@@ -53,6 +53,7 @@
 #include "Common/RandomValue.h"
 #include "Common/StateHash.h"
 #include "GameLogic/Module/HordeContain.h"
+#include "GameLogic/SimMath.h"
 
 #include <functional>
 #include <list>
@@ -89,6 +90,15 @@ public:
 	{
 		Coord3D position{ 0.0f, 0.0f, 0.0f };
 		float angle = 0.0f;
+		// lane UBER-2B: cos / sin of `angle` (SimMath::cosf32 / sinf32) computed once for a whole member pass instead of per member; the same values
+		bool hasTrig = false;
+		float cosAngle = 0.0f, sinAngle = 0.0f;
+		void computeTrig()
+		{
+			cosAngle = SimMath::cosf32(angle);
+			sinAngle = SimMath::sinf32(angle);
+			hasTrig = true;
+		}
 	};
 
 	// RW 0x73D5C2: does a member of this template belong in a slot of this UnitType?

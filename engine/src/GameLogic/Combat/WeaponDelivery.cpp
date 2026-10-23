@@ -2,10 +2,12 @@
 // See GameLogic/Combat/WeaponDelivery.h for the target facts.
 
 #include "GameLogic/Combat/WeaponDelivery.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/LegendaryHeroesGame.h"
 
 #include "Common/Player.h"
+#include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
@@ -174,7 +176,7 @@ const char *const kNestedHordeStop =
 	"[S-1790] shockwaves (COMBAT-4): NOT ported: MetaImpactNugget's hit on a member of a horde that is itself inside a container (RW 0x910764 .. 0x9107AF: the source scores the member, the outer "
 	"container's contain slots 4 / 0x3C / 0x7C act on it; counted, nothing applied); the handler's audio event (RW 0x696947 .. 0x696A0E, TheAudio slot 0x64) and the drawable's "
 	"projectile type (client); FlipDirection is read by no 2.01 nugget code found; INFERENCE: a horde's member list is its contain list (horde interface slot 0x108 not read), the "
-	"clear-radius landing height is the ground (layer heights S-161), the AI state of RW 0x662D70 is the port's current state";
+	"clear-radius landing height is the layer's (RW 0x680A75) at the shock wave centre's z (lane WALL-2), the AI state of RW 0x662D70 is the port's current state";
 
 // RW 0x68D91A Object::estimateDamage: a TREE (template + 0x113 bit 6) answers 1.0 for FLAME (6) and 0 for anything else; else the body's estimate (body vslot 2);
 // no body: 0 (lane DECOMP-1)
@@ -1186,9 +1188,9 @@ void luaEventAt(GameLogic &logic, const LuaEventNugget &n, ObjectID sourceId, co
 // ---- SpawnAndFadeNugget (vtable RW 0xC7BD60: slot 1 RW 0x911BCF, slot 2 RW 0x911BFD, slot 5 RW 0x911C32 = slot 6 at the victim's position, slot 6 RW 0x911C46) ----
 // RW 0x911C46: the source object (retail reads it without a null test); SpawnedObjectName's template (RW 0x6D1305; none: nothing); a new object on the source's team
 // (RW 0x6D165E, status 0) at the SOURCE's position plus SpawnOffset turned by the source's angle: s / c the MSVCR71 sin / cos of the angle stored as floats, SSE
-// x + (c ox - s oy), y + (ox s + c oy); z the terrain height there on the source's layer (TheTerrainLogic slot 0x1C: the ground, S-161); its orientation the
-// source's (RW 0x70C31E); the source dies (RW 0x698EC3: UNRESISTABLE, FADED); a DEPLOYED_MINE (template + 0x11D bit 4) enters the pathfinder's map (RW 0x6E85E9).
-// The target position itself is not read
+// x + (c ox - s oy), y + (ox s + c oy); z the terrain height there on the source's layer (TheTerrainLogic slot 0x1C, RW 0x68BBE0; lane WALL-1: a wall top's or a
+// ramp's height for a source on a walkway, the ground otherwise); its orientation the source's (RW 0x70C31E); the source dies (RW 0x698EC3: UNRESISTABLE, FADED:
+// the mine carrier's DeployedDeath fades it); a DEPLOYED_MINE (template + 0x11D bit 4) enters the pathfinder's map (RW 0x6E85E9). The target position itself is not read
 void spawnAndFade(GameLogic &logic, const SpawnAndFadeNugget &n, ObjectID sourceId)
 {
 	static const int kDeployedMine = MetaImpact::kindIndex("DEPLOYED_MINE");
@@ -1216,7 +1218,8 @@ void spawnAndFade(GameLogic &logic, const SpawnAndFadeNugget &n, ObjectID source
 	Coord3D p;
 	p.x = SimMath::addf32(sp.x, SimMath::subf32(SimMath::mulf32(c, ox), SimMath::mulf32(s, oy)));
 	p.y = SimMath::addf32(sp.y, SimMath::addf32(SimMath::mulf32(ox, s), SimMath::mulf32(c, oy)));
-	p.z = logic.getGroundHeight(p.x, p.y);
+	const AIUpdateInterface *sai = source->getAIUpdateInterface();
+	p.z = sai ? sai->layerHeightAt(p.x, p.y) : logic.getGroundHeight(p.x, p.y);
 	o->setPosition(&p);
 	o->setOrientation(angle);
 	source->kill(DEATH_FADED);

@@ -254,8 +254,8 @@ TEST_CASE("pathperf1: the S-162 and S-163 stop lines, whole (the inferences and 
 {
 	const std::vector<std::string> all = Pathfinder::allStops();
 	auto has = [&](const std::string &line) { return std::find(all.begin(), all.end(), line) != all.end(); };
-	CHECK(has("S-162 the hierarchical block search of findPath (RW 0x6F9829) runs on the ground layer only (RW 0x6F8601): its bridge links (RW 0x9389CE), block portals "
-			  "(RW 0x937F2D / 0x937F7F) and the mineshaft network's intermediate goal (RW 0x77559F, type 8 waypoints) are not ported, and the block-edge passability "
+	CHECK(has("S-162 the hierarchical block search of findPath (RW 0x6F9829) runs on the ground layer only (RW 0x6F8601): its bridge links (RW 0x9389CE) and the "
+			  "mineshaft network's intermediate goal (RW 0x77559F, type 8 waypoints) are not ported (its block portals, RW 0x937F2D / 0x937F7F, are: lane WALL-2), and the block-edge passability "
 			  "(RW 0x938240) is the port's zone pair test (INFERRED equal); findAttackPath's own corridor (RW 0x6FC4CB .. 0x6FC4F9) is not ported: it searches every block; "
 			  "a goal inside the obstacle the unit ignores (a builder's own site) gets no corridor (INFERENCE: the port's builders aim inside the footprint)"));
 	CHECK(has("S-163 a complete path skips the rebuild RW applies to it from the unit's facing (RW 0x767B0E, called at RW 0x6FDCDA; the path to the closest cell gets none), the closest cell's third test (RW 0x6EF3C3) and the search-free path of an object whose + 0x4AC flag is set (RW 0x6FD66D) are not ported"));

@@ -146,7 +146,11 @@ bool Pathfinder::isGroundPathPassable(const Coord3D &start, PathfindLayerEnum la
 	Coord3D s = start, e = end;
 	worldToCell(&s, true, &a);
 	worldToCell(&e, true, &b);
-	const bool stopped = walkLine(*this, layer, a, b, [&](PathfindCell *, PathfindCell *to, int x, int y) {
+	const bool stopped = walkLine(*this, layer, a, b, [&](PathfindCell *fromCell, PathfindCell *to, int x, int y) {
+		if (fromCell && !PathfindCell::layersCompatible(*fromCell, *to))
+		{
+			return true; // lane WALL-1: no step between a wall top and the ground beside it
+		}
 		return clearCellForDiameter(0, x, y, to->getLayer(), diameter, true) != diameter;
 	});
 	return !stopped;
@@ -172,6 +176,10 @@ bool Pathfinder::isLineBlocked(const PathfindObject *obj, unsigned surfaces, Pat
 		info.cell.x = x;
 		info.cell.y = y;
 		info.layer = toCell->getLayer();
+		if (fromCell && !PathfindCell::layersCompatible(*fromCell, *toCell))
+		{
+			return true; // lane WALL-1: no step between a wall top and the ground beside it
+		}
 		if (!checkForMovement(obj, info, fromCell ? &prev : nullptr) || info.terrainPenalty != 0)
 		{
 			return true;
@@ -191,7 +199,11 @@ bool Pathfinder::adjustGroundPathPosition(const Coord3D &from, Coord3D *pos)
 	Coord3D s = from, e = *pos;
 	worldToCell(&s, true, &a);
 	worldToCell(&e, true, &b);
-	const bool stopped = walkLine(*this, LAYER_GROUND, a, b, [&](PathfindCell *, PathfindCell *to, int x, int y) {
+	const bool stopped = walkLine(*this, getLayerAt(s.x, s.y), a, b, [&](PathfindCell *fromCell, PathfindCell *to, int x, int y) {
+		if (fromCell && !PathfindCell::layersCompatible(*fromCell, *to))
+		{
+			return true; // lane WALL-1: from the layer of `from` (a wall top's), no step onto another
+		}
 		if (clearCellForDiameter(0, x, y, to->getLayer(), 4, true) == 4)
 		{
 			adjustCoordToCell(x, y, true, result, to->getLayer());
@@ -374,7 +386,10 @@ Path *Pathfinder::findGroundPath(PathfindObject *obj, const Coord3D *from, const
 	m_zoneManager.clearPassableFlags(); // RW 0x937C23
 	const PathfindLocomotorInfo ground{ LOCOMOTORSURFACE_GROUND, false, false };
 	Coord3D hierarchicalTarget;
-	if (!findClosestHierarchicalPath(obj, ground, true, from, rawTo, &hierarchicalTarget))
+	m_portalHops.clear(); // lane WALL-2: the hops of this search only (INFERENCE: as findPath empties them, RW 0x6FE7CB)
+	// a goal on a raised walkway gets no corridor (S-162: the block search runs on the ground only), as findPath (review #64)
+	const bool raisedGoal = isRaisedLayer(getLayerAt(rawTo->x, rawTo->y, rawTo->z));
+	if (raisedGoal || !findClosestHierarchicalPath(obj, ground, true, from, rawTo, &hierarchicalTarget))
 	{
 		m_zoneManager.setAllPassable(); // RW 0x937C65
 	}
@@ -386,7 +401,9 @@ Path *Pathfinder::findGroundPath(PathfindObject *obj, const Coord3D *from, const
 	Coord3D clipped = *from;
 	clip(&clipped, &adjusted);
 	m_isTunneling = false;
-	const PathfindLayerEnum layer = LAYER_GROUND; // TheTerrainLogic::getLayerForDestination: the ground (S-161)
+	// TheTerrainLogic::getLayerForDestination at the destination's height (lane WALL-1: a wall top's, as computePath; review #64: with the height, a raised
+	// walkway's, which the terrain's height under it never names)
+	const PathfindLayerEnum layer = getLayerAt(adjusted.x, adjusted.y, adjusted.z);
 	ICoord2D cell;
 	worldToCell(&adjusted, true, &cell);
 	if (diameter != clearCellForDiameter(0, cell.x, cell.y, layer, diameter, true))
@@ -470,6 +487,10 @@ Path *Pathfinder::findGroundPath(PathfindObject *obj, const Coord3D *from, const
 				{
 					return false;
 				}
+				if (!PathfindCell::layersCompatible(*lineFrom, *to))
+				{
+					return true; // lane WALL-1: the line keeps to joined layers
+				}
 				if (to->hasInfo() && (to->getOpen() || to->getClosed()))
 				{
 					return true;
@@ -494,9 +515,9 @@ Path *Pathfinder::findGroundPath(PathfindObject *obj, const Coord3D *from, const
 		{
 			const ICoord2D next{ parent->getXIndex() + kGroundDx[i], parent->getYIndex() + kGroundDy[i] };
 			PathfindCell *n = getCell(parent->getLayer(), next.x, next.y);
-			if (!n)
+			if (!n || !PathfindCell::layersCompatible(*parent, *n))
 			{
-				continue;
+				continue; // lane WALL-1: a wall top and the ground beside it are not neighbours (as examineNeighboringCells)
 			}
 			if (n->getLayer() == LAYER_GROUND && !m_zoneManager.isPassable(next.x, next.y))
 			{

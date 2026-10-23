@@ -90,6 +90,7 @@ LiveGame::~LiveGame()
 	if (m_ai)
 	{
 		m_ai->detach(); // the AI world is destroyed after the logic (members are destroyed in reverse order): it must not touch the logic then
+		m_ai->setWallMeshes(nullptr);
 	}
 }
 
@@ -414,6 +415,10 @@ bool LiveGame::load(const Options &options, std::string *error)
 	m_launchBones = std::make_unique<DrawableLaunchBones>(*m_launchAssets, m_logic->settings().standardPublicBones);
 	m_launchBones->reset();
 	m_logic->combat().setLaunchOffsets(m_launchBones.get());
+	// WALL-1: a wall piece's footprint routine (RW 0x936B7D -> ClassifyWall) asks its drawable for the WallBoundsMesh / RampMesh surfaces; the same files answer
+	// it from the template data, before the map's objects enter the pathfinder's map
+	m_wallMeshes = std::make_unique<DrawableWallMeshes>(*m_launchAssets);
+	m_ai->setWallMeshes(m_wallMeshes.get());
 	// the script engine and the ONE creation path (LuaScriptEngine::sendObjectCreated through GameLogic::setObjectCreatedProc, world hooks)
 	m_scripting = std::make_unique<LiveScripting>(*m_logic, m_fs, m_world.nameKeys());
 	if (!m_scripting->start(MapClassification::mapDirectory(lowerName), error))
@@ -1126,8 +1131,16 @@ std::shared_ptr<const FrameCompletion> LiveGame::captureCompletion(const WorkIte
 	}
 	else if (item.capture.hashEveryFrame || m_options.hashEveryFrame)
 	{
-		c->hash = m_logic->computeStateHash();
-		c->hashed = true;
+		if (!m_options.hashEveryFrame && m_logic->uber() && c->frame % (UnsignedInt)LiveGameFrameDriver::kUberRecordedHashEvery != 0 &&
+			!(item.driver && item.driver->hashWanted(c->frame)))
+		{
+			c->hashSkipped = true; // lane UBER-2C: the Uber recording's cadence
+		}
+		else
+		{
+			c->hash = m_logic->computeStateHash();
+			c->hashed = true;
+		}
 	}
 	std::uint32_t rng = 0x811C9DC5u;
 	for (std::uint32_t w : m_logic->random().seedArray())
@@ -1271,6 +1284,19 @@ LiveGame::Report LiveGame::report() const
 			r.stops.push_back(s);
 		}
 		r.launchBoneProblems = m_launchBones->problems();
+	}
+	if (m_wallMeshes)
+	{
+		// a mesh the INI names that the model lacks is retail data (RotWK's HelmsDeepCulvert names RampMesh1 / 2 = P2 / P3, RBHDDWCulv has neither: retail's
+		// getRamp finds no mesh and makes no ramp); a missing model is an error
+		r.wallMeshProblems = m_wallMeshes->problems();
+		for (const std::string &e : r.wallMeshProblems)
+		{
+			if (e.find(" is not a mesh of ") == std::string::npos)
+			{
+				r.errors.push_back("wall meshes: " + e);
+			}
+		}
 	}
 	for (const std::string &s : r.movementStops)
 	{

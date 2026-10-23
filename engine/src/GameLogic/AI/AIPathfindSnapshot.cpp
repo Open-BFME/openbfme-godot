@@ -25,36 +25,61 @@
 
 namespace
 {
+// version 3 (lanes WALL-1 / WALL-2): a cell's layer and connected layer take 7 bits each (0 .. 0x40: the wall tops 0x11 .. 0x40, the ramp 0x10, the raised
+// walkways 2 .. 15); versions 1 and 2 (upstream's 4-bit fields, a map without walls) are still read
 std::uint32_t classWord(const PathfindCell &c)
 {
-	return (std::uint32_t)c.getType() | ((std::uint32_t)c.getLayer() << 4) | ((std::uint32_t)c.getConnectLayer() << 8) | (c.getBit17() ? 1u << 12 : 0u) |
-		(c.getImpassableToPlayers() ? 1u << 13 : 0u) | (c.getExtraPass() ? 1u << 14 : 0u) | (c.getBit22() ? 1u << 15 : 0u) | (c.getBit23() ? 1u << 16 : 0u) |
-		(c.getPinched() ? 1u << 17 : 0u);
+	return (std::uint32_t)c.getType() | ((std::uint32_t)c.getLayer() << 4) | ((std::uint32_t)c.getConnectLayer() << 11) | (c.getBit17() ? 1u << 18 : 0u) |
+		(c.getImpassableToPlayers() ? 1u << 19 : 0u) | (c.getExtraPass() ? 1u << 20 : 0u) | (c.getBit22() ? 1u << 21 : 0u) | (c.getBit23() ? 1u << 22 : 0u) |
+		(c.getPinched() ? 1u << 23 : 0u);
 }
 
-// the closed set of a class word: the 18 bits classWord writes, a cell type 0 .. 7 (RW 0xDA2444's table)
-void checkClassWord(std::uint32_t w)
+// a version 1 or 2 word in version 3's layout
+std::uint32_t widenClassWord(std::uint32_t w)
 {
-	if (w >> 18)
+	return (w & 0xFu) | (((w >> 4) & 0xFu) << 4) | (((w >> 8) & 0xFu) << 11) | ((w >> 12) << 18);
+}
+
+// the closed set of a class word: the 24 bits classWord writes (18 before version 3), a cell type 0 .. 7 (RW 0xDA2444's table), layers up to LAYER_LAST
+void checkClassWord(std::uint32_t w, int version)
+{
+	const int bits = version >= 3 ? 24 : 18;
+	if (w >> bits)
 	{
-		throw XferException("pathfinder: a cell class word " + std::to_string(w) + " with bits beyond the 18 a cell keeps");
+		throw XferException("pathfinder: a cell class word " + std::to_string(w) + " with bits beyond the " + std::to_string(bits) + " a cell keeps");
 	}
 	AIXfer::inRange(w & 0xF, 0, 7, "pathfinder: a cell type");
+	if (version >= 3)
+	{
+		AIXfer::inRange((w >> 4) & 0x7F, LAYER_INVALID, LAYER_LAST, "pathfinder: a cell's layer");
+		AIXfer::inRange((w >> 11) & 0x7F, LAYER_INVALID, LAYER_LAST, "pathfinder: a cell's connected layer");
+	}
 }
 
 void setClassWord(PathfindCell &c, std::uint32_t w)
 {
 	c.setType((PathfindCell::CellType)(w & 0xF));
-	c.setLayer((PathfindLayerEnum)((w >> 4) & 0xF));
-	c.setConnectLayer((PathfindLayerEnum)((w >> 8) & 0xF));
-	c.setBit17((w >> 12) & 1);
-	c.setImpassableToPlayers((w >> 13) & 1);
-	c.setExtraPass((w >> 14) & 1);
-	c.setBit22((w >> 15) & 1);
-	c.setBit23((w >> 16) & 1);
-	c.setPinched((w >> 17) & 1);
+	c.setLayer((PathfindLayerEnum)((w >> 4) & 0x7F));
+	c.setConnectLayer((PathfindLayerEnum)((w >> 11) & 0x7F));
+	c.setBit17((w >> 18) & 1);
+	c.setImpassableToPlayers((w >> 19) & 1);
+	c.setExtraPass((w >> 20) & 1);
+	c.setBit22((w >> 21) & 1);
+	c.setBit23((w >> 22) & 1);
+	c.setPinched((w >> 23) & 1);
 }
+
 } // namespace
+
+std::uint32_t Pathfinder::classWord(const PathfindCell &c)
+{
+	return ::classWord(c);
+}
+
+void Pathfinder::setClassWordWide(PathfindCell &c, std::uint32_t w)
+{
+	::setClassWord(c, w);
+}
 
 void PathfindRequestRing::xfer(Xfer &x)
 {
@@ -63,7 +88,7 @@ void PathfindRequestRing::xfer(Xfer &x)
 	x.xferInt(&tail);
 	if (x.isLoading())
 	{
-		if (head < 0 || head >= PATHFIND_QUEUE_LEN || tail < 0 || tail >= PATHFIND_QUEUE_LEN)
+		if (head < 0 || head >= m_len || tail < 0 || tail >= m_len) // lane PATHPERF-4: this ring's length (the game's profile)
 		{
 			throw XferException("pathfinder: a request ring's head " + std::to_string(head) + " / tail " + std::to_string(tail));
 		}
@@ -71,7 +96,7 @@ void PathfindRequestRing::xfer(Xfer &x)
 		m_head = head;
 		m_tail = tail;
 	}
-	for (int s = m_head; s != m_tail; s = (s + 1) % PATHFIND_QUEUE_LEN)
+	for (int s = m_head; s != m_tail; s = (s + 1) % m_len)
 	{
 		x.xferUnsignedInt(&m_slots[(size_t)s]);
 		if (x.isLoading()) // lane SAVE-4e (closed sets): an id the game issued (a later object must not inherit a queued request)
@@ -113,7 +138,7 @@ void PathfindZoneManager::xfer(Xfer &x)
 		return;
 	}
 	m_tables.clear();
-	// the closed sets: a block per block of the extent, a zone's class (a cell type 0 .. 7, layers 0 .. 15), the adjacency sorted, unique, a < b, of zones
+	// the closed sets: a block per block of the extent, a zone's class (a cell type 0 .. 7, layers 0 .. LAYER_LAST, lanes WALL-1 / WALL-2), the adjacency sorted, unique, a < b, of zones
 	if (m_blockSize <= 0 || m_zoneBlockExtent.x < 0 || m_zoneBlockExtent.y < 0 ||
 		(std::uint64_t)m_zoneBlockExtent.x * (std::uint64_t)m_zoneBlockExtent.y != m_blocks.size())
 	{
@@ -161,14 +186,18 @@ std::uint32_t Pathfinder::configHash() const
 		h.addI32(v);
 	}
 	h.addU32((std::uint32_t)m_blockOfMapCells.size());
-	h.addI32(m_pool.capacity());
+	// upstream hashed the pool's capacity here, which was always the configured size; an Uber pool grows (lane PATHPERF-4), so the configured size is
+	// hashed instead: the same value as before, so a snapshot of an earlier build keeps its configuration hash (review #63)
+	h.addI32(m_config.cellInfoPoolSize);
 	return h.value();
 }
 
 void Pathfinder::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 3 }; // 2: the Uber profile's limits, the request rings' lengths and the burst latch (lane PATHPERF-4); 3: the walls, the raised
+	                       // walkways and the portals (lanes WALL-1 / WALL-2), the wide class words
 	x.xferVersion(v);
+	const int version = v.current;
 	const bool loading = x.isLoading();
 	if (!loading && (!m_open.empty() || m_closedList))
 	{
@@ -232,7 +261,16 @@ void Pathfinder::xfer(Xfer &x)
 			at += run;
 		}
 	};
-	runs([](const PathfindCell &c) { return classWord(c); }, words, [&](std::uint32_t &w) { x.xferUnsignedInt(&w); checkClassWord(w); }, "class words");
+	runs([](const PathfindCell &c) { return classWord(c); }, words,
+		[&](std::uint32_t &w) {
+			x.xferUnsignedInt(&w);
+			checkClassWord(w, version);
+			if (version < 3)
+			{
+				w = widenClassWord(w);
+			}
+		},
+		"class words");
 	runs([](const PathfindCell &c) { return (std::uint16_t)c.getZone(); }, zones, [&](std::uint16_t &z) { x.xferUnsignedShort(&z); }, "zones");
 	// the cells with a cell info, in index order (the cell (x, y) is m_blockOfMapCells[x * stride + y], Pathfinder::getCell): the obstacle id, the flags, a
 	// mask of the occupant kinds that have a chain, then those chains in order
@@ -250,9 +288,12 @@ void Pathfinder::xfer(Xfer &x)
 		infoCount += c.hasInfo() ? 1u : 0u;
 	}
 	x.xferCount(&infoCount, 10, sizeof(LoadedInfo)); // index, obstacle, flags, kinds
-	if (loading && infoCount > (std::uint32_t)m_pool.capacity())
+	// lane PATHPERF-4: the pool grows up to its limit, which is the SNAPSHOT's profile (its Uber flag comes after the infos, checked there); here only
+	// the most any profile holds, so a count no pool can take is refused before it is read
+	if (loading && infoCount > (std::uint32_t)std::max(m_pool.capacity(), (int)kCellInfoPoolMax))
 	{
-		throw XferException("pathfinder: the snapshot holds " + std::to_string(infoCount) + " cell infos, more than the pool of " + std::to_string(m_pool.capacity()));
+		throw XferException("pathfinder: the snapshot holds " + std::to_string(infoCount) + " cell infos, more than any pool of " +
+			std::to_string(std::max(m_pool.capacity(), (int)kCellInfoPoolMax)));
 	}
 	std::uint32_t index = 0, last = 0;
 	for (std::uint32_t n = 0; n < infoCount; ++n)
@@ -311,6 +352,23 @@ void Pathfinder::xfer(Xfer &x)
 	}
 	PathfindZoneManager zoneManager;
 	PathfindRequestRing queue1, queue2;
+	// version 2 (lane PATHPERF-4): the rings' lengths, retail's PATHFIND_QUEUE_LEN or the Uber profile's kUberQueueLength, so a game that switched its
+	// profile loads into a fresh game of either one (review #64); a version 1 snapshot's rings are retail's
+	std::int32_t len1 = loading ? (std::int32_t)PATHFIND_QUEUE_LEN : (std::int32_t)m_queue1.length();
+	std::int32_t len2 = loading ? (std::int32_t)PATHFIND_QUEUE_LEN : (std::int32_t)m_queue2.length();
+	bool uberLimits = m_uberLimits; // a version 1 snapshot keeps the loading game's
+	if (version >= 2)
+	{
+		x.xferBool(&uberLimits); // the Uber profile's limits on (Pathfinder::setUberLimits; the state hash folds the burst latch only then)
+		x.xferInt(&len1);
+		x.xferInt(&len2);
+		if ((len1 != PATHFIND_QUEUE_LEN && len1 != kUberQueueLength) || (len2 != PATHFIND_QUEUE_LEN && len2 != kUberQueueLength))
+		{
+			throw XferException("pathfinder: request ring lengths len1 " + std::to_string(len1) + ", len2 " + std::to_string(len2));
+		}
+	}
+	queue1.setLength(len1);
+	queue2.setLength(len2);
 	PathfindZoneManager &zm = loading ? zoneManager : m_zoneManager;
 	PathfindRequestRing &q1 = loading ? queue1 : m_queue1, &q2 = loading ? queue2 : m_queue2;
 	zm.xfer(x);
@@ -366,9 +424,41 @@ void Pathfinder::xfer(Xfer &x)
 	}
 	std::vector<std::string> stops = m_stops;
 	AIXfer::reportStrings(x, stops);
+	// version 2 (lane PATHPERF-4): the request queue's burst latch (AIPathfindUnits.cpp; hashed in an Uber game, always false in a Faithful one)
+	bool uberBurst = loading ? false : m_uberBurst;
+	if (version >= 2)
+	{
+		x.xferBool(&uberBurst);
+	}
+	WallState walls;
+	if (version >= 3)
+	{
+		xferWalls(x, walls);
+	}
 	if (!loading)
 	{
 		return;
+	}
+	// the snapshot's profile decides the pool's limit (setGrowthLimit below), not the loading game's (review of #62: a game whose profile is set after
+	// its map, AIWorld's setUberLimits when it differs, would check against the wrong one)
+	const std::size_t most = (std::size_t)std::max(m_pool.capacity(), uberLimits ? (int)kCellInfoPoolMax : 0);
+	if (infos.size() > most)
+	{
+		throw XferException("pathfinder: the snapshot holds " + std::to_string(infos.size()) + " cell infos, more than the pool of " + std::to_string(most));
+	}
+	// review of #63: the raised layers' cell infos come from the same pool as the ground's (applyWalls allocates them after the ground's); each count was
+	// checked alone, so a snapshot whose two together pass the pool is refused here, before anything changes
+	{
+		std::size_t raisedInfos = 0;
+		for (const WallState::Raised &r : walls.raised)
+		{
+			raisedInfos += r.used ? r.infos.size() : 0;
+		}
+		if (infos.size() + raisedInfos > most)
+		{
+			throw XferException("pathfinder: the snapshot holds " + std::to_string(infos.size()) + " ground and " + std::to_string(raisedInfos) +
+				" raised cell infos, more than the pool of " + std::to_string(most));
+		}
 	}
 	// the references: the zones name zones of the loaded table; the obstacles, the occupants and the reserving units are objects of the game (the
 	// pathfinder's world); request rings hold any id (a unit that died while queued stays queued; the handler skips it)
@@ -383,6 +473,17 @@ void Pathfinder::xfer(Xfer &x)
 		if (zones[i] != 0 && zones[i] >= zm.zoneCount())
 		{
 			throw XferException("pathfinder: cell " + std::to_string(i) + " is in the zone " + std::to_string(zones[i]) + " of " + std::to_string(zm.zoneCount()));
+		}
+	}
+	// lanes WALL-1 / WALL-2: a raised cell's zone too (the raised layers' zones are numbered after the ground's in the same table, AIPathfindZones.cpp)
+	for (const WallState::Raised &r : walls.raised)
+	{
+		for (std::uint16_t z : r.zones)
+		{
+			if (z != 0 && z >= zm.zoneCount())
+			{
+				throw XferException("pathfinder: a raised cell is in the zone " + std::to_string(z) + " of " + std::to_string(zm.zoneCount()));
+			}
 		}
 	}
 	for (const LoadedInfo &li : infos)
@@ -459,6 +560,8 @@ void Pathfinder::xfer(Xfer &x)
 	{
 		c.reset(nullptr); // the infos go with the pool below (nothing is released into the old free list)
 	}
+	// as setUberLimits: only an Uber pool grows. Set before the infos are taken again: an Uber snapshot's may pass the configured pool
+	m_pool.setGrowthLimit(uberLimits ? (int)kCellInfoPoolMax : 0);
 	m_pool.allocate(m_pool.capacity());
 	for (std::uint32_t i = 0; i < cells; ++i)
 	{
@@ -471,7 +574,7 @@ void Pathfinder::xfer(Xfer &x)
 		ICoord2D pos;
 		pos.x = (int)(li.index / (std::uint32_t)m_stride);
 		pos.y = (int)(li.index % (std::uint32_t)m_stride);
-		c.allocateInfo(m_pool, pos); // the count is within the pool (checked above)
+		c.allocateInfo(m_pool, pos); // the count is within the pool (checked above, against the snapshot's limit)
 		PathfindCellInfo *info = c.info();
 		info->m_obstacleID = li.obstacle;
 		info->m_blockedByAlly = li.flags & 1;
@@ -508,6 +611,9 @@ void Pathfinder::xfer(Xfer &x)
 	}
 	m_hierLast = -1; // the last search's corridor is that search's scratch (rebuilt by findClosestHierarchicalPath before it is read)
 	m_stops = std::move(stops);
+	m_uberBurst = uberBurst;
+	m_uberLimits = uberLimits;
+	applyWalls(walls, version >= 3); // its raised infos come from the pool after the ground's (the limit set above)
 }
 
 void Path::xfer(Xfer &x)

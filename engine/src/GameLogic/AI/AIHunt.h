@@ -74,6 +74,7 @@ private:
 	Object *findVictim(Object &owner);
 	std::unique_ptr<AIStateMachine> makeHuntMachine();
 	std::unique_ptr<AIStateMachine> m_huntMachine; ///< + 0x20
+	KeptSubMachines<AIStateMachine> m_keptMachines; ///< review of #64: the hunt machine dropped during its own update (see KeptSubMachines)
 	unsigned m_nextEnemyScanTime = 0;               ///< + 0x24
 };
 

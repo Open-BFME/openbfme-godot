@@ -349,7 +349,7 @@ void AIWorld::moveAlliesAwayFromDestination(Object &obj, const Coord3D &from, co
 	}
 	const float r = CombatQueries::boundingCircleRadius(obj);
 	auto visit = [&](int x, int y) -> bool {
-		const PathfindCell *cell = pf.getCell(LAYER_GROUND, x, y); // the requester's layer: only the ground layer exists (S-161)
+		const PathfindCell *cell = pf.getCell(self.getLayer(), x, y); // the requester's layer (lane WALL-2: a walkway's cells; the ground grid for the rest)
 		if (cell == nullptr)
 		{
 			return false; // RW 0x6F57C3: no cell ends the walk
@@ -520,12 +520,14 @@ void AIUpdateInterface::aiMoveAwayFromUnit(Object *unit, const Coord3D &requeste
 	Pathfinder &pf = m_world->pathfinder();
 	const PathfindObject *unitPf = &m_world->adapterFor(*unit);
 	const PathfindObject *prevPf = prev ? &m_world->adapterFor(*prev) : nullptr;
+	m_movingAwaySearch = true; // lane WALL-2, RW 0x66DBFB: AI + 0x3CF while the move-away searches run (a type 7 portal refuses the unit then, RW 0x68230B)
 	Path *path = pf.getMoveAwayFromPath(&adapter(), locomotorInfo(), unitPf, unitPath, prevPf, prevPath);
 	if (path == nullptr && !canPathThroughUnits())
 	{
 		setCanPathThroughUnits(true);
 		path = pf.getMoveAwayFromPath(&adapter(), locomotorInfo(), unitPf, unitPath, prevPf, prevPath);
 	}
+	m_movingAwaySearch = false; // RW 0x66DC4B
 	// RW 0x66DC43 .. 0x66DC57 (lane BACKLOG-1): with or without a path, the current locomotor's preferred point becomes the object's position (RW 0x5E39CE)
 	if (m_curLocomotor)
 	{

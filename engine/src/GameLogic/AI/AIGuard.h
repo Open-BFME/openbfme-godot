@@ -140,6 +140,7 @@ public:
 
 private:
 	std::unique_ptr<AIGuardMachine> m_guardMachine; // + 0x20
+	KeptSubMachines<AIGuardMachine> m_keptMachines;  // review of #64: the guard machine dropped during its own update (see KeptSubMachines)
 };
 
 // RW vtable 0xC27DF8: onEnter RW 0x743864: the owner's StancesBehavior hears that the move ended (RW 0x86228E), then failure (-> idle)

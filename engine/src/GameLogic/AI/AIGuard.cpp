@@ -694,7 +694,11 @@ StateReturnType AIGuardState::update()
 		return STATE_FAILURE;
 	}
 	machine().lock();
-	const StateReturnType r = m_guardMachine->updateStateMachine();
+	StateReturnType r;
+	{
+		KeptSubMachines<AIGuardMachine>::Run run(m_keptMachines); // an attack inside can end this state (onExit below)
+		r = m_guardMachine->updateStateMachine();
+	}
 	machine().unlock();
 	return r;
 }
@@ -702,11 +706,7 @@ StateReturnType AIGuardState::update()
 // RW 0x752DC7
 void AIGuardState::onExit(StateExitType)
 {
-	if (m_guardMachine)
-	{
-		m_guardMachine->halt();
-		m_guardMachine.reset();
-	}
+	m_keptMachines.drop(m_guardMachine); // halted, and kept while its update runs (review of #64)
 }
 
 bool AIGuardState::isIdle() const

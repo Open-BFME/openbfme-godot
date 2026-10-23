@@ -87,7 +87,7 @@ Path *Pathfinder::findSafePath(const PathfindObject *obj, const PathfindLocomoto
 			break;
 		}
 		markClosed(c);
-		checkChangeLayers(c, obj); // RW 0x6F6286 (lane BACKLOG5)
+		checkChangeLayers(c, obj); // RW 0x6FCFF6 (lane WALL-2)
 		cellCount += examineNeighboringCells(c, nullptr, loco, isHuman, center, radius, startNdx, obj);
 	}
 	cleanOpenAndClosedLists();

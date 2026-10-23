@@ -4,12 +4,15 @@
 // The bench is skipped by default (run it with --no-skip):
 //   openbfme_tests -tc="pathperf1 bench*" --no-skip
 // PATHPERF1_CASES="10,50,150,i300" picks the cases (default all four; iN = N single infantry), PATHPERF1_MAP the map (default map mp brown lands),
-// PATHPERF1_FRAMES the frames after the order (default 60), PATHPERF1_SETTLE the frames before it (default 30).
+// PATHPERF1_FRAMES the frames after the order (default 60), PATHPERF1_SETTLE the frames before it (default 30), PATHPERF1_PROFILE=uber the Uber profile.
 #include "doctest.h"
 #include "HudTestUtil.h"
 #include "PerfBenchUtil.h"
+#include "PathfindTestUtil.h"
 
 #include "Common/Player.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameClient/LiveGame.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
@@ -21,6 +24,8 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <iterator>
+#include <memory>
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
@@ -78,6 +83,11 @@ OrderRun runOrder(const char *mapName, const char *templ, int count, float spaci
 	LiveGame::Options o;
 	o.mapName = mapName;
 	o.seed = 4711;
+	// lane PATHPERF-4: PATHPERF1_PROFILE=uber runs the order in the Uber profile (its larger path queue and budget)
+	if (const char *profile = std::getenv("PATHPERF1_PROFILE"))
+	{
+		o.simulationProfile = std::string(profile) == "uber" ? SimulationProfile::Uber : SimulationProfile::Faithful;
+	}
 	o.slots.players.push_back({ "Player_1", "FactionMen", true, 0, 0, 0 });
 	o.slots.players.push_back({ "Player_2", "FactionMordor", false, 1, 0, 1 });
 	std::string err;
@@ -321,4 +331,303 @@ TEST_CASE("pathperf1: the search memo and the unit index change nothing: a 60 ho
 	MESSAGE(searches << " searches compared, " << partials << " partial, " << corridors << " with a corridor");
 	CHECK(searches == 60u);
 	CHECK(corridors > 0u);
+}
+
+// lane PATHPERF-4 with upstream's SAVE-4: an Uber game's path queue is longer than retail's ring (kUberQueueLength, not PATHFIND_QUEUE_LEN), its
+// cell info pool grows and a mass order starts a burst; the pathfinder's snapshot keeps all three (version 2: the burst latch)
+TEST_CASE("pathperf4 save: an Uber game saved while a mass order's path burst drains, its request ring past retail's 512 slots, loads into itself "
+		  "and the next 100 frames hash as before")
+{
+	SharedWorld &s = shared();
+	if (!s.mount || !s.world)
+	{
+		MESSAGE("SKIP: " << s.error);
+		return;
+	}
+	ArchiveW3DFileSource source(*s.mount->fs);
+	WW3DAssetManager assets(source);
+	LiveGame game(*s.world, *s.mount->fs, assets, s.options);
+	LiveGame::Options o;
+	o.mapName = "map mp brown lands";
+	o.seed = 4711;
+	o.simulationProfile = SimulationProfile::Uber;
+	o.slots.players.push_back({ "Player_1", "FactionMen", true, 0, 0, 0 });
+	o.slots.players.push_back({ "Player_2", "FactionMordor", false, 1, 0, 1 });
+	std::string error;
+	REQUIRE_MESSAGE(game.load(o, &error), error);
+	Player *pa = game.players().findPlayerWithName("Player_1");
+	REQUIRE(pa != nullptr);
+	GameLogic &logic = game.logic();
+	REQUIRE(logic.aiWorld() != nullptr);
+	const Waypoint *wa = logic.terrain() ? logic.terrain()->findWaypointByName("Player_1_Start") : nullptr;
+	const Waypoint *wb = logic.terrain() ? logic.terrain()->findWaypointByName("Player_2_Start") : nullptr;
+	REQUIRE(wa != nullptr);
+	REQUIRE(wb != nullptr);
+	// 300 soldiers in a block in front of Player_1's base, ordered back and forth across the map
+	const Coord3D home{ wa->location.x + (wb->location.x - wa->location.x) * 0.15f, wa->location.y + (wb->location.y - wa->location.y) * 0.15f, 0.0f };
+	const Coord3D away{ wa->location.x + (wb->location.x - wa->location.x) * 0.5f, wa->location.y + (wb->location.y - wa->location.y) * 0.5f, 0.0f };
+	std::vector<ObjectID> ids;
+	for (int i = 0; i < 300; ++i)
+	{
+		Object *u = game.createObject("GondorFighter", pa->getPlayerIndex(), Coord3D{ home.x + (float)(i % 20) * 15.0f, home.y + (float)(i / 20) * 15.0f, 0.0f }, 0.0f,
+			&error);
+		REQUIRE_MESSAGE(u, error);
+		ids.push_back(u->getID());
+	}
+	for (int i = 0; i < 30; ++i)
+	{
+		REQUIRE(game.advance(0.2) == 1);
+	}
+	Pathfinder &pf = logic.aiWorld()->pathfinder();
+	REQUIRE(pf.uberLimits());
+	auto order = [&](const Coord3D &to) {
+		game.commands().append(selectMsg(pa->getPlayerIndex(), ids));
+		GameMessage mv(MSG_DO_MOVETO, pa->getPlayerIndex());
+		mv.appendLocationArgument(to);
+		game.commands().append(mv);
+	};
+	// three orders, each drained: more than 512 requests went through the ring, so its head is past retail's length
+	for (int k = 0; k < 3; ++k)
+	{
+		order(k % 2 == 0 ? away : home);
+		for (int f = 0; f < 120 && (f < 2 || pf.queuedRequests() > 0); ++f)
+		{
+			REQUIRE(game.advance(0.2) == 1);
+		}
+		REQUIRE(pf.queuedRequests() == 0u);
+	}
+	CHECK(pf.requestRing().length() == (int)Pathfinder::kUberQueueLength);
+	MESSAGE("request ring head after three orders: " << pf.requestRing().head());
+	REQUIRE(pf.requestRing().head() >= (int)PATHFIND_QUEUE_LEN); // tolerance: a precondition (past retail's ring; the exact head is the orders' own count)
+	// a fourth order; saved after the first frame that latched the burst, with requests still waiting
+	order(away);
+	bool latched = false;
+	for (int f = 0; f < 10 && !latched; ++f)
+	{
+		REQUIRE(game.advance(0.2) == 1);
+		latched = pf.uberBurst() && pf.queuedRequests() > 0;
+	}
+	REQUIRE(latched);
+	std::vector<std::uint8_t> snapshot;
+	REQUIRE_MESSAGE(logic.saveSnapshot(snapshot, &error), error);
+	const UnsignedInt savedFrame = logic.getFrame();
+	const std::uint32_t savedHash = logic.computeStateHash();
+	const size_t savedQueued = pf.queuedRequests();
+	std::vector<std::uint32_t> hashes;
+	for (int i = 0; i < 100; ++i)
+	{
+		REQUIRE(game.advance(0.2) == 1);
+		hashes.push_back(logic.computeStateHash());
+	}
+	REQUIRE_MESSAGE(game.loadSnapshot(snapshot, &error), error);
+	Pathfinder &loaded = game.logic().aiWorld()->pathfinder();
+	CHECK(game.logic().getFrame() == savedFrame);
+	CHECK(game.logic().computeStateHash() == savedHash);
+	CHECK(loaded.uberBurst());
+	CHECK(loaded.queuedRequests() == savedQueued);
+	int same = 0;
+	for (size_t i = 0; i < hashes.size(); ++i)
+	{
+		REQUIRE(game.advance(0.2) == 1);
+		same += game.logic().computeStateHash() == hashes[i] ? 1 : 0;
+	}
+	CHECK(same == (int)hashes.size());
+}
+
+// review (#63): the pathfinder's configuration hash (a snapshot of another configuration is refused) is the value earlier builds wrote: they hashed the
+// pool's capacity, then always the configured size; the configured size is hashed now, so a grown Uber pool keeps it too. The literal was measured with
+// upstream main's Pathfinder::configHash (7f034123 .. 5a68dad4) on this terrain and configuration
+TEST_CASE("pathperf4 save: the pathfinder's configuration hash is the one earlier builds wrote, with the Uber limits on as well")
+{
+	pathtest::SyntheticTerrain terrain{ 40, 20 };
+	pathtest::TestWorld world;
+	Pathfinder pf(pathtest::testConfig(), &world);
+	pf.newMap(terrain);
+	CHECK(pf.configHash() == 56852104u);
+	pf.setUberLimits(true);
+	CHECK(pf.configHash() == 56852104u);
+}
+
+// review of #62 (Greptile P1 on 210a92a82): the cell-info pool grows only with the Uber limits on (Pathfinder::setUberLimits). A Faithful pathfinder keeps retail's fixed pool
+// (gamedata 60,000 records, PathfindConfig::cellInfoPoolSize): the 60,001st info fails; an Uber one (or a Faithful one switched to Uber) adds a block of
+// half the capacity (PathfindCellInfoPool::get). The snapshot keeps the limits: an Uber pathfinder's 60,001 infos load into a fresh Faithful game (the
+// snapshot's flag turns the growth on), a Faithful one's load with the pool still fixed, and a snapshot claiming Faithful with more infos is refused
+TEST_CASE("pathperf4: a Faithful pathfinder's cell-info pool never grows past its 60,000 records, an Uber one's does, and the snapshot keeps the limit")
+{
+	pathtest::SyntheticTerrain terrain{ 300, 300 }; // 90,000 cells
+	pathtest::TestWorld world;
+	PathfindConfig config = pathtest::testConfig();
+	config.cellInfoPoolSize = 60000; // gamedata.ini's (AIPathfindConfig.cpp)
+	// a cell info on every cell in index order until the pool runs out or `limit` are taken; the count taken
+	auto fill = [](Pathfinder &pf, int limit) {
+		int taken = 0;
+		for (int x = 0; x < 300 && taken < limit; ++x)
+		{
+			for (int y = 0; y < 300 && taken < limit; ++y)
+			{
+				PathfindCell *c = pf.getCell(LAYER_GROUND, x, y);
+				REQUIRE(c != nullptr);
+				if (c->hasInfo())
+				{
+					continue;
+				}
+				ICoord2D pos;
+				pos.x = x;
+				pos.y = y;
+				if (!c->allocateInfo(pf.pool(), pos))
+				{
+					return taken;
+				}
+				++taken;
+			}
+		}
+		return taken;
+	};
+	auto save = [](Pathfinder &pf) {
+		XferSave xs;
+		pf.xfer(xs);
+		return xs.data();
+	};
+	auto load = [&](const std::vector<std::uint8_t> &bytes, std::string *error) {
+		auto pf = std::make_unique<Pathfinder>(config, &world);
+		pf->newMap(terrain);
+		try
+		{
+			XferLoad xl(bytes);
+			pf->xfer(xl);
+		}
+		catch (const XferException &e)
+		{
+			*error = e.what();
+		}
+		return pf;
+	};
+
+	Pathfinder faithful(config, &world);
+	faithful.newMap(terrain);
+	REQUIRE(!faithful.uberLimits());
+	REQUIRE(faithful.pool().freeCount() == 60000);
+	CHECK(fill(faithful, 90000) == 60000);
+	CHECK(faithful.pool().capacity() == 60000);
+	CHECK(faithful.pool().growthLimit() == 0);
+	CHECK(faithful.pool().growths() == 0);
+	CHECK(faithful.pool().exhaustedOnce());
+	CHECK(fill(faithful, 90000) == 0); // still full: the search fails, the reservation is dropped
+	const std::vector<std::uint8_t> faithfulBytes = save(faithful);
+
+	Pathfinder uber(config, &world);
+	uber.newMap(terrain);
+	uber.setUberLimits(true);
+	CHECK(uber.pool().growthLimit() == (int)Pathfinder::kCellInfoPoolMax);
+	CHECK(fill(uber, 60001) == 60001);
+	CHECK(uber.pool().capacity() == 90000); // one block of half the capacity
+	CHECK(uber.pool().growths() == 1);
+	CHECK(!uber.pool().exhaustedOnce());
+	const std::vector<std::uint8_t> uberBytes = save(uber);
+
+	// a Faithful game switched to Uber grows from then on; switched back, it grows no further
+	faithful.setUberLimits(true);
+	CHECK(fill(faithful, 1) == 1);
+	CHECK(faithful.pool().capacity() == 90000);
+	faithful.setUberLimits(false);
+	CHECK(faithful.pool().growthLimit() == 0);
+
+	std::string error;
+	std::unique_ptr<Pathfinder> fromFaithful = load(faithfulBytes, &error);
+	REQUIRE_MESSAGE(error.empty(), error);
+	CHECK(!fromFaithful->uberLimits());
+	CHECK(fromFaithful->pool().capacity() == 60000);
+	CHECK(fromFaithful->pool().growthLimit() == 0);
+	CHECK(fill(*fromFaithful, 90000) == 0); // the loaded Faithful pool is full and stays fixed
+	CHECK(fromFaithful->pool().growths() == 0);
+
+	std::unique_ptr<Pathfinder> fromUber = load(uberBytes, &error);
+	REQUIRE_MESSAGE(error.empty(), error);
+	CHECK(fromUber->uberLimits());
+	CHECK(fromUber->pool().growthLimit() == (int)Pathfinder::kCellInfoPoolMax);
+	CHECK(fromUber->pool().capacity() == 90000);
+	CHECK(fromUber->pool().freeCount() == 90000 - 60001);
+	std::vector<std::uint8_t> again = save(*fromUber);
+	CHECK(again == uberBytes);
+
+	// the Uber snapshot with its limits flag cleared (the flag and the two ring lengths, 16,384 each, follow the cell infos): refused, a Faithful pool
+	// holds no 60,001 infos
+	std::vector<std::uint8_t> claimsFaithful = uberBytes;
+	const std::uint8_t tail[] = { 1, 0x00, 0x40, 0, 0, 0x00, 0x40, 0, 0 };
+	auto at = std::search(claimsFaithful.begin(), claimsFaithful.end(), std::begin(tail), std::end(tail));
+	REQUIRE(at != claimsFaithful.end());
+	REQUIRE(std::search(at + 1, claimsFaithful.end(), std::begin(tail), std::end(tail)) == claimsFaithful.end());
+	*at = 0;
+	std::unique_ptr<Pathfinder> refused = load(claimsFaithful, &error);
+	CHECK(error == "pathfinder: the snapshot holds 60001 cell infos, more than the pool of 60000");
+}
+
+// review (#64): a game started Faithful that switched to Uber (a loaded save handed over to the player's profile, SAVE-2) and moved its request ring past
+// retail's 512 slots saves the rings' lengths, so the snapshot loads into a game whose rings are retail's again
+TEST_CASE("pathperf4 save: a game that switched from Faithful to Uber and moved its request ring past 512 loads into a Faithful game")
+{
+	SharedWorld &s = shared();
+	if (!s.mount || !s.world)
+	{
+		MESSAGE("SKIP: " << s.error);
+		return;
+	}
+	ArchiveW3DFileSource source(*s.mount->fs);
+	WW3DAssetManager assets(source);
+	LiveGame game(*s.world, *s.mount->fs, assets, s.options);
+	LiveGame::Options o;
+	o.mapName = "map mp brown lands";
+	o.seed = 4711;
+	o.slots.players.push_back({ "Player_1", "FactionMen", true, 0, 0, 0 });
+	o.slots.players.push_back({ "Player_2", "FactionMordor", false, 1, 0, 1 });
+	std::string error;
+	REQUIRE_MESSAGE(game.load(o, &error), error);
+	Player *pa = game.players().findPlayerWithName("Player_1");
+	REQUIRE(pa != nullptr);
+	GameLogic &logic = game.logic();
+	const Waypoint *wa = logic.terrain() ? logic.terrain()->findWaypointByName("Player_1_Start") : nullptr;
+	const Waypoint *wb = logic.terrain() ? logic.terrain()->findWaypointByName("Player_2_Start") : nullptr;
+	REQUIRE(wa != nullptr);
+	REQUIRE(wb != nullptr);
+	const Coord3D home{ wa->location.x + (wb->location.x - wa->location.x) * 0.15f, wa->location.y + (wb->location.y - wa->location.y) * 0.15f, 0.0f };
+	const Coord3D away{ wa->location.x + (wb->location.x - wa->location.x) * 0.5f, wa->location.y + (wb->location.y - wa->location.y) * 0.5f, 0.0f };
+	std::vector<ObjectID> ids;
+	for (int i = 0; i < 300; ++i)
+	{
+		Object *u = game.createObject("GondorFighter", pa->getPlayerIndex(), Coord3D{ home.x + (float)(i % 20) * 15.0f, home.y + (float)(i / 20) * 15.0f, 0.0f }, 0.0f,
+			&error);
+		REQUIRE_MESSAGE(u, error);
+		ids.push_back(u->getID());
+	}
+	for (int i = 0; i < 30; ++i)
+	{
+		REQUIRE(game.advance(0.2) == 1);
+	}
+	Pathfinder &pf = logic.aiWorld()->pathfinder();
+	REQUIRE(pf.requestRing().length() == (int)PATHFIND_QUEUE_LEN);
+	logic.setSimulationProfile(SimulationProfile::Uber); // as a handed-over save switches it
+	REQUIRE(game.advance(0.2) == 1);
+	REQUIRE(pf.requestRing().length() == (int)Pathfinder::kUberQueueLength);
+	for (int k = 0; k < 3; ++k)
+	{
+		game.commands().append(selectMsg(pa->getPlayerIndex(), ids));
+		GameMessage mv(MSG_DO_MOVETO, pa->getPlayerIndex());
+		mv.appendLocationArgument(k % 2 == 0 ? away : home);
+		game.commands().append(mv);
+		for (int f = 0; f < 120 && (f < 2 || pf.queuedRequests() > 0); ++f)
+		{
+			REQUIRE(game.advance(0.2) == 1);
+		}
+	}
+	REQUIRE(pf.requestRing().head() >= (int)PATHFIND_QUEUE_LEN); // tolerance: a precondition (past retail's ring; the exact head is the orders' own count)
+	std::vector<std::uint8_t> snapshot;
+	REQUIRE_MESSAGE(logic.saveSnapshot(snapshot, &error), error);
+	const std::uint32_t savedHash = logic.computeStateHash();
+	// the game goes back to Faithful (retail's rings) before the load, as a fresh game of the original setup would be
+	logic.setSimulationProfile(SimulationProfile::Faithful);
+	REQUIRE(game.advance(0.2) == 1);
+	REQUIRE(pf.requestRing().length() == (int)PATHFIND_QUEUE_LEN);
+	REQUIRE_MESSAGE(game.loadSnapshot(snapshot, &error), error);
+	CHECK(game.logic().computeStateHash() == savedHash);
+	CHECK(game.logic().aiWorld()->pathfinder().requestRing().length() == (int)Pathfinder::kUberQueueLength);
 }

@@ -227,7 +227,14 @@ static Object *cellObjectAt(Object &asker, const Coord3D &pos)
 	{
 		return nullptr;
 	}
-	const PathfindCell *cell = ai->world().pathfinder().getCell(LAYER_GROUND, &pos);
+	Pathfinder &pf = ai->world().pathfinder();
+	const PathfindCell *cell = pf.getCell(LAYER_GROUND, &pos);
+	if (cell && cell->getType() == PathfindCell::CELL_CLEAR)
+	{
+		// lane WALL-1: a wall top replaced the wall's own obstacle cells (Pathfinder::classifyWall); the wall piece holding the cell stands for it
+		const PathfindObjectID wall = pf.wallPieceAt(pos);
+		return wall == PATHFIND_INVALID_ID ? nullptr : asker.logic().findObjectByID((ObjectID)wall);
+	}
 	if (!cell || cell->getType() != PathfindCell::CELL_OBSTACLE || cell->getObstacleID() == PATHFIND_INVALID_ID)
 	{
 		return nullptr;

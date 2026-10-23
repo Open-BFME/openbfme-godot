@@ -240,6 +240,9 @@ include(cmake/Ownerfix2.cmake)  # OWNERFIX-2: the owner's playtest of 2026-10-17
 include(cmake/Backlog8.cmake)   # BACKLOG-8: formations, horde wall scaling, auto ability melee position (appends to OPENBFME_SIM_SOURCES)
 include(cmake/Menufix1.cmake)   # MENUFIX-1: the menus, consistent and retail-looking (OPENBFME_MENUFIX1_TESTS)
 include(cmake/Hudredraw1.cmake) # HUDREDRAW-1: the HUD redraws only the changed Apt levels (OPENBFME_HUDREDRAW1_TESTS)
+include(cmake/Wall1.cmake)      # WALL-1: walkable wall tops and ramps (appends to OPENBFME_SIM_SOURCES; OPENBFME_WALL1_TESTS)
+include(cmake/Wall2.cmake)      # WALL-2: portals, portal modules, raised walkways (appends to OPENBFME_SIM_SOURCES; OPENBFME_WALL2_TESTS)
+include(cmake/Siege1.cmake)     # SIEGE-1: the siege units (appends to OPENBFME_SIM_SOURCES; OPENBFME_SIEGE1_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -729,6 +732,9 @@ add_executable(openbfme_tests
     ${OPENBFME_OWNERFIX2_TESTS}
     ${OPENBFME_MENUFIX1_TESTS}
     ${OPENBFME_HUDREDRAW1_TESTS}
+    ${OPENBFME_WALL1_TESTS}
+    ${OPENBFME_WALL2_TESTS}
+    ${OPENBFME_SIEGE1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_archive_order.cpp

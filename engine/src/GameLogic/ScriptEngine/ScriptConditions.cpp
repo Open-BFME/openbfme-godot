@@ -16,6 +16,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/ScriptEngine/ScriptActions.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptTemplates.h"
 #include "GameLogic/SimMath.h"
@@ -121,6 +122,7 @@ enum ConditionType
 	ENEMY_SIGHTED_BY_TEAM = 133,                      // lane CAMP-1
 	TEAM_CREATED = 25,                                // lane CAMP-1
 	NAMED_TOTALLY_DEAD = 57,                          // lane CAMP-1
+	IS_SEIGE_ATTACHED_TO_WALL = 109,                  // lane SIEGE-1
 	GATE_IS_OPEN = 135
 };
 
@@ -1451,6 +1453,8 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		}
 		return false;
 	}
+	case IS_SEIGE_ATTACHED_TO_WALL: // RW 0x7EB7CD case 0x6D -> RW 0x7E5760 (lane SIEGE-1, ScriptActionsSiege.cpp)
+		return ScriptActions::isSiegeAttachedToWall(engine, param(c, 0).stringValue);
 	case NAMED_TOTALLY_DEAD: // RW 0x7E4A66: no unit of that name (RW 0x75A3D8) and the name had one (RW 0x758F46)
 		return engine.getUnitNamed(param(c, 0).stringValue) == nullptr && engine.didUnitExist(param(c, 0).stringValue);
 	case TEAM_CREATED: // RW 0x7E73E0: the team's + 0x5E

@@ -964,6 +964,8 @@ bool HordeAIUpdate::isMeleeTargetReady(Object &targetIn)
 
 static bool aiSlot1B8(Object &m);
 static Object *amoebaReach(Object &m, Object &target);
+static std::vector<Object *> amoebaReachCandidates(Object &target);
+static Object *amoebaReachAmong(Object &m, const std::vector<Object *> &cands);
 static bool amoebaAttack(Object &m, Object &victim);
 
 // RW 0x86D75E (the target changes) + Amoeba onNewTarget (RW 0x99006A)
@@ -1056,13 +1058,34 @@ static Object *amoebaReach(Object &m, Object &target)
 	{
 		return nullptr;
 	}
+	return amoebaReachAmong(m, amoebaReachCandidates(target));
+}
+
+// the reach check's candidates: the target's living members, then the target itself when it is alive and not a horde object
+static std::vector<Object *> amoebaReachCandidates(Object &target)
+{
 	std::vector<Object *> cands = aliveMembers(target);
 	if (CombatQueries::isAlive(target) && !isHordeObject(target))
 	{
 		cands.push_back(&target);
 	}
+	return cands;
+}
+
+static Object *amoebaReachAmong(Object &m, const std::vector<Object *> &cands)
+{
+	ObjectWeapons *w = m.getWeapons();
+	Weapon *weapon = w ? w->currentWeapon() : nullptr;
+	if (!weapon || !weapon->getTemplate() || !weapon->getTemplate()->m_meleeWeapon)
+	{
+		return nullptr;
+	}
 	Object *best = nullptr;
 	float bestD = 0.0f;
+	// lane UBER-3W (Uber only): the distance first, and the weapon range (its bonus, its reach: 2.5% of a one-thread 30,000-troop clash frame, once per member
+	// and candidate) only for a candidate that would beat the best so far; the nearest enemy in range is the same. Uber because the range test leaves the
+	// melee reach it computed in the weapon's range host, which then holds another candidate's value (every reader but a point target's sets it first)
+	const bool rangeLast = m.logic().uber();
 	ObjectID sacrificeTarget = INVALID_ID;
 	if (m.testStatus((unsigned)CombatNames::status("BLOODTHIRSTY")))
 	{
@@ -1078,7 +1101,27 @@ static Object *amoebaReach(Object &m, Object &target)
 	{
 		// RW 0x6F2956: the recorded victim or an object it produced bypasses the relationship veto.
 		const bool sacrifice = sacrificeTarget != INVALID_ID && (e->getID() == sacrificeTarget || e->getProducerID() == sacrificeTarget);
-		if ((!sacrifice && m.getRelationship(*e) != ENEMIES) || !w->isWithinAttackRange(*e))
+		if (rangeLast)
+		{
+			if (!CombatQueries::isAlive(*e) || (!sacrifice && m.getRelationship(*e) != ENEMIES))
+			{
+				continue;
+			}
+			const float d2 = CombatQueries::edgeDistanceSquared2D(m, *m.getPosition(), *e, *e->getPosition()); // RW 0x66352C
+			if (best && !(d2 < bestD || (d2 == bestD && e->getID() < best->getID())))
+			{
+				continue;
+			}
+			if (!w->isWithinAttackRange(*e))
+			{
+				continue;
+			}
+			best = e;
+			bestD = d2;
+			continue;
+		}
+		// lane UBER-2B: a candidate of a list built before this member (the Uber tick's) may have died since; a fresh list holds only living ones
+		if (!CombatQueries::isAlive(*e) || (!sacrifice && m.getRelationship(*e) != ENEMIES) || !w->isWithinAttackRange(*e))
 		{
 			continue;
 		}
@@ -1726,13 +1769,21 @@ bool HordeAIUpdate::hasMeleeAttackingMember() const
 // around the member, RW 0x6ED843). INFERENCE (S-588): the touching enemy is the reach check's enemy of the target (RW 0x6F2956 rules); no repositioning.
 void HordeAIUpdate::holdGroundTick(Object &target)
 {
+	// lane UBER-2B (Uber only): the target's candidates once per tick instead of once per member (a list built per member and frame). Uber rule change: the
+	// list is the tick's start (amoebaReachAmong still skips a soldier that died since); a soldier that joined the target during the tick waits for the next
+	const bool uber = getObject()->logic().uber();
+	std::vector<Object *> tickCands;
+	if (uber)
+	{
+		tickCands = amoebaReachCandidates(target);
+	}
 	for (Object *m : membersOf())
 	{
 		if (m->testStatus((unsigned)CombatNames::statuses().isMeleeAttacking))
 		{
 			continue;
 		}
-		if (Object *e = amoebaReach(*m, target))
+		if (Object *e = uber ? amoebaReachAmong(*m, tickCands) : amoebaReach(*m, target))
 		{
 			if (amoebaAttack(*m, *e))
 			{

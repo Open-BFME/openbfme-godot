@@ -90,6 +90,9 @@ public:
 	// one). Pure: every state class says what it keeps, a state without fields writes its version only (xferNoFields)
 	virtual void xfer(class Xfer &x) = 0;
 	static void xferNoFields(class Xfer &x);
+	// lane UBER-2C: true for a state whose crcPersistent writes anything (every override of crcPersistent answers true). The machine's hash walks only
+	// those states: walking every state of every unit's machine for the empty default was most of the Faithful state hash's own time
+	virtual bool hasPersistentCrc() const { return false; }
 	// lane MODULES-3 r2: RW State slot 0x1C, called on the current state when a temporary state ends by itself (RW 0x751D9A); nothing for most states, the move
 	// states clear their internal move's "waiting for a path" (RW 0x740C97)
 	virtual void onTemporaryStateEnded() {}
@@ -210,6 +213,7 @@ private:
 	AIUpdateInterface *m_owner;
 	std::string m_name;
 	std::map<unsigned, std::unique_ptr<AIState>> m_states;
+	std::vector<const AIState *> m_persistentStates; // lane UBER-2C: the states with hasPersistentCrc, in m_states' (id) order
 	AIState *m_currentState = nullptr;
 	AIState *m_temporaryState = nullptr;
 	unsigned m_temporaryStateFrameEnd = 0;
@@ -301,4 +305,45 @@ public:
 	explicit AIBusyState(AIStateMachine &m) : AIState(m, "AIBusyState") {}
 	StateReturnType update() override { return STATE_CONTINUE; }
 	void xfer(class Xfer &x) override { xferNoFields(x); }
+};
+
+// review of #64: an owner state's sub machine (an attack's, a guard's, a hunt's) that the owner drops while one of the machine's updates runs is kept,
+// halted, until that update returns. The owner's exit can run inside the update: a shot that kills its shooter (SpawnAndFadeNugget, RW 0x698EC3) ends the
+// owner's state, and freeing the machine there freed it and its running state under them. Run marks an update; drop halts the machine and frees it, at
+// once or when the last update running ends
+template <typename M>
+struct KeptSubMachines
+{
+	int running = 0;
+	std::vector<std::unique_ptr<M>> kept;
+	struct Run
+	{
+		KeptSubMachines &k;
+		explicit Run(KeptSubMachines &keeper) : k(keeper) { ++k.running; }
+		~Run()
+		{
+			if (--k.running == 0)
+			{
+				k.kept.clear();
+			}
+		}
+		Run(const Run &) = delete;
+		Run &operator=(const Run &) = delete;
+	};
+	void drop(std::unique_ptr<M> &m)
+	{
+		if (!m)
+		{
+			return;
+		}
+		m->halt();
+		if (running > 0)
+		{
+			kept.push_back(std::move(m));
+		}
+		else
+		{
+			m.reset();
+		}
+	}
 };

@@ -11,8 +11,8 @@
 #include "GameLogic/AI/AICommandSink.h"
 #include "GameLogic/ObjectTypes.h"
 
-#include <map>
-#include <utility>
+#include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 class GameLogic;
@@ -35,17 +35,31 @@ public:
 	Object *findClosestEnemy(const Object &seeker, float range, unsigned flags, CommandSourceType source);
 	// lane PLAY-4: the same scan measured from `center` instead of the seeker (the guard machine's scan around the guarded spot, RW 0x70146A)
 	Object *findClosestEnemyNear(const Object &seeker, const Coord3D &center, float range, unsigned flags, CommandSourceType source);
-	// every attackable object whose centre is within `radius` of `center`, in (cell, list) order
-	void collectInRadius(const Coord3D &center, float radius, std::vector<Object *> &out);
+	// every attackable object whose centre is within `radius` of `center`, in (cell, list) order. lane UBER-2A: `layers` (bit k: player k's objects, as
+	// PartitionFilter::playerLayerMask) skips the other players' objects unread; an object of a team with relationship overrides (layer -1) is always taken
+	void collectInRadius(const Coord3D &center, float radius, std::vector<Object *> &out, std::uint32_t layers = 0xFFFFFFFFu);
 	void reset();
 	size_t indexedObjects() const { return m_count; }
 
 private:
+	struct Indexed
+	{
+		ObjectID id;
+		int layer; ///< layerOf at the build
+	};
+	static int layerOf(const Object &o);
 	void rebuild();
+	void append(Object *from); // every attackable object from `from` to the list's tail, in list order
+	bool appendCreated();      // lane UBER-2A (Uber): the objects made since the build appended; false: the last one indexed left the list (rebuild instead)
 	GameLogic &m_logic;
 	unsigned m_builtFrame = 0xFFFFFFFFu;
 	size_t m_builtCount = 0;
+	ObjectID m_builtTail = INVALID_ID; // the last object of the list the index looked at
 	unsigned m_builtTransitions = 0; // GameLogic::containWorldTransitions at the build: a contain's rider leaving or entering the world (lane GARRISON-1) rebuilds
 	size_t m_count = 0;
-	std::map<std::pair<int, int>, std::vector<ObjectID>> m_cells;
+	// cell (x, y) packed into a key -> its objects in list order. A rebuild empties the cells and keeps them with their storage (no allocation once the grid
+	// is warm; an empty cell answers like an absent one); queries visit cells by their own (x, y) loop, never in the map's order
+	std::unordered_map<std::uint64_t, std::vector<Indexed>> m_cells;
+	std::vector<Object *> m_near; // findClosestEnemyNear's candidates, kept between calls for their storage
+	static std::uint64_t cellKey(int cx, int cy) { return ((std::uint64_t)(std::uint32_t)cx << 32) | (std::uint32_t)cy; }
 };

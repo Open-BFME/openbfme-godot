@@ -114,6 +114,8 @@ public:
 	bool logUpTo(UnsignedInt frame, std::uint32_t hash, std::vector<std::uint8_t> &out, std::string *error) const;
 	void recordFrame(UnsignedInt frame, const CommandList &commands);
 	void recordHash(UnsignedInt frameAfter, std::uint32_t hash);
+	// lane UBER-2C: the last hash recorded is that of `frame` (an Uber recording holds every 5th frame's)
+	bool hasHashOf(UnsignedInt frame) const { return m_anyHash && m_lastHashFrame == frame; }
 	// lane SAVE-2: the game goes on under `profile` from the batch of `frame` on (a loaded save of the other execution profile)
 	void recordProfileSwitch(UnsignedInt frame, SimulationProfile profile);
 	void close(UnsignedInt finalFrame, std::uint32_t finalHash);
@@ -143,6 +145,7 @@ public:
 	explicit ReplayPlayback(const ReplayFile &replay) : m_replay(replay) {}
 	// SMOOTH-1 (review r4): the protocol owner half takes the recorded batches and compares the completions' hashes (captured on the simulation owner)
 	Capture capture() const override;
+	bool hashWanted(UnsignedInt frame) const override { return m_replay.hashes.count(frame) != 0; } // lane UBER-2C: every recorded hash is compared
 	void pump(UnsignedInt protocolFrame, CommandList &pending) override;
 	bool acquire(UnsignedInt frame, FrameBatch &out) override;
 	void completed(const FrameCompletion &c) override;

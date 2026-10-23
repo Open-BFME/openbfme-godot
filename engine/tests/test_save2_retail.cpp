@@ -245,6 +245,10 @@ Recorded recordGame(starttest::Shared &s, const NewGameMessage &message, const P
 	g.game->drainFrames();
 	r.savedFrame = g.game->logic().getFrame();
 	const std::uint32_t hash = g.game->logic().computeStateHash();
+	if (!writer.hasHashOf(r.savedFrame))
+	{
+		writer.recordHash(r.savedFrame, hash); // lane UBER-2C: as save_game does for an Uber recording (every 5th frame's hash)
+	}
 	REQUIRE_MESSAGE(writer.logUpTo(r.savedFrame, hash, r.save.log, &error), error);
 	if (snapshot)
 	{
@@ -668,6 +672,16 @@ TEST_CASE("save2 retail: a save of the other execution profile loads in single p
 	REQUIRE(SaveGameFile::executionProfileOf(faithful.text) == "enhanced");
 	REQUIRE(SaveGameFile::executionProfileOf(uber.text) == "uber");
 	std::string error;
+	// lane UBER-2C: the hashes a recording holds of the frames from .. to: every one run under Faithful, every LiveGameFrameDriver::kUberRecordedHashEvery-th
+	// under Uber, and a save's frame (save_game records it)
+	const auto recorded = [](UnsignedInt from, UnsignedInt to, SimulationProfile p) {
+		size_t n = 0;
+		for (UnsignedInt f = from; f <= to; ++f)
+		{
+			n += (p != SimulationProfile::Uber || f % (UnsignedInt)LiveGameFrameDriver::kUberRecordedHashEvery == 0 || f == to) ? 1 : 0;
+		}
+		return n;
+	};
 	for (int reverse = 0; reverse < 2; ++reverse)
 	{
 		// saved under one profile (its game setup and identity), loaded by a player of the other
@@ -687,7 +701,9 @@ TEST_CASE("save2 retail: a save of the other execution profile loads in single p
 		Loaded g;
 		CommandLogLoad cl;
 		REQUIRE_MESSAGE(catchUp(*s, rec.save, g, cl, error) == CommandLogLoad::State::Ready, error);
-		CHECK(cl.hashesCompared() == 150u);
+		const size_t firstHashes = recorded(rec.startFrame + 1, rec.savedFrame, savedProfile);
+		CHECK(firstHashes == (reverse ? 150u : 31u));
+		CHECK(cl.hashesCompared() == firstHashes);
 		CHECK(g.game->logic().simulationProfile() == savedProfile);
 		CHECK(g.game->logic().computeStateHash() == rec.save.header.stateHash);
 		// handed over as GameWorld::save_load_step does (CommandLogLoad::handOver): this player's profile from the saved frame on, the switch recorded in the
@@ -710,6 +726,10 @@ TEST_CASE("save2 retail: a save of the other execution profile loads in single p
 		second.header.frame = g.game->logic().getFrame();
 		second.header.stateHash = g.game->logic().computeStateHash();
 		second.header.executionProfile = ownProfile == SimulationProfile::Uber ? "uber" : "enhanced";
+		if (!writer.hasHashOf(second.header.frame))
+		{
+			writer.recordHash(second.header.frame, second.header.stateHash); // lane UBER-2C: as save_game does
+		}
 		REQUIRE_MESSAGE(writer.logUpTo(second.header.frame, second.header.stateHash, second.log, &error), error);
 		writer.close(second.header.frame, second.header.stateHash);
 		g.game->setFrameDriver(nullptr);
@@ -720,14 +740,16 @@ TEST_CASE("save2 retail: a save of the other execution profile loads in single p
 		REQUIRE(continued.profileSwitches.size() == 1u);
 		CHECK(continued.profileSwitches[0].first == switchFrame);
 		CHECK(continued.profileSwitches[0].second == ownProfile);
-		CHECK(continued.hashes.size() == 250u);
+		const size_t allHashes = firstHashes + recorded(switchFrame + 1, second.header.frame, ownProfile);
+		CHECK(allHashes == (reverse ? 171u : 131u));
+		CHECK(continued.hashes.size() == allHashes);
 		// the second save is this player's own profile now; it replays under the saved profile to the switch, then under the player's, every hash equal
 		CHECK_FALSE(SaveGameCompatibility::check(second.header, running, ProfileIdentity::buildId(), "test", false).crossProfile);
 		g.game.reset(); // lane MAPRESET-1 (merge q7): one live game per world (S-3808); the first game is over
 		Loaded g2;
 		CommandLogLoad cl2;
 		REQUIRE_MESSAGE(catchUp(*s, second, g2, cl2, error) == CommandLogLoad::State::Ready, error);
-		CHECK(cl2.hashesCompared() == 250u);
+		CHECK(cl2.hashesCompared() == allHashes);
 		CHECK(g2.game->logic().simulationProfile() == ownProfile);
 		CHECK(g2.game->logic().computeStateHash() == second.header.stateHash);
 		// without the switch record the same log does not replay: named at its first differing frame
@@ -748,7 +770,12 @@ TEST_CASE("save2 retail: a save of the other execution profile loads in single p
 		Loaded g3;
 		CommandLogLoad cl3;
 		CHECK(catchUp(*s, noSwitch, g3, cl3, error) == CommandLogLoad::State::Failed);
-		CHECK(error.rfind("the saved game does not replay the same in this build: frame " + std::to_string(switchFrame + 1) + " has state hash ", 0) == 0);
+		// lane UBER-2C: an Uber continuation holds every 5th frame's hash, so without its switch the log reads as Faithful frames with hashes missing and is
+		// refused before it replays; a Faithful continuation replays and is named at its first differing frame
+		const std::string expected = ownProfile == SimulationProfile::Uber
+			? "the save's command log has no state hash of frame " + std::to_string(switchFrame + 1)
+			: "the saved game does not replay the same in this build: frame " + std::to_string(switchFrame + 1) + " has state hash ";
+		CHECK_MESSAGE(error.rfind(expected, 0) == 0, error);
 	}
 }
 

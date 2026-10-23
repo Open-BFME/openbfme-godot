@@ -16,25 +16,30 @@
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/SimMath.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 
 // ---------------------------------------------------------------------------------------------------------
 // PathfindCellInfoPool
 // ---------------------------------------------------------------------------------------------------------
-void PathfindCellInfoPool::allocate(int count)
+// lane PATHPERF-4: the records live in blocks that never move (cells and searches keep pointers to them), so the pool can grow: allocate makes the
+// first block, and with a growth limit an empty free list gets another block instead of failing (setGrowthLimit: the Uber profile only; BFME1 keeps 0x200 fixed
+// slots plus an overflow list, Open-BFME-1 PathfindCellInfoPoolReset.cpp). Until the first block runs out nothing differs from a fixed pool
+void PathfindCellInfoPool::addBlock(int count)
 {
-	m_infos.assign((size_t)count, PathfindCellInfo());
-	m_exhausted = false;
+	PathfindCellInfo *block = new PathfindCellInfo[(size_t)count]();
+	m_blocks.emplace_back(block);
 	for (int i = 0; i < count; ++i)
 	{
-		PathfindCellInfo &info = m_infos[(size_t)i];
+		PathfindCellInfo &info = block[i];
 		info.m_nextOpen = nullptr;
 		info.m_prevOpen = nullptr;
-		info.m_pathParent = (i + 1 < count) ? &m_infos[(size_t)i + 1] : nullptr;
+		info.m_pathParent = (i + 1 < count) ? &block[i + 1] : m_firstFree;
 		info.m_cell = nullptr;
 		info.m_totalCost = 0;
 		info.m_costSoFar = 0;
+		info.m_viaPortal = 0;
 		info.m_pos = ICoord2D();
 		info.m_obstacleID = PATHFIND_INVALID_ID;
 		for (int k = 0; k < OCC_KIND_COUNT; ++k)
@@ -48,7 +53,20 @@ void PathfindCellInfoPool::allocate(int count)
 		info.m_open = 0;
 		info.m_closed = 0;
 	}
-	m_firstFree = count > 0 ? &m_infos[0] : nullptr;
+	if (count > 0)
+	{
+		m_firstFree = &block[0];
+	}
+	m_capacity += count;
+}
+
+void PathfindCellInfoPool::allocate(int count)
+{
+	m_blocks.clear();
+	m_capacity = 0;
+	m_firstFree = nullptr;
+	m_exhausted = false;
+	addBlock(count);
 	m_occChunks.clear();
 	m_occFree = nullptr;
 	m_occUsedInChunk = 0;
@@ -57,6 +75,12 @@ void PathfindCellInfoPool::allocate(int count)
 
 PathfindCellInfo *PathfindCellInfoPool::get(PathfindCell *cell, const ICoord2D &pos)
 {
+	if (!m_firstFree && m_growthLimit > m_capacity)
+	{
+		const int grow = std::min(std::max(m_capacity / 2, 4096), m_growthLimit - m_capacity);
+		addBlock(grow);
+		++m_growths;
+	}
 	PathfindCellInfo *info = m_firstFree;
 	if (info)
 	{
@@ -69,6 +93,7 @@ PathfindCellInfo *PathfindCellInfoPool::get(PathfindCell *cell, const ICoord2D &
 		info->m_pathParent = nullptr;
 		info->m_costSoFar = 0;
 		info->m_totalCost = 0;
+		info->m_viaPortal = 0;
 		info->m_open = 0;
 		info->m_closed = 0;
 		info->m_obstacleID = PATHFIND_INVALID_ID;
@@ -167,6 +192,7 @@ bool PathfindCell::startPathfind(PathfindCell *goalCell)
 	m_info->m_nextOpen = nullptr;
 	m_info->m_prevOpen = nullptr;
 	m_info->m_pathParent = nullptr;
+	m_info->m_viaPortal = 0;
 	m_info->m_costSoFar = 0;
 	m_info->m_totalCost = 0;
 	if (goalCell)
@@ -181,6 +207,14 @@ bool PathfindCell::startPathfind(PathfindCell *goalCell)
 void PathfindCell::setParentCell(PathfindCell *parent)
 {
 	m_info->m_pathParent = parent->m_info;
+	m_info->m_viaPortal = 0; // lane WALL-2 (see the header)
+}
+
+void PathfindCell::setParentCellViaPortal(PathfindCell *parent, std::uint16_t portalSlot)
+{
+	// RW 0x93443D: info + 8 = the parent's record, info + 0xC = the waypoint
+	m_info->m_pathParent = parent ? parent->m_info : nullptr;
+	m_info->m_viaPortal = portalSlot;
 }
 
 bool PathfindCell::allocateInfo(PathfindCellInfoPool &pool, const ICoord2D &pos)
@@ -336,6 +370,18 @@ bool PathfindCell::removeObstacle(PathfindCellInfoPool &pool, const PathfindObje
 	return true;
 }
 
+bool PathfindCell::removeObstacleId(PathfindCellInfoPool &pool, PathfindObjectID id)
+{
+	if (!m_info || id == PATHFIND_INVALID_ID || m_info->m_obstacleID != id)
+	{
+		return false;
+	}
+	m_type = CELL_CLEAR;
+	m_info->m_obstacleID = PATHFIND_INVALID_ID;
+	releaseInfo(pool);
+	return true;
+}
+
 // ---- the closed list (links through the info; the open list is the heap) ----
 int PathfindCell::releaseClosedList(PathfindCellInfoPool &pool, PathfindCell *list)
 {
@@ -475,22 +521,28 @@ unsigned PathfindCell::costSoFar(const PathfindCell *parent) const
 // ---------------------------------------------------------------------------------------------------------
 // PathfindOpenHeap (RW 0x6ECF1D push, 0x6ECF65 pop; see AIPathfind.h)
 // ---------------------------------------------------------------------------------------------------------
+// lane PATHPERF-2: the totals live beside the cells (m_k, parallel to m_v), so a comparison reads one dense array instead of cell -> info -> total.
+// A cell's total is set before its push and never changed while it is open (every push site skips open and closed cells), so the copy is its total.
 void PathfindOpenHeap::push(PathfindCell *c)
 {
 	c->info()->m_open = 1;
+	const std::uint16_t key = (std::uint16_t)c->getTotalCost();
 	m_v.push_back(c);
+	m_k.push_back(key);
 	size_t i = m_v.size() - 1;
 	while (i > 0)
 	{
 		const size_t p = (i - 1) / 2;
-		if (!(m_v[p]->getTotalCost() > c->getTotalCost()))
+		if (!(m_k[p] > key))
 		{
 			break;
 		}
 		m_v[i] = m_v[p];
+		m_k[i] = m_k[p];
 		i = p;
 	}
 	m_v[i] = c;
+	m_k[i] = key;
 }
 
 PathfindCell *PathfindOpenHeap::pop()
@@ -499,40 +551,47 @@ PathfindCell *PathfindOpenHeap::pop()
 	top->info()->m_open = 0;
 	const size_t n = m_v.size();
 	PathfindCell *val = m_v[n - 1];
+	const std::uint16_t valKey = m_k[n - 1];
 	m_v[n - 1] = m_v[0];
+	m_k[n - 1] = m_k[0];
 	const size_t len = n - 1; // the heap without the moved root
 	size_t h = 0;
 	size_t ch = 2 * h + 2;
 	while (ch < len)
 	{
-		if (m_v[ch]->getTotalCost() > m_v[ch - 1]->getTotalCost())
+		if (m_k[ch] > m_k[ch - 1])
 		{
 			ch--;
 		}
 		m_v[h] = m_v[ch];
+		m_k[h] = m_k[ch];
 		h = ch;
 		ch = 2 * h + 2;
 	}
 	if (ch == len)
 	{
 		m_v[h] = m_v[len - 1];
+		m_k[h] = m_k[len - 1];
 		h = len - 1;
 	}
 	// sift the saved element up from the hole with the push rule
 	while (h > 0)
 	{
 		const size_t p = (h - 1) / 2;
-		if (!(m_v[p]->getTotalCost() > val->getTotalCost()))
+		if (!(m_k[p] > valKey))
 		{
 			break;
 		}
 		m_v[h] = m_v[p];
+		m_k[h] = m_k[p];
 		h = p;
 	}
 	if (len > 0)
 	{
 		m_v[h] = val;
+		m_k[h] = valKey;
 	}
 	m_v.pop_back();
+	m_k.pop_back();
 	return top;
 }

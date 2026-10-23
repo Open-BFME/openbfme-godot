@@ -31,6 +31,7 @@
 #include <string>
 #include <vector>
 
+class AttributeModifierStore;
 class ModuleFactory;
 
 class AttributeModifierPool : public BehaviorModule
@@ -88,9 +89,15 @@ private:
 		std::string name;
 		unsigned expire = 0;
 	};
-	bool suppressed(unsigned frame, const Entry &e, bool innate) const; ///< RW 0x804D27
+	bool suppressed(unsigned frame, const struct ModifierListTemplate &list, bool innate) const; ///< RW 0x804D27 (the entry's list, fetched by the caller)
 	void removeByName(const std::string &listName);                   ///< RW 0x8052FB (the entry only: S-633)
 
+	// lane HDPERF-1: the AttributeModifierStore of the object's world, taken when the module is made (on the logic thread, in the world's context). A job
+	// worker has no world context (Common/JobSystem.h: the thread_local stores are null there), and the pool is read on the job pool (the shroud's look
+	// asks for SHROUD_CLEARING, the Uber collision facts for the crush levels): through the thread_local a sum there found no store and answered 0, so the
+	// result depended on the thread that took the record (a lockstep desync under load). Null (a pool made outside a world): the thread_local
+	const AttributeModifierStore *m_store = nullptr;
+	const AttributeModifierStore *store() const;
 	std::vector<Entry> m_entries;                      ///< +0x20
 	unsigned m_nextWake = 0x3FFFFFFF;                  ///< +0x2C
 	std::array<unsigned, 15> m_categoryDisabled{};     ///< +0x30

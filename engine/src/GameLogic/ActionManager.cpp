@@ -33,7 +33,7 @@ const char *const kStopUpgrade =
 	"run answers no";
 const char *const kStopLayer =
 	"[S-1872] ActionManager RW 0x82C366 (an AI moving along its path, AIUpdate + 0x1FC in {1, 4} with a path whose node + 0x20 is set, on a pathfinder cell "
-	"whose bits 4 .. 9 exceed 0x10 refuses every power) is not ported: never refuses";
+	"whose bits 4 .. 9 exceed 0x10 refuses every power) is ported (lane WALL-2: walls, portals); the path's waypoint test (RW 0x765522) is not cached at + 0x24";
 const char *const kStopRequirements =
 	"[S-1873] the location requirements RW 0x897E01: RW 0x896DB4 (power type 0x20: the object's special ability state, RW 0x68C89B, and its AI's last "
 	"command frame) is not ported (answers no for that type); only SpecialAbilityUpdate answers the special power update interface (vslot 0x64)";
@@ -66,17 +66,32 @@ bool unitCostMet(const Object &obj, const SpecialPowerTemplate &t)
 	return !h || c->getContainCount() >= (unsigned)t.m_unitCost;
 }
 
-// RW 0x82C366: not ported (S-1872). Its first condition is an AI following a path (AIUpdate + 0x1FC in {1, 4} with a path); the port reports the stop when
-// the object's AI is moving and answers no refusal (the 2.01 maps have the ground layer only, S-161, so the layer test above 0x10 is not met there)
+// RW 0x82C366 (lane WALL-2): the pathfinder exists; the object's AI follows a path (RW 0x6628CD: AIUpdate + 0x1FC 1 or 4, a path, and a node of it carries a
+// waypoint id, RW 0x765522); the ground grid's layer at the object's position (RW 0x6EACB9, the point raised by RW 0xBDD97C: the cell is read at x, y) is a
+// wall top (0x11 and up): every power is refused
 bool movingOnUpperLayer(Object &obj)
 {
+	AIWorld *world = obj.logic().aiWorld();
 	const AIUpdateInterface *ai = obj.getAIUpdateInterface();
-	if (ai && ai->isMoving())
+	if (!world || !world->mapReady() || !ai)
+	{
+		return false;
+	}
+	const AIMover &m = ai->mover();
+	const Path *path = m.path();
+	if (!(m.goalType() == AIGOAL_ON_PATH || m.goalType() == AIGOAL_EXPLICIT_WITH_PATH) || !path || !path->hasWaypointNodes())
+	{
+		return false;
+	}
+	const Coord3D &p = *obj.getPosition();
+	const PathfindCell *c = world->pathfinder().cellAt(SimMath::floorToInt(SimMath::mulf32(p.x, 0.1f)), SimMath::floorToInt(SimMath::mulf32(p.y, 0.1f)));
+	const bool upper = c && (int)c->getLayer() >= (int)LAYER_WALL_FIRST;
+	if (upper)
 	{
 		++ActionManager::stats().movingOnLayer;
 		obj.logic().noteStop(kStopLayer);
 	}
-	return false;
+	return upper;
 }
 
 const PathfindTerrain *terrainOf(GameLogic &logic)
@@ -538,7 +553,7 @@ bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialP
 			return false; // RW 0x6F5BB0: no AI (+ 0x260) and no locomotor set given -> no (INFERENCE: its earlier status / Object + 0x4AC tests, RW 0x44DDEC / 0x68C053, do not apply)
 		}
 		const PathfindLocomotorInfo loco = ai->locomotorInfo();
-		if (!world->pathfinder().clientSafeQuickDoesPathExist(loco, obj.getPosition(), &loc))
+		if (!world->pathfinder().clientSafeQuickDoesPathExist(loco, obj.getPosition(), &loc, &ai->adapter())) // lane WALL-2: with the unit, its portals
 		{
 			return false;
 		}
@@ -599,7 +614,7 @@ bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialP
 	case 0x8C:
 	{
 		// RW 0x82E860 (0x8C): no STRUCTURE (KindOf bit 7, RW 0x444D39(0, 7) / 0x445139) within 1.0 of the location (distance type 0, RW 0xA39090); the
-		// ground layer's cell under it (RW 0x680A75: the ground, S-161) exists and is not of type 5 (RW 0x6EAD90); with a current locomotor (AI + 0x1F0,
+		// cell of its layer under it (RW 0x680A75) exists and is not of type 5 (RW 0x6EAD90); with a current locomotor (AI + 0x1F0,
 		// RW 0x68B31D) its max speed for the condition (RW 0x5E3F49) is not 0
 		static const int kStructure = kindBit("STRUCTURE");
 		PartitionFilterFn structure([](Object &o) { return kStructure >= 0 && o.isKindOf((unsigned)kStructure); });
@@ -608,7 +623,7 @@ bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialP
 			return false;
 		}
 		AIWorld *world = logic.aiWorld();
-		const PathfindCell *cell = world ? world->pathfinder().getCell(LAYER_GROUND, &loc) : nullptr;
+		const PathfindCell *cell = world ? world->pathfinder().getCell(world->pathfinder().getLayerAt(loc.x, loc.y, loc.z), &loc) : nullptr; // lane WALL-2: the layer
 		if (!cell || (int)cell->getType() == 5)
 		{
 			return false;

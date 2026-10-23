@@ -120,8 +120,8 @@ const char *AIGroup::formationStopLine()
 // terrain tests, in RW's order: the members' centre and extent (RW 0x76D14F: held members and members without an AI do not count), the squared distance of
 // the nearest member to the point (starting at (MinDistanceForGroup * 4)^2), the member nearest the centre (none: refused), the extent replacing the
 // distance when it is longer than that start, the refusal when the distance is below MinDistanceForGroup^2, and the member whose AI finds the ground path
-// (INFANTRY, MONSTER, CAVALRY / MACHINE, never AIRCRAFT; none: refused). NOT ported, so never a refusal here: the terrain tests RW 0x680A75 (the layer; only
-// the ground exists, S-161) and W3DTerrainLogic slot 0xC8 (RW 0x4627C1: a height map bit plane at the point and at every path node), the nearby enemy test
+// (INFANTRY, MONSTER, CAVALRY / MACHINE, never AIRCRAFT; none: refused). NOT ported, so never a refusal here: the terrain tests RW 0x680A75 (the layer; lane
+// WALL-2 makes the layers exist, the test was not read) and W3DTerrainLogic slot 0xC8 (RW 0x4627C1: a height map bit plane at the point and at every path node), the nearby enemy test
 // (AI::findClosestEnemy within GroupEnemyScanRange with qualifiers 0xE4) and Pathfinder::FindGroundPath itself (a missing path refuses the group in RW)
 bool AIGroup::groupGroundPathAccepts(const Coord3D &pos) const
 {
@@ -420,7 +420,8 @@ void AIGroup::planningMoveToPosition(const Coord3D &pos, bool attackMove, Comman
 		{
 			Pathfinder &pf = world->pathfinder();
 			PathfindObject &adapter = world->adapterFor(*o);
-			Coord3D p{ pos.x, pos.y, m_logic.getGroundHeight(pos.x, pos.y) }; // RW TerrainLogic vslot 0x1C at the point's layer (only the ground exists, S-161)
+			// RW TerrainLogic vslot 0x1C at the point's layer (RW 0x680A75; lane WALL-2: a wall top's, a ramp's or a walkway's height, the terrain elsewhere)
+			Coord3D p{ pos.x, pos.y, pf.getLayerHeight(pos.x, pos.y, pf.getLayerAt(pos.x, pos.y, pos.z)) };
 			if (!pf.adjustDestination(adapter, ai->locomotorInfo(), &p, &pos))
 			{
 				p = pos;

@@ -388,15 +388,28 @@ TEST_CASE("pathfind stops: what a build and a search report is registered, every
 	delete w.pf->findPath(nullptr, groundLoco(), &from, &inside, &partial);
 	delete w.pf->findPath(nullptr, groundLoco(), &from, &far, &partial);
 	const std::vector<std::string> all = Pathfinder::allStops();
-	REQUIRE(all.size() == 16);
+	REQUIRE(all.size() == 24);
 	std::set<std::string> registered(all.begin(), all.end());
 	CHECK(registered.size() == all.size());
 	std::set<int> rows;
+	int wallRows = 0, portalRows = 0;
 	for (const std::string &s : all)
 	{
+		if (s.compare(0, 7, "S-4840 ") == 0)
+		{
+			++wallRows; // lane WALL-1: the wall tops and ramps (AIPathfindWalls.cpp)
+			continue;
+		}
+		if (s.compare(0, 7, "S-4857 ") == 0 || s.compare(0, 7, "S-4852 ") == 0 || s.compare(0, 7, "S-4856 ") == 0)
+		{
+			++portalRows; // lane WALL-2: the portals (AIPathfindPortals.cpp), a removed portal under a horde (AIWorld.cpp), the raised layers (AIPathfindRaised.cpp)
+			continue;
+		}
 		REQUIRE(s.compare(0, 4, "S-16") == 0);
 		rows.insert(s[4] - '0');
 	}
+	CHECK(wallRows == 2);
+	CHECK(portalRows == 6);
 	// the rows the pathfinder core raises: S-160 classification, S-161 layers, S-162 zones, S-163 search, S-164 footprints, S-165 path,
 	// S-167 numerics (S-166, the AI move path, has its own list: AIMover::allStops)
 	CHECK(rows == std::set<int>{ 0, 1, 2, 3, 4, 5, 7 });
@@ -413,7 +426,7 @@ TEST_CASE("pathfind stops: what a build and a search report is registered, every
 		return false;
 	};
 	CHECK(raised("S-160 slope limits"));
-	CHECK(raised("S-161 only the ground layer"));
+	CHECK(raised("S-161 the raised layers 2 .. 15"));
 	CHECK(raised("S-162 the hierarchical block search of findPath (RW 0x6F9829)"));
 	CHECK(raised("S-165 path nodes"));
 	CHECK(raised("S-167 float32"));

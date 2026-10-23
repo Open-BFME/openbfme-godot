@@ -293,7 +293,7 @@ bool AIGroup::computeGroundPath(const Coord3D &pos)
 		return false;
 	}
 	AIUpdateInterface *cai = centerUnit->getAIUpdateInterface();
-	if (pf.isLineBlocked(&world->adapterFor(*centerUnit), cai->locomotorInfo().validSurfaces, LAYER_GROUND, *centerUnit->getPosition(), center))
+	if (pf.isLineBlocked(&world->adapterFor(*centerUnit), cai->locomotorInfo().validSurfaces, world->adapterFor(*centerUnit).getLayer(), *centerUnit->getPosition(), center)) // lane WALL-1: the unit's layer
 	{
 		center = *centerUnit->getPosition();
 	}
@@ -615,7 +615,7 @@ void AIGroup::moveFormationToPos(const Coord3D &pos, CommandSourceType source, i
 				pf.adjustDestination(adapter, info, &dest, nullptr);
 			}
 		}
-		pf.updateGoal(adapter, &dest, LAYER_GROUND); // RW 0x68B3BD
+		pf.updateGoal(adapter, &dest, pf.getLayerAt(dest.x, dest.y)); // RW 0x68B3BD (lane WALL-1: the destination's layer, as AIMoveToState::onEnter)
 		path.push_back(dest);
 		// mode 1 (the attack march, command 0x25 / RW 0x695C42 0xF) is not ported (S-4463): the port's callers ask for mode 0 only
 		(void)mode;

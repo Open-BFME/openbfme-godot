@@ -15,7 +15,13 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
+#include "GameLogic/Combat/CombatState.h"
+#include "GameLogic/Combat/WeaponDelivery.h"
+#include "GameLogic/AI/AIPathfind.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/SiegeModules.h"
+#include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Locomotor.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
@@ -34,8 +40,12 @@ const char *const kStopSiege =
 	"[S-1105] SiegeEngineContain / HordeSiegeEngineContain (lane GARRISON-2): ported from RW 0x87ECC7 / 0x87FD0F (the crew: CrewFilter, CrewMax, the owner's "
 	"objects), 0x87F341 / 0x87EFF8 (the crew list, CONTAINED, LOCOMOTORSET_CONTAINED, SIEGE_CONTAIN), 0x87ED55 (ObjectStatusOfCrew), 0x87F5B4 (the crew on its bones), "
 	"0x87ED45 (the crew's speed: count x SpeedPercentPerCrew), 0x87EE53 / 0x87FFC7 (InitialCrew), 0x87EE17 (the crew destroyed with the engine) and 0x87F7B4 / "
-	"0x8807CA (a crew member steps 50 away). Not ported: SiegeDeploySpecialPower, SiegeAIUpdate and DynamicPortalBehaviour (the docking against a wall: the deployed "
-	"exit onto the wall is not reached), the wall layer (S-164), TransferSelection (client), the crew's team change on capture";
+	"0x8807CA (a crew member steps 50 away; lane SIEGE-1: a rider of a deployed engine onto the wall, RW 0x87F87C / 0x880868). Not ported: DynamicPortalBehaviour "
+	"(lane WALL-2, S-4940), TransferSelection (client), the crew's team change on capture";
+const char *const kStopSiegeExit =
+	"[S-4943] siege exit onto the wall (lane SIEGE-1): RotWK puts a deployed ladder's / tower's rider on layer 0x11; the port's walls have a layer per height (S-4840), "
+	"so the rider takes the wall layer under it (0x11 where it stands on no wall); the next path frame (AI + 0x178), the destination adjustment and the goal "
+	"reservation (RW 0x68B3AB) are not ported; without the client's bone provider the rider is put at the engine";
 
 int statusBit(const char *name)
 {
@@ -391,10 +401,168 @@ void SiegeEngineContainT<Base, Horde>::exitOne(Object *obj, int door)
 		}
 		return;
 	}
-	// a rider: the deployed branch (SiegeDeploySpecialPower's deployed state, RW 0x8C9C01: the ladder's "Ladder04" / the tower's front on the wall layer) is not
-	// reached: SiegeDeploySpecialPower is not ported (S-1103)
-	Base::exitObjectViaDoor(obj, door); // OpenContain RW 0x8682D9 / HordeTransportContain RW 0x87A89E
+	// a rider of an engine whose SiegeDeploySpecialPower is deployed (RW 0x87F865 .. 0x87F87C: the module, RW 0x8C9C01) goes onto the wall (lane SIEGE-1)
+	const SiegeDeploySpecialPower *deploy = SiegeDeploySpecialPower::of(*container);
+	if (!deploy || !deploy->isDeployed())
+	{
+		Base::exitObjectViaDoor(obj, door); // OpenContain RW 0x8682D9 / HordeTransportContain RW 0x87A89E
+		return;
+	}
+	exitOntoWall(obj);
 }
+
+// lane SIEGE-1: a rider of a deployed engine goes onto the wall. TARGET FACTS (caveat S-001): SiegeEngineContain RW 0x87F87C .. 0x87FBB8 and HordeSiegeEngineContain
+// RW 0x880868 .. 0x880B7B, after the rider left the contain (contain slot 0xA4(rider, 0)):
+//   * SiegeEngineContain, a SIEGE_LADDER engine (template + 0x119 bit 3): the rider takes the bone "Ladder04"'s world transform (RW 0x68C5AF; teleportTransform
+//     RW 0x68DA67), UNPACKING (+ 0x118 bit 0) cleared first, layer 0x11 (RW 0x68BB9D), the pathfind map (RW 0x6E85E9); a computer player's rider (Player + 0x5C
+//     == 1) hunts (RW 0x66831A(0), RW 0x6AF150: AI command 0x12), a human's idles (RW 0x5E821A);
+//   * SiegeEngineContain, another engine: in front of it (its X axis RW 0x70B9E0 x Object + 0xCC) at layer 0x11's height (RW 0x6F0B27): the rider is put 20 further
+//     (RW 0xBDBC6C, teleportTo RW 0x696E63), faces as the engine (RW 0x70C31E), layer 0x11, the map, and follows the path [40 further, 40 further] (RW 0xBDD28C;
+//     RW 0x77113C after RW 0x66831A(0) and the destination adjustment RW 0x6F3C87), then the goal reservation (RW 0x68B3AB);
+//   * HordeSiegeEngineContain, a SIEGE_TOWER engine (template + 0x113 bit 5): "Ladder04" as the ladder's; another: the rider is set 40 in front (RW 0x70C201
+//     twice), faces as the engine, layer 0x11, the map; both: RW 0x66831A(0) and AI + 0x178 (now + 5 / now + 15), then the hunt (RW 0x6AF150(2)); a HORDE
+//     rider (template + 0x115 bit 5) loses UNATTACKABLE (status 0x3C).
+// INFERENCE (S-4943): RotWK puts the rider on layer 0x11; WALL-1's port gives each wall height its own layer (0x11 .. 0x40, S-4840), so the rider takes the wall
+// layer under the point it is put on (0x11 where that point is on no wall); Object + 0xCC is taken as the geometry's major radius (GARRISON-2's reading); AI
+// + 0x178 (the next path frame, S-1103), the destination adjustment (S-1100) and the goal reservation RW 0x68B3AB are not ported, as in the crew's exit.
+template <class Base, bool Horde>
+void SiegeEngineContainT<Base, Horde>::exitOntoWall(Object *obj)
+{
+	static const int kSiegeLadder = CombatNames::kindOf("SIEGE_LADDER");  // template + 0x119 bit 3
+	static const int kSiegeTower = CombatNames::kindOf("SIEGE_TOWER");    // template + 0x113 bit 5
+	static const int kHorde = CombatNames::kindOf("HORDE");               // template + 0x115 bit 5
+	static const int kUnpacking = CombatNames::modelCondition("UNPACKING"); // + 0x118 bit 0
+	static const int kUnattackable = statusBit("UNATTACKABLE");            // 0x3C
+	Object *container = this->getObject();
+	GameLogic &logic = container->logic();
+	this->removeFromContain(obj); // contain slot 0xA4(rider, 0)
+	logic.noteStop(kStopSiegeExit);
+	AIWorld *world = logic.aiWorld();
+	auto wallLayerAt = [&](const Coord3D &p) {
+		const PathfindLayerEnum l = world ? world->pathfinder().getLayerAt(p.x, p.y) : LAYER_GROUND;
+		return isWallLayer(l) ? l : LAYER_WALL_FIRST;
+	};
+	AIUpdateInterface *ai = obj->getAIUpdateInterface();
+	const bool byLadderBone = Horde ? container->isKindOf((unsigned)kSiegeTower) : container->isKindOf((unsigned)kSiegeLadder);
+	if (byLadderBone)
+	{
+		// the bone "Ladder04" in world space (RW 0x68C5AF): the container's transform times the bone's
+		float bone[12];
+		ProjectileLaunchOffsets *provider = logic.combat().launchOffsets();
+		const bool found = provider && provider->singleLogicalBone(*container, "Ladder04", bone);
+		Coord3D at = *container->getPosition();
+		float basis[9];
+		const float *cb = container->getBasis();
+		for (int i = 0; i < 9; ++i)
+		{
+			basis[i] = cb[i];
+		}
+		if (found)
+		{
+			const Coord3D &cp = *container->getPosition();
+			const float t[3] = { cp.x, cp.y, cp.z };
+			float w[3];
+			for (int r = 0; r < 3; ++r)
+			{
+				const float v = SimMath::addf32(SimMath::mulf32(cb[r * 3 + 2], bone[11]), SimMath::mulf32(cb[r * 3 + 1], bone[7]));
+				w[r] = SimMath::addf32(SimMath::addf32(v, SimMath::mulf32(cb[r * 3 + 0], bone[3])), t[r]);
+				for (int c = 0; c < 3; ++c)
+				{
+					const float u = SimMath::addf32(SimMath::mulf32(cb[r * 3 + 2], bone[8 + c]), SimMath::mulf32(cb[r * 3 + 1], bone[4 + c]));
+					basis[r * 3 + c] = SimMath::addf32(u, SimMath::mulf32(cb[r * 3 + 0], bone[c]));
+				}
+			}
+			at = Coord3D{ w[0], w[1], w[2] };
+		}
+		// else: no bone provider (a logic without a client): the rider is put at the engine (S-4943)
+		if (!Horde && obj->testModelCondition(kUnpacking))
+		{
+			obj->setModelConditionState(kUnpacking, false); // RW 0x87F8B6 .. 0x87F8C9
+		}
+		obj->teleportTransform(&at, basis); // RW 0x68DA67
+		if (ai)
+		{
+			ai->setLayer(wallLayerAt(at)); // RW 0x68BB9D(0x11)
+		}
+		if (world)
+		{
+			world->addObjectToPathfindMap(*obj); // RW 0x6E85E9
+		}
+		if (!ai)
+		{
+			return;
+		}
+		if (Horde)
+		{
+			ai->mover().ignoreObstacle(PATHFIND_INVALID_ID); // RW 0x66831A(0)
+			ai->aiHunt(CMD_FROM_AI);                       // RW 0x6AF150(2)
+		}
+		else
+		{
+			const Player *owner = obj->getControllingPlayer();
+			if (owner && owner->getPlayerType() == PLAYER_COMPUTER) // RW 0x87F91F: Player + 0x5C == 1
+			{
+				ai->mover().ignoreObstacle(PATHFIND_INVALID_ID);
+				ai->aiHunt(CMD_FROM_AI);
+			}
+			else
+			{
+				ai->aiIdle(CMD_FROM_AI); // RW 0x5E821A(2)
+			}
+		}
+	}
+	else
+	{
+		// in front of the engine by its major radius, at the wall layer's height
+		const float *cb = container->getBasis();
+		const float fx = cb[0], fy = cb[3];
+		const Coord3D &cp = *container->getPosition();
+		const std::vector<ObjectGeometry::Shape> shapes = ObjectGeometry::shapesOf(*static_cast<const ThingTemplate *>(container->getTemplate())->getFinalOverride());
+		const float radius = shapes.empty() ? 0.0f : shapes.front().majorRadius;
+		const Coord3D front{ SimMath::addf32(SimMath::mulf32(fx, radius), cp.x), SimMath::addf32(SimMath::mulf32(fy, radius), cp.y), cp.z };
+		const PathfindLayerEnum layer = wallLayerAt(front);
+		const float z = world ? world->pathfinder().getLayerHeight(front.x, front.y, layer) : front.z;
+		const Coord3D walk{ SimMath::addf32(SimMath::mulf32(fx, 40.0f), front.x), SimMath::addf32(SimMath::mulf32(fy, 40.0f), front.y), z };
+		const Coord3D start{ SimMath::addf32(SimMath::mulf32(fx, 20.0f), front.x), SimMath::addf32(SimMath::mulf32(fy, 20.0f), front.y), z };
+		if (Horde)
+		{
+			obj->setPosition(&walk); // RW 0x70C201, twice
+			obj->setPosition(&walk);
+		}
+		else
+		{
+			obj->teleportTo(&start, false); // RW 0x696E63(rider, start, 0)
+		}
+		obj->setOrientation(container->getOrientation()); // RW 0x70C31E(the engine's angle)
+		if (ai)
+		{
+			ai->setLayer(layer); // RW 0x68BB9D(0x11)
+		}
+		if (world)
+		{
+			world->addObjectToPathfindMap(*obj); // RW 0x6E85E9
+		}
+		if (!ai)
+		{
+			return;
+		}
+		ai->mover().ignoreObstacle(PATHFIND_INVALID_ID); // RW 0x66831A(0)
+		if (Horde)
+		{
+			ai->aiHunt(CMD_FROM_AI); // RW 0x6AF150(2)
+		}
+		else
+		{
+			std::vector<Coord3D> path{ walk, walk };
+			ai->aiFollowPath(path, container, CMD_FROM_AI, true); // RW 0x77113C
+		}
+	}
+	if (Horde && obj->isKindOf((unsigned)kHorde))
+	{
+		obj->setStatus((unsigned)kUnattackable, false); // RW 0x880B6B: status 0x3C
+	}
+}
+
 
 template <class Base, bool Horde>
 void SiegeEngineContainT<Base, Horde>::crc(StateHasher &h) const
@@ -451,4 +619,9 @@ void SiegeEngineContainRegistry::registerClasses(ModuleFactory &modules)
 std::vector<std::string> SiegeEngineContainRegistry::stopLines()
 {
 	return { kStopSiege };
+}
+
+const char *siegeExitStopLine()
+{
+	return kStopSiegeExit;
 }

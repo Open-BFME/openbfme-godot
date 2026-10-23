@@ -250,6 +250,15 @@ MapObjectLoopResult MapObjectLoop::create(GameLogic &logic, const LoadedMap &map
 			applyContained(*obj, d, afterCreate, result.contained, result.hordes);
 		}
 	}
+	// lane WALL-2: RW 0x62F1A4 (after the properties pass RW 0x695A06) collects the placed objects (RW 0x62DCE4) and broadcasts Object RW 0x694692 with each
+	// one's map properties (RW 0x62F36B): the behaviour modules' slot 45 (DynamicPortalBehaviour's portals). INFERENCE (S-4853): in the creation order
+	for (size_t i = 0; i < result.ids.size(); ++i)
+	{
+		if (Object *obj = logic.findObjectByID(result.ids[i]))
+		{
+			obj->friend_onMapPlacement(&map.chunks.objects.at(result.objectIndices[i]).m_properties);
+		}
+	}
 	// lane STEALTH-1: the terrain tree list (RW TheTerrainLogic + 0x578): the loop's KindOf TREE map objects that go to the tree buffer (RW 0x62E44F -> 0x683D89, the
 	// record made when the template has a tree draw module, RW 0x683DC2 .. 0x683E63) at their placed position; INFERENCE (S-1040): the list holds the positions only
 	logic.invisibility().clearTrees();

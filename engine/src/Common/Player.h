@@ -115,6 +115,13 @@ public:
 	// ZH Player::getRelationship(const Team *): a team override, then one for the team's player, else NEUTRAL
 	Relationship getRelationship(const Team *that) const;
 	Relationship getRelationship(const Player *that) const;
+	// lane UBER-2A: getRelationship(player) by the player's index; whether a team override exists (Team::enemyLayerMask)
+	Relationship relationshipToPlayerIndex(int index) const
+	{
+		auto it = m_playerRelations.find(index);
+		return it != m_playerRelations.end() ? it->second : NEUTRAL;
+	}
+	bool hasTeamRelationships() const { return !m_teamRelations.empty(); }
 	void setPlayerRelationship(const Player *that, Relationship r);
 	void setTeamRelationship(const Team *that, Relationship r);
 	void removeTeamRelationship(const Team *that);

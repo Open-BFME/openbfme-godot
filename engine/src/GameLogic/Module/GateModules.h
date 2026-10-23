@@ -39,8 +39,9 @@
 //     inside closes (RotWK dropped BFME2's "and an enemy inside"), a closed gate with an ally inside opens.
 // INFERENCE / NOT PORTED (stops S-1940 .. S-1942): the push-out scan of the units in the gate's way (RW 0x89C759) and the collide interface's repel (RW 0x89C6F5,
 // RepelCollidingUnits), GateProxyBehavior and the Proxy link (onObjectCreated RW 0x89CB19), the gate sounds (no logic sound path: counted, not played), the
-// object interface call RW 0x68C3E6 -> vslot 2 at the start of the update, the AI notification RW 0x68BE59(9), the skirmish AI's gate list (TheSkirmishAIManager
-// + 0xA74) and FakePathfindPortalBehaviour; the pathfinder's "keeping gate flags" removal (RW 0x6E861E) is the plain removal here.
+// object interface call RW 0x68C3E6 -> vslot 2 at the start of the update, the AI notification RW 0x68BE59(9) and the skirmish AI's gate list
+// (TheSkirmishAIManager + 0xA74) (FakePathfindPortalBehaviour: lane WALL-2, PortalModules.h); the pathfinder's "keeping gate flags" removal (RW 0x6E861E) is the
+// plain removal here.
 
 #pragma once
 

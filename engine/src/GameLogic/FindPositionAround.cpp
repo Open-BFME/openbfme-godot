@@ -140,7 +140,7 @@ bool FindPosition::tryPosition(GameLogic &logic, const Coord3D &center, float di
 			throw std::logic_error("TryPosition (RW 0x6F5BB0): the path source has no AI to path with");
 		}
 		const PathfindLocomotorInfo loco = ai->locomotorInfo();
-		if (!logic.aiWorld()->pathfinder().clientSafeQuickDoesPathExist(loco, source->getPosition(), &pos))
+		if (!logic.aiWorld()->pathfinder().clientSafeQuickDoesPathExist(loco, source->getPosition(), &pos, &ai->adapter())) // lane WALL-2: with the unit, its portals
 		{
 			return false;
 		}

@@ -22,6 +22,7 @@
 #include "Common/Team.h"
 #include "GameClient/ClientEvents.h"
 #include "GameClient/DrawableLaunchBones.h"
+#include "GameClient/DrawableWallMeshes.h"
 #include "GameClient/LogicSnapshot.h"
 #include "GameClient/DrawableManager.h"
 #include "GameClient/LiveGameFrameDriver.h"
@@ -334,6 +335,7 @@ public:
 		std::vector<std::string> movement;     ///< MOVE-1: the AI world's movement-data errors
 		std::vector<std::string> movementStops; ///< MOVE-1: the stops the movers raised
 		std::vector<std::string> launchBoneProblems; ///< RENDER-2: the launch-bone provider's data problems (missing models / bones / pose animations); counted in its S-460 stop
+		std::vector<std::string> wallMeshProblems;   ///< WALL-1: the wall-mesh provider's data problems (a missing wall model, in errors too; a named mesh the model lacks)
 	};
 	// the load-time part is fixed; logic and drawables are read when this is called
 	Report report() const;
@@ -357,6 +359,7 @@ private:
 	std::unique_ptr<PlayerList> m_players;
 	std::unique_ptr<WW3DDrawAssets> m_launchAssets;      // RENDER-2: the launch bone provider's view of the assets
 	std::unique_ptr<DrawableLaunchBones> m_launchBones; // RENDER-2: the drawables' launch bones (RW 0x6756A1) for the logic's projectile launches; before the logic
+	std::unique_ptr<DrawableWallMeshes> m_wallMeshes;   // WALL-1: the wall pieces' walkable surfaces for the pathfinder (RW 0x936B7D); before the AI world
 	std::unique_ptr<DrawableManager> m_drawables; // before the logic: the logic deletes its objects (and calls the manager) in its destructor first
 	std::unique_ptr<LiveScripting> m_scripting;   // likewise: the objects' destructors call the world hooks
 	std::unique_ptr<class MapScriptSetup> m_scriptSetup; // lane SCRIPT-1: the libraries the script engine's lists point into (outlive the logic)

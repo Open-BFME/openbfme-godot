@@ -41,9 +41,9 @@ namespace
 // RW 0x6F5F65 (lane GARRISON-2): the path test to a container whose entry point lies in its footprint. The container's cell is not an obstacle: the quick path
 // test to its position (RW's second probe at the position plus the template's first offset, RW 0xAD1AE0(0), is not read: S-1107). An obstacle: from the centre
 // cell (RW 0x6E8CE6, centred) a line (RW 0x6E94B2) of d = 2 - (int)(bounding circle radius x -0.1) cells in each of the four directions (+x, -x, +y, -y, RW
-// 0x6F5EF3) finds the first cell of another obstacle id (RW 0x6E86D2); its zone (the terrain variant RW 0x938D89 of the locomotor) must be the unit's zone (the
-// portal search RW 0x6F5547 between two zones is not ported, S-161: different zones fail)
-bool quickPathToContainer(Pathfinder &pf, const PathfindLocomotorInfo &loco, const Coord3D &from, const Object &container)
+// 0x6F5EF3) finds the first cell of another obstacle id (RW 0x6E86D2); its zone (the terrain variant RW 0x938D89 of the locomotor) must be the unit's zone, or the
+// portal search RW 0x6F5547 joins the two (lane WALL-2; the movement is the unit's, as QuickDoesPathExist builds it)
+bool quickPathToContainer(Pathfinder &pf, const PathfindLocomotorInfo &loco, const Coord3D &from, const Object &container, const PathfindObject *unit)
 {
 	Coord3D to = *container.getPosition();
 	ICoord2D centre;
@@ -55,9 +55,9 @@ bool quickPathToContainer(Pathfinder &pf, const PathfindLocomotorInfo &loco, con
 	}
 	if (goal->getType() != PathfindCell::CELL_OBSTACLE)
 	{
-		return pf.clientSafeQuickDoesPathExist(loco, &from, &to);
+		return pf.clientSafeQuickDoesPathExist(loco, &from, &to, unit);
 	}
-	const PathfindMovement mv = Pathfinder::makeMovement(nullptr, loco);
+	const PathfindMovement mv = Pathfinder::makeMovement(unit, loco);
 	const PathfindCell *fromCell = pf.getClippedCell(LAYER_GROUND, &from);
 	if (!fromCell)
 	{
@@ -83,7 +83,8 @@ bool quickPathToContainer(Pathfinder &pf, const PathfindLocomotorInfo &loco, con
 			}
 			if (c->getObstacleID() != obstacle)
 			{
-				if (pf.zoneManager().getEffectiveZone(mv, true, c->getZone()) == fromZone)
+				const zoneStorageType z = pf.zoneManager().getEffectiveZone(mv, true, c->getZone());
+				if (z == fromZone || (unit && pf.portalPathExists(unit, loco, fromZone, z)))
 				{
 					return true;
 				}
@@ -361,7 +362,7 @@ bool GarrisonContain::isValidContainerFor(const Object &obj, bool checkCapacity,
 			getEntryOffset(to);
 			Coord3D from = *obj.getPosition();
 			Pathfinder &pf = ai->world().pathfinder();
-			if (!pf.clientSafeQuickDoesPathExist(ai->locomotorInfo(), &from, &to) && !quickPathToContainer(pf, ai->locomotorInfo(), from, *getObject()))
+			if (!pf.clientSafeQuickDoesPathExist(ai->locomotorInfo(), &from, &to, &ai->adapter()) && !quickPathToContainer(pf, ai->locomotorInfo(), from, *getObject(), &ai->adapter()))
 			{
 				return false;
 			}

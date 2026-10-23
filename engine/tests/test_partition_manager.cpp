@@ -9,6 +9,7 @@
 
 #include "Common/Player.h"
 #include "Common/StateHash.h"
+#include "Common/Team.h"
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/SimMath.h"
 
@@ -215,7 +216,7 @@ TEST_CASE("partition: the range test keeps distance <= radius^2 on the live posi
 	CHECK_THROWS(f.logic->partition().iterateObjectsInRange(Coord3D{ 500.0f, 500.0f, 0.0f }, 50.0f, FROM_GEOMETRY_OVERLAP, {}, ITER_FASTEST));
 }
 
-TEST_CASE("partition: the range walk's double-precision pre-reject changes no hit, order or distance (points packed on the boundaries, every type)")
+TEST_CASE("partition: the double-precision pre-reject of the range walk and of getClosestObject changes no hit, order, distance or filter call (points packed on the boundaries, every type)")
 {
 	Fx f;
 	PartitionManager &pm = f.logic->partition();
@@ -310,7 +311,68 @@ TEST_CASE("partition: the range walk's double-precision pre-reject changes no hi
 				CHECK(std::memcmp(&on[i].distSqr, &off[i].distSqr, sizeof(float)) == 0);
 			}
 		}
+		// lane UBER-2A: getClosestObject's pre-reject skips only candidates beyond the best distance so far: the same filter calls in the same order (a filter
+		// that refuses most objects keeps the bound wide, one that takes all shrinks it at every winner), the same winner and distance
+		for (int keepEvery : { 1, 7 })
+		{
+			std::vector<ObjectID> asked[2];
+			Object *winner[2] = { nullptr, nullptr };
+			float dist[2] = { 0.0f, 0.0f };
+			for (int on = 0; on < 2; ++on)
+			{
+				PartitionFilterFn record([&](Object &o) {
+					asked[on].push_back(o.getID());
+					return (o.getID() % (ObjectID)keepEvery) == 0;
+				});
+				pm.setPreReject(on == 1);
+				winner[on] = pm.getClosestObject(c, radius, type, { &record }, nullptr, &dist[on]);
+			}
+			pm.setPreReject(true);
+			INFO("type " << (int)type << " keep every " << keepEvery << ": " << asked[0].size() << " filter calls without the pre-reject");
+			CHECK_FALSE(asked[0].empty());
+			CHECK(asked[1] == asked[0]);
+			CHECK(winner[1] == winner[0]);
+			CHECK(std::memcmp(&dist[1], &dist[0], sizeof(float)) == 0);
+		}
 	}
+}
+
+TEST_CASE("partition: Team::enemyLayerMask (lane UBER-2A) holds exactly the player layers whose objects getRelationship sees as ENEMIES; a team override sets every layer")
+{
+	Fx f;
+	Object *a = f.at("Peg", 100.0f, 100.0f, "Alice");
+	Object *b = f.at("Peg", 200.0f, 200.0f, "Bob");
+	f.logic->runLogicFrame();
+	Player *alice = f.players.findPlayerWithName("Alice");
+	Player *bob = f.players.findPlayerWithName("Bob");
+	Team *ta = f.teamOf("Alice");
+	PartitionManager &pm = f.logic->partition();
+	REQUIRE(pm.layerOf(*a) == alice->getPlayerIndex());
+	REQUIRE(pm.layerOf(*b) == bob->getPlayerIndex());
+	// b's layer (Bob's team has no override); a's is Alice's while her team has none
+	const unsigned la = (unsigned)alice->getPlayerIndex(), lb = (unsigned)bob->getPlayerIndex();
+	for (Relationship r : { ENEMIES, NEUTRAL, ALLIES })
+	{
+		alice->setPlayerRelationship(bob, r);
+		const std::uint32_t mask = ta->enemyLayerMask();
+		const std::uint32_t self = a->getRelationship(*a) == ENEMIES ? 1u : 0u;
+		CHECK(((mask >> lb) & 1u) == (a->getRelationship(*b) == ENEMIES ? 1u : 0u));
+		CHECK(((mask >> la) & 1u) == self);
+		// the team's own override for Bob comes first (Team::getRelationship)
+		ta->setPlayerRelationship(bob, ENEMIES);
+		CHECK(a->getRelationship(*b) == ENEMIES);
+		CHECK(ta->enemyLayerMask() == ((1u << lb) | (self << la)));
+		ta->setPlayerRelationship(bob, NEUTRAL);
+		CHECK(a->getRelationship(*b) == NEUTRAL);
+		CHECK(((ta->enemyLayerMask() >> lb) & 1u) == 0u);
+		ta->removeAllRelationshipOverrides();
+	}
+	// a team override (per team id) cannot be told from the layer: every layer
+	ta->setTeamRelationship(f.teamOf("Bob"), ALLIES);
+	CHECK(ta->enemyLayerMask() == 0xFFFFFFFFu);
+	ta->removeAllRelationshipOverrides();
+	alice->setTeamRelationship(f.teamOf("Bob"), ALLIES);
+	CHECK(ta->enemyLayerMask() == 0xFFFFFFFFu);
 }
 
 TEST_CASE("partition: the STLport introsort (RW 0xA3A6B0): up to 16 equal keys keep their order, 17 or more are reversed by the Hoare partition")

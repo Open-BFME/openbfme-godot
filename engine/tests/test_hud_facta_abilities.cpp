@@ -16,6 +16,7 @@
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "Common/ModelState.h"
 #include "GameLogic/System/ShroudManager.h"
+#include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/WeaponState.h"
 #include "GameLogic/Module/HeroModules.h"
@@ -87,7 +88,7 @@ const std::map<std::string, std::string> &expectedEffects()
 		{ "Command_SpecialAbilityTrainArchers", "L" },
 		// a timer refresh (SpecialPowerTimerRefreshSpecialPower)
 		{ "Command_SpecialAbilityElrondRestoration", "R" },
-		// S-1984: nothing deploys
+		// the deploy toggle (lane SIEGE-1: DeployStyleAIUpdate, S-4945): no effect letter; the press is checked by the UNPACKING / DEPLOYED condition below
 		{ "Command_SpecialAbilityDwarvenDemolisherDeploy", "" },
 	};
 	return e;
@@ -470,14 +471,14 @@ void runObject(FactRig &r, const std::string &faction, const std::string &name, 
 						}
 					}
 				}
-				// S-1984: the deploy toggle's update module (ToggleDeploySpecialAbilityUpdate) and the deploy AI (DeployStyleAIUpdate) are not ported: the
-				// power's module is reported unported (S-140) and nothing deploys
-				const std::vector<std::string> unp = r.logic().findObjectByID(o->getID()) ? unportedModules(*o) : std::vector<std::string>();
-				if (!changed && std::find(unp.begin(), unp.end(), "ToggleDeploySpecialAbilityUpdate") != unp.end())
+				// lane SIEGE-1 (S-1984 / S-4945): the deploy toggle (ToggleDeploySpecialAbilityUpdate) asks the DeployStyleAIUpdate to deploy: the
+				// Demolisher unpacks (UNPACKING) and stands DEPLOYED
+				if (b->m_name == "Command_SpecialAbilityDwarvenDemolisherDeploy" && r.logic().findObjectByID(o->getID()))
 				{
-					++out.stopped;
+					static const int kUnpacking = CombatNames::modelCondition("UNPACKING"), kDeployed = CombatNames::modelCondition("DEPLOYED");
+					changed = changed || o->testModelCondition(kUnpacking) || o->testModelCondition(kDeployed);
 				}
-				else if (changed)
+				if (changed)
 				{
 					++out.fired;
 				}

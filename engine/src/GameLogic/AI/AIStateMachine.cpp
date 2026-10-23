@@ -100,6 +100,14 @@ void AIStateMachine::defineState(unsigned id, std::unique_ptr<AIState> state, un
 		m_defaultStateId = id;
 	}
 	m_states[id] = std::move(state);
+	m_persistentStates.clear(); // lane UBER-2C: in id order, as crc walked m_states
+	for (const auto &e : m_states)
+	{
+		if (e.second->hasPersistentCrc())
+		{
+			m_persistentStates.push_back(e.second.get());
+		}
+	}
 }
 
 AIState *AIStateMachine::findState(unsigned id) const
@@ -793,11 +801,11 @@ void AIStateMachine::crc(StateHasher &h) const
 	{
 		m_temporaryState->crc(h);
 	}
-	for (const auto &e : m_states)
+	for (const AIState *s : m_persistentStates) // lane UBER-2C: the states without kept fields hash nothing and are left out
 	{
-		if (e.second.get() != m_currentState && e.second.get() != m_temporaryState)
+		if (s != m_currentState && s != m_temporaryState)
 		{
-			e.second->crcPersistent(h); // lane MODULES-3 (nothing for the states without kept fields)
+			s->crcPersistent(h); // lane MODULES-3
 		}
 	}
 }

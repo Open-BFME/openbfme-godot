@@ -89,6 +89,10 @@ struct ModifierListTemplate
 	bool m_multiLevelFX = false;                              // +0xD0
 	bool m_replaceInCategoryIfLongest = false;                // +0xD2
 	bool m_ignoreIfAnticategoryActive = false;                // +0xD3
+	// lane HDPERF-1 (performance, no retail field): bit t set when m_modifiers holds a modifier of type t (the parser keeps it), so a pool's sum / product
+	// passes over a list that cannot answer without walking it; value() answers false for those types either way
+	std::uint32_t m_typeMask = 0;
+	bool mayHave(int type) const { return type < 0 || type >= 32 || ((m_typeMask >> type) & 1u) != 0; }
 
 	// RW 0x805268: the value of `type` (first entry); `name` filters on the entry's name list when both are present
 	bool value(int type, const char *name, float &out) const;

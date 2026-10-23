@@ -272,6 +272,26 @@ bool CommandLogLoad::beginSnapshot(LiveGame &game, std::string *error)
 	return true;
 }
 
+// lane UBER-2C: a frame the log must hold the state hash of. A frame run under the Uber profile (the start's, or that of the last profile switch before
+// it) needs one only every LiveGameFrameDriver::kUberRecordedHashEvery frames (the Uber recording's cadence); the saved frame always has one
+bool CommandLogLoad::hashRequired(UnsignedInt f, UnsignedInt target) const
+{
+	return f == target || hashRecordedFor(m_log, f);
+}
+
+bool CommandLogLoad::hashRecordedFor(const ReplayFile &log, UnsignedInt f)
+{
+	SimulationProfile p = log.header.game.game.simulationProfile;
+	for (const auto &sw : log.profileSwitches)
+	{
+		if (sw.first < f)
+		{
+			p = sw.second;
+		}
+	}
+	return p != SimulationProfile::Uber || f % (UnsignedInt)LiveGameFrameDriver::kUberRecordedHashEvery == 0;
+}
+
 void CommandLogLoad::checkCoverage(UnsignedInt target)
 {
 	// review: every frame of the log has its state hash, once (duplicates are refused by ReplayFile::parse), none after F, the hash of F among them; the
@@ -300,7 +320,7 @@ void CommandLogLoad::checkCoverage(UnsignedInt target)
 	}
 	for (UnsignedInt f = m_log.hashes.begin()->first; f <= target; ++f)
 	{
-		if (!m_log.hashes.count(f))
+		if (!m_log.hashes.count(f) && hashRequired(f, target))
 		{
 			fail(nullptr, "the save's command log has no state hash of frame " + std::to_string(f));
 			return;
@@ -331,8 +351,13 @@ bool CommandLogLoad::begin(LiveGame &game, std::string *error)
 	}
 	// the log's state hashes start with the first frame the loaded game runs (start + 1) and go on without a gap to F (checkCoverage)
 	const UnsignedInt firstHash = m_log.hashes.empty() ? m_target : m_log.hashes.begin()->first;
-	const UnsignedInt expected = m_target == m_startFrame ? m_target : m_startFrame + 1;
-	if ((m_log.hashes.empty() && m_target != m_startFrame) || firstHash != expected)
+	const UnsignedInt first = m_target == m_startFrame ? m_target : m_startFrame + 1;
+	UnsignedInt expected = first; // lane UBER-2C: the first frame that must have a hash (an Uber log skips to its cadence)
+	while (expected < m_target && !hashRequired(expected, m_target))
+	{
+		++expected;
+	}
+	if ((m_log.hashes.empty() && m_target != m_startFrame) || firstHash < first || firstHash > expected)
 	{
 		fail(&game, firstHash > expected || m_log.hashes.empty()
 				? "the save's command log has no state hash of frame " + std::to_string(expected)

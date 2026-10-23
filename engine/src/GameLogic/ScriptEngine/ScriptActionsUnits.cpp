@@ -39,6 +39,10 @@
 //     AutoAbility (+ 0x10C), the object's command set (RW 0x69156B / 0x71EFA2): for each of its 33 slots holding that button (RW 0x80C837, bound 0x21),
 //     AutoAbilityBehavior::setAutoAbility(button, on) (RW 0x85D7B6). The campaign maps use them; the skirmish AI's hero library (lib_hero_behaviors) asks it only for
 //     buttons with AutoAbility No (Captain of Gondor, King's Favor), which this ignores: retail's skirmish AI never switches autocast on.
+//   * lane WALL-1: NAMED_USE_COMMANDBUTTON_ABILITY (unit, button) RW 0x7C6243 and NAMED_USE_COMMANDBUTTON_ABILITY_ON_NAMED (unit, button, target)
+//     RW 0x7C62BF: every slot of the unit's command set holding a button of that name runs Object::doCommandButton (RW 0x696FD2) / doCommandButtonAtObject
+//     (RW 0x697890) with CMD_FROM_SCRIPT; TEAM_USE_COMMANDBUTTON_ABILITY (team, button) RW 0x7C11EE: the button by name for every member of the team's AI
+//     group (RW 0x76F9FF), whatever its command set. The ported command types: S-4841.
 //
 // INFERENCE / NOT PORTED (stops): the AI states without a port (hunt, attitude, attack-team, the waypoint path states with their per-waypoint link
 // choice, face-object) -> S-1186 (docs/STOPS.md); the noted stand-ins below each report themselves.
@@ -63,6 +67,10 @@
 #include "GameLogic/AI/AIGarrisonStates.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
+#include "GameLogic/Module/SpecialPowerModules.h"
+#include "GameLogic/Module/StancesBehavior.h"
+#include "GameLogic/WeaponSetToggle.h"
+#include "Common/SpecialPower.h"
 #include "GameClient/ControlBarCommands.h"
 #include "Common/CommandPoints.h"
 #include "GameLogic/Object/PartitionManager.h"
@@ -284,6 +292,73 @@ std::vector<Object *> unitOrTeam(ScriptEngine &engine, const std::string &name, 
 		out = ScriptConditions::members(*t);
 	}
 	return out;
+}
+
+const char *const kStopCommandButton =
+	"[S-4841] command button script actions (lane WALL-1): NAMED_USE_COMMANDBUTTON_ABILITY (RW 0x7C6243), NAMED_USE_COMMANDBUTTON_ABILITY_ON_NAMED (RW "
+	"0x7C62BF) and TEAM_USE_COMMANDBUTTON_ABILITY (RW 0x7C11EE -> the team's AI group, RW 0x76F9FF) run Object::doCommandButton (RW 0x696FD2 / 0x697890) "
+	"with CMD_FROM_SCRIPT for the cases AISpecialPowerUpdate's runner has (SPECIAL_POWER / SPELL_BOOK, TOGGLE_WEAPONSET, SET_STANCE); another command type "
+	"does nothing; INFERENCE: a disabled object does nothing (Object + 0xA0 bit 6 taken as clear) and the team's group holds its living members";
+
+// RW 0x696FD2 / 0x697890 Object::doCommandButton(button, CMD_FROM_SCRIPT, 0) / doCommandButtonAtObject(button, target, CMD_FROM_SCRIPT, 0): the cases
+// AISpecialPowerUpdate::runButton ports (S-4841)
+void doScriptCommandButton(ScriptEngine &engine, Object &obj, const CommandButton &b, Object *target)
+{
+	if (obj.getDisabledMask() != 0)
+	{
+		return;
+	}
+	if (b.m_command == GUI_COMMAND_SET_STANCE && !target)
+	{
+		// RW 0x696FD2 case 0x3A: the object's StancesBehavior takes the button's first stance (RW 0x75D324(0))
+		if (StancesBehavior *s = StancesBehavior::of(obj))
+		{
+			if (!b.m_stances.empty() && b.m_stances[0] >= 0 && b.m_stances[0] < STANCE_COUNT)
+			{
+				s->setStance((StanceType)b.m_stances[0]);
+			}
+		}
+		return;
+	}
+	if (b.m_command == GUI_COMMAND_TOGGLE_WEAPONSET && !target)
+	{
+		WeaponSetToggle::toggleFromCommandButton(obj); // RW 0x696FD2 case 0x2D
+		return;
+	}
+	if (b.m_command != GUI_COMMAND_SPECIAL_POWER && b.m_command != GUI_COMMAND_SPELL_BOOK)
+	{
+		engine.note(kStopCommandButton);
+		return;
+	}
+	const SpecialPowerTemplate *t = TheSpecialPowerStore && !b.m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(b.m_specialPowerName) : nullptr;
+	if (!t)
+	{
+		return; // a button without a power (+ 0x44 null) does nothing
+	}
+	const unsigned options = b.m_options | 0x40000u;
+	if (target)
+	{
+		SpecialPowerModules::doSpecialPowerAtObject(obj, t, target, options, true); // CMD_FROM_SCRIPT: forced
+	}
+	else
+	{
+		SpecialPowerModules::doSpecialPower(obj, t, options, true);
+	}
+}
+
+// RW 0x7C6243 / 0x7C62BF: the unit's command set (RW 0x69156B -> TheControlBar RW 0x71EFA2); each of its 33 slots (RW 0x80C837, bound 0x21) whose button
+// has a name equal to `buttonName` (RW 0x401E64 / 0x4065AA) runs (every such slot, not only the first)
+void doNamedCommandButton(ScriptEngine &engine, Object &obj, const std::string &buttonName, Object *target)
+{
+	const CommandSet *set = TheCommandStore ? TheCommandStore->findCommandSet(obj.getCommandSetName()) : nullptr;
+	for (int i = 0; set && i < CommandSet::MAX_BUTTONS; ++i)
+	{
+		const CommandButton *b = set->getCommandButton(i);
+		if (b && !b->m_name.empty() && b->m_name == buttonName)
+		{
+			doScriptCommandButton(engine, obj, *b, target);
+		}
+	}
 }
 
 void faceObject(Object &o, const Object &target)
@@ -993,6 +1068,42 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 		if (found)
 		{
 			engine.nameInCache(param(a, 3).stringValue, *found);
+		}
+		return true;
+	}
+	if (name == "NAMED_USE_COMMANDBUTTON_ABILITY") // lane WALL-1: RW 0x7C6243 (unit, button name)
+	{
+		if (Object *o = engine.getUnitNamed(param(a, 0).stringValue)) // RW 0x75A3D8
+		{
+			doNamedCommandButton(engine, *o, param(a, 1).stringValue, nullptr);
+		}
+		return true;
+	}
+	if (name == "NAMED_USE_COMMANDBUTTON_ABILITY_ON_NAMED") // lane WALL-1: RW 0x7C62BF (unit, button name, target)
+	{
+		Object *o = engine.getUnitNamed(param(a, 0).stringValue);
+		Object *target = engine.getUnitNamed(param(a, 2).stringValue); // RW 0x75A243
+		if (o && target)
+		{
+			doNamedCommandButton(engine, *o, param(a, 1).stringValue, target);
+		}
+		return true;
+	}
+	if (name == "TEAM_USE_COMMANDBUTTON_ABILITY") // lane WALL-1: RW 0x7C11EE (team, button name)
+	{
+		// the team (RW 0x759FDA), the button by name (TheControlBar RW 0x71D6EA), a new AI group of the team's members (RW 0x70042A / 0x7A3D3D), then each
+		// member's doCommandButton(button, CMD_FROM_SCRIPT, 0) in the group's order (RW 0x76F9FF): no command set test here
+		Team *t = ScriptConditions::team(engine, param(a, 0).stringValue);
+		const CommandButton *button = TheCommandStore ? TheCommandStore->findCommandButton(param(a, 1).stringValue) : nullptr;
+		if (t && button)
+		{
+			for (Object *o : ScriptConditions::members(*t))
+			{
+				if (!o->isEffectivelyDead())
+				{
+					doScriptCommandButton(engine, *o, *button, nullptr);
+				}
+			}
 		}
 		return true;
 	}

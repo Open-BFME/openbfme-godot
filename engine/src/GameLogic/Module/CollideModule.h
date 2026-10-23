@@ -25,10 +25,30 @@ public:
 	// FireWeaponCollide (RW 0xC70CDC), CivilianSpawnCollide (RW 0xC71670) and AODCrushCollide (collide vtable RW 0xC70EF4) answer RW 0x7FEAC1 (false); only the
 	// crate collides (RW 0x8C0664: CrateCollide's isValidToExecute) can answer yes
 	virtual bool wouldLikeToCollideWith(const Object &other) const = 0;
+	// lane UBER-2B: true when ObjectCollide::pairIsInert below knows every way this module's onCollide can act (SquishCollide, HordeMemberCollide). An object
+	// with a module that answers false is never left out of a contact pair
+	virtual bool pairFactsKnown() const { return false; }
 };
 
 namespace ObjectCollide
 {
 // ZH Object::onCollide: every collide module of `self` in module order meets `other`; stops when `self` is destroyed
 void onCollide(Object &self, Object &other);
+
+// lane UBER-2B (the Uber profile's collision pass, AIWorld::processCollisions): what an object's collide modules test before they act, taken once per object
+// and pass instead of in every contact pair, both ways. Most pairs of a big battle are soldiers of one horde, or of two hordes not in a melee, where
+// SquishCollide and HordeMemberCollide return at their first tests.
+struct PairFacts
+{
+	const Object *container = nullptr; ///< getContainedBy
+	bool known = false;                ///< every collide module answers pairFactsKnown (an object without collide modules too)
+	bool deadOrHorde = false;          ///< as `other` of SquishCollide: effectively dead or HORDE
+	bool squishInert = false;          ///< as `self` of SquishCollide: effectively dead or its physics motion disabled
+	int crusher = 0, crushable = 0;    ///< ObjectCrush::crusherLevel / crushableLevel
+	bool meleeHorde = false;           ///< contained by a horde whose HordeAIUpdate has a melee target (HordeMemberCollide acts only then)
+};
+PairFacts pairFacts(Object &obj);
+// true when the collide modules of neither object can act on the other, as the facts describe them (SquishCollide: no crush either way; HordeMemberCollide:
+// no melee horde, or both in the same container, where its tests repeat one that already failed)
+bool pairIsInert(const PairFacts &a, const PairFacts &b);
 } // namespace ObjectCollide

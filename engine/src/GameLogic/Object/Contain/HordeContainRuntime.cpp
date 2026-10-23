@@ -190,6 +190,7 @@ void HordeContain::reassignMembersToNearestSlots()
 	HordeContainCore::Placement owner;
 	owner.position = *horde->getPosition();
 	owner.angle = horde->getOrientation();
+	owner.computeTrig(); // lane UBER-2B: once for every member below
 	const int count = (int)m_core->slots().size();
 	std::vector<Coord3D> slotPos((size_t)count);
 	for (int i = 0; i < count; ++i)

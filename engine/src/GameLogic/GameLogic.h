@@ -65,9 +65,11 @@
 #include <cfloat>
 #include <functional>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -395,15 +397,34 @@ public:
 		return id;
 	}
 	float getGroundHeight(float x, float y) const;
+	// lane WALL-1: ZH TerrainLogic::getHighestLayerForDestination + getLayerHeight: the highest walkable surface at (x, y), a wall top or a ramp over the
+	// terrain (the pathfinder's ground-grid layers); the terrain without an AI world
+	// lane WALL-2: the height of the layer a point at (x, y, z) stands on (TheTerrainLogic vslot 0x1C with RW 0x680A75's layer): a wall top's, a ramp's or a
+	// walkway's, the terrain elsewhere
+	float getLayerHeightForDestination(float x, float y, float z) const;
+	float getHighestLayerHeight(float x, float y) const;
 	// problems nothing explains; each distinct text is kept once and reaches report().errors
 	void reportError(const std::string &text);
 	// lane BUILD-1: a rule met at runtime that is registered as a stop but not ported (a castle's PreBuiltList ...): each distinct text reaches report().stops once
-	void noteStop(const std::string &text)
+	// (a view: the hot callers pass literals, and a noted text is found without building a std::string)
+	void noteStop(std::string_view text)
 	{
-		m_notedStops.insert(text);
-		++m_notedStopHits[text]; // lane QA-1: how often a game meets each stop (diagnostics, not simulation state)
+		if (m_notedStops.find(text) == m_notedStops.end())
+		{
+			m_notedStops.emplace(text);
+		}
+		// lane QA-1: how often a game meets each stop (diagnostics, not simulation state)
+		const auto hit = m_notedStopHits.find(text);
+		if (hit != m_notedStopHits.end())
+		{
+			++hit->second;
+		}
+		else
+		{
+			m_notedStopHits.emplace(std::string(text), 1u);
+		}
 	}
-	const std::map<std::string, unsigned> &notedStopHits() const { return m_notedStopHits; }
+	const std::map<std::string, unsigned, std::less<>> &notedStopHits() const { return m_notedStopHits; }
 
 	// lane BACKLOG3 (S-2452): a radar event the logic's code makes for the client's radar. Retail calls TheRadar->createEvent (RW 0x6D98FA) from inside the
 	// logic frame (the scripts' radar actions RW 0x7BC221 / 0x7BC250 / 0x7C0B61, the dozer's finished building RW 0x88E125); here the logic records the event
@@ -796,8 +817,8 @@ private:
 	std::unique_ptr<TerrainTrees> m_trees;               // lane SPELL-3
 	std::unique_ptr<ScriptEngine> m_scriptEngine;        // lane SCRIPT-1
 	CastleTemplateStore m_castleTemplates;
-	std::set<std::string> m_notedStops;
-	std::map<std::string, unsigned> m_notedStopHits;
+	std::set<std::string, std::less<>> m_notedStops;
+	std::map<std::string, unsigned, std::less<>> m_notedStopHits;
 	std::vector<RadarEventNotice> m_radarEventNotices; ///< lane BACKLOG3: oldest first, at most kRadarEventNotices
 	std::uint32_t m_radarEventSeq = 0;
 	ObjectClientHooks *m_clientHooks = nullptr;
@@ -877,7 +898,10 @@ private:
 
 	std::vector<PhaseWork> m_phaseWork;
 	std::map<const ThingTemplate *, ObjectTemplateInfo> m_templateInfo; ///< looked up only, never iterated
-	std::map<const ThingTemplate *, std::unique_ptr<CrushTemplateInfo>> m_crushInfo; ///< looked up only, never iterated
+	std::unordered_map<const ThingTemplate *, std::unique_ptr<CrushTemplateInfo>> m_crushInfo; ///< looked up only, never iterated
+	// lane HDPERF-1 (performance: a lookup per colliding pair): the infos by template id, each slot with the template it holds (an override shares its
+	// base's id: a slot taken by another template sends the lookup to m_crushInfo); filled only where m_crushInfo is (on the logic thread)
+	std::vector<std::pair<const ThingTemplate *, const CrushTemplateInfo *>> m_crushById;
 	std::vector<std::string> m_errors;
 	const TerrainLogic *m_terrain = nullptr;
 	AICommandSink m_aiCommands;

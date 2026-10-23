@@ -223,7 +223,7 @@ void PhysicsBehavior::fling(const Coord3D &velocity, unsigned a, unsigned b)
 	// the landing: the start moved by the horizontal velocity for the whole flight, on the ground
 	const Coord3D move{ SimMath::mulf32(velocity.x, frames), SimMath::mulf32(velocity.y, frames), SimMath::mulf32(frames, 0.0f) };
 	Coord3D landing{ SimMath::addf32(pos.x, move.x), SimMath::addf32(pos.y, move.y), SimMath::addf32(pos.z, move.z) };
-	landing.z = logic.getGroundHeight(landing.x, landing.y); // RW: +10 for the layer query, then the ground height of that layer (ground only, S-161)
+	landing.z = logic.getLayerHeightForDestination(landing.x, landing.y, SimMath::addf32(landing.z, 10.0f)); // RW: +10 for the layer query, then that layer's height
 	// the speed along the curve: (|move| + 2 apex + height) / frames on the x87, at least -gravity
 	const double along = SimMath::pc24DivW(SimMath::pc24AddW(SimMath::pc24AddW(retailLength(move.x, move.y, move.z), SimMath::pc24AddW((double)apex, (double)apex)), (double)height),
 		(double)frames);
@@ -583,7 +583,7 @@ void PhysicsBehavior::bounce(bool final)
 	Coord3D target;
 	target.x = SimMath::fstpDword(SimMath::pc24AddW(SimMath::pc24MulW((double)dx, half), (double)pos.x));
 	target.y = SimMath::fstpDword(SimMath::pc24AddW(SimMath::pc24MulW(half, (double)dy), (double)pos.y));
-	target.z = obj->logic().getGroundHeight(target.x, target.y); // TheTerrainLogic vslot 0x18 (ground only, S-161)
+	target.z = obj->logic().getGroundHeight(target.x, target.y); // TheTerrainLogic vslot 0x18: the terrain's height (no layer)
 	flyTo(target, SimMath::mulf32(m_apex, 0.35f), SimMath::mulf32(m_speed, 0.85f)); // RW 0xC30378 / 0xC3037C
 	m_bounced = true;
 }
@@ -731,7 +731,7 @@ float ObjectKnockback::shockwaveResistance(const Object &obj)
 //   * len = (float)|D+0x34| (RW 0x403111); m = min(len / radius, 1.0) (divss, comiss / ja); r = GameLogicRandomValueReal(0.85, 1.15) (RW 0xBFB4BC / 0xC12234,
 //     "Object.cpp" line 0x1030);
 //   * ClearRadius (D+0x50): c = ClearMult (D+0x54), 0 when negative; the planar unit vector of D+0x34 (normalize with z = 0); the landing = D+0x5C + dir * (((radius *
-//     c) * r) * m + radius) (SSE), its z the terrain height there (TheTerrainLogic RW 0xDE4690 slot 0x1C with the layer RW 0x680A75, S-161: the ground); flyTo(landing,
+//     c) * r) * m + radius) (SSE), its z the terrain height there (TheTerrainLogic RW 0xDE4690 slot 0x1C with the layer RW 0x680A75; lane WALL-2: a wall top or walkway counts); flyTo(landing,
 //     ClearFlingHeight (D+0x58) * r, amount) (RW 0x792997);
 //   * otherwise: s = 1 - (1 - taper (D+0x48)) * m; dir = normalize(D+0x34) (RW 0x403175);
 //       not cyclonic: f = (amount * s) * r; v = dir * f (SSE: f * x, y * f, f * z); v.z = |v| (RW 0x403111, x87) * ZMult (D+0x4C) * r (fmul dword, fstp);
@@ -785,7 +785,8 @@ bool ObjectKnockback::shockWave(Object &obj, const DamageInfo &info)
 		Coord3D landing;
 		landing.x = SimMath::addf32(d.m_shockWaveClearCenter.x, SimMath::mulf32(dir.x, dist));
 		landing.y = SimMath::addf32(d.m_shockWaveClearCenter.y, SimMath::mulf32(dir.y, dist));
-		landing.z = logic.getGroundHeight(landing.x, landing.y); // TheTerrainLogic slot 0x1C (the layer height: S-161 the ground)
+		landing.z = logic.getLayerHeightForDestination(landing.x, landing.y, d.m_shockWaveClearCenter.z); // TheTerrainLogic slot 0x1C with the layer (lane WALL-2;
+		// INFERENCE: the layer query's z is the shock wave centre's)
 		phys->flyTo(landing, SimMath::mulf32(d.m_shockWaveClearFlingHeight, r), d.m_shockWaveAmount); // RW 0x792997
 	}
 	else

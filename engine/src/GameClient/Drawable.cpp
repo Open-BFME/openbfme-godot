@@ -224,19 +224,14 @@ void Drawable::setModelConditionFlags(const ModelConditionFlags &flags)
 
 ModelConditionFlags Drawable::dependencySharedModelFlags() const
 {
+	// the union of the draws' sets, a word at a time (lane BIGBATTLE-1: the bit loop ran for every contained drawable every render frame;
+	// MODELCONDITION_COUNT is the type's width and its unused high bits are zero, so the words give the same set)
 	ModelConditionFlags out;
 	for (const DrawEntry &e : m_entries)
 	{
 		if (e.draw)
 		{
-			const ModelConditionFlags &f = e.draw->dependencySharedModelFlags();
-			for (int b = 0; b < MODELCONDITION_COUNT; ++b)
-			{
-				if (f.test(b))
-				{
-					out.set(b);
-				}
-			}
+			out.set(e.draw->dependencySharedModelFlags());
 		}
 	}
 	return out;
@@ -244,19 +239,15 @@ ModelConditionFlags Drawable::dependencySharedModelFlags() const
 
 bool Drawable::applyDependencyFlags(const ModelConditionFlags &shared, const ModelConditionFlags &containerFlags)
 {
+	// the shared bits take the container's values, the others keep this drawable's (a word at a time, as dependencySharedModelFlags)
 	ModelConditionFlags next = m_flags;
-	for (int b = 0; b < MODELCONDITION_COUNT; ++b)
+	std::uint32_t *n = next.words();
+	const std::uint32_t *s = shared.words(), *c = containerFlags.words();
+	for (int w = 0; w < ModelConditionFlags::NUM_WORDS; ++w)
 	{
-		if (shared.test(b))
-		{
-			next.set(b, containerFlags.test(b));
-		}
+		n[w] = (n[w] & ~s[w]) | (c[w] & s[w]);
 	}
-	bool changed = false;
-	for (int b = 0; b < MODELCONDITION_COUNT && !changed; ++b)
-	{
-		changed = next.test(b) != m_flags.test(b);
-	}
+	const bool changed = next != m_flags;
 	if (changed)
 	{
 		setModelConditionFlags(next);

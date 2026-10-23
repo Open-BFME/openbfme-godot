@@ -7,6 +7,7 @@
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
 #include "GameLogic/Object/ObjectGeometry.h"
+#include "GameLogic/Module/CollideModule.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
@@ -255,10 +256,27 @@ std::unique_ptr<BehaviorModule> Object::friend_replaceModule(BehaviorModule *old
 			{
 				m_contain = m->getContain();
 			}
+			rebuildCollideModules();
 			return out;
 		}
 	}
 	throw std::logic_error("Object::friend_replaceModule: the module is not this object's");
+}
+
+void Object::rebuildCollideModules()
+{
+	m_collideModules.clear();
+	m_collideModulesKnown = true;
+	for (const std::unique_ptr<BehaviorModule> &m : m_modules)
+	{
+		if (CollideModuleInterface *c = m ? m->getCollide() : nullptr)
+		{
+			m_collideModules.push_back(c);
+			m_collideModulesKnown = m_collideModulesKnown && c->pairFactsKnown();
+		}
+	}
+	m_attributePool = findModule("AttributeModifierPoolUpdate"); // lane UBER-3W: attributeModifierPoolModule's answer from here on
+	m_moduleCachesBuilt = true;
 }
 
 void Object::buildModules()
@@ -317,6 +335,7 @@ void Object::buildModules()
 			m_ai = a;
 		}
 	}
+	rebuildCollideModules();
 	// COMBAT-2: the finished object's body applies its initial damage state once (an INI InitialHealth below the thresholds shows DAMAGED / REALLYDAMAGED / RUBBLE from the start)
 	if (m_body)
 	{
@@ -890,6 +909,15 @@ void Object::friend_onBuildComplete()
 	}
 }
 
+void Object::friend_onMapPlacement(const Dict *properties)
+{
+	// lane WALL-2, RW 0x694692 .. 0x6946BF: the +0xC interface's slot 45 of every module
+	for (size_t i = 0; i < m_modules.size(); ++i)
+	{
+		m_modules[i]->onMapPlacement(properties);
+	}
+}
+
 void Object::friend_onDie(const DieModuleInterface::Event &event)
 {
 	// RW 0x698F06 (the dead flag RW + 0x458 bit 0 first: from now on the object is no target and takes no more damage)
@@ -1091,7 +1119,7 @@ void Object::clearDisabled(unsigned type)
 	checkDisabledStatus(m_logic.getFrame()); // RW 0x69261D
 }
 
-BehaviorModule *Object::findModule(const std::string &className) const
+BehaviorModule *Object::findModule(std::string_view className) const
 {
 	for (const std::unique_ptr<BehaviorModule> &m : m_modules)
 	{
@@ -2041,18 +2069,22 @@ void Object::setStatusAcrossHorde(unsigned bit, bool set)
 
 Object *Object::getHordeObject(bool alsoProducer) const
 {
-	if (isKindOfName("HORDE"))
+	// lane BIGBATTLE-1: the HORDE bit looked up once (isKindOfName searched the KindOf names on each of up to three tests; the client asks this
+	// for every unit in a big battle). The name table is the engine's, fixed for the process
+	static const int kHorde = ObjectTemplateInfoBuilder::kindOfIndex("HORDE");
+	const auto isHorde = [](const Object &o) { return kHorde >= 0 && o.isKindOf((unsigned)kHorde); };
+	if (isHorde(*this))
 	{
 		return const_cast<Object *>(this);
 	}
-	if (m_containedBy && m_containedBy->isKindOfName("HORDE"))
+	if (m_containedBy && isHorde(*m_containedBy))
 	{
 		return m_containedBy;
 	}
 	if (alsoProducer)
 	{
 		Object *producer = m_logic.findObjectByID(m_producerID);
-		if (producer && producer->isKindOfName("HORDE"))
+		if (producer && isHorde(*producer))
 		{
 			return producer;
 		}
@@ -2075,7 +2107,7 @@ bool Object::addAttributeModifier(const std::string &listName, int duration)
 			return true;
 		}
 	}
-	AttributeModifierPool *pool = static_cast<AttributeModifierPool *>(findModule("AttributeModifierPoolUpdate"));
+	AttributeModifierPool *pool = static_cast<AttributeModifierPool *>(attributeModifierPoolModule());
 	if (!pool)
 	{
 		return false;
@@ -2113,7 +2145,7 @@ void Object::removeAttributeModifier(const std::string &listName)
 			return;
 		}
 	}
-	AttributeModifierPool *pool = static_cast<AttributeModifierPool *>(findModule("AttributeModifierPoolUpdate")); // RW 0x68C4A6
+	AttributeModifierPool *pool = static_cast<AttributeModifierPool *>(attributeModifierPoolModule()); // RW 0x68C4A6
 	if (!pool)
 	{
 		return;
@@ -2134,7 +2166,7 @@ void Object::removeAttributeModifier(const std::string &listName)
 
 bool Object::attributeModifierSum(int type, const char *name, float &out) const
 {
-	const AttributeModifierPool *pool = static_cast<const AttributeModifierPool *>(findModule("AttributeModifierPoolUpdate"));
+	const AttributeModifierPool *pool = static_cast<const AttributeModifierPool *>(attributeModifierPoolModule());
 	if (!pool)
 	{
 		return false;
@@ -2144,7 +2176,7 @@ bool Object::attributeModifierSum(int type, const char *name, float &out) const
 
 bool Object::attributeModifierProduct(int type, const char *name, bool innate, float &out) const
 {
-	const AttributeModifierPool *pool = static_cast<const AttributeModifierPool *>(findModule("AttributeModifierPoolUpdate"));
+	const AttributeModifierPool *pool = static_cast<const AttributeModifierPool *>(attributeModifierPoolModule());
 	if (!pool)
 	{
 		return false;

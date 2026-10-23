@@ -95,6 +95,13 @@ public:
 	virtual bool moveToPositionFromAI(const Coord3D &p) { (void)p; return false; }
 	virtual void startMoveSound() {}
 	virtual void stopMoveSound() {}
+	// ---- lane WALL-2 ----
+	// RW 0x66A143 .. 0x66A166 (a Climb portal steeply up or down): a disguised unit (its StealthUpdate, RW 0x68FBD3, + 0x3C) is marked detected (RW 0x7767A9(0, 1,
+	// null, horde)); default nothing
+	virtual void revealDisguiseOnClimb() {}
+	// RW 0x662A0E (a type 7 portal, after destroyPath RW 0x66276B): the AI's vslot 0x60 with CMD_FROM_AI (RW 0x66D8F5, the AI's private idle: INFERENCE S-4857,
+	// the port's aiIdle(CMD_FROM_AI)); default nothing
+	virtual void idleFromAI() {}
 };
 
 enum AIGoalType
@@ -210,6 +217,10 @@ public:
 	void setGoalTypeRaw(AIGoalType t) { m_goalType = t; }
 	// distance left to the goal for the current goal type (RW 0x664127)
 	float locomotorDistanceToGoal() const;
+	// lane WALL-1: the unit's layer settles to the cell under it (Pathfinder::settleLayer) and, with a type 4 goal on a path, follows the nearest path node's
+	// layer (Pathfinder::UpdateLayer BFME2 0x6F11A1). The horde member update (RW 0x66C748) calls it too; its z then is the layer's height
+	// (LocomotorHost::groundHeightAt). Lane WALL-2: a type 1 path goal's layer follows RotWK's doLocomotor (RW 0x669D3D .. 0x669D66, the point ahead's layer)
+	void refreshLayer();
 
 	// ---- the per-frame locomotor step (RW 0x669932): returns the number of frames until the next call is needed ----
 	unsigned doLocomotor();
@@ -251,6 +262,12 @@ private:
 	void note(const char *stop);
 	bool isDoingGroundMovement() const;
 	bool pointAheadIsPortal() const;
+	// lane WALL-2: RW 0x669E8F .. 0x66A27E, the portal branch of doLocomotor: the unit walks (is put on) the point ahead of its path, by the waypoint's type
+	void moveThroughPortal(Locomotor &loco, const PathfindWaypoint &portal, float speed, const LocomotorPathPoint &first);
+public:
+	bool onPortal() const { return m_onPortal; } // RW AI + 0x3BB
+private:
+	bool m_onPortal = false;
 
 	AIMoveHost &m_host;
 	Pathfinder &m_pf;
@@ -288,6 +305,7 @@ private:
 	unsigned m_colliderFrames[4] = {};
 	int m_colliderCount = 0;
 	std::vector<std::string> m_stops;
+	unsigned m_notedBits = 0; // note: the known stops already in m_stops
 };
 
 // AIInternalMoveToState (RW vtable 0xC27448): move to a position, then optionally turn to a final angle.

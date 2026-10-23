@@ -258,7 +258,13 @@ bool Pathfinder::validMovementPosition(const PathfindObject *obj, const Pathfind
 	const int x = SimMath::truncToInt32(SimMath::mulf32(pos->x, 0.1f));
 	const int y = SimMath::truncToInt32(SimMath::mulf32(pos->y, 0.1f));
 	const PathfindMovement mv = makeMovement(obj, loco);
-	return validMovementPosition(mv, getCell(layer, x, y));
+	const PathfindCell *cell = getCell(layer, x, y);
+	// lane WALL-1 (INFERENCE, S-4840): a unit on `layer` stands only on a cell of that layer or one connecting to it (a ground unit is not valid on a wall top)
+	if (cell && !m_wallPieces.empty() && !cell->allowsLayer(layer))
+	{
+		return false;
+	}
+	return validMovementPosition(mv, cell);
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -293,6 +299,7 @@ const Pathfinder::OccupantFacts *Pathfinder::occupantFacts(const PathfindObject 
 		}
 	}
 	f->gen = m_memoGen;
+	f->reach = ReachMemo();
 	f->o = m_world ? m_world->findObjectByID(id) : nullptr;
 	if (!f->o)
 	{
@@ -309,6 +316,27 @@ const Pathfinder::OccupantFacts *Pathfinder::occupantFacts(const PathfindObject 
 	f->aiPriority = o.aiPriority();
 	f->container = o.getContainer();
 	return f;
+}
+
+// lane PATHPERF-2: secondsToReach from the memo's inputs. The speed is the costly part (Locomotor::getMaxSpeedForCondition reads the damage state, the
+// charge status and the crew), and nothing it reads changes during a search; the arithmetic is secondsToReach's own. With the shortcuts off every
+// answer is asked afresh (test_pathperf1_bench.cpp compares both ways)
+float Pathfinder::reachSeconds(const PathfindObject &o, ReachMemo &memo, float x, float y) const
+{
+	if (!m_searchShortcuts)
+	{
+		return o.secondsToReach(x, y);
+	}
+	if (memo.state == 0)
+	{
+		memo.state = o.reachInputs(memo.x, memo.y, memo.speed) ? 1 : 2;
+	}
+	if (memo.state == 2)
+	{
+		return o.secondsToReach(x, y);
+	}
+	const float dist = SimMath::length2d(SimMath::subf32(x, memo.x), SimMath::subf32(y, memo.y));
+	return memo.speed > 0.0f ? SimMath::divf32(dist, memo.speed) : 0.0f;
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -719,7 +747,7 @@ void Pathfinder::releaseSlot(PathfindObjectID id, Slot &slot)
 	// RW 0x8E1CC4: unlink the unit's node from each cell of the chain; a cell info with no node left is released
 	for (const ICoord2D &c : slot.cells)
 	{
-		PathfindCell *cell = getCell(LAYER_GROUND, c.x, c.y);
+		PathfindCell *cell = getCell(slot.layer, c.x, c.y); // the slot's layer (review #63: a walkway's cells, not the ground under them)
 		if (cell)
 		{
 			cell->removeOccupant(m_pool, slot.kind, id);
@@ -735,7 +763,7 @@ void Pathfinder::registerSlot(PathfindObject &obj, Slot &slot)
 	footprintCells(obj, slot.cell, slot.angleCode, slot.cells);
 	for (const ICoord2D &c : slot.cells)
 	{
-		PathfindCell *cell = getCell(LAYER_GROUND, c.x, c.y);
+		PathfindCell *cell = getCell(slot.layer, c.x, c.y); // lane WALL-2: a raised walkway's cell when the slot is on one, else the ground grid's
 		cell->addOccupant(m_pool, slot.kind, obj.getID(), c);
 	}
 }
@@ -886,7 +914,6 @@ void Pathfinder::removeUnitFromPathfindMap(PathfindObject &obj)
 // ---------------------------------------------------------------------------------------------------------
 void Pathfinder::adjustCoordToCell(int cellX, int cellY, bool centerInCell, Coord3D &pos, PathfindLayerEnum layer)
 {
-	(void)layer;
 	if (centerInCell)
 	{
 		pos.x = SimMath::mulf32((SimMath::addf32((float)cellX, 0.5f)), 10.0f);
@@ -898,7 +925,8 @@ void Pathfinder::adjustCoordToCell(int cellX, int cellY, bool centerInCell, Coor
 		pos.x = (float)SimMath::mulD(SimMath::addD((double)cellX, 0.05), (double)10.0f);
 		pos.y = (float)SimMath::mulD(SimMath::addD((double)cellY, 0.05), (double)10.0f);
 	}
-	pos.z = m_terrain ? m_terrain->getGroundHeight(pos.x, pos.y) : 0.0f;
+	// ZH: TheTerrainLogic->getLayerHeight(pos.x, pos.y, layer) (lane WALL-1: a wall top's or a ramp's height; the terrain on the ground)
+	pos.z = m_terrain ? getLayerHeight(pos.x, pos.y, layer) : 0.0f;
 }
 
 namespace
@@ -985,26 +1013,19 @@ bool Pathfinder::memberFootprintFits(const PathfindMovement &mv, PathfindLayerEn
 			{
 				return false;
 			}
-			const PathfindLayerEnum cl = c->getLayer();
-			if (cl != hordeLayer)
+			if (!c->allowsLayer(hordeLayer))
 			{
-				// RW: a cell of another layer than the horde's fails unless it is the wall layer, or the horde is on a raised layer whose tests (RW 0x6E82B3 /
-				// 0x5E2F24) pass; only the ground layer is ported (S-161): any other mismatch fails
-				if (hordeLayer == LAYER_GROUND && cl != LAYER_WALL)
-				{
-					return false;
-				}
-				if (hordeLayer != LAYER_GROUND)
-				{
-					return false;
-				}
+				// RW: a cell of another layer than the horde's fails unless the horde is on a raised layer whose tests (RW 0x6E82B3 / 0x5E2F24) pass (the raised
+				// layers' tests are not ported, S-4856). Lane WALL-1 (INFERENCE, S-4840): a cell that connects to the horde's layer (a ramp's foot for a horde on
+				// the ground, a joint for one on a wall) is the horde's layer too; the port's old exception for ZH's wall layer 15 is gone
+				return false;
 			}
 			if (!validMovementPosition(mv, c))
 			{
 				return false;
 			}
 			// RW: the terrain height at the cell's centre (cell * 10 + 5), on the cell's layer; the footprint is no more than 10 from its first cell
-			const float h = m_terrain ? m_terrain->getGroundHeight(SimMath::addf32((float)(i * 10), 5.0f), SimMath::addf32((float)(j * 10), 5.0f)) : 0.0f;
+			const float h = m_terrain ? getLayerHeight(SimMath::addf32((float)(i * 10), 5.0f), SimMath::addf32((float)(j * 10), 5.0f), c->getLayer()) : 0.0f;
 			if (first)
 			{
 				first = false;
@@ -1070,7 +1091,7 @@ bool Pathfinder::adjustHordeMemberDestination(const PathfindObject &member, cons
 		{
 			dest->x = x;
 			dest->y = y;
-			dest->z = m_terrain ? m_terrain->getGroundHeight(x, y) : dest->z; // RW 0x680A75 (the destination's layer: the ground) then the layer height
+			dest->z = m_terrain ? getLayerHeight(x, y, getLayerAt(x, y, dest->z)) : dest->z; // RW 0x680A75 (the destination's layer) then the layer height
 			return true;
 		}
 	}
@@ -1185,10 +1206,12 @@ bool Pathfinder::goalPosition(PathfindObject &obj, Coord3D *pos)
 bool Pathfinder::checkForAdjust(PathfindObject &obj, const PathfindLocomotorInfo &loco, bool isHuman, int cellX, int cellY, PathfindLayerEnum layer,
 	Coord3D *dest, bool &candidate)
 {
-	// TARGET RW 0x6F66D9 (steps 1-8 of the analysis); the group-height and required-layer steps do not apply on the ground layer only
+	// TARGET RW 0x6F66D9 (steps 1-8 of the analysis); the group-height step is not ported. Lane WALL-1 (INFERENCE, S-4840): the required-layer step keeps the
+	// adjusted destination on the destination's layer (a cell of that layer or one connecting to it)
 	candidate = false;
 	PathfindCell *cellP = getCell(layer, cellX, cellY);
 	if (cellP == nullptr) return false;
+	if (!m_wallPieces.empty() && !cellP->allowsLayer(layer)) return false;
 	if (cellP->getType() == PathfindCell::CELL_CLIFF) return false; // no final destinations on cliffs
 	int iRadius;
 	bool center;
@@ -1216,11 +1239,11 @@ bool Pathfinder::checkForAdjust(PathfindObject &obj, const PathfindLocomotorInfo
 	}
 	else
 	{
-		pathExists = clientSafeQuickDoesPathExist(loco, &obj.getPosition(), dest);
-		adjustedPathExists = clientSafeQuickDoesPathExist(loco, &obj.getPosition(), &adjustDest);
+		pathExists = clientSafeQuickDoesPathExist(loco, &obj.getPosition(), dest, &obj); // RW 0x6F5BB0 with the unit (lane WALL-2)
+		adjustedPathExists = clientSafeQuickDoesPathExist(loco, &obj.getPosition(), &adjustDest, &obj);
 		if (!pathExists)
 		{
-			if (clientSafeQuickDoesPathExist(loco, dest, &adjustDest))
+			if (clientSafeQuickDoesPathExist(loco, dest, &adjustDest, &obj))
 			{
 				adjustedPathExists = true;
 			}
@@ -1253,7 +1276,8 @@ bool Pathfinder::adjustDestination(PathfindObject &obj, const PathfindLocomotorI
 	getRadiusAndCenter(&obj, iRadius, center);
 	ICoord2D cell;
 	worldToCell(dest, center, &cell);
-	const PathfindLayerEnum layer = LAYER_GROUND;
+	// RW 0x680A75 (TerrainLogic::getLayerForDestination): the destination's own layer (lane WALL-1: a wall top's or a ramp's; the ground elsewhere)
+	const PathfindLayerEnum layer = getLayerAt(dest->x, dest->y, dest->z);
 	bool candidate = false;
 	Coord3D found = *dest;
 	if (checkForAdjust(obj, loco, isHuman, cell.x, cell.y, layer, &found, candidate))
@@ -1330,7 +1354,7 @@ bool Pathfinder::adjustToPossibleDestination(PathfindObject &obj, const Pathfind
 	{
 		return false; // outside of bounds
 	}
-	const PathfindLayerEnum destinationLayer = LAYER_GROUND;
+	const PathfindLayerEnum destinationLayer = searchDestinationLayer(*dest);
 	PathfindCell *goalCell = getCell(destinationLayer, goalCellNdx.x, goalCellNdx.y);
 	Coord3D from = obj.getPosition();
 	PathfindCell *parentCell = getClippedCell(obj.getLayer(), &from);
@@ -1382,6 +1406,15 @@ bool Pathfinder::adjustToPossibleDestination(PathfindObject &obj, const Pathfind
 // ---------------------------------------------------------------------------------------------------------
 // queue
 // ---------------------------------------------------------------------------------------------------------
+void Pathfinder::setUberLimits(bool on)
+{
+	m_uberLimits = on;
+	m_pool.setGrowthLimit(on ? (int)kCellInfoPoolMax : 0); // review of #62: the Faithful pool keeps its configured size and fails when full, as on main
+	const int len = on ? (int)kUberQueueLength : (int)PATHFIND_QUEUE_LEN;
+	m_queue1.setLength(len);
+	m_queue2.setLength(len);
+}
+
 bool Pathfinder::queueForPath(PathfindObjectID id)
 {
 	// TARGET RW 0x6ED0FB: a linear duplicate scan (a duplicate returns true), a full ring returns false
@@ -1432,6 +1465,17 @@ void Pathfinder::processPathfindQueue(PathfindRequestHandler &handler)
 	setLogicalExtentFromTerrain();
 	m_cumulativeCellsAllocated = 0;
 	int budget = m_config.cellsPerFrame;
+	if (m_uberLimits)
+	{
+		// lane PATHPERF-4 (Uber only): a burst (a mass order) starts at kUberBurstQueue waiting requests and lasts until the queue is down to
+		// kUberBurstEnd; the steady repaths of a fight never start one
+		const size_t queued = m_queue1.size() + m_queue2.size();
+		m_uberBurst = m_uberBurst ? queued > (size_t)kUberBurstEnd : queued >= (size_t)kUberBurstQueue;
+		if (m_uberBurst)
+		{
+			budget *= kUberBudgetScale;
+		}
+	}
 	if (m_world && m_world->getFrame() < 25u)
 	{
 		budget *= 100;

@@ -109,6 +109,8 @@ public:
 	void aiMoveToObject(Object *obj, CommandSourceType source);
 	// RW 0x770C2C (MSG_DO_MOVE_AND_ORIENTATE_OBJECTTO): a move that ends facing `angle`
 	void aiMoveToPositionAndOrientate(const Coord3D &pos, float angle, CommandSourceType source);
+	// lane SIEGE-1: AI command 0x27 (RW 0x7C821E -> AI vslot 0x118 RW 0x667290): the unit turns to face `pos` (state 0x25, GameLogic/Module/SiegeModules.cpp)
+	void aiFacePosition(const Coord3D &pos, CommandSourceType source);
 	void aiIdle(CommandSourceType source);
 	void aiFollowPath(const std::vector<Coord3D> &path, Object *ignoreObject, CommandSourceType source, bool exitProduction);
 	void aiFollowPathAppend(const Coord3D &pos, CommandSourceType source);
@@ -340,6 +342,11 @@ public:
 	float orientation() const override;
 	void setOrientation(float angle) override;
 	float groundHeightAt(float x, float y) const override;
+	// lane WALL-1: TheTerrainLogic->getLayerHeight(x, y, the object's layer): the terrain on the ground, a wall top's or a ramp's height on theirs
+	float layerHeightAt(float x, float y) const;
+	// lane WALL-1: after the object was put somewhere directly (a horde member snapped onto its slot, a member put on its goal): its layer settles to the cell
+	// under it (Pathfinder::settleLayer) and, off the ground, it stands on that layer's surface. Nothing for a ground unit that stays on the ground
+	void settleOnLayer();
 	void setLayer(PathfindLayerEnum layer) override;
 	bool isImmobile() const override;
 	bool isStatusImmobile() const override;
@@ -357,6 +364,8 @@ public:
 	float locomotorSpeed() const override;
 	bool movingBackwards() const override;
 	bool setModelCondition(const char *name, bool on) override;
+	void revealDisguiseOnClimb() override; // lane WALL-2: RW 0x66A143 (a Climb portal)
+	void idleFromAI() override;            // lane WALL-2: RW 0x662A0E's vslot 0x60(2) (a type 7 portal)
 	void startMoveSound() override; // lane AUDIO-3: RW 0x748C0B
 	void stopMoveSound() override;
 	float relativeAngleTo(const Coord3D &p) const override;
@@ -391,7 +400,8 @@ public:
 	// RW 0x667174 (aiDoCommand's gate): `command` is the AICommandType number (0 move to position, 1 move to object, ...; -1 unknown); false when the object is dead,
 	// a PLAYER order meets PreventPlayerCommands (+ 0x3C5) or the model condition 206, a SCRIPT order meets + 0x3C6, the temporary state is locked, or a PLAYER
 	// move order meets a locomotor set speed of 0. Every ai* command of this class asks it first
-	bool allowedToRespondToCommand(CommandSourceType source, int command) const;
+	// (virtual: AI vtable slot 148, isAllowedToRespondToAiCommands; lane SIEGE-1: SiegeAIUpdate overrides it, RW 0x893C80)
+	virtual bool allowedToRespondToCommand(CommandSourceType source, int command) const;
 	// lane AUDIO-3 r2: aiDoCommand's entry: the gate, then (passed) the module's own reaction before the command runs (commandAccepted). Every ai* command calls this
 	bool acceptCommand(CommandSourceType source, int command, Object *target = nullptr)
 	{
@@ -453,6 +463,8 @@ protected:
 		Object *target = nullptr;
 		CommandSourceType source = CMD_FROM_AI;
 		int waypointId = -1;
+		float angle = 0.0f;          // lane SIEGE-1: the move with an angle's final angle (DeployStyleAIUpdate gives a kept command again)
+		int maxShots = 0x7FFFFFFF;   // lane SIEGE-1: the attack commands' shot limit (AICommandParms m_intValue)
 		std::vector<Coord3D> path; // lane STEALTHFLY1: a follow path the bird keeps while attacking (GiantBirdAIUpdate::deferWhileAttacking)
 	};
 	virtual bool routeCommand(const RoutedCommand &command) { (void)command; return false; }
@@ -494,6 +506,10 @@ private:
 	bool m_canPathThroughUnits = false;
 	ObjectID m_moveAwayRequesters[2] = { INVALID_ID, INVALID_ID }; // lane PHYS-1: RW AI +0x198 / +0x19C (RW 0x66DA5F)
 	bool m_isInUpdate = false;
+	bool m_movingAwaySearch = false; // lane WALL-2: RW AI + 0x3CF (set around the move-away searches, RW 0x66DBFB / 0x66DC4B)
+public:
+	bool movingAwaySearch() const { return m_movingAwaySearch; }
+private:
 	unsigned long long m_memberUpdates = 0; // lane EXIT-1 (a counter, not hashed)
 	std::array<std::uint32_t, 19> m_luaConditionSnapshot{}; ///< lane HERO-2: + 0x290, the ModelCondition script events' snapshot (RW 0x663E32)
 	bool m_moveLoopPosted = false; // lane AUDIO-3: a move loop is kept for this object on the audio side (audio bookkeeping only: no logic reads it, not hashed)

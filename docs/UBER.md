@@ -400,6 +400,90 @@ That's a research item, not a plan.
   would collide. The hash was the biggest change that is safe on its own: a
   pure function of the state, on every frame of every recorded game.
 
+### PATHPERF-4: the path queue's limits (done)
+
+Retail's path queue holds 511 units: a unit refused by a full queue waits for
+a path that never comes until its next order. It also serves only
+`MaxPathfindCellsPerFrame` cells a call, so a mass order is served over
+seconds (150 hordes: 4.6 s, 300 single soldiers: 9.6 s, `pathperf1 bench`).
+
+- **Uber rule change:** the two request rings hold 16,384 units
+  (`Pathfinder::setUberLimits`), and during a burst the cell budget is 4 times
+  retail's: a burst starts at 120 waiting requests (a mass order) and lasts
+  until 40 or fewer wait. A sustained battle's repaths keep 60-90 waiting
+  (10,000 troops) and never start one; an always-4x budget only spent its
+  time on that steady trickle (logic 232 instead of 197 ms a frame at 10,000
+  troops, one thread). The 150 hordes' order is served in 1.6 s, the 300
+  soldiers' in 4.6 s (`PATHPERF1_PROFILE=uber`). The burst flag is in the
+  Uber state hash; the Uber pin vector was regenerated.
+- **Uber rule change:** the pathfinder's cell-info pool grows past its 60,000
+  records up to 1,000,000 (`Pathfinder::setUberLimits`), instead of failing
+  searches and reservations in a big battle. The Faithful pool keeps its
+  60,000 and fails when full, as before: RotWK 2.01's own limit has not been
+  read from the binary (BFME1 keeps 0x200 fixed slots plus an overflow list,
+  Open-BFME-1 `PathfindCellInfoPoolReset.cpp`), so the growth is the profile's.
+
+### UBER-2A: the "what is near me" queries (done)
+
+The 10k Uber profile had the taunt scans (`tauntScan` -> `getClosestObject`)
+at 10% of the logic frame, nearly all of it the exact x87 distance of every
+partition entry the search visited, plus the combat range checks recomputing
+the bounding radii (6%), the large group bonus scans (4%) and `TargetFinder`
+(4%, most of it rebuilding its grid about a dozen times a frame).
+
+- **Both profiles (the same answers):** `getClosestObject` skips the exact
+  distance of a candidate the double-precision bound puts beyond the best
+  distance so far (the range walk's pre-reject, now inlined), and keeps its
+  heap storage between calls. The Faithful pins and the Faithful bench hash
+  chain are unchanged. (The bounding radii are UBER-2B's cache.)
+- **Uber rule changes:** the taunt scan, the dual weapon switch scan and
+  `TargetFinder` walk only the layers of the players the seeker sees as
+  enemies (`Team::enemyLayerMask`), the large group bonus only its owner's;
+  `TargetFinder` builds its grid once a frame and appends the objects made
+  later in the frame instead of rebuilding. What a player can notice: nothing
+  (of two candidates at exactly the same distance another may win; an object
+  whose owner changed this frame is found on its old layer until the next
+  partition update).
+- Result (`uber bench` 10k, Uber, 30 frames, back to back on a busy PC): logic
+  wall about 173 -> 137 ms, phases 3 / 4 about 33 / 30 -> 23 / 19 ms; the
+  taunt scan went from 10% to 1.5% of the logic frame. The Uber bench hash
+  chain did not change either (no tie or owner change met in that battle).
+
+### UBER-3P: the battle's path searches that cannot succeed (done)
+
+In the 30,000-troop clash the path queue runs at its budget in every one of a
+logic frame's six calls, and each call is mostly one search: a repath toward
+a contact point in the press whose goal cannot be reached (an approximate
+search: the goal is in another zone or not a valid movement position; or its
+goal cell was rejected). Such a search ends with the path to its closest cell
+(or none), but kept expanding up to the slack or `MaxCellsFindPathLimit`: the
+calls averaged 23,000 cells against a budget of 4,000. Of 2,094 searches in
+that battle, a failed search's closest cell was final after about 10 cells
+and never replaced 250 cells later; 1,182 of the 1,644 unreachable searches
+found no closest cell at all and gave no path, after 72% of all their cells.
+
+- **Uber rule change:** `internalFindPath` ends an unreachable search once its
+  answer has held for 256 cells (the closest cell, or with none yet the
+  candidate key that would test one) and gives that answer. A tunnelling
+  search's pause starts when it leaves its obstacle. What a player can
+  notice: nothing; the paths are served sooner (in that battle 45 of the
+  unreachable searches tested a candidate after such a pause, the only ones
+  whose answer can differ). The Uber pin vector was regenerated.
+- Result (`uber bench` 30k, Uber, 30 frames, back to back, two rounds): logic
+  wall 203 / 221 -> 175 / 181 ms (default threads), 240 -> 215 ms (one
+  thread); the 15 clash frames 220 / 242 -> 179 / 184 ms, p99 316 / 363 ->
+  240 / 261 ms. The queue's cells per call 23,000 -> 8,600, the horde repaths
+  served in the 14 clash frames 170 -> 209. The 10k battle is unchanged within
+  the noise (83-89 -> 86-94 ms default threads, 103-107 -> 106 ms one thread).
+- **Uber rule change (second step):** `findAttackPath` with no endpoint yet
+  ends once its closest cell has held for 256 examined cells and gives the
+  fallback the exhausted search gives (the path to that cell). In the clash
+  126 of 200 attack searches found no endpoint and spent 75% of their cells
+  after such a pause; no endpoint of the other 74 came after one. Result on
+  top of the first step (30k, 30 frames, a busy PC): 174 -> 161 ms default
+  threads (clash frames 182 -> 154), 254 -> 237 ms one thread; the 10k battle
+  within the noise. The Uber pin vector was regenerated again.
+
 ### U2: parallel queries and paths, GPU animation (next)
 
 - **Snapshot queries.** Before each module phase, the queries a module will

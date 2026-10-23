@@ -7,6 +7,7 @@
 #include "Common/PlayerList.h"
 #include "Common/GameState.h" // lane SAVE-4a
 #include "Common/Snapshot.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Module/UpgradeModuleClasses.h"
@@ -203,14 +204,28 @@ void GameLogic::invalidateTemplateInfo()
 {
 	m_templateInfo.clear();
 	m_crushInfo.clear();
+	m_crushById.clear();
 }
 
 const CrushTemplateInfo &GameLogic::crushInfo(const ThingTemplate *finalOverride)
 {
+	const size_t id = finalOverride->getTemplateID();
+	if (id < m_crushById.size() && m_crushById[id].first == finalOverride)
+	{
+		return *m_crushById[id].second;
+	}
 	auto it = m_crushInfo.find(finalOverride);
 	if (it == m_crushInfo.end())
 	{
 		it = m_crushInfo.emplace(finalOverride, std::make_unique<CrushTemplateInfo>(CrushTemplateInfo::of(*finalOverride))).first;
+	}
+	if (id >= m_crushById.size())
+	{
+		m_crushById.resize(id + 1, { nullptr, nullptr });
+	}
+	if (!m_crushById[id].first)
+	{
+		m_crushById[id] = { finalOverride, it->second.get() }; // the first template of the id keeps the slot
 	}
 	return *it->second;
 }
@@ -238,6 +253,26 @@ Object *GameLogic::newObject(const ThingTemplate *tt, Team *team, const ObjectSt
 float GameLogic::getGroundHeight(float x, float y) const
 {
 	return m_terrain ? m_terrain->getGroundHeight(x, y, nullptr) : 0.0f;
+}
+
+float GameLogic::getLayerHeightForDestination(float x, float y, float z) const
+{
+	// lane WALL-2: TheTerrainLogic vslot 0x1C (getLayerHeight) with the layer of RW 0x680A75 (getLayerForDestination) at (x, y, z)
+	if (m_aiWorld && m_aiWorld->mapReady())
+	{
+		const Pathfinder &pf = m_aiWorld->pathfinder();
+		return pf.getLayerHeight(x, y, pf.getLayerAt(x, y, z));
+	}
+	return getGroundHeight(x, y);
+}
+
+float GameLogic::getHighestLayerHeight(float x, float y) const
+{
+	if (m_aiWorld && m_aiWorld->mapReady())
+	{
+		return m_aiWorld->pathfinder().getHighestLayerHeight(x, y);
+	}
+	return getGroundHeight(x, y);
 }
 
 void GameLogic::reportError(const std::string &text)
@@ -906,6 +941,7 @@ void GameLogic::reset()
 	m_objectsById.clear();
 	m_templateInfo.clear();
 	m_crushInfo.clear();
+	m_crushById.clear();
 	m_frame = 0;
 	m_gameDifficulty = 1; // lane CAMP-1H: GameLogic::reset RW 0x62D3EB (+ 0xA4 = 1)
 	m_nextObjectID = 1;

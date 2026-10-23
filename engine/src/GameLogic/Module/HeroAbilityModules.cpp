@@ -1368,7 +1368,12 @@ UpdateSleepTime DualWeaponBehavior::update()
 	{
 		// RW 0x701443(object, range, 0x62) -> RW 0x7006D7 (the AI's target search: INFERENCE, S-1228: the closest visible alive enemy)
 		PartitionFilterFn chain([&](Object &o) { return !o.isEffectivelyDead() && obj->getRelationship(o) == ENEMIES && EmotionModules::canSeeObject(*obj, o, range); });
-		for (const PartitionHit &h : obj->logic().partition().iterateObjectsInRange(*obj->getPosition(), range, FROM_CENTER_2D, { &chain }, ITER_SORTED_NEAR_TO_FAR))
+		// lane UBER-2A, Uber only: the chain accepts only ENEMIES, so the trees of the players this one does not see as enemies are skipped. The hits enter the
+		// sort in the same order (layer by layer); Uber rule change: an object whose owner changed since the frame's partition update is looked for on its old layer
+		PartitionFilterLayers enemyLayers(obj->getTeam() ? obj->getTeam()->enemyLayerMask() : 0u);
+		PartitionFilter *const chainList[] = { &chain, &enemyLayers };
+		const PartitionFilterList filters(chainList, obj->logic().uber() ? 2 : 1);
+		for (const PartitionHit &h : obj->logic().partition().iterateObjectsInRange(*obj->getPosition(), range, FROM_CENTER_2D, filters, ITER_SORTED_NEAR_TO_FAR))
 		{
 			victim = h.object;
 			break;

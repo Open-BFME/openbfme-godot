@@ -186,11 +186,7 @@ StateReturnType AIHuntState::onEnter()
 
 void AIHuntState::onExit(StateExitType)
 {
-	if (m_huntMachine)
-	{
-		m_huntMachine->halt();
-		m_huntMachine.reset();
-	}
+	m_keptMachines.drop(m_huntMachine); // halted, and kept while its update runs (review of #64)
 	if (ObjectWeapons *w = owner().getWeapons())
 	{
 		w->releaseWeaponLock(LOCKED_TEMPORARILY);
@@ -301,7 +297,11 @@ StateReturnType AIHuntState::update()
 	}
 	// (4) RW 0x74820F
 	machine().lock();
-	StateReturnType ret = m_huntMachine->updateStateMachine();
+	StateReturnType ret;
+	{
+		KeptSubMachines<AIStateMachine>::Run run(m_keptMachines); // an attack inside can end this state (onExit below)
+		ret = m_huntMachine->updateStateMachine();
+	}
 	machine().unlock();
 	if (IS_STATE_SLEEP(ret))
 	{

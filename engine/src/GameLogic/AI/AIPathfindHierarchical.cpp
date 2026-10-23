@@ -18,7 +18,7 @@
 //       - the goal record is reset (RW 0x934400); the start's total cost is RW 0x6F1F0D (start, goal); the goal's zone is the effective zone (RW 0x9389A6, the
 //         non-terrain variant) on the ground and wall layers (RW 0x76550F), with the goal's block;
 //       - the loop pops the open heap (RW 0x6F4AF2), closes the cell (RW 0x934594) and is done when the cell's effective zone and block are the goal's; else
-//         the bridge links (RW 0x9389CE) and the block portals (RW 0x937F2D / 0x937F7F) of the block (none exist here: S-161), the closest cell by
+//         the bridge links (RW 0x9389CE) and the block portals (RW 0x937F2D / 0x937F7F) of the block (the bridge links: not ported, S-161 / S-4856; the portals: lane WALL-2), the closest cell by
 //         dy*dy + dx*dx (float, below 999999995904.0f, RW 0xC1C4AC), then the four edges of the block: x = bx*16 (left, step -1), bx*16 + 15 (right, +1), y = by*16
 //         (bottom), by*16 + 15 (top), each edge's 16 cells from its middle outward (8, 9, 7, 10, 6, ... , 15, 1, 16 from the block's corner), a cell
 //         that exists, is neither open nor closed and (a human's search) lies in the logical extent goes to RW 0x6F6454 with a zone list cleared per edge;
@@ -93,6 +93,19 @@ void Pathfinder::makeHierarchicalPathPassable(PathfindCell *last, bool expand)
 		m_hierIndex[(size_t)b] = -1;
 	}
 	m_hierBlocks.clear();
+	// lane WALL-2, RW 0x6F49D5 .. 0x6F4A29: first every portal hop of the chain (a record with a waypoint, info + 0xC, and a parent) goes to the back of the waypoint
+	// vector (+ 0x1C1CC) as {the waypoint's id, the parent's cell}: goal first
+	for (PathfindCell *node = last; node && node->getParentCell(); node = node->getParentCell())
+	{
+		if (const PathfindWaypoint *w = waypointOfSlot(node->getViaPortal()))
+		{
+			PathfindPortalHop hop;
+			hop.waypointId = w->id;
+			hop.cell.x = node->getParentCell()->getXIndex();
+			hop.cell.y = node->getParentCell()->getYIndex();
+			m_portalHops.push_back(hop);
+		}
+	}
 	// the chain from `last` back to the start (RW 0x6E810B: the record's parent); the walk visits it goal first, the list holds it start first
 	int count = 0;
 	for (PathfindCell *node = last; node; node = node->getParentCell())
@@ -232,7 +245,7 @@ bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const Pathfind
 	Coord3D fromPos = *from;
 	clip(&fromPos, &goalPos);
 	m_isTunneling = false;
-	note(pathstops::kHierarchical); // the mineshaft branch (RW 0x77559F) and the bridge and portal branches below are not ported (S-161, S-162)
+	note(pathstops::kHierarchical); // the mineshaft branch (RW 0x77559F) and the bridge branch below are not ported (S-161, S-162); the portal branch is (WALL-2)
 	ICoord2D goalNdx;
 	if (worldToCell(&goalPos, true, &goalNdx))
 	{
@@ -250,7 +263,7 @@ bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const Pathfind
 	{
 		return false;
 	}
-	PathfindCell *start = getClippedCell(LAYER_GROUND, &fromPos); // the start's layer: only the ground exists (S-161)
+	PathfindCell *start = getClippedCell(LAYER_GROUND, &fromPos); // the start's ground grid cell (the corridor's raised branch RW 0x9389CE is not ported: S-4856)
 	if (!start)
 	{
 		return false;
@@ -320,6 +333,9 @@ bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const Pathfind
 			*adjustedTo = goalPos;
 			return true;
 		}
+		// lane WALL-2: the portals of the cell's block (RW 0x6F9089 .. 0x6F9371; the bridge branch before it, RW 0x6F8CC7 .. 0x6F8F7B, is S-161 / S-4856)
+		int portalCells = 0;
+		hierarchicalPortals(c, goal, cz, goalZone, mv, obj, portalCells);
 		const float key = hierarchicalClosestKey((int)goal->getXIndex() - (int)c->getXIndex(), (int)goal->getYIndex() - (int)c->getYIndex());
 		if (bestKey > key) // RW 0x6F93C2: comiss best, key; jbe keeps the first of equal keys
 		{
@@ -367,6 +383,7 @@ bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const Pathfind
 	m_isTunneling = false;
 	if (closest == nullptr || closest == start)
 	{
+		m_portalHops.clear(); // RW: none -> the waypoint vector (+ 0x1C1CC) cleared (lane WALL-2)
 		cleanOpenAndClosedLists();
 		goal->releaseInfo(m_pool);
 		return false;

@@ -79,6 +79,10 @@ private:
 	// lane FACT-C: RW 0x81E60B's capture branch (ActionManager check 0xC, canCaptureBuilding RW 0x82D0A1): the capture button of the first selected object
 	int evaluateCapture(Object *obj, const Coord3D *pos, EvaluateType type);
 	bool canCaptureBuilding(const Object &capturer, const Object &target);
+	// lane SIEGE-1: RW 0x81E7A5 .. 0x81E8C9 (evaluateContextCommand's siege branch) and InGameUI's test RW 0x69D674: a click on a wall a selected ladder / tower
+	// can dock at is the siege deploy (MSG_DO_SPECIAL_POWER_AT_OBJECT with Command_SpecialAbilitySiegeDeploy's power)
+	int evaluateSiegeDeploy(Object *obj, EvaluateType type);
+	bool canSiegeDeploy(const Object &target);
 	void hint(const char *cursor);
 	void viewHomeBase();
 	void selectAllUnits();

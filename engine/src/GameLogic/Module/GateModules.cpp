@@ -515,8 +515,8 @@ std::vector<std::string> GateModules::acceptanceStops()
 		"[S-1940] gates (HUD-5): GateOpenAndCloseBehavior's states, timing, model conditions and open / closed geometry (RW 0x89CC29), MSG_OPEN_GATE / MSG_CLOSE_GATE "
 		"(RW 0x77BF7B / 0x77C037), the gate buttons (RW 0x9410D7 / 0x9436E9) and AIGateUpdate (RW 0x8B4D34) run; not ported: the push-out scan of the units in "
 		"the gate's way (RW 0x89C759), the collide interface's repel (RW 0x89C6F5, RepelCollidingUnits), the object interface call RW 0x68C3E6 at the start of the "
-		"update, the AI notification RW 0x68BE59(9), the pathfinder's gate-flag keeping removal (RW 0x6E861E: the plain removal here), the skirmish AI's gate list "
-		"(TheSkirmishAIManager + 0xA74) and FakePathfindPortalBehaviour",
+		"update, the AI notification RW 0x68BE59(9), the pathfinder's gate-flag keeping removal (RW 0x6E861E: the plain removal here) and the skirmish AI's gate "
+		"list (TheSkirmishAIManager + 0xA74); FakePathfindPortalBehaviour runs since lane WALL-2 (PortalModules.h)",
 		"[S-1941] GateProxyBehavior and the Proxy link of GateOpenAndCloseBehavior (onObjectCreated RW 0x89CB19, Orthanc) are not ported: the messages and buttons find "
 		"only a GateOpenAndCloseBehavior",
 		"[S-1942] the gate sounds (SoundOpeningGateLoop / SoundFinishedOpeningGate / SoundClosingGateLoop / SoundFinishedClosingGate, RW 0x89C261 / 0x89C1A4) are "

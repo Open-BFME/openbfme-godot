@@ -40,6 +40,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class ThingTemplate;
@@ -146,8 +147,17 @@ private:
 	std::map<ObjectID, std::array<std::uint32_t, 19>> m_animationConditions;
 
 	// lane ANIM-1: the objects whose MODEL_CONDITION events have not been flushed (RW Drawable + 0x443), in the order of their first change
-	std::vector<ObjectID> m_dirty;
-	std::set<ObjectID> m_dirtySet;
+	// (a flush or a destroy drops an object by erasing its mark, O(1); its m_dirty entry stays behind, stale, and only entries whose mark is the object's current
+	// one count: a drawable dirtied again after a flush is in the order of that new change, as when the entry was erased)
+	struct DirtyEntry
+	{
+		ObjectID id;
+		std::uint32_t mark;
+	};
+	std::vector<DirtyEntry> m_dirty;
+	std::unordered_map<ObjectID, std::uint32_t> m_dirtyMark; // the dirty objects -> the mark of their live m_dirty entry
+	std::uint32_t m_nextDirtyMark = 0;
+	bool undirty(ObjectID id); ///< false when `id` was not dirty
 
 	GameLogic &m_logic;
 	bool m_observing = false;

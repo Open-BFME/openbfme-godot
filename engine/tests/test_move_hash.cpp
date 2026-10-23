@@ -240,8 +240,8 @@ TEST_CASE("move hash: every persistent pathfinder field is hashed on its own (gr
 	const std::vector<std::pair<const char *, Mut>> mutations = {
 		{ "type clear -> cliff", [](Pathfinder &, PathfindCell &c) { c.setType(PathfindCell::CELL_CLIFF); } },
 		{ "type clear -> water", [](Pathfinder &, PathfindCell &c) { c.setType(PathfindCell::CELL_WATER); } },
-		{ "layer", [](Pathfinder &, PathfindCell &c) { c.setLayer(LAYER_WALL); } },
-		{ "connects-to layer", [](Pathfinder &, PathfindCell &c) { c.setConnectLayer(LAYER_WALL); } },
+		{ "layer", [](Pathfinder &, PathfindCell &c) { c.setLayer(LAYER_WALL_FIRST); } },
+		{ "connects-to layer", [](Pathfinder &, PathfindCell &c) { c.setConnectLayer(LAYER_RAMP); } },
 		{ "bit 17", [](Pathfinder &, PathfindCell &c) { c.setBit17(true); } },
 		{ "impassable to players", [](Pathfinder &, PathfindCell &c) { c.setImpassableToPlayers(true); } },
 		{ "extra pass", [](Pathfinder &, PathfindCell &c) { c.setExtraPass(true); } },

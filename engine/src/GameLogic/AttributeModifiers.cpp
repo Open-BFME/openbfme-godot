@@ -67,6 +67,10 @@ void parseModifier(INI *ini, void *instance, void *, const void *)
 	m.value = value;
 	m.names = names;
 	list->m_modifiers.push_back(m);
+	if (type >= 0 && type < 32)
+	{
+		list->m_typeMask |= 1u << type; // lane HDPERF-1: ModifierListTemplate::mayHave
+	}
 }
 
 // RW 0x804DEA

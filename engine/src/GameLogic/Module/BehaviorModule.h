@@ -35,6 +35,7 @@ class HordeContainInterface;
 class ExitInterface;                 // GameLogic/Module/ExitInterface.h (lane PROD-1)
 class ProductionUpdateInterface;     // GameLogic/Module/ProductionUpdate.h (lane PROD-1)
 class FoundationAIUpdate;            // GameLogic/Module/ConstructionModules.h (lane BUILD-1)
+class Dict;                          // Common/Dict.h
 
 // ZH Include/GameLogic/Module/BodyModule.h BodyDamageType
 enum BodyDamageType
@@ -234,6 +235,10 @@ public:
 	virtual UpgradeMux *getUpgrade() { return nullptr; }
 	// ZH BehaviorModuleInterface::getProjectileUpdateInterface (lane PROJ-2: the client snapshot asks the projectile's look-ahead point and its launch)
 	virtual ProjectileUpdateInterface *getProjectileUpdateInterface() { return nullptr; }
+	// lane WALL-2: RW slot 45 (+ 0xB4) of the +0xC interface, with the map object's properties or null: Object RW 0x694692 (Object::friend_onMapPlacement)
+	// broadcasts it after the map objects are placed (RW 0x62F36B / 0x62F8EA) and after FoundationAIUpdate places a structure (RW 0x858A94). Default nothing
+	// (DynamicPortalBehaviour's RW 0x864341 generates its portals there)
+	virtual void onMapPlacement(const Dict *properties) { (void)properties; }
 
 protected:
 	// lane SAVE-4b: BehaviorModule::xfer, version (1, 1) (RW 0x8CD4AA, the base xfer every UpdateModule / UpgradeModule xfer calls; inference: it is

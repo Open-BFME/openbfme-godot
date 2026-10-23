@@ -99,6 +99,10 @@ bool GameWorld::buildSave(const Dictionary &options, SaveGameFile &f, UnsignedIn
 	m_game->drainFrames(); // every batch already taken runs; the recording then holds the frames below F and the hash of F
 	frame = m_game->logic().getFrame();
 	hash = m_game->logic().computeStateHash();
+	if (!m_localWriter->hasHashOf(frame))
+	{
+		m_localWriter->recordHash(frame, hash); // lane UBER-2C: an Uber recording holds every 5th frame's hash; the saved frame's goes in now
+	}
 	if (!m_localWriter->logUpTo(frame, hash, f.log, &error))
 	{
 		return failed(error);

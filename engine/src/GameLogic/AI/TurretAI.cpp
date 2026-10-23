@@ -177,6 +177,7 @@ public:
 		x.xferVersion(v);
 		x.xferUnsignedInt(&m_nextIdleScan);
 	}
+	bool hasPersistentCrc() const override { return true; } // lane UBER-2C
 
 private:
 	unsigned m_nextIdleScan = 0; // + 0x20
@@ -219,6 +220,7 @@ public:
 		x.xferVersion(v);
 		x.xferReal(&m_desiredAngle);
 	}
+	bool hasPersistentCrc() const override { return true; } // lane UBER-2C
 
 private:
 	float m_desiredAngle = 0.0f; // + 0x20
@@ -277,6 +279,7 @@ public:
 		x.xferVersion(v);
 		x.xferUnsignedInt(&m_timestamp);
 	}
+	bool hasPersistentCrc() const override { return true; } // lane UBER-2C
 
 private:
 	unsigned m_timestamp = 0; // + 0x20

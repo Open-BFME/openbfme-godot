@@ -642,16 +642,16 @@ void SquishCollide::onCollide(Object *other, const Coord3D *, const Coord3D *)
 // ZH Object::onCollide (Object.cpp): every collide module in module order; stop once the object is destroyed
 void ObjectCollide::onCollide(Object &self, Object &other)
 {
-	for (const std::unique_ptr<BehaviorModule> &m : self.modules())
+	// lane UBER-2B: the object's collide modules in module order (Object::collideModules), not a getCollide call per module and pair: the same calls in the
+	// same order, the destroyed test still before each of them (the other modules had nothing to call)
+	const std::vector<CollideModuleInterface *> &collides = self.collideModules();
+	for (size_t i = 0; i < collides.size(); ++i)
 	{
 		if (self.isDestroyed())
 		{
 			return;
 		}
-		if (CollideModuleInterface *c = m->getCollide())
-		{
-			c->onCollide(&other, nullptr, nullptr);
-		}
+		collides[i]->onCollide(&other, nullptr, nullptr);
 	}
 }
 
@@ -730,4 +730,42 @@ void HordeMemberCollide::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);
 	xferBehaviorModule(x);
+}
+
+// lane UBER-2B: the facts behind the first tests of SquishCollide::onCollide (RW 0x8BFBAE) and HordeMemberCollide::onCollide (RW 0x8C0518) above
+ObjectCollide::PairFacts ObjectCollide::pairFacts(Object &obj)
+{
+	PairFacts f;
+	f.container = obj.getContainedBy();
+	f.known = obj.collideModulesKnown();
+	f.deadOrHorde = obj.isEffectivelyDead() || isHorde(obj);
+	bool physicsDisabled = false;
+	if (AIUpdateInterface *ai = obj.getAIUpdateInterface())
+	{
+		physicsDisabled = ai->locomotorHost().physicsMotionDisabled();
+	}
+	f.squishInert = obj.isEffectivelyDead() || physicsDisabled;
+	f.crusher = ObjectCrush::crusherLevel(obj);
+	f.crushable = ObjectCrush::crushableLevel(obj);
+	if (f.container)
+	{
+		const HordeAIUpdate *h = hordeAiOf(const_cast<Object *>(f.container));
+		f.meleeHorde = h && h->meleeTargetId() != 0;
+	}
+	return f;
+}
+
+bool ObjectCollide::pairIsInert(const PairFacts &a, const PairFacts &b)
+{
+	if (!a.known || !b.known)
+	{
+		return false;
+	}
+	// SquishCollide of self `s` against `o` returns before it acts when o is dead or a horde, s is dead or stunned, or o's crusher level is not above s's
+	// crushable level
+	const auto squishInert = [](const PairFacts &s, const PairFacts &o) { return o.deadOrHorde || s.squishInert || !(o.crusher > s.crushable); };
+	// HordeMemberCollide of self `s` against `o` returns when s is not contained or its horde has no melee target. Against a soldier of the SAME container it
+	// cannot act either: `o` is neither the target nor in it, and the allied-horde branch asks the same horde the isInCurrentMelee question that just failed
+	const auto memberInert = [](const PairFacts &s, const PairFacts &o) { return s.container == nullptr || !s.meleeHorde || o.container == s.container; };
+	return squishInert(a, b) && squishInert(b, a) && memberInert(a, b) && memberInert(b, a);
 }

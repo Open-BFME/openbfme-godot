@@ -657,6 +657,11 @@ private:
 	void refresh_shroud(bool force);
 	Ref<godot::ImageTexture> m_shroudTexture;
 	bool m_shroudDrawn = true;
+	// lane BIGBATTLE-1: the shroud parameters the terrain's materials were last given (refresh_shroud visits them only when one changes)
+	bool m_shroudParamsSet = false;
+	bool m_shroudParamEnabled = false;
+	Vector2 m_shroudParamOrigin, m_shroudParamExtent;
+	Color m_shroudParamColor;
 	void refresh_streaks(bool record = true); ///< RENDER-1: W3DStreakDraw trails of the live drawables (S-391)
 	void remove_view(uint32_t drawableId);
 

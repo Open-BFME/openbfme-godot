@@ -219,6 +219,7 @@ Path *Pathfinder::getMoveAwayFromPath(const PathfindObject *obj, const PathfindL
 				break;
 			}
 		}
+		checkChangeLayers(c, obj); // RW 0x6FB601 (lane WALL-2)
 		examineNeighboringCells(c, nullptr, loco, isHuman, center, radius, startNdx, obj);
 	}
 	m_isTunneling = false;

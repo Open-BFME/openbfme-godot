@@ -264,7 +264,7 @@ StateReturnType AIFollowPathAsTeamState::update()
 				m_goal.z = SimMath::mulf32(SimMath::addf32(pos.z, m_goal.z), 0.5f);
 				m_steppedBack = true;
 			}
-			a.world().pathfinder().updateGoal(a.adapter(), &m_goal, LAYER_GROUND); // RW 0x68B3AB
+			a.world().pathfinder().updateGoal(a.adapter(), &m_goal, a.world().pathfinder().getLayerAt(m_goal.x, m_goal.y)); // RW 0x68B3AB (lane WALL-1: the goal's layer)
 		}
 	}
 	startMove(adjusts); // the internal move's computePath (vslot 0x44)

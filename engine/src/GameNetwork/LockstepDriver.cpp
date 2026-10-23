@@ -180,7 +180,7 @@ void LockstepDriver::completed(const FrameCompletion &c)
 		{
 			m_writer->recordHash(c.frame, c.hash); // the result of batch N under N + 1, exactly once
 		}
-		else
+		else if (!c.hashSkipped) // lane UBER-2C: an Uber recording keeps every kUberRecordedHashEvery-th frame's hash
 		{
 			m_errors.push_back("completion of frame " + std::to_string(c.frame) + " has no hash for the replay");
 		}

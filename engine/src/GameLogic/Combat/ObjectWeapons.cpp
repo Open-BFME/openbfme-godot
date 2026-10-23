@@ -28,6 +28,7 @@
 #include "GameLogic/Weapon.h"
 #include "GameLogic/WeaponNugget.h"
 #include "GameLogic/WeaponSet.h"
+#include "GameLogic/Module/SiegeModules.h"
 
 #include <cstring>
 #include <stdexcept>
@@ -161,8 +162,9 @@ private:
 
 const char *meleeReachStopLine()
 {
-	return "[S-3806] melee reach (RW 0x6ED843, lane PLAY-4): the footprint test of a unit target is ported; a SIEGE_TOWER target outside the boxes takes RW's ramp branch "
-		   "(RW 0x6EDB6F .. 0x6EDC74: the tower's ramp point and the unit's radius), not ported (false); a STRUCTURE target keeps the edge distance (S-320)";
+	return "[S-3806] melee reach (RW 0x6ED843, lane PLAY-4): the footprint test of a unit target is ported; a SIEGE_TOWER target outside the boxes takes RW's top branch "
+		   "(RW 0x6EDB6F .. 0x6EDC74, lane SIEGE-1: a deployed tower's portal top attack point within 20 in height and the radii in x and y; the portal is WALL-2's, "
+		   "S-4940; INFERENCE: the attacker's Object + 0xB8 is its bounding circle radius); a STRUCTURE target keeps the edge distance (S-320)";
 }
 
 class ObjectWeapons::RangeHost : public WeaponRangeHost
@@ -203,8 +205,8 @@ public:
 	//   * a STRUCTURE target (RW 0x6ED8D5): INFERENCE (S-320): the edge-to-edge distance within the weapon's reach (set by the caller) stands for the ring of cells
 	//     around the unit's footprint that RW walks for the structure's obstacle id (RW 0x6ED937 .. 0x6EDA52) and its WALK_ON_TOP_OF_WALL tail (RW 0x6EDA58);
 	//   * any other target (lane PLAY-4 r1): the footprint boxes (Pathfinder::meleeReachCells, RW 0x6EDB0C .. 0x6EDB69); a CAN_CLIMB_WALLS target on a wall
-	//     (RW 0x6EDAD4 -> 0x696057) cannot occur (only the ground layer exists, S-161); a SIEGE_TOWER target outside the boxes takes the ramp branch
-	//     (RW 0x6EDB6F .. 0x6EDC74), not ported (stop S-3806: false).
+	//     (RW 0x6EDAD4 -> 0x696057) is not ported (wall climbing is S-084: no unit climbs); a SIEGE_TOWER target outside the boxes takes the top branch
+	//     (RW 0x6EDB6F .. 0x6EDC74, lane SIEGE-1: siegeTowerTopReach; stop S-3806 for its inference).
 	bool meleeReach(const RangeSubject &source, const Coord3D &sourcePos, const RangeSubject &victim) override
 	{
 		if (victim.isStructure || !victim.object)
@@ -240,7 +242,10 @@ public:
 		static const int siegeTower = CombatNames::kindOf("SIEGE_TOWER");
 		if (victim.object->isKindOf((unsigned)siegeTower))
 		{
+			// lane SIEGE-1: RW 0x6EDB6F .. 0x6EDC74, a deployed ladder / tower is reached at its portal's top attack point (GameLogic/Module/SiegeModules.h).
+			// INFERENCE (S-3806): the attacker's Object + 0xB8 is its bounding circle radius
 			self.logic().noteStop(meleeReachStopLine());
+			return siegeTowerTopReach(*const_cast<Object *>(victim.object), sourcePos, source.boundingCircleRadius);
 		}
 		return false;
 	}
