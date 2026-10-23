@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "Common/GameCommon.h"
 #include "GameLogic/AI/AIAttack.h"
 #include <array>
 #include "GameLogic/AI/AIMove.h"
@@ -38,6 +39,7 @@
 #include <vector>
 
 class AIWorld;
+class AttackPriorityInfo;
 class ModuleFactory;
 class TurretAI;
 class Object;
@@ -113,6 +115,9 @@ public:
 	void aiFollowPath(const std::vector<Coord3D> &path, Object *ignoreObject, CommandSourceType source, bool exitProduction);
 	void aiFollowPathAppend(const Coord3D &pos, CommandSourceType source);
 	void aiBusy(CommandSourceType source);
+	// lane FLANK-1: RW 0x852E2A(frames, source) -> aiDoCommand command 0x31 -> RW 0x66498A with frames > 0: the goal is saved (RW 0x741675) and the busy state 0x2A runs
+	// as the machine's temporary state for `frames` (RW 0x74168E); frames 0 is aiBusy
+	void aiBusyFor(unsigned frames, CommandSourceType source);
 	// ---- lane COMBAT-1: attack commands, the victim, the mood, death ----
 	// B1 aiAttackObject (AIUpdate.cpp privateAttackObject): clears the machine and enters AI_ATTACK_OBJECT with the victim as the goal; false when this object cannot attack it
 	// `maxShotsToFire`: the command's shot limit (AICommandParms m_intValue, RW 0x66C536), set on the current weapon once the state is entered
@@ -150,22 +155,27 @@ public:
 	// the AI module's fields the mood scan reads (the module data is raw: S-326)
 	struct CombatSettings
 	{
-		unsigned moodAttackCheckRate = 0;  ///< frames (INI MoodAttackCheckRate, ms; 0 = none)
+		unsigned moodAttackCheckRate = 2u * (unsigned)LOGICFRAMES_PER_SECOND; ///< + 0x18 frames (INI MoodAttackCheckRate, ms); lane TARGET-1: the module data constructor RW 0x66E8FF sets 2 seconds
 		unsigned autoAcquire = 0;          ///< ZH AutoAcquireEnemiesWhenIdle flags: 1 Yes, 2 STEALTHED, 4 No, 8 NOTWHILEATTACKING, 16 ATTACK_BUILDINGS
 		float stopChaseDistance = 0.0f;
 		bool standGround = false;
 		bool canAttackWhileContained = false; ///< lane IDLE-1: CanAttackWhileContained (RW field table 0xC0F530, + 0x25, parseBool RW 0x42E558)
-		std::string attackPriority;
+		std::string attackPriority = "DefaultAttackPriority"; ///< lane TARGET-1: + 0x44, the module data constructor RW 0x66E8FF
+		float holdGroundCloseRangeDistance = 0.0f; ///< lane TARGET-1: HoldGroundCloseRangeDistance (RW field table 0xC0F530, + 0x28, parseReal)
 		std::vector<std::string> specialContactPoints; ///< lane BUILD-3: SpecialContactPoints (RW field table 0xC0F640, + 0x58, RW 0x42E59E: every token appended)
 	};
 	const CombatSettings &combatSettings() const { return m_combat; }
 	// lane BUILD-3, RW 0x667C76 AIUpdateInterface::findNearestLabeledContactPointOnTarget(target, out, callerPos, preferred): the SpecialContactPoints labels in order;
 	// the first for which the target has a contact point (Object::getWorldspaceBestContactPoint RW 0x690BD2, mode 0) gives `out`; false when none has one
 	bool findNearestLabeledContactPointOnTarget(const Object &target, Coord3D &out, const Coord3D &callerPos, bool preferred) const;
-	// ZH getNextMoodTarget: the nearest attackable enemy within the vision range, null when this unit does not look for targets (no weapon, no AutoAcquire flag, a horde member)
-	Object *nextMoodTarget();
-	// the idle scan: due every MoodAttackCheckRate frames; returns the frames until the next check (0 when this unit never scans)
-	unsigned moodCheckInterval() const;
+	// lane TARGET-1: RotWK's getNextMoodTarget(calledByAI, calledDuringIdle) (RW 0x66844A): the target the unit's mood suggests (AI::findClosestEnemy with
+	// the mood's qualifiers and attack priority info), null when it looks for none now; calledByAI keeps the cadence (AI + 0x21C, MoodAttackCheckRate)
+	Object *getNextMoodTarget(bool calledByAI, bool calledDuringIdle);
+	// AI + 0x70: the attack priority info (AttackPriority.h); null for an empty AttackPriority name
+	const AttackPriorityInfo *attackInfo();
+	// RW 0x662DD9 / 0x662DB3 (see AIUpdateCombat.cpp)
+	void resetNextMoodCheckTime();
+	void wakeUpAndAttemptToTarget();
 	// ---- lane SCRIPT-3: the attitude (RW AI + 0x218, 0 at creation, RW 0x66EF64): -3 (RotWK's mood 0x2000), -2 sleep, -1 passive, 0 normal, 1 alert,
 	// 2 aggressive (the scripts' AI_MOOD) ----
 	// RW 0x66E12A: stored; -3 also drops a current victim (the machine's goal object cleared, vslot 0x38(0), and aiIdle(CMD_FROM_AI), RW 0x5E821A)
@@ -180,9 +190,15 @@ public:
 	int guardTargetType() const { return m_guardTargetType; }          // AI vslot 123
 	const Coord3D &guardLocation() const { return m_guardLocation; }   // AI vslot 118
 	unsigned autoAcquireFlags() const { return m_combat.autoAcquire; }
-	// RW 0x662E01 (AI + 0x21C; ZH AIUpdateInterface::setNextMoodCheckTime): the frame of the next mood check (lane BACKLOG6: the port reads it for the attack-move scan only, S-1106)
-	void setNextMoodCheckTime(unsigned frame) { m_nextMoodCheck = frame; }
+	// RW 0x662E01 (AI + 0x21C; ZH AIUpdateInterface::setNextMoodCheckTime): the frame of the next mood check, without the random offset (+ 0x3BC cleared)
+	void setNextMoodCheckTime(unsigned frame)
+	{
+		m_nextMoodCheck = frame;
+		m_randomlyOffsetMoodCheck = false;
+	}
 	unsigned nextMoodCheckTime() const { return m_nextMoodCheck; }
+	bool randomlyOffsetMoodCheck() const { return m_randomlyOffsetMoodCheck; } ///< lane TARGET-1: AI + 0x3BC
+	ObjectID orderedMeleeTarget() const { return m_orderedMeleeTarget; }      ///< lane TARGET-1: AI + 0x1A4
 	// lane SCRIPT-3: AI commands 6 / 7 / 0x32 / 0x33 (RW 0x770FA8 / 0x771072 / 0x77100D / 0x7710D7): the waypoint path states from `waypointId`
 	// (AIWaypointPath.cpp); false when nothing changed
 	bool aiFollowWaypointPath(int waypointId, CommandSourceType source, bool asTeam, bool exact);
@@ -244,6 +260,26 @@ public:
 	void aiExit(Object *container, CommandSourceType source);
 	// AI command 0x3E -> RW 0x664767: AIHordeExitState (53)
 	void aiHordeExit(Object *container, CommandSourceType source);
+
+	// ---- lane LUMBER1: the supply commands (GameLogic/AI/AIHarvest.h, GameLogic/AI/AIDock.h) ----
+	// RW 0x771655 aiHarvest (AI command 0x19) -> privateHarvest RW 0x664657: a mobile object goes to AI_HARVEST (47) with the position as its goal
+	void aiHarvest(const Coord3D &pos, CommandSourceType source);
+	// RW 0x66C609 aiDock (AI command 0xD) -> privateDock: AI_DOCK (14) with the dock as the goal object
+	void aiDock(Object *dock, CommandSourceType source);
+	// AI vslots 0x178 / 0x17C (null but for WorkerAIUpdate, RW 0x82C61B / 0x8AA349) and 0x190 (RW 0x8AA317)
+	virtual class SupplyTruckAIInterface *getSupplyTruckAIInterface() { return nullptr; }
+	virtual const class SupplyTruckAIInterface *getSupplyTruckAIInterface() const { return nullptr; }
+	virtual class WorkerAIInterface *getWorkerAIInterface() { return nullptr; }
+	// RW 0x662D70 getAIStateType: the temporary state's id, else the current state's (AI_NO_STATE without either)
+	unsigned aiStateType() const
+	{
+		if (!m_machine)
+		{
+			return (unsigned)AI_NO_STATE;
+		}
+		const unsigned t = m_machine->temporaryStateId();
+		return t != (unsigned)AI_NO_STATE ? t : m_machine->currentStateId();
+	}
 	// RW 0x855830 (the update interface's slot 1): the AI runs while the object is DISABLED_HELD (3): a garrisoned rider still fights
 	DisabledMaskType getDisabledTypesToProcess() const override { return (DisabledMaskType)(1u << 3); }
 
@@ -365,6 +401,8 @@ public:
 	// ---- lane PHYS-1 (AIUpdateAllies.cpp) ----
 	bool attackRangeFrom(const Coord3D &from, PathfindObjectID victim, const Coord3D &victimPos, float extra) override;
 	bool attackRangeFromTo(const Coord3D &from, PathfindObjectID victim, const Coord3D &victimPos, float extra) override;
+	float attackDistanceTo(PathfindObjectID victim, const Coord3D &victimPos) override; // lane ATTACKPATH-1: RW 0x6CA974
+	bool currentWeaponIsMelee() override;                                               // lane ATTACKPATH-1: RW 0x441B59
 	const PathfindObject *findPathfindObject(PathfindObjectID id) override;
 	void clearAlliesFromPath(Path &path) override;
 	void noteLogicStop(const std::string &line) override;
@@ -395,6 +433,7 @@ public:
 	// lane AUDIO-3 r2: aiDoCommand's entry: the gate, then (passed) the module's own reaction before the command runs (commandAccepted). Every ai* command calls this
 	bool acceptCommand(CommandSourceType source, int command, Object *target = nullptr)
 	{
+		commandArriving(); // lane LUMBER1: what a subclass's aiDoCommand does before the gate (WorkerAIUpdate RW 0x8AE798)
 		if (!allowedToRespondToCommand(source, command))
 		{
 			return false;
@@ -413,6 +452,8 @@ public:
 	// a command passed the gate and is about to run (RotWK DozerAIUpdate::aiDoCommand RW 0x88E44F cancels its task on a player command; HordeAIUpdate::aiDoCommand
 	// RW 0x89E169 makes its members busy, lane MOVE-2); `target` is the command's object (attack commands 0xB / 0xC), else null; default nothing
 	virtual void commandAccepted(CommandSourceType source, int command, Object *target) { (void)source; (void)command; (void)target; }
+	// lane LUMBER1: a command arrives, before aiDoCommand's gate (WorkerAIUpdate RW 0x8AE798 clears its harvest model conditions there); default nothing
+	virtual void commandArriving() {}
 	void setPreventPlayerCommands(bool on) { m_preventPlayerCommands = on; } // RW + 0x3C5 (the nugget start / stop with PreventPlayerCommands)
 	bool preventPlayerCommands() const { return m_preventPlayerCommands; }
 	// RW + 0x3C4: the panic cower's short cower (MinCowerTime / 4); its writer is not identified (S-1027), only state 21's exit clears it
@@ -467,6 +508,10 @@ protected:
 	// the state machine of the class (ZH makeStateMachine): the base states; a subclass adds its own
 	virtual std::unique_ptr<AIStateMachine> makeStateMachine();
 
+	// lane LUMBER1: the command bodies WorkerAIUpdate extends (RW 0x8ACE75 / 0x8ACE4A)
+	virtual void privateHarvest(const Coord3D &pos, CommandSourceType source);
+	virtual void privateDock(Object *dock, CommandSourceType source);
+
 private:
 	class ObjectLocomotorHost;
 	void privateMoveToPosition(const Coord3D &pos, CommandSourceType source);
@@ -510,7 +555,11 @@ private:
 	int m_guardTargetType = 0;                        ///< RW AI + 0x54
 	Coord3D m_guardLocation{ 0.0f, 0.0f, 0.0f };      ///< RW AI + 0x58
 	float m_guardAngle = 0.0f;                        ///< RW AI + 0x1A0
-	unsigned m_nextMoodCheck = 0;
+	unsigned m_nextMoodCheck = 0;                     ///< RW AI + 0x21C
+	bool m_randomlyOffsetMoodCheck = false;           ///< lane TARGET-1: RW AI + 0x3BC (0 from the constructor RW 0x66ECFE)
+	ObjectID m_orderedMeleeTarget = INVALID_ID;       ///< lane TARGET-1: RW AI + 0x1A4 (RW 0x66BD33 sets it, the mood scan reads and clears it)
+	const AttackPriorityInfo *m_attackInfo = nullptr; ///< lane TARGET-1: RW AI + 0x70 (derived: the module data's name through the script engine's table)
+	unsigned m_attackInfoGeneration = 0xFFFFFFFFu;    ///< the table generation m_attackInfo was looked up in (a cache key, not state)
 	int m_attitude = 0; ///< lane SCRIPT-3: RW + 0x218
 	std::map<std::string, unsigned> m_unportedCommands;
 	// RW obj+0x198 / +0x1A6: the movers' "pending position"

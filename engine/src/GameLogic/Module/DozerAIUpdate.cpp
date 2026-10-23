@@ -2,6 +2,7 @@
 // See GameLogic/Module/DozerAIUpdate.h for the sources of every rule.
 
 #include "GameLogic/Module/DozerAIUpdate.h"
+#include "GameLogic/Module/WorkerAIUpdate.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 
 #include "Common/Audio/AudioRequests.h"
@@ -173,15 +174,7 @@ void DozerAIUpdate::registerClass(ModuleFactory &modules)
 
 void DozerAIUpdate::registerWorkerClass(ModuleFactory &modules)
 {
-	modules.bindModuleProc("WorkerAIUpdate", MODULETYPE_BEHAVIOR, [](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &info) -> std::unique_ptr<Module> {
-		if (!thing->asObject() || !thing->asObject()->logic().aiWorld())
-		{
-			return makeUnportedModule(thing, data, info.name, info.type, info.interfaceMask);
-		}
-		auto dozer = std::make_unique<DozerAIUpdate>(thing, data);
-		dozer->m_isWorker = true;
-		return dozer;
-	});
+	WorkerAIUpdate::registerClass(modules); // lane LUMBER1: the dozer half here, the supply half in WorkerAIUpdate
 }
 
 DozerAIUpdate::~DozerAIUpdate()
@@ -614,7 +607,7 @@ void DozerAIUpdate::commandAccepted(CommandSourceType source, int command, Objec
 	{
 		primarySetState(PRIMARY_IDLE);
 	}
-	if (source != CMD_FROM_PLAYER || command == 0x13 || command == 0x14 || command == 0x34)
+	if (source != CMD_FROM_PLAYER || command == 0x13 || command == 0x14 || (command == 0x34 && !m_isWorker)) // lane LUMBER1: RW 0x8AE798 has no 0x34 case
 	{
 		return;
 	}
@@ -1116,23 +1109,28 @@ UpdateSleepTime DozerAIUpdate::update()
 		primarySetState(PRIMARY_IDLE); // RW 0x88C1C1: the machine made and its default state entered
 	}
 	AIUpdateInterface::update(); // RW 0x66E58F
-	Object *self = getObject();
-	if (!self->isEffectivelyDead())
+	if (!getObject()->isEffectivelyDead())
 	{
-		if (m_currentTask == DOZER_TASK_REPAIR && !canRepair(*self, self->logic().findObjectByID(getTaskTarget(DOZER_TASK_REPAIR))))
-		{
-			cancelTaskInternal(DOZER_TASK_REPAIR); // RW 0x88CB6D (the ActionManager's test RW 0x82D7F2: S-1282)
-		}
-		// the primary machine (ZH StateMachine::updateStateMachine)
-		const int before = m_primaryState;
-		int status = before == PRIMARY_IDLE ? primaryUpdateIdle() : actionUpdate(before - PRIMARY_BUILD);
-		if (m_primaryState != before)
-		{
-			status = STATE_CONTINUE;
-		}
-		primaryCheckTransitions(status);
+		dozerMachineStep();
 	}
 	return UPDATE_SLEEP_NONE;
+}
+
+void DozerAIUpdate::dozerMachineStep()
+{
+	Object *self = getObject();
+	if (m_currentTask == DOZER_TASK_REPAIR && !canRepair(*self, self->logic().findObjectByID(getTaskTarget(DOZER_TASK_REPAIR))))
+	{
+		cancelTaskInternal(DOZER_TASK_REPAIR); // RW 0x88CB6D (the ActionManager's test RW 0x82D7F2: S-1282)
+	}
+	// the primary machine (ZH StateMachine::updateStateMachine)
+	const int before = m_primaryState;
+	int status = before == PRIMARY_IDLE ? primaryUpdateIdle() : actionUpdate(before - PRIMARY_BUILD);
+	if (m_primaryState != before)
+	{
+		status = STATE_CONTINUE;
+	}
+	primaryCheckTransitions(status);
 }
 
 void DozerAIUpdate::crc(StateHasher &h) const

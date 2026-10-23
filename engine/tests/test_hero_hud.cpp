@@ -4,6 +4,8 @@
 
 #include "HudTestUtil.h"
 
+#include "Common/BuildAssistant.h"
+#include "Common/CommandPoints.h"
 #include "Common/PlayerHeroList.h"
 #include "GameLogic/CreateAHeroSystem.h"
 #include "Common/SpecialPower.h"
@@ -13,6 +15,8 @@
 #include "GameLogic/Module/SpecialAbilityModules.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/ExperienceTracker.h"
+#include "GameLogic/Damage.h"
+#include "Common/Upgrade.h"
 
 using namespace hudtest;
 
@@ -23,7 +27,7 @@ struct HeroHudRig
 	Rig rig;
 	RecordingShellServices services;
 	std::unique_ptr<InGameHud> hud;
-	explicit HeroHudRig(SharedWorld &s) : rig(s)
+	explicit HeroHudRig(SharedWorld &s, const char *faction = "FactionMen") : rig(s, "map mp fall back 4p", faction)
 	{
 		InGameHud::Config cfg{ *rig.game, *s.world, *s.mount->fs, services, rig.view, s.mouse, s.meta, nullptr };
 		hud = std::make_unique<InGameHud>(cfg);
@@ -274,7 +278,34 @@ TEST_CASE("hero hud: the fortress's REVIVE buttons show the hero records and a p
 	MESSAGE("REVIVE buttons: " << revive.size() << ", Aragorn's image " << aragornButton->image << " cost " << aragornButton->cost);
 	// a press recruits Aragorn: the button shows the progress, then the hero comes
 	REQUIRE(h.hud->controlBar().pressButton(aragornButton->slot, aragornButton->inPalantir));
-	h.frames(30);
+	// Inspect every render refresh across the production-start tick, including
+	// exactly zero elapsed logic frames. HIDE_WHILE_DISABLED must not remove it.
+	bool sawZeroProgress = false;
+	for (int frame = 0; frame < 30; ++frame)
+	{
+		h.frames(1);
+		h.hud->controlBar().update();
+		const auto visible = h.buttons(GUI_COMMAND_REVIVE);
+		CHECK(visible.size() == heroes);
+		bool found = false;
+		for (const auto &button : visible)
+		{
+			if (button.reviveIndex != aragornIndex) continue;
+			found = true;
+			if (list.at(aragornIndex)->startFrame != -1)
+			{
+				CHECK(button.state == ButtonState::NotReady);
+				CHECK(button.queued == 1);
+				if (list.at(aragornIndex)->startFrame == (int)h.rig.logic().getFrame())
+				{
+					sawZeroProgress = true;
+					CHECK(button.timer == 0.0f);
+				}
+			}
+		}
+		CHECK(found);
+	}
+	CHECK(sawZeroProgress);
 	revive = h.buttons(GUI_COMMAND_REVIVE);
 	const ControlBarButton *pending = nullptr;
 	for (const ControlBarButton &b : revive)
@@ -441,4 +472,221 @@ TEST_CASE("hero hud: custom hero recruitment uses the selected Shield Maiden ima
 			sawModHero = true;
 		}
 	CHECK(sawModHero);
+}
+
+TEST_CASE("hero hud: a recruited custom hero can be revived at the fortress")
+{
+	if (!haveWorld("custom hero recruitment image")) return;
+	SharedWorld &s = shared();
+	HeroHudRig h(s);
+	const auto context = s.world->enterContext();
+	REQUIRE(TheCreateAHeroSystem);
+	CreateAHeroHero hero;
+	bool found = false;
+	for (size_t c = 0; c < TheCreateAHeroSystem->classes().size(); ++c)
+		for (size_t sub = 0; sub < TheCreateAHeroSystem->classes()[c].subClasses.size(); ++sub)
+			if (TheCreateAHeroSystem->classes()[c].subClasses[sub].buttonImage == "HICAHShieldMaiden")
+			{
+				hero.classIndex = c;
+				hero.subClassIndex = sub;
+				found = true;
+			}
+	REQUIRE(found);
+	hero.name = u"Haley";
+	hero.uniqueID = "hud-shield-maiden";
+	h.rig.game->logic().createAHeroes().assign(*h.rig.local, hero);
+	h.rig.game->logic().createAHeroes().startGame();
+	const Coord3D c = h.rig.freeSpot(2800, 1400, 300.0f);
+	Object *keep = h.rig.make("MenFortressCitadel", c.x, c.y);
+	REQUIRE(keep);
+	h.frames(20);
+	h.hud->setWindowSize(1024, 768);
+	h.rig.view.setScreen(1024, 768);
+	h.select(keep);
+	bool pushed = false;
+	for (const ControlBarButton &button : h.buttons(GUI_COMMAND_PUSH_VISIBLE_COMMAND_RANGE))
+		if (!pushed && button.image == "UCCommon_GoodHeroes") pushed = h.hud->controlBar().pressButton(button.slot, button.inPalantir);
+	REQUIRE(pushed);
+	h.frames(5);
+	bool sawHero = false;
+	for (const ControlBarButton &button : h.buttons(GUI_COMMAND_REVIVE))
+	{
+		const auto &records = h.rig.local->heroes().records();
+		if (button.reviveIndex >= 0 && records.at(button.reviveIndex).templateName == "CreateAHero")
+		{
+			sawHero = true;
+		}
+	}
+	CHECK(sawHero);
+	// Recruit through the actual fortress HUD, then kill and revive the same
+	// custom hero. Creation consumes the purchase upgrade in skirmish/LAN.
+	h.rig.local->getMoney()->deposit(100000);
+	auto customButton = [&]() {
+		for (const auto &button : h.buttons(GUI_COMMAND_REVIVE))
+			if (const auto *record = h.rig.local->heroes().at(button.reviveIndex))
+				if (record->templateName == "CreateAHero") return button;
+		return ControlBarButton{};
+	};
+	auto liveHero = [&]() -> Object * {
+		for (Object *o = h.rig.logic().getFirstObject(); o; o = o->getNextObject())
+			if (o->isKindOfName("CREATE_A_HERO") && !o->isEffectivelyDead() && o->getControllingPlayer() == h.rig.local) return o;
+		return nullptr;
+	};
+	auto button = customButton();
+	REQUIRE(button.button);
+	REQUIRE(h.hud->controlBar().pressButton(button.slot, button.inPalantir));
+	for (int i = 0; i < 4000 && !liveHero(); ++i) h.frames(1);
+	Object *first = liveHero();
+	REQUIRE(first);
+	const ObjectID firstID = first->getID();
+	const auto *purchaseUpgrade = TheUpgradeCenter->findUpgrade(TheCreateAHeroSystem->canBuildUpgradeName);
+	REQUIRE(purchaseUpgrade);
+	CHECK_FALSE(h.rig.local->hasUpgradeComplete(purchaseUpgrade));
+	h.frames(300); // finish the spawn animation before death
+	DamageInfo damage;
+	damage.m_input.m_damageType = DAMAGE_UNRESISTABLE;
+	damage.m_input.m_amount = 100000.0f;
+	damage.m_input.m_kill = true;
+	first->attemptDamage(damage);
+	REQUIRE(first->isEffectivelyDead());
+	h.frames(20);
+	button = customButton();
+	REQUIRE_MESSAGE(button.button, "dead custom hero must remain available at the fortress");
+	CHECK(button.state == ButtonState::Enabled);
+	CHECK(h.rig.local->heroes().at(button.reviveIndex)->dead);
+	REQUIRE(h.hud->controlBar().pressButton(button.slot, button.inPalantir));
+	for (int i = 0; i < 4000 && !liveHero(); ++i) h.frames(1);
+	REQUIRE(liveHero());
+	CHECK(liveHero()->getID() != firstID);
+	CHECK_FALSE(h.rig.local->hasUpgradeComplete(purchaseUpgrade));
+}
+
+// lane HEROBUY-1 (owner report 2026-10-22): a Goblin player with three heroes out still sees Shelob's button in the fortress's hero menu. Each Command_Generic
+// ReviveSlotN is HIDE_WHILE_DISABLED (commandbutton.ini), so a living hero's slot hides; the others stay (RW 0x943D6F: one REVIVE button per BuildableHeroesMP entry)
+TEST_CASE("hero hud: a Goblin fortress with three heroes out still offers Shelob")
+{
+	if (!haveWorld("goblin heroes"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	HeroHudRig h(s, "FactionWild");
+	h.rig.local->getMoney()->deposit(100000);
+	const Coord3D c = h.rig.freeSpot(2800, 1400, 300.0f);
+	Object *keep = h.rig.make("WildFortressCitadel", c.x, c.y);
+	REQUIRE(keep != nullptr);
+	h.rig.lookAt({ c.x, c.y, 0 });
+	h.frames(20);
+	h.hud->setWindowSize(1024, 768);
+	h.rig.view.setScreen(1024, 768);
+	h.select(keep);
+	REQUIRE(h.hud->input().ui().selected() == std::vector<ObjectID>{ keep->getID() });
+	auto dump = [&](const char *what) {
+		std::string line;
+		for (const auto *v : { &h.hud->controlBar().palantirButtons(), &h.hud->controlBar().sideButtons() })
+		{
+			for (const ControlBarButton &b : *v)
+			{
+				const HeroRecord *r = b.reviveIndex >= 0 ? h.rig.local->heroes().at(b.reviveIndex) : nullptr;
+				line += " [" + std::to_string(b.slot) + (b.inPalantir ? "p " : "s ") + (b.button ? b.button->m_name : std::string("?")) + (r ? "=" + r->templateName : std::string()) + " st" + std::to_string((int)b.state) + "]";
+			}
+		}
+		MESSAGE(std::string(what) << ":" << line);
+	};
+	dump("main");
+	PlayerHeroList &list = h.rig.local->heroes();
+	auto openHeroes = [&]() {
+		bool pushed = false;
+		for (const ControlBarButton &b : h.buttons(GUI_COMMAND_PUSH_VISIBLE_COMMAND_RANGE))
+		{
+			if (!pushed && b.image == "UCCommon_EvilHeroes")
+			{
+				pushed = h.hud->controlBar().pressButton(b.slot, b.inPalantir);
+			}
+		}
+		h.frames(5);
+		return pushed;
+	};
+	REQUIRE(openHeroes());
+	dump("heroes");
+	auto heroButton = [&](const std::string &name) -> ControlBarButton {
+		for (const ControlBarButton &b : h.buttons(GUI_COMMAND_REVIVE))
+		{
+			const HeroRecord *r = b.reviveIndex >= 0 ? list.at(b.reviveIndex) : nullptr;
+			if (r && r->templateName == name)
+			{
+				return b;
+			}
+		}
+		return ControlBarButton{};
+	};
+	auto alive = [&](const std::string &name) {
+		for (Object *o = h.rig.logic().getFirstObject(); o; o = o->getNextObject())
+		{
+			if (o->getTemplate()->getName() == name && !o->isEffectivelyDead())
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+	for (const char *hero : { "WildGoblinKing", "WildAzog", "Drogoth" })
+	{
+		const ControlBarButton b = heroButton(hero);
+		REQUIRE_MESSAGE(b.button != nullptr, hero << " has no button");
+		REQUIRE(b.state == ButtonState::Enabled);
+		REQUIRE(h.hud->controlBar().pressButton(b.slot, b.inPalantir));
+		for (int i = 0; i < 4000 && !alive(hero); ++i)
+		{
+			h.frames(1);
+		}
+		REQUIRE_MESSAGE(alive(hero), hero << " never came");
+		h.frames(30);
+		dump(hero);
+	}
+	// the owner's view (530 / 525): the player is over the command point cap, Shelob (CommandPoints 50) cannot be afforded
+	CommandPoints &cp = h.rig.local->commandPoints();
+	const int over = h.rig.local->commandPointLimit() - cp.getUsage() + 5;
+	cp.addUsage(over);
+	REQUIRE(cp.getUsage() == h.rig.local->commandPointLimit() + 5);
+	h.select(keep);
+	if (heroButton("WildShelob").button == nullptr && h.buttons(GUI_COMMAND_PUSH_VISIBLE_COMMAND_RANGE).size() > 0)
+	{
+		REQUIRE(openHeroes());
+	}
+	dump("heroes after three, over the cap");
+	{
+		int si = -1;
+		for (size_t i = 0; i < list.size(); ++i)
+			if (list.at((int)i)->templateName == "WildShelob") si = (int)i;
+		MESSAGE("shelob record " << si << " canMakeUnit " << (si >= 0 ? (int)BuildAssistant::canMakeUnit(*keep, nullptr, si) : -9) << " cp " << cp.getUsage() << "/" << h.rig.local->commandPointLimit()
+			<< " allowed " << (si >= 0 && BuildAssistant::playerAllowedToBuild(*h.rig.local, list.templateAt(h.rig.logic(), si), h.rig.logic())));
+	}
+	ControlBarButton shelob = heroButton("WildShelob");
+	// RW 0x942F42: canMakeUnit 7 is availability 7, drawn as _cantAfford and never hidden by HIDE_WHILE_DISABLED (RW 0x943B39 tests availability 0)
+	REQUIRE_MESSAGE(shelob.button != nullptr, "Shelob's button is gone with three heroes out over the command point cap");
+	CHECK(shelob.state == ButtonState::CantAfford);
+	CHECK(shelob.commandPointsShort);
+	for (const char *hero : { "WildGoblinKing", "WildAzog", "Drogoth" })
+	{
+		CHECK_MESSAGE(heroButton(hero).button == nullptr, hero << " is alive: its HIDE_WHILE_DISABLED slot hides");
+	}
+	// RW 0x940B87: the press aborts silently, nothing is queued
+	CHECK_FALSE(h.hud->controlBar().pressButton(shelob.slot, shelob.inPalantir));
+	h.frames(10);
+	CHECK(list.at(shelob.reviveIndex)->startFrame == -1);
+	// command points freed: the button is a normal recruit again and Shelob comes
+	cp.removeUsage(over);
+	h.frames(5);
+	dump("heroes after three, under the cap");
+	shelob = heroButton("WildShelob");
+	REQUIRE(shelob.button != nullptr);
+	CHECK(shelob.state == ButtonState::Enabled);
+	CHECK_FALSE(shelob.commandPointsShort);
+	REQUIRE(h.hud->controlBar().pressButton(shelob.slot, shelob.inPalantir));
+	for (int i = 0; i < 4000 && !alive("WildShelob"); ++i)
+	{
+		h.frames(1);
+	}
+	CHECK(alive("WildShelob"));
 }

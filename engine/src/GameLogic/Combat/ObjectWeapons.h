@@ -139,6 +139,9 @@ public:
 	bool deliveryRangeAllows(const WeaponTemplate &t, const WeaponBonus &bonus, const Object *victim, const Coord3D &victimPos) const;
 	// RW 0x6CA974: getAttackDistance(source, victim): the reach of the current weapon plus both bounding spheres (the approach asks it)
 	float attackDistance(const Object &victim) const;
+	// lane ATTACKPATH-1: RW 0x6CA974 with all three branches: a victim object (the reach plus both bounding spheres), else a position (the reach at its height),
+	// else neither; 0 without a current weapon
+	float attackDistanceTo(const Object *victim, const Coord3D *position) const;
 	// lane PHYS-1: RW 0x6CA8BD(source, 0): the current weapon's attack range (0 without a weapon)
 	float currentAttackRange() const;
 	// lane ARCHER-1: RW 0x6CA935(source): the current weapon's attack range with no target (the scale applied twice, WeaponGetAttackRangeNoTarget); 0 without one

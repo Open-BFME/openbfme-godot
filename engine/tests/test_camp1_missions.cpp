@@ -645,7 +645,9 @@ TEST_CASE("camp1 bonus: MAP ANG Bonus (ANGMAR_BONUS_CAMPAIGN) plays from its int
 	m.kill(*wk);
 	REQUIRE(d.until([&] { return m.flag("PlyrAngmarWitchKing/Flag - WK Defeated"); }, 100));
 	expectVictory(m, 300);
-	expectTeamScripts(m, 0, 0, 80); // lane CAMP-1H: Team::updateState / updateGenericScripts (RW 0x7A208C / 0x7A267D) over the playthrough
+	// lane CAMP-1H: Team::updateState / updateGenericScripts (RW 0x7A208C / 0x7A267D) over the playthrough. Lane TARGET-1: 84 (was 80): RotWK's target choice
+	// and mood-check timing make the fights, so the playthrough, last a few team updates longer
+	expectTeamScripts(m, 0, 0, 84);
 }
 
 TEST_CASE("camp1 determinism: MAP ANG Dark Eye twice with the same player's part agrees on every frame's state hash (AttachUpdate, the attacked-by flags, "

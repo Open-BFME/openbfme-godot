@@ -23,6 +23,7 @@
 #include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/sub_viewport.hpp>
 #include <godot_cpp/variant/rect2.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/rid.hpp>
 #include <godot_cpp/variant/string.hpp>
 
@@ -59,6 +60,8 @@ public:
 	const std::set<std::string> &notes() const { return m_notes; }
 	std::size_t viewerCount() const { return m_slots.size(); }
 	String sourceStyle() const;
+	// Active viewers only; read the animation clock without advancing it.
+	Dictionary animationFrames() const;
 
 private:
 	struct Slot

@@ -1759,7 +1759,7 @@ TEST_CASE("factb units: every Isengard unit, horde and hero ability and upgrade 
 	Results r;
 	unitsOf("FactionIsengard", r);
 	r.print("units FactionIsengard");
-	r.check({ { "* Command_ToggleStance", "S-289" }, { "MordorWorker Command_Harvest", "S-1993" }, { "IsengardPorter Command_PorterExtinguishFire", "S-1997" },
+	r.check({ { "* Command_ToggleStance", "S-289" }, { "MordorWorker Command_Harvest", "S-1993 closed: the sweep asserts no SPECIAL_HARVEST effect; test_lumber1.cpp does" }, { "IsengardPorter Command_PorterExtinguishFire", "S-1997" },
 		{ "IsengardBallista Command_BombardEvil", "S-1990" }, { "IsengardSaruman Command_SarumanThunderBolt", "S-180 (the bolt's damage lands; its WeaponOCLNugget makes nothing)" },
 		{ "IsengardSharku Command_SpecialAbilitySharkuManEater", "S-180 (GrabNugget delivery)" } });
 }
@@ -1774,7 +1774,7 @@ TEST_CASE("factb units: every Mordor unit, horde and hero ability and upgrade bu
 	unitsOf("FactionMordor", r);
 	r.print("units FactionMordor");
 	// lane FLY-1: the fell beasts' dismounts land and fire (GiantBirdAIUpdate, MOVING_TO_DISMOUNT): S-1994's pins went
-	r.check({ { "* Command_ToggleStance", "S-289" }, { "MordorWorker Command_Harvest", "S-1993" }, { "MordorPorter Command_PorterExtinguishFire", "S-1997" },
+	r.check({ { "* Command_ToggleStance", "S-289" }, { "MordorWorker Command_Harvest", "S-1993 closed: the sweep asserts no SPECIAL_HARVEST effect; test_lumber1.cpp does" }, { "MordorPorter Command_PorterExtinguishFire", "S-1997" },
 		{ "MordorHaradrimArcherHorde Command_HaradrimArcherBarbedArrowAbility", "S-1997" } });
 }
 
@@ -2506,6 +2506,9 @@ TEST_CASE("factb damage: the first hit of every Mordor unit, horde and hero on a
 	damageOf("FactionMordor", r);
 	r.print("damage FactionMordor");
 	// lane PLAY-4 r3 / FLY-1: the fell beasts fly and strike (S-1994 closed)
+	// lane ATTACKPATH-1: the mumak reaches Boromir on another frame (RotWK's horde approach goal, + 0x5D) and its first frame's loss is 140, not one listed hit
+	// (S-4104: the first-hit window takes only copies of one hit)
+	// merge queue q23 (with TARGET-1's target choice and FLANK-1's flank test at fire time): the mumak's first frame takes one listed hit again
 	r.check({});
 }
 
@@ -2848,7 +2851,8 @@ void spellBookOf(const std::string &faction, Results &res, bool viaStore = false
 		}
 		if (seen.empty())
 		{
-			res.fail(item, "cast, but no effect seen beyond the control run: " + missing);
+			res.fail(item, "cast, but no effect seen beyond the control run: " + missing +
+							   str(" (enemies lost %.0f with the cast, %.0f without; own units healed %.0f / %.0f)", run.enemyLost, control.enemyLost, run.mineGained, control.mineGained));
 		}
 		else
 		{
@@ -2869,6 +2873,10 @@ TEST_CASE("factb spell book: every Isengard spell book power cast through the HU
 	r.print("spell book FactionIsengard");
 	// lane SUMMON-1: Isengard's Taint shows no effect of its own (its terrain taint is S-921, as Mordor's Taint below); it passed before only because the
 	// hordes' own fight in the control and cast runs differed by more than the 500 margin, which the OCLs' added retail random draws changed
+	// lane TARGET-1: Isengard's Taint is S-1997's (its stop names it): it passed only while the scene's own fight lost 500 more health in the cast run than
+	// in the control; with RotWK's target choice the two runs lose about the same (1008 with the cast, 1140 without, measured on a CI host)
+	// lane ATTACKPATH-1: Isengard's Taint is S-1997's (no effect of TaintSpecialPower is asserted, as Mordor's and the Goblins'): it passed before only
+	// because its scene's fight happened to cost the enemies more health than the control run
 	r.check({ { "spell SpellBookDevastation", "S-921 (SPELL-3)" }, { "spell SpellBookIndustry", "S-1997" },
 		{ "spell SpellBookFueltheFires", "S-1997" }, { "spell SpellBookDragonStrike", "S-1997" },
 		{ "spell SpellBookIsengardTaint", "S-1997|no effect of TaintSpecialPower" } });
@@ -3613,7 +3621,17 @@ void upgradeEffectsOf(const std::string &faction, Results &res)
 					}
 					else
 					{
-						res.fail(item, str("the smallest hit taken did not shrink (%.2f -> %.2f) and the INI hit is the same (%s)", b0, a0, after.text.c_str()));
+						std::string seen = "; without:";
+						for (float d : before.drops)
+						{
+							seen += str(" %.2f", d);
+						}
+						seen += "; with:";
+						for (float d : after.drops)
+						{
+							seen += str(" %.2f", d);
+						}
+						res.fail(item, str("the smallest hit taken did not shrink (%.2f -> %.2f) and the INI hit is the same (%s)", b0, a0, after.text.c_str()) + seen);
 					}
 				}
 				else if (fresh.empty())
@@ -3706,7 +3724,7 @@ TEST_CASE("factc units: every Goblin and Angmar unit, horde and hero ability and
 	factcCase("units", "FactionWild", unitsOf,
 			  { { "* Command_ToggleStance", "S-289" },
 				{ "GoblinArcherHorde Command_GoblinArcherPoisonArrows", "S-1997|HordeAttackNugget" },
-				{ "MordorWorker Command_Harvest", "S-1993|no effect of it is asserted" },
+				{ "MordorWorker Command_Harvest", "S-1993 closed: the sweep asserts no SPECIAL_HARVEST effect; test_lumber1.cpp does|no effect of it is asserted" },
 				{ "WildBabyDrakeHorde Command_FireDrakeBroodInferno", "S-2006|BabyDrakeInferno: no result" },
 				{ "WildMountainGiant Command_SpecialAbilityWildMountainGiantStomp", "S-2006|WildMountainGiantStomp: no result" },
 				{ "WildPorter Command_PorterExtinguishFire", "S-1997|PorterFireExtinguisher: no result" } });
@@ -3737,7 +3755,10 @@ TEST_CASE("factc fights: every Goblin and Angmar unit, horde and hero attacks an
 	factcCase("fights", "FactionWild", fightsOf, {});
 	// lane PLAY-4 r3: the sites are kept on the map, where the enemy is in sight: the clicks are attack orders (S-565's fogged target, a move, no longer
 	// happens here); the Necromancers stop short of the enemy as in the damage sweep (S-2005)
-	factcCase("fights", "FactionAngmar", fightsOf, { { "fight AngmarNecromancerHorde", "S-2005|lost no health" } });
+	// Lane TARGET-1: the Thrall Master's guard no longer charges the staged horde before the click: RotWK's search refuses a NO_AUTO_ACQUIRE searcher (the
+	// guard's qualifier 0x40, RW 0x949E79 -> RW 0x7006D7), which the earlier stand-in did not; the clicked member stands 180 away, past its
+	// VISION_STANDARD_MELEE, so the order on the fogged target is refused (RW 0x82C167, S-565) at 170 and 420
+	factcCase("fights", "FactionAngmar", fightsOf, { { "fight AngmarNecromancerHorde", "S-2005|lost no health" }, { "fight AngmarThrallMaster", "S-565|lost no health" } });
 }
 
 TEST_CASE("factc damage: the first hit of every Goblin and Angmar unit, horde and hero on an enemy hero, and of every siege engine on a structure")
@@ -3748,8 +3769,9 @@ TEST_CASE("factc damage: the first hit of every Goblin and Angmar unit, horde an
 	}
 	// merge q8 (PATHPERF-1's placement on FLY-1's tree): the Goblin archers' first frame of damage on the hero is two different hits of their weapon
 	// summed (4.35 = 3.75 + 0.6), which the window's "k copies of one hit" does not accept (S-4104)
-	factcCase("damage", "FactionWild", heroDamageOf,
-			  { { "damage GoblinArcherHorde", "S-4104|the first hit took 4.35" } });
+	// Lane TARGET-1: the archers' first frame of damage on the hero is one hit again (3.75): RotWK's target search and the horde member pick (RW 0x68D30E ->
+	// 0x86FA87) moved the volley's timing; S-4104's window limit stays registered
+	factcCase("damage", "FactionWild", heroDamageOf, {});
 	// lane PLAY-4 r3: RotWK's melee reach (RW 0x6ED843's footprint boxes) brings the Goblin King, the Marauder swords and the Dark Dunedain onto Boromir (S-2005
 	// keeps the Necromancers); on the site kept on the map the Thrall Master's target is in sight (S-565 no longer applies)
 	// and Karsh's first loss on the site kept on the map is his touch's two nuggets (63), not S-2004's 0.25.
@@ -3768,6 +3790,10 @@ TEST_CASE("factc upgrade effects: every Goblin and Angmar weapon and armour upgr
 	factcCase("upgrade effects", "FactionWild", upgradeEffectsOf,
 			  { { "upgrade effect GoblinSpiderRiderHorde Upgrade_WildFireArrows", "S-2008|did not change the INI hit" } });
 	// lane PLAY-4 r3: the armour scenes show hits since Boromir reaches the members with RotWK's melee reach (RW 0x6ED843's footprint boxes)
+	// lane ATTACKPATH-1: the Snow Trolls' Dark Iron Armor cannot show against Boromir: armor.ini gives SnowTrollArmor and SnowTrollHeavyArmor both HERO 100%,
+	// so his hit is 300 with and without it; the scene passed before only because its first run's smallest frame drop was two hits (600) landing together
+	// merge queue q23: on the merged tree the scene without the armour has a two-hit frame again (600), so the smallest hit "shrinks" and the line passes; the
+	// armour still does not change Boromir's HERO hit (S-2008 keeps the explanation)
 	factcCase("upgrade effects", "FactionAngmar", upgradeEffectsOf, {});
 }
 

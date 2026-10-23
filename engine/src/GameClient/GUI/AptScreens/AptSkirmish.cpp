@@ -1096,23 +1096,40 @@ void AptSkirmish::refreshChatPlayers()
 	}
 	std::vector<std::u16string> names;
 	std::vector<PlatformKind> kinds; // lane PLATFORMICON-1: each player's system, shown as an icon before the name
-	for (const SkirmishGameSlot &s : m_setup->info().slots)
+	std::vector<UnicodeString> notes; // lane ONLINEMENU-1: the second column (the online room's ping)
+	std::vector<Color> noteColors;
+	bool anyNote = false;
+	for (int slot = 0; slot < MAX_SLOTS; ++slot)
 	{
+		const SkirmishGameSlot &s = m_setup->info().slots[slot];
 		if (s.isHuman())
 		{
 			names.push_back(s.name);
 			kinds.push_back(s.platform);
+			Color color = 0xFFFFFFFFu;
+			notes.push_back(chatPlayerNote(slot, &color));
+			noteColors.push_back(color);
+			anyNote = anyNote || !notes.back().empty();
 		}
 	}
-	// only when the room's players changed (a refill would drop the list's scroll position every poll)
-	bool same = GadgetListBoxGetNumEntries(m_chatPlayers) == (int)names.size();
+	// only when the room's players (or their notes) changed (a refill would drop the list's scroll position every poll)
+	const int columns = anyNote ? 2 : 1;
+	bool same = GadgetListBoxGetNumEntries(m_chatPlayers) == (int)names.size() && GadgetListBoxGetNumColumns(m_chatPlayers) == columns;
 	for (int i = 0; same && i < (int)names.size(); ++i)
 	{
 		same = GadgetListBoxGetText(m_chatPlayers, i, 0) == names[(size_t)i] && GadgetListBoxGetCellBadge(m_chatPlayers, i, 0) == platformImageName(kinds[(size_t)i]);
+		Color shown = 0;
+		same = same && (columns == 1 || (GadgetListBoxGetTextAndColor(m_chatPlayers, &shown, i, 1) == notes[(size_t)i] && shown == noteColors[(size_t)i]));
 	}
 	if (same)
 	{
 		return;
+	}
+	// the widths in pixels follow the list's size now (it grows while the tab's clip plays in: serviceChatLists refills it then)
+	if (columns == 2 || GadgetListBoxGetNumColumns(m_chatPlayers) != columns)
+	{
+		static const int kNameAndNote[2] = { 62, 38 };
+		GadgetListBoxSetColumnWidths(m_chatPlayers, columns, columns == 2 ? kNameAndNote : nullptr);
 	}
 	if (MappedImageCollection *images = m_chatPlayers->manager().mutableImages())
 	{
@@ -1123,6 +1140,10 @@ void AptSkirmish::refreshChatPlayers()
 	{
 		const int row = GadgetListBoxAddEntryText(m_chatPlayers, names[i], 0xFFFFFFFFu, -1, 0);
 		GadgetListBoxSetCellBadge(m_chatPlayers, row, 0, platformImageName(kinds[i]));
+		if (columns == 2)
+		{
+			GadgetListBoxAddEntryText(m_chatPlayers, notes[i], noteColors[i], row, 1);
+		}
 	}
 }
 
@@ -1721,7 +1742,7 @@ void AptSkirmish::refreshSlot(int slot)
 		}
 		else if (!heroChoiceAvailable())
 		{
-			combo->winEnable(false); // lane ONLINE-5: shown locked (the online lobby, S-4076)
+			combo->winEnable(false); // lane ONLINE-5: shown locked where a lobby carries no Create-a-Hero record
 		}
 		else if (!m_setup->network() || slotGadgetsEnabled(slot))
 		{

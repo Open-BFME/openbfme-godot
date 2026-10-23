@@ -1002,13 +1002,14 @@ class SyncAudit(audit_package.Audit):
 
 
 def is_detached_signature(name: str, data: bytes, depth: int, payload_tar: bool = False) -> bool:
-    """PUBLICCI-1: a release's detached Ed25519 signature (manifest*.json.sig, sign_manifest.py: 64 raw bytes, top level) is random; about
+    """PUBLICCI-1: a release's detached Ed25519 signature (manifest*.json.sig, sign_manifest.py, and SIGNKMS-1's manifest*.json.sig2,
+    kms_sign.py: 64 raw bytes, top level) is random; about
     1 in 992 starts with a valid zlib header (the hosted pull request checks hit one in test_autorelease). Such a file that does NOT decode
     as zlib is a signature, not a finding; one that decodes is still decoded and checked like any other stream.
     The signed payload sidecar at a release package root has the same random bytes (one archive layer, or the Linux gzip stream followed by its tar)."""
     if len(data) != 64:
         return False
-    return (depth == 0 and re.fullmatch(r"(?:.*/)?[^/]+\.json\.sig", name) is not None
+    return (depth == 0 and re.fullmatch(r"(?:.*/)?[^/]+\.json\.sig2?", name) is not None
             or depth == 1 and re.fullmatch(r"[^:]+:openbfme-[^/:]+/payload\.json\.sig", name) is not None
             or depth == 2 and payload_tar and re.fullmatch(r"[^:]+:openbfme-[^/:]+/payload\.json\.sig", name) is not None)
 
@@ -1264,14 +1265,21 @@ BUILTIN_RULES = [
     # private path forms (the home / Users forms are the commit gate's MACHINE_PATH, checked above)
     {"id": "private-path", "kind": "regex", "pattern": r"~/\.ssh/|/mnt/[a-z]/Users/"},
     # account ids and cloud credentials by shape
-    {"id": "aws-account", "kind": "regex", "pattern": r"arn:aws[a-z-]*:|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|aws_secret_access_key|aws_session_token|"
+    # lane ONLINEMENU-1: the mailer's IAM policy and its deploy steps name their resources with the <ACCOUNT_ID> placeholder only
+    # (test_autorelease.test_onlinemenu1_the_mailer_arns_hold_no_account pins that)
+    {"id": "aws-account", "kind": "regex", "allow": ["services/online/mailer/iam-policy.json", "services/online/mailer/README.md"],
+     "pattern": r"arn:aws[a-z-]*:|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|aws_secret_access_key|aws_session_token|"
                                                      r"\baccount\W{0,12}\d{4}-?\d{4}-?\d{4}\b"},
     {"id": "cloudflare-account", "kind": "regex", "pattern": r"(?:account|zone)[_ -]?id\W{0,6}[0-9a-f]{32}\b"},
     # e-mail addresses: only the noreply forms and the reserved example domains are public (third-party credits and test fixtures allowed);
     # RELFIX-3: nongnu.org's public mailing lists too (FreeType's, in every Godot template)
+    # lane ONLINEMENU-1: the project's own domain (the sign-in mail's sender no-reply@ and the privacy contact admin@ are published by
+    # design: docs/PRIVACY-SIGNIN.md) and the lobby's / mailer's address-validation test fixtures
     {"id": "e-mail", "kind": "regex", "allow": ["engine/thirdparty/**", "engine/src/GameClient/VP6Decoder.cpp", "engine/src/GameClient/VP6Tables.inc",
-                                                  "engine/tests/**", "godot/tests/**", "launcher/tests/**"],
-     "pattern": r"[A-Za-z0-9._%+-]+@(?!users\.noreply\.github\.com\b|anthropic\.com\b|nongnu\.org\b|example\.(?:com|org|net)\b|[a-z0-9.-]*\.(?:example|invalid|test|localhost)\b)"
+                                                  "engine/tests/**", "godot/tests/**", "launcher/tests/**", "services/online/lobby/test/email.test.mjs",
+                                                  "services/online/lobby/test/email-flow.test.mjs",
+                                                  "services/online/mailer/test_handler.py"],
+     "pattern": r"[A-Za-z0-9._%+-]+@(?!users\.noreply\.github\.com\b|anthropic\.com\b|nongnu\.org\b|openbfme\.com(?![\w.-])|example\.(?:com|org|net)\b|[a-z0-9.-]*\.(?:example|invalid|test|localhost)\b)"
                 # r3: a file name after the '@' is no address (the game's library holds "...o@multiplayer.ini")
                 r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?!(?:ini|cfg|txt|json|big|str|dat|map|wnd|apt|w3d|tga|dds|png|gd|tscn|tres)\b)"
                 r"[A-Za-z]{2,}\b"},

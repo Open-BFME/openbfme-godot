@@ -155,7 +155,10 @@ def test_ui3_the_launcher_has_one_file_manager_owner_too():
     assert calls(owner + "static func other():\n\tOS.shell_open(\"https://example.com\")\n", paths) == ["line 5: OS.shell_open"]
     assert calls("static var x := 1\n" + "func f():\n\tOS.shell_open(\"x\")\n", paths) == ["line 3: OS.shell_open"]
     found = net_guard.scan_launcher()
-    assert [f for f in found.get(paths, []) if "shell_" in f] == [] and not [p for p, fs in found.items() for f in fs if "shell_" in f]
+    # lane ONLINEMENU-1: the account page opens the system browser on a checked sign-in URL (test_launcher_tools pins both calls): no file manager
+    oauth = "launcher/scripts/core/oauth_account.gd"
+    assert [f.split(": ", 1)[-1] for f in found.get(oauth, []) if "shell_" in f] == ["OS.shell_open", "OS.shell_open"]
+    assert [f for f in found.get(paths, []) if "shell_" in f] == [] and not [p for p, fs in found.items() if p != oauth for f in fs if "shell_" in f]
 
 
 def test_the_online_lobby_client_requests_only_the_named_lobby():
@@ -217,3 +220,24 @@ def test_netguard1_player_reports_make_no_network_call_of_their_own():
     assert not net_guard.game_finding_allowed(path, "line 1: HTTPRequest")
     lobby = (REPO / net_guard.ONLINE_LOBBY).read_text()
     assert "func post_oneshot(" in lobby and net_guard.online_lobby_problems(lobby) == []
+
+
+def test_onlinemenu1_the_machine_guid_query_is_exact_and_read_only():
+    """lane ONLINEMENU-1 (owner 2026-10-20: a hardware id for bans only): the two identity files read Windows' MachineGuid with the system's
+    reg.exe and one literal read-only argument list, in machine_id(); the files are on no allow list, and any other process call is a finding"""
+    query = ('OS.execute(OS.get_environment("SystemRoot").path_join("System32/reg.exe"), '
+             '["query", "HKLM\\\\SOFTWARE\\\\Microsoft\\\\Cryptography", "/v", "MachineGuid"], out, true)')
+    for path in ("godot/scripts/online_identity.gd", "launcher/scripts/core/social_identity.gd"):
+        assert path not in net_guard.ALLOWED_GAME and path not in net_guard.ALLOWED_LAUNCHER
+        text = (REPO / path).read_text(encoding="utf-8")
+        assert text.count("OS.execute(") == 1 and query in text
+        assert net_guard.gdscript_findings(text, path) == []
+        source = "static func machine_id() -> String:\n\tvar out: Array = []\n\tif " + query + " != 0:\n\t\treturn \"\"\n"
+        assert net_guard.gdscript_findings(source, path) == []
+        assert net_guard.gdscript_findings(source, "godot/scripts/game.gd")
+        assert net_guard.gdscript_findings(source.replace("func machine_id", "func other"), path)
+        for old, new in [('"query"', '"add"'), ('"MachineGuid"', '"Other"'), ('"System32/reg.exe"', '"reg.exe"'), ('"SystemRoot"', '"CUSTOM_ROOT"'),
+                         ('Cryptography', 'Run'), ('out, true)', 'out, true, true)'), ('OS.execute(', 'OS.create_process(')]:
+            changed = source.replace(old, new)
+            assert changed != source and net_guard.gdscript_findings(changed, path), (old, new)
+        assert net_guard.gdscript_findings(source + 'func other():\n\tOS.execute("reg", args)\n', path)

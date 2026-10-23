@@ -5,6 +5,7 @@
 
 #include "FactcSweepUtil.h"
 #include "FactbRig.h"
+#include "ProductionRateTestUtil.h"
 
 #include "Common/BuildAssistant.h"
 #include "Common/PlayerHeroList.h"
@@ -883,6 +884,8 @@ ProductionResult runProduction(HudRig &h, const Offer &offer)
 		r.outcome = "press refused";
 		return r;
 	}
+	const ObjectID producerId = b->getID();
+	std::vector<float> rates{ prodrate::rateNow(*b) }; // lane PRODUCTION1: the producer's PRODUCTION rate of every frame (RW 0x8A1EBC)
 	h.frames(1);
 	r.cost = h.paidSince(money0);
 	std::ostringstream out;
@@ -893,6 +896,10 @@ ProductionResult runProduction(HudRig &h, const Offer &offer)
 	Object *made = nullptr;
 	for (; r.frames < expectFrames + 60 && !made; ++r.frames)
 	{
+		if (Object *p = logic.findObjectByID(producerId))
+		{
+			rates.push_back(prodrate::rateNow(*p));
+		}
 		h.frames(1);
 		for (Object *o = logic.getFirstObject(); o && !made; o = o->getNextObject())
 		{
@@ -912,9 +919,10 @@ ProductionResult runProduction(HudRig &h, const Offer &offer)
 	}
 	else
 	{
-		if (r.frames < expectFrames - 1)
+		const int rated = prodrate::expectedFrames(rates, expectFrames); // a level 2 / 3 building is faster (its BuildSpeedModLvl<n>)
+		if (r.frames < rated - 1)
 		{
-			out << "came after " << r.frames << " frames, calcTimeToBuild " << expectFrames << "; ";
+			out << "came after " << r.frames << " frames, calcTimeToBuild " << expectFrames << " (" << rated << " at the producer's PRODUCTION rate); ";
 		}
 		const float dx = made->getPosition()->x - b->getPosition()->x, dy = made->getPosition()->y - b->getPosition()->y;
 		if (dx * dx + dy * dy > 600.0f * 600.0f)

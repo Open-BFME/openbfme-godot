@@ -394,11 +394,12 @@ UpdateSleepTime SpawnBehavior::update()
 			}
 			if (m_data->m_killSpawnsBasedOnModelConditionState)
 			{
-				// RW 0x86356C: stopped after the one try; lane DECOMP-3: a try that made nothing (no spawn bones, S-209) leaves the spawner empty for good
+				// RW 0x86356C: stopped after the one try; lane DECOMP-3: a try that made nothing (no free exit door: e.g. a SpawnPoint exit without bones) leaves the
+				// spawner empty for good
 				if (m_spawnIDs.empty() && !m_replacementFrames.empty())
 				{
 					logic.noteStop("[S-3800] SpawnBehavior of " + obj->getTemplate()->getName() + ": KillSpawnsBasedOnModelConditionState stopped the spawner after "
-						"one try that made no spawn (its exit has no door: the spawn bones are missing, S-209); it stays empty");
+						"one try that made no spawn (its exit had no free door: no spawn bones, or no bone provider, S-209); it stays empty");
 				}
 				stopSpawning();
 			}

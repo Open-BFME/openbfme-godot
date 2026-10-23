@@ -607,3 +607,47 @@ TEST_CASE("rotwk-c pick retail: special-power wall selectability overrides only 
 	command.m_command = GUI_COMMAND_ATTACK_MOVE;
 	CHECK_FALSE(HudObjects::isSelectable(*wall, &command));
 }
+
+#include "GameClient/PlayerMessageLog.h"
+#include "GameClient/RadiusCursor.h"
+TEST_CASE("player message log: native INI settings and six alternating entries")
+{
+	RadiusCursorTemplates parsed;
+	std::string error;
+	REQUIRE(parsed.scan("InGameUI\n MessageColor1 = R:255 G:255 B:0\n MessageColor2 = R:255 G:255 B:255\n MessagePosition = X:-10 Y:20\n MessageFont = Arial\n MessagePointSize = 14\n MessageBold = Yes\n MessageDelayMS = 5000\nEnd\n", &error));
+	PlayerMessageLog log;
+	log.settings = parsed.messageUi();
+	CHECK(log.settings.color1 == 0xffffff00);
+	CHECK(log.settings.color2 == 0xffffffff);
+	CHECK(log.settings.position.x == -10);
+	CHECK(log.settings.position.y == 20);
+	CHECK(log.settings.pointSize == 14);
+	CHECK(log.settings.bold);
+	for (unsigned i = 0; i != 7; ++i) log.add(std::u16string(1, char16_t('0' + i)), 0);
+	REQUIRE(log.entries().size() == 6);
+	CHECK(log.entries().front().text == u"6");
+	CHECK(log.entries().back().text == u"1");
+	CHECK(log.entries()[0].color == 0xffffff00);
+	CHECK(log.entries()[1].color == 0xffffffff);
+	log.update(99);
+	CHECK(log.entries()[0].color == 0xffffff00);
+	log.update(100);
+	CHECK(log.entries()[0].color == 0xfeffff00);
+	log.update(25500);
+	CHECK(log.entries().empty());
+	log.add(u"again", 25500);
+	CHECK(log.entries()[0].color == 0xffffff00);
+}
+
+TEST_CASE("player message log: batching client ticks preserves fade")
+{
+	PlayerMessageLog batched, individual;
+	batched.add(u"invalid site", 0);
+	individual.add(u"invalid site", 0);
+	batched.advanceClientTicks(100, 0);
+	CHECK(batched.entries()[0].color == 0xffffffff);
+	batched.advanceClientTicks(100, 4);
+	for (unsigned i = 0; i != 4; ++i) individual.advanceClientTicks(100, 1);
+	CHECK(batched.entries()[0].color == 0xfbffffff);
+	CHECK(batched.entries()[0].color == individual.entries()[0].color);
+}

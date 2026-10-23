@@ -237,6 +237,30 @@ struct LogicWorld
 		players.setupSkirmish(setup);
 		logic = std::make_unique<GameLogic>(w.things, w.modules, players, rng);
 		logic->random().seedRandom(1);
+		retailTargetSearchData(logic->settings());
+	}
+
+	// lane TARGET-1: the AIData rows of the target search as retail data\ini\default\aidata.ini sets them (ForceIdleMSEC 67 -> 1 frame,
+	// AttackPriorityDistanceModifier 80, AttackUsesLineOfSight / AttackIgnoreInsignificantBuildings Yes, ArtilleryMaxFriendlyFire unset) and its
+	// AttackPriority blocks (Default only), so the synthetic worlds search as a retail game does
+	static void retailTargetSearchData(GameLogicSettings &s)
+	{
+		s.forceIdleFrames = 1;
+		s.attackPriorityDistanceModifier = 80.0f;
+		s.attackUsesLineOfSight = true;
+		s.attackIgnoreInsignificantBuildings = true;
+		s.artilleryMaxFriendlyFire = 1.0f;
+		s.attackPriorityDefs.clear();
+		const std::pair<const char *, int> defs[] = { { "DefaultAttackPriority", 35 }, { "AttackPriority_Infantry", 35 }, { "AttackPriority_Archer", 35 },
+			{ "AttackPriority_Spearman", 35 }, { "AttackPriority_Cavalry", 35 }, { "AttackPriorityCavalry", 10 }, { "AttackPriorityMordorFighter", 100 },
+			{ "AttackPriority_FellBeast", 35 }, { "AttackPriority_Eagle", 35 } };
+		for (const auto &d : defs)
+		{
+			GameLogicSettings::AttackPriorityDef def;
+			def.name = d.first;
+			def.defaultPriority = d.second;
+			s.attackPriorityDefs.insert(s.attackPriorityDefs.begin(), def); // RW 0x70153B pushes each new block at the head
+		}
 	}
 
 	// Binds a scripted runtime class over a registered class name (type behavior)

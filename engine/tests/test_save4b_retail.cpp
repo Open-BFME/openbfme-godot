@@ -318,11 +318,16 @@ TEST_CASE("save4b retail T4: a real 4-player skirmish's snapshot is written (SAV
 	// Lane AI5 (the AIs buy their structures' and units' upgrades and fortress expansions, and save money for heroes): those three classes are back
 	// Merge queue q22 (SUMMON-1 + FX-4 + AI5 + NUGGET-1, measured on the merged tree on srv1): SUMMON-1's OCL draws and AI5's purchases together move the
 	// AIs' game again: at frame 1,500 it has no AutoHealBehavior object
+	// AIs' play changed since 0a18ec56, so this game at frame 1,500 had no CommandButtonHuntUpdate, AutoHealBehavior or RepairSpecialPower object; lane
+	// TARGET-1 (retail's target search and mood-scan cadence) changes the fights, and the game at frame 1,500 holds those three again
+	// Lane ATTACKPATH-1 (the AIs' fights move with RotWK's attack paths and the towards-goal corridor term): at frame 1,500 the game now has AutoHealBehavior
+	// and CommandButtonHuntUpdate objects and no cavalry horde (HorseHordeContain) or horde crush warning (HordeNotifyTargetsOfImminentProbableCrushingUpdate)
+	// Merge queue q23 (TARGET-1 + ATTACKPATH-1 + FLANK-1 + PRODUCTION1 + LUMBER1 on q22's tree, measured once): the inventory is q22's again (no AutoHealBehavior)
 	CHECK(classes == std::set<std::string>{
 		"AISpecialPowerUpdate", "ActiveBody", "ArmorUpgrade", "ArrowStormUpdate", "AttributeModifierAuraUpdate", "AttributeModifierPoolUpdate",
-		"AttributeModifierUpgrade", "AudioLoopUpgrade", "AutoAbilityBehavior", "AutoDepositUpdate", "AutoPickUpUpdate",
-		"BannerCarrierUpdate", "BezierProjectileBehavior", "BloodthirstyUpdate", "BoredUpdate", "BuildableHeroListUpgrade", "BuildingBehavior",
-		"CastleBehavior", "CastleMemberBehavior", "CastleUpgrade", "CitadelSlaughterHordeContain", "ClickReactionBehavior", "CloudBreakSpecialPower",
+		"AttributeModifierUpgrade", "AudioLoopUpgrade", "AutoAbilityBehavior", "AutoDepositUpdate", "AutoPickUpUpdate", "BannerCarrierUpdate",
+		"BezierProjectileBehavior", "BloodthirstyUpdate", "BoredUpdate", "BuildableHeroListUpgrade", "BuildingBehavior", "CastleBehavior",
+		"CastleMemberBehavior", "CastleUpgrade", "CitadelSlaughterHordeContain", "ClickReactionBehavior", "CloudBreakSpecialPower",
 		"CommandButtonHuntUpdate", "CommandPointsUpgrade", "CommandSetUpgrade", "CostModifierUpgrade", "CreateObjectDie", "CritterEmitterUpdate",
 		"DamageFilteredCreateObjectDie", "DarknessSpecialPower", "DefectionHelper", "DelayedDeathBody", "DestroyDie", "DevastateSpecialPower",
 		"DoCommandUpgrade", "DualWeaponBehavior", "ElvenWoodSpecialPower", "EmotionTrackerUpdate", "FXListDie", "FiringTrackerHelper",

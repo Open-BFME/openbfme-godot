@@ -107,7 +107,8 @@ std::array<int, 4> OpenBFMEOptionsPage::gadgetRect(std::size_t index) const
 			// a narrow column keeps 50 pixels right of the slider for its value
 			return { x0, y, b.narrow ? std::min(x0 + kSliderWidth, x1 - 50) : x0 + kSliderWidth, y + kRowHeight };
 		case OpenBFMEPageRow::Kind::Entry:
-			return { x0, y, std::min(x0 + kEntryWidth, x1), y + kRowHeight };
+			// lane ONLINEMENU-1: an entry for more than a code or a number (the friends page's chat line) runs to the gadgets' right edge
+			return { x0, y, row.maxValue > kShortEntryLength ? x1 : std::min(x0 + kEntryWidth, x1), y + kRowHeight };
 		default:
 			return { x0, y, x1, y + kRowHeight };
 	}
@@ -198,7 +199,8 @@ bool OpenBFMEOptionsPage::show(const OpenBFMEPageSpec &spec, std::string *error)
 	if (m_spec.hasList)
 	{
 		std::string err;
-		const int y0 = kRowTop;
+		// lane ONLINEMENU-1: below the page's first rows when the spec says so (the friends page: rows, then its list)
+		const int y0 = m_spec.listFromRow < 0 ? kRowTop : kRowTop + m_spec.listFromRow * kRowPitch;
 		const int y1 = kHelpTop - 10;
 		m_list = m_layer.createEngineGadget(kListSkin, kLabelLeft, y0, kGadgetRight - kLabelLeft, y1 - y0, m_owner, &err);
 		if (!m_list)
@@ -216,6 +218,17 @@ bool OpenBFMEOptionsPage::show(const OpenBFMEPageSpec &spec, std::string *error)
 		{
 			GadgetListBoxAddEntryText(m_list, m_spec.list[i].first, kLabelColor, (int)i, 0);
 			GadgetListBoxAddEntryText(m_list, m_spec.list[i].second, kHelpColor, (int)i, 1);
+		}
+		// lane ONLINEMENU-1: a list below rows is as tall as its lines and one more (at least three), not the rest of the panel in empty space
+		const ListboxData *data = m_spec.listFromRow < 0 ? nullptr : static_cast<const ListboxData *>(m_list->winGetUserData());
+		const int pitch = m_list->manager().winFontHeight(m_list->winGetFont()) + 1;
+		if (data && pitch > 1)
+		{
+			const int height = std::max(data->totalHeight + pitch, 3 * pitch) + 2 * TOTAL_OUTLINE_HEIGHT;
+			if (height < y1 - y0)
+			{
+				m_list->winSetSize(kGadgetRight - kLabelLeft, height);
+			}
 		}
 		GadgetListBoxSetTopVisibleEntry(m_list, 0);
 	}
@@ -320,7 +333,22 @@ bool OpenBFMEOptionsPage::message(std::uint32_t msg, WindowMsgData data1, Window
 	}
 	if (m_list && from == m_list)
 	{
-		return true; // the hot key list is read only
+		// the hot key list is read only; lane ONLINEMENU-1: a list that activates tells its row chosen and double-clicked (ZH GadgetListBox sends the
+		// row in data2 with GLM_DOUBLE_CLICKED; the selection is read for GLM_SELECTED)
+		if (m_spec.listActivates && !m_syncing && (msg == GLM_SELECTED || msg == GLM_DOUBLE_CLICKED))
+		{
+			int row = -1;
+			GadgetListBoxGetSelected(m_list, &row);
+			if (msg == GLM_DOUBLE_CLICKED && (int)data2 >= 0 && (int)data2 < (int)m_spec.list.size())
+			{
+				row = (int)data2;
+			}
+			if (row >= 0 && row < (int)m_spec.list.size())
+			{
+				emit({ msg == GLM_SELECTED ? OpenBFMEPageEvent::Kind::ListSelect : OpenBFMEPageEvent::Kind::ListActivate, std::string("list"), row });
+			}
+		}
+		return true;
 	}
 	for (std::size_t i = 0; i < m_built.size(); ++i)
 	{
@@ -379,7 +407,15 @@ bool OpenBFMEOptionsPage::message(std::uint32_t msg, WindowMsgData data1, Window
 					number = number * 10 + (c - u'0');
 				}
 				row.value = number;
-				emit({ OpenBFMEPageEvent::Kind::Value, row.key, number });
+				OpenBFMEPageEvent e{ OpenBFMEPageEvent::Kind::Value, row.key, number };
+				e.text = text;
+				emit(e);
+			}
+			if (msg == GEM_EDIT_DONE)
+			{
+				OpenBFMEPageEvent e{ OpenBFMEPageEvent::Kind::Submit, row.key, row.value };
+				e.text = text;
+				emit(e); // lane ONLINEMENU-1: Enter sends the text (the friends page's "add friend by code")
 			}
 		}
 		else if ((msg == GSM_SLIDER_TRACK || msg == GSM_SLIDER_DONE) && row.kind == OpenBFMEPageRow::Kind::Slider)
@@ -545,6 +581,19 @@ void OpenBFMEOptionsPage::decorate(GadgetDrawList &out) const
 	if (!m_shown)
 	{
 		return;
+	}
+	if (m_spec.backdrop)
+	{
+		// lane ONLINEMENU-1: over an online page the movie's own panels are under the page's band: a dark fill (the menus' background tone) first
+		GadgetDrawCommand c;
+		c.kind = GadgetDrawCommand::Kind::FillRect;
+		c.window = "OpenBFMEPage";
+		c.x0 = kTabsLeft - 8;
+		c.y0 = kTop - 8;
+		c.x1 = kPanelRight + 8;
+		c.y1 = kBottom + 8;
+		c.color = 0xFF050607u; // opaque: at 0xF0 the online page's text showed through (the friends video)
+		out.commands.push_back(c);
 	}
 	frame(out, kTabsLeft, kTop, kTabsRight, kBottom, m_spec.tabsHeader);
 	frame(out, kPanelLeft, kTop, kPanelRight, kBottom, m_spec.panelHeader);

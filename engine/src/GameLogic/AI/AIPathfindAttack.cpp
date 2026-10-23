@@ -1,57 +1,79 @@
 // OpenBFME. GPL-3.0.
 // Derived from Command & Conquer Generals Zero Hour, (c) 2001-2003 Electronic Arts Inc., GPL-3.0.
 //
-// Lane PHYS-1: Pathfinder::findAttackPath, the search for a cell from which the attacker's weapon reaches its victim (ZH AIPathfind.cpp findAttackPath; RotWK body
-// RW 0x6FC18E, pathfinder vtable 0xC1B8D8 slot +8, the ship variant RW 0x6FDE38 at +0xC is not ported).
+// Lane PHYS-1, completed by lane ATTACKPATH-1: Pathfinder::findAttackPath, the search for a cell from which the attacker's weapon reaches its victim (ZH AIPathfind.cpp
+// findAttackPath; RotWK body RW 0x6FC18E, pathfinder vtable 0xC1B8D8 slot +8, tier B to BFME2 0x6FAD13 whose decomp source is the near-matching draft
+// reverse/attempts/0x002fad13.cpp (2117 / 2117 bytes, not yet byte-matched): every step below was read from the RotWK disassembly, the draft supplied the names.
+// The ship variant RW 0x6FDE38 (slot +0xC, decomp PathfinderSidewaysAttack.cpp) is not ported: ships are not modelled by the pathfinder.)
 //
-// TARGET FACTS (RotWK game.dat, caveat S-001; review r2 of lane PHYS-1):
-//   1. without the path-through flag: a short forward probe. dir = normalize2(target - position) * 10; for i = 1 .. 9 the point position + i * dir * 0.5: its cell
-//      (RW 0x6E8CE6, centred) must be inside the logical extent for a human player, a valid movement cell (RW 0x6E8200) and a free footprint (RW 0x6F3082:
-//      checkDestination with no other unit's goal in it); the first point from which the weapon reaches with an extra 10 (RW 0x6CC07C(obj, point, victim, pos, 10, 1))
-//      and the view is not blocked (RW 0x6F4557) ends a two-node path (position -> point);
-//   2. the A* search: the goal for the heuristic is the victim's position, moved toward the attacker by the victim's bounding circle + 10 (unless RW 0x441B59);
-//      the start cell is the position (+5, +5 for a centred footprint); the search pops cells in heap order: a cell from which the weapon reaches (RW 0x6CC07C, extra
-//      0) and whose footprint checkDestination accepts (RW 0x6F1584, its occupancy count) is an endpoint unless it lies within 5 (25 squared) of the start; an endpoint
-//      with a count below 2 ends the search at once, else the lowest count is kept; every popped cell is expanded (RW 0x6F9850) while fewer than
-//      MaxCellsFindAttackPath (GameData +0x1214) cells were examined; with no endpoint the cell nearest the goal is used and `fallback` is set;
-//   3. the path is built by RW 0x6F1A31 (buildActualPath).
-// INFERENCE (stop S-784): the view test RW 0x6F4557 is not ported (S-325: never blocked); RW 0x441B59's condition on the goal shift and RW 0x68C9AC's KindOf 150 goal
-// are not read (the shift is always made); the closest-cell fallback ranks by the distance to the goal cell only (RW also ranks by RW 0x93AD93 of the cell, a zone
-// value, when the zone seed RW 0x6F9829 succeeded); RW 0x6F9850's range limit (attack distance + 30) and seed arguments are not passed (the port's expansion has
-// none); the occupancy count is the port's checkDestination count (allied goals block, S-164); a popped cell is always closed (RW 0x6F6286 is skipped with
-// the path-through flag; the port's records would not return to the pool).
+// TARGET FACTS (RotWK game.dat, caveat S-001; lane PHYS-1 review r2 / r3, lane ATTACKPATH-1):
+//   0. the map not ready -> null (before *fallback is cleared); *fallback = 0; the mineshaft fields + 0x1C1D8 / + 0x1C1DC = 0; crusher = crusher level > 0
+//      (RW 0x695070, passed to the corridor); the footprint (RW 0x6ED071); the movement (RW 0x6EA04D); human = not a computer player (player + 0x5C == 1);
+//   1. without the path-through flag: the forward probe. dir = normalize(target - unit) (RW 0x403175, z = 0) * 10; for i = 1 .. 9 the point unit + i * dir * 0.5
+//      (SSE): its cell (RW 0x6E8CE6, centred) must be inside the logical extent for a human player, exist on the unit's layer and be a valid movement cell
+//      (RW 0x6E8200), with a free footprint (RW 0x6F3082); the first point from which the weapon reaches with an extra 10 (RW 0x6CC07C(obj, point, victim, pos,
+//      10, 1)) and the view is not blocked (RW 0x6F4557) ends a two-node path (unit -> point; the first node's optimised link set by hand);
+//   2. the goal of the corridor: the given position; for a victim object a WALL_UPGRADE victim's point (RW 0x68C9AC) and, unless the weapon is a MeleeWeapon
+//      (RW 0x441B59, template + 0x125), the goal moves toward the unit by the victim's bounding radius (+ 0xB8) + 10 along Normalize(unit - victim) (RW 0x405553);
+//   3. the waypoint vector cleared (RW 0x8E6731), the block flags cleared (RW 0x937C23), the corridor FindClosestHierarchicalPath (RW 0x6F9829(human, locomotors,
+//      unit, from, goal, crusher, goal)); none -> every block passable (RW 0x937C65);
+//   4. the attack distance (int) Weapon::getAttackDistance(unit, victim, pos) (RW 0x6CA974, _ftol RW 0xA3CFA4) + 30 limits the expansion; the start = the unit's
+//      position (+5, +5 for a centred footprint), its cell (RW 0x6EA076) on the unit's layer; none, or a unit without an AI (+ 0x260) -> null; the start's record
+//      (RW 0x6E9FF8; an existing one has + 0xC cleared) starts with no goal (RW 0x934400(0)); the goal cell = the victim object's own position (+ 0x38) or the
+//      given position (RW 0x6E8CE6, centred, RW 0x5E2E9C on the ground layer: none off the grid -> null), its record; the start is pushed (RW 0x6F57A1);
+//   5. the fallback key starts at (corridor index 0, 0.9f (RW 0xBDE198) * (float)(dx^2 + dy^2) of the start cell to the goal cell, SSE); the view is tested
+//      only when there is no victim object or it is not significantly above the terrain (RW 0x70C55D); the towards-goal counter is reset (RW 0xDE4B14);
+//   6. every popped cell (RW 0x6F4AF2): with a corridor, its index (RW 0x93AD93) and (float)(dx^2 + dy^2) to the goal cell replace the fallback when the index is
+//      higher, or equal with a smaller distance; a cell reached through no waypoint (record + 0xC, always 0 here: S-161) from whose centre (RW 0x6EA0A1) the
+//      weapon reaches (extra 0) and whose footprint checkDestination (RW 0x6F1584) accepts, with its occupancy count: blocked = the view test (when tested);
+//      the start cell itself is never an endpoint, a centre within 5 (squared 25, RW 0xC69574, SSE y*y + x*x) of the start is blocked; an endpoint with a
+//      count <= 1 is closed and ends the search at once (RW 0x6FC91D); a lower count than the best so far becomes the acceptable cell; the cell is closed
+//      (RW 0x934594); while fewer than MaxCellsFindAttackPath (GameData + 0x1214, unsigned) were examined: the layer links (RW 0x6F6286, without the
+//      path-through flag) and the neighbours (RW 0x6F9850 with the attack distance and the corridor) are expanded;
+//   7. the acceptable cell, else the fallback cell (*fallback = 1), else null; the path RW 0x6F1A31(unit, surfaces, unit position, cell, centred, 0, 1).
+// INFERENCE / NOT PORTED (stop S-784): RW 0x68C9AC's transformed point of a WALL_UPGRADE victim is its position (the goal only seeds the corridor); the
+// occupancy count is the port's checkDestination count (allied goals block, S-164); a retail path keeps the goal cell's record when it was never opened or
+// closed (RW releases it only on the null branch), the port gives it back (no observable difference: an occupant-free record carries nothing); the
+// path is built and optimised by the port's buildActualPath (RW's last argument 1 is not identified).
 
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIPathfindStops.h"
 #include "GameLogic/SimMath.h"
 
-#include <limits>
+namespace
+{
+// RW 0x6E8CE6 with the centring flag 1 (no clamp)
+inline int cellIndexCentred(float v)
+{
+	return SimMath::floorToInt(SimMath::mulf32(v, 0.1f));
+}
+} // namespace
 
 Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const PathfindObject *victim, const Coord3D *victimPos,
 	float victimRadius, const PathfindAttackRange &range, bool pathThrough, bool *fallback)
 {
+	if (!m_isMapReady)
+	{
+		return nullptr;
+	}
 	if (fallback)
 	{
 		*fallback = false;
 	}
-	if (!m_isMapReady || obj == nullptr)
+	if (obj == nullptr)
 	{
 		return nullptr;
 	}
-	// lane PATHPERF-1: RW 0x6FC4CB .. 0x6FC4F9 clears the block flags, builds its own corridor (RW 0x6F9829) and marks every block passable when there is
-	// none. The corridor is not ported (S-162, kHierarchical): every block passable, as the search was before findPath kept its corridor between searches
-	note(pathstops::kHierarchical);
-	m_zoneManager.setAllPassable();
 	int radius = 0;
 	bool center = false;
 	getRadiusAndCenter(obj, radius, center);
 	const PathfindMovement mv = makeMovement(obj, loco);
 	const bool isHuman = !obj->isComputerControlled();
-	const Coord3D pos = *from;
-	const Coord3D target = victim ? victim->getPosition() : *victimPos;
+	const Coord3D pos = obj->getPosition();
 	// 1. the forward probe
 	if (!pathThrough)
 	{
+		const Coord3D target = victim ? victim->getPosition() : *victimPos;
 		float dx = SimMath::subf32(target.x, pos.x), dy = SimMath::subf32(target.y, pos.y);
 		const float len = SimMath::fstpDword(SimMath::sqrtPC24((double)SimMath::sumSquares2(dx, dy)));
 		if (len != 0.0f)
@@ -83,7 +105,8 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 			{
 				break;
 			}
-			if (range.inRangeFrom(p, 10.0f))
+			// lane ATTACKPATH-1: the view test RW 0x6F4557 after the reach (RW 0x6FC3BE)
+			if (range.inRangeFrom(p, 10.0f) && !isAttackViewBlockedByObstacle(*obj, p, victim, *victimPos))
 			{
 				Path *path = new Path();
 				path->prependNode(&p, LAYER_GROUND);
@@ -93,11 +116,12 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 			}
 		}
 	}
-	// 2. the search
-	Coord3D goal = target;
-	if (victim)
+	// 2. the corridor's goal
+	Coord3D goal = *victimPos;
+	if (victim && !range.meleeWeapon())
 	{
-		float ux = SimMath::subf32(pos.x, target.x), uy = SimMath::subf32(pos.y, target.y);
+		// RW 0x6FC436 .. 0x6FC4AC (SSE; RW 0x405553 normalises with z = 0)
+		float ux = SimMath::subf32(pos.x, victim->getPosition().x), uy = SimMath::subf32(pos.y, victim->getPosition().y);
 		const float len = SimMath::fstpDword(SimMath::sqrtPC24((double)SimMath::sumSquares2(ux, uy)));
 		if (len != 0.0f)
 		{
@@ -109,108 +133,139 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 		goal.y = SimMath::addf32(SimMath::mulf32(uy, k), goal.y); // the binary's order: y, x (the z term is 0)
 		goal.x = SimMath::addf32(SimMath::mulf32(k, ux), goal.x);
 	}
+	// 3. the corridor (lane ATTACKPATH-1: RW 0x6FC4B1 .. 0x6FC4F9; closes the feature map's perf trap "findAttackPath's own corridor", S-162)
+	m_zoneManager.clearPassableFlags();
+	Coord3D adjustedGoal = goal;
+	const bool hierarchical = findClosestHierarchicalPath(const_cast<PathfindObject *>(obj), loco, isHuman, from, &goal, &adjustedGoal);
+	if (!hierarchical)
+	{
+		m_zoneManager.setAllPassable();
+	}
+	// 4. the start and the goal cell
+	const int attackDistance = SimMath::truncToInt32(range.attackDistance()) + 30;
 	Coord3D start = pos;
 	if (center)
 	{
 		start.x = SimMath::addf32(start.x, 5.0f);
 		start.y = SimMath::addf32(start.y, 5.0f);
 	}
-	ICoord2D startNdx;
-	worldToCell(&start, true, &startNdx);
+	ICoord2D startNdx{ cellIndexCentred(start.x), cellIndexCentred(start.y) };
 	PathfindCell *parentCell = getClippedCell(obj->getLayer(), &start);
 	if (parentCell == nullptr || !obj->hasAI())
 	{
 		return nullptr;
 	}
-	// review r3: the shifted point only seeds the zone search (RW 0x6F9829 at 0x6FC4E4, not ported: S-784); the goal cell is the target's own position (RW 0x6FC661 ..
-	// 0x6FC68B: the target object's + 0x38, or the supplied position)
-	(void)goal;
-	ICoord2D goalNdx;
-	Coord3D goalPos = target;
-	worldToCell(&goalPos, true, &goalNdx);
+	// RW 0x6E9FF8 or + 0xC := 0 on an existing record: the waypoint link, which the port's records do not have (S-161); the parent link is cleared by
+	// RW 0x934400 below
+	if (!parentCell->allocateInfo(m_pool, startNdx))
+	{
+		return nullptr;
+	}
+	m_isTunneling = false;
+	parentCell->startPathfind(nullptr);
+	const Coord3D target = victim ? victim->getPosition() : *victimPos;
+	const ICoord2D goalNdx{ cellIndexCentred(target.x), cellIndexCentred(target.y) };
 	PathfindCell *goalCell = getCell(LAYER_GROUND, goalNdx.x, goalNdx.y);
 	if (goalCell == nullptr)
 	{
+		parentCell->releaseInfo(m_pool);
 		return nullptr;
 	}
 	if (!goalCell->allocateInfo(m_pool, goalNdx))
 	{
+		parentCell->releaseInfo(m_pool);
 		return nullptr;
 	}
-	if (parentCell != goalCell && !parentCell->allocateInfo(m_pool, startNdx))
-	{
-		goalCell->releaseInfo(m_pool);
-		return nullptr;
-	}
-	m_isTunneling = false;
-	parentCell->startPathfind(goalCell);
 	m_open.clear();
 	m_closedList = nullptr;
-	parentCell->setTotalCost(parentCell->costToGoal(goalCell));
 	m_open.push(parentCell);
+	// 5. the fallback key and the view rule
+	PathfindCell *acceptable = nullptr, *closest = nullptr;
+	int acceptableCount = 9999999;
+	int closestOrder = 0;
+	float closestDistance;
+	{
+		const int dx = (int)goalCell->getXIndex() - (int)parentCell->getXIndex(), dy = (int)goalCell->getYIndex() - (int)parentCell->getYIndex();
+		closestDistance = SimMath::mulf32(SimMath::sseFromInt32(dy * dy + dx * dx), 0.9f);
+	}
+	const bool checkView = victim == nullptr || !victim->isSignificantlyAboveTerrain();
 	m_shortcutCounter = 0;
-	PathfindCell *best = nullptr, *closest = nullptr;
-	int bestCount = 9999999;
-	int closestD2 = std::numeric_limits<int>::max();
-	int examined = 0;
+	unsigned examined = 0;
 	Path *result = nullptr;
+	bool done = false;
+	// 6. the search
 	while (!m_open.empty())
 	{
 		PathfindCell *c = m_open.pop();
-		// every popped cell is closed at once (review r3): its record returns to the pool on success, failure and an exhausted budget alike. RW skips the close
-		// (RW 0x6F6286) with the path-through flag (S-784)
-		markClosed(c);
-		const int gx = (int)goalCell->getXIndex() - (int)c->getXIndex(), gy = (int)goalCell->getYIndex() - (int)c->getYIndex();
-		const int d2 = gx * gx + gy * gy;
-		if (d2 < closestD2)
-		{
-			closestD2 = d2;
-			closest = c;
-		}
 		Coord3D centre;
 		adjustCoordToCell(c->getXIndex(), c->getYIndex(), center, centre, c->getLayer());
+		if (hierarchical)
+		{
+			const int order = hierarchicalPositionOf(c->getXIndex(), c->getYIndex());
+			const int gx = (int)goalCell->getXIndex() - (int)c->getXIndex(), gy = (int)goalCell->getYIndex() - (int)c->getYIndex();
+			const float d = SimMath::sseFromInt32(gy * gy + gx * gx);
+			if (order > closestOrder || (order == closestOrder && closestDistance > d))
+			{
+				closest = c;
+				closestOrder = order;
+				closestDistance = d;
+			}
+		}
 		int crowd = 0;
 		if (range.inRangeFrom(centre, 0.0f) && checkDestination(obj, c->getXIndex(), c->getYIndex(), c->getLayer(), radius, center, &crowd, false))
 		{
-			bool nearStart = false;
+			bool blocked = checkView ? isAttackViewBlockedByObstacle(*obj, centre, victim, *victimPos) : false;
 			if (c != parentCell)
 			{
 				const float sx = SimMath::subf32(centre.x, start.x), sy = SimMath::subf32(centre.y, start.y);
-				nearStart = SimMath::addf32(SimMath::mulf32(sy, sy), SimMath::mulf32(sx, sx)) < 25.0f;
-				if (!nearStart)
+				if (SimMath::addf32(SimMath::mulf32(sy, sy), SimMath::mulf32(sx, sx)) < 25.0f)
 				{
-					if (crowd < 2)
+					blocked = true;
+				}
+				if (!blocked)
+				{
+					if (crowd <= 1)
 					{
-						best = c;
-						bestCount = -1;
+						markClosed(c);
+						result = buildActualPath(obj, loco.validSurfaces, &pos, c, center, false);
+						done = true;
 						break;
 					}
-					if (crowd < bestCount)
+					if (crowd < acceptableCount)
 					{
-						best = c;
-						bestCount = crowd;
+						acceptable = c;
+						acceptableCount = crowd;
 					}
 				}
 			}
 		}
-		if (examined < m_config.findAttackPathLimit)
+		markClosed(c);
+		if (examined < (unsigned)m_config.findAttackPathLimit)
 		{
-			examined += examineNeighboringCells(c, goalCell, loco, isHuman, center, radius, startNdx, obj);
+			if (!pathThrough)
+			{
+				checkChangeLayers(c, obj); // RW 0x6F6286
+			}
+			examined += (unsigned)examineNeighboringCells(c, goalCell, loco, isHuman, center, radius, startNdx, obj, hierarchical, attackDistance);
 		}
 	}
-	PathfindCell *end = best;
-	if (end == nullptr && closest != nullptr)
+	// 7. the result
+	if (!done)
 	{
-		end = closest;
-		if (fallback)
+		if (acceptable)
 		{
-			*fallback = true;
+			result = buildActualPath(obj, loco.validSurfaces, &pos, acceptable, center, false);
+		}
+		else if (closest)
+		{
+			if (fallback)
+			{
+				*fallback = true;
+			}
+			result = buildActualPath(obj, loco.validSurfaces, &pos, closest, center, false);
 		}
 	}
-	if (end)
-	{
-		result = buildActualPath(obj, loco.validSurfaces, from, end, center, false);
-	}
+	m_isTunneling = false;
 	cleanOpenAndClosedLists();
 	parentCell->releaseInfo(m_pool);
 	if (goalCell != parentCell)

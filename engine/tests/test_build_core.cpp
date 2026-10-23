@@ -352,7 +352,7 @@ TEST_CASE("placement: footprints collide as oriented rectangles and discs (ZH ge
 	CHECK_FALSE(footprintsCollide(e, g));
 }
 
-TEST_CASE("stops S-300 .. S-307 and S-650 .. S-657 (S-651 closed): every construction stop is in the live report, and a PreBuiltList castle notes its stop at runtime")
+TEST_CASE("stops S-300 .. S-307 and S-650 .. S-657 (S-651 and S-655 closed): every construction stop is in the live report, and a PreBuiltList castle notes its stop at runtime")
 {
 	BuildFx f;
 	const GameLogic::Report before = f.logic->report();
@@ -363,7 +363,7 @@ TEST_CASE("stops S-300 .. S-307 and S-650 .. S-657 (S-651 closed): every constru
 	}
 	for (int id = 650; id <= 657; ++id)
 	{
-		if (id != 651) // S-651 closed by lane DECOMP-1: the HealWeapon is the full temporary weapon (RW 0x6CF530)
+		if (id != 651 && id != 655) // S-651 closed by lane DECOMP-1: the HealWeapon is the full temporary weapon (RW 0x6CF530); S-655 by lane LUMBER1 (WorkerAIUpdate's supply half)
 		{
 			ids.push_back(id); // lane BUILD-2
 		}

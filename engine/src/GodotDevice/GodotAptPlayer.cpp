@@ -73,6 +73,7 @@
 #include "GameClient/GUI/AptScreens/AptOnlineHub.h"
 #include "GameClient/GameRecords.h"
 #include "GameNetwork/PlatformApiClient.h"
+#include "GameClient/GUI/AptScreens/AptMessenger.h"
 #include "GameClient/GUI/AptMessageBox.h"
 #include "GameClient/GUI/ProfileSwitch.h"
 #include "GameNetwork/OnlineLobbyClient.h"
@@ -167,6 +168,12 @@ std::string compact(const std::string &s)
 // lane UI-2: a texture by UV corners in the port's top-row-first textures (a pair with lo > hi mirrors that axis): a quad with explicit UVs
 void addTextureUV(RenderingServer *rs, RID item, const Rect2 &dest, const Ref<Texture2D> &texture, const float uvLo[2], const float uvHi[2], const Color &colour)
 {
+	// lane ONLINEMENU-1: a quad without area draws nothing, and Godot's canvas refuses it ("Invalid polygon data, triangulation failed", every frame:
+	// 1104 lines in the friends video's log once the FRIENDS page's entry had the focus)
+	if (!(std::fabs(dest.size.x) > 0.0f && std::fabs(dest.size.y) > 0.0f))
+	{
+		return;
+	}
 	PackedVector2Array points, uvs;
 	PackedColorArray colours;
 	const Vector2 p0 = dest.position, p1 = dest.position + dest.size;
@@ -1295,6 +1302,18 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("online_deliver", "id", "status", "body", "error"), &AptMenuPlayer::online_deliver);
 	ClassDB::bind_method(D_METHOD("online_status"), &AptMenuPlayer::online_status);
 	ClassDB::bind_method(D_METHOD("online_apply", "spec"), &AptMenuPlayer::online_apply);
+	ClassDB::bind_method(D_METHOD("online_social_status"), &AptMenuPlayer::online_social_status);
+	ClassDB::bind_method(D_METHOD("online_social_events"), &AptMenuPlayer::online_social_events);
+	ClassDB::bind_method(D_METHOD("online_social_apply", "spec"), &AptMenuPlayer::online_social_apply);
+	ClassDB::bind_method(D_METHOD("online_messenger_sync", "spec"), &AptMenuPlayer::online_messenger_sync);
+	ClassDB::bind_method(D_METHOD("online_friends_button", "label"), &AptMenuPlayer::online_friends_button); // lane ONLINEMENU-1
+	ClassDB::bind_method(D_METHOD("online_ask", "key", "title", "text"), &AptMenuPlayer::online_ask);
+	ClassDB::bind_method(D_METHOD("online_answers"), &AptMenuPlayer::online_answers);
+	ClassDB::bind_method(D_METHOD("online_asking", "key"), &AptMenuPlayer::online_asking);
+	ClassDB::bind_method(D_METHOD("online_friends_page_show", "spec"), &AptMenuPlayer::online_friends_page_show);
+	ClassDB::bind_method(D_METHOD("online_friends_page_close"), &AptMenuPlayer::online_friends_page_close);
+	ClassDB::bind_method(D_METHOD("online_friends_page_events"), &AptMenuPlayer::online_friends_page_events);
+	ClassDB::bind_method(D_METHOD("online_friends_page_state"), &AptMenuPlayer::online_friends_page_state);
 	ClassDB::bind_method(D_METHOD("online_start_failed", "error"), &AptMenuPlayer::online_start_failed); // Sol r1
 	ClassDB::bind_method(D_METHOD("online_game_failed", "text"), &AptMenuPlayer::online_game_failed); // lane ONLINEUX-1
 	ClassDB::bind_method(D_METHOD("online_set_counts", "counts"), &AptMenuPlayer::online_set_counts); // lane ONLINEUX-1
@@ -2140,6 +2159,7 @@ Dictionary AptMenuPlayer::get_backdrop_state() const
 	// lane CAMP-2: what is on screen behind the shell's movies, read from the canvas as drawn (not from the shell's flags)
 	Dictionary d;
 	d["backdrop_image"] = toGodot(m->drawnBackdrop);
+	d["model_animation_frames"] = m->view3d.animationFrames();
 	const int background = m->shell && m->shell->wm ? m->shell->wm->backgroundLevel() : -1;
 	d["background_level"] = (int64_t)background;
 	const auto it = m->levelCommands.find(background);
@@ -2425,6 +2445,56 @@ OpenBFMEPageRow pageRowOf(const Dictionary &d)
 	return r;
 }
 
+// lane ONLINEMENU-1: a page spec from the device's Dictionary (the Options screen's OpenBFME page and the online FRIENDS page)
+OpenBFMEPageSpec pageSpecOf(const Dictionary &spec)
+{
+	OpenBFMEPageSpec s;
+	s.subtitle = u16Of(spec.get("subtitle", ""));
+	s.tabsHeader = u16Of(spec.get("tabs_header", ""));
+	const Array tabs = spec.get("tabs", Array());
+	for (int64_t i = 0; i < tabs.size() && i < 16; ++i)
+	{
+		s.tabs.push_back(u16Of(tabs[i]));
+	}
+	s.tab = (int)spec.get("tab", 0);
+	s.panelHeader = u16Of(spec.get("panel_header", ""));
+	s.note = u16Of(spec.get("note", ""));
+	const Array rows = spec.get("rows", Array());
+	for (int64_t i = 0; i < rows.size() && i < 64; ++i)
+	{
+		s.rows.push_back(pageRowOf(rows[i]));
+	}
+	if (spec.has("list"))
+	{
+		s.hasList = true;
+		const Array list = spec["list"];
+		for (int64_t i = 0; i < list.size() && i < 500; ++i)
+		{
+			const Array pair = list[i];
+			s.list.emplace_back(u16Of(pair.size() > 0 ? pair[0] : Variant("")), u16Of(pair.size() > 1 ? pair[1] : Variant("")));
+		}
+	}
+	s.listFromRow = (int)spec.get("list_from_row", -1);
+	s.listActivates = (bool)spec.get("list_activates", false);
+	return s;
+}
+
+Array pageEventsOf(const std::vector<OpenBFMEPageEvent> &events)
+{
+	Array out;
+	static const char *kinds[] = { "value", "tab", "cancel", "reset", "accept", "entry", "release", "submit", "list_select", "list_activate" };
+	for (const OpenBFMEPageEvent &e : events)
+	{
+		Dictionary d;
+		d["kind"] = kinds[(int)e.kind];
+		d["key"] = toGodot(e.key);
+		d["value"] = e.value;
+		d["text"] = toGodot(u16ToUtf8(e.text));
+		out.push_back(d);
+	}
+	return out;
+}
+
 // lane OPTS-5: a row as GDScript describes them (pageRowOf's input)
 Dictionary pageRowDict(const OpenBFMEPageRow &r)
 {
@@ -2551,16 +2621,7 @@ Array AptMenuPlayer::openbfme_page_events()
 	{
 		return out;
 	}
-	static const char *kinds[] = { "value", "tab", "cancel", "reset", "accept", "entry", "release" };
-	for (const OpenBFMEPageEvent &e : o->takeExtensionEvents())
-	{
-		Dictionary d;
-		d["kind"] = kinds[(int)e.kind];
-		d["key"] = toGodot(e.key);
-		d["value"] = e.value;
-		out.push_back(d);
-	}
-	return out;
+	return pageEventsOf(o->takeExtensionEvents());
 }
 
 Dictionary AptMenuPlayer::openbfme_page_state() const
@@ -6217,9 +6278,9 @@ void AptMenuPlayer::set_input_forwarded(bool forwarded)
 	m->inputForwarded = forwarded;
 }
 
-Ref<Font> AptMenuPlayer::font_for(const std::string &name, float size, float *drawSize)
+Ref<Font> AptMenuPlayer::font_for(const std::string &name, float size, float *drawSize, bool bold)
 {
-	return m->fontFor(name, size, drawSize);
+	return m->fontFor(name, size, drawSize, bold);
 }
 
 Ref<Font> AptMenuPlayer::font_cell(const Ref<Font> &font, int px)
@@ -6870,6 +6931,7 @@ Dictionary AptMenuPlayer::set_online(Object *worldObject, const Dictionary &opti
 	o.platform = localPlatform(); // lane PLATFORMICON-1: the one value told about this machine
 	o.playerTemplateCount = factions;
 	o.colorCount = colors;
+	o.enableSocial = !o.installId.empty();
 	o.pollMs = (std::uint32_t)(int64_t)options.get("poll_ms", (int64_t)o.pollMs);
 	// lane ONLINE-5: the staging room's polls are held by a lobby that can (20 s: one request per player every 20 s in an idle room); "long_poll_s" 0
 	// turns it off (plain polls every poll_ms)
@@ -6912,6 +6974,8 @@ Array AptMenuPlayer::online_take_requests()
 		d["token"] = toGodot(q.token);
 		d["held"] = q.held; // lane ONLINE-5: a poll the lobby may keep for hold_seconds: its own connection (online_http.gd)
 		d["hold_seconds"] = (int64_t)q.holdSeconds;
+		d["channel"] = q.channel == OnlineLobbyClient::HttpRequest::Social ? "social" :
+			q.channel == OnlineLobbyClient::HttpRequest::Room ? "room" : "ordinary";
 		out.push_back(d);
 	}
 	return out;
@@ -7036,6 +7100,8 @@ Dictionary AptMenuPlayer::online_status()
 	}
 	r["running"] = mine;
 	r["in_game"] = c.inGame();
+	// lane ONLINEMENU-1: the corner's ping: the player's latest link to the game relay ("" not measured yet, "none" no answer, else "<ms>")
+	r["relay_ping"] = toGodot(!c.ownRelayKnown() ? std::string() : c.ownRelayRttMs() < 0 ? std::string("none") : std::to_string(c.ownRelayRttMs()));
 	r["host"] = c.amIHost();
 	r["mode"] = toGodot(std::string(OnlineLobbyClient::modeName(c.profile()))); // lane UBERJOIN-1: "normal" or "uber" (Quick Match matches by it)
 	r["room_mode"] = toGodot(std::string(OnlineLobbyClient::modeName(c.gameMode())));
@@ -7070,6 +7136,7 @@ Dictionary AptMenuPlayer::online_status()
 	r["hold_seconds"] = (int64_t)c.holdSeconds();
 	AptOnlineShell *screen = sm.shell ? dynamic_cast<AptOnlineShell *>(sm.shell->findScreenByFilename("OnlineShell.apt")) : nullptr;
 	r["screen"] = screen != nullptr;
+	r["messenger"] = screen && screen->messenger() != nullptr;
 	if (screen)
 	{
 		r["page"] = toGodot(screen->currentPage());
@@ -7096,6 +7163,519 @@ Dictionary AptMenuPlayer::online_status()
 		r["start_spots"] = spots;
 	}
 	return r;
+}
+
+Dictionary AptMenuPlayer::online_social_status() const
+{
+	Dictionary out;
+	out["available"] = false;
+	if (!m->shell || !m->shell->online)
+	{
+		return out;
+	}
+	const OnlineLobbyClient &c = *m->shell->online;
+	const OnlineLobbyClient::SocialState &s = c.social();
+	auto text16 = [](const std::u16string &v) { return String::utf8(OnlineLobbyClient::utf16ToUtf8(v).c_str()); };
+	auto player = [&](const OnlineLobbyClient::Player &p) {
+		Dictionary d;
+		d["pid"] = toGodot(p.pid);
+		d["code"] = toGodot(p.code);
+		d["nick"] = text16(p.nick);
+		return d;
+	};
+	out["available"] = s.available;
+	out["unsupported"] = s.unsupported; // ONLINEMENU-1: the lobby has no social service (the screens say "not available on this server yet")
+	Dictionary me;
+	me["pid"] = toGodot(s.me.pid);
+	me["code"] = toGodot(s.me.code);
+	me["nick"] = text16(s.me.nick);
+	me["hidden"] = s.me.hidden;
+	Dictionary privacy;
+	privacy["invites"] = toGodot(s.me.privacy.invites);
+	privacy["challenges"] = toGodot(s.me.privacy.challenges);
+	privacy["requests"] = toGodot(s.me.privacy.requests);
+	privacy["presence"] = toGodot(s.me.privacy.presence);
+	me["privacy"] = privacy;
+	out["me"] = me;
+	Array friends;
+	for (const auto &f : s.friends)
+	{
+		Dictionary d = player(f);
+		auto presence = std::find_if(s.presence.begin(), s.presence.end(), [&](const auto &p) { return p.pid == f.pid; });
+		d["status"] = presence == s.presence.end() ? String("offline") : toGodot(presence->state);
+		d["request"] = false;
+		friends.push_back(d);
+	}
+	out["friends"] = friends;
+	Array requests;
+	for (const auto &item : s.requests)
+	{
+		Dictionary d;
+		d["id"] = toGodot(item.id);
+		d["from"] = player(item.from);
+		d["to"] = player(item.to);
+		d["at"] = (int64_t)item.at;
+		requests.push_back(d);
+	}
+	out["requests"] = requests;
+	Array invites;
+	for (const auto &item : s.invites)
+	{
+		Dictionary d;
+		d["id"] = toGodot(item.id);
+		d["from"] = player(item.from);
+		d["to"] = player(item.to);
+		d["game"] = toGodot(item.game);
+		d["kind"] = toGodot(item.kind);
+		d["mode"] = item.hasMode ? Variant(toGodot(item.mode)) : Variant();
+		d["note"] = toGodot(item.note);
+		d["expires"] = (int64_t)item.expires;
+		invites.push_back(d);
+	}
+	out["invites"] = invites;
+	Array presence;
+	for (const auto &item : s.presence)
+	{
+		Dictionary d;
+		d["pid"] = toGodot(item.pid);
+		d["state"] = toGodot(item.state);
+		d["game"] = item.hasGame ? Variant(toGodot(item.game)) : Variant();
+		d["joinable"] = item.joinable;
+		d["since"] = (int64_t)item.since;
+		d["map"] = item.hasMap ? Variant(toGodot(item.map)) : Variant();
+		d["mode"] = item.hasMode ? Variant(toGodot(item.mode)) : Variant();
+		presence.push_back(d);
+	}
+	out["presence"] = presence;
+	Array notices;
+	for (const auto &item : s.notices)
+	{
+		Dictionary d;
+		d["id"] = toGodot(item.id);
+		d["kind"] = toGodot(item.kind);
+		d["invite"] = item.hasInvite ? Variant(toGodot(item.invite)) : Variant();
+		d["at"] = (int64_t)item.at;
+		notices.push_back(d);
+	}
+	out["notices"] = notices;
+	Array recent;
+	for (const auto &game : s.recent)
+	{
+		Dictionary d;
+		d["game"] = toGodot(game.game);
+		d["at"] = (int64_t)game.at;
+		Array players;
+		for (const auto &entry : game.players)
+		{
+			Dictionary p = player(entry.player);
+			p["target"] = toGodot(entry.target);
+			players.push_back(p);
+		}
+		d["players"] = players;
+		recent.push_back(d);
+	}
+	out["recent"] = recent;
+	Array blocks;
+	for (const auto &item : s.blocks)
+	{
+		Dictionary d = player(item.player);
+		d["note"] = toGodot(item.note);
+		d["at"] = (int64_t)item.at;
+		blocks.push_back(d);
+	}
+	out["blocks"] = blocks;
+	out["blocks_next"] = s.hasBlocksNext ? Variant(toGodot(s.blocksNext)) : Variant();
+	Array heads;
+	for (const auto &item : s.chatHeads)
+	{
+		Dictionary d;
+		d["pid"] = toGodot(item.pid);
+		d["last_id"] = (int64_t)item.lastId;
+		d["read_id"] = (int64_t)item.readId;
+		heads.push_back(d);
+	}
+	out["chat_heads"] = heads;
+	out["chat"] = heads;
+	Array threads;
+	for (const auto &item : s.threads)
+	{
+		Dictionary d;
+		d["pid"] = toGodot(item.pid);
+		d["nick"] = text16(item.nick);
+		d["code"] = toGodot(item.code);
+		d["last_id"] = (int64_t)item.lastId;
+		d["read_id"] = (int64_t)item.readId;
+		threads.push_back(d);
+	}
+	out["threads"] = threads;
+	out["threads_next"] = s.hasThreadsNext ? Variant(toGodot(s.threadsNext)) : Variant();
+	Dictionary conversations;
+	for (const auto &pair : s.conversations)
+	{
+		Dictionary conversation;
+		Array messages;
+		for (const auto &item : pair.second.messages)
+		{
+			Dictionary d;
+			d["id"] = (int64_t)item.id;
+			d["from"] = toGodot(item.from);
+			d["to"] = toGodot(item.to);
+			d["text"] = toGodot(item.text);
+			d["at"] = (int64_t)item.at;
+			d["client_id"] = toGodot(item.clientId);
+			messages.push_back(d);
+		}
+		conversation["messages"] = messages;
+		conversation["next"] = pair.second.hasNext ? Variant((int64_t)pair.second.next) : Variant();
+		conversation["has_more"] = pair.second.hasNext;
+		conversation["last_id"] = (int64_t)pair.second.lastId;
+		conversation["read_id"] = (int64_t)pair.second.readId;
+		conversations[toGodot(pair.first)] = conversation;
+	}
+	out["conversations"] = conversations;
+	out["seq"] = toGodot(s.seq);
+	Dictionary stats;
+	stats["v"] = 1;
+	stats["players"] = (int64_t)s.stats.players;
+	stats["games_open"] = (int64_t)s.stats.gamesOpen;
+	stats["games_running"] = (int64_t)s.stats.gamesRunning;
+	stats["as_of"] = (int64_t)s.stats.asOf;
+	out["stats"] = stats;
+	Array roomPlayers;
+	if (c.inGame())
+	{
+		for (std::size_t i = 0; i < c.slotViews().size(); ++i)
+		{
+			const auto &slot = c.slotViews()[i];
+			if (slot.state != "player" || slot.you) continue;
+			Dictionary d;
+			d["pid"] = slot.pid.empty() ? Variant() : Variant(toGodot(slot.pid));
+			d["nick"] = text16(c.gameInfo().slots[i].name);
+			d["blocked"] = slot.blocked;
+			d["target"] = slot.playerId.empty() ? Variant() : Variant(toGodot(slot.playerId));
+			roomPlayers.push_back(d);
+		}
+	}
+	out["room_players"] = roomPlayers;
+	return out;
+}
+
+Array AptMenuPlayer::online_social_events()
+{
+	Array out;
+	if (!m->shell || !m->shell->online) return out;
+	for (const auto &event : m->shell->online->takeSocialEvents())
+	{
+		Dictionary d;
+		const char *kind = event.kind == OnlineLobbyClient::SocialEvent::Error ? "error" :
+			event.kind == OnlineLobbyClient::SocialEvent::Chat ? "chat" :
+			event.kind == OnlineLobbyClient::SocialEvent::Recovery ? "recovery" :
+			event.kind == OnlineLobbyClient::SocialEvent::NoticeEvent ? "notice" : "changed";
+		d["kind"] = kind;
+		if (!event.request.empty()) d["request"] = toGodot(event.request);
+		if (!event.code.empty()) d["code"] = toGodot(event.code);
+		if (!event.pid.empty()) d["pid"] = toGodot(event.pid);
+		if (!event.id.empty()) d["id"] = toGodot(event.id);
+		if (!event.text.empty() || event.kind == OnlineLobbyClient::SocialEvent::Recovery)
+			d[event.kind == OnlineLobbyClient::SocialEvent::Recovery ? "code" : "message"] = toGodot(event.text);
+		out.push_back(d);
+	}
+	return out;
+}
+
+Dictionary AptMenuPlayer::online_social_apply(const Dictionary &spec)
+{
+	Dictionary out;
+	auto fail = [&](const std::string &error) {
+		out["ok"] = false;
+		out["error"] = toGodot(error);
+		return out;
+	};
+	if (!m->shell || !m->shell->online) return fail("not_in_shell");
+	OnlineLobbyClient &c = *m->shell->online;
+	const std::string action = toNative(String(spec.get("action", String())));
+	const std::string pid = toNative(String(spec.get("pid", String())));
+	const std::string id = toNative(String(spec.get("id", String())));
+	const std::string text = toNative(String(spec.get("text", String())));
+	const std::string note = toNative(String(spec.get("note", String())));
+	bool ok = false;
+	if (action == "request_friend_code") ok = c.requestFriendCode(toNative(String(spec.get("code", String()))));
+	else if (action == "request_friend") ok = c.requestFriend(pid);
+	else if (action == "accept_friend") ok = c.acceptFriend(id);
+	else if (action == "decline_friend") ok = c.declineFriend(id);
+	else if (action == "remove_friend") ok = c.removeFriend(pid);
+	else if (action == "block_player") ok = c.blockPlayer(pid, note);
+	else if (action == "unblock_player") ok = c.unblockPlayer(pid);
+	else if (action == "fetch_blocks") ok = c.fetchBlocks(toNative(String(spec.get("after", String()))));
+	else if (action == "send_invite")
+		ok = c.sendInvite(pid, toNative(String(spec.get("kind", String("invite")))),
+			toNative(String(spec.get("mode", String()))), note);
+	else if (action == "accept_invite") ok = c.acceptInvite(id);
+	else if (action == "leave_accept_invite") ok = c.acceptInviteAfterLeave(id);
+	else if (action == "decline_invite") ok = c.declineInvite(id, bool(spec.get("busy", false)));
+	else if (action == "fetch_recent") ok = c.fetchRecent();
+	else if (action == "fetch_threads") ok = c.fetchThreads(toNative(String(spec.get("after", String()))));
+	else if (action == "fetch_messages")
+		ok = c.fetchMessages(pid, (std::uint64_t)(int64_t)spec.get("after", (int64_t)0));
+	else if (action == "send_message")
+		ok = c.sendMessage(pid, toNative(String(spec.get("client_id", String()))), text);
+	else if (action == "mark_read")
+		ok = c.markRead(pid, (std::uint64_t)(int64_t)spec.get("through", (int64_t)0));
+	else if (action == "set_privacy")
+	{
+		const Dictionary value = spec.get("privacy", Dictionary());
+		OnlineLobbyClient::Privacy privacy;
+		privacy.invites = toNative(String(value.get("invites", String())));
+		privacy.challenges = toNative(String(value.get("challenges", String())));
+		privacy.requests = toNative(String(value.get("requests", String())));
+		privacy.presence = toNative(String(value.get("presence", String())));
+		ok = c.setPrivacy(privacy);
+	}
+	else if (action == "set_presence")
+		ok = c.setPresence(toNative(String(spec.get("state", String()))), spec.has("hidden"), bool(spec.get("hidden", false)));
+	else if (action == "generate_recovery") ok = c.generateRecovery();
+	else if (action == "leave_game")
+	{
+		if (!c.inGame()) return fail("not_in_game");
+		c.leaveGame();
+		ok = true;
+	}
+	else if (action == "create_challenge")
+	{
+		AptOnlineShell *screen = m->shell->shell ?
+			dynamic_cast<AptOnlineShell *>(m->shell->shell->findScreenByFilename("OnlineShell.apt")) : nullptr;
+		if (!screen) return fail("online_screen_closed");
+		ok = screen->createChallenge(pid, toNative(String(spec.get("mode", String()))),
+			toNative(String(spec.get("password", String()))));
+		if (!ok) return fail("challenge_not_started");
+	}
+	else return fail("bad_action");
+	if (!ok) return fail(c.lastSocialError().empty() ? "social_unavailable" : c.lastSocialError());
+	out["ok"] = true;
+	return out;
+}
+
+// lane ONLINEMENU-1: the online FRIENDS button and page (AptOnlineShell; NOT RETAIL)
+namespace
+{
+AptOnlineShell *onlineShellOf(Shell *shell)
+{
+	return shell ? dynamic_cast<AptOnlineShell *>(shell->findScreenByFilename("OnlineShell.apt")) : nullptr;
+}
+} // namespace
+
+void AptMenuPlayer::online_friends_button(const String &label)
+{
+	if (AptOnlineShell *s = onlineShellOf(m->shell ? m->shell->shell.get() : nullptr))
+	{
+		s->setFriendsButton(utf8ToU16(toNative(label)).substr(0, 32));
+	}
+}
+
+bool AptMenuPlayer::online_ask(const String &key, const String &title, const String &text)
+{
+	AptOnlineShell *s = onlineShellOf(m->shell ? m->shell->shell.get() : nullptr);
+	return s && s->askYesNo(toNative(key).substr(0, 64), utf8ToU16(toNative(title)).substr(0, 64), utf8ToU16(toNative(text)).substr(0, 400));
+}
+
+bool AptMenuPlayer::online_asking(const String &key)
+{
+	AptOnlineShell *s = onlineShellOf(m->shell ? m->shell->shell.get() : nullptr);
+	return s && s->asking(toNative(key));
+}
+
+PackedStringArray AptMenuPlayer::online_answers()
+{
+	PackedStringArray out;
+	if (AptOnlineShell *s = onlineShellOf(m->shell ? m->shell->shell.get() : nullptr))
+	{
+		for (const std::string &a : s->takeAnswers())
+		{
+			out.push_back(toGodot(a));
+		}
+	}
+	return out;
+}
+
+Dictionary AptMenuPlayer::online_friends_page_show(const Dictionary &spec)
+{
+	Dictionary r;
+	r["ok"] = false;
+	AptOnlineShell *s = onlineShellOf(m->shell ? m->shell->shell.get() : nullptr);
+	if (!s)
+	{
+		r["error"] = "OnlineShell.apt is not up";
+		return r;
+	}
+	std::string error;
+	const bool ok = s->openFriendsPage(pageSpecOf(spec), &error);
+	r["ok"] = ok;
+	r["error"] = toGodot(error);
+	if (!ok)
+	{
+		UtilityFunctions::printerr(toGodot("SHELL friends page: " + error));
+	}
+	return r;
+}
+
+void AptMenuPlayer::online_friends_page_close()
+{
+	if (AptOnlineShell *s = onlineShellOf(m->shell ? m->shell->shell.get() : nullptr))
+	{
+		s->closeFriendsPage();
+	}
+}
+
+Array AptMenuPlayer::online_friends_page_events()
+{
+	AptOnlineShell *s = onlineShellOf(m->shell ? m->shell->shell.get() : nullptr);
+	return s ? pageEventsOf(s->takeFriendsEvents()) : Array();
+}
+
+Dictionary AptMenuPlayer::online_friends_page_state() const
+{
+	Dictionary d;
+	AptOnlineShell *s = onlineShellOf(m->shell ? m->shell->shell.get() : nullptr);
+	d["shell"] = s != nullptr;
+	d["open"] = s && s->friendsPageOpen();
+	if (s)
+	{
+		d["button"] = Rect2(AptOnlineShell::kFriendsButtonLeft, AptOnlineShell::kFriendsButtonTop, AptOnlineShell::kFriendsButtonRight - AptOnlineShell::kFriendsButtonLeft,
+			AptOnlineShell::kFriendsButtonBottom - AptOnlineShell::kFriendsButtonTop);
+	}
+	OpenBFMEOptionsPage *page = s ? s->friendsPage() : nullptr;
+	if (!page || !page->shown())
+	{
+		return d;
+	}
+	d["tab"] = page->spec().tab;
+	Array tabs;
+	for (std::size_t i = 0; i < page->spec().tabs.size(); ++i)
+	{
+		std::array<int, 4> r{};
+		page->rect("tab:" + std::to_string(i), r);
+		tabs.push_back(stageRect(r));
+	}
+	d["tabs"] = tabs;
+	Dictionary rows;
+	for (const OpenBFMEPageRow &row : page->spec().rows)
+	{
+		if (row.key.empty())
+		{
+			continue;
+		}
+		Dictionary rd;
+		std::array<int, 4> r{};
+		if (page->rect(row.key, r))
+		{
+			rd["rect"] = stageRect(r);
+		}
+		rd["value"] = row.value;
+		rd["value_text"] = toGodot(u16ToUtf8(row.valueText));
+		rd["label"] = toGodot(u16ToUtf8(row.label));
+		rows[toGodot(row.key)] = rd;
+	}
+	d["rows"] = rows;
+	Array list;
+	for (const auto &item : page->spec().list)
+	{
+		list.push_back(toGodot(u16ToUtf8(item.first)));
+	}
+	d["list_rows"] = list;
+	std::array<int, 4> lr{};
+	if (page->rect("list", lr))
+	{
+		d["list"] = stageRect(lr);
+	}
+	d["help"] = toGodot(u16ToUtf8(page->helpText()));
+	return d;
+}
+
+Dictionary AptMenuPlayer::online_messenger_sync(const Dictionary &spec)
+{
+	Dictionary out;
+	out["open"] = false;
+	if (!m->shell || !m->shell->shell) return out;
+	AptOnlineShell *screen = dynamic_cast<AptOnlineShell *>(m->shell->shell->findScreenByFilename("OnlineShell.apt"));
+	AptMessenger *messenger = screen ? screen->messenger() : nullptr;
+	if (!messenger) return out;
+	if (spec.has("rows"))
+	{
+		const Array rows = spec.get("rows", Array());
+		for (int tab = 0; tab < 2; ++tab)
+		{
+			std::vector<AptMessenger::Row> nativeRows;
+			if (rows.size() > tab && rows[tab].get_type() == Variant::ARRAY)
+			{
+				const Array entries = rows[tab];
+				for (int i = 0; i < entries.size() && i < 200; ++i)
+				{
+					AptMessenger::Row row;
+					if (entries[i].get_type() == Variant::DICTIONARY)
+					{
+						const Dictionary item = entries[i];
+						row.id = toNative(String(item.get("pid", String())));
+						row.name = utf8ToU16(toNative(String(item.get("nick", String()))));
+						row.status = utf8ToU16(toNative(String(item.get("status", String()))));
+						row.request = bool(item.get("request", false));
+						row.blocked = bool(item.get("blocked", false));      // lane ONLINEMENU-1
+						row.friendable = bool(item.get("friendable", true));
+					}
+					else if (entries[i].get_type() == Variant::ARRAY)
+					{
+						const Array item = entries[i];
+						if (item.size() > 0) row.id = toNative(String(item[0]));
+						if (item.size() > 1) row.name = utf8ToU16(toNative(String(item[1])));
+						if (item.size() > 2) row.status = utf8ToU16(toNative(String(item[2])));
+						if (item.size() > 3) row.request = bool(item[3]);
+					}
+					else continue;
+					nativeRows.push_back(std::move(row));
+				}
+			}
+			messenger->setRows(tab, nativeRows);
+		}
+	}
+	if (spec.has("chat"))
+	{
+		const Array chats = spec.get("chat", Array());
+		for (int tab = 0; tab < 2; ++tab)
+		{
+			std::vector<std::u16string> lines;
+			if (chats.size() > tab && chats[tab].get_type() == Variant::ARRAY)
+			{
+				const Array entries = chats[tab];
+				for (int i = 0; i < entries.size() && i < 200; ++i)
+					lines.push_back(utf8ToU16(toNative(String(entries[i]))));
+			}
+			messenger->setChat(tab, lines);
+		}
+	}
+	if (spec.has("clear_entry_if"))
+		messenger->acknowledgeMessage(utf8ToU16(toNative(String(spec.get("clear_entry_if", String())))));
+	if (spec.has("select")) // lane ONLINEMENU-1 (Sol): the player the FRIENDS page chose
+		messenger->selectPlayer(toNative(String(spec.get("select", String()))));
+	out["open"] = true;
+	out["tab"] = messenger->activeTab();
+	out["selected"] = toGodot(messenger->selectedPlayer());
+	Array actions;
+	for (const auto &action : messenger->takeActions())
+	{
+		Dictionary d;
+		const char *kind = action.kind == AptMessenger::Action::Select ? "select" :
+			action.kind == AptMessenger::Action::AddFriend ? "add_friend" :
+			action.kind == AptMessenger::Action::RemoveFriend ? "remove_friend" :
+			action.kind == AptMessenger::Action::AcceptFriend ? "accept_friend" :
+			action.kind == AptMessenger::Action::Invite ? "invite" :
+			action.kind == AptMessenger::Action::Ignore ? "block" :
+			action.kind == AptMessenger::Action::Unignore ? "unblock" : "send";
+		d["kind"] = kind;
+		d["pid"] = toGodot(action.player);
+		d["text"] = String::utf8(OnlineLobbyClient::utf16ToUtf8(action.text).c_str());
+		actions.push_back(d);
+	}
+	out["actions"] = actions;
+	return out;
 }
 
 Dictionary AptMenuPlayer::online_apply(const Dictionary &spec)

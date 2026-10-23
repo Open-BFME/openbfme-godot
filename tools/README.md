@@ -23,7 +23,12 @@ privately installed retail games enable additional existing tests. Install
 reported by `-ra`; never add game data or generated retail-format fixtures to
 the repository.
 
-Some release checks fail closed when Godot is missing rather than skipping.
+Godot-dependent release tests skip with a specific reason when its executable
+is absent; the release tools themselves still fail closed without Godot.
+The historical bridge grammar probes also need the exact published launcher
+trees documented in `docs/WINDOWS.md`; their skip messages name the missing
+tree and the tag to fetch. Current-source probes and Python bridge rules do
+not depend on that history.
 Completing the suite within its time budget is not the same as passing it:
 retain the nonzero exit status and investigate every reported failure.
 

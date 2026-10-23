@@ -32,8 +32,9 @@ const REQUIRED_ROWS := {
 		"Retail.MovieVolume", "Retail.MusicVolume", "Retail.SoundFxVolume", "Retail.VoiceVolume"],
 	"Camera": ["OpenBFMEConfineMouse", "OpenBFMEEdgeScroll", "OpenBFMEFreeCamera", "OpenBFMEInvertDragScroll", "OpenBFMEMaxZoomOut", "OpenBFMERotateSpeed",
 		"Retail.ScrollSpeed"],
-	"Interface": ["AlternateMouseSetup", "OpenBFMEGameClock", "OpenBFMEHealthBars", "OpenBFMEMainMenuStyle", "OpenBFMEUIScale", "Retail.HealthBars"],
-	"Online": ["OpenBFMEShareResults", "Retail.OnlineIp", "Retail.OnlinePortNum", "Retail.RefreshNat", "Retail.SendDelay"],
+	"Interface": ["AlternateMouseSetup", "OpenBFMEGameClock", "OpenBFMEHealthBars", "OpenBFMEMainMenuStyle", "OpenBFMEPingKey", "OpenBFMEPingWheel", "OpenBFMEUIScale", "Retail.HealthBars"],
+	"Online": ["OpenBFMEShareResults", "OpenBFMEShowPing", "Retail.OnlineIp", "Retail.OnlinePortNum", "Retail.RefreshNat", "Retail.SendDelay",
+		"Social.challenges", "Social.hidden", "Social.invites", "Social.presence", "Social.requests"], # ONLINEMENU-1: who may ask, invite, challenge, see you
 	"Performance": ["OpenBFMEUberPerformance"],
 	"Controls": [],
 }
@@ -1039,13 +1040,14 @@ func keyboard_walk() -> void:
 	if await focus_target("row:Retail.Detail"):
 		var before := int(page().rows["Retail.Detail"].value)
 		await key(KEY_ENTER)
-		check("keyboard: Enter opens the Graphics list", shell.menu_nav_state().get("open_list", false), ", ".join(Array(shell.menu_nav_state().log).slice(-8)))
+		check("keyboard: Enter opens the Graphics list", await until_list(true), ", ".join(Array(shell.menu_nav_state().log).slice(-8)))
 		await shot("opts6-keyboard-open-list")
 		await key(KEY_ESCAPE)
-		check("keyboard: Esc closes the open list and the settings stay", not shell.menu_nav_state().get("open_list", true) and screen.is_open(), "")
+		check("keyboard: Esc closes the open list and the settings stay", await until_list(false) and screen.is_open(), "")
 		if not screen.is_open():
 			return
 		await key(KEY_ENTER)
+		await until_list(true)
 		await key(KEY_DOWN)
 		var now := int(page().rows["Retail.Detail"].value)
 		check("keyboard: Down in the open list chooses the next level (%d -> %d)" % [before, now], now == before + 1, ", ".join(Array(shell.menu_nav_state().log).slice(-8)))
@@ -1291,11 +1293,17 @@ func skirmish_profile_box() -> void:
 func online_login_nickname() -> void:
 	var entry := ""
 	var login := false
-	for t in shell.menu_nav_state().get("targets", []):
-		var id := String(t.id)
-		if id.ends_with("OnlineLogin.Login.componentGroup.OnlineLogin::Nickname"):
-			entry = id
-		login = login or id.ends_with("OnlineLogin.Login.LogIn.bttn")
+	# the name entry is a target once the login page has played in: a cold first run (the first size on a loaded host) needs more than the
+	# 120 steps the caller gave every screen's intro
+	for attempt in 40:
+		for t in shell.menu_nav_state().get("targets", []):
+			var id := String(t.id)
+			if id.ends_with("OnlineLogin.Login.componentGroup.OnlineLogin::Nickname"):
+				entry = id
+			login = login or id.ends_with("OnlineLogin.Login.LogIn.bttn")
+		if not entry.is_empty():
+			break
+		await game._step(15)
 	check("the online login offers its name entry to the keys, and no LOG IN while the name is empty (RW 0x97A668)", not entry.is_empty() and not login,
 		"entry '%s', LOG IN a target: %s" % [entry, str(login)])
 	if entry.is_empty() or not await focus_target(entry):
@@ -1372,6 +1380,16 @@ func focus_and_press(name: String, walk: int) -> bool:
 
 
 ## Tab (or the D-pad: right into the rows, then down) until `id` has the focus
+# lane MENUFIX-3: the list opens / closes on the shell's next ticks; on a loaded host (the UI-2 gate at 2560x1440) a fixed few frames were not enough,
+# so wait for the state (at most ~6 s) instead of judging after key()'s frames
+func until_list(open: bool) -> bool:
+	for i in 75:
+		if bool(shell.menu_nav_state().get("open_list", not open)) == open:
+			return true
+		await game._step(5)
+	return false
+
+
 func focus_target(id: String, pad := false) -> bool:
 	if pad:
 		await joy_button(JOY_BUTTON_DPAD_RIGHT) # the first press shows the focus (on the tab)

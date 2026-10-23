@@ -526,6 +526,8 @@ AIIdleState::AIIdleState(AIStateMachine &m)
 StateReturnType AIIdleState::onEnter()
 {
 	m_inited = true;
+	// lane TARGET-1: RW 0x7489B6 (AIIdleState::onEnter): the AI's next mood check is pushed back (RW 0x662DD9: ForceIdleMSEC, randomly offset)
+	ai().resetNextMoodCheckTime();
 	// ZH: the idle countdown is randomised so the idle checks of many units do not spike on the same frame (S-221: the RW draw is not read)
 	m_initialSleepOffset = (unsigned short)ai().getObject()->logic().random().getValue(0, (int)kIdleCountdownDelay, "AIStates.cpp", 0x520);
 	return STATE_CONTINUE; // never sleep at the start: the cell check runs the first time through
@@ -565,8 +567,6 @@ void AIIdleState::doInitIdleState()
 StateReturnType AIIdleState::update()
 {
 	doInitIdleState();
-	// COMBAT-1 (ZH AIIdleState::update + AIUpdateInterface mood): a unit with a weapon and an AutoAcquire flag looks for an enemy every MoodAttackCheckRate frames and attacks
-	// the nearest one it finds (stop S-326); the scan replaces the long idle sleep
 	AIUpdateInterface &self = ai();
 	if (self.attackMoveActive())
 	{
@@ -575,22 +575,38 @@ StateReturnType AIIdleState::update()
 			return STATE_CONTINUE; // the march goes on (the attack that interrupted it is over)
 		}
 	}
-	const unsigned mood = self.moodCheckInterval();
-	if (mood != 0)
+	// lane TARGET-1, RotWK's AIIdleState::update (RW 0x7553AB, BFME2 decomp AIIdleStateUpdate.cpp same shape): the sleep is 2 seconds (RW 0xDE784C) plus the
+	// onEnter offset, which is used once; unless the object is disabled EMP / PARALYZED / TEMPORARILY_BUSY (+ 0x1C8 & 0x14 / 0x100) or the mood matrix's idle
+	// action has IgnoreAll (RW 0x664E18(0) & 0x10), the mood scan getNextMoodTarget(1, 1) (RW 0x66844A) runs; a target is attacked (RW 0x66C536, AI command
+	// source 2); none: the sleep is shortened to the next mood check (AI + 0x21C) when that comes sooner, and then the offset is kept for the next time.
+	// Not ported here: the weapon's frame-window test (RW 0x6CA2C3), the stances countdown (+ 0x22) with state 0x4E, the hunt status 0x49, the HORDE_MEMBER
+	// melee wait, the repulsors (KindOf + 0x10D bit 5) and the crate (RW 0x66810B: none in RotWK) (S-326)
+	const unsigned short oldSleepOffset = m_initialSleepOffset;
+	unsigned timeToSleep = kIdleCountdownDelay + oldSleepOffset;
+	m_initialSleepOffset = 0;
+	const Object &obj = *self.getObject();
+	const bool disabled = obj.isDisabledByType(DISABLED_EMP) || obj.isDisabledByType(DISABLED_PARALYZED) || obj.isDisabledByType(DISABLED_TEMPORARILY_BUSY);
+	if (!disabled && !(self.moodAdjustment(0) & 0x10u))
 	{
-		m_initialSleepOffset = 0;
-		// lane SCRIPT-3 (RW 0x75550D): the mood adjustment of the idle action (RW 0x664E18(0)) with IgnoreAll (0x10, a sleeping computer unit) skips the scan
-		if (Object *target = (self.moodAdjustment(0) & 0x10u) ? nullptr : self.nextMoodTarget())
+		if (Object *target = self.getNextMoodTarget(true, true))
 		{
 			if (self.aiAttackObject(target, CMD_FROM_AI))
 			{
 				return STATE_CONTINUE; // the machine changed state: the new state runs next
 			}
 		}
-		return STATE_SLEEP(mood);
 	}
-	const unsigned timeToSleep = kIdleCountdownDelay + m_initialSleepOffset;
-	m_initialSleepOffset = 0;
+	const unsigned now = self.frame();
+	const unsigned next = self.nextMoodCheckTime();
+	if (next > now)
+	{
+		const unsigned moodSleep = next - now;
+		if (moodSleep < timeToSleep)
+		{
+			timeToSleep = moodSleep;
+			m_initialSleepOffset = oldSleepOffset; // RW 0x7555C8: saved for the next time
+		}
+	}
 	return STATE_SLEEP(timeToSleep);
 }
 

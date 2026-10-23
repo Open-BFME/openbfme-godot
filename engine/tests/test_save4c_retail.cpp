@@ -1046,7 +1046,23 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 		return nullptr;
 	};
 	Object *attacker = firstOf(playerIds[0], [&](Object *o) { return armed(o) && takes(o, 0xB); });
-	Object *mover = firstOf(playerIds[1], [&](Object *o) { return takes(o, 0); });
+	// the move order (300 east of the unit, as below) must be reachable, or it ends at once; and the unit must be standing without a path: a unit that just
+	// computed one has its new request deferred (AIMover::requestPath's 2-frame rule, 5 frames later) and its old path's end can finish the order at once,
+	// and a blocked unit patches its old path instead of searching (RW 0x6662FD .. 0x6665B5). Lane ATTACKPATH-1: the second player's first unit at frame
+	// 2700 is a porter walking a path, so these rules apply to the first choice too
+	auto reachableMover = [&](Object *o) {
+		AIUpdateInterface *ai = o->getAIUpdateInterface();
+		if (ai->mover().blockedFrames() > 0 || ai->mover().path() != nullptr)
+		{
+			return false;
+		}
+		const Coord3D from = *o->getPosition();
+		Coord3D to = from;
+		to.x += 300.0f;
+		to.z = la.getGroundHeight(to.x, to.y);
+		return ai->world().pathfinder().clientSafeQuickDoesPathExist(ai->locomotorInfo(), &from, &to);
+	};
+	Object *mover = firstOf(playerIds[1], [&](Object *o) { return takes(o, 0) && reachableMover(o); });
 	Object *guard = firstOf(playerIds[2], [&](Object *o) { return takes(o, 0); });
 	Object *hunter = firstOf(playerIds[3], [&](Object *o) { return armed(o) && takes(o, 0x12) && GarrisonRules::isMobile(*o); }); // RW 0x66450F's test
 	if (!mover)
@@ -1056,14 +1072,7 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 		for (int p : playerIds)
 		{
 			// the move order (300 east of the unit, as below) must be reachable, or it ends at once
-			Object *c = firstOf(p, [&](Object *o) {
-				AIUpdateInterface *ai = o->getAIUpdateInterface();
-				const Coord3D from = *o->getPosition();
-				Coord3D to = from;
-				to.x += 300.0f;
-				to.z = la.getGroundHeight(to.x, to.y);
-				return takes(o, 0) && o != attacker && o != guard && o != hunter && ai->world().pathfinder().clientSafeQuickDoesPathExist(ai->locomotorInfo(), &from, &to);
-			});
+			Object *c = firstOf(p, [&](Object *o) { return takes(o, 0) && o != attacker && o != guard && o != hunter && reachableMover(o); });
 			mover = mover ? mover : c;
 		}
 	}
@@ -1585,14 +1594,16 @@ TEST_CASE("save4c review r3: a giant bird saved mid-flight: its module (the flig
 	load(*starttest::peerWorld(), m, b); // one live game per world (S-3808): the second game has its own
 	runTo(a, 50);
 	runTo(b, 50);
-	const ThingTemplate *beast = s->world->things().findTemplate("MordorWitchKingOnFellBeast");
-	REQUIRE(beast != nullptr);
 	ObjectID id = INVALID_ID;
 	for (Game *g : { &a, &b })
 	{
 		GameLogic &l = g->logic();
 		AISkirmishPlayer *mordor = aiOfSide(l, "Mordor");
 		REQUIRE(mordor != nullptr);
+		// merge queue q23: each game's bird is made from its own world's template: TARGET-1's AttackPriority tables are keyed by the template (RW 0x603AF6), so a
+		// bird of the other world's template was not found in game B's table and B's creeps chose their targets differently from A's (the games parted at frame 124)
+		const ThingTemplate *beast = l.things().findTemplate("MordorWitchKingOnFellBeast");
+		REQUIRE(beast != nullptr);
 		Object *o = l.newObject(beast, l.players().getNthPlayer(mordor->playerIndex)->getDefaultTeam(), ObjectStatusMaskType{});
 		REQUIRE(o != nullptr);
 		Coord3D pos{ 1500.0f, 800.0f, l.getGroundHeight(1500.0f, 800.0f) };
@@ -1671,14 +1682,16 @@ TEST_CASE("stealthfly1: a giant bird saved on its queued waypoints (follow path 
 	load(*starttest::peerWorld(), m, b);
 	runTo(a, 50);
 	runTo(b, 50);
-	const ThingTemplate *beast = s->world->things().findTemplate("MordorWitchKingOnFellBeast");
-	REQUIRE(beast != nullptr);
 	ObjectID id = INVALID_ID;
 	for (Game *g : { &a, &b })
 	{
 		GameLogic &l = g->logic();
 		AISkirmishPlayer *mordor = aiOfSide(l, "Mordor");
 		REQUIRE(mordor != nullptr);
+		// merge queue q23: each game's bird is made from its own world's template: TARGET-1's AttackPriority tables are keyed by the template (RW 0x603AF6), so a
+		// bird of the other world's template was not found in game B's table and B's creeps chose their targets differently from A's (the games parted at frame 124)
+		const ThingTemplate *beast = l.things().findTemplate("MordorWitchKingOnFellBeast");
+		REQUIRE(beast != nullptr);
 		Object *o = l.newObject(beast, l.players().getNthPlayer(mordor->playerIndex)->getDefaultTeam(), ObjectStatusMaskType{});
 		REQUIRE(o != nullptr);
 		Coord3D pos{ 1500.0f, 800.0f, l.getGroundHeight(1500.0f, 800.0f) };
@@ -1886,6 +1899,9 @@ TEST_CASE("save4c review r4: a capture's snapshot loads and the game goes on as 
 			REQUIRE(u != nullptr);
 			Coord3D pos{ 1500.0f, 800.0f, l.getGroundHeight(1500.0f, 800.0f) };
 			u->setPosition(&pos);
+			// lane TARGET-1: held by NO_AUTO_ACQUIRE: a computer player's idle unit takes what it sees (RotWK's mood scan, RW 0x66844A), and from this spot the
+			// horde charged what it saw 460 to the east and died there before frame 351; the dispatch (RW 0x9A3040) does not read the status
+			u->setStatusAcrossHorde((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("NO_AUTO_ACQUIRE"), true);
 			men->disabled = true; // the team builder takes the idle unit once its AI runs again (RW 0x9A3040)
 			runTo(g, 351);
 			men = aiOfSide(l, "Men");
@@ -2034,6 +2050,9 @@ TEST_CASE("save4c reviewer round5: round4 factory cleanup and legal dispatched c
 	SUBCASE("a genuinely dispatched unit legally captured saves and loads")
 	{
 		Object *u = make("GondorFighterHorde", old);
+		// lane TARGET-1: held by NO_AUTO_ACQUIRE: a computer player's idle unit takes what it sees (RotWK's mood scan, RW 0x66844A), and from this spot the
+		// horde charged what it saw 460 to the east and died there before frame 351; the dispatch (RW 0x9A3040) does not read the status
+		u->setStatusAcrossHorde((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("NO_AUTO_ACQUIRE"), true);
 		men->disabled = true;
 		runTo(g, 351);
 		men->disabled = false;
@@ -2154,6 +2173,9 @@ TEST_CASE("save4c reviewer round5: audit live dozer factories and owned tactic m
 		REQUIRE(u);
 		Coord3D pos{1500.0f, 800.0f, l.getGroundHeight(1500.0f, 800.0f)};
 		u->setPosition(&pos);
+		// lane TARGET-1: held by NO_AUTO_ACQUIRE: a computer player's idle unit takes what it sees (RotWK's mood scan, RW 0x66844A), and from this spot the
+		// horde charged what it saw 460 to the east and died there before frame 351; the dispatch (RW 0x9A3040) does not read the status
+		u->setStatusAcrossHorde((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("NO_AUTO_ACQUIRE"), true);
 		men->disabled = true;
 		runTo(g, 351);
 		men->disabled = false;

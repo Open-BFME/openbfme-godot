@@ -1819,12 +1819,23 @@ int main(int argc, char **argv)
 	const std::uint64_t runStart = NetMilliseconds();
 	std::uint64_t lastProgress = runStart;
 	int exitCode = 0;
-	session.driver().setStopFrame((UnsignedInt)std::max(0, a.frames)); // SMOOTH-1: no batch beyond --frames (the worker may run ahead of presentation)
-	if (a.vanishAt >= 0 && a.vanishAt < a.frames)
-	{
-		// lane NETLAG-2: the process stops exactly at its frame (a frame that waited and the next can now run in one advance: LiveGame's owed frame)
-		session.driver().setStopFrame((UnsignedInt)a.vanishAt);
-	}
+	// SMOOTH-1: no batch beyond --frames (the worker may run ahead of presentation). lane NETLAG-2: --vanish-at stops the process exactly at its frame
+	// (a frame that waited and the next can now run in one advance: LiveGame's owed frame). KNOWN-3: --quit-at and a pending --blackout-at hold the
+	// driver at their frame alike, so the event happens at exactly that protocol frame on a loaded machine too (a catch-up advance ran over it: the
+	// quit at 251); the hold ends once the event is done (the blackout's is lifted in the same loop pass, before the advance)
+	auto holdFrame = [&]() {
+		long long stop = std::max(0, a.frames);
+		for (long long f : { a.vanishAt, a.quitAt })
+		{
+			stop = f >= 0 ? std::min(stop, f) : stop;
+		}
+		for (const auto &bo : a.blackouts)
+		{
+			stop = bo.first >= 0 ? std::min(stop, bo.first) : stop;
+		}
+		session.driver().setStopFrame((UnsignedInt)stop);
+	};
+	holdFrame();
 	// lane MP-2: a frame may wait for the disconnect path (the screen after NetworkDisconnectTime, the drop after NetworkPlayerTimeoutTime)
 	const std::uint64_t noProgressMs = 30000u + (std::uint64_t)so.network.disconnectTime + (std::uint64_t)so.network.playerTimeoutTime;
 	std::string disconnectQuit;
@@ -1980,6 +1991,7 @@ int main(int argc, char **argv)
 				session.transport().impairment().blackout(NetMilliseconds(), (std::uint64_t)bo.second); // lane MP-3: the cable is pulled
 				blackoutLog.push_back("frame " + std::to_string(pf) + " for " + std::to_string(bo.second) + " ms");
 				bo.first = -1;
+				holdFrame(); // KNOWN-3: the next event's frame (or --frames)
 			}
 		}
 		for (auto &h : a.hitches)

@@ -126,7 +126,7 @@ bool TerrainTrees::addTree(const ThingTemplate &tmpl, const Coord3D &position, s
 }
 
 // RW 0x67F52B -> 0x67E078 with the collector RW 0x67D519
-TerrainTrees::Record *TerrainTrees::findClosestTree(const Coord3D &where, float radius, bool ignoreToppled, int mode)
+TerrainTrees::Record *TerrainTrees::findClosestTree(const Coord3D &where, float radius, bool ignoreToppled, int mode, const std::function<bool(const Record &)> &accept)
 {
 	if (m_records.empty() || !m_hasExtent)
 	{
@@ -180,7 +180,7 @@ TerrainTrees::Record *TerrainTrees::findClosestTree(const Coord3D &where, float 
 						const float cx = SimMath::subf32(where.x, t.position.x);
 						const float cy = SimMath::subf32(where.y, t.position.y);
 						const float d2 = SimMath::addf32(SimMath::mulf32(cy, cy), SimMath::mulf32(cx, cx));
-						if (!best || bestD > d2)
+						if ((!best || bestD > d2) && (!accept || accept(t)))
 						{
 							best = &t;
 							bestD = d2;

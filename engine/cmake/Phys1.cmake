@@ -6,6 +6,8 @@ list(APPEND OPENBFME_SIM_SOURCES
     src/GameLogic/Module/PhysicsBehavior.cpp
     src/GameLogic/AI/AIPathfindCrowd.cpp
     src/GameLogic/AI/AIPathfindAttack.cpp
+    src/GameLogic/AI/AIPathfindAttackView.cpp
+    src/GameLogic/AI/AIPathfindHordeMelee.cpp
     src/GameLogic/AI/AIPathfindMoveAway.cpp
     src/GameLogic/AI/AIPathfindMelee.cpp
     src/GameLogic/AI/AIAttackMelee.cpp
@@ -16,6 +18,7 @@ set(OPENBFME_PHYS1_TESTS
     tests/test_phys1_physics.cpp
     tests/test_phys1_rank_odr.cpp
     tests/test_phys1_pathfind.cpp
+    tests/test_attackpath1.cpp
     tests/test_phys1_approach.cpp
     tests/test_phys1_melee.cpp
     tests/test_phys1_fire_gate.cpp

@@ -30,6 +30,9 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 W=${OPENBFME_WIN_DIR:-$ROOT/build/windows}
 JOBS=${JOBS:-4}
 GODOT=${GODOT:-godot}
+# lane MACACT-1: the build date the library records (engine/cmake/BuildVersion.cmake) is the commit's, not the build day's, so two
+# builds of one commit (the build host's and GitHub Actions', autorelease.sh compares them byte for byte) are the same bytes
+export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" show -s --format=%ct HEAD)}
 TESTS_ONLY=0; EXPORT=1
 for a in "$@"; do
   case $a in

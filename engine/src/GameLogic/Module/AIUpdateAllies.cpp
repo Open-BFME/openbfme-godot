@@ -175,6 +175,24 @@ bool AIUpdateInterface::attackRangeFromTo(const Coord3D &from, PathfindObjectID 
 	return v ? w->isWithinAttackRangeFromTo(from, *v, victimPos, extra, true) : w->isWithinAttackRangeFrom(from, nullptr, victimPos, extra, true);
 }
 
+float AIUpdateInterface::attackDistanceTo(PathfindObjectID victim, const Coord3D &victimPos)
+{
+	const ObjectWeapons *w = getObject()->getWeapons();
+	if (!w)
+	{
+		return 0.0f;
+	}
+	const Object *v = victim != PATHFIND_INVALID_ID ? getObject()->logic().findObjectByID((ObjectID)victim) : nullptr;
+	return w->attackDistanceTo(v, &victimPos);
+}
+
+bool AIUpdateInterface::currentWeaponIsMelee()
+{
+	const ObjectWeapons *w = getObject()->getWeapons();
+	const Weapon *cur = w ? w->currentWeapon() : nullptr;
+	return cur && cur->getTemplate() && cur->getTemplate()->m_meleeWeapon; // RW 0x441B59: WeaponTemplate + 0x125
+}
+
 const PathfindObject *AIUpdateInterface::findPathfindObject(PathfindObjectID id)
 {
 	return m_world ? m_world->findObjectByID(id) : nullptr;

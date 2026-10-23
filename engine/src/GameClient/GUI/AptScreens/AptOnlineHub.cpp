@@ -795,7 +795,7 @@ void AptOnlineHub::update()
 		AptGadgetLayer *layer = m_shell.windows().gadgetLayer();
 		if (layer && m_shell.shell().top() == &m_shell)
 		{
-			layer->setDecorator([this](GadgetDrawList &out) { decorate(out); }, this);
+			m_shell.takeDecorator(); // lane ONLINEMENU-1: the shell's decorator draws this panel, then the friends button and page
 		}
 		// the movie's Searching / found pop-up covers the page's middle while a search or a match's room is under way: the panel steps aside
 		// (its status line stays, below the pop-up)

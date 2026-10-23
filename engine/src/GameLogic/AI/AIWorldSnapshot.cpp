@@ -7,7 +7,7 @@
 // (the occupant chains' order, AIPathfindSnapshot.cpp) and keeps its AI modules' state together here, so obfme:Objects (SAVE-4b) carries the AI update
 // family as made by its object and this block fills them, in object id order, each in a BLOK so a module that reads short or long is named.
 // In order: the map flag, the AI modules' object ids (checked before anything is loaded), the pathfinder (Pathfinder::xfer), every pathfinder view's layer (ObjectPathfindAdapter + its layer: the unit's PathfindLayerEnum,
-// hashed through its AI), every AI module (AIUpdateInterface::xferAIState), the movement failures and the noted stops of the report. Rebuilt, not saved:
+// hashed through its AI), every AI module (AIUpdateInterface::xferAIState), the movement failures, the noted stops of the report and the next formation id. Rebuilt, not saved:
 // the per-template movement infos (parsed from the templates on use), the collision pass's scratch arrays, the queue diagnostics (peaks).
 
 #include "GameLogic/AI/AIWorld.h"
@@ -29,7 +29,9 @@ void AIWorld::xfer(Xfer &x)
 
 void AIWorld::xferBody(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	// version 2 (lane FLANK-1): the next formation id (AI + 0x20, lane BACKLOG-8) is saved: it is hashed once a formation was made, and a fresh game's 1 made a
+	// loaded snapshot's hash differ from the saved one (save2 retail T1); a version 1 snapshot keeps 1
+	XferVersion v{ 1, 2 };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	AIXfer::StringTableScope strings; // the units' stop lines once each (AIXfer::reportString)
@@ -39,6 +41,7 @@ void AIWorld::xferBody(Xfer &x)
 	{
 		throw XferException(std::string("ai world: the snapshot's map grid is ") + (ready ? "made" : "not made") + ", this game's " + (m_mapReady ? "is" : "is not"));
 	}
+
 	// the AI modules by object id first: a snapshot of another set is refused before anything changes
 	std::uint32_t ais = (std::uint32_t)m_ais.size();
 	x.xferUnsignedInt(&ais);
@@ -136,9 +139,23 @@ void AIWorld::xferBody(Xfer &x)
 	});
 	std::vector<std::string> noted(m_noted.begin(), m_noted.end());
 	AIXfer::reportStrings(x, noted);
+	std::int32_t nextFormation = m_nextFormationId; // version 2: last, so the earlier layout keeps its offsets
+	if (v.current >= 2)
+	{
+		x.xferInt(&nextFormation);
+		if (loading && nextFormation < 1)
+		{
+			throw XferException("ai world: the next formation id " + std::to_string(nextFormation) + " (ids start at 1)");
+		}
+	}
+	else if (loading)
+	{
+		nextFormation = 1;
+	}
 	AIXfer::blockReadToEnd(x, "ai world"); // inside the transaction: a block with bytes after its state is refused before anything stays changed
 	if (loading)
 	{
 		m_noted = std::set<std::string>(noted.begin(), noted.end());
+		m_nextFormationId = nextFormation; // lane FLANK-1 (version 2)
 	}
 }

@@ -11,6 +11,13 @@ func _init() -> void:
 	assert(not first.has("error"))
 	assert(RegEx.create_from_string("^[0-9a-f]{32}$").search(first.install) != null)
 	assert(identity.install_id(path) == first)
+	# ONLINEMENU-1: a lock directory an older build left behind (a crash while it held it) does not stop the sign-in: the same id is read
+	var lock_path := "user://.install_id.lock"
+	if not DirAccess.dir_exists_absolute(lock_path):
+		assert(DirAccess.make_dir_absolute(lock_path) == OK)
+	assert(identity.install_id(path) == first)
+	assert(FileAccess.get_file_as_string(path).strip_edges() == first.install)
+	assert(DirAccess.remove_absolute(lock_path) == OK)
 	assert(identity.device_hash("test-machine") == "e1335feb0e81f4fb77a4d54489b0573532c99105ce3d01de8080d04d18b0a0cb")
 	assert(identity.device_hash("") == "")
 	var file := FileAccess.open(path, FileAccess.WRITE)

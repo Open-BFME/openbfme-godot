@@ -280,8 +280,8 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 180 | SiegeEngineContain | Behavior | 4 | 4 | ported |
 | 181 | SpawnUnitBehavior | Behavior | 4 | 3 | missing |
 | 182 | SpecialEnemySenseUpdate | Behavior | 4 | 2 | missing |
-| 183 | SupplyCenterCreate | Behavior | 4 | 1 | missing |
-| 184 | SupplyCenterDockUpdate | Behavior | 4 | 1 | missing |
+| 183 | SupplyCenterCreate | Behavior | 4 | 1 | ported |
+| 184 | SupplyCenterDockUpdate | Behavior | 4 | 1 | ported |
 | 185 | SupplyCenterProductionExitUpdate | Behavior | 4 | 1 | ported |
 | 186 | SymbioticStructuresBody | Body | 4 | 4 | ported |
 | 187 | TooltipUpgrade | Behavior | 4 | 6 | missing |

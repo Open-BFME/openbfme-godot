@@ -231,7 +231,10 @@ TEST_CASE("ai5 upgrade builder: the structures' upgrades and the plots' expansio
 				CHECK(r->heuristicType == up->m_skirmishAIHeuristic); // RW 0x99F52F
 				const Object *obj = logic.findObjectByID(r->producer);
 				REQUIRE(obj != nullptr); // RW 0x99FD0E drops a record whose object is gone
-				CHECK(obj->getConstructionPercent() < 0.0f); // tolerance: registered when finished, RW 0x99FCC4 tests the construction percent below 0
+				// tolerance: registered when finished, RW 0x99FCC4 tests the construction percent below 0. Merge queue q23: a finished producer that was destroyed and is
+				// rebuilt (GettingBuiltBehavior RW 0x857B0B: back to 0 % under construction) keeps its records, RW 0x99FD0E drops only a gone object's (measured: a
+				// GondorBarracks rebuilding at frame 4,501 with its Upgrade_GondorBarracksLevel2 record)
+				CHECK((obj->getConstructionPercent() < 0.0f || obj->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION))); // tolerance: finished, or rebuilt after its death
 				CHECK_FALSE(obj->isKindOfName("WALL_HUB")); // RW 0x99FAA6
 				if (r->state == 2)
 				{

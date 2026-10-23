@@ -57,6 +57,7 @@ struct PathfindConfig
 	int adjustToMeleeLimit = 0;         // GameData MaxCellsAdjustToMeleeDestination (+0x1200, row RW 0xC01140): RW 0x6EEBC1's spiral budget (lane PHYS-1)
 	int findMeleeEngagementLimit = 0;   // GameData MaxCellsFindMeleeEngagementLocation (+0x11EC, row RW 0xC010F0): RW 0x6F37B3's search budget (lane PHYS-1)
 	float castleSiegeStandBackDistance = 0.0f; // AIData CastleSiegeStandBackDistance (RW AIData +0xD4, row RW 0xC1CF00): RW 0x7463E8's extra back-off (lane PHYS-1)
+	bool attackUsesLineOfSight = false; // AIData AttackUsesLineOfSight (RW AIData +0x67, row RW 0xC1CCA0, parseBool): the attack view test RW 0x6F4557 (lane ATTACKPATH-1)
 	int findAttackPathLimit = 0;       // GameData MaxCellsFindAttackPath (+0x1214, row RW 0xC01190): the cells findAttackPath RW 0x6FC18E expands (lane PHYS-1)
 	int adjustToPossibleLimit = 0;     // GameData MaxCellsAdjustToPossibleDestination
 	int examineTowardsGoalLimit = 0;   // GameData MaxCellsToExamineTowardsGoal (+0x121C): the cells the straight-line shortcut may visit per search
@@ -477,6 +478,10 @@ public:
 	virtual bool inRangeFrom(const Coord3D &from, float extra) const = 0;
 	// RW 0x6CC07C with an explicit victim position (RW 0x6F37B3 asks it from the unit's own position to a candidate point)
 	virtual bool inRangeFromTo(const Coord3D &from, const Coord3D &victimPos, float extra) const = 0;
+	// lane ATTACKPATH-1: RW 0x6CA974 Weapon::getAttackDistance(source, victim, victimPos) of the weapon (the reach plus both bounding spheres for a victim object)
+	virtual float attackDistance() const { return 0.0f; }
+	// lane ATTACKPATH-1: RW 0x441B59, the weapon template's MeleeWeapon (+ 0x125)
+	virtual bool meleeWeapon() const { return false; }
 };
 
 class PathfindOpenHeap
@@ -694,6 +699,16 @@ public:
 	// victim; `fallback` is set when the path only ends at the search's closest cell. Null when nothing is found.
 	Path *findAttackPath(const PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const PathfindObject *victim, const Coord3D *victimPos,
 		float victimRadius, const class PathfindAttackRange &range, bool pathThrough, bool *fallback);
+	// lane ATTACKPATH-1 (AIPathfindHordeMelee.cpp, stop S-590): RW 0x6F2FFF IsHordeMeleeLinePassable (the unit's footprint along the cell line, mode 0x0C);
+	// RW 0x746783, the horde approach goal walked back toward the unit in steps of 10 until a one-point line passes (else adjustToPossibleDestination, false);
+	// RW 0x6FB67A AdjustHordeMeleeDestination (the ring RW 0x6FA733 over MaxCellsAdjustHordeMeleeDestination with the functor RW 0x6F8540 / 0x6F6C18 / 0x6EB2EF)
+	bool isHordeMeleeLinePassable(const PathfindObject *obj, unsigned surfaces, PathfindLayerEnum layer, const Coord3D &from, const Coord3D &to);
+	bool hordeMeleeStepBack(PathfindObject &obj, const PathfindLocomotorInfo &loco, Coord3D *goal);
+	bool adjustHordeMeleeDestination(PathfindObject &obj, const PathfindLocomotorInfo &loco, Coord3D *dest);
+	bool hordeMeleeFootprint(const PathfindObject &obj, int x, int y, PathfindLayerEnum layer, int radius, bool centred, int *count);
+	// lane ATTACKPATH-1: RW 0x6F4557 (BFME2 decomp PathfinderAttackView.cpp, AIPathfindAttackView.cpp): the attacker at `attackerPos` cannot see `victim` past the
+	// pathfinder's obstacles (AIData AttackUsesLineOfSight, an ATTACK_NEEDS_LINE_OF_SIGHT or CAN_SHOOT_OVER_WALLS attacker; the weapon's terrain line is S-784)
+	bool isAttackViewBlockedByObstacle(const PathfindObject &attacker, const Coord3D &attackerPos, const PathfindObject *victim, const Coord3D &victimPos);
 	// lane PHYS-1: RW getMoveAwayFromPath 0x6FB231 (AIPathfindMoveAway.cpp): a path for `obj` to the nearest cell whose box keeps clear of `other`, of `obj` itself and
 	// of the two paths to avoid; null when none
 	Path *getMoveAwayFromPath(const PathfindObject *obj, const PathfindLocomotorInfo &loco, const PathfindObject *other, const Path *pathToAvoid,
@@ -865,7 +880,7 @@ private:
 	Path *buildActualPath(const PathfindObject *obj, unsigned acceptableSurfaces, const Coord3D *fromPos, PathfindCell *goalCell, bool center, bool blocked);
 	void prependCells(Path *path, const Coord3D *fromPos, PathfindCell *goalCell, bool center);
 	int examineNeighboringCells(PathfindCell *parentCell, PathfindCell *goalCell, const PathfindLocomotorInfo &loco, bool isHuman, bool centerInCell,
-		int radius, const ICoord2D &startCellNdx, const PathfindObject *obj, bool hierarchical = false);
+		int radius, const ICoord2D &startCellNdx, const PathfindObject *obj, bool hierarchical = false, int attackDistance = 0);
 	// lane PATHPERF-1: RW 0x6F6454, one cell of a block edge in the hierarchical search, and RW 0x6F49BC, the corridor of the found cell chain
 	void examineHierarchicalEdgeCell(const ICoord2D &cell, const ICoord2D &delta, PathfindCell *parent, PathfindCell *goal, zoneStorageType parentZone,
 		zoneStorageType *zones, int &zoneCount, const PathfindMovement &mv);

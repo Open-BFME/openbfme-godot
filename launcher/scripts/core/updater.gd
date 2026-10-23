@@ -432,7 +432,7 @@ func macos_release_manifest(release: Dictionary) -> Dictionary:
 		var entry_linked := _path_is_link(dir)  # MACPLAY-1 (Sol r2): never read through it; the link alone is removed below
 		var cached := Manifest.read_limited(manifest_path, Manifest.MAX_BYTES) if not entry_linked else PackedByteArray()
 		var cached_sig := Manifest.read_limited(signature_path, 64) if not entry_linked else PackedByteArray()
-		var cv := Manifest.verify(cached, cached_sig, info.release_key, expect, "macos")
+		var cv := Manifest.verify(cached, cached_sig, info.release_keys, expect, "macos")
 		if cv.ok:
 			return {"ok": true, "error": "", "manifest": cv.manifest, "bytes": cached, "sig": cached_sig,
 				"macos_sidecar": true, "no_entry": cv.manifest.assets.game.is_empty()}
@@ -442,24 +442,24 @@ func macos_release_manifest(release: Dictionary) -> Dictionary:
 		remove_tree(dir)
 		DirAccess.remove_absolute(dir)
 	var has_manifest: bool = release.assets.has("manifest-macos.json")
-	var has_signature: bool = release.assets.has("manifest-macos.json.sig")
+	var has_signature: bool = release.assets.has("manifest-macos.json.sig") or release.assets.has("manifest-macos.json.sig2")
 	if has_manifest or has_signature:
 		if not has_manifest or not has_signature:
 			return {"ok": false, "error": "release %s has an incomplete macOS manifest sidecar" % release.tag, "manifest": {}}
 		var m := http.get_small(release.assets["manifest-macos.json"].url, Manifest.MAX_BYTES)
 		if not m.ok or m.code != 200:
 			return {"ok": false, "error": "the macOS manifest of %s could not be downloaded: %s" % [release.tag, m.error if not m.ok else "HTTP %d" % m.code], "manifest": {}}
-		var s := http.get_small(release.assets["manifest-macos.json.sig"].url, 64)
-		if not s.ok or s.code != 200:
-			return {"ok": false, "error": "the macOS manifest signature of %s could not be downloaded: %s" % [release.tag, s.error if not s.ok else "HTTP %d" % s.code], "manifest": {}}
-		var v := Manifest.verify(m.body, s.body, info.release_key, expect, "macos")
+		var s := release_signature(release, "manifest-macos.json", m.body, "macos")
+		if not s.ok:
+			return {"ok": false, "error": "release %s rejected: %s" % [release.tag, s.error], "manifest": {}}
+		var v := Manifest.verify(m.body, s.sig, info.release_keys, expect, "macos")
 		if not v.ok:
 			return {"ok": false, "error": "release %s rejected: %s" % [release.tag, v.error], "manifest": {}}
-		var why := _cache_pair(dir, "manifest-macos.json", m.body, s.body) if linked == "" else ""
+		var why := _cache_pair(dir, "manifest-macos.json", m.body, s.sig) if linked == "" else ""
 		if why != "":
 			# the verified sidecar is used for this check; only its cache failed (the next check fetches it again)
 			Log.line("LAUNCHER the verified macOS manifest of %s was not cached: %s" % [release.tag, why])
-		return {"ok": true, "error": "", "manifest": v.manifest, "bytes": m.body, "sig": s.body,
+		return {"ok": true, "error": "", "manifest": v.manifest, "bytes": m.body, "sig": s.sig,
 			"macos_sidecar": true, "no_entry": v.manifest.assets.game.is_empty()}
 	var legacy := _standard_release_manifest(release)
 	if not legacy.ok:
@@ -492,25 +492,50 @@ func _standard_release_manifest(release: Dictionary) -> Dictionary:
 	var bytes := Manifest.read_limited(dir.path_join("manifest.json"), Manifest.MAX_BYTES)
 	var sig := Manifest.read_limited(dir.path_join("manifest.json.sig"), 64)
 	if not bytes.is_empty() and sig.size() == 64:
-		var v := Manifest.verify(bytes, sig, info.release_key, expect)
+		var v := Manifest.verify(bytes, sig, info.release_keys, expect)
 		if v.ok:
 			return {"ok": true, "error": "", "manifest": v.manifest, "bytes": bytes, "sig": sig}
-	for need in ["manifest.json", "manifest.json.sig"]:
-		if not release.assets.has(need):
-			return {"ok": false, "error": "the release %s has no %s (not a launcher release)" % [release.tag, need]}
+	if not release.assets.has("manifest.json"):
+		return {"ok": false, "error": "the release %s has no manifest.json (not a launcher release)" % release.tag}
+	if not release.assets.has("manifest.json.sig") and not release.assets.has("manifest.json.sig2"):
+		return {"ok": false, "error": "the release %s has no manifest.json.sig or manifest.json.sig2 (not a launcher release)" % release.tag}
 	var m := http.get_small(release.assets["manifest.json"].url, Manifest.MAX_BYTES)
 	if not m.ok or m.code != 200:
 		return {"ok": false, "error": "the manifest of %s could not be downloaded: %s" % [release.tag, m.error if not m.ok else "HTTP %d" % m.code]}
-	var s := http.get_small(release.assets["manifest.json.sig"].url, 64)
-	if not s.ok or s.code != 200:
-		return {"ok": false, "error": "the manifest signature of %s could not be downloaded: %s" % [release.tag, s.error if not s.ok else "HTTP %d" % s.code]}
-	var v := Manifest.verify(m.body, s.body, info.release_key, expect)
+	var s := release_signature(release, "manifest.json", m.body, "standard")
+	if not s.ok:
+		return {"ok": false, "error": "release %s rejected: %s" % [release.tag, s.error]}
+	var v := Manifest.verify(m.body, s.sig, info.release_keys, expect)
 	if not v.ok:
 		return {"ok": false, "error": "release %s rejected: %s" % [release.tag, v.error]}
 	DirAccess.make_dir_recursive_absolute(dir)
 	_write(dir.path_join("manifest.json"), m.body)
-	_write(dir.path_join("manifest.json.sig"), s.body)
-	return {"ok": true, "error": "", "manifest": v.manifest, "bytes": m.body, "sig": s.body}
+	_write(dir.path_join("manifest.json.sig"), s.sig)
+	return {"ok": true, "error": "", "manifest": v.manifest, "bytes": m.body, "sig": s.sig}
+
+
+## lane SIGNKMS-1: the signature of the release file `name` (manifest.json / manifest-macos.json, its bytes `body`, checked in
+## `schema_mode`) from the release's two slots: `name`.sig (what every launcher reads) when it is there and valid under the trusted keys,
+## else `name`.sig2 (read by launchers with the key list only: the KMS envelope signature). Each slot is read with the 64-byte limit.
+## Whichever verified is what the caller stores, under the plain `name`.sig (caches, versions/<v>/, the launcher's proof, receipts).
+## {ok, error, sig, slot}; neither valid fails, naming both slots.
+func release_signature(release: Dictionary, name: String, body: PackedByteArray, schema_mode: String) -> Dictionary:
+	var tried := PackedStringArray()
+	for slot in [name + ".sig", name + ".sig2"]:
+		if not release.assets.has(slot):
+			tried.append("%s: not in the release" % slot)
+			continue
+		var s := http.get_small(release.assets[slot].url, 64)
+		if not s.ok or s.code != 200:
+			tried.append("%s: could not be downloaded (%s)" % [slot, s.error if not s.ok else "HTTP %d" % s.code])
+		elif s.body.size() != 64:
+			tried.append("%s: %d bytes (an Ed25519 signature is 64)" % [slot, s.body.size()])
+		elif Manifest.signature_ok(body, s.body, info.release_keys, schema_mode):
+			return {"ok": true, "error": "", "sig": s.body, "slot": slot}
+		else:
+			tried.append("%s: not valid" % slot)
+	var why := Manifest.not_signed_error(info.release_keys) if Manifest.has_keys(info.release_keys) else "this launcher has no release key"
+	return {"ok": false, "error": "%s (%s)" % [why, "; ".join(tried)], "sig": PackedByteArray(), "slot": ""}
 
 
 # ---- installed versions ------------------------------------------------------------------------------------------------------------------
@@ -545,7 +570,7 @@ func verify_installed(name: String, full := false) -> Dictionary:
 	var dir := data_dir.path_join("versions").path_join(name)
 	# MACPLAY-1: a Mac version folder holds the signed manifest-macos.json it was installed from (stored as manifest.json), "macos" schema
 	var v := Manifest.verify(Manifest.read_limited(dir.path_join("manifest.json"), Manifest.MAX_BYTES),
-		Manifest.read_limited(dir.path_join("manifest.json.sig"), 64), info.release_key, {"repo": info.repo},
+		Manifest.read_limited(dir.path_join("manifest.json.sig"), 64), info.release_keys, {"repo": info.repo},
 		"macos" if mac_platform() else "standard")
 	if not v.ok:
 		return {"ok": false, "error": v.error}
@@ -686,7 +711,7 @@ func bundled() -> Dictionary:
 	var sig: PackedByteArray = sr.bytes
 	var key := bytes.hex_encode() + ":" + sig.hex_encode() + ":%d:%d" % [pr.size, sr.size]
 	if not _bundled_cache.has(key):
-		var v := Manifest.verify_payload(bytes, sig, info.release_key, {"repo": info.repo, "platform": info.platform()})
+		var v := Manifest.verify_payload(bytes, sig, info.release_keys, {"repo": info.repo, "platform": info.platform()})
 		if pr.size > Manifest.MAX_BYTES:
 			v = {"ok": false, "error": "%s is %d bytes (at most %d)" % [Manifest.PAYLOAD, pr.size, Manifest.MAX_BYTES]}
 		elif sr.size > 64:
@@ -807,7 +832,7 @@ func check_launcher(dir: String, signed: Dictionary) -> String:
 	if not signed.is_empty() and sha == signed.sha256:
 		return ""
 	var v := Manifest.verify(Manifest.read_limited(dir.path_join(PROOF), Manifest.MAX_BYTES), Manifest.read_limited(dir.path_join(PROOF_SIG), 64),
-		info.release_key, {"repo": info.repo})
+		info.release_keys, {"repo": info.repo})
 	if v.ok:
 		var src := Manifest.launcher_source(v.manifest, info.platform(), exe)
 		if src.ok and sha == (src.file.sha256 if src.combined else String(src.asset.files.get(exe, {}).get("sha256", ""))):
@@ -823,7 +848,7 @@ func write_launcher_proof(dir: String, tag: String) -> bool:
 	var cache := data_dir.path_join("cache/manifests").path_join(tag)
 	var bytes := Manifest.read_limited(cache.path_join("manifest.json"), Manifest.MAX_BYTES)
 	var sig := Manifest.read_limited(cache.path_join("manifest.json.sig"), 64)
-	if not Manifest.verify(bytes, sig, info.release_key, {"repo": info.repo, "tag": tag}).ok:
+	if not Manifest.verify(bytes, sig, info.release_keys, {"repo": info.repo, "tag": tag}).ok:
 		Log.line("LAUNCHER no verified manifest of %s to prove the launcher beside the game" % tag)
 		return false
 	for item in [[PROOF_SIG, sig], [PROOF, bytes]]:
@@ -847,7 +872,7 @@ static func _sha256_of(path: String) -> String:
 	return hc.finish().hex_encode()
 
 
-func _play_bundled(b: Dictionary, args: PackedStringArray) -> Dictionary:
+func _play_bundled(b: Dictionary, args: PackedStringArray, before_start := Callable()) -> Dictionary:
 	if macos_updates_enabled() and (macos_transaction or MacOSUpdate.transaction_locked(self)):
 		return {"ok": false, "pid": -1, "modified": false, "error": "a signed whole-package update is in progress"}
 	var c := check_bundled()
@@ -859,6 +884,8 @@ func _play_bundled(b: Dictionary, args: PackedStringArray) -> Dictionary:
 		var glibc := GlibcCheck.check(b.path, OS.get_environment("OPENBFME_TEST_SYSTEM_GLIBC") if info.tests_allowed() else "")
 		if glibc != "":
 			return {"ok": false, "error": "%s cannot be started: %s" % [b.version, glibc], "pid": -1}
+	if before_start.is_valid() and not before_start.call():
+		return {"ok": false, "error": "The game launch was canceled.", "pid": -1, "stopped": true}
 	OS.set_environment(STARTED_BY_LAUNCHER, "1")
 	var pid := OS.create_process(exe, args)
 	if pid <= 0:
@@ -1107,7 +1134,7 @@ func play(version: String, args: PackedStringArray = PackedStringArray(), before
 	args = launch.args
 	_report("Checking %s" % version)
 	if plays_bundled(version):
-		return _play_bundled(bundled(), args)
+		return _play_bundled(bundled(), args, before_start)
 	var v := verify_installed(version, true)
 	if not v.ok:
 		var why := "%s cannot be started: %s" % [version, v.error]
@@ -1405,7 +1432,7 @@ func asset_names(manifest: Dictionary, kinds: Array) -> Array:
 func check_staged(dir: String, tag: String) -> Dictionary:
 	var cache := data_dir.path_join("cache/manifests").path_join(tag)
 	var v := Manifest.verify(Manifest.read_limited(cache.path_join("manifest.json"), Manifest.MAX_BYTES),
-		Manifest.read_limited(cache.path_join("manifest.json.sig"), 64), info.release_key, {"repo": info.repo, "tag": tag})
+		Manifest.read_limited(cache.path_join("manifest.json.sig"), 64), info.release_keys, {"repo": info.repo, "tag": tag})
 	if not v.ok:
 		return {"ok": false, "error": "no verified manifest for the staged launcher %s (%s)" % [tag, v.error]}
 	var exe: String = launcher_files()[0]

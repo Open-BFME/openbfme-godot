@@ -258,9 +258,19 @@ void runVersus(starttest::Shared &s, const NewGameMessage &message, int frames, 
 	const Player *players[2] = { playerAtStart(logic, 0), playerAtStart(logic, 1) };
 	REQUIRE(players[0] != nullptr);
 	REQUIRE(players[1] != nullptr);
+	// lane FLANK-1: the first frame each of the lane's mechanisms acted (a projectile contact hit, a pre-landing emotion, a landing, a flank), for the pin notes
+	int firstContactHit = -1, firstPreLanding = -1, firstLanding = -1, firstFlank = -1;
 	for (int i = 0; i < frames; ++i)
 	{
 		game.advance(0.2);
+		{
+			const CombatState::Counters &cc = logic.combat().counters();
+			const int fr = (int)logic.getFrame();
+			firstContactHit = firstContactHit < 0 && cc.projectileContactHits > 0 ? fr : firstContactHit;
+			firstPreLanding = firstPreLanding < 0 && cc.projectilePreLandingEmotions > 0 ? fr : firstPreLanding;
+			firstLanding = firstLanding < 0 && cc.projectilesLanded > 0 ? fr : firstLanding;
+			firstFlank = firstFlank < 0 && cc.flanks > 0 ? fr : firstFlank;
+		}
 		if (hashEveryFrame)
 		{
 			out.hashes.push_back(logic.computeStateHash());
@@ -295,6 +305,13 @@ void runVersus(starttest::Shared &s, const NewGameMessage &message, int frames, 
 		}
 	}
 	out.log += "end frame " + std::to_string(logic.getFrame()) + "\n  " + summary(logic, players[0]) + "\n  " + summary(logic, players[1]) + "\n";
+	{
+		const CombatState::Counters &cc = logic.combat().counters();
+		out.log += "  flank1: projectile contacts " + std::to_string(cc.projectileContacts) + " hits " + std::to_string(cc.projectileContactHits) + " (first frame " +
+			std::to_string(firstContactHit) + "), pre-landing emotions " + std::to_string(cc.projectilePreLandingEmotions) + " (" + std::to_string(firstPreLanding) +
+			"), landings " + std::to_string(cc.projectilesLanded) + " (" + std::to_string(firstLanding) + "), flank tests " + std::to_string(cc.flankTests) + " flanked " +
+			std::to_string(cc.flanks) + " (" + std::to_string(firstFlank) + "), crushes " + std::to_string(cc.crushes) + "\n";
+	}
 	for (Object *h = logic.getFirstObject(); h; h = h->getNextObject())
 	{
 		const ContainModuleInterface *c = h->getContain();
@@ -792,7 +809,25 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// saver; each lane alone measured the values above), measured once on the merged tree (srv1, the test file alone, twice): seed 2 stays open at 9000 with a new
 	// progress table (changed from the first window), seed 7 ends with Mordor's defeat (start position 1) at 5693 (3790 before), seed 1234 is open at 9000
 	// (Mordor's defeat at 4095 before). Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 5693 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Lane TARGET-1 (RotWK's target choice: the combat chains' priorities, the reachability test, MoodAttackCheckRate's 2-second default, the one-off
+	// check offsets drawing the logic generator, an attack-move order pushing the mood check back), measured on a CI host (the laptop): seed 2 stays open at
+	// 9000 with a new table (below), seed 7 ends with Mordor's defeat (start position 1) at 6459 (4103), seed 1234 with Mordor's defeat (start position 0)
+	// at 5072 (5701). Engine pins, not retail values.
+	// Lane ATTACKPATH-1 (RotWK's findAttackPath with its view test, own corridor and ranked fallback; the attack path's failure branch; the horde approach goal's
+	// helpers RW 0x6F2F8F / 0x746783 / 0x6FB67A; the towards-goal line's corridor term RW 0x6F6D57 in every path search), measured on the lane's tree bb49bd6a6
+	// (measure.sh's three runs on a CI host, the laptop): all three games are open at 9000 with both armies still fighting (seed 2's table below: every counter
+	// rises through the last window); seed 2's table changed from the 1000 window on. Engine pins, not retail values.
+	// Lane FLANK-1 (projectiles that meet objects in flight RW 0x85E52B / 0x6CC79C, a landed thrown unit busy or idle RW 0x85FAA4, the flank test at fire time
+	// RW 0x6CCB4D, the crush contact RW 0xAD2CE0 with heights, the charge state's exits, the miss scatter RW 0x6CC399), measured on the lane's tree (dev): seed 2 is no
+	// longer open: Men (start position 1) are defeated at 8035; its progress is identical through the 1000 window and differs from the 2000 window (the first
+	// fire-time flank at frame 1481, the first landing of a thrown unit at 3123, the first in-flight hit at 3174). Seed 7 (Mordor, start position 1) ends at 4027 (4103;
+	// first in-flight hit 2174, first flank 1849). Seed 1234 (Mordor, start position 0) ends at 6317 (5701) with no projectile contact or landing in the game, so its move
+	// comes from the flank timing (first flank 1999), the crush contact or the scatter. The `flank1:` line of each run's log has the counts. Engine pins, not retail values.
+	// Lane FLANK-1 alone (dev): seed 2 Men defeated at 8035, seed 7 Mordor at 4027, seed 1234 Mordor at 6317. Merge queue q23 (TARGET-1's target choice and
+	// mood scan, ATTACKPATH-1's attack paths and horde approach, FLANK-1's in-flight hits / fire-time flank / crush contact / scatter, PRODUCTION1's levelled
+	// build speed, LUMBER1's evil lumber mills, on q22's tree; each lane alone measured the results above), measured once on the merged tree (the test file
+	// alone, the Mac and the laptop): all three games are open at 9000 with both armies still fighting; seed 2's table below. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -813,17 +848,17 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 		CHECK(run.defeatFrame == g.defeatFrame);
 		if (g.seed == 2u)
 		{
-			// the game that stays open: no late stall, every counter still rises in each of the last windows (a sample every 1000 frames, cumulative)
+			// merge queue q23: seed 2's table (every side keeps attacking, building and destroying through the windows; a sample every 1000 frames, cumulative)
 			CHECK(run.progress ==
-		"frame 1000: [0 attacks 2 built 90u/8s destroyed 16u/0s] [1 attacks 1 built 75u/7s destroyed 9u/1s]\n"
-		"frame 2000: [0 attacks 5 built 288u/11s destroyed 95u/2s] [1 attacks 4 built 172u/11s destroyed 241u/1s]\n"
-		"frame 3000: [0 attacks 6 built 450u/12s destroyed 268u/3s] [1 attacks 9 built 309u/12s destroyed 386u/1s]\n"
-		"frame 4000: [0 attacks 10 built 652u/14s destroyed 363u/3s] [1 attacks 12 built 434u/14s destroyed 588u/1s]\n"
-		"frame 5000: [0 attacks 12 built 832u/18s destroyed 477u/5s] [1 attacks 14 built 504u/15s destroyed 706u/3s]\n"
-		"frame 6000: [0 attacks 15 built 975u/19s destroyed 647u/6s] [1 attacks 17 built 683u/15s destroyed 879u/3s]\n"
-		"frame 7000: [0 attacks 17 built 1098u/21s destroyed 724u/7s] [1 attacks 19 built 776u/15s destroyed 1102u/3s]\n"
-		"frame 8000: [0 attacks 20 built 1257u/23s destroyed 825u/7s] [1 attacks 23 built 881u/15s destroyed 1201u/3s]\n"
-		"frame 9000: [0 attacks 22 built 1431u/23s destroyed 953u/7s] [1 attacks 26 built 993u/15s destroyed 1313u/3s]\n");
+		"frame 1000: [0 attacks 0 built 90u/8s destroyed 17u/1s] [1 attacks 1 built 92u/8s destroyed 44u/2s]\n"
+		"frame 2000: [0 attacks 3 built 298u/10s destroyed 194u/1s] [1 attacks 3 built 251u/10s destroyed 247u/4s]\n"
+		"frame 3000: [0 attacks 6 built 488u/11s destroyed 355u/2s] [1 attacks 4 built 420u/11s destroyed 456u/4s]\n"
+		"frame 4000: [0 attacks 8 built 745u/14s destroyed 493u/2s] [1 attacks 7 built 540u/13s destroyed 649u/4s]\n"
+		"frame 5000: [0 attacks 11 built 941u/15s destroyed 648u/2s] [1 attacks 8 built 686u/15s destroyed 824u/4s]\n"
+		"frame 6000: [0 attacks 12 built 1124u/16s destroyed 780u/3s] [1 attacks 9 built 846u/16s destroyed 1069u/4s]\n"
+		"frame 7000: [0 attacks 16 built 1352u/16s destroyed 929u/3s] [1 attacks 13 built 987u/16s destroyed 1282u/4s]\n"
+		"frame 8000: [0 attacks 17 built 1538u/17s destroyed 1075u/4s] [1 attacks 15 built 1164u/16s destroyed 1471u/4s]\n"
+		"frame 9000: [0 attacks 21 built 1733u/19s destroyed 1180u/4s] [1 attacks 16 built 1239u/19s destroyed 1651u/4s]\n");
 		}
 	}
 }
@@ -1231,6 +1266,8 @@ TEST_CASE("skirmish ai vs ai (S-420): an unfinished structure whose builder is g
 	CHECK(CombatQueries::isAttackable(*cage));
 	AIUpdateInterface *ai = knights->getAIUpdateInterface();
 	REQUIRE(ai != nullptr);
+	// lane TARGET-1: the attack-move scan is RotWK's mood scan (RW 0x66844A(1, 0)), which keeps its own cadence (AI + 0x21C): it is made due now
+	ai->setNextMoodCheckTime(logic.getFrame());
 	CHECK(ai->attackMoveTarget() == cage);
 }
 

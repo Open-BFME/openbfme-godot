@@ -159,7 +159,9 @@ def commit_only_checks(rel: str, data: bytes) -> str:
 
 TEST_ROOTS = ("engine/tests/", "godot/tests/")
 CPP_SUFFIXES = {".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".inl"}
-TOLERANCE_FIX = "assert the exact value, or justify the bound with `// tolerance: <reason>` (GDScript `# tolerance: <reason>`)"
+TOLERANCE_FIX = (
+    "bounds and approximations can hide wrong results; assert the exact value, or justify the bound with `// tolerance: <reason>` "
+    "(GDScript `# tolerance: <reason>`); example for an expected count of 3: `CHECK(count == 3);` (GDScript `assert(count == 3)`)")
 _STRING = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
 _TEMPLATE = re.compile(r"\b[A-Za-z_][\w:]*<[^<>();&|=!]*>")
 _COMPARE = re.compile(r"[<>]=?|!=\s*0(?![\w.])|!=\s*0\.0*f?(?![\w.])")

@@ -86,3 +86,22 @@ attribute edits reuse it instead of reparsing gamedata.ini on the main thread.
 Every game replacement or reset invalidates the cache, including setup with a
 new file system. Failed settings loads leave it invalid and keep reporting the
 error rather than caching an invented offset.
+
+## Fortress revival after death
+
+A recruited custom hero consumes the configured `CanBuildCreateAHeroUpgradeName`
+permission in multiplayer/skirmish (RW 0x61B28B). Death creates a separate revival
+record (RW 0x781792), but the fortress previously evaluated that record against
+the purchase button's consumed prerequisite and hid it.
+
+`ControlBar::reviveButton` now ignores only that configured purchase prerequisite
+for a dead record whose template has `CREATE_A_HERO`. Other button prerequisites,
+producer availability, money, queue and hero-record progress checks remain in
+place. This changes presentation and command availability, not the player's
+upgrades or simulation state. The original command button is not modified.
+
+This slot reuse is **INFERENCE**, not a recovered implementation of retail's
+second REVIVE placement pass; that general placement pass remains S-850. The
+retail-backed HUD regression recruits the selected Shield Maiden, verifies the
+purchase upgrade is consumed, kills her, presses her fortress revival button,
+and waits for a new living hero while the purchase upgrade remains absent.

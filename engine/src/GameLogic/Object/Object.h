@@ -364,6 +364,8 @@ public:
 	BehaviorModule *findModule(const std::string &className) const; // the first module of this class (helpers included), or null
 	// RW 0x68BB14: the first module with an exit interface (array order); lane PROD-1
 	ExitInterface *getObjectExitInterface() const;
+	// lane LUMBER1: RW 0x68C383, the first behavior module's dock interface (null for none)
+	class DockUpdateInterface *getDockUpdateInterface() const;
 	// RW 0x68C327: the ProductionUpdate's queue interface, or null
 	ProductionUpdateInterface *getProductionUpdate() const;
 	BehaviorModule *findModuleByTag(NameKeyType tagKey) const;

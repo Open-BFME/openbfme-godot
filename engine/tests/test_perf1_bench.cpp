@@ -383,6 +383,8 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // the battle first, then a 2-player AI game (Mordor and Isengard: before the S-1080 fix it created their units' keys first and changed every later AI
 // game), then the 4-player skirmish, which must hash as the first game of a fresh process did, frame for frame. A change that alters the
 // simulation on purpose re-measures the files (and says why); an optimisation never does.
+// Lane TARGET-1 re-measured both (OPENBFME_PERF1_REGEN=1 on its tree): RotWK's mood scan and target search change which enemy every unit picks and when
+// it looks, and the new AI state and AIData rows are hashed.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	const std::vector<std::uint32_t> battleRef = perf1::readHashes("big_battle_400.hashes");

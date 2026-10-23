@@ -110,7 +110,7 @@ public:
 	// lane BUILD-2: WorkerAIUpdate (create RW 0x64EF9C, data RW 0x654238, mask 0x11; ctor RW 0x8ADAA0, size 0x594): ZH's WorkerAIUpdate = a dozer plus a supply truck. Field
 	// table RW 0xC058C8: MaxBoxes, RepairHealthPercentPerSecond (+0x68), BoredTime, BoredRange, the supply / harvest fields. The dozer half runs as this class (the same named
 	// fields); the supply-truck half (MaxBoxes, SupplyCenterActionDelay, Harvest*) is not ported (stop S-655). The workers GettingBuiltBehavior spawns (WorkerName) use it
-	static void registerWorkerClass(ModuleFactory &modules);
+	static void registerWorkerClass(ModuleFactory &modules); // lane LUMBER1: binds WorkerAIUpdate (GameLogic/Module/WorkerAIUpdate.h)
 	bool isWorker() const { return m_isWorker; }
 
 	// RW 0x88C217 -> 0x88C2A5: the legality gate of the construct body, flags 0x49F (ZH CLEAR_PATH | TERRAIN_RESTRICTIONS | NO_OBJECT_OVERLAP | USE_QUICK_PATHFIND | SHROUD_REVEALED = 0x1F
@@ -161,8 +161,11 @@ public:
 
 protected:
 	const char *machineName() const override { return "DozerAIUpdateMachine"; }
+	// lane LUMBER1: the dozer machine's frame (RW 0x88CB6D .. : the repair check, then the primary machine), WorkerAIUpdate's AS_DOZER step
+	void dozerMachineStep();
+	// lane LUMBER1: WorkerAIUpdate's supply half of the AI state (DozerAIUpdate::xferAIStateBody version 2); nothing for a dozer
+	virtual void xferSupplyBody(class Xfer &x) { (void)x; }
 
-private:
 	struct TaskInfo
 	{
 		ObjectID target = INVALID_ID; ///< + 4

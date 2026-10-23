@@ -8,6 +8,7 @@
 
 import { Lobby, LobbyError, route, configFromEnv, MAX_JSON_BYTES, validateEnforcementRecord, validateSighting, withoutGameIp } from './lobby.mjs';
 import { SqliteIdentityStore } from './identity-store.mjs';
+import { SocialStorageError, socialSqlTransaction, socialStorageError } from './social-store.mjs';
 
 const subtle = crypto.subtle;
 
@@ -133,6 +134,26 @@ export function durableReportTransaction(storage) {
   }));
 }
 
+export const SOCIAL_DATABASE_BUDGET_BYTES = 900_000_000;
+
+export function durableSocialTransaction(storage) {
+  if (!storage.sql || typeof storage.transactionSync !== 'function') return null;
+  storage.sql.exec('CREATE TABLE IF NOT EXISTS social_records (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID');
+  const transaction = socialSqlTransaction(storage.sql, { beforePut() {
+    const size = storage.sql.databaseSize;
+    if (!Number.isSafeInteger(size) || size < 0) throw new SocialStorageError('unavailable');
+    if (size >= SOCIAL_DATABASE_BUDGET_BYTES) throw new SocialStorageError('full');
+  } });
+  return (fn) => {
+    try {
+      return storage.transactionSync(() => transaction(fn));
+    } catch (error) {
+      if (Number.isInteger(error?.status) && typeof error?.code === 'string') throw error;
+      throw socialStorageError(error);
+    }
+  };
+}
+
 function workerEnv(state, env) {
   const keys = new Map();
   const logs = logStoreFor(state, env);
@@ -157,7 +178,9 @@ function workerEnv(state, env) {
     }
     sql.exec('UPDATE moderation_receipts SET payload = ? WHERE command_hash = ?', JSON.stringify(record), commandHash);
   });
+  const socialTransaction = durableSocialTransaction(state.storage);
   return {
+    socialStorageRequired: true,
     hmac: async (key, data) => {
       const id = Array.from(key).join(',');
       let k = keys.get(id);
@@ -170,6 +193,7 @@ function workerEnv(state, env) {
     sha256: async (data) => new Uint8Array(await subtle.digest('SHA-256', data)),
     randomBytes: (n) => crypto.getRandomValues(new Uint8Array(n)),
     now: () => Date.now(),
+    ...(typeof env.oauthFetch === 'function' ? { oauthFetch: env.oauthFetch } : {}),
     store: {
       saveGame: (g) => state.storage.put(`game:${g.id}`, withoutGameIp(g)),
       saveMeta: (k, v) => state.storage.put(k, v), // INFRA-2 r2: the relay uploader's status (relay-status:<address>)
@@ -184,6 +208,7 @@ function workerEnv(state, env) {
       loadSightings: () => [],
       kind: logs.kind,
       ...(reportTransaction ? { reportTransaction } : {}),
+      ...(socialTransaction ? { socialTransaction } : {}),
       maxLogBytes: logs.maxLogBytes,
       putBlob: logs.putBlob?.bind(logs),
       getBlob: logs.getBlob?.bind(logs),
@@ -250,6 +275,7 @@ export class LobbyObject {
     this.queue = Promise.resolve();
     this.state = state;
     this.identity = this.lobby.env.store.identity;
+    this.identity.onEnforcementChange = () => this.lobby.social.securityStateChanged();
     this.ready = false;
     this.migrationError = null;
     this.bodyTimeoutMs = Number(env.BODY_TIMEOUT_MS ?? 10000);
@@ -316,6 +342,8 @@ export class LobbyObject {
       } catch {
         this.migrationError = 'initialization_failed';
       }
+    } else if (typeof this.state.storage.setAlarm === 'function') {
+      await this.state.storage.setAlarm(Date.now() + 60000);
     }
   }
   async scheduleMigration() {
@@ -327,7 +355,15 @@ export class LobbyObject {
   }
   async alarm() {
     await this.readyPromise;
-    const run = this.queue.then(() => this.processMigration());
+    const run = this.queue.then(async () => {
+      await this.processMigration();
+      if (!this.ready) return;
+      try {
+        await this.lobby.prepareReportExpiries?.();
+      } finally {
+        if (typeof this.state.storage.setAlarm === 'function') await this.state.storage.setAlarm(Date.now() + 60000);
+      }
+    });
     this.queue = run.catch(() => {});
     await run;
   }
@@ -380,6 +416,7 @@ export class LobbyObject {
       headers,
       ip: request.headers.get('cf-connecting-ip') ?? '',
       bytes: async () => bytes,
+      signal: request.signal,
       ...(bodyRejection ? { bodyRejection } : {}),
     });
     return out;

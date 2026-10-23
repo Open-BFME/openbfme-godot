@@ -67,6 +67,7 @@ struct ControlBarButton
 	int position = -1;                      ///< lane HUD-4: the arc's window (slot - range start, 0 .. 5) or the side bar's packed position (0 ..)
 	bool autoAbility = false;               ///< lane AUTOCAST-1: the glow (RW 0x9D2D0E -> SetAutoAbilityOverlayState): the source object's AutoAbilityBehavior auto casts this button
 	int productionCount = 0;                ///< lane OWNERFIX-3: the count the window shows (RW 0x729D9A; 0 none): ShowProductionCount buttons only
+	bool commandPointsShort = false;        ///< lane HEROBUY-1: a CantAfford REVIVE button is RotWK's availability 7 (command points short, RW 0x942F47), not 6
 };
 
 struct ControlBarQueueEntry

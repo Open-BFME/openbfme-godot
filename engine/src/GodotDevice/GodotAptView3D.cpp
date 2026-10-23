@@ -309,6 +309,19 @@ void AptView3DViewers::pose(Slot &slot, double now)
 	GammaComposite::ensure(slot.camWhite);
 }
 
+Dictionary AptView3DViewers::animationFrames() const
+{
+	Dictionary frames;
+	for (const auto &entry : m_slots)
+	{
+		if (entry.second.used && !entry.second.failed)
+		{
+			frames[String(entry.first.c_str())] = entry.second.anim.frame();
+		}
+	}
+	return frames;
+}
+
 void AptView3DViewers::advance()
 {
 	const double now = nowMs();

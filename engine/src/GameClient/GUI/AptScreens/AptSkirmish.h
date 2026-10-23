@@ -180,15 +180,23 @@ protected:
 	// may the slot's combos be changed now: lobbyEditable, and (RW 0x843F6E UpdateSlot, BFME2 0x441B15: a local player who accepted and is not the host
 	// has every gadget disabled, RW 0x8404AC(false, -1)) not after the local player's own Ready
 	bool slotGadgetsEnabled(int slot) const;
-	// lane ONLINE-5: may a slot's Hero combo be used at all (the online lobby carries no Create-a-Hero record yet, S-4076: shown locked there)
+	// lane ONLINE-5: may a slot's Hero combo be used at all (false: shown locked; every lobby carries the record since lane ONLINEMENU-1)
 	virtual bool heroChoiceAvailable() const { return true; }
-	// lane OWNERFIX-2: whether the lobby can carry a slot's handicap to the game (the skirmish and LAN lobbies: NetPacket's GameInfo); the online staging room's
-	// start (GameNetwork/OnlineStart.cpp) has no handicap, so its combo stays empty and locked (S-4552)
+	// lane OWNERFIX-2: whether the lobby can carry a slot's handicap to the game (false: its combo stays empty and locked; the skirmish and LAN lobbies through
+	// NetPacket's GameInfo, the online one through the lobby's START since lane ONLINEMENU-1)
 	virtual bool handicapChoiceAvailable() const { return true; }
 	// lane ONLINE-5: the chat panel's Players list (AptMpChat's "ChatPlayers", RW 0x9BEA20): the human players of the network game, in slot order.
 	// INFERENCE [S-4551]: retail's chat helper fills it with the chat's recipients (the room's players; its fill, RW 0x9BECCB's source, was not read)
 	// and sends a line only to the ones selected; here it lists who is in the room and every line goes to everyone
 	void refreshChatPlayers();
+	// lane ONLINEMENU-1 (owner, 2026-10-20: "the player can just see their ping on the side"): a second column after a player's name in that list (the
+	// online room: the ping); "" none (the list keeps one column)
+	virtual UnicodeString chatPlayerNote(int slot, Color *color) const
+	{
+		(void)slot;
+		(void)color;
+		return UnicodeString();
+	}
 	// lane UI-1: AptMpGameRules::ShowChat (RW 0x845AE2 id 0): the host interface's answer; the skirmish lobby has no chat
 	virtual bool showChat() const { return false; }
 	// lane RULES-1: the panel's ruleChanged (RW 0x8421E0) on the host posts "GUI:RuleChangeWarning" + the rule's name (kind 10 with a reset:

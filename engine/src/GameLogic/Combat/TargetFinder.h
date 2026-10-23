@@ -5,6 +5,8 @@
 // the objects of a cell in list order, and breaks ties by object id, so the answer never depends on pointer values or hash order.
 //
 // WHAT IS INFERENCE (stop S-326): the retail partition manager's filters and cell order are not read; the grid answers "the nearest enemy within the vision range".
+// Lane TARGET-1: the mood scan, attack-move, guard and hunt ask RotWK's search (GameLogic/AI/AIClosestEnemy.h); only the melee re-acquire (AIAttackMelee 0xE5,
+// RW 0x74D46D, S-787) still asks this grid.
 
 #pragma once
 

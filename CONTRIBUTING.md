@@ -35,6 +35,20 @@ Please also keep personal data out: no paths of your own machine, no e-mail addr
    Linux): its maths goes through `engine/src/GameLogic/SimMath.h`.
 4. Open the pull request against `main` and fill in the template.
 
+## Before you open a PR
+
+- Stage your changes with `git add`, then run `python3 tools/precommit.py` from the repository root. The commit gate checks staged
+  files, not unstaged edits.
+- Assert exact expected values in tests: for an expected count of 3, use `CHECK(count == 3);`, not `CHECK(count > 0);` or
+  `doctest::Approx`. If a bound really is needed, explain why with `// tolerance: <reason>` (GDScript `# tolerance: <reason>`) on the
+  same line or the line above.
+- If you add or close rows in `docs/STOPS.md`, run `python3 tools/stops_count.py --write` and include the updated `README.md` count.
+- Retail-data tests need your own game files through `ROTWK_INSTALL` and `BFME2_INSTALL`; they skip without them, as on public CI.
+  The Godot smoke test also needs the installed games. Never add game files to your PR.
+- Install the Python test dependencies with `python -m pip install -r tools/requirements-test.txt` (a virtual environment is handy).
+- Run the Python tests with `python -m pytest -n 6 -q tools`. Some tests also need game files, built helpers or extra dependencies;
+  public CI runs the subset that needs none of those.
+
 ## What we check
 
 Every pull request runs `.github/workflows/pr.yml` on GitHub's own runners, with no secrets and read-only access. The check named

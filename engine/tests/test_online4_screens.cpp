@@ -9,7 +9,13 @@
 #include "ProcessTestUtil.h"
 
 #include "GameClient/AptView3D.h"
+#include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/AptMessageBox.h"
+#include "GameClient/GUI/Gadget.h"
+#include "GameClient/GUI/GadgetDrawList.h"
+#include "GameClient/GUI/GameWindowManager.h"
+#include "GameClient/CreateAHeroHeroList.h"
+#include "GameClient/GUI/AptScreens/AptCreateAHero.h"
 #include "GameClient/GUI/AptScreens/AptOnlineShell.h"
 #include "GameClient/GUI/Gadgets.h"
 #include "GameClient/GUI/GameWindow.h"
@@ -18,6 +24,7 @@
 #include "GameClient/GUI/ProfileSwitch.h"
 #include "GameNetwork/OnlineLobbyClient.h"
 #include "GameNetwork/OnlineStart.h"
+#include "GameNetwork/RelayProtocol.h"
 #include "GameNetwork/Transport.h"
 #include "Libraries/Source/Apt/Apt.h"
 #include "Libraries/Source/Apt/AptRenderList.h"
@@ -32,8 +39,11 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <random>
+#include <regex>
 #include <sstream>
 #include <string>
+#include <atomic>
 #include <thread>
 #include <vector>
 
@@ -380,18 +390,31 @@ TEST_CASE("online4: install identity and pending notices (no lobby needed)")
 	CHECK(events[0].code == "protocol");
 }
 
-// DEVINPR-1 (review of WP-C): AptOnlineShell keeps a session only when it was issued to this install (sessionInstall == Options::installId); a
-// session from before the client sent an install, or another install's, signs in again so the lobby's enforcement and reports see the install
+// DEVINPR-1 (review of WP-C): AptOnlineShell keeps a session only when it was issued to this install; a session from before the client sent an
+// install, or another install's, signs in again so the lobby's enforcement and reports see the install. ONLINEMENU-1 (PR #8 review finding 2): the
+// token carries the install sealed ("ix") and a public tag of it ("ih", lobby.mjs installTag), never the install itself; a token that shows its
+// install is an older lobby's (refused there) and is not kept
 TEST_CASE("devinpr1: a session token names the install it was issued to (no lobby needed)")
 {
-	const std::string withInstall = "eyJpZCI6Imd1ZXN0OjAxMjM0NTY3ODlhYmNkZWYiLCJuYW1lIjoiR3Vlc3QiLCJraW5kIjoiZ3Vlc3QiLCJpbnN0YWxsIjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJleHAiOjF9.c2ln"; // {"id":"guest:0123456789abcdef","name":"Guest","kind":"guest","install":"aa..a","exp":1}
-	const std::string without = "eyJpZCI6Imd1ZXN0OjAxMjM0NTY3ODlhYmNkZWYiLCJuYW1lIjoiR3Vlc3QiLCJraW5kIjoiZ3Vlc3QiLCJleHAiOjF9.c2ln";     // the same without "install" (a lobby before WP-C, or a client that sent none)
-	CHECK(OnlineLobbyClient::sessionName(withInstall) == u"Guest");
-	CHECK(OnlineLobbyClient::sessionInstall(withInstall) == std::string(32, 'a'));
+	const std::string install(32, 'a');
+	// {"id":"guest:0123456789abcdef","name":"Guest","kind":"guest","ix":"AA..A","ih":"63339ffe1fed3ce23c7546e36dde1ad3","iat":1,"exp":1}: the tag of
+	// "aa..a" (HMAC-SHA256 keyed "openbfme-install-tag-v1", its first 16 bytes; lobby.mjs installTag gives the same)
+	const std::string tagged = "eyJpZCI6Imd1ZXN0OjAxMjM0NTY3ODlhYmNkZWYiLCJuYW1lIjoiR3Vlc3QiLCJraW5kIjoiZ3Vlc3QiLCJpeCI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwiaWgiOiI2MzMzOWZmZTFmZWQzY2UyM2M3NTQ2ZTM2ZGRlMWFkMyIsImlhdCI6MSwiZXhwIjoxfQ.c2ln";
+	// the same with another install's tag
+	const std::string otherTag = "eyJpZCI6Imd1ZXN0OjAxMjM0NTY3ODlhYmNkZWYiLCJuYW1lIjoiR3Vlc3QiLCJraW5kIjoiZ3Vlc3QiLCJpeCI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwiaWgiOiIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMCIsImlhdCI6MSwiZXhwIjoxfQ.c2ln";
+	// {"id":..,"name":"Guest","kind":"guest","install":"aa..a","exp":1}: a token from before the seal
+	const std::string clear = "eyJpZCI6Imd1ZXN0OjAxMjM0NTY3ODlhYmNkZWYiLCJuYW1lIjoiR3Vlc3QiLCJraW5kIjoiZ3Vlc3QiLCJpbnN0YWxsIjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJleHAiOjF9.c2ln";
+	const std::string without = "eyJpZCI6Imd1ZXN0OjAxMjM0NTY3ODlhYmNkZWYiLCJuYW1lIjoiR3Vlc3QiLCJraW5kIjoiZ3Vlc3QiLCJleHAiOjF9.c2ln"; // no install at all
+	CHECK(OnlineLobbyClient::sessionName(tagged) == u"Guest");
+	CHECK(OnlineLobbyClient::sessionMatchesInstall(tagged, install));
+	CHECK_FALSE(OnlineLobbyClient::sessionMatchesInstall(tagged, std::string(32, 'b')));
+	CHECK_FALSE(OnlineLobbyClient::sessionMatchesInstall(tagged, ""));
+	CHECK_FALSE(OnlineLobbyClient::sessionMatchesInstall(otherTag, install));
+	CHECK_FALSE(OnlineLobbyClient::sessionMatchesInstall(clear, install));
 	CHECK(OnlineLobbyClient::sessionName(without) == u"Guest");
-	CHECK(OnlineLobbyClient::sessionInstall(without).empty());
-	CHECK(OnlineLobbyClient::sessionInstall("not a token").empty());
-	CHECK(OnlineLobbyClient::sessionInstall("").empty());
+	CHECK_FALSE(OnlineLobbyClient::sessionMatchesInstall(without, install));
+	CHECK_FALSE(OnlineLobbyClient::sessionMatchesInstall("not a token", install));
+	CHECK_FALSE(OnlineLobbyClient::sessionMatchesInstall("", install));
 }
 
 TEST_CASE("online4: the lobby client's requests and its checks of the answers (no lobby needed)")
@@ -579,6 +602,191 @@ TEST_CASE("uberjoin1: the lobby client reads and sends a room's performance mode
 	o.takeEvents();
 	REQUIRE(o.inGame());
 	CHECK(o.gameMode() == SimulationProfile::Faithful);
+}
+
+TEST_CASE("onlinemenu1: the lobby client sends and reads a slot's handicap and Create-a-Hero record; a bad handicap refuses the view, a bad record "
+		  "is only that slot's problem (no lobby needed)")
+{
+	using C = OnlineLobbyClient;
+	// a record built here (no retail bytes), in its wire form as a .cah load gives it
+	CreateAHeroHero hero;
+	hero.name = u"Menuhero";
+	hero.classIndex = 3;
+	hero.subClassIndex = 1;
+	hero.primaryColor = 0xFF102030u;
+	hero.powers[0] = { "Command_TestPowerA", 0, 1 };
+	hero.bling = { { "CreateAHero_Weapon", 1 } };
+	hero.uniqueID = "ONLINEMENU1HERO";
+	CreateAHeroHero loaded;
+	std::string error;
+	REQUIRE_MESSAGE(loaded.load(hero.save(), &error), error);
+	const std::vector<std::uint8_t> wire = loaded.save();
+	const std::string b64 = RelayProtocol::base64Encode(wire.data(), wire.size());
+	C c(clientOptions(4, 4));
+	auto answer = [&](const std::string &body) {
+		std::vector<C::HttpRequest> rs = c.takeRequests();
+		REQUIRE(rs.size() == 1);
+		c.deliver(rs[0].id, 200, body, "");
+		return c.takeEvents();
+	};
+	c.signInGuest(u"x");
+	answer("{\"v\":1,\"token\":\"t.t\",\"account\":{\"id\":\"guest:1\",\"name\":\"x\",\"kind\":\"guest\"}}");
+	auto view = [](const std::string &slot1Extra, const std::string &slot2Extra = "") {
+		std::string slots;
+		for (int i = 0; i < 8; ++i)
+		{
+			slots += std::string(i ? "," : "") + "{\"slot\":" + std::to_string(i) + ",\"state\":\"" + (i < 2 ? "player" : "closed") + "\",\"name\":\"" +
+				(i == 1 ? "Rohan" : "Host") + "\",\"faction\":-1,\"color\":-1,\"startPos\":-1,\"team\":-1,\"ready\":false,\"you\":" + (i == 1 ? "true" : "false") +
+				(i == 1 ? slot1Extra : i == 2 ? slot2Extra : std::string()) + "}";
+		}
+		return "{\"v\":1,\"slot\":1,\"game\":{\"id\":\"0123456789abcdef\",\"name\":\"g\",\"state\":\"open\",\"hostSlot\":0,\"profile\":\"x\",\"setup\":{\"map\":\"m\","
+			   "\"startingCash\":1500,\"superweaponRestriction\":0,\"legendaryHeroes\":1,\"rules\":null},\"slots\":[" + slots + "],\"seq\":3}}";
+	};
+	// not in a game: nothing is sent
+	CHECK_FALSE(c.setOwnCreateAHero(&loaded, &error));
+	CHECK(c.takeRequests().empty());
+	// ---- reading: a handicap and a record ----
+	c.joinGame("0123456789abcdef", "");
+	answer(view(",\"handicap\":-15,\"cah\":\"" + b64 + "\""));
+	REQUIRE(c.inGame());
+	CHECK(c.gameInfo().slots[1].handicap == -15);
+	REQUIRE(c.gameInfo().slots[1].hasCreateAHero);
+	CHECK(c.gameInfo().slots[1].createAHero.save() == wire);
+	CHECK(c.slotViews()[1].heroProblem.empty());
+	CHECK(c.gameInfo().slots[0].handicap == 0); // absent: 0
+	CHECK_FALSE(c.gameInfo().slots[0].hasCreateAHero);
+	// ---- sending: the handicap with the slot's choices, the record as base64 of its wire form, none as null ----
+	c.setOwnSlot(C::kKeep, C::kKeep, C::kKeep, C::kKeep, -20);
+	std::vector<C::HttpRequest> rs = c.takeRequests();
+	REQUIRE(rs.size() == 1);
+	CHECK(rs[0].path == "/v1/games/0123456789abcdef/slot");
+	CHECK(rs[0].body == "{\"handicap\":-20}");
+	c.deliver(rs[0].id, 200, view(",\"handicap\":-20"), "");
+	c.takeEvents();
+	REQUIRE(c.setOwnCreateAHero(&loaded, &error));
+	rs = c.takeRequests();
+	REQUIRE(rs.size() == 1);
+	CHECK(rs[0].body == "{\"cah\":\"" + b64 + "\"}");
+	c.deliver(rs[0].id, 200, view(",\"handicap\":-20"), "");
+	c.takeEvents();
+	REQUIRE(c.setOwnCreateAHero(nullptr, &error));
+	rs = c.takeRequests();
+	REQUIRE(rs.size() == 1);
+	CHECK(rs[0].body == "{\"cah\":null}");
+	c.deliver(rs[0].id, 200, view(",\"handicap\":-20"), "");
+	c.takeEvents();
+	// ---- a handicap outside RotWK's set refuses the whole view (the last good one stays) ----
+	for (const std::string &bad : { ",\"handicap\":-7", ",\"handicap\":5", ",\"handicap\":-100", ",\"handicap\":\"-10\"", ",\"handicap\":null" })
+	{
+		c.setReady(true);
+		std::vector<C::Event> es = answer(view(bad));
+		CHECK_MESSAGE(std::any_of(es.begin(), es.end(), [](const C::Event &e) { return e.kind == C::Event::Refused && e.code == "protocol"; }), bad);
+		CHECK(c.gameInfo().slots[1].handicap == -20);
+	}
+	// ---- a record that does not read is that slot's problem only: the view stays, the slot shows no hero ----
+	const std::string broken = b64.substr(0, b64.size() - 4) + "AAAA";
+	for (const std::string &bad : { std::string("!!!!"), broken, std::string(5468, 'A'), std::string("42") })
+	{
+		c.setReady(true);
+		const std::string field = bad == "42" ? ",\"cah\":42" : ",\"cah\":\"" + bad + "\"";
+		std::vector<C::Event> es = answer(view(",\"handicap\":-10" + field));
+		CHECK_FALSE(std::any_of(es.begin(), es.end(), [](const C::Event &e) { return e.kind == C::Event::Refused; }));
+		CHECK(c.gameInfo().slots[1].handicap == -10);
+		CHECK_FALSE(c.gameInfo().slots[1].hasCreateAHero);
+		CHECK_MESSAGE(!c.slotViews()[1].heroProblem.empty(), bad.substr(0, 16));
+	}
+	// a record on a slot that is not a player's
+	c.setReady(true);
+	answer(view("", ",\"cah\":\"" + b64 + "\""));
+	CHECK_FALSE(c.gameInfo().slots[2].hasCreateAHero);
+	CHECK(c.slotViews()[2].heroProblem == "a Create-a-Hero on a slot that is not a player's");
+	// and the problem goes with the next good view
+	c.setReady(true);
+	answer(view(",\"cah\":\"" + b64 + "\""));
+	CHECK(c.slotViews()[1].heroProblem.empty());
+	CHECK(c.slotViews()[2].heroProblem.empty());
+	CHECK(c.gameInfo().slots[1].hasCreateAHero);
+}
+
+TEST_CASE("onlinemenu1: the lobby client reads the room's relay and each player's link, refuses a malformed link, and reports its own (no lobby needed)")
+{
+	using C = OnlineLobbyClient;
+	C c(clientOptions(4, 4));
+	auto answer = [&](const std::string &body) {
+		std::vector<C::HttpRequest> rs = c.takeRequests();
+		REQUIRE(rs.size() == 1);
+		c.deliver(rs[0].id, 200, body, "");
+		return c.takeEvents();
+	};
+	c.signInGuest(u"x");
+	answer("{\"v\":1,\"token\":\"t.t\",\"account\":{\"id\":\"guest:1\",\"name\":\"x\",\"kind\":\"guest\"}}");
+	auto view = [](const std::string &relay, const std::string &link0, const std::string &link2 = "") {
+		std::string slots;
+		for (int i = 0; i < 8; ++i)
+		{
+			slots += std::string(i ? "," : "") + "{\"slot\":" + std::to_string(i) + ",\"state\":\"" + (i < 2 ? "player" : (i == 2 ? "hard" : "closed")) +
+				"\",\"name\":\"" + (i == 1 ? "Rohan" : "Host") + "\",\"faction\":-1,\"color\":-1,\"startPos\":-1,\"team\":-1,\"ready\":false,\"you\":" +
+				(i == 1 ? "true" : "false") + (i == 0 ? link0 : i == 2 ? link2 : std::string()) + "}";
+		}
+		return "{\"v\":1,\"slot\":1,\"game\":{\"id\":\"0123456789abcdef\",\"name\":\"g\",\"state\":\"open\",\"hostSlot\":0,\"profile\":\"x\"" + relay +
+			",\"setup\":{\"map\":\"m\",\"startingCash\":1500,\"superweaponRestriction\":0,\"legendaryHeroes\":1,\"rules\":null},\"slots\":[" + slots + "],\"seq\":3}}";
+	};
+	// not in a game: nothing is sent
+	c.reportLink(40, 0);
+	CHECK(c.takeRequests().empty());
+	c.joinGame("0123456789abcdef", "");
+	answer(view(",\"relay\":\"192.0.2.10:7350\"", ",\"link\":{\"rtt\":42,\"loss\":20}"));
+	REQUIRE(c.inGame());
+	CHECK(c.roomRelay() == "192.0.2.10:7350");
+	CHECK(c.slotViews()[0].linkKnown);
+	CHECK(c.slotViews()[0].rttMs == 42);
+	CHECK(c.slotViews()[0].lossPct == 20);
+	CHECK_FALSE(c.slotViews()[1].linkKnown);
+	// a failed link; a relay that is no address is none; an older lobby's view (neither field) is "not known"
+	c.setReady(true);
+	answer(view(",\"relay\":\"relay.example:7350\"", ",\"link\":{\"rtt\":null,\"loss\":100}"));
+	CHECK(c.slotViews()[0].rttMs == -1);
+	CHECK(c.slotViews()[0].lossPct == 100);
+	CHECK(c.roomRelay().empty());
+	c.setReady(true);
+	answer(view("", ""));
+	CHECK_FALSE(c.slotViews()[0].linkKnown);
+	CHECK(c.roomRelay().empty());
+	// a malformed link refuses the whole view (the last good one stays)
+	c.setReady(true);
+	answer(view(",\"relay\":\"192.0.2.10:7350\"", ",\"link\":{\"rtt\":42,\"loss\":20}"));
+	for (const std::string &bad : { std::string(",\"link\":{\"rtt\":0,\"loss\":0}"), std::string(",\"link\":{\"rtt\":10001,\"loss\":0}"),
+			 std::string(",\"link\":{\"rtt\":5,\"loss\":101}"), std::string(",\"link\":{\"rtt\":null,\"loss\":3}"), std::string(",\"link\":{\"rtt\":5}"),
+			 std::string(",\"link\":7"), std::string(",\"link\":{\"rtt\":\"5\",\"loss\":0}") })
+	{
+		c.setReady(true);
+		std::vector<C::Event> es = answer(view(",\"relay\":\"192.0.2.10:7350\"", bad));
+		CHECK_MESSAGE(std::any_of(es.begin(), es.end(), [](const C::Event &e) { return e.kind == C::Event::Refused && e.code == "protocol"; }), bad);
+		CHECK(c.slotViews()[0].rttMs == 42);
+	}
+	// a link on a slot that is not a player's (an AI)
+	c.setReady(true);
+	std::vector<C::Event> es = answer(view(",\"relay\":\"192.0.2.10:7350\"", "", ",\"link\":{\"rtt\":5,\"loss\":0}"));
+	CHECK(std::any_of(es.begin(), es.end(), [](const C::Event &e) { return e.kind == C::Event::Refused && e.code == "protocol"; }));
+	// reporting: the lobby's body; out of range values send nothing
+	c.reportLink(40, 0);
+	std::vector<C::HttpRequest> rs = c.takeRequests();
+	REQUIRE(rs.size() == 1);
+	CHECK(rs[0].path == "/v1/games/0123456789abcdef/link");
+	CHECK(rs[0].body == "{\"rtt\":40,\"loss\":0}");
+	c.deliver(rs[0].id, 200, view(",\"relay\":\"192.0.2.10:7350\"", ",\"link\":{\"rtt\":42,\"loss\":20}"), "");
+	c.takeEvents();
+	c.reportLink(-1, 100);
+	rs = c.takeRequests();
+	REQUIRE(rs.size() == 1);
+	CHECK(rs[0].body == "{\"rtt\":null}");
+	c.deliver(rs[0].id, 200, view(",\"relay\":\"192.0.2.10:7350\"", ""), "");
+	c.takeEvents();
+	for (const auto &bad : { std::pair<int, int>{ 0, 0 }, { 10001, 0 }, { 40, -1 }, { 40, 101 }, { -1, 50 } })
+	{
+		c.reportLink(bad.first, bad.second);
+		CHECK(c.takeRequests().empty());
+	}
 }
 
 TEST_CASE("online4: hostile lobby answers are bounded and refused, and credentials are redacted (Sol r1; no lobby needed)")
@@ -1303,6 +1511,51 @@ struct OnlinePlayer
 		MESSAGE("no visible button '" << part << "'; the visible buttons:\n" << list << "notes:\n" << notes());
 		return false;
 	}
+	// lane ONLINEMENU-1: a press where the pointer really reaches the button (any point of a 9 x 9 grid over its bounds; the centre of a ring-shaped
+	// button can be empty): false, with every point's hit named, when none does
+	bool pressReachable(const std::string &part, std::string *why)
+	{
+		std::vector<AptButtonInst *> all;
+		buttons(fx.wm->apt().level(sh->level()), all);
+		for (AptButtonInst *b : all)
+		{
+			if (b->targetPath().find(part) == std::string::npos)
+			{
+				continue;
+			}
+			float x0, y0, x1, y1;
+			if (!b->contentBounds(x0, y0, x1, y1))
+			{
+				continue;
+			}
+			std::string hits;
+			for (int i = 1; i < 10; ++i)
+			{
+				for (int j = 1; j < 10; ++j)
+				{
+					float x, y;
+					b->globalMatrix().apply(x0 + (x1 - x0) * i / 10, y0 + (y1 - y0) * j / 10, x, y);
+					AptButtonInst *hit = fx.wm->apt().input().hitTestButtons(x, y);
+					if (hit == b)
+					{
+						starttest::clickAt(fx, x, y);
+						return true;
+					}
+					hits += hit ? hit->targetPath() + ";" : std::string("-;");
+				}
+			}
+			if (why)
+			{
+				*why = b->targetPath() + ": " + hits;
+			}
+			return false;
+		}
+		if (why)
+		{
+			*why = "no visible button " + part;
+		}
+		return false;
+	}
 	// the player's Ok on the message box (the box clip's own command, then its hide as its Ok button plays it)
 	void dismissBox(const char *button = "Ok")
 	{
@@ -1399,7 +1652,7 @@ TEST_CASE("online4 retail: OnlineShell.apt on a local lobby: guest sign-in, the 
 	{
 		CHECK(host.hasNote("online-stops", line));
 	}
-	CHECK(AptOnlineShell::stopLines().size() == 24); // lane ONLINE-5: S-4550 .. S-4554 added; lane ONLINEHUB-1: S-4870, 4871, 4873 .. 4875, 4877; ONLINEUX-1: S-5140 .. S-5143
+	CHECK(AptOnlineShell::stopLines().size() == 23); // lane ONLINE-5: S-4550 .. S-4554 added; lane ONLINEHUB-1: S-4870, 4871, 4873 .. 4875, 4877; ONLINEUX-1: S-5140 .. S-5143; ONLINEMENU-1: S-4076 resolved
 	// ---- OnlineLogin: the guest name of the last sign-in is offered; the account features are disabled ----
 	REQUIRE_MESSAGE(runUntil({ &host }, [&] { return host.sh->nicknameWindow() != nullptr; }, 300), host.notes());
 	CHECK(host.sh->currentPage() == "OnlineLogin");
@@ -1983,6 +2236,23 @@ int waitExit(pid_t pid)
 	waitpid(pid, &st, 0);
 	return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
 }
+// lane ONLINEMENU-1: waitExit with a cap: -1 and *late when the process is still running after `capMs` (it is left running)
+int waitExitFor(pid_t pid, std::uint64_t capMs, bool *late)
+{
+	const std::uint64_t until = NetMilliseconds() + capMs;
+	int st = 0;
+	while (waitpid(pid, &st, WNOHANG) == 0)
+	{
+		if (NetMilliseconds() >= until)
+		{
+			*late = true;
+			return -1;
+		}
+		NetSleepMilliseconds(100);
+	}
+	*late = false;
+	return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+}
 std::string startOf(const RecordingShellServices &s)
 {
 	for (const ShellRequest &r : s.requests)
@@ -2043,13 +2313,19 @@ TEST_CASE("online4 retail rejoin: a player that crashes mid-game restarts, signs
 	OnlineLobbyClient::Options o = clientOptions(s->world->playerTemplates().getPlayerTemplateCount(), (int)s->settings.multiplayerColors.size());
 	o.profileDigest = profile;
 	// ---- the game: a host and a joiner from the screens, played by two peer processes ----
+	// PR #8: a kept session is used only by the install it was made for (OnlineLobbyClient::sessionMatchesInstall): the joiner is one install
+	// before and after its restart
+	OnlineLobbyClient::Options joinerOptions = o;
+	joinerOptions.installId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+	joinerOptions.clientPlatform = "linux"; // an install's sign-in names its client (signInGuest)
+	joinerOptions.clientVersion = "test";
 	std::string joinerSession;
 	std::string starts[2];
 	{
 		OnlinePlayer host(*s, lobby.port, 31, u"");
 		OnlinePlayer join(*s, lobby.port, 32, u"");
 		host.client = OnlineLobbyClient(o);
-		join.client = OnlineLobbyClient(o);
+		join.client = OnlineLobbyClient(joinerOptions);
 		signInAndOpenPlay(host, u"Host");
 		REQUIRE(host.clickWhenShown("Controls.CreateGame"));
 		REQUIRE(runUntil({ &host }, [&] { return host.sh->gameNameWindow() != nullptr && host.sh->openPlayState() == 3; }, 300));
@@ -2092,7 +2368,7 @@ TEST_CASE("online4 retail rejoin: a player that crashes mid-game restarts, signs
 	REQUIRE(reportField(readText(reports[1]), "vanished_at") == std::to_string(kCrashFrame));
 	// ---- the game restarts: a new shell with the session the host program kept; Online, the same name ----
 	OnlinePlayer again(*s, lobby.port, 33, u"Joiner");
-	again.client = OnlineLobbyClient(o);
+	again.client = OnlineLobbyClient(joinerOptions);
 	again.ctx.sessionToken = joinerSession;
 	signIn(again, u"Joiner");
 	CHECK(again.hasNote("online-session", "the kept lobby session of Joiner is used"));
@@ -2574,7 +2850,8 @@ TEST_CASE("online5 retail: the staging room's rows and buttons: the chat's Playe
 	CHECK(GadgetListBoxGetTopVisibleEntry(a.sh->chatPlayersWindow()) == 0);
 	CHECK(GadgetListBoxGetTopVisibleEntry(a.sh->chatListWindow()) == 0);
 	CHECK(GadgetListBoxGetText(a.sh->chatListWindow(), 0, 0) == u"Host created the game");
-	// ---- the rows: the owner's drop-downs are enabled, everyone else's are locked; Hero and Handicap are locked for everyone ----
+	// ---- the rows: the owner's drop-downs are enabled, everyone else's are locked (lane ONLINEMENU-1: Hero and Handicap too, now that the lobby carries
+	// them: the handicap test below drives them) ----
 	REQUIRE(runUntil(all, [&] { return host.sh->slotGadget(1, "Team") && a.sh->slotGadget(1, "Team") && a.sh->slotGadget(0, "Handicap"); }, 300));
 	for (const char *leaf : { "PlayerTemplate", "Team", "Color" })
 	{
@@ -2591,9 +2868,9 @@ TEST_CASE("online5 retail: the staging room's rows and buttons: the chat's Playe
 		{
 			REQUIRE(p->sh->slotGadget(slot, "Hero"));
 			REQUIRE(p->sh->slotGadget(slot, "Handicap"));
-			CHECK_MESSAGE(!gadgetEnabled(p->sh->slotGadget(slot, "Hero")), "slot " << slot);     // S-4076 / S-4552
-			CHECK_MESSAGE(!gadgetEnabled(p->sh->slotGadget(slot, "Handicap")), "slot " << slot); // S-178 / S-4552
-			CHECK(GadgetComboBoxGetLength(p->sh->slotGadget(slot, "Handicap")) == 0);
+			// lane ONLINEMENU-1: a row's Handicap works for its owner (the host for an open slot's AI) and is locked for the others
+			const bool owner = (p == &host && slot != 1) || (p == &a && slot == 1);
+			CHECK_MESSAGE(gadgetEnabled(p->sh->slotGadget(slot, "Handicap")) == owner, "slot " << slot);
 		}
 	}
 	// the joiner's team and colour through its own combos reach the host's screen (a row's drop-downs work for its owner)
@@ -2607,25 +2884,35 @@ TEST_CASE("online5 retail: the staging room's rows and buttons: the chat's Playe
 	CHECK_FALSE(host.sh->ruleWindow(RULE_CLAN_GAME)->winIsHidden());
 	CHECK(gadgetEnabled(host.sh->ruleWindow(RULE_CLAN_GAME)));
 	REQUIRE(host.clickWhenShown("TabButtons.ChatTab"));
-	// ---- the Messenger button: its command says the Messenger is not available (it used to reach no handler) ----
+	// ---- the frame's MESSENGER button (SOCIAL-1, landed by ONLINEMENU-1): it opens RotWK's Messenger over the room (no "not available" box any more);
+	// a second press closes it ----
 	const size_t boxes = host.sh->boxesShown().size();
-	REQUIRE(host.fx.wm->invokeCallback("AptMessenger::OnMessengerBttn", ""));
-	host.tick(5);
-	REQUIRE(host.sh->boxesShown().size() == boxes + 1);
-	CHECK(host.sh->boxesShown().back() == "GUI:GSErrorTitle|not available: the Messenger");
-	CHECK(host.hasNote("unported", "the Messenger is not available in OpenBFME's online play [S-4075]"));
-	host.dismissBox();
-	// ---- the Connections button (the movie's own button): refused by name, and the staging room comes back whole ----
+	std::string why;
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.pressReachable("MessengerButton", &why); }, 300), why);
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.sh->messenger() != nullptr; }, 300), host.notes());
+	CHECK(host.sh->boxesShown().size() == boxes);
+	CHECK_FALSE(host.hasNote("unported", "the Messenger is not available"));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.pressReachable("MessengerButton", &why); }, 300), why);
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.sh->messenger() == nullptr; }, 300), host.notes());
+	// ---- the Connections button (the movie's own button): lane ONLINEMENU-1: the screen opens (no box); this lobby has no relay, so every cell
+	// between the two players is failed; the screen's Done brings the staging room back whole ----
 	REQUIRE(host.clickWhenShown("LowerButtons_Host.Connections"));
-	REQUIRE(runUntil(all, [&] { return host.sh->boxesShown().size() == boxes + 2; }, 300));
-	CHECK(host.sh->boxesShown().back() ==
-		  "GUI:GSErrorTitle|not available: the Connections screen (online games go through the relay server, players do not connect to each other)");
-	CHECK(host.hasNote("unported", "[S-4550]"));
-	// lane MENUWORK-1: the Connections movie's own Connection::RedrawGrid has a handler (the harness does not load that movie: the real press is
-	// the menu inventory's, tools/menus); the page registers it
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.sh->connectionsOpen() && host.sh->connectionCell(0, 1) == "_failed"; }, 300), host.notes());
+	CHECK(host.sh->boxesShown().size() == boxes); // no box
+	REQUIRE(host.sh->networkPageOpen()); // lane ONLINEMENU-1: the page in words over the grid
+	{
+		bool said = false;
+		for (const OpenBFMEPageRow &r : host.sh->networkPage()->spec().rows)
+		{
+			said = said || (r.key == "relay" && r.valueText == u"none: this lobby cannot start games");
+		}
+		CHECK(said);
+	}
 	CHECK_FALSE(host.hasNote("command-unhandled", "Connection::RedrawGrid"));
 	CHECK_FALSE(host.fx.wm->registerCommand("Connection::RedrawGrid", [](const std::string &) {})); // already registered: a second registration is refused
-	host.dismissBox();
+	REQUIRE(host.clickWhenShown("Done"));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return !host.sh->connectionsOpen(); }, 600), host.notes());
+	CHECK_FALSE(host.sh->networkPageOpen()); // the screen's DONE closes the page with it
 	REQUIRE_MESSAGE(host.waitShown("LowerButtons_Host.PlayGame", 600), host.notes());
 	REQUIRE(host.waitShown("LowerButtons_Host.Connections", 600));
 	CHECK(host.client.inGame());
@@ -2820,14 +3107,29 @@ TEST_CASE("online5 retail e2e rejoin: three players through a local relay; one i
 			std::ofstream(files[i]) << starts[i];
 		}
 	}
+	// lane ONLINEMENU-1: B crashes mid-game by itself: it vanishes (no leave, nothing more sent, as a kill) once it has played kVanishFrame
+	// frames, so it has reached the relay and is in the game whatever the machine's load. A fixed 50 s before a SIGKILL ended, at a load of
+	// 30-50 on 8 cores, before B had connected ("cannot rejoin: the original player never connected to the relay")
+	const int kVanishFrame = 100;
 	auto runPeer = [&](int i) {
-		return spawn(base + " --online-start \"" + files[i] + "\" --script --paced --frames " + std::to_string(kFrames) + " --logic-threads 2 --report \"" + reports[i] +
-			"\" > \"" + (dir / ("peer-" + std::to_string(i) + ".log")).string() + "\" 2>&1");
+		const std::string vanish = i == 2 ? " --vanish-at " + std::to_string(kVanishFrame) : "";
+		return spawn(base + vanish + " --online-start \"" + files[i] + "\" --script --paced --frames " + std::to_string(kFrames) + " --logic-threads 2 --report \"" +
+			reports[i] + "\" > \"" + (dir / ("peer-" + std::to_string(i) + ".log")).string() + "\" 2>&1");
 	};
 	const pid_t p0 = runPeer(0), p1 = runPeer(1), p2 = runPeer(2);
-	NetSleepMilliseconds(50000); // three peers load in parallel first (about 30 s on a loaded 6-core machine): the kill comes mid-game
-	kill(p2, SIGKILL);
-	waitExit(p2);
+	bool late = false;
+	const int rc2 = waitExitFor(p2, 600000, &late); // generous: three peers load in parallel (about 30 s on a loaded 6-core machine), then 20 s of play
+	if (late)
+	{
+		for (pid_t p : { p0, p1, p2 })
+		{
+			kill(p, SIGKILL);
+			waitExit(p);
+		}
+	}
+	REQUIRE_MESSAGE(!late, "B did not reach frame " << kVanishFrame << " in 10 minutes:\n" << readText((dir / "peer-2.log").string()).substr(0, 4000));
+	CHECK(rc2 == 0);
+	REQUIRE(reportField(readText(reports[2]), "vanished_at") == std::to_string(kVanishFrame));
 	// joiner B's game restarts with its kept session and asks for its running game
 	OnlineLobbyClient again(o);
 	again.useSession(bSession);
@@ -3643,5 +3945,549 @@ TEST_CASE("onlineux1 retail: the home page's ticker shows retail's Date / Time /
 	std::string fields;
 	p.fx.wm->getExtern("OnlineHome::NumTickerFields", fields);
 	CHECK(fields == "4");
+}
+#endif
+
+#ifdef ONLINE4_POSIX
+namespace
+{
+int comboItem(GameWindow *combo, int row)
+{
+	return (int)reinterpret_cast<std::intptr_t>(GadgetComboBoxGetItemData(combo, row));
+}
+struct HeroDir
+{
+	std::string path;
+	HeroDir()
+	{
+		std::random_device rd;
+		path = (std::filesystem::temp_directory_path() / ("openbfme-onlinemenu1-" + std::to_string(rd()))).u8string();
+		std::filesystem::create_directories(std::filesystem::u8path(path));
+	}
+	~HeroDir()
+	{
+		std::error_code ec;
+		std::filesystem::remove_all(std::filesystem::u8path(path), ec);
+	}
+};
+} // namespace
+
+TEST_CASE("onlinemenu1 retail: the online staging room's Handicap and Hero work as the LAN room's: the joiner picks them in its own row's drop-downs, "
+		  "every player's room shows them, and every START carries them (S-4076 / S-4552 were locked)")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	HeroDir dir;
+	CreateAHeroHeroList heroes;
+	heroes.load(s->mount->fs.get(), dir.path, nullptr);
+	REQUIRE(heroes.size() == 8); // RotWK's eight system heroes (the Create-a-Hero screen's own list; no file of ours)
+	CreateAHeroScreenContext cah;
+	cah.system = &s->world->createAHeroSystem();
+	cah.heroes = &heroes;
+	NodeLobby lobby("local=127.0.0.1:9", ""); // the START is built without a word to the relay (as the positions test)
+	OnlinePlayer host(*s, lobby.port, 81, u""), a(*s, lobby.port, 82, u"");
+	const std::vector<OnlinePlayer *> all{ &host, &a };
+	for (OnlinePlayer *p : all)
+	{
+		p->fx.environment.createAHero = &cah;
+		p->fx.text.set("GUI:Random", "Random");
+		p->fx.text.set("VALUE:Default", " (Default)");
+	}
+	CHECK_FALSE(host.hasNote("online-stops", "[S-4076]"));
+	signInAndOpenPlay(host, u"Host");
+	REQUIRE(host.clickWhenShown("Controls.CreateGame"));
+	REQUIRE(runUntil({ &host }, [&] { return host.sh->gameNameWindow() != nullptr && host.sh->openPlayState() == 3; }, 300));
+	REQUIRE(host.clickWhenShown("CreateGamePopup.Accept"));
+	REQUIRE_MESSAGE(runUntil({ &host }, [&] { return host.client.inGame() && host.sh->openPlayState() == 6; }, 300), host.notes());
+	joinListed(a, all, u"JoinerA");
+	REQUIRE(runUntil(all, [&] { return a.sh->slotGadget(1, "Handicap") && a.sh->slotGadget(1, "Hero") && host.sh->slotGadget(1, "Handicap"); }, 300));
+	// ---- Handicap: RotWK's combo (RW 0x840B9D): 0, -5 .. -95, the item data the value; the joiner picks -15 (row 3) in its own row ----
+	GameWindow *handicap = a.sh->slotGadget(1, "Handicap");
+	REQUIRE(GadgetComboBoxGetLength(handicap) == 20);
+	for (int r = 0; r < 20; ++r)
+	{
+		CHECK(comboItem(handicap, r) == -5 * r);
+	}
+	// the host sees the joiner's row locked once its room view has the joiner (before, slot 1 was an open slot: the host's to fill)
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.client.slotViews()[1].state == "player" && host.sh->slotGadget(1, "Handicap") &&
+		!gadgetEnabled(host.sh->slotGadget(1, "Handicap")); }, 300), host.notes());
+	GadgetComboBoxSetSelectedPos(handicap, 3, false);
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.client.gameInfo().slots[1].handicap == -15 && host.sh->setup()->info().slots[1].handicap == -15; }, 300),
+		a.notes());
+	CHECK(a.client.gameInfo().slots[1].handicap == -15);
+	CHECK(host.client.gameInfo().slots[0].handicap == 0);
+	// a raw out-of-set handicap (a client that skips the combo): the lobby refuses it by name and the room keeps -15
+	a.client.setOwnSlot(OnlineLobbyClient::kKeep, OnlineLobbyClient::kKeep, OnlineLobbyClient::kKeep, OnlineLobbyClient::kKeep, -7);
+	REQUIRE(runUntil(all, [&] { return a.hasNote("online-refused", "slot: bad_field"); }, 300));
+	for (OnlinePlayer *p : all)
+	{
+		p->tick(30);
+	}
+	CHECK(host.client.gameInfo().slots[1].handicap == -15);
+	// ---- Hero: the joiner takes the Men, then a system hero the Men can use, from its own Hero combo ----
+	int men = -1;
+	for (int i = 0; i < (int)a.fx.setup.factions().size(); ++i)
+	{
+		men = a.fx.setup.factions()[(size_t)i].templateName == "FactionMen" ? i : men;
+	}
+	REQUIRE(men >= 0); // tolerance: a lookup that found FactionMen (any index of the faction list)
+	GameWindow *faction = a.sh->slotGadget(1, "PlayerTemplate");
+	for (int r = 0; r < GadgetComboBoxGetLength(faction); ++r)
+	{
+		if (comboItem(faction, r) == men)
+		{
+			GadgetComboBoxSetSelectedPos(faction, r, false);
+		}
+	}
+	REQUIRE(runUntil(all, [&] { return host.client.gameInfo().slots[1].playerTemplate == men; }, 300));
+	const CreateAHeroSystem &sys = s->world->createAHeroSystem();
+	int chosen = -1;
+	for (int i = 0; i < (int)heroes.size() && chosen < 0; ++i)
+	{
+		const CreateAHeroSubClass *sub = sys.subClass(heroes.at(i)->hero.classIndex, heroes.at(i)->hero.subClassIndex);
+		if (sub && std::find(sub->usableFactions.begin(), sub->usableFactions.end(), 0) != sub->usableFactions.end())
+		{
+			chosen = i;
+		}
+	}
+	REQUIRE(chosen >= 0); // tolerance: a lookup that found a system hero the Men can use (its index in the list)
+	REQUIRE(runUntil(all, [&] { return a.sh->slotGadget(1, "Hero") && GadgetComboBoxGetLength(a.sh->slotGadget(1, "Hero")) == 10; }, 300));
+	GameWindow *heroCombo = a.sh->slotGadget(1, "Hero");
+	CHECK(gadgetEnabled(heroCombo));
+	int row = -1;
+	for (int r = 0; r < GadgetComboBoxGetLength(heroCombo); ++r)
+	{
+		row = comboItem(heroCombo, r) == chosen ? r : row;
+	}
+	REQUIRE(row >= 0); // tolerance: a lookup that found the hero's row in the combo
+	GadgetComboBoxSetSelectedPos(heroCombo, row, false);
+	const std::vector<std::uint8_t> wire = heroes.at(chosen)->hero.save();
+	REQUIRE_MESSAGE(runUntil(all, [&] {
+		const SkirmishGameSlot &h = host.client.gameInfo().slots[1];
+		return h.hasCreateAHero && h.createAHero.save() == wire && host.sh->setup()->info().slots[1].hasCreateAHero;
+	}, 300), a.notes());
+	CHECK(host.client.slotViews()[1].heroProblem.empty());
+	// the host's room shows the joiner's choice as text (RW 0x841A9E): a system hero's name and VALUE:Default
+	REQUIRE(runUntil(all, [&] { return host.sh->slotGadget(1, "Hero") && GadgetComboBoxGetLength(host.sh->slotGadget(1, "Hero")) == 1; }, 300));
+	CHECK(GadgetComboBoxGetText(host.sh->slotGadget(1, "Hero")) == heroes.at(chosen)->hero.name + u" (Default)");
+	CHECK_FALSE(gadgetEnabled(host.sh->slotGadget(1, "Hero")));
+	// ---- ready, start: both STARTs carry the handicap and the record as OnlineStart reads them (the joiner is on the CHAT tab, the Ready column's) ----
+	REQUIRE_MESSAGE(runUntil(all, [&] { return a.sh->readyIcon(1) == "_enabledUnchecked"; }, 300), a.notes());
+	// ---- a hero record the HOST's client cannot read (the host's room views rewritten: the lobby and the joiner keep the good one): the slot shows no
+	// hero there and the host's Play Game is refused by name (the joiner's name in the room's chat), no START asked for ----
+	host.tamper = [](const OnlineLobbyClient::HttpRequest &, HttpAnswer &ans) {
+		ans.body = std::regex_replace(ans.body, std::regex("\"cah\":\"[^\"]+\""), "\"cah\":\"AAAA\"");
+	};
+	a.client.chat(u"a new room view for the host");
+	REQUIRE_MESSAGE(runUntil(all, [&] { return !host.client.slotViews()[1].heroProblem.empty(); }, 300), host.notes());
+	CHECK_FALSE(host.client.gameInfo().slots[1].hasCreateAHero);
+	REQUIRE(a.click("~1.Ready"));
+	REQUIRE(runUntil(all, [&] { return host.client.slotViews()[1].ready; }, 300));
+	const size_t refusals = host.sh->startRefusals().size();
+	REQUIRE(host.clickWhenShown("LowerButtons_Host.PlayGame"));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.sh->startRefusals().size() == refusals + 1; }, 300), host.notes());
+	CHECK(host.sh->startRefusals().back() == "create-a-hero");
+	CHECK(host.client.sentCount("start") == 0);
+	CHECK(std::count(host.sh->chatLines().begin(), host.sh->chatLines().end(),
+		  "The game can't start: JoinerA's Create-a-Hero can't be used. They need to choose another hero or none.") == 1);
+	// ---- the host's views read again (nothing rewritten): the record is the joiner's again and Play Game starts ----
+	host.tamper = nullptr;
+	a.client.chat(u"and another");
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.client.slotViews()[1].heroProblem.empty() && host.client.gameInfo().slots[1].hasCreateAHero; }, 300),
+		host.notes());
+	REQUIRE(runUntil(all, [&] { return host.client.slotViews()[1].ready; }, 300));
+	REQUIRE(host.clickWhenShown("LowerButtons_Host.PlayGame"));
+	REQUIRE_MESSAGE(runUntil(all, [&] {
+		return host.fx.services.countRequests(ShellAction::OnlineGameStart) == 1 && a.fx.services.countRequests(ShellAction::OnlineGameStart) == 1;
+	}, 900), host.notes());
+	for (OnlinePlayer *p : all)
+	{
+		OnlineStart::Limits limits;
+		limits.playerTemplateCount = s->world->playerTemplates().getPlayerTemplateCount();
+		limits.colorCount = (int)s->settings.multiplayerColors.size();
+		LobbyStart parsed;
+		std::string error;
+		ProfileIdentity identity;
+		identity.digest = p->client.options().profileDigest;
+		REQUIRE_MESSAGE(OnlineStart::parse(startOf(p->fx.services), identity, limits, parsed, &error), error);
+		CHECK(parsed.game.game.slots[0].handicap == 0);
+		CHECK(parsed.game.game.slots[1].handicap == -15);
+		CHECK_FALSE(parsed.game.game.slots[0].hasCreateAHero);
+		REQUIRE(parsed.game.game.slots[1].hasCreateAHero);
+		CHECK(parsed.game.game.slots[1].createAHero.save() == wire);
+	}
+}
+#endif
+
+#ifdef ONLINE4_POSIX
+namespace
+{
+// lane ONLINEMENU-1: a relay stand-in for the Connections screen: answers a probe (an unknown sender's LOG_REQUEST) NOT_BOUND as RelayCore does, or
+// stays silent while `silent` is set
+struct ProbeRelay
+{
+	UDP socket;
+	NetAddress address;
+	std::atomic<bool> stop{ false }, silent{ false };
+	std::thread thread;
+	ProbeRelay()
+	{
+		std::string error;
+		REQUIRE_MESSAGE(socket.bind(0x7F000001u, 0, &error), error);
+		address = socket.localAddress();
+		address.ip = 0x7F000001u;
+		thread = std::thread([this] {
+			NetAddress from;
+			std::vector<std::uint8_t> d;
+			const std::vector<std::uint8_t> notBound = RelayProtocol::encodeEmpty(RelayProtocol::NOT_BOUND);
+			while (!stop)
+			{
+				if (!socket.receiveFrom(from, d))
+				{
+					std::this_thread::sleep_for(std::chrono::milliseconds(1));
+					continue;
+				}
+				if (!silent && d == RelayProtocol::encodeLogRequest(0))
+				{
+					socket.sendTo(from, notBound.data(), notBound.size());
+				}
+			}
+		});
+	}
+	~ProbeRelay()
+	{
+		stop = true;
+		thread.join();
+	}
+};
+} // namespace
+
+TEST_CASE("onlinemenu1 retail: the staging room's CONNECTIONS button opens RotWK's Connections grid with each player's link to the relay (the owner's "
+		  "option 1): good links, a failed one after Refresh, empty cells for no player, names and numbers (S-4550)")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	ProbeRelay relay;
+	NodeLobby lobby("lab=" + relay.address.text(), "");
+	OnlinePlayer host(*s, lobby.port, 91, u""), a(*s, lobby.port, 92, u"");
+	const std::vector<OnlinePlayer *> all{ &host, &a };
+	signInAndOpenPlay(host, u"Host");
+	// the owner (2026-10-20: "ping to server"): outside a room the player's ping is measured against the relay the lobby names (GET /v1/health), for
+	// the corner only: nothing is reported to the lobby
+	REQUIRE_MESSAGE(runUntil({ &host }, [&] { return host.client.lobbyRelay() == relay.address.text() && host.client.ownRelayKnown(); }, 1500),
+		host.notes() << host.client.relayLookupError());
+	CHECK(host.client.ownRelayRttMs() >= 1); // tolerance: a loopback round trip, at least the 1 ms the probe reports
+	CHECK(host.client.sentCount("health") == 1);
+	CHECK(host.client.sentCount("link") == 0);
+	REQUIRE(host.clickWhenShown("Controls.CreateGame"));
+	REQUIRE(runUntil({ &host }, [&] { return host.sh->gameNameWindow() != nullptr && host.sh->openPlayState() == 3; }, 300));
+	REQUIRE(host.clickWhenShown("CreateGamePopup.Accept"));
+	REQUIRE_MESSAGE(runUntil({ &host }, [&] { return host.client.inGame() && host.sh->openPlayState() == 6; }, 300), host.notes());
+	joinListed(a, all, u"JoinerA");
+	// the room names the lobby's relay; both clients probe it on entering and report their links (no request of the screen's own)
+	CHECK(host.client.roomRelay() == relay.address.text());
+	auto linked = [&](OnlinePlayer &p, int slot) { return p.client.slotViews()[(size_t)slot].linkKnown; };
+	REQUIRE_MESSAGE(runUntil(all, [&] { return linked(host, 0) && linked(host, 1) && linked(a, 0) && linked(a, 1); }, 1500), host.notes() << a.notes());
+	for (int slot = 0; slot < 2; ++slot)
+	{
+		CHECK(host.client.slotViews()[(size_t)slot].rttMs >= 1); // tolerance: a loopback round trip, at least the 1 ms the probe reports
+		CHECK(host.client.slotViews()[(size_t)slot].rttMs < 300); // tolerance: below GameSpy's good cut-off (a loopback answer)
+		CHECK(host.client.slotViews()[(size_t)slot].lossPct == 0);
+	}
+	CHECK(host.client.sentCount("link") == 1);
+	CHECK(a.client.sentCount("link") == 1);
+	// Sol: a screen over the shell (Options) pauses the measurement; back on top nothing is measured or reported again before its minute is up
+	host.fx.shell->push("Options.apt");
+	host.tick(10);
+	host.fx.shell->pop();
+	runUntil(all, [&] { return false; }, 120); // two seconds of updates: a new measurement would have been reported by then (a loopback answers at once)
+	CHECK(host.client.sentCount("link") == 1);
+	auto isMs = [](const UnicodeString &t) { return t.size() > 3 && t.compare(t.size() - 3, 3, u" ms") == 0 && t[0] >= u'0' && t[0] <= u'9'; };
+	// ---- the owner (2026-10-20: "the player can just see their ping on the side"): the chat tab's Players list has each player's ping beside the name
+	// (the host's own: its ping to the relay; the joiner's: both pings added) ----
+	REQUIRE(host.clickWhenShown("TabButtons.ChatTab"));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.sh->chatPlayersWindow() && GadgetListBoxGetNumEntries(host.sh->chatPlayersWindow()) == 2; }, 300), host.notes());
+	host.tick(60); // the lists are made again once the tab's clip has played in
+	{
+		GameWindow *players = host.sh->chatPlayersWindow();
+		REQUIRE(players);
+		CHECK(GadgetListBoxGetNumColumns(players) == 2);
+		CHECK(GadgetListBoxGetText(players, 0, 0) == u"Host");
+		CHECK_MESSAGE(isMs(GadgetListBoxGetText(players, 0, 1)), OnlineLobbyClient::utf16ToUtf8(GadgetListBoxGetText(players, 0, 1)));
+		CHECK_MESSAGE(isMs(GadgetListBoxGetText(players, 1, 1)), OnlineLobbyClient::utf16ToUtf8(GadgetListBoxGetText(players, 1, 1)));
+		Color shown = 0;
+		GadgetListBoxGetTextAndColor(players, &shown, 1, 1);
+		CHECK(shown == 0xFF6CD66Cu); // a loopback ping: the good band's green
+	}
+	CHECK(host.client.lobbyRttMs() >= 0); // tolerance: measured (not -1); its value is the test transport's timing
+	// ---- the movie's own CONNECTIONS button: the grid shows good cells between the two players, nothing for the empty slots or a player's own ----
+	const size_t boxes = host.sh->boxesShown().size();
+	REQUIRE(host.clickWhenShown("LowerButtons_Host.Connections"));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.sh->connectionCell(0, 1) == "_good"; }, 300), host.notes());
+	CHECK(host.sh->boxesShown().size() == boxes); // no "not available" box any more
+	CHECK(host.sh->connectionsOpen());
+	// the owner (2026-10-20: the grid "makes like no sense"): an OpenBFME page covers it and says it in words: the lobby server's response time, the
+	// player's ping to the relay, its loss, and each other player's ping to the player
+	REQUIRE(host.sh->networkPageOpen());
+	auto pageValue = [&](const std::string &key) {
+		for (const OpenBFMEPageRow &r : host.sh->networkPage()->spec().rows)
+		{
+			if (r.key == key)
+			{
+				return r.valueText;
+			}
+		}
+		return UnicodeString(u"(no row)");
+	};
+	auto pageLabel = [&](const std::string &key) {
+		for (const OpenBFMEPageRow &r : host.sh->networkPage()->spec().rows)
+		{
+			if (r.key == key)
+			{
+				return r.label;
+			}
+		}
+		return UnicodeString(u"(no row)");
+	};
+	REQUIRE_MESSAGE(runUntil(all, [&] { return isMs(pageValue("relay")); }, 300), OnlineLobbyClient::utf16ToUtf8(pageValue("relay")));
+	CHECK(isMs(pageValue("lobby")));
+	CHECK(pageValue("loss") == u"0%");
+	CHECK(pageLabel("p1") == u"JoinerA");
+	CHECK_MESSAGE(isMs(pageValue("p1")), OnlineLobbyClient::utf16ToUtf8(pageValue("p1")));
+	CHECK(pageValue("p0") == u"(no row)"); // the player's own slot is the YOU column
+	CHECK(host.sh->connectionCell(1, 0) == "_good");
+	CHECK(host.sh->connectionCell(0, 0) == "_empty");
+	// the effect in the movie: each cell clip (Connections.apt Main.Grid.<row>.<column>) plays its state's frame label, the movie's own frames
+	auto cellShows = [&](int row, int column, const std::string &label) {
+		AptCharacterInst *c = host.fx.wm->apt().resolvePath(host.fx.wm->apt().level(host.sh->level()),
+			"OnlineOpenPlay.ConnectionScreen.Main.Grid." + std::to_string(row) + "." + std::to_string(column));
+		AptSpriteInst *sp = c ? c->asSprite() : nullptr;
+		if (!sp || sp->labelFrame(label) < 0)
+		{
+			return false;
+		}
+		const int from = sp->labelFrame(label);
+		int to = sp->totalFrames();
+		for (const char *other : { "_empty", "_waiting", "_connecting", "_good", "_warning", "_bad", "_failed" })
+		{
+			const int f = sp->labelFrame(other);
+			if (f > from && f < to)
+			{
+				to = f;
+			}
+		}
+		return sp->frame >= from && sp->frame < to;
+	};
+	CHECK(cellShows(0, 1, "_good"));
+	CHECK(cellShows(1, 0, "_good"));
+	CHECK(cellShows(0, 0, "_empty"));
+	CHECK(cellShows(2, 3, "_empty"));
+	CHECK(host.sh->connectionCell(1, 1) == "_empty");
+	for (int i = 2; i < MAX_SLOTS; ++i)
+	{
+		CHECK_MESSAGE(host.sh->connectionCell(0, i) == "_empty", i);
+		CHECK_MESSAGE(host.sh->connectionCell(i, 1) == "_empty", i);
+	}
+	auto text = [&](const std::string &name) {
+		const std::string *t = host.fx.wm->aptText(name);
+		return t ? *t : std::string("(unset)");
+	};
+	CHECK(text("APT:ConnectionPlayerName_0") == "Host");
+	CHECK(text("APT:ConnectionPlayerName_1") == "JoinerA");
+	CHECK(text("APT:ConnectionPlayerNum_0") == "1");
+	CHECK(text("APT:ConnectionPlayerNum_1") == "2");
+	CHECK(text("APT:ConnectionPlayerName_2").empty());
+	CHECK(text("APT:ConnectionPlayerNum_2").empty());
+	// ---- the relay stops answering; the screen's Refresh probes again: the host's link fails, every cell with the host is failed on both clients ----
+	relay.silent = true;
+	{
+		// the page's REFRESH NOW (its one tab; the screen's own button under the page is out of reach), clicked with the pointer
+		std::array<int, 4> tr{};
+		REQUIRE(host.sh->networkPage()->rect("tab:0", tr));
+		starttest::clickAt(host.fx, (tr[0] + tr[2]) / 2.0f, (tr[1] + tr[3]) / 2.0f);
+	}
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.client.slotViews()[0].linkKnown && host.client.slotViews()[0].rttMs == -1 &&
+		a.client.slotViews()[0].rttMs == -1; }, 1500), host.notes());
+	CHECK(host.client.slotViews()[0].lossPct == 100);
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.sh->connectionCell(0, 1) == "_failed"; }, 300), host.notes());
+	CHECK(host.sh->connectionCell(1, 0) == "_failed");
+	host.tick(5);
+	CHECK(cellShows(0, 1, "_failed"));
+	CHECK(host.client.sentCount("link") == 2);
+	CHECK(pageValue("relay") == u"no answer");
+	CHECK(pageValue("loss") == u"100%");
+	CHECK(pageValue("p1") == u"no link");
+	// ---- the grid's Kick buttons (Main.Grid.<row>.Kick) stay in the movie's own state with no hit area in the staging room: a player cannot press
+	// them (the room's own per-slot Kick is the way to remove a player); nothing reaches the engine from them ----
+	{
+		std::vector<AptButtonInst *> all;
+		host.buttons(host.fx.wm->apt().level(host.sh->level()), all);
+		for (AptButtonInst *b : all)
+		{
+			if (b->targetPath().find("Main.Grid.") == std::string::npos || b->targetPath().find(".Kick") == std::string::npos)
+			{
+				continue;
+			}
+			float x0, y0, x1, y1, x, y;
+			REQUIRE(b->contentBounds(x0, y0, x1, y1));
+			b->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, x, y);
+			CHECK_MESSAGE(host.fx.wm->apt().input().hitTestButtons(x, y) == nullptr, b->targetPath());
+		}
+	}
+}
+#endif
+
+#ifdef ONLINE4_POSIX // OnlinePlayer (the online players above) is POSIX-only
+TEST_CASE("onlinemenu1 retail: the FRIENDS page over the online screens (OpenBFME's, in the game's style): the button drawn beside MESSENGER and "
+		  "pressed for real, the page's tabs, rows and activating list, Enter in its entry, closed when another screen covers the shell, and nothing "
+		  "of the shell's left on the layer once it is gone")
+{
+	OPENBFME_REQUIRE_START(s);
+	OnlinePlayer p(*s, 1, 95, u""); // no lobby needed: the page is the shell's own
+	p.tick(30);
+	AptGadgetLayer *layer = p.fx.wm->gadgetLayer();
+	REQUIRE(layer);
+	auto drawn = [&](const std::u16string &text) {
+		GadgetDrawList out;
+		layer->buildDrawList(out);
+		return std::any_of(out.commands.begin(), out.commands.end(), [&](const GadgetDrawCommand &c) { return c.kind == GadgetDrawCommand::Kind::Text && c.text == text; });
+	};
+	CHECK_FALSE(drawn(u"FRIENDS (2)"));
+	// ---- the button: drawn once the host names it, pressed with the pointer (the window manager's mouse filter is the shell's) ----
+	p.sh->setFriendsButton(u"FRIENDS (2)");
+	p.tick(2);
+	REQUIRE(drawn(u"FRIENDS (2)"));
+	const float bx = (AptOnlineShell::kFriendsButtonLeft + AptOnlineShell::kFriendsButtonRight) / 2.0f;
+	const float by = (AptOnlineShell::kFriendsButtonTop + AptOnlineShell::kFriendsButtonBottom) / 2.0f;
+	starttest::clickAt(p.fx, bx, by);
+	std::vector<OpenBFMEPageEvent> ev = p.sh->takeFriendsEvents();
+	REQUIRE(ev.size() == 1);
+	CHECK(ev[0].kind == OpenBFMEPageEvent::Kind::Entry);
+	CHECK(ev[0].key == "friends_button");
+	starttest::clickAt(p.fx, AptOnlineShell::kFriendsButtonLeft - 40.0f, by); // beside it: nothing
+	CHECK(p.sh->takeFriendsEvents().empty());
+	// ---- the page: tabs, a text row, an entry, a choice, and a list below the rows whose lines can be double-clicked ----
+	OpenBFMEPageSpec spec;
+	spec.tabsHeader = u"FRIENDS";
+	spec.tabs = { u"REQUESTS", u"ADD FRIEND", u"BACK" };
+	spec.tab = 1;
+	spec.panelHeader = u"ADD A FRIEND";
+	OpenBFMEPageRow code;
+	code.kind = OpenBFMEPageRow::Kind::Text;
+	code.key = "code";
+	code.label = u"Your friend code";
+	code.valueText = u"0123-4567-89";
+	OpenBFMEPageRow add;
+	add.kind = OpenBFMEPageRow::Kind::Entry;
+	add.key = "add_code";
+	add.label = u"Friend's code (Enter)";
+	add.maxValue = 12;
+	OpenBFMEPageRow status;
+	status.kind = OpenBFMEPageRow::Kind::Choice;
+	status.key = "status";
+	status.label = u"Show me as";
+	status.items = { { u"Online", true }, { u"Away", true } };
+	spec.rows = { code, add, status };
+	spec.hasList = true;
+	spec.list = { { u"Create a recovery code", u"" }, { u"Second line", u"" } };
+	spec.listFromRow = 4;
+	spec.listActivates = true;
+	std::string err;
+	REQUIRE_MESSAGE(p.sh->openFriendsPage(spec, &err), err);
+	p.tick(2);
+	OpenBFMEOptionsPage *page = p.sh->friendsPage();
+	REQUIRE(page);
+	CHECK(p.sh->friendsPageOpen());
+	CHECK(drawn(u"ADD A FRIEND"));
+	CHECK(drawn(u"Your friend code"));
+	CHECK(drawn(u"FRIENDS (2)")); // the button stays
+	std::array<int, 4> lr{}, er{};
+	REQUIRE(page->rect("list", lr));
+	REQUIRE(page->rect("add_code", er));
+	CHECK(lr[1] == OpenBFMEOptionsPage::kRowTop + 4 * OpenBFMEOptionsPage::kRowPitch); // the list from row 4 (listFromRow), below the three rows
+	CHECK(lr[3] < OpenBFMEOptionsPage::kHelpTop - 10); // tolerance: the font's line height sets the exact bottom; two lines: the list is as tall as its lines and one more, not the rest of the panel
+	CHECK(er[2] - er[0] == OpenBFMEOptionsPage::kEntryWidth); // a code's entry keeps its width (a longer entry runs to the gadgets' right edge)
+	// a click on a tab (the page takes it; the online page under it never sees it)
+	std::array<int, 4> tr{};
+	REQUIRE(page->rect("tab:2", tr));
+	starttest::clickAt(p.fx, (tr[0] + tr[2]) / 2.0f, (tr[1] + tr[3]) / 2.0f);
+	ev = p.sh->takeFriendsEvents();
+	REQUIRE(ev.size() == 1);
+	CHECK(ev[0].kind == OpenBFMEPageEvent::Kind::Tab);
+	CHECK(ev[0].value == 2);
+	// Enter in the entry (the gadget's own GEM_EDIT_DONE to its owner): the text comes with the Submit
+	GameWindow *entry = page->gadget("add_code");
+	REQUIRE(entry);
+	GadgetTextEntrySetText(entry, u"ABCD-EFGH-JK");
+	entry->manager().winSendSystemMsg(entry->winGetOwner(), GEM_EDIT_DONE, (WindowMsgData)entry, 0);
+	ev = p.sh->takeFriendsEvents();
+	REQUIRE_FALSE(ev.empty());
+	CHECK(ev.back().kind == OpenBFMEPageEvent::Kind::Submit);
+	CHECK(ev.back().key == "add_code");
+	CHECK(ev.back().text == u"ABCD-EFGH-JK");
+	// ONLINEMENU-1 (the friends video, 2026-10-20): a real click into the entry and typed characters reach it: the page's band kept every press
+	// from the gadget layer, so a player could not type a friend code (the steps above send the gadget's messages directly)
+	GadgetTextEntrySetText(entry, u"");
+	starttest::clickAt(p.fx, (er[0] + er[2]) / 2.0f, (er[1] + er[3]) / 2.0f);
+	CHECK(p.sh->takeFriendsEvents().empty()); // a click in the page is not the online page's under it, nor a tab
+	for (char16_t c : std::u16string(u"WXYZ-1234"))
+	{
+		p.fx.wm->postTextInput(c);
+	}
+	p.tick(2);
+	const auto typed = GadgetTextEntryGetText(entry);
+	CHECK(std::u16string(typed.begin(), typed.end()) == u"WXYZ-1234");
+	p.fx.wm->postTextInput(u'\r');
+	p.tick(2);
+	ev = p.sh->takeFriendsEvents();
+	REQUIRE_FALSE(ev.empty());
+	CHECK(ev.back().kind == OpenBFMEPageEvent::Kind::Submit);
+	CHECK(ev.back().text == u"WXYZ-1234");
+	// a list line double-clicked (ZH GadgetListBox's GLM_DOUBLE_CLICKED with the row) is the page's ListActivate with that row
+	GameWindow *list = page->gadget("list");
+	REQUIRE(list);
+	list->manager().winSendSystemMsg(list->winGetOwner(), GLM_DOUBLE_CLICKED, (WindowMsgData)list, 1);
+	ev = p.sh->takeFriendsEvents();
+	REQUIRE(ev.size() == 1);
+	CHECK(ev[0].kind == OpenBFMEPageEvent::Kind::ListActivate);
+	CHECK(ev[0].value == 1);
+	// the choice through its gadget
+	REQUIRE_MESSAGE(page->choose("status", 1, &err), err);
+	ev = p.sh->takeFriendsEvents();
+	REQUIRE_FALSE(ev.empty());
+	CHECK(ev.back().kind == OpenBFMEPageEvent::Kind::Value);
+	CHECK(ev.back().value == 1);
+	// ---- a screen over the shell (Options): the page closes (its gadgets would show through) and the host is told; back on top, the button works ----
+	p.fx.shell->push("Options.apt");
+	p.tick(10);
+	CHECK_FALSE(p.sh->friendsPageOpen());
+	ev = p.sh->takeFriendsEvents();
+	REQUIRE_FALSE(ev.empty());
+	CHECK(ev.back().kind == OpenBFMEPageEvent::Kind::Cancel);
+	CHECK(ev.back().key == "covered");
+	CHECK_FALSE(drawn(u"FRIENDS (2)")); // nothing of the shell's over the Options screen
+	p.fx.shell->pop();
+	p.tick(10);
+	REQUIRE(drawn(u"FRIENDS (2)"));
+	starttest::clickAt(p.fx, bx, by);
+	ev = p.sh->takeFriendsEvents();
+	REQUIRE(ev.size() == 1);
+	CHECK(ev[0].key == "friends_button");
+	// ---- lane ONLINEMENU-1 (friends in the Messenger): the host's Yes / No question in GuiFX's own box, one at a time, its answer handed back once ----
+	REQUIRE(p.sh->askYesNo("social1", u"Friend Game Invite", u"Ann has invited you to play a Open Play game. Do you want to jump to their game?"));
+	CHECK_FALSE(p.sh->askYesNo("social2", u"Ignore", u"Ignore Bea?")); // the box is up
+	CHECK_FALSE(p.sh->askYesNo("bad|key", u"T", u"t"));
+	p.tick(10);
+	p.dismissBox("Yes");
+	CHECK(p.sh->takeAnswers() == std::vector<std::string>{ "social1|yes" });
+	CHECK(p.sh->takeAnswers().empty());
+	REQUIRE(p.sh->askYesNo("social2", u"Ignore", u"Ignore Bea?"));
+	p.tick(10);
+	p.dismissBox("No");
+	CHECK(p.sh->takeAnswers() == std::vector<std::string>{ "social2|no" });
+	// ---- the shell gone: its decorator is not left on the layer (it captured the shell) ----
+	p.fx.shell->pop();
+	p.tick(5);
+	CHECK(layer->decoratorOwner() != static_cast<const void *>(p.sh));
 }
 #endif

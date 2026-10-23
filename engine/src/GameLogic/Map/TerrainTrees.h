@@ -35,6 +35,7 @@
 #include "Common/StateHash.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -86,8 +87,10 @@ public:
 	bool hasExtent() const { return m_hasExtent; }
 	// RW 0x683D89; false (nothing added) for a template without a W3DTreeDraw module or before the extent is set
 	bool addTree(const ThingTemplate &tmpl, const Coord3D &position, std::uint32_t clientId);
-	// RW 0x67F52B: the closest record within `radius` (see the header), null when none
-	Record *findClosestTree(const Coord3D &where, float radius, bool ignoreToppled, int mode);
+	// RW 0x67F52B: the closest record within `radius` (see the header), null when none. Lane LUMBER1: `accept` (the harvest finder's collector RW 0x67D5A0:
+	// the same 2D distance and order, then the worker's quick path and ground line tests) is asked only for a record that would become the closest; a
+	// refused one is passed over
+	Record *findClosestTree(const Coord3D &where, float radius, bool ignoreToppled, int mode, const std::function<bool(const Record &)> &accept = nullptr);
 	const Record *findClosestTree(const Coord3D &where, float radius, bool ignoreToppled, int mode) const;
 	// RW 0x6849F8 with the source object (or none: `from` is the location)
 	void toppleTree(Record &tree, const Coord3D &from, const Object *source);

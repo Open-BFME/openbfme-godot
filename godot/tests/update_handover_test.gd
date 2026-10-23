@@ -11,6 +11,7 @@ extends SceneTree
 
 const Handover := preload("res://scripts/release/update_handover.gd")
 const LauncherCheck := preload("res://scripts/release/launcher_check.gd")
+const ReleaseSignature := preload("res://scripts/crypto/release_signature.gd")
 
 var failures := 0
 var cases: Dictionary
@@ -28,7 +29,7 @@ func _init() -> void:
 
 func fresh(name: String) -> RefCounted:
 	var h := Handover.new()
-	h.key = String(cases.key).hex_decode()
+	h.keys = ReleaseSignature.parse_hex_list(String(cases.key)).keys   # lane SIGNKMS-1: one key or a comma-separated list
 	h.repo = cases.repo
 	h.launcher_dir = cases.launcher_dir
 	h.user_args = PackedStringArray(["--script", "res://evil.gd", "--fps"])
@@ -60,12 +61,23 @@ func _run() -> void:
 		if a.begins_with("--cases="):
 			cases = JSON.parse_string(FileAccess.get_file_as_string(a.substr(8)))
 	check(Handover.why_not(false) == "a development run", "a development run does not ask: " + Handover.why_not(false))
-	var key := String(cases.key).hex_decode()
+	var keys: Array = ReleaseSignature.parse_hex_list(String(cases.key)).keys
+	check(not keys.is_empty(), "the cases' trusted key list parses")
+	# lane SIGNKMS-1: release_trust.gd's two texts: RELEASE_KEYS must begin with RELEASE_KEY; empty texts: no key (a development run)
+	var first := String(cases.key).get_slice(",", 0)
+	var t := LauncherCheck.trusted_keys(first, String(cases.key))
+	check(t.ok and t.keys == keys, "the trusted list of RELEASE_KEY + RELEASE_KEYS")
+	check(LauncherCheck.trusted_keys(first, first).keys.size() == 1, "a one-key list")
+	for bad in [["", ""], [first, ""], ["", first], [first, String(cases.key).get_slice(",", 1) + "," + first], [first, first + "," + first],
+			[first, first.to_upper()], [first.to_upper(), first.to_upper()]]:
+		var b := LauncherCheck.trusted_keys(bad[0], bad[1])
+		check(not b.ok and b.keys.is_empty() and b.error != "", "no trusted list of %s" % str(bad).left(60))
+	check(LauncherCheck.check(cases.check[0].dir, [], cases.repo) == "this game has no release key", "an empty list: no launcher is started")
 
 	# the launcher beside the game: authenticated before it is started
 	for c in cases.check:
 		var before := OS.get_static_memory_peak_usage()
-		var got := LauncherCheck.check(c.dir, key, cases.repo)
+		var got := LauncherCheck.check(c.dir, keys, cases.repo)
 		var grew := OS.get_static_memory_peak_usage() - before
 		print("CHECK %s: %s (peak memory +%d)" % [c.name, got if got != "" else "ok", grew])
 		# tolerance: the 1 MiB hashing buffer and the small signed files; the 32 MiB case's file is never read whole (Sol r2)

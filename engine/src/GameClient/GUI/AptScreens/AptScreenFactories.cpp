@@ -15,9 +15,13 @@
 #include "GameClient/GUI/AptScreens/AptCreateAHero.h"
 #include "GameClient/GUI/AptScreens/AptOnlineShell.h"
 #include "GameClient/GUI/AptScreens/AptCampaignMenu.h"
+#include "GameClient/GUI/AptScreens/AptMessenger.h"
 
 void registerAptScreenFactories(AptScreenFactoryTable &table)
 {
+	table.registerFactory("Messenger.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
+		return std::make_unique<AptMessenger>(c.windows, c.shell, c.environment);
+	});
 	table.registerFactory("MainMenu.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
 		return std::make_unique<AptMainMenu>(c.windows, c.shell, c.services, &c.environment);
 	});

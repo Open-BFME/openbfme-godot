@@ -60,7 +60,13 @@ ALLOWED_LAUNCHER = {"launcher/scripts/net/http_fetch.gd": {"HTTPClient"},
                     # lane mac-release-1: the authenticated external helper syncs durable update receipts and journals
                     "launcher/scripts/core/macos_update.gd": {"OS.execute", "OS.create_process"},
                     # lane ONLINE-2: `reg add` under HKCU (Windows) / xdg-mime + update-desktop-database (Linux), only on --register-url-handler
-                    "launcher/scripts/core/url_handler.gd": {"OS.execute"}}
+                    "launcher/scripts/core/url_handler.gd": {"OS.execute"},
+                    # lane ONLINEMENU-1 (SOCIAL-2b, PR #8): the launcher's account page (recovery code, e-mail and Discord / Google linking) talks
+                    # to the lobby the player named (NetPolicy.set_lobby; social_client: each request's origin is that lobby, /v1/, TLS; no
+                    # redirects, one request call each), opens the system browser only on an allow-listed Discord authorize URL or that lobby's
+                    # own e-mail page, and takes the OAuth callback on a 127.0.0.1 listener: test_launcher_tools pins each of these
+                    "launcher/scripts/core/oauth_account.gd": {"HTTPRequest", "HTTPClient", "TCPServer", "StreamPeerTCP", "OS.shell_open"},
+                    "launcher/scripts/net/social_client.gd": {"HTTPRequest", "HTTPClient"}}
 # lane ONLINE-2: game file -> the findings it may have: the online lobby client (its requests: online_lobby_problems)
 # lane ONLINE-4: the online screens' transport (scripts/online_http.gd: the requests OnlineShell.apt's lobby client queues), the same rule
 # lane ONEZIP-1: a game started directly runs the OpenBFME Launcher beside it once (the one updater; the game itself still opens no
@@ -337,6 +343,13 @@ EXCLUDED_PORT_QUERY = [(kind, value) for kind, value, _, _ in lex_gd_stream(
     'OS.execute(OS.get_environment("SystemRoot").path_join("System32/netsh.exe"), '
     '["int", "ipv4", "show", "excludedportrange", "protocol=tcp"], output, true)')]
 
+# lane ONLINEMENU-1 (owner 2026-10-20: a hardware id for bans only): Windows' MachineGuid (Godot's OS.get_unique_id reads the hardware
+# profile's GUID there instead), read-only, by the system's reg.exe and this literal argument list, in the two identity files' machine_id()
+MACHINE_GUID_QUERY = [(kind, value) for kind, value, _, _ in lex_gd_stream(
+    'OS.execute(OS.get_environment("SystemRoot").path_join("System32/reg.exe"), '
+    '["query", "HKLM\\\\SOFTWARE\\\\Microsoft\\\\Cryptography", "/v", "MachineGuid"], out, true)')]
+MACHINE_GUID_OWNERS = {("godot/scripts/online_identity.gd", "machine_id"), ("launcher/scripts/core/social_identity.gd", "machine_id")}
+
 
 def gdscript_findings(text: str, path: str | None = None) -> list[str]:
     stream = lex_gd_stream(text)
@@ -359,6 +372,9 @@ def gdscript_findings(text: str, path: str | None = None) -> list[str]:
         if value in GODOT_OS_CALLS and k >= 2 and stream[k - 1][1] == "." and stream[k - 2][1] == "OS":
             if (path == "launcher/scripts/core/instance_lock.gd" and function == "_windows_exclusions"
                     and [(t[0], t[1]) for t in stream[k - 2:k - 2 + len(EXCLUDED_PORT_QUERY)]] == EXCLUDED_PORT_QUERY):
+                continue
+            if ((path, function) in MACHINE_GUID_OWNERS
+                    and [(t[0], t[1]) for t in stream[k - 2:k - 2 + len(MACHINE_GUID_QUERY)]] == MACHINE_GUID_QUERY):
                 continue
             if value in FILE_MANAGER_METHODS and (path, function) in FILE_MANAGER_OWNERS:
                 continue

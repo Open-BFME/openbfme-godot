@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Lobby, route, configFromEnv, parseBlobKey, MAX_JSON_BYTES, MAX_LOG_BYTES, validateSighting, withoutGameIp } from './lobby.mjs';
 import { createNodeReportStore } from './report-store-node.mjs';
+import { createNodeSocialStore } from './social-store-node.mjs';
 
 export function readEnv(env = process.env) {
   const out = { ...env };
@@ -97,6 +98,7 @@ export function fileStore(dir) {
     }
     writeDurably(path, JSON.stringify(record));
   };
+  const social = createNodeSocialStore(join(dir, 'social.sqlite'));
   const write = (path, data) => {
     writeDurably(path, data);
   };
@@ -118,6 +120,7 @@ export function fileStore(dir) {
   return {
     kind: 'files',
     reportTransaction: reports.reportTransaction.bind(reports),
+    socialTransaction: social.socialTransaction.bind(social),
     saveGame: (g) => write(join(dir, 'games', `${g.id}.json`), JSON.stringify(withoutGameIp(g))),
     deleteGame: (id) => {
       const p = join(dir, 'games', `${id}.json`);
@@ -257,6 +260,10 @@ export function startServer(env = readEnv(), { log = console.log } = {}) {
         ip: req.socket.remoteAddress ?? '',
         bytes: async () => new Uint8Array(raw),
       };
+      const controller = new AbortController();
+      r.signal = controller.signal;
+      req.once('aborted', () => controller.abort());
+      res.once('close', () => { if (!res.writableEnded) controller.abort(); });
       // ONLINE-5: a held poll (route's `deferred`) is answered when it resolves; the chain goes on with the next request meanwhile
       const routed = chain.then(() => route(lobby, r));
       chain = routed.catch(() => {});

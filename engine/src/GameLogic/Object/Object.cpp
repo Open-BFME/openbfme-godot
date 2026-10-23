@@ -1115,6 +1115,19 @@ ExitInterface *Object::getObjectExitInterface() const
 	return nullptr; // RW 0x68BB37: the contain's exit slot (0x74) is not ported
 }
 
+// RW 0x68C383
+DockUpdateInterface *Object::getDockUpdateInterface() const
+{
+	for (const std::unique_ptr<BehaviorModule> &m : m_modules)
+	{
+		if (DockUpdateInterface *d = m->getDockUpdateInterface())
+		{
+			return d;
+		}
+	}
+	return nullptr;
+}
+
 ProductionUpdateInterface *Object::getProductionUpdate() const
 {
 	for (const std::unique_ptr<BehaviorModule> &m : m_modules)

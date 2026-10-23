@@ -217,6 +217,8 @@ another profile). Tabs:
 | | Health bars on infantry and cavalry too | `AllHealthBars` (retail) | no |
 | | Alternate mouse setup | `AlternateMouseSetup` (retail) | no |
 | | Game clock | `OpenBFMEGameClock` | no |
+| | Ping wheel: hold the ping key for the wheel of pings (skirmish; not retail, see [Ping wheel](PLAYING.md#ping-wheel)) | `OpenBFMEPingWheel` | yes |
+| | Ping key: G held (a tap stays the game's G) / Alt+G / J / mouse back button / mouse forward button | `OpenBFMEPingKey` | g |
 | Audio | Master volume 0 .. 100 (live while it moves, with the sound effects sample: OPTS-4) | `OpenBFMEMasterVolume` | 100 |
 | | Mute in the background | `OpenBFMEMuteUnfocused` | no |
 | | Output device (Godot's list: Windows, Linux, macOS) | `OpenBFMEAudioDevice` | Default |

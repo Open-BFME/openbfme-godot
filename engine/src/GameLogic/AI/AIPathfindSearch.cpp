@@ -436,6 +436,8 @@ struct ShortcutState
 	ICoord2D last;
 	bool haveLast = false;
 	int *counter = nullptr;
+	bool hierarchical = false; // lane ATTACKPATH-1: RW 0x6EBFB7's record + 0x34, the corridor (its term joins the line cells' estimate)
+	int attackDistance = 0;    // lane ATTACKPATH-1: + 0x30, findAttackPath's (int) attack distance + 30 (0 for the other searches)
 };
 
 bool Pathfinder::examineShortcutCell(PathfindCell *from, PathfindCell *to, int x, int y, ShortcutState &d)
@@ -446,6 +448,16 @@ bool Pathfinder::examineShortcutCell(PathfindCell *from, PathfindCell *to, int x
 		return true;
 	}
 	++*d.counter;
+	// lane ATTACKPATH-1, TARGET RW 0x6F6D8D .. 0x6F6DB6: with an attack distance a (findAttackPath), the line stops at the first cell within it of the goal cell:
+	// a * a > ((y - goal.y)^2 + (x - goal.x)^2) * 100 (integers)
+	if (d.attackDistance >= 1)
+	{
+		const int gy = y - (int)d.goal->getYIndex(), gx = x - (int)d.goal->getXIndex();
+		if (d.attackDistance * d.attackDistance > (gy * gy + gx * gx) * 100)
+		{
+			return true;
+		}
+	}
 	if (m_isTunneling)
 	{
 		return true;
@@ -516,6 +528,12 @@ bool Pathfinder::examineShortcutCell(PathfindCell *from, PathfindCell *to, int x
 		}
 		to->setBlockedByAlly(false);
 		unsigned rem = to->costToGoal(d.goal);
+		if (d.hierarchical)
+		{
+			// lane ATTACKPATH-1, TARGET RW 0x6F7071 .. 0x6F708B: the corridor's remaining length, (last index - the cell's position (RW 0x93AD93)) * 320, as in the
+			// neighbour expansion (the port's line cells had none)
+			rem += (unsigned)((m_hierLast - hierarchicalPositionOf(x, y)) * 320);
+		}
 		to->setCostSoFar(c);
 		to->setParentCell(from);
 		to->setTotalCost((unsigned)(std::uint16_t)to->getCostSoFar() + (unsigned)(std::uint16_t)rem);
@@ -602,7 +620,7 @@ int Pathfinder::occupantCost(const PathfindObject *obj, const PathfindCell *pare
 }
 
 int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *goalCell, const PathfindLocomotorInfo &loco, bool isHuman, bool centerInCell,
-	int radius, const ICoord2D &startCellNdx, const PathfindObject *obj, bool hierarchical)
+	int radius, const ICoord2D &startCellNdx, const PathfindObject *obj, bool hierarchical, int attackDistance)
 {
 	(void)startCellNdx;
 	// TARGET RW 0x6F9850
@@ -630,6 +648,8 @@ int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 		d.mode = (obj && obj->isKindOf(PK_HERO)) ? 3u : 0x12u;
 		d.ignoreId = ignoreId;
 		d.counter = &m_shortcutCounter;
+		d.hierarchical = hierarchical;
+		d.attackDistance = attackDistance; // RW 0x6F991F: the waypoint vector (+ 0x1C1CC) is always empty here (S-161), so the attack distance always goes in
 		ICoord2D start, end;
 		start.x = parentCell->getXIndex();
 		start.y = parentCell->getYIndex();
@@ -776,6 +796,10 @@ int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 		if (goalCell)
 		{
 			rem = n->costToGoal(goalCell);
+			if (attackDistance != 0 && info.goalListNonEmpty)
+			{
+				X += 30; // lane ATTACKPATH-1, TARGET RW 0x6F9D94 .. 0x6F9DA3: findAttackPath's search avoids cells that hold another unit's goal (+ 0x32)
+			}
 		}
 		if (hierarchical)
 		{

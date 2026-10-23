@@ -386,6 +386,45 @@ Object *HordeContain::pickMemberNear(bool skipTagged, const Coord3D &pos, float 
 	return best;
 }
 
+// lane TARGET-1: RW 0x86FA87 with no position: over the contain list in its order the first entry (skipTagged: the first not TAGGED, status 0x3F), else over the
+// members on their way in (the map at interface + 0x54, by id) the first one found (skipTagged: the first found and not TAGGED); no member: null
+Object *HordeContain::pickMemberNoPosition(bool skipTagged) const
+{
+	static const int kTagged = ObjectTemplateInfoBuilder::objectStatusIndex("TAGGED"); // status 0x3F
+	if (!m_members.empty())
+	{
+		if (skipTagged)
+		{
+			for (Object *m : m_members)
+			{
+				if (m && !(kTagged >= 0 && m->testStatus((unsigned)kTagged)))
+				{
+					return m;
+				}
+			}
+		}
+		return m_members.front(); // RW returns the list head's object when no untagged member was found (piVar5 still the head)
+	}
+	GameLogic &logic = getObject()->logic();
+	if (m_garrisonEntering.empty())
+	{
+		return nullptr;
+	}
+	if (!skipTagged)
+	{
+		return logic.findObjectByID(*m_garrisonEntering.begin());
+	}
+	for (ObjectID id : m_garrisonEntering)
+	{
+		Object *m = logic.findObjectByID(id);
+		if (m && !(kTagged >= 0 && m->testStatus((unsigned)kTagged)))
+		{
+			return m;
+		}
+	}
+	return nullptr;
+}
+
 // HordeContainInterface slot 4 (RW 0x875221)
 void HordeContain::attackTargetNow(Object *victim, bool closestMemberOnly)
 {

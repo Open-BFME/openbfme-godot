@@ -4,6 +4,7 @@
 // Expected values follow the RotWK functions cited at each check (ScriptEngine.cpp, ScriptActionsUnits.cpp, AIHunt.cpp, AIWaypointPath.cpp,
 // AIUpdateCombat.cpp), never the engine's own output.
 
+#include "GameLogic/AI/AIClosestEnemy.h"
 #include "doctest.h"
 #include "CombatTestUtil.h"
 #include "LogicTestUtil.h"
@@ -205,7 +206,7 @@ TEST_CASE("script3 attitude (RW 0x66E12A, 0x664CD6, 0x664D7E) and the idle scan 
 	run(w.logic->scriptEngine(), act("TEAM_SET_ATTITUDE", { sp(3, qual(w.teamA())), ip(20, -1) }));
 	CHECK(ai->attitude() == -1);
 	CHECK(ai->moodMatrixValue() == 0x202u);
-	CHECK(ai->nextMoodTarget() == nullptr); // passive, never hit
+	CHECK(ai->getNextMoodTarget(false, true) == nullptr); // passive, never hit
 	// the dummy hits it: the last damage source is the answer
 	DamageInfo info;
 	info.m_input.m_damageType = DAMAGE_UNRESISTABLE;
@@ -213,7 +214,7 @@ TEST_CASE("script3 attitude (RW 0x66E12A, 0x664CD6, 0x664D7E) and the idle scan 
 	info.m_input.m_sourceID = dummy->getID();
 	info.m_input.m_amount = 1.0f;
 	a->getBodyModule()->attemptDamage(info);
-	CHECK(ai->nextMoodTarget() == dummy);
+	CHECK(ai->getNextMoodTarget(false, true) == dummy);
 	// -3: nothing, and a current victim is dropped (the unit idles)
 	REQUIRE(ai->aiAttackObject(dummy, CMD_FROM_PLAYER));
 	CHECK(ai->currentVictim() == dummy);
@@ -222,7 +223,9 @@ TEST_CASE("script3 attitude (RW 0x66E12A, 0x664CD6, 0x664D7E) and the idle scan 
 	CHECK(ai->currentVictim() == nullptr);
 	CHECK(ai->currentStateId() == (unsigned)AI_IDLE);
 	CHECK(ai->moodMatrixValue() == 0x2002u);
-	CHECK(ai->nextMoodTarget() == nullptr);
+	// lane TARGET-1: the player's attack order with a sword (a MeleeWeapon) is remembered (AI + 0x1A4, RW 0x66BD33) and RW 0x66844A answers it before the mood
+	// tests (RW 0x66854F); without it, -3 looks for nothing (target1 tests)
+	CHECK(ai->getNextMoodTarget(false, true) == dummy);
 	// the other moods: their bits
 	const std::pair<int, unsigned> moods[] = { { -2, 0x102u }, { 0, 0x402u }, { 1, 0x802u }, { 2, 0x1002u }, { 7, 0x402u } };
 	for (const auto &m : moods)
@@ -234,7 +237,7 @@ TEST_CASE("script3 attitude (RW 0x66E12A, 0x664CD6, 0x664D7E) and the idle scan 
 	w.playerOf('A')->setPlayerType(PLAYER_HUMAN, true);
 	ai->setAttitude(-3);
 	CHECK(ai->moodMatrixValue() == 1u);
-	CHECK(ai->nextMoodTarget() == dummy);
+	CHECK(ai->getNextMoodTarget(false, true) == dummy);
 	CHECK(w.logic->scriptEngine().stats().unportedActions.empty());
 }
 
@@ -569,11 +572,14 @@ TEST_CASE("script3 r2 mood target (RW 0x668716 .. 0x668787): the vision range is
 		a->getBodyModule()->attemptDamage(info);
 		if (std::string(tmpl) == "BlindSword")
 		{
-			CHECK(ai->nextMoodTarget() == nullptr); // no range: nothing, not the attacker
+			// lane TARGET-1: RW 0x6FF412's range is the vision range PLUS the bounding circle (+ 0xB8, the cylinder's 8): VisionRange 0 still gives 8, above 0,
+			// so the blind passive swordsman answers its attacker as well (a range of 0 needs no vision and no radius)
+			CHECK(AI::adjustedVisionRange(*a, 3u) == 8.0f);
+			CHECK(ai->getNextMoodTarget(false, true) == dummy);
 		}
 		else
 		{
-			CHECK(ai->nextMoodTarget() == dummy); // with range: the last attacker
+			CHECK(ai->getNextMoodTarget(false, true) == dummy); // with range: the last attacker
 		}
 	}
 }

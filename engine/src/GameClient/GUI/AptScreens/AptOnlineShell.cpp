@@ -20,7 +20,9 @@
 #include "GameClient/GUI/Skirmish/SkirmishGameSetup.h"
 #include "GameNetwork/OnlineLobbyClient.h"
 #include "GameNetwork/OnlineStart.h"
+#include "GameNetwork/RelayProbe.h"
 #include "GameNetwork/Transport.h"
+#include "GameClient/GUI/AptScreens/AptMessenger.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -88,7 +90,7 @@ const std::vector<std::string> &AptOnlineShell::stopLines()
 		"(a second press reverses) is OpenBFME's (RotWK's sorter RW 0x988BB5 not read)",
 		"[S-4074] online staging room: the states between the retail facts (the update's moves, the GameSpy NAT negotiation, the countdown) are OpenBFME's: "
 		"the host's Play Game asks the lobby for the START (no relay: refused, told to the player); loading a saved online game is not available",
-		"[S-4075] online pages not ported: Strategic (War of the Ring online), the Messenger",
+		"[S-4075] online pages not ported: Strategic (War of the Ring online)",
 		"[S-4870] Quick Match (the TOURNAMENT page): the platform's matchmaker (same mode and size, oldest first): Ladder = the size, Army, Color; "
 		"ConnectionSpeed disabled, Widen Search says the search is as wide as it gets",
 		"[S-4871] Quick Match room: the match's host makes a private lobby room by the match's room code on an official map for that many players "
@@ -100,13 +102,15 @@ const std::vector<std::string> &AptOnlineShell::stopLines()
 		"WAR OF THE RING = not kept",
 		"[S-4877] Quick Match failures: the platform unreachable, a search timed out or cancelled, a room that does not start in 90 seconds: told in a "
 		"box and the page's status line, the page comes back",
-		"[S-4076] online Create-a-Hero: the lobby service does not carry a slot's Create-a-Hero record: online games are played without them",
-		"[S-4550] online Connections screen: not shown (retail's lists the GameSpy connection between every two players; OpenBFME's players reach each "
-		"other only through the relay): the button says so and the staging room comes back",
+		"[S-4550] online Connections screen: retail's grid of the GameSpy connection between every two players shows, for two players, their two links "
+		"to the relay (each client probes it; the cell banded by the summed round trip at GameSpy's default 300 / 600 ms cut-offs); the grid's per-row Kick "
+		"buttons stay in the movie's own unpressable state there (the room's per-slot Kick removes a player); an OpenBFME page covers the grid and says it "
+		"in words (the lobby's response time, the player's ping to the relay and its loss, each other player's ping to the player), and the chat's Players "
+		"list shows each player's ping (the owner, 2026-10-20)",
 		"[S-4551] online staging room chat: the Players list names the room's players (retail's fill, the chat's recipients, was not read) and every "
 		"line goes to everyone (no private lines)",
-		"[S-4552] online staging room rows: Hero (no Create-a-Hero through the lobby, S-4076) and Handicap (the online start carries no handicap: OWNERFIX-2 locks its combo) are shown "
-		"locked; the lobby carries no handicap",
+		"[S-4552] online staging room rows: Hero and Handicap work as in the LAN room (lane ONLINEMENU-1: the lobby carries a player's Create-a-Hero record "
+		"and every slot's handicap into the START); a record another client cannot read is shown as no hero and refuses the host's start by name",
 		"[S-4553] online ready rules: the lobby unreadies every player on any change of the room (a join, a leave, a kick, a slot or setup change); "
 		"RotWK's own reset (the game's vslot 0x38 after a rule change, RW 0x8421E0) was read only for the host's rule changes; the clan game's checks "
 		"before a ready (CLAN:ErrorMissingClanAffiliation / CLAN:ErrorOnlyTwoClans) are not ported",
@@ -134,6 +138,25 @@ const std::vector<std::string> &AptOnlineShell::stopLines()
 
 AptOnlineShell::~AptOnlineShell()
 {
+	// lane ONLINEMENU-1: the friends page's gadgets and the shell's decorator / mouse filter go with the shell (the layer outlives every screen)
+	if (AptGadgetLayer *layer = windows().gadgetLayer())
+	{
+		layer->clearDecorator(this);
+	}
+	else
+	{
+		if (m_friendsPage)
+		{
+			m_friendsPage->abandon();
+		}
+		if (m_networkPage)
+		{
+			m_networkPage->abandon();
+		}
+	}
+	m_friendsPage.reset();
+	m_networkPage.reset();
+	windows().setMouseFilter(nullptr);
 	for (auto &p : m_pages)
 	{
 		for (const std::string &n : p.second.commands)
@@ -181,14 +204,19 @@ AptOnlineShell::AptOnlineShell(WindowManager &windows, Shell &shell, ShellEnviro
 		}
 		this->windows().requestShellPop();
 	});
-	// lane ONLINE-5: the MESSENGER button of the shell's frame (MpGameSetup.apt's MessengerButton: its release sends AptMessenger::OnMessengerBttn and
-	// its look follows the extern AptMessenger::IsOpen). The Messenger (GameSpy's buddy chat, AptMessenger) is not ported (S-4075): the press used to
-	// reach no handler at all; now the player is told, and the button shows the Messenger closed
-	registerCommand("AptMessenger::OnMessengerBttn", [this](const std::string &) { notAvailable("the Messenger", "[S-4075]"); });
-	registerProvider("AptMessenger::IsOpen", [](const std::string &, std::string &value, bool setting) {
+	registerCommand("AptMessenger::OnMessengerBttn", [this](const std::string &) {
+		if (m_messenger) m_messenger->requestClose();
+		else
+		{
+			m_messenger = std::make_unique<AptMessenger>(this->windows(), this->shell(), this->environment());
+			m_messenger->onClose = []() {}; // destroy on the next update, not inside its own callback
+			m_messenger->runInit();
+		}
+	});
+	registerProvider("AptMessenger::IsOpen", [this](const std::string &, std::string &value, bool setting) {
 		if (!setting)
 		{
-			value = "0";
+			value = m_messenger && !m_messenger->closing() ? "1" : "0";
 		}
 		return true;
 	});
@@ -451,6 +479,8 @@ void AptOnlineShell::runInit()
 	{
 		m_barDue = true;
 	}
+	// lane ONLINEMENU-1: the mouse filter is the shell's while it is on top (the Options screen opened over it takes and clears its own)
+	windows().setMouseFilter([this](int kind, float x, float y) { return friendsMouse(kind, x, y); });
 }
 
 void AptOnlineShell::unloadPage(const std::string &name)
@@ -667,7 +697,7 @@ void AptOnlineShell::login()
 	// lobby then knows the running game to rejoin. Another name is another guest. DEVINPR-1 (review of WP-C): only a session issued to this install
 	// is kept; one from before the client sent its install (or another install's) is a fresh guest sign-in, so enforcement and reporting see the install
 	if (m_ctx && !m_ctx->sessionToken.empty() && OnlineLobbyClient::sessionName(m_ctx->sessionToken) == name
-		&& OnlineLobbyClient::sessionInstall(m_ctx->sessionToken) == m_client->options().installId)
+		&& OnlineLobbyClient::sessionMatchesInstall(m_ctx->sessionToken, m_client->options().installId))
 	{
 		windows().note("online-session", "the kept lobby session of " + narrow(name) + " is used");
 		m_client->useSession(m_ctx->sessionToken);
@@ -838,6 +868,10 @@ void AptOnlineShell::registerHome()
 	if (m_client)
 	{
 		m_client->fetchMotd();
+		if (!m_client->relaysAsked())
+		{
+			m_client->fetchRelays(); // lane ONLINEMENU-1: the game server to measure the corner's ping against outside a room
+		}
 	}
 }
 
@@ -988,19 +1022,39 @@ void AptOnlineShell::registerOpenPlay()
 		m_popUp = false;
 	});
 	// lane ONLINE-5: the CONNECTIONS button: the page's OpenConnectionScreen closes the room's panels, loads Connections.swf and sends
-	// OnOpenConnectionsScreen. Retail's screen shows the GameSpy connection (NAT negotiation) between every two players; OpenBFME's players do not
-	// connect to each other (every one talks to the relay), so there is nothing for it to show [S-4550]: the player is told, and the room's panels
-	// come back through the page's own close (StartCloseConnectionsScreen reopens them, OnConnectionsScreenClosed unloads the movie). The handler
-	// used to do nothing: the room's panels went and an empty screen stayed
+	// OnOpenConnectionsScreen. Retail's screen shows the GameSpy connection (NAT negotiation) between every two players [S-4550]
+	// lane ONLINEMENU-1 (the owner, 2026-10-20: option 1): the screen opens and shows each player's link to the room's relay (RelayProbe.h) in RotWK's
+	// grid. The page loads Connections.swf (OpenConnectionScreen); the screen's constructor (BFME2 0x005DB6E2) binds Connection::RedrawGrid and
+	// Connection::OnRetryConnections and draws the grid once
 	pageCommand(page, "AptOnline::CustomMatch::OnOpenConnectionsScreen", [this](const std::string &) {
-		m_closeConnections = 2; // the page's own functions run from the next updates (not inside the button's script)
-		notAvailable("the Connections screen (online games go through the relay server, players do not connect to each other)", "[S-4550]");
+		m_connectionsOpen = true;
+		m_gridDrawn.clear();
+		m_gridCaller.clear();
+		m_gridDue = 2; // the movie's own clips exist from the next updates (not inside the button's script)
 	});
-	pageCommand(page, "AptOnline::CustomMatch::OnClosingConnectionsScreen", [](const std::string &) {});
-	// lane MENUWORK-1 (S-4550): the Connections movie draws its player grid by calling Connection::RedrawGrid (a game.dat name of the screen's own
-	// registrations, not ported: the screen is replaced by the box above); the call reached no handler and was only a "command-unhandled" note
+	pageCommand(page, "AptOnline::CustomMatch::OnClosingConnectionsScreen", [this](const std::string &) {
+		m_connectionsOpen = false;
+		m_gridDrawn.clear();
+		updateNetworkPage();
+	});
+	// BFME2 0x005DB647: every cell, then every player's name and number
 	pageCommand(page, "Connection::RedrawGrid", [this](const std::string &) {
-		windows().note("unported", "Connection::RedrawGrid: the Connections screen is not available in OpenBFME's online play [S-4550]");
+		// the call comes from the Connections movie's own clip (retail keeps the grid's level, + 0x5C): its functions are found from there
+		if (AptCharacterInst *caller = windows().apt().scriptTarget())
+		{
+			m_gridCaller = caller->targetPath();
+		}
+		m_gridDrawn.clear();
+		drawConnectionGrid();
+	});
+	// BFME2 0x005DB36A: TheNAT retries the connections; here: the relay is probed again now and the result reported
+	pageCommand(page, "Connection::OnRetryConnections", [this](const std::string &) {
+		m_probeDueMs = 0;
+		m_linkReported = std::string();
+		if (m_probe)
+		{
+			m_probe->stop();
+		}
 	});
 	// GameSorter (RW 0x98821C ..): the columns of the list
 	pageCommand(page, "GameSorter::OnSortName", [this](const std::string &) { sortBy(0); });
@@ -1665,6 +1719,42 @@ void AptOnlineShell::offerRejoin()
 	});
 }
 
+bool AptOnlineShell::askYesNo(const std::string &key, const std::u16string &title, const std::u16string &text)
+{
+	if (key.empty() || key.find('|') != std::string::npos || box().type() != AptMessageBox::TYPE_NONE || isHidden() || shell().top() != this)
+	{
+		return false;
+	}
+	m_boxes.push_back("ask-" + key + "|" + narrow(text));
+	m_askKey = key;
+	m_askTitle = title;
+	m_askText = text;
+	box().show(AptMessageBox::TYPE_YES_NO, title, text, [this, key](int button) {
+		if (m_askKey == key)
+		{
+			m_askKey.clear();
+		}
+		if (m_answers.size() < 64)
+		{
+			m_answers.push_back(key + (button == AptMessageBox::BUTTON_YES ? "|yes" : "|no"));
+		}
+	});
+	return true;
+}
+
+bool AptOnlineShell::asking(const std::string &key)
+{
+	// another show() keeps the box up with its own texts and callback: the question is gone from the screen without an answer
+	return !key.empty() && m_askKey == key && box().type() == AptMessageBox::TYPE_YES_NO && box().title() == m_askTitle && box().text() == m_askText;
+}
+
+std::vector<std::string> AptOnlineShell::takeAnswers()
+{
+	std::vector<std::string> out;
+	out.swap(m_answers);
+	return out;
+}
+
 void AptOnlineShell::requestJoin(const std::string &id, const std::string &password)
 {
 	// BFME2 0x5A2C77 RequestJoinGame: the request, state 11
@@ -1684,6 +1774,21 @@ void AptOnlineShell::syncModel()
 	model->replaceInfo(m_client->gameInfo());
 	m_syncedSeq = m_client->viewSeq();
 	refreshLobby();
+}
+
+bool AptOnlineShell::createChallenge(const std::string &pid, const std::string &mode, const std::string &password)
+{
+	if (!m_client || !m_client->signedIn() || !m_challengeTarget.empty() || m_client->busy() ||
+		pid.size() != 16 || pid.find_first_not_of("0123456789abcdef") != std::string::npos ||
+		(mode != "normal" && mode != "uber") || password.size() != 32 || password.find_first_not_of("0123456789abcdef") != std::string::npos)
+		return false;
+	m_challengeTarget = pid;
+	m_challengeMode = mode;
+	m_challengePassword = password;
+	if (m_client->inGame()) m_client->leaveGame(); // the caller has explicitly confirmed leaving this room
+	if (m_currentName != "OnlineOpenPlay") loadChildScreen("OnlineOpenPlay");
+	else backToList();
+	return true;
 }
 
 void AptOnlineShell::enterSetup(bool host)
@@ -1789,6 +1894,21 @@ void AptOnlineShell::startPressed()
 			return;
 		}
 	}
+	// lane ONLINEMENU-1 (OpenBFME): a player's Create-a-Hero record the lobby carried could not be read here (OnlineLobbyClient::SlotView::heroProblem):
+	// a START with it would fail on every client, so the host's start is refused, naming the player, until that player chooses again
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const std::string &problem = m_client->slotViews()[(size_t)i].heroProblem;
+		if (!problem.empty())
+		{
+			const std::u16string who = m_client->gameInfo().slots[i].name;
+			systemChat(u"The game can't start: " + who + u"'s Create-a-Hero can't be used. They need to choose another hero or none.");
+			m_startRefusals.push_back("create-a-hero");
+			windows().note("online-start-refused", "slot " + std::to_string(i) + ": " + problem);
+			callPage("EnableButtonPlayGame");
+			return;
+		}
+	}
 	m_startSent = true;
 	m_connecting = true;
 	callPage("PopUpConnectingOpen"); // BFME2 0x59F37C: the connecting pop-up while the game is set up
@@ -1855,12 +1975,23 @@ void AptOnlineShell::pumpClient()
 			{
 				m_state = 5;
 				enterSetup(true);
+				if (!m_challengeTarget.empty())
+				{
+					m_client->sendInvite(m_challengeTarget, "challenge", m_challengeMode);
+					m_challengeTarget.clear();
+					m_challengePassword.clear();
+				}
 			}
 			break;
 		case OnlineLobbyClient::Event::GameJoined:
-			if (m_state == 11)
+			if (m_state == 11 || m_currentName == "OnlineOpenPlay")
 			{
 				enterSetup(false);
+			}
+			else
+			{
+				m_socialJoined = true;
+				if (m_currentName != "OnlineOpenPlay") loadChildScreen("OnlineOpenPlay");
 			}
 			break;
 		case OnlineLobbyClient::Event::GameUpdated:
@@ -1910,10 +2041,16 @@ void AptOnlineShell::pumpClient()
 				environment().services->request(ShellRequest{ ShellAction::OnlineGameStart, m_client->startJson() });
 			}
 			m_box.reset(); // the box goes with the shell (its GuiFX.apt level is the game's, as the LAN lobby's start)
+			closeFriendsPage(); // lane ONLINEMENU-1: the page's gadgets are the shell's window's (never over the loading screen)
 			break;
 		}
 		case OnlineLobbyClient::Event::Refused:
 		{
+			if (e.request == "leave" || e.request == "create")
+			{
+				m_challengeTarget.clear();
+				m_challengePassword.clear();
+			}
 			const std::string record = e.request + ": " + e.code + ": " + narrow(e.text);
 			windows().note("online-refused", record);
 			const bool statusRefusal = e.code == "banned" || e.code == "suspended" || e.code == "muted";
@@ -2031,8 +2168,24 @@ void AptOnlineShell::pumpClient()
 
 void AptOnlineShell::update()
 {
+	if (m_messenger && m_messenger->closing()) m_messenger.reset();
 	prune();
 	pumpClient();
+	// lane ONLINEMENU-1: the FRIENDS button and page draw through the shell's decorator, taken back every frame as the TOURNAMENT panel's (a covering
+	// screen hands the layer's decorator to nobody when it closes)
+	if ((!m_friendsLabel.empty() || friendsPageOpen() || networkPageOpen()) && shell().top() == this && !isHidden())
+	{
+		takeDecorator();
+	}
+	else if (friendsPageOpen() && (shell().top() != this || isHidden()))
+	{
+		// a screen over the shell (Options): the page's gadgets would show through it; the page closes and the host is told (a Cancel event)
+		closeFriendsPage();
+		OpenBFMEPageEvent e;
+		e.kind = OpenBFMEPageEvent::Kind::Cancel;
+		e.key = "covered";
+		m_friendsEvents.push_back(e);
+	}
 	retryNav(); // DEVINPR-1
 	if (level() >= 0 && !isHidden())
 	{
@@ -2097,14 +2250,16 @@ void AptOnlineShell::update()
 	{
 		fillTicker(); // lane ONLINEUX-1: RW 0x9C881D runs every update of the home page (the clock, the counts the host keeps)
 	}
+	updateNetworkPage(); // lane ONLINEMENU-1 (it closes when the screen, the room or the page goes)
+	updateRelayLink();   // lane ONLINEMENU-1
 	if (!m_pages.count("OnlineOpenPlay"))
 	{
 		return;
 	}
-	if (m_closeConnections > 0 && --m_closeConnections == 0)
+	refreshChatPlayers(); // lane ONLINEMENU-1: the Players list's pings follow the links (refilled only when one changed)
+	if (m_connectionsOpen && (m_gridDue == 0 || --m_gridDue == 0))
 	{
-		invokeRoot("StartCloseConnectionsScreen"); // lane ONLINE-5 (S-4550): the room's panels back (the page defines both on _root)
-		invokeRoot("OnConnectionsScreenClosed");
+		drawConnectionGrid(); // a cell whose link changed is drawn again (the grid keeps what it shows: nothing is redrawn while it is unchanged)
 	}
 	switch (m_state)
 	{
@@ -2125,6 +2280,17 @@ void AptOnlineShell::update()
 		break;
 	case 2:
 	case 3:
+		if (m_socialJoined && m_client && m_client->inGame())
+		{
+			m_socialJoined = false;
+			enterSetup(false);
+			break;
+		}
+		if (!m_challengeTarget.empty() && m_client && !m_client->busy())
+		{
+			m_state = 4;
+			break;
+		}
 		if (m_listDirty)
 		{
 			fillGamesList();
@@ -2139,7 +2305,7 @@ void AptOnlineShell::update()
 		{
 			name = m_client->accountName();
 		}
-		const std::string password = m_gamePassword ? narrow(GadgetTextEntryGetText(m_gamePassword)) : std::string();
+		const std::string password = !m_challengeTarget.empty() ? m_challengePassword : m_gamePassword ? narrow(GadgetTextEntryGetText(m_gamePassword)) : std::string();
 		SkirmishGameSetup *model = setupModel();
 		if (!m_client || !model)
 		{
@@ -2159,7 +2325,7 @@ void AptOnlineShell::update()
 		for (int s = 1; s < MAX_SLOTS; ++s)
 		{
 			info.slots[s] = SkirmishGameSlot();
-			info.slots[s].state = SLOT_OPEN;
+			info.slots[s].state = !m_challengeTarget.empty() && s > 1 ? SLOT_CLOSED : SLOT_OPEN;
 		}
 		m_client->createGame(name, password, info, 0);
 		m_state = 5;
@@ -2182,6 +2348,10 @@ void AptOnlineShell::update()
 WindowMsgHandledType AptOnlineShell::gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2)
 {
 	prune();
+	if (m_friendsPage && m_friendsPage->message(msg, data1, data2))
+	{
+		return MSG_HANDLED; // lane ONLINEMENU-1: one of the FRIENDS page's gadgets
+	}
 	GameWindow *gadget = reinterpret_cast<GameWindow *>(data1);
 	if (m_hub && m_hub->gadgetMessage(gadget, msg, data1, data2))
 	{
@@ -2235,14 +2405,14 @@ void AptOnlineShell::lobbyChanged()
 		const SkirmishGameSlot &a = now.slots[i];
 		const SkirmishGameSlot &b = was.slots[i];
 		const bool changed = a.state != b.state || a.playerTemplate != b.playerTemplate || a.color != b.color || a.startPos != b.startPos ||
-			a.teamNumber != b.teamNumber;
+			a.teamNumber != b.teamNumber || a.handicap != b.handicap;
 		if (!changed)
 		{
 			continue;
 		}
 		if (i == m_client->localSlot())
 		{
-			m_client->setOwnSlot(a.playerTemplate, a.color, a.startPos, a.teamNumber);
+			m_client->setOwnSlot(a.playerTemplate, a.color, a.startPos, a.teamNumber, a.handicap); // lane ONLINEMENU-1: the handicap too (S-4552)
 		}
 		else if (m_client->amIHost() && !b.isHuman())
 		{
@@ -2250,7 +2420,7 @@ void AptOnlineShell::lobbyChanged()
 			{
 				continue; // a player's place is taken by a join, never set
 			}
-			m_client->setOtherSlot(i, a.state, a.playerTemplate, a.color, a.startPos, a.teamNumber);
+			m_client->setOtherSlot(i, a.state, a.playerTemplate, a.color, a.startPos, a.teamNumber, a.handicap);
 		}
 	}
 }
@@ -2314,12 +2484,593 @@ void AptOnlineShell::onReadyPress(const std::string &argument)
 
 bool AptOnlineShell::applySlotHero(int slot, const CreateAHeroHero *hero)
 {
-	(void)slot;
-	if (hero)
+	// lane ONLINEMENU-1: the owner's applySlotHero in an online game (BFME2 MpGameSetup owner vslot 6), as AptLanLobby's: only the local slot's hero, sent
+	// to the lobby (POST .../slot {"cah"}); the room's next view puts it on the slot for every player, and the START carries it (S-4076 closed)
+	if (!m_client || !m_client->inGame() || slot != m_client->localSlot())
 	{
-		windows().note("create-a-hero-lobby", "a Create-a-Hero in an online game: the lobby service does not carry the record yet [S-4076]");
+		return false;
+	}
+	std::string error;
+	if (!m_client->setOwnCreateAHero(hero, &error))
+	{
+		windows().note("create-a-hero-lobby", "the hero was not sent: " + error);
+		return false;
+	}
+	return true;
+}
+
+// ---- lane ONLINEMENU-1: the FRIENDS page (NOT RETAIL; see AptOnlineShell.h) ---------------------------------------------------------------------------
+
+void AptOnlineShell::takeDecorator()
+{
+	if (AptGadgetLayer *layer = windows().gadgetLayer())
+	{
+		layer->setDecorator([this](GadgetDrawList &out) { decorateAll(out); }, this);
+	}
+}
+
+void AptOnlineShell::decorateAll(GadgetDrawList &out)
+{
+	if (isHidden() || shell().top() != this)
+	{
+		return; // nothing of the shell's while another screen covers it (the in-game HUD draws through the same layer)
+	}
+	if (m_hub && m_hub->decorating())
+	{
+		m_hub->drawPanel(out);
+	}
+	if (networkPageOpen())
+	{
+		m_networkPage->decorate(out);
+	}
+	if (friendsPageOpen())
+	{
+		m_friendsPage->decorate(out);
+	}
+	if (!m_friendsLabel.empty())
+	{
+		// a button of the menus' own look (OpenBFME's: the frame and lettering of Options.apt's page, OpenBFMEOptionsPage::frame / text), the pointed
+		// one brighter, beside the frame's MESSENGER
+		GadgetDrawCommand c;
+		c.kind = GadgetDrawCommand::Kind::FillRect;
+		c.window = "OpenBFMEFriends";
+		c.x0 = kFriendsButtonLeft;
+		c.y0 = kFriendsButtonTop;
+		c.x1 = kFriendsButtonRight;
+		c.y1 = kFriendsButtonBottom;
+		c.color = m_friendsPressed ? 0xF0182028u : 0xE0050607u;
+		out.commands.push_back(c);
+		OpenBFMEOptionsPage::frame(out, kFriendsButtonLeft, kFriendsButtonTop, kFriendsButtonRight, kFriendsButtonBottom, UnicodeString());
+		OpenBFMEOptionsPage::text(out, m_friendsLabel, kFriendsButtonLeft, kFriendsButtonTop + 9, 14,
+			m_friendsHot || friendsPageOpen() ? OpenBFMEOptionsPage::kTabHotColor : OpenBFMEOptionsPage::kTabColor, kFriendsButtonRight - kFriendsButtonLeft, true);
+	}
+}
+
+bool AptOnlineShell::openFriendsPage(const OpenBFMEPageSpec &spec, std::string *error)
+{
+	AptGadgetLayer *layer = windows().gadgetLayer();
+	if (!layer || !ownerWindow())
+	{
+		if (error)
+		{
+			*error = "no gadget layer";
+		}
+		return false;
+	}
+	if (!m_friendsPage)
+	{
+		m_friendsPage = std::make_unique<OpenBFMEOptionsPage>(*layer, ownerWindow());
+		m_friendsPage->setSink([this](const OpenBFMEPageEvent &e) {
+			if (m_friendsEvents.size() < 256)
+			{
+				m_friendsEvents.push_back(e);
+			}
+		});
+	}
+	OpenBFMEPageSpec s = spec;
+	s.backdrop = true;
+	if (!m_friendsPage->show(s, error))
+	{
+		return false;
+	}
+	takeDecorator();
+	return true;
+}
+
+void AptOnlineShell::closeFriendsPage()
+{
+	if (m_friendsPage)
+	{
+		m_friendsPage->hide();
+	}
+}
+
+std::vector<OpenBFMEPageEvent> AptOnlineShell::takeFriendsEvents()
+{
+	std::vector<OpenBFMEPageEvent> out;
+	out.swap(m_friendsEvents);
+	return out;
+}
+
+bool AptOnlineShell::friendsMouse(int kind, float x, float y)
+{
+	if (isHidden() || shell().top() != this)
+	{
+		return false;
+	}
+	if (friendsPageOpen())
+	{
+		if (m_friendsPage->mouse(kind, x, y))
+		{
+			return true;
+		}
+		// the page's band is the page's: a press there never reaches the online page under it. ONLINEMENU-1 (the friends video, 2026-10-20): its own
+		// gadgets (the friend-code entry, the lists) still take it, from the gadget layer here; returning true kept it from them as well, so a
+		// player could not click into the entry or a list
+		if (kind != 0 && x >= OpenBFMEOptionsPage::kTabsLeft - 8 && x <= OpenBFMEOptionsPage::kPanelRight + 8 && y >= OpenBFMEOptionsPage::kTop - 8 &&
+			y <= OpenBFMEOptionsPage::kBottom + 8)
+		{
+			if (AptGadgetLayer *layer = windows().gadgetLayer())
+			{
+				layer->mouseButton(kind == 1);
+			}
+			return true;
+		}
+	}
+	else if (networkPageOpen())
+	{
+		if (m_networkPage->mouse(kind, x, y))
+		{
+			return true;
+		}
+		// the network page has no gadgets: a press in its band is its own (the grid's buttons under it stay out of reach)
+		if (kind != 0 && x >= OpenBFMEOptionsPage::kTabsLeft - 8 && x <= OpenBFMEOptionsPage::kPanelRight + 8 && y >= OpenBFMEOptionsPage::kTop - 8 &&
+			y <= OpenBFMEOptionsPage::kBottom + 8)
+		{
+			return true;
+		}
+	}
+	if (m_friendsLabel.empty())
+	{
+		m_friendsHot = m_friendsPressed = false;
+		return false;
+	}
+	const bool inside = x >= kFriendsButtonLeft && x <= kFriendsButtonRight && y >= kFriendsButtonTop && y <= kFriendsButtonBottom;
+	if (kind == 0)
+	{
+		m_friendsHot = inside;
+		return false;
+	}
+	if (kind == 1 && inside)
+	{
+		m_friendsPressed = true;
+		return true;
+	}
+	if (kind == 2 && m_friendsPressed)
+	{
+		m_friendsPressed = false;
+		if (inside)
+		{
+			OpenBFMEPageEvent e;
+			e.kind = OpenBFMEPageEvent::Kind::Entry;
+			e.key = "friends_button";
+			m_friendsEvents.push_back(e);
+		}
+		return true;
 	}
 	return false;
+}
+
+// ---- lane ONLINEMENU-1: the Connections screen on the relay ---------------------------------------------------------------------------------------------
+
+namespace
+{
+// BFME2 0x005DB335 (decomp Common/Rva005DB335Get.cpp): a ping's band against TheGameSpyConfig's cut-offs, getPingCutoffGood / getPingCutoffBad, whose
+// defaults are 300 and 600 ms (decomp GameNetwork/GameSpy/GSConfig.cpp; GameSpy's config file could change them: OpenBFME keeps the defaults)
+const char *pingFrame(int ms)
+{
+	if (ms < 300)
+	{
+		return "_good";
+	}
+	return ms >= 600 ? "_bad" : "_warning";
+}
+} // namespace
+
+std::string AptOnlineShell::connectionFrame(int row, int column) const
+{
+	// BFME2 0x005DB512 UpdateGrid: the cell of two players. OpenBFME: the two reach each other through the relay, so their link is the sum of their two
+	// round trips to it (INFERENCE: what a datagram between them crosses), banded as retail banded a ping; a player whose client could not reach the
+	// relay is a failed cell (retail state 4); one that has not reported yet is waiting (state 1). No cell for a slot without a human (retail state 0)
+	if (!m_client || row == column)
+	{
+		return "_empty";
+	}
+	const auto &views = m_client->slotViews();
+	const OnlineLobbyClient::SlotView &a = views[(size_t)row];
+	const OnlineLobbyClient::SlotView &b = views[(size_t)column];
+	if (a.state != "player" || b.state != "player")
+	{
+		return "_empty";
+	}
+	if (m_client->roomRelay().empty())
+	{
+		return "_failed"; // no relay: online games cannot start (no_relay), and nobody reaches anybody
+	}
+	if (!a.linkKnown || !b.linkKnown)
+	{
+		return "_waiting";
+	}
+	if (a.rttMs < 0 || b.rttMs < 0)
+	{
+		return "_failed";
+	}
+	return pingFrame(a.rttMs + b.rttMs);
+}
+
+void AptOnlineShell::drawConnectionGrid()
+{
+	if (!m_connectionsOpen || !m_client || !m_client->inGame() || level() < 0 || m_gridCaller.empty())
+	{
+		return; // the grid is drawn once the movie asked for it (Connection::RedrawGrid names its clip), then whenever a cell changes
+	}
+	std::string signature;
+	for (int row = 0; row < MAX_SLOTS; ++row)
+	{
+		for (int column = 0; column < MAX_SLOTS; ++column)
+		{
+			signature += connectionFrame(row, column) + ",";
+		}
+	}
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		signature += narrow(m_client->gameInfo().slots[i].name) + ";";
+	}
+	if (signature == m_gridDrawn)
+	{
+		return;
+	}
+	m_gridDrawn = signature;
+	// BFME2 0x005DB3B3 UpdateSlotName: a human slot's name and its number (idx + 1), nothing for the others
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const SkirmishGameSlot &s = m_client->gameInfo().slots[i];
+		const bool human = m_client->slotViews()[(size_t)i].state == "player";
+		windows().setAptText("APT:ConnectionPlayerName_" + std::to_string(i), human ? OnlineLobbyClient::utf16ToUtf8(s.name) : std::string());
+		windows().setAptText("APT:ConnectionPlayerNum_" + std::to_string(i), human ? std::to_string(i + 1) : std::string());
+	}
+	// the cells: the movie's UpdateConnection_<row>_<column>(frame) (retail invokes it in the grid's level)
+	for (int row = 0; row < MAX_SLOTS; ++row)
+	{
+		for (int column = 0; column < MAX_SLOTS; ++column)
+		{
+			const std::string fn = "UpdateConnection_" + std::to_string(row) + "_" + std::to_string(column);
+			const std::string frame = connectionFrame(row, column);
+			// RW's UpdateConnection_<row>_<column>(frame) is the movie's own: each cell clip of the grid (Connections.apt Main.Grid.<row>.<column>, the
+			// clip that called Connection::RedrawGrid is the screen) builds its function from its name and plays the frame it is given. This port
+			// plays the cell clip to that frame itself: the same effect, without depending on how the movie names the function (S-4550)
+			const std::string base = m_gridCaller.rfind("_level", 0) == 0 && m_gridCaller.find('.') != std::string::npos ? m_gridCaller.substr(m_gridCaller.find('.') + 1) : m_gridCaller;
+			const std::string cell = base + ".Main.Grid." + std::to_string(row) + "." + std::to_string(column);
+			std::string err;
+			if (!windows().invokeASAt(level(), cell, "gotoAndPlay", { frame }, nullptr, &err))
+			{
+				windows().note("movie-function-missing", "Connections cell " + cell + " (" + fn + "): " + err);
+				m_gridDrawn.clear();
+				return;
+			}
+			m_gridFrames[(size_t)(row * MAX_SLOTS + column)] = frame;
+		}
+	}
+}
+
+void AptOnlineShell::updateRelayLink()
+{
+	// the local player's link to the relay: in a staging room the room's relay (measured on entering, again a minute after each measurement and at
+	// once on the Connections screen's Refresh; reported to the lobby (POST .../link) the first time and whenever its round trip moves by a 50 ms step
+	// or its loss changes, so a steady link costs no requests); on the other online pages the relay the lobby names (fetchRelays), for the corner's
+	// ping only (nothing reported). Nothing while the online screens are covered (a game, Options)
+	std::string target;
+	const bool room = m_client && m_client->inGame();
+	if (m_client && m_client->signedIn() && shell().top() == this && !isHidden())
+	{
+		target = room ? m_client->roomRelay() : m_client->lobbyRelay();
+		if (!m_client->inGame() && target.empty() && !m_client->relayLookupError().empty() && m_relayErrorNoted != m_client->relayLookupError())
+		{
+			m_relayErrorNoted = m_client->relayLookupError();
+			windows().note("online-connections", "no relay to measure the ping against: " + m_relayErrorNoted);
+		}
+	}
+	if (target.empty())
+	{
+		// covered (Options, a game) or signed out: the measurement pauses; what was measured and reported stays (Sol: a visit to Options measured
+		// and reported again on the way back)
+		if (m_probe && m_probe->running())
+		{
+			m_probe->stop();
+		}
+		return;
+	}
+	// entering or leaving a room measures again at once (a room's players wait for each other's reports, also when it is the lobby's relay)
+	const std::string key = std::string(room ? "room " : "lobby ") + target;
+	if (key != m_probeTarget)
+	{
+		// a new relay (or none): the last one's measurement says nothing about it
+		m_probeTarget = key;
+		if (m_probe)
+		{
+			m_probe->stop();
+		}
+		m_probe.reset();
+		m_linkReported.clear();
+		m_probeDueMs = 0;
+		m_probeDoneMs = 0;
+		m_hasLastLink = false;
+		if (m_client)
+		{
+			m_client->forgetOwnLink();
+		}
+	}
+	const std::uint64_t now = NetMilliseconds();
+	if (!m_probe)
+	{
+		m_probe = std::make_unique<RelayProbe>();
+	}
+	if (!m_probe->running() && now >= m_probeDueMs)
+	{
+		std::string error;
+		if (!m_probe->start(target, now, &error))
+		{
+			windows().note("online-connections", "the relay could not be probed: " + error);
+			m_probeDueMs = now + 60000;
+			return;
+		}
+	}
+	const bool wasRunning = m_probe->running();
+	m_probe->update(now);
+	if (wasRunning && !m_probe->running() && m_probe->hasResult())
+	{
+		const RelayProbe::Result &r = m_probe->result();
+		m_probeDueMs = now + 60000;
+		m_probeDoneMs = now;
+		m_lastLink = r;
+		m_hasLastLink = true;
+		m_client->noteOwnLink(r.rttMs, r.lossPct); // the corner's ping (GodotAptPlayer online_status) follows every measurement
+		// Sol r1 (follow-up): a cell bands the SUM of two players' round trips, so a change inside one player's own band can move a cell: the report
+		// follows each 50 ms step of the round trip and every change of the loss (still at most one report a minute, after a measurement)
+		const std::string band = r.rttMs < 0 ? std::string("failed") : std::to_string(r.rttMs / 50) + "/" + std::to_string(r.lossPct);
+		windows().note("online-connections", "relay " + target + (room ? "" : " (the lobby's)") + ": " + (r.rttMs < 0 ? std::string("no answer") : std::to_string(r.rttMs) + " ms") +
+			", " + std::to_string(r.lossPct) + "% lost (" + std::to_string(r.answered) + " of " + std::to_string(r.sent) + ")");
+		if (room && band != m_linkReported)
+		{
+			m_linkReported = band;
+			m_client->reportLink(r.rttMs, r.rttMs < 0 ? 100 : r.lossPct);
+		}
+	}
+}
+
+namespace
+{
+// the page's and the Players list's colours for a ping: retail's bands (pingFrame), a loss of 10% or more a band worse, 30% or more bad
+constexpr Color kPingGood = 0xFF6CD66Cu, kPingFair = 0xFFE8CC50u, kPingBad = 0xFFE8604Cu, kPingUnknown = 0xFFA8B4BCu;
+Color pingColor(int ms, int lossPct)
+{
+	int band = ms < 300 ? 0 : ms < 600 ? 1 : 2;
+	if (lossPct >= 30)
+	{
+		band = 2;
+	}
+	else if (lossPct >= 10)
+	{
+		band = std::max(band, 1);
+	}
+	return band == 0 ? kPingGood : band == 1 ? kPingFair : kPingBad;
+}
+UnicodeString msText(int ms)
+{
+	return wide(std::to_string(ms) + " ms");
+}
+} // namespace
+
+UnicodeString AptOnlineShell::pingText(int slot, Color *color) const
+{
+	if (color)
+	{
+		*color = kPingUnknown;
+	}
+	if (!m_client || !m_client->inGame() || m_client->roomRelay().empty() || slot < 0 || slot >= MAX_SLOTS)
+	{
+		return UnicodeString();
+	}
+	const auto &views = m_client->slotViews();
+	if (views[(size_t)slot].state != "player")
+	{
+		return UnicodeString();
+	}
+	const int me = m_client->localSlot();
+	// a player's link to the relay: 0 not measured yet, 1 no answer, 2 measured (`rtt`, `loss`); the local player's own from its latest measurement
+	auto link = [&](int s, int &rtt, int &loss) {
+		if (s == me && m_hasLastLink)
+		{
+			rtt = m_lastLink.rttMs; // the last completed measurement (a running one has no result yet: Sol)
+			loss = m_lastLink.lossPct;
+		}
+		else if (views[(size_t)s].linkKnown)
+		{
+			rtt = views[(size_t)s].rttMs;
+			loss = views[(size_t)s].lossPct;
+		}
+		else
+		{
+			return 0;
+		}
+		return rtt < 0 ? 1 : 2;
+	};
+	int rtt = 0, loss = 0;
+	int state = link(slot, rtt, loss);
+	if (state == 2 && slot != me)
+	{
+		int myRtt = 0, myLoss = 0;
+		state = me >= 0 && me < MAX_SLOTS ? link(me, myRtt, myLoss) : 0;
+		rtt += myRtt;
+		loss = 100 - (100 - loss) * (100 - myLoss) / 100;
+	}
+	if (state == 0)
+	{
+		return u"...";
+	}
+	if (color)
+	{
+		*color = state == 1 ? kPingBad : pingColor(rtt, loss);
+	}
+	return state == 1 ? UnicodeString(u"no link") : msText(rtt);
+}
+
+OpenBFMEPageSpec AptOnlineShell::networkSpec() const
+{
+	OpenBFMEPageSpec spec;
+	spec.tabsHeader = u"NETWORK";
+	spec.tabs = { u"REFRESH NOW" };
+	spec.tab = -1; // a button, never the chosen tab
+	spec.panelHeader = u"PING";
+	spec.backdrop = true;
+	spec.note = u"A game's messages go through the game server, so a player's ping to you is their ping to it plus yours. Below 300 ms plays "
+				u"smoothly; from 600 ms orders take noticeably longer to happen.";
+	auto add = [&](OpenBFMEPageRow::Kind kind, const std::string &key, const UnicodeString &label, const UnicodeString &value, int column,
+				   const UnicodeString &help) {
+		OpenBFMEPageRow row;
+		row.kind = kind;
+		row.key = key;
+		row.label = label;
+		row.valueText = value;
+		row.column = column;
+		row.help = help;
+		spec.rows.push_back(row);
+	};
+	using K = OpenBFMEPageRow::Kind;
+	add(K::Section, "you", u"YOU", UnicodeString(), 0, UnicodeString());
+	const int lobby = m_client ? m_client->lobbyRttMs() : -1;
+	add(K::Text, "lobby", u"Lobby response", lobby >= 0 ? msText(lobby) : UnicodeString(u"not measured yet"), 0,
+		u"How long the lobby takes to answer the menus (game lists, chat, ready): the fastest of its last answers, connection setup included. Not "
+		u"part of a game.");
+	UnicodeString relay, loss = u"-", when = u"-";
+	const bool measured = m_hasLastLink && m_probeDoneMs != 0;
+	if (!m_client || m_client->roomRelay().empty())
+	{
+		relay = u"none: this lobby cannot start games";
+	}
+	else if (m_probe && m_probe->running() && !measured)
+	{
+		relay = u"measuring...";
+	}
+	else if (measured)
+	{
+		const RelayProbe::Result &r = m_lastLink;
+		relay = r.rttMs < 0 ? UnicodeString(u"no answer") : msText(r.rttMs);
+		loss = wide(std::to_string(r.lossPct) + "%");
+		const std::uint64_t now = NetMilliseconds();
+		when = m_probe && m_probe->running() ? UnicodeString(u"measuring again...") : wide(std::to_string((now - m_probeDoneMs) / 1000) + " s ago");
+	}
+	else
+	{
+		relay = u"not measured yet";
+	}
+	add(K::Text, "relay", u"Game server", relay, 0, u"Your ping: the round trip to the relay that carries the game's messages.");
+	add(K::Text, "loss", u"Lost on the way", loss, 0, u"The share of the relay's test messages that got no answer (5 each minute).");
+	add(K::Text, "measured", u"Measured", when, 0, u"Measured on entering the room, then every minute; REFRESH NOW measures again.");
+	add(K::Section, "players", u"PING TO YOU", UnicodeString(), 1, UnicodeString());
+	bool any = false;
+	if (m_client && m_client->inGame())
+	{
+		for (int slot = 0; slot < MAX_SLOTS; ++slot)
+		{
+			if (slot == m_client->localSlot() || m_client->slotViews()[(size_t)slot].state != "player")
+			{
+				continue;
+			}
+			any = true;
+			UnicodeString value = pingText(slot, nullptr);
+			const OnlineLobbyClient::SlotView &v = m_client->slotViews()[(size_t)slot];
+			if (v.linkKnown && v.rttMs >= 0 && v.lossPct > 0)
+			{
+				value += wide(", " + std::to_string(v.lossPct) + "% lost");
+			}
+			if (value == u"...")
+			{
+				value = u"measuring...";
+			}
+			add(K::Text, "p" + std::to_string(slot), m_client->gameInfo().slots[slot].name, value, 1, u"Their ping to the game server plus yours.");
+		}
+	}
+	if (!any)
+	{
+		add(K::Text, "p-", u"No other players yet", UnicodeString(), 1, UnicodeString());
+	}
+	return spec;
+}
+
+void AptOnlineShell::updateNetworkPage()
+{
+	const bool wanted = m_connectionsOpen && m_client && m_client->inGame() && shell().top() == this && !isHidden();
+	if (!wanted)
+	{
+		if (networkPageOpen())
+		{
+			m_networkPage->hide();
+		}
+		m_networkRows.clear();
+		return;
+	}
+	AptGadgetLayer *layer = windows().gadgetLayer();
+	if (!layer || !ownerWindow())
+	{
+		return;
+	}
+	if (!m_networkPage)
+	{
+		m_networkPage = std::make_unique<OpenBFMEOptionsPage>(*layer, ownerWindow());
+		m_networkPage->setSink([this](const OpenBFMEPageEvent &e) {
+			if (e.kind == OpenBFMEPageEvent::Kind::Tab && e.value == 0)
+			{
+				// REFRESH NOW: as the screen's own button (Connection::OnRetryConnections), the relay is measured again now
+				m_probeDueMs = 0;
+				m_linkReported = std::string();
+				if (m_probe)
+				{
+					m_probe->stop();
+				}
+			}
+		});
+	}
+	const OpenBFMEPageSpec spec = networkSpec();
+	std::string keys;
+	for (const OpenBFMEPageRow &row : spec.rows)
+	{
+		keys += row.key + ",";
+	}
+	if (!networkPageOpen() || keys != m_networkRows)
+	{
+		if (m_networkRows == "!" + keys)
+		{
+			return; // it could not be shown (noted once)
+		}
+		std::string error;
+		if (!m_networkPage->show(spec, &error))
+		{
+			windows().note("online-connections", "the network page could not be shown: " + error);
+			m_networkRows = "!" + keys;
+			return;
+		}
+		m_networkRows = keys;
+		takeDecorator();
+		return;
+	}
+	for (const OpenBFMEPageRow &row : spec.rows)
+	{
+		if (row.kind == OpenBFMEPageRow::Kind::Text)
+		{
+			m_networkPage->setRow(row); // the values change in place (no rebuild, the pointed row's help stays)
+		}
+	}
 }
 
 void AptOnlineShell::onKickPlayer(const std::string &argument)

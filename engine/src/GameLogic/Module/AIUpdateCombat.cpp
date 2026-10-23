@@ -10,7 +10,12 @@
 #include "Common/NumericState.h"
 #include "Common/Thing/RawModuleData.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/AI/AIClosestEnemy.h"
+#include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/Module/DozerAIUpdate.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
+#include "GameLogic/Weapon.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/Combat/CombatState.h"
@@ -109,6 +114,7 @@ bool ieq(const std::string &a, const char *b)
 void AIUpdateInterface::readCombatSettings(const ModuleData *data)
 {
 	m_combat = CombatSettings();
+	m_attackInfoGeneration = 0xFFFFFFFFu; // lane TARGET-1: AI + 0x70 is looked up again from the (new) name
 	m_minCowerTime = m_maxCowerTime = 0; // lane MODULES-3: RW ctor 0x66E8FF (+ 0x34 / + 0x30 = 0)
 	const RawModuleData *raw = dynamic_cast<const RawModuleData *>(data);
 	if (!raw)
@@ -154,6 +160,10 @@ void AIUpdateInterface::readCombatSettings(const ModuleData *data)
 		else if (ieq(name, "StopChaseDistance"))
 		{
 			m_combat.stopChaseDistance = strtofPortable(tok[0].c_str(), nullptr); // retail: sscanf "%f" (lane WIN-1)
+		}
+		else if (ieq(name, "HoldGroundCloseRangeDistance"))
+		{
+			m_combat.holdGroundCloseRangeDistance = strtofPortable(tok[0].c_str(), nullptr); // lane TARGET-1: + 0x28, parseReal (sscanf "%f")
 		}
 		else if (ieq(name, "StandGround"))
 		{
@@ -289,6 +299,12 @@ bool AIUpdateInterface::aiAttackObject(Object *victim, CommandSourceType source,
 	if (Weapon *cur = w->currentWeapon())
 	{
 		cur->setMaxShotCount(maxShotsToFire);
+		// lane TARGET-1, RW 0x66BE7D .. 0x66BE99: a player's or a script's order (source 0 / 1) with a MeleeWeapon current weapon (RW 0x441B59) remembers its
+		// target (AI + 0x1A4): the mood scan answers it while it lives (RW 0x66854F)
+		if ((source == CMD_FROM_PLAYER || source == CMD_FROM_SCRIPT) && cur->getTemplate() && cur->getTemplate()->m_meleeWeapon)
+		{
+			m_orderedMeleeTarget = victim->getID();
+		}
 	}
 	wakeUpNow();
 	return true;
@@ -438,17 +454,6 @@ void AIUpdateInterface::onDie()
 	getObject()->setModelConditionState(modelConditionBit("MOVING"), false);
 }
 
-unsigned AIUpdateInterface::moodCheckInterval() const
-{
-	const Object &obj = *getObject();
-	const CombatNames::Status &st = CombatNames::statuses();
-	if (!obj.logic().combat().autoAcquireEnabled() || m_combat.autoAcquire == 0 || (m_combat.autoAcquire & 4u) || !obj.getWeapons() || obj.testStatus((unsigned)st.hordeMember))
-	{
-		return 0; // no AutoAcquire flag, "No", no weapon, or a horde member (its horde decides)
-	}
-	return m_combat.moodAttackCheckRate ? m_combat.moodAttackCheckRate : 3u;
-}
-
 // ---- lane SCRIPT-3: the attitude ----
 
 void AIUpdateInterface::setAttitude(int attitude)
@@ -540,102 +545,324 @@ unsigned AIUpdateInterface::moodAdjustment(int action) const
 	}
 }
 
-// ZH getNextMoodTarget (the vision range scan): the nearest attackable enemy within the template's VisionRange
-Object *AIUpdateInterface::nextMoodTarget()
+// ---- lane TARGET-1: the mood scan, RotWK's getNextMoodTarget (RW 0x66844A; ZH AIUpdate.cpp getNextMoodTarget is the donor of the shape) ----
+
+const AttackPriorityInfo *AIUpdateInterface::attackInfo()
+{
+	// AI + 0x70: the AI constructor's getAttackInfo of the module data's AttackPriority (+ 0x44, "DefaultAttackPriority" from the module data constructor
+	// RW 0x66E8FF), null for an empty name (RW 0x66ECFE); looked up again when the script engine's table was reset (the entries are made again with the
+	// same values)
+	ScriptEngine &se = getObject()->logic().scriptEngine();
+	if (m_attackInfoGeneration != se.attackPriorities().generation())
+	{
+		m_attackInfoGeneration = se.attackPriorities().generation();
+		m_attackInfo = m_combat.attackPriority.empty() ? nullptr : se.attackPriorities().getAttackInfo(m_combat.attackPriority);
+	}
+	return m_attackInfo;
+}
+
+// RW 0x662DD9 (ZH resetNextMoodCheckTime, RotWK's: never earlier): AIData ForceIdleMSEC frames from now unless the check is later already, and the next check
+// randomly offset
+void AIUpdateInterface::resetNextMoodCheckTime()
+{
+	const unsigned at = getObject()->logic().settings().forceIdleFrames + frame();
+	if (m_nextMoodCheck < at)
+	{
+		m_nextMoodCheck = at;
+	}
+	m_randomlyOffsetMoodCheck = true;
+}
+
+// RW 0x662DB3 (ZH wakeUpAndAttemptToTarget): an idle unit (AI vslot 0x1B8) checks now, randomly offset
+void AIUpdateInterface::wakeUpAndAttemptToTarget()
+{
+	if (isIdle())
+	{
+		m_nextMoodCheck = frame();
+		m_randomlyOffsetMoodCheck = true;
+	}
+}
+
+namespace
+{
+// the mood scan's optional filter (vtable 0xC0F3AC, allow RW 0x662E2B; passed for a human player's unit): the current weapon (RW 0x68B58C(0)) reaches the
+// candidate now (RW 0x6CC653(me, it, 0, 1)), or it is a MeleeWeapon (+ 0x125) or a ChaseWeapon (+ 0x126), or the player is not human, or the unit has no AI,
+// the AI byte + 0x3C1, or the charge order (Object + 0x251, Locomotor's isChargeOrdered); no weapon: every candidate. Only the scored search uses it.
+class MoodTargetFilter : public PartitionFilter
+{
+public:
+	explicit MoodTargetFilter(Object &me)
+		: m_me(me)
+	{
+	}
+	bool allow(Object &obj) override
+	{
+		const ObjectWeapons *w = m_me.getWeapons();
+		const Weapon *cur = w ? w->currentWeapon() : nullptr;
+		if (!cur)
+		{
+			return true;
+		}
+		if (w->isWithinAttackRange(obj, 0.0f, true))
+		{
+			return true;
+		}
+		if (cur->getTemplate() && (cur->getTemplate()->m_meleeWeapon || cur->getTemplate()->m_chaseWeapon))
+		{
+			return true;
+		}
+		const Player *p = m_me.getControllingPlayer();
+		if (p && p->getPlayerType() != PLAYER_HUMAN)
+		{
+			return true;
+		}
+		// the AI's + 0x3C1 byte (written by no ported code) and the charge order (Locomotor + 0x251 for the object) are not modelled here: false (S-326)
+		return !m_me.getAIUpdateInterface();
+	}
+
+private:
+	Object &m_me;
+};
+
+bool teamAttacksCommonTarget(const Team *t)
+{
+	return t && t->getPrototype() && t->getPrototype()->getDict().getBool("teamAttackCommonTarget"); // prototype + 0x30 -> + 0x216
+}
+} // namespace
+
+Object *AIUpdateInterface::getNextMoodTarget(bool calledByAI, bool calledDuringIdle)
 {
 	Object &obj = *getObject();
-	if (moodCheckInterval() == 0)
+	GameLogic &logic = obj.logic();
+	if (!logic.combat().autoAcquireEnabled())
+	{
+		return nullptr; // the port's switch for the movement sweeps (not retail state)
+	}
+	static const int kAbilityBusy = CombatNames::status("SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING"); // 0x46
+	static const int kNoAutoAcquire = CombatNames::status("NO_AUTO_ACQUIRE");                           // 0x17
+	static const int kHordeMember = CombatNames::status("HORDE_MEMBER");                                // 0x26
+	static const int kIgnoreAi = CombatNames::status("IGNORE_AI_COMMAND");                              // 0x4A
+	static const int kStandGround = CombatNames::status("STAND_GROUND");                                // 0x44
+	static const int kFleeOffMap = CombatNames::status("FLEE_OFF_MAP");                                 // 0x32
+	static const int kContesting = CombatNames::status("CONTESTING_BUILDING");                          // 0x25
+	static const int kHidden = CombatNames::status("HIDDEN");                                           // 0x10
+	static const int kInsideGarrison = CombatNames::status("INSIDE_GARRISON");                          // 0x3A
+	static const int kJustBuilt = CombatNames::modelCondition("JUST_BUILT");                            // + 0x124 bit 26
+	static const int kComingOut = CombatNames::modelCondition("COMING_OUT_OF_FACTORY");                 // + 0x134 bit 13
+	static const int kDozer = CombatNames::kindOf("DOZER");                                             // + 0x109 bit 6
+	static const int kHorde = CombatNames::kindOf("HORDE");                                             // + 0x115 bit 5
+	static const int kAttackNeedsLos = CombatNames::kindOf("ATTACK_NEEDS_LINE_OF_SIGHT");               // + 0x10F bit 3
+	const unsigned kCloseRange = 7; // TheWeaponConditionNames (RW 0xDA1328) CLOSE_RANGE
+	// RW 0x66849D .. 0x6684EC: dead (+ 0x458 bit 0; bit 3 is never set in the port), SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING, the AI's temporary state
+	// machine (+ 0x34: BeginTemporaryStateMachine RW 0x6630A9, which nothing calls in the port, S-1222), NO_AUTO_ACQUIRE, HORDE_MEMBER, IGNORE_AI_COMMAND,
+	// the model conditions JUST_BUILT (lane SPELL-3: a castle member fading in) and COMING_OUT_OF_FACTORY: nothing
+	if (obj.isEffectivelyDead() || obj.testStatus((unsigned)kAbilityBusy) || obj.testStatus((unsigned)kNoAutoAcquire) || obj.testStatus((unsigned)kHordeMember) ||
+		obj.testStatus((unsigned)kIgnoreAi) || obj.testModelCondition(kJustBuilt) || obj.testModelCondition(kComingOut))
 	{
 		return nullptr;
 	}
-	// lane PLAY-4 r1, RW 0x66849D .. 0x6684EC (the gate's first tests; FACT-A ported 0x17 for the hold-fire toggle): an object that is NO_AUTO_ACQUIRE
-	// (status 0x17: a special ability sets it while it runs, RW 0x852F3D; a trebuchet's hold-fire toggle, MSG_TOGGLE_NO_AUTO_ACQUIRE),
-	// SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING (0x46) or IGNORE_AI_COMMAND (0x4A), or whose model conditions hold JUST_BUILT (+ 0x124 bit 26, lane SPELL-3: a
-	// castle member fading in, RW 0x7987EE) or COMING_OUT_OF_FACTORY (+ 0x134 bit 13), looks for nothing (HORDE_MEMBER, 0x26, is moodCheckInterval's).
-	// INFERENCE (S-326): the AI + 0x34 test of RW 0x668489 is not identified and not ported. Lane SPELL-3 (review r2): RW 0x668A41 .. 0x668A4A: nor one
-	// Object::isAbleToAttack (RW 0x691269; BFME2 decomp Object_isAbleToAttack.cpp, tier B same-shape) refuses. Ported of it: its status / condition tests
-	// (NO_ATTACK status 5, the model condition 0x81 (RW 0x46E918 reads Object + 0x10C), UNDER_CONSTRUCTION, SOLD); its contain, turret and CAN_ATTACK branches
-	// are not (S-1301, as AITacticalAI's canAttackAtAll), so they refuse nothing here
+	const Player *player = obj.getControllingPlayer();
+	// RW 0x6684F2 .. 0x668515: STAND_GROUND, or a human player's unit, needs its target in reach (the qualifier 0x10 and the final test below)
+	const bool needsReach = obj.testStatus((unsigned)kStandGround) || (player && player->getPlayerType() == PLAYER_HUMAN);
+	// RW 0x668517 .. 0x668546: a DOZER busy with a task (its dozer interface, AI vslot 0x174: slot 0x24 the current task, slot 0x20 any pending) looks for nothing
+	if (obj.isKindOf((unsigned)kDozer))
 	{
-		static const int noAutoAcquire = CombatNames::status("NO_AUTO_ACQUIRE");
-		static const int abilityBusy = CombatNames::status("SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING");
-		static const int ignoreAi = CombatNames::status("IGNORE_AI_COMMAND");
-		static const int justBuiltSelf = CombatNames::modelCondition("JUST_BUILT");
-		static const int comingOut = CombatNames::modelCondition("COMING_OUT_OF_FACTORY");
-		if (obj.testStatus((unsigned)noAutoAcquire) || obj.testStatus((unsigned)abilityBusy) || obj.testStatus((unsigned)ignoreAi) || obj.testModelCondition(justBuiltSelf) ||
-			obj.testModelCondition(comingOut) || !CombatQueries::isAbleToAttack(obj))
+		if (const DozerAIUpdate *dozer = dynamic_cast<const DozerAIUpdate *>(this))
 		{
-			return nullptr;
-		}
-	}
-	// lane IDLE-1 (community FB-0001), RW 0x66844A's gate before the scan (read with Ghidra, RW 0x6685B6 .. 0x6685F9): a contained object (+ 0x27C) looks for
-	// a target only when its AI module's CanAttackWhileContained (data + 0x25) is set, it is CONTESTING_BUILDING (status 0x25) or its own contain (+ 0x258, the
-	// ContainModuleInterface subobject) answers vslot 0xB8 true, and its container is not JUST_BUILT (+ 0x124 bit 26). vslot 0xB8 is RW 0x9188EB (false) in
-	// OpenContain's and HordeContain's contain vtables (HordeContain: the subobject at + 0x20, vtable 0xC5B480; RW 0x871A90 is in the vtable at + 0x11C, another
-	// interface) and RW 0x87EDA9 (CrewAllowedToFire) in SiegeEngineContain's. Before, a battering ram's crew (AutoAcquireEnemiesWhenIdle Yes, a sword, no
-	// CanAttackWhileContained) acquired a target from its bones, its attack state walked it away from the ram it still belonged to and it stood with MOVING
-	// where the ram's redeploy put it back: the QA matrix's IsengardRamCrew / MordorRamCrew treadmill. (ZH's Object::isAbleToAttack has the same container
-	// rule for passengers, isPassengerAllowedToFire.)
-	if (const Object *container = obj.getContainedBy())
-	{
-		static const int contesting = CombatNames::status("CONTESTING_BUILDING");
-		static const int justBuilt = CombatNames::modelCondition("JUST_BUILT");
-		const ContainModuleInterface *own = obj.getContain();
-		const bool allowed = m_combat.canAttackWhileContained || (contesting >= 0 && obj.testStatus((unsigned)contesting)) || (own && own->moodScanWhileContained());
-		if (!allowed || (justBuilt >= 0 && container->testModelCondition(justBuilt)))
-		{
-			return nullptr;
-		}
-	}
-	// lane STEALTH-1 (RW 0x66844A, the idle branch RW 0x6685F7 .. 0x668676): a CAMOUFLAGE object scans unless its StancesBehavior's stance class is 3 (RW 0x861D8E); any other
-	// object that is stealthed and undetected (RW 0x694C0D, no viewer) scans only with AutoAcquireEnemiesWhenIdle STEALTHED (flag 2); the container's slot 0xB0 exception
-	// (RW 0x668653) is not ported (S-1040)
-	if (InvisibilityManager::invisibilityType(obj) == InvisibilityNugget::CAMOUFLAGE)
-	{
-		if (const StancesBehavior *sb = dynamic_cast<const StancesBehavior *>(obj.findModule("StancesBehavior")))
-		{
-			if (StancesBehavior::stanceClass(sb->getStance()) == 3)
+			if (dozer->getCurrentTask() != -1 || dozer->isAnyTaskPending())
 			{
 				return nullptr;
 			}
 		}
 	}
-	else if (InvisibilityManager::isStealthedAndUndetected(obj, nullptr) && !(m_combat.autoAcquire & 2u))
+	// RW 0x66854F .. 0x668589: the target a player's or script's attack order gave a melee weapon (AI + 0x1A4, RW 0x66BD33) is answered while it lives and
+	// is not FLEE_OFF_MAP; else it is forgotten
+	if (m_orderedMeleeTarget != INVALID_ID)
+	{
+		Object *t = logic.findObjectByID(m_orderedMeleeTarget);
+		if (t && !t->isEffectivelyDead() && !t->testStatus((unsigned)kFleeOffMap))
+		{
+			return t;
+		}
+		m_orderedMeleeTarget = INVALID_ID;
+	}
+	// RW 0x66858C .. 0x6685F5 (the module data, AI + 4): during idle only with AutoAcquireEnemiesWhenIdle Yes (+ 0x1C bit 0); NOTWHILEATTACKING (bit 3) while
+	// the current state is an attack (AI vslot 0x1BC, RW 0x662B3C: the state's slot 0x24); lane IDLE-1: a contained object only with CanAttackWhileContained
+	// (+ 0x25), CONTESTING_BUILDING or its own contain's vslot 0xB8, and a container that is not JUST_BUILT
+	if (calledDuringIdle && !(m_combat.autoAcquire & 1u))
 	{
 		return nullptr;
 	}
-	// the range first (RW 0x668716 .. 0x668726, before the mood branches; review r1)
-	float range = 0.0f;
-	if (const FieldValue *v = obj.getTemplate()->getFinalOverride()->findField("VisionRange"))
+	if (isStateActive() && (m_combat.autoAcquire & 8u))
 	{
-		if (const float *f = std::get_if<float>(v))
+		return nullptr;
+	}
+	if (const Object *container = obj.getContainedBy())
+	{
+		const ContainModuleInterface *own = obj.getContain();
+		const bool allowed = m_combat.canAttackWhileContained || obj.testStatus((unsigned)kContesting) || (own && own->moodScanWhileContained());
+		if (!allowed || container->testModelCondition(kJustBuilt))
 		{
-			range = *f;
+			return nullptr;
 		}
 	}
-	if (range <= 0.0f)
+	if (calledDuringIdle)
+	{
+		// lane STEALTH-1 (RW 0x6685F7 .. 0x668676): a CAMOUFLAGE object scans unless its StancesBehavior's stance class is 3 (RW 0x861D8E); any other object that
+		// is stealthed and undetected (RW 0x694C0D, no viewer) scans only with AutoAcquireEnemiesWhenIdle STEALTHED (bit 1); the container's slot 0xB0 exception
+		// (RW 0x668653) is not ported (S-1040)
+		if (InvisibilityManager::invisibilityType(obj) == InvisibilityNugget::CAMOUFLAGE)
+		{
+			if (const StancesBehavior *sb = dynamic_cast<const StancesBehavior *>(obj.findModule("StancesBehavior")))
+			{
+				if (StancesBehavior::stanceClass(sb->getStance()) == 3)
+				{
+					return nullptr;
+				}
+			}
+		}
+		else if (InvisibilityManager::isStealthedAndUndetected(obj, nullptr) && !(m_combat.autoAcquire & 2u))
+		{
+			return nullptr;
+		}
+	}
+	// RW 0x668678: HIDDEN looks for nothing
+	if (obj.testStatus((unsigned)kHidden))
 	{
 		return nullptr;
 	}
-	// lane SCRIPT-3 (RW 0x668748 .. 0x668787): a computer player's PASSIVE unit answers only its last attacker (the body's last damage source,
-	// vslot 0x40 + 8, by id); attitude -3 (mood 0x2000) looks for nothing
-	const unsigned mood = moodMatrixValue();
+	if (calledByAI)
+	{
+		// RW 0x66868F .. 0x6686C4: a team that attacks a common target and has one, for an attitude of at least normal (RW 0x664CD6)
+		Team *team = obj.getTeam();
+		if (teamAttacksCommonTarget(team))
+		{
+			if (Object *teamVictim = AIHuntState::teamTarget(*team, logic)) // RW 0x7A3E36
+			{
+				if (attitude() >= 0)
+				{
+					return teamVictim;
+				}
+			}
+		}
+		// RW 0x6686C6 .. 0x66870F: the cadence (AI + 0x21C): MoodAttackCheckRate (module data + 0x18) from now, offset once by GameLogicRandomValue(-half,
+		// half) (line 0x2079) when AI + 0x3BC is set
+		const unsigned now = frame();
+		if (now < m_nextMoodCheck)
+		{
+			return nullptr;
+		}
+		const int rate = (int)m_combat.moodAttackCheckRate;
+		m_nextMoodCheck = now + (unsigned)rate;
+		if (m_randomlyOffsetMoodCheck)
+		{
+			const int half = rate >> 1;
+			m_nextMoodCheck = (unsigned)((int)m_nextMoodCheck + logic.random().getValue(-half, half, "AIUpdate.cpp", 0x2079));
+			m_randomlyOffsetMoodCheck = false;
+		}
+	}
+	// RW 0x668716: the range, RW 0x6FF412(obj, OWNERTYPE | MOOD), plus the container's bounding circle (+ 0xB8)
+	float range = AI::adjustedVisionRange(obj, 3u);
+	if (!(range > 0.0f))
+	{
+		return nullptr;
+	}
+	if (const Object *container = obj.getContainedBy())
+	{
+		range = SimMath::addf32(CombatQueries::boundingCircleRadius(*container), range);
+	}
+	// lane SCRIPT-3 (RW 0x668748 .. 0x668787): a computer player's PASSIVE unit answers only its last attacker (the body's last damage info, vslot 0x40 + 8);
+	// attitude -3 (mood 0x2000) looks for nothing
+	const unsigned mood = moodMatrixValue(); // RW 0x664D7E
 	if ((mood & 2u) && (mood & 0x200u))
 	{
 		const ActiveBody *body = dynamic_cast<const ActiveBody *>(obj.getBodyModule());
-		return body ? obj.logic().findObjectByID(body->lastDamager()) : nullptr;
+		return body ? logic.findObjectByID(body->lastDamager()) : nullptr;
 	}
 	if (mood & 0x2000u)
 	{
 		return nullptr;
 	}
-	unsigned flags = 0;
-	if (m_combat.autoAcquire & 16u)
+	// RW 0x66878D .. 0x6687B5: a HORDE INSIDE_GARRISON whose members are still on their way (horde interface slot 0xF4) looks for nothing
+	if (obj.isKindOf((unsigned)kHorde) && obj.testStatus((unsigned)kInsideGarrison))
 	{
-		flags |= TargetFinder::ALLOW_STRUCTURES;
+		ContainModuleInterface *c = obj.getContain();
+		HordeContainInterface *h = c ? c->getHordeContainInterface() : nullptr;
+		if (h && !h->allMembersEntered())
+		{
+			return nullptr;
+		}
 	}
-	flags |= obj.isKindOf((unsigned)CombatNames::kinds().horde) ? TargetFinder::HORDES_ONLY : TargetFinder::MEMBERS_ONLY;
-	return obj.logic().combat().targets().findClosestEnemy(obj, range, flags, CMD_FROM_AI);
+	// RW 0x6687BB .. 0x668843: the qualifiers
+	const GameLogicSettings &settings = logic.settings();
+	unsigned q = AI::CAN_ATTACK;
+	if (settings.attackUsesLineOfSight && obj.isKindOf((unsigned)kAttackNeedsLos))
+	{
+		q |= AI::CAN_SEE;
+	}
+	if (settings.attackIgnoreInsignificantBuildings)
+	{
+		q |= AI::IGNORE_INSIGNIFICANT_BUILDINGS;
+	}
+	if (m_combat.autoAcquire & 0x10u)
+	{
+		q |= AI::ATTACK_BUILDINGS;
+	}
+	if (calledByAI && player && player->getPlayerType() == PLAYER_HUMAN)
+	{
+		q |= AI::UNFOGGED;
+	}
+	q |= AI::AUTO_ACQUIRE;
+	if (needsReach)
+	{
+		q |= AI::WITHIN_ATTACK_RANGE;
+	}
+	if (player && player->getPlayerType() == PLAYER_COMPUTER)
+	{
+		q |= AI::COMPUTER_CREEPS;
+	}
+	// RW 0x668843 .. 0x6688EA (AI + 0x3CC, the player's stop order RW 0x771F49, and the body's last attacker): the port never sets + 0x3CC (S-326).
+	// RW 0x6688EC .. 0x668919: the firing tracker's take-once object (Object + 0x248 -> + 0x38, RW 0x68B666 / 0x8E2E0A), its writer not identified and never
+	// set in the port (S-326).
+	MoodTargetFilter moodFilter(obj);
+	Object *target = AI::findClosestEnemy(obj, range, q, attackInfo(), player && player->getPlayerType() == PLAYER_HUMAN ? &moodFilter : nullptr, 0); // RW 0x701443
+	// RW 0x6689F0: a lone unit's HORDE target becomes one of its members (RW 0x68D30E(me, 0, 0))
+	if (target && !obj.isKindOf((unsigned)kHorde) && target->isKindOf((unsigned)kHorde))
+	{
+		target = AI::adjustVictim(*target, &obj, false, 0);
+	}
+	// RW 0x668A26 .. 0x668A4A: a unit that needs its target in reach and cannot reach it, or that cannot attack at all (RW 0x691269), answers nothing
+	if ((calledByAI && needsReach && target && !AI::canAttackFromHere(obj, *target)) || !obj.isAbleToAttack())
+	{
+		return nullptr;
+	}
+	if (!target)
+	{
+		return nullptr;
+	}
+	// RW 0x668A57 .. 0x668AB6: a CLOSE_RANGE weapon set (Object + 0x38C bit 7, RW 0x68BE7D) out of reach with HoldGroundCloseRangeDistance (module data
+	// + 0x28) above 0 drops a target farther than it (Coord3D::length of the 3D difference)
+	if ((obj.getWeaponSetFlags()[kCloseRange >> 5] & (1u << (kCloseRange & 31))) && !AI::canAttackFromHere(obj, *target) && m_combat.holdGroundCloseRangeDistance > 0.0f)
+	{
+		const float d = (float)SimMath::length3d(SimMath::subf32(target->getPosition()->x, obj.getPosition()->x), SimMath::subf32(target->getPosition()->y, obj.getPosition()->y),
+			SimMath::subf32(target->getPosition()->z, obj.getPosition()->z));
+		if (m_combat.holdGroundCloseRangeDistance < d)
+		{
+			return nullptr;
+		}
+	}
+	// RW 0x668ABC .. 0x668AE5: a HORDE's target held by a HORDE container is that container
+	if (obj.isKindOf((unsigned)kHorde))
+	{
+		if (Object *c = target->getContainedBy())
+		{
+			if (c->isKindOf((unsigned)kHorde))
+			{
+				target = c;
+			}
+		}
+	}
+	return target;
 }
 
 // ZH groupAttackMoveToPosition (stop S-328)
@@ -657,37 +884,17 @@ bool AIUpdateInterface::armAttackMove(const Coord3D &goal, CommandSourceType sou
 	}
 	m_attackMoveActive = true;
 	m_attackMoveGoal = goal;
-	m_nextMoodCheck = 0;
+	// lane TARGET-1: the attack-move machine starts in its idle state (ZH AIAttackMoveToState::onEnter setState(AI_IDLE); RotWK's state 0x21 runs its sub
+	// machine at + 0x54, RW 0x755798), whose entry pushes the mood check back (RW 0x7489B6 -> 0x662DD9); the earlier stand-in zeroed its own clock here
+	resetNextMoodCheckTime();
 	return true;
 }
 
-// the attack-move's scan: the nearest attackable enemy within the vision range, buildings included (the AutoAcquire flags are for idle units)
+// the attack-move's scan: RotWK's AIAttackMoveToState (RW 0x755798) asks getNextMoodTarget(calledByAI unless its attack just ended, not during idle) while its
+// sub machine is idle; the port's march (S-328) asks it with calledByAI (its cadence is the mood scan's)
 Object *AIUpdateInterface::attackMoveTarget()
 {
-	Object &obj = *getObject();
-	if (!obj.getWeapons())
-	{
-		return nullptr;
-	}
-	float range = 0.0f;
-	if (const FieldValue *v = obj.getTemplate()->getFinalOverride()->findField("VisionRange"))
-	{
-		if (const float *f = std::get_if<float>(v))
-		{
-			range = *f;
-		}
-	}
-	if (range <= 0.0f)
-	{
-		return nullptr;
-	}
-	unsigned flags = TargetFinder::ALLOW_STRUCTURES;
-	flags |= obj.isKindOf((unsigned)CombatNames::kinds().horde) ? TargetFinder::HORDES_ONLY : TargetFinder::MEMBERS_ONLY;
-	if (obj.testStatus((unsigned)CombatNames::statuses().hordeMember))
-	{
-		return nullptr; // a horde member marches with its horde
-	}
-	return obj.logic().combat().targets().findClosestEnemy(obj, range, flags, CMD_FROM_AI);
+	return getNextMoodTarget(true, false);
 }
 
 bool AIUpdateInterface::resumeAttackMove()

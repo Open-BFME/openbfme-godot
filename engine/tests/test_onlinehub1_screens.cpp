@@ -1501,7 +1501,7 @@ TEST_CASE("onlineux1 retail: the TOURNAMENT page's lettering leaves with the onl
 	AptGadgetLayer *layer = p.fx.wm->gadgetLayer();
 	REQUIRE(layer);
 	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return layer->hasDecorator(); }, 120), p.notes());
-	CHECK(layer->decoratorOwner() == p.sh->hub());
+	CHECK(layer->decoratorOwner() == static_cast<const void *>(p.sh)); // lane ONLINEMENU-1: the shell owns the layer's one decorator (the hub's page and the FRIENDS page)
 	GadgetDrawList drawn;
 	layer->buildDrawList(drawn);
 	CHECK_FALSE(drawn.commands.empty());

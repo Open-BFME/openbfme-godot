@@ -4,9 +4,15 @@
 # client sources (excluded from the simulation audit in tools/sim/sim_policy.json): the lobby service's client and OnlineShell.apt's engine side
 set(OPENBFME_ONLINE4_CLIENT_SOURCES
     src/GameNetwork/OnlineLobbyClient.cpp
+    src/GameNetwork/OnlineSocialClient.cpp
+    src/GameNetwork/RelayProbe.cpp
+    src/GameClient/GUI/AptScreens/AptMessenger.cpp
     src/GameClient/GUI/AptScreens/AptOnlineShell.cpp)
 set(OPENBFME_ONLINE4_TESTS
-    tests/test_online4_screens.cpp)
+    tests/test_social_client.cpp
+    tests/test_social_screens.cpp
+    tests/test_online4_screens.cpp
+    tests/test_onlinemenu1.cpp)
 
 # called once openbfme_core and openbfme_tests exist
 macro(openbfme_online4_targets)

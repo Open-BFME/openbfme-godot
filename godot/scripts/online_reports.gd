@@ -11,12 +11,14 @@ var _players: Array[Dictionary] = []
 var _button: Button
 var _dialog: ConfirmationDialog
 var _target: OptionButton
+var _category: OptionButton
 var _reason: TextEdit
 var _status: Label
 var _client: Node
 var _key := ""
 var _payload := ""
 var _busy := false
+var _context_frozen := false
 const RESULT_SUCCESS := 0 ## HTTPRequest.RESULT_SUCCESS (named here only: this file uses no networking class)
 
 
@@ -55,9 +57,16 @@ func _ready() -> void:
 	_target.name = "ReportTarget"
 	_target.item_selected.connect(func(_index: int): _reset_submission())
 	content.add_child(_target)
+	_category = OptionButton.new()
+	_category.name = "ReportCategory"
+	for category in ["Cheating", "Harassment", "Griefing", "Other"]:
+		_category.add_item(category)
+	_category.select(3)
+	_category.item_selected.connect(func(_index: int): _reset_submission())
+	content.add_child(_category)
 	_reason = TextEdit.new()
 	_reason.name = "ReportReason"
-	_reason.placeholder_text = "Reason (1–1,000 characters)"
+	_reason.placeholder_text = "Additional details (optional, up to 500 characters)"
 	_reason.custom_minimum_size = Vector2(400, 140)
 	_reason.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	_reason.text_changed.connect(_reset_submission)
@@ -73,6 +82,8 @@ func _ready() -> void:
 
 
 func set_context(context: Dictionary) -> void:
+	if _context_frozen and _dialog.visible:
+		return
 	var game: String = str(context.get("game_id", ""))
 	var token: String = str(context.get("session_token", ""))
 	if RegEx.create_from_string("^[0-9a-f]{16}$").search(game) == null or token.is_empty():
@@ -120,20 +131,34 @@ func open_dialog() -> void:
 	_reason.grab_focus()
 
 
+func open_target(game: String, target: String, nick: String, token: String) -> void:
+	if _busy:
+		return
+	_context_frozen = false
+	_dialog.hide()
+	set_context({"game_id": game, "session_token": token, "report_players": [{"id": target, "name": nick}]})
+	_context_frozen = true
+	open_dialog()
+	for i in _players.size():
+		if _players[i].id == target:
+			_target.select(i)
+			return
+
+
 func _reset_submission() -> void:
 	if _busy:
 		return
 	_key = ""
 	_payload = ""
 	if _dialog != null:
-		_dialog.get_ok_button().disabled = _reason.text.strip_edges().is_empty() or _reason.text.length() > 1000
+		_dialog.get_ok_button().disabled = _reason.text.length() > 500
 
 
 func submit() -> void:
 	if _busy or _target.selected < 0 or _target.selected >= _players.size():
 		return
-	if _reason.text.strip_edges().is_empty() or _reason.text.length() > 1000:
-		_status.text = "Enter a reason of 1–1,000 characters."
+	if _reason.text.length() > 500:
+		_status.text = "Additional details must be no longer than 500 characters."
 		return
 	var problem: String = load("res://scripts/online_lobby.gd").lobby_url_problem(lobby_url)
 	if not problem.is_empty():
@@ -145,7 +170,10 @@ func submit() -> void:
 			_status.text = "Cannot prepare the report. Please try again."
 			return
 		_key = random.hex_encode()
-		_payload = JSON.stringify({"v": 1, "game_id": _game, "target": _players[_target.selected].id, "reason": _reason.text})
+		var reason: String = ["cheating", "harassment", "griefing", "other"][_category.selected]
+		if not _reason.text.strip_edges().is_empty():
+			reason += ": " + _reason.text.strip_edges()
+		_payload = JSON.stringify({"v": 1, "game_id": _game, "target": _players[_target.selected].id, "reason": reason})
 	_busy = true
 	_dialog.get_ok_button().disabled = true
 	_dialog.get_cancel_button().disabled = true

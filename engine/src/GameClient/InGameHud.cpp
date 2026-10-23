@@ -290,6 +290,19 @@ bool InGameHud::boot(std::string *error)
 			m_errors.push_back("radius cursors: " + cursorError);
 		}
 	}
+	m_playerMessages.settings = m_radiusTemplates.messageUi();
+	if (const GlobalLanguage *language = m_shellRef->environment().language)
+	{
+		if (!language->messageFont.name.empty())
+		{
+			m_playerMessages.settings.font = language->messageFont.name;
+			m_playerMessages.settings.pointSize = language->messageFont.size;
+			m_playerMessages.settings.bold = language->messageFont.bold;
+		}
+	}
+	m_input->ui().setMessageHandler([this](const std::string &label) {
+		m_playerMessages.add(fetchOrMissing(m_config.gameText, label), m_config.game.logic().getFrame());
+	});
 	bootHud6(); // lane HUD-6: the help box's settings and the Palantir's help box movie (InGameHudHud6.cpp)
 	m_radar->setupFromTerrain();
 	{
@@ -444,6 +457,9 @@ void InGameHud::update(double seconds)
 		partStart = now;
 	};
 	m_input->update();
+	const unsigned messageTicks = m_clientFrames - m_messageClientFrame;
+	m_playerMessages.advanceClientTicks(m_config.game.logic().getFrame(), messageTicks);
+	m_messageClientFrame = m_clientFrames;
 	if (m_config.game.canObserve())
 	{
 		const auto snapshot = m_config.game.presentedSnapshot();
@@ -1167,6 +1183,24 @@ bool InGameHud::radarClick(HudInput::Button button, int x, int y, int timeMs)
 	return true;
 }
 
+bool InGameHud::radarPoint(int x, int y, bool &hasPoint, float &wx, float &wy)
+{
+	hasPoint = false;
+	float sq[4];
+	if (!radarSquare(sq) || (float)x < sq[0] || (float)x > sq[2] || (float)y < sq[1] || (float)y > sq[3])
+	{
+		return false;
+	}
+	if (!m_radar->ready() || !m_radar->drawn(false)) // radarClick's gates: a radar that shows nothing maps no point
+	{
+		return true;
+	}
+	const int size = 128;
+	const float kx = (float)size / (sq[2] - sq[0]), ky = (float)size / (sq[3] - sq[1]);
+	hasPoint = m_radar->click(((float)x - sq[0]) * kx, ((float)y - sq[1]) * ky, size, wx, wy);
+	return true;
+}
+
 bool InGameHud::commandContentAt(int x, int y)
 {
 	AptStageMapping m;
@@ -1338,6 +1372,7 @@ void InGameHud::key(int keyCode, int keyState, char32_t character)
 std::vector<std::string> InGameHud::stops() const
 {
 	std::vector<std::string> out = m_input->stops();
+	out.push_back("[S-6101] player message log: BFME2 recovered six-entry message, positioning and fade routines ported; independent RotWK display-routine verification remains outstanding");
 	out.push_back(DrawablePick::stopLine()); // lane QA-1: the HUD's pick is the drawn-model ray test, not S-284's geometry volumes
 	out.push_back("[S-1201] context commands (lane QA-1): a click with a builder on our rising structure is MSG_RESUME_CONSTRUCTION, on our damaged finished structure "
 				  "MSG_DO_REPAIR (CommandTranslator::evaluateContextCommand), by ZH ActionManager::canResumeConstructionOf / canRepairObject (a DOZER of the same player); "

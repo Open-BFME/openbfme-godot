@@ -508,6 +508,7 @@ void Pathfinder::crc(StateHasher &h) const
 	h.addFloat(m_config.meleeApproachDist);
 	h.addFloat(m_config.meleeApproachTolerance);
 	h.addFloat(m_config.castleSiegeStandBackDistance);
+	h.addBool(m_config.attackUsesLineOfSight); // lane ATTACKPATH-1
 	for (int v : { m_extent.lo.x, m_extent.lo.y, m_extent.hi.x, m_extent.hi.y, m_logicalExtent.lo.x, m_logicalExtent.lo.y, m_logicalExtent.hi.x, m_logicalExtent.hi.y, m_stride })
 	{
 		h.addI32(v);

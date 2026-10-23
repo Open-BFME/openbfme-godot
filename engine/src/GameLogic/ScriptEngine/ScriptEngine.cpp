@@ -137,6 +137,7 @@ void ScriptEngine::reset()
 	m_thisTeam = nullptr;
 	m_stats = Stats();
 	resetBreeze(); // lane VISUAL-2
+	m_attackPriorities.reset(); // lane TARGET-1 (ZH ScriptEngine::reset empties the table; INFERENCE for RotWK, AttackPriority.h)
 }
 
 void ScriptEngine::resetBreeze()

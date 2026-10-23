@@ -20,7 +20,7 @@ class MacInfo:
 	var repo := "Test/repo"
 	var packaged := false
 	var commit := ""
-	var release_key := PackedByteArray()
+	var release_keys: Array = []   # lane SIGNKMS-1: the trusted key list
 	var error := ""
 	var macos_updates := true
 	var test_build := true
@@ -89,14 +89,14 @@ func _payload() -> void:
 	var bytes := FileAccess.get_file_as_bytes(a.payload)
 	var sig := FileAccess.get_file_as_bytes(a.sig)
 	var key: PackedByteArray = String(a.key).hex_decode()
-	var v := Manifest.verify_payload(bytes, sig, key, {"repo": "Test/repo", "platform": "macos-arm64"})
+	var v := Manifest.verify_payload(bytes, sig, [key], {"repo": "Test/repo", "platform": "macos-arm64"})
 	_check(v.ok and v.payload.files.has("OpenBFME Launcher.app/Contents/MacOS/OpenBFME Launcher"),
 		"the macos-arm64 payload inventory verifies (%s)" % v.error)
-	_check(not Manifest.verify_payload(bytes, sig, key, {"repo": "Test/repo", "platform": "linux-x64"}).ok,
+	_check(not Manifest.verify_payload(bytes, sig, [key], {"repo": "Test/repo", "platform": "linux-x64"}).ok,
 		"a macos-arm64 inventory is not a Linux one")
 	var other := key.duplicate()
 	other[0] ^= 1
-	_check(not Manifest.verify_payload(bytes, sig, other, {"repo": "Test/repo", "platform": "macos-arm64"}).ok,
+	_check(not Manifest.verify_payload(bytes, sig, [other], {"repo": "Test/repo", "platform": "macos-arm64"}).ok,
 		"another key's inventory is refused")
 
 

@@ -16,7 +16,7 @@ class MacBuildInfo:
 	var repo := "Test/repo"
 	var packaged := true
 	var commit := "0123456789abcdef0123456789abcdef01234567"
-	var release_key := PackedByteArray()
+	var release_keys: Array = []   # lane SIGNKMS-1: the trusted key list
 	var error := ""
 
 	func platform() -> String:
@@ -74,7 +74,7 @@ func _manifest_payload() -> void:
 	var key: PackedByteArray = args.key.hex_decode()
 	_check(not "macos-universal" in Manifest.PLATFORMS and "macos-universal" in Manifest.PAYLOAD_PLATFORMS,
 		"macOS is allowed for signed payloads but not release manifests")
-	var verified := Manifest.verify_payload(bytes, sig, key, {"repo": "Test/repo", "version": "v1.0.0", "platform": "macos-universal"})
+	var verified := Manifest.verify_payload(bytes, sig, [key], {"repo": "Test/repo", "version": "v1.0.0", "platform": "macos-universal"})
 	_check(verified.ok, "signed macOS bundle inventory verifies (%s)" % verified.error)
 	if not verified.ok:
 		return
@@ -88,7 +88,7 @@ func _manifest_payload() -> void:
 		file.close()
 	_check(Manifest.check_files(root, verified.payload.files) == "", "both nested app inventories match the signed payload")
 	var changed := bytes.get_string_from_utf8().replace("macos-universal", "linux-x64").to_utf8_buffer()
-	_check(not Manifest.verify_payload(changed, sig, key, {"repo": "Test/repo"}).ok, "tampered macOS payload is rejected")
+	_check(not Manifest.verify_payload(changed, sig, [key], {"repo": "Test/repo"}).ok, "tampered macOS payload is rejected")
 	var first: String = verified.payload.files.keys()[0]
 	var file := FileAccess.open(root.path_join(first), FileAccess.WRITE)
 	file.store_buffer(PackedByteArray([4, 3, 2, 1]))

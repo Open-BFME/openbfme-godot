@@ -43,6 +43,8 @@
 #include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/WallSpan.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
+#include "GameLogic/Module/DockUpdate.h"
+#include "GameLogic/Module/SupplyCenterCreate.h"
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/ProductionExitModules.h"
@@ -79,7 +81,9 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	EconomyModules::registerAll(modules); // lane ECON-1
 	DozerAIUpdate::registerClass(modules); // lane BUILD-1 (after the AI classes: it replaces the base AI's binding of DozerAIUpdate)
 	GiantBirdAIUpdate::registerClass(modules); // lane FLY-1 (after the AI classes: it replaces the base AI's binding of GiantBirdAIUpdate)
-	DozerAIUpdate::registerWorkerClass(modules); // lane BUILD-2: WorkerAIUpdate's dozer half (the workers GettingBuiltBehavior spawns)
+	DozerAIUpdate::registerWorkerClass(modules); // lane BUILD-2 / LUMBER1: WorkerAIUpdate, the dozer half and the supply half
+	SupplyCenterCreate::registerClass(modules);     // lane LUMBER1: the lumber mills' registration with the players' ResourceGatheringManager
+	SupplyCenterDockUpdate::registerClass(modules); // lane LUMBER1: the lumber mills' dock (the income of a delivery)
 	ConstructionModules::registerAll(modules);
 	WallSpan::registerModules(modules); // lane BUILD-2: WallHubBehavior
 	CastleModules::registerAll(modules);

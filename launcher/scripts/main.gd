@@ -49,7 +49,7 @@
 ##   test that no screen shows the home folder or the user name); --screenshot-size=WxH lays the window out at that size and saves
 ##   exactly that (the screenshots at 1280x720 and 1280x800 on any display).
 ## Test options (honoured only by a development run or a test package, BuildInfo.tests_allowed):
-##   --api-base=http://127.0.0.1:<port>   the API origin (a local test server); --trust-key=<64 hex>   the release key of a development run;
+##   --api-base=http://127.0.0.1:<port>   the API origin (a local test server); --trust-key=<64 hex>[,<64 hex>...]   the release key(s) of a development run;
 ##   --repo=<owner>/<name>   the repository; --launcher-dir=<folder>   the launcher's own folder in a development run (the combined
 ##   package's game beside it, the staged launcher update); --launcher-version=<version>   its version there; --aio-base=http://127.0.0.1:<port>   the AIO service's stand-in (both of its hosts);
 ##   --aio-pins=<file>   made-up pinned tables (JSON) for that stand-in; --aio-stop-after=<folder>/<file>:<pause|cancel>   a stop right
@@ -93,6 +93,10 @@ const InstanceLock := preload("res://scripts/core/instance_lock.gd")
 const GameStart := preload("res://scripts/core/game_start.gd")
 const OnlineCount := preload("res://scripts/core/online_count.gd")  # lane ONLINECOUNT-1
 const HttpFetch := preload("res://scripts/net/http_fetch.gd")
+const SocialClient := preload("res://scripts/net/social_client.gd")
+const OAuthAccount := preload("res://scripts/core/oauth_account.gd")
+const SocialLaunch := preload("res://scripts/core/social_launch.gd")
+const ReleaseSignature := preload("res://scripts/crypto/release_signature.gd")  # lane SIGNKMS-1: --trust-key lists
 
 const CLI_ACTIONS := ["--update", "--install=", "--select=", "--self-update", "--check-game-files", "--channel=", "--list", "--play", "--version", "--free-camera=",
 	"--game=", "--aio=", "--aio-install=", "--auto-update=", "--online-count=", "--open-url", "--lobby=", "--register-url-handler", "--game-start=",
@@ -153,6 +157,9 @@ var _news: NewsScreen
 var _mods: ModsScreen
 var _games_screen: GamesScreen
 var _settings: SettingsScreen
+var _social: SocialClient
+var _multiplayer: MultiplayerScreen
+var _social_handoff := false
 var _banner: PanelContainer
 var _warning: Label
 var _macos_releases_link: LinkButton
@@ -248,9 +255,14 @@ func _ready() -> void:
 					get_tree().quit(1)
 					return
 				Log.line("LAUNCHER test AIO %s %s" % ["origin" if a.begins_with("--aio-base=") else "pins", a.substr(11)])
-			elif info.release_key.is_empty():
-				info.release_key = a.substr(12).hex_decode()
-	if info.release_key.size() != 32 and problem == "":
+			elif a.begins_with("--trust-key=") and info.release_keys.is_empty():
+				# lane SIGNKMS-1: one key or a comma-separated list (the first plays launcher/release_key.pub)
+				var trusted := ReleaseSignature.parse_hex_list(a.substr(12))
+				if trusted.ok:
+					info.release_keys = trusted.keys
+				else:
+					Log.line("LAUNCHER --trust-key is not used: " + trusted.error)
+	if info.release_keys.is_empty() and problem == "":
 		problem = "this launcher has no release key: it cannot check updates"
 	updater.recover()
 	var start := SelfUpdate.on_start(updater, args, GameStart.request_of(args) == "" or SelfUpdate._arg(args, "--apply-update=") != "")
@@ -308,6 +320,7 @@ func _ready() -> void:
 		return
 	_problem = problem
 	_build_ui()
+	_init_social()
 	if start.message != "":
 		_set_status(start.message)
 	_refresh_installed()
@@ -967,6 +980,7 @@ func _build_ui() -> void:
 	_play_screen.show_news.connect(_show_screen.bind("news"))
 	_news = NewsScreen.new()
 	var mp := MultiplayerScreen.new()
+	_multiplayer = mp
 	mp.build(info.repo)
 	_mods = ModsScreen.new()
 	_games_screen = GamesScreen.new()
@@ -1206,6 +1220,10 @@ func _count_tick() -> void:
 
 
 func _refresh_count() -> void:
+	if _social_handoff:
+		return
+	if _social != null and _social.is_signed_in():
+		return
 	if not updater.show_online_count() or _demo != "" or "--offline" in OS.get_cmdline_user_args() or _screen != "play":
 		return
 	var headless := DisplayServer.get_name() == "headless"
@@ -1231,6 +1249,8 @@ func _refresh_count() -> void:
 
 
 func _on_count(r: Dictionary) -> void:
+	if _social != null and _social.is_signed_in():
+		return
 	if not updater.show_online_count():
 		_count_text = ""
 		_play_screen.set_players("")  # it was switched off while the request was out: its answer is not shown
@@ -1822,7 +1842,8 @@ func _on_play() -> void:
 		return
 	var p := updater.play(v)
 	if p.ok:
-		if _busy():
+		# The worker may have ended while play() checked the game; its deferred completion still has to show any failure.
+		if _thread != null:
 			_quit_when_done = true
 			_set_status("Playing %s. The update keeps downloading in the background; your next Play starts the new version." % v)
 			if DisplayServer.get_name() != "headless":
@@ -1863,7 +1884,76 @@ func _no_game() -> void:
 	_show_error("No game to start", why)
 
 
+func _init_social() -> void:
+	_social = SocialClient.new()
+	add_child(_social)
+	var local: String = updater.policy.test_origin if info.tests_allowed() else ""
+	var why := _social.configure(updater.lobby_url(), info.version, local)
+	var oauth := OAuthAccount.new()
+	add_child(oauth)
+	var oauth_error := oauth.configure(updater.lobby_url(), local)
+	if why == "":
+		why = oauth_error
+	if "--offline" in OS.get_cmdline_user_args() or _demo != "":
+		why = "Multiplayer sign-in is disabled in offline or demo mode."
+	_multiplayer.bind_client(_social, self, why)
+	_multiplayer.bind_oauth(oauth)
+	_multiplayer.join_invite.connect(_join_social_invite)
+	_social.changed.connect(_social_stats)
+	_social.connection_changed.connect(func(connected: bool) -> void:
+		_count_text = ""
+		_play_screen.set_players("")
+		if not connected:
+			_refresh_count())
+
+
+func _social_stats() -> void:
+	if not _social.is_signed_in() or not updater.show_online_count():
+		return
+	var stats: Dictionary = _social.snapshot.get("stats", {})
+	var parsed := OnlineCount.parse(200, JSON.stringify(stats).to_utf8_buffer())
+	_count_text = parsed.text
+	_count_got_ms = Time.get_ticks_msec()
+	_play_screen.set_players(parsed.text)
+
+
+func _join_social_invite(invite: Dictionary) -> void:
+	if not _social.is_signed_in() or _social.busy or _multiplayer.oauth_in_progress():
+		_multiplayer.show_problem("Finish signing in before joining.")
+		return
+	if _play_blocked():
+		_multiplayer.show_problem("Wait for the current game installation before joining.")
+		return
+	if str(invite.get("to", {}).get("pid", "")) != str(_social.me.get("pid", "")):
+		_multiplayer.show_problem("This invitation is not addressed to you.")
+		return
+	if int(invite.get("expires", 0)) <= int(Time.get_unix_time_from_system()):
+		_multiplayer.show_problem("This invitation expired.")
+		return
+	var version := updater.play_version()
+	if version.is_empty():
+		_multiplayer.show_problem("Install the game before joining an invitation.")
+		return
+	var result := SocialLaunch.play(updater, version, str(invite.get("id", "")), _social.lobby_url, _social.token)
+	if not result.ok:
+		_multiplayer.show_problem(result.error)
+		return
+	# The game owns presence and the accepted slot from here; this launcher must not keep polling it.
+	_social_handoff = true
+	_social.sign_out()
+	if _busy():
+		_quit_when_done = true
+		_set_status("The game is opening your invitation. The update continues in the background.")
+		if DisplayServer.get_name() != "headless":
+			get_window().mode = Window.MODE_MINIMIZED
+	else:
+		get_tree().quit(0)
+
+
 func _exit_tree() -> void:
+	_social_handoff = true
+	if _social != null:
+		_social.sign_out()
 	# MACPLAY-1: the online-count request is cancelled and its thread joined before the window goes. It was never joined: a launcher that
 	# closed while the lobby had not answered (Play started the game at once) freed itself under the running thread, which then called
 	# back into it (the owner's Mac, 2026-10-17 11:13: SIGSEGV at 0x190 on that thread, the "quit unexpectedly" dialog)

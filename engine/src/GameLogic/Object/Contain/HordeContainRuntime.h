@@ -251,6 +251,11 @@ public:
 	// contain slot 0x48 (RW 0x86FA87): the member of this horde an attacker at `pos` aims at (see HordeMemberPass.cpp); `skipTagged`: members with the status
 	// 0x3F are passed over; `attacker`: its current weapon filters the candidates (RW 0x744AAA)
 	Object *pickMemberNear(bool skipTagged, const Coord3D &pos, float range, Object *attacker);
+	// lane TARGET-1: slot 0x48 without a position (RW 0x86FA87 with pos 0, adjustVictim's second call RW 0x68D30E): the first member of the contain list (with
+	// `skipTagged`, the first not TAGGED), else the first member on its way into a garrison (likewise); null when none
+	Object *pickMemberNoPosition(bool skipTagged) const;
+	// lane TARGET-1: slot 0x180(0) (RW 0x8706DF, no filter): the contain count plus the members on their way in (interface + 0x58)
+	unsigned countWithEntering() const { return getContainCount() + (unsigned)m_garrisonEntering.size(); }
 	// contain slot 0x110 (RW 0x87055D): the first member of the contain list, else the first member on its way into a garrison, else null
 	Object *firstMember() const;
 	// RW 0x870C29: the member (the contain list, then the members on the way) nearest to `victim` in the plane, within 1000 (1e6 squared, RW 0xBDCDC0)

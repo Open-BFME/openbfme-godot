@@ -222,6 +222,8 @@ public:
 	virtual SpawnUnitBehaviorInterface *getSpawnUnitBehaviorInterface() { return nullptr; }
 	// RW slot 0x50 / 4 = 20 of the +0xC interface: the exit interface of a production exit module (Object::getObjectExitInterface, RW 0x68BB14)
 	virtual ExitInterface *getExitInterface() { return nullptr; }
+	// lane LUMBER1: slot 0x58 of the +0xC interface: the dock interface of a DockUpdate (Object::getDockUpdateInterface, RW 0x68C383)
+	virtual class DockUpdateInterface *getDockUpdateInterface() { return nullptr; }
 	// the production queue of a ProductionUpdate (RW 0x68C327 asks for it)
 	virtual ProductionUpdateInterface *getProductionUpdateInterface() { return nullptr; }
 	// lane BUILD-1: the FoundationAIUpdate interface (RW 0x68C3C3 asks every module through slot 38 of its +0xC interface)

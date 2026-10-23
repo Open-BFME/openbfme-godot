@@ -789,7 +789,9 @@ TEST_CASE("HordeContain: an unknown field is retail's code 5 error; the stop rep
 	REQUIRE(stops.size() == 1);
 	CHECK(stops[0].rfind("S-082:", 0) == 0);
 	CHECK(stops[0].find("Leader <rank> <index>") != std::string::npos);
-	CHECK(stops[0].find("FlankedDuration") != std::string::npos);
+	// lane FLANK-1: FrontAngle and FlankedDuration have a RotWK reader (RW 0x876FC4 at 0x876FD4 / 0x877055 and 0x8770FC): they leave the unread list
+	CHECK(stops[0].find("CowerRadius, RanksToJustFreeWhenAttacking") != std::string::npos);
+	CHECK(stops[0].find("FrontAngle (+0x264) and FlankedDuration (+0x26C) are read by the flank test RW 0x876FC4") != std::string::npos);
 }
 
 // ---- retail corpus (SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset) -----------------------------------------------

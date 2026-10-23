@@ -624,8 +624,10 @@ TEST_CASE("AIPOW-1: end to end: a Hard computer's wounded Aragorn uses Athelas o
 	MESSAGE("Athelas ran after " << frame << " frames");
 	// the 25-frame counter (RW 0x99302D) counts the module's updates from its first (2 frames before the wound); the roll above 0.5 and Hard's chance (1 : 1)
 	// pass on that frame here. Engine pin (seed 5107). Lane PATHPERF-1: 23 with findPath's hierarchical corridor (RW 0x6F8601); 22 with it switched off (a
-	// test switch, measured): the corridor's routes move the frame on which the roll passes
-	CHECK(frame == 23);
+	// test switch, measured): the corridor's routes move the frame on which the roll passes. Lane TARGET-1: 22: the mood scan's one-off random offset of its
+	// next check (RW 0x6686F0, GameLogicRandomValue line 0x2079 after the idle entry's resetNextMoodCheckTime RW 0x662DD9) draws from the logic generator
+	// before the power's roll
+	CHECK(frame == 22);
 	CHECK(AISpecialPowerUpdate::stats().executedByType[10] == 1);
 	a.advance(10); // Athelas's heal lands a few frames after the cast
 	CHECK(AISpecialPowerUpdate::healthRatio(*mine) > wounded);    // healed

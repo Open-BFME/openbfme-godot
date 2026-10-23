@@ -721,7 +721,7 @@ PCK_RULES = [
     *((re.compile(re.escape(path) + r"\Z"), "icon") for path in PINNED_GAME_ICONS),
     (re.compile(r"^\.godot/exported/\d+/export-[0-9a-f]{32}-[\w.-]+\.scn$"), "rsrc"),
     (re.compile(r"^(scripts|tests)/[\w/.-]+\.gd$"), "text"),
-    (re.compile(r"^scenes/[\w/.-]+\.tscn$"), "scene"),  # scenes ship as their committed text (project.godot: no binary conversion)
+    (re.compile(r"^(scenes|tests)/[\w/.-]+\.tscn$"), "scene"),  # scenes ship as their committed text (project.godot: no binary conversion); tests/ holds a test scene beside the test scripts above
     (re.compile(r"^[\w/.-]+\.(tscn|tres)\.remap$"), "remap"),
     (re.compile(r"^shaders/[\w/.-]+\.(gdshader|gdshaderinc)$"), "text"),
     (re.compile(r"^\.godot/(extension_list|global_script_class_cache)\.cfg$"), "text"),

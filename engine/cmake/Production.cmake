@@ -21,4 +21,5 @@ set(OPENBFME_PROD_TESTS
     tests/test_prod_production.cpp
     tests/test_prod_hash.cpp
     tests/test_prod_retail.cpp
+    tests/test_production1_retail.cpp # lane PRODUCTION1
 )

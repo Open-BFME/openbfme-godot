@@ -83,6 +83,10 @@ public:
 		unsigned long long shockwaveFlings = 0;       ///< the shockwave handler threw its object (RW 0x696D95 fling / RW 0x696BB7 flyTo)
 		unsigned long long shockwaveStandUps = 0;     ///< the handler's stand-up of a resisting object (RW 0x696A24)
 		unsigned long long shockwaveRampageKills = 0; ///< flung objects in AI state 0x2D killed (RW 0x696E17)
+		// lane FLANK-1 (S-363): the contacts of flying projectiles (the collide interface of BezierProjectileBehavior, RW vtable 0xC585C8)
+		unsigned long long projectileContacts = 0;     ///< contacts met (a candidate whose geometry overlaps the projectile's, RW 0xAD2CE0)
+		unsigned long long projectileContactHits = 0;  ///< contacts canCollideWith accepted (RW 0x85EF6A), handed to handleCollision (RW 0x85FDB7)
+		unsigned long long projectilePreLandingEmotions = 0; ///< PreLandingEmotion requests (RW 0x85F2DD .. 0x85F3F0 -> RW 0x68F383)
 	};
 	Counters &counters() { return m_counters; }
 	const Counters &counters() const { return m_counters; }
@@ -101,6 +105,16 @@ public:
 
 	// the projectile objects that fly: live BezierProjectileBehavior modules with a path, not detonated, on an object that is neither dead nor destroyed (PROJ-1)
 	size_t inFlight() const;
+
+	// lane FLANK-1 (S-363 / S-780): RotWK registers every object without KindOf NO_COLLIDE with its collision manager (RW 0x68E31F -> 0xB6C470), and a flying
+	// BezierProjectileBehavior answers that manager's contacts through its collide interface (RW vtable 0xC585C8: onCollide RW 0x85E52B = canCollideWith
+	// RW 0x85EF6A, then handleCollision RW 0x85FDB7). The port's contact pairs come from the AI units' overlap pass (AIWorld::processCollisions, S-780), which
+	// has no projectile, so the projectiles get their own pass in the same row (RW 0x62E93B .. 0x62E94E), after it. A projectile enters the list when it is
+	// fired along a path (projectileFireAtObjectOrPosition) and leaves it when its path is gone; the list is derived (not saved, rebuilt after a load from the
+	// objects, see processProjectileContacts) and walked in id order.
+	void noteFlyingProjectile(std::uint32_t objectId);
+	void processProjectileContacts();
+	size_t flyingProjectileCount() const { return m_flying.size(); }
 
 	// lane COMBAT-2: a castle member that reached RUBBLE and counts for the EVA "castle breached" (CastleMemberBehavior RW 0x79A0ED). The event exists for EVERY owner (it is simulation
 	// state and hashed); delivering the EVA is the client's: it plays it when `ownerPlayerIndex` is its local player
@@ -136,4 +150,7 @@ private:
 	std::vector<CastleBreach> m_breaches;
 	bool m_autoAcquire = true;
 	std::unique_ptr<ObjectProjectileLauncher> m_real;
+	std::vector<std::uint32_t> m_flying;  ///< lane FLANK-1: flying projectile ids, ascending (derived state: not hashed, not saved)
+	bool m_flyingValid = true;            ///< false after a load: the next pass rebuilds m_flying from the objects
+	std::vector<std::uint32_t> m_flyingScratch, m_contactScratch; ///< the candidates of one projectile (kept between frames: no allocation per frame)
 };

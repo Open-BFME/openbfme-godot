@@ -2,6 +2,8 @@
 // See GameLogic/Module/AIUpdate.h for the sources and what is inference.
 
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/AI/AIDock.h"
+#include "GameLogic/AI/AIHarvest.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/AI/AIFollowPathAsTeam.h"
 #include "GameLogic/AI/AIGarrisonStates.h"
@@ -459,6 +461,9 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_AS_INDIVIDUALS, std::make_unique<AIFollowWaypointPathState>(*m, false, false), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_EXACT_AS_TEAM, std::make_unique<AIFollowWaypointPathState>(*m, true, true), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_EXACT_AS_INDIVIDUALS, std::make_unique<AIFollowWaypointPathState>(*m, false, true), AI_IDLE, AI_IDLE);
+	// lane LUMBER1 (RW 0x753755): AIDockState 14 (RW 0x740F01) and AIHarvestState 47 (RW 0x740F2C), both ending in idle
+	m->defineState(AI_DOCK, std::make_unique<AIDockState>(*m), AI_IDLE, AI_IDLE);
+	m->defineState(AI_HARVEST, std::make_unique<AIHarvestState>(*m), AI_IDLE, AI_IDLE);
 	return m;
 }
 
@@ -550,10 +555,10 @@ UpdateSleepTime AIUpdateInterface::update()
 		w->updateFiringTracker(); // RW 0x8E30DD
 	}
 	updateBeforeBase();
-	if (m_attackMoveActive && !m_mover->isAiDead() && frame() >= m_nextMoodCheck)
+	if (m_attackMoveActive && !m_mover->isAiDead())
 	{
-		// ZH AIAttackMoveToState::update: look around while marching; a target interrupts the march (the idle state resumes it)
-		m_nextMoodCheck = frame() + 3u;
+		// ZH AIAttackMoveToState::update: look around while marching; a target interrupts the march (the idle state resumes it). Lane TARGET-1: the scan is
+		// RotWK's mood scan (RW 0x755798 -> RW 0x66844A(1, 0)); its cadence is the mood check's (AI + 0x21C)
 		const unsigned id = currentStateId();
 		if (id == (unsigned)AI_MOVE_TO || id == (unsigned)AI_FOLLOW_PATH)
 		{
@@ -886,6 +891,21 @@ void AIUpdateInterface::aiBusy(CommandSourceType source)
 	m_machine->clear();
 	m_machine->setState(AI_BUSY);
 	wakeUpNow();
+}
+
+void AIUpdateInterface::aiBusyFor(unsigned frames, CommandSourceType source)
+{
+	if (frames == 0)
+	{
+		aiBusy(source); // RW 0x664997 .. 0x6649AD: clear, the source (+ 0x48), setState(0x2A)
+		return;
+	}
+	if (!acceptCommand(source, -1))
+	{
+		return; // RW 0x667174
+	}
+	m_machine->saveGoalForTemporaryState();             // RW 0x6649AF: RW 0x741675
+	m_machine->setTemporaryStateRW(AI_BUSY, (int)frames); // RW 0x6649BD: RW 0x74168E(0x2A, frames), as the emotion AI's temporary states (no wake of its own)
 }
 
 // B1 AIUpdate.cpp:5039
@@ -1667,6 +1687,8 @@ void AIUpdateInterface::crc(StateHasher &h) const
 	h.addFloat(m_attackMoveGoal.y);
 	h.addFloat(m_attackMoveGoal.z);
 	h.addU32(m_nextMoodCheck);
+	h.addBool(m_randomlyOffsetMoodCheck); // lane TARGET-1: AI + 0x3BC / + 0x1A4
+	h.addU32(m_orderedMeleeTarget);
 	h.addBool(m_isInUpdate);
 	h.addBool(m_pendingValid);
 	h.addFloat(m_pendingPosition.x);

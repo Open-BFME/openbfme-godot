@@ -677,8 +677,12 @@ TEST_CASE("proj2 retail: the timing - the arm stays in its attack state through 
 			CHECK(fr.pos.z == st.path[fr.step - 1].z);
 			CHECK(fr.recorded.x == st.path[fr.step - 2].x);
 		}
-		// gone segments - 1 frames after the launch frame (the update after the last point detonates)
-		CHECK(st.gone == (int)st.launchFrame + st.segments - 1);
+		// gone segments - 1 frames after the launch frame (the update after the last point detonates). Lane FLANK-1: the stones are not NO_COLLIDE, and one that
+		// meets its intended victim (always accepted, RW 0x6CC79C) before its last point goes off in that frame's collision row (RW 0x85FDB7): the Mordor
+		// catapult's stone overlaps the Gondor barracks one frame before its last point (segments - 2); the trebuchet's falls onto the barracks at its last point
+		// (measured engine pins: the overlap is the template geometries' RW 0xAD2CE0 test along the path)
+		const int early = std::string(c.launcher) == "MordorCatapult" ? 1 : 0;
+		CHECK(st.gone == (int)st.launchFrame + st.segments - 1 - early);
 		// the launcher's flags at the end of the launch frame: FIRING_A (the helper saw the shot of this frame, RW 0x68E197 lastFireFrame == now)
 		const size_t launchIdx = (size_t)(std::find(r.loopFrames.begin(), r.loopFrames.end(), st.launchFrame) - r.loopFrames.begin());
 		REQUIRE(launchIdx < r.launcherFlags.size());
@@ -757,7 +761,10 @@ TEST_CASE("proj2 retail: the drawn stone follows the arc - retail's Catmull-Rom 
 		}
 		std::printf("  info: %s: %d drawn samples, the farthest %.3f from the Bezier curve; drawn apex %.2f, path apex %.2f\n", c.launcher, samples, worst, drawnApex, pathApex);
 		CHECK(samples >= 6 * (st.segments - 2));
-		CHECK(worst < 1.5); // the Catmull-Rom spline through the curve's points stays on the curve
+		// the Catmull-Rom spline through the curve's points stays on the curve. Merge queue q23: 1.5 -> 2.0: the trebuchet's stone now aims at the barracks' aim point
+		// (FLANK-1's miss scatter RW 0x6CC399 starts a STRUCTURE victim from RW 0x6CB85A, which answers with the PreferredTargetBone since FX-4 / NUGGET-1): end z 18.90,
+		// 366.4 away, 7 segments of 64.2 (the ground under it before: 409.4, 8 segments), and the coarser spline lies 1.537 from the curve at most (measured)
+		CHECK(worst < 2.0); // tolerance: the spline through 7 points of the curve departs from it between them (measured 1.537)
 		CHECK(drawnApex >= pathApex - 1e-3);
 		CHECK(drawnApex <= pathApex + 2.0);
 	}

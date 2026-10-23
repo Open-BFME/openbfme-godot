@@ -25,6 +25,8 @@
 #include "GameLogic/Module/HordeAIUpdate.h"
 #include "GameLogic/Object/Object.h"
 
+#include <limits>
+
 // lane SAVE-4e: the AI update family in Object::xfer's module loop (obfme:Objects): each class its own version (SAVES.md section 8), then the base's; the
 // update module's next call frame. The AI state is xferAIState's (obfme:AIWorld, after obfme:Objects in the list)
 void AIUpdateInterface::xfer(Xfer &x)
@@ -63,7 +65,9 @@ void AIUpdateInterface::xferAIState(Xfer &x)
 
 void AIUpdateInterface::xferAIStateBody(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	// version 2 (lane TARGET-1 + lane ATTACKPATH-1 + lane FLANK-1, merged in q23 before any shipped): the mood scan's random-offset flag (AI + 0x3BC) and
+	// ordered melee target (AI + 0x1A4); lane BACKLOG-8's formation slot and march fields (hashed but not saved before, found by save2 retail T1), last
+	XferVersion v{ 1, 2 };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	for (std::uint32_t &w : m_luaConditionSnapshot)
@@ -92,6 +96,16 @@ void AIUpdateInterface::xferAIStateBody(Xfer &x)
 	AIXfer::uns(x, m_maxCowerTime);
 	AIXfer::coord(x, m_attackMoveGoal);
 	AIXfer::uns(x, m_nextMoodCheck);
+	if (v.current >= 2)
+	{
+		x.xferBool(&m_randomlyOffsetMoodCheck);
+		AIXfer::objectId(x, m_orderedMeleeTarget, "ai: the object id orderedMeleeTarget");
+	}
+	else if (loading)
+	{
+		m_randomlyOffsetMoodCheck = false; // a version 1 snapshot predates the fields: the constructor's values
+		m_orderedMeleeTarget = INVALID_ID;
+	}
 	x.xferBool(&m_isInUpdate);
 	x.xferInt(&m_guardMode); // lane PLAY-4's guard (RW AI + 0x4C / + 0x54 / + 0x58 / + 0x1A0)
 	x.xferInt(&m_guardTargetType);
@@ -224,6 +238,27 @@ void AIUpdateInterface::xferAIStateBody(Xfer &x)
 	});
 	AIXfer::reportStrings(x, m_locomotorNotes);
 	AIXfer::u64(x, m_memberUpdates);
+	// lane BACKLOG-8's formation id and offset (RW Object + 0x42C / + 0x430 / + 0x434) and the march's angle and path index (AI + 0x1A0 / + 0x194)
+	if (v.current >= 2)
+	{
+		x.xferInt(&m_formationId);
+		x.xferReal(&m_formationOffset.x);
+		x.xferReal(&m_formationOffset.y);
+		x.xferReal(&m_teamPathAngle);
+		x.xferInt(&m_currentGoalPathIndex);
+		if (loading)
+		{
+			AIXfer::inRange(m_formationId, 0, std::numeric_limits<int>::max(), "ai: the formation id m_formationId");       // 0: none (AIGroup::createFormation's ids start at 1)
+			AIXfer::inRange(m_currentGoalPathIndex, -1, std::numeric_limits<int>::max(), "ai: the march's path index"); // -1: none
+		}
+	}
+	else if (loading)
+	{
+		m_formationId = 0;
+		m_formationOffset = Coord2D{ 0.0f, 0.0f };
+		m_teamPathAngle = 0.0f;
+		m_currentGoalPathIndex = -1;
+	}
 }
 
 void HordeAIUpdate::xferAIStateBody(Xfer &x)
@@ -265,7 +300,7 @@ void HordeAIUpdate::xferAIStateBody(Xfer &x)
 void DozerAIUpdate::xferAIStateBody(Xfer &x)
 {
 	AIUpdateInterface::xferAIStateBody(x);
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 2 }; // lane LUMBER1: version 2 ends with the supply half (WorkerAIUpdate; nothing for a dozer)
 	x.xferVersion(v);
 	for (int t = 0; t < DOZER_NUM_TASKS; ++t)
 	{
@@ -310,4 +345,8 @@ void DozerAIUpdate::xferAIStateBody(Xfer &x)
 	x.xferUnsignedInt(&m_taskWorkFrames);
 	x.xferBool(&m_working);
 	AIXfer::objectId(x, m_buildingSoundHolder, "dozer ai: the object id buildingSoundHolder");
+	if (v.current >= 2)
+	{
+		xferSupplyBody(x);
+	}
 }

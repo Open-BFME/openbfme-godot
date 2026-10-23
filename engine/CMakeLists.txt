@@ -190,6 +190,7 @@ include(cmake/Garrison3.cmake)  # GARRISON-3: the garrison exit (OPENBFME_GARRIS
 include(cmake/Backlog1.cmake)   # BACKLOG-1: garrison / enter / exit / allied clearing from the BFME2 decomp (OPENBFME_BACKLOG1_TESTS)
 include(cmake/Combat3.cmake)    # COMBAT-3: cavalry charges and siege crews (OPENBFME_COMBAT3_TESTS)
 include(cmake/Combat4.cmake)    # COMBAT-4: shockwaves, siege crews in motion, corpses (OPENBFME_COMBAT4_TESTS)
+include(cmake/Flank1.cmake)     # FLANK-1: flank at fire time, crush contact, projectile contacts, miss scatter (OPENBFME_FLANK1_TESTS)
 include(cmake/Hud4.cmake)       # HUD-4: every command reachable, every hotkey (appends to OPENBFME_SIM_SOURCES; OPENBFME_HUD4_TESTS)
 include(cmake/Qa2fix.cmake)     # QA2-FIX: a player's wall span through the HUD, the lobby after a game (OPENBFME_QA2FIX_TESTS)
 include(cmake/Hud5.cmake)       # HUD-5: the owner's first Windows session (OPENBFME_HUD5_CLIENT_SOURCES / OPENBFME_HUD5_TESTS)
@@ -237,6 +238,7 @@ include(cmake/Platformicon1.cmake) # PLATFORMICON-1: each player's system beside
 include(cmake/Ownerfix1.cmake)  # OWNERFIX-1: problems the owner hit playing (OPENBFME_OWNERFIX1_TESTS)
 include(cmake/Visual2.cmake)    # VISUAL-2: the owner's fog leak, tree sway and colouring (OPENBFME_VISUAL2_SOURCES / _TESTS)
 include(cmake/Ownerfix2.cmake)  # OWNERFIX-2: the owner's playtest of 2026-10-17 (OPENBFME_OWNERFIX2_CLIENT_SOURCES / _TESTS)
+include(cmake/Lumber1.cmake)    # LUMBER1: the evil lumber mills' harvesting workers (appends to OPENBFME_SIM_SOURCES; OPENBFME_LUMBER1_TESTS)
 include(cmake/Backlog8.cmake)   # BACKLOG-8: formations, horde wall scaling, auto ability melee position (appends to OPENBFME_SIM_SOURCES)
 include(cmake/Menufix1.cmake)   # MENUFIX-1: the menus, consistent and retail-looking (OPENBFME_MENUFIX1_TESTS)
 include(cmake/Hudredraw1.cmake) # HUDREDRAW-1: the HUD redraws only the changed Apt levels (OPENBFME_HUDREDRAW1_TESTS)
@@ -690,6 +692,7 @@ add_executable(openbfme_tests
     ${OPENBFME_BACKLOG1_TESTS}
     ${OPENBFME_COMBAT3_TESTS}
     ${OPENBFME_COMBAT4_TESTS}
+    ${OPENBFME_FLANK1_TESTS}
     ${OPENBFME_HUD4_TESTS}
     ${OPENBFME_QA2FIX_TESTS}
     ${OPENBFME_EXIT1_TESTS}
@@ -718,6 +721,7 @@ add_executable(openbfme_tests
     ${OPENBFME_BACKLOG4_TESTS}
     ${OPENBFME_FLY1_TESTS}
     ${OPENBFME_SUMMON1_TESTS}
+    ${OPENBFME_LUMBER1_TESTS}
     ${OPENBFME_SHIP1_TESTS}
     ${OPENBFME_RENDERWAIT1_TESTS}
     ${OPENBFME_BACKLOG2_TESTS}

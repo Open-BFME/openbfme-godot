@@ -190,3 +190,65 @@ def test_pulls_of_retries_an_empty_github_answer_and_fails_closed_when_it_persis
         nn.GitHub("gh", "o/r", attempts=3, backoff=0).pulls_of(SHB)
     monkeypatch.setattr(nn.subprocess, "run", lambda cmd, capture_output=True, text=True: R(err="HTTP 422: No commit found", rc=1))
     assert nn.GitHub("gh", "o/r", attempts=3, backoff=0).pulls_of(SHB) == []   # an internal cherry-pick: GitHub does not know it
+
+
+@pytest.mark.parametrize("body", ["", " \n", "{}", "null", "false", "0", '"no PRs"', "["])
+def test_pulls_of_retries_non_array_bodies_and_does_not_cache_failures(monkeypatch, body):
+    good = json.dumps([{"number": 69, "user": {"login": "daisyhasacat"}, "title": "t", "base": {"repo": {"full_name": "o/r"}}}])
+    answers = [body, body, good]
+    calls, sleeps = [], []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return nn.subprocess.CompletedProcess(cmd, 0, answers.pop(0), "")
+
+    monkeypatch.setattr(nn.subprocess, "run", run)
+    monkeypatch.setattr(nn.time, "sleep", sleeps.append)
+    github = nn.GitHub("gh", "o/r", attempts=3, backoff=2)
+    expected = [{"pr": 69, "login": "daisyhasacat", "title": "t"}]
+    assert github.pulls_of(SHA) == expected
+    assert calls == [["gh", "api", f"repos/o/r/commits/{SHA}/pulls"]] * 3
+    assert sleeps == [2, 4]
+    assert github.pulls_of(SHA) == expected and len(calls) == 3
+
+    answers[:] = [body] * 3
+    with pytest.raises(SystemExit, match="fail closed.*JSON array"):
+        github.pulls_of(SHB)
+    assert SHB not in github.cache and len(calls) == 6 and not answers
+    answers[:] = [good]
+    assert github.pulls_of(SHB) == expected and len(calls) == 7
+
+
+@pytest.mark.parametrize("body, rc, err", [("[]", 0, ""), ("", 1, "HTTP 404: Not Found"), ("", 1, "HTTP 422: No commit found")])
+def test_pulls_of_caches_valid_no_pr_answers_without_retry(monkeypatch, body, rc, err):
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return nn.subprocess.CompletedProcess(cmd, rc, body, err)
+
+    monkeypatch.setattr(nn.subprocess, "run", run)
+    monkeypatch.setattr(nn.time, "sleep", lambda seconds: pytest.fail("a valid no-PR answer must not retry"))
+    github = nn.GitHub("gh", "o/r")
+    assert github.pulls_of(SHA) == [] and github.pulls_of(SHA) == []
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("attempts", [0, -2])
+@pytest.mark.parametrize("body", ["[]", "{}"])
+def test_pulls_of_makes_one_attempt_for_nonpositive_attempts(monkeypatch, attempts, body):
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return nn.subprocess.CompletedProcess(cmd, 0, body, "")
+
+    monkeypatch.setattr(nn.subprocess, "run", run)
+    monkeypatch.setattr(nn.time, "sleep", lambda seconds: pytest.fail("a single attempt must not sleep"))
+    github = nn.GitHub("gh", "o/r", attempts=attempts)
+    if body == "[]":
+        assert github.pulls_of(SHA) == []
+    else:
+        with pytest.raises(SystemExit, match="fail closed"):
+            github.pulls_of(SHA)
+    assert len(calls) == 1

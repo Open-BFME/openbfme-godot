@@ -81,7 +81,7 @@ def inner_commits(git_dir: str | None, sha: str) -> list[dict]:
 class GitHub:
     def __init__(self, gh: str, repo: str, attempts: int = 4, backoff: float = 5.0):
         self.gh, self.repo, self.cache = gh, repo, {}
-        self.attempts, self.backoff = attempts, backoff
+        self.attempts, self.backoff = max(1, attempts), backoff
 
     def pulls_of(self, sha: str) -> list[dict]:
         """the pull requests of the repository GitHub links to commit sha; [] when GitHub does not know the commit (an internal cherry-pick)"""
@@ -91,18 +91,27 @@ class GitHub:
         # JSON input", nightly 2026-10-22): try again, and fail closed only when every attempt fails
         for attempt in range(self.attempts):
             r = subprocess.run([self.gh, "api", f"repos/{self.repo}/commits/{sha}/pulls"], capture_output=True, text=True)
-            if not r.returncode or re.search(r"HTTP (404|422)", r.stderr):
-                break
-            if attempt + 1 < self.attempts:
-                time.sleep(self.backoff * (attempt + 1))
-        if r.returncode:
-            if re.search(r"HTTP (404|422)", r.stderr):
+            if not r.returncode:
+                try:
+                    pulls = json.loads(r.stdout)
+                except json.JSONDecodeError:
+                    error = "invalid JSON (expected a JSON array)"
+                else:
+                    if isinstance(pulls, list):
+                        break
+                    error = "expected a JSON array"
+            elif re.search(r"HTTP (404|422)", r.stderr):
                 self.cache[sha] = []
                 return []
+            else:
+                error = r.stderr.strip()[:200]
+            if attempt + 1 < self.attempts:
+                time.sleep(self.backoff * (attempt + 1))
+        else:
             raise SystemExit(f"nightly_notes: cannot read the pull requests of commit {sha[:10]} from GitHub (fail closed): "
-                             f"{r.stderr.strip()[:200]}")
+                             f"{error}")
         out = []
-        for p in json.loads(r.stdout or "[]"):
+        for p in pulls:
             login = str((p.get("user") or {}).get("login", ""))
             base = (p.get("base") or {}).get("repo") or {}
             if base.get("full_name") != self.repo or not LOGIN.fullmatch(login) or not isinstance(p.get("number"), int):

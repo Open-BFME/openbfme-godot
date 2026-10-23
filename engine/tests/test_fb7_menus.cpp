@@ -1701,6 +1701,16 @@ TEST_CASE("opts4 gadget layer retail: an open drop-down list is drawn after ever
 
 	// clicked: the entry "Enhanced", at a point inside the row below, is the list's
 	const float clickX = 755.0f, clickY = 275.0f; // inside the list's second entry (268 .. 290) and inside the row below (254 .. 280)
+	SUBCASE("uninterrupted dropdown") {}
+	SUBCASE("destroying an unrelated combo during hover preserves the open list")
+	{
+		GameWindow *transient = fx.layer->createEngineGadget("window/apt/combobox.wnd", 0, 0, 200, 26, nullptr, &error);
+		REQUIRE_MESSAGE(transient, error);
+		fx.layer->mouseMove(clickX, clickY);
+		fx.layer->destroyEngineGadget(transient);
+		REQUIRE(fx.layer->openDropDown() == look);
+		REQUIRE_FALSE(lookList->winIsHidden());
+	}
 	clickStage(fx, clickX, clickY);
 	const std::vector<OpenBFMEPageEvent> events = options->takeExtensionEvents();
 	REQUIRE(events.size() == 1);

@@ -17,6 +17,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/AI/AIGroup.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/SlavedUpdate.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -327,6 +328,10 @@ struct KindBits
 			{ PK_SCALEABLE_WALL, "SCALEABLE_WALL" },
 			{ PK_BASE_SITE, "BASE_SITE" },
 			{ PK_WALL_UPGRADE, "WALL_UPGRADE" },
+			{ PK_ATTACK_NEEDS_LINE_OF_SIGHT, "ATTACK_NEEDS_LINE_OF_SIGHT" },
+			{ PK_CAN_SHOOT_OVER_WALLS, "CAN_SHOOT_OVER_WALLS" },
+			{ PK_WALL_SEGMENT, "WALL_SEGMENT" },
+			{ PK_WALL_GATE, "WALL_GATE" },
 		};
 		for (int &b : bit)
 		{
@@ -442,6 +447,29 @@ float ObjectPathfindAdapter::getHeightAboveTerrain() const
 {
 	const Coord3D &p = *m_object->getPosition();
 	return SimMath::subf32(p.z, m_object->logic().getGroundHeight(p.x, p.y));
+}
+
+// lane ATTACKPATH-1: RW 0x6E82C8 walks the behaviour modules (Object + 0x24C) for the first whose behaviour interface slot 0x68 (the SlavedUpdate interface) is
+// not null and answers its slot 0, the slaver's id
+PathfindObjectID ObjectPathfindAdapter::getSlaverID() const
+{
+	const SlavedUpdateInterface *s = SlavedUpdateInterface::of(*m_object);
+	return s ? (PathfindObjectID)s->getSlaverID() : PATHFIND_INVALID_ID;
+}
+
+// lane ATTACKPATH-1: RW 0x70C55D -> RW 0x70C50C(0.0): not for the KindOf CAN_CLIMB_WALLS / SHIP (template + 0x11F & 0x81); else the height above the terrain
+// (RW 0x70B8AE) + 0 over GlobalData Gravity (+ 0xC4) * -9 (RW 0xC1EBC0), x87 (the predicate AerialPathfinder and SlowDeathBehavior port)
+bool ObjectPathfindAdapter::isSignificantlyAboveTerrain() const
+{
+	static const int kClimb = ObjectTemplateInfoBuilder::kindOfIndex("CAN_CLIMB_WALLS");
+	static const int kShip = ObjectTemplateInfoBuilder::kindOfIndex("SHIP");
+	if ((kClimb >= 0 && m_object->isKindOf((unsigned)kClimb)) || (kShip >= 0 && m_object->isKindOf((unsigned)kShip)))
+	{
+		return false;
+	}
+	const Coord3D &p = *m_object->getPosition();
+	const float above = SimMath::pc24Add(SimMath::pc24Sub(p.z, m_object->logic().getGroundHeight(p.x, p.y)), 0.0f);
+	return above > SimMath::pc24Mul(m_object->logic().settings().gravity, -9.0f);
 }
 
 bool ObjectPathfindAdapter::isMobile() const

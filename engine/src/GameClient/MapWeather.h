@@ -25,6 +25,16 @@ struct MapWeather
 	bool fogKeysSeen = false;
 };
 
+// The DiffuseColor of a time of day's "WaterSet MORNING|AFTERNOON|EVENING|NIGHT ... End" block (RGBA 0..1), which
+// drawRiverWater lights a white river with (WaterGeometry::riverVertexColour): data\ini\water.ini, then the map's map.ini,
+// the last block that sets it winning. R:175 G:175 B:175 A:255 when none does; A defaults to 255.
+namespace WaterSetScan
+{
+void applyText(const std::string &text, int timeOfDay, float diffuse[4]);
+// timeOfDay 1 Morning .. 4 Night (clamped). Missing map.ini is fine; a missing water.ini is an error.
+bool load(ArchiveFileSystem &fs, const std::string &mapDir, int timeOfDay, float diffuse[4], std::string *error);
+} // namespace WaterSetScan
+
 namespace MapWeatherScan
 {
 // Applies the keys of every "Weather ... End" block in `text` on top of `weather`.

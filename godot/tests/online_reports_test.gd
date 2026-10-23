@@ -50,7 +50,7 @@ func _run() -> void:
 	_check(panel._button.visible, "report entry should be available")
 	_check(panel._players.size() == 1, "the local player must not be offered as a target")
 	panel.open_dialog()
-	_check(panel._dialog.get_ok_button().disabled, "empty reports must not be sent")
+	_check(not panel._dialog.get_ok_button().disabled, "a category is a reason; the additional note is optional")
 	panel._reason.text = "Describe the incident and when it happened."
 	panel._reason.text_changed.emit()
 	_check(not panel._dialog.get_ok_button().disabled, "a reason enables submission")

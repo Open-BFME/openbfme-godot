@@ -264,6 +264,10 @@ public:
 	void online_deliver(int64_t id, int64_t status, const String &body, const String &error);
 	Dictionary online_status();
 	Dictionary online_apply(const Dictionary &spec);
+	Dictionary online_social_status() const;
+	Array online_social_events();
+	Dictionary online_social_apply(const Dictionary &spec);
+	Dictionary online_messenger_sync(const Dictionary &spec);
 	// Sol r1: the host could not play the START OnlineShell.apt handed on (GameWorld.net_online refused it): the screens show a recoverable lobby error
 	// and go back to the game list (false: no online screens). online_redact: a text with its credentials masked (OnlineLobbyClient::redact: relay,
 	// rejoin and spectator tickets, session tokens), for anything the game prints of the lobby's
@@ -347,6 +351,17 @@ public:
 	Array openbfme_page_events();
 	Dictionary openbfme_page_state() const;
 	Dictionary openbfme_page_choose(const String &key, int value);
+	// lane ONLINEMENU-1: the online FRIENDS button (label; empty: none) and page (a page spec as openbfme_page_show's, plus list_from_row and
+	// list_activates; events as openbfme_page_events' with "submit" / "list_select" / "list_activate" and a "text"; state: open, button rect, tabs,
+	// rows, list rows and rect, help)
+	void online_friends_button(const String &label);
+	bool online_ask(const String &key, const String &title, const String &text); // lane ONLINEMENU-1: AptOnlineShell::askYesNo
+	PackedStringArray online_answers();
+	bool online_asking(const String &key);
+	Dictionary online_friends_page_show(const Dictionary &spec);
+	void online_friends_page_close();
+	Array online_friends_page_events();
+	Dictionary online_friends_page_state() const;
 	// lane OPTS-5: the one Options menu (AptOptionsScreen::kOpenBFMEMenu). openbfme_page_show's rows take "entry" (a text entry: value_text, max) and
 	// "column" (0 / 1); its events take "release" (a slider let go), and "entry" is the menu's opening (value 1: show the detail settings first).
 	// options_retail_rows: { key: row } of the original game's settings as the page shows them ("Retail.<gadget>": kind, label, help, help_label,
@@ -397,7 +412,7 @@ public:
 	void attach_window_manager(WindowManager *wm);
 	void set_native_hook(AptNativeHook *hook);
 	// lane HUD-6: the font the movie's texts draw with for (name, point size): fontsubstitution.ini, the corpus fonts (C++ only; the HUD's help box)
-	Ref<Font> font_for(const std::string &name, float size, float *drawSize);
+	Ref<Font> font_for(const std::string &name, float size, float *drawSize, bool bold = false);
 	// lane UI-6: `font` (from font_for) at `px` pixels with RotWK's GDI text cell (ascent = the cell's baseline, height = the char height)
 	Ref<Font> font_cell(const Ref<Font> &font, int px);
 	// the shell mode's window manager and shell (null in the other modes) and a switch that hands the mouse and keys to the HUD node instead of this player (C++ only)

@@ -13,12 +13,18 @@
 #include "Common/StateHash.h"
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Combat/BezierSegment.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Combat/WeaponDelivery.h"
 #include "GameLogic/Damage.h"
+#include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/EmotionModules.h"
+#include "GameLogic/Module/NotifyCrushModules.h"
+#include "GameLogic/Object/ObjectGeometry.h"
+#include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
@@ -421,6 +427,12 @@ void BezierProjectileBehavior::projectileFireAtObjectOrPosition(const Object *vi
 	}
 	m_currentFlightPathStep = 0;
 	m_fireFrame = obj->logic().getFrame();
+	// lane FLANK-1: an object without KindOf NO_COLLIDE is in RotWK's collision manager (RW 0x68E31F): its contacts reach the collide interface while it flies
+	static const unsigned kNoCollide = (unsigned)CombatNames::kindOf("NO_COLLIDE");
+	if (!obj->isKindOf(kNoCollide))
+	{
+		obj->logic().combat().noteFlyingProjectile(obj->getID());
+	}
 	// RW 0x85EE00 .. 0x85EF31: the drawable's fade (InvisibleFrames / FadeInTime, or a fade over the flight when the launcher or the target is fogged for the
 	// local player) is client state: the client snapshot carries m_fireFrame (projectileClientInfo) and GameClient/DrawableFade starts it (lane PROJ-2).
 	// RW 0x85EF34 .. 0x85EF5E (lane PROJ-2): the projectile takes its first two steps at once: update, the partition refresh (RW 0x68C7E9: this port's
@@ -533,7 +545,22 @@ UpdateSleepTime BezierProjectileBehavior::update()
 		obj->setModelConditionState(kModelConditionAboutToHit, true);
 		if (d->m_preLandingEmotion != -1)
 		{
-			++logic.combat().counters().projectileEmotionsUnported;
+			// RW 0x85F31A .. 0x85F3F0 (lane FLANK-1; BFME2 decomp BezierProjectileBehaviorUpdate.cpp:136 has a relationship byte at + 0xB4 that RotWK does not read: RotWK
+			// passes the constant 7): ThePartitionManager within PreLandingEmotionRadius (+ 0xB0) of the path's end (+ 0x5C), distance type 1 (FROM_CENTER_3D), sorted near to far,
+			// through the filters RW 0xC11DC0 (the projectile's relationship to the object in mask 7 = allies, enemies, neutral: every object), RW 0xC10E20 (alive) and
+			// RW 0xC0F374 (the projectile's off-map flag, Object + 0x458 bit 3: never set in the port, S-920); every hit but the projectile asks its emotion tracker for
+			// PreLandingEmotion (+ 0xAC) with the projectile as the source and delay 1 (RW 0x68F383)
+			PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); });
+			const PartitionHits hits =
+				logic.partition().iterateObjectsInRange(m_flightPathEnd, d->m_preLandingEmotionRadius, FROM_CENTER_3D, { &alive }, ITER_SORTED_NEAR_TO_FAR);
+			for (const PartitionHit &hit : hits)
+			{
+				if (hit.object != obj)
+				{
+					EmotionTrackerUpdate::requestEmotion(*hit.object, d->m_preLandingEmotion, obj, 1);
+					++logic.combat().counters().projectilePreLandingEmotions;
+				}
+			}
 		}
 	}
 	// RW 0x85F42B: FlightPathAdjustDistPerSecond: the end of the path follows the victim, at most that far per frame
@@ -661,18 +688,152 @@ UpdateSleepTime BezierProjectileBehavior::update()
 	return sleepTime();
 }
 
-// RW 0x85EF6A: the weapon's ProjectileCollidesWith test (RW 0x6CC79C) is not ported (S-364): a live path and a warhead
+// RW 0x6CC79C WeaponTemplate::shouldProjectileCollideWith (lane FLANK-1; BFME2 decomp WeaponPrivateFireWeapon.cpp:829, ZH Weapon.cpp), `warhead` is `this`: the intended
+// victim always; never the launcher or the launcher's container; a FLAME warhead (RW 0x6CB6EA(6, the launcher's current weapon)) never hits a BURNED object (status 0xB);
+// an object whose AI has a sneaky targeting offset (AI vslot 0x200(0)) never; else the projectile's relationship to it (RW 0x68D7AB: ALLIES 1, ENEMIES 2, NEUTRAL 4), a
+// STRUCTURE (template + 0x108 bit 7) of the projectile's controlling player 0x200 (CONTROLLED_STRUCTURES) or else 8 (STRUCTURES), SHRUBBERY (bit 6) 0x10, PROJECTILE
+// (bit 25) 0x20, a FenceWidth above 0 (+ 0x4B0) 0x40 (WALLS), SMALL_MISSILE (bit 52) 0x80, BALLISTIC_MISSILE (bit 75) 0x100, MONSTER (bit 10) 0x400 against the
+// warhead's ProjectileCollidesWith (+ 0x118); a WALK_ON_TOP_OF_WALL object (bit 60) is passed over when the intended victim stands on a layer above the ground (RW 0x68BBE0 > 1)
+bool ProjectileModules::shouldProjectileCollideWith(GameLogic &logic, const WeaponTemplate &warhead, const Object *launcher, const Object *projectile, const Object *other,
+	ObjectID intendedVictim)
+{
+	if (!projectile || !other)
+	{
+		return false;
+	}
+	if (intendedVictim == other->getID())
+	{
+		return true;
+	}
+	static const unsigned kBurned = (unsigned)CombatNames::status("BURNED");
+	if (launcher)
+	{
+		if (launcher == other || launcher->getContainedBy() == other)
+		{
+			return false;
+		}
+		// RW 0x6CC7E2 .. 0x6CC802: RW 0x6CB6EA(6, the launcher's current weapon) on the warhead, then the BURNED status (0xB) of the other: the order does not matter
+		// (no side effect). No port module sets BURNED yet
+		if (other->testStatus(kBurned))
+		{
+			if (warhead.m_damageType == DAMAGE_FLAME)
+			{
+				return false; // RW 0x6CB6EA's first test: the template's DamageType (+ 0x58) is FLAME
+			}
+			logic.noteStop("[S-363] shouldProjectileCollideWith: a BURNED object met a warhead whose own DamageType is not FLAME: RW 0x6CB6EA's nugget walk is not "
+			               "ported (lane FLANK-1), the contact goes on as if no nugget were FLAME");
+		}
+	}
+	// RW 0x6CC808: AI vslot 0x200(0), the sneaky targeting offset: the port's AI has none (S-325), so no object is passed over here
+	unsigned required = 0;
+	switch (projectile->getRelationship(*other)) // RW 0x68D7AB
+	{
+	case ALLIES:
+		required = WEAPON_COLLIDE_ALLIES;
+		break;
+	case ENEMIES:
+		required = WEAPON_COLLIDE_ENEMIES;
+		break;
+	case NEUTRAL:
+		required = WEAPON_COLLIDE_NEUTRALS;
+		break;
+	default:
+		break;
+	}
+	static const unsigned kStructure = (unsigned)CombatNames::kindOf("STRUCTURE"), kShrubbery = (unsigned)CombatNames::kindOf("SHRUBBERY"),
+	                      kProjectile = (unsigned)CombatNames::kindOf("PROJECTILE"), kSmallMissile = (unsigned)CombatNames::kindOf("SMALL_MISSILE"),
+	                      kBallistic = (unsigned)CombatNames::kindOf("BALLISTIC_MISSILE"), kMonster = (unsigned)CombatNames::kindOf("MONSTER");
+	if (other->isKindOf(kStructure))
+	{
+		required |= other->getControllingPlayer() == projectile->getControllingPlayer() ? WEAPON_COLLIDE_CONTROLLED_STRUCTURES : WEAPON_COLLIDE_STRUCTURES; // RW 0x68B678 twice
+	}
+	if (other->isKindOf(kShrubbery))
+	{
+		required |= WEAPON_COLLIDE_SHRUBBERY;
+	}
+	if (other->isKindOf(kProjectile))
+	{
+		required |= WEAPON_COLLIDE_PROJECTILES;
+	}
+	if (logic.aiWorld() && logic.aiWorld()->movementInfo(*other->getTemplate()).fenceWidth > 0.0f) // comiss against 0.0 (RW 0xC1B594)
+	{
+		required |= WEAPON_COLLIDE_WALLS;
+	}
+	if (other->isKindOf(kSmallMissile))
+	{
+		required |= WEAPON_COLLIDE_SMALL_MISSILES;
+	}
+	if (other->isKindOf(kBallistic))
+	{
+		required |= WEAPON_COLLIDE_BALLISTIC_MISSILES;
+	}
+	if (other->isKindOf(kMonster))
+	{
+		required |= WEAPON_COLLIDE_MONSTERS;
+	}
+	if ((warhead.m_collideMask & required) == 0)
+	{
+		return false;
+	}
+	// RW 0x6CC8DD .. 0x6CC907: a WALK_ON_TOP_OF_WALL object (bit 60) when the intended victim's layer (RW 0x68BBE0) is above 1: the port has the ground layer only
+	// (S-362), so this never passes an object over
+	return true;
+}
+
+// RW 0x85EF6A (lane FLANK-1; BFME2 decomp BezierProjectileBehaviorSlots.cpp rva0045BF06): a path and a warhead; an object of KindOf HORDE (template + 0x115 bit 5) or
+// dead (Object + 0x458 bit 0) never; else the warhead's RW 0x6CC79C with the launcher found by id, the projectile and the intended victim's id (+ 0x38)
 bool BezierProjectileBehavior::projectileCanCollideWith(const Object *other) const
 {
 	if (m_flightPath.empty() || !m_warhead)
 	{
 		return false;
 	}
-	if (other && other->isEffectivelyDead())
+	static const unsigned kHorde = (unsigned)CombatNames::kindOf("HORDE");
+	if (other && (other->isKindOf(kHorde) || other->isEffectivelyDead()))
 	{
 		return false;
 	}
-	return true;
+	const Object *obj = getObject();
+	GameLogic &logic = obj->logic();
+	const Object *launcher = m_launcherID != INVALID_ID ? logic.findObjectByID(m_launcherID) : nullptr;
+	return ProjectileModules::shouldProjectileCollideWith(logic, *m_warhead, launcher, obj, other, m_victimID);
+}
+
+// RW 0x85EA5F (lane FLANK-1; BFME2 decomp BezierProjectileBehaviorSlots.cpp rva0045B9FB): k = min(path size - 1, the step) (an unsigned compare), the step toward
+// path point max(k - 1, 0) is 0.1 of (that point - the position) (SSE, x, y, z each); while the projectile's shapes at the stepped position still overlap `other`'s
+// (GeometryInfo::CollidesWith = RW 0xAD2CE0 with the projectile's angle and the other's position and angle), at most 13 times, take another step; then one step back
+// and setPosition (RW 0x70C201)
+void BezierProjectileBehavior::backOff(const Object &other)
+{
+	if (m_flightPath.empty())
+	{
+		return;
+	}
+	Object *obj = getObject();
+	const size_t last = m_flightPath.size() - 1;
+	const int k = last < (size_t)(unsigned)m_currentFlightPathStep ? (int)last : m_currentFlightPathStep;
+	const Coord3D &target = m_flightPath[(size_t)(k - 1 < 0 ? 0 : k - 1)];
+	Coord3D cur = *obj->getPosition();
+	Coord3D delta{ SimMath::subf32(target.x, cur.x), SimMath::subf32(target.y, cur.y), SimMath::subf32(target.z, cur.z) };
+	delta.x = SimMath::mulf32(delta.x, 0.1f); // RW 0xBD83D4
+	delta.y = SimMath::mulf32(delta.y, 0.1f);
+	delta.z = SimMath::mulf32(delta.z, 0.1f);
+	const float angle = obj->getOrientation();
+	const std::vector<ObjectGeometry::Shape> &own = ObjectGeometry::cachedShapesOf(*obj->getTemplate());
+	const std::vector<ObjectGeometry::Shape> &theirs = ObjectGeometry::cachedShapesOf(*other.getTemplate());
+	int i = 0;
+	bool collision = true;
+	while (collision && i++ <= 12)
+	{
+		cur.x = SimMath::addf32(cur.x, delta.x);
+		cur.y = SimMath::addf32(cur.y, delta.y);
+		cur.z = SimMath::addf32(cur.z, delta.z);
+		collision = NotifyCrushModules::geometriesOverlap(own, cur, angle, theirs, *other.getPosition(), other.getOrientation());
+	}
+	cur.x = SimMath::subf32(cur.x, delta.x);
+	cur.y = SimMath::subf32(cur.y, delta.y);
+	cur.z = SimMath::subf32(cur.z, delta.z);
+	obj->setPosition(&cur);
 }
 
 bool BezierProjectileBehavior::alreadyHit(ObjectID id) const
@@ -700,7 +861,8 @@ bool BezierProjectileBehavior::projectileHandleCollision(Object *other)
 	CombatState::Counters &counters = logic.combat().counters();
 	if (other)
 	{
-		// RW 0x85EA5F: back the projectile off along its path until it no longer overlaps `other` (GeometryInfo overlap RW 0xAD2CE0 is not ported: S-363, the position stays)
+		// RW 0x85FDCE (BFME2 decomp BezierProjectileBehaviorCollide.cpp:150): the back-off first (RW 0x85EA5F, lane FLANK-1), then a non-CrushStyle projectile detonates
+		backOff(*other);
 		if (!d->m_crushStyle)
 		{
 			detonate();
@@ -708,13 +870,12 @@ bool BezierProjectileBehavior::projectileHandleCollision(Object *other)
 		}
 		if (!alreadyHit(other->getID()))
 		{
-			// RW 0x85F85B: the warhead goes off at the position of the thing hit, the thing is remembered
+			// RW 0x85F85B (BFME2 decomp BezierProjectileBehaviorRva0045C812.cpp): handleProjectileDetonation(warhead, &origin + 0x2C, the PROJECTILE object (+ 0x08), &other's
+			// position, bonus + 0x74), then the thing is remembered (+ 0x7C). lane FLANK-1: the source was the producer; retail's is the projectile
 			if (m_warhead)
 			{
-				Object *producer = logic.findObjectByID(obj->getProducerID());
-				const ObjectID source = producer ? producer->getID() : obj->getID();
 				Coord3D pos = *other->getPosition();
-				DeliverNuggets(logic, source, *m_warhead, WeaponBonus(), nullptr, &pos, true, &counters.unportedNuggets);
+				DeliverNuggets(logic, obj->getID(), *m_warhead, WeaponBonus(), nullptr, &pos, true, &counters.unportedNuggets);
 			}
 			m_hitList.push_back(other->getID());
 		}
@@ -816,9 +977,20 @@ void BezierProjectileBehavior::landed()
 	}
 	obj->setStatus((unsigned)CombatNames::statuses().noAttack, false);
 	++logic.combat().counters().projectilesLanded;
-	// RW 0x85FAA4: FinalStuckTime > 0 sends the object's AI the command 0x31 (RW 0x852E2A; dispatch 0x66498A -> 0x74168E: a temporary busy state 0x2A for FinalStuckTime
-	// frames); retail skips the dispatch for an object without AI. That AI command is not ported, and FinalStuckTime == 0 sends a message (RW 0x5E821A, type 5) that is not
-	// read (S-363). A landed object leaves through its own modules (a LifetimeUpdate started at creation)
+	// RW 0x85FAA4 .. 0x85FACB (lane FLANK-1): an object with an AI (+ 0x260) gets, from the AI (source 2), FinalStuckTime (+ 0x38) > 0: command 0x31 with that many frames
+	// (RW 0x852E2A -> 0x66498A: the busy state 0x2A as a temporary state, RW 0x74168E: a leaping hero stands still after it lands); 0: command 5, idle (RW 0x5E821A).
+	// A landed object without an AI leaves through its own modules (a LifetimeUpdate started at creation)
+	if (AIUpdateInterface *ai = obj->getAIUpdateInterface())
+	{
+		if (d->m_finalStuckTime > 0)
+		{
+			ai->aiBusyFor(d->m_finalStuckTime, CMD_FROM_AI);
+		}
+		else
+		{
+			ai->aiIdle(CMD_FROM_AI);
+		}
+	}
 }
 
 // RW 0x85F08A
@@ -951,11 +1123,14 @@ std::vector<std::string> ProjectileModules::stops()
 		"drawable query) and the seed is drawn from the logic random (Weapon.cpp:1749) like retail; the highest terrain along the line is sampled over partition cells of 40 on a 3x3 lattice (ZH "
 		"estimateTerrainExtremesAlongLine; RW's own routine, slot 0x40 of the terrain object RW 0xDE4690, was not read); only the ground layer exists (no bridges)",
 		"[S-363] projectile behaviour: the victim proximity test of RW 0x85F737 is ported as the binary has it (the length of the victim's WORLD position against radius + speed: it only fires near the map "
-		"origin); nothing calls projectileHandleCollision(other) in flight (arrows are NO_COLLIDE; a stone needs the physics / collide dispatch), so a CrushStyle projectile and the GeometryInfo back-off of "
-		"RW 0x85EA5F are reached only by direct calls; GarrisonHitKill, the Pre / PostLanding emotions and TumbleRandomly are parsed and counted, not executed (InvisibleFrames / FadeInTime and the drawable look-ahead point: lane PROJ-2, S-1001); "
-		"FinalStuckTime > 0 sends the object's AI command 0x31 (RW 0x852E2A -> 0x66498A -> 0x74168E: a temporary busy state 0x2A; skipped without AI), not ported; FinalStuckTime 0 sends a message (RW 0x5E821A) that is not read; the hit and bounce FX lists are counted, not played",
-		"[S-364] warhead: the detonation delivers the warhead's nuggets through DeliverNuggets (RW 0x6CF590 / 0x6CF4D6 create a temporary Weapon: its own HitPercentage / scatter / dodge rolls and the weapon "
-		"bonus flags are not applied), the ProjectileCollidesWith test (RW 0x6CC79C) is not ported",
+		"origin); lane FLANK-1: a flying projectile without KindOf NO_COLLIDE meets the objects its shapes overlap (CombatState::processProjectileContacts, the collision manager row; INFERENCE S-780: "
+		"the candidates are ThePartitionManager's within its bounding sphere, tested with RW 0xAD2CE0, in id order, the projectile's side only) through canCollideWith RW 0x85EF6A with the warhead's "
+		"ProjectileCollidesWith RW 0x6CC79C (no sneaky targeting offset, the ground layer only, a BURNED object's nugget walk of RW 0x6CB6EA not ported), the back-off RW 0x85EA5F and the CrushStyle hit "
+		"RW 0x85F85B with the projectile as the source; PreLandingEmotion runs (RW 0x85F31A -> RW 0x68F383); GarrisonHitKill (no 2.01 data), the PostLanding emotion (no 2.01 data) and TumbleRandomly "
+		"(the physics orientation) are parsed and counted, not executed (InvisibleFrames / FadeInTime and the drawable look-ahead point: lane PROJ-2, S-1001); "
+		"FinalStuckTime > 0 makes a landed object's AI busy for that many frames (RW 0x852E2A -> 0x66498A: the temporary state 0x2A) and FinalStuckTime 0 sends it idle (RW 0x5E821A, lane FLANK-1); the hit and bounce FX lists are counted, not played",
+		"[S-364] warhead: the detonation delivers the warhead's nuggets through DeliverNuggets (RW 0x6CF590 / 0x6CF4D6 create a temporary Weapon: its own HitPercentage / scatter / dodge rolls are not applied; "
+		"lane FLANK-1 found the fire body RW 0x6CC915 never reads the WeaponBonus, and no 2.01 warhead has a HitPercentage below 1, a scatter or a dodge, so 2.01 data delivers the same damage)",
 		"[S-1000] siege launch (lane PROJ-2): the WeaponStatusHelper runs RW 0x68E197 every frame in the FINAL update phase (RW 0x68D19A, 0x8311B1) and the fire state sets the "
 		"current slot's FIRING conditions right before the shot (RW 0x74C4A7 -> 0x69036C), so the launch bone is the attack state's pose at FrameForPristineBonePositions; the "
 		"launch takes the first two path points at once (RW 0x85EF34). Not ported: RW 0x68E197 / 0x69036C change the conditions only for an object with a drawable (this "

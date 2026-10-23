@@ -1,0 +1,348 @@
+# Lane SIGNKMS-1: the release signing key in AWS KMS, the one role that may sign with it, and an e-mail on every signature
+# (docs/RELEASE.md, "Release signing": the owner creates this stack from his own AWS login; nothing in the repository or on GitHub holds an
+# AWS credential).
+#
+#   KMS key      ECC_NIST_EDWARDS25519, SIGN_VERIFY, created inside KMS and never exportable; alias alias/openbfme-release.
+#                Its key policy: the account's administrators may manage it (describe, enable / disable, change the policy, schedule its
+#                deletion) but NOBODY may sign except the signing role, and the role only with ED25519_SHA_512 over RAW messages (an
+#                explicit Deny for every other principal: an IAM policy cannot grant kms:Sign around it).
+#   Role         openbfme-release-signer, assumable only through GitHub's OIDC provider with a token whose audience is sts.amazonaws.com
+#                and whose subject is EXACTLY one of the two customised subjects (repository, repository id, the nightly or stable
+#                environment, the release workflow file at refs/heads/main): no branch, pull request, fork, other workflow or other
+#                environment can assume it. Sessions last at most one hour (the workflow asks for 15 minutes).
+#   Alerts       a CloudTrail trail (management events; KMS events included) and an EventBridge rule: every kms:Sign with this key, and every
+#                change to the key or the role (policy, disable, deletion, alias), goes to an SNS topic that e-mails AlertEmail.
+#
+# Cost (us-east-1 prices, 2026-10): the asymmetric key $1.00 a month; signing requests $0.15 per 10,000 (about 300 a month: 30 nightlies
+# and a few stables x 6 signatures + public-key reads) = under $0.01; CloudTrail's first trail of management events: no charge, its S3
+# storage a few cents (90-day lifecycle); EventBridge rules on AWS service events: no charge; SNS e-mail: the first 1,000 a month free.
+# About $1.05 a month in all, far under the account's $90 cap. A key scheduled for deletion is billed until it is deleted.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: OpenBFME release signing (KMS Ed25519 key, GitHub OIDC signing role, sign alerts)
+
+Parameters:
+  GitHubRepository:
+    Type: String
+    Default: Open-BFME/openbfme-godot
+    AllowedPattern: "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"
+    Description: owner/name of the public repository whose release workflow signs
+  GitHubRepositoryId:
+    Type: String
+    AllowedPattern: "^[0-9]+$"
+    Description: the repository's numeric id (gh api repos/Open-BFME/openbfme-godot --jq .id); a deleted and re-created repository of the same name gets a new id
+  WorkflowPath:
+    Type: String
+    Default: .github/workflows/release.yml
+    AllowedPattern: "^\\.github/workflows/[a-z0-9_-]+\\.yml$"
+  KeyAdminArn:
+    Type: String
+    Description: the IAM principal that administers the key (the owner's IAM user or SSO role ARN); it can never sign
+  AlertEmail:
+    Type: String
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+$"
+    Description: where every signature and every change to the key is reported
+  ExistingGitHubOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: leave empty to create GitHub's OIDC provider; else the ARN of the account's existing token.actions.githubusercontent.com provider
+  CreateTrail:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: false only when a trail already records management events (KMS events NOT excluded) in this region
+
+Conditions:
+  MakeProvider: !Equals [!Ref ExistingGitHubOidcProviderArn, ""]
+  MakeTrail: !Equals [!Ref CreateTrail, "true"]
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: MakeProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  SignerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: openbfme-release-signer
+      Description: GitHub Actions release workflow (main, environments nightly / stable) signs OpenBFME releases with KMS
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If [MakeProvider, !Ref GitHubOidcProvider, !Ref ExistingGitHubOidcProviderArn]
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                # the repository's customised subject (docs/RELEASE.md step "OIDC subject"): include_claim_keys
+                # ["repo", "repository_id", "context", "workflow_ref"]
+                token.actions.githubusercontent.com:sub:
+                  - !Sub "repo:${GitHubRepository}:repository_id:${GitHubRepositoryId}:environment:nightly:workflow_ref:${GitHubRepository}/${WorkflowPath}@refs/heads/main"
+                  - !Sub "repo:${GitHubRepository}:repository_id:${GitHubRepositoryId}:environment:stable:workflow_ref:${GitHubRepository}/${WorkflowPath}@refs/heads/main"
+
+  SigningKey:
+    Type: AWS::KMS::Key
+    DependsOn: SignerRole
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: OpenBFME release signing key (Ed25519); signs only through the GitHub release workflow
+      KeySpec: ECC_NIST_EDWARDS25519
+      KeyUsage: SIGN_VERIFY
+      Enabled: true
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AdministerNeverSign
+            Effect: Allow
+            Principal:
+              AWS: !Ref KeyAdminArn
+            Action:
+              - kms:DescribeKey
+              - kms:GetKeyPolicy
+              - kms:GetPublicKey
+              - kms:ListResourceTags
+              - kms:PutKeyPolicy
+              - kms:EnableKey
+              - kms:DisableKey
+              - kms:TagResource
+              - kms:UntagResource
+              - kms:ScheduleKeyDeletion
+              - kms:CancelKeyDeletion
+              - kms:CreateAlias
+              - kms:UpdateAlias
+              - kms:DeleteAlias
+              - kms:UpdateKeyDescription
+            Resource: "*"
+          - Sid: AccountRootCanRepairThePolicy
+            # without it a wrong KeyAdminArn would lock the key for good (AWS's recommendation); root can change the policy, not sign
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+            Action:
+              - kms:DescribeKey
+              - kms:GetKeyPolicy
+              - kms:PutKeyPolicy
+            Resource: "*"
+          - Sid: TheReleaseWorkflowSigns
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt SignerRole.Arn
+            Action: kms:Sign
+            Resource: "*"
+            Condition:
+              StringEquals:
+                kms:SigningAlgorithm: ED25519_SHA_512
+                kms:MessageType: RAW
+          - Sid: TheReleaseWorkflowReadsThePublicKey
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt SignerRole.Arn
+            Action:
+              - kms:GetPublicKey
+              - kms:DescribeKey
+            Resource: "*"
+          - Sid: NobodyElseSigns
+            Effect: Deny
+            Principal: "*"
+            Action: kms:Sign
+            Resource: "*"
+            Condition:
+              ArnNotEquals:
+                aws:PrincipalArn: !GetAtt SignerRole.Arn
+
+  SigningKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/openbfme-release
+      TargetKeyId: !Ref SigningKey
+
+  SignerPolicy:
+    Type: AWS::IAM::RolePolicy
+    Properties:
+      RoleName: !Ref SignerRole
+      PolicyName: sign-releases
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - kms:Sign
+              - kms:GetPublicKey
+              - kms:DescribeKey
+            Resource: !GetAtt SigningKey.Arn
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: openbfme-release-signing-alerts
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+
+  AlertTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref AlertTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref AlertTopic
+            Condition:
+              ArnEquals:
+                aws:SourceArn: [!GetAtt SignAlertRule.Arn, !GetAtt KeyChangeAlertRule.Arn, !GetAtt RoleChangeAlertRule.Arn]
+
+  TrailBucket:
+    Type: AWS::S3::Bucket
+    Condition: MakeTrail
+    DeletionPolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-after-90-days
+            Status: Enabled
+            ExpirationInDays: 90
+
+  TrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: MakeTrail
+    Properties:
+      Bucket: !Ref TrailBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt TrailBucket.Arn
+          - Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "${TrailBucket.Arn}/AWSLogs/${AWS::AccountId}/*"
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+  Trail:
+    Type: AWS::CloudTrail::Trail
+    Condition: MakeTrail
+    DependsOn: TrailBucketPolicy
+    Properties:
+      TrailName: openbfme-release-signing
+      S3BucketName: !Ref TrailBucket
+      IsLogging: true
+      IsMultiRegionTrail: false
+      IncludeGlobalServiceEvents: true
+      EnableLogFileValidation: true
+      EventSelectors:
+        - ReadWriteType: All
+          IncludeManagementEvents: true
+
+  SignAlertRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: openbfme-release-signed
+      Description: every signature made with the OpenBFME release key
+      State: ENABLED
+      EventPattern:
+        source: [aws.kms]
+        detail-type: [AWS API Call via CloudTrail]
+        detail:
+          eventSource: [kms.amazonaws.com]
+          eventName: [Sign]
+          resources:
+            ARN: [!GetAtt SigningKey.Arn]
+      Targets:
+        - Id: email
+          Arn: !Ref AlertTopic
+          InputTransformer:
+            InputPathsMap:
+              time: $.detail.eventTime
+              who: $.detail.userIdentity.arn
+              ip: $.detail.sourceIPAddress
+              error: $.detail.errorCode
+            InputTemplate: |
+              "OpenBFME release key: kms:Sign at <time> by <who> from <ip> (error: <error>). Expected: an assumed-role session of openbfme-release-signer named openbfme-<run id>-<attempt> during a release workflow run. Anything else: disable the key (docs/RELEASE.md, Release signing, Recovery)."
+
+  KeyChangeAlertRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: openbfme-release-key-changed
+      Description: changes to the OpenBFME release key or its alias
+      State: ENABLED
+      EventPattern:
+        source: [aws.kms]
+        detail-type: [AWS API Call via CloudTrail]
+        detail:
+          eventName: [PutKeyPolicy, DisableKey, EnableKey, ScheduleKeyDeletion, CancelKeyDeletion, CreateGrant, CreateAlias, UpdateAlias,
+                      DeleteAlias]
+          resources:
+            ARN: [!GetAtt SigningKey.Arn]
+      Targets:
+        - Id: email
+          Arn: !Ref AlertTopic
+          InputTransformer:
+            InputPathsMap:
+              time: $.detail.eventTime
+              what: $.detail.eventName
+              who: $.detail.userIdentity.arn
+            InputTemplate: |
+              "OpenBFME release key: <what> at <time> by <who>. If this was not you, see docs/RELEASE.md, Release signing, Recovery."
+
+  RoleChangeAlertRule:
+    # IAM is a global service: its CloudTrail events reach EventBridge in us-east-1 only, so create this stack in us-east-1
+    Type: AWS::Events::Rule
+    Properties:
+      Name: openbfme-release-signer-changed
+      Description: changes to the OpenBFME signing role (its trust policy or permissions)
+      State: ENABLED
+      EventPattern:
+        source: [aws.iam]
+        detail-type: [AWS API Call via CloudTrail]
+        detail:
+          eventName: [UpdateAssumeRolePolicy, PutRolePolicy, AttachRolePolicy, DeleteRolePolicy, DetachRolePolicy, DeleteRole]
+          requestParameters:
+            roleName: [openbfme-release-signer]
+      Targets:
+        - Id: email
+          Arn: !Ref AlertTopic
+          InputTransformer:
+            InputPathsMap:
+              time: $.detail.eventTime
+              what: $.detail.eventName
+              who: $.detail.userIdentity.arn
+            InputTemplate: |
+              "OpenBFME signing role: <what> at <time> by <who>. If this was not you, see docs/RELEASE.md, Release signing, Recovery."
+
+Outputs:
+  SigningRoleArn:
+    Description: the environment secret OPENBFME_SIGNING_ROLE_ARN (nightly and stable)
+    Value: !GetAtt SignerRole.Arn
+  SigningKeyArn:
+    Value: !GetAtt SigningKey.Arn
+  SigningKeyAlias:
+    Value: !Ref SigningKeyAlias
+  Region:
+    Description: the environment variable OPENBFME_SIGNING_REGION (nightly and stable)
+    Value: !Ref AWS::Region

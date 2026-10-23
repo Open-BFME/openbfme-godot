@@ -148,6 +148,49 @@ void noteUnapplied(INI *ini, void *instance, void *, const void *userData)
 
 #define SEEN_DATA(bit) ((const void *)(std::uintptr_t)(bit))
 
+// lane TARGET-1, RW 0x7013C2 (the AttackPriority block's Target row): a ThingTemplate name, then an int (RW 0x42EC5E). RW resolves the template there
+// (RW 0x73AD1F: "None" -> null, an unknown name -> null with a debug line) and keeps only a found template with a name; the port keeps the name and
+// resolves it where the info is built (AttackPriorityStore::getAttackInfo), with the same skip (INFERENCE: the template store is complete by then)
+void parseAttackPriorityTarget(INI *ini, void *instance, void *, const void *)
+{
+	const std::string name = ini->getNextToken();
+	int priority = 0;
+	INI::parseInt(ini, nullptr, &priority, nullptr);
+	static_cast<GameLogicSettings::AttackPriorityDef *>(instance)->targets.emplace_back(name, priority);
+}
+
+// the AttackPriority block's field table (RW 0xC1D8EC)
+const FieldParse kAttackPriorityFields[] = {
+	{ "Default", INI::parseInt, nullptr, (int)offsetof(GameLogicSettings::AttackPriorityDef, defaultPriority) },
+	{ "Target", parseAttackPriorityTarget, nullptr, 0 },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+
+// RW 0x70153B (the AIData row AttackPriority, RW 0xC1CD00): the name; a def of that name (exact compare) has its targets cleared and is parsed again,
+// else a new def (Default 1, RW 0x701323) is pushed at the list head
+void parseAttackPriorityBlock(INI *ini, void *instance, void *, const void *)
+{
+	std::vector<GameLogicSettings::AttackPriorityDef> &defs = static_cast<BlockState *>(instance)->values.attackPriorityDefs;
+	const std::string name = ini->getNextToken();
+	GameLogicSettings::AttackPriorityDef *def = nullptr;
+	for (GameLogicSettings::AttackPriorityDef &d : defs)
+	{
+		if (d.name == name)
+		{
+			def = &d;
+			break;
+		}
+	}
+	if (!def)
+	{
+		defs.insert(defs.begin(), GameLogicSettings::AttackPriorityDef());
+		def = &defs.front();
+		def->name = name;
+	}
+	def->targets.clear(); // RW 0x75E707
+	ini->initFromINI(def, kAttackPriorityFields);
+}
+
 const FieldParse kGameDataFields[] = {
 	{ "TimeAfterDamageUntilRepairAllowed", parseNoting<INI::parseUnsignedInt>, SEEN_DATA(SEEN_REPAIR_DELAY), (int)offsetof(BlockState, values.timeAfterDamageUntilRepairAllowed) },
 	{ "ForceModelsToFollowTimeOfDay", parseNoting<INI::parseBool>, SEEN_DATA(SEEN_TOD), (int)offsetof(BlockState, values.forceModelsToFollowTimeOfDay) },
@@ -241,6 +284,15 @@ const FieldParse kAIDataFields[] = {
 	{ "UseFormations", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.useFormations) },
 	// lane STEALTHFLY1: MinFlightHeight (row RW 0xC1CE60 parseReal RW 0x42ED00, AIData + 0xB0): the aerial path's ground floor (RW 0x777ED7)
 	{ "MinFlightHeight", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.minFlightHeight) },
+	// lane TARGET-1: the target search's rows (RW 0xC1CB60 ForceIdleMSEC parseDurationUnsignedInt + 0x14; AttackPriorityDistanceModifier parseReal + 0x54;
+	// AttackUsesLineOfSight / AttackIgnoreInsignificantBuildings parseBool + 0x67 / + 0x68; ArtilleryMaxFriendlyFire parsePercentToReal + 0xF0; AttackPriority
+	// RW 0x70153B, row RW 0xC1CD00)
+	{ "ForceIdleMSEC", parseNoting<INI::parseDurationUnsignedInt>, 0, (int)offsetof(BlockState, values.forceIdleFrames) },
+	{ "AttackPriorityDistanceModifier", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.attackPriorityDistanceModifier) },
+	{ "AttackUsesLineOfSight", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.attackUsesLineOfSight) },
+	{ "AttackIgnoreInsignificantBuildings", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.attackIgnoreInsignificantBuildings) },
+	{ "ArtilleryMaxFriendlyFire", parseNoting<INI::parsePercentToReal>, 0, (int)offsetof(BlockState, values.artilleryMaxFriendlyFire) },
+	{ "AttackPriority", parseAttackPriorityBlock, nullptr, 0 },
 	{ nullptr, noteUnapplied, nullptr, 0 }
 };
 const FieldParse kMultiplayerFields[] = {
@@ -570,6 +622,23 @@ void GameLogicSettings::crc(StateHasher &h) const
 		h.addFloat(minFlightHeight); // lane STEALTHFLY1: only a map that sets it (the hash of every other game is unchanged)
 	}
 	h.addFloat(groupMoveClickToGatherAreaFactor);
+	h.addU32(forceIdleFrames); // lane TARGET-1
+	h.addFloat(attackPriorityDistanceModifier);
+	h.addBool(attackUsesLineOfSight);
+	h.addBool(attackIgnoreInsignificantBuildings);
+	h.addFloat(artilleryMaxFriendlyFire);
+	h.addU32((std::uint32_t)attackPriorityDefs.size());
+	for (const AttackPriorityDef &d : attackPriorityDefs)
+	{
+		h.addString(d.name);
+		h.addI32(d.defaultPriority);
+		h.addU32((std::uint32_t)d.targets.size());
+		for (const auto &t : d.targets)
+		{
+			h.addString(t.first);
+			h.addI32(t.second);
+		}
+	}
 	h.addBool(forceModelsToFollowTimeOfDay);
 	h.addBool(forceModelsToFollowWeather);
 	h.addBool(bodyThresholdsLoaded);

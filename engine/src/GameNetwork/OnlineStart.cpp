@@ -327,6 +327,19 @@ bool parse(const std::string &json, const ProfileIdentity &ownProfile, const Lim
 		gs.startPos = (int)startPos;
 		gs.teamNumber = (int)team;
 		gs.accepted = true;
+		// lane ONLINEMENU-1: the slot's handicap (GameSlot + 0x20; lobby.mjs signAndStart). Absent: a START or replay record written before the lobby
+		// carried one, whose games were all played at 0; present, it must be one of the Handicap combo's values (RW 0x840B9D) or the START is refused
+		gs.handicap = 0;
+		if (js.get("handicap"))
+		{
+			long long handicap = 0;
+			sub.clear();
+			if (!intField(js, "handicap", -95, 0, handicap, &sub) || !SkirmishGameSlot::handicapValid((int)handicap))
+			{
+				return fail(error, at + (sub.empty() ? std::string("\"handicap\" must be 0 or -5 .. -95 in steps of 5") : sub));
+			}
+			gs.handicap = (int)handicap;
+		}
 		if (const JsonValue *cah = js.get("cah"))
 		{
 			std::vector<std::uint8_t> bytes;

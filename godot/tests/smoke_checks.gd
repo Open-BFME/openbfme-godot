@@ -584,7 +584,9 @@ func _map_terrain(fs: RefCounted) -> void:
 		for mi in node.find_children("*", "MeshInstance3D", true, false):
 			var m: ShaderMaterial = (mi as MeshInstance3D).mesh.surface_get_material(0)
 			if m != null:
-				_check(m.render_priority > terrain_priority and m.shader.code.contains("blend_mix"), "%s/%s draws after the opaque terrain (priority %d > %d, blended)" % [group, mi.name, m.render_priority, terrain_priority])
+				# RiverArea::additiveBlending rivers get the blend_add copy of river.gdshader (Fords of Isen II has only those)
+				var blend := "blend_add" if m.shader.code.contains("render_mode unshaded, blend_add") else "blend_mix"
+				_check(m.render_priority > terrain_priority and m.shader.code.contains(blend), "%s/%s draws after the opaque terrain (priority %d > %d, %s)" % [group, mi.name, m.render_priority, terrain_priority, blend])
 	var meshes := root.find_children("*", "MeshInstance3D", true, false)
 
 	# present a frame (the dummy renderer in headless mode: the scene is entered and drawn, not rasterised)

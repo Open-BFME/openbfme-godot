@@ -1318,12 +1318,13 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("camera_look_at", "sage_xy"), &InGameHudNode::camera_look_at);
 	ClassDB::bind_method(D_METHOD("camera_set_height", "height_above_ground"), &InGameHudNode::camera_set_height);
 	ClassDB::bind_method(D_METHOD("pixel_to_world", "pixel"), &InGameHudNode::pixel_to_world);
+	ClassDB::bind_method(D_METHOD("ping_point", "pixel"), &InGameHudNode::ping_point); // the ping wheel
 	ClassDB::bind_method(D_METHOD("world_to_pixel", "world_xy"), &InGameHudNode::world_to_pixel);
 	ClassDB::bind_method(D_METHOD("pick_probe", "pixel", "id"), &InGameHudNode::pick_probe);
 	ClassDB::bind_method(D_METHOD("find_button_window", "path"), &InGameHudNode::find_button_window);
 	ClassDB::bind_method(D_METHOD("get_radar_square"), &InGameHudNode::get_radar_square);
 	ClassDB::bind_method(D_METHOD("world_to_radar_pixel", "world_xy"), &InGameHudNode::world_to_radar_pixel);
-	ClassDB::bind_method(D_METHOD("create_radar_event", "world_xy", "type"), &InGameHudNode::create_radar_event);
+	ClassDB::bind_method(D_METHOD("create_radar_event", "world_xy", "type", "jump_to"), &InGameHudNode::create_radar_event, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("get_radar_state"), &InGameHudNode::get_radar_state); // lane HUD-7
 	ClassDB::bind_method(D_METHOD("radar_probe", "world_xy"), &InGameHudNode::radar_probe); // lane HUD-7
 	ClassDB::bind_method(D_METHOD("camera_set_angle_pitch", "angle", "pitch"), &InGameHudNode::camera_set_angle_pitch); // lane HUD-7 (a test hook)
@@ -2418,6 +2419,15 @@ Dictionary InGameHudNode::get_state() const
 		msgs.push_back(toGodot(m));
 	}
 	s["messages"] = msgs;
+	Array displayedMessages;
+	for (const auto &entry : d->hud->playerMessages().entries())
+	{
+		Dictionary message;
+		message["text"] = String::utf16(reinterpret_cast<const char16_t *>(entry.text.data()), (int64_t)entry.text.size());
+		message["color"] = (int64_t)entry.color;
+		displayedMessages.push_back(message);
+	}
+	s["player_messages"] = displayedMessages;
 	{
 		ControlBar &cb = d->hud->controlBar();
 		Dictionary bar;
@@ -2918,6 +2928,7 @@ void InGameHudNode::_process(double delta)
 	if (d->hud6)
 	{
 		d->hud6->drawRadial(get_canvas_item()); // lane HUD-6
+		d->hud6->drawMessages(get_canvas_item());
 	}
 	const uint64_t t1 = Time::get_singleton()->get_ticks_usec();
 	d->hudMs = (double)(ta - t0) / 1000.0;
@@ -3653,6 +3664,29 @@ Vector2 InGameHudNode::pixel_to_world(const Vector2 &pixel) const
 	return Vector2(-1e9f, -1e9f);
 }
 
+Vector2 InGameHudNode::ping_point(const Vector2 &pixel) const
+{
+	// the ping wheel (not retail): the map point a ping placed at this window pixel marks. Over the minimap: the point the radar shows there (the mapping of
+	// a radar click, InGameHud::radarClick); over any other part of the HUD (the Palantir, the control bar, the radial bubbles: InGameHud::isOverGui): none,
+	// as the terrain behind the HUD is not what the player points at; elsewhere the terrain under the pixel (pixel_to_world). (-1e9, -1e9) for none
+	waitLogic(d.get());
+	if (!d->hud)
+	{
+		return Vector2(-1e9f, -1e9f);
+	}
+	bool hasPoint = false;
+	float wx = 0.0f, wy = 0.0f;
+	if (d->hud->radarPoint((int)pixel.x, (int)pixel.y, hasPoint, wx, wy))
+	{
+		return hasPoint ? Vector2(wx, wy) : Vector2(-1e9f, -1e9f);
+	}
+	if (d->hud->isOverGui((int)pixel.x, (int)pixel.y))
+	{
+		return Vector2(-1e9f, -1e9f);
+	}
+	return pixel_to_world(pixel);
+}
+
 Vector2 InGameHudNode::world_to_pixel(const Vector2 &w) const
 {
 	waitLogic(d.get());
@@ -3747,14 +3781,21 @@ Vector2 InGameHudNode::world_to_radar_pixel(const Vector2 &world) const
 	return Vector2(sq[0] + rx * (sq[2] - sq[0]) / 128.0f, sq[1] + ry * (sq[3] - sq[1]) / 128.0f);
 }
 
-bool InGameHudNode::create_radar_event(const Vector2 &world_xy, int type)
+bool InGameHudNode::create_radar_event(const Vector2 &world_xy, int type, bool jump_to)
 {
-	// lane RADAR-1 (QA): an event the way a script's radar event action makes one (createEvent, 4 s); false without a radar
+	// lane RADAR-1 (QA): an event the way a script's radar event action makes one (createEvent, 4 s); false without a radar. `jump_to` (the ping wheel):
+	// also TheEva's event position, as the script action adds it after createEvent (RW 0x7BC221 -> RW 0x5DD1F3, Radar::noteEvaPosition), so Space
+	// (VIEW_LAST_RADAR_EVENT) looks at it. Client state only (the radar), as the script's event is
 	if (!d->hud || !d->hud->radar().ready())
 	{
 		return false;
 	}
-	d->hud->radar().createEvent(Coord3D{ (float)world_xy.x, (float)world_xy.y, 0.0f }, type, 4.0f);
+	const Coord3D at{ (float)world_xy.x, (float)world_xy.y, 0.0f };
+	d->hud->radar().createEvent(at, type, 4.0f);
+	if (jump_to)
+	{
+		d->hud->radar().noteEvaPosition(at);
+	}
 	return true;
 }
 

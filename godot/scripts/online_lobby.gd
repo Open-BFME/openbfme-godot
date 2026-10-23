@@ -14,6 +14,8 @@
 ## each time), once a second while the game has not started; the session is not kept (a spectator has no slot to rejoin: it asks again).
 extends Node
 
+const OnlineList := preload("res://scripts/online_list.gd")
+
 signal started(start_json: String)
 signal failed(message: String)
 signal notice(message: String)
@@ -26,7 +28,9 @@ var lobby_url := ""
 var player_name := "Player"
 var profile := ""
 var mode := "normal"        ## lane UBERJOIN-1: the performance mode of this player's games ("normal" or "uber": the lobby refuses a join in the other)
+var platform := OS.get_name().to_lower() ## SOCIAL-1: told with a join (lobby.mjs checkPlatform)
 var join_id := ""          ## join this game; empty: host one with host_setup
+var invite_id := ""        ## accept with this game's locally computed profile and inherited lobby token
 var host_setup := {}        ## {name, setup: {map, startingCash, slots: [...]}, players: N}
 var token := ""
 var rejoin := false          ## lane ONLINE-3: rejoin a running game instead of joining / hosting
@@ -85,6 +89,19 @@ func begin() -> void:
 	if not problem.is_empty():
 		_fail(problem)
 		return
+	if mode not in ["normal", "uber"]:
+		_fail("the local performance mode is invalid")
+		return
+	if not invite_id.is_empty():
+		if RegEx.create_from_string("^[0-9a-f]{16}$").search(invite_id) == null:
+			_fail("the invitation id is invalid")
+			return
+		if token.is_empty():
+			_fail("accepting an invitation requires the original lobby session")
+			return
+		if not join_id.is_empty() or not host_setup.is_empty() or rejoin or spectate or RegEx.create_from_string("^[0-9a-f]{32}$").search(profile) == null:
+			_fail("accepting an invitation requires a local profile and no other join mode")
+			return
 	if token.is_empty() and rejoin:
 		# lane ONLINE-3: the session of the game that restarted (the slot belongs to that guest)
 		var f := FileAccess.open(SESSION_FILE, FileAccess.READ)
@@ -133,7 +150,20 @@ func _fail(message: String) -> void:
 	failed.emit(message)
 
 
+func _join_identity() -> Dictionary:
+	var identity := {"profile": profile, "mode": mode}
+	if platform in ["windows", "linux", "macos"]:
+		identity["platform"] = platform
+	return identity
+
+
 func _after_signin() -> void:
+	if not invite_id.is_empty():
+		_step = "invite"
+		var identity := _join_identity()
+		identity["v"] = 1
+		_send(HTTPClient.METHOD_POST, "/v1/invites/%s/accept" % invite_id, identity)
+		return
 	if spectate:
 		if join_id.is_empty():
 			_fail("spectating needs the game's id")
@@ -148,13 +178,12 @@ func _after_signin() -> void:
 	if join_id.is_empty():
 		_step = "create"
 		var body: Dictionary = host_setup.duplicate(true)
-		body["profile"] = profile
-		body["mode"] = mode
+		body.merge(_join_identity(), true)
 		body.erase("players")
 		_send(HTTPClient.METHOD_POST, "/v1/games", body)
 	else:
 		_step = "join"
-		_send(HTTPClient.METHOD_POST, "/v1/games/%s/join" % join_id, {"profile": profile, "mode": mode})
+		_send(HTTPClient.METHOD_POST, "/v1/games/%s/join" % join_id, _join_identity())
 
 
 func _on_response(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
@@ -171,7 +200,15 @@ func _on_response(result: int, code: int, _headers: PackedStringArray, body: Pac
 	if result != HTTPRequest.RESULT_SUCCESS:
 		_fail("the lobby %s did not answer (%d)" % [lobby_url, result])
 		return
-	var data: Variant = JSON.parse_string(body.get_string_from_utf8())
+	var data: Variant
+	if _step == "mine" and code == 200:
+		var parsed := OnlineList.parse(body, true)
+		if not parsed.ok:
+			_fail(parsed.error)
+			return
+		data = parsed.data
+	else:
+		data = JSON.parse_string(body.get_string_from_utf8())
 	if typeof(data) != TYPE_DICTIONARY or int(data.get("v", 0)) != 1:
 		_fail("the lobby answered HTTP %d with something that is not lobby version 1" % code)
 		return
@@ -204,6 +241,13 @@ func _on_response(result: int, code: int, _headers: PackedStringArray, body: Pac
 			if f != null:
 				f.store_string(token + "\n")
 			_after_signin()
+		"invite":
+			if not data.get("id") is String or RegEx.create_from_string("^[0-9a-f]{16}$").search(data.id) == null or not data.get("game") is Dictionary or data.game.get("id") != data.id or not data.get("slot") is float or data.slot != floor(data.slot) or data.slot < 0 or data.slot >= 8:
+				_fail("the lobby returned an invalid invitation acceptance")
+				return
+			join_id = data.id
+			invite_id = ""
+			_after_signin() # same token, ordinary idempotent join of the slot just reserved
 		"mine":
 			var games: Array = data.get("games", [])
 			for g in games:

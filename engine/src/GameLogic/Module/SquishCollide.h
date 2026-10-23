@@ -83,7 +83,7 @@ bool canCrush(const Object &obj);      // RW 0x68D524
 void onCrush(Object &crusher, Object &victim);
 // RW 0x696800: `crusher` touched `victim` too slowly to crush it
 void onBump(Object &crusher, Object &victim);
-// the planar shape test of RW 0xAD2CE0 with `self`'s radii replaced by `selfRadius` (both)
+// RW 0x8BFDE2 .. 0x8BFE4C: RW 0xAD2CE0 (every shape, the heights) of `other` against `self` whose first shape has both radii `selfRadius` (lane FLANK-1)
 bool shapesTouch(const Object &self, float selfRadius, const Object &other);
 // the stop line S-580
 const char *stopLine();

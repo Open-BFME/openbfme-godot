@@ -23,6 +23,7 @@
 #include "GameLogic/LargeGroupAudioLink.h"
 #include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/NewGame/NewGame.h"
+#include "GameLogic/Module/TerrainResourceBehavior.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/System/TerrainResourceManager.h"
@@ -204,10 +205,26 @@ TEST_CASE("save4d retail: a 4-player skirmish at frame 3,000: the SAVE-4d blocks
 	lb.scriptEngine().flag("Probe") = true;
 	lb.victory().setScriptFlag91(true);
 	lb.weather().setWeather(2, 0, 50);
+	// merge queue q23: a claimant's release (RW 0x75BB8F) also zeroes its TerrainResourceBehavior share and re-applies its neighbours' claims (RW 0x75B923):
+	// object state outside these blocks (at frame 3,000 the list's first is now a finished IsengardUrukPit with a share). The test puts the shares back
+	// through the module so that B differs from A in these blocks alone (checked below: B's objects section is A's)
+	std::map<ObjectID, float> shares;
+	for (Object *o = lb.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (const TerrainResourceBehavior *mod = dynamic_cast<const TerrainResourceBehavior *>(o->findModule("TerrainResourceBehavior")))
+		{
+			shares[o->getID()] = mod->claimShare();
+		}
+	}
 	const TerrainResourceManager::Claimant firstClaim = lb.economy().resources().claimants().front();
 	lb.economy().resources().unclaim(*lb.findObjectByID(firstClaim.id), firstClaim.radius); // RW 0x75BE1C: as when the object dies
+	for (const auto &kv : shares)
+	{
+		dynamic_cast<TerrainResourceBehavior *>(lb.findObjectByID(kv.first)->findModule("TerrainResourceBehavior"))->setClaimShare(kv.second);
+	}
 	lb.largeGroupAudio().enable(1);
 	const std::map<std::string, std::uint32_t> changedB = sectionValues(lb);
+	CHECK(changedB.at("objects") == sectionsA.at("objects")); // merge queue q23: the unclaim's share changes were put back
 	for (const char *name : { "script engine", "victory", "weather", "economy", "large group audio" })
 	{
 		CHECK_MESSAGE(changedB.at(name) != sectionsA.at(name), name);

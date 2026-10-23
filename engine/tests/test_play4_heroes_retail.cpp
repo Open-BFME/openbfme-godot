@@ -411,6 +411,8 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// the damage and the kills are the same
 				// merge queue q22 (SUMMON-1 + FX-4 + AI5 + NUGGET-1, measured on the merged tree on srv1): 4 strikes (2 before): the scene's computer opponent draws
 				// AI5's upgrade-registration random values and SUMMON-1's OCL draws, which shift the ordered fight's timing; the damage and the kills are the same
+				// lane TARGET-1: 4 strikes (3 before): the idle bird wakes at its next mood check (RW 0x7553AB) and the map's creeps' attack-moves push their
+				// mood checks back (RW 0x662DD9), so the scene's world plays differently; the damage and kills are unchanged
 				CHECK(ord.shots == (drogoth ? 4u : 0u));
 				CHECK(ord.lost == (drogoth ? 1500.0f : 450.0f));
 				CHECK(ord.membersKilled == (drogoth ? 20u : 5u));
@@ -419,7 +421,11 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 			CHECK(own.walked > 600.0f);
 			// on its own: the Battle stance's guard attacks the horde (with the reach of RW 0x6ED843 every walking hero kills several members)
 			CHECK(own.shots > 0u);
-			CHECK(own.lost > 0.0f);
+			// lane TARGET-1: Haldir's guard (RotWK's search, RW 0x949CA7 -> 0x70146A) takes a creep first: from the spot, before the horde is made, a
+			// MordorGoblinSwordsman_Slaved of the Moria goblin lair about 550 to the south-west, then the lair itself, so his strikes in the window never
+			// reach the horde (measured on a CI host); every other hero fights the horde
+			const bool creepFirst = hero == "ElvenHaldir";
+			CHECK(creepFirst ? own.lost == 0.0f : own.lost > 0.0f); // tolerance: the pre-existing "the guard attacks the horde" bound, Haldir's 0 exact
 			CHECK_FALSE(own.noted3804);
 			// on an order (auto-acquire off): the order alone strikes and kills. Lane ATTACK-1 closed S-3807 (its two named exceptions, the mounted Witch-king and
 			// Mouth of Sauron, were the port's static crush test in blockedBy: the next test); its runtime note is gone
@@ -524,8 +530,20 @@ TEST_CASE("attack1 heroes retail: the mounted Witch-king and Mouth of Sauron, or
 	// 0x5D), which shifts the random sequence of the Witch-king's fight: 7 shots, 18 killed (300 in the crush run), 3 swings (the first took 525, 1050
 	// outside the run), the control's nearest 0.381908, the lowered case's 70.444. With only that registration switched off the old pins (5 / 12 / 225, 2 /
 	// 450 / 675, 0.789662 / 69.9072) come back exactly; the Mouth of Sauron's case does not move. Engine pins, not retail values.
-	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 7u, 18u, 300.0f, { 800.0f, 112.0f }, 3u, 525.0f, 1050.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 0u, 0.0f, 70.444f, 0.381908f },
-			 Case{ "FactionMordor", "MordorMouthOfSauron", 11u, 11u, 150.0f, { 640.0f, 320.0f }, 7u, 75.0f, 525.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 1u, 75.0f, 41.3165f, 20.1465f } })
+	// Lane ATTACKPATH-1: the pins moved again, all through one retail rule: the towards-goal line of the path search now adds the hierarchical corridor's remaining
+	// length to its cells' estimate as RotWK does (RW 0x6F6D57 with its record + 0x34), so the crush run's path takes another line; with that rule alone switched
+	// off (an experiment build of the lane) every value below was the q12 pin again. The CRUSHER_LEVEL -1 case is blocked again (10 frames from frame 37 / 30) and
+	// both heroes swing once from about 40 away.
+	// lane FLANK-1 (the crush run's computePath RW 0x742271: refused while blocked, a forced re-path without a path, the goal's z kept; onEnter's destroyed path
+	// RW 0x66276B; the crush contact RW 0xAD2CE0 with the heights; the flank test at fire time): measured engine pins of the same scene: the Witch-king 7 shots
+	// (5 before), 17 of 20 killed (12), 3 swings of his mace (2), the first taking 375 (450), 975 outside the run (675), nearest 5.97199 (0.789662); the Mouth of
+	// Sauron 8 shots (11), 8 killed (11), 4 swings (7), 300 outside the run (525), nearest 9.96728 (20.1465). The CRUSHER_LEVEL -1 runs and the duels are unchanged
+	// Merge queue q23 (TARGET-1's mood scan cadence, ATTACKPATH-1's towards-goal corridor term and FLANK-1's crush run computePath / contact, measured once on
+	// the merged tree; each lane alone measured its values above): the Witch-king 5 shots, 14 killed (225 in the crush run), 2 swings (the first took 525, 825
+	// outside the run), nearest 1.26859, with CRUSHER_LEVEL -1 never blocked, one swing taking 450 from 40.8519; the Mouth of Sauron 7 shots, 7 killed (150), 5
+	// swings (75 / 375), nearest 10.1093, with CRUSHER_LEVEL -1 one swing taking 75 from 41.3165. The duels are unchanged. Engine pins, not retail values.
+	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 5u, 14u, 225.0f, { 800.0f, 112.0f }, 2u, 525.0f, 825.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 1u, 450.0f, 40.8519f, 1.26859f },
+			 Case{ "FactionMordor", "MordorMouthOfSauron", 7u, 7u, 150.0f, { 640.0f, 320.0f }, 5u, 75.0f, 375.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 1u, 75.0f, 41.3165f, 10.1093f } })
 	{
 		INFO(std::string(c.hero));
 		const ThingTemplate *tt = s->world->things().findTemplate(c.hero);

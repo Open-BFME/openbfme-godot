@@ -295,6 +295,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("destroy_object", "id"), &GameWorld::destroy_object);
 	ClassDB::bind_method(D_METHOD("find_object_by_template", "template_name"), &GameWorld::find_object_by_template);
 	ClassDB::bind_method(D_METHOD("get_template_model", "template_name"), &GameWorld::get_template_model);
+	ClassDB::bind_method(D_METHOD("get_player_beacon_template", "player_index"), &GameWorld::get_player_beacon_template); // the ping wheel
 	ClassDB::bind_method(D_METHOD("get_placement_ghost", "template_name"), &GameWorld::get_placement_ghost);
 	ClassDB::bind_method(D_METHOD("create_object", "template_name", "player", "x", "y", "angle"), &GameWorld::create_object, DEFVAL(0.0));
 	ClassDB::bind_method(D_METHOD("get_ground_height", "x", "y"), &GameWorld::get_ground_height);
@@ -3027,6 +3028,19 @@ String GameWorld::get_template_model(const String &template_name) const
 		}
 	}
 	return String();
+}
+
+String GameWorld::get_player_beacon_template(int64_t player_index) const
+{
+	// PlayerTemplate BeaconName (PlayerTemplate.cpp's field table; RotWK reads it at RW 0x6D1305 for the beacon it places): the template a player's
+	// beacon is. The ping wheel draws that template's model, so a mod's own beacon shows. The template is fixed once the player is set up
+	if (!m_game || player_index < 0 || player_index >= m_game->players().getPlayerCount())
+	{
+		return String();
+	}
+	const Player *p = m_game->players().getNthPlayer((int)player_index);
+	const PlayerTemplate *pt = p ? p->getPlayerTemplate() : nullptr;
+	return pt ? toGodot(pt->m_beaconName) : String();
 }
 
 int64_t GameWorld::create_object(const String &template_name, int64_t player, double x, double y, double angle)

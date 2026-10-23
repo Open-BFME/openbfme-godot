@@ -86,13 +86,20 @@ const StructRow kRows[] = {
 	// Merge of IDLE-1 r2 (22e29980) into MOVE-3 with MOVE-3 r4: re-measured on the reference PC, the IDLE-1 values above unchanged. Engine pins
 	// Lane PLAY-4 (the stances' guard, AIGuard.h: an idle Battle-stance horde guards its spot, whose idle and return states draw the logic random generator,
 	// RW 0x949630 / 0x94A571): MordorBarracks 54 -> 62, GoblinCave 112 -> 120, the others unchanged. Engine pins
-	{ "FactionMen", "GondorBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 438 },
-	{ "FactionElves", "ElvenBarracks", "StructureBody", 3000.0f, 20.0f, 0, 100.0f, true, 344 }, // no BountyValue line
-	{ "FactionDwarves", "DwarfBarracks", "ActiveBody", 5000.0f, 20.0f, 125, 155.0f, true, 604 },
-	{ "FactionIsengard", "IsengardUrukPit", "StructureBody", 3000.0f, 20.0f, 88, 89.0f, true, 344 },
-	{ "FactionMordor", "MordorBarracks", "StructureBody", 1500.0f, 100.0f, 0, 0.0f, false, 62 },
-	{ "FactionWild", "GoblinCave", "ActiveBody", 1500.0f, 50.0f, 100, 25.0f, true, 120 },
-	{ "FactionAngmar", "AngmarBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 438 },
+	// Lane TARGET-1 (RotWK's mood scan: the idle state sleeps until the next mood check, RW 0x7553AB, and the check's one-off random offset draws the logic
+	// generator, RW 0x6686F0): 438 -> 390, 344 -> 324, 604 -> 584, 344 -> 380, 62 -> 72, 120 -> 116, 438 -> 390; the hit counts are unchanged. Engine pins
+	// Lane ATTACKPATH-1 (the horde approach goal's helpers RW 0x6F2F8F / 0x746783 / 0x6FB67A: the goal is pulled back 0.7 * the horde's circle when the line from
+	// the target to that point is NOT blocked, the port had it the other way round; the walk back toward the horde and AdjustHordeMeleeDestination's ring):
+	// MordorBarracks 62 -> 60, GoblinCave 120 -> 104 (the two rows whose horde runs the chain before it is ready), the others unchanged. Engine pins
+	// Merge queue q23 (TARGET-1 + ATTACKPATH-1 + FLANK-1 on the merged tree, measured once): TARGET-1's values with ATTACKPATH-1's horde approach goal on the two
+	// rows whose horde runs the chain before it is ready: MordorBarracks 72 -> 60, GoblinCave 116 -> 96; the others are TARGET-1's. Engine pins
+	{ "FactionMen", "GondorBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 390 },
+	{ "FactionElves", "ElvenBarracks", "StructureBody", 3000.0f, 20.0f, 0, 100.0f, true, 324 }, // no BountyValue line
+	{ "FactionDwarves", "DwarfBarracks", "ActiveBody", 5000.0f, 20.0f, 125, 155.0f, true, 584 },
+	{ "FactionIsengard", "IsengardUrukPit", "StructureBody", 3000.0f, 20.0f, 88, 89.0f, true, 380 },
+	{ "FactionMordor", "MordorBarracks", "StructureBody", 1500.0f, 100.0f, 0, 0.0f, false, 60 },
+	{ "FactionWild", "GoblinCave", "ActiveBody", 1500.0f, 50.0f, 100, 25.0f, true, 96 },
+	{ "FactionAngmar", "AngmarBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 390 },
 };
 
 // n * (n - 1) / 2 * 1.28 >= H, the first n

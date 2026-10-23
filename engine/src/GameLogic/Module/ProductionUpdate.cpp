@@ -26,6 +26,7 @@
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/AttributeModifiers.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/HeroSystem.h"
 #include "GameLogic/Module/AIUpdate.h"
@@ -585,7 +586,7 @@ void ProductionUpdate::cancelUpgrade(const UpgradeTemplate *upgrade)
 	}
 }
 
-// RW 0x8A2015 .. 0x8A22FD (the castle refund RW 0x79D322 / 0x79D833, the UI messages, the research sound and Eva event are not ported: S-486)
+// RW 0x8A2015 .. 0x8A22FD (the producer's experience RW 0x8A2015 .. 0x8A2057 is in update(), lane PRODUCTION1; the UI messages, the research sound and Eva event are not ported: S-486)
 void ProductionUpdate::completeUpgrade(ProductionEntry *entry, Player *player)
 {
 	const UpgradeTemplate *upgrade = entry->upgradeToResearch;
@@ -960,8 +961,11 @@ UpdateSleepTime ProductionUpdate::update()
 			return UPDATE_SLEEP_NONE;
 		}
 	}
-	// RW 0x8A1EBC: the progress rate is 1.0f modified by the object's attribute modifiers of type 0xD (RW 0x68C82D; not ported: S-203)
+	// lane PRODUCTION1: RW 0x8A1EBC .. 0x8A1EE9: the progress rate starts at 1.0f (RW 0xBD1908) and is the producer's PRODUCTION attribute modifiers
+	// (type 0xD) through RW 0x68C82D(0xD, &rate, null, 1); a producer without a pool or without an active PRODUCTION list keeps 1.0f. The counter adds it
+	// (ADDSS). The BFME2 decomp's update (ProductionUpdateQueue.cpp) adds a plain 1 here: a RotWK difference, RotWK's is taken
 	float rate = 1.0f;
+	us->attributeModifierProduct(ATTRIBUTE_PRODUCTION, nullptr, true, rate);
 	entry->framesUnderConstruction = SimMath::addf32(entry->framesUnderConstruction, rate);
 	const int total = totalProductionFrames(*entry, player);
 	entry->percentComplete = SimMath::mulf32(SimMath::divf32(entry->framesUnderConstruction, (float)total), 100.0f); // RW 0xBD88D8 = 100.0f; the divide before the multiply
@@ -981,11 +985,57 @@ UpdateSleepTime ProductionUpdate::update()
 	}
 	if (entry->type == PRODUCTION_UPGRADE)
 	{
+		// lane PRODUCTION1: RW 0x8A2015 .. 0x8A2057: the producer's experience tracker (Object + 0x26C, read at the top of the update) takes the upgrade's cost
+		// (UpgradeTemplate::calcCostToBuild(null, null) RW 0x66F2C8, cvtsi2ss) when it accepts experience (RW 0x79D322), GiveNoXP (data + 0x30) is clear and the
+		// cost is above 0: addExperiencePoints(cost, 1, 1, 1, 0) (RW 0x79D833)
+		ExperienceTracker *xp = us->getExperienceTracker();
+		if (xp && !m_data->m_giveNoXP && xp->isAcceptingExperiencePoints() && entry->upgradeToResearch)
+		{
+			const int cost = entry->upgradeToResearch->calcCostToBuild(nullptr, nullptr);
+			if (cost > 0)
+			{
+				xp->addExperiencePoints(NumericState::sseFromInt32(cost), true, true, true, false);
+			}
+		}
 		completeUpgrade(entry, player);
 		return UPDATE_SLEEP_NONE;
 	}
 	completeUnit(entry, player, now);
 	return UPDATE_SLEEP_NONE;
+}
+
+// lane PRODUCTION1: RW 0x8A27D4 .. 0x8A283B, right after the new object is made (unit, horde member or hero alike: both creation branches meet at RW 0x8A278E)
+//   1. VeteranUnitsFromVeteranFactory (data + 0x40): when the new object has a tracker (Object + 0x26C) and the PRODUCER's rank (tracker + 0x24) is 3 or more,
+//      the new object gains one level without feedback (RW 0x79D7E5(1, 0) -> RW 0x79D7AD);
+//   2. the producer's tracker takes the template's cost as experience: GiveNoXP (data + 0x30) clear and the tracker accepting experience (RW 0x79D322),
+//      cost = ThingTemplate::calcCostToBuild(null player, null producer, -1) (RW 0x73C25F: the BuildCost), above 0: addExperiencePoints((float)cost, 1, 1, 1, 0)
+//      (RW 0x79D833, cvtsi2ss). The template is the entry's (a horde's members are its member template after the horde turn below, RW 0x8A2C6A)
+// BFME2 1.06 does the same (ProductionUpdateQueue.cpp update: m_inheritVeterancy / m_noExperience, matched C++)
+void ProductionUpdate::awardProductionExperience(Object *newObj, const ProductionEntry &entry)
+{
+	ExperienceTracker *producerXp = getObject()->getExperienceTracker();
+	if (m_data->m_veteranUnitsFromVeteranFactory)
+	{
+		if (ExperienceTracker *newXp = newObj->getExperienceTracker())
+		{
+			if (!producerXp)
+			{
+				throw std::logic_error("ProductionUpdate: the producer has no experience tracker (RW 0x8A27E7 reads it unchecked)");
+			}
+			if (producerXp->getRank() >= 3)
+			{
+				newXp->gainLevels(1, false);
+			}
+		}
+	}
+	if (producerXp && !m_data->m_giveNoXP && producerXp->isAcceptingExperiencePoints())
+	{
+		const int cost = BuildAssistant::calcCostToBuild(*entry.objectToProduce, nullptr, nullptr, -1);
+		if (cost > 0)
+		{
+			producerXp->addExperiencePoints(NumericState::sseFromInt32(cost), true, true, true, false);
+		}
+	}
 }
 
 // RW 0x8A1F8A .. 0x8A2EC4
@@ -1104,7 +1154,8 @@ void ProductionUpdate::completeUnit(ProductionEntry *entry, Player *player, Unsi
 				newObj->setBuildCostPaid(NumericState::sseFromInt32(entry->cost));
 			}
 			m_exitingObjectID = newObj->getID();
-			// RW 0x8A27D4 .. 0x8A283B: VeteranUnitsFromVeteranFactory and the XP for the producer need the experience tracker (S-203)
+			// (RW 0x8A27A3 .. 0x8A27CF: the new drawable is hidden under the local player's shroud: client)
+			awardProductionExperience(newObj, *entry);
 			if (hasPos)
 			{
 				// lane BACKLOG4 (S-813): RW 0x8A284A .. 0x8A28C7: a flyer (AI vslot 0x168, true only for GiantBirdAIUpdate) is put 250 above the exit position
@@ -1154,8 +1205,26 @@ void ProductionUpdate::completeUnit(ProductionEntry *entry, Player *player, Unsi
 					world->moveAlliesAwayFromDestination(*newObj, *us->getPosition(), natural, (ObjectID)nai->mover().ignoredObstacleID());
 				}
 			}
-			// RW 0x8A2944 .. 0x8A29EC: the player's upgrades are applied to the new unit (UPGRADE-1), voice / EVA events (audio), the player's unit created
-			// hook, then CreateModule::onBuildComplete on every create module
+			// lane PRODUCTION1: RW 0x8A2922 .. 0x8A293F: an entry queued with an upgrade bit (entry + 0x30, MSG_QUEUE_UNIT_CREATE's third argument: the command
+			// button's BuildUpgrades; no 2.01 button has one) puts that bit in the new object's own upgrade mask (RW 0x68FD31 builds the 0x90 byte mask, RW 0x68CC6C
+			// ORs it into Object + 0x28C); RW 0x8A2946: then the upgrade modules run again against the player's, the object's and its keep's upgrades (RW 0x6936FE)
+			if (entry->value30 != -1)
+			{
+				if (entry->value30 < 0 || (unsigned)entry->value30 >= UpgradeMaskType::BITS)
+				{
+					// retail writes outside the 0x90 byte mask (RW 0x68FD31 does not check the bit): refused and reported here
+					logic.reportError("ProductionUpdate: the upgrade bit " + std::to_string(entry->value30) + " of a queued " + entry->objectToProduce->getName() +
+						" is outside the upgrade mask (retail would write past it, RW 0x68FD31)");
+				}
+				else
+				{
+					UpgradeMaskType bit;
+					bit.set((unsigned)entry->value30);
+					newObj->friend_orUpgradeMask(bit);
+				}
+			}
+			newObj->updateUpgradeModules();
+			// RW 0x8A294D .. 0x8A29EC: voice / EVA events (audio), the player's unit created hook, then CreateModule::onBuildComplete on every create module
 			for (const std::unique_ptr<BehaviorModule> &m : newObj->modules())
 			{
 				if (CreateModuleInterface *create = m->getCreate())

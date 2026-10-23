@@ -1007,6 +1007,99 @@ themselves from it: the launcher's macOS mode (mac-release-1, `launcher/scripts/
   The stand-in build (`OPENBFME_RELEASE_STANDIN/build-mac`) returns a package that passes the strict audit, and
   `OPENBFME_RELEASE_MAC_SSH` (stand-in mode only) replaces ssh for the readiness check.
 
+### Release builds on GitHub Actions (MACACT-1)
+
+Since MACACT-1 a release can have its platforms built on GitHub's own runners instead of (macOS) or beside (Linux, Windows) the build
+hosts, so a release no longer needs the owner's MacBook awake on a known address (a nightly shipped without macOS on 10-21/22 for that).
+Each platform has its own switch; **the default is `host` for all three** until the owner switches:
+
+| variable | `host` (default) | `actions` |
+| --- | --- | --- |
+| `OPENBFME_RELEASE_MAC_BUILDER` | the Mac build host (step 4m, `build_macos_release.sh`) | the package is built on `macos-15` (arm64) by `package_macos.py`, the Mac host is not asked |
+| `OPENBFME_RELEASE_LINUX_BUILDER` | the build host's GDExtension | GitHub builds it too (`build_linux.sh`, ubuntu-24.04) and the build host's, inside the returned package, must be byte for byte GitHub's |
+| `OPENBFME_RELEASE_WINDOWS_BUILDER` | the build host's GDExtension | the same with `build_windows.sh --no-export` (ubuntu-24.04, the pinned llvm-mingw) |
+
+The Windows DLL is built on `ubuntu-24.04`, not on a `windows-2022` runner: `build_windows.sh` is a Linux-hosted cross build with a pinned
+llvm-mingw (`...-ubuntu-22.04-x86_64`), and only the same toolchain binary gives bytes the release can compare with the build host's; a
+Windows-hosted llvm-mingw is another compiler binary with other paths.
+
+Switch by setting the variable in the operator's release environment (`release.env`), e.g.
+`export OPENBFME_RELEASE_MAC_BUILDER=actions`; any value but `host` / `actions` stops the run before anything happens.
+`OPENBFME_RELEASE_SKIP_MAC=1` stays the one way to ship without macOS (it wins over the Mac builder).
+`OPENBFME_RELEASE_ACTIONS_TIMEOUT` (default 7200 s) bounds one GitHub build.
+
+**The flow** (`autorelease.sh`, `tools/release/actions_build.py`, `.github/workflows/release-package.yml`):
+
+1. `actions-check` (with the other step 1 checks, before anything is pushed): GitHub knows the workflow and it is active. GitHub dispatches
+   only a workflow it has seen: one that was on `main` once, or registered by a push (MACACT-1 registered it once from a probe branch on
+   2026-10-22; the first release after this lane carries it to `main` for good).
+2. `actions-dispatch` (step 4a, after the candidate's tag is made locally and the trusted checkout is checked): the candidate's public
+   commit, whose tree passed the privacy audit (step 2), the `.github` policy and the pre-push guard, is pushed to
+   `refs/heads/staging/<version>` of the public repository (a leftover from a killed run is replaced; both pushes carry a lease, so a
+   concurrent push is never overwritten). Only the commit goes: the tag stays on the Deck until step P. GitHub can only build what it
+   has, so this push is the release's second write to GitHub before the candidate passed (after the GHPR-1 merges); it makes public a
+   commit that will be public anyway, and a dry run pushes it too (and deletes it). Then one `workflow_dispatch` per platform, with the
+   commit, the version and a fresh 32-hex request id, through the REST API with `return_run_details`: GitHub answers with the id of the
+   run this very dispatch created, recorded in `$WORK/actions.json`. Nothing is looked up by name or time.
+3. The runs build while the build host builds (step 4). `actions_build.py collect` then waits for each recorded run (step 4m for macOS,
+   step 5x for Linux / Windows) and accepts it only when: it is the recorded run; event `workflow_dispatch`; the workflow file
+   `release-package.yml`; on `staging/<version>` at the candidate commit (`head_sha`); actor and triggering actor the release account
+   (`gh api user`); attempt 1 (a re-run could upload other files); the title naming platform, version and request; concluded
+   `success`; only the platform's job ran. It must have exactly one artifact, named `<stem>-<request>`, made by that run at that commit,
+   not expired; the downloaded ZIP's SHA-256 and size must be GitHub's recorded digest and size; the ZIP must hold exactly the platform's
+   files, plain names, no folders. A failed, refused or timed-out run (cancelled at the timeout) **fails the release**: no fallback to a
+   host (CLAUDE.md, "no fallbacks").
+4. The Deck then checks the result like a host build. macOS: the exact package set, the strict audit, the checksum, `VERSION` naming the
+   tag and the public commit, the launcher's key and repository (`make_macos_manifest.py --verify-package`). Linux / Windows
+   (`actions-compare`): the library inside the build host's returned package must be byte for byte GitHub's, else the release fails
+   ("a GitHub build can't silently differ from ours"; it also catches a build host that differs from GitHub). The packages, `test_export.sh`
+   and the native Windows start stay on the build hosts: they need the game files, which never go to GitHub.
+5. `actions-unstage`: the staging branch is deleted (lease on the candidate commit: a branch someone moved is left and named, and the
+   release fails). On any failure the cleanup cancels unfinished runs, best effort (a dispatch whose answer was lost is found by the request id it
+   recorded first) and deletes the branch too. The staging push never carries a tag (`--no-follow-tags`, whatever `push.followTags` says).
+6. Only then the seal, the manifests and the signatures, all on the Deck (step 6), the pre-flight (7c) and the push of `main` and the tag
+   (P). Nothing is published, and nothing is signed, before every GitHub build was verified.
+
+**The security model.** What runs on GitHub: the public workflow on the public commit (exactly the tree that is published), on GitHub-hosted
+runners, with `permissions: contents: read`, no secrets, no caches (a fresh build; no cache another workflow could have written), actions
+pinned by commit sha, every download (Godot 4.7.2, its templates, ninja, the Godot Linux SDK, llvm-mingw) checked against a pinned hash, the
+inputs reaching the shell only through the environment and checked first. It produces unsigned build outputs, kept 7 days as run
+artifacts (public, like the code they come from; the Windows PDB, private, is never uploaded). What never leaves the Deck: the release key
+and everything signed with it (`payload.json` signatures, `manifest.json`, `manifest-macos.json` and their `.sig`), the private denylist,
+the release state. The Deck's `gh` token needs `repo` and `workflow` (pushing a commit that carries `.github/workflows`, dispatching,
+reading runs and artifacts); the runners get only their own read-only `GITHUB_TOKEN`. Who can tamper: someone with write access to the
+public repository can dispatch runs or push to `staging/*`; the Deck accepts only its own run at its own commit, so either fails the
+release, never changes what is published. A compromised GitHub runner image could build a different binary: for Linux and Windows the
+byte comparison with the build host catches it; for macOS the Deck's checks cover the package's structure, version, commit, key and
+repository, not the compiled code (as with the Mac build host before). Suggested for the owner: a ruleset that limits creating
+`refs/heads/staging/*` to the release account.
+
+**Reproducibility across the two builds** (measured 2026-10-22: probes on one CI host, then the dry run below on the nightly builder's host).
+`build_linux.sh` and `build_windows.sh` set `SOURCE_DATE_EPOCH` to the commit's time (the build date the library records was the build
+day). The libraries record source paths relative to the build folder, so the workflow uses the release builder's layout (the checkout in
+`src/`, the build folders beside it as `src.linux` / `src.win`), and builds the DLL through ccache with `CCACHE_BASEDIR` above both, as
+the build hosts do: ccache's base_dir rewriting is what makes the DLL's `__FILE__` strings `..\..\src\engine\...` (without it the first
+probe differed in 800 bytes of paths and in size). The runner's checkout drops the git-lfs filter: `.gitattributes` marks `*.png` as LFS
+while the public tree holds the four PNGs as plain blobs, and a git-lfs clean filter makes such a checkout read as dirty (`git describe
+--dirty`; the build hosts have no git-lfs; where a system gitconfig has it, the release scripts run with `GIT_CONFIG_NOSYSTEM=1`).
+
+| platform | GitHub Actions vs the build host, same commit | why |
+| --- | --- | --- |
+| Linux `.so` | byte for byte identical (two build hosts) | the same pinned Godot SDK; prefix maps; commit-dated build record |
+| Windows `.dll` | identical but for the 16-byte CodeView GUID (`pdb_tools.py same-build`) | lld derives the GUID from the PDB, which holds the build folder's absolute path (`/home/<user>/...` vs the runner's); the GUID only pairs the DLL with its private PDB for crash symbols |
+| macOS zip | not byte-identical (compared by hand, not a release step): same file set; identical `VERSION`, both `.pck`s, `Info.plist`s, icons, licences, README; the two app executables identical up to their code signature (only `__LINKEDIT` / `LC_CODE_SIGNATURE` sizes and the signature blob differ); the GDExtension dylib and the swap helper differ, and so do the two `CodeResources` | the compilers differ: the Mac build host has Apple clang 21 / macOS SDK 26.4 (Command Line Tools on macOS 26.6), `macos-15` has Xcode 16.4, Apple clang 17 / SDK 15.5; the ad-hoc signatures come from different `codesign` versions (different sizes); `CodeResources` hashes the differing files |
+
+So the comparison is a release step for Linux and Windows (`actions-compare`), and not for macOS: two Mac builds of one commit do not
+match today, and the Mac host would have to be awake to compare, which is what this lane removes.
+
+**The proof** (2026-10-22, lane head `185e35641`, a stable dry run with all three builders on `actions`, on the nightly builder's
+hosts, notes since `afedb8cf9`): staging/v0.4.12 at the candidate `a3455cb23d`, runs
+[macOS 39806291285](https://github.com/Open-BFME/openbfme-godot/actions/runs/39806291285),
+[Linux 39806296840](https://github.com/Open-BFME/openbfme-godot/actions/runs/39806296840),
+[Windows 39806302508](https://github.com/Open-BFME/openbfme-godot/actions/runs/39806302508); the Mac package passed the Deck's checks, the
+Linux library was the build host's byte for byte, the DLL the build host's but for the GUID, the staging branch was deleted, `AUTORELEASE DRY RUN OK`; no tag,
+no release, `main` unchanged.
+
 ### The updater's threat model
 
 The launcher downloads and runs code, so the release key is its root of trust. Each threat below is
@@ -1037,7 +1130,9 @@ covered by the listed defence:
   once.
 - **A crash while a game version is replaced.** The old folder is kept until the new one is in place.
   `recover()` finishes or undoes the replacement at the next start.
-- **The private key.** It is offline, never in the repository or CI, and stored with mode 600.
+- **The private key.** SIGNKMS-1 replaces this with two keys: the KMS key that signs on GitHub Actions and the Deck key as the
+  recovery key ("Release signing" below has their threat model). Until the transition starts, the Deck key is the only one.
+  It is offline, never in the repository or CI, and stored with mode 600.
   - If it is lost: no new releases can be installed by existing launchers. Testers download a new
     launcher by hand.
   - If it leaks: an attacker with the key and the GitHub account can ship code. The response is a new
@@ -1046,6 +1141,237 @@ covered by the listed defence:
   - There is no revocation list.
 - **Out of scope.** Anyone who can write the launcher's or the user data folder can already replace the
   launcher. Code-signing of the executables (Authenticode) does not exist yet.
+
+### Release signing (SIGNKMS-1)
+
+Owner, 2026-10-22: "the nightly can sign automatically, that's fine, let's switch". The release key moves from the Deck into AWS KMS,
+and the release workflow on GitHub Actions signs with it. Stable releases still need the owner: his approval of the GitHub
+environment `stable` comes before the KMS key signs.
+
+**The keys.** `launcher/release_keys.pub` is the trusted list every launcher and game is built with (`package.sh`,
+`build_launcher.sh` and `package_macos.py` write it into `build_info.json` as `release_keys` and into the game's
+`release_trust.gd` as `RELEASE_KEYS`). Each line holds a key in 64 hex digits and a label:
+
+| label | where the private half lives | signs |
+|---|---|---|
+| `deck-2026` | the Deck key: on the key host during the transition, then only as an encrypted offline backup. It is also `launcher/release_key.pub`, which every launcher before this lane trusts. | raw Ed25519 over the file (scheme v1), as since LAUNCH-1 |
+| `kms-2026` | AWS KMS (`alias/openbfme-release`, `ECC_NIST_EDWARDS25519`, created in KMS and never exportable). Added by a one-line commit once the owner has created it. | the signature envelope (scheme v2) |
+
+A signature (64 bytes) is valid when it verifies under ANY listed key, raw or as an envelope. An unknown key, a changed byte, a wrong
+size or an envelope of another kind of file fails, and an empty list fails. The launcher, the game, `sign_manifest.py --verify`,
+`seal_package.py check`, `make_macos_manifest.py` and `publish_release.sh` all apply this one rule (`tools/release/release_keys.py`).
+
+**The signature envelope.** KMS signs at most 4096 bytes with pure Ed25519 (`ED25519_SHA_512`, `MessageType RAW`). Our manifests are
+5 to 64 KiB, and payload.json is bigger. The prehash variant `ED25519_PH_SHA_512` is a different scheme that no launcher verifies, so
+it is not used. Instead, the KMS key signs a short text that names the file:
+
+    OpenBFME signature v2\n<kind>\n<SHA-512 of the file, 128 hex>\n        kind: manifest.json | manifest-macos.json | payload.json
+
+The signature is still 64 bytes, so every bounded read stays the same. An envelope starts with `OpenBFME`, while a manifest is JSON
+starting with `{`, so a raw signature can never pass as an envelope signature or the other way round. The kind stops a payload
+signature from being replayed as a manifest signature.
+
+**Signature slots.** A release carries `manifest.json.sig` and `manifest-macos.json.sig`, which every launcher reads, and, when
+it is signed on Actions, `manifest.json.sig2` and `manifest-macos.json.sig2`, which only launchers with the list read. A new
+launcher tries `.sig` first. If that is missing or does not verify, it tries `.sig2`. It keeps whichever verified under the plain
+`.sig` name (its caches, `versions/<v>/`, the launcher proof). `payload.json.sig` inside a package holds one signature, made by
+whoever sealed it. Only the launcher and game in that same package read it, and they were built with the list.
+
+**The phase** (`tools/release/signing_policy.json`, committed and reviewed like code):
+- `transition` (the start): the workflow writes `.sig2` (KMS) only. The Deck verifies the draft, adds `.sig` with the Deck key
+  (`tools/release/cosign_release.py`) and publishes. Launchers from before this lane keep updating.
+- `kms` (the end): the workflow writes the KMS signature into `.sig` and `.sig2`. The Deck verifies and publishes without any key.
+
+**Who does what.**
+
+| step | where | why there |
+|---|---|---|
+| the full gate, the nightly gate subset, the Windows start and HUD checks | our hosts | they need the retail game files, which never go to GitHub |
+| the public sync: tree audit with the private denylist, community pull request merges and credit, push of main and the tag | the Deck (autorelease.sh steps 1-3, P) | the archive and the denylist are private |
+| building the packages that are signed | GitHub Actions (`release.yml`: macos, linux-lib, windows-lib, package) | the signer signs only what its own run built from a commit on main |
+| sealing and signing | GitHub Actions, job `sign` (environment `nightly` or `stable`; OIDC to AWS; KMS) | the private key never leaves KMS |
+| the draft release with the signed assets | GitHub Actions (`actions_release.py draft`) | read back by name, size and SHA-256 |
+| comparing the draft with the tested candidate, the privacy gate with the private denylist on every asset, the notes, the transition's co-signature, publishing | the Deck (`actions_release.py wait`, `cosign_release.py`, `publish_release.sh`) | the private denylist; the tested candidate; the Deck key during the transition |
+
+The workflow never publishes: a release goes public only after the Deck has checked what Actions signed. `OPENBFME_RELEASE_SIGNER`
+chooses the path (`deck`, the default until the owner switches it, or `actions`). On the `actions` path, autorelease.sh
+dispatches `release.yml` after its push (step P) and waits for the run. A stable run waits for the owner's approval in the GitHub
+environment, and the next autorelease run resumes the wait. Then autorelease.sh checks the draft and publishes it.
+
+**The workflow's guards** (`.github/workflows/release.yml`, `tools/release/actions_release.py`):
+- Trigger and inputs: only `workflow_dispatch`. Every input reaches the scripts through the environment, never pasted into a script.
+  `plan` requires:
+  - main of `Open-BFME/openbfme-godot`;
+  - a kind of `nightly` with a `v<x.y.z>-nightly.<YYYYMMDD>` tag, or `stable` with a plain `v<x.y.z>`, so a nightly signing can never
+    make a stable-channel manifest without the owner's approval;
+  - a tag that names the commit, and a commit on main.
+- Jobs: the build jobs have read-only contents, no AWS access and no caches. Only `sign` gets the OIDC token and write access to
+  contents. `public_workflows.py` allows those two permissions in this file alone, in one job whose environment is `nightly` or
+  `stable`.
+- Supply chain: actions are pinned by commit sha, Godot and the templates are pinned by hash, and the templates are checked against
+  `godot_templates.txt`.
+- AWS: the session lasts 15 minutes and is named `openbfme-<run id>-<attempt>`. Its credentials live only in the environment of the
+  `aws` processes.
+- Signatures: every one is verified against the committed list before anything is uploaded.
+
+**Threat model of the new model.**
+- *Who can make the KMS key sign.* Only a run of `.github/workflows/release.yml` on refs/heads/main of this repository (pinned by
+  repository id), in the environment `nightly` or `stable`. The role's trust policy checks GitHub's customised OIDC subject, and the key
+  policy denies `kms:Sign` to every other principal.
+  - In practice: anyone who can dispatch workflows (write access) can get a nightly signed, and a stable signed once the owner
+    approves it. The signed bytes are always a fresh build of a commit that is already on main.
+  - So signing authority equals the authority to put code on main. Protect main and the release files (step 8 of the owner's setup):
+    a community pull request that touches `.github/workflows/release.yml`, `tools/release/` or `launcher/release_keys.pub` gets the
+    owner's review and never takes the coordinator's automatic PR fast track ("Community pull requests").
+- *Workflow injection.* No input is expanded into a script, and `run-name` is display only. The workflow never runs on pull request,
+  push or `workflow_run` triggers, so a fork's code never runs with the OIDC permission.
+- *Artifact substitution.* Artifacts are this run's own: no caches, no cross-run downloads. The Deck accepts only the draft whose
+  body names its one-time request id, and only from the run that names that id. It re-verifies every signature and checksum, and
+  compares the draft's archives with the candidate it tested before it publishes.
+- *Downgrade through the old key.* The Deck key stays trusted, so whoever holds it can still sign for every launcher. That is the price
+  of the recovery path below.
+  - After the transition the key is kept only as an encrypted offline backup. Nothing online can use it, unlike today, where it sits
+    on the key host for every nightly.
+  - A later launcher release can drop it from the list if the owner prefers losing that recovery path.
+- *Rollback.* Unchanged: older signed releases are never installed automatically, and a stale list gives the freeze warning.
+- *A compromised AWS account.* Only the account root can rewrite the key policy and then sign. Every `kms:Sign`, every change to the
+  key's policy, alias or state, and every change to the signing role sends an e-mail (CloudTrail + EventBridge + SNS).
+  - Response: disable the key in KMS, then publish a launcher release signed with the Deck key that drops `kms-2026` from the list.
+- *A compromised GitHub account.* It can dispatch the workflow but cannot change what main holds without the push being visible.
+  The stable environment still needs the owner's approval. Publishing still goes through the Deck's checks, and every signature
+  sends an e-mail.
+
+**Recovery.**
+- *The KMS key is lost* (deleted, disabled, or the AWS account is gone):
+  1. Sign with the Deck key from its encrypted backup (`OPENBFME_RELEASE_SIGNER=deck`); every launcher trusts it.
+  2. If a new KMS key is made, ship it in a launcher release signed with the Deck key (a new line in `release_keys.pub`).
+- *The Deck key's backup is lost:* nothing changes for launchers that already have the list. The KMS key keeps signing. Only
+  launchers from before this lane can no longer be updated after the cut-over, so they recover by a manual download (below).
+- *A launcher that missed the transition* (one from before the trust release, started for the first time after the cut-over):
+  1. It refuses the new release ("the manifest's signature is not valid") and keeps playing its installed version. It fails closed.
+  2. The player downloads the current package from the releases page by hand, and the launcher in it has the list.
+  3. The cut-over release's notes and the README say so.
+
+**Rollout and the transition plan:** see "Moving releases to GitHub Actions (RELSIGN-1)" below: the four switch-over steps, the
+cut-over's conditions included.
+
+**The owner's setup (click by click; he runs it, this lane created nothing).** Nothing here needs a long-lived AWS key: GitHub uses
+OIDC, and the owner uses his own console login.
+
+1. *GitHub, repository id:* run `gh api repos/Open-BFME/openbfme-godot --jq .id`, or open https://api.github.com/repos/Open-BFME/openbfme-godot
+   and read `"id"`. Note the number.
+2. *GitHub, the OIDC subject:* this has no settings page, so run once, as the owner:
+
+       gh api -X PUT repos/Open-BFME/openbfme-godot/actions/oidc/customization/sub -F use_default=false \
+         -f 'include_claim_keys[]=repo' -f 'include_claim_keys[]=repository_id' -f 'include_claim_keys[]=context' \
+         -f 'include_claim_keys[]=workflow_ref'
+
+   Check it with `gh api repos/Open-BFME/openbfme-godot/actions/oidc/customization/sub`. No other workflow of the repository uses OIDC.
+3. *GitHub, environments* (repository Settings > Environments > New environment):
+   - `nightly`: under Deployment branches and tags choose "Selected branches and tags", then Add deployment branch rule: `main`.
+     No reviewers.
+   - `stable`: the same branch rule `main`, plus "Required reviewers": add yourself (leave "Prevent self-review" off: the Deck
+     dispatches as your account). Save.
+4. *AWS, the stack:*
+   1. Sign in to the AWS console with your own login and pick region **US East (N. Virginia) us-east-1** at the top right. IAM's
+      events reach EventBridge only there.
+   2. Look under IAM > Identity providers. If `token.actions.githubusercontent.com` is already listed, copy its ARN.
+   3. Look under CloudTrail > Trails. If a trail already logs management events here, you can reuse it (CreateTrail false). Otherwise
+      the stack makes one.
+   4. Find your key-admin ARN: IAM > Users > your user > copy the ARN. For an SSO login, use the role's ARN from IAM > Roles.
+   5. CloudFormation > Create stack > With new resources (standard) > "Upload a template file" >
+      `tools/release/aws/release-signing.yaml` > Next.
+   6. Stack name `openbfme-release-signing`. Parameters:
+      - GitHubRepositoryId: step 1's number;
+      - KeyAdminArn: your ARN;
+      - AlertEmail: your address;
+      - ExistingGitHubOidcProviderArn: the ARN from step 2, or empty;
+      - CreateTrail: true, or false per step 3.
+
+      Then Next.
+   7. On the review page tick "I acknowledge that AWS CloudFormation might create IAM resources with custom names", then Submit.
+      Wait for CREATE_COMPLETE (a few minutes). If it fails with "invalid principals" on the key, the new role had not propagated
+      yet: delete the stack and create it again.
+   8. Open the e-mail "AWS Notification - Subscription Confirmation" and click "Confirm subscription".
+   9. Open the stack's Outputs tab and note SigningRoleArn and Region.
+   10. KMS > Customer managed keys > `alias/openbfme-release` > tab "Public key" > Download. Send the file to the coordinator. It is
+       public and safe to share, and it becomes the `kms-2026` line.
+5. *GitHub, the role and the region:* in Settings > Environments > `nightly`:
+   - under Environment secrets, Add environment secret `OPENBFME_SIGNING_ROLE_ARN` = SigningRoleArn;
+   - under Environment variables, Add environment variable `OPENBFME_SIGNING_REGION` = Region.
+
+   Do the same for `stable`. The ARN is not a credential. It is a secret only because it names the AWS account, and GitHub masks
+   secrets in the public logs, while a variable would be printed with the job's environment. No AWS credential is stored anywhere.
+6. *Billing:* the stack costs about $1.05 a month (the key $1, signing under 1 cent, the trail's storage a few cents; see the
+   template's header). The existing $90 budget alarm covers it.
+7. *A test signature,* after the `kms-2026` commit is merged and synced: dispatch the workflow for a nightly. The coordinator does
+   this; it creates a draft only. Expect one e-mail per signature (about six per release).
+8. *Repository rules* (Settings > Rules > Rulesets, on main):
+   - keep "Restrict deletions" and "Block force pushes";
+   - only the owner and the release account may push to main and create `v*` tags.
+
+   Community pull requests that touch the release workflow, `tools/release/` or `launcher/release_keys.pub` take the normal path with
+   the owner's review, never the automatic fast track.
+
+### Moving releases to GitHub Actions (RELSIGN-1)
+
+Owner, 2026-10-22: "make sure the nightly builds are on github actions and compile + publish automatically for all 3 systems". MACACT-1
+(the builds) and SIGNKMS-1 (the signing) are one design since RELSIGN-1:
+
+- **One definition of the builds.** `.github/workflows/release-package.yml` holds the three build jobs (macOS package, Linux library,
+  Windows library) with the build host's folder layout, ccache's path rewriting and the commit-dated build record, so the Linux library is
+  the build host's byte for byte and the Windows DLL the build host's but for its CodeView GUID (the table above). It runs two ways:
+  - **dispatched by the Deck** on `staging/<version>` at the candidate commit, one platform per run (`OPENBFME_RELEASE_*_BUILDER=actions`):
+    the Deck collects and compares the artifacts and keeps sealing and signing itself (MACACT-1's flow above);
+  - **called by `.github/workflows/release.yml`** (`workflow_call`, `OPENBFME_RELEASE_SIGNER=actions`): its jobs `macos`, `linux-lib` and
+    `windows-lib` are calls of that file (its definition is the one on `main`, the caller's commit; each job checks out and builds the
+    tag's commit); then `package` (`package.sh` for Linux and Windows) and `sign` (OIDC + KMS,
+    the draft) as in SIGNKMS-1.
+  Each build job's first step tells the two apart by `GITHUB_WORKFLOW_REF`, which the runner sets and no input can change: a dispatch must
+  run release-package.yml from `staging/<version>` with the ref's head at the commit; a call must come from `release.yml` on
+  `refs/heads/main` (whose `plan` job checked that the tag names the commit and the commit is on main). Anything else fails.
+- **The policy** (`public_workflows.py`) allows `workflow_call` in `release-package.yml` alone (beside `workflow_dispatch`, declaring inputs
+  only), a job that calls a workflow in `release.yml` alone (exactly `./.github/workflows/release-package.yml`, no `permissions` or
+  `secrets` of its own: it runs with the top-level `contents: read`), and refuses a `secrets:` key everywhere (`secrets: inherit` would
+  hand a called workflow every secret without one `secrets.` reference). The build jobs therefore have no secret, no write access and no
+  OIDC token on either path; only `release.yml`'s `sign` job has them, in the `nightly` / `stable` environment.
+- **The comparison on the signer's path.** `actions_release.py compare` holds the draft's archives to the tested candidate: byte for byte
+  without the seal, except the game's Windows ZIP, which may differ in its DLL's CodeView GUID and nothing else (member by member,
+  `pdb_tools.same_build`). The Mac package is compared byte for byte too, and the Mac build host's compiler is not `macos-15`'s, so a
+  signer = `actions` release needs `OPENBFME_RELEASE_MAC_BUILDER=actions` (the candidate's Mac package then comes from the same runner
+  image; if two `macos-15` builds of one commit still differ, the release fails closed and `OPENBFME_RELEASE_ACTIONS_COMPARE=report`
+  is the owner's call).
+
+**The switch-over, in order** (each step is the owner's call; the defaults stay `host` builders and the `deck` signer):
+
+1. **(a) Nightly builds on Actions.** Prerequisite: the workflows are on public `main` (the next release carries them; GitHub dispatches
+   only a workflow it has seen). Then, in the operator's release environment (`release.env`, or only the nightly wrapper's environment to
+   keep stable releases on the hosts for a while):
+
+       export OPENBFME_RELEASE_MAC_BUILDER=actions
+       export OPENBFME_RELEASE_LINUX_BUILDER=actions
+       export OPENBFME_RELEASE_WINDOWS_BUILDER=actions
+
+   The nightly then builds macOS on `macos-15` (the Mac host is not asked), and Linux and Windows on GitHub as well as on the build host,
+   whose library must match GitHub's; the packages and their tests stay on the build host (game files). The Deck still seals, signs and
+   publishes automatically as now. Proof that this works: the RELSIGN-1 dry run below.
+2. **(b) After the owner's AWS setup: signer on Actions.** The owner runs "The owner's setup" (SIGNKMS-1 above); the coordinator commits the
+   KMS public key as `kms-2026` (`python3 tools/release/release_keys.py --spki-to-hex <the public key file>`) and dispatches one nightly
+   test signature (a draft only). Then `export OPENBFME_RELEASE_SIGNER=actions` (with step (a)'s three builders), phase `transition` in
+   `signing_policy.json`: Actions builds, seals and signs `.sig2` through KMS and leaves a draft; the Deck compares it with the tested
+   candidate, co-signs `.sig` with the Deck key and publishes. A stable release waits for the owner's approval of the `stable`
+   environment; `OPENBFME_RELEASE_SIGN_TIMEOUT` (default 14400 s) bounds that wait, then the intent stays open and the next run waits
+   again (`OPENBFME_RELEASE_ACTIONS_TIMEOUT` stays MACACT-1's bound on one staging build).
+3. **(c) The trust release.** The next stable release after `kms-2026` is committed (signed either way) ships launchers and games whose
+   `release_keys.pub` trusts both keys. Every launcher that updates to it can follow the cut-over.
+4. **(d) The cut-over to phase `kms`** (a one-line commit to `signing_policy.json`), when ALL of these hold:
+   - at least 60 days since the trust release (twice the freeze-warning window; a launcher updates itself at every start);
+   - at least two stable releases since the trust release;
+   - no report in the community channels of a launcher older than the trust release still in use.
+
+   Actions then writes the KMS signature into `.sig` and `.sig2`, the Deck publishes without any key, and the Deck key leaves the key host
+   (deleted there, kept only as the encrypted offline backup and listed as the recovery key). A launcher that missed the transition refuses
+   the new release, keeps playing its installed version and recovers by a manual download (the cut-over's notes say so).
 
 ## Community pull requests (GHPR-1)
 

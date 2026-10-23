@@ -122,6 +122,10 @@ void MapPathfindObjects::kindsOf(const MapTemplateInfo &info, bool (&kinds)[PK_C
 		{ PK_SCALEABLE_WALL, "SCALEABLE_WALL" },
 		{ PK_BASE_SITE, "BASE_SITE" },
 		{ PK_WALL_UPGRADE, "WALL_UPGRADE" },
+		{ PK_ATTACK_NEEDS_LINE_OF_SIGHT, "ATTACK_NEEDS_LINE_OF_SIGHT" },
+		{ PK_CAN_SHOOT_OVER_WALLS, "CAN_SHOOT_OVER_WALLS" },
+		{ PK_WALL_SEGMENT, "WALL_SEGMENT" },
+		{ PK_WALL_GATE, "WALL_GATE" },
 	};
 	for (const Map &m : table)
 	{

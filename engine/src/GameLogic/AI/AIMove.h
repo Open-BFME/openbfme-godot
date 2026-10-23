@@ -76,6 +76,10 @@ public:
 	virtual bool attackRangeFrom(const Coord3D &from, PathfindObjectID victim, const Coord3D &victimPos, float extra) { (void)from; (void)victim; (void)victimPos; (void)extra; return false; }
 	// lane PHYS-1: the same test with the victim taken at `victimPos` (RW 0x6CC07C's explicit position argument)
 	virtual bool attackRangeFromTo(const Coord3D &from, PathfindObjectID victim, const Coord3D &victimPos, float extra) { (void)from; (void)victim; (void)victimPos; (void)extra; return false; }
+	// lane ATTACKPATH-1: RW 0x6CA974 Weapon::getAttackDistance(unit, victim, victimPos) of the current weapon (RW 0x68B58C(0)); 0 without a weapon
+	virtual float attackDistanceTo(PathfindObjectID victim, const Coord3D &victimPos) { (void)victim; (void)victimPos; return 0.0f; }
+	// lane ATTACKPATH-1: RW 0x441B59 on the current weapon: its template's MeleeWeapon (+ 0x125); false without a weapon
+	virtual bool currentWeaponIsMelee() { return false; }
 	// the pathfinder's view of any object (null when gone)
 	virtual const PathfindObject *findPathfindObject(PathfindObjectID id) { (void)id; return nullptr; }
 	// the allied clearing of a new path: the gates of RW 0x666EEA .. 0x666F67 (and 0x66670F, 0x669459), then RW 0x6F503B; default nothing

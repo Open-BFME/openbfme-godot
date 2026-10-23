@@ -33,6 +33,7 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
 #include "PathfindTestUtil.h"
+#include "ProductionRateTestUtil.h"
 #include "RetailTestMount.h"
 
 #include <algorithm>
@@ -43,6 +44,20 @@
 #include <memory>
 #include <set>
 #include <sstream>
+
+namespace
+{
+// lane PRODUCTION1: the producer's PRODUCTION rate of every frame and the counter model are ProductionRateTestUtil.h's
+float productionRateNow(const Object &b)
+{
+	return prodrate::rateNow(b);
+}
+
+int framesToComplete(const std::vector<float> &rates, int total)
+{
+	return prodrate::framesToComplete(rates, total);
+}
+} // namespace
 
 namespace
 {
@@ -365,6 +380,7 @@ FactionResult runFaction(Shared &sh, const std::string &faction)
 				}
 				list.append(queueMsg(pi, unit));
 				const UnsignedInt queuedFrame = logic.getFrame();
+				std::vector<float> rates{ productionRateNow(*b) }; // lane PRODUCTION1: the rate of every frame from the queue on
 				logic.runLogicFrame();
 				ProductionUpdateInterface *pu = b->getProductionUpdate();
 				if (!pu || pu->getProductionCount() != 1)
@@ -441,6 +457,10 @@ FactionResult runFaction(Shared &sh, const std::string &faction)
 				UnsignedInt idleSince = 0;
 				for (int i = 0; i < maxFrames; ++i)
 				{
+					if (!completeAt)
+					{
+						rates.push_back(productionRateNow(*b));
+					}
 					logic.runLogicFrame();
 					if (!completeAt && pu->firstProduction() && pu->firstProduction()->percentComplete >= 100.0f)
 					{
@@ -490,9 +510,12 @@ FactionResult runFaction(Shared &sh, const std::string &faction)
 				{
 					completeAt = madeAt[0]; // without a door the object is made in the update that completes the progress: the entry is gone before it can be seen
 				}
-				if (completeAt == 0 || (int)(completeAt - queuedFrame) != expectedFrames)
+				// lane PRODUCTION1: five frames per whole second at rate 1.0; a level 2 / 3 building (the button's NeededUpgrade levels it) runs at its BuildSpeedModLvl<n>
+				const int expectedRated = framesToComplete(rates, expectedFrames);
+				if (completeAt == 0 || (int)(completeAt - queuedFrame) != expectedRated)
 				{
-					res.problems.push_back(tag + ": progress reached 100% after " + std::to_string(completeAt ? (int)(completeAt - queuedFrame) : -1) + " frames, expected " + std::to_string(expectedFrames));
+					res.problems.push_back(tag + ": progress reached 100% after " + std::to_string(completeAt ? (int)(completeAt - queuedFrame) : -1) + " frames, expected " + std::to_string(expectedRated) +
+						" (" + std::to_string(expectedFrames) + " at rate 1)");
 				}
 				if (madeAt.empty())
 				{
@@ -848,6 +871,10 @@ std::vector<RallyOutcome> runRally(Shared &sh, const std::string &faction)
 				b->setPosition(&at);
 				ai.removeObjectFromPathfindMap(*b);
 				ai.addObjectToPathfindMap(*b); // the footprint where the building stands
+				if (SpawnBehaviorInterface *sb = SpawnBehaviorInterface::of(*b))
+				{
+					sb->stopSpawning(); // as runFaction (lane MOD-4): a lumber mill's own SpawnBehavior makes the same workers through the same exit; only the queue is measured
+				}
 				for (const std::string &u : button->m_neededUpgrade)
 				{
 					const int type = world.upgradeTypes().typeOf(u);
@@ -878,6 +905,7 @@ std::vector<RallyOutcome> runRally(Shared &sh, const std::string &faction)
 				const unsigned long long unexecutedBefore = logic.aiCommands().unexecuted();
 				const size_t failuresBefore = ai.movementFailures().size();
 				const UnsignedInt queuedFrame = logic.getFrame();
+				std::vector<float> rates{ productionRateNow(*b) }; // lane PRODUCTION1: the rate of every frame from the queue on
 				logic.runLogicFrame();
 				ProductionUpdateInterface *pu = b->getProductionUpdate();
 				if (!pu || pu->getProductionCount() != 1)
@@ -896,10 +924,15 @@ std::vector<RallyOutcome> runRally(Shared &sh, const std::string &faction)
 				const FieldValue *timeField = unit->getFinalOverride()->findField("BuildTime");
 				const int expectedFrames = timeField ? 5 * (int)std::get<float>(*timeField) : 0;
 				UnsignedInt completeAt = 0;
+				UnsignedInt madeFrame = 0; // the frame the first object appeared (Sol r1: the no-door case measures it rather than assuming it)
 				Object *made = nullptr;
 				bool settled = false;
 				for (int f = 0; f < 6000 && !settled; ++f)
 				{
+					if (!completeAt && pu->getProductionCount() != 0)
+					{
+						rates.push_back(productionRateNow(*b));
+					}
 					logic.runLogicFrame();
 					if (!completeAt && pu->firstProduction() && pu->firstProduction()->percentComplete >= 100.0f)
 					{
@@ -912,18 +945,22 @@ std::vector<RallyOutcome> runRally(Shared &sh, const std::string &faction)
 							if (o->getProducerID() == b->getID() && !o->getContainedBy() && o->getTemplate()->getFinalOverride() != building->getFinalOverride())
 							{
 								made = o;
+								madeFrame = logic.getFrame();
 							}
 						}
 					}
 					settled = made && made->getAIUpdateInterface() && made->getAIUpdateInterface()->isIdle() && f > 30 && pu->getProductionCount() == 0 && puIdle(*b);
 				}
+				// lane PRODUCTION1: the rate of every frame (a level 2 / 3 building runs at its BuildSpeedModLvl<n>, RW 0x8A1EBC)
+				const int expectedRated = framesToComplete(rates, expectedFrames);
 				if (completeAt == 0 && puData && puData->m_numDoorAnimations == 0 && made)
 				{
-					completeAt = queuedFrame + (UnsignedInt)expectedFrames; // no door: the object appears in the update that completes the progress, the entry is gone before it is seen
+					completeAt = madeFrame; // no door: the object appears in the update that completes the progress, the entry is gone before it is seen
 				}
-				if (r.problem.empty() && (completeAt == 0 || (int)(completeAt - queuedFrame) != expectedFrames))
+				if (r.problem.empty() && (completeAt == 0 || (int)(completeAt - queuedFrame) != expectedRated))
 				{
-					r.problem = "progress reached 100% after " + std::to_string(completeAt ? (int)(completeAt - queuedFrame) : -1) + " frames, expected " + std::to_string(expectedFrames);
+					r.problem = "progress reached 100% after " + std::to_string(completeAt ? (int)(completeAt - queuedFrame) : -1) + " frames, expected " + std::to_string(expectedRated) + " (" +
+						std::to_string(expectedFrames) + " at rate 1)";
 				}
 				for (int f = 0; f < 200; ++f)
 				{

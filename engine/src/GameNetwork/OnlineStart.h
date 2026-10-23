@@ -10,7 +10,8 @@
 //     "runAhead": <1 .. 25>, "crcInterval": <0 .. 1000>, "profile": "<the profile identity's MD5, every player's: the service compared them>",
 //     "setup": { "map": "<map cache key>", "seed": <u32>, "startingCash": <-1 (lane ONLINE-4: unset, the InitialResources rule) .. 1e9>, "superweaponRestriction": <int>, "rules": null | [10 ints],
 //                "legendaryHeroes": <1 .. 4>, "slots": [ up to 8 x { "state": "open|closed|player|easy|medium|hard|brutal", "name": "<UTF-8>",
-//                "faction": <player template index or -1 random>, "color": <-1 ..>, "startPos": <-1 ..>, "team": <-1 ..>, "cah": "<base64 .cah>" (optional) } ] } }
+//                "faction": <player template index or -1 random>, "color": <-1 ..>, "startPos": <-1 ..>, "team": <-1 ..>, "handicap": <0, -5 .. -95> (lane ONLINEMENU-1; absent: 0),
+//                "cah": "<base64 .cah>" (optional) } ] } }
 // ONLINE-2 r2: the lobby publishes each game's "openbfme-replay-start" (/v1/replays/<id>/start): the same without "slot", "relay" and "ticket".
 // Missing slots are closed. Every field is checked: an unknown version, a missing or mistyped field, a value out of range, a profile other than this
 // client's, or a slot that is not a human player's is an error (never a default).

@@ -191,6 +191,9 @@ public:
 	int64_t find_object_by_template(const String &template_name) const;
 	// lane BUILD-1: the first real model of the template's draw modules (its default model condition state), "" when it has none: what the placement ghost shows
 	String get_template_model(const String &template_name) const;
+	// Ping wheel (not retail, presentation only): the BeaconName of player `player_index`'s PlayerTemplate (RotWK's multiplayer beacon object, e.g. its
+	// MultiplayerBeacon), "" when the player or the name is missing. Reads the start-time player template only, never the simulation's state
+	String get_player_beacon_template(int64_t player_index) const;
 	// lane PLAY-1: what PlayerTribute.apt reads of this game and its Send (GameClient/GUI/TributeInfo.h); valid while the world lives (null-safe without a game)
 	TributeSource *tribute_source();
 

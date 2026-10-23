@@ -4,7 +4,12 @@
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 
+#include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/Combat/ProjectileLauncher.h"
+#include "GameLogic/Module/NotifyCrushModules.h"
+#include "GameLogic/Object/ObjectGeometry.h"
+#include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/Module/StancesBehavior.h"
 #include "GameLogic/Module/ProjectileModules.h"
 #include "GameLogic/Module/HordeAIUpdate.h"
@@ -58,12 +63,138 @@ size_t CombatState::inFlight() const
 	return n;
 }
 
+// lane FLANK-1: the module of an object whose BezierProjectileBehavior flies (a path, not detonated); null otherwise
+namespace
+{
+BezierProjectileBehavior *flyingBezier(Object &o)
+{
+	for (const std::unique_ptr<BehaviorModule> &m : o.modules())
+	{
+		if (BezierProjectileBehavior *b = dynamic_cast<BezierProjectileBehavior *>(m.get()))
+		{
+			return !b->flightPath().empty() && !b->hasDetonated() ? b : nullptr;
+		}
+	}
+	return nullptr;
+}
+} // namespace
+
+void CombatState::noteFlyingProjectile(std::uint32_t objectId)
+{
+	const std::vector<std::uint32_t>::iterator it = std::lower_bound(m_flying.begin(), m_flying.end(), objectId);
+	if (it == m_flying.end() || *it != objectId)
+	{
+		m_flying.insert(it, objectId);
+	}
+}
+
+// lane FLANK-1 (S-363 / S-780). Retail: RW 0x68E31F registers an object without KindOf NO_COLLIDE (bit 30) with the collision manager (RW 0xB6C470); the manager's
+// update (row RW 0x62E93B .. 0x62E94E, after ThePartitionManager's) finds the overlapping pairs (broad phase RW 0xB6D8A0, the test vslot 0x20) and calls onCollide
+// both ways (RW 0xB6D060). A BezierProjectileBehavior's collide interface (RW vtable 0xC585C8, slot 0 RW 0x85E52B) asks canCollideWith (RW 0x85EF6A) and hands an
+// accepted contact to handleCollision (RW 0x85FDB7; BFME2 decomp BezierProjectileBehaviorSlots.cpp rva0045B4C0 / rva0045BF06, Collide.cpp rva0045CD6E).
+// INFERENCE (stop S-780): the pairs of a flying projectile are the objects ThePartitionManager returns within its bounding sphere (distance type 3) whose shapes
+// overlap its own (RW 0xAD2CE0, NotifyCrushModules::geometriesOverlap), met in id order; retail's broad phase, its contact test (vslot 0x20) and its pair order were
+// not read. Only the projectile's side of a contact is dispatched here: a flying unit (a thrown or leaping infantry template) already meets the AI units through
+// AIWorld's pass, and the other object's collide modules are not called for a projectile (a ported module reacting to one: none that changes a 2.01 fight is known).
+// HORDE objects (KindOf 109) are not candidates: retail's manager leaves them out and canCollideWith refuses them. The geometry is the pathfinder's (an AIWorld).
+void CombatState::processProjectileContacts()
+{
+	if (!m_logic.aiWorld())
+	{
+		return;
+	}
+	if (!m_flyingValid)
+	{
+		// after a load: the list is what the launches built, i.e. every object whose BezierProjectileBehavior flies (sorted by id, as the launches keep it)
+		m_flying.clear();
+		for (Object *o = m_logic.getFirstObject(); o; o = o->getNextObject())
+		{
+			if (!o->isDestroyed() && flyingBezier(*o))
+			{
+				m_flying.push_back(o->getID());
+			}
+		}
+		std::sort(m_flying.begin(), m_flying.end());
+		m_flyingValid = true;
+	}
+	if (m_flying.empty())
+	{
+		return;
+	}
+	static const unsigned kNoCollide = (unsigned)CombatNames::kindOf("NO_COLLIDE"), kHorde = (unsigned)CombatNames::kindOf("HORDE");
+	static const unsigned kNoCollisions = (unsigned)CombatNames::statuses().noCollisions;
+	m_flyingScratch.assign(m_flying.begin(), m_flying.end()); // a contact can launch or destroy projectiles: walk a copy
+	for (std::uint32_t id : m_flyingScratch)
+	{
+		Object *p = m_logic.findObjectByID(id);
+		BezierProjectileBehavior *b = p && !p->isDestroyed() ? flyingBezier(*p) : nullptr;
+		if (!b || p->isKindOf(kNoCollide))
+		{
+			m_flying.erase(std::lower_bound(m_flying.begin(), m_flying.end(), id));
+			continue;
+		}
+		if (p->testStatus(kNoCollisions) || !p->isInWorld())
+		{
+			continue;
+		}
+		const std::vector<ObjectGeometry::Shape> &own = ObjectGeometry::cachedShapesOf(*p->getTemplate());
+		if (own.empty())
+		{
+			continue; // no shape overlaps anything (RW 0xAD2CE0 walks the shapes)
+		}
+		PartitionFilterFn candidate([&](Object &o) {
+			return &o != p && !o.isDestroyed() && o.isInWorld() && !o.isKindOf(kNoCollide) && !o.isKindOf(kHorde) && !o.testStatus(kNoCollisions);
+		});
+		const PartitionHits hits =
+			m_logic.partition().iterateObjectsInRange(*p->getPosition(), CombatQueries::boundingSphereRadius(*p), FROM_BOUNDINGSPHERE_3D, { &candidate }, ITER_FASTEST);
+		m_contactScratch.clear();
+		for (const PartitionHit &h : hits)
+		{
+			m_contactScratch.push_back(h.object->getID());
+		}
+		std::sort(m_contactScratch.begin(), m_contactScratch.end());
+		for (std::uint32_t otherId : m_contactScratch)
+		{
+			if (p->isDestroyed() || p->testStatus(kNoCollisions) || !flyingBezier(*p))
+			{
+				break; // detonated, landed or killed by an earlier contact
+			}
+			Object *o = m_logic.findObjectByID(otherId);
+			if (!o || o->isDestroyed())
+			{
+				continue;
+			}
+			if (!NotifyCrushModules::geometriesOverlap(own, *p->getPosition(), p->getOrientation(), ObjectGeometry::cachedShapesOf(*o->getTemplate()), *o->getPosition(),
+				    o->getOrientation()))
+			{
+				continue;
+			}
+			++m_counters.projectileContacts;
+			if (b->projectileCanCollideWith(o)) // RW 0x85E52B
+			{
+				++m_counters.projectileContactHits;
+				b->projectileHandleCollision(o);
+			}
+		}
+		if (p->isDestroyed() || !flyingBezier(*p))
+		{
+			const std::vector<std::uint32_t>::iterator it = std::lower_bound(m_flying.begin(), m_flying.end(), id);
+			if (it != m_flying.end() && *it == id)
+			{
+				m_flying.erase(it);
+			}
+		}
+	}
+}
+
 void CombatState::reset()
 {
 	m_targets.reset();
 	m_counters = Counters();
 	m_breaches.clear();
 	m_autoAcquire = true;
+	m_flying.clear();
+	m_flyingValid = true;
 }
 
 void CombatState::crc(StateHasher &h) const
@@ -108,6 +239,9 @@ void CombatState::crc(StateHasher &h) const
 	h.addU64(m_counters.shockwaveFlings);
 	h.addU64(m_counters.shockwaveStandUps);
 	h.addU64(m_counters.shockwaveRampageKills);
+	h.addU64(m_counters.projectileContacts); // lane FLANK-1
+	h.addU64(m_counters.projectileContactHits);
+	h.addU64(m_counters.projectilePreLandingEmotions);
 	h.addU32((std::uint32_t)m_breaches.size());
 	for (const CastleBreach &b : m_breaches)
 	{
@@ -134,8 +268,12 @@ std::vector<std::string> CombatState::stops()
 		"[S-325] attack machine: AIAttackState and its sub machine (Pursue 0x64, Approach 0x65, Aim 0x66, Fire 0x67, WaitUntilFinishedFiring 0x68) are the B1 ids and transitions (RW's own ids were not read); "
 		"the transition conditions (weapon range test, victim death) are inference; no turrets, a stealthed and undetected victim ends the attack state (lane STEALTH-1, inference of the RW sub-state), no garrison fire points, no combo locomotors, no attack position / area / squad, no retaliation"
 		"; lane SPELL-3 (review r3): the Aim and Fire states of an attack on an object carry RotWK's cannotPossiblyAttackObject (RW 0x741798, the B1 condition lists): an owner Object::isAbleToAttack refuses (NO_ATTACK, the condition 0x81, UNDER_CONSTRUCTION, SOLD) leaves the machine with failure, an ordered attack included; its getAbleToAttackSpecificObject half (RW 0x68D6A6 with the AI's last command source) and the B1 conditions to Pursue are not ported, and the horde and melee machines have no conditions",
-		"[S-326] acquisition: an idle unit scans for an enemy every MoodAttackCheckRate frames within its vision range (the template's VisionRange), nearest first, ties by object id; AttackPriority tables, "
-		"the stances' acquisition side (StancesBehavior's RW 0x662A21, S-585), guard and hunt states, NOTWHILEATTACKING and the retail partition manager's filters are not read (stealth: a stealthed and undetected enemy is not attackable, RW 0x6C9147, and a stealthed unit scans only with STEALTHED, RW 0x66844A: lane STEALTH-1)",
+		"[S-326] acquisition (lane TARGET-1): RotWK's mood scan getNextMoodTarget (RW 0x66844A) with its cadence (AI + 0x21C, the one-off random offset AI + 0x3BC, "
+		"resetNextMoodCheckTime RW 0x662DD9 on idle entry) and the target search AI::findClosestEnemy (RW 0x7006D7: the partition filters, the AttackPriority table "
+		"score with the combat chain, pathability, the horde adjustment RW 0x68D30E) run for the idle, attack-move, guard, hunt, turret and giant bird scans; "
+		"not ported: the line of sight filter (taken as clear, S-859), the friendly-fire crowd query (distance type 4, S-1020), the player's stop flag AI + 0x3CC "
+		"and its retaliation branch, the firing tracker's take-once target (Object + 0x248 + 0x38), the contained structure's apparent player, the attack-moving "
+		"skirmish AI filter (state 0x21, S-328), the script attack priority actions and the team prototype's priority override (S-1180); the melee re-acquire (state 0xE5) still uses the port's TargetFinder",
 		"[S-327] horde combat: the horde object runs the melee approach and wait states (B1 ids 0xC8..0xCC) and its members attack through their own attack machine; HordeMeleeAmoeba's cell search is "
 		"approximated by every member attacking the nearest enemy member in reach or walking toward it; the readiness rule, RanksToReleaseWhenAttacking, back-up and the banner carrier are not ported (the crush is lane HORDE-2's: S-580, S-583)",
 		"[S-328] attack commands: MSG_DO_ATTACK_OBJECT, MSG_DO_FORCE_ATTACK_OBJECT and MSG_DO_ATTACKMOVETO (as attack-move: the group attacks what it meets, then continues) reach the group of the "
@@ -167,6 +305,8 @@ std::vector<std::string> CombatState::report() const
 		std::to_string(m_counters.projectilesLanded) + " ground hits " + std::to_string(m_counters.projectileGroundHits) + " bounces " + std::to_string(m_counters.projectileBounces) +
 		" fx unplayed " + std::to_string(m_counters.projectileFxUnplayed) + " launch bones " + std::to_string(m_counters.launchBonesFound) +
 		" garrison launches unported " + std::to_string(m_counters.garrisonLaunchUnported) + " garrison launches " + std::to_string(m_counters.garrisonLaunches) + " launches without bones " + std::to_string(m_counters.launchesWithoutBones) + " emotions unported " + std::to_string(m_counters.projectileEmotionsUnported) +
+		" pre-landing emotions " + std::to_string(m_counters.projectilePreLandingEmotions) + " contacts " + std::to_string(m_counters.projectileContacts) + " contact hits " +
+		std::to_string(m_counters.projectileContactHits) +
 		", unported nuggets " + std::to_string(m_counters.unportedNuggets) + ", flank tests ignored " + std::to_string(m_counters.flankIgnored));
 	out.push_back("[S-580..S-584 counters] crushes " + std::to_string(m_counters.crushes) + ", crush weapon shots " + std::to_string(m_counters.crushWeaponShots) + ", bumps " +
 		std::to_string(m_counters.crushBumps) + " (contact attacks not ported " + std::to_string(m_counters.crushBumpAttacksNotPorted) + "), knockbacks " +
@@ -182,7 +322,10 @@ std::vector<std::string> CombatState::report() const
 // The target finder's cell index is a cache: rebuilt from the objects at its next query (TargetFinder::reset), never saved.
 void CombatState::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	// version 2 (lane FLANK-1): the projectile contact and pre-landing emotion counters
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
+	const int version = v.current;
 	x.xferBool(&m_autoAcquire);
 	for (unsigned long long *c : { &m_counters.damageApplications, &m_counters.kills, &m_counters.bountyPaid, &m_counters.projectilesLaunched,
 			 &m_counters.launchBonesFound, &m_counters.garrisonLaunchUnported, &m_counters.garrisonLaunches, &m_counters.launchesWithoutBones,
@@ -196,6 +339,17 @@ void CombatState::xfer(Xfer &x)
 	{
 		SnapshotXfer::u64(x, *c);
 	}
+	for (unsigned long long *c : { &m_counters.projectileContacts, &m_counters.projectileContactHits, &m_counters.projectilePreLandingEmotions })
+	{
+		if (version >= 2)
+		{
+			SnapshotXfer::u64(x, *c);
+		}
+		else
+		{
+			*c = 0; // a version 1 save has none of them: the game starts them at 0 (Sol r1)
+		}
+	}
 	SnapshotXfer::each(x, m_breaches, 12, [&](CastleBreach &b) {
 		x.xferUnsignedInt(&b.frame);
 		x.xferObjectID(&b.objectId); // an object id (the same u32)
@@ -205,5 +359,7 @@ void CombatState::xfer(Xfer &x)
 	if (x.isLoading())
 	{
 		m_targets.reset();
+		m_flying.clear();
+		m_flyingValid = false; // lane FLANK-1: rebuilt from the loaded objects by the next contact pass
 	}
 }

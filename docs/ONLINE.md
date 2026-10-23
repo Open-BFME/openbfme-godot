@@ -27,6 +27,45 @@ best-effort goal with its own checks (docs/PLAN.md, "Oracles and gates").
 The rest of this page is the engineering study behind that plan (lane
 ONLINE-1): hosting options, costs and the measured bandwidth.
 
+## Social lobby backend (SOCIAL-1 S-A)
+
+The canonical `/v1/me`, `/v1/me/privacy`, `/v1/me/status`,
+`/v1/me/recovery`, `/v1/friends/*`, `/v1/blocks/*`, `/v1/inbox`,
+`/v1/invites/*`, and `/v1/chat/*` routes keep stable player identities,
+recovery hashes, friend edges and requests, blocks, privacy, recent-room
+references, invites, inbox state, and permanent friend-chat messages. Social
+data is separate from the report journal. The Worker stores indexed rows in
+the Lobby Durable Object's SQLite storage; it does not load all players or
+messages into memory. Presence, held polls, notices, pending invites, and
+challenge handoffs are bounded process/session state and are not durable
+history.
+The self-hosted Node server uses `LOBBY_DATA/social.sqlite` and requires Node
+22 or newer for `node:sqlite`. Missing or unavailable social storage fails
+closed (`503`); a full store refuses writes (`507`). There is no production
+in-memory fallback. Friend-chat history has no time-based eviction; report
+evidence is private and independently expires after 90 days.
+
+Inbox long polls wait at most 25 seconds and may wake sooner when relevant
+state changes. The unchanged-timeout budget is **3600 / 25 = 144 sequential
+timeout requests per player-hour**; signed-in stats polling is removed.
+Requests held concurrently share the lobby's account/global hold caps, with a
+limit of two held inbox requests per player.
+Authenticated mutation requests rejected for malformed JSON or query fields
+are charged to the applicable mutation window. A transport/body limit that
+rejects a request before routing and account authentication cannot be charged;
+the Node and Worker ingress limits are enforced at that boundary.
+
+Focused commands:
+
+```sh
+node --test services/online/lobby/test/social.test.mjs services/online/lobby/test/social-worker.test.mjs
+node --test services/online/lobby/test/reports.test.mjs services/online/lobby/test/wp_c.test.mjs
+node --check services/online/lobby/src/social.mjs
+node --check services/online/lobby/src/social-store.mjs
+node --check services/online/lobby/src/social-store-node.mjs
+node --test services/online/lobby/test/*.test.mjs
+```
+
 ## Online multiplayer: engineering options (ONLINE-1)
 
 Design and measurement only (lane ONLINE-1, 2026-10-10). Nothing here has been
@@ -231,7 +270,7 @@ frames through it on equal state hashes (0 desyncs).
 - (fixed by ONLINE-5: the staging room's Ready column, below);
 - War of the Ring online and the Messenger (S-4075); Quick Match, tournaments and Stats need the
   platform API deployed (S-4880, below),
-  Create-a-Heroes online (S-4076), ping per relay region (S-4073).
+  ping per relay region (S-4073). (Create-a-Heroes and handicaps online: lane ONLINEMENU-1.)
 
 **Rejoin and Watch (round 2, with ONLINE-3 merged).** A restarted game signs
 in with the lobby session it kept (ONLINE-3's `user://online_session.txt`),
@@ -1301,3 +1340,36 @@ the started games the account left (`"left": [ids]`, newest 32; optional for the
 after the leave lists those games neither as REJOIN nor as WATCH (the lobby refuses a player of the game as its spectator, `409 player`). A rejoin or
 watch that fails before it is live (`game.gd _online_game_failed`) is no leave: the client forgets the game without `POST .../leave`, the network
 session sends no frame counts and no PLAYERLEAVE for an incarnation that never went live, and the lobby keeps offering the game for a rejoin.
+
+## The online menus against retail, and the staging room's last two columns (lane ONLINEMENU-1, 2026-10-20)
+
+An inventory of every callback, provider and gadget name the RotWK binary has for its online screens, checked against what this port
+registers, found every retail name wired except the Messenger's (`AptMessenger::*`, `Messenger::ChatTab_*` / `PlayersTab_*`),
+`Connection::OnRetryConnections`, `OnlineLogin::TOSText` and `MpClans::Initialized`. The buttons that only say "not available" are the
+Messenger, War of the Ring, Load Game, Connections and the staging room's Clans tab. RotWK's home page has no Official Site button (the
+callback is BFME2's; the RotWK movie never calls it).
+
+**Handicap and Create-a-Hero online.** The staging room's Handicap and Hero columns work as in the LAN room. The lobby keeps each slot's
+`handicap` (0, -5 .. -95 in steps of 5: RotWK's Handicap combo, RW 0x840B9D) and each player's own `cah` (the Create-a-Hero record in its
+wire form, base64, 1 .. 4,096 bytes), checks them whole with the slot's other choices, clears them when the slot empties, and puts both
+in the room view and in the START (each player's and the replay record). Only the row's owner sets them (the host for its AIs' handicaps;
+nobody gives an AI or an empty slot a hero). The client reads the record with `SkirmishGameSlot::setCreateAHeroBytes`, and the game
+start validates it against the Create-a-Hero system as a LAN start does. A record another client cannot read leaves that slot without a
+hero, and the host's Play Game says whose hero is the problem instead of sending a START that every client would refuse. A START without
+`handicap` (an older lobby's) plays at 0. Mixed client builds never share a room (the profile identity's engine id), so an older client
+that ignores the new fields cannot end up in a game that uses them.
+
+**Lobby change for the coordinator (not deployed: needs review and the owner's OK, staging first).** `services/online/lobby/src/lobby.mjs`:
+the slot fields `handicap` and `cah` (tests in `lobby.test.mjs`, "ONLINEMENU-1: ..."). Older clients keep working against it: they send
+neither field and ignore them in the answers.
+
+**The Connections screen on the relay (the owner's choice, 2026-10-20).** The staging room's CONNECTIONS button opens RotWK's own
+grid (Connections.apt) again. Retail drew the GameSpy connection between every two players; OpenBFME's players only reach the relay,
+so each client measures its own link to the room's relay (`GameNetwork/RelayProbe.h`: five LOG_REQUESTs from fresh sockets, which the
+relay answers NOT_BOUND as it answers any unknown sender, so the relay needs no change) and tells the lobby (`POST
+/v1/games/<id>/link`) on entering the room, on the screen's Refresh and when its round trip moves by a 50 ms step or its loss changes. A cell of two players shows their two
+round trips added together, at GameSpy's default cut-offs (300 / 600 ms: good / warning / bad), failed when one of them cannot reach
+the relay (or the room has none), waiting before both reported. The grid's per-row Kick buttons stay in the movie's own unpressable
+state in the staging room; the room's per-slot Kick removes a player. The lobby names the room's relay in the room view (as
+`/v1/health` already does) and keeps each player's link; a report never unreadies anyone, an unchanged one takes no new seq, and it
+is not part of the START.

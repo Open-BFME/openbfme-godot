@@ -287,6 +287,8 @@ public:
 	}
 	bool inRangeFrom(const Coord3D &from, float extra) const override { return m_host.attackRangeFrom(from, m_victim, m_pos, extra); }
 	bool inRangeFromTo(const Coord3D &from, const Coord3D &victimPos, float extra) const override { return m_host.attackRangeFromTo(from, m_victim, victimPos, extra); }
+	float attackDistance() const override { return m_host.attackDistanceTo(m_victim, m_pos); }
+	bool meleeWeapon() const override { return m_host.currentWeaponIsMelee(); }
 
 private:
 	AIMoveHost &m_host;
@@ -367,34 +369,50 @@ bool AIMover::computeAttackPath()
 {
 	// RW 0x6668CA (the ground branch; the flying / no-pathfind branch RW 0x666D4E .. 0x666E6C and the ship variant RW 0x6FDE38 are S-784)
 	static const std::string kStopAttackPath =
-		"[S-784] attack path: requestAttackPath (RW 0x663802), computeAttackPath (RW 0x6668CA, ground branch) and findAttackPath (RW 0x6FC18E) are ported; NOT ported: the view "
-		"test RW 0x6F4557 (never blocked, S-325), the flying branch and the ship search RW 0x6FDE38, the failure branch's RW 0x6F3C87 / 0x66831A retries (a melee "
-		"soldier attacks through the melee machine instead, S-787); INFERENCE: the closest-cell fallback ranks by distance only (RW 0x93AD93 zone value), the "
-		"expansion takes no range limit, the goal shift toward the attacker is always made (RW 0x441B59 not read)";
+		"[S-784] attack path: requestAttackPath (RW 0x663802), computeAttackPath (RW 0x6668CA, ground branch), findAttackPath (RW 0x6FC18E: the probe, the corridor "
+		"RW 0x6F9829, the ranked fallback, the range-limited expansion) and its view test RW 0x6F4557 (lane ATTACKPATH-1) are ported; NOT ported: the view test's "
+		"weapon terrain line RW 0x6CC6DD (taken as clear, S-859), the flying branch and the ship search RW 0x6FDE38, the existing path kept for a waypoint node "
+		"(RW 0x666907, no waypoints: S-161), the path-through flag of a guard state (state 0x10 with AI + 0x3CD, S-325), the BRIDGE victim's attack points "
+		"(RW 0x67D7EC); INFERENCE: a WALL_UPGRADE victim's corridor goal is its position (RW 0x68C9AC)";
 	m_host.noteLogicStop(kStopAttackPath);
 	PathfindObject &obj = m_host.pathfindObject();
 	const PathfindLocomotorInfo info = m_host.locomotorInfo();
 	const Coord3D pos = obj.getPosition();
 	const PathfindObject *victim = m_attackVictim != PATHFIND_INVALID_ID ? m_host.findPathfindObject(m_attackVictim) : nullptr;
-	const Coord3D target = victim ? victim->getPosition() : m_attackPos;
-	// in reach already: no path (RW 0x6669C2)
-	if (m_host.attackRangeFrom(pos, victim ? m_attackVictim : PATHFIND_INVALID_ID, target, 0.0f))
+	const PathfindObjectID victimId = victim ? m_attackVictim : PATHFIND_INVALID_ID;
+	// in reach already: no path (RW 0x6669C2). A victim object: in reach (RW 0x6CC653) unless the unit does ground movement (AI vslot 0x224), the victim is not
+	// significantly above the terrain (RW 0x70C55D) and the view from here is blocked (RW 0x6F4557, lane ATTACKPATH-1); a position: RW 0x6CC07C from here
+	bool inReach;
+	if (victim)
+	{
+		inReach = m_host.attackRangeFrom(pos, victimId, victim->getPosition(), 0.0f) &&
+			!(isDoingGroundMovement() && !victim->isSignificantlyAboveTerrain() && m_pf.isAttackViewBlockedByObstacle(obj, pos, victim, victim->getPosition()));
+	}
+	else
+	{
+		inReach = m_host.attackRangeFrom(pos, PATHFIND_INVALID_ID, m_attackPos, 0.0f);
+	}
+	if (inReach)
 	{
 		destroyPath();
 		m_pathTimestamp = m_host.frame();
 		return true;
 	}
+	// RW 0x6669FE .. 0x666A55: the victim's position (a position target: the request's), its z the terrain height there (TerrainLogic vslot 0x1C on the
+	// victim's layer: the ground, S-161)
+	Coord3D target = victim ? victim->getPosition() : m_attackPos;
+	target.z = m_host.groundHeightAt(target.x, target.y);
 	destroyPath();
 	m_pf.removeGoal(obj); // RW 0x68B401
 	m_pf.setIgnoreObstacleID(m_ignoreObstacleId); // RW 0x6E8498(AI +0x164)
-	const MoverAttackRange range(m_host, victim ? m_attackVictim : PATHFIND_INVALID_ID, target);
+	const MoverAttackRange range(m_host, victimId, target);
 	bool fallback = false;
 	const float victimRadius = victim ? victim->getGeometry().boundingCircleRadius() : 0.0f;
 	m_path = m_pf.findAttackPath(&obj, info, &pos, victim, &target, victimRadius, range, false, &fallback);
 	if (m_path && m_path->getLastNode())
 	{
 		const Coord3D last = *m_path->getLastNode()->getPosition();
-		if (!fallback && !m_host.attackRangeFrom(last, victim ? m_attackVictim : PATHFIND_INVALID_ID, target, 0.0f))
+		if (!fallback && !m_host.attackRangeFrom(last, victimId, target, 0.0f))
 		{
 			// RW 0x666A9F: an end out of reach closer than 30 to the unit: adjust the unit's own position and path there instead
 			const float d = (float)SimMath::length3d(SimMath::subf32(last.x, pos.x), SimMath::subf32(last.y, pos.y), SimMath::subf32(last.z, pos.z));
@@ -454,9 +472,41 @@ void AIMover::doPathfind()
 		m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
 		return;
 	}
+	// RW 0x66902C: the approach flag (+ 0x3B4) drops when the unit is not doing ground movement (AI vslot 0x224) (lane ATTACKPATH-1)
+	if (m_meleeApproachRequest && !isDoingGroundMovement())
+	{
+		m_meleeApproachRequest = false;
+	}
+	if (m_attackRequest)
+	{
+		// RW 0x669049: the attack request (computeAttackPath RW 0x6668CA)
+		const PathfindObject *victim = m_attackVictim != PATHFIND_INVALID_ID ? m_host.findPathfindObject(m_attackVictim) : nullptr;
+		const PathfindObjectID victimId = victim ? m_attackVictim : PATHFIND_INVALID_ID;
+		if (computeAttackPath())
+		{
+			m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
+			return;
+		}
+		m_attackRequest = false;
+		// lane ATTACKPATH-1, TARGET RW 0x6691C3 .. 0x669287 (the failure branch): with a victim object the kept position (+ 0x148) becomes the victim's position,
+		// adjustToPossibleDestination (RW 0x6F3C87) moves it, the AI ignores the victim's footprint from now on (RW 0x66831A: AI + 0x164 = its id) and a
+		// refused adjustment sets the approach flag (+ 0x3B4): the path then comes from the approach branch (pathfinder slot + 4) to that position
+		if (victim)
+		{
+			m_attackPos = victim->getPosition();
+			const bool adjusted = m_pf.adjustToPossibleDestination(m_host.pathfindObject(), m_host.locomotorInfo(), &m_attackPos);
+			m_ignoreObstacleId = victimId;
+			if (!adjusted)
+			{
+				m_meleeApproachRequest = true;
+			}
+		}
+		m_requestedDest = m_attackPos;
+	}
 	if (m_meleeApproachRequest)
 	{
-		// RW 0x668E94's + 0x3B4 branch: an ordinary path (pathfinder vslot + 4) to the kept destination, its end reserved with its layer, then the allied clearing
+		// RW 0x66928E's + 0x3B4 branch: an ordinary path (pathfinder vslot + 4) to the kept destination; with ground movement (AI vslot 0x224) and a path its end is
+		// reserved with its layer (RW 0x68B3BD), then the allied clearing
 		m_meleeApproachRequest = false;
 		PathfindObject &obj = m_host.pathfindObject();
 		const PathfindLocomotorInfo info = m_host.locomotorInfo();
@@ -464,7 +514,7 @@ void AIMover::doPathfind()
 		destroyPath();
 		// lane PATHPERF-1: slot +4 is FindClosestPath (RW 0x6FB869, not ported: S-166), not findPath: the search without findPath's corridor stands in for it
 		m_path = m_pf.findPathWithoutCorridor(&obj, info, &pos, &m_attackPos, nullptr);
-		if (m_path && m_path->getLastNode())
+		if (m_path && m_path->getLastNode() && isDoingGroundMovement())
 		{
 			const PathNode *end = m_path->getLastNode();
 			m_pf.updateGoal(obj, end->getPosition(), end->getLayer());
@@ -476,18 +526,6 @@ void AIMover::doPathfind()
 		m_isBlocked = false;
 		m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
 		return;
-	}
-	if (m_attackRequest)
-	{
-		// RW 0x668F2F: the attack request; a failure drops the flag and falls back to an ordinary path to the kept position (the destination adjustment
-		// RW 0x6F3C87 and the ignore-obstacle retry RW 0x66831A of the failure branch are S-784)
-		if (computeAttackPath())
-		{
-			m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
-			return;
-		}
-		m_attackRequest = false;
-		m_requestedDest = m_attackPos;
 	}
 	computePath(m_requestedDest);
 	if (m_path)

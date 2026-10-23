@@ -7,6 +7,8 @@
 ##   sell        a barracks the builder buys and builds, selected by a click, its Sell button clicked: half the price back (income excluded), then it is gone
 ##   upgrade     the fortress's first affordable upgrade bubble clicked: the button shows the purchased state while it is researched (RW 0x943C40 availability 8)
 ##   herocancel  the fortress's hero ring, a hero recruited by a click, then a right click on the same bubble cancels it with the refund (RW 0x940C57)
+##   herobuy     (lane HEROBUY-1, --faction=FactionWild) three Goblin heroes recruited by clicks, the army past the command point cap, then the hero ring still
+##               shows Shelob as a can't-afford bubble (RW 0x942F47: availability 7 is never hidden) and a click on it queues nothing
 extends "res://scripts/scenario_player.gd"
 
 var game: Node
@@ -578,3 +580,101 @@ func hero_entries(prod: Dictionary) -> int:
 		if int(e.quantity_total) > 0:
 			n += 1
 	return n
+
+
+# ---- herobuy (lane HEROBUY-1): the owner's report, a Goblin fortress with three heroes out and the command points over the cap ------------------------------
+
+func cp() -> Dictionary:
+	var e := eco()
+	return {"used": int(e.get("cp_used", -1)), "limit": int(e.get("cp_limit", -1))}
+
+
+func hero_bubble(image: String) -> Dictionary:
+	for b in radial().get("buttons", []):
+		if str(b.command) == "REVIVE" and str(b.image) == image:
+			return b
+	return {}
+
+
+func ring_dump(tag: String) -> void:
+	var parts := PackedStringArray()
+	for b in radial().get("buttons", []):
+		parts.append("%s/%s/%s/st%d" % [str(b.command), str(b.name), str(b.image), int(b.state)])
+	print("HUD7 herobuy %s: frame %d, cp %s, ring [%s]" % [tag, Engine.get_frames_drawn(), JSON.stringify(cp()), ", ".join(parts)])
+
+
+func _scenario_herobuy() -> String:
+	var f := fortress()
+	if f.is_empty():
+		return "no own fortress citadel"
+	world.give_money(game._local_index, 50000)
+	print("HUD7 herobuy: gave 50000 (GAME TEST HOOK)")
+	if not await select_object(f):
+		return "the fortress could not be selected"
+	hud.camera_set_height(330.0)
+	await look(f.x, f.y)
+	hud.inject_mouse_move(Vector2(60, 60))
+	await game._step(30)
+	if not await open_ring("Revivables"):
+		return "the fortress has no hero ring bubble: " + JSON.stringify(radial().get("buttons", []))
+	ring_dump("ring at start")
+	var heroes := {"HIGoblinKing": "WildGoblinKing", "HIAzogIcon": "WildAzog", "HIDrogoth": "Drogoth"}
+	for image in heroes:
+		var b := hero_bubble(image)
+		if b.is_empty() or int(b.state) != 1:
+			return "no enabled %s bubble: %s" % [image, JSON.stringify(radial().get("buttons", []))]
+		await click_pixel(bubble_centre(b))
+		hud.inject_mouse_move(Vector2(60, 60))
+		await game._step(10)
+	ring_dump("three recruits queued")
+	var waited := 0
+	while waited < 9000:
+		var out := 0
+		for t in heroes.values():
+			if not find_own(func(o): return str(o.template) == t).is_empty():
+				out += 1
+		if out == 3:
+			break
+		await game._step(30)
+		waited += 30
+	for t in heroes.values():
+		if find_own(func(o): return str(o.template) == t).is_empty():
+			return "%s never came out" % t
+	print("HUD7 herobuy: three heroes out after %d frames" % waited)
+	# the army past the cap, as in the owner's game (530 / 525): Marauder hordes beside the fortress (GAME TEST HOOK create_object)
+	var n := 0
+	while cp().used <= cp().limit and n < 60:
+		world.create_object("WildMarauderHorde", game._local_index, f.x + 180.0 + (n % 6) * 40.0, f.y - 200.0 + floorf(n / 6.0) * 40.0, 0.0)
+		n += 1
+		await game._step(2)
+	print("HUD7 herobuy: %d hordes made, cp %s" % [n, JSON.stringify(cp())])
+	if cp().used <= cp().limit:
+		return "the command points never went over the cap: " + JSON.stringify(cp())
+	if not await select_object(f):
+		return "the fortress could not be selected again"
+	await look(f.x, f.y)
+	hud.inject_mouse_move(Vector2(60, 60))
+	await game._step(30)
+	print("HUD7 herobuy: MARK the fortress again, frame %d" % Engine.get_frames_drawn())
+	await game._step(30)
+	if not await open_ring("Revivables"):
+		return "the fortress has no hero ring bubble: " + JSON.stringify(radial().get("buttons", []))
+	await game._step(60)
+	ring_dump("over the cap")
+	shot("herobuy-1-over-cap")
+	var shelob := hero_bubble("HIShelob")
+	if shelob.is_empty():
+		return "Shelob's bubble is gone with three heroes out over the command point cap"
+	if int(shelob.state) != 3:
+		return "Shelob's bubble is state %d, not can't afford (3)" % int(shelob.state)
+	hud.inject_mouse_move(bubble_centre(shelob))
+	await game._step(60)
+	shot("herobuy-2-shelob-hover")
+	await click_pixel(bubble_centre(shelob))
+	await game._step(30)
+	var prod: Dictionary = world.get_production(game._local_index, int(f.id))
+	ring_dump("after the click")
+	if hero_entries(prod) != 0:
+		return "the click queued a hero over the cap: " + JSON.stringify(prod.get("queue"))
+	await game._step(90)
+	return ""

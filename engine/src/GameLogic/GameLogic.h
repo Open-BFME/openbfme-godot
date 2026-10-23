@@ -179,6 +179,25 @@ struct GameLogicSettings
 	// height's floor (RW 0x777ED7). No retail aidata.ini sets it; a map's map.ini AIData block does (map wor dol guldur 76, map evil rivendell 300)
 	float minFlightHeight = FLT_MAX;
 	float groupMoveClickToGatherAreaFactor = 1.0f;
+	// lane TARGET-1: the target search's AIData rows (table RW 0xC1CB20 .., parser RW 0x7017AA; defaults the AIData constructor's, RW 0x6FFBEF):
+	// ForceIdleMSEC + 0x14 (parseDurationUnsignedInt RW 0x73A429: frames), AttackPriorityDistanceModifier + 0x54 (parseReal RW 0x42ED00, ctor 0.0),
+	// AttackUsesLineOfSight + 0x67 (parseBool RW 0x42E558, ctor 1), AttackIgnoreInsignificantBuildings + 0x68 (ctor 0), ArtilleryMaxFriendlyFire + 0xF0
+	// (parsePercentToReal RW 0x42EEFA, ctor 1.0); the AttackPriority blocks (+ 0xFC, RW 0x70153B: see AttackPriorityDef)
+	unsigned forceIdleFrames = 0;
+	float attackPriorityDistanceModifier = 0.0f;
+	bool attackUsesLineOfSight = true;
+	bool attackIgnoreInsignificantBuildings = false;
+	float artilleryMaxFriendlyFire = 1.0f;
+	// RW 0x70153B: an `AttackPriority <name>` block of AIData (def 0x14 bytes, ctor RW 0x701323: Default 1). A repeated name re-parses the same def (its
+	// targets cleared, Default kept unless the block sets it); a new one is pushed at the list head. `Target = <template> <int>` (RW 0x7013C2) lines in
+	// file order (RW inserts each at the front of its list: TARGET 0x7004B4; the store applies them back to front)
+	struct AttackPriorityDef
+	{
+		std::string name;
+		int defaultPriority = 1;
+		std::vector<std::pair<std::string, int>> targets;
+	};
+	std::vector<AttackPriorityDef> attackPriorityDefs; ///< the AIData list (+ 0xFC) head first
 	bool forceModelsToFollowTimeOfDay = false;       ///< GameData ForceModelsToFollowTimeOfDay (a new drawable gets NIGHT)
 	bool forceModelsToFollowWeather = false;         ///< GameData ForceModelsToFollowWeather (SNOW)
 	bool bodyThresholdsLoaded = false;               ///< the two thresholds below were read from GameData (an ActiveBody that needs them throws when not)

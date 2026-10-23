@@ -113,6 +113,8 @@ public:
 	void onHordeGoalChanged() override;    // lane MOVE-3: RW 0x86EF13 through the horde contain
 	bool isEffectivelyDead() const override; // lane MOVE-3: Object + 0x458 bit 0
 	bool hordeFill(int &count, int &slots) const override; // lane MOVE-3: RW 0x6F1584's contain slots 0x7C / 0x70 / 0x114
+	PathfindObjectID getSlaverID() const override;       // lane ATTACKPATH-1: RW 0x6E82C8
+	bool isSignificantlyAboveTerrain() const override;  // lane ATTACKPATH-1: RW 0x70C55D
 
 private:
 	// AIWorld::movementInfo of the object's template, remembered with the template it was looked up for (lane PERF-1: the pathfinder and the

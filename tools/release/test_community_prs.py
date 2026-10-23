@@ -22,7 +22,7 @@ sys.path.insert(0, str(HERE))
 import autorelease  # noqa: E402
 import community_prs  # noqa: E402
 import public_workflows  # noqa: E402
-from test_autorelease import GIT_ENV, TARGET, World, git, run, world_template  # noqa: E402, F401
+from test_autorelease import GIT_ENV, TARGET, World, commit, git, run, world_template  # noqa: E402, F401
 
 DAISY = {"GIT_AUTHOR_NAME": "Daisy", "GIT_AUTHOR_EMAIL": "daisy@example.invalid"}
 LOGIN = "daisyhasacat"
@@ -118,6 +118,38 @@ def sync_prs(world: World) -> list[dict]:
         if body.startswith("Sync the rebuild"):
             found.append({"merge": c, "body": body})
     return found
+
+
+@pytest.mark.parametrize("conflict", [False, True], ids=["clean", "conflict"])
+def test_the_github_standin_performs_a_real_three_way_merge(world, conflict):
+    seed = world.tmp / "seed"
+    lines = [f"line {n}\n" for n in range(20)]
+    commit(seed, {"README.md": "".join(lines)}, "a shared base")
+    git(seed, "push", "-q", str(world.remote), "main")
+    theirs = lines.copy()
+    theirs[1] = "the contribution\n"
+    head = open_pr(world, 37, {"README.md": "".join(theirs)})
+    ours = lines.copy()
+    ours[1 if conflict else 18] = "the main branch moved on\n"
+    base = commit(seed, {"README.md": "".join(ours)}, "main advanced after the pull request opened")
+    git(seed, "push", "-q", str(world.remote), "main")
+    before = gh_state(world)
+    refs = git(world.remote, "show-ref")
+    worktrees = git(world.remote, "worktree", "list", "--porcelain")
+    r = run(world.gh, "pr", "merge", "37", "--merge", "--match-head-commit", head, env=world.env())
+    assert git(world.remote, "worktree", "list", "--porcelain") == worktrees, "no temporary worktree remains"
+    if conflict:
+        assert r.returncode == 1 and "CONFLICT (content)" in r.stderr, r.stdout + r.stderr
+        assert gh_state(world) == before and git(world.remote, "show-ref") == refs, "a conflict changes no GitHub record or ref"
+    else:
+        assert r.returncode == 0, r.stdout + r.stderr
+        pull = gh_state(world)["pulls"]["37"]
+        merged = pull["merge_commit_sha"]
+        assert pull["merged"] is True and pull["state"] == "closed"
+        assert git(world.remote, "rev-parse", "refs/heads/main") == merged
+        assert git(world.remote, "rev-list", "--parents", "-1", merged).split() == [merged, base, head]
+        ours[1] = theirs[1]
+        assert git(world.remote, "show", f"{merged}:README.md") == "".join(ours).strip(), "both sides' edits survive the merge"
 
 
 # ---- the flow, end to end ---------------------------------------------------------------------------------------------------------------

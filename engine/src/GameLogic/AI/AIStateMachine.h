@@ -150,6 +150,13 @@ public:
 	static constexpr unsigned kTemporaryLocked = 0xFFFFFFFFu;   // RW machine + 0x54 == -1
 	static constexpr unsigned kTemporaryUntilReplaced = 0xFFFFFFFEu; // -2
 	void halt();                               // the owner is going away: the current state exits without entering anything
+	// lane LUMBER1: RotWK's StateMachine::halt (RW 0x8DB758, the harvest and dock machines' vslot 0x3C): the current state is dropped WITHOUT its exit and the
+	// machine locked (ZH's halt clears through the exit; retail's sub-machines keep what their state set: model conditions, the internal move)
+	void haltWithoutExit()
+	{
+		m_currentState = nullptr;
+		m_locked = true;
+	}
 
 	void lock() { m_locked = true; }
 	void unlock() { m_locked = false; }
@@ -159,6 +166,7 @@ public:
 	unsigned currentStateId() const { return m_currentState ? m_currentState->id() : (unsigned)AI_NO_STATE; }
 	// lane PHYS-1: the temporary state's id (AI_NO_STATE when none; RW machine + 0x50)
 	unsigned temporaryStateId() const { return m_temporaryState ? m_temporaryState->id() : (unsigned)AI_NO_STATE; }
+	unsigned temporaryStateFrameEnd() const { return m_temporaryStateFrameEnd; } // lane FLANK-1 (tests): the frame after which a timed temporary state ends
 	// lane EXIT-1, RW 0x741724 (machine vslot 0x30): the temporary state's slot 0x28, else (RW 0x8DB6BD) the current state's; slot 0x28 is true only for
 	// AIBusyState (RW 0x8BD372 in its vtable 0xC274F8)
 	bool isBusyState() const { return temporaryStateId() == (unsigned)AI_BUSY || currentStateId() == (unsigned)AI_BUSY; }

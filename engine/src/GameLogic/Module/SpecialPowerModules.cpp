@@ -60,6 +60,8 @@
 
 namespace
 {
+const int kSpecialHarvest = 0x8D; // SPECIAL_HARVEST (RW 0x897EC1: the enum switch's third case)
+
 #include "Common/SpecialPowerNames.inc"
 
 // RW 0x73B22F: the template by name from TheSpecialPowerStore
@@ -986,6 +988,19 @@ bool SpecialPowerModule::initiate(Object *target, const Coord3D *loc, unsigned o
 		return false;
 	}
 	++m_initiates;
+	// lane LUMBER1: the enum switch's SPECIAL_HARVEST case (RW 0x897EC6 .. 0x897F07, enum 0x8D: the workers' Harvest button): the object's AI (+ 0x260) and its
+	// player's ResourceGatheringManager (+ 0x304) find a tree (RW 0x8FA834); found: aiHarvest(position, CMD_FROM_AI) (RW 0x771655) and the AI byte + 0x3CC
+	// cleared (not part of the port: S-583). The other cases (0x33 / 0x88) stay S-529's
+	if (const SpecialPowerTemplate *t = getSpecialPowerTemplate(); t && t->getSpecialPowerType() == kSpecialHarvest)
+	{
+		AIUpdateInterface *ai = obj->getAIUpdateInterface();
+		Player *player = obj->getControllingPlayer();
+		Coord3D pos;
+		if (ai && player && player->resourceGatheringManager().findHarvestPosition(obj, pos))
+		{
+			ai->aiHarvest(pos, CMD_FROM_AI);
+		}
+	}
 	bool driven = false;
 	if (SpecialPowerUpdateInterface *u = SpecialAbilityModules::findUpdate(*obj, getSpecialPowerTemplate()))
 	{
@@ -1002,8 +1017,8 @@ bool SpecialPowerModule::initiate(Object *target, const Coord3D *loc, unsigned o
 		}
 	}
 	// RW 0x897F9C / 0x897FEF .. 0x898009: only when an update module drives the power: InitiateFX (data + 0x44) on the object with the target as the second object.
-	// Still open (S-529): the enum switch before the update call (RW 0x897EAB: types 0x33 / 0x88 end each other's module RW 0x8A007F, type 0x8D sends a
-	// harvester back, RW 0x897F0D), the target id kept at + 0x2C, the + 0x28 flag (options bit 0x40000 with the update's slot 2), the radar window
+	// Still open (S-529): the enum switch before the update call (RW 0x897EAB: types 0x33 / 0x88 end each other's module RW 0x8A007F; lane LUMBER1 ported
+	// type 0x8D, the harvester sent back, above), the target id kept at + 0x2C, the + 0x28 flag (options bit 0x40000 with the update's slot 2), the radar window
 	// override (RW 0x897FB2 .. 0x897FD4) and the unit's voice response (RW 0x898009 .. 0x89809A)
 	if (driven)
 	{

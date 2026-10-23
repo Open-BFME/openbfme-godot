@@ -101,7 +101,8 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // The Uber profile must give every peer the same state whatever its core count: the bench battle (at least 3,000 living troops, 8 players) for 40
 // frames with 1, 4 and 16 logic threads and 4 again, every frame's hash equal to the stored Uber pin vector (tests/data/uber1/battle3000_40.hashes,
 // measured with 1 thread by the build that introduced it; OPENBFME_UBER1_REGEN=1 rewrites it, only for a change MEANT to alter the Uber simulation or
-// its hash, said in the commit). The state hash's own dispatches are counted apart from the frame's (PERF-2's collision jobs): with more than one
+// its hash, said in the commit; lane TARGET-1 re-measured it: RotWK's target choice and mood-check timing). The state hash's own dispatches are counted
+// apart from the frame's (PERF-2's collision jobs): with more than one
 // thread the hash itself ran chunks on workers. The Uber hash is not the Faithful one, and a Faithful hash dispatches nothing.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")

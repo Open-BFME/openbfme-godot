@@ -134,6 +134,12 @@ public:
 		, m_size(list.size())
 	{
 	}
+	// lane TARGET-1: a caller's own array (the target search's chain, no allocation per call)
+	PartitionFilterList(PartitionFilter *const *data, size_t size)
+		: m_data(data)
+		, m_size(size)
+	{
+	}
 	PartitionFilter *const *begin() const { return m_data; }
 	PartitionFilter *const *end() const { return m_data + m_size; }
 	bool empty() const { return m_size == 0; }

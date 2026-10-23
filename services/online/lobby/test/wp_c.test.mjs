@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -825,6 +826,7 @@ test('stored state validation is explicit; expired sightings hide immediately an
 
 test('file and Durable Object adapters persist sightings and enforcement independently of relay meta', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'openbfme-wpc-'));
+  let sqlite;
   try {
     const store = fileStore(dir);
     const env = nodeEnv(store);
@@ -911,6 +913,7 @@ test('file and Durable Object adapters persist sightings and enforcement indepen
     assert.deepEqual(await fakeStorage.get(`sighting:${'2'.repeat(32)}`), undefined);
     assert.deepEqual(await fakeStorage.get(`enforcement:${'2'.repeat(32)}`), undefined);
   } finally {
+    sqlite?.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -1089,6 +1092,30 @@ test('50k bounded sightings search is deterministic for ties and returns opaque 
   assert.equal(lobby.adminPlayers('alex', null, 50).players[0].nick, 'Alex');
 });
 
+test('ONLINEMENU-1 (owner 2026-10-20): a ban blocks the hardware hash by default; block_devices: false skips it; a suspension does not', async () => {
+  const env = fakeEnv();
+  const lobby = new Lobby(env, configFromEnv(ENV));
+  const device = '7'.repeat(64);
+  await guest(lobby, 'Cheater', 'a'.repeat(32), device);
+  await guest(lobby, 'Spared', 'b'.repeat(32), '8'.repeat(64));
+  await guest(lobby, 'Suspended', 'c'.repeat(32), '9'.repeat(64));
+  const ban = (version, extra = {}) => ({ v: 1, version, block: { kind: 'ban', until: null, reason: 'cheating' }, mute_until: null, routing: '', notice: null, devices: [], ...extra });
+  assert.equal((await update(lobby, env, 'a'.repeat(32), ban(1))).status, 200);
+  assert.equal(lobby.getEnforcement('a'.repeat(32)).block_devices, true);
+  assert.deepEqual(lobby.getEnforcement('a'.repeat(32)).devices, [device]);
+  // a new install on the same machine is refused
+  assert.equal((await guest(lobby, 'Fresh install', 'd'.repeat(32), device)).status, 403);
+  // the console's checkbox off: the install only
+  assert.equal((await update(lobby, env, 'b'.repeat(32), ban(1, { block_devices: false }))).status, 200);
+  assert.deepEqual(lobby.getEnforcement('b'.repeat(32)).devices, []);
+  assert.equal((await guest(lobby, 'Same machine', 'e'.repeat(32), '8'.repeat(64))).status, 200);
+  // a suspension never blocks devices
+  const suspend = { ...ban(1), block: { kind: 'suspend', until: null, reason: 'cool down' } };
+  assert.equal((await update(lobby, env, 'c'.repeat(32), suspend)).status, 200);
+  assert.equal(lobby.getEnforcement('c'.repeat(32)).block_devices, undefined);
+  assert.equal((await guest(lobby, 'Other install', 'f'.repeat(32), '9'.repeat(64))).status, 200);
+});
+
 test('block_devices snapshots only the target install, stays frozen, and restores from persistence', async () => {
   const env = fakeEnv();
   const lobby = new Lobby(env, configFromEnv(ENV));
@@ -1182,7 +1209,7 @@ test('player report routes require identity, emit exact receipts, and keep moder
   })).status, 200);
   const hostAccount = await lobby.account(`Bearer ${host.token}`);
   const targetAccount = await lobby.account(`Bearer ${target.token}`);
-  const report = { v: 1, game_id: game, target: targetAccount.id, reason: 'A sufficiently detailed report.' };
+  const report = { v: 1, game_id: game, target: targetAccount.id, reason: 'other: A sufficiently detailed report.' };
   const postPath = '/v1/reports';
   const anonymous = await call(lobby, 'POST', postPath, {
     body: report, headers: { 'idempotency-key': 'route-key-001' },
@@ -1325,7 +1352,7 @@ test('player report routes require identity, emit exact receipts, and keep moder
   assert.equal((await update(lobby, env, hostAccount.install,
     effective(1, { block: { kind: 'ban', until: null, reason: 'account restricted' } }))).status, 200);
   const banned = await call(lobby, 'POST', postPath, {
-    token: host.token, body: { ...report, reason: 'after restriction' },
+    token: host.token, body: { ...report, reason: 'other: after restriction' },
     headers: { 'idempotency-key': 'banned-route-key' },
   });
   assert.equal(banned.status, 403);
@@ -1507,7 +1534,7 @@ test('Durable Object report storage survives restart and pages descending with s
     randomBytes,
     account: { ...reporter, },
     rawBody: encoder.encode(JSON.stringify({
-      v: 1, game_id: '0123456789abcdef', target: target.account, reason: 'durable report',
+      v: 1, game_id: '0123456789abcdef', target: target.account, reason: 'other: durable report',
     })),
     idempotencyKey: key,
     getLiveGame: () => null,
@@ -1529,7 +1556,7 @@ test('Durable Object report storage survives restart and pages descending with s
     randomBytes,
     account: { id: 'guest:do-a', install: 'a'.repeat(32), name: 'A' },
     rawBody: encoder.encode(JSON.stringify({
-      v: 1, game_id: '0123456789abcdef', target: participants[1].account, reason: 'durable report',
+      v: 1, game_id: '0123456789abcdef', target: participants[1].account, reason: 'other: durable report',
     })),
     idempotencyKey: 'do-report-a',
     getLiveGame: () => null,
@@ -1589,7 +1616,7 @@ test('closed, idle, and signed-finished games retain departed report targets for
       v: 1,
       game_id: game,
       target: (await lobby.account(`Bearer ${target.token}`)).id,
-      reason: 'The other participant left before the report.',
+      reason: 'other: The other participant left before the report.',
     },
     headers: { 'idempotency-key': key },
   });

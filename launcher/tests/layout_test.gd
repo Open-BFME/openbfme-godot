@@ -54,7 +54,7 @@ static func _cases() -> Dictionary:
 	var c := {
 		"main": _case("main", "play", ["Up to date", "PLAY", "Check for updates", "In ~/Games/BFME", "What's New"]),
 		"news": _case("news", "news", ["News & patch notes", "PLAY"]),
-		"multiplayer": _case("multiplayer", "multiplayer", ["Multiplayer", "Online play is coming"]),
+		"multiplayer": _case("multiplayer", "multiplayer", ["Multiplayer", "Sign in", "Use a recovery code on this PC"]),
 		"mods": _case("mods", "mods", ["Edain Mod", "none installed"]),
 		"games": _case("games", "games", ["NOT FOUND", "Download"]),
 		"games-bfme1": _case("games-bfme1", "games", ["BATTLE FOR MIDDLE-EARTH I (OPTIONAL)", "Downloaded from BFME Arena (bfmeladder.com)*", "Download"]),

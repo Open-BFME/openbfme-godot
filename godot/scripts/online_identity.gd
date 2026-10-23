@@ -4,6 +4,8 @@ extends RefCounted
 const INSTALL_FILE := "user://install_id.txt"
 
 
+# ONLINEMENU-1: no lock directory (SOCIAL-1's lock, left behind by a crash, refused every later sign-in): DEVINPR-1's write-then-rename already gives
+# two games (or the game and the launcher) starting at the same moment the same id
 static func install_id(path: String = INSTALL_FILE) -> Dictionary:
 	if FileAccess.file_exists(path):
 		return _read_install(path)
@@ -40,6 +42,19 @@ static func _read_install(path: String) -> Dictionary:
 	return {"install": id}
 
 
+## ONLINEMENU-1 (owner 2026-10-20: a hardware id for bans only): the machine id that is hashed: Windows' MachineGuid
+## (HKLM\SOFTWARE\Microsoft\Cryptography), macOS's IOPlatformUUID and Linux's /etc/machine-id (Godot's OS.get_unique_id reads those two).
+## Only the salted one-way hash leaves this PC; it is never shown to players or peers. "" when it cannot be read (then no device is sent)
+static func machine_id() -> String:
+	if OS.get_name() == "Windows":
+		var out: Array = []
+		if OS.execute(OS.get_environment("SystemRoot").path_join("System32/reg.exe"), ["query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"], out, true) != 0 or out.is_empty():
+			return ""
+		var found := RegEx.create_from_string("MachineGuid\\s+REG_SZ\\s+([0-9A-Fa-f-]{36})").search(str(out[0]))
+		return found.get_string(1).to_lower() if found != null else ""
+	return OS.get_unique_id()
+
+
 static func device_hash(machine_id: String) -> String:
 	if machine_id.is_empty():
 		return ""
@@ -60,7 +75,7 @@ static func identity() -> Dictionary:
 		return {"error": "cannot read the client build version: extension unavailable"}
 	var info: RefCounted = ClassDB.instantiate("ReleaseInfo")
 	result["client"] = {"platform": OS.get_name().to_lower(), "version": info.version()}
-	var device := device_hash(OS.get_unique_id())
+	var device := device_hash(machine_id())
 	if not device.is_empty():
 		result["device"] = device
 	return result

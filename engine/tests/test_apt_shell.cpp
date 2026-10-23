@@ -533,7 +533,8 @@ TEST_CASE("Shell: the A4 factory table holds MainMenu, Skirmish, LoadScreen, Opt
 		"PlayerTribute.apt", // lane PLAY-1: the Palantir flag's screen
 		"CreateAHero.apt", // lane CAH-1: the Create-a-Hero builder
 		"OnlineShell.apt", // lane ONLINE-4: the online screens
-		"CampaignMenu.apt" }); // lane CAMPSAVE-1: the campaign between missions
+		"CampaignMenu.apt", // lane CAMPSAVE-1: the campaign between missions
+		"Messenger.apt" }); // SOCIAL-1 (landed by lane ONLINEMENU-1): RotWK's Messenger
 	CHECK(fx.factories.has("mainmenu.APT"));
 	fx.wm->init();
 	fx.shell->push("AptLevel0.apt");

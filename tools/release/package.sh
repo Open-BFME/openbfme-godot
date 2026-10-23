@@ -2,7 +2,7 @@
 # Lane RELEASE-1: the closed-test packages.
 #
 #   tools/release/package.sh [--out DIR] [--platforms linux[,windows]|macos] [--windows-dll FILE] [--templates FILE] [--version VERSION] [--godot BIN] [--allow-dirty]
-#                            [--repo OWNER/NAME] [--release-key FILE] [--no-launcher] [--no-legacy-launchers]
+#                            [--repo OWNER/NAME] [--release-key FILE] [--keys-file FILE] [--no-launcher] [--no-legacy-launchers]
 #
 # Produces, for the commit checked out (lane ONEZIP-1: ONE download per platform, the game and the launcher together):
 #   <out>/openbfme-<version>-linux-x64.tar.gz     OpenBFME.x86_64 + OpenBFME.pck + the GDExtension .so, OpenBFMELauncher.x86_64 (the
@@ -20,6 +20,10 @@
 #                                                 The launcher updates from --repo (default Open-BFME/openbfme-godot)
 #                                                 and trusts the Ed25519 key of --release-key (default launcher/release_key.pub, committed
 #                                                 by the coordinator; missing = an error, or --no-launcher for a game-only trial)
+#                                                 Lane SIGNKMS-1: the launcher and the game trust the key LIST of --keys-file (default
+#                                                 launcher/release_keys.pub), whose first key must be --release-key's; without
+#                                                 --keys-file a --release-key that is not the committed list's first key (a test or
+#                                                 local-trial key) is a one-key list
 #   <out>/SHA256SUMS-<version>.txt
 # <version> = git describe (the build's version, engine/cmake/BuildVersion.cmake). Default <out>: workspace/release (git-ignored).
 #
@@ -49,6 +53,7 @@ VERIFY_DIR=""
 SELF_VERIFY=1
 TARGET_REPO="Open-BFME/openbfme-godot"
 RELEASE_KEY="$REPO/launcher/release_key.pub"
+KEYS_FILE=""
 LAUNCHER=1
 LEGACY=1
 while [ $# -gt 0 ]; do
@@ -64,14 +69,33 @@ while [ $# -gt 0 ]; do
     --no-self-verify) SELF_VERIFY=0; shift ;;
     --repo) TARGET_REPO=$2; shift 2 ;;
     --release-key) RELEASE_KEY=$2; shift 2 ;;
+    --keys-file) KEYS_FILE=$2; shift 2 ;;
     --no-launcher) LAUNCHER=0; shift ;;
     --no-legacy-launchers) LEGACY=0; shift ;;
-    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
     *) echo "package.sh: unknown argument $1" >&2; exit 2 ;;
   esac
 done
 
 fail() { echo "PACKAGE FAIL: $*" >&2; exit 1; }
+# lane SIGNKMS-1: the keys the launcher and the game trust. Sets TRUST_KEY (--release-key's key, the legacy single key), TRUST_KEYS (the
+# list, comma-separated, TRUST_KEY first) and KEYS_PUBLIC (the file seal_package.py check reads: the list file, or --release-key's for a
+# one-key list). The list's format is tools/release/release_keys.py's.
+trusted_keys() {
+  TRUST_KEY=$(tr -d ' \n\r' < "$RELEASE_KEY")
+  [[ "$TRUST_KEY" =~ ^[0-9a-f]{64}$ ]] || fail "$RELEASE_KEY does not hold an Ed25519 public key (64 lower-case hex digits)"
+  local list=${KEYS_FILE:-$REPO/launcher/release_keys.pub}
+  [ -f "$list" ] || fail "the release key list $list does not exist"
+  TRUST_KEYS=$(python3 "$REPO/tools/release/release_keys.py" --hex "$list" --format csv) || fail "$list is not a valid release key list"
+  KEYS_PUBLIC=$list
+  if [ "${TRUST_KEYS%%,*}" != "$TRUST_KEY" ]; then
+    [ -z "$KEYS_FILE" ] || fail "the first key of $KEYS_FILE is not the key of $RELEASE_KEY"
+    TRUST_KEYS=$TRUST_KEY
+    KEYS_PUBLIC=$RELEASE_KEY
+  fi
+}
+KEYS_OPT=()
+[ -z "$KEYS_FILE" ] || KEYS_OPT=(--keys-file "$KEYS_FILE")
 sha256_sum() {
   if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi
 }
@@ -112,11 +136,11 @@ if [ -n "$VERIFY_DIR" ]; then
     case "$a" in
       openbfme-launcher-*) legacy=1 ;;
       *-linux-x64.tar.gz) plats="$plats,linux"
-        if python3 "$REPO/tools/release/make_archive.py" --has "$VERIFY_DIR/$a" OpenBFMELauncher.x86_64; then lopts=(--repo "$TARGET_REPO" --release-key "$RELEASE_KEY"); fi ;;
+        if python3 "$REPO/tools/release/make_archive.py" --has "$VERIFY_DIR/$a" OpenBFMELauncher.x86_64; then lopts=(--repo "$TARGET_REPO" --release-key "$RELEASE_KEY" ${KEYS_OPT[@]+"${KEYS_OPT[@]}"}); fi ;;
       *-macos-universal.zip) plats="$plats,macos"
-        if python3 "$REPO/tools/release/make_archive.py" --has "$VERIFY_DIR/$a" OpenBFMELauncher.app; then lopts=(--repo "$TARGET_REPO" --release-key "$RELEASE_KEY"); fi ;;
+        if python3 "$REPO/tools/release/make_archive.py" --has "$VERIFY_DIR/$a" OpenBFMELauncher.app; then lopts=(--repo "$TARGET_REPO" --release-key "$RELEASE_KEY" ${KEYS_OPT[@]+"${KEYS_OPT[@]}"}); fi ;;
       *) plats="$plats,windows"
-        if python3 "$REPO/tools/release/make_archive.py" --has "$VERIFY_DIR/$a" OpenBFMELauncher.exe; then lopts=(--repo "$TARGET_REPO" --release-key "$RELEASE_KEY"); fi ;;
+        if python3 "$REPO/tools/release/make_archive.py" --has "$VERIFY_DIR/$a" OpenBFMELauncher.exe; then lopts=(--repo "$TARGET_REPO" --release-key "$RELEASE_KEY" ${KEYS_OPT[@]+"${KEYS_OPT[@]}"}); fi ;;
     esac
   done
   if [ "${lopts[0]}" = --no-launcher ]; then [ $legacy = 0 ] || fail "$VERIFY_DIR holds launcher archives beside game archives without a launcher"
@@ -146,7 +170,8 @@ if [ -n "$VERIFY_DIR" ]; then
     else cp "$VERIFY_DIR/$f" "$cmpdir/$f"; fi
   done
   if [ $sealed = 1 ]; then
-    python3 "$REPO/tools/release/seal_package.py" check "$VERIFY_DIR" --public "$RELEASE_KEY" --repo "$TARGET_REPO" || fail "the seal of $VERIFY_DIR is not the release's"
+    trusted_keys
+    python3 "$REPO/tools/release/seal_package.py" check "$VERIFY_DIR" --public "$KEYS_PUBLIC" --repo "$TARGET_REPO" || fail "the seal of $VERIFY_DIR is not the release's"
     while IFS= read -r line; do n=${line#*  }; echo "$(sha256_sum "$cmpdir/$n" | cut -d' ' -f1)  $n"; done < "${sums[0]}" > "$cmpdir/$(basename "${sums[0]}")"
   else cp "${sums[0]}" "$cmpdir/"; fi
   bad=0
@@ -272,19 +297,22 @@ for p in ${PLATFORMS//,/ }; do
 done
 git -C "$REPO" archive --format=tar HEAD godot LICENSE NOTICE | tar -x -C "$STAGE"
 # lane ONEZIP-1 r2: what the packaged game trusts when it checks the launcher beside it (godot/scripts/release/launcher_check.gd): the
-# release key and the repository the launcher is built with (the source tree's file is empty: a development run asks no launcher)
+# release key and the repository the launcher is built with (the source tree's file is empty: a development run asks no launcher);
+# lane SIGNKMS-1: and the trusted key list (RELEASE_KEYS, comma-separated, RELEASE_KEY first)
 if [ $LAUNCHER = 1 ]; then
-  TRUST_KEY=$(tr -d ' \n\r' < "$RELEASE_KEY")
-  [[ "$TRUST_KEY" =~ ^[0-9a-f]{64}$ ]] || fail "$RELEASE_KEY does not hold an Ed25519 public key (64 lower-case hex digits)"
+  trusted_keys
   [[ "$TARGET_REPO" =~ ^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$ ]] || fail "--repo $TARGET_REPO is not <owner>/<name>"
-  python3 - "$STAGE/godot/scripts/release/release_trust.gd" "$TRUST_KEY" "$TARGET_REPO" <<'PY'
+  python3 - "$STAGE/godot/scripts/release/release_trust.gd" "$TRUST_KEY" "$TRUST_KEYS" "$TARGET_REPO" <<'PY'
 import re, sys
-path, key, repo = sys.argv[1:]
+path, key, keys, repo = sys.argv[1:]
+if keys.split(",")[0] != key or not all(re.fullmatch(r"[0-9a-f]{64}", k) for k in keys.split(",")):
+    sys.exit("release_trust.gd: the key list does not begin with the release key")
 text = open(path, encoding="utf-8").read()
 text, n1 = re.subn(r'^const RELEASE_KEY := ""$', f'const RELEASE_KEY := "{key}"', text, flags=re.M)
+text, n3 = re.subn(r'^const RELEASE_KEYS := ""$', f'const RELEASE_KEYS := "{keys}"', text, flags=re.M)
 text, n2 = re.subn(r'^const REPO := ""$', f'const REPO := "{repo}"', text, flags=re.M)
-if (n1, n2) != (1, 1):
-    sys.exit("release_trust.gd: the empty RELEASE_KEY / REPO lines are not there")
+if (n1, n2, n3) != (1, 1, 1):
+    sys.exit("release_trust.gd: the empty RELEASE_KEY / RELEASE_KEYS / REPO lines are not there")
 open(path, "w", encoding="utf-8").write(text)
 PY
 fi
@@ -318,7 +346,7 @@ if [ $LAUNCHER = 1 ]; then
     mkdir -p "$LAUNCHER_OUT"
   fi
   bl_out=$("$REPO/tools/release/build_launcher.sh" --out "$LAUNCHER_OUT" --version "$VERSION" --commit "$HEAD" --repo "$TARGET_REPO" \
-    --key-file "$RELEASE_KEY" --mtime "$SOURCE_DATE_EPOCH" --platforms "$PLATFORMS" --godot "$GODOT_BIN" 2>&1) || { echo "$bl_out" | tail -30; fail "the launcher packages"; }
+    --key-file "$RELEASE_KEY" ${KEYS_OPT[@]+"${KEYS_OPT[@]}"} --mtime "$SOURCE_DATE_EPOCH" --platforms "$PLATFORMS" --godot "$GODOT_BIN" 2>&1) || { echo "$bl_out" | tail -30; fail "the launcher packages"; }
 fi
 
 ARCHIVES=()
@@ -424,7 +452,7 @@ if [ "$SELF_VERIFY" = 1 ]; then
   # a package is only good if this commit rebuilds it byte for byte (docs/RELEASE.md, "Threat model")
   verify_args=("$0" --verify "$OUT" --godot "$GODOT_BIN")
   [ -n "$WINDLL" ] && verify_args+=(--windows-dll "$WINDLL")
-  if [ $LAUNCHER = 1 ]; then verify_args+=(--repo "$TARGET_REPO" --release-key "$RELEASE_KEY"); fi
+  if [ $LAUNCHER = 1 ]; then verify_args+=(--repo "$TARGET_REPO" --release-key "$RELEASE_KEY" ${KEYS_OPT[@]+"${KEYS_OPT[@]}"}); fi
   [ "$ALLOW_DIRTY" = 1 ] && verify_args+=(--allow-dirty)
   [ -n "$VERSION_OVERRIDE" ] && verify_args+=(--version "$VERSION_OVERRIDE")
   [ -n "$MAC_TEMPLATES" ] && verify_args+=(--templates "$MAC_TEMPLATES")

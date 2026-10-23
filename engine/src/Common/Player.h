@@ -20,6 +20,7 @@
 #include "Common/PlayerHeroList.h"
 #include "Common/PlayerScience.h"
 #include "Common/PlayerTemplate.h"
+#include "Common/ResourceGatheringManager.h"
 #include "Common/ScoreKeeper.h"
 #include "Common/Upgrade.h"
 #include "GameLogic/ObjectTypes.h"
@@ -314,6 +315,10 @@ public:
 	const TunnelTracker *tunnelTrackerIfAny() const { return m_tunnelTracker.get(); }
 	void friend_dropTunnelTracker() { m_tunnelTracker.reset(); } // lane SAVE-4b: a snapshot of a player without one
 
+	// lane LUMBER1: RW Player + 0x304, the supply centers / warehouses its workers use (Common/ResourceGatheringManager.h); emptied by init (ZH Player::init)
+	ResourceGatheringManager &resourceGatheringManager() { return m_resourceGathering; }
+	const ResourceGatheringManager &resourceGatheringManager() const { return m_resourceGathering; }
+
 	void setEconomyHost(PlayerEconomyHost *host) { m_host = host; }
 	PlayerEconomyHost *economyHost() const { return m_host; }
 
@@ -369,4 +374,5 @@ private:
 	std::array<std::vector<ObjectID>, NUM_HOTKEY_SQUADS> m_hotkeySquads;
 	int m_orderMode = 0; // lane INPUT-1 r2
 	std::shared_ptr<TunnelTracker> m_tunnelTracker; ///< lane GARRISON-2 (RW + 0x308)
+	ResourceGatheringManager m_resourceGathering; ///< lane LUMBER1 (RW + 0x304)
 };

@@ -31,10 +31,12 @@ export class SqliteIdentityStore {
 
   saveEnforcement(record) {
     this.storage.transactionSync(() => this.writeEnforcement(record));
+    this.onEnforcementChange?.(record.install);
   }
 
   writeEnforcement(record) {
     const { install, block, devices } = record;
+    this.onEnforcementChange?.(install);
     this.sql.exec('INSERT OR REPLACE INTO identity_enforcement VALUES (?, ?)', install, JSON.stringify(record));
     this.sql.exec('DELETE FROM identity_blocks WHERE install = ?', install);
     if (block) for (const device of devices) {

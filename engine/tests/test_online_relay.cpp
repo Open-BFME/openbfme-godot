@@ -1131,3 +1131,35 @@ TEST_CASE("online2: the openbfme_relay process welcomes a ticket over UDP, write
 	std::filesystem::remove_all(dir);
 }
 #endif
+
+TEST_CASE("onlinemenu1: the online START carries each slot's handicap (0, -5 .. -95; absent from an older lobby: 0); anything else refuses the START")
+{
+	const ProfileIdentity own = ProfileIdentity::fromText("openbfme-profile 1\ntest\n");
+	const std::string ticket = "AQHvzauJZ0UjAQEHAJQ1dxkKDPX40Zd_QbpSaTVc2UI"; // slot 1, mask 0x07
+	auto start = [&](const std::string &h0, const std::string &h1) {
+		return "{\"v\":1,\"kind\":\"openbfme-start\",\"game\":\"0123456789abcdef\",\"slot\":1,\"relay\":\"192.0.2.10:7350\",\"ticket\":\"" + ticket +
+			"\",\"runAhead\":3,\"crcInterval\":100,\"profile\":\"" + own.digest +
+			"\",\"setup\":{\"map\":\"maps/map mp evendim/map mp evendim.map\",\"seed\":4242,\"startingCash\":2000,\"superweaponRestriction\":0,\"rules\":null,"
+			"\"legendaryHeroes\":1,\"slots\":[{\"state\":\"player\",\"name\":\"Ann\",\"faction\":0,\"color\":0,\"startPos\":0,\"team\":0" + h0 + "},"
+			"{\"state\":\"player\",\"name\":\"Bea\",\"faction\":1,\"color\":1,\"startPos\":1,\"team\":1" + h1 + "},"
+			"{\"state\":\"player\",\"name\":\"Cy\",\"faction\":-1,\"color\":-1,\"startPos\":-1,\"team\":-1},"
+			"{\"state\":\"hard\",\"name\":\"AI\",\"faction\":2,\"color\":3,\"startPos\":3,\"team\":1,\"handicap\":-95}]}}";
+	};
+	OnlineStart::Limits limits;
+	limits.playerTemplateCount = 8;
+	limits.colorCount = 8;
+	LobbyStart s;
+	std::string error;
+	REQUIRE_MESSAGE(OnlineStart::parse(start("", ",\"handicap\":-15"), own, limits, s, &error), error);
+	CHECK(s.game.game.slots[0].handicap == 0); // absent
+	CHECK(s.game.game.slots[1].handicap == -15);
+	CHECK(s.game.game.slots[2].handicap == 0);
+	CHECK(s.game.game.slots[3].handicap == -95);
+	REQUIRE_MESSAGE(OnlineStart::parse(start(",\"handicap\":0", ",\"handicap\":-5"), own, limits, s, &error), error);
+	CHECK(s.game.game.slots[1].handicap == -5);
+	for (const char *bad : { ",\"handicap\":-7", ",\"handicap\":5", ",\"handicap\":-100", ",\"handicap\":\"-10\"", ",\"handicap\":-10.5", ",\"handicap\":null" })
+	{
+		CHECK_MESSAGE(!OnlineStart::parse(start("", bad), own, limits, s, &error), bad);
+		CHECK_MESSAGE(error.find("handicap") != std::string::npos, bad << ": " << error);
+	}
+}

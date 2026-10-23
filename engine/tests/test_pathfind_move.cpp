@@ -142,6 +142,7 @@ struct Unit : AIMoveHost
 	bool movingBackwards() const override { return false; }
 	bool setModelCondition(const char *, bool) override { return true; }
 	float relativeAngleTo(const Coord3D &p) const override { return std::atan2(p.y - obj.pos.y, p.x - obj.pos.x) - angle; }
+	const PathfindObject *findPathfindObject(PathfindObjectID id) override; // lane ATTACKPATH-1: the attack path's victim lookup
 };
 
 struct Sim
@@ -306,6 +307,7 @@ Unit::Unit(Sim *s, const LocomotorTemplate *t, PathfindObjectID id, float x, flo
 	lh.sync();
 }
 unsigned Unit::frame() const { return sim->frame; }
+const PathfindObject *Unit::findPathfindObject(PathfindObjectID id) { return sim->world.findObjectByID(id); }
 AIMover *Unit::moverOf(PathfindObjectID id)
 {
 	auto it = sim->units.find(id);
@@ -1109,4 +1111,35 @@ TEST_CASE("backlog5: the two withdrawn rules are named at runtime with their mea
 			"parent): the bridge-layer cell lookup (RW 0x5E2E9C) and the waypoint link expansion (RW 0x68229C, 0x93443D) are not implemented, and the four-bit connection "
 			"field cannot hold a wall layer (16 and up); a patch or a search never crosses a layer or a portal (S-161)"));
 	}
+}
+
+// lane ATTACKPATH-1, RW 0x6691C3 .. 0x669287: when the attack path fails (here: the attacker is walled in by cliffs, so there is no corridor and no fallback, and the
+// mock weapon never reaches), the kept position becomes the victim's current position, adjustToPossibleDestination (RW 0x6F3C87) may move it, and the AI ignores
+// the victim's footprint from then on (RW 0x66831A: AI + 0x164 = the victim's id). Before the lane the stale request position was used and nothing was ignored
+TEST_CASE("attackpath1: a failed attack path re-aims at the victim's position and ignores the victim's footprint")
+{
+	Sim sim(40, 40);
+	for (int i = 2; i <= 8; ++i)
+	{
+		for (int j : { 2, 8 })
+		{
+			sim.terrain.cliff.insert({ i, j });
+			sim.terrain.cliff.insert({ j, i });
+		}
+	}
+	sim.build();
+	Unit &a = sim.add(2, 55.0f, 55.0f);
+	Unit &v = sim.add(3, 305.0f, 305.0f, 1);
+	REQUIRE(a.ai->ignoredObstacleID() == PATHFIND_INVALID_ID);
+	const Coord3D stale{ 205.0f, 105.0f, 0.0f };
+	a.ai->requestAttackPath(v.obj.id, stale);
+	sim.frame += 10;
+	sim.world.frame = sim.frame;
+	sim.mw->processQueues();
+	CHECK_FALSE(a.ai->attackRequestPending());
+	CHECK(a.ai->ignoredObstacleID() == v.obj.id);
+	const Coord3D d = a.ai->requestedDestination();
+	// tolerance: adjustToPossibleDestination may move the point off the victim's own cell, but only to a cell beside it, never back to the stale position
+	CHECK(std::fabs(d.x - v.obj.pos.x) <= 20.0f); // tolerance: a cell beside the victim's
+	CHECK(std::fabs(d.y - v.obj.pos.y) <= 20.0f); // tolerance: a cell beside the victim's
 }

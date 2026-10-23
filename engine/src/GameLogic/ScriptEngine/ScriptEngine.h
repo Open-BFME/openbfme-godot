@@ -55,6 +55,7 @@
 #include "Common/INIDataTypes.h"
 #include "Common/PlayerScience.h"
 #include "GameLogic/ObjectTypes.h"
+#include "GameLogic/ScriptEngine/AttackPriority.h"
 #include "GameLogic/ScriptEngine/Scripts.h"
 
 #include <array>
@@ -142,6 +143,8 @@ public:
 	bool objectsReceiveDifficultyBonus() const { return m_objectsReceiveDifficultyBonus; }
 	bool loaded() const { return m_loaded; }
 	void reset();
+	// lane TARGET-1: the attack priority table (TheScriptEngine + 0x19200, RW 0x605938 getAttackInfo; AttackPriority.h)
+	AttackPriorityStore &attackPriorities() { return m_attackPriorities; }
 
 	// ---- the frame ---------------------------------------------------------------------------------------------------------------------------
 	// RW 0x60CC67 (see the header). GameLogic calls it first in phase 1's subsystem row.
@@ -419,6 +422,7 @@ private:
 	void callSubroutine(const ScriptActionRec &a);
 
 	GameLogic &m_logic;
+	AttackPriorityStore m_attackPriorities{ m_logic };
 	ScriptEngineHost *m_host = nullptr;
 	bool m_loaded = false;
 	bool m_firstUpdate = true;
