@@ -6,7 +6,6 @@
 #endif
 
 #include "GameLogic/Module/UpgradeModuleClasses.h"
-#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/SnapshotXfer.h"
 
 #include "Common/AsciiString.h"
@@ -800,13 +799,14 @@ UpgradeModuleClasses::Stats &UpgradeModuleClasses::stats()
 	return s;
 }
 
-void UpgradeModuleClasses::registerAll(ModuleFactory &modules)
+void UpgradeModuleClasses::registerAll(ModuleFactory &modules, bool bfme1Data)
 {
-	modules.bindTypedData<GeometryUpgradeModuleData>("GeometryUpgrade", MODULETYPE_BEHAVIOR);
-	modules.bindModuleProc("GeometryUpgrade", MODULETYPE_BEHAVIOR, [](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &info) -> std::unique_ptr<Module> {
-		if (!thing->getTemplate()->bfme1Data()) return makeUnportedModule(thing, data, info.name, info.type, info.interfaceMask);
-		return std::make_unique<GeometryUpgrade>(thing, dynamic_cast<const GeometryUpgradeModuleData *>(data));
-	});
+	// The geometry runtime is BFME1-only; keep RotWK's registry and unported reporting unchanged.
+	if (bfme1Data)
+	{
+		modules.bindTypedData<GeometryUpgradeModuleData>("GeometryUpgrade", MODULETYPE_BEHAVIOR);
+		bindRuntime<GeometryUpgrade, GeometryUpgradeModuleData>(modules, "GeometryUpgrade");
+	}
 	modules.bindTypedData<StatusBitsUpgradeModuleData>("StatusBitsUpgrade", MODULETYPE_BEHAVIOR);
 	bindRuntime<StatusBitsUpgrade, StatusBitsUpgradeModuleData>(modules, "StatusBitsUpgrade");
 	modules.bindTypedData<ModelConditionUpgradeModuleData>("ModelConditionUpgrade", MODULETYPE_BEHAVIOR);

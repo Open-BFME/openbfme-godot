@@ -84,7 +84,7 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	W3DDrawModules::registerTypedDrawModuleData(*m_modules);
 	// the horde contain data of the map's horde objects (their members are the drawables of a horde)
 	MapHordeSpawn::bindHordeContainData(*m_modules);
-	LogicModules::registerAll(*m_modules); // LOGIC-1: ActiveBody and HordeContain run for real, every other class is an UnportedModule (S-140)
+	LogicModules::registerAll(*m_modules, isBfme1Data(m_fs)); // LOGIC-1: ActiveBody and HordeContain run for real, every other class is an UnportedModule (S-140)
 	m_things = std::make_unique<ThingFactory>(m_keys, *m_modules, *m_grammar, isBfme1Data(m_fs));
 	m_playerTemplates = std::make_unique<PlayerTemplateStore>(m_keys);
 	m_spellStores = std::make_unique<SpellStores>(m_keys);

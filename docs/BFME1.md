@@ -312,7 +312,7 @@ loader identifies the payload before decoding, so the Palantir sphere uses its
 authored texture rather than the pink error material. The HUD regression loads
 the Palantir model and requires an empty texture-error report.
 
-For battalions in all games, an incomplete coarse-corridor path is retried once with the existing
+For BFME1 battalions only, an incomplete coarse-corridor path is retried once with the existing
 cell search without corridor ordering. Castle rear walls can otherwise leave the battalion
 at a partial endpoint despite an open gate providing a longer route. This is an OpenBFME
 pathfinding correction, not a verified retail algorithm. Both searches retain their

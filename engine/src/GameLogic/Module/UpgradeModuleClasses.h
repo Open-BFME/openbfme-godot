@@ -321,7 +321,7 @@ private:
 namespace UpgradeModuleClasses
 {
 // binds the typed data and the runtime class of every class above (the economy's two are bound by EconomyModules)
-void registerAll(ModuleFactory &modules);
+void registerAll(ModuleFactory &modules, bool bfme1Data = false);
 // the counts of what the runtime could not apply (stop S-484: fades, texture swaps, house recolours), reset by resetStats
 struct Stats
 {

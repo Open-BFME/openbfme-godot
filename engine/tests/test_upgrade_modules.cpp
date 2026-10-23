@@ -280,6 +280,10 @@ End
 )";
 	{
 		econtest::Fx retail(objects.c_str());
+		const auto *registration = retail.w.modules.findModuleTemplate("GeometryUpgrade", MODULETYPE_BEHAVIOR);
+		REQUIRE(registration);
+		CHECK_FALSE(registration->portedModule);
+		CHECK_FALSE(registration->typed);
 		Object *plot = retail.make("GeometryPlot", retail.teamOf("Alice"));
 		REQUIRE(plot);
 		bool found = false;
@@ -290,8 +294,13 @@ End
 				CHECK(module->isUnported());
 			}
 		CHECK(found);
+		CHECK(retail.w.modules.unportedCreated().at("GeometryUpgrade") == 1);
 	}
 	econtest::Fx f(objects.c_str(), nullptr, true);
+	const auto *registration = f.w.modules.findModuleTemplate("GeometryUpgrade", MODULETYPE_BEHAVIOR);
+	REQUIRE(registration);
+	CHECK(registration->portedModule);
+	CHECK(registration->typed);
 	Object *plot = f.make("GeometryPlot", f.teamOf("Alice"));
 	const int condition = conditionBit("UPGRADE_GARRISON");
 	plot->giveUpgrade(up("Upgrade_A"));

@@ -67,7 +67,7 @@ struct Fx : logictest::LogicWorld
 		: LogicWorld(RandomAlgorithm::ZH_CarryChain, templates, bfme1)
 	{
 		REQUIRE_MESSAGE(loadError.empty(), loadError);
-		LogicModules::registerAll(w.modules);
+		LogicModules::registerAll(w.modules, bfme1);
 		const std::string err = w.load(objects);
 		REQUIRE_MESSAGE(err.empty(), err);
 		logic->settings().bodyThresholdsLoaded = true;

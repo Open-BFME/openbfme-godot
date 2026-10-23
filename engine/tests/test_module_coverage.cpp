@@ -112,12 +112,12 @@ TEST_CASE("module coverage: every registry class is ported, base AI, parsed only
 	// HUD-5 (GateOpenAndCloseBehavior, AIGateUpdate): +2 -> 135 / 172; DECOMP-2 (ModelCondition / Upgrade / RandomSoundSelectorClientBehavior): +3 -> 138 / 169; SPELL-3 (FloodUpdate): +1 -> 139 / 168; FACT-B (WeaponChangeSpecialPowerModule, CastleUpgrade): +2 -> 141 / 166; FACT-A (ObjectCreationUpgrade, ReplaceSelfUpgrade; its CastleUpgrade is FACT-B's): +2 -> 143 / 164; FACT-C (HordeDispatchSpecialPower; its ObjectCreationUpgrade is FACT-A's, replaced by FACT-C's port): +1 -> 144 / 163; FLY-1 (GiantBirdAIUpdate: base AI -> ported): 145, base AI 8
 	// S-1991: BloodthirstyUpdate moves from missing to ported. SUMMON-1: SummonReplacementSpecialAbilityUpdate and DoCommandUpgrade missing -> ported: 148 / 159.
 	// FX-4: TransitionDamageFX -> 149 / 158; LUMBER1: SupplyCenterCreate and
-	// SupplyCenterDockUpdate -> 151 / 156; BFME1 GeometryUpgrade -> 152 / 155.
-	CHECK(c.ported == 152);
+	// SupplyCenterDockUpdate -> 151 / 156. BFME1-only GeometryUpgrade does not change RotWK coverage.
+	CHECK(c.ported == 151);
 	CHECK(c.baseAi == 8);
 	// S-207: SpawnUnitBehavior data is parsed-only; its runtime remains unported (S-140).
 	CHECK(c.parsedOnly == 14);
-	CHECK(c.missing == 155);
+	CHECK(c.missing == 156);
 
 
 	if (const char *out = std::getenv("OPENBFME_MODULE_COVERAGE_OUT"))
