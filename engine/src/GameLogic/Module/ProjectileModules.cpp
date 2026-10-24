@@ -259,7 +259,14 @@ void BezierProjectileBehavior::projectileLaunchAtObjectOrPosition(const Object *
 	m_weapon = weapon;
 	m_warhead = warhead;
 	m_altCurve = 0;
-	positionForLaunch(launcher, wslot, barrel);
+	// TARGET RW 0x90FDB6 .. 0x90FE2E passes the source's current transform for
+	// a position-targeted ProjectileSelf shot; RW 0x85E9F2 uses that transform
+	// instead of positioning at a weapon bone. Object-targeted shots still use
+	// calcProjectileLaunchPosition (RW 0x90FAD7), as do newly created projectiles.
+	if (obj != launcher || victim)
+	{
+		positionForLaunch(launcher, wslot, barrel);
+	}
 	m_originPos = launcher ? *launcher->getPosition() : *obj->getPosition();
 	projectileFireAtObjectOrPosition(victim, victimPos);
 	obj->setModelConditionState(kModelConditionThrownProjectile, true);

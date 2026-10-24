@@ -16,6 +16,7 @@ list(APPEND OPENBFME_SIM_SOURCES
 )
 set(OPENBFME_HERO_TESTS
     tests/test_hero_core.cpp
+    tests/test_hero_activation_execution.cpp
     tests/test_hero_retail.cpp
     tests/test_hero_hud.cpp
     tests/test_hero_expiry.cpp

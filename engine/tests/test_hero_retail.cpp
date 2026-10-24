@@ -38,6 +38,7 @@
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
+#include "GameLogic/Module/ProjectileModules.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
@@ -2429,6 +2430,90 @@ TEST_CASE("capture flag presentation: authored capture events select one faction
 
 	CHECK(g.logic->notedStopHits().count("[S-090] capture flag condition-state LuaEvents run on the logic owner; render-frame and script-transition event timing remain unported") == 1);
 
+}
+
+TEST_CASE("hero execution retail: Gimli and Rogash ground Leap commands launch their own Bezier behavior and land alive")
+{
+	REQUIRE_RETAIL_WORLD(sh);
+	struct Case { const char *hero; const char *faction; const char *power; };
+	const Case cases[] = {
+		{ "DwarvenGimli", "FactionDwarves", "SpecialAbilityGimliLeap" },
+		{ "AngmarRogash", "FactionAngmar", "SpecialAbilityRogashLeap" }
+	};
+	for (const Case &c : cases)
+	{
+		CAPTURE(c.hero);
+		Game g(sh, c.faction, "FactionMen", true);
+		g.logic->combat().setAutoAcquireEnabled(false);
+		const ThingTemplate *tt = sh.world->things().findTemplate(c.hero);
+		REQUIRE(tt);
+		Object *hero = g.make(tt, g.me, 1000, 1000);
+		const ObjectID id = hero->getID();
+		const SpecialPowerTemplate *powerTemplate = TheSpecialPowerStore->findSpecialPowerTemplate(c.power);
+		REQUIRE(powerTemplate);
+		unlockByUpgrade(*hero, powerTemplate);
+		for (int i = 0; i < 20; ++i) g.logic->runLogicFrame(); // finish the initial hero spawn animation
+		auto *power = dynamic_cast<SpecialPowerModule *>(SpecialPowerModules::findModule(*hero, powerTemplate));
+		auto *ability = dynamic_cast<WeaponFireSpecialAbilityUpdate *>(SpecialAbilityModules::findUpdate(*hero, powerTemplate));
+		auto *projectile = dynamic_cast<BezierProjectileBehavior *>(hero->findModule("BezierProjectileBehavior"));
+		REQUIRE(power);
+		REQUIRE(ability);
+		REQUIRE(projectile);
+		REQUIRE(power->isReady());
+		REQUIRE(projectile->flightPath().empty());
+		const Coord3D destination{ hero->getPosition()->x + 80, hero->getPosition()->y, 0 };
+		Object *victim = g.make(sh.world->things().findTemplate("RohanEowyn"), g.enemy, destination.x + 20, destination.y);
+		REQUIRE(victim);
+		const ObjectID victimId = victim->getID();
+		for (int i = 0; i < 20; ++i) g.logic->runLogicFrame(); // finish the target's spawn before measuring the landing hit
+		int landingHits = 0;
+		float landingDamage = 0;
+		g.logic->combat().setDamageTrace([&](const Object &hit, unsigned source, float amount, float) {
+			if (hit.getID() == victimId && source == id)
+			{
+				++landingHits;
+				landingDamage += amount;
+			}
+		});
+		GameMessage cast(MSG_DO_SPECIAL_POWER_AT_LOCATION, g.me->getPlayerIndex());
+		cast.appendIntegerArgument((int)powerTemplate->getID());
+		cast.appendLocationArgument(destination);
+		cast.appendObjectIDArgument(INVALID_ID);
+		cast.appendIntegerArgument(0);
+		cast.appendObjectIDArgument(id);
+		g.list.append(cast);
+		for (int i = 0; i < 30 && ability->shotsFired() == 0; ++i) g.logic->runLogicFrame();
+		CHECK(g.spells.casts() == 1);
+		CHECK(ability->shotsFired() == 1);
+		REQUIRE_FALSE(projectile->flightPath().empty());
+		CHECK(projectile->projectileGetLauncherID() == id);
+		CHECK(projectile->flightEnd().x == destination.x);
+		CHECK(projectile->flightEnd().y == destination.y);
+		const Coord3D landing = projectile->flightPath().back();
+		CHECK(hero->testModelCondition(154));
+		CHECK_FALSE(power->isReady());
+		bool airborne = false;
+		for (int i = 0; i < 40; ++i)
+		{
+			airborne = airborne || hero->getPosition()->z > 0; // tolerance: Leap's retail curve must rise above flat ground
+			g.logic->runLogicFrame();
+		}
+		CHECK(airborne);
+		CHECK(g.logic->findObjectByID(id) == hero);
+		CHECK_FALSE(hero->isEffectivelyDead());
+		CHECK(projectile->flightPath().empty());
+		CHECK_FALSE(hero->testModelCondition(154));
+		CHECK_FALSE(hero->testModelCondition(155));
+		CHECK_FALSE(ability->isActive());
+		CHECK(hero->getPosition()->x == landing.x);
+		CHECK(hero->getPosition()->y == landing.y);
+		CHECK(hero->getPosition()->z == 0);
+		CHECK(g.logic->combat().counters().projectilesLanded == 1);
+		CHECK(g.logic->combat().counters().projectilesDetonated == 0);
+		g.logic->combat().setDamageTrace(nullptr);
+		CHECK(landingHits == 1);
+		CHECK(landingDamage > 0);
+	}
 }
 
 TEST_CASE("capture flag presentation: callbacks append dirty objects during the same flush")
