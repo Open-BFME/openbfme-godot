@@ -6,11 +6,23 @@
 
 #include <chrono>
 
-AudioAssetCache::AudioAssetCache(ArchiveFileSystem *files, std::uint64_t decodedBudgetBytes) : m_files(files), m_budget(decodedBudgetBytes) {}
+AudioAssetCache::AudioAssetCache(ArchiveFileSystem *files, std::uint64_t decodedBudgetBytes, const std::string &language)
+	: m_language(language), m_files(files), m_budget(decodedBudgetBytes) {}
+
+std::string AudioAssetCache::resolvedPath(const std::string &path) const
+{
+	std::string canonical = AsciiStringUtil::lowered(path);
+	for (char &c : canonical) if (c == '\\') c = '/';
+	// BFME1 AudioEventRTSAdjustForLocalization.cpp keeps a present direct
+	// filename; AudioEventRTSGenerateFilenamePrefix.cpp adds the language.
+	if (m_files && !m_language.empty() && canonical.rfind("data/audio/", 0) == 0 && !m_files->doesFileExist(path))
+		return "lang/" + m_language + "/" + path;
+	return path;
+}
 
 bool AudioAssetCache::exists(const std::string &virtualPath) const
 {
-	return m_files && m_files->doesFileExist(virtualPath);
+	return m_files && m_files->doesFileExist(resolvedPath(virtualPath));
 }
 
 std::shared_ptr<const std::vector<std::uint8_t>> AudioAssetCache::readFile(const std::string &virtualPath, std::string *error)
@@ -25,7 +37,7 @@ std::shared_ptr<const std::vector<std::uint8_t>> AudioAssetCache::readFile(const
 	}
 	auto bytes = std::make_shared<std::vector<std::uint8_t>>();
 	std::string e;
-	if (!m_files->readFile(virtualPath, *bytes, &e))
+	if (!m_files->readFile(resolvedPath(virtualPath), *bytes, &e))
 	{
 		++m_stats.errors;
 		if (error)

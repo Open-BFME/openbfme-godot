@@ -1350,6 +1350,14 @@ func _boot() -> void:
 		return
 	_audio.play_shell_music(false) # no shell map yet (View3D is a stop): the low-LOD shell music, as menu_viewer
 	_state = State.MENU
+	if _fs.is_bfme1():
+		var movie_audio := preload("res://scripts/shell_movie_audio.gd").new()
+		movie_audio.name = "ShellMovieAudio"
+		movie_audio.shell = _shell
+		movie_audio.world = _world
+		movie_audio.audio = _audio
+		movie_audio.menu_active = func() -> bool: return _state == State.MENU
+		add_child(movie_audio)
 	set_process(true)
 	_campaign_flow = load("res://scripts/campaign_flow.gd").new() # lane CAMP-1
 	_campaign_flow.name = "CampaignFlow"

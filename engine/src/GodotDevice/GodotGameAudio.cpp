@@ -1,3 +1,4 @@
+#include "Common/AsciiString.h"
 // OpenBFME. GPL-3.0. See GodotGameAudio.h.
 
 #include "GodotDevice/GodotGameAudio.h"
@@ -521,7 +522,35 @@ Dictionary GameAudio::boot(const Ref<RetailFileSystem> &fs, const Dictionary &co
 	}
 	const std::uint32_t seed = config.has("seed") ? (std::uint32_t)(int64_t)config["seed"] : 1u;
 	const std::uint64_t budgetMb = config.has("decoded_budget_mb") ? (std::uint64_t)(int64_t)config["decoded_budget_mb"] : 128u;
-	m_cache = std::make_unique<AudioAssetCache>(archive, budgetMb << 20);
+	std::string audioLanguage;
+	if (fs->is_bfme1())
+	{
+		for (const MountedArchive &mounted : fs->mountedArchives())
+		{
+			std::string path = AsciiStringUtil::lowered(mounted.canonicalPath);
+			for (char &c : path) if (c == '\\') c = '/';
+			if (path.rfind("lang/", 0) == 0 && path.size() > 14 && path.substr(path.size() - 9) == "audio.big")
+			{
+				const std::string language = path.substr(5, path.size() - 14);
+				if (!audioLanguage.empty() && audioLanguage != language)
+				{
+					errors.push_back("BFME1 audio has multiple mounted language archives");
+					result["errors"] = errors;
+					tearDown();
+					return result;
+				}
+				audioLanguage = language;
+			}
+		}
+		if (audioLanguage.empty())
+		{
+			errors.push_back("BFME1 audio has no mounted language audio archive");
+			result["errors"] = errors;
+			tearDown();
+			return result;
+		}
+	}
+	m_cache = std::make_unique<AudioAssetCache>(archive, budgetMb << 20, audioLanguage);
 	const AudioSettings &s = m_ini->settings;
 	m_device = std::make_unique<GodotAudioDevice>(this, m_cache.get(), std::max(8, s.sampleCount2D) + std::max(8, s.sampleCount3D) + std::max(4, s.streamCount) + 8);
 	m_manager = std::make_unique<AudioManager>(*m_ini, *m_cache, *m_device, algorithm, seed);

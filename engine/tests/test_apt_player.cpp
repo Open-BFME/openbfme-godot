@@ -886,3 +886,26 @@ TEST_CASE("player: createEmptyMovieClip puts the clip at depth + 0x4000; removeM
 	CHECK(fx.root()->childAtDepth(7 + 0x4000) == nullptr);
 	CHECK(fx.errorsText().empty());
 }
+
+TEST_CASE("render list: BFME1 movie completion callback reaches the device")
+{
+	// BFME1 MainMenu.apt OpenBook's Initialize event names this callback;
+	// Rva00465770MovieProperties (0x465770) forwards _CallOnLastFrame.
+	TestMovie movie;
+	movie.addCharacter(0);
+	const auto sprite = movie.addCharacter(movie.addSprite({ {} }));
+	movie.setRootFrames({ { movie.addPlaceItem(placeChar(sprite, 1, "book")) } });
+	PlayerFx fx;
+	REQUIRE(fx.load(0, "MainMenu", movie));
+	AptCharacterInst *book = fx.at("book");
+	REQUIRE(book);
+	book->setMember("_type", AptValue::string("BinkMovie"));
+	book->setMember("_MovieName", AptValue::string("TutorialOpenBook"));
+	book->setMember("_CallOnLastFrame", AptValue::string("TutortialOpenBookDone"));
+	AptRenderList list;
+	fx.apt->buildRenderList(list);
+	REQUIRE(list.commands.size() == 1);
+	CHECK(list.commands[0].nativeTag);
+	CHECK(list.commands[0].nativeVars == std::vector<std::pair<std::string, std::string>>{
+		{ "_MovieName", "TutorialOpenBook" }, { "_CallOnLastFrame", "TutortialOpenBookDone" } });
+}
