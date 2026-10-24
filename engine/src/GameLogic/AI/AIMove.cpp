@@ -23,7 +23,7 @@ const char *const kStopPortalMineshaft = kStopSpecialLayer;
 const char *const kStopUpdate =
 	"S-166 the movement-complete block of AIUpdateInterface::update (RW 0x6695EF) skips the object goal refresh (0x68B411, 0x6EF225, 0x68B3BD), the status bit clears and the turret update; the state machine's sleep comes from the host";
 const char *const kStopExitQuickPath =
-	"S-166 computePath's straight path for a unit following its exit-production path (RW 0x666036 .. 0x66607C: state 7 with AI + 0x3BA; the flag is dropped and the machine's "
+	"S-166 computePath's straight path for a non-battalion unit following its exit-production path (RW 0x666036 .. 0x66607C: state 7 with AI + 0x3BA; the flag is dropped and the machine's "
 	"goal becomes the destination, RW 0x6654AD) is read but not applied: applied, production exits moved (test_aipow1: a frame 22 for 23; test_play4_heroes_retail: 2 shots, "
 	"150 lost and 2 members killed in an order that has none) and the goal overwrite alone sent an idle Battle-stance unit 826.975 from its guard spot (test_play4_stances_retail, "
 	"bound 365; without the overwrite it passes); INFERENCE, not verified: the port's exit state and guard keep the machine's goal for something RotWK does not";
@@ -630,6 +630,12 @@ bool AIMover::computePath(const Coord3D &destIn)
 	// RW 0x666036 .. 0x66607C, the straight path of a unit following its exit-production path (state 7 with AI + 0x3BA), is read but not applied: S-166
 	if (m_host.stateId() == 7 && obj.canPathThroughUnits())
 	{
+		// BFME2 AIUpdateInterface_computePath.cpp (state 7): the building exit
+		// starts with a two-node quick path, so soldiers do not route around their producer.
+		// Limit this port to battalion members; other exit-state/guard semantics remain S-166.
+		AIMover *container = m_host.containerMover();
+		if (container && container->m_host.pathfindObject().isKindOf(PK_HORDE))
+			return computeQuickPath(dest);
 		note(kStopExitQuickPath);
 	}
 	const Coord3D orig = dest;

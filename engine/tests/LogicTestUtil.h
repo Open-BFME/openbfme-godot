@@ -216,8 +216,10 @@ struct LogicWorld
 	UpgradeCenter upgradeCenter;
 	UpgradeCenter *savedUpgradeCenter = TheUpgradeCenter;
 
-	LogicWorld(RandomAlgorithm rng = RandomAlgorithm::ZH_CarryChain, const char *extraTemplates = nullptr)
+	// bfme1: the objects are BFME1 templates (objtest::World(true): their bfme1Data() answers true)
+	LogicWorld(RandomAlgorithm rng = RandomAlgorithm::ZH_CarryChain, const char *extraTemplates = nullptr, bool bfme1 = false)
 		: hooks(log)
+		, w(bfme1)
 		, templates(w.keys)
 		, players(w.keys, templates, teams)
 	{

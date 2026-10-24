@@ -162,8 +162,10 @@ struct MoveWorld : logictest::LogicWorld
 	AICommands aiCommands;
 	bool mapBuilt = false;
 
-	explicit MoveWorld(int cellsW = 100, int cellsH = 100, const char *extraObjects = "")
-		: terrain(cellsW, cellsH)
+	// bfme1: the world's objects are BFME1 templates (LogicWorld's bfme1)
+	explicit MoveWorld(int cellsW = 100, int cellsH = 100, const char *extraObjects = "", bool bfme1 = false)
+		: logictest::LogicWorld(RandomAlgorithm::ZH_CarryChain, nullptr, bfme1)
+		, terrain(cellsW, cellsH)
 		, dispatcher(*logic)
 	{
 		REQUIRE_MESSAGE(loadError.empty(), loadError);

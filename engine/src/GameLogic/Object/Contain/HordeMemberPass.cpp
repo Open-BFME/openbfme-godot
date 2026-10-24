@@ -758,6 +758,15 @@ void HordeContain::memberOrder(Object &member, const Coord3D &slotPos, float ori
 	{
 		return;
 	}
+	// BFME1 HordeMemberOrder00245420::apply preserves a member's explicit path
+	// before applying formation steering. Our production path uses AIGOAL_ON_PATH
+	// rather than that explicit-path goal, so preserve state 7 here as well.
+	// Otherwise moveHub makes the member busy and pulls it sideways before the door is clear.
+	if (a->currentStateId() == AI_FOLLOW_EXITPRODUCTION_PATH)
+	{
+		m_workDone = true;
+		return;
+	}
 	++m_stats.orders;
 	const bool ownerMoving = b->isMoving();
 	// the leash while marching (B1 245420 lines 0xCF..): the nearer of the horde and the slot beyond MeleeAttackLeashDistance gets the command (0, 2); RW 0x877AE3: only

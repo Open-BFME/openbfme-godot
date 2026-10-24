@@ -5,6 +5,7 @@
 #include "MoveTestUtil.h"
 
 #include "GameLogic/Object/Contain/HordeContainCore.h"
+#include "GameLogic/Module/ExitInterface.h"
 
 #include <algorithm>
 #include <cmath>
@@ -523,5 +524,83 @@ TEST_CASE("backlog8 horde: a parked horde 25 above the ground: FLOATING_Z member
 			// FLOATING_Z: the slot as it is (the horde's height); any other: the member's height, on the ground where it may stand
 			CHECK(m->getPosition()->z == (std::string(name) == "FloatHorde" ? 25.0f : 0.0f));
 		}
+	}
+}
+
+TEST_CASE("horde production exit: members keep the shared straight exit path before forming ranks")
+{
+	MoveWorld mw;
+	mw.buildMap();
+	Object *horde = mw.spawn("Horde", 705.0f, 505.0f);
+	const auto members = mw.membersOf(horde);
+	REQUIRE(members.size() == 15);
+	Object *member = members.back();
+	mw.frames(2); // Finish the initial payload placement before simulating a produced member.
+	const Coord3D start{405.0f, 505.0f, 0.0f};
+	member->teleportTo(&start, true);
+	mw.aiOf(member)->aiFollowPath({Coord3D{555.0f, 505.0f, 0.0f}}, nullptr, CMD_FROM_AI, true);
+	for (int frame = 0; frame < 8; ++frame)
+	{
+		mw.frames(1);
+		// tolerance: binary32 locomotor integration must stay on the authored exit centreline.
+		CHECK(member->getPosition()->y == doctest::Approx(start.y).epsilon(0.00001));
+		CHECK(mw.aiOf(member)->currentStateId() == AI_FOLLOW_EXITPRODUCTION_PATH);
+	}
+	CHECK(member->getPosition()->x != start.x);
+}
+
+TEST_CASE("horde production exit: BFME1 and BFME2 members clear the building in one lane then form ranks")
+{
+	for (bool bfme1 : {false, true})
+	{
+		CAPTURE(bfme1);
+		const char *building = R"(
+Object ExitBuilding
+ KindOf = STRUCTURE IMMOBILE
+ Geometry = BOX
+ GeometryMajorRadius = 40
+ GeometryMinorRadius = 40
+ Behavior = QueueProductionExitUpdate Exit
+  UnitCreatePoint = X:0 Y:0 Z:0
+  NaturalRallyPoint = X:200 Y:0 Z:0
+  ExitDelay = 400
+ End
+End
+)";
+		MoveWorld mw(100, 100, building, bfme1);
+		Object *producer = mw.spawn("ExitBuilding", 405.0f, 505.0f);
+		mw.buildMap();
+		mw.logic->setPendingProducer(producer->getID());
+		Object *horde = mw.make("Horde", mw.teamOf("Alice"));
+		auto *exit = producer->getObjectExitInterface();
+		REQUIRE(exit);
+		exit->exitObjectViaDoor(horde, DOOR_1);
+		mw.frames(2);
+		for (int index = 0; index < 15; ++index)
+		{
+			mw.logic->setPendingProducer(producer->getID());
+			Object *member = mw.make("MemberOfHorde", mw.teamOf("Alice"));
+			exit->exitObjectViaDoor(member, DOOR_1);
+			const auto &order = mw.logic->aiCommands().issued().back();
+			CHECK(order.object == member->getID());
+			CHECK(order.type == AICMD_FOLLOW_EXIT_PRODUCTION_PATH);
+			REQUIRE(order.path.size() == (bfme1 ? 1u : 3u));
+			CHECK(order.path.front().y == 505.0f);
+			for (int frame = 0; frame < 8; ++frame)
+			{
+				mw.frames(1);
+				// tolerance: an authored X-axis exit must not fan sideways inside the producer footprint.
+				CHECK(member->getPosition()->y == doctest::Approx(505.0f).epsilon(0.00001));
+			}
+			// tolerance: eight 0.2-second steps at speed 55 advance past creation but cannot reach the halfway waypoint (515).
+			CHECK(member->getPosition()->x > 405.0f);
+			// tolerance: the same speed/time bound rules out teleporting directly into formation.
+			CHECK(member->getPosition()->x < 515.0f);
+		}
+		exit->releaseLastExit();
+		mw.frames(200);
+		CHECK(mw.membersOf(horde).size() == 15);
+		// tolerance: after the common exit lane, every soldier must reach its authored formation slot.
+		CHECK(worstSlotError(mw, horde) < 3.0f);
 	}
 }
