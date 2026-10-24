@@ -2,6 +2,7 @@
 // Lane PATHPERF-1: findPath's hierarchical corridor (RW 0x6F8601, AIPathfindHierarchical.cpp) on synthetic terrain: no retail data.
 #include "doctest.h"
 #include "PathfindTestUtil.h"
+#include "Common/StateHash.h"
 
 #include <algorithm>
 #include <cmath>
@@ -260,4 +261,91 @@ TEST_CASE("pathperf1: the S-162 and S-163 stop lines, whole (the inferences and 
 			  "a goal inside the obstacle the unit ignores (a builder's own site) gets no corridor (INFERENCE: the port's builders aim inside the footprint)"));
 	// lane ATTACKPATH-1: findAttackPath's own corridor (RW 0x6FC4CB .. 0x6FC4F9) is ported and left the S-162 line
 	CHECK(has("S-163 a complete path skips the rebuild RW applies to it from the unit's facing (RW 0x767B0E, called at RW 0x6FDCDA; the path to the closest cell gets none), the closest cell's third test (RW 0x6EF3C3) and the search-free path of an object whose + 0x4AC flag is set (RW 0x6FD66D) are not ported"));
+}
+
+// PR #111 (Uber profile only): an incomplete battalion corridor route is retried without the corridor. RW 0x6FE7CB has no second search, so the
+// Faithful profile keeps the corridor's partial route, its cell count and its pathfinder state (the hash a build without the retry gives)
+TEST_CASE("pathperf1: Uber battalions retry an incomplete corridor route around a wall within the same cell budget, Faithful ones keep retail's")
+{
+	SyntheticTerrain terrain(128, 64);
+	for (int x = 60; x <= 61; ++x)
+		for (int y = 0; y < 52; ++y)
+			terrain.cliff.insert({ x, y });
+	TestWorld world;
+	auto config = testConfig();
+	config.findPathLimit = 3000;
+	TestObject battalion;
+	battalion.mobile = true;
+	battalion.kinds.insert(PK_HORDE);
+	battalion.pos = cellCentre(10, 10);
+	const Coord3D to = cellCentre(110, 10);
+	struct Outcome
+	{
+		std::unique_ptr<Path> path;
+		bool partial = false;
+		int cells = 0;
+		std::uint32_t hash = 0;
+	};
+	auto run = [&](bool uber, TestObject *obj) {
+		Pathfinder pf(config, &world);
+		pf.newMap(terrain);
+		pf.setUberLimits(uber);
+		Outcome o;
+		o.path.reset(pf.findPath(obj, groundLoco(), &battalion.pos, &to, &o.partial));
+		o.cells = pf.cumulativeCellsAllocated();
+		StateHasher h;
+		pf.crc(h);
+		o.hash = h.value();
+		return o;
+	};
+
+	// Faithful: the corridor's partial route, as RW 0x6FE7CB gives it
+	const Outcome faithful = run(false, &battalion);
+	REQUIRE(faithful.path != nullptr);
+	CHECK(faithful.partial);
+	// tolerance: the wall at cell 60 keeps the corridor's partial route on the starting side, whatever its exact end cell
+	for (const Coord3D &node : nodes(faithful.path.get())) CHECK(node.x < 600.0f);
+	CHECK(faithful.cells == 3360);        // origin/main 46bca8b6b gives the same
+	CHECK(faithful.hash == 1271294937u); // origin/main 46bca8b6b gives the same
+
+	// Uber: an individual unit and a search without an object keep the corridor's result; the battalion retries and arrives
+	TestObject individual;
+	individual.mobile = true;
+	individual.pos = battalion.pos;
+	const Outcome single = run(true, &individual);
+	CHECK((single.path == nullptr || single.partial));
+	const Outcome none = run(true, nullptr);
+	CHECK((none.path == nullptr || none.partial));
+	const Outcome uber = run(true, &battalion);
+	REQUIRE(uber.path != nullptr);
+	CHECK_FALSE(uber.partial);
+	CHECK(uber.path->getLastNode()->getPosition()->x == to.x);
+	CHECK(uber.path->getLastNode()->getPosition()->y == to.y);
+	// both searches' cells count against the tick's budget (cleanOpenAndClosedLists): the corridor search's 3360 (as Faithful) and the retry's 2607,
+	// each under its own findPathLimit
+	CHECK(uber.cells == 5967);
+	CHECK(single.cells == 3247); // an individual unit searches once
+}
+
+TEST_CASE("pathperf1: an Uber battalion's retry preserves an incomplete route when a wall has no opening")
+{
+	SyntheticTerrain terrain(128, 64);
+	for (int x = 60; x <= 61; ++x)
+		for (int y = 0; y < 64; ++y)
+			terrain.cliff.insert({ x, y });
+	TestWorld world;
+	Pathfinder pf(testConfig(), &world);
+	pf.newMap(terrain);
+	pf.setUberLimits(true);
+	TestObject battalion;
+	battalion.mobile = true;
+	battalion.kinds.insert(PK_HORDE);
+	battalion.pos = cellCentre(10, 10);
+	const Coord3D to = cellCentre(110, 10);
+	bool partial = false;
+	std::unique_ptr<Path> path(pf.findPath(&battalion, groundLoco(), &battalion.pos, &to, &partial));
+	REQUIRE(path != nullptr);
+	CHECK(partial);
+	// tolerance: a sealed barrier at cell 60 must keep every path node strictly on the starting side.
+	for (const Coord3D &node : nodes(path.get())) CHECK(node.x < 600.0f);
 }
