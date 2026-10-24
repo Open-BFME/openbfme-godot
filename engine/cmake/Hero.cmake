@@ -19,6 +19,7 @@ set(OPENBFME_HERO_TESTS
     tests/test_hero_retail.cpp
     tests/test_hero_hud.cpp
     tests/test_hero_expiry.cpp
+    tests/test_hero_facing_execution.cpp
     tests/test_hero2_core.cpp
     tests/test_create_a_hero.cpp
 )

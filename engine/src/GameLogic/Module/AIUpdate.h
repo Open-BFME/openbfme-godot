@@ -112,6 +112,10 @@ public:
 	// RW 0x770C2C (MSG_DO_MOVE_AND_ORIENTATE_OBJECTTO): a move that ends facing `angle`
 	void aiMoveToPositionAndOrientate(const Coord3D &pos, float angle, CommandSourceType source);
 	void aiIdle(CommandSourceType source);
+	// TARGET RW 0x6643B6 / 0x667290: face commands 0x26 / 0x27 enter
+	// states 36 / 37 and turn through the locomotor before returning to idle.
+	void aiFaceObject(Object *target, CommandSourceType source);
+	void aiFacePosition(const Coord3D &position, CommandSourceType source);
 	void aiFollowPath(const std::vector<Coord3D> &path, Object *ignoreObject, CommandSourceType source, bool exitProduction);
 	void aiFollowPathAppend(const Coord3D &pos, CommandSourceType source);
 	void aiBusy(CommandSourceType source);

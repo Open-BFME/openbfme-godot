@@ -367,8 +367,55 @@ void AIQuarrelState::onExit(StateExitType)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
-// 59
+// 36 / 37 / 59: the face states
 // ---------------------------------------------------------------------------------------------------------------------------------
+StateReturnType AIFaceState::onEnter()
+{
+	// TARGET RW 0x74D68C: modes 0 / 1 skip AIIdleState::onEnter. Donor:
+	// Open-BFME-2 AIFaceStateUpdate.cpp (same mode switch, BFME2 RVA 0x35487E).
+	AIUpdateInterface &a = ai();
+	m_canTurn = a.curLocomotor() && a.curLocomotor()->getMinSpeed(a.locomotorHost()) == 0.0f; // RW 0x5E3796
+	return m_objectTarget && !machine().goalObject() ? STATE_FAILURE : STATE_CONTINUE;
+}
+
+StateReturnType AIFaceState::update()
+{
+	// TARGET RW 0x75638B: an object target is resolved every frame, so a moving
+	// target keeps changing the turn's goal. 0.035 radians is the retail threshold.
+	const Object *target = m_objectTarget ? machine().goalObject() : nullptr;
+	if (m_objectTarget && !target)
+	{
+		return STATE_FAILURE;
+	}
+	const Coord3D &position = target ? *target->getPosition() : machine().goalPosition();
+	const float relative = emotionRelAngle(owner(), position);
+	if (SimMath::absD(relative) < kFacedEnough)
+	{
+		return STATE_SUCCESS;
+	}
+	if (m_canTurn)
+	{
+		ai().setLocomotorGoalOrientation(SimMath::addf32(owner().getOrientation(), relative));
+	}
+	else
+	{
+		ai().setLocomotorGoalPositionExplicit(position);
+	}
+	return STATE_CONTINUE;
+}
+
+void AIFaceState::crc(StateHasher &h) const
+{
+	h.addBool(m_canTurn);
+}
+
+void AIFaceState::xfer(Xfer &x)
+{
+	XferVersion version{ 1, 1 };
+	x.xferVersion(version);
+	x.xferBool(&m_canTurn);
+}
+
 AIFaceObjectIdleState::AIFaceObjectIdleState(AIStateMachine &m)
 	: AIIdleState(m)
 {

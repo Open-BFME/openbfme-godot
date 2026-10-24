@@ -811,13 +811,25 @@ UpdateSleepTime SpecialAbilityUpdate::update()
 		m_withinRange = true;
 		if (!m_data->m_ignoreFacingCheck)
 		{
-			// RW 0x851384 / 0x8513B8 / 0x854D01: the facing. The binary idles the AI, issues the face command (AI command RW 0x7C81B9 / 0x7C821E) and waits for
-			// the AI's idle (vslot 0x1B8) once the turn ends. The face command is not ported (S-859): the turn takes no time here, so the check passes on the
-			// frame after the idle (waiting for the AI's idle instead never ends for a hero pushed around by the target it touches)
+			// TARGET RW 0x851384 / 0x8513B8 / 0x854D01: idle, issue the face
+			// command, then wait for its non-idle face state to finish. The turn
+			// uses the locomotor's rate; an object target is followed while turning.
 			if (!m_facingIssued)
 			{
 				ai->aiIdle(CMD_FROM_AI);
 				m_facingIssued = true;
+				if (Object *victim = target())
+				{
+					ai->aiFaceObject(victim, CMD_FROM_AI);
+				}
+				else if (!isZero(m_targetPos))
+				{
+					ai->aiFacePosition(m_targetPos, CMD_FROM_AI);
+				}
+				return calcSleep();
+			}
+			if (!m_facingDone && !ai->isIdle())
+			{
 				return calcSleep();
 			}
 			m_facingDone = true;
@@ -2378,8 +2390,7 @@ void SpecialAbilityModules::registerAll(ModuleFactory &modules)
 std::vector<std::string> SpecialAbilityModules::stopLines()
 {
 	return {
-		"[S-859] SpecialAbilityUpdate details not ported: the face command before the trigger (AI command RW 0x7C81B9 / 0x7C821E: the check passes the frame after the AI's idle, no turn) "
-		"only), the line of sight of ApproachRequiresLOS (RW 0x6613D3 / 0x6616AC: always clear), the approach point RW 0x851607 (the move goes to the object), "
+		"[S-859] SpecialAbilityUpdate details not ported: the line of sight of ApproachRequiresLOS (RW 0x6613D3 / 0x6616AC: always clear), the approach point RW 0x851607 (the move goes to the object), "
 		"Object + 0xA0 bit 6 in the command source test, PreTriggerUnstealthTime (DisableWhenWearingTheRing and LoseStealthOnTrigger: lane STEALTH-2), the paralysis "
 		"commands, FlipOwnerAfterPacking / Unpacking, FleeRangeAfterCompletion, ChainedButton, a horde's SPECIAL_WEAPON condition to its members, the power "
 		"module's finish notice (vslot 0x4C), sounds and voices (client): each counted (unported())",
