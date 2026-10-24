@@ -542,8 +542,9 @@ void MusicScripts::executeAction(const ScriptActionRec &a)
 {
 	++m_stats.actionsRun;
 	const auto &p = a.params;
-	// Use the parser's named template resolution for BFME1 rather than its stored ordinal.
-	switch (m_source && m_source->chunks.bfme1Data ? a.resolved : a.type)
+	// Use the parser's named template resolution for BFME1 rather than its stored ordinal, for the switch and every branch inside it.
+	const int type = m_source && m_source->chunks.bfme1Data ? a.resolved : a.type;
+	switch (type)
 	{
 		case A_SET_FLAG:
 			m_flags[param(p, 0).stringValue] = param(p, 1).intValue != 0;
@@ -558,7 +559,7 @@ void MusicScripts::executeAction(const ScriptActionRec &a)
 		case A_DISABLE_SCRIPT:
 			if (Node *n = find(param(p, 0).stringValue))
 			{
-				n->active = a.type == A_ENABLE_SCRIPT;
+				n->active = type == A_ENABLE_SCRIPT;
 			}
 			break;
 		case A_CALL_SUBROUTINE:
@@ -586,7 +587,7 @@ void MusicScripts::executeAction(const ScriptActionRec &a)
 		{
 			// ZH setTimer 6738 (seconds; the random form draws between the two values: retail's GameLogicRandomValue, here the audio stream, S-711)
 			float seconds = param(p, 1).realValue;
-			if (a.type == A_SET_RANDOM_MSEC_TIMER)
+			if (type == A_SET_RANDOM_MSEC_TIMER)
 			{
 				seconds = m_audio.audioRandom().getValueReal(seconds, param(p, 2).realValue, __FILE__, __LINE__);
 			}
@@ -637,7 +638,7 @@ void MusicScripts::executeAction(const ScriptActionRec &a)
 			t.remaining = std::max(1, param(p, 1).intValue);
 			t.notifyFlag = param(p, 4).stringValue;
 			stopCurrent(param(p, 2).intValue != 0);
-			if (a.type == A_MUSIC_SCRIPT_PLAY_TRACK_FINITE_TIMES_AND_NOTIFY)
+			if (type == A_MUSIC_SCRIPT_PLAY_TRACK_FINITE_TIMES_AND_NOTIFY)
 			{
 				if (m_stack.empty())
 				{
