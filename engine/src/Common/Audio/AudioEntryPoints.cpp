@@ -186,7 +186,7 @@ AudioManager *ownerManager()
 AudioHandle playUiSound(const std::string &n)
 {
 	REQUIRE_AUDIO(AHSV_Error)
-	return mgr->playSound(n);
+	return mgr->playUiSound(n);
 }
 
 AudioHandle playSoundAtPosition(const std::string &n, const Coord3D &p)

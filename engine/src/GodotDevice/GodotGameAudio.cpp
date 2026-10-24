@@ -799,7 +799,9 @@ int64_t GameAudio::play_misc(const String &field)
 
 int64_t GameAudio::play_shell_sound(const String &n)
 {
-	return play_sound(n);
+	// lane MENUSND-1: the menus' FSCommand PlaySound, as RotWK adds it (AudioManager::playUiSound, RW 0x815772)
+	REQUIRE_BOOTED(AHSV_Error)
+	return (int64_t)m_manager->playUiSound(toNative(n));
 }
 
 int64_t GameAudio::play_shell_music(bool shell_map)

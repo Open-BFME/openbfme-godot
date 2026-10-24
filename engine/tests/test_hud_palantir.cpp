@@ -844,3 +844,59 @@ TEST_CASE("play1 palantir input: the key, the powers button and the flag above t
 		CHECK_MESSAGE(commandSeen(h, p.command), p.command);
 	}
 }
+
+// lane MENUSND-1: the Palantir's click sounds, from its movies (Palantir.apt's buttons: Gui_PalantirButtonClick on the press; libInGameUI.apt's command
+// button, button 37 transition 4: _root.PlaySound("Gui_PalantirCommandButtonClick") before its FSCommand _OnPress), through the Palantir's PlaySound
+// (FSCommand PlaySound, RW 0x815772). The pointer on them asks for nothing.
+TEST_CASE("menusnd1 palantir input: the Palantir's buttons and a command button ask for RotWK's click sound on the press, once")
+{
+	if (!haveWorld("menusnd1 palantir input"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	HudRig h(s);
+	h.hud->setWindowSize(1024, 768);
+	h.rig.view.setScreen(1024, 768);
+	h.frames(40);
+	h.services.sounds.clear();
+	for (const char *path : { "PalantirButtons.Buttons.Options", "PalantirButtons.Buttons.PlayerMagic", "PalantirButtons.Buttons.Objectives" })
+	{
+		INFO(path);
+		int x = 0, y = 0;
+		REQUIRE(buttonHitPoint(h, path, x, y));
+		h.hud->mouseMove(x, y);
+		h.frames(4);
+		CHECK(h.services.sounds.empty());
+		h.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 2000);
+		h.frames(2);
+		h.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 2040);
+		h.frames(10);
+		CHECK(h.services.sounds == std::vector<std::string>{ "Gui_PalantirButtonClick" });
+		h.services.sounds.clear();
+		h.hud->mouseMove(5, 5);
+		h.frames(30);
+		h.services.sounds.clear();
+	}
+	const Coord3D c = h.rig.freeSpot(2800, 1400, 200.0f);
+	h.rig.make("GondorBarracks", c.x, c.y);
+	h.rig.lookAt({ c.x, c.y, 0 });
+	h.frames(20);
+	const ICoord2D px = h.rig.screenOf({ c.x, c.y, 10.0f });
+	h.hud->mouseMove(px.x, px.y);
+	h.hud->mouseButton(HudInput::Button::Left, true, px.x, px.y, 0, 3000);
+	h.hud->mouseButton(HudInput::Button::Left, false, px.x, px.y, 0, 3040);
+	h.frames(40);
+	h.services.sounds.clear();
+	int x = 0, y = 0;
+	REQUIRE(buttonCentre(h, "CommandButtons.0.content", x, y));
+	h.hud->mouseMove(x, y);
+	h.frames(2);
+	CHECK(h.services.sounds.empty());
+	h.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 4000);
+	h.frames(2);
+	CHECK(h.services.sounds == std::vector<std::string>{ "Gui_PalantirCommandButtonClick" }); // on the press
+	h.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 4040);
+	h.frames(10);
+	CHECK(h.services.sounds == std::vector<std::string>{ "Gui_PalantirCommandButtonClick" });
+}

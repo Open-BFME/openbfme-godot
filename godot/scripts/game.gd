@@ -118,6 +118,8 @@
 ##     --opts2-size=WxH      (with --opts2-check / --opts2-game) the window's size for the screenshots (1280x720, 2560x1440)
 ##     --opts4-check         the scripted check of tests/opts4_test.gd (scripts/opts4_check.gd): an open drop-down on top, the sliders' tick rows inside
 ##                           their windows, the volume sliders live with their samples; --opts4-size=WxH the window, --opts4-shots=DIR the screenshots
+##     --menusnd-check       lane MENUSND-1 (scripts/menusnd_check.gd): the main menu's entries and the Options bar play RotWK's hover and press sounds
+##                           (the movies' PlaySound, taken by the audio manager), with real mouse events; exit 0 when all held
 ##     --opts5-check         the scripted check of tests/opts5_test.gd (scripts/opts5_check.gd): Options is the one OpenBFME menu, the original game's settings
 ##                           among its rows (their effects, Options.ini, CANCEL / RESET), the layout rules; --opts5-size=WxH, --opts5-shots=DIR
 ##     --shellfix1-check     lane SHELLFIX-1 (scripts/shellfix1_check.gd): Options from the main menu (and, with OPENBFME_LOBBY, the online home) in the style
@@ -335,6 +337,8 @@ var _state := State.BOOT
 var _frames := 0
 var _menu_revealed := false
 var _misc_sounds_played: Array = [] # lane DEVPORT-8: the last MiscAudio plays of _update_listener
+var shell_sounds_played: Array = [] # lane MENUSND-1: the last FSCommand PlaySound requests of the menus (_on_shell_service)
+var _menusnd_check := false # lane MENUSND-1: --menusnd-check (scripts/menusnd_check.gd)
 var _menu_style := "rotwk"
 var _pending_menu_style := "rotwk"
 var _switching_menu_style := false
@@ -717,6 +721,8 @@ func _ready() -> void:
 			_opts2_shots = arg.substr(14)
 		elif arg == "--opts4-check":
 			_opts4_check = true
+		elif arg == "--menusnd-check":
+			_menusnd_check = true
 		elif arg.begins_with("--opts4-shots="):
 			_opts4_shots = arg.substr(14)
 		elif arg.begins_with("--opts4-size="):
@@ -1157,6 +1163,13 @@ func _run_opts4_check() -> void:
 	get_tree().quit(0 if failed == 0 else 1)
 
 
+## lane MENUSND-1: --menusnd-check (scripts/menusnd_check.gd)
+func _run_menusnd_check() -> void:
+	var check: Object = load("res://scripts/menusnd_check.gd").new()
+	var failed: int = await check.run(self)
+	get_tree().quit(0 if failed == 0 else 1)
+
+
 ## lane OPTS-6: --opts6-check (scripts/opts6_check.gd)
 func _run_opts6_check() -> void:
 	var check: Object = load("res://scripts/opts6_check.gd").new()
@@ -1344,6 +1357,8 @@ func _boot() -> void:
 		_run_opts2_check() # lane OPTS-2
 	elif _opts4_check:
 		_run_opts4_check() # lane OPTS-4
+	elif _menusnd_check:
+		_run_menusnd_check() # lane MENUSND-1
 	elif _opts5_check:
 		_run_opts5_check() # lane OPTS-5
 	elif _opts6_check:
@@ -1515,7 +1530,11 @@ func _update_listener() -> void:
 func _on_shell_service(kind: String, a: String, b: String) -> void:
 	# AUDIO-1: kind "sound" is a UI sound or music cue name (a); "load_music" is the faction's LoadScreenMusic when a load starts
 	if kind == "sound":
-		_audio.play_shell_sound(a)
+		var handle: int = _audio.play_shell_sound(a)
+		# lane MENUSND-1: the last UI sounds the menus asked for (name, the audio manager's handle, frame), for scripts/menusnd_check.gd
+		shell_sounds_played.append({"name": a, "handle": handle, "frame": _frames})
+		if shell_sounds_played.size() > 256:
+			shell_sounds_played.pop_front()
 	elif kind == "load_music":
 		_audio.play_music(a)
 	elif kind == "option":

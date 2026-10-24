@@ -41,3 +41,7 @@ list(APPEND OPENBFME_APT_TESTS
     tests/test_menu1_layering.cpp
     tests/test_menu1_profiles.cpp
     tests/test_menu1_loadscreen.cpp)
+
+# lane MENUSND-1: the menus' hover and click sounds (the inventory of RotWK's PlaySound per control)
+list(APPEND OPENBFME_APT_TESTS
+    tests/test_menusnd1_click_sounds.cpp)

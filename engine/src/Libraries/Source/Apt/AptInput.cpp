@@ -107,6 +107,7 @@ void AptInput::postMouseMove(float x, float y)
 	e.x = x;
 	e.y = y;
 	m_queue.push_back(e);
+	++m_posted;
 }
 
 void AptInput::postMouseButton(bool down)
@@ -115,6 +116,7 @@ void AptInput::postMouseButton(bool down)
 	e.type = EventType::MouseButton;
 	e.down = down;
 	m_queue.push_back(e);
+	++m_posted;
 }
 
 void AptInput::postMouseWheel(int delta)
@@ -123,6 +125,7 @@ void AptInput::postMouseWheel(int delta)
 	e.type = EventType::MouseWheel;
 	e.code = delta;
 	m_queue.push_back(e);
+	++m_posted;
 }
 
 void AptInput::postKey(int keyCode, bool down)
@@ -132,6 +135,16 @@ void AptInput::postKey(int keyCode, bool down)
 	e.down = down;
 	e.code = keyCode;
 	m_queue.push_back(e);
+	++m_posted;
+}
+
+std::uint64_t AptInput::postCancelPress()
+{
+	Event e;
+	e.type = EventType::CancelPress;
+	m_queue.push_back(e);
+	++m_posted;
+	return m_posted;
 }
 
 void AptInput::processQueued()
@@ -139,9 +152,12 @@ void AptInput::processQueued()
 	// 0x00AFB910: the queue is drained in order; the first event of the batch is flagged (0x00AFB938 `sete al`)
 	std::vector<Event> events;
 	events.swap(m_queue);
-	for (std::size_t i = 0; i < events.size(); ++i)
+	bool first = true;
+	for (const Event &e : events)
 	{
-		processEvent(events[i], i == 0);
+		++m_processed;
+		processEvent(e, first);
+		first = first && e.type == EventType::CancelPress; // the port's cancel is not one of the batch's events
 	}
 }
 
@@ -320,6 +336,17 @@ void AptInput::fireOn(AptCharacterInst *inst, std::uint32_t mask, std::uint32_t 
 
 void AptInput::processEvent(const Event &e, bool first)
 {
+	if (e.type == EventType::CancelPress)
+	{
+		// postCancelPress (NOT RETAIL): the press ends with no script run
+		if (m_pressed && m_currentButton && m_currentButton->defined() && m_currentButton->state() == AptButtonInst::State::Down)
+		{
+			m_currentButton->setState(AptButtonInst::State::Over);
+		}
+		m_pressed = false;
+		m_pressedClip = nullptr;
+		return;
+	}
 	if (e.type == EventType::MouseMove)
 	{
 		m_apt.setMousePosition(e.x, e.y); // 0x00AFB887: gApt+0x74 / +0x78
