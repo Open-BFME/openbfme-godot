@@ -12,6 +12,7 @@
 // map.ini take effect here.
 
 #pragma once
+#include "GameClient/FormationAssistant.h"
 
 #include "Common/BfmeGame.h"
 #include "Common/ArchiveFileSystem.h"
@@ -31,6 +32,7 @@
 #include "GameLogic/ExperienceLevels.h"
 #include "GameLogic/Locomotor.h"
 #include "GameLogic/ProductionSettings.h"
+#include "GameLogic/ScriptEngine/MissionObjectiveTracker.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 #include "GameLogic/SpellStores.h"
 #include "GameLogic/Module/StancesBehavior.h"
@@ -89,8 +91,13 @@ public:
 	const StanceTemplateStore &stances() const { return m_s->m_stances; } // INTEG-1
 	const EmotionSystem &emotions() const { return m_s->m_emotions; }     // MODULES-2: TheEmotionSystem (the EmotionNugget blocks)
 	bool bfme1Data() const { return isBfme1Data(m_fs); } // community PR #36 (Common/BfmeGame.h)
+	const FormationAssistant &formations() const { return m_s->m_formations; }
 	const LinearCampaignManager &linearCampaigns() const { return m_s->m_linearCampaigns; } // CAMP-1: TheLinearCampaignManager (the LinearCampaign blocks)
 	const CreateAHeroSystem &createAHeroSystem() const { return m_s->m_createAHero; } // HERO-2: TheCreateAHeroSystem (Data\INI\CreateAHeroSystem.ini)
+	// lane CAMPUI-1: the MissionObjectiveList of the last applyMapIni's map.ini / solo.ini (MissionObjectiveTracker::parseList, RW 0x836497); `parsed` false
+	// when the map has none. The game's tracker takes it at the start (LiveGame)
+	const std::vector<MissionObjective> &mapObjectives() const { return m_s->m_mapObjectives; }
+	bool hasMapObjectives() const { return m_s->m_mapObjectivesParsed; }
 	// MOVE-1: the INI macro table the object templates were loaded with (a LocomotorSet block's Speed may be a macro: AIWorld parses those blocks at runtime)
 	const INIMacroTable &iniMacros() const { return m_s->m_env.macros; }
 
@@ -133,6 +140,8 @@ public:
 	const FXParticleSystem::FXParticleSystemTemplateStore *fxParticleSystems() const { return m_s->m_recorder.fxParticleSystems.get(); }
 
 	std::vector<std::string> acceptanceStops() const;
+	// lane MODS-2: what the load skipped silently as retail does (AIBase layouts with no .bse file, unknown SubUpgradeTemplateNames), one line each
+	std::vector<std::string> loadNotes() const;
 	// AUDIO-1: the audio / EVA blocks the INI load parsed (TheAudio / TheEva files, retail order)
 	const AudioIniState &audio() const;
 
@@ -189,8 +198,11 @@ private:
 		AttributeModifierStore m_attributeModifiers;  // XP-1
 		StanceTemplateStore m_stances;                // INTEG-1
 		EmotionSystem m_emotions;                     // MODULES-2
+		FormationAssistant m_formations;
 		LinearCampaignManager m_linearCampaigns;      // CAMP-1
 		CreateAHeroSystem m_createAHero;              // HERO-2
+		std::vector<MissionObjective> m_mapObjectives; // lane CAMPUI-1: map.ini's MissionObjectiveList
+		bool m_mapObjectivesParsed = false;
 		std::unique_ptr<AudioIniState> m_audio;
 		std::unique_ptr<SkirmishAIStore> m_skirmishAI;
 		WeaponStores m_weaponStores; // WEAPON-1: the Weapon, Armor and DamageFX blocks have real parsers

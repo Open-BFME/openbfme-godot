@@ -12,6 +12,8 @@
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/Gadgets.h"
+#include "Libraries/Source/Apt/Apt.h"
+#include "Libraries/Source/Apt/AptCharacterInst.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -179,7 +181,7 @@ AptTimeLine::AptTimeLine(WindowManager &windows, Shell &shell, ShellEnvironment 
 	{
 		windows.markNumericProvider(name);
 	}
-	for (int i = 0; i < 8; ++i)
+	for (int i = 0; i < MAX_SLOTS; ++i)
 	{
 		// RW 0x925188
 		registerProvider("TimeLine:PlayerColor:" + std::to_string(i), [this, i](const std::string &, std::string &value, bool setting) {
@@ -229,6 +231,97 @@ AptTimeLine::AptTimeLine(WindowManager &windows, Shell &shell, ShellEnvironment 
 const ScoreScreenData *AptTimeLine::data() const
 {
 	return m_env.scoreScreen && m_env.scoreScreen->valid ? m_env.scoreScreen : nullptr;
+}
+
+AptTimeLine::~AptTimeLine()
+{
+	if (AptGadgetLayer *layer = windows().gadgetLayer()) layer->destroyEngineGadget(m_playerRange);
+}
+
+WindowMsgHandledType AptTimeLine::gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2)
+{
+	if (m_playerRange && reinterpret_cast<GameWindow *>(data1) == m_playerRange && msg == GCM_SELECTED)
+	{
+		int selected = -1;
+		GadgetComboBoxGetSelectedPos(m_playerRange, &selected);
+		if (selected >= 0) m_firstPlayer = selected;
+		return MSG_HANDLED;
+	}
+	return AptScreen::gadgetMessage(from, msg, data1, data2);
+}
+
+void AptTimeLine::frameUpdate()
+{
+	const ScoreScreenData *d = data();
+	if (!d || d->entries.size() <= LEGACY_MAX_SLOTS) return;
+	AptCharacterInst *instance = windows().apt().resolvePath(windows().apt().level(level()), "Main");
+	AptSpriteInst *parent = instance ? instance->asSprite() : nullptr;
+	if (!parent) return;
+	AptCharacterInst *prototype = parent->childByName("Button0");
+	AptCharacterInst *second = parent->childByName("Button1");
+	if (!prototype || !second) return;
+	AptCharacterInst *axis = parent->childByName("Axis");
+	const bool standingsVisible = axis && axis->globallyVisible() && !isHidden();
+	AptGadgetLayer *layer = windows().gadgetLayer();
+	if (!layer) return;
+	if (!m_playerRange)
+	{
+		m_firstPlayerY = prototype->matrix.ty;
+		m_playerStep = second->matrix.ty - prototype->matrix.ty;
+		std::string error;
+		m_playerRange = layer->createEngineGadget("window/apt/combobox.wnd", 430, 640, 240, 24, ownerWindow(), &error);
+		if (!m_playerRange)
+		{
+			windows().note("extended-layout-error", "score player range creation failed: " + error);
+			return;
+		}
+		GadgetComboBoxSetMaxDisplay(m_playerRange, 4);
+		for (int i = 0; i <= (int)d->entries.size() - LEGACY_MAX_SLOTS; ++i)
+		{
+			const std::string label = "Players " + std::to_string(i + 1) + "-" + std::to_string(i + LEGACY_MAX_SLOTS) + " / " + std::to_string(d->entries.size());
+			GadgetComboBoxAddEntry(m_playerRange, utf8ToU16(label), 0xFFFFFFFFu);
+		}
+		GadgetComboBoxSetSelectedPos(m_playerRange, 0, true);
+	}
+	// OpenBFME extension: initialize the authored button properties for rows absent when Main's frame script ran.
+	for (int i = 0; i < (int)d->entries.size(); ++i)
+	{
+		const std::string name = "Button" + std::to_string(i);
+		AptCharacterInst *row = parent->childByName(name);
+		if (!row && i >= LEGACY_MAX_SLOTS)
+		{
+			row = parent->attachCharacter(prototype->charRef(), name, 0x4000 + i, true);
+			if (row)
+			{
+				row->matrix = prototype->matrix;
+				row->color = prototype->color;
+				row->setMember("buttonName", AptValue::string("$TimeLine:PlayerName:" + std::to_string(i)));
+				row->setMember("buttonScoreName", AptValue::string("$TimeLine:PlayerScore:" + std::to_string(i)));
+				char color[32];
+				std::snprintf(color, sizeof(color), "%#x", d->entries[(size_t)i].color & 0xFFFFFFu);
+				row->setMember("ButtonColor", AptValue::string(color));
+				AptFunction *callback = windows().apt().gc().create<AptFunction>();
+				callback->native = [this, i](AptCallInfo &) {
+					std::string error;
+					if (!windows().invokeASAtValues(level(), "Main", "DoFocusGraph", { AptValue::integer(i) }, &error))
+						windows().note("extended-layout-error", "score player focus failed: " + error);
+					return AptValue::undefined();
+				};
+				row->setMember("DoButtonCallBack", AptValue::object(callback));
+				row->setMember("onRelease", AptValue::object(callback));
+			}
+		}
+		if (!row)
+		{
+			windows().note("extended-layout-error", "missing score player row " + name);
+			return;
+		}
+		row->matrix.ty = m_firstPlayerY + (i - m_firstPlayer) * m_playerStep;
+		row->asChanged = true;
+		row->visible = standingsVisible && i >= m_firstPlayer && i < m_firstPlayer + LEGACY_MAX_SLOTS;
+	}
+	layer->syncPlacements();
+	m_playerRange->winHide(!standingsVisible);
 }
 
 void AptTimeLine::runInit()

@@ -52,3 +52,10 @@ void AttributeModifierUpgrade::xfer(Xfer &x)
 	SnapshotXfer::version(x, 1, 1);
 	UpgradeModule::xfer(x);
 }
+
+// lane BANNER-1: AllowBannerSpawnUpgrade keeps no state of its own (RW 0x650650 makes 0x1C bytes, the UpgradeModule's); as AttributeModifierUpgrade
+void AllowBannerSpawnUpgrade::xfer(Xfer &x)
+{
+	SnapshotXfer::version(x, 1, 1);
+	UpgradeModule::xfer(x);
+}

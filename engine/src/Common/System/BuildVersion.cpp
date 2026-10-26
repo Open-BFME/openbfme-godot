@@ -28,6 +28,27 @@ std::string BuildVersion::versionLine()
 	return std::string("OpenBFME ") + kVersion + " (" + kBuildDate + ")";
 }
 
+bool BuildVersion::isReleaseVersion(const std::string &version)
+{
+	std::string part;
+	size_t i = 1;
+	if (version.size() > 40 || version.empty() || version[0] != 'v' || !number(version, i, part) || i >= version.size() ||
+		version[i++] != '.' || !number(version, i, part) || i >= version.size() || version[i++] != '.' || !number(version, i, part))
+		return false;
+	if (i == version.size())
+		return true;
+	for (const char *channel : { "-alpha.", "-nightly.", "-preview." })
+	{
+		const std::string suffix = channel;
+		if (version.compare(i, suffix.size(), suffix) == 0)
+		{
+			i += suffix.size();
+			return number(version, i, part) && i == version.size();
+		}
+	}
+	return false;
+}
+
 std::string BuildVersion::displayVersion(const std::string &version)
 {
 	// v<major>.<minor>.<patch>[-alpha.<n>], matched as a whole (the launcher's grammar, launcher/scripts/core/semver.gd)

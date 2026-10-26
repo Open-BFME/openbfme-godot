@@ -13,7 +13,6 @@
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Object/PartitionManager.h"
-#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIWaypointPath.h"
 #include "GameClient/MapChunks.h"
@@ -25,6 +24,8 @@
 #include "GameLogic/SimMath.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 
 namespace
 {
@@ -112,6 +113,7 @@ void ScriptEngine::reset()
 	m_counters.clear();
 	m_flags.clear();
 	m_namedObjects.clear();
+	m_references.clear();
 	m_objectLists.clear();
 	m_triggers = nullptr;
 	m_runtimeTriggers.clear(); // lane HUD-5
@@ -136,6 +138,7 @@ void ScriptEngine::reset()
 	m_thisTeam = nullptr;
 	m_stats = Stats();
 	resetBreeze(); // lane VISUAL-2
+	m_attackPriorities.reset(); // lane TARGET-1 (ZH ScriptEngine::reset empties the table; INFERENCE for RotWK, AttackPriority.h)
 }
 
 void ScriptEngine::resetBreeze()
@@ -470,7 +473,13 @@ void ScriptEngine::objectNamed(Object &obj)
 	m_namedObjects.emplace_back(obj.getName(), obj.getID());
 }
 
-void ScriptEngine::nameInCache(const std::string &name, Object &obj)
+void ScriptEngine::setReference(const std::string &name, const Object &obj)
+{
+	// RW 0x608397: the key (+ 0x1A20C, name) (RW 0x42C1CC), insert-or-find (RW 0x60741E), the node's + 0x18 = the object's id
+	m_references[{ m_currentSide, name }] = obj.getID();
+}
+
+void ScriptEngine::nameInCache(const std::string &name, const Object &obj)
 {
 	if (name.empty())
 	{
@@ -489,7 +498,12 @@ void ScriptEngine::nameInCache(const std::string &name, Object &obj)
 
 bool ScriptEngine::isInNamedCache(const Object &obj) const
 {
-	for (const auto &e : m_namedObjects)
+	// RW 0x759601: a name (RW 0x4065AA against ""), else a reference whose id (+ 0x18) is the object's (+ 0x74)
+	if (!obj.getName().empty())
+	{
+		return true;
+	}
+	for (const auto &e : m_references)
 	{
 		if (e.second == obj.getID())
 		{
@@ -505,6 +519,16 @@ Object *ScriptEngine::getUnitNamed(const std::string &name) const
 	{
 		return nullptr;
 	}
+	// RW 0x75A284 .. 0x75A2E5: the reference map first (find RW 0x606EA0); a hit answers with its object, null when it is gone (RW 0x449681)
+	if (!m_references.empty())
+	{
+		const auto it = m_references.find(qualify(name));
+		if (it != m_references.end())
+		{
+			return m_logic.findObjectByID(it->second);
+		}
+	}
+	// RW 0x75A2FF: the named cache (+ 0x1A220)
 	for (const auto &e : m_namedObjects)
 	{
 		if (e.first == name)
@@ -783,7 +807,13 @@ bool ScriptEngine::evaluateCondition(const ScriptCondition &c)
 // RW 0x60C1C9
 void ScriptEngine::executeActions(const std::vector<ScriptActionRec> &actions, RScript &s)
 {
-	(void)s;
+	// lane MODS-3: opt-in diagnostic only (OPENBFME_TRACE_SCRIPTS=<side name> or "*"): every action a script of that side runs, to stderr; no
+	// simulation state is read or changed beyond the names
+	static const std::string traced = [] {
+		const char *value = std::getenv("OPENBFME_TRACE_SCRIPTS");
+		return value ? std::string(value) : std::string();
+	}();
+	const bool trace = !traced.empty() && (traced == "*" || traced == currentSideName());
 	for (const ScriptActionRec &a : actions)
 	{
 		const ScriptTemplate *t = ScriptTemplates::action(a.resolved);
@@ -791,10 +821,27 @@ void ScriptEngine::executeActions(const std::vector<ScriptActionRec> &actions, R
 		{
 			continue;
 		}
+		if (trace)
+		{
+			std::string line = "SCRIPTRUN frame=" + std::to_string(m_logic.getFrame()) + " side=" + currentSideName() + " script=\"" +
+				(s.def ? s.def->name : std::string()) + "\" " + a.internalName + "(";
+			for (const ScriptParameter &p : a.params)
+			{
+				line += (p.stringValue.empty() ? std::to_string(p.intValue) : p.stringValue) + ",";
+			}
+			std::fprintf(stderr, "%s)\n", line.c_str());
+		}
 		++m_stats.actionsRun;
 		if (!executeEngineAction(a))
 		{
 			ScriptActions::execute(*this, a); // TheScriptActions vslot 0x38 (RW 0x7CAFA5)
+		}
+		if (trace && !a.params.empty() && a.params[0].type == 14) // a UNIT parameter: its owner after the action
+		{
+			const Object *o = getUnitNamed(a.params[0].stringValue);
+			const Player *owner = o ? o->getControllingPlayer() : nullptr;
+			std::fprintf(stderr, "SCRIPTRUN   unit %s: %s\n", a.params[0].stringValue.c_str(),
+				!o ? "not found" : (owner ? owner->getPlayerName().c_str() : "no owner"));
 		}
 	}
 }
@@ -938,6 +985,23 @@ void ScriptEngine::removeSequentialScriptsOf(ObjectID object, std::uint32_t team
 			chain.clear(); // RW 0x604CD9: emptied, the slot stays (the update erases it)
 		}
 		++i;
+	}
+}
+
+void ScriptEngine::setSequentialTimer(ObjectID object, std::uint32_t team, std::int32_t frames)
+{
+	for (std::vector<SequentialScript> &chain : m_sequential)
+	{
+		if (chain.empty())
+		{
+			continue; // retail's null slot
+		}
+		SequentialScript &head = chain.front();
+		if (object != INVALID_ID ? head.object == object : (team != 0 && head.team == team))
+		{
+			head.framesToWait = frames;
+			return;
+		}
 	}
 }
 
@@ -1894,6 +1958,17 @@ void ScriptEngine::crc(StateHasher &h) const
 		h.addString(e.first);
 		h.addU32(e.second);
 	}
+	if (!m_references.empty()) // lane CASTLE-UNPACK: hashed once a reference exists (the earlier hashes are unchanged)
+	{
+		h.addU32(0x191B8u);
+		h.addU32((std::uint32_t)m_references.size());
+		for (const auto &e : m_references)
+		{
+			h.addString(e.first.first);
+			h.addString(e.first.second);
+			h.addU32(e.second);
+		}
+	}
 	if (!m_sequential.empty()) // lane SCRIPT-2: hashed once a sequential script exists
 	{
 		h.addU32(0x5E0u | ((std::uint32_t)m_sequential.size() << 12));
@@ -2050,21 +2125,32 @@ std::vector<std::string> ScriptEngine::stopLines()
 		"[S-1180] map scripts: the conditions and actions without a port here evaluate false / do nothing and are counted by name (ScriptEngine::stats)",
 		"[S-1181] map scripts: a side runs its own list followed by its PlayerAIType library (PlayerAITypes.ini LibraryMap) and its LibraryMaps, merged in "
 		"load order; in a skirmish every human slot side runs Multiplayer_Human and the map's Player_N sides are dropped (inference); the multiplayer victory / "
-		"defeat conditions and, in a LAN / Internet game, the <Local Player...> parameters answer for the current script player (lockstep)",
+		"defeat conditions and, in a LAN / Internet game, the <Local Player...> parameters answer for the current script player (lockstep; lane SCRIPT-4: a start "
+		"with several human slots counts as one, as the LAN / online start leaves the mode at skirmish; a spectator of a game with one human slot still "
+		"resolves its own local player)",
 		"[S-1182] map scripts: camera, UI, audio, input, fade and end-screen actions are recorded as client requests; the client applies the camera moves / "
 		"resets / rotations / follow / zoom / pitch / look-toward, letterbox, captions, fades, notifications, objectives and (lane SCRIPT-2) the sounds, speech "
 		"and music tracks, not the rest; the RotWK camera controller's ease (W3DView + 0x280) is the ZH ParabolicEase here; the conditions that read the "
-		"client (CAMERA_MOVEMENT_FINISHED, NAMED_SELECTED ...) are unported and false, and FLAG's UI-interaction fallback is not implemented",
+		"client (CAMERA_MOVEMENT_FINISHED ...) are unported and false, and FLAG's UI-interaction fallback is not implemented; NAMED_SELECTED / TYPE_SELECTED "
+		"(lane SCRIPT-4) read the local player's logic selection (Player::selection) for TheInGameUI's list, false in a LAN / Internet game as in retail",
 		"[S-1183] map scripts: a script with a condition team does not run once per team member",
 		"[S-1184] map scripts: SET_COUNTER_TO_CLIENT_RANDOM_VALUE keeps its low bound (retail draws the client generator RW 0x6D32E4 inside the logic)",
 		"[S-1185] map scripts: the War of the Ring per-player gate and RW 0x862535 are not ported (lane CAMP-1H: the team states, RW 0x6A8541, run); sequential scripts run "
 		"(lane SCRIPT-2) without the wait actions' sequential interface (they pass at once) and the AI busy flag + 0x3CA",
 		"[S-1186] map scripts: the AI orders without an AI state here run as stand-ins: the attack-follow waypoint orders march (attack move) to the end of "
 		"the path along each waypoint's first link, the face orders turn at once; NAMED_ATTACK_TEAM and the AI recruiting flag are not ported, nor a group "
-		"attack's firing passengers and giant birds (lane SCRIPT-3: hunt, attitude, the group attack and the waypoint path states are ported, S-1188 / S-1189)",
+		"attack's firing passengers and giant birds (lane SCRIPT-3: hunt, attitude, the group attack and the waypoint path states are ported, S-1188 / S-1189); "
+		"lane SCRIPT-4: the location guards, the idle / guard-for orders and stand ground are ported; the area guards (UNIT_ / TEAM_GUARD_AREA[_FROM_POSITION], "
+		"the guard machine's area form) and TEAM_ATTACK_TEAM (AIAttackSquadState, state 0x17) are not (counted as unported actions)",
 		"[S-1187] map scripts: HAS_FINISHED_AUDIO times an event by a logic-side length model (RW 0x759B84 / 0x4541FF: attack + main + decay file lengths "
 		"from the first query); a multi-file sound list contributes its first file where retail draws the audio generator",
 		huntStopLine(),
 		waypointPathStopLine(),
+		"[S-1190] map scripts (lane SCRIPT-4): the command-button ability actions (NAMED_ / TEAM_USE_COMMANDBUTTON_ABILITY[_ON_NAMED / _AT_WAYPOINT]) run "
+		"Object::doCommandButton* (RW 0x696FD2 / 0x697890 / 0x6979D9) for the special powers, spell books, stop, weapon-set toggle, set stance and enter; "
+		"the other command types with a retail case (upgrades, castle unpack / pack, fire weapon, dozer construct, attack move, self repair, gates, the "
+		"message-stream commands such as the horde formation toggle and exit) do nothing and are noted by button; Object + 0xA0 bit 6 (RotWK's disabled "
+		"exception) is read as clear; SET_UNIT_REFERENCE names the unit in the named cache only (the side's reference map RW + 0x191B4 and "
+		"SET_UNIT_REFERENCE_TO_REFERENCE are not ported); the AI recruitable flag (AI + 0x3BE) is read as true",
 	};
 }

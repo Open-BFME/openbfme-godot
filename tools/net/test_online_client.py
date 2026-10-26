@@ -82,7 +82,16 @@ def test_smoke_against_a_lobby_without_a_relay(tmp_path):
            "PUBLIC_URL": f"http://127.0.0.1:{port}", "LOBBY_DATA": str(tmp_path), "LOBBY_BIND": f"127.0.0.1:{port}"}
     server = subprocess.Popen([node, str(HERE.parents[1] / "services/online/lobby/src/server.mjs")], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
-        assert "listening" in server.stdout.readline()
+        # Node may print warnings first (e.g. SQLite's ExperimentalWarning): wait for the lobby's own "listening" line
+        seen = []
+        for _ in range(20):
+            line = server.stdout.readline()
+            if not line:
+                break
+            seen.append(line)
+            if "listening" in line:
+                break
+        assert seen and "listening" in seen[-1], "".join(seen)
         smoke = [sys.executable, str(HERE / "online_client.py"), "smoke", "--lobby", f"http://127.0.0.1:{port}", "--profile", "0" * 32, "--map", "maps/x/x.map"]
         r = subprocess.run(smoke + ["--expect-no-relay"], capture_output=True, text=True, timeout=60)
         assert r.returncode == 0, r.stdout + r.stderr
@@ -93,3 +102,32 @@ def test_smoke_against_a_lobby_without_a_relay(tmp_path):
     finally:
         server.kill()
         server.wait()
+
+
+def test_fixture_auth_writes_each_tickets_mac_key_and_the_tag_required_mode(tmp_path):
+    """ONLINE16-FIX: --auth gives every START its ticket's session_key (AUTH-1); --mode 4 signs TICKET_MODE_AUTH into a version-7 ticket"""
+    import hashlib
+    import hmac
+    r = subprocess.run([sys.executable, str(HERE / "online_client.py"), "fixture", "--key-hex", KEY.hex(), "--game", "00000000000000aa", "--relay",
+                        "192.0.2.10:7350", "--profile", "0" * 32, "--map", "maps/x/x.map", "--slot", "player,0,0,0,0", "--slot", "player,1,1,1,1",
+                        "--out-dir", str(tmp_path), "--rejoin", "1:1", "--spectator", "0:0", "--auth", "--mode", "4"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    for name in ("start-0.json", "start-1.json", "start-1-rejoin1.json", "spectate-0.json"):
+        s = json.loads((tmp_path / name).read_text())
+        raw = online_client.base64.urlsafe_b64decode(s["ticket"] + "=" * (-len(s["ticket"]) % 4))
+        want = online_client.base64.urlsafe_b64encode(hmac.new(KEY, b"OBFME-SESSION-1" + raw, hashlib.sha256).digest()[:16]).rstrip(b"=").decode()
+        assert s["session_key"] == want, name
+    t = online_client.base64.urlsafe_b64decode(json.loads((tmp_path / "start-1.json").read_text())["ticket"] + "=" * 0)
+    assert t[0] == 7 and t[13] == 4 and len(t) == 36
+    # without --auth no START carries one (an old lobby's START)
+    r = subprocess.run([sys.executable, str(HERE / "online_client.py"), "fixture", "--key-hex", KEY.hex(), "--game", "00000000000000aa", "--relay",
+                        "192.0.2.10:7350", "--profile", "0" * 32, "--map", "maps/x/x.map", "--slot", "player,0,0,0,0", "--slot", "player,1,1,1,1",
+                        "--out-dir", str(tmp_path / "plain")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert "session_key" not in json.loads((tmp_path / "plain" / "start-0.json").read_text())
+
+
+def test_session_key_pin():
+    """ONLINE16-FIX: the START's session_key is lane/anticheat1's OBFME-SESSION-1 derivation (pinned there and in test_online16_fix.cpp)"""
+    t = online_client.ticket(bytes(range(32)), 1, "0123456789abcdef", 0, 7, 2000000000)
+    assert online_client.session_key(bytes(range(32)), t) == "cHLqM4pf8wcINff_naIhJg"

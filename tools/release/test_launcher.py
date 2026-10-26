@@ -11,7 +11,6 @@ Skipped (loudly) without Godot 4.7.2; the self-update tests also need the host's
 from __future__ import annotations
 
 import hashlib
-import ctypes
 import io
 import json
 import os
@@ -21,9 +20,11 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import zipfile
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -37,7 +38,7 @@ import ed25519  # noqa: E402
 import make_archive  # noqa: E402
 import make_manifest  # noqa: E402
 from launcher_test_server import COMMIT, TEST_REPO, ReleaseServer, tiny_package  # noqa: E402
-from launcher_test_support import (ARCHIVE_SUFFIX, GAME_EXE, LAUNCHER_EXE, PLATFORM, WINDOWS, asset_name,
+from launcher_test_support import (ARCHIVE_SUFFIX, GAME_EXE, LAUNCHER_EXE, MACOS, MACOS_SKIP, PLATFORM, WINDOWS, asset_name,  # noqa: E402
                                    dismiss_missing_pack_alert, godot_engine, isolated_environment, native_game, normalized_path,
                                    process_running, stop_process)
 
@@ -52,7 +53,7 @@ def _godot_ok() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(not _godot_ok(), reason="SKIP launcher tests: Godot 4.7.2 not found (set GODOT)")
+pytestmark = [pytest.mark.skipif(MACOS, reason=MACOS_SKIP), pytest.mark.skipif(not _godot_ok(), reason="SKIP launcher tests: Godot 4.7.2 not found (set GODOT)")]
 
 
 @pytest.fixture(autouse=True)
@@ -72,15 +73,17 @@ def server():
 
 @pytest.fixture(scope="session")
 def keys(tmp_path_factory):
-    """(secret, public) of the throwaway release key, and another key"""
-    return {"release": os.urandom(32), "other": os.urandom(32)}
+    """the secrets of the throwaway release key (the old, Deck-style key), a second trusted key (SIGNKMS-1: the KMS key's stand-in,
+    which signs the envelope) and another key"""
+    return {"release": os.urandom(32), "kms": os.urandom(32), "other": os.urandom(32)}
 
 
 @pytest.fixture(scope="session", autouse=True)
-def imported():
+def imported(tmp_path_factory):
     """the launcher project's import cache (a fresh clone has none; the first import may abort on a known Godot quirk)"""
+    env = isolated_environment(tmp_path_factory.mktemp("launcher-import"))
     for _ in range(2):
-        subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--import"], capture_output=True, timeout=300)
+        subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--import"], env=env, capture_output=True, timeout=300)
 
 
 # ---- packages ---------------------------------------------------------------------------------------------------------------------------
@@ -90,7 +93,13 @@ def game_script() -> bytes:
 
 
 def slow_game() -> bytes:
-    return native_game("long").read_bytes() if WINDOWS else game_script() + b"exec >/dev/null 2>&1 </dev/null\ntrap 'kill $!; exit' TERM\nsleep 60 &\nwait\n"
+    return native_game("long").read_bytes() if WINDOWS else game_script() + b'''exec >/dev/null 2>&1 </dev/null
+event="$OPENBFME_TEST_PLAYED.$$.exit"
+trap 'rm -f "$event"' EXIT
+trap 'exit' TERM INT
+mkfifo "$event" || exit 1
+read -r done < "$event"
+'''
 
 
 def game_tar(tmp: Path, version: str, extra: bytes = b"", script: bytes | None = None, version_extra: str = "") -> bytes:
@@ -203,14 +212,16 @@ class Run:
         return f"exit {self.code}\n" + "\n".join(self.lines)
 
 
-def launch(tmp: Path, server: ReleaseServer | None, key: bytes, *args: str, exe: Path | None = None, origin: str | None = None,
+def launch(tmp: Path, server: ReleaseServer | None, key: bytes | list[bytes], *args: str, exe: Path | None = None, origin: str | None = None,
            timeout: int = 180, env_extra: dict | None = None, headless: bool = True,
            missing_pack_alert: bool = False) -> Run:
+    """`key`: the secret of the key the launcher trusts, or (SIGNKMS-1) a list of secrets: --trust-key=<hex>,<hex>..."""
     env = isolated_environment(tmp, OPENBFME_TEST_PLAYED=str(tmp / "played.txt"), **(env_extra or {}))
     test = []
     if origin or server:
         test.append(f"--api-base={origin or server.origin}")
-    test += [f"--trust-key={ed25519.public_key(key).hex()}", f"--repo={TEST_REPO}"]
+    trusted = key if isinstance(key, list) else [key]
+    test += [f"--trust-key={','.join(ed25519.public_key(k).hex() for k in trusted)}", f"--repo={TEST_REPO}"]
     display = ["--headless"] if headless else []
     cmd = [str(exe), *display, "--", *test, *args] if exe else [GODOT, *display, "--path", str(LAUNCHER), "--", *test, *args]
     if not WINDOWS:
@@ -344,6 +355,31 @@ def test_gdscript_crypto_matches_the_references(tmp_path, keys):
         vec["ed25519"].append([ed25519.public_key(sk).hex(), msg.hex(), osig.hex(), True, "openssl"])
     else:
         print("SKIP the OpenSSL cross-check: no openssl")
+    # SIGNKMS-1: the envelope and the release signature rule against release_keys.py (the Python twin)
+    import release_keys
+    vec["envelope"], vec["release"] = [], []
+    for kind in release_keys.KINDS:
+        for n in (0, 3, 200):
+            m = os.urandom(n)
+            vec["envelope"].append([kind, m.hex(), release_keys.envelope(kind, m).hex()])
+    old, new, unknown = os.urandom(32), os.urandom(32), os.urandom(32)
+    lst = [("old", ed25519.public_key(old)), ("new", ed25519.public_key(new))]
+    both = ",".join(k.hex() for _, k in lst)
+    for kind in release_keys.KINDS:
+        data = b'{"a": "' + kind.encode() + b'"}\n'
+        cases = [(both, ed25519.sign(old, data), "old key raw"),
+                 (both, ed25519.sign(new, release_keys.envelope(kind, data)), "new key envelope"),
+                 (both, ed25519.sign(old, release_keys.envelope(kind, data)), "old key envelope"),
+                 (both, ed25519.sign(new, data), "new key raw"),
+                 (both, ed25519.sign(unknown, release_keys.envelope(kind, data)), "unknown key"),
+                 (both, ed25519.sign(new, release_keys.envelope(next(k for k in release_keys.KINDS if k != kind), data)), "wrong kind"),
+                 (lst[0][1].hex(), ed25519.sign(new, release_keys.envelope(kind, data)), "new key, old list"),
+                 (both, bytes(64), "zeros")]
+        for keys_csv, sig, what in cases:
+            keys = [(str(i), bytes.fromhex(h)) for i, h in enumerate(keys_csv.split(","))]
+            label = release_keys.verify(keys, kind, data, sig)
+            vec["release"].append([keys_csv, kind, data.hex(), sig.hex(), -1 if label is None else int(label), f"{kind}: {what}"])
+    assert [v[4] for v in vec["release"][:8]] == [0, 1, 0, 1, -1, -1, -1, -1]
     (tmp_path / "vectors.json").write_text(json.dumps(vec))
     r = subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--script", "res://tests/crypto_test.gd", "--",
                         f"--vectors={tmp_path / 'vectors.json'}"], capture_output=True, text=True, encoding="utf-8",
@@ -364,16 +400,191 @@ def test_rfc8032_vectors_in_python():
     assert not ed25519.verify(ed25519.public_key(sk), b"\x72", s_plus_l), "S >= L is rejected"
 
 
-def test_launcher_unit_rules(tmp_path, keys):
+def signkms_fixtures(manifest: bytes, deck: bytes, kms: bytes, other: bytes) -> dict[str, str]:
+    """SIGNKMS-1: launcher/tests/unit_test.gd --signkms: signatures of a manifest.json, a manifest-macos.json and a payload.json under
+    the old (Deck: raw) and the new (KMS: envelope, release_keys.py) throwaway keys, of the wrong kinds, and of an unknown key"""
+    import release_keys
+    env = release_keys.envelope
+    mac = json.dumps({"format": 3, "product": "OpenBFME", "repo": TEST_REPO, "version": "v1.2.3-preview.4", "channel": "preview",
+                      "date": "2026-10-16", "commit": COMMIT, "assets": {"game": {}}}, indent=2).encode() + b"\n"
+    pay = json.dumps({"format": 1, "product": "OpenBFME", "repo": TEST_REPO, "version": "v1.2.3-preview.4", "platform": "linux-x64",
+                      "files": {"OpenBFME.x86_64": {"size": 1, "sha256": "0" * 64}}}, indent=2).encode() + b"\n"
+    sign = ed25519.sign
+    fx = {
+        "deck": ed25519.public_key(deck), "kms": ed25519.public_key(kms), "other": ed25519.public_key(other),
+        "envelope_abc": env("manifest.json", b"abc"), "envelope_of_manifest": env("manifest.json", manifest),
+        "manifest": manifest, "manifest_raw": sign(deck, manifest), "manifest_env": sign(kms, env("manifest.json", manifest)),
+        "manifest_env_deck": sign(deck, env("manifest.json", manifest)),
+        "manifest_env_other": sign(other, env("manifest.json", manifest)), "manifest_raw_other": sign(other, manifest),
+        "manifest_env_payload_kind": sign(kms, env("payload.json", manifest)),
+        "manifest_env_macos_kind": sign(kms, env("manifest-macos.json", manifest)),
+        "macos": mac, "macos_raw": sign(deck, mac), "macos_env": sign(kms, env("manifest-macos.json", mac)),
+        "macos_env_wrong_kind": sign(kms, env("manifest.json", mac)),
+        "payload": pay, "payload_raw": sign(deck, pay), "payload_env": sign(kms, env("payload.json", pay)),
+        "payload_env_wrong_kind": sign(kms, env("manifest.json", pay)),
+    }
+    # the envelope signature is what release_keys.verify accepts, and the raw one too (the Python twin of the rule)
+    lst = [("deck", fx["deck"]), ("kms", fx["kms"])]
+    assert release_keys.verify(lst, "manifest.json", manifest, fx["manifest_env"]) == "kms"
+    assert release_keys.verify(lst, "manifest.json", manifest, fx["manifest_raw"]) == "deck"
+    assert release_keys.verify(lst, "manifest.json", manifest, fx["manifest_env_payload_kind"]) is None
+    return {k: v.hex() for k, v in fx.items()}
+
+
+@pytest.mark.parametrize("project,script,summary", [
+    (LAUNCHER, "log_privacy_test.gd", "PRIVACY OK"),
+    (REPO / "godot", "crash_log_test.gd", "CRASH LOG OK"),
+])
+def test_local_diagnostic_privacy(tmp_path, project, script, summary):
+    r = subprocess.run([GODOT, "--headless", "--path", str(project), "--script", f"res://tests/{script}"],
+                       env=isolated_environment(tmp_path), capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and summary in r.stdout, r.stdout + r.stderr
+    assert "SCRIPT ERROR" not in r.stderr and "Parse Error" not in r.stderr, r.stderr
+
+
+def _unit_run(project, tmp_path, keys):
     files = release_files(tmp_path, "v1.2.3-preview.4", keys["release"])
     (tmp_path / "m.json").write_bytes(files["manifest.json"])
     (tmp_path / "m.sig").write_bytes(files["manifest.json.sig"])
-    r = subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--script", "res://tests/unit_test.gd", "--",
+    (tmp_path / "signkms.json").write_text(json.dumps(signkms_fixtures(files["manifest.json"], keys["release"], keys["kms"], keys["other"])))
+    return subprocess.run([GODOT, "--headless", "--path", str(project), "--script", "res://tests/unit_test.gd", "--",
                         f"--key={ed25519.public_key(keys['release']).hex()}", f"--manifest={tmp_path / 'm.json'}",
-                        f"--sig={tmp_path / 'm.sig'}"], env=isolated_environment(tmp_path), capture_output=True,
-                       text=True, encoding="utf-8", errors="replace", timeout=300)
+                        f"--sig={tmp_path / 'm.sig'}", f"--signkms={tmp_path / 'signkms.json'}"], env=isolated_environment(tmp_path),
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+
+
+def _check_unit_run(r):
+    output = r.stdout + r.stderr
+    assert "SCRIPT ERROR" not in output and "Parse Error" not in output, output
+    assert r.returncode == 0 and "UNIT OK" in r.stdout, output[-5000:]
     print(r.stdout[-3000:])
-    assert r.returncode == 0 and "UNIT OK" in r.stdout, r.stdout[-3000:] + r.stderr[-2000:]
+
+
+def test_launcher_unit_rules(tmp_path, keys):
+    r = _unit_run(LAUNCHER, tmp_path, keys)
+    _check_unit_run(r)
+    assert "UNIT signkms: the key-list checks run" in r.stdout, r.stdout[-3000:]
+
+
+@pytest.mark.parametrize("error", ["SCRIPT ERROR", "Parse Error"])
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_unit_wrapper_rejects_error_output(error, stream, capsys):
+    output = {"stdout": "UNIT OK 1 checks\n", "stderr": ""}
+    output[stream] += error + ": deliberately broken test\n"
+    result = subprocess.CompletedProcess([], 0, **output)
+    with pytest.raises(AssertionError, match=error):
+        _check_unit_run(result)
+    assert "UNIT OK" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("error", ["runtime", "parse"])
+def test_unit_wrapper_rejects_broken_test(tmp_path, keys, error):
+    project = tmp_path / "broken-launcher"
+    shutil.copytree(LAUNCHER, project, ignore=shutil.ignore_patterns(".godot"))
+    script = project / "tests/unit_test.gd"
+    source = script.read_text(encoding="utf-8")
+    if error == "runtime":
+        assert 'screen.build("")' in source
+        source = source.replace('screen.build("")', '# Deliberately reproduce the unbuilt-screen script error.')
+    else:
+        source += "\nfunc deliberately_broken( -> void:\n"
+    script.write_text(source, encoding="utf-8")
+    result = _unit_run(project, tmp_path, keys)
+    marker = "SCRIPT ERROR" if error == "runtime" else "Parse Error"
+    assert marker in result.stdout + result.stderr, result
+    assert "UNIT OK" not in result.stdout + result.stderr, result
+    assert result.returncode != 0, result
+    with pytest.raises(AssertionError, match=marker):
+        _check_unit_run(result)
+
+
+@pytest.mark.skipif(WINDOWS, reason="POSIX FIFO lifetime control")
+def test_slow_game_waits_for_exit_event(tmp_path):
+    game = tmp_path / "game"
+    game.write_bytes(slow_game())
+    game.chmod(0o755)
+    played = tmp_path / "played.txt"
+    with subprocess.Popen([str(game)], env=isolated_environment(tmp_path, OPENBFME_TEST_PLAYED=str(played)),
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as process:
+        event = played.with_name(f"{played.name}.{process.pid}.exit")
+        try:
+            deadline = time.monotonic() + 10
+            while not event.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert event.is_fifo() and process.poll() is None
+            with event.open("w") as signal:
+                signal.write("exit\n")
+            assert process.wait(timeout=10) == 0
+            assert not event.exists()
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=10)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the synthetic argv executable is a Linux fixture; Windows is cross-compiled")
+def test_install_paths_preserve_text_and_process_arguments():
+    r = subprocess.run([sys.executable, str(HERE / "test_install_paths.py"), "--godot", GODOT],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "PATH FIRST-RUN checks=66 failed=0 cases=11" in r.stdout
+    assert "PATH LAUNCHER checks=127 failed=0 cases=11" in r.stdout
+
+
+@pytest.mark.parametrize(("script", "verdict"), [
+    ("oauth_test.gd", r"OAUTH PASS \d+ checks"),
+    ("social_launch_test.gd", r"SOCIAL LAUNCH OK"),
+    ("social_ui_test.gd", r"SOCIAL UI OK"),
+    ("macos_preview_test.gd", r"MAC PREVIEW UNIT OK"),
+    ("lobby_list_test.gd", r"LAUNCHER LIST: \d+ passed, 0 failed"),
+])
+def test_standalone_launcher_scripts(tmp_path, script, verdict):
+    result = subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--script", f"res://tests/{script}"],
+                            env=isolated_environment(tmp_path), capture_output=True, text=True, timeout=90, check=False)
+    output = result.stdout + result.stderr
+    assert not re.search(r"(?m)^\s*(?:SCRIPT ERROR|ERROR):", output), output
+    if result.returncode == 77:
+        assert script == "macos_preview_test.gd" and "native bundle checks SKIP: macOS required" in output, output
+        pytest.skip("macOS preview: portable checks passed; native bundle checks require macOS")
+    assert result.returncode == 0 and re.search(verdict, output), output
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="short-write regression requires Linux RLIMIT_FSIZE")
+def test_launcher_write_failures(tmp_path):
+    # Set the limit in a single-threaded child, not preexec_fn in the threaded release-server process.
+    limit = ("import os, resource, signal, sys; signal.signal(signal.SIGXFSZ, signal.SIG_IGN); "
+             "resource.setrlimit(resource.RLIMIT_FSIZE, (4096, 4096)); os.execv(sys.argv[1], sys.argv[1:])")
+    godot = shutil.which(GODOT) or GODOT  # os.execv takes a path, not a PATH name like the CI's "godot"
+    result = subprocess.run([sys.executable, "-c", limit, godot, "--headless", "--path", str(LAUNCHER), "--script",
+                             "res://tests/write_failure_test.gd", "--", "--write-limited"],
+                            env=isolated_environment(tmp_path), capture_output=True, text=True, timeout=60, check=False)
+    output = result.stdout + result.stderr
+    assert result.returncode == 0 and "WRITE FAILURE PASS: 2 checks (settings=true, icon=true)" in output, output
+    assert not re.search(r"(?m)^\s*(?:SCRIPT ERROR|ERROR):", output), output
+
+
+@pytest.mark.parametrize("runner", ["test_launcher_social.py", "test_launcher_oauth.py"])
+def test_launcher_social_integrations(tmp_path, runner):
+    if runner == "test_launcher_oauth.py":
+        from test_launcher_oauth import node_command, safe_output
+        try:
+            node_command()
+        except RuntimeError as error:
+            pytest.skip(f"SKIP LOUDLY: launcher OAuth integration needs Node.js with node:sqlite support; {error}")
+    result = subprocess.run([sys.executable, str(HERE / runner), "--godot", GODOT],
+                            env=isolated_environment(tmp_path), capture_output=True, text=True, timeout=240, check=False)
+    output = result.stdout + result.stderr
+    if runner == "test_launcher_oauth.py":
+        output = safe_output(output)
+    verdict = "OAUTH INTEGRATION PASS" if runner == "test_launcher_oauth.py" else "PASS: persistent identity"
+    assert result.returncode == 0 and verdict in output, output
+
+
+def test_oauth_without_node_skips_loudly(monkeypatch, tmp_path):
+    monkeypatch.delenv("NODE", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(pytest.skip.Exception, match="SKIP LOUDLY: launcher OAuth integration needs Node.js.*not found"):
+        test_launcher_social_integrations(tmp_path, "test_launcher_oauth.py")
 
 
 def _layout_run(project: Path, tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
@@ -505,7 +716,9 @@ def test_play_checks_the_systems_glibc(tmp_path, server, keys):
     game = game_tar(tmp_path, "v0.2.0", version_extra="requires GLIBC 2.35\n")
     server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"], game=game))
     r = launch(tmp_path, server, keys["release"], "--update", "--play", env_extra={"OPENBFME_TEST_SYSTEM_GLIBC": "2.31"})
-    assert r.code == 1 and r.has("it needs GLIBC 2.35 or newer, and this system has GLIBC 2.31"), r
+    assert r.code == 1 and r.has("this Linux system is too old for this build. "
+                                "Update to a Linux distribution with GLIBC 2.35 or newer (this system has 2.31). "
+                                "If you need help, use the OpenBFME Discord #bug-reports forum or GitHub issues."), r
     assert played(tmp_path) == ""
     r = launch(tmp_path, None, keys["release"], "--play", env_extra={"OPENBFME_TEST_SYSTEM_GLIBC": "2.35"})
     assert r.code == 0 and "played game" in played(tmp_path), r
@@ -633,6 +846,63 @@ def test_manifest_signed_by_another_key_is_rejected(tmp_path, server, keys):
     assert installed(tmp_path) == []
 
 
+def kms_slot(files: dict[str, bytes], kms: bytes, sig: bytes | None = b"") -> dict[str, bytes]:
+    """SIGNKMS-1: a release signed the new way: manifest.json.sig2 is the KMS key's envelope signature (release_keys.py); manifest.json.sig
+    is left as it is (b""), removed (None) or replaced by `sig`"""
+    import release_keys
+    out = dict(files)
+    out["manifest.json.sig2"] = ed25519.sign(kms, release_keys.envelope("manifest.json", files["manifest.json"]))
+    if sig is None:
+        del out["manifest.json.sig"]
+    elif sig:
+        out["manifest.json.sig"] = sig
+    return out
+
+
+@pytest.mark.parametrize("slot", ["sig missing", "sig invalid", "sig unknown key"])
+def test_a_release_signed_by_the_new_key_is_taken_from_its_second_slot(tmp_path, server, keys, slot):
+    """SIGNKMS-1: a launcher trusting the list (old key, new key) installs and plays a release whose manifest.json.sig is missing or not
+    valid and whose manifest.json.sig2 is the new key's envelope signature; the verified signature is kept as manifest.json.sig"""
+    sig = {"sig missing": None, "sig invalid": bytes(64), "sig unknown key": ed25519.sign(keys["other"], b"x")}[slot]
+    files = kms_slot(release_files(tmp_path, "v0.2.0", keys["release"]), keys["kms"], sig)
+    server.publish("v0.2.0", files)
+    r = launch(tmp_path, server, [keys["release"], keys["kms"]], "--update", "--list", "--play")
+    assert r.code == 0 and r.has("update installed v0.2.0") and "played game" in played(tmp_path), r
+    assert (data(tmp_path) / "versions/v0.2.0/manifest.json.sig").read_bytes() == files["manifest.json.sig2"]
+    assert (data(tmp_path) / "cache/manifests/v0.2.0/manifest.json.sig").read_bytes() == files["manifest.json.sig2"]
+    r = launch(tmp_path, None, [keys["release"], keys["kms"]], "--list", "--play")   # offline: the stored signature verifies again
+    assert r.code == 0 and r.has("installed v0.2.0"), r
+
+
+def test_a_release_with_both_slots_is_read_from_the_first(tmp_path, server, keys):
+    """SIGNKMS-1: a valid manifest.json.sig (the old key, raw) is used as it is; manifest.json.sig2 is not even downloaded. An old
+    launcher (the old key alone) reads the same release"""
+    files = kms_slot(release_files(tmp_path, "v0.2.0", keys["release"]), keys["kms"])
+    files["manifest.json.sig2"] = bytes(64)   # broken: would fail if it were read
+    server.publish("v0.2.0", files)
+    r = launch(tmp_path, server, [keys["release"], keys["kms"]], "--update")
+    assert r.code == 0 and r.has("update installed v0.2.0"), r
+    assert not any(p.endswith("/manifest.json.sig2") for p, _ in server.requests), "the second slot is not downloaded"
+    assert (data(tmp_path) / "versions/v0.2.0/manifest.json.sig").read_bytes() == files["manifest.json.sig"]
+    r = launch(tmp_path / "old", server, keys["release"], "--update")
+    assert r.code == 0 and r.has("update installed v0.2.0"), r
+
+
+def test_a_release_with_no_valid_slot_is_refused(tmp_path, server, keys):
+    """SIGNKMS-1: neither slot valid (a broken manifest.json.sig, the second slot by an unknown key; or only the new key's signature for
+    a launcher trusting the old key alone): refused, both slots named, nothing downloaded"""
+    files = kms_slot(release_files(tmp_path, "v0.2.0", keys["release"]), keys["other"], bytes(64))
+    server.publish("v0.2.0", files)
+    r = launch(tmp_path, server, [keys["release"], keys["kms"]], "--update")
+    assert r.code == 3 and r.has("signature is not valid") and r.has("manifest.json.sig: not valid; manifest.json.sig2: not valid"), r
+    assert installed(tmp_path) == []
+    assert not any("/dl/v0.2.0/openbfme-v0.2.0" in p for p, _ in server.requests), "no package is downloaded for a bad manifest"
+    server.publish("v0.2.0", kms_slot(release_files(tmp_path, "v0.2.0", keys["release"]), keys["kms"], None))
+    r = launch(tmp_path, server, keys["release"], "--update")
+    assert r.code == 3 and r.has("manifest.json.sig: not in the release; manifest.json.sig2: not valid"), r
+    assert installed(tmp_path) == []
+
+
 def test_manifest_for_another_repository_is_rejected(tmp_path, server, keys):
     server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"], repo="Other/fork"))
     r = launch(tmp_path, server, keys["release"], "--update")
@@ -727,7 +997,7 @@ def test_redirects_only_to_allowed_hosts(tmp_path, server, keys):
     port = server.httpd.server_address[1]
     server.redirect[f"/dl/v0.2.0/{name}"] = f"http://localhost:{port}/dl/v0.2.0/{name}"
     r = launch(tmp_path, server, keys["release"], "--update")
-    assert r.code == 3 and r.has("refused URL 'http://localhost"), r
+    assert r.code == 3 and r.has(f"refused URL 'http://localhost:{port}/dl/v0.2.0/{name}': not HTTPS"), r
     server.redirect[f"/dl/v0.2.0/{name}"] = f"/elsewhere/{name}"  # a relative redirect on the same origin is followed
     server.files[f"/elsewhere/{name}"] = files[name]
     r = launch(tmp_path, server, keys["release"], "--update")
@@ -736,7 +1006,7 @@ def test_redirects_only_to_allowed_hosts(tmp_path, server, keys):
 
 def test_test_origin_must_be_loopback(tmp_path, keys):
     r = launch(tmp_path, None, keys["release"], "--update", origin="http://example.com:80")
-    assert r.code == 1 and r.has("the test API origin must be http://127.0.0.1"), r
+    assert r.code == 1 and r.has("the test API origin must be http://<address>:<port>"), r
 
 
 # ---- the packaged launcher: self-update and the release build ---------------------------------------------------------------------------
@@ -1023,9 +1293,11 @@ def test_release_build_ignores_the_test_options(tmp_path, server, keys, launcher
     inst = unpack_launcher(tmp_path / "rel", launcher_builds["release"])
     server.publish("v0.3.0", release_files(tmp_path, "v0.3.0", keys["release"]))
     # --version only: with the test options ignored, --update would ask the real api.github.com
-    r = launch(tmp_path, server, keys["other"], "--version", exe=inst / LAUNCHER_EXE, timeout=120)
+    r = launch(tmp_path, server, keys["other"], "--version", "--ui-demo=offline", "--ui-demo=paused",
+               exe=inst / LAUNCHER_EXE, timeout=120)
     assert r.has("ignored --api-base: test options are off in a release build"), r
     assert r.has("ignored --trust-key"), r
+    assert r.out.count("ignored --ui-demo: test options are off in a release build") == 2, r
     assert not server.requests, "the release build never contacts the test server"
     assert "updates from Test/repo" in r.out
 
@@ -1272,6 +1544,28 @@ def big_game_release(tmp: Path, server: ReleaseServer, key: bytes, version: str 
     return name
 
 
+def play_during_download(tmp: Path, server: ReleaseServer, key: bytes, name: str) -> Run:
+    """Hold the download after its first chunk until Play has started the installed game and elected to wait for the update."""
+    resume = threading.Event()
+    path = next(p for p in server.files if p.endswith("/" + name))
+    server.pause_once[path] = resume
+    log = data(tmp) / "launcher.log"
+    offset = log.stat().st_size if log.is_file() else 0
+    ready = "LAUNCHER Playing v0.1.0. The update keeps downloading in the background;"
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        run = pool.submit(window, tmp, server, key, f"--ui-stop=play@{name}")
+        try:
+            deadline = time.monotonic() + 120
+            while ready not in _new_launcher_log(log, offset):
+                if run.done():
+                    pytest.fail(f"Play did not wait for the background update: {run.result()}")
+                assert time.monotonic() < deadline, _new_launcher_log(log, offset)
+                resume.wait(0.05)
+        finally:
+            resume.set()
+        return run.result(timeout=180)
+
+
 def other_partials(tmp: Path) -> list[Path]:
     """resumable downloads in downloads/ that are not the running job's: another version's game package, an unrelated file"""
     dl = data(tmp) / "downloads"
@@ -1335,6 +1629,71 @@ def test_a_stopped_launcher_download_can_be_resumed_or_cancelled(tmp_path, serve
 
 # ---- lane UI-5: updates in the background, the notes cards ------------------------------------------------------------------------------
 
+@pytest.mark.parametrize("case", ["fresh", "cached", "offline", "network-error", "rate-limit", "manifest-error", "available",
+                                  "no-release", "auto-install", "manual", "manual-available", "manual-error",
+                                  "completion", "completion-error"])
+def test_update_pill_and_bottom_line_share_the_completed_state(tmp_path, server, keys, case):
+    current, newer = "v0.4.12-nightly.20261022", "v0.4.13-nightly.20261023"
+    key = keys["release"]
+    server.publish(current, release_files(tmp_path, current, key))
+    r = launch(tmp_path, server, key, "--update", "--auto-update=off", "--channel=nightly", "--online-count=off")
+    assert r.code == 0, r.out
+    head, detail = "Up to date", "Up to date."
+    diagnostic = ""
+    args = []
+    if case == "fresh":
+        for path in (data(tmp_path) / "cache").glob("releases.*"):
+            path.unlink()
+    elif case in ("available", "manual-available", "auto-install"):
+        server.publish(newer, release_files(tmp_path, newer, key))
+        if case == "auto-install":
+            r = launch(tmp_path, server, key, "--auto-update=on")
+            assert r.code == 0, r.out
+            detail = "Installed " + newer + "."
+        else:
+            head, detail = "Nightly 0.4.13 (2026-10-23) is available", newer + " is available."
+    elif case in ("rate-limit", "manual-error"):
+        server.rate_limited = True
+        head, detail = "Could not check for updates", "Could not check for updates. Check your internet connection; retry later."
+        diagnostic = "Updates skipped: GitHub's API rate limit"
+    elif case == "network-error":
+        server.stop()
+        head, detail = "Could not check for updates", "Could not check for updates. Check your internet connection; retry later."
+        diagnostic = "Updates skipped: the release list could not be fetched:"
+    elif case == "manifest-error":
+        server.publish(newer, release_files(tmp_path, newer, key))
+        path = next(p for p in server.files if p.endswith(newer + "/manifest.json.sig"))
+        server.files[path] = b"invalid signature"
+        head, detail = "Could not check for updates", "Update could not be verified. Check for updates and retry."
+        diagnostic = "Update rejected:"
+    elif case == "no-release":
+        server.releases.clear()
+        head, detail = "No nightly release yet", "There is no nightly release yet."
+    elif case == "completion-error":
+        head, detail = "Could not check for updates", "Update could not be verified. Check for updates and retry."
+    if case == "offline" or case.startswith(("manual", "completion")):
+        args.append("--offline")
+    if case == "offline":
+        head, detail = "Offline — updates not checked", ""
+    server.requests.clear()
+    env = isolated_environment(tmp_path)
+    result = subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--script", "res://tests/update_status_test.gd", "--",
+                             f"--api-base={server.origin}", f"--trust-key={ed25519.public_key(key).hex()}", f"--repo={TEST_REPO}",
+                             f"--status-case={case}", f"--status-head={head}", f"--status-detail={detail}",
+                             f"--status-diagnostic={diagnostic}", *args],
+                            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+    out = result.stdout + result.stderr
+    assert result.returncode == 0 and "UPDATE STATUS OK" in out and "SCRIPT ERROR" not in out, out
+    requests = [headers for path, headers in server.requests if path.startswith("/repos/")]
+    if case in ("offline", "completion", "completion-error"):
+        assert requests == []
+    elif case in ("fresh", "cached", "manual"):
+        assert len(requests) == (2 if case == "manual" else 1)
+        assert all(("if-none-match" in h) == (case != "fresh") for h in requests)
+    if case == "auto-install":
+        assert installed(tmp_path) == [current, newer]
+
+
 def test_with_updating_by_itself_off_the_window_only_offers_the_update(tmp_path, server, keys):
     server.publish("v0.1.0", release_files(tmp_path, "v0.1.0", keys["release"]))
     r = launch(tmp_path, server, keys["release"], "--update", "--auto-update=off")
@@ -1354,7 +1713,8 @@ def test_play_during_a_background_update_starts_the_installed_version(tmp_path, 
     server.publish("v0.1.0", release_files(tmp_path, "v0.1.0", keys["release"]))
     assert launch(tmp_path, server, keys["release"], "--update").code == 0 and installed(tmp_path) == ["v0.1.0"]
     name = big_game_release(tmp_path, server, keys["release"], "v0.2.0")
-    r = window(tmp_path, server, keys["release"], f"--ui-stop=play@{name}")
+    del server.throttle[name]
+    r = play_during_download(tmp_path, server, keys["release"], name)
     assert r.has(f"ui test: play pressed during Downloading {name}") and r.has("started v0.1.0 (pid"), r
     assert r.has("installed v0.2.0") and r.has("the background update finished while the game runs: the launcher closes"), r
     assert r.code == 0 and not r.has("ui status:"), "it closed by itself, before the screenshot step"
@@ -1454,14 +1814,27 @@ def test_a_background_update_that_fails_while_playing_stays_visible(tmp_path, se
     name = make_manifest.asset_name("game", "v0.2.0", PLATFORM)
     files[name] = files[name][:-1] + bytes([files[name][-1] ^ 1])  # same size, other bytes
     server.publish("v0.2.0", files)
-    server.throttle[name] = 0.02
-    r = window(tmp_path, server, keys["release"], f"--ui-stop=play@{name}")
+    r = play_during_download(tmp_path, server, keys["release"], name)
     assert r.has(f"ui test: play pressed during Downloading {name}") and r.has("started v0.1.0 (pid"), r
     assert r.has("does not match the signed manifest") and r.has("the launcher stays open to show it"), r
     assert not r.has("the launcher closes") and r.has("ui dialog: Update not installed: Update rejected:"), r
     r = window(tmp_path, None, keys["release"], "--offline")
     assert r.has("showing an update failure from while the game ran") and r.has("ui dialog: An update failed while you played"), r
     assert installed(tmp_path) == ["v0.1.0"]
+
+
+@pytest.mark.parametrize("result", ["success", "failure"])
+def test_background_update_completion_pending_when_play_returns(tmp_path, result):
+    env = isolated_environment(tmp_path)
+    r = subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--script", "res://tests/background_play_test.gd", "--", result],
+                       env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0 and "BACKGROUND PLAY pending completion kept" in out, out
+    if result == "success":
+        assert "the background update finished while the game runs: the launcher closes" in out, out
+    else:
+        assert "the background update failed while the game runs: the launcher stays open" in out, out
+        assert "BACKGROUND PLAY failure kept for the next start" in out and "the launcher closes" not in out, out
 
 
 def test_with_updating_by_itself_off_a_launcher_only_update_is_offered(tmp_path, server, keys, launcher_builds):

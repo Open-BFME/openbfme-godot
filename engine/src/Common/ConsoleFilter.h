@@ -19,8 +19,8 @@ namespace ConsoleFilter
 {
 
 // outFd / errFd: where the redacted streams go (-1 = the process's original stdout / stderr; tests pass files). maxLine: the longest line
-// held whole; beyond it the line is written in parts cut by LogPrivacy::safeCut (tests pass a small value).
-bool install(const LogPrivacy::Rules &rules, std::string *error, int outFd = -1, int errFd = -1, size_t maxLine = 8u << 20);
+// held whole; beyond it the entire line is omitted (never emit a credential in split chunks).
+bool install(const LogPrivacy::Rules &rules, std::string *error, int outFd = -1, int errFd = -1, size_t maxLine = LogPrivacy::kMaxFieldBytes);
 // Flushes stdio, restores the original descriptors and writes what the pipes still hold. Safe to call when not installed.
 void uninstall();
 bool installed();

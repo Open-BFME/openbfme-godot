@@ -6,6 +6,8 @@
 #pragma once
 
 #include "Common/LooseFileScan.h"
+#include "Common/ModMount.h"
+#include "GameClient/AssetPacks.h"
 #include "Common/RetailArchivePolicy.h"
 
 #include <godot_cpp/classes/ref_counted.hpp>
@@ -50,6 +52,26 @@ public:
 	// Build a presentation-only source from the verified BFME2 install of this
 	// normal RotWK mount. The returned source never becomes a GameWorld source.
 	Ref<RetailFileSystem> create_bfme2_shell();
+	// lane MODS-1: the `-mod` operands of the next mount (RotWK's -mod, Common/ModMount.h), in command-line order; a relative path is taken
+	// below the user data folder named by the RotWK install's gi.dat. Empty = no mod. The next mount_retail / mount_retail_paths mounts them
+	// over the verified retail archives and fails as a whole when one cannot be mounted.
+	void set_mods(const PackedStringArray &paths);
+	// lane MODS-2: an install-folder mod (Common/ModMount.h MountInstallOverlay: e.g. Edain as the All In One launcher installs it), laid over the
+	// RotWK install for the next mount; "" = none. Mounted before the -mod operands.
+	void set_install_mod(const String &folder);
+	// several folders, highest priority first (an All In One package with its enhancements and patches)
+	void set_install_mods(const PackedStringArray &folders);
+	// lane MODS-3: the MD5s of the mod's modified game binaries (Common/ModEngineFeatures.h); the next mount turns their features on and fails
+	// when one is unknown. Empty = retail engine.
+	void set_mod_engines(const PackedStringArray &md5s);
+	PackedStringArray get_mods() const { return m_modArgs; }
+	// GDScript view of the mounted mod: {mounted, archives: [{path, size}], loose_files, identity: [...], stops: [...]}
+	Dictionary get_mod_report() const;
+	// the source list of one virtual path, the winner first (ArchiveFileSystem::sourcesOf; "mod-folder:<path>" for a loose mod file)
+	PackedStringArray get_file_sources(const String &path) const;
+	// lane SDK-0 (GameClient/AssetPacks.h): the cosmetic asset packs, in order (the last wins a name). Replaces the packs of this file system;
+	// {ok, errors, packs, textures, models, notes, not_covered}. Takes effect for asset managers and material factories made afterwards.
+	Dictionary set_asset_packs(const PackedStringArray &folders);
 
 	bool is_mounted() const { return m_mounted; }
 	bool is_shell_source() const { return m_shellSource; }
@@ -79,6 +101,13 @@ public:
 	// Engine side: the folder a map name's maps are in (MapClassification::mapDirectory): "maps", or with userMap the user maps folder. False +
 	// *error when there is no user maps folder.
 	bool mapsFolder(bool userMap, std::string &out, std::string *error) const;
+	// lane MODS-1: the mounted mod's ProfileIdentity lines (empty without a mod) and its folder (the movie player's "Mod Path", RW 0x490D1C)
+	std::vector<std::string> modIdentity() const; // the install-folder mod's lines, then the -mod's
+	const std::string &modFolder() const { return m_modReport.loose.root; }
+	// lane SDK-0: the packs (empty without any) and the W3D source of the RENDER side: the mounted files with the packs in front. Never for
+	// the simulation's asset manager (LiveGame's m_simAssetSource reads the archive file system directly).
+	const AssetPacks &assetPacks() const { return m_packs; }
+	std::unique_ptr<W3DFileSource> renderW3DSource();
 
 protected:
 	static void _bind_methods();
@@ -86,6 +115,7 @@ protected:
 private:
 	Dictionary mountFrom(const std::string &rotwkRoot, const std::string &bfme2Root, PackedStringArray errors);
 	Dictionary mountBfme2Shell(const std::string &bfme2Root);
+	void mountMods(const std::string &rotwkRoot, PackedStringArray &errors); // lane MODS-1
 
 	std::unique_ptr<Win32BIGFileSystem> m_fs;
 	bool m_mounted = false;
@@ -98,6 +128,12 @@ private:
 	std::vector<MountedArchive> m_mountedArchives;
 	std::string m_userMapFolder; // lane MOD-5
 	std::string m_userMapError;
+	PackedStringArray m_modArgs;    // lane MODS-1
+	ModMountReport m_modReport;     // the mounted mod (ok == false without one)
+	PackedStringArray m_installModArgs; // lane MODS-2: highest priority first
+	PackedStringArray m_modEngines;     // lane MODS-3
+	ModMountReport m_installModReport;
+	AssetPacks m_packs;             // lane SDK-0
 };
 
 } // namespace godot

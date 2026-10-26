@@ -483,7 +483,10 @@ TEST_CASE("MOD-4: a Cave Troll Lair spawns its troll, which guards the lair, and
 	troll->setPosition(&away);
 	if (AIUpdateInterface *ai = troll->getAIUpdateInterface())
 	{
-		ai->aiIdle(CMD_FROM_AI);
+		// idled by a script, not by its AI: an AI idle keeps the troll's own guard walk (an attack-move, RW 0x696266) armed, and the idle state resumes it
+		// (lane TARGET-1) without a new guard move. Its wander around the lair is still on at frame 30 since the formations are centred on their hordes
+		// (RW 0x86C4EA) and the destination adjustment spirals around the cell (RW 0x6FA2A4)
+		ai->aiIdle(CMD_FROM_SCRIPT);
 	}
 	auto distToLair = [&]() {
 		const float dx = troll->getPosition()->x - lair->getPosition()->x, dy = troll->getPosition()->y - lair->getPosition()->y;

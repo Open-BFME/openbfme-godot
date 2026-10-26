@@ -6,23 +6,36 @@
 
 #include "doctest.h"
 #include "TestChild.h"
+#include "OnlineTestWait.h"
 
 #include "Common/Crc32.h"
+#include "Common/MiniJson.h"
 #include "Common/Sha256.h"
 #include "GameNetwork/NetPacket.h"
 #include "GameNetwork/OnlineStart.h"
 #include "GameNetwork/RelayLog.h"
+#include "GameNetwork/RelayCommit.h"
+#include "GameNetwork/RelayFrameBundle.h"
+#include "GameNetwork/RelayMembership.h"
 #include "GameNetwork/RelayProtocol.h"
 #include "GameNetwork/Transport.h"
 #include "RelayCore.h"
+#include "RelayLogProbe.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <regex>
+#include <sstream>
 #include <string>
 #include <vector>
+
+// relaylogprobe::classicDigest(600) with lane NETDIAG-1's RelayLog::assemble (0d044941d, compiled against these headers)
+constexpr std::uint64_t kNetdiag1ClassicDigest = 0xcd9078d1c4bf1210ull;
 
 #if defined(__linux__) || defined(__APPLE__)
 #include "DatagramBatch.h"
@@ -230,6 +243,494 @@ std::vector<std::uint8_t> readFile(const std::string &path)
 }
 } // namespace
 
+namespace
+{
+// lane NETDIAG-1: an ack-only transport packet (no records) from `sender` acknowledging records below `ack`
+std::vector<std::uint8_t> ackPacket(std::uint8_t sender, std::uint32_t ack)
+{
+	std::vector<std::uint8_t> p = transportPacket(sender, 0, {});
+	p.resize(14);
+	p[12] = p[13] = 0;
+	for (int i = 0; i < 4; ++i)
+	{
+		p[(size_t)i + 8] = (std::uint8_t)(ack >> (8 * i));
+	}
+	const std::uint32_t crc = crc32Bytes(p.data() + 4, p.size() - 4);
+	for (int i = 0; i < 4; ++i)
+	{
+		p[(size_t)i] = (std::uint8_t)(crc >> (8 * i));
+	}
+	return p;
+}
+} // namespace
+
+// lane NETDIAG-1 (relay health, from a contributor's change): the same scripted exchange on every DATA path that forwards a transport packet —
+// a plain lockstep game without and with the command log (follow), and a canonical game's direct commands (validatePacket only)
+// lane NETDIAG-1 (from a contributor's parser hardening): a GAP reason other than 1 / 2 and an END reason other than 1..3 are refused (RelayCore
+// writes no other); the valid ones parse in an eight-slot version-2 log and a sixteen-slot version-4 one. (The contributor's `slot >= 8` checks are
+// not taken: RelayLogFile already checks every slot against the log's wire slots and its slot mask.)
+TEST_CASE("online2: relay log GAP and END reasons outside what the relay writes are refused; the valid ones parse in v2 and v4 logs")
+{
+	auto header = [](std::uint32_t version, std::uint16_t mask) {
+		std::vector<std::uint8_t> log{ 'O', 'B', 'F', 'M', 'E', 'R', 'L', 'G' };
+		NetByteWriter w;
+		w.u32(version);
+		w.u32(0x89abcdefu);
+		w.u32(0x01234567u);
+		w.u8((std::uint8_t)mask);
+		if (version == 4)
+		{
+			w.u8((std::uint8_t)(mask >> 8));
+		}
+		w.u32(1700000000u);
+		log.insert(log.end(), w.data().begin(), w.data().end());
+		return log;
+	};
+	auto gap = [](std::uint8_t sender, std::uint8_t target, std::uint8_t reason) { return std::vector<std::uint8_t>{ 3, sender, target, 0, 0, 0, 0, reason }; };
+	auto end = [](std::uint8_t reason, size_t wireSlots) {
+		std::vector<std::uint8_t> r{ 4, 0, 0, 0, 0, reason };
+		r.insert(r.end(), wireSlots * 24, 0);
+		return r;
+	};
+	auto parse = [](std::vector<std::uint8_t> log, const std::vector<std::vector<std::uint8_t>> &records, std::string &error) {
+		for (const std::vector<std::uint8_t> &r : records)
+		{
+			log.insert(log.end(), r.begin(), r.end());
+		}
+		RelayLogFile parsed;
+		error.clear();
+		return RelayLogFile::parse(log, parsed, &error) ? (int)parsed.gaps.size() * 10 + parsed.endReason : -1;
+	};
+	std::string error;
+	const std::vector<std::uint8_t> v2 = header(2, 0x03), v4 = header(4, 0x8001);
+	CHECK(parse(v2, { gap(0, 1, 0) }, error) == -1);
+	CHECK(error == "relay log: invalid GAP reason 0");
+	CHECK(parse(v4, { gap(15, 0, 3) }, error) == -1);
+	CHECK(error == "relay log: invalid GAP reason 3");
+	CHECK(parse(v2, { end(0, 8) }, error) == -1);
+	CHECK(error == "relay log: invalid END reason 0");
+	CHECK(parse(v4, { end(4, 16) }, error) == -1);
+	CHECK(error == "relay log: invalid END reason 4");
+	CHECK(parse(v2, { gap(0, 1, 1), gap(1, 0, 2), end(1, 8) }, error) == 21);
+	CHECK(parse(v2, { end(2, 8) }, error) == 2);
+	CHECK(parse(v4, { gap(15, 0, 1), gap(0, 15, 2), end(3, 16) }, error) == 23);
+	// the slot checks that were already there: slot 8 of an eight-slot log, slot 14 outside a sixteen-slot log's mask
+	CHECK(parse(v2, { gap(8, 0, 1) }, error) == -1);
+	CHECK(error == "relay log: invalid GAP slot");
+	CHECK(parse(v4, { gap(14, 0, 1) }, error) == -1);
+	CHECK(error == "relay log: invalid GAP slot");
+}
+
+// lane NETDIAG-1 (found by the relay_log fuzzer, 26 s on one 289-byte log): the assembly walked every frame up to the highest execution frame any
+// command named while a slot was held for a REJOIN, though no slot ran a frame any more; a client chooses that frame number (0xFFFFFFFE here:
+// four billion empty frames; 0xFFFFFFFF never ended). It now ends at the first frame with no member, with the same result.
+// the classic rooms' assembly (2 or more network slots) is lane NETDIAG-1's (0d044941d): the hash of 600 generated logs' assembled results
+// (tests/RelayLogProbe.h), measured with 0d044941d's RelayLog::assemble
+TEST_CASE("online2: a classic room's relay log assembles exactly as lane NETDIAG-1's assembler did (600 generated logs)")
+{
+	const std::uint64_t digest = relaylogprobe::classicDigest(600, [](const RelayLogFile &l, const NetworkConfig &c, RelayLog::Assembled &a, std::string *e) {
+		return RelayLog::assemble(l, c, a, e);
+	});
+	CHECK(digest == kNetdiag1ClassicDigest);
+}
+
+// lane SOLO-1 x NETDIAG-1: a one-human room's walk jumps to its held slot's own REJOINs; a crafted log of tens of thousands of incarnations,
+// each one's REJOIN far ahead, and as many drops, assembles in linear time (each frame, incarnation and drop is looked at a bounded number of times)
+TEST_CASE("online2: a crafted one-human room's relay log of far-ahead REJOINs and many drops assembles in well under a second")
+{
+	RelayLogFile log;
+	log.version = 2;
+	log.slotMask = 0x01;
+	auto add = [&](const NetCommandMsg &m) {
+		RelayLogFile::Command c;
+		c.sender = 0;
+		c.msg = m;
+		log.commands.push_back(c);
+	};
+	for (std::uint32_t f = 0; f < 3; ++f)
+	{
+		add(relaylogprobe::frameInfo(0, f, 0));
+	}
+	const int kIncarnations = 60000;
+	for (int k = 1; k <= kIncarnations; ++k)
+	{
+		RelayLogFile::Rejoined j;
+		j.slot = 0;
+		j.generation = k;
+		j.firstCommand = log.commands.size();
+		log.rejoins.push_back(j);
+		const std::uint32_t at = 10u + (std::uint32_t)k * 1000u; // the slot's own REJOIN, far ahead of the last frame it ran
+		NetCommandMsg r;
+		r.type = NETCOMMANDTYPE_REJOIN;
+		r.executionFrame = at;
+		r.targetSlot = 0;
+		add(r);
+		add(relaylogprobe::frameInfo(0, at, 1));
+		add(relaylogprobe::frameInfo(0, at + 1, 0));
+	}
+	for (int d = 0; d < 20000; ++d)
+	{
+		NetCommandMsg m;
+		m.type = NETCOMMANDTYPE_DISCONNECTPLAYER;
+		m.targetSlot = 0;
+		m.frame = 100000000u + (std::uint32_t)d * 7u; // after every incarnation's frames: each joined incarnation takes the first one
+		add(m);
+	}
+	NetworkConfig config;
+	config.slotPlayerIndex.fill(-1);
+	config.slotPlayerIndex[0] = 0;
+	RelayLog::Assembled a;
+	std::string error;
+	const auto t0 = std::chrono::steady_clock::now();
+	REQUIRE_MESSAGE(RelayLog::assemble(log, config, a, &error), error);
+	const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+	MESSAGE("crafted one-human relay log of ", log.commands.size(), " records assembled in ", ms, " ms");
+	CHECK(ms < 1000.0); // tolerance: a linear walk takes tens of milliseconds; the quadratic one took minutes
+	// every incarnation's own REJOIN ran: it was admitted, ran its two frames and ended where its successor began
+	size_t rejoins = 0;
+	for (const auto &m : a.membership)
+	{
+		rejoins += m.kind == Network::MembershipEvent::REJOIN ? 1 : 0;
+	}
+	CHECK(rejoins == (size_t)kIncarnations);
+	CHECK(a.joinFrame[0] == 10u + (std::uint32_t)kIncarnations * 1000u + 1u);
+}
+
+TEST_CASE("online2: the relay log assembly ends when no slot runs a frame, whatever frame a held slot's command names")
+{
+	auto assembleWith = [](std::uint32_t namedFrame, RelayLog::Assembled &a) {
+		RelayLogFile log;
+		log.version = 2;
+		log.slotMask = 0x03;
+		auto add = [&](int sender, NetCommandMsg m) {
+			RelayLogFile::Command c;
+			c.sender = sender;
+			c.msg = m;
+			log.commands.push_back(c);
+		};
+		auto info = [](int slot, std::uint32_t frame) {
+			NetCommandMsg m;
+			m.type = NETCOMMANDTYPE_FRAMEINFO;
+			m.slot = (std::uint8_t)slot;
+			m.executionFrame = frame;
+			m.commandCount = 0;
+			return m;
+		};
+		auto leave = [](int slot, std::uint32_t frame) {
+			NetCommandMsg m;
+			m.type = NETCOMMANDTYPE_PLAYERLEAVE;
+			m.slot = (std::uint8_t)slot;
+			m.executionFrame = frame;
+			return m;
+		};
+		// slot 0 runs frames 0..2 and leaves at 3; slot 1 runs frame 0, leaves at 1 and comes back (REJOINED) but no REJOIN of it ever runs
+		for (std::uint32_t f = 0; f < 3; ++f)
+		{
+			add(0, info(0, f));
+		}
+		add(0, leave(0, 3));
+		add(1, info(1, 0));
+		add(1, leave(1, 1));
+		RelayLogFile::Rejoined j;
+		j.slot = 1;
+		j.generation = 1;
+		j.firstCommand = log.commands.size();
+		log.rejoins.push_back(j);
+		add(1, info(1, namedFrame)); // the held incarnation's frame info
+		NetworkConfig config;
+		config.slotPlayerIndex = { { 0, 1, -1, -1, -1, -1, -1, -1 } };
+		std::string error;
+		const bool ok = RelayLog::assemble(log, config, a, &error);
+		CHECK_MESSAGE(ok, error);
+		return ok;
+	};
+	RelayLog::Assembled small, huge;
+	REQUIRE(assembleWith(40, small));
+	REQUIRE(assembleWith(0xFFFFFFFEu, huge));
+	// what the walk to frame 40 gave (each empty frame up to the named one counted complete): the shortcut gives the same
+	CHECK(small.anyComplete);
+	CHECK(small.lastCompleteFrame == 40);
+	CHECK(small.frames.empty());
+	CHECK(huge.lastCompleteFrame == 0xFFFFFFFEu);
+	CHECK(huge.frames.empty());
+	CHECK(huge.membership.size() == small.membership.size());
+	CHECK(huge.problems == small.problems);
+}
+
+TEST_CASE("online health: passive game metrics have exact counts, bounded samples and no endpoint or payload identity")
+{
+	using namespace RelayProtocol;
+	RelayCore::Options options;
+	options.keys = testRing();
+	std::filesystem::path dir;
+	std::uint8_t mode = 0, caps = 0;
+	SUBCASE("without command logging") {}
+	SUBCASE("with command logging")
+	{
+		dir = tempDir("health");
+		options.logDir = dir.string();
+	}
+	SUBCASE("canonical game: direct commands")
+	{
+		mode = TICKET_MODE_CANONICAL;
+		caps = CAP_CANONICAL;
+		dir = tempDir("health_canonical"); // a canonical game needs its log (RelayCore::hello)
+		options.logDir = dir.string();
+	}
+	RelayCore relay(options);
+	auto ticket = [&](std::uint8_t slot) {
+		Ticket t = testTicket(slot);
+		t.mode = mode;
+		return ticketBytes(t);
+	};
+	auto send = [&](int slot, std::vector<std::uint8_t> bytes, std::uint64_t at, bool fail = false) {
+		const RelayCore::Action action = relay.handle(addr((std::uint16_t)(100 + slot)), bytes.data(), bytes.size(), at, 1700000000u);
+		std::vector<RelayCore::Action> extra;
+		relay.takePending(extra); // a canonical game's own emissions are not part of the script
+		if (action.kind != RelayCore::Action::NONE)
+		{
+			relay.noteSend(fail ? 0 : 1, fail ? 1 : 0);
+		}
+		return action.kind;
+	};
+	auto ack = [&](std::uint32_t end, std::uint64_t at) { CHECK(send(1, encodeData(0, ackPacket(1, end)), at) == RelayCore::Action::FORWARD); };
+	CHECK(send(0, encodeHello(ticket(0), {}, caps), 0) == RelayCore::Action::REPLY);
+	CHECK(send(1, encodeHello(ticket(1), {}, caps), 0) == RelayCore::Action::REPLY);
+	CHECK(send(0, encodeData(1, transportPacket(0, 0, frameInfo(0, 10, 0))), 100) == RelayCore::Action::FORWARD);
+	ack(1, 120);
+	CHECK(send(0, encodeData(1, transportPacket(0, 1, frameInfo(0, 12, 0))), 200) == RelayCore::Action::FORWARD);
+	ack(2, 250);
+	const std::vector<std::uint8_t> resend = encodeData(1, transportPacket(0, 2, frameInfo(0, 11, 0)));
+	CHECK(send(0, resend, 300) == RelayCore::Action::FORWARD);
+	CHECK(send(0, resend, 310) == RelayCore::Action::FORWARD);
+	ack(3, 330); // Karn: the retransmitted record contributes no RTT/jitter sample
+	const std::string identity = "player@example.org";
+	CHECK(send(0, encodeData(1, transportPacket(0, 3, { identity.begin(), identity.end() })), 400, true) == RelayCore::Action::FORWARD);
+	CHECK(send(0, encodeData(9, transportPacket(0, 4, frameInfo(0, 14, 0))), 450) == RelayCore::Action::NONE); // slot 9: not in the mask
+	std::vector<std::uint8_t> malformed = transportPacket(0, 4, frameInfo(0, 14, 0));
+	malformed[0] ^= 1;
+	CHECK(send(0, encodeData(1, malformed), 460) == RelayCore::Action::NONE);
+	CHECK(send(0, { 1, 2, 3 }, 470) == RelayCore::Action::NONE);
+	relay.noteTruncated();
+	JsonValue health;
+	std::string error;
+	const std::string json = relay.healthJson(1000, 4096);
+	REQUIRE_MESSAGE(JsonValue::parse(json, health, &error), error);
+	CHECK(health.get("event")->string == "relay_health");
+	CHECK(health.get("activeGames")->number == 1);
+	CHECK(health.get("players")->number == 2);
+	CHECK(health.get("spectators")->number == 0);
+	CHECK(health.get("packetsIn")->number == 14);
+	CHECK(health.get("packetsOut")->number == 9);
+	CHECK(health.get("packetsInPerSecond")->number == 14);
+	CHECK(health.get("packetsOutPerSecond")->number == 9);
+	CHECK(health.get("sampleMs")->number == 1000);
+	CHECK(health.get("uptimeMs")->number == 1000);
+	CHECK(health.get("residentBytes")->number == 4096);
+	CHECK(health.get("metricsBytes")->number == sizeof(RelayHealth));
+	CHECK(health.get("bufferedBytes")->number == relay.heldBytes());
+	CHECK(health.get("dataDrops")->number == 2); // the bad target and the bad CRC
+	CHECK(health.get("invalidDatagrams")->number == 2); // the 3-byte datagram and the truncated one
+	CHECK(health.get("sendDrops")->number == 1);
+	CHECK(health.get("resends")->number == 1);
+	CHECK(health.get("lateFrames")->number == 1);
+	REQUIRE(health.get("games")->array.size() == 1);
+	const JsonValue &game = health.get("games")->array[0];
+	CHECK(game.get("game")->string == "0123456789abcdef");
+	CHECK(game.get("players")->number == 2);
+	CHECK(game.get("dataDrops")->number == 2);
+	CHECK(game.get("resends")->number == 1);
+	CHECK(game.get("lateFrames")->number == 1);
+	CHECK(game.get("ackRtt")->get("samples")->number == 2);
+	CHECK(game.get("ackRtt")->get("p50Ms")->number == 20);
+	CHECK(game.get("ackRtt")->get("p95Ms")->number == 50);
+	CHECK(game.get("ackRtt")->get("p99Ms")->number == 50);
+	CHECK(game.get("ackJitter")->get("samples")->number == 1);
+	CHECK(game.get("ackJitter")->get("p50Ms")->number == 30);
+	CHECK(game.get("ackJitter")->get("p95Ms")->number == 30);
+	CHECK(game.get("ackJitter")->get("p99Ms")->number == 30);
+	// privacy: game ids and counters only (no address, e-mail, IPv6, ticket or session material)
+	CHECK_FALSE(std::regex_search(json, std::regex(R"(\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|(?:[A-Fa-f0-9]{1,4}:){2,})")));
+	CHECK(json.find(addr(100).text()) == std::string::npos);
+	CHECK(json.find(identity) == std::string::npos);
+	CHECK(json.find("ticket") == std::string::npos);
+	CHECK(json.find("session") == std::string::npos);
+	REQUIRE(JsonValue::parse(relay.healthJson(2000), health, &error));
+	CHECK(health.get("residentBytes")->type == JsonValue::NUL);
+	CHECK(health.get("packetsInPerSecond")->number == 0);
+	CHECK(health.get("packetsOutPerSecond")->number == 0);
+	CHECK(health.get("packetsIn")->number == 14);
+	relay.shutdown(2100);
+	REQUIRE(JsonValue::parse(relay.healthJson(3000), health, &error));
+	CHECK(health.get("activeGames")->number == 0);
+	CHECK(health.get("players")->number == 0);
+	CHECK(health.get("metricsBytes")->number == 0);
+	CHECK(health.get("resends")->number == 1);
+	CHECK(health.get("games")->array.empty());
+	if (!dir.empty())
+	{
+		std::filesystem::remove_all(dir);
+	}
+}
+
+TEST_CASE("online health: collection can be disabled without changing relay forwarding")
+{
+	using namespace RelayProtocol;
+	RelayCore::Options options;
+	options.keys = testRing();
+	options.metrics = false;
+	RelayCore relay(options);
+	for (int slot : { 0, 1 })
+	{
+		std::vector<std::uint8_t> hello = encodeHello(ticketBytes(testTicket((std::uint8_t)slot)));
+		CHECK(relay.handle(addr((std::uint16_t)(100 + slot)), hello.data(), hello.size(), 0, 1700000000u).kind == RelayCore::Action::REPLY);
+	}
+	std::vector<std::uint8_t> data = encodeData(1, transportPacket(0, 0, frameInfo(0, 10, 0)));
+	CHECK(relay.handle(addr(100), data.data(), data.size(), 100, 1700000000u).kind == RelayCore::Action::FORWARD);
+	relay.noteSend(3, 1);
+	relay.noteTruncated(); // the legacy counters are unchanged with metrics off
+	CHECK(relay.healthJson(1000).empty());
+	CHECK(relay.stats().forwarded == 1);
+	CHECK(relay.stats().datagrams == 3);
+	CHECK(relay.stats().badDatagrams == 0);
+	CHECK(relay.heldBytes() == 0);
+}
+
+TEST_CASE("online health: pending ACK coverage is bounded, invalid ACKs are ignored and closed games disappear")
+{
+	using namespace RelayProtocol;
+	RelayCore::Options options;
+	options.keys = testRing();
+	options.idleMs = 1000;
+	options.silentMs = 1000;
+	RelayCore relay(options);
+	auto send = [&](int slot, std::vector<std::uint8_t> bytes, std::uint64_t at) {
+		return relay.handle(addr((std::uint16_t)(100 + slot)), bytes.data(), bytes.size(), at, 1700000000u).kind;
+	};
+	for (int slot : { 0, 1 })
+	{
+		CHECK(send(slot, encodeHello(ticketBytes(testTicket((std::uint8_t)slot))), 0) == RelayCore::Action::REPLY);
+	}
+	CHECK(send(2, encodeHello(ticketBytes(testTicket(0, 1, 0xfedcba9876543210ull))), 0) == RelayCore::Action::REPLY);
+	JsonValue health;
+	std::string error;
+	REQUIRE(JsonValue::parse(relay.healthJson(1), health, &error));
+	CHECK(health.get("activeGames")->number == 2);
+	CHECK(health.get("players")->number == 3);
+	CHECK(health.get("metricsBytes")->number == 2 * sizeof(RelayHealth));
+	CHECK(health.get("games")->array[0].get("ackRtt")->get("p95Ms")->type == JsonValue::NUL);
+	for (unsigned seq = 0; seq < 6; ++seq)
+	{
+		CHECK(send(0, encodeData(1, transportPacket(0, seq, frameInfo(0, 10 + seq, 0))), 100 + seq * 10) == RelayCore::Action::FORWARD);
+	}
+	auto ack = [&](std::uint32_t end, std::uint64_t at) { CHECK(send(1, encodeData(0, ackPacket(1, end)), at) == RelayCore::Action::FORWARD); };
+	ack(1000, 200); // beyond the observed sequence range: no diagnostic sample
+	ack(2, 210);    // these two packets fell out of the four pending timestamps
+	REQUIRE(JsonValue::parse(relay.healthJson(220), health, &error));
+	CHECK(health.get("games")->array[0].get("ackRtt")->get("samples")->number == 0);
+	ack(6, 250); // one cumulative ACK samples only the newest eligible packet (sent at 150)
+	ack(6, 260); // a repeated ACK: never another sample
+	REQUIRE(JsonValue::parse(relay.healthJson(300), health, &error));
+	CHECK(health.get("games")->array[0].get("ackRtt")->get("samples")->number == 1);
+	CHECK(health.get("games")->array[0].get("ackRtt")->get("p95Ms")->number == 100);
+	CHECK(health.get("games")->array[0].get("ackJitter")->get("samples")->number == 0);
+	relay.tick(1500);
+	REQUIRE(JsonValue::parse(relay.healthJson(1500), health, &error));
+	CHECK(health.get("activeGames")->number == 0);
+	CHECK(health.get("players")->number == 0);
+	CHECK(health.get("metricsBytes")->number == 0);
+}
+
+// lane NETDIAG-1: dataDrops are the DATA the relay refused (the slot's `dropped` of the log's END record), not every DATA that went nowhere: a
+// target that has not bound yet (its transport resends) is unboundTargets only. The contributor's version counted every DATA answered with nothing.
+TEST_CASE("online health: dataDrops count refused DATA only, not DATA to a target that has not bound yet")
+{
+	using namespace RelayProtocol;
+	const std::vector<std::uint8_t> toUnbound = encodeData(2, transportPacket(0, 0, frameInfo(0, 10, 0))); // slot 2: in the mask, not bound
+	RelayCore::Options options;
+	options.keys = testRing();
+	options.bytesPerSecond = 0; // the burst only, two datagrams' worth: the third is over the budget
+	options.burstBytes = (std::uint32_t)(2 * toUnbound.size());
+	RelayCore relay(options);
+	auto send = [&](int slot, std::vector<std::uint8_t> bytes, std::uint64_t at) {
+		return relay.handle(addr((std::uint16_t)(100 + slot)), bytes.data(), bytes.size(), at, 1700000000u).kind;
+	};
+	CHECK(send(0, encodeHello(ticketBytes(testTicket(0))), 0) == RelayCore::Action::REPLY);
+	CHECK(send(1, encodeHello(ticketBytes(testTicket(1))), 0) == RelayCore::Action::REPLY);
+	CHECK(send(0, toUnbound, 100) == RelayCore::Action::NONE);
+	CHECK(send(0, encodeData(1, transportPacket(0, 0, frameInfo(0, 10, 0))), 110) == RelayCore::Action::FORWARD);
+	CHECK(send(0, encodeData(1, transportPacket(0, 1, frameInfo(0, 11, 0))), 120) == RelayCore::Action::NONE); // over the burst
+	CHECK(relay.stats().unboundTargets == 1);
+	CHECK(relay.stats().rateLimited == 1);
+	JsonValue health;
+	std::string error;
+	REQUIRE(JsonValue::parse(relay.healthJson(1000), health, &error));
+	CHECK(health.get("dataDrops")->number == 1);
+	CHECK(health.get("games")->array[0].get("dataDrops")->number == 1);
+}
+
+// lane NETDIAG-1: the log-only stream (DATA addressed to the sender's own slot, answered by the relay) is observed too: its resends and late frames
+// count; it times nothing (no receiver acknowledges it)
+TEST_CASE("online health: the log-only stream counts resends and late frames and takes no ACK sample")
+{
+	using namespace RelayProtocol;
+	RelayCore::Options options;
+	options.keys = testRing();
+	RelayCore relay(options);
+	auto send = [&](int slot, std::vector<std::uint8_t> bytes, std::uint64_t at) {
+		return relay.handle(addr((std::uint16_t)(100 + slot)), bytes.data(), bytes.size(), at, 1700000000u).kind;
+	};
+	CHECK(send(0, encodeHello(ticketBytes(testTicket(0))), 0) == RelayCore::Action::REPLY);
+	CHECK(send(0, encodeData(0, transportPacket(0, 0, frameInfo(0, 20, 0))), 100) == RelayCore::Action::REPLY);
+	CHECK(send(0, encodeData(0, transportPacket(0, 1, frameInfo(0, 19, 0))), 110) == RelayCore::Action::REPLY);
+	CHECK(send(0, encodeData(0, transportPacket(0, 1, frameInfo(0, 19, 0))), 120) == RelayCore::Action::REPLY);
+	CHECK(send(0, encodeData(0, ackPacket(0, 2)), 130) == RelayCore::Action::REPLY);
+	CHECK(relay.stats().logStreamPackets == 4);
+	JsonValue health;
+	std::string error;
+	REQUIRE(JsonValue::parse(relay.healthJson(1000), health, &error));
+	const JsonValue &game = health.get("games")->array[0];
+	CHECK(game.get("resends")->number == 1);
+	CHECK(game.get("lateFrames")->number == 1);
+	CHECK(game.get("dataDrops")->number == 0);
+	CHECK(game.get("ackRtt")->get("samples")->number == 0);
+}
+
+TEST_CASE("online health: percentile storage wraps at 128 samples and duplicate history is fixed-size")
+{
+	RelayHealth::Samples samples;
+	for (unsigned n = 1; n <= 256; ++n)
+	{
+		samples.add(n);
+	}
+	std::ostringstream out;
+	samples.json(out);
+	CHECK(out.str() == "{\"samples\":128,\"p50Ms\":192,\"p95Ms\":250,\"p99Ms\":255}");
+	RelayHealth::Samples empty;
+	std::ostringstream missing;
+	empty.json(missing);
+	CHECK(missing.str() == "{\"samples\":0,\"p50Ms\":null,\"p95Ms\":null,\"p99Ms\":null}");
+	RelayHealth::Stream stream;
+	bool duplicate = false;
+	CHECK(stream.fresh(100, duplicate));
+	CHECK_FALSE(stream.fresh(100, duplicate));
+	CHECK(duplicate);
+	CHECK(stream.fresh(99, duplicate));
+	CHECK_FALSE(stream.fresh(1, duplicate));
+	CHECK_FALSE(duplicate); // beyond the 64-record window is unmeasured, not a claimed retransmission
+	CHECK(stream.fresh(200, duplicate));
+	CHECK_FALSE(stream.fresh(100, duplicate));
+	CHECK_FALSE(duplicate);
+	RelayHealth::Stream wrapping;
+	CHECK(wrapping.fresh(0xffffffffu, duplicate));
+	CHECK(wrapping.fresh(0, duplicate));
+	CHECK_FALSE(wrapping.fresh(0xffffffffu, duplicate));
+	CHECK(duplicate);
+	// every relay slot has its streams (sixteen: RelayProtocol::kMaxSlots), so slots 8..15 index inside the table
+	CHECK(RelayHealth().streams.size() == 16);
+	CHECK(RelayHealth().streams[15].size() == 16);
+}
+
 TEST_CASE("online2: SHA-256 (FIPS 180-4 examples) and HMAC-SHA256 (RFC 4231 cases 1, 2 and 6)")
 {
 	CHECK(hex(Sha256::hash("", 0)) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
@@ -284,6 +785,271 @@ TEST_CASE("online2: the ticket is the pinned 32 bytes, verifies, and every tampe
 	const std::vector<std::uint8_t> outOfMask = ticketBytes(testTicket(3, 0x07));
 	CHECK_FALSE(verifyTicket(outOfMask.data(), outOfMask.size(), testRing(), 1700000000u, out, &error, &reason));
 	CHECK(error.find("not one of the game's network slots") != std::string::npos);
+}
+
+TEST_CASE("p16 net: wide relay tickets preserve slot 15 and authenticate every byte")
+{
+	using namespace RelayProtocol;
+	Ticket t = testTicket(15);
+	t.slotMask = 0x8001;
+	t.generation = 7;
+	t.delaySeconds = 60;
+	const std::vector<std::vector<std::uint8_t>> tickets = { signTicket(t, testKey()), signRejoinTicket(t, testKey()), signSpectatorTicket(t, testKey()) };
+	// Independent Python struct.pack('<BBQBHI', ...) + hmac/sha256, key bytes 0..31.
+	const char *pins[] = {
+		"0401efcdab89674523010f0180009435774e6bb4312fe030524161d836cb3e692c",
+		"0501efcdab89674523010f018000943577070034015cecde49f2aa031c8ddb1a0e27f2",
+		"0601efcdab89674523010f0180009435773c00d513e3a3d58c88c5cc0798624a466942"
+	};
+	for (size_t kind = 0; kind < tickets.size(); ++kind)
+	{
+		const auto &bytes = tickets[kind];
+		CHECK(HexBytes(bytes.data(), bytes.size()) == pins[kind]);
+		CHECK(bytes.size() == ticketSize((std::uint8_t)(4 + kind)));
+		Ticket out;
+		std::string error;
+		REQUIRE(verifyTicket(bytes.data(), bytes.size(), testRing(), 1700000000u, out, &error));
+		CHECK(out.gameId == t.gameId);
+		CHECK(out.slot == 15);
+		CHECK(out.slotMask == 0x8001);
+		CHECK(out.generation == (kind == 1 ? 7 : 0));
+		CHECK(out.spectator == (kind == 2));
+		CHECK(out.delaySeconds == (kind == 2 ? 60 : 0));
+		for (size_t i = 0; i < bytes.size(); ++i)
+		{
+			auto bad = bytes;
+			bad[i] ^= 1;
+			CHECK_FALSE(verifyTicket(bad.data(), bad.size(), testRing(), 1700000000u, out, &error));
+		}
+		CHECK_FALSE(verifyTicket(bytes.data(), bytes.size() - 1, testRing(), 1700000000u, out, &error));
+		CHECK_FALSE(verifyTicket(bytes.data(), bytes.size(), testRing(), 2000000001u, out, &error));
+	}
+	Ticket out;
+	std::string error;
+	CHECK_FALSE(readTicketFields(nullptr, 0, out, &error));
+	t.slot = 16;
+	auto bad = signTicket(t, testKey());
+	CHECK_FALSE(verifyTicket(bad.data(), bad.size(), testRing(), 1700000000u, out, &error));
+	t.slot = 14;
+	bad = signTicket(t, testKey());
+	CHECK_FALSE(verifyTicket(bad.data(), bad.size(), testRing(), 1700000000u, out, &error));
+	t.slot = 15;
+	t.generation = 0;
+	bad = signRejoinTicket(t, testKey());
+	CHECK_FALSE(verifyTicket(bad.data(), bad.size(), testRing(), 1700000000u, out, &error));
+}
+
+TEST_CASE("p16 net: Transport accepts all six versioned ticket widths and rejects malformed lengths")
+{
+	using namespace RelayProtocol;
+	UDP socket;
+	for (bool extended : { false, true })
+	{
+		Ticket ticket = testTicket(extended ? 15 : 1);
+		ticket.slotMask = extended ? 0xffff : 0x03;
+		ticket.generation = 1;
+		ticket.delaySeconds = 60;
+		const std::vector<std::vector<std::uint8_t>> tickets = {
+			signTicket(ticket, testKey()), signRejoinTicket(ticket, testKey()), signSpectatorTicket(ticket, testKey())
+		};
+		for (const auto &bytes : tickets)
+		{
+			Transport::Options options;
+			options.relay.enabled = true;
+			options.relay.ticket = bytes;
+			Transport valid(socket, ticket.slot, options);
+			CHECK(valid.errors().empty());
+			options.relay.ticket.pop_back();
+			Transport truncated(socket, ticket.slot, options);
+			CHECK_FALSE(truncated.errors().empty());
+			options.relay.ticket = bytes;
+			options.relay.ticket.push_back(0);
+			Transport trailing(socket, ticket.slot, options);
+			CHECK_FALSE(trailing.errors().empty());
+			options.relay.ticket = bytes;
+			options.relay.ticket[0] = 127;
+			Transport unknown(socket, ticket.slot, options);
+			CHECK_FALSE(unknown.errors().empty());
+		}
+	}
+	Transport::Options options;
+	options.relay.enabled = true;
+	Transport missing(socket, 0, options);
+	CHECK_FALSE(missing.errors().empty());
+}
+
+TEST_CASE("p16 net: sixteen relay slots bind, forward, log-only, rejoin and reject slot 16")
+{
+	using namespace RelayProtocol;
+	RelayCore::Options options;
+	options.keys = testRing();
+	RelayCore relay(options);
+	auto send = [&](const RelayAddress &from, std::vector<std::uint8_t> d) {
+		return relay.handle(from, d.data(), d.size(), 1000, 1700000000u);
+	};
+	for (std::uint8_t slot = 0; slot < 16; ++slot)
+	{
+		Ticket player = testTicket(slot);
+		player.slotMask = 0xffff;
+		const RelayCore::Action a = send(addr((std::uint16_t)(100 + slot)), encodeHello(ticketBytes(player)));
+		CHECK(a.kind == RelayCore::Action::REPLY);
+		CHECK(welcomeToken(a.reply, slot).size() == kSessionTokenBytes);
+	}
+	CHECK(relay.openGames() == 1);
+	const RelayCore::Action forwarded = send(addr(115), encodeData(0, transportPacket(15, 0, { 1, 2, 3 })));
+	CHECK(forwarded.kind == RelayCore::Action::FORWARD);
+	CHECK(forwarded.to == addr(100));
+	const RelayCore::Action logOnly = send(addr(115), encodeData(15, transportPacket(15, 1, { 4 })));
+	CHECK(logOnly.kind == RelayCore::Action::REPLY);
+	CHECK(logOnly.reply[4] == 15);
+	Ticket spectator = testTicket(0);
+	spectator.slotMask = 0xffff;
+	spectator.spectator = true;
+	const std::vector<std::uint8_t> spectatorTicket = signSpectatorTicket(spectator, testKey());
+	const RelayCore::Action spectatorWelcome = send(addr(300), encodeHello(spectatorTicket));
+	CHECK(spectatorWelcome.reply[12] == (std::uint8_t)(kSpectatorWelcome));
+	CHECK(send(addr(300), encodeData(0, transportPacket(0, 0, { 5 }))).reply == encodeRefused(REFUSE_SPECTATOR));
+	Ticket bad = testTicket(16);
+	bad.slotMask = 0xffff;
+	CHECK(send(addr(200), encodeHello(ticketBytes(bad))).reply == encodeRefused(REFUSE_BAD_TICKET));
+	Ticket rejoin = testTicket(15);
+	rejoin.slotMask = 0xffff;
+	rejoin.generation = 1;
+	const std::vector<std::uint8_t> rejoinBytes = signRejoinTicket(rejoin, testKey());
+	const RelayCore::Action rebound = send(addr(215), encodeHello(rejoinBytes));
+	CHECK(rebound.kind == RelayCore::Action::REPLY);
+	std::vector<RelayCore::Action> statuses;
+	relay.tick(2000, &statuses);
+	bool sawWideStatus = false;
+	for (const RelayCore::Action &action : statuses)
+	{
+		std::vector<SlotStatus> decoded;
+		if (decodeStatus(action.reply.data(), action.reply.size(), decoded) && decoded.size() == 16)
+		{
+			for (const SlotStatus &slot : decoded)
+			{
+				sawWideStatus = sawWideStatus || (slot.slot == 15 && slot.generation == 1);
+			}
+		}
+	}
+	CHECK(sawWideStatus);
+}
+
+TEST_CASE("p16 net: version 4 relay logs parse sixteen stats and reject truncation or unknown slots")
+{
+	std::vector<std::uint8_t> b = { 'O', 'B', 'F', 'M', 'E', 'R', 'L', 'G' };
+	auto put32 = [&](std::uint32_t v) {
+		for (int i = 0; i < 4; ++i) b.push_back((std::uint8_t)(v >> (8 * i)));
+	};
+	auto put64 = [&](std::uint64_t v) {
+		put32((std::uint32_t)v);
+		put32((std::uint32_t)(v >> 32));
+	};
+	put32(4);
+	put64(0x0123456789abcdefull);
+	b.push_back(0xff);
+	b.push_back(0xff);
+	put32(1700000000u);
+	const std::vector<std::uint8_t> command = gameCommand(15, 0, MSG_LOGIC_CRC, 7);
+	b.push_back(1);
+	b.push_back(15);
+	put32(0);
+	put32((std::uint32_t)command.size());
+	b.insert(b.end(), command.begin(), command.end());
+	b.insert(b.end(), { 4, 0, 0, 0, 0, 1 });
+	for (int i = 0; i < 16; ++i)
+	{
+		put64((std::uint64_t)i);
+		put64((std::uint64_t)i + 100);
+		put64((std::uint64_t)i + 200);
+	}
+	RelayLogFile log;
+	std::string error;
+	REQUIRE_MESSAGE(RelayLogFile::parse(b, log, &error), error);
+	CHECK(log.version == 4);
+	CHECK(log.slotMask == 0xffff);
+	REQUIRE(log.commands.size() == 1);
+	CHECK(log.commands[0].sender == 15);
+	CHECK(log.complete);
+	CHECK(log.datagramsIn[15] == 15);
+	CHECK(log.dropped[15] == 215);
+	std::vector<std::uint8_t> cut(b.begin(), b.end() - 1);
+	CHECK_FALSE(RelayLogFile::parse(cut, log, &error));
+	std::vector<std::uint8_t> unknown = b;
+	unknown[20] = 1;
+	unknown[21] = 0;
+	CHECK_FALSE(RelayLogFile::parse(unknown, log, &error));
+}
+
+TEST_CASE("p16 net: online START carries wide player rejoin and spectator tickets with explicit capacity")
+{
+	using namespace RelayProtocol;
+	const ProfileIdentity own = ProfileIdentity::fromText("openbfme-profile 1\ntest\n");
+	OnlineStart::Limits limits;
+	limits.playerTemplateCount = 8;
+	limits.colorCount = 16;
+	for (int capacity : { 9, 16 })
+	{
+		CAPTURE(capacity);
+		std::string slots;
+		for (int i = 0; i < 16; ++i)
+		{
+			if (i) slots += ",";
+			slots += i < capacity ? "{\"state\":\"player\",\"name\":\"Player\",\"faction\":0,\"color\":" + std::to_string(i)
+				+ ",\"startPos\":" + std::to_string(i) + ",\"team\":-1}" : "{\"state\":\"closed\"}";
+		}
+		const auto json = [&](const Ticket &ticket, OnlineStart::Kind kind, int count, int rejoin = 7, int delay = 60) {
+			const bool replay = kind == OnlineStart::Kind::ReplayStart;
+			const bool spectator = kind == OnlineStart::Kind::Spectate;
+			const auto bytes = spectator ? signSpectatorTicket(ticket, testKey()) : ticket.generation ? signRejoinTicket(ticket, testKey()) : signTicket(ticket, testKey());
+			std::string s = "{\"v\":1,\"kind\":\"" + std::string(replay ? "openbfme-replay-start" : spectator ? "openbfme-spectate" : "openbfme-start")
+				+ "\",\"game\":\"0123456789abcdef\",\"runAhead\":3,\"crcInterval\":100,\"profile\":\"" + own.digest + "\"";
+			if (!replay)
+			{
+				s += ",\"relay\":\"127.0.0.1:7350\",\"ticket\":\"" + base64UrlEncode(bytes.data(), bytes.size()) + "\"";
+				s += spectator ? ",\"spectator\":3,\"delay\":" + std::to_string(delay) : ",\"slot\":" + std::to_string(capacity - 1);
+				if (ticket.generation && !spectator) s += ",\"rejoin\":" + std::to_string(rejoin);
+			}
+			s += ",\"setup\":{\"map\":\"maps/p16_fixture/p16_fixture.map\",\"seed\":1,\"startingCash\":1000,\"superweaponRestriction\":0,\"rules\":null,\"legendaryHeroes\":1";
+			if (count) s += ",\"mapStartCount\":" + std::to_string(count);
+			return s + ",\"slots\":[" + slots + "]}}";
+		};
+		Ticket ticket = testTicket((std::uint8_t)(capacity - 1));
+		ticket.slotMask = (std::uint16_t)((1u << capacity) - 1);
+		LobbyStart parsed;
+		std::string error;
+		REQUIRE_MESSAGE(OnlineStart::parse(json(ticket, OnlineStart::Kind::Start, capacity), own, limits, parsed, &error), error);
+		CHECK(parsed.ticket[0] == 4);
+		CHECK(parsed.localSlot == capacity - 1);
+		CHECK(parsed.game.game.mapStartCount == capacity);
+		CHECK(parsed.networkSlot[(size_t)capacity - 1]);
+		CHECK(parsed.game.game.slots[capacity - 1].startPos == capacity - 1);
+		CHECK_FALSE(OnlineStart::parse(json(ticket, OnlineStart::Kind::Start, 0), own, limits, parsed, &error));
+		CHECK_FALSE(OnlineStart::parse(json(ticket, OnlineStart::Kind::Start, capacity - 1), own, limits, parsed, &error));
+		CHECK_FALSE(OnlineStart::parse(json(ticket, OnlineStart::Kind::Start, 17), own, limits, parsed, &error));
+		Ticket badMask = ticket;
+		badMask.slotMask ^= 1;
+		CHECK_FALSE(OnlineStart::parse(json(badMask, OnlineStart::Kind::Start, capacity), own, limits, parsed, &error));
+		CHECK(error.find("slot mask") != std::string::npos);
+		ticket.generation = 7;
+		REQUIRE_MESSAGE(OnlineStart::parse(json(ticket, OnlineStart::Kind::Start, capacity), own, limits, parsed, &error), error);
+		CHECK(parsed.ticket[0] == 5);
+		CHECK(parsed.rejoinGeneration == 7);
+		CHECK_FALSE(OnlineStart::parse(json(ticket, OnlineStart::Kind::Start, capacity, 8), own, limits, parsed, &error));
+		ticket.generation = 0;
+		ticket.slot = 3;
+		ticket.delaySeconds = 60;
+		REQUIRE_MESSAGE(OnlineStart::parse(json(ticket, OnlineStart::Kind::Spectate, capacity), own, limits, parsed, &error, OnlineStart::Kind::Spectate), error);
+		CHECK(parsed.ticket[0] == 6);
+		CHECK(parsed.spectatorIndex == 3);
+		CHECK(parsed.spectatorDelay == 60);
+		CHECK(parsed.localSlot == -1);
+		CHECK_FALSE(OnlineStart::parse(json(ticket, OnlineStart::Kind::Spectate, capacity, 7, 59), own, limits, parsed, &error, OnlineStart::Kind::Spectate));
+		REQUIRE_MESSAGE(OnlineStart::parse(json(ticket, OnlineStart::Kind::ReplayStart, capacity), own, limits, parsed, &error, OnlineStart::Kind::ReplayStart), error);
+		CHECK(parsed.ticket.empty());
+		CHECK(parsed.networkSlot[(size_t)capacity - 1]);
+		CHECK(parsed.game.game.mapStartCount == capacity);
+	}
 }
 
 TEST_CASE("online2: base64url is strict, key rings parse and refuse malformed lines")
@@ -349,7 +1115,8 @@ TEST_CASE("online2: the online START becomes a LobbyStart; another profile, a mi
 	CHECK(s.profile == own);
 	// the other profile, the slot the ticket is not for, a mask that differs from the human slots, bad fields
 	CHECK_FALSE(OnlineStart::parse(start("00000000000000000000000000000000", 1, slots3), own, limits, s, &error));
-	CHECK(error.find("profile identity") != std::string::npos);
+	CHECK(error.find("different OpenBFME version or different game files") != std::string::npos); // lane JOINVER-1: plain words, no ids
+	CHECK(error.find("00000000000000000000000000000000") == std::string::npos);
 	CHECK_FALSE(OnlineStart::parse(start(own.digest, 0, slots3), own, limits, s, &error));
 	CHECK(error.find("ticket is for slot 1") != std::string::npos);
 	const std::string slots2 = "[{\"state\":\"player\",\"name\":\"Ann\",\"faction\":0,\"color\":0,\"startPos\":0,\"team\":0},"
@@ -787,21 +1554,14 @@ TEST_CASE("online2 r2: the Transport keeps the WELCOME's session token and prove
 	t.setPeer(1, NetAddress{});
 	auto next = [&](std::vector<std::uint8_t> &d) {
 		NetAddress from;
-		const std::uint64_t start = NetMilliseconds();
-		while (NetMilliseconds() - start < 2000)
-		{
+		return onlinetest::waitUntil([&] {
 			t.service();
-			if (relaySocket.receiveFrom(from, d) && d.size() >= kHeaderBytes && d[3] == HELLO)
-			{
-				return true;
-			}
-			NetSleepMilliseconds(1);
-		}
-		return false;
+			return relaySocket.receiveFrom(from, d) && d.size() >= kHeaderBytes && d[3] == HELLO;
+		});
 	};
 	std::vector<std::uint8_t> d;
 	REQUIRE(next(d));
-	CHECK(d == encodeHello(o.relay.ticket)); // the first HELLO: the ticket alone
+	CHECK(d == encodeHello(o.relay.ticket, {}, CAP_CANONICAL)); // the first HELLO: the ticket and the capability bits
 	std::array<std::uint8_t, kSessionTokenBytes> token{};
 	for (size_t i = 0; i < token.size(); ++i)
 	{
@@ -809,11 +1569,10 @@ TEST_CASE("online2 r2: the Transport keeps the WELCOME's session token and prove
 	}
 	const std::vector<std::uint8_t> welcome = encodeWelcome(0x0123456789abcdefull, 0, token), notBound = encodeEmpty(NOT_BOUND);
 	relaySocket.sendTo(client.localAddress(), welcome.data(), welcome.size());
-	for (int i = 0; i < 50 && !t.relayBound(); ++i)
-	{
+	REQUIRE(onlinetest::waitUntil([&] {
 		t.service();
-		NetSleepMilliseconds(1);
-	}
+		return t.relayBound();
+	}));
 	REQUIRE(t.relayBound());
 	{
 		NetAddress from;
@@ -824,7 +1583,7 @@ TEST_CASE("online2 r2: the Transport keeps the WELCOME's session token and prove
 	}
 	relaySocket.sendTo(client.localAddress(), notBound.data(), notBound.size());
 	REQUIRE(next(d));
-	CHECK(d == encodeHello(o.relay.ticket, std::vector<std::uint8_t>(token.begin(), token.end())));
+	CHECK(d == encodeHello(o.relay.ticket, std::vector<std::uint8_t>(token.begin(), token.end()), CAP_CANONICAL));
 }
 
 TEST_CASE("online2: three real Transports play through the relay with 20 % loss: every command arrives once and in order, the log holds each once")
@@ -893,7 +1652,6 @@ TEST_CASE("online2: three real Transports play through the relay with 20 % loss:
 	}
 	std::map<std::pair<int, int>, int> got; // (receiver, sender) -> commands in order
 	bool inOrder = true;
-	const std::uint64_t start = NetMilliseconds();
 	auto done = [&] {
 		for (int i = 0; i < 3; ++i)
 		{
@@ -907,8 +1665,7 @@ TEST_CASE("online2: three real Transports play through the relay with 20 % loss:
 		}
 		return true;
 	};
-	while (!done() && NetMilliseconds() - start < 20000)
-	{
+	REQUIRE(onlinetest::waitUntil([&] {
 		for (auto &tr : t)
 		{
 			tr->service();
@@ -928,8 +1685,9 @@ TEST_CASE("online2: three real Transports play through the relay with 20 % loss:
 				++n;
 			}
 		}
-		NetSleepMilliseconds(1);
-	}
+		// Delivery may finish before a keep-alive or resend reaches a seeded loss draw. Observe loss on every endpoint too.
+		return done() && std::all_of(t.begin(), t.end(), [](const auto &tr) { return tr->stats().dropped > 0; });
+	}));
 	CHECK(done());
 	CHECK(inOrder);
 	for (int i = 0; i < 3; ++i)
@@ -941,23 +1699,29 @@ TEST_CASE("online2: three real Transports play through the relay with 20 % loss:
 	}
 	CHECK(relay.stats().slotMismatches == 0);
 	// let the acks settle, then the transports say BYE as they go
-	const std::uint64_t t2 = NetMilliseconds();
-	while (NetMilliseconds() - t2 < 300)
-	{
+	REQUIRE(onlinetest::waitUntil([&] {
 		for (auto &tr : t)
 		{
 			tr->service();
 		}
 		pumpRelay();
-		NetSleepMilliseconds(1);
-	}
+		for (auto &tr : t)
+		{
+			for (int peer = 0; peer < 3; ++peer)
+			{
+				if (!tr->allAcked(peer))
+				{
+					return false;
+				}
+			}
+		}
+		return true;
+	}));
 	t.clear();
-	const std::uint64_t t3 = NetMilliseconds();
-	while (relay.openGames() > 0 && NetMilliseconds() - t3 < 2000)
-	{
+	REQUIRE(onlinetest::waitUntil([&] {
 		pumpRelay();
-		NetSleepMilliseconds(1);
-	}
+		return relay.openGames() == 0;
+	}));
 	CHECK(relay.openGames() == 0);
 	REQUIRE(relay.closedLogs().size() == 1);
 	RelayLogFile log;
@@ -1072,6 +1836,126 @@ TEST_CASE("online2: the relay log assembles into the frames the Network runs: sl
 	CHECK_FALSE(RelayLogFile::parse(cut, log, &error));
 }
 
+TEST_CASE("ROUTER-1: a canonical game's log assembles the committed frames: orders as GameMessages, CRC hashes, a rejoin")
+{
+	// a synthetic canonical log: records of game 0x0123456789abcdef, mask 0b101, crc interval 2
+	std::vector<std::uint8_t> b = { 'O', 'B', 'F', 'M', 'E', 'R', 'L', 'G' };
+	auto put32 = [&](std::uint32_t v) {
+		for (int i = 0; i < 4; ++i)
+		{
+			b.push_back((std::uint8_t)(v >> (8 * i)));
+		}
+	};
+	put32(2);
+	put32(0x89abcdefu);
+	put32(0x01234567u);
+	b.push_back(0x05);
+	put32(1700000000u);
+	const std::uint64_t game = 0x0123456789abcdefull;
+	std::uint64_t seq = 0;
+	auto record = [&](RelayCommit::Kind kind, std::uint32_t frame, const std::vector<std::uint8_t> &payload) {
+		RelayCommit::Record rec;
+		rec.stamp.game = game;
+		rec.stamp.epoch = 1;
+		rec.stamp.sequence = ++seq;
+		rec.stamp.frame = frame;
+		rec.kind = kind;
+		rec.payload = payload;
+		std::vector<std::uint8_t> enc;
+		std::string err;
+		REQUIRE(RelayCommit::encode(rec, enc, err));
+		b.push_back(6);
+		put32((std::uint32_t)enc.size());
+		b.insert(b.end(), enc.begin(), enc.end());
+	};
+	auto order = [&](GameMessageType type, int arg) {
+		GameMessage m(type, 99); // the sender's player field is bound to its slot on assembly, like the relay binds it
+		m.appendIntegerArgument(arg);
+		if (type == MSG_LOGIC_CRC)
+		{
+			m.appendBooleanArgument(false);
+		}
+		NetByteWriter w;
+		std::string err;
+		REQUIRE(NetPacket::writeGameMessage(w, m, &err));
+		return w.data();
+	};
+	RelayMembership::Snapshot snap;
+	snap.slotMask = 0x05;
+	snap.active = 0x05;
+	snap.loaded = 0x05;
+	{
+		std::vector<std::uint8_t> p;
+		std::string err;
+		REQUIRE(RelayMembership::encode(snap, p, err));
+		record(RelayCommit::Kind::Membership, 0, p);
+	}
+	{
+		RelayFrameBundle::Frame f;
+		f.orders.push_back({ 0, 1, order(MSG_LOGIC_CRC, 111) });
+		f.orders.push_back({ 2, 1, order(MSG_DO_ATTACK_OBJECT, 7) });
+		std::vector<std::uint8_t> p;
+		std::string err;
+		REQUIRE(RelayFrameBundle::encode(f, p, err));
+		record(RelayCommit::Kind::Frame, 1, p);
+	}
+	snap.ticketGenerations[2] = 1; // slot 2 rejoined with a bumped generation
+	{
+		std::vector<std::uint8_t> p;
+		std::string err;
+		REQUIRE(RelayMembership::encode(snap, p, err));
+		record(RelayCommit::Kind::Membership, 2, p);
+	}
+	{
+		RelayFrameBundle::Frame f;
+		f.orders.push_back({ 2, 9, order(MSG_LOGIC_CRC, 111) });
+		std::vector<std::uint8_t> p;
+		std::string err;
+		REQUIRE(RelayFrameBundle::encode(f, p, err));
+		record(RelayCommit::Kind::Frame, 2, p);
+	}
+	record(RelayCommit::Kind::End, 2, {});
+	RelayLogFile log;
+	std::string error;
+	REQUIRE_MESSAGE(RelayLogFile::parse(b, log, &error), error);
+	REQUIRE(log.canonical.size() == 5);
+	NetworkConfig config;
+	config.slotPlayerIndex = { { 3, -1, 5, -1, -1, -1, -1, -1 } };
+	config.crcInterval = 2;
+	RelayLog::Assembled a;
+	REQUIRE_MESSAGE(RelayLog::assemble(log, config, a, &error), error);
+	REQUIRE(a.frames.count(1));
+	const std::vector<GameMessage> &f1 = a.frames.at(1).messages();
+	REQUIRE(f1.size() == 2);
+	CHECK(f1[0].getPlayerIndex() == 3);
+	CHECK(f1[1].getPlayerIndex() == 5);
+	CHECK(a.frames.at(2).messages().size() == 1);
+	CHECK(a.lastCompleteFrame == 2);
+	CHECK(a.hashes.at(2) == 111u);
+	CHECK(a.crcDisagreements == 0);
+	CHECK(a.incarnations[2] == 2);
+	bool rejoinLogged = false, dropLogged = false;
+	for (const Network::MembershipEvent &e : a.membership)
+	{
+		rejoinLogged = rejoinLogged || (e.kind == Network::MembershipEvent::REJOIN && e.slot == 2);
+		dropLogged = dropLogged || (e.kind == Network::MembershipEvent::DROP);
+	}
+	CHECK(rejoinLogged);
+	CHECK_FALSE(dropLogged);
+	// a frame record that does not decode is an error, never dropped
+	b.clear();
+	b = { 'O', 'B', 'F', 'M', 'E', 'R', 'L', 'G' };
+	put32(2);
+	put32(0x89abcdefu);
+	put32(0x01234567u);
+	b.push_back(0x05);
+	put32(1700000000u);
+	b.push_back(6);
+	put32(3);
+	b.insert(b.end(), { 1, 2, 3 });
+	CHECK_FALSE(RelayLogFile::parse(b, log, &error));
+}
+
 TEST_CASE("online2: the lane's acceptance stops are reported (S-3710, S-3711)")
 {
 	const std::vector<std::string> stops = RelayLog::stopLines();
@@ -1105,18 +1989,16 @@ TEST_CASE("online2: the openbfme_relay process welcomes a ticket over UDP, write
 	REQUIRE(relay.started());
 	const std::vector<std::uint8_t> hello = RelayProtocol::encodeHello(ticketBytes(testTicket(0)));
 	bool welcomed = false;
-	const std::uint64_t start = NetMilliseconds();
-	while (!welcomed && NetMilliseconds() - start < 5000)
-	{
+	REQUIRE(onlinetest::waitUntil([&] {
 		probe.sendTo(NetAddress{ 0x7F000001u, port }, hello.data(), hello.size());
-		NetSleepMilliseconds(20);
 		NetAddress from;
 		std::vector<std::uint8_t> d;
 		while (probe.receiveFrom(from, d))
 		{
 			welcomed = welcomed || welcomeToken(d, 0).size() == RelayProtocol::kSessionTokenBytes;
 		}
-	}
+		return welcomed;
+	}));
 	CHECK(welcomed);
 	const int status_ = relay.stop();
 	CHECK(WIFEXITED(status_));
@@ -1131,3 +2013,99 @@ TEST_CASE("online2: the openbfme_relay process welcomes a ticket over UDP, write
 	std::filesystem::remove_all(dir);
 }
 #endif
+
+TEST_CASE("anticheat1 views: a VIEW on the log-only stream is logged by the relay, never forwarded, assembled apart from the frames and kept in the replay")
+{
+	using namespace RelayProtocol;
+	NetCommandMsg v;
+	v.type = NETCOMMANDTYPE_VIEW;
+	v.slot = 0;
+	v.executionFrame = 42;
+	v.view = { 100.5f, 200.25f, 640.0f, 480.0f };
+	v.viewFlags = 1;
+	std::string error;
+	const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(v, &error);
+	REQUIRE_MESSAGE(!bytes.empty(), error);
+	NetCommandMsg back;
+	REQUIRE(NetPacket::decodeCommand(bytes, back, &error));
+	CHECK(back.type == NETCOMMANDTYPE_VIEW);
+	CHECK(back.executionFrame == 42);
+	CHECK(back.view[1] == 200.25f);
+	CHECK(back.viewFlags == 1);
+	// through the relay: slot 0's log-only stream (DATA to its own slot) carries a frame command, then the VIEW
+	const std::filesystem::path dir = tempDir("views");
+	RelayCore::Options o;
+	o.keys = testRing();
+	o.logDir = dir.string();
+	RelayCore relay(o);
+	auto send = [&](const RelayAddress &from, std::vector<std::uint8_t> d) { return relay.handle(from, d.data(), d.size(), 1000, 1700000000u); };
+	send(addr(1), encodeHello(ticketBytes(testTicket(0, 0x03))));
+	send(addr(2), encodeHello(ticketBytes(testTicket(1, 0x03))));
+	RelayCore::Action a = send(addr(1), encodeData(0, transportPacket(0, 0, frameInfo(0, 41, 0))));
+	CHECK(a.kind == RelayCore::Action::REPLY); // the relay's ack as slot 0
+	a = send(addr(1), encodeData(0, transportPacket(0, 1, bytes)));
+	CHECK(a.kind == RelayCore::Action::REPLY);
+	CHECK(a.to == addr(1)); // acknowledged to the sender, sent to nobody else
+	send(addr(1), encodeEmpty(BYE));
+	send(addr(2), encodeEmpty(BYE));
+	REQUIRE(relay.closedLogs().size() == 1);
+	RelayLogFile log;
+	REQUIRE_MESSAGE(RelayLogFile::load(relay.closedLogs().front(), log, &error), error);
+	REQUIRE(log.commands.size() == 2);
+	CHECK(log.commands[1].msg.type == NETCOMMANDTYPE_VIEW);
+	NetworkConfig config;
+	config.slotPlayerIndex = { { 3, 4, -1, -1, -1, -1, -1, -1 } };
+	config.crcInterval = 0;
+	RelayLog::Assembled as;
+	REQUIRE_MESSAGE(RelayLog::assemble(log, config, as, &error), error);
+	REQUIRE(as.views.size() == 1);
+	CHECK(as.views[0].frame == 42);
+	CHECK(as.views[0].slot == 0);
+	CHECK(as.views[0].cursorX == 640.0f);
+	CHECK_FALSE(as.frames.count(42)); // never a frame entry
+	// the replay keeps it (version 8 VIEW record)
+	const std::string path = (dir / "views.replay").string();
+	ReplayHeader h;
+	h.profile = ProfileIdentity::fromText("openbfme-profile 1\ntest\n");
+	REQUIRE_MESSAGE(RelayLog::writeReplay(path, h, as, &error), error);
+	ReplayFile rf;
+	REQUIRE_MESSAGE(ReplayFile::load(path, rf, &error), error);
+	REQUIRE(rf.views.size() == 1);
+	CHECK(rf.views[0].frame == 42);
+	CHECK(rf.views[0].cameraX == 100.5f);
+	CHECK(rf.views[0].cursorY == 480.0f);
+	CHECK(rf.views[0].flags == 1);
+	std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("onlinemenu1: the online START carries each slot's handicap (0, -5 .. -95; absent from an older lobby: 0); anything else refuses the START")
+{
+	const ProfileIdentity own = ProfileIdentity::fromText("openbfme-profile 1\ntest\n");
+	const std::string ticket = "AQHvzauJZ0UjAQEHAJQ1dxkKDPX40Zd_QbpSaTVc2UI"; // slot 1, mask 0x07
+	auto start = [&](const std::string &h0, const std::string &h1) {
+		return "{\"v\":1,\"kind\":\"openbfme-start\",\"game\":\"0123456789abcdef\",\"slot\":1,\"relay\":\"192.0.2.10:7350\",\"ticket\":\"" + ticket +
+			"\",\"runAhead\":3,\"crcInterval\":100,\"profile\":\"" + own.digest +
+			"\",\"setup\":{\"map\":\"maps/map mp evendim/map mp evendim.map\",\"seed\":4242,\"startingCash\":2000,\"superweaponRestriction\":0,\"rules\":null,"
+			"\"legendaryHeroes\":1,\"slots\":[{\"state\":\"player\",\"name\":\"Ann\",\"faction\":0,\"color\":0,\"startPos\":0,\"team\":0" + h0 + "},"
+			"{\"state\":\"player\",\"name\":\"Bea\",\"faction\":1,\"color\":1,\"startPos\":1,\"team\":1" + h1 + "},"
+			"{\"state\":\"player\",\"name\":\"Cy\",\"faction\":-1,\"color\":-1,\"startPos\":-1,\"team\":-1},"
+			"{\"state\":\"hard\",\"name\":\"AI\",\"faction\":2,\"color\":3,\"startPos\":3,\"team\":1,\"handicap\":-95}]}}";
+	};
+	OnlineStart::Limits limits;
+	limits.playerTemplateCount = 8;
+	limits.colorCount = 8;
+	LobbyStart s;
+	std::string error;
+	REQUIRE_MESSAGE(OnlineStart::parse(start("", ",\"handicap\":-15"), own, limits, s, &error), error);
+	CHECK(s.game.game.slots[0].handicap == 0); // absent
+	CHECK(s.game.game.slots[1].handicap == -15);
+	CHECK(s.game.game.slots[2].handicap == 0);
+	CHECK(s.game.game.slots[3].handicap == -95);
+	REQUIRE_MESSAGE(OnlineStart::parse(start(",\"handicap\":0", ",\"handicap\":-5"), own, limits, s, &error), error);
+	CHECK(s.game.game.slots[1].handicap == -5);
+	for (const char *bad : { ",\"handicap\":-7", ",\"handicap\":5", ",\"handicap\":-100", ",\"handicap\":\"-10\"", ",\"handicap\":-10.5", ",\"handicap\":null" })
+	{
+		CHECK_MESSAGE(!OnlineStart::parse(start("", bad), own, limits, s, &error), bad);
+		CHECK_MESSAGE(error.find("handicap") != std::string::npos, bad << ": " << error);
+	}
+}

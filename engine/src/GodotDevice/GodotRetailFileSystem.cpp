@@ -1,15 +1,20 @@
 // OpenBFME. GPL-3.0.
 
 #include "GodotDevice/GodotRetailFileSystem.h"
+#include "Common/PathIO.h"
 #include "Common/BfmeGame.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
 #include "Common/RetailArchivePolicy.h"
 #include "Common/ArchiveFile.h"
+#include "GameClient/UserDataFolder.h"
+#include "Common/ModEngineFeatures.h"
 #include "Common/MD5.h"
 #include "GameClient/UserDataFolder.h"
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <chrono>
 #include <godot_cpp/classes/config_file.hpp>
 #include <godot_cpp/classes/file_access.hpp>
@@ -67,6 +72,138 @@ void RetailFileSystem::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_last_error"), &RetailFileSystem::get_last_error);
 	ClassDB::bind_method(D_METHOD("get_loose_files"), &RetailFileSystem::get_loose_files);
 	ClassDB::bind_method(D_METHOD("get_user_map_folder"), &RetailFileSystem::get_user_map_folder); // lane MOD-5
+	ClassDB::bind_method(D_METHOD("set_mods", "paths"), &RetailFileSystem::set_mods); // MODS-1
+	ClassDB::bind_method(D_METHOD("get_mods"), &RetailFileSystem::get_mods);
+	ClassDB::bind_method(D_METHOD("get_mod_report"), &RetailFileSystem::get_mod_report);
+	ClassDB::bind_method(D_METHOD("get_file_sources", "path"), &RetailFileSystem::get_file_sources);
+	ClassDB::bind_method(D_METHOD("set_asset_packs", "folders"), &RetailFileSystem::set_asset_packs); // SDK-0
+	ClassDB::bind_method(D_METHOD("set_install_mod", "folder"), &RetailFileSystem::set_install_mod); // MODS-2
+	ClassDB::bind_method(D_METHOD("set_install_mods", "folders"), &RetailFileSystem::set_install_mods);
+	ClassDB::bind_method(D_METHOD("set_mod_engines", "md5s"), &RetailFileSystem::set_mod_engines); // MODS-3
+}
+
+Dictionary RetailFileSystem::set_asset_packs(const PackedStringArray &folders)
+{
+	AssetPacks packs;
+	std::vector<std::string> errors;
+	for (int64_t i = 0; i < folders.size(); ++i)
+	{
+		packs.addPack(toNative(folders[i]), errors);
+	}
+	Dictionary d;
+	PackedStringArray e, names, notes;
+	for (const std::string &s : errors)
+	{
+		e.push_back(toGodot(s));
+		UtilityFunctions::push_error("RetailFileSystem: ", toGodot(s));
+	}
+	if (errors.empty())
+	{
+		m_packs = std::move(packs); // all or nothing: a pack with an error changes nothing
+	}
+	for (const std::string &s : m_packs.packs())
+	{
+		names.push_back(toGodot(s));
+	}
+	for (const std::string &s : m_packs.notes())
+	{
+		notes.push_back(toGodot(s));
+	}
+	d["ok"] = errors.empty();
+	d["errors"] = e;
+	d["packs"] = names;
+	d["textures"] = (int64_t)m_packs.textureCount();
+	d["models"] = (int64_t)m_packs.modelCount();
+	d["notes"] = notes;
+	d["not_covered"] = toGodot(AssetPacks::notCovered());
+	return d;
+}
+
+std::unique_ptr<W3DFileSource> RetailFileSystem::renderW3DSource()
+{
+	std::unique_ptr<W3DFileSource> base(new ArchiveW3DFileSource(*m_fs));
+	if (m_packs.empty())
+	{
+		return base;
+	}
+	return std::unique_ptr<W3DFileSource>(new AssetPackW3DFileSource(std::move(base), m_packs));
+}
+
+void RetailFileSystem::set_mods(const PackedStringArray &paths)
+{
+	m_modArgs = paths;
+}
+
+void RetailFileSystem::set_install_mod(const String &folder)
+{
+	m_installModArgs.clear();
+	if (!folder.is_empty())
+	{
+		m_installModArgs.push_back(folder);
+	}
+}
+
+void RetailFileSystem::set_install_mods(const PackedStringArray &folders)
+{
+	m_installModArgs = folders;
+}
+
+void RetailFileSystem::set_mod_engines(const PackedStringArray &md5s)
+{
+	m_modEngines = md5s;
+}
+
+std::vector<std::string> RetailFileSystem::modIdentity() const
+{
+	std::vector<std::string> lines = m_installModReport.identity; // the install-folder mod first: it is mounted first
+	lines.insert(lines.end(), m_modReport.identity.begin(), m_modReport.identity.end());
+	return lines;
+}
+
+Dictionary RetailFileSystem::get_mod_report() const
+{
+	Dictionary d;
+	d["mounted"] = m_modReport.ok;
+	Array archives;
+	for (const MountedArchive &a : m_modReport.archives)
+	{
+		Dictionary e;
+		e["path"] = toGodot(a.canonicalPath);
+		e["size"] = (int64_t)a.size;
+		archives.push_back(e);
+	}
+	d["archives"] = archives;
+	d["folder"] = toGodot(m_modReport.folderName);
+	d["loose_files"] = (int64_t)m_modReport.loose.files.size();
+	PackedStringArray identity, stops;
+	for (const std::string &l : m_modReport.identity)
+	{
+		identity.push_back(toGodot(l));
+	}
+	for (const std::string &l : m_modReport.stops)
+	{
+		stops.push_back(toGodot(l));
+	}
+	d["identity"] = identity;
+	d["stops"] = stops;
+	d["install_mod"] = toGodot(m_installModReport.folderName);
+	d["install_mod_archives"] = (int64_t)m_installModReport.archives.size();
+	d["files_hashed"] = m_modReport.filesHashed;
+	d["md5_cache_hits"] = m_modReport.md5CacheHits;
+	return d;
+}
+
+PackedStringArray RetailFileSystem::get_file_sources(const String &path) const
+{
+	PackedStringArray out;
+	if (m_fs)
+	{
+		for (const std::string &s : m_fs->sourcesOf(toNative(path)))
+		{
+			out.push_back(toGodot(s));
+		}
+	}
+	return out;
 }
 
 Dictionary RetailFileSystem::mount_retail()
@@ -124,8 +261,17 @@ Dictionary RetailFileSystem::mount_bfme1_path(const String &root)
 	m_userMapFolder.clear();
 	m_userMapError.clear();
 	PackedStringArray errors;
+	std::string pathError;
+	if (!PathIO::checkInstallPath(toNative(root), pathError))
+	{
+		errors.push_back(toGodot(pathError));
+		Dictionary r;
+		r["ok"] = false;
+		r["errors"] = errors;
+		return r;
+	}
 	auto fs = std::make_unique<Win32BIGFileSystem>();
-	const auto directory = std::filesystem::u8path(toNative(root));
+	const auto directory = PathIO::native(toNative(root));
 	std::error_code ec;
 	std::vector<std::string> names;
 	PackedStringArray excluded; // community PR #36 review: reported, never silently skipped (PLAN rule 7)
@@ -146,8 +292,8 @@ Dictionary RetailFileSystem::mount_bfme1_path(const String &root)
 		std::replace(relative.begin(), relative.end(), '/', '\\');
 		names.push_back(relative);
 	}
-	if (ec) errors.push_back(toGodot("Cannot read BFME1 folder: " + ec.message()));
-	if (names.empty()) errors.push_back("Choose a BFME1 installation containing BIG archives");
+	if (ec) errors.push_back(toGodot("Cannot read BFME1 folder '" + toNative(root) + "': " + ec.message()));
+	if (names.empty()) errors.push_back("Choose a BFME1 installation containing BIG archives: " + root);
 	// BFME1 Win32BIGFileSystem_loadBigFiles.cpp (0x009CDB90): descending
 	// strcmp order, first mounted wins. Do not mix in BFME2/RotWK archives.
 	std::vector<MountedArchive> mounted;
@@ -168,8 +314,8 @@ Dictionary RetailFileSystem::mount_bfme1_path(const String &root)
 		entry.install = "bfme1";
 		entry.canonicalPath = relative;
 		entry.diskPath = path;
-		entry.size = std::filesystem::file_size(std::filesystem::u8path(path), ec);
-		const auto stamp = std::filesystem::last_write_time(std::filesystem::u8path(path), ec).time_since_epoch().count();
+		entry.size = std::filesystem::file_size(PathIO::native(path), ec);
+		const auto stamp = std::filesystem::last_write_time(PathIO::native(path), ec).time_since_epoch().count();
 		const String key = toGodot(MD5::ofBytes(path.data(), path.size()));
 		if (!ec && (int64_t)cache->get_value(key, "size", (int64_t)-1) == (int64_t)entry.size &&
 			(int64_t)cache->get_value(key, "mtime", (int64_t)0) == stamp)
@@ -283,6 +429,30 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 	m_userMapError.clear();
 	m_shellSource = false;
 	m_installRoot.clear();
+	m_modReport = ModMountReport();
+	m_installModReport = ModMountReport();
+	{
+		// lane MODS-3: the mod's engine features, before anything is parsed (Common/ModEngineFeatures.h); an unknown game binary fails the mount
+		std::vector<std::string> engines;
+		for (int64_t i = 0; i < m_modEngines.size(); ++i)
+		{
+			engines.push_back(toNative(m_modEngines[i]));
+		}
+		std::string engineError;
+		if (!ModEngineFeatures::activate(engines, &engineError))
+		{
+			ModEngineFeatures::reset();
+			errors.push_back(toGodot(engineError));
+		}
+		for (const std::string &p : ModEngineFeatures::activeProfiles())
+		{
+			UtilityFunctions::print("RetailFileSystem: mod engine profile: ", toGodot(p));
+		}
+		for (const std::string &l : ModEngineFeatures::stopLines())
+		{
+			UtilityFunctions::print("RetailFileSystem: ", toGodot(l));
+		}
+	}
 
 	std::vector<RetailInstall> installs(2);
 	installs[0].label = "rotwk";
@@ -334,16 +504,55 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 			UtilityFunctions::push_warning("RetailFileSystem: ", toGodot(w));
 		}
 		result["warnings"] = warnings;
+		PackedStringArray stops; // lane MODS-2 (S-5302)
+		for (const std::string &l : report.stops)
+		{
+			stops.push_back(toGodot(l));
+		}
+		result["stops"] = stops;
 		result["archives_hashed"] = report.archivesHashed;
 		result["md5_cache_hits"] = report.md5CacheHits;
 		result["mounted"] = mounted;
 		result["excluded_found"] = excluded;
+		if (report.ok && !m_installModArgs.is_empty())
+		{
+			// lane MODS-2: an install-folder mod: the file system the merged game folder would give (Common/ModMount.h MountInstallOverlay)
+			std::unique_ptr<Win32BIGFileSystem> merged = std::make_unique<Win32BIGFileSystem>();
+			ModMountOptions overlayOptions;
+			overlayOptions.md5CachePath = toNative(ProjectSettings::get_singleton()->globalize_path("user://mod-md5-cache.tsv"));
+			std::vector<std::string> folders;
+			for (int64_t i = 0; i < m_installModArgs.size(); ++i)
+			{
+				folders.push_back(toNative(m_installModArgs[i]));
+			}
+			m_installModReport = MountInstallOverlay(*merged, report, folders, overlayOptions);
+			for (const std::string &e : m_installModReport.errors)
+			{
+				errors.push_back(toGodot(e));
+			}
+			for (const std::string &l : m_installModReport.notes)
+			{
+				UtilityFunctions::print("RetailFileSystem: ", toGodot(l));
+			}
+			for (const std::string &l : m_installModReport.stops)
+			{
+				UtilityFunctions::print("RetailFileSystem: ", toGodot(l));
+			}
+			if (m_installModReport.ok)
+			{
+				fs = std::move(merged);
+			}
+			else
+			{
+				report.ok = false; // the mod the player asked for, or nothing (never retail instead)
+			}
+		}
 		if (report.ok)
 		{
 			m_fs = std::move(fs);
 			m_mounted = true;
 			m_installRoot = bfme2Root;
-			m_mountedArchives = report.mounted; // MP-1
+			m_mountedArchives = m_installModReport.ok ? m_installModReport.merged : report.mounted; // MP-1 (MODS-2: the merged order of an install mod)
 			// PLAN rule 7 / stop S-039: loose map files in the install folders are contamination; they are
 			// reported by the mount and by every map build, never read.
 			std::string scanError;
@@ -368,8 +577,14 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 				}
 			}
 		}
+		// lane MODS-1: the -mod operands over the verified retail set (RW 0x7BAA44 runs after the archives are mounted)
+		if (m_mounted && !m_modArgs.is_empty())
+		{
+			mountMods(rotwkRoot, errors);
+		}
 	}
 
+	result["mod"] = get_mod_report();
 	result["loose_files"] = get_loose_files();
 	result["user_map_folder"] = toGodot(m_userMapFolder);
 	if (!m_userMapError.empty())
@@ -384,6 +599,65 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 		UtilityFunctions::push_error("RetailFileSystem: ", errors[i]);
 	}
 	return result;
+}
+
+void RetailFileSystem::mountMods(const std::string &rotwkRoot, PackedStringArray &errors)
+{
+	// the user data folder of a relative -mod path (RW 0x6427C8 = GlobalData + 0x1244, set by RW 0x644148 from the install's gi.dat leaf name)
+	std::string userData;
+	{
+		std::vector<std::uint8_t> bytes;
+		std::ifstream in(std::filesystem::u8path(rotwkRoot + "/gi.dat"), std::ios::binary);
+		if (in)
+		{
+			bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+			std::string leafError;
+			const std::string leaf = UserDataFolder::leafName(bytes, &leafError);
+			if (!leaf.empty())
+			{
+				userData = UserDataFolder::userDataFolder(toNative(OS::get_singleton()->get_data_dir()), leaf, '/');
+			}
+		}
+	}
+	ModOperand operand;
+	bool ok = true;
+	for (int64_t i = 0; i < m_modArgs.size(); ++i)
+	{
+		std::string error;
+		if (!ParseModArgument(toNative(m_modArgs[i]), userData, operand, &error))
+		{
+			errors.push_back(toGodot(error));
+			ok = false;
+		}
+	}
+	if (ok)
+	{
+		ModMountOptions options;
+		options.md5CachePath = toNative(ProjectSettings::get_singleton()->globalize_path("user://mod-md5-cache.tsv"));
+		options.rotwkInstallRoot = rotwkRoot;
+		m_modReport = MountRetailMod(*m_fs, operand, options);
+		for (const std::string &e : m_modReport.errors)
+		{
+			errors.push_back(toGodot(e));
+		}
+		for (const std::string &w : m_modReport.warnings)
+		{
+			UtilityFunctions::push_warning("RetailFileSystem: ", toGodot(w));
+		}
+		for (const std::string &l : m_modReport.stops)
+		{
+			UtilityFunctions::print("RetailFileSystem: ", toGodot(l));
+		}
+		ok = m_modReport.ok;
+	}
+	if (!ok)
+	{
+		// a mod that cannot be mounted fails the whole mount: playing retail data instead would be a silent fallback
+		m_fs.reset();
+		m_mounted = false;
+		m_mountedArchives.clear();
+		m_modReport = ModMountReport();
+	}
 }
 
 Ref<RetailFileSystem> RetailFileSystem::create_bfme2_shell()

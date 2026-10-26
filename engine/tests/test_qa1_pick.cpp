@@ -107,7 +107,7 @@ TEST_CASE("qa1 pick: a click on a barracks' body above its GEOMETRY cylinder sel
 	// the stop the pick reports (S-1200): what is not read from the target
 	const std::vector<std::string> stops = h.hud->stops();
 	CHECK(std::find(stops.begin(), stops.end(), std::string(DrawablePick::stopLine())) != stops.end());
-	CHECK(std::string(DrawablePick::stopLine()).rfind("[S-1200] picking (InGameHud): the ray meets the triangles of the drawn W3D models", 0) == 0);
+	CHECK(std::string(DrawablePick::stopLine()).rfind("[S-1200] picking (InGameHud): the ray meets the drawn W3D model's oriented bounding box when its top LOD has one", 0) == 0);
 	// far off the model nothing is picked: the click on open ground drops nothing into the selection
 	h.deselect(3000);
 	h.click(Coord3D{ c.x + 150.0f, c.y + 150.0f, 0.0f }, 4000);

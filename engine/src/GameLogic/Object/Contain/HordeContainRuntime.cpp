@@ -47,6 +47,12 @@ HordeContain::HordeContain(Thing *thing, const HordeContainBehaviorData *data)
 	m_core = std::make_unique<HordeContainCore>(data->horde, logic.random(), [&things](const std::string &slotUnitType, const std::string &memberName) {
 		return MapHordeSpawn::unitTypeMatches(things, slotUnitType, memberName);
 	});
+	// RW 0x86C4EA's machine rank; the info is the logic's (GameLogic::templateInfo reports a template's KindOf error), a rank naming no template a logic error
+	m_core->setMachineTest([&logic, &things](const std::string &unitType) {
+		return MapHordeSpawn::unitTypeIsMachine(
+			things, unitType, [&logic](const ThingTemplate &t) -> const ObjectTemplateInfo & { return logic.templateInfo(&t); },
+			[&logic](const std::string &e) { logic.reportError(e); });
+	});
 	// MOVE-1: a game with an AIWorld runs the contain (member pass, reformation, the TransportContain model condition mirror: RW 0x872EFC); a logic without one
 	// (the LOGIC-1 fixtures) keeps the static horde: the module sleeps and the members stay where creation put them (S-149)
 	m_movementEnabled = logic.aiWorld() != nullptr;
@@ -190,6 +196,7 @@ void HordeContain::reassignMembersToNearestSlots()
 	HordeContainCore::Placement owner;
 	owner.position = *horde->getPosition();
 	owner.angle = horde->getOrientation();
+	owner.computeTrig(); // lane UBER-2B: once for every member below
 	const int count = (int)m_core->slots().size();
 	std::vector<Coord3D> slotPos((size_t)count);
 	for (int i = 0; i < count; ++i)
@@ -411,6 +418,15 @@ bool HordeContain::acceptCreatedMember(Object *obj)
 	return true;
 }
 
+bool HordeContain::hasFreeSlotFor(const Object &member)
+{
+	if (!m_core->built())
+	{
+		m_core->buildSlots(true);
+	}
+	return m_core->hasFreeSlotFor(member.getTemplate()->getName());
+}
+
 std::string HordeContain::getPayloadMemberTemplateName() const
 {
 	const std::vector<InitialPayloadEntry> &payload = m_data->horde.m_transport.m_initialPayload;
@@ -503,11 +519,6 @@ void HordeContain::reserveMemberGoals()
 		return;
 	}
 	Object *horde = getObject();
-	static const std::string kStopRankBox =
-		"[S-1832] a horde's destination check (RW 0x6F1584: the LARGE_RECTANGLE_PATHFIND box of its geometry, 6 x 10 cells for a 30 x 50 box, centred on the goal) "
-		"meets only the member goals reserved inside it (RW 0x86EF13): hordes whose ranks all stand 30 or more ahead of the horde object (ElvenLorienArcherHorde, "
-		"DwarvenAxeThrowerHorde) can be sent to one point and stand on it together; not verified against a retail run";
-	horde->logic().noteStop(kStopRankBox);
 	AIWorld *world = horde->logic().aiWorld();
 	if (world == nullptr || !world->mapReady())
 	{
@@ -557,10 +568,6 @@ void HordeContain::removeMember(Object *obj, bool keepSlot)
 	}
 	m_members.erase(it);
 	m_producedMembers.erase(std::remove(m_producedMembers.begin(), m_producedMembers.end(), obj->getID()), m_producedMembers.end());
-	if (obj->getID() == m_bannerCarrier)
-	{
-		m_bannerCarrier = 0; // HORDE-2 (inference: the RW writer of H+0x26C on removal is not read)
-	}
 	obj->friend_setContainedBy(nullptr);
 	if (keepSlot)
 	{
@@ -575,6 +582,7 @@ void HordeContain::removeMember(Object *obj, bool keepSlot)
 			m_removedMemberAttacker = body->lastDamager();
 		}
 		m_lastMemberRemovedFrame = getObject()->logic().getFrame();
+		bannerCarrierRemoved(*obj); // RW 0x871915, called by the removals RW 0x87370B / 0x87393E (lane BANNER-1)
 		m_dirty = true; // the ranks behind a dead man close up (the member pass refills the slot)
 	}
 	if (m_data->horde.m_forcedLocomotorSet != -1 && m_movementEnabled)

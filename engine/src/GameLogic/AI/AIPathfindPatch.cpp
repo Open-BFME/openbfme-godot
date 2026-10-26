@@ -16,8 +16,9 @@
 //     the raw nodes (node + 0) after the given node, at most 20 in all. A popped cell (RW 0x6F4AF2) that is a target ends the search: a new Path
 //     (RW 0x765A1A) gets the cells from the unit's position (RW 0x6EF591) and is marked optimised (+ 0xC = 1) as it is; else the cell is closed
 //     (RW 0x934594), the search ends once more than 3000 cell records were taken, the layer links of the cell are expanded (RW 0x6F6286: bridge / wall
-//     layers and portals, S-161: none here), then the eight neighbours (RW 0xDA2514 / 0xDA24F4: the orthogonal four first, a diagonal only beside an
-//     accepted orthogonal one) that exist, are neither open nor closed and share a layer: a neighbour whose footprint cost (RW 0x6ED46C, the cells the
+//     layers and portals, lane WALL-2), then the eight neighbours (RW 0xDA2514 / 0xDA24F4: the orthogonal four first, a diagonal only beside an
+//     accepted orthogonal one) that exist, are neither open nor closed and whose layers are compatible (RW 0x6F7C1E .. 0x6F7C63: the same test as
+//     PathfindCell::layersCompatible): a neighbour whose footprint cost (RW 0x6ED46C, the cells the
 //     parent's footprint does not cover) is negative or that fails validMovementPosition is closed; else its cost so far is the footprint cost + the step
 //     (RW 0x934602) + 10 for a pinched cell (cell bit 16) more than 3 (manhattan) from the point's cell + 1000 for an obstacle cell (type 4), its
 //     blocked-by-ally bit (info + 0x2C bit 0) is cleared, its parent set (RW 0x93442F) and its total is that plus costToGoal to the point's cell;
@@ -33,8 +34,8 @@
 //   * RW 0x767A66 (the splice): RW 0x765598 with `opt` 0 finds the segment of the raw chain closest to the patch's last node; without one the patch is
 //     dropped; else the nodes before that segment's start are deleted, the patch's last node is linked (next and next optimised) to the start's raw next,
 //     the start is deleted, the path begins with the patch, and the follower restarts at its head (+ 0x10 = head, + 0x14 = 0).
-// PORT NOTES: the occupant lists are the port's per-cell lists (OCC_GROUND_GOAL = + 0x14, OCC_POSITION = + 0x20, OCC_HORDE_POSITION = + 0x24); only the
-// ground layer exists (S-161), so the layer tests of the expansion always pass and RW 0x6F6286 adds nothing.
+// PORT NOTES: the occupant lists are the port's per-cell lists (OCC_GROUND_GOAL = + 0x14, OCC_POSITION = + 0x20, OCC_HORDE_POSITION = + 0x24); the raised
+// raised walkways' layers 2 .. 15 are reached through RW 0x6F6286's layer half (lane WALL-2, S-4856).
 
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIPathfindStops.h"
@@ -252,7 +253,9 @@ Path *Pathfinder::patchPath(PathfindObject &obj, const PathfindLocomotorInfo &lo
 		startCell->clearParentCell();
 	}
 	startCell->startPathfind(goalCell);
-	startCell->setTotalCost(startCell->costToGoal(goalCell));
+	// RW 0x6F1F0D (lane WALL-2). The pending hops (pathfinder + 0x1C1CC) are kept: RW 0x6F7938 has no reference to the vector (read in RotWK 2.01: its
+	// estimate calls at 0x6F7ADA / 0x6F7D5B take it as the last search left it), unlike the path patch RW 0x6FC9DA, which empties it (0x6FCA2C)
+	startCell->setTotalCost(costToGoal(startCell, goalCell));
 	m_open.clear();
 	m_closedList = nullptr;
 	m_open.push(startCell);
@@ -287,7 +290,7 @@ Path *Pathfinder::patchPath(PathfindObject &obj, const PathfindLocomotorInfo &lo
 		{
 			break;
 		}
-		checkChangeLayers(c, &obj); // RW 0x6F6286 (lane BACKLOG5)
+		checkChangeLayers(c, &obj); // RW 0x6F7B91 .. 0x6F7B95 (lane WALL-2)
 		bool accepted[4] = { false, false, false, false };
 		for (int i = 0; i < 8; i++)
 		{
@@ -298,6 +301,10 @@ Path *Pathfinder::patchPath(PathfindObject &obj, const PathfindLocomotorInfo &lo
 			if (n == nullptr || (n->hasInfo() && (n->getOpen() || n->getClosed())))
 			{
 				continue;
+			}
+			if (!PathfindCell::layersCompatible(*c, *n))
+			{
+				continue; // RW 0x6F7C1E .. 0x6F7C63 (lane WALL-2): the layer test of every search (a wall top's cell is no step from the ground beside it)
 			}
 			if (i >= 4 && !accepted[kSide[i - 4]] && !accepted[kSide[i - 3]])
 			{
@@ -344,7 +351,7 @@ Path *Pathfinder::patchPath(PathfindObject &obj, const PathfindLocomotorInfo &lo
 				step += 10;
 			}
 			n->setBlockedByAlly(false);
-			const unsigned rem = n->costToGoal(goalCell);
+			const unsigned rem = costToGoal(n, goalCell); // RW 0x6F1F0D (lane WALL-2)
 			if (n->getType() == PathfindCell::CELL_OBSTACLE)
 			{
 				step += 1000;
@@ -365,51 +372,8 @@ Path *Pathfinder::patchPath(PathfindObject &obj, const PathfindLocomotorInfo &lo
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Lane BACKLOG5: the layer-change expansion and computePath's patch
+// Lane BACKLOG5: computePath's patch (the layer-change expansion RW 0x6F6286 is lane WALL-2's, AIPathfindPortals.cpp)
 // ---------------------------------------------------------------------------------------------------------
-void Pathfinder::checkChangeLayers(PathfindCell *parentCell, const PathfindObject *obj)
-{
-	// TARGET RW 0x6F6286 (tier A for BFME2 decomp PathfinderCheckChangeLayers.cpp Pathfinder::CheckChangeLayers, the donor), called by every cell search
-	// after a cell is closed and before its neighbours are examined (RW 0x6FDBDD internalFindPath, 0x6FCD22 patchPath, findSafePath, RW 0x6F7938):
-	//   * a cell that connects to a layer (cell + 0xC bits 10 .. 15): the cell at the same index on that layer, or on the ground when the connection is
-	//     the ground or a wall layer (RW 0x76550F: layer 1 or >= 16), is opened unless it is open or closed already (RW 0x6E7F85 / 0x6E7F98): it gets a
-	//     record (RW 0x6E9FF8; an existing record has its parent cleared), the closed cell as its parent (RW 0x93442F) and the parent's cost so far and
-	//     total cost unchanged: a layer change costs nothing;
-	//   * a cell with a pathfind waypoint (cell + 0x14) the unit may use (RW 0x68229C): the waypoint's id is taken off the end of the pending hops
-	//     (pathfinder + 0x1C1CC) and the ground cell under each of its links is opened the same way, with the waypoint recorded (RW 0x93443D).
-	// PORT (what is and is not here, S-161 / S-1830): only the GROUND-connection subset of the first rule. The lookup of a cell on a bridge layer
-	// (RW 0x5E2E9C with the connection) is not implemented: no layer but the ground holds cells. The second rule (the waypoint expansion, RW 0x68229C /
-	// 0x93443D and the hop list) is not implemented: cells carry no waypoints. The wall layers (connection >= 16, RW 0x76550F) cannot be represented: the
-	// port's connection field has four bits (PathfindCell::m_connectsToLayer). The one case that runs, a connection to the ground, names the cell's own index on
-	// the ground, which is the closed parent: nothing is opened, so on today's maps the call changes no search. It is here so the call sites match RW's.
-	(void)obj;
-	if (parentCell->getConnectLayer() != LAYER_GROUND)
-	{
-		return;
-	}
-	const ICoord2D ndx = { (int)parentCell->getXIndex(), (int)parentCell->getYIndex() };
-	PathfindCell *cell = getCell(LAYER_GROUND, ndx.x, ndx.y);
-	if (cell == nullptr || (cell->hasInfo() && (cell->getOpen() || cell->getClosed())))
-	{
-		return;
-	}
-	if (!cell->hasInfo())
-	{
-		if (!cell->allocateInfo(m_pool, ndx))
-		{
-			return;
-		}
-	}
-	else
-	{
-		cell->clearParentCell();
-	}
-	cell->setParentCell(parentCell);
-	cell->setCostSoFar(parentCell->getCostSoFar());
-	cell->setTotalCost(parentCell->getTotalCost());
-	m_open.push(cell);
-}
-
 Path *Pathfinder::patchPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, Path *originalPath, bool blocked)
 {
 	// TARGET RW 0x6FC9DA (pathfinder vtable 0xC1B8D8 slot 0x10, the call of computePath RW 0x6663F4 for a unit with blocked frames; BFME2 decomp
@@ -466,6 +430,7 @@ Path *Pathfinder::patchPath(PathfindObject *obj, const PathfindLocomotorInfo &lo
 	m_closedList = nullptr;
 	m_open.push(parentCell);
 
+	m_portalHops.clear(); // lane WALL-2: RW 0x6FC9DA empties the pending hops (pathfinder + 0x1C1CC)
 	const PathNode *const lastNode = originalPath->getLastNode();
 	const PathNode *const firstNode = originalPath->getFirstNode();
 	Coord3D goalPos = *lastNode->getPosition();
@@ -549,9 +514,12 @@ Path *Pathfinder::patchPath(PathfindObject *obj, const PathfindLocomotorInfo &lo
 		{
 			m_isTunneling = false;
 			result = new Path();
+			result->setWaypointSource(originalPath->waypointSource()); // lane WALL-2: the portals of the copied nodes
 			for (const PathNode *node = lastNode; node != matchNode; node = node->getPrevious())
 			{
 				result->prependNode(node->getPosition(), node->getLayer());
+				result->getFirstNode()->setWaypointID(node->getWaypointID()); // lane WALL-2: a portal node stays one (RW copies the node, its + 0x2C)
+				result->getFirstNode()->setCanOptimize(node->getCanOptimize());
 			}
 			prependCells(result, &currentPosition, parentCell, centerInCell);
 			result->optimize(*this, obj, loco.validSurfaces, blocked, nullptr);

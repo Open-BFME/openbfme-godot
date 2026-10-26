@@ -171,8 +171,18 @@ enum GameMessageType : int
 	MSG_ADD_TO_TEAM7 = 1145,
 	MSG_ADD_TO_TEAM8 = 1146,
 	MSG_ADD_TO_TEAM9 = 1147,
-	MSG_END_NETWORK_MESSAGES = 1148
+	MSG_END_NETWORK_MESSAGES = 1148,
+	// lane CHEAT-1: OpenBFME's Cheat Mode command (GameLogic/CheatMode.h), run only in a game whose setup has Cheat Mode on and only for the host's slot. Not a
+	// retail type (PLAN rule 4: a stated divergence): it sits far outside RotWK's 1001 .. 1999 range, so it never gets a selection group (RW 0x6AAB85) and can
+	// never meet a retail message; every logic-type check names it explicitly (IsNetworkLogicMessageType)
+	MSG_OPENBFME_CHEAT = 32001
 };
+
+// lane CHEAT-1: a type the network, the replay and the logic dispatcher carry: retail's logic range plus MSG_OPENBFME_CHEAT
+inline bool IsNetworkLogicMessageType(int type)
+{
+	return (type > MSG_BEGIN_NETWORK_MESSAGES && type < MSG_END_NETWORK_MESSAGES) || type == MSG_OPENBFME_CHEAT;
+}
 
 // RW recorder readArgument order
 enum GameMessageArgumentDataType
@@ -200,7 +210,7 @@ struct GameMessageArgument
 	Coord3D location;
 };
 
-// the name of a logic message type ("MSG_QUEUE_UNIT_CREATE"), or "" for a number outside 1000 .. 1148
+// the name of a logic message type ("MSG_QUEUE_UNIT_CREATE"), or "" for a number outside 1000 .. 1148 and not MSG_OPENBFME_CHEAT
 const char *GameMessageTypeName(int type);
 
 class GameMessage

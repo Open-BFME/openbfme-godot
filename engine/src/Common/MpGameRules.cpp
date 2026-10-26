@@ -208,6 +208,11 @@ std::u16string LegendaryHeroes::label()
 	return u"Legendary Heroes (OpenBFME rule)";
 }
 
+std::u16string CheatModeRule::label()
+{
+	return u"Cheat Mode (OpenBFME rule)";
+}
+
 std::u16string LegendaryHeroes::choiceText(int factor)
 {
 	if (factor <= kOff)

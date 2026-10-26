@@ -64,8 +64,12 @@ static func set_value(key: String, value: String, path: String = "") -> String:
 	var f := FileAccess.open(p, FileAccess.WRITE)
 	if f == null:
 		return "cannot write %s (%s)" % [p, error_string(FileAccess.get_open_error())]
-	f.store_string("\n".join(out) + "\n")
+	var stored: bool = f.store_string("\n".join(out) + "\n")
+	f.flush()
+	err = f.get_error()
 	f.close()
+	if not stored or err != OK:
+		return "cannot write %s (%s)" % [p, error_string(err) if err != OK else "short write"]
 	return ""
 
 

@@ -46,20 +46,3 @@ target_link_libraries(audio_decode_cli PRIVATE openbfme_core)
 # The Godot half of the audio device (compiled into the GDExtension only).
 set(OPENBFME_AUDIO_GODOT_SOURCES
     src/GodotDevice/GodotGameAudio.cpp)
-
-# The MP3 fixture streams are generated, never committed (retail-format bytes, synthetic ones included, stay out of git). The target runs
-# tools/audio/gen_mp3_fixtures.py into <build>/audio_fixtures and checks the numbers it derives against tests/data/audio/mp3_golden.tsv.
-# It needs python3, lame and mpg123; without them the unit tests fail loudly naming the command (no silent skip).
-set(OPENBFME_AUDIO_FIXTURE_DIR "${CMAKE_BINARY_DIR}/audio_fixtures")
-find_package(Python3 COMPONENTS Interpreter)
-find_program(OPENBFME_LAME lame)
-find_program(OPENBFME_MPG123 mpg123)
-if(Python3_FOUND AND OPENBFME_LAME AND OPENBFME_MPG123)
-    add_custom_target(audio_mp3_fixtures ALL
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/audio/gen_mp3_fixtures.py" --out "${OPENBFME_AUDIO_FIXTURE_DIR}"
-        COMMENT "Generating the synthetic MP3 test fixtures"
-        VERBATIM)
-else()
-    message(WARNING "python3 / lame / mpg123 not all found: the MP3 fixtures are not generated and the audio decode tests will fail until "
-        "'python3 tools/audio/gen_mp3_fixtures.py --out ${OPENBFME_AUDIO_FIXTURE_DIR}' has run")
-endif()

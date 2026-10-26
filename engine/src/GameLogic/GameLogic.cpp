@@ -2,11 +2,13 @@
 // See GameLogic/GameLogic.h for the sources of every rule.
 
 #include "GameLogic/GameLogic.h"
+#include "Common/ModEngineFeatures.h"
 
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/GameState.h" // lane SAVE-4a
 #include "Common/Snapshot.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Module/UpgradeModuleClasses.h"
@@ -203,14 +205,28 @@ void GameLogic::invalidateTemplateInfo()
 {
 	m_templateInfo.clear();
 	m_crushInfo.clear();
+	m_crushById.clear();
 }
 
 const CrushTemplateInfo &GameLogic::crushInfo(const ThingTemplate *finalOverride)
 {
+	const size_t id = finalOverride->getTemplateID();
+	if (id < m_crushById.size() && m_crushById[id].first == finalOverride)
+	{
+		return *m_crushById[id].second;
+	}
 	auto it = m_crushInfo.find(finalOverride);
 	if (it == m_crushInfo.end())
 	{
 		it = m_crushInfo.emplace(finalOverride, std::make_unique<CrushTemplateInfo>(CrushTemplateInfo::of(*finalOverride))).first;
+	}
+	if (id >= m_crushById.size())
+	{
+		m_crushById.resize(id + 1, { nullptr, nullptr });
+	}
+	if (!m_crushById[id].first)
+	{
+		m_crushById[id] = { finalOverride, it->second.get() }; // the first template of the id keeps the slot
 	}
 	return *it->second;
 }
@@ -238,6 +254,26 @@ Object *GameLogic::newObject(const ThingTemplate *tt, Team *team, const ObjectSt
 float GameLogic::getGroundHeight(float x, float y) const
 {
 	return m_terrain ? m_terrain->getGroundHeight(x, y, nullptr) : 0.0f;
+}
+
+float GameLogic::getLayerHeightForDestination(float x, float y, float z) const
+{
+	// lane WALL-2: TheTerrainLogic vslot 0x1C (getLayerHeight) with the layer of RW 0x680A75 (getLayerForDestination) at (x, y, z)
+	if (m_aiWorld && m_aiWorld->mapReady())
+	{
+		const Pathfinder &pf = m_aiWorld->pathfinder();
+		return pf.getLayerHeight(x, y, pf.getLayerAt(x, y, z));
+	}
+	return getGroundHeight(x, y);
+}
+
+float GameLogic::getHighestLayerHeight(float x, float y) const
+{
+	if (m_aiWorld && m_aiWorld->mapReady())
+	{
+		return m_aiWorld->pathfinder().getHighestLayerHeight(x, y);
+	}
+	return getGroundHeight(x, y);
 }
 
 void GameLogic::reportError(const std::string &text)
@@ -585,6 +621,7 @@ void GameLogic::update(int phase)
 	{
 		m_partition->update(); // RW 0x62E93B: ThePartitionManager vslot 0x28 (RW 0xA39020 -> 0xA3B4E0), then the row's collision manager (lane MODULES-2)
 		runRow(ROW_PARTITION_COLLISION);
+		combat().processProjectileContacts(); // lane FLANK-1: the flying projectiles' contacts, the same collision manager row (S-780 inference: after the AI units' pass)
 		// RW 0x62E951 .. 0x62E97E
 		for (Object *o = m_objectHead; o; o = o->getNextObject())
 		{
@@ -859,6 +896,22 @@ void GameLogic::processDestroyList()
 }
 
 // lane BACKLOG3 (S-2452): see GameLogic.h
+void GameLogic::noteBeacon(BeaconNotice::Kind kind, int playerIndex, ObjectID object, const Coord3D &position)
+{
+	if (m_beaconNotices.size() >= kBeaconNotices)
+	{
+		m_beaconNotices.erase(m_beaconNotices.begin());
+	}
+	BeaconNotice n;
+	n.seq = ++m_beaconSeq;
+	n.frame = m_frame;
+	n.kind = kind;
+	n.playerIndex = playerIndex;
+	n.object = object;
+	n.position = position;
+	m_beaconNotices.push_back(n);
+}
+
 void GameLogic::noteRadarEvent(int type, const Coord3D &position, RadarEventNotice::Source source, int playerIndex)
 {
 	if (m_radarEventNotices.size() >= kRadarEventNotices)
@@ -877,6 +930,7 @@ void GameLogic::noteRadarEvent(int type, const Coord3D &position, RadarEventNoti
 
 void GameLogic::reset()
 {
+	m_missionObjectives.reset(); // lane CAMPUI-1: TheMissionObjectiveTracker's reset (RW 0x835E03): a new game has no list until its map.ini's
 	m_radarEventNotices.clear(); // lane BACKLOG3: a new game's radar starts empty (the sequence goes on: a client's cursor stays behind it)
 	// ZH GameLogic::reset: every object goes; the scheduler vectors are cleared with their modules' indices
 	m_current = nullptr;
@@ -906,9 +960,11 @@ void GameLogic::reset()
 	m_objectsById.clear();
 	m_templateInfo.clear();
 	m_crushInfo.clear();
+	m_crushById.clear();
 	m_frame = 0;
 	m_gameDifficulty = 1; // lane CAMP-1H: GameLogic::reset RW 0x62D3EB (+ 0xA4 = 1)
 	m_nextObjectID = 1;
+	m_sharedProductionID = 0;
 	m_objectCount = 0;
 	m_lastPhase = 0;
 	m_depth = 0;
@@ -1038,12 +1094,17 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 		{
 			x.addI32(m_legendaryHeroes);
 		}
+		m_cheatMode.crc(x); // lane CHEAT-1: only a Cheat Mode game hashes it (every other game keeps its hash)
 		// lane UBER-1: an Uber game hashes its profile (a Faithful game hashes nothing more: its hashes stay the ones before UBER-1)
 		if (m_simulationProfile != SimulationProfile::Faithful)
 		{
 			x.addI32((std::int32_t)m_simulationProfile);
 		}
 		x.addU32(m_nextObjectID);
+		if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedUniqueProductionId))
+		{
+			x.addU32(m_sharedProductionID); // lane MODS-3 (a retail game hashes nothing more)
+		}
 		x.addU32((std::uint32_t)m_objectCount);
 		for (std::uint32_t w : m_random.seedArray())
 		{

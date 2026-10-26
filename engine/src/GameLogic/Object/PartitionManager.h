@@ -94,6 +94,8 @@ public:
 	virtual bool allow(Object &obj) = 0;
 	// bit k: player k's layer may hold an allowed object (RW 0xA39490 ANDs them); layer -1 is always walked
 	virtual std::uint32_t playerLayerMask() const { return 0xFFFFFFFFu; }
+	// lane UBER-3W: true for a pure filter the range walk may ask before the distance test, when it is the chain's first (the same hits: the chain still asks it)
+	virtual bool beforeDistance() const { return false; }
 };
 
 // a filter made of a predicate (the port's filters that have no own class); the callable is held by value (no std::function allocation per scan):
@@ -110,6 +112,22 @@ public:
 
 private:
 	Fn m_fn;
+};
+
+// lane UBER-2A (Uber only, not retail): a filter that allows every object and only narrows the walked player layers (the scans whose other filters can accept
+// nothing on the other layers add it to skip those trees)
+class PartitionFilterLayers : public PartitionFilter
+{
+public:
+	explicit PartitionFilterLayers(std::uint32_t mask)
+		: m_mask(mask)
+	{
+	}
+	bool allow(Object &) override { return true; }
+	std::uint32_t playerLayerMask() const override { return m_mask; }
+
+private:
+	std::uint32_t m_mask;
 };
 
 struct PartitionHit
@@ -132,6 +150,12 @@ public:
 	PartitionFilterList(const std::vector<PartitionFilter *> &list)
 		: m_data(list.data())
 		, m_size(list.size())
+	{
+	}
+	// the first `size` filters of an array the caller keeps alive for the call
+	PartitionFilterList(PartitionFilter *const *data, size_t size)
+		: m_data(data)
+		, m_size(size)
 	{
 	}
 	PartitionFilter *const *begin() const { return m_data; }
@@ -239,11 +263,13 @@ public:
 	void xfer(class Xfer &x);
 	void loadPostProcess();
 	static std::vector<std::string> stopLines();
-	// tests: the range walk's double-precision pre-reject (surelyBeyond) on or off; the results are the same either way (not state)
+	// tests: the double-precision pre-reject (surelyBeyond) of the range walk and of getClosestObject on or off; the results are the same either way (not state)
 	void setPreReject(bool on) { m_preReject = on; }
 
 	// RW 0xA3A6B0 / 0xA3A700: the STLport introsort of the hits on distSqr (exposed for the tests)
 	static void sortHits(std::vector<PartitionHit> &hits, IterOrderType order);
+
+	struct SearchNode; ///< a node of getClosestObject's search (RW 0xA3BDB0)
 
 	struct Geometry
 	{
@@ -292,6 +318,7 @@ private:
 	std::vector<std::unique_ptr<Entry>> m_byId; ///< Object + 0x4E8, indexed by object id
 	mutable std::unordered_map<const ThingTemplate *, Geometry> m_geometry; ///< looked up only (never iterated); element references stay valid
 	mutable std::vector<std::vector<PartitionHit>> m_hitPool;              ///< the buffers of finished queries (PartitionHits)
+	mutable std::vector<SearchNode> m_searchHeap;                          ///< getClosestObject's heap storage, kept between calls (lane UBER-2A)
 	bool m_preReject = true;
 	// lane SAVE-4c: the state a load read, until its post-process builds it (PartitionManager.cpp)
 	struct PendingLoad
@@ -316,5 +343,6 @@ private:
 	};
 	std::unique_ptr<PendingLoad> m_pendingLoad;
 	mutable bool m_walkPreReject = true; ///< this walk's: off when the query rectangle is the whole grid (every candidate is near: the bound would only cost)
+	mutable PartitionFilter *m_walkPreFilter = nullptr; ///< lane UBER-3W: this range walk's beforeDistance filter (iterateObjectsInRange), else null
 	int m_mineBit = -1;
 };

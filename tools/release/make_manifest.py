@@ -20,7 +20,7 @@ package must be byte for byte the launcher archive's (one launcher per release).
 
 with sorted keys, two-space indents and a final newline, so the same packages give the same bytes. The version is the folder's (the
 SHA256SUMS name); it must be a release tag (v<major>.<minor>.<patch>, v<major>.<minor>.<patch>-alpha.<n>,
-v<major>.<minor>.<patch>-nightly.<YYYYMMDD> or v<major>.<minor>.<patch>-preview.<n>) on the checked-out commit (--allow-untagged: tests); an -alpha.<n>,
+v<major>.<minor>.<patch>-nightly.<n> or v<major>.<minor>.<patch>-preview.<n>) on the checked-out commit (--allow-untagged: tests); an -alpha.<n>,
 -nightly.<n> or -preview.<n> tag is the pre-release channel, whose id is "preview" (lane NIGHTLY-1, owner, 2026-10-21: the launcher shows that channel as "Nightly"; the id is unchanged). Every archive's size and SHA-256 are computed here and must match SHA256SUMS. Sign the result
 with tools/release/sign_manifest.py on the offline machine.
 """

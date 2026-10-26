@@ -166,5 +166,9 @@ const char *GameMessageTypeName(int type)
 	{
 		return kLogicMessageNames[type - 1001];
 	}
+	if (type == MSG_OPENBFME_CHEAT)
+	{
+		return "MSG_OPENBFME_CHEAT"; // lane CHEAT-1
+	}
 	return "";
 }

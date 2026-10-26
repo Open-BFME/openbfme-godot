@@ -3,13 +3,18 @@
 Question (owner, 2026-10-09): how much of the Open-BFME-2 decompilation (BFME2 1.06 `game.dat`,
 byte-matching C++) can be used for RotWK 2.01? Would a separate BFME2 -> RotWK project pay off?
 
+The measurements and open-stop ranking below are that investigation's snapshot,
+using the inputs listed here, not current engine feature coverage or a live stop
+count. Recomputing them requires the private mapping inputs and donor checkout;
+the scripts do not infer those data from the engine source tree.
+
 Answer: most of RotWK *is* BFME2. 95% of RotWK's code bytes have a BFME2 counterpart (91% the same
 function, identical or changed), 64% are byte-identical (after masking addresses), and **49% of RotWK's code is identical to a BFME2
 function that already has byte-matched decomp C++** (43.5% human-authored, the rest generated EH
 funclets and vendored libraries). Counting the "same function, changed" tier, 67% of RotWK's code
 bytes have byte-matched C++ for their counterpart. The expansion is not a separate block: RotWK-only
 code is 5.4% of the bytes, in small islands (the largest is 21 KiB) between BFME2 functions. A
-separate project is not needed: the map below (tools/re/, regenerated in about 3 minutes) is the
+separate project is not needed: the map below (tools/re/, regeneration took about 3 minutes in that investigation) is the
 bridge, and it improves on its own as Open-BFME-2 matches more functions.
 
 Inputs: RotWK `game.dat` (68,404 functions, Ghidra), BFME2 1.06 `game.dat` (66,336 functions,

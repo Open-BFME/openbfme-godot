@@ -9,6 +9,8 @@ var missing_games: Label
 
 signal download_games
 signal show_news
+signal open_replay
+signal open_save
 
 const W := preload("res://scripts/ui/widgets.gd")
 const Style := preload("res://scripts/ui/style.gd")
@@ -85,6 +87,15 @@ func _init() -> void:
 	p.panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	left.add_child(p.panel)
 	p.box.add_child(W.h3("Your games"))
+	# the open buttons side by side at their own width (stretched across the panel their icons stood apart from the text: the layout check)
+	var open_row := W.hbox(10)
+	var replay := W.button("Open replay...", "folder", "Watch a downloaded OpenBFME replay", 15)
+	replay.pressed.connect(func(): open_replay.emit())
+	open_row.add_child(replay)
+	var save := W.button("Open save...", "folder", "Continue an OpenBFME save with the build that made it", 15)
+	save.pressed.connect(func(): open_save.emit())
+	open_row.add_child(save)
+	p.box.add_child(open_row)
 	# community PR #36: the game Play starts, in the games row where the names were (a row of its own made the panel's bottom almost meet What's
 	# New's: the layout check); its items name the versions
 	game_picker = OptionButton.new()
@@ -97,6 +108,7 @@ func _init() -> void:
 	games_found = W.vbox(4)
 	games_where = W.trim_label("", "Muted")
 	games_found.add_child(games_where)
+	games_found.add_child(W.wrap("Version and language are checked when the game starts.", "Muted"))
 	p.box.add_child(games_found)
 	games_card = W.vbox(8)
 	missing_games = W.wrap("The Rise of the Witch-king 2.01 and Battle for Middle-earth II 1.06 were not found.", "Muted")
@@ -212,10 +224,11 @@ func set_players(text: String) -> void:
 
 ## found: the games' state; aio: the download is offered (the setting)
 func set_games(found: bool, aio: bool, where: String) -> void:
-	_games_status.text = "✓ Ready" if found else "Not found"
+	_games_status.text = "Folders found" if found else "Not found"
 	_games_status.add_theme_color_override("font_color", Style.GOOD if found else Style.WARN)
 	games_found.visible = found
 	games_where.text = where
+	games_where.tooltip_text = games_where.text
 	games_card.visible = not found and aio
 
 

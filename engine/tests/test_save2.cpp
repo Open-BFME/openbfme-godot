@@ -7,6 +7,7 @@
 
 #include "Common/Recorder.h"
 #include "Common/Sha256.h"
+#include "Common/RecordingBuild.h"
 #include "Common/System/SaveGame/SaveGameFile.h"
 #include "GameClient/CommandLogLoad.h"
 
@@ -257,10 +258,10 @@ TEST_CASE("save2 T5: a damaged, truncated or foreign file is refused with its na
 		CHECK(parseError(sk.encode()) == "the save is a skirmish that names a campaign");
 		std::vector<std::uint8_t> v = good;
 		const size_t head = partOffset(good, 0);
-		v[head + 40] = 3; // the header version word (its digest recomputed below so only the version is wrong; lane CAMPSAVE-1: 1 and 2 load)
+		v[head + 40] = 4; // unknown header version, with a valid digest
 		const std::array<std::uint8_t, 32> d = Sha256::hash(v.data() + head + 40, (size_t)(partOffset(good, 1) - head - 40));
 		std::memcpy(v.data() + head + 8, d.data(), 32);
-		CHECK(parseError(v) == "save header version 3 (this build reads versions 1 and 2)");
+		CHECK(parseError(v) == "save header version 4 (this build reads versions 1, 2 and 3)");
 	}
 	SUBCASE("a missing file")
 	{
@@ -322,6 +323,189 @@ TEST_CASE("save2 T5: no part is allocated before its declared size is checked: a
 	std::remove(path.c_str());
 }
 
+TEST_CASE("save reader: malformed part boundaries, tags, sizes, versions and foreign identities are refused by name")
+{
+	const std::vector<std::uint8_t> good = sample().encode();
+	const size_t head = partOffset(good, 0), log = partOffset(good, 1), snap = partOffset(good, 2);
+	REQUIRE(parseError(good) == "(parsed)");
+	for (size_t cut : { size_t(0), size_t(8), size_t(12), head + 4, head + 8, head + 40, log - 1, log, log + 4, log + 8,
+		log + 40, snap - 1, snap, snap + 4, snap + 8, snap + 40, good.size() - 1 })
+	{
+		if (cut == good.size())
+		{
+			continue; // the synthetic save has an empty SNAP part
+		}
+		const std::string error = parseError(std::vector<std::uint8_t>(good.begin(), good.begin() + (std::ptrdiff_t)cut));
+		CHECK_MESSAGE((!error.empty() && error != "(parsed)"), "truncation at byte ", cut);
+	}
+	for (const auto &change : { std::pair<size_t, char>{ log, 'X' }, { log, 'H' }, { snap, 'H' } })
+	{
+		auto bad = good;
+		bad[change.first] = (std::uint8_t)change.second;
+		CHECK(parseError(bad).find("expected the ") != std::string::npos);
+	}
+	for (const auto &part : { std::pair<size_t, size_t>{ head, log }, { log, snap }, { snap, good.size() } })
+	{
+		auto missing = good;
+		missing.erase(missing.begin() + (std::ptrdiff_t)part.first, missing.begin() + (std::ptrdiff_t)part.second);
+		CHECK(parseError(missing) != "(parsed)");
+		auto duplicate = good;
+		duplicate.insert(duplicate.begin() + (std::ptrdiff_t)part.first, good.begin() + (std::ptrdiff_t)part.first,
+			good.begin() + (std::ptrdiff_t)part.second);
+		CHECK(parseError(duplicate) != "(parsed)");
+	}
+	for (size_t offset : { head, log, snap })
+	{
+		auto bad = good;
+		const std::uint32_t huge = 1u << 31;
+		std::memcpy(bad.data() + offset + 4, &huge, 4);
+		CHECK(parseError(bad).find("declares 2147483648 bytes") != std::string::npos);
+		CHECK(parseError(bad, true).find(offset == head ? "declares 2147483648 bytes" : "of its 2147483648 bytes") != std::string::npos);
+		bad = good;
+		std::fill_n(bad.begin() + (std::ptrdiff_t)offset + 4, 4, offset == snap ? 1 : 0);
+		CHECK(parseError(bad) != "(parsed)");
+	}
+	auto version = good;
+	version[head + 40] = 99;
+	const auto digest = Sha256::hash(version.data() + head + 40, log - head - 40);
+	std::memcpy(version.data() + head + 8, digest.data(), digest.size());
+	CHECK(parseError(version).find("save header version 99") != std::string::npos);
+	SaveGameFile foreign = sample();
+	foreign.header.engineId = "another-engine-identity";
+	SaveGameFile read;
+	std::string error;
+	REQUIRE_MESSAGE(SaveGameFile::parse(foreign.encode(), read, &error), error);
+	const SaveGameCompatibility compatible = SaveGameCompatibility::check(read.header, identity("enhanced"), ProfileIdentity::buildId(), "v0.3.0-test", false);
+	CHECK_FALSE(compatible.loadable);
+	CHECK(compatible.refusal == RecordingBuild::openWith(read.header.buildVersion, read.header.buildDate)); // another build: named by its release, not its engine id
+	CHECK_FALSE(parseError({}).empty());
+	read.header.description = "unchanged";
+	auto damaged = good;
+	damaged[log] = 'X';
+	CHECK_FALSE(SaveGameFile::parse(damaged, read, &error));
+	CHECK(read.header.description == "unchanged");
+	const std::string path = "save2_damaged.obfmesave";
+	{
+		std::ofstream file(path, std::ios::binary);
+		file.write((const char *)damaged.data(), (std::streamsize)damaged.size());
+		REQUIRE(file.good());
+	}
+	CHECK_FALSE(SaveGameFile::load(path, read, &error));
+	CHECK_FALSE(error.empty());
+	CHECK(read.header.description == "unchanged");
+	std::remove(path.c_str());
+}
+
+TEST_CASE("save reader: sparse large and maximum replay frame numbers have bounded coverage checks")
+{
+	for (const UnsignedInt frame : { 1u << 31, 0xFFFFFFFFu })
+	{
+		SaveGameFile save = sample();
+		save.header.frame = frame;
+		save.header.stateHash = 0x1BADB002u;
+		ReplayHeader h;
+		h.game = smallGame();
+		h.profile = save.header.profile;
+		ReplayWriter writer;
+		writer.setKeepCopy(true);
+		std::string error;
+		REQUIRE_MESSAGE(writer.open("", h, &error), error);
+		writer.recordHash(1, save.header.stateHash);
+		REQUIRE_MESSAGE(writer.logUpTo(1, save.header.stateHash, save.log, &error), error);
+		std::memcpy(save.log.data() + save.log.size() - 8, &frame, 4);
+		CommandLogLoad load;
+		CHECK_FALSE(load.prepare(save, &error));
+		CHECK(error == "the save's command log has no state hash of frame 2");
+	}
+	SaveGameFile save = sample();
+	save.header.frame = 0xFFFFFFFFu;
+	save.header.stateHash = 0x1BADB002u;
+	ReplayHeader h;
+	h.game = smallGame();
+	h.profile = save.header.profile;
+	ReplayWriter writer;
+	writer.setKeepCopy(true);
+	std::string error;
+	REQUIRE_MESSAGE(writer.open("", h, &error), error);
+	writer.recordHash(save.header.frame, save.header.stateHash);
+	REQUIRE_MESSAGE(writer.logUpTo(save.header.frame, save.header.stateHash, save.log, &error), error);
+	CommandLogLoad load;
+	CHECK_MESSAGE(load.prepare(save, &error), error);
+}
+
+TEST_CASE("replay reader: disk truncations, unknown records, oversized fields and foreign profiles have named errors")
+{
+	ReplayHeader h;
+	h.game = smallGame();
+	h.profile = identity("enhanced");
+	ReplayWriter writer;
+	writer.setKeepCopy(true);
+	std::string error;
+	REQUIRE_MESSAGE(writer.open("", h, &error), error);
+	writer.recordHash(1, 0xABCDu);
+	std::vector<std::uint8_t> good;
+	REQUIRE_MESSAGE(writer.logUpTo(1, 0xABCDu, good, &error), error);
+	const size_t end = good.size() - 9;
+	const std::string path = "save_reader_robustness.replay";
+	ReplayFile out;
+	for (size_t cut = 0; cut < good.size(); ++cut)
+	{
+		std::ofstream file(path, std::ios::binary | std::ios::trunc);
+		file.write((const char *)good.data(), (std::streamsize)cut);
+		file.close();
+		out.finalFrame = 123;
+		if (cut == end || cut == end - 9)
+		{
+			REQUIRE_MESSAGE(ReplayFile::load(path, out, &error), error);
+			CHECK_FALSE(out.complete); // supported relay/interrupted recordings end between intact records
+			continue;
+		}
+		CHECK_MESSAGE((!ReplayFile::load(path, out, &error) && !error.empty()), "replay truncated at byte ", cut);
+		CHECK(out.finalFrame == 123);
+	}
+	std::filesystem::resize_file(path, ReplayFile::kMaxBytes + 1);
+	out.finalFrame = 123;
+	CHECK_FALSE(ReplayFile::load(path, out, &error));
+	CHECK(error == "the replay exceeds the size limit of 268435456 bytes");
+	CHECK(out.finalFrame == 123);
+	std::remove(path.c_str());
+	REQUIRE_MESSAGE(ReplayFile::parse(good, out, &error), error);
+	CHECK(out.complete);
+	for (std::vector<std::uint8_t> bad : {
+		std::vector<std::uint8_t>(good.begin(), good.begin() + 12),
+		std::vector<std::uint8_t>(good.begin(), good.end() - 1),
+		std::vector<std::uint8_t>(good.begin(), good.end()) })
+	{
+		bad[8] = 255;
+		CHECK_FALSE(ReplayFile::parse(bad, out, &error));
+		CHECK_FALSE(error.empty());
+	}
+	auto unknown = good;
+	unknown[end] = 255;
+	CHECK_FALSE(ReplayFile::parse(unknown, out, &error));
+	CHECK(error == "unknown replay record 255");
+	auto count = good;
+	count.insert(count.begin() + (std::ptrdiff_t)end, { 1, 0, 0, 0, 0, 0, 0, 0, 0x80 });
+	CHECK_FALSE(ReplayFile::parse(count, out, &error));
+	CHECK(error.find("command count 2147483648 exceeds the record's bytes") != std::string::npos);
+	auto length = good;
+	length.insert(length.begin() + (std::ptrdiff_t)end, { 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80 });
+	CHECK_FALSE(ReplayFile::parse(length, out, &error));
+	CHECK(error == "truncated replay record");
+	CHECK(out.complete); // a failed parse must not replace the previous valid result
+	ReplayHeader foreign = h;
+	foreign.profile = identity("uber");
+	foreign.game.game.simulationProfile = SimulationProfile::Uber;
+	ReplayWriter other;
+	other.setKeepCopy(true);
+	REQUIRE_MESSAGE(other.open("", foreign, &error), error);
+	other.recordHash(1, 0xABCDu);
+	std::vector<std::uint8_t> otherBytes;
+	REQUIRE_MESSAGE(other.logUpTo(1, 0xABCDu, otherBytes, &error), error);
+	REQUIRE_MESSAGE(ReplayFile::parse(otherBytes, out, &error), error);
+	CHECK_FALSE(out.profileMismatch(h.profile).empty());
+}
+
 TEST_CASE("save2: a save loads only in the build that made it (refused by name), with the same data; the other execution profile loads in single player")
 {
 	const ProfileIdentity running = identity("enhanced");
@@ -340,16 +524,14 @@ TEST_CASE("save2: a save loads only in the build that made it (refused by name),
 		const std::string ours = ProfileIdentity::buildId();
 		const SaveGameCompatibility c = SaveGameCompatibility::check(h, running, ours, "v0.3.0-test", false);
 		CHECK_FALSE(c.loadable);
-		CHECK(c.refusal == "this game was saved by OpenBFME v0.2.9-preview.3 (engine 111111111111); this is OpenBFME v0.3.0-test (engine " + ours.substr(0, 12)
-			+ "). A save loads only in the build that made it.");
+		CHECK(c.refusal == "Made with v0.2.9-preview.3 (build date unavailable). Open it with that version from the launcher.");
 	}
 	SUBCASE("other game data")
 	{
 		h.profile = identity("enhanced", "ffffffffffffffffffffffffffffffff");
 		const SaveGameCompatibility c = SaveGameCompatibility::check(h, running, ProfileIdentity::buildId(), "v0.3.0-test", false);
 		CHECK_FALSE(c.loadable);
-		CHECK(c.refusal.rfind("this game was saved with other game data or rules: ", 0) == 0);
-		CHECK(c.refusal.find("ffffffffffffffffffffffffffffffff") != std::string::npos);
+		CHECK(c.refusal == "Made with an unknown build. Open it with the build that made it from the launcher. The game data or rules differ from this build.");
 	}
 	SUBCASE("Uber save, Faithful build, and the reverse: single player only")
 	{
@@ -609,4 +791,3 @@ TEST_CASE("save2: the replay records an execution profile switch, refuses a bad 
 	CHECK_FALSE(ReplayFile::parse(twice, parsed, &error));
 	CHECK(error == "replay profile switches out of order (frame 2)");
 }
-

@@ -1,7 +1,7 @@
 """Tests of tools/sim/sim_audit.py: the compile-flag audit, the manifest classification, the type-aware AST check on fixture sources, and a real
 configure of engine/ whose generated compile_commands.json is audited against the manifest (the coverage check the CI runs: configure first, then audit).
 
-The AST tests need libclang (Linux: pip install libclang==18.1.1; Windows: LLVM >= 19, see tools/sim/README.md) and skip LOUDLY without it on Linux
+The AST tests need libclang (Linux: pip install libclang==18.1.1; Windows: LLVM >= 19; macOS: the toolchain's libclang.dylib, see tools/sim/README.md) and skip LOUDLY without it on Linux
 (stop S-190). The configure tests need cmake and skip loudly without it."""
 import json
 import os
@@ -68,6 +68,28 @@ def test_windows_llvm_discovery_and_missing_explicit_dll(monkeypatch, tmp_path):
     monkeypatch.setattr(sim_audit.shutil, "which", lambda name: None)
     with pytest.raises(RuntimeError, match=r"libclang.dll not found.*LLVM >= 19"):
         sim_audit.windows_libclang()
+
+
+def test_macos_libclang_is_the_toolchains_and_an_explicit_library_wins(monkeypatch, tmp_path):
+    """lane MACGATE-1: on macOS the AST pass loads the build toolchain's libclang.dylib (the wheel's libclang 18 cannot parse the SDK's libc++)."""
+    lib = tmp_path / "usr" / "lib" / "libclang.dylib"
+    lib.parent.mkdir(parents=True)
+    lib.touch()
+    clang = tmp_path / "usr" / "bin" / "clang"
+    found = {"stdout": str(clang) + "\n"}
+    monkeypatch.setattr(sim_audit.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=found["stdout"], stderr=""))
+    monkeypatch.delenv("OPENBFME_LIBCLANG_LIBRARY", raising=False)
+    assert sim_audit.macos_libclang() == str(lib)
+    monkeypatch.setenv("OPENBFME_LIBCLANG_LIBRARY", str(tmp_path / "missing.dylib"))
+    with pytest.raises(RuntimeError, match="OPENBFME_LIBCLANG_LIBRARY does not name an existing libclang.dylib"):
+        sim_audit.macos_libclang()  # an explicit bad path must not fall back to the toolchain's library
+    monkeypatch.delenv("OPENBFME_LIBCLANG_LIBRARY")
+    lib.unlink()
+    with pytest.raises(RuntimeError, match=r"libclang.dylib not found beside the toolchain's clang"):
+        sim_audit.macos_libclang()  # no toolchain library: an error, never the wheel's libclang 18
+    found["stdout"] = ""
+    with pytest.raises(RuntimeError, match=r"xcrun --find clang printed nothing"):
+        sim_audit.macos_libclang()
 
 
 def test_msvc_ast_retains_build_include_paths():

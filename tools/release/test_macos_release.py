@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import selectors
 import shutil
 import hashlib
 import struct
@@ -239,7 +240,7 @@ def test_arm64_build_arguments_include_reproducibility_inputs(tmp_path: Path):
     extension = tmp_path / "extension path"
     args = package_macos.cmake_configure_args(build, extension, "v1.2.3-preview.1 Mac Unstable Preview (Apple Silicon)")
     assert "-DCMAKE_BUILD_TYPE=Release" in args
-    assert "-DOPENBFME_LAME=OFF" in args
+    assert "-DOPENBFME_BUILD_TESTS=OFF" in args
     assert "-DOPENBFME_BUILD_GODOT=ON" in args
     assert "-DCMAKE_OSX_ARCHITECTURES=arm64" in args
     assert "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0" in args
@@ -335,7 +336,7 @@ def test_generic_audit_rejects_extras_wrong_architecture_and_embedded_paths(tmp_
 # HUD6 had passed: `git clone --no-checkout <host>/repo.git` is a local clone, which hardlinks repo.git's files and checks each link
 # against the file it walked, and another job was writing a pack there. The script now fetches the tag into a fresh repository over
 # git's transport. These tests run the real script against a local "Mac": a stand-in ssh that runs every remote command here, in a
-# throwaway home, with a writer appending to a tmp_pack file of the host's repo.git the whole time.
+# throwaway home with a busy pack writer. The link hook also appends after Git cached the source's stat: the old clone must see the race.
 FAKE_SSH = r'''#!/bin/bash
 # the Mac stand-in: ssh [-o opt]... host [command]: the command (or stdin's script) runs here, in $FAKE_MAC_HOME, Homebrew paths dropped
 while [ $# -gt 0 ]; do case $1 in -o|-p|-l|-i) shift 2 ;; -*) shift ;; *) break ;; esac; done
@@ -359,11 +360,81 @@ out = Path(a.out)
 (out / "README-MAC.txt").write_text("OpenBFME for Mac\n")
 print(f"MACOS stub package of {a.version} at {head}")
 '''
-APPENDER = r'''import sys, time
-f = open(sys.argv[1], "ab", buffering=0)
-while True:
-    f.write(b"x" * 64)
+CLONE_WRITER = r'''
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+static int append_at_link(const char *source, const char *dest)
+{
+    const char *target = getenv("OPENBFME_TEST_CLONE_SOURCE");
+    if (target && strcmp(source, target) == 0) {
+        int fd = open(source, O_WRONLY | O_APPEND);
+        if (fd < 0 || write(fd, "x", 1) != 1) _exit(91);
+        close(fd);
+        fd = open(getenv("OPENBFME_TEST_CLONE_WRITTEN"), O_WRONLY | O_CREAT, 0600);
+        if (fd < 0) _exit(92);
+        close(fd);
+    }
+#ifdef __APPLE__
+    return link(source, dest);
+#else
+    int (*real_link)(const char *, const char *) = dlsym(RTLD_NEXT, "link");
+    if (!real_link) _exit(93);
+    return real_link(source, dest);
+#endif
+}
+
+#ifdef __APPLE__
+__attribute__((used)) static struct { const void *replacement, *original; } interpose
+    __attribute__((section("__DATA,__interpose"))) = { (const void *)append_at_link, (const void *)link };
+#else
+int link(const char *source, const char *dest) { return append_at_link(source, dest); }
+#endif
 '''
+
+APPENDER = r'''import sys, time
+with open(sys.argv[1], "ab", buffering=0) as f:
+    f.write(b"x" * 64)
+    sys.stdout.buffer.write(b"1")
+    sys.stdout.flush()
+    while True:
+        f.write(b"x" * 64)
+        time.sleep(0.001)  # fault injection, not a readiness wait
+'''
+
+
+@pytest.fixture(scope="session")
+def clone_writer(tmp_path_factory):
+    root = tmp_path_factory.mktemp("clone-writer")
+    source = root / "writer.c"
+    source.write_text(CLONE_WRITER)
+    library = root / ("writer.dylib" if sys.platform == "darwin" else "writer.so")
+    flags = ["-dynamiclib"] if sys.platform == "darwin" else ["-shared", "-fPIC", "-ldl"]
+    result = subprocess.run(["cc", *flags, str(source), "-o", str(library)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    if sys.platform == "darwin":
+        # SIP strips DYLD_* from system executables. Instrument a throwaway, ad-hoc signed copy, never the installed Git.
+        git = shutil.which("git")
+        if git == "/usr/bin/git":
+            git = subprocess.check_output(["xcrun", "--find", "git"], text=True, timeout=60).strip()
+        executable = root / "git-under-test"
+        shutil.copyfile(git, executable)
+        executable.chmod(0o755)
+        subprocess.run(["codesign", "--force", "--sign", "-", str(executable)], capture_output=True, check=True, timeout=60)
+        bindir = root / "bin"
+        bindir.mkdir()
+        wrapper = bindir / "git"
+        wrapper.write_text(f'''#!{sys.executable}
+import os, sys
+os.environ["DYLD_INSERT_LIBRARIES"] = os.environ["OPENBFME_TEST_CLONE_PRELOAD"]
+os.execv({str(executable)!r}, ["git", *sys.argv[1:]])
+''')
+        wrapper.chmod(0o755)
+    return library
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -388,10 +459,7 @@ def _mac_world(tmp_path: Path, script: Path) -> dict:
     _git(ci, "init", "-q", "--bare", "repo.git")
     (ci / "env.sh").write_text('C=$HOME/ci-root\n')
     (ci / "release").mkdir()
-    # the host's repository is a busy one: many loose objects (a long directory walk for a local clone)
-    for i in range(1500):
-        subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=ci / "repo.git", input=f"object {i}\n", text=True, check=True,
-                       capture_output=True)
+    (ci / "repo.git/objects/pack/tmp_pack_busy").write_bytes(b"initial pack bytes")
     wt = tmp_path / "checkout"
     wt.mkdir()
     _git(wt, "init", "-q", "-b", "main")
@@ -411,19 +479,31 @@ def _mac_world(tmp_path: Path, script: Path) -> dict:
     return {"wt": wt, "ci": ci, "out": out, "env": env, "script": script, "commit": _git(wt, "rev-parse", "HEAD")}
 
 
-def _run_mac_build(w: dict) -> subprocess.CompletedProcess:
-    writer = subprocess.Popen([sys.executable, "-c", APPENDER, str(w["ci"] / "repo.git/objects/pack/tmp_pack_busy")])
+def _run_mac_build(w: dict, writer: Path) -> subprocess.CompletedProcess:
+    preload = "DYLD_INSERT_LIBRARIES" if sys.platform == "darwin" else "LD_PRELOAD"
+    env = {**w["env"], preload: str(writer),
+           "OPENBFME_TEST_CLONE_SOURCE": str(w["ci"] / "repo.git/objects/pack/tmp_pack_busy"),
+           "OPENBFME_TEST_CLONE_WRITTEN": str(w["out"] / "writer-ran")}
+    if sys.platform == "darwin":
+        env.update(OPENBFME_TEST_CLONE_PRELOAD=str(writer), PATH=f"{writer.parent / 'bin'}:{env['PATH']}",
+                   GIT_EXEC_PATH=subprocess.check_output(["git", "--exec-path"], text=True, timeout=60).strip())
+    appender = subprocess.Popen([sys.executable, "-c", APPENDER, env["OPENBFME_TEST_CLONE_SOURCE"]], stdout=subprocess.PIPE)
     try:
+        with selectors.DefaultSelector() as ready:
+            ready.register(appender.stdout, selectors.EVENT_READ)
+            assert ready.select(60), "the pack writer did not start"
+            assert appender.stdout.read(1) == b"1", "the pack writer exited before its first write"
         return subprocess.run(["bash", str(w["script"]), str(w["wt"]), "v0.4.12", str(w["out"])], capture_output=True, text=True,
-                              env=w["env"], timeout=300)
+                              env=env, timeout=300)
     finally:
-        writer.kill()
-        writer.wait()
+        appender.kill()
+        appender.wait(timeout=60)
+        appender.stdout.close()
 
 
-def test_the_mac_clone_does_not_race_a_pack_being_written(tmp_path):
+def test_the_mac_clone_does_not_race_a_pack_being_written(tmp_path, clone_writer):
     w = _mac_world(tmp_path, HERE / "build_macos_release.sh")
-    r = _run_mac_build(w)
+    r = _run_mac_build(w, clone_writer)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "hardlink" not in r.stdout + r.stderr
     stem = "openbfme-v0.4.12-macos-arm64"
@@ -437,7 +517,7 @@ def test_the_mac_clone_does_not_race_a_pack_being_written(tmp_path):
                           capture_output=True).returncode != 0
 
 
-def test_the_old_local_clone_fails_under_the_same_writer(tmp_path):
+def test_the_old_local_clone_fails_under_the_same_writer(tmp_path, clone_writer):
     """the control: the script with v0.4.11's local clone fails in the same harness with v0.4.11's error (so the test above can fail)"""
     text = (HERE / "build_macos_release.sh").read_text()
     new = ('git init -q "\\$R/src"\ncd "\\$R/src"\n'
@@ -449,7 +529,8 @@ def test_the_old_local_clone_fails_under_the_same_writer(tmp_path):
     script.write_text(text.replace(new, old))
     shutil.copy2(HERE / "package_macos_preview.py", tmp_path / "package_macos_preview.py")   # the script reads its template pin there
     w = _mac_world(tmp_path, script)
-    r = _run_mac_build(w)
+    r = _run_mac_build(w, clone_writer)
+    assert (w["out"] / "writer-ran").exists(), "Git never reached the test's synchronized pack writer"
     assert r.returncode != 0 and "hardlink different from source at" in r.stdout + r.stderr, r.stdout + r.stderr
 
 

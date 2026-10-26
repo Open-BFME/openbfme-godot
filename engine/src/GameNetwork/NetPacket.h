@@ -19,6 +19,7 @@
 #include "GameLogic/GameMessage.h"
 #include "GameNetwork/GameInfo.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -37,6 +38,8 @@ enum NetCommandType : std::uint8_t
 	NETCOMMANDTYPE_PLAYERLEAVE = 10,
 	NETCOMMANDTYPE_DESTROYPLAYER = 11,
 	NETCOMMANDTYPE_KEEPALIVE = 12,
+	NETCOMMANDTYPE_DISCONNECTCHAT = 13, ///< lane CHAT-1: the disconnect screen's chat (RotWK's number; direct, no recipients: every connected player)
+	NETCOMMANDTYPE_CHAT = 14, ///< lane CHAT-1: the in-game chat line (RotWK's number; a direct command, never frame data: see NetChat below)
 	NETCOMMANDTYPE_LOADCOMPLETE = 16,
 	NETCOMMANDTYPE_DISCONNECTKEEPALIVE = 25,
 	NETCOMMANDTYPE_DISCONNECTPLAYER = 26,
@@ -50,7 +53,11 @@ enum NetCommandType : std::uint8_t
 	NETCOMMANDTYPE_REJOIN = 0x83,        ///< a frame command of the packet router: `targetSlot`, held for a rejoin, is a member again from the frame after this one
 	NETCOMMANDTYPE_REJOINREQUEST = 0x84, ///< direct, from a rejoining client (a new incarnation of its slot): `frame` = its ticket's generation
 	NETCOMMANDTYPE_PAUSE = 0x85,         ///< direct: every peer stops before frame `frame` (the sender's next execution frame, not announced yet)
-	NETCOMMANDTYPE_RESUME = 0x86         ///< direct: the pause before frame `frame` ends
+	NETCOMMANDTYPE_RESUME = 0x86,        ///< direct: the pause before frame `frame` ends
+	// lane ANTICHEAT-1 (OpenBFME addition, owner 2026-10-21): the player's view, for the relay's log only (the log-only stream to the sender's own slot:
+	// never forwarded to another player, never part of the simulation): `executionFrame` = the logic frame the client showed, `view` = the camera's
+	// look-at point x, y and the world point under the cursor x, y; viewFlags bit 0: the cursor is over the world (else its x, y mean nothing)
+	NETCOMMANDTYPE_VIEW = 0x8A // after the P16 wire tags 0x87 .. 0x89 (kDisconnectPlayer16 .. kFrameResend16)
 };
 const char *NetCommandTypeName(int type);
 
@@ -126,6 +133,9 @@ bool writeGameMessage(NetByteWriter &w, const GameMessage &m, std::string *error
 // null + *error on a malformed or truncated message, a type outside 1001 .. 1147 or an unknown argument type
 std::unique_ptr<GameMessage> readGameMessage(NetByteReader &r, std::string *error);
 
+// OpenBFME P16: legacy records have no prefix and exactly 8 slots. Extended records begin with this invalid legacy slot state,
+// then i32 mapStartCount (9..16), then 16 slots. Slots beyond mapStartCount must be closed. Old readers reject the tag as a slot state.
+constexpr std::int32_t kExtendedGameInfoTag = -16;
 void writeGameInfo(NetByteWriter &w, const SkirmishGameInfo &g);
 // lane UBERJOIN-1: `profileOptionalAtEnd`: the simulation profile (the last field) may be absent when the packet ends right before it (the game list's
 // announcement, the one place a GameInfo is the packet's tail: an announcement of a peer that predates UBER-1 lists as Faithful). Present, it is checked as
@@ -133,9 +143,9 @@ void writeGameInfo(NetByteWriter &w, const SkirmishGameInfo &g);
 // lane OWNERFIX-2: the eight slots' handicaps (GameSlot + 0x20) follow the profile; `slotHandicaps` false reads a GameInfo written before they existed (a
 // format 5 / 6 replay or save: every handicap 0). An announcement without the profile has none either (every handicap 0); one with the profile must carry
 // them (the LAN protocol version that carries them refuses older peers first). A handicap outside 0, -5 .. -95 (SkirmishGameSlot::handicapValid) is refused
-bool readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string *error, bool profileOptionalAtEnd = false, bool slotHandicaps = true);
+bool readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string *error, bool profileOptionalAtEnd = false, bool slotHandicaps = true, bool cheatField = true);
 void writeNewGameMessage(NetByteWriter &w, const NewGameMessage &m);
-bool readNewGameMessage(NetByteReader &r, NewGameMessage &m, std::string *error, bool slotHandicaps = true);
+bool readNewGameMessage(NetByteReader &r, NewGameMessage &m, std::string *error, bool slotHandicaps = true, bool cheatField = true);
 } // namespace NetPacket
 
 // One network command (ZH NetCommandMsg and its subclasses, reduced to the commands this lane exchanges)
@@ -155,16 +165,33 @@ struct NetCommandMsg
 	// FRAMERESEND: the frame of the relayed commands (executionFrame stays the header field of the others)
 	std::uint32_t frame = 0;
 	// DISCONNECTSCREENOFF (OpenBFME addition, S-1121): the disconnect frames the sender had received when it released them (bit per slot) and those frames
-	std::uint8_t releasedMask = 0;
+	std::uint16_t releasedMask = 0; // lane P16: a bit per slot (16 slots need 16 bits)
 	std::vector<std::uint32_t> releasedFrames;
 	// FRAMERESEND: the relayed slot's commands of `frame` (its FRAMEINFO count is their number, plus one with a run-ahead change)
 	std::vector<std::shared_ptr<GameMessage>> messages;
 	std::int32_t runAheadChange = -1; ///< FRAMERESEND: the slot's RUNAHEAD of that frame (-1 none)
-	std::uint8_t rejoinMask = 0;      ///< lane ONLINE-3, FRAMERESEND: the slots the relayed frame's REJOINs name (bit per slot; frame entries like RUNAHEAD)
+	std::uint16_t rejoinMask = 0;     ///< lane ONLINE-3, FRAMERESEND: the slots the relayed frame's REJOINs name (bit per slot; frame entries like RUNAHEAD; lane P16: 16 bits)
+	std::array<float, 4> view{};      ///< lane ANTICHEAT-1, VIEW: camera x, y, cursor x, y (world units)
+	std::uint8_t viewFlags = 0;       ///< lane ANTICHEAT-1, VIEW: bit 0 the cursor is over the world
+	// lane CHAT-1, CHAT (ZH NetChatCommandMsg; RotWK ctor RW 0x8DA4E6: text + 0x1C, playerMask + 0x20): the line as the sender formatted it ("<Team> hi", RotWK
+	// AptInGameChat::Send RW 0x8ECF3E) and its recipients, bit per slot (32 bits: room for 16 slots)
+	std::u16string chatText;
+	std::uint32_t playerMask = 0;
 };
+
+// lane CHAT-1: the chat command's limits. TARGET FACT: RotWK's reader (NetPacket::readChatMessage RW 0x99A51A, as ZH) takes a u8 character count (255 at
+// most) and the entry caps a typed line at 110 characters (RW 0x8ECC1D); the encoding below is OpenBFME's own (S-721) and keeps the 255 limit
+namespace NetChat
+{
+constexpr std::size_t kMaxTextUnits = 255;
+}
 
 namespace NetPacket
 {
+// OpenBFME P16 wire tags: decoded to the original command types, with u16 masks. Low masks keep the legacy command bytes.
+constexpr std::uint8_t kDisconnectPlayer16 = 0x87;
+constexpr std::uint8_t kDisconnectScreenOff16 = 0x88;
+constexpr std::uint8_t kFrameResend16 = 0x89;
 std::vector<std::uint8_t> encodeCommand(const NetCommandMsg &c, std::string *error);
 bool decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommandMsg &out, std::string *error);
 } // namespace NetPacket

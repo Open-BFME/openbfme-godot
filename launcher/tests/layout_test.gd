@@ -55,10 +55,10 @@ static func _cases() -> Dictionary:
 	var c := {
 		"main": _case("main", "play", ["Up to date", "PLAY", "Check for updates", "In ~/Games/BFME", "What's New"]),
 		"news": _case("news", "news", ["News & patch notes", "PLAY"]),
-		"multiplayer": _case("multiplayer", "multiplayer", ["Multiplayer", "Host game", "No open games"]),
-		"multiplayer-populated": _case("multiplayer", "multiplayer", ["Multiplayer", "Host game", "Westfold", "N".repeat(48),
+		"multiplayer": _case("multiplayer", "multiplayer", ["Multiplayer", "Sign in", "Use a recovery code on this PC", "Host game", "No open games"]),
+		"multiplayer-populated": _case("multiplayer", "multiplayer", ["Multiplayer", "Sign in", "Host game", "Westfold", "N".repeat(48),
 			"A locked game (locked)", "A full game (full)"]),
-		"mods": _case("mods", "mods", ["Edain Mod", "none installed"]),
+		"mods": _case("mods", "mods", ["PLAY WITH", "Example Realms", "Installed: ready", "Refresh", "Realms No Intro 1.0.0 (ready)", "Needs engine features:*"]),
 		"games": _case("games", "games", ["NOT FOUND", "Download"]),
 		"games-bfme1": _case("games-bfme1", "games", ["BATTLE FOR MIDDLE-EARTH I (OPTIONAL)", "Downloaded from BFME Arena (bfmeladder.com)*", "Download"]),
 		"games-downloading": _case("games-downloading", "games", ["Pause", "Cancel", "RotWK: game files 412 of 1 830*"]),
@@ -226,6 +226,12 @@ func _check_game_rows(main: Control, where: String) -> void:
 
 ## the state's own effects (what _show_demo is meant to have done), beyond the texts each layer must show
 func _check_applied(state: String, main: Control) -> void:
+	var statuses := {
+		"offline": "Could not check for updates. Check your internet connection; retry later.",
+		"paused": "Paused. Resume continues where it stopped.",
+	}
+	if statuses.has(state) and main._status.text != statuses[state]:
+		_fail("%s: unexpected status '%s'" % [state, main._status.text])
 	if state in ["settings", "display", "about"] and main._settings.tab != {"settings": "general", "display": "display", "about": "about"}[state]:
 		_fail("%s: Settings shows the tab '%s'" % [state, main._settings.tab])
 	if state in ["error", "glibc", "ask"] and not main._message.visible:
@@ -451,10 +457,17 @@ func _check_nodes(all: Array, top: Node, bounds: Rect2, where: String, ours := t
 			var edges := []
 			if x_overlap and y_overlap <= EPS and (_region(a, top) == _region(b, top) or minf(ra.size.x, rb.size.x) >= 150.0):
 				edges = [["left", ra.position.x, rb.position.x], ["right", ra.end.x, rb.end.x]]
+				# lane NIGHTLY-2: a wrapping row's line ends where its last item ends, ragged by design, also against a block above or
+				# below it (the Play card's chips over YOUR GAMES: a long version name fills a line to a few px short of the card's edge)
+				if a.get_parent() is FlowContainer or b.get_parent() is FlowContainer:
+					edges = [edges[0]]
 			elif not x_overlap and y_overlap >= 0.5 * minf(ra.size.y, rb.size.y) and a.get_class() == b.get_class() \
 					and _lca(a, b) is HBoxContainer:
 				edges = [["top", ra.position.y, rb.position.y], ["bottom", ra.end.y, rb.end.y]]
 			for edge in edges:
+				# Independent columns with hand-sized cards do not promise equal bottom edges.
+				if edge[0] == "bottom" and a.get_parent() != b.get_parent():
+					continue
 				var d := absf(edge[1] - edge[2])
 				if d > EPS and d <= NEAR:
 					_record(where, "almost lined up (%s edge)" % edge[0], "%s and %s differ by %.1f px" % [_name(a), _name(b), d])
@@ -520,8 +533,12 @@ static func _ink(c: Control) -> Rect2:
 
 ## the child of the layer's root that holds `c` (the rail, the screens, the bottom bar)
 static func _region(c: Node, top: Node) -> Node:
+	var boundary := top
+	for child in top.get_children():
+		if child is ScrollContainer and child.get_child_count() == 1 and child.get_child(0).is_ancestor_of(c):
+			boundary = child.get_child(0)
 	var p := c
-	while p.get_parent() != null and p.get_parent() != top:
+	while p.get_parent() != null and p.get_parent() != boundary:
 		p = p.get_parent()
 	return p
 

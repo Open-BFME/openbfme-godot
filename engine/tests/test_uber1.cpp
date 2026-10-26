@@ -50,7 +50,7 @@ TEST_CASE("uber1: the simulation profile travels in the game setup (LAN options,
 	CHECK_FALSE(faithful.game == m.game);
 	// the profile is the GameInfo's i32 before the eight slots' handicaps (lane OWNERFIX-2): 2 is no profile this build knows
 	std::vector<std::uint8_t> bad = w.data();
-	bad[bad.size() - 4 - 4 * MAX_SLOTS] = 2;
+	bad[bad.size() - 8 - 4 * LEGACY_MAX_SLOTS] = 2; // lane CHEAT-1: the Cheat Mode i32 ends the GameInfo
 	NetByteReader r2(bad);
 	CHECK_FALSE(NetPacket::readNewGameMessage(r2, back, &error));
 	CHECK(error.find("simulation profile 2") != std::string::npos);
@@ -101,7 +101,9 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // The Uber profile must give every peer the same state whatever its core count: the bench battle (at least 3,000 living troops, 8 players) for 40
 // frames with 1, 4 and 16 logic threads and 4 again, every frame's hash equal to the stored Uber pin vector (tests/data/uber1/battle3000_40.hashes,
 // measured with 1 thread by the build that introduced it; OPENBFME_UBER1_REGEN=1 rewrites it, only for a change MEANT to alter the Uber simulation or
-// its hash, said in the commit). The state hash's own dispatches are counted apart from the frame's (PERF-2's collision jobs): with more than one
+// its hash, said in the commit; lane TARGET-1 re-measured it: RotWK's target choice and mood-check timing; community #73 + #74 re-measured it on the merged tree: the formations centred
+// on their hordes, RW 0x86C4EA, and the destination adjustment spiralling around the cell, RW 0x6FA2A4, #73 alone differs from it from frame 0). The state hash's own dispatches are counted
+// apart from the frame's (PERF-2's collision jobs): with more than one
 // thread the hash itself ran chunks on workers. The Uber hash is not the Faithful one, and a Faithful hash dispatches nothing.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")
@@ -383,12 +385,16 @@ std::vector<std::uint8_t> forgedReplay(const ProfileIdentity &identity, const Ne
 {
 	std::vector<std::uint8_t> bytes = { 'O', 'B', 'F', 'M', 'E', 'R', 'E', 'P' };
 	NetByteWriter w;
-	w.u32(7); // the format NetPacket::writeNewGameMessage writes (lane OWNERFIX-2: 7 adds the slots' handicaps)
+	w.u32(8); // format 8 (lane OWNERFIX-2: 7 adds the slots' handicaps; 8 ANTICHEAT-1's VIEW record): the GameInfo without CHEAT-1's Cheat Mode (format 11)
 	w.str(identity.text);
-	NetPacket::writeNewGameMessage(w, game);
+	bytes.insert(bytes.end(), w.data().begin(), w.data().end());
+	NetByteWriter g;
+	NetPacket::writeNewGameMessage(g, game);
+	bytes.insert(bytes.end(), g.data().begin(), g.data().end() - 4); // the Cheat Mode i32 ends the GameInfo
+	w = NetByteWriter();
 	w.i32(0);
 	w.u32((std::uint32_t)RandomAlgorithm::ZH_CarryChain);
-	for (int i = 0; i < MAX_SLOTS; ++i)
+	for (int i = 0; i < game.game.serializedSlotCount(); ++i)
 	{
 		w.i32(-1);
 	}

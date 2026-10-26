@@ -152,8 +152,70 @@ struct Plan
 	std::set<ObjectID> cheatTargets;
 	int visibleAttacks = 0;
 	int burstCommands = 0; ///< the macro burst's commands (D5)
+	int views = 0;         ///< the views recorded (D2)
+	std::string hoverTemplate; ///< the cheater's hover target (D2)
+	float hoverX = 0.0f, hoverY = 0.0f;
+	UnsignedInt hoverFirst = 0, hoverLast = 0; ///< the frames of the first and the last hover view
+	UnsignedInt afterHover = 0;                ///< the frame of the first view after the hover (0: none; the plan records a view only while the human has a mobile unit)
 };
 
+// lane ANTICHEAT-1 (D2): the view a client would report every other frame: the camera and pointer over the human's own first unit; for the cheater,
+// from 1000 frames in for 30 frames, the pointer over a building of the AI the human never saw (a map hacker looking at the enemy base)
+void recordView(LiveGame &game, ReplayWriter &writer, Plan &plan, UnsignedInt startFrame)
+{
+	const UnsignedInt f = game.frame();
+	if (f % 2 != 0)
+	{
+		return;
+	}
+	GameLogic &logic = game.logic();
+	const Player *human = humanOf(logic);
+	const ShroudManager *shroud = logic.shroud();
+	ReplayFile::View v;
+	v.frame = f;
+	v.slot = 0;
+	v.flags = 1;
+	bool any = false;
+	for (const Object *o = logic.getFirstObject(); o && !any; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() == human && !o->isEffectivelyDead() && !o->isKindOfName("STRUCTURE"))
+		{
+			v.cameraX = v.cursorX = o->getPosition()->x;
+			v.cameraY = v.cursorY = o->getPosition()->y;
+			any = true;
+		}
+	}
+	const UnsignedInt rel = f - startFrame;
+	if (plan.cheat && rel >= 1000 && rel < 1030)
+	{
+		for (const Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+		{
+			const Player *owner = o->getControllingPlayer();
+			if (owner && owner != human && human->getRelationship(owner) == ENEMIES && owner->getPlayerTemplate() && owner->getPlayerTemplate()->m_playableSide &&
+				o->isKindOfName("STRUCTURE") && !shroud->hasSeen(*o, human->getPlayerIndex()))
+			{
+				v.cursorX = o->getPosition()->x;
+				v.cursorY = o->getPosition()->y;
+				plan.hoverTemplate = o->getTemplate()->getName();
+				plan.hoverX = v.cursorX;
+				plan.hoverY = v.cursorY;
+				plan.hoverFirst = plan.hoverFirst ? plan.hoverFirst : f;
+				plan.hoverLast = f;
+				any = true;
+				break;
+			}
+		}
+	}
+	if (any && plan.hoverLast && rel >= 1030 && !plan.afterHover)
+	{
+		plan.afterHover = f;
+	}
+	if (any)
+	{
+		writer.recordView(v);
+		++plan.views;
+	}
+}
 
 // every 20 frames: the human's units move around their start; every 40 frames they attack an enemy object the human sees now (normal play); with
 // `cheat`, at three frames minutes apart, they also attack the AI's objects the human has never seen (the cheater-like stream)
@@ -271,6 +333,7 @@ struct Checked
 	bool abstained = false;
 	std::string peerJson; ///< openbfme_peer --replay --fog-check's report of the same recording ("" when the executable is not built)
 	std::string peerRate, peerCommands; ///< its --input-rate-check (D5) and --command-check (D6) reports of the same pass
+	std::string peerViews;              ///< its --view-check (D2) report
 	int peerRc = -1;
 };
 
@@ -301,6 +364,7 @@ Checked recordAndCheck(starttest::Shared &s, Plan &plan, const std::string &path
 		for (int i = 0; i < frames; ++i)
 		{
 			humanCommands(*g.game, g.game->commands(), plan, startFrame);
+			recordView(*g.game, writer, plan, startFrame);
 			REQUIRE(g.game->advance(0.2) == 1);
 		}
 		writer.close(g.game->frame(), g.game->logic().computeStateHash());
@@ -350,9 +414,11 @@ Checked recordAndCheck(starttest::Shared &s, Plan &plan, const std::string &path
 	{
 		// the real tool on the same recording: openbfme_peer --replay --fog-check (what the integrity worker runs)
 		const std::string jsonPath = path + ".fog.json";
-		const std::string ratePath = path + ".d5.json", commandPath = path + ".d6.json";
+		const std::string ratePath = path + ".d5.json", commandPath = path + ".d6.json", viewPath = path + ".d2.json";
 		out.peerRc = runPeer("--replay \"" + path + "\" --fog-check \"" + jsonPath + "\" --input-rate-check \"" + ratePath + "\" --command-check \"" +
-			commandPath + "\" --game-id 00000000000ac001 --report \"" + path + ".report.txt\"");
+			commandPath + "\" --view-check \"" + viewPath + "\" --game-id 00000000000ac001 --report \"" + path + ".report.txt\"");
+		out.peerViews = readText(viewPath);
+		std::remove(viewPath.c_str());
 		out.peerJson = readText(jsonPath);
 		out.peerRate = readText(ratePath);
 		out.peerCommands = readText(commandPath);
@@ -401,6 +467,10 @@ TEST_CASE("orders into fog retail: normal play on Evendim (moves, attacks on ene
 	CHECK(c.peerRate.find("\"band\":\"none\"") != std::string::npos);
 	CHECK(c.peerCommands.find("\"detector\":\"D6-command-integrity\"") != std::string::npos);
 	CHECK(c.peerCommands.find("\"band\":\"none\"") != std::string::npos);
+	// D2: the pointer followed the human's own army: no hover over a hidden enemy, and every recorded view was read
+	CHECK(c.peerViews.find("\"detector\":\"D2-view-focus\"") != std::string::npos);
+	CHECK(c.peerViews.find("\"band\":\"none\"") != std::string::npos);
+	CHECK(c.peerViews.find("\"views\":" + std::to_string(plan.views) + ",") != std::string::npos);
 #endif
 }
 
@@ -457,5 +527,21 @@ TEST_CASE("orders into fog retail: a cheater-like stream (attacks on the AI's ne
 	CHECK(c.peerRate.find("\"command\":\"MSG_DO_MOVETO\"") != std::string::npos);
 	CHECK(c.peerCommands.find("\"band\":\"none\"") != std::string::npos);
 	MESSAGE(c.peerRate);
+	// D2: the 30 frames the pointer rested on the AI's never-seen building: one hover episode on it (review: client-reported)
+	MESSAGE(c.peerViews);
+	CHECK(!plan.hoverTemplate.empty());
+	CHECK(c.peerViews.find("\"band\":\"review\"") != std::string::npos);
+	CHECK(c.peerViews.find("\"reason\":\"hover_hidden\"") != std::string::npos);
+	// the episode starts where the pointer rested (the hidden object nearest to it may be another part of that building, e.g. its citadel)
+	char where[96];
+	std::snprintf(where, sizeof where, "\"x\":%.6f,\"y\":%.6f", plan.hoverX, plan.hoverY);
+	CHECK(c.peerViews.find(where) != std::string::npos);
+	// the episode lasts until the next view, or, with none within 10 frames (the human had no mobile unit then), until the last hover view is stale
+	// (ViewCheck::Settings::staleFrames, 10 frames after it): 30 frames, or 39 (since MERGEQ-23's AI changes, archive dac88c9f9, the human has no
+	// mobile unit from the hover's end until frame 1116 of this game, so no view follows the hover in time)
+	const UnsignedInt hoverEnd = plan.afterHover && plan.afterHover <= plan.hoverLast + 10 ? plan.afterHover : plan.hoverLast + 11;
+	MESSAGE("D2 hover views " << plan.hoverFirst << ".." << plan.hoverLast << ", next view " << plan.afterHover << ", episode " << hoverEnd - plan.hoverFirst);
+	CHECK(c.peerViews.find("\"frame\":" + std::to_string(plan.hoverFirst) + ",") != std::string::npos);
+	CHECK(c.peerViews.find("\"frames\":" + std::to_string(hoverEnd - plan.hoverFirst) + ",") != std::string::npos);
 #endif
 }

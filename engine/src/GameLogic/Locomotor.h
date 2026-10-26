@@ -586,10 +586,12 @@ public:
 	// Acceptance-stop lines raised by the moves made so far (S-081, S-084); empty when none applied.
 	const std::vector<std::string> &unverified() const { return m_unverified; }
 	// The stops this component can raise at all (tests pin the exact text).
-	static std::vector<std::string> allStops();
+	static const std::vector<std::string> &allStops();
 
 private:
 	void noteStop(const char *line);
+	// allStops()[index], noted once: the movers raise these on every move, so the text is compared only the first time (a bit per index)
+	void noteStopOf(unsigned index);
 
 	const LocomotorTemplate *m_template;
 	float m_lookAheadMult = 1.0f;       // +0x20
@@ -621,4 +623,5 @@ private:
 	float m_preferredHeightDamping = 1.0f;
 	int m_attackHeightState = 0;
 	std::vector<std::string> m_unverified;
+	unsigned m_notedStopBits = 0; // noteStopOf: the allStops() indices already in m_unverified
 };

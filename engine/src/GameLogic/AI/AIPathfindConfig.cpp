@@ -178,6 +178,7 @@ bool PathfindConfigLoader::load(ArchiveFileSystem &fs, PathfindConfig &out, std:
 	if (!getFloat(ai, "MeleeApproachTolerance", c.meleeApproachTolerance, "aidata.ini", error)) return false; // lane PHYS-1: AIData +0x90 (row RW 0xC1CDB0)
 	if (!getFloat(ai, "MeleeApproachDist", c.meleeApproachDist, "aidata.ini", error)) return false; // lane PHYS-1: AIData +0x94 (row RW 0xC1CDC0) // lane PHYS-1: AIData +0xB9 (row RW 0xC1CE40)
 	if (!getFloat(ai, "CastleSiegeStandBackDistance", c.castleSiegeStandBackDistance, "aidata.ini", error)) return false; // lane PHYS-1: AIData +0xD4 (row RW 0xC1CF00)
+	if (!getBool(ai, "AttackUsesLineOfSight", c.attackUsesLineOfSight, "aidata.ini", error)) return false; // lane ATTACKPATH-1: AIData +0x67 (row RW 0xC1CCA0)
 	if (bfme1)
 	{
 		// BFME1's pathfinder compiles its search budgets in; BFME2 moved them to GameData MaxCells* (none of which BFME1's gamedata.ini has).

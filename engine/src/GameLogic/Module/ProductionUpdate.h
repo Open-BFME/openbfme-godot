@@ -11,9 +11,9 @@
 //     DISABLED_HELD.
 //   * module: create RW 0x64E53C (0x140 bytes), constructor RW 0x8A17D8, update RW 0x8A1B9F, ProductionUpdateInterface vtable RW 0xC67DB0 (31 slots at
 //     module + 0x20, named in ProductionUpdateInterface below with their addresses).
-//   * a production entry (RW 0x8A08D3, 0x54 bytes) is a float progress counter: each update adds 1.0f (through the attribute modifier of type 0xD,
-//     unported) to +0x1C, percent = progress / (float)totalFrames * 100.0f, the unit is made when percent >= 100.0f. totalFrames is
-//     calcTimeToBuild (BuildAssistant.h): five times whole seconds.
+//   * a production entry (RW 0x8A08D3, 0x54 bytes) is a float progress counter: each update adds 1.0f times the producer's PRODUCTION attribute modifiers
+//     (type 0xD, RW 0x8A1EBC; lane PRODUCTION1) to +0x1C, percent = progress / (float)totalFrames * 100.0f, the unit is made when percent >= 100.0f.
+//     totalFrames is calcTimeToBuild (BuildAssistant.h): five times whole seconds.
 //   * the money is withdrawn per queued unit and the cost is stored in the entry: a cancel refunds exactly that (RW 0x8A13EE), not a recomputed cost.
 // DONOR: B1 ProductionUpdate_*.cpp, ZH ProductionUpdate.cpp (the door state machine and the construction complete state are ZH's with RW's order).
 //
@@ -23,8 +23,9 @@
 // RW 0x780AD3 / 0x7812B2), the pause pass (RW 0x8A0669), the ready entry of currentEntry (RW 0x8A078A), the record's progress as the completion gate with the
 // hero countdown (RW 0x8A1F12), the object from the record (RW 0x78142F) and the revive hand-off (RW 0x8A2C98: RespawnUpdate::onRevived, the level cap,
 // countdown 4 * LOGICFRAMES_PER_SECOND, NO_COLLISIONS RW 0x6907D7), cancel by index (RW 0x8A047B / 0x8A03EC) and the record's cancel (RW 0x8A1460).
-// NOT PORTED (stop S-203): the experience tracker (XP to the producer, VeteranUnitsFromVeteranFactory), audio (speed bonus loop, voices), the EVA messages,
-// the attribute modifiers of the producer (the progress rate is 1.0f), the player upgrades applied to a new unit (RW 0x6936FE), the entry name /
+// Lane PRODUCTION1: the producer's experience from a made unit and a finished upgrade (RW 0x8A27F9 / 0x8A2015), VeteranUnitsFromVeteranFactory (RW 0x8A27D4),
+// the PRODUCTION rate (RW 0x8A1EBC), the entry's upgrade bit and the upgrade modules of the new unit (RW 0x8A2922 .. 0x8A2946).
+// NOT PORTED (stop S-203): audio (speed bonus loop, voices), the EVA messages, the speed bonus model condition (a player bonus map), the entry name /
 // script naming (RW +0x40), the horde-join of entry + 0x3C, the BuildFadeInOnCreateList extra objects' drawables, SecondaryQueue selection of the
 // dispatcher is ported but hero queues are not.
 
@@ -129,7 +130,15 @@ public:
 	virtual int canQueueCreateUnit() const = 0;                          // slot 0, RW 0x8A0711: 3 factory disabled, 4 queue full, else 0
 	virtual ProductionID requestUniqueUnitID() = 0;                      // slot 2, RW 0x8A18FA
 	// slot 8, RW 0x8A11D2
-	virtual bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44) = 0;
+	bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44)
+	{
+		return queueCreateUnit(unitType, buildIndex, productionID, value30, batch, name, flag44, false);
+	}
+	// lane MODS-3 (mod engine feature edain-unchained.queue-ignore-cp): the same call; `ignoreCommandPoints` reaches BuildAssistant::canMakeUnit, which then
+	// skips only its command point refusal (code 7). Edain Unchained's game.dat sets a global around the slot 8 call of Object::doCommandButton (hooks at
+	// RW 0x697403 / 0x697800, read at RW 0x79402B); the port passes it as this argument. Retail (every other caller) passes false
+	virtual bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44,
+								 bool ignoreCommandPoints) = 0;
 	virtual void cancelUnitCreate(ProductionID productionID) = 0;        // slot 10, RW 0x8A13EE
 	virtual void cancelUnitCreateByType(const ThingTemplate *type, bool all) = 0; // slot 5, RW 0x8A0428
 	virtual int countUnitTypeInQueue(const ThingTemplate *type) const = 0; // slot 7, RW 0x8A056C (type 1 entries only)
@@ -170,8 +179,13 @@ public:
 
 	// ProductionUpdateInterface
 	int canQueueCreateUnit() const override;
-	ProductionID requestUniqueUnitID() override { return m_uniqueID++; }
-	bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44) override;
+	// RW 0x8A18FA: the module's post-increment. Lane MODS-3: edain-unchained.unique-production-id (its 0x8A18FA rewrite, .prodid) takes the id from one
+	// pre-incremented counter for every building, so two buildings never mint the same id for the hero records (RW 0x78131E); here the counter is the
+	// game's (reset with it, saved and hashed), not the process's
+	ProductionID requestUniqueUnitID() override;
+	using ProductionUpdateInterface::queueCreateUnit;
+	bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44,
+						 bool ignoreCommandPoints) override;
 	void cancelUnitCreate(ProductionID productionID) override;
 	void cancelUnitCreateByType(const ThingTemplate *type, bool all) override;
 	int countUnitTypeInQueue(const ThingTemplate *type) const override;
@@ -218,6 +232,7 @@ private:
 	void removeFromProductionQueue(ProductionEntry *e);
 	void completeUpgrade(ProductionEntry *entry, Player *player); // lane UPGRADE-1
 	void completeUnit(ProductionEntry *entry, Player *player, UnsignedInt now);
+	void awardProductionExperience(Object *newObj, const ProductionEntry &entry); // lane PRODUCTION1: RW 0x8A27D4 .. 0x8A283B
 	int totalProductionFrames(const ProductionEntry &e, Player *player) const;
 	void flushModelConditions();
 	void pauseHeroEntries();                                   ///< RW 0x8A0669 (lane HERO-1)

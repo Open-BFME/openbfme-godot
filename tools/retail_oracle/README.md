@@ -11,12 +11,19 @@ runtime.
 
 ## Build and run
 
-    tools\retail_oracle\build.bat                       :: MSVC (VS 2022, x86 + x64 tools) -> build\retail_oracle.exe, plus
-                                                        :: build\numeric_driver.exe (engine NumericState), build\hash_driver.exe (engine INIMacroTable::hash),
-                                                        :: build\refpack_driver.exe (engine REF_decode) and tools\x87_oracle's exe,
-                                                        :: which the duration tests compare against
-    python -m pytest tools\retail_oracle -rs            :: the suite; needs pytest and numpy (capstone for two optional tests)
-    tools\retail_oracle\run_tests.bat                   :: both
+Windows only, from the repository root in Command Prompt with MSVC (VS 2022,
+x86 + x64 tools), Python with `pytest` and `numpy` (`capstone` for the disassembly
+checks), and the repo-root engine build already complete:
+
+```bat
+tools\retail_oracle\build.bat
+python -m pytest tools\retail_oracle -rs
+```
+
+`tools\retail_oracle\run_tests.bat` performs both steps. The helper build writes
+`tools\retail_oracle\build\retail_oracle.exe`, the NumericState `numeric_driver.exe`,
+INIMacroTable `hash_driver.exe`, and REF_decode `refpack_driver.exe` there, as well
+as the x87 helper under `tools\x87_oracle\build\`.
 
 The top-level `build.bat` runs this script after the engine build, so a normal build keeps every helper current.
 `hash_driver` links `engine\build\openbfme_core.lib`, so the repo-root `build.bat` must have run first.
@@ -112,7 +119,7 @@ duration, nlerp) with their citations.
    comes from in the test header. Remember RW values carry S-001 (`Oracle.caveats`); where it
    matters, show the function is byte-identical to BFME2 1.06 (`test_macro_hash_core_is_byte_identical...`).
 
-## Proven functions (all in `test_retail_oracle.py`)
+## Proven functions (`test_retail_oracle.py` unless another test is named)
 
 | function | address | against |
 |---|---|---|

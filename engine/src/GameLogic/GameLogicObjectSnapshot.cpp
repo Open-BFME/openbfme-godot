@@ -254,6 +254,9 @@ void GameLogic::xferObjects(Xfer &x)
 	}
 	m_snapshotTable = nullptr;
 	m_snapshotLinks = nullptr;
+	// the links replace every contain list the creations filled; until they are installed those lists still name the objects a creation made on its
+	// own, so a refused link leaves those objects alive and listed (the refused load is put back by loading the kept snapshot, LiveGame::loadSnapshot)
+	installSnapshotLinks(links);
 	// an object a creation made on its own goes (it is not in the snapshot); the list then holds the snapshot's objects in its order
 	for (Object *p = m_objectHead; p;)
 	{
@@ -264,7 +267,6 @@ void GameLogic::xferObjects(Xfer &x)
 		}
 		p = next;
 	}
-	installSnapshotLinks(links);
 	size_t i = 0;
 	for (const Object *p = m_objectHead; p; p = p->getNextObject(), ++i)
 	{

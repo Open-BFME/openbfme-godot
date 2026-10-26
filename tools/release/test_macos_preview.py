@@ -20,6 +20,7 @@ sys.path.insert(0, str(HERE.parent))
 import audit_package  # noqa: E402
 import lib_provenance  # noqa: E402
 import make_archive  # noqa: E402
+import ed25519  # noqa: E402
 import package_macos_preview  # noqa: E402
 import precommit  # noqa: E402
 from test_release_tools import pck  # noqa: E402
@@ -295,8 +296,10 @@ def test_launcher_preset_and_build_info_are_preview_only(tmp_path: Path):
 
     launcher = tmp_path / "launcher"
     launcher.mkdir()
-    key = "ab" * 32
+    key = ed25519.public_key(b"\x01" * 32).hex()
+    kms = ed25519.public_key(b"\x02" * 32).hex()
     (launcher / "release_key.pub").write_text(key)
+    (launcher / "release_keys.pub").write_text(f"# test list\n{key}  deck-2026\n{kms}  kms-2026\n")
     info = package_macos_preview.write_launcher_build_info(launcher, COMMIT, 1_700_000_000)
     assert info == {
         "version": VERSION,
@@ -305,11 +308,28 @@ def test_launcher_preset_and_build_info_are_preview_only(tmp_path: Path):
         "date": "2023-11-14",
         "repo": "Open-BFME/openbfme-godot",
         "release_key": key,
+        "release_keys": [key, kms],
         "test_build": False,
         "local_trial": False,
         "macos_preview": True,
         "macos_updates": False,
     }
+    # SIGNKMS-1: the list must begin with release_key.pub's key, and parse; a test key alone is a one-key list
+    (launcher / "release_keys.pub").write_text(f"{kms}  kms-2026\n{key}  deck-2026\n")
+    with pytest.raises(SystemExit):
+        package_macos_preview.write_launcher_build_info(launcher, COMMIT, 1_700_000_000)
+    (launcher / "release_keys.pub").write_text(f"{key}  Deck\n")
+    with pytest.raises(SystemExit):
+        package_macos_preview.write_launcher_build_info(launcher, COMMIT, 1_700_000_000)
+    (launcher / "release_keys.pub").unlink()
+    with pytest.raises(SystemExit):
+        package_macos_preview.write_launcher_build_info(launcher, COMMIT, 1_700_000_000)
+    test = package_macos_preview.write_launcher_build_info(launcher, COMMIT, 1_700_000_000, test_key=kms)
+    assert test["release_key"] == kms and test["release_keys"] == [kms] and test["local_trial"] and test["test_build"]
+    other = tmp_path / "keys.pub"
+    other.write_text(f"{kms}  kms-test\n{key}  deck-test\n")
+    test = package_macos_preview.write_launcher_build_info(launcher, COMMIT, 1_700_000_000, test_key=kms, keys_file=other)
+    assert test["release_keys"] == [kms, key]
 
 
 def test_macos_build_version_accepts_11_and_13(monkeypatch, tmp_path: Path):

@@ -4,6 +4,7 @@
 // Port of ZH GameEngineDevice/Source/Win32Device/Common/Win32BIGFileSystem.cpp.
 
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
+#include "Common/PathIO.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFile.h"
 #include "Common/AsciiString.h"
 
@@ -236,7 +237,13 @@ bool Win32BIGFileSystem::loadBigFilesFromDirectory(const std::string &dir, const
 	namespace fs = std::filesystem;
 	std::vector<std::string> filenameList;
 	std::error_code ec;
-	fs::path root = fs::u8path(dir);
+	std::string pathError;
+	if (!PathIO::checkInstallPath(dir, pathError))
+	{
+		if (error) *error = pathError;
+		return false;
+	}
+	fs::path root = PathIO::native(dir);
 	for (fs::recursive_directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec))
 	{
 		if (!it->is_regular_file())

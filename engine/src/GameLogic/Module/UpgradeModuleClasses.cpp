@@ -10,16 +10,20 @@
 
 #include "Common/AsciiString.h"
 #include "Common/INIException.h"
+#include "Common/ModEngineFeatures.h"
 #include "Common/Player.h"
 #include "Common/StateHash.h"
 #include "Common/SpecialPower.h"
 #include "Common/Thing/ModuleFactory.h"
+#include "Common/Thing/ThingTemplate.h"
 #include "GameClient/ControlBarCommands.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/ArmorSet.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Object/Object.h"
+#include "GameClient/ControlBarCommands.h"
+#include "GameLogic/AI/AICommandSink.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -28,6 +32,7 @@
 #include <cstddef>
 #include <cstring>
 #include <stdexcept>
+#include <variant>
 
 namespace
 {
@@ -173,6 +178,27 @@ const FieldParse kCommandSet[] = { // RW 0xC6DF70
 	{ "CommandSet", INI::parseAsciiString, nullptr, (int)offsetof(CommandSetUpgradeModuleData, m_commandSet) },
 	{ nullptr, nullptr, nullptr, 0 }
 };
+// lane MODS-3: edain-unchained.commandset-button-upgrade's parser (its 0xEDB040): every remaining token of the line joined with ' ' (a second line
+// replaces the first)
+void parseCommandButtonList(INI *ini, void *, void *store, const void *)
+{
+	std::string joined;
+	for (const char *t = ini->getNextTokenOrNull(); t; t = ini->getNextTokenOrNull())
+	{
+		joined += (joined.empty() ? "" : " ") + std::string(t);
+	}
+	*(std::string *)store = joined;
+}
+const FieldParse kCommandSetButtons[] = { // its table 0xEDB000: the retail row, then CommandButtons (+0x13C)
+	{ "CommandSet", INI::parseAsciiString, nullptr, (int)offsetof(CommandSetUpgradeModuleData, m_commandSet) },
+	{ "CommandButtons", parseCommandButtonList, nullptr, (int)offsetof(CommandSetUpgradeModuleData, m_commandButtons) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+const FieldParse kObjectImage[] = { // its table 0xEF30C8 (parseAsciiString RW 0x42EE5E)
+	{ "SelectPortrait", INI::parseAsciiString, nullptr, (int)offsetof(ObjectImageUpgradeModuleData, m_selectPortrait) },
+	{ "ButtonImage", INI::parseAsciiString, nullptr, (int)offsetof(ObjectImageUpgradeModuleData, m_buttonImage) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
 #define SO_OFF(m) (int)offsetof(SubObjectsUpgradeModuleData, m)
 const FieldParse kSubObjects[] = { // RW 0xC6E928
 	{ "ShowSubObjects", INI::parseAsciiStringVectorAppend, nullptr, SO_OFF(m_showSubObjects) },
@@ -213,7 +239,6 @@ const FieldParse kGrantUpgradeCreate[] = { // RW 0xC70158
 	{ nullptr, nullptr, nullptr, 0 }
 };
 #undef GU_OFF
-
 #define DC_OFF(m) (int)offsetof(DoCommandUpgradeModuleData, m)
 const FieldParse kDoCommand[] = { // RW 0xC6E7B4 (lane SUMMON-1)
 	{ "GetUpgradeCommandButtonName", INI::parseAsciiString, nullptr, DC_OFF(m_getUpgradeCommandButtonName) },
@@ -248,7 +273,12 @@ void WeaponSetUpgradeModuleData::buildFieldParse(MultiIniFieldParse &p)
 void CommandSetUpgradeModuleData::buildFieldParse(MultiIniFieldParse &p)
 {
 	buildBaseFieldParse(p);
-	p.add(kCommandSet);
+	p.add(ModEngineFeatures::has(ModEngineFeature::EdainUnchainedCommandSetButtons) ? kCommandSetButtons : kCommandSet);
+}
+void ObjectImageUpgradeModuleData::buildFieldParse(MultiIniFieldParse &p)
+{
+	buildBaseFieldParse(p); // its 0xEF31ED: the upgrade mux fields (RW 0x8D26E0), then its table
+	p.add(kObjectImage);
 }
 void DoCommandUpgradeModuleData::buildFieldParse(MultiIniFieldParse &p)
 {
@@ -435,8 +465,86 @@ void WeaponSetUpgrade::processUpgradeRemoval()
 }
 
 // ---- CommandSetUpgrade --------------------------------------------------------------------------------------------------------------------
+namespace
+{
+// its 0xEDB12F: some CommandSetUpgrade of the object has CommandButtons
+bool hasCommandButtonsModule(const Object &obj)
+{
+	if (!ModEngineFeatures::has(ModEngineFeature::EdainUnchainedCommandSetButtons))
+	{
+		return false;
+	}
+	for (const auto &m : obj.modules())
+	{
+		const auto *c = dynamic_cast<const CommandSetUpgrade *>(m.get());
+		if (c && !static_cast<const CommandSetUpgradeModuleData *>(c->getModuleData())->m_commandButtons.empty())
+		{
+			return true;
+		}
+	}
+	return false;
+}
+} // namespace
+
+void CommandSetUpgrade::rebuildCommandButtons(bool selfActive)
+{
+	Object *obj = getObject();
+	// 2. the base is the template's CommandSet (template + 0x70), not the current override
+	std::string base;
+	if (const FieldValue *v = obj->getTemplate()->findField("CommandSet"))
+	{
+		if (const std::string *n = std::get_if<std::string>(v))
+		{
+			base = *n;
+		}
+	}
+	// 3. the active modules in behavior order: a CommandSet-only one replaces the base (the last wins), a CommandButtons one adds its list
+	bool hasSet = false;
+	std::string lists;
+	for (const auto &m : obj->modules())
+	{
+		const auto *c = dynamic_cast<const CommandSetUpgrade *>(m.get());
+		if (!c || !(c == this ? selfActive : c->isAlreadyUpgraded()))
+		{
+			continue;
+		}
+		const auto *d = static_cast<const CommandSetUpgradeModuleData *>(c->getModuleData());
+		if (!d->m_commandButtons.empty())
+		{
+			lists += "+" + d->m_commandButtons;
+		}
+		else if (!d->m_commandSet.empty())
+		{
+			base = d->m_commandSet;
+			hasSet = true;
+		}
+	}
+	std::string name;
+	if (lists.empty())
+	{
+		name = hasSet ? base : std::string(); // 4. "" clears any override
+	}
+	else
+	{
+		name = base + lists; // 5. e.g. "BauplatzKICommandSet+Command_X:1+Command_Y:0", built once
+		if (!TheCommandStore)
+		{
+			throw std::logic_error("CommandSetUpgrade CommandButtons: no CommandStore (TheCommandStore) is set");
+		}
+		TheCommandStore->mergedCommandSet(name);
+	}
+	obj->setCommandSetOverride(name); // 6. RW 0x693B94, then as retail the skirmish AI's removal and add
+	obj->logic().skirmishAI().objectRemoved(*obj);
+	obj->logic().skirmishAI().objectAdded(*obj);
+}
+
 void CommandSetUpgrade::upgradeImplementation()
 {
+	if (hasCommandButtonsModule(*getObject()))
+	{
+		rebuildCommandButtons(true); // lane MODS-3: its hook 0xEDB0B6 (no custom anim on this path)
+		return;
+	}
 	setCustomAnim(true);
 	Object *obj = getObject();
 	obj->setCommandSetOverride(m_data->m_commandSet); // RW 0x693B94 (the control bar refresh that follows is the client's)
@@ -448,6 +556,17 @@ void CommandSetUpgrade::upgradeImplementation()
 
 void CommandSetUpgrade::processUpgradeRemoval()
 {
+	if (hasCommandButtonsModule(*getObject()))
+	{
+		// lane MODS-3: its hook 0xEDB0E6
+		if (isAlreadyUpgraded())
+		{
+			setCustomAnim(false);
+			rebuildCommandButtons(false);
+			setUpgradeExecuted(false);
+		}
+		return;
+	}
 	if (!isAlreadyUpgraded())
 	{
 		return;
@@ -497,6 +616,11 @@ void DoCommandUpgrade::doCommandButton(Object &obj, const CommandButton &b)
 	}
 	case GUI_COMMAND_TOGGLE_WEAPONSET: // 0x2D
 		WeaponSetToggle::toggleFromCommandButton(obj);
+		return;
+	case GUI_COMMAND_PLAYER_UPGRADE:
+		// lane MODS-3: the upgrade case of RW 0x696FD2 (its gate RW 0x695338, the research queue) through Object::doCommandButton (S-5305): the Hall of
+		// Twilight's DoCommandUpgrade modules buy its technologies as it levels (retail angmarhalloftwilight.ini)
+		obj.doCommandButton(&b, CMD_FROM_PLAYER, false);
 		return;
 	default:
 		++UpgradeModuleClasses::stats().doCommandsNotPorted; // S-5145
@@ -608,6 +732,30 @@ void SubObjectsUpgrade::crc(StateHasher &h) const
 {
 	UpgradeModule::crc(h);
 	h.addBool(m_shown);
+}
+
+// ---- ObjectImageUpgrade (lane MODS-3) -----------------------------------------------------------------------------------------------------------
+void ObjectImageUpgrade::upgradeImplementation()
+{
+	m_appliedFrame = getObject()->logic().getFrame() + 1; // its 0xEF320F: the entry is (re)written last, the newest
+}
+
+std::string ObjectImageUpgrade::imageOf(const Object &obj, bool portrait)
+{
+	const ObjectImageUpgrade *best = nullptr;
+	for (const auto &m : obj.modules())
+	{
+		const auto *u = dynamic_cast<const ObjectImageUpgrade *>(m.get());
+		if (!u || !u->m_appliedFrame || (portrait ? u->m_data->m_selectPortrait : u->m_data->m_buttonImage).empty())
+		{
+			continue;
+		}
+		if (!best || u->m_appliedFrame >= best->m_appliedFrame) // a later module applied in the same frame was written after it
+		{
+			best = u;
+		}
+	}
+	return best ? (portrait ? best->m_data->m_selectPortrait : best->m_data->m_buttonImage) : std::string();
 }
 
 // ---- RemoveUpgradeUpgrade -----------------------------------------------------------------------------------------------------------------
@@ -753,6 +901,11 @@ void UpgradeModuleClasses::registerAll(ModuleFactory &modules)
 	bindRuntime<SubObjectsUpgrade, SubObjectsUpgradeModuleData>(modules, "SubObjectsUpgrade");
 	modules.bindTypedData<RemoveUpgradeUpgradeModuleData>("RemoveUpgradeUpgrade", MODULETYPE_BEHAVIOR);
 	bindRuntime<RemoveUpgradeUpgrade, RemoveUpgradeUpgradeModuleData>(modules, "RemoveUpgradeUpgrade");
+	if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedObjectImageUpgrade))
+	{
+		modules.bindTypedData<ObjectImageUpgradeModuleData>("ObjectImageUpgrade", MODULETYPE_BEHAVIOR); // its 0xEF3128 (interface mask 0x84)
+		bindRuntime<ObjectImageUpgrade, ObjectImageUpgradeModuleData>(modules, "ObjectImageUpgrade");
+	}
 	modules.bindTypedData<GrantUpgradeCreateModuleData>("GrantUpgradeCreate", MODULETYPE_BEHAVIOR);
 	bindRuntime<GrantUpgradeCreate, GrantUpgradeCreateModuleData>(modules, "GrantUpgradeCreate");
 }
@@ -774,7 +927,7 @@ std::vector<std::string> UpgradeModuleClasses::stopLines()
 		"(RW 0x67273A) are not drawn: " + std::to_string(s.subObjectFadesNotPorted) + " fades shown instantly, " + std::to_string(s.textureSwapsNotPorted) +
 		" texture swaps and " + std::to_string(s.houseRecolorsNotPorted) + " recolours not applied",
 		"[S-486] upgrade research details not ported: the sub upgrade cost skip of UpgradeTemplate::calcCostToBuild (RW 0x694BF8 / slot 0xAC), the castle cost "
-		"records of queueUpgrade (RW 0x8A10A0) and of the completion (RW 0x79D322 / 0x79D833), the first and third clauses of Object::affectedByUpgrade (RW 0x6939DF / "
+		"record of queueUpgrade (RW 0x8A10A0) (the completion's RW 0x79D322 / 0x79D833 are the producer's experience: PRODUCTION1, S-203), the first and third clauses of Object::affectedByUpgrade (RW 0x6939DF / "
 		"0x693A1A, RW 0x6ABDC2), HordeContain's second member list (+0x150) in the upgrade hand-down (RW 0x87566B) and in Object::hasUpgrade (RW 0x86EC2D: module + 0x170), the research sound, Eva event, UpgradeFX and UI "
 		"messages of the completion",
 		"[S-485] closed: ModelConditionUpgrade RemoveConditionFlagsInRange (RW 0x8BA71A) is ported (the Create-A-Hero model condition upgrades use it)",
@@ -813,6 +966,14 @@ void CommandSetUpgrade::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);
 	UpgradeModule::xfer(x);
+}
+
+// OpenBFME native (S-4190): the mux, then the applied frame (Edain's sidecar is not saved)
+void ObjectImageUpgrade::xfer(Xfer &x)
+{
+	SnapshotXfer::version(x, 1, 1);
+	UpgradeModule::xfer(x);
+	x.xferUnsignedInt(&m_appliedFrame);
 }
 
 void DoCommandUpgrade::xfer(Xfer &x)

@@ -61,6 +61,9 @@ public:
 	virtual int getSlotCapacity() const = 0;
 	// slot 11 (RW 0x873F30): a member made by a factory joins without being placed on its slot; false when it already is a member
 	virtual bool acceptCreatedMember(Object *member) = 0;
+	// lane MODS-3: edain-unchained.horde-exit-absorption (its 0xEE1000): the slot table is built when it is not yet (H + 0x198 == 0: the slot 0x84 call),
+	// then true when a free slot's rank has a UnitType the template matches (RW 0x873F30's search, nothing taken)
+	virtual bool hasFreeSlotFor(const Object &member) = 0;
 	// slot 7 (RW 0x877D89): the world position of the member's slot for the horde's current transform
 	virtual Coord3D getMemberFormationPosition(const Object *member) const = 0;
 	// slot 0xC8 (RW 0x86EF13, lane MOVE-3): called by the pathfinder's updateGoal (RW 0x8E24D3) once the horde's goal changed: unless the horde melees (+ 0x184),
@@ -251,6 +254,11 @@ public:
 	// contain slot 0x48 (RW 0x86FA87): the member of this horde an attacker at `pos` aims at (see HordeMemberPass.cpp); `skipTagged`: members with the status
 	// 0x3F are passed over; `attacker`: its current weapon filters the candidates (RW 0x744AAA)
 	Object *pickMemberNear(bool skipTagged, const Coord3D &pos, float range, Object *attacker);
+	// lane TARGET-1: slot 0x48 without a position (RW 0x86FA87 with pos 0, adjustVictim's second call RW 0x68D30E): the first member of the contain list (with
+	// `skipTagged`, the first not TAGGED), else the first member on its way into a garrison (likewise); null when none
+	Object *pickMemberNoPosition(bool skipTagged) const;
+	// lane TARGET-1: slot 0x180(0) (RW 0x8706DF, no filter): the contain count plus the members on their way in (interface + 0x58)
+	unsigned countWithEntering() const { return getContainCount() + (unsigned)m_garrisonEntering.size(); }
 	// contain slot 0x110 (RW 0x87055D): the first member of the contain list, else the first member on its way into a garrison, else null
 	Object *firstMember() const;
 	// RW 0x870C29: the member (the contain list, then the members on the way) nearest to `victim` in the plane, within 1000 (1e6 squared, RW 0xBDCDC0)
@@ -319,6 +327,7 @@ public:
 	// production placed it (the factory's exit) and is not moved by containReactToTransformChange; moving it to its formation position is the
 	// member pass of the horde runtime (MOVE-1 / HORDE-2, stop S-149). false when it already is a member.
 	bool acceptCreatedMember(Object *member) override;
+	bool hasFreeSlotFor(const Object &member) override;
 	// the world position of the member's slot for the horde's current transform (RW 0x877D89); the horde's own position when it has no slot
 	Coord3D getMemberFormationPosition(const Object *member) const override;
 	void reserveMemberGoals() override;
@@ -392,13 +401,15 @@ public:
 	void bannerCheck(bool force);
 	ObjectID bannerCarrier() const { return m_bannerCarrier; }
 	unsigned bannerCountdown() const { return m_bannerCountdown; }
+	// RW 0x871915 (lane BANNER-1): the removed member was the banner carrier: the id goes and the countdown becomes its BannerCarrierUpdate's DiedRespawnTime. Only the
+	// removals RW 0x87370B / 0x87393E call it; a member released toward a garrison (RW 0x86EBF4, keepSlot) stays the carrier
+	void bannerCarrierRemoved(const Object &member);
 	void expediteBannerRespawn() { if (m_bannerCountdown > 1) { m_bannerCountdown = 1; } } // RW 0x89ACC1
 	unsigned payloadCount() const; ///< RW interface slot 0x188: members, including those entering a garrison, without the banner.
 	unsigned lastMemberDamageFrame() const; ///< RW 0x86EB60, interface slot 0x26C.
-	// RW HordeContainInterface slot 0x18C (RW 0x873AE3): a new member of the payload template joins at `pos` (null when the horde is full or has no single payload template)
-	Object *spawnReplacementMember(const Coord3D &pos);
-	// RW slot 0x90 (RW 0x86EE52, inference S-587): a member was damaged or is attacking within the last `frames` frames
-	bool wasInCombatWithin(unsigned frames) const;
+	// RW HordeContainInterface slot 0x18C (RW 0x873AE3): a new member of the payload template joins at `pos` facing `orientation` (the matrix), with the horde's
+	// weapon set flags, experience pool, attribute modifiers and lifetime (null when the horde is full or has no single payload template)
+	Object *spawnReplacementMember(const Coord3D &pos, float orientation);
 	const std::vector<float> &flankHistory() const { return m_flankAngles; }
 
 	friend struct Horde2HashAccess; // the HORDE-2 hash mutation tests (test_horde2_hash.cpp)

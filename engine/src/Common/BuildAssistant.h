@@ -76,8 +76,10 @@ bool isInProducersCommandSet(Object &builder, const ThingTemplate *what, int bui
 // template both carry KindOf WALL_HUB (template + 0x118 & 0x10000000, i.e. + 0x11B bit 4); a null `what` or builder is no line build
 bool isLineBuildTemplate(GameLogic &logic, const ThingTemplate *what, const Object *builder);
 
-// ZH BuildAssistant::canMakeUnit, RW vtable + 0x64 (RW 0x793ECB)
-CanMakeType canMakeUnit(Object &builder, const ThingTemplate *what, int buildIndex);
+// ZH BuildAssistant::canMakeUnit, RW vtable + 0x64 (RW 0x793ECB). `ignoreCommandPoints` (lane MODS-3, mod engine feature edain-unchained.queue-ignore-cp:
+// Edain Unchained's hook at RW 0x79402B continues at RW 0x794033 when its global is set) skips only the command point refusal (CANMAKE_UNKNOWN_7 at RW
+// 0x794026); retail never sets it. Only ProductionUpdate::queueCreateUnit's doCommandButton path passes true (Object::doCommandButton, QueueIgnoreCP)
+CanMakeType canMakeUnit(Object &builder, const ThingTemplate *what, int buildIndex, bool ignoreCommandPoints = false);
 } // namespace BuildAssistant
 
 // the name the dispatcher and the tests use for ZH's `ThingTemplate::isEquivalentTo`

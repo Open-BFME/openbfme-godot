@@ -2,13 +2,16 @@
 // Expected values are hand-computed from the cited ZH formulas (W3DRoadBuffer.cpp) and geometry.
 
 #include "doctest.h"
+#include "BigTestUtil.h"
 
+#include "Common/ArchiveFile.h"
 #include "Common/LooseFileScan.h"
 #include "GameClient/MapStops.h"
 #include "GameClient/MapWeather.h"
 #include "GameClient/TerrainRoads.h"
 #include "GameClient/WaterGeometry.h"
 #include "GameClient/MapUtil.h"
+#include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 
 #include <cmath>
 #include <filesystem>
@@ -227,28 +230,102 @@ TEST_CASE("WaterGeometry::triangulate: convex, non-convex and either winding giv
 	CHECK_FALSE(WaterGeometry::triangulate({ { 0, 0 }, { 1, 1 } }, tri));
 }
 
-TEST_CASE("WaterGeometry::buildRiverStrip: two vertices per cross-section line, UV v by distance along the centre line")
+TEST_CASE("WaterGeometry::buildRiverStrip: drawRiverWater's strip, the second end of each line first, v the same per line")
 {
 	RiverArea r;
-	r.waterHeight = 290;
-	r.lines = { { 0, 0, 0, 10 }, { 30, 0, 30, 10 }, { 30, 40, 30, 50 } };
+	r.waterHeight = 151;
+	r.lines = { { 0, 50, 0, -50 }, { 100, 50, 100, -50 }, { 200, 50, 200, -50 } };
 	WaterGeometry::RiverStrip s;
-	REQUIRE(WaterGeometry::buildRiverStrip(r, 80.0f, s));
+	REQUIRE(WaterGeometry::buildRiverStrip(r, s));
 	REQUIRE(s.position.size() == 6 * 3);
-	CHECK(s.position[0] == 0.0f);  CHECK(s.position[1] == 0.0f);  CHECK(s.position[2] == 290.0f);
-	CHECK(s.position[3] == 0.0f);  CHECK(s.position[4] == 10.0f);
-	CHECK(s.index.size() == 12);
-	// centres (0,5) -> (30,5) -> (30,45): along = 0, 30, 70
+	CHECK(s.position[0] == 0.0f);  CHECK(s.position[1] == -50.0f);  CHECK(s.position[2] == 151.0f);   // the second end
+	CHECK(s.position[3] == 0.0f);  CHECK(s.position[4] == 50.0f);
+	for (int i = 0; i < 3; ++i)
+	{
+		CHECK(s.uv0[i * 4] == 0.5f);  CHECK(s.uv0[i * 4 + 2] == 0.0f);   // u1: 0.5 across
+		CHECK(s.uv1[i * 4] == 1.0f);  CHECK(s.uv1[i * 4 + 2] == 0.0f);   // u2: 1 across
+	}
+	// the outline less its closing edge is 500, the first line 100 wide: (250 - 100) / 100 over two quads
 	CHECK(s.uv0[1] == 0.0f);
-	CHECK(s.uv0[5] == 30.0f / 80.0f);
-	CHECK(s.uv0[9] == 70.0f / 80.0f);
-	CHECK(s.uv0[0] == 0.0f);
-	CHECK(s.uv0[2] == 1.0f);
-	CHECK(s.uv1[1] == 0.5f);
+	CHECK(s.uv0[5] == 0.75f);
+	CHECK(s.uv0[9] == 1.5f);
+	CHECK(s.uv1[9] == s.uv0[9]);
+	CHECK(s.index == std::vector<std::uint32_t>{ 0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4 });
 	// one line is not a river
 	RiverArea one;
 	one.lines = { { 0, 0, 1, 1 } };
-	CHECK_FALSE(WaterGeometry::buildRiverStrip(one, 80.0f, s));
+	CHECK_FALSE(WaterGeometry::buildRiverStrip(one, s));
+}
+
+TEST_CASE("WaterGeometry::riverVertexColour: a white river lit by the terrain lights and the WaterSet, black as white, others as they are")
+{
+	TimeOfDayLights tod;
+	for (int c = 0; c < 3; ++c)
+	{
+		tod.terrain[0].ambient[c] = 0.2f;
+		tod.terrain[1].diffuse[c] = 1.0f;
+	}
+	const float down[3] = { 0.0f, 0.5f, -0.8f }, sunColour[3] = { 1.0f, 0.9f, 0.8f };
+	for (int c = 0; c < 3; ++c)
+	{
+		tod.terrain[0].lightPos[c] = down[c];
+		tod.terrain[0].diffuse[c] = sunColour[c];
+	}
+	tod.terrain[1].lightPos[2] = 0.5f;   // points up: no light
+	const float water[4] = { 185 / 255.0f, 185 / 255.0f, 185 / 255.0f, 1.0f };
+	RiverArea r;
+	r.r = r.g = r.b = 255;
+	float out[4];
+	WaterGeometry::riverVertexColour(r, &tod, water, out);
+	CHECK(out[0] == doctest::Approx((0.2f + 0.8f) * 185 / 255.0f));   // tolerance: lit colour sums float dot products (ambient + N.L diffuse) in another order than the literal
+	CHECK(out[2] == doctest::Approx((0.2f + 0.8f * 0.8f) * 185 / 255.0f));   // tolerance: lit colour sums float dot products (ambient + N.L diffuse) in another order than the literal
+	CHECK(out[3] == 1.0f);
+	r.r = r.g = r.b = 0;
+	WaterGeometry::riverVertexColour(r, &tod, water, out);
+	CHECK((out[0] == 1.0f && out[1] == 1.0f && out[2] == 1.0f));
+	r.r = 51;
+	r.g = 102;
+	r.b = 255;
+	WaterGeometry::riverVertexColour(r, nullptr, water, out);
+	CHECK(out[0] == 51 / 255.0f);
+	CHECK(out[1] == 102 / 255.0f);
+	CHECK(out[2] == 1.0f);
+}
+
+TEST_CASE("WaterSetScan::applyText: the DiffuseColor of the time of day's WaterSet, the last block winning")
+{
+	float diffuse[4] = { 0, 0, 0, 0 };
+	WaterSetScan::applyText("WaterSet MORNING\n  DiffuseColor = R:1 G:2 B:3 A:4\nEnd\n"
+	                        "WaterSet AFTERNOON\n  DiffuseColor   = R:185 G:180 B:175 A:128 ; a comment\nEnd\n", 2, diffuse);
+	CHECK(diffuse[0] == 185 / 255.0f);
+	CHECK(diffuse[1] == 180 / 255.0f);
+	CHECK(diffuse[2] == 175 / 255.0f);
+	CHECK(diffuse[3] == 128 / 255.0f);
+	WaterSetScan::applyText("WaterSet Afternoon\n  DiffuseColor = R:10 G:20 B:30\nEnd\n", 2, diffuse);   // A defaults to 255
+	CHECK(diffuse[0] == 10 / 255.0f);
+	CHECK(diffuse[3] == 1.0f);
+	WaterSetScan::applyText("WaterSet NIGHT\n  DiffuseColor = R:100 G:100 B:100 A:255\nEnd\n", 2, diffuse);
+	CHECK(diffuse[0] == 10 / 255.0f);   // another time of day changes nothing
+}
+
+TEST_CASE("WaterSetScan::load: water.ini, then the map's maps\\<map>\\map.ini WaterSet overriding it")
+{
+	const std::string waterIni = "WaterSet AFTERNOON\n  DiffuseColor = R:185 G:185 B:185 A:255\nEnd\n";
+	const std::string mapIni = "WaterSet AFTERNOON\n  DiffuseColor = R:51 G:102 B:153 A:255\nEnd\n";
+	Win32BIGFileSystem fsys;
+	std::string error;
+	auto big = fsys.openArchiveFromMemory("w.big", std::make_shared<const std::vector<std::uint8_t>>(bigtest::makeBig("BIGF", {
+		{ "data\\ini\\water.ini", waterIni }, { "maps\\map wor rhun\\map.ini", mapIni } })), &error);
+	REQUIRE(big);
+	fsys.mountArchive(std::move(big), "w.big", false);
+	float diffuse[4];
+	REQUIRE(WaterSetScan::load(fsys, "map wor rhun", 2, diffuse, &error));
+	CHECK(diffuse[0] == 51 / 255.0f);
+	CHECK(diffuse[1] == 102 / 255.0f);
+	CHECK(diffuse[2] == 153 / 255.0f);
+	REQUIRE(WaterSetScan::load(fsys, "map wor other", 2, diffuse, &error));   // no map.ini: water.ini's value
+	CHECK(diffuse[0] == 185 / 255.0f);
+	CHECK(diffuse[3] == 1.0f);
 }
 
 // ------------------------------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 // See GameLogic/NewGame/NewGame.h.
 
 #include "GameLogic/NewGame/NewGame.h"
+#include "Common/ExtendedPlayerColors.h"
 #include "Common/NumericState.h"
 
 #include "GameLogic/NewGame/SkirmishRandom.h"
@@ -54,6 +55,13 @@ bool NewGame::prepareNewGame(const NewGameMessage &in, const PlayerTemplateStore
 	NewGameStart start(algorithm);
 	start.message = in;
 	SkirmishGameInfo &info = start.message.game;
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		if (info.slots[i].state < SLOT_OPEN || info.slots[i].state > SLOT_PLAYER)
+		{
+			return failWith(error, "slot " + std::to_string(i + 1) + ": unknown slot state");
+		}
+	}
 	if (info.numPlayers() == 0)
 	{
 		return failWith(error, "the game has no occupied slot");
@@ -75,6 +83,30 @@ bool NewGame::prepareNewGame(const NewGameMessage &in, const PlayerTemplateStore
 	{
 		return failWith(error, "the map cache key '" + info.mapName + "' is not maps/<name>/<name>.map");
 	}
+	if (!MapCache::validateStartPositions(*entry, error))
+	{
+		return false;
+	}
+	start.mapPlayerCount = entry->numPlayers;
+	info.mapStartCount = entry->numPlayers > LEGACY_MAX_SLOTS ? entry->numPlayers : LEGACY_MAX_SLOTS;
+	bool assigned[MAX_SLOTS]{};
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const SkirmishGameSlot &slot = info.slots[i];
+		if (!slot.isOccupied() || slot.playerTemplate == PLAYERTEMPLATE_OBSERVER) continue;
+		if (slot.startPos < -1 || slot.startPos >= entry->numPlayers)
+		{
+			return failWith(error, "slot " + std::to_string(i + 1) + ": invalid explicit start position " + std::to_string(slot.startPos));
+		}
+		if (slot.startPos >= 0)
+		{
+			if (assigned[slot.startPos])
+			{
+				return failWith(error, "slot " + std::to_string(i + 1) + ": duplicate explicit start position " + std::to_string(slot.startPos));
+			}
+			assigned[slot.startPos] = true;
+		}
+	}
 	start.localSlot = -1;
 	for (int i = 0; i < MAX_SLOTS; ++i)
 	{
@@ -88,7 +120,7 @@ bool NewGame::prepareNewGame(const NewGameMessage &in, const PlayerTemplateStore
 	start.random.initGameLogicRandom(info.seed, -1);
 	SkirmishResolveInput input;
 	input.templates = &templates;
-	input.numColors = (int)settings.multiplayerColors.size();
+	input.numColors = ExtendedPlayerColors::count((int)settings.multiplayerColors.size(), info.mapStartCount);
 	input.map = entry;
 	std::string why;
 	if (!SkirmishRandom::resolve(info, input, start.random, &why))

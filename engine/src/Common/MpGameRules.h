@@ -121,3 +121,10 @@ float damageDealtFactor(int factor);
 std::u16string label();
 std::u16string choiceText(int factor);
 }
+
+// ---- OpenBFME: Cheat Mode (lane CHEAT-1; not a retail rule: GameLogic/CheatMode.h) ------------------------------------------------------------------
+namespace CheatModeRule
+{
+// the Rules tab's check row and the marks of a Cheat Mode game (the game lists, the load screen, the in-game marker): English, marked as OpenBFME's
+std::u16string label();
+}

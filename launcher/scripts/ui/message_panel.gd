@@ -9,6 +9,8 @@ const W := preload("res://scripts/ui/widgets.gd")
 const VectorIcon := preload("res://scripts/ui/vector_icon.gd")
 const Style := preload("res://scripts/ui/style.gd")
 const Paths := preload("res://scripts/ui/paths.gd")
+const PlayerMessages := preload("res://scripts/ui/player_messages.gd")
+const Log := preload("res://scripts/core/launcher_log.gd")
 
 var _icon: TextureRect
 var _title: Label
@@ -19,6 +21,7 @@ var _cancel: Button
 var _ok: Button
 var _details := ""
 var _on_ok := Callable()
+var _previous_focus: WeakRef
 
 
 func _init() -> void:
@@ -33,6 +36,8 @@ func _init() -> void:
 	_icon.modulate = Style.WARN
 	head.add_child(_icon)
 	_title = W.label("", "Heading")
+	_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_title)
 	m.body.add_child(head)
 	_text = W.wrap("")
@@ -49,13 +54,12 @@ func _init() -> void:
 	row.add_child(_logs)
 	row.add_child(W.spacer())
 	_cancel = W.button("Cancel")
-	_cancel.pressed.connect(func() -> void: visible = false)
+	_cancel.pressed.connect(_dismiss)
 	row.add_child(_cancel)
 	_ok = W.button("Close", "", "GoldButton")
 	_ok.custom_minimum_size.x = 120
 	_ok.pressed.connect(func() -> void:
-		visible = false
-		closed.emit()
+		_dismiss()
 		if _on_ok.is_valid():
 			_on_ok.call())
 	row.add_child(_ok)
@@ -63,9 +67,10 @@ func _init() -> void:
 
 
 ## an error the player should see (the status line keeps a one-line copy); `about` goes into the copied details
-func show_error(title: String, text: String, about: String) -> void:
+func show_error(title: String, text: String, about: String, operation := PlayerMessages.Operation.GENERAL) -> void:
+	Log.line("LAUNCHER ui dialog: " + Paths.scrub(title + ": " + text))
 	_title.text = title
-	_text.text = Paths.scrub(text)
+	_text.text = PlayerMessages.error_text(text, operation)
 	_details = Paths.scrub("%s\n%s\n%s" % [title, text, about])
 	_icon.visible = true
 	_copy.visible = true
@@ -74,7 +79,7 @@ func show_error(title: String, text: String, about: String) -> void:
 	_cancel.visible = false
 	_ok.text = "Close"
 	_on_ok = Callable()
-	visible = true
+	_open()
 
 
 ## a question; `on_ok` runs when the player presses `ok_text`
@@ -87,7 +92,45 @@ func ask(title: String, text: String, ok_text: String, on_ok: Callable) -> void:
 	_cancel.visible = true
 	_ok.text = ok_text
 	_on_ok = on_ok
+	_open()
+
+
+func _open() -> void:
+	if not visible and is_inside_tree():
+		_previous_focus = weakref(get_viewport().gui_get_focus_owner())
 	visible = true
+	if is_inside_tree():
+		var buttons: Array[Button] = []
+		for b in [_copy, _logs, _cancel, _ok]:
+			if b.visible and not b.disabled:
+				buttons.append(b)
+		for i in buttons.size():
+			var b := buttons[i]
+			var previous := b.get_path_to(buttons[posmod(i - 1, buttons.size())])
+			var next := b.get_path_to(buttons[(i + 1) % buttons.size()])
+			b.focus_previous = previous
+			b.focus_next = next
+			b.focus_neighbor_left = previous
+			b.focus_neighbor_top = previous
+			b.focus_neighbor_right = next
+			b.focus_neighbor_bottom = next
+		(_cancel if _cancel.visible else _ok).grab_focus.call_deferred()
+
+
+func _dismiss() -> void:
+	visible = false
+	closed.emit()
+	var previous: Control = _previous_focus.get_ref() if _previous_focus != null else null
+	if is_instance_valid(previous) and previous.is_visible_in_tree():
+		previous.grab_focus()
+
+
+func _input(event: InputEvent) -> void:
+	if not visible:
+		return
+	if event.is_action_pressed("ui_cancel"):
+		_dismiss()
+		get_viewport().set_input_as_handled()
 
 
 ## "<title>: <text>" of the dialog (the tests' check of what the window shows)

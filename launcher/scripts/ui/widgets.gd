@@ -246,6 +246,7 @@ static func progress_bar() -> ProgressBar:
 ## a vertical scroll area with the content inside; {scroll, box}
 static func scroll(sep := 14) -> Dictionary:
 	var s := ScrollContainer.new()
+	s.follow_focus = true
 	s.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	s.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var v := vbox(sep)

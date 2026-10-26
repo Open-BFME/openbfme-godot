@@ -1246,16 +1246,9 @@ public:
 		}
 		if (subIdle())
 		{
-			// no crates in RotWK (RW 0x66810B answers none: S-4040); the mood scan (RW 0x66844A(!force, 0)) at the MoodAttackCheckRate interval unless forced
-			// (RW 0x662E01's clock, INFERENCE)
-			const unsigned now = o.logic().getFrame();
-			Object *target = nullptr;
-			if (force || now >= m_nextMoodCheck)
-			{
-				const unsigned interval = ai.moodCheckInterval();
-				m_nextMoodCheck = now + (interval ? interval : 1u);
-				target = ai.nextMoodTarget();
-			}
+			// no crates in RotWK (RW 0x66810B answers none: S-4040); the mood scan RW 0x66844A(!force, 0): its own cadence (AI + 0x21C) when called by the AI
+			// (lane TARGET-1; m_nextMoodCheck, the earlier stand-in clock, is kept in the snapshot but no longer read)
+			Object *target = ai.getNextMoodTarget(!force, false);
 			if (target)
 			{
 				ai.mover().endingMove(); // RW 0x6627CB

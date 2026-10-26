@@ -2,12 +2,14 @@
 // See CommandButtonHelp.h (lane HUD-6). Client-only: the help reads the logic, it never changes it.
 
 #include "GameClient/CommandButtonHelp.h"
+#include "GameClient/LocalizedText.h"
 
 #include "Common/ArchiveFileSystem.h"
 #include "Common/AsciiString.h"
 #include "Common/BuildAssistant.h"
 #include "Common/INI.h"
 #include "Common/INIException.h"
+#include "Common/ModEngineFeatures.h"
 #include "Common/INI/INIBlockStubs.h"
 #include "Common/Player.h"
 #include "Common/ProductionPrerequisite.h"
@@ -19,11 +21,14 @@
 #include "GameClient/GUI/GameWindowManager.h"
 #include "GameClient/GUI/LoadScreenInfo.h"
 #include "GameClient/GlobalLanguage.h"
+#include "GameClient/InGameUIMessages.h"
+#include "GameLogic/AttributeModifiers.h"
 #include "GameLogic/CreateAHeroSystem.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/Module/ProductionUpdate.h"
+#include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 
@@ -41,10 +46,27 @@ namespace
 struct SettingsState
 {
 	HelpBoxSettings values;
+	InGameUIMessageSettings messages; // lane CHAT-1: the Message* rows (constructor defaults until a row is read)
 	GlobalLanguage language; // INTEG-4: UI-4's GlobalLanguage reads the Language block (its full RW 0xBF4C20 table)
 	unsigned seen = 0;
 	bool inGameUi = false;
+	MilitaryCaptionSettings caption; // lane CAMPUI-1
+	unsigned captionSeen = 0;
 };
+
+// lane CAMPUI-1: the MilitaryCaption* rows seen (SettingsState::captionSeen)
+enum : unsigned
+{
+	SEEN_MC_COLOR = 1u << 0, SEEN_MC_POSITION = 1u << 1, SEEN_MC_CENTERED = 1u << 2, SEEN_MC_TITLE_FONT = 1u << 3, SEEN_MC_TITLE_SIZE = 1u << 4,
+	SEEN_MC_TITLE_BOLD = 1u << 5, SEEN_MC_FONT = 1u << 6, SEEN_MC_SIZE = 1u << 7, SEEN_MC_BOLD = 1u << 8, SEEN_MC_DELAY = 1u << 9,
+	SEEN_MC_ALL = (1u << 10) - 1
+};
+template <INIFieldParseProc Proc>
+void parseCaptionNoting(INI *ini, void *instance, void *store, const void *userData)
+{
+	Proc(ini, instance, store, nullptr);
+	static_cast<SettingsState *>(instance)->captionSeen |= (unsigned)(std::uintptr_t)userData;
+}
 
 enum : unsigned
 {
@@ -138,6 +160,18 @@ void skipNestedBlock(INI *ini, void *, void *, const void *userData)
 
 #define SEEN(bit) ((const void *)(std::uintptr_t)(bit))
 #define HB_OFF(member) (int)offsetof(SettingsState, values.member)
+#define MSG_OFF(member) (int)offsetof(SettingsState, messages.member)
+
+// lane CHAT-1: InGameUI's Message* rows (table at file offset 0x812420; the parsers RW 0x42F13E colour int, RW 0x42F2FA the coordinate pair, RW 0x42EE5E
+// string, RW 0x42EC5E int, RW 0x42E558 bool); a row parsed into a field of a nested struct: the coordinate pair writes X then Y (ICoord2D)
+void parseMessagePosition(INI *ini, void *, void *store, const void *)
+{
+	ICoord2D c;
+	INI::parseICoord2D(ini, nullptr, &c, nullptr);
+	static_cast<int *>(store)[0] = c.x;
+	static_cast<int *>(store)[1] = c.y;
+}
+#define MC_OFF(member) (int)offsetof(SettingsState, caption.member)
 
 // InGameUI rows RW 0xC126C0 .. 0xC127B0 (parseAsciiString RW 0x42EE5E, parseInt RW 0x42EC5E, parseBool RW 0x42E558, parseColorInt RW 0x42F13E)
 FieldParse kInGameUiFields[] = {
@@ -157,6 +191,25 @@ FieldParse kInGameUiFields[] = {
 	{ "HelpBoxDescriptionPointSize", parseNoting<INI::parseInt>, SEEN(SEEN_DESC_SIZE), HB_OFF(description.pointSize) },
 	{ "HelpBoxDescriptionBold", parseNoting<INI::parseBool>, SEEN(SEEN_DESC_BOLD), HB_OFF(description.bold) },
 	{ "HelpBoxDescriptionColor", parseNoting<INI::parseColorInt>, SEEN(SEEN_DESC_COLOR), HB_OFF(description.color) },
+	{ "MessageColor1", INI::parseColorInt, nullptr, MSG_OFF(color1) },
+	{ "MessageColor2", INI::parseColorInt, nullptr, MSG_OFF(color2) },
+	{ "MessagePosition", parseMessagePosition, nullptr, MSG_OFF(positionX) },
+	{ "MessagePositionLW", parseMessagePosition, nullptr, MSG_OFF(positionLWX) },
+	{ "MessageFont", INI::parseAsciiString, nullptr, MSG_OFF(font) },
+	{ "MessagePointSize", INI::parseInt, nullptr, MSG_OFF(pointSize) },
+	{ "MessageBold", INI::parseBool, nullptr, MSG_OFF(bold) },
+	{ "MessageDelayMS", INI::parseInt, nullptr, MSG_OFF(delayMS) },
+	// lane CAMPUI-1: rows RW 0xC124A0 .. 0xC12530 (InGameUI + 0x83C colour, + 0x84C / + 0x850 position, + 0x854 centred, + 0x858 .. fonts, + 0x870 delay)
+	{ "MilitaryCaptionColor", parseCaptionNoting<INI::parseRGBAColorInt>, SEEN(SEEN_MC_COLOR), MC_OFF(color) },
+	{ "MilitaryCaptionPosition", parseCaptionNoting<INI::parseCoord2D>, SEEN(SEEN_MC_POSITION), MC_OFF(position) },
+	{ "MilitaryCaptionCentered", parseCaptionNoting<INI::parseBool>, SEEN(SEEN_MC_CENTERED), MC_OFF(centered) },
+	{ "MilitaryCaptionTitleFont", parseCaptionNoting<INI::parseAsciiString>, SEEN(SEEN_MC_TITLE_FONT), MC_OFF(title.name) },
+	{ "MilitaryCaptionTitlePointSize", parseCaptionNoting<INI::parseInt>, SEEN(SEEN_MC_TITLE_SIZE), MC_OFF(title.pointSize) },
+	{ "MilitaryCaptionTitleBold", parseCaptionNoting<INI::parseBool>, SEEN(SEEN_MC_TITLE_BOLD), MC_OFF(title.bold) },
+	{ "MilitaryCaptionFont", parseCaptionNoting<INI::parseAsciiString>, SEEN(SEEN_MC_FONT), MC_OFF(text.name) },
+	{ "MilitaryCaptionPointSize", parseCaptionNoting<INI::parseInt>, SEEN(SEEN_MC_SIZE), MC_OFF(text.pointSize) },
+	{ "MilitaryCaptionBold", parseCaptionNoting<INI::parseBool>, SEEN(SEEN_MC_BOLD), MC_OFF(text.bold) },
+	{ "MilitaryCaptionDelayMS", parseCaptionNoting<INI::parseInt>, SEEN(SEEN_MC_DELAY), MC_OFF(delayMs) },
 	{ "RadiusCursorTemplate", skipNestedBlock, "RadiusCursorTemplate", 0 },
 	{ nullptr, skipField, "InGameUI", 0 }
 };
@@ -244,33 +297,37 @@ bool finish(SettingsLoad &l, HelpBoxSettings &out, std::string *error)
 	return true;
 }
 
+// lane CAMPUI-1: MilitaryCaptionSettings (the same two files; the help box's rows are not required here)
+bool finishCaption(SettingsLoad &l, MilitaryCaptionSettings &out, std::string *error)
+{
+	SettingsState &s = l.state();
+	if (!s.inGameUi || (s.captionSeen & SEEN_MC_ALL) != SEEN_MC_ALL)
+	{
+		if (error)
+		{
+			*error = !s.inGameUi ? "ingameui.ini: no InGameUI block" : "ingameui.ini: InGameUI lacks a MilitaryCaption field (mask " + std::to_string(s.captionSeen) + ")";
+		}
+		return false;
+	}
+	if (!s.language.loaded)
+	{
+		if (error)
+		{
+			*error = "language.ini: no Language block";
+		}
+		return false;
+	}
+	out = s.caption;
+	applyLanguage(out.title, s.language.militaryCaptionTitleFont);
+	applyLanguage(out.text, s.language.militaryCaptionFont);
+	out.loaded = true;
+	return true;
+}
+
 // UnicodeString::format with one %d or %s (the retail labels carry one)
 UnicodeString formatOne(const UnicodeString &fmt, const UnicodeString &value)
 {
-	UnicodeString out;
-	bool done = false;
-	for (size_t i = 0; i < fmt.size(); ++i)
-	{
-		if (fmt[i] == u'%' && i + 1 < fmt.size())
-		{
-			const char16_t c = fmt[i + 1];
-			if (c == u'%')
-			{
-				out += u'%';
-				++i;
-				continue;
-			}
-			if (!done && (c == u'd' || c == u's' || c == u'S' || c == u'u' || c == u'i'))
-			{
-				out += value;
-				done = true;
-				++i;
-				continue;
-			}
-		}
-		out += fmt[i];
-	}
-	return out;
+	return LocalizedText::format(fmt, { value });
 }
 UnicodeString u16(const std::string &ascii)
 {
@@ -301,6 +358,29 @@ bool HelpBoxSettings::scan(const std::string &inGameUi, const std::string &langu
 	return l.run("ingameui.ini", &inGameUi, error) && l.run("language.ini", &language, error) && finish(l, out, error);
 }
 
+bool MilitaryCaptionSettings::scan(const std::string &inGameUi, const std::string &language, MilitaryCaptionSettings &out, std::string *error)
+{
+	SettingsLoad l(nullptr);
+	return l.run("ingameui.ini", &inGameUi, error) && l.run("language.ini", &language, error) && finishCaption(l, out, error);
+}
+
+bool MilitaryCaptionSettings::load(ArchiveFileSystem &fs, MilitaryCaptionSettings &out, std::string *error)
+{
+	for (const char *file : { "data\\ini\\ingameui.ini", "language.ini" })
+	{
+		if (!fs.doesFileExist(file))
+		{
+			if (error)
+			{
+				*error = std::string("file not found in any mounted archive: ") + file;
+			}
+			return false;
+		}
+	}
+	SettingsLoad l(&fs);
+	return l.run("data\\ini\\ingameui.ini", nullptr, error) && l.run("language.ini", nullptr, error) && finishCaption(l, out, error);
+}
+
 bool HelpBoxSettings::load(ArchiveFileSystem &fs, HelpBoxSettings &out, std::string *error)
 {
 	for (const char *file : { "data\\ini\\ingameui.ini", "language.ini" })
@@ -316,6 +396,63 @@ bool HelpBoxSettings::load(ArchiveFileSystem &fs, HelpBoxSettings &out, std::str
 	}
 	SettingsLoad l(&fs);
 	return l.run("data\\ini\\ingameui.ini", nullptr, error) && l.run("language.ini", nullptr, error) && finish(l, out, error);
+}
+
+namespace
+{
+bool finishMessages(SettingsLoad &l, InGameUIMessageSettings &out, std::string *error)
+{
+	SettingsState &s = l.state();
+	if (!s.inGameUi)
+	{
+		if (error)
+		{
+			*error = "ingameui.ini: no InGameUI block";
+		}
+		return false;
+	}
+	if (!s.language.loaded)
+	{
+		if (error)
+		{
+			*error = "language.ini: no Language block";
+		}
+		return false;
+	}
+	out = s.messages;
+	// RW 0x69EDA7 .. 0x69EDD7: Language's MessageFont (+ 0x38) replaces the name, size and bold when it names a font
+	if (!s.language.messageFont.name.empty())
+	{
+		out.font = s.language.messageFont.name;
+		out.pointSize = s.language.messageFont.size;
+		out.bold = s.language.messageFont.bold;
+	}
+	out.loaded = true;
+	return true;
+}
+} // namespace
+
+bool InGameUIMessageSettings::scan(const std::string &inGameUi, const std::string &language, InGameUIMessageSettings &out, std::string *error)
+{
+	SettingsLoad l(nullptr);
+	return l.run("ingameui.ini", &inGameUi, error) && l.run("language.ini", &language, error) && finishMessages(l, out, error);
+}
+
+bool InGameUIMessageSettings::load(ArchiveFileSystem &fs, InGameUIMessageSettings &out, std::string *error)
+{
+	for (const char *file : { "data\\ini\\ingameui.ini", "language.ini" })
+	{
+		if (!fs.doesFileExist(file))
+		{
+			if (error)
+			{
+				*error = std::string("file not found in any mounted archive: ") + file;
+			}
+			return false;
+		}
+	}
+	SettingsLoad l(&fs);
+	return l.run("data\\ini\\ingameui.ini", nullptr, error) && l.run("language.ini", nullptr, error) && finishMessages(l, out, error);
 }
 
 template <typename T, INIFieldParseProc Parse>
@@ -468,8 +605,113 @@ bool allRequiredUpgradesComplete(const Object &obj, const CommandButton &b, std:
 }
 } // namespace
 
+namespace
+{
+// lane MODS-3: edain-unchained.description-timers (its 0xEDD07B at RW 0x8086AB, every exit of RW 0x807A81): one line per button, the frames / 5 in whole
+// seconds; under 5 frames, or a label the string table lacks (silent until the mod adds it), no line
+void addTimerLine(CommandButtonHelp::Text &t, const CommandButton &b, const GameTextSource *text, GameLogic &logic, Player *player, Object *selection)
+{
+	std::string label;
+	int frames = 0;
+	const SpecialPowerTemplate *sp = (TheSpecialPowerStore && !b.m_specialPowerName.empty()) ? TheSpecialPowerStore->findSpecialPowerTemplate(b.m_specialPowerName) : nullptr;
+	const UpgradeTemplate *upgrade = (TheUpgradeCenter && !b.m_upgradeName.empty()) ? TheUpgradeCenter->findUpgrade(b.m_upgradeName) : nullptr;
+	const ThingTemplate *tmpl = b.getThingTemplate(); // RW 0x75D1DC
+	if (sp)
+	{
+		// 1. the cooldown: the selection's module (RW 0x68C26D), else the player's SPELL_BOOK object's (RW 0x6ABABD over RW 0x6AAE3C)
+		const Object *owner = selection;
+		const SpecialPowerModuleInterface *m = owner ? SpecialPowerModules::findModule(*owner, sp) : nullptr;
+		if (!m && player)
+		{
+			static const int spellBook = ObjectTemplateInfoBuilder::kindOfIndex("SPELL_BOOK");
+			for (Object *o = logic.getFirstObject(); o && spellBook >= 0; o = o->getNextObject())
+			{
+				if (o->isKindOf((unsigned)spellBook) && o->getControllingPlayer() == player)
+				{
+					owner = o;
+					m = SpecialPowerModules::findModule(*o, sp);
+					break;
+				}
+			}
+		}
+		// the retail recharge (SpecialPowerModule::startPowerRecharge RW 0x896E31): ReloadTime x (the player's discount + 1 when the power respects it) x the
+		// owner's RECHARGE_TIME product, truncated
+		float playerScale = 1.0f, modifierScale = 1.0f;
+		if ((sp->getFlags() & SPF_RESPECT_RECHARGE_TIME_DISCOUNT) && player)
+		{
+			playerScale = player->science().rechargeDiscount() + 1.0f;
+		}
+		if (owner)
+		{
+			owner->attributeModifierProduct(ATTRIBUTE_RECHARGE_TIME, nullptr, true, modifierScale);
+		}
+		const int total = (int)((double)sp->getReloadTime() * playerScale * modifierScale);
+		if (total <= 0)
+		{
+			return;
+		}
+		// the remaining frames of a module still recharging (INFERENCE: a paused module's ready frame is read too; its 0xEDD07B tells the module kinds apart)
+		const int remaining = m && !m->isReadyForDisplay() ? (int)(m->getReadyFrame() - logic.getFrame()) : 0;
+		label = remaining > 0 ? "TOOLTIP:CooldownRemaining" : "TOOLTIP:Cooldown";
+		frames = remaining > 0 ? remaining : total;
+	}
+	else if (upgrade)
+	{
+		// 2. the research time (RW 0x66F1A8), none for an upgrade already owned (RW 0x691421 / 0x6AC2AF)
+		if (!player)
+		{
+			return;
+		}
+		const bool owned = upgrade->getUpgradeType() == UPGRADE_TYPE_OBJECT ? (selection && selection->hasUpgrade(upgrade)) : player->hasUpgradeComplete(upgrade);
+		if (owned)
+		{
+			return;
+		}
+		label = "TOOLTIP:ResearchTime";
+		frames = upgrade->calcTimeToBuild(player);
+	}
+	else if (tmpl && b.m_command != GUI_COMMAND_PURCHASE_SCIENCE && b.m_command != GUI_COMMAND_HORDE_SET_FORMATION)
+	{
+		// 3. the build time (RW 0x73C39E), not for a CREATE_A_HERO template
+		const int cahBit = ObjectTemplateInfoBuilder::kindOfIndex("CREATE_A_HERO");
+		if (cahBit >= 0 && MaskTest(ObjectTemplateInfoBuilder::build(*tmpl).kindOf, (unsigned)cahBit))
+		{
+			return;
+		}
+		label = "TOOLTIP:BuildTime";
+		frames = BuildAssistant::calcTimeToBuild(*tmpl, player, selection, -1, logic.productionSettings(), logic);
+	}
+	if (label.empty() || frames < 5) // LOGICFRAMES_PER_SECOND (RW 0xD9F608)
+	{
+		return;
+	}
+	std::u16string fmt;
+	if (!text || !text->fetch(label, fmt))
+	{
+		return;
+	}
+	if (hasText(t.description))
+	{
+		t.description += u"\n"; // RW 0xBDBC40
+	}
+	t.description += formatOne(fmt, u16(std::to_string(frames / 5)));
+}
+} // namespace
+
 CommandButtonHelp::Text CommandButtonHelp::compose(const ControlBarButton &button, const GameTextSource *text, GameLogic &logic, Player *player, Player *localPlayer,
                                                    Object *selection, const std::string &faction, const std::vector<ObjectID> *selected)
+{
+	Text t = composeRetail(button, text, logic, player, localPlayer, selection, faction, selected);
+	if (button.button && ModEngineFeatures::has(ModEngineFeature::EdainUnchainedDescriptionTimers))
+	{
+		// RW 0x8086AB's player: the selection's controller, else the local player (the caller's `player`)
+		addTimerLine(t, *button.button, text, logic, player, selection);
+	}
+	return t;
+}
+
+CommandButtonHelp::Text CommandButtonHelp::composeRetail(const ControlBarButton &button, const GameTextSource *text, GameLogic &logic, Player *player, Player *localPlayer,
+                                                         Object *selection, const std::string &faction, const std::vector<ObjectID> *selected)
 {
 	Text t;
 	t.resourceSuffix = faction; // RW 0x8086B5: the Palantir's faction (+ 0xF8), when the Palantir exists
@@ -717,7 +959,21 @@ CommandButtonHelp::Text CommandButtonHelp::compose(const ControlBarButton &butto
 		{
 			if (t6 || t7 || t8) // RW 0x808329: + 0x70, else the default
 			{
-				t.description = b->m_purchasedLabel.empty() ? fetchOrMissing(text, "TOOLTIP:AlreadyUpgradedDefault") : fetchOrMissing(text, b->m_purchasedLabel);
+				const UnicodeString purchased = b->m_purchasedLabel.empty() ? fetchOrMissing(text, "TOOLTIP:AlreadyUpgradedDefault") : fetchOrMissing(text, b->m_purchasedLabel);
+				if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedUpgradeDescription))
+				{
+					// lane MODS-3: edain-unchained.upgrade-description (its 0xEDE00A at RW 0x808371): the purchased text follows the description after a
+					// blank line instead of replacing it
+					if (hasText(t.description))
+					{
+						t.description += u"\n\n"; // RW 0xC4F008
+					}
+					t.description += purchased;
+				}
+				else
+				{
+					t.description = purchased;
+				}
 			}
 			if (has)
 			{

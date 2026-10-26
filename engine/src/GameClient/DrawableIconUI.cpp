@@ -2,6 +2,7 @@
 // See GameClient/DrawableIconUI.h for the target facts and the addresses. Client only (excluded from the simulation audit): plain float arithmetic.
 
 #include "GameClient/DrawableIconUI.h"
+#include "GameClient/LocalizedText.h"
 
 #include "Common/INI/HostRealText.h"
 #include "Common/Player.h"
@@ -301,6 +302,11 @@ const DrawableIconUI::TemplateBox &DrawableIconUI::boxOf(const ThingTemplate &tt
 	return m_boxes.emplace(&tt, b).first->second;
 }
 
+std::string DrawableIconUI::constructionText(const GameTextSource *text, double percent)
+{
+	return loadScreenU16ToUtf8(LocalizedText::format(fetchOrMissing(text, "CONTROLBAR:UnderConstructionDesc"), { percent }));
+}
+
 void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, const TacticalView &view, const IconUISettings &s, const std::set<ObjectID> &selected,
 	ObjectID mousedOver, std::vector<IconUIOp> &out)
 {
@@ -425,17 +431,7 @@ void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, c
 			std::string text;
 			if (!kindOf(obj, WALL_SEGMENT) && !kindOf(obj, DEFENSIVE_WALL))
 			{
-				std::u16string fmt;
-				if (s.text && s.text->fetch("CONTROLBAR:UnderConstructionDesc", fmt))
-				{
-					char buf[256];
-					std::snprintf(buf, sizeof(buf), loadScreenU16ToUtf8(fmt).c_str(), (double)obj.getConstructionPercent()); // "Building: %.0f%%"
-					text = buf;
-				}
-				else
-				{
-					text = loadScreenU16ToUtf8(fetchOrMissing(s.text, "CONTROLBAR:UnderConstructionDesc"));
-				}
+				text = constructionText(s.text, (double)obj.getConstructionPercent());
 			}
 			const TemplateBox &box = boxOf(*obj.getTemplate());
 			Coord3D pos = iconAnchor(logic, drawables, *q.d, obj, box.heightOffset, box.maxHeight);

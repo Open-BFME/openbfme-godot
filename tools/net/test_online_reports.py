@@ -59,7 +59,7 @@ def test_report_controls_retry_the_same_authenticated_payload(tmp_path):
         assert token == "Bearer fake-lobby-session"
         assert re.fullmatch(r"[A-Za-z0-9_-]{8,64}", key)
         assert payload == {"v": 1, "game_id": "0123456789abcdef",
-                           "target": "guest:2222222222222222", "reason": "Reason about this game."}
+                           "target": "guest:2222222222222222", "reason": "other: Reason about this game."}
     finally:
         server.shutdown()
         server.server_close()

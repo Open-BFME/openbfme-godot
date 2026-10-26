@@ -52,9 +52,13 @@ OpenBFME is unofficial. It is not made or endorsed by EA.
 > Alpha 0.4.5, then 0.4.6 and so on, and the middle number goes up (0.5.0) when
 > a big new feature lands. Your launcher updates to each one by itself.
 
+Having trouble? See the [troubleshooting guide](docs/TROUBLESHOOTING.md)
+for game folders, updates, crashes, logs and online errors on Windows,
+Linux and macOS.
+
 **You need** **The Rise of the Witch-king 2.01** and **The Battle for
-Middle-earth II 1.06**, both in English, and Windows 10/11 or 64-bit Linux
-with Vulkan graphics (or Direct3D 12 on Windows).
+Middle-earth II 1.06**, both in English, and x86-64 Windows 10/11 or x86-64
+Linux with GLIBC 2.28 or newer and Vulkan graphics (or Direct3D 12 on Windows).
 
 1. **Download OpenBFME** from
    [GitHub Releases](https://github.com/Open-BFME/openbfme-godot/releases):
@@ -116,20 +120,20 @@ the original are still missing.
 | Main menu and options | 🟡 Partial | real menus with the original layout; the credits roll; the graphics detail level sets particles, texture quality and health bars, but shadows and the other detail rows are not drawn yet; OpenBFME's own settings inside Options |
 | Sound and music | 🟡 Partial | voices, effects, music and the original stereo image; some sounds (damage sounds, scripted music, parts of the big-battle ambience) are missing |
 | Movies | ✅ Works | the start-up logos and intro, and the campaign movies (no subtitles) |
-| Campaign | 🟡 Partial | missions start from the menu with their movies and narration; missions can be saved and loaded, but the original game's campaign-progress saving and the campaign menu between missions are not done yet |
+| Campaign | 🟡 Partial | missions start from the menu with their movies and narration; missions and campaign progress can be saved and loaded, including the between-mission menu and auto-save; saves are OpenBFME's own format and heroes do not carry over between missions yet |
 | LAN multiplayer | ✅ Works | Windows and Linux players in one game, disconnect screen, every game recorded |
 | Replays | 🟡 Partial | every game is recorded and can be watched from *Load Replay*; no saving under a name, no replay controls |
 | Create-a-Hero | ✅ Works | the hero builder, colours and saving; heroes can be fielded in skirmish and LAN |
 | Save / load | 🟡 Partial | skirmish and campaign missions save and load through the original Save / Load screens (OpenBFME's own save files, not the original game's) |
 | War of the Ring | ❌ Not yet | |
-| Online multiplayer | 🟡 Test feature | server browser, rejoin and spectating on the original online screens, through an OpenBFME lobby and relay; there is no public lobby yet, so someone has to host one ([player guide](docs/PLAYING.md#online-play-test-feature)) |
+| Online multiplayer | 🟡 Test feature | server browser, rejoin and spectating through an OpenBFME lobby and relay; the launcher's Multiplayer screen supports sign-in, friends and invitations; the lobby is configurable ([player guide](docs/PLAYING.md#online-play-test-feature)) |
 | Mods | ❌ Not yet | designed in from the start; Edain is the first target |
 
 **Faithful first.** OpenBFME copies the original game's behaviour; it does
 not reinvent it. Where the evidence runs out and the team has to make an
 educated guess, that guess is not hidden: it is recorded as an *acceptance
 stop* in [docs/STOPS.md](docs/STOPS.md), reported by the game at runtime and
-pinned by a test. There are **762 open stops** today. Some are big
+pinned by a test. There are **790 open stops** today. Some are big
 (retail save files), most are small details waiting for better evidence. The plan to
 get to a 1:1 game is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -151,16 +155,18 @@ The full plan, with what is done and what is next, is in
 
 ## Build from source
 
-You need Git, CMake (3.17 or newer), Ninja, a C++17 compiler and
+You need Git with Git LFS, CMake (3.17 or newer), Ninja, Python 3, a C++17 compiler and
 [Godot 4.7](https://godotengine.org/download). Clone with the `godot-cpp`
-submodule:
+submodule (POSIX shell on Linux/macOS; run from your parent source folder):
 
 ```sh
 git clone --recursive https://github.com/Open-BFME/openbfme-godot
 cd openbfme-godot
 ```
 
-**Linux** (GCC or Clang):
+**Linux** (GCC or Clang, from the repository root). For MP3 fixture generation,
+put the reference LAME 3.100 and mpg123 on `PATH`; otherwise use the reference
+fixtures and `-DOPENBFME_LAME=OFF` as described below:
 
 ```sh
 cmake -S engine -B engine/build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -170,29 +176,44 @@ engine/build/openbfme_tests                                   # unit tests (reta
 godot --path godot                                            # start the game
 ```
 
-**Windows** (Visual Studio 2022 with the C++ x64 tools, CMake, Ninja):
+**Windows only** (Visual Studio C++ x64/x86 tools, CMake, Ninja, Python on
+`PATH`, reference MP3 tools or fixtures). Run from the repository root in an
+x64 Native Tools Command Prompt; install the LLVM 19+ AST-audit prerequisites
+in [docs/WINDOWS.md](docs/WINDOWS.md) first:
 
 ```bat
 build.bat
-set ROTWK_INSTALL=<RotWK folder>
-set BFME2_INSTALL=<BFME2 folder>
-set GODOT=<path to the Godot 4.7 console exe>
+set "ROTWK_INSTALL=C:\Games\RotWK"
+set "BFME2_INSTALL=C:\Games\BFME2"
+set "GODOT=C:\path\to\Godot_v4.7.2-stable_win64_console.exe"
 run_tests.bat
-%GODOT% --path godot
+"%GODOT%" --path godot
 ```
 
 `build.bat` writes the extension to `godot\bin` and the tests to
-`engine\build`. `run_tests.bat` exits 0 when everything passed and 77 when
-the install folders are not set (the game tests are skipped). Windows builds
+`engine\build`. `run_tests.bat` runs the unit tests, simulation AST audit,
+headless smoke test and windowed shader test. With the default required AST
+check, it exits 0 when all pass, 77 for a smoke/shader prerequisite skip,
+and 1 for a failure. Overriding `SIM_AUDIT_ARGS=--ast=skip` only warns and
+continues, so a final 0 with that override is not proof of an AST pass. Windows builds
 can also be cross-compiled from Linux with `tools/release/build_windows.sh`;
 see [docs/WINDOWS.md](docs/WINDOWS.md). Packaging and releases are described
 in [docs/RELEASE.md](docs/RELEASE.md).
 
 MP3 decoder tests use the reference-machine fixtures (LAME 3.100, matching
-`engine/tests/data/audio/mp3_golden.tsv`). On other platforms, including macOS,
-configure with `-DOPENBFME_LAME=OFF` and set `OPENBFME_AUDIO_FIXTURES` to the
-directory containing the unpacked reference fixtures before running the tests.
-`OFF` disables regeneration, not the tests; keep the fixture bytes outside git.
+`engine/tests/data/audio/mp3_golden.tsv`). Test-enabled configuration first checks
+`<build>/audio_fixtures` (or `OPENBFME_AUDIO_FIXTURES`). Valid reference streams
+need no encoder/decoder tools or extra flag, even if an incompatible LAME is on
+PATH. Otherwise generation requires LAME **3.100** and mpg123; other LAME versions
+are rejected explicitly. Missing fixtures/tools yield one configure warning,
+never a configure/build error; exactly the five MP3 test cases fail at test time
+with the reason and manual command. For standalone generation outside a CMake sandbox,
+run `python3 tools/audio/gen_mp3_fixtures.py --out workspace/audio_fixtures` from
+the repository root. See the [MP3 test README](engine/tests/data/audio/README.md)
+for hash validation. `-DOPENBFME_BUILD_TESTS=OFF` removes the C++ test target and
+all MP3 fixture/tool checks for release-only builds. `build.bat` and
+`build.bat Release` build the extension, tests and test helpers without fixtures
+or audio tools; executing the five MP3 cases still requires verified fixtures.
 
 Instead of the environment variables, the install folders can live in
 `user://install-paths.cfg` as `KEY=VALUE` lines (the game's first-run screen
@@ -222,7 +243,7 @@ Video devlogs on the [OpenBFME YouTube channel](https://www.youtube.com/@OpenBFM
 
 - **Bugs:** open an issue on
   [GitHub](https://github.com/Open-BFME/openbfme-godot/issues), or post in
-  the OpenBFME Discord's `#feedback` channel (join from the YouTube channel
+  the OpenBFME Discord's `#bug-reports` forum (join from the YouTube channel
   page).
 - **Always attach the session log** of the run where it happened (see
   [Logs](#play-it)), and say which version you played (it is shown in the top

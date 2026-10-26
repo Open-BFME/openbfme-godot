@@ -58,6 +58,7 @@ std::unique_ptr<Mount> build(const std::vector<std::pair<std::string, std::strin
 	{
 		m->archives.push_back(a.install + ":" + a.canonicalPath);
 	}
+	m->identityArchives = report.mounted;
 	return m;
 }
 
@@ -79,6 +80,17 @@ Mount *pureMount()
 		mount = build({ { "rotwk", rotwk }, { "bfme2", bfme2 } });
 	}
 	return mount.get();
+}
+
+std::unique_ptr<Mount> freshPureMount()
+{
+	std::string rotwk = envOrEmpty("ROTWK_INSTALL");
+	std::string bfme2 = envOrEmpty("BFME2_INSTALL");
+	if (rotwk.empty() || bfme2.empty())
+	{
+		return nullptr;
+	}
+	return build({ { "rotwk", rotwk }, { "bfme2", bfme2 } });
 }
 
 Mount *bfme2Mount()

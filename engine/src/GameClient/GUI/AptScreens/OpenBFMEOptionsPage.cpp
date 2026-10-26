@@ -107,7 +107,10 @@ std::array<int, 4> OpenBFMEOptionsPage::gadgetRect(std::size_t index) const
 			// a narrow column keeps 50 pixels right of the slider for its value
 			return { x0, y, b.narrow ? std::min(x0 + kSliderWidth, x1 - 50) : x0 + kSliderWidth, y + kRowHeight };
 		case OpenBFMEPageRow::Kind::Entry:
-			return { x0, y, std::min(x0 + kEntryWidth, x1), y + kRowHeight };
+			// lane ONLINEMENU-1: an entry for more than a code or a number (the friends page's chat line) runs to the gadgets' right edge
+			return { x0, y, row.maxValue > kShortEntryLength ? x1 : std::min(x0 + kEntryWidth, x1), y + kRowHeight };
+		case OpenBFMEPageRow::Kind::Button:
+			return { x0, y, std::min(x0 + kButtonWidth, x1), y + kRowHeight }; // lane CHEAT-1
 		default:
 			return { x0, y, x1, y + kRowHeight };
 	}
@@ -198,7 +201,8 @@ bool OpenBFMEOptionsPage::show(const OpenBFMEPageSpec &spec, std::string *error)
 	if (m_spec.hasList)
 	{
 		std::string err;
-		const int y0 = kRowTop;
+		// lane ONLINEMENU-1: below the page's first rows when the spec says so (the friends page: rows, then its list)
+		const int y0 = m_spec.listFromRow < 0 ? kRowTop : kRowTop + m_spec.listFromRow * kRowPitch;
 		const int y1 = kHelpTop - 10;
 		m_list = m_layer.createEngineGadget(kListSkin, kLabelLeft, y0, kGadgetRight - kLabelLeft, y1 - y0, m_owner, &err);
 		if (!m_list)
@@ -217,6 +221,17 @@ bool OpenBFMEOptionsPage::show(const OpenBFMEPageSpec &spec, std::string *error)
 			GadgetListBoxAddEntryText(m_list, m_spec.list[i].first, kLabelColor, (int)i, 0);
 			GadgetListBoxAddEntryText(m_list, m_spec.list[i].second, kHelpColor, (int)i, 1);
 		}
+		// lane ONLINEMENU-1: a list below rows is as tall as its lines and one more (at least three), not the rest of the panel in empty space
+		const ListboxData *data = m_spec.listFromRow < 0 ? nullptr : static_cast<const ListboxData *>(m_list->winGetUserData());
+		const int pitch = m_list->manager().winFontHeight(m_list->winGetFont()) + 1;
+		if (data && pitch > 1)
+		{
+			const int height = std::max(data->totalHeight + pitch, 3 * pitch) + 2 * TOTAL_OUTLINE_HEIGHT;
+			if (height < y1 - y0)
+			{
+				m_list->winSetSize(kGadgetRight - kLabelLeft, height);
+			}
+		}
 		GadgetListBoxSetTopVisibleEntry(m_list, 0);
 	}
 	m_shown = true;
@@ -230,6 +245,8 @@ void OpenBFMEOptionsPage::hide()
 	m_hoverRow = -1;
 	m_hoverTab = -1;
 	m_pressTab = -1;
+	m_hoverButton = -1;
+	m_pressButton = -1;
 }
 
 void OpenBFMEOptionsPage::applyRow(std::size_t index)
@@ -320,7 +337,22 @@ bool OpenBFMEOptionsPage::message(std::uint32_t msg, WindowMsgData data1, Window
 	}
 	if (m_list && from == m_list)
 	{
-		return true; // the hot key list is read only
+		// the hot key list is read only; lane ONLINEMENU-1: a list that activates tells its row chosen and double-clicked (ZH GadgetListBox sends the
+		// row in data2 with GLM_DOUBLE_CLICKED; the selection is read for GLM_SELECTED)
+		if (m_spec.listActivates && !m_syncing && (msg == GLM_SELECTED || msg == GLM_DOUBLE_CLICKED))
+		{
+			int row = -1;
+			GadgetListBoxGetSelected(m_list, &row);
+			if (msg == GLM_DOUBLE_CLICKED && (int)data2 >= 0 && (int)data2 < (int)m_spec.list.size())
+			{
+				row = (int)data2;
+			}
+			if (row >= 0 && row < (int)m_spec.list.size())
+			{
+				emit({ msg == GLM_SELECTED ? OpenBFMEPageEvent::Kind::ListSelect : OpenBFMEPageEvent::Kind::ListActivate, std::string("list"), row });
+			}
+		}
+		return true;
 	}
 	for (std::size_t i = 0; i < m_built.size(); ++i)
 	{
@@ -379,7 +411,15 @@ bool OpenBFMEOptionsPage::message(std::uint32_t msg, WindowMsgData data1, Window
 					number = number * 10 + (c - u'0');
 				}
 				row.value = number;
-				emit({ OpenBFMEPageEvent::Kind::Value, row.key, number });
+				OpenBFMEPageEvent e{ OpenBFMEPageEvent::Kind::Value, row.key, number };
+				e.text = text;
+				emit(e);
+			}
+			if (msg == GEM_EDIT_DONE)
+			{
+				OpenBFMEPageEvent e{ OpenBFMEPageEvent::Kind::Submit, row.key, row.value };
+				e.text = text;
+				emit(e); // lane ONLINEMENU-1: Enter sends the text (the friends page's "add friend by code")
 			}
 		}
 		else if ((msg == GSM_SLIDER_TRACK || msg == GSM_SLIDER_DONE) && row.kind == OpenBFMEPageRow::Kind::Slider)
@@ -431,6 +471,23 @@ int OpenBFMEOptionsPage::tabAt(float x, float y) const
 	return -1;
 }
 
+int OpenBFMEOptionsPage::buttonAt(float x, float y) const
+{
+	for (std::size_t i = 0; i < m_spec.rows.size() && i < m_built.size(); ++i)
+	{
+		if (m_spec.rows[i].kind != OpenBFMEPageRow::Kind::Button || !m_spec.rows[i].enabled)
+		{
+			continue;
+		}
+		const std::array<int, 4> r = gadgetRect(i);
+		if (x >= r[0] && x < r[2] && y >= r[1] && y < r[3])
+		{
+			return (int)i;
+		}
+	}
+	return -1;
+}
+
 bool OpenBFMEOptionsPage::mouse(int kind, float x, float y)
 {
 	if (!m_shown)
@@ -438,16 +495,30 @@ bool OpenBFMEOptionsPage::mouse(int kind, float x, float y)
 		return false;
 	}
 	const int tab = tabAt(x, y);
+	const int button = buttonAt(x, y); // lane CHEAT-1
 	if (kind == 0)
 	{
 		m_hoverRow = rowAt(x, y);
 		m_hoverTab = tab;
+		m_hoverButton = button;
 		return false;
 	}
 	if (kind == 1)
 	{
 		m_pressTab = tab;
-		return tab >= 0;
+		m_pressButton = button;
+		return tab >= 0 || button >= 0;
+	}
+	// lane CHEAT-1: a Button row is clicked when the press and the release were on it
+	if (m_pressButton >= 0)
+	{
+		const int pressedButton = m_pressButton;
+		m_pressButton = -1;
+		if (pressedButton == button && button < (int)m_spec.rows.size())
+		{
+			emit({ OpenBFMEPageEvent::Kind::Press, m_spec.rows[(std::size_t)button].key, 0 });
+		}
+		return true;
 	}
 	// the release: a tab is chosen when the press and the release were on it (a button's click)
 	const int pressed = m_pressTab;
@@ -546,6 +617,19 @@ void OpenBFMEOptionsPage::decorate(GadgetDrawList &out) const
 	{
 		return;
 	}
+	if (m_spec.backdrop)
+	{
+		// lane ONLINEMENU-1: over an online page the movie's own panels are under the page's band: a dark fill (the menus' background tone) first
+		GadgetDrawCommand c;
+		c.kind = GadgetDrawCommand::Kind::FillRect;
+		c.window = "OpenBFMEPage";
+		c.x0 = kTabsLeft - 8;
+		c.y0 = kTop - 8;
+		c.x1 = kPanelRight + 8;
+		c.y1 = kBottom + 8;
+		c.color = 0xFF050607u; // opaque: at 0xF0 the online page's text showed through (the friends video)
+		out.commands.push_back(c);
+	}
 	frame(out, kTabsLeft, kTop, kTabsRight, kBottom, m_spec.tabsHeader);
 	frame(out, kPanelLeft, kTop, kPanelRight, kBottom, m_spec.panelHeader);
 	// the tabs: the chosen one on the list box's selection image (listbox.wnd's highlight, AptListBoxHilite*), the pointed one brighter
@@ -599,6 +683,24 @@ void OpenBFMEOptionsPage::decorate(GadgetDrawList &out) const
 			well.color = kFrameColor;
 			out.commands.push_back(std::move(well));
 		}
+		if (row.kind == OpenBFMEPageRow::Kind::Button)
+		{
+			// lane CHEAT-1: the FRIENDS button's look (AptOnlineShell::decorateAll): a dark box, the page's frame, the bottom bar's lettering, brighter when pointed
+			GadgetDrawCommand box;
+			box.kind = GadgetDrawCommand::Kind::FillRect;
+			box.window = "OpenBFMEPage";
+			box.x0 = r[0];
+			box.y0 = r[1];
+			box.x1 = r[2];
+			box.y1 = r[3];
+			box.color = (int)i == m_pressButton ? 0xF0182028u : 0xE0050607u;
+			out.commands.push_back(box);
+			box.kind = GadgetDrawCommand::Kind::OpenRect;
+			box.color = kFrameColor;
+			out.commands.push_back(std::move(box));
+			const Color c = !row.enabled ? kDisabledLabelColor : (int)i == m_hoverButton ? kTabHotColor : kTabColor;
+			text(out, row.valueText, r[0], y + 4, kLabelSize, c, r[2] - r[0], true);
+		}
 		if (row.kind == OpenBFMEPageRow::Kind::Slider)
 		{
 			text(out, row.valueText, r[2] + 14, y + 3, kLabelSize, row.enabled ? kHelpColor : kDisabledLabelColor);
@@ -647,7 +749,7 @@ bool OpenBFMEOptionsPage::rect(const std::string &name, std::array<int, 4> &out)
 	}
 	for (std::size_t i = 0; i < m_built.size(); ++i)
 	{
-		if (m_spec.rows[i].key == name && m_built[i].window)
+		if (m_spec.rows[i].key == name && (m_built[i].window || m_spec.rows[i].kind == OpenBFMEPageRow::Kind::Button))
 		{
 			out = gadgetRect(i);
 			return true;

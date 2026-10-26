@@ -242,7 +242,7 @@ TEST_CASE("ownerfix2: the slots' handicaps travel in the game setup (LAN options
 	// truncated, as a full GameInfo is
 	{
 		std::vector<std::uint8_t> bytes = w.data();
-		bytes.resize(bytes.size() - 4 * MAX_SLOTS);
+		bytes.resize(bytes.size() - 4 - 4 * LEGACY_MAX_SLOTS); // lane CHEAT-1: the Cheat Mode i32 after the handicaps goes too
 		NetByteReader r(bytes.data(), bytes.size());
 		SkirmishGameInfo back;
 		std::string error;
@@ -254,7 +254,7 @@ TEST_CASE("ownerfix2: the slots' handicaps travel in the game setup (LAN options
 	// a format 6 replay / save (GameInfo without handicaps) still reads, every handicap 0; the same bytes read as format 7 are refused
 	{
 		std::vector<std::uint8_t> bytes = w.data();
-		bytes.resize(bytes.size() - 4 * MAX_SLOTS);
+		bytes.resize(bytes.size() - 4 - 4 * LEGACY_MAX_SLOTS); // lane CHEAT-1: the Cheat Mode i32 after the handicaps goes too
 		NetByteReader r(bytes.data(), bytes.size());
 		SkirmishGameInfo back;
 		std::string error;

@@ -15,7 +15,11 @@ namespace
 {
 // the stops this component can raise (docs/STOPS.md S-166); tests pin the exact text
 const char *const kStopSpecialLayer =
-	"S-166 the special-layer (bridge, wall, ladder) branch of doLocomotor (RW 0x669E8F-0x66A27E) is not ported: a path node with a waypoint id moves like a ground node";
+	"S-166 doLocomotor's portal branch (RW 0x669E8F-0x66A27E, lane WALL-2) met a waypoint of type 0 or 8: type 0 moves nothing (RW's debug line), the mineshaft "
+	"network (type 8) is not ported";
+// lane WALL-2: the two cases of kStopSpecialLayer (one stop line)
+const char *const kStopPortalNormal = kStopSpecialLayer;
+const char *const kStopPortalMineshaft = kStopSpecialLayer;
 const char *const kStopUpdate =
 	"S-166 the movement-complete block of AIUpdateInterface::update (RW 0x6695EF) skips the object goal refresh (0x68B411, 0x6EF225, 0x68B3BD), the status bit clears and the turret update; the state machine's sleep comes from the host";
 const char *const kStopExitQuickPath =
@@ -47,6 +51,20 @@ std::vector<std::string> AIMover::allStops()
 
 void AIMover::note(const char *stop)
 {
+	// the movers note these on every frame of a move: a known stop is compared by its text only the first time (a bit per stop)
+	static const char *const kKnown[] = { kStopSpecialLayer, kStopUpdate, kStopExitQuickPath, kStopExplicit, kStopDistance, kStopRequests, kStopGroup };
+	for (unsigned i = 0; i < sizeof(kKnown) / sizeof(kKnown[0]); ++i)
+	{
+		if (kKnown[i] == stop)
+		{
+			if (m_notedBits & (1u << i))
+			{
+				return;
+			}
+			m_notedBits |= 1u << i;
+			break;
+		}
+	}
 	for (const std::string &s : m_stops)
 	{
 		if (s == stop)
@@ -287,6 +305,8 @@ public:
 	}
 	bool inRangeFrom(const Coord3D &from, float extra) const override { return m_host.attackRangeFrom(from, m_victim, m_pos, extra); }
 	bool inRangeFromTo(const Coord3D &from, const Coord3D &victimPos, float extra) const override { return m_host.attackRangeFromTo(from, m_victim, victimPos, extra); }
+	float attackDistance() const override { return m_host.attackDistanceTo(m_victim, m_pos); }
+	bool meleeWeapon() const override { return m_host.currentWeaponIsMelee(); }
 
 private:
 	AIMoveHost &m_host;
@@ -367,34 +387,50 @@ bool AIMover::computeAttackPath()
 {
 	// RW 0x6668CA (the ground branch; the flying / no-pathfind branch RW 0x666D4E .. 0x666E6C and the ship variant RW 0x6FDE38 are S-784)
 	static const std::string kStopAttackPath =
-		"[S-784] attack path: requestAttackPath (RW 0x663802), computeAttackPath (RW 0x6668CA, ground branch) and findAttackPath (RW 0x6FC18E) are ported; NOT ported: the view "
-		"test RW 0x6F4557 (never blocked, S-325), the flying branch and the ship search RW 0x6FDE38, the failure branch's RW 0x6F3C87 / 0x66831A retries (a melee "
-		"soldier attacks through the melee machine instead, S-787); INFERENCE: the closest-cell fallback ranks by distance only (RW 0x93AD93 zone value), the "
-		"expansion takes no range limit, the goal shift toward the attacker is always made (RW 0x441B59 not read)";
+		"[S-784] attack path: requestAttackPath (RW 0x663802), computeAttackPath (RW 0x6668CA, ground branch), findAttackPath (RW 0x6FC18E: the probe, the corridor "
+		"RW 0x6F9829, the ranked fallback, the range-limited expansion) and its view test RW 0x6F4557 (lane ATTACKPATH-1) are ported; NOT ported: the view test's "
+		"weapon terrain line RW 0x6CC6DD (taken as clear, S-859), the flying branch and the ship search RW 0x6FDE38, the existing path kept for a waypoint node "
+		"(RW 0x666907, no waypoints: S-161), the path-through flag of a guard state (state 0x10 with AI + 0x3CD, S-325), the BRIDGE victim's attack points "
+		"(RW 0x67D7EC); INFERENCE: a WALL_UPGRADE victim's corridor goal is its position (RW 0x68C9AC)";
 	m_host.noteLogicStop(kStopAttackPath);
 	PathfindObject &obj = m_host.pathfindObject();
 	const PathfindLocomotorInfo info = m_host.locomotorInfo();
 	const Coord3D pos = obj.getPosition();
 	const PathfindObject *victim = m_attackVictim != PATHFIND_INVALID_ID ? m_host.findPathfindObject(m_attackVictim) : nullptr;
-	const Coord3D target = victim ? victim->getPosition() : m_attackPos;
-	// in reach already: no path (RW 0x6669C2)
-	if (m_host.attackRangeFrom(pos, victim ? m_attackVictim : PATHFIND_INVALID_ID, target, 0.0f))
+	const PathfindObjectID victimId = victim ? m_attackVictim : PATHFIND_INVALID_ID;
+	// in reach already: no path (RW 0x6669C2). A victim object: in reach (RW 0x6CC653) unless the unit does ground movement (AI vslot 0x224), the victim is not
+	// significantly above the terrain (RW 0x70C55D) and the view from here is blocked (RW 0x6F4557, lane ATTACKPATH-1); a position: RW 0x6CC07C from here
+	bool inReach;
+	if (victim)
+	{
+		inReach = m_host.attackRangeFrom(pos, victimId, victim->getPosition(), 0.0f) &&
+			!(isDoingGroundMovement() && !victim->isSignificantlyAboveTerrain() && m_pf.isAttackViewBlockedByObstacle(obj, pos, victim, victim->getPosition()));
+	}
+	else
+	{
+		inReach = m_host.attackRangeFrom(pos, PATHFIND_INVALID_ID, m_attackPos, 0.0f);
+	}
+	if (inReach)
 	{
 		destroyPath();
 		m_pathTimestamp = m_host.frame();
 		return true;
 	}
+	// RW 0x6669FE .. 0x666A55: the victim's position (a position target: the request's), its z the terrain height there (TerrainLogic vslot 0x1C on the
+	// victim's layer: the ground, S-161)
+	Coord3D target = victim ? victim->getPosition() : m_attackPos;
+	target.z = m_host.groundHeightAt(target.x, target.y);
 	destroyPath();
 	m_pf.removeGoal(obj); // RW 0x68B401
 	m_pf.setIgnoreObstacleID(m_ignoreObstacleId); // RW 0x6E8498(AI +0x164)
-	const MoverAttackRange range(m_host, victim ? m_attackVictim : PATHFIND_INVALID_ID, target);
+	const MoverAttackRange range(m_host, victimId, target);
 	bool fallback = false;
 	const float victimRadius = victim ? victim->getGeometry().boundingCircleRadius() : 0.0f;
 	m_path = m_pf.findAttackPath(&obj, info, &pos, victim, &target, victimRadius, range, false, &fallback);
 	if (m_path && m_path->getLastNode())
 	{
 		const Coord3D last = *m_path->getLastNode()->getPosition();
-		if (!fallback && !m_host.attackRangeFrom(last, victim ? m_attackVictim : PATHFIND_INVALID_ID, target, 0.0f))
+		if (!fallback && !m_host.attackRangeFrom(last, victimId, target, 0.0f))
 		{
 			// RW 0x666A9F: an end out of reach closer than 30 to the unit: adjust the unit's own position and path there instead
 			const float d = (float)SimMath::length3d(SimMath::subf32(last.x, pos.x), SimMath::subf32(last.y, pos.y), SimMath::subf32(last.z, pos.z));
@@ -454,9 +490,41 @@ void AIMover::doPathfind()
 		m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
 		return;
 	}
+	// RW 0x66902C: the approach flag (+ 0x3B4) drops when the unit is not doing ground movement (AI vslot 0x224) (lane ATTACKPATH-1)
+	if (m_meleeApproachRequest && !isDoingGroundMovement())
+	{
+		m_meleeApproachRequest = false;
+	}
+	if (m_attackRequest)
+	{
+		// RW 0x669049: the attack request (computeAttackPath RW 0x6668CA)
+		const PathfindObject *victim = m_attackVictim != PATHFIND_INVALID_ID ? m_host.findPathfindObject(m_attackVictim) : nullptr;
+		const PathfindObjectID victimId = victim ? m_attackVictim : PATHFIND_INVALID_ID;
+		if (computeAttackPath())
+		{
+			m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
+			return;
+		}
+		m_attackRequest = false;
+		// lane ATTACKPATH-1, TARGET RW 0x6691C3 .. 0x669287 (the failure branch): with a victim object the kept position (+ 0x148) becomes the victim's position,
+		// adjustToPossibleDestination (RW 0x6F3C87) moves it, the AI ignores the victim's footprint from now on (RW 0x66831A: AI + 0x164 = its id) and a
+		// refused adjustment sets the approach flag (+ 0x3B4): the path then comes from the approach branch (pathfinder slot + 4) to that position
+		if (victim)
+		{
+			m_attackPos = victim->getPosition();
+			const bool adjusted = m_pf.adjustToPossibleDestination(m_host.pathfindObject(), m_host.locomotorInfo(), &m_attackPos);
+			m_ignoreObstacleId = victimId;
+			if (!adjusted)
+			{
+				m_meleeApproachRequest = true;
+			}
+		}
+		m_requestedDest = m_attackPos;
+	}
 	if (m_meleeApproachRequest)
 	{
-		// RW 0x668E94's + 0x3B4 branch: an ordinary path (pathfinder vslot + 4) to the kept destination, its end reserved with its layer, then the allied clearing
+		// RW 0x66928E's + 0x3B4 branch: an ordinary path (pathfinder vslot + 4) to the kept destination; with ground movement (AI vslot 0x224) and a path its end is
+		// reserved with its layer (RW 0x68B3BD), then the allied clearing
 		m_meleeApproachRequest = false;
 		PathfindObject &obj = m_host.pathfindObject();
 		const PathfindLocomotorInfo info = m_host.locomotorInfo();
@@ -464,7 +532,7 @@ void AIMover::doPathfind()
 		destroyPath();
 		// lane PATHPERF-1: slot +4 is FindClosestPath (RW 0x6FB869, not ported: S-166), not findPath: the search without findPath's corridor stands in for it
 		m_path = m_pf.findPathWithoutCorridor(&obj, info, &pos, &m_attackPos, nullptr);
-		if (m_path && m_path->getLastNode())
+		if (m_path && m_path->getLastNode() && isDoingGroundMovement())
 		{
 			const PathNode *end = m_path->getLastNode();
 			m_pf.updateGoal(obj, end->getPosition(), end->getLayer());
@@ -476,18 +544,6 @@ void AIMover::doPathfind()
 		m_isBlocked = false;
 		m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
 		return;
-	}
-	if (m_attackRequest)
-	{
-		// RW 0x668F2F: the attack request; a failure drops the flag and falls back to an ordinary path to the kept position (the destination adjustment
-		// RW 0x6F3C87 and the ignore-obstacle retry RW 0x66831A of the failure branch are S-784)
-		if (computeAttackPath())
-		{
-			m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
-			return;
-		}
-		m_attackRequest = false;
-		m_requestedDest = m_attackPos;
 	}
 	computePath(m_requestedDest);
 	if (m_path)
@@ -523,7 +579,7 @@ bool AIMover::computeQuickPath(const Coord3D &dest)
 	Path *p = new Path();
 	Coord3D from = obj.getPosition();
 	from.z = dest.z;
-	p->prependNode(&dest, LAYER_GROUND);
+	p->prependNode(&dest, m_pf.getLayerAt(dest.x, dest.y, dest.z)); // lane WALL-1: the destination's layer (the ground on a map without walls)
 	p->prependNode(&from, obj.getLayer());
 	p->optimize(m_pf, &obj, m_host.locomotorInfo().validSurfaces, false, nullptr);
 	m_path = p;
@@ -591,7 +647,7 @@ bool AIMover::computePath(const Coord3D &destIn)
 	// two fall back, when they made nothing and the unit has no path, to the closest path (slot + 4, RW 0x6FB869), which always sets the retry flag
 	Path *np = nullptr;
 	bool tryClosest = true;
-	if (!m_pf.validMovementPosition(&obj, info, LAYER_GROUND, &dest))
+	if (!m_pf.validMovementPosition(&obj, info, m_pf.getLayerAt(dest.x, dest.y, dest.z), &dest)) // the destination's layer (RW 0x680A75; lane WALL-1: a wall top's)
 	{
 		np = nullptr;
 	}
@@ -702,7 +758,8 @@ bool AIMover::goalCellOnGridAndNotStart(const Coord3D &from)
 	{
 		return false;
 	}
-	return m_pf.getCell(LAYER_GROUND, goalCell.x, goalCell.y) != nullptr; // the layer of RW 0x680A75: only the ground is ported (S-161)
+	// the layer of RW 0x680A75 (lane WALL-2: getCell of any layer answers a cell wherever the ground grid has one: a raised layer falls back to it)
+	return m_pf.getCell(LAYER_GROUND, goalCell.x, goalCell.y) != nullptr;
 }
 
 // RW 0x6F1B3E (unit, from, to, goal = the locomotor goal): the straight step is valid. Shared by doLocomotor's type 4 goal and the horde member update RW 0x66C748
@@ -749,6 +806,150 @@ Path *AIMover::pathReachingGoal(const Coord3D &from)
 	return path;
 }
 
+void AIMover::refreshLayer()
+{
+	PathfindObject &obj = m_host.pathfindObject();
+	if (!m_pf.isMapReady())
+	{
+		return;
+	}
+	PathfindLayerEnum layer = m_pf.settleLayer(obj);
+	if (layer != obj.getLayer())
+	{
+		m_host.setLayer(layer);
+		// lane BRIDGE-1 (INFERENCE, S-1750 narrowed): a unit whose wall top or bridge deck went away stands on the ground under it on this frame, as RotWK's
+		// NO_Z_MOTIVE_FORCE height (RW 0x5E76AC case 0, RW 0x5E774A .. 0x5E7816: the height of the object's layer) puts it there, from the movers for a moving
+		// unit and from maintainCurrentPosition's tail (RW 0x5E7CC7, the transform write RW 0x70BA76) for an idle one (RotWK has no fall, no fall damage). The
+		// port runs that height only on this layer change: the whole tail moves every idle unit to its surface each frame and changes the games' hashes (S-1750).
+		// Only for a NO_Z_MOTIVE_FORCE locomotor (case 0: a flyer's height is its own) that is not a HORDE (a horde's position change places its members, and
+		// each member settles on its own layer change)
+		const Locomotor *loco = m_host.locomotor();
+		if (layer == LAYER_GROUND && loco && loco->getTemplate().m_zAxisBehavior == Z_NO_Z_MOTIVE_FORCE && loco->getTemplate().m_appearance != LOCO_HORDE)
+		{
+			Coord3D p = obj.getPosition();
+			const float z = m_host.groundHeightAt(p.x, p.y);
+			if (!(z == p.z))
+			{
+				p.z = z;
+				m_host.setPosition(p);
+			}
+		}
+	}
+	// lane WALL-2: a path goal (type 1) takes RotWK's layer update in doLocomotor itself (RW 0x669D3D .. 0x669D66: the point ahead's layer); a type 4 goal with a
+	// path (the horde member update) keeps lane WALL-1's (INFERENCE, S-4840)
+	if (m_path && m_goalType == AIGOAL_EXPLICIT_WITH_PATH)
+	{
+		// the path node nearest the unit: the current segment's start or its end (BFME2 doLocomotor 0x66A3A0 asks gd_00364521)
+		const PathNode *node = m_path->currentNode() ? m_path->currentNode() : m_path->getFirstNode();
+		if (node && node->getNext())
+		{
+			const Coord3D &p = obj.getPosition();
+			const Coord3D *a = node->getPosition(), *b = node->getNext()->getPosition();
+			const float da = SimMath::sumSquares2(SimMath::subf32(a->x, p.x), SimMath::subf32(a->y, p.y));
+			const float db = SimMath::sumSquares2(SimMath::subf32(b->x, p.x), SimMath::subf32(b->y, p.y));
+			if (db < da)
+			{
+				node = node->getNext();
+			}
+		}
+		if (node)
+		{
+			layer = m_pf.updateLayer(obj, node->getLayer());
+			if (layer != obj.getLayer())
+			{
+				m_host.setLayer(layer);
+			}
+		}
+	}
+}
+
+// lane WALL-2, RW 0x669E8F .. 0x66A27E (BFME2 WB doLocomotor 0xe477a0, the switch on the waypoint's type, AIUpdate.cpp line 0xF87): the locomotor's speed moves
+// toward the desired one (RW 0x5E4C40), the point ahead is taken again at that speed (RW 0x766173), and by the type:
+//   0: "Can't use normal waypoint as portal" (a debug line), nothing moves; 1: the unit is put on the point ahead (RW 0x70C201);
+//   2 Walk, 4 PreClimb: ACCELERATE and DECELERATE go, WALKING comes; the unit turns toward the point at its turn rate (RW 0x5E6810: RW 0x5E60C7 then the
+//      transform) and is put on it;
+//   3 Climb: ACCELERATE, DECELERATE and CLIMBING go, WALKING comes; with d the step to the point (x87 length RW 0x403111): steeply down (|d| * -0.5 > dz) it turns
+//      toward the point mirrored through itself (2 * pos - point, the first point ahead's z: it climbs down backwards), BACKING_UP and CLIMBING come and a disguised
+//      unit is revealed; steeply up (dz > |d| * 0.5) CLIMBING comes (and the reveal) and it turns toward the point; else it turns toward the point; then it is
+//      put on the point;
+//   7 (FakePathfindPortalBehaviour's gate pair): ACCELERATE, DECELERATE go, the path is dropped and the AI idles (RW 0x662A0E: destroyPath, vslot 0x60(2)),
+//      nothing else;
+//   8 (mineshaft): not ported (reported);
+// then (every type but 7 and 8) the unit takes the point's layer (RW 0x5E2D5D -> Object::setLayer RW 0x68BBF4) and the path's closest segment (RW 0x765598,
+// opt 1) follows its position.
+void AIMover::moveThroughPortal(Locomotor &loco, const PathfindWaypoint &portal, float speed, const LocomotorPathPoint &first)
+{
+	PathfindObject &obj = m_host.pathfindObject();
+	LocomotorHost &lh = m_host.locomotorHost();
+	loco.setSpeedTowards(lh, speed);
+	const LocomotorPathPoint pt = m_path->computePointAhead(loco.speed());
+	const Coord3D pos = obj.getPosition();
+	const float dx = SimMath::subf32(pt.position.x, pos.x), dy = SimMath::subf32(pt.position.y, pos.y), dz = SimMath::subf32(pt.position.z, pos.z);
+	auto turnToward = [&](const Coord3D &p) {
+		loco.rotateTowardsWrapper(lh, p, nullptr);
+		lh.setTransform(loco.matrix());
+	};
+	switch (portal.type)
+	{
+	case PWAYPOINT_NORMAL:
+		note(kStopPortalNormal);
+		break;
+	case PWAYPOINT_TYPE1:
+		m_host.setPosition(pt.position);
+		break;
+	case PWAYPOINT_WALK:
+	case PWAYPOINT_PRECLIMB:
+		m_host.setModelCondition("ACCELERATE", false);
+		m_host.setModelCondition("DECELERATE", false);
+		m_host.setModelCondition("WALKING", true);
+		turnToward(pt.position);
+		m_host.setPosition(pt.position);
+		break;
+	case PWAYPOINT_CLIMB:
+	{
+		m_host.setModelCondition("ACCELERATE", false);
+		m_host.setModelCondition("DECELERATE", false);
+		m_host.setModelCondition("CLIMBING", false);
+		m_host.setModelCondition("WALKING", true);
+		const float len = (float)SimMath::length3d(dx, dy, dz);
+		if (SimMath::mulf32(len, -0.5f) > dz) // RW 0x66A0AC .. 0x66A0C3 (0xBDCB70)
+		{
+			const Coord3D away{ SimMath::subf32(SimMath::mulf32(pos.x, 2.0f), pt.position.x), SimMath::subf32(SimMath::mulf32(pos.y, 2.0f), pt.position.y),
+				first.position.z };
+			turnToward(away);
+			m_host.setModelCondition("BACKING_UP", true);
+			m_host.setModelCondition("CLIMBING", true);
+			m_host.revealDisguiseOnClimb();
+		}
+		else
+		{
+			if (dz > SimMath::mulf32(len, 0.5f)) // RW 0x66A1A9 .. 0x66A1BE (0xBD869C)
+			{
+				m_host.setModelCondition("CLIMBING", true);
+				m_host.revealDisguiseOnClimb();
+			}
+			turnToward(pt.position);
+		}
+		m_host.setPosition(pt.position);
+		break;
+	}
+	case PWAYPOINT_TYPE7:
+		m_host.setModelCondition("ACCELERATE", false);
+		m_host.setModelCondition("DECELERATE", false);
+		destroyPath();
+		m_host.idleFromAI();
+		return;
+	case PWAYPOINT_MINESHAFT:
+		note(kStopPortalMineshaft);
+		return;
+	default:
+		break;
+	}
+	m_host.setLayer(pt.layer == (int)LAYER_INVALID ? LAYER_GROUND : (PathfindLayerEnum)pt.layer);
+	m_path->updateClosestSegment(obj.getPosition());
+	m_doFinalPosition = false;
+}
+
 unsigned AIMover::doLocomotor()
 {
 	PathfindObject &obj = m_host.pathfindObject();
@@ -772,6 +973,7 @@ unsigned AIMover::doLocomotor()
 	Locomotor *loco = m_host.locomotor();
 	if (loco && !(m_isAiDead && !loco->getTemplate().m_locomotorWorksWhenDead))
 	{
+		refreshLayer();
 		const Coord3D pos = obj.getPosition();
 		switch (m_goalType)
 		{
@@ -852,10 +1054,36 @@ unsigned AIMover::doLocomotor()
 			// a locomotor (lane MOVE-2: the port took 40 for a unit standing still, so a unit starting a path aimed 40 ahead instead of at its closest point)
 			const float ahead = loco->speed();
 			const LocomotorPathPoint pt = m_path->computePointAhead(ahead);
-			if (m_path->currentNode() && m_path->currentNode()->getWaypointID() != PathNode::NO_WAYPOINT)
+			// lane WALL-2, RW 0x669D0E .. 0x669D7D (BFME2 WB doLocomotor 0xe477a0): a unit moving on the ground (AI vslot 0x224, RW 0x667144) takes the
+			// waypoint of the point ahead ((node's next optimised ?: node) + 0x20, RW 0x5E2D74; TheTerrainLogic vslot 0x8C); without one its layer follows the
+			// point ahead's (RW 0x5E2D5D; the ground: the ground grid's cell layer there, RW 0x6EACB9 GetGroundLayer) through UpdateLayer (RW 0x6F25FE)
+			const PathfindWaypoint *portal = nullptr;
+			if (isDoingGroundMovement())
 			{
-				note(kStopSpecialLayer);
+				const PathNode *an = m_path->lastAheadNode();
+				const PathNode *nn = an ? (an->getNextOptimized() ? an->getNextOptimized() : an) : nullptr;
+				const int wid = nn ? nn->getWaypointID() : PathNode::NO_WAYPOINT;
+				if (wid != PathNode::NO_WAYPOINT)
+				{
+					portal = m_pf.findWaypoint(wid);
+				}
+				if (!portal)
+				{
+					PathfindLayerEnum layer = (PathfindLayerEnum)pt.layer;
+					if (layer == LAYER_GROUND)
+					{
+						Coord3D p = pt.position;
+						const PathfindCell *gc = m_pf.isMapReady() ? m_pf.getCell(LAYER_GROUND, &p) : nullptr;
+						layer = gc ? gc->getLayer() : LAYER_GROUND;
+					}
+					const PathfindLayerEnum now = m_pf.updateLayer(obj, layer);
+					if (now != obj.getLayer())
+					{
+						m_host.setLayer(now);
+					}
+				}
 			}
+			m_onPortal = portal != nullptr; // RW AI + 0x3BB
 			float speed = m_desiredSpeed;
 			const float maxSpeed = loco->getMaxSpeedForCondition(lh);
 			if (speed == AI_FAST_SPEED || speed > maxSpeed)
@@ -886,6 +1114,22 @@ unsigned AIMover::doLocomotor()
 					speed = m_bumpSpeedLimit;
 				}
 			}
+			// RW 0x669E47 .. 0x669E89: a locomotor without ScalesWalls (template + 0x150) leaves CLIMBING; a HORDE appearance (+ 0x74 == 6) takes no portal (its
+			// members do)
+			if (!loco->getTemplate().m_scalesWalls)
+			{
+				m_host.setModelCondition("CLIMBING", false);
+			}
+			if (loco->getTemplate().m_appearance == LOCO_HORDE)
+			{
+				portal = nullptr;
+			}
+			if (portal)
+			{
+				moveThroughPortal(*loco, *portal, speed, pt);
+				break;
+			}
+			m_host.setModelCondition("BACKING_UP", false); // RW 0x66A27E
 			// the ground branch: a blocked unit stops
 			if (blocked)
 			{
@@ -1321,7 +1565,7 @@ StateReturnType AIMoveToState::onEnter()
 		{
 			m_ai.m_pf.snapClosestGoalPosition(obj, &m_goal);
 		}
-		m_ai.m_pf.updateGoal(obj, &m_goal, LAYER_GROUND);
+		m_ai.m_pf.updateGoal(obj, &m_goal, m_ai.m_pf.getLayerAt(m_goal.x, m_goal.y, m_goal.z)); // lane WALL-1: the goal's layer (RW 0x680A75)
 		m_ai.m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
 	}
 	const Coord3D pos = obj.getPosition();
@@ -1559,6 +1803,10 @@ void AIMover::crc(StateHasher &h) const
 	h.addBool(m_movementComplete);
 	h.addBool(m_retryPath);
 	h.addBool(m_isAiDead);
+	if (m_onPortal)
+	{
+		h.addU32(0x504F5254u); // lane WALL-2: AI + 0x3BB, folded only while set (a unit off portals hashes as before)
+	}
 	h.addI32(m_colliderCount);
 	for (int i = 0; i < 4; ++i)
 	{

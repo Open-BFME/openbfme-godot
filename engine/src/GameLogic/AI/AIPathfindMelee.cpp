@@ -15,8 +15,9 @@
 //   * RW 0x6EBE89: every footprint cell (x - r .. x + r + centred) exists, is not type 5 or 4, not impassable to players for a human player's unit (RW 0x68B68A); a unit that is
 //     not LARGE_RECTANGLE_PATHFIND (template + 0x122 bit 0x10) needs RW 0x9344DE: no goal reservation of another unit on the cell; a LARGE_RECTANGLE_PATHFIND unit refuses a
 //     goal of another LARGE_RECTANGLE_PATHFIND unit; then no ENEMY (RW 0x68D7AB == 0) among the cell's stationary positions.
-// INFERENCE (stop S-786): RW 0x938939's obstacle-zone mapping has no counterpart in the zone manager: a unit standing in an obstacle cell uses its cell's zone; only the
-// ground layer exists (S-161).
+// INFERENCE (stop S-786): RW 0x938939's obstacle-zone mapping has no counterpart in the zone manager: a unit standing in an obstacle cell uses its cell's zone. Lane
+// WALL-2: findMeleeEngagementLocation searches on the destination's layer and retries a WALL_UPGRADE target on the ground with twice the budget (RW 0x6F39AD /
+// 0x6F3BBD); the siege-deploy flag of its predicate (RW 0x6F3B4F .. 0x6F3B69, SiegeDeploySpecialPower) is not ported.
 
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/SimMath.h"
@@ -209,8 +210,8 @@ bool Pathfinder::adjustToMeleeDestination(const PathfindObject &obj, const Pathf
 //     accepted when marked or |dest - point| + 20 <= d0: RW 0x6F3C87 (adjustToPossibleDestination) on the point, dest = point, true; else false.
 // INFERENCE (stop S-787): RW 0x68C9AC is the target's position; RW 0x667C76 is false; RW 0x6EA0EC's WALK_ON_TOP_OF_WALL cell test (RW 0x6E82B3) is the obstacle test;
 // RW 0x6F3082 is checkDestination with no other unit's goal in it; RW 0x938939's obstacle-zone mapping and the siege-deploy branches (RW 0x863983 / 0x8C9C01) are
-// not ported; RW 0x6FB754 is canApproachToTarget (lane PLAY-4, its callback RW 0x6F61BD in AIPathfindSearch.cpp); RW 0x6F5BB0 is clientSafeQuickDoesPathExist; RW 0x6EAD32 is false
-// and only the ground layer exists (S-161).
+// not ported; RW 0x6FB754 is canApproachToTarget (lane PLAY-4, its callback RW 0x6F61BD in AIPathfindSearch.cpp); RW 0x6F5BB0 is clientSafeQuickDoesPathExist. Lane
+// WALL-2 ported the mark (RW 0x74661A: the step's layer above the ground, or RW 0x6EAD32: its ground cell an obstacle with bit 17).
 
 #include "GameLogic/AI/AIPathfindHost.h"
 
@@ -354,29 +355,49 @@ bool Pathfinder::findMeleeEngagementLocation(const PathfindObject &obj, const Pa
 			return false;
 		}
 		const zoneStorageType zone = m_zoneManager.getEffectiveZone(mv, true, own->getZone());
-		const PathfindCell *destCell = getCell(LAYER_GROUND, cell.x, cell.y);
+		// lane WALL-2, RW 0x6F39AD .. 0x6F3A05: the search's layer is the destination's (RW 0x680A75), the ground for a WALK_ON_TOP_OF_WALL target that is not
+		// WALL_UPGRADE
+		PathfindLayerEnum layer = getLayerAt(dest->x, dest->y, dest->z);
+		if (target.isKindOf(PK_WALK_ON_TOP_OF_WALL) && !wallUpgrade)
+		{
+			layer = LAYER_GROUND;
+		}
+		const PathfindCell *destCell = getCell(layer, cell.x, cell.y);
 		if (destCell && m_zoneManager.getEffectiveZone(mv, true, destCell->getZone()) == zone)
 		{
 			int crowd = 0;
-			if (checkDestination(&obj, cell.x, cell.y, LAYER_GROUND, radius, center, &crowd, false) && crowd == 0 && range.inRangeFromTo(self, *dest, 0.0f))
+			if (checkDestination(&obj, cell.x, cell.y, layer, radius, center, &crowd, false) && crowd == 0 && range.inRangeFromTo(self, *dest, 0.0f))
 			{
 				return true;
 			}
 		}
 		// RW 0x6EFE9F with RW 0x6ED798 / 0x6E8523
 		auto predicate = [&](int x, int y, Coord3D &out) {
-			const PathfindCell *c = getCell(LAYER_GROUND, x, y);
+			const PathfindCell *c = getCell(layer, x, y);
 			if (c == nullptr || c->getType() == PathfindCell::CELL_OBSTACLE || c->getType() == PathfindCell::CELL_BRIDGE_IMPASSABLE ||
 				(c->getImpassableToPlayers() && human) || m_zoneManager.getEffectiveZone(mv, true, c->getZone()) != zone)
 			{
 				return false; // RW 0x6E9070
 			}
-			adjustCoordToCell(x, y, center, out, LAYER_GROUND);
-			return range.inRangeFrom(out, 0.0f) && meleeFootprintFree(obj, x, y, LAYER_GROUND, radius, center);
+			adjustCoordToCell(x, y, center, out, layer);
+			return range.inRangeFrom(out, 0.0f) && meleeFootprintFree(obj, x, y, layer, radius, center);
 		};
 		bool found = false;
 		float best = 0.0f;
 		Coord3D bestPos = *dest;
+		const Coord3D destStart = *dest;
+		for (int attempt = 0; attempt < 2 && !found; ++attempt)
+		{
+		if (attempt == 1)
+		{
+			// RW 0x6F3BBD .. 0x6F3C14: a WALL_UPGRADE target searched off the ground is searched again on the ground with twice the budget
+			if (!wallUpgrade || layer == LAYER_GROUND)
+			{
+				break;
+			}
+			layer = LAYER_GROUND;
+			bestPos = destStart;
+		}
 		auto visit = [&](int x, int y, int &patience) {
 			const float score = engagementScore(x, y, self);
 			Coord3D p;
@@ -399,7 +420,7 @@ bool Pathfinder::findMeleeEngagementLocation(const PathfindObject &obj, const Pa
 				patience = 1;
 			}
 		}
-		int budget = config().findMeleeEngagementLimit;
+		int budget = attempt == 0 ? config().findMeleeEngagementLimit : 2 * config().findMeleeEngagementLimit;
 		int ox = 0, oy = 0, n = 1, ringCost = 4;
 		while (budget > 0)
 		{
@@ -431,12 +452,12 @@ bool Pathfinder::findMeleeEngagementLocation(const PathfindObject &obj, const Pa
 			n += 2;
 			ringCost += 8;
 		}
+		}
 		if (found)
 		{
 			*dest = bestPos;
 			return true;
 		}
-		// the WALL_UPGRADE retry on layer 1 does not apply: only the ground layer exists (S-161)
 		if (!(SimMath::addf32(SimMath::mulf32(vy, vy), SimMath::mulf32(vx, vx)) > 1.0f) || round >= 1)
 		{
 			return false;
@@ -453,7 +474,7 @@ bool Pathfinder::meleeBackOff(PathfindObject &obj, const PathfindLocomotorInfo &
 	// RW 0x6FB754 (lane PLAY-4: CanApproachToTarget ported; PHYS-1 had taken isLinePassable for it, whose goal reservations of other units closed every
 	// line out of a horde, so a lone melee unit never got near a horde member)
 	const bool open = canApproachToTarget(obj, loco, *dest, weaponRange, meleeWeapon);
-	if (open && clientSafeQuickDoesPathExist(loco, &pos, dest))
+	if (open && clientSafeQuickDoesPathExist(loco, &pos, dest, &obj)) // RW 0x6F5BB0 with the unit (lane WALL-2: its portals)
 	{
 		return true;
 	}
@@ -472,15 +493,25 @@ bool Pathfinder::meleeBackOff(PathfindObject &obj, const PathfindLocomotorInfo &
 	dy = SimMath::mulf32(dy, 20.0f);
 	Coord3D p = *dest;
 	bool reached = false;
-	const bool marked = false; // RW 0x680A75 > 1 / RW 0x6EAD32: only the ground layer exists (S-161)
+	bool marked = false; // RW EBP - 0xD
 	for (int i = 0; i < steps; ++i)
 	{
 		p.x = SimMath::subf32(p.x, dx);
 		p.y = SimMath::subf32(p.y, dy);
-		if (clientSafeQuickDoesPathExist(loco, &pos, &p))
+		if (clientSafeQuickDoesPathExist(loco, &pos, &p, &obj))
 		{
 			reached = true;
 			break;
+		}
+		// lane WALL-2, RW 0x74661A .. 0x746648: a step the quick test refuses marks the walk when its layer (RW 0x680A75) is above the ground (a wall top, a ramp,
+		// a walkway) or its ground cell is an obstacle with bit 17 (RW 0x6EAD32(pos, 1): a wall or gate footprint)
+		if ((int)getLayerAt(p.x, p.y, p.z) > (int)LAYER_GROUND)
+		{
+			marked = true;
+		}
+		else if (const PathfindCell *c = cellAt(SimMath::floorToInt(SimMath::mulf32(p.x, 0.1f)), SimMath::floorToInt(SimMath::mulf32(p.y, 0.1f))))
+		{
+			marked = marked || (c->getType() == PathfindCell::CELL_OBSTACLE && c->getBit17());
 		}
 	}
 	if (!reached)

@@ -25,6 +25,7 @@ sys.path.insert(0, str(HERE))
 import audit_package  # noqa: E402
 import lib_provenance  # noqa: E402
 import make_archive  # noqa: E402
+import release_keys  # noqa: E402
 
 VERSION = "v0.4.6 Mac Unstable Preview (Apple Silicon)"
 STEM = "openbfme-v0.4.6-macos-arm64-unstable-preview"
@@ -204,13 +205,25 @@ def arm64_launcher_preset_text(source: str) -> str:
 
 def write_launcher_build_info(
     project: Path, commit: str, epoch: int, version: str = VERSION, *, macos_updates: bool = False, test_key: str | None = None,
-    repo: str = "Open-BFME/openbfme-godot",
+    repo: str = "Open-BFME/openbfme-godot", keys_file: Path | None = None,
 ) -> dict:
     """`test_key` (MACPLAY-1, tests only): a test package that trusts that key, accepts the test options and says LOCAL TRIAL
-    (make_macos_manifest.py --verify-package refuses such a launcher, so a release never carries one)"""
+    (make_macos_manifest.py --verify-package refuses such a launcher, so a release never carries one).
+    Lane SIGNKMS-1: release_keys, the trusted key list, from `keys_file` (default: the staged launcher's release_keys.pub; with
+    `test_key` and no `keys_file`: that key alone); its first key must be release_key (the legacy key: release_key.pub or `test_key`)."""
     key = test_key if test_key is not None else (project / "release_key.pub").read_text(encoding="ascii").strip()
     if not re.fullmatch(r"[0-9a-f]{64}", key):
         fail("the committed launcher/release_key.pub is not a 32-byte Ed25519 public key")
+    if keys_file is None and test_key is not None:
+        keys = [key]
+    else:
+        list_file = keys_file if keys_file is not None else project / "release_keys.pub"
+        try:
+            keys = [k.hex() for _, k in release_keys.load(list_file, legacy=False)]
+        except release_keys.KeyListError as e:
+            fail(f"the release key list is not valid: {e}")
+        if keys[0] != key:
+            fail(f"the first key of {list_file.name} is not the launcher's release_key")
     info = {
         "version": version.split(" ", 1)[0] if macos_updates else version,
         "display_version": version,
@@ -218,6 +231,7 @@ def write_launcher_build_info(
         "date": datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%d"),
         "repo": repo,
         "release_key": key,
+        "release_keys": keys,
         "test_build": test_key is not None,
         "local_trial": test_key is not None,
         "macos_preview": not macos_updates,
@@ -608,6 +622,7 @@ def package(
     macos_updates_helper: Path | None = None,
     test_key: str | None = None,
     test_repo: str | None = None,
+    keys_file: Path | None = None,
 ) -> None:
     if sys.platform != "darwin":
         fail("the Apple Silicon preview packager must run on macOS")
@@ -652,7 +667,8 @@ def package(
         project = stage / "godot"
         manifest = project / "openbfme.gdextension"
         manifest.write_text(arm64_manifest_text(manifest.read_text(encoding="utf-8")), encoding="utf-8")
-        if (project / "scripts/release/release_trust.gd").read_text(encoding="utf-8").count('const RELEASE_KEY := ""') != 1:
+        trust = (project / "scripts/release/release_trust.gd").read_text(encoding="utf-8")
+        if trust.count('const RELEASE_KEY := ""') != 1 or trust.count('const RELEASE_KEYS := ""') != 1:
             fail("release_trust must remain empty in the macOS preview")
         (project / "bin").mkdir(parents=True, exist_ok=True)
         shutil.copyfile(library, project / "bin" / ARM64_LIBRARY)
@@ -664,7 +680,8 @@ def package(
             arm64_launcher_preset_text(launcher_presets.read_text(encoding="utf-8")), encoding="utf-8",
         )
         launcher_info = write_launcher_build_info(launcher_project, commit, epoch, version, macos_updates=macos_updates,
-                                                  test_key=test_key, repo=test_repo or "Open-BFME/openbfme-godot")
+                                                  test_key=test_key, repo=test_repo or "Open-BFME/openbfme-godot",
+                                                  keys_file=keys_file)
         audit(launcher_project, release=False, platform=platform, forbidden_prefixes=forbidden_prefixes)
 
         godot_cmd = ["arch", "-arm64", str(godot)]
@@ -774,8 +791,11 @@ def main() -> int:
     parser.add_argument("--templates", required=True, help="official Godot 4.7.2 templates .tpz")
     parser.add_argument("--out", required=True, help="empty output directory inside workspace/")
     parser.add_argument("--source-branch", default=BRANCH, help="required checked-out branch (default: %(default)s)")
+    parser.add_argument("--keys-file", type=Path, default=None,
+                        help="SIGNKMS-1: the trusted release key list the launcher is built with (default: the committed "
+                             "launcher/release_keys.pub of the packaged commit); its first key must be launcher/release_key.pub's")
     args = parser.parse_args()
-    package(args.godot, args.templates, args.out, args.source_branch)
+    package(args.godot, args.templates, args.out, args.source_branch, keys_file=args.keys_file)
     return 0
 
 

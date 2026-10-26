@@ -2,6 +2,7 @@
 //
 // See ObjectFilter.h for the target facts. Lane HORDE-1.
 
+#include "Common/Thing/KindOfTokens.h"
 #include "GameLogic/ObjectFilter.h"
 
 #include "Common/AsciiString.h"
@@ -50,9 +51,10 @@ bool eqNoCase(const std::string &a, const char *b)
 // RW 0x6AAD1A: stricmp over TheKindOfNames, -1 when absent.
 int kindOfIndex(const char *name)
 {
-	for (int i = 0; TheKindOfNames[i]; ++i)
+	const char *const *names = KindOfTokens::names(); // lane MODS-3: the table in force
+	for (int i = 0; names[i]; ++i)
 	{
-		if (AsciiStringUtil::compareNoCase(TheKindOfNames[i], name) == 0)
+		if (AsciiStringUtil::compareNoCase(names[i], name) == 0)
 		{
 			return i;
 		}

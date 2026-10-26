@@ -21,19 +21,54 @@
 
 #include <cstddef> // size_t (GLIBC-1: GCC 11 does not reach it through <vector>)
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 typedef std::uint32_t PathfindObjectID;
 static const PathfindObjectID PATHFIND_INVALID_ID = 0;
 
-// ZH GameType.h PathfindLayerEnum: 0 invalid, 1 ground, 2.. bridges, a wall layer; fits the 4 bits of a cell.
+// The RotWK layer ids (the 6 layer bits 4 .. 9 of the cell dword; BFME2 WorldBuilder decomp Pathfinder::GetWallHeight 0xd3ed70 / IsPointOnWall 0xd3f890,
+// BFME1 Pathfinder::getLayerHeight RVA 0x3D8940): 0 invalid, 1 ground, 2 .. 15 the raised layers with cells of their own (lane WALL-2: the RaisedWallMesh
+// walkways, AIPathfindRaised.cpp; the bridge layers are S-161), 0x10 every ramp, 0x11 .. 0x40 one id per wall-top height. Ramps and wall tops are written into the GROUND grid's cells (RW getCell answers the ground
+// grid for layer 1 and every layer from 0x10: RW 0x76550F). ZH's single LAYER_WALL = 15 is not RotWK's.
 enum PathfindLayerEnum
 {
 	LAYER_INVALID = 0,
 	LAYER_GROUND = 1,
-	LAYER_TOP = 2,
-	LAYER_WALL = 15,
-	LAYER_LAST = 15
+	LAYER_TOP = 2,          // the first raised layer
+	LAYER_RAISED_LAST = 0xF, // the last raised layer
+	LAYER_RAMP = 0x10,
+	LAYER_WALL_FIRST = 0x11,
+	LAYER_WALL_LAST = 0x40,
+	LAYER_LAST = 0x40
+};
+
+inline bool isWallLayer(PathfindLayerEnum l) { return (int)l >= (int)LAYER_WALL_FIRST && (int)l <= (int)LAYER_WALL_LAST; }
+// RW 0x5E2F24 (IS_BRIDGE_LAYER): 2 .. 15
+inline bool isRaisedLayer(PathfindLayerEnum l) { return (int)l >= (int)LAYER_TOP && (int)l <= (int)LAYER_RAISED_LAST; }
+
+// lane WALL-1: the walkable surfaces of a wall piece in world space, the triangles of its draw module's WallBoundsMesh (a flat wall top, `height` its z)
+// and RampMesh1 / RampMesh2 (a sloped way up, the triangles give the height). See GameClient/DrawableWallMeshes.h for where they come from.
+struct PathfindWallTriangle
+{
+	Coord3D v[3];
+};
+
+struct PathfindWallSurface
+{
+	std::vector<PathfindWallTriangle> triangles;
+	float loX = 0.0f, loY = 0.0f, hiX = 0.0f, hiY = 0.0f; // the 2D box of the triangles
+	float height = 0.0f;                                   // a wall top: its height; a ramp: its highest point
+	// the triangle under (x, y) (edges included) and its height there; false when no triangle holds the point
+	bool heightAt(float x, float y, float &z) const;
+};
+
+struct PathfindWallGeometry
+{
+	std::vector<PathfindWallSurface> walls; // WallBoundsMesh
+	std::vector<PathfindWallSurface> ramps; // RampMesh1, RampMesh2
+	std::vector<PathfindWallSurface> raised; // lane WALL-2: RaisedWallMesh (a walkway on a raised layer, `height` its highest point)
+	bool empty() const { return walls.empty() && ramps.empty() && raised.empty(); }
 };
 
 // ZH Geometry.h GeometryType
@@ -71,9 +106,36 @@ struct PathfindGeometry
 	PathfindShape shape(size_t i) const;
 	// RW GeometryInfo +0x10 (computed by RW 0xAD2860): the largest bounding circle (RW 0xAD2700) of the ACTIVE shapes, at least 0.01. A shape's circle is
 	// sqrt(offX^2 + offY^2) + major for a SPHERE / CYLINDER and sqrt((|offX| + major)^2 + (|offY| + minor)^2) for a BOX.
-	float boundingCircleRadius() const;
+	float boundingCircleRadius() const { return m_radii.valid ? m_radii.circle : computeBoundingCircleRadius(); }
 	// RW GeometryInfo +0x14 (RW 0xAD2860): the largest bounding sphere (RW 0xAD2770) of the ACTIVE shapes, at least 0.
-	float boundingSphereRadius() const;
+	float boundingSphereRadius() const { return m_radii.valid ? m_radii.sphere : computeBoundingSphereRadius(); }
+	float computeBoundingCircleRadius() const;
+	float computeBoundingSphereRadius() const;
+	// lane UBER-2B (performance, both profiles: the same values): RW keeps the two radii in the GeometryInfo (+0x10 / +0x14, computed once by RW 0xAD2860); the
+	// port recomputed them (seven emulated x87 operations and a root per shape) on every call, about 10% of a 10k battle's logic frame (the melee reach scans,
+	// subjectOf, footprintSize). The OWNER of a geometry that no longer changes stores them: AIWorld::movementInfo (a template's geometry, after buildInfo) and
+	// ObjectPathfindAdapter::getGeometry (an object's own shape flags, after each rebuild). The cache is not copied: a copy (which its holder may change) starts
+	// uncached and computes, so no edited copy can answer a stale radius. Whoever changes an owner's fields after cacheRadii must call cacheRadii again.
+	void cacheRadii()
+	{
+		m_radii.valid = false;
+		m_radii.circle = computeBoundingCircleRadius();
+		m_radii.sphere = computeBoundingSphereRadius();
+		m_radii.valid = true;
+	}
+	struct RadiiCache
+	{
+		bool valid = false;
+		float circle = 0.0f, sphere = 0.0f;
+		RadiiCache() = default;
+		RadiiCache(const RadiiCache &) {}
+		RadiiCache &operator=(const RadiiCache &)
+		{
+			valid = false;
+			return *this;
+		}
+	};
+	RadiiCache m_radii;
 	// RW 0xAD14F0: `pos` moved by the shape's offset turned by `angle` (x += cos * offX - sin * offY, y += sin * offX + cos * offY, z += offZ)
 	static void applyShapeOffset(const PathfindShape &s, float angle, Coord3D &pos);
 	// RW 0xAD1D60: the 2D box (lo.x, lo.y, hi.x, hi.y) around `pos` and every ACTIVE shape of the object at `pos` turned by `angle`
@@ -115,6 +177,10 @@ enum PathfindKind
 	PK_SCALEABLE_WALL,            // SCALEABLE_WALL (201)
 	PK_BASE_SITE,                 // BASE_SITE (120)
 	PK_WALL_UPGRADE,              // WALL_UPGRADE (150), lane PHYS-1: RW 0x6F37B3's wall branch
+	PK_ATTACK_NEEDS_LINE_OF_SIGHT, // ATTACK_NEEDS_LINE_OF_SIGHT (59), lane ATTACKPATH-1: the attack view test RW 0x6F4557
+	PK_CAN_SHOOT_OVER_WALLS,       // CAN_SHOOT_OVER_WALLS (214), lane ATTACKPATH-1
+	PK_WALL_SEGMENT,               // WALL_SEGMENT (189), lane ATTACKPATH-1: the view test's wall obstacles (RW 0x6F2D31)
+	PK_WALL_GATE,                  // WALL_GATE (203), lane ATTACKPATH-1
 	PK_COUNT
 };
 
@@ -172,10 +238,17 @@ public:
 	// RW 0x6ED21E: the unit has a locomotor and the time (seconds) it needs to get to (x, y): hypot / speed
 	virtual bool hasLocomotor() const { return false; }
 	virtual float secondsToReach(float x, float y) const { (void)x; (void)y; return 0.0f; }
+	// lane PATHPERF-2: the two inputs of secondsToReach, so the search can ask them once per unit: `x`, `y` the position, `speed` the speed (0: secondsToReach
+	// answers 0). secondsToReach(qx, qy) must equal speed > 0 ? divf32(length2d(subf32(qx, x), subf32(qy, y)), speed) : 0 for every point. false: not
+	// provided, the search asks secondsToReach itself
+	virtual bool reachInputs(float &x, float &y, float &speed) const { (void)x; (void)y; (void)speed; return false; }
 	// the object stands still (AI vtable +0x228 false): only such units hold a position slot
 	virtual bool isStationary() const { return true; }
 	// object status bits the footprint code reads (RW status index 0x58 and 0x4D; names INFERRED: S-164)
 	virtual bool footprintSkippedByStatus() const { return false; }
+	// the object status CAN_NOT_WALK_ON (RW index 0x4D, the binary's status name table): RW 0x936C8A .. 0x936C95 clears a WALK_ON_TOP_OF_WALL template's
+	// wall flag with it (review of #63)
+	virtual bool cannotWalkOn() const { return false; }
 	// RW checkForMovement (0x6EBAA0), enemy branch: `other` (or its container) is the unit's current attack / approach target, so a
 	// parked enemy of that kind does not block it (the AI state machine's target RW 0x8DBACE and 0x668303; S-164)
 	virtual bool ignoresAsTarget(const PathfindObject &other) const { (void)other; return false; }
@@ -191,6 +264,22 @@ public:
 	virtual bool hordeFill(int &count, int &slots) const { (void)count; (void)slots; return false; }
 	// lane MOVE-3: Object + 0x458 bit 0 (effectively dead): RW 0x8E24D3 leaves such an object's goal alone
 	virtual bool isEffectivelyDead() const { return false; }
+	// lane ATTACKPATH-1: RW 0x6E82C8 (BFME2 decomp Rva002E6E9F.cpp): the first behaviour module's SlavedUpdate interface (behaviour interface slot 0x68), its
+	// slot 0 = the slaver's id; invalid without one
+	virtual PathfindObjectID getSlaverID() const { return PATHFIND_INVALID_ID; }
+	// lane ATTACKPATH-1: RW 0x70C55D -> 0x70C50C(0) Thing::isSignificantlyAboveTerrain (BFME2 decomp ThingIsSignificantlyAboveTerrain.cpp, tier A)
+	virtual bool isSignificantlyAboveTerrain() const { return false; }
+	// lane WALL-1: the wall top and ramp surfaces of a wall piece (the draw module's WallBoundsMesh / RampMesh1 / RampMesh2 at the object's transform), null
+	// for every other object (RW 0x936B7D -> Pathfinder::ClassifyWall, BFME2 0x92F63F, asks the object's drawable)
+	virtual const PathfindWallGeometry *getWallGeometry() const { return nullptr; }
+	// lane WALL-2: RW 0x6822E2 .. 0x682307 (Waypoint::isValidUnitType without AllowNonSkirmishAIUnits): the controlling player is a skirmish AI player (RW
+	// 0x6AAC66) that TheSkirmishAIManager runs (RW 0x6A950B)
+	virtual bool isSkirmishAIControlled() const { return false; }
+	// lane WALL-2: RW 0x68C053, the first test of the portal search RW 0x6F5547 (a unit it answers true for crosses no portal; name INFERRED: S-4851)
+	virtual bool refusesPortals() const { return false; }
+	// lane WALL-2: RW AI + 0x3CF, the unit's AI is inside a move-away search (RW 0x66DBFB / 0x66DC4B set it around getMoveAwayFromPath); a type 7 waypoint
+	// refuses such a unit (RW 0x68230B)
+	virtual bool inMoveAwaySearch() const { return false; }
 };
 
 // TheGameLogic->findObjectByID
@@ -201,6 +290,11 @@ public:
 	virtual PathfindObject *findObjectByID(PathfindObjectID id) const = 0;
 	// TheGameLogic->getFrame()
 	virtual unsigned getFrame() const = 0;
+	// lane WALL-2: RW 0x6E8454, after portals were removed: every object (the logic's list order) whose AI has a path that names a waypoint no longer there
+	// (RW 0x76573F) is told so (RW 0x668AF8 notifyPathHasInvalidPortals). No AI world: nothing
+	virtual void onPathsLostPortals() const {}
+	// lane WALL-2 (the snapshot load): the unit filter of the portal waypoints `owner` makes (its DynamicPortalBehaviour's ObjectFilter); none: no filter
+	virtual std::function<bool(const PathfindObject &)> portalFilterOf(PathfindObjectID owner) const { (void)owner; return {}; }
 };
 
 // The cell-sampling view of TheTerrainLogic. Coordinates are world units (the pathfinder passes cell corners).

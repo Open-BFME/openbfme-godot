@@ -1,22 +1,25 @@
 #!/bin/bash
 # Lane LAUNCH-1: the OpenBFME Launcher packages (package.sh runs this; the launcher tests run it with --test-build).
 #
-#   tools/release/build_launcher.sh --out DIR --version TAG --commit SHA --repo OWNER/NAME --key-file FILE [--mtime UNIX] [--platforms linux,windows,macos]
-#                                   [--godot BIN] [--worktree | --source COMMIT] [--test-build] [--stage-reverse]
+#   tools/release/build_launcher.sh --out DIR --version TAG --commit SHA --repo OWNER/NAME --key-file FILE [--keys-file FILE] [--mtime UNIX]
+#                                   [--platforms linux,windows,macos] [--godot BIN] [--worktree | --source COMMIT] [--test-build] [--stage-reverse]
 #
 # Writes DIR/openbfme-launcher-<TAG>-<platform> archive(s): Linux and Windows contain the embedded-pack executable and README.txt;
 # macOS contains OpenBFMELauncher.app and README.txt. All include LICENSE, NOTICE, VERSION.
 # The project is exported from `git archive HEAD launcher` (--worktree: the working tree's launcher/, for the tests; --source COMMIT: that
 # commit's, for the tests of the launchers already published, RELNAME-1) with a generated
 # res://build_info.json: version, commit, date, repo (the GitHub repository it updates from: a build-time setting), release_key (the
-# Ed25519 public key it trusts, read from --key-file: launcher/release_key.pub for a release) and test_build (true only with --test-build,
+# legacy Ed25519 public key, read from --key-file: launcher/release_key.pub for a release), release_keys (lane SIGNKMS-1: the trusted key
+# list, read from --keys-file, default launcher/release_keys.pub, whose first key must be --key-file's; without --keys-file a --key-file
+# that is not the default list's first key, a test or local-trial key, is a one-key list), local_trial (the list is not the staged
+# launcher's own release_keys.pub, or for a source without one its release_key.pub) and test_build (true only with --test-build,
 # which enables the launcher's test options; never for a tester package). Godot's release template with the pack embedded, scripts as text.
 # Every file is checked by audit_package.py (content, then the launcher allowlist); archives are make_archive.py's, reproducible.
 # --stage-reverse (REPRO-1's test, test_launcher.py): the staged project's directories and files are created in reverse path order, so a
 # file system that lists a directory in creation order (tmpfs) lists each directory differently; the package must not change.
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
-OUT=""; VERSION=""; COMMIT=""; TARGET=""; KEYFILE=""; MTIME="${SOURCE_DATE_EPOCH:-}"; PLATFORMS="linux"; GODOT_BIN="${GODOT:-godot}"
+OUT=""; VERSION=""; COMMIT=""; TARGET=""; KEYFILE=""; KEYSFILE=""; MTIME="${SOURCE_DATE_EPOCH:-}"; PLATFORMS="linux"; GODOT_BIN="${GODOT:-godot}"
 WORKTREE=0; TEST_BUILD=false; SOURCE=HEAD; STAGE_REVERSE=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -25,6 +28,7 @@ while [ $# -gt 0 ]; do
     --commit) COMMIT=$2; shift 2 ;;
     --repo) TARGET=$2; shift 2 ;;
     --key-file) KEYFILE=$2; shift 2 ;;
+    --keys-file) KEYSFILE=$2; shift 2 ;;
     --mtime) MTIME=$2; shift 2 ;;
     --platforms) PLATFORMS=$2; shift 2 ;;
     --godot) GODOT_BIN=$2; shift 2 ;;
@@ -32,7 +36,7 @@ while [ $# -gt 0 ]; do
     --source) SOURCE=$2; shift 2 ;;
     --test-build) TEST_BUILD=true; shift ;;
     --stage-reverse) STAGE_REVERSE=1; shift ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
     *) echo "build_launcher.sh: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -43,6 +47,18 @@ fail() { echo "LAUNCHER PACKAGE FAIL: $*" >&2; exit 1; }
 KEY=$(tr -d ' \n\r' < "$KEYFILE")
 [[ "$KEY" =~ ^[0-9a-f]{64}$ ]] || fail "$KEYFILE does not hold an Ed25519 public key (64 lower-case hex digits)"
 grep -q "PRIVATE" "$KEYFILE" && fail "$KEYFILE is a private key"
+# lane SIGNKMS-1: the trusted key list (tools/release/release_keys.py checks its format: 1..8 keys, labels, no duplicates)
+if [ -n "$KEYSFILE" ]; then
+  [ -f "$KEYSFILE" ] || fail "the release key list $KEYSFILE does not exist"
+  KEYS=$(python3 "$REPO/tools/release/release_keys.py" --hex "$KEYSFILE" --format csv) || fail "$KEYSFILE is not a valid release key list"
+  [ "${KEYS%%,*}" = "$KEY" ] || fail "the first key of $KEYSFILE is not the key of $KEYFILE"
+else
+  DEFAULT_KEYS="$REPO/launcher/release_keys.pub"
+  [ -f "$DEFAULT_KEYS" ] || fail "the release key list $DEFAULT_KEYS does not exist"
+  KEYS=$(python3 "$REPO/tools/release/release_keys.py" --hex "$DEFAULT_KEYS" --format csv) || fail "$DEFAULT_KEYS is not a valid release key list"
+  # a --key-file that is not the committed list's first key (a test or local-trial key) trusts itself alone: a one-key list
+  [ "${KEYS%%,*}" = "$KEY" ] || KEYS=$KEY
+fi
 "$GODOT_BIN" --version | grep -q "^4\.7\.2\." || fail "Godot 4.7.2 is required, found $("$GODOT_BIN" --version)"
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
@@ -77,13 +93,21 @@ import sys
 print(datetime.fromtimestamp(int(sys.argv[1]), timezone.utc).strftime("%Y-%m-%d"))
 PY
 )
-python3 - "$P/build_info.json" "$VERSION" "$COMMIT" "$DATE" "$TARGET" "$KEY" "$TEST_BUILD" <<'EOF'
+# the staged launcher's own trusted list: an official build trusts exactly it (a source made before SIGNKMS-1: its release_key.pub)
+OFFICIAL=""
+if [ -f "$P/release_keys.pub" ]; then
+  OFFICIAL=$(python3 "$REPO/tools/release/release_keys.py" --hex "$P/release_keys.pub" --format csv) || fail "the staged launcher/release_keys.pub is not a valid release key list"
+elif [ -f "$P/release_key.pub" ]; then
+  OFFICIAL=$(tr -d ' \n\r' < "$P/release_key.pub")
+fi
+python3 - "$P/build_info.json" "$VERSION" "$COMMIT" "$DATE" "$TARGET" "$KEY" "$KEYS" "$TEST_BUILD" "$OFFICIAL" <<'EOF'
 import json, sys
-from pathlib import Path
-path, version, commit, date, repo, key, test = sys.argv[1:]
-info = {"version": version, "commit": commit, "date": date, "repo": repo, "release_key": key, "test_build": test == "true"}
-official_key = Path(path).with_name("release_key.pub")
-info["local_trial"] = not official_key.is_file() or key != official_key.read_text().strip()
+path, version, commit, date, repo, key, keys, test, official = sys.argv[1:]
+keys = keys.split(",")
+if keys[0] != key:
+    sys.exit("build_info.json: release_keys does not begin with release_key")
+info = {"version": version, "commit": commit, "date": date, "repo": repo, "release_key": key, "release_keys": keys, "test_build": test == "true"}
+info["local_trial"] = official == "" or keys != official.split(",")
 open(path, "w", encoding="utf-8").write(json.dumps(info, indent=2, sort_keys=True) + "\n")
 EOF
 python3 "$REPO/tools/release/audit_package.py" "$P" >/dev/null || { python3 "$REPO/tools/release/audit_package.py" "$P"; fail "the staged launcher failed the audit"; }

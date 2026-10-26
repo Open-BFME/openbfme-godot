@@ -14,11 +14,25 @@ endif()
 #   openbfme_tests  - doctest unit tests over openbfme_core
 project(OpenBFME LANGUAGES C CXX)
 
+include(cmake/Sanitizers.cmake)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 # compile_commands.json for tools/sim/sim_audit.py: set BEFORE any subdirectory, the setting is read when a target is created
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# lane NETDIAG-1 shares this option: the network decoders' libFuzzer targets (engine/tests/fuzz_network.cpp; cmake/Online2.cmake and
+# services/online/relay/CMakeLists.txt add them) build beside the data-file parser targets (cmake/Fuzz.cmake)
+option(OPENBFME_FUZZ "Build Clang/libFuzzer parser targets: data files and network decoders (instrument engine libraries)" OFF)
+if(OPENBFME_FUZZ)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "OPENBFME_FUZZ requires Clang (configure with CC=clang CXX=clang++)")
+    endif()
+    # Instrument dependencies as well as harnesses: the parsers live in openbfme_core.
+    add_compile_options(-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
 
 if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     get_filename_component(OPENBFME_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." REALPATH)
@@ -80,8 +94,22 @@ set(GODOTCPP_API_VERSION "4.7" CACHE STRING "Godot API version for godot-cpp bin
 # -DOPENBFME_BUILD_GODOT=OFF builds only openbfme_core + openbfme_tests (no godot-cpp), e.g. to run the
 # unit tests on Linux/WSL where the Godot toolchain is not set up.
 option(OPENBFME_BUILD_GODOT "Build the godot-cpp GDExtension" ON)
+if(OPENBFME_FUZZ AND OPENBFME_BUILD_GODOT)
+    message(FATAL_ERROR "OPENBFME_FUZZ requires OPENBFME_BUILD_GODOT=OFF")
+endif()
+option(OPENBFME_BUILD_FUZZERS "Build the asset-free save and replay libFuzzer harness (Clang only)" OFF)
+option(OPENBFME_BUILD_TESTS "Build the C++ unit tests (five MP3 cases require verified fixtures when run)" ON)
 if(OPENBFME_BUILD_GODOT)
 add_subdirectory(thirdparty/godot-cpp EXCLUDE_FROM_ALL)
+endif()
+
+option(OPENBFME_COVERAGE "Instrument engine tests for gcov line and branch coverage (GCC/Clang)" OFF)
+if(OPENBFME_COVERAGE)
+    if(MSVC OR NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        message(FATAL_ERROR "OPENBFME_COVERAGE requires GCC or Clang with gcov support")
+    endif()
+    add_compile_options(--coverage -O0 -g)
+    add_link_options(--coverage)
 endif()
 # godot-cpp sets CMAKE_MSVC_RUNTIME_LIBRARY (static CRT) in the cache; every target below
 # inherits it, so the core library links cleanly into the extension.
@@ -121,7 +149,7 @@ include(cmake/Audio.cmake) # OPENBFME_AUDIO_SOURCES / OPENBFME_AUDIO_TESTS (lane
 include(cmake/Move.cmake) # OPENBFME_MOVE_SOURCES / OPENBFME_MOVE_TESTS (lane MOVE-1)
 include(cmake/Hud.cmake) # OPENBFME_HUD_SOURCES / OPENBFME_HUD_TESTS (lane HUD-1)
 include(cmake/Start.cmake)      # OPENBFME_START_SOURCES / OPENBFME_START_TESTS (lane START-1)
-include(cmake/Build.cmake)      # BUILD-1: construction, castles, dozers (appends to OPENBFME_SIM_SOURCES; OPENBFME_BUILD_TESTS)
+include(cmake/Build.cmake)      # BUILD-1: construction, castles, dozers (appends to OPENBFME_SIM_SOURCES; OPENBFME_BUILD_TEST_SOURCES)
 include(cmake/Combat.cmake)     # OPENBFME_COMBAT_SOURCES / OPENBFME_COMBAT_TESTS (lane COMBAT-1)
 include(cmake/Structure.cmake)  # OPENBFME_STRUCTURE_SOURCES / OPENBFME_STRUCTURE_TESTS (lane COMBAT-2)
 include(cmake/Spell.cmake)      # OPENBFME_SPELL_SOURCES / OPENBFME_SPELL_TESTS (lane SPELL-1)
@@ -190,10 +218,12 @@ include(cmake/Garrison3.cmake)  # GARRISON-3: the garrison exit (OPENBFME_GARRIS
 include(cmake/Backlog1.cmake)   # BACKLOG-1: garrison / enter / exit / allied clearing from the BFME2 decomp (OPENBFME_BACKLOG1_TESTS)
 include(cmake/Combat3.cmake)    # COMBAT-3: cavalry charges and siege crews (OPENBFME_COMBAT3_TESTS)
 include(cmake/Combat4.cmake)    # COMBAT-4: shockwaves, siege crews in motion, corpses (OPENBFME_COMBAT4_TESTS)
+include(cmake/Flank1.cmake)     # FLANK-1: flank at fire time, crush contact, projectile contacts, miss scatter (OPENBFME_FLANK1_TESTS)
 include(cmake/Hud4.cmake)       # HUD-4: every command reachable, every hotkey (appends to OPENBFME_SIM_SOURCES; OPENBFME_HUD4_TESTS)
 include(cmake/Qa2fix.cmake)     # QA2-FIX: a player's wall span through the HUD, the lobby after a game (OPENBFME_QA2FIX_TESTS)
 include(cmake/Hud5.cmake)       # HUD-5: the owner's first Windows session (OPENBFME_HUD5_CLIENT_SOURCES / OPENBFME_HUD5_TESTS)
 include(cmake/Autocast1.cmake)  # AUTOCAST-1: the ability autocast toggle and glow (OPENBFME_AUTOCAST1_TESTS)
+include(cmake/CampUi1Stance.cmake) # CAMPUI-1: the stance toggle's radial (OPENBFME_CAMPUI1_STANCE_SOURCES / _TESTS)
 include(cmake/Hud6.cmake)       # HUD-6: radial bubbles, side bar frame, help box (OPENBFME_HUD6_CLIENT_SOURCES / OPENBFME_HUD6_TESTS)
 include(cmake/Hover1.cmake)     # HOVER-1: every on-hover text (OPENBFME_HOVER1_CLIENT_SOURCES / OPENBFME_HOVER1_TESTS)
 include(cmake/Hud7.cmake)       # HUD-7: a tester's HUD items (OPENBFME_HUD7_TESTS)
@@ -203,10 +233,12 @@ include(cmake/Decomp3.cmake)    # DECOMP-3: the skirmish AI's player info record
 include(cmake/Backlog6.cmake)   # BACKLOG6: the AI's fortress rebuild, builder update and AIGroup gate (OPENBFME_BACKLOG6_TESTS)
 include(cmake/Decomp1.cmake)    # DECOMP-1: stops closed with the decompilation's progress (appends to OPENBFME_SIM_SOURCES; OPENBFME_DECOMP1_TESTS)
 include(cmake/Play1.cmake)      # PLAY-1: the tribute, the placement ghost (appends to OPENBFME_SIM_SOURCES; OPENBFME_PLAY1_SOURCES / _TESTS)
+include(cmake/Sdk0.cmake)       # SDK-0: cosmetic asset packs (client only; OPENBFME_SDK0_SOURCES / _TESTS)
 include(cmake/Cah1.cmake)       # CAH-1: the Create-a-Hero screens (client only; OPENBFME_CAH1_SOURCES / _GODOT_SOURCES / _TESTS)
 include(cmake/Uber1.cmake)      # UBER-1: the Uber performance mode (appends to OPENBFME_SIM_SOURCES; OPENBFME_UBER1_TESTS)
 include(cmake/Menuwork1.cmake)  # MENUWORK-1: the menu inventory's fixes (client only; OPENBFME_MENUWORK1_SOURCES / _TESTS)
 include(cmake/Rules1.cmake)     # RULES-1: the Rules tab, the game rules, Legendary Heroes (appends to OPENBFME_SIM_SOURCES; OPENBFME_RULES1_SOURCES / _TESTS)
+include(cmake/Cheat1.cmake)        # CHEAT-1: the open Cheat Mode of custom games (appends to OPENBFME_SIM_SOURCES; OPENBFME_CHEAT1_TESTS)
 include(cmake/Gamemodes1.cmake) # GAMEMODES-1: the game modes' tests (OPENBFME_GAMEMODES1_TESTS)
 include(cmake/Move3.cmake)      # MOVE-3: horde spacing, the blocked path patch (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOVE3_TESTS)
 include(cmake/Input1.cmake)     # INPUT-1: RotWK's input layer (OPENBFME_INPUT1_TESTS)
@@ -237,9 +269,17 @@ include(cmake/Platformicon1.cmake) # PLATFORMICON-1: each player's system beside
 include(cmake/Ownerfix1.cmake)  # OWNERFIX-1: problems the owner hit playing (OPENBFME_OWNERFIX1_TESTS)
 include(cmake/Visual2.cmake)    # VISUAL-2: the owner's fog leak, tree sway and colouring (OPENBFME_VISUAL2_SOURCES / _TESTS)
 include(cmake/Ownerfix2.cmake)  # OWNERFIX-2: the owner's playtest of 2026-10-17 (OPENBFME_OWNERFIX2_CLIENT_SOURCES / _TESTS)
+include(cmake/Lumber1.cmake)    # LUMBER1: the evil lumber mills' harvesting workers (appends to OPENBFME_SIM_SOURCES; OPENBFME_LUMBER1_TESTS)
 include(cmake/Backlog8.cmake)   # BACKLOG-8: formations, horde wall scaling, auto ability melee position (appends to OPENBFME_SIM_SOURCES)
 include(cmake/Menufix1.cmake)   # MENUFIX-1: the menus, consistent and retail-looking (OPENBFME_MENUFIX1_TESTS)
 include(cmake/Hudredraw1.cmake) # HUDREDRAW-1: the HUD redraws only the changed Apt levels (OPENBFME_HUDREDRAW1_TESTS)
+include(cmake/Chat1.cmake)      # CHAT-1: in-game chat and beacons (OPENBFME_CHAT1_CLIENT_SOURCES / _TESTS)
+include(cmake/Campui1.cmake)    # CAMPUI-1: the campaign presentation, the mission objectives (appends to OPENBFME_SIM_SOURCES; OPENBFME_CAMPUI1_TESTS)
+include(cmake/Offmap1.cmake)    # OFFMAP-1: off-map map objects and horde members (OPENBFME_OFFMAP1_TESTS)
+include(cmake/Wall1.cmake)      # WALL-1: walkable wall tops and ramps (appends to OPENBFME_SIM_SOURCES; OPENBFME_WALL1_TESTS)
+include(cmake/Wall2.cmake)      # WALL-2: portals, portal modules, raised walkways (appends to OPENBFME_SIM_SOURCES; OPENBFME_WALL2_TESTS)
+include(cmake/Bridge1.cmake)    # BRIDGE-1: retail bridges crossed and destroyed (OPENBFME_BRIDGE1_TESTS)
+include(cmake/Siege1.cmake)     # SIEGE-1: the siege units (appends to OPENBFME_SIM_SOURCES; OPENBFME_SIEGE1_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -273,6 +313,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_UI2_CLIENT_SOURCES}
     ${OPENBFME_UI4_CLIENT_SOURCES}
     ${OPENBFME_OWNERFIX2_CLIENT_SOURCES}
+    ${OPENBFME_CHAT1_CLIENT_SOURCES}
     ${OPENBFME_UI6_CLIENT_SOURCES}
     ${OPENBFME_OWNERFIX3_CLIENT_SOURCES}
     ${OPENBFME_ANTICHEAT_SOURCES}
@@ -282,9 +323,11 @@ add_library(openbfme_core STATIC
     ${OPENBFME_HUD6_CLIENT_SOURCES}
     ${OPENBFME_HOVER1_CLIENT_SOURCES}
     ${OPENBFME_CAH1_SOURCES}
+    ${OPENBFME_SDK0_SOURCES}
     ${OPENBFME_RULES1_SOURCES}
     ${OPENBFME_MENUWORK1_SOURCES}
     ${OPENBFME_CAMP2_SOURCES}
+    ${OPENBFME_CAMPUI1_STANCE_SOURCES}
     ${OPENBFME_VISUAL2_SOURCES}
     ${OPENBFME_CAMPSAVE1_SOURCES}
     src/Common/AsciiString.cpp
@@ -301,6 +344,8 @@ add_library(openbfme_core STATIC
     src/Libraries/file/Win32Path.cpp
     src/Common/System/ArchiveFile.cpp
     src/Common/System/ArchiveFileSystem.cpp
+    src/Common/System/ModMount.cpp
+    src/Common/System/ModEngineFeatures.cpp
     src/Common/System/RetailArchivePolicy.cpp
     src/GameClient/MapCache.cpp
     src/GameClient/MapWeather.cpp
@@ -509,7 +554,7 @@ if(OPENBFME_PYTHON)
         COMMENT "Auditing the simulation floating-point contract (tools/sim/sim_audit.py)"
         VERBATIM USES_TERMINAL)
 endif()
-target_include_directories(openbfme_core PUBLIC src)
+target_include_directories(openbfme_core PUBLIC src PRIVATE thirdparty)
 target_link_libraries(openbfme_core PUBLIC openbfme_float_chars)
 target_link_libraries(openbfme_core PUBLIC openbfme_lua)
 if(WIN32)
@@ -554,6 +599,7 @@ add_library(openbfme SHARED
     ${OPENBFME_RENDER4_GODOT_SOURCES}
     ${OPENBFME_AUDIO_GODOT_SOURCES}
     ${OPENBFME_SCRIPT1_GODOT_SOURCES}
+    ${OPENBFME_CHEAT1_GODOT_SOURCES}
     ${OPENBFME_CAMP1_GODOT_SOURCES}
     ${OPENBFME_SAVE2_GODOT_SOURCES}
     ${OPENBFME_CAMP2_GODOT_SOURCES}
@@ -609,6 +655,8 @@ endif()
 endif()
 
 # ---- unit tests --------------------------------------------------------------------------
+if(OPENBFME_BUILD_TESTS)
+include(cmake/AudioFixtures.cmake)
 add_executable(openbfme_tests
     ${OPENBFME_WIN1_TESTS}
     ${OPENBFME_DEP2_TESTS}
@@ -661,7 +709,7 @@ add_executable(openbfme_tests
     ${OPENBFME_STEALTH_TESTS}
     ${OPENBFME_GARRISON_TESTS}
     ${OPENBFME_TRANSPORT_TESTS}
-    ${OPENBFME_BUILD_TESTS}
+    ${OPENBFME_BUILD_TEST_SOURCES}
     ${OPENBFME_CASTLE1_TESTS}
     ${OPENBFME_END1_TESTS}
     ${OPENBFME_MP2_TESTS}
@@ -690,6 +738,7 @@ add_executable(openbfme_tests
     ${OPENBFME_BACKLOG1_TESTS}
     ${OPENBFME_COMBAT3_TESTS}
     ${OPENBFME_COMBAT4_TESTS}
+    ${OPENBFME_FLANK1_TESTS}
     ${OPENBFME_HUD4_TESTS}
     ${OPENBFME_QA2FIX_TESTS}
     ${OPENBFME_EXIT1_TESTS}
@@ -700,11 +749,14 @@ add_executable(openbfme_tests
     ${OPENBFME_PLAY1_TESTS}
     ${OPENBFME_HUD5_TESTS}
     ${OPENBFME_AUTOCAST1_TESTS}
+    ${OPENBFME_CAMPUI1_STANCE_TESTS}
     ${OPENBFME_HUD6_TESTS}
     ${OPENBFME_HOVER1_TESTS}
     ${OPENBFME_HUD7_TESTS}
     ${OPENBFME_CAH1_TESTS}
+    ${OPENBFME_SDK0_TESTS}
     ${OPENBFME_RULES1_TESTS}
+    ${OPENBFME_CHEAT1_TESTS}
     ${OPENBFME_MENUWORK1_TESTS}
     ${OPENBFME_GAMEMODES1_TESTS}
     ${OPENBFME_UBER1_TESTS}
@@ -715,9 +767,12 @@ add_executable(openbfme_tests
     ${OPENBFME_FACTA_TESTS}
     ${OPENBFME_FACTC_TESTS}
     ${OPENBFME_BUGS1_TESTS}
+    ${OPENBFME_CAMPUI1_TESTS}
+    ${OPENBFME_OFFMAP1_TESTS}
     ${OPENBFME_BACKLOG4_TESTS}
     ${OPENBFME_FLY1_TESTS}
     ${OPENBFME_SUMMON1_TESTS}
+    ${OPENBFME_LUMBER1_TESTS}
     ${OPENBFME_SHIP1_TESTS}
     ${OPENBFME_RENDERWAIT1_TESTS}
     ${OPENBFME_BACKLOG2_TESTS}
@@ -729,9 +784,17 @@ add_executable(openbfme_tests
     ${OPENBFME_OWNERFIX2_TESTS}
     ${OPENBFME_MENUFIX1_TESTS}
     ${OPENBFME_HUDREDRAW1_TESTS}
+    ${OPENBFME_CHAT1_TESTS}
+    ${OPENBFME_WALL1_TESTS}
+    ${OPENBFME_WALL2_TESTS}
+    ${OPENBFME_BRIDGE1_TESTS}
+    ${OPENBFME_SIEGE1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
+    tests/test_parser_fuzz_regressions.cpp
     tests/test_archive_order.cpp
+    tests/test_mods1_mount.cpp
+    tests/test_mods1_retail.cpp
     tests/test_logic_clock.cpp
     tests/test_chunkio.cpp
     tests/test_w3d_htree.cpp
@@ -828,11 +891,16 @@ add_executable(openbfme_tests
     tests/test_econ_hash.cpp
     tests/test_econ_retail.cpp
     tests/test_falsedef_retail.cpp)
+target_sources(openbfme_tests PRIVATE
+    tests/test_coverage_online_shell.cpp
+    tests/test_coverage_simple_screens.cpp
+    tests/test_coverage_skirmish.cpp
+    tests/test_coverage_create_a_hero.cpp
+    tests/test_coverage_vp6.cpp
+    tests/test_coverage_in_game_hud.cpp
+    tests/test_coverage_mp3.cpp
+    tests/test_coverage_online_hub.cpp)
 target_link_libraries(openbfme_tests PRIVATE openbfme_core)
-openbfme_net_targets() # MP-1: the network host sources, the headless peer
-openbfme_online2_targets() # ONLINE-2: the relay sources and tests, the relay process (Linux)
-openbfme_online4_targets() # ONLINE-4: the online screens, the lobby client and their tests
-openbfme_onlinehub1_targets() # ONLINEHUB-1: the platform API's client, the game records, the pages and their tests
 openbfme_online3_targets() # ONLINE-3: the rejoin, hold and pause tests
 openbfme_mpdrop1_targets() # MP-DROP-1: the disconnect path's drop tests
 # a separate process for the independent-process determinism test of lua_pushusertag userdata (tests/test_lua_runtime.cpp)
@@ -864,13 +932,37 @@ target_compile_definitions(openbfme_tests PRIVATE
     OPENBFME_LUA_PRISTINE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/lua-4.0.1"
     OPENBFME_LUA_PATCH_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/Libraries/Lua")
 target_compile_definitions(openbfme_tests PRIVATE OPENBFME_AUDIO_FIXTURE_DIR="${OPENBFME_AUDIO_FIXTURE_DIR}")
-if(TARGET audio_mp3_fixtures)
-    add_dependencies(openbfme_tests audio_mp3_fixtures)
-endif()
 target_compile_definitions(openbfme_tests PRIVATE OPENBFME_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
     OPENBFME_DOCS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../docs")
 if(MSVC)
     target_compile_options(openbfme_tests PRIVATE /utf-8)
+endif()
+endif()
+
+openbfme_net_targets() # MP-1: the network host sources, the headless peer
+openbfme_online2_targets() # ONLINE-2: the relay sources and tests, the relay process (Linux)
+openbfme_online4_targets() # ONLINE-4: the online screens, the lobby client and their tests
+openbfme_onlinehub1_targets() # ONLINEHUB-1: the platform API's client, the game records, the pages and their tests
+
+if(OPENBFME_FUZZ)
+    include(cmake/Fuzz.cmake)
+endif()
+
+if(OPENBFME_BUILD_FUZZERS)
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        message(FATAL_ERROR "OPENBFME_BUILD_FUZZERS requires Clang's libFuzzer")
+    endif()
+    target_compile_options(openbfme_core PRIVATE -fsanitize=fuzzer-no-link,address,undefined -fno-omit-frame-pointer)
+    target_link_options(openbfme_core INTERFACE -fsanitize=address,undefined)
+    add_executable(openbfme_fuzz_save_replay tests/fuzz_save_replay.cpp)
+    target_link_libraries(openbfme_fuzz_save_replay PRIVATE openbfme_core)
+    target_compile_options(openbfme_fuzz_save_replay PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(openbfme_fuzz_save_replay PRIVATE -fsanitize=fuzzer,address,undefined)
+
+    add_executable(openbfme_reader_corpus tests/fuzz_save_replay.cpp)
+    target_compile_definitions(openbfme_reader_corpus PRIVATE OPENBFME_READER_CORPUS)
+    target_link_libraries(openbfme_reader_corpus PRIVATE openbfme_core)
+    target_compile_options(openbfme_reader_corpus PRIVATE -fsanitize=address,undefined)
 endif()
 
 # the contract holds for every target that carries simulation code or links it: nothing added to a target after its registration may override it

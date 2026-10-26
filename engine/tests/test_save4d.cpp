@@ -954,7 +954,8 @@ struct FullScriptGame
 		Team *t = g.lw.teams.createTeam(proto, true);
 		t->scriptState().ready = true;
 		g.engine().updateGenericScripts(*t);
-		g.engine().nameInCache("HeroN1", *dummy);
+		dummy->setName("HeroN1");                  // the named cache (Object::setName)
+		g.engine().setReference("RefN2", *dummy); // lane CASTLE-UNPACK: an object reference (RW 0x608397), the side "" outside the update
 		CHECK(g.engine().didPlayerAcquireScience(*g.lw.players.findPlayerWithName("Alice"), s.sci("SCIENCE_B"), true)); // B consumed, A pending
 		CHECK_FALSE(g.engine().hasFinishedAudio("Horn", false));
 		ScriptEngine::SequentialScript seq;
@@ -1024,6 +1025,8 @@ TEST_CASE("save4d script engine: a non-default acquired-science queue and generi
 		"block 'obfme:ScriptEngine': an acquired-science queue holds the science 12345, which this game's data lacks");
 	const size_t horn = find(good, { 4, 'H', 'o', 'r', 'n' });
 	refusedBeyond(horn - 4, 5); // the audio timers
+	const size_t reference = find(good, { 0, 5, 'R', 'e', 'f', 'N', '2' }); // lane CASTLE-UNPACK: the side "", the name
+	refusedBeyond(reference - 4, 6);                                       // the object references
 	CHECK(section(*b.g.lw.logic, "script engine") == before);
 
 	// the round trip
@@ -1037,5 +1040,7 @@ TEST_CASE("save4d script engine: a non-default acquired-science queue and generi
 	// the prototype's copies (private to the engine) are in the section compared above: per hook its script and its own active flag
 	CHECK(b.g.engine().audioTimers().size() == 1u);
 	CHECK(b.g.engine().getUnitNamed("HeroN1") == b.dummy);
+	CHECK(b.g.engine().getUnitNamed("RefN2") == b.dummy); // lane CASTLE-UNPACK
+	CHECK(b.g.engine().references().size() == 1u);
 	CHECK(b.g.engine().sequentialScripts().size() == 1u);
 }

@@ -3,6 +3,8 @@
 
 #include "GameLogic/Economy.h"
 
+#include "GameLogic/SimMath.h"
+#include "Common/ModEngineFeatures.h"
 #include "Common/NumericState.h"
 #include "Common/Audio/AudioRequests.h"
 #include "Common/Player.h"
@@ -19,7 +21,9 @@
 #include "GameLogic/ObjectTemplateInfo.h"
 
 #include <stdexcept>
+#include <utility>
 #include <variant>
+#include <vector>
 
 namespace
 {
@@ -425,10 +429,40 @@ void Economy::reportUpgradeEva(const Player &player, const UpgradeTemplate &upgr
 	AudioApi::reportEva(event, nullptr);
 }
 
+namespace
+{
+// lane BIGBATTLE-1: ObjectFilterMatch::allows(filter, object, no other player) of the objects one player controls depends only on the object's
+// template (the side is the player's; with no other player a relationship rule refuses; the names, the equivalence and the KindOf are the template's), so a
+// scan over the player's objects asks the filter once per template. The filter resolves its names and equivalences through string lookups (findTemplate,
+// EquivalentTo, BuildVariations): the AI's special power checks made that a large part of a big battle's logic frame. Same answers, once each per scan
+struct FilterByTemplate
+{
+	GameLogic &logic;
+	const ObjectFilter &filter;
+	const Player &player;
+	std::vector<std::pair<const ThingTemplate *, bool>> seen;
+	bool allows(const Object &o)
+	{
+		const ThingTemplate *t = o.getTemplate();
+		for (const auto &s : seen)
+		{
+			if (s.first == t)
+			{
+				return s.second;
+			}
+		}
+		const bool r = ObjectFilterMatch::allows(logic, filter, t, &player, nullptr);
+		seen.emplace_back(t, r);
+		return r;
+	}
+};
+}
+
 bool Economy::hasObjectMatching(const Player &player, const ObjectFilter &filter, bool completedOnly) const
 {
 	// RW 0x6ABD0B -> 0x7A19AB -> 0x7A075A over the player's teams' members
 	const Bits &b = bits();
+	FilterByTemplate byTemplate{ m_logic, filter, player, {} };
 	for (const Object *o = m_logic.getFirstObject(); o; o = o->getNextObject())
 	{
 		if (o->getControllingPlayer() != &player)
@@ -443,7 +477,7 @@ bool Economy::hasObjectMatching(const Player &player, const ObjectFilter &filter
 		{
 			continue; // retail tests the AWAITING_CONSTRUCTION / PARTIALLY_CONSTRUCTED model conditions: approximated by the construction statuses (S-253)
 		}
-		if (ObjectFilterMatch::allows(m_logic, filter, *o, nullptr))
+		if (byTemplate.allows(*o))
 		{
 			return true;
 		}
@@ -454,6 +488,7 @@ bool Economy::hasObjectMatching(const Player &player, const ObjectFilter &filter
 int Economy::countOwnedObjectsAllowedBy(const Player &player, const ObjectFilter &filter) const
 {
 	const Bits &b = bits();
+	FilterByTemplate byTemplate{ m_logic, filter, player, {} };
 	int n = 0;
 	for (const Object *o = m_logic.getFirstObject(); o; o = o->getNextObject())
 	{
@@ -461,7 +496,7 @@ int Economy::countOwnedObjectsAllowedBy(const Player &player, const ObjectFilter
 		{
 			continue;
 		}
-		if (ObjectFilterMatch::allows(m_logic, filter, *o, nullptr))
+		if (byTemplate.allows(*o))
 		{
 			++n;
 		}
@@ -516,6 +551,16 @@ float Economy::attributeModifierProduct(const Object &obj, int type) const
 		m_attributeModifiers(obj, type, product);
 	}
 	return product;
+}
+
+float Economy::productionMoneyProduct(const Object &obj) const
+{
+	const float production = attributeModifierProduct(obj, ATTRIBUTE_MODIFIER_PRODUCTION);
+	if (!ModEngineFeatures::has(ModEngineFeature::EdainUnchainedProductionSplit))
+	{
+		return production;
+	}
+	return SimMath::mulf32(production, attributeModifierProduct(obj, 28)); // PRODUCTION_MONEY (AttributeModifiers.h ATTRIBUTE_PRODUCTION_MONEY)
 }
 
 bool Economy::objectHasModelCondition(const Object &obj, const char *modelCondition) const

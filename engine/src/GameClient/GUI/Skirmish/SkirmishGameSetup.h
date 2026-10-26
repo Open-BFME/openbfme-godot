@@ -133,6 +133,9 @@ public:
 		m_simulationProfile = profile;
 		m_info.simulationProfile = profile;
 	}
+	// lane CHEAT-1: OpenBFME's Cheat Mode (GameLogic/CheatMode.h): on puts the cheat seat on this setup's local slot (the host's: only the host's screen calls
+	// it); off clears it. False in strategic mode (the rule is mode 0's) or when the local slot is not a human slot
+	bool setCheatMode(bool on);
 	// the Legendary Heroes combo's entries: Off, 2x, 3x, 4x (item data = the factor; Off carries the " *" default mark like a retail row)
 	std::vector<SkirmishComboEntry> legendaryHeroesEntries() const;
 

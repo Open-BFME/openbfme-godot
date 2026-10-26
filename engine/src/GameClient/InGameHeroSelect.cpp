@@ -23,6 +23,9 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/PlayerCommands.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/Module/UpgradeModuleClasses.h"
+#include "Common/ModEngineFeatures.h"
+#include "Common/Thing/ThingTemplate.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -247,7 +250,13 @@ std::string InGameHeroSelect::buttonImage(const Object &obj)
 			if (state && !state->buttonImageName.empty()) return state->buttonImageName;
 		}
 	}
-	// RW 0x73D0BA -> RW 0x73CFEF: ordinary template ButtonImage.
+	// lane MODS-3: an ObjectImageUpgrade's ButtonImage first (edain-unchained.object-image-upgrade, its hook 0xEF3392 at RW 0x73D0BA)
+	std::string upgraded = ObjectImageUpgrade::imageOf(obj, false);
+	if (!upgraded.empty())
+	{
+		return upgraded;
+	}
+	// RW 0x73D0BA -> RW 0x73CFEF: the template's ButtonImage (+ 0x78)
 	if (const FieldValue *v = obj.getTemplate()->findField("ButtonImage"))
 	{
 		if (const std::string *s = std::get_if<std::string>(v))
@@ -278,9 +287,16 @@ bool InGameHeroSelect::isReadyBuilder(const HudContext &, const Object &obj)
 
 // ---- the data -----------------------------------------------------------------------------------------------------------------------------------
 
+bool InGameHeroSelect::listedAsHero(const Object &obj)
+{
+	// lane MODS-3: edain-unchained.herobar (its hooks 0xED74A8 / 0xED74D9 / 0xED74FE): HERO || HEROBAR || HEROBAR_GROUP takes the hero list
+	return obj.isKindOfName("HERO") ||
+		(ModEngineFeatures::has(ModEngineFeature::EdainUnchainedHerobar) && (obj.isKindOfName("HEROBAR") || obj.isKindOfName("HEROBAR_GROUP")));
+}
+
 void InGameHeroSelect::addObject(const Object &obj)
 {
-	const bool hero = obj.isKindOfName("HERO");
+	const bool hero = listedAsHero(obj);
 	if (!hero && !obj.isKindOfName("PORTER"))
 	{
 		return;
@@ -338,7 +354,7 @@ void InGameHeroSelect::addObject(const Object &obj)
 void InGameHeroSelect::removeObject(const Object &obj)
 {
 	const ObjectID id = obj.getID();
-	if (obj.isKindOfName("HERO"))
+	if (listedAsHero(obj))
 	{
 		m_heroes.remove_if([id](const Hero &h) { return h.id == id; });
 	}
@@ -535,8 +551,12 @@ void InGameHeroSelect::update()
 		m_slots[0].builder = false;
 	}
 	bool anyHero = false;
-	for (Hero &h : m_heroes)
+	// lane MODS-3: edain-unchained.herobar's group merge (its 0xED7599 / 0xED75AB): the HEROBAR_GROUP templates already given a slot this update (at most 16)
+	const bool herobar = ModEngineFeatures::has(ModEngineFeature::EdainUnchainedHerobar);
+	std::vector<const ThingTemplate *> groupsShown;
+	for (auto it = m_heroes.begin(); it != m_heroes.end(); ++it)
 	{
+		Hero &h = *it;
 		const Object *hero = m_ctx.logic.findObjectByID(h.id);
 		if (!hero)
 		{
@@ -547,6 +567,35 @@ void InGameHeroSelect::update()
 		PalantirCommandUI::objectRankAndProgress(*hero, rank, progress); // RW 0x92D3AF -> RW 0x9D2437
 		const bool levelUp = h.rank > 0 && rank > h.rank;
 		h.rank = rank;
+		bool group = false, groupSelected = false;
+		if (herobar && isSelectableHero(m_ctx, *hero) && slotIndex < kSlots && hero->isKindOfName("HEROBAR_GROUP"))
+		{
+			const ThingTemplate *tt = static_cast<const ThingTemplate *>(hero->getTemplate());
+			if (std::find(groupsShown.begin(), groupsShown.end(), tt) != groupsShown.end())
+			{
+				if (h.flashFrames > 0)
+				{
+					--h.flashFrames; // a later instance takes no slot (its 0xED75AB jumps to RW 0x92D76F)
+				}
+				continue;
+			}
+			if (groupsShown.size() < 16)
+			{
+				groupsShown.push_back(tt);
+				group = true;
+				int count = 0; // the selectable instances from this node to the end (RW 0x92BBEF); the slot's rank text shows the count
+				for (auto jt = it; jt != m_heroes.end(); ++jt)
+				{
+					const Object *o = m_ctx.logic.findObjectByID(jt->id);
+					if (o && o->getTemplate() == hero->getTemplate() && isSelectableHero(m_ctx, *o))
+					{
+						++count;
+						groupSelected = groupSelected || m_ctx.ui.isSelected(o->getID());
+					}
+				}
+				rank = count;
+			}
+		}
 		if (isSelectableHero(m_ctx, *hero) && slotIndex < kSlots)
 		{
 			Slot &s = m_slots[slotIndex];
@@ -557,6 +606,7 @@ void InGameHeroSelect::update()
 				s.hero = h.id;
 				s.builder = false;
 			}
+			s.group = group;
 			const std::string image = buttonImage(*hero);
 			if (image != s.image)
 			{
@@ -593,7 +643,7 @@ void InGameHeroSelect::update()
 				movieCall("SetButtonHealthBar", { n, num(health) });
 				s.health = health;
 			}
-			const bool selected = m_ctx.ui.isSelected(h.id);
+			const bool selected = group ? groupSelected : m_ctx.ui.isSelected(h.id); // a group slot: any instance selected (its 0xED7458)
 			if (selected != s.selected)
 			{
 				movieCall("SetButtonSelectedHighlightState", { n, selected ? "_show" : "_hide" });
@@ -621,6 +671,7 @@ void InGameHeroSelect::update()
 	{
 		Slot &s = m_slots[slotIndex];
 		const std::string n = num(slotIndex + 1);
+		s.group = false;
 		if (s.hero != INVALID_ID)
 		{
 			movieCall("KillButtonEffects", { n });
@@ -699,6 +750,11 @@ void InGameHeroSelect::onButtonPressed(const std::string &param)
 	{
 		return;
 	}
+	if (m_slots[index].group)
+	{
+		pressGroupSlot(index);
+		return;
+	}
 	const Object *obj = m_ctx.logic.findObjectByID(m_slots[index].hero);
 	if (!obj)
 	{
@@ -750,6 +806,57 @@ void InGameHeroSelect::onButtonPressed(const std::string &param)
 	}
 }
 
+// lane MODS-3: edain-unchained.herobar's group press (its 0xED76EA): a second press of the same slot within 15 client frames (500 ms x 0.03) looks at the instance
+// the first one picked; else the next selectable instance of the template after the one this slot picked last (wrapping) becomes the selection, alone (no
+// container or horde substitution, no additive selection)
+void InGameHeroSelect::pressGroupSlot(int index)
+{
+	const Object *first = m_ctx.logic.findObjectByID(m_slots[index].hero);
+	if (!first)
+	{
+		return;
+	}
+	const bool remembered = index < 16; // its arrays hold 16 slots
+	if (remembered && m_groupLastSlot == index && m_groupLastId[index] != INVALID_ID && m_clientFrame < m_groupDoubleClickDeadline)
+	{
+		if (const Object *o = m_ctx.logic.findObjectByID(m_groupLastId[index]))
+		{
+			m_ctx.view.lookAt(*o->getPosition()); // the tactical view's look-at (vslot 0x54) at the drawn position (RW 0x676711)
+		}
+		return;
+	}
+	std::vector<ObjectID> instances;
+	for (const Hero &h : m_heroes)
+	{
+		const Object *o = m_ctx.logic.findObjectByID(h.id);
+		if (o && o->getTemplate() == first->getTemplate() && isSelectableHero(m_ctx, *o) && PlayerCommands::isSelectable(*o))
+		{
+			instances.push_back(h.id);
+		}
+	}
+	if (instances.empty())
+	{
+		return;
+	}
+	ObjectID pick = instances.front();
+	if (remembered)
+	{
+		auto at = std::find(instances.begin(), instances.end(), m_groupLastId[index]);
+		if (at != instances.end() && at + 1 != instances.end())
+		{
+			pick = *(at + 1);
+		}
+		m_groupLastId[index] = pick;
+		m_groupLastSlot = index;
+		m_groupDoubleClickDeadline = m_clientFrame + 15;
+	}
+	m_ctx.ui.deselectAll(false);
+	ClientMessage &m = m_ctx.stream.append(MSG_CREATE_SELECTED_GROUP);
+	m.appendBoolean(true);
+	m.appendObjectID(pick);
+	m_ctx.ui.selectObject(pick);
+}
+
 void InGameHeroSelect::selectAllHeroes()
 {
 	if (!m_ctx.ui.getInputEnabled())
@@ -766,6 +873,10 @@ void InGameHeroSelect::selectAllHeroes()
 		if (!hero || !PlayerCommands::isSelectable(*hero) || HudObjects::isEffectivelyDead(*hero))
 		{
 			return false;
+		}
+		if (!hero->isKindOfName("HERO") && listedAsHero(*hero))
+		{
+			return false; // lane MODS-3: edain-unchained.herobar (its 0xED7523 / 0xED755E): a HEROBAR-only object is not a hero for select-all
 		}
 		if (!clear && m_ctx.ui.isSelected(hero->getID()))
 		{

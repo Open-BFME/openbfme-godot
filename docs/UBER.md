@@ -7,22 +7,25 @@ waits on a logic step. Reference machine: the owner's PC (RTX 4090, 24 CPU
 threads, Windows). The Steam Deck's numbers are reported next to it.
 
 This file is the design for getting there, the budget per system, the phases,
-and the honest numbers today. Lane UBER-1 delivered phase U1.
+and the recorded measurements from UBER-1 / RENDERWAIT-1. The dated numbers below
+are historical measurements, not a fresh benchmark of this checkout. Lane UBER-1 delivered phase U1;
+U2-U5 remain planned work.
 
 ## What the mode is
 
 Retail RotWK runs its logic frame on one thread. OpenBFME's default
-(**Faithful**) simulation ports retail's, and is meant to replay retail games.
-It keeps lockstep with the same seed on every machine and uses about one core
-of 24.
+(**Faithful**) simulation ports retail's. Retail replay compatibility is a goal,
+not a supported input format here: the recorder reads OpenBFME replay versions
+5, 6 and 7. The measurements below used about one core, not a fixed core limit.
 
 **Uber** is a second simulation profile (`Common/SimulationProfile.h`), off by
 default:
 
-- **The switch:** Options → OpenBFME → Graphics+ → "Uber performance mode"
+- **The switch:** Options → OpenBFME → Performance → "Uber performance mode"
   (`Options.ini OpenBFMEUberPerformance = yes`). Its help line warns that it
   isn't compatible with the original game, and it takes effect from the next
-  game or LAN lobby.
+  game. The setting is locked while inside an online or LAN room; leave the
+  room to change it.
 - **Same rules, different computation.** Uber plays the same game: same INI
   data, modules and rules. But it may compute things differently from retail:
   a different order of independent work, snapshot semantics for queries, and
@@ -35,13 +38,14 @@ default:
 - **Never mixed.** The profile is in:
   - the game setup (`SkirmishGameInfo::simulationProfile`);
   - the LAN options and start;
-  - the replay (format 5);
+  - the replay (current writer: format 7; readers accept 5, 6 and 7);
   - the profile identity (`profile uber`, compared at every lobby join and
     start and by replay playback);
   - the state hash.
 
-  A Faithful peer, a Faithful replay or a retail client meets a refusal, never
-  a desync.
+  A mismatched running peer or replay is refused, never mixed into the game.
+  Joining a room can first adopt that room's profile; the locked setting then
+  reflects the room, rather than the previous preference.
 - **Faithful's results don't move for Uber; some of its code paths did.**
   What is unchanged:
   - a Faithful game's state hash values (the PERF-1 per-frame vectors,
@@ -52,8 +56,8 @@ default:
   What did change:
   - the hash now goes through UBER-1's staging code: the sections are listed
     first, then fed in the same order into the same chain;
-  - recordings are replay format 5 (the setup's profile field), so format 4
-    files from older builds are refused;
+  - UBER-1 introduced replay format 5 (the setup's profile field); the writer
+    now uses 7 (slot handicaps), and reads 5 / 6 / 7, not 4;
   - the LAN wire's GameInfo carries one more field.
 
   Uber has its own pin set (`test_uber1.cpp`, `tests/data/uber1/`).
@@ -65,7 +69,16 @@ pins prove its results unchanged.
 
 ## The benchmark (the Uber gate)
 
-`openbfme_tests -tc="uber bench*" --no-skip` (`test_uber1_bench.cpp`):
+Linux / POSIX shell, from the project root, after building the C++ test target
+into `engine/build` and setting `ROTWK_INSTALL` and `BFME2_INSTALL` to the game
+folders (without both, this benchmark skips):
+
+```sh
+./engine/build/openbfme_tests -tc="uber bench*" --no-skip
+```
+
+Windows: use `engine\build\openbfme_tests.exe` from a command prompt with the
+same environment and arguments. The implementation is `engine/tests/test_uber1_bench.cpp`:
 
 - the setup: 8 players on map mp fall back 8p, players 1-4 Men against 5-8
   Mordor, as human slots, so no computer player acts;
@@ -80,7 +93,8 @@ pins prove its results unchanged.
 
 Environment variables: `OPENBFME_UBER_UNITS`, `OPENBFME_BENCH_FRAMES`,
 `OPENBFME_UBER_WARMUP`, `OPENBFME_UBER_PROFILE` (faithful / uber / both) and
-`OPENBFME_LOGIC_THREADS`.
+`OPENBFME_LOGIC_THREADS`. Defaults: unit counts `10000,20000,40000`, 50 measured
+frames, 50 warm-up frames, both profiles; the thread override sizes the logic pool.
 
 Reported per battle:
 
@@ -92,14 +106,21 @@ Reported per battle:
 - the logic frame's wall time and each of its six phases;
 - the state hash's time and its own job-pool dispatches, counted apart from
   the frame's (PERF-2's collision jobs);
-- the cores used (process CPU / wall) and the hash chain.
+- the cores used (process CPU / wall, unavailable in this benchmark on Windows)
+  and the hash chain.
 
 **The game gate** is the same battle in the real client: the logic on its
 worker, replay recording with its per-frame hash, drawables, terrain, HUD:
 
-    game.gd --auto --map="maps/map mp fall back 8p/map mp fall back 8p.map" --ai=2
-            --uber1=<troops> [--uber1-seconds=20] [--vsync=off] [--perf]
-            [--options-file=F with OpenBFMEUberPerformance = yes / no]
+Linux / POSIX shell, from the project root, with Godot 4.7.2, the matching built
+GDExtension, a working graphical session, and both game-folder environment
+variables above. Set `OpenBFMEUberPerformance = yes` (or `no`) in the options
+file; `--options-file=F` can select a separate file.
+
+```sh
+godot --path godot -- --auto --map="maps/map mp fall back 8p/map mp fall back 8p.map" --ai=2 \
+  --uber1=10000 --uber1-seconds=20 --vsync=off --perf
+```
 
 `scripts/uber1_player.gd` makes the armies through `GameWorld.create_object`
 until `GameWorld.get_census()` counts the troops, then orders every horde to
@@ -114,9 +135,12 @@ prints:
 
 One count per run.
 
-The instancer's own bench (`res://scenes/w3d_viewer.tscn -- --bench=N`: N
-animated soldiers through the GPU-skinned W3DInstancer, nothing else) isolates
-the render.
+The instancer's own bench isolates N animated soldiers through the GPU-skinned
+W3DInstancer. With the same Linux graphical prerequisites, from the project root:
+
+```sh
+godot --path godot res://scenes/w3d_viewer.tscn -- --bench=10000
+```
 
 ## Where a frame goes today
 
@@ -171,7 +195,7 @@ main thread's CPU is 166 ms and the frame 642 ms.
 log (below) named the one site: the spell ring's per-frame HUD query
 (`spell_target_ring.gd` -> `get_spellbook_state` -> `InGameHud::enterContext`
 -> `LiveGame::waitIdle`), 12.8 s of waits in the 20 s window. Since
-RENDERWAIT-1 the render thread no longer waits for a logic frame; see "The
+RENDERWAIT-1 the per-frame render reads use the client window; see "The
 render and the logic".
 
 Where the logic frame goes (perf on the lane machine, one thread, Faithful, 20k
@@ -212,7 +236,11 @@ and the presentation interpolates behind a presentation delay. When a logic
 frame is late, the presented time stops at the end of the last completed frame
 (S-1140).
 
-**RENDERWAIT-1: the render never waits on a logic frame.**
+**RENDERWAIT-1: per-frame live reads use the client window.**
+
+Accessors outside the window can still wait; one-off teardown and mission
+starts deliberately drain the worker. The static per-frame test excludes these
+one-off operations, not normal HUD reads.
 
 - **The wait log.** Every wait of a non-worker thread on the logic worker is
   logged by site: each `LiveGame` accessor passes its caller's file and line,
@@ -379,7 +407,7 @@ That's a research item, not a plan.
   - setup and wire: `SkirmishGameSetup`, `GameInfo`, `NetPacket`;
   - LAN: `LANAPI` (the host's game runs its identity's profile; options or a
     start of another profile are refused) and `LANLobby`;
-  - replay format 5 and `ProfileIdentity` (`profile uber`); a replay header
+  - replay format 5 at U1 (now writer 7, readers 5 / 6 / 7) and `ProfileIdentity` (`profile uber`); a replay header
     whose identity and setup name different profiles is never written, never
     read, never played (UBER-1 review);
   - `GameLogic` (hashed only when Uber);
@@ -399,6 +427,90 @@ That's a research item, not a plan.
   right now (the retail request queue), and a second lane in the same code
   would collide. The hash was the biggest change that is safe on its own: a
   pure function of the state, on every frame of every recorded game.
+
+### PATHPERF-4: the path queue's limits (done)
+
+Retail's path queue holds 511 units: a unit refused by a full queue waits for
+a path that never comes until its next order. It also serves only
+`MaxPathfindCellsPerFrame` cells a call, so a mass order is served over
+seconds (150 hordes: 4.6 s, 300 single soldiers: 9.6 s, `pathperf1 bench`).
+
+- **Uber rule change:** the two request rings hold 16,384 units
+  (`Pathfinder::setUberLimits`), and during a burst the cell budget is 4 times
+  retail's: a burst starts at 120 waiting requests (a mass order) and lasts
+  until 40 or fewer wait. A sustained battle's repaths keep 60-90 waiting
+  (10,000 troops) and never start one; an always-4x budget only spent its
+  time on that steady trickle (logic 232 instead of 197 ms a frame at 10,000
+  troops, one thread). The 150 hordes' order is served in 1.6 s, the 300
+  soldiers' in 4.6 s (`PATHPERF1_PROFILE=uber`). The burst flag is in the
+  Uber state hash; the Uber pin vector was regenerated.
+- **Uber rule change:** the pathfinder's cell-info pool grows past its 60,000
+  records up to 1,000,000 (`Pathfinder::setUberLimits`), instead of failing
+  searches and reservations in a big battle. The Faithful pool keeps its
+  60,000 and fails when full, as before: RotWK 2.01's own limit has not been
+  read from the binary (BFME1 keeps 0x200 fixed slots plus an overflow list,
+  Open-BFME-1 `PathfindCellInfoPoolReset.cpp`), so the growth is the profile's.
+
+### UBER-2A: the "what is near me" queries (done)
+
+The 10k Uber profile had the taunt scans (`tauntScan` -> `getClosestObject`)
+at 10% of the logic frame, nearly all of it the exact x87 distance of every
+partition entry the search visited, plus the combat range checks recomputing
+the bounding radii (6%), the large group bonus scans (4%) and `TargetFinder`
+(4%, most of it rebuilding its grid about a dozen times a frame).
+
+- **Both profiles (the same answers):** `getClosestObject` skips the exact
+  distance of a candidate the double-precision bound puts beyond the best
+  distance so far (the range walk's pre-reject, now inlined), and keeps its
+  heap storage between calls. The Faithful pins and the Faithful bench hash
+  chain are unchanged. (The bounding radii are UBER-2B's cache.)
+- **Uber rule changes:** the taunt scan, the dual weapon switch scan and
+  `TargetFinder` walk only the layers of the players the seeker sees as
+  enemies (`Team::enemyLayerMask`), the large group bonus only its owner's;
+  `TargetFinder` builds its grid once a frame and appends the objects made
+  later in the frame instead of rebuilding. What a player can notice: nothing
+  (of two candidates at exactly the same distance another may win; an object
+  whose owner changed this frame is found on its old layer until the next
+  partition update).
+- Result (`uber bench` 10k, Uber, 30 frames, back to back on a busy PC): logic
+  wall about 173 -> 137 ms, phases 3 / 4 about 33 / 30 -> 23 / 19 ms; the
+  taunt scan went from 10% to 1.5% of the logic frame. The Uber bench hash
+  chain did not change either (no tie or owner change met in that battle).
+
+### UBER-3P: the battle's path searches that cannot succeed (done)
+
+In the 30,000-troop clash the path queue runs at its budget in every one of a
+logic frame's six calls, and each call is mostly one search: a repath toward
+a contact point in the press whose goal cannot be reached (an approximate
+search: the goal is in another zone or not a valid movement position; or its
+goal cell was rejected). Such a search ends with the path to its closest cell
+(or none), but kept expanding up to the slack or `MaxCellsFindPathLimit`: the
+calls averaged 23,000 cells against a budget of 4,000. Of 2,094 searches in
+that battle, a failed search's closest cell was final after about 10 cells
+and never replaced 250 cells later; 1,182 of the 1,644 unreachable searches
+found no closest cell at all and gave no path, after 72% of all their cells.
+
+- **Uber rule change:** `internalFindPath` ends an unreachable search once its
+  answer has held for 256 cells (the closest cell, or with none yet the
+  candidate key that would test one) and gives that answer. A tunnelling
+  search's pause starts when it leaves its obstacle. What a player can
+  notice: nothing; the paths are served sooner (in that battle 45 of the
+  unreachable searches tested a candidate after such a pause, the only ones
+  whose answer can differ). The Uber pin vector was regenerated.
+- Result (`uber bench` 30k, Uber, 30 frames, back to back, two rounds): logic
+  wall 203 / 221 -> 175 / 181 ms (default threads), 240 -> 215 ms (one
+  thread); the 15 clash frames 220 / 242 -> 179 / 184 ms, p99 316 / 363 ->
+  240 / 261 ms. The queue's cells per call 23,000 -> 8,600, the horde repaths
+  served in the 14 clash frames 170 -> 209. The 10k battle is unchanged within
+  the noise (83-89 -> 86-94 ms default threads, 103-107 -> 106 ms one thread).
+- **Uber rule change (second step):** `findAttackPath` with no endpoint yet
+  ends once its closest cell has held for 256 examined cells and gives the
+  fallback the exhausted search gives (the path to that cell). In the clash
+  126 of 200 attack searches found no endpoint and spent 75% of their cells
+  after such a pause; no endpoint of the other 74 came after one. Result on
+  top of the first step (30k, 30 frames, a busy PC): 174 -> 161 ms default
+  threads (clash frames 182 -> 154), 254 -> 237 ms one thread; the 10k battle
+  within the noise. The Uber pin vector was regenerated again.
 
 ### U2: parallel queries and paths, GPU animation (next)
 

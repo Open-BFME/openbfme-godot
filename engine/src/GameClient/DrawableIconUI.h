@@ -100,6 +100,7 @@ struct IconUISettings
 class DrawableIconUI
 {
 public:
+	static std::string constructionText(const GameTextSource *text, double percent);
 	// the ops of this frame, in retail's list order (0, then 2), drawables in id order within a list
 	void build(GameLogic &logic, const DrawableManager &drawables, const TacticalView &view, const IconUISettings &settings, const std::set<ObjectID> &selected,
 		ObjectID mousedOver, std::vector<IconUIOp> &out);

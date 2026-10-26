@@ -22,15 +22,27 @@ sys.path.insert(0, str(HERE))
 import autorelease  # noqa: E402
 import community_prs  # noqa: E402
 import public_workflows  # noqa: E402
-from test_autorelease import GIT_ENV, TARGET, World, git, run, world_template  # noqa: E402, F401
+from test_autorelease import GIT_ENV, TARGET, World, commit, git, run, world_template  # noqa: E402, F401
 
 DAISY = {"GIT_AUTHOR_NAME": "Daisy", "GIT_AUTHOR_EMAIL": "daisy@example.invalid"}
 LOGIN = "daisyhasacat"
 
 
 @pytest.fixture
-def world(tmp_path, world_template):
+def empty_world(tmp_path, world_template):
     return world_template.copy(tmp_path)
+
+
+@pytest.fixture(scope="module")
+def released_world_template(tmp_path_factory, world_template):
+    template = world_template.copy(tmp_path_factory.mktemp("community-released"))
+    first_release(template)
+    return template
+
+
+@pytest.fixture
+def world(tmp_path, released_world_template):
+    return released_world_template.copy(tmp_path)
 
 
 def gh_state(world: World) -> dict:
@@ -90,8 +102,7 @@ def review(world: World, n: int, head: str, port_sha: str, login: str = LOGIN) -
 
 
 def ready(world: World, n: int = 37, files=None) -> tuple[str, str]:
-    """a first release, then pull request #n opened, ported, gated and reviewed: (its head, the archive sha that carries it)"""
-    first_release(world)
+    """on a released world, pull request #n opened, ported, gated and reviewed: (its head, the archive sha that carries it)"""
     head = open_pr(world, n, files or {"engine/a.cpp": "2\ncontrib\n", "docs/new.md": "hello\n"})
     p = port(world, n)
     # the development line moved on beside the port (the usual case: the sync then has more to bring than the pull request)
@@ -118,6 +129,39 @@ def sync_prs(world: World) -> list[dict]:
         if body.startswith("Sync the rebuild"):
             found.append({"merge": c, "body": body})
     return found
+
+
+@pytest.mark.parametrize("conflict", [False, True], ids=["clean", "conflict"])
+def test_the_github_standin_performs_a_real_three_way_merge(empty_world, conflict):
+    world = empty_world
+    seed = world.tmp / "seed"
+    lines = [f"line {n}\n" for n in range(20)]
+    commit(seed, {"README.md": "".join(lines)}, "a shared base")
+    git(seed, "push", "-q", str(world.remote), "main")
+    theirs = lines.copy()
+    theirs[1] = "the contribution\n"
+    head = open_pr(world, 37, {"README.md": "".join(theirs)})
+    ours = lines.copy()
+    ours[1 if conflict else 18] = "the main branch moved on\n"
+    base = commit(seed, {"README.md": "".join(ours)}, "main advanced after the pull request opened")
+    git(seed, "push", "-q", str(world.remote), "main")
+    before = gh_state(world)
+    refs = git(world.remote, "show-ref")
+    worktrees = git(world.remote, "worktree", "list", "--porcelain")
+    r = run(world.gh, "pr", "merge", "37", "--merge", "--match-head-commit", head, env=world.env())
+    assert git(world.remote, "worktree", "list", "--porcelain") == worktrees, "no temporary worktree remains"
+    if conflict:
+        assert r.returncode == 1 and "CONFLICT (content)" in r.stderr, r.stdout + r.stderr
+        assert gh_state(world) == before and git(world.remote, "show-ref") == refs, "a conflict changes no GitHub record or ref"
+    else:
+        assert r.returncode == 0, r.stdout + r.stderr
+        pull = gh_state(world)["pulls"]["37"]
+        merged = pull["merge_commit_sha"]
+        assert pull["merged"] is True and pull["state"] == "closed"
+        assert git(world.remote, "rev-parse", "refs/heads/main") == merged
+        assert git(world.remote, "rev-list", "--parents", "-1", merged).split() == [merged, base, head]
+        ours[1] = theirs[1]
+        assert git(world.remote, "show", f"{merged}:README.md") == "".join(ours).strip(), "both sides' edits survive the merge"
 
 
 # ---- the flow, end to end ---------------------------------------------------------------------------------------------------------------
@@ -159,7 +203,6 @@ def test_a_reviewed_pull_request_is_merged_first_and_credited(world):
 def test_a_release_that_is_only_the_pull_request_tags_its_merge(world):
     """when the public main holds the release's whole tree once the pull request is merged, there is no sync PR (nothing left to bring):
     the release tags the pull request's merge commit, and the pull request is recorded as landed"""
-    first_release(world)
     head = open_pr(world, 37, {"engine/a.cpp": "2\ncontrib\n"})
     sha = port(world, 37)
     world.gate(sha)
@@ -269,7 +312,6 @@ def test_every_check_refuses_by_name(world, case):
     ({"engine/a.cpp": "2\n"}, "it changes nothing"),                                 # an empty pull request
 ])
 def test_a_pull_request_the_public_tree_cannot_hold_is_refused(world, files, why):
-    first_release(world)
     head = open_pr(world, 37, files)
     if "archive/note.txt" in files:
         port(world, 37)
@@ -357,7 +399,6 @@ def test_a_pull_request_merged_by_hand_is_credited_not_merged_again(world):
 
 
 def test_a_port_outside_the_release_waits(world):
-    first_release(world)
     head = open_pr(world, 37, {"docs/new.md": "hello\n"})
     git(world.repo, "checkout", "-q", "-b", "side")
     side = port(world, 37)
@@ -374,7 +415,6 @@ def test_a_port_outside_the_release_waits(world):
 def test_a_resumed_run_after_the_sync_merges_nothing_more(world):
     """the run stops after its push (RELCAND-1: publishing fails): the resumed run neither merges a pull request reviewed in between nor
     records it"""
-    first_release(world)
     h37 = open_pr(world, 37, {"engine/c.cpp": "c\n"})
     port(world, 37)
     h38 = open_pr(world, 38, {"engine/d.cpp": "d\n"})
@@ -429,7 +469,6 @@ def test_a_landed_pull_request_listed_with_another_head_is_refused(world):
 
 
 def test_a_port_commit_that_is_not_here_is_refused(world):
-    first_release(world)
     head = open_pr(world, 37, {"engine/c.cpp": "c\n"})
     sha = port(world, 37)
     world.gate(sha)
@@ -579,7 +618,7 @@ OLD_LINE_88 = 'run: engine/build/openbfme_tests --test-case-exclude="audio decod
 
 def test_the_real_workflow_parses_and_the_old_unparsable_line_is_refused():
     assert public_workflows.yaml_problems(".github/workflows/pr.yml", PR_YML) == []
-    old = '        run: |\n          engine/build/openbfme_tests --test-case-exclude="audio decode: MP3 *,audio decode: corrupted MP3 fixtures*"\n'
+    old = '        run: |\n          engine/build/openbfme_tests\n'
     assert old in PR_YML
     probs = public_workflows.workflow_problems(".github/workflows/pr.yml", PR_YML.replace(old, "        " + OLD_LINE_88 + "\n", 1))
     assert len(probs) == 1 and "not valid YAML (mapping values are not allowed here)" in probs[0], probs
@@ -619,7 +658,7 @@ def test_the_ci_script_fails_on_every_non_success(tmp_path):
     body = script.split("<<'EOF'\n", 1)[1].rsplit("EOF", 1)[0]
     f = tmp_path / "ci.py"
     f.write_text(body)
-    names = ("lint", "gate", "linux", "windows", "macos")
+    names = ("lint", "gate", "fixtures", "linux", "windows", "macos")
 
     def ci(results):
         env = {**os.environ, "RESULTS": json.dumps({k: {"result": v, "outputs": {}} for k, v in results.items()})}
@@ -631,7 +670,7 @@ def test_the_ci_script_fails_on_every_non_success(tmp_path):
             r = ci({**{m: "success" for m in names}, n: bad})
             assert r.returncode == 1 and f"CI FAILED: {n}: {bad}" in r.stdout, (n, bad, r.stdout)
         r = ci({m: "success" for m in names if m != n})
-        assert r.returncode == 1 and "not ['gate', 'lint', 'linux', 'macos', 'windows']" in r.stdout, r.stdout
+        assert r.returncode == 1 and f"not {sorted(names)}" in r.stdout, r.stdout
     assert ci({}).returncode == 1
 
 
@@ -767,7 +806,6 @@ def test_a_candidate_that_fails_leaves_its_merges_and_the_next_run_credits_them(
     """RELCAND-1: the reviewed pull requests are merged on GitHub before the candidate (the one write before the push: the pull request's
     own, already public commits). A candidate that fails (a tampered package) pushes nothing else; the next run takes the merged one as
     already merged, lands the one reviewed in between, credits both in its sync commit and records both, under the same version"""
-    first_release(world)
     h37 = open_pr(world, 37, {"engine/c.cpp": "c\n"})
     port(world, 37)
     h38 = open_pr(world, 38, {"engine/d.cpp": "d\n"})

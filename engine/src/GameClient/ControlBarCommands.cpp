@@ -10,6 +10,7 @@
 #include "Common/AsciiString.h"
 #include "Common/ArchiveFileSystem.h"
 #include "Common/INIException.h"
+#include "Common/ModEngineFeatures.h"
 #include "Common/ModelState.h"
 #include "Common/Thing/ThingFactory.h"
 
@@ -300,6 +301,25 @@ const FieldParse kBfme1CommandButtonFields[] = {
 };
 const Bfme1FieldRowsRegistration kBfme1CommandButtonFieldsRegistration(kCommandButtonFieldParse, kBfme1CommandButtonFields);
 
+// lane MODS-3 (mod engine feature edain-unchained.queue-ignore-cp): Edain Unchained's game.dat points the CommandButton parse (RW 0x5DA707 / 0x5DA7B7 /
+// 0x5DA7D1) at a copy of RW 0xC2BAC8 with one row appended, { "QueueIgnoreCP", INI::parseBool (RW 0x42E558), 0, +0x10D } (its .qcp section, 0xED8014); its
+// constructor patch (RW 0x75D688: the byte store to + 0x10C becomes a dword store) makes the default No. Retail has no such row: with the feature off the
+// token stays the unknown field retail's parse refuses
+const FieldParse *commandButtonFieldParse()
+{
+	static const std::vector<FieldParse> edainUnchained = [] {
+		std::vector<FieldParse> rows;
+		for (const FieldParse *f = kCommandButtonFieldParse; f->token; ++f)
+		{
+			rows.push_back(*f);
+		}
+		rows.push_back({ "QueueIgnoreCP", INI::parseBool, nullptr, CB_OFF(m_queueIgnoreCP) });
+		rows.push_back({ nullptr, nullptr, nullptr, 0 });
+		return rows;
+	}();
+	return ModEngineFeatures::has(ModEngineFeature::EdainUnchainedQueueIgnoreCP) ? edainUnchained.data() : kCommandButtonFieldParse;
+}
+
 #undef CB_OFF
 
 // RW 0x80C9E1 CommandSet::parseCommandButton; userData = the slot index
@@ -316,26 +336,28 @@ void parseSetButton(INI *ini, void *instance, void *, const void *userData)
 	set->m_command[(size_t)index] = button;
 }
 
-// RW 0xC4F3D8: keys "1" .. "33" then InitialVisible (the keys are strings with static storage)
+// RW 0xC4F3D8: keys "1" .. "33" then InitialVisible (the keys are strings with static storage). Lane MODS-3: under edain-unchained.commandset-limit the
+// table is its 0xED4000 one: keys "1" .. "64" (userdata 0 .. 63), then InitialVisible
 struct SetTable
 {
-	std::string keys[CommandSet::MAX_BUTTONS];
-	FieldParse rows[CommandSet::MAX_BUTTONS + 2];
-	SetTable()
+	std::string keys[CommandSet::STORAGE];
+	FieldParse rows[CommandSet::STORAGE + 2];
+	explicit SetTable(int slots)
 	{
-		for (int i = 0; i < CommandSet::MAX_BUTTONS; ++i)
+		for (int i = 0; i < slots; ++i)
 		{
 			keys[i] = std::to_string(i + 1);
 			rows[i] = { keys[i].c_str(), parseSetButton, (const void *)(std::intptr_t)i, 0 };
 		}
-		rows[CommandSet::MAX_BUTTONS] = { "InitialVisible", INI::parseInt, nullptr, (int)offsetof(CommandSet, m_initialVisible) };
-		rows[CommandSet::MAX_BUTTONS + 1] = { nullptr, nullptr, nullptr, 0 };
+		rows[slots] = { "InitialVisible", INI::parseInt, nullptr, (int)offsetof(CommandSet, m_initialVisible) };
+		rows[slots + 1] = { nullptr, nullptr, nullptr, 0 };
 	}
 };
 const FieldParse *commandSetFieldParse()
 {
-	static const SetTable table;
-	return table.rows;
+	static const SetTable retail(CommandSet::MAX_BUTTONS);
+	static const SetTable extended(CommandSet::STORAGE);
+	return ModEngineFeatures::has(ModEngineFeature::EdainUnchainedCommandSetLimit) ? extended.rows : retail.rows;
 }
 } // namespace
 
@@ -346,6 +368,11 @@ const char *GUICommandName(int command)
 }
 
 CommandButton::CommandButton() = default;
+
+int CommandSet::slotCapacity()
+{
+	return ModEngineFeatures::has(ModEngineFeature::EdainUnchainedCommandSetLimit) ? (int)STORAGE : (int)MAX_BUTTONS;
+}
 
 const CommandButton *CommandButton::getFinalOverride() const
 {
@@ -429,6 +456,99 @@ CommandSet *CommandStore::newDynamicCommandSet(const std::string &name)
 	return raw;
 }
 
+const CommandSet *CommandStore::mergedCommandSet(const std::string &name)
+{
+	if (const CommandSet *have = findCommandSet(name)) // RW 0x71EFA2
+	{
+		return have;
+	}
+	std::vector<std::string> parts;
+	for (size_t at = 0;;)
+	{
+		const size_t plus = name.find('+', at);
+		parts.push_back(name.substr(at, plus == std::string::npos ? std::string::npos : plus - at));
+		if (plus == std::string::npos)
+		{
+			break;
+		}
+		at = plus + 1;
+	}
+	const CommandSet *base = findCommandSet(parts[0]);
+	if (!base && !parts[0].empty())
+	{
+		m_mergeNotes.push_back("CommandSet '" + parts[0] + "' (the base of the CommandButtons set '" + name + "') is not a CommandSet: the set starts empty");
+	}
+	CommandSet *set = newDynamicCommandSet(name); // RW 0x72028B(name, 1), 0x80C8D2
+	const int capacity = CommandSet::slotCapacity(); // 0xEDB169 reads the bound byte at RW 0x80C8FE
+	for (int i = 0; base && i < capacity; ++i)
+	{
+		if (const CommandButton *b = base->getCommandButton(i))
+		{
+			set->setDynamicButton(i, b);
+		}
+	}
+	for (size_t p = 1; p < parts.size(); ++p)
+	{
+		const std::string &list = parts[p];
+		for (size_t at = 0; at < list.size();)
+		{
+			if (list[at] == ' ')
+			{
+				++at;
+				continue;
+			}
+			// 0xEDB3B8: the name stops at ' ', ':' or the end (at most 255 characters), then ":N" in decimal; no digit: the first empty slot
+			size_t end = at;
+			while (end < list.size() && list[end] != ' ' && list[end] != ':')
+			{
+				++end;
+			}
+			const std::string button = list.substr(at, std::min<size_t>(end - at, 255));
+			int slot = -1;
+			if (end < list.size() && list[end] == ':')
+			{
+				++end;
+				if (end < list.size() && list[end] >= '0' && list[end] <= '9')
+				{
+					slot = 0;
+					while (end < list.size() && list[end] >= '0' && list[end] <= '9')
+					{
+						slot = std::min(slot * 10 + (list[end] - '0'), 1 << 20);
+						++end;
+					}
+				}
+			}
+			while (end < list.size() && list[end] != ' ')
+			{
+				++end;
+			}
+			at = end;
+			const CommandButton *b = findCommandButton(button); // RW 0x71D6EA
+			if (!b)
+			{
+				m_mergeNotes.push_back("CommandButtons of '" + name + "' names '" + button + "', which is not a CommandButton: skipped (as Edain Unchained's game.dat)");
+				continue;
+			}
+			if (slot < 0)
+			{
+				for (int i = 0; i < capacity; ++i)
+				{
+					if (!set->getCommandButton(i))
+					{
+						slot = i;
+						break;
+					}
+				}
+			}
+			if (slot >= 0)
+			{
+				set->setDynamicButton(slot, b); // RW 0x80C8EF: a slot >= the capacity is ignored
+			}
+		}
+	}
+	return set;
+}
+
 // RW 0x71C958: the copy is NOT in the map
 CommandSet *CommandStore::newCommandSetOverride(CommandSet *base)
 {
@@ -466,10 +586,10 @@ void CommandStore::parseCommandButtonDefinition(INI *ini)
 	{
 		// RW 0x5DA7C5: load types 1, 3, 4: parsed into a temporary and discarded (errors still thrown)
 		CommandButton scratch;
-		ini->initFromINI(&scratch, kCommandButtonFieldParse);
+		ini->initFromINI(&scratch, commandButtonFieldParse());
 		return;
 	}
-	ini->initFromINI(button, kCommandButtonFieldParse);
+	ini->initFromINI(button, commandButtonFieldParse());
 }
 
 // RW 0x7205B9

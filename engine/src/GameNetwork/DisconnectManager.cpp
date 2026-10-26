@@ -299,7 +299,7 @@ void DisconnectManager::turnOffScreen(Network &net, std::uint32_t logicFrame)
 	{
 		if (m_disconnectFramesReceived[(size_t)i])
 		{
-			c.releasedMask |= (std::uint8_t)(1u << i);
+			c.releasedMask |= (std::uint16_t)(1u << i);
 			c.releasedFrames[(size_t)i] = m_disconnectFrames[(size_t)i];
 		}
 		m_disconnectFramesReceived[(size_t)i] = false;
@@ -578,7 +578,7 @@ void DisconnectManager::updateDisconnectStatus(Network &net, std::uint64_t now, 
 		if ((std::int32_t)remaining < 0 || votedOut || m_silentEpisodes[(size_t)i] > kMaxSilentEpisodes - 1 || net.slotRestarted(i))
 		{
 			remaining = 0;
-			std::uint8_t gone = 0;
+			std::uint16_t gone = 0;
 			const bool sameFrame = allOnSameFrame(net, now, logicFrame);
 			const int router = nextPacketRouter(net, now, logicFrame);
 			const bool claims = sameFrame && router == local && net.dropClaims(local, i, gone);
@@ -665,7 +665,7 @@ bool DisconnectManager::validateDrop(Network &net, const NetCommandMsg &c, int f
 		why = target == from ? "the sender drops itself" : "slot " + std::to_string(target) + " is not a player of the game";
 		return false;
 	}
-	for (int s = 0; s < 8; ++s)
+	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
 		if (!(c.releasedMask & (1u << s)))
 		{
@@ -828,7 +828,7 @@ void DisconnectManager::processDisconnectCommand(Network &net, const NetCommandM
 				r.slot = (std::uint8_t)local;
 				r.frame = logicFrame;
 				r.releasedFrames.assign(MAX_SLOTS, 0u);
-				r.releasedMask = (std::uint8_t)(1u << from);
+				r.releasedMask = (std::uint16_t)(1u << from);
 				r.releasedFrames[(size_t)from] = c.frame;
 				m_disconnectFramesReceived[(size_t)from] = false;
 				net.sendDirect(r);
@@ -994,12 +994,12 @@ std::vector<std::string> DisconnectManager::stopLines()
 		"[S-1121] disconnect path: RotWK's DisconnectManager is ported (RW 0x8D7C78 .. 0x8D8DDC); not located or not ported: the sender of "
 		"DISCONNECTSCREENOFF (type 29 inferred, ZH's notifyOthersOfNewFrame kept), the GameSpy ping test (no pinger in a LAN game), TheGameLogic + 0x2A4, "
 		"the left state 1 (ConnectionManager + 0x12080), the router fallback order's filler (here the network slots in slot order), RotWK's frame gate "
-		"(none here but OpenBFME's announced-frame rule), the disconnect chat",
+		"(none here but OpenBFME's announced-frame rule)",
 		"[S-1122] self destruct: MSG_SELF_DESTRUCT (RW 0x77CA3D) and transferAssetsFromThat (RW 0x6AF598) are ported without the contain interface's "
 		"occupant hand-over (vslot 0x54), the RW 0xDE4AB8 lists, the end of a defection (RW 0x69ABA7) and the Living World branch; the objects change "
 		"owner in object list order (RotWK: team, then member order); a horde member follows its container (inferred)",
 		"[S-1123] disconnect screen: DisconnectScreen.apt gets RotWK's texts, colour providers, SetBarPercent / Show / HideKickButton and its Kick / Quit "
-		"commands (RW 0x91988F); not ported: the chat (InitGadgets, Chat::OnBttnEnterText, Quit's disconnect chat), the in-game UI calls of show "
+		"commands (RW 0x91988F) and its chat (lane CHAT-1: DISCONNECTCHAT 13); not ported: the in-game UI calls of show "
 		"(RW 0x9190F0), the level (the first free one)",
 		"[S-1124] desync dump: RW 0x6290C7's DESYNC-Frame<n>-<exe>-<player>.txt holds OpenBFME's per-subsystem breakdown and object hashes (not "
 		"retail's CRC text lines), the replay is copied next to it (retail embeds it), no BIN_DESYNC; the message box (GUI:DesyncTitle / "

@@ -79,7 +79,7 @@ void ScriptCameraDirector::apply(const ScriptClientRequest &r, const Coord3D &ca
 		if (r.hasPosition)
 		{
 			// (position, seconds, shutter, ease in, ease out)
-			startMove(m_hasTarget ? m_target : cameraTarget, r.position, realParam(r, 1), realParam(r, 3), realParam(r, 4));
+			startMove(m_move.active ? m_target : cameraTarget, r.position, realParam(r, 1), realParam(r, 3), realParam(r, 4));
 		}
 		return;
 	}
@@ -88,9 +88,12 @@ void ScriptCameraDirector::apply(const ScriptClientRequest &r, const Coord3D &ca
 		if (r.hasPosition)
 		{
 			// (position, seconds, ease in, ease out): the move, the default angle (0) and the default pitch / zoom
-			startMove(m_hasTarget ? m_target : cameraTarget, r.position, realParam(r, 1), realParam(r, 2), realParam(r, 3));
+			startMove(m_move.active ? m_target : cameraTarget, r.position, realParam(r, 1), realParam(r, 2), realParam(r, 3));
+			// lane CAMPUI-1: a move or turn starts from where the camera is now (the player may have moved it since the last one), the director's own value only
+			// while one of its moves is still running
+			const float from = m_rotate.active ? m_angle : cameraAngle;
 			m_rotate.active = true;
-			m_rotate.from = m_hasAngle ? m_angle : cameraAngle;
+			m_rotate.from = from;
 			m_rotate.to = 0.0f;
 			m_rotate.ms = m_move.ms;
 			m_rotate.elapsed = 0.0;
@@ -105,8 +108,9 @@ void ScriptCameraDirector::apply(const ScriptClientRequest &r, const Coord3D &ca
 	{
 		// (rotations, seconds, ease in, ease out)
 		const float seconds = realParam(r, 1);
+		const float from = m_rotate.active ? m_angle : cameraAngle;
 		m_rotate.active = true;
-		m_rotate.from = m_hasAngle ? m_angle : cameraAngle;
+		m_rotate.from = from;
 		m_rotate.to = m_rotate.from + 2.0f * kPi * realParam(r, 0);
 		m_rotate.ms = seconds * 1000.0 < 1.0 ? 1.0 : seconds * 1000.0;
 		m_rotate.elapsed = 0.0;
@@ -139,6 +143,8 @@ void ScriptCameraDirector::apply(const ScriptClientRequest &r, const Coord3D &ca
 	{
 		m_captionLabel = r.params.empty() ? std::string() : r.params[0].stringValue;
 		m_captionMs = r.params.size() > 1 && r.params[1].type == 1 ? realParam(r, 1) * 1000.0 : (double)intParam(r, 1);
+		m_captionDurationMs = m_captionMs;
+		++m_captionSerial;
 		return;
 	}
 	if (a == "CAMERA_FADE_ADD" || a == "CAMERA_FADE_SUBTRACT" || a == "CAMERA_FADE_SATURATE" || a == "CAMERA_FADE_MULTIPLY")
@@ -173,15 +179,16 @@ void ScriptCameraDirector::apply(const ScriptClientRequest &r, const Coord3D &ca
 		// (waypoint, seconds, ease in, ease out, reverse): the camera turns to look from where it looks now toward the waypoint (ZH W3DView::lookAt donor)
 		if (r.hasPosition)
 		{
-			const Coord3D from = m_hasTarget ? m_target : cameraTarget;
+			const Coord3D from = m_move.active ? m_target : cameraTarget;
 			float to = std::atan2(r.position.x - from.x, r.position.y - from.y); // the viewer's angle: 0 looks north (+y), the view direction (sin, cos)
 			if (intParam(r, 4) != 0)
 			{
 				to += kPi;
 			}
 			const float seconds = realParam(r, 1);
+			const float fromAngle = m_rotate.active ? m_angle : cameraAngle;
 			m_rotate.active = true;
-			m_rotate.from = m_hasAngle ? m_angle : cameraAngle;
+			m_rotate.from = fromAngle;
 			m_rotate.to = to;
 			m_rotate.ms = seconds * 1000.0 < 1.0 ? 1.0 : seconds * 1000.0;
 			m_rotate.elapsed = 0.0;

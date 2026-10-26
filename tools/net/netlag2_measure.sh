@@ -7,6 +7,9 @@
 #     prints "NETLAG2 <name> ..." summary lines and "RESULT netlag2 <name>: PASS|FAIL" (every peer ran the frames, one final hash, no desync)
 #   tools/net/netlag2_measure.sh lan <out dir> <name> <players 2..4> <frames> [peer args...]
 #     the same game over a direct UDP lobby on 127.0.0.1 (no relay): the LAN baseline (add --link latency=MS for a slow LAN)
+#   tools/net/netlag2_measure.sh fixture <relay host:port> <key hex> <mode> <out dir> <name> <players 2..4> <frames> [peer args...]
+#     the same game with signed fixture STARTs (tools/net/online_client.py fixture) for a relay keyed with <key hex> (no lobby); <mode> 0 = today's
+#     lockstep, 1 = the relay keeps the beat (ROUTER-1); a scenario name "fx<mode>-..." in a batch runs this with $FX_RELAY / $FX_KEY
 #   tools/net/netlag2_measure.sh batch <lobby URL> <out dir> <control dir> <scenario>...
 #     scenario "name:players:frames[:peer arg,peer arg...]": before each one it writes <control dir>/want.<i> (the name) and waits for
 #     <control dir>/go.<i> (the operator has set the network conditions for it, e.g. netem on the relay), then writes done.<i>; a scenario whose name
@@ -71,6 +74,25 @@ game() { # <lobby> <out> <name> <players> <frames> [peer args...]
     summarize "$D" "$N" "$P" "$F"
 }
 
+fixture() { # <relay> <key hex> <mode> <out> <name> <players> <frames> [peer args...]
+    local RELAY="$1" KEY="$2" MODE="$3" OUT="$4" N="$5" P="$6" F="$7"; shift 7
+    local D="$OUT/$N" PROFILE pids=() s
+    rm -rf "$D"; mkdir -p "$D"
+    PROFILE="$("$PEER" --print-profile | head -n1)"
+    local fac=(3 8 5 7) slots=()
+    for s in $(seq 0 3); do [ "$s" -lt "$P" ] && slots+=(--slot "player,${fac[$s]},$s,$s,$s") || slots+=(--slot closed); done
+    python3 "$HERE/online_client.py" fixture --key-hex "$KEY" --game "$(printf '%016x' $((0x0E300000 + RANDOM)))" --relay "$RELAY" --profile "$PROFILE" \
+        --map "$MAP" --mode "$MODE" "${slots[@]}" --out-dir "$D" > "$D/fixture.log" 2>&1 || { echo "RESULT netlag2 $N: FAIL (fixture)"; return 1; }
+    for s in $(seq 0 $((P - 1))); do
+        slot_args "$s" "$@"
+        ( "$PEER" --online-start "$D/start-$s.json" --script --script-phase random --paced --frames "$F" --logic-threads 1 --report "$D/r$s.txt" "${SA[@]}" \
+            > "$D/peer$s.log" 2>&1; echo $? > "$D/rc$s.txt" ) &
+        pids+=($!)
+    done
+    wait "${pids[@]}"
+    summarize "$D" "$N" "$P" "$F"
+}
+
 lan() { # <out> <name> <players> <frames> [peer args...]
     local OUT="$1" N="$2" P="$3" F="$4"; shift 4
     local D="$OUT/$N" PORT pids=() s
@@ -96,6 +118,7 @@ lan() { # <out> <name> <players> <frames> [peer args...]
 case "${1:-}" in
     game) shift; game "$@" ;;
     lan) shift; lan "$@" ;;
+    fixture) shift; fixture "$@" ;;
     batch)
         LOBBY="$2"; OUT="$3"; CTL="$4"; shift 4; i=0; mkdir -p "$CTL"
         for sc in "$@"; do
@@ -104,7 +127,9 @@ case "${1:-}" in
             echo "$N" > "$CTL/want.$i"
             for _ in $(seq 1 3600); do [ -e "$CTL/go.$i" ] && break; sleep 1; done
             [ -e "$CTL/go.$i" ] || { echo "RESULT netlag2 $N: FAIL (no go from the operator)"; exit 1; }
-            if [ "$P" = lan2 ] || [ "$P" = lan4 ]; then lan "$OUT" "$N" "${P#lan}" "$F" "${ARGS[@]}"; else game "$LOBBY" "$OUT" "$N" "$P" "$F" "${ARGS[@]}"; fi
+            if [ "$P" = lan2 ] || [ "$P" = lan4 ]; then lan "$OUT" "$N" "${P#lan}" "$F" "${ARGS[@]}"
+            elif [[ "$N" =~ ^(base-)?fx([0-9])- ]]; then fixture "${FX_RELAY:?FX_RELAY}" "${FX_KEY:?FX_KEY}" "${BASH_REMATCH[2]}" "$OUT" "$N" "$P" "$F" "${ARGS[@]}"
+            else game "$LOBBY" "$OUT" "$N" "$P" "$F" "${ARGS[@]}"; fi
             touch "$CTL/done.$i"; i=$((i + 1))
         done
         touch "$CTL/finished" ;;

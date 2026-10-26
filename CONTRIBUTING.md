@@ -24,6 +24,13 @@ ln -s ../../tools/precommit.py .git/hooks/pre-commit      # Windows: copy it the
 
 Please also keep personal data out: no paths of your own machine, no e-mail addresses in files, no logs of your install.
 
+The gate also refuses conflict-marker lines in the **staged blob**, not the working tree, reporting the file and 1-based line number.
+It checks every changed text file (including pure renames): lines starting with seven `<` or seven `>`, and lines consisting of exactly
+seven `=` (LF or CRLF). NUL-containing binary blobs are skipped by this check only; the byte-format checks still apply. Markdown and
+AsciiDoc underlines of other lengths, such as `=====`, are allowed. The current tree has no matching documentation underlines or
+literal test fixtures, so there is **no allowlist and no path exemption**; tests should generate marker lines at runtime. Reads use one
+`git cat-file --batch` process, one blob at a time, to keep large commits fast without buffering all their contents.
+
 ## Opening a pull request
 
 1. Fork the repository and branch from `main`.
@@ -34,6 +41,20 @@ Please also keep personal data out: no paths of your own machine, no e-mail addr
    behaviour; we do not invent new rules. Simulation code must stay deterministic (it runs in lockstep multiplayer across Windows and
    Linux): its maths goes through `engine/src/GameLogic/SimMath.h`.
 4. Open the pull request against `main` and fill in the template.
+
+## Before you open a PR
+
+- Stage your changes with `git add`, then run `python3 tools/precommit.py` from the repository root. The commit gate checks staged
+  files, not unstaged edits.
+- Assert exact expected values in tests: for an expected count of 3, use `CHECK(count == 3);`, not `CHECK(count > 0);` or
+  `doctest::Approx`. If a bound really is needed, explain why with `// tolerance: <reason>` (GDScript `# tolerance: <reason>`) on the
+  same line or the line above.
+- If you add or close rows in `docs/STOPS.md`, run `python3 tools/stops_count.py --write` and include the updated `README.md` count.
+- Retail-data tests need your own game files through `ROTWK_INSTALL` and `BFME2_INSTALL`; they skip without them, as on public CI.
+  The Godot smoke test also needs the installed games. Never add game files to your PR.
+- Install the Python test dependencies with `python -m pip install -r tools/requirements-test.txt` (a virtual environment is handy).
+- Run the Python tests with `python -m pytest -n 6 -q tools`. Some tests also need game files, built helpers or extra dependencies;
+  public CI runs the subset that needs none of those.
 
 ## What we check
 

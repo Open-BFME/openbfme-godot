@@ -9,6 +9,7 @@
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 #endif
 
+#include "Common/Thing/KindOfTokens.h"
 #include "GameLogic/Module/OpenContain.h"
 
 #include "Common/AsciiString.h"
@@ -69,7 +70,7 @@ void OpenContainModuleData::parsePassengerBonePrefix(INI *ini, void *, void *sto
 		throw INIException(3, "KindOf expected"); // RW 0xC59A8C
 	}
 	PassengerBonePrefixEntry entry;
-	ParseBitFlags(ini, entry.kindOf.data(), entry.kindOf.size(), TheKindOfNames);
+	ParseBitFlags(ini, entry.kindOf.data(), entry.kindOf.size(), KindOfTokens::names()); // lane MODS-3
 	entry.bonePrefix = name;
 	list->push_back(entry);
 }

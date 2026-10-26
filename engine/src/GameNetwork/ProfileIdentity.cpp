@@ -19,7 +19,7 @@
 namespace
 {
 // the owned formats and rules a peer must share: bump the number of the one that changes
-const char *const kFeatures = "net-wire 2, game-message 2, replay 2, lobby 2, state-hash-sections 1, lockstep-frame-model 1";
+const char *const kFeatures = "net-wire 3, game-message 2, replay 2, lobby 2, state-hash-sections 1, lockstep-frame-model 1";
 const char *const kNumeric = "IEEE binary32/binary64 through the numeric facade, canonical MXCSR 0x1F80 (round to nearest), no FMA contraction";
 
 std::vector<std::string> lines(const std::string &t)
@@ -46,7 +46,7 @@ const char *ProfileIdentity::gitProvenance()
 }
 
 ProfileIdentity ProfileIdentity::compute(const std::vector<MountedArchive> &archives, RandomAlgorithm rng, const std::vector<std::string> &extraFeatures,
-	SimulationProfile profile)
+	SimulationProfile profile, const std::vector<std::string> &modLines)
 {
 	std::ostringstream o;
 	o << "openbfme-profile 1\n";
@@ -62,7 +62,23 @@ ProfileIdentity ProfileIdentity::compute(const std::vector<MountedArchive> &arch
 	o << "\n";
 	o << "numeric " << kNumeric << "\n";
 	o << "rng " << (rng == RandomAlgorithm::ZH_CarryChain ? "ZH_CarryChain" : "RotWK_GameDat_LCG") << "\n";
-	o << "mods none\n";
+	if (modLines.empty())
+	{
+		o << "mods none\n";
+	}
+	else
+	{
+		size_t sources = 0;
+		for (const std::string &l : modLines)
+		{
+			sources += l.compare(0, 4, "mod ") == 0 ? 1 : 0;
+		}
+		o << "mods " << sources << "\n";
+		for (const std::string &l : modLines)
+		{
+			o << l << "\n";
+		}
+	}
 	for (size_t i = 0; i < archives.size(); ++i)
 	{
 		const MountedArchive &a = archives[i];
@@ -124,16 +140,37 @@ std::string ProfileIdentity::difference(const ProfileIdentity &ours, const Profi
 	return out;
 }
 
-// lane NETLAG-1: the recordings of builds before the one-frame command delay play back here. The delay only decides WHICH batch a live command lands in;
-// a recording holds every batch's commands as they ran, so playback never reads the run-ahead. VERIFIED, not assumed: each id below has a fixture
-// recording in engine/tests/data/netlag1 that the test "netlag1 replay: ..." plays with every hash equal (a build whose recordings stop matching is
-// removed from this list). Ids come from cmake -DOPENBFME_ID_ROOT=<engine dir> -P cmake/EngineId.cmake at the commit.
+// lane NETLAG-1: historical engine identities whose recordings are accepted when only the engine line differs. The fixture test reads the old
+// recording, checks its identity and plays every frame; historical hash mismatches are reported, not required to be zero. Hash equality is checked
+// separately with a recording made by the current simulation using the old command path and engine id; this list does not guarantee it for old builds.
+// Ids come from cmake -DOPENBFME_ID_ROOT=<engine dir> -P cmake/EngineId.cmake at the commit.
 const std::vector<ProfileIdentity::VerifiedEngine> &ProfileIdentity::verifiedReplayEngines()
 {
 	static const std::vector<VerifiedEngine> v = {
 		{ "e2a8e912ec797b1969fafeb7df6d18a264b9aa2723ced5109490ff5b2ce0bfbb", "q19 tree b093e098 with NETLAG-1's command-delay sources reverted (before NETLAG-1), fixture engine/tests/data/netlag1/prelane_runahead2.replay" },
 	};
 	return v;
+}
+
+// BATCH-P4 (the online batch's `net-wire 3`): the features line's `net-wire N` names the live datagram format only (peers, relay, lobby); a recording
+// never reads it, so for REPLAY playback two features lines that differ in that entry alone are the same. Every other feature still has to match
+static bool sameFeaturesButNetWire(const std::string &a, const std::string &b)
+{
+	if (a.rfind("features ", 0) != 0 || b.rfind("features ", 0) != 0)
+	{
+		return false;
+	}
+	auto strip = [](std::string line) {
+		const size_t at = line.find("net-wire ");
+		if (at == std::string::npos)
+		{
+			return line;
+		}
+		size_t end = line.find(", ", at);
+		end = end == std::string::npos ? line.size() : end + 2;
+		return line.erase(at, end - at);
+	};
+	return strip(a) == strip(b);
 }
 
 bool ProfileIdentity::replayCompatible(const ProfileIdentity &ours, const ProfileIdentity &theirs, std::string *engine)
@@ -146,7 +183,7 @@ bool ProfileIdentity::replayCompatible(const ProfileIdentity &ours, const Profil
 	std::string theirEngine;
 	for (size_t i = 0; i < a.size(); ++i)
 	{
-		if (a[i] == b[i])
+		if (a[i] == b[i] || sameFeaturesButNetWire(a[i], b[i]))
 		{
 			continue;
 		}

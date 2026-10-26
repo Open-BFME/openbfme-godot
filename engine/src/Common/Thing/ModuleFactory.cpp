@@ -2,6 +2,7 @@
 // ModuleFactory: see ModuleFactory.h for the RotWK addresses and the stops.
 
 #include "Common/Thing/ModuleFactory.h"
+#include "Common/ModEngineFeatures.h"
 
 #include "GameLogic/Module/UnportedModule.h"
 
@@ -31,9 +32,16 @@ void ModuleFactory::init()
 	// Name keys are handed out in call order, so the registrations are replayed in the order the binary executes
 	// them (RW 0x464AD2 runs the 0x6579C9 function, 310 non-draw classes starting with AutoHealBehavior, before the draw
 	// classes), not in the golden's class order; a repeated registration (WeaponBonusUpgrade) reuses its key.
+	// lane MODS-3: edain-unchained.object-image-upgrade's registration (its 0xEF3128 replaces the TooltipUpgrade addModule call at RW 0x65A7F3: that
+	// one, then "ObjectImageUpgrade", interface mask 0x84, a behavior)
+	const bool objectImage = ModEngineFeatures::has(ModEngineFeature::EdainUnchainedObjectImageUpgrade);
 	for (const auto &step : data.registrationSequence)
 	{
 		makeDecoratedNameKey(step.first, (ModuleType)step.second);
+		if (objectImage && step.first == "TooltipUpgrade" && (ModuleType)step.second == MODULETYPE_BEHAVIOR)
+		{
+			makeDecoratedNameKey("ObjectImageUpgrade", MODULETYPE_BEHAVIOR);
+		}
 	}
 	for (const RwClass &cls : data.classes)
 	{
@@ -78,6 +86,27 @@ void ModuleFactory::init()
 		{
 			m_order.push_back(key);
 		}
+		if (objectImage && cls.name == "TooltipUpgrade" && cls.type == MODULETYPE_BEHAVIOR)
+		{
+			const NameKeyType imageKey = makeDecoratedNameKey("ObjectImageUpgrade", MODULETYPE_BEHAVIOR);
+			ModuleTemplate &image = m_templates[imageKey];
+			image.name = "ObjectImageUpgrade";
+			image.type = MODULETYPE_BEHAVIOR;
+			image.interfaceMask = 0x84;
+			image.typed = false;
+			image.portedModule = false; // UpgradeModuleClasses binds its data and runtime (bindTypedData / bindRuntime)
+			image.newModuleData = [](INI *) -> std::shared_ptr<ModuleData> {
+				throw std::logic_error("ModuleFactory: ObjectImageUpgrade has no data class bound (UpgradeModuleClasses registers it)");
+			};
+			image.newModule = [](Thing *thing, const ModuleData *d, const ModuleTemplate &info) -> std::unique_ptr<Module> {
+				return makeUnportedModule(thing, d, info.name, info.type, info.interfaceMask);
+			};
+			m_order.push_back(imageKey);
+		}
+	}
+	if (objectImage && !m_templates.count(makeDecoratedNameKey("ObjectImageUpgrade", MODULETYPE_BEHAVIOR)))
+	{
+		throw std::logic_error("ModuleFactory: edain-unchained.object-image-upgrade needs TooltipUpgrade in the binary's registry");
 	}
 }
 

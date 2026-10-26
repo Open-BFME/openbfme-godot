@@ -259,7 +259,8 @@ TEST_CASE("script actions: PLAYER_SET_MONEY / GIVE_MONEY, PLAYER_RELATES_PLAYER,
 	g.lists[1].items.push_back(item(script("once", { { cond("CONDITION_TRUE", {}) } },
 		{ act("PLAYER_SET_MONEY", { sp(11, "<This Player>"), ip(0, 1000) }), act("PLAYER_GIVE_MONEY", { sp(11, "<This Player>"), ip(0, -300) }),
 			act("PLAYER_RELATES_PLAYER", { sp(11, "Alice"), sp(11, "Bob"), ip(19, 2) }), act("SHOW_MILITARY_CAPTION", { sp(25, "SCRIPT:X"), rp(3.0f) }),
-			act("VICTORY", {}), act("GATE_OPEN", { sp(14, "nobody") }), act("SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER", { sp(11, "<This Player>"), sp(15, "GondorFighter"), sp(4, "kills") }) },
+			act("VICTORY", {}), act("GATE_OPEN", { sp(14, "nobody") }), act("SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER", { sp(11, "<This Player>"), sp(15, "GondorFighter"), sp(4, "kills") }),
+			act("TEAM_ATTACK_TEAM", { sp(3, "nobody"), sp(3, "nobody") }) },
 		{}, true)));
 	g.start();
 	g.frame();
@@ -275,11 +276,12 @@ TEST_CASE("script actions: PLAYER_SET_MONEY / GIVE_MONEY, PLAYER_RELATES_PLAYER,
 	REQUIRE(g.engine().endRequests().size() == 1);
 	CHECK(g.engine().endRequests()[0].victory);
 	CHECK(g.engine().stats().unportedActions.count("GATE_OPEN") == 0);
-	CHECK(g.engine().stats().unportedActions.count("SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER") == 1); // lane DEVPORT-7: unported in the archive and in OWNERFIX-1 (S-1363)
+	CHECK(g.engine().stats().unportedActions.count("SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER") == 0); // lane SCRIPT-4 ported it (RW 0x7C38F6)
+	CHECK(g.engine().stats().unportedActions.count("TEAM_ATTACK_TEAM") == 1); // AIAttackSquadState is not ported (S-1186)
 	bool found = false;
 	for (const std::string &s : g.lw.logic->report().stops)
 	{
-		found = found || s.find("[S-1180] script action not ported (did nothing): SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER x1") != std::string::npos;
+		found = found || s.find("[S-1180] script action not ported (did nothing): TEAM_ATTACK_TEAM x1") != std::string::npos;
 	}
 	CHECK(found);
 }
@@ -519,7 +521,7 @@ TEST_CASE("script camera director: MOVE_CAMERA_TO / RESET_CAMERA / ROTATE_CAMERA
 	CHECK(d.captionLabel().empty());
 }
 
-TEST_CASE("script engine: stop lines (S-1180 .. S-1189) reach the logic report once a game's scripts are loaded")
+TEST_CASE("script engine: stop lines (S-1180 .. S-1190) reach the logic report once a game's scripts are loaded")
 {
 	const std::vector<std::string> lines = ScriptEngine::stopLines();
 	std::set<std::string> ids;
@@ -527,7 +529,7 @@ TEST_CASE("script engine: stop lines (S-1180 .. S-1189) reach the logic report o
 	{
 		ids.insert(l.substr(0, 8));
 	}
-	CHECK(ids == std::set<std::string>{ "[S-1180]", "[S-1181]", "[S-1182]", "[S-1183]", "[S-1184]", "[S-1185]", "[S-1186]", "[S-1187]", "[S-1188]", "[S-1189]" });
+	CHECK(ids == std::set<std::string>{ "[S-1180]", "[S-1181]", "[S-1182]", "[S-1183]", "[S-1184]", "[S-1185]", "[S-1186]", "[S-1187]", "[S-1188]", "[S-1189]", "[S-1190]" });
 	ScriptGame g;
 	bool before = false;
 	for (const std::string &s : g.lw.logic->report().stops)
@@ -539,7 +541,7 @@ TEST_CASE("script engine: stop lines (S-1180 .. S-1189) reach the logic report o
 	size_t after = 0;
 	for (const std::string &s : g.lw.logic->report().stops)
 	{
-		after += s.rfind("[S-118", 0) == 0 ? 1 : 0;
+		after += s.rfind("[S-118", 0) == 0 || s.rfind("[S-1190]", 0) == 0 ? 1 : 0;
 	}
 	CHECK(after == lines.size());
 }

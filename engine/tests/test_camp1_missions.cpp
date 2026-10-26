@@ -9,6 +9,7 @@
 #include "GameLogic/Module/AttachUpdate.h"
 #include "GameLogic/SimMath.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <map>
 
@@ -86,6 +87,8 @@ TEST_CASE("camp1 survey: every Angmar mission's unported script content in its f
 	const char *frames = std::getenv("CAMP1_SURVEY");
 	if (!frames)
 	{
+		std::printf("SKIP: camp1 survey needs CAMP1_SURVEY (opt-in diagnostic); not run\n");
+		std::fflush(stdout);
 		return;
 	}
 	for (const char *map : { "map ang amon sul", "map ang dark eye", "map ang barrow downs", "map ang carn dum", "map ang barrow wights", "map ang fornost",
@@ -200,6 +203,8 @@ TEST_CASE("camp1 probe: CAMP1_PROBE=<map> CAMP1_FRAMES=<n> logs the mission's pr
 	const char *map = std::getenv("CAMP1_PROBE");
 	if (!map)
 	{
+		std::printf("SKIP: camp1 probe needs CAMP1_PROBE (opt-in diagnostic); not run\n");
+		std::fflush(stdout);
 		return;
 	}
 	OPENBFME_REQUIRE_START(s);
@@ -357,7 +362,14 @@ TEST_CASE("camp1 dark eye: MAP ANG Dark Eye plays from its intro to the victory 
 	// lane CAMP-1H: Team::updateState / updateGenericScripts (RW 0x7A208C / 0x7A267D) over the playthrough. Lane MOVE-3: since the horde goal reservation
 	// (RW 0x86EF13) and the hordes' own footprint (RW 0x6ED071) the Builder & Friends team's generic hook "Notify Player of Builder" fired once in this run;
 	// MOVE-3 r3 (a horde's straight-line test with radius 1, RW 0x6EE12D, and the other review fixes) moves the team as before MOVE-3 and it no longer fires
-	expectTeamScripts(m, 11, 0, 0);
+	// lane MODS-3: the Arnor / Men teams' generic hooks ("/Ping Shard 0N", "Generic Shard Return ...") look the shards up by name from their own side; since
+	// SET_REF_TO_* writes the reference and the named cache as retail does (RW 0x7C3FAD / 0x7C3FBB), they see them: 28 runs (was 0)
+	// merge queue q24: 0 again on the merged tree. Measured on the archive 92fefaadf (MERGEQ-23's TARGET-1 / ATTACKPATH-1 / FLANK-1 / PRODUCTION1 / LUMBER1) with
+	// MODS-3 alone (no CAMPUI-1, OFFMAP-1 or SCRIPT-4): 0 as well, so MERGEQ-23's fights move the playthrough off the shard hooks' conditions; MODS-3's lane
+	// tree (on q22) measured 28. An engine pin of the playthrough, not a retail value
+	// merge queue q26: the formations centred on their hordes (community #73, RW 0x86C4EA) move the team otherwise and it fires once again (as #73's own port
+	// measured)
+	expectTeamScripts(m, 11, 0, 1);
 }
 
 namespace
@@ -645,7 +657,9 @@ TEST_CASE("camp1 bonus: MAP ANG Bonus (ANGMAR_BONUS_CAMPAIGN) plays from its int
 	m.kill(*wk);
 	REQUIRE(d.until([&] { return m.flag("PlyrAngmarWitchKing/Flag - WK Defeated"); }, 100));
 	expectVictory(m, 300);
-	expectTeamScripts(m, 0, 0, 80); // lane CAMP-1H: Team::updateState / updateGenericScripts (RW 0x7A208C / 0x7A267D) over the playthrough
+	// lane CAMP-1H: Team::updateState / updateGenericScripts (RW 0x7A208C / 0x7A267D) over the playthrough. Lane TARGET-1: 84 (was 80): RotWK's target choice
+	// and mood-check timing make the fights, so the playthrough, last a few team updates longer
+	expectTeamScripts(m, 0, 0, 84);
 }
 
 TEST_CASE("camp1 determinism: MAP ANG Dark Eye twice with the same player's part agrees on every frame's state hash (AttachUpdate, the attacked-by flags, "

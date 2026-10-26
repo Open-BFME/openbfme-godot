@@ -237,6 +237,7 @@ static func extract(archive: String, kind: String, top: String, dest: String) ->
 		var ok := f.store_buffer(m.data)
 		f.flush()
 		var err := f.get_error()
+		ok = ok and f.get_length() == m.data.size()
 		f.close()
 		if not ok or err != OK:
 			return {"ok": false, "error": "writing %s failed (%s): is the disk full?" % [target, error_string(err) if err != OK else "short write"], "files": {}}

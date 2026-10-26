@@ -191,6 +191,9 @@ public:
 	int64_t find_object_by_template(const String &template_name) const;
 	// lane BUILD-1: the first real model of the template's draw modules (its default model condition state), "" when it has none: what the placement ghost shows
 	String get_template_model(const String &template_name) const;
+	// Ping wheel (not retail, presentation only): the BeaconName of player `player_index`'s PlayerTemplate (RotWK's multiplayer beacon object, e.g. its
+	// MultiplayerBeacon), "" when the player or the name is missing. Reads the start-time player template only, never the simulation's state
+	String get_player_beacon_template(int64_t player_index) const;
 	// lane PLAY-1: what PlayerTribute.apt reads of this game and its Send (GameClient/GUI/TributeInfo.h); valid while the world lives (null-safe without a game)
 	TributeSource *tribute_source();
 
@@ -346,6 +349,15 @@ public:
 	// steps the script camera director by `delta_ms` of render time: { moving, has_target, x, y, z (SAGE), has_angle, angle, reset_view, letterbox,
 	// input_disabled, caption (label), caption_text (the game text), caption_ms, fade }; `camera` gives the current look-at { x, y, z, angle } (the start of a move)
 	Dictionary update_script_view(double delta_ms, const Dictionary &camera);
+	// lane CAMPUI-1: InGameUI.ini's MilitaryCaption* rows with language.ini's caption fonts (MilitaryCaptionSettings): { ok, error, color (Color),
+	// position (Vector2 fractions), centered, font, point_size, bold, title_font, title_point_size, title_bold, delay_ms }
+	Dictionary get_military_caption_settings() const;
+	// lane CAMPUI-1: TheMissionObjectiveTracker (GameLogic::missionObjectives): { has_list, screen_enabled, objectives: [{ label, text (the game text, UTF-8),
+	// bonus, shown, completed }] in list order (main then bonus), held (read now; else the last held frame's copy) }
+	Dictionary get_mission_objectives();
+	// lane CAMPUI-1: { ok, image }: the ThingTemplate's ButtonImage (RW 0x73CFEF: ThingTemplate + 0x78; "" when it has none); ok false: no such template
+	// (DISPLAY_NOTIFICATION_BOX_WITH_OBJECT_TYPE_IMAGE_OVERRIDE then keeps the type's icon, RW 0x6D1305)
+	Dictionary get_template_button_image(const String &name) const;
 	// { loaded, sides: [ { name, scripts, groups } ], scripts, groups, updates, scripts_evaluated, scripts_fired, false_fired, actions_run, conditions_evaluated,
 	// unported_conditions: { name: count }, unported_actions, client_requests, notes, end_requests: [ { frame, player, victory, action } ], setup (the sides' lists) }
 	Dictionary get_script_report() const;
@@ -363,6 +375,20 @@ public:
 	Dictionary debug_script_place_at(const String &name, double x, double y);
 	Dictionary debug_script_kill_team(const String &name);
 	static void bindScriptMethods();
+	// ---- lane CHEAT-1 (GodotDevice/GodotGameWorldCheats.cpp): the open Cheat Mode (GameLogic/CheatMode.h; the API: docs/CHEAT_MODE.md) ----
+	// { enabled, seat_slot, seat_player, seat_name, local_is_seat, voided, executed, refused, label }
+	Dictionary cheat_info() const;
+	// the game's players: [ { index, name, side, defeated } ]
+	Array cheat_players() const;
+	// the units and heroes of a player's side: [ { template, id, hero, label (the DisplayName label) } ], heroes first
+	Array cheat_units(int64_t player) const;
+	// a player's living heroes that can gain levels: [ { id, template, label, level } ]
+	Array cheat_heroes(int64_t player) const;
+	// queues MSG_OPENBFME_CHEAT for the local player (only the cheat seat): { command, target, value, template, object, x, y } -> { ok, error }
+	Dictionary cheat_command(const Dictionary &command);
+	// the announced lines since the last call: [ { frame, text, executed, command, template, label (a spawn's / level up's unit and its DisplayName) } ]
+	Array take_cheat_lines();
+	static void bindCheatMethods();
 	// ---- lane CAMP-1 (GodotDevice/GodotGameWorldCampaign.cpp): the linear campaigns ----
 	// TheLinearCampaignManager's campaigns: [ { name, display_label, intro_movie, carryover: [..], missions: [ { name, map, intro_movie, load_screen_image,
 	// load_screen_music, fade_up_frames, delay_carryover: [..] } ] } ] (the world must be set up)
@@ -505,6 +531,9 @@ public:
 	String net_profile_digest() const;
 	Dictionary net_begin(const Dictionary &options);
 	Dictionary net_status() const;
+	// lane ANTICHEAT-1 (C++ only, from the HUD): the local player's view for the relay's log of an online game it plays (not a spectator, not LAN):
+	// Network::submitView with the logic frame shown; ignored otherwise
+	void net_submit_view(float cameraX, float cameraY, float cursorX, float cursorY, bool cursorOverWorld);
 	// the local player leaves the game (PLAYERLEAVE after the frames it announced), the recording is closed; waits up to 2 s for the acks
 	void net_finish();
 	// lane MP-3: the per-frame census of a net_begin({"census": true}) game as CSV (frame, sim_us, battalions, troops, objects); {ok, rows | error}
@@ -518,6 +547,22 @@ public:
 	// catch-up (the relay's log, no rendering of the skipped frames) until net_status().rejoin.state is "live" (or "failed", with the reason)
 	void net_pause();
 	void net_resume();
+	// ---- lane CHAT-1: the in-game chat over the game's network (GameNetwork/Network.h sendChat / takeChat; GameClient/InGameChat.h) ----
+	// net_chat_info: { network (a LAN / online game this client plays in: not single player, a replay, a spectator or a rejoin's catch-up), local_slot,
+	// local_active, slots: [{ player, local, active, allied (both ways with the local player), muted, name, color (0xRRGGBB) }] }.
+	// net_chat_send(line, mask): Network::sendChat of the formatted line ("<Team> hi") to the slots of `mask`: { ok | error }.
+	// net_chat_take: the lines shown since the last call [{ slot, name, text, color }] (the sender's player colour; -1 without a player).
+	// net_chat_set_muted: the players screen's mute of a slot (GameSlot + 0xA); net_chat_stats: the network's chat counters
+	Dictionary net_chat_info() const;
+	Dictionary net_chat_send(const String &line, int64_t mask);
+	int64_t net_chat_mask(int64_t mode) const; ///< InGameChat::recipientMask of the window's mode over net_chat_info's slots (RW 0x8ECF3E)
+	Array net_chat_take();
+	void net_chat_set_muted(int64_t slot, bool muted);
+	Dictionary net_chat_stats() const;
+	// lane CHAT-1: the disconnect screen's chat (Network::sendDisconnectChat; NETCOMMANDTYPE_DISCONNECTCHAT): send a line { ok | error }, take the lines
+	// received [{ slot, name, text }]
+	Dictionary net_disconnect_chat(const String &text);
+	Array net_disconnect_chat_take();
 	// lane ONLINE-3: a spectator START (net_online with the lobby's /v1/games/<id>/spectate START: {ok, spectator, delay}) makes net_begin watch the game:
 	// no slot, the ReplayObserver side is the local player (the map revealed, RW 0x62F91A), _process catches up from the relay's log and then follows
 	// it (NetGameSession::spectateStep; nothing is sent, the local input is ignored); net_status().spectate: state ("binding" / "catching_up" / "live" /
@@ -657,6 +702,11 @@ private:
 	void refresh_shroud(bool force);
 	Ref<godot::ImageTexture> m_shroudTexture;
 	bool m_shroudDrawn = true;
+	// lane BIGBATTLE-1: the shroud parameters the terrain's materials were last given (refresh_shroud visits them only when one changes)
+	bool m_shroudParamsSet = false;
+	bool m_shroudParamEnabled = false;
+	Vector2 m_shroudParamOrigin, m_shroudParamExtent;
+	Color m_shroudParamColor;
 	void refresh_streaks(bool record = true); ///< RENDER-1: W3DStreakDraw trails of the live drawables (S-391)
 	void remove_view(uint32_t drawableId);
 
@@ -668,7 +718,7 @@ private:
 	std::string m_videosError;             // lane CAMP-1H: why the Video INIs did not load
 	std::unique_ptr<GameLogicSettings> m_settings;   ///< GameData / AIData / MultiplayerSettings (and the lobby colours), read once by setup()
 	std::unique_ptr<MapObjectOptions> m_options;
-	std::unique_ptr<ArchiveW3DFileSource> m_source;
+	std::unique_ptr<W3DFileSource> m_source;
 	std::unique_ptr<WW3DAssetManager> m_assets;
 	mutable UnsignedInt m_netHashFrame = 0;   ///< lane RENDERWAIT-1: net_status's last state hash (computed where the logic is held) and its frame
 	mutable std::uint32_t m_netHash = 0;
@@ -730,6 +780,7 @@ private:
 	std::unique_ptr<EndGameController> m_endGame;
 	std::unique_ptr<ScriptCameraDirector> m_scriptView;     // lane SCRIPT-1
 	std::vector<ScriptClientRequest> m_pendingScriptRequests; // lane SCRIPT-1: taken from the game, not applied to the director yet
+	Dictionary m_objectivesView; // lane CAMPUI-1: the tracker as last read in a held frame (get_mission_objectives)
 	std::vector<ScriptClientRequest> m_pendingScriptAudio;    // lane RENDERWAIT-1 r2: taken, their audio not applied yet (waits for a held logic)
 	unsigned long long m_scriptAudioApplied = 0; // RENDERWAIT-1 r3: requests handed to the audio side (test counter)
 	void applyPendingScriptAudio();

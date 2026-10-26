@@ -53,6 +53,7 @@
 #include "Common/RandomValue.h"
 #include "Common/StateHash.h"
 #include "GameLogic/Module/HordeContain.h"
+#include "GameLogic/SimMath.h"
 
 #include <functional>
 #include <list>
@@ -89,6 +90,15 @@ public:
 	{
 		Coord3D position{ 0.0f, 0.0f, 0.0f };
 		float angle = 0.0f;
+		// lane UBER-2B: cos / sin of `angle` (SimMath::cosf32 / sinf32) computed once for a whole member pass instead of per member; the same values
+		bool hasTrig = false;
+		float cosAngle = 0.0f, sinAngle = 0.0f;
+		void computeTrig()
+		{
+			cosAngle = SimMath::cosf32(angle);
+			sinAngle = SimMath::sinf32(angle);
+			hasTrig = true;
+		}
 	};
 
 	// RW 0x73D5C2: does a member of this template belong in a slot of this UnitType?
@@ -99,17 +109,28 @@ public:
 	// `data` and `rng` must outlive the core. A null matcher is a logic error (no default matching rule).
 	HordeContainCore(const HordeContainModuleData &data, GameLogicRandom &rng, UnitTypeMatcher matcher);
 
+	// RW 0x6D1305 then ThingTemplate + 0x109 bit 3 (KindOf MACHINE): is the template named by a rank's UnitType a machine? Set before buildSlots; without
+	// it no rank is a machine's.
+	typedef std::function<bool(const std::string &unitType)> MachineTest;
+
 	void setMemberSlotChanged(MemberSlotChanged cb) { m_slotChanged = std::move(cb); }
+	void setMachineTest(MachineTest test) { m_isMachine = std::move(test); }
 	void setBannerCarrierId(ObjectId id) { m_bannerCarrierId = id; }   // H+0x26C
 	void setOtherNonSlotId(ObjectId id) { m_otherNonSlotId = id; }     // H+0x264 (identity unproven)
 
 	// RW 0x877751. Rebuilds the slot table (retail does this when the contain is created and when the formation
-	// is swapped); existing member indices are kept.
+	// is swapped); existing member indices are kept. After the ranks' slots it appends a slot at LeaderPosition (RW 0x877A17 .. 0x877A34, with
+	// LeadersAllowed) and one per BannerCarrierPosition entry (RW 0x8776BB, with BannerCarriersAllowed), then centres the table (RW 0x86C4EA).
 	void buildSlots(bool fromScratch);
+	// The slot RW 0x8776BB appended for BannerCarrierPosition entry `entry` (the banner carrier's place, centred with the rest), or -1 when none was.
+	int bannerSlot(size_t entry) const;
 
 	// RW 0x873F30: returns the slot index taken, or -1 when no free slot of a matching rank exists (the member
 	// is then in the contain list without a slot).
 	int addMember(ObjectId id, const std::string &templateName);
+	// lane MODS-3: addMember's search without taking the slot (edain-unchained.horde-exit-absorption)
+	bool hasFreeSlotFor(const std::string &templateName) const;
+	bool built() const { return m_built; }
 	// RW 0x87370B / 0x87393E. `templateIsSpecial` is ThingTemplate+0x109 bit 3.
 	void removeMember(ObjectId id, bool templateIsSpecial);
 	// lane GARRISON-3: a member released through HordeContainInterface slot 0xA8 (RW 0x86EBF4 -> OpenContain's removal RW 0x8665BE / 0x865EB6 ->
@@ -166,6 +187,7 @@ private:
 	const HordeContainModuleData &m_data;
 	GameLogicRandom &m_rng;
 	UnitTypeMatcher m_matcher;
+	MachineTest m_isMachine;
 	MemberSlotChanged m_slotChanged;
 	std::vector<Slot> m_slots;                 // H+0x188
 	std::map<ObjectId, int> m_memberIndex;     // H+0x17C

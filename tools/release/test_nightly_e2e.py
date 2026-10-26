@@ -1,4 +1,5 @@
-"""Lane NIGHTLY-1: autorelease.sh --nightly end to end in the stand-in mode of test_autorelease.py (same World fixture)."""
+"""Lane NIGHTLY-1: autorelease.sh --nightly end to end in the stand-in mode of test_autorelease.py (same World fixture). Lane NIGHTLY-2: two
+nightlies a day; the run's clock is the stand-in's OPENBFME_RELEASE_NIGHTLY_CLOCK (UTC YYYYMMDDHH), 07:00Z on 2026-10-23 unless a test says."""
 from __future__ import annotations
 
 import datetime as dt
@@ -11,6 +12,21 @@ import pytest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from test_autorelease import World, git, run, TARGET  # noqa: E402,F401
+from test_autorelease import autorelease, zip_of  # noqa: E402
+
+
+@pytest.mark.parametrize("packed", [False, True])
+def test_signature_sync_word_is_not_audio_but_tagged_audio_is_refused(packed):
+    # A fixed reproduction of the random-signature collision, not a filename exemption.
+    for header, expected in ((bytes([255, 251, 144, 0]), False), (b"ID3\x00", True)):
+        signature = header + bytes(60)
+        audit = autorelease.SyncAudit(top=True)
+        name = "manifest.json.sig"
+        if packed:
+            signature = zip_of({"openbfme-v0.4.5-windows-x64/payload.json.sig": signature})
+            name = "package.zip"
+        audit.blob(name, signature)
+        assert any("audio" in problem for problem in audit.problems) == expected, audit.problems
 
 LLM = r'''#!/usr/bin/env python3
 import json, sys
@@ -60,8 +76,12 @@ sys.exit(subprocess.call([{str(w.gh)!r}] + a))
     return w
 
 
+MORNING = "2026102307"   # the 07:00Z run: v<x.y.z>-nightly.261023100
+EVENING = "2026102319"   # the 19:00Z run: v<x.y.z>-nightly.261023200
+
+
 def nightly_env(w, **extra) -> dict:
-    return {"OPENBFME_NIGHTLY_LLM": w.llm, "AR_NIGHTLY_LOG": str(w.ar_log), **extra}
+    return {"OPENBFME_NIGHTLY_LLM": w.llm, "AR_NIGHTLY_LOG": str(w.ar_log), "OPENBFME_RELEASE_NIGHTLY_CLOCK": MORNING, **extra}
 
 
 def stable(w) -> str:
@@ -78,7 +98,8 @@ def nightly(w, sha: str, *args: str, **env):
 
 
 def today() -> str:
-    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
+    """the nightly number of the default clock (MORNING)"""
+    return "261023100"
 
 
 def new_commit(w, n: str = "3") -> str:
@@ -96,9 +117,9 @@ def test_nightly_publishes_a_prerelease(world):
     tag = f"v0.4.6-nightly.{today()}"
     assert f"AUTORELEASE OK {tag}" in r.stdout, r.stdout
     rel = w.gh_data()["releases"][-1]
-    d = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
     assert rel["tag_name"] == tag and rel["prerelease"] is True and rel["draft"] is False
-    assert rel["name"] == f"OpenBFME Nightly 0.4.6 ({d})", rel["name"]
+    assert rel["name"] == "OpenBFME Nightly 0.4.6 (2026-10-23, morning)", rel["name"]
+    assert "made automatically twice a day" in rel["body"], rel["body"]
     assert "## What to test" in rel["body"] and "Units walk around obstacles again." in rel["body"], rel["body"]
     assert "## Thanks to our community" not in rel["body"]
     assert (w.state / "nightly/last-released").read_text().split()[:2] == [head, tag]
@@ -109,21 +130,43 @@ def test_nightly_publishes_a_prerelease(world):
 
 
 def test_second_nightly_same_day(world):
+    # NIGHTLY-2: the evening run of the same day publishes its own nightly, above the morning's; a third in the same half day is refused
     w = world
     stable(w)
     head = new_commit(w)
     assert nightly(w, head).returncode == 0
     n = len(w.gh_data()["releases"])
     # nothing changed: skipped
-    r = nightly(w, head)
+    r = nightly(w, head, OPENBFME_RELEASE_NIGHTLY_CLOCK=EVENING)
     assert r.returncode == 0 or "AUTORELEASE SKIP" in r.stdout or "last released" in r.stdout, r.stdout
     assert len(w.gh_data()["releases"]) == n
-    # an engine change the same day: refused, one nightly per date
+    # an engine change the same evening: the evening nightly, with the notes since the morning's
     head2 = new_commit(w, "4")
-    r = nightly(w, head2)
-    assert r.returncode != 0 and "one nightly per date" in (r.stdout + r.stderr).lower().replace("per day", "per date"), r.stdout + r.stderr
+    r = nightly(w, head2, OPENBFME_RELEASE_NIGHTLY_CLOCK=EVENING)
+    assert r.returncode == 0 and "AUTORELEASE OK v0.4.6-nightly.261023200" in r.stdout, r.stdout + r.stderr
+    rel = w.gh_data()["releases"][-1]
+    assert rel["tag_name"] == "v0.4.6-nightly.261023200" and rel["name"] == "OpenBFME Nightly 0.4.6 (2026-10-23, evening)", rel
+    assert (w.state / "nightly/last-released").read_text().split()[:2] == [head2, "v0.4.6-nightly.261023200"]
+    assert f"notes since {head}" in r.stdout, r.stdout
+    n += 1
+    # another change in the same half day (a later evening hour): refused, one nightly per half day
+    head3 = new_commit(w, "5")
+    r = nightly(w, head3, OPENBFME_RELEASE_NIGHTLY_CLOCK="2026102323")
+    assert r.returncode != 0 and "one nightly per half day" in r.stdout + r.stderr, r.stdout + r.stderr
     assert len(w.gh_data()["releases"]) == n
-    assert (w.state / "nightly/last-released").read_text().split()[0] == head
+    assert (w.state / "nightly/last-released").read_text().split()[0] == head2
+    # the next morning moves on
+    r = nightly(w, head3, OPENBFME_RELEASE_NIGHTLY_CLOCK="2026102407")
+    assert r.returncode == 0 and "AUTORELEASE OK v0.4.6-nightly.261024100" in r.stdout, r.stdout + r.stderr
+
+
+def test_nightly_clock_is_for_tests_only(world):
+    # the clock override is refused outside the stand-in mode (here: no stand-in), before anything happens
+    w = world
+    stable(w)
+    head = new_commit(w)
+    r = nightly(w, head, OPENBFME_RELEASE_STANDIN="")
+    assert r.returncode != 0 and "OPENBFME_RELEASE_NIGHTLY_CLOCK is for tests" in r.stdout + r.stderr, r.stdout + r.stderr
 
 
 def test_nightly_skip_when_nothing_changed(world):

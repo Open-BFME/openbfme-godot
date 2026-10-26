@@ -15,6 +15,7 @@
 #pragma once
 
 #include "GameClient/PlacementIcons.h"
+#include "GameClient/InGameUI.h"
 
 #include <godot_cpp/classes/mesh_instance3d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
@@ -96,6 +97,11 @@ private:
 	void updateBib(PlacementIcons::Icon &icon, IconView &view);
 	void updateShadowDecal(PlacementIcons::Icon &icon, IconView &view); // lane OWNERFIX-2
 	void updateArrow(const InGameUI &ui);
+	void updateFormation(LiveGame &game,const InGameUI &ui,bool idle);
+	std::vector<InGameUI::FormationSlot> m_formationSlots;
+	std::vector<std::string> m_formationTextures;
+	MeshInstance3D *m_formation=nullptr;
+	uint64_t m_formationId=0;
 	Ref<Texture2D> texture(const std::string &name);
 
 	const MappedImageCollection *m_images = nullptr;

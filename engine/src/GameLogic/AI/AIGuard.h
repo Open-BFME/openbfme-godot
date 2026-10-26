@@ -23,7 +23,7 @@
 //     (RW 0x691269) and getAbleToAttackSpecificObject(new target, it, CMD_FROM_AI) possible or possible after moving (RW 0x68D6A6).
 //   * lookForInnerTarget RW 0x949CA7: the AI's turret target when an enemy; a team that attacks a common target and has one; then around the guarded spot
 //     (RW 0x949BD3: the guarded object's position, else the team's, else the guard position; the owner's when that is 0, 0) within getStdGuardRange
-//     (RW 0x949567 -> RW 0x6FF412: the vision range plus Object + 0xB8, times AIData AlertRangeModifier / AggressiveRangeModifier for an alert / aggressive
+//     (RW 0x949567 -> RW 0x6FF412: the vision range plus Object + 0xB8 (the bounding circle radius), times AIData AlertRangeModifier / AggressiveRangeModifier for an alert / aggressive
 //     computer unit, 0 asleep): an INVISIBLE_STEALTH object (model condition 0x222) finds nothing, an INVISIBLE_CAMOUFLAGE one (0x223) nothing in a stance of
 //     class 3; TheAI's closest enemy around the spot (RW 0x70146A) and, when none and the owner is more than half the range from the spot, around the owner
 //     within half the range (RW 0x701443); a HORDE victim is adjusted (RW 0x68D30E).
@@ -33,10 +33,10 @@
 //     (+ 0x3C), GuardEnemyScanRate (+ 0x40), GuardEnemyReturnScanRate (+ 0x44) (table RW 0xC1CC00 .., parseDurationUnsignedInt RW 0x73A429).
 //
 // INFERENCE / NOT PORTED (stop S-3802, guardStopLine()): only the LOCATION target type (object, team and area guards are the script commands' and are
-// reported where met); TheAI's closest enemy is the port's TargetFinder (S-326) with the idle scan's flags, not RW's qualifier word; the turret target, the
+// reported where met); (lane TARGET-1: TheAI's closest enemy is RotWK's search AI::findClosestEnemy with RW's qualifier word); the turret target, the
 // AI + 0x3CD layer flag, the crate state (the port has no AI crates: it succeeds at once), the inner state's +0x40 restart flag (no writer known), the
-// outer state's layer test (RW 0x68BBE0 / 0x6FF7FA: every port object is on the ground layer, so it passes); the vision range is the template's VisionRange
-// like the idle scan's (Object + 0xB8 is 0 outside construction).
+// outer state's layer test (RW 0x68BBE0 / 0x6FF7FA: every port object is on the ground layer, so it passes); the vision range is RW 0x6FF412's (lane
+// TARGET-1: the vision range plus the bounding circle, AI::adjustedVisionRange).
 
 #pragma once
 
@@ -140,6 +140,7 @@ public:
 
 private:
 	std::unique_ptr<AIGuardMachine> m_guardMachine; // + 0x20
+	KeptSubMachines<AIGuardMachine> m_keptMachines;  // review of #64: the guard machine dropped during its own update (see KeptSubMachines)
 };
 
 // RW vtable 0xC27DF8: onEnter RW 0x743864: the owner's StancesBehavior hears that the move ended (RW 0x86228E), then failure (-> idle)

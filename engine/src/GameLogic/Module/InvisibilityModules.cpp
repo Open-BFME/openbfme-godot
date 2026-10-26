@@ -5,6 +5,7 @@
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 #endif
 
+#include "Common/Upgrade.h"
 #include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
@@ -1106,12 +1107,14 @@ void StealthUpdate::crc(StateHasher &h) const
 	h.addBool(m_halfway);
 	h.addBool(m_disguising);
 	h.addBool(m_disguised);
-	for (std::uint32_t w : m_requiredUpgrades.words)
+	for (unsigned i = 0; i < UpgradeMaskType::activeWords(); ++i) // lane MODS-3: retail's 0x24 words unless the data has more upgrades
 	{
+		const std::uint32_t w = m_requiredUpgrades.words[i];
 		h.addU32(w);
 	}
-	for (std::uint32_t w : m_forbiddenUpgrades.words)
+	for (unsigned i = 0; i < UpgradeMaskType::activeWords(); ++i) // lane MODS-3: retail's 0x24 words unless the data has more upgrades
 	{
+		const std::uint32_t w = m_forbiddenUpgrades.words[i];
 		h.addU32(w);
 	}
 	h.addBool(m_active);
@@ -1205,8 +1208,8 @@ void StealthUpdate::xfer(Xfer &x)
 	x.xferBool(&m_halfway);
 	x.xferBool(&m_disguising);
 	x.xferBool(&m_disguised);
-	SnapshotXfer::words(x, m_requiredUpgrades.words);
-	SnapshotXfer::words(x, m_forbiddenUpgrades.words);
+	xferUpgradeMask(x, m_requiredUpgrades, "an invisibility module's required upgrades"); // lane MODS-3: activeWords (retail's 0x24)
+	xferUpgradeMask(x, m_forbiddenUpgrades, "an invisibility module's forbidden upgrades");
 	if (x.isLoading()) // lane SAVE-4e (closed sets): only this game's upgrades
 	{
 		checkLoadedUpgradeMask(m_requiredUpgrades, "a stealth update's required upgrades");

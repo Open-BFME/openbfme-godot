@@ -1,0 +1,7 @@
+# zizmor configuration (auto-discovered by `zizmor .github/workflows`).
+rules:
+  # zizmor 1.31 asks for GitHub's `$/...` self-repository form for local reusable workflows, but actionlint 1.7.12 (also pinned in
+  # pr.yml) rejects that form, so the release jobs keep the workspace-relative `./...` calls. Re-enable this audit and switch the
+  # calls when the pinned actionlint accepts `$/...`.
+  self-repository:
+    disable: true

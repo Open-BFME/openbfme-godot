@@ -17,8 +17,9 @@ HERO-2 (S-1227); AUTOCAST-1 added the toggle paths, the AI's script actions and 
   `AllowSelf = No`, `ForbiddenStatus = INSIDE_GARRISON`) and a generic one after it.
 - Further button fields read by the update: `AutoDelay` (+ 0x134), `PresetRange` (+ 0x130),
   `TriggerWhenReady` (+ 0x12C), `NeedDamagedTarget` (+ 0x138),
-  `AutoAbilityDisallowedOnModelCondition` (+ 0x13C), the `Set/UnsetAutoAbilityUnitSound` voices
-  (+ 0xD4 / + 0xE0).
+  `AutoAbilityDisallowedOnModelCondition` (+ 0x13C). The `Set/UnsetAutoAbilityUnitSound` voices
+  (+ 0xD4 / + 0xE0) belong to the client's right-press path, not the update; they are parsed
+  but their playback remains unported (S-3460).
 
 ## Per-object state
 

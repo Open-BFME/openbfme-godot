@@ -13,7 +13,7 @@ std::vector<int> NetGameSession::disconnectedPlayerIndices() const
 	{
 		return players;
 	}
-	const std::uint8_t playbackDrops = !m_network ? m_assembled->disconnectedSlotsAt(m_catchUp->reached()) : 0;
+	const std::uint16_t playbackDrops = !m_network ? m_assembled->disconnectedSlotsAt(m_catchUp->reached()) : 0; // ONLINE16-FIX: 16 wide
 	for (int slot = 0; slot < MAX_SLOTS; ++slot)
 	{
 		const int player = m_config.slotPlayerIndex[(size_t)slot];
@@ -96,6 +96,7 @@ bool NetGameSession::setUp(LiveGame &game, std::string *error)
 		transportOptions.relay.enabled = true;
 		transportOptions.relay.address = m_start.relay;
 		transportOptions.relay.ticket = m_start.ticket;
+		transportOptions.relay.macKey = m_start.macKey; // lane AUTH-1: empty for an old lobby's START
 	}
 	m_transport = std::make_unique<Transport>(m_socket, m_start.localSlot, transportOptions);
 	for (int s = 0; s < MAX_SLOTS; ++s)
@@ -106,6 +107,7 @@ bool NetGameSession::setUp(LiveGame &game, std::string *error)
 		}
 	}
 	m_network = std::make_unique<Network>(m_config, *m_transport);
+	m_network->setChatLobbyMuted(m_start.chatMutedMask); // lane CHAT-1: the lobby moderators' mute (the START's chatMuted)
 	if (!m_options.replayPath.empty())
 	{
 		m_writer = std::make_unique<ReplayWriter>();
@@ -122,6 +124,7 @@ bool NetGameSession::setUp(LiveGame &game, std::string *error)
 	}
 	m_driver = std::make_unique<LockstepDriver>(m_network.get(), m_writer.get());
 	m_driver->setCensus(m_options.census); // lane MP-3: before the driver is installed (its capture is read then)
+	m_driver->setHashEveryFrame(m_options.hashEveryFrame); // ONLINE16-FIX: likewise
 	RegisterLogicCRCHandler(game.dispatch());
 	m_game = &game;
 	return true;
@@ -257,6 +260,7 @@ bool NetGameSession::beginSpectate(LiveGame &game, std::string *error)
 	o.relay.enabled = true;
 	o.relay.address = m_start.relay;
 	o.relay.ticket = m_start.ticket;
+	o.relay.macKey = m_start.macKey; // lane AUTH-1: the spectator's own k (relay->spectator only)
 	o.relay.spectatorIndex = m_start.spectatorIndex;
 	m_transport = std::make_unique<Transport>(m_socket, 0, o); // no peer: it never sends a transport packet
 	m_fetch = std::make_unique<RelayLogFetch>();

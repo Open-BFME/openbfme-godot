@@ -7,15 +7,17 @@
 ##     outside has none. The shape is the one drawn: the gadgets' own draw commands (gadget_draw_list), the tabs' selection bar, the buttons' art bounds.
 ##     A stated margin: a check box's window keeps 3 stage pixels above and below its box (OpenBFMEOptionsPage::kCheckBoxMargin). Zero controls, a
 ##     control with no drawn shape or a tab without controls fails.
-##   * keyboard: the main menu to the settings and through them without the mouse (Tab, arrows, Enter, Space, PageUp / PageDown, Esc); the effects
+##   * keyboard: main-menu groups/entries use arrows and Enter; settings use Tab, arrows, Enter, Space, PageUp / PageDown and Esc; the effects
 ##     (the tab shown, a slider's value and the music volume, a box, a choice, an open list closed by Esc with the page still up, Esc = CANCEL).
-##   * controller: the same with joypad events (D-pad, A, B, LB / RB, the left stick, the right trigger).
+##   * controller: the same with joypad events (D-pad, A, B, LB / RB, the right stick, the right trigger).
 ##   * stale focus: the focus of a closed screen is not kept by the next one.
 ## run_game: the quit menu's Options over a live game: the quit menu's and the Palantir's buttons cannot be hit or clicked through it, the arrows move
 ## the menu's focus and not the camera, no world decoration is drawn over it, closing it brings the quit menu back and closing that the Palantir.
 ## Prints "OPTS6 <name>: ok" / "OPTS6 <name>: FAIL <why>" and "OPTS6 RESULT: <n> ok, <m> failed"; tests/opts6_test.gd runs it. --opts6-shots=DIR
 ## (windowed) saves pictures.
 extends RefCounted
+
+const Wait := preload("res://scripts/opts6_wait.gd")
 
 ## The REQUIRED inventories: what each screen must offer, written here by name and NOT read from the live page (a list built from what the page shows can
 ## never miss a control: Sol's review removed Retail.Brightness from the checker's inventory and the checker still passed with 8 controls). A control
@@ -32,8 +34,9 @@ const REQUIRED_ROWS := {
 		"Retail.MovieVolume", "Retail.MusicVolume", "Retail.SoundFxVolume", "Retail.VoiceVolume"],
 	"Camera": ["OpenBFMEConfineMouse", "OpenBFMEEdgeScroll", "OpenBFMEFreeCamera", "OpenBFMEInvertDragScroll", "OpenBFMEMaxZoomOut", "OpenBFMERotateSpeed",
 		"Retail.ScrollSpeed"],
-	"Interface": ["AlternateMouseSetup", "OpenBFMEGameClock", "OpenBFMEHealthBars", "OpenBFMEMainMenuStyle", "OpenBFMEUIScale", "Retail.HealthBars"],
-	"Online": ["OpenBFMEShareResults", "Retail.OnlineIp", "Retail.OnlinePortNum", "Retail.RefreshNat", "Retail.SendDelay"],
+	"Interface": ["AlternateMouseSetup", "OpenBFMEGameClock", "OpenBFMEHealthBars", "OpenBFMEMainMenuStyle", "OpenBFMEPingKey", "OpenBFMEPingWheel", "OpenBFMEUIScale", "Retail.HealthBars"],
+	"Online": ["OpenBFMEShareResults", "OpenBFMEShowPing", "Retail.OnlineIp", "Retail.OnlinePortNum", "Retail.RefreshNat", "Retail.SendDelay",
+		"Social.challenges", "Social.hidden", "Social.invites", "Social.presence", "Social.requests"], # ONLINEMENU-1: who may ask, invite, challenge, see you
 	"Performance": ["OpenBFMEUberPerformance"],
 	"Controls": [],
 }
@@ -280,16 +283,21 @@ func run_game(p_game: Node, p_shots: String) -> int:
 	check("with no menu up nothing has the menus' input (the Palantir is the HUD)", not shell.menu_has_input(), str(shell.menu_nav_state().get("level")))
 	var cam_before: Vector2 = game._hud.get_camera().position
 	var menu_keys := int(game._hud.get_state().get("keys", {}).get("menu_key_events", 0))
-	var down := InputEventKey.new()
-	down.keycode = KEY_LEFT
-	down.physical_keycode = KEY_LEFT
-	down.pressed = true
-	Input.parse_input_event(down)
-	await game._wait_seconds(1.0)
-	var up := down.duplicate()
-	up.pressed = false
-	Input.parse_input_event(up)
-	await game._step(10)
+	# the start spot is the lobby's random one: on Evendim's west spot the camera starts at the map's left clamp (x about 146), where LEFT has nowhere to
+	# go, so RIGHT is pressed when LEFT left the camera where it was
+	for arrow in [KEY_LEFT, KEY_RIGHT]:
+		var down := InputEventKey.new()
+		down.keycode = arrow
+		down.physical_keycode = arrow
+		down.pressed = true
+		Input.parse_input_event(down)
+		await game._wait_seconds(1.0)
+		var up := down.duplicate()
+		up.pressed = false
+		Input.parse_input_event(up)
+		await game._step(10)
+		if game._hud.get_camera().position != cam_before:
+			break
 	check("with no menu up the arrow scrolls the camera (%s -> %s)" % [cam_before, game._hud.get_camera().position], game._hud.get_camera().position != cam_before
 		and int(game._hud.get_state().get("keys", {}).get("menu_key_events", 0)) == menu_keys, "keys " + str(game._hud.get_state().get("keys", {})) + ", paused " + str(game.get_tree().paused))
 	return finish()
@@ -988,18 +996,15 @@ func keyboard_walk() -> void:
 	await game._wait_main_ready()
 	await game._step(30)
 	await shot("opts6-main-menu-idle")
-	# the main menu: Tab shows the focus, Tab / arrows walk to OPTIONS, Enter opens its menu, then SETTINGS
+	# Main-menu arrows select authored groups and entries; Enter activates SETTINGS.
 
-	if not await focus_and_press("OptionsNav", KEY_TAB):
+	if not await focus_and_press("OptionsNav", KEY_RIGHT):
 		return
 	await game._step(60)
 	if not await focus_and_press("Settings", KEY_UP):
 		return
-	for i in 30:
-		if top() == "Options.apt" and screen.is_open():
-			break
-		await game._step(15)
-	check("keyboard: the main menu's OPTIONS > SETTINGS opened the settings", top() == "Options.apt" and screen.is_open(), str(shell.shell_stack()))
+	var opened := await Wait.until(func(): return top() == "Options.apt" and screen.is_open() and not _navigation().get("targets", []).is_empty(), game._step.bind(1))
+	check("keyboard: the main menu's OPTIONS > SETTINGS opened the settings", opened, str(shell.shell_stack()))
 	if not screen.is_open():
 		return
 	await game._step(30)
@@ -1008,8 +1013,7 @@ func keyboard_walk() -> void:
 	# PageDown x2: Audio
 	await key(KEY_PAGEDOWN)
 	await key(KEY_PAGEDOWN)
-	await game._step(10)
-	check("keyboard: PageDown twice shows the Audio tab", screen.current_tab() == "Audio", screen.current_tab())
+	check("keyboard: PageDown twice shows the Audio tab", await Wait.until(func(): return screen.current_tab() == "Audio", game._step.bind(1)), screen.current_tab())
 	await shot("opts6-keyboard-audio-tab")
 	# walk to the Music slider with Tab / Down and raise it with Right
 	if await focus_target("row:Retail.MusicVolume"):
@@ -1036,25 +1040,27 @@ func keyboard_walk() -> void:
 		await key(KEY_LEFT)
 		check("keyboard: Left lowers Brightness", int(page().rows["Retail.Brightness"].value) < 50, str(page().rows["Retail.Brightness"].value))
 	await key(KEY_PAGEDOWN)
+	check("keyboard: Graphics navigation is ready", await Wait.until(func(): return screen.current_tab() == "Graphics" and not Wait.target(_navigation(), "row:Retail.Detail").is_empty(), game._step.bind(1)), str(_navigation()))
 	if await focus_target("row:Retail.Detail"):
 		var before := int(page().rows["Retail.Detail"].value)
 		await key(KEY_ENTER)
-		check("keyboard: Enter opens the Graphics list", shell.menu_nav_state().get("open_list", false), ", ".join(Array(shell.menu_nav_state().log).slice(-8)))
+		check("keyboard: Enter opens the Graphics list", await until_list(true), ", ".join(Array(shell.menu_nav_state().log).slice(-8)))
 		await shot("opts6-keyboard-open-list")
 		await key(KEY_ESCAPE)
-		check("keyboard: Esc closes the open list and the settings stay", not shell.menu_nav_state().get("open_list", true) and screen.is_open(), "")
+		check("keyboard: Esc closes the open list and the settings stay", await until_list(false) and screen.is_open(), "")
 		if not screen.is_open():
 			return
 		await key(KEY_ENTER)
+		await until_list(true)
 		await key(KEY_DOWN)
+		await key(KEY_ENTER) # Down previews the choice; Enter commits it.
 		var now := int(page().rows["Retail.Detail"].value)
-		check("keyboard: Down in the open list chooses the next level (%d -> %d)" % [before, now], now == before + 1, ", ".join(Array(shell.menu_nav_state().log).slice(-8)))
+		check("keyboard: Down then Enter in the open list chooses the next level (%d -> %d)" % [before, now], now == before + 1, ", ".join(Array(shell.menu_nav_state().log).slice(-8)))
 		if shell.menu_nav_state().get("open_list", false):
 			await key(KEY_ESCAPE)
 	# Esc: CANCEL (the brightness, the volume back)
 	await key(KEY_ESCAPE)
-	await game._step(90)
-	check("keyboard: Esc is CANCEL (the settings close)", not screen.is_open(), str(shell.shell_stack()))
+	check("keyboard: Esc is CANCEL (the settings close)", await Wait.until(func(): return not screen.is_open() and top() == "MainMenu.apt", game._step.bind(1)), str(shell.shell_stack()))
 
 
 func controller_walk() -> void:
@@ -1081,10 +1087,10 @@ func controller_walk() -> void:
 		await joy_axis(JOY_AXIS_TRIGGER_RIGHT, 1.0)
 		await joy_axis(JOY_AXIS_TRIGGER_RIGHT, 0.0)
 		var after_trigger := int(page().rows["Retail.SoundFxVolume"].value)
-		await joy_axis(JOY_AXIS_LEFT_X, -1.0)
-		await joy_axis(JOY_AXIS_LEFT_X, 0.0)
+		await joy_axis(JOY_AXIS_RIGHT_X, -1.0)
+		await joy_axis(JOY_AXIS_RIGHT_X, 0.0)
 		var after_stick := int(page().rows["Retail.SoundFxVolume"].value)
-		check("controller: the right trigger raises Sound FX (%d -> %d), the left stick lowers it (%d)" % [before, after_trigger, after_stick],
+		check("controller: the right trigger raises Sound FX (%d -> %d), the right stick lowers it (%d)" % [before, after_trigger, after_stick],
 			after_trigger > before and after_stick == before or (before == int(page().rows["Retail.SoundFxVolume"].max) and after_stick < before), "")
 		await shot("opts6-controller-sfx-focus")
 	await joy_button(JOY_BUTTON_LEFT_SHOULDER)
@@ -1205,7 +1211,7 @@ const SCREENS := [
 
 
 ## The controls each screen must offer to the keys, by id without the `_levelN.` prefix: written from the screens' movies (their clip and instance names), not
-## read from the run. The skirmish setup is the one of the default map of this install (8 slots: five gadgets each)
+## read from the run. The skirmish setup is the one of the default map of this install (8 slots: six gadgets each)
 func screen_inventory(name: String) -> Array:
 	match name:
 		"skirmish":
@@ -1214,7 +1220,7 @@ func screen_inventory(name: String) -> Array:
 				"OpenPlay.MpMapAndSettings.MapsTabSelected.MapsTab_Assorted.PlayersTab.OnSortPlayers", "OpenPlay.MpMapAndSettings.MapsTabSelected.MapsTab_Assorted.instance22.MapList",
 				"OpenPlay.MpMapAndSettings.MapsTabSelected.instance1.MapInfo.MapInfo", "lobby.MainMenu.bttn", "ProfileNav.bttn", "lobby.StartGame.bttn"]
 			for slot in 8:
-				for g in ["Player", "PlayerTemplate", "Hero", "Team", "Handicap"]:
+				for g in ["Player", "PlayerTemplate", "Hero", "Team", "Handicap", "Color"]:
 					out.append("OpenPlay.instance1.PlayerList.~%d.%s" % [slot, g])
 			return out
 		"load":
@@ -1235,19 +1241,14 @@ func screen_inventory(name: String) -> Array:
 				"LanOpenPlay.LobbyMain.instance1.TabMap.instance7", "LanOpenPlay.LobbyMain.instance1.TabButtons.RulesTab.bttn",
 				"LanOpenPlay.LobbyMain.instance1.MapsTabSelected.MapsTab_Assorted.ArrowTab.OnSortIcon", "LanOpenPlay.LobbyMain.instance1.MapsTabSelected.MapsTab_Assorted.NameTab.OnSortName",
 				"LanOpenPlay.LobbyMain.instance1.MapsTabSelected.MapsTab_Assorted.PlayersTab.OnSortPlayers", "LanOpenPlay.LobbyMain.instance1.MapsTabSelected.MapsTab_Assorted.instance22.MapList",
-				"LanOpenPlay.LobbyMain.instance1.MapsTabSelected.instance1.MapInfo.MapInfo", "MainButtons.MainMenu.bttn", "MainButtons.Options.bttn"]
+				"LanOpenPlay.LobbyMain.instance1.MapsTabSelected.instance1.MapInfo.MapInfo", "MainButtons.MainMenu.bttn", "MainButtons.Options.bttn", "instance82.MessengerButton.bttn"]
 	return []
 
 
 ## the buttons a main menu nav sub-menu offers now (the targets under its clip) against REQUIRED_SUB
 func sub_menu_inventory(nav: String) -> void:
-	var leaves := []
-	for t in shell.menu_nav_state().get("targets", []):
-		if String(t.id).contains("." + nav + "."):
-			var leaf := button_leaf(String(t.id))
-			if leaf != nav:
-				leaves.append(leaf)
-	check_inventory("the %s sub-menu" % nav, required(REQUIRED_SUB[nav]), shown(leaves))
+	var entries: PackedStringArray = shell.menu_nav_state().get("main_entries", PackedStringArray())
+	check_inventory("the %s sub-menu" % nav, required(REQUIRED_SUB[nav]), shown(Array(entries)))
 
 
 ## Skirmish's first visit asks for a profile name in a modal box (ProfilePopup): by keys only: Tab to the name entry, the name typed, Tab to SELECT, Enter.
@@ -1289,20 +1290,18 @@ func skirmish_profile_box() -> void:
 ## (no remembered name) offers it to no key until a name is typed: by keys only, the name entry is focused and a name typed; then LOG IN is a target
 ## (and the screen's inventory below has it)
 func online_login_nickname() -> void:
-	var entry := ""
-	var login := false
-	for t in shell.menu_nav_state().get("targets", []):
-		var id := String(t.id)
-		if id.ends_with("OnlineLogin.Login.componentGroup.OnlineLogin::Nickname"):
-			entry = id
-		login = login or id.ends_with("OnlineLogin.Login.LogIn.bttn")
+	var nickname := "OnlineLogin.Login.componentGroup.OnlineLogin::Nickname"
+	var ready := await Wait.until(func(): return top() == "OnlineShell.apt" and not Wait.target(_navigation(), nickname).is_empty(), game._step.bind(1))
+	var entry := Wait.target(_navigation(), nickname) if ready else ""
+	var login := not Wait.target(_navigation(), "OnlineLogin.Login.LogIn.bttn").is_empty()
 	check("the online login offers its name entry to the keys, and no LOG IN while the name is empty (RW 0x97A668)", not entry.is_empty() and not login,
 		"entry '%s', LOG IN a target: %s" % [entry, str(login)])
 	if entry.is_empty() or not await focus_target(entry):
 		return
 	for ch in "navtester":
 		await type_char(ch)
-	await game._step(30)
+	check("the typed nickname enables LOG IN for the keys", await Wait.until(func():
+		return not Wait.target(_navigation(), "OnlineLogin.Login.LogIn.bttn").is_empty(), game._step.bind(1)), str(_navigation()))
 
 
 func type_char(ch: String) -> void:
@@ -1320,7 +1319,7 @@ func other_screens() -> void:
 	await game._wait_main_ready()
 	await game._step(30)
 	for row in SCREENS:
-		if not await focus_and_press(row.nav, KEY_TAB):
+		if not await focus_and_press(row.nav, KEY_RIGHT):
 			continue
 		await game._step(60)
 		print_targets("the %s sub-menu" % row.nav)
@@ -1341,7 +1340,7 @@ func other_screens() -> void:
 		await game._step(60)
 	# the other sub-menus' contents (data for the inventories: the campaign, multiplayer and heroes entries)
 	for nav in ["OptionsNav"]: # the Multiplayer sub-menu is opened by its screens' rows above
-		if await focus_and_press(nav, KEY_TAB):
+		if await focus_and_press(nav, KEY_RIGHT):
 			await game._step(60)
 			print_targets("the %s sub-menu" % nav)
 			sub_menu_inventory(nav)
@@ -1349,12 +1348,19 @@ func other_screens() -> void:
 			await game._step(60)
 
 
-## focus a main menu button whose path holds `name` with `walk` (a key, or -joypad button) and press it (Enter / A); its effect is the caller's
+## Select an authored main-menu group, or activate one of its entries.
 func focus_and_press(name: String, walk: int) -> bool:
-	for i in 40:
+	for i in 40: # tolerance: bounded traversal exceeds every retail group's entry count.
 		var nav: Dictionary = shell.menu_nav_state()
-		if str(nav.focus).contains("." + name + ".") or str(nav.focus).ends_with("." + name):
-			if walk < 0:
+		if String(nav.get("main_focus", "")) == name:
+			if name in nav.get("main_groups", []):
+				# Populate main_entries after the authored opening animation, without activating an entry.
+				await game._step(60)
+				if walk < 0:
+					await joy_button(JOY_BUTTON_DPAD_UP)
+				else:
+					await key(KEY_UP)
+			elif walk < 0:
 				await joy_button(JOY_BUTTON_A)
 			else:
 				await key(KEY_ENTER)
@@ -1364,26 +1370,40 @@ func focus_and_press(name: String, walk: int) -> bool:
 		else:
 			await key(walk)
 	var st: Dictionary = shell.menu_nav_state()
-	var ids := PackedStringArray()
-	for t in st.get("targets", []):
-		ids.append("%s %s" % [t.id, t.rect])
-	check("reach %s without the mouse" % name, false, "%s; the keys did: %s; targets now: %s" % [st.get("focus"), ", ".join(Array(st.get("log", [])).slice(-12)), "; ".join(ids)])
+	check("reach %s without the mouse" % name, false, "focus %s; groups %s; entries %s" % [st.get("main_focus"), st.get("main_groups"), st.get("main_entries")])
 	return false
 
+# lane MENUFIX-3: the list opens / closes on the shell's next ticks; on a loaded host (the UI-2 gate at 2560x1440) a fixed few frames were not enough,
+# so wait for the state instead of judging after key()'s frames
+func until_list(open: bool) -> bool:
+	return await Wait.until(func(): return bool(_navigation().get("open_list", not open)) == open, game._step.bind(1))
 
-## Tab (or the D-pad: right into the rows, then down) until `id` has the focus
+
+func _navigation() -> Dictionary:
+	var nav: Dictionary = shell.menu_nav_state()
+	return nav if int(nav.get("level", -1)) == shell.shell_top_level() else {}
+
+
+## Tab, or D-pad right into the rows then vertically toward the requested row.
 func focus_target(id: String, pad := false) -> bool:
+	if not await Wait.until(func(): return not Wait.target(_navigation(), id).is_empty(), game._step.bind(1)):
+		check("reach %s without the mouse" % id, false, "target not visible before the deadline")
+		return false
+	var send := key.bind(KEY_TAB)
 	if pad:
 		await joy_button(JOY_BUTTON_DPAD_RIGHT) # the first press shows the focus (on the tab)
 		if str(shell.menu_nav_state().focus).begins_with("tab:"):
 			await joy_button(JOY_BUTTON_DPAD_RIGHT)
-	for i in 60:
-		if str(shell.menu_nav_state().focus) == id and shell.menu_nav_state().frame:
-			return true
-		if pad:
-			await joy_button(JOY_BUTTON_DPAD_DOWN)
-		else:
-			await key(KEY_TAB)
+		send = func():
+			var state: Dictionary = shell.menu_nav_state()
+			var current_y := 0.0
+			var target_y := 0.0
+			for target in state.get("targets", []):
+				if String(target.id) == String(state.focus): current_y = (target.rect as Rect2).get_center().y
+				if String(target.id) == id: target_y = (target.rect as Rect2).get_center().y
+			await joy_button(JOY_BUTTON_DPAD_UP if target_y < current_y else JOY_BUTTON_DPAD_DOWN)
+	if await Wait.focus(id, _navigation, send, game._step.bind(1)):
+		return true
 	check("reach %s without the mouse" % id, false, str(shell.menu_nav_state().focus))
 	return false
 

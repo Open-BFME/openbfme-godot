@@ -4,12 +4,15 @@
 ##
 ## Built in: the FIPS 180-4 SHA-512 examples and the RFC 8032 7.1 tests 1-3 (each also with a flipped message / signature / key bit, S + L
 ## and a non-canonical public key). --vectors: a JSON file {"sha512": [[hex in, hex digest]...], "ed25519": [[pk, msg, sig, valid]...]}
-## written by tools/release/test_launcher.py from hashlib, tools/release/ed25519.py and OpenSSL.
+## written by tools/release/test_launcher.py from hashlib, tools/release/ed25519.py and OpenSSL; lane SIGNKMS-1: "envelope": [[kind, hex
+## data, hex envelope]...] and "release": [[comma-separated public keys, kind, hex data, hex sig, the signer's index or -1, what]...] from
+## tools/release/release_keys.py (the release signature rule, scripts/crypto/release_signature.gd).
 ## Prints CRYPTO lines and "CRYPTO OK <n> checks" or "CRYPTO FAIL ..."; exit 0 only when every check passed.
 extends SceneTree
 
 const Sha512 := preload("res://scripts/crypto/sha512.gd")
 const Ed25519 := preload("res://scripts/crypto/ed25519.gd")
+const ReleaseSignature := preload("res://scripts/crypto/release_signature.gd")
 
 const RFC8032 := [
 	["d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a", "",
@@ -121,3 +124,12 @@ func _run_file(path: String) -> void:
 		_check(ok == v[3], "ed25519 vector %d (%s, expected %s)" % [n, v[4] if v.size() > 4 else "", "valid" if v[3] else "invalid"])
 		n += 1
 	print("CRYPTO vectors file: %d sha512, %d ed25519" % [data.get("sha512", []).size(), n])
+	for v in data.get("envelope", []):
+		_check(ReleaseSignature.envelope(v[0], v[1].hex_decode()).hex_encode() == v[2], "envelope vector %s of %d bytes" % [v[0], v[1].length() / 2])
+	n = 0
+	for v in data.get("release", []):
+		var keys: Array = ReleaseSignature.parse_hex_list(v[0]).keys
+		var got := ReleaseSignature.signer(keys, v[1], v[2].hex_decode(), v[3].hex_decode())
+		_check(not keys.is_empty() and got == int(v[4]), "release signature vector %d (%s): signer %d, expected %d" % [n, v[5], got, int(v[4])])
+		n += 1
+	print("CRYPTO vectors file: %d envelope, %d release signature" % [data.get("envelope", []).size(), n])

@@ -11,7 +11,8 @@
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
-#include "GameLogic/Combat/TargetFinder.h"
+#include "GameLogic/AI/AIClosestEnemy.h"
+#include "GameLogic/ScriptEngine/AttackPriority.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/HordeAIUpdate.h"
@@ -65,8 +66,8 @@ int playerDifficulty(const Player &p, GameLogic &logic)
 
 const char *huntStopLine()
 {
-	return "[S-1188] AI hunt (TEAM_HUNT / NAMED_HUNT / PLAYER_HUNT, RW 0x741133): the crate pick-up (AI + 0x238) and the attack priority info (AI + 0x70) are "
-		   "not part of the port; the closest enemy is the port's TargetFinder (S-326); PLAYER_HUNT (RW 0x6AF4B1, lane DECOMP-2) walks the player's objects in "
+	return "[S-1188] AI hunt (TEAM_HUNT / NAMED_HUNT / PLAYER_HUNT, RW 0x741133): the crate pick-up (AI + 0x238) is not part of the port (lane TARGET-1: the "
+		   "attack priority info AI + 0x70 and RotWK's closest enemy search are); PLAYER_HUNT (RW 0x6AF4B1, lane DECOMP-2) walks the player's objects in "
 		   "object list order";
 }
 
@@ -186,11 +187,7 @@ StateReturnType AIHuntState::onEnter()
 
 void AIHuntState::onExit(StateExitType)
 {
-	if (m_huntMachine)
-	{
-		m_huntMachine->halt();
-		m_huntMachine.reset();
-	}
+	m_keptMachines.drop(m_huntMachine); // halted, and kept while its update runs (review of #64)
 	if (ObjectWeapons *w = owner().getWeapons())
 	{
 		w->releaseWeaponLock(LOCKED_TEMPORARILY);
@@ -204,19 +201,41 @@ bool AIHuntState::isActive() const
 
 Object *AIHuntState::findVictim(Object &obj)
 {
+	// RW 0x748069 .. 0x74816E (lane TARGET-1: the attack priority info AI + 0x70 and RotWK's search)
 	GameLogic &logic = obj.logic();
 	Team *team = obj.getTeam();
 	const bool common = attackCommonTarget(team);
 	Object *teamVictim = common ? teamTarget(*team, logic) : nullptr;
-	if (teamVictim)
+	AIUpdateInterface *ai = obj.getAIUpdateInterface();
+	const AttackPriorityInfo *info = ai ? ai->attackInfo() : nullptr;
+	if (teamVictim && !info)
 	{
-		return teamVictim; // RW 0x7480AE: no attack priority info (AI + 0x70) in the port
+		return teamVictim; // RW 0x7480AE
 	}
-	unsigned flags = TargetFinder::ALLOW_STRUCTURES;
-	flags |= obj.isKindOf((unsigned)CombatNames::kinds().horde) ? TargetFinder::HORDES_ONLY : TargetFinder::MEMBERS_ONLY;
-	Object *victim = logic.combat().targets().findClosestEnemy(obj, kHuntRange, flags, CMD_FROM_AI);
+	const unsigned q = AI::CAN_ATTACK | AI::ATTACK_BUILDINGS | AI::AUTO_ACQUIRE; // 0x4A
+	Object *victim = AI::findClosestEnemy(obj, kHuntRange, q, info, nullptr, 0);   // RW 0x701443
+	const Player *p = obj.getControllingPlayer();
+	if (!victim && p && p->unitsShouldHunt())
+	{
+		victim = AI::findClosestEnemy(obj, kHuntRange, q, nullptr, nullptr, 0); // RW 0x7480E5: again without the info
+	}
 	if (common)
 	{
+		if (teamVictim && info)
+		{
+			// RW 0x748123 .. 0x74815E: the team's target keeps it unless the new victim's priority is higher (x87: the team target's priority stored as a float,
+			// the victim's compared wide)
+			if (!victim)
+			{
+				victim = teamVictim;
+			}
+			const float teamPriority = info->getPriority(obj, *teamVictim, true);
+			const float victimPriority = info->getPriority(obj, *victim, true);
+			if (victimPriority <= teamPriority)
+			{
+				victim = teamVictim;
+			}
+		}
 		setTeamTarget(*team, victim, logic); // RW 0x748169
 	}
 	return victim;
@@ -301,7 +320,11 @@ StateReturnType AIHuntState::update()
 	}
 	// (4) RW 0x74820F
 	machine().lock();
-	StateReturnType ret = m_huntMachine->updateStateMachine();
+	StateReturnType ret;
+	{
+		KeptSubMachines<AIStateMachine>::Run run(m_keptMachines); // an attack inside can end this state (onExit below)
+		ret = m_huntMachine->updateStateMachine();
+	}
 	machine().unlock();
 	if (IS_STATE_SLEEP(ret))
 	{

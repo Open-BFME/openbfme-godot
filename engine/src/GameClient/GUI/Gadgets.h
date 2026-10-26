@@ -167,4 +167,4 @@ struct MapCacheEntry;
 void W3DDrawMapPreview(GameWindow *window, WinInstanceData *instData);
 WindowMsgHandledType PassSelectedButtonsToParentSystem(GameWindow *window, std::uint32_t msg, WindowMsgData mData1, WindowMsgData mData2);
 void MapPreviewFindDrawPositions(int startX, int startY, int width, int height, const MapCacheEntry &map, ICoord2D *ul, ICoord2D *lr);
-void MapPreviewPositionStartSpot(GameWindow *button, GameWindow *mapWindow, const Coord3D &pos, const MapCacheEntry &map, GameWindow *const buttons[8]);
+void MapPreviewPositionStartSpot(GameWindow *button, GameWindow *mapWindow, const Coord3D &pos, const MapCacheEntry &map, GameWindow *const *buttons, int buttonCount = 8);

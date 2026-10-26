@@ -17,11 +17,13 @@
 #include "GameLogic/ObjectTypes.h"
 
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
 class CommandButton;
 class GameLogic;
+class FormationAssistant;
 class MessageStream;
 struct HudContext;
 
@@ -53,6 +55,14 @@ inline constexpr const char *Scroll = "Scroll";
 class InGameUI
 {
 public:
+	struct FormationSlot { ObjectID object; Coord3D position; float angle; float radius; std::string preview; };
+	bool formationActive = false;
+	int formationType = -1;
+	unsigned formationExpires = 0;
+	Coord3D formationAnchor{};
+	float formationAngle = 0, formationDragLength = 0;
+	const FormationAssistant *formationData = nullptr;
+	std::vector<FormationSlot> formationSlots;
 	InGameUI() = default;
 	InGameUI(const InGameUI &) = delete;
 	InGameUI &operator=(const InGameUI &) = delete;
@@ -166,11 +176,37 @@ public:
 	void requestScreenshot() { ++m_screenshots; }
 	// DIPLOMACY (Tab, RW 0x81FFAA): the Palantir flag's screen (the players / tribute screen in a skirmish, the objectives in a campaign)
 	void requestDiplomacy() { ++m_diplomacy; }
+	// lane CHAT-1: CHAT_ALLIES (false) / CHAT_EVERYONE (true) (RW 0x81FEE0 / 0x81FF34): the chat window, drained by the HUD in order
+	// lane CHAT-1: the objects this client hides (an enemy's beacon, BeaconClientUpdate::hideBeacon RW 0x8CDC11): never picked, dropped from the selection
+	void setClientHidden(ObjectID id, bool hidden)
+	{
+		if (hidden)
+		{
+			m_clientHidden.insert(id);
+		}
+		else
+		{
+			m_clientHidden.erase(id);
+		}
+	}
+	bool isClientHidden(ObjectID id) const { return !m_clientHidden.empty() && m_clientHidden.count(id) != 0; }
+	const std::set<ObjectID> &clientHidden() const { return m_clientHidden; }
+	// lane CHAT-1: a network game (LAN / online): the chat and beacon keys work only there (RW 0x441B7C: game mode 1 or 5)
+	void setNetworkGame(bool on) { m_networkGame = on; }
+	bool networkGame() const { return m_networkGame; }
+	void requestChat(bool everyone) { m_chatRequests.push_back(everyone); }
+	std::vector<bool> takeChatRequests()
+	{
+		std::vector<bool> out;
+		out.swap(m_chatRequests);
+		return out;
+	}
 	unsigned diplomacyRequests() const { return m_diplomacy; }
 	unsigned screenshotRequests() const { return m_screenshots; }
 
 	// ---- messages for the player (ZH InGameUI::message(label)): game text labels, drained by the HUD ----
-	void message(const std::string &label) { m_messages.push_back(label); }
+	void message(const std::string &label) { m_messages.push_back(label); if (m_messageHandler) m_messageHandler(label); }
+	void setMessageHandler(std::function<void(const std::string &)> handler) { m_messageHandler = std::move(handler); }
 	std::vector<std::string> takeMessages();
 	const std::vector<std::string> &messages() const { return m_messages; }
 
@@ -314,6 +350,10 @@ private:
 	Coord3D m_mouseoverLocation;
 	bool m_hasMouseoverLocation = false;
 	std::vector<std::string> m_messages;
+	std::vector<bool> m_chatRequests; ///< lane CHAT-1
+	std::set<ObjectID> m_clientHidden; ///< lane CHAT-1
+	bool m_networkGame = false;        ///< lane CHAT-1
+	std::function<void(const std::string &)> m_messageHandler;
 	std::string m_placeTemplate;
 	ObjectID m_placeSource = INVALID_ID;
 	const CommandButton *m_placeCommand = nullptr;

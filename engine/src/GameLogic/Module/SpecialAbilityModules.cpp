@@ -1452,13 +1452,26 @@ Weapon *WeaponFireSpecialAbilityUpdate::specialWeapon()
 	{
 		m_weaponMade = true;
 		const WeaponTemplate *wt = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(m_wf->m_specialWeapon) : nullptr;
-		ObjectWeapons *w = getObject()->getWeapons();
+		ObjectWeapons *w = wt ? weaponHost() : nullptr;
 		if (wt && w)
 		{
 			m_weapon = w->makeExtraWeapon(wt);
 		}
 	}
 	return m_weapon.get();
+}
+
+ObjectWeapons *WeaponFireSpecialAbilityUpdate::weaponHost()
+{
+	if (ObjectWeapons *w = getObject()->getWeapons())
+	{
+		return w;
+	}
+	if (!m_ownHost)
+	{
+		m_ownHost = std::make_unique<ObjectWeapons>(*getObject()); // lane WALL-1: an object without a weapon set (see m_ownHost)
+	}
+	return m_ownHost.get();
 }
 
 WeaponFireSpecialAbilityUpdate::~WeaponFireSpecialAbilityUpdate() = default;
@@ -1510,7 +1523,7 @@ void WeaponFireSpecialAbilityUpdate::startUnpacking()
 void WeaponFireSpecialAbilityUpdate::triggerAbilityEffect()
 {
 	Object *obj = getObject();
-	ObjectWeapons *weapons = obj->getWeapons();
+	ObjectWeapons *weapons = specialWeapon() ? weaponHost() : obj->getWeapons();
 	// RW 0x896210: the FiringTracker's RW 0x8E302A(1) (the object's + 0x248) is COMBAT-1's: not called here
 	if (!(isHorde(*obj) && m_data->m_suppressForHordes))
 	{

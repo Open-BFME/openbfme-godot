@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "Common/RetailArchivePolicy.h"
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -19,10 +21,13 @@ struct Mount
 	std::unique_ptr<Win32BIGFileSystem> fs;
 	std::string error;                 // non-empty if mounting failed
 	std::vector<std::string> archives; // canonical archive paths in load order, "<install>:<path>"
+	std::vector<MountedArchive> identityArchives; // verified hashes and sizes, for acceptance recordings
 };
 
 // Pure 2.01 = RotWK 2.01 archives (first) + BFME2 1.06 archives. nullptr if the install variables are unset.
 Mount *pureMount();
+// A second, unshared pure-2.01 mount: for tests that inject generated archives so they stay out of the shared corpus.
+std::unique_ptr<Mount> freshPureMount();
 // BFME2 1.06 archives only (asset.dat oracle). nullptr if BFME2_INSTALL is unset.
 Mount *bfme2Mount();
 

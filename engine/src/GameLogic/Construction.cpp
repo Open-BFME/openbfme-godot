@@ -261,8 +261,16 @@ Object *Construction::constructOnPlot(Object &plot, const ThingTemplate &what, c
 	{
 		obj->setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, false);
 		obj->setConstructionPercent(-1.0f);
+		// lane WALL-2: RW 0x858A82 .. 0x858A8B: an instant build enters the pathfinder's map whatever its kind, a WALK_ON_TOP_OF_WALL piece too (its wall
+		// top and ramps: the castles' walls); the other kinds were added above (RW adds them a second time at RW 0x858AAD: the port's add is idempotent)
+		AIWorld *ai = logic.aiWorld();
+		if (ai && templateKindOf(logic, what, "WALK_ON_TOP_OF_WALL"))
+		{
+			ai->addObjectToPathfindMap(*obj);
+		}
 	}
-	else if (member && obj->findModule("CastleMemberBehavior"))
+	obj->friend_onMapPlacement(nullptr); // lane WALL-2: RW 0x858A90 .. 0x858A94, Object RW 0x694692(null): the behaviour modules' slot 45
+	if (!instant && member && obj->findModule("CastleMemberBehavior"))
 	{
 		// lane BACKLOG2: RW 0x858AB3 .. 0x858AE8: the price is paid only when the new object and the plot both have a CastleMemberBehavior (the name key
 		// RW 0xDE8E50 = "CastleMemberBehavior", RW 0xC0BE84): a structure without one built on a castle (an economy plot's explicit unpack, RW 0x79B98B) was
@@ -412,8 +420,6 @@ std::vector<std::string> Construction::stopLines()
 		"inference: an object's own geometry is its template's shapes with its active flags",
 		"[S-654] RebuildWhenDead: the DisallowRebuildFilter scan (RW 0x857873) is ported over the object list (3D centre distance, any match blocks); a template without the "
 		"filter row blocks nothing (RW's default filter at data + 0x40 was not read: inference); what keeps a dead structure in the world is its own die modules (KeepObjectDie)",
-		"[S-655] WorkerAIUpdate (RW 0x8ADAA0, fields RW 0xC058C8) runs as the dozer AI (the workers GettingBuiltBehavior spawns build and repair); its supply-truck half (MaxBoxes, the supply "
-		"center / warehouse delays, HarvestTrees and the harvest fields) is not ported",
 		"[S-656] repair: MSG_DO_REPAIR sends the selected dozers to repair (DozerAIUpdate::repair, the heal of RW 0x88DC46, free); the dispatcher case of MSG_DO_REPAIR was not read, and the "
 		"caller that makes the owner pay a structure's own repair (GettingBuiltBehavior slot 4 without force: ceil(calcCostToBuild * PercentOfBuildCostToRebuild<state>), RW 0x856227) was not found",
 	};

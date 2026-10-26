@@ -179,6 +179,9 @@ public:
 	AudioHandle addAudioEvent(const AudioEventRTS &event);
 	// convenience entry points: a UI sound by name, a sound at a position, attached to an object / drawable, for an owning player
 	AudioHandle playSound(const std::string &eventName);
+	// lane MENUSND-1: the menus' FSCommand PlaySound (RW 0x815772, registered by RW 0x815C7D): the event is built with view type 2 (VIEW_ANY, RW 0x6DA95E's
+	// second argument) and added (TheAudio vslot 100), so neither view's gate (RW 0x4591DF) mutes it and the player filter passes it (RW 0x4533A9)
+	AudioHandle playUiSound(const std::string &eventName);
 	AudioHandle playSoundAt(const std::string &eventName, const Coord3D &position);
 	AudioHandle playSoundForObject(const std::string &eventName, std::uint32_t objectId, int owningPlayerIndex = -1);
 	AudioHandle playSoundForDrawable(const std::string &eventName, std::uint32_t drawableId, int owningPlayerIndex = -1);

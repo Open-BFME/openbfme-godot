@@ -9,6 +9,7 @@ import {
   endReportRoster,
   readPlayerReport,
   readPlayerReports,
+  REPORT_TTL_S,
   submitPlayerReport,
 } from '../src/reports.mjs';
 import { createNodeReportStore } from '../src/report-store-node.mjs';
@@ -18,6 +19,38 @@ const installB = 'b'.repeat(32);
 const gameId = '0123456789abcdef';
 const account = { id: 'guest:a', name: 'Alice', install: installA };
 const now = 1_700_000_000_000;
+
+test('Node journal replay repairs legacy report, roster and evidence strings before storage validation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'openbfme-reports-text-'));
+  try {
+    const path = join(directory, 'journal.ndjson');
+    const id = `R-${'a'.repeat(24)}`;
+    const seconds = Math.floor(now / 1000);
+    for (const text of ['\ud800x', 'é e\u0301 🌍']) {
+      const report = { id, source: 'player', reporter: { install: installA, nick: text },
+        target: { install: installB, nick: text }, game_id: gameId, reason: `other: ${text}`,
+        received_at: seconds, expires_at: seconds + REPORT_TTL_S };
+      const roster = { game_id: gameId, participants: [{ account: account.id, install: installA, nick: text }],
+        active: [], state: 'finished', ended_at: seconds };
+      const evidence = { expires_at: report.expires_at, lines: [{ game_id: gameId, nick: text, text, at: seconds }] };
+      const journal = JSON.stringify({ v: 1, kind: 'snapshot', compacted_at: Date.now(), entries: [
+        [`report:${id}`, report], [`roster:${gameId}`, roster], [`evidence:${id}`, evidence],
+      ] }) + '\n';
+      await writeFile(path, journal);
+      const store = createNodeReportStore(directory);
+      const response = await readPlayerReport({ store, now: () => now, reportId: id });
+      assert.equal(response.report.reporter.nick, text.toWellFormed());
+      assert.equal(response.report.target.nick, text.toWellFormed());
+      assert.equal(response.report.reason, `other: ${text.toWellFormed()}`);
+      assert.equal((await store.reportTransaction((tx) => tx.get(`roster:${gameId}`))).participants[0].nick, text.toWellFormed());
+      const storedEvidence = await store.reportTransaction((tx) => tx.get(`evidence:${id}`));
+      assert.equal(storedEvidence.lines[0].nick, text.toWellFormed());
+      assert.equal(storedEvidence.lines[0].text, text.toWellFormed());
+      if (text.isWellFormed()) assert.equal(JSON.stringify(response), JSON.stringify({ v: 1, report }));
+      assert.equal(await readFile(path, 'utf8'), journal, 'read repair leaves the journal bytes alone');
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 const roster = {
   id: gameId,
   slots: [
@@ -32,7 +65,7 @@ const roster = {
   finished: false,
 };
 
-function body(reason = 'unsporting play', target = 'guest:b') {
+function body(reason = 'other: unsporting play', target = 'guest:b') {
   return new TextEncoder().encode(JSON.stringify({ v: 1, game_id: gameId, target, reason }));
 }
 
@@ -95,6 +128,113 @@ test('player report submission is private, idempotent, and survives restart', as
     ]);
     assert.equal(detail.report.reporter.install, installA);
     assert.equal(detail.report.target.install, installB);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('report categories, roster names, and private bounded chat evidence are enforced', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'openbfme-reports-'));
+  try {
+    const store = createNodeReportStore(directory);
+    const game = {
+      ...roster,
+      reportParticipants: [
+        { account: account.id, install: installA, nick: 'Roster Alice' },
+        { account: 'guest:b', install: installB, nick: 'Roster Bob' },
+      ],
+      chat: [
+        { account: 'spectator', text: 'not part of pair', at: now },
+        ...Array.from({ length: 60 }, (_, index) => ({
+          account: index % 2 ? account.id : 'guest:b',
+          text: `room line ${index}`,
+          at: now + index * 1000,
+        })),
+      ],
+    };
+    await store.reportTransaction((tx) => tx.put(`roster:${gameId}`, {
+      game_id: gameId, participants: game.reportParticipants, active: [account.id, 'guest:b'],
+      state: 'started', ended_at: null,
+    }));
+    const submitted = await submitPlayerReport({
+      store,
+      now: () => now,
+      randomBytes,
+      account: { ...account, name: 'Untrusted client nickname' },
+      rawBody: body('harassment: repeated abuse'),
+      idempotencyKey: 'social-evidence-1',
+      getLiveGame: () => game,
+    });
+    const evidence = await store.reportTransaction((tx) => tx.get(`evidence:${submitted.receipt.report_id}`));
+    assert.equal(evidence.lines.length, 50);
+    assert.ok(evidence.lines.every((line) => line.game_id === gameId && line.nick !== 'Untrusted client nickname'));
+    assert.ok(evidence.lines.every((line) => Number.isSafeInteger(line.at)));
+    const detail = await readPlayerReport({ store, now: () => now, reportId: submitted.receipt.report_id });
+    assert.equal(detail.report.reporter.nick, 'Roster Alice');
+    assert.equal(Object.hasOwn(detail.report, 'evidence'), false);
+    await assert.rejects(() => submitPlayerReport({
+      store,
+      now: () => now + 1,
+      randomBytes,
+      account,
+      rawBody: body('unsupported: note'),
+      idempotencyKey: 'social-evidence-2',
+      getLiveGame: () => game,
+    }), (error) => error.code === 'bad_reason');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('report categories reject controls and malformed Unicode while legacy stored receipts remain replayable', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'openbfme-reports-reasons-'));
+  try {
+    const store = createNodeReportStore(directory);
+    await store.reportTransaction((tx) => tx.put(`roster:${gameId}`, {
+      game_id: gameId, participants: roster.reportParticipants, active: [account.id, 'guest:b'],
+      state: 'started', ended_at: null,
+    }));
+    for (const reason of ['other: note\u0000hidden', 'harassment: \ud800']) {
+      await assert.rejects(() => submitPlayerReport({
+        store, now: () => now, randomBytes, account, rawBody: body(reason),
+        idempotencyKey: `bad-${reason.includes('\u0000') ? 'control' : 'unicode'}-01`,
+        getLiveGame: () => roster,
+        // LOBBYSEC-1: text that is not well-formed Unicode is refused as bad_field before the category check, like every other lobby text
+      }), (error) => error.code === (reason.includes('\u0000') ? 'bad_reason' : 'bad_field'));
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('Unicode private evidence reopens from the Node journal and expires after 90 days', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'openbfme-reports-unicode-'));
+  try {
+    const store = createNodeReportStore(directory);
+    const game = {
+      ...roster,
+      reportParticipants: [
+        { account: account.id, install: installA, nick: '😀'.repeat(24) },
+        { account: 'guest:b', install: installB, nick: '旅行者'.repeat(8) },
+      ],
+      chat: [{ account: account.id, text: '🚀'.repeat(200), at: now }, { account: 'guest:b', text: 'é'.repeat(100), at: null }],
+    };
+    await store.reportTransaction((tx) => tx.put(`roster:${gameId}`, {
+      game_id: gameId, participants: game.reportParticipants, active: [account.id, 'guest:b'],
+      state: 'started', ended_at: null,
+    }));
+    const submitted = await submitPlayerReport({
+      store, now: () => now, randomBytes, account, rawBody: body('other: Unicode evidence'),
+      idempotencyKey: 'unicode-evidence-01', getLiveGame: () => game,
+    });
+    const reopened = createNodeReportStore(directory);
+    const evidence = await reopened.reportTransaction((tx) => tx.get(`evidence:${submitted.receipt.report_id}`));
+    assert.equal(evidence.lines.length, 2);
+    assert.equal(evidence.lines[0].nick, '😀'.repeat(24));
+    assert.equal(evidence.lines[0].text, '🚀'.repeat(200));
+    assert.equal(evidence.lines[1].at, null);
+    await cleanupReportData(reopened, Math.floor(now / 1000) + 90 * 24 * 60 * 60 + 1);
+    assert.equal(await reopened.reportTransaction((tx) => tx.get(`evidence:${submitted.receipt.report_id}`)), null);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -201,7 +341,7 @@ test('same-key mismatch, different-key duplicate, and failed transactions remain
     getLiveGame: () => liveGame(),
   });
   await assert.rejects(submitPlayerReport({
-    store, now: () => now, randomBytes, account, rawBody: body('different reason'),
+    store, now: () => now, randomBytes, account, rawBody: body('other: different reason'),
     idempotencyKey: 'report-key-1', getLiveGame: () => liveGame(),
   }), (error) => error.status === 409 && error.code === 'conflict');
   await assert.rejects(submitPlayerReport({
@@ -324,7 +464,7 @@ test('Node journal compaction removes deleted report reasons from disk', async (
   try {
     const store = createNodeReportStore(directory);
     await store.reportTransaction((tx) => tx.put(`roster:${gameId}`, testRoster()));
-    const reason = 'private reason removed by compaction';
+    const reason = 'other: private reason removed by compaction';
     const submission = await submitPlayerReport({
       store, now: () => now, randomBytes, account, rawBody: body(reason), idempotencyKey: 'compact-reason-01',
       getLiveGame: () => liveGame(),
@@ -401,4 +541,20 @@ test('Node journal: a failed append fails its transaction only; the store stays 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+// LOBBYSEC-1: a report whose reason or target is not well-formed Unicode (a lone UTF-16 surrogate) is refused at intake (400), before any storage
+test('LOBBYSEC-1: a report reason or target with a lone surrogate is refused (400)', async () => {
+  for (const raw of [body('\ud800 cheat'), body('unsporting play', 'guest:\udc00')]) {
+    await assert.rejects(submitPlayerReport({ store: memoryReportStore(), now: () => now, randomBytes, account, rawBody: raw, idempotencyKey: 'lobbysec-1',
+      getLiveGame: () => roster }), (e) => e.status === 400 && e.code === 'bad_field');
+  }
+});
+
+// LOBBYSEC-1 (Sol): ported from the live lobby line's test
+test('a stored receipt from before the well-formed rule still validates; new intake refuses it (LOBBYSEC-1, as the live lobby line)', async () => {
+  const { validReceipt } = await import('../src/reports.mjs');
+  const canonical = JSON.stringify({ v: 1, game_id: gameId, target: 'guest:b', reason: 'legacy \ud800' });
+  const receipt = { canonical, report_id: `R-${'1'.repeat(24)}`, received_at: 100, expires_at: 100 + 24 * 60 * 60 };
+  assert.equal(validReceipt(receipt), receipt);
 });

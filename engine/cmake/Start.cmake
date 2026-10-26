@@ -18,7 +18,11 @@ set(OPENBFME_START_SOURCES
 set(OPENBFME_START_TESTS
     tests/StartTestUtil.cpp
     tests/test_start_random.cpp
+    tests/test_p16_core.cpp
+    tests/test_p16_retail.cpp
+    tests/test_p16_soak.cpp
     tests/test_start_retail.cpp
+    tests/test_online16_skirmish_start.cpp
 )
 # the Godot device classes of the lane (added to the openbfme extension)
 set(OPENBFME_START_GODOT_SOURCES

@@ -2,6 +2,7 @@
 // See GameClient/GUI/AptScreens/AptSimpleScreens.h.
 
 #include "GameClient/GUI/AptScreens/AptSimpleScreens.h"
+#include "GameClient/LocalizedText.h"
 
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/Gadgets.h"
@@ -19,6 +20,7 @@
 #include "Libraries/Source/Apt/Apt.h"
 #include "Libraries/Source/Apt/AptButtonInst.h"
 #include "Libraries/Source/Apt/AptCharacterInst.h"
+#include "Libraries/Source/Apt/AptInput.h"
 #include "Libraries/Source/Apt/AptValue.h"
 
 #include <array>
@@ -90,6 +92,8 @@ AptPlayerTribute::AptPlayerTribute(WindowManager &windows, Shell &shell, ShellSe
 
 AptPlayerTribute::~AptPlayerTribute()
 {
+	destroyRowViewport(m_statusViewport);
+	destroyRowViewport(m_tributeViewport);
 	dropStatusPage();
 }
 
@@ -207,6 +211,27 @@ void AptPlayerTribute::pageLoaded(const std::string &params)
 		registerCommand(page + "_OnEnabledContentLoaded", [this](const std::string &arg) { contentLoaded(arg); });
 		// RW 0x91653C -> RW 0x915946: the content and its rows are freed
 		registerCommand(page + "_OnEnabledContentUnloaded", [this](const std::string &) {
+			if (m_content.empty())
+			{
+				return;
+			}
+			// Dynamic row callbacks capture indices into m_rows: retire them with the content,
+			// before clearing its rows, so a reload can register fresh callbacks.
+			for (TRow &row : m_rows)
+			{
+				if (!row.path.empty())
+				{
+					const std::string root = pathPrefix() + "." + row.path;
+					windows().unregisterProvider(root + "_color");
+					windows().closeAptScreen(root + "_InitSlider");
+					windows().closeAptScreen(root + "_InitTextEntry");
+				}
+			}
+			for (const char *suffix : { "_OnRowShown", "_OnRowHidden", "_Reset", "_Send" })
+			{
+				windows().unregisterCommand(m_content + suffix);
+			}
+			windows().unregisterProvider(m_content + "_NumOfPlayers");
 			m_content.clear();
 			m_rows.clear();
 		});
@@ -258,6 +283,7 @@ void AptPlayerTribute::pageUnloaded(const std::string &name)
 
 void AptPlayerTribute::dropStatusPage()
 {
+	destroyRowViewport(m_statusViewport);
 	if (!m_status)
 	{
 		return;
@@ -415,7 +441,7 @@ void AptPlayerTribute::contentLoaded(const std::string &argument)
 	{
 		for (const TributePlayerRow &p : m_env.tribute->tributePlayers())
 		{
-			if (m_rows.size() >= 7)
+			if (m_rows.size() >= (size_t)m_env.tribute->rowLimit())
 			{
 				break;
 			}
@@ -447,6 +473,14 @@ void AptPlayerTribute::tributeRowHidden(const std::string &argument)
 		return;
 	}
 	TRow &row = m_rows[(size_t)index];
+	// A hidden clip can be replaced by the movie; its providers and _Init refs leave with it.
+	if (!row.path.empty())
+	{
+		const std::string root = pathPrefix() + "." + row.path;
+		windows().unregisterProvider(root + "_color");
+		windows().closeAptScreen(root + "_InitSlider");
+		windows().closeAptScreen(root + "_InitTextEntry");
+	}
 	row.path.clear();
 	row.slider = nullptr;
 	row.entry = nullptr;
@@ -600,6 +634,16 @@ WindowMsgHandledType AptPlayerTribute::gadgetMessage(GameWindow *owner, std::uin
 {
 	// the gadget that reports is the message's first datum (the owner window is the screen's own)
 	GameWindow *from = reinterpret_cast<GameWindow *>(data1);
+	for (RowViewport *viewport : { &m_statusViewport, &m_tributeViewport })
+	{
+		if (from && from == viewport->range && msg == GCM_SELECTED)
+		{
+			int selected = -1;
+			GadgetComboBoxGetSelectedPos(from, &selected);
+			if (selected >= 0) viewport->first = selected;
+			return MSG_HANDLED;
+		}
+	}
 	for (TRow &r : m_rows)
 	{
 		if (msg == GSM_SLIDER_TRACK && from && from == r.slider)
@@ -641,9 +685,104 @@ WindowMsgHandledType AptPlayerTribute::gadgetMessage(GameWindow *owner, std::uin
 	return AptScreen::gadgetMessage(owner, msg, data1, data2);
 }
 
+void AptPlayerTribute::destroyRowViewport(RowViewport &viewport)
+{
+	if (AptGadgetLayer *layer = windows().gadgetLayer()) layer->destroyEngineGadget(viewport.range);
+	viewport = {};
+}
+
+void AptPlayerTribute::updateRowViewport(RowViewport &viewport, const std::string &path, int count, int visibleCount)
+{
+	if (path.empty() || count <= visibleCount)
+	{
+		destroyRowViewport(viewport);
+		return;
+	}
+	AptCharacterInst *instance = windows().apt().resolvePath(windows().apt().level(level()), path);
+	AptSpriteInst *parent = instance ? instance->asSprite() : nullptr;
+	if (!parent)
+	{
+		if (viewport.range) viewport.range->winHide(true);
+		return;
+	}
+	AptCharacterInst *first = parent->childByName("0");
+	AptCharacterInst *second = parent->childByName("1");
+	if (!first || !second) return; // the retail timeline has not placed its rows yet
+	AptCharacterInst *prototype = second; // tribute's local row has no editable transfer controls
+	if (viewport.parent != parent)
+	{
+		destroyRowViewport(viewport);
+		viewport.parent = parent;
+		viewport.firstY = first->matrix.ty;
+		viewport.step = second->matrix.ty - first->matrix.ty;
+	}
+	// OpenBFME extension: keep the retail row symbol and logical row names; only its viewport changes.
+	for (int i = visibleCount; i < count; ++i)
+	{
+		const std::string name = std::to_string(i);
+		if (!parent->childByName(name))
+		{
+			AptCharacterInst *row = parent->attachCharacter(prototype->charRef(), name, 0x4000 + i, true);
+			if (!row)
+			{
+				windows().note("extended-layout-error", "could not create player row " + name + " at " + path);
+				return;
+			}
+			row->matrix = prototype->matrix;
+			row->color = prototype->color;
+		}
+	}
+	for (int i = 0; i < count; ++i)
+	{
+		if (AptCharacterInst *row = parent->childByName(std::to_string(i)))
+		{
+			if (i >= visibleCount)
+			{
+				const std::string params = "index=" + std::to_string(i) + "&name=" + row->targetPath();
+				if (&viewport == &m_statusViewport) rowShown(params);
+				else tributeRowShown(params);
+				// Retail's table initializes only its authored rows. Extend that initialization to runtime rows.
+				AptSpriteInst *sprite = row->asSprite();
+				AptSpriteInst *source = prototype->asSprite();
+				if (sprite && source && sprite->frame == 0 && source->frame > 0)
+				{
+					sprite->gotoFrame(source->frame);
+					sprite->playing = source->playing;
+				}
+			}
+			row->matrix.ty = viewport.firstY + (i - viewport.first) * viewport.step;
+			row->asChanged = true;
+			row->visible = i >= viewport.first && i < viewport.first + visibleCount;
+		}
+	}
+	AptGadgetLayer *layer = windows().gadgetLayer();
+	if (!layer) return;
+	layer->syncPlacements();
+	if (!viewport.range)
+	{
+		std::string error;
+		viewport.range = layer->createEngineGadget("window/apt/combobox.wnd", 392, 472, 240, 24, ownerWindow(), &error);
+		if (!viewport.range)
+		{
+			windows().note("extended-layout-error", "player range creation failed: " + error);
+			return;
+		}
+		GadgetComboBoxSetMaxDisplay(viewport.range, 4);
+		for (int i = 0; i <= count - visibleCount; ++i)
+		{
+			const std::string label = "Players " + std::to_string(i + 1) + "-" + std::to_string(i + visibleCount) + " / " + std::to_string(count);
+			GadgetComboBoxAddEntry(viewport.range, asciiToU16(label), 0xFFFFFFFFu);
+		}
+		GadgetComboBoxSetSelectedPos(viewport.range, 0, true);
+	}
+	viewport.range->winHide(!parent->globallyVisible() || isHidden());
+}
+
 // RW 0x9164EB
 void AptPlayerTribute::update()
 {
+	updateRowViewport(m_statusViewport, m_status ? m_status->path + ".Table" : "", m_status ? (int)m_status->rowShown.size() : 0, 8);
+	updateRowViewport(m_tributeViewport, m_content.empty() ? "" : skipLevelN(m_content) + ".Table", (int)m_rows.size(), 7);
 	if (!m_env.tribute)
 	{
 		return;
@@ -740,8 +879,8 @@ const char *AptPlayerTribute::stopLine()
 		   "(its Cancel / Escape: <path>_ReturnToGame, RW 0x914C51); the status rows are HUD-5's (S-1953); the tribute rows with their sliders and amounts "
 		   "(RW 0x915F5D .. 0x91578C) and Send (RW 0x914DD6 -> MSG_GIVE_MONEY, RW 0x6264E1) are ported (PLAY-1 r2); not ported: the opening's pause / input calls "
 		   "(RW 0x914FA2 .. 0x914FE2), a skirmish AI ally's extra money term in a tribute row's field 1 (RW 0x6A950B / 0x6A9999), the text entry's limit and filter "
-		   "(RW 0x81606D / 0x721FA9), RW 0x91578C's call points (here after every change), RW 0x6264E1's + 0x754 test taken as Player::isDefeated, and the campaign's "
-		   "objectives screen (RW 0x8E8843, AptObjectivesMenu)";
+		   "(RW 0x81606D / 0x721FA9), RW 0x91578C's call points (here after every change), RW 0x6264E1's + 0x754 test taken as Player::isDefeated (lane CAMPUI-1: the "
+		   "campaign's objectives screen RW 0x8E8843 is AptObjectivesMenu)";
 }
 
 AptLoadScreen::AptLoadScreen(WindowManager &windows, Shell &shell, ShellEnvironment &environment)
@@ -766,7 +905,7 @@ AptLoadScreen::AptLoadScreen(WindowManager &windows, Shell &shell, ShellEnvironm
 			default: return false;
 		}
 	});
-	for (int i = 0; i < MAX_LOAD_SLOTS; ++i)
+	for (int i = 0; i < (m_env.loadScreen ? m_env.loadScreen->cardCapacity() : LEGACY_MAX_SLOTS); ++i)
 	{
 		// GameLoading:PlayerColor:<c> (RW 0x81C6D2): sprintf("%d", the colour as a signed 32 bit 0xAARRGGBB) for an occupied card, nothing otherwise
 		registerProvider("GameLoading:PlayerColor:" + std::to_string(i), [this, i](const std::string &name, std::string &value, bool setting) {
@@ -800,7 +939,12 @@ void AptLoadScreen::populate()
 		windows().note("loadscreen-unwired", "no LoadScreenInfo: the cards stay as the movie draws them [S-273]");
 		return;
 	}
-	for (int c = 0; c < MAX_LOAD_SLOTS; ++c)
+	if (!m_env.loadScreen->error.empty())
+	{
+		windows().note("loadscreen-invalid", m_env.loadScreen->error);
+		return;
+	}
+	for (int c = 0; c < m_env.loadScreen->cardCapacity(); ++c)
 	{
 		const std::string n = std::to_string(c);
 		const LoadScreenSlotInfo &card = m_env.loadScreen->cards[c];
@@ -821,9 +965,11 @@ void AptLoadScreen::populate()
 		if (card.occupied)
 		{
 			++m_cards;
+			m_cardRows = c + 1;
 			windows().setAptText("LoadingScreen::PlayerName" + n, loadScreenU16ToUtf8(card.playerName));
 			const std::string teamLabel = "Team:" + std::to_string(card.teamNumber + 1);
-			windows().setAptText("LoadingScreen::TeamNumber" + n, loadScreenU16ToUtf8(fetchOrMissing(m_env.gameText, teamLabel)));
+			windows().setAptText("LoadingScreen::TeamNumber" + n, m_env.loadScreen->mapStartCount > LEGACY_MAX_SLOTS && card.teamNumber >= 4
+				? std::to_string(card.teamNumber + 1) : loadScreenU16ToUtf8(fetchOrMissing(m_env.gameText, teamLabel)));
 			windows().setAptText("LoadingScreen::ArmyName" + n, loadScreenU16ToUtf8(card.armyName));
 		}
 		else
@@ -838,7 +984,7 @@ void AptLoadScreen::populate()
 	windows().note("loadscreen-level", "[S-3506] the Level icons' RenderImage clips (UIClip.Level.<c>) take the image record UIClip/Level/<c> by their path "
 									   "below the root: the RenderImage callback's name rule was not read");
 	// every card starts at 0 (processProgress(slot, 0) per card, RW 0x81D062)
-	for (int c = 0; c < MAX_LOAD_SLOTS; ++c)
+	for (int c = 0; c < m_env.loadScreen->cardCapacity(); ++c)
 	{
 		if (m_env.loadScreen->cards[c].occupied)
 		{
@@ -859,9 +1005,113 @@ bool AptLoadScreen::callBar(int card, int percent)
 	return true;
 }
 
+AptLoadScreen::~AptLoadScreen()
+{
+	if (AptGadgetLayer *layer = windows().gadgetLayer()) layer->destroyEngineGadget(m_cardRange);
+}
+
+WindowMsgHandledType AptLoadScreen::gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2)
+{
+	if (m_cardRange && reinterpret_cast<GameWindow *>(data1) == m_cardRange && msg == GCM_SELECTED)
+	{
+		int selected = -1;
+		GadgetComboBoxGetSelectedPos(m_cardRange, &selected);
+		if (selected >= 0) m_firstCard = selected;
+		return MSG_HANDLED;
+	}
+	return AptScreen::gadgetMessage(from, msg, data1, data2);
+}
+
+bool AptLoadScreen::barsReady()
+{
+	if (m_cardRows <= LEGACY_MAX_SLOTS) return true;
+	AptCharacterInst *bar = windows().apt().resolvePath(windows().apt().level(level()), "UIClip.ProgressBars.Bar" + std::to_string(m_cardRows - 1));
+	return m_cardRange && bar && bar->hasMember("SetPercent");
+}
+
+void AptLoadScreen::frameUpdate()
+{
+	if (!m_env.loadScreen || m_env.loadScreen->mapStartCount <= LEGACY_MAX_SLOTS || m_cardRows <= LEGACY_MAX_SLOTS) return;
+	AptGadgetLayer *layer = windows().gadgetLayer();
+	if (!layer) return;
+	const char *columns[] = { "Rank", "PlayerName", "TeamNumber", "ArmyName", "ProgressBars", "Level", "Fellowship" };
+	std::array<AptSpriteInst *, 7> parents{};
+	for (int col = 0; col < 7; ++col)
+	{
+		AptCharacterInst *instance = windows().apt().resolvePath(windows().apt().level(level()), "UIClip." + std::string(columns[col]));
+		parents[col] = instance ? instance->asSprite() : nullptr;
+		if (!parents[col]) return;
+		for (int i = 0; i < LEGACY_MAX_SLOTS; ++i)
+		{
+			AptCharacterInst *row = parents[col]->childByName((col == 4 ? "Bar" : "") + std::to_string(i));
+			if (!row) return; // the movie has not placed its authored rows yet
+			if (!m_cardRange) m_cardY[col][i] = row->matrix.ty;
+		}
+	}
+	if (!m_cardRange)
+	{
+		std::string error;
+		m_cardRange = layer->createEngineGadget("window/apt/combobox.wnd", 392, 650, 240, 24, ownerWindow(), &error);
+		if (!m_cardRange)
+		{
+			windows().note("extended-layout-error", "loading card range creation failed: " + error);
+			return;
+		}
+		GadgetComboBoxSetMaxDisplay(m_cardRange, 4);
+		for (int i = 0; i <= m_cardRows - LEGACY_MAX_SLOTS; ++i)
+		{
+			const std::string label = "Players " + std::to_string(i + 1) + "-" + std::to_string(i + LEGACY_MAX_SLOTS) + " / " + std::to_string(m_cardRows);
+			GadgetComboBoxAddEntry(m_cardRange, asciiToU16(label), 0xFFFFFFFFu);
+		}
+		GadgetComboBoxSetSelectedPos(m_cardRange, 0, true);
+	}
+	// OpenBFME extension of RW 0x81CB08: retain card indices and the authored column symbols in an eight-row viewport.
+	for (int col = 0; col < 7; ++col)
+	{
+		const std::string prefix = col == 4 ? "Bar" : "";
+		AptCharacterInst *prototype = parents[col]->childByName(prefix + "0");
+		for (int i = 0; i < m_cardRows; ++i)
+		{
+			const std::string name = prefix + std::to_string(i);
+			AptCharacterInst *row = parents[col]->childByName(name);
+			if (!row && i >= LEGACY_MAX_SLOTS)
+			{
+				row = parents[col]->attachCharacter(prototype->charRef(), name, 0x4000 + i, true);
+				if (row)
+				{
+					row->matrix = prototype->matrix;
+					row->color = prototype->color;
+					if (col >= 5)
+					{
+						AptValue type;
+						if (!prototype->getMember("_type", type) || !type.isString())
+						{
+							windows().note("extended-layout-error", "loading image prototype has no render type");
+							return;
+						}
+						row->setMember("_type", type);
+					}
+				}
+			}
+			if (!row)
+			{
+				windows().note("extended-layout-error", "missing loading card " + std::string(columns[col]) + "." + name);
+				return;
+			}
+			const int visibleRow = i - m_firstCard;
+			row->visible = visibleRow >= 0 && visibleRow < LEGACY_MAX_SLOTS;
+			if (row->visible) row->matrix.ty = m_cardY[col][visibleRow];
+			row->asChanged = true;
+		}
+	}
+	layer->syncPlacements();
+	m_cardRange->winHide(isHidden() || !parents[0]->globallyVisible());
+	flush();
+}
+
 void AptLoadScreen::flush()
 {
-	if (m_pending.empty() || !windows().isAptWindowLoaded(level()))
+	if (m_pending.empty() || !windows().isAptWindowLoaded(level()) || !barsReady())
 	{
 		return;
 	}
@@ -875,7 +1125,12 @@ void AptLoadScreen::flush()
 
 bool AptLoadScreen::setProgress(int card, int percent)
 {
-	if (!windows().isAptWindowLoaded(level()))
+	if (!m_env.loadScreen || card < 0 || card >= MAX_LOAD_SLOTS || card >= m_env.loadScreen->mapStartCount || !m_env.loadScreen->cards[card].occupied)
+	{
+		windows().note("loadscreen-invalid-card", "progress for unknown card " + std::to_string(card));
+		return false;
+	}
+	if (!windows().isAptWindowLoaded(level()) || !barsReady())
 	{
 		m_pending.push_back({ card, percent });
 		return false;
@@ -948,47 +1203,6 @@ bool equalsNoCase(const std::string &a, const char *b)
 	return i == a.size() && b[i] == 0;
 }
 
-// ZH UnicodeString::format (a vswprintf) of a "%d"-style game text: the integer conversions are replaced in order by the integers, with their flags,
-// width and precision (Version:Format2 is "Version %d.%02d": the minor version 1 shows as "01", RotWK's "Version 2.01"; lane MENUFIX-1, before the
-// width was dropped: "Version 2.1")
-std::u16string formatInts(const std::u16string &format, std::initializer_list<int> values)
-{
-	std::u16string out;
-	auto it = values.begin();
-	for (std::size_t i = 0; i < format.size(); ++i)
-	{
-		if (format[i] == u'%' && i + 1 < format.size())
-		{
-			std::size_t j = i + 1;
-			std::string spec = "%";
-			while (j < format.size() && (format[j] == u'-' || format[j] == u'+' || format[j] == u' ' || format[j] == u'#' || format[j] == u'.' ||
-					(format[j] >= u'0' && format[j] <= u'9')))
-			{
-				spec += (char)format[j++];
-			}
-			if (j < format.size() && (format[j] == u'd' || format[j] == u'i' || format[j] == u'u'))
-			{
-				if (it != values.end())
-				{
-					spec += (char)format[j];
-					char buf[64];
-					std::snprintf(buf, sizeof(buf), spec.c_str(), *it++);
-					out += asciiToU16(buf);
-				}
-				i = j;
-				continue;
-			}
-			if (format[i + 1] == u'%')
-			{
-				out += u'%';
-				++i;
-				continue;
-			}
-		}
-		out += format[i];
-	}
-	return out;
-}
 } // namespace
 
 std::u16string AptOptionsScreen::versionText(const GameTextSource *text)
@@ -999,7 +1213,7 @@ std::u16string AptOptionsScreen::versionText(const GameTextSource *text)
 	{
 		format = u"Version:Format2"; // a missing label shows as the label (the game text's own rule)
 	}
-	return formatInts(format, { kVersionMajor, kVersionMinor });
+	return LocalizedText::format(format, { kVersionMajor, kVersionMinor });
 }
 
 namespace
@@ -1038,7 +1252,7 @@ AptOptionsScreen::AptOptionsScreen(WindowManager &windows, Shell &shell, ShellEn
 	registerCommand("AptOptions::Cancel", [this](const std::string &) {
 		if (extensionOpen())
 		{
-			m_extensionEvents.push_back({ OpenBFMEPageEvent::Kind::Cancel, std::string(), 0 });
+			addExtensionEvent({ OpenBFMEPageEvent::Kind::Cancel, std::string(), 0 });
 			return;
 		}
 		cancel();
@@ -1046,7 +1260,7 @@ AptOptionsScreen::AptOptionsScreen(WindowManager &windows, Shell &shell, ShellEn
 	registerCommand("AptOptions::Save", [this](const std::string &) {
 		if (extensionOpen())
 		{
-			m_extensionEvents.push_back({ OpenBFMEPageEvent::Kind::Accept, std::string(), 0 });
+			addExtensionEvent({ OpenBFMEPageEvent::Kind::Accept, std::string(), 0 });
 			return;
 		}
 		save();
@@ -1054,7 +1268,7 @@ AptOptionsScreen::AptOptionsScreen(WindowManager &windows, Shell &shell, ShellEn
 	registerCommand("AptOptions::Reset", [this](const std::string &) {
 		if (extensionOpen())
 		{
-			m_extensionEvents.push_back({ OpenBFMEPageEvent::Kind::Reset, std::string(), 0 });
+			addExtensionEvent({ OpenBFMEPageEvent::Kind::Reset, std::string(), 0 });
 			return;
 		}
 		reset();
@@ -2318,7 +2532,7 @@ bool AptOptionsScreen::openExtension(std::string *error)
 				}
 				return;
 			}
-			m_extensionEvents.push_back(e);
+			addExtensionEvent(e);
 		});
 	}
 	layer->setDecorator([this](GadgetDrawList &out) {
@@ -2348,6 +2562,7 @@ bool AptOptionsScreen::openExtension(std::string *error)
 	m_state = kExtensionState;
 	m_entryPressed = false;
 	m_barPressed = -1;
+	m_deferredEvents.clear();
 	setExtensionHidden(true);
 	return true;
 }
@@ -2397,9 +2612,28 @@ void AptOptionsScreen::closeExtension()
 	m_mirroredAtOpen.clear();
 }
 
+void AptOptionsScreen::addExtensionEvent(const OpenBFMEPageEvent &e, std::uint64_t inputSerial)
+{
+	if (inputSerial == 0 && m_deferredEvents.empty())
+	{
+		m_extensionEvents.push_back(e);
+		return;
+	}
+	m_deferredEvents.emplace_back(e, inputSerial);
+}
+
 std::vector<OpenBFMEPageEvent> AptOptionsScreen::takeExtensionEvents()
 {
-	// one FIFO: the page's changes and the bottom bar's / the button's clicks in the order they happened (Sol review r1)
+	// one FIFO: the page's changes and the bottom bar's / the button's clicks in the order they happened (Sol review r1). Lane MENUSND-1: a bar click
+	// joins it once the movie's input has processed the press and its cancel (the press's sound is asked for by then), the events behind it after it
+	const std::uint64_t processed = windows().apt().input().processed();
+	std::size_t ready = 0;
+	while (ready < m_deferredEvents.size() && m_deferredEvents[ready].second <= processed)
+	{
+		m_extensionEvents.push_back(m_deferredEvents[ready].first);
+		++ready;
+	}
+	m_deferredEvents.erase(m_deferredEvents.begin(), m_deferredEvents.begin() + (std::ptrdiff_t)ready);
 	std::vector<OpenBFMEPageEvent> out;
 	out.swap(m_extensionEvents);
 	return out;
@@ -2514,6 +2748,14 @@ bool AptOptionsScreen::mouseFilter(int kind, float x, float y)
 		if (kind == 1)
 		{
 			m_barPressed = hit;
+			if (hit >= 0)
+			{
+				// lane MENUSND-1: the press still reaches the movie, so the button plays what RotWK plays on it: MenuExport.apt's GenericButton goes to
+				// its `_down` frame (button action 4: gotoAndPlay("_down")), whose action calls _root.PlaySound("Gui_ShellMapSelect") (FSCommand PlaySound,
+				// RW 0x815772) and shows the pressed look. The press does nothing else there: the button's click (OnButtonClick) is its `_release end`
+				// frame, which the release reaches, and the release stays the page's
+				windows().apt().input().postMouseButton(true);
+			}
 			return hit >= 0;
 		}
 		const int pressed = m_barPressed;
@@ -2522,10 +2764,11 @@ bool AptOptionsScreen::mouseFilter(int kind, float x, float y)
 		{
 			return false;
 		}
+		const std::uint64_t serial = windows().apt().input().postCancelPress(); // the movie's press ends without its release (and so without its click)
 		if (pressed == hit)
 		{
 			static const OpenBFMEPageEvent::Kind kinds[3] = { OpenBFMEPageEvent::Kind::Cancel, OpenBFMEPageEvent::Kind::Reset, OpenBFMEPageEvent::Kind::Accept };
-			m_extensionEvents.push_back({ kinds[pressed], std::string(), 0 });
+			addExtensionEvent({ kinds[pressed], std::string(), 0 }, serial); // the page's event once the movie has the press (takeExtensionEvents)
 		}
 		return true;
 	}
@@ -2545,7 +2788,7 @@ bool AptOptionsScreen::mouseFilter(int kind, float x, float y)
 		m_entryPressed = false;
 		if (inside)
 		{
-			m_extensionEvents.push_back({ OpenBFMEPageEvent::Kind::Entry, std::string(), 0 });
+			addExtensionEvent({ OpenBFMEPageEvent::Kind::Entry, std::string(), 0 });
 		}
 		return true;
 	}
@@ -2967,7 +3210,7 @@ void AptOptionsScreen::menuUpdate()
 	{
 		windows().note("options-menu", "[S-4670] Options: the movie made no " + missing + ": the menu has no row for it");
 	}
-	m_extensionEvents.push_back({ OpenBFMEPageEvent::Kind::Entry, std::string(), m_openOnDetail ? 1 : 0 });
+	addExtensionEvent({ OpenBFMEPageEvent::Kind::Entry, std::string(), m_openOnDetail ? 1 : 0 });
 }
 
 void AptOptionsScreen::finishMenu(bool accept)

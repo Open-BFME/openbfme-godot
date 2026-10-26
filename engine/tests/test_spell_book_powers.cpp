@@ -496,8 +496,12 @@ TEST_CASE("SPELL-2 retail: weather-based powers set the map-wide modifier, new o
 	{
 		g.player(mordor)->science().grantScience(st);
 	}
+	// lane OFFMAP-1: the enemy stands far away (the claim is the filter of a map-wide modifier, not range); 100 apart the two fought through the
+	// WeatherDuration countdown and the test read its soldier after it died (a crash once the idle state stopped snapping them onto cell centres,
+	// RW 0x745A64). The soldier is looked up by id from then on
 	Object *own = g.place("MordorFighter", mordor, 6000.0f, 8500.0f);
-	Object *foe = g.place("GondorFighter", men, 6100.0f, 8500.0f);
+	Object *foe = g.place("GondorFighter", men, 6000.0f, 6500.0f);
+	const ObjectID ownId = own->getID();
 	g.castAt(mordor, darkness, Coord3D{ 100.0f, 100.0f, 0.0f });
 	const GlobalWeatherSystem &w = g.logic->weather();
 	CHECK(w.weather() == 1);
@@ -514,9 +518,13 @@ TEST_CASE("SPELL-2 retail: weather-based powers set the map-wide modifier, new o
 	{
 		g.logic->runLogicFrame();
 	}
+	own = g.logic->findObjectByID(ownId);
+	REQUIRE(own != nullptr);
 	CHECK(w.modifierName() == d->m_attributeModifier);
 	CHECK(pool(*own)->hasList(d->m_attributeModifier));
 	g.logic->runLogicFrame();
+	own = g.logic->findObjectByID(ownId);
+	REQUIRE(own != nullptr);
 	CHECK(w.modifierName().empty());
 	CHECK(w.affectKind() == GlobalWeatherSystem::AFFECT_NONE);
 	CHECK_FALSE(pool(*own)->hasList(d->m_attributeModifier));

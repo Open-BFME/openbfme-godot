@@ -114,12 +114,12 @@ bool HordeContain::isFlankedByHorde(Object &attacker)
 	const float c = (float)SimMath::cosDet(halfAngle);                               // MSVCR71 cos on the double, fstp dword
 	float dx = SimMath::subf32(attacker.getPosition()->x, self->getPosition()->x);
 	float dy = SimMath::subf32(attacker.getPosition()->y, self->getPosition()->y);
-	const float len = (float)SimMath::length3d(dx, dy, 0.0f); // RW 0x405553: the length, then each component divided when it is not 0
-	if (len != 0.0f)
-	{
-		dx = SimMath::divf32(dx, len);
-		dy = SimMath::divf32(dy, len);
-	}
+	// RW 0x405553 Coord3D::normalize (lane FLANK-1 re-read): the length (RW 0x4054F5, fst dword), inv = 1.0f / len (divss), then x * inv, inv * y, inv * z (mulss), with no
+	// zero test: two hordes on the same point give inv = +inf and NaN components, every compare below is false (comiss / fcomip unordered) and the horde is not flanked
+	const float len = (float)SimMath::length3d(dx, dy, 0.0f);
+	const float inv = SimMath::divf32(1.0f, len);
+	dx = SimMath::mulf32(dx, inv);
+	dy = SimMath::mulf32(inv, dy);
 	const float a = self->getOrientation();
 	const float fx = SimMath::cosDet(a), fy = SimMath::sinDet(a);
 	const float dot = SimMath::addf32(SimMath::addf32(SimMath::mulf32(fy, dy), SimMath::mulf32(0.0f, 0.0f)), SimMath::mulf32(fx, dx));

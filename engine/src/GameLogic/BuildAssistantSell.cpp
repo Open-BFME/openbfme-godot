@@ -119,8 +119,13 @@ bool BuildAssistantSell::onSellMessage(const GameMessage &m)
 		}
 		if (beacon && BuildAssistant::isEquivalentTo(obj->getTemplate()->getFinalOverride(), beacon->getFinalOverride())) // RW 0x77B32F
 		{
+			// lane CHAT-1: RW 0x77B33C .. 0x77B3D5: the sender's own beacon is destroyed (GameLogic::destroyObject RW 0x62BBAB; the control bar's dirty flag
+			// is client state). Another player's beacon only hides it on the sender's screen in retail (unreachable: the group holds the sender's objects)
 			++m_stats.beacons;
-			m_logic.noteStop("[S-1980] sell: a selected beacon is removed in retail (RW 0x77B33C .. 0x77B3D5); beacons are not ported, nothing happens");
+			if (obj->getControllingPlayer() == player) // RW 0x68B678
+			{
+				m_logic.destroyObject(obj);
+			}
 			continue;
 		}
 		sellObject(obj); // RW 0x77B3E0: TheBuildAssistant vslot 0x6C
@@ -260,7 +265,7 @@ std::vector<std::string> BuildAssistantSell::acceptanceStops()
 {
 	return {
 		"[S-1980] sell (FACT-A, RW 0x77B2C8 / 0x7966BB / 0x79468B): MSG_SELL sells the group's structures, the refund (RefundValue or paid * SellPercentage, times the health "
-		"fraction) is paid in the next phase 5 and the structure dies (UNRESISTABLE, death type 8); not ported: a selected beacon's removal (no beacons), the local "
+		"fraction) is paid in the next phase 5 and the structure dies (UNRESISTABLE, death type 8), a selected own beacon is destroyed (lane CHAT-1); not ported: the local "
 		"player's BeaconName (the issuing player's is read: every retail faction names MultiplayerBeacon), the contain's onSelling (contain vslot 0x64: the riders are "
 		"ordered out with CMD_FROM_AI as BFME2's OpenContain does; GarrisonContain's removeAllContained first is not ported), the client's animation loop and cash text",
 		"[S-1981] sell: GameData SellPercentage (row RW 0xC00690, parsePercentToReal RW 0x42EEFA, GlobalData + 0xB94) must be loaded; without it a structure that has no "

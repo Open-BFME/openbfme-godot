@@ -8,6 +8,7 @@
 #include "GameLogic/Module/ReplaceSelfUpgrade.h"
 #include "GameLogic/SnapshotXfer.h"
 
+#include "Common/ModEngineFeatures.h"
 #include "Common/Player.h"
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingFactory.h"
@@ -16,6 +17,7 @@
 #include "GameLogic/AI/AIPathfindHost.h"
 #include "GameLogic/Construction.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/ObjectGeometry.h"
@@ -195,6 +197,27 @@ void ReplaceSelfUpgrade::upgradeImplementation()
 	const std::string name = obj->getName(); // + 0x88
 	Player *owner = obj->getControllingPlayer();
 	const Coord3D d = directionOf(*obj);
+	// lane MODS-3: edain-unchained.foundation-rebind (its 0xEDA020 before RW 0x62BBAB): the plot or castle whose occupant this object is keeps it for the
+	// first piece; the object's producer link goes before the destroy
+	const ObjectID replaced = obj->getID();
+	Object *plot = nullptr;
+	CastleMemberBehavior *plotMember = nullptr;
+	CastleBehavior *plotCastle = nullptr;
+	if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedFoundationRebind))
+	{
+		if (Object *p = logic.findObjectByID(obj->getProducerID()))
+		{
+			CastleMemberBehavior *m = dynamic_cast<CastleMemberBehavior *>(p->findModule("CastleMemberBehavior"));
+			CastleBehavior *c = dynamic_cast<CastleBehavior *>(p->findModule("CastleBehavior"));
+			if ((m && m->occupantId() == replaced) || (c && c->keepId() == replaced))
+			{
+				plot = p;
+				plotMember = m;
+				plotCastle = c;
+				obj->setProducer(nullptr);
+			}
+		}
+	}
 	logic.destroyObject(obj); // RW 0x68C18F, 0x68C6EE, the drawable, RW 0x6E85FB, RW 0x62BBAB
 	std::vector<const ThingTemplate *> list;
 	float total = 0.0f;
@@ -251,6 +274,31 @@ void ReplaceSelfUpgrade::upgradeImplementation()
 		if (trigger)
 		{
 			piece->setBuildCostPaid((float)trigger->getBuildCost()); // RW 0x8BB948: + 0x33C
+		}
+		if (plot)
+		{
+			// lane MODS-3: its 0xEDA097 at RW 0x8BB965, the first piece only: a castle's keep piece takes the keep, else the plot's occupant becomes the
+			// piece (when it is empty or still the replaced object); the piece's producer is the plot, and a plot built by the replaced object is built
+			// by the piece
+			static const int keep = kindBit("CASTLE_KEEP");
+			const ObjectID occupant = plotMember ? plotMember->occupantId() : (plotCastle ? plotCastle->keepId() : (ObjectID)INVALID_ID);
+			if (occupant == INVALID_ID || occupant == replaced)
+			{
+				if (plotCastle && piece->isKindOf((unsigned)keep))
+				{
+					plotCastle->rebindKeep(replaced, *piece);
+				}
+				else if (plotMember)
+				{
+					plotMember->setOccupantId(piece->getID());
+				}
+				piece->setProducer(plot);
+				if (plot->getBuilderID() == replaced)
+				{
+					plot->setBuilder(piece);
+				}
+			}
+			plot = nullptr;
 		}
 		logic.noteStop(stopLines()[0]); // RW 0x8BB96D .. 0x8BB9DF: the wall links
 	}

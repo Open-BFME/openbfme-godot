@@ -9,14 +9,22 @@ Lanes only need the lookup (`rw2decomp.py`); the rest rebuilds the map.
 
 ## Lookup
 
-    python tools/re/rw2decomp.py 0x66B3FD                  # RotWK VA, any address inside a function
-    python tools/re/rw2decomp.py privateMoveToPosition     # RotWK Ghidra name or decomp name
-    python tools/re/rw2decomp.py --bfme2 0x66B487          # BFME2 VA -> RotWK
-    python tools/re/pair_diff.py --rotwk <RotWK game.dat> --bfme2 <BFME2 game.dat> \
-        --map <rw_map.csv> 0x66B3FD                        # where a tier-B pair differs
+From the repository root with Python 3 and Git. The lookup requires the generated
+map below; the donor clone adds source line numbers and is optional. Binary
+comparison/rebuilding also requires `capstone` and `pefile`, plus the local retail
+binaries. These POSIX-shell examples work on
+Linux/macOS; set `ROTWK_INSTALL` and `BFME2_INSTALL` to the install roots first:
+
+```sh
+python3 tools/re/rw2decomp.py 0x66B3FD                  # RotWK VA, any address inside a function
+python3 tools/re/rw2decomp.py privateMoveToPosition     # RotWK Ghidra name or decomp name
+python3 tools/re/rw2decomp.py --bfme2 0x66B487          # BFME2 VA -> RotWK
+python3 tools/re/pair_diff.py --rotwk "$ROTWK_INSTALL/game.dat" --bfme2 "$BFME2_INSTALL/game.dat" \
+    --map workspace/rebuild/xmap/rw_map.csv 0x66B3FD   # where a tier-B pair differs
+```
 
 It reads `workspace/rebuild/xmap/rw_map.csv` and the clone `workspace/reference/open-bfme-2` of
-the main checkout (found through git, so this works from any lane worktree), or
+the main checkout (the current decomp: keep it pulled, and rebuild the map when it moves) (found through git, so this works from any lane worktree), or
 `$OPENBFME_XMAP` / `$OPENBFME_DECOMP2`.
 
 Tiers:
@@ -37,10 +45,22 @@ Decomp status of the counterpart: `authored` / `vendored` / `generated` = byte-m
 
 Always cite the RotWK address; BFME2 and the decomp are donors (PLAN source priority).
 
+Known limit: where BFME2's Ghidra list merged two functions into one entry and RotWK's did not
+(BFME2 0x2FB997 is FindSafePath + InternalFindPath, 0x2DBCCA is GameState::xfer + its neighbour,
+0x3CA4BE is executeAction + initConditionTemplates), the RotWK half that pairs with it gets the first
+function's name and the other half is RotWK-only or pairs with something else. Check the
+counterpart's `bfme2_size` against the ledger row's size when a name looks wrong.
+
 ## Rebuilding the map
 
 Outputs contain retail-derived addresses and names only (no bytes, no decompiled code) and stay
 under the ignored `workspace/rebuild/xmap/`.
+
+The commands below are argument sketches, not directly executable shell blocks:
+replace `X` with `workspace/rebuild/xmap`, create that directory first, and replace
+each `<...>` with a quoted local path. Use the same Python/Git/binary-analysis
+prerequisites as above; the inventory fetch additionally needs a running local
+GhidraMCP server with the named program loaded.
 
 1. Function entries. RotWK: from the headless GhidraMCP server (read-only
    `/list_functions_enhanced`). BFME2: the decomp's own Ghidra list, `reverse/ghidra_functions.csv`
@@ -59,7 +79,9 @@ under the ignored `workspace/rebuild/xmap/`.
 3. The map: `python tools/re/match_rotwk.py --config X/config.json` with keys `rotwk`, `rotwk_inv`,
    `bfme2`, `bfme2_inv`, `bfme2_ledger`, `decomp` (the clone), `work` (feature cache), `out_csv`
    (`rw_map.csv`), `out_json` (`rw_summary.json`: totals, per subsystem, RotWK-only islands and
-   strings, tier A/B samples). About 3 minutes and 0.4 GB.
+   strings, tier A/B samples). About 3 minutes and 0.4 GB on an idle machine (the first run
+   extracts features into `work`; 25+ minutes on a loaded one). The last run's config is kept as
+   `workspace/rebuild/xmap/config.json`; back the folder up (`xmap.bak-<date>`) before a rebuild.
 4. Stops: `python tools/re/stops_xmap.py --out X/stops_xmap.md` ranks the open `docs/STOPS.md`
    rows whose cited code is tier A (or B) with byte-matched decomp source.
 

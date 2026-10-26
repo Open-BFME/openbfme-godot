@@ -332,6 +332,38 @@ TEST_CASE("play2 force attack object: a plain attack order on one's own object i
 	CHECK(w.aiCommands.stats().attackOrdersAccepted == 0);
 }
 
+TEST_CASE("play2 force attack object: an order naming a target destroyed before it runs, or already deleted, resolves the id at use and orders nothing")
+{
+	ForceWorld w;
+	const int alice = w.playerIndex("Alice");
+	Object *cat = w.unit("Catapult", 'A', 300, 300);
+	Object *foe = w.unit("Dummy", 'B', 400, 300);
+	w.frames(2);
+	w.select(alice, { cat });
+	const ObjectID foeId = foe->getID();
+	const Coord3D foePos = *foe->getPosition();
+	auto order = [&] {
+		GameMessage m(MSG_DO_FORCE_ATTACK_OBJECT, alice);
+		m.appendObjectIDArgument(foeId);
+		m.appendLocationArgument(foePos);
+		w.send(m);
+	};
+	w.logic->destroyObject(foe);
+	foe = nullptr; // deleted by the next frame's destroy list: only the id is kept
+	REQUIRE(w.byId(foeId) != nullptr);
+	CHECK(w.byId(foeId)->isDestroyed());
+	order();
+	w.frames(1);
+	CHECK(w.byId(foeId) == nullptr);
+	CHECK(w.state(cat) == (unsigned)AI_IDLE);
+	order();
+	w.frames(1);
+	CHECK(w.state(cat) == (unsigned)AI_IDLE);
+	CHECK(w.aiCommands.stats().forceAttacks == 2);
+	CHECK(w.aiCommands.stats().attackOrdersAccepted == 0);
+	CHECK(w.shots(cat) == 0);
+}
+
 TEST_CASE("play2 force attack: the S-2480 stop is reported once the ground form runs")
 {
 	ForceWorld w;
@@ -363,6 +395,7 @@ TEST_CASE("play2 force attack: two peers fed the same orders through the network
 		Object *foe = w.unit("Dummy", 'B', 480, 320);
 		Object *own = w.unit("Dummy", 'A', 450, 500);
 		const ObjectID foeId = foe->getID();
+		const Coord3D foePosition = *foe->getPosition();
 		w.frames(2);
 		auto order = [&](int frame, const GameMessage &m) {
 			if (peer == 0)
@@ -375,6 +408,10 @@ TEST_CASE("play2 force attack: two peers fed the same orders through the network
 		};
 		for (int f = 0; f < 400; ++f)
 		{
+			if (f == 120)
+			{
+				REQUIRE(w.byId(foeId) == nullptr); // the ground attack killed it: the next order deliberately names a stale ID
+			}
 			if (peer == 0)
 			{
 				if (f == 0)
@@ -406,8 +443,8 @@ TEST_CASE("play2 force attack: two peers fed the same orders through the network
 					sel.appendObjectIDArgument(spare->getID());
 					order(f, sel);
 					GameMessage o(MSG_DO_FORCE_ATTACK_OBJECT, alice);
-					o.appendObjectIDArgument(foe->getID());
-					o.appendLocationArgument(*foe->getPosition());
+					o.appendObjectIDArgument(foeId);
+					o.appendLocationArgument(foePosition);
 					order(f, o);
 				}
 			}
@@ -427,7 +464,6 @@ TEST_CASE("play2 force attack: two peers fed the same orders through the network
 			}
 		}
 		CHECK(w.shots(cat) >= 2);
-		CHECK(w.byId(foeId) == nullptr); // within 20 of the spot: the ground attack's boulders kill it before frame 120, so the last order finds no victim
 		CHECK(w.shots(spare) == 0);
 		CHECK(w.health(own) == 100.0f);
 		if (peer == 1)

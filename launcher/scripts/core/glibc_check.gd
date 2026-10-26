@@ -64,5 +64,5 @@ static func check(game_dir: String, system := "") -> String:
 
 
 static func too_old(need: String, have: String) -> String:
-	return ("it needs GLIBC %s or newer, and this system has GLIBC %s. Update your Linux distribution (for example to Ubuntu 20.04 or Debian 10 "
-		+ "or newer), or report it in the OpenBFME Discord, channel #feedback.") % [need, have]
+	return ("this Linux system is too old for this build. Update to a Linux distribution with GLIBC %s or newer (this system has %s). "
+		+ "If you need help, use the OpenBFME Discord #bug-reports forum or GitHub issues.") % [need, have]

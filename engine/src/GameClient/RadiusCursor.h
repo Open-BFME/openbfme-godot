@@ -36,6 +36,7 @@
 //   selection decals are (S-2522: a Godot Decal over the terrain layer, not RotWK's projected terrain mesh).
 
 #pragma once
+#include "GameClient/PlayerMessageLog.h"
 
 #include "Common/INIDataTypes.h"
 
@@ -79,6 +80,7 @@ struct TerrainResourceUiSettings
 class RadiusCursorTemplates
 {
 public:
+	const PlayerMessageSettings &messageUi() const { return m_messageUi; }
 	const TerrainResourceUiSettings &resourceUi() const { return m_resourceUi; } // lane OWNERFIX-2
 	// Data\INI\InGameUI.ini from the mount; false with `error` when it is missing or does not parse
 	bool load(ArchiveFileSystem &fs, std::string *error);
@@ -92,6 +94,7 @@ public:
 private:
 	std::map<std::string, RadiusDecalTemplate> m_templates;
 	TerrainResourceUiSettings m_resourceUi;
+	PlayerMessageSettings m_messageUi;
 };
 
 // the decal the device draws this frame

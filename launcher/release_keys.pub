@@ -1,0 +1,9 @@
+# Lane SIGNKMS-1: the Ed25519 public keys an OpenBFME release may be signed with (docs/RELEASE.md, "Release signing").
+#
+# One key per line: <64 lower-case hex digits of the public key>  <label>     ('#' starts a comment line; blank lines are allowed)
+# Rules (checked by tools/release/release_keys.py, the launcher's build_info.json and the packagers): 1 to 8 keys, no key twice, labels
+# [a-z0-9-]{1,32}; the FIRST entry is launcher/release_key.pub, the legacy key every launcher made before this list trusts.
+# The packagers compile this list into the launcher (build_info.json "release_keys") and the game (release_trust.gd RELEASE_KEYS); a
+# signature is valid when it verifies under ANY key here, raw (scheme v1) or over the signature envelope (scheme v2).
+# The AWS KMS key (label kms-2026) is added below by a one-line commit once the owner has created it; it is NOT here yet.
+53530cc89e5e56b1b8e721e3b23abc0aca3f82397543e256c2d4a7c4255d27c9  deck-2026

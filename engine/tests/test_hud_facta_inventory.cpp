@@ -52,6 +52,7 @@ const char *stateName(ButtonState s)
 		case ButtonState::CantAfford: return "cantafford";
 		case ButtonState::NotReady: return "notready";
 		case ButtonState::Active: return "active";
+		case ButtonState::Purchased: return "purchased";
 	}
 	return "?";
 }

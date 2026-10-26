@@ -549,7 +549,8 @@ void AptLanLobby::fillGamesList()
 		{
 			map.resize(map.size() - 4);
 		}
-		const std::string players = std::to_string(occupied) + "/" + std::to_string(MAX_SLOTS);
+		// lane P16: the count is the game's own slots (the map's start count, capped at the record capacity)
+		const std::string players = std::to_string(occupied) + "/" + std::to_string(std::min(g.info.mapStartCount, MAX_SLOTS));
 		const std::string status = g.inProgress ? "in progress" : "";
 		const Color c = 0xFFFFFFFFu;
 		// lane UBERJOIN-1: the game's performance mode (carried by the announced GameInfo's simulation profile), tagged as the online list does
@@ -557,11 +558,12 @@ void AptLanLobby::fillGamesList()
 		// the columns as the movie's headers stand on screen: Status, Game Name, Map, Players, Ping (UBERJOIN-1 r2: the name and the count were one column
 		// off, under Status and Game Name; the first column the list takes is the Status one)
 		const int row = GadgetListBoxAddEntryText(m_gamesList, wide(status), c, -1, 0);
-		GadgetListBoxAddEntryText(m_gamesList, uber ? g.name + u"  - UBER" : g.name, c, row, 1);
+		// lane CHEAT-1: a Cheat Mode game is tagged the same way, before anyone joins
+		GadgetListBoxAddEntryText(m_gamesList, (uber ? g.name + u"  - UBER" : g.name) + (g.info.cheatModeOn() ? u"  - CHEAT MODE" : u""), c, row, 1);
 		GadgetListBoxAddEntryText(m_gamesList, wide(map), c, row, 2);
 		GadgetListBoxAddEntryText(m_gamesList, wide(players), c, row, 3);
 		GadgetListBoxAddEntryText(m_gamesList, UnicodeString(), c, row, 4);
-		m_gameRows.push_back(narrow(g.name) + "|" + players + "|" + map + "|" + status + (uber ? "|uber" : ""));
+		m_gameRows.push_back(narrow(g.name) + "|" + players + "|" + map + "|" + status + (uber ? "|uber" : "") + (g.info.cheatModeOn() ? "|cheat" : ""));
 		m_listedHosts.push_back(g.host);
 		m_listedGames.push_back(i);
 		if (keep && g.host == selectedHost)
@@ -711,6 +713,7 @@ void AptLanLobby::update()
 	// RW 0x8490E0
 	pruneLan(); // a gadget that went falls back to its live twin (and the list refills)
 	pumpLan();
+	updateExtendedRows();
 	serviceReadyBoxes(); // lane ONLINE-5
 	if (m_box)
 	{
@@ -741,12 +744,13 @@ void AptLanLobby::update()
 	case 2:
 		if (m_lan && !m_lan->currentGame())
 		{
-			// RW 0x849160 .. 0x84919B: TheLAN->RequestGameCreate; the host's slot 0, every other slot open (ZH LanGameOptionsMenu's host start)
+			// RW 0x849160 .. 0x84919B: TheLAN->RequestGameCreate; the host's slot 0, every other slot open (ZH LanGameOptionsMenu's host start).
+			// lane P16: the map's slots only (a slot past the map's starts does not exist)
 			SkirmishGameInfo info = setupModel() ? setupModel()->info() : SkirmishGameInfo();
-			for (int s = 1; s < MAX_SLOTS; ++s)
+			for (int s = 1; s < info.mapStartCount; ++s)
 			{
 				info.slots[s] = SkirmishGameSlot();
-				info.slots[s].state = SLOT_OPEN;
+				info.slots[s].state = s < info.mapStartCount ? SLOT_OPEN : SLOT_CLOSED;
 			}
 			m_lan->requestGameCreate(info);
 		}

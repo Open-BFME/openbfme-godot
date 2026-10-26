@@ -207,8 +207,18 @@ class Run:
         return f"exit {self.code}\n" + "\n".join(self.lines) + ("\n" + self.out[-2000:] if not self.lines else "")
 
 
+def launcher_data(tmp: Path) -> Path:
+    """the launcher's user:// (custom_user_dir_name OpenBFMELauncher) of a launch(): $XDG_DATA_HOME/OpenBFMELauncher; lane MACGATE-1: Godot on
+    macOS ignores XDG_*, there it is $HOME/Library/Application Support/OpenBFMELauncher, so launch() gives the run a HOME of its own"""
+    if sys.platform == "darwin":
+        return tmp / "home" / "Library" / "Application Support" / "OpenBFMELauncher"
+    return tmp / "data" / "OpenBFMELauncher"
+
+
 def launch(tmp: Path, service: Service, *args: str) -> Run:
     env = dict(os.environ, XDG_DATA_HOME=str(tmp / "data"), OPENBFME_GAME_USER_DIR=str(tmp / "game-user"))
+    if sys.platform == "darwin":
+        env["HOME"] = str(tmp / "home")
     cmd = [GODOT, "--headless", "--path", str(LAUNCHER), "--", f"--aio-base={service.server.origin}", f"--aio-pins={service.pins_file}", *args]
     r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL)
     return Run(r.returncode, r.stdout + r.stderr)
@@ -272,7 +282,7 @@ def test_aio_installs_both_games_and_checks_every_file(tmp_path, service):
             if english:
                 assert path.read_bytes() == f["data"], path
     assert not list(target(tmp_path).rglob("*.part"))
-    record = json.loads((tmp_path / "data" / "OpenBFMELauncher" / "aio-install.json").read_text())
+    record = json.loads((launcher_data(tmp_path) / "aio-install.json").read_text())
     assert record["folders"] == {"rotwk": str(target(tmp_path) / "RotWK"), "bfme2": str(target(tmp_path) / "BFME2")}
     # the first-run handoff (InstallLocator::readDownloaded)
     marker = (tmp_path / "game-user" / "downloaded-installs.cfg").read_text().splitlines()
@@ -311,7 +321,7 @@ def test_aio_a_pinned_archive_with_another_md5_downloads_nothing(tmp_path, servi
     (lambda m, o: m.update(Owner="someone-else"), "moved its files (owner 'someone-else'"),
     (lambda m, o: m["Files"][4].update(Name="..\\..\\escaped.dat"), "not a plain relative path"),
     (lambda m, o: m["Files"][4].update(Name="C:\\Windows\\x.dat"), "not a plain relative path"),
-    (lambda m, o: m["Files"][4].update(Url="https://example.com/" + m["Files"][4]["Md5"]), "not at the pinned http://127.0.0.1"),
+    (lambda m, o: m["Files"][4].update(Url="https://example.com/" + m["Files"][4]["Md5"]), "not at the pinned http://<address>"),  # the launcher log writes addresses as <address>
     (lambda m, o: m["Files"][1].update(Size=123), "lists lang/English.big with 123 bytes"),
     (lambda m, o: m["Files"][5].update(Md5="0" * 32, Url=f"{o}/{OWNER}/" + "0" * 32), "lists game.dat with MD5 00000000"),
     (lambda m, o: m["Files"].append({**m["Files"][5], "Name": "extra.txt"}), "lists extra.txt, which OpenBFME's list of RotWK test does not have"),
@@ -451,7 +461,7 @@ def test_aio_a_stop_after_the_last_check_hands_nothing_off(tmp_path, service, ho
     r = install(tmp_path, service, f"--aio-stop-after=BFME2/lotrbfme2.exe:{how}")
     assert r.code == 2 and r.has("cancelled" if how == "cancel" else "paused"), r
     assert not (tmp_path / "game-user" / "downloaded-installs.cfg").exists()
-    assert not (tmp_path / "data" / "OpenBFMELauncher" / "aio-install.json").exists()
+    assert not (launcher_data(tmp_path) / "aio-install.json").exists()
     r = install(tmp_path, service)
     assert r.code == 0 and r.has("0 files downloaded, 7 already there"), r
     assert (tmp_path / "game-user" / "downloaded-installs.cfg").exists()
@@ -517,7 +527,7 @@ def test_aio_bfme1_installs_only_bfme1_with_its_own_handoff(tmp_path, service):
     assert marker.read_text() == before and "BFME1" not in before
     handoff = (tmp_path / "game-user" / "downloaded-bfme1.cfg").read_text().splitlines()
     assert handoff[1:] == ["SOURCE=All In One BFME Launcher service: original-BFME1", f"BFME1_INSTALL={target(tmp_path) / 'BFME1'}"], handoff
-    data = tmp_path / "data" / "OpenBFMELauncher"
+    data = launcher_data(tmp_path)
     assert json.loads((data / "aio-install-bfme1.json").read_text())["folders"] == {"bfme1": str(target(tmp_path) / "BFME1")}
     assert json.loads((data / "aio-install.json").read_text())["folders"].keys() == {"rotwk", "bfme2"}
     # a second run checks what is there and downloads nothing

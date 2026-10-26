@@ -65,6 +65,10 @@ public:
 	// lane MODULES-2: RW 0x7A1C4D / 0x7A207B (team + 0x118 / + 0x11C non-empty): the team has a team or player relationship override (the partition layer
 	// of its objects is then -1, RW 0x68EE53)
 	bool hasRelationshipOverrides() const { return !m_teamRelations.empty() || !m_playerRelations.empty(); }
+	// lane UBER-2A: the partition layers (PartitionFilter::playerLayerMask, bit k: player k) that can hold an object getRelationship sees as ENEMIES. An
+	// object on player k's layer belongs to a team of player k without overrides, so the answer depends on k alone unless this team or its player has a
+	// TEAM override (then every bit is set)
+	std::uint32_t enemyLayerMask() const;
 
 	// lane SCRIPT-2: the script state (team + 0x44, TEAM_SET_STATE RW 0x7BF72E / TEAM_STATE_IS RW 0x7EA28F) and the custom states (RW 0x7A6BD3 set /
 	// clear, RW 0x7A6A01 test)

@@ -1,10 +1,12 @@
 ## Lane LAUNCH-1: unit checks of the launcher's rules (versions, the network policy, the manifest schema, archive member names).
 ##
-##   godot --headless --path launcher --script res://tests/unit_test.gd -- --key=<64 hex> --manifest=<file> --sig=<file>
+##   godot --headless --path launcher --script res://tests/unit_test.gd -- --key=<64 hex> --manifest=<file> --sig=<file> [--signkms=<file>]
 ##
 ## --manifest / --sig / --key: a valid signed manifest written by tools/release/test_launcher.py; this test re-signs nothing, it checks
 ## that the valid one passes and that each schema break (made here, AFTER the signature check would fail anyway) is named, by calling the
 ## schema check directly. Prints UNIT lines and "UNIT OK <n> checks" / "UNIT FAIL ..."; exit 0 only when all passed.
+## --signkms: lane SIGNKMS-1's fixtures (JSON, hex; written by tools/release/test_launcher.py with tools/release/ed25519.py and
+## release_keys.py, throwaway keys): signatures under an "old" (Deck, raw) and a "new" (KMS, envelope) key, for the key-list checks.
 extends SceneTree
 
 const Semver := preload("res://scripts/core/semver.gd")
@@ -19,6 +21,9 @@ const Paths := preload("res://scripts/ui/paths.gd")
 const ProgressMeter := preload("res://scripts/ui/progress_meter.gd")
 const SettingsScreen := preload("res://scripts/ui/settings_screen.gd")
 const MessagePanel := preload("res://scripts/ui/message_panel.gd")
+const PlayerMessages := preload("res://scripts/ui/player_messages.gd")
+const MultiplayerScreen := preload("res://scripts/ui/multiplayer_screen.gd")
+const SocialClient := preload("res://scripts/net/social_client.gd")
 const ReleaseNotes := preload("res://scripts/core/release_notes.gd")
 const InstanceLock := preload("res://scripts/core/instance_lock.gd")
 const Updater := preload("res://scripts/core/updater.gd")
@@ -28,9 +33,55 @@ const OnlineCount := preload("res://scripts/core/online_count.gd")
 const GameList := preload("res://scripts/core/game_list.gd")
 const DesktopEntry := preload("res://scripts/core/desktop_entry.gd")
 const AppIcon := preload("res://scripts/ui/app_icon.gd")
+const ReleaseSignature := preload("res://scripts/crypto/release_signature.gd")
+const GlibcCheck := preload("res://scripts/core/glibc_check.gd")
+const NetPolicy2 := preload("res://scripts/net/net_policy.gd")
+
+
+## lane SIGNKMS-1: the release download stand-in for the signature slots: url -> bytes, anything else 404; get_small's limit applies
+class FakeHttp extends "res://scripts/net/http_fetch.gd":
+	var files := {}
+	var asked := []
+
+	func _init() -> void:
+		super(NetPolicy2.new(), "v0.0.0-test")
+
+	func get_small(url: String, cap: int, accept := "", etag := "", extra := PackedStringArray()) -> Dictionary:
+		asked.append(url)
+		if not files.has(url):
+			return {"ok": true, "error": "", "code": 404, "headers": {}, "body": PackedByteArray()}
+		var body: PackedByteArray = files[url]
+		if body.size() > cap:
+			return {"ok": false, "error": "more than %d bytes" % cap, "code": 200, "headers": {}, "body": PackedByteArray()}
+		return {"ok": true, "error": "", "code": 200, "headers": {}, "body": body}
 
 var _checks := 0
 var _failed := 0
+
+class TestErrors extends Logger:
+	var _mutex := Mutex.new()
+	var _failed := false
+
+	func _log_error(_function: String, _file: String, _line: int, _code: String, _rationale: String,
+			_editor_notify: bool, error_type: int, _backtraces: Array[ScriptBacktrace]) -> void:
+		if error_type == Logger.ERROR_TYPE_SCRIPT:
+			_mutex.lock()
+			_failed = true
+			_mutex.unlock()
+
+	func _log_message(message: String, _error: bool) -> void:
+		if message.contains("SCRIPT ERROR") or message.contains("Parse Error"):
+			_mutex.lock()
+			_failed = true
+			_mutex.unlock()
+
+	func failed() -> bool:
+		_mutex.lock()
+		var result := _failed
+		_mutex.unlock()
+		return result
+
+var _errors := TestErrors.new()
 
 
 ## lane ONLINE-2: openbfme:// links join a game and nothing else; the registration entries
@@ -75,7 +126,28 @@ func _check(ok: bool, what: String) -> void:
 		print("UNIT FAIL ", what)
 
 
+## lane NIGHTLY-2: Semver.nightly_text exactly as NIGHTLY-1 shipped it (v0.4.12 and the nightlies before NIGHTLY-2): what an installed launcher shows
+@warning_ignore("integer_division")
+static func _shipped_nightly_text(core: String, n: int) -> String:
+	var y := n / 10000
+	var mo := (n / 100) % 100
+	var d := n % 100
+	if n >= 10000000 and mo >= 1 and mo <= 12 and d >= 1 and d <= 31:
+		return "Nightly %s (%04d-%02d-%02d)" % [core, y, mo, d]
+	return "Nightly %s build %d" % [core, n]
+
+
 func _init() -> void:
+	OS.add_logger(_errors)
+	_run.call_deferred()
+
+
+func _run() -> void:
+	for need in ["2.28", "2.35", "2.38"]:
+		_check(GlibcCheck.too_old(need, "2.27") == ("this Linux system is too old for this build. " +
+			"Update to a Linux distribution with GLIBC %s or newer (this system has 2.27). " +
+			"If you need help, use the OpenBFME Discord #bug-reports forum or GitHub issues.") % need,
+			"Linux advice follows the package's actual requirement: " + need)
 	# versions (SemVer 2.0.0 section 11 precedence)
 	var order := ["v0.1.0-preview.0", "v0.1.0-preview.1", "v0.1.0-preview.2", "v0.1.0-preview.10", "v0.1.0", "v0.1.1-preview.1",
 		"v0.1.1", "v0.2.0-preview.9", "v0.2.0", "v0.10.0", "v1.0.0-preview.1", "v1.0.0", "v1.0.10", "v10.0.0"]
@@ -112,6 +184,36 @@ func _init() -> void:
 			["v0.4.13-nightly.20261000", "Nightly 0.4.13 build 20261000"], ["v0.4.13-nightly.7", "Nightly 0.4.13 build 7"]]:
 		_check(Semver.display(d[0]) == d[1], "display %s: %s, not %s" % [d[0], d[1], Semver.display(d[0])])
 	_check(ReleaseNotes.title_of("v0.4.13-nightly.20261022") == "Nightly 0.4.13 (2026-10-22)", "notes: nightly title")
+	# lane NIGHTLY-2 (owner, 2026-10-23): two nightlies a day, <YYMMDD><1|2>00, above every 8-digit date, in run order
+	var twice := ["v0.4.12-nightly.20261022", "v0.4.13-nightly.20261022", "v0.4.13-nightly.20261023", "v0.4.13-nightly.99999999",
+		"v0.4.13-nightly.261023100", "v0.4.13-nightly.261023200", "v0.4.13-nightly.261024100", "v0.4.13-nightly.261101200",
+		"v0.4.13-nightly.270101100", "v0.4.13", "v0.4.14-nightly.261102100"]
+	for i in twice.size():
+		for j in twice.size():
+			var want := 0 if i == j else (-1 if i < j else 1)
+			_check(Semver.compare(twice[i], twice[j]) == want, "semver %s vs %s" % [twice[i], twice[j]])
+	for d in [["v0.4.13-nightly.261023100", "Nightly 0.4.13 (2026-10-23, morning)"], ["v0.4.13-nightly.261023200", "Nightly 0.4.13 (2026-10-23, evening)"],
+			["v0.4.13-nightly.270101100", "Nightly 0.4.13 (2027-01-01, morning)"], ["v0.4.13-nightly.991231200", "Nightly 0.4.13 (2099-12-31, evening)"],
+			["v0.4.13-nightly.261023300", "Nightly 0.4.13 build 261023300"], ["v0.4.13-nightly.261023000", "Nightly 0.4.13 build 261023000"],
+			["v0.4.13-nightly.261023210", "Nightly 0.4.13 build 261023210"], ["v0.4.13-nightly.261323100", "Nightly 0.4.13 build 261323100"],
+			["v0.4.13-nightly.261032100", "Nightly 0.4.13 build 261032100"], ["v0.4.13-nightly.251023100", "Nightly 0.4.13 build 251023100"],
+			["v0.4.13-nightly.202610231", "Nightly 0.4.13 build 202610231"]]:
+		_check(Semver.display(d[0]) == d[1], "display %s: %s, not %s" % [d[0], d[1], Semver.display(d[0])])
+	_check(ReleaseNotes.title_of("v0.4.13-nightly.261023200") == "Nightly 0.4.13 (2026-10-23, evening)", "notes: twice-a-day nightly title")
+	# the bottom bar's short name: a nightly without its date and half day, anything else as display()
+	for d in [["v0.4.13-nightly.261023200", "Nightly 0.4.13"], ["v0.4.12-nightly.20261022", "Nightly 0.4.12"], ["v0.4.5", "Alpha 0.4.5"],
+			["v0.4.0-alpha.3", "v0.4.0 Alpha 3"], ["v0.3.0-preview.4", "v0.3.0-preview.4"], ["dev-build", "dev-build"]]:
+		_check(Semver.display_short(d[0]) == d[1], "display_short %s: %s, not %s" % [d[0], d[1], Semver.display_short(d[0])])
+	# a launcher already shipped (NIGHTLY-1's nightly_text, below as it shipped) shows every twice-a-day number as a build, never a date
+	var shown_wrong := 0
+	for yy in range(26, 100):
+		for mo in range(1, 13):
+			for dd in range(1, 32):
+				for slot in [1, 2]:
+					var n: int = ((yy * 100 + mo) * 100 + dd) * 1000 + slot * 100
+					if _shipped_nightly_text("0.4.13", n) != "Nightly 0.4.13 build %d" % n:
+						shown_wrong += 1
+	_check(shown_wrong == 0, "a NIGHTLY-1 launcher shows %d twice-a-day numbers as a date" % shown_wrong)
 	var plain := ["v0.4.0-alpha.1", "v0.4.0-alpha.4", "v0.4.0-alpha.10", "v0.4.0", "v0.4.5", "v0.4.6", "v0.4.10", "v0.5.0", "v1.0.0"]
 	for i in plain.size():
 		for j in plain.size():
@@ -289,8 +391,11 @@ func _init() -> void:
 	var key := ""
 	var mpath := ""
 	var spath := ""
+	var kmspath := ""
 	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--key="):
+		if a.begins_with("--signkms="):
+			kmspath = a.substr(10)
+		elif a.begins_with("--key="):
 			key = a.substr(6)
 		elif a.begins_with("--manifest="):
 			mpath = a.substr(11)
@@ -299,11 +404,12 @@ func _init() -> void:
 	if mpath != "":
 		var bytes := FileAccess.get_file_as_bytes(mpath)
 		var sig := FileAccess.get_file_as_bytes(spath)
-		var v := Manifest.verify(bytes, sig, key.hex_decode(), {"repo": "Test/repo"})
+		var v := Manifest.verify(bytes, sig, [key.hex_decode()], {"repo": "Test/repo"})
 		_check(v.ok, "the valid manifest passes (%s)" % v.error)
-		_check(not Manifest.verify(bytes, sig, key.hex_decode(), {"repo": "Other/repo"}).ok, "another repository is refused")
-		_check(not Manifest.verify(bytes, sig, key.hex_decode(), {"repo": "Test/repo", "tag": "v9.9.9"}).ok, "another tag is refused")
-		_check(not Manifest.verify(bytes, sig, PackedByteArray(), {}).ok, "no key, no manifest")
+		_check(not Manifest.verify(bytes, sig, [key.hex_decode()], {"repo": "Other/repo"}).ok, "another repository is refused")
+		_check(not Manifest.verify(bytes, sig, [key.hex_decode()], {"repo": "Test/repo", "tag": "v9.9.9"}).ok, "another tag is refused")
+		_check(not Manifest.verify(bytes, sig, [], {}).ok, "no key, no manifest")
+		_check(not Manifest.verify(bytes, sig, [PackedByteArray()], {}).ok, "an empty key, no manifest")
 		var m: Dictionary = JSON.parse_string(bytes.get_string_from_utf8())
 		var breaks := {
 			"format": func(d): d.format = 1,
@@ -333,6 +439,9 @@ func _init() -> void:
 			breaks[what].call(d)
 			_check(Manifest._schema(d) != "", "schema refuses: %s" % what)
 		_check(Manifest._schema(m.duplicate(true)) == "", "schema accepts the valid manifest")
+	if kmspath != "":
+		_signkms(kmspath)
+	_build_info_keys()
 	_macos_manifest_schema()
 	_macos_update_tree()
 	_macos_manifest_only_on_macos()
@@ -340,14 +449,204 @@ func _init() -> void:
 	_aio()
 	_ui()
 	_ui_dialogs()
+	_player_messages()
+	_social_error_codes()
 	_url_handler()
 	_app_icon()
+	if _errors.failed():
+		_failed += 1
 	if _failed == 0:
 		print("UNIT OK %d checks" % _checks)
 		quit(0)
 	else:
 		print("UNIT FAIL %d of %d checks" % [_failed, _checks])
 		quit(1)
+
+
+## lane SIGNKMS-1: the key list. A signature is valid under ANY trusted key, raw (the old Deck key's scheme) or over the envelope of its
+## kind (the KMS key's); an unknown key, changed bytes, another kind or an empty list are refused; the release's X.sig / X.sig2 slots
+func _signkms(path: String) -> void:
+	var fx: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
+	var h := func(k: String) -> PackedByteArray: return String(fx[k]).hex_decode()
+	var deck: PackedByteArray = h.call("deck")
+	var kms: PackedByteArray = h.call("kms")
+	var both := [deck, kms]
+	var expect := {"repo": "Test/repo"}
+	print("UNIT signkms: the key-list checks run")
+	# the envelope is release_keys.py's byte for byte
+	_check(ReleaseSignature.envelope("manifest.json", "abc".to_ascii_buffer()) == h.call("envelope_abc"), "the envelope matches release_keys.py's")
+	var m: PackedByteArray = h.call("manifest")
+	var raw: PackedByteArray = h.call("manifest_raw")
+	var env: PackedByteArray = h.call("manifest_env")
+	var t0 := Time.get_ticks_msec()
+	_check(Manifest.verify(m, raw, [deck], expect).ok, "old key only: its raw signature passes")
+	_check(Manifest.verify(m, env, [kms], expect).ok, "new key only: its envelope signature passes")
+	_check(Manifest.verify(m, raw, both, expect).ok and Manifest.verify(m, env, both, expect).ok, "the list of both: either signature passes")
+	_check(Manifest.verify(m, env, [kms, deck], expect).ok, "the list's order does not matter")
+	_check(ReleaseSignature.signer(both, "manifest.json", m, raw) == 0 and ReleaseSignature.signer(both, "manifest.json", m, env) == 1,
+		"signer names the key that signed")
+	_check(Manifest.verify(m, h.call("manifest_env_deck"), [deck], expect).ok, "the old key's envelope signature passes too (the rule is per key, not per scheme)")
+	print("UNIT signkms: 7 manifest verifications in %d ms" % (Time.get_ticks_msec() - t0))
+	var r := Manifest.verify(m, env, [deck], expect)
+	_check(not r.ok and String(r.error).contains("signature is not valid"), "the new key's signature under the old key alone is refused (%s)" % r.error)
+	_check(not Manifest.verify(m, raw, [kms], expect).ok, "the old key's signature under the new key alone is refused")
+	_check(not Manifest.verify(m, h.call("manifest_env_other"), both, expect).ok, "an unknown key's envelope signature is refused")
+	_check(not Manifest.verify(m, h.call("manifest_raw_other"), both, expect).ok, "an unknown key's raw signature is refused")
+	var tampered := m.duplicate()
+	tampered[tampered.size() / 2] ^= 1
+	_check(not Manifest.verify(tampered, raw, both, expect).ok, "a tampered manifest is refused (raw)")
+	_check(not Manifest.verify(tampered, env, both, expect).ok, "a tampered manifest is refused (envelope)")
+	var longer := m.duplicate()
+	longer.append(0x20)
+	_check(not Manifest.verify(longer, env, both, expect).ok, "a manifest with a byte more is refused (envelope)")
+	_check(not Manifest.verify(m, h.call("manifest_env_payload_kind"), both, expect).ok, "an envelope of kind payload.json is not a manifest signature")
+	_check(not Manifest.verify(m, h.call("manifest_env_macos_kind"), both, expect).ok, "an envelope of kind manifest-macos.json is not a manifest.json signature")
+	_check(not Manifest.verify(h.call("envelope_of_manifest"), env, both, expect).ok, "the envelope itself is not a manifest (its signature never passes as raw)")
+	var bad := env.duplicate()
+	bad[40] ^= 1
+	_check(not Manifest.verify(m, bad, both, expect).ok, "a changed signature is refused")
+	_check(not Manifest.verify(m, env.slice(0, 63), both, expect).ok, "a 63-byte signature is refused")
+	r = Manifest.verify(m, env, [], expect)
+	_check(not r.ok and String(r.error).contains("no release key"), "an empty list is refused: " + String(r.error))
+	_check(not Manifest.verify(m, env, [kms.slice(0, 16)], expect).ok, "a list with a 16-byte key is refused")
+	# the macOS sidecar: kind manifest-macos.json
+	var mac: PackedByteArray = h.call("macos")
+	_check(Manifest.verify(mac, h.call("macos_raw"), both, expect, "macos").ok, "macOS manifest: the old key's raw signature passes")
+	_check(Manifest.verify(mac, h.call("macos_env"), both, expect, "macos").ok, "macOS manifest: the new key's envelope signature passes")
+	_check(not Manifest.verify(mac, h.call("macos_env_wrong_kind"), both, expect, "macos").ok, "macOS manifest: an envelope of kind manifest.json is refused")
+	var mac_t := mac.duplicate()
+	mac_t[mac_t.size() / 2] ^= 1
+	_check(not Manifest.verify(mac_t, h.call("macos_raw"), both, expect, "macos").ok and not Manifest.verify(mac_t, h.call("macos_env"), both, expect, "macos").ok,
+		"macOS manifest: tampered, refused under both schemes")
+	_check(not Manifest.verify(mac, h.call("macos_env"), [deck], expect, "macos").ok, "macOS manifest: the new key's signature under the old key alone is refused")
+	# the payload inventory: kind payload.json
+	var pay: PackedByteArray = h.call("payload")
+	var pexpect := {"repo": "Test/repo", "platform": "linux-x64"}
+	var pv := Manifest.verify_payload(pay, h.call("payload_raw"), both, pexpect)
+	_check(pv.ok, "payload: the old key's raw signature passes (%s)" % pv.error)
+	_check(Manifest.verify_payload(pay, h.call("payload_env"), both, pexpect).ok, "payload: the new key's envelope signature passes")
+	_check(Manifest.verify_payload(pay, h.call("payload_env"), [kms], pexpect).ok, "payload: new key only")
+	_check(not Manifest.verify_payload(pay, h.call("payload_env"), [deck], pexpect).ok, "payload: the new key's signature under the old key alone is refused")
+	_check(not Manifest.verify_payload(pay, h.call("payload_env_wrong_kind"), both, pexpect).ok, "payload: an envelope of kind manifest.json is refused")
+	var pay_t := pay.duplicate()
+	pay_t[pay_t.size() / 2] ^= 1
+	_check(not Manifest.verify_payload(pay_t, h.call("payload_raw"), both, pexpect).ok and not Manifest.verify_payload(pay_t, h.call("payload_env"), both, pexpect).ok,
+		"payload: tampered, refused under both schemes")
+	r = Manifest.verify_payload(pay, h.call("payload_env"), [], pexpect)
+	_check(not r.ok and String(r.error).contains("no release key"), "payload: an empty list is refused")
+	# parse_hex_list (--trust-key, release_trust.gd RELEASE_KEYS)
+	var dh := deck.hex_encode()
+	var kh := kms.hex_encode()
+	_check(ReleaseSignature.parse_hex_list(dh).keys == [deck], "one key parses")
+	_check(ReleaseSignature.parse_hex_list(dh + "," + kh).keys == [deck, kms], "two keys parse, in order")
+	var nine := PackedStringArray()
+	for i in 9:
+		nine.append("%064x" % (i + 1))
+	for broken in ["", dh + ",", dh + "," + dh, dh.to_upper(), dh.left(63), dh + "00", dh + ",," + kh, ",".join(nine), dh + ";" + kh]:
+		_check(not ReleaseSignature.parse_hex_list(broken).ok, "a malformed key list is refused: '%s'" % broken.left(40))
+	_slots(fx, deck, kms)
+
+
+## lane SIGNKMS-1: a release's two signature slots (Updater.release_signature): X.sig, else X.sig2; whichever verified is cached as X.sig
+func _slots(fx: Dictionary, deck: PackedByteArray, kms: PackedByteArray) -> void:
+	var m := String(fx.manifest).hex_decode()
+	var raw := String(fx.manifest_raw).hex_decode()
+	var env := String(fx.manifest_env).hex_decode()
+	var zero := PackedByteArray()
+	zero.resize(64)
+	var big := env.duplicate()
+	big.append(0)
+	var tag := "v1.2.3-preview.4"
+	var cases := [
+		# [name, X.sig (null: not in the release), X.sig2, keys, want ok, the cached / error text, sig2 must not be asked]
+		["X.sig valid (old key), no X.sig2", raw, null, [deck, kms], true, raw, false],
+		["X.sig valid, X.sig2 broken: X.sig2 is not even asked", raw, zero, [deck, kms], true, raw, true],
+		["X.sig missing, X.sig2 valid (new key)", null, env, [deck, kms], true, env, false],
+		["X.sig invalid, X.sig2 valid", zero, env, [deck, kms], true, env, false],
+		["X.sig of 65 bytes, X.sig2 valid", big, env, [deck, kms], true, env, false],
+		["X.sig unknown key, X.sig2 valid", String(fx.manifest_env_other).hex_decode(), env, [deck, kms], true, env, false],
+		["both invalid", zero, zero, [deck, kms], false, "manifest.json.sig: not valid; manifest.json.sig2: not valid", false],
+		["X.sig missing, X.sig2 invalid", null, zero, [deck, kms], false, "manifest.json.sig: not in the release; manifest.json.sig2: not valid", false],
+		["neither slot", null, null, [deck, kms], false, "has no manifest.json.sig or manifest.json.sig2", false],
+		["an old launcher's list: X.sig missing, X.sig2 by the new key", null, env, [deck], false, "signature is not valid", false],
+	]
+	var n := 0
+	for c in cases:
+		n += 1
+		var info := BuildInfo.new()
+		info.repo = "Test/repo"
+		info.release_keys = c[3]
+		var up := Updater.new(info)
+		up.data_dir = OS.get_user_data_dir().path_join("signkms-slots-%d" % n)
+		Updater.remove_tree(up.data_dir)
+		var fake := FakeHttp.new()
+		fake.files["http://t/manifest.json"] = m
+		var assets := {"manifest.json": {"url": "http://t/manifest.json"}}
+		for slot in [["manifest.json.sig", c[1]], ["manifest.json.sig2", c[2]]]:
+			if slot[1] != null:
+				assets[slot[0]] = {"url": "http://t/" + slot[0]}
+				fake.files["http://t/" + slot[0]] = slot[1]
+		up.http = fake
+		var got: Dictionary = up.release_manifest({"tag": tag, "prerelease": true, "assets": assets})
+		if c[4]:
+			var cached := FileAccess.get_file_as_bytes(up.data_dir.path_join("cache/manifests").path_join(tag).path_join("manifest.json.sig"))
+			_check(got.ok and got.sig == c[5] and cached == c[5], "slots, %s: accepted, the verified one kept as manifest.json.sig (%s)" % [c[0], got.get("error", "")])
+		else:
+			_check(not got.ok and String(got.error).contains(c[5]), "slots, %s: refused by name (%s)" % [c[0], got.get("error", "")])
+		if c[6]:
+			_check(not "http://t/manifest.json.sig2" in fake.asked, "slots, %s: X.sig2 not fetched" % c[0])
+	# the macOS sidecar's slots, the same rule (kind manifest-macos.json)
+	var mac := String(fx.macos).hex_decode()
+	for c in [["mac: X.sig missing, X.sig2 valid", null, String(fx.macos_env).hex_decode(), true],
+			["mac: X.sig invalid, X.sig2 valid", zero, String(fx.macos_env).hex_decode(), true],
+			["mac: X.sig valid (old key)", String(fx.macos_raw).hex_decode(), null, true],
+			["mac: X.sig2 of the wrong kind", null, String(fx.macos_env_wrong_kind).hex_decode(), false],
+			["mac: both invalid", zero, zero, false]]:
+		n += 1
+		var info := BuildInfo.new()
+		info.repo = "Test/repo"
+		info.release_keys = [deck, kms]
+		var up := Updater.new(info)
+		up.data_dir = OS.get_user_data_dir().path_join("signkms-slots-%d" % n)
+		Updater.remove_tree(up.data_dir)
+		var fake := FakeHttp.new()
+		fake.files["http://t/manifest-macos.json"] = mac
+		var assets := {"manifest-macos.json": {"url": "http://t/manifest-macos.json"}}
+		for slot in [["manifest-macos.json.sig", c[1]], ["manifest-macos.json.sig2", c[2]]]:
+			if slot[1] != null:
+				assets[slot[0]] = {"url": "http://t/" + slot[0]}
+				fake.files["http://t/" + slot[0]] = slot[1]
+		up.http = fake
+		var got: Dictionary = up.macos_release_manifest({"tag": tag, "prerelease": true, "assets": assets})
+		if c[3]:
+			var want: PackedByteArray = c[2] if c[1] == null or c[1] == zero else c[1]
+			var cached := FileAccess.get_file_as_bytes(up.data_dir.path_join("cache/manifests-macos").path_join(tag).path_join("manifest-macos.json.sig"))
+			_check(got.ok and got.sig == want and cached == want, "slots, %s: accepted and cached as manifest-macos.json.sig (%s)" % [c[0], got.get("error", "")])
+		else:
+			_check(not got.ok and String(got.error).contains("manifest-macos.json.sig2"), "slots, %s: refused, both slots named (%s)" % [c[0], got.get("error", "")])
+
+
+## lane SIGNKMS-1: build_info.json's release_keys: absent -> [release_key]; present -> the list, beginning with release_key; malformed -> error
+func _build_info_keys() -> void:
+	var deck := "1a".repeat(32)
+	var kms := "2b".repeat(32)
+	var base := {"version": "v1.0.0", "repo": "Test/repo", "release_key": deck, "test_build": false}
+	var parse := func(extra: Dictionary) -> RefCounted:
+		var d := base.duplicate()
+		d.merge(extra, true)
+		return BuildInfo.from_text(BuildInfo.new(), JSON.stringify(d))
+	var old: RefCounted = parse.call({})
+	_check(old.error == "" and old.release_keys == [deck.hex_decode()], "build_info without release_keys trusts [release_key] (%s)" % old.error)
+	var two: RefCounted = parse.call({"release_keys": [deck, kms]})
+	_check(two.error == "" and two.release_keys == [deck.hex_decode(), kms.hex_decode()], "build_info with release_keys trusts the list (%s)" % two.error)
+	var nine := []
+	for i in 9:
+		nine.append(deck if i == 0 else "%064x" % i)
+	for bad in [[kms, deck], [], "x", deck, [deck, deck], [deck, kms.to_upper()], [deck, 5], [deck, kms + "," + kms], [deck, kms.left(62)], nine, null, {}]:
+		var b: RefCounted = parse.call({"release_keys": bad})
+		_check(b.error != "" and b.release_keys.is_empty(), "build_info refuses release_keys %s (%s)" % [str(bad).left(50), b.error])
+	var badkey: RefCounted = parse.call({"release_key": deck.to_upper()})
+	_check(badkey.error != "" and badkey.release_keys.is_empty(), "build_info refuses an upper-case release_key")
 
 
 ## lane OWNERFIX-3: the launcher's icon decodes to the 256 x 256 ring, and the Linux desktop entry names the launcher and the icon it writes
@@ -557,6 +856,87 @@ func _ui() -> void:
 	_check(is_equal_approx(m.rate, 10 * 1048576.0) and m._b == 5, "UI: a new file restarts the sample")
 	_check(ProgressMeter.time_left(59) == "59 s" and ProgressMeter.time_left(90) == "1 min 30 s" and ProgressMeter.time_left(1200) == "20 min" and ProgressMeter.time_left(3725) == "1 h 2 min", "UI: time left")
 	_check(ProgressMeter.mb(3 * 1073741824) == "3.00 GB", "UI: GB above 1 GB")
+
+
+func _player_messages() -> void:
+	var operations := [PlayerMessages.Operation.UPDATE_CHECK, PlayerMessages.Operation.DOWNLOAD,
+		PlayerMessages.Operation.SIGN_IN, PlayerMessages.Operation.LOBBY, PlayerMessages.Operation.GENERAL]
+	var guidance := ["Could not check for updates", "retry the download", "try Sign in again", "try the lobby action again", "action could not be completed"]
+	var secrets := ["private-host.example", "/opt/private-install/version", "C:\\private-install\\version", "private-server.internal"]
+	var diagnostic := "HTTP 503 https://private-host.example:8443/file /opt/private-install/version C:\\private-install\\version private-server.internal"
+	var panel := MessagePanel.new()
+	for index in operations.size():
+		var operation: int = operations[index]
+		var visible := PlayerMessages.error_text(diagnostic, operation)
+		_check(visible.contains(guidance[index]), "messages: operation-specific HTTP recovery %d" % operation)
+		if operation != PlayerMessages.Operation.UPDATE_CHECK:
+			_check(not visible.contains("Could not check for updates"), "messages: HTTP is not always an update check")
+		panel.show_error("Action failed", diagnostic, "about", operation)
+		_check(panel._text.text == visible, "messages: dialog uses operation-specific text")
+		_check(panel._details.contains(diagnostic), "messages: Copy details retains diagnostics")
+		for detail in [diagnostic, "Unknown failure " + diagnostic, "writing " + diagnostic + " failed", "SHA-256 " + diagnostic, "rejected: " + diagnostic]:
+			for shown in [PlayerMessages.error_text(detail, operation), PlayerMessages.status_text(detail, operation), panel._text.text]:
+				for secret in secrets:
+					_check(not shown.contains(secret), "messages: visible text excludes paths and hosts")
+	panel.free()
+	for operation in [PlayerMessages.Operation.SIGN_IN, PlayerMessages.Operation.LOBBY]:
+		var text := PlayerMessages.social_error(diagnostic, operation)
+		_check(text == PlayerMessages.error_text(diagnostic, operation), "messages: social failures use the same safe mapping")
+		for secret in secrets:
+			_check(not text.contains(secret), "messages: social text excludes paths and hosts")
+	var screen := MultiplayerScreen.new()
+	screen.build("")
+	var social := SocialClient.new()
+	screen.client = social
+	var reports := []
+	screen.problem_reported.connect(func(detail: String, operation: int) -> void: reports.append([detail, operation]))
+	screen.show_problem(diagnostic)
+	_check(screen._status.text == PlayerMessages.error_text(diagnostic, PlayerMessages.Operation.SIGN_IN), "messages: signed-out errors use sign-in guidance")
+	social.token = "test-token"
+	social.me = {"pid": "0123456789abcdef"}
+	screen.show_problem(diagnostic)
+	_check(screen._status.text == PlayerMessages.error_text(diagnostic, PlayerMessages.Operation.LOBBY), "messages: signed-in errors use lobby guidance")
+	_check(reports == [[diagnostic, PlayerMessages.Operation.SIGN_IN], [diagnostic, PlayerMessages.Operation.LOBBY]], "messages: social diagnostics go to Copy details separately")
+	screen.free()
+	social.free()
+
+
+func _social_error_codes() -> void:
+	var cases := {
+		"signed_out": "Your social session expired. Sign in again.",
+		"session_revoked": "Your social session was revoked. Sign in again.",
+		"bad_recovery": "The recovery code was not accepted.",
+		"install_required": "Start the game once to create your shared identity.",
+		"banned": "This social account is unavailable.",
+		"suspended": "This social account is temporarily unavailable.",
+		"rate_limited": "Too many social requests. Try again later.",
+		"already_friends": "You are already friends.",
+		"already_requested": "That friend request is already pending.",
+		"unavailable": "That social item is no longer available.",
+		"not_found": "That social item was not found.",
+		"chat_muted": "Chat is unavailable for this account.",
+		"social_unavailable": "The social service is unavailable.",
+		"social_store_full": "The social service cannot save more data right now.",
+	}
+	var http_cases := {429: "Too many social requests. Try again later.",
+		401: "The social session is no longer accepted. Sign in again.",
+		403: "The social session is no longer accepted. Sign in again.",
+		404: "That social item is unavailable."}
+	_check(cases.keys() == SocialClient.ERROR_MESSAGES.keys(), "messages: every known social error code is tested")
+	_check(http_cases.keys() == SocialClient.HTTP_ERROR_MESSAGES.keys(), "messages: every known HTTP error code is tested")
+	var social := SocialClient.new()
+	for operation in [PlayerMessages.Operation.SIGN_IN, PlayerMessages.Operation.LOBBY]:
+		for code in cases:
+			var detail := social._safe_error(400, code)
+			_check(PlayerMessages.error_text(detail, operation) == cases[code], "messages: recovery for %s (%d)" % [code, operation])
+			_check(PlayerMessages.status_text(detail, operation) == cases[code], "messages: status recovery for %s (%d)" % [code, operation])
+			_check(not PlayerMessages.error_text(detail + " https://private-host.example /opt/private-install", operation).contains("private"),
+				"messages: known code guidance does not pass through appended diagnostics")
+		for code in http_cases:
+			var detail := social._safe_error(code, "unknown_server_code")
+			_check(PlayerMessages.error_text(detail, operation) == http_cases[code], "messages: HTTP recovery for %d (%d)" % [code, operation])
+			_check(PlayerMessages.status_text(detail, operation) == http_cases[code], "messages: HTTP status recovery for %d (%d)" % [code, operation])
+	social.free()
 
 
 ## lane UI-5: the Settings tabs show one page at a time; the message dialog closed with its X (Close) opens again (lane UI-3 round 2,

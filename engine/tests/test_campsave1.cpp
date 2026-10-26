@@ -277,8 +277,8 @@ TEST_CASE("campsave1 save file: the campaign menu save point (header version 2) 
 	CHECK(headerOnly.header.autoSave);
 
 	const std::vector<std::uint8_t> head = headOf(bytes);
-	REQUIRE(head.size() > 8); // tolerance: a guard before the last 8 bytes (the save point and the flags) are indexed
-	const size_t point = head.size() - 8; // u32 save point, then the four flags
+	REQUIRE(head.size() > 12); // tolerance: guard before indexing the save point and flags preceding the empty build date
+	const size_t point = head.size() - 12; // u32 save point, four flags, then the empty build-date string
 	{
 		std::vector<std::uint8_t> h = head;
 		h[point] = 2;
@@ -326,7 +326,7 @@ TEST_CASE("campsave1 save file: the campaign menu save point (header version 2) 
 	v1.log = { 9, 9 };
 	const std::vector<std::uint8_t> v2bytes = v1.encode();
 	std::vector<std::uint8_t> h1 = headOf(v2bytes);
-	h1.resize(h1.size() - 8);
+	h1.resize(h1.size() - 12);
 	h1[0] = 1; // the header version word
 	SaveGameFile old;
 	REQUIRE_MESSAGE(SaveGameFile::parse(withHead(v2bytes, h1), old, &error), error);
@@ -334,6 +334,12 @@ TEST_CASE("campsave1 save file: the campaign menu save point (header version 2) 
 	CHECK(old.header.frame == 120);
 	CHECK_FALSE(old.header.autoSave);
 	CHECK(old.log == std::vector<std::uint8_t>{ 9, 9 });
+	CHECK(old.header.buildDate.empty());
+	auto h2 = headOf(v2bytes);
+	h2.resize(h2.size() - 4);
+	h2[0] = 2;
+	REQUIRE_MESSAGE(SaveGameFile::parse(withHead(v2bytes, h2), old, &error), error);
+	CHECK(old.header.buildDate.empty());
 }
 
 TEST_CASE("campsave1 retail: ANGMAR_CAMPAIGN through RotWK's end-of-game logic: each won mission auto-saves and names the next one on the menu "
@@ -616,7 +622,7 @@ TEST_CASE("campsave1 menu save compatibility (review): one verdict for the listi
 		"\nrng ZH_CarryChain\nmods none\narchive 0 rotwk:INI.big ffffffffffffffffffffffffffffffff 100\n");
 	const SaveGameCompatibility changed = verdict(other, running);
 	CHECK_FALSE(changed.loadable);
-	CHECK(changed.refusal.rfind("this game was saved with other game data or rules: ", 0) == 0);
+	CHECK(changed.refusal.find("from the launcher.") != std::string::npos); // the sample's "test" build is no release: "the build that made it"
 	SaveGameHeader mods = h;
 	mods.profile = ProfileIdentity::fromText(std::string("openbfme-profile 1\nprofile enhanced\nengine ") + ProfileIdentity::buildId() +
 		"\nrng ZH_CarryChain\nmods BigMod\narchive 0 rotwk:INI.big 0123456789abcdef0123456789abcdef 100\n");

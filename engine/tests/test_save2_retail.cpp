@@ -245,6 +245,10 @@ Recorded recordGame(starttest::Shared &s, const NewGameMessage &message, const P
 	g.game->drainFrames();
 	r.savedFrame = g.game->logic().getFrame();
 	const std::uint32_t hash = g.game->logic().computeStateHash();
+	if (!writer.hasHashOf(r.savedFrame))
+	{
+		writer.recordHash(r.savedFrame, hash); // lane UBER-2C: as save_game does for an Uber recording (every 5th frame's hash)
+	}
 	REQUIRE_MESSAGE(writer.logUpTo(r.savedFrame, hash, r.save.log, &error), error);
 	if (snapshot)
 	{
@@ -286,7 +290,10 @@ CommandLogLoad::State catchUp(starttest::Shared &s, const SaveGameFile &save, Lo
 	{
 		return cl.state();
 	}
-	while (cl.step(*g.game, 20) == CommandLogLoad::State::CatchingUp)
+	// lane MACGATE-1: budget 0 = one frame per step, so the scripted human's input (every 20th frame) is offered at every frame boundary. A
+	// 20 ms budget made it timing-dependent: on a steady host each step ran the same number of frames and the step ends could miss every
+	// 20th frame, so localInputIgnored() stayed 0 (failed alone on macOS, passed under load)
+	while (cl.step(*g.game, 0) == CommandLogLoad::State::CatchingUp)
 	{
 		humanCommands(*g.game, g.game->commands()); // the local input during the catch-up is ignored (it would be the player's, ZH playback)
 	}
@@ -565,7 +572,7 @@ TEST_CASE("save2 retail T1: a skirmish saved at frame F, loaded and played on wi
 	CHECK(g.game->frame() == rec.savedFrame);
 	CHECK(cl.startFrame() == rec.startFrame);
 	CHECK(cl.hashesCompared() == (unsigned long long)kBefore); // every frame of the log was compared on the way
-	CHECK(cl.localInputIgnored() > 0); // tolerance: the player's input during the catch-up was taken and dropped (how much is the loop's timing)
+	CHECK(cl.localInputIgnored() > 0); // tolerance: the player's input during the catch-up was taken and dropped (offered every 20th frame)
 	CHECK(g.game->logic().computeStateHash() == save.header.stateHash);
 	MESSAGE("catch-up of " << kBefore << " frames: " << cl.elapsedMs() << " ms");
 	// handed to the player: a recording that continues the saved log, the same human from here on
@@ -668,6 +675,16 @@ TEST_CASE("save2 retail: a save of the other execution profile loads in single p
 	REQUIRE(SaveGameFile::executionProfileOf(faithful.text) == "enhanced");
 	REQUIRE(SaveGameFile::executionProfileOf(uber.text) == "uber");
 	std::string error;
+	// lane UBER-2C: the hashes a recording holds of the frames from .. to: every one run under Faithful, every LiveGameFrameDriver::kUberRecordedHashEvery-th
+	// under Uber, and a save's frame (save_game records it)
+	const auto recorded = [](UnsignedInt from, UnsignedInt to, SimulationProfile p) {
+		size_t n = 0;
+		for (UnsignedInt f = from; f <= to; ++f)
+		{
+			n += (p != SimulationProfile::Uber || f % (UnsignedInt)LiveGameFrameDriver::kUberRecordedHashEvery == 0 || f == to) ? 1 : 0;
+		}
+		return n;
+	};
 	for (int reverse = 0; reverse < 2; ++reverse)
 	{
 		// saved under one profile (its game setup and identity), loaded by a player of the other
@@ -687,7 +704,9 @@ TEST_CASE("save2 retail: a save of the other execution profile loads in single p
 		Loaded g;
 		CommandLogLoad cl;
 		REQUIRE_MESSAGE(catchUp(*s, rec.save, g, cl, error) == CommandLogLoad::State::Ready, error);
-		CHECK(cl.hashesCompared() == 150u);
+		const size_t firstHashes = recorded(rec.startFrame + 1, rec.savedFrame, savedProfile);
+		CHECK(firstHashes == (reverse ? 150u : 31u));
+		CHECK(cl.hashesCompared() == firstHashes);
 		CHECK(g.game->logic().simulationProfile() == savedProfile);
 		CHECK(g.game->logic().computeStateHash() == rec.save.header.stateHash);
 		// handed over as GameWorld::save_load_step does (CommandLogLoad::handOver): this player's profile from the saved frame on, the switch recorded in the
@@ -710,6 +729,10 @@ TEST_CASE("save2 retail: a save of the other execution profile loads in single p
 		second.header.frame = g.game->logic().getFrame();
 		second.header.stateHash = g.game->logic().computeStateHash();
 		second.header.executionProfile = ownProfile == SimulationProfile::Uber ? "uber" : "enhanced";
+		if (!writer.hasHashOf(second.header.frame))
+		{
+			writer.recordHash(second.header.frame, second.header.stateHash); // lane UBER-2C: as save_game does
+		}
 		REQUIRE_MESSAGE(writer.logUpTo(second.header.frame, second.header.stateHash, second.log, &error), error);
 		writer.close(second.header.frame, second.header.stateHash);
 		g.game->setFrameDriver(nullptr);
@@ -720,14 +743,16 @@ TEST_CASE("save2 retail: a save of the other execution profile loads in single p
 		REQUIRE(continued.profileSwitches.size() == 1u);
 		CHECK(continued.profileSwitches[0].first == switchFrame);
 		CHECK(continued.profileSwitches[0].second == ownProfile);
-		CHECK(continued.hashes.size() == 250u);
+		const size_t allHashes = firstHashes + recorded(switchFrame + 1, second.header.frame, ownProfile);
+		CHECK(allHashes == (reverse ? 171u : 131u));
+		CHECK(continued.hashes.size() == allHashes);
 		// the second save is this player's own profile now; it replays under the saved profile to the switch, then under the player's, every hash equal
 		CHECK_FALSE(SaveGameCompatibility::check(second.header, running, ProfileIdentity::buildId(), "test", false).crossProfile);
 		g.game.reset(); // lane MAPRESET-1 (merge q7): one live game per world (S-3808); the first game is over
 		Loaded g2;
 		CommandLogLoad cl2;
 		REQUIRE_MESSAGE(catchUp(*s, second, g2, cl2, error) == CommandLogLoad::State::Ready, error);
-		CHECK(cl2.hashesCompared() == 250u);
+		CHECK(cl2.hashesCompared() == allHashes);
 		CHECK(g2.game->logic().simulationProfile() == ownProfile);
 		CHECK(g2.game->logic().computeStateHash() == second.header.stateHash);
 		// without the switch record the same log does not replay: named at its first differing frame
@@ -748,7 +773,12 @@ TEST_CASE("save2 retail: a save of the other execution profile loads in single p
 		Loaded g3;
 		CommandLogLoad cl3;
 		CHECK(catchUp(*s, noSwitch, g3, cl3, error) == CommandLogLoad::State::Failed);
-		CHECK(error.rfind("the saved game does not replay the same in this build: frame " + std::to_string(switchFrame + 1) + " has state hash ", 0) == 0);
+		// lane UBER-2C: an Uber continuation holds every 5th frame's hash, so without its switch the log reads as Faithful frames with hashes missing and is
+		// refused before it replays; a Faithful continuation replays and is named at its first differing frame
+		const std::string expected = ownProfile == SimulationProfile::Uber
+			? "the save's command log has no state hash of frame " + std::to_string(switchFrame + 1)
+			: "the saved game does not replay the same in this build: frame " + std::to_string(switchFrame + 1) + " has state hash ";
+		CHECK_MESSAGE(error.rfind(expected, 0) == 0, error);
 	}
 }
 
@@ -900,7 +930,10 @@ TEST_CASE("save2 retail T1 (SAVES.md): a 4-AI skirmish saved with each named sce
 	const ProfileIdentity profile = ProfileIdentity::fromText(readText(profilePath));
 	std::remove(profilePath.c_str());
 	REQUIRE(profile.text.rfind("openbfme-profile 1\n", 0) == 0);
-	const NewGameMessage message = fourAiMessage(*s, 8642u);
+	// merge queue q24: seed 8644 (8642 before). Since OFFMAP-1 (RotWK's idle state RW 0x745A64: no ZH frame <= 1 snap) seed 8642's game had no special power
+	// in flight in its 20 minutes (the Dwarves alive with 100+ objects; measured); seeds 8644 and 8645 hold all four scenarios (a DwarvenGuardianHorde's power
+	// at frame 1632 / 1887) and pass. The scenarios are the test's subject, the seed is not
+	const NewGameMessage message = fourAiMessage(*s, 8644u);
 	struct Taken
 	{
 		std::string scenario, path, found;
@@ -925,7 +958,8 @@ TEST_CASE("save2 retail T1 (SAVES.md): a 4-AI skirmish saved with each named sce
 		RegisterLogicCRCHandler(g.game->dispatch());
 		startFrame = g.game->frame();
 		g.game->setFrameDriver(&driver);
-		// from two minutes on, each scenario is saved at the first frame it is in flight (at most 20 minutes of game time)
+		// from two minutes on, each scenario is saved at the first frame it is in flight (at most 30 minutes of game time; review of #74: since the destination
+		// adjustment spirals around the cell, RW 0x6FA2A4, the first special power in flight comes at frame 7405, a DwarvenGuardianHorde's, past 20 minutes)
 		bool seen[4] = { false, false, false, false };
 		bool elevenTaken = false;
 		// lane SAVE-4e: the save as GameWorld::save_game writes it: the log to F and the snapshot at F
@@ -946,7 +980,7 @@ TEST_CASE("save2 retail T1 (SAVES.md): a 4-AI skirmish saved with each named sce
 			sh.mapPath = message.game.mapName;
 			REQUIRE_MESSAGE(save.write(t.path, &error), error);
 		};
-		for (int i = 0; i < 6000 && (saves.size() < 5 || !elevenTaken); ++i)
+		for (int i = 0; i < 9000 && (saves.size() < 5 || !elevenTaken); ++i)
 		{
 			humanCommands(*g.game, g.game->commands());
 			REQUIRE(g.game->advance(0.2) == 1);
@@ -992,7 +1026,7 @@ TEST_CASE("save2 retail T1 (SAVES.md): a 4-AI skirmish saved with each named sce
 		}
 		for (int k = 0; k < 4; ++k)
 		{
-			CHECK_MESSAGE(seen[k], names[k] << " never happened in 20 minutes of the game");
+			CHECK_MESSAGE(seen[k], names[k] << " never happened in 30 minutes of the game");
 		}
 		REQUIRE(elevenTaken);
 		for (int i = 0; i < 3000; ++i) // F + 3000 for the last save, more for the earlier ones
@@ -1959,7 +1993,7 @@ TEST_CASE("save4e retail review r1: a refused snapshot (a hostile end token, a l
 		else
 		{
 			const std::vector<BlockAt> blocks = blocksOf(bad.snapshot);
-			REQUIRE(blocks.back().token == "obfme:LargeGroupAudio");
+			REQUIRE(blocks.back().token == "CHUNK_MissionObjectives"); // lane CAMPUI-1: the tracker's block, its version byte first (RW 0x8363F2)
 			REQUIRE(bad.snapshot[blocks.back().begin] == 1);
 			bad.snapshot[blocks.back().begin] = 0xFF;
 		}
@@ -2015,7 +2049,7 @@ TEST_CASE("save4e retail review r1: a refusal inside each block of a real snapsh
 						"obfme:UpdateScheduler", "obfme:TunnelTracker", "obfme:Combat", "obfme:SellList", "obfme:Experience", "obfme:Invisibility",
 						"obfme:DamageOverTime", "obfme:Partition", "obfme:Emotions", "obfme:AIWorld", "obfme:Shroud", "obfme:SkirmishAI",
 						"obfme:ScriptEngine", "obfme:Victory", "obfme:Weather", "obfme:Economy", "obfme:CreateAHero", "obfme:TerrainTrees",
-						"obfme:LargeGroupAudio" });
+						"obfme:LargeGroupAudio", "CHUNK_ObjectivesMenu", "CHUNK_MissionObjectives" });
 	Loaded g;
 	load(*s, message, g);
 	for (int i = 0; i < 50; ++i)
@@ -2204,12 +2238,12 @@ TEST_CASE("save4e retail review r2: a snapshot refused late (LargeGroupAudio's v
 	};
 	std::vector<std::uint8_t> bad = older;
 	const std::vector<BlockAt> blocks = blocksOf(bad);
-	REQUIRE(blocks.back().token == "obfme:LargeGroupAudio");
+	REQUIRE(blocks.back().token == "CHUNK_MissionObjectives"); // lane CAMPUI-1: the tracker's block, its version byte first (RW 0x8363F2)
 	bad[blocks.back().begin] = 0xFF;
 	CHECK_FALSE(g.game->loadSnapshot(bad, &error));
 	MESSAGE("late refusal with three extra teams: " << error);
 	CHECK(error.find("could not be put back") == std::string::npos);
-	same("LargeGroupAudio's version refused");
+	same("MissionObjectives' version refused");
 	CHECK_FALSE(g.game->loadSnapshot(older, &error, [](GameLogic &) { return std::string("review refusal after every post-process"); }));
 	MESSAGE("refused after every post-process: " << error);
 	same("refused after every post-process");

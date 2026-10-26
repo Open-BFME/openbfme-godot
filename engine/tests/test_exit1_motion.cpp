@@ -357,7 +357,7 @@ TEST_CASE("idle1 retail: horde members turning where they stand end the frame wi
 	}
 	MESSAGE("member-frames turning on the spot " << probe.turned << " (with MOVING " << probe.turnedMoving << ", still the frame after outside the attack state " << probe.turnedMovingOutsideAttack << "); attacking " << probe.turnedAttacking << " ("
 										   << probe.turnedAttackingMoving << "); cavalry " << probe.turnedCavalry << " (" << probe.turnedCavalryMoving
-										   << "); members standing with MOVING for 5 frames " << probe.stillMovingStreaks << "; held by a back-up record (the pass skipping them): turns " << probe.turnedHeldByBackUp << ", standing frames with MOVING " << probe.framesHeldByBackUp << "\n"
+										   << "); members standing with MOVING for 5 frames " << probe.stillMovingStreaks << "; held by a back-up record (the pass skipping them): turns " << probe.turnedHeldByBackUp << ", standing frames with MOVING " << probe.framesHeldByBackUp << "; turned, then the horde walked: " << probe.turnedThenHordeMoved << "\n"
 										   << probe.samples.str());
 	// not vacuous: the game turns members on the spot, attacking ones (melee and the buildings' attackers) among them (the riders: test_idle1_turns.cpp)
 	CHECK(probe.turned >= 1000);

@@ -35,6 +35,7 @@
 #pragma once
 
 #include "GameClient/OptionPreferences.h"
+#include "GameNetwork/GameInfo.h"
 
 #include <array>
 #include <string>
@@ -82,7 +83,7 @@ struct SkirmishHonorsGame
 		int state = 1;   ///< SlotState (1 closed, 2 .. 5 AI, 6 human)
 		int team = -1;   ///< the team number, -1 none
 	};
-	std::array<Slot, 8> slots{};
+	std::array<Slot, MAX_SLOTS> slots{}; ///< ONLINE16-FIX: every game slot (AptSkirmish::startGame fills MAX_SLOTS; eight overran into mapKey)
 	int localSlot = -1;
 	std::string mapKey;   ///< the map cache key
 	int mapPlayers = -1;  ///< RW 0x803C52: the map's player count, -1 not in the cache

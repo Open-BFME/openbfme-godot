@@ -30,6 +30,8 @@
 #include "GameClient/DrawableIconUI.h"
 #include "GameClient/HudInput.h"
 #include "GameClient/InGameHeroSelect.h"
+#include "GameClient/InGameChat.h"
+#include "GameClient/InGameUIMessages.h"
 #include "GameClient/SelectionDecals.h"
 #include "GameClient/Radar.h"
 #include "GameClient/RadiusCursor.h"
@@ -116,6 +118,9 @@ public:
 	// a click at a window pixel inside the radar square: the left button moves the view there, the right button orders the selection to that ground point (MSG_DO_MOVETO) when it is
 	// controllable. True when the click was the radar's.
 	bool radarClick(HudInput::Button button, int x, int y, int timeMs);
+	// the ping wheel (not retail): whether window point (x, y) is on the radar, and the map point radarClick's mapping gives it (`hasPoint` false while the
+	// radar shows nothing: radarClick's own gates). No click, no camera move: a read
+	bool radarPoint(int x, int y, bool &hasPoint, float &wx, float &wy);
 
 	WindowManager &windows() { return *m_wm; }
 	Apt &apt() { return m_wm->apt(); }
@@ -126,11 +131,34 @@ public:
 	Radar &radar() { return *m_radar; }
 	// AUDIO-2: the unit voices of the local player's selection and commands (through the installed audio manager and Eva)
 	UnitVoiceResponse &voice() { return *m_voice; }
+	// ---- lane CHAT-1: the InGameUI message lines (GameClient/InGameUIMessages.h) and the chat window's model (GameClient/InGameChat.h) ----
+	InGameUIMessages &messageLines() { return m_messageLines; }
+	const InGameUIMessages &messageLines() const { return m_messageLines; }
+	InGameChat &chat() { return m_chat; }
+	GameTextSource *gameText() const { return m_config.gameText; } ///< lane CHAT-1: the chat's labels (APT:TeamChat ...)
+	// InGameUI::message / messageColor at the logic frame the HUD saw last (`rgb` 0x00RRGGBB, null: the alternating colours)
+	void addMessageText(const std::u16string &text, const std::uint32_t *rgb) { m_messageLines.addMessageText(text, rgb, m_messageFrame); }
+	// CHAT_ALLIES (false) / CHAT_EVERYONE (true) presses since the last call, for the host's chat window
+	std::vector<bool> takeChatRequests() { return m_input->ui().takeChatRequests(); }
+	// the GUI labels (InGameUI::message) shown so far as message lines, and the labels the game text did not have
+	unsigned long long guiMessagesShown() const { return m_guiMessagesShown; }
+	// lane CHAT-1: the multiplayer beacons this client presented (GameLogic::beaconNotices): placed / refused notices handled, beacons hidden here, pulses
+	struct BeaconStats
+	{
+		unsigned long long placed = 0, tooMany = 0, failed = 0, hidden = 0, pulses = 0;
+	};
+	const BeaconStats &beaconStats() const { return m_beaconStats; }
+	const std::set<ObjectID> &beacons() const { return m_beaconObjects; }
+	const std::vector<std::string> &missingMessageLabels() const { return m_missingMessageLabels; }
 	const std::vector<std::string> &errors() const { return m_errors; }
 	std::vector<std::string> stops() const;
 
 	// ---- lane OWNERFIX-1: the map scripts' DISABLE_INPUT / ENABLE_INPUT (the in-game cutscenes): InGameUI::applyScriptInput ----
 	void scriptInput(bool enable);
+	// lane CAMPUI-1: the objectives screen is up (the Palantir's flag stops flashing, RW 0x6D7647), and a script's FLASH_*_BUTTON(seconds) (RW 0x6D455F)
+	void setObjectivesScreenOpen(bool open) { m_objectivesScreenOpen = open; }
+	void flashPalantirButton(int slot, int seconds);
+	bool palantirObjectivesFlashing() const;
 	bool scriptMouseHidden() const { return m_input->ui().scriptMouseHidden(); } ///< DISABLE_INPUT's Mouse::setVisibility(false): the device shows no pointer
 
 	// ---- lane SPELL-2: the spell book (the Palantir's InGameSpellBook and the SpellStore.apt screen) ----
@@ -142,6 +170,9 @@ public:
 	bool openSpellStore(std::string *error = nullptr);
 	void closeSpellStore();
 	AptSpellStore *spellStore() { return m_store.get(); }
+	const PlayerMessageLog &playerMessages() const { return m_playerMessages; }
+	// lane CHEAT-1: a line of text (not a game text label) in the message log, as InGameUI::message's handler adds one: the Cheat Mode announcements
+	void addPlayerMessageText(const std::u16string &text);
 	// lane SPELL-4: the aiming marker of a spell book or selected-unit ground power waiting for its target (GameClient/RadiusCursor.h), updated each update(); the device draws it
 	const RadiusCursor &radiusCursor() const { return m_radiusCursor; }
 	const RadiusCursorTemplates &radiusCursorTemplates() const { return m_radiusTemplates; }
@@ -214,6 +245,7 @@ public:
 	unsigned long long attackFlashRequests() const { return m_attackFlashRequests; }
 
 private:
+	bool m_objectivesScreenOpen = false; // lane CAMPUI-1
 	void bootHud6();
 	void updateHud6(ObjectID context, const std::string &faction, double seconds);
 	bool hud6OverGui(int x, int y) const;
@@ -264,6 +296,20 @@ private:
 	AudioApiVoiceSink m_voiceSink;
 	std::unique_ptr<UnitVoiceResponse> m_voice;
 	std::vector<std::string> m_errors;
+	// lane CHAT-1
+	InGameUIMessages m_messageLines;
+	InGameChat m_chat;
+	std::uint32_t m_messageFrame = 0;
+	std::size_t m_messageLabelsSeen = 0; ///< lane CHAT-1: InGameUI::messages() shown so far
+	unsigned long long m_guiMessagesShown = 0;
+	std::vector<std::string> m_missingMessageLabels;
+	std::uint32_t m_beaconNoticeSeen = 0;
+	std::set<ObjectID> m_beaconObjects;    ///< the beacons the notices made (live ones; pruned when gone)
+	std::uint32_t m_beaconPulseFrame = 0xFFFFFFFFu;
+	BeaconStats m_beaconStats;
+	void presentBeacons();              ///< lane CHAT-1: the notices and the pulses (logic held)
+	void showMessageLabel(const std::string &label, const std::u16string *argument);
+
 	InGameSpellBookModel m_spellBar;          // lane SPELL-2
 	std::unique_ptr<AptSpellStore> m_store;   // lane SPELL-2
 	std::unique_ptr<InGameHeroSelect> m_heroSelect; // lane UI-4: the Palantir's hero bar
@@ -302,6 +348,8 @@ private:
 	void updateRadiusCursor();
 	void updateResourceFeedback(); // lane OWNERFIX-2
 	TerrainResourceFeedback m_resourceFeedback;
+	PlayerMessageLog m_playerMessages;
+	unsigned m_messageClientFrame = 0;
 	RadiusCursorTemplates m_radiusTemplates;
 	RadiusCursor m_radiusCursor;
 	int m_pointerX = 0, m_pointerY = 0;

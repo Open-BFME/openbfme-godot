@@ -5,7 +5,9 @@ export function identityStorage(path = ':memory:') {
   db.exec('CREATE TABLE IF NOT EXISTS test_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const storage = {
     db, maxRows: 0, maxListLimit: 0,
-    sql: { exec(query, ...args) {
+    sql: { get databaseSize() {
+      return db.prepare('PRAGMA page_count').get().page_count * db.prepare('PRAGMA page_size').get().page_size;
+    }, exec(query, ...args) {
       const statement = db.prepare(query);
       const rows = /^\s*(SELECT|EXPLAIN|PRAGMA)/i.test(query) ? statement.all(...args) : (statement.run(...args), []);
       storage.maxRows = Math.max(storage.maxRows, rows.length);

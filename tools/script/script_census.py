@@ -178,6 +178,9 @@ def dump(path):
                 # the v5 flags (Condition + 0x4C enabled, + 0x4D inverted: RW 0x7ED72C inverts an ordinal >= 5's answer; lane CAMP-1)
                 enabled, inverted = r.i32(), r.i32()
                 prefix += (" NOT" if inverted else "") + ("" if enabled else " (disabled)")
+            elif leaf != "Condition" and ver >= 3:
+                # lane CAMPUI-1: an action's v3 tail (ScriptAction + 0x41 enabled; RW 0x7CAFB7 runs nothing for 0)
+                prefix += "" if r.i32() else " (disabled)"
             print("  " * depth + "%s %s(%s)" % (prefix, name, ", ".join(shown)))
         elif leaf == "ScriptList":
             print("  " * depth + "ScriptList")

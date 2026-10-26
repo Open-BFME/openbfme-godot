@@ -1,6 +1,7 @@
 """Lane NIGHTLY-1: the nightly versions (autorelease.py) and the nightly notes (nightly_notes.py)."""
 from __future__ import annotations
 
+import datetime as dt
 import json
 import sys
 from pathlib import Path
@@ -17,22 +18,58 @@ SHB = "b" * 40
 SHC = "c" * 40
 
 
-def test_nightly_version_is_the_next_plain_release_with_the_date():
-    tags = ["refs/tags/v0.4.11", "refs/tags/v0.4.9", "refs/tags/v0.4.0-alpha.5"]
-    assert ar.nightly_version(tags, "20261022") == "v0.4.12-nightly.20261022"
-    # after a nightly the next date moves on; the same date again is refused (one per date), an earlier date too
-    tags.append("refs/tags/v0.4.12-nightly.20261022")
-    assert ar.nightly_version(tags, "20261023") == "v0.4.12-nightly.20261023"
-    for d in ("20261022", "20261021"):
-        with pytest.raises(SystemExit):
-            ar.nightly_version(tags, d)
+def test_nightly_version_is_the_next_plain_release_with_the_half_day():
+    # NIGHTLY-2: <YYMMDD><1 morning | 2 evening>00 from the run's UTC clock YYYYMMDDHH
+    tags = ["refs/tags/v0.4.11", "refs/tags/v0.4.9", "refs/tags/v0.4.0-alpha.5", "refs/tags/v0.4.12-nightly.20261022"]
+    assert ar.nightly_version(tags, "2026102307") == "v0.4.12-nightly.261023100"
+    tags.append("refs/tags/v0.4.12-nightly.261023100")
+    assert ar.nightly_version(tags, "2026102319") == "v0.4.12-nightly.261023200"
+    tags.append("refs/tags/v0.4.12-nightly.261023200")
+    assert ar.nightly_version(tags, "2026102400") == "v0.4.12-nightly.261024100"
+    # the same half day again is refused (one per half day), an earlier one too
+    for c in ("2026102312", "2026102323", "2026102311", "2026102207"):
+        with pytest.raises(SystemExit, match="one nightly per half day"):
+            ar.nightly_version(tags, c)
     # the stable release v0.4.12 is above its nightlies; the next nightly is of v0.4.13
     tags.append("refs/tags/v0.4.12")
-    assert ar.nightly_version(tags, "20261024") == "v0.4.13-nightly.20261024"
+    assert ar.nightly_version(tags, "2026102407") == "v0.4.13-nightly.261024100"
     assert ar.next_version(tags) == "v0.4.13"
-    for bad in ("2026102", "20261322", "20261000", "2026-10-22"):
+    for bad in ("20261023", "2026102324", "2026132307", "2026103207", "2025102307", "2026-10-23T07", "202610230", "20261023077"):
         with pytest.raises(SystemExit):
             ar.nightly_version(tags, bad)
+
+
+def test_nightly_numbers_sort_in_run_order():
+    # every NIGHTLY-2 number is above every NIGHTLY-1 date (the shipped v0.4.12-nightly.20261022 first), and in run order
+    runs = ["v0.4.12-nightly.20261022", "v0.4.12-nightly.20261023", "v0.4.12-nightly.20991231"]
+    day = dt.date(2026, 10, 23)
+    while day.year < 2100:
+        for hour in (7, 19):
+            runs.append(f"v0.4.12-nightly.{ar.nightly_number(day.strftime('%Y%m%d') + f'{hour:02d}')}")
+        day += dt.timedelta(days=3)
+    assert all(ar.TAG.fullmatch(t) for t in runs)
+    assert sorted(runs, key=ar.version_key) == runs and len(set(runs)) == len(runs)
+    assert ar.version_key("v0.4.11") < ar.version_key(runs[0]) and ar.version_key(runs[-1]) < ar.version_key("v0.4.12")
+
+
+def shipped_nightly_text(core: str, n: int) -> str:
+    """semver.gd nightly_text() as NIGHTLY-1 shipped it (v0.4.12-nightly.20261022 and every launcher before NIGHTLY-2)"""
+    y, mo, d = n // 10000, (n // 100) % 100, n % 100
+    if n >= 10000000 and 1 <= mo <= 12 and 1 <= d <= 31:
+        return f"Nightly {core} ({y:04d}-{mo:02d}-{d:02d})"
+    return f"Nightly {core} build {n}"
+
+
+def test_a_shipped_launcher_never_shows_a_wrong_date():
+    # every half day to 2099: an installed NIGHTLY-1 launcher shows "Nightly 0.4.13 build <n>", the new names show the date and the half
+    day = dt.date(2026, 1, 1)
+    while day.year < 2100:
+        for hour, half in ((0, "morning"), (11, "morning"), (12, "evening"), (23, "evening")):
+            n = ar.nightly_number(day.strftime("%Y%m%d") + f"{hour:02d}")
+            assert shipped_nightly_text("0.4.13", int(n)) == f"Nightly 0.4.13 build {n}"
+            assert ar.display_name(f"v0.4.13-nightly.{n}") == f"Nightly 0.4.13 ({day.isoformat()}, {half})"
+        day += dt.timedelta(days=1)
+    assert shipped_nightly_text("0.4.12", 20261022) == "Nightly 0.4.12 (2026-10-22)"
 
 
 def test_nightly_names_lines_and_intents():
@@ -46,8 +83,28 @@ def test_nightly_names_lines_and_intents():
     # a stable release (or a later nightly) tagged meanwhile ends a resumed nightly
     assert not ar.intent_version_ok(v, "", ["refs/tags/v0.4.12"])
     assert not ar.intent_version_ok(v, "", ["refs/tags/v0.4.12-nightly.20261023"])
+    assert not ar.intent_version_ok(v, "", ["refs/tags/v0.4.12-nightly.261023100"])
     with pytest.raises(SystemExit):
         ar.nightly_date("v0.4.12")
+    # NIGHTLY-2's numbers
+    e = "v0.4.12-nightly.261023200"
+    assert ar.display_name(e) == "Nightly 0.4.12 (2026-10-23, evening)"
+    assert ar.release_title("v0.4.12-nightly.261023100") == "OpenBFME Nightly 0.4.12 (2026-10-23, morning)"
+    assert ar.nightly_date(e) == "2026-10-23" and ar.channel_of(e) == "preview" and ar.line_of(e) == "nightly"
+    assert ar.intent_version_ok(e, "", ["refs/tags/v0.4.12-nightly.261023100", f"refs/tags/{e}"])
+    assert not ar.intent_version_ok("v0.4.12-nightly.261023100", "", ["refs/tags/v0.4.12-nightly.261023200"])
+    for bad in ("261023300", "261023000", "261023210", "261023101", "261323100", "261000100", "251023100", "202610231", "2610231"):
+        assert ar.line_of(f"v0.4.12-nightly.{bad}") == "", bad
+        with pytest.raises(SystemExit):
+            ar.display_name(f"v0.4.12-nightly.{bad}")
+
+
+def test_tester_readme_titles():
+    import readme_testers as rt
+    assert rt.title_of("v0.4.12-nightly.20261022", "Linux") == "OpenBFME Nightly 0.4.12 (2026-10-22) for Linux"
+    assert rt.title_of("v0.4.13-nightly.261023200", "Linux") == "OpenBFME Nightly 0.4.13 (2026-10-23, evening) for Linux"
+    assert rt.title_of("v0.4.13-nightly.261023100", "Windows") == "OpenBFME Nightly 0.4.13 (2026-10-23, morning) for Windows"
+    assert rt.title_of("v0.4.13-nightly.261023300", "Linux") == "OpenBFME v0.4.13-nightly.261023300 - alpha build for Linux"
 
 
 def change(sha, notes=(), tests=(), player=True, community=(), inner=()):
@@ -190,3 +247,65 @@ def test_pulls_of_retries_an_empty_github_answer_and_fails_closed_when_it_persis
         nn.GitHub("gh", "o/r", attempts=3, backoff=0).pulls_of(SHB)
     monkeypatch.setattr(nn.subprocess, "run", lambda cmd, capture_output=True, text=True: R(err="HTTP 422: No commit found", rc=1))
     assert nn.GitHub("gh", "o/r", attempts=3, backoff=0).pulls_of(SHB) == []   # an internal cherry-pick: GitHub does not know it
+
+
+@pytest.mark.parametrize("body", ["", " \n", "{}", "null", "false", "0", '"no PRs"', "["])
+def test_pulls_of_retries_non_array_bodies_and_does_not_cache_failures(monkeypatch, body):
+    good = json.dumps([{"number": 69, "user": {"login": "daisyhasacat"}, "title": "t", "base": {"repo": {"full_name": "o/r"}}}])
+    answers = [body, body, good]
+    calls, sleeps = [], []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return nn.subprocess.CompletedProcess(cmd, 0, answers.pop(0), "")
+
+    monkeypatch.setattr(nn.subprocess, "run", run)
+    monkeypatch.setattr(nn.time, "sleep", sleeps.append)
+    github = nn.GitHub("gh", "o/r", attempts=3, backoff=2)
+    expected = [{"pr": 69, "login": "daisyhasacat", "title": "t"}]
+    assert github.pulls_of(SHA) == expected
+    assert calls == [["gh", "api", f"repos/o/r/commits/{SHA}/pulls"]] * 3
+    assert sleeps == [2, 4]
+    assert github.pulls_of(SHA) == expected and len(calls) == 3
+
+    answers[:] = [body] * 3
+    with pytest.raises(SystemExit, match="fail closed.*JSON array"):
+        github.pulls_of(SHB)
+    assert SHB not in github.cache and len(calls) == 6 and not answers
+    answers[:] = [good]
+    assert github.pulls_of(SHB) == expected and len(calls) == 7
+
+
+@pytest.mark.parametrize("body, rc, err", [("[]", 0, ""), ("", 1, "HTTP 404: Not Found"), ("", 1, "HTTP 422: No commit found")])
+def test_pulls_of_caches_valid_no_pr_answers_without_retry(monkeypatch, body, rc, err):
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return nn.subprocess.CompletedProcess(cmd, rc, body, err)
+
+    monkeypatch.setattr(nn.subprocess, "run", run)
+    monkeypatch.setattr(nn.time, "sleep", lambda seconds: pytest.fail("a valid no-PR answer must not retry"))
+    github = nn.GitHub("gh", "o/r")
+    assert github.pulls_of(SHA) == [] and github.pulls_of(SHA) == []
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("attempts", [0, -2])
+@pytest.mark.parametrize("body", ["[]", "{}"])
+def test_pulls_of_makes_one_attempt_for_nonpositive_attempts(monkeypatch, attempts, body):
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return nn.subprocess.CompletedProcess(cmd, 0, body, "")
+
+    monkeypatch.setattr(nn.subprocess, "run", run)
+    monkeypatch.setattr(nn.time, "sleep", lambda seconds: pytest.fail("a single attempt must not sleep"))
+    github = nn.GitHub("gh", "o/r", attempts=attempts)
+    if body == "[]":
+        assert github.pulls_of(SHA) == []
+    else:
+        with pytest.raises(SystemExit, match="fail closed"):
+            github.pulls_of(SHA)
+    assert len(calls) == 1

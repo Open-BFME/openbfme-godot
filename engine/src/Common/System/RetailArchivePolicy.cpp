@@ -1,9 +1,11 @@
 // OpenBFME. GPL-3.0.
 
 #include "Common/RetailArchivePolicy.h"
+#include "Common/PathIO.h"
 #include "Common/ArchiveFile.h"
 #include "Common/AsciiString.h"
 #include "Common/JobSystem.h"
+#include "Common/Md5Cache.h"
 #include "Common/MD5.h"
 #include "Common/MiniJson.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
@@ -49,98 +51,6 @@ std::uint32_t readBE32(const std::uint8_t *p)
 {
 	return ((std::uint32_t)p[0] << 24) | ((std::uint32_t)p[1] << 16) | ((std::uint32_t)p[2] << 8) | (std::uint32_t)p[3];
 }
-
-// Threat model: the md5 check (and this cache) detects wrong or modified game files, such as a
-// mod, a patch or a damaged copy. A cache hit trusts "same absolute path + size + last-write time",
-// so it does not stop deliberate tampering by someone who edits a file and then restores its
-// timestamp (or who edits the cache). That is accepted: cross-play integrity comes from the
-// retail INI/logic CRCs exchanged between players, not from this cache.
-struct Md5Cache
-{
-	std::map<std::string, std::string> entries; // "size\tmtime\tpath" -> md5
-	std::string path;
-	bool dirty = false;
-
-	static std::string key(const std::string &file, std::uint64_t size, long long mtime)
-	{
-		return std::to_string(size) + "\t" + std::to_string(mtime) + "\t" + file;
-	}
-
-	static bool isMd5Hex(const std::string &s)
-	{
-		if (s.size() != 32)
-		{
-			return false;
-		}
-		for (char c : s)
-		{
-			if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
-			{
-				return false;
-			}
-		}
-		return true;
-	}
-
-	// A missing or damaged cache is only a lost speed-up (every key mismatch rehashes), so lines
-	// that do not parse are dropped here; they never reach a verification decision.
-	void load()
-	{
-		if (path.empty())
-		{
-			return;
-		}
-		std::ifstream in(fs::u8path(path));
-		std::string line;
-		while (std::getline(in, line))
-		{
-			if (!line.empty() && line.back() == '\r')
-			{
-				line.pop_back();
-			}
-			size_t tab = line.find('\t');
-			if (tab == std::string::npos || !isMd5Hex(line.substr(0, tab)))
-			{
-				continue;
-			}
-			entries[line.substr(tab + 1)] = line.substr(0, tab);
-		}
-	}
-
-	// Writes to a sibling temp file and renames over the cache, so a crash or a second process
-	// never leaves a half-written cache. Returns an empty string or a warning text.
-	std::string save()
-	{
-		if (path.empty() || !dirty)
-		{
-			return std::string();
-		}
-		std::error_code ec;
-		fs::path target = fs::u8path(path);
-		fs::create_directories(target.parent_path(), ec);
-		fs::path temp = target;
-		temp += ".tmp";
-		{
-			std::ofstream out(temp, std::ios::trunc);
-			for (const auto &e : entries)
-			{
-				out << e.second << '\t' << e.first << '\n';
-			}
-			out.flush();
-			if (!out)
-			{
-				return "could not write the md5 cache " + temp.u8string() + "; every mount will rehash";
-			}
-		}
-		fs::rename(temp, target, ec);
-		if (ec)
-		{
-			fs::remove(temp, ec);
-			return "could not replace the md5 cache " + path + ": " + ec.message() + "; every mount will rehash";
-		}
-		return std::string();
-	}
-};
 
 } // namespace
 
@@ -418,20 +328,68 @@ bool RetailArchivePolicy::loadBuiltin(const std::string &id, RetailArchivePolicy
 	return parse(policy, exclusions, out, error);
 }
 
-std::vector<RetailArchiveEntry> RetailArchiveLoadOrder(const std::vector<RetailArchiveEntry> &archives)
+std::string RetailBaseAptStopLine()
 {
-	std::vector<std::string> names;
-	std::map<std::string, RetailArchiveEntry> byName;
+	return "S-5302: the BFME2 install's apt\\*.big archives are mounted last although retail RotWK never mounts them (RW 0xA14419): they add "
+		   "file names retail does not have and shadow none";
+}
+
+std::vector<RetailArchiveEntry> RetailArchiveLoadOrder(const std::vector<RetailArchiveEntry> &archives, bool gameInstall)
+{
+	// lane MODS-2: RotWK's startup mount, read from the binary (RW 0xA1766D for the game's own folder, RW 0xA14419 for the BFME2 install named
+	// by RW 0x638D22), as a first-wins sequence:
+	//  * the game folder: loadBigFilesFromDirectory("lang\\", "English*.big", 1) - overwrite 1, so the LAST of them wins: here in descending
+	//    order -, then ("", "*.big", 0), then ("apt\\", "*.big", 0);
+	//  * the BFME2 install: (bfme2 + "lang\\", "English*.big", 0), then (bfme2, "*.big", 0); its apt\ is never mounted (stop S-5302: the port
+	//    keeps those archives last, so they only add files retail does not have).
+	// loadBigFilesFromDirectory RW 0xA17FB0 lists one folder (searchSubdirectories 0) into a FilenameList ordered by AsciiString::compareNoCase
+	// (RW 0x42C33B -> msvcr71 _memicmp, a shorter name first on a tie) and mounts it in that order; with overwrite 0 the first archive mounted keeps
+	// a name (RW 0xA1829C). Before lane MODS-2 the port used BFME1's descending strcmp over the whole install (Win32BIGFileSystem.h): on the
+	// pinned 2.01 / 1.06 archives every one of the 44,882 file names resolves to the same archive either way; the orders differ for mods.
+	auto lowerName = [](const std::string &path) { return AsciiStringUtil::lowered(path); };
+	auto folderOf = [&lowerName](const std::string &path) {
+		const std::string l = lowerName(path);
+		const size_t slash = l.find('/');
+		return slash == std::string::npos ? std::string() : l.substr(0, slash);
+	};
+	std::vector<RetailArchiveEntry> lang, root, apt, other;
 	for (const RetailArchiveEntry &a : archives)
 	{
-		std::string name = slashesToBackslashes(a.path);
-		names.push_back(name);
-		byName[name] = a;
+		const std::string folder = folderOf(a.path);
+		if (folder.empty())
+		{
+			root.push_back(a);
+		}
+		else if (folder == "lang" && lowerName(a.path).compare(5, 7, "english") == 0 && a.path.find('/', 5) == std::string::npos)
+		{
+			lang.push_back(a);
+		}
+		else if (folder == "apt" && a.path.find('/', 4) == std::string::npos)
+		{
+			apt.push_back(a);
+		}
+		else
+		{
+			other.push_back(a); // no retail load reads it (not in a pinned 2.01 / 1.06 policy); kept last so it can only add files
+		}
+	}
+	auto ascending = [](std::vector<RetailArchiveEntry> &v) {
+		std::stable_sort(v.begin(), v.end(), [](const RetailArchiveEntry &x, const RetailArchiveEntry &y) {
+			return AsciiStringUtil::compareNoCase(x.path, y.path) < 0;
+		});
+	};
+	ascending(lang);
+	ascending(root);
+	ascending(apt);
+	ascending(other);
+	if (gameInstall)
+	{
+		std::reverse(lang.begin(), lang.end()); // overwrite 1: the last one loaded wins
 	}
 	std::vector<RetailArchiveEntry> ordered;
-	for (const std::string &name : BFMEArchiveLoadOrder(names))
+	for (std::vector<RetailArchiveEntry> *group : { &lang, &root, &apt, &other })
 	{
-		ordered.push_back(byName[name]);
+		ordered.insert(ordered.end(), group->begin(), group->end());
 	}
 	return ordered;
 }
@@ -759,8 +717,14 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 
 	for (const RetailInstall &install : installs)
 	{
+		std::string pathError;
+		if (!PathIO::checkInstallPath(install.root, pathError))
+		{
+			stepError(install.label + ": " + pathError);
+			continue;
+		}
 		std::error_code ec;
-		fs::path root = fs::u8path(install.root);
+		fs::path root = PathIO::native(install.root);
 		if (install.root.empty() || !fs::is_directory(root, ec))
 		{
 			stepError(install.label + ": install directory does not exist: '" + install.root + "'");
@@ -830,7 +794,7 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 		}
 		const std::string layoutWords = layout.layoutName.empty() ? std::string() : " (" + layout.layoutName + ")";
 		const std::string advice = install.policy.advice.empty() ? std::string() : " " + install.policy.advice;
-		for (const RetailArchiveEntry &entry : RetailArchiveLoadOrder(layout.archives))
+		for (const RetailArchiveEntry &entry : RetailArchiveLoadOrder(layout.archives, &install == &installs.front()))
 		{
 			auto found = onDisk.find(normalizedKey(entry.path));
 			if (found == onDisk.end())
@@ -922,7 +886,7 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 				continue;
 			}
 			std::vector<std::uint8_t> bytes((size_t)p.entry.size);
-			std::ifstream in(fs::u8path(p.diskPath), std::ios::binary);
+			std::ifstream in(PathIO::native(p.diskPath), std::ios::binary);
 			if (!in || !in.read(reinterpret_cast<char *>(bytes.data()), (std::streamsize)bytes.size()) || in.peek() != std::char_traits<char>::eof())
 			{
 				report.errors.push_back(p.install + ": could not read " + p.entry.path + " (" + p.diskPath + ")");
@@ -1011,6 +975,12 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 	{
 		fileSystem.mountArchive(std::move(opened[i]), plan[i].diskPath, false);
 		report.mounted.push_back({ plan[i].install, plan[i].entry.path, plan[i].diskPath, plan[i].entry.size, plan[i].entry.md5 });
+		// lane MODS-2: a base install's (not the first install's) apt\ archive: retail never mounts it (stop S-5302)
+		if (report.stops.empty() && !installs.empty() && plan[i].install != installs.front().label &&
+			AsciiStringUtil::lowered(plan[i].entry.path).compare(0, 4, "apt/") == 0)
+		{
+			report.stops.push_back(RetailBaseAptStopLine());
+		}
 	}
 	report.ok = true;
 	return report;
@@ -1018,15 +988,15 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 
 bool ResolveInstallPath(const std::string &key, const std::string &configPath, std::string &out, std::string *error)
 {
-	const char *env = std::getenv(key.c_str());
-	if (env != nullptr && env[0] != 0)
+	const std::string env = PathIO::environment(key.c_str());
+	if (!env.empty())
 	{
 		out = env;
 		return true;
 	}
 	if (!configPath.empty())
 	{
-		std::ifstream in(fs::u8path(configPath));
+		std::ifstream in(PathIO::native(configPath));
 		std::string line;
 		while (std::getline(in, line))
 		{
@@ -1041,13 +1011,11 @@ bool ResolveInstallPath(const std::string &key, const std::string &configPath, s
 			}
 			std::string k = line.substr(0, eq);
 			std::string v = line.substr(eq + 1);
+			const auto first = v.find_first_not_of(" \t");
+			v = first == std::string::npos ? std::string() : v.substr(first);
 			while (!k.empty() && (k.back() == ' ' || k.back() == '\t'))
 			{
 				k.pop_back();
-			}
-			while (!v.empty() && (v.front() == ' ' || v.front() == '\t'))
-			{
-				v.erase(v.begin());
 			}
 			if (k == key && !v.empty())
 			{

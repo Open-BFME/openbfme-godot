@@ -39,6 +39,10 @@ static func install(exe: String, home: String) -> Dictionary:
 		var f := FileAccess.open(path, FileAccess.WRITE)
 		if f == null:
 			return {"ok": false, "error": "cannot write %s: %s" % [path, error_string(FileAccess.get_open_error())]}
-		f.store_buffer(writes[path])
+		var stored: bool = f.store_buffer(writes[path])
+		f.flush()
+		var err: Error = f.get_error()
 		f.close()
+		if not stored or err != OK:
+			return {"ok": false, "error": "cannot write %s: %s" % [path, error_string(err) if err != OK else "short write"]}
 	return {"ok": true, "error": "", "where": app_dir.path_join(DESKTOP_FILE)}

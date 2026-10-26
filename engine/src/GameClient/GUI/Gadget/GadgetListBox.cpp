@@ -149,7 +149,7 @@ void adjustDisplay(GameWindow *window, int adjustment, bool updateSlider)
 		}
 		GameWindow *child = list->slider->winGetChild();
 		child->winGetSize(&sliderChildSize.x, &sliderChildSize.y);
-		sData->numTicks = (float)((sliderSize.y - sliderChildSize.y) / (float)sData->maxVal);
+		sData->numTicks = sData->maxVal == 0 ? 0.0f : (float)(sliderSize.y - sliderChildSize.y) / (float)sData->maxVal;
 		if (updateSlider)
 		{
 			window->manager().winSendSystemMsg(list->slider, GSM_SET_SLIDER, (WindowMsgData)(sData->maxVal - list->displayPos), 0);

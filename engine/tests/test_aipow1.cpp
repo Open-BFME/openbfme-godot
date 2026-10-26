@@ -546,7 +546,7 @@ TEST_CASE("AIPOW-1: Legolas: LEGOLAS_TRAINARCHERS (RW 0x9EAD61) needs allied arc
 	CHECK(wind->decideNow() == (120.0f >= 0.8f * range2 && 120.0f <= range2));
 }
 
-TEST_CASE("AIPOW-1: a Hard computer's Dwarves: Dain's HEAL_AOE (RW 0x9EA462) needs ten allies at one of the four points, his summon waits for S-1020, the Guardians CHARGE (RW 0x9EA0A1)")
+TEST_CASE("AIPOW-1: a Hard computer's Dwarves: Dain's HEAL_AOE (RW 0x9EA462) needs ten allies at one of the four points, his summon (SUMMONLOC-1: the spot test runs), the Guardians CHARGE (RW 0x9EA0A1)")
 {
 	OPENBFME_REQUIRE_START(s);
 	Arena a;
@@ -569,12 +569,22 @@ TEST_CASE("AIPOW-1: a Hard computer's Dwarves: Dain's HEAL_AOE (RW 0x9EA462) nee
 	CHECK(rage->decideNow() == false); // nine soldiers; Dain stands 200 from the first point, on its circle's edge (the scan keeps distances below 200)
 	a.make("GondorFighter", a.ai, 150.0f, 130.0f);
 	CHECK(rage->decideNow() == true); // ten
-	// the summon: a goal and more than one enemy (horde or loose) near a point the ActionManager accepts; the summons' spot test waits for S-1020, so no
+	// the summon: a goal and more than one enemy (horde or loose) near a point the ActionManager accepts; lane SUMMONLOC-1: the summons' spot test
+	// (RW 0x82E586) runs, the open ground answers yes and no unported test is counted
 	a.make("GondorFighter", a.human, 10.0f, -150.0f);
 	a.make("GondorFighter", a.human, -10.0f, -150.0f);
 	const unsigned long long before = ActionManager::stats().unportedTypeTests[0x5B];
-	CHECK(guard->decideNow() == false);
-	CHECK(ActionManager::stats().unportedTypeTests[0x5B] > before);
+	CHECK(guard->decideNow() == true);
+	CHECK(ActionManager::stats().unportedTypeTests[0x5B] == before);
+	REQUIRE(guard->decision());
+	const Coord3D spot = guard->decision()->location;
+	// the same spot under a structure (RW 0x82E586: an overlapping live STRUCTURE refuses) answers no
+	Object *fort = a.make("DwarvenFortressCitadel", a.human, spot.x - a.where.x, spot.y - a.where.y);
+	REQUIRE(fort);
+	a.advance(1);
+	CHECK_FALSE(ActionManager::canDoSpecialPowerAtLocation(*dain, *guard->decision()->button, spot));
+	a.logic->destroyObject(fort);
+	a.advance(1);
 	// CHARGE (RW 0x9EA0A1) on the Guardians: the nearest enemy, or the first one whose health ratio is below the first's
 	Object *guardians = a.make("DwarvenGuardianHorde", a.ai, -300.0f, 0.0f);
 	a.advance(3);
@@ -594,6 +604,37 @@ TEST_CASE("AIPOW-1: a Hard computer's Dwarves: Dain's HEAL_AOE (RW 0x9EA462) nee
 	setHealthRatio(*farEnemy, 0.5f);
 	CHECK(charge->decideNow() == true);
 	CHECK(charge->decision()->target == farEnemy->getID());
+}
+
+TEST_CASE("SUMMONLOC-1: end to end: a Hard computer's Dain summons his Royal Guard (SPELL_BOOK_MEN_OF_DALE_ALLIES, AI type 11) into a fight on open ground")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionDwarves", 5105, &err), err);
+	Object *dain = a.make("DwarvenDain", a.ai, 0.0f, 0.0f);
+	dain->getExperienceTracker()->gainExpForLevel(10, true, false);
+	a.advance(2);
+	AISpecialPowerUpdate *guard = aiPowerOfType(*dain, 11);
+	REQUIRE(guard);
+	Object *enemy = a.make("GondorFighter", a.human, 0.0f, -150.0f);
+	a.make("GondorFighter", a.human, 10.0f, -150.0f);
+	a.make("GondorFighter", a.human, -10.0f, -150.0f);
+	REQUIRE(dain->getAIUpdateInterface()->aiAttackObject(enemy, CMD_FROM_PLAYER));
+	AISpecialPowerUpdate::stats() = AISpecialPowerUpdate::Stats{};
+	int frame = -1;
+	for (int i = 0; i < 300 && frame < 0; ++i)
+	{
+		a.advance(1);
+		if (AISpecialPowerUpdate::stats().executedByType[11] != 0)
+		{
+			frame = i;
+		}
+	}
+	MESSAGE("the Royal Guard summon ran after " << frame << " frames");
+	// engine pin (seed 5105): the module's 25-frame counter (RW 0x99302D) from its first update and the roll above Hard's chance pass on this frame
+	CHECK(frame == 22);
+	CHECK(AISpecialPowerUpdate::stats().executedByType[11] == 1);
 }
 
 TEST_CASE("AIPOW-1: end to end: a Hard computer's wounded Aragorn uses Athelas on his own (SELFAOEHEALHEROS), a human's does not")
@@ -624,8 +665,10 @@ TEST_CASE("AIPOW-1: end to end: a Hard computer's wounded Aragorn uses Athelas o
 	MESSAGE("Athelas ran after " << frame << " frames");
 	// the 25-frame counter (RW 0x99302D) counts the module's updates from its first (2 frames before the wound); the roll above 0.5 and Hard's chance (1 : 1)
 	// pass on that frame here. Engine pin (seed 5107). Lane PATHPERF-1: 23 with findPath's hierarchical corridor (RW 0x6F8601); 22 with it switched off (a
-	// test switch, measured): the corridor's routes move the frame on which the roll passes
-	CHECK(frame == 23);
+	// test switch, measured): the corridor's routes move the frame on which the roll passes. Lane TARGET-1: 22: the mood scan's one-off random offset of its
+	// next check (RW 0x6686F0, GameLogicRandomValue line 0x2079 after the idle entry's resetNextMoodCheckTime RW 0x662DD9) draws from the logic generator
+	// before the power's roll
+	CHECK(frame == 22);
 	CHECK(AISpecialPowerUpdate::stats().executedByType[10] == 1);
 	a.advance(10); // Athelas's heal lands a few frames after the cast
 	CHECK(AISpecialPowerUpdate::healthRatio(*mine) > wounded);    // healed

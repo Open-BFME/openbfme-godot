@@ -105,8 +105,10 @@ TEST_CASE("phys1 retail: the overlap statistic of a big melee between two barrac
 	// frames on the stack6 merge) the survivors stand still for good, and the run's mean took the closest parked pair of two allied hordes 300 more times (a
 	// penetration of 11.63 from frame 300 on: the mean 6.80). That rest layout moved with EXIT-1's horde member update (RW 0x66C748, the straight member
 	// steps) while the melee did not: over the fight the allied mean is 2.02 (enemy 1.40) with the member update and 1.97 (enemy 1.59) with it switched off
+	// Lane ATTACKPATH-1: the player hordes' first approach (the state's + 0x5D, RW 0x74A8F2 .. 0x74A9D5) skips the second walk back and goes to the unadjusted
+	// point when AdjustHordeMeleeDestination refuses, so allied hordes close in on one point: the allied mean while fighting is 6.05 (3.92 with + 0x5D forced clear)
 	CHECK(r.fight.meanEnemyOverlap / r.fight.frames < 5.0);
-	CHECK(r.fight.meanAllyOverlap / r.fight.frames < 6.0);
+	CHECK(r.fight.meanAllyOverlap / r.fight.frames < 6.5); // tolerance: the measured 6.05 plus headroom; a scenario measurement, not a retail value
 	// the collision pass reports what it is not (S-780) and that it left allied overlaps alone (S-781)
 	size_t s780 = 0, s781 = 0;
 	for (const std::string &line : r.stops)

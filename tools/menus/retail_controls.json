@@ -505,6 +505,56 @@
    "effect": "page | probe:lan_state | probe:online_state"
   },
   {
+   "match": "OnlineQuickMatch\\.LeftFrame\\.JoinGame",
+   "retail": "Quick Match: starts the search; the movie's Searching pop-up covers the page and its time counts up (lane MENUFIX-3: the page works since ONLINEHUB-1, the row expected the old box)",
+   "source": "AptOnline::OnlineQuickMatch::PlayGame (RW 0x9C9F30's registrations, BFME2 0x5BA34B)",
+   "effect": "page | changed"
+  },
+  {
+   "match": "OnlineQuickMatch::(Side|NumOfPlayers|Ladder|ConnectionSpeed)#combo",
+   "retail": "Quick Match's army, ladder size and connection speed combos (the connection speed is GameSpy's: disabled)",
+   "source": "AptOnlineQuickMatch's combos (AptOnlineHub.cpp, BFME2 0x5B8F04)",
+   "effect": "open | value | nothing"
+  },
+  {
+   "match": "OnlineQuickMatch\\.Searching\\.instance1$",
+   "retail": "the Searching pop-up's panel: no action (its text is the search's running time)",
+   "source": "OnlineQuickMatch.apt Searching clip",
+   "effect": "nothing | changed"
+  },
+  {
+   "match": "OnlineQuickMatch\\.Searching\\.navSearching\\.WidenSearch",
+   "retail": "widens the search (GameSpy's request 0x11); OpenBFME's platform already takes every player of the same mode and size (S-4870)",
+   "source": "AptOnline::OnlineQuickMatch::WidenSearch RW 0x9C9DDD",
+   "effect": "changed | command:AptOnline::OnlineQuickMatch::WidenSearch",
+   "retail_unhandled": [
+    "AptOnline::WidenSearch"
+   ],
+   "note": "the movie also calls AptOnline::WidenSearch, a name RotWK does not register (only AptOnline::OnlineQuickMatch::WidenSearch is in game.dat)"
+  },
+  {
+   "match": "OnlineQuickMatch\\.Searching\\.navSearching\\.Cancel",
+   "retail": "cancels the search; the page comes back",
+   "source": "AptOnline::OnlineQuickMatch::Cancel RW 0x9C9E55",
+   "effect": "page | changed | command:AptOnline::OnlineQuickMatch::Cancel",
+   "retail_unhandled": [
+    "AptOnline::Cancel"
+   ],
+   "note": "the movie also calls AptOnline::Cancel, a name RotWK does not register (only AptOnline::OnlineQuickMatch::Cancel is in game.dat)"
+  },
+  {
+   "match": "Stats\\.Main\\.TabButtons\\.(OpenPlay|Strategic)\\.Button",
+   "retail": "the online statistics page's tab: that mode's records",
+   "source": "AptOnline::Stats::CurrentTab (AptStats), Stats::OnSelectFaction",
+   "effect": "page | changed | command:AptOnline::Stats::CurrentTab"
+  },
+  {
+   "match": "Stats\\.Main\\.\\$Tournament",
+   "retail": "the tab already shown: a press changes nothing",
+   "source": "the Stats movie's tab clips",
+   "effect": "nothing"
+  },
+  {
    "match": "JoinGame",
    "retail": "joins the selected game (none selected: a box)",
    "source": "AptLanLobby::OnJoinGameBttn RW 0x846F8A / AptOnline::CustomMatch::JoinGame",
@@ -650,9 +700,9 @@
   },
   {
    "match": "LowerButtons_Host\\.Connections",
-   "retail": "the connections between the players: retail shows the GameSpy connection of every two players; OpenBFME's players reach each other through the relay, so the player is told it is not available and the room's panels come back (ONLINE-5, S-4550)",
-   "source": "AptOnline::CustomMatch::OnOpenConnectionsScreen",
-   "effect": "unavailable"
+   "retail": "the connections between the players: retail shows the GameSpy connection of every two players; OpenBFME's players reach each other through the relay, so the grid shows each two players' links to the relay (ONLINEMENU-1, S-4550)",
+   "source": "AptOnline::CustomMatch::OnOpenConnectionsScreen (Connections.apt, AptConnectionScreen BFME2 0x005DB6E2)",
+   "effect": "command:AptOnline::CustomMatch::OnOpenConnectionsScreen | page"
   },
   {
    "match": "LowerButtons_Host\\.PlayGame",
@@ -823,9 +873,12 @@
     "AptGameLoading::OnInitialized"
    ],
    "ignore_unhandled": [
-    "OnAptInGameSideCommandBarButtonFrameUnloaded"
+    "OnAptInGameSideCommandBarButtonFrameUnloaded",
+    "PalantirCommandUI::OnSubMenuUnloaded",
+    "PalantirCommandUI::OnButtonFrameUnloaded",
+    "PalantirCommandUI::OnToggleFlashUnloaded"
    ],
-   "note": "the HUD's side command bar teardown callback (a game.dat name) has no handler: an in-game HUD gap, not this button's. Lane MENUFIX-2: the restart's load is synchronous, so the walk can sample the stack after the new game is up (Palantir.apt before and after): the restart request the host carries out counts too; AptGameLoading::OnInitialized has no handler in the binary (AptSimpleScreens.h)"
+   "note": "the HUD's side command bar teardown callback (a game.dat name) has no handler: an in-game HUD gap, not this button's. Lane MENUFIX-2: the restart's load is synchronous, so the walk can sample the stack after the new game is up (Palantir.apt before and after): the restart request the host carries out counts too; AptGameLoading::OnInitialized has no handler in the binary (AptSimpleScreens.h). Lane MENUFIX-3: the restart drops the HUD screen (AptPalantir and its command registrations) before the Palantir movie's clips run their unload actions, so PalantirCommandUI::OnButtonFrameUnloaded (ported, RW 0x930200), OnToggleFlashUnloaded and OnSubMenuUnloaded (RW 0x930340, registered with OnSubMenuLoaded RW 0x93023D in RW 0x930A25) arrive with no screen: the frame / submenu slots they drop went with it (the port keeps no submenu slots: OnSubMenuLoaded is not ported, ControlBar.cpp). Nothing is left to release; the teardown order is a follow-up, not this button's"
   },
   {
    "match": "MainButtons\\.Skip",

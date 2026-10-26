@@ -31,6 +31,9 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 B=${OPENBFME_LINUX_DIR:-$ROOT/build/linux-godot-sdk}
 JOBS=${JOBS:-4}
 fail() { echo "LINUX BUILD FAIL: $*" >&2; exit 1; }
+# lane MACACT-1: the build date the library records (engine/cmake/BuildVersion.cmake) is the commit's, not the build day's, so two
+# builds of one commit (the build host's and GitHub Actions', autorelease.sh compares them byte for byte) are the same bytes
+export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" show -s --format=%ct HEAD)}
 
 cache=${OPENBFME_SDK_CACHE:-$HOME/.cache/openbfme-godot-sdk}
 SDK=$cache/$SDK_RELEASE/$SDK_NAME
@@ -59,7 +62,7 @@ B=$(cd "$B" && pwd)
 SO="$ROOT/godot/bin/openbfme.linux.template_debug.x86_64.so"
 rm -f "$SO"
 ( cd "$ROOT" && export PATH="$SDK/bin:$PATH" &&
-  cmake -S engine -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENBFME_LAME=OFF \
+  cmake -S engine -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENBFME_BUILD_TESTS=OFF \
     -DCMAKE_C_COMPILER="$SDK/bin/x86_64-godot-linux-gnu-gcc" -DCMAKE_CXX_COMPILER="$SDK/bin/x86_64-godot-linux-gnu-g++" &&
   cmake --build "$B" -j"$JOBS" --target openbfme ) || fail "the build failed"
 [ -f "$SO" ] || fail "the build wrote no $SO"

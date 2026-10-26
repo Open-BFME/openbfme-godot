@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GameLogic/Module/HeroAbilityModules.h (lane HERO-2).
 
+#include "Common/ModEngineFeatures.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
 #include "GameLogic/Module/BloodthirstyUpdate.h"
 #include "GameLogic/AttributeModifiers.h"
@@ -317,6 +318,26 @@ ShareExperienceBehavior *ShareExperienceBehavior::of(Object &obj)
 
 float ShareExperienceBehavior::dropOffFactor(const Coord3D &from, const Object &candidate) const
 {
+	// lane MODS-3, edain-unchained.share-experience-all (0xEE808C): a Radius other than 0 takes the new body: DropOff <= 0 is 1.0, otherwise
+	// 1 - clamp(d / Radius, 0, 1) * clamp(DropOff, 0, 1) in SSE (DropOff 0 and 1.0 give retail's values bit for bit; 0 < DropOff < 1 is a
+	// partial fall-off, Edain Unchained's 0.5). Radius 0 keeps the retail body below
+	if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedShareExperienceAll) && m_data->m_radius != 0.0f)
+	{
+		if (!(m_data->m_dropOff > 0.0f))
+		{
+			return 1.0f;
+		}
+		const Coord3D *q = candidate.getPosition();
+		const float ex = SimMath::subf32(q->x, from.x), ey = SimMath::subf32(q->y, from.y), ez = SimMath::subf32(q->z, from.z);
+		const double sq = NumericState::pc24AddW(NumericState::pc24AddW(NumericState::pc24MulW(ez, ez), NumericState::pc24MulW(ey, ey)), NumericState::pc24MulW(ex, ex));
+		const float d = NumericState::fstpDword(NumericState::sqrtPC24(sq)); // RW 0x4054F5, as the retail body
+		float ratio = SimMath::divf32(d, m_data->m_radius);
+		ratio = ratio > 0.0f ? ratio : 0.0f; // maxss
+		ratio = ratio < 1.0f ? ratio : 1.0f; // minss
+		float drop = m_data->m_dropOff > 0.0f ? m_data->m_dropOff : 0.0f;
+		drop = drop < 1.0f ? drop : 1.0f;
+		return SimMath::subf32(1.0f, SimMath::mulf32(ratio, drop));
+	}
 	if (m_data->m_dropOff != 1.0f) // RW 0x883265 .. 0x883275 (ucomiss; jp: not equal)
 	{
 		return 1.0f;
@@ -363,6 +384,18 @@ void ShareExperienceBehavior::share(float value)
 		ExperienceTracker *t = c->getExperienceTracker();
 		if (!t || !t->isAcceptingExperiencePoints()) // RW 0x88343D .. 0x883451
 		{
+			continue;
+		}
+		if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedShareExperienceAll))
+		{
+			// lane MODS-3 (0xEE803E): each candidate gets the original value: tmp = fstp(value * Percentage), tmp = fstp(dropOff * tmp); [ebp + 8] stays
+			float award = NumericState::pc24Mul(value, m_data->m_percentage);
+			award = NumericState::pc24Mul(dropOffFactor(from, *c), award);
+			if (award > 0.0f)
+			{
+				t->addExperiencePoints(award, true, true, true, false); // RW 0x79D833
+				++m_shares;
+			}
 			continue;
 		}
 		value = NumericState::pc24Mul(value, m_data->m_percentage); // RW 0x883453: fld; fmul; fstp [ebp + 8]
@@ -1368,7 +1401,12 @@ UpdateSleepTime DualWeaponBehavior::update()
 	{
 		// RW 0x701443(object, range, 0x62) -> RW 0x7006D7 (the AI's target search: INFERENCE, S-1228: the closest visible alive enemy)
 		PartitionFilterFn chain([&](Object &o) { return !o.isEffectivelyDead() && obj->getRelationship(o) == ENEMIES && EmotionModules::canSeeObject(*obj, o, range); });
-		for (const PartitionHit &h : obj->logic().partition().iterateObjectsInRange(*obj->getPosition(), range, FROM_CENTER_2D, { &chain }, ITER_SORTED_NEAR_TO_FAR))
+		// lane UBER-2A, Uber only: the chain accepts only ENEMIES, so the trees of the players this one does not see as enemies are skipped. The hits enter the
+		// sort in the same order (layer by layer); Uber rule change: an object whose owner changed since the frame's partition update is looked for on its old layer
+		PartitionFilterLayers enemyLayers(obj->getTeam() ? obj->getTeam()->enemyLayerMask() : 0u);
+		PartitionFilter *const chainList[] = { &chain, &enemyLayers };
+		const PartitionFilterList filters(chainList, obj->logic().uber() ? 2 : 1);
+		for (const PartitionHit &h : obj->logic().partition().iterateObjectsInRange(*obj->getPosition(), range, FROM_CENTER_2D, filters, ITER_SORTED_NEAR_TO_FAR))
 		{
 			victim = h.object;
 			break;

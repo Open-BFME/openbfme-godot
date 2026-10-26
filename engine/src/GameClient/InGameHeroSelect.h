@@ -115,6 +115,7 @@ public:
 		std::string image;
 		int rank = -1, rankProgress = -1, health = -1;
 		bool selected = false, flash = false, builder = false;
+		bool group = false; ///< lane MODS-3: edain-unchained.herobar's group slot (slot + 0x16 == 2): the HEROBAR_GROUP template of `hero`
 	};
 	const Slot &slot(int i) const { return m_slots[i]; }
 
@@ -145,4 +146,10 @@ private:
 	bool m_shown = false, m_selectAllShown = false, m_builderUsed = false;
 	unsigned m_builderDeadline = 0, m_clientFrame = 0, m_builderTimeoutFrames = 0;
 	Slot m_slots[kSlots];
+	// lane MODS-3: edain-unchained.herobar's press memory (its 0xED7404[16] / 0xED744C / 0xED7450)
+	ObjectID m_groupLastId[kSlots] = {};
+	int m_groupLastSlot = -1;
+	unsigned m_groupDoubleClickDeadline = 0;
+	static bool listedAsHero(const Object &obj); // HERO, or under edain-unchained.herobar HEROBAR / HEROBAR_GROUP
+	void pressGroupSlot(int index);
 };

@@ -15,7 +15,13 @@
 
 AttributeModifierPool::AttributeModifierPool(Thing *thing, const ModuleData *data)
 	: BehaviorModule(thing, data)
+	, m_store(TheAttributeModifierStore) // the world's store, taken where the object is made (see m_store)
 {
+}
+
+const AttributeModifierStore *AttributeModifierPool::store() const
+{
+	return m_store ? m_store : TheAttributeModifierStore;
 }
 
 void AttributeModifierPool::registerClass(ModuleFactory &modules)
@@ -40,10 +46,10 @@ std::vector<std::string> AttributeModifierPool::stopLines()
 		"disabling RW 0x804FCC runs)" };
 }
 
-bool AttributeModifierPool::suppressed(unsigned frame, const Entry &e, bool innate) const
+// RW 0x804D27 (the entry's list fetched by the caller)
+bool AttributeModifierPool::suppressed(unsigned frame, const ModifierListTemplate &list, bool innate) const
 {
-	const ModifierListTemplate *list = TheAttributeModifierStore ? TheAttributeModifierStore->get(e.index) : nullptr;
-	const int cat = list ? list->m_category : 0;
+	const int cat = list.m_category;
 	if (!innate && cat >= 10 && cat <= 14)
 	{
 		return true;
@@ -54,7 +60,7 @@ bool AttributeModifierPool::suppressed(unsigned frame, const Entry &e, bool inna
 bool AttributeModifierPool::sum(int type, const char *name, float &out) const
 {
 	out = 0.0f;
-	if (!TheAttributeModifierStore)
+	if (!store())
 	{
 		return false;
 	}
@@ -62,13 +68,15 @@ bool AttributeModifierPool::sum(int type, const char *name, float &out) const
 	bool found = false;
 	for (const Entry &e : m_entries)
 	{
-		if (frame >= e.expire || suppressed(frame, e, true))
+		// lane HDPERF-1 (performance): the list is fetched once and a list without a modifier of `type` is passed over first (it adds nothing, whatever
+		// its expiry or suppression: the same answer)
+		const ModifierListTemplate *list = store()->get(e.index);
+		if (!list || !list->mayHave(type) || frame >= e.expire || suppressed(frame, *list, true))
 		{
 			continue;
 		}
-		const ModifierListTemplate *list = TheAttributeModifierStore->get(e.index);
 		float v = 0.0f;
-		if (list && list->value(type, name, v))
+		if (list->value(type, name, v))
 		{
 			out = SimMath::addf32(out, v);
 			found = true;
@@ -80,7 +88,7 @@ bool AttributeModifierPool::sum(int type, const char *name, float &out) const
 bool AttributeModifierPool::product(int type, const char *name, bool innate, float &out) const
 {
 	out = 1.0f;
-	if (!TheAttributeModifierStore)
+	if (!store())
 	{
 		return false;
 	}
@@ -88,13 +96,15 @@ bool AttributeModifierPool::product(int type, const char *name, bool innate, flo
 	bool found = false;
 	for (const Entry &e : m_entries)
 	{
-		if (frame >= e.expire || suppressed(frame, e, innate))
+		// lane HDPERF-1 (performance): the list is fetched once and a list without a modifier of `type` is passed over first (it adds nothing, whatever
+		// its expiry or suppression: the same answer)
+		const ModifierListTemplate *list = store()->get(e.index);
+		if (!list || !list->mayHave(type) || frame >= e.expire || suppressed(frame, *list, innate))
 		{
 			continue;
 		}
-		const ModifierListTemplate *list = TheAttributeModifierStore->get(e.index);
 		float v = 0.0f;
-		if (list && list->value(type, name, v))
+		if (list->value(type, name, v))
 		{
 			out = SimMath::mulf32(out, v);
 			found = true;
@@ -157,14 +167,30 @@ void emitModifierFX(Object &obj, const std::string &fx)
 }
 } // namespace
 
+void AttributeModifierPool::handDownTo(Object &obj) const
+{
+	const unsigned frame = getObject()->logic().getFrame();
+	const std::vector<Entry> entries = m_entries; // the member's own pool is another module: the copy only guards against a hand-down to this object
+	for (const Entry &e : entries)
+	{
+		// INFERENCE (S-633, lane BANNER-1 review r1): the port keeps an expired entry (the pool's expiry removal is not ported) where retail's would be gone; it is
+		// not handed down (a non-positive remaining duration would give the list its own default duration again)
+		if (e.expire <= frame)
+		{
+			continue;
+		}
+		obj.addAttributeModifier(e.name, (int)(e.expire - frame)); // RW 0x804F18 .. 0x804F27
+	}
+}
+
 bool AttributeModifierPool::add(const std::string &listName, int duration)
 {
-	if (!TheAttributeModifierStore)
+	if (!store())
 	{
 		return false;
 	}
-	const int index = TheAttributeModifierStore->findIndex(listName);
-	const ModifierListTemplate *list = TheAttributeModifierStore->get(index);
+	const int index = store()->findIndex(listName);
+	const ModifierListTemplate *list = store()->get(index);
 	if (!list)
 	{
 		return false;
@@ -187,7 +213,7 @@ bool AttributeModifierPool::add(const std::string &listName, int duration)
 		std::vector<std::string> shorter;
 		for (const Entry &e : m_entries)
 		{
-			const ModifierListTemplate *other = TheAttributeModifierStore->get(e.index);
+			const ModifierListTemplate *other = store()->get(e.index);
 			if (e.index != index && other && other->m_category == cat)
 			{
 				if (e.expire >= expire)
@@ -327,7 +353,7 @@ void AttributeModifierPool::xfer(Xfer &x)
 		x.xferInt(&e.index);
 		x.xferAsciiString(&e.name);
 		// the list is the store's: its index is the name's (RW 0x614470)
-		const int index = TheAttributeModifierStore ? TheAttributeModifierStore->findIndex(e.name) : -1;
+		const int index = store() ? store()->findIndex(e.name) : -1; // the pool's world store (m_store)
 		if (x.isLoading() && (index < 0 || index != e.index))
 		{
 			throw XferException("an attribute modifier entry names the list '" + e.name + "' at index " + std::to_string(e.index) + ", which this game's data has "

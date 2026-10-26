@@ -125,6 +125,9 @@ public:
 	bool hasAttributeModifierProvider() const { return (bool)m_attributeModifiers; }
 	// RW 0x68C82D with the out value starting at 1.0 (RW 0x805007)
 	float attributeModifierProduct(const Object &obj, int type) const;
+	// the income / deposit factor: the PRODUCTION product (RW 0x68C82D(0xD)); lane MODS-3: times PRODUCTION_MONEY's under
+	// edain-unchained.production-split (its 0xED90D8 at RW 0x88559F / 0x89DC45 / 0x883C4E / 0x8A4623)
+	float productionMoneyProduct(const Object &obj) const;
 	// RW 0x68C818 style: the sum form for COMMAND_POINT_BONUS (RW 0x6A7C01 starts it at 0.0)
 	typedef std::function<bool(const Object &obj, int type, float &sum)> AttributeModifierSumProvider;
 	void setAttributeModifierSumProvider(AttributeModifierSumProvider p) { m_attributeSums = std::move(p); }

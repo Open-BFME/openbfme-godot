@@ -888,9 +888,12 @@ TEST_CASE("backlog8 retail: a goblin horde that keeps a wall to scale (RW 0x86C6
 	CHECK(scaled.hordeCondition);
 	CHECK(scaled.stop);
 	CHECK(scaled.highest == 40.0f); // the wall's top: its base (0) + GeometryHeight 40, never above (RW 0x86E214's clamp)
-	CHECK(scaled.climbers == 5); // the five of the twenty whose way to their slots crosses the wall's cells; the others walk past it on the ground
-	CHECK(scaled.marked == 5);   // every member that climbed got SCALING_WALL_HORDE with CLIMBING
-	CHECK(scaled.rappellers == 5); // and came down the far side with RAPPELLING
+	// the six of the twenty whose way to their slots crosses the wall's cells; the others walk past it on the ground. lane OFFMAP-1: five while the
+	// port's idle state snapped every unit onto its goal cell centre at frame <= 1 (ZH's cheat move, not in RotWK's RW 0x745A64): from the positions
+	// the horde made them at, one more member's way crosses the wall (re-measured; the old snap put back alone gives five again)
+	CHECK(scaled.climbers == 6);
+	CHECK(scaled.marked == 6);     // every member that climbed got SCALING_WALL_HORDE with CLIMBING
+	CHECK(scaled.rappellers == 6); // and came down the far side with RAPPELLING
 	CHECK(scaled.endHighest == 0.0f); // everybody is back on the ground at the end
 	CHECK(scaled.reach == 90.0f); // H + 0x2EC: the largest distance to a slot, capped (RW 0x86BC41)
 }

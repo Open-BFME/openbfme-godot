@@ -2,6 +2,7 @@
 // See RealTimeStats.h (lane OWNERFIX-3).
 
 #include "GameClient/GUI/Skirmish/RealTimeStats.h"
+#include "Common/PathIO.h"
 
 #include "GameClient/MapCache.h"
 
@@ -68,7 +69,7 @@ bool RealTimeStatsPreferences::load(const std::string &folder, const std::u16str
 		// loadStatsFile (RW 0x93E669): the profile name and the leaf appended to the user data folder (UserPreferences::load RW 0x7B2B7F)
 		m_path = folder + utf8(profile) + kLeaf;
 		std::error_code ec;
-		const std::filesystem::path path = std::filesystem::u8path(m_path);
+		const std::filesystem::path path = PathIO::native(m_path);
 		if (std::filesystem::exists(path, ec))
 		{
 			// a folder (or anything not a file) of that name cannot be read: an error, not an empty profile
@@ -188,7 +189,7 @@ bool SkirmishHonorsGame::isSandbox() const
 	int localTeam = -1;
 	if (localSlot < 0)
 	{
-		for (int i = 0; i < 8; ++i)
+		for (int i = 0; i < (int)slots.size(); ++i)
 		{
 			if (occupied(i))
 			{
@@ -201,7 +202,7 @@ bool SkirmishHonorsGame::isSandbox() const
 	{
 		localTeam = slots[(size_t)localSlot].team;
 	}
-	for (int i = 0; i < 8; ++i)
+	for (int i = 0; i < (int)slots.size(); ++i)
 	{
 		if (i == localSlot)
 		{
@@ -217,7 +218,7 @@ bool SkirmishHonorsGame::isSandbox() const
 
 bool SkirmishHonorsGame::isAlly(int i) const
 {
-	if (localSlot < 0 || localSlot >= 8)
+	if (localSlot < 0 || localSlot >= (int)slots.size())
 	{
 		return true; // RW 0x9CE6C5: no local slot
 	}
@@ -253,7 +254,7 @@ bool recordSkirmishHonors(RealTimeStatsPreferences &stats, const SkirmishHonorsG
 	// Rva005BF2C7Update (RW 0x9CE6FE)
 	int easy = 0, normal = 0, hard = 0, brutal = 0;
 	bool allied = false;
-	for (int i = 0; i < 8; ++i)
+	for (int i = 0; i < (int)game.slots.size(); ++i)
 	{
 		if (game.isAI(i) && !game.isAlly(i))
 		{

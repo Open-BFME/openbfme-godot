@@ -513,7 +513,10 @@ bool MeshModelClass::read_shader_materials(ChunkLoadClass &cload, std::string *e
 					{
 						std::uint32_t v;
 						ok = take32(v);
-						prop.Int = (sint32)v;
+						if (ok)
+						{
+							prop.Int = (sint32)v;
+						}
 						break;
 					}
 					case W3DSHADERMATERIAL_PROPERTY_BOOL:
@@ -538,7 +541,10 @@ bool MeshModelClass::read_shader_materials(ChunkLoadClass &cload, std::string *e
 				{
 					std::uint32_t bits;
 					ok = take32(bits);
-					std::memcpy(&prop.Float[i], &bits, 4);
+					if (ok)
+					{
+						std::memcpy(&prop.Float[i], &bits, 4);
+					}
 				}
 				if (!ok || at != raw.size())
 				{

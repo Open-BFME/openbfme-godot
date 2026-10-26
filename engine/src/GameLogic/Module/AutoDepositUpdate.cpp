@@ -104,7 +104,7 @@ UpdateSleepTime AutoDepositUpdate::update()
 	{
 		return UPDATE_SLEEP_NONE;
 	}
-	float bonus = economy.attributeModifierProduct(*obj, Economy::ATTRIBUTE_MODIFIER_PRODUCTION);
+	float bonus = economy.productionMoneyProduct(*obj); // lane MODS-3: with PRODUCTION_MONEY under edain-unchained.production-split
 	if (!m_data->m_upgrade.empty() && owner->hasUpgradeComplete(m_data->m_upgrade))
 	{
 		const ObjectFilter requirement = m_data->m_upgradeMustBePresent ? *m_data->m_upgradeMustBePresent : ObjectFilter();

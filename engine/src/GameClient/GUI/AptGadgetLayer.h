@@ -78,6 +78,7 @@ public:
 	// ---- per update (WindowManager::update calls these) ----------------------------------------------------------------------------------
 	// Follows the placeholder clips: position, size, visibility; advances the gadget clock.
 	void update(int elapsedMs);
+	void syncPlacements(); // synchronize engine-driven clip layout without advancing the gadget clock or pickers
 	// The draw commands of every visible gadget in this frame.
 	void buildDrawList(GadgetDrawList &out);
 	// lane OPTS-3: an engine page's own frames and texts (the Options screen's OpenBFME page, not retail), drawn before the gadgets; empty: none

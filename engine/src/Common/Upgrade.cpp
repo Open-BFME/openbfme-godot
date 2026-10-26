@@ -240,9 +240,12 @@ UpgradeTemplate *UpgradeCenter::newUpgrade(const std::string &name, bool assignB
 	t->m_maskBit = -1;
 	if (assignBit)
 	{
-		if (m_nextBit >= (int)UpgradeMaskType::BITS)
+		// lane MODS-3 (stop S-5303): retail keeps counting past the mask's 1152 bits (its masks then overflow); the port holds CAPACITY_BITS and
+		// refuses only beyond that
+		if (m_nextBit >= (int)UpgradeMaskType::CAPACITY_BITS)
 		{
-			throw INIException(3, "Upgrade %s: more than %u upgrades (the upgrade mask has %u bits, RW 0x8D2835)", name.c_str(), UpgradeMaskType::BITS, UpgradeMaskType::BITS);
+			throw INIException(3, "Upgrade %s: more than %u upgrades (OpenBFME holds %u; retail's mask has %u bits, RW 0x8D2835)", name.c_str(),
+				UpgradeMaskType::CAPACITY_BITS, UpgradeMaskType::CAPACITY_BITS, UpgradeMaskType::BITS);
 		}
 		t->m_maskBit = m_nextBit++;
 	}
@@ -321,6 +324,12 @@ void UpgradeCenter::registerBlock(INIBlockRegistry &registry)
 
 bool UpgradeCenter::resolveSubUpgrades(std::string *error)
 {
+	(void)error; // no name fails: see below
+	m_unknownSubUpgrades.clear();
+	// RW 0x66FC11 walks the center's templates and RW 0x66FBAB resolves each one's names (+0x10): reserve, then for every name
+	// findUpgrade (RW 0x66F5E5) and push_back the template when there is one (RW 0x66FBED: an unknown name is skipped), then the names
+	// are erased (RW 0x66FC07). Lane MODS-2 (Edain's Upgrade_RohanForgedBlades names a missing upgrade): the skipped names are listed
+	// in unknownSubUpgrades() instead of being dropped unseen
 	for (UpgradeTemplate *t : m_byBit)
 	{
 		if (!t)
@@ -333,12 +342,9 @@ bool UpgradeCenter::resolveSubUpgrades(std::string *error)
 			const UpgradeTemplate *sub = findUpgrade(n);
 			if (!sub)
 			{
-				// INFERENCE: the RW resolution site of +0x10 into +0x1C was not read; an unknown name is reported, never dropped (PLAN rule 10)
-				if (error)
-				{
-					*error = "Upgrade " + t->getUpgradeName() + ": SubUpgradeTemplateNames names '" + n + "', which is not an Upgrade";
-				}
-				return false;
+				m_unknownSubUpgrades.push_back("Upgrade " + t->getUpgradeName() + ": SubUpgradeTemplateNames names '" + n +
+					"', which is not an Upgrade: skipped (RW 0x66FBED)");
+				continue;
 			}
 			t->m_subUpgrades.push_back(sub);
 		}
@@ -416,11 +422,39 @@ void UpgradeCenter::parseUpgradeMask(INI *ini, UpgradeMaskType &mask, std::vecto
 	}
 }
 
+unsigned UpgradeMaskType::activeWords()
+{
+	const unsigned bits = TheUpgradeCenter ? (unsigned)TheUpgradeCenter->nextMaskBit() : 0u;
+	const unsigned need = (bits + 31u) / 32u;
+	return need > WORDS ? need : WORDS;
+}
+
+void xferUpgradeMask(Xfer &x, UpgradeMaskType &mask, const std::string &what)
+{
+	const unsigned active = UpgradeMaskType::activeWords();
+	std::uint32_t n = active;
+	x.xferUnsignedInt(&n);
+	if (n != active)
+	{
+		throw XferException(what + ": a mask of " + std::to_string(n) + " words where this game has " + std::to_string(active));
+	}
+	UpgradeMaskType v = x.isLoading() ? UpgradeMaskType{} : mask;
+	for (unsigned i = 0; i < active; ++i)
+	{
+		x.xferUnsignedInt(&v.words[i]);
+	}
+	if (x.isLoading())
+	{
+		checkLoadedUpgradeMask(v, what);
+		mask = v;
+	}
+}
+
 void checkLoadedUpgradeMask(const UpgradeMaskType &mask, const std::string &what)
 {
 	const unsigned bits = TheUpgradeCenter ? (unsigned)TheUpgradeCenter->nextMaskBit() : 0u;
-	const bool probed = SnapshotProbe::hit(what) && bits < UpgradeMaskType::BITS; // lane SAVE-4e: a test's bit beyond the upgrades
-	for (unsigned b = bits; b < UpgradeMaskType::BITS; ++b)
+	const bool probed = SnapshotProbe::hit(what) && bits < UpgradeMaskType::CAPACITY_BITS; // lane SAVE-4e: a test's bit beyond the upgrades
+	for (unsigned b = bits; b < UpgradeMaskType::CAPACITY_BITS; ++b)
 	{
 		if (mask.test(b) || (probed && b == bits))
 		{

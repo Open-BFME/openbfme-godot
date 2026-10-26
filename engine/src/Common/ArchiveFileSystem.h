@@ -13,6 +13,17 @@
 // Changes: std::string replaces AsciiString; openFile() returning a RAMFile is replaced by
 // readFile() filling a byte vector; archives are owned by unique_ptr; readFile() and doesFileExist()
 // also take the local step of retail's FileSystem::openFile for one folder (setLocalFolder, lane MOD-5).
+//
+// Lane MODS-1: RotWK's FileSystem puts local (loose) files in front of this tree when the
+// prefer-local-files flag RW 0xDEC490 is set (`-mod`, RW 0x7BADB9). FileSystem::openFile RW 0xA149A2,
+// doesFileExist RW 0xA14AEB and getFileInfo RW 0xA14BA8 then try "<modDir>\<file>" (RW 0xDEC498, the
+// mod folder), "lang\<language>\<file>" and "<file>" on the local file system, and only then the
+// archives; getFileListInDirectory RW 0xA14D2B adds the mod folder's files to the union. The port
+// keeps that order in readFile / doesFileExist / getFileListInDirectory. The mod folder is a frozen
+// index taken at mount (ModLooseIndex, Common/ModMount.h): retail asks the disk on every open, the
+// port reads the files the identity hashed, matched case-insensitively as Windows does. The two
+// install-folder lookups never find a file here: the -mod mount refuses an install whose loose files
+// would answer them (Common/ModMount.h, PLAN rule 7, stop S-5300).
 
 #pragma once
 
@@ -24,6 +35,28 @@
 #include <vector>
 
 class ArchiveFile;
+
+// Lane MODS-1: the loose files of the mounted mod folder (RW 0xDEC498), taken once at mount.
+struct ModLooseFile
+{
+	std::string virtualPath; // as listed: the path below the mod folder with '\\' separators, on-disk case
+	std::string diskPath;
+	std::uint64_t size = 0;
+	long long mtime = 0;     // last-write time at mount: a file changed after the mount is a read error
+	std::string md5;
+};
+
+struct ModLooseIndex
+{
+	std::string root;                         // the mod folder
+	std::vector<ModLooseFile> files;          // byte order of virtualPath
+	std::map<std::string, size_t> byKey;      // ModLooseIndex::key(virtualPath) -> files index
+
+	// lower case, '/' -> '\\', repeated separators collapsed, a leading separator and "." dropped, ".." applied
+	// ("" when the path leaves the root): how Windows finds "<modDir>\\<file>" in a case-insensitive folder
+	static std::string key(const std::string &path);
+	const ModLooseFile *find(const std::string &path) const;
+};
 
 struct FilenameLessNoCase
 {
@@ -118,6 +151,23 @@ public:
 
 	size_t getArchiveCount() const { return m_archiveFileMap.size(); }
 
+	// Lane MODS-1: the prefer-local-files flag (RW 0xDEC490) and the mod folder's loose layer (RW 0xDEC498).
+	// Set together by the -mod mount only (MountRetailMod); without them every lookup is the archive tree's, as before.
+	void setModLooseLayer(ModLooseIndex index);
+	bool preferLocalFiles() const { return m_preferLocalFiles; }
+	const ModLooseIndex &modLooseLayer() const { return m_modLoose; }
+
+	// Lane MODS-3: a file the mount derives from the mod's own files (ModMount: a mod's GameData blocks outside data\ini\gamedata.ini merged into it).
+	// It answers before every other layer; `origin` names it in sourcesOf ("derived:<origin>").
+	// `sources`: the files it was derived from (a later mount re-derives it from them and its own); clearDerivedFile drops it (the real file answers again)
+	void setDerivedFile(const std::string &filename, std::vector<std::uint8_t> bytes, const std::string &origin, std::vector<std::string> sources = {});
+	void clearDerivedFile(const std::string &filename);
+	std::vector<std::string> derivedSources(const std::string &filename) const;
+
+	// Lane MODS-1 resolver: every source holding `filename`, the winner first ("mod-folder:<virtual path>", then the
+	// archives: the owner the tree resolves first, then every other mounted archive that has the entry, by archive name).
+	std::vector<std::string> sourcesOf(const std::string &filename) const;
+
 	// OpenBFME mount report for ACCEPTANCE STOP S-012: one "S-012: ..." line per mounted archive
 	// whose identity the platform cannot enforce (ArchiveFile::isIdentityEnforced() == false).
 	// Empty when every mounted archive is protected. Callers must surface a non-empty result.
@@ -134,4 +184,14 @@ private:
 	std::string findLocalFile(const std::string &filename) const;
 
 	std::string m_localFolder;
+	bool m_preferLocalFiles = false; // RW 0xDEC490
+	ModLooseIndex m_modLoose;        // RW 0xDEC498's folder, frozen at mount
+	struct DerivedFile
+	{
+		std::vector<std::uint8_t> bytes;
+		std::string origin;
+		std::vector<std::string> sources;
+	};
+	std::map<std::string, DerivedFile> m_derived; ///< lane MODS-3: by ModLooseIndex::key
+	const DerivedFile *derived(const std::string &filename) const;
 };

@@ -12,7 +12,7 @@
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
-#include "GameLogic/Combat/TargetFinder.h"
+#include "GameLogic/AI/AIClosestEnemy.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/ActiveBody.h"
@@ -52,16 +52,40 @@ float distSqr2D(const Coord3D &a, const Coord3D &b)
 	return SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy));
 }
 
-// the idle scan's TargetFinder flags (AIUpdateInterface::nextMoodTarget): a horde looks for hordes and lone units, a lone unit for lone units and members
-unsigned scanFlags(const Object &obj, const AIUpdateInterface &ai)
+// lane TARGET-1: the guard's qualifiers of AI::findClosestEnemy (RW 0x949E2A .. 0x949E9C)
+unsigned guardQualifiers(const Object &obj, const AIUpdateInterface &ai)
 {
-	unsigned flags = 0;
-	if (ai.autoAcquireFlags() & 16u)
+	static const int kNeedsLos = CombatNames::kindOf("ATTACK_NEEDS_LINE_OF_SIGHT");
+	static const int kStandGround = CombatNames::status("STAND_GROUND");
+	const GameLogicSettings &settings = obj.logic().settings();
+	unsigned q = AI::CAN_ATTACK;
+	if (settings.attackUsesLineOfSight && obj.isKindOf((unsigned)kNeedsLos))
 	{
-		flags |= TargetFinder::ALLOW_STRUCTURES;
+		q |= AI::CAN_SEE;
 	}
-	flags |= obj.isKindOf((unsigned)CombatNames::kinds().horde) ? TargetFinder::HORDES_ONLY : TargetFinder::MEMBERS_ONLY;
-	return flags;
+	if (settings.attackIgnoreInsignificantBuildings)
+	{
+		q |= AI::IGNORE_INSIGNIFICANT_BUILDINGS;
+	}
+	if (ai.autoAcquireFlags() != 0)
+	{
+		q |= AI::ATTACK_BUILDINGS;
+	}
+	const Player *p = obj.getControllingPlayer();
+	if (p && p->getPlayerType() == PLAYER_HUMAN)
+	{
+		q |= AI::UNFOGGED;
+	}
+	q |= AI::AUTO_ACQUIRE;
+	if (obj.testStatus((unsigned)kStandGround))
+	{
+		q |= AI::WITHIN_ATTACK_RANGE;
+	}
+	if (p && p->getPlayerType() == PLAYER_COMPUTER) // RW 0x949E8C: + 0x5C == 1 (the player is not null-checked there)
+	{
+		q |= AI::COMPUTER_CREEPS;
+	}
+	return q;
 }
 
 // RW 0x691269 (Object::isAbleToAttack) in part, as AITacticalAI's canAttackAtAll (S-1301): weapons, not NO_ATTACK, UNDER_CONSTRUCTION or SOLD
@@ -480,7 +504,7 @@ const char *guardStopLine()
 {
 	return "[S-3802] AI guard (RW 0x662A21 -> state 16, the guard machine RW 0x949A10): ported for the LOCATION guard of the stances; not ported: the object, team "
 		   "and area guards, the turret's target in lookForInnerTarget, the AI + 0x3CD layer flag and the outer state's layer test (RW 0x68BBE0 / 0x6FF7FA: "
-		   "every object is on the ground layer), AI crates, the inner state's restart flag; TheAI's closest enemy is the port's TargetFinder (S-326)";
+		   "every object is on the ground layer), AI crates, the inner state's restart flag (lane TARGET-1: TheAI's closest enemy is RotWK's search, AIClosestEnemy.h)";
 }
 
 // RW 0x9497F0
@@ -527,26 +551,9 @@ AIGuardMachine::AIGuardMachine(AIUpdateInterface &ai)
 
 float AIGuardMachine::getAdjustedVisionRange(const Object &obj)
 {
-	// RW 0x6FF412 with OWNERTYPE | MOOD (RotWK, like BFME2, has no inner / outer factors): the vision range (+ Object + 0xB8), then by the mood of a computer
-	// unit: asleep (0x100) 0, alert (0x800) * AlertRangeModifier, aggressive (0x1000) * AggressiveRangeModifier
-	AIUpdateInterface *ai = const_cast<Object &>(obj).getAIUpdateInterface();
-	if (!ai)
-	{
-		return 0.0f;
-	}
-	float range = AIUpdateInterface::objectVisionRangeOf(const_cast<Object &>(obj));
-	const unsigned mood = ai->moodMatrixValue();
-	if (!(mood & 1u))
-	{
-		switch (mood & 0x1F00u)
-		{
-		case 0x100u: return 0.0f;
-		case 0x800u: range = SimMath::mulf32(obj.logic().settings().alertRangeModifier, range); break;
-		case 0x1000u: range = SimMath::mulf32(obj.logic().settings().aggressiveRangeModifier, range); break;
-		default: break;
-		}
-	}
-	return range;
+	// RW 0x6FF412 with OWNERTYPE | MOOD (RotWK, like BFME2, has no inner / outer factors): lane TARGET-1 ports it whole (AI::adjustedVisionRange), the
+	// bounding circle (+ 0xB8) included
+	return AI::adjustedVisionRange(obj, 3u);
 }
 
 float AIGuardMachine::getStdGuardRange(const Object &obj)
@@ -609,21 +616,29 @@ bool AIGuardMachine::lookForInnerTarget()
 		}
 	}
 	AIUpdateInterface &ai = owner();
-	const unsigned flags = scanFlags(obj, ai);
-	TargetFinder &finder = logic.combat().targets();
-	Object *victim = finder.findClosestEnemyNear(obj, pos, range, flags, CMD_FROM_AI); // RW 0x70146A
+	// lane TARGET-1, RW 0x949E2A .. 0x949E9C: the qualifiers: CAN_ATTACK, CAN_SEE for an ATTACK_NEEDS_LINE_OF_SIGHT unit when AIData AttackUsesLineOfSight,
+	// IGNORE_INSIGNIFICANT_BUILDINGS with AttackIgnoreInsignificantBuildings, ATTACK_BUILDINGS for any AutoAcquireEnemiesWhenIdle flag (module data + 0x1C
+	// not 0), UNFOGGED for a human player, AUTO_ACQUIRE, WITHIN_ATTACK_RANGE when STAND_GROUND (status 0x44), COMPUTER_CREEPS for a computer player
+	const unsigned flags = guardQualifiers(obj, ai);
+	const AttackPriorityInfo *info = ai.attackInfo(); // AI + 0x70
+	Object *victim = AI::findClosestEnemy(obj, pos, range, flags, info, nullptr, 0); // RW 0x70146A
 	if (!victim)
 	{
 		const Coord3D guard = guardPosition();
 		const float half = SimMath::mulf32(range, 0.5f); // RW 0xBD869C
 		if (distSqr2D(guard, *obj.getPosition()) > SimMath::mulf32(half, half))
 		{
-			victim = finder.findClosestEnemy(obj, half, flags, CMD_FROM_AI); // RW 0x701443
+			victim = AI::findClosestEnemy(obj, half, flags, info, nullptr, 0); // RW 0x701443
 		}
+	}
+	// RW 0x949F4A .. 0x949F5D: a HORDE victim (+ 0x115 bit 5) is adjusted (RW 0x68D30E(owner, 1, 0))
+	if (victim && victim->isKindOf((unsigned)CombatNames::kinds().horde))
+	{
+		victim = AI::adjustVictim(*victim, &obj, true, 0);
 	}
 	if (victim)
 	{
-		m_nemesis = victim->getID(); // RW 0x68D30E (the adjustment of a HORDE victim) is the TargetFinder's horde / member rule
+		m_nemesis = victim->getID();
 		return true;
 	}
 	return false;
@@ -694,7 +709,11 @@ StateReturnType AIGuardState::update()
 		return STATE_FAILURE;
 	}
 	machine().lock();
-	const StateReturnType r = m_guardMachine->updateStateMachine();
+	StateReturnType r;
+	{
+		KeptSubMachines<AIGuardMachine>::Run run(m_keptMachines); // an attack inside can end this state (onExit below)
+		r = m_guardMachine->updateStateMachine();
+	}
 	machine().unlock();
 	return r;
 }
@@ -702,11 +721,7 @@ StateReturnType AIGuardState::update()
 // RW 0x752DC7
 void AIGuardState::onExit(StateExitType)
 {
-	if (m_guardMachine)
-	{
-		m_guardMachine->halt();
-		m_guardMachine.reset();
-	}
+	m_keptMachines.drop(m_guardMachine); // halted, and kept while its update runs (review of #64)
 }
 
 bool AIGuardState::isIdle() const

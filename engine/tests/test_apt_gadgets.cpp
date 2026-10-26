@@ -734,9 +734,16 @@ TEST_CASE("ListBox: the scroll bar (up, down, slider) exists, takes its skin fro
 	CHECK(up->winGetEnabledImage(0) == "UpEnabled");   // LISTBOXENABLEDUPBUTTONDRAWDATA reached the button
 	CHECK(down->winGetEnabledImage(0) == "DownEnabled");
 	CHECK(up->winGetOwner() == lb);
+	SliderData *sd = static_cast<SliderData *>(slider->winGetUserData());
 	for (int i = 0; i < 20; ++i)
 	{
 		GadgetListBoxAddEntryText(lb, u("row"), 0, -1, 0);
+		if (i == 0)
+		{
+			CHECK(sd->maxVal == 0);
+			CHECK(sd->numTicks == 0.0f);
+			CHECK(GadgetSliderGetPosition(slider) == 0);
+		}
 	}
 	ListboxData *list = static_cast<ListboxData *>(lb->winGetUserData());
 	const int top = list->displayPos;
@@ -746,8 +753,14 @@ TEST_CASE("ListBox: the scroll bar (up, down, slider) exists, takes its skin fro
 	fx.gwm.winSendSystemMsg(lb, GBM_SELECTED, msgData(up), 0);
 	CHECK(list->displayPos == top);
 	// the slider's range follows the content
-	SliderData *sd = static_cast<SliderData *>(slider->winGetUserData());
 	CHECK(sd->maxVal > 0);
+	GadgetListBoxReset(lb);
+	CHECK(sd->maxVal == 0);
+	CHECK(sd->numTicks == 0.0f);
+	int thumbX, thumbY;
+	GadgetSliderGetThumb(slider)->winGetPosition(&thumbX, &thumbY);
+	CHECK(thumbX == 0);
+	CHECK(thumbY == 0);
 }
 
 TEST_CASE("ComboBox: entries, opening the list by a click, picking an entry sends GCM_SELECTED and shows the text")
@@ -1004,6 +1017,38 @@ TEST_CASE("HorzSlider: the position follows GSM_SET_SLIDER, a click moves the th
 	CHECK(fill > 0);
 	CHECK(empty > 0);
 	CHECK(fill + empty > 10);
+}
+
+TEST_CASE("gadget slider: zero-range track clicks and drags leave the value unchanged")
+{
+	for (bool vertical : { false, true })
+	{
+		GadgetFx fx;
+		std::string script = sliderWnd(vertical ? 24 : 232, vertical ? 232 : 24);
+		if (vertical)
+		{
+			for (std::size_t at = script.find("HORZSLIDER"); at != std::string::npos; at = script.find("HORZSLIDER", at))
+			{
+				script.replace(at, 10, "VERTSLIDER");
+			}
+		}
+		GameWindow *s = fx.load(script, 100, 100);
+		fx.gwm.winSendSystemMsg(s, GSM_SET_MIN_MAX, 7, 7);
+		CHECK(GadgetSliderGetPosition(s) == 7);
+		const SliderData *data = static_cast<SliderData *>(s->winGetUserData());
+		CHECK(data->numTicks == 0.0f);
+		for (int offset : { 40, 110, 200 })
+		{
+			CHECK(fx.click(vertical ? 110 : 100 + offset, vertical ? 100 + offset : 110));
+			CHECK(GadgetSliderGetPosition(s) == 7);
+		}
+		const ICoord2D point{ 110, 110 };
+		fx.gwm.winSendSystemMsg(s, GGM_LEFT_DRAG, 0, (WindowMsgData)((point.y << 16) | point.x));
+		CHECK(GadgetSliderGetPosition(s) == 7);
+		fx.gwm.winSendSystemMsg(s, GSM_SET_MIN_MAX, 0, 100);
+		GadgetSliderSetPosition(s, 60);
+		CHECK(GadgetSliderGetPosition(s) == 60);
+	}
 }
 
 TEST_CASE("draw contract: an image the collection does not know is reported in the list, not drawn as a placeholder; clipping pairs up")

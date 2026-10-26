@@ -27,9 +27,16 @@
 #include "GameLogic/SimMath.h"
 #include "GameLogic/AI/AIPathfindStops.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+
+namespace
+{
+// lane UBER-3P (Uber profile only): a cell search that cannot reach its goal ends once its answer held for this many cells (internalFindPath)
+constexpr int kUberStallCells = 256;
+} // namespace
 
 namespace
 {
@@ -195,12 +202,17 @@ void Pathfinder::clip(Coord3D *from, Coord3D *to)
 	}
 }
 
-bool Pathfinder::clientSafeQuickDoesPathExist(const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to)
+bool Pathfinder::clientSafeQuickDoesPathExist(const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to, const PathfindObject *obj)
 {
-	// ZH clientSafeQuickDoesPathExist on the ground layer, with the RW zone model (the terrain variant when an end is a building)
-	const PathfindMovement mv = makeMovement(nullptr, loco);
-	PathfindCell *goalCell = getClippedCell(LAYER_GROUND, to);
-	PathfindCell *parentCell = getClippedCell(LAYER_GROUND, from);
+	// ZH clientSafeQuickDoesPathExist on the ends' layers (review #63), with the RW zone model (the terrain variant when an end is a building). Lane WALL-2: with the unit
+	// the movement is the unit's (RW 0x6F5D65 .. 0x6F5D91: its SlopeLimitIndex and CanPathThroughGates, RW 0x6EA04D), without one ZH's anonymous movement
+	const PathfindMovement mv = makeMovement(obj, loco);
+	// review (#63): the ends' layers, as the search takes them: the goal on a raised walkway is the walkway's cell, the start the unit's layer's
+	PathfindCell *goalCell = getClippedCell(searchDestinationLayer(*to), to);
+	// review of #63: the unit's layer only where the start is the unit's position; another start (a goal tested onward, an adjusted point) takes the layer
+	// there, as the goal does
+	const bool atUnit = obj && from->x == obj->getPosition().x && from->y == obj->getPosition().y;
+	PathfindCell *parentCell = getClippedCell(atUnit ? obj->getLayer() : searchDestinationLayer(*from), from);
 	if (parentCell == nullptr || goalCell == nullptr)
 	{
 		return false;
@@ -229,7 +241,11 @@ bool Pathfinder::clientSafeQuickDoesPathExist(const PathfindLocomotorInfo &loco,
 	}
 	const zoneStorageType z1 = m_zoneManager.getEffectiveZone(mv, terrainVariant, parentCell->getZone());
 	const zoneStorageType z2 = m_zoneManager.getEffectiveZone(mv, terrainVariant, goalCell->getZone());
-	return z1 == z2;
+	if (z1 == z2)
+	{
+		return true;
+	}
+	return obj != nullptr && portalPathExists(obj, loco, z1, z2); // RW 0x6F5EDA .. 0x6F5EE7 (lane WALL-2)
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -287,8 +303,8 @@ bool Pathfinder::canApproachToTarget(const PathfindObject &obj, const PathfindLo
 				worldToCell(&s0, true, &a); // RW 0x6FAA07 / 0x6FAA19: centring 1
 				worldToCell(&e0, true, &b);
 			}
-			// the layer of RW 0x680A75 (the target's): only the ground layer exists (S-161)
-			walkLine(*this, LAYER_GROUND, a, b, [&](PathfindCell *, PathfindCell *to, int x, int y) -> bool {
+			// the layer of RW 0x680A75 (the target's; lane WALL-2: a raised walkway's cells when the target stands on one)
+			walkLine(*this, getLayerAt(target.x, target.y, target.z), a, b, [&](PathfindCell *, PathfindCell *to, int x, int y) -> bool {
 				if ((to->getBit17() || raised(to)) && !melee && !noneYet && missed)
 				{
 					return true; // 1.
@@ -308,7 +324,7 @@ bool Pathfinder::canApproachToTarget(const PathfindObject &obj, const PathfindLo
 				}
 				Coord3D point;
 				adjustCoordToCell(x, y, center, point, to->getLayer() == LAYER_INVALID ? LAYER_GROUND : to->getLayer()); // 5.
-				if (clientSafeQuickDoesPathExist(loco, &from, &point))
+				if (clientSafeQuickDoesPathExist(loco, &from, &point, &obj)) // RW 0x6F5BB0 with the unit (lane WALL-2)
 				{
 					found = true;
 					return true;
@@ -357,9 +373,24 @@ bool Pathfinder::isLinePassable(const PathfindObject *obj, unsigned acceptableSu
 		worldToCell(&s, &start);
 		worldToCell(&e, &end);
 	}
+	// lane PATHPERF-2: the line memo (LineMemoScope) binds to the scope's first parameters; a call with others walks without it
+	bool memo = false;
+	if (m_lineMemoActive && m_searchShortcuts)
+	{
+		if (!m_lineMemoBound)
+		{
+			m_lineMemoBound = true;
+			m_lineMemoObj = obj;
+			m_lineMemoSurfaces = acceptableSurfaces;
+			m_lineMemoBlockedArg = blocked;
+			m_lineMemoPinchedArg = allowPinched;
+			m_lineMemoLayer = layer;
+		}
+		memo = m_lineMemoObj == obj && m_lineMemoSurfaces == acceptableSurfaces && m_lineMemoBlockedArg == blocked && m_lineMemoPinchedArg == allowPinched &&
+			m_lineMemoLayer == layer;
+	}
 	const bool blockedLine = walkLine(*this, layer, start, end, [&](PathfindCell *from, PathfindCell *to, int x, int y) -> bool {
 		// RW 0x6EE234, with info+0x5C = 1: goal reservations of other units block the line
-		const PathfindOccupant *list = to->occupants(OCC_GROUND_GOAL);
 		if (to->getExtraPass())
 		{
 			li.latch5D = true;
@@ -368,55 +399,198 @@ bool Pathfinder::isLinePassable(const PathfindObject *obj, unsigned acceptableSu
 		{
 			return true;
 		}
-		for (const PathfindOccupant *n = list; n; n = n->next)
+		// the rest depends only on the cell and the neighbour it is entered from (checkForMovement's footprint overlap): walkLine steps to a neighbour, and
+		// li.prev is `from`'s cell whenever `from` is set
+		// the cell by its coordinates and layer, not by its address (review #64: a raised walkway's cells are another array, and a difference of pointers
+		// into different arrays is undefined)
+		const std::uint64_t cellKey = x >= 0 && y >= 0
+			? ((std::uint64_t)x * (std::uint64_t)m_stride + (std::uint64_t)y) * 0x41u + (std::uint64_t)to->getLayer()
+			: 0xFFFFFFFFu;
+		std::uint32_t key = 0;
+		if (memo && cellKey < 400000000u)
 		{
-			const PathfindObject *o = m_world ? m_world->findObjectByID(n->owner) : nullptr;
-			if (!o)
+			const unsigned code = from ? (unsigned)((x - li.prev.x + 1) * 3 + (y - li.prev.y + 1)) : 9u;
+			key = (std::uint32_t)(cellKey * 10u + code + 1u);
+			bool known = false;
+			if (lineMemoFind(key, known))
 			{
-				// an occupant the world no longer knows blocks like an unknown object (retail dereferences it)
-				return true;
+				if (!known)
+				{
+					li.prev.x = x;
+					li.prev.y = y;
+				}
+				return known;
 			}
-			if (o != obj && o->getContainer() != obj)
-			{
-				return true;
-			}
 		}
-		li.move.cell.x = x;
-		li.move.cell.y = y;
-		li.move.layer = to->getLayer();
-		const bool ok = checkForMovement(obj, li.move, from ? &li.prev : nullptr);
-		if (!ok)
-		{
-			return true;
-		}
-		if (li.move.terrainPenalty != 0)
-		{
-			return true;
-		}
-		li.prev.x = x;
-		li.prev.y = y;
-		if (!li.allowPinched)
-		{
-			if (to->getPinched())
+		const bool cellBlocks = [&]() -> bool {
+			// lane WALL-1 (INFERENCE, S-4840): a line does not step between cells the search could not step between (a wall top and the ground beside it)
+			if (from && !PathfindCell::layersCompatible(*from, *to))
 			{
 				return true;
 			}
-			if (to->getBit23())
+			for (const PathfindOccupant *n = to->occupants(OCC_GROUND_GOAL); n; n = n->next)
+			{
+				const PathfindObject *o = m_world ? m_world->findObjectByID(n->owner) : nullptr;
+				if (!o)
+				{
+					// an occupant the world no longer knows blocks like an unknown object (retail dereferences it)
+					return true;
+				}
+				if (o != obj && o->getContainer() != obj)
+				{
+					return true;
+				}
+			}
+			li.move.cell.x = x;
+			li.move.cell.y = y;
+			li.move.layer = to->getLayer();
+			const bool ok = checkForMovement(obj, li.move, from ? &li.prev : nullptr);
+			if (!ok)
 			{
 				return true;
 			}
+			if (li.move.terrainPenalty != 0)
+			{
+				return true;
+			}
+			if (!li.allowPinched)
+			{
+				if (to->getPinched())
+				{
+					return true;
+				}
+				if (to->getBit23())
+				{
+					return true;
+				}
+			}
+			return !validMovementPosition(li.move.mv, to);
+		}();
+		if (key != 0)
+		{
+			lineMemoStore(key, cellBlocks);
 		}
-		return !validMovementPosition(li.move.mv, to);
+		if (!cellBlocks)
+		{
+			li.prev.x = x;
+			li.prev.y = y;
+		}
+		return cellBlocks;
 	});
 	return !blockedLine;
 }
 
+// lane PATHPERF-2: the line memo
+Pathfinder::LineMemoScope::LineMemoScope(Pathfinder &pf) : m_pf(pf), m_outer(!pf.m_lineMemoActive)
+{
+	if (m_outer)
+	{
+		pf.m_lineMemoActive = true;
+		pf.m_lineMemoBound = false;
+		pf.m_lineMemoCount = 0;
+		if (++pf.m_lineMemoGen == 0)
+		{
+			for (LineMemoEntry &e : pf.m_lineMemo)
+			{
+				e.gen = 0;
+			}
+			pf.m_lineMemoGen = 1;
+		}
+	}
+}
+
+Pathfinder::LineMemoScope::~LineMemoScope()
+{
+	if (m_outer)
+	{
+		m_pf.m_lineMemoActive = false;
+		m_pf.m_lineMemoBound = false;
+	}
+}
+
+namespace
+{
+inline size_t lineMemoSlot(std::uint32_t key, size_t mask)
+{
+	return (size_t)((key * 2654435761u) >> 7) & mask;
+}
+} // namespace
+
+bool Pathfinder::lineMemoFind(std::uint32_t key, bool &blocked) const
+{
+	if (m_lineMemo.empty())
+	{
+		return false;
+	}
+	const size_t mask = m_lineMemo.size() - 1;
+	for (size_t i = lineMemoSlot(key, mask);; i = (i + 1) & mask)
+	{
+		const LineMemoEntry &e = m_lineMemo[i];
+		if (e.gen != m_lineMemoGen)
+		{
+			return false;
+		}
+		if (e.key == key)
+		{
+			blocked = e.blocked;
+			return true;
+		}
+	}
+}
+
+void Pathfinder::lineMemoStore(std::uint32_t key, bool blocked)
+{
+	if ((m_lineMemoCount + 1) * 2 > m_lineMemo.size())
+	{
+		// grow (power of two, at most half full); the current generation's entries move over
+		std::vector<LineMemoEntry> old;
+		old.swap(m_lineMemo);
+		m_lineMemo.assign(old.empty() ? 4096 : old.size() * 2, LineMemoEntry());
+		const std::uint32_t gen = m_lineMemoGen;
+		m_lineMemoCount = 0;
+		for (const LineMemoEntry &e : old)
+		{
+			if (e.gen == gen)
+			{
+				lineMemoStore(e.key, e.blocked);
+			}
+		}
+	}
+	const size_t mask = m_lineMemo.size() - 1;
+	for (size_t i = lineMemoSlot(key, mask);; i = (i + 1) & mask)
+	{
+		LineMemoEntry &e = m_lineMemo[i];
+		if (e.gen != m_lineMemoGen)
+		{
+			e.key = key;
+			e.gen = m_lineMemoGen;
+			e.blocked = blocked;
+			++m_lineMemoCount;
+			return;
+		}
+		if (e.key == key)
+		{
+			e.blocked = blocked;
+			return;
+		}
+	}
+}
+
 bool Pathfinder::isGroundLineClear(const Coord3D &a, const Coord3D &b)
 {
-	// no non-ground layer exists in this port (S-161): every cell is layer 1, the line is clear
-	(void)a;
-	(void)b;
-	return true;
+	// RW 0x6EE5E3: the Bresenham cells from a to b on the ground layer meet no cell of another layer (lane WALL-1: the wall tops and ramps of the ground grid)
+	if (m_wallPieces.empty())
+	{
+		return true;
+	}
+	ICoord2D s, e;
+	{
+		Coord3D p = a, q = b;
+		worldToCell(&p, &s);
+		worldToCell(&q, &e);
+	}
+	const bool met = walkLine(*this, LAYER_GROUND, s, e, [](PathfindCell *, PathfindCell *to, int, int) -> bool { return to->getLayer() != LAYER_GROUND; });
+	return !met;
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -436,6 +610,8 @@ struct ShortcutState
 	ICoord2D last;
 	bool haveLast = false;
 	int *counter = nullptr;
+	bool hierarchical = false; // lane ATTACKPATH-1: RW 0x6EBFB7's record + 0x34, the corridor (its term joins the line cells' estimate)
+	int attackDistance = 0;    // lane ATTACKPATH-1: + 0x30, findAttackPath's (int) attack distance + 30 (0 for the other searches)
 };
 
 bool Pathfinder::examineShortcutCell(PathfindCell *from, PathfindCell *to, int x, int y, ShortcutState &d)
@@ -446,6 +622,16 @@ bool Pathfinder::examineShortcutCell(PathfindCell *from, PathfindCell *to, int x
 		return true;
 	}
 	++*d.counter;
+	// lane ATTACKPATH-1, TARGET RW 0x6F6D8D .. 0x6F6DB6: with an attack distance a (findAttackPath), the line stops at the first cell within it of the goal cell:
+	// a * a > ((y - goal.y)^2 + (x - goal.x)^2) * 100 (integers)
+	if (d.attackDistance >= 1)
+	{
+		const int gy = y - (int)d.goal->getYIndex(), gx = x - (int)d.goal->getXIndex();
+		if (d.attackDistance * d.attackDistance > (gy * gy + gx * gx) * 100)
+		{
+			return true;
+		}
+	}
 	if (m_isTunneling)
 	{
 		return true;
@@ -515,7 +701,13 @@ bool Pathfinder::examineShortcutCell(PathfindCell *from, PathfindCell *to, int x
 			return true;
 		}
 		to->setBlockedByAlly(false);
-		unsigned rem = to->costToGoal(d.goal);
+		unsigned rem = costToGoal(to, d.goal); // RW 0x6F1F0D (lane WALL-2)
+		if (d.hierarchical)
+		{
+			// lane ATTACKPATH-1, TARGET RW 0x6F7071 .. 0x6F708B: the corridor's remaining length, (last index - the cell's position (RW 0x93AD93)) * 320, as in the
+			// neighbour expansion (the port's line cells had none)
+			rem += (unsigned)((m_hierLast - hierarchicalPositionOf(x, y)) * 320);
+		}
 		to->setCostSoFar(c);
 		to->setParentCell(from);
 		to->setTotalCost((unsigned)(std::uint16_t)to->getCostSoFar() + (unsigned)(std::uint16_t)rem);
@@ -582,9 +774,9 @@ int Pathfinder::occupantCost(const PathfindObject *obj, const PathfindCell *pare
 					const float qx = SimMath::mulf32((SimMath::addf32((float)i, 0.5f)), 10.0f), qy = SimMath::mulf32((SimMath::addf32((float)j, 0.5f)), 10.0f);
 					if (selfT < 0.0f)
 					{
-						selfT = obj->secondsToReach(qx, qy);
+						selfT = (m_memoActive && obj == m_memoObj) ? reachSeconds(*obj, m_memoSelfReach, qx, qy) : obj->secondsToReach(qx, qy);
 					}
-					const float oT = o->secondsToReach(qx, qy);
+					const float oT = reachSeconds(*o, f->reach, qx, qy);
 					if (selfT > oT)
 					{
 						add = 4;
@@ -602,7 +794,7 @@ int Pathfinder::occupantCost(const PathfindObject *obj, const PathfindCell *pare
 }
 
 int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *goalCell, const PathfindLocomotorInfo &loco, bool isHuman, bool centerInCell,
-	int radius, const ICoord2D &startCellNdx, const PathfindObject *obj, bool hierarchical)
+	int radius, const ICoord2D &startCellNdx, const PathfindObject *obj, bool hierarchical, int attackDistance)
 {
 	(void)startCellNdx;
 	// TARGET RW 0x6F9850
@@ -630,6 +822,8 @@ int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 		d.mode = (obj && obj->isKindOf(PK_HERO)) ? 3u : 0x12u;
 		d.ignoreId = ignoreId;
 		d.counter = &m_shortcutCounter;
+		d.hierarchical = hierarchical;
+		d.attackDistance = attackDistance; // RW 0x6F991F: the waypoint vector (+ 0x1C1CC) is always empty here (S-161), so the attack distance always goes in
 		ICoord2D start, end;
 		start.x = parentCell->getXIndex();
 		start.y = parentCell->getYIndex();
@@ -668,9 +862,11 @@ int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 				continue; // a diagonal needs one of its two orthogonal neighbours
 			}
 		}
-		if (n->getType() != PathfindCell::CELL_CLEAR || true)
+		// layer compatibility (RW step 3, BFME2 examineNeighboringCells 0x6F83F5; lane WALL-1): the same layer, one cell connecting to the other's layer, or
+		// both connecting to the ramp layer. Every cell of a map without wall pieces is on the ground: always true there
+		if (!PathfindCell::layersCompatible(*parentCell, *n))
 		{
-			// layer compatibility (RW step 3): the ground layer only
+			continue;
 		}
 		if (isHuman)
 		{
@@ -775,7 +971,11 @@ int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 		unsigned rem = 0;
 		if (goalCell)
 		{
-			rem = n->costToGoal(goalCell);
+			rem = costToGoal(n, goalCell); // RW 0x6F9D8F -> 0x6F1F0D (lane WALL-2)
+			if (attackDistance != 0 && info.goalListNonEmpty)
+			{
+				X += 30; // lane ATTACKPATH-1, TARGET RW 0x6F9D94 .. 0x6F9DA3: findAttackPath's search avoids cells that hold another unit's goal (+ 0x32)
+			}
 		}
 		if (hierarchical)
 		{
@@ -831,7 +1031,7 @@ Path *Pathfinder::findPath(PathfindObject *obj, const PathfindLocomotorInfo &loc
 	*p = false;
 	const bool isHuman = obj ? !obj->isComputerControlled() : true;
 	Coord3D to = *rawTo;
-	if (!clientSafeQuickDoesPathExist(loco, from, &to))
+	if (!clientSafeQuickDoesPathExist(loco, from, &to, obj)) // RW 0x6F5BB0 with the unit (lane WALL-2: its portals)
 	{
 		*p = true;
 		float dx = SimMath::subf32(to.x, from->x), dy = SimMath::subf32(to.y, from->y);
@@ -848,15 +1048,18 @@ Path *Pathfinder::findPath(PathfindObject *obj, const PathfindLocomotorInfo &loc
 		{
 			to.x = SimMath::subf32(to.x, dx);
 			to.y = SimMath::subf32(to.y, dy);
-			if (clientSafeQuickDoesPathExist(loco, from, &to))
+			if (clientSafeQuickDoesPathExist(loco, from, &to, obj))
 			{
 				break;
 			}
 		}
 	}
+	m_portalHops.clear(); // RW 0x6FE7CB (see above): the waypoint vector (+ 0x1C1CC) emptied before the block search (lane WALL-2)
 	m_zoneManager.clearPassableFlags();
 	Coord3D adjustedTo = to;
-	const bool hierarchical = findClosestHierarchicalPath(obj, loco, isHuman, from, &to, &adjustedTo);
+	// the block search runs on the ground layer only (S-162: its bridge links, RW 0x9389CE, are not ported), so a goal on a raised walkway (lane WALL-2)
+	// gets no corridor and the full search runs on every block (review #63: the corridor moved such a goal to the ground beside it, a partial path)
+	const bool hierarchical = !isRaisedLayer(searchDestinationLayer(to)) && findClosestHierarchicalPath(obj, loco, isHuman, from, &to, &adjustedTo);
 	if (!hierarchical)
 	{
 		m_zoneManager.setAllPassable();
@@ -888,6 +1091,7 @@ struct Pathfinder::SearchMemoScope
 		{
 			pf.m_memoSelf = pf.searcherFacts(obj);
 		}
+		pf.m_memoSelfReach = ReachMemo();
 	}
 	~SearchMemoScope()
 	{
@@ -905,6 +1109,7 @@ Path *Pathfinder::findPathWithoutCorridor(PathfindObject *obj, const PathfindLoc
 		*partial = false;
 	}
 	m_zoneManager.setAllPassable();
+	m_portalHops.clear(); // lane WALL-2: no corridor, no hops (a former search's would bias costToGoal)
 	return internalFindPath(obj, loco, from, to, false, partial);
 }
 
@@ -942,7 +1147,7 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 		note(pathstops::kLargeRectGoal);
 	}
 	m_isTunneling = false;
-	const PathfindLayerEnum destinationLayer = LAYER_GROUND;
+	const PathfindLayerEnum destinationLayer = searchDestinationLayer(*to); // ZH internalFindPath: TheTerrainLogic->getLayerForDestination(to)
 	PathfindCell *goalCell = getCell(destinationLayer, to);
 	if (goalCell == nullptr)
 	{
@@ -1005,9 +1210,9 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 		// the zone screening: the terrain variant of the effective zone for both ends
 		const zoneStorageType zS = m_zoneManager.getEffectiveZone(mv, true, parentCell->getZone());
 		const zoneStorageType zG = m_zoneManager.getEffectiveZone(mv, true, goalCell->getZone());
-		if (zS != zG)
+		if (zS != zG && !portalPathExists(obj, loco, zS, zG))
 		{
-			// RW 0x6F5547 (a breadth-first search over portal objects) is not ported: the goal is treated as unreachable
+			// RW 0x6FD80C .. 0x6FD846: different zones and no portal chain between them (RW 0x6F5547, lane WALL-2): the goal is treated as unreachable
 			approx = true;
 		}
 	}
@@ -1041,7 +1246,7 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 	parentCell->startPathfind(goalCell);
 	m_open.clear();
 	m_closedList = nullptr;
-	parentCell->setTotalCost(parentCell->costToGoal(goalCell));
+	parentCell->setTotalCost(costToGoal(parentCell, goalCell)); // RW 0x6FD6A8 -> 0x6F1F0D (lane WALL-2: through the corridor's portal hops)
 	m_open.push(parentCell);
 	int cellCount = 0;
 	m_shortcutCounter = 0;
@@ -1050,6 +1255,7 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 	int bestPosition = 0; // RW [ebp + 0x24]: the best corridor position so far (0 to start with: a cell off the corridor, -1, never qualifies)
 	int bestD2 = std::numeric_limits<int>::max();
 	int slack = std::numeric_limits<int>::max();
+	int closestAt = 0, candidateAt = 0; // lane UBER-3P: the cell counts when `closest`, and the candidate key, last changed
 	while (!m_open.empty())
 	{
 		PathfindCell *c = m_open.pop();
@@ -1086,7 +1292,7 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 				}
 				bestD2 = d2;
 			}
-			const int key = d2; // + 10000 * the waypoint count (none)
+			const int key = d2 + 10000 * (int)m_portalHops.size(); // RW 0x6FDA53 .. 0x6FDA6A: + 10000 per remaining portal hop of the corridor (lane WALL-2)
 			// lane PATHPERF-1, TARGET RW 0x6FDA6C .. 0x6FDB7C: with a corridor a cell is a candidate when it is further along the corridor (RW 0x93AD93) than
 			// the best so far, or as far and nearer (key); without, when it is nearer. The best is recorded BEFORE the cell's tests (RW 0x6F3082, 0x6E8200;
 			// RW's third, 0x6EF3C3, is not ported: S-163), which only decide whether it becomes the closest cell: a nearer cell that fails shuts out the
@@ -1107,13 +1313,33 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 			}
 			if (candidate)
 			{
+				candidateAt = cellCount;
 				bestClose = key;
 				int out = 0;
 				if (checkDestination(obj, c->getXIndex(), c->getYIndex(), destinationLayer, radius, centerInCell, &out, false) && out == 0 &&
 					validMovementPosition(mv, c))
 				{
 					closest = c;
+					closestAt = cellCount;
 				}
+			}
+		}
+		// lane UBER-3P (Uber profile only, docs/UBER.md): a search that cannot reach its goal (an approximate search: the goal is in another zone or
+		// not a valid movement position; or the goal cell was closed, its footprint rejected) ends here once its answer has held for kUberStallCells
+		// cells: the closest cell (or, with none yet, the candidate key that would test a new one) did not change, and the exhausted search's answer
+		// (the path to that closest cell, or none) is given. In a battle the repaths toward a contact point in the press fail this way and kept
+		// expanding up to the slack or MaxCellsFindPathLimit. Measured on the 30,000-troop clash (2,094 searches): a failed search's closest cell was
+		// final after ~10 cells and never replaced 250 cells on; 1,182 of the 1,644 unreachable searches found no closest cell at all (72% of their
+		// cells), 45 of them tested a candidate after such a pause. A tunnelling search tests no candidates: its pause starts when it leaves the obstacle
+		if (m_uberLimits && (approx || goalCell->getClosed()))
+		{
+			if (m_isTunneling)
+			{
+				candidateAt = cellCount;
+			}
+			else if (cellCount - (closest != nullptr ? closestAt : candidateAt) >= kUberStallCells)
+			{
+				break;
 			}
 		}
 		// TARGET RW 0x6FDB7F .. 0x6FDBD9: an approximate search skips a cell beyond the slack unless it is within 10 cells; with a corridor only after 2000 cells
@@ -1121,7 +1347,7 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 		{
 			continue; // too far from the goal to be worth expanding
 		}
-		checkChangeLayers(c, obj); // RW 0x6FDBDD
+		checkChangeLayers(c, obj); // RW 0x6FDBE1 (lane WALL-2): the cell's other layer and its portal's links
 		cellCount += examineNeighboringCells(c, goalCell, loco, isHuman, centerInCell, radius, startCellNdx, obj, hierarchical);
 	}
 	// failure or budget: a path to the closest valid cell, else nothing
@@ -1163,13 +1389,35 @@ Path *Pathfinder::buildActualPath(const PathfindObject *obj, unsigned acceptable
 void Pathfinder::prependCells(Path *path, const Coord3D *fromPos, PathfindCell *goalCell, bool center)
 {
 	// TARGET RW 0x6EF591: the cells are walked in REVERSE order, creating the path in the desired order; the LAST node is in the unit's
-	// own cell, so the unit's position is used instead. (Waypoint cells and the layer lookup are not modelled: S-161.)
+	// own cell, so the unit's position is used instead. Lane WALL-2 (read from the disassembly):
+	//   * a cell at the index of the cell after it (a hop between layers, RW 0x6EF5D5 .. 0x6EF607) adds no node: the node after it takes its layer (the
+	//     cell's, or the later cell's when the cell is on the ground) and the walk goes on without making it the previous cell;
+	//   * a cell reached through a portal (info + 0xC, RW 0x6EF647 .. 0x6EF71E): its node stands at the portal waypoint's position; before it come, in path
+	//     order, the waypoint's intermediates (+ 0x44, until one with links) and, when the cell is itself a portal's start, that portal's position; each of
+	//     those nodes and the node after them get the id of the waypoint the step to them starts from (RW 0x6653DC writes the id of the node prepended before
+	//     them: the node after, + 0x20) and cannot be optimised (+ 0x1C);
+	//   * a node's layer is TheTerrainLogic::getLayerForDestination of its position (RW 0x680A75: a ramp under it, else the ground grid cell's layer: the
+	//     port's getLayerAt; lane WALL-1 used the cell's layer, which differs only where a wall cell lies under a ramp's surface).
+	path->setWaypointSource(this);
 	Coord3D pos;
 	PathfindCell *cell, *prevCell = nullptr;
 	const bool goalCellNull = (goalCell->getParentCell() == nullptr);
 	for (cell = goalCell; cell->getParentCell(); cell = cell->getParentCell())
 	{
 		adjustCoordToCell(cell->getXIndex(), cell->getYIndex(), center, pos, cell->getLayer());
+		if (prevCell && prevCell->getXIndex() == cell->getXIndex() && prevCell->getYIndex() == cell->getYIndex())
+		{
+			PathfindLayerEnum layer = cell->getLayer();
+			if (layer == LAYER_GROUND)
+			{
+				layer = prevCell->getLayer();
+			}
+			if (path->getFirstNode())
+			{
+				path->getFirstNode()->setLayer(layer);
+			}
+			continue;
+		}
 		bool canOptimize = true;
 		if (cell->getType() == PathfindCell::CELL_CLIFF)
 		{
@@ -1188,7 +1436,42 @@ void Pathfinder::prependCells(Path *path, const Coord3D *fromPos, PathfindCell *
 				canOptimize = false;
 			}
 		}
-		path->prependNode(&pos, LAYER_GROUND);
+		if (const PathfindWaypoint *wp = waypointOfSlot(cell->getViaPortal()))
+		{
+			pos = wp->pos; // RW 0x6EF66A
+			if (wp->id != PathfindWaypoint::NO_ID)
+			{
+				auto mark = [&](int id) {
+					if (path->getFirstNode())
+					{
+						path->getFirstNode()->setWaypointID(id);
+						path->getFirstNode()->setCanOptimize(false);
+					}
+				};
+				if (const PathfindWaypoint *own = waypointOfSlot(cell->getPortal()))
+				{
+					mark(own->id);
+					Coord3D p = own->pos;
+					path->prependNode(&p, cell->getLayer());
+				}
+				// review of #63: a Via chain that loops back on itself (DynamicPortalBehaviour's Link data) ends at its first repeat; a chain without one is walked
+				// as before
+				std::vector<int> seen;
+				for (const PathfindWaypoint *n = findWaypoint(wp->next); n && std::find(seen.begin(), seen.end(), n->id) == seen.end(); n = findWaypoint(n->next))
+				{
+					seen.push_back(n->id);
+					mark(n->id);
+					Coord3D p = n->pos;
+					path->prependNode(&p, cell->getLayer());
+					if (n->numLinks != 0)
+					{
+						break;
+					}
+				}
+				mark(wp->id);
+			}
+		}
+		path->prependNode(&pos, m_wallPieces.empty() ? cell->getLayer() : getLayerAt(pos.x, pos.y, pos.z)); // RW 0x6EF721 .. 0x6EF741 (see above)
 		path->getFirstNode()->setCanOptimize(canOptimize);
 		if (cell->isBlockedByAlly())
 		{

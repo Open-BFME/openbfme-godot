@@ -187,7 +187,7 @@ struct AIBaseTemplate
 	std::vector<int> playerPositions;   ///< + 0x0C (RW 0x42EC7A appends)
 	bool allowsArbitraryRotation = true; ///< + 0x18 AllowsArbirtaryRotation (the INI's spelling); the ctor sets 1
 	std::vector<AIBaseStructure> structures; ///< + 0x1C the layout (RW 0x82F2E9 appends; loadBaseLayouts)
-	bool layoutLoaded = false;          ///< its .bse was read (a missing file is an error)
+	bool layoutLoaded = false;          ///< its .bse was read (lane MODS-2: a missing file leaves it false, as retail; a bad one is an error)
 };
 
 // PlayerAIType (0x10 bytes: name + 0, LibraryMap + 4; RW 0x615487 reads the name then the block)
@@ -232,6 +232,8 @@ public:
 	// RW 0x82FA98 (TheBaseTemplateLibrary's post-load): every AIBase's "Bases\\<Map>\\<Map>.bse", its CastleTemplates chunks routed by EXACT name to the base of
 	// that Map (RW 0x82F3D5); false + *errors when a file does not open or parse (retail throws 0xDEAD0005 at RW 0x82FC54)
 	bool loadBaseLayouts(ArchiveFileSystem &fs, std::vector<std::string> *errors);
+	// lane MODS-2: the AIBase blocks whose .bse file does not exist (retail skips them, RW 0x82FB5A); one line each, from loadBaseLayouts
+	const std::vector<std::string> &missingLayouts() const { return m_missingLayouts; }
 	// every base of a side, in the side's list order (a repeated map appears again), null entries skipped
 	std::vector<const AIBaseTemplate *> baseTemplatesOfSide(const std::string &side) const;
 
@@ -267,6 +269,7 @@ public:
 	void parsePlayerAIType(INI *ini);
 
 private:
+	std::vector<std::string> m_missingLayouts; // lane MODS-2
 	NameKeyGenerator &m_keys;
 	SkirmishAIData m_data;
 	unsigned m_dataBlocks = 0;

@@ -2,8 +2,11 @@
 
 #include "doctest.h"
 #include "MoveTestUtil.h"
+#include "GameClient/FormationAssistant.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 using namespace movetest;
 
@@ -118,6 +121,10 @@ TEST_CASE("commands: a formation move message ends with the units facing the ang
 	Object *b = mw.spawn("Walker", 305.0f, 105.0f);
 	mw.frames(2);
 	mw.select(alice, { a });
+	FormationAssistant formation;
+	std::string formationError;
+	REQUIRE(formation.scan("FormationAssistant\n UnitDefinition Unit\n ObjectFilter = ALL\n End\n FormationTemplate Line\n Rows\n Row = Unit\n End\n End\nEnd\n", &formationError));
+	mw.aiCommands.setFormationAssistant(&formation);
 	GameMessage fm(MSG_DO_MOVETO_FORMATION, alice);
 	fm.appendLocationArgument(Coord3D{ 105.0f, 405.0f, 0.0f });
 	fm.appendRealArgument(3.14159265f);
@@ -197,4 +204,115 @@ TEST_CASE("commands: the same messages in two worlds give the same state hash in
 		CHECK(h1[i] == h2[i]);
 	}
 	CHECK(h1.front() != h1.back()); // the state really changes
+}
+
+TEST_CASE("commands: rotate firing arc turns selected units toward the target without moving")
+{
+ MoveWorld mw;
+ mw.buildMap();
+ const int alice=mw.playerIndex("Alice");
+ Object *unit=mw.spawn("Walker",110.5f,110.5f);
+ mw.frames(2);
+ mw.select(alice,{unit});
+ GameMessage order(MSG_DO_ROTATE_FIRINGARC,alice);
+ order.appendLocationArgument({110.5f,410.5f,0});
+ mw.send(order);
+ mw.frames(30);
+ CHECK(unit->getPosition()->x==110.5f);
+ CHECK(unit->getPosition()->y==110.5f);
+ // tolerance: recovered AIRotateFiringarc::update (BFME2 RVA 0x34274A) completes below 0.01 radians.
+ CHECK(std::fabs(unit->getOrientation()-1.57079632679f)<0.01f);
+}
+
+namespace
+{
+const char *const kOneRowFormation = "FormationAssistant\n UnitDefinition Unit\n ObjectFilter = ALL\n End\n FormationTemplate Line\n Rows\n Row = Unit Unit\n End\n End\nEnd\n";
+
+GameMessage formationOrder(int player, const Coord3D &where, float angle, bool attack)
+{
+	GameMessage m(MSG_DO_MOVETO_FORMATION, player);
+	m.appendLocationArgument(where);
+	m.appendRealArgument(angle);
+	m.appendIntegerArgument(0);
+	m.appendBooleanArgument(attack);
+	return m;
+}
+}
+
+// PR #88 review fix 4: RW 0x94E72B sends each slot's object an attack-move (RW 0x770CA5) when the order's attack flag is set
+TEST_CASE("commands: a formation move with the attack flag arms an attack-move for every slot's unit; without it none")
+{
+	for (bool attack : { false, true })
+	{
+		MoveWorld mw;
+		mw.buildMap();
+		const int alice = mw.playerIndex("Alice");
+		Object *a = mw.spawn("Walker", 105.0f, 105.0f);
+		Object *b = mw.spawn("Walker", 145.0f, 105.0f);
+		mw.frames(2);
+		mw.select(alice, { a, b });
+		FormationAssistant formation;
+		std::string formationError;
+		REQUIRE(formation.scan(kOneRowFormation, &formationError));
+		mw.aiCommands.setFormationAssistant(&formation);
+		mw.send(formationOrder(alice, Coord3D{ 125.0f, 405.0f, 0.0f }, 0.0f, attack));
+		mw.frames(1);
+		CHECK(mw.aiCommands.stats().formationMoves == 1);
+		CHECK(mw.aiCommands.stats().rejected == 0);
+		CHECK(a->getAIUpdateInterface()->attackMoveActive() == attack);
+		CHECK(b->getAIUpdateInterface()->attackMoveActive() == attack);
+		CHECK_FALSE(a->getAIUpdateInterface()->isIdle());
+		CHECK_FALSE(b->getAIUpdateInterface()->isIdle());
+	}
+}
+
+// PR #88 review fix 5: a peer's malformed formation / firing-arc order (a NaN or infinite angle or location, an angle outside [-2 pi, 2 pi]) is
+// rejected, it never reaches the moves
+TEST_CASE("commands: malformed formation and firing-arc orders with non-finite values are rejected and the simulation keeps running")
+{
+	MoveWorld mw;
+	mw.buildMap();
+	const int alice = mw.playerIndex("Alice");
+	Object *a = mw.spawn("Walker", 105.0f, 105.0f);
+	Object *b = mw.spawn("Walker", 145.0f, 105.0f);
+	mw.frames(2);
+	const Coord3D a0 = *a->getPosition(), b0 = *b->getPosition(); // after the spawn's snap to its cell
+	mw.select(alice, { a, b });
+	FormationAssistant formation;
+	std::string formationError;
+	REQUIRE(formation.scan(kOneRowFormation, &formationError));
+	mw.aiCommands.setFormationAssistant(&formation);
+	const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
+	mw.send(formationOrder(alice, Coord3D{ 125.0f, 405.0f, 0.0f }, nan, false));
+	mw.send(formationOrder(alice, Coord3D{ 125.0f, 405.0f, 0.0f }, inf, true));
+	mw.send(formationOrder(alice, Coord3D{ 125.0f, 405.0f, 0.0f }, 1.0e20f, false)); // finite, but the facing wrap loop would never end
+	mw.send(formationOrder(alice, Coord3D{ 125.0f, 405.0f, 0.0f }, -6.3f, false));
+	mw.send(formationOrder(alice, Coord3D{ nan, 405.0f, 0.0f }, 0.0f, false));
+	mw.send(formationOrder(alice, Coord3D{ 125.0f, -inf, 0.0f }, 0.0f, false));
+	mw.send(formationOrder(alice, Coord3D{ 125.0f, 405.0f, nan }, 0.0f, false));
+	for (const Coord3D &target : { Coord3D{ nan, 405.0f, 0.0f }, Coord3D{ 125.0f, inf, 0.0f }, Coord3D{ 125.0f, 405.0f, -inf } })
+	{
+		GameMessage arc(MSG_DO_ROTATE_FIRINGARC, alice);
+		arc.appendLocationArgument(target);
+		mw.send(arc);
+	}
+	mw.frames(30);
+	CHECK(mw.aiCommands.stats().rejected == 10);
+	CHECK(mw.aiCommands.stats().formationMoves == 0);
+	for (Object *o : { a, b })
+	{
+		CHECK(o->getAIUpdateInterface()->isIdle());
+		CHECK_FALSE(o->getAIUpdateInterface()->attackMoveActive());
+		CHECK(std::isfinite(o->getOrientation()));
+	}
+	CHECK(a->getPosition()->x == a0.x);
+	CHECK(a->getPosition()->y == a0.y);
+	CHECK(b->getPosition()->x == b0.x);
+	CHECK(b->getPosition()->y == b0.y);
+	// the simulation survives: a well-formed order afterwards still moves the units
+	mw.send(formationOrder(alice, Coord3D{ 125.0f, 405.0f, 0.0f }, 0.0f, false));
+	mw.frames(1);
+	CHECK(mw.aiCommands.stats().formationMoves == 1);
+	CHECK_FALSE(a->getAIUpdateInterface()->isIdle());
+	CHECK_FALSE(b->getAIUpdateInterface()->isIdle());
 }

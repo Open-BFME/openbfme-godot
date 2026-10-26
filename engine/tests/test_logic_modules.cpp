@@ -255,21 +255,23 @@ TEST_CASE("HordeContain: members stand at the slot offset rotated by the horde's
 	Coord3D p{ 100.0f, 200.0f, 0.0f };
 	horde->setOrientation(0.0f);
 	horde->setPosition(&p);
-	// slot 0 is (50, 0), slot 1 (50, 20), slot 2 (50, -20), slot 3 (30, 0): angle 0 is the identity rotation
-	CHECK(m[0]->getPosition()->x == doctest::Approx(150.0f));
+	// the slots less the table's centre (RW 0x86C4EA: three at X 50 and three at 30, 40): slot 0 is (10, 0), slot 1 (10, 20), slot 2 (10, -20), slot 3
+	// (-10, 0); angle 0 is the identity rotation
+	CHECK(m[0]->getPosition()->x == 110.0f);
 	CHECK(m[0]->getPosition()->y == doctest::Approx(200.0f));
 	CHECK(m[1]->getPosition()->y == doctest::Approx(220.0f));
 	CHECK(m[2]->getPosition()->y == doctest::Approx(180.0f));
-	CHECK(m[3]->getPosition()->x == doctest::Approx(130.0f));
+	CHECK(m[3]->getPosition()->x == 90.0f);
 	const float halfPi = 1.57079632679f;
 	horde->setOrientation(halfPi); // +x offsets point along +y
 	CHECK(m[0]->getPosition()->x == doctest::Approx(100.0f).epsilon(1e-4));
-	CHECK(m[0]->getPosition()->y == doctest::Approx(250.0f));
-	CHECK(m[1]->getPosition()->x == doctest::Approx(80.0f)); // (50, 20) rotated: x' = -20, y' = 50
+	CHECK(m[0]->getPosition()->y == doctest::Approx(210.0f)); // tolerance: the slot turned by the horde's angle through sin / cos, not exact
+	// (10, 20) rotated: x' = -20, y' = 10
+	CHECK(m[1]->getPosition()->x == doctest::Approx(80.0f)); // tolerance: the slot turned by the horde's angle through sin / cos, not exact
 	CHECK(m[0]->getOrientation() == doctest::Approx(halfPi));
 	Coord3D q{ 0.0f, 0.0f, 7.0f };
 	horde->setPosition(&q);
-	CHECK(m[0]->getPosition()->y == doctest::Approx(50.0f));
+	CHECK(m[0]->getPosition()->y == doctest::Approx(10.0f)); // tolerance: the slot turned by the horde's angle through sin / cos, not exact
 	// the z of a member is the ground height under it: 0 here (no terrain installed)
 	CHECK_FALSE(f.logic->hasTerrain());
 	CHECK(m[0]->getPosition()->z == 0.0f);

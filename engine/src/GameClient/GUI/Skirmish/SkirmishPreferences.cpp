@@ -2,6 +2,7 @@
 // See GameClient/GUI/Skirmish/SkirmishPreferences.h.
 
 #include "GameClient/GUI/Skirmish/SkirmishPreferences.h"
+#include "Common/PathIO.h"
 
 #include <filesystem>
 #include <system_error>
@@ -147,7 +148,7 @@ SkirmishPreferences::SkirmishPreferences(std::string path) : m_path(std::move(pa
 {
 	// RW 0x8221F5
 	std::error_code ec;
-	const bool exists = std::filesystem::exists(std::filesystem::u8path(m_path), ec);
+	const bool exists = std::filesystem::exists(PathIO::native(m_path), ec);
 	if (ec)
 	{
 		// lane MENU-1 review: a folder that cannot be inspected is an error, never taken for a first run
@@ -157,7 +158,7 @@ SkirmishPreferences::SkirmishPreferences(std::string path) : m_path(std::move(pa
 	if (!exists)
 	{
 		// the first run (no file yet) only when its folder is a folder or not made yet; a path through a file is an error
-		const std::filesystem::path folder = std::filesystem::u8path(m_path).parent_path();
+		const std::filesystem::path folder = PathIO::native(m_path).parent_path();
 		std::error_code fec;
 		if (!folder.empty() && std::filesystem::exists(folder, fec) && !std::filesystem::is_directory(folder, fec))
 		{
@@ -329,7 +330,7 @@ void SkirmishPreferences::write()
 		m_file.set("CurrentUserName", m_currentUserName);
 	}
 	std::error_code ec;
-	const std::filesystem::path folder = std::filesystem::u8path(m_path).parent_path();
+	const std::filesystem::path folder = PathIO::native(m_path).parent_path();
 	if (!folder.empty())
 	{
 		std::filesystem::create_directories(folder, ec);
@@ -343,7 +344,7 @@ void SkirmishPreferences::write()
 
 std::string SkirmishPreferences::folder() const
 {
-	const std::filesystem::path dir = std::filesystem::u8path(m_path).parent_path();
+	const std::filesystem::path dir = PathIO::native(m_path).parent_path();
 	if (dir.empty())
 	{
 		return std::string();

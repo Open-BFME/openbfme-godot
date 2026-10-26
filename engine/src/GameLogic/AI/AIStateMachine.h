@@ -90,6 +90,9 @@ public:
 	// one). Pure: every state class says what it keeps, a state without fields writes its version only (xferNoFields)
 	virtual void xfer(class Xfer &x) = 0;
 	static void xferNoFields(class Xfer &x);
+	// lane UBER-2C: true for a state whose crcPersistent writes anything (every override of crcPersistent answers true). The machine's hash walks only
+	// those states: walking every state of every unit's machine for the empty default was most of the Faithful state hash's own time
+	virtual bool hasPersistentCrc() const { return false; }
 	// lane MODULES-3 r2: RW State slot 0x1C, called on the current state when a temporary state ends by itself (RW 0x751D9A); nothing for most states, the move
 	// states clear their internal move's "waiting for a path" (RW 0x740C97)
 	virtual void onTemporaryStateEnded() {}
@@ -150,6 +153,13 @@ public:
 	static constexpr unsigned kTemporaryLocked = 0xFFFFFFFFu;   // RW machine + 0x54 == -1
 	static constexpr unsigned kTemporaryUntilReplaced = 0xFFFFFFFEu; // -2
 	void halt();                               // the owner is going away: the current state exits without entering anything
+	// lane LUMBER1: RotWK's StateMachine::halt (RW 0x8DB758, the harvest and dock machines' vslot 0x3C): the current state is dropped WITHOUT its exit and the
+	// machine locked (ZH's halt clears through the exit; retail's sub-machines keep what their state set: model conditions, the internal move)
+	void haltWithoutExit()
+	{
+		m_currentState = nullptr;
+		m_locked = true;
+	}
 
 	void lock() { m_locked = true; }
 	void unlock() { m_locked = false; }
@@ -159,6 +169,7 @@ public:
 	unsigned currentStateId() const { return m_currentState ? m_currentState->id() : (unsigned)AI_NO_STATE; }
 	// lane PHYS-1: the temporary state's id (AI_NO_STATE when none; RW machine + 0x50)
 	unsigned temporaryStateId() const { return m_temporaryState ? m_temporaryState->id() : (unsigned)AI_NO_STATE; }
+	unsigned temporaryStateFrameEnd() const { return m_temporaryStateFrameEnd; } // lane FLANK-1 (tests): the frame after which a timed temporary state ends
 	// lane EXIT-1, RW 0x741724 (machine vslot 0x30): the temporary state's slot 0x28, else (RW 0x8DB6BD) the current state's; slot 0x28 is true only for
 	// AIBusyState (RW 0x8BD372 in its vtable 0xC274F8)
 	bool isBusyState() const { return temporaryStateId() == (unsigned)AI_BUSY || currentStateId() == (unsigned)AI_BUSY; }
@@ -210,6 +221,7 @@ private:
 	AIUpdateInterface *m_owner;
 	std::string m_name;
 	std::map<unsigned, std::unique_ptr<AIState>> m_states;
+	std::vector<const AIState *> m_persistentStates; // lane UBER-2C: the states with hasPersistentCrc, in m_states' (id) order
 	AIState *m_currentState = nullptr;
 	AIState *m_temporaryState = nullptr;
 	unsigned m_temporaryStateFrameEnd = 0;
@@ -227,6 +239,9 @@ private:
 };
 
 // ---- the states ----------------------------------------------------------------------------------------------------------------
+// stop S-5148: the stop line of the idle state's unported stance failure (RotWK RW 0x7553AB / 0x7537E0; AIStateMachine.cpp), noted by AIIdleState::update
+const char *idleStanceStopLine();
+
 // AIIdleState (ZH AIStates.cpp:1273-1460, B1 RW-equivalent 0x188090): stakes out the unit's cell and sleeps.
 class AIIdleState : public AIState
 {
@@ -301,4 +316,45 @@ public:
 	explicit AIBusyState(AIStateMachine &m) : AIState(m, "AIBusyState") {}
 	StateReturnType update() override { return STATE_CONTINUE; }
 	void xfer(class Xfer &x) override { xferNoFields(x); }
+};
+
+// review of #64: an owner state's sub machine (an attack's, a guard's, a hunt's) that the owner drops while one of the machine's updates runs is kept,
+// halted, until that update returns. The owner's exit can run inside the update: a shot that kills its shooter (SpawnAndFadeNugget, RW 0x698EC3) ends the
+// owner's state, and freeing the machine there freed it and its running state under them. Run marks an update; drop halts the machine and frees it, at
+// once or when the last update running ends
+template <typename M>
+struct KeptSubMachines
+{
+	int running = 0;
+	std::vector<std::unique_ptr<M>> kept;
+	struct Run
+	{
+		KeptSubMachines &k;
+		explicit Run(KeptSubMachines &keeper) : k(keeper) { ++k.running; }
+		~Run()
+		{
+			if (--k.running == 0)
+			{
+				k.kept.clear();
+			}
+		}
+		Run(const Run &) = delete;
+		Run &operator=(const Run &) = delete;
+	};
+	void drop(std::unique_ptr<M> &m)
+	{
+		if (!m)
+		{
+			return;
+		}
+		m->halt();
+		if (running > 0)
+		{
+			kept.push_back(std::move(m));
+		}
+		else
+		{
+			m.reset();
+		}
+	}
 };

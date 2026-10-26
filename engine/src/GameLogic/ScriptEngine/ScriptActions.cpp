@@ -6,6 +6,7 @@
 
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
+#include "Common/PlayerTemplate.h"
 #include "Common/Science.h"
 #include "Common/Team.h"
 #include "Common/Thing/ThingFactory.h"
@@ -71,8 +72,11 @@ const std::set<int> &clientActions()
 			"MAP_UNDO_REVEAL_PERMANENTLY_AT_WAYPOINT", "MAP_REVEAL_PERMANENTLY_IN_TRIGGER", "MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER",
 			// lane SCRIPT-2: the victory screen (RW 0x7BF05C: TheShell's victory window, no logic), the objectives button flash (RW 0x7BDF4E), the command
 			// bar edits (RW 0x7C6793 ...: TheControlBar). Lane BACKLOG3: the radar event actions are ported below (radarEventAction)
-			"VICTORY_SCREEN", "FLASH_OBJECTIVES_BUTTON", "COMMANDBAR_REMOVE_BUTTON_OBJECTTYPE", "COMMANDBAR_ADD_BUTTON_OBJECTTYPE_SLOT",
+			"VICTORY_SCREEN", "FLASH_OBJECTIVES_BUTTON", "FLASH_SPELL_STORE_BUTTON", "FLASH_PLANNING_MODE_BUTTON", // lane CAMPUI-1: RW 0x6D455F's other two slots "COMMANDBAR_REMOVE_BUTTON_OBJECTTYPE", "COMMANDBAR_ADD_BUTTON_OBJECTTYPE_SLOT",
 			"TOGGLE_AVI_CAPTURE", "ENABLE_OBJECT_SOUND", "DISABLE_OBJECT_SOUND",
+			// lane SCRIPT-4: RW 0x7BC604 doSetBorderShroud (BFME2 ScriptActions.cpp, tier A): TheDisplay vslot 0x138 with GlobalData ClearAlpha (+ 0xBE8) / ShroudAlpha
+			// (+ 0xBEA): the shroud border's fill (client, not saved)
+			"DISABLE_BORDER_SHROUD", "ENABLE_BORDER_SHROUD",
 		};
 		std::set<int> out;
 		for (const char *n : names)
@@ -88,8 +92,18 @@ const std::set<int> &clientActions()
 	return s;
 }
 
-bool positionOf(ScriptEngine &engine, const std::string &name, Coord3D &out)
+bool positionOf(ScriptEngine &engine, const std::string &name, Coord3D &out, bool cameraFirst = false)
 {
+	// lane CAMPUI-1: MOVE_CAMERA_TO's parameter (type 51) is a named camera or a waypoint; RW 0x7BB540 (BFME2 0x7BAAE4, decomp ScriptActionsRva003BACCA.cpp)
+	// looks up both and the named camera's position wins
+	if (cameraFirst)
+	{
+		if (const NamedCamera *c = engine.findNamedCamera(name))
+		{
+			out = c->position;
+			return true;
+		}
+	}
 	if (const TerrainLogic *terrain = engine.logic().terrain())
 	{
 		if (const Waypoint *w = terrain->findWaypointByName(name))
@@ -175,6 +189,44 @@ void radarEventAction(ScriptEngine &engine, const ScriptActionRec &a, const std:
 	logic.noteRadarEvent(type, pos, GameLogic::RadarEventNotice::SCRIPT, -1);
 }
 
+// RW 0x7C595A (ZH ScriptActions::doCreateObject): CREATE_OBJECT (RW 0x7CBCE0: no name, RW 0xDC62B8) and UNIT_SPAWN_NAMED_LOCATION_ORIENTATION
+// (RW 0x7CE45B: the name parameter): a living object of that name refuses (the warning RW 0xC362FC); the team by name, made when missing
+// (RW 0x759FDA with 1, RW 0x7C597E); the template (RW 0x6D1305; none: nothing); the new object (RW 0x6D165E) named before it enters the
+// cache (RW 0x60A1D5); setOrientation(angle) (RW 0x70C31E), setPosition (RW 0x70C201) and the pathfinder (RW 0x6902F5) through the host
+void createOnTeamAtPosition(ScriptEngine &engine, const std::string &name, const std::string &templateName, const std::string &teamName,
+	const Coord3D &pos, float angle)
+{
+	GameLogic &logic = engine.logic();
+	Object *existing = name.empty() ? nullptr : engine.getUnitNamed(name);
+	if (existing && !existing->isEffectivelyDead())
+	{
+		engine.note("WARNING: Object with name " + name + " already exists.  Failed Create.");
+		return;
+	}
+	Team *team = ScriptConditions::team(engine, teamName, true);
+	if (!team)
+	{
+		engine.note("***WARNING: Team not found:*** " + teamName);
+		return;
+	}
+	const ThingTemplate *tt = logic.things().findTemplate(templateName);
+	if (!tt)
+	{
+		engine.note("***WARNING: object template not found:*** " + templateName);
+		return;
+	}
+	if (!engine.host())
+	{
+		engine.note("[S-1180] no object creation host: " + templateName);
+		return;
+	}
+	Object *obj = engine.host()->createObject(*tt, *team, pos, angle);
+	if (obj && !name.empty())
+	{
+		obj->setName(name);
+	}
+}
+
 // RW 0x7C5B3B
 void createOnTeamAtWaypoint(ScriptEngine &engine, const std::string &name, const std::string &templateName, const std::string &teamName,
 	const std::string &waypointName)
@@ -250,7 +302,7 @@ void ScriptActions::clientRequest(ScriptEngine &engine, const ScriptActionRec &a
 	{
 		if ((p.type == PARAM_WAYPOINT || p.type == PARAM_CAMERA_POSITION) && !r.hasPosition)
 		{
-			r.hasPosition = positionOf(engine, p.stringValue, r.position);
+			r.hasPosition = positionOf(engine, p.stringValue, r.position, p.type == PARAM_CAMERA_POSITION);
 		}
 		if (p.type == 14 && r.objectId == 0) // a named unit: the client follows / sounds at it
 		{
@@ -261,6 +313,52 @@ void ScriptActions::clientRequest(ScriptEngine &engine, const ScriptActionRec &a
 		}
 	}
 	engine.addClientRequest(std::move(r));
+}
+
+// lane CAMPUI-1: the objective actions on TheMissionObjectiveTracker (MissionObjectiveTracker.h): SHOW / HIDE RW 0x7BDE35 / 0x7BDE57 -> setShown RW 0x835FAE,
+// MARK_..._COMPLETED / _NOT_COMPLETED RW 0x7BDE79 / 0x7BDE9B -> setCompleted RW 0x836097 (the parameter minus one); ENABLE / DISABLE_OBJECTIVES_SCREEN
+// RW 0x7BDF1C -> RW 0x8E89BD. The sound of a false -> true change (the local player's PlayerTemplate ObjectiveAddedSound + 0x1A8 / ObjectiveCompletedSound
+// + 0x1AC, the latter only after logic frame 3) goes to the client as MISSION_OBJECTIVE_SOUND(event name). Every one is also a client request as before
+// (the presentation: the Palantir's flash, the screen)
+static bool missionObjectiveAction(ScriptEngine &engine, const ScriptActionRec &a, const std::string &name)
+{
+	GameLogic &logic = engine.logic();
+	MissionObjectiveTracker &tracker = logic.missionObjectives();
+	if (name == "ENABLE_OBJECTIVES_SCREEN" || name == "DISABLE_OBJECTIVES_SCREEN")
+	{
+		tracker.setScreenEnabled(name == "ENABLE_OBJECTIVES_SCREEN");
+		return true;
+	}
+	const bool show = name == "SHOW_MISSION_OBJECTIVE", hide = name == "HIDE_MISSION_OBJECTIVE";
+	const bool done = name == "MARK_MISSION_OBJECTIVE_COMPLETED", undone = name == "MARK_MISSION_OBJECTIVE_NOT_COMPLETED";
+	if (!show && !hide && !done && !undone)
+	{
+		return false;
+	}
+	if (!tracker.hasList() || a.params.empty())
+	{
+		return true; // RW 0x7BDE35 ..: no tracker list, nothing
+	}
+	const int index = a.params[0].intValue - 1;
+	const bool changed = (show || hide) ? tracker.setShown(index, show) : tracker.setCompleted(index, done);
+	if (!changed || (done && logic.getFrame() <= 3))
+	{
+		return true;
+	}
+	const Player *local = logic.players().getLocalPlayer();
+	const PlayerTemplate *pt = local ? local->getPlayerTemplate() : nullptr;
+	const std::string &sound = pt ? (show ? pt->m_objectiveAddedSound : pt->m_objectiveCompletedSound) : std::string();
+	if (!sound.empty())
+	{
+		ScriptClientRequest r;
+		r.action = "MISSION_OBJECTIVE_SOUND";
+		ScriptParameter p;
+		p.type = 12; // a sound name (PLAY_SOUND_EFFECT's parameter type)
+		p.stringValue = sound;
+		r.params.push_back(p);
+		engine.addClientRequest(std::move(r));
+	}
+	return true;
 }
 
 // RW 0x7CAFA5
@@ -274,6 +372,10 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 	if (!t || !t->retailCase)
 	{
 		return; // retail's default: nothing
+	}
+	if (missionObjectiveAction(engine, a, t->name) && !isClientAction(a.resolved))
+	{
+		return; // lane CAMPUI-1: ENABLE / DISABLE_OBJECTIVES_SCREEN are logic only (their flag is saved, CHUNK_ObjectivesMenu)
 	}
 	if (isClientAction(a.resolved))
 	{
@@ -327,6 +429,18 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 	if (name == "CREATE_NAMED_ON_TEAM_AT_WAYPOINT")
 	{
 		createOnTeamAtWaypoint(engine, param(a, 0).stringValue, param(a, 1).stringValue, param(a, 2).stringValue, param(a, 3).stringValue);
+		return;
+	}
+	if (name == "CREATE_OBJECT") // RW 0x7CBCE0 -> RW 0x7C595A("", param 0 type, param 1 team, param 2 position, param 3 angle)
+	{
+		const ScriptParameter &at = param(a, 2);
+		createOnTeamAtPosition(engine, std::string(), param(a, 0).stringValue, param(a, 1).stringValue, Coord3D{ at.x, at.y, at.z }, param(a, 3).realValue);
+		return;
+	}
+	if (name == "UNIT_SPAWN_NAMED_LOCATION_ORIENTATION") // RW 0x7CE45B -> RW 0x7C595A(param 0 name, param 1 type, param 2 team, param 3, param 4)
+	{
+		const ScriptParameter &at = param(a, 3);
+		createOnTeamAtPosition(engine, param(a, 0).stringValue, param(a, 1).stringValue, param(a, 2).stringValue, Coord3D{ at.x, at.y, at.z }, param(a, 4).realValue);
 		return;
 	}
 	if (name == "CREATE_UNNAMED_ON_TEAM_AT_WAYPOINT")
@@ -526,7 +640,7 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 		}
 		return;
 	}
-	if (executeUnitAction(engine, a, name) || executeCampaignAction(engine, a, name))
+	if (executeUnitAction(engine, a, name) || executeOrderAction(engine, a, name) || executeCampaignAction(engine, a, name) || executeSiegeAction(engine, a, name))
 	{
 		return;
 	}

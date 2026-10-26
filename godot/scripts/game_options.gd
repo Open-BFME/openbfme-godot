@@ -47,9 +47,13 @@ const EXTRAS := {
 	"OpenBFMERotateSpeed": {"default": "100", "choices": ["50", "75", "100", "150", "200"]},
 	"OpenBFMEHealthBars": {"default": "retail", "choices": ["retail", "damaged", "always"]},
 	"OpenBFMEGameClock": {"default": "no", "choices": ["yes", "no"]},
+	# the ping wheel (not retail: scripts/ping_wheel.gd): on by default, an addition with no retail behaviour to keep; the key it opens on
+	"OpenBFMEPingWheel": {"default": "yes", "choices": ["yes", "no"]},
+	"OpenBFMEPingKey": {"default": "g", "choices": ["g", "altg", "j", "mouse4", "mouse5"]},
 	# lane UBER-1: the Uber performance mode (docs/UBER.md): the next lobby and game run the Uber simulation profile; never compatible with the original game
 	"OpenBFMEUberPerformance": {"default": "no", "choices": ["yes", "no"]},
 	"OpenBFMEShareResults": {"default": "yes", "choices": ["yes", "no"]}, # lane ONLINEHUB-1: the platform's game results (docs/PLATFORM_API.md)
+	"OpenBFMEShowPing": {"default": "yes", "choices": ["yes", "no"]}, # lane ONLINEMENU-1: the online menus' corner shows the player's ping
 	"OpenBFMEMasterVolume": {"default": "100", "range": [0, 100]},
 	"OpenBFMEMuteUnfocused": {"default": "no", "choices": ["yes", "no"]},
 	"OpenBFMEAudioDevice": {"default": "Default", "device": true},
@@ -266,6 +270,9 @@ func apply_global(values: Dictionary) -> PackedStringArray:
 		_hud.set_view_options(view_options(values))
 	_apply_confine(values)
 	_clock_layer.visible = _in_game and values.OpenBFMEGameClock == "yes"
+	var wheel = game.get("_ping_wheel") if game != null else null
+	if wheel != null and is_instance_valid(wheel):
+		wheel.configure(values.OpenBFMEPingWheel == "yes", values.OpenBFMEPingKey)
 	_clock.add_theme_font_size_override("font_size", roundi(16 * values.OpenBFMEUIScale.to_int() / 100.0))
 	if game != null and game.get("_display_overlay") != null:
 		var counter = game._display_overlay.get_node_or_null("FpsCounter")

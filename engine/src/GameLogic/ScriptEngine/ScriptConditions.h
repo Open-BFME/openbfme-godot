@@ -44,6 +44,10 @@ public:
 	// the players of a player parameter (RW 0x758F7C), in index order
 	static std::vector<Player *> players(ScriptEngine &engine, const std::string &parameter);
 	static Player *firstPlayer(ScriptEngine &engine, const std::string &parameter); // RW 0x6A85B6
+	// lane SCRIPT-4: RW 0x6A85B6 as retail has it: the player only when the mask is exactly that player's bit (firstPlayer gives the first of any mask)
+	static Player *playerOfMask(ScriptEngine &engine, const std::string &parameter);
+	// lane SCRIPT-4: RW 0x778EA0: a template name in a type parameter's set (an object list, else the one name; case kept)
+	static bool inTypeSet(ScriptEngine &engine, const std::string &parameter, const std::string &templateName);
 	// a team by its (side-qualified) name, ZH ScriptEngine::getTeamNamed (RW 0x759FDA); "<This Team>" is the team script's team, else the condition team
 	static Team *team(ScriptEngine &engine, const std::string &name, bool create = false); // lane CAMP-1H: `create` (RW 0x759FDA's flag)
 	// RW 0x70CF29
@@ -51,7 +55,8 @@ public:
 	// RW 0x96E85F: the type names of a type parameter (an object list's types, or the one type)
 	static std::vector<std::string> typeNames(ScriptEngine &engine, const std::string &parameter);
 	// RW 0x6ABAF7(.., alive, .., not under construction): the player's team members of one of the types (RW 0x73D5C2), each counted once
-	static std::int32_t countPlayerObjects(GameLogic &logic, const Player &p, const std::vector<const ThingTemplate *> &types);
+	// lane SCRIPT-4: `ignoreDead` false (BUILT_BY_PLAYER, RW 0x6ABAF7's flag 0) counts dead members too
+	static std::int32_t countPlayerObjects(GameLogic &logic, const Player &p, const std::vector<const ThingTemplate *> &types, bool ignoreDead = true);
 	// RW 0x73D5C2 ThingTemplate::isEquivalentTo
 	static bool equivalentTemplates(const ThingTemplate *a, const ThingTemplate *b);
 	// the live members of a team, in member order

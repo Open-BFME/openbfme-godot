@@ -18,6 +18,7 @@
 #include "GameLogic/ObjectFilter.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -310,6 +311,51 @@ TEST_CASE("save4a GameState: the stream (RW 0xA20DD0 / 0x6DDF2F framing), the bl
 	}
 }
 
+TEST_CASE("snapshot reader: every truncated block boundary and impossible block end is refused before changing state")
+{
+	GameState state;
+	IntBlock first, second;
+	first.value = 123;
+	second.value = 456;
+	state.addSnapshotBlock("test:A", &first, 1u << SNAPSHOT_SAVELOAD, "test", {});
+	state.addSnapshotBlock("test:B", &second, 1u << SNAPSHOT_SAVELOAD, "test", {});
+	std::vector<std::uint8_t> good;
+	std::string error;
+	REQUIRE_MESSAGE(state.saveSnapshot({}, good, &error), error);
+	for (size_t cut = 0; cut < good.size(); ++cut)
+	{
+		const std::vector<std::uint8_t> prefix(good.begin(), good.begin() + (std::ptrdiff_t)cut);
+		CAPTURE(cut);
+		CHECK_FALSE(state.checkFraming(prefix, &error));
+		CHECK_FALSE(error.empty());
+		CHECK_FALSE(state.loadSnapshot({}, prefix, &error));
+		CHECK(first.value == 123);
+		CHECK(second.value == 456);
+	}
+	std::vector<std::uint8_t> bad = good;
+	const std::array<std::uint8_t, 4> marker{ 'K', 'O', 'L', 'B' };
+	const auto at = std::search(bad.begin(), bad.end(), marker.begin(), marker.end());
+	REQUIRE(at != bad.end());
+	const std::uint32_t huge = 1u << 31;
+	std::memcpy(&bad[(size_t)(at - bad.begin()) + 4], &huge, 4);
+	CHECK_FALSE(state.loadSnapshot({}, bad, &error));
+	CHECK(error.find("outside") != std::string::npos);
+	CHECK(first.value == 123);
+	CHECK(second.value == 456);
+}
+
+TEST_CASE("snapshot reader: 2^31 Xfer entry counts and string lengths refuse before allocation")
+{
+	CHECK(loadError(bytes({ 0, 0, 0, 0x80 }), [](Xfer &x) {
+		std::uint32_t count = 0;
+		x.xferCount(&count, 1, 1);
+	}) == "a list declares 2147483648 entries of at least 1 bytes, more than the 0 bytes left");
+	CHECK(loadError(bytes({ 0xFF, 0, 0, 0, 0x80 }), [](Xfer &x) {
+		std::string text;
+		x.xferAsciiString(&text);
+	}) == "a string declares 2147483648 bytes, more than the 0 left");
+}
+
 TEST_CASE("save4a GameState: no partial snapshots: a block without an xfer and a state hash section without a block are a named refusal (T4)")
 {
 	GameState gs;
@@ -363,6 +409,8 @@ TEST_CASE("save4a: the game's block registry is the exact inventory: every simul
 						  "obfme:CreateAHero xfer SAVE-4d",
 						  "obfme:TerrainTrees xfer SAVE-4d",
 						  "obfme:LargeGroupAudio xfer SAVE-4d",
+						  "CHUNK_ObjectivesMenu xfer CAMPUI-1",
+						  "CHUNK_MissionObjectives xfer CAMPUI-1",
 					  });
 	// this synthetic game's state hash sections are all declared (no shroud or pathfinder contributor: those exist in a real game, test_save4a_retail.cpp)
 	CHECK(f.logic->gameState().undeclaredSections(f.logic->stateHashSectionNames()).empty());

@@ -305,6 +305,11 @@ void AptGadgetLayer::update(int elapsedMs)
 	}
 	m_timeMs += (std::uint32_t)elapsedMs;
 	m_gwm.setTimeMs(m_timeMs);
+	syncPlacements();
+}
+
+void AptGadgetLayer::syncPlacements()
+{
 	for (const WindowManager::ComponentRecord &rec : m_windows.components())
 	{
 		GameWindow *window = rec.window.get();

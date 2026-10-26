@@ -281,6 +281,71 @@ TEST_CASE("pathfind reservation: a goal cell is exclusive for allies, adjustDest
 	cleanup(w.world);
 }
 
+TEST_CASE("pathfind adjust: the ring searches spiral around the centre, so a free cell to the -x side is found (RW 0x6FA2A4, 0x6F3C87)")
+{
+	// cliff at x >= 8 and, west of it, y >= 10; the pinch expansion makes x >= 7 and y >= 9 cliff, so only x <= 6, y <= 8 is clear. The goal cell
+	// (8,8) is cliff, and so is every cell of the first layer. The spiral's second layer (RW: the offsets carry over) walks x+3 from (-1,-1), y+3, x-4,
+	// y-4 and meets (-2,0) = cell (6,8), the nearest clear cell of that layer: d2 4 (a layer restarted at the centre reaches only offsets -1 .. +d)
+	World w(16, 16);
+	for (int x = 0; x < 16; ++x)
+	{
+		for (int y = 0; y < 16; ++y)
+		{
+			if (x >= 8 || y >= 10)
+			{
+				w.terrain.cliff.insert({ x, y });
+			}
+		}
+	}
+	w.build();
+	CHECK(typeAt(*w.pf, 7, 2) == PathfindCell::CELL_CLIFF);
+	CHECK(typeAt(*w.pf, 2, 9) == PathfindCell::CELL_CLIFF);
+	CHECK(typeAt(*w.pf, 6, 8) == PathfindCell::CELL_CLEAR);
+	TestObject *b = makeUnit(w.world, 2, 25.0f, 25.0f);
+	Coord3D dest = at(85.0f, 85.0f);
+	CHECK(w.pf->adjustDestination(*b, groundLoco(), &dest));
+	CHECK(dest.x == 65.0f);
+	CHECK(dest.y == 85.0f);
+	// adjustToPossibleDestination's spiral (first clear cell of the unit's zone whose footprint fits, in the walk's order) reaches (6,8) in the same layer:
+	// before it, (8,7) .. (6,9) are all cliff
+	Coord3D possible = at(85.0f, 85.0f);
+	CHECK(w.pf->adjustToPossibleDestination(*b, groundLoco(), &possible));
+	CHECK(possible.x == 65.0f);
+	CHECK(possible.y == 85.0f);
+	cleanup(w.world);
+}
+
+TEST_CASE("skirmish ai base: RW 0x8E1BD4 unset and released goals preserve the caller's position")
+{
+	TestObject unit;
+	World w(12, 12);
+	w.build();
+	unit.id = 1;
+	unit.mobile = true;
+	unit.geometry.type = PATHFIND_GEOMETRY_SPHERE;
+	unit.geometry.majorRadius = 5.0f;
+	w.world.objects[unit.id] = &unit;
+	Coord3D position{ -17.0f, 29.0f, 41.0f };
+	CHECK_FALSE(w.pf->goalPosition(unit, &position));
+	CHECK(position.x == -17.0f);
+	CHECK(position.y == 29.0f);
+	CHECK(position.z == 41.0f);
+	const Coord3D goal{ 55.0f, 55.0f, 0.0f };
+	w.pf->updateGoal(unit, &goal, LAYER_GROUND);
+	REQUIRE(w.pf->goalRegistered(unit.id));
+	REQUIRE(w.pf->goalPosition(unit, &position));
+	CHECK(position.x == 55.0f);
+	CHECK(position.y == 55.0f);
+	CHECK(position.z == 0.0f);
+	w.pf->removeGoal(unit);
+	REQUIRE_FALSE(w.pf->goalRegistered(unit.id));
+	position = Coord3D{ -17.0f, 29.0f, 41.0f };
+	CHECK_FALSE(w.pf->goalPosition(unit, &position));
+	CHECK(position.x == -17.0f);
+	CHECK(position.y == 29.0f);
+	CHECK(position.z == 41.0f);
+}
+
 TEST_CASE("pathfind reservation: position cells follow updatePos and are removed with the unit")
 {
 	World w(10, 10);
@@ -388,15 +453,28 @@ TEST_CASE("pathfind stops: what a build and a search report is registered, every
 	delete w.pf->findPath(nullptr, groundLoco(), &from, &inside, &partial);
 	delete w.pf->findPath(nullptr, groundLoco(), &from, &far, &partial);
 	const std::vector<std::string> all = Pathfinder::allStops();
-	REQUIRE(all.size() == 16);
+	REQUIRE(all.size() == 25);
 	std::set<std::string> registered(all.begin(), all.end());
 	CHECK(registered.size() == all.size());
 	std::set<int> rows;
+	int wallRows = 0, portalRows = 0;
 	for (const std::string &s : all)
 	{
+		if (s.compare(0, 7, "S-4840 ") == 0)
+		{
+			++wallRows; // lane WALL-1: the wall tops and ramps (AIPathfindWalls.cpp)
+			continue;
+		}
+		if (s.compare(0, 7, "S-4857 ") == 0 || s.compare(0, 7, "S-4852 ") == 0 || s.compare(0, 7, "S-4856 ") == 0 || s.compare(0, 7, "S-4858 ") == 0)
+		{
+			++portalRows; // lane WALL-2: the portals (AIPathfindPortals.cpp), a removed portal under a horde (AIWorld.cpp), the raised layers (AIPathfindRaised.cpp), the attack search's fallback off the ground (AIPathfindAttack.cpp)
+			continue;
+		}
 		REQUIRE(s.compare(0, 4, "S-16") == 0);
 		rows.insert(s[4] - '0');
 	}
+	CHECK(wallRows == 2);
+	CHECK(portalRows == 7);
 	// the rows the pathfinder core raises: S-160 classification, S-161 layers, S-162 zones, S-163 search, S-164 footprints, S-165 path,
 	// S-167 numerics (S-166, the AI move path, has its own list: AIMover::allStops)
 	CHECK(rows == std::set<int>{ 0, 1, 2, 3, 4, 5, 7 });
@@ -413,7 +491,7 @@ TEST_CASE("pathfind stops: what a build and a search report is registered, every
 		return false;
 	};
 	CHECK(raised("S-160 slope limits"));
-	CHECK(raised("S-161 only the ground layer"));
+	CHECK(raised("S-161 the raised layers 2 .. 15"));
 	CHECK(raised("S-162 the hierarchical block search of findPath (RW 0x6F9829)"));
 	CHECK(raised("S-165 path nodes"));
 	CHECK(raised("S-167 float32"));

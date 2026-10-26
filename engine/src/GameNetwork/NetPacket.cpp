@@ -58,6 +58,12 @@ const char *NetCommandTypeName(int type)
 		return "NETCOMMANDTYPE_PAUSE";
 	case NETCOMMANDTYPE_RESUME:
 		return "NETCOMMANDTYPE_RESUME";
+	case NETCOMMANDTYPE_VIEW:
+		return "NETCOMMANDTYPE_VIEW";
+	case NETCOMMANDTYPE_CHAT:
+		return "NETCOMMANDTYPE_CHAT";
+	case NETCOMMANDTYPE_DISCONNECTCHAT:
+		return "NETCOMMANDTYPE_DISCONNECTCHAT";
 	default:
 		return "";
 	}
@@ -192,9 +198,9 @@ std::vector<std::uint8_t> NetByteReader::bytes()
 
 bool NetPacket::writeGameMessage(NetByteWriter &w, const GameMessage &m, std::string *error)
 {
-	if (m.getType() <= MSG_BEGIN_NETWORK_MESSAGES || m.getType() >= MSG_END_NETWORK_MESSAGES)
+	if (!IsNetworkLogicMessageType(m.getType())) // lane CHEAT-1: + MSG_OPENBFME_CHEAT
 	{
-		return failWith(error, "GameMessage type " + std::to_string(m.getType()) + " is not a logic message (1001 .. 1147)");
+		return failWith(error, "GameMessage type " + std::to_string(m.getType()) + " is not a logic message (1001 .. 1147, or 32001 lane CHEAT-1)");
 	}
 	if (m.getPlayerIndex() < -1 || m.getPlayerIndex() > 254)
 	{
@@ -255,9 +261,9 @@ std::unique_ptr<GameMessage> NetPacket::readGameMessage(NetByteReader &r, std::s
 			", and the bytes left hold " + std::to_string(r.remaining() / 2) + ")");
 		return nullptr;
 	}
-	if (type <= MSG_BEGIN_NETWORK_MESSAGES || type >= MSG_END_NETWORK_MESSAGES)
+	if (!IsNetworkLogicMessageType(type)) // lane CHEAT-1: + MSG_OPENBFME_CHEAT
 	{
-		failWith(error, "GameMessage type " + std::to_string(type) + " is not a logic message (1001 .. 1147)");
+		failWith(error, "GameMessage type " + std::to_string(type) + " is not a logic message (1001 .. 1147, or 32001 lane CHEAT-1)");
 		return nullptr;
 	}
 	std::unique_ptr<GameMessage> m = std::make_unique<GameMessage>(type, player == 0xFF ? -1 : (int)player);
@@ -310,8 +316,21 @@ std::unique_ptr<GameMessage> NetPacket::readGameMessage(NetByteReader &r, std::s
 
 void NetPacket::writeGameInfo(NetByteWriter &w, const SkirmishGameInfo &g)
 {
-	for (const SkirmishGameSlot &s : g.slots)
+	bool extended = g.mapStartCount != LEGACY_MAX_SLOTS;
+	for (int i = LEGACY_MAX_SLOTS; i < MAX_SLOTS; ++i)
 	{
+		extended = extended || g.slots[i].state != SLOT_CLOSED;
+	}
+	if (extended)
+	{
+		// An invalid legacy setup with active high slots must fail decoding, not silently lose those slots.
+		w.i32(kExtendedGameInfoTag);
+		w.i32(g.mapStartCount);
+	}
+	const int count = extended ? MAX_SLOTS : LEGACY_MAX_SLOTS;
+	for (int i = 0; i < count; ++i)
+	{
+		const SkirmishGameSlot &s = g.slots[i];
 		w.i32((std::int32_t)s.state);
 		w.wstr(s.name);
 		w.u8(s.accepted ? 1 : 0);
@@ -345,20 +364,39 @@ void NetPacket::writeGameInfo(NetByteWriter &w, const SkirmishGameInfo &g)
 	}
 	w.i32(g.legendaryHeroes);
 	w.i32((std::int32_t)g.simulationProfile); // lane UBER-1: the simulation profile (Common/SimulationProfile.h)
-	for (const SkirmishGameSlot &s : g.slots)
+	// lane P16: the handicap entries follow the record's slot loop: 8 for a legacy game, 16 for an extended one
+	for (int i = 0; i < count; ++i)
 	{
-		w.i32(s.handicap); // lane OWNERFIX-2: GameSlot + 0x20 (RotWK's LAN option string carries it as "Handicap=%d", RW 0x8476E6 = BFME2 decomp BfmeAptScreenLanLobby.cpp AptLanLobby::MpOwnerSelectHandicap, tier A)
+		w.i32(g.slots[i].handicap); // lane OWNERFIX-2: GameSlot + 0x20 (RotWK's LAN option string carries it as "Handicap=%d", RW 0x8476E6 = BFME2 decomp BfmeAptScreenLanLobby.cpp AptLanLobby::MpOwnerSelectHandicap, tier A)
 	}
+	w.i32(g.cheatMode); // lane CHEAT-1: Cheat Mode (-1 off, else the cheat seat's slot)
 }
 
-bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string *error, bool profileOptionalAtEnd, bool slotHandicaps)
+bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string *error, bool profileOptionalAtEnd, bool slotHandicaps, bool cheatField)
 {
-	for (SkirmishGameSlot &s : g.slots)
+	g = SkirmishGameInfo();
+	const std::int32_t firstState = r.i32();
+	const bool extended = firstState == kExtendedGameInfoTag;
+	if (extended)
 	{
-		const std::int32_t state = r.i32();
+		g.mapStartCount = r.i32();
+		if (r.failed() || g.mapStartCount <= LEGACY_MAX_SLOTS || g.mapStartCount > MAX_SLOTS)
+		{
+			return failWith(error, "GameInfo extended map start count " + std::to_string(g.mapStartCount) + " (requires 9 .. 16)");
+		}
+	}
+	const int count = g.serializedSlotCount();
+	for (int i = 0; i < count; ++i)
+	{
+		SkirmishGameSlot &s = g.slots[i];
+		const std::int32_t state = i == 0 && !extended ? firstState : r.i32();
 		if (state < SLOT_OPEN || state > SLOT_PLAYER)
 		{
 			return failWith(error, "GameInfo slot state " + std::to_string(state));
+		}
+		if (i >= g.mapStartCount && state != SLOT_CLOSED)
+		{
+			return failWith(error, "GameInfo slot " + std::to_string(i) + " exceeds the map's start positions");
 		}
 		s.state = (SlotState)state;
 		s.name = r.wstr();
@@ -405,15 +443,18 @@ bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string 
 		v = r.i32();
 	}
 	g.legendaryHeroes = r.i32();
-	const bool profileAbsent = profileOptionalAtEnd && !r.failed() && r.atEnd();
+	const bool profileAbsent = !extended && profileOptionalAtEnd && !r.failed() && r.atEnd();
 	const std::int32_t profile = profileAbsent ? (std::int32_t)SimulationProfile::Faithful : r.i32();
 	// lane OWNERFIX-2: the slots' handicaps (absent: an older replay / save format, or an announcement without the profile, UBERJOIN-1's case; the LAN
 	// messages that carry them are LANAPI protocol 3 / LANLobby version 4, so an announcement with the profile and without them is truncated)
 	const bool handicapsAbsent = !slotHandicaps || profileAbsent;
-	for (SkirmishGameSlot &s : g.slots)
+	// lane P16: the handicap entries follow the record's slot loop (a legacy record carries 8)
+	for (int i = 0; i < count; ++i)
 	{
-		s.handicap = handicapsAbsent ? 0 : r.i32();
+		g.slots[i].handicap = handicapsAbsent ? 0 : r.i32();
 	}
+	// lane CHEAT-1: Cheat Mode (absent: an older replay / save format or an announcement without the profile: off)
+	g.cheatMode = (!cheatField || handicapsAbsent) ? -1 : r.i32();
 	if (r.failed())
 	{
 		return failWith(error, r.badFlag() ? "GameInfo with a flag that is not 0 / 1" : "truncated GameInfo");
@@ -422,6 +463,10 @@ bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string 
 	for (int i = 0; i < MAX_SLOTS; ++i)
 	{
 		const SkirmishGameSlot &s = g.slots[i];
+		if (extended && (s.startPos >= g.mapStartCount || s.origStartPos >= g.mapStartCount))
+		{
+			return failWith(error, "GameInfo slot " + std::to_string(i) + " names a start position beyond the map's capacity");
+		}
 		for (int v : { s.color, s.startPos, s.playerTemplate, s.teamNumber, s.origColor, s.origStartPos, s.origPlayerTemplate })
 		{
 			if (v < -1)
@@ -447,6 +492,11 @@ bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string 
 	if (!LegendaryHeroes::valid(g.legendaryHeroes))
 	{
 		return failWith(error, "GameInfo Legendary Heroes factor " + std::to_string(g.legendaryHeroes));
+	}
+	// lane CHEAT-1: the cheat seat is a human slot (the host's); anything else is a setup no host makes: refused, never a guess
+	if (g.cheatMode < -1 || g.cheatMode >= MAX_SLOTS || (g.cheatMode >= 0 && g.slots[g.cheatMode].state != SLOT_PLAYER))
+	{
+		return failWith(error, "GameInfo Cheat Mode seat " + std::to_string(g.cheatMode) + " is not a human slot");
 	}
 	// lane UBER-1: a simulation profile this build does not know is a refused setup (never a guess)
 	if (!simulationProfileValid(profile))
@@ -476,7 +526,7 @@ void NetPacket::writeNewGameMessage(NetByteWriter &w, const NewGameMessage &m)
 	writeGameInfo(w, m.game);
 }
 
-bool NetPacket::readNewGameMessage(NetByteReader &r, NewGameMessage &m, std::string *error, bool slotHandicaps)
+bool NetPacket::readNewGameMessage(NetByteReader &r, NewGameMessage &m, std::string *error, bool slotHandicaps, bool cheatField)
 {
 	const std::uint8_t mode = r.u8();
 	if (mode > 1)
@@ -486,13 +536,18 @@ bool NetPacket::readNewGameMessage(NetByteReader &r, NewGameMessage &m, std::str
 	m.mode = mode ? NewGameMode::Skirmish : NewGameMode::SinglePlayer;
 	m.difficulty = r.i32();
 	m.rankPoints = r.i32();
-	return readGameInfo(r, m.game, error, false, slotHandicaps);
+	return readGameInfo(r, m.game, error, false, slotHandicaps, cheatField);
 }
 
 std::vector<std::uint8_t> NetPacket::encodeCommand(const NetCommandMsg &c, std::string *error)
 {
 	NetByteWriter w;
-	w.u8((std::uint8_t)c.type);
+	std::uint8_t wireType = (std::uint8_t)c.type;
+	if (c.type == NETCOMMANDTYPE_DISCONNECTPLAYER && (c.releasedMask > 0xff || c.targetSlot >= LEGACY_MAX_SLOTS)) wireType = kDisconnectPlayer16;
+	if (c.type == NETCOMMANDTYPE_DISCONNECTSCREENOFF && c.releasedMask > 0xff) wireType = kDisconnectScreenOff16;
+	if (c.type == NETCOMMANDTYPE_FRAMERESEND && (c.rejoinMask > 0xff || c.targetSlot >= LEGACY_MAX_SLOTS)) wireType = kFrameResend16;
+	const bool wide = wireType != (std::uint8_t)c.type;
+	w.u8(wireType);
 	w.u8(c.slot);
 	w.u32(c.executionFrame);
 	switch (c.type)
@@ -514,6 +569,13 @@ std::vector<std::uint8_t> NetPacket::encodeCommand(const NetCommandMsg &c, std::
 	case NETCOMMANDTYPE_DESYNCREPORT:
 		w.bytes(c.payload);
 		break;
+	case NETCOMMANDTYPE_VIEW: // lane ANTICHEAT-1
+		for (float v : c.view)
+		{
+			w.f32(v);
+		}
+		w.u8(c.viewFlags);
+		break;
 	case NETCOMMANDTYPE_DESTROYPLAYER:
 	case NETCOMMANDTYPE_REJOIN: // lane ONLINE-3
 		w.u8(c.targetSlot);
@@ -521,7 +583,9 @@ std::vector<std::uint8_t> NetPacket::encodeCommand(const NetCommandMsg &c, std::
 	case NETCOMMANDTYPE_DISCONNECTPLAYER:
 		w.u8(c.targetSlot);
 		w.u32(c.frame);
-		w.u8(c.releasedMask); // lane MP-2 (review): the slots before the sender in the fallback order that the sender holds gone
+		// lane MP-2 (review): the slots before the sender in the fallback order that the sender holds gone (lane P16: a bit per slot)
+		if (wide) w.u16(c.releasedMask);
+		else w.u8((std::uint8_t)c.releasedMask);
 		break;
 	case NETCOMMANDTYPE_DISCONNECTVOTE:
 		w.u8(c.targetSlot);
@@ -536,12 +600,18 @@ std::vector<std::uint8_t> NetPacket::encodeCommand(const NetCommandMsg &c, std::
 		break;
 	case NETCOMMANDTYPE_DISCONNECTSCREENOFF:
 		w.u32(c.frame);
-		w.u8(c.releasedMask);
-		for (int i = 0; i < 8; ++i)
+		if (wide) w.u16(c.releasedMask);
+		else w.u8((std::uint8_t)c.releasedMask);
+		for (int i = 0; i < (wide ? MAX_SLOTS : LEGACY_MAX_SLOTS); ++i)
 		{
 			if (c.releasedMask & (1u << i))
 			{
-				w.u32((size_t)i < c.releasedFrames.size() ? c.releasedFrames[(size_t)i] : 0u);
+				if ((size_t)i >= c.releasedFrames.size())
+				{
+					failWith(error, "DISCONNECTSCREENOFF missing frame for slot " + std::to_string(i));
+					return {};
+				}
+				w.u32(c.releasedFrames[(size_t)i]);
 			}
 		}
 		break;
@@ -562,7 +632,26 @@ std::vector<std::uint8_t> NetPacket::encodeCommand(const NetCommandMsg &c, std::
 			}
 		}
 		w.i32(c.runAheadChange);
-		w.u8(c.rejoinMask); // lane ONLINE-3
+		// lane ONLINE-3
+		if (wide) w.u16(c.rejoinMask);
+		else w.u8((std::uint8_t)c.rejoinMask);
+		break;
+	case NETCOMMANDTYPE_CHAT: // lane CHAT-1: u32 recipients, then the text (u32 length + UTF-16LE); a longer line is an error, never cut
+		if (c.chatText.size() > NetChat::kMaxTextUnits)
+		{
+			failWith(error, "CHAT of " + std::to_string(c.chatText.size()) + " characters (at most " + std::to_string(NetChat::kMaxTextUnits) + ")");
+			return {};
+		}
+		w.u32(c.playerMask);
+		w.wstr(c.chatText);
+		break;
+	case NETCOMMANDTYPE_DISCONNECTCHAT: // lane CHAT-1: the text only (RotWK readDisconnectChatMessage RW 0x99A453: no mask)
+		if (c.chatText.size() > NetChat::kMaxTextUnits)
+		{
+			failWith(error, "DISCONNECTCHAT of " + std::to_string(c.chatText.size()) + " characters (at most " + std::to_string(NetChat::kMaxTextUnits) + ")");
+			return {};
+		}
+		w.wstr(c.chatText);
 		break;
 	case NETCOMMANDTYPE_PLAYERLEAVE:
 	case NETCOMMANDTYPE_KEEPALIVE:
@@ -580,12 +669,20 @@ bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommand
 {
 	NetByteReader r(bytes);
 	out = NetCommandMsg();
-	const int type = r.u8();
+	const int wireType = r.u8();
+	const bool wide = wireType == kDisconnectPlayer16 || wireType == kDisconnectScreenOff16 || wireType == kFrameResend16;
+	const int type = wireType == kDisconnectPlayer16 ? NETCOMMANDTYPE_DISCONNECTPLAYER
+		: wireType == kDisconnectScreenOff16 ? NETCOMMANDTYPE_DISCONNECTSCREENOFF
+		: wireType == kFrameResend16 ? NETCOMMANDTYPE_FRAMERESEND : wireType;
 	out.slot = r.u8();
 	out.executionFrame = r.u32();
 	if (r.failed())
 	{
 		return failWith(error, "truncated net command header");
+	}
+	if (out.slot >= MAX_SLOTS)
+	{
+		return failWith(error, "net command from unknown slot " + std::to_string(out.slot));
 	}
 	switch (type)
 	{
@@ -605,6 +702,13 @@ bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommand
 	case NETCOMMANDTYPE_DESYNCREPORT:
 		out.payload = r.bytes();
 		break;
+	case NETCOMMANDTYPE_VIEW: // lane ANTICHEAT-1
+		for (float &v : out.view)
+		{
+			v = r.f32();
+		}
+		out.viewFlags = r.u8();
+		break;
 	case NETCOMMANDTYPE_DESTROYPLAYER:
 	case NETCOMMANDTYPE_REJOIN: // lane ONLINE-3
 		out.targetSlot = r.u8();
@@ -612,7 +716,7 @@ bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommand
 	case NETCOMMANDTYPE_DISCONNECTPLAYER:
 		out.targetSlot = r.u8();
 		out.frame = r.u32();
-		out.releasedMask = r.u8();
+		out.releasedMask = wide ? r.u16() : r.u8();
 		break;
 	case NETCOMMANDTYPE_DISCONNECTVOTE:
 		out.targetSlot = r.u8();
@@ -627,9 +731,9 @@ bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommand
 		break;
 	case NETCOMMANDTYPE_DISCONNECTSCREENOFF:
 		out.frame = r.u32();
-		out.releasedMask = r.u8();
-		out.releasedFrames.assign(8, 0u);
-		for (int i = 0; i < 8; ++i)
+		out.releasedMask = wide ? r.u16() : r.u8();
+		out.releasedFrames.assign(wide ? MAX_SLOTS : LEGACY_MAX_SLOTS, 0u);
+		for (int i = 0; i < (wide ? MAX_SLOTS : LEGACY_MAX_SLOTS); ++i)
 		{
 			if (out.releasedMask & (1u << i))
 			{
@@ -652,9 +756,25 @@ bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommand
 			out.messages.push_back(std::move(m));
 		}
 		out.runAheadChange = r.i32();
-		out.rejoinMask = r.u8(); // lane ONLINE-3
+		// lane ONLINE-3
+		out.rejoinMask = wide ? r.u16() : r.u8();
 		break;
 	}
+	case NETCOMMANDTYPE_CHAT: // lane CHAT-1
+		out.playerMask = r.u32();
+		out.chatText = r.wstr();
+		if (!r.failed() && out.chatText.size() > NetChat::kMaxTextUnits)
+		{
+			return failWith(error, "CHAT of " + std::to_string(out.chatText.size()) + " characters (at most " + std::to_string(NetChat::kMaxTextUnits) + ")");
+		}
+		break;
+	case NETCOMMANDTYPE_DISCONNECTCHAT: // lane CHAT-1
+		out.chatText = r.wstr();
+		if (!r.failed() && out.chatText.size() > NetChat::kMaxTextUnits)
+		{
+			return failWith(error, "DISCONNECTCHAT of " + std::to_string(out.chatText.size()) + " characters (at most " + std::to_string(NetChat::kMaxTextUnits) + ")");
+		}
+		break;
 	case NETCOMMANDTYPE_PLAYERLEAVE:
 	case NETCOMMANDTYPE_KEEPALIVE:
 	case NETCOMMANDTYPE_LOADCOMPLETE:
@@ -664,9 +784,10 @@ bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommand
 		return failWith(error, "unknown net command type " + std::to_string(type));
 	}
 	out.type = (NetCommandType)type;
+	const bool legacyEightSlotTarget = !wide && (type == NETCOMMANDTYPE_DISCONNECTPLAYER || type == NETCOMMANDTYPE_FRAMERESEND);
 	if ((type == NETCOMMANDTYPE_DESTROYPLAYER || type == NETCOMMANDTYPE_DISCONNECTPLAYER || type == NETCOMMANDTYPE_DISCONNECTVOTE
 			|| type == NETCOMMANDTYPE_FRAMERESEND || type == NETCOMMANDTYPE_REJOIN)
-		&& out.targetSlot >= MAX_SLOTS && !r.failed())
+		&& out.targetSlot >= (legacyEightSlotTarget ? LEGACY_MAX_SLOTS : MAX_SLOTS) && !r.failed())
 	{
 		return failWith(error, std::string(NetCommandTypeName(type)) + " about slot " + std::to_string(out.targetSlot));
 	}

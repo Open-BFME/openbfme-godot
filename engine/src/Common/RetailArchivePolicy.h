@@ -13,12 +13,10 @@
 //     Every cross-install overlap in the retail files (RotWK INI.big/W3D.big/lang vs BFME2
 //     ini.big/w3d.big/_patch103.big) is RotWK re-shipping a newer copy, which only works if
 //     RotWK wins.
-//  2. within one install, BFME's order: stable_sort by strcmp then reverse, applied to the
-//     retail-canonical relative path with backslashes (e.g. "apt\MainMenu.big",
-//     "lang\englishpatch201.big"). Canonical names come from the policy, not the disk, so a
-//     copy whose files were renamed to lower case (e.g. "ini.big") still gets retail order.
-//     With retail names this puts _patch201*.big ahead of INI.big/W3D.big/Maps.big ('_' > 'I')
-//     and lang\englishpatch201.big ahead of lang\English.big ('e' > 'E'): the patches win.
+//  2. within one install, RotWK's startup order (lane MODS-2, read from the binary: RetailArchiveLoadOrder): lang\English*.big (the
+//     game folder's with overwrite, so lang\englishpatch201.big wins over lang\English.big), then the folder's own *.big in case-insensitive
+//     name order (_patch201*.big ahead of INI.big / W3D.big / Maps.big: '_' sorts before letters), then apt\*.big; first mounted wins.
+//     Canonical names come from the policy, not the disk.
 //
 // Layouts (lane CONTRIB-1, GitHub issue #21): one game version can sit on disk in more than one known way. RotWK 2.01 has two:
 //  * "aio": the All In One package's, the policy's `archives` list (the 2.00 INI.big / Maps.big plus _patch201ini.big /
@@ -166,6 +164,7 @@ struct RetailMountReport
 	std::vector<std::string> excludedFound; // "<install>:<path>" skipped on purpose
 	std::vector<std::string> layouts;       // lane CONTRIB-1: "<install>:<layout id>" of every install whose policy knows several layouts
 	std::vector<std::string> warnings;      // non-fatal (e.g. the md5 cache could not be written)
+	std::vector<std::string> stops;         // lane MODS-2: the stop lines this mount reports (S-5302 when a base install's apt\ archives are mounted)
 	int archivesHashed = 0;                 // md5 computed from the file during this mount
 	int md5CacheHits = 0;                   // md5 taken from the cache (path+size+mtime unchanged)
 };
@@ -174,9 +173,12 @@ struct RetailMountReport
 RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std::vector<RetailInstall> &installs,
 	const RetailMountOptions &options);
 
-// The within-install order used above: BFMEArchiveLoadOrder over canonical paths with
-// '/' turned into '\'. Exposed for tests.
-std::vector<RetailArchiveEntry> RetailArchiveLoadOrder(const std::vector<RetailArchiveEntry> &archives);
+// The within-install order used above, as a first-wins sequence (lane MODS-2: RotWK's startup mount RW 0xA1766D / 0xA14419, see the
+// definition): `gameInstall` = the game's own folder (RotWK: its lang\ archives are loaded with overwrite, the last one winning, and its apt\ folder
+// is mounted) rather than the base install it reads (BFME2). Exposed for tests.
+std::vector<RetailArchiveEntry> RetailArchiveLoadOrder(const std::vector<RetailArchiveEntry> &archives, bool gameInstall = true);
+// docs/STOPS.md S-5302: the base install's apt\ archives, which retail RotWK never mounts, are mounted last
+std::string RetailBaseAptStopLine();
 
 // Install directories come from the environment (ROTWK_INSTALL, BFME2_INSTALL) or, when a
 // variable is unset, from a KEY=VALUE config file. Returns false + *error if neither has it.

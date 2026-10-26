@@ -2,6 +2,7 @@
 // See GameClient/GUI/AptScreens/AptMainMenu.h.
 
 #include "GameClient/GUI/AptScreens/AptMainMenu.h"
+#include "Common/PathIO.h"
 #include "GameClient/GUI/AptScreens/AptSimpleScreens.h"
 #include "GameClient/GUI/AptMessageBox.h"
 #include "GameClient/GUI/WindowManager.h"
@@ -397,5 +398,5 @@ bool AptMainMenu::continueCampaignSaveExists(const std::string &saveFolder)
 		return false;
 	}
 	std::error_code ec;
-	return std::filesystem::is_regular_file(std::filesystem::u8path(saveFolder) / "00000000.sav", ec);
+	return std::filesystem::is_regular_file(PathIO::native(saveFolder) / "00000000.sav", ec);
 }

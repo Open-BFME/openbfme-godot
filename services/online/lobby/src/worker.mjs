@@ -8,6 +8,8 @@
 
 import { Lobby, LobbyError, route, configFromEnv, MAX_JSON_BYTES, validateEnforcementRecord, validateSighting, withoutGameIp } from './lobby.mjs';
 import { SqliteIdentityStore } from './identity-store.mjs';
+import { repairStoredText } from './stored-text.mjs';
+import { SocialStorageError, socialSqlTransaction, socialStorageError } from './social-store.mjs';
 
 const subtle = crypto.subtle;
 
@@ -133,6 +135,26 @@ export function durableReportTransaction(storage) {
   }));
 }
 
+export const SOCIAL_DATABASE_BUDGET_BYTES = 900_000_000;
+
+export function durableSocialTransaction(storage) {
+  if (!storage.sql || typeof storage.transactionSync !== 'function') return null;
+  storage.sql.exec('CREATE TABLE IF NOT EXISTS social_records (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID');
+  const transaction = socialSqlTransaction(storage.sql, { beforePut() {
+    const size = storage.sql.databaseSize;
+    if (!Number.isSafeInteger(size) || size < 0) throw new SocialStorageError('unavailable');
+    if (size >= SOCIAL_DATABASE_BUDGET_BYTES) throw new SocialStorageError('full');
+  } });
+  return (fn) => {
+    try {
+      return storage.transactionSync(() => transaction(fn));
+    } catch (error) {
+      if (Number.isInteger(error?.status) && typeof error?.code === 'string') throw error;
+      throw socialStorageError(error);
+    }
+  };
+}
+
 function workerEnv(state, env) {
   const keys = new Map();
   const logs = logStoreFor(state, env);
@@ -157,7 +179,9 @@ function workerEnv(state, env) {
     }
     sql.exec('UPDATE moderation_receipts SET payload = ? WHERE command_hash = ?', JSON.stringify(record), commandHash);
   });
+  const socialTransaction = durableSocialTransaction(state.storage);
   return {
+    socialStorageRequired: true,
     hmac: async (key, data) => {
       const id = Array.from(key).join(',');
       let k = keys.get(id);
@@ -170,6 +194,7 @@ function workerEnv(state, env) {
     sha256: async (data) => new Uint8Array(await subtle.digest('SHA-256', data)),
     randomBytes: (n) => crypto.getRandomValues(new Uint8Array(n)),
     now: () => Date.now(),
+    ...(typeof env.oauthFetch === 'function' ? { oauthFetch: env.oauthFetch } : {}),
     store: {
       saveGame: (g) => state.storage.put(`game:${g.id}`, withoutGameIp(g)),
       saveMeta: (k, v) => state.storage.put(k, v), // INFRA-2 r2: the relay uploader's status (relay-status:<address>)
@@ -184,6 +209,7 @@ function workerEnv(state, env) {
       loadSightings: () => [],
       kind: logs.kind,
       ...(reportTransaction ? { reportTransaction } : {}),
+      ...(socialTransaction ? { socialTransaction } : {}),
       maxLogBytes: logs.maxLogBytes,
       putBlob: logs.putBlob?.bind(logs),
       getBlob: logs.getBlob?.bind(logs),
@@ -250,6 +276,7 @@ export class LobbyObject {
     this.queue = Promise.resolve();
     this.state = state;
     this.identity = this.lobby.env.store.identity;
+    this.identity.onEnforcementChange = () => this.lobby.social.securityStateChanged();
     this.ready = false;
     this.migrationError = null;
     this.bodyTimeoutMs = Number(env.BODY_TIMEOUT_MS ?? 10000);
@@ -291,8 +318,9 @@ export class LobbyObject {
             throw new Error('stored game key does not match its id');
           }
           lastKey = key;
-          const clean = withoutGameIp(game);
-          if (Object.hasOwn(game, 'ip')) await this.state.storage.put(key, clean);
+          const repaired = repairStoredText(game);
+          const clean = withoutGameIp(repaired);
+          if (repaired !== game || Object.hasOwn(game, 'ip')) await this.state.storage.put(key, clean);
           page.push(clean);
         }
         this.lobby.loadGames(page);
@@ -316,6 +344,8 @@ export class LobbyObject {
       } catch {
         this.migrationError = 'initialization_failed';
       }
+    } else if (typeof this.state.storage.setAlarm === 'function') {
+      await this.state.storage.setAlarm(Date.now() + 60000);
     }
   }
   async scheduleMigration() {
@@ -327,7 +357,15 @@ export class LobbyObject {
   }
   async alarm() {
     await this.readyPromise;
-    const run = this.queue.then(() => this.processMigration());
+    const run = this.queue.then(async () => {
+      await this.processMigration();
+      if (!this.ready) return;
+      try {
+        await this.lobby.prepareReportExpiries?.();
+      } finally {
+        if (typeof this.state.storage.setAlarm === 'function') await this.state.storage.setAlarm(Date.now() + 60000);
+      }
+    });
     this.queue = run.catch(() => {});
     await run;
   }
@@ -380,6 +418,7 @@ export class LobbyObject {
       headers,
       ip: request.headers.get('cf-connecting-ip') ?? '',
       bytes: async () => bytes,
+      signal: request.signal,
       ...(bodyRejection ? { bodyRejection } : {}),
     });
     return out;
@@ -387,7 +426,7 @@ export class LobbyObject {
 }
 
 // ONLINECOUNT-1: GET /v1/stats without a token (the main menu's and the launcher's line) is answered from the data centre's Cache API for STATS_CACHE_S
-// seconds, so those requests do not reach the Durable Object (its own 100,000-a-day free allowance); they still count as Worker requests (the Worker runs
+// seconds, so those requests do not reach the Durable Object (Paid includes 1 M requests/month); they still count as Worker requests (Paid includes 10 M/month; the Worker runs
 // before any cache). A request with a token (the online menu's, which marks the player present) always goes to the object.
 // ONLINECOUNT-1 r2 (Sol: a cache hit skipped the limiter, 100 x 200 from one address): the order is admission -> cache -> the object (whose lobby limiter
 // is the second line). Admission is a token bucket per address kept per Worker isolate ( separate or recycled isolates and the eviction of old buckets reset it, so it is no aggregate cap and no protection for the Worker

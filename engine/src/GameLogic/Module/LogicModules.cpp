@@ -26,6 +26,7 @@
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/HitReactionBehavior.h"
 #include "GameLogic/Module/InvisibilityModules.h"
+#include "GameLogic/Module/PortalModules.h"
 
 #include "Common/Thing/ModuleFactory.h"
 #include "GameClient/MapHordeSpawn.h"
@@ -43,6 +44,8 @@
 #include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/WallSpan.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
+#include "GameLogic/Module/DockUpdate.h"
+#include "GameLogic/Module/SupplyCenterCreate.h"
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/ProductionExitModules.h"
@@ -52,6 +55,7 @@
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Contain/GarrisonContainRuntime.h"
 #include "GameLogic/Object/Contain/TransportContainRuntime.h"
+#include "GameLogic/Module/SiegeModules.h"
 
 #include <stdexcept>
 
@@ -79,7 +83,9 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	EconomyModules::registerAll(modules); // lane ECON-1
 	DozerAIUpdate::registerClass(modules); // lane BUILD-1 (after the AI classes: it replaces the base AI's binding of DozerAIUpdate)
 	GiantBirdAIUpdate::registerClass(modules); // lane FLY-1 (after the AI classes: it replaces the base AI's binding of GiantBirdAIUpdate)
-	DozerAIUpdate::registerWorkerClass(modules); // lane BUILD-2: WorkerAIUpdate's dozer half (the workers GettingBuiltBehavior spawns)
+	DozerAIUpdate::registerWorkerClass(modules); // lane BUILD-2 / LUMBER1: WorkerAIUpdate, the dozer half and the supply half
+	SupplyCenterCreate::registerClass(modules);     // lane LUMBER1: the lumber mills' registration with the players' ResourceGatheringManager
+	SupplyCenterDockUpdate::registerClass(modules); // lane LUMBER1: the lumber mills' dock (the income of a delivery)
 	ConstructionModules::registerAll(modules);
 	WallSpan::registerModules(modules); // lane BUILD-2: WallHubBehavior
 	CastleModules::registerAll(modules);
@@ -100,6 +106,7 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	SpecialAbilityModules::registerAll(modules); // lane HERO-1: the SpecialAbilityUpdate family
 	ExtraModules::registerAll(modules); // lane MODULES-1: the remaining behaviour modules the base game uses
 	GateModules::registerAll(modules); // lane HUD-5: GateOpenAndCloseBehavior, AIGateUpdate
+	PortalModules::registerAll(modules); // lane WALL-2: DynamicPortalBehaviour, FakePathfindPortalBehaviour
 	EmotionModules::registerAll(modules); // lane MODULES-2: EmotionTrackerUpdate, RadiateFearUpdate
 	AreaScanModules::registerAll(modules); // lane MODULES-2: LargeGroupBonusUpdate, PassiveAreaEffectBehavior
 	NotifyCrushModules::registerAll(modules); // lane MODULES-3: (Horde)NotifyTargetsOfImminentProbableCrushingUpdate
@@ -118,4 +125,5 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	SlavedUpdate::registerClass(modules); // lane MOD-4: the spawns' guard
 	LargeGroupAudioUpdate::registerClass(modules); // lane AUDIO-4: the logic half of the large group battle sounds
 	ClientBehaviorModules::registerAll(modules); // lane AUDIO-4: the footsteps (a ClientBehavior: the drawables make it, GameClient/)
+	SiegeModules::registerAll(modules); // lane SIEGE-1: SiegeDockingBehavior, SiegeDeploySpecialPower, StopSpecialPower, SiegeAIUpdate (after the AI classes)
 }

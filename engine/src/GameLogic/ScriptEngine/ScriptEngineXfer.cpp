@@ -142,8 +142,9 @@ void ScriptEngine::xfer(Xfer &x)
 		m_pendingTeams.clear();
 	}
 	// lane SAVE-4e: version 2 adds BACKLOG4's triggered special power lists (merged after SAVE-4d); no version 1 snapshot was ever written by a
-	// release (loads of snapshots begin with SAVE-4e), so version 1 is not read (a list it lacked would load empty, silently)
-	XferVersion v{ 2, 2 };
+	// release (loads of snapshots begin with SAVE-4e), so version 1 is not read (a list it lacked would load empty, silently). Lane CASTLE-UNPACK:
+	// version 3 adds the object references (RW + 0x191B8); a version 2 game had none (its engine kept no such map), so it loads with an empty one
+	XferVersion v{ 2, 3 };
 	x.xferVersion(v);
 	bool loaded = loading ? false : m_loaded;
 	x.xferBool(&loaded);
@@ -384,6 +385,43 @@ void ScriptEngine::xfer(Xfer &x)
 			}
 		}
 	}
+	// lane CASTLE-UNPACK (version 3): the object references by (side, name), in key order: the object's id (an id of this game; the object may be gone,
+	// as in retail's map)
+	std::map<std::pair<std::string, std::string>, ObjectID> loadedReferences;
+	auto &references = loading ? loadedReferences : m_references;
+	if (v.current >= 3)
+	{
+		n = loading ? 0 : (std::uint32_t)references.size();
+		x.xferCount(&n, 1 + 1 + 4, sizeof(std::pair<const std::pair<std::string, std::string>, ObjectID>) + Xfer::kNodeBytes);
+		auto rit = references.begin();
+		for (std::uint32_t i = 0; i < n; ++i)
+		{
+			std::pair<std::string, std::string> key;
+			ObjectID id = INVALID_ID;
+			if (!loading)
+			{
+				key = rit->first;
+				id = rit->second;
+				++rit;
+			}
+			x.xferAsciiString(&key.first);
+			x.xferAsciiString(&key.second);
+			x.xferObjectID(&id);
+			if (!loading)
+			{
+				continue;
+			}
+			if (id != INVALID_ID && id >= m_logic.getNextObjectID())
+			{
+				throw XferException("script engine: the reference '" + key.first + "/" + key.second + "' names the object " + std::to_string(id) +
+					", which this game never made");
+			}
+			if (!references.emplace(key, id).second)
+			{
+				throw XferException("script engine: the reference '" + key.first + "/" + key.second + "' twice");
+			}
+		}
+	}
 	if (!loading)
 	{
 		return;
@@ -423,9 +461,9 @@ void ScriptEngine::xfer(Xfer &x)
 		std::map<std::pair<std::string, std::string>, Counter>, std::map<std::pair<std::string, std::string>, bool>,
 		std::vector<std::pair<std::string, std::vector<std::string>>>, std::vector<std::pair<std::string, ObjectID>>,
 		std::vector<std::vector<SequentialScript>>, std::array<AcquiredScienceQueue, 20>, std::vector<AudioTimer>,
-		std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers>>>(std::move(tree), std::move(loadedGeneric), std::move(loadedCounters),
-		std::move(loadedFlags), std::move(loadedLists), std::move(loadedNamed), std::move(loadedSequential), loadedQueues, std::move(loadedTimers),
-		std::move(loadedTriggered));
+		std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers>, std::map<std::pair<std::string, std::string>, ObjectID>>>(std::move(tree),
+		std::move(loadedGeneric), std::move(loadedCounters), std::move(loadedFlags), std::move(loadedLists), std::move(loadedNamed), std::move(loadedSequential),
+		loadedQueues, std::move(loadedTimers), std::move(loadedTriggered), std::move(loadedReferences));
 	m_pendingTeams.clear();
 	for (const auto &chain : std::get<6>(*staged))
 	{
@@ -455,6 +493,7 @@ void ScriptEngine::xfer(Xfer &x)
 		m_acquiredSciences = std::get<7>(*staged);
 		m_audioTimers = std::move(std::get<8>(*staged));
 		m_triggeredSpecialPowers = std::move(std::get<9>(*staged)); // lane SAVE-4e
+		m_references = std::move(std::get<10>(*staged));             // lane CASTLE-UNPACK
 	};
 }
 

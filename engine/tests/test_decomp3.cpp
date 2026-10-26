@@ -541,7 +541,7 @@ TEST_CASE("decomp3 S-1301: isAbleToAttack's EMP rule (MordorBarricade), slave at
 	REQUIRE(mordor);
 
 	// SPAWNS_ARE_THE_WEAPONS (MordorBarricade): the CAN_ATTACK status answers, but not while DISABLED_EMP (RW 0x691327 .. 0x691343, before the CAN_ATTACK tests).
-	// Its archers need the drawable's ARCHER_ bones to leave (SpawnPointProductionExitUpdate), which a headless test has not: its spawner stays empty here
+	// Its archers stand on its ARCHER_ bones (SpawnPointProductionExitUpdate, lane PRODUCTION1)
 	{
 		Object *barricade = make(logic, "MordorBarricade", *mordor, nearStart(logic, *mordor, 300.0f, 0.0f));
 		REQUIRE(barricade->isKindOf((unsigned)CombatNames::kindOf("SPAWNS_ARE_THE_WEAPONS")));
@@ -555,7 +555,8 @@ TEST_CASE("decomp3 S-1301: isAbleToAttack's EMP rule (MordorBarricade), slave at
 		CHECK_FALSE(barricade->isAbleToAttack());
 		barricade->clearDisabled(DISABLED_EMP);
 		CHECK(barricade->isAbleToAttack());
-		// S-3800: its one spawn try (RW 0x86356C) made nothing without the ARCHER_ bones; the spawner stays empty and the stop is noted
+		// lane PRODUCTION1: the SpawnPoint exit finds the ARCHER_ bones through the game's bone provider: the initial burst puts its four archers on them
+		// (SpawnNumber = InitialBurst = 4), then KillSpawnsBasedOnModelConditionState stops the spawner after the one try (RW 0x86356C); no S-3800 stop
 		const ObjectID barricadeId = barricade->getID();
 		const SpawnBehavior *spawn = dynamic_cast<const SpawnBehavior *>(SpawnBehaviorInterface::of(*barricade));
 		REQUIRE(spawn);
@@ -564,14 +565,14 @@ TEST_CASE("decomp3 S-1301: isAbleToAttack's EMP rule (MordorBarricade), slave at
 			logic.runLogicFrame();
 		}
 		REQUIRE(logic.findObjectByID(barricadeId));
-		CHECK(spawn->spawns().empty());
+		CHECK(spawn->spawns().size() == 4);
 		CHECK_FALSE(spawn->isSpawnerActive());
 		bool noted = false;
 		for (const std::string &line : logic.report().stops)
 		{
 			noted = noted || line.find("[S-3800] SpawnBehavior of MordorBarricade") != std::string::npos;
 		}
-		CHECK(noted);
+		CHECK_FALSE(noted);
 	}
 
 	// slave attacks (SpawnBehavior::canAnySlavesAttack RW 0x862A4E): a WargLair (no CAN_ATTACK, no weapon) is able while one of its wargs is

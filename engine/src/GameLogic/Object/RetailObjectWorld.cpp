@@ -100,7 +100,8 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 		"StanceTemplate", // INTEG-1: TheStanceTemplateStore (RW 0x835967)
 		"EmotionNugget", // MODULES-2: TheEmotionSystem (RW 0x8E0D59)
 		"CreateAHeroSystem", "AwardSystem", // HERO-2: TheCreateAHeroSystem (its own file, RW 0x61A10F)
-		"LinearCampaign" }; // CAMP-1: TheLinearCampaignManager (RW 0x5ECCB9)
+		"LinearCampaign", // CAMP-1: TheLinearCampaignManager (RW 0x5ECCB9)
+		"MissionObjectiveList" }; // CAMPUI-1: TheMissionObjectiveTracker's block (RW 0x836497)
 	// AUDIO-1: the audio blocks (AudioEvent, DialogEvent, MusicTrack, ..., EvaEvent, AudioSettings, MiscAudio) are parsed for real
 	skip.insert(skip.end(), AudioIniState::blockKeywords().begin(), AudioIniState::blockKeywords().end());
 	// AI-1: the skirmish AI blocks are parsed for real (GameLogic/SkirmishAI/SkirmishAIData.h)
@@ -133,6 +134,7 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	m_createAHero.registerBlock(m_env.blocks); // HERO-2: TheCreateAHeroSystem (RW 0xDE3D84)
 	SpellStores::registerBlocks(m_env.blocks); // SPELL-1
 	m_linearCampaigns.registerBlock(m_env.blocks); // CAMP-1
+	m_env.blocks.registerBlock("MissionObjectiveList", [this](INI *ini) { MissionObjectiveTracker::parseList(ini, m_mapObjectives, m_mapObjectivesParsed); });
 }
 
 const AudioIniState &RetailObjectWorld::audio() const
@@ -419,6 +421,20 @@ bool RetailObjectWorld::loadState(std::string *error)
 			m_s->m_report.errors.push_back(fe);
 		}
 	}
+	// PR #88 review fix 8 (no fallbacks, CLAUDE.md): BFME2 and RotWK ship Data\INI\FormationAssistant.ini; a missing or unreadable file is an
+	// error in the report, never a silent skip. BFME1 has no formation assistant (the two-button gesture is BFME2's): its data is exempt.
+	if (!options.bfme1)
+	{
+		std::string formationError;
+		if (!m_s->m_formations.load(m_fs, &formationError))
+		{
+			SubsystemLoadReport::FileError fe;
+			fe.file = "Data\\INI\\FormationAssistant.ini";
+			fe.code = 3;
+			fe.message = formationError;
+			m_s->m_report.errors.push_back(fe);
+		}
+	}
 	// INTEG-1: TheStanceTemplateStore's init (RW 0x83568D) loads Data\INI\Stances.ini itself (INI::load, type 1), not through the legend; an error reaches the report
 	if (!options.bfme1) try
 	{
@@ -639,5 +655,13 @@ std::vector<std::string> RetailObjectWorld::acceptanceStops() const
 	{
 		out.push_back(l);
 	}
+	return out;
+}
+
+std::vector<std::string> RetailObjectWorld::loadNotes() const
+{
+	std::vector<std::string> out = m_s->m_upgrades.unknownSubUpgrades();
+	const std::vector<std::string> &bases = m_s->m_skirmishAI->missingLayouts();
+	out.insert(out.end(), bases.begin(), bases.end());
 	return out;
 }

@@ -138,14 +138,16 @@ func get_small(url: String, cap: int, accept := "", etag := "", extra := PackedS
 
 ## Download `url` to `dest` (resuming an existing partial `dest`), expecting exactly `size` bytes. `progress.call(done, total)` is
 ## called while it runs. {ok, error, resumed (bytes kept from before)}. A failed transfer keeps the partial file for the next resume.
-func download(url: String, dest: String, size: int, progress: Callable) -> Dictionary:
+## Lane MODS-3: `size` -1 is a file whose size the manifest does not give (the mod service lists real archives with Size 0): the server's
+## Content-Length (200) or the total of its Content-Range (206) is taken, at most `max_unknown` bytes; the caller checks the MD5 anyway.
+func download(url: String, dest: String, size: int, progress: Callable, max_unknown := 0) -> Dictionary:
 	var have := 0
 	if FileAccess.file_exists(dest):
 		have = FileAccess.open(dest, FileAccess.READ).get_length()
-	if have > size:
+	if size >= 0 and have > size:
 		DirAccess.remove_absolute(dest)
 		have = 0
-	if have == size:
+	if size >= 0 and have == size:
 		return {"ok": true, "error": "", "resumed": have}
 	var hs := PackedStringArray(["Accept: application/octet-stream"])
 	if have > 0:
@@ -154,6 +156,12 @@ func download(url: String, dest: String, size: int, progress: Callable) -> Dicti
 	if not o.ok:
 		return {"ok": false, "error": o.error, "resumed": 0}
 	var client: HTTPClient = o.client
+	if size < 0 and o.code in [200, 206]:
+		var told: String = o.headers.get("content-length", "") if o.code == 200 else String(o.headers.get("content-range", "")).get_slice("/", 1)
+		if not told.is_valid_int() or told.to_int() < 0 or told.to_int() > max_unknown:
+			client.close()
+			return {"ok": false, "error": "the server gave no usable size for a file the manifest lists without one (%s)" % told.left(40), "resumed": 0}
+		size = told.to_int()
 	var f: FileAccess
 	if o.code == 206 and have > 0:
 		var cr: String = o.headers.get("content-range", "")
@@ -199,6 +207,9 @@ func download(url: String, dest: String, size: int, progress: Callable) -> Dicti
 			break
 		done += chunk.size()
 		progress.call(done, size)
+	f.flush()
+	if error == "" and (f.get_error() != OK or f.get_length() != done):
+		error = "writing %s failed: is the disk full?" % dest
 	f.close()
 	client.close()
 	if error == "" and done != size:

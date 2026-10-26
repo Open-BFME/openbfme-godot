@@ -24,6 +24,260 @@
 #include <string>
 #include <vector>
 
+TEST_CASE("p16 net: LAN START preserves the legacy address table and versions extended maps")
+{
+	for (int capacity : { 8, 9, 16 })
+	{
+		CAPTURE(capacity);
+		LobbyStart start;
+		start.profile = ProfileIdentity::fromText("openbfme-profile 1\ntest\n");
+		start.game.game.mapStartCount = capacity;
+		start.game.game.slots[0].state = SLOT_PLAYER;
+		start.game.game.slots[capacity - 1].state = SLOT_PLAYER;
+		start.networkSlot[0] = true;
+		start.networkSlot[(size_t)capacity - 1] = true;
+		start.addresses[(size_t)capacity - 1] = NetAddress{ 0x7F000001u, 12345 };
+		const auto bytes = LANLobby::encodeStart(start);
+		// tolerance: the version byte at index 3 requires at least four START header bytes
+		REQUIRE(bytes.size() > 3);
+		// lane P16: the legacy-capacity START keeps the lobby version (4 for the handicap layout, 6 since CHEAT-1's Cheat Mode field);
+		// the same START on an extended record is the next number (5, now 7)
+		CHECK(bytes[3] == (capacity == 8 ? 6 : 7));
+		if (capacity == 8)
+		{
+			NetByteWriter legacy;
+			legacy.u16(0x4C42);
+			legacy.u8(4); // LOBBY_START
+			legacy.u8(6); // the legacy START version (lane CHEAT-1)
+			legacy.str(start.profile.text);
+			NetPacket::writeNewGameMessage(legacy, start.game);
+			legacy.i32(start.runAhead);
+			legacy.i32(start.crcInterval);
+			for (int i = 0; i < 8; ++i)
+			{
+				legacy.u8(start.networkSlot[(size_t)i] ? 1 : 0);
+				legacy.u32(start.addresses[(size_t)i].ip);
+				legacy.u16(start.addresses[(size_t)i].port);
+			}
+			CHECK(bytes == legacy.data());
+		}
+		LobbyStart back;
+		back.networkSlot.fill(true);
+		back.addresses.fill(NetAddress{ 1, 1 });
+		std::string error;
+		REQUIRE_MESSAGE(LANLobby::decodeStart(bytes, back, &error), error);
+		CHECK(back.game.game.mapStartCount == capacity);
+		CHECK(back.networkSlot == start.networkSlot);
+		CHECK(back.addresses == start.addresses);
+		for (size_t n = 0; n < bytes.size(); ++n)
+		{
+			CHECK_FALSE(LANLobby::decodeStart(std::vector<std::uint8_t>(bytes.begin(), bytes.begin() + n), back, &error));
+		}
+		auto malformed = bytes;
+		malformed[3] = capacity == 8 ? 7 : 6; // the other START layout's version byte (lane CHEAT-1: 6 legacy, 7 extended)
+		CHECK_FALSE(LANLobby::decodeStart(malformed, back, &error));
+		CHECK(error.find("slot capacity") != std::string::npos);
+		malformed = bytes;
+		malformed[bytes.size() - (size_t)start.game.game.serializedSlotCount() * 7] = 7;
+		CHECK_FALSE(LANLobby::decodeStart(malformed, back, &error));
+		CHECK(error.find("not 0 / 1") != std::string::npos);
+		malformed = bytes;
+		malformed.push_back(0);
+		CHECK_FALSE(LANLobby::decodeStart(malformed, back, &error));
+	}
+}
+
+TEST_CASE("p16 net: disconnect and rejoin masks retain legacy bytes and preserve high slots")
+{
+	for (NetCommandType type : { NETCOMMANDTYPE_DISCONNECTPLAYER, NETCOMMANDTYPE_DISCONNECTSCREENOFF, NETCOMMANDTYPE_FRAMERESEND })
+	{
+		INFO(type);
+		NetCommandMsg c;
+		c.type = type;
+		c.slot = 2;
+		c.executionFrame = 17;
+		c.targetSlot = 3;
+		c.frame = 19;
+		c.releasedMask = 5;
+		c.rejoinMask = 5;
+		c.releasedFrames.assign(16, 0);
+		c.releasedFrames[0] = 11;
+		c.releasedFrames[2] = 13;
+		NetByteWriter legacy;
+		legacy.u8((std::uint8_t)type);
+		legacy.u8(2);
+		legacy.u32(17);
+		if (type != NETCOMMANDTYPE_DISCONNECTSCREENOFF) legacy.u8(3);
+		legacy.u32(19);
+		if (type == NETCOMMANDTYPE_FRAMERESEND)
+		{
+			legacy.u16(0);
+			legacy.i32(-1);
+		}
+		legacy.u8(5);
+		if (type == NETCOMMANDTYPE_DISCONNECTSCREENOFF)
+		{
+			legacy.u32(11);
+			legacy.u32(13);
+		}
+		std::string error;
+		CHECK(NetPacket::encodeCommand(c, &error) == legacy.data());
+		for (int high : { 8, 9, 15 })
+		{
+			INFO(high);
+			c.releasedMask = c.rejoinMask = (std::uint16_t)(1u | (1u << high));
+			c.releasedFrames[(size_t)high] = 77;
+			const auto bytes = NetPacket::encodeCommand(c, &error);
+			REQUIRE_FALSE(bytes.empty());
+			CHECK(bytes[0] == (type == NETCOMMANDTYPE_DISCONNECTPLAYER ? 0x87 : type == NETCOMMANDTYPE_DISCONNECTSCREENOFF ? 0x88 : 0x89));
+			NetCommandMsg decoded;
+			REQUIRE_MESSAGE(NetPacket::decodeCommand(bytes, decoded, &error), error);
+			CHECK(decoded.type == type);
+			CHECK(decoded.slot == 2);
+			CHECK(decoded.frame == 19);
+			if (type == NETCOMMANDTYPE_FRAMERESEND) CHECK(decoded.rejoinMask == c.rejoinMask);
+			else CHECK(decoded.releasedMask == c.releasedMask);
+			if (type == NETCOMMANDTYPE_DISCONNECTSCREENOFF) CHECK(decoded.releasedFrames[(size_t)high] == 77);
+			for (size_t n = 0; n < bytes.size(); ++n)
+			{
+				CHECK_FALSE(NetPacket::decodeCommand(std::vector<std::uint8_t>(bytes.begin(), bytes.begin() + n), decoded, &error));
+			}
+			auto trailing = bytes;
+			trailing.push_back(0);
+			CHECK_FALSE(NetPacket::decodeCommand(trailing, decoded, &error));
+			auto unknownSlot = bytes;
+			unknownSlot[1] = 16;
+			CHECK_FALSE(NetPacket::decodeCommand(unknownSlot, decoded, &error));
+		}
+		if (type == NETCOMMANDTYPE_DISCONNECTSCREENOFF)
+		{
+			c.releasedFrames.resize(8);
+			CHECK(NetPacket::encodeCommand(c, &error).empty());
+			CHECK(error.find("missing frame for slot 15") != std::string::npos);
+		}
+	}
+}
+
+TEST_CASE("p16 net: unassigned network slots remain inactive at every capacity")
+{
+	NetworkConfig config;
+	for (int player : config.slotPlayerIndex) CHECK(player == -1);
+}
+
+TEST_CASE("p16 net: GameInfo legacy bytes remain eight slots without a prefix")
+{
+	// The pre-P16 default record layout: eight 39-byte slots, the 77-byte game fields and the eight handicap entries (lane OWNERFIX-2), then CHEAT-1's Cheat Mode.
+	NetByteWriter legacy;
+	for (int i = 0; i < 8; ++i)
+	{
+		legacy.i32(1);
+		legacy.u32(0);
+		legacy.u8(0);
+		legacy.u8(1);
+		for (int field = 0; field < 7; ++field) legacy.i32(-1);
+		legacy.u8(0);
+	}
+	for (int field = 0; field < 7; ++field) legacy.u32(0);
+	legacy.u8(0);
+	for (int rule = 0; rule < 10; ++rule) legacy.i32(-1);
+	legacy.i32(1);
+	legacy.i32(0);
+	for (int i = 0; i < 8; ++i) legacy.i32(0);
+	legacy.i32(-1); // lane CHEAT-1: the Cheat Mode (-1: off) ends the GameInfo
+	REQUIRE(legacy.data().size() == 425);
+	SkirmishGameInfo game;
+	NetByteWriter encoded;
+	NetPacket::writeGameInfo(encoded, game);
+	CHECK(encoded.data() == legacy.data());
+	game.mapStartCount = 16;
+	game.slots[15].state = SLOT_PLAYER;
+	NetByteReader reader(legacy.data());
+	std::string error;
+	REQUIRE_MESSAGE(NetPacket::readGameInfo(reader, game, &error), error);
+	CHECK(reader.atEnd());
+	CHECK(game.mapStartCount == 8);
+	CHECK(game.slots[15].state == SLOT_CLOSED);
+}
+
+TEST_CASE("p16 net: tagged GameInfo preserves map capacity and every slot")
+{
+	for (int count : { 8, 9, 15, 16 })
+	{
+		INFO(count);
+		SkirmishGameInfo game;
+		game.mapStartCount = count;
+		game.mapName = "maps/p16/source-fixture.map";
+		game.seed = 12345;
+		for (int i = 0; i < count; ++i)
+		{
+			game.slots[i].state = SLOT_PLAYER;
+			game.slots[i].name = u"Player" + std::u16string(1, (char16_t)(u'A' + i));
+			game.slots[i].startPos = i;
+			game.slots[i].origStartPos = i;
+		}
+		NetByteWriter writer;
+		NetPacket::writeGameInfo(writer, game);
+		NetByteReader prefix(writer.data());
+		const int first = prefix.i32();
+		CHECK(first == (count == 8 ? (int)SLOT_PLAYER : NetPacket::kExtendedGameInfoTag));
+		if (count > 8)
+		{
+			CHECK(prefix.i32() == count);
+			CHECK((first < SLOT_OPEN || first > SLOT_PLAYER)); // tolerance: old readers must reject any state outside the valid enum before slot parsing
+		}
+		NetByteReader reader(writer.data());
+		SkirmishGameInfo decoded;
+		std::string error;
+		REQUIRE_MESSAGE(NetPacket::readGameInfo(reader, decoded, &error), error);
+		CHECK(reader.atEnd());
+		CHECK(decoded.mapStartCount == count);
+		CHECK(decoded.mapName == game.mapName);
+		CHECK(decoded.seed == game.seed);
+		for (int i = 0; i < MAX_SLOTS; ++i) CHECK(decoded.slots[i] == game.slots[i]);
+		for (size_t length = 0; length < writer.data().size(); ++length)
+		{
+			NetByteReader cut(writer.data().data(), length);
+			CHECK_FALSE(NetPacket::readGameInfo(cut, decoded, &error));
+		}
+	}
+}
+
+TEST_CASE("p16 net: malformed map capacity and out-of-capacity slots are explicit errors")
+{
+	std::string error;
+	SkirmishGameInfo decoded;
+	auto refused = [&](const SkirmishGameInfo &game) {
+		NetByteWriter writer;
+		NetPacket::writeGameInfo(writer, game);
+		NetByteReader reader(writer.data());
+		error.clear();
+		CHECK_FALSE(NetPacket::readGameInfo(reader, decoded, &error));
+		CHECK_FALSE(error.empty());
+	};
+	for (int count : { 0, 7, 17 })
+	{
+		SkirmishGameInfo game;
+		game.mapStartCount = count;
+		refused(game);
+	}
+	for (int count : { 8, 9, 15 })
+	{
+		SkirmishGameInfo game;
+		game.mapStartCount = count;
+		game.slots[count].state = SLOT_OPEN;
+		refused(game);
+	}
+	SkirmishGameInfo game;
+	game.mapStartCount = 16;
+	game.slots[15].state = SLOT_PLAYER;
+	game.slots[15].startPos = 16;
+	refused(game);
+	NetByteWriter unknown;
+	unknown.i32(NetPacket::kExtendedGameInfoTag - 1);
+	NetByteReader reader(unknown.data());
+	CHECK_FALSE(NetPacket::readGameInfo(reader, decoded, &error));
+}
+
 namespace
 {
 // An in-memory network of peers: every datagram is delivered after a per-link delay in "ticks" (reliable, in order, like Transport)
@@ -125,6 +379,155 @@ GameMessage moveMessage(int player, float x)
 	return m;
 }
 } // namespace
+
+TEST_CASE("p16 net: sixteen lockstep peers exchange FRAMEINFO on all 240 directed links")
+{
+	Hub hub(16);
+	std::map<std::pair<int, int>, unsigned> links;
+	struct Counted : NetTransport
+	{
+		Hub::Endpoint &endpoint;
+		std::map<std::pair<int, int>, unsigned> &links;
+		Counted(Hub::Endpoint &e, std::map<std::pair<int, int>, unsigned> &l) : endpoint(e), links(l) {}
+		bool sendTo(int to, const std::vector<std::uint8_t> &bytes, std::string *error) override
+		{
+			if (!bytes.empty() && bytes[0] == NETCOMMANDTYPE_FRAMEINFO) ++links[{ endpoint.slot, to }];
+			return endpoint.sendTo(to, bytes, error);
+		}
+		bool receive(int &from, std::vector<std::uint8_t> &bytes) override { return endpoint.receive(from, bytes); }
+	};
+	std::vector<std::unique_ptr<Counted>> transports;
+	std::vector<std::unique_ptr<Network>> nets;
+	std::array<CommandList, 16> pending;
+	std::array<UnsignedInt, 16> frames{};
+	std::array<std::vector<int>, 16> commands;
+	std::uint64_t now = 1;
+	for (int s = 0; s < 16; ++s)
+	{
+		transports.push_back(std::make_unique<Counted>(hub.endpoint(s), links));
+		NetworkConfig config = configFor(s, 16, 2, 0);
+		for (int p = 0; p < 16; ++p) config.slotPlayerIndex[(size_t)p] = p + 4;
+		nets.push_back(std::make_unique<Network>(config, *transports.back()));
+		nets.back()->setClock([&now] { return now; });
+		nets.back()->sendLoadComplete();
+		pending[(size_t)s].append(moveMessage(99, (float)s));
+	}
+	for (int tick = 0; tick < 300; ++tick)
+	{
+		for (size_t s = 0; s < 16; ++s)
+		{
+			nets[s]->update(frames[s], pending[s]);
+			if (frames[s] < 64 && nets[s]->isFrameReady(frames[s]))
+			{
+				CommandList out;
+				nets[s]->relayCommands(frames[s], out);
+				for (const auto &m : out.messages())
+				{
+					CHECK(frames[s] == 2);
+					CHECK(m.getType() == MSG_DO_MOVETO);
+					CHECK(m.getArgument(0)->location.x == (float)(m.getPlayerIndex() - 4));
+					commands[s].push_back(m.getPlayerIndex());
+				}
+				++frames[s];
+			}
+		}
+		hub.tick();
+		++now;
+	}
+	CHECK(links.size() == 240);
+	for (size_t s = 0; s < 16; ++s)
+	{
+		CHECK(frames[s] == 64);
+		CHECK(nets[s]->errors().empty());
+		REQUIRE(commands[s].size() == 16);
+		for (int p = 0; p < 16; ++p) CHECK(commands[s][(size_t)p] == p + 4);
+		for (int t = 0; t < 16; ++t)
+		{
+			if ((int)s != t) CHECK(links.at({ (int)s, t }) >= 64); // tolerance: retransmission may add FRAMEINFO sends beyond the required one per frame
+		}
+	}
+}
+
+TEST_CASE("p16 net: rejoin history preserves slot 15 without aliasing slot 7")
+{
+	Hub hub(16);
+	NetworkConfig config = configFor(1, 16, 2, 0);
+	for (int p = 0; p < 16; ++p) config.slotPlayerIndex[(size_t)p] = p + 4;
+	config.holdForRejoin = true;
+	Network net(config, hub.endpoint(1));
+	net.setClock([] { return 1; });
+	Network::LiveStart start;
+	start.frame = 2;
+	start.runAhead = 2;
+	net.beginLive(start);
+	net.disconnectPlayer(15, 2);
+	REQUIRE(net.isHeld(15));
+	for (int s = 0; s < 15; ++s)
+	{
+		if (s != 1) net.fillFromLog(s, 2, {}, -1, s == 0 ? std::vector<int>{ 15 } : std::vector<int>{});
+	}
+	CommandList pending;
+	net.update(2, pending);
+	REQUIRE(net.isFrameReady(2));
+	CommandList commands;
+	net.relayCommands(2, commands);
+	CHECK_FALSE(net.isHeld(15));
+	CHECK(net.rejoinFrame(15) == 3);
+	CHECK(net.rejoinFrame(7) == 0);
+	net.sendFrameDataToPlayer(7, 2, 2);
+	hub.tick();
+	bool found = false;
+	int from = -1;
+	std::vector<std::uint8_t> bytes;
+	while (hub.endpoint(7).receive(from, bytes))
+	{
+		NetCommandMsg msg;
+		std::string error;
+		REQUIRE_MESSAGE(NetPacket::decodeCommand(bytes, msg, &error), error);
+		if (msg.type == NETCOMMANDTYPE_FRAMERESEND && msg.targetSlot == 0)
+		{
+			CHECK(msg.rejoinMask == 0x8000);
+			CHECK(bytes[0] == NetPacket::kFrameResend16);
+			found = true;
+		}
+	}
+	CHECK(found);
+	CHECK(net.errors().empty());
+}
+
+TEST_CASE("p16 net: voting and router succession retain high-slot predecessors")
+{
+	Hub hub(16);
+	NetworkConfig config = configFor(15, 16, 2, 0);
+	for (int p = 0; p < 16; ++p) config.slotPlayerIndex[(size_t)p] = p + 4;
+	Network net(config, hub.endpoint(15));
+	net.setClock([] { return 1; });
+	Network::LiveStart start;
+	start.frame = 1;
+	start.runAhead = 2;
+	net.beginLive(start);
+	for (int s = 0; s < 15; ++s)
+	{
+		NetCommandMsg vote;
+		vote.type = NETCOMMANDTYPE_DISCONNECTVOTE;
+		vote.slot = (std::uint8_t)s;
+		vote.targetSlot = 15;
+		vote.frame = 1;
+		net.disconnectManager().processDisconnectCommand(net, vote, 1, 1);
+	}
+	CHECK(net.disconnectManager().countVotesForPlayer(net, 15, 1) == 15);
+	net.disconnectManager().voteForPlayerDisconnect(net, 0, 1);
+	CHECK(net.disconnectManager().countVotesForPlayer(net, 0, 1) == 1);
+	for (int s = 0; s < 14; ++s) net.disconnectPlayer(s, 2);
+	CHECK(net.packetRouterAt(1) == 0);
+	CHECK(net.packetRouterAt(2) == 14);
+	std::uint16_t gone = 0;
+	REQUIRE(net.dropClaims(14, 15, gone));
+	CHECK(gone == 0x3fff);
+	CHECK(net.verifyDropClaims(14, 15, gone) == 1);
+	CHECK(net.verifyDropClaims(14, 15, gone & ~(1u << 13)) == -1);
+	CHECK(net.errors().empty());
+}
 
 TEST_CASE("net core: a GameMessage and every net command survive the encoding bit for bit; malformed input is rejected, never truncated")
 {
@@ -420,6 +823,110 @@ TEST_CASE("net core: a replay file keeps the game, every frame's commands and ha
 	CHECK_FALSE(ReplayFile::parse(cut, f, &error));
 	bytes[0] = 'X';
 	CHECK_FALSE(ReplayFile::parse(bytes, f, &error));
+}
+
+// lane NETDIAG-1 (from a contributor's parser hardening and fuzz targets): counts that the remaining bytes cannot hold are refused before any entry
+// is read, with their own reason; valid input at the bounds decodes exactly as before
+TEST_CASE("net core: malformed desync counts and replay frame count are refused before consuming records")
+{
+	NetByteWriter w;
+	w.i32(0);
+	w.u32(1);
+	w.u32(0);
+	w.u32(0xFFFFFFFFu);
+	DesyncHalf half;
+	std::string error;
+	CHECK_FALSE(DesyncHalf::decode(w.data(), half, &error));
+	CHECK(error == "desync report section count 4294967295 exceeds the report's bytes");
+	w = NetByteWriter();
+	w.i32(0);
+	w.u32(1);
+	w.u32(0);
+	w.u32(0);
+	w.u32(0xFFFFFFFFu);
+	CHECK_FALSE(DesyncHalf::decode(w.data(), half, &error));
+	CHECK(error == "desync report object count 4294967295 exceeds the limit or the report's bytes");
+
+	ReplayHeader h;
+	ReplayWriter writer;
+	writer.setKeepCopy(true);
+	REQUIRE(writer.open("", h, &error));
+	writer.recordHash(1, 0);
+	std::vector<std::uint8_t> replay;
+	REQUIRE(writer.logUpTo(1, 0, replay, &error));
+	replay.resize(replay.size() - 9); // without the END record
+	w = NetByteWriter();
+	w.u8(1); // a frame record
+	w.u32(1);
+	w.u32(0xFFFFFFFFu);
+	replay.insert(replay.end(), w.data().begin(), w.data().end());
+	ReplayFile parsed;
+	CHECK_FALSE(ReplayFile::parse(replay, parsed, &error));
+	CHECK(error == "frame 1 command count 4294967295 exceeds the record's bytes");
+	CHECK(parsed.frames.empty());
+}
+
+TEST_CASE("net core: desync halves and replay frames at the new count bounds decode exactly as before")
+{
+	// a desync half with the encoder's object limit (kMaxReportObjects, 4,000), every entry at its smallest size (empty names): it round-trips
+	DesyncHalf half;
+	half.slot = 3;
+	half.frame = 77;
+	half.hash = 0xDEADBEEFu;
+	half.sections.push_back({ "", 1u });
+	half.sections.push_back({ "objects", 2u });
+	for (std::uint32_t i = 0; i < 4000; ++i)
+	{
+		GameLogic::ObjectStateHash o;
+		o.id = i + 1;
+		o.value = i * 3;
+		half.objects.push_back(o);
+	}
+	const std::vector<std::uint8_t> bytes = half.encode();
+	CHECK(bytes.size() == 4 * 4 + (8 + 15) + 4 + 4000 * 12);
+	DesyncHalf back;
+	std::string error;
+	REQUIRE_MESSAGE(DesyncHalf::decode(bytes, back, &error), error);
+	CHECK(back.encode() == bytes);
+	CHECK(back.objects.size() == 4000);
+	CHECK(back.sections[1].name == "objects");
+	// one object more than the encoder ever writes is refused (the bytes would hold it)
+	NetByteWriter w;
+	w.i32(0);
+	w.u32(1);
+	w.u32(0);
+	w.u32(0);
+	w.u32(4001);
+	for (int i = 0; i < 4001; ++i)
+	{
+		w.u32(1);
+		w.str("");
+		w.u32(0);
+	}
+	CHECK_FALSE(DesyncHalf::decode(w.data(), back, &error));
+	CHECK(error == "desync report object count 4001 exceeds the limit or the report's bytes");
+
+	// a replay frame of smallest commands (7 bytes each: no arguments) whose count is exactly what its bytes hold
+	ReplayHeader h;
+	ReplayWriter writer;
+	writer.setKeepCopy(true);
+	REQUIRE(writer.open("", h, &error));
+	CommandList l;
+	for (int i = 0; i < 5; ++i)
+	{
+		l.append(GameMessage(MSG_LOGIC_CRC, i));
+	}
+	writer.recordFrame(2, l);
+	writer.recordHash(3, 0);
+	std::vector<std::uint8_t> replay;
+	REQUIRE_MESSAGE(writer.logUpTo(3, 0, replay, &error), error);
+	replay.resize(replay.size() - 18); // without the HASH and END records: the frame record is the last bytes (u8 kind, u32 frame, u32 count, 5 x 7)
+	CHECK(std::vector<std::uint8_t>(replay.end() - 44, replay.end() - 35) == std::vector<std::uint8_t>{ 1, 2, 0, 0, 0, 5, 0, 0, 0 });
+	ReplayFile parsed;
+	REQUIRE_MESSAGE(ReplayFile::parse(replay, parsed, &error), error);
+	REQUIRE(parsed.frames.at(2).size() == 5);
+	CHECK(parsed.frames.at(2)[4].getPlayerIndex() == 4);
+	CHECK_FALSE(parsed.complete);
 }
 
 TEST_CASE("net core: the UDP transport delivers every command once and in order over localhost with 30 % of the datagrams dropped")

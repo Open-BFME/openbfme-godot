@@ -24,6 +24,7 @@
 
 #include "Common/SimulationProfile.h"
 #include "GameNetwork/GameInfo.h"
+#include "GameNetwork/JoinBuild.h"
 #include "GameNetwork/PlatformKind.h"
 
 #include <array>
@@ -32,6 +33,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -44,6 +46,10 @@ public:
 	{
 		std::string installId, deviceHash; ///< supplied by the host; never part of simulation state
 		std::string clientPlatform, clientVersion;
+		// lane JOINVER-1: the rest of the build a create / join tells (lobby.mjs checkBuild; the version is clientVersion): the build day and whether
+		// this is an official release (1), not (0), not told (-1)
+		std::string buildDate;
+		int buildOfficial = -1;
 		std::string profileDigest;   ///< the profile identity's MD5 (ProfileIdentity::digest): the lobby compares it at the join
 		// lane UBERJOIN-1: the simulation profile that digest is of (the player's performance mode): the room made and the room joined carry it as their
 		// "mode" ("normal" / "uber"); a join of a room in the other mode is the lobby's "mode" refusal. setProfile changes both together
@@ -59,9 +65,11 @@ public:
 		std::uint32_t longPollS = 0;
 		// lane PLATFORMICON-1: the one value this client tells the lobby about itself (the create / join body's "platform"); None: nothing is sent
 		PlatformKind platform = PlatformKind::None; // the game's glue sets localPlatform()
+		bool enableSocial = false; ///< SOCIAL-1: the client also runs the social calls (friends, presence, invites, the inbox poll)
 	};
 	struct HttpRequest
 	{
+		enum Channel { Ordinary, Room, Social };
 		int id = 0;
 		std::string method; ///< "GET" / "POST"
 		std::string path;   ///< "/v1/..." (the host prefixes the lobby URL)
@@ -69,6 +77,123 @@ public:
 		std::string token;  ///< the bearer token ("" before the sign-in)
 		bool held = false;  ///< lane ONLINE-5: a poll the lobby may keep for up to holdSeconds: sent on a connection of its own, with a longer timeout
 		int holdSeconds = 0;
+		int maxSlots = MAX_SLOTS; ///< X-OpenBFME-Max-Slots: absent on legacy clients, which support eight slots
+		Channel channel = Ordinary;
+	};
+	struct Player
+	{
+		std::string pid, code;
+		std::u16string nick;
+	};
+	struct Presence
+	{
+		std::string pid, state, game, map, mode;
+		bool hasGame = false, joinable = false, hasMap = false, hasMode = false;
+		std::uint64_t since = 0;
+	};
+	struct Request
+	{
+		Player from, to;
+		std::string id;
+		std::uint64_t at = 0;
+	};
+	struct Invite
+	{
+		Player from, to;
+		std::string id, game, kind, mode, note;
+		bool hasMode = false;
+		std::uint64_t expires = 0;
+	};
+	struct Message
+	{
+		std::uint64_t id = 0, at = 0;
+		std::string from, to, clientId, text;
+	};
+	struct Privacy
+	{
+		std::string invites = "friends_or_room";
+		std::string challenges = "friends_or_room";
+		std::string requests = "anyone";
+		std::string presence = "friends";
+	};
+	struct Me
+	{
+		std::string pid, code;
+		std::u16string nick;
+		Privacy privacy;
+		bool hidden = false;
+	};
+	struct Notice
+	{
+		std::string id, kind, invite;
+		bool hasInvite = false;
+		std::uint64_t at = 0;
+	};
+	struct RecentPlayer
+	{
+		Player player;
+		std::string target;
+	};
+	struct RecentGame
+	{
+		std::string game;
+		std::uint64_t at = 0;
+		std::vector<RecentPlayer> players;
+	};
+	struct Block
+	{
+		Player player;
+		std::string note;
+		std::uint64_t at = 0;
+	};
+	struct ChatHead
+	{
+		std::string pid;
+		std::uint64_t lastId = 0, readId = 0;
+	};
+	struct Thread
+	{
+		std::string pid, code;
+		std::u16string nick;
+		std::uint64_t lastId = 0, readId = 0;
+	};
+	struct Conversation
+	{
+		std::vector<Message> messages;
+		std::uint64_t lastId = 0, readId = 0;
+		std::uint64_t historyThrough = 0;
+		bool hasNext = false;
+		std::uint64_t next = 0;
+	};
+	struct SocialStats
+	{
+		std::uint64_t players = 0, gamesOpen = 0, gamesRunning = 0, asOf = 0;
+	};
+	struct SocialState
+	{
+		bool available = false;
+		/// ONLINEMENU-1 (BATCH-P3 live-lobby check): the lobby has no social service: its /v1/health lists no "social" feature (the deployed
+		/// lobby before the social routes), or it answered not_found for /v1/me or the inbox. Nothing social is asked; the screens say so
+		bool unsupported = false;
+		Me me;
+		std::vector<Player> friends;
+		std::vector<Request> requests;
+		std::vector<Invite> invites;
+		std::vector<Presence> presence;
+		std::vector<Notice> notices;
+		std::vector<RecentGame> recent;
+		std::vector<Block> blocks;
+		std::vector<ChatHead> chatHeads;
+		std::vector<Thread> threads;
+		std::map<std::string, Conversation> conversations;
+		std::string seq, blocksNext, threadsNext;
+		bool hasBlocksNext = false, hasThreadsNext = false;
+		SocialStats stats;
+	};
+	struct SocialEvent
+	{
+		enum Kind { Changed, Chat, Recovery, NoticeEvent, Error } kind = Changed;
+		std::string request, code, pid, id, text;
 	};
 	// One game of the server browser (lobby.mjs publicGame)
 	struct Listing
@@ -80,10 +205,22 @@ public:
 		std::string map;         ///< the map cache key
 		int players = 0;         ///< human players in it
 		int openSlots = 0;
+		int mapStartCount = LEGACY_MAX_SLOTS;
 		bool password = false;
 		SimulationProfile mode = SimulationProfile::Faithful; ///< lane UBERJOIN-1: the game's performance mode ("mode": absent = "normal", a room of an old client)
+		bool cheatMode = false;  ///< lane CHEAT-1: the host turned Cheat Mode on ("cheatMode": absent = off, a lobby before CHEAT-1)
 		std::string state;       ///< "open", or "started" (refreshList(true): a running game, to watch; mine(): the player's own, to rejoin)
 		int slot = -1;           ///< mine(): the player's slot in the running game
+		// lane JOINVER-1: the game's profile id and its host's build (an older lobby: both empty); a profile other than this client's cannot be joined
+		std::string profile;
+		JoinBuild::Build build;
+	};
+	// lane JOINVER-1: the lobby's 409 "profile" (a join refused for a different build): both sides' builds and profile ids (an older lobby: none)
+	struct ProfileRefusal
+	{
+		bool valid = false;
+		JoinBuild::Build host, yours;
+		std::string hostProfile, yourProfile;
 	};
 	struct ChatLine
 	{
@@ -121,6 +258,15 @@ public:
 		bool ready = false;
 		bool you = false;
 		std::string playerId; ///< opaque reporting target, never an install or device identifier
+		// lane ONLINEMENU-1: the slot's Create-a-Hero record (lobby.mjs gameView `cah`) could not be read (why); the slot is shown without a hero and
+		// the host's start is refused by name until it is changed (a START carrying it would fail on every client, OnlineStart's "cah" check)
+		std::string heroProblem;
+		std::string pid;      ///< empty when the personalized view has no social pid
+		bool blocked = false;
+		// lane ONLINEMENU-1: the player's link to the room's relay as their client reported it (lobby.mjs gameView `link`, the Connections screen):
+		// linkKnown false = not reported yet; rttMs -1 = the relay did not answer them at all (loss 100)
+		bool linkKnown = false;
+		int rttMs = -1, lossPct = 100;
 	};
 
 	// the bounds of an answer (lobby.mjs's own limits; Sol r1: a hostile lobby must not exhaust memory). The transport stops reading a body at
@@ -132,7 +278,8 @@ public:
 	static constexpr std::size_t kMaxChatBytes = 256;          ///< a chat line (players' 200 bytes, the lobby's own lines name a player)
 	static constexpr std::size_t kMaxMotdBytes = 2000;         ///< lobby.mjs motdFromEnv
 	static constexpr std::size_t kMaxTokenBytes = 1024;        ///< a session token (base64url(JSON).base64url(HMAC): about 150 bytes)
-	static constexpr std::size_t kMaxStartBytes = 16 * 1024;   ///< a START (8 slots, no Create-a-Hero records: about 1.5 KiB)
+	// a START: 8 slots are about 1.5 KiB; lane ONLINEMENU-1: with up to 8 Create-a-Hero records of kMaxCreateAHeroBytes (5,464 bytes of base64 each)
+	static constexpr std::size_t kMaxStartBytes = 64 * 1024;
 	static constexpr std::size_t kMaxRefusalBytes = 512;       ///< a refusal's message ("not ready: " and up to 8 names)
 	static constexpr std::size_t kMaxStatusBytes = 8192;
 	static constexpr std::size_t kMaxNoticeBytes = 4000;
@@ -145,7 +292,8 @@ public:
 	// a rejoin or spectator ticket, a session token's HMAC; with its dot-joined parts: the whole token) becomes "<redacted>". The lobby's ids (16 hex
 	// digits) and the profile digest (32) stay
 	static std::string redact(const std::string &text);
-	std::string platformField() const; // lane PLATFORMICON-1: ,"platform":"<name>" or nothing
+	std::string platformField() const;
+	std::string buildField() const; ///< lane JOINVER-1: ",\"build\":{...}" for create / join bodies, or "" (an odd version is not told) // lane PLATFORMICON-1: ,"platform":"<name>" or nothing
 
 	explicit OnlineLobbyClient(const Options &options);
 
@@ -167,8 +315,10 @@ public:
 	const std::vector<std::string> &mineLeft() const { return m_mineLeft; }
 	// the account name a session token names (its payload, lobby.mjs makeToken: base64url(JSON).base64url(HMAC)); "" when it is not one
 	static std::u16string sessionName(const std::string &token);
-	// DEVINPR-1: the install id a session token was issued to (lobby.mjs guest puts the account's install in it); "" when none or not a token
-	static std::string sessionInstall(const std::string &token);
+	// DEVINPR-1, ONLINEMENU-1: whether a session token was issued to this install. The token no longer shows the install (PR #8 review finding 2:
+	// it is the credential that signs in as the player); it carries a public tag of it (lobby.mjs installTag: the first 16 bytes of HMAC-SHA256 keyed
+	// with "openbfme-install-tag-v1" over the install id, hex), compared here. False for a token without one (older lobbies) or not a token
+	static bool sessionMatchesInstall(const std::string &token, const std::string &installId);
 	void fetchMotd();                                     // GET /v1/motd
 	// POST /v1/games: host a game; `setup` gives the map, the cash, the rules and the slot states (the host's slot must be SLOT_PLAYER, the other human
 	// slots open). `password` "" = none
@@ -180,15 +330,80 @@ public:
 	void leaveGame();                                     // POST .../leave; the client is out of the game at once (Removed "left")
 	// the local player's own slot (POST .../slot); kKeep leaves a field
 	static constexpr int kKeep = -1000;
-	void setOwnSlot(int faction, int color, int startPos, int team);
+	// lane ONLINEMENU-1: `handicap` the slot's GameSlot + 0x20 (0, -5 .. -95: SkirmishGameSlot::handicapValid); kKeep leaves it
+	void setOwnSlot(int faction, int color, int startPos, int team, int handicap = kKeep);
 	// host: a slot that is not a player's (its state open / closed / an AI level, and the AI's choices)
-	void setOtherSlot(int slot, SlotState state, int faction, int color, int startPos, int team);
+	void setOtherSlot(int slot, SlotState state, int faction, int color, int startPos, int team, int handicap = kKeep);
+	// lane ONLINEMENU-1: the local player's Create-a-Hero for its own slot (POST .../slot {"cah": base64 of its wire form | null}); false + *error when the
+	// record is over kMaxCreateAHeroBytes (nothing is sent)
+	bool setOwnCreateAHero(const CreateAHeroHero *hero, std::string *error);
+	// lane ONLINEMENU-1: the local player's link to the room's relay (POST .../link {rtt, loss}, rttMs -1: {rtt: null}); display data for the Connections
+	// screen, it unreadies nobody. Out of range values are refused here (nothing sent)
+	void reportLink(int rttMs, int lossPct);
+	const std::string &roomRelay() const { return m_roomRelay; } ///< lane ONLINEMENU-1: the relay the room's START will name ("" none)
+	/// lane JOINVER-1: whether the lobby's game view names its relay at all (false: an older lobby, without the Connections screen's data)
+	bool roomRelayTold() const { return m_roomRelayTold; }
+	// lane ONLINEMENU-1 (owner, 2026-10-20: "ping to server"): the lobby's response time, the fastest of the last kLobbyRttSamples answers to ordinary
+	// requests (held polls excluded: the lobby keeps them on purpose), in ms from the request handed to the host to its answer; -1 before the first
+	int lobbyRttMs() const;
+	static constexpr std::size_t kLobbyRttSamples = 8;
+	// lane ONLINEMENU-1: the local player's latest measured link to the relay (the room's, else the lobby's: lobbyRelay), every measurement, not
+	// only the reported steps; display data (the corner's ping). ownRelayKnown false: not measured yet; ownRelayRttMs -1 with it: no answer
+	void noteOwnLink(int rttMs, int lossPct)
+	{
+		m_ownRelayKnown = true;
+		m_ownRelayRtt = rttMs;
+		m_ownRelayLoss = lossPct;
+	}
+	void forgetOwnLink()
+	{
+		m_ownRelayKnown = false;
+		m_ownRelayRtt = -1;
+		m_ownRelayLoss = 100;
+	}
+	bool ownRelayKnown() const { return m_ownRelayKnown; }
+	int ownRelayRttMs() const { return m_ownRelayRtt; }
+	// lane ONLINEMENU-1: the relay the lobby names to anyone (GET /v1/health "relays", the first: the one a room's START names), so the player's ping
+	// to the game server is known outside a room too. Display data: a failure is kept in relayLookupError() (the screens note it), never a box
+	void fetchRelays();
+	bool relaysAsked() const { return m_relaysAsked; }
+	/// lane JOINVER-1: the last join refused for a different build (valid only when the lobby named the builds)
+	const ProfileRefusal &profileRefusal() const { return m_profileRefusal; }
+	/// lane JOINVER-1: this client's build as the lobby is told it
+	JoinBuild::Build ownBuild() const;
+	const std::string &profileDigest() const { return m_options.profileDigest; }
+	/// ONLINEMENU-1: a feature the lobby's /v1/health `features` names ("social", "oauth", "email"), asked before each guest sign-in
+	bool lobbyHasFeature(const std::string &name) const { return m_lobbyFeatures.count(name) != 0; }
+	const std::string &lobbyRelay() const { return m_lobbyRelay; }
+	const std::string &relayLookupError() const { return m_relayLookupError; }
 	// host: the game options (POST .../setup)
 	void setSetup(const SkirmishGameInfo &setup);
 	void setReady(bool ready);
 	void chat(const std::u16string &text);
 	void kick(int slot);
 	void start();                                         // host: POST .../start (the lobby builds every player's START)
+	void refreshSocial();
+	bool setPrivacy(const Privacy &privacy);
+	bool setPresence(const std::string &state, bool hasHidden = false, bool hidden = false);
+	bool requestFriendCode(const std::string &code);
+	bool requestFriend(const std::string &pid);
+	bool acceptFriend(const std::string &requestId);
+	bool declineFriend(const std::string &requestId);
+	bool removeFriend(const std::string &pid);
+	bool blockPlayer(const std::string &pid, const std::string &note = "");
+	bool unblockPlayer(const std::string &pid);
+	bool fetchBlocks(const std::string &after = "");
+	bool sendInvite(const std::string &to, const std::string &kind, const std::string &mode = "", const std::string &note = "");
+	bool acceptInvite(const std::string &id);
+	bool acceptInviteAfterLeave(const std::string &id);
+	bool declineInvite(const std::string &id, bool busy = false);
+	bool fetchRecent();
+	bool fetchThreads(const std::string &after = "");
+	bool fetchMessages(const std::string &pid, std::uint64_t after = 0);
+	bool sendMessage(const std::string &pid, const std::string &clientId, const std::string &text);
+	bool markRead(const std::string &pid, std::uint64_t through);
+	bool generateRecovery();
+	std::string takeRecoveryCode();
 
 	// moves the client on: schedules the staging room's poll
 	void update(std::uint64_t nowMs);
@@ -197,6 +412,7 @@ public:
 	// the answer to request `id`: the HTTP status and body, or a transport error ("" when the request reached the lobby)
 	void deliver(int id, int status, const std::string &body, const std::string &transportError);
 	std::vector<Event> takeEvents();
+	std::vector<SocialEvent> takeSocialEvents();
 
 	// ---- state ----
 	bool signedIn() const { return !m_token.empty(); }
@@ -209,6 +425,9 @@ public:
 	const std::string &gameId() const { return m_gameId; }
 	const std::u16string &gameName() const { return m_gameName; }
 	bool amIHost() const { return inGame() && m_localSlot >= 0 && m_localSlot == m_hostSlot; }
+	// the game view's "private" (lobby.mjs: a room-code room is a Quick Match's or a tournament's, ONLINEHUB-1): SOLO-1's
+	// one-human start is for a custom game only; a private room keeps the two-human minimum; lane CHEAT-1: and has no Cheat Mode
+	bool privateRoom() const { return m_privateRoom; }
 	int localSlot() const { return m_localSlot; }
 	int hostSlot() const { return m_hostSlot; }
 	const SkirmishGameInfo &gameInfo() const { return m_info; }
@@ -239,6 +458,8 @@ public:
 	bool setProfile(SimulationProfile profile, const std::string &digest, std::string *why);
 	// the room's mode (the host's: it can't differ inside a room): the view's "mode", Faithful before a room
 	SimulationProfile gameMode() const { return m_info.simulationProfile; }
+	const SocialState &social() const { return m_social; }
+	const std::string &lastSocialError() const { return m_lastSocialError; }
 	std::uint32_t viewSeq() const { return m_seq; } ///< the game view's seq (moves with every change the lobby made)
 	bool busy() const { return m_inFlight != 0 || !m_queue.empty(); }
 	// lane ONLINE-5: the seconds the lobby holds a poll (its "wait"; 0: it does not, or no poll answered yet), and whether a held poll is out
@@ -260,6 +481,7 @@ public:
 	static bool parseMode(const std::string &name, SimulationProfile *out);
 
 private:
+	std::string joinIdentityFields() const;
 	struct Pending
 	{
 		std::string kind;
@@ -272,6 +494,14 @@ private:
 	bool readGameView(const JsonValue &game, std::string *error, bool fresh = false);
 	void leftGame(const std::string &why);
 	void handle(const Pending &p, int status, const JsonValue &body);
+	void handleSocial(const Pending &p, const JsonValue &body);
+	void startSocial();
+	void resetSocialSession();
+	void stopSocial(const std::string &code, const std::string &request = "social");
+	void markSocialUnsupported(); ///< ONLINEMENU-1: the lobby has no social service (SocialState::unsupported)
+	void socialRefuse(const std::string &request, const std::string &code);
+	void socialQueue(const std::string &kind, const std::string &method, const std::string &path, const std::string &body = "");
+	bool socialReady(const std::string &request);
 
 	Options m_options;
 	std::string m_token;
@@ -284,10 +514,12 @@ private:
 	// the game we are in
 	std::string m_gameId;
 	std::u16string m_gameName;
+	bool m_privateRoom = false;
 	int m_localSlot = -1, m_hostSlot = -1;
 	SkirmishGameInfo m_info;
 	std::vector<std::string> m_platformNotes; // lane PLATFORMICON-1
 	std::array<SlotView, MAX_SLOTS> m_slots{};
+	std::string m_roomRelay; // lane ONLINEMENU-1
 	std::uint32_t m_seq = 0;      ///< the game view's seq
 	std::uint32_t m_chatSince = 0; ///< the last chat line read
 	std::string m_startJson;
@@ -301,6 +533,16 @@ private:
 	Pending m_current;
 	std::deque<Pending> m_queue;
 	std::vector<Event> m_events;
+	SocialState m_social;
+	std::vector<SocialEvent> m_socialEvents;
+	std::string m_lastSocialError, m_recoveryCode, m_pendingSocialAcceptInvite;
+	std::set<std::string> m_seenSocialNotices;
+	bool m_socialStarted = false, m_socialStopped = false, m_socialDue = false, m_socialFirstInbox = true;
+	int m_socialHeldInFlight = 0;
+	Pending m_socialHeld;
+	std::uint64_t m_socialNextPoll = 0, m_socialBackoffUntil = 0, m_socialSentAt = 0;
+	std::string m_socialAskedSeq;
+	bool m_gamePasswordProtected = false;
 	std::map<std::string, int> m_sent;
 	// lane ONLINE-5: long polling and the sender's own chat lines
 	int m_holdCap = 0;              ///< the lobby's "wait" (seconds); 0 until a poll answer carried one
@@ -311,4 +553,13 @@ private:
 	std::uint32_t m_heldSeq = 0, m_heldSince = 0; ///< what the held poll that is out asked from
 	int m_backoffS = 0;             ///< Sol r1: the last poll answer's "backoff" (seconds before the next poll; 0: none)
 	int m_ownEcho = 0;              ///< chat lines shown when they were sent whose copy from the lobby ("you") is still to come
+	std::uint64_t m_inFlightSentAt = 0; ///< lane ONLINEMENU-1: when the ordinary request in flight was handed to the host
+	std::deque<int> m_lobbyRtts;        ///< its last answers' times (lobbyRttMs)
+	int m_ownRelayRtt = -1, m_ownRelayLoss = 100; ///< noteOwnLink
+	bool m_ownRelayKnown = false;
+	bool m_relaysAsked = false;
+	bool m_roomRelayTold = false; ///< lane JOINVER-1
+	ProfileRefusal m_profileRefusal; ///< lane JOINVER-1
+	std::set<std::string> m_lobbyFeatures; ///< ONLINEMENU-1: /v1/health `features` (empty: an older lobby, or the answer was unreadable)
+	std::string m_lobbyRelay, m_relayLookupError; ///< fetchRelays
 };

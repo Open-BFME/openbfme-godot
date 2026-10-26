@@ -12,11 +12,13 @@
 #include "Common/Xfer.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
 
+#include <cfloat>
 #include <map>
 #include <stdexcept>
 #include <utility>
@@ -49,7 +51,7 @@ namespace
 const char *const kStopPartition =
 	"[S-1020] partition: ThePartitionManager is RotWK's 21 loose quadtrees (RW 0xA3BD20 .. 0xA3C7D0, ported: registration, dirty update, range / region / "
 	"closest queries, the STLport introsort of the hits); inference: the geometry is the template's (RW keeps it per object and RW 0x68B2CB marks a change), "
-	"the undetected defector bit (Object + 0x458 bit 1) is never set (no defection, S-141), distance type 4 needs the shape overlap test RW 0xAD2CE0 (refused), "
+	"the undetected defector bit (Object + 0x458 bit 1) is never set (no defection, S-141), distance type 4 (RW 0xA3C7D0 -> RW 0xAD2CE0) tests the template's shapes, "
 	"a game without a map keeps the constructor's empty region (every object in cell 0, 0; getClosestObject's range clamps to 0: only a coincident or overlapping candidate can still be returned)";
 } // namespace
 
@@ -565,7 +567,6 @@ bool PartitionManager::allowed(Object &obj, const PartitionFilterList &filters) 
 // the distance functions of RW table 0xDBDAF8: the x87 register value (24-bit significand, the wide exponent of the carrier)
 double PartitionManager::distance(DistanceCalculationType type, const Coord3D &c, const Entry &e, float radiusSqr) const
 {
-	(void)radiusSqr;
 	const Coord3D *p = e.object->getPosition();
 	switch (type)
 	{
@@ -603,7 +604,26 @@ double PartitionManager::distance(DistanceCalculationType type, const Coord3D &c
 			return (d < 0.0) ? -sq : sq;
 		}
 		case FROM_GEOMETRY_OVERLAP:
-			throw std::logic_error("partition: distance type 4 (RW 0xA3C7D0) needs the shape overlap test RW 0xAD2CE0, not ported [S-1020]");
+		{
+			// RW 0xA3C7D0: a static GeometryInfo (RW 0xDEF920, built once by RW 0x450429(SPHERE, small, 2, 2, 2)) whose first shape's major radius
+			// (+ 0x08) becomes fsqrt(radiusSqr) (the float argument, fstp dword; RW 0xAD2860 then only refreshes its bounds); the entry's own
+			// geometry (proxy vslot 0) CollidesWith (RW 0xAD2CE0) at the object's position (vslot 1) and angle (vslot 2) against that sphere at the
+			// centre with angle 0: 0.0 (RW 0xC1B594) on a hit, else FLT_MAX (RW 0xBD1910)
+			ObjectGeometry::Shape sphere;
+			sphere.type = ObjectGeometry::SHAPE_SPHERE;
+			sphere.height = 2.0f;
+			sphere.majorRadius = SimMath::fstpDword(SimMath::sqrtPC24((double)radiusSqr));
+			sphere.minorRadius = 2.0f;
+			const std::vector<ObjectGeometry::Shape> query = { sphere };
+			const ThingTemplate *tt = static_cast<const ThingTemplate *>(e.object->getTemplate());
+			if (!tt)
+			{
+				throw std::logic_error("partition: distance type 4 (RW 0xA3C7D0) on an object without a template");
+			}
+			const bool hit = NotifyCrushModules::geometriesOverlap(ObjectGeometry::cachedShapesOf(*tt->getFinalOverride()), *p, e.object->getOrientation(),
+			                                                       query, c, 0.0f);
+			return hit ? 0.0 : (double)FLT_MAX;
+		}
 		case FROM_CENTER_2D:
 		default:
 		{
@@ -615,49 +635,42 @@ double PartitionManager::distance(DistanceCalculationType type, const Coord3D &c
 	}
 }
 
-// Not retail (performance): a bound in binary64 (SSE, deterministic) of the distance() value. The exact value carries at most a few 2^-24 relative roundings
-// (the PC24 differences, squares, sums, the float store of type 2, the PC24 root and radius subtraction), so a candidate whose bound exceeds radiusSqr by the
-// relative margin 1e-5 (and, for the bounding types, after an absolute margin of 1e-5 of the magnitudes involved) is rejected by the exact test as well. A
-// NaN compares false and goes to the exact test; so does every candidate near the boundary.
-bool PartitionManager::surelyBeyond(DistanceCalculationType type, const Coord3D &c, const Entry &e, double radiusSqr) const
+// Not retail (performance): a bound in binary64 (SSE, deterministic) of the distance() value of a bounding type. The exact value carries at most a few
+// 2^-24 relative roundings (the PC24 differences, squares, sums, the float store of type 2, the PC24 root and radius subtraction), so a candidate whose
+// bound exceeds radiusSqr by the relative margin 1e-5, after an absolute margin of 1e-5 of the magnitudes involved, is rejected by the exact test as
+// well. A NaN compares false and goes to the exact test; so does every candidate near the boundary. The bound never decides anything itself, it only
+// skips an exact test that would reject. Its arithmetic is SimMath's (one SSE2 rounding each, tools/sim/sim_audit.py); the centre types are not bounded:
+// their exact test (no square root) costs no more than the bound would.
+inline bool PartitionManager::surelyBeyond(DistanceCalculationType type, const Coord3D &c, const Entry &e, double radiusSqr) const
 {
-	const Coord3D *p = e.object->getPosition();
-	const double limit = SimMath::mulD(radiusSqr, 1.00001);
-	const double dx = SimMath::subD((double)p->x, (double)c.x);
-	const double dy = SimMath::subD((double)p->y, (double)c.y);
-	const double s2 = SimMath::addD(SimMath::mulD(dx, dx), SimMath::mulD(dy, dy));
-	auto absD = [](double v) { return v < 0.0 ? SimMath::subD(0.0, v) : v; };
-	switch (type)
+	if (type != FROM_BOUNDINGSPHERE_2D && type != FROM_BOUNDINGSPHERE_3D)
 	{
-		case FROM_CENTER_2D:
-			return s2 > limit;
-		case FROM_CENTER_3D:
-		{
-			const double dz = SimMath::subD((double)p->z, (double)c.z);
-			return SimMath::addD(s2, SimMath::mulD(dz, dz)) > limit;
-		}
-		case FROM_BOUNDINGSPHERE_2D:
-		{
-			const double r = (double)entryGeometry(e).circle;
-			const double q = SimMath::sqrtd(s2);
-			const double err = SimMath::addD(SimMath::mulD(SimMath::addD(q, absD(r)), 1.0e-5), 1.0e-20);
-			const double lo = SimMath::subD(SimMath::subD(q, r), err);
-			return lo > 0.0 && SimMath::mulD(lo, lo) > limit;
-		}
-		case FROM_BOUNDINGSPHERE_3D:
-		{
-			const Geometry &g = entryGeometry(e);
-			const double dz0 = SimMath::subD((double)p->z, (double)c.z);
-			const double dz = SimMath::addD(dz0, (double)g.centerZ);
-			const double q = SimMath::sqrtd(SimMath::addD(s2, SimMath::mulD(dz, dz)));
-			const double mag = SimMath::addD(SimMath::addD(q, absD((double)g.sphere)), SimMath::addD(absD((double)g.centerZ), absD(dz0)));
-			const double err = SimMath::addD(SimMath::mulD(mag, 1.0e-5), 1.0e-20);
-			const double lo = SimMath::subD(SimMath::subD(q, (double)g.sphere), err);
-			return lo > 0.0 && SimMath::mulD(lo, lo) > limit;
-		}
-		default:
-			return false;
+		return false;
 	}
+	using SimMath::addD;
+	using SimMath::mulD;
+	using SimMath::subD;
+	const Coord3D *p = e.object->getPosition();
+	const double limit = mulD(radiusSqr, 1.00001);
+	const double dx = subD((double)p->x, (double)c.x);
+	const double dy = subD((double)p->y, (double)c.y);
+	const double s2 = addD(mulD(dx, dx), mulD(dy, dy));
+	if (type == FROM_BOUNDINGSPHERE_2D)
+	{
+		const double r = (double)entryGeometry(e).circle;
+		const double q = SimMath::sqrtd(s2);
+		const double err = addD(mulD(addD(q, SimMath::absD(r)), 1.0e-5), 1.0e-20);
+		const double lo = subD(subD(q, r), err);
+		return lo > 0.0 && mulD(lo, lo) > limit;
+	}
+	const Geometry &g = entryGeometry(e);
+	const double dz0 = subD((double)p->z, (double)c.z);
+	const double dz = addD(dz0, (double)g.centerZ);
+	const double q = SimMath::sqrtd(addD(s2, mulD(dz, dz)));
+	const double mag = addD(addD(q, SimMath::absD((double)g.sphere)), addD(SimMath::absD((double)g.centerZ), SimMath::absD(dz0)));
+	const double err = addD(mulD(mag, 1.0e-5), 1.0e-20);
+	const double lo = subD(subD(q, (double)g.sphere), err);
+	return lo > 0.0 && mulD(lo, lo) > limit;
 }
 
 // RW 0xA3A860 (the recursion kept as written: the node's list, then the children 0, 1 (y low), 2, 3 (y high) that overlap the cell rectangle)
@@ -686,6 +699,10 @@ void PartitionManager::walk(const Node *node, std::uint32_t childNodes, int x0, 
 			}
 			else
 			{
+				if (m_walkPreFilter && !m_walkPreFilter->allow(*e->object))
+				{
+					continue; // lane UBER-3W: the chain's first filter refuses it (a pure one; asked before the distance's square root)
+				}
 				if (m_walkPreReject && surelyBeyond(type, *center, *e, radiusSqr))
 				{
 					continue; // the exact test below would reject it (performance)
@@ -750,10 +767,6 @@ PartitionHits PartitionManager::iterateObjectsInRange(const Coord3D &center, flo
 	{
 		type = FROM_CENTER_2D;
 	}
-	if (type == FROM_GEOMETRY_OVERLAP)
-	{
-		throw std::logic_error("partition: distance type 4 (RW 0xA3C7D0) needs the shape overlap test RW 0xAD2CE0, not ported [S-1020]");
-	}
 	std::uint32_t layers = layerMask(filters);
 	const int x0 = (int)cellX(SimMath::pc24Sub(center.x, radius));
 	const int x1 = (int)cellX(SimMath::pc24Add(radius, center.x));
@@ -761,6 +774,7 @@ PartitionHits PartitionManager::iterateObjectsInRange(const Coord3D &center, flo
 	const int y1 = (int)cellY(SimMath::pc24Add(radius, center.y));
 	const float radiusSqr = SimMath::pc24Mul(radius, radius);
 	m_walkPreReject = m_preReject && !(x0 == 0 && y0 == 0 && x1 == kCells - 1 && y1 == kCells - 1);
+	m_walkPreFilter = (filters.begin() != filters.end() && (*filters.begin())->beforeDistance()) ? *filters.begin() : nullptr;
 	std::vector<PartitionHit> out = takeBuffer();
 	for (int i = 0; i < kLayerCount; ++i)
 	{
@@ -770,6 +784,7 @@ PartitionHits PartitionManager::iterateObjectsInRange(const Coord3D &center, flo
 		}
 		layers >>= 1;
 	}
+	m_walkPreFilter = nullptr;
 	sortHits(out, order);
 	return PartitionHits(*this, std::move(out));
 }
@@ -1047,16 +1062,18 @@ void PartitionManager::sortHits(std::vector<PartitionHit> &hits, IterOrderType o
 
 // ---- RW 0xA3BDB0: the closest object -------------------------------------------------------------------------------------------------------------------------
 
-namespace
-{
 // a node of the search (24 bytes in RW: key, node, child node count, x, y, size)
-struct SearchNode
+struct PartitionManager::SearchNode
 {
 	std::int32_t key = 0;
 	const void *node = nullptr;
 	std::uint32_t childNodes = 0;
 	std::int32_t x = 0, y = 0, size = 0;
 };
+
+namespace
+{
+using SearchNode = PartitionManager::SearchNode;
 
 // RW 0xA3B0A0 __push_heap (a max-heap on the key: `parent.key < value.key` moves the parent down)
 void searchPushHeap(SearchNode *first, int hole, int top, SearchNode value)
@@ -1125,7 +1142,23 @@ Object *PartitionManager::getClosestObject(const Coord3D &center, float maxDist,
 		type = FROM_CENTER_2D;
 	}
 	std::uint32_t layers = layerMask(filters);
+	// lane UBER-2A (performance): the heap's storage is kept between calls (no allocation per scan); a nested query (a filter that scans) finds it taken and
+	// makes its own
 	std::vector<SearchNode> heap;
+	heap.swap(m_searchHeap);
+	heap.clear();
+	struct GiveBack
+	{
+		std::vector<SearchNode> &heap, &keep;
+		~GiveBack()
+		{
+			if (keep.capacity() < heap.capacity())
+			{
+				heap.clear();
+				keep.swap(heap);
+			}
+		}
+	} giveBack{ heap, m_searchHeap };
 	// RW 0xA3BE70: one root per walked layer, appended (all keys 0)
 	for (int i = 0; i < kLayerCount; ++i)
 	{
@@ -1180,6 +1213,10 @@ Object *PartitionManager::getClosestObject(const Coord3D &center, float maxDist,
 		const Node *node = static_cast<const Node *>(cur.node);
 		for (const Entry *e = node->head; e; e = e->nodeNext)
 		{
+			if (m_preReject && surelyBeyond(type, center, *e, (double)best))
+			{
+				continue; // lane UBER-2A (performance): the exact test below would reject it (d > best), the same decision
+			}
 			const double d = distance(type, center, *e, 0.0f);
 			const float cand = SimMath::fstpDword(d);
 			if (d > (double)best)

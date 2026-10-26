@@ -153,7 +153,8 @@ public:
 	TurretIdleState(AIStateMachine &m, TurretAI &t) : TurretStateBase(m, t, "TurretAIIdleState") {}
 	StateReturnType onEnter() override
 	{
-		// RW 0x8DC6E7: the AI's mood check is pushed back (RW 0x662DD9) and its turret sync cleared (AI + 0x210): not ported (S-1106); then RW 0x8DC6B0
+		// RW 0x8DC6E7: the AI's mood check is pushed back (RW 0x662DD9, lane TARGET-1); its turret sync (AI + 0x210) is not cleared (S-1106); then RW 0x8DC6B0
+		ai().resetNextMoodCheckTime();
 		const unsigned n = now();
 		const TurretAIData &d = turret().data();
 		m_nextIdleScan = n + (unsigned)owner().logic().random().getValue((int)d.m_minIdleScanInterval, (int)d.m_maxIdleScanInterval, kTurretAICpp, 0x524);
@@ -177,6 +178,7 @@ public:
 		x.xferVersion(v);
 		x.xferUnsignedInt(&m_nextIdleScan);
 	}
+	bool hasPersistentCrc() const override { return true; } // lane UBER-2C
 
 private:
 	unsigned m_nextIdleScan = 0; // + 0x20
@@ -219,6 +221,7 @@ public:
 		x.xferVersion(v);
 		x.xferReal(&m_desiredAngle);
 	}
+	bool hasPersistentCrc() const override { return true; } // lane UBER-2C
 
 private:
 	float m_desiredAngle = 0.0f; // + 0x20
@@ -277,6 +280,7 @@ public:
 		x.xferVersion(v);
 		x.xferUnsignedInt(&m_timestamp);
 	}
+	bool hasPersistentCrc() const override { return true; } // lane UBER-2C
 
 private:
 	unsigned m_timestamp = 0; // + 0x20
@@ -636,8 +640,8 @@ bool TurretAI::isSweepEnabled() const
 
 unsigned TurretAI::nextIdleMoodTargetFrame() const
 {
-	// RW 0x8DC693 reads the AI's next mood check (AI + 0x21C), which the port does not keep (S-1106): the AI's MoodAttackCheckRate from now (now: no scan)
-	return m_ai->frame() + m_ai->moodCheckInterval();
+	// RW 0x8DC693: the AI's next mood check (AI + 0x21C; lane TARGET-1 keeps it)
+	return m_ai->nextMoodCheckTime();
 }
 
 bool TurretAI::isAnyWeaponInRangeOf(const Object &victim) const
@@ -664,7 +668,7 @@ void TurretAI::checkForIdleMoodTarget()
 	{
 		return;
 	}
-	Object *enemy = m_ai->nextMoodTarget();
+	Object *enemy = m_ai->getNextMoodTarget(true, true); // lane TARGET-1: RW 0x8DCBB6 pushes (1, 1)
 	if (!enemy)
 	{
 		return;

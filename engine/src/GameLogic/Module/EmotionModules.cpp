@@ -10,6 +10,7 @@
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/StateHash.h"
+#include "Common/Team.h"
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -538,7 +539,19 @@ void EmotionTrackerUpdate::tauntScan(Object *&taunt, float &closest)
 	Object *found = nullptr;
 	if (!(kStandGround >= 0 && obj->testStatus((unsigned)kStandGround)))
 	{
-		found = logic.partition().getClosestObject(*obj->getPosition(), m_data->m_tauntAndPointDistance, FROM_CENTER_2D, { &tracker, &sees, &visible }); // RW 0xA39090
+		if (logic.uber())
+		{
+			// lane UBER-2A, Uber only: the tracker accepts only ENEMIES (and the members of an accepted enemy's horde, on that enemy's layer), so the search
+			// skips the layers of the players this one does not see as enemies (its own and its allies' soldiers, the nearest and most numerous candidates).
+			// Uber rule change: the search's node order differs, so of two candidates at the same distance another may win; an object whose owner changed
+			// since the frame's partition update is looked for on its old layer
+			PartitionFilterLayers enemyLayers(obj->getTeam() ? obj->getTeam()->enemyLayerMask() : 0u); // no team: every relationship is NEUTRAL
+			found = logic.partition().getClosestObject(*obj->getPosition(), m_data->m_tauntAndPointDistance, FROM_CENTER_2D, { &tracker, &sees, &visible, &enemyLayers });
+		}
+		else
+		{
+			found = logic.partition().getClosestObject(*obj->getPosition(), m_data->m_tauntAndPointDistance, FROM_CENTER_2D, { &tracker, &sees, &visible }); // RW 0xA39090
+		}
 	}
 	if (!found)
 	{
@@ -612,8 +625,9 @@ UpdateSleepTime EmotionTrackerUpdate::update()
 		static const int kAirborne = statusBit("AIRBORNE_TARGET");
 		const ThingTemplate *gollum = nullptr;
 		bool gollumLooked = false;
-		const std::vector<ObjectID> ids = logic.emotions().scaryOrHeroes();
-		for (ObjectID id : ids)
+		const std::vector<ObjectID> &scaryOrHeroes = logic.emotions().scaryOrHeroes();
+		m_scanIds.assign(scaryOrHeroes.begin(), scaryOrHeroes.end()); // a copy, as before (the list may change under the scan), into kept storage
+		for (ObjectID id : m_scanIds)
 		{
 			Object *o = logic.findObjectByID(id);
 			if (!o || o->isDestroyed())

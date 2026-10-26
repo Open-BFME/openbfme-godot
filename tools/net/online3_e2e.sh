@@ -23,11 +23,15 @@
 #   loaddeath lane MP-DROP-1: slot 2 is killed E2E_LOAD_KILL_S (default 3) seconds after it starts, on the load screen: the survivors leave the load
 #           barrier after 4 x 15 s + 60 s (RotWK's silence limit below frame 6), drop it at frame 0 and play every frame in step
 # Environment: E2E_KILL_S (default 60), E2E_RESTART_S (default 25), E2E_NICE (default 10); the peers use retail's NetworkDisconnectTime (15 s) and
-# NetworkPlayerTimeoutTime (60 s). A local relay with a throw-away key on 127.0.0.1 (tools/net/online_client.py fixture signs the STARTs).
+# NetworkPlayerTimeoutTime (60 s). Online batch: E2E_RELAY (default <build dir>/relay/openbfme_relay): another relay binary (a previous release's peers
+# through the current relay: <build dir> is the previous release's); E2E_SPECTATE_S: a spectator (a fixture spectator START) starts that many seconds
+# into the game and watches to the end: its final hash must be the players' and its CRCs must match. A negative E2E_SPECTATE_S starts it that
+# many seconds BEFORE the players (it HELLOs first: the relay answers NOT_BOUND until a player opened the game).
+# A local relay with a throw-away key on 127.0.0.1 (tools/net/online_client.py fixture signs the STARTs).
 # Needs ROTWK_INSTALL / BFME2_INSTALL. Prints "RESULT online3 <scenario>: ..." and exits 0 when the scenario's checks hold.
 set -u
 B="$1"; OUT="$2"; SCEN="$3"; FRAMES="${4:-900}"
-PEER="$B/openbfme_peer"; RELAY="$B/relay/openbfme_relay"
+PEER="$B/openbfme_peer"; RELAY="${E2E_RELAY:-$B/relay/openbfme_relay}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 KILL_S="${E2E_KILL_S:-60}"; RESTART_S="${E2E_RESTART_S:-25}"; NICE="${E2E_NICE:-10}"; WINDOW_MS="${E2E_WINDOW_MS:-30000}"
 LINKARGS=()
@@ -47,7 +51,7 @@ RPORT=$((29300 + RANDOM % 500)); RADDR="127.0.0.1:$RPORT"
 RPID=$!
 sleep 0.5
 python3 "$HERE/online_client.py" fixture --key-hex "$KEY_HEX" --game "$GAME_ID" --relay "$RADDR" --profile "$PROFILE" --map "$MAP" "${SLOTS[@]}" \
-    --seed $((9000 + RANDOM % 1000)) --rejoin 2:1 --rejoin 0:1 --out-dir "$D" > /dev/null || { echo "RESULT online3 $SCEN: FAIL (fixture)"; kill "$RPID"; exit 1; }
+    --seed $((9000 + RANDOM % 1000)) --rejoin 2:1 --rejoin 0:1 --spectator 0:0 --out-dir "$D" > /dev/null || { echo "RESULT online3 $SCEN: FAIL (fixture)"; kill "$RPID"; exit 1; }
 
 peer() { # slot, START, extra args... (always run with &: the background subshell becomes the peer process, so its PID can be killed)
     local s="$1" start="$2"; shift 2
@@ -61,6 +65,12 @@ case "$SCEN" in
     pause) EXTRA1=(--net-pause-at 200); EXTRA2=(--net-resume-ms 8000) ;;
 esac
 T0=$(date +%s)
+SP=""
+if [ -n "${E2E_SPECTATE_S:-}" ]; then
+    ( [ "$E2E_SPECTATE_S" -gt 0 ] && sleep "$E2E_SPECTATE_S"; exec nice -n "$NICE" "$PEER" --online-start "$D/spectate-0.json" --frames "$FRAMES" --report "$D/s0.txt" > "$D/s0.log" 2>&1 ) &
+    SP=$!
+    [ "$E2E_SPECTATE_S" -lt 0 ] && sleep "${E2E_SPECTATE_S#-}"
+fi
 peer 0 "$D/start-0.json" --report "$D/p0.txt" --hashes "$D/h0.txt" "${EXTRA0[@]}" & P0=$!
 peer 1 "$D/start-1.json" --report "$D/p1.txt" --hashes "$D/h1.txt" "${EXTRA1[@]}" & P1=$!
 if [ "$SCEN" = pause ]; then
@@ -110,6 +120,8 @@ rc=0
 wait "$P0" || rc=1
 [ -n "$P1" ] && { wait "$P1" || rc=1; }
 [ -n "$P2" ] && { wait "$P2" || rc=1; }
+src=0
+[ -n "$SP" ] && { wait "$SP" || src=1; }
 if [ -n "${HUNG:-}" ]; then
     # the hung game woke up after its drop: whatever it does then (it finds itself dropped) is not the survivors' game; it is stopped here
     sleep 5; kill -TERM "$HUNG" 2> /dev/null; wait "$HUNG" 2> /dev/null; echo "hung slot 2 exit $?" >> "$D/events.txt"
@@ -137,6 +149,10 @@ check '[ "$frames_ok" = "${#REPORTS[@]}" ]' "every peer ran $FRAMES frames"
 check '[ "$desyncs" = 0 ]' "no desync"
 check '[ "$finals" = 1 ]' "one final hash"
 check '[ "$conv" = 0 ] && [ "$play" = 0 ] && [ "${compared:-0}" -ge 1 ] && [ "${mism:-1}" = 0 ]' "the relay log's replay matches the players' CRCs"
+if [ -n "$SP" ]; then
+    check '[ "$src" = 0 ] && grep -q "^spectate state ended reached $FRAMES .* crc_mismatches 0 " "$D/s0.txt"' "the spectator watched to frame $FRAMES with no CRC mismatch"
+    check '[ "$(v "$D/s0.txt" final_hash)" = "$(v "$D/p0.txt" final_hash)" ]' "the spectator's final hash is the players'"
+fi
 case "$SCEN" in
     rejoin|soak|late)
         check 'grep -q "^rejoin generation 1 live_frame" "$D/p2.txt"' "slot 2 rejoined"
@@ -175,6 +191,7 @@ esac
 {
     echo "scenario $SCEN frames $FRAMES seconds $SECS game $GAME_ID"
     cat "$D/events.txt" 2> /dev/null
+    [ -n "$SP" ] && grep -h "^spectate \|^final_hash" "$D/s0.txt" 2> /dev/null | sed "s/^/spectator /"
     grep -h "^slot \|^final_hash\|^crc_checks_passed\|^desyncs\|^rejoin \|^online_slots\|^pause \|^self_destruct \|^stall_ms\|^relay " "${REPORTS[@]}" 2> /dev/null
     echo "relay_log $(basename "${LOG:-none}") convert_exit $conv replay_exit $play hashes_compared ${compared:-0} mismatches ${mism:-?}"
     cat "$D/result.txt"

@@ -1,7 +1,8 @@
 ## Lane LAUNCH-1: the signed release manifest (written by tools/release/make_manifest.py, signed by tools/release/sign_manifest.py).
 ##
-## manifest.json is checked byte for byte against its detached Ed25519 signature (manifest.json.sig, 64 raw bytes) under the release key
-## compiled into the launcher BEFORE it is parsed; then its schema is checked strictly (unknown or missing keys, a wrong type, a bad
+## manifest.json is checked byte for byte against its detached Ed25519 signature (manifest.json.sig, 64 raw bytes) under the release keys
+## compiled into the launcher BEFORE it is parsed (lane SIGNKMS-1: valid under ANY trusted key, raw or over the signature envelope of kind
+## "manifest.json" / "manifest-macos.json", scripts/crypto/release_signature.gd); then its schema is checked strictly (unknown or missing keys, a wrong type, a bad
 ## version, channel, date, commit, asset name, size or digest are errors) and it must belong to the release it came with: the same
 ## repository, the tag as its version, its channel matching the release's pre-release flag. Format (docs/RELEASE.md, "The launcher"):
 ##   {"format": 1, "product": "OpenBFME", "repo": "<owner>/<name>", "version": "v0.3.0", "channel": "stable" | "preview",
@@ -19,7 +20,7 @@
 ## manifest-macos.json uses the same metadata/inventory contract with the explicit "macos" schema mode.
 extends RefCounted
 
-const Ed25519 := preload("res://scripts/crypto/ed25519.gd")
+const ReleaseSignature := preload("res://scripts/crypto/release_signature.gd")
 const Semver := preload("res://scripts/core/semver.gd")
 const Archive := preload("res://scripts/core/archive.gd")
 
@@ -45,18 +46,19 @@ static func top_folder(asset: String) -> String:
 
 
 ## {ok, error, manifest}. `expect`: {repo, tag, prerelease} of the release it was downloaded with ({} for a stored, already matched one
-## except `repo`, which is always checked).
-static func verify(bytes: PackedByteArray, sig: PackedByteArray, release_key: PackedByteArray, expect: Dictionary,
+## except `repo`, which is always checked). `release_keys`: the trusted keys (BuildInfo.release_keys, each 32 bytes); `schema_mode`
+## "standard" (manifest.json) or "macos" (manifest-macos.json) also names the signature envelope's kind.
+static func verify(bytes: PackedByteArray, sig: PackedByteArray, release_keys: Array, expect: Dictionary,
 		schema_mode := "standard") -> Dictionary:
 	var fail := func(why: String) -> Dictionary: return {"ok": false, "error": why, "manifest": {}}
-	if release_key.size() != 32:
+	if not has_keys(release_keys):
 		return fail.call("this launcher has no release key (a development run without --trust-key?)")
 	if bytes.size() > MAX_BYTES:
 		return fail.call("manifest.json is %d bytes (at most %d)" % [bytes.size(), MAX_BYTES])
 	if sig.size() != 64:
 		return fail.call("manifest.json.sig is %d bytes (an Ed25519 signature is 64)" % sig.size())
-	if not Ed25519.verify(release_key, bytes, sig):
-		return fail.call("the manifest's signature is not valid for the release key: the release was not signed by the OpenBFME release key, or it was changed")
+	if not ReleaseSignature.valid(release_keys, signature_kind(schema_mode), bytes, sig):
+		return fail.call(not_signed_error(release_keys))
 	var text := bytes.get_string_from_utf8()
 	var json := JSON.new()
 	if json.parse(text) != OK or typeof(json.data) != TYPE_DICTIONARY:
@@ -72,6 +74,31 @@ static func verify(bytes: PackedByteArray, sig: PackedByteArray, release_key: Pa
 	if expect.has("prerelease") and bool(expect.prerelease) != (m.channel == "preview"):
 		return fail.call("the manifest's channel (%s) does not match the release's pre-release flag" % m.channel)
 	return {"ok": true, "error": "", "manifest": m}
+
+
+## lane SIGNKMS-1: the signature envelope's kind of a manifest checked in `schema_mode`
+static func signature_kind(schema_mode: String) -> String:
+	return "manifest-macos.json" if schema_mode == "macos" else "manifest.json"
+
+
+## true when `release_keys` is a usable trusted list: 1 or more keys, each 32 bytes
+static func has_keys(release_keys: Array) -> bool:
+	if release_keys.is_empty():
+		return false
+	for k in release_keys:
+		if typeof(k) != TYPE_PACKED_BYTE_ARRAY or k.size() != 32:
+			return false
+	return true
+
+
+## true when `sig` is a valid signature of the manifest `bytes` (kind of `schema_mode`) under one of `release_keys`; the signature alone
+## (Updater's choice between a release's X.sig and X.sig2 slots; the schema is Manifest.verify's)
+static func signature_ok(bytes: PackedByteArray, sig: PackedByteArray, release_keys: Array, schema_mode := "standard") -> bool:
+	return has_keys(release_keys) and bytes.size() <= MAX_BYTES and ReleaseSignature.valid(release_keys, signature_kind(schema_mode), bytes, sig)
+
+
+static func not_signed_error(release_keys: Array) -> String:
+	return "the manifest's signature is not valid for the release key: the release was not signed by an OpenBFME release key (this launcher trusts %d), or it was changed" % release_keys.size()
 
 
 static func _keys(d: Dictionary, want: Array) -> String:
@@ -206,7 +233,7 @@ static func _files_schema(files, top: String) -> String:
 
 ## Lane ONEZIP-1 r2: the signed payload inventory inside a combined package (tools/release/seal_package.py writes it on the machine with
 ## the release key, before the archive is finished, so it never names itself): payload.json, checked byte for byte against
-## payload.json.sig under the release key before it is parsed, then strictly:
+## payload.json.sig under the trusted release keys (raw or envelope of kind "payload.json", lane SIGNKMS-1) before it is parsed, then strictly:
 ##   {"format": 1, "product": "OpenBFME", "repo": "<owner>/<name>", "version": <release version>, "platform": "linux-x64" | "windows-x64" | "macos-arm64",
 ##    "files": {<path in the package>: {"size", "sha256"}, ...}}     every file of the package but payload.json and payload.json.sig
 ## `expect`: {repo, platform}. {ok, error, payload}
@@ -231,9 +258,9 @@ static func read_limited(path: String, max: int) -> PackedByteArray:
 	return read_bounded(path, max).bytes
 
 
-static func verify_payload(bytes: PackedByteArray, sig: PackedByteArray, release_key: PackedByteArray, expect: Dictionary) -> Dictionary:
+static func verify_payload(bytes: PackedByteArray, sig: PackedByteArray, release_keys: Array, expect: Dictionary) -> Dictionary:
 	var fail := func(why: String) -> Dictionary: return {"ok": false, "error": why, "payload": {}}
-	if release_key.size() != 32:
+	if not has_keys(release_keys):
 		return fail.call("this launcher has no release key")
 	if bytes.is_empty():
 		return fail.call("there is no %s (not a signed package)" % PAYLOAD)
@@ -241,8 +268,8 @@ static func verify_payload(bytes: PackedByteArray, sig: PackedByteArray, release
 		return fail.call("%s is %d bytes (at most %d)" % [PAYLOAD, bytes.size(), MAX_BYTES])
 	if sig.size() != 64:
 		return fail.call("%s is %d bytes (an Ed25519 signature is 64)" % [PAYLOAD_SIG, sig.size()])
-	if not Ed25519.verify(release_key, bytes, sig):
-		return fail.call("the signature of %s is not valid for the release key: the package was not made by the OpenBFME release, or it was changed" % PAYLOAD)
+	if not ReleaseSignature.valid(release_keys, PAYLOAD, bytes, sig):
+		return fail.call("the signature of %s is not valid for the release key: the package was not made by the OpenBFME release (this launcher trusts %d key%s), or it was changed" % [PAYLOAD, release_keys.size(), "" if release_keys.size() == 1 else "s"])
 	var json := JSON.new()
 	if json.parse(bytes.get_string_from_utf8()) != OK or typeof(json.data) != TYPE_DICTIONARY:
 		return fail.call("%s is not a JSON object" % PAYLOAD)

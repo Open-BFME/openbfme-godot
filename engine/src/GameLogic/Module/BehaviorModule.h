@@ -16,6 +16,7 @@
 #include "Common/Module.h"
 #include "GameLogic/ObjectTypes.h"
 
+#include <cstdint>
 #include <list>
 #include <string>
 #include <vector>
@@ -35,6 +36,7 @@ class HordeContainInterface;
 class ExitInterface;                 // GameLogic/Module/ExitInterface.h (lane PROD-1)
 class ProductionUpdateInterface;     // GameLogic/Module/ProductionUpdate.h (lane PROD-1)
 class FoundationAIUpdate;            // GameLogic/Module/ConstructionModules.h (lane BUILD-1)
+class Dict;                          // Common/Dict.h
 
 // ZH Include/GameLogic/Module/BodyModule.h BodyDamageType
 enum BodyDamageType
@@ -137,6 +139,9 @@ public:
 		(void)checkPath;
 		return false;
 	}
+	// lane SCRIPT-4: slot 0x144 getPlayerWhoEntered (RW 0x5F2DC6 `mov eax, [ecx + 0x58]` in the OpenContain, GarrisonContain and HordeGarrisonContain
+	// tables RW 0xC59AF0 / 0xC5C698 / 0xC5C9F0): the mask of the player whose units entered (OpenContain overrides); 0 for a contain without that field
+	virtual std::uint32_t getPlayerWhoEntered() const { return 0; }
 	// slot 0xB0 (RW 0x865C15): the module data's ObjectStatusOfContained mask (OpenContain data + 0x58); null for a contain without one
 	virtual const ObjectStatusMaskType *getObjectStatusOfContained() const { return nullptr; }
 	// lane DECOMP-3 (Object::isAbleToAttack RW 0x691269): slot 0xB0 asked for a rider (OpenContain RW 0x865C15, SiegeEngineContain RW 0x87ED55); null as above
@@ -222,6 +227,8 @@ public:
 	virtual SpawnUnitBehaviorInterface *getSpawnUnitBehaviorInterface() { return nullptr; }
 	// RW slot 0x50 / 4 = 20 of the +0xC interface: the exit interface of a production exit module (Object::getObjectExitInterface, RW 0x68BB14)
 	virtual ExitInterface *getExitInterface() { return nullptr; }
+	// lane LUMBER1: slot 0x58 of the +0xC interface: the dock interface of a DockUpdate (Object::getDockUpdateInterface, RW 0x68C383)
+	virtual class DockUpdateInterface *getDockUpdateInterface() { return nullptr; }
 	// the production queue of a ProductionUpdate (RW 0x68C327 asks for it)
 	virtual ProductionUpdateInterface *getProductionUpdateInterface() { return nullptr; }
 	// lane BUILD-1: the FoundationAIUpdate interface (RW 0x68C3C3 asks every module through slot 38 of its +0xC interface)
@@ -234,6 +241,10 @@ public:
 	virtual UpgradeMux *getUpgrade() { return nullptr; }
 	// ZH BehaviorModuleInterface::getProjectileUpdateInterface (lane PROJ-2: the client snapshot asks the projectile's look-ahead point and its launch)
 	virtual ProjectileUpdateInterface *getProjectileUpdateInterface() { return nullptr; }
+	// lane WALL-2: RW slot 45 (+ 0xB4) of the +0xC interface, with the map object's properties or null: Object RW 0x694692 (Object::friend_onMapPlacement)
+	// broadcasts it after the map objects are placed (RW 0x62F36B / 0x62F8EA) and after FoundationAIUpdate places a structure (RW 0x858A94). Default nothing
+	// (DynamicPortalBehaviour's RW 0x864341 generates its portals there)
+	virtual void onMapPlacement(const Dict *properties) { (void)properties; }
 
 protected:
 	// lane SAVE-4b: BehaviorModule::xfer, version (1, 1) (RW 0x8CD4AA, the base xfer every UpdateModule / UpgradeModule xfer calls; inference: it is

@@ -116,7 +116,7 @@ UpdateSleepTime TerrainResourceBehavior::update()
 		}
 	}
 	// RW 0x885591 .. 0x88559E: the PRODUCTION attribute modifier product (out = 1.0 first, RW 0x805007)
-	const float modifier = economy.attributeModifierProduct(*obj, Economy::ATTRIBUTE_MODIFIER_PRODUCTION);
+	const float modifier = economy.productionMoneyProduct(*obj); // lane MODS-3: with PRODUCTION_MONEY under edain-unchained.production-split
 	// RW 0x8855A3 .. 0x885650: the resource factor of the owner's template (the diminishing returns of many resource buildings)
 	float resourceFactor = 1.0f;
 	const PlayerTemplate *pt = owner->getPlayerTemplate();

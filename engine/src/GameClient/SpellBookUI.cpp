@@ -57,7 +57,8 @@ bool SpellStoreModel::open(const CommandStore &commands, GameLogic &logic, Playe
 		}
 		return false;
 	}
-	m_setName = player.science().mode().skirmishOrMultiplayer ? pt->m_purchaseScienceCommandSetMP : pt->m_purchaseScienceCommandSet; // S-923 (inference)
+	// S-923 (inference); lane MODS-3: an upgraded store under edain-unchained.spell-store-upgrade (its 0xED38ED at RW 0x822AD0)
+	m_setName = logic.players().templates().purchaseScienceCommandSetFor(player, &commands);
 	const CommandSet *set = commands.findCommandSet(m_setName);
 	if (!set)
 	{

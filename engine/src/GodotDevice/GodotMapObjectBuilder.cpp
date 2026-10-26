@@ -184,7 +184,7 @@ Dictionary MapObjectBuilder::setup(const Ref<RetailFileSystem> &fs)
 			}
 			result["seconds"] = (nowMs() - t0) / 1000.0;
 			result["templates"] = (int64_t)m_world->things().templateCount();
-			m_source.reset(new ArchiveW3DFileSource(*fs->archive_fs()));
+			m_source = fs->renderW3DSource(); // lane SDK-0
 			m_assets.reset(new WW3DAssetManager(*m_source));
 		}
 	}

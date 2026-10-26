@@ -73,6 +73,8 @@ public:
 	SimulationProfile startProfile() const { return m_log.header.game.game.simulationProfile; }
 	SimulationProfile targetProfile() const { return m_targetProfile; }
 	const ReplayFile &log() const { return m_log; }
+	// lane UBER-2C: whether a recording holds frame f's state hash (an Uber frame only on the kUberRecordedHashEvery cadence; ReplaySeek asks it too)
+	static bool hashRecordedFor(const ReplayFile &log, UnsignedInt f);
 	// installs the playback driver on the started game (its frame must be the log's first frame or earlier than F); lane SAVE-4e: in the Snapshot mode
 	// loads the snapshot instead (the state is then Ready or Failed on return)
 	bool begin(LiveGame &game, std::string *error);
@@ -107,6 +109,7 @@ private:
 	SimulationProfile m_targetProfile = SimulationProfile::Faithful;
 	std::vector<std::uint8_t> m_logBytes; ///< the save's log, continued by handOver
 	void checkCoverage(UnsignedInt target);
+	bool hashRequired(UnsignedInt f, UnsignedInt target) const; // lane UBER-2C
 	bool m_restoreThread = false;
 	double m_elapsedMs = 0.0;
 	// lane SAVE-4e

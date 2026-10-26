@@ -88,3 +88,36 @@ def test_stop_impact_uses_area_keywords():
     assert stops_xmap.impact("W3D animation", "") == 2
     assert stops_xmap.impact("Disconnect path (MP-2)", "") == 1
     assert stops_xmap.impact("INI block bodies", "") == 2
+
+
+def test_equal_shape_siblings_follow_link_order():
+    # three same-shape siblings that differ only in a constant (no tier A): each RotWK copy pairs
+    # with the BFME2 sibling at the same link-order offset, not with the first free one
+    R = [feat(0x1000, b"u1"), feat(0x1040, b"r1"), feat(0x1080, b"r2"), feat(0x10C0, b"r3"), feat(0x1200, b"u2")]
+    T = [feat(0x2000, b"u1"), feat(0x2040, b"t1"), feat(0x2080, b"t2"), feat(0x20C0, b"t3"), feat(0x2200, b"u2")]
+    for i in (1, 2, 3):
+        R[i]["shash"] = T[i]["shash"] = b"same"
+    m =match_rotwk.Matcher(R, T).run(log=lambda s: None)
+    assert [m[i][0] for i in (1, 2, 3)] == [1, 2, 3]
+    assert all(m[i][1] == "B" for i in (1, 2, 3))
+
+
+def _tie_case(t2_shape_edit):
+    # RotWK r (0x1040) calls c; BFME2 t1 sits at the predicted 0x2040 but calls d, t2 (0x2080) calls c's pair
+    R = [feat(0x1000, b"u1"), feat(0x1040, b"r"), feat(0x1100, b"c"), feat(0x1140, b"d"), feat(0x1200, b"u2")]
+    T = [feat(0x2000, b"u1"), feat(0x2040, b"t1"), feat(0x2080, b"t2"), feat(0x2100, b"c"), feat(0x2140, b"d"),
+         feat(0x2200, b"u2")]
+    for f in (R[1], T[1], T[2]):
+        f["shape"] = ["op"] * 16
+    if t2_shape_edit:
+        T[2]["shape"] = ["op"] * 15 + ["other"]  # similarity 0.9375: still tier B, below t1's 1.0
+    R[1]["callees"], T[1]["callees"], T[2]["callees"] = [0x1100], [0x2140], [0x2100]
+    return match_rotwk.Matcher(R, T).run(log=lambda s: None)
+
+
+def test_equal_score_tie_prefers_matched_callees_over_link_order():
+    assert _tie_case(False)[1][0] == 2
+
+
+def test_higher_score_beats_matched_callees():
+    assert _tie_case(True)[1][0] == 1

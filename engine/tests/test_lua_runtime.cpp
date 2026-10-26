@@ -684,6 +684,26 @@ TEST_CASE("lua host: the library functions that reach files, processes, the cloc
 	CHECK(f.eval("return dostring('return 1+1')") == "number:2");
 }
 
+TEST_CASE("localized text: Lua script formatting selects fixed typed conversions")
+{
+	Fixture f;
+	CHECK(f.eval("return format('%d-%s-%%', 5, 'x')") == "string:5-x-%");
+	CHECK(f.eval("return format('%02d %i %u %#x %#o %c', 1, -2, 3, 42, 9, 65)") == "string:01 -2 3 0x2a 011 A");
+	CHECK(f.eval("return format('%+06.2f % .1f %.2e %.3g', 2.5, 2.5, 1.0, 12.5)") == "string:+02.50  2.5 1.00e+00 12.5");
+	CHECK(f.eval("return format('%-5.2s/%+ d/%-05d/%03.2d', 'hero', 7, 7, 7)") == "string:he   /+7/7    / 07");
+	CHECK(f.eval("return format('%2$d %1$s', 'hero', 7)") == "string:7 hero");
+	CHECK(f.eval("return format('%s', '%n%s%p')") == "string:%n%s%p");
+	CHECK(f.eval("return format('%s', 7)") == "string:7");
+	CHECK(f.eval("return format('%x', 42)") == "string:2a");
+	CHECK(f.eval("return format('%d', 7, 8)") == "string:7");
+	for (const char *pattern : { "%n", "%p", "%999999d", "%", "%ls", "%S", "%s %s", "%d" })
+	{
+		INFO(pattern);
+		const std::string arg = std::string(pattern) == "%d" ? "'not a number'" : "7";
+		CHECK(run(f.rt, "return format('" + std::string(pattern) + "', " + arg + ")").status == 1);
+	}
+}
+
 TEST_CASE("lua host: character classes and string comparison do not depend on the host locale")
 {
 	Fixture f;

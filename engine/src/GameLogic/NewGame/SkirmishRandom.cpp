@@ -35,7 +35,7 @@ float distanceOf(const Coord3D &p1, const Coord3D &p2)
 
 bool SkirmishRandom::populateRandomStartPosition(SkirmishGameInfo &info, const SkirmishResolveInput &in, GameLogicRandom &rng, std::string *error)
 {
-	int numPlayers = MAX_SLOTS;
+	int numPlayers = LEGACY_MAX_SLOTS;
 	if (in.map)
 	{
 		numPlayers = in.map->numPlayers;
@@ -43,6 +43,13 @@ bool SkirmishRandom::populateRandomStartPosition(SkirmishGameInfo &info, const S
 	if (numPlayers < 0 || numPlayers > MAX_SLOTS)
 	{
 		return fail(error, "the map cache entry has numPlayers " + std::to_string(numPlayers) + " (1.." + std::to_string(MAX_SLOTS) + " expected)");
+	}
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		if (info.slots[i].isOccupied() && i >= LEGACY_MAX_SLOTS && (!in.map || i >= numPlayers))
+		{
+			return fail(error, "slot " + std::to_string(i + 1) + " requires a map with that many start positions");
+		}
 	}
 	// the distance matrix [i][j] (RW stack [ebp + (i * 8 + j) * 4 - 0x15C])
 	float dist[MAX_SLOTS][MAX_SLOTS];
@@ -279,6 +286,15 @@ bool SkirmishRandom::populateRandomSideAndColor(SkirmishGameInfo &info, const Sk
 				return fail(error, "slot " + std::to_string(i) + ": multiplayer.ini defines no colour to choose from");
 			}
 			colorIdx = -1;
+			bool available = false;
+			for (int color = 0; color < in.numColors; ++color)
+			{
+				available = available || !info.isColorTaken(color, -1);
+			}
+			if (!available)
+			{
+				return fail(error, "slot " + std::to_string(i + 1) + ": no unused multiplayer colour remains");
+			}
 			while (colorIdx == -1)
 			{
 				colorIdx = rng.getValue(0, in.numColors - 1, kFile, 0x7DE);

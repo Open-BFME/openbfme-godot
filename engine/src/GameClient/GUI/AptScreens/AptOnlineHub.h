@@ -49,6 +49,9 @@ class AptOnlineShell;
 class AptOnlineHub
 {
 public:
+	// lane ONLINEMENU-1: the shell's decorator draws the TOURNAMENT panel through these (the shell owns the layer's decorator)
+	void drawPanel(GadgetDrawList &out) const { decorate(out); }
+	bool decorating() const { return m_qmUp; } ///< the TOURNAMENT page's panel is up
 	static constexpr std::uint64_t kRoomTimeoutMs = 90 * 1000; ///< a matched room must start within this long
 	static constexpr std::uint64_t kJoinRetryMs = 2000;        ///< a joiner asks for the room again while the host has not made it
 	// the tournaments panel on the page's 1024 x 768 stage (the empty right half of OnlineQuickMatch.swf: its left frame ends at x 528)

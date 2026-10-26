@@ -14,6 +14,7 @@
 ##   --enemy=<Template>:<dx>,<dy>   (repeatable) an object for the opponent (Player_2) near the first free spot (lane COMBAT-1: the combat scenario)
 ##   --alternate-mouse       the right click orders (default: the left click orders)
 ##   --edge-scroll           scroll when the pointer touches the window edge (retail does it in fullscreen only)
+##   --focus=<x>,<y>         (TUNNEL-1) the map point the --spawn / --enemy offsets start from (default: the centre of Player_1's map objects)
 ##   --scenario=<name>       a scripted run (see _run_scenario): horde2 (lane HORDE-2: our horde charges the enemy horde, <prefix>-select / -contact / -melee / -aftermath), camera (lane CAM-1: the retail camera tour), streaks_paused (the arrow ribbons face a camera turned while paused), select_building, select_horde, drag_box, radar, radar1 (lane RADAR-1: radar1-NN.png every 45 frames), rally, combat (box-select our horde, click the enemy horde, follow the fight),
 ##                           combat_building (lane COMBAT-2: the same against the enemy's BUILDING, the first --enemy: it is damaged, collapses into rubble and the victory report follows)
 ##   --no-audio / --build=<Template>   (lane AUDIO-2) run without the audio manager / the unit the audio scenario builds at the second --spawn
@@ -92,6 +93,7 @@ var _calls: Array = []
 var _bench_seconds := 8.0
 var _bench_interp := "on"
 var _caption := ""
+var _focus_arg := Vector2.INF  # TUNNEL-1: --focus=x,y places the --spawn / --enemy offsets around this map point (a map without start objects has no focus)
 var _perf_overlay := false   # lane PERF-1: --perf-overlay
 var _bench_caption := ""     # lane PERF-1: --bench-caption
 var _overlay_label: Label
@@ -187,6 +189,9 @@ func _ready() -> void:
 			_min_air = int(arg.substr(6))
 		elif arg.begins_with("--timescale="):
 			_time_scale = float(arg.substr(12))
+		elif arg.begins_with("--focus="):
+			var fxy: PackedStringArray = arg.substr(8).split(",")
+			_focus_arg = Vector2(float(fxy[0]), float(fxy[1]))
 		elif arg.begins_with("--scenario="):
 			_scenario = arg.substr(11)
 			if _scenario == "audio":
@@ -342,7 +347,7 @@ func _ready() -> void:
 		idx += 1
 	for s in rep.stops:
 		print("  live stop: ", String(s).substr(0, 120))
-	_focus = _find_focus()
+	_focus = _find_focus() if _focus_arg == Vector2.INF else _focus_arg
 	_cam_target = _focus
 	# the HUD
 	_layer = CanvasLayer.new()
@@ -940,6 +945,94 @@ func _run_scenario() -> void:
 			await _frames(30)
 			print("SPELLBOOK slots ", _hud.get_spellbook_state().slots)
 			_save(shots.path_join(_shot_prefix + "-bar.png"))
+		"tunnel":
+			# TUNNEL-1: the Goblins' tunnel network as a player uses it. --spawn=WildMineShaft:.. twice, then a horde (--spawn=GoblinFighterHorde:..; run with
+			# --faction=FactionWild --logic-thread=off; --audio for sound): both shafts finished (debug_build_complete: their completion joins the network), the horde
+			# ordered into the first shaft (MSG_ENTER), the camera to the second shaft, a click selects it and its first exit button (the
+			# horde's portrait) is pressed (MSG_EXIT): the horde comes out of the second shaft. Saves <prefix>-entered / -exit-button / -out
+			if _shot_prefix == "proj1":
+				_shot_prefix = "tunnel1"
+			var shaft_a: int = _spawn_ids[0]
+			var shaft_b: int = _spawn_ids[1]
+			var horde: int = _spawn_ids[2]
+			# every stage is checked: a stage that did not happen ends the run with HUDVIEW FAIL before the next screenshot (a broken run never looks successful)
+			var done_a: Dictionary = _world.debug_build_complete(shaft_a)
+			var done_b: Dictionary = _world.debug_build_complete(shaft_b)
+			print("COMPLETE ", done_a, " ", done_b)
+			if not done_a.get("ok", false) or not done_b.get("ok", false):
+				_fail("tunnel: the shafts could not be finished: %s %s" % [done_a, done_b])
+				return
+			var a: Dictionary = _world.get_object(shaft_a)
+			var b: Dictionary = _world.get_object(shaft_b)
+			var h: Dictionary = _world.get_object(horde)
+			_caption = "Goblin tunnels: the horde goes into this mine shaft..."
+			_cam_target = (Vector2(a.x, a.y) + Vector2(h.x, h.y)) * 0.5
+			_cam_height = 380.0
+			_place_camera()
+			await _frames(45)
+			# the enter order through the lockstep command path (MSG_ENTER, what the right click sends; the click itself is test_hud_tunnel_retail.cpp's)
+			var enter: Dictionary = _world.order_garrison([horde], shaft_a)
+			print("ENTER ", enter)
+			if not enter.get("ok", false):
+				_fail("tunnel: the enter order was refused: %s" % [enter])
+				return
+			# the waits run until the stage is done or 120 s of wall time passed (a headless run's frames are much shorter than the movie writer's)
+			var inside := false
+			var t0 := Time.get_ticks_msec()
+			while Time.get_ticks_msec() - t0 < 120000:
+				await _frames(1)
+				var g: Dictionary = _world.get_garrison(shaft_a)
+				if int(g.get("count", 0)) > 0 and int(g.get("entering", 0)) == 0 and int(g.get("members_hidden", 0)) == int(g.get("members", -1)):
+					inside = true
+					break
+			if not inside:
+				_fail("tunnel: the horde never got into the first shaft: %s" % [JSON.stringify(_world.get_garrison(shaft_a))])
+				return
+			await _frames(20)
+			print("ENTERED ", JSON.stringify(_world.get_garrison(shaft_a)), " B ", JSON.stringify(_world.get_garrison(shaft_b)))
+			_save(shots.path_join(_shot_prefix + "-entered.png"))
+			_caption = "...and the other shaft of the network holds it too"
+			_cam_target = Vector2(b.x, b.y)
+			_place_camera()
+			await _frames(45)
+			for attempt in 6:
+				await _click_world(Vector2(b.x, b.y) + Vector2(0, attempt * 12))
+				await _frames(20)
+				if _hud.get_selection().has(shaft_b):
+					break
+			if not _hud.get_selection().has(shaft_b):
+				_fail("tunnel: the click did not select the second shaft")
+				return
+			await _frames(30)
+			print("SHAFT B BUTTONS ", JSON.stringify(_hud.get_command_buttons()))
+			_save(shots.path_join(_shot_prefix + "-exit-button.png"))
+			_caption = "Its exit button lets the horde out here"
+			var pressed: bool = _hud.press_command_button("Command_ExitGarrison")
+			print("EXIT PRESS ", pressed)
+			if not pressed:
+				_fail("tunnel: the second shaft's exit button could not be pressed: %s" % [JSON.stringify(_hud.get_command_buttons())])
+				return
+			var left := false
+			t0 = Time.get_ticks_msec()
+			while Time.get_ticks_msec() - t0 < 120000:
+				await _frames(1)
+				if int(_world.get_garrison(shaft_b).get("count", 1)) == 0:
+					left = true
+					break
+			if not left:
+				_fail("tunnel: the horde never came out of the second shaft")
+				return
+			await _frames(60)
+			# the horde selected (the shaft's radial menu closes) and sent a little way from the shaft
+			_hud.select_objects([horde])
+			print("MOVE ", _world.order_move([horde], b.x - 60.0, b.y - 260.0, {}))
+			await _frames(240)
+			var out: Dictionary = _world.get_object(horde)
+			if not out.get("ok", false) or int(out.get("contained_by", 0)) != 0:
+				_fail("tunnel: the horde is not out in the world: %s" % [out])
+				return
+			print("OUT horde at (%.0f, %.0f): %.0f from shaft B, %.0f from shaft A" % [out.x, out.y, Vector2(out.x, out.y).distance_to(Vector2(b.x, b.y)), Vector2(out.x, out.y).distance_to(Vector2(a.x, a.y))])
+			_save(shots.path_join(_shot_prefix + "-out.png"))
 		"garrison_hud":
 			# lane UI-1: the first --spawn is a container (GondorKeep), the second a horde (GondorArcherHorde): the container selected empty (its EXIT_CONTAINER
 			# buttons disabled), the horde ordered in (MSG_ENTER), the container selected again (the rider on the first button), <prefix>-empty / -garrisoned

@@ -67,6 +67,7 @@ struct ControlBarButton
 	int position = -1;                      ///< lane HUD-4: the arc's window (slot - range start, 0 .. 5) or the side bar's packed position (0 ..)
 	bool autoAbility = false;               ///< lane AUTOCAST-1: the glow (RW 0x9D2D0E -> SetAutoAbilityOverlayState): the source object's AutoAbilityBehavior auto casts this button
 	int productionCount = 0;                ///< lane OWNERFIX-3: the count the window shows (RW 0x729D9A; 0 none): ShowProductionCount buttons only
+	bool commandPointsShort = false;        ///< a CantAfford UNIT_BUILD / REVIVE button is RotWK's availability 7 (command points short, RW 0x942F47), not 6
 };
 
 struct ControlBarQueueEntry
@@ -135,6 +136,8 @@ public:
 	// ---- input ----
 	// ZH ControlBar::processCommandUI: the press of the button in `slot`. Returns false when the slot has no usable button (counted, reported through ui messages).
 	bool pressButton(int slot, bool inPalantir);
+	// lane CAMPUI-1: the stance toggle's SetStance (RW 0x96F53C): MSG_CHANGE_STANCE with `stance` (a stance item of the Palantir's radial, a SET_STANCE button)
+	bool sendChangeStance(int stance);
 	// right press on a build button: cancels one queued unit, or all with Shift and no MaxSimultaneousOfType (RW 0x940CD0); on a REVIVE button the hero record by
 	// its index (RW 0x940C57)
 	bool cancelQueued(int slot, bool inPalantir, bool shift = false);
@@ -178,7 +181,7 @@ public:
 
 private:
 	void setAttackWindowEnabled(bool enabled);
-	ButtonState evaluate(const CommandButton &b, Object &obj, bool ignoreDisabled = false);
+	ButtonState evaluate(const CommandButton &b, Object &obj, bool &commandPointsShort, bool ignoreDisabled = false);
 	static const SpecialPowerTemplate *specialPowerOf(const CommandButton &b);
 	// lane FACT-C: the castle object of a castle member (its CastleMemberBehavior's castle id, module + 0x18; RW 0x943140 .. 0x94318E), or null
 	static Object *castleOfMember(Object &obj);

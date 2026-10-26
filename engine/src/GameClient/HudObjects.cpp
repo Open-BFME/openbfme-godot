@@ -356,7 +356,8 @@ std::vector<PickHit> pickHits(const HudContext &ctx, const ICoord2D &pixel, unsi
 	const unsigned castMask = pickTypes | PICK_TYPE_SELECTABLE | PICK_TYPE_ENEMY | PICK_TYPE_HERO | PICK_TYPE_OWN;
 	for (Object *obj = ctx.logic.getFirstObject(); obj; obj = obj->getNextObject())
 	{
-		if (!isPickable(*obj) || InvisibilityManager::clientLook(*obj, ctx.localPlayer()) == 5) // lane STEALTH-1: an enemy's invisible object is not drawn, not picked
+		if (!isPickable(*obj) || InvisibilityManager::clientLook(*obj, ctx.localPlayer()) == 5 // lane STEALTH-1: an enemy's invisible object is not drawn, not picked
+			|| ctx.ui.isClientHidden(obj->getID())) // lane CHAT-1: an enemy's beacon (BeaconClientUpdate::hideBeacon, RW 0x8CDC11: hidden and deselected)
 		{
 			continue;
 		}
@@ -481,24 +482,40 @@ std::vector<Object *> objectsInRegion(const HudContext &ctx, const IRegion2D &re
 		}
 		return out;
 	}
+	static const int unselectable = ObjectTemplateInfoBuilder::objectStatusIndex("UNSELECTABLE");
 	for (Object *obj = ctx.logic.getFirstObject(); obj; obj = obj->getNextObject())
 	{
-		if (!isPickable(*obj) || obj->getContainedBy() || InvisibilityManager::clientLook(*obj, ctx.localPlayer()) == 5) // lane STEALTH-1
+		if (!isPickable(*obj) || InvisibilityManager::clientLook(*obj, ctx.localPlayer()) == 5) // lane STEALTH-1
 		{
 			continue;
 		}
-		if (hiddenFromDrag(ctx, *obj)) // lane VISUAL-2 r2
+		if (hiddenFromDrag(ctx, *obj) || ctx.ui.isClientHidden(obj->getID())) // lane VISUAL-2 r2; lane CHAT-1: an enemy's hidden beacon
 		{
 			continue;
+		}
+		// lane SELECT-1: RotWK addDrawableToList (RW 0x7108F2, the callback of the drag's iterateDrawablesInRegion at RW 0x83C44C) visits the soldiers'
+		// drawables too: a selectable soldier (RW 0x710964: Object RW 0x68DE58) whose producer (Object + 0x78, RW 0x7109CE) is a HORDE (template + 0x115
+		// bit 5) stands for that horde unless the horde is UNSELECTABLE (status 3, RW 0x7109F7: skipped). So a box over any soldier takes the battalion, not
+		// only a box over the horde's centre; any other contained object stays out (an enclosing container hides it: S-288)
+		Object *stand = obj;
+		if (obj->getContainedBy())
+		{
+			Object *producer = isSelectable(*obj) ? ctx.logic.findObjectByID(obj->getProducerID()) : nullptr;
+			if (!producer || !producer->isKindOfName("HORDE") || producer->testStatus(unselectable))
+			{
+				continue;
+			}
+			stand = producer;
 		}
 		ICoord2D px;
 		if (!ctx.view.worldToScreen(*obj->getPosition(), px))
 		{
 			continue;
 		}
-		if (px.x >= region.lo.x && px.x <= region.hi.x && px.y >= region.lo.y && px.y <= region.hi.y)
+		if (px.x >= region.lo.x && px.x <= region.hi.x && px.y >= region.lo.y && px.y <= region.hi.y
+			&& std::find(out.begin(), out.end(), stand) == out.end())
 		{
-			out.push_back(obj);
+			out.push_back(stand);
 		}
 	}
 	return out;

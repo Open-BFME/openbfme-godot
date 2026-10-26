@@ -208,6 +208,20 @@ public:
 	const std::string &explicitTemplateName() const { return m_explicitTemplate; }
 	// RW 0x79AC19
 	void registerOwnedObject(Object &obj);
+	// lane MODS-3: edain-unchained.foundation-rebind's keep step (its 0xEDA097): a keep that was the replaced object leaves + 0x38; an empty keep slot then
+	// takes the new keep piece (registerOwnedObject) and the castle state becomes 4 (unpacked)
+	void rebindKeep(ObjectID replaced, Object &piece)
+	{
+		if (m_keepId == replaced)
+		{
+			m_keepId = INVALID_ID;
+		}
+		if (m_keepId == INVALID_ID)
+		{
+			registerOwnedObject(piece);
+			m_state = STATE_UNPACKED;
+		}
+	}
 	// lane CASTLE-1: the stop lines S-950 .. S-952 (in GameLogic::report through BuildStops)
 	static std::vector<std::string> stopLines();
 

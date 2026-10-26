@@ -103,7 +103,7 @@ def validate_preview_sources(repo: Path) -> None:
             "_set_macos_releases_link" not in launcher or not macos_update.is_file() or not helper.is_file()):
         fail("HEAD lacks the signed macOS manifest, package updater, or atomic swap helper sources")
     trust = (repo / "godot/scripts/release/release_trust.gd").read_text(encoding="utf-8")
-    if trust.count('const RELEASE_KEY := ""') != 1:
+    if trust.count('const RELEASE_KEY := ""') != 1 or trust.count('const RELEASE_KEYS := ""') != 1:
         fail("release_trust must remain empty for the unsigned-payload Mac preview")
 
 
@@ -130,7 +130,7 @@ def ensure_empty_output(path: Path) -> None:
 def cmake_configure_args(build: Path, extension_dir: Path, version: str) -> list[str]:
     return [
         "cmake", "-S", str(REPO / "engine"), "-B", str(build), "-G", "Ninja",
-        "-DCMAKE_BUILD_TYPE=Release", "-DOPENBFME_LAME=OFF", "-DOPENBFME_BUILD_GODOT=ON",
+        "-DCMAKE_BUILD_TYPE=Release", "-DOPENBFME_BUILD_TESTS=OFF", "-DOPENBFME_BUILD_GODOT=ON",
         "-DCMAKE_OSX_ARCHITECTURES=arm64", "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0",
         f"-DOPENBFME_VERSION_OVERRIDE={version}", f"-DOPENBFME_GODOT_BIN={extension_dir}",
     ]
@@ -181,7 +181,7 @@ def make_plan(
     extension = "<fresh temporary build directory>/godot-bin"
     configure = [
         "cmake", "-S", str(REPO / "engine"), "-B", build, "-G", "Ninja",
-        "-DCMAKE_BUILD_TYPE=Release", "-DOPENBFME_LAME=OFF", "-DOPENBFME_BUILD_GODOT=ON",
+        "-DCMAKE_BUILD_TYPE=Release", "-DOPENBFME_BUILD_TESTS=OFF", "-DOPENBFME_BUILD_GODOT=ON",
         "-DCMAKE_OSX_ARCHITECTURES=arm64", "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0",
         f"-DOPENBFME_VERSION_OVERRIDE={display_version}", f"-DOPENBFME_GODOT_BIN={extension}",
     ]
@@ -304,7 +304,7 @@ def package(args: argparse.Namespace) -> int:
             library_path=library, commit_epoch=(commit, epoch), allow_external_out=True,
             forbidden_prefixes=forbidden, allowed_output_entries=(work,), tool_versions=versions,
             base_env=env, sanitize_template_paths=True, macos_updates=True, macos_updates_helper=helper,
-            test_key=args.test_key, test_repo=args.test_repo,
+            test_key=args.test_key, test_repo=args.test_repo, keys_file=args.keys_file,
         )
     return 0
 
@@ -330,6 +330,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--test-key", help="MACPLAY-1, tests only: a 64-hex Ed25519 public key the launcher trusts instead of "
                         "launcher/release_key.pub; the launcher is a test build (test options on, LOCAL TRIAL), which the release refuses")
     parser.add_argument("--test-repo", help="tests only, with --test-key: the <owner>/<name> the test launcher updates from")
+    parser.add_argument("--keys-file", type=Path, default=None,
+                        help="SIGNKMS-1: the trusted release key list the launcher is built with (default: the committed "
+                             "launcher/release_keys.pub of the packaged commit; with --test-key: that key alone); its first key "
+                             "must be the launcher's release key (launcher/release_key.pub or --test-key)")
     args = parser.parse_args(argv)
     if args.test_key is not None and not re.fullmatch(r"[0-9a-f]{64}", args.test_key):
         fail("--test-key must be 64 lower-case hex digits")

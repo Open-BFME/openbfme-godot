@@ -15,7 +15,9 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/System/ShroudManager.h"
 #include "GameNetwork/CommandStreamChecks.h"
+#include "GameNetwork/FogCheckDriver.h"
 #include "GameNetwork/OrdersIntoFog.h"
+#include "GameNetwork/ViewChecks.h"
 
 #include <limits>
 #include <memory>
@@ -484,6 +486,44 @@ TEST_CASE("input rate (D5): more than 100 commands in 5 s of game time is an epi
 	CHECK(j.find("\"band\":\"none\"") != std::string::npos);
 }
 
+TEST_CASE("fog replay driver: recorded hashes outside Uber checkpoints are requested and mismatches are reported")
+{
+	Game g;
+	ReplayFile replay;
+	replay.header.game.game.simulationProfile = SimulationProfile::Uber;
+	replay.hashes = { { 1, 0x1234u }, { 5, 0x5678u }, { 7, 0x9ABCu } };
+	replay.finalFrame = 7;
+	ReplayPlayback playback(replay);
+	FogCheckDriver fog(playback, replay, *g.check);
+	LiveGameFrameDriver &driver = fog;
+	CHECK(driver.capture().hashEveryFrame);
+	CHECK(driver.hashWanted(1));
+	CHECK(driver.hashWanted(5));
+	CHECK(driver.hashWanted(7));
+	CHECK_FALSE(driver.hashWanted(0));
+	CHECK_FALSE(driver.hashWanted(2));
+	CHECK_FALSE(driver.hashWanted(8));
+
+	for (const auto &entry : replay.hashes)
+	{
+		FrameCompletion c;
+		c.frame = entry.first;
+		c.hashed = driver.hashWanted(c.frame);
+		c.hash = entry.second;
+		if (c.frame == 7)
+		{
+			c.hash ^= 1u; // a divergence on a recorded frame between five-frame checkpoints
+		}
+		driver.completed(c);
+	}
+	CHECK(playback.hashesCompared() == 3u);
+	CHECK(playback.mismatches() == 1u);
+	REQUIRE(playback.hasMismatch());
+	CHECK(playback.firstMismatch().frame == 7u);
+	CHECK(playback.firstMismatch().recorded == 0x9ABCu);
+	CHECK(playback.firstMismatch().played == 0x9ABDu);
+}
+
 TEST_CASE("command integrity (D6): unknown message types, malformed arguments and another player's object named as the issuer are listed")
 {
 	Game g(false);
@@ -530,4 +570,98 @@ TEST_CASE("command integrity (D6): unknown message types, malformed arguments an
 	CHECK(j.find("\"command\":\"MSG_UNKNOWN_1200\"") != std::string::npos);
 	CHECK(j.find("\"band\":\"review\"") != std::string::npos);
 	CHECK(CommandIntegrityCheck::issuerArgument(MSG_DO_AUTO_ABILITY) == 1);
+}
+
+TEST_CASE("view focus (D2): the pointer resting 3 s over a hidden enemy is an episode; shorter, over a seen enemy, over one seen moments ago, or stale views are not")
+{
+	Game g;
+	g.place("Scout", "Alice", 200.0f, 200.0f);
+	Object *fort = g.place("Fort", "Bob", 1600.0f, 1600.0f);      // never seen
+	Object *seen = g.place("Grunt", "Bob", 260.0f, 200.0f);       // in the scout's sight
+	Object *walker = g.place("Grunt", "Bob", 260.0f, 240.0f);     // seen (72 from the scout, which sees 100), then it walks into fog
+	std::vector<int> slots{ g.alice, -1, -1, -1, -1, -1, -1, -1 };
+	std::vector<ReplayFile::View> views;
+	auto look = [&](UnsignedInt from, UnsignedInt to, float x, float y, std::uint8_t flags = 1, UnsignedInt every = 2) {
+		for (UnsignedInt f = from; f < to; f += every)
+		{
+			ReplayFile::View v;
+			v.frame = f;
+			v.slot = 0;
+			v.cameraX = x;
+			v.cameraY = y;
+			v.cursorX = x + 5.0f;
+			v.cursorY = y;
+			v.flags = flags;
+			views.push_back(v);
+		}
+	};
+	look(10, 30, 1600.0f, 1600.0f);          // 20 frames over the never-seen fort: an episode
+	look(60, 64, 1600.0f, 1600.0f);          // two reports (frames 60, 62), standing until 72: 13 frames, too short
+	look(100, 130, 260.0f, 200.0f);          // over a seen enemy: nothing hidden there
+	look(150, 180, 1000.0f, 1000.0f, 0);     // the pointer over the HUD (flags 0): no ground point
+	look(200, 202, 1600.0f, 1600.0f);        // one report, then silence: stale after 10 frames
+	// the walker goes into fog at frame 230 and the pointer follows it at once for 28 frames: it was seen moments ago, so that is no episode
+	look(232, 260, 1200.0f, 1000.0f);
+	ViewCheck vc(*g.logic, views, slots, *g.check);
+	for (UnsignedInt f = 0; f < 300; ++f)
+	{
+		if (f == 230)
+		{
+			g.moveTo(walker, 1200.0f, 1000.0f);
+		}
+		g.check->beforeFrame(g.batch, g.pending);
+		vc.beforeFrame(g.batch);
+		g.pending.clear();
+		g.logic->runLogicFrame();
+		++g.batch;
+	}
+	const auto r = vc.results()[0];
+	REQUIRE(r.events.size() == 1);
+	CHECK(r.events[0].frame == 10);
+	CHECK(r.events[0].frames == 29); // frames 10 .. 38: the last view (frame 28) stands for the pointer until it is stale (10 frames later)
+	CHECK(r.events[0].target == fort->getID());
+	CHECK(r.events[0].targetTemplate == "Fort");
+	CHECK(r.views == views.size());
+	CHECK(r.encounters == 1);
+	const std::string j = vc.json("0123456789abcdef", "match", g.batch);
+	CHECK(j.find("\"detector\":\"D2-view-focus\"") != std::string::npos);
+	CHECK(j.find("\"reason\":\"hover_hidden\"") != std::string::npos);
+	(void)seen;
+}
+
+TEST_CASE("view focus (D2): views whose values are not finite numbers are counted and ignored; the report stays valid JSON (Sol r3)")
+{
+	Game g;
+	g.place("Scout", "Alice", 200.0f, 200.0f);
+	g.place("Fort", "Bob", 1600.0f, 1600.0f);
+	std::vector<int> slots{ g.alice, -1, -1, -1, -1, -1, -1, -1 };
+	std::vector<ReplayFile::View> views;
+	const float bad[3] = { std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(), 3.0e38f };
+	for (UnsignedInt f = 0; f < 60; f += 2)
+	{
+		ReplayFile::View v;
+		v.frame = f;
+		v.slot = 0;
+		v.flags = 1;
+		v.cameraX = v.cameraY = 100.0f;
+		v.cursorX = bad[(f / 2) % 3];
+		v.cursorY = 1600.0f;
+		views.push_back(v);
+	}
+	ViewCheck vc(*g.logic, views, slots, *g.check);
+	for (UnsignedInt f = 0; f < 80; ++f)
+	{
+		g.check->beforeFrame(g.batch, g.pending);
+		vc.beforeFrame(g.batch);
+		g.logic->runLogicFrame();
+		++g.batch;
+	}
+	const auto r = vc.results()[0];
+	CHECK(r.views == 30);
+	CHECK(r.invalidViews == 30);
+	CHECK(r.events.empty());
+	const std::string j = vc.json("0123456789abcdef", "match", g.batch);
+	CHECK(j.find("nan") == std::string::npos);
+	CHECK(j.find("inf") == std::string::npos);
+	CHECK(j.find("\"invalid_views\":30") != std::string::npos);
 }

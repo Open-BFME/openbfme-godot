@@ -141,7 +141,10 @@ WindowMsgHandledType GadgetImageComboBoxSystem(GameWindow *window, std::uint32_t
 	switch (msg)
 	{
 		case GWM_DESTROY:
-			mgr.winSetLoneWindow(nullptr);
+			if (mgr.winGetLoneWindow() == window)
+			{
+				mgr.winSetLoneWindow(nullptr);
+			}
 			delete dataOf(window);
 			window->winSetUserData(nullptr);
 			return MSG_HANDLED;

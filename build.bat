@@ -1,11 +1,16 @@
 @echo off
 rem Builds the OpenBFME engine: GDExtension into godot\bin and the unit test runner.
+rem build.bat [Release|Debug]; the default also builds tests and their helpers.
 rem Needs Visual Studio 2022 (C++ workload), CMake and Ninja on PATH.
 setlocal
 set "ROOT=%~dp0"
 set "BUILD_DIR=%ROOT%engine\build"
 set "BUILD_TYPE=Release"
 if not "%~1"=="" set "BUILD_TYPE=%~1"
+if not "%~2"=="" (
+    echo ERROR: usage: build.bat [Release^|Debug]
+    exit /b 2
+)
 
 if exist "%ROOT%engine\thirdparty\godot-cpp\CMakeLists.txt" goto have_godotcpp
 git -C "%ROOT%." submodule update --init engine/thirdparty/godot-cpp
@@ -24,7 +29,7 @@ call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul
 if errorlevel 1 goto no_msvc
 :have_msvc
 
-cmake -S "%ROOT%engine" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
+cmake -S "%ROOT%engine" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=%BUILD_TYPE% -DOPENBFME_BUILD_TESTS=ON -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
 if errorlevel 1 exit /b 1
 cmake --build "%BUILD_DIR%" --target openbfme openbfme_tests
 if errorlevel 1 exit /b 1
@@ -33,14 +38,6 @@ rem The helper executables the tests drive (x87_oracle, retail_oracle, numeric/a
 rem rebuilt only when older than their sources (tools\retail_oracle\helpers.json). The tests refuse stale ones.
 call "%ROOT%tools\retail_oracle\build.bat"
 if errorlevel 1 exit /b 1
-rem GitHub #23: CMake's warning about the MP3 fixtures scrolls past inside the Ninja output; repeat it as the last thing on screen
-if exist "%BUILD_DIR%\audio_fixtures\mono_44k.mp3.bin" goto fixtures_ok
-echo.
-echo WARNING: the synthetic MP3 test fixtures were not generated (CMake did not find python, lame and mpg123).
-echo          The five MP3 decode cases of run_tests.bat FAIL until they exist. Install lame and mpg123 on PATH (docs\WINDOWS.md)
-echo          and run build.bat again, or run: py -3 tools\audio\gen_mp3_fixtures.py --out engine\build\audio_fixtures
-echo.
-:fixtures_ok
 echo BUILD OK: godot\bin\ and engine\build\openbfme_tests.exe, test helpers in tools\
 exit /b 0
 

@@ -2,6 +2,8 @@
 // See GameLogic/Module/AIUpdate.h for the sources and what is inference.
 
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/AI/AIDock.h"
+#include "GameLogic/AI/AIHarvest.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/AI/AIFollowPathAsTeam.h"
 #include "GameLogic/AI/AIGarrisonStates.h"
@@ -16,11 +18,13 @@
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIEmotionStates.h"
+#include "GameLogic/Module/SiegeModules.h"
 #include "GameLogic/AI/AIAttackMelee.h"
 #include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIWaypointPath.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/AttributeModifiers.h"
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/HordeAIUpdate.h"
@@ -55,8 +59,8 @@ const char *const kStopStates =
 	"0x47 = a state RotWK added); AIIdleState::onEnter draws its random sleep offset as ZH does (GetGameLogicRandomValue(0, 10, \"AIStates.cpp\", 0x520)): the RW draw was not read, "
 	"so a retail replay's RNG sequence can differ at the first idle of every unit";
 const char *const kStopHost =
-	"S-222 the movement host reports no river (RiverModifier), no crew power, no speed attribute modifier, no charge order, no physics suppression and no turn limiting "
-	"(the modules behind RW 0x68BF11, 0x68C82D, 0x5E3A1B and the terrain river query are other lanes'); the pending position of the movers lives in the AI";
+	"S-222 the movement host reports no river (RiverModifier), no crew power, no charge order, no physics suppression and no turn limiting "
+	"(the modules behind RW 0x68BF11, 0x5E3A1B and the terrain river query are other lanes'); the pending position of the movers lives in the AI";
 
 // the registry bits, resolved once by name (a mod's own order cannot break them)
 int modelConditionIndex(const char *name)
@@ -222,26 +226,38 @@ public:
 		const ContainModuleInterface *c = m_ai.getObject()->getContain();
 		return c ? c->getCrewPowerMultiplier() : 1.0f;
 	}
-	bool speedAttributeModifier(float &) const override { return false; }
+	bool speedAttributeModifier(float &out) const override
+	{
+		// TARGET: RW 0x5E4015 -> Object product 0x68C82D (type 8, no name, innate=true); Locomotor applies it at 0x5E401E.
+		// Query this object's pool only: HordeContain already propagates additions to the members (RW 0x870E50).
+		return obj().attributeModifierProduct(ATTRIBUTE_SPEED, nullptr, true, out);
+	}
 	bool isInRiver(float, float) const override { return false; }
 	bool isTurnLimited() const override { return !stationary(); }
 	bool isChargeOrdered() const override { return false; }
 	// RW 0x5E3A1B: Object + 0x264 (the PhysicsBehavior) byte + 0x5C, the shock stun (lane COMBAT-3)
 	bool physicsMotionDisabled() const override
 	{
+		const PhysicsBehavior *p = physics();
+		return p != nullptr && p->isStunned();
+	}
+	// lane EXIT-1: obj+0x264, the PhysicsBehavior RW caches at creation (RW 0x69A420); the port finds the module (lane UBER-2B: once, as physicsMotionDisabled
+	// did: the search's dynamic_cast over every module ran per locomotorMaintainCurrentPosition, 2% of a 10k battle)
+	bool hasPhysicsModule() const override { return physics() != nullptr; }
+	PhysicsBehavior *physics() const
+	{
 		if (!m_physicsLooked)
 		{
 			m_physics = PhysicsBehavior::find(obj()); // the modules never change after the object is made
 			m_physicsLooked = true;
 		}
-		return m_physics != nullptr && m_physics->isStunned();
+		return m_physics;
 	}
-	// lane EXIT-1: obj+0x264, the PhysicsBehavior RW caches at creation (RW 0x69A420); the port finds the module
-	bool hasPhysicsModule() const override { return PhysicsBehavior::find(obj()) != nullptr; }
 	bool zMotionSuppressed() const override { return false; }
 	unsigned logicFrame() const override { return obj().logic().getFrame(); }
 	bool containerAllowsBackingUp() const override { return false; }
-	float groundHeightAt(float x, float y) const override { return obj().logic().getGroundHeight(x, y); }
+	// RW 0x5E774A: TheTerrainLogic vslot 0x1C at the object's layer (lane WALL-1: a wall top's or a ramp's height, Pathfinder::getLayerHeight)
+	float groundHeightAt(float x, float y) const override { return m_ai.layerHeightAt(x, y); }
 	LocomotorPath *getPath() override { return m_ai.m_mover->path(); }
 	bool testObjectStatus(int bit) const override { return bit >= 0 && obj().testStatus((unsigned)bit); }
 	bool testModelCondition(int bit) const override { return obj().testModelCondition(bit); }
@@ -450,6 +466,7 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	m->defineState(AI_BACK_AWAY, std::make_unique<AIBackAwayState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_QUARREL, std::make_unique<AIQuarrelState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FACE_OBJECT_IDLE, std::make_unique<AIFaceObjectIdleState>(*m), AI_IDLE, AI_IDLE);
+	m->defineState(AI_FACE_POSITION, std::make_unique<AIFacePositionState>(*m), AI_IDLE, AI_IDLE); // lane SIEGE-1: RW 0x753755 state 0x25 (RW 0x7449D4 mode 0)
 	m->defineState(AI_HUNT, std::make_unique<AIHuntState>(*m), AI_IDLE, AI_IDLE); // lane SCRIPT-3: RW 0x741133 (AIHunt.cpp)
 	// lane PLAY-4 (RW 0x753755): AIGuardState 16 (RW 0x74109B) and AIGoingIdleState 0x4E (RW 0x7410C2), both ending in idle (AIGuard.cpp)
 	m->defineState(AI_GUARD, std::make_unique<AIGuardState>(*m), AI_IDLE, AI_IDLE);
@@ -459,6 +476,9 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_AS_INDIVIDUALS, std::make_unique<AIFollowWaypointPathState>(*m, false, false), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_EXACT_AS_TEAM, std::make_unique<AIFollowWaypointPathState>(*m, true, true), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_EXACT_AS_INDIVIDUALS, std::make_unique<AIFollowWaypointPathState>(*m, false, true), AI_IDLE, AI_IDLE);
+	// lane LUMBER1 (RW 0x753755): AIDockState 14 (RW 0x740F01) and AIHarvestState 47 (RW 0x740F2C), both ending in idle
+	m->defineState(AI_DOCK, std::make_unique<AIDockState>(*m), AI_IDLE, AI_IDLE);
+	m->defineState(AI_HARVEST, std::make_unique<AIHarvestState>(*m), AI_IDLE, AI_IDLE);
 	return m;
 }
 
@@ -550,10 +570,10 @@ UpdateSleepTime AIUpdateInterface::update()
 		w->updateFiringTracker(); // RW 0x8E30DD
 	}
 	updateBeforeBase();
-	if (m_attackMoveActive && !m_mover->isAiDead() && frame() >= m_nextMoodCheck)
+	if (m_attackMoveActive && !m_mover->isAiDead())
 	{
-		// ZH AIAttackMoveToState::update: look around while marching; a target interrupts the march (the idle state resumes it)
-		m_nextMoodCheck = frame() + 3u;
+		// ZH AIAttackMoveToState::update: look around while marching; a target interrupts the march (the idle state resumes it). Lane TARGET-1: the scan is
+		// RotWK's mood scan (RW 0x755798 -> RW 0x66844A(1, 0)); its cadence is the mood check's (AI + 0x21C)
 		const unsigned id = currentStateId();
 		if (id == (unsigned)AI_MOVE_TO || id == (unsigned)AI_FOLLOW_PATH)
 		{
@@ -814,6 +834,7 @@ void AIUpdateInterface::aiMoveToPositionAndOrientate(const Coord3D &pos, float a
 	{
 		RoutedCommand c; // lane FLY-1
 		c.type = kCommandUnidentifiedMove;
+		c.angle = angle;
 		c.position = pos;
 		c.source = source;
 		if (routeCommand(c))
@@ -886,6 +907,21 @@ void AIUpdateInterface::aiBusy(CommandSourceType source)
 	m_machine->clear();
 	m_machine->setState(AI_BUSY);
 	wakeUpNow();
+}
+
+void AIUpdateInterface::aiBusyFor(unsigned frames, CommandSourceType source)
+{
+	if (frames == 0)
+	{
+		aiBusy(source); // RW 0x664997 .. 0x6649AD: clear, the source (+ 0x48), setState(0x2A)
+		return;
+	}
+	if (!acceptCommand(source, -1))
+	{
+		return; // RW 0x667174
+	}
+	m_machine->saveGoalForTemporaryState();             // RW 0x6649AF: RW 0x741675
+	m_machine->setTemporaryStateRW(AI_BUSY, (int)frames); // RW 0x6649BD: RW 0x74168E(0x2A, frames), as the emotion AI's temporary states (no wake of its own)
 }
 
 // B1 AIUpdate.cpp:5039
@@ -1352,6 +1388,40 @@ float AIUpdateInterface::groundHeightAt(float x, float y) const
 	return getObject()->logic().getGroundHeight(x, y);
 }
 
+float AIUpdateInterface::layerHeightAt(float x, float y) const
+{
+	if (m_world && m_adapter && m_adapter->getLayer() != LAYER_GROUND && m_world->mapReady())
+	{
+		return m_world->pathfinder().getLayerHeight(x, y, m_adapter->getLayer());
+	}
+	return getObject()->logic().getGroundHeight(x, y);
+}
+
+void AIUpdateInterface::settleOnLayer()
+{
+	if (!m_world || !m_adapter || !m_world->mapReady())
+	{
+		return;
+	}
+	const PathfindLayerEnum before = m_adapter->getLayer();
+	const PathfindLayerEnum layer = m_world->pathfinder().settleLayer(*m_adapter);
+	if (layer != before)
+	{
+		m_adapter->setLayer(layer);
+	}
+	if (layer == before && layer == LAYER_GROUND)
+	{
+		return;
+	}
+	Coord3D p = *getObject()->getPosition();
+	const float z = layerHeightAt(p.x, p.y);
+	if (p.z != z)
+	{
+		p.z = z;
+		getObject()->setPosition(&p);
+	}
+}
+
 void AIUpdateInterface::setLayer(PathfindLayerEnum layer)
 {
 	m_adapter->setLayer(layer);
@@ -1552,6 +1622,23 @@ void AIUpdateInterface::stopMoveSound()
 	}
 }
 
+// lane WALL-2, RW 0x66A143 .. 0x66A166: the object's StealthUpdate (RW 0x68FBD3) with a disguise (+ 0x3C) marks it detected (RW 0x7767A9(0, 1, null, 1))
+void AIUpdateInterface::revealDisguiseOnClimb()
+{
+	StealthUpdate *st = StealthUpdate::of(*getObject());
+	if (st && st->disguiseTemplate())
+	{
+		st->markAsDetected(0, 1, nullptr, true);
+	}
+}
+
+// lane WALL-2, RW 0x662A0E: AI vslot 0x60 (RW 0x66D8F5) with CMD_FROM_AI; RW 0x66D8F5 is read as the AI's private idle (the riders of its contain idle too, the
+// machine goes to AI_IDLE): INFERENCE S-4857, the port's aiIdle(CMD_FROM_AI)
+void AIUpdateInterface::idleFromAI()
+{
+	aiIdle(CMD_FROM_AI);
+}
+
 bool AIUpdateInterface::setModelCondition(const char *name, bool on)
 {
 	if (m_destroying)
@@ -1667,6 +1754,8 @@ void AIUpdateInterface::crc(StateHasher &h) const
 	h.addFloat(m_attackMoveGoal.y);
 	h.addFloat(m_attackMoveGoal.z);
 	h.addU32(m_nextMoodCheck);
+	h.addBool(m_randomlyOffsetMoodCheck); // lane TARGET-1: AI + 0x3BC / + 0x1A4
+	h.addU32(m_orderedMeleeTarget);
 	h.addBool(m_isInUpdate);
 	h.addBool(m_pendingValid);
 	h.addFloat(m_pendingPosition.x);

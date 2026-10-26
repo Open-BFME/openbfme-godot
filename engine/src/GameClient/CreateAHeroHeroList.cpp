@@ -2,6 +2,7 @@
 // The Create-a-Heroes a player can pick (lane CAH-1). See GameClient/CreateAHeroHeroList.h for the target facts.
 
 #include "GameClient/CreateAHeroHeroList.h"
+#include "Common/PathIO.h"
 
 #include "Common/ArchiveFileSystem.h"
 #include "Common/AsciiString.h"
@@ -72,7 +73,7 @@ void CreateAHeroHeroList::load(ArchiveFileSystem *fs, const std::string &profile
 	if (!profileDir.empty())
 	{
 		std::error_code ec;
-		const std::filesystem::path dir = std::filesystem::u8path(profileDir);
+		const std::filesystem::path dir = PathIO::native(profileDir);
 		if (std::filesystem::is_directory(dir, ec))
 		{
 			std::vector<std::filesystem::path> paths;
@@ -152,7 +153,7 @@ bool CreateAHeroHeroList::save(const CreateAHeroHero &hero, std::string *error, 
 		return false;
 	}
 	std::error_code ec;
-	const std::filesystem::path dir = std::filesystem::u8path(m_profileDir);
+	const std::filesystem::path dir = PathIO::native(m_profileDir);
 	std::filesystem::create_directories(dir, ec);
 	const std::string name = fileNameOf(hero.uniqueID);
 	const std::vector<std::uint8_t> bytes = hero.save();
@@ -209,7 +210,7 @@ bool CreateAHeroHeroList::remove(int index, std::string *error)
 		return false;
 	}
 	std::error_code ec;
-	std::filesystem::remove(std::filesystem::u8path(m_profileDir) / std::filesystem::u8path(e->fileName), ec);
+	std::filesystem::remove(PathIO::native(m_profileDir) / std::filesystem::u8path(e->fileName), ec);
 	if (ec)
 	{
 		if (error)

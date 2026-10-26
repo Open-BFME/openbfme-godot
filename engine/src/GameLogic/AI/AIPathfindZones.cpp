@@ -52,10 +52,12 @@ void PathfindZoneManager::reset()
 	m_zones.clear();
 	m_adjacent.clear();
 	m_tables.clear();
+	m_anyPortal = false;
 }
 
 void PathfindZoneManager::allocateBlocks(const PathfindRegion &globalBounds)
 {
+	m_anyPortal = false; // lane WALL-2: fresh blocks list no portals
 	// RW 0x939226: (hi - lo + blockSize) / blockSize on each axis
 	m_zoneBlockExtent.x = (globalBounds.hi.x - globalBounds.lo.x + m_blockSize) / m_blockSize;
 	m_zoneBlockExtent.y = (globalBounds.hi.y - globalBounds.lo.y + m_blockSize) / m_blockSize;
@@ -157,12 +159,38 @@ void PathfindZoneManager::calculateZones(const PathfindGridView &map, const Path
 			}
 		}
 	}
+	// lane WALL-2, RW 0x93A584 .. 0x93A5BE: every raised layer in use has one zone of its own (class: CLEAR on the layer), numbered after the ground zones
+	// (INFERENCE S-4856: RW numbers them first)
+	zoneStorageType raisedZone[16] = {};
+	for (const PathfindRaisedView &r : map.raised)
+	{
+		const zoneStorageType z = (zoneStorageType)m_zones.size();
+		ZoneInfo zi;
+		zi.type = (std::uint8_t)PathfindCell::CELL_CLEAR;
+		zi.layer = (std::uint8_t)r.layer;
+		m_zones.push_back(zi);
+		for (size_t k = 0; k < r.count; ++k)
+		{
+			r.cells[k].setZone(z);
+		}
+		raisedZone[r.layer & 15] = z;
+	}
 	// adjacency: every pair of 4-adjacent cells of different zones
 	for (int i = globalBounds.lo.x; i <= globalBounds.hi.x; i++)
 	{
 		for (int j = globalBounds.lo.y; j <= globalBounds.hi.y; j++)
 		{
 			const zoneStorageType z = map.at(i, j).getZone();
+			if (!map.raised.empty())
+			{
+				// lane WALL-2, RW 0x93A0D1 .. 0x93A14B: a CLEAR cell whose connect layer is a raised layer joins the layer's zone
+				const PathfindCell &cell = map.at(i, j);
+				const int conn = (int)cell.getConnectLayer();
+				if (conn >= (int)LAYER_TOP && conn <= (int)LAYER_RAISED_LAST && raisedZone[conn] != 0 && cell.getType() == PathfindCell::CELL_CLEAR && raisedZone[conn] != z)
+				{
+					m_adjacent.emplace_back(std::min(z, raisedZone[conn]), std::max(z, raisedZone[conn]));
+				}
+			}
 			if (i > globalBounds.lo.x)
 			{
 				const zoneStorageType o = map.at(i - 1, j).getZone();

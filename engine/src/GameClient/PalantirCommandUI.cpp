@@ -15,6 +15,7 @@
 #include "GameLogic/Module/HeroAbilityModules.h"
 #include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/Module/StealthAbilityModules.h"
+#include "GameLogic/Module/UpgradeModuleClasses.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/Object.h"
 
@@ -24,6 +25,12 @@ namespace PalantirCommandUI
 {
 std::string objectPortrait(const Object &obj)
 {
+	// lane MODS-3: an ObjectImageUpgrade's SelectPortrait first (edain-unchained.object-image-upgrade, its hook 0xEF3331 at RW 0x694F06)
+	std::string upgraded = ObjectImageUpgrade::imageOf(obj, true);
+	if (!upgraded.empty())
+	{
+		return upgraded;
+	}
 	// RW 0x694F06 -> 0x73D0A3 -> 0x73CF31: the template's SelectPortrait (template +0x74)
 	const ThingTemplate *t = obj.getTemplate();
 	if (!t)

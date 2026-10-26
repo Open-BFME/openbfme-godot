@@ -14,6 +14,8 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Lobby, route, configFromEnv, parseBlobKey, MAX_JSON_BYTES, MAX_LOG_BYTES, validateSighting, withoutGameIp } from './lobby.mjs';
 import { createNodeReportStore } from './report-store-node.mjs';
+import { createNodeSocialStore } from './social-store-node.mjs';
+import { repairStoredText } from './stored-text.mjs';
 
 export function readEnv(env = process.env) {
   const out = { ...env };
@@ -97,6 +99,7 @@ export function fileStore(dir) {
     }
     writeDurably(path, JSON.stringify(record));
   };
+  const social = createNodeSocialStore(join(dir, 'social.sqlite'));
   const write = (path, data) => {
     writeDurably(path, data);
   };
@@ -110,7 +113,7 @@ export function fileStore(dir) {
     if (record?.install !== f.slice(0, -5)) throw new Error(`lobby: stored ${label} ${f} has a mismatched install key`);
     if (label === 'sighting') {
       const clean = validateSighting(record);
-      if (clean.platform !== record.platform) write(join(dir, sub, f), JSON.stringify(clean));
+      if (repairStoredText(record) !== record || clean.platform !== record.platform) write(join(dir, sub, f), JSON.stringify(clean));
       record = clean;
     }
     return record;
@@ -118,6 +121,7 @@ export function fileStore(dir) {
   return {
     kind: 'files',
     reportTransaction: reports.reportTransaction.bind(reports),
+    socialTransaction: social.socialTransaction.bind(social),
     saveGame: (g) => write(join(dir, 'games', `${g.id}.json`), JSON.stringify(withoutGameIp(g))),
     deleteGame: (id) => {
       const p = join(dir, 'games', `${id}.json`);
@@ -143,8 +147,9 @@ export function fileStore(dir) {
       const path = join(dir, 'games', f);
       const game = JSON.parse(readFileSync(path, 'utf8'));
       if (!game || game.id !== f.slice(0, -5)) throw new Error(`lobby: stored game ${f} has a mismatched key`);
-      const clean = withoutGameIp(game);
-      if (Object.hasOwn(game, 'ip')) write(path, JSON.stringify(clean));
+      const repaired = repairStoredText(game);
+      const clean = withoutGameIp(repaired);
+      if (repaired !== game || Object.hasOwn(game, 'ip')) write(path, JSON.stringify(clean));
       return clean;
     }),
     putBlob: (key, bytes) => write(join(dir, key), bytes),
@@ -257,6 +262,10 @@ export function startServer(env = readEnv(), { log = console.log } = {}) {
         ip: req.socket.remoteAddress ?? '',
         bytes: async () => new Uint8Array(raw),
       };
+      const controller = new AbortController();
+      r.signal = controller.signal;
+      req.once('aborted', () => controller.abort());
+      res.once('close', () => { if (!res.writableEnded) controller.abort(); });
       // ONLINE-5: a held poll (route's `deferred`) is answered when it resolves; the chain goes on with the next request meanwhile
       const routed = chain.then(() => route(lobby, r));
       chain = routed.catch(() => {});

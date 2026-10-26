@@ -1591,4 +1591,11 @@ TEST_CASE("onlinehub1: the results report: LAN and online games only, the platfo
 	solo.players.resize(1);
 	CHECK(GameRecords::resultBody(solo, kInstall, "Elrond", "linux", "v", &err).empty());
 	CHECK(err == "a game with fewer than two players is not reported (the service takes 2 .. 8)");
+	// lane SOLO-1: an online game with a single human is never reported, AI slots or not; a LAN game's one human still reports
+	GameRecord soloAI = r;
+	soloAI.players[1].human = false;
+	CHECK(GameRecords::resultBody(soloAI, kInstall, "Elrond", "linux", "v", &err).empty());
+	CHECK(err == "an online game with a single human is not reported (a custom game may start solo)");
+	soloAI.kind = "lan";
+	CHECK_FALSE(GameRecords::resultBody(soloAI, kInstall, "Elrond", "linux", "v", &err).empty());
 }

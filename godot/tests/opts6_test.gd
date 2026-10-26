@@ -1,7 +1,7 @@
-## Headless test of lane OPTS-6 (menus that are exact, modal and usable with keyboard and controller): the game with --opts6-check (scripts/opts6_check.gd:
-## the hit areas of every control of the settings, the bottom bar and the main menu just inside / outside their drawn shapes, the keyboard and the
-## controller walks) on an Options.ini of the test's own at 1024x768, 1920x1080 and 2560x1440 (OPTS6_SIZES to choose), then --auto --opts6-game (the
-## quit menu's Options over a live game: modal; AllHealthBars on, so the world has decorations to hide).
+## Headless OPTS-6 test: --opts6-check probes settings, bottom-bar and main-menu hit shapes, then walks
+## main-menu groups/entries with arrows/Enter and D-pad/A, and settings with keyboard and right-stick input.
+## Uses its own Options.ini at 1024x768, 1920x1080 and 2560x1440 (OPTS6_SIZES to choose), then --auto
+## --opts6-game checks modal Options over a live game with AllHealthBars enabled.
 ##
 ##   godot --headless --path godot --script res://tests/opts6_test.gd
 ##
@@ -12,6 +12,7 @@ var _failures := 0
 
 
 func _initialize() -> void:
+	OS.set_environment("OPENBFME_TEST", "1")
 	var code: int = await _run()
 	print("OPTS6 %s" % ["PASS" if code == 0 else "FAIL"])
 	quit(code)

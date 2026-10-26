@@ -15,6 +15,7 @@ set(OPENBFME_HUD_SOURCES
     src/GameClient/HudObjects.cpp
     src/GameClient/HudContext.cpp
     src/GameClient/CursorFile.cpp
+    src/GameClient/FormationAssistant.cpp
     src/GameClient/HudInput.cpp
     src/GameClient/InGameHud.cpp
     src/GameClient/ControlBar.cpp
@@ -34,6 +35,7 @@ set(OPENBFME_HUD_TESTS
 # Simulation audit (tools/sim): the code that builds GameMessages or changes the players' simulation state is manifested; the camera, the picking maths, the control bar
 # view, the Palantir screen and the device layer are client-side and excluded with their reasons in tools/sim/sim_policy.json.
 list(APPEND OPENBFME_SIM_SOURCES
+    src/GameClient/FormationAssistant.cpp
     src/GameLogic/PlayerCommands.cpp
     src/GameClient/MessageStream/MessageStream.cpp
     src/GameClient/MessageStream/CommandXlat.cpp

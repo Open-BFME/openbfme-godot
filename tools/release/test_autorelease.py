@@ -16,6 +16,7 @@ import json
 import re
 import os
 import shutil
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -67,6 +68,16 @@ def commit(repo: Path, files: dict[str, str | bytes], message: str, force: bool 
     return git(repo, "rev-parse", "HEAD")
 
 
+# lane MACGATE-1: the release pipeline (autorelease.sh, publish_release.sh) runs on the Deck and the Linux release hosts only: its scripts are
+# #!/bin/bash and use bash 4+ (mapfile), and macOS's /bin/bash is 3.2. A run of it on macOS is skipped by name, never passed.
+DECK_HOSTED = "the release pipeline (autorelease.sh / publish_release.sh) runs on the Deck and Linux release hosts: #!/bin/bash needs bash 4+, macOS has 3.2"
+
+
+def skip_on_macos() -> None:
+    if sys.platform == "darwin":
+        pytest.skip(DECK_HOSTED)
+
+
 def run(*cmd, env=None, **kw) -> subprocess.CompletedProcess:
     return subprocess.run([str(c) for c in cmd], capture_output=True, text=True, timeout=600, env={**os.environ, **GIT_ENV, **(env or {})},
                           stdin=subprocess.DEVNULL, **kw)
@@ -84,6 +95,8 @@ def package_dir(d: Path, version: str, extra: bool = False, legacy: bool = True)
             files = {"OpenBFMELauncher" + ext: f"the launcher of {version} for {platform}".encode()}
             if kind == "game":
                 files["OpenBFME" + ext] = f"{n} bytes".encode()
+                # MACACT-1: the GDExtension, which autorelease.sh compares with a GitHub Actions build of it (actions_lib)
+                files[LIBS[platform]] = actions_lib(platform, version)
                 files["VERSION"] = f"OpenBFME {version}\n".encode()   # seal_package.py checks it names the version
             data = tiny_package(n, files)
             (d / n).write_bytes(data)
@@ -93,6 +106,20 @@ def package_dir(d: Path, version: str, extra: bool = False, legacy: bool = True)
     if extra:
         (d / "payload.bin").write_bytes(b"not a package file")
     return d
+
+
+LIBS = {"linux-x64": "openbfme.linux.template_debug.x86_64.so", "windows-x64": "openbfme.windows.template_debug.x86_64.dll"}
+
+
+def actions_lib(platform: str, version: str, github: bool = False, differs: bool = False) -> bytes:
+    """the stand-in GDExtension of a platform: the build host's and GitHub Actions' builds (`github`) are the same bytes, the Windows DLL
+    but for its CodeView GUID (lld's hash of the PDB, which holds the build folder's path: a small PE image, test_pdb_tools.pe); `differs`
+    (STANDIN_ACTIONS_FAULT=lib-differs): GitHub's is another build"""
+    body = f"the {platform} GDExtension of {version}{' (another build)' if differs else ''}\n".encode()
+    if platform == "linux-x64":
+        return body
+    import test_pdb_tools
+    return test_pdb_tools.pe(guid=bytes([0x6A if github else 0x11]) * 16, extra=body)
 
 
 def standin_build_hooks(checkout: Path, version: str) -> None:
@@ -138,8 +165,10 @@ def mac_package_dir(checkout: Path, version: str, out: Path, fault: str = "", co
     import test_macos_release
     commit = commit or git(checkout, "rev-parse", "HEAD")   # `commit`: the tagged public commit the host built (mac_publish_dir)
     key = (checkout / "launcher/release_key.pub").read_text().strip()
+    keys = [ln.split()[0] for ln in (checkout / "launcher/release_keys.pub").read_text().splitlines() if ln.strip() and not ln.startswith("#")]
     info = {"version": version, "display_version": f"{version} Mac Unstable Preview (Apple Silicon)", "commit": commit, "date": "2026-10-16",
-            "repo": TARGET, "release_key": key, "test_build": False, "local_trial": False, "macos_preview": False, "macos_updates": True}
+            "repo": TARGET, "release_key": key, "release_keys": keys, "test_build": False, "local_trial": False, "macos_preview": False,
+            "macos_updates": True}
     if fault == "wrong-key":
         info["release_key"] = "ab" * 32
     if fault == "wrong-repo":
@@ -206,6 +235,8 @@ class World:
         shutil.copytree(HERE, self.repo / "tools/release", ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
         shutil.copy2(REPO / "tools/precommit.py", self.repo / "tools/precommit.py")
         files = {"README.md": "OpenBFME\n" + ARCHIVE_LINE, "launcher/release_key.pub": pub.stdout.strip() + "\n",
+                 # SIGNKMS-1: the trusted list, the Deck key first (the Mac launcher's build_info.json carries it)
+                 "launcher/release_keys.pub": pub.stdout.strip() + "  deck-2026\n",
                  # RELNAME-1: the launcher's release grammar (a bridge's launcher must know -alpha)
                  "launcher/scripts/core/semver.gd": (REPO / "launcher/scripts/core/semver.gd").read_text(),
                  "engine/a.cpp": "1\n", ".gitignore": "/workspace/\n*.secret\n", "archive/old.txt": "legacy\n",
@@ -250,9 +281,29 @@ case "${FAKE_MAC:-up}" in
   *) echo "MAC READY 26.6 arm64 Godot 4.7.2.stable.official.test"; exit 0 ;;
 esac
 ''')
-        for f in ("build", "verify", "build-mac", "ssh"):
+        # MACACT-1: what the stand-in GitHub Actions run builds (gh_stand_in.py runs it at the dispatch): the Mac package as the Mac host
+        # would, or a platform's GDExtension; it logs what it built and what the public remote had then (the tag must not be there yet)
+        (self.standin / "actions-build").write_text(f"""#!{sys.executable}
+import sys; sys.path.insert(0, {str(HERE)!r})
+from pathlib import Path
+from test_autorelease import mac_package_dir, actions_lib, LIBS
+import json, os, subprocess
+platform, checkout, version, out = sys.argv[1], Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4])
+remote = os.environ["FAKE_GH_REMOTE"]
+tag = subprocess.run(["git", "ls-remote", remote, "refs/tags/" + version], capture_output=True, text=True).stdout.strip()
+head = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+open(os.environ["FAKE_ACTIONS_LOG"], "a").write(json.dumps({{"platform": platform, "version": version, "head": head, "remote_tag": tag}}) + "\\n")
+if platform == "macos":
+    mac_package_dir(checkout, version, out, os.environ.get("STANDIN_MAC_FAULT", ""))
+else:
+    p = "linux-x64" if platform == "linux" else "windows-x64"
+    data = actions_lib(p, version, github=True, differs=os.environ.get("STANDIN_ACTIONS_FAULT") == "lib-differs")
+    (out / LIBS[p]).write_bytes(data)
+""")
+        for f in ("build", "verify", "build-mac", "ssh", "actions-build"):
             (self.standin / f).chmod(0o755)
         self.mac_log = tmp / "mac.log"
+        self.actions_log = tmp / "actions.jsonl"
         self.gh = tmp / "bin" / "gh"
         self.gh.parent.mkdir()
         self.gh.write_text(f"#!/bin/bash\nexec {sys.executable} {HERE / 'gh_stand_in.py'} \"$@\"\n")
@@ -287,9 +338,12 @@ esac
                 "OPENBFME_RELEASE_MAC_SSH": str(self.standin / "ssh"), "FAKE_MAC_LOG": str(self.mac_log), "OPENBFME_RELEASE_MAC_ROOT": "ci-root",
                 "OPENBFME_RELEASE_MIN_COMMIT": self.first,
                 "STANDIN_BUILD_LOG": str(self.tmp / "builds.jsonl"),
+                "FAKE_GH_ACTIONS_BUILD": str(self.standin / "actions-build"), "FAKE_ACTIONS_LOG": str(self.actions_log),
+                "OPENBFME_RELEASE_ACTIONS_POLL": "0",
                 "PATH": f"{self.gh.parent}:{os.environ['PATH']}", **extra}
 
     def release(self, sha: str, *args: str, **env) -> subprocess.CompletedProcess:
+        skip_on_macos()
         return run("bash", self.repo / "tools/release/autorelease.sh", sha, "--repo", TARGET, "--remote", "origin", *args, env=self.env(**env))
 
     def gh_data(self) -> dict:
@@ -682,7 +736,7 @@ def test_plain_releases_follow_the_alpha_builds_without_a_bridge(world):
     assert [x["prerelease"] for x in world.gh_data()["releases"]] == [False, False]
 
 
-def test_bridge_rules():
+def test_bridge_version_rules():
     ok = lambda r: ""
     rel = lambda t, draft=False: {"tag_name": t, "draft": draft, "prerelease": "-" in t}
     assert autorelease.bridge_check([], ok) == ("no release on the first 30 an old launcher can read", "")
@@ -698,19 +752,6 @@ def test_bridge_rules():
     assert autorelease.next_bridge(["refs/tags/v0.3.0-preview.4", "refs/tags/v0.4.0-alpha.7", "refs/tags/v0.3.0-preview.5^{}"]) == "v0.3.0-preview.6"
     with pytest.raises(SystemExit, match="would not be above v0.3.1"):
         autorelease.next_bridge(["refs/tags/v0.3.0-preview.4", "refs/tags/v0.3.1"])
-    # Sol r2: the grammar is run (Godot, sample tags), not searched for a word
-    assert autorelease.knows_alpha((REPO / "launcher/scripts/core/semver.gd").read_text())
-    for old in ("42f8a8d2", "2a422ce6"):   # the launchers of v0.3.0-preview.1/.2 and .3/.4
-        src = subprocess.run(["git", "-C", REPO, "show", f"{old}:launcher/scripts/core/semver.gd"], capture_output=True, text=True)
-        assert src.returncode == 0, f"the launcher of {old} is not in this clone"
-        assert not autorelease.knows_alpha(src.stdout), old
-        hacked = src.stdout.replace('(0|[1-9][0-9]{0,8}))?$"', '(0|[1-9][0-9]{0,8}))?$"  # alpha', 1)
-        assert hacked != src.stdout and not autorelease.knows_alpha(hacked), "a comment saying alpha is no alpha grammar"
-    assert not autorelease.knows_alpha("this is not gdscript"), "a semver.gd that does not parse"
-    assert not autorelease.knows_alpha("extends RefCounted\nstatic func is_valid(t): return [][1]\n"), "one that stops on an error"
-    lax = (REPO / "launcher/scripts/core/semver.gd").read_text().replace("(?:-(alpha|nightly|preview)", "(?:-(alpha|beta|nightly|preview)")
-    assert lax != (REPO / "launcher/scripts/core/semver.gd").read_text()
-    assert not autorelease.knows_alpha(lax), "a grammar that takes more than the launchers' is not the alpha grammar"
     iv = autorelease.intent_version_ok
     assert iv("v0.3.0-preview.5", "v0.3.0-preview.4") and iv("v0.4.0-alpha.1", "v0.3.0-preview.5") and iv("v0.3.0-preview.6", "v0.4.0-alpha.3")
     assert not iv("v0.4.0-alpha.2", "v0.4.0-alpha.2") and not iv("v0.3.0-preview.5", "v0.3.0-preview.6") and not iv("v0.5.0-alpha.1", "")
@@ -726,6 +767,43 @@ def test_bridge_rules():
     assert not iv("v0.4.6", "v0.4.0-alpha.4", tags + ["refs/tags/v0.4.7"]) and iv("v0.4.8", "v0.4.5", tags + ["refs/tags/v0.4.7"])
     assert not iv("v0.4.0-alpha.5", "v0.4.5") and not iv("v0.4.0-alpha.5", "v0.4.0-alpha.4", ["refs/tags/v0.4.5"])
     assert not iv("v0.3.0-preview.7", "v0.4.5") and not iv("v0.3.0-preview.7", "", ["refs/tags/v0.4.5^{}"])
+
+
+@pytest.fixture
+def bridge_godot():
+    if shutil.which(os.environ.get("GODOT", "godot")) is None:
+        pytest.skip("no Godot executable (set GODOT) to run the bridge launcher's semver.gd grammar probe")
+
+
+def test_bridge_rules(bridge_godot):
+    # Sol r2: the grammar is run (Godot, sample tags), not searched for a word
+    assert autorelease.knows_alpha((REPO / "launcher/scripts/core/semver.gd").read_text())
+    assert not autorelease.knows_alpha("this is not gdscript"), "a semver.gd that does not parse"
+    assert not autorelease.knows_alpha("extends RefCounted\nstatic func is_valid(t): return [][1]\n"), "one that stops on an error"
+    lax = (REPO / "launcher/scripts/core/semver.gd").read_text().replace("(?:-(alpha|nightly|preview)", "(?:-(alpha|beta|nightly|preview)")
+    assert lax != (REPO / "launcher/scripts/core/semver.gd").read_text()
+    assert not autorelease.knows_alpha(lax), "a grammar that takes more than the launchers' is not the alpha grammar"
+
+
+@pytest.mark.parametrize("tag,tree", [
+    ("v0.3.0-preview.2", "4bc620603c6824421b967bb174f9ed42bea91b9e"),
+    ("v0.3.0-preview.4", "b10f453de143a794ce9dd4e02baacc9fa9fd57ce"),
+])
+def test_bridge_historical_rules(bridge_godot, tag, tree):
+    # docs/WINDOWS.md: these published trees are identical to the unpublished development-history pins.
+    available = subprocess.run(["git", "-C", REPO, "cat-file", "-e", f"{tree}^{{tree}}"], capture_output=True, text=True)
+    if available.returncode:
+        pytest.skip(f"the pinned launcher tree {tree} of {tag} is absent; fetch refs/tags/{tag} from the repository")
+    src = git(REPO, "show", f"{tree}:scripts/core/semver.gd")
+    assert not autorelease.knows_alpha(src), tag
+    hacked = src.replace('(0|[1-9][0-9]{0,8}))?$"', '(0|[1-9][0-9]{0,8}))?$"  # alpha', 1)
+    assert hacked != src and not autorelease.knows_alpha(hacked), "a comment saying alpha is no alpha grammar"
+
+
+def test_the_alpha_probe_fails_closed_without_godot(tmp_path, monkeypatch):
+    monkeypatch.setenv("GODOT", str(tmp_path / "missing-godot"))
+    with pytest.raises(SystemExit, match=r"Godot .* could not run .*the alpha check fails closed"):
+        autorelease.knows_alpha((REPO / "launcher/scripts/core/semver.gd").read_text())
 
 
 def test_bridge_manifest_rules(world, tmp_path):
@@ -3107,16 +3185,29 @@ def paused_remote(world, tmp: Path) -> dict:
     refuses it (<rc>): a server still applying a push whose client is gone"""
     f = {k: tmp / k for k in ("pause", "received", "go", "rc", "done")}
     hook = world.remote / "hooks/pre-receive"
-    hook.write_text(f"""#!/bin/bash
-cat > /dev/null
-[ -f {f['pause']} ] || exit 0
-touch {f['received']}
-while [ ! -f {f['go']} ]; do sleep 0.1; done
-rc=$(cat {f['rc']} 2>/dev/null || echo 0)
-touch {f['done']}
-exit $rc
+    hook.write_text(f"""#!{sys.executable}
+import pathlib, sys, time
+sys.stdin.read()
+if not pathlib.Path({str(f['pause'])!r}).exists():
+    sys.exit(0)
+pathlib.Path({str(f['received'])!r}).touch()
+deadline = time.monotonic() + 60
+while not pathlib.Path({str(f['go'])!r}).exists():
+    if time.monotonic() >= deadline:
+        sys.exit("test server timed out waiting for go")
+    time.sleep(0.01)
+sys.exit(int(pathlib.Path({str(f['rc'])!r}).read_text()))
 """)
     hook.chmod(0o755)
+    receiver = tmp / "receive-pack"
+    receiver.write_text(f"""#!{sys.executable}
+import pathlib, subprocess, sys
+result = subprocess.run([{shutil.which('git')!r}, "receive-pack", *sys.argv[1:]])
+pathlib.Path({str(f['done'])!r}).touch()
+sys.exit(result.returncode)
+""")
+    receiver.chmod(0o755)
+    git(world.repo, "config", "remote.origin.receivepack", shlex.quote(str(receiver)))
     f["pause"].touch()
     return f
 
@@ -3131,8 +3222,8 @@ import os, subprocess, sys, time
 if "push" in sys.argv and "--atomic" in sys.argv:
     # the local "server" (receive-pack, a child of this push) must not hold the run's output pipes, as a remote one would not
     p = subprocess.Popen([{real!r}] + sys.argv[1:], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    end = time.time() + 60
-    while not os.path.exists({str(received)!r}) and time.time() < end:
+    end = time.monotonic() + 60
+    while not os.path.exists({str(received)!r}) and time.monotonic() < end:
         time.sleep(0.05)
     p.kill(); p.wait()
     print("fatal: the remote end hung up unexpectedly", file=sys.stderr)
@@ -3145,8 +3236,8 @@ os.execv({real!r}, [{real!r}] + sys.argv[1:])
 
 def wait_for(path: Path, what: str) -> None:
     import time  # noqa: PLC0415
-    end = time.time() + 60
-    while not path.exists() and time.time() < end:
+    end = time.monotonic() + 60
+    while not path.exists() and time.monotonic() < end:
         time.sleep(0.05)
     assert path.exists(), what
 
@@ -3171,8 +3262,6 @@ def test_a_push_whose_client_dies_while_the_server_applies_it_is_never_discarded
     f["go"].touch()
     wait_for(f["done"], "the server's hook finished")
     f["pause"].unlink()
-    import time  # noqa: PLC0415
-    time.sleep(0.5)
     landed = world.remote_refs("refs/tags/v0.4.5")
     assert bool(landed) == (server == "lands"), landed
     r = world.release(sha)
@@ -3253,3 +3342,23 @@ def test_the_push_guard_runs_before_the_push(world, tmp_path):
     r = world.release(sha, "--since", world.first)
     assert r.returncode == 0 and "AUTORELEASE OK v0.4.5" in r.stdout, r.stdout + r.stderr
     assert r.stdout.index("PUBLIC PUSH GUARD ok: 1 new commit(s), 1 tree(s) audited for origin") < r.stdout.index("AUTORELEASE push:")
+
+
+def test_onlinemenu1_the_mailer_arns_hold_no_account():
+    """lane ONLINEMENU-1: the aws-account rule allows the mailer's IAM policy and deploy steps because every ARN there names the account with the
+    <ACCOUNT_ID> placeholder; no 12-digit account, access key or bucket name may appear in them"""
+    for name in ("services/online/mailer/iam-policy.json", "services/online/mailer/README.md"):
+        text = (REPO / name).read_text(encoding="utf-8")
+        arns = re.findall(r"arn:aws[a-z-]*:[^\s\"]*", text)
+        assert arns, name
+        for arn in arns:
+            parts = arn.split(":")
+            assert len(parts) >= 6 and parts[4] == "<ACCOUNT_ID>" and parts[2] in ("iam", "logs", "ses"), arn
+        assert not re.search(r"(?<!\d)\d{12}(?!\d)|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|aws_secret_access_key|aws_session_token", text), name
+
+
+def test_onlinemenu1_only_the_project_domain_itself_is_public():
+    """Sol (onlinemenu1-guards): @openbfme.com is public, a longer domain that starts with it is not"""
+    rx = next(r[1] for r in autorelease.BUILTIN if r[0] == "e-mail")
+    assert not rx.search("write to admin@openbfme.com with your code") and not rx.search("from `no-reply@openbfme.com`;")
+    assert rx.search("person@openbfme.com.evil.net") and rx.search("person@openbfme.community")

@@ -2,6 +2,41 @@
 
 Run the audit on the host that configured the build. It reads `compile_commands.json`
 and `sim_manifest.json`; it does not change compilation flags, policy or baseline.
+Run all commands from the repository root with Python 3, after configuring
+`engine` with CMake >= 3.17, Ninja and a C++17 compiler on that same host.
+
+## Deterministic libm cross-compiler sweep
+
+`detlibm_sweep.cpp` compares compiler builds directly, not with the host's math
+library. Run from the repository root (no Godot or game files needed):
+
+```sh
+cmake -S engine -B workspace/detlibm-gcc -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENBFME_BUILD_GODOT=OFF -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+cmake -S engine -B workspace/detlibm-clang -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENBFME_BUILD_GODOT=OFF -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+cmake --build workspace/detlibm-gcc --target openbfme_detlibm
+cmake --build workspace/detlibm-clang --target openbfme_detlibm
+g++ -std=c++17 -O3 -fno-fast-math -ffp-contract=off -frounding-math -fno-math-errno -Iengine/src tools/sim/detlibm_sweep.cpp workspace/detlibm-gcc/libopenbfme_detlibm.a -o workspace/detlibm-gcc/sweep
+clang++ -std=c++17 -O3 -fno-fast-math -ffp-contract=off -frounding-math -fno-math-errno -Iengine/src tools/sim/detlibm_sweep.cpp workspace/detlibm-clang/libopenbfme_detlibm.a -o workspace/detlibm-clang/sweep
+workspace/detlibm-gcc/sweep workspace/detlibm-gcc/results.bin
+workspace/detlibm-clang/sweep workspace/detlibm-clang/results.bin
+cmp workspace/detlibm-gcc/results.bin workspace/detlibm-clang/results.bin
+```
+
+Each build evaluates 1,000,000 input tuples (xorshift64 seed `D1B54A32D192ED03`):
+250,000 random binary64 triples, 250,000 triples in [-1,1) with FMA cancellation,
+250,000 wider finite triples, and 250,000 edge triples including signed zeros,
+subnormals, infinities and both kinds/signs of NaN. All 19 functions run on every
+tuple: 19,000,000 double results and 1,000,000 separate `frexp` exponents, with
+no NaN canonicalization or exclusions. The 192,000,024-byte output is
+little-endian uint64 words: a seed/count/record-width header, then each tuple's
+`x,y,z,n` bits, the 19 result words in source order, and the signed `frexp`
+exponent. Comparing the inputs too guards against a compiler difference in the
+generator. A failed write returns nonzero. Keep the generated binaries untracked.
+
+The host comparison in `test_deterministic_libm.cpp` is a different check:
+`std::floor`/`std::ceil` may be GCC inlines preserving signaling NaNs or glibc
+calls quieting them. Those inputs are excluded only from that host oracle; the
+port's exact unchanged NaN bits are tested explicitly and in the pinned hashes.
 
 ## Windows (MSVC)
 
@@ -67,9 +102,26 @@ AST parser settings only: the build's simulation flags and audit rules are uncha
 
 ## Linux
 
-Existing setup is unchanged: `python -m pip install libclang==18.1.1`, then
-`python tools/sim/sim_audit.py --build <build-dir>` on the build host. Compiler
-system includes are probed from that build's compiler.
+Linux only, in a dedicated Python environment with the configured build in
+`engine/build` (adjust `--build` for another directory):
 
-The default is `--ast=require` on both platforms. Explicit `--ast=skip` remains
+```sh
+python3 -m pip install libclang==18.1.1
+python3 tools/sim/sim_audit.py --build engine/build
+```
+
+Compiler system includes are probed from that build's compiler.
+
+## macOS
+
+Install the libclang wheel for its Python bindings (`python -m pip install
+libclang==18.1.1`), but the AST pass does not load the wheel's libclang 18: the
+macOS SDK's libc++ headers use builtins of the SDK's own compiler (libclang 18
+fails on `__builtin_clzg` in `<__bit/countl.h>`). `sim_audit.py` loads the
+`libclang.dylib` of the active developer toolchain instead (`xcrun --find clang`,
+then `../lib/libclang.dylib`: Xcode or the Command Line Tools, the compiler the
+build uses). `OPENBFME_LIBCLANG_LIBRARY` overrides it; a missing library is an
+error. The universal build's compile commands are parsed for the arm64 slice.
+
+The default is `--ast=require` on every platform. Explicit `--ast=skip` remains
 a loud exit 3, never proof that the AST audit passed. Do not use it for acceptance.

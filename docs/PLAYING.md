@@ -39,8 +39,11 @@ files.
   **not accepted yet**: its `Data1.big` (fonts, scripts, built-in heroes) is a
   different build from the All In One one, and OpenBFME has not pinned it
   (S-4701). The game says which entry it does not know; the message asks you
-  to report it, and `py -3 tools\release\big_entries.py "<game folder>\Data1.big"`
-  lists the entries to post. A mix of the two layouts (a half-patched install)
+  to report it. With a source checkout and Python 3, Windows users can run
+  `py -3 tools\release\big_entries.py "games\RotWK\Data1.big"` from the
+  checkout root (Linux: `python3 tools/release/big_entries.py games/RotWK/Data1.big`);
+  replace the relative game folder with yours. This lists the entries to post.
+  A mix of the two layouts (a half-patched install)
   is refused with the files named.
   Games started from a disc install and from an All In One install do not
   match: players on different layouts cannot join each other's LAN games or
@@ -54,9 +57,10 @@ files.
   its first start. It is on the launcher's **Game files** page; to hide it,
   turn off *Offer to download the games* in Settings.
 - **Windows 10 or 11** (64-bit) with a graphics card that supports Vulkan or
-  Direct3D 12, or **64-bit Linux** with Vulkan graphics (Mesa or the
-  proprietary drivers). On Linux the game folders can be inside a Wine or
-  Proton prefix.
+  Direct3D 12, **x86-64 Linux** with Vulkan graphics (Mesa or the
+  proprietary drivers), or **macOS 13 or newer on Apple Silicon** with Metal.
+  The Mac package is not an Intel/Rosetta build. On Linux the game folders
+  can be inside a Wine or Proton prefix.
 
 ## Installing
 
@@ -67,7 +71,8 @@ downloaded first.
 1. Download the file for your system from
    [GitHub Releases](https://github.com/Open-BFME/openbfme-godot/releases):
    `openbfme-<version>-windows-x64.zip` or
-   `openbfme-<version>-linux-x64.tar.gz`. The other files of a release are
+   `openbfme-<version>-linux-x64.tar.gz`, or `openbfme-<version>-macos-arm64.zip`.
+   The other files of a release are
    used by OpenBFME itself; you don't need them.
    To check the download, compare its SHA-256 with the release's
    `SHA256SUMS-<version>.txt` (Linux: `sha256sum -c --ignore-missing
@@ -83,26 +88,31 @@ downloaded first.
      `./OpenBFMELauncher.x86_64`, for the news, the settings, older versions
      and the games download, and **Play**.
 
+   On macOS, keep the sibling **OpenBFME.app** and **OpenBFME Launcher.app**
+   together and open either in Finder. These apps are ad-hoc signed, not
+   Developer ID signed or notarized; follow the package's first-open instructions.
+
    On Windows, SmartScreen may say *Windows protected your PC* because the
    executables are not code-signed yet: choose **More info**, then **Run
    anyway**. Windows asks this once per new file.
 4. The first start asks for your game folders (next section).
 
-Whichever one you start keeps OpenBFME up to date (see [Updates](#updates)).
-Already have the launcher from an earlier build? You don't need to download
-anything: it updates itself and the game.
+On Windows and Linux, whichever one you start keeps OpenBFME up to date
+(see [Updates](#updates)). Already have the launcher from an earlier build?
+You don't need to download anything: it updates itself and the game.
+The Mac package has the separate update requirements below.
 
 Releases have plain numbers: Alpha 0.4.5, then 0.4.6 and so on; the middle
 number goes up (0.5.0) when a big new feature lands. The launcher has two
 channels: **Stable** (the tested releases, shown as Alpha 0.4.5) and
-**Nightly** (a build of everything merged that day, published every night; it
+**Nightly** (a build of everything merged, published twice a day; it
 may break). Nightly also gets every stable release, and you can switch in
 Settings.
 
 The menu on the left has **Play** (the installed version, whether it is up to
 date, your games and What's New from the version's release notes), **News**
-(the notes of every release), **Multiplayer** (online play is coming; LAN
-games are in the game), **Mods**, **Game files** (where your games are: *Show
+(the notes of every release), **Multiplayer** (online identity and friends;
+LAN games are in the game), **Mods**, **Game files** (where your games are: *Show
 folder*, *Choose again* makes the game ask on its next start, and the games
 download) and **Settings** (General: the channel, the free camera, updating
 by itself, the games download; About & logs: the versions, the log folder,
@@ -148,14 +158,25 @@ cached afterwards. The folders are remembered in `install-paths.cfg` in the
 game's data folder (see [Logs](#logs) for where that is); delete that file to
 choose again.
 
-OpenBFME only reads your game files. It uses the network only for the
-launcher's update check, for LAN games you start yourself and, when you join
-or host an online test game, for the lobby and relay of that game (see
-[Online play](#online-play-test-feature)).
+OpenBFME only reads your game files. Network use also includes optional game
+downloads, online player counts, identity and friends, lobby and relay play,
+Quick Match, tournaments and statistics. **Share my game results for statistics**
+is on by default in Options > OPENBFME > Online; turn it off to stop uploading
+LAN and online game summaries. Crash reporting separately asks for consent.
+See [Online play](#online-play-test-feature).
 
 ## Updates
 
-Both programs keep OpenBFME up to date, through the same updater (the
+**macOS:** the current arm64 builder produces an unsealed package. Open
+**OpenBFME.app** directly to run it; launcher **Play** needs an approved signed
+payload inventory. Its SHA-256 sidecar checks download integrity, not an
+official release signature. Signed Mac updates use a separate manifest and
+replace both apps together when the launcher restarts; they are deferred while
+the game is running. A signed update manifest does not seal an initially
+unpacked package. The older unstable preview supports manual updates only.
+See [MACOS.md](MACOS.md) for the package and signing requirements.
+
+**Windows and Linux:** both programs keep OpenBFME up to date, through the same updater (the
 launcher's):
 
 - **Started the launcher?** It looks for a newer build at every start and
@@ -202,10 +223,10 @@ launcher never installs an older version by itself; to go back, use
 Settings > About & logs (*Play this version*, or *Install* an older release). Offline, or when GitHub's
 hourly limit is reached, it says so and plays the newest installed version.
 
-The launcher only talks to `api.github.com`, `github.com` and
-`*.githubusercontent.com` over HTTPS (and to `bfmeladder.com` only while a
-*Download the games* you started runs). It sends no telemetry and needs no
-account.
+The updater uses HTTPS release downloads. The launcher also contacts the online
+lobby for player counts and social features, account providers when you choose
+to link or restore an identity, and the game-download service when you request
+a download. These are separate from the update check.
 
 The full design is in [RELEASE.md](RELEASE.md#the-launcher-launch-1).
 
@@ -267,7 +288,7 @@ next game) and whether every health bar shows; **Brightness** brightens or
 darkens the picture; **Scroll Speed** sets the camera's scroll speed. The
 detail rows OpenBFME cannot draw yet (model, animation, shadows, terrain,
 water, shader detail) are greyed out on the Custom Settings page, and so are
-**Movie**, **EAX3** and **High Audio Quality**. A texture quality change shows
+**EAX3** and **High Audio Quality**. **Movie** volume works. A texture quality change shows
 from the next game you load. The **Resolution** row says where the window size
 is set: OPENBFME, Display tab.
 
@@ -277,21 +298,27 @@ corner, above Cancel. The OpenBFME settings take the place of the three
 panels; the tabs are on the left: **Display** (also **Widescreen view**:
 Original is the original game's view, which shows less from top to bottom on
 screens wider than 4:3; Wider shows the 4:3 view from top to bottom and more
-to the sides), **Graphics+** (anti-aliasing,
-anisotropic filtering, original or enhanced look, interface scale for large
-screens, soft particle edges), **Camera** (scroll speed, edge scrolling,
+to the sides), **Graphics** (the original detail rows, anti-aliasing,
+anisotropic filtering, original or enhanced look,
+soft particle edges), **Camera** (scroll speed, edge scrolling,
 rotation speed, max zoom-out, the free camera, inverted drag scrolling, keeping
 the mouse in the window), **Interface** (when health bars show: **Always (all
 players)** shows every unit's and building's bar, yours and the enemy's; the
-original health-bar and mouse options, a game clock), **Audio** (master volume, mute in
-the background, output device) and **Controls** (the game's hot keys). The
-defaults behave like the original game, except the max zoom-out (2.5x). Every
+original health-bar and mouse options, a game clock, interface scale and main
+menu style), **Audio** (the original volume sliders, master volume, mute in
+the background, output device), **Online** (results sharing, ping and social
+privacy), **Performance** (Uber performance mode) and **Controls** (the game's
+hot keys, read only). OpenBFME additions have their own defaults, including
+max zoom-out (2.5x), soft particles, the ping wheel and results sharing. Every
 change shows at once;
 **Accept** keeps it and **Cancel** or **Esc** puts back what you had (both
 return to the Options screen), **Reset to defaults** sets the defaults. Point
-at a setting to read what it does. They are kept in `Options.ini` as keys starting
-with `OpenBFME`; the original game ignores them. The full list is in
-`docs/OPTIONS.md`.
+at a setting to read what it does. OpenBFME-specific game options are kept in
+`Options.ini` as keys starting with `OpenBFME`; the original game ignores them.
+Original detail and volume settings retain their original keys, Display settings
+use `openbfme-display.cfg`, and social privacy choices are saved to the lobby.
+The full list is in
+[OPTIONS.md](OPTIONS.md).
 
 ### Display tab
 
@@ -336,7 +363,8 @@ with `OpenBFME`; the original game ignores them. The full list is in
   buildings get none, as in the original.
 - **Build bubbles.** A selected building shows its buttons (units to train,
   upgrades, the fortress's heroes) as round bubbles around it. Right-click a
-  bubble to cancel what it queued.
+  cancelable unit or hero bubble to cancel what it queued; upgrade cancellation
+  is not implemented yet.
 - **The builder's side panel.** With a builder selected, the buildings it can
   build are listed in the carved side panel.
 - **Help boxes.** Hold the pointer over a bubble or a Palantir button to see
@@ -359,6 +387,14 @@ and not part of the original game: every player's heroes get 2, 3 or 4 times
 their health, take less damage and hit harder. The loading screen names the
 rule when it is on. A game with it on plays differently from the original;
 with it off nothing changes.
+
+**Cheat Mode** is another OpenBFME addition on the same tab, off by default and
+offered in skirmish, LAN and Open Play games (never in Quick Match). When the
+host ticks it, the host can give resources, spawn units and heroes, level
+heroes, reveal the map or end the game from the in-game menu (Esc, then CHEAT
+MODE). Everyone sees it: the game list tags the game before you join, and every
+action shows up as a message line for every player. A Cheat Mode game never
+counts in statistics. Details and the command list: [CHEAT_MODE.md](CHEAT_MODE.md).
 
 ## Skirmish games
 
@@ -393,14 +429,12 @@ it later, from the same screens as the original.
 - **Loading.** Choose **Load** in the same menu, or **Load Game** in the main
   menu. Pick a save and press Load. Over a running game you're asked first,
   because that game is lost.
-- **Catching up.** A save holds the game's start and every order given since.
-  Loading replays those orders at full speed behind the loading screen, which
-  says "Catching up with the saved game", and you take over at the moment you
-  saved. This takes about 1.5 to 2 minutes for an hour-long game on a fast PC,
-  and longer on slower ones. A faster kind of save is planned.
-- **Saves only load in the version that made them.** After an update, older
-  saves are greyed out on the Load page. Choosing one tells you which version
-  made it. Keep that version if you want to finish the game.
+- **Loading a saved state.** New saves include a snapshot restored directly at
+  the saved frame. Earlier log-only saves replay their orders at full speed
+  behind "Catching up with the saved game" before handing control back.
+- **Saves require a compatible engine and game data.** A save from a different
+  engine identity or with different game data or rules is refused; the Load
+  page tells you why. A version label alone does not determine compatibility.
 - **Where they are.** Saves go into the original game's Save folder in your
   user data folder (the one with your Create-a-Hero heroes), as `.obfmesave`
   files, so the original game never sees them.
@@ -419,8 +453,9 @@ it later, from the same screens as the original.
   (they show in the list greyed out, with a note).
 - **Deleting.** Select a save and press Delete; you're asked first.
 - **Uber performance mode.** A game saved with the Uber performance mode on
-  loads with it off, and the reverse. The saved part is replayed as it was
-  played, and the game goes on in your current mode.
+  loads with it off, and the reverse. A snapshot restores the saved state
+  directly; a log-only save replays under its saved mode. The game then goes
+  on in your current mode.
 
 ## Controls
 
@@ -440,16 +475,63 @@ the keys are the original game's. In particular:
 | Ctrl held + click | force-attack a unit, building or the ground (also your own) | **OpenBFME only**: 2.01 has no force-attack, see [below](#force-attack) |
 | S | stop | same |
 | D / F / G | stances | same |
-| Space | jump to the last radar event | same key; it jumps to a mission script's radar ping. Other events don't feed it yet, so in a skirmish it does nothing (S-1674) |
+| Space | jump to the last radar event | same key; it jumps to a mission script's radar ping and to your [pings](#ping-wheel). Other events don't feed it yet, so in a skirmish it jumps only to your pings (S-1674) |
 | \` | open the spell book (powers) | same |
 | F12 | screenshot | same |
 | Esc | the game menu (Resume, Options, Restart; LAN: Forfeit, Exit) | same |
+| Enter | LAN / online: chat to everyone (Enter sends, Esc cancels and keeps what you typed) | same |
+| Backspace | LAN / online: chat to your allies | same |
+| Ctrl+B, then click the ground | LAN / online: place a beacon (up to 3) your allies see on the map and minimap | same |
+| Delete | with your beacon selected: remove it | same (Delete is Sell) |
 | Shift+Up / Shift+Down | nothing | same: 2.01 has no action for them |
 | Ctrl+Z | free camera on / off | **OpenBFME only** (no original key uses Ctrl+Z) |
 | F11 | frame rate counter on / off | **OpenBFME only** (no original key uses F11) |
 | Alt+Enter | window / full screen | **OpenBFME only** (no original key uses Alt+Enter) |
+| G held | the [ping wheel](#ping-wheel) | **OpenBFME only**; a quick tap of G is still the original G (Hold Ground, or a button's hotkey); the key can be changed in Options |
 
 On a German keyboard layout, Y and Z swap as in the original.
+
+### Ping wheel
+
+The ping wheel is an OpenBFME addition, a quick way to mark a spot on the map,
+as in many newer strategy and team games. It works in skirmish games for now.
+
+1. Point at a spot on the map (or on the minimap) and hold **G**.
+2. A wheel opens under the pointer. Move the pointer towards a sector:
+   **Attack here** (up), **Reinforcements** (right), **Danger, fall back**
+   (down) or **Need help** (left). The middle is **Look here**.
+3. Let go of G. The ping appears on the ground and on the minimap, with a
+   sound. Space jumps the camera to the last ping, as it does for the
+   game's own radar events.
+
+G is also the original game's key for Hold Ground and for some buttons. A
+quick tap of G still does that; only holding it opens the wheel. The original
+action then happens when you let go of G rather than when you press it.
+
+A left click also places the selected ping; a right click or Esc closes the
+wheel without one. You can place three pings every five seconds. The pings
+use the game's own beacon model, minimap ping and beacon sound, read from
+your install.
+
+In Options, on the Interface tab, you can turn the wheel off or move it to
+Alt+G or J (keys the original game never uses) or one of the mouse's side
+buttons. If a mod binds Alt+G or J itself, the mod keeps it and the wheel
+stays off.
+
+Pings are only shown on your own screen for now. They are not yet sent to the
+other players in a network game, so the wheel is off there.
+
+### Chat and beacons
+
+In a LAN or online game, **Enter** opens the chat to everyone and **Backspace** the chat to your allies, as in the original
+(observers' Enter goes to the other observers). Lines show at the top right as `[Name] <Team> text` in the sender's colour and
+fade after about 20 seconds; while the chat window is open the last lines stay on screen (an OpenBFME addition). Allies-only
+lines are only ever sent to your allies' computers. Type `/mute Name` to hide a player's lines on your screen, `/unmute Name`
+to show them again and `/mute` to list who you muted (OpenBFME: the original has no mute you can reach in a multiplayer
+game). To report a player for what they wrote, use **Report** on the score screen or the online menu.
+
+**Ctrl+B** and a click on the ground place a beacon: your allies and observers get "A Beacon was placed by ..." with a
+minimap ping, your enemies never see it. You can have three; select one and press Delete to remove it.
 
 ### Force-attack
 
@@ -477,9 +559,10 @@ Alt sends the original's order-mode message, but no order reacts to it yet.
 
 ## Online play (test feature)
 
-Online play is a **test feature**: it works, but there is no public OpenBFME
-lobby yet, so it only works when someone runs a lobby for you. The whole
-Online menu is a test feature.
+Online play is a **test feature**. The game has a default lobby configured;
+you do not need to supply one to open Online. A working lobby, relay and
+platform service are needed for their respective features; this guide does
+not establish live service availability.
 
 How it works: a **lobby** holds the game list and builds the game's start; a
 **relay** passes every turn between the players, so nobody sees anyone
@@ -490,9 +573,9 @@ the game's orders, from which a replay of the game can be made.
 screens, connected to the OpenBFME lobby instead of the old GameSpy service:
 
 1. **Sign in.** Type a name in the **Nickname** box and press **Log In**. The
-   lobby signs you in as a guest under that name (there are no accounts yet,
-   so the e-mail and password boxes and the account buttons are switched
-   off). The game remembers the name for next time.
+   lobby signs you in with your installation's identity under that name;
+   the e-mail and password boxes are not used. The game remembers the name
+   for next time. The launcher also offers account linking and recovery.
 2. **Home** shows the lobby's message of the day, or says that the lobby has
    none.
 3. **Open Play** is the server browser: the list of open games (name, map,
@@ -508,7 +591,8 @@ screens, connected to the OpenBFME lobby instead of the old GameSpy service:
    relay, the game loads and plays through it.
 
 **If your game closed during a match** (a crash, a lost connection), start
-OpenBFME again, choose **Online** and log in with the same name. The game
+OpenBFME again on the same installation identity, choose **Online** and log in.
+A matching nickname alone does not recover another installation's slot. The game
 asks whether to rejoin your running game; you can also pick it in Open Play,
 where it is listed with **REJOIN**, and press **Join Game**. The game then
 catches up with the match (a line on screen shows the progress) and puts you
@@ -518,8 +602,10 @@ lets you watch as a spectator.
 Joining a match that has already started as a new player ("hot join") is
 not possible.
 
-Quick Match, Strategic (War of the Ring online), Profile / Stats and the
-friends list are not available yet (S-4075).
+**TOURNAMENT** offers Quick Match (1 vs 1 or 2 vs 2) and tournaments;
+**STATS** reads platform statistics. Friends and chat use the game's
+Messenger. These require the corresponding online services. Strategic
+(War of the Ring online) is still unavailable.
 
 **Which lobby.** Release builds use `https://play.openbfme.com`. To use
 another one, start the game with `--online-lobby=<the lobby's address>`, or
@@ -529,11 +615,13 @@ set the `OPENBFME_LOBBY` environment variable, or put
 **Joining a game.** The host gives you a link such as
 `openbfme://join/0123456789abcdef` (or a web page that shows it). Once the
 launcher handles these links, clicking the link starts OpenBFME in that game.
-To make the launcher handle them, start it once from a terminal or command
-prompt with:
+To make the launcher handle them, use the following **Linux shell** command
+from the unpacked package, with `OPENBFME_LOBBY` set to the intended lobby's
+base URL. On **Windows**, use `OpenBFMELauncher.exe` and replace the quoted
+shell variable with that URL in quotes:
 
-```
-OpenBFMELauncher --headless -- --register-url-handler --lobby=<the lobby's address>
+```sh
+./OpenBFMELauncher.x86_64 --headless -- --register-url-handler --lobby="$OPENBFME_LOBBY"
 ```
 
 On Windows this adds an entry for your user only (no administrator rights).
@@ -542,9 +630,10 @@ On Linux and the Steam Deck it adds a hidden `openbfme-url.desktop` entry in
 
 **A menu entry on Linux.** The game and the launcher show the OpenBFME icon
 (the ring) in their windows and task bars. On Linux and the Steam Deck you can
-also add an "OpenBFME" entry with that icon to your desktop's menu:
+also add an "OpenBFME" entry with that icon to your desktop's menu. From the
+unpacked Linux package, with a desktop environment installed:
 
-```
+```sh
 ./OpenBFMELauncher.x86_64 --headless -- --install-desktop-entry
 ```
 
@@ -552,21 +641,26 @@ It writes `~/.local/share/applications/openbfme.desktop` (starting this
 launcher) and the icon `~/.local/share/icons/hicolor/256x256/apps/openbfme.png`.
 On Windows the icon is in the `.exe` files themselves.
 
-You can also start the game straight from a terminal:
+The remaining examples use a **Linux shell**, the unpacked game and
+`OPENBFME_LOBBY` set to the test lobby's base URL. On **Windows**, use
+`OpenBFME.exe` instead of `./OpenBFME.x86_64` and substitute that URL in quotes.
+All players need accessible, verified game installations. You can also start
+the game straight from a terminal:
 
-```
-OpenBFME -- --online-lobby=<the lobby's address> --online-join=0123456789abcdef --online-name=YourName
+```sh
+./OpenBFME.x86_64 -- --online-lobby="$OPENBFME_LOBBY" --online-join=0123456789abcdef --online-name=Player
 ```
 
-The game signs you in as a guest under that name, joins, says you are ready
-and waits for the host to start. Everyone needs the same OpenBFME version and
-the same RotWK 2.01 / BFME2 1.06 files; the lobby refuses a player whose files
-or build differ, and says so.
+The game signs you in under that name with your installation identity, joins,
+says you are ready and waits for the host to start. Everyone needs compatible
+engine, rules and mounted-data identities; mismatches are refused by name.
+Joining a Faithful/Uber room of the other mode through the menu asks to switch
+for that game without changing the saved Options.ini setting.
 
 **Hosting a game** (for testers):
 
-```
-OpenBFME -- --online-lobby=<the lobby's address> --online-host --map="maps/map mp fords of isen ii/map mp fords of isen ii.map" --online-slots="player:-1:0:0;open" --online-players=2
+```sh
+./OpenBFME.x86_64 -- --online-lobby="$OPENBFME_LOBBY" --online-host --map="maps/map mp fords of isen ii/map mp fords of isen ii.map" --online-slots="player:-1:0:0;open" --online-players=2
 ```
 
 The log shows `GAME ONLINE hosting game <id>: invite openbfme://join/<id>`.
@@ -589,8 +683,8 @@ army goes to an ally, as on a LAN. Pressing **Kick** on the disconnect screen
 **Rejoining after a crash or a lost connection.** Start the game again on the
 same computer with:
 
-```
-OpenBFME -- --online-lobby=<the lobby's address> --online-rejoin
+```sh
+./OpenBFME.x86_64 -- --online-lobby="$OPENBFME_LOBBY" --online-rejoin
 ```
 
 The game signs in as the same player (it keeps the lobby session in its user
@@ -607,20 +701,20 @@ stops for every player at the same moment, and the screen says who paused
 it. Any player presses Pause again to resume. The original game cannot pause
 a multiplayer game at all; this is an OpenBFME addition.
 
-**Watching an online game as a spectator.** Anyone who is not a player can
-watch a game with its id:
+**Watching an online game as a spectator.** If you are not one of its players,
+you can watch a public game with its id. Private rooms refuse spectators:
 
-```
-OpenBFME -- --online-lobby=<the lobby's address> --online-spectate=<game id>
+```sh
+./OpenBFME.x86_64 -- --online-lobby="$OPENBFME_LOBBY" --online-spectate=0123456789abcdef
 ```
 
 If the game has not started, the game waits for the host to start it; you
 can also join a game that is already running (the game first replays what
 happened, at full speed). You see the whole map with no fog of war and every
-player's army. Press **Tab** to see one player's view, with their resources,
-command points and power on screen; Tab again for the next player, then back
-to everyone. **Shift+Tab** goes the other way. The host can set a spectator
-delay in the lobby (in seconds): you then watch that far behind the players,
+player's army. Press **0** for everyone's view, **1**–**8** to select an occupied
+lobby slot, and **T** to toggle allied vision. The caster HUD shows the selected
+player's resources, command points and power. The host can set a spectator
+delay in the lobby (in seconds; 120 by default): you watch that far behind the players,
 so you cannot tell them what the other side is doing. A spectator never
 slows the players down.
 
@@ -634,10 +728,9 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   the next yet (S-4903), and the campaign's saves are OpenBFME's own, not the
   original game's (S-1360).
 - War of the Ring.
-- Online play is a test feature: the Online menu works against an OpenBFME
-  lobby, but there is no public one yet, and Quick Match, War of the Ring
-  online and the stats pages are missing (see
-  [Online play](#online-play-test-feature); S-4070 .. S-4076).
+- Online play is a test feature; Quick Match, tournaments, statistics and
+  friends have service-backed implementations, but War of the Ring online
+  is not available (see [Online play](#online-play-test-feature)).
 - Game languages other than English: other installs are refused on the first
   start (S-1561).
 
@@ -647,8 +740,9 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
 - The computer opponent builds, attacks and finishes games, and uses its
   heroes, spell book and powers, but it does not yet defend or expand the way
   the original does, and it skips some powers (S-413, S-415, S-417, S-1421).
-- Units and buildings cast no shadows yet, so the building preview has none
-  either (S-3304).
+- Ordinary unit and building shadows are not drawn yet (S-3304). Placement
+  previews can draw authored decal shadows, including area-of-effect decals;
+  that is not general model-shadow support.
 - A destroyed enemy building out of your sight disappears at once instead of
   staying in the fog until you look again (S-561).
 - Some sounds are missing: units being damaged, scripted music and parts of
@@ -658,16 +752,18 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   click targets can be slightly off (S-130, S-455).
 
 **Menus**
-- Menus work with the mouse only, not the keyboard or a gamepad (S-108).
-- Skirmish's profile page (PROFILE, then the statistics entry) opens, but its
-  statistics are not filled in yet and show placeholder labels (S-175).
+- Menus support keyboard navigation (arrows, Enter, Esc and PageUp/PageDown)
+  and controller navigation (D-pad/left stick, A/B and shoulder buttons).
+  This does not add controller orders during gameplay.
+- Skirmish's profile statistics page uses recorded local game results, not
+  placeholder labels.
 - The graphics detail settings set the particle limit, texture quality and
   health bars, but OpenBFME doesn't draw shadows yet, and the model,
   animation, terrain, water and shader detail rows are greyed out (S-3402).
   A texture quality change shows from the next game.
-- Replays are recorded for every game and can be watched from *Load Replay*,
-  but can't be saved under a name, and there are no replay controls (S-1125,
-  S-1126). The score screen's graphs are simplified (S-1063).
+- Replays can be watched from *Load Replay*, with caster playback controls
+  (pause, speed and seeking), but Save Replay on the score screen is not
+  ported (S-1125, S-1126). The score screen's graphs are simplified (S-1063).
 - LAN: the disconnect screen has no chat (S-1123).
 - Online: when a player's game crashes, the others drop that player when the
   disconnect screen's bar runs out, but only if the game's first player still
@@ -678,13 +774,10 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   bar runs out (S-4811).
 
 **In-game interface**
-- Hero bar: pointing at a hero's portrait shows no help box, the portrait does
-  not flash when the hero is attacked, and a Create-a-Hero hero does not show
-  its own picture (S-2521, S-2703).
-- Help boxes: hero ability, spell, repair and revive buttons don't show their
-  cost yet, and the spell book has no help box (S-2702, S-2703).
-- Build bubbles don't flash and don't show how many units are queued
-  (S-2701).
+- Help boxes include hero-bar and spell-book providers and command costs;
+  text wrapping and centering still use an inferred layout, and two retail
+  visibility guards are not ported (S-2702, S-2703).
+- Build bubbles don't flash yet; queued-unit counts are drawn (S-2701).
 - Selection rings always use the highest-detail look, whatever the detail
   setting (S-2522).
 - Turning a hero's autocast on or off doesn't play the hero's voice line
@@ -726,6 +819,7 @@ names the error and the log; please send both.
 **The launcher doesn't start after an update.** It keeps the previous
 version as `OpenBFMELauncher.old` (Windows: `OpenBFMELauncher.exe.old`) until
 the new one has started once. Rename that file back to the launcher's name.
+This is the Windows/Linux updater; Mac preview packages are updated manually.
 
 **The launcher can't update.** It shows why (offline, GitHub's hourly
 limit, a failed check). Play still starts the newest installed version.
@@ -744,7 +838,8 @@ new download next to an old one, start the game from either folder: both
 start the newest installed version.
 
 **Which file do I download?** One file per system:
-`openbfme-<version>-windows-x64.zip` or `openbfme-<version>-linux-x64.tar.gz`.
+`openbfme-<version>-windows-x64.zip`, `openbfme-<version>-linux-x64.tar.gz` or
+`openbfme-<version>-macos-arm64.zip`.
 The `openbfme-launcher-...` files are update files for launchers from before
 this layout; you don't need them.
 

@@ -72,9 +72,16 @@ Dictionary newGameToDictionary(const NewGameMessage &m)
 	}
 	d["rules"] = rules;
 	d["legendary_heroes"] = m.game.legendaryHeroes;
+	d["cheat_mode"] = m.game.cheatMode; // lane CHEAT-1: -1 off, else the cheat seat's slot
 	d["simulation_profile"] = (int)m.game.simulationProfile; // lane UBER-1: 0 Faithful, 1 Uber (Common/SimulationProfile.h)
+	// lane P16: the wire's extended GameInfo tag (NetPacket kExtendedGameInfoTag): a legacy game's dictionary stays exactly as it was
+	// (eight slots, no capacity key); an extended map's carries map_start_count (9..16) and all 16 slot entries
+	if (m.game.mapStartCount > LEGACY_MAX_SLOTS)
+	{
+		d["map_start_count"] = m.game.mapStartCount;
+	}
 	Array slots;
-	for (int i = 0; i < MAX_SLOTS; ++i)
+	for (int i = 0; i < m.game.serializedSlotCount(); ++i)
 	{
 		const SkirmishGameSlot &s = m.game.slots[i];
 		Dictionary sd;
@@ -163,6 +170,8 @@ bool newGameFromDictionary(const Dictionary &d, NewGameMessage &out, std::string
 	{
 		return fail("legendary_heroes " + std::to_string(m.game.legendaryHeroes) + " (1 .. 4)");
 	}
+	// lane CHEAT-1: "cheat_mode" (absent: -1, off); the seat must be a human slot (checked once the slots are read, below)
+	m.game.cheatMode = (int)(int64_t)d.get("cheat_mode", (int64_t)-1);
 	// lane UBER-1: the simulation profile (absent: Faithful, the setups before UBER-1); a value this build does not know is refused
 	const int64_t profile = (int64_t)d.get("simulation_profile", (int64_t)SimulationProfile::Faithful);
 	if (!simulationProfileValid((std::int32_t)profile))
@@ -170,12 +179,25 @@ bool newGameFromDictionary(const Dictionary &d, NewGameMessage &out, std::string
 		return fail("simulation_profile " + std::to_string((long long)profile) + " (0 faithful, 1 uber)");
 	}
 	m.game.simulationProfile = (SimulationProfile)profile;
-	const Array slots = d["slots"];
-	if (slots.size() != MAX_SLOTS)
+	// lane P16: an absent "map_start_count" is a legacy 8-slot message (the form every build before the extension produced); present, it is
+	// the extended tag's capacity, 9 .. MAX_SLOTS, and the message carries all 16 slot entries, those beyond the capacity closed (the wire's rule)
+	if (d.has("map_start_count") && d["map_start_count"].get_type() != Variant::INT)
 	{
-		return fail("slots has " + std::to_string((int)slots.size()) + " entries, expected " + std::to_string(MAX_SLOTS));
+		return fail("map_start_count must be an integer"); // P16-UI: "16" or 16.5 is refused, never converted
 	}
-	for (int i = 0; i < MAX_SLOTS; ++i)
+	const int64_t mapStartCount = (int64_t)d.get("map_start_count", (int64_t)LEGACY_MAX_SLOTS);
+	// ONLINE16-FIX: present means the extended tag, so an explicit 8 is refused like 7 or 17 (it was accepted as the legacy message)
+	if (d.has("map_start_count") ? (mapStartCount <= LEGACY_MAX_SLOTS || mapStartCount > MAX_SLOTS) : false)
+	{
+		return fail("map_start_count " + std::to_string((long long)mapStartCount) + " (requires 9 .. " + std::to_string(MAX_SLOTS) + ")");
+	}
+	m.game.mapStartCount = (int)mapStartCount;
+	const Array slots = d["slots"];
+	if (slots.size() != m.game.serializedSlotCount())
+	{
+		return fail("slots has " + std::to_string((int)slots.size()) + " entries, expected " + std::to_string(m.game.serializedSlotCount()));
+	}
+	for (int i = 0; i < m.game.serializedSlotCount(); ++i)
 	{
 		const Dictionary sd = slots[i];
 		for (const char *key : { "state", "name", "color", "start_pos", "player_template", "team" })
@@ -189,6 +211,10 @@ bool newGameFromDictionary(const Dictionary &d, NewGameMessage &out, std::string
 		if (state < SLOT_OPEN || state > SLOT_PLAYER)
 		{
 			return fail("slot " + std::to_string(i) + " state " + std::to_string(state));
+		}
+		if (i >= m.game.mapStartCount && state != SLOT_CLOSED)
+		{
+			return fail("slot " + std::to_string(i) + " exceeds the map's start positions");
 		}
 		SkirmishGameSlot &s = m.game.slots[i];
 		s.state = (SlotState)state;
@@ -229,21 +255,52 @@ bool newGameFromDictionary(const Dictionary &d, NewGameMessage &out, std::string
 			}
 		}
 	}
+	// lane CHEAT-1: the cheat seat is a human slot (the host's), as NetPacket::readGameInfo holds a received setup to it
+	if (m.game.cheatMode < -1 || m.game.cheatMode >= MAX_SLOTS || (m.game.cheatMode >= 0 && !m.game.slots[m.game.cheatMode].isHuman()))
+	{
+		return fail("cheat_mode " + std::to_string(m.game.cheatMode) + " is not a human slot");
+	}
 	out = m;
 	return true;
 }
 
-void loadScreenFromDictionary(const Dictionary &d, LoadScreenInfo &out)
+bool loadScreenFromDictionary(const Dictionary &d, LoadScreenInfo &out, std::string *error)
 {
-	out = LoadScreenInfo();
-	out.gameLoadingType = (int)(int64_t)d.get("loading_type", (int64_t)0);
-	out.localCard = (int)(int64_t)d.get("local_card", (int64_t)0);
-	out.mapName = toNativeUtf8(d.get("map", String()));
-	const Array cards = d.get("cards", Array());
-	for (int64_t i = 0; i < cards.size() && i < MAX_LOAD_SLOTS; ++i)
+	auto fail = [&](const std::string &why) {
+		if (error) *error = why;
+		return false;
+	};
+	for (const char *key : { "map_start_count", "loading_type", "local_card" })
 	{
+		if (d.has(key) && d[key].get_type() != Variant::INT) return fail(std::string(key) + " must be an integer");
+	}
+	LoadScreenInfo info;
+	const int64_t capacity = d.get("map_start_count", (int64_t)LEGACY_MAX_SLOTS);
+	if (capacity < LEGACY_MAX_SLOTS || capacity > MAX_LOAD_SLOTS) return fail("loading map capacity must be 8 .. 16");
+	info.mapStartCount = (int)capacity;
+	info.gameLoadingType = (int)(int64_t)d.get("loading_type", (int64_t)0);
+	const int64_t local = d.get("local_card", (int64_t)0);
+	if (local < 0 || local >= capacity) return fail("local loading card outside map capacity");
+	info.localCard = (int)local;
+	if (d.has("map") && d["map"].get_type() != Variant::STRING) return fail("loading map must be a string");
+	info.mapName = toNativeUtf8(d.get("map", String()));
+	if (d.has("cards") && d["cards"].get_type() != Variant::ARRAY) return fail("loading cards must be an array");
+	const Array cards = d.get("cards", Array());
+	if (cards.size() > capacity) return fail("loading cards exceed map capacity");
+	for (int64_t i = 0; i < cards.size(); ++i)
+	{
+		if (cards[i].get_type() != Variant::DICTIONARY) return fail("loading card must be a dictionary");
 		const Dictionary cd = cards[i];
-		LoadScreenSlotInfo &s = out.cards[i];
+		for (const char *key : { "rank", "team", "color" })
+		{
+			if (cd.has(key) && cd[key].get_type() != Variant::INT) return fail(std::string("loading card ") + key + " must be an integer");
+		}
+		for (const char *key : { "name", "army", "load_music" })
+		{
+			if (cd.has(key) && cd[key].get_type() != Variant::STRING) return fail(std::string("loading card ") + key + " must be a string");
+		}
+		if (cd.has("occupied") && cd["occupied"].get_type() != Variant::BOOL) return fail("loading card occupied must be a boolean");
+		LoadScreenSlotInfo &s = info.cards[i];
 		s.occupied = (bool)cd.get("occupied", true);
 		s.playerName = godotToU16(cd.get("name", String()));
 		s.armyName = godotToU16(cd.get("army", String()));
@@ -252,5 +309,7 @@ void loadScreenFromDictionary(const Dictionary &d, LoadScreenInfo &out)
 		s.color = (std::uint32_t)(int64_t)cd.get("color", (int64_t)0);
 		s.loadMusic = toNativeUtf8(cd.get("load_music", String()));
 	}
+	out = std::move(info);
+	return true;
 }
 } // namespace godot

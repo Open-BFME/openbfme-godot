@@ -9,4 +9,5 @@ list(APPEND OPENBFME_HUD_SOURCES
 )
 set(OPENBFME_INPUT1_TESTS
     tests/test_input1.cpp
+    tests/test_formation_placement.cpp
 )

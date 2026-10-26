@@ -6,7 +6,8 @@
 // OPENBFME_UBER_UNITS (a comma list, default 10000,20000,40000) armies of at least that many living troops (GameClient/FrameCensus.h: horde members
 // count one by one, the horde controllers not), OPENBFME_BENCH_FRAMES logic frames each (default 50),
 // OPENBFME_UBER_WARMUP warm-up frames after the order, not measured (default 50 = 10 game seconds: the armies are in contact when the measured frames
-// start), OPENBFME_UBER_PROFILE = faithful | uber | both (default both), OPENBFME_LOGIC_THREADS the logic pool's size. Prints per battle: the living troops
+// start), OPENBFME_UBER_PROFILE = faithful | uber | both (default both), OPENBFME_LOGIC_THREADS the logic pool's size, OPENBFME_UBER_FRAMES_DUMP=1 every
+// measured frame's logic time, phases and hash. Prints per battle: the living troops
 // (at the start, the sustained mean over the frames, the minimum, at the end), the TICK (logic + the state hash every recorded game computes) and
 // whether it fits the 200 ms of the 5 fps logic clock, the logic frame's wall time (mean / p99 / max) and its six phases, the state hash's time and
 // its own job dispatches, the cores used (process CPU / wall). SKIP without ROTWK_INSTALL / BFME2_INSTALL. The client side (render fps, 1% low,
@@ -220,6 +221,15 @@ void runBattle(ArchiveFileSystem &fs, RetailObjectWorld &world, const MapObjectO
 		out.battalionsStart = c.battalions;
 	}
 	double troopsSum = 0.0;
+	// OPENBFME_SAMPLER_FLAG=<file>: the file exists while the measured frames run (a sampling profiler records only then, not the warm-up)
+	const char *samplerFlag = std::getenv("OPENBFME_SAMPLER_FLAG");
+	if (samplerFlag)
+	{
+		if (FILE *flag = std::fopen(samplerFlag, "w"))
+		{
+			std::fclose(flag);
+		}
+	}
 	const double cpu0 = processCpuMs(), wall0 = wallMs();
 	for (int f = 0; f < frames; ++f)
 	{
@@ -251,6 +261,10 @@ void runBattle(ArchiveFileSystem &fs, RetailObjectWorld &world, const MapObjectO
 		out.troopsMin = std::min(out.troopsMin, alive);
 		out.troopsEnd = alive;
 		troopsSum += (double)alive;
+	}
+	if (samplerFlag)
+	{
+		std::remove(samplerFlag);
 	}
 	out.troopsMean = frames > 0 ? troopsSum / (double)frames : 0.0;
 	out.framesWallMs = wallMs() - wall0;
@@ -306,6 +320,16 @@ TEST_CASE("uber bench: 10k / 20k / 40k unit battles on map mp fall back 8p, fait
 				phase[2], phase[3], phase[4], phase[5], phase[6], h.mean, h.max, (unsigned long long)r.hashDispatches, (unsigned long long)r.hashWorkerChunks,
 				r.processCpuMs >= 0.0 && r.framesWallMs > 0.0 ? r.processCpuMs / r.framesWallMs : -1.0, over, r.tickMs.size(),
 				(unsigned)perfbench::chain(r.hashes));
+			// OPENBFME_UBER_FRAMES_DUMP=1: every measured frame's logic wall time, its six phases and the state hash (the spikes behind the p99)
+			if (std::getenv("OPENBFME_UBER_FRAMES_DUMP"))
+			{
+				for (size_t f = 0; f < r.wallMs.size(); ++f)
+				{
+					const uberbench::PhaseTimes &p = f < r.phases.size() ? r.phases[f] : uberbench::PhaseTimes();
+					std::printf("    frame %zu: logic %.1f ms (phases %.1f / %.1f / %.1f / %.1f / %.1f / %.1f) hash %.1f ms\n", f, r.wallMs[f], p.ms[1], p.ms[2],
+						p.ms[3], p.ms[4], p.ms[5], p.ms[6], f < r.hashMs.size() ? r.hashMs[f] : 0.0);
+				}
+			}
 			std::fflush(stdout);
 			CHECK(r.troopsMade >= units);
 		}

@@ -1,12 +1,20 @@
 # FACT-A inventory: Men, Elves and Dwarves
 
-Generated from the output of `FACT-A inventory` (engine/tests/test_hud_facta_inventory.cpp) on the retail data. Each faction is walked from a real
+Generated from the output of `FACT-A inventory` ([engine/tests/test_hud_facta_inventory.cpp](../engine/tests/test_hud_facta_inventory.cpp)) on the retail data. Each faction is walked from a real
 skirmish start (the castle unpacked, the builders, the PlayerTemplate heroes); every button's product is walked in turn, and so are the command sets an
 upgrade switches to (CommandSetUpgrade: the building levels) and the objects the modules make or lay (ObjectCreationUpgrade, ReplaceSelfUpgrade: the
 gates and towers, WallHubBehavior: the wall pieces). For each object: its cost, build time (s), command points, command set and the modules still
-unported (S-140); for each button: the slot, the command, what it should do, its target and the state the HUD shows. A button that is NOT-SHOWN is off
-the unit bar by design: spell-book entries are in the power tree, revive slots are empty while no hero is dead, CaptureBuilding is a context command
-(S-286), and the Ivory Tower and Mighty Catapult powers hide until their upgrade (HIDE_WHILE_DISABLED).
+unported (S-140); for each button: the slot, the command, what it should do, its target and the state the HUD shows. The costs, times, command points,
+command sets, targets, HUD states and result counts below are the recorded 2026-10-11 review round 4 snapshot, not a new test run. The unported-module
+lists and the status notes have been checked against source at `c4ee740e5b8cf1f060aec0fad9ad4c9c5bb1ae64`. Reproducing the retail-data inventory needs
+both ROTWK_INSTALL and BFME2_INSTALL; without them the test prints SKIP. The `should` column describes command intent, not verified implementation;
+upgrade-set rows are read from the data without buying the upgrade in the inventory test.
+
+A button that is NOT-SHOWN was not found on the control bar in that inventory: spell-book entries are in the power tree, CaptureBuilding is a context
+command, and the Ivory Tower and Mighty Catapult powers hide until their upgrade (HIDE_WHILE_DISABLED). REVIVE slots use hero purchase or dead-hero
+records, not just dead heroes: skirmish initialization creates purchase records for BuildableHeroesMP. A missing record hides its slot; prerequisites
+can hide a restricted slot, while money and command-point shortages show can't-afford. The historical NOT-SHOWN rows do not describe current hero
+availability (ControlBar::reviveButton, HeroSystem::initPlayer).
 
 ## Results (FACT-A tests, 2026-10-11, review round 4)
 
@@ -25,20 +33,29 @@ healing a wounded battalion within its radius that did not heal before; each bat
 toughened): the health an enemy battalion loses a hit to a fresh twin of the unit and then to the unit after its purchase (a weapon set must take
 more), the health the unit loses a hit to enemy fighters and archers before and after (an armour must lose less), Basic Training raising the
 battalion's rank; every power of the book's command set (by name) bought, cast and showing its world effect against the same scene without it (a
-summon by the names of the objects its OCL or egg makes, a heal, a buff or debuff, damage; the Flood counted as stopped by S-1987, not verified; Rebuild healing a wounded building; Cloud Break's sunny weather and sunbeams; the Riches' modifier on the economy building; the
+summon by the names of the objects its OCL or egg makes, a heal, a buff or debuff, damage; the Flood was counted as stopped by S-1987 in the results above,
+but the pinned test now requires its damage; Rebuild healing a wounded building; Cloud Break's sunny weather and sunbeams; the Riches' modifier on the economy building; the
 Arrow Volley's and the Bombard's hits on the enemy battalion within their weapon's size).
 
-Known open items:
+Source status since those results:
+- the Flood's wave runs through FloodUpdate (SpellEffectModules); S-1987 is closed and the spell test expects damage, not a stopped cast;
+- Basic Training's LevelUpUpgrade calls HordeContain::gainMemberLevel for each gained level; both contained and entering members are leveled, so the
+  old S-635 member-level item is no longer open;
+- DoCommandUpgrade is bound and runs SPECIAL_POWER, SPELL_BOOK and TOGGLE_WEAPONSET; other command types remain stopped by S-5145;
+- HordeDispatchSpecialPower is bound and dispatches to the members; its target substitution remains S-2001;
+- TransitionDamageFX is bound and emits damage-state FX, OCL and particle events; its rubble-neighbour and other remaining differences are S-686.
+  These three bound classes have been removed from the unported lists below; that does not mean their remaining stops are closed.
+
+Known open items at the pinned source:
 - the Noldor Warrior horde's ArcherBombard: the horde's position attack (PLAY-2's groupAttackPosition) ends at once;
 - the Dwarven Demolisher's deploy (S-1984);
-- the eagle's SlaveWatcherBehavior (S-1985);
+- the eagle's SlaveWatcherBehavior link in ObjectCreationUpgrade (now S-2007, including the former S-1985 item);
 - the wall links of a replaced segment (S-1986);
-- the Flood's wave: its FloodUpdate is not ported (S-1987); the Dwarven Riches' PRODUCTION income bonus (S-253);
-- the members' levels from Basic Training (S-635: the horde's rank rises);
+- the Dwarven Riches' PRODUCTION income bonus (S-253);
 - seen while measuring: a GondorKnightHorde or DwarvenGuardianHorde ordered onto a second victim right after a fight stays in AI_ATTACK_OBJECT and
   lands nothing (the order after that works); the test measures the before hits on a fresh twin;
-- the context click on a capture flag or a burning building (S-286; the capture works through the power's message), the porters' extinguisher
-  (FireLogicNugget, S-321);
+- the context click on a burning building (S-286), the porters' extinguisher (FireLogicNugget, S-321); capture context on a capturable structure now
+  issues the special-power message through CommandTranslator::evaluateCapture, but capture powers with ObjectFilter remain stopped by S-2002;
 - the unported modules listed per object below (GeometryUpgrade, PickupStuffUpdate, the CAH modules, ...).
 
 
@@ -137,7 +154,7 @@ cost 5000, time 120.0, cp 0, set `MenFortressCommandSet`; unported: AudioLoopUpg
 | 24 | Command_RadialBack | POP_VISIBLE_COMMAND_RANGE | closes a page |  | enabled |
 
 ### CreateAHero
-cost 500, time 30.0, cp 50, set `CreateAHeroCommandSet`; unported: DefectionHelper, DoCommandUpgrade, FiringTrackerHelper, GuardingHelper, LocomotorSetUpgrade, RecoveryHelper, ReplaceObjectUpdate, StoreObjectsSpecialPower, TeleportToCasterSpecialPower
+cost 500, time 30.0, cp 50, set `CreateAHeroCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, LocomotorSetUpgrade, RecoveryHelper, ReplaceObjectUpdate, StoreObjectsSpecialPower, TeleportToCasterSpecialPower
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|
@@ -684,7 +701,7 @@ cost 1500, time 45.0, cp 100, set `GondorKnightsofDolHordeCommandSet`; unported:
 | 18 | Command_SetStanceHoldGround | SET_STANCE | sets the stance |  | restricted |
 
 ### GondorTrebuchet
-cost 1000, time 30.0, cp 25, set `GondorTrebuchetCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper, TransitionDamageFX
+cost 1000, time 30.0, cp 25, set `GondorTrebuchetCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|
@@ -724,7 +741,7 @@ cost 50, time 20.0, cp 0, set `MenWallCliffCapCommandSet`; unported: DefectionHe
 | 6 | Command_Sell | SELL | sells the structure |  | enabled |
 
 ### MenTrebuchetFortress
-cost 1000, time 30.0, cp 0, set `GondorTrebuchetFortressWallCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper, TransitionDamageFX
+cost 1000, time 30.0, cp 0, set `GondorTrebuchetFortressWallCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|
@@ -886,7 +903,7 @@ after its upgrade, set `SellableCommandSet`:
 - makes or lays GondorTrebuchetWall
 
 ### GondorTrebuchetWall
-cost 1000, time 30.0, cp 0, set `GondorTrebuchetFortressWallCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper, TransitionDamageFX
+cost 1000, time 30.0, cp 0, set `GondorTrebuchetFortressWallCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|
@@ -981,7 +998,7 @@ cost 5000, time 120.0, cp 0, set `ElvenFortressCommandSet`; unported: AudioLoopU
 - makes or lays ElvenFortressCrystalMoat
 
 ### CreateAHero
-cost 500, time 30.0, cp 50, set `CreateAHeroCommandSet`; unported: DefectionHelper, DoCommandUpgrade, FiringTrackerHelper, GuardingHelper, LocomotorSetUpgrade, RecoveryHelper, ReplaceObjectUpdate, StoreObjectsSpecialPower, TeleportToCasterSpecialPower
+cost 500, time 30.0, cp 50, set `CreateAHeroCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, LocomotorSetUpgrade, RecoveryHelper, ReplaceObjectUpdate, StoreObjectsSpecialPower, TeleportToCasterSpecialPower
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|
@@ -1112,7 +1129,7 @@ cost 300, time 15.0, cp 0, set `SellableCommandSet`; unported: DefectionHelper, 
 | 6 | Command_Sell | SELL | sells the structure |  | enabled |
 
 ### ElvenBarracks
-cost 300, time 30.0, cp 0, set `ERElvenBarracksCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GeometryUpgrade, GuardingHelper, RecoveryHelper, TransitionDamageFX
+cost 300, time 30.0, cp 0, set `ERElvenBarracksCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GeometryUpgrade, GuardingHelper, RecoveryHelper
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|
@@ -1340,7 +1357,7 @@ cost 300, time 30.0, cp 60, set `ElvenLorienArcherHordeCommandSet`; unported: De
 | 18 | Command_SetStanceHoldGround | SET_STANCE | sets the stance |  | restricted |
 
 ### ElvenMithlondSentryHorde
-cost 300, time 35.0, cp 60, set `ElvenMithlondSentryHordeCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, HordeDispatchSpecialPower, PickupStuffUpdate, RecoveryHelper
+cost 300, time 35.0, cp 60, set `ElvenMithlondSentryHordeCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, PickupStuffUpdate, RecoveryHelper
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|
@@ -1422,7 +1439,7 @@ cost 450, time 30.0, cp 80, set `ElvenRivendellArcherHordeCommandSet`; unported:
 | 18 | Command_SetStanceHoldGround | SET_STANCE | sets the stance |  | restricted |
 
 ### RohanGenericEnt
-cost 1000, time 45.0, cp 50, set `RohanEntCommandSet`; unported: AimWeaponBehavior, DefectionHelper, DoCommandUpgrade, FiringTrackerHelper, GuardingHelper, RecoveryHelper
+cost 1000, time 45.0, cp 50, set `RohanEntCommandSet`; unported: AimWeaponBehavior, DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|
@@ -1435,7 +1452,7 @@ cost 1000, time 45.0, cp 50, set `RohanEntCommandSet`; unported: AimWeaponBehavi
 | 18 | Command_SetStanceHoldGround | SET_STANCE | sets the stance |  | restricted |
 
 ### RohanTreeBerd
-cost 2000, time 60.0, cp 50, set `RohanTreeBeardCommandSet`; unported: AimWeaponBehavior, DefectionHelper, DoCommandUpgrade, FiringTrackerHelper, GuardingHelper, RecoveryHelper
+cost 2000, time 60.0, cp 50, set `RohanTreeBeardCommandSet`; unported: AimWeaponBehavior, DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|
@@ -1662,7 +1679,7 @@ cost 0, time 120.0, cp 0, set `DwarvenFortressCommandSet`; unported: AudioLoopUp
 - makes or lays DwarvenFortressMightyCatapult
 
 ### CreateAHero
-cost 500, time 30.0, cp 50, set `CreateAHeroCommandSet`; unported: DefectionHelper, DoCommandUpgrade, FiringTrackerHelper, GuardingHelper, LocomotorSetUpgrade, RecoveryHelper, ReplaceObjectUpdate, StoreObjectsSpecialPower, TeleportToCasterSpecialPower
+cost 500, time 30.0, cp 50, set `CreateAHeroCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, LocomotorSetUpgrade, RecoveryHelper, ReplaceObjectUpdate, StoreObjectsSpecialPower, TeleportToCasterSpecialPower
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|
@@ -1952,7 +1969,7 @@ cost 200, time 30.0, cp 0, set `DwarvenCastleWallHubSmallCommandSet`; unported: 
 - makes or lays DwarvenWallCliffCap
 
 ### DwarvenFortressMightyCatapult
-cost 800, time 40.0, cp 0, set `EmptyCommandSet` (not selected by a click); unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper, TransitionDamageFX
+cost 800, time 40.0, cp 0, set `EmptyCommandSet` (not selected by a click); unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|
@@ -2086,7 +2103,7 @@ cost 600, time 30.0, cp 25, set `DwarvenDemolisherCommandSet`; unported: Defecti
 | 18 | Command_SetStanceHoldGround | SET_STANCE | sets the stance |  | restricted |
 
 ### DwarvenCatapult
-cost 800, time 40.0, cp 25, set `DwarvenCatapultCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper, TransitionDamageFX
+cost 800, time 40.0, cp 25, set `DwarvenCatapultCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|
@@ -2127,7 +2144,7 @@ cost 50, time 20.0, cp 0, set `DwarvenWallCliffCapCommandSet`; unported: Defecti
 | 6 | Command_Sell | SELL | sells the structure |  | enabled |
 
 ### DwarvenCatapultFortress
-cost 800, time 40.0, cp 0, set `DwarvenCatapultFortressCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper, TransitionDamageFX
+cost 800, time 40.0, cp 0, set `DwarvenCatapultFortressCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|
@@ -2268,7 +2285,7 @@ after its upgrade, set `SellableCommandSet`:
 - makes or lays DwarvenWallCatapult
 
 ### DwarvenWallCatapult
-cost 800, time 40.0, cp 0, set `DwarvenCatapultFortressCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper, TransitionDamageFX
+cost 800, time 40.0, cp 0, set `DwarvenCatapultFortressCommandSet`; unported: DefectionHelper, FiringTrackerHelper, GuardingHelper, RecoveryHelper
 
 | slot | button | command | should | target | HUD |
 |---|---|---|---|---|---|

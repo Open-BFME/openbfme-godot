@@ -2,6 +2,7 @@
 // See GameClient/OptionPreferences.h.
 
 #include "GameClient/OptionPreferences.h"
+#include "Common/PathIO.h"
 
 #include <cctype>
 #include <cstdio>
@@ -79,7 +80,7 @@ std::string OptionPreferences::text() const
 
 bool OptionPreferences::load(const std::string &path, std::string *error)
 {
-	std::ifstream in(path, std::ios::binary);
+	std::ifstream in(PathIO::native(path), std::ios::binary);
 	if (!in)
 	{
 		if (error)
@@ -96,7 +97,7 @@ bool OptionPreferences::load(const std::string &path, std::string *error)
 
 bool OptionPreferences::save(const std::string &path, std::string *error) const
 {
-	std::ofstream out(path, std::ios::binary | std::ios::trunc);
+	std::ofstream out(PathIO::native(path), std::ios::binary | std::ios::trunc);
 	if (!out)
 	{
 		if (error)

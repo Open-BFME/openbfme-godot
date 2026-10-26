@@ -121,7 +121,7 @@ class ClientMessage
 public:
 	explicit ClientMessage(int type) : m_type(type) {}
 	int type() const { return m_type; }
-	bool isLogic() const { return m_type > MSG_BEGIN_NETWORK_MESSAGES && m_type < MSG_END_NETWORK_MESSAGES; }
+	bool isLogic() const { return IsNetworkLogicMessageType(m_type); } // lane CHEAT-1: + MSG_OPENBFME_CHEAT
 
 	void appendInteger(int v) { ClientArg a; a.kind = ClientArgKind::Integer; a.integer = v; m_args.push_back(a); }
 	void appendReal(float v) { ClientArg a; a.kind = ClientArgKind::Real; a.real = v; m_args.push_back(a); }
@@ -162,6 +162,8 @@ public:
 	ClientMessage &append(int type);
 	// ZH insertMessage: the message goes right after `after` (the click derived from a button up comes before the button up's later translators)
 	ClientMessage &insertAfter(int type, const ClientMessage &after);
+	// Replay a deferred input before the event that ended its wait. Later translators see both in input order.
+	ClientMessage &insertBefore(int type, const ClientMessage &before);
 	size_t pending() const { return m_messages.size(); }
 
 	// One pass (ZH propagateMessages). The messages that reach the end are returned in order; the stream is empty afterwards.

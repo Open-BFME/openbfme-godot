@@ -1400,7 +1400,7 @@ bool WindowManager::postMouseMove(float x, float y)
 {
 	m_mouseX = x;
 	m_mouseY = y;
-	if (m_mouseFilter && !componentInputBlocked())
+	if (m_mouseFilter && (!componentInputBlocked() || m_mouseFilterOverBox))
 	{
 		m_mouseFilter(0, x, y); // lane OPTS-3; lane OPTS-5: not while a message box has taken the input (DisableComponents())
 	}
@@ -1414,7 +1414,7 @@ bool WindowManager::postMouseButton(bool down)
 {
 	// lane OPTS-3: the engine screen's press; lane OPTS-5: a modal (a message box, whose movie calls DisableComponents()) takes the input first, so the
 	// screen under it hears nothing
-	if (m_mouseFilter && !componentInputBlocked() && m_mouseFilter(down ? 1 : 2, m_mouseX, m_mouseY))
+	if (m_mouseFilter && (!componentInputBlocked() || m_mouseFilterOverBox) && m_mouseFilter(down ? 1 : 2, m_mouseX, m_mouseY))
 	{
 		return true;
 	}

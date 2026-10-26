@@ -3,7 +3,9 @@
 
 #include "GameClient/ControlBar.h"
 #include "GameLogic/CreateAHeroSystem.h"
+#include "GameLogic/Economy.h"
 #include "Common/Upgrade.h"
+#include "Common/AsciiString.h"
 
 #include "Common/BuildAssistant.h"
 #include "Common/Player.h"
@@ -33,6 +35,7 @@
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "Common/ModelState.h"
+#include "Common/ModEngineFeatures.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Weapon.h"
 #include "GameLogic/WeaponState.h"
@@ -65,9 +68,24 @@ int hotkeyOf(const std::string &)
 {
 	return 0; // the `&` accelerator of a label needs the game text: the HUD fills it when a text source is given
 }
+
+ButtonState buildAvailability(CanMakeType make, bool &commandPointsShort)
+{
+	switch (make)
+	{
+		case CANMAKE_OK: return ButtonState::Enabled;
+		case CANMAKE_NO_MONEY: return ButtonState::CantAfford;
+		case CANMAKE_UNKNOWN_7:
+			// RW 0x942F42: result 7 is availability 7, drawn as _cantAfford (RW 0x943C51 -> 0x943C46), not hidden by HIDE_WHILE_DISABLED
+			// (RW 0x943B39). A left press aborts silently (RW 0x940B87), unlike availability 6's insufficient-money message.
+			commandPointsShort = true;
+			return ButtonState::CantAfford;
+		default: return ButtonState::Restricted;
+	}
+}
 } // namespace
 
-ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj, bool ignoreDisabled)
+ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj, bool &commandPointsShort, bool ignoreDisabled)
 {
 	// ZH ControlBar::getCommandAvailability (ControlBarCommand.cpp:1017), the subset whose logic is ported (stop S-290)
 	Player *player = obj.getControllingPlayer();
@@ -104,7 +122,8 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj, bool ignor
 		b.m_command != GUI_COMMAND_EVACUATE && b.m_command != GUI_COMMAND_CREW_EVACUATE && b.m_command != GUI_COMMAND_EXIT_CONTAINER &&
 		b.m_command != GUI_COMMAND_BEACON_DELETE && b.m_command != GUI_COMMAND_SET_RALLY_POINT && b.m_command != GUI_COMMAND_SWITCH_WEAPON)
 	{
-		return evaluate(b, obj, true) == ButtonState::Hidden ? ButtonState::Hidden : ButtonState::Restricted;
+		bool ignored = false;
+		return evaluate(b, obj, ignored, true) == ButtonState::Hidden ? ButtonState::Hidden : ButtonState::Restricted;
 	}
 	// lane FACT-B, RW 0x9428A3 .. 0x942993 (before every command's own rule): a NEED_UPGRADE button (Options bit 0x40) needs its NeededUpgrade list (+0x28):
 	// every entry, or any one with NeededUpgradeAny (+0x34). A PLAYER entry asks Player::hasUpgradeComplete (RW 0x6AC2AF), an OBJECT entry Object::hasUpgrade
@@ -185,12 +204,12 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj, bool ignor
 			{
 				return ButtonState::Restricted;
 			}
-			switch (BuildAssistant::canMakeUnit(obj, tt, -1))
+			const CanMakeType make = BuildAssistant::canMakeUnit(obj, tt, -1);
+			if (make == CANMAKE_UNKNOWN_7 && b.m_command != GUI_COMMAND_UNIT_BUILD)
 			{
-				case CANMAKE_OK: return ButtonState::Enabled;
-				case CANMAKE_NO_MONEY: return ButtonState::CantAfford;
-				default: return ButtonState::Restricted;
+				return ButtonState::Restricted;
 			}
+			return buildAvailability(make, commandPointsShort);
 		}
 		case GUI_COMMAND_PUSH_VISIBLE_COMMAND_RANGE:
 		case GUI_COMMAND_POP_VISIBLE_COMMAND_RANGE:
@@ -641,7 +660,15 @@ void ControlBar::update()
 		{
 			const int start = m_rangeStack.back().first, count = m_rangeStack.back().second;
 			const int initial = m_rangeStack.size() == 1 ? std::min(set->m_initialVisible, (int)CommandSet::MAX_BUTTONS) : count;
-			for (int slot = start; slot < start + (m_rangeStack.size() == 1 ? initial : count) && slot < CommandSet::MAX_BUTTONS; ++slot)
+			int shown = m_rangeStack.size() == 1 ? initial : count, end = CommandSet::MAX_BUTTONS;
+			if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedCommandSetLimit))
+			{
+				// lane MODS-3: edain-unchained.commandset-limit's populate hook (its 0xED447D after RW 0x71CF0A): 33 windows over 64 slots, a range
+				// past the end shows nothing
+				shown = start >= CommandSet::STORAGE ? 0 : std::max(0, std::min({ m_rangeStack.size() == 1 ? set->m_initialVisible : count, (int)CommandSet::MAX_BUTTONS, (int)CommandSet::STORAGE - start }));
+				end = CommandSet::STORAGE;
+			}
+			for (int slot = start; slot < start + shown && slot < end; ++slot)
 			{
 				const CommandButton *b = set->getCommandButton(slot);
 				if (!b || !b->m_showButton)
@@ -707,7 +734,7 @@ void ControlBar::update()
 					place(cb, start);
 					continue;
 				}
-				cb.state = evaluate(*b, *obj);
+				cb.state = evaluate(*b, *obj, cb.commandPointsShort);
 				// lane HUD-6: RW 0x943B39 .. 0x943B4C: a disabled button (availability 0) with the option HIDE_WHILE_DISABLED (CommandButton + 0x1E & 0x40,
 				// option bit 22 of RW 0xDA4C88) is hidden (3): the Mordor fortress's spire fireball before its upgrade. Lane OWNERFIX-3: the exception (bl,
 				// RW 0x943B18) is only for a button updateContextCommand itself turned to 0 in a foreign view (foreignDisable): one whose own availability was
@@ -843,7 +870,25 @@ bool ControlBar::reviveButton(ControlBarButton &cb, int n, Player &player, Objec
 	cb.reviveIndex = n;
 	cb.image = heroRecordImage(*r, player);
 	cb.cost = list.costAt(m_ctx.logic, player, n, &producer);
-	cb.state = evaluate(*cb.button, producer);
+	CommandButton availability = *cb.button;
+	const ThingTemplate *heroTemplate = list.templateAt(m_ctx.logic, n);
+	if (r->dead && heroTemplate && m_ctx.logic.economy().templateKindOf(*heroTemplate, "CREATE_A_HERO") && TheCreateAHeroSystem)
+	{
+		// RW 0x61B28B consumes the custom hero's purchase permission on creation;
+		// RW 0x781792 retains a separate dead-hero record for revival. INFERENCE:
+		// reuse its fortress slot without that purchase-only prerequisite. Retail's
+		// general second REVIVE placement pass remains S-850 (not reproduced here).
+		auto &needed = availability.m_neededUpgrade;
+		const auto end = std::remove_if(needed.begin(), needed.end(), [](const std::string &name) {
+			return AsciiStringUtil::compareNoCase(name, TheCreateAHeroSystem->canBuildUpgradeName) == 0;
+		});
+		if (end != needed.end())
+		{
+			needed.erase(end, needed.end());
+			if (needed.empty()) availability.m_options &= ~COMMAND_OPTION_NEED_UPGRADE;
+		}
+	}
+	cb.state = evaluate(availability, producer, cb.commandPointsShort);
 	if (cb.state != ButtonState::Enabled)
 	{
 		return true;
@@ -853,12 +898,13 @@ bool ControlBar::reviveButton(ControlBarButton &cb, int n, Player &player, Objec
 		cb.state = ButtonState::Restricted;
 		return true;
 	}
-	switch (BuildAssistant::canMakeUnit(producer, nullptr, n))
+	const CanMakeType make = BuildAssistant::canMakeUnit(producer, nullptr, n);
+	switch (make)
 	{
 		case CANMAKE_NO_MONEY:
-			cb.state = ButtonState::CantAfford;
-			return true;
 		case CANMAKE_UNKNOWN_7:
+			cb.state = buildAvailability(make, cb.commandPointsShort);
+			return true;
 		case CANMAKE_MAXED_OUT_FOR_PLAYER:
 		case CANMAKE_PARKING_PLACES_FULL:
 			cb.state = ButtonState::Restricted;
@@ -871,7 +917,10 @@ bool ControlBar::reviveButton(ControlBarButton &cb, int n, Player &player, Objec
 	const float stored = (float)progress;
 	cb.queued = r->startFrame != -1 ? 1 : 0;
 	cb.timer = cb.queued ? stored : -1.0f;
-	cb.state = progress == 0.0 ? ButtonState::Restricted : stored != 1.0f ? ButtonState::NotReady :
+	// Presentation fix: a queued hero has zero progress on its start frame.
+	// Keep that slot cooling down instead of hiding it via HIDE_WHILE_DISABLED;
+	// otherwise the side bar removes/reinserts it and replays its entrance.
+	cb.state = cb.queued ? ButtonState::NotReady : progress == 0.0 ? ButtonState::Restricted : stored != 1.0f ? ButtonState::NotReady :
 		player.getMoney()->countMoney() < cost ? ButtonState::CantAfford : ButtonState::Enabled;
 	return true;
 }
@@ -1161,7 +1210,7 @@ std::vector<std::string> ControlBar::acceptanceStops()
 	return {
 		"[S-289] control bar placement (HUD-4, RW 0x943D6F / 0x92FF5C / 0x92F082): window i shows slot rangeStart + i; the Palantir arc shows windows 0 .. 5 whose "
 		"button is InPalantir, the side command bar every Radial button in window order; a button in neither is off the bar as in retail (offBarButtons: Attack-Move / "
-		"Stop / the SET_STANCE slots, reached by hotkey); the stance buttons: S-3803",
+		"Stop / the SET_STANCE slots, reached by hotkey); the stance toggle's radial sub-menu is ported on the Palantir arc (lane CAMPUI-1): S-3803",
 		"[S-290] command availability RW 0x942733 is partial: common script / disabled / rank / model-condition gates, NeededUpgrade, hero availability and "
 		"special-power science / status, deferred model-mask and paused-progress gates are ported; unresolved receiver state, command-center substitution, special-power substitution / trigger chains and "
 		"the remaining command-specific branches are documented in docs/re/rotwk/RW_0x942733.md; availability 4/7 still use Restricted",
@@ -1192,9 +1241,12 @@ std::vector<std::string> ControlBar::acceptanceStops()
 		"(not for DONT_USE_CANCEL_BUILD_BUTTON; enabled for its controller; MSG_DOZER_CANCEL_CONSTRUCT, RW 0x9409A1); not ported: the WALL_UPGRADE whose Object query "
 		"RW 0x68C82D(3, ...) reads 0.0 (unidentified), the overlay windows (ControlBar + 0x29C / + 0x2A0), the radar override; the construction text and the rally "
 		"point are the HUD's (DrawableIconUI)",
-		"[S-3803] stance buttons (lane PLAY-4): SET_STANCE and TOGGLE_STANCE send MSG_CHANGE_STANCE with the stance (RW 0x96F53C), TOGGLE_STANCE is available with a "
-		"StancesBehavior (RW 0x942A77) and shows the current stance's image and labels (StanceToButtonSlot); INFERENCE: retail opens the toggle's radial sub-menu "
-		"(PalantirCommandUI::OnSubMenuLoaded RW 0x97004A / 0x96FDFD, not ported) and sends the picked stance; here a press sends the next stance of the button's list",
+		"[S-3803] stance buttons (lanes PLAY-4, CAMPUI-1): SET_STANCE sends MSG_CHANGE_STANCE with its stance (RW 0x96F53C); TOGGLE_STANCE is available with a "
+		"StancesBehavior (RW 0x942A77) and shows the current stance's image and labels (StanceToButtonSlot); on the Palantir its press opens / closes the radial of "
+		"its Stances (InGameToggleStanceCommandButton RW 0x92FF5C / 0x96FAC6, the sub-menu RW 0x9D3380 .. 0x9D3550) and an item sends its stance (RW 0x96F85A -> "
+		"0x96F53C); a TOGGLE_STANCE press that reaches processCommandUI sends nothing and is counted (unportedPresses \"TOGGLE_STANCE (no sub-menu)\"); not ported: "
+		"SetStance's voice (RW 0x8DEDBB event 0x7E3, INFERENCE: the UnitSpecificSound), the items' hotkey registration (RW 0x96F890, S-280: D / F / G still send "
+		"through CommandXlat), the sub-menu owner's notifications (vslots 4 / 8), the press's context object checks (RW 0x449681 / 0x6A8803)",
 		"[S-4531] the left press's gate and click sound (lane NETLAG-1, read, not ported): RW 0x9D285E (BFME2 decomp Rva005C3427::Run, tier A) reads the "
 		"command button clip's state (RW 0xA00C0E: clip + 0x50, set by RW 0x9D2BEE: 1 _disabled, 2 _extraDisabled, 3 _cantAfford, 4 _static, 5 _notReady, "
 		"6 _up, 7 _visuallyEnabled) and for 1, 3 and 5 plays Gui_PalantirCommandButtonDisabledClick and drops the press; any other state goes to "

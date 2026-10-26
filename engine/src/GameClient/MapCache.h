@@ -41,6 +41,8 @@ struct MapCacheEntry
 	std::u16string displayName;
 	std::u16string description;
 	std::map<int, std::map<std::string, std::string>> playerPositions; // scenario slot restrictions
+	std::vector<Coord3D> techPositions;   // lane MODS-2: techPosition = X:.. Y:.. Z:.. (retail writer format; Edain's mapcache.ini)
+	std::vector<Coord3D> supplyPositions; // supplyPosition = X:.. Y:.. Z:..
 	std::map<int, Coord3D> startPositions; // Player_N_Start, keyed by N (1-based)
 };
 
@@ -49,6 +51,9 @@ namespace MapCache
 // Parses the whole file. Returns false + *error on the first unrecognised construct.
 // bfme1 (community PR #36): BFME1 data's mapcache.ini (its PlayerPosition blocks)
 bool parse(const std::string &text, std::vector<MapCacheEntry> &out, std::string *error, bool bfme1 = false);
+
+// Startup contract, separate from cache syntax: contiguous finite Player_1..N_Start, N in 1..16.
+bool validateStartPositions(const MapCacheEntry &map, std::string *error);
 
 // "maps_5Ccamera_5Fdemo_5Ccamera_5Fdemo_2Emap" -> bytes with every "_XX" replaced by the byte XX.
 std::string unescape(const std::string &escaped);

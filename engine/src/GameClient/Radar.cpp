@@ -596,19 +596,21 @@ struct HorzLine
 std::vector<HorzLine> discreteCircle(int xCenter, int yCenter, int radius)
 {
 	std::vector<HorzLine> edges;
-	int x = 0, y = radius, d = (1 - radius) << 1;
+	int x = 0, y = radius;
+	// The initial decision term and the terminal y = -1 can be negative; widen before doubling.
+	std::int64_t d = (1 - std::int64_t{ radius }) * 2;
 	while (y >= 0)
 	{
 		edges.push_back(HorzLine{ yCenter + y, xCenter - x, xCenter + x });
 		if (d + y > 0)
 		{
 			--y;
-			d -= ((y << 1) - 1);
+			d -= (std::int64_t{ y } * 2 - 1);
 		}
 		if (x > d)
 		{
 			++x;
-			d += ((x << 1) + 1);
+			d += (std::int64_t{ x } * 2 + 1);
 		}
 	}
 	for (size_t i = 0; i + 1 < edges.size();)

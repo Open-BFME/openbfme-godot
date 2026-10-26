@@ -26,6 +26,9 @@
 ##   --scenario=play4     (lane PLAY-4) the build scenario with the percent shots (prefix play4), the under-construction control bar, then the finished
 ##                        barracks damaged through DAMAGED and REALLYDAMAGED to its death, Aragorn next to an enemy horde, and a Battle and a HoldGround
 ##                        horde whose enemy walks away; screens play4-*.png, PLAY4VIEW lines
+##   --scenario=ai_summon  (lane SUMMONLOC-1) a Hard computer (--ai-faction, default FactionDwarves here, --ai-state, --seed) gets a level 10 Dain on open
+##                        ground between the bases and a few of the local player's soldiers to fight; its AISpecialPowerUpdate summons the Royal Guard there
+##                        (the summon spot test RW 0x82E586). SUMMONLOC1VIEW lines name the new objects; screens summonloc1-*.png; quits 12 s after the summon
 ##   --scenario=walls_timeline  (lane BUILD-4) a Men wall span from the outermost pad, watched low from the side with --wall-side (else along the span); BUILD4VIEW
 ##                        lines give every piece's construction percent per logic frame; screens build4-*.png
 extends Node3D
@@ -127,10 +130,12 @@ func _ready() -> void:
 	slots[1] = {"state": 2, "name": "Easy AI", "accepted": true, "color": 1, "start_pos": 4, "player_template": TEMPLATES["FactionMordor"], "team": -1}
 	var game_seed := 4711
 	var cash := 5000
-	if _scenario == "ai_attack" or _scenario == "ai_tactics":
+	if _scenario == "ai_summon" and _ai_faction == "FactionMordor":
+		_ai_faction = "FactionDwarves"
+	if _scenario == "ai_attack" or _scenario == "ai_tactics" or _scenario == "ai_summon":
 		# lane AI-1: a Medium computer (slot state 3) against the idle local player, the setup of the retail attack tests
 		slots[0] = {"state": 6, "name": "Human", "accepted": false, "color": 0, "start_pos": 0, "player_template": TEMPLATES[_faction], "team": 0}
-		slots[1] = {"state": _ai_state if _scenario == "ai_tactics" else 3, "name": "Computer", "accepted": false, "color": 1, "start_pos": 1, "player_template": TEMPLATES[_ai_faction], "team": 1}
+		slots[1] = {"state": _ai_state if _scenario == "ai_tactics" else (4 if _scenario == "ai_summon" else 3), "name": "Computer", "accepted": false, "color": 1, "start_pos": 1, "player_template": TEMPLATES[_ai_faction], "team": 1}
 		for i in range(2, 8):
 			slots[i].accepted = false
 		game_seed = _seed_arg if _seed_arg >= 0 else 1234
@@ -348,6 +353,9 @@ func _run_scenario() -> void:
 		return
 	if _scenario == "castle_fall":
 		await _run_castle_fall(shots)
+		return
+	if _scenario == "ai_summon":
+		await _run_ai_summon(shots)
 		return
 	var slow := _scenario == "showcase"
 	if _scenario == "play4":
@@ -663,6 +671,108 @@ func _run_play4(building_id: int, shots: String) -> void:
 
 
 ## lane AI-1: the computer's base grows, then its first SimpleAttack team marches to the local base (the camera only watches; the logic is the game's)
+func _player_index_of(owner: String, probe_template: String, at: Vector2) -> int:
+	# create_object takes the index of the player list: the first index whose probe object belongs to `owner`
+	for idx in 16:
+		var probe: int = _world.create_object(probe_template, idx, at.x, at.y, 0.0)
+		if probe < 0:
+			continue
+		var mine := str(_world.get_object(probe).get("owner", "")) == owner
+		_world.destroy_object(probe)
+		if mine:
+			return idx
+	return -1
+
+
+func _run_ai_summon(shots: String) -> void:
+	# lane SUMMONLOC-1: the computer's Dain on open ground, a fight, his Royal Guard summon (AISpecialPowerUpdate -> the ActionManager's spot test)
+	# the retail audio manager (as hud_viewer's --audio, lane AUDIO-2): the fight, the summon's sound and voices are heard from the camera
+	var audio: Node = ClassDB.instantiate("GameAudio")
+	audio.name = "GameAudio"
+	add_child(audio)
+	var booted: Dictionary = audio.boot(_fs, {"seed": 4711})
+	if not booted.get("ok", false):
+		_fail("GameAudio boot failed: %s" % [booted.get("errors", [])])
+		return
+	var attached: Dictionary = _world.attach_audio()
+	if not attached.get("ok", false):
+		_fail("attach_audio failed: %s" % [attached])
+		return
+	var enemy := ""
+	var base := Vector2.ZERO
+	var n := 0
+	for so in _start_objects:
+		var eo: Dictionary = _world.get_object(int(so.id))
+		if eo.get("ok", false) and str(eo.owner) != _local and not str(eo.owner).is_empty():
+			enemy = str(eo.owner)
+			base += Vector2(eo.x, eo.y)
+			n += 1
+	if enemy.is_empty() or n == 0:
+		_fail("ai_summon needs a computer player")
+		return
+	base /= float(n)
+	var spot := _focus.lerp(base, 0.5)
+	var ai_index := _player_index_of(enemy, "DwarvenDain", spot)
+	var local_index := _player_index_of(_local, "GondorFighter", spot)
+	if ai_index < 0 or local_index < 0:
+		_fail("no player index (computer %d, local %d)" % [ai_index, local_index])
+		return
+	var toward := (_focus - base).normalized()
+	var dain: int = _world.create_object("DwarvenDain", ai_index, spot.x, spot.y, atan2(toward.y, toward.x))
+	if dain < 0:
+		_fail("no Dain")
+		return
+	_world.gain_hero_levels(dain, 10)
+	var foes: Array = []
+	var side := Vector2(-toward.y, toward.x)
+	for i in 5:
+		var p := spot + toward * 170.0 + side * (float(i) - 2.0) * 25.0
+		var id: int = _world.create_object("GondorFighter", local_index, p.x, p.y, atan2(-toward.y, -toward.x))
+		if id >= 0:
+			foes.append(id)
+	var before := {}
+	for id in _world.get_object_ids():
+		before[id] = true
+	_cam_target = spot + toward * 90.0
+	_cam_height = 700.0
+	_place_camera()
+	_label.position = Vector2(10, 90)
+	_world.order_attack([dain], foes[0])
+	print("SUMMONLOC1VIEW computer %s (index %d): Dain %d at %s, %d foes" % [enemy, ai_index, dain, spot, foes.size()])
+	var summoned_frame := -1
+	var quit_frame := -1
+	var shot_cast := false
+	for i in 60000:
+		await get_tree().process_frame
+		var cam: Dictionary = _hud.get_camera()
+		if cam.has("eye") and cam.has("target"):
+			# lane AUDIO-5: retail's microphone from the camera's eye and target (Godot axes (x, z, -y) -> SAGE)
+			var e: Vector3 = cam.eye
+			var t: Vector3 = cam.target
+			audio.update_microphone(Vector3(e.x, -e.z, e.y), Vector3(t.x, -t.z, t.y), true)
+		var frame: int = _world.get_frame()
+		_label.text = "Hard computer's Dain (Dwarves) vs Gondor soldiers: frame %d" % frame + ("" if summoned_frame < 0 else "   Royal Guard summoned at frame %d" % summoned_frame)
+		if summoned_frame < 0:
+			for id in _world.get_object_ids():
+				if before.has(id):
+					continue
+				before[id] = true
+				var o: Dictionary = _world.get_object(id)
+				if o.get("ok", false) and str(o.owner) == enemy and str(o.template).ends_with("_Summoned"):
+					summoned_frame = frame
+					quit_frame = frame + 60
+					print("SUMMONLOC1VIEW frame %d: the computer's %s %d appears at (%.0f, %.0f)" % [frame, o.template, id, float(o.x), float(o.y)])
+		elif not shot_cast and frame >= summoned_frame + 10:
+			shot_cast = true
+			_save(shots.path_join("summonloc1-royal-guard.png"))
+		if quit_frame >= 0 and frame >= quit_frame:
+			break
+		if summoned_frame < 0 and frame > 3000:
+			print("SUMMONLOC1VIEW no summon by frame 3000")
+			break
+	get_tree().quit(0 if summoned_frame >= 0 else 1)
+
+
 func _run_castle_fall(shots: String) -> void:
 	# lane CASTLE-1: the local fortress, its keep, the computer
 	var keep := -1

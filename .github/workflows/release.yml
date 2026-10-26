@@ -1,0 +1,203 @@
+# Lane SIGNKMS-1: a release's packages built and SIGNED on GitHub's own runners (docs/RELEASE.md, "Release signing").
+#
+# The release's Deck (tools/release/autorelease.sh with OPENBFME_RELEASE_SIGNER=actions) has synced, audited, built and tested the release
+# candidate with the retail files GitHub never sees, and pushed the public commit and its tag. It then dispatches this workflow ON MAIN with
+# the tag, the commit, the kind and a one-time request id. This workflow:
+#   plan     checks the inputs (through the environment only, never pasted into a script), that it runs on main of this repository, that
+#            the tag names the commit and that the commit is on main;
+#   macos / linux-lib / windows-lib / package
+#            builds the packages from a checkout of the tag: the Mac package (package_macos.py, ad-hoc codesign), the Linux and Windows
+#            GDExtensions (build_linux.sh: the GLIBC 2.28 floor; build_windows.sh --no-export: the pinned llvm-mingw), then package.sh
+#            (Godot 4.7.2 with the templates godot_templates.txt pins) for the Linux and Windows packages; these jobs have no write access,
+#            no AWS access and no secret; RELSIGN-1: macos / linux-lib / windows-lib CALL release-package.yml (MACACT-1's jobs, which
+#            the Deck also dispatches on its own for the host-vs-Actions comparisons), so both paths build with one definition;
+#   sign     in the protected environment named by the kind (`nightly`: main only; `stable`: main only AND the owner's approval), the only
+#            job allowed to request GitHub's OIDC token: it trades GitHub's OIDC token for a 15-minute AWS session of the signing role (the role's trust
+#            policy accepts only this repository, this workflow file on refs/heads/main and these two environments), seals the packages and
+#            signs the manifests with the KMS key (tools/release/actions_release.py sign: the signature envelope, docs/RELEASE.md), verifies
+#            every signature against the committed launcher/release_keys.pub, and creates the release as a DRAFT with GitHub's token
+#            (write access to the contents, this job only). It never publishes: the Deck reads the draft back, checks it against the candidate it tested,
+#            runs the private privacy gate, adds the transition's co-signature (tools/release/cosign_release.py) and publishes.
+# The private key never exists outside AWS KMS; nothing here holds a long-lived credential (the one secret, the signing role's ARN, is
+# masked, not a credential); every action is pinned by its full commit sha;
+# every download is checked against a pinned hash. tools/release/public_workflows.py allows those two permissions in this
+# file alone, in a job with `environment:` nightly or stable.
+name: Release
+
+run-name: Release ${{ inputs.tag }} (${{ inputs.kind }}, request ${{ inputs.request }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: nightly or stable (the environment the signing job runs in)
+        required: true
+        type: choice
+        options:
+          - nightly
+          - stable
+      tag:
+        description: the release tag the Deck pushed (v1.2.3 or v1.2.3-nightly.261023200)
+        required: true
+        type: string
+      commit:
+        description: the public commit the tag names (40 hex)
+        required: true
+        type: string
+      request:
+        description: the Deck's one-time request id (32 hex)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  IN_KIND: ${{ inputs.kind }}
+  IN_TAG: ${{ inputs.tag }}
+  IN_COMMIT: ${{ inputs.commit }}
+  IN_REQUEST: ${{ inputs.request }}
+
+jobs:
+  plan:
+    name: Check the request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the inputs, the ref, the tag and the commit
+        run: python3 tools/release/actions_release.py plan
+
+  # RELSIGN-1: the three builds are release-package.yml's jobs, the same ones the Deck dispatches on a staging branch (MACACT-1): one
+  # definition, the build host's folder layout and ccache rewriting (so the Linux library is the build host's byte for byte and the Windows
+  # DLL but for its CodeView GUID), no secrets passed (none declared there), contents: read inherited from the top level
+  macos:
+    name: macOS
+    needs: plan
+    uses: ./.github/workflows/release-package.yml
+    with:
+      platform: macos
+      commit: ${{ inputs.commit }}
+      version: ${{ inputs.tag }}
+      request: ${{ inputs.request }}
+
+  linux-lib:
+    name: Linux
+    needs: plan
+    uses: ./.github/workflows/release-package.yml
+    with:
+      platform: linux
+      commit: ${{ inputs.commit }}
+      version: ${{ inputs.tag }}
+      request: ${{ inputs.request }}
+
+  windows-lib:
+    name: Windows
+    needs: plan
+    uses: ./.github/workflows/release-package.yml
+    with:
+      platform: windows
+      commit: ${{ inputs.commit }}
+      version: ${{ inputs.tag }}
+      request: ${{ inputs.request }}
+
+  package:
+    name: Linux and Windows packages (package.sh)
+    needs: [linux-lib, windows-lib]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: true
+      - name: The checkout is the tag
+        run: python3 tools/release/actions_release.py checkout-is-tag
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: openbfme-${{ inputs.tag }}-linux-x64-${{ inputs.request }}
+          path: ${{ runner.temp }}/linux-lib
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: openbfme-${{ inputs.tag }}-windows-x64-${{ inputs.request }}
+          path: ${{ runner.temp }}/windows-lib
+      - name: Download Godot 4.7.2 and its export templates (pinned hashes)
+        # the templates must also be the godot_templates.txt files byte for byte: package.sh and the privacy gate check them by SHA-256
+        run: |
+          T="$RUNNER_TEMP/tools"; mkdir -p "$T"; cd "$T"
+          base=https://github.com/godotengine/godot/releases/download/4.7.2-stable
+          curl -fsSLo godot.zip "$base/Godot_v4.7.2-stable_linux.x86_64.zip"
+          curl -fsSLo templates.tpz "$base/Godot_v4.7.2-stable_export_templates.tpz"
+          sha512sum -c --strict <<'EOF'
+          9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65  godot.zip
+          ca4d71c4d7b81dfc15d1a98baa07534aa95b03fdda78a0075b06672e1648d2e5f40980c9adc28d23e1b92e732ee7bf3461997aa804af74ec2fcd7a93ccb84079  templates.tpz
+          EOF
+          unzip -q godot.zip
+          D="$HOME/.local/share/godot/export_templates/4.7.2.stable"; mkdir -p "$D"
+          unzip -q -j templates.tpz -d "$D"
+          rm godot.zip templates.tpz
+          cd "$D" && awk -F '  ' '!/^#/ && NF {print $1 "  " $2}' "$GITHUB_WORKSPACE/tools/release/godot_templates.txt" | sha256sum -c --strict
+      - name: Build the packages (package.sh)
+        run: |
+          mkdir -p godot/bin "$RUNNER_TEMP/out"
+          cp "$RUNNER_TEMP/linux-lib/openbfme.linux.template_debug.x86_64.so" godot/bin/
+          tools/release/package.sh --out "$RUNNER_TEMP/out" --platforms linux,windows \
+            --windows-dll "$RUNNER_TEMP/windows-lib/openbfme.windows.template_debug.x86_64.dll" \
+            --godot "$RUNNER_TEMP/tools/Godot_v4.7.2-stable_linux.x86_64" --repo "$GITHUB_REPOSITORY" \
+            > "$RUNNER_TEMP/package.log" 2>&1 || { tail -80 "$RUNNER_TEMP/package.log"; exit 1; }
+          ls -l "$RUNNER_TEMP/out"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  sign:
+    name: Seal, sign (AWS KMS) and draft the release
+    needs: [plan, macos, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # nightly: deployment branches main only; stable: main only and the owner as the required reviewer (docs/RELEASE.md, "Release signing")
+    environment: ${{ inputs.kind }}
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      # the role's ARN names the AWS account: an environment SECRET (GitHub masks it in every log line; a variable would be printed
+      # with the job's environment), not a credential; the region is public
+      SIGNING_ROLE_ARN: ${{ secrets.OPENBFME_SIGNING_ROLE_ARN }}
+      SIGNING_REGION: ${{ vars.OPENBFME_SIGNING_REGION }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The checkout is the tag, the request is still the plan's
+        run: |
+          python3 tools/release/actions_release.py plan
+          python3 tools/release/actions_release.py checkout-is-tag
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+          path: ${{ runner.temp }}/in/packages
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: openbfme-${{ inputs.tag }}-macos-arm64-${{ inputs.request }}
+          path: ${{ runner.temp }}/in/macos
+      - name: Seal and sign through AWS KMS, verify under launcher/release_keys.pub
+        run: python3 tools/release/actions_release.py sign --in "$RUNNER_TEMP/in" --pkg "$RUNNER_TEMP/pkg"
+      - name: Create the draft release (never published here)
+        run: python3 tools/release/actions_release.py draft --pkg "$RUNNER_TEMP/pkg"

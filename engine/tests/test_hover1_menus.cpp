@@ -381,7 +381,7 @@ TEST_CASE("hover1 retail: every visible button of the main menu (each navigation
 				open = open ? open : k->asButton();
 			}
 			REQUIRE(open);
-			float x, y;
+			float x = 0, y = 0;
 			REQUIRE(r.centreOf(*open, x, y));
 			// the navigation's button opens it; its entries reveal over a few updates (a press the menu does not take yet is repeated: the first press
 			// after the opening animation only focuses the movie)

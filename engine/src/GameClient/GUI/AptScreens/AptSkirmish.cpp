@@ -20,6 +20,8 @@
 
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/PlatformIcons.h"
+#include "Libraries/Source/Apt/Apt.h"
+#include "Libraries/Source/Apt/AptCharacterInst.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -197,6 +199,8 @@ AptSkirmish::AptSkirmish(WindowManager &windows, Shell &shell, ShellEnvironment 
 
 AptSkirmish::~AptSkirmish()
 {
+	destroySlotScroll();
+	if (AptGadgetLayer *layer = windows().gadgetLayer()) layer->destroyEngineGadget(m_mapCapacityFilter);
 	// lane UI-2: AptMapPreview's teardown (RW 0x9769E8) releases the picture the render callback draws
 	windows().clearRenderPicture("AptMapPreview::Picture");
 }
@@ -465,12 +469,26 @@ bool AptSkirmish::changeProfileFromList()
 	const std::u16string name = GadgetListBoxGetText(m_profileList, selected, 0);
 	// lane UI-6: RW 0x9293F5 (BFME2 decomp AptSkirmishCallbacks.cpp OnChangeProfile): another profile keeps the current one's game first (RW 0x929440),
 	// and its own game is set up again (state 5: InitTheGame, RW 0x9288D0)
+	// The list may outlive an external profile deletion. A stale row is not a successful profile change:
+	// keep the active lobby and the popup open instead of reinitialising it for the old profile.
+	const std::vector<std::u16string> names = m_profiles->names();
+	if (std::find(names.begin(), names.end(), name) == names.end())
+	{
+		windows().note("profile-rejected", "the selected profile no longer exists: " + u16ToUtf8(name));
+		refreshProfileList();
+		return false;
+	}
 	const bool other = name != m_profiles->current();
 	if (other)
 	{
 		keepGame();
 	}
-	m_profiles->setCurrent(name);
+	if (!m_profiles->setCurrent(name))
+	{
+		windows().note("profile-rejected", "cannot select profile: " + u16ToUtf8(name));
+		refreshProfileList();
+		return false;
+	}
 	if (other)
 	{
 		reloadGameForProfile();
@@ -590,7 +608,7 @@ std::string AptSkirmish::extensionHeroes() const
 {
 	const CreateAHeroHeroList *list = m_env.createAHero ? m_env.createAHero->heroes : nullptr;
 	std::string out;
-	for (int slot = 0; slot < MAX_SLOTS; ++slot)
+	for (int slot = 0; slot < m_setup->info().serializedSlotCount(); ++slot)
 	{
 		const int v = m_slotHero[(size_t)slot];
 		const CreateAHeroListEntry *e = list ? list->at(v) : nullptr;
@@ -697,8 +715,203 @@ void AptSkirmish::closePopupState()
 	}
 }
 
+void AptSkirmish::destroySlotScroll()
+{
+	if (AptGadgetLayer *layer = windows().gadgetLayer())
+	{
+		layer->destroyEngineGadget(m_slotScroll);
+		layer->destroyEngineGadget(m_slotRange);
+	}
+	m_slotScroll = nullptr;
+	m_slotRange = nullptr;
+}
+
+void AptSkirmish::setFirstVisibleSlot(int first)
+{
+	if (first < 0 || first > m_layoutCapacity - LEGACY_MAX_SLOTS)
+	{
+		windows().note("extended-layout-error", "slot viewport outside map capacity");
+		return;
+	}
+	m_firstVisibleSlot = first;
+	if (m_slotScroll)
+	{
+		GadgetSliderSetPosition(m_slotScroll, m_layoutCapacity - LEGACY_MAX_SLOTS - first);
+	}
+	if (m_slotRange)
+	{
+		int selected = -1;
+		GadgetComboBoxGetSelectedPos(m_slotRange, &selected);
+		if (selected != first)
+		{
+			GadgetComboBoxSetSelectedPos(m_slotRange, first, true);
+		}
+	}
+}
+
+void AptSkirmish::updateExtendedRows()
+{
+	pruneDeadGadgets();
+	if (m_mapCapacityFilter) m_mapCapacityFilter->winHide(!m_mapList || m_mapList->winIsHidden());
+	if (!m_setup)
+	{
+		return;
+	}
+	const int capacity = m_setup->info().mapStartCount;
+	const bool extended = capacity > LEGACY_MAX_SLOTS;
+	if (!extended && !m_extendedRowsParent)
+	{
+		return;
+	}
+	AptSpriteInst *parent = nullptr;
+	for (const auto &component : windows().components())
+	{
+		if (component.window.get() != m_slots[0][(int)Leaf::Player] || !component.instance)
+		{
+			continue;
+		}
+		for (const AptCharacterInst *row = component.instance; row; row = row->parent())
+		{
+			if (row->instName() == "~0" && row->parent())
+			{
+				parent = row->parent()->asSprite();
+				break;
+			}
+		}
+		break;
+	}
+	if (!parent)
+	{
+		if (m_slotScroll) m_slotScroll->winHide(true);
+		if (m_slotRange) m_slotRange->winHide(true);
+		return; // the movie is entering or leaving its player page
+	}
+	if (capacity > MAX_SLOTS)
+	{
+		m_error = "extended layout: unsupported map capacity " + std::to_string(capacity);
+		windows().note("extended-layout-error", m_error);
+		return;
+	}
+	if (parent != m_extendedRowsParent)
+	{
+		for (int i = 0; i < LEGACY_MAX_SLOTS; ++i)
+		{
+			AptCharacterInst *row = parent->childByName("~" + std::to_string(i));
+			if (!row) return; // the retail rows have not all been placed yet
+			m_retailRowY[(size_t)i] = row->matrix.ty;
+		}
+		m_extendedRowsParent = parent;
+		m_firstVisibleSlot = 0;
+	}
+	const int count = extended ? capacity : LEGACY_MAX_SLOTS;
+	const bool capacityChanged = count != m_layoutCapacity;
+	m_layoutCapacity = count;
+	if (m_firstVisibleSlot > count - LEGACY_MAX_SLOTS) m_firstVisibleSlot = count - LEGACY_MAX_SLOTS;
+	AptCharacterInst *prototype = parent->childByName("~0");
+	// OpenBFME extension: instantiate the retail row symbol at runtime, not a replacement movie. Each row keeps its actual slot name, so its
+	// InitGadgets and Ready callbacks retain their logical slot index while the viewport moves. No retail file or <=8-map layout is modified.
+	for (int i = LEGACY_MAX_SLOTS; i < MAX_SLOTS; ++i)
+	{
+		const std::string name = "~" + std::to_string(i);
+		AptCharacterInst *row = parent->childByName(name);
+		if (i >= count)
+		{
+			if (row) parent->removeObject(row->depth());
+			continue;
+		}
+		if (!row)
+		{
+			row = parent->attachCharacter(prototype->charRef(), name, 0x4000 + i, true);
+			if (!row)
+			{
+				m_error = "extended layout: could not create player row " + std::to_string(i + 1);
+				windows().note("extended-layout-error", m_error);
+				return;
+			}
+			row->matrix = prototype->matrix;
+			row->color = prototype->color;
+		}
+	}
+	for (int i = 0; i < count; ++i)
+	{
+		AptCharacterInst *row = parent->childByName("~" + std::to_string(i));
+		row->matrix.ty = extended ? m_retailRowY[0] + (i - m_firstVisibleSlot) * (m_retailRowY[1] - m_retailRowY[0]) : m_retailRowY[(size_t)i];
+		row->asChanged = true;
+		row->visible = i >= m_firstVisibleSlot && i < m_firstVisibleSlot + LEGACY_MAX_SLOTS;
+	}
+	AptGadgetLayer *layer = windows().gadgetLayer();
+	if (!layer) return;
+	layer->syncPlacements();
+	if (!extended)
+	{
+		destroySlotScroll();
+		m_extendedRowsParent = nullptr;
+		for (int i = 0; i < LEGACY_MAX_SLOTS; ++i)
+		{
+			if (GameWindow *team = m_slots[i][(int)Leaf::Team]) populateSlotGadget(i, Leaf::Team, team);
+		}
+		refreshAll();
+		return;
+	}
+	if (!m_slotScroll && m_mapList)
+	{
+		GameWindow *skin = GadgetListBoxGetSlider(m_mapList);
+		if (!skin)
+		{
+			m_error = "extended layout: map-list scrollbar skin is missing";
+			windows().note("extended-layout-error", m_error);
+			return;
+		}
+		WinInstanceData instance = *skin->winGetInstanceData();
+		SliderData data = *static_cast<SliderData *>(skin->winGetUserData());
+		data.minVal = 0;
+		data.maxVal = count - LEGACY_MAX_SLOTS;
+		m_slotScroll = layer->gadgets().gogoGadgetSlider(nullptr, WIN_STATUS_ENABLED | WIN_STATUS_APT_TEMPLATE, 890, 422, 18, 216, &instance, &data, skin->winGetFont(), false);
+		std::string error;
+		m_slotRange = layer->createEngineGadget("window/apt/combobox.wnd", 640, 650, 250, 24, ownerWindow(), &error);
+		if (m_slotRange) GadgetComboBoxSetMaxDisplay(m_slotRange, 4);
+		if (!m_slotScroll || !m_slotRange)
+		{
+			m_error = "extended layout: scrollbar creation failed: " + error;
+			windows().note("extended-layout-error", m_error);
+			destroySlotScroll();
+			return;
+		}
+		m_slotScroll->winSetOwner(ownerWindow());
+		m_slotScroll->winSetDrawFunc(skin->winGetDrawFunc());
+		if (GameWindow *thumb = m_slotScroll->winGetChild())
+		{
+			*thumb->winGetInstanceData() = *skin->winGetChild()->winGetInstanceData();
+			thumb->winSetOwner(m_slotScroll);
+			thumb->winSetDrawFunc(skin->winGetChild()->winGetDrawFunc());
+		}
+	}
+	if (m_slotRange && (capacityChanged || GadgetComboBoxGetLength(m_slotRange) != count - LEGACY_MAX_SLOTS + 1))
+	{
+		GadgetComboBoxReset(m_slotRange);
+		for (int i = 0; i <= count - LEGACY_MAX_SLOTS; ++i)
+		{
+			const std::string label = "Players " + std::to_string(i + 1) + "-" + std::to_string(i + LEGACY_MAX_SLOTS) + " / " + std::to_string(count);
+			GadgetComboBoxAddEntry(m_slotRange, std::u16string(label.begin(), label.end()), 0xFFFFFFFFu);
+		}
+		m_slotScroll->manager().winSendSystemMsg(m_slotScroll, GSM_SET_MIN_MAX, 0, (WindowMsgData)(count - LEGACY_MAX_SLOTS));
+		setFirstVisibleSlot(m_firstVisibleSlot);
+	}
+	const bool shown = parent->globallyVisible() && !isHidden();
+	if (m_slotScroll) m_slotScroll->winHide(!shown);
+	if (m_slotRange) m_slotRange->winHide(!shown);
+	if (capacityChanged)
+	{
+		for (int i = 0; i < count; ++i)
+		{
+			if (GameWindow *team = m_slots[i][(int)Leaf::Team]) populateSlotGadget(i, Leaf::Team, team);
+		}
+	}
+}
+
 void AptSkirmish::update()
 {
+	updateExtendedRows();
 	if (m_statsPage)
 	{
 		m_statsPage->update(); // lane ONLINEHUB-1: the cards' text lines
@@ -817,7 +1030,7 @@ void AptSkirmish::registerLobby()
 	registerProvider("MpGameRules::NumCheckBoxes", [this](const std::string &, std::string &value, bool setting) {
 		if (!setting)
 		{
-			value = std::to_string(m_setup ? MpGameRules::numCheckBoxes(m_setup->rulesMode()) : 0);
+			value = std::to_string(ruleCheckCount()); // lane CHEAT-1: + 1 for OpenBFME's Cheat Mode row in mode 0
 		}
 		return true;
 	});
@@ -887,7 +1100,7 @@ bool AptSkirmish::slotGadgetsEnabled(int slot) const
 void AptSkirmish::updateReadyIcon(int slot, bool force)
 {
 	// RW 0x84211D (see the header)
-	if (!m_setup || slot < 0 || slot >= MAX_SLOTS)
+	if (!m_setup || slot < 0 || slot >= m_setup->info().mapStartCount)
 	{
 		return;
 	}
@@ -985,7 +1198,9 @@ void AptSkirmish::serviceReadyBoxes()
 		return;
 	}
 	m_readyDirty = false;
-	for (int slot = 0; slot < MAX_SLOTS; ++slot)
+	// P16: the movie's Ready boxes exist only for the game's slots (the retail setup movie has eight; an extended
+	// lobby provides sixteen for a >8 map); never call SetReadyState for slots this game does not have
+	for (int slot = 0; slot < m_setup->info().mapStartCount && slot < MAX_SLOTS; ++slot)
 	{
 		if (m_readyIcon[(size_t)slot].empty())
 		{
@@ -1057,23 +1272,40 @@ void AptSkirmish::refreshChatPlayers()
 	}
 	std::vector<std::u16string> names;
 	std::vector<PlatformKind> kinds; // lane PLATFORMICON-1: each player's system, shown as an icon before the name
-	for (const SkirmishGameSlot &s : m_setup->info().slots)
+	std::vector<UnicodeString> notes; // lane ONLINEMENU-1: the second column (the online room's ping)
+	std::vector<Color> noteColors;
+	bool anyNote = false;
+	for (int slot = 0; slot < MAX_SLOTS; ++slot)
 	{
+		const SkirmishGameSlot &s = m_setup->info().slots[slot];
 		if (s.isHuman())
 		{
 			names.push_back(s.name);
 			kinds.push_back(s.platform);
+			Color color = 0xFFFFFFFFu;
+			notes.push_back(chatPlayerNote(slot, &color));
+			noteColors.push_back(color);
+			anyNote = anyNote || !notes.back().empty();
 		}
 	}
-	// only when the room's players changed (a refill would drop the list's scroll position every poll)
-	bool same = GadgetListBoxGetNumEntries(m_chatPlayers) == (int)names.size();
+	// only when the room's players (or their notes) changed (a refill would drop the list's scroll position every poll)
+	const int columns = anyNote ? 2 : 1;
+	bool same = GadgetListBoxGetNumEntries(m_chatPlayers) == (int)names.size() && GadgetListBoxGetNumColumns(m_chatPlayers) == columns;
 	for (int i = 0; same && i < (int)names.size(); ++i)
 	{
 		same = GadgetListBoxGetText(m_chatPlayers, i, 0) == names[(size_t)i] && GadgetListBoxGetCellBadge(m_chatPlayers, i, 0) == platformImageName(kinds[(size_t)i]);
+		Color shown = 0;
+		same = same && (columns == 1 || (GadgetListBoxGetTextAndColor(m_chatPlayers, &shown, i, 1) == notes[(size_t)i] && shown == noteColors[(size_t)i]));
 	}
 	if (same)
 	{
 		return;
+	}
+	// the widths in pixels follow the list's size now (it grows while the tab's clip plays in: serviceChatLists refills it then)
+	if (columns == 2 || GadgetListBoxGetNumColumns(m_chatPlayers) != columns)
+	{
+		static const int kNameAndNote[2] = { 62, 38 };
+		GadgetListBoxSetColumnWidths(m_chatPlayers, columns, columns == 2 ? kNameAndNote : nullptr);
 	}
 	if (MappedImageCollection *images = m_chatPlayers->manager().mutableImages())
 	{
@@ -1084,6 +1316,10 @@ void AptSkirmish::refreshChatPlayers()
 	{
 		const int row = GadgetListBoxAddEntryText(m_chatPlayers, names[i], 0xFFFFFFFFu, -1, 0);
 		GadgetListBoxSetCellBadge(m_chatPlayers, row, 0, platformImageName(kinds[i]));
+		if (columns == 2)
+		{
+			GadgetListBoxAddEntryText(m_chatPlayers, notes[i], noteColors[i], row, 1);
+		}
 	}
 }
 
@@ -1195,6 +1431,7 @@ void AptSkirmish::pruneDeadGadgets()
 		}
 	};
 	check(m_mapList);
+	check(m_mapCapacityFilter);
 	check(m_mapInfo);
 	check(m_mapDescription);
 	check(m_mapPicture);
@@ -1204,6 +1441,8 @@ void AptSkirmish::pruneDeadGadgets()
 	check(m_chatList);
 	check(m_chatPlayers);
 	check(m_chatEntry);
+	check(m_slotScroll);
+	check(m_slotRange);
 	for (auto &row : m_slots)
 	{
 		for (GameWindow *&w : row)
@@ -1268,10 +1507,6 @@ void AptSkirmish::initMpGameSetupGadget(const std::string &name, GameWindow *win
 	{
 		return; // retail: sscanf != 1 -> return without a note
 	}
-	if (index > 8)
-	{
-		return;
-	}
 	if (index >= (unsigned)MAX_SLOTS)
 	{
 		// the retail check is `index > 8`: index 8 passes and the store `m_player[8]` lands in the next array (a retail overrun); not reproduced
@@ -1326,13 +1561,16 @@ void AptSkirmish::initMapPreviewGadget(const std::string &name, GameWindow *wind
 	}
 	else if (name == "CurrentMap")
 	{
-		m_currentMap = window;
-		m_currentMapChildren.clear();
-		for (GameWindow *child = window->winGetChild(); child && m_currentMapChildren.size() < 8; child = child->winGetNext())
+		if (m_currentMap != window)
 		{
-			m_currentMapChildren.push_back(child);
-			child->winHide(true);
-			child->winSetStatus(WIN_STATUS_RIGHT_CLICK); // RW 0x9778B0: status | 0x20000
+			m_currentMap = window;
+			m_currentMapChildren.clear();
+			for (GameWindow *child = window->winGetChild(); child && m_currentMapChildren.size() < LEGACY_MAX_SLOTS; child = child->winGetNext())
+			{
+				m_currentMapChildren.push_back(child);
+				child->winHide(true);
+				child->winSetStatus(WIN_STATUS_RIGHT_CLICK); // RW 0x9778B0: status | 0x20000
+			}
 		}
 	}
 	updateMapPreview();
@@ -1429,6 +1667,28 @@ void AptSkirmish::setMapSort(int mode)
 	populateMapList();
 }
 
+void AptSkirmish::createMapCapacityFilter()
+{
+	if (m_mapCapacityFilter || !m_setup) return;
+	const auto &maps = m_setup->source().maps();
+	if (std::none_of(maps.begin(), maps.end(), [](const MapCacheEntry &map) {
+		return map.isMultiplayer && map.numPlayers > LEGACY_MAX_SLOTS && map.numPlayers <= MAX_SLOTS;
+	})) return;
+	AptGadgetLayer *layer = windows().gadgetLayer();
+	if (!layer) return;
+	std::string error;
+	m_mapCapacityFilter = layer->createEngineGadget("window/apt/combobox.wnd", 430, 168, 300, 24, ownerWindow(), &error);
+	if (!m_mapCapacityFilter)
+	{
+		m_error = "map capacity filter: " + error;
+		windows().note("extended-layout-error", m_error);
+		return;
+	}
+	GadgetComboBoxAddEntry(m_mapCapacityFilter, u"Maps: all player counts", 0xFFFFFFFFu);
+	GadgetComboBoxAddEntry(m_mapCapacityFilter, u"Maps: 9-16 players", 0xFFFFFFFFu);
+	GadgetComboBoxSetSelectedPos(m_mapCapacityFilter, m_largeMapsOnly ? 1 : 0, true);
+}
+
 void AptSkirmish::populateMapList()
 {
 	// MpGameSetup's map list fill (RW 0x8460B5; the column widths {8, 2, 70, 10, 10} come from MpGameSetup::InitGadgets RW 0x840906):
@@ -1450,6 +1710,7 @@ void AptSkirmish::populateMapList()
 	m_mapKeys.clear();
 	m_mapStates.clear();
 	m_mapImages.clear();
+	createMapCapacityFilter();
 	const std::vector<MapCacheEntry> &maps = m_setup->source().maps();
 	// lane OWNERFIX-3: RW 0x8460B5 with the flag bit 0: the current profile's stats (SkirmishPreferences RW 0x821A14 -> RealTimeStatsPreferences RW 0x93E72F)
 	RealTimeStatsPreferences statsFile;
@@ -1480,6 +1741,7 @@ void AptSkirmish::populateMapList()
 	for (int index : m_setup->listedMaps())
 	{
 		const MapCacheEntry &m = maps[(std::size_t)index];
+		if (m_largeMapsOnly && (m.numPlayers <= LEGACY_MAX_SLOTS || m.numPlayers > MAX_SLOTS)) continue;
 		const int state = RealTimeStatsPreferences::conquestState(stats, m);
 		rows.push_back(Row{ index, state, m_setup->mapDisplayName(m, true) });
 	}
@@ -1658,7 +1920,7 @@ void AptSkirmish::refreshSlot(int slot)
 		}
 		else if (!heroChoiceAvailable())
 		{
-			combo->winEnable(false); // lane ONLINE-5: shown locked (the online lobby, S-4076)
+			combo->winEnable(false); // lane ONLINE-5: shown locked where a lobby carries no Create-a-Hero record
 		}
 		else if (!m_setup->network() || slotGadgetsEnabled(slot))
 		{
@@ -1778,7 +2040,8 @@ void AptSkirmish::updateMapPreview()
 		GadgetListBoxReset(m_mapInfo);
 		if (map)
 		{
-			GadgetListBoxAddEntryText(m_mapInfo, m_setup->mapDescription(*map), 0xFFFFFFFFu, -1, -1, true);
+			const std::u16string text = m_error.compare(0, 12, "map preview:") == 0 ? std::u16string(m_error.begin(), m_error.end()) : m_setup->mapDescription(*map);
+			GadgetListBoxAddEntryText(m_mapInfo, text, 0xFFFFFFFFu, -1, -1, true);
 			m_mapInfo->winEnable(true);
 		}
 	}
@@ -1861,6 +2124,10 @@ void AptSkirmish::updateCurrentMapWindow(const MapCacheEntry *map)
 		return;
 	}
 	GameWindow *window = m_currentMap;
+	if (m_error.compare(0, 12, "map preview:") == 0)
+	{
+		m_error.clear();
+	}
 	window->winSetEnabledImage(1, std::string());
 	std::string image;
 	if (map)
@@ -1887,11 +2154,66 @@ void AptSkirmish::updateCurrentMapWindow(const MapCacheEntry *map)
 	{
 		window->winClearStatus(WIN_STATUS_IMAGE); // RW 0x977522
 	}
-	// RW 0x976F59: the start spots
-	GameWindow *buttons[8] = {};
-	for (std::size_t i = 0; i < m_currentMapChildren.size() && i < 8; ++i)
+	// OpenBFME extended maps reuse the retail start button's skin and input, owned by the same map window.
+	if (map && map->numPlayers > LEGACY_MAX_SLOTS && !m_currentMapChildren.empty())
+	{
+		GameWindow *prototype = m_currentMapChildren.front();
+		int w = 0, h = 0;
+		prototype->winGetSize(&w, &h);
+		while (m_currentMapChildren.size() < MAX_SLOTS)
+		{
+			WinInstanceData instance = *prototype->winGetInstanceData();
+			GameWindow *button = window->manager().gogoGadgetPushButton(window, prototype->winGetStatus(), 0, 0, w, h, &instance, prototype->winGetFont(), false);
+			if (!button)
+			{
+				break;
+			}
+			m_currentMapChildren.push_back(button);
+		}
+	}
+	// RW 0x976F59: the start spots. Validate the whole preview before showing any marker.
+	GameWindow *buttons[MAX_SLOTS] = {};
+	for (std::size_t i = 0; i < m_currentMapChildren.size() && i < MAX_SLOTS; ++i)
 	{
 		buttons[i] = m_currentMapChildren[i];
+	}
+	// In a sparse map cache entry a previously displayed button may no longer have a start
+	// position. Hide every button before showing the positions this map actually provides.
+	for (GameWindow *button : buttons)
+	{
+		if (button)
+		{
+			button->winHide(true);
+		}
+	}
+	if (map)
+	{
+		std::string error;
+		if (map->numPlayers > MAX_SLOTS)
+		{
+			error = "map preview: unsupported player capacity " + std::to_string(map->numPlayers);
+		}
+		for (int i = 0; error.empty() && i < map->numPlayers; ++i)
+		{
+			if (!map->startPositions.count(i + 1) || !buttons[i])
+			{
+				error = "map preview: missing start position or control " + std::to_string(i + 1);
+			}
+		}
+		if (!error.empty())
+		{
+			m_error = error;
+			windows().note("map-preview-error", error);
+			window->winEnable(false);
+			for (GameWindow *button : buttons)
+			{
+				if (button)
+				{
+					button->winHide(true);
+				}
+			}
+			return;
+		}
 	}
 	int shown = 0;
 	if (map)
@@ -1905,15 +2227,11 @@ void AptSkirmish::updateCurrentMapWindow(const MapCacheEntry *map)
 		// Ring battle's lobby (kinds 0 .. 2) would hide them; this port's War of the Ring does not use this screen for its battles
 		if (map->isMultiplayer && map->numPlayers > 0)
 		{
-			for (; shown < map->numPlayers && shown < 8; ++shown)
+			for (; shown < map->numPlayers && shown < MAX_SLOTS; ++shown)
 			{
 				auto spot = map->startPositions.find(shown + 1); // "Player_%d_Start"
-				if (spot == map->startPositions.end())
-				{
-					continue;
-				}
 				GameWindow *button = buttons[shown];
-				MapPreviewPositionStartSpot(button, window, spot->second, *map, buttons);
+				MapPreviewPositionStartSpot(button, window, spot->second, *map, buttons, MAX_SLOTS);
 				if (button)
 				{
 					button->winEnable(true); // RW 0x976FFE: the screen's flag + 0x61 (INFERENCE [S-1480]: enabled)
@@ -1926,7 +2244,7 @@ void AptSkirmish::updateCurrentMapWindow(const MapCacheEntry *map)
 	{
 		window->winEnable(false);
 	}
-	for (int i = shown; i < 8; ++i)
+	for (int i = shown; i < MAX_SLOTS; ++i)
 	{
 		if (buttons[i])
 		{
@@ -1940,6 +2258,28 @@ WindowMsgHandledType AptSkirmish::gadgetMessage(GameWindow *, std::uint32_t msg,
 {
 	pruneDeadGadgets();
 	GameWindow *gadget = reinterpret_cast<GameWindow *>(data1);
+	if (gadget && gadget == m_mapCapacityFilter && msg == GCM_SELECTED)
+	{
+		if (m_refreshing) return MSG_HANDLED;
+		int selected = -1;
+		GadgetComboBoxGetSelectedPos(gadget, &selected);
+		if (selected != 0 && selected != 1) return MSG_HANDLED;
+		m_largeMapsOnly = selected == 1;
+		populateMapList();
+		return MSG_HANDLED;
+	}
+	if (gadget && gadget == m_slotScroll && (msg == GSM_SLIDER_TRACK || msg == GSM_SLIDER_DONE))
+	{
+		setFirstVisibleSlot(m_layoutCapacity - LEGACY_MAX_SLOTS - GadgetSliderGetPosition(gadget));
+		return MSG_HANDLED;
+	}
+	if (gadget && gadget == m_slotRange && msg == GCM_SELECTED)
+	{
+		int selected = -1;
+		GadgetComboBoxGetSelectedPos(gadget, &selected);
+		setFirstVisibleSlot(selected);
+		return MSG_HANDLED;
+	}
 	switch (msg)
 	{
 		case GCM_SELECTED:
@@ -2044,7 +2384,7 @@ bool AptSkirmish::onStartSpotSelected(GameWindow *button, bool left)
 		return false;
 	}
 	int position = -1; // RW 0x975782: the button's index among the map window's eight
-	for (std::size_t i = 0; i < m_currentMapChildren.size() && i < 8; ++i)
+	for (std::size_t i = 0; i < m_currentMapChildren.size() && i < MAX_SLOTS; ++i)
 	{
 		if (m_currentMapChildren[i] == button)
 		{
@@ -2117,8 +2457,8 @@ void AptSkirmish::updateMapStartSpots()
 			break;
 		}
 	}
-	GameWindow *buttons[8] = {};
-	for (std::size_t i = 0; i < m_currentMapChildren.size() && i < 8; ++i)
+	GameWindow *buttons[MAX_SLOTS] = {};
+	for (std::size_t i = 0; i < m_currentMapChildren.size() && i < MAX_SLOTS; ++i)
 	{
 		buttons[i] = m_currentMapChildren[i];
 	}
@@ -2150,7 +2490,7 @@ void AptSkirmish::updateMapStartSpots()
 			m_setup->setSlotStartPos(i, -1);
 			continue;
 		}
-		if (pos < 0 || s.playerTemplate <= PLAYERTEMPLATE_OBSERVER || pos >= 8 || !buttons[pos])
+		if (pos < 0 || s.playerTemplate <= PLAYERTEMPLATE_OBSERVER || pos >= MAX_SLOTS || !buttons[pos])
 		{
 			continue;
 		}
@@ -2470,7 +2810,7 @@ bool AptSkirmish::startGame()
 	{
 		SkirmishHonorsGame &h = *m_env.skirmishHonors;
 		h = SkirmishHonorsGame();
-		if (setupFlags() & 1)
+		if ((setupFlags() & 1) && !message.game.cheatModeOn()) // lane CHEAT-1: a Cheat Mode game earns no battle honors
 		{
 			h.valid = true;
 			for (int i = 0; i < MAX_SLOTS; ++i)

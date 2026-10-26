@@ -44,6 +44,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/GameLogicDispatch.h"
 #include "GameNetwork/DisconnectManager.h"
+#include "GameNetwork/RelayCanonicalClient.h"
 #include "GameNetwork/NetPacket.h"
 #include "GameNetwork/NetworkSettings.h"
 
@@ -122,13 +123,41 @@ public:
 		(void)bytes;
 		return false;
 	}
+	// ---- lane NET-SYNC (canonical relay games): the relay keeps the beat ----
+	// True once a canonical game's WELCOME bound (orders and beats go up as OBCI messages, committed OBRC records
+	// come down). Every method is inert outside a canonical bind.
+	virtual bool relayCanonical() const { return false; }
+	virtual std::uint64_t canonicalGame() const { return 0; }
+	virtual std::uint64_t canonicalEpoch() const { return 0; }
+	// one local order (the complete serialized GameMessage), stamped by the relay; `id` is the slot's dense order counter
+	virtual bool sendCanonicalOrder(std::uint64_t id, const std::vector<std::uint8_t> &bytes, std::uint64_t now, std::string &error)
+	{
+		(void)id; (void)bytes; (void)now; (void)error;
+		return false;
+	}
+	// this client's input for the window ending now is complete; `id` is its dense beat counter
+	virtual bool sendCanonicalBeat(std::uint64_t id, std::uint64_t now, std::string &error)
+	{
+		(void)id; (void)now; (void)error;
+		return false;
+	}
+	// the next committed OBRC record in journal order, false when none waits
+	virtual bool takeCanonicalRecord(std::vector<std::uint8_t> &bytes)
+	{
+		(void)bytes;
+		return false;
+	}
 };
 
 struct NetworkConfig
 {
 	int localSlot = 0;
 	// per GameInfo slot: the logic player index of the human player in that slot, -1 for a slot that is not a network player (AI, open, closed)
-	std::array<int, MAX_SLOTS> slotPlayerIndex{ { -1, -1, -1, -1, -1, -1, -1, -1 } };
+	std::array<int, MAX_SLOTS> slotPlayerIndex = [] {
+		std::array<int, MAX_SLOTS> slots;
+		slots.fill(-1);
+		return slots;
+	}();
 	// frames between issuing a command and executing it; with adaptiveRunAhead the minimum. Lane NETLAG-1: 1, RotWK's delay (the packet router stamps a
 	// command with the current frame + 1, RW 0x8D4301 / 0x8D3AF1: 200 to 400 ms from a click to its frame); MP-1 .. MP-3 used 2
 	int runAhead = 1;
@@ -184,6 +213,10 @@ public:
 	Network(const NetworkConfig &config, NetTransport &transport);
 
 	const NetworkConfig &config() const { return m_config; }
+	// lane ANTICHEAT-1 (owner 2026-10-21): the local player's view for the relay's log: a VIEW command on the log-only stream (the relay logs it, no other
+	// player receives it; not simulation input): the logic frame shown, the camera's look-at x, y, the world point under the cursor x, y. False when the
+	// transport keeps no log (LAN)
+	bool submitView(UnsignedInt frame, float cameraX, float cameraY, float cursorX, float cursorY, bool cursorOverWorld);
 
 	// ZH Network::update: (1) every message the local player put on `pending` since the last call is sent with the execution frame (its player index is set
 	// to the local player's), `pending` is emptied; (2) the frame infos up to getExecutionFrame() - 1 go out; (3) everything received is filed.
@@ -331,6 +364,46 @@ public:
 	// a frame of another slot taken from the relay's log, complete (its FRAMEINFO and every entry): filled whole unless complete already (as FRAMERESEND)
 	void fillFromLog(int slot, UnsignedInt frame, const std::vector<std::shared_ptr<GameMessage>> &commands, int runAheadChange, const std::vector<int> &rejoins);
 
+	// ---- lane CHAT-1: the in-game chat (RotWK Network::sendChat RW 0x65DF98 -> ConnectionManager::sendChat RW 0x8D5BA5, processChat RW 0x8D54D1) ----
+	// TARGET FACTS (RotWK game.dat, caveat S-001): sendChat makes a NetChatCommandMsg (type 14, the text and the recipients mask), sends it with
+	// sendLocalCommandDirect (RW 0x8D3AF1: a direct, acknowledged command to each connection, NOT frame data: CHAT is not a synchronized type, RW 0x989315
+	// lists only 3, 4, 10, 11 and 0x1E) and runs processChat on it at once (the sender's own echo). processChat shows the line when the local slot's bit is
+	// in the mask and the sender's slot is not muted (GameSlot + 0xA, set from the players screen); nothing of it reaches the logic, the frame data, the
+	// command counts or the run-ahead.
+	// OpenBFME DIFFERENCES (named, docs/STOPS.md S-5150): (1) the command goes only to the connections whose bit is in the mask (retail sends it to every
+	// connection and each receiver filters: an allies line never reaches an enemy's machine here); (2) a receiver drops a sender's lines beyond a flood
+	// limit (kChatBurst lines, then one per kChatRefillMs; retail has none); dropped lines are counted, never shown. The byte layout is OpenBFME's (S-721).
+	struct ChatLine
+	{
+		int slot = -1;               ///< the sender (the command's slot, which receiveAll checked against the connection)
+		std::uint32_t playerMask = 0; ///< its recipients (bit per slot)
+		std::u16string text;         ///< the line as the sender formatted it ("<Team> hello")
+	};
+	static constexpr int kChatBurst = 8;
+	static constexpr std::uint64_t kChatRefillMs = 1000;
+	// sends `text` to the slots of `mask` (the local bit: the local echo); false + *error for an empty or over-long text (NetChat::kMaxTextUnits), while
+	// leaving / rejoining, or when no slot of the mask is a player of the game
+	bool sendChat(const std::u16string &text, std::uint32_t mask, std::string *error = nullptr);
+	// the chat lines shown since the last call, in arrival order (per sender: the order it sent them)
+	std::vector<ChatLine> takeChat();
+	// the players screen's mute (GameSlot + 0xA): a muted slot's lines are not shown; Everyone lines leave muted slots out of the mask (the caller's)
+	void setChatMuted(int slot, bool muted);
+	// lane CHAT-1 (OpenBFME): the lobby moderators' mute (the START's chatMuted): those slots' lines are dropped on every machine, and a muted local player
+	// cannot send (sendChat fails with "muted by the moderators"); the players' own /mute is setChatMuted
+	void setChatLobbyMuted(std::uint32_t mask) { m_chatLobbyMuted = mask; }
+	std::uint32_t chatLobbyMuted() const { return m_chatLobbyMuted; }
+	bool chatMuted(int slot) const { return slot >= 0 && slot < 32 && (m_chatMuted >> slot & 1u); }
+	std::uint32_t chatMutedMask() const { return m_chatMuted; }
+	unsigned long long chatReceived() const { return m_chatReceived; }      ///< lines filed (shown or not)
+	unsigned long long chatDroppedFlood() const { return m_chatFlood; }    ///< lines over a sender's flood limit
+	unsigned long long chatDroppedMuted() const { return m_chatMutedDrops; }
+	unsigned long long chatNotAddressed() const { return m_chatNotAddressed; } ///< lines whose mask did not hold the local slot
+	// the disconnect screen's chat (RotWK sendDisconnectChat RW 0x8D5C5B, processDisconnectChat RW 0x8D5403): NETCOMMANDTYPE_DISCONNECTCHAT 13 with the text
+	// only, direct to every connected player, the local echo; a receiver shows it on its disconnect screen when that is up (the caller's). The flood limit
+	// and the moderators' mute apply as to CHAT (OpenBFME); the players' own mute does not (retail's processDisconnectChat has none)
+	bool sendDisconnectChat(const std::u16string &text, std::string *error = nullptr);
+	std::vector<ChatLine> takeDisconnectChat();
+
 	// lane MP-3 (review r1): the packet router of a frame (the role passes on at a drop or leave frame)
 	int packetRouterAt(UnsignedInt frame) const { return routerAt(frame); }
 	int nextPacketRouterSlot(int slot) const; ///< RW 0x8D3ECD (8 or more: none)
@@ -339,8 +412,8 @@ public:
 	// `sender` decide on this peer's knowledge, and which predecessors it claims gone. verifyDropClaims, on a receiver: -1 refused (a predecessor that is
 	// not the target is not claimed: decided on the message and the agreed order alone, the same on every peer), 0 pending (a claimed leave / drop has not
 	// been applied here yet: the drop waits for it, and the frames from the drop frame on wait for the drop), 1 accepted
-	bool dropClaims(int sender, int target, std::uint8_t &gone) const;
-	int verifyDropClaims(int sender, int target, std::uint8_t gone) const;
+	bool dropClaims(int sender, int target, std::uint16_t &gone) const;
+	int verifyDropClaims(int sender, int target, std::uint16_t gone) const;
 	// lane MP-2 (review): a membership change at `frame` is still possible here: this peer has not run that frame
 	void reportError(const std::string &e) { m_errors.push_back(e); }
 	bool frameStillOpen(UnsignedInt frame) const { return !m_relayedAny || frame > m_lastRelayed; }
@@ -396,6 +469,12 @@ private:
 
 	NetworkConfig m_config;
 	NetTransport &m_transport;
+	// lane NET-SYNC: the canonical driver's state — the commit stream's cursor and the frames it produced and the
+	// driver has not run yet; the counters keep the per-slot dense OBCI ids
+	std::unique_ptr<RelayCanonicalClient::Client> m_canonicalClient;
+	std::map<UnsignedInt, RelayCanonicalClient::FrameInput> m_canonicalFrames;
+	std::uint64_t m_canonicalOrderId = 0, m_canonicalBeatId = 0;
+	void updateCanonical(UnsignedInt logicFrame, CommandList &pending);
 	std::array<SlotData, MAX_SLOTS> m_slots;
 	UnsignedInt m_lastExecutionFrame = 0;
 	long long m_lastFrameAnnounced = -1; ///< ZH m_lastFrameCompleted
@@ -421,8 +500,12 @@ private:
 	{
 		std::array<bool, MAX_SLOTS> present{};
 		std::array<bool, MAX_SLOTS> resent{};
-		std::array<int, MAX_SLOTS> runAheadChange{ { -1, -1, -1, -1, -1, -1, -1, -1 } };
-		std::array<std::uint8_t, MAX_SLOTS> rejoinMask{}; ///< lane ONLINE-3
+		std::array<int, MAX_SLOTS> runAheadChange = [] {
+			std::array<int, MAX_SLOTS> changes;
+			changes.fill(-1);
+			return changes;
+		}();
+		std::array<std::uint16_t, MAX_SLOTS> rejoinMask{}; ///< lane ONLINE-3; lane P16: a bit per slot
 		std::array<std::vector<std::shared_ptr<GameMessage>>, MAX_SLOTS> commands;
 	};
 	std::map<UnsignedInt, RelayedFrame> m_history;
@@ -452,7 +535,11 @@ private:
 	int runAheadAt(UnsignedInt logicFrame) const;
 	// lane MP-2 (review): the packet router of each frame (a drop of the router hands the role on at the drop frame): only its RUNAHEAD is taken. Lane MP-3
 	// (review r3): derived from every slot's departure frame (leave or drop; none = 0xFFFFFFFF) and the agreed fallback order, never from arrival order
-	std::array<UnsignedInt, MAX_SLOTS> m_departureFrame{ { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu } };
+	std::array<UnsignedInt, MAX_SLOTS> m_departureFrame = [] {
+		std::array<UnsignedInt, MAX_SLOTS> frames;
+		frames.fill(0xFFFFFFFFu);
+		return frames;
+	}();
 	int routerAt(UnsignedInt frame) const;
 	// RW 0x8D57D8's membership step for a slot that is gone from `frame` on (dropped, or lane MP-3: left): the next router, the fallback order
 	void passRouterRole(int slot, UnsignedInt frame);
@@ -477,8 +564,25 @@ private:
 	std::map<UnsignedInt, int> m_pauses;     ///< pause frame -> who paused (pending; a RESUME removes it)
 	std::set<UnsignedInt> m_resumedPauses;   ///< pauses resumed (a RESUME can overtake its PAUSE from another sender)
 	unsigned long long m_pausesSeen = 0;
+	// lane CHAT-1
+	std::vector<ChatLine> m_chatIn;
+	std::vector<ChatLine> m_disconnectChatIn;
+	bool chatFloodAllows(int fromSlot);
+	std::uint32_t m_chatMuted = 0;
+	std::uint32_t m_chatLobbyMuted = 0;
+	struct ChatBucket
+	{
+		int tokens = kChatBurst;
+		std::uint64_t last = 0;
+		bool started = false;
+	};
+	std::array<ChatBucket, MAX_SLOTS> m_chatBuckets{};
+	unsigned long long m_chatReceived = 0, m_chatFlood = 0, m_chatMutedDrops = 0, m_chatNotAddressed = 0;
+	void fileChat(const NetCommandMsg &c, int fromSlot);
 	bool m_rejoining = false, m_rejoinReady = false;
 	int m_rejoinGeneration = 0;
 	std::uint64_t m_lastRejoinRequest = 0;
+	bool m_selfRejoinSent = false; ///< lane SOLO-1: the local slot is the game's only network player: its own REJOIN went out
+	int m_memberSlots = 0;         ///< the config's network slots (a solo game's is 1)
 	std::vector<std::string> m_rejoinLog;
 };

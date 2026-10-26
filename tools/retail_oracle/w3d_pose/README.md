@@ -12,8 +12,19 @@ Expected values of `engine/tests/test_w3d_pose.cpp` that come from BFME2 1.06's 
 0x562930-0x562B7A, run per pivot). `emu_arms.py` then runs the same way over the arms' segments (listed in the test's comment).
 `Anim_Update` itself needs vtable objects, which the oracle cannot call without hand-assembled stubs, hence the emulator.
 
-`emu_arms.py` reads `arm_asm.txt` (env `ARM_ASM`): `python dump_asm.py <port> 0x562BB0 arm_asm.txt` against a ghidrasql server on
-the BFME2 `game.dat` project. The dump is derived from retail bytes and is not committed.
+The live `oracle_*.py` scripts require Windows and the built retail helper with
+BFME2 installed. The emulator scripts require Python 3 and NumPy; dumping also
+needs curl and a running local ghidrasql server on the BFME2 `game.dat` project.
+From the repository root on Linux/macOS (POSIX shell), with `PORT` set to that
+local server's port and the ignored `workspace` directory created:
+
+```sh
+python3 tools/retail_oracle/w3d_pose/dump_asm.py "$PORT" 0x562BB0 workspace/arm_asm.txt
+ARM_ASM=workspace/arm_asm.txt python3 tools/retail_oracle/w3d_pose/emu_arms.py
+```
+
+`emu_arms.py` defaults to `arm_asm.txt` relative to the working directory; `ARM_ASM`
+selects the private dump above. The dump is derived from retail bytes and is not committed.
 
 The finding behind all three: the Ghidra decompile writes `T + a + b` for what the compiled code computes as `T + (a + b)` (the two
 product pairs are added before the translation); only the instructions, or a call to the real function, settle the grouping.

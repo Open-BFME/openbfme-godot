@@ -177,36 +177,68 @@ def display_name(version: str) -> str:
     if m.group(4) == "alpha":
         return f"v{m.group(1)}.{m.group(2)}.{m.group(3)} Alpha {m.group(5)}"
     if m.group(4) == "nightly":
-        return f"Nightly {m.group(1)}.{m.group(2)}.{m.group(3)} ({nightly_date(version)})"
+        return f"Nightly {m.group(1)}.{m.group(2)}.{m.group(3)} ({nightly_when(version)})"
     return version
 
 
 # ---- the nightly builds (lane NIGHTLY-1, owner 2026-10-21: "build the pulled in PRs every night with patch notes and what to test ... stable vs
-# nightly ... but the game is still in alpha"). A nightly is a GitHub pre-release v<x>.<y>.<z>-nightly.<YYYYMMDD>: <x>.<y>.<z> is the next
+# nightly ... but the game is still in alpha"). A nightly is a GitHub pre-release v<x>.<y>.<z>-nightly.<n>: <x>.<y>.<z> is the next
 # plain release (next_version), so SemVer puts it below that release and above the last one, and the launcher's pre-release channel (id
-# "preview", shown as "Nightly") offers it; one per UTC date. Launchers older than NIGHTLY-1 do not parse the word and skip it.
+# "preview", shown as "Nightly") offers it. Launchers older than NIGHTLY-1 do not parse the word and skip it.
+# NIGHTLY-1 made one a UTC date, n = YYYYMMDD (v0.4.12-nightly.20261022). Lane NIGHTLY-2 (owner, 2026-10-23: "i would like the nightly to run
+# twice a day on actions"): two a UTC day, n = <YYMMDD><s>00, 9 digits (the launcher's limit): s = 1 for the morning build (made 00:00-11:59
+# UTC, the 07:00Z run), 2 for the evening one (12:00-23:59, the 19:00Z run): v0.4.12-nightly.261023100, v0.4.12-nightly.261023200. Every
+# 9-digit number is above every 8-digit date, so numbers sort in run order across the change. The final "00" keeps the launchers already
+# shipped from showing a wrong date: NIGHTLY-1's semver.gd nightly_text() reads the last two digits as the day, and 00 is no day, so they
+# show "Nightly 0.4.12 build 261023200" (test_nightly.py checks that for every date). One nightly per half day (slot).
 NIGHTLY_DATE = re.compile(r"(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])")
+NIGHTLY_SLOT = re.compile(r"(2[6-9]|[3-9]\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])([12])00")
+SLOT_NAMES = {"1": "morning", "2": "evening"}
+NIGHTLY_CLOCK = re.compile(r"(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])([01]\d|2[0-3])")
+
+
+def nightly_parts(version: str) -> tuple[str, str]:
+    """(YYYY-MM-DD, "" for a NIGHTLY-1 nightly of a date or "morning" / "evening" for a NIGHTLY-2 one) of a nightly version; an error for
+    anything else"""
+    m = TAG.fullmatch(version)
+    n = m.group(5) if m and m.group(4) == "nightly" and len(version) <= 40 else ""
+    if d := NIGHTLY_DATE.fullmatch(n):
+        return f"{d.group(1)}-{d.group(2)}-{d.group(3)}", ""
+    if d := NIGHTLY_SLOT.fullmatch(n):
+        return f"20{d.group(1)}-{d.group(2)}-{d.group(3)}", SLOT_NAMES[d.group(4)]
+    raise SystemExit(f"autorelease: {version!r} is not a nightly version (v<x>.<y>.<z>-nightly.<YYMMDD><1|2>00, or an earlier "
+                     f"-nightly.<YYYYMMDD>)")
 
 
 def nightly_date(version: str) -> str:
     """the date of a nightly version, YYYY-MM-DD (an error for anything else)"""
-    m = TAG.fullmatch(version)
-    d = NIGHTLY_DATE.fullmatch(m.group(5)) if m and m.group(4) == "nightly" and len(version) <= 40 else None
-    if not d:
-        raise SystemExit(f"autorelease: {version!r} is not a nightly version (v<x>.<y>.<z>-nightly.<YYYYMMDD>)")
-    return f"{d.group(1)}-{d.group(2)}-{d.group(3)}"
+    return nightly_parts(version)[0]
 
 
-def nightly_version(tag_names: list[str], date: str) -> str:
-    """the nightly of `date` (YYYYMMDD): the next plain release's numbers with -nightly.<date>; refused when a release tag is at or above it
-    (a nightly of this date or a later one exists: one nightly per date, never one below an earlier)"""
-    if not NIGHTLY_DATE.fullmatch(date):
-        raise SystemExit(f"autorelease: {date!r} is not a date YYYYMMDD")
-    version = f"{next_version(tag_names)}-nightly.{date}"
+def nightly_when(version: str) -> str:
+    """what players read for a nightly's build: "2026-10-23, evening" (NIGHTLY-2), "2026-10-22" (NIGHTLY-1)"""
+    date, slot = nightly_parts(version)
+    return f"{date}, {slot}" if slot else date
+
+
+def nightly_number(clock: str) -> str:
+    """the nightly number of a run started at `clock` (UTC YYYYMMDDHH): <YYMMDD><1 before 12:00, else 2>00"""
+    c = NIGHTLY_CLOCK.fullmatch(clock)
+    if not c or not NIGHTLY_SLOT.fullmatch(n := f"{c.group(1)[2:]}{c.group(2)}{c.group(3)}{1 if int(c.group(4)) < 12 else 2}00"):
+        raise SystemExit(f"autorelease: {clock!r} is not a UTC time YYYYMMDDHH from 2026 on")
+    return n
+
+
+def nightly_version(tag_names: list[str], clock: str) -> str:
+    """the nightly of a run started at `clock` (UTC YYYYMMDDHH): the next plain release's numbers with -nightly.<nightly_number>; refused
+    when a release tag is at or above it (a nightly of this half day or a later one exists: one nightly per half day, never one below an
+    earlier)"""
+    version = f"{next_version(tag_names)}-nightly.{nightly_number(clock)}"
     tags = [n for n in _tag_names(tag_names) if TAG.fullmatch(n) and len(n) <= 40]
     newer = sorted({t for t in tags if version_key(t) >= version_key(version)}, key=version_key)
     if newer:
-        raise SystemExit(f"autorelease: the nightly {version} would not be above the release tag {newer[-1]} (one nightly per date)")
+        raise SystemExit(f"autorelease: the nightly {version} would not be above the release tag {newer[-1]} (one nightly per half day, "
+                         f"morning and evening UTC)")
     return version
 
 
@@ -317,7 +349,7 @@ def line_of(version: str) -> str:
         return "alpha"
     if m and m.group(4) == "preview" and version.startswith(BRIDGE_BASE + "-preview."):
         return "bridge"
-    if m and len(version) <= 40 and m.group(4) == "nightly" and NIGHTLY_DATE.fullmatch(m.group(5)):
+    if m and len(version) <= 40 and m.group(4) == "nightly" and (NIGHTLY_DATE.fullmatch(m.group(5)) or NIGHTLY_SLOT.fullmatch(m.group(5))):
         return "nightly"
     return ""
 
@@ -1002,13 +1034,14 @@ class SyncAudit(audit_package.Audit):
 
 
 def is_detached_signature(name: str, data: bytes, depth: int, payload_tar: bool = False) -> bool:
-    """PUBLICCI-1: a release's detached Ed25519 signature (manifest*.json.sig, sign_manifest.py: 64 raw bytes, top level) is random; about
+    """PUBLICCI-1: a release's detached Ed25519 signature (manifest*.json.sig, sign_manifest.py, and SIGNKMS-1's manifest*.json.sig2,
+    kms_sign.py: 64 raw bytes, top level) is random; about
     1 in 992 starts with a valid zlib header (the hosted pull request checks hit one in test_autorelease). Such a file that does NOT decode
     as zlib is a signature, not a finding; one that decodes is still decoded and checked like any other stream.
     The signed payload sidecar at a release package root has the same random bytes (one archive layer, or the Linux gzip stream followed by its tar)."""
     if len(data) != 64:
         return False
-    return (depth == 0 and re.fullmatch(r"(?:.*/)?[^/]+\.json\.sig", name) is not None
+    return (depth == 0 and re.fullmatch(r"(?:.*/)?[^/]+\.json\.sig2?", name) is not None
             or depth == 1 and re.fullmatch(r"[^:]+:openbfme-[^/:]+/payload\.json\.sig", name) is not None
             or depth == 2 and payload_tar and re.fullmatch(r"[^:]+:openbfme-[^/:]+/payload\.json\.sig", name) is not None)
 
@@ -1264,14 +1297,21 @@ BUILTIN_RULES = [
     # private path forms (the home / Users forms are the commit gate's MACHINE_PATH, checked above)
     {"id": "private-path", "kind": "regex", "pattern": r"~/\.ssh/|/mnt/[a-z]/Users/"},
     # account ids and cloud credentials by shape
-    {"id": "aws-account", "kind": "regex", "pattern": r"arn:aws[a-z-]*:|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|aws_secret_access_key|aws_session_token|"
+    # lane ONLINEMENU-1: the mailer's IAM policy and its deploy steps name their resources with the <ACCOUNT_ID> placeholder only
+    # (test_autorelease.test_onlinemenu1_the_mailer_arns_hold_no_account pins that)
+    {"id": "aws-account", "kind": "regex", "allow": ["services/online/mailer/iam-policy.json", "services/online/mailer/README.md"],
+     "pattern": r"arn:aws[a-z-]*:|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|aws_secret_access_key|aws_session_token|"
                                                      r"\baccount\W{0,12}\d{4}-?\d{4}-?\d{4}\b"},
     {"id": "cloudflare-account", "kind": "regex", "pattern": r"(?:account|zone)[_ -]?id\W{0,6}[0-9a-f]{32}\b"},
     # e-mail addresses: only the noreply forms and the reserved example domains are public (third-party credits and test fixtures allowed);
     # RELFIX-3: nongnu.org's public mailing lists too (FreeType's, in every Godot template)
+    # lane ONLINEMENU-1: the project's own domain (the sign-in mail's sender no-reply@ and the privacy contact admin@ are published by
+    # design: docs/PRIVACY-SIGNIN.md) and the lobby's / mailer's address-validation test fixtures
     {"id": "e-mail", "kind": "regex", "allow": ["engine/thirdparty/**", "engine/src/GameClient/VP6Decoder.cpp", "engine/src/GameClient/VP6Tables.inc",
-                                                  "engine/tests/**", "godot/tests/**", "launcher/tests/**"],
-     "pattern": r"[A-Za-z0-9._%+-]+@(?!users\.noreply\.github\.com\b|anthropic\.com\b|nongnu\.org\b|example\.(?:com|org|net)\b|[a-z0-9.-]*\.(?:example|invalid|test|localhost)\b)"
+                                                  "engine/tests/**", "godot/tests/**", "launcher/tests/**", "services/online/lobby/test/email.test.mjs",
+                                                  "services/online/lobby/test/email-flow.test.mjs",
+                                                  "services/online/mailer/test_handler.py"],
+     "pattern": r"[A-Za-z0-9._%+-]+@(?!users\.noreply\.github\.com\b|anthropic\.com\b|nongnu\.org\b|openbfme\.com(?![\w.-])|example\.(?:com|org|net)\b|[a-z0-9.-]*\.(?:example|invalid|test|localhost)\b)"
                 # r3: a file name after the '@' is no address (the game's library holds "...o@multiplayer.ini")
                 r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?!(?:ini|cfg|txt|json|big|str|dat|map|wnd|apt|w3d|tga|dds|png|gd|tscn|tres)\b)"
                 r"[A-Za-z]{2,}\b"},
@@ -2429,9 +2469,10 @@ def main(argv: list[str]) -> int:
     rv.add_argument("--repo", required=True)
     rv.add_argument("--sha", required=True)
     rv.add_argument("--gh", default=os.environ.get("GH", "gh"))
-    nv = sub.add_parser("nightly-version", help="NIGHTLY-1: the nightly of --date (YYYYMMDD): the next plain release's numbers, -nightly.<date>")
+    nv = sub.add_parser("nightly-version", help="NIGHTLY-2: the nightly of a run started at --clock (UTC YYYYMMDDHH): the next plain "
+                        "release's numbers, -nightly.<YYMMDD><1 morning | 2 evening>00")
     nv.add_argument("--remote", default="origin")
-    nv.add_argument("--date", required=True)
+    nv.add_argument("--clock", required=True)
     bo = sub.add_parser("bridge-ok", help="exit 0 when the old launchers' page still holds a verified bridge (before an alpha is published)")
     bo.add_argument("--remote", default="origin")
     bo.add_argument("--repo", required=True)
@@ -2543,7 +2584,7 @@ def main(argv: list[str]) -> int:
         print(version)
         return 0
     if a.cmd == "nightly-version":
-        print(nightly_version(remote_tags(a.git_dir, a.remote), a.date))
+        print(nightly_version(remote_tags(a.git_dir, a.remote), a.clock))
         return 0
     if a.cmd == "bridge-ok":
         # Sol r2: right before an alpha build is published (also one resumed from an open intent, its version kept): the bridge is

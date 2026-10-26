@@ -3,6 +3,7 @@
 
 #include "Common/BfmeGame.h"
 #include "GameClient/EndGame.h"
+#include "GameClient/LocalizedText.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 
 #include "Common/Player.h"
@@ -676,7 +677,8 @@ ScoreScreenData ScoreScreenData::build(GameLogic &logic, int type, const std::ve
 			e.result = 0; // vslot 0x38
 		}
 		const ScoreKeeper &s = p->getScoreKeeper();
-		e.score = s.computeScore(logic.settings(), logic.getFrame());
+		int shownBonus = 0;
+		e.score = s.computeScore(logic.settings(), logic.getFrame(), logic.missionObjectives().countShownBonus(shownBonus)); // lane CAMPUI-1: RW 0x79DE90
 		e.perFrame = s.perFrameStats();
 		e.fortressMarks = s.fortressMarks();
 		e.unitsBuilt = s.unitsBuilt();
@@ -938,11 +940,7 @@ ScoreScreenData::StatCell ScoreScreenData::timeCell(std::uint32_t seconds, const
 		else
 		{
 			t = fetch(std::string(label) + "s"); // RW 0xC8F0DC: the plural label, formatted with the count
-			const size_t p = t.find("%d");
-			if (p != std::string::npos)
-			{
-				t = t.substr(0, p) + std::to_string(n) + t.substr(p + 2);
-			}
+			t = LocalizedText::format(t, { n });
 		}
 		return t + " "; // RW 0xBD16E4
 	};

@@ -126,35 +126,77 @@ bool WaterGeometry::triangulate(const std::vector<Point2F> &polygon, std::vector
 	return !indices.empty();
 }
 
-bool WaterGeometry::buildRiverStrip(const RiverArea &river, float uvLength, RiverStrip &out)
+bool WaterGeometry::buildRiverStrip(const RiverArea &river, RiverStrip &out)
 {
 	out = RiverStrip();
-	if (river.lines.size() < 2 || uvLength <= 0.0f)
+	const size_t n = river.lines.size();
+	if (n < 2)
 	{
 		return false;
 	}
-	float along = 0.0f;
-	float px = 0, py = 0;
-	for (size_t i = 0; i < river.lines.size(); ++i)
+	const std::vector<RiverArea::Line> &l = river.lines;
+	auto dist = [](float x0, float y0, float x1, float y1) { return std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0)); };
+	// the outline: first[0], second[0..n-1], first[n-1..1] (the closing edge first[1] -> first[0] left out)
+	const float end = dist(l[0].x0, l[0].y0, l[0].x1, l[0].y1);
+	float total = end + dist(l[n - 1].x1, l[n - 1].y1, l[n - 1].x0, l[n - 1].y0);
+	for (size_t i = 1; i < n; ++i)
 	{
-		const RiverArea::Line &l = river.lines[i];
-		const float cx = (l.x0 + l.x1) * 0.5f, cy = (l.y0 + l.y1) * 0.5f;
-		if (i > 0)
+		total += dist(l[i - 1].x1, l[i - 1].y1, l[i].x1, l[i].y1);
+		if (i > 1)
 		{
-			along += std::sqrt((cx - px) * (cx - px) + (cy - py) * (cy - py));
+			total += dist(l[i - 1].x0, l[i - 1].y0, l[i].x0, l[i].y0);
 		}
-		px = cx;
-		py = cy;
-		const float z = (float)river.waterHeight;
-		const float v = along / uvLength;
-		out.position.insert(out.position.end(), { l.x0, l.y0, z, l.x1, l.y1, z });
-		out.uv0.insert(out.uv0.end(), { 0.0f, v, 1.0f, v });
-		out.uv1.insert(out.uv1.end(), { 0.0f, 0.5f, 1.0f, 0.5f });
+	}
+	const float vScale = end > 0.0f ? ((total / 2.0f - end) / end) / (float)(n - 1) : 0.0f;
+	const float z = (float)river.waterHeight;
+	for (size_t i = 0; i < n; ++i)
+	{
+		const float v = vScale * (float)i;
+		out.position.insert(out.position.end(), { l[i].x1, l[i].y1, z, l[i].x0, l[i].y0, z });
+		out.uv0.insert(out.uv0.end(), { 0.5f, v, 0.0f, v });
+		out.uv1.insert(out.uv1.end(), { 1.0f, v, 0.0f, v });
 		if (i > 0)
 		{
-			const std::uint32_t a = (std::uint32_t)(2 * (i - 1)), b = a + 1, c = a + 2, d = a + 3;
-			out.index.insert(out.index.end(), { a, b, d, a, d, c });
+			const std::uint32_t a = (std::uint32_t)(2 * (i - 1));
+			out.index.insert(out.index.end(), { a, a + 1, a + 3, a, a + 3, a + 2 });
 		}
 	}
 	return true;
+}
+
+void WaterGeometry::riverVertexColour(const RiverArea &river, const TimeOfDayLights *tod, const float waterDiffuse[4], float out[4])
+{
+	if (river.r == 255 && river.g == 255 && river.b == 255)
+	{
+		for (int c = 0; c < 3; ++c)
+		{
+			float v = tod ? tod->terrain[0].ambient[c] : 0.0f;
+			for (int i = 0; tod && i < 3; ++i)
+			{
+				const float down = -tod->terrain[i].lightPos[2];
+				if (down > 0.0f)
+				{
+					v += down * tod->terrain[i].diffuse[c];
+				}
+			}
+			out[c] = v * waterDiffuse[c];
+		}
+	}
+	else if (river.r == 0 && river.g == 0 && river.b == 0)
+	{
+		out[0] = out[1] = out[2] = 1.0f;
+	}
+	else
+	{
+		out[0] = river.r / 255.0f;
+		out[1] = river.g / 255.0f;
+		out[2] = river.b / 255.0f;
+	}
+	// the game packs these into colour bytes unclamped; past 255 a channel would spill into the next, which no retail
+	// lighting reaches
+	for (int c = 0; c < 3; ++c)
+	{
+		out[c] = std::min(std::max(out[c], 0.0f), 1.0f);
+	}
+	out[3] = waterDiffuse[3];
 }

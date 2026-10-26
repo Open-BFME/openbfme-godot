@@ -70,6 +70,7 @@ public:
 	void crc(class StateHasher &hasher) const override;
 	void crcPersistent(class StateHasher &hasher) const override;
 	void xfer(class Xfer &x) override; // lane SAVE-4c (AIEmotionStates.cpp)
+	bool hasPersistentCrc() const override { return true; } // lane UBER-2C
 	void onTemporaryStateEnded() override; // RW 0x740C97 (vtables 0xC28BE0 / 0xC28C28 slot 0x1C)
 
 private:

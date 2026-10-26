@@ -22,6 +22,27 @@ Player *Team::getControllingPlayer() const
 	return m_proto->getControllingPlayer();
 }
 
+std::uint32_t Team::enemyLayerMask() const
+{
+	const Player *owner = getControllingPlayer();
+	if (!owner || !m_teamRelations.empty() || owner->hasTeamRelationships())
+	{
+		return 0xFFFFFFFFu;
+	}
+	// getRelationship below with that team's overrides absent: this team's override for player k, else the controlling player's view of player k
+	std::uint32_t mask = 0;
+	for (int k = 0; k < 32; ++k)
+	{
+		auto it = m_playerRelations.find(k);
+		const Relationship r = it != m_playerRelations.end() ? it->second : owner->relationshipToPlayerIndex(k);
+		if (r == ENEMIES)
+		{
+			mask |= 1u << k;
+		}
+	}
+	return mask;
+}
+
 // ZH Team.cpp:1471-1499
 Relationship Team::getRelationship(const Team *that) const
 {

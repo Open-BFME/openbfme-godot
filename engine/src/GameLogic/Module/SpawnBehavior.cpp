@@ -5,6 +5,7 @@
 #include "GameLogic/SnapshotXfer.h"
 
 #include "Common/GameCommon.h"
+#include "Common/ModEngineFeatures.h"
 #include "Common/Player.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/ModuleFactory.h"
@@ -98,16 +99,66 @@ void SpawnBehaviorModuleData::buildFieldParse(MultiIniFieldParse &p)
 	p.add(kSpawnBehavior);
 }
 
+namespace
+{
+// lane MODS-3: edain-unchained.spawn-union's proxy (its 0xEDC045 .. 0xEDC402): each call re-walks the object's modules and reaches every
+// SpawnBehavior; a bool answer is the OR of theirs
+class SpawnBehaviorUnion final : public SpawnBehaviorInterface
+{
+public:
+	Object *m_obj = nullptr;
+	template <class F>
+	bool each(F f) const
+	{
+		bool any = false;
+		for (const std::unique_ptr<BehaviorModule> &m : m_obj->modules())
+		{
+			if (SpawnBehaviorInterface *s = dynamic_cast<SpawnBehaviorInterface *>(m.get()))
+			{
+				any = f(*s) || any;
+			}
+		}
+		return any;
+	}
+	void onSpawnDeath(ObjectID deadSpawn, const DieModuleInterface::Event *info) override // slot 1 (0xEDC093)
+	{
+		each([&](SpawnBehaviorInterface &s) { s.onSpawnDeath(deadSpawn, info); return false; });
+	}
+	bool canAnySlavesAttack() const override { return each([](SpawnBehaviorInterface &s) { return s.canAnySlavesAttack(); }); } // slot 7 (0xEDC291)
+	// slot 8 (SCRIPT-4's orderSlavesToGoIdle; merge queue q24: reaches every SpawnBehavior as the proxy's other void slots do; its address in the proxy is not read)
+	void orderSlavesToGoIdle(CommandSourceType source) override { each([&](SpawnBehaviorInterface &s) { s.orderSlavesToGoIdle(source); return false; }); }
+	void stopSpawning() override { each([](SpawnBehaviorInterface &s) { s.stopSpawning(); return false; }); }                 // slot 9 (0xEDC316)
+	bool isSpawnerActive() const override { return each([](SpawnBehaviorInterface &s) { return s.isSpawnerActive(); }); }     // slot 11 (0xEDC384)
+	void reclaimDueOrphans() override { each([](SpawnBehaviorInterface &s) { s.reclaimDueOrphans(); return false; }); }       // slot 12 (0xEDC3CC)
+};
+} // namespace
+
 SpawnBehaviorInterface *SpawnBehaviorInterface::of(Object &obj)
 {
+	SpawnBehaviorInterface *first = nullptr;
 	for (const std::unique_ptr<BehaviorModule> &m : obj.modules()) // RW 0x68C3A3: behaviour slot 0x78 of each module
 	{
 		if (SpawnBehaviorInterface *s = dynamic_cast<SpawnBehaviorInterface *>(m.get()))
 		{
-			return s;
+			if (!first)
+			{
+				first = s;
+				if (!ModEngineFeatures::has(ModEngineFeature::EdainUnchainedSpawnUnion))
+				{
+					return s;
+				}
+				continue;
+			}
+			// lane MODS-3: edain-unchained.spawn-union (its lookup 0xEDC444): a second spawner gives a proxy over all of them, from a ring of 8 (every
+			// caller uses it at once)
+			static thread_local SpawnBehaviorUnion ring[8];
+			static thread_local unsigned at = 0;
+			at = (at + 1) & 7;
+			ring[at].m_obj = &obj;
+			return &ring[at];
 		}
 	}
-	return nullptr;
+	return first;
 }
 
 // RW 0x862A4E (BFME2 decomp SpawnBehavior_canAnySlavesAttack.cpp, tier A; lane DECOMP-3): the first spawn, in list order, that resolves and is able to attack
@@ -123,6 +174,20 @@ bool SpawnBehavior::canAnySlavesAttack() const
 		}
 	}
 	return false;
+}
+
+// RW 0x863850 (lane SCRIPT-4): the slave list in order; each one found (RW 0x449681) with an AI (+ 0x260) idles with the group's source (RW 0x5E821A)
+void SpawnBehavior::orderSlavesToGoIdle(CommandSourceType source)
+{
+	const std::vector<ObjectID> ids(m_spawnIDs.begin(), m_spawnIDs.end());
+	for (ObjectID id : ids)
+	{
+		Object *o = getObject()->logic().findObjectByID(id);
+		if (o && o->getAIUpdateInterface())
+		{
+			o->getAIUpdateInterface()->aiIdle(source);
+		}
+	}
 }
 
 void SpawnBehaviorInterface::notifyProducerOfDeath(Object &dead, const DieModuleInterface::Event &info)
@@ -394,11 +459,12 @@ UpdateSleepTime SpawnBehavior::update()
 			}
 			if (m_data->m_killSpawnsBasedOnModelConditionState)
 			{
-				// RW 0x86356C: stopped after the one try; lane DECOMP-3: a try that made nothing (no spawn bones, S-209) leaves the spawner empty for good
+				// RW 0x86356C: stopped after the one try; lane DECOMP-3: a try that made nothing (no free exit door: e.g. a SpawnPoint exit without bones) leaves the
+				// spawner empty for good
 				if (m_spawnIDs.empty() && !m_replacementFrames.empty())
 				{
 					logic.noteStop("[S-3800] SpawnBehavior of " + obj->getTemplate()->getName() + ": KillSpawnsBasedOnModelConditionState stopped the spawner after "
-						"one try that made no spawn (its exit has no door: the spawn bones are missing, S-209); it stays empty");
+						"one try that made no spawn (its exit had no free door: no spawn bones, or no bone provider, S-209); it stays empty");
 				}
 				stopSpawning();
 			}

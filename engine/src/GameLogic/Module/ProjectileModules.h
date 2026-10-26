@@ -39,6 +39,7 @@
 #include <string>
 #include <vector>
 
+class GameLogic;
 class ModuleFactory;
 class Object;
 class WeaponTemplate;
@@ -56,7 +57,7 @@ public:
 	virtual ObjectID projectileGetLauncherID() const = 0;
 	// RW 0x85FDB7: the projectile hit `other` (null: the ground or the end of the path)
 	virtual bool projectileHandleCollision(Object *other) = 0;
-	// RW 0x85EF6A (the weapon's ProjectileCollidesWith test is not ported, S-364)
+	// RW 0x85EF6A (lane FLANK-1: with the warhead's ProjectileCollidesWith test RW 0x6CC79C)
 	virtual bool projectileCanCollideWith(const Object *other) const = 0;
 	virtual void projectileNowJammed() = 0;
 
@@ -170,6 +171,7 @@ private:
 	Coord3D aimPosition(const Object &victim);                       // RW 0x6CB85A with flag 1
 	UpdateSleepTime sleepTime() const;                               // RW 0x85EBAF
 	bool alreadyHit(ObjectID id) const;
+	void backOff(const Object &other); // RW 0x85EA5F (lane FLANK-1)
 
 	const BezierProjectileBehaviorModuleData *m_data;
 	ObjectID m_launcherID = INVALID_ID;       // +0x28
@@ -200,6 +202,8 @@ namespace ProjectileModules
 void registerAll(ModuleFactory &modules);
 // the stop lines of docs/STOPS.md S-360 .. S-379 that apply to a game
 std::vector<std::string> stops();
+// lane FLANK-1: RW 0x6CC79C WeaponTemplate::shouldProjectileCollideWith (`warhead` is the template's this; see ProjectileModules.cpp)
+bool shouldProjectileCollideWith(GameLogic &logic, const WeaponTemplate &warhead, const Object *launcher, const Object *projectile, const Object *other, ObjectID intendedVictim);
 } // namespace ProjectileModules
 
 // WWMath::Inv_Sqrt (RW 0x441C56): the magic-constant guess and three x87 Newton steps at 24 bits; `value` must not be 0

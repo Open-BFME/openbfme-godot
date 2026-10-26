@@ -50,6 +50,7 @@ enum class ShellAction
 	// lane PLAY-1: the Palantir's flag button AptPalantir::OnBttnObjectives (RW 0x6D40C9): in a skirmish or multiplayer game (RW 0x625456) RW 0x914EF0 pushes
 	// PlayerTribute.apt over the game, otherwise RW 0x8E8843 opens the objectives screen; the host decides by the game's mode
 	PalantirObjectives,
+	ObjectivesReturnToGame, // lane CAMPUI-1: AptObjectivesMenu::ReturnToGame (RW 0x8E873E -> RW 0x8E86A5: the screen closes, TheShell pops it, the game goes on)
 	TributeReturnToGame, // lane PLAY-1: PlayerTribute.apt's "<path>_ReturnToGame" (RW 0x914E89 -> RW 0x914C51: the screen closes, TheShell pops it)
 	CreateAHeroExit,     // lane CAH-1: AptCreateAHero::Class::Exit (the builder is left; the device ends the map mode)
 	OnlineGameStart,     // lane ONLINE-4: OnlineShell.apt's staging room has the lobby's START (the argument: its JSON, GameNetwork/OnlineStart.h)

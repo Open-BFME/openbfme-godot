@@ -100,6 +100,10 @@ struct DrawEntry
 	float tireFront = 0.0f, tireRear = 0.0f;
 	std::vector<std::string> frontTireBones, rearTireBones;
 	unsigned tireChanges = 0; ///< bumped when an angle changed (the device layer re-poses the instance)
+	// advanceTires: dynamic_cast once per entry. A rebuilt entry is a new DrawEntry, so this starts unset; a replaced data pointer misses the cache.
+	const ModuleData *truckData = nullptr;
+	bool truckChecked = false;
+	bool isTruck = false;
 };
 
 class Drawable : public Thing
@@ -231,6 +235,9 @@ public:
 		bool fogLook = false;
 	};
 	PresentedLook presentedLook(const LogicSnapshot *presented, bool shroudDrawn) const;
+	// lane CHAT-1: this client's own hiding (ZH Drawable::setDrawableHidden from BeaconClientUpdate::hideBeacon, RW 0x6718FB + 0x43D): an enemy's beacon
+	void setClientHidden(bool hidden) { m_clientHidden = hidden; }
+	bool clientHidden() const { return m_clientHidden; }
 	const ObjectSnapshot *syncedRecord(const LogicSnapshot &snapshot, bool &found) const
 	{
 		found = m_syncSnapshot == &snapshot && m_syncFrame == snapshot.frame;
@@ -291,6 +298,7 @@ private:
 	float m_geometryHeight = -1.0f;          ///< RENDER-2: RW 0xAD1920 of the template's shapes (computed on first use)
 	std::vector<DrawEntry> m_entries;
 	std::vector<std::unique_ptr<DrawableModule>> m_clientModules;
+	bool m_clientHidden = false; ///< lane CHAT-1
 	Fade m_fade; ///< lane PROJ-2
 	bool m_buildingEntries = false;                                     ///< lane BUILD-4: the constructor is making the draw modules
 	std::vector<std::pair<std::string, bool>> m_pendingModuleRequests; ///< lane BUILD-4: script module requests made meanwhile

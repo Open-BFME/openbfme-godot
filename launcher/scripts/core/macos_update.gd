@@ -597,7 +597,7 @@ static func _candidate_path_error(
 static func _verified_journal_manifest(updater: RefCounted, journal: Dictionary) -> Dictionary:
 	var bytes := Marshalls.base64_to_raw(String(journal.get("manifest", "")))
 	var sig := String(journal.get("signature", "")).hex_decode()
-	var verified := Manifest.verify(bytes, sig, updater.info.release_key,
+	var verified := Manifest.verify(bytes, sig, updater.info.release_keys,
 		{"repo": updater.info.repo, "tag": journal.get("version", "")}, "macos")
 	if not verified.ok or verified.manifest.assets.game.is_empty():
 		return {"ok": false, "error": "the signed Mac update journal manifest is invalid"}
@@ -885,7 +885,7 @@ static func signed_receipt(updater: RefCounted, root: String, package_version :=
 		return {"ok": false, "error": "the signed macOS update receipt belongs to a different package version"}
 	var bytes := Marshalls.base64_to_raw(String(receipt.get("manifest", "")))
 	var sig := String(receipt.get("signature", "")).hex_decode()
-	var v := Manifest.verify(bytes, sig, updater.info.release_key,
+	var v := Manifest.verify(bytes, sig, updater.info.release_keys,
 		{"repo": updater.info.repo, "tag": receipt.get("version", "")}, "macos")
 	if not v.ok or v.manifest.assets.game.is_empty():
 		return {"ok": false, "error": "the signed macOS update receipt is invalid: " + (v.error if not v.ok else "no Mac asset")}
@@ -923,7 +923,7 @@ static func _write_receipt(updater: RefCounted, journal: Dictionary) -> String:
 		return "the confirmation launcher is not running from the installed package root"
 	var bytes := Marshalls.base64_to_raw(String(journal.manifest))
 	var sig := String(journal.signature).hex_decode()
-	var v := Manifest.verify(bytes, sig, updater.info.release_key, {"repo": updater.info.repo, "tag": journal.version}, "macos")
+	var v := Manifest.verify(bytes, sig, updater.info.release_keys, {"repo": updater.info.repo, "tag": journal.version}, "macos")
 	if not v.ok or v.manifest.assets.game.is_empty():
 		return "the signed Mac manifest could not be revalidated during confirmation"
 	var files: Dictionary = v.manifest.assets.game["macos-arm64"].files
@@ -1074,7 +1074,7 @@ static func _old_trust_error(updater: RefCounted, journal: Dictionary, tree: Str
 		var receipt := _read_json(receipt_file)
 		var bytes := Marshalls.base64_to_raw(String(receipt.get("manifest", "")))
 		var sig := String(receipt.get("signature", "")).hex_decode()
-		var v := Manifest.verify(bytes, sig, updater.info.release_key, {"repo": updater.info.repo, "tag": version}, "macos")
+		var v := Manifest.verify(bytes, sig, updater.info.release_keys, {"repo": updater.info.repo, "tag": version}, "macos")
 		if not v.ok or v.manifest.assets.game.is_empty() or receipt.get("root", "") != String(journal.root):
 			return "the previous package's signed receipt does not verify"
 		if _same_files(files, v.manifest.assets.game["macos-arm64"].files) != "":
@@ -1082,7 +1082,7 @@ static func _old_trust_error(updater: RefCounted, journal: Dictionary, tree: Str
 		return ""
 	var p := Manifest.read_bounded(tree.path_join(Manifest.PAYLOAD), Manifest.MAX_BYTES)
 	var s := Manifest.read_bounded(tree.path_join(Manifest.PAYLOAD_SIG), 64)
-	var v := Manifest.verify_payload(p.bytes, s.bytes, updater.info.release_key, {"repo": updater.info.repo, "platform": "macos-arm64"})
+	var v := Manifest.verify_payload(p.bytes, s.bytes, updater.info.release_keys, {"repo": updater.info.repo, "platform": "macos-arm64"})
 	if not v.ok:
 		return "the previous package has no signed inventory (%s)" % v.error
 	if v.payload.version != version:

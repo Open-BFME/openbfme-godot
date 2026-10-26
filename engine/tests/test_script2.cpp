@@ -483,8 +483,10 @@ TEST_CASE("script2 coverage: the share of the retail script uses (skirmish, camp
 	CHECK(c.total == 14493);
 	// the pins only shrink: SCRIPT-1 left 9,985 action uses (34 %) and 3,113 condition uses (21 %) unported, SCRIPT-2 4,788 and 1,448; lane SCRIPT-3
 	// (hunt, attitude, the building / science availability, the waypoint paths, HAS_FINISHED_AUDIO, CAN_BUILD_AT_BASE, the script volumes)
-	CHECK(a.uncovered <= 3008);
-	CHECK(c.uncovered <= 981); // lane AUDIO-4 (merged): PLAYER_ACQUIRED_SCIENCE and PLAYER_HAS_REACHED_LEVEL_CAP ported (21 uses): 1002 -> 981
+	// lane SCRIPT-4: the guard / idle / stand-ground orders, the team moves, recruiting, garrisons, the command-button abilities, the special powers at a
+	// waypoint, the timed model condition and twelve conditions: 3008 -> 1528 action uses (5.3 %), 981 -> 463 condition uses (3.2 %)
+	CHECK(a.uncovered <= 1528); // tolerance: the pins only shrink as cases are ported
+	CHECK(c.uncovered <= 463);  // tolerance: as above
 }
 
 namespace

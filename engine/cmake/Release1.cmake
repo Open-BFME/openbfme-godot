@@ -12,6 +12,7 @@ add_custom_target(openbfme_build_version
     COMMENT "Build version"
     VERBATIM)
 set(OPENBFME_RELEASE1_SOURCES
+    src/Common/System/PathIO.cpp
     src/Common/System/InstallLocator.cpp
     src/Common/System/LogPrivacy.cpp
     src/Common/System/ConsoleFilter.cpp
@@ -23,6 +24,7 @@ set(OPENBFME_RELEASE1_GODOT_SOURCES
     src/GodotDevice/GodotRelease.cpp
 )
 set(OPENBFME_RELEASE1_TESTS
+    tests/test_install_paths.cpp
     tests/test_release1_install.cpp
     tests/test_release1_log.cpp
     tests/test_release1_console.cpp

@@ -22,6 +22,11 @@ MACREL-1 (tools/release/autorelease.sh publishes the Mac package next to the Win
         no-entry manifest when the folder holds none), names manifest.json's version, repository, commit and date,
         SHA256SUMS-<v>.txt lists the Mac package with its digest, and the package is sealed (MACPLAY-1: its signed
         payload.json, seal_package.py)
+
+SIGNKMS-1: --release-key-file may be the trusted key list (launcher/release_keys.pub) or a one-key file (launcher/release_key.pub
+stands for the release_keys.pub beside it, whose first entry it must be). The Mac launcher's
+build_info.json must carry "release_keys" equal to the list (in file order) and "release_key" equal to its first entry (the legacy key).
+--seal-key-file may be a list too: payload.json.sig is valid under any of its keys, raw or envelope (release_keys.py).
 """
 from __future__ import annotations
 
@@ -38,6 +43,7 @@ sys.path.insert(0, str(HERE))
 
 import audit_package  # noqa: E402
 import make_manifest  # noqa: E402
+import release_keys  # noqa: E402
 
 DEFAULT_REPO = make_manifest.DEFAULT_REPO
 MACOS_ASSET = re.compile(r"^openbfme-(v[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|nightly|preview)\.[0-9]+)?)-macos-arm64\.zip$")
@@ -132,8 +138,28 @@ def read_key(path: Path) -> str:
     return key
 
 
-def package_problems(archive: Path, checksum: Path, version: str, commit: str, repo: str, release_key: str) -> list[str]:
-    """MACREL-1: what is wrong with the Mac package the build host returned (empty: nothing)"""
+def read_keys(path: Path, sibling_list: bool = False) -> list[str]:
+    """SIGNKMS-1: the trusted keys (64 hex each, in file order) of a key list or a one-key file. sibling_list: a one-key file with a
+    release_keys.pub beside it (launcher/release_key.pub) stands for that list, whose first entry must be it"""
+    try:
+        keys = release_keys.load_any(path)
+        side = Path(path).with_name("release_keys.pub")
+        if sibling_list and len(keys) == 1 and Path(path).name != side.name and side.is_file():
+            keys = release_keys.load(side, legacy=path)
+        return [k.hex() for _, k in keys]
+    except (release_keys.KeyListError, OSError, ValueError) as e:
+        fail(f"{path.name}: {e}")
+
+
+def _hexes(keys) -> list[str]:
+    """one key (64 hex) or a list of them"""
+    return [keys] if isinstance(keys, str) else list(keys)
+
+
+def package_problems(archive: Path, checksum: Path, version: str, commit: str, repo: str, release_key) -> list[str]:
+    """MACREL-1: what is wrong with the Mac package the build host returned (empty: nothing). release_key: the trusted keys (64 hex
+    each, the list's order; one key alone is a list of one): build_info.json's release_keys must be them, its release_key the first"""
+    keys = _hexes(release_key)
     expected_name = f"openbfme-{version}-macos-arm64.zip"
     if archive.name != expected_name:
         return [f"the Mac package is {archive.name}, not {expected_name}"]
@@ -155,18 +181,17 @@ def package_problems(archive: Path, checksum: Path, version: str, commit: str, r
         info = json.loads(entries["build_info.json"])
     except (KeyError, ValueError) as e:
         return problems + [f"{archive.name}: the Mac launcher's build_info.json cannot be read ({e})"]
-    want = {"repo": repo, "release_key": release_key, "version": version, "macos_updates": True, "macos_preview": False,
-            "test_build": False, "local_trial": False}
+    want = {"repo": repo, "release_key": keys[0], "release_keys": keys, "version": version, "macos_updates": True,
+            "macos_preview": False, "test_build": False, "local_trial": False}
     for key, value in want.items():
         if info.get(key) != value:
             problems.append(f"{archive.name}: the Mac launcher's build_info.json has {key} {info.get(key)!r}, not {value!r}")
     return problems
 
 
-def seal_problems(archive: Path, repo: str, release_key: str) -> list[str]:
+def seal_problems(archive: Path, repo: str, release_key) -> list[str]:
     """MACPLAY-1: the published Mac package carries its signed payload inventory (seal_package.py, autorelease.sh step 6), signed by the
     release key and naming exactly the ZIP's other files: its launcher offers the game beside it only then"""
-    import ed25519
     import seal_package
     m = seal_package.NAME.match(archive.name)
     if not m:
@@ -175,14 +200,15 @@ def seal_problems(archive: Path, repo: str, release_key: str) -> list[str]:
     body, sig = files.get(seal_package.PAYLOAD), files.get(seal_package.PAYLOAD_SIG)
     if body is None or sig is None:
         return [f"{archive.name} is not sealed (no {seal_package.PAYLOAD} / {seal_package.PAYLOAD_SIG}): its launcher would not start the game beside it"]
-    if not ed25519.verify(bytes.fromhex(release_key), body, sig):
+    trusted = [("key", bytes.fromhex(k)) for k in _hexes(release_key)]
+    if release_keys.verify(trusted, seal_package.PAYLOAD, body, sig) is None:
         return [f"{archive.name}: the signature of {seal_package.PAYLOAD} does not verify under the release key"]
     if body != seal_package.payload_bytes(files, m.group(1), m.group(2), repo):
         return [f"{archive.name}: {seal_package.PAYLOAD} is not the inventory of the archive's files"]
     return []
 
 
-def check_dir(d: Path, release_key: str, seal_key: str | None = None) -> list[str]:
+def check_dir(d: Path, release_key, seal_key=None) -> list[str]:
     """MACREL-1: publish_release.sh's check of manifest-macos.json against the package folder"""
     try:
         sidecar = (d / "manifest-macos.json").read_bytes()
@@ -243,9 +269,9 @@ def main(argv: list[str]) -> int:
         ap.add_argument("--seal-key-file", type=Path, help="--check: the key the package's payload.json is signed with (the manifests' "
                         "key; default --release-key-file; a dry run's throwaway key)")
         a = ap.parse_args(argv)
-        key = read_key(a.release_key_file)
+        key = read_keys(a.release_key_file, sibling_list=True)
         if a.check:
-            problems = check_dir(a.check, key, read_key(a.seal_key_file) if a.seal_key_file else None)
+            problems = check_dir(a.check, key, read_keys(a.seal_key_file) if a.seal_key_file else None)
             ok = f"manifest-macos.json ok: matches {a.check.name}"
         else:
             if not (a.checksum and a.version and a.commit):

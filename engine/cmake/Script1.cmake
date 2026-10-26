@@ -9,6 +9,9 @@ list(APPEND OPENBFME_SIM_SOURCES
     src/GameLogic/ScriptEngine/ScriptConditions.cpp
     src/GameLogic/ScriptEngine/ScriptActions.cpp
     src/GameLogic/ScriptEngine/ScriptActionsUnits.cpp
+    src/GameLogic/ScriptEngine/ScriptActionsOrders.cpp
+    src/GameLogic/AI/AIGuardCommands.cpp
+    src/GameLogic/Object/ObjectCommandButton.cpp
     src/GameLogic/AI/AIHunt.cpp
     src/GameLogic/AI/AIWaypointPath.cpp
     src/GameClient/MapScriptSetup.cpp
@@ -30,4 +33,5 @@ set(OPENBFME_SCRIPT1_TESTS
     tests/test_script2_client.cpp
     tests/test_script3.cpp
     tests/test_script3_mission.cpp
+    tests/test_script4.cpp
 )

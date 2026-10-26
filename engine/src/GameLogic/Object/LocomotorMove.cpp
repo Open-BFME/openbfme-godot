@@ -165,9 +165,9 @@ Locomotor::Locomotor(const LocomotorTemplate *tmpl)
 	}
 }
 
-std::vector<std::string> Locomotor::allStops()
+const std::vector<std::string> &Locomotor::allStops()
 {
-	return {
+	static const std::vector<std::string> stops = {
 		"S-081: locomotor numeric parity unproven: the movers mix x87 and SSE (moveForward RW 0x5E586F) and use the CRT / x87 sin, cos and atan2; "
 		"operation order and PC24 precision are reproduced through NumericState, the trigonometry is NumericState's deterministic double-double "
 		"(lane WIN-1: the same bits on every OS), not the retail CRT / x87 results.",
@@ -178,6 +178,7 @@ std::vector<std::string> Locomotor::allStops()
 		"constant-calling result, the transform write (RW 0x70BA76) and the WINGS hold (RW 0x5E74C1) are not run; an idle unit's height and sleep follow "
 		"the movers' last frame."
 	};
+	return stops;
 }
 
 void Locomotor::noteStop(const char *line)
@@ -190,6 +191,16 @@ void Locomotor::noteStop(const char *line)
 		}
 	}
 	m_unverified.push_back(line);
+}
+
+void Locomotor::noteStopOf(unsigned index)
+{
+	if (m_notedStopBits & (1u << index))
+	{
+		return;
+	}
+	m_notedStopBits |= 1u << index;
+	noteStop(allStops()[index].c_str());
 }
 
 // ---- getters ---------------------------------------------------------------------------------------------------
@@ -301,7 +312,7 @@ void Locomotor::moveForward(LocomotorHost &host, const Coord3D &goal, float onPa
 {
 	const LocomotorTemplate &t = *m_template;
 	const Bits &b = bits();
-	noteStop(allStops()[0].c_str()); // S-081 applies to every move
+	noteStopOf(0); // S-081 applies to every move
 
 	const float maxSpeed = getMaxSpeedForCondition(host); // [ebp-0xc]
 	if (desiredSpeed > maxSpeed)
@@ -516,7 +527,7 @@ void Locomotor::rotateTowardsPosition(LocomotorHost &host, const Coord3D &goal, 
 	const Bits &b = bits();
 	if (t.m_appearance == LOCO_GIANT_BIRD)
 	{
-		noteStop(allStops()[1].c_str());
+		noteStopOf(1);
 		throw std::logic_error("S-084: rotateTowardsPosition for GIANT_BIRD locomotors is not ported");
 	}
 
@@ -937,7 +948,7 @@ void Locomotor::moveTowardsPositionHorde(LocomotorHost &host, const Coord3D &goa
 		const int node = path->currentSpecialNodeType();
 		if (node == 2 || node == 3 || node == 7 || node == 8)
 		{
-			noteStop(allStops()[1].c_str());
+			noteStopOf(1);
 			throw std::logic_error("S-084: HORDE mover formation path nodes (types 2, 3, 7, 8) are not ported");
 		}
 		const LocomotorPathPoint ahead = path->computePointAhead(m_speed); // RW 0x766173
@@ -1234,7 +1245,7 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 		// the movers left in the matrix stays: no ground snap
 		Coord3D p{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] }; // RW 0x5E3A5A
 		host.setPendingPosition(p);
-		noteStop(allStops()[1].c_str());
+		noteStopOf(1);
 		return;
 	}
 	if (zAxis == Z_SEA_LEVEL)
@@ -1319,7 +1330,7 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 				}
 				if (host.hasStealthModule())
 				{
-					noteStop(allStops()[1].c_str()); // RW 0x5E7C0A: the stealth reveal of a climbing object is not ported
+					noteStopOf(1); // RW 0x5E7C0A: the stealth reveal of a climbing object is not ported
 				}
 			}
 			else if (host.testModelCondition(climbing))
@@ -1334,7 +1345,7 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 	}
 	if (zAxis != Z_NO_Z_MOTIVE_FORCE)
 	{
-		noteStop(allStops()[1].c_str());
+		noteStopOf(1);
 		throw std::logic_error("S-084: ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT, ABSOLUTE_HEIGHT and SCALING_WALLS is not ported");
 	}
 	Coord3D pos{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] }; // RW 0x5E3A5A
@@ -1342,7 +1353,7 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 	{
 		// RW 0x5E774A-0x5E7816: z comes from the terrain (RW 0x5E5785 on the ground layer, else the terrain query);
 		// the layer / water / falling special cases are not ported (S-084)
-		noteStop(allStops()[1].c_str());
+		noteStopOf(1);
 		pos.z = host.groundHeightAt(pos.x, pos.y);
 		m_matrix.m[2][3] = pos.z;
 	}
@@ -1485,7 +1496,7 @@ bool Locomotor::locomotorMaintainCurrentPosition(LocomotorHost &host)
 		m_speed = 0.0f;
 		break;
 	case LOCO_WINGS:
-		noteStop(allStops()[2].c_str()); // RW 0x5E74C1, not ported
+		noteStopOf(2); // RW 0x5E74C1, not ported
 		break;
 	default:
 		m_speed = 0.0f;
@@ -1495,7 +1506,7 @@ bool Locomotor::locomotorMaintainCurrentPosition(LocomotorHost &host)
 		}
 		break;
 	}
-	noteStop(allStops()[2].c_str()); // the tail (RW 0x5E76AC on the held position, RW 0x70BA76) is not run
+	noteStopOf(2); // the tail (RW 0x5E76AC on the held position, RW 0x70BA76) is not run
 	return result;
 }
 
@@ -1527,7 +1538,7 @@ void Locomotor::locomotorMoveTowardsPosition(LocomotorHost &host, const Coord3D 
 	}
 	if (t.m_scalesWalls)
 	{
-		noteStop(allStops()[1].c_str()); // the wall-scaling look-ahead (RW 0x5E8956-0x5E8FF8) is not ported
+		noteStopOf(1); // the wall-scaling look-ahead (RW 0x5E8956-0x5E8FF8) is not ported
 	}
 	switch (t.m_appearance)
 	{

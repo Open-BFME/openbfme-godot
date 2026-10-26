@@ -1,0 +1,28 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OwnLogGroupOnly",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:us-east-2:<ACCOUNT_ID>:log-group:/aws/lambda/openbfme-mailer:*"
+    },
+    {
+      "Sid": "SendAsNoReplyOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ses:SendEmail",
+        "ses:SendRawEmail"
+      ],
+      "Resource": "arn:aws:ses:us-east-2:<ACCOUNT_ID>:identity/openbfme.com",
+      "Condition": {
+        "StringEquals": {
+          "ses:FromAddress": "no-reply@openbfme.com"
+        }
+      }
+    }
+  ]
+}

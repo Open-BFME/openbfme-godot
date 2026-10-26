@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Lane NIGHTLY-1 (owner, 2026-10-21): the nightly build's notes for players, and the nightly releases kept on GitHub.
 
-"build the pulled in PRs every night with patch notes and what to test for for people". Every night autorelease.sh --nightly publishes the
-archive head as a GitHub pre-release v<x>.<y>.<z>-nightly.<YYYYMMDD> (autorelease.py nightly-version) whose notes say, in plain words, what
-is new since the last nightly and how to test each change ("What to test"), community pull requests first and credited by their GitHub
+"build the pulled in PRs every night with patch notes and what to test for for people". Twice a day (lane NIGHTLY-2, owner 2026-10-23:
+07:00 and 19:00 UTC) autorelease.sh --nightly publishes the archive head as a GitHub pre-release v<x>.<y>.<z>-nightly.<YYMMDD><1|2>00
+(autorelease.py nightly-version; 1 the morning build, 2 the evening one) whose notes say, in plain words, what is new since the last
+nightly (the morning's or the evening's, whichever was published last) and how to test each change ("What to test"), community pull requests first and credited by their GitHub
 handle (owner, 15:30Z: "Thanks to @handle: ..."). docs/RELEASE.md, "Nightly builds".
 
     python3 tools/release/nightly_notes.py [--git-dir DIR] <command>
@@ -81,7 +82,7 @@ def inner_commits(git_dir: str | None, sha: str) -> list[dict]:
 class GitHub:
     def __init__(self, gh: str, repo: str, attempts: int = 4, backoff: float = 5.0):
         self.gh, self.repo, self.cache = gh, repo, {}
-        self.attempts, self.backoff = attempts, backoff
+        self.attempts, self.backoff = max(1, attempts), backoff
 
     def pulls_of(self, sha: str) -> list[dict]:
         """the pull requests of the repository GitHub links to commit sha; [] when GitHub does not know the commit (an internal cherry-pick)"""
@@ -91,18 +92,27 @@ class GitHub:
         # JSON input", nightly 2026-10-22): try again, and fail closed only when every attempt fails
         for attempt in range(self.attempts):
             r = subprocess.run([self.gh, "api", f"repos/{self.repo}/commits/{sha}/pulls"], capture_output=True, text=True)
-            if not r.returncode or re.search(r"HTTP (404|422)", r.stderr):
-                break
-            if attempt + 1 < self.attempts:
-                time.sleep(self.backoff * (attempt + 1))
-        if r.returncode:
-            if re.search(r"HTTP (404|422)", r.stderr):
+            if not r.returncode:
+                try:
+                    pulls = json.loads(r.stdout)
+                except json.JSONDecodeError:
+                    error = "invalid JSON (expected a JSON array)"
+                else:
+                    if isinstance(pulls, list):
+                        break
+                    error = "expected a JSON array"
+            elif re.search(r"HTTP (404|422)", r.stderr):
                 self.cache[sha] = []
                 return []
+            else:
+                error = r.stderr.strip()[:200]
+            if attempt + 1 < self.attempts:
+                time.sleep(self.backoff * (attempt + 1))
+        else:
             raise SystemExit(f"nightly_notes: cannot read the pull requests of commit {sha[:10]} from GitHub (fail closed): "
-                             f"{r.stderr.strip()[:200]}")
+                             f"{error}")
         out = []
-        for p in json.loads(r.stdout or "[]"):
+        for p in pulls:
             login = str((p.get("user") or {}).get("login", ""))
             base = (p.get("base") or {}).get("repo") or {}
             if base.get("full_name") != self.repo or not LOGIN.fullmatch(login) or not isinstance(p.get("number"), int):
@@ -330,7 +340,7 @@ def render(ctx: dict, draft: dict, version: str, known_issues: list, repo: str, 
     md = lambda t: ar.markdown(ar.neutral(t))  # noqa: E731
     when = ar._date_text(date) if date else ""
     out = [f"# OpenBFME {ar.display_name(version)}", "", f"{when} · nightly build for testers" if when else "Nightly build for testers", "",
-           "A nightly build holds everything merged since the last one. It is made automatically every night and only lightly tested, so "
+           "A nightly build holds everything merged since the last one. It is made automatically twice a day and only lightly tested, so "
            "expect new bugs. OpenBFME is in alpha. For fewer surprises, use the Stable channel (launcher: Settings, Channel).", "",
            "Install or update it with the OpenBFME Launcher on the Nightly channel. It uses your installed The Rise of the Witch-king 2.01 "
            "and The Battle for Middle-earth II 1.06, or downloads them for you.", ""]

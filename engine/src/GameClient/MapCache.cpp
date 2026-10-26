@@ -3,8 +3,11 @@
 // See GameClient/MapCache.h.
 
 #include "GameClient/MapCache.h"
+#include "GameNetwork/GameInfo.h"
+#include "Common/AsciiString.h"
 
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
@@ -26,14 +29,22 @@ std::string trim(const std::string &s)
 	return s.substr(a, b - a);
 }
 
+// lane MODS-2 (Edain's mapcache.ini writes "End" and mixed-case keys): retail reads MapCache.ini with the generic INI reader (its block,
+// field and value tables, the format strings "  PlayerPosition %d" / "  techPosition = ..." / "  supplyPosition = ..." / "  END" next to
+// them), so the block name, END, every key and yes / no compare without case (INI::parseBool and the field lookup are stricmp)
+bool eqNoCase(const std::string &a, const char *b)
+{
+	return AsciiStringUtil::compareNoCase(a, b) == 0;
+}
+
 bool parseYesNo(const std::string &v, bool &out)
 {
-	if (v == "yes" || v == "Yes" || v == "YES")
+	if (eqNoCase(v, "yes"))
 	{
 		out = true;
 		return true;
 	}
-	if (v == "no" || v == "No" || v == "NO")
+	if (eqNoCase(v, "no"))
 	{
 		out = false;
 		return true;
@@ -133,7 +144,7 @@ bool parse(const std::string &text, std::vector<MapCacheEntry> &out, std::string
 		}
 		if (!cur)
 		{
-			if (line.rfind("MapCache", 0) != 0 || line.size() <= 9 || !std::isspace((unsigned char)line[8]))
+			if (line.size() <= 9 || !eqNoCase(line.substr(0, 8), "MapCache") || !std::isspace((unsigned char)line[8]))
 			{
 				return fail("expected 'MapCache <name>', got '" + line + "'");
 			}
@@ -148,7 +159,8 @@ bool parse(const std::string &text, std::vector<MapCacheEntry> &out, std::string
 			cur->name = n;
 			continue;
 		}
-		if (line.rfind("PlayerPosition ", 0) == 0 && bfme1) // community PR #36: BFME1's scenario slot blocks (BFME1 data only)
+		// community PR #36: BFME1's scenario slot blocks; lane MODS-2: RotWK's reader has them too (its "  PlayerPosition %d" writer format)
+		if (line.size() > 15 && eqNoCase(line.substr(0, 15), "PlayerPosition "))
 		{
 			long long slot = 0;
 			if (playerPosition || !parseInt(trim(line.substr(15)), slot) || slot < 1 || slot > 16) return fail("bad PlayerPosition");
@@ -157,13 +169,13 @@ bool parse(const std::string &text, std::vector<MapCacheEntry> &out, std::string
 		}
 		if (playerPosition)
 		{
-			if (line == "END") { playerPosition = 0; continue; }
+			if (eqNoCase(line, "END")) { playerPosition = 0; continue; }
 			const auto separator = line.find('=');
 			if (separator == std::string::npos) return fail("expected scenario slot setting");
 			cur->playerPositions[playerPosition][trim(line.substr(0, separator))] = trim(line.substr(separator + 1));
 			continue;
 		}
-		if (line == "END")
+		if (eqNoCase(line, "END"))
 		{
 			cur = nullptr;
 			continue;
@@ -177,32 +189,43 @@ bool parse(const std::string &text, std::vector<MapCacheEntry> &out, std::string
 		std::string val = trim(line.substr(eq + 1));
 		long long n = 0;
 		bool ok = true;
-		if (key == "fileSize") { ok = parseInt(val, n); cur->fileSize = (std::uint32_t)n; }
-		else if (key == "fileCRC") { ok = parseInt(val, n); cur->fileCRC = (std::uint32_t)n; }
-		else if (key == "timestampLo") { ok = parseInt(val, n); cur->timestampLo = (std::int32_t)n; }
-		else if (key == "timestampHi") { ok = parseInt(val, n); cur->timestampHi = (std::int32_t)n; }
-		else if (key == "numPlayers") { ok = parseInt(val, n); cur->numPlayers = (std::int32_t)n; }
-		else if (key == "isOfficial") ok = parseYesNo(val, cur->isOfficial);
-		else if (key == "isMultiplayer") ok = parseYesNo(val, cur->isMultiplayer);
-		else if (key == "isScenarioMP") ok = parseYesNo(val, cur->isScenarioMP);
-		else if (key == "extentMin") ok = parseCoord(val, cur->extentMin);
-		else if (key == "extentMax") ok = parseCoord(val, cur->extentMax);
-		else if (key == "InitialCameraPosition")
+		Coord3D at;
+		if (eqNoCase(key, "fileSize")) { ok = parseInt(val, n); cur->fileSize = (std::uint32_t)n; }
+		else if (eqNoCase(key, "fileCRC")) { ok = parseInt(val, n); cur->fileCRC = (std::uint32_t)n; }
+		else if (eqNoCase(key, "timestampLo")) { ok = parseInt(val, n); cur->timestampLo = (std::int32_t)n; }
+		else if (eqNoCase(key, "timestampHi")) { ok = parseInt(val, n); cur->timestampHi = (std::int32_t)n; }
+		else if (eqNoCase(key, "numPlayers")) { ok = parseInt(val, n); cur->numPlayers = (std::int32_t)n; }
+		else if (eqNoCase(key, "isOfficial")) ok = parseYesNo(val, cur->isOfficial);
+		else if (eqNoCase(key, "isMultiplayer")) ok = parseYesNo(val, cur->isMultiplayer);
+		else if (eqNoCase(key, "isScenarioMP")) ok = parseYesNo(val, cur->isScenarioMP);
+		else if (eqNoCase(key, "extentMin")) ok = parseCoord(val, cur->extentMin);
+		else if (eqNoCase(key, "extentMax")) ok = parseCoord(val, cur->extentMax);
+		else if (eqNoCase(key, "InitialCameraPosition"))
 		{
 			ok = parseCoord(val, cur->initialCamera);
 			cur->hasInitialCamera = ok;
 		}
-		else if (key == "displayName") cur->displayName = toUtf16(unescape(val));
-		else if (key == "description") cur->description = toUtf16(unescape(val));
-		else if (key.rfind("Player_", 0) == 0 && key.size() > 13 && key.compare(key.size() - 6, 6, "_Start") == 0)
+		else if (eqNoCase(key, "displayName")) cur->displayName = toUtf16(unescape(val));
+		else if (eqNoCase(key, "description")) cur->description = toUtf16(unescape(val));
+		else if (eqNoCase(key, "techPosition")) // lane MODS-2: the writer's "  techPosition = X:%2.2f Y:%2.2f Z:%2.2f"
+		{
+			ok = parseCoord(val, at);
+			if (ok) cur->techPositions.push_back(at);
+		}
+		else if (eqNoCase(key, "supplyPosition"))
+		{
+			ok = parseCoord(val, at);
+			if (ok) cur->supplyPositions.push_back(at);
+		}
+		else if (key.size() > 13 && eqNoCase(key.substr(0, 7), "Player_") && eqNoCase(key.substr(key.size() - 6), "_Start"))
 		{
 			long long idx = 0;
-			ok = parseInt(key.substr(7, key.size() - 13), idx) && idx >= 1;
+			ok = parseInt(key.substr(7, key.size() - 13), idx) && idx >= 1 && idx <= MAX_SLOTS && key == "Player_" + std::to_string(idx) + "_Start";
 			Coord3D c;
 			ok = ok && parseCoord(val, c);
 			if (ok)
 			{
-				cur->startPositions[(int)idx] = c;
+				ok = cur->startPositions.emplace((int)idx, c).second;
 			}
 		}
 		else
@@ -217,6 +240,28 @@ bool parse(const std::string &text, std::vector<MapCacheEntry> &out, std::string
 	if (cur)
 	{
 		return fail("missing END for block '" + cur->rawName + "'");
+	}
+	return true;
+}
+
+bool validateStartPositions(const MapCacheEntry &map, std::string *error)
+{
+	auto fail = [&](const std::string &why) {
+		if (error) *error = "map '" + map.name + "': " + why;
+		return false;
+	};
+	if (map.numPlayers < 1 || map.numPlayers > MAX_SLOTS)
+	{
+		return fail("start count must be in 1..16");
+	}
+	for (const auto &[number, pos] : map.startPositions)
+	{
+		if (number < 1 || number > map.numPlayers) return fail("unknown start Player_" + std::to_string(number) + "_Start");
+		if (!std::isfinite(pos.x) || !std::isfinite(pos.y) || !std::isfinite(pos.z)) return fail("non-finite start " + std::to_string(number));
+	}
+	for (int i = 1; i <= map.numPlayers; ++i)
+	{
+		if (!map.startPositions.count(i)) return fail("missing Player_" + std::to_string(i) + "_Start");
 	}
 	return true;
 }

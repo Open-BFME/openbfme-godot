@@ -75,9 +75,17 @@ TEST_CASE("move: a walker follows a straight path with the locomotor's own kinem
 	REQUIRE(ai->curLocomotor() != nullptr);
 	CHECK(ai->locomotorSetSpeed() == 55.0f);                 // LocomotorSet Speed is a raw distance per second (RW ai+0x1F8)
 	CHECK(ai->curLocomotor()->getMaxSpeedForCondition(ai->locomotorHost()) == doctest::Approx(11.0f)); // x0.2: 11 a frame
-	mw.frames(2);                                            // the idle state's first update snaps a fresh unit onto its cell (ZH AIIdleState, frame <= 1)
+	// lane OFFMAP-1: RotWK's idle state (RW 0x745A64) does not snap a fresh unit onto its cell as ZH's did (frame <= 1), so the test puts the walker on
+	// its cell position itself (the pathfinder's snap, the position its path nodes use): the run below is the locomotor's straight-line kinematics
+	Coord3D onCell{ 105.0f, 105.0f, 0.0f };
+	ai->world().pathfinder().snapPosition(ai->adapter(), &onCell);
+	onCell.z = u->getPosition()->z;
+	u->setPosition(&onCell);
+	mw.frames(2);
 	CHECK(ai->isIdle());
 	const Coord3D start = *u->getPosition();
+	CHECK(start.x == onCell.x);
+	CHECK(start.y == onCell.y);
 	const Coord3D dest{ 505.0f, start.y, 0.0f };
 	ai->aiMoveToPosition(dest, CMD_FROM_PLAYER);
 	CHECK(ai->currentStateId() == (unsigned)AI_MOVE_TO);

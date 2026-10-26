@@ -5,6 +5,11 @@ files. Long term, also run BFME2/RotWK mods and play against retail clients.
 
 ## Two profiles, designed in from the start
 
+This is the target contract, not a claim of retail compatibility today.
+The current runtime selects **Faithful** or **Uber** execution; neither name
+establishes the retail replay or cross-play gates below. OpenBFME's native
+saves and replays carry its own engine/data/profile identity, not retail formats.
+
 | | Retail-compatible | Enhanced |
 |---|---|---|
 | Rules | exact 2.01 behaviour | 2.01 plus named fixes and improvements |
@@ -76,8 +81,10 @@ files. Long term, also run BFME2/RotWK mods and play against retail clients.
      boundaries matter.
    - The stored INI checksum adds a further, still unidentified subsystem value
      (0x63C809 / 0x63C820).
-   - Implementation waits until the full algorithm and the input sequence are
-     documented.
+   - Retail CRC parity waits until the full input sequence is documented.
+     The current INI reader has a line-CRC hook and the simulation has an
+     OpenBFME state hasher using the rotate-add step; neither is proof that
+     retail's complete checksum input is reproduced.
 6. **Mods use retail `-mod` semantics.**
    - `-mod` (handler 0x7BADB9) takes a directory or archive and switches file
      precedence to prefer local files (flag 0xDEC490, used by the file-open
@@ -89,7 +96,7 @@ files. Long term, also run BFME2/RotWK mods and play against retail clients.
    - Mods that patch `game.dat` need those changes reimplemented as profile
      features.
    - **Mod compatibility is a design constraint, not a later feature.** A mod
-     that runs in retail RotWK runs here unmodified, with its INI, W3D,
+     that runs in retail RotWK must run here unmodified, with its INI, W3D,
      textures, APT, maps, Lua and audio read at runtime from the mounted mod
      exactly as retail reads them. Therefore:
      - engine code never hard-codes retail content (template names, counts,
@@ -106,7 +113,7 @@ files. Long term, also run BFME2/RotWK mods and play against retail clients.
 7. **Loose files follow verified precedence; nothing is silently skipped.**
    - In the 2.01 baseline, any loose file in the install folders that isn't
      part of retail is reported as contamination and refused. That includes
-     the two zero-byte `.map` files in `F:\RotWK\libraries`.
+     the two zero-byte `.map` files found under an inspected install's `libraries/`.
    - Precedence for explicitly mounted mods reproduces the binary's
      conditional ordering.
 8. **Lua is part of the retail baseline, not a mod feature.**
@@ -118,7 +125,7 @@ files. Long term, also run BFME2/RotWK mods and play against retail clients.
    - Needs a Lua 4.0.1-compatible runtime plus the SAGE bindings and event
      dispatch.
 9. **Verified target binary.**
-   - `F:\RotWK\game.dat` is community-modified: added `stxt*`, `.mackt` and
+   - The originally inspected `game.dat` is community-modified: added `stxt*`, `.mackt` and
      `.danetta` sections, with active calls from 0x5D8A64 and 0x5D8AF1 into
      `.danetta`.
    - It is not trusted as the 2.01 oracle until we have a clean 2.01 binary, or
@@ -128,7 +135,7 @@ files. Long term, also run BFME2/RotWK mods and play against retail clients.
      areas stop.
 10. **No silent fallbacks.** Missing or unknown data is an error that reaches
     a test or report.
-11. **Pure 2.01 data.** Never read 2.02/HD archives, `F:\RotWK\asset.dat` or
+11. **Pure 2.01 data.** Never read 2.02/HD archives, an install's `asset.dat` or
     patched trees, except through an explicitly mounted profile.
 12. **Update order is retail's.** The six-phase logic update and object order
     from the INI/object spec are preserved exactly.

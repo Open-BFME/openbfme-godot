@@ -53,6 +53,25 @@ Error decodeTexture(const Ref<Image> &image, const PackedByteArray &buffer, bool
 	return dds ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
 }
 
+// lane SDK-0: an asset pack's texture is decoded by its bytes (a modder may save a PNG for a retail .tga name)
+Error decodePackTexture(const Ref<Image> &image, const PackedByteArray &buffer)
+{
+	static const unsigned char png[] = { 137, 80, 78, 71, 13, 10, 26, 10 };
+	if (buffer.size() >= 4 && std::memcmp(buffer.ptr(), "DDS ", 4) == 0)
+	{
+		return image->load_dds_from_buffer(buffer);
+	}
+	if (buffer.size() >= 8 && std::memcmp(buffer.ptr(), png, sizeof(png)) == 0)
+	{
+		return image->load_png_from_buffer(buffer);
+	}
+	if (buffer.size() >= 3 && buffer[0] == 0xff && buffer[1] == 0xd8 && buffer[2] == 0xff)
+	{
+		return image->load_jpg_from_buffer(buffer);
+	}
+	return image->load_tga_from_buffer(buffer);
+}
+
 String toGodot(const std::string &s)
 {
 	return String::utf8(s.c_str(), (int64_t)s.size());
@@ -303,6 +322,48 @@ bool W3DMaterialFactory::Reduce_Image(Ref<Image> &image, int reduction)
 Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing)
 {
 	found = false;
+	if (Packs)
+	{
+		if (const AssetPackFile *pf = Packs->texture(name))
+		{
+			const int reduction = g_textureReduction;
+			const std::string cacheKey = "pack:" + pf->diskPath + (reduction > 0 ? "#reduction" + std::to_string(reduction) : std::string());
+			auto cached = Textures.find(cacheKey);
+			if (cached != Textures.end())
+			{
+				found = true;
+				return cached->second;
+			}
+			std::vector<std::uint8_t> bytes;
+			std::string error;
+			if (!AssetPacks::read(*pf, bytes, &error))
+			{
+				errors.push_back("texture " + name + ": " + error);
+				TextureErrors.push_back(errors.back());
+				return Ref<Texture2D>();
+			}
+			PackedByteArray buffer;
+			buffer.resize((int64_t)bytes.size());
+			if (!bytes.empty()) std::memcpy(buffer.ptrw(), bytes.data(), bytes.size());
+			Ref<Image> image;
+			image.instantiate();
+			if (decodePackTexture(image, buffer) != OK || image->is_empty())
+			{
+				errors.push_back("asset pack " + pf->pack + ": could not decode " + pf->relative + " (the replacement of texture " + name + ")");
+				TextureErrors.push_back(errors.back());
+				return Ref<Texture2D>();
+			}
+			if (!image->has_mipmaps() && !image->is_compressed())
+			{
+				image->generate_mipmaps();
+			}
+			Reduce_Image(image, reduction);
+			Ref<ImageTexture> tex = ImageTexture::create_from_image(image);
+			Textures[cacheKey] = tex;
+			found = true;
+			return tex;
+		}
+	}
 	TextureResolution res = Resolve_W3D_Texture(name, [&](const std::string &p) { return Fs.doesFileExist(p); }, isBfme1Data(Fs)); // community PR #36: the archives' layout
 	if (!res.Found)
 	{

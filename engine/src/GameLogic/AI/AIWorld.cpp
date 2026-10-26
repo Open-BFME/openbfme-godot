@@ -3,6 +3,7 @@
 
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Object/ObjectGeometry.h"
+#include "GameLogic/Module/PortalModules.h"
 #include "GameLogic/Module/CollideModule.h"
 
 #include "Common/ArchiveFileSystem.h"
@@ -14,9 +15,12 @@
 #include "Common/Team.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIPathfindConfig.h"
+#include "GameLogic/AI/AIPathfindStops.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/AI/AIGroup.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/SlavedUpdate.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -259,7 +263,7 @@ void buildInfo(const ThingTemplate &tt, INIEnvironment &env, ObjectMovementInfo 
 	{
 		out.formationDepth = (int)v;
 	}
-	bool gates = false;
+	bool gates = true;
 	if (boolField(tt, "CanPathThroughGates", gates))
 	{
 		out.canPathThroughGates = gates;
@@ -327,6 +331,10 @@ struct KindBits
 			{ PK_SCALEABLE_WALL, "SCALEABLE_WALL" },
 			{ PK_BASE_SITE, "BASE_SITE" },
 			{ PK_WALL_UPGRADE, "WALL_UPGRADE" },
+			{ PK_ATTACK_NEEDS_LINE_OF_SIGHT, "ATTACK_NEEDS_LINE_OF_SIGHT" },
+			{ PK_CAN_SHOOT_OVER_WALLS, "CAN_SHOOT_OVER_WALLS" },
+			{ PK_WALL_SEGMENT, "WALL_SEGMENT" },
+			{ PK_WALL_GATE, "WALL_GATE" },
 		};
 		for (int &b : bit)
 		{
@@ -444,9 +452,57 @@ float ObjectPathfindAdapter::getHeightAboveTerrain() const
 	return SimMath::subf32(p.z, m_object->logic().getGroundHeight(p.x, p.y));
 }
 
+// lane ATTACKPATH-1: RW 0x6E82C8 walks the behaviour modules (Object + 0x24C) for the first whose behaviour interface slot 0x68 (the SlavedUpdate interface) is
+// not null and answers its slot 0, the slaver's id
+PathfindObjectID ObjectPathfindAdapter::getSlaverID() const
+{
+	const SlavedUpdateInterface *s = SlavedUpdateInterface::of(*m_object);
+	return s ? (PathfindObjectID)s->getSlaverID() : PATHFIND_INVALID_ID;
+}
+
+// lane ATTACKPATH-1: RW 0x70C55D -> RW 0x70C50C(0.0): not for the KindOf CAN_CLIMB_WALLS / SHIP (template + 0x11F & 0x81); else the height above the terrain
+// (RW 0x70B8AE) + 0 over GlobalData Gravity (+ 0xC4) * -9 (RW 0xC1EBC0), x87 (the predicate AerialPathfinder and SlowDeathBehavior port)
+bool ObjectPathfindAdapter::isSignificantlyAboveTerrain() const
+{
+	static const int kClimb = ObjectTemplateInfoBuilder::kindOfIndex("CAN_CLIMB_WALLS");
+	static const int kShip = ObjectTemplateInfoBuilder::kindOfIndex("SHIP");
+	if ((kClimb >= 0 && m_object->isKindOf((unsigned)kClimb)) || (kShip >= 0 && m_object->isKindOf((unsigned)kShip)))
+	{
+		return false;
+	}
+	const Coord3D &p = *m_object->getPosition();
+	const float above = SimMath::pc24Add(SimMath::pc24Sub(p.z, m_object->logic().getGroundHeight(p.x, p.y)), 0.0f);
+	return above > SimMath::pc24Mul(m_object->logic().settings().gravity, -9.0f);
+}
+
 bool ObjectPathfindAdapter::isMobile() const
 {
 	return !isKindOf(PK_IMMOBILE);
+}
+
+const PathfindWallGeometry *ObjectPathfindAdapter::getWallGeometry() const
+{
+	PathfindWallMeshSource *source = m_world.wallMeshes();
+	if (!source)
+	{
+		return nullptr;
+	}
+	const Coord3D &p = *m_object->getPosition();
+	const float angle = m_object->getOrientation(), scale = m_object->getInstanceScale();
+	const ThingTemplate *tt = m_object->getTemplate();
+	if (!m_wallLooked || tt != m_wallTemplate || p.x != m_wallPos.x || p.y != m_wallPos.y || p.z != m_wallPos.z || angle != m_wallAngle || scale != m_wallScale ||
+		m_object->getModelConditionBits() != m_wallBits)
+	{
+		m_wallLooked = true;
+		m_wallTemplate = tt;
+		m_wallPos = p;
+		m_wallAngle = angle;
+		m_wallScale = scale;
+		m_wallBits = m_object->getModelConditionBits();
+		m_wallGeometry = PathfindWallGeometry();
+		m_hasWall = source->wallGeometry(*m_object, m_wallGeometry) && !m_wallGeometry.empty();
+	}
+	return m_hasWall ? &m_wallGeometry : nullptr;
 }
 
 bool ObjectPathfindAdapter::isKindOf(PathfindKind kind) const
@@ -481,6 +537,7 @@ const PathfindGeometry &ObjectPathfindAdapter::getGeometry() const
 		{
 			m_ownGeometry.shapes[i].active = active[i] != 0;
 		}
+		m_ownGeometry.cacheRadii(); // lane UBER-2B: the radii of the flags just set (see PathfindGeometry::cacheRadii)
 		m_ownGeometryVersion = m_object->geometryVersion();
 	}
 	return m_ownGeometry;
@@ -503,6 +560,14 @@ bool ObjectPathfindAdapter::isComputerControlled() const
 {
 	const Player *p = m_object->getControllingPlayer();
 	return p && p->getPlayerType() == PLAYER_COMPUTER;
+}
+
+bool ObjectPathfindAdapter::isSkirmishAIControlled() const
+{
+	// lane WALL-2, RW 0x6822E2 .. 0x682307: the player's skirmish AI flag (RW 0x6AAC66: player + 0x34 -> + 0x151; INFERENCE S-4851: a computer player) and
+	// TheSkirmishAIManager's AI for the player (RW 0x6A950B: the port's SkirmishAIManager::findAI)
+	const Player *p = m_object->getControllingPlayer();
+	return p && p->getPlayerType() == PLAYER_COMPUTER && m_object->logic().skirmishAI().findAI(p->getPlayerIndex()) != nullptr;
 }
 
 unsigned ObjectPathfindAdapter::getCrusherLevel() const { return info().crusherLevel; }
@@ -552,6 +617,13 @@ bool ObjectPathfindAdapter::isParked() const
 }
 
 bool ObjectPathfindAdapter::hasAI() const { return m_object->getAIUpdateInterface() != nullptr; }
+
+bool ObjectPathfindAdapter::inMoveAwaySearch() const
+{
+	// lane WALL-2: RW AI + 0x3CF, set only around the two getMoveAwayFromPath calls (RW 0x66DBFB / 0x66DC4B)
+	const AIUpdateInterface *ai = m_object->getAIUpdateInterface();
+	return ai && ai->movingAwaySearch();
+}
 
 PathfindObjectID ObjectPathfindAdapter::getIgnoredObstacleID() const
 {
@@ -603,6 +675,17 @@ float ObjectPathfindAdapter::secondsToReach(float x, float y) const
 	return speed > 0.0f ? SimMath::divf32(dist, speed) : 0.0f;
 }
 
+// lane PATHPERF-2: secondsToReach's position and speed (speed 0 without an AI or a locomotor: secondsToReach answers 0 then)
+bool ObjectPathfindAdapter::reachInputs(float &x, float &y, float &speed) const
+{
+	const Coord3D &p = *m_object->getPosition();
+	x = p.x;
+	y = p.y;
+	AIUpdateInterface *a = ai();
+	speed = (a && a->curLocomotor()) ? a->curLocomotorSpeed() : 0.0f;
+	return true;
+}
+
 // RW 0x66288A (AI vtable +0x228): false (stationary) unless the unit follows a path with a special node
 bool ObjectPathfindAdapter::isStationary() const
 {
@@ -621,12 +704,19 @@ bool ObjectPathfindAdapter::isStationary() const
 }
 
 // RW 0x936C57 (the footprint registration RW 0x936B7D, reached through 0x6E85E9): the one status that keeps an object out of the map is 0x58 = PHANTOM_STRUCTURE (the binary's
-// status name table). An ordinary foundation (UNDER_CONSTRUCTION, status 2) is an obstacle from the moment it is placed (lane BUILD-1, review r1). The 0x4D of the earlier note is
-// not read by that function.
+// status name table). An ordinary foundation (UNDER_CONSTRUCTION, status 2) is an obstacle from the moment it is placed (lane BUILD-1, review r1). The 0x4D of the earlier note
+// (CAN_NOT_WALK_ON) is read by that function only for a WALK_ON_TOP_OF_WALL template (RW 0x936C8A: cannotWalkOn below).
 bool ObjectPathfindAdapter::footprintSkippedByStatus() const
 {
 	static const int phantom = statusIndex("PHANTOM_STRUCTURE");
 	return phantom >= 0 && m_object->testStatus((unsigned)phantom);
+}
+
+// RW 0x936C8A .. 0x936C95 (review of #63): RW 0x44DDEC(0x4D) = the object status CAN_NOT_WALK_ON (the binary's status name table)
+bool ObjectPathfindAdapter::cannotWalkOn() const
+{
+	static const int cannot = statusIndex("CAN_NOT_WALK_ON");
+	return cannot >= 0 && m_object->testStatus((unsigned)cannot);
 }
 
 bool ObjectPathfindAdapter::ignoresAsTarget(const PathfindObject &) const
@@ -793,7 +883,11 @@ void AIWorld::reportMovementFailure(const Object &obj, const std::string &text)
 
 void AIWorld::noteStop(const char *stop)
 {
-	m_noted.insert(stop);
+	const std::string_view text(stop);
+	if (m_noted.find(text) == m_noted.end())
+	{
+		m_noted.emplace(text);
+	}
 }
 
 std::vector<std::string> AIWorld::allStops()
@@ -866,6 +960,7 @@ void AIWorld::newMap(const PathfindTerrain &terrain)
 		}
 	}
 	m_pathfinder->newMap(terrain, &structures);
+	m_pathfinder->setUberLimits(m_logic.uber()); // lane PATHPERF-4
 	m_mapReady = m_pathfinder->isMapReady();
 }
 
@@ -914,6 +1009,89 @@ unsigned AIWorld::getFrame() const
 	return m_logic.getFrame();
 }
 
+// lane WALL-2: RW 0x668AF8 AIUpdateInterface::notifyPathHasInvalidPortals (BFME2 WB 0xe599c0 the same body):
+//   * a unit that is not a HORDE inside a container (RW 0x693A1A) passes it on to the container's AI when that has a path, else its path goes (RW 0x66276B);
+//   * else the waypoint of the point ahead on its path (RW 0x766173, (node's next optimised ?: node) + 0x20): none, or still there -> the path goes; gone ->
+//     a unit that is not a HORDE dies (RW 0x698EC3 kill(8, 0)); a HORDE classifies its members before / on / after the portal (the horde contain's slot 0x21C,
+//     HordeContain::ClassifyBeforeOnAfterInvalidPortal), kills the ones on it (and the smaller side), clears the others' paths and stands past the portal
+//     when more were after it: NOT PORTED (stop S-4852, reported): the horde's and its members' paths go;
+//   * the path goes.
+static void notifyPathHasInvalidPortals(AIWorld &world, AIUpdateInterface &ai)
+{
+	Object &obj = ai.adapter().object();
+	if (!obj.isKindOfName("HORDE"))
+	{
+		if (Object *top = obj.getContainedBy())
+		{
+			AIUpdateInterface *cai = world.aiOf(*top);
+			if (!cai)
+			{
+				return;
+			}
+			if (cai->mover().path())
+			{
+				notifyPathHasInvalidPortals(world, *cai);
+			}
+			else
+			{
+				ai.mover().destroyPath();
+			}
+			return;
+		}
+	}
+	Path *path = ai.mover().path();
+	if (!path)
+	{
+		return;
+	}
+	const LocomotorPathPoint pt = path->computePointAhead(ai.locomotor() ? ai.locomotor()->speed() : 40.0f);
+	const PathNode *node = path->lastAheadNode();
+	const PathNode *n = node ? (node->getNextOptimized() ? node->getNextOptimized() : node) : nullptr;
+	(void)pt;
+	const int id = n ? n->getWaypointID() : PathNode::NO_WAYPOINT;
+	if (id != PathNode::NO_WAYPOINT && world.pathfinder().findWaypoint(id) == nullptr)
+	{
+		if (!obj.isKindOfName("HORDE"))
+		{
+			obj.kill(0); // RW 0x668D6A: kill(8, 0)
+			return;
+		}
+		world.pathfinder().noteStop(pathstops::kPortalLostHorde);
+		for (Object *o = world.logic().getFirstObject(); o; o = o->getNextObject())
+		{
+			if (o->getContainedBy() == &obj)
+			{
+				if (AIUpdateInterface *mai = world.aiOf(*o))
+				{
+					mai->mover().destroyPath();
+				}
+			}
+		}
+	}
+	ai.mover().destroyPath();
+}
+
+std::function<bool(const PathfindObject &)> AIWorld::portalFilterOf(PathfindObjectID owner) const
+{
+	Object *o = m_logic.findObjectByID((ObjectID)owner);
+	const DynamicPortalBehaviour *p = o ? DynamicPortalBehaviour::of(*o) : nullptr;
+	return p ? p->waypointFilter() : std::function<bool(const PathfindObject &)>();
+}
+
+void AIWorld::onPathsLostPortals() const
+{
+	AIWorld &self = const_cast<AIWorld &>(*this);
+	// RW 0x6E8454: TheGameLogic's objects (first RW 0x97338F, next + 0x8C), those with an AI (+ 0x260) whose path (+ 0x140) has invalid portals (RW 0x76573F)
+	for (Object *o = m_logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		AIUpdateInterface *ai = aiOf(*o);
+		if (ai && ai->mover().path() && ai->mover().path()->hasInvalidPortals())
+		{
+			notifyPathHasInvalidPortals(self, *ai);
+		}
+	}
+}
+
 const ObjectMovementInfo &AIWorld::movementInfo(const ThingTemplate &tt)
 {
 	const ThingTemplate *key = tt.getFinalOverride();
@@ -922,6 +1100,7 @@ const ObjectMovementInfo &AIWorld::movementInfo(const ThingTemplate &tt)
 	{
 		std::unique_ptr<ObjectMovementInfo> info = std::make_unique<ObjectMovementInfo>();
 		buildInfo(*key, *m_env, *info);
+		info->geometry.cacheRadii(); // lane UBER-2B: a template's geometry never changes after buildInfo (see PathfindGeometry::cacheRadii)
 		for (const std::string &e : info->errors)
 		{
 			if (std::find(m_errors.begin(), m_errors.end(), e) == m_errors.end())
@@ -1019,6 +1198,10 @@ void AIWorld::processPathfindQueue()
 {
 	if (m_mapReady)
 	{
+		if (m_pathfinder->uberLimits() != m_logic.uber())
+		{
+			m_pathfinder->setUberLimits(m_logic.uber()); // lane PATHPERF-4: a profile set after the map
+		}
 		const size_t queued = m_pathfinder->queuedRequests() + m_pathfinder->queuedBlockedRepaths();
 		m_moveWorld->processQueues();
 		// diagnostics only (not logic state, not hashed): the cells one tick allocated and the deepest queue a tick found
@@ -1033,6 +1216,7 @@ void AIWorld::processPathfindQueue()
 void AIWorld::processCollisions()
 {
 	m_collisionPairs = 0;
+	m_collisionPairsSkipped = 0;
 	if (!m_mapReady || m_ais.size() < 2)
 	{
 		return;
@@ -1042,6 +1226,8 @@ void AIWorld::processCollisions()
 	// candidates in the same sorted order and the pairs are handled exactly as before
 	std::vector<CollisionUnit> &units = m_collisionUnits;
 	units.clear();
+	const bool uberFacts = m_logic.uber();
+	const ThingTemplate *crushWarm = nullptr;
 	for (const auto &kv : m_ais) // ordered by id
 	{
 		AIUpdateInterface *ai = kv.second;
@@ -1050,6 +1236,17 @@ void AIWorld::processCollisions()
 			continue; // lane GARRISON-1: a contain's rider out of the world (RW 0x68C18F) is not in the partition (ZH PartitionManager::processCollisions)
 		}
 		units.push_back(CollisionUnit{ kv.first, ai, 0.0f, 0.0f, 0.0f, 0, &ai->adapter().getGeometry() });
+		if (uberFacts)
+		{
+			// lane UBER-3W: the crush info of every unit's template is in GameLogic's cache before the facts are taken on the job pool (below); a horde's
+			// soldiers have consecutive ids and one template, so this is one lookup per horde
+			const ThingTemplate *tt = static_cast<const ThingTemplate *>(ai->getObject()->getTemplate())->getFinalOverride();
+			if (tt != crushWarm)
+			{
+				m_logic.crushInfo(tt);
+				crushWarm = tt;
+			}
+		}
 	}
 	if (units.size() < 2)
 	{
@@ -1119,38 +1316,82 @@ void AIWorld::processCollisions()
 		for (size_t i = first; i < last; ++i)
 		{
 			const CollisionUnit &a = units[i];
-			const int cx = a.bucket % w, cy = a.bucket / w;
-			// a partner overlaps when its centre is within a.r + b.r <= a.r + maxRadius: the buckets that reach that far, however large the footprints are
-			const int reach = SimMath::truncToInt32(SimMath::divf32(SimMath::addf32(a.r, maxRadius), cell)) + 1;
+			// a partner overlaps when its centre is within a.r + b.r <= a.r + maxRadius on each axis (the float overlap test below cannot pass with |dx| or |dy|
+			// at or beyond a.r + b.r). lane UBER-3W: the buckets that box reaches (one unit wider against rounding), not a whole bucket ring each way around a's
+			// bucket: a soldier's box touches 1 to 4 buckets instead of 9; the overlapping set is the same, so the pairs and their order are too
+			const float reachR = SimMath::addf32(SimMath::addf32(a.r, maxRadius), 1.0f);
+			const auto bucketOf = [&](float v, float lo, int count) {
+				const int c = SimMath::truncToInt32(SimMath::divf32(SimMath::subf32(v, lo), cell)); // truncation: a negative offset above -cell gives 0, clamped anyway
+				return c < 0 ? 0 : (c > count - 1 ? count - 1 : c);
+			};
+			const int x0 = bucketOf(SimMath::subf32(a.x, reachR), minX, w), x1 = bucketOf(SimMath::addf32(a.x, reachR), minX, w);
+			const int y0 = bucketOf(SimMath::subf32(a.y, reachR), minY, h), y1 = bucketOf(SimMath::addf32(a.y, reachR), minY, h);
 			candidates.clear();
-			for (int ny = std::max(0, cy - reach); ny <= std::min(h - 1, cy + reach); ++ny)
+			for (int ny = y0; ny <= y1; ++ny)
 			{
-				for (int nx = std::max(0, cx - reach); nx <= std::min(w - 1, cx + reach); ++nx)
+				for (int nx = x0; nx <= x1; ++nx)
 				{
 					const size_t b = (size_t)ny * (size_t)w + (size_t)nx;
-					for (int k = start[b]; k < start[b + 1]; ++k)
+					// a bucket lists its units in index order: the partners above i are its tail (lane UBER-3W: walked from the end, the candidates are sorted below)
+					for (int k = start[b + 1] - 1; k >= start[b]; --k)
 					{
 						const int j = items[(size_t)k];
-						if ((size_t)j > i) // the pair is handled from the lower index
+						if ((size_t)j <= i) // the pair is handled from the lower index
 						{
-							candidates.push_back(j);
+							break;
 						}
+						// lane UBER-2C: the overlap test before the sort (it judges each partner on its own, so the overlapping set and its id order are
+						// the same): a melee's neighbour buckets hold dozens of units a unit does not touch, and sorting them all was 9% of a 30,000-troop
+						// clash's logic frame
+						const CollisionUnit &b = units[(size_t)j];
+						const float dx = SimMath::subf32(a.x, b.x), dy = SimMath::subf32(a.y, b.y), rr = SimMath::addf32(a.r, b.r);
+						if (SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy)) >= SimMath::mulf32(rr, rr))
+						{
+							continue;
+						}
+						candidates.push_back(j);
 					}
 				}
 			}
 			std::sort(candidates.begin(), candidates.end()); // the pairs of one unit meet in id order, whatever the bucket layout
 			for (int j : candidates)
 			{
-				const CollisionUnit &b = units[(size_t)j];
-				const float dx = SimMath::subf32(a.x, b.x), dy = SimMath::subf32(a.y, b.y), rr = SimMath::addf32(a.r, b.r);
-				if (SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy)) >= SimMath::mulf32(rr, rr))
-				{
-					continue;
-				}
 				pairs.emplace_back((int)i, j);
 			}
 		}
 	});
+	// lane UBER-2B (Uber only): the facts every pair's handlers test first, once per unit and pass. A pair whose handlers would all return at those tests is
+	// counted and skipped: AIMover::onCollide returns for a contained unit or a contained other (both ways), the collide modules as ObjectCollide::pairIsInert
+	// says. lane UBER-3W: the facts of every unit with a pair are taken before the first pair meets, on the logic job pool (each job writes only its own
+	// units' facts and their objects' lazily found physics module; the one shared lazy cache, GameLogic::crushInfo, was filled above on this thread). They
+	// were taken on this thread at the unit's first pair, 5% of a one-thread 30,000-troop clash frame. Uber rule change (snapshot semantics): a unit's facts
+	// are those from before the pass's first pair (UBER-2B: before its own first pair), so a pair after a crush or a stun in the same pass reads them from before it
+	const bool filter = m_logic.uber();
+	if (filter)
+	{
+		m_collisionFacts.resize(units.size());
+		m_collisionFactState.assign(units.size(), 0);
+		for (size_t chunk = 0; chunk < chunkCount; ++chunk)
+		{
+			for (const std::pair<int, int> &pair : m_collisionChunks[chunk].pairs)
+			{
+				m_collisionFactState[(size_t)pair.first] = 3; // 3: wanted
+				m_collisionFactState[(size_t)pair.second] = 3;
+			}
+		}
+		jobs.parallelFor(units.size(), kUnitsPerJob, [this, &units](size_t, size_t begin, size_t end) {
+			for (size_t i = begin; i < end; ++i)
+			{
+				if (m_collisionFactState[i] == 3)
+				{
+					AIUpdateInterface *ai = units[i].ai;
+					m_collisionFacts[i] = ObjectCollide::pairFacts(*ai->getObject());
+					m_collisionFactState[i] = ai->isContained() ? 2 : 1; // 2: AIUpdateInterface::isContained
+				}
+			}
+		});
+	}
+	const auto factsOf = [&](int i) -> std::uint8_t { return m_collisionFactState[(size_t)i]; };
 	bool alliedPair = false;
 	for (size_t chunk = 0; chunk < chunkCount; ++chunk)
 	{
@@ -1159,6 +1400,17 @@ void AIWorld::processCollisions()
 			const CollisionUnit &a = units[(size_t)pair.first], &b = units[(size_t)pair.second];
 			++m_collisionPairs;
 			alliedPair = alliedPair || a.ai->adapter().getRelationship(b.ai->adapter()) != PATHFIND_ENEMIES;
+			if (filter)
+			{
+				const bool aContained = factsOf(pair.first) == 2, bContained = factsOf(pair.second) == 2;
+				const ObjectCollide::PairFacts &fa = m_collisionFacts[(size_t)pair.first], &fb = m_collisionFacts[(size_t)pair.second];
+				const bool moverInert = (aContained || fb.container != nullptr) && (bContained || fa.container != nullptr);
+				if (moverInert && ObjectCollide::pairIsInert(fa, fb))
+				{
+					++m_collisionPairsSkipped;
+					continue;
+				}
+			}
 			a.ai->onCollide(b.ai->adapter());
 			b.ai->onCollide(a.ai->adapter());
 			// lane HORDE-2: the collide modules of both objects (ZH Object::onCollide: SquishCollide, HordeMemberCollide, ...), the lower id first (inference, S-581)

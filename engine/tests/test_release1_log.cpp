@@ -8,19 +8,145 @@
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 using LogPrivacy::redact;
 using LogPrivacy::Rules;
 
-TEST_CASE("release1: the home folder becomes ~, the user name <user>")
+TEST_CASE("release1: shared diagnostics omit credentials and player content")
+{
+	const std::vector<std::string> fields = { "Authorization: Bearer synthetic value", "cookie: session=synthetic", "password=two words",
+		"access_token=synthetic", "refresh-token: synthetic", "sessionKey=synthetic", "api_key='two words'", "secret=synthetic",
+		"player_name=Fixture Player", "displayName=Fixture Player", "GAME ONLINE signed in as Fixture Player (guest)",
+		"GAME ONLINE chat Fixture Player: arbitrary file contents", "session key=synthetic", "authToken=synthetic",
+		"player name=Fixture Player", "GAME ONLINE remembered name Fixture Player: saved", "GAME ONLINE WALK games: Fixture Player" };
+	for (const auto &field : fields)
+	{
+		const auto clean = redact(field, {});
+		CHECK(clean.find(LogPrivacy::kOmitted) != std::string::npos);
+		for (const char *privateValue : { "synthetic", "two words", "Fixture Player", "arbitrary file contents" })
+			CHECK(clean.find(privateValue) == std::string::npos);
+		CHECK(redact(clean, {}) == clean);
+	}
+	CHECK(redact("ok\nAuthorization: synthetic\nend", {}) == std::string("ok\nAuthorization: ") + LogPrivacy::kOmitted + "\nend");
+	CHECK(redact("contact fixture@example.invalid at 192.0.2.10 or [2001:db8::10]", {}) == "contact <address> at <address> or [<address>]");
+	CHECK(redact("connect https://fixture.invalid/path?value=synthetic", {}) == "connect https://fixture.invalid/path?value=synthetic");
+	CHECK(redact("12:34:56 std::function", {}) == "12:34:56 std::function");
+	CHECK(redact("ERROR: token: synthetic; retry failed", {}) == std::string("ERROR: token: ") + LogPrivacy::kOmitted + "; retry failed");
+	CHECK(redact("response eyJmaXh0dXJlIjoiMSJ9.eyJmaXh0dXJlIjoyfQ.c3ludGhldGlj failed", {}) == std::string("response ") + LogPrivacy::kOmitted + " failed");
+	CHECK(redact("value=abcdefghijklmnopqrstuvwxyz0123456789", {}) == "value=abcdefghijklmnopqrstuvwxyz0123456789");
+}
+
+TEST_CASE("release1: hashes source paths parser diagnostics and labelled versions survive")
+{
+	for (const char *text : { "commit 0123456789abcdef0123456789abcdef01234567", "engine id abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd",
+		"engine/src/GameClient/AnimationSoundClientBehavior.cpp:322", "res://scripts/parser.gd:7 Unexpected token in expression",
+		"Unexpected token: '}'", "version 1.2.3.4", "Godot 4.7.2.0", "v1.2.3.4", "version 999.999.999.999" })
+		CHECK(redact(text, {}) == text);
+	CHECK(redact("version 1.2.3.4 peer 192.0.2.10 port 3000", {}) == "version 1.2.3.4 peer <address> port 3000");
+	CHECK(redact("peer=1.2.3.4", {}) == "peer=<address>");
+	CHECK(redact("peer 192.0.2.10.", {}) == "peer <address>.");
+	CHECK(redact("connect https://Fixture:synthetic@fixture.invalid/path", {}) == std::string("connect https://") + LogPrivacy::kOmitted + "@fixture.invalid/path");
+	CHECK(redact("https://fixture.invalid/log?access_token=synthetic&version=1.2.3.4", {}) == std::string("https://fixture.invalid/log?access_token=") + LogPrivacy::kOmitted + "&version=1.2.3.4");
+}
+
+TEST_CASE("release1: Godot error messages use code when rationale is empty and redact only private values")
+{
+	Rules rules;
+	rules.home = "/srv/players/Fixture Player";
+	rules.user = "Fixture Player";
+	for (const char *message : { "Index 7 is out of bounds (size = 2)", "push_error fixture", "push_warning fixture", "Unexpected token in expression" })
+		CHECK(LogPrivacy::errorMessage(message, "", rules) == message);
+	CHECK(LogPrivacy::errorMessage("Index 7", "Bounded error explanation", rules) == "Bounded error explanation");
+	CHECK(LogPrivacy::errorMessage("Load /srv/players/Fixture Player/log; token='synthetic'; retry failed", "", rules) ==
+		std::string("Load <user>/log; token='") + LogPrivacy::kOmitted + "'; retry failed");
+	const auto longMessage = LogPrivacy::errorMessage("Index out of bounds " + std::string(LogPrivacy::kMaxFieldBytes, 'x'), "", rules);
+	CHECK(longMessage == "Index out of bounds [truncated]");
+	CHECK(redact("SHADER ERROR: " + longMessage, rules) == "SHADER ERROR: " + longMessage);
+	const auto oneWord = LogPrivacy::errorMessage(std::string(LogPrivacy::kMaxFieldBytes + 1, 'x'), "", rules);
+	CHECK(oneWord == std::string(LogPrivacy::kMaxFieldBytes - 32, 'x') + " [truncated]");
+	CHECK(redact("ERROR: " + oneWord, rules) == "ERROR: " + oneWord);
+}
+
+TEST_CASE("release1: reports redact every synthetic profile path even without host environment")
+{
+	const std::string name = "Fixture Player";
+	Rules rules;
+	rules.home = "/srv/players/" + name;
+	rules.user = name;
+	const std::vector<std::string> paths = { rules.home + "/logs/crash.log", "/home/" + name + "/Games", "/Users/" + name + "/Library",
+		"C:\\Users\\" + name + "\\AppData", "d:/users/" + name + "/Games", "/media/" + name + "/Games" };
+	for (const auto &path : paths)
+	{
+		const auto report = redact("ERROR failed to load " + path + "\nusername=" + name, rules);
+		CHECK(report.find(name) == std::string::npos);
+		CHECK(report.find(rules.home) == std::string::npos);
+		CHECK(report.find("<user>") != std::string::npos);
+	}
+	CHECK(redact("/" "home/Fixture/Games", {}) == "<user>/Games");
+	CHECK(redact("C:/" "Users/Fixture/Games", {}) == "<user>/Games");
+}
+
+TEST_CASE("release1: maximum-sized locations cannot exhaust the privacy filter stack")
+{
+	for (const auto &prefix : std::vector<std::string>{ "https://", std::string("/") + "home/", "C:\\Users\\" })
+	{
+		const std::string text = prefix + std::string(LogPrivacy::kMaxFieldBytes - prefix.size(), 'x');
+		CHECK(redact(text, {}) == (prefix == "https://" ? text : "<user>"));
+	}
+	const std::string prefix = "2001:db8::1%";
+	CHECK(redact(prefix + std::string(LogPrivacy::kMaxFieldBytes - prefix.size(), 'x'), {}) == "<address>");
+}
+
+TEST_CASE("release1: diagnostic fields and whole inputs are bounded without a raw prefix")
+{
+	CHECK(redact(std::string(LogPrivacy::kMaxFieldBytes + 1, 'x') + "password=fixture", {}) == LogPrivacy::kOversized);
+	CHECK(redact(std::string(LogPrivacy::kMaxLogBytes + 1, 'x'), {}) == LogPrivacy::kOversized);
+	std::string boundary;
+	for (size_t i = 0; i < LogPrivacy::kMaxFieldBytes / 2; ++i)
+		boundary += "x ";
+	CHECK(redact(boundary, {}) == boundary);
+}
+
+TEST_CASE("release1: the session budget retains the head and recent records beyond multiple rotations")
+{
+	LogPrivacy::Budget budget;
+	std::FILE *file = std::tmpfile();
+	REQUIRE(file != nullptr);
+	const std::string header = "OpenBFME version 1.2.3.4 commit 0123456789abcdef0123456789abcdef01234567";
+	REQUIRE(budget.write(file, header, {}));
+	const std::string line(8000, 'x');
+	for (int i = 0; i < 400; ++i)
+	{
+		REQUIRE(budget.write(file, "record " + std::to_string(i) + " " + line, {}));
+		REQUIRE(budget.written <= LogPrivacy::kMaxLogBytes); // tolerance: the hard file-size cap must hold at every write, regardless of record boundaries.
+	}
+	REQUIRE(budget.write(file, "ERROR final crash /" "home/Fixture/log; session_key=synthetic", {}));
+	const auto snapshot = budget.snapshot();
+	CHECK(snapshot.find(header + "\n") == 0);
+	CHECK(snapshot.find("record 399 ") != std::string::npos);
+	CHECK(snapshot.find("record 100 ") == std::string::npos);
+	CHECK(snapshot.find("ERROR final crash <user>/log; session_key=") != std::string::npos);
+	CHECK(snapshot.find("synthetic") == std::string::npos);
+	CHECK(snapshot.size() == budget.written);
+	REQUIRE(std::fseek(file, 0, SEEK_END) == 0);
+	CHECK((size_t)std::ftell(file) == snapshot.size());
+	std::rewind(file);
+	std::string disk(snapshot.size(), '\0');
+	REQUIRE(std::fread(disk.data(), 1, disk.size(), file) == disk.size());
+	CHECK(disk == snapshot);
+	std::fclose(file);
+}
+
+TEST_CASE("release1: the home folder and user name become <user>")
 {
 	Rules r;
 	r.home = "/srv/players/tester";
 	r.user = "tester";
-	CHECK(redact("mount: /srv/players/tester/Games/RotWK/INI.big", r) == "mount: ~/Games/RotWK/INI.big");
-	CHECK(redact("user data /srv/players/tester/.local/share/godot/app_userdata/OpenBFME/logs", r) == "user data ~/.local/share/godot/app_userdata/OpenBFME/logs");
-	CHECK(redact("the home folder alone: /srv/players/tester", r) == "the home folder alone: ~");
-	CHECK(redact("\"/srv/players/tester\"", r) == "\"~\"");
+	CHECK(redact("mount: /srv/players/tester/Games/RotWK/INI.big", r) == "mount: <user>/Games/RotWK/INI.big");
+	CHECK(redact("user data /srv/players/tester/.local/share/godot/app_userdata/OpenBFME/logs", r) == "user data <user>/.local/share/godot/app_userdata/OpenBFME/logs");
+	CHECK(redact("the home folder alone: /srv/players/tester", r) == "the home folder alone: <user>");
+	CHECK(redact("\"/srv/players/tester\"", r) == "\"<user>\"");
 	// another user's folder that starts with the same letters is left alone; the name as a whole path component elsewhere is removed
 	CHECK(redact("/srv/players/testers/x", r) == "/srv/players/testers/x");
 	CHECK(redact("/run/media/tester/sdcard/RotWK", r) == "/run/media/<user>/sdcard/RotWK");
@@ -29,7 +155,7 @@ TEST_CASE("release1: the home folder becomes ~, the user name <user>")
 	CHECK(redact("testers and protester", r) == "testers and protester");
 	// several occurrences, a trailing separator in HOME
 	r.home = "/srv/players/tester/";
-	CHECK(redact("/srv/players/tester/a and /srv/players/tester/b", r) == "~/a and ~/b");
+	CHECK(redact("/srv/players/tester/a and /srv/players/tester/b", r) == "<user>/a and <user>/b");
 }
 
 TEST_CASE("release1: names end at any non-name character (review r1)")
@@ -37,9 +163,9 @@ TEST_CASE("release1: names end at any non-name character (review r1)")
 	Rules r;
 	r.home = "/srv/players/tester";
 	r.user = "tester";
-	CHECK(redact("home=/srv/players/tester;user=tester", r) == "home=~;user=<user>");
-	CHECK(redact("[home=/srv/players/tester]", r) == "[home=~]");
-	CHECK(redact("{\"home\":\"/srv/players/tester/x\"}", r) == "{\"home\":\"~/x\"}");
+	CHECK(redact("home=/srv/players/tester;user=tester", r) == "home=<user>;user=<user>");
+	CHECK(redact("[home=/srv/players/tester]", r) == "[home=<user>]");
+	CHECK(redact("{\"home\":\"/srv/players/tester/x\"}", r) == "{\"home\":\"<user>/x\"}");
 	CHECK(redact("username=tester&next", r) == "username=<user>&next");
 	// a longer path that merely contains the home is not the home (its user name component still goes)
 	CHECK(redact("/backup/srv/players/tester/a", r) == "/backup/srv/players/<user>/a");
@@ -55,7 +181,7 @@ TEST_CASE("release1: one- and two-character user names, everywhere they stand as
 	CHECK(redact("/mnt/a/private", r) == "/mnt/<user>/private");
 	CHECK(redact("~a/private", r) == "~<user>/private");
 	CHECK(redact("user:a", r) == "user:<user>");
-	CHECK(redact("/srv/a/x", r) == "~/x");
+	CHECK(redact("/srv/a/x", r) == "<user>/x");
 	// conservative (review r2): the word itself goes too; longer words that contain it stay
 	CHECK(redact("a unit has a sword, data/abc", r) == "<user> unit has <user> sword, data/abc");
 	r.user = "jo";
@@ -74,8 +200,8 @@ TEST_CASE("release1: Windows spellings, case-insensitive")
 	r.home = "C:\\Users\\Ann Smith";
 	r.user = "Ann Smith";
 	r.caseInsensitive = true;
-	CHECK(redact("C:\\Users\\Ann Smith\\AppData\\Roaming\\Godot\\app_userdata\\OpenBFME\\logs\\x.log", r) == "~\\AppData\\Roaming\\Godot\\app_userdata\\OpenBFME\\logs\\x.log");
-	CHECK(redact("c:/users/ann smith/AppData/Roaming", r) == "~/AppData/Roaming");
+	CHECK(redact("C:\\Users\\Ann Smith\\AppData\\Roaming\\Godot\\app_userdata\\OpenBFME\\logs\\x.log", r) == "<user>\\AppData\\Roaming\\Godot\\app_userdata\\OpenBFME\\logs\\x.log");
+	CHECK(redact("c:/users/ann smith/AppData/Roaming", r) == "<user>/AppData/Roaming");
 	CHECK(redact("D:\\Backups\\ANN SMITH\\RotWK", r) == "D:\\Backups\\<user>\\RotWK");
 	// a short user name wherever it is a token (review r2)
 	r.user = "a";
@@ -101,7 +227,7 @@ TEST_CASE("release1: a cut that never splits a name, the last text of a stream (
 	CHECK(LogPrivacy::redactFinal("user=tester", r) == "user=<user>");
 	CHECK(LogPrivacy::redactFinal("user=tes", r) == "user=\xE2\x80\xA6");
 	CHECK(LogPrivacy::redactFinal("path /srv/players/te", r) == "path \xE2\x80\xA6");
-	CHECK(LogPrivacy::redactFinal("bye /srv/players/tester", r) == "bye ~");
+	CHECK(LogPrivacy::redactFinal("bye /srv/players/tester", r) == "bye <user>");
 	CHECK(LogPrivacy::redactFinal("loading", r) == "loading");
 }
 

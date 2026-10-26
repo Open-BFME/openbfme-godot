@@ -6,6 +6,7 @@
 #endif
 
 #include "GameClient/AnimationSoundClientBehavior.h"
+#include "GameClient/BeaconClientUpdate.h"
 #include "GameClient/ClientBehaviorModules.h"
 #include "GameClient/SoundSelectorClientBehavior.h"
 
@@ -635,4 +636,5 @@ void ClientBehaviorModules::registerAll(ModuleFactory &modules)
 {
 	AnimationSoundClientBehavior::registerClass(modules);
 	SoundSelectorClientBehavior::registerClasses(modules); // lane DECOMP-2: the three sound selectors (S-701)
+	BeaconClientUpdate::registerClass(modules);            // lane CHAT-1: the multiplayer beacon's minimap pulse
 }

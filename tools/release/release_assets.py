@@ -7,7 +7,7 @@
 
 FILE is `gh api repos/<repo>/releases/<id>`'s answer. The release must have the tag, the draft and pre-release flags given, and exactly the
 release's assets (publish_release.sh's list: the archives the manifest names, four in format 2, two in format 3, lane ONEZIP-1; the
-checksum file, manifest.json and its signature; MACREL-1: with manifest-macos.json in the folder also the Mac package it names, the
+checksum file, manifest.json and its signature (SIGNKMS-1: manifest.json.sig and/or manifest.json.sig2, the ones in the folder); MACREL-1: with manifest-macos.json in the folder also the Mac package it names, the
 sidecar and its signature), each in state "uploaded" with the local file's size and SHA-256: the archives'
 digests come from the signed manifest.json (which publish_release.sh has verified against the archives and the key), the checksum file,
 manifest.json and manifest.json.sig are hashed here. An asset whose answer carries no "digest" is downloaded (`$GH api -H "Accept:
@@ -44,20 +44,29 @@ def expected(d: Path, version: str) -> dict[str, tuple[int, str]]:
             if a["name"] != asset_name(kind, version, platform):
                 raise SystemExit(f"release_assets: the manifest names {a['name']} for {kind} {platform}")
             out[a["name"]] = (a["size"], a["sha256"])
-    names = [f"SHA256SUMS-{version}.txt", "manifest.json", "manifest.json.sig"]
+    # SIGNKMS-1: a manifest's signature slots are the ones in the folder: X.sig (every launcher reads it) and X.sig2 (the KMS envelope
+    # signature, new launchers only); publish_release.sh requires at least one and checks each
+    names = [f"SHA256SUMS-{version}.txt", "manifest.json"] + sig_slots(d, "manifest.json")
     # MACREL-1: the separately signed Mac manifest and the Mac package it names (none: a release made with OPENBFME_RELEASE_SKIP_MAC=1
     # carries the no-entry manifest-macos.json); the archive's digest comes from that signed sidecar, as the others' from manifest.json
-    if (d / "manifest-macos.json").exists() or (d / "manifest-macos.json.sig").exists():
+    if any((d / n).exists() for n in ("manifest-macos.json", "manifest-macos.json.sig", "manifest-macos.json.sig2")):
         mac = json.loads((d / "manifest-macos.json").read_bytes())
         for platform, a in ((mac.get("assets") or {}).get("game") or {}).items():
             if platform != "macos-arm64" or a.get("name") != f"openbfme-{version}-macos-arm64.zip":
                 raise SystemExit(f"release_assets: manifest-macos.json names {a.get('name')!r} for {platform}")
             out[a["name"]] = (a["size"], a["sha256"])
-        names += ["manifest-macos.json", "manifest-macos.json.sig"]
+        names += ["manifest-macos.json"] + sig_slots(d, "manifest-macos.json")
     for name in names:
         data = (d / name).read_bytes()
         out[name] = (len(data), hashlib.sha256(data).hexdigest())
     return out
+
+
+def sig_slots(d: Path, name: str) -> list[str]:
+    """the signature files of `name` in the folder: name.sig (also when missing: the release's classic slot, so a folder without any
+    signature still names it and fails), then name.sig2 when present"""
+    return [f"{name}.sig"] * ((d / f"{name}.sig").exists() or not (d / f"{name}.sig2").exists()) + \
+        [f"{name}.sig2"] * (d / f"{name}.sig2").exists()
 
 
 def download_digest(repo: str, asset_id: int) -> str:

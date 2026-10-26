@@ -186,7 +186,90 @@ void HordeContainCore::buildSlots(bool fromScratch)
 			}
 		}
 	}
+	// the slots no rank owns (RW 0x877669: a record of rank 0 whose two coordinate copies are both the position, appended without a free-list entry):
+	// RW 0x877A17 .. 0x877A34, with LeadersAllowed (data + 0x1F4), one at LeaderPosition (+ 0x200), its index kept at H + 0x268 (not kept here: nothing
+	// ported reads it; the 2.01 data sets no LeadersAllowed); RW 0x8776BB, with BannerCarriersAllowed (+ 0x218), one per BannerCarrierPosition entry (+ 0x20C)
+	auto append = [this](float x, float y) {
+		Slot s;
+		s.x = x;
+		s.y = y;
+		s.x2 = x;
+		s.y2 = y;
+		m_slots.push_back(s);
+	};
+	if (!m_data.m_leadersAllowed.empty())
+	{
+		append(m_data.m_leaderPosition.x, m_data.m_leaderPosition.y);
+	}
+	if (!m_data.m_bannerCarriersAllowed.empty())
+	{
+		for (const BannerCarrierPositionEntry &e : m_data.m_bannerCarrierPosition)
+		{
+			append(e.x, e.y);
+		}
+	}
+	// RW 0x86C4EA: the formation is centred on the horde. The reference is the first slot of the first rank whose UnitType is a MACHINE (RW 0x6D1305,
+	// ThingTemplate + 0x109 bit 3), else the mean of every slot, the leader's and the banner carriers' included; it is taken from both coordinate copies
+	// (the sums in slot order, x + sum; then times 1 / n). Measured in RotWK (the Horde Spacing Lab of bfme2-map-studio, updateGoal RW 0x8E24D3 traced):
+	// a GondorArcherHorde's members reserve their goals at X 17.5 / -2.5 / -22.5 from the horde's, its ranks being X 50 / 30 / 10 and its banner
+	// carrier X 70 (the mean of 16 slots, 32.5); an ElvenMirkwoodArcherHorde's at 7.73 / 2.73 / -12.27 (ranks 0 / 20 / 15, banner 40: 11 slots, 12.27)
+	int reference = -1;
+	{
+		int before = 0;
+		for (const RankInfo &r : m_data.m_rankInfo)
+		{
+			if (m_isMachine && m_isMachine(r.unitType))
+			{
+				reference = before;
+				break;
+			}
+			before += (int)r.positions.size();
+		}
+	}
+	float cx = 0.0f, cy = 0.0f;
+	int n = 0;
+	for (size_t i = 0; i < m_slots.size(); ++i)
+	{
+		cx = SimMath::addf32(m_slots[i].x, cx);
+		cy = SimMath::addf32(m_slots[i].y, cy);
+		++n;
+		if ((int)i == reference)
+		{
+			cx = m_slots[i].x;
+			cy = m_slots[i].y;
+			n = 1;
+			break;
+		}
+	}
+	if (n != 0)
+	{
+		const float inv = SimMath::divf32(1.0f, (float)n);
+		cx = SimMath::mulf32(cx, inv);
+		cy = SimMath::mulf32(cy, inv);
+	}
+	for (Slot &s : m_slots)
+	{
+		s.x = SimMath::subf32(s.x, cx);
+		s.y = SimMath::subf32(s.y, cy);
+		s.x2 = s.x;
+		s.y2 = s.y;
+	}
 	m_built = true;
+}
+
+int HordeContainCore::bannerSlot(size_t entry) const
+{
+	if (m_data.m_bannerCarriersAllowed.empty() || entry >= m_data.m_bannerCarrierPosition.size())
+	{
+		return -1;
+	}
+	size_t index = m_data.m_leadersAllowed.empty() ? 0 : 1;
+	for (const RankInfo &r : m_data.m_rankInfo)
+	{
+		index += r.positions.size();
+	}
+	index += entry;
+	return index < m_slots.size() ? (int)index : -1;
 }
 
 // RW 0x873F30
@@ -210,6 +293,19 @@ int HordeContainCore::addMember(ObjectId id, const std::string &templateName)
 		}
 	}
 	return -1;
+}
+
+bool HordeContainCore::hasFreeSlotFor(const std::string &templateName) const
+{
+	for (int idx : m_freeList)
+	{
+		const RankInfo *rank = findRank(m_slots[(size_t)idx].rank);
+		if (rank && m_matcher(rank->unitType, templateName))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 // RW 0x87370B
@@ -366,8 +462,8 @@ Coord3D HordeContainCore::getSlotWorldPos(ObjectId member, const Placement &owne
 			ox = m_slots[(size_t)idx].x;
 			oy = m_slots[(size_t)idx].y;
 		}
-		const float c = SimMath::cosf32(owner.angle);
-		const float s = SimMath::sinf32(owner.angle);
+		const float c = owner.hasTrig ? owner.cosAngle : SimMath::cosf32(owner.angle);
+		const float s = owner.hasTrig ? owner.sinAngle : SimMath::sinf32(owner.angle);
 		const float rx = SimMath::subf32(SimMath::mulf32(ox, c), SimMath::mulf32(oy, s));
 		const float ry = SimMath::addf32(SimMath::mulf32(ox, s), SimMath::mulf32(oy, c));
 		if (outAngle)
@@ -384,8 +480,8 @@ Coord3D HordeContainCore::getSlotWorldPos(ObjectId member, const Placement &owne
 Coord3D HordeContainCore::getSlotWorldPosByIndex(int slot, const Placement &owner) const
 {
 	const Slot &s = m_slots.at((size_t)slot);
-	const float c = SimMath::cosf32(owner.angle);
-	const float sn = SimMath::sinf32(owner.angle);
+	const float c = owner.hasTrig ? owner.cosAngle : SimMath::cosf32(owner.angle);
+	const float sn = owner.hasTrig ? owner.sinAngle : SimMath::sinf32(owner.angle);
 	const float rx = SimMath::subf32(SimMath::mulf32(s.x2, c), SimMath::mulf32(s.y2, sn));
 	const float ry = SimMath::addf32(SimMath::mulf32(s.x2, sn), SimMath::mulf32(s.y2, c));
 	return Coord3D{ SimMath::addf32(owner.position.x, rx), SimMath::addf32(ry, owner.position.y), owner.position.z };
@@ -422,7 +518,7 @@ std::vector<std::string> HordeContainCore::unverified() const
 		out.push_back("S-082: slot leader links (record +0x18) are built but no reader was found in the RotWK binary; the formation does not use them");
 	}
 	out.push_back("S-082: slot records keep two coordinate copies (+0x4 / +0x8 and +0xC / +0x10); the member form of getSlotWorldPos reads the first, the by-index form the second; "
-				  "the writer that makes them differ is unknown, and NarrowPassageScale (RotWK offset scaling) is not applied");
+				  "the centring (RW 0x86C4EA) writes both alike, the writer that makes them differ is unknown, and NarrowPassageScale (RotWK offset scaling) is not applied");
 	return out;
 }
 

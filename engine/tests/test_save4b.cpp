@@ -1028,6 +1028,42 @@ TEST_CASE("save4b links refused (review r2): a contradictory link, a rider in tw
 	}
 }
 
+TEST_CASE("save4b links refused: a load refused at its links leaves every contain listing live objects only (the creation-only horde members a load "
+		  "removes are not freed while listed; ASan pins the use-after-free), and the game then loads the good snapshot as saved")
+{
+	S4World saved(kLinkObjects);
+	LinkGame g = playLinks(saved);
+	runFrames(*saved.logic, 2);
+	const std::vector<std::uint8_t> good = saveLinks(saved);
+	const std::vector<ObjectRecord> before = objectRecords(*saved.logic);
+	g.members[0]->friend_setContainedBy(nullptr);
+	const std::vector<std::uint8_t> bad = saveLinks(saved);
+	g.members[0]->friend_setContainedBy(g.horde);
+	S4World other(kLinkObjects);
+	CHECK(loadError(other, linkTokens(), bad) == "block 'obfme:Objects': the snapshot's object " + std::to_string(g.horde->getID()) + " lists rider "
+		+ std::to_string(g.members[0]->getID()) + ", whose container is none");
+	size_t contains = 0;
+	for (Object *o = other.logic->getFirstObject(); o; o = o->getNextObject())
+	{
+		const ContainModuleInterface *c = o->getContain();
+		if (!c || !c->getContainedItemsList())
+		{
+			continue;
+		}
+		++contains;
+		for (Object *r : *c->getContainedItemsList())
+		{
+			const ObjectID id = r->getID();
+			CHECK(other.logic->findObjectByID(id) == r);
+			CHECK(r->getContainedBy() == o);
+		}
+	}
+	CHECK(contains == 4); // the horde, the two wagons and the tunnel
+	CHECK(loadError(other, linkTokens(), good) == "(loaded)");
+	CHECK(objectRecords(*other.logic) == before);
+	CHECK(saveLinks(other) == good);
+}
+
 TEST_CASE("save4b closed sets (review r2): a damage record's damage and death types and a horde's free slot outside their sets are refused by name, the "
 		  "records and the slots unchanged")
 {

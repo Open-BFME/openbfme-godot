@@ -11,10 +11,12 @@ set(OPENBFME_ONLINEHUB1_TESTS
     tests/test_onlinehub1_platform.cpp
     tests/test_onlinehub1_screens.cpp)
 
-# called once openbfme_core and openbfme_tests exist
+# called once openbfme_core and the optional openbfme_tests exist
 macro(openbfme_onlinehub1_targets)
     target_sources(openbfme_core PRIVATE ${OPENBFME_ONLINEHUB1_CLIENT_SOURCES})
-    target_sources(openbfme_tests PRIVATE ${OPENBFME_ONLINEHUB1_TESTS})
-    get_filename_component(OPENBFME_FAKE_PLATFORM "${CMAKE_CURRENT_SOURCE_DIR}/../tools/platform_fake/fake_server.py" ABSOLUTE)
-    target_compile_definitions(openbfme_tests PRIVATE OPENBFME_FAKE_PLATFORM="${OPENBFME_FAKE_PLATFORM}")
+    if(TARGET openbfme_tests)
+        target_sources(openbfme_tests PRIVATE ${OPENBFME_ONLINEHUB1_TESTS})
+        get_filename_component(OPENBFME_FAKE_PLATFORM "${CMAKE_CURRENT_SOURCE_DIR}/../tools/platform_fake/fake_server.py" ABSOLUTE)
+        target_compile_definitions(openbfme_tests PRIVATE OPENBFME_FAKE_PLATFORM="${OPENBFME_FAKE_PLATFORM}")
+    endif()
 endmacro()

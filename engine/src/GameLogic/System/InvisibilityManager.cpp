@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GameLogic/System/InvisibilityManager.h for the target facts, the call sites and what is inference.
 
+#include "Common/Upgrade.h"
 #include "GameLogic/System/InvisibilityManager.h"
 
 #include "GameLogic/Map/TerrainTrees.h"
@@ -194,8 +195,9 @@ void InvisibilityNugget::crc(StateHasher &h) const
 	}
 	h.addFloat(detectionRange);
 	h.addI32(invisibilityType);
-	for (std::uint32_t w : ignoreTreeCheckUpgrades.words)
+	for (unsigned i = 0; i < UpgradeMaskType::activeWords(); ++i) // lane MODS-3: retail's 0x24 words unless the data has more upgrades
 	{
+		const std::uint32_t w = ignoreTreeCheckUpgrades.words[i];
 		h.addU32(w);
 	}
 	h.addU32(options);
@@ -987,7 +989,7 @@ void InvisibilityNugget::xfer(Xfer &x)
 	SnapshotXfer::maskWords(x, forbiddenWeaponConditions, SnapshotXfer::weaponConditionCount(), "an invisibility nugget's forbidden weapon conditions", "the weapon set conditions");
 	x.xferReal(&detectionRange);
 	SnapshotXfer::enumIn(x, invisibilityType, STEALTH, NONE, "an invisibility nugget's type");
-	SnapshotXfer::words(x, ignoreTreeCheckUpgrades.words);
+	xferUpgradeMask(x, ignoreTreeCheckUpgrades, "an invisibility entry's IgnoreTreeCheckUpgrades"); // lane MODS-3
 	if (x.isLoading())
 	{
 		checkLoadedUpgradeMask(ignoreTreeCheckUpgrades, "an invisibility nugget's tree check upgrades");

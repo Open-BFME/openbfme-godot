@@ -1552,8 +1552,9 @@ TEST_CASE("ownerfix3 retail: the production count on the barracks' bubbles and t
 		return;
 	}
 	SharedWorld &s = shared();
-	Hud6Rig h(s, "FactionMen");
 	FixedMetrics metrics;
+	Hud6Rig h(s, "FactionMen");
+	auto context = h.hud->enterContext();
 	h.hud->setFontMetrics(&metrics);
 	h.frames(10);
 	h.rig.local->getMoney()->deposit(20000, false);

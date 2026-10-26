@@ -2,11 +2,14 @@
 // See GodotDevice/GodotRelease.h (lane RELEASE-1).
 
 #include "GodotDevice/GodotRelease.h"
+#include "Common/PathIO.h"
 
 #include "Common/BuildVersion.h"
+#include "Common/Recorder.h"
 #include "Common/ConsoleFilter.h"
 #include "Common/InstallLocator.h"
 #include "Common/WindowsCrashDump.h"
+#include "GameNetwork/JoinBuild.h"
 #include "GameNetwork/ProfileIdentity.h"
 
 #include <godot_cpp/classes/project_settings.hpp>
@@ -15,6 +18,7 @@
 #include <godot_cpp/variant/packed_string_array.hpp>
 
 #include <chrono>
+#include <algorithm>
 #include <filesystem>
 #include <thread>
 
@@ -88,11 +92,41 @@ void ReleaseInfo::_bind_methods()
 	ClassDB::bind_method(D_METHOD("display_line"), &ReleaseInfo::display_line);
 	ClassDB::bind_method(D_METHOD("engine_id"), &ReleaseInfo::engine_id);
 	ClassDB::bind_method(D_METHOD("build_record"), &ReleaseInfo::build_record);
+	ClassDB::bind_method(D_METHOD("inspect_replay", "path"), &ReleaseInfo::inspect_replay);
 	ClassDB::bind_method(D_METHOD("redact", "text"), &ReleaseInfo::redact);
+	ClassDB::bind_method(D_METHOD("join_refusal_text", "mine", "host"), &ReleaseInfo::join_refusal_text);
+	ClassDB::bind_method(D_METHOD("join_details_text", "mine", "mine_profile", "host", "host_profile"), &ReleaseInfo::join_details_text);
 	ClassDB::bind_method(D_METHOD("process_alive", "pid"), &ReleaseInfo::process_alive);
 	ClassDB::bind_method(D_METHOD("crash_test"), &ReleaseInfo::crash_test);
 	ClassDB::bind_method(D_METHOD("crash_test_worker"), &ReleaseInfo::crash_test_worker);
 	ClassDB::bind_method(D_METHOD("install_crash_handler"), &ReleaseInfo::install_crash_handler);
+}
+
+namespace
+{
+JoinBuild::Build joinBuildOf(const Dictionary &d)
+{
+	JoinBuild::Build b;
+	b.version = String(d.get("version", String())).utf8().get_data();
+	b.date = String(d.get("date", String())).utf8().get_data();
+	b.platform = String(d.get("platform", String())).utf8().get_data();
+	const Variant official = d.get("official", Variant());
+	if (official.get_type() == Variant::BOOL)
+	{
+		b.official = bool(official) ? 1 : 0;
+	}
+	return b;
+}
+} // namespace
+
+String ReleaseInfo::join_refusal_text(const Dictionary &mine, const Dictionary &host) const
+{
+	return String::utf8(JoinBuild::refusalText(joinBuildOf(mine), joinBuildOf(host)).c_str());
+}
+
+String ReleaseInfo::join_details_text(const Dictionary &mine, const String &mine_profile, const Dictionary &host, const String &host_profile) const
+{
+	return String::utf8(JoinBuild::detailsText(joinBuildOf(mine), mine_profile.utf8().get_data(), joinBuildOf(host), host_profile.utf8().get_data()).c_str());
 }
 
 String ReleaseInfo::version() const
@@ -108,6 +142,18 @@ String ReleaseInfo::commit() const
 String ReleaseInfo::build_date() const
 {
 	return String(BuildVersion::kBuildDate);
+}
+
+Dictionary ReleaseInfo::inspect_replay(const String &path) const
+{
+	ReplayFile file;
+	std::string error;
+	Dictionary result;
+	result["ok"] = ReplayFile::load(toNative(path), file, &error);
+	result["error"] = toGodot(error);
+	result["version"] = toGodot(file.header.buildVersion);
+	result["commit"] = toGodot(file.header.buildCommit);
+	return result;
 }
 
 String ReleaseInfo::version_line() const
@@ -211,9 +257,11 @@ bool SessionLogger::open(const String &path)
 		m_file = nullptr;
 	}
 	m_rules = LogPrivacy::hostRules();
+	m_budget = {};
+	m_crashed = false;
 	const std::string native = toNative(ProjectSettings::get_singleton()->globalize_path(path));
 	std::error_code ec;
-	std::filesystem::path p = std::filesystem::u8path(native);
+	std::filesystem::path p = PathIO::native(native);
 	if (p.has_parent_path())
 		std::filesystem::create_directories(p.parent_path(), ec);
 #ifdef _WIN32
@@ -228,9 +276,13 @@ bool SessionLogger::open(const String &path)
 	}
 	m_path = path;
 	m_error = String();
-	const std::string head = BuildVersion::versionLine() + ", commit " + BuildVersion::kCommit + ", engine id " + ProfileIdentity::buildId() + "\n";
-	std::fwrite(head.data(), 1, head.size(), m_file);
-	std::fflush(m_file);
+	if (!m_budget.write(m_file, BuildVersion::versionLine() + ", commit " + BuildVersion::kCommit + ", engine id " + ProfileIdentity::buildId(), m_rules))
+	{
+		std::fclose(m_file);
+		m_file = nullptr;
+		m_error = "session log write failed";
+		return false;
+	}
 	return true;
 }
 
@@ -253,11 +305,18 @@ bool SessionLogger::is_open() const
 
 void SessionLogger::writeRaw(const std::string &utf8)
 {
+	static thread_local bool writing = false;
+	if (writing)
+		return;
+	writing = true;
+	struct Reset { bool &value; ~Reset() { value = false; } } reset{writing};
 	// called from any thread (Godot's loggers are), and from the crash handler: a crash while another thread held the lock must not hang
 	// the dump, so the lock is tried for at most 200 ms. One write + flush per message keeps lines whole and on disk.
 	std::unique_lock<std::mutex> lock(m_mutex, std::defer_lock);
 	for (int i = 0; i < 200 && !lock.try_lock(); ++i)
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	if (!lock.owns_lock())
+		return;
 	// Godot's crash handler (CrashHandler::handle_crash) starts its dump with this line; from then on the console gets every message directly
 	// (ConsoleFilter::crashWrite), the filter thread may not run again before the process dies
 	if (!m_crashed && utf8.find("Program crashed with signal") != std::string::npos)
@@ -266,11 +325,12 @@ void SessionLogger::writeRaw(const std::string &utf8)
 		ConsoleFilter::crashWrite(utf8);
 	if (!m_file)
 		return;
-	const std::string clean = LogPrivacy::redact(utf8, m_rules);
-	std::fwrite(clean.data(), 1, clean.size(), m_file);
-	if (clean.empty() || clean.back() != '\n')
-		std::fputc('\n', m_file);
-	std::fflush(m_file);
+	if (!m_budget.write(m_file, utf8, m_rules))
+	{
+		std::fclose(m_file);
+		m_file = nullptr;
+		m_error = "session log write failed";
+	}
 }
 
 bool SessionLogger::filter_console()
@@ -300,12 +360,14 @@ void SessionLogger::_log_error(const String &p_function, const String &p_file, i
 	// Logger.ErrorType: 0 error, 1 warning, 2 script error, 3 shader error (the prefixes Godot's own log uses)
 	static const char *const kinds[] = { "ERROR", "WARNING", "SCRIPT ERROR", "SHADER ERROR" };
 	const char *kind = p_error_type >= 0 && p_error_type < 4 ? kinds[p_error_type] : "ERROR";
-	String text = String(kind) + ": " + (p_rationale.is_empty() ? p_code : p_rationale) + "\n   at: " + p_function + " (" + p_file + ":" + String::num_int64(p_line) + ")";
-	for (int64_t i = 0; i < p_script_backtraces.size(); ++i)
+	const auto field = [](const String &value, int64_t limit) { return value.length() > limit ? String(LogPrivacy::kOversized) : value; };
+	String text = String(kind) + ": " + toGodot(LogPrivacy::errorMessage(toNative(p_code.left(LogPrivacy::kMaxFieldBytes + 1)), toNative(p_rationale.left(LogPrivacy::kMaxFieldBytes + 1)), m_rules)) + "\n   at: " + field(p_function, 1024) + " (" + field(p_file, 4096) + ":" + String::num_int64(p_line) + ")";
+	for (int64_t i = 0; i < std::min<int64_t>(p_script_backtraces.size(), 16); ++i)
 	{
 		Ref<ScriptBacktrace> bt = p_script_backtraces[i];
-		if (bt.is_valid() && !bt->is_empty())
-			text += "\n" + bt->format(3, 4);
+		if (bt.is_valid())
+			for (int32_t frame = 0; frame < std::min<int32_t>(bt->get_frame_count(), 32); ++frame)
+				text += "\n   at: " + field(bt->get_frame_function(frame), 1024) + " (" + field(bt->get_frame_file(frame), 4096) + ":" + String::num_int64(bt->get_frame_line(frame)) + ")";
 	}
 	writeRaw(toNative(text));
 }
@@ -341,7 +403,7 @@ String InstallSetup::downloaded_problem() const
 {
 	const std::string marker = downloadedMarker();
 	std::error_code ec;
-	if (!std::filesystem::exists(std::filesystem::u8path(marker), ec))
+	if (!std::filesystem::exists(PathIO::native(marker), ec))
 		return String();
 	InstallLocator::Downloaded downloaded;
 	std::string why;

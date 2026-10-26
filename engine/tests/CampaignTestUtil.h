@@ -84,7 +84,23 @@ struct Mission
 		const bool *f = engine().findFlag(q);
 		return f && *f;
 	}
-	Object *unit(const std::string &n) { return engine().getUnitNamed(n); }
+	// a named unit, or else an object reference of that name some side's script set (SET_REF_TO_..., NAMED_BASE_UNPACK: RW 0x608397, keyed by
+	// (side, name)); the test reads it outside every script, where getUnitNamed only sees side "" (lane MODS-3)
+	Object *unit(const std::string &n)
+	{
+		if (Object *o = engine().getUnitNamed(n))
+		{
+			return o;
+		}
+		for (const auto &r : engine().references())
+		{
+			if (r.first.second == n)
+			{
+				return game->logic().findObjectByID(r.second);
+			}
+		}
+		return nullptr;
+	}
 	Coord3D centreOf(const std::string &trigger)
 	{
 		const TriggerArea *t = engine().findTrigger(trigger);

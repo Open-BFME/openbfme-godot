@@ -37,6 +37,9 @@
 // TheParticleSystemManager. Cinematic paths are excluded when -cinematics is off
 // (RW 0x5B4C25-0x5B4C42, confirmed in the Sol review).
 
+#include "Common/ModEngineFeatures.h"
+#include "Common/Science.h"
+#include "Common/INIException.h"
 #include "Common/SubsystemLegend.h"
 #include "Common/INI.h"
 #include "Common/ArchiveFileSystem.h"
@@ -171,6 +174,19 @@ void RunSubsystemIniLoad(SubsystemLegend &legend, INI &ini, const SubsystemLoadO
 		{
 			legend.loadIniFilesFromLegend(step.name, ini, options, &report);
 			report.subsystemsLoaded.push_back(step.name);
+			// lane MODS-3, edain-unchained.science-prereqs: the hook at RW 0x63B223 (after TheScienceStore's INI load) checks the deferred
+			// PrerequisiteSciences names (0xEE44CD -> 0xEE4452)
+			if (step.name == std::string("TheScienceStore") && ModEngineFeatures::has(ModEngineFeature::EdainUnchainedSciencePrereqs) && TheScienceStore)
+			{
+				try
+				{
+					TheScienceStore->validateDeferredPrerequisites();
+				}
+				catch (const INIException &e)
+				{
+					report.errors.push_back({ "TheScienceStore", e.code(), e.what() });
+				}
+			}
 		}
 		for (const char *extra : step.extraFiles)
 		{

@@ -21,17 +21,25 @@ buildings until first seen (RW 0x68EDD0). The 27-frame window covers the lockste
 shows behind. Allied vision and revealer powers need no special case: they look into the player's own cells. Remembered buildings (seen once, drawn as
 a ghost in fog) are never flagged.
 
-Bands, per player: events within 30 s of each other are one encounter. `alert` = at least 3 encounters at confidence >= 0.9, the first and last at
+Bands, per player: events within 30 s of an encounter's first event are one encounter (not a sliding gap between adjacent events). `alert` = at least 3 encounters at confidence >= 0.9, the first and last at
 least 2 minutes apart; `review` = any encounter; `none`; `abstained` = the game cannot be judged. The whole game abstains when the replay lost a
 command, has no recorded hashes, starts from a save, or the re-simulation does not reproduce the players' own recorded hashes (`crc_parity`); a relay
 log whose players' CRCs disagree (a desync) or that is incomplete abstains too (`fog_check.py run`). A replay without an end record (every relay
 log's, S-3710) is judged up to its last recorded hash: every judged order lies before a state the players' own CRCs confirm.
 
-Coverage limits: a map hacker who only looks, and clicks things once they are visible, leaves no D1 trace (the statistical detectors D2-D5 are for that);
+Coverage limits: a map hacker who only looks, and clicks things once they are visible, leaves no D1 trace. D5 below checks input rate, not passive looking;
 position orders (move, attack-move, spells at a location) are not judged.
 
 Selections count too (owner, 2026-10-21): OpenBFME's client sends the selection of enemy objects over the network, and it can only pick what it
 draws, so a selection (`MSG_CREATE_SELECTED_GROUP` and its forms) naming an enemy the player could not see is judged like an order on it.
+
+## D2: view focus (client-reported, supporting only)
+
+`engine/src/GameNetwork/ViewChecks.h`: the game reports each player's view twice a second (the camera's look-at point and the ground under the pointer,
+`Network::submitView`) on the relay's log-only stream: the relay logs it, no other player receives it, it is no simulation input; the replay keeps it
+(version 8 VIEW records). `hover_hidden`: the pointer rests for at least 3 s (15 frames) within 30 units of an enemy hidden from the player (a unit in
+fog, a building never seen, a stealthed unit) that the player had not seen in the 10 s before. Band `review` at most: a modified client can report
+anything or nothing (`views` counts what a player reported; D7 says whether its input was signed), and a pointer can rest anywhere by chance.
 
 ## D5: input rate ("macro detector", informational)
 
@@ -50,17 +58,44 @@ D5 and D6 run in the same re-simulation as D1, under the same abstain rules, and
 `D6-command-integrity`; D5 events `{frame, time_s, command, count, start_frame, end_frame, encounter}`, players add `commands_total`, `peak_5s`,
 `peak_frame`; D6 events `{frame, time_s, command, reason, target_id, argument, encounter}`, players add `commands_total`).
 
+## D7: packet integrity (relay-observed)
+
+The relay keeps, per slot, what it received and refused (INPUT records, relay log version 4, kind 7: RelayCore.h "u8 7 INPUT"); `openbfme_peer --relay-log
+... --packet-check d7.json` reports it: `input` (`signed` / `plain` / `mixed`), the counts, band `review` when anything was refused for the slot
+(datagrams speaking for another slot, malformed datagrams, and, with the relay's packet authentication, wrong tags, replays and unauthenticated data
+from an authenticated slot). The authentication itself is the relay lane's (AUTH-1: every relay datagram tagged in both directions, keys derived from
+the START's `session_key`, RelayProtocol.h sessionKey); it fills the INPUT record's verified / refused counts in this layout. Until it is deployed,
+every slot's data counts as `plain`.
+
+A game a previous release opened (its version-3 HELLO) has a version-2 relay log, which that release's clients read; its INPUT records go to a
+sidecar next to it (`<log>.input`, RelayCore.h "INPUT sidecar"), which `--relay-log` reads when present. A player authenticating in such a game is
+an anomaly (honest games never mix releases: a current participant can send its own ticket in a version-3 HELLO first to keep its INPUT records out
+of the log): the report's top-level `anomaly` says so and the slot whose HELLO opened the game gets band `review`, with the same text in its
+`anomaly`. The relay's uploader posts the sidecar after its log (`/v1/relay/logs/<id>/input`, stored by the lobby next to the log); a lobby
+without that route keeps refusing it, the uploader keeps both files and retries, and a check of a log without its sidecar abstains as before.
+
 ## The automatic check
 
 `integrity_check.py` is the program to run (or `openbfme-integrity.service` / `.timer`, every 5 minutes, on a host with the game files):
 
+Linux command example, from the repository root with Python 3, a built
+`openbfme_peer`, `ROTWK_INSTALL` / `BFME2_INSTALL`, and the named local game
+records; set `GAME_ID` to that game's 16-hex ID. Evidence rendering also needs
+ffmpeg (or pass `--no-render`):
+
+```sh
+python3 tools/integrity/integrity_check.py game --peer engine/build/openbfme_peer --relay-log G.obfmerlog --online-start G.start.json --game-id "$GAME_ID" --out-dir DIR
 ```
-python3 tools/integrity/integrity_check.py game --peer engine/build/openbfme_peer --relay-log G.obfmerlog --online-start G.start.json --game-id ID --out-dir DIR
+
+Watch-mode usage sketch (parentheses/brackets show alternatives, not shell syntax;
+posting additionally needs an operator-provided intake URL and key file):
+
+```text
 python3 tools/integrity/integrity_check.py watch --once (--peer PEER | --peers DIR) --root ROOT (--incoming LOGDIR | --lobby URL --read-key-file K) [--url INTAKE --key-file K]
 ```
 
-One game: `DIR/game.replay` (the whole game, kept for the admins to watch in OpenBFME), `d1.json`, `d5.json`, `d6.json`, `summary.json` /
-`summary.txt`,
+One game: `DIR/game.replay` (the whole game with the players' views, kept for the admins to watch in OpenBFME), `d1.json`, `d2.json`, `d5.json`,
+`d6.json`, for a relay game `d7.json` (packet integrity), `summary.json` / `summary.txt`,
 and for every player D1 flags `evidence/d1-slot<N>.png` / `.mp4`. `watch` does that for every finished game not checked yet (a relay log directory, or
 the lobby's worker read routes) and posts the findings of the detectors the intake takes (`--detectors`, default D1).
 
@@ -72,7 +107,10 @@ release's peer has no D5 / D6: their reports are then absent); D1 is the minimum
 
 ### Running it
 
-```
+Usage sketches for the same Linux build and prerequisites; replace the uppercase
+arguments, and do not type brackets. Posting is an operator action, not a local test:
+
+```text
 openbfme_peer --rotwk DIR --bfme2 DIR --replay GAME.replay --fog-check report.json [--game-id ID]
 python3 tools/integrity/fog_check.py run --peer engine/build/openbfme_peer --relay-log GAME.obfmerlog --online-start START.json --game-id ID --out report.json
 python3 tools/integrity/fog_check.py findings report.json [--post URL --key-file KEY]

@@ -427,14 +427,17 @@ TEST_CASE("catalog oracle: scanning the BFME2 1.06 archives alone reproduces ret
 	CHECK(c.WinnerOtherFile == 0);
 	CHECK(c.WinnerSameFile == 39855);
 	CHECK(c.WinnerMissing == 19);
-	CHECK(c.WinnerExact == 39694);
+	// lane MODS-2 (6e5bb64a4): RotWK's startup order (RW 0xA17FB0: case-insensitive name order, the first mounted wins) picks, for the 11 files w3d.big
+	// copies, the copy retail's asset.dat indexed: every winner of a present, valid file now matches the oracle (was: 39,694 exact; 7 offset past the
+	// file, 99 no chunk at the offset, 55 length differs, all of them those copies)
+	CHECK(c.WinnerExact == 39855);
 	CHECK(catalog.Canonical_Ties() == 0);
-	CHECK(c.Match == 39694);
+	CHECK(c.Match == 39855);
 	CHECK(c.FileFailedValidation == 10); // the 7 corrupt files of spec 2.3 hold 10 oracle entries; skipped whole, fail closed
 	CHECK(c.FileAbsent == 9);
-	CHECK(c.OffsetOutOfRange == 7);
-	CHECK(c.NoChunkAtOffset == 99);
-	CHECK(c.LengthDiffers == 55);
+	CHECK(c.OffsetOutOfRange == 0);
+	CHECK(c.NoChunkAtOffset == 0);
+	CHECK(c.LengthDiffers == 0);
 	// the scanner found no malformed top-level chunk in any BFME2 file except the corrupt ones (spec section 2.3)
 	CHECK(catalog.Faults().size() <= 7);
 }

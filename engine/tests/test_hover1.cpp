@@ -104,6 +104,33 @@ TEST_CASE("hover1 simple help: the title loses its '&', the two strings wrap at 
 	CHECK(only.setWidthAndComputeHeight(400, settings, 1.0f, 1.0f, 1.0f, metrics) == 20);
 }
 
+TEST_CASE("localized text: command button shortcut templates use typed text")
+{
+	MapText source;
+	CommandButtonHelp::Text text;
+	text.name = u"&Hero";
+	struct Case { const char16_t *pattern; const char *expected; };
+	for (const Case &c : { Case{ u"Shortcut: %s", "Shortcut: H" }, Case{ u"%s", "H" }, Case{ u"%n", "%n" }, Case{ u"%x", "%x" },
+		Case{ u"%p", "%p" }, Case{ u"%999999d", "%999999d" }, Case{ u"%", "%" }, Case{ u"%ls/%S/%d", "H//" }, Case{ u"plain", "plain" } })
+	{
+		source.t["TOOLTIP:Shortcut"] = c.pattern;
+		CommandButtonHelp help(text, &source, nullptr, nullptr);
+		HelpBoxSettings settings;
+		settings.name = { "Test", 16, false, 0xFFFFFFFFu };
+		settings.shortcut = { "Test", 14, false, 0xFFFFCC00u };
+		DefaultFontMetrics metrics;
+		const int height = help.setWidthAndComputeHeight(400, settings, 1.0f, 1.0f, 1.0f, metrics);
+		std::vector<HelpDrawOp> ops;
+		help.render(0.0f, 0.0f, 400.0f, (float)height, ops);
+		bool found = false;
+		for (const HelpDrawOp &op : ops)
+		{
+			found |= op.text == c.expected;
+		}
+		CHECK(found);
+	}
+}
+
 TEST_CASE("hover1 format: the retail labels' arguments go in order (TOOLTIP:Rank's two %d, TOOLTIP:VerteranHordeMemberName's two %s)")
 {
 	CHECK(UnitHelpSource::format(u"Level: %d / Maximum Level: %d", { u"3", u"10" }) == u"Level: 3 / Maximum Level: 10");

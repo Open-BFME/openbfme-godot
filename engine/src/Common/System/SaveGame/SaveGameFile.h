@@ -25,6 +25,7 @@
 //                 frame 0, no commands, empty LOG and SNAP parts), u8 won, u8 ready, u8 advanced (the campaign's + 0xD0 / + 0xD2 / + 0xD3,
 //                 GameClient/LinearCampaign.h), u8 auto-save (retail's IsAutoSaveOrNot, RW 0x6DE8F1: the Load page's AutoSaveList); each 0 or 1 and
 //                 0 for a game; version 1 headers still load (a game, no flags)
+//                 header version 3 adds: str UTC build date (YYYY-MM-DD, BuildVersion::kBuildDate); absent in versions 1 and 2
 //   LOG payload:  an OpenBFME replay (format 4) whose end record is (F, hash at F)
 //   SNAP payload: empty, or the snapshot at F (Common/GameState.h's stream, SAVE-4a); read and digest-checked like the other parts (at most
 //                 kMaxSnapshotBytes); loading a save that carries one is refused by CommandLogLoad until the snapshot loads (SAVE-4b..d)
@@ -46,6 +47,7 @@ struct SaveGameHeader
 	std::string buildVersion; ///< BuildVersion::kVersion of the build that saved ("v0.3.0-preview.1-4-g0123456789")
 	std::string engineId;     ///< ProfileIdentity::buildId(): the engine compatibility id; a log replays only in the build with the same id
 	std::string commit;       ///< provenance only
+	std::string buildDate;    ///< header version 3: UTC build day, not the local save date; empty in older headers
 	ProfileIdentity profile;  ///< the data, rules and execution profile the game ran under
 	std::string executionProfile; ///< the profile the game ran at F (the identity's "profile" line value: "enhanced" for Faithful, UBER-1's "uber")
 	int gameKind = 2;         ///< 1 Campaign, 2 Skirmish (SaveLoad.apt's game types, RW 0x816164)
@@ -68,7 +70,7 @@ struct SaveGameHeader
 struct SaveGameFile
 {
 	static constexpr std::uint32_t kContainerVersion = 1;
-	static constexpr std::uint32_t kHeaderVersion = 2; // lane CAMPSAVE-1 (1 still loads)
+	static constexpr std::uint32_t kHeaderVersion = 3; // 3 adds build date; 1 and 2 still read
 	static constexpr const char *kExtension = ".obfmesave";
 	// the most a part may declare (checked before it is read: a larger one is a named refusal, never an allocation)
 	static constexpr std::uint64_t kMaxHeaderBytes = 1u << 20;  // 1 MiB (an identity text and a few names)

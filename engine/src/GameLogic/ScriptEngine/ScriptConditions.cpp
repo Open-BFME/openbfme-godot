@@ -7,6 +7,8 @@
 #include "GameLogic/Module/GateModules.h"
 
 #include "Common/AsciiString.h"
+#include "GameLogic/BitFlags.h"
+#include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/Science.h"
@@ -16,12 +18,14 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/ScriptEngine/ScriptActions.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptTemplates.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/VictoryConditions.h"
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameClient/ControlBarCommands.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Object/PartitionManager.h"
@@ -31,6 +35,7 @@
 #include "GameLogic/System/InvisibilityManager.h"
 #include "GameLogic/System/ShroudManager.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <iostream>
@@ -109,6 +114,8 @@ enum ConditionType
 	PLAYER_TRIGGERED_SPECIAL_POWER = 61,              // lane BACKLOG4
 	PLAYER_TRIGGERED_SPECIAL_POWER_FROM_NAMED = 64,   // lane BACKLOG4
 	CAN_BUILD_AT_BASE = 127,
+	NAMED_BASE_UNPACKABLE_FOR_PLAYER = 121,           // lane CASTLE-UNPACK
+	PLAYER_HAS_N_OR_FEWER_BASES = 131,                // lane CASTLE-UNPACK
 	NAMED_ATTACKED_BY_PLAYER = 21,                    // lane CAMP-1
 	TEAM_ATTACKED_BY_PLAYER = 22,                     // lane CAMP-1
 	TEAM_ENTERED_AREA_ENTIRELY = 40,                  // lane CAMP-1
@@ -121,7 +128,21 @@ enum ConditionType
 	ENEMY_SIGHTED_BY_TEAM = 133,                      // lane CAMP-1
 	TEAM_CREATED = 25,                                // lane CAMP-1
 	NAMED_TOTALLY_DEAD = 57,                          // lane CAMP-1
-	GATE_IS_OPEN = 135
+	IS_SEIGE_ATTACHED_TO_WALL = 109,                  // lane SIEGE-1
+	GATE_IS_OPEN = 135,
+	// lane SCRIPT-4 (BFME2 decomp ScriptConditions_evaluateConditionHelper.cpp's cases, each checked against the RotWK body)
+	NAMED_ATTACKED_BY_OBJECTTYPE = 19,
+	BUILT_BY_PLAYER = 23,
+	NAMED_SELECTED = 37,
+	TYPE_SIGHTED = 77,
+	NAMED_BUILDING_IS_EMPTY = 78,
+	PLAYER_HAS_SCIENCEPURCHASEPOINTS = 101,
+	PLAYER_HAS_KILLED_TYPE_UNITS = 129,
+	PLAYER_HAS_OBJECT_OF_VETERANCY = 146,
+	PLAYER_HAS_NUMBER_OBJECTS_WITH_MODELCONDITION = 160,
+	COMPARE_NUM_PLAYERS_IN_GAME = 168,
+	EVAL_TEAM_HEALTH = 174,
+	TYPE_SELECTED = 200
 };
 
 int kindOfBit(const char *name)
@@ -465,8 +486,9 @@ std::vector<Player *> ScriptConditions::players(ScriptEngine &engine, const std:
 	// Lockstep (S-1181): in a LAN / Internet game the local player differs per peer, so the "<Local Player...>" forms answer for the current script player
 	// there (every peer then evaluates the same thing); a skirmish, campaign or other single-machine game keeps retail's local player
 	{
-		const int mode = engine.logic().economy().context().gameMode;
-		if (mode == EconomyContext::MODE_LAN || mode == EconomyContext::MODE_INTERNET)
+		// lane SCRIPT-4 r2 (Sol): the LAN / online start leaves the mode at skirmish: the start's several human slots say it (multiplayerSession)
+		const EconomyContext &context = engine.logic().economy().context();
+		if (context.gameMode == EconomyContext::MODE_LAN || context.gameMode == EconomyContext::MODE_INTERNET || context.multiplayerSession)
 		{
 			local = current;
 		}
@@ -541,6 +563,27 @@ Player *ScriptConditions::firstPlayer(ScriptEngine &engine, const std::string &p
 {
 	std::vector<Player *> v = players(engine, p);
 	return v.empty() ? nullptr : v.front();
+}
+
+// lane SCRIPT-4: RW 0x6A85B6 getPlayerFromMask: the player whose bit (1 << Player + 0x54) EQUALS the mask; a mask of several players gives none
+Player *ScriptConditions::playerOfMask(ScriptEngine &engine, const std::string &p)
+{
+	std::vector<Player *> v = players(engine, p);
+	return v.size() == 1 ? v.front() : nullptr;
+}
+
+// lane SCRIPT-4: RW 0x778EA0 (ObjectTypes::isInSet): the name in the type parameter's set (an object list's names, else the one name), case kept (RW 0x9A7C56)
+bool ScriptConditions::inTypeSet(ScriptEngine &engine, const std::string &parameter, const std::string &templateName)
+{
+	if (parameter.empty())
+	{
+		return false;
+	}
+	if (const std::vector<std::string> *list = engine.findObjectList(parameter))
+	{
+		return std::find(list->begin(), list->end(), templateName) != list->end();
+	}
+	return parameter == templateName;
 }
 
 Team *ScriptConditions::team(ScriptEngine &engine, const std::string &name, bool create)
@@ -620,13 +663,13 @@ Team *ScriptConditions::team(ScriptEngine &engine, const std::string &name, bool
 	return head;
 }
 
-std::int32_t ScriptConditions::countPlayerObjects(GameLogic &logic, const Player &p, const std::vector<const ThingTemplate *> &types)
+std::int32_t ScriptConditions::countPlayerObjects(GameLogic &logic, const Player &p, const std::vector<const ThingTemplate *> &types, bool ignoreDead)
 {
 	std::int32_t count = 0;
 	forPlayerTeamMembers(logic, &p, [&](Object &o) {
 		for (const ThingTemplate *tt : types)
 		{
-			if (equivalentTemplatesImpl(o.getTemplate(), tt) && !o.isEffectivelyDead() && !o.testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION))
+			if (equivalentTemplatesImpl(o.getTemplate(), tt) && !(ignoreDead && o.isEffectivelyDead()) && !o.testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION))
 			{
 				++count;
 				break;
@@ -1259,6 +1302,76 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		}
 		return unit->findModule("FoundationAIUpdate") != nullptr && !foundationOccupied(logic, *unit);
 	}
+	case NAMED_BASE_UNPACKABLE_FOR_PLAYER:
+	{
+		// lane CASTLE-UNPACK: RW 0x7EBF07 -> RW 0x7E5142(param 0 the unit, param 1 the player): the unit by name (RW 0x75A3D8; none: false), the player
+		// mask (RW 0x75968D; 0: false) and its first player (RW 0x6A85B6; none: false); the unit's controlling player (RW 0x68B678) must be that player.
+		// Its CastleBehavior (RW 0x68BDA5 with RW 0x797AC1's key) answers true when canUnpack(true) (RW 0x7983E3), isPlayerAllowedToPackOrUnpack(player)
+		// (RW 0x79A472) and canAffordUnpack(player) (RW 0x79969F) all hold. Else the unit's command set (RW 0x69156B -> TheControlBar RW 0x71EFA2; none:
+		// false), its 33 slots (RW 0x80C837, bound 0x21 at RW 0x7E5248): a CASTLE_UNPACK_EXPLICIT_OBJECT (50) button with a template (RW 0x75D1DC) answers
+		// true when the castle exists and canUnpack(true), allowed and canAffordUnpackOf(player, template) (RW 0x797B6D) hold; else false (RW 0x7E524D)
+		Object *unit = engine.getUnitNamed(param(c, 0).stringValue);
+		if (!unit)
+		{
+			return false;
+		}
+		const std::vector<Player *> ps = players(engine, param(c, 1).stringValue); // an empty mask: no player
+		Player *player = ps.empty() ? nullptr : ps.front();
+		if (!player || unit->getControllingPlayer() != player)
+		{
+			return false;
+		}
+		const CastleBehavior *castle = dynamic_cast<const CastleBehavior *>(unit->findModule("CastleBehavior"));
+		if (castle && castle->canUnpack(true) && castle->isPlayerAllowedToPackOrUnpack(player) && castle->canAffordUnpack(player))
+		{
+			return true;
+		}
+		const CommandSet *set = TheCommandStore ? TheCommandStore->findCommandSet(unit->getCommandSetName()) : nullptr;
+		if (!set)
+		{
+			return false;
+		}
+		for (int i = 0; i < CommandSet::MAX_BUTTONS; ++i)
+		{
+			const CommandButton *b = set->getCommandButton(i);
+			if (!b || b->m_command != GUI_COMMAND_CASTLE_UNPACK_EXPLICIT_OBJECT)
+			{
+				continue;
+			}
+			const ThingTemplate *tt = b->getThingTemplate();
+			if (tt && castle && castle->canUnpack(true) && castle->isPlayerAllowedToPackOrUnpack(player) && castle->canAffordUnpackOf(player, tt))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+	case PLAYER_HAS_N_OR_FEWER_BASES:
+	{
+		// lane CASTLE-UNPACK: RW 0x7EBDB5 -> RW 0x7E64CD(param 1 the count, param 0 the player). Before ftol(5 * SecondsBeforeBaseCheckActive) (RW 0x7E64DE:
+		// cvtsi2ss [0xD9F608] = 5, mulss GlobalData + 0x110C, x87 _ftol RW 0xA3CFA4; the frame [0xDE412C] + 0x40, unsigned `jae`) false. Then every player of
+		// the mask (RW 0x75968D, walked by RW 0x6A85EE) adds Player::countObjects(set { VITAL_FOR_BASE_SURVIVAL }, clear: the empty mask RW 0xDE49E4)
+		// (RW 0x6ABB6A: the mask is built at RW 0x7E6532, `or byte [ebp-0xa], 2` = byte 22 bit 1 = KindOf 177): the members of the player's teams (Player
+		// + 0x34C prototypes -> RW 0x7A184C over + 0x334 -> RW 0x7A0555) whose KindOf (+ 0x108) holds every set bit and none of the clear (RW 0x70B8C7); no
+		// alive or construction test. True when count <= n (RW 0x7E6581: cmp the int, setge)
+		const unsigned delay = (unsigned)SimMath::truncToInt32(SimMath::mulf32(SimMath::sseFromInt32(5), logic.settings().secondsBeforeBaseCheckActive));
+		if (logic.getFrame() < delay)
+		{
+			return false;
+		}
+		static const int vital = kindOfBit("VITAL_FOR_BASE_SURVIVAL");
+		std::int32_t count = 0;
+		for (Player *p : players(engine, param(c, 0).stringValue))
+		{
+			forPlayerTeamMembers(logic, p, [&](Object &o) {
+				if (vital >= 0 && o.isKindOf((unsigned)vital))
+				{
+					++count;
+				}
+			});
+		}
+		return param(c, 1).intValue >= count;
+	}
 	case HAS_FINISHED_AUDIO: // RW 0x7E4DF0 -> RW 0x759B84(name, consume 1): the logic-side length model (S-1187)
 		return engine.hasFinishedAudio(param(c, 0).stringValue, true);
 	case PLAYER_TRIGGERED_SPECIAL_POWER:
@@ -1451,6 +1564,8 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		}
 		return false;
 	}
+	case IS_SEIGE_ATTACHED_TO_WALL: // RW 0x7EB7CD case 0x6D -> RW 0x7E5760 (lane SIEGE-1, ScriptActionsSiege.cpp)
+		return ScriptActions::isSiegeAttachedToWall(engine, param(c, 0).stringValue);
 	case NAMED_TOTALLY_DEAD: // RW 0x7E4A66: no unit of that name (RW 0x75A3D8) and the name had one (RW 0x758F46)
 		return engine.getUnitNamed(param(c, 0).stringValue) == nullptr && engine.didUnitExist(param(c, 0).stringValue);
 	case TEAM_CREATED: // RW 0x7E73E0: the team's + 0x5E
@@ -1469,6 +1584,254 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		ScriptCondition inside = c;
 		inside.resolved = SKIRMISH_PLAYER_HAS_UNITS_IN_AREA;
 		return !evaluate(engine, inside);
+	}
+	// ---- lane SCRIPT-4 ----
+	case NAMED_ATTACKED_BY_OBJECTTYPE: // RW 0x7EA374 (BFME2 ScriptConditions_evaluateTeamStateIs.cpp:1064, tier B): the last damager's template in the type set
+	{
+		const Object *o = engine.getUnitNamed(param(c, 0).stringValue);
+		const ActiveBody *body = o ? dynamic_cast<const ActiveBody *>(o->getBodyModule()) : nullptr;
+		if (!body || body->lastDamageFrame() == 0xFFFFFFFFu) // body vslot 0x40: no damage record
+		{
+			return false;
+		}
+		const Object *attacker = logic.findObjectByID(body->lastDamager()); // RW 0x449681(info + 8)
+		if (!attacker || !attacker->getTemplate())
+		{
+			return false;
+		}
+		return ScriptConditions::inTypeSet(engine, param(c, 1).stringValue, attacker->getTemplate()->getName()); // RW 0x778EA0
+	}
+	case BUILT_BY_PLAYER: // RW 0x7EA59C (BFME2 ScriptConditions_evaluateTeamStateIs.cpp:1158, tier B)
+	{
+		// RW 0x6D1305 on the raw parameter first: an object list's name that is no template gives false. Then the type set's templates (RW 0x77907A) and per
+		// player of the mask RW 0x6ABAF7(.., ignoreDead 0, .., ignoreUnderConstruction 1): dead objects count. INFERENCE: the + 0x44 / + 0x48 cache against
+		// the engine's object-change frame (+ 0x1A25C) is not kept, as for PLAYER_HAS_OBJECT_COMPARISON: evaluated every time
+		if (!logic.things().findTemplate(param(c, 0).stringValue))
+		{
+			return false;
+		}
+		std::vector<const ThingTemplate *> types;
+		for (const std::string &n : typeNames(engine, param(c, 0).stringValue))
+		{
+			if (const ThingTemplate *tt = logic.things().findTemplate(n))
+			{
+				types.push_back(tt);
+			}
+		}
+		if (types.empty())
+		{
+			return false;
+		}
+		for (Player *p : players(engine, param(c, 1).stringValue))
+		{
+			if (countPlayerObjects(logic, *p, types, false) != 0) // RW 0x7BDF78: the counts' sum
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+	case NAMED_SELECTED: // RW 0x7EA988 (BFME2 ScriptConditions_evaluateTeamStateIs.cpp:1425, tier A)
+	case TYPE_SELECTED:  // RW 0x7E77A2 (the same file :1669, tier A)
+	{
+		// TheGameEngine vslot 0x58 (a multiplayer session) -> false; else TheInGameUI's selected drawables (vslot 0x124): NAMED compares the object's name
+		// (+ 0x88, case kept), TYPE its template's name with the type set. INFERENCE (S-1182): the logic's selection of the local player (Player::selection(),
+		// set by the selection messages) stands for the UI's list (it follows it by the message delay); the + 0x44 / + 0x48 cache (the UI's selection frame)
+		// is not kept: it only skips the walk while the selection is unchanged
+		// lane SCRIPT-4 r2 (Sol): the port's LAN / online start leaves the mode at skirmish; the start's several human slots (multiplayerSession) make it a
+		// multiplayer session as well: false on every peer and in a replay of the game. Every retail use (9 + 7 maps) is in a campaign or tutorial map
+		const EconomyContext &context = logic.economy().context();
+		if (context.gameMode == EconomyContext::MODE_LAN || context.gameMode == EconomyContext::MODE_INTERNET || context.multiplayerSession)
+		{
+			return false;
+		}
+		const Player *local = logic.players().getLocalPlayer();
+		if (!local)
+		{
+			return false;
+		}
+		for (ObjectID id : local->selection())
+		{
+			const Object *o = logic.findObjectByID(id);
+			if (!o)
+			{
+				continue;
+			}
+			if (c.resolved == NAMED_SELECTED ? o->getName() == param(c, 0).stringValue
+											 : (o->getTemplate() && ScriptConditions::inTypeSet(engine, param(c, 0).stringValue, o->getTemplate()->getName())))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+	case TYPE_SIGHTED: // RW 0x7EB1C9 (BFME2 ScriptConditions_Rva003EA3AB.cpp:166, tier A; ZH evaluateTypeSighted)
+	{
+		// per player of the mask, ThePartitionManager's objects around the unit within its vision range (RW 0x68E43B, FROM_CENTER_2D) that the unit can
+		// see (RW 0x6612AC at the vision range), not stealthed from it (RW 0x660D2C), alive, controlled by the player, of the type set. Unlike
+		// ENEMY_SIGHTED: no relationship, no INERT / MOVE_ONLY test, the unit itself is not left out. The answer is "any": the order does not matter
+		Object *unit = engine.getUnitNamed(param(c, 0).stringValue);
+		if (!unit)
+		{
+			return false;
+		}
+		const float range = AIUpdateInterface::objectVisionRangeOf(*unit);
+		const Player *viewer = unit->getControllingPlayer();
+		const std::string &types = param(c, 1).stringValue;
+		for (Player *p : players(engine, param(c, 2).stringValue))
+		{
+			PartitionFilterFn filter([&](Object &o) {
+				return !o.isEffectivelyDead() && o.getControllingPlayer() == p && o.getTemplate() && ScriptConditions::inTypeSet(engine, types, o.getTemplate()->getName()) &&
+					!InvisibilityManager::isStealthedAndUndetected(o, viewer) && EmotionModules::canSeeObject(*unit, o, range);
+			});
+			if (logic.partition().getClosestObject(*unit->getPosition(), range, FROM_CENTER_2D, { &filter }) != nullptr)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+	case NAMED_BUILDING_IS_EMPTY: // RW 0x7E4C56 (BFME2 ScriptConditions_evaluateIsBuildingEmpty.cpp:111, tier B): a contain holding nothing (vslot 0x114)
+	{
+		const Object *o = engine.getUnitNamed(param(c, 0).stringValue);
+		const ContainModuleInterface *ct = o ? o->getContain() : nullptr;
+		return ct && ct->getContainCount() == 0;
+	}
+	case PLAYER_HAS_SCIENCEPURCHASEPOINTS: // RW 0x7E50AE (BFME2 ScriptConditions_evaluatePlayerMaskTests.cpp:47, tier A): any player with at least the points
+		for (Player *p : players(engine, param(c, 0).stringValue))
+		{
+			if (p->science().getSciencePurchasePoints() >= param(c, 1).intValue)
+			{
+				return true;
+			}
+		}
+		return false;
+	case PLAYER_HAS_KILLED_TYPE_UNITS: // RW 0x7E8EB3 (BFME2 ScriptConditions_evaluateTeamStateIs.cpp:1344, tier B)
+	{
+		// the first player of the mask (RW 0x6A85EE once); per type name RW 0x79E4D8: over the ScoreKeeper's 20 destroyed-by-template maps (+ 0x1FC) the
+		// entries of that name (case kept); the total >= the count
+		const std::vector<Player *> ps = players(engine, param(c, 0).stringValue);
+		if (ps.empty())
+		{
+			return false;
+		}
+		std::int32_t total = 0;
+		for (const std::string &n : typeNames(engine, param(c, 2).stringValue))
+		{
+			for (int i = 0; i < ScoreKeeper::MAX_PLAYERS; ++i)
+			{
+				const std::map<std::string, int> &m = ps.front()->getScoreKeeper().destroyedByTemplate(i);
+				const auto it = m.find(n);
+				total += it != m.end() ? it->second : 0;
+			}
+		}
+		return total >= param(c, 1).intValue;
+	}
+	case PLAYER_HAS_OBJECT_OF_VETERANCY: // RW 0x7E99F4 (BFME2 ScriptConditionsRva003E8E23.cpp:238, tier B)
+	{
+		// the player of the mask only when the mask is that one player's bit (RW 0x6A85B6); the type: an object list's names (RW 0x778EA0), else the
+		// template (RW 0x6D1305, RW 0x73D5C2); the player's team members (no alive test) with an experience tracker whose rank compares true
+		const Player *p = ScriptConditions::playerOfMask(engine, param(c, 0).stringValue);
+		if (!p)
+		{
+			return false;
+		}
+		const std::string &typeParam = param(c, 1).stringValue;
+		const std::vector<std::string> *list = engine.findObjectList(typeParam);
+		const ThingTemplate *tt = list ? nullptr : logic.things().findTemplate(typeParam);
+		bool hit = false;
+		forPlayerTeamMembers(logic, p, [&](Object &o) {
+			if (hit || !o.getTemplate())
+			{
+				return;
+			}
+			const bool typed = list ? std::find(list->begin(), list->end(), o.getTemplate()->getName()) != list->end() : equivalentTemplatesImpl(o.getTemplate(), tt);
+			const ExperienceTracker *xp = o.getExperienceTracker();
+			hit = typed && xp && compare(param(c, 2).intValue, xp->getRank(), param(c, 3).intValue);
+		});
+		return hit;
+	}
+	case PLAYER_HAS_NUMBER_OBJECTS_WITH_MODELCONDITION: // RW 0x7E6B50 (BFME2 ScriptConditions_Rva003E5F73.cpp, tier A)
+	{
+		// the bit by name (RW 0x4B3B5B: _strcmpi over the 591 names, -1 unknown); per player of the mask RW 0x6AC74F(bit, limit): its team members (dead
+		// ones too) with the model condition bit, each count stopping at limit + 1, the walk over the players stopping once the total passes the limit.
+		// An unknown name: retail reads outside the bit words (undefined); here no object has bit -1, the total is 0
+		int bit = -1;
+		for (int i = 0; i < 591 && TheModelConditionNames[i] && bit < 0; ++i)
+		{
+			if (AsciiStringUtil::compareNoCase(TheModelConditionNames[i], param(c, 1).stringValue) == 0)
+			{
+				bit = i;
+			}
+		}
+		const std::int32_t limit = param(c, 3).intValue;
+		std::int32_t total = 0;
+		for (Player *p : players(engine, param(c, 0).stringValue))
+		{
+			std::int32_t n = 0;
+			forPlayerTeamMembers(logic, p, [&](Object &o) {
+				if (n <= limit && o.testModelCondition(bit))
+				{
+					++n;
+				}
+			});
+			total += n;
+			if (total > limit)
+			{
+				break;
+			}
+		}
+		return compare(param(c, 2).intValue, total, limit);
+	}
+	case COMPARE_NUM_PLAYERS_IN_GAME: // RW 0x7E5FA5 (BFME2 ScriptConditions_Rva003E53C8.cpp, tier A) -> RW 0x6A8630(0)
+	{
+		// the players with a template of a playable side (+ 0x151) that are not defeated (+ 0x754 / + 0x35A)
+		std::int32_t n = 0;
+		for (int i = 0; i < logic.players().getPlayerCount(); ++i)
+		{
+			const Player *p = logic.players().getNthPlayer(i);
+			if (p && p->getPlayerTemplate() && p->getPlayerTemplate()->m_playableSide && !p->isDefeated())
+			{
+				++n;
+			}
+		}
+		return compare(param(c, 0).intValue, n, param(c, 1).intValue);
+	}
+	case EVAL_TEAM_HEALTH: // RW 0x7E98D2 (BFME2 ScriptConditions_evaluateTeamStateIs.cpp:1889, tier A)
+	{
+		// no hit points are read: per member (not INERT, not IGNORED_IN_GUI) a HORDE adds its horde interface's slot 0x17C (the Slots) and slot 0x180(0)
+		// (its contained count plus the garrison-transit entries, S-486: the count alone here); any other member that is no HORDE_MEMBER (status 0x26) adds
+		// 1 of 1. The percent = cur * 100 / max (integer), 0 without any
+		const Team *tm = team(engine, param(c, 0).stringValue);
+		if (!tm)
+		{
+			return false;
+		}
+		static const int hordeMember = ObjectTemplateInfoBuilder::objectStatusIndex("HORDE_MEMBER");
+		std::int32_t maxCount = 0, curCount = 0;
+		for (Object *o : members(*tm))
+		{
+			if (isKindOfName(*o, "INERT") || isKindOfName(*o, "IGNORED_IN_GUI"))
+			{
+				continue;
+			}
+			if (isKindOfName(*o, "HORDE"))
+			{
+				ContainModuleInterface *ct = o->getContain(); // RW 0x68C866
+				if (HordeContainInterface *h = ct ? ct->getHordeContainInterface() : nullptr)
+				{
+					maxCount += h->getSlotCapacity();
+					curCount += (std::int32_t)ct->getContainCount();
+				}
+			}
+			else if (!o->testStatus((unsigned)hordeMember))
+			{
+				++maxCount;
+				++curCount;
+			}
+		}
+		const std::int32_t percent = maxCount != 0 ? curCount * 100 / maxCount : 0;
+		return compare(param(c, 1).intValue, percent, param(c, 2).intValue);
 	}
 	default:
 		engine.noteUnportedCondition(t->name);

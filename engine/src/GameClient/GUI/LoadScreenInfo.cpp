@@ -2,6 +2,7 @@
 // See GameClient/GUI/LoadScreenInfo.h.
 
 #include "GameClient/GUI/LoadScreenInfo.h"
+#include "Common/ExtendedPlayerColors.h"
 
 #include "GameClient/GUI/GameTextSource.h"
 #include "GameClient/GUI/Skirmish/SkirmishSetup.h"
@@ -49,11 +50,25 @@ LoadScreenInfo makeLoadScreenInfo(const SkirmishGameInfo &game, const SkirmishSe
 	const std::function<bool(const std::string &)> &imageExists)
 {
 	LoadScreenInfo info;
+	info.mapStartCount = game.mapStartCount;
+	if (game.mapStartCount < LEGACY_MAX_SLOTS || game.mapStartCount > MAX_SLOTS)
+	{
+		info.error = "loading map capacity must be 8 .. 16";
+		return info;
+	}
+	for (int i = game.mapStartCount; i < MAX_SLOTS; ++i)
+	{
+		if (game.slots[i].isOccupied())
+		{
+			info.error = "occupied loading slot outside map capacity: " + std::to_string(i);
+			return info;
+		}
+	}
 	info.gameLoadingType = 2;
 	info.mapName = game.mapName;
 	int card = 0;
 	bool haveLocal = false;
-	for (int i = 0; i < MAX_SLOTS && card < MAX_LOAD_SLOTS; ++i)
+	for (int i = 0; i < game.mapStartCount; ++i)
 	{
 		const SkirmishGameSlot &slot = game.slots[i];
 		if (!slot.isOccupied())
@@ -75,6 +90,10 @@ LoadScreenInfo makeLoadScreenInfo(const SkirmishGameInfo &game, const SkirmishSe
 		if (slot.color >= 0 && slot.color < (int)setup.colors().size())
 		{
 			c.color = setup.colors()[(size_t)slot.color].rgb;
+		}
+		else if (const auto *color = ExtendedPlayerColors::find(slot.color, (int)setup.colors().size(), game.mapStartCount))
+		{
+			c.color = color->rgb;
 		}
 		// lane MENU-1: the Level column (RW 0x81CB08); the profile's points are 0: the stats files are not ported [S-3506]
 		if (imageExists)
@@ -98,6 +117,11 @@ LoadScreenInfo makeLoadScreenInfo(const SkirmishGameInfo &game, const SkirmishSe
 	if (game.simulationProfile == SimulationProfile::Uber)
 	{
 		info.rulesSummary += (info.rulesSummary.empty() ? u"" : u"; ") + std::u16string(u"Uber performance mode");
+	}
+	// lane CHEAT-1: a Cheat Mode game says so before it starts (and the in-game marker keeps saying it)
+	if (game.cheatModeOn())
+	{
+		info.rulesSummary += (info.rulesSummary.empty() ? u"" : u"; ") + CheatModeRule::label() + u": on";
 	}
 	return info;
 }

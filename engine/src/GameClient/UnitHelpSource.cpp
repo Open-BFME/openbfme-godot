@@ -2,6 +2,7 @@
 // See UnitHelpSource.h (lane HOVER-1). Client-only: the help reads the logic, it never changes it.
 
 #include "GameClient/UnitHelpSource.h"
+#include "GameClient/LocalizedText.h"
 
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -115,33 +116,13 @@ void displayDamage(const ThingTemplate &tt, const Object &obj, int &melee, int &
 
 UnicodeString UnitHelpSource::format(const UnicodeString &fmt, const std::vector<UnicodeString> &args)
 {
-	UnicodeString out;
-	size_t next = 0;
-	for (size_t i = 0; i < fmt.size(); ++i)
+	std::vector<LocalizedText::Argument<char16_t>> values;
+	values.reserve(args.size());
+	for (const UnicodeString &arg : args)
 	{
-		if (fmt[i] == u'%' && i + 1 < fmt.size())
-		{
-			const char16_t c = fmt[i + 1];
-			if (c == u'%')
-			{
-				out += u'%';
-				++i;
-				continue;
-			}
-			if (c == u'd' || c == u's' || c == u'S' || c == u'u' || c == u'i')
-			{
-				if (next < args.size())
-				{
-					out += args[next];
-				}
-				++next;
-				++i;
-				continue;
-			}
-		}
-		out += fmt[i];
+		values.emplace_back(arg);
 	}
-	return out;
+	return LocalizedText::format(fmt, values);
 }
 
 UnitHelpSource::Text UnitHelpSource::compose(const Object &obj, const GameTextSource *text, GameLogic &logic, const Player *localPlayer)

@@ -49,12 +49,16 @@
 #include "GameNetwork/NetImpairment.h"
 #include "GameNetwork/Network.h"
 #include "GameNetwork/RelayProtocol.h"
+#include "GameNetwork/RelayAuth.h"
+#include "GameNetwork/RelayBundleChannel.h"
+#include "GameNetwork/RelayCanonicalInput.h"
 
 #include <array>
 #include <cstdint>
 #include <deque>
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -123,6 +127,7 @@ public:
 			bool enabled = false;
 			NetAddress address;               ///< the relay's UDP address (every peer's address in this mode)
 			std::vector<std::uint8_t> ticket; ///< the lobby's ticket for this client's slot (32 bytes; lane ONLINE-3: 34, a rejoin ticket)
+			std::vector<std::uint8_t> macKey; ///< lane AUTH-1: the START's per-slot secret (32 bytes; empty = the legacy unauthenticated envelope)
 			int helloMs = 250;                ///< HELLO again after this while not welcomed
 			int spectatorIndex = -1;          ///< lane ONLINE-3: a spectator ticket's index (WELCOME names 0x80 + it); -1: a player
 		} relay;
@@ -156,6 +161,9 @@ public:
 		unsigned long long fastResends = 0; ///< lane MP-3: records resent on ack evidence before their timeout
 		// lane ONLINE-2 (relay mode): HELLOs sent, WELCOMEs and NOT_BOUNDs received, envelope bytes (5 per data datagram) included in bytesSent
 		unsigned long long relayHellos = 0, relayWelcomes = 0, relayNotBound = 0, relaySlotMismatches = 0;
+		unsigned long long relayAuthDropped = 0; ///< lane AUTH-1: relay datagrams dropped on a bad tag / replayed counter
+		unsigned long long relayAuthStale = 0;   ///< ONLINE16-FIX: of those, the ones with a good tag the replay window refused
+		unsigned long long relayLegacyEnvelope = 0; ///< ONLINE16-FIX: a version-3-only relay was met (the client then speaks version 3)
 	};
 	const Stats &stats() const { return m_stats; }
 	// socket send failures and protocol violations of known peers (at most 100 kept), for the reports
@@ -182,7 +190,15 @@ public:
 	// lane ONLINE-2: relay mode: the relay welcomed this client (its address is bound to the ticket's game and slot); the refusal reason
 	// (RelayProtocol::RefuseReason) of a REFUSED, 0 none
 	bool relayBound() const { return m_relayBound; }
+	// lane NET-SYNC: the canonical mode: queued records (OBRC bytes) drain via takeCanonicalRecord; orders leave via sendCanonicalOrder
+	bool relayCanonical() const override { return m_relayCanonical; }
+	bool sendCanonicalOrder(std::uint64_t id, const std::vector<std::uint8_t> &bytes, std::uint64_t now, std::string &error) override;
+	bool sendCanonicalBeat(std::uint64_t id, std::uint64_t now, std::string &error) override;
+	bool takeCanonicalRecord(std::vector<std::uint8_t> &bytes) override;
+	std::uint64_t canonicalGame() const override;
+	std::uint64_t canonicalEpoch() const override { return m_relayEpoch; }
 	int relayRefusal() const { return m_relayRefusal; }
+	bool relayLegacyEnvelope() const { return m_relayLegacy; } ///< ONLINE16-FIX: speaking the previous release's envelope (version 3)
 
 	// lane ONLINE-3 (relay mode): NetTransport's view of the relay's STATUS and the local link
 	int peerGeneration(int slot) const override { return slot >= 0 && slot < MAX_SLOTS ? m_relayStatus[(size_t)slot].generation : 0; }
@@ -245,10 +261,10 @@ private:
 	void flush(int slot, std::uint64_t now);
 	void sendDatagram(int slot, const NetAddress &to, std::vector<std::uint8_t> datagram, std::uint64_t now);
 	void sendNow(const NetAddress &to, const std::vector<std::uint8_t> &datagram);
-	void handleDatagram(const NetAddress &from, const std::vector<std::uint8_t> &d, std::uint64_t now);
+	void handleDatagram(const NetAddress &from, std::vector<std::uint8_t> &d, std::uint64_t now);
 	// envelopeSlot: relay mode, the source slot the relay stamped (-1: peer to peer)
 	void handlePacket(const NetAddress &from, const std::vector<std::uint8_t> &d, std::uint64_t now, int envelopeSlot);
-	void handleRelay(const std::vector<std::uint8_t> &d, std::uint64_t now); ///< lane ONLINE-2
+	void handleRelay(std::vector<std::uint8_t> &d, std::uint64_t now); ///< lane ONLINE-2 (AUTH-1: the tag check rewrites the buffer in place)
 	void sendHello(std::uint64_t now);
 	void deliver(int slot, Incoming &&record);
 	void error(const std::string &e);
@@ -278,10 +294,27 @@ private:
 		bool silent = false;
 	};
 	std::array<RelaySlotStatus, MAX_SLOTS> m_relayStatus{};
+	// lane NET-SYNC: canonical games (the ticket's mode has TICKET_MODE_CANONICAL): the relay keeps the beat. The
+	// WELCOME's epoch tail opens this client's NS channel; orders leave as OBCI messages, committed OBRC records
+	// arrive back. `m_canonicalRecords` is the ordered commit stream Network consumes.
+	bool m_relayCanonical = false;
+	std::uint64_t m_relayEpoch = 0;
+	std::unique_ptr<RelayBundleChannel> m_relayChannel;
+	std::deque<std::vector<std::uint8_t>> m_canonicalRecords;
+	bool emitCanonicalMessage(const RelayCanonicalInput::Message &message, std::uint64_t now, std::string &error);
 	std::uint64_t m_lastFromRelay = 0;
 	unsigned long long m_relayStatuses = 0;
 	std::map<std::uint32_t, std::vector<std::uint8_t>> m_logChunks;
 	std::uint32_t m_logSize = 0;
 	bool m_logRefused = false;
 	unsigned long long m_spectatorRefusals = 0;
+	// lane AUTH-1: the START's macKey derives the direction keys once; c2r seals every outgoing datagram, r2c +
+	// the window verify every incoming one. Empty macKey = the legacy unauthenticated path (an old lobby's START)
+	bool m_auth = false;
+	RelayAuth::Keys m_authKeys;
+	std::uint64_t m_authSent = 0; ///< the c2r counter (HELLO counts too)
+	RelayAuth::Window m_authRecv; ///< the r2c replay window
+	bool m_authVerified = false;  ///< ONLINE16-FIX: a sealed datagram of the relay verified (unsigned refusals stop counting)
+	bool m_relayLegacy = false;   ///< ONLINE16-FIX: the relay speaks only version 3 (never together with m_auth)
+	void sealRelay(std::vector<std::uint8_t> &d); ///< lane AUTH-1: upgrades a built v4 datagram to v5 when authed
 };

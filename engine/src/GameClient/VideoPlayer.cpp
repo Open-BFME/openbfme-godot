@@ -2,6 +2,7 @@
 // See GameClient/VideoPlayer.h.
 
 #include "GameClient/VideoPlayer.h"
+#include "Common/PathIO.h"
 
 #include "Common/AsciiString.h"
 #include "Common/INI.h"
@@ -29,13 +30,13 @@ const FieldParse kVideoParse[] = {
 std::string findNoCase(const stdfs::path &dir, const std::string &name)
 {
 	std::error_code ec;
-	if (stdfs::exists(dir / name, ec))
+	if (stdfs::exists(dir / stdfs::u8path(name), ec))
 	{
 		return name;
 	}
 	for (stdfs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
 	{
-		const std::string n = it->path().filename().string();
+		const std::string n = it->path().filename().u8string();
 		if (AsciiStringUtil::compareNoCase(n, name) == 0)
 		{
 			return n;
@@ -47,7 +48,7 @@ std::string findNoCase(const stdfs::path &dir, const std::string &name)
 // `relative` ('/' or '\' separated) below `root`, each component matched without regard to case; "" when a component is missing
 std::string resolveNoCase(const std::string &root, const std::string &relative)
 {
-	stdfs::path at(root);
+	stdfs::path at = PathIO::native(root);
 	std::string out;
 	std::string part;
 	auto step = [&](const std::string &comp) {
@@ -60,7 +61,7 @@ std::string resolveNoCase(const std::string &root, const std::string &relative)
 		{
 			return false;
 		}
-		at /= found;
+		at /= stdfs::u8path(found);
 		out += (out.empty() ? "" : "/") + found;
 		return true;
 	};
@@ -172,7 +173,7 @@ VideoStreamInfo VideoPlayer::locate(const std::string &title, const std::string 
 		{
 			continue;
 		}
-		const std::string full = (stdfs::path(d.root) / found).string();
+		const std::string full = (PathIO::native(d.root) / stdfs::u8path(found)).u8string();
 		// lane CAMP-2: the container's chunk index (EAVP6Movie: the MVhd header wherever it is, every frame chunk present)
 		EAVP6Movie movie;
 		std::string err;

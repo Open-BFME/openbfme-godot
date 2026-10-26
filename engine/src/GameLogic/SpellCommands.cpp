@@ -3,9 +3,11 @@
 
 #include "GameLogic/SpellCommands.h"
 
+#include "Common/ModEngineFeatures.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/SpecialPower.h"
+#include "GameClient/ControlBarCommands.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/Object.h"
@@ -30,6 +32,41 @@ const GameMessageArgument *arg(const GameMessage &m, size_t i, GameMessageArgume
 {
 	const GameMessageArgument *a = m.getArgument(i);
 	return a && a->type == t ? a : nullptr;
+}
+// lane MODS-3: edain-unchained.multi-execute-gate (its 0xEE3000, wrapping the ActionManager tests RW 0x82D5DA / 0x82D925 in the member loops of
+// AIGroup::groupDoSpecialPower RW 0x76F6DA and groupDoSpecialPowerAtObject RW 0x770B67): the member's base command set (RW 0x69156B, 0x71EFA2; none:
+// allowed), its first SPECIAL_POWER button (slots 0 .. 63) whose power is this one; RW 0x942490 answering 3 for it (a DisableOnModelCondition the member
+// holds, or an EnableOnModelCondition it holds none of) refuses the member
+bool multiExecuteGateAllows(const Object &member, const SpecialPowerTemplate &power)
+{
+	const CommandSet *set = TheCommandStore ? TheCommandStore->findCommandSet(member.getCommandSetName()) : nullptr;
+	if (!set)
+	{
+		return true;
+	}
+	for (int i = 0; i < CommandSet::STORAGE; ++i)
+	{
+		const CommandButton *b = set->getCommandButton(i);
+		if (!b || b->m_command != GUI_COMMAND_SPECIAL_POWER || b->m_specialPowerName.empty())
+		{
+			continue;
+		}
+		const SpecialPowerTemplate *bp = TheSpecialPowerStore->findSpecialPowerTemplate(b->m_specialPowerName); // RW 0x688D3C: the final override
+		if (!bp || bp->getID() != power.getID())
+		{
+			continue;
+		}
+		bool needs = false, enabled = false, disabled = false;
+		for (size_t w = 0; w < b->m_enableOnModelCondition.size(); ++w)
+		{
+			const auto bits = member.getModelConditionBits()[w];
+			needs = needs || b->m_enableOnModelCondition[w] != 0;
+			enabled = enabled || (bits & b->m_enableOnModelCondition[w]) != 0;
+			disabled = disabled || (bits & b->m_disableOnModelCondition[w]) != 0;
+		}
+		return !disabled && (!needs || enabled);
+	}
+	return true;
 }
 } // namespace
 
@@ -149,7 +186,8 @@ bool SpellCommands::doSpecialPower(GameLogic &logic, const GameMessage &msg, int
 	{
 		SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(*member, t);
 		// RW 0x82DFB7 (ported part): the module, fully ready, its requirements
-		if (!sp || sp->getPercentReady() < 1.0f || !sp->requirementsMet())
+		if (!sp || sp->getPercentReady() < 1.0f || !sp->requirementsMet() ||
+			((kind == 0 || kind == 2) && t && ModEngineFeatures::has(ModEngineFeature::EdainUnchainedMultiExecuteGate) && !multiExecuteGateAllows(*member, *t)))
 		{
 			++m_refused;
 			continue;

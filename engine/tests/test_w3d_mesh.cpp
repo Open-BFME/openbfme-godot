@@ -435,6 +435,38 @@ TEST_CASE("BFME FX shader materials: header and every property type")
 	CHECK(error.find("type 99") != std::string::npos);
 }
 
+TEST_CASE("BFME FX shader materials: truncated numeric properties are rejected")
+{
+	Bytes header;
+	header.u8(0).str("normalmapped.fx", 32).u32(0);
+	const std::pair<std::uint32_t, std::size_t> types[] = {
+		{ W3DSHADERMATERIAL_PROPERTY_INT, 4 },
+		{ W3DSHADERMATERIAL_PROPERTY_FLOAT, 4 },
+		{ W3DSHADERMATERIAL_PROPERTY_VECTOR2, 8 },
+		{ W3DSHADERMATERIAL_PROPERTY_VECTOR3, 12 },
+		{ W3DSHADERMATERIAL_PROPERTY_VECTOR4, 16 }
+	};
+	for (const auto &type : types)
+	{
+		for (std::size_t size = 0; size < type.second; ++size)
+		{
+			CAPTURE(type.first);
+			CAPTURE(size);
+			ChunkWriter material;
+			material.chunk(W3D_CHUNK_SHADER_MATERIAL_HEADER, header.v);
+			material.chunk(W3D_CHUNK_SHADER_MATERIAL_PROPERTY, property(type.first, "X", std::vector<std::uint8_t>(size, 0)).v);
+			ChunkWriter materials;
+			materials.wrapper(W3D_CHUNK_SHADER_MATERIAL, material);
+			MeshSpec spec;
+			spec.ExtraChildren.wrapper(W3D_CHUNK_SHADER_MATERIALS, materials);
+			MeshModelClass mesh;
+			std::string error;
+			CHECK_FALSE(loadMesh(mesh, meshBytes(spec), error));
+			CHECK(error.find("malformed W3D_CHUNK_SHADER_MATERIAL_PROPERTY") != std::string::npos);
+		}
+	}
+}
+
 TEST_CASE("AABTree chunks: header counts must match the polygon index and node arrays")
 {
 	auto tree = [](std::uint32_t nodes, std::uint32_t polys, std::uint32_t nodesPresent, std::uint32_t polysPresent) {

@@ -254,6 +254,10 @@ private:
 		bool groundValid = false;                               ///< RW object + 0x418 / + 0x41C (the integer position) and + 0x1C4
 		int groundX = 0, groundY = 0;
 		float groundRef = 0.0f;
+		// lane UBER-3W (Uber only, derived, not hashed): templateVision of the template it was read for (prepareRecord read it for every processing: a
+		// geometry list built per record and frame, 1.2% of a one-thread 30,000-troop clash frame)
+		const ThingTemplate *tvTemplate = nullptr;
+		TemplateVision tv;
 	};
 
 	Cell *cellAt(int x, int y);
@@ -270,7 +274,26 @@ private:
 	void processPending(bool considerTime); ///< RW 0xB51690
 	void processRecord(Record &r);          ///< RW 0xB4EF50
 	void clearCoverage(Record &r);          ///< RW 0xB4E620
-	void cover(Record &r, const Object &obj, const TemplateVision &tv);
+	// lane BIGBATTLE-1: RW 0xB4EF50 in two halves, so the dirty list's records can be prepared on the logic job pool (JobSystem.h). prepare
+	// reads only the record and its object (the template's vision, the covered cells, the look's inputs: none reads the cell grid or another record; the look
+	// may refresh the record's own ground reference); apply does everything that writes the grid and the record, in the dirty list's order. processRecord is
+	// prepare then apply, on one thread
+	struct Prepared
+	{
+		Object *obj = nullptr;
+		TemplateVision tv;
+		std::vector<int> cells;  ///< cover's cells, in its order, each once
+		int cx = 0, cy = 0;
+		float facing = 0.0f;
+		bool force = false;      ///< r.force after the facing test
+		bool look = false;       ///< the record looks again (in holds the inputs)
+		LookInputs in;
+	};
+	void prepareRecord(Record &r, Prepared &p);
+	void applyRecord(Record &r, Prepared &p);
+	void coverCells(const Object &obj, const TemplateVision &tv, std::vector<int> &cells) const; ///< cover's cells, without writing anything
+	std::vector<Prepared> m_prepared;       ///< update's prepared records (kept for their storage)
+	std::vector<std::uint32_t> m_preparedOrder; ///< the dirty list in processing order (the slots m_prepared belongs to)
 	void removeLookOf(Record &r);           ///< RW 0xB4E100
 	void evaluate(Record &r, int player, const Object *obj);
 	ObjectShroudStatus computeStatus(const Record &r, int player, const Object *obj, int &seen) const;

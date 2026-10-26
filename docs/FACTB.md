@@ -3,7 +3,9 @@
 Lane FACT-B checks every structure, unit, horde, hero, upgrade and ability of Isengard and Mordor through the in-game HUD, the way a
 player reaches them: clicks on objects and on the ground, and presses of the control bar's own buttons (the button pages opened with
 their own buttons). The tests are `engine/tests/test_hud_factb_*.cpp` (they SKIP without the games). The inventory below is generated
-from the retail data by `factb inventory` (FACTB_INVENTORY_OUT); nothing in the engine names these factions.
+from the retail data by `factb inventory` (`FACTB_INVENTORY_OUT`); it is a reachability inventory, not proof that every listed module works.
+These tests require both `ROTWK_INSTALL` and `BFME2_INSTALL` for retail-dependent runs.
+The numeric results and generated tables below are the 2026-10-11 snapshot, not a fresh run.
 
 ## Results (2026-10-11)
 
@@ -21,7 +23,7 @@ from the retail data by `factb inventory` (FACTB_INVENTORY_OUT); nothing in the 
 | damage (`factb damage`) | 13 / 14 | 14 / 17 | the first hit on an enemy hero equals the weapon's Damage x the hero's armour coefficient x the nugget's DamageScalar (k members' hits for a horde) |
 | spell book (`factb spell book`) | 7 / 12 | 9 / 12 | each power cast through the HUD's spell bar, its effect beyond a control run of the same scene |
 
-The units' failures are mostly the stance button (S-289, on every unit) and the stops below; every failing item is pinned in the tests
+The units' failures include the stance button (S-289, on units with that button) and the stops below; every failing item is pinned in the tests
 with its stop (an item that starts to work fails its test until the pin moves). Round 3 replaced the units' generic "effect step ran"
 counter with the results above: it had passed abilities whose effect never happened. Sauron's Fires of Doom (its special weapon holds
 only a WeaponOCLNugget) and Sharku's Man-Eater (a GrabNugget) now fail under S-180, those nuggets' delivery is not ported; Saruman's
@@ -30,12 +32,26 @@ Lightning Bolt deals its damage, but its weapon's WeaponOCLNugget makes nothing 
 Fixed in this lane: the upgrade buttons' availability (RW 0x942733) and press-time affordability (RW 0x940435), CONTEXTMODE special powers
 that sent a move order, the battering ram a click could not select (Object::isSelectable RW 0x68DE58), the Berserker's Light Torch
 (WeaponChangeSpecialPowerModule RW 0x8C8420), the fortress improvements (CastleUpgrade RW 0x8BAAC0), the players' InitialUpgrades
-(RW 0x6AFC92: the ring hero's upgrades are taken back when it is built), a building's upgrade modules run again for its new owner (Object::setTeam RW 0x699658, FACT-C's finding). Still broken, with stops: S-1990 (FIRE_WEAPON: Bombard, mine Deploy,
+(RW 0x6AFC92: the ring hero's upgrades are taken back when it is built), a building's upgrade modules run again for its new owner (Object::setTeam RW 0x699658, FACT-C's finding). At the time of this snapshot the stops were: S-1990 (FIRE_WEAPON: Bombard, mine Deploy,
 Mumakil Charge), S-1991 (Bloodthirsty sacrifice), S-1992 (auto-acquire toggle), S-1993 (the lumber mills earn nothing), S-1994 (the fell
 beasts), S-1995 (the unported module classes listed below, among them the Lava Moat's ObjectCreationUpgrade), S-1996 (a Berserker against a
 hero), S-1997 (ability and spell effects not seen: Extinguish Fire, Taint, Industry, Fuel the Fires, Dragon Strike, Untamed
 Allegiance), S-921 (Devastation, SPELL-3), S-289 (the stance button's radial menu). The catapult made at the siege works barely moves away
 from the door when ordered (MOVE-3's exit, reported).
+
+Since that snapshot, `FIRE_WEAPON` dispatch exists; the Isengard Ballista's
+`Command_BombardEvil` remains pinned at S-1990. Bloodthirsty (S-1991), the
+auto-acquire toggle (S-1992), lumber harvesting (S-1993), the fell beasts
+(S-1994), and the Berserker's first hit on a hero (S-1996) have implementations
+and their old failure pins are gone. The button sweep does not assert a
+harvesting effect: `engine/tests/test_lumber1.cpp` covers it separately.
+Both factions' first-hit damage sweeps now allow no failing item.
+`WeaponOCLNugget` and `GrabNugget` delivery also exist now; S-180 still pins
+Saruman's missing OCL result and Sharku's Man-Eater result in the button sweep,
+not the absence of all delivery for either nugget class.
+The historical unported-module tables below still record the snapshot;
+`BloodthirstyUpdate`, `ObjectCreationUpgrade`, `SupplyCenterCreate`,
+`SupplyCenterDockUpdate`, `DoCommandUpgrade` and `TransitionDamageFX` now have runtimes.
 
 ## FactionIsengard
 
@@ -477,4 +493,3 @@ from the door when ordered (MOVE-3's exit, reported).
 | SupplyCenterCreate | MordorLumberMill |
 | SupplyCenterDockUpdate | MordorLumberMill |
 | TransitionDamageFX | MordorCatapult |
-

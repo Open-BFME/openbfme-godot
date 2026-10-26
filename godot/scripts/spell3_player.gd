@@ -9,6 +9,11 @@
 ##              Palantir's powers button opens it and it is held open 10 s; per window "SPELL3 APT <window> ..." prints the render frames, fps, the main thread's
 ##              CPU per frame and the Apt player's get_stats (rebuilds, unchanged_frames, list_us, canvas_us, submit_us, the levels redrawn / kept); run with --perf
 ##              for the GAME PERF lines
+##   spellrc    (lane SPELLRC-1, the owner: "you can't right click mouse move with spellbook powers out") power points given (the test hook above), a unit
+##              selected by a click, a power bought by mouse; with the store open a right click on the ground orders the move; then a spell book power that
+##              wants a position is pressed (its targeting): a right DRAG on the ground scrolls the camera and the power is still waiting (RotWK's LookAt
+##              translator sees the press; the GUI command translator RW 0x83D7AD ends a command only on a click that was not dragged), a right CLICK cancels
+##              it without an order (RW 0x83DB8D), and the next right click orders the move
 extends "res://scripts/play1_player.gd"
 
 var faction := ""
@@ -1010,4 +1015,154 @@ func _scenario_earned() -> String:
 	print("SPELL3 TABLE " + JSON.stringify(results))
 	if r.result != "ok":
 		fails.append("%s: %s" % [r.power, r.why])
+	return "; ".join(fails)
+
+
+## lane SPELLRC-1: an empty ground pixel near `around` that is not over the GUI (none: x < 0)
+func spellrc_ground(around: Vector2) -> Vector2:
+	for off in [Vector2(220, 60), Vector2(-220, 60), Vector2(200, -80), Vector2(-200, -80), Vector2(300, 140), Vector2(-300, 140), Vector2(380, -120), Vector2(-380, -120)]:
+		var target: Vector2 = around + off
+		var w: Vector2 = hud.pixel_to_world(target)
+		var clear := w.x > -1.0e8 and on_screen(target)
+		for o in world.get_player_objects(game._local_name):
+			if Vector2(o.x, o.y).distance_to(w) < 60.0:
+				clear = false
+		if not clear:
+			continue
+		await move_to(target)
+		await game._step(4)
+		if not hud.get_state().get("over_gui", false):
+			return target
+	return Vector2(-1, -1)
+
+
+## lane SPELLRC-1: a right click at `p`; the MSG_DO_MOVETO it made
+func spellrc_right_click(p: Vector2, what: String) -> int:
+	var before := log_count("MSG_DO_MOVETO")
+	await click(p, MOUSE_BUTTON_RIGHT)
+	await game._step(6)
+	var ml: PackedStringArray = hud.get_message_log()
+	var moved := log_count("MSG_DO_MOVETO") - before
+	print("SPELL3 spellrc: %s: right click at %s: MSG_DO_MOVETO %d, targeting %s; the last messages %s" % [what, p, moved,
+		str(hud.get_spellbook_state().targeting), ml.slice(maxi(0, ml.size() - 3))])
+	return moved
+
+
+func _scenario_spellrc() -> String:
+	await _headless_window()
+	var fails: Array = []
+	var me: int = game._local_index
+	world.debug_add_science_points(me, 200)
+	print("SPELL3 TEST HOOK: player %d (%s) given 200 power points" % [me, faction])
+	# a unit of the player, selected by a click
+	var unit: Dictionary = {}
+	for u in local_units():
+		hud.camera_look_at(Vector2(u.x, u.y))
+		await game._step(10)
+		if on_screen(to_pixel(u.x, u.y)):
+			unit = u
+			break
+	if unit.is_empty():
+		var us := local_units()
+		return "no local unit on the screen (window %s, %d units%s)" % [window_size(), us.size(), (", the first at pixel %s" % to_pixel(us[0].x, us[0].y)) if not us.is_empty() else ""]
+	await click(to_pixel(unit.x, unit.y))
+	await game._step(20)
+	if hud.get_selection().is_empty():
+		return "the left click on the unit selected nothing"
+	# the store: every power it sells now; with it open a right click on the ground beside it is still the move order
+	var st := await open_store()
+	if not st.get("open", false):
+		return "the powers button did not open the store (%s)" % st.get("error", "")
+	# the first power the points buy (each click is a moment of the clip; buy_all would buy the whole tier)
+	var first: int = st.states.find("_active")
+	if first < 0:
+		return "the store sells nothing (%s)" % str(st.states)
+	for attempt in 4:
+		await click(shell_button(st.level, "SpellStore.Buttons.Spell%d" % (first + 1)))
+		await game._wait_seconds(1.2) # the generic button calls back when its _down animation ends
+		if store_state().states[first] != "_active":
+			break
+	var up := to_pixel(unit.x, unit.y)
+	var ground := await spellrc_ground(up)
+	if ground.x < 0:
+		return "no empty ground beside the store"
+	shot("spellrc-store-open")
+	await game._wait_seconds(1.0) # (a watchable clip: each step held a moment)
+	if await spellrc_right_click(ground, "store open") != 1:
+		fails.append("a right click on the ground with the store open did not order the move")
+	await click(shell_button(st.level, "SpellStore.Buttons.ButtonsMain.Accept"))
+	await game._wait_seconds(3.0)
+	if store_state().get("open", false):
+		return "ACCEPT did not close the store"
+	# a spell book power that wants a position, pressed: its targeting
+	var k := -1
+	var state: Dictionary = hud.get_spellbook_state()
+	for i in state.get("slots", []).size():
+		var b := power_of_button(int(state.slot_buttons[i]))
+		if state.slots[i] == "_up" and bool(b.get("needs_position", false)) and k < 0:
+			k = i
+	if k < 0:
+		return "no bought power that wants a position is up on the spell book (%s)" % str(state.get("slots", []))
+	var unit_now: Dictionary = world.get_object(int(unit.id))
+	up = to_pixel(float(unit_now.get("x", unit.x)), float(unit_now.get("y", unit.y)))
+	await click(slot_pixel(k))
+	await game._step(6)
+	state = hud.get_spellbook_state()
+	print("SPELL3 spellrc: slot %d (%s) pressed: targeting %s" % [k + 1, state.get("target_power", ""), str(state.targeting)])
+	if not state.targeting:
+		return "the spell book slot %d did not start its targeting" % (k + 1)
+	ground = await spellrc_ground(up)
+	if ground.x < 0:
+		return "no empty ground for the right drag"
+	shot("spellrc-aiming")
+	await game._wait_seconds(1.5)
+	# the right drag: the camera scrolls (the LookAt translator's RMB scroll), the power still waits, no order
+	var cam0: Vector2 = hud.get_camera().position
+	var moves0 := log_count("MSG_DO_MOVETO")
+	press(ground, MOUSE_BUTTON_RIGHT, true)
+	await game._step(2)
+	for i in 10:
+		var m := InputEventMouseMotion.new()
+		m.position = ground + Vector2(18 * (i + 1), 0)
+		m.global_position = m.position
+		m.button_mask = MOUSE_BUTTON_MASK_RIGHT
+		if OS.get_environment("PLAY1_NO_WARP") != "1":
+			Input.warp_mouse(m.position)
+		_vp().push_input(m)
+		await game._step(2)
+	press(ground + Vector2(180, 0), MOUSE_BUTTON_RIGHT, false)
+	await game._step(6)
+	await game._wait_seconds(1.5)
+	var cam1: Vector2 = hud.get_camera().position
+	state = hud.get_spellbook_state()
+	print("SPELL3 spellrc: right drag: camera %s -> %s (moved %.0f), targeting %s, MSG_DO_MOVETO %d" % [cam0, cam1, cam0.distance_to(cam1), str(state.targeting),
+		log_count("MSG_DO_MOVETO") - moves0])
+	if cam0.distance_to(cam1) < 1.0:
+		fails.append("a right drag with the power aimed did not scroll the camera")
+	if not state.targeting:
+		fails.append("a right drag cancelled the aimed power (RotWK keeps it: only a click cancels)")
+	if log_count("MSG_DO_MOVETO") != moves0:
+		fails.append("a right drag ordered a move")
+	# a right click: the power is cancelled, nothing is ordered
+	if not state.targeting:
+		await click(slot_pixel(k))
+		await game._step(6)
+	unit_now = world.get_object(int(unit.id))
+	hud.camera_look_at(Vector2(float(unit_now.get("x", unit.x)), float(unit_now.get("y", unit.y)))) # the drag scrolled the unit away: back to it
+	await game._step(10)
+	ground = await spellrc_ground(to_pixel(float(unit_now.get("x", unit.x)), float(unit_now.get("y", unit.y))))
+	if ground.x < 0:
+		return "; ".join(fails + ["no empty ground for the right click"])
+	await game._wait_seconds(1.0)
+	var moved := await spellrc_right_click(ground, "power aimed")
+	if hud.get_spellbook_state().targeting:
+		fails.append("a right click did not cancel the aimed power")
+	if moved != 0:
+		fails.append("the right click that cancelled the power also ordered a move")
+	# the next right click orders the move
+	shot("spellrc-after-cancel")
+	await game._wait_seconds(1.0)
+	if await spellrc_right_click(ground, "after the cancel") != 1:
+		fails.append("a right click after the cancel did not order the move")
+	await game._wait_seconds(3.0) # the unit walks there
 	return "; ".join(fails)

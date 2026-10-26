@@ -3,21 +3,24 @@
 // See Common/Recorder.h.
 
 #include "Common/Recorder.h"
+#include "Common/BuildVersion.h"
+#include "Common/PathIO.h"
 
 #include <cstring>
-#include <iterator>
+#include <filesystem>
 
 namespace
 {
 const char kMagic[8] = { 'O', 'B', 'F', 'M', 'E', 'R', 'E', 'P' };
-constexpr std::uint32_t kVersion = 7; // 7 (lane OWNERFIX-2): the GameInfo slots' handicaps; 6 (lane SAVE-2): the execution profile switch record, duplicate records refused; 2: the profile identity, GameMessage format 2 (u32 argument counts), lost-command records; 3 (lane HERO-2): the GameInfo slots' Create-a-Hero records; 4 (lane RULES-1): the GameInfo's game rules and Legendary Heroes factor; 5 (lane UBER-1): the GameInfo's simulation profile
+constexpr std::uint32_t kVersion = 11; // 11 (lane CHEAT-1): the GameInfo's Cheat Mode; 10: the build date; 9: the recording build (version, commit); 8 (lane ANTICHEAT-1): the VIEW record; 7 (lane OWNERFIX-2): the GameInfo slots' handicaps; 6 (lane SAVE-2): the execution profile switch record, duplicate records refused; 2: the profile identity, GameMessage format 2 (u32 argument counts), lost-command records; 3 (lane HERO-2): the GameInfo slots' Create-a-Hero records; 4 (lane RULES-1): the GameInfo's game rules and Legendary Heroes factor; 5 (lane UBER-1): the GameInfo's simulation profile
 enum : std::uint8_t
 {
 	RECORD_FRAME = 1,
 	RECORD_HASH = 2,
 	RECORD_END = 3,
 	RECORD_LOST = 4,
-	RECORD_PROFILE = 5 // lane SAVE-2
+	RECORD_PROFILE = 5, // lane SAVE-2
+	RECORD_VIEW = 6     // lane ANTICHEAT-1
 };
 bool failWith(std::string *error, const std::string &why)
 {
@@ -41,33 +44,78 @@ unsigned long long ReplayFile::commandCount() const
 
 bool ReplayFile::load(const std::string &path, ReplayFile &out, std::string *error)
 {
-	std::ifstream in(path, std::ios::binary);
-	if (!in)
+	try
 	{
-		return failWith(error, "cannot open the replay " + path);
+		std::error_code ec;
+		const auto file = PathIO::native(path);
+		const std::uintmax_t size = std::filesystem::file_size(file, ec);
+		std::ifstream in(file, std::ios::binary);
+		if (ec || !in)
+		{
+			return failWith(error, "cannot open the replay " + path);
+		}
+		if (size > kMaxBytes)
+		{
+			return failWith(error, "the replay exceeds the size limit of " + std::to_string(kMaxBytes) + " bytes");
+		}
+		std::vector<std::uint8_t> bytes((std::size_t)size);
+		if (!bytes.empty() && !in.read((char *)bytes.data(), (std::streamsize)bytes.size()))
+		{
+			return failWith(error, "the replay could not be read (truncated file)");
+		}
+		ReplayFile parsed;
+		if (!parse(bytes, parsed, error))
+		{
+			return false;
+		}
+		out = std::move(parsed);
+		return true;
 	}
-	std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-	return parse(bytes, out, error);
+	catch (const std::exception &e)
+	{
+		return failWith(error, std::string("the replay could not be read (") + e.what() + ")");
+	}
 }
 
-bool ReplayFile::parse(const std::vector<std::uint8_t> &bytes, ReplayFile &out, std::string *error)
+namespace
 {
-	out = ReplayFile();
+bool parseReplay(const std::vector<std::uint8_t> &bytes, ReplayFile &out, std::string *error)
+{
+	if (bytes.size() > ReplayFile::kMaxBytes)
+	{
+		return failWith(error, "the replay exceeds the size limit of " + std::to_string(ReplayFile::kMaxBytes) + " bytes");
+	}
 	if (bytes.size() < sizeof(kMagic) || std::memcmp(bytes.data(), kMagic, sizeof(kMagic)) != 0)
 	{
 		return failWith(error, "not an OpenBFME replay (magic)");
 	}
 	NetByteReader r(bytes.data() + sizeof(kMagic), bytes.size() - sizeof(kMagic));
 	const std::uint32_t version = r.u32();
-	if (version != kVersion && version != 5 && version != 6)
+	if (version != kVersion && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10)
 	{
 		// lane SAVE-2: format 6 only adds the profile switch record, so a format 5 replay (UBER-1) still reads (without that record); lane OWNERFIX-2:
 		// format 7 only adds the slots' handicaps, so a format 5 / 6 replay or save still reads (every handicap 0)
-		return failWith(error, "replay version " + std::to_string(version) + " (this build reads 5, 6 and " + std::to_string(kVersion) + ")");
+		return failWith(error, "replay version " + std::to_string(version) + " (this build reads 5 .. " + std::to_string(kVersion) + ")");
 	}
 	ReplayHeader &h = out.header;
 	h.profile = ProfileIdentity::fromText(r.str());
-	if (!NetPacket::readNewGameMessage(r, h.game, error, version >= 7))
+	if (version >= 9)
+	{
+		h.buildVersion = r.str();
+		h.buildCommit = r.str();
+		if (version >= 10)
+		{
+			h.buildDate = r.str();
+		}
+		if (r.failed() || h.buildVersion.empty() || h.buildVersion.size() > 128 || h.buildCommit.size() > 40 ||
+			!RecordingBuild::validDate(h.buildDate) ||
+			h.buildVersion.find_first_of("\r\n\t") != std::string::npos ||
+			(h.buildCommit != "none" && (h.buildCommit.size() != 40 || h.buildCommit.find_first_not_of("0123456789abcdef") != std::string::npos)))
+		{
+			return failWith(error, "invalid replay recording build");
+		}
+	}
+	if (!NetPacket::readNewGameMessage(r, h.game, error, version >= 7, version >= 11)) // lane CHEAT-1: the Cheat Mode i32 from format 11
 	{
 		return false;
 	}
@@ -84,9 +132,11 @@ bool ReplayFile::parse(const std::vector<std::uint8_t> &bytes, ReplayFile &out, 
 		return failWith(error, "replay RNG algorithm " + std::to_string(algorithm));
 	}
 	h.algorithm = (RandomAlgorithm)algorithm;
-	for (int &p : h.network.slotPlayerIndex)
+	// lane P16-NET: the index list is sized by the recorded game's serialized slot count — 8 for a legacy game, so an
+	// old recording parses byte for byte; 16 for an extended one (its GameInfo tag already makes old readers refuse it).
+	for (int i = 0; i < h.game.game.serializedSlotCount(); ++i)
 	{
-		p = r.i32();
+		h.network.slotPlayerIndex[(size_t)i] = r.i32();
 	}
 	h.network.localSlot = h.recordingSlot;
 	h.network.runAhead = r.i32();
@@ -106,7 +156,13 @@ bool ReplayFile::parse(const std::vector<std::uint8_t> &bytes, ReplayFile &out, 
 			{
 				return failWith(error, "duplicate command record of frame " + std::to_string(frame)); // lane SAVE-2: one record per frame
 			}
-			std::vector<GameMessage> &list = out.frames[frame];
+			// lane NETDIAG-1 (from a contributor's parser hardening): a count the remaining bytes cannot hold is refused before any command is read
+			// (7 bytes is the smallest GameMessage: u16 type, u8 player, u32 argument count, NetPacket.h format 2)
+			if (r.failed() || n > r.remaining() / 7)
+			{
+				return failWith(error, "frame " + std::to_string(frame) + " command count " + std::to_string(n) + " exceeds the record's bytes");
+			}
+			std::vector<GameMessage> list;
 			for (std::uint32_t i = 0; i < n; ++i)
 			{
 				std::unique_ptr<GameMessage> m = NetPacket::readGameMessage(r, error);
@@ -116,6 +172,7 @@ bool ReplayFile::parse(const std::vector<std::uint8_t> &bytes, ReplayFile &out, 
 				}
 				list.push_back(*m);
 			}
+			out.frames.emplace(frame, std::move(list));
 		}
 		else if (kind == RECORD_HASH)
 		{
@@ -140,6 +197,23 @@ bool ReplayFile::parse(const std::vector<std::uint8_t> &bytes, ReplayFile &out, 
 				return failWith(error, "replay profile switches out of order (frame " + std::to_string(frame) + ")");
 			}
 			out.profileSwitches.push_back({ frame, (SimulationProfile)profile });
+		}
+		else if (kind == RECORD_VIEW && version >= 8)
+		{
+			// lane ANTICHEAT-1: a player's view (camera and cursor), reported by its client: not simulation input
+			ReplayFile::View v;
+			v.frame = r.u32();
+			v.slot = r.u8();
+			v.cameraX = r.f32();
+			v.cameraY = r.f32();
+			v.cursorX = r.f32();
+			v.cursorY = r.f32();
+			v.flags = r.u8();
+			if (!r.failed() && v.slot >= MAX_SLOTS)
+			{
+				return failWith(error, "a view record of slot " + std::to_string(v.slot));
+			}
+			out.views.push_back(v);
 		}
 		else if (kind == RECORD_LOST)
 		{
@@ -172,6 +246,25 @@ bool ReplayFile::parse(const std::vector<std::uint8_t> &bytes, ReplayFile &out, 
 	}
 	return true;
 }
+} // namespace
+
+bool ReplayFile::parse(const std::vector<std::uint8_t> &bytes, ReplayFile &out, std::string *error)
+{
+	try
+	{
+		ReplayFile parsed;
+		if (!parseReplay(bytes, parsed, error))
+		{
+			return false;
+		}
+		out = std::move(parsed);
+		return true;
+	}
+	catch (const std::exception &e)
+	{
+		return failWith(error, std::string("the replay could not be parsed (") + e.what() + ")");
+	}
+}
 
 bool ReplayWriter::openTarget(const std::string &path, std::string *error)
 {
@@ -186,7 +279,7 @@ bool ReplayWriter::openTarget(const std::string &path, std::string *error)
 		m_open = true;
 		return true;
 	}
-	m_out.open(path, std::ios::binary | std::ios::trunc);
+	m_out.open(PathIO::native(path), std::ios::binary | std::ios::trunc);
 	if (!m_out)
 	{
 		return failWith(error, "cannot write the replay " + path);
@@ -210,12 +303,17 @@ bool ReplayWriter::open(const std::string &path, const ReplayHeader &h, std::str
 	NetByteWriter w;
 	w.u32(kVersion);
 	w.str(h.profile.text);
+	w.str(h.buildVersion.empty() ? BuildVersion::kVersion : h.buildVersion);
+	w.str(h.buildCommit.empty() ? BuildVersion::kCommit : h.buildCommit);
+	w.str(h.buildVersion.empty() ? BuildVersion::kBuildDate : h.buildDate);
 	NetPacket::writeNewGameMessage(w, h.game);
 	w.i32(h.recordingSlot);
 	w.u32((std::uint32_t)h.algorithm);
-	for (int p : h.network.slotPlayerIndex)
+	// lane P16-NET: a legacy game keeps the old 8-entry list; an extended game's GameInfo already carries the tag
+	// old readers refuse, so its 16-entry list needs no new format version.
+	for (int i = 0; i < h.game.game.serializedSlotCount(); ++i)
 	{
-		w.i32(p);
+		w.i32(h.network.slotPlayerIndex[(size_t)i]);
 	}
 	w.i32(h.network.runAhead);
 	w.i32(h.network.crcInterval);
@@ -365,6 +463,24 @@ void ReplayWriter::recordProfileSwitch(UnsignedInt frame, SimulationProfile prof
 	w.u8(RECORD_PROFILE);
 	w.u32(frame);
 	w.u32((std::uint32_t)profile);
+	write(w.data());
+}
+
+void ReplayWriter::recordView(const ReplayFile::View &v)
+{
+	if (!m_open)
+	{
+		return;
+	}
+	NetByteWriter w;
+	w.u8(RECORD_VIEW);
+	w.u32(v.frame);
+	w.u8(v.slot);
+	w.f32(v.cameraX);
+	w.f32(v.cameraY);
+	w.f32(v.cursorX);
+	w.f32(v.cursorY);
+	w.u8(v.flags);
 	write(w.data());
 }
 

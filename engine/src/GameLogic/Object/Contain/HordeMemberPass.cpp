@@ -386,6 +386,45 @@ Object *HordeContain::pickMemberNear(bool skipTagged, const Coord3D &pos, float 
 	return best;
 }
 
+// lane TARGET-1: RW 0x86FA87 with no position: over the contain list in its order the first entry (skipTagged: the first not TAGGED, status 0x3F), else over the
+// members on their way in (the map at interface + 0x54, by id) the first one found (skipTagged: the first found and not TAGGED); no member: null
+Object *HordeContain::pickMemberNoPosition(bool skipTagged) const
+{
+	static const int kTagged = ObjectTemplateInfoBuilder::objectStatusIndex("TAGGED"); // status 0x3F
+	if (!m_members.empty())
+	{
+		if (skipTagged)
+		{
+			for (Object *m : m_members)
+			{
+				if (m && !(kTagged >= 0 && m->testStatus((unsigned)kTagged)))
+				{
+					return m;
+				}
+			}
+		}
+		return m_members.front(); // RW returns the list head's object when no untagged member was found (piVar5 still the head)
+	}
+	GameLogic &logic = getObject()->logic();
+	if (m_garrisonEntering.empty())
+	{
+		return nullptr;
+	}
+	if (!skipTagged)
+	{
+		return logic.findObjectByID(*m_garrisonEntering.begin());
+	}
+	for (ObjectID id : m_garrisonEntering)
+	{
+		Object *m = logic.findObjectByID(id);
+		if (m && !(kTagged >= 0 && m->testStatus((unsigned)kTagged)))
+		{
+			return m;
+		}
+	}
+	return nullptr;
+}
+
 // HordeContainInterface slot 4 (RW 0x875221)
 void HordeContain::attackTargetNow(Object *victim, bool closestMemberOnly)
 {
@@ -626,6 +665,7 @@ float HordeContain::worstMemberSlotError() const
 	HordeContainCore::Placement owner;
 	owner.position = *horde->getPosition();
 	owner.angle = horde->getOrientation();
+	owner.computeTrig(); // lane UBER-2B: once for every member below
 	float worst = 0.0f;
 	for (const Object *m : m_members)
 	{
@@ -648,6 +688,7 @@ bool HordeContain::runMemberPass()
 	HordeContainCore::Placement owner;
 	owner.position = *horde->getPosition();
 	owner.angle = horde->getOrientation();
+	owner.computeTrig(); // lane UBER-2B: once for every member below
 	m_workDone = false;
 	++m_stats.passes;
 	// lane HORDE-2: the RotWK member pass (RW 0x873FE8, read with Ghidra) calls the member order (vslot 0x90 = RW 0x877A7A) with force = 1 - isMoving(horde)
@@ -770,7 +811,7 @@ void HordeContain::memberOrder(Object &member, const Coord3D &slotPos, float ori
 		}
 	}
 	// lane MOVE-2 r3, RW 0x877C37 .. 0x877C72 (H + 0x2A0, the melee target, set): no destination adjustment, no wait: unless the member follows a path whose current
-	// node is a waypoint (RW 0x5E2DF4, never in the port: S-161) the hub walks it to the destination it was given (its melee destination)
+	// node is a waypoint (RW 0x5E2DF4, a portal's: lane WALL-2) the hub walks it to the destination it was given (its melee destination)
 	if (m_meleeEngaged)
 	{
 		if (a->mover().goalType() == AIGOAL_EXPLICIT_WITH_PATH && a->mover().path() && a->mover().path()->hasExplicitZ())
@@ -912,7 +953,7 @@ void HordeContain::moveHub(Object &member, const Coord3D &destIn, float orientat
 			q.z = oldPosition.z;
 			if (world.mapReady() && pf.validMovementPosition(&a->adapter(), a->locomotorInfo(), a->adapter().getLayer(), &q))
 			{
-				q.z = horde->logic().getGroundHeight(q.x, q.y);
+				q.z = a->layerHeightAt(q.x, q.y); // TheTerrainLogic at the member's layer (lane WALL-1: a wall top's or a ramp's height; the terrain on the ground)
 			}
 		}
 		// the turn comes first (RW 0x874FA6 .. 0x8750E1): a member more than 10 degrees off the slot's facing turns where it stands; nothing moves it this frame
@@ -959,6 +1000,8 @@ void HordeContain::moveHub(Object &member, const Coord3D &destIn, float orientat
 		if (!ownerMoving)
 		{
 			member.setPosition(&q);
+			a->settleOnLayer(); // lane WALL-1: a member put on a wall top's slot stands on the wall
+			q = *member.getPosition();
 			host.setPendingPosition(q);
 			if (world.mapReady())
 			{

@@ -2,10 +2,12 @@
 // See GameLogic/Combat/WeaponDelivery.h for the target facts.
 
 #include "GameLogic/Combat/WeaponDelivery.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/LegendaryHeroesGame.h"
 
 #include "Common/Player.h"
+#include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
@@ -174,7 +176,7 @@ const char *const kNestedHordeStop =
 	"[S-1790] shockwaves (COMBAT-4): NOT ported: MetaImpactNugget's hit on a member of a horde that is itself inside a container (RW 0x910764 .. 0x9107AF: the source scores the member, the outer "
 	"container's contain slots 4 / 0x3C / 0x7C act on it; counted, nothing applied); the handler's audio event (RW 0x696947 .. 0x696A0E, TheAudio slot 0x64) and the drawable's "
 	"projectile type (client); FlipDirection is read by no 2.01 nugget code found; INFERENCE: a horde's member list is its contain list (horde interface slot 0x108 not read), the "
-	"clear-radius landing height is the ground (layer heights S-161), the AI state of RW 0x662D70 is the port's current state";
+	"clear-radius landing height is the layer's (RW 0x680A75) at the shock wave centre's z (lane WALL-2), the AI state of RW 0x662D70 is the port's current state";
 
 // RW 0x68D91A Object::estimateDamage: a TREE (template + 0x113 bit 6) answers 1.0 for FLAME (6) and 0 for anything else; else the body's estimate (body vslot 2);
 // no body: 0 (lane DECOMP-1)
@@ -1186,9 +1188,9 @@ void luaEventAt(GameLogic &logic, const LuaEventNugget &n, ObjectID sourceId, co
 // ---- SpawnAndFadeNugget (vtable RW 0xC7BD60: slot 1 RW 0x911BCF, slot 2 RW 0x911BFD, slot 5 RW 0x911C32 = slot 6 at the victim's position, slot 6 RW 0x911C46) ----
 // RW 0x911C46: the source object (retail reads it without a null test); SpawnedObjectName's template (RW 0x6D1305; none: nothing); a new object on the source's team
 // (RW 0x6D165E, status 0) at the SOURCE's position plus SpawnOffset turned by the source's angle: s / c the MSVCR71 sin / cos of the angle stored as floats, SSE
-// x + (c ox - s oy), y + (ox s + c oy); z the terrain height there on the source's layer (TheTerrainLogic slot 0x1C: the ground, S-161); its orientation the
-// source's (RW 0x70C31E); the source dies (RW 0x698EC3: UNRESISTABLE, FADED); a DEPLOYED_MINE (template + 0x11D bit 4) enters the pathfinder's map (RW 0x6E85E9).
-// The target position itself is not read
+// x + (c ox - s oy), y + (ox s + c oy); z the terrain height there on the source's layer (TheTerrainLogic slot 0x1C, RW 0x68BBE0; lane WALL-1: a wall top's or a
+// ramp's height for a source on a walkway, the ground otherwise); its orientation the source's (RW 0x70C31E); the source dies (RW 0x698EC3: UNRESISTABLE, FADED:
+// the mine carrier's DeployedDeath fades it); a DEPLOYED_MINE (template + 0x11D bit 4) enters the pathfinder's map (RW 0x6E85E9). The target position itself is not read
 void spawnAndFade(GameLogic &logic, const SpawnAndFadeNugget &n, ObjectID sourceId)
 {
 	static const int kDeployedMine = MetaImpact::kindIndex("DEPLOYED_MINE");
@@ -1216,7 +1218,8 @@ void spawnAndFade(GameLogic &logic, const SpawnAndFadeNugget &n, ObjectID source
 	Coord3D p;
 	p.x = SimMath::addf32(sp.x, SimMath::subf32(SimMath::mulf32(c, ox), SimMath::mulf32(s, oy)));
 	p.y = SimMath::addf32(sp.y, SimMath::addf32(SimMath::mulf32(ox, s), SimMath::mulf32(c, oy)));
-	p.z = logic.getGroundHeight(p.x, p.y);
+	const AIUpdateInterface *sai = source->getAIUpdateInterface();
+	p.z = sai ? sai->layerHeightAt(p.x, p.y) : logic.getGroundHeight(p.x, p.y);
 	o->setPosition(&p);
 	o->setOrientation(angle);
 	source->kill(DEATH_FADED);
@@ -1534,6 +1537,12 @@ bool deliver(GameLogic &logic, const WeaponNugget &n, const WeaponTemplate &w, O
 } // namespace NuggetEffects
 } // namespace
 
+bool WeaponNuggetUpgradeAllows(const WeaponNugget &n, const Object *source)
+{
+	return upgradeTest(n, source);
+}
+
+
 // RW 0x6CB779 (lane DECOMP-1): any nugget of the template whose slot 1 (isApplicable(weapon, victim)) answers true; false without a victim. The slot 1 bodies
 // (RotWK vtables, read with capstone): DamageNugget / DOTNugget RW 0x90E855 (damageApplicable); ProjectileNugget RW 0x90F954 (the base test RW 0x90D77C, a
 // warhead (+ 0x148) and RW 0x6CB779 on the warhead); MetaImpactNugget RW 0x910070; AttributeModifier / WeaponOCL / OpenGate / SpecialModelCondition RW 0x9114B4
@@ -1771,9 +1780,11 @@ void ObjectWeaponDelivery::fireWeaponTemplate(const WeaponBonus &bonus, int curB
 	bool miss = false;
 	if (victim && !scattered)
 	{
-		if (t.m_infantryInaccuracyDist > 0.0f && victim->isKindOf((unsigned)CombatNames::kinds().infantry) && !t.m_disableScatterForTargetsOnWall)
+		// (1) no roll. lane FLANK-1: DisableScatterForTargetsOnWall (+ 0x3D) only spares an infantry victim standing on a wall (RW 0x6CCC7F -> 0x6EA857
+		// Pathfinder::IsPointOnWall at the victim's position); the port has the ground layer only (S-362), so no victim stands on a wall and the miss applies
+		if (t.m_infantryInaccuracyDist > 0.0f && victim->isKindOf((unsigned)CombatNames::kinds().infantry))
 		{
-			miss = true; // (1) no roll
+			miss = true;
 		}
 	}
 	// (2) RW 0x6CCCA7: HitPercentage rolls whatever the target is: with no victim (a position shot, or DamageDealtAtSelfPosition's cleared one) it still draws (lane COMBAT-4 r2)
@@ -1801,40 +1812,29 @@ void ObjectWeaponDelivery::fireWeaponTemplate(const WeaponBonus &bonus, int curB
 		}
 		// (4) HitPassengerPercentage: the victim's contain module (garrison) is not a passenger target in this lane (S-321)
 	}
-	if (miss)
+	// RW 0x6CCDBA .. 0x6CCE5A: ScatterIndependently (+ 0x3C) delivers every nugget through the position path (slot 2, then slot 6 at the target), a miss scattering
+	// again before each one (the first with the victim, the others without: RW 0x6CC399 with a null victim draws the full circle); otherwise one scatter for all
+	// (lane FLANK-1; BFME2 decomp WeaponPrivateFireWeapon.cpp:1053). HitPassengerPercentage's redirect (RW 0x6CCD5A, the non-independent branch) is S-321's
+	const bool independently = t.m_scatterIndependently;
+	Object *scatterVictim = victim;
+	if (miss && !independently)
 	{
-		// RW 0x6CC399 computeScatter: the position path, no victim
-		float radius = t.m_scatterRadius;
-		if (t.m_infantryInaccuracyDist > 0.0f && victim && victim->isKindOf((unsigned)CombatNames::kinds().infantry))
-		{
-			radius = SimMath::addf32(radius, t.m_infantryInaccuracyDist);
-		}
-		const float targetRadius = victim ? SimMath::addf32(CombatQueries::boundingCircleRadius(*victim), 5.0f) : 0.0f;
-		if (radius > targetRadius)
-		{
-			radius = rng.getValueReal(targetRadius, radius, kWeaponCpp, 1625);
-		}
-		const Coord3D src = *m_source->getPosition();
-		float angle;
-		if (victim)
-		{
-			const float base = (float)SimMath::atan2d(SimMath::subf32(src.y, pos.y), SimMath::subf32(src.x, pos.x));
-			const float half = 1.5707964f;
-			angle = rng.getValueReal(SimMath::subf32(base, half), SimMath::addf32(base, half), kWeaponCpp, 1639);
-		}
-		else
-		{
-			angle = rng.getValueReal(0.0f, 6.28318548f, kWeaponCpp, 1643);
-		}
-		pos.x = SimMath::addf32(pos.x, SimMath::mulf32((float)SimMath::cosd(angle), radius));
-		pos.y = SimMath::addf32(pos.y, SimMath::mulf32((float)SimMath::sind(angle), radius));
-		pos.z = logic.getGroundHeight(pos.x, pos.y);
+		pos = scatterTargetPos(scatterVictim, pos);
 		victim = nullptr;
 	}
 	// the nugget loop in parse order
 	for (const std::shared_ptr<WeaponNugget> &np : t.m_nuggets)
 	{
 		const WeaponNugget &n = *np;
+		if (independently)
+		{
+			if (miss)
+			{
+				pos = scatterTargetPos(scatterVictim, pos);
+				scatterVictim = nullptr;
+			}
+			victim = nullptr; // the position path for every nugget
+		}
 		switch (n.kind())
 		{
 		case NUGGET_DAMAGE:
@@ -1986,6 +1986,75 @@ Coord3D ConvertBonePosToWorldPos(const Object &obj, const Coord3D &bone)
 	return Coord3D{ w[0], w[1], w[2] };
 }
 
+// RW 0x6CC399 WeaponTemplate::calcScatterTargetPos (lane FLANK-1 re-read; BFME2 decomp WeaponTemplateScatterTargetPos.cpp:163): the minimum radius is the victim's bounding
+// circle (+ 0xB8) + 5.0 (RW 0xBDAE58), 0 without a victim; a STRUCTURE victim (template + 0x108 bit 7) starts from its aim point (RW 0x6CB85A(source, victim, 1): the logic
+// draw of Weapon.cpp:1749 unless the PreferredTargetBone answers); ScatterRadius (+ 0x34), plus ScatterRadiusVsInfantry (+ 0x14C) for an INFANTRY victim; above the minimum
+// the radius is drawn (line 0x659). The angle: with a victim the planar direction source - VICTIM (SSE), normalised by Inv_Sqrt (RW 0x441C56, x87) unless its length is
+// 0, atan2 (RW 0x441BF4), +- pi/2 (line 0x667); without one 0 .. 2 pi (line 0x66B). The offset is cos / sin (x87) times the radius. The z: a MINE victim (bit 55) keeps its
+// own z; a victim whose AI answers vslot 0x224 (ground movement) takes the height of its layer at the point (the ground: S-362); anything else keeps the z it had
+Coord3D ObjectWeaponDelivery::scatterTargetPos(Object *victim, Coord3D pos)
+{
+	GameLogic &logic = m_source->logic();
+	GameLogicRandom &rng = logic.random();
+	const WeaponTemplate &t = *m_weapon;
+	const float minRadius = victim ? SimMath::addf32(CombatQueries::boundingCircleRadius(*victim), 5.0f) : 0.0f;
+	float radius = t.m_scatterRadius;
+	if (victim)
+	{
+		if (victim->isKindOf((unsigned)CombatNames::kinds().structure))
+		{
+			pos = fireFXAimPosition(*victim);
+		}
+		if (t.m_infantryInaccuracyDist > 0.0f && victim->isKindOf((unsigned)CombatNames::kinds().infantry))
+		{
+			radius = SimMath::addf32(t.m_infantryInaccuracyDist, radius);
+		}
+	}
+	if (radius > minRadius)
+	{
+		radius = rng.getValueReal(minRadius, radius, kWeaponCpp, 1625);
+	}
+	float angle;
+	if (victim)
+	{
+		const Coord3D &src = *m_source->getPosition();
+		const Coord3D &vp = *victim->getPosition();
+		float dx = SimMath::subf32(src.x, vp.x), dy = SimMath::subf32(src.y, vp.y);
+		const float lenSq = SimMath::addf32(SimMath::mulf32(dy, dy), SimMath::mulf32(dx, dx));
+		if (lenSq != 0.0f)
+		{
+			const float inv = ProjectileInvSqrt(lenSq);
+			dx = SimMath::mulf32(dx, inv);
+			dy = SimMath::mulf32(dy, inv);
+		}
+		const float base = (float)SimMath::atan2d(dy, dx);
+		const float half = 1.5707964f; // RW 0xBD89D0
+		angle = rng.getValueReal(SimMath::subf32(base, half), SimMath::addf32(base, half), kWeaponCpp, 1639);
+	}
+	else
+	{
+		angle = rng.getValueReal(0.0f, 6.28318548f, kWeaponCpp, 1643); // RW 0xBDD38C
+	}
+	pos.x = SimMath::addf32(pos.x, SimMath::mulf32((float)SimMath::cosd(angle), radius));
+	pos.y = SimMath::addf32(pos.y, SimMath::mulf32((float)SimMath::sind(angle), radius));
+	if (victim)
+	{
+		static const unsigned kMine = (unsigned)CombatNames::kindOf("MINE");
+		if (victim->isKindOf(kMine))
+		{
+			pos.z = victim->getPosition()->z;
+		}
+		else if (const AIUpdateInterface *ai = victim->getAIUpdateInterface())
+		{
+			if (ai->canFollowTeamPath())
+			{
+				pos.z = logic.getGroundHeight(pos.x, pos.y);
+			}
+		}
+	}
+	return pos;
+}
+
 // RW 0x6CB85A(out, source, victim, flag 1), the aim query of the fire FX block (lane FX-2 review). TARGET FACTS: RW 0x6CB81A first asks the victim for the
 // weapon's PreferredTargetBone (+0x90): a non-empty name found exactly once among the victim drawable's pristine bones (RW 0x68C5AF -> 0x672A73, then
 // 0x70BCE7 to world) is the answer with no draw; otherwise GameLogicRandomValue(0, 0xBC614E = 12345678) is drawn (Weapon.cpp:1749, RW 0x6CB8C2..0x6CB8D3)
@@ -2010,24 +2079,28 @@ Coord3D ObjectWeaponDelivery::fireFXAimPosition(const Object &victim)
 // RW 0x6CC915, the fire FX block (0x6CCAA7..0x6CCBF6; lane FX-2). It runs when the source has a drawable (RW 0x70E013): every object has one in retail
 // (RW 0x628882 makes it at creation; DrawableManager likewise), so the block is taken for every shot whatever the client shows; eligibility is never the
 // player's. First the victim aim query (above: the logic draw of Weapon.cpp:1749 unless the preferred bone answers), BEFORE anything can return. Then the FX:
-// FireFlankFX (+0xB4) when the victim is flanked by the source (RW 0x68FB63; the flank test is not ported, S-322: never) else FireFX (+0xA4, the REGULAR
-// entry: RW reads no veterancy entry here), none while the logic frame is below the weapon's suspendFXFrame (+0x30). The local-player / stealth tests
+// with a victim, RW 0x6CCB46 .. 0x6CCB4D asks victim->isFlankedBy(source) (RW 0x68FB63; lane FLANK-1: this is SIMULATION, the first judgement of an attacker horde is
+// kept by the victim horde, HordeFlank.cpp) for every shot, before any FX test; FireFlankFX (+0xB4) when it answers yes and the weapon has one, else FireFX (+0xA4, the
+// REGULAR entry: RW reads no veterancy entry here), none while the logic frame is below the weapon's suspendFXFrame (+0x30). The local-player / stealth tests
 // (RW 0x68B749, 0x694C0D, +0x135) belong to the viewing client: the event carries PlayFXWhenStealthed.
-void ObjectWeaponDelivery::emitFireFX(int curBarrel, const Object *victim, const Coord3D &victimPos)
+void ObjectWeaponDelivery::emitFireFX(int curBarrel, Object *victim, const Coord3D &victimPos)
 {
 	GameLogic &logic = m_source->logic();
 	const Coord3D aim = victim ? fireFXAimPosition(*victim) : victimPos;
 	const WeaponTemplate &t = *m_weapon;
+	const bool flanked = victim && HordeFlank::isFlankedBy(*victim, *m_source); // RW 0x6CCB46 .. 0x6CCB54 (lane FLANK-1)
+	const bool flankFX = flanked && FXEventLog::isFXName(t.m_fireFlankFX);    // RW 0x6CCB56 .. 0x6CCB64: a null FireFlankFX falls back to FireFX
+	const std::string &fx = flankFX ? t.m_fireFlankFX : t.m_fireFXs[0];
 	const Weapon *w = m_firing; // the firing weapon's own suspend-FX frame (+ 0x30)
 	if (w && w->getTemplate() == &t && logic.getFrame() < w->suspendFXFrame())
 	{
 		return;
 	}
-	if (!FXEventLog::isFXName(t.m_fireFXs[0]))
+	if (!FXEventLog::isFXName(fx))
 	{
 		return;
 	}
-	FXEvent e = FXEventLog::objectEvent(FXEvent::WEAPON_FIRE_FX, "FireFX", logic.getFrame(), t.m_fireFXs[0], *m_source);
+	FXEvent e = FXEventLog::objectEvent(FXEvent::WEAPON_FIRE_FX, flankFX ? "FireFlankFX" : "FireFX", logic.getFrame(), fx, *m_source);
 	e.secondary = victim ? victim->getID() : (ObjectID)INVALID_ID;
 	e.secondaryPosition = aim;
 	e.weaponSlot = m_firing->getSlot();

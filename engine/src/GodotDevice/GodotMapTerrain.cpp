@@ -1022,13 +1022,37 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 		if (wantRivers && !map.chunks.riverAreas.empty())
 		{
 			Ref<Shader> sh = loadShader("res://shaders/river.gdshader", errors);
+			// RiverWater.fx blends a river onto the frame with SRCALPHA / INVSRCALPHA, or SRCALPHA / ONE when the map marks it additive
+			// (RiverArea::additiveBlending). Godot fixes the blend in the shader's render mode, so additive rivers get a copy with blend_add.
+			Ref<Shader> additive;
+			if (sh.is_valid())
+			{
+				const String mixMode = "render_mode unshaded, blend_mix";
+				if (sh->get_code().contains(mixMode))
+				{
+					additive.instantiate();
+					additive->set_code(sh->get_code().replace(mixMode, "render_mode unshaded, blend_add"));
+				}
+				else
+				{
+					errors.push_back("river.gdshader: no \"" + mixMode + "\" render mode to make the additive copy from");
+				}
+			}
+			int64_t additiveRendered = 0;
+			float waterDiffuse[4];
+			std::string waterError;
+			if (!WaterSetScan::load(*arch, name, lighting ? lighting->timeOfDay : 2, waterDiffuse, &waterError))
+			{
+				errors.push_back(toGodot("water.ini: " + waterError));
+			}
+			float colour[4];
 			Node3D *riverRoot = memnew(Node3D);
 			riverRoot->set_name("Rivers");
 			root->add_child(riverRoot);
 			for (const RiverArea &r : map.chunks.riverAreas)
 			{
 				WaterGeometry::RiverStrip strip;
-				if (!WaterGeometry::buildRiverStrip(r, 80.0f, strip) || sh.is_null())
+				if (!WaterGeometry::buildRiverStrip(r, strip) || sh.is_null())
 				{
 					continue;
 				}
@@ -1041,12 +1065,13 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				uv0.resize(n);
 				uv1.resize(n);
 				col.resize(n);
+				WaterGeometry::riverVertexColour(r, tod, waterDiffuse, colour);
 				for (int64_t i = 0; i < n; ++i)
 				{
 					vtx.set(i, toG(strip.position[(size_t)i * 3], strip.position[(size_t)i * 3 + 1], strip.position[(size_t)i * 3 + 2]));
 					uv0.set(i, Vector2(strip.uv0[(size_t)i * 2], strip.uv0[(size_t)i * 2 + 1]));
 					uv1.set(i, Vector2(strip.uv1[(size_t)i * 2], strip.uv1[(size_t)i * 2 + 1]));
-					col.set(i, Color(r.r / 255.0f, r.g / 255.0f, r.b / 255.0f, r.alpha));
+					col.set(i, Color(colour[0], colour[1], colour[2], colour[3]));
 				}
 				idx.resize((int64_t)strip.index.size());
 				memcpy(idx.ptrw(), strip.index.data(), strip.index.size() * sizeof(int32_t));
@@ -1062,7 +1087,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
 				Ref<ShaderMaterial> m;
 				m.instantiate();
-				m->set_shader(sh);
+				m->set_shader(r.additiveBlending ? additive : sh);
 				m->set_render_priority(RIVER_RENDER_PRIORITY);
 				// lane RENDER-3 (S-831): the river blends in the transparent pass, which the map root (a GammaCompositeHost) composites in retail's gamma
 				// space: the gamma-space colour is handed over unconverted
@@ -1080,6 +1105,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				setTex("noise_tex", r.noiseTexture);
 				setTex("edge_tex", r.alphaEdgeTexture);
 				m->set_shader_parameter("uv_scroll_per_second", Vector2(r.uvScrollSpeed, r.uvScrollSpeed));
+				m->set_shader_parameter("opacity", r.alpha); // RiverWater.fx Opacity.w
 				for (int64_t i = 0; i < texErrors.size(); ++i)
 				{
 					errors.push_back(texErrors[i]);
@@ -1091,8 +1117,10 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				mi->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
 				riverRoot->add_child(mi);
 				++rendered;
+				additiveRendered += r.additiveBlending ? 1 : 0;
 				tris += (int64_t)strip.index.size() / 3;
 			}
+			rv["additive"] = additiveRendered;
 		}
 		rv["rendered"] = rendered;
 		rv["triangles"] = tris;

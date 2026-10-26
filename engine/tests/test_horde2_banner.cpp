@@ -41,7 +41,8 @@ TEST_CASE("horde2 banner: no carrier at rank 0; at rank 1 the carrier joins, sta
 	CHECK(hc(h)->getContainCount() == 4);
 	CHECK(hc(h)->bannerCountdown() == 19u); // MeleeFreeBannerReSpawnTime 4000 ms = 20 frames, one update ran since
 	w.frames(30);
-	CHECK(banner->getPosition()->x == doctest::Approx(310.0f).epsilon(0.02)); // BannerCarrierPosition X:10 in front of the horde centre
+	// BannerCarrierPosition X:10, in the slot table centred on its mean (RW 0x86C4EA: three swordsmen at X 50 and the carrier at 10, 40): 30 behind the horde
+	CHECK(banner->getPosition()->x == doctest::Approx(h->getPosition()->x - 30.0f).epsilon(0.02)); // tolerance: the carrier walks onto its slot (2 %, as before)
 	// a member dies; the carrier brings the horde back to three swordsmen after IdleSpawnRate once nobody fought for MeleeFreeUnitSpawnTime
 	Object *victim = nullptr;
 	for (Object *m : w.membersOf(h))

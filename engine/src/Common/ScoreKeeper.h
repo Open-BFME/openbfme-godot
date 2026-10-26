@@ -170,7 +170,10 @@ public:
 	// RW 0x79F704: `frame` is TheGameLogic + 0x40; `player` is the keeper's owner
 	void recordPerFrameStats(GameLogic &logic, const Player &player, unsigned frame);
 	// RW 0x79DFFA without the store at + 0xEC (the client may ask at any time: nothing changes); `frame` is the logic frame
-	int computeScore(const GameLogicSettings &settings, unsigned frame) const;
+	int computeScore(const GameLogicSettings &settings, unsigned frame) const { return computeScore(settings, frame, 0); }
+	// lane CAMPUI-1: with the objectives term's count (RW 0x79DE90: TheMissionObjectiveTracker's completed shown bonus objectives, the same for every
+	// player; 0 in a game without an objective list: the two-argument form)
+	int computeScore(const GameLogicSettings &settings, unsigned frame, int completedObjectives) const;
 	// RW 0x79DFFA: computeScore and the store at + 0xEC
 	int calculateScore(const GameLogicSettings &settings, unsigned frame)
 	{

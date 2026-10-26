@@ -420,13 +420,13 @@ void INI::parseTypeFlagList(INI *ini, void *, void *store, const void *userData)
 		if (token[0] == '+')
 		{
 			const int dt = scanIndexList(token + 1, spec->names);
-			flags |= 1u << (dt - spec->firstBitIndex);
+			flags |= 1u << ((unsigned)(dt - spec->firstBitIndex) & 31u); // x86 shl by cl (RW 0x73A62D): the count mod 32 (FORCE, index 0, is bit 31)
 			continue;
 		}
 		if (token[0] == '-')
 		{
 			const int dt = scanIndexList(token + 1, spec->names);
-			flags &= ~(1u << (dt - spec->firstBitIndex));
+			flags &= ~(1u << ((unsigned)(dt - spec->firstBitIndex) & 31u)); // RW 0x73A648
 			continue;
 		}
 		throw INIException(5, "ALL, NONE, + or - expected");

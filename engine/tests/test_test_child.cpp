@@ -95,7 +95,16 @@ TEST_CASE("test child: the child's output goes to its log file, not to the test'
 			CHECK(target.string() == log);
 		}
 #endif
-		std::this_thread::sleep_for(std::chrono::milliseconds(200));
+		// lane MACGATE-1: wait for the child's two lines (bounded) before the destructor kills it; a fixed 200 ms lost the race on a loaded
+		// macOS host, where no /proc wait above has given the shell time to run
+		for (int t = 0; t < 500; ++t) // tolerance: 10 s at most
+		{
+			std::error_code ec;
+			const auto size = std::filesystem::file_size(log, ec);
+			if (!ec && size >= 14) // "to-out\nto-err\n"
+				break;
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		}
 	}
 	std::ifstream in(log);
 	std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());

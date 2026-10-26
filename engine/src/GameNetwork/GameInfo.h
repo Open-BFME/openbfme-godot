@@ -17,7 +17,8 @@
 #include <string>
 #include <vector>
 
-constexpr int MAX_SLOTS = 8;              // ZH GameNetwork/GameInfo.h
+constexpr int LEGACY_MAX_SLOTS = 8;       // ZH GameNetwork/GameInfo.h / RotWK 2.01
+constexpr int MAX_SLOTS = 16;             // OpenBFME extension; map-gated, not a simulation profile
 constexpr int PLAYERTEMPLATE_RANDOM = -1; // ZH Common/PlayerTemplate.h
 constexpr int PLAYERTEMPLATE_OBSERVER = -2;
 
@@ -143,6 +144,10 @@ struct SkirmishGameSlot
 struct SkirmishGameInfo
 {
 	SkirmishGameSlot slots[MAX_SLOTS];
+	// OpenBFME map capacity: 8 for legacy maps/records, actual start count (9..16)
+	// for extended maps. Network/save encoders must explicitly tag the latter.
+	int mapStartCount = LEGACY_MAX_SLOTS;
+	int serializedSlotCount() const { return mapStartCount > LEGACY_MAX_SLOTS ? MAX_SLOTS : LEGACY_MAX_SLOTS; }
 	std::string mapName; // the map cache key
 	std::uint32_t mapCRC = 0;
 	std::uint32_t mapSize = 0;
@@ -161,6 +166,10 @@ struct SkirmishGameInfo
 	// lane UBER-1, OpenBFME (not retail): the simulation profile (Common/SimulationProfile.h): Faithful, or the opt-in Uber performance mode the host's
 	// OpenBFME option chose; every peer's profile identity must say the same (GameNetwork/ProfileIdentity.h), so a mismatch is refused at the lobby
 	SimulationProfile simulationProfile = SimulationProfile::Faithful;
+	// lane CHEAT-1, OpenBFME (not retail): Cheat Mode (GameLogic/CheatMode.h), the host's open "cheats on" rule: -1 off, else the game slot of the cheat seat
+	// (the host's slot, a human slot). Every player sees it before joining (the game lists), on the load screen and in game; never in Quick Match
+	int cheatMode = -1;
+	bool cheatModeOn() const { return cheatMode >= 0; }
 	// lane RULES-1: AllowCustomHeroes (rule 0): a game with no rule block keeps every slot's Create-a-Hero; with the block only rule 0 == 1 allows them (RW 0x842A85
 	// enables a slot's hero combo only then). The host, the wire reader and the game start all hold a setup to it
 	bool customHeroesAllowed() const { return MpGameRules::isNone(rules) || rules[RULE_ALLOW_CUSTOM_HEROES] == 1; }
@@ -283,9 +292,9 @@ struct SkirmishGameInfo
 				return false;
 			}
 		}
-		return mapName == o.mapName && mapCRC == o.mapCRC && mapSize == o.mapSize && mapMask == o.mapMask && seed == o.seed && startingCash == o.startingCash
+		return mapStartCount == o.mapStartCount && mapName == o.mapName && mapCRC == o.mapCRC && mapSize == o.mapSize && mapMask == o.mapMask && seed == o.seed && startingCash == o.startingCash
 			&& superweaponRestriction == o.superweaponRestriction && inProgress == o.inProgress && rules == o.rules && legendaryHeroes == o.legendaryHeroes
-			&& simulationProfile == o.simulationProfile;
+			&& simulationProfile == o.simulationProfile && cheatMode == o.cheatMode;
 	}
 };
 
@@ -305,4 +314,3 @@ struct NewGameMessage
 	int rankPoints = 0;
 	SkirmishGameInfo game; // TheSkirmishGameInfo at the moment of the message
 };
-

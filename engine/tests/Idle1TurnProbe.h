@@ -33,6 +33,7 @@ struct TurnProbe
 		unsigned recordDelay = 0;  ///< its delay then
 		bool skippedAfter = false; ///< the member pass skipped the member in the frame after the turn (the lookahead frame)
 		bool skippedLast = false;  ///< the pass skipped the member at the last sample
+		bool hordeMovingAfter = false; ///< lane ATTACKPATH-1: the member's horde was moving in the lookahead frame (its MOVING is the horde's walk)
 	};
 	std::map<ObjectID, Last> last;
 	int turned = 0, turnedMoving = 0;                   ///< member-frames turning on the spot; of those with MOVING at the frame's end
@@ -50,6 +51,9 @@ struct TurnProbe
 	// count, so standing with MOVING 5 frames past the resume still fails. A cowering member exempts nothing. Those are counted apart, not in the two
 	// counts above (held turns, held standing frames with MOVING)
 	int turnedHeldByBackUp = 0, framesHeldByBackUp = 0;
+	// lane ATTACKPATH-1: a member that turned while its horde was still, whose horde got a move order in the next frame (a computer player's move between two
+	// attack orders): its MOVING in that frame is the horde's walk starting (the member walks off a frame later), not a turn kept running; counted apart
+	int turnedThenHordeMoved = 0;
 	std::ostringstream samples;
 	int lines = 0, streakLines = 0;
 
@@ -84,6 +88,8 @@ struct TurnProbe
 			{
 				l.movingAfter = l.pendingMoving && mv;
 				l.skippedAfter = skipped;
+				const AIUpdateInterface *hai = c->getAIUpdateInterface();
+				l.hordeMovingAfter = hai && hai->isMoving();
 			}
 			else if (l.pendingTurn && l.pendingAge == 2)
 			{
@@ -91,7 +97,8 @@ struct TurnProbe
 				++turned;
 				turnedMoving += l.pendingMoving ? 1 : 0;
 				const bool outside = l.movingAfter && l.state != (unsigned)AI_ATTACK_OBJECT;
-				turnedMovingOutsideAttack += outside && !l.skippedAfter ? 1 : 0;
+				turnedThenHordeMoved += outside && !l.skippedAfter && l.hordeMovingAfter ? 1 : 0;
+				turnedMovingOutsideAttack += outside && !l.skippedAfter && !l.hordeMovingAfter ? 1 : 0;
 				turnedHeldByBackUp += outside && l.skippedAfter ? 1 : 0;
 				if (l.pendingAttacking)
 				{
@@ -103,7 +110,7 @@ struct TurnProbe
 					++turnedCavalry;
 					turnedCavalryMoving += l.pendingMoving ? 1 : 0;
 				}
-				if (outside && !l.skippedAfter && lines < 6)
+				if (outside && !l.skippedAfter && !l.hordeMovingAfter && lines < 6)
 				{
 					++lines;
 					samples << "  f" << logic.getFrame() - 2 << " " << x->getTemplate()->getName() << " #" << x->getID() << " turned on the spot, MOVING still set the next frame, state " << l.state << "\n";

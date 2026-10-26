@@ -2,7 +2,9 @@
 // See Common/System/SaveGame/SaveGameFile.h (lane SAVE-2).
 
 #include "Common/System/SaveGame/SaveGameFile.h"
+#include "Common/PathIO.h"
 
+#include "Common/RecordingBuild.h"
 #include "Common/Sha256.h"
 #include "GameNetwork/NetPacket.h"
 
@@ -70,10 +72,6 @@ std::string dataOnly(const std::string &text)
 	return out;
 }
 
-std::string shortId(const std::string &id)
-{
-	return id.size() > 12 ? id.substr(0, 12) : id;
-}
 } // namespace
 
 std::string SaveGameFile::executionProfileOf(const std::string &identityText)
@@ -117,6 +115,7 @@ std::vector<std::uint8_t> SaveGameFile::encode() const
 	h.u8(header.campaignReady ? 1 : 0);
 	h.u8(header.campaignAdvanced ? 1 : 0);
 	h.u8(header.autoSave ? 1 : 0);
+	h.str(header.buildDate);
 	std::vector<std::uint8_t> out(kMagic, kMagic + sizeof(kMagic));
 	NetByteWriter v;
 	v.u32(kContainerVersion);
@@ -182,8 +181,21 @@ private:
 
 bool SaveGameFile::parse(const std::vector<std::uint8_t> &bytes, SaveGameFile &out, std::string *error, bool headerOnly)
 {
-	MemorySource src(bytes);
-	return parseFrom(src, out, error, headerOnly);
+	try
+	{
+		MemorySource src(bytes);
+		SaveGameFile parsed;
+		if (!parseFrom(src, parsed, error, headerOnly))
+		{
+			return false;
+		}
+		out = std::move(parsed);
+		return true;
+	}
+	catch (const std::exception &e)
+	{
+		return failWith(error, std::string("the save could not be parsed (") + e.what() + ")");
+	}
 }
 
 bool SaveGameFile::parseFrom(Source &src, SaveGameFile &out, std::string *error, bool headerOnly)
@@ -221,6 +233,11 @@ bool SaveGameFile::parseFrom(Source &src, SaveGameFile &out, std::string *error,
 		}
 		const std::uint32_t length = NetByteReader(ph + 4, 4).u32();
 		pos += 40;
+		if ((i == 0 || !headerOnly) && length > limits[i])
+		{
+			return failWith(error, std::string("the save's ") + kPartNames[i] + " part declares " + std::to_string(length) + " bytes (at most "
+				+ std::to_string(limits[i]) + ")");
+		}
 		if (size - pos < length)
 		{
 			return failWith(error, std::string("the save is truncated (the ") + kPartNames[i] + " part has " + std::to_string(size - pos) + " of its "
@@ -228,11 +245,6 @@ bool SaveGameFile::parseFrom(Source &src, SaveGameFile &out, std::string *error,
 		}
 		if (i == 0 || !headerOnly)
 		{
-			if (length > limits[i])
-			{
-				return failWith(error, std::string("the save's ") + kPartNames[i] + " part declares " + std::to_string(length) + " bytes (at most "
-					+ std::to_string(limits[i]) + ")");
-			}
 			parts[i].resize(length);
 			if (!src.read(pos, parts[i].data(), length))
 			{
@@ -252,9 +264,9 @@ bool SaveGameFile::parseFrom(Source &src, SaveGameFile &out, std::string *error,
 	}
 	NetByteReader r(parts[0]);
 	const std::uint32_t headerVersion = r.u32();
-	if (!r.failed() && headerVersion != kHeaderVersion && headerVersion != 1)
+	if (!r.failed() && headerVersion != kHeaderVersion && headerVersion != 1 && headerVersion != 2)
 	{
-		return failWith(error, "save header version " + std::to_string(headerVersion) + " (this build reads versions 1 and " + std::to_string(kHeaderVersion) + ")");
+		return failWith(error, "save header version " + std::to_string(headerVersion) + " (this build reads versions 1, 2 and 3)");
 	}
 	SaveGameHeader &h = out.header;
 	h.buildVersion = r.str();
@@ -294,6 +306,14 @@ bool SaveGameFile::parseFrom(Source &src, SaveGameFile &out, std::string *error,
 			{
 				return failWith(error, "the save's campaign flag " + std::to_string(i) + " is " + std::to_string(flags[i]) + " (0 or 1)");
 			}
+		}
+	}
+	if (headerVersion >= 3)
+	{
+		h.buildDate = r.str();
+		if (!r.failed() && !RecordingBuild::validDate(h.buildDate))
+		{
+			return failWith(error, "invalid save recording build date");
 		}
 	}
 	h.campaignVictorious = flags[0] == 1;
@@ -347,8 +367,8 @@ bool SaveGameFile::load(const std::string &path, SaveGameFile &out, std::string 
 	// read part by part: the header-only listing reads the header part and the parts' 40-byte heads, nothing else; every size is checked against the
 	// file's before anything is allocated (review: a large foreign file read whole aborted the listing with std::bad_alloc)
 	std::error_code ec;
-	const std::uintmax_t size = std::filesystem::file_size(std::filesystem::u8path(path), ec);
-	std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
+	const std::uintmax_t size = std::filesystem::file_size(PathIO::native(path), ec);
+	std::ifstream in(PathIO::native(path), std::ios::binary);
 	if (ec || !in)
 	{
 		return failWith(error, "cannot open the save " + path);
@@ -356,11 +376,16 @@ bool SaveGameFile::load(const std::string &path, SaveGameFile &out, std::string 
 	try
 	{
 		FileSource src(in, (std::uint64_t)size);
-		return parseFrom(src, out, error, headerOnly);
+		SaveGameFile parsed;
+		if (!parseFrom(src, parsed, error, headerOnly))
+		{
+			return false;
+		}
+		out = std::move(parsed);
+		return true;
 	}
 	catch (const std::exception &e)
 	{
-		out = SaveGameFile();
 		return failWith(error, std::string("the save could not be read (") + e.what() + ")");
 	}
 }
@@ -368,8 +393,8 @@ bool SaveGameFile::load(const std::string &path, SaveGameFile &out, std::string 
 bool SaveGameFile::write(const std::string &path, std::string *error) const
 {
 	const std::vector<std::uint8_t> bytes = encode();
-	const std::filesystem::path target = std::filesystem::u8path(path);
-	const std::filesystem::path temp = std::filesystem::u8path(path + ".tmp");
+	const std::filesystem::path target = PathIO::native(path);
+	const std::filesystem::path temp = PathIO::native(path + ".tmp");
 	{
 		std::ofstream o(temp, std::ios::binary | std::ios::trunc);
 		if (!o)
@@ -404,7 +429,7 @@ SaveGameCompatibility SaveGameCompatibility::checkMenuSave(const SaveGameHeader 
 	const ProfileIdentity b = ProfileIdentity::fromText(dataOnly(save.profile.text));
 	if (a != b)
 	{
-		c.refusal = "this game was saved with other game data or rules: " + ProfileIdentity::difference(a, b);
+		c.refusal = RecordingBuild::openWith(save.buildVersion, save.buildDate) + " The game data or rules differ from this build.";
 		return c;
 	}
 	if (!campaignRefusal.empty())
@@ -417,21 +442,20 @@ SaveGameCompatibility SaveGameCompatibility::checkMenuSave(const SaveGameHeader 
 }
 
 SaveGameCompatibility SaveGameCompatibility::check(const SaveGameHeader &save, const ProfileIdentity &running, const std::string &runningEngineId,
-	const std::string &runningBuildVersion, bool multiplayer)
+	const std::string &, bool multiplayer)
 {
 	SaveGameCompatibility c;
 	if (save.engineId != runningEngineId)
 	{
 		// owner decision 2: a log-only save is refused by another build, naming the build that made it (SAVES.md section 5: replay with that build)
-		c.refusal = "this game was saved by OpenBFME " + save.buildVersion + " (engine " + shortId(save.engineId) + "); this is OpenBFME "
-			+ runningBuildVersion + " (engine " + shortId(runningEngineId) + "). A save loads only in the build that made it.";
+		c.refusal = RecordingBuild::openWith(save.buildVersion, save.buildDate);
 		return c;
 	}
 	const ProfileIdentity a = ProfileIdentity::fromText(withoutProfileLine(running.text));
 	const ProfileIdentity b = ProfileIdentity::fromText(withoutProfileLine(save.profile.text));
 	if (a != b)
 	{
-		c.refusal = "this game was saved with other game data or rules: " + ProfileIdentity::difference(a, b);
+		c.refusal = RecordingBuild::openWith(save.buildVersion, save.buildDate) + " The game data or rules differ from this build.";
 		return c;
 	}
 	const std::string ours = SaveGameFile::executionProfileOf(running.text);

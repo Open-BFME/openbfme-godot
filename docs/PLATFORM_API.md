@@ -10,6 +10,7 @@ The game's code: `engine/src/GameNetwork/PlatformApiClient.{h,cpp}` (the client:
 pages), `godot/scripts/online_http.gd` (the transport, kind `platform`). The tests run against the backend's OWN service and
 HTTP fake, copied into `tools/platform_fake/` (origin and commit in its `SOURCE.md`; `fake_server.py` adds a `/__test/` surface: request log, clock,
 injected failures), so the client and the real backend cannot drift: `python3 -m pytest tools/platform_fake`, and the C++ screen tests start it.
+Run that command from the repository root on Linux (or another POSIX test host), with Python 3, pytest and a loopback port available.
 
 ## General rules
 
@@ -24,14 +25,15 @@ injected failures), so the client and the real backend cannot drift: `python3 -m
   code itself for any other). A 429 / 503 may carry `Retry-After`.
 - Identity: `install` = 32 lowercase hex digits (128 random bits, made once per installation, kept in the game's user folder:
   `user://platform_install_id.txt`), and `nick` (the online sign-in name, 1 .. 24 bytes UTF-8, no control characters). No accounts, no tokens.
-- Ids (tickets, matches, tournaments, games): `[A-Za-z0-9_-]{1,64}`. A room code: `[A-Za-z0-9_-]{6,32}` (the lobby's `ROOM_CODE`).
+- Ticket, Quick Match match and tournament ids: 32 lowercase hex digits. Tournament match ids: `<32-hex tournament id>.<24 lowercase hex>`.
+  Result game ids: 1 .. 128 ASCII letters, digits, `_`, `-` or `.`. A room code: `[A-Za-z0-9_-]{6,32}` (the lobby's `ROOM_CODE`).
 - Nothing blocks a game: the service unreachable means "Online services unavailable" on the pages, and play goes on.
 
 ## Quick Match
 
 `POST /qm/tickets`
 ```json
-{"v":1,"install":"<32 hex>","nick":"Elrond","mode":"faithful","size":"1v1","factions":["FactionMen"]}
+{"v":1,"install":"<32 hex>","nick":"Elrond","client":{"platform":"linux","version":"<game version>"},"mode":"faithful","size":"1v1","factions":["FactionMen"]}
 ```
 `mode`: `faithful` (Normal) or `uber` (the player's Uber performance mode option). `size`: `1v1` / `2v2`. `factions`: PlayerTemplate names, or
 `["random"]` (1 .. 32 entries). Answer: 201 `{"v":1,"ticket":"<id>","poll_after_s":2}` (`poll_after_s` 1 .. 60; one outside it, or not a whole number, ends the search as a protocol error).
@@ -42,7 +44,8 @@ injected failures), so the client and the real backend cannot drift: `python3 -m
  "players":[{"nick":"Elrond","team":0},{"nick":"Gothmog","team":1}]}}
 ```
 `state`: `searching` / `matched` / `expired` / `cancelled`. A matched ticket's match must have the search's mode, 2 players for `1v1` and 4 for `2v2`,
-teams 0 .. 7, and this player among them (a player may carry `"you": true`; else the client finds its own nick) - anything else ends the search with
+teams 0 .. 7, and this player among them (the matching `host_install` identifies the first player; a non-host must have exactly one matching nick
+among the remaining players; a wire `you` flag is not used) - anything else ends the search with
 the reason shown. `DELETE /qm/tickets/<ticket>` cancels (also sent when a cancelled search's ticket arrives late, and when the client's own search time
 runs out: 10 minutes). A ticket answered after the search was cancelled or restarted belongs to the old search: it is cancelled and never adopted.
 
@@ -60,32 +63,37 @@ decision: the platform's match carries no map, so the map is chosen this way.)**
 
 `GET /tournaments`:
 ```json
-{"v":1,"tournaments":[{"id":"spring","name":"Spring Cup","mode":"faithful","size":"1v1","start":1790000000,"max_players":8,"registered":3,
+{"v":1,"tournaments":[{"id":"0123456789abcdef0123456789abcdef","name":"Spring Cup","mode":"faithful","size":"1v1","start":1790000000,"max_players":8,"registered":3,
  "state":"upcoming"}]}
 ```
-At most 100; ids unique; `state` `upcoming` / `running` / `finished`; `registered` <= `max_players` (2 .. 256); `name` at most 96 bytes.
+At most 100 per page; ids unique; `state` `upcoming` / `running` / `finished` / `cancelled`; `registered` <= `max_players` (2 .. 128);
+`name` at most 512 UTF-8 bytes.
 
-`GET /tournaments` is paged: `next_cursor` (when present) is asked with `?cursor=`; the client reads at most 100 and says when there are more.
+`GET /tournaments` is paged: `next_cursor` (when present) is asked with `?cursor=`; the client reads at most 5 pages (500 tournaments) and says when there are more.
 
 `GET /tournaments/<id>?install=<install>` (the backend's flat shape: the tournament's fields beside `rules`, `reason`, `rounds`):
 ```json
-{"v":1,"id":"spring","name":"Spring Cup","mode":"faithful","size":"1v1","start":1790000000,"max_players":8,"registered":3,"state":"upcoming",
- "rules":"Best of one.\nNo rushing.","reason":null,"rounds":[{"round":1,"matches":[{"id":"r1m1","state":"ready","players":["Elrond","Gil"],"winner":null,
- "room_code":"T-spring-r1m1","opened_at":1790000100}]}]}
+{"v":1,"id":"0123456789abcdef0123456789abcdef","name":"Spring Cup","mode":"faithful","size":"1v1","start":1790000000,"max_players":8,"registered":3,"state":"running",
+ "rules":"Best of one.\nNo rushing.","reason":null,"rounds":[["0123456789abcdef0123456789abcdef.0123456789abcdef01234567"]],
+ "matches":[{"id":"0123456789abcdef0123456789abcdef.0123456789abcdef01234567","round":0,"state":"open","players":["Elrond","Gil"],"winner":null,
+ "room_code":"T-example-r1m1","opened_at":1790000100}]}
 ```
-`rules` at most 4000 bytes; at most 8 rounds of 128 matches of 8 players; match ids unique; match `state` `pending` / `ready` / `playing` / `done` /
-`disputed` / `no_show` (`checkin` opened: `ready` with `opened_at`); `room_code` only while the match is playable. The public detail names no
+`rules` at most 16384 UTF-8 bytes; at most 8 rounds and 255 matches total. `rounds` lists match ids; the separate `matches` array lists their
+records with zero-based `round` and exactly two nicknames or null placeholders. Ids are unique and must belong to this tournament and round.
+Match `state`: `waiting` / `open` / `ready` / `bye` / `finished` / `admin_resolved` / `no_show` / `disputed`; check-in uses `open` / `ready` with
+`opened_at`. The public detail names no
 registrants, so the game cannot know from it that you are registered: it remembers its own register / withdraw answers for the session (S-4873); after a restart Withdraw is offered on its own (the service's `DELETE .../register` of a place never held answers `registered: false`). A request that cannot be queued (64 waiting) refuses a Quick Match search by name, and a ticket request not answered within 60 s fails the search. "Your next match"
-is the first match, round by round, whose players list your nick and is not `done` / `no_show`. Its room is made as a Quick Match's: **the first
+is the first `open` / `ready` match with both players and a room code for this install, in the service's match order. Its room is made as a Quick Match's: **the first
 player listed hosts (client decision)**.
 
 v1 is **1v1 only**: a tournament whose `size` is not `1v1`, or whose `mode` is not the player's current mode setting, is not joined (the player is
 told why, nothing is sent). A match is entered from the room screen only after **check-in**: `POST /tournaments/<id>/matches/<match>/checkin`
-(`{"v":1,"install":...,"nick":...,"client":{...}}`; answer `{"v":1,"state":"open"|"ready"}`; `checkin_closed` after the 15 minute window); the
+(`{"v":1,"install":...,"client":{...}}`; answer `{"v":1,"state":"open"|"ready"}`; `checkin_closed` after the 15 minute window); the
 game sends it when the player enters the match's room and retries twice, then tells the player.
 
-`POST /tournaments/<id>/register` `{"v":1,"install":"...","nick":"..."}` and `DELETE /tournaments/<id>/register` `{"v":1,"install":"..."}`: answer
-`{"v":1}` (201 for a new registration; anything else in it is ignored); refusals (`started`, `full` ...) are shown with their message. The game then reads the list again.
+`POST /tournaments/<id>/register` `{"v":1,"install":"...","nick":"...","client":{...}}` and `DELETE /tournaments/<id>/register`
+`{"v":1,"install":"...","client":{...}}`: answer `{"v":1,"registered":true}` for registration (201 when new), `registered:false` for withdrawal.
+The client checks that boolean; refusals use local text for known error codes, not a backend message. The game then reads the list again.
 
 A tournament match is reported through `/results` with `game.id` = the match id (below). Admin routes are not in the game.
 
@@ -97,8 +105,8 @@ A tournament match is reported through `/results` with `game.id` = the match id 
  "matchups":[{"a":"FactionMen","b":"FactionMordor","games":20,"a_wins":12}],"maps":[{"map":"maps/map mp fords of isen/map mp fords of isen.map","games":25}],
  "avg_duration_s":1250.5,"vs_ai":{"games":7,"factions":[],"matchups":[],"maps":[],"avg_duration_s":900}}
 ```
-Counts whole numbers 0 .. 10^9, rates 0 .. 1, `wins` <= `picks`, `a_wins` <= `games`, `avg_duration_s` 0 .. 604800; at most 32 factions, 1024
-matchups, 200 maps. Factions are PlayerTemplate names, maps the lobby's map keys (the game shows its own display names).
+Counts whole numbers 0 .. 10^9, rates 0 .. 1, `wins` <= `picks`, `a_wins` <= `games`, `avg_duration_s` 0 .. 604800; at most 32 factions, 32
+matchups and 32 maps per bucket. Labels may also be the service's display labels (at most 512 UTF-8 bytes); entries can mark `overflow:true`.
 
 `GET /stats/me?install=` is not called by the game: "Your stats" are computed from the games this installation recorded itself (below), which also
 counts skirmish games and works offline.
@@ -110,19 +118,21 @@ off Options > Online > "Share my game results for statistics" (on by default):
 
 `POST /results`
 ```json
-{"v":1,"install":"<32 hex>","nick":"Elrond","game":{"id":"<id>","mode":"faithful","map":"maps/...","players":[{"slot":0,"nick":"Elrond",
+{"v":1,"install":"<32 hex>","nick":"Elrond","client":{"platform":"linux","version":"<game version>"},"game":{"id":"<id>","mode":"faithful","map":"maps/...","players":[{"slot":0,"nick":"Elrond",
  "faction":"FactionMen","team":0,"human":true},{"slot":1,"nick":"Gothmog","faction":"FactionMordor","team":1,"human":true}],"start":1790000000,
  "end":1790000600,"duration_s":590,"winner_team":0},"me":{"slot":0}}
 ```
 - `game.id`: the platform's match id for a Quick Match or tournament game, else the lobby's game id; a LAN game's is `lan-` and 32 hex digits of the
   SHA-256 of its start message (seed, map, slot names), so every peer of the game reports the same id **(client decision)**.
-- `team`: the game's team; a player without a team gets one of its own (8 + slot). `winner_team`: the team of the players the score screen calls
+- `team`: the game's team; a player without a team gets the lowest unused nonnegative team number, in player order. `winner_team`: the team of the players the score screen calls
   victorious, `null` when there are none or they are not one team (a draw, everyone left). `duration_s`: the game's own time (logic frames / 5).
 - `faction`: the PlayerTemplate the player actually played (a random choice resolved).
-- `client` (platform, version) rides along as on every write. A game with fewer than two players is never sent.
+- `client` (platform, version) rides along as on every write. A game with fewer than two players is never sent, and neither is an online
+  game with a single human (SOLO-1: a custom game may start solo; its result is nobody's statistics).
 - Sent once per game, and not at all once the player turns the option off: results still waiting in the queue and retries are dropped at that moment.
   When the service cannot be reached (or answers 5xx / 408 / 429) it is sent once more 60 s later, then dropped and logged. A
-  refusal (4xx) is not retried. `replay_hash` is not sent yet.
+  refusal (4xx) is not retried. The serializer includes `replay_hash` when the record has one (64 hex digits); the game's current record producer
+  does not populate it.
 
 ## What the game sends (for PRIVACY.md)
 

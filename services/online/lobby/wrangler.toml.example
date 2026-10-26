@@ -1,6 +1,9 @@
 # OpenBFME lobby on Cloudflare (the deploy notes, kept outside this repository). Copy to wrangler.toml, fill the account id and names; secrets go in with
 # `wrangler secret put TICKET_KEYS`, `wrangler secret put ADMIN_KEY` and `wrangler secret put MOD_KEY`, never into this file.
 # Local key creation command: `openssl rand -hex 32` (do not store its output in this file).
+# Planning baseline: Workers Paid ($5/month minimum; owner approved 2026-10-16).
+# The coordinator selects the account plan; this example neither upgrades nor deploys it.
+# docs/ONLINE.md lists monthly Worker / Durable Object allowances and overage.
 name = "openbfme-lobby"
 main = "src/worker.mjs"
 compatibility_date = "2026-10-01"
@@ -19,7 +22,7 @@ binding = "LOGS"
 bucket_name = "openbfme-replays"
 
 [vars]
-LOG_STORE = "r2"   # or "durable-object" (no R2 binding needed: the Workers Free plan), unset = no log store
+LOG_STORE = "r2"   # explicit storage choice; "durable-object" is also supported, unset = no log store
 RELAYS = "us-east=203.0.113.10:7350"
 PUBLIC_URL = "https://lobby.example.org"
 REQUIRE_INSTALL = "0"

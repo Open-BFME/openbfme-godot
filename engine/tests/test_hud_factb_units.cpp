@@ -12,8 +12,10 @@
 #include "FactbRig.h"
 
 #include "Common/SpecialPower.h"
+#include "GameLogic/ActionManager.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/ExperienceTracker.h"
+#include "GameClient/Drawable.h"
 #include "GameClient/HudObjects.h"
 #include "GameClient/GUI/AptScreens/AptSpellStore.h"
 #include "GameClient/SpellBookUI.h"
@@ -1125,7 +1127,7 @@ void unitsOf(const std::string &faction, Results &res)
 				}
 				if (cmd == GUI_COMMAND_TOGGLE_STANCE)
 				{
-					res.fail(item, "S-289: the stance button's radial menu (RW 0x96F53C) is not ported; the STANCE_* hotkeys change the stance");
+					res.fail(item, "S-289: the stance button opens the Palantir's radial (RW 0x96FAC6, tested by test_campui1_stance.cpp), not a command press; the STANCE_* hotkeys change the stance");
 					continue;
 				}
 				// an enemy-object power tries the first of a horde's soldier, an enemy hero and an enemy troll that its SpecialPower's ObjectFilter takes
@@ -1223,6 +1225,29 @@ void unitsOf(const std::string &faction, Results &res)
 					modelGated = modelGated || (u->getModelConditionBits()[w] & cb->m_disableOnModelCondition[w]) != 0;
 				}
 				modelGated = modelGated && !upgrade && b.state == ButtonState::Restricted;
+				// lane MODS-3: a unit its DoCommandUpgrade put in the toggled weapon set at creation (the mountain giant's rock throwing, Upgrade_SwitchToRockThrowing
+				// -> Command_ToggleMountainGiantRockThrow) has the buttons whose DisableOnModelCondition holds WEAPONSET_TOGGLE_1 (its Stomp) disabled: the player
+				// toggles back first, so does the test
+				bool toggleDisabled = false;
+				for (size_t w = 0; w < cb->m_disableOnModelCondition.size(); ++w)
+				{
+					toggleDisabled = toggleDisabled || (cb->m_disableOnModelCondition[w] & u->getModelConditionBits()[w]) != 0; // tolerance: any shared bit
+				}
+				if (!upgrade && toggleDisabled && ((u->getWeaponSetFlags()[0] >> 24) & 1u) != 0) // tolerance: the WEAPONSET_TOGGLE_1 bit
+				{
+					ControlBarButton toggle;
+					if (g.select(u) && g.reveal(u, [](const CommandButton &x) { return x.m_command == GUI_COMMAND_TOGGLE_WEAPONSET; }, toggle))
+					{
+						g.press(toggle);
+						g.step(15);
+					}
+					g.select(u);
+					if (!g.reveal(u, [&](const CommandButton &x) { return &x == cb; }, b))
+					{
+						res.fail(item, "the button left the bar after the weapon toggle");
+						continue;
+					}
+				}
 				if (b.state != ButtonState::Enabled && b.state != ButtonState::Active && !modelGated)
 				{
 					res.fail(item, str("state %d at level %d (not enabled)", (int)b.state, u->getExperienceTracker() ? u->getExperienceTracker()->getRank() : 0));
@@ -1554,7 +1579,27 @@ void unitsOf(const std::string &faction, Results &res)
 					// of a tall model may not cover its foot; a big caster in front takes the click), pressing the button again before each further try;
 					// its position is read again each time (it fights and moves)
 					const ObjectID onId = on ? on->getID() : INVALID_ID;
-					const Coord3D ground{ c.x + 120.0f, c.y + 120.0f, 0.0f };
+					Coord3D ground{ c.x + 120.0f, c.y + 120.0f, 0.0f };
+					// lane SUMMONLOC-1: the hero power click issues nothing where the location test refuses (RW 0x81E9C5 -> RW 0x6A4260 -> RW 0x82DFB7):
+					// a LIMIT_DISTANCE 150 power (Hwaldar's Hillmen) is clicked nearer, as a player would
+					if (Object *caster = g.logic().findObjectByID(uid); caster && !on && cb->m_command == GUI_COMMAND_SPECIAL_POWER && TheSpecialPowerStore)
+					{
+						// (the spots around the caster at 100: an earlier summon's units may stand on the first)
+						const SpecialPowerTemplate *pw = TheSpecialPowerStore->findSpecialPowerTemplate(cb->m_specialPowerName);
+						const Coord3D onGround{ ground.x, ground.y, g.logic().getGroundHeight(ground.x, ground.y) };
+						if (pw && !ActionManager::canDoSpecialPowerAtLocation(*caster, onGround, pw, cb->m_options))
+						{
+							for (const Coord3D d : { Coord3D{ 70.0f, 70.0f, 0.0f }, Coord3D{ -70.0f, 70.0f, 0.0f }, Coord3D{ 70.0f, -70.0f, 0.0f }, Coord3D{ -70.0f, -70.0f, 0.0f } })
+							{
+								const Coord3D nearer{ c.x + d.x, c.y + d.y, g.logic().getGroundHeight(c.x + d.x, c.y + d.y) };
+								if (ActionManager::canDoSpecialPowerAtLocation(*caster, nearer, pw, cb->m_options))
+								{
+									ground = nearer; // clicked at its terrain height: a click at z 0 under a raised terrain lands elsewhere
+									break;
+								}
+							}
+						}
+					}
 					const size_t sentBefore = g.hud->input().messageLog().size();
 					bool reached = false;
 					Coord3D at = on ? *on->getPosition() : ground;
@@ -1759,7 +1804,7 @@ TEST_CASE("factb units: every Isengard unit, horde and hero ability and upgrade 
 	Results r;
 	unitsOf("FactionIsengard", r);
 	r.print("units FactionIsengard");
-	r.check({ { "* Command_ToggleStance", "S-289" }, { "MordorWorker Command_Harvest", "S-1993" }, { "IsengardPorter Command_PorterExtinguishFire", "S-1997" },
+	r.check({ { "* Command_ToggleStance", "S-289" }, { "MordorWorker Command_Harvest", "S-1993 closed: the sweep asserts no SPECIAL_HARVEST effect; test_lumber1.cpp does" }, { "IsengardPorter Command_PorterExtinguishFire", "S-1997" },
 		{ "IsengardBallista Command_BombardEvil", "S-1990" }, { "IsengardSaruman Command_SarumanThunderBolt", "S-180 (the bolt's damage lands; its WeaponOCLNugget makes nothing)" },
 		{ "IsengardSharku Command_SpecialAbilitySharkuManEater", "S-180 (GrabNugget delivery)" } });
 }
@@ -1774,7 +1819,7 @@ TEST_CASE("factb units: every Mordor unit, horde and hero ability and upgrade bu
 	unitsOf("FactionMordor", r);
 	r.print("units FactionMordor");
 	// lane FLY-1: the fell beasts' dismounts land and fire (GiantBirdAIUpdate, MOVING_TO_DISMOUNT): S-1994's pins went
-	r.check({ { "* Command_ToggleStance", "S-289" }, { "MordorWorker Command_Harvest", "S-1993" }, { "MordorPorter Command_PorterExtinguishFire", "S-1997" },
+	r.check({ { "* Command_ToggleStance", "S-289" }, { "MordorWorker Command_Harvest", "S-1993 closed: the sweep asserts no SPECIAL_HARVEST effect; test_lumber1.cpp does" }, { "MordorPorter Command_PorterExtinguishFire", "S-1997" },
 		{ "MordorHaradrimArcherHorde Command_HaradrimArcherBarbedArrowAbility", "S-1997" } });
 }
 
@@ -2149,14 +2194,48 @@ void fightsOf(const std::string &faction, Results &res)
 				{
 					outcome = "the unit could not be selected with a click";
 				}
+				else if (!(target = g.logic().findObjectByID(tid)))
+				{
+					// lane OFFMAP-1: select() runs frames; the test read the target through the pointer it had before them (a crash when the enemy died then)
+					outcome = "the enemy died before the order";
+				}
 				else
 				{
-					Object *at = target;
+					// RotWK's default mouse: a left click on an enemy attacks. A horde is clicked through a member; lane OFFMAP-1: as select() does, up to four
+					// members are tried until the HUD sends the attack (a click that met the ground sent a move: the giant birds' scenes, once the start
+					// units kept the positions they were made at, RW 0x745A64)
+					std::vector<Object *> ats{ target };
 					if (target->getContain() && !target->getContain()->getContainedItemsList()->empty())
 					{
-						at = target->getContain()->getContainedItemsList()->front();
+						ats.assign(target->getContain()->getContainedItemsList()->begin(), target->getContain()->getContainedItemsList()->end());
 					}
-					g.clickAt({ at->getPosition()->x, at->getPosition()->y, at->getPosition()->z + 10.0f }); // RotWK's default mouse: a left click on an enemy attacks
+					int clicks = 0;
+					for (size_t k = 0; k < ats.size() && k < 4; ++k)
+					{
+						Object *at = ats[k];
+						const size_t logged = g.hud->input().messageLog().size();
+						// community #74: the click goes where the member is drawn (the last completed frame's pose): a member still walking to its slot
+						// stands a step ahead of its drawing
+						const Drawable *drawn = g.rig.game->drawables().findByObject(at->getID());
+						const Coord3D seen = drawn ? *drawn->getPosition() : *at->getPosition();
+						g.clickAt({ seen.x, seen.y, seen.z + 10.0f });
+						++clicks;
+						g.step(1);
+						const std::vector<std::string> &log = g.hud->input().messageLog();
+						bool attacked = false;
+						for (size_t i = logged; i < log.size(); ++i)
+						{
+							attacked = attacked || log[i].rfind("MSG_DO_ATTACK_OBJECT", 0) == 0;
+						}
+						if (attacked)
+						{
+							break;
+						}
+					}
+					if (clicks > 1)
+					{
+						std::printf("  info: fight %s: %d clicks on the enemy horde's members before the HUD's attack was seen\n", e->name.c_str(), clicks);
+					}
 					const unsigned start = g.frame();
 					float now = before;
 					for (int f = 0; f < 200 && now >= before; ++f)
@@ -2506,6 +2585,9 @@ TEST_CASE("factb damage: the first hit of every Mordor unit, horde and hero on a
 	damageOf("FactionMordor", r);
 	r.print("damage FactionMordor");
 	// lane PLAY-4 r3 / FLY-1: the fell beasts fly and strike (S-1994 closed)
+	// lane ATTACKPATH-1: the mumak reaches Boromir on another frame (RotWK's horde approach goal, + 0x5D) and its first frame's loss is 140, not one listed hit
+	// (S-4104: the first-hit window takes only copies of one hit)
+	// merge queue q23 (with TARGET-1's target choice and FLANK-1's flank test at fire time): the mumak's first frame takes one listed hit again
 	r.check({});
 }
 
@@ -2848,7 +2930,8 @@ void spellBookOf(const std::string &faction, Results &res, bool viaStore = false
 		}
 		if (seen.empty())
 		{
-			res.fail(item, "cast, but no effect seen beyond the control run: " + missing);
+			res.fail(item, "cast, but no effect seen beyond the control run: " + missing +
+							   str(" (enemies lost %.0f with the cast, %.0f without; own units healed %.0f / %.0f)", run.enemyLost, control.enemyLost, run.mineGained, control.mineGained));
 		}
 		else
 		{
@@ -2869,9 +2952,19 @@ TEST_CASE("factb spell book: every Isengard spell book power cast through the HU
 	r.print("spell book FactionIsengard");
 	// lane SUMMON-1: Isengard's Taint shows no effect of its own (its terrain taint is S-921, as Mordor's Taint below); it passed before only because the
 	// hordes' own fight in the control and cast runs differed by more than the 500 margin, which the OCLs' added retail random draws changed
+	// lane TARGET-1: Isengard's Taint is S-1997's (its stop names it): it passed only while the scene's own fight lost 500 more health in the cast run than
+	// in the control; with RotWK's target choice the two runs lose about the same (1008 with the cast, 1140 without, measured on a CI host)
+	// lane ATTACKPATH-1: Isengard's Taint is S-1997's (no effect of TaintSpecialPower is asserted, as Mordor's and the Goblins'): it passed before only
+	// because its scene's fight happened to cost the enemies more health than the control run
+	// lane OFFMAP-1: Isengard's Taint has no effect assertion of its own (S-1997, as the Goblin / Angmar sweep's SpellBookTaint): it passed through the
+	// "enemies lost 500 more than the control run" heuristic, which the scene no longer meets once the start units keep the positions they were made at
+	// (RotWK's idle state RW 0x745A64 has no ZH frame <= 1 snap)
+	// merge queue q24 (CAMPUI-1, OFFMAP-1, SCRIPT-4, MODS-3 and the amoeba reach fix on q23's tree, measured once): the scene meets the 500 heuristic again,
+	// so the Taint line passes; it still asserts no effect of TaintSpecialPower of its own (S-1997 keeps the explanation)
+	// merge queue q26 (community #73's slot table centred on the horde, as #73's own run found): the scene misses the 500 heuristic again (1536 with the cast,
+	// 1732 without), so Taint is a KNOWN line once more
 	r.check({ { "spell SpellBookDevastation", "S-921 (SPELL-3)" }, { "spell SpellBookIndustry", "S-1997" },
-		{ "spell SpellBookFueltheFires", "S-1997" }, { "spell SpellBookDragonStrike", "S-1997" },
-		{ "spell SpellBookIsengardTaint", "S-1997|no effect of TaintSpecialPower" } });
+		{ "spell SpellBookFueltheFires", "S-1997" }, { "spell SpellBookDragonStrike", "S-1997" }, { "spell SpellBookIsengardTaint", "S-1997" } });
 }
 
 TEST_CASE("factb spell book: every Mordor spell book power cast through the HUD's spell bar shows its effect")
@@ -3613,7 +3706,17 @@ void upgradeEffectsOf(const std::string &faction, Results &res)
 					}
 					else
 					{
-						res.fail(item, str("the smallest hit taken did not shrink (%.2f -> %.2f) and the INI hit is the same (%s)", b0, a0, after.text.c_str()));
+						std::string seen = "; without:";
+						for (float d : before.drops)
+						{
+							seen += str(" %.2f", d);
+						}
+						seen += "; with:";
+						for (float d : after.drops)
+						{
+							seen += str(" %.2f", d);
+						}
+						res.fail(item, str("the smallest hit taken did not shrink (%.2f -> %.2f) and the INI hit is the same (%s)", b0, a0, after.text.c_str()) + seen);
 					}
 				}
 				else if (fresh.empty())
@@ -3706,8 +3809,7 @@ TEST_CASE("factc units: every Goblin and Angmar unit, horde and hero ability and
 	factcCase("units", "FactionWild", unitsOf,
 			  { { "* Command_ToggleStance", "S-289" },
 				{ "GoblinArcherHorde Command_GoblinArcherPoisonArrows", "S-1997|HordeAttackNugget" },
-				{ "MordorWorker Command_Harvest", "S-1993|no effect of it is asserted" },
-				{ "WildBabyDrakeHorde Command_FireDrakeBroodInferno", "S-2006|BabyDrakeInferno: no result" },
+				{ "MordorWorker Command_Harvest", "S-1993 closed: the sweep asserts no SPECIAL_HARVEST effect; test_lumber1.cpp does|no effect of it is asserted" },
 				{ "WildMountainGiant Command_SpecialAbilityWildMountainGiantStomp", "S-2006|WildMountainGiantStomp: no result" },
 				{ "WildPorter Command_PorterExtinguishFire", "S-1997|PorterFireExtinguisher: no result" } });
 	factcCase("units", "FactionAngmar", unitsOf,
@@ -3737,7 +3839,10 @@ TEST_CASE("factc fights: every Goblin and Angmar unit, horde and hero attacks an
 	factcCase("fights", "FactionWild", fightsOf, {});
 	// lane PLAY-4 r3: the sites are kept on the map, where the enemy is in sight: the clicks are attack orders (S-565's fogged target, a move, no longer
 	// happens here); the Necromancers stop short of the enemy as in the damage sweep (S-2005)
-	factcCase("fights", "FactionAngmar", fightsOf, { { "fight AngmarNecromancerHorde", "S-2005|lost no health" } });
+	// Lane TARGET-1: the Thrall Master's guard no longer charges the staged horde before the click: RotWK's search refuses a NO_AUTO_ACQUIRE searcher (the
+	// guard's qualifier 0x40, RW 0x949E79 -> RW 0x7006D7), which the earlier stand-in did not; the clicked member stands 180 away, past its
+	// VISION_STANDARD_MELEE, so the order on the fogged target is refused (RW 0x82C167, S-565) at 170 and 420
+	factcCase("fights", "FactionAngmar", fightsOf, { { "fight AngmarNecromancerHorde", "S-2005|lost no health" }, { "fight AngmarThrallMaster", "S-565|lost no health" } });
 }
 
 TEST_CASE("factc damage: the first hit of every Goblin and Angmar unit, horde and hero on an enemy hero, and of every siege engine on a structure")
@@ -3746,10 +3851,12 @@ TEST_CASE("factc damage: the first hit of every Goblin and Angmar unit, horde an
 	{
 		return;
 	}
-	// merge q8 (PATHPERF-1's placement on FLY-1's tree): the Goblin archers' first frame of damage on the hero is two different hits of their weapon
-	// summed (4.35 = 3.75 + 0.6), which the window's "k copies of one hit" does not accept (S-4104)
-	factcCase("damage", "FactionWild", heroDamageOf,
-			  { { "damage GoblinArcherHorde", "S-4104|the first hit took 4.35" } });
+	// merge q8 (PATHPERF-1's placement on FLY-1's tree): the Goblin archers' first frame of damage on the hero was two different hits of their weapon
+	// summed (4.35 = 3.75 + 0.6), which the window's "k copies of one hit" does not accept (S-4104, closed: since the formations are centred on their
+	// hordes, RW 0x86C4EA, the first frame holds one hit)
+	// Lane TARGET-1: the archers' first frame of damage on the hero is one hit again (3.75): RotWK's target search and the horde member pick (RW 0x68D30E ->
+	// 0x86FA87) moved the volley's timing
+	factcCase("damage", "FactionWild", heroDamageOf, {});
 	// lane PLAY-4 r3: RotWK's melee reach (RW 0x6ED843's footprint boxes) brings the Goblin King, the Marauder swords and the Dark Dunedain onto Boromir (S-2005
 	// keeps the Necromancers); on the site kept on the map the Thrall Master's target is in sight (S-565 no longer applies)
 	// and Karsh's first loss on the site kept on the map is his touch's two nuggets (63), not S-2004's 0.25.
@@ -3768,7 +3875,14 @@ TEST_CASE("factc upgrade effects: every Goblin and Angmar weapon and armour upgr
 	factcCase("upgrade effects", "FactionWild", upgradeEffectsOf,
 			  { { "upgrade effect GoblinSpiderRiderHorde Upgrade_WildFireArrows", "S-2008|did not change the INI hit" } });
 	// lane PLAY-4 r3: the armour scenes show hits since Boromir reaches the members with RotWK's melee reach (RW 0x6ED843's footprint boxes)
-	factcCase("upgrade effects", "FactionAngmar", upgradeEffectsOf, {});
+	// lane ATTACKPATH-1: the Snow Trolls' Dark Iron Armor cannot show against Boromir: armor.ini gives SnowTrollArmor and SnowTrollHeavyArmor both HERO 100%,
+	// so his hit is 300 with and without it; the scene passed before only because its first run's smallest frame drop was two hits (600) landing together
+	// merge queue q23: on the merged tree the scene without the armour has a two-hit frame again (600), so the smallest hit "shrinks" and the line passes; the
+	// armour still does not change Boromir's HERO hit (S-2008 keeps the explanation)
+	// merge queue q24 (OFFMAP-1's exact start positions: without OFFMAP-1 the merged tree passes it): no two-hit frame without the armour again, the line fails
+	// as ATTACKPATH-1 found
+	factcCase("upgrade effects", "FactionAngmar", upgradeEffectsOf,
+			  { { "upgrade effect AngmarSnowTrollHorde Upgrade_AngmarDarkIronArmor", "S-2008|did not shrink" } });
 }
 
 TEST_CASE("factc spell book: every Goblin and Angmar spell bought in the store and cast through the spell bar shows its effect")

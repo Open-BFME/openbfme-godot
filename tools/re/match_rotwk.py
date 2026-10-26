@@ -231,7 +231,11 @@ class Matcher:
                 scored.append((s, r, t, "sim"))
             elif tier == "B" and self._callee_pattern(r, t):
                 scored.append((max(s, 0.0), r, t, "callee-pattern"))
-        scored.sort(key=lambda x: (-x[0], x[1]))
+        # equal scores (siblings that differ only in a constant or a callee, e.g. the AIGroup
+        # guard / attack-team wrappers): the pair whose callees are already matched pairwise
+        # first, then the target nearest the link-order prediction
+        scored.sort(key=lambda x: (-x[0], x[3] != "callee-pattern" and not self._callee_pattern(x[1], x[2]),
+                                   abs(self.T[x[2]]["rva"] - self.predict(self.R[x[1]]["rva"])[0]), x[1]))
         added = 0
         for s, r, t, why in scored:
             if r in self.match or t in self.t_taken:

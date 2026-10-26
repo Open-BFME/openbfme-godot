@@ -255,8 +255,9 @@ TEST_CASE("turret retail: Rohirrim in bow mode attack warg riders, then ride on:
 	CHECK(shotsWhileMoving == 0u); // RW 0x6658D3: no turret update while the owner is busy (Sol r2: the earlier 12 were pre-march shots counted on the first moving frame)
 	// lane MOVE-2 r2: RotWK's horde command hand-off (RW 0x89E169 -> slot 0x14 RW 0x87594C) makes the riders busy at the ride-on order: their attacks end,
 	// their turrets do not update while busy (RW 0x6658D3), and afterwards the turrets find targets with their own idle scan (RW 0x8DCBA6); the turret is
-	// off the horse's axis at its shots
-	CHECK(maxOffAxis > 0.3f);
+	// off the horse's axis at its shots. Lane TARGET-1: the turrets' idle targets are RotWK's search (RW 0x8DCBA6 -> 0x66844A -> 0x7006D7: the combat chain's
+	// priorities, the partition order), which picks wargs nearer the horse's axis: the largest angle at a shot is 0.27 rad (was above 0.3 with the nearest enemy)
+	CHECK(maxOffAxis > 0.25f); // tolerance: "off the axis" (the aim takes the turret); 0.27 rad measured
 	CHECK(after < before);
 }
 

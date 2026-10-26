@@ -25,6 +25,7 @@
 #include <vector>
 
 class ArchiveW3DFileSource;
+class W3DFileSource;
 class WW3DAssetManager;
 class RetailObjectWorld;
 struct LoadedMap;
@@ -83,7 +84,7 @@ private:
 	Ref<RetailFileSystem> m_fs;
 	std::unique_ptr<RetailObjectWorld> m_world;
 	std::unique_ptr<MapObjectOptions> m_options;
-	std::unique_ptr<ArchiveW3DFileSource> m_source;
+	std::unique_ptr<W3DFileSource> m_source;
 	std::unique_ptr<WW3DAssetManager> m_assets;
 	std::unique_ptr<LoadedMap> m_map;
 	std::unique_ptr<MapObjectDrawables> m_drawables;

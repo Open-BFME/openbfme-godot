@@ -67,8 +67,10 @@ func _vp() -> Viewport:
 
 
 func move_to(p: Vector2) -> void:
-	# the window's real pointer goes there too: on a desktop the system pointer's own motion events would otherwise land between the injected ones
-	Input.warp_mouse(p)
+	# the window's real pointer goes there too: on a desktop the system pointer's own motion events would otherwise land between the injected ones.
+	# PLAY1_NO_WARP=1 (lane SPELLRC-1: a recording window on a workspace nobody shows): no warp, the injected events are the only pointer
+	if OS.get_environment("PLAY1_NO_WARP") != "1":
+		Input.warp_mouse(p)
 	var m := InputEventMouseMotion.new()
 	m.position = p
 	m.global_position = p

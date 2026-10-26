@@ -21,6 +21,7 @@ set(OPENBFME_APT_SOURCES
     src/GameClient/GameText.cpp)
 
 set(OPENBFME_APT_TESTS
+    tests/test_localized_text.cpp
     tests/test_apt_file.cpp
     tests/test_apt_corpus.cpp
     tests/test_apt_value.cpp

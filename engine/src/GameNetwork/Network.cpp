@@ -61,6 +61,16 @@ bool DesyncHalf::decode(const std::vector<std::uint8_t> &bytes, DesyncHalf &out,
 	out.frame = r.u32();
 	out.hash = r.u32();
 	const std::uint32_t ns = r.u32();
+	// lane NETDIAG-1 (from a contributor's parser hardening): counts the bytes cannot hold are refused before any entry is read (a section is at
+	// least 8 bytes: u32 name length + u32 value; an object at least 12; encode() writes at most kMaxReportObjects objects)
+	if (r.failed() || ns > r.remaining() / 8)
+	{
+		if (error)
+		{
+			*error = "desync report section count " + std::to_string(ns) + " exceeds the report's bytes";
+		}
+		return false;
+	}
 	for (std::uint32_t i = 0; i < ns && !r.failed(); ++i)
 	{
 		GameLogic::StateHashSection s;
@@ -69,6 +79,14 @@ bool DesyncHalf::decode(const std::vector<std::uint8_t> &bytes, DesyncHalf &out,
 		out.sections.push_back(s);
 	}
 	const std::uint32_t no = r.u32();
+	if (r.failed() || no > kMaxReportObjects || no > r.remaining() / 12)
+	{
+		if (error)
+		{
+			*error = "desync report object count " + std::to_string(no) + " exceeds the limit or the report's bytes";
+		}
+		return false;
+	}
 	for (std::uint32_t i = 0; i < no && !r.failed(); ++i)
 	{
 		GameLogic::ObjectStateHash o;
@@ -193,6 +211,7 @@ Network::Network(const NetworkConfig &config, NetTransport &transport)
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
 		m_slots[(size_t)s].active = config.slotPlayerIndex[(size_t)s] >= 0;
+		m_memberSlots += m_slots[(size_t)s].active ? 1 : 0;
 	}
 	if (config.localSlot < 0 || config.localSlot >= MAX_SLOTS || !m_slots[(size_t)config.localSlot].active)
 	{
@@ -351,6 +370,11 @@ void Network::send(const NetCommandMsg &c)
 
 void Network::update(UnsignedInt logicFrame, CommandList &pending)
 {
+	if (m_transport.relayCanonical())
+	{
+		updateCanonical(logicFrame, pending);
+		return;
+	}
 	if (m_rejoining)
 	{
 		// lane ONLINE-3: a rejoining client sends no frame data before beginLive (the catch-up runs the game from the relay's log); it files what the
@@ -367,6 +391,19 @@ void Network::update(UnsignedInt logicFrame, CommandList &pending)
 			c.slot = (std::uint8_t)m_config.localSlot;
 			c.frame = (std::uint32_t)m_rejoinGeneration;
 			sendDirect(c);
+			// lane SOLO-1: a game born with the local slot as its only network player has nobody left to take it back once it
+			// drops (the packet router was itself): it admits itself, the REJOIN reaching the relay's log like every command
+			// sent with no live peer to get it (relayCommands takes a slot's own REJOIN when no member can route one)
+			if (m_memberSlots == 1 && !m_selfRejoinSent)
+			{
+				m_selfRejoinSent = true;
+				NetCommandMsg r;
+				r.type = NETCOMMANDTYPE_REJOIN;
+				r.slot = (std::uint8_t)m_config.localSlot;
+				r.executionFrame = executionFrame(m_logicFrame);
+				r.targetSlot = (std::uint8_t)m_config.localSlot;
+				send(r);
+			}
 		}
 		return;
 	}
@@ -443,6 +480,79 @@ void Network::update(UnsignedInt logicFrame, CommandList &pending)
 	if (m_config.disconnectPath && !m_leaving)
 	{
 		m_disconnect.update(*this, now(), logicFrame);
+	}
+}
+
+void Network::updateCanonical(UnsignedInt logicFrame, CommandList &pending)
+{
+	// lane NET-SYNC: the canonical mode — the relay stamps every order's execution frame and publishes one committed
+	// bundle per frame. Local orders go up as OBCI messages (the slot's dense order id; the frame is never chosen
+	// here); one beat closes this client's window for the seal; the durable record stream becomes the frame inputs.
+	if (!m_canonicalClient)
+	{
+		std::uint16_t mask = 0;
+		for (int s = 0; s < MAX_SLOTS; ++s)
+		{
+			if (m_config.slotPlayerIndex[(size_t)s] >= 0)
+			{
+				mask |= (std::uint16_t)(1u << s);
+			}
+		}
+		// ROUTER-1: the canonical client's map is 16-slot (the relay's ceiling); this Network is 8-slot (GameInfo.h)
+		std::array<int, 16> idx;
+		idx.fill(-1);
+		for (int s = 0; s < MAX_SLOTS; ++s)
+		{
+			idx[(size_t)s] = m_config.slotPlayerIndex[(size_t)s];
+		}
+		m_canonicalClient = std::make_unique<RelayCanonicalClient::Client>(
+			m_transport.canonicalGame(), m_transport.canonicalEpoch(), mask, 1, idx);
+	}
+	const std::uint64_t t = now();
+	for (const GameMessage &m : pending.messages())
+	{
+		NetByteWriter w;
+		std::string error;
+		if (!NetPacket::writeGameMessage(w, m, &error))
+		{
+			m_errors.push_back("canonical order encode: " + error);
+			continue;
+		}
+		if (!m_transport.sendCanonicalOrder(++m_canonicalOrderId, w.data(), t, error))
+		{
+			m_errors.push_back("canonical order send: " + error);
+		}
+	}
+	pending.reset();
+	{
+		std::string error;
+		if (!m_transport.sendCanonicalBeat(++m_canonicalBeatId, t, error))
+		{
+			m_errors.push_back("canonical beat send: " + error);
+		}
+	}
+	m_logicFrame = logicFrame;
+	m_transport.service();
+	std::vector<std::uint8_t> bytes;
+	while (m_transport.takeCanonicalRecord(bytes))
+	{
+		RelayCommit::Record record;
+		std::string error;
+		if (!RelayCommit::decode(bytes, RelayCanonicalInput::kMaxWireBytes, record, error))
+		{
+			m_errors.push_back("canonical record decode: " + error);
+			continue;
+		}
+		if (!m_canonicalClient->accept(record, error))
+		{
+			m_errors.push_back("canonical record: " + error);
+			continue;
+		}
+		RelayCanonicalClient::FrameInput input;
+		while (m_canonicalClient->takeFrameInput(input))
+		{
+			m_canonicalFrames[input.stamp.frame] = std::move(input);
+		}
 	}
 }
 
@@ -608,6 +718,17 @@ void Network::file(const NetCommandMsg &c, int fromSlot)
 					+ std::to_string(owner) + "'s frame " + std::to_string(c.frame) + ", which is not the packet router's: refused");
 				return;
 			}
+			// lane CHEAT-1 (Sol review r1 / r2): a resend's owner is the sender's claim, not an authenticated origin, and MSG_OPENBFME_CHEAT's only
+			// authority is the player stamped from the frame's slot: in ordinary play a relayed Cheat Mode command could name the host's seat for a peer that
+			// misses the host's frame. It is refused with the whole resend while the owner is heard (DisconnectManager::heard, RW 0x8D335D: in the game,
+			// whether or not another player's silence put the disconnect screen up); the frame then waits for the owner's own packet. Once the owner is
+			// silent the survivors' resends are the only way to reach the same frame before its drop (allOnSameFrame), so they are taken as before
+			if (copy->getType() == MSG_OPENBFME_CHEAT && m_disconnect.slotHeard(*this, owner, now(), m_logicFrame))
+			{
+				m_errors.push_back("slot " + std::to_string(fromSlot) + " resent a Cheat Mode command in slot " + std::to_string(owner) + "'s frame " +
+					std::to_string(c.frame) + ": refused (a Cheat Mode command is never relayed)");
+				return;
+			}
 			if (copy->getType() != MSG_SELF_DESTRUCT)
 			{
 				copy->friend_setPlayerIndex(ownerPlayer);
@@ -690,6 +811,18 @@ void Network::file(const NetCommandMsg &c, int fromSlot)
 		m_pauses.erase(c.frame); // lane ONLINE-3: any player may resume
 		m_resumedPauses.insert(c.frame);
 		return;
+	case NETCOMMANDTYPE_CHAT:
+		fileChat(c, fromSlot); // lane CHAT-1: RW 0x8D728F's case 0xE (processChat at once, no frame wait)
+		return;
+	case NETCOMMANDTYPE_DISCONNECTCHAT: // lane CHAT-1: RW 0x8D728F's case 0xD (processDisconnectChat RW 0x8D5403)
+		if ((fromSlot == m_config.localSlot || chatFloodAllows(fromSlot)) && !(m_chatLobbyMuted >> fromSlot & 1u))
+		{
+			ChatLine line;
+			line.slot = fromSlot;
+			line.text = c.chatText;
+			m_disconnectChatIn.push_back(std::move(line));
+		}
+		return;
 	case NETCOMMANDTYPE_KEEPALIVE:
 		return;
 	case NETCOMMANDTYPE_DESYNCREPORT:
@@ -734,6 +867,22 @@ bool Network::isFrameReady(UnsignedInt frame) const
 std::vector<int> Network::waitingFor(UnsignedInt frame) const
 {
 	std::vector<int> out;
+	if (m_transport.relayCanonical())
+	{
+		// lane NET-SYNC: a canonical frame waits on the one committed bundle, not on per-slot input
+		if (m_canonicalFrames.count(frame))
+		{
+			return out;
+		}
+		for (int s = 0; s < MAX_SLOTS; ++s)
+		{
+			if (slotNeeded(s, frame))
+			{
+				out.push_back(s);
+			}
+		}
+		return out;
+	}
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
 		if (!slotNeeded(s, frame))
@@ -753,6 +902,49 @@ std::vector<int> Network::waitingFor(UnsignedInt frame) const
 
 void Network::relayCommands(UnsignedInt frame, CommandList &out)
 {
+	if (m_transport.relayCanonical())
+	{
+		// lane NET-SYNC: the frame's committed bundle is its whole input: the departed slots' MSG_SELF_DESTRUCT(true)
+		// first (ascending), then every order in (slot, id) order. The echo of the local client's own orders runs
+		// exactly once, here — they were never filed locally.
+		const auto it = m_canonicalFrames.find(frame);
+		if (it == m_canonicalFrames.end())
+		{
+			m_errors.push_back("canonical frame " + std::to_string(frame) + " relayed before its bundle arrived");
+			return;
+		}
+		std::map<int, std::uint32_t> crcs;
+		bool anyCRC = false;
+		for (int s = 0; s < MAX_SLOTS; ++s)
+		{
+			if ((it->second.departed & (1u << s)) && m_config.slotPlayerIndex[(size_t)s] >= 0)
+			{
+				GameMessage destruct(MSG_SELF_DESTRUCT, m_config.slotPlayerIndex[(size_t)s]);
+				destruct.appendBooleanArgument(true);
+				out.append(destruct);
+				++m_commandsRelayed;
+			}
+		}
+		for (const RelayCanonicalClient::FrameInput::Command &cmd : it->second.commands)
+		{
+			if (cmd.message->getType() == MSG_LOGIC_CRC)
+			{
+				anyCRC = true;
+				const GameMessageArgument *a = cmd.message->getArgument(0);
+				crcs[cmd.slot] = a ? (std::uint32_t)a->integer : 0u;
+			}
+			out.append(*cmd.message);
+			++m_commandsRelayed;
+		}
+		m_canonicalFrames.erase(it);
+		m_lastRelayed = frame;
+		m_relayedAny = true;
+		if (anyCRC)
+		{
+			checkCRCs(frame, crcs);
+		}
+		return;
+	}
 	int newRunAhead = -1;
 	std::vector<int> rejoined; // lane ONLINE-3: the slots the frame's packet router takes back (from frame + 1)
 	std::map<int, std::uint32_t> crcs;
@@ -788,14 +980,20 @@ void Network::relayCommands(UnsignedInt frame, CommandList &out)
 			h.runAheadChange[(size_t)s] = it->second.runAheadChange;
 			for (int t : it->second.rejoins)
 			{
-				// lane ONLINE-3: only the frame's packet router takes a slot back, and only a held one (deterministic: the same membership on every peer)
-				h.rejoinMask[(size_t)s] |= (std::uint8_t)(1u << (t & 7));
-				if (s != routerAt(frame))
+				// lane ONLINE-3: only the frame's packet router takes a slot back, and only a held one (deterministic: the same membership on every peer).
+				// lane SOLO-1: when no member can route a REJOIN at all (every slot of the game has departed; a solo game's only
+				// member), a held slot's own REJOIN of itself stands in for the router's
+				const bool selfAdmit = t == s && routerAt(frame) < 0;
+				if (t >= 0 && t < MAX_SLOTS)
+				{
+					h.rejoinMask[(size_t)s] |= (std::uint16_t)(1u << t);
+				}
+				if (s != routerAt(frame) && !selfAdmit)
 				{
 					m_errors.push_back("REJOIN of slot " + std::to_string(t) + " from slot " + std::to_string(s) + " for frame " + std::to_string(frame)
 						+ ", which is not the packet router's: ignored");
 				}
-				else if (t < 0 || t >= MAX_SLOTS || t == s || !m_slots[(size_t)t].active || !m_slots[(size_t)t].held || m_slots[(size_t)t].handedOver)
+				else if (t < 0 || t >= MAX_SLOTS || (t == s && !selfAdmit) || !m_slots[(size_t)t].active || !m_slots[(size_t)t].held || m_slots[(size_t)t].handedOver)
 				{
 					m_errors.push_back("REJOIN of slot " + std::to_string(t) + " for frame " + std::to_string(frame) + ", which is not held for a rejoin: ignored");
 				}
@@ -1130,17 +1328,27 @@ bool Network::allowedToContinue(UnsignedInt frame)
 
 void Network::voteForPlayerDisconnect(int slot)
 {
+	if (m_transport.relayCanonical())
+	{
+		// ROUTER-1: disconnect votes ride the legacy stream; a silent slot in a canonical game goes HELD at the relay
+		// (it stalls nobody) and may rejoin — the kick vote is refused loudly here
+		m_errors.push_back("kick votes are not available in a canonical game (ROUTER-1: a silent slot is held at the relay, not voted out)");
+		return;
+	}
 	m_disconnect.voteForPlayerDisconnect(*this, slot, m_logicFrame);
 }
 
 void Network::quitFromDisconnectScreen()
 {
-	// RW 0x9195E1: the chat "Network:PlayerLeftGame" (not ported: no disconnect chat), a vote for every slot that is not the local one, then quit
-	for (int s = 0; s < MAX_SLOTS; ++s)
+	// RW 0x9195E1: the chat "Network:PlayerLeftGame" (lane CHAT-1: the host sends it first, sendDisconnectChat), a vote for every slot that is not the local one, then quit
+	if (!m_transport.relayCanonical())
 	{
-		if (s != m_config.localSlot && isPlayerConnected(s))
+		for (int s = 0; s < MAX_SLOTS; ++s)
 		{
-			m_disconnect.voteForPlayerDisconnect(*this, s, m_logicFrame);
+			if (s != m_config.localSlot && isPlayerConnected(s))
+			{
+				m_disconnect.voteForPlayerDisconnect(*this, s, m_logicFrame);
+			}
 		}
 	}
 	m_quitFromScreen = true;
@@ -1217,7 +1425,7 @@ int Network::nextPacketRouterSlot(int slot) const
 	return MAX_SLOTS;
 }
 
-bool Network::dropClaims(int sender, int target, std::uint8_t &gone) const
+bool Network::dropClaims(int sender, int target, std::uint16_t &gone) const
 {
 	gone = 0;
 	if (sender < 0 || sender >= MAX_SLOTS || target < 0 || target >= MAX_SLOTS || sender == target || !m_slots[(size_t)target].active
@@ -1239,12 +1447,12 @@ bool Network::dropClaims(int sender, int target, std::uint8_t &gone) const
 		{
 			return false; // a predecessor this peer holds connected is the one to decide (lane ONLINE-3: a rejoined slot is never a decider again)
 		}
-		gone |= (std::uint8_t)(1u << s);
+		gone |= (std::uint16_t)(1u << s);
 	}
 	return false;
 }
 
-int Network::verifyDropClaims(int sender, int target, std::uint8_t gone) const
+int Network::verifyDropClaims(int sender, int target, std::uint16_t gone) const
 {
 	if (sender < 0 || sender >= MAX_SLOTS || target < 0 || target >= MAX_SLOTS || sender == target || !m_slots[(size_t)target].active
 		|| !m_slots[(size_t)sender].active)
@@ -1588,6 +1796,13 @@ void Network::requestPause()
 	{
 		return;
 	}
+	if (m_transport.relayCanonical())
+	{
+		// ROUTER-1: PAUSE is a NETCOMMANDTYPE on the legacy stream; canonical orders carry GameMessages only, so the
+		// relayed bundle path cannot schedule it — refused loudly (pause lands in a later ROUTER lane)
+		m_errors.push_back("pause is not available in a canonical game (ROUTER-1: the bundle stream carries game orders only)");
+		return;
+	}
 	// the pause frame is this peer's next execution frame: its frame info for that frame is sent after this command (in order on every link), so no peer
 	// can have run it, and every peer stops before it
 	const UnsignedInt p = executionFrame(m_logicFrame);
@@ -1605,6 +1820,11 @@ void Network::requestPause()
 
 void Network::requestResume()
 {
+	if (m_transport.relayCanonical())
+	{
+		m_errors.push_back("resume is not available in a canonical game (ROUTER-1: the bundle stream carries game orders only)");
+		return;
+	}
 	if (m_pauses.empty())
 	{
 		return;
@@ -1615,6 +1835,169 @@ void Network::requestResume()
 	c.frame = m_pauses.begin()->first;
 	sendDirect(c);
 	file(c, m_config.localSlot);
+}
+
+bool Network::sendChat(const std::u16string &text, std::uint32_t mask, std::string *error)
+{
+	// RW 0x8D5BA5: the command of the local slot, sent direct, then processChat on it (the echo)
+	auto fail = [error](const std::string &e) {
+		if (error)
+		{
+			*error = e;
+		}
+		return false;
+	};
+	if (text.empty())
+	{
+		return fail("an empty chat line");
+	}
+	if (text.size() > NetChat::kMaxTextUnits)
+	{
+		return fail("a chat line of " + std::to_string(text.size()) + " characters (at most " + std::to_string(NetChat::kMaxTextUnits) + ")");
+	}
+	if (m_leaving || m_rejoining)
+	{
+		return fail(m_leaving ? "the local player is leaving" : "the local player is rejoining");
+	}
+	if (m_chatLobbyMuted >> m_config.localSlot & 1u)
+	{
+		return fail("muted by the moderators");
+	}
+	bool anyPlayer = false;
+	for (int s = 0; s < MAX_SLOTS; ++s)
+	{
+		anyPlayer = anyPlayer || ((mask >> s & 1u) && (s == m_config.localSlot || hasConnection(s)));
+	}
+	if (!anyPlayer)
+	{
+		return fail("no player of the game is a recipient (mask " + std::to_string(mask) + ")");
+	}
+	NetCommandMsg c;
+	c.type = NETCOMMANDTYPE_CHAT;
+	c.slot = (std::uint8_t)m_config.localSlot;
+	c.executionFrame = m_logicFrame; // retail stamps an unassigned direct command with the logic frame + 1 (RW 0x8D3AF1); a receiver never waits for it
+	c.chatText = text;
+	c.playerMask = mask;
+	for (int s = 0; s < MAX_SLOTS; ++s)
+	{
+		if (s != m_config.localSlot && (mask >> s & 1u))
+		{
+			sendDirectTo(s, c); // OpenBFME difference (1): only the recipients' connections
+		}
+	}
+	file(c, m_config.localSlot);
+	return true;
+}
+
+void Network::fileChat(const NetCommandMsg &c, int fromSlot)
+{
+	++m_chatReceived;
+	// RW 0x8D54D1: shown when the local bit is in the mask and the sender is not muted
+	if (!(c.playerMask >> m_config.localSlot & 1u))
+	{
+		++m_chatNotAddressed;
+		return;
+	}
+	if (fromSlot != m_config.localSlot && !chatFloodAllows(fromSlot)) // OpenBFME difference (2) (the local echo is the player's own typing)
+	{
+		return;
+	}
+	if (chatMuted(fromSlot) || (m_chatLobbyMuted >> fromSlot & 1u))
+	{
+		++m_chatMutedDrops;
+		return;
+	}
+	ChatLine line;
+	line.slot = fromSlot;
+	line.playerMask = c.playerMask;
+	line.text = c.chatText;
+	m_chatIn.push_back(std::move(line));
+}
+
+bool Network::chatFloodAllows(int fromSlot)
+{
+	// OpenBFME difference (2): a remote sender's lines beyond kChatBurst at once, then one per kChatRefillMs, are dropped (counted)
+	ChatBucket &b = m_chatBuckets[(size_t)fromSlot];
+	const std::uint64_t t = now();
+	if (!b.started)
+	{
+		b.started = true;
+		b.last = t;
+	}
+	else if (t > b.last)
+	{
+		const std::uint64_t refills = (t - b.last) / kChatRefillMs;
+		if (refills > 0)
+		{
+			b.tokens = (int)std::min<std::uint64_t>((std::uint64_t)kChatBurst, (std::uint64_t)b.tokens + refills);
+			b.last += refills * kChatRefillMs;
+		}
+	}
+	if (b.tokens <= 0)
+	{
+		++m_chatFlood;
+		return false;
+	}
+	--b.tokens;
+	return true;
+}
+
+bool Network::sendDisconnectChat(const std::u16string &text, std::string *error)
+{
+	// RW 0x8D5C5B: NetDisconnectChatCommandMsg (no command id), sendLocalCommandDirect to every other connection, processDisconnectChat locally
+	auto fail = [error](const std::string &e) {
+		if (error)
+		{
+			*error = e;
+		}
+		return false;
+	};
+	if (text.empty() || text.size() > NetChat::kMaxTextUnits)
+	{
+		return fail(text.empty() ? std::string("an empty chat line") : "a chat line of " + std::to_string(text.size()) + " characters (at most " + std::to_string(NetChat::kMaxTextUnits) + ")");
+	}
+	if (m_chatLobbyMuted >> m_config.localSlot & 1u)
+	{
+		return fail("muted by the moderators");
+	}
+	NetCommandMsg c;
+	c.type = NETCOMMANDTYPE_DISCONNECTCHAT;
+	c.slot = (std::uint8_t)m_config.localSlot;
+	c.executionFrame = m_logicFrame;
+	c.chatText = text;
+	sendDirect(c);
+	file(c, m_config.localSlot);
+	return true;
+}
+
+std::vector<Network::ChatLine> Network::takeDisconnectChat()
+{
+	std::vector<ChatLine> out;
+	out.swap(m_disconnectChatIn);
+	return out;
+}
+
+std::vector<Network::ChatLine> Network::takeChat()
+{
+	std::vector<ChatLine> out;
+	out.swap(m_chatIn);
+	return out;
+}
+
+void Network::setChatMuted(int slot, bool muted)
+{
+	if (slot < 0 || slot >= MAX_SLOTS)
+	{
+		return;
+	}
+	if (muted)
+	{
+		m_chatMuted |= 1u << slot;
+	}
+	else
+	{
+		m_chatMuted &= ~(1u << slot);
+	}
 }
 
 void Network::setRejoining(int generation)
@@ -1804,4 +2187,21 @@ std::vector<std::string> Network::stopLines()
 		"order runs one frame before the run-ahead's frame while that frame is at least the planned one-way latency + 10 % + 40 ms away (its FRAMEINFO "
 		"is held until then); RotWK always waits for the router's frame + 1",
 	};
+}
+
+bool Network::submitView(UnsignedInt frame, float cameraX, float cameraY, float cursorX, float cursorY, bool cursorOverWorld)
+{
+	// lane ANTICHEAT-1: see Network.h
+	if (m_config.localSlot < 0)
+	{
+		return false;
+	}
+	NetCommandMsg c;
+	c.type = NETCOMMANDTYPE_VIEW;
+	c.slot = (std::uint8_t)m_config.localSlot;
+	c.executionFrame = frame;
+	c.view = { cameraX, cameraY, cursorX, cursorY };
+	c.viewFlags = cursorOverWorld ? 1 : 0;
+	const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(c, nullptr);
+	return !bytes.empty() && m_transport.sendToLog(bytes);
 }

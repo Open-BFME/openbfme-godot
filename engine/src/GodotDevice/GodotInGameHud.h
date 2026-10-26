@@ -64,6 +64,21 @@ public:
 	// lane HUD-6: { radial: { object, count, radius, centre, size, hilited, presses, buttons: [{ slot, rect, state, image, name }], errors }, help: { loaded,
 	// render_name, state, shown, width, helps_shown, draws, name, calls } }
 	Dictionary get_hud6_state() const;
+	// ---- lane CHAT-1: the InGameUI message lines and the chat (GameClient/InGameUIMessages.h, GameClient/InGameChat.h) ----
+	// take_chat_requests: CHAT_ALLIES (false) / CHAT_EVERYONE (true) presses since the last call. chat_text(label): the game text of a label ("" when
+	// absent). chat_format(mode, text): the line Send sends ("<Team> hi": the mode's label formatted with the text). add_chat_line(text, rgb): a received
+	// line (messageColor in the sender's colour 0xRRGGBB, or -1: the alternating colours, InGameUI::message) and the scroll-back. set_chat_history_shown:
+	// the scroll-back over the message lines while the chat window is open (OpenBFME addition). message_lines_state: the lines, their colours, the history
+	Array take_chat_requests();
+	String chat_text(const String &label) const;
+	String chat_format(int64_t mode, const String &text) const;
+	void add_chat_line(const String &text, int64_t rgb);
+	void set_chat_history_shown(bool shown);
+	Dictionary message_lines_state() const;
+	// lane CHAT-1: the chat and beacon keys work only in a network game (RW 0x441B7C); beacon_state: the beacons this client presented
+	// { placed, too_many, failed, hidden, pulses, beacons: [ids], client_hidden: [ids], gui_command }
+	void set_network_game(bool on);
+	Dictionary beacon_state() const;
 	// lane SMOOTH-1: the parts of the last _process in ms { hud_update_ms (the HUD: APT movie, control bar, radar, input), hud_camera_ms, hud_cursor_ms }
 	Dictionary get_frame_timings() const;
 	// lane BUILD-1: { placing, template, source, has_ghost, x, y, angle, legal (LegalBuildCode, 0 = may be placed) } of the building waiting for its site
@@ -94,6 +109,10 @@ public:
 	// world position (SAGE x, y) under a window pixel; (-1e9, -1e9) when the ray misses the ground
 	// lane CAM-1: the retail tactical camera's state (position, angle, zoom, heights, pose, limits) for the viewers and the tests; empty before attach()
 	Dictionary get_camera() const;
+	// lane CHEAT-1: a line in the in-game message log (InGameHud::addPlayerMessageText) and the log's place ({ x, y, point_size }: InGameUI's
+	// MessagePosition in 1024 x 768 units and its point size)
+	void add_player_message(const String &text);
+	Dictionary get_player_message_layout() const;
 	// edge scrolling is on in fullscreen (retail: GlobalData Windowed = No); a test or a windowed run can force it
 	void set_edge_scroll(bool on);
 	// lane PLAY-1: the free camera (the owner's presentation option, not retail: TacticalCamera::setFreeCamera); also the attach option free_camera
@@ -110,17 +129,29 @@ public:
 	// scripted camera moves for the viewers (the same View::lookAt / setHeightAboveGround the radar click and the wheel call)
 	void camera_look_at(const Vector2 &sage_xy);
 	void camera_set_height(float height_above_ground);
+	// lane CAMPUI-1: a map script's RESET_CAMERA (view slot 0xC8, the game start's RW 0x63135B) and the letterbox's zoom limit (W3DDisplay::enableLetterBox
+	// RW 0x443C81: TheTacticalView slot 0x1C setZoomLimited(!enable)) on the HUD's own camera, so a cinematic moves the camera the player then keeps
+	void camera_reset(const Vector2 &sage_xy);
+	void camera_set_zoom_limited(bool on);
+	// lane CAMPUI-1: the objectives screen's state for the Palantir's flag and a script's FLASH_*_BUTTON (slot 0 spell store, 1 objectives, 2 planning mode)
+	void set_objectives_screen_open(bool open);
+	void flash_palantir_button(int slot, int seconds);
+	bool is_objectives_flag_flashing() const;
 	Vector2 pixel_to_world(const Vector2 &pixel) const;
+	Vector2 ping_point(const Vector2 &pixel) const; ///< the ping wheel (not retail): the map point a ping at this pixel marks (see the .cpp)
 	Vector2 world_to_pixel(const Vector2 &world_xy) const;
 	// lane IDLE-1: { ok, picked (the id the HUD's pick answers at `pixel`, 0 for none), target ("hit" / "miss" / "not_drawn" / "unknown" / "gone": the pick ray
 	// against object `id`'s drawn model alone), target_t, selectable (HudObjects::isSelectable of `id`) } (the QA harness's failed-click verdict)
 	Dictionary pick_probe(const Vector2 &pixel, int64_t id) const;
+	// lane SELECT-1: the screen pixels of points inside object `id`'s oriented pick box (the first top-LOD W3D_BOX_ATTRIBUTE_ORIENTED box of its drawn model,
+	// the one RotWK's pick tests: RW 0x59C680): the centre, then the centre +- 80 % of each half extent along the box's axes; empty without such a box
+	PackedVector2Array pick_box_pixels(int64_t id) const;
 	// engine -> movie: calls `function` on the clip at `path` below the HUD movie's root ("" = the root) with string arguments; { ok, result, error }
 	Dictionary invoke_at(const String &path, const String &function, const PackedStringArray &args);
 	// the radar picture's square in window pixels (Rect2; size 0 before the movie shows it)
 	// lane PLAY-1: the window pixel of the radar that shows the SAGE point (x, y); (-1, -1) without a radar
 	Vector2 world_to_radar_pixel(const Vector2 &world) const;
-	bool create_radar_event(const Vector2 &world_xy, int type); ///< lane RADAR-1 (QA): Radar::createEvent at SAGE (x, y), 4 seconds
+	bool create_radar_event(const Vector2 &world_xy, int type, bool jump_to = false); ///< lane RADAR-1 (QA): Radar::createEvent at SAGE (x, y), 4 seconds
 	Rect2 get_radar_square() const;
 	Dictionary get_radar_state() const;                 ///< lane HUD-7: the drawn picture, clip and view box beside the click rectangle
 	Dictionary radar_probe(const Vector2 &world_xy) const; ///< lane HUD-7: the overlay cell of a world point, its alpha and drawn pixel
@@ -144,6 +175,7 @@ public:
 	// lane BACKLOG2 (proof captures): select_object, then the selection message a click sends (MSG_CREATE_SELECTED_GROUP_NO_SOUND, SelectionTranslator::
 	// selectSingleWithoutSound), so the logic's selection follows and the object's command buttons act on it
 	bool select_object_with_message(int64_t id);
+	int64_t select_objects_with_message(const PackedInt64Array &ids);
 	int64_t select_objects(const PackedInt64Array &ids); // lane SELPERF-1: the selection benchmark's N objects at once
 	bool open_spell_store();
 	void close_spell_store();

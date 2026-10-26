@@ -98,5 +98,10 @@ struct EconomyContext
 	// local slot's team (the lobby's "Entering sandbox mode..."). VictoryConditions reads it (RW 0x808C5B: no allied victory; RW 0x809034: the keep-score
 	// switch stays on). Set by the game start from the setup; false without a game info (tests, tools)
 	bool sandbox = false;
+	// lane SCRIPT-4 r2 (Sol): a game of several machines: the start message has more than one human slot (SLOT_PLAYER, observers included). The LAN / online
+	// start leaves gameMode at MODE_SKIRMISH, so this is what tells the script engine that the local player differs from peer to peer (TheGameEngine's
+	// multiplayer session, vslot 0x58, and the <Local Player...> parameters). Set by the game start from the setup, the same on every peer and in a replay
+	// of the game; not hashed (it never changes during a game, and every game that is not one hashes as before)
+	bool multiplayerSession = false;
 	void crc(StateHasher &h) const;
 };

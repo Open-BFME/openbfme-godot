@@ -2,6 +2,7 @@
 // See AptPalantir.h.
 
 #include "GameClient/GUI/AptScreens/AptPalantir.h"
+#include "GameClient/LocalizedText.h"
 
 #include <cstdio>
 #include "GameClient/GUI/AptScreens/AptSimpleScreens.h"
@@ -72,6 +73,15 @@ void AptPalantir::hook(const std::string &name)
 		{
 			++m_loaded[name];
 		}
+		// lane CAMPUI-1: the arc slots' sub-menus (RW 0x93023D / 0x930340) and toggle flashes
+		if (name == "PalantirCommandUI::OnSubMenuLoaded" || name == "PalantirCommandUI::OnSubMenuUnloaded")
+		{
+			subMenuLoaded(arg, name == "PalantirCommandUI::OnSubMenuLoaded");
+		}
+		else if (name == "PalantirCommandUI::OnToggleFlashLoaded" || name == "PalantirCommandUI::OnToggleFlashUnloaded")
+		{
+			toggleFlashLoaded(arg, name == "PalantirCommandUI::OnToggleFlashLoaded");
+		}
 		if ((name == "AptPalantir::OnHelpBoxLoaded" || name == "AptPalantir::OnHelpBoxUnloaded") && m_helpBoxHandler)
 		{
 			m_helpBoxHandler(arg, name == "AptPalantir::OnHelpBoxLoaded"); // lane HUD-6: RW 0x6D4F28 / its unload twin
@@ -137,6 +147,7 @@ void AptPalantir::hook(const std::string &name)
 		}
 		else if (name == "AptPalantir::OnBttnObjectives")
 		{
+			m_objFlash = false; // lane CAMPUI-1: RW 0x6D40C9 clears + 0xE5 (the flag's flash)
 			// lane PLAY-1: RW 0x6D40C9 (the flag above the radar): PlayerTribute.apt in a skirmish / multiplayer game (RW 0x914EF0), the objectives otherwise
 			if (m_services)
 			{
@@ -218,7 +229,7 @@ bool AptPalantir::call(const std::string &path, const std::string &fn, const std
 // of the CreateContent call (string RW 0xC8C3AC) and takes it away again; the movie's CreateContent writes the content's name into that extern, and the
 // creation counts only when it did (the provider's flag decides the result). Without the provider every button creation wrote to an unregistered extern
 // (thousands of "no extern provider" errors a game). INFERENCE: the content instance and name retail keeps from the provider are not used here.
-bool AptPalantir::createContent(const std::string &frame)
+bool AptPalantir::createContent(const std::string &frame, const char *name)
 {
 	bool written = false;
 	const std::string key = levelPrefix() + frame + "_ContentName";
@@ -226,7 +237,7 @@ bool AptPalantir::createContent(const std::string &frame)
 		written = written || setting;
 		return setting;
 	});
-	const bool ok = call(frame, "CreateContent", { "CommandButton", "content" });
+	const bool ok = call(frame, "CreateContent", { "CommandButton", name }); // RW 0x9D72DB: the content type "CommandButton" (RW 0xBF06B8)
 	windows().unregisterProvider(key);
 	return ok && written;
 }
@@ -320,6 +331,10 @@ void AptPalantir::frameLoaded(bool arc, const std::string &arg, bool loaded)
 	}
 	if (!loaded && i < (arc ? kArcPositions : kSidePositions))
 	{
+		if (arc)
+		{
+			hideStanceMenu(i); // lane CAMPUI-1: the content's destructor (RW 0x96FCCB)
+		}
 		(arc ? m_arc : m_side)[i] = Slot(); // the frame's content went with it
 	}
 }
@@ -392,6 +407,10 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 		{
 			if (s.created)
 			{
+				if (arc)
+				{
+					hideStanceMenu(i); // lane CAMPUI-1: RW 0x96FCCB
+				}
 				const std::string key = levelPrefix() + frame + ".content";
 				setOverlay(s, frame, false); // lane AUTOCAST-1: the content's destructor hides the glow first (RW 0x9D6EC7 -> 0x9D6F07)
 				call(frame, "DeleteContent", {});
@@ -405,6 +424,14 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 		const ControlBarButton &b = *at[i];
 		const std::string key = levelPrefix() + frame + ".content";
 		const std::string sig = std::to_string(b.slot) + "|" + std::to_string((int)b.state) + "|" + std::to_string(b.productionCount) + "|" + b.image + "|" + std::to_string((int)(b.timer * 100.0f)) + (b.autoAbility ? "|auto" : "");
+		// lane CAMPUI-1: the window's button changed: retail's factory (RW 0x92FF5C) replaces the content, and a stance toggle's destructor hides its open
+		// radial (RW 0x96FCCB)
+		if (arc && s.button != b.button)
+		{
+			hideStanceMenu(i);
+		}
+		s.button = b.button;
+		s.state = b.state;
 		if (s.created && s.sig == sig)
 		{
 			continue;
@@ -430,7 +457,11 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 					// lane AUTOCAST-1: RW 0x9D6E54 reads TheAptWindowManager + 0x318: 0 the left press (owner slots 0xC / 0x10), 2 the right press
 					// (slots 0x14 / 0x18 -> RW 0x9D288A / 0x9D28D4), anything else nothing
 					const int button = windows().pressButton();
-					if (button == 0 && m_press)
+					if (button == 0 && inArc && isToggleStanceContent(position))
+					{
+						pressToggleStance(position); // lane CAMPUI-1: InGameToggleStanceCommandButton's press (RW 0x96FAC6) replaces processCommandUI's (RW 0x9D2814)
+					}
+					else if (button == 0 && m_press)
 					{
 						m_press(shown.slot, inArc);
 					}
@@ -584,6 +615,12 @@ void AptPalantir::syncLocal()
 	if (m_local.context && (!m_commandContext || m_local.contextObject != m_contextObject || m_local.commandSet != m_contextSet))
 	{
 		hideRank(); // RW 0x92F990: HideRankInterface when shown
+		// lane CAMPUI-1: the context's contents go (the stance toggle's destructor RW 0x96FCCB hides its open radial). INFERENCE: the content is rebuilt on
+		// a context switch (the factory RW 0x92FF5C's callers were not read)
+		for (int i = 0; i < kArcPositions; ++i)
+		{
+			hideStanceMenu(i);
+		}
 		if (m_commandShown)
 		{
 			call("", "HideCommandInterface", {});
@@ -648,6 +685,11 @@ void AptPalantir::hideRank()
 // the rank text (type 0, when it changed: APT:HeroRank = APT:RankLabel formatted with the rank, RW 0x92FB90 -> 0x92FACB) or the time text (type 1, when just shown:
 // APT:PalantirTimeRemaining, RW 0x930729 .. 0x9307C1), then the bar when its value changed (RW 0x9304DB: ShowRankProgress / SetRankProgressBar(clamp(1 +
 // trunc(100 v), 1, 100)) for v >= 0, HideRankProgress for v < 0)
+std::string AptPalantir::rankText(const LocalState &state)
+{
+	return LocalizedText::format(state.rankLabelFormat, { state.rank });
+}
+
 void AptPalantir::syncRank()
 {
 	if (m_local.rankType != m_rankType)
@@ -672,9 +714,7 @@ void AptPalantir::syncRank()
 	{
 		if (!m_rankSet || m_local.rank != m_rankValue)
 		{
-			char buf[256];
-			std::snprintf(buf, sizeof(buf), m_local.rankLabelFormat.c_str(), m_local.rank);
-			windows().setAptText("APT:HeroRank", buf);
+			windows().setAptText("APT:HeroRank", rankText(m_local));
 			m_rankValue = m_local.rank;
 			m_rankSet = true;
 		}
@@ -838,7 +878,320 @@ void AptPalantir::sync(const ControlBar &bar)
 	{
 		syncFrames({}, true);
 	}
+	syncSubMenus(); // lane CAMPUI-1
 	syncSideBar(bar);
+}
+
+// ---- lane CAMPUI-1: the arc's sub-menus and the stance toggle's radial (see AptPalantir.h, InGameCommandButtonSubMenu.h) ----------------------------
+// RW 0x930088: atoi(index) in [0, 6)
+static int arcIndexOf(const std::string &arg)
+{
+	const std::string index = InGameCommandButtonSubMenu::queryValue(arg, "index");
+	if (index.empty())
+	{
+		return -1;
+	}
+	const int i = std::atoi(index.c_str());
+	return i >= 0 && i < AptPalantir::kArcPositions ? i : -1;
+}
+
+void AptPalantir::stanceError(const std::string &e)
+{
+	if (m_stanceErrors.size() < 64)
+	{
+		m_stanceErrors.push_back(e);
+	}
+}
+
+// RW 0x93023D: a slot without a sub-menu gets one for the clip of `name` (RW 0x92F6CE; the level prefix removed, RW 0x815563); RW 0x930340 drops it
+void AptPalantir::subMenuLoaded(const std::string &arg, bool loaded)
+{
+	const int i = arcIndexOf(arg);
+	if (i < 0)
+	{
+		return;
+	}
+	if (!loaded)
+	{
+		m_subMenu[i].reset();
+		return;
+	}
+	const std::string name = InGameCommandButtonSubMenu::queryValue(arg, "name");
+	if (name.empty() || m_subMenu[i])
+	{
+		return;
+	}
+	const std::string path = InGameCommandButtonSubMenu::stripLevel(name);
+	m_subMenu[i] = std::make_unique<InGameCommandButtonSubMenu>(level(), path, [this](const std::string &p, const std::string &fn, const std::vector<std::string> &args) {
+		return call(p, fn, args);
+	});
+	m_subMenu[i]->setDropItemContent([this](const InGameCommandButtonSubMenu::Item &it) {
+		// RW 0x9D6EC7 -> 0x9D2640: the item content's destructor deletes the content it made in its frame
+		const std::string key = levelPrefix() + it.frame + ".Button";
+		call(it.frame, "DeleteContent", {}); // RW 0xC8C39C
+		m_images.erase(key + "_Image");
+	});
+	// RW 0x9D3380 registers the three commands of the clip; the movie's names are built from the clip's path, so each path is registered once and the
+	// callbacks reach the slot's current sub-menu of that path
+	if (m_subMenuRegistered.insert(path).second)
+	{
+		const InGameCommandButtonSubMenu &menu = *m_subMenu[i];
+		auto route = [this, i, path](void (InGameCommandButtonSubMenu::*fn)(const std::string &)) {
+			return [this, i, path, fn](const std::string &a) {
+				if (m_subMenu[i] && m_subMenu[i]->path() == path)
+				{
+					(m_subMenu[i].get()->*fn)(a);
+				}
+			};
+		};
+		registerCommand(menu.commandName(InGameCommandButtonSubMenu::kFrameLoaded), route(&InGameCommandButtonSubMenu::onButtonFrameLoaded));
+		registerCommand(menu.commandName(InGameCommandButtonSubMenu::kFrameUnloaded), route(&InGameCommandButtonSubMenu::onButtonFrameUnloaded));
+		registerCommand(menu.commandName(InGameCommandButtonSubMenu::kClosed), [this, i, path](const std::string &) {
+			if (m_subMenu[i] && m_subMenu[i]->path() == path)
+			{
+				m_subMenu[i]->onClosed();
+			}
+		});
+	}
+}
+
+void AptPalantir::toggleFlashLoaded(const std::string &arg, bool loaded)
+{
+	const int i = arcIndexOf(arg);
+	if (i < 0)
+	{
+		return;
+	}
+	if (!loaded)
+	{
+		m_toggleFlashPath[i].clear();
+		return;
+	}
+	const std::string name = InGameCommandButtonSubMenu::queryValue(arg, "name");
+	if (!name.empty() && m_toggleFlashPath[i].empty())
+	{
+		m_toggleFlashPath[i] = InGameCommandButtonSubMenu::stripLevel(name);
+	}
+}
+
+bool AptPalantir::isToggleStanceContent(int position) const
+{
+	if (position < 0 || position >= kArcPositions || m_bfme1)
+	{
+		return false;
+	}
+	const Slot &s = m_arc[position];
+	// RW 0x92FF5C: command 0x39 and the slot's + 4 (sub-menu) and + 8 (toggle flash)
+	return s.created && s.button && s.button->m_command == GUI_COMMAND_TOGGLE_STANCE && m_subMenu[position] && !m_toggleFlashPath[position].empty();
+}
+
+const char *AptPalantir::setStanceButtonName(int stance)
+{
+	// RW 0x96F6E7: the table { 1, "Command_SetStanceBattle" }, { 2, "Command_SetStanceAggressive" }, { 3, "Command_SetStanceHoldGround" } (RW 0xDEBD2C)
+	switch (stance)
+	{
+		case 1: return "Command_SetStanceBattle";
+		case 2: return "Command_SetStanceAggressive";
+		case 3: return "Command_SetStanceHoldGround";
+		default: return nullptr;
+	}
+}
+
+// RW 0x96FAC6: InGameToggleStanceCommandButton's press. TARGET FACTS: no sub-menu, nothing; the context object's checks (RW 0x449681, DAT 0xDE4928,
+// RW 0x6A8803); a closed sub-menu gets one item per entry of the button's Stances (+ 0x234 .. + 0x238) while it has at most 2, then opens (Show(n)); an open one
+// is asked to close. INFERENCE: the context checks are not ported beyond the gate every press here has (ControlBar::pressButton refuses a restricted / not
+// ready button; S-4531: the clip state gate RW 0x9D285E is not ported)
+void AptPalantir::pressToggleStance(int position)
+{
+	InGameCommandButtonSubMenu *menu = m_subMenu[position].get();
+	const Slot &s = m_arc[position];
+	if (!menu || !s.button)
+	{
+		return;
+	}
+	if (s.state == ButtonState::Restricted || s.state == ButtonState::NotReady)
+	{
+		return;
+	}
+	if (!menu->isOpen())
+	{
+		for (int stance : s.button->m_stances)
+		{
+			if (menu->itemCount() > 2)
+			{
+				break;
+			}
+			menu->addItem(stance); // RW 0x96F62F: the item { toggle, stance }
+		}
+		if (!menu->open())
+		{
+			stanceError(menu->path() + ".Show(" + std::to_string(menu->itemCount()) + ") refused by the movie");
+		}
+	}
+	else
+	{
+		menu->requestClose();
+	}
+}
+
+// RW 0x96F85A: the item's press: the toggle's SetStance (RW 0x96F53C: MSG_CHANGE_STANCE 0x468 with the stance through RW 0x7111E5, then the close request
+// of an open sub-menu), then the toggle flash's Go() (RW 0x9D2DA3 -> 0x92B9C8). NOT PORTED: SetStance's voice (RW 0x8DEDBB with 0x7E3 on the selection,
+// INFERENCE: the toggle's UnitSpecificSound); the toggle's image follows the logic's stance (ControlBar's StanceToButtonSlot, RW 0x96F5DE)
+void AptPalantir::pressStanceItem(int position, int item)
+{
+	InGameCommandButtonSubMenu *menu = m_subMenu[position].get();
+	if (!menu || item < 0 || item >= menu->itemCount())
+	{
+		return;
+	}
+	const int stance = menu->item(item).value;
+	if (m_stancePress)
+	{
+		m_stancePress(stance);
+	}
+	else
+	{
+		stanceError("stance " + std::to_string(stance) + ": no stance handler, MSG_CHANGE_STANCE not sent");
+	}
+	if (menu->isOpen())
+	{
+		menu->requestClose();
+	}
+	if (!m_toggleFlashPath[position].empty())
+	{
+		++m_flashGoes;
+		if (!call(m_toggleFlashPath[position], "Go", {})) // RW 0xC86830
+		{
+			stanceError(m_toggleFlashPath[position] + ".Go() refused by the movie");
+		}
+	}
+}
+
+void AptPalantir::hideStanceMenu(int position)
+{
+	if (position >= 0 && position < kArcPositions && m_subMenu[position] && m_subMenu[position]->isOpen())
+	{
+		m_subMenu[position]->hide(); // RW 0x96FCCB -> 0x9D32CD
+	}
+}
+
+// RW 0x96F7B7 (the item content, vtable RW 0xC84200) -> 0x9D75BC -> 0x9D72DB: CreateContent("CommandButton", "Button") in the item frame, the commands
+// "<content>_OnInitialized" (RW 0x9D6E4D) and "<content>_OnPress" (RW 0x9D6E54), the count text " " (RW 0xC8CAC8)
+bool AptPalantir::createStanceItem(int position, int item)
+{
+	const InGameCommandButtonSubMenu::Item &it = m_subMenu[position]->item(item);
+	if (!createContent(it.frame, "Button"))
+	{
+		stanceError(it.frame + ": CreateContent(CommandButton, Button) refused");
+		return false;
+	}
+	const std::string key = levelPrefix() + it.frame + ".Button";
+	if (m_itemRegistered.insert(key).second)
+	{
+		const std::string frame = it.frame;
+		registerCommand(key + "_OnPress", [this, position, item, frame](const std::string &) {
+			InGameCommandButtonSubMenu *menu = m_subMenu[position].get();
+			if (!menu || item >= menu->itemCount() || menu->item(item).frame != frame || !menu->item(item).content)
+			{
+				return;
+			}
+			if (windows().pressButton() == 0) // RW 0x9D6E54: the left press
+			{
+				pressStanceItem(position, item);
+			}
+		});
+		registerCommand(key + "_OnInitialized", [this, position, item, frame](const std::string &) {
+			InGameCommandButtonSubMenu *menu = m_subMenu[position].get();
+			if (menu && item < menu->itemCount() && menu->item(item).frame == frame && menu->item(item).content)
+			{
+				menu->item(item).initialized = true;
+			}
+		});
+	}
+	windows().setAptText("APT:" + key + "_ProductionCount", " ");
+	return true;
+}
+
+// the item content's update (RW 0x9D6ED8, after its _OnInitialized): the state _up and the image of the stance's SET_STANCE button (RW 0x96F6E7 -> the
+// control bar's findCommandButton RW 0x71D6EA)
+void AptPalantir::updateStanceItem(int position, int item)
+{
+	InGameCommandButtonSubMenu::Item &it = m_subMenu[position]->item(item);
+	if (!it.initialized || !it.sig.empty())
+	{
+		return;
+	}
+	const std::string key = levelPrefix() + it.frame + ".Button";
+	std::string image;
+	const char *name = setStanceButtonName(it.value);
+	const CommandButton *b = name && TheCommandStore ? TheCommandStore->findCommandButton(name) : nullptr;
+	if (!b || b->m_buttonImageName.empty())
+	{
+		stanceError("stance " + std::to_string(it.value) + ": no image (" + (name ? name : "no SetStance button for the stance") + (b ? " has no ButtonImage)" : " not found)"));
+	}
+	else
+	{
+		image = b->m_buttonImageName.front();
+	}
+	if (!call(it.frame + ".Button", "SetState", { "_up" }))
+	{
+		return;
+	}
+	it.sig = "_up|" + image;
+	if (!image.empty())
+	{
+		m_images[key + "_Image"] = NativeImage{ image, false };
+	}
+}
+
+void AptPalantir::syncSubMenus()
+{
+	for (int i = 0; i < kArcPositions; ++i)
+	{
+		if (!m_subMenu[i])
+		{
+			continue;
+		}
+		m_subMenu[i]->update([this, i](int item) { return createStanceItem(i, item); }, [this, i](int item) { updateStanceItem(i, item); });
+	}
+}
+
+bool AptPalantir::stanceItemAt(const std::string &path, StanceItemHit &hit) const
+{
+	for (int i = 0; i < kArcPositions; ++i)
+	{
+		const InGameCommandButtonSubMenu *menu = m_subMenu[i].get();
+		if (!menu || !menu->isOpen() || !m_arc[i].button)
+		{
+			continue;
+		}
+		for (int k = 0; k < menu->itemCount(); ++k)
+		{
+			const InGameCommandButtonSubMenu::Item &it = menu->item(k);
+			if (!it.content)
+			{
+				continue;
+			}
+			const std::string key = levelPrefix() + it.frame + ".Button";
+			if (path == key || (path.size() > key.size() && path.compare(0, key.size(), key) == 0 && path[key.size()] == '.'))
+			{
+				hit.slot = m_arc[i].slot;
+				hit.stance = it.value;
+				hit.toggle = m_arc[i].button;
+				hit.listIndex = -1;
+				for (size_t n = 0; n < hit.toggle->m_stances.size(); ++n) // RW 0x96F2DA
+				{
+					if (hit.toggle->m_stances[n] == it.value)
+					{
+						hit.listIndex = (int)n;
+						break;
+					}
+				}
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 std::vector<std::string> AptPalantir::acceptanceStops()

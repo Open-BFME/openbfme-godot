@@ -16,8 +16,8 @@
 //     (1/sqrt 2, -1/sqrt 2) rotated by the signed angle A of the offset: A = acos(offset.y / |offset|) (the normalised y, through the retail fast inverse square
 //     root RW 0x441C56 and PC24 products), negated when the normalised x is negative; sin / cos of A as the CRT (doubles stored as float32); the structure's
 //     orientation is NOT used and z is the structure's z.  (A reference vector of the retail code, kept as it is: the placed units land on the structure's
-//     south-east side whatever the offset says except through A.)  With a ZERO offset retail searches the partition manager (findPositionAround around the rally
-//     point, radii from the CastleBehavior or the geometry): not ported, a template with one is an error here (S-272).  A unit then gets Player::onUnitCreated
+//     south-east side whatever the offset says except through A.)  With a ZERO offset retail searches the partition manager (findPositionAround around the base
+//     point, radii from the CastleBehavior or the geometry; lane MODS-3, RW 0x62B074 .. 0x62B111).  A unit then gets Player::onUnitCreated
 //     (RW 0x6AA688).
 // INFERENCE / not ported (S-272): Player::onStructureCreated / ConstructionComplete / onUnitCreated, the team activation, the pathfinder registration and the
 // adjusted destination of mobile units, the waypoint flag, the CRT parity of acos / sin / cos (S-081 / S-167).

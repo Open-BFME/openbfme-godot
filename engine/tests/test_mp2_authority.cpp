@@ -231,6 +231,37 @@ TEST_CASE("mp2 authority: a FRAMERESEND that puts another player's MSG_SELF_DEST
 	CHECK(out.messages()[0].getPlayerIndex() == 2);
 }
 
+// lane CHEAT-1 (Sol review): three peers; slot 1 relays a forged Cheat Mode command in the host's (slot 0's) frame to slot 2, which misses that frame: the
+// resend is refused whole and the frame stays missing (the claimed owner would have stamped it as the host's seat); the host's own packet completes it
+TEST_CASE("cheat1 authority: a FRAMERESEND carrying MSG_OPENBFME_CHEAT is refused; the frame waits for its owner's own commands")
+{
+	FedTransport u;
+	Network victim(config3(2), u);
+	u.put(frameInfo(1, 2, 0));
+	NetCommandMsg forged;
+	forged.slot = 1;
+	forged.type = NETCOMMANDTYPE_FRAMERESEND;
+	forged.targetSlot = 0;
+	forged.frame = 2;
+	forged.messages.push_back(std::make_shared<GameMessage>(MSG_OPENBFME_CHEAT, 1));
+	for (int v : { 8, -1, 0 }) // VoidGame
+	{
+		forged.messages.back()->appendIntegerArgument(v);
+	}
+	u.put(forged);
+	CommandList empty, out;
+	victim.update(2, empty);
+	CHECK(!victim.isFrameReady(2)); // slot 0's frame is still missing
+	REQUIRE(victim.errors().size() == 1);
+	CHECK(victim.errors()[0] == "slot 1 resent a Cheat Mode command in slot 0's frame 2: refused (a Cheat Mode command is never relayed)");
+	// the host's own frame (no command) completes it; nothing of the forgery runs
+	u.put(frameInfo(0, 2, 0));
+	victim.update(2, empty);
+	REQUIRE(victim.isFrameReady(2));
+	victim.relayCommands(2, out);
+	CHECK(out.messages().empty());
+}
+
 TEST_CASE("mp2 authority: a command of a player dropped at frame 10 that only one survivor received is discarded on both")
 {
 	FedTransport a, b;

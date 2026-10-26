@@ -14,10 +14,13 @@
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Damage.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/AI/AIStateMachine.h"
 #include "GameLogic/Locomotor.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/HordeAIUpdate.h"
+#include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/Module/HordeContain.h"
+#include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
@@ -167,90 +170,6 @@ void facing(const Object &o, float &fx, float &fy)
 	const float a = o.getOrientation();
 	fx = SimMath::cosDet(a);
 	fy = SimMath::sinDet(a);
-}
-
-// ---- the planar shape test (RW 0xAD2CE0, planar part) -----------------------------------------------------------------------------
-struct Shape2D
-{
-	bool box = false;
-	float cx = 0.0f, cy = 0.0f;
-	float major = 0.0f, minor = 0.0f; // box: half extents along the object's forward / side axes; circle: major = radius
-	float ux = 1.0f, uy = 0.0f;       // box: forward axis
-};
-
-Shape2D shapeOf(const Object &o, float overrideRadius)
-{
-	Shape2D s;
-	s.cx = o.getPosition()->x;
-	s.cy = o.getPosition()->y;
-	const std::vector<ObjectGeometry::Shape> shapes = ObjectGeometry::shapesOf(finalTemplate(o));
-	const ObjectGeometry::Shape def;
-	const ObjectGeometry::Shape &g = shapes.empty() ? def : shapes[0];
-	s.box = g.type == ObjectGeometry::SHAPE_BOX;
-	s.major = g.majorRadius;
-	s.minor = g.minorRadius;
-	if (overrideRadius >= 0.0f)
-	{
-		s.major = overrideRadius;
-		s.minor = overrideRadius;
-	}
-	facing(o, s.ux, s.uy);
-	return s;
-}
-
-float absF(float a)
-{
-	return a < 0.0f ? SimMath::subf32(0.0f, a) : a;
-}
-
-// the distance from a point to a box (0 inside), squared
-float pointBoxDistSq(const Shape2D &b, float px, float py)
-{
-	const float dx = SimMath::subf32(px, b.cx), dy = SimMath::subf32(py, b.cy);
-	const float lf = SimMath::addf32(SimMath::mulf32(dx, b.ux), SimMath::mulf32(dy, b.uy));
-	const float ls = SimMath::subf32(SimMath::mulf32(dy, b.ux), SimMath::mulf32(dx, b.uy));
-	const float ef = SimMath::subf32(absF(lf), b.major);
-	const float es = SimMath::subf32(absF(ls), b.minor);
-	const float qf = ef > 0.0f ? ef : 0.0f;
-	const float qs = es > 0.0f ? es : 0.0f;
-	return SimMath::sumSquares2(qf, qs);
-}
-
-// separating axis test of two oriented rectangles
-bool boxesOverlap(const Shape2D &a, const Shape2D &b)
-{
-	const float axes[4][2] = { { a.ux, a.uy }, { SimMath::subf32(0.0f, a.uy), a.ux }, { b.ux, b.uy }, { SimMath::subf32(0.0f, b.uy), b.ux } };
-	const float dx = SimMath::subf32(b.cx, a.cx), dy = SimMath::subf32(b.cy, a.cy);
-	for (const auto &ax : axes)
-	{
-		auto radius = [&](const Shape2D &s) {
-			const float f = absF(SimMath::addf32(SimMath::mulf32(s.ux, ax[0]), SimMath::mulf32(s.uy, ax[1])));
-			const float g = absF(SimMath::subf32(SimMath::mulf32(s.ux, ax[1]), SimMath::mulf32(s.uy, ax[0])));
-			return SimMath::addf32(SimMath::mulf32(s.major, f), SimMath::mulf32(s.minor, g));
-		};
-		const float dist = absF(SimMath::addf32(SimMath::mulf32(dx, ax[0]), SimMath::mulf32(dy, ax[1])));
-		if (dist > SimMath::addf32(radius(a), radius(b)))
-		{
-			return false;
-		}
-	}
-	return true;
-}
-
-bool overlap(const Shape2D &a, const Shape2D &b)
-{
-	if (a.box && b.box)
-	{
-		return boxesOverlap(a, b);
-	}
-	if (a.box || b.box)
-	{
-		const Shape2D &box = a.box ? a : b;
-		const Shape2D &circle = a.box ? b : a;
-		return pointBoxDistSq(box, circle.cx, circle.cy) < SimMath::mulf32(circle.major, circle.major);
-	}
-	const float r = SimMath::addf32(a.major, b.major);
-	return SimMath::sumSquares2(SimMath::subf32(a.cx, b.cx), SimMath::subf32(a.cy, b.cy)) < SimMath::mulf32(r, r);
 }
 
 struct Names
@@ -518,7 +437,17 @@ void ObjectCrush::onBump(Object &crusher, Object &victim)
 
 bool ObjectCrush::shapesTouch(const Object &self, float selfRadius, const Object &other)
 {
-	return overlap(shapeOf(self, selfRadius), shapeOf(other, -1.0f));
+	// lane FLANK-1: RW 0x8BFDE2 .. 0x8BFE4C: a copy of self's GeometryInfo (RW 0x4923F0) whose FIRST shape (when it has one, active or not) takes `selfRadius` as its major
+	// (+ 0x8, RW 0x8BFB5E) and minor (+ 0xC, RW 0x8BFB86) radius; then other's geometry (this, ECX = other + 0xA8) at other's position and angle against that copy at
+	// self's position and angle (RW 0xAD2CE0: every active shape pair, the heights and the planar test; NotifyCrushModules::geometriesOverlap)
+	std::vector<ObjectGeometry::Shape> mine = ObjectGeometry::cachedShapesOf(finalTemplate(self));
+	if (!mine.empty())
+	{
+		mine[0].majorRadius = selfRadius;
+		mine[0].minorRadius = selfRadius;
+	}
+	return NotifyCrushModules::geometriesOverlap(ObjectGeometry::cachedShapesOf(finalTemplate(other)), *other.getPosition(), other.getOrientation(), mine,
+	                                             *self.getPosition(), self.getOrientation());
 }
 
 void SquishCollide::registerClass(ModuleFactory &modules)
@@ -537,16 +466,43 @@ void SquishCollide::onCollide(Object *other, const Coord3D *, const Coord3D *)
 	{
 		return;
 	}
-	if (AIUpdateInterface *sai = self->getAIUpdateInterface())
+	// self + 0x264 (the PhysicsBehavior) byte + 0x5C, the shock stun; lane FLANK-1: read with or without an AI, as RW does (an object without a PhysicsBehavior: RW reads
+	// through a null module; the port's answer is "not stunned")
+	if (const PhysicsBehavior *phys = PhysicsBehavior::find(*self))
 	{
-		if (sai->locomotorHost().physicsMotionDisabled())
+		if (phys->isStunned())
 		{
-			return; // self + 0x264 module byte + 0x5C
+			return;
 		}
 	}
 	if (!(ObjectCrush::crusherLevel(*other) > ObjectCrush::crushableLevel(*self)))
 	{
 		return;
+	}
+	// RW 0x8BFC28 .. 0x8BFC85 (lane FLANK-1): other's AI vslot 0x188 (non-null only for GiantBirdAIUpdate, the base RW 0x851E97 answers 0): no crush of the bird's own victim
+	// (+ 0x584); without it, no crush when other's AI machine goal (RW 0x8DBACE) is self, other has a current weapon (RW 0x68B58C(0)) and that weapon grabs self (RW 0x6CA3DA:
+	// a GrabNugget (+ 0x157) and other's contain accepting self, slot 0x98(self, 1, 0))
+	if (AIUpdateInterface *oai = other->getAIUpdateInterface())
+	{
+		if (const GiantBirdAIUpdate *bird = dynamic_cast<const GiantBirdAIUpdate *>(oai))
+		{
+			if (bird->victimId() == self->getID())
+			{
+				return;
+			}
+		}
+		else if (const AIStateMachine *m = oai->stateMachineOrNull())
+		{
+			if (m->goalObject() == self)
+			{
+				const ObjectWeapons *ow = other->getWeapons();
+				const Weapon *w = ow ? ow->currentWeapon() : nullptr;
+				if (w && w->getTemplate()->m_hasGrabNugget && other->getContain() && other->getContain()->isValidContainerFor(*self, true, false))
+				{
+					return;
+				}
+			}
+		}
 	}
 	GameLogic &logic = self->logic();
 	// other must move toward self: its facing against self - other, else against self - other's recorded position
@@ -586,12 +542,13 @@ void SquishCollide::onCollide(Object *other, const Coord3D *, const Coord3D *)
 		return;
 	}
 	// self's body slot 0x9C(other): yes for every body of 2.01 (PorcupineFormationBodyModule's check is gated off by RW 0x8C6244)
+	// RW 0x8BFE8E: ONE DamageInfo (RW 0x66365E at ebp - 0xB4) serves the ram hit and the lethal crush hit below (lane FLANK-1: the lethal hit keeps the ram's shockwave fields)
+	DamageInfo info;
 	ObjectCrush::onCrush(*other, *self);
 	if (ot.ramPower > 0.0f)
 	{
 		// RW 0x8BFEC6 .. 0x8BFF68 (lane COMBAT-4): a 0-damage CRUSH hit from the crusher whose shockwave half throws self: the vector is the normalised
 		// self - crusher (Coord3D::normalize RW 0x403175), the amount RamPower (+0x618), the radius 10.0 (RW 0xBD83D8), the taper 1.0, the z mult RamZMult (+0x61C)
-		DamageInfo info; // RW 0x66365E
 		Coord3D v{ SimMath::subf32(self->getPosition()->x, other->getPosition()->x), SimMath::subf32(self->getPosition()->y, other->getPosition()->y),
 			SimMath::subf32(self->getPosition()->z, other->getPosition()->z) };
 		ObjectKnockback::normalize(v);
@@ -620,8 +577,7 @@ void SquishCollide::onCollide(Object *other, const Coord3D *, const Coord3D *)
 		{
 			logic.reportError("SquishCollide: " + other->getTemplate()->getName() + " names CrushWeapon " + ot.crushWeapon + " but has no weapon set to fire it from (S-580)");
 		}
-		DamageInfo info;
-		info.m_input.m_sourceID = other->getID();
+		info.m_input.m_sourceID = other->getID(); // RW 0x8BFF8A .. 0x8BFFA6 on the same DamageInfo
 		info.m_input.m_damageType = DAMAGE_CRUSH;
 		info.m_input.m_deathType = DEATH_CRUSHED;
 		info.m_input.m_amount = 999999.0f; // RW 0xC70E98
@@ -642,16 +598,16 @@ void SquishCollide::onCollide(Object *other, const Coord3D *, const Coord3D *)
 // ZH Object::onCollide (Object.cpp): every collide module in module order; stop once the object is destroyed
 void ObjectCollide::onCollide(Object &self, Object &other)
 {
-	for (const std::unique_ptr<BehaviorModule> &m : self.modules())
+	// lane UBER-2B: the object's collide modules in module order (Object::collideModules), not a getCollide call per module and pair: the same calls in the
+	// same order, the destroyed test still before each of them (the other modules had nothing to call)
+	const std::vector<CollideModuleInterface *> &collides = self.collideModules();
+	for (size_t i = 0; i < collides.size(); ++i)
 	{
 		if (self.isDestroyed())
 		{
 			return;
 		}
-		if (CollideModuleInterface *c = m->getCollide())
-		{
-			c->onCollide(&other, nullptr, nullptr);
-		}
+		collides[i]->onCollide(&other, nullptr, nullptr);
 	}
 }
 
@@ -730,4 +686,42 @@ void HordeMemberCollide::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);
 	xferBehaviorModule(x);
+}
+
+// lane UBER-2B: the facts behind the first tests of SquishCollide::onCollide (RW 0x8BFBAE) and HordeMemberCollide::onCollide (RW 0x8C0518) above
+ObjectCollide::PairFacts ObjectCollide::pairFacts(Object &obj)
+{
+	PairFacts f;
+	f.container = obj.getContainedBy();
+	f.known = obj.collideModulesKnown();
+	f.deadOrHorde = obj.isEffectivelyDead() || isHorde(obj);
+	bool physicsDisabled = false;
+	if (AIUpdateInterface *ai = obj.getAIUpdateInterface())
+	{
+		physicsDisabled = ai->locomotorHost().physicsMotionDisabled();
+	}
+	f.squishInert = obj.isEffectivelyDead() || physicsDisabled;
+	f.crusher = ObjectCrush::crusherLevel(obj);
+	f.crushable = ObjectCrush::crushableLevel(obj);
+	if (f.container)
+	{
+		const HordeAIUpdate *h = hordeAiOf(const_cast<Object *>(f.container));
+		f.meleeHorde = h && h->meleeTargetId() != 0;
+	}
+	return f;
+}
+
+bool ObjectCollide::pairIsInert(const PairFacts &a, const PairFacts &b)
+{
+	if (!a.known || !b.known)
+	{
+		return false;
+	}
+	// SquishCollide of self `s` against `o` returns before it acts when o is dead or a horde, s is dead or stunned, or o's crusher level is not above s's
+	// crushable level
+	const auto squishInert = [](const PairFacts &s, const PairFacts &o) { return o.deadOrHorde || s.squishInert || !(o.crusher > s.crushable); };
+	// HordeMemberCollide of self `s` against `o` returns when s is not contained or its horde has no melee target. Against a soldier of the SAME container it
+	// cannot act either: `o` is neither the target nor in it, and the allied-horde branch asks the same horde the isInCurrentMelee question that just failed
+	const auto memberInert = [](const PairFacts &s, const PairFacts &o) { return s.container == nullptr || !s.meleeHorde || o.container == s.container; };
+	return squishInert(a, b) && squishInert(b, a) && memberInert(a, b) && memberInert(b, a);
 }

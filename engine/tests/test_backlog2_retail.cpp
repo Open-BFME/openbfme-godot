@@ -240,10 +240,12 @@ TEST_CASE("BACKLOG2 S-653: a dead structure that starts its rebuild sends the al
 		logic.runLogicFrame();
 		walked += boromir->getAIUpdateInterface()->isMoving() ? 1 : 0;
 	}
-	// pinned (measured, Linux / GCC): he walks 7 frames and stops on the cell the move state adjusted the ordered spot to
-	CHECK(walked == 7);
-	CHECK(bitsOf(boromir->getPosition()->x) == 1144594432u);
-	CHECK(bitsOf(boromir->getPosition()->y) == 1167152128u);
+	// pinned (measured, Linux / GCC): he walks 10 frames and stops on the cell the move state adjusted the ordered spot to. Lane TARGET-1: was 7 frames to
+	// (1144594432, 1167152128): the mood scans' one-off random offsets (RW 0x6686F0) draw from the logic generator before the rebuild's two draws, so the
+	// ordered spot moved
+	CHECK(walked == 10);
+	CHECK(bitsOf(boromir->getPosition()->x) == 1143611392u);
+	CHECK(bitsOf(boromir->getPosition()->y) == 1167193088u);
 	CHECK(bitsOf(start.x) == 1144391642u);
 }
 
@@ -344,9 +346,10 @@ TEST_CASE("BACKLOG2 S-950: the foundation's creation interface clears the pad an
 	// pinned (measured, Linux / GCC): the partition gives the new tower the first triple and Boromir the second; he walks 15 frames to the cell the move
 	// state adjusted the ordered spot to
 	CHECK_FALSE(boromirFirst);
-	CHECK(walked == 15);
-	CHECK(bitsOf(boromir->getPosition()->x) == 1143119872u);
-	CHECK(bitsOf(boromir->getPosition()->y) == 1166701568u);
+	// Lane TARGET-1: was 15 frames to (1143119872, 1166701568): the mood scans' random offset draws (RW 0x6686F0) come before the pad's draws
+	CHECK(walked == 22);
+	CHECK(bitsOf(boromir->getPosition()->x) == 1142300672u);
+	CHECK(bitsOf(boromir->getPosition()->y) == 1167070208u);
 	logic.random().enableCallLog(false);
 }
 
@@ -673,9 +676,21 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// the pins (measured on the Deck, Linux / GCC; the gate hosts must agree): the partition's order gives Boromir the first pair of draws, Faramir the second,
 	// Aragorn the third
 	CHECK(a.drawOrder == std::vector<std::string>{ "GondorBoromir", "GondorFaramir", "GondorAragorn" });
-	CHECK(a.goals == std::vector<std::uint32_t>{ 0x4412CD2Bu, 0x458FD561u, 0x440FE5A5u, 0x458EB2F9u, 0x4408C216u, 0x458E2385u });
-	CHECK(a.positions == std::vector<std::uint32_t>{ 0x4413A000u, 0x458FC400u, 0x441DB5ACu, 0x458ED1F8u, 0x43FDF2A9u, 0x458D2F2Bu });
-	CHECK(a.hashes.back() == 0x0EFDBFD5U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// Lane TARGET-1: the goals, positions and hash moved (were 0x4412CD2B .. / 0x4413A000 .. / 0x0EFDBFD5): the mood scans' one-off random offsets
+	// (RW 0x6686F0) draw from the logic generator before the pad's draws, the new AI state (AI + 0x3BC / + 0x1A4) and AIData rows are hashed; the hash moved
+	// again (0x9D9B68D1 -> 0xA0300E3C, goals and positions unchanged) when the attack-move order pushed its mood check back (RW 0x662DD9) instead of zeroing it
+	// lane ATTACKPATH-1 (RotWK's attack path, the doPathfind failure branch, the towards-goal line's corridor term RW 0x6F6D57): Aragorn ends elsewhere, the others
+	// do not; positions and the last hash re-measured on the lane's tree (the Deck and a CI host agree). Was 0x43FDF2A9 0x458D2F2B / 0x0EFDBFD5
+	CHECK(a.goals == std::vector<std::uint32_t>{ 0x4429DD96u, 0x458EC911u, 0x441570DFu, 0x458BC0F4u, 0x440CCC09u, 0x458F1B95u });
+	// merge queue q23 (TARGET-1's mood-scan draws with ATTACKPATH-1's attack path and corridor term, measured once on the merged tree, the Mac and the laptop
+	// agreeing): the goals are TARGET-1's, Aragorn ends elsewhere (was 0x4425E21A 0x458D2BBD) and the last hash is 0x165E2BAF (TARGET-1: 0xA0300E3C)
+	// merge queue q26: community #74's spiral (RW 0x6FA2A4) moves Faramir and Aragorn as #74's own port measured (were 0x4422A000 0x458CA400 / 0x44224BB5
+	// 0x458CE977), the goals unchanged
+	CHECK(a.positions == std::vector<std::uint32_t>{ 0x442A2000u, 0x458ED400u, 0x44202000u, 0x458CA400u, 0x44246B33u, 0x458D5A9Au });
+	// merge queue q24: the last hash 0x165E2BAF -> 0x0E2AE1AF, goals and positions unchanged: OFFMAP-1 (RotWK's idle state RW 0x745A64: no ZH frame <= 1 snap, no
+	// pathfinder position update) moves it (bisected: the q24 tree with CAMPUI-1 alone keeps q23's hash); measured once on the merged tree
+	// merge queue q26 (community #73 / #74 with BANNER-1, SIEGE-1 and the rest, measured once on the merged tree): 0x0E2AE1AF -> 0x4BFCBFF6
+	CHECK(a.hashes.back() == 0x4BFCBFF6U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);

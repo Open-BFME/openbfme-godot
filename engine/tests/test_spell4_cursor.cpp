@@ -16,6 +16,7 @@
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/InGameHud.h"
 #include "GameClient/RadiusCursor.h"
+#include "GameLogic/ActionManager.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
@@ -415,6 +416,18 @@ TEST_CASE("SPELL-4 retail: Men of the West: each targeted spell book power aims 
 		const InGameSpellBookModel::Button *after = buttonOf(*r.hud, e.command);
 		REQUIRE(after);
 		CHECK_FALSE(after->ready); // the cast took its recharge
+		// lane SUMMONLOC-1: what the cast left at the spot (the Lone Tower, the summoned allies) goes, or the next summon's spot test (RW 0x82E586) would
+		// refuse the spot under it, as retail does
+		r.frames(25);
+		for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+		{
+			const float dx = o->getPosition()->x - target.x, dy = o->getPosition()->y - target.y;
+			if (o != citadel && dx * dx + dy * dy < 300.0f * 300.0f)
+			{
+				logic.destroyObject(o);
+			}
+		}
+		r.frames(2);
 	}
 	// the powers whose location test is not ported (S-1874) were let through and reported, once each (S-4641)
 	std::vector<std::string> unported;
@@ -428,6 +441,129 @@ TEST_CASE("SPELL-4 retail: Men of the West: each targeted spell book power aims 
 		}
 	}
 	CHECK(s4640 == 1);
-	CHECK(unported == std::vector<std::string>{ "SpellBookRebuild", "SpellBookTomBombadil", "SpellBookHobbitAllies", "SpellBookSpawnLoneTower",
-							"SpellBookRohanAllies", "SpellBookDunedainAllies" });
+	// (lane SUMMONLOC-1: the summons' spot test runs now: Tom Bombadil and the Hobbit, Rohan and Dunedain allies are tested, not reported)
+	CHECK(unported == std::vector<std::string>{ "SpellBookRebuild", "SpellBookSpawnLoneTower" });
+}
+
+// lane SUMMONLOC-1: the summons' spot test (RW 0x82E586, the first scan the partition's geometry overlap RW 0xA3C7D0 -> RW 0xAD2CE0): no live
+// IMMOBILE / STRUCTURE object (neither BASE_SITE nor CRATE) may overlap the RadiusCursorRadius circle. A structure is not in the powers'
+// NO_SUMMON_NEAR_OBJECT_FILTER, so only the spot test refuses the spot on a citadel.
+TEST_CASE("SUMMONLOC-1 retail: Rohan allies, the Balrog and Summon Orcs (General Summon) accept a clear spot and refuse one on a structure (RW 0x82E586)")
+{
+	if (!haveWorld("summonloc1 spell book"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	struct Case
+	{
+		const char *faction, *citadel, *science, *power, *command;
+		int type;
+	};
+	const Case cases[] = {
+		{ "FactionMen", "MenFortressCitadel", "SCIENCE_RohanAllies", "SpellBookRohanAllies", "Command_SpellBookRohanAllies", 0x5D },
+		{ "FactionMordor", "MordorFortressCitadel", "SCIENCE_BalrogAlly", "SpellBookBalrogAlly", "Command_SpellBookBalrogAlly", 0x7C },
+		{ "FactionAngmar", "AngmarFortressCitadel", "SCIENCE_SummonOrcs", "SpellBookSummonOrcs", "Command_SpellBookSummonOrcs", 0x9A },
+	};
+	for (const Case &c : cases)
+	{
+		INFO(std::string(c.power));
+		CursorRig r(s, c.faction);
+		auto ctx = r.hud->enterContext();
+		GameLogic &logic = r.rig.logic();
+		Player &me = *r.rig.local;
+		const ThingTemplate *cit = s.world->things().findTemplate(c.citadel);
+		REQUIRE(cit);
+		Object *citadel = logic.newObject(cit, me.getDefaultTeam(), ObjectStatusMaskType{});
+		REQUIRE(citadel);
+		const Coord3D home{ 600.0f, 600.0f, logic.getGroundHeight(600.0f, 600.0f) };
+		citadel->setPosition(&home);
+		citadel->friend_onBuildComplete();
+		const ScienceType st = TheScienceStore->getScienceFromInternalName(c.science);
+		REQUIRE(st != SCIENCE_INVALID);
+		me.science().grantScience(st);
+		r.rig.game->shroud().revealMapForPlayerPermanently(me.getPlayerIndex());
+		r.frames(20);
+		const SpecialPowerTemplate *power = TheSpecialPowerStore->findSpecialPowerTemplate(c.power);
+		REQUIRE(power);
+		CHECK(power->getSpecialPowerType() == c.type);
+		Object *book = SpecialPowerModules::getSpellBookObject(logic, me);
+		REQUIRE(book);
+		const Coord3D clear{ 800.0f, 700.0f, logic.getGroundHeight(800.0f, 700.0f) };
+		bool unported = true;
+		CHECK(ActionManager::canDoSpecialPowerAtLocation(*book, clear, power, 0, &unported));
+		CHECK_FALSE(unported);
+		unported = true;
+		CHECK_FALSE(ActionManager::canDoSpecialPowerAtLocation(*book, home, power, 0, &unported));
+		CHECK_FALSE(unported); // refused by the ported spot test, not counted as unported
+		// the cursor shows the same: white on the clear spot, red on the citadel, and a click there issues nothing
+		const InGameSpellBookModel::Button *b = buttonOf(*r.hud, c.command);
+		REQUIRE(b);
+		REQUIRE(r.hud->pressSpell(b->index));
+		CHECK(r.hud->spellBar().targetVerdict(logic, clear) == InGameSpellBookModel::Target::VALID);
+		CHECK(r.hud->spellBar().targetVerdict(logic, home) == InGameSpellBookModel::Target::INVALID);
+	}
+}
+
+// lane SUMMONLOC-1: a hero's summon clicked onto a structure: RotWK's CommandTranslator case 0x18 (RW 0x81E9C5 -> RW 0x6A4260 -> RW 0x82DFB7) issues
+// nothing there and keeps the command; on a clear spot it issues MSG_DO_SPECIAL_POWER_AT_LOCATION
+TEST_CASE("SUMMONLOC-1 retail: Dain's Royal Guard (SPELL_BOOK_MEN_OF_DALE_ALLIES) clicked onto a structure issues nothing, on a clear spot it casts")
+{
+	if (!haveWorld("summonloc1 hero click"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	CursorRig r(s, "FactionDwarves");
+	auto context = r.hud->enterContext();
+	GameLogic &logic = r.rig.logic();
+	Player &me = *r.rig.local;
+	Object *dain = r.rig.make("DwarvenDain", 800.0f, 650.0f);
+	REQUIRE(dain);
+	dain->getExperienceTracker()->gainExpForLevel(10, true, false);
+	const ThingTemplate *cit = s.world->things().findTemplate("DwarvenFortressCitadel");
+	REQUIRE(cit);
+	Object *citadel = logic.newObject(cit, me.getDefaultTeam(), ObjectStatusMaskType{});
+	REQUIRE(citadel);
+	const Coord3D blocked{ 920.0f, 650.0f, logic.getGroundHeight(920.0f, 650.0f) }; // 120 from Dain: inside MaxCastRange 150
+	citadel->setPosition(&blocked);
+	citadel->friend_onBuildComplete();
+	r.hud->input().ui().selectObject(dain->getID());
+	r.rig.game->shroud().revealMapForPlayerPermanently(me.getPlayerIndex());
+	r.frames(20);
+	ControlBarButton guard;
+	for (const auto *buttons : { &r.hud->controlBar().palantirButtons(), &r.hud->controlBar().sideButtons() })
+		for (const auto &button : *buttons)
+			if (button.button && button.button->m_name == "Command_SpecialAbilityDainSummonRoyalGuard") guard = button;
+	REQUIRE(guard.button);
+	REQUIRE(guard.state == ButtonState::Enabled);
+	const SpecialPowerTemplate *power = TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityDainSummonRoyalGuard");
+	REQUIRE(power);
+	CHECK(power->getSpecialPowerType() == 0x5B);
+	const Coord3D clear{ 680.0f, 650.0f, logic.getGroundHeight(680.0f, 650.0f) }; // 120 from Dain, the other side
+	CHECK(ActionManager::canDoSpecialPowerAtLocation(*dain, clear, power, guard.button->m_options));
+	CHECK_FALSE(ActionManager::canDoSpecialPowerAtLocation(*dain, blocked, power, guard.button->m_options));
+	REQUIRE(r.hud->controlBar().pressButton(guard.slot, guard.inPalantir));
+	r.hud->update(0.034);
+	const size_t queued = castsQueued(*r.rig.game);
+	r.rig.lookAt(blocked);
+	const ICoord2D bpx = r.rig.screenOf(blocked);
+	r.hud->mouseMove(bpx.x, bpx.y, 0);
+	r.hud->update(0.034);
+	CHECK_FALSE(r.hud->radiusCursor().decal().valid);
+	r.hud->mouseButton(HudInput::Button::Left, true, bpx.x, bpx.y, 0, 1000);
+	r.hud->mouseButton(HudInput::Button::Left, false, bpx.x, bpx.y, 0, 1050);
+	r.hud->update(0.034);
+	CHECK(castsQueued(*r.rig.game) == queued);
+	CHECK(r.hud->input().ui().getGUICommand() == guard.button); // the command waits for a valid spot
+	r.rig.lookAt(clear);
+	const ICoord2D cpx = r.rig.screenOf(clear);
+	r.hud->mouseMove(cpx.x, cpx.y, 0);
+	r.hud->update(0.034);
+	CHECK(r.hud->radiusCursor().decal().valid);
+	r.hud->mouseButton(HudInput::Button::Left, true, cpx.x, cpx.y, 0, 1100);
+	r.hud->mouseButton(HudInput::Button::Left, false, cpx.x, cpx.y, 0, 1150);
+	r.hud->update(0.034);
+	CHECK(castsQueued(*r.rig.game) == queued + 1);
+	CHECK(r.hud->input().ui().getGUICommand() == nullptr);
 }

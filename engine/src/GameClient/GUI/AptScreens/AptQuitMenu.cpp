@@ -3,7 +3,10 @@
 
 #include "GameClient/GUI/AptScreens/AptQuitMenu.h"
 
+#include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/GameTextSource.h"
+#include "GameClient/GUI/Shell/Shell.h"
+#include "GameClient/GUI/WindowManager.h"
 #include "GameClient/GUI/LoadScreenInfo.h"
 #include "GameClient/GUI/ShellEnvironment.h"
 #include "GameClient/GUI/ShellServices.h"
@@ -73,6 +76,19 @@ AptQuitMenu::AptQuitMenu(WindowManager &windows, Shell &shell, ShellEnvironment 
 
 AptQuitMenu::~AptQuitMenu()
 {
+	// lane CHEAT-1: nothing of the Cheat Mode panel may run after the menu is gone
+	if (m_cheatLabel.size() || m_cheatPage)
+	{
+		windows().setMouseFilter(nullptr);
+	}
+	if (AptGadgetLayer *layer = windows().gadgetLayer())
+	{
+		if (m_cheatPage)
+		{
+			m_cheatPage->hide();
+		}
+		layer->clearDecorator(this);
+	}
 	// lane SAVE-UI1: RW 0x9219B9 / 0x921A70 .. 0x921A96: after Exit (+ 0x27C) the front-end background (RW 0x6230B6(1)); else, unless a skirmish restart
 	// keeps it (+ 0x27D), the background is hidden with its animation (RW 0x622C88(0)) and the game is seen again
 	if (m_exiting)
@@ -145,4 +161,171 @@ void AptQuitMenu::onInitialized()
 	}
 	const bool restart = !c || !c->inGame || c->gameKind == 3;
 	windows().setAptText("APT:RestartOrSurrender", text(m_env, restart ? "APT:Restart" : "APT:Forfeit"));
+}
+
+// ---- lane CHEAT-1: the Cheat Mode panel (see AptQuitMenu.h) ---------------------------------------------------------------------------------------------
+
+void AptQuitMenu::runInit()
+{
+	AptScreen::runInit();
+	if (!m_cheatLabel.empty() || cheatPageOpen())
+	{
+		takeHooks(); // a screen opened over the menu (Options) took the mouse filter and the decorator and cleared them on its way out
+	}
+}
+
+void AptQuitMenu::takeHooks()
+{
+	windows().setMouseFilter([this](int kind, float x, float y) { return cheatMouse(kind, x, y); });
+	if (AptGadgetLayer *layer = windows().gadgetLayer())
+	{
+		layer->setDecorator([this](GadgetDrawList &out) { decorate(out); }, this);
+	}
+}
+
+void AptQuitMenu::setCheatButton(const UnicodeString &label)
+{
+	m_cheatLabel = label;
+	m_cheatHot = m_cheatPressed = false;
+	takeHooks();
+}
+
+bool AptQuitMenu::openCheatPage(const OpenBFMEPageSpec &spec, std::string *error)
+{
+	AptGadgetLayer *layer = windows().gadgetLayer();
+	if (!layer || !ownerWindow())
+	{
+		if (error)
+		{
+			*error = "no gadget layer";
+		}
+		return false;
+	}
+	if (!m_cheatPage)
+	{
+		m_cheatPage = std::make_unique<OpenBFMEOptionsPage>(*layer, ownerWindow());
+		m_cheatPage->setSink([this](const OpenBFMEPageEvent &e) {
+			if (m_cheatEvents.size() < 256)
+			{
+				m_cheatEvents.push_back(e);
+			}
+		});
+	}
+	OpenBFMEPageSpec s = spec;
+	s.backdrop = true;
+	if (!m_cheatPage->show(s, error))
+	{
+		return false;
+	}
+	takeHooks();
+	return true;
+}
+
+void AptQuitMenu::closeCheatPage()
+{
+	if (m_cheatPage)
+	{
+		m_cheatPage->hide();
+	}
+}
+
+std::vector<OpenBFMEPageEvent> AptQuitMenu::takeCheatEvents()
+{
+	std::vector<OpenBFMEPageEvent> out;
+	out.swap(m_cheatEvents);
+	return out;
+}
+
+WindowMsgHandledType AptQuitMenu::gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2)
+{
+	if (cheatPageOpen() && m_cheatPage->message(msg, data1, data2))
+	{
+		return MSG_HANDLED;
+	}
+	return AptScreen::gadgetMessage(from, msg, data1, data2);
+}
+
+bool AptQuitMenu::cheatMouse(int kind, float x, float y)
+{
+	if (isHidden() || shell().inputTop() != this) // the in-game menu is the shell's overlay (lane OPTS-6): it is on top while nothing covers it
+	{
+		return false;
+	}
+	if (cheatPageOpen())
+	{
+		if (m_cheatPage->mouse(kind, x, y))
+		{
+			return true;
+		}
+		// the page's band is the page's: a press there never reaches the menu's buttons under it; its own gadgets still take it from the gadget layer
+		if (kind != 0 && x >= OpenBFMEOptionsPage::kTabsLeft - 8 && x <= OpenBFMEOptionsPage::kPanelRight + 8 && y >= OpenBFMEOptionsPage::kTop - 8 &&
+			y <= OpenBFMEOptionsPage::kBottom + 8)
+		{
+			if (AptGadgetLayer *layer = windows().gadgetLayer())
+			{
+				layer->mouseButton(kind == 1);
+			}
+			return true;
+		}
+		return false;
+	}
+	if (m_cheatLabel.empty())
+	{
+		m_cheatHot = m_cheatPressed = false;
+		return false;
+	}
+	const bool inside = x >= kCheatButtonLeft && x <= kCheatButtonRight && y >= kCheatButtonTop && y <= kCheatButtonBottom;
+	if (kind == 0)
+	{
+		m_cheatHot = inside;
+		return false;
+	}
+	if (kind == 1 && inside)
+	{
+		m_cheatPressed = true;
+		return true;
+	}
+	if (kind == 2 && m_cheatPressed)
+	{
+		m_cheatPressed = false;
+		if (inside)
+		{
+			OpenBFMEPageEvent e;
+			e.kind = OpenBFMEPageEvent::Kind::Entry;
+			e.key = "cheat_button";
+			m_cheatEvents.push_back(e);
+		}
+		return true;
+	}
+	return false;
+}
+
+void AptQuitMenu::decorate(GadgetDrawList &out)
+{
+	if (isHidden() || shell().inputTop() != this) // the in-game menu is the shell's overlay (lane OPTS-6): it is on top while nothing covers it
+	{
+		return;
+	}
+	if (cheatPageOpen())
+	{
+		m_cheatPage->decorate(out);
+		return;
+	}
+	if (m_cheatLabel.empty())
+	{
+		return;
+	}
+	// the FRIENDS button's look (AptOnlineShell::decorateAll): a dark box, the page's frame, the bottom bar's lettering, brighter when pointed
+	GadgetDrawCommand c;
+	c.kind = GadgetDrawCommand::Kind::FillRect;
+	c.window = "OpenBFMECheatMode";
+	c.x0 = kCheatButtonLeft;
+	c.y0 = kCheatButtonTop;
+	c.x1 = kCheatButtonRight;
+	c.y1 = kCheatButtonBottom;
+	c.color = m_cheatPressed ? 0xF0182028u : 0xE0050607u;
+	out.commands.push_back(c);
+	OpenBFMEOptionsPage::frame(out, kCheatButtonLeft, kCheatButtonTop, kCheatButtonRight, kCheatButtonBottom, UnicodeString());
+	OpenBFMEOptionsPage::text(out, m_cheatLabel, kCheatButtonLeft, kCheatButtonTop + 9, 14,
+		m_cheatHot ? OpenBFMEOptionsPage::kTabHotColor : OpenBFMEOptionsPage::kTabColor, kCheatButtonRight - kCheatButtonLeft, true);
 }

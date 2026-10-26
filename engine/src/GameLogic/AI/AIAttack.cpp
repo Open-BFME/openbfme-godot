@@ -341,7 +341,11 @@ StateReturnType AIAttackState::update()
 	{
 		return STATE_FAILURE;
 	}
-	StateReturnType r = m_attackMachine->updateStateMachine();
+	StateReturnType r;
+	{
+		KeptSubMachines<AIStateMachine>::Run run(m_keptMachines); // the shot can end this state inside the update (onExit below)
+		r = m_attackMachine->updateStateMachine();
+	}
 	if (IS_STATE_SLEEP(r))
 	{
 		r = STATE_CONTINUE; // ZH CONVERT_SLEEP_TO_CONTINUE
@@ -351,11 +355,7 @@ StateReturnType AIAttackState::update()
 
 void AIAttackState::onExit(StateExitType)
 {
-	if (m_attackMachine)
-	{
-		m_attackMachine->halt();
-		m_attackMachine.reset();
-	}
+	m_keptMachines.drop(m_attackMachine); // halted, and kept while its update runs (review of #64)
 	Object &obj = owner();
 	const CombatNames::Status &st = CombatNames::statuses();
 	setStatusBit(obj, st.isFiringWeapon, false);

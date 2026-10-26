@@ -148,7 +148,7 @@ TEST_CASE("hudredraw1 retail: 300 frames closed and open, the Palantir draws aga
 	std::map<std::string, int> activeArt; // the art of each `_active` power: its loop steps 293 of the 300 frames (the movie's 30 fps against 33 ms frames)
 	for (int i = 0; i < 12; ++i)
 	{
-		if (AptSpellStore::stateName(st->buttonState(i)) == "_active")
+		if (std::string(AptSpellStore::stateName(st->buttonState(i))) == "_active")
 		{
 			activeArt["_level" + std::to_string(store) + ".SpellStore.Buttons.Spell" + std::to_string(i + 1) + ".instance3.instance1.instance1"] = 293;
 		}

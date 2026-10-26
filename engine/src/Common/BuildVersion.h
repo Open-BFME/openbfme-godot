@@ -25,6 +25,9 @@ std::string versionLine();
 // display_name(): numbers are digits without leading zeros, at most 9 of them.
 std::string displayVersion(const std::string &version);
 
+// Strict launcher release-tag grammar, for untrusted recording metadata (not arbitrary git-describe text).
+bool isReleaseVersion(const std::string &version);
+
 // "OpenBFME Alpha 0.4.5 (<build date>)": the line the main menu's watermark and the first-run screen show.
 std::string displayLine();
 } // namespace BuildVersion

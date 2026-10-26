@@ -102,7 +102,11 @@ TEST_CASE("logic settings: fields no row reads and nested blocks are consumed an
 	CHECK(g.unappliedFields.count("AIData.Wealthy") == 1);
 	CHECK(g.unappliedFields.count("AIData.SideInfo") == 1);
 	CHECK(g.unappliedFields.count("AIData.SkirmishBuildList") == 1);
-	CHECK(g.unappliedFields.count("AIData.AttackPriority") == 1);
+	// lane TARGET-1: the AttackPriority block has its own row (RW 0x70153B): read, not recorded
+	CHECK(g.unappliedFields.count("AIData.AttackPriority") == 0);
+	REQUIRE(g.attackPriorityDefs.size() == 1u);
+	CHECK(g.attackPriorityDefs[0].name == "Default");
+	CHECK(g.attackPriorityDefs[0].defaultPriority == 35);
 	CHECK(g.repulsedDistance == 130.0f); // lane MODULES-3 reads the row (AIData + 0x60): read after the nested blocks, they ended where their End is
 	CHECK(g.unappliedFields.count("AIData.ResourceGatherersEasy") == 0); // inside a nested block: not a field of the block
 	// an unterminated nested block is an error

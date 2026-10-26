@@ -17,6 +17,7 @@ set(OPENBFME_NET_HOST_SOURCES
 set(OPENBFME_NET_TESTS
     tests/test_process.cpp
     tests/test_net_core.cpp
+    tests/test_p16_net_soak.cpp
     tests/test_net_retail.cpp)
 
 # called once openbfme_core and openbfme_tests exist: the host sources, the headless peer and the tests' path to it
@@ -56,18 +57,21 @@ set_source_files_properties(src/GameNetwork/ProfileIdentity.cpp PROPERTIES
 macro(openbfme_net_targets)
     target_sources(openbfme_core PRIVATE ${OPENBFME_NET_HOST_SOURCES})
     if(WIN32)
-        target_link_libraries(openbfme_core PUBLIC ws2_32)
+        target_link_libraries(openbfme_core PUBLIC ws2_32 shell32)
     endif()
     add_executable(openbfme_peer src/Main/openbfme_peer.cpp)
     target_link_libraries(openbfme_peer PRIVATE openbfme_core)
     if(MSVC)
         target_compile_options(openbfme_peer PRIVATE /utf-8)
     endif()
-    add_dependencies(openbfme_tests openbfme_peer)
-    target_compile_definitions(openbfme_tests PRIVATE OPENBFME_PEER_EXE="$<TARGET_FILE:openbfme_peer>")
-    add_executable(openbfme_process_probe tests/process_probe.cpp)
-    target_compile_features(openbfme_process_probe PRIVATE cxx_std_17)
-    openbfme_sim_register_target(openbfme_process_probe) # the flag audit covers every target's translation units
-    add_dependencies(openbfme_tests openbfme_process_probe)
-    target_compile_definitions(openbfme_tests PRIVATE OPENBFME_PROCESS_PROBE_EXE="$<TARGET_FILE:openbfme_process_probe>")
+    if(TARGET openbfme_tests)
+        add_dependencies(openbfme_tests openbfme_peer)
+        target_compile_definitions(openbfme_tests PRIVATE OPENBFME_PEER_EXE="$<TARGET_FILE:openbfme_peer>")
+        add_executable(openbfme_process_probe tests/process_probe.cpp)
+        target_link_libraries(openbfme_process_probe PRIVATE openbfme_core)
+        target_compile_features(openbfme_process_probe PRIVATE cxx_std_17)
+        openbfme_sim_register_target(openbfme_process_probe) # the flag audit covers every target's translation units
+        add_dependencies(openbfme_tests openbfme_process_probe)
+        target_compile_definitions(openbfme_tests PRIVATE OPENBFME_PROCESS_PROBE_EXE="$<TARGET_FILE:openbfme_process_probe>")
+    endif()
 endmacro()

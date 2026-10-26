@@ -57,6 +57,7 @@ public:
 	bool addToContain(Object *obj) override;    // RW 0x8674C2
 	void removeFromContain(Object *obj) override; // RW 0x8665BE
 	bool isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const override; // RW 0x86603B
+	std::uint32_t getPlayerWhoEntered() const override { return m_playerEnteredMask; } // RW 0x5F2DC6, slot 0x144 (lane SCRIPT-4)
 	const ObjectStatusMaskType *getObjectStatusOfContained() const override;
 	const ObjectStatusMaskType *getObjectStatusOfContainedFor(const Object *rider) const override { return &statusMaskFor(rider); } // slot 0xB0
 	bool isPassengerAllowedToFire() const override;                                    // RW 0x865A7E (lane DECOMP-3)
@@ -156,8 +157,11 @@ protected:
 	virtual void recalcApparentControllingPlayer() {}         // main slots 0x50 / 0x54 / 0x58 (the apparent controller is the owner, S-1100)
 	virtual void addToContainList(Object *obj);               // contain slot 0xA0 (RW 0x866987)
 	virtual void removeFromContainList(Object *obj);          // main slot 0x34 (RW 0x865E78: the list erase)
-	// contain slot 0xE8 (OpenContain RW 0x8662D0): `obj` is one of this contain's (SiegeEngineContain RW 0x87FEDA: its crew too)
+public:
+	// contain slot 0xE8 (OpenContain RW 0x8662D0): `obj` is one of this contain's (SiegeEngineContain RW 0x87FEDA: its crew too; TunnelContain RW 0x8811DD:
+	// one of its player's network). Public for MSG_EXIT (RW 0x77ACF3, TUNNEL-1); declared in its old place so the virtual order stays the same
 	virtual bool isContainedHere(const Object &obj) const;
+protected:
 	// contain slot 0xB0(obj) (OpenContain RW 0x865C15: the data's ObjectStatusOfContained; SiegeEngineContain RW 0x87ED55: a crew member's ObjectStatusOfCrew)
 	virtual const ObjectStatusMaskType &statusMaskFor(const Object *obj) const;
 	// RW 0x8674C2's body (main slot 0x74 of the horde contains calls it directly)

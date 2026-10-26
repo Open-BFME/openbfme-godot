@@ -91,6 +91,7 @@ public:
 	// cursor to the next mouse move, which stops a scroll while the input is off: RW 0x42EBF9; the port ends it here), the rotation and the four held keys
 	// are off. +0x3B / +0x3C (a pitch flag and one more) are not mapped (S-4964)
 	void clearFlags();
+	void cancelPointer() { stopScrolling(); m_rotating = false; }
 	bool isScrolling() const { return m_scrolling; }
 	int scrollType() const { return m_scrollType; }
 	bool isRotating() const { return m_rotating; }

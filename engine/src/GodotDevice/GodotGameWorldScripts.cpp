@@ -5,6 +5,7 @@
 #include "GodotDevice/GodotGameWorld.h"
 
 #include "Common/ArchiveFileSystem.h"
+#include "GameClient/CommandButtonHelp.h"
 #include "GameClient/GameText.h"
 #include "GameClient/LiveGame.h"
 #include "GameClient/LiveGameAudio.h"
@@ -14,12 +15,15 @@
 #include "GameClient/MapChunks.h"
 #include "GameClient/ScriptCameraDirector.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/ScriptEngine/MissionObjectiveTracker.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptTemplates.h"
 #include "GameLogic/ScriptEngine/Scripts.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "Common/Team.h"
+#include "Common/Thing/ThingTemplate.h"
+#include "Common/Thing/ThingFactory.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
 
 #include <godot_cpp/core/class_db.hpp>
@@ -54,6 +58,9 @@ void GameWorld::bindScriptMethods()
 	ClassDB::bind_method(D_METHOD("take_script_requests"), &GameWorld::take_script_requests);
 	ClassDB::bind_method(D_METHOD("update_script_view", "delta_ms", "camera"), &GameWorld::update_script_view);
 	ClassDB::bind_method(D_METHOD("get_script_report"), &GameWorld::get_script_report);
+	ClassDB::bind_method(D_METHOD("get_military_caption_settings"), &GameWorld::get_military_caption_settings); // lane CAMPUI-1
+	ClassDB::bind_method(D_METHOD("get_mission_objectives"), &GameWorld::get_mission_objectives); // lane CAMPUI-1
+	ClassDB::bind_method(D_METHOD("get_template_button_image", "name"), &GameWorld::get_template_button_image); // lane CAMPUI-1
 	ClassDB::bind_method(D_METHOD("get_waypoint", "name"), &GameWorld::get_waypoint);
 	ClassDB::bind_method(D_METHOD("debug_script_place", "name", "where"), &GameWorld::debug_script_place);
 	ClassDB::bind_method(D_METHOD("debug_script_kill", "name"), &GameWorld::debug_script_kill);
@@ -66,6 +73,113 @@ void GameWorld::bindScriptMethods()
 	ClassDB::bind_method(D_METHOD("get_pending_script_audio"), &GameWorld::get_pending_script_audio);
 	ClassDB::bind_method(D_METHOD("get_script_audio_applied"), &GameWorld::get_script_audio_applied);
 	ClassDB::bind_method(D_METHOD("debug_script_action", "name", "params"), &GameWorld::debug_script_action); // lane BACKLOG3
+}
+
+Dictionary GameWorld::get_military_caption_settings() const
+{
+	Dictionary d;
+	d["ok"] = false;
+	ArchiveFileSystem *fs = m_fs.is_valid() ? m_fs->archive_fs() : nullptr;
+	if (!fs)
+	{
+		d["error"] = "no game file system";
+		return d;
+	}
+	MilitaryCaptionSettings c;
+	std::string error;
+	if (!MilitaryCaptionSettings::load(*fs, c, &error))
+	{
+		d["error"] = g(error);
+		return d;
+	}
+	d["ok"] = true;
+	d["color"] = Color(c.color.red / 255.0f, c.color.green / 255.0f, c.color.blue / 255.0f, c.color.alpha / 255.0f);
+	d["position"] = Vector2(c.position.x, c.position.y);
+	d["centered"] = c.centered;
+	d["font"] = g(c.text.name);
+	d["point_size"] = c.text.pointSize;
+	d["bold"] = c.text.bold;
+	d["title_font"] = g(c.title.name);
+	d["title_point_size"] = c.title.pointSize;
+	d["title_bold"] = c.title.bold;
+	d["delay_ms"] = c.delayMs;
+	return d;
+}
+
+Dictionary GameWorld::get_template_button_image(const String &name) const
+{
+	Dictionary d;
+	d["ok"] = false;
+	d["image"] = String();
+	if (!m_game)
+	{
+		return d;
+	}
+	// template data only (never changed by the logic): no wait for the logic worker
+	const ThingTemplate *tt = const_cast<LiveGame &>(*m_game).logic().things().findTemplate(name.utf8().get_data());
+	if (!tt)
+	{
+		return d;
+	}
+	d["ok"] = true;
+	if (const FieldValue *v = tt->findField("ButtonImage"))
+	{
+		if (const std::string *str = std::get_if<std::string>(v))
+		{
+			d["image"] = g(*str);
+		}
+	}
+	return d;
+}
+
+Dictionary GameWorld::get_mission_objectives()
+{
+	if (!m_game)
+	{
+		Dictionary d;
+		d["has_list"] = false;
+		d["screen_enabled"] = true;
+		d["objectives"] = Array();
+		d["held"] = false;
+		return d;
+	}
+	if (!m_game->logicHeld())
+	{
+		Dictionary d = m_objectivesView.duplicate();
+		d["held"] = false; // lane RENDERWAIT-1: no wait for the logic worker: the last held frame's copy
+		if (!d.has("objectives"))
+		{
+			d["has_list"] = false;
+			d["screen_enabled"] = true;
+			d["objectives"] = Array();
+		}
+		return d;
+	}
+	const MissionObjectiveTracker &t = m_game->logic().missionObjectives();
+	const GameTextTable *table = gameText(m_fs.is_valid() ? m_fs->archive_fs() : nullptr);
+	Array list;
+	for (const MissionObjective &o : t.objectives())
+	{
+		Dictionary od;
+		std::string text;
+		if (!table || !table->lookup(o.label, text))
+		{
+			text = "MISSING: '" + o.label + "'"; // GameText::fetch of an unknown label
+		}
+		od["label"] = g(o.label);
+		od["text"] = g(text);
+		od["bonus"] = o.bonus;
+		od["shown"] = o.shown;
+		od["completed"] = o.completed;
+		list.push_back(od);
+	}
+	Dictionary d;
+	d["has_list"] = t.hasList();
+	d["screen_enabled"] = t.screenEnabled();
+	d["objectives"] = list;
+	m_objectivesView = d.duplicate(true);
+	d["held"] = true;
+	return d;
 }
 
 Dictionary GameWorld::get_waypoint(const String &name) const
@@ -242,6 +356,8 @@ Dictionary GameWorld::update_script_view(double delta_ms, const Dictionary &came
 	d["letterbox"] = v.letterbox();
 	d["input_disabled"] = v.inputDisabled();
 	d["caption"] = g(v.captionLabel());
+	d["caption_serial"] = (int64_t)v.captionSerial(); // lane CAMPUI-1: a new SHOW_MILITARY_CAPTION (the typing restarts, RW 0x69FF85)
+	d["caption_duration_ms"] = v.captionDurationMs();
 	std::string text;
 	if (!v.captionLabel().empty())
 	{
@@ -402,6 +518,7 @@ Dictionary GameWorld::debug_script_unit(const String &name)
 		out["y"] = o->getPosition()->y;
 		out["z"] = o->getPosition()->z;
 		out["dead"] = o->isEffectivelyDead();
+		out["id"] = (int64_t)o->getID(); // lane CAMPUI-1: the proof run selects it (InGameHudNode.select_object)
 	}
 	return out;
 }

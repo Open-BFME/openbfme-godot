@@ -39,6 +39,8 @@
 
 #include <cstdint>
 #include <memory>
+
+class ObjectWeapons;
 #include <string>
 #include <vector>
 
@@ -318,10 +320,15 @@ protected:
 private:
 	int specialWeaponCondition() const;
 	Weapon *specialWeapon();
+	ObjectWeapons *weaponHost(); // the object's ObjectWeapons, else m_ownHost
 	const WeaponFireSpecialAbilityUpdateModuleData *m_wf;
 	std::unique_ptr<Weapon> m_weapon; // + 0x88
 	bool m_weaponMade = false;
 	unsigned m_shots = 0;
+	// lane WALL-1: the weapon host of an object without a weapon set (the deployed mine's Detonate): retail's Object embeds its WeaponSet and the special
+	// weapon's status and fire (RW 0x6CDCE7, RW 0x6CF3D2) are the Weapon's own, so the shot needs no set; the port's shot needs an ObjectWeapons host, made
+	// here once as ObjectWeapons::fireTempWeapon makes one (kept with the module: a delayed delivery refers to it)
+	std::unique_ptr<ObjectWeapons> m_ownHost;
 };
 
 class ToggleMountedSpecialAbilityUpdate : public SpecialAbilityUpdate, public CreateModuleInterface

@@ -1222,6 +1222,9 @@ void AptCreateAHero::showPage(char page)
 	{
 		return;
 	}
+	// A power chosen by the movie is applied on the next update. A page change
+	// cancels that pending input; entering P rebuilds and frees its old cell.
+	m_pendingPower = nullptr;
 	m_previousPage = m_page;
 	m_page = page;
 	// the hidden page (vslot 4) and the shown one (vslot 3)

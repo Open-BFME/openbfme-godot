@@ -54,6 +54,13 @@ class FindingsTest(unittest.TestCase):
         for word in ("cheat", "hack", "guilty", "banned"):
             self.assertNotIn(word, s.lower())
 
+    def test_d7_anomaly_summary(self):
+        # online batch r4: a version-2 relay log with authenticated players: the slot whose HELLO opened the game is the finding
+        p = {"slot": 0, "band": "review", "encounters": 1, "input": "signed", "signed_datagrams": 1, "plain_datagrams": 0, "bad_tag": 0,
+             "anomaly": "a version-2 (previous-release) relay log, yet 2 authenticated player HELLO(s)", "events": []}
+        self.assertEqual(fc.summary(p, fc.PACKET_INTEGRITY), "Automated check D7: a version-2 (previous-release) relay log, yet 2 authenticated player "
+                         "HELLO(s); the relay refused 0 datagrams sent as this slot; its input was signed (1 signed, 0 plain datagrams)")
+
     def test_abstained_or_unmatched_games_give_no_finding(self):
         self.assertEqual(fc.findings(report(status="abstained", abstain_reason="crc")), [])
         self.assertEqual(fc.findings(report(crc_parity="mismatch")), [])

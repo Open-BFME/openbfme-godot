@@ -17,6 +17,8 @@ enum : std::uint8_t
 };
 constexpr std::uint64_t kResendMs = 150;
 constexpr std::uint8_t kLobbyVersion = LANLobby::kVersion;
+// lane P16: the START of a wide (16-slot-record) game; the rest of the datagram is identical to kLobbyVersion (5 before CHEAT-1's Cheat Mode field, now 7)
+constexpr std::uint8_t kExtendedStartVersion = 7;
 
 NetByteWriter header(std::uint8_t kind)
 {
@@ -39,12 +41,13 @@ bool LANLobby::isLobbyDatagram(const std::vector<std::uint8_t> &d)
 std::vector<std::uint8_t> LANLobby::encodeStart(const LobbyStart &s)
 {
 	NetByteWriter w = header(LOBBY_START);
-	w.u8(kLobbyVersion);
+	w.u8(s.game.game.serializedSlotCount() == LEGACY_MAX_SLOTS ? kLobbyVersion : kExtendedStartVersion);
 	w.str(s.profile.text);
 	NetPacket::writeNewGameMessage(w, s.game);
 	w.i32(s.runAhead);
 	w.i32(s.crcInterval);
-	for (int i = 0; i < MAX_SLOTS; ++i)
+	// lane P16: the per-slot network entries follow the record's wire layout: 8 for a legacy (<=8 start) map, 16 for an extended one
+	for (int i = 0; i < s.game.game.serializedSlotCount(); ++i)
 	{
 		w.u8(s.networkSlot[(size_t)i] ? 1 : 0);
 		w.u32(s.addresses[(size_t)i].ip);
@@ -65,7 +68,7 @@ bool LANLobby::decodeStart(const std::vector<std::uint8_t> &d, LobbyStart &out, 
 		return false;
 	}
 	const std::uint8_t version = r.u8();
-	if (version != kLobbyVersion)
+	if (version != kLobbyVersion && version != kExtendedStartVersion)
 	{
 		if (error)
 		{
@@ -78,9 +81,20 @@ bool LANLobby::decodeStart(const std::vector<std::uint8_t> &d, LobbyStart &out, 
 	{
 		return false;
 	}
+	const int count = out.game.game.serializedSlotCount();
+	if ((version == kExtendedStartVersion) != (count == MAX_SLOTS))
+	{
+		if (error)
+		{
+			*error = "lobby START version does not match the map's slot capacity";
+		}
+		return false;
+	}
 	out.runAhead = r.i32();
 	out.crcInterval = r.i32();
-	for (int i = 0; i < MAX_SLOTS; ++i)
+	out.networkSlot.fill(false);
+	out.addresses.fill(NetAddress());
+	for (int i = 0; i < count; ++i)
 	{
 		out.networkSlot[(size_t)i] = r.flag(); // lane MP-2 (review): 0 / 1 only
 		out.addresses[(size_t)i].ip = r.u32();

@@ -57,6 +57,10 @@ public:
 	bool inputDisabled() const { return m_inputDisabled; }
 	const std::string &captionLabel() const { return m_captionLabel; }
 	double captionMsLeft() const { return m_captionMs; }
+	// lane CAMPUI-1: SHOW_MILITARY_CAPTION's count (each one restarts the caption, RW 0x69FF85) and its duration in ms (the caption's own lifetime: RW 0x69CE5F
+	// keeps it until max(duration, typed + 2 s), then fades it; the client draws it from these)
+	unsigned captionSerial() const { return m_captionSerial; }
+	double captionDurationMs() const { return m_captionDurationMs; }
 	float fade() const { return m_fade; } ///< 0 none .. 1 full (the CAMERA_FADE_* amount now)
 	// lane SCRIPT-2: CAMERA_FOLLOW_NAMED / CAMERA_STOP_FOLLOW (the object the camera follows, 0 none), ZOOM_CAMERA / PITCH_CAMERA (factors of the default
 	// distance / pitch over time, 1 = the default), the notification box (DISPLAY_NOTIFICATION_BOX: its label for its seconds), the objectives shown
@@ -113,6 +117,8 @@ private:
 	bool m_letterbox = false, m_inputDisabled = false;
 	std::string m_captionLabel;
 	double m_captionMs = 0.0;
+	unsigned m_captionSerial = 0;
+	double m_captionDurationMs = 0.0;
 	float m_fade = 0.0f;
 	std::vector<std::string> m_unhandled;
 };

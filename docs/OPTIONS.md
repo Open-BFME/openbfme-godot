@@ -127,8 +127,17 @@ disables its Graphics list there; the online rows are enabled only when the onli
 | Alternate mouse setup | Interface | retail key, OpenBFME row (RotWK 2.01's screen has no box for it) | `AlternateMouseSetup` |
 | Online IP, Port Number, Send Delay | Online | retail (enabled from the online screens) | `GameSpyIPAddress`, `FirewallPortOverride`, `SendDelay` |
 | Refresh NAT | Online | retail (refused by name: S-1913) | |
+| Share my game results for statistics, Show my ping in the online menus | Online | OpenBFME | `OpenBFMEShareResults`, `OpenBFMEShowPing` (both yes by default) |
+| Game invitations, Challenges | Online | OpenBFME social privacy | `privacy.invites`, `privacy.challenges`: Friends and room players / Friends only |
+| Player friend requests | Online | OpenBFME social privacy | `privacy.requests`: Anyone / Nobody |
+| Show my status | Online | OpenBFME social privacy | `privacy.presence`: Friends / Nobody |
+| Online visibility | Online | OpenBFME social presence | `hidden`: Visible / Appear offline |
 | Uber performance mode | Performance | OpenBFME (UBER-1) | `OpenBFMEUberPerformance` |
 | Hot keys (read only) | Controls | retail data (CommandMap.ini) | |
+
+The social rows require a signed-in identity on a lobby with social support. ACCEPT sends changed privacy/visibility
+to that identity, not to `Options.ini`; defaults are Friends and room players for invitations/challenges, Anyone for
+requests, Friends for status and Visible for visibility. CANCEL does not submit those pending changes.
 
 Why there: the brightness is a property of the picture, so Display; the detail level and its custom settings are what the retail screen calls
 Graphics, with OpenBFME's renderer settings beside them in a second column (the tab has fourteen rows; two columns keep every row on screen);
@@ -190,9 +199,10 @@ Lane OPTS-3 made it a page of Options.apt, built from the menu's own pieces
   first (the check box to 26 pixels) and its 16 pixel texts were drawn at stage
   size and magnified, which is the softness the owner saw at 2560 x 1440.
 
-Defaults are retail behaviour, except the Max zoom-out (the owner's 2.5x, lane
-ZOOM-1); nothing here reaches the simulation (viewport, environment, audio
-buses, camera, HUD decorations), except the Uber performance mode, which picks
+Defaults are retail behaviour where there is a retail equivalent, except the Max zoom-out (the owner's 2.5x, lane
+ZOOM-1). New features such as the ping wheel, result sharing and ping display default on. Camera, graphics,
+audio and HUD settings stay outside simulation; the ping wheel sends pings and result sharing sends game summaries.
+Uber performance mode picks
 the simulation profile of the player's next games (refused, never mixed, with
 another profile). Tabs:
 
@@ -217,6 +227,8 @@ another profile). Tabs:
 | | Health bars on infantry and cavalry too | `AllHealthBars` (retail) | no |
 | | Alternate mouse setup | `AlternateMouseSetup` (retail) | no |
 | | Game clock | `OpenBFMEGameClock` | no |
+| | Ping wheel: hold the ping key for the wheel of pings (skirmish; not retail, see [Ping wheel](PLAYING.md#ping-wheel)) | `OpenBFMEPingWheel` | yes |
+| | Ping key: G held (a tap stays the game's G) / Alt+G / J / mouse back button / mouse forward button | `OpenBFMEPingKey` | g |
 | Audio | Master volume 0 .. 100 (live while it moves, with the sound effects sample: OPTS-4) | `OpenBFMEMasterVolume` | 100 |
 | | Mute in the background | `OpenBFMEMuteUnfocused` | no |
 | | Output device (Godot's list: Windows, Linux, macOS) | `OpenBFMEAudioDevice` | Default |
@@ -375,7 +387,7 @@ Load Game moves up into their place. A request that still names them,
 
 ### Checks
 
-With the extension built, run Godot headlessly with `--path godot --script`
+From the repository root on Linux, with Godot 4.7.2 on PATH and the extension built, run Godot headlessly with `--path godot --script`
 and each of `res://tests/menustyle_settings_test.gd`,
 `res://tests/menustyle_native_test.gd`, `res://tests/menustyle_test.gd`.
 The latter two need `ROTWK_INSTALL` and `BFME2_INSTALL`. The C++ test

@@ -32,7 +32,9 @@
 #pragma once
 
 #include "GameClient/GUI/AptScreen.h"
+#include "GameClient/GUI/AptScreens/OpenBFMEOptionsPage.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -57,7 +59,25 @@ public:
 	const std::vector<std::string> &disabledButtons() const { return m_disabled; }
 	const std::vector<std::string> &requests() const { return m_requests; }
 
+	// ---- lane CHEAT-1: the open Cheat Mode's panel (NOT RETAIL; GameLogic/CheatMode.h) ----
+	// The host of a Cheat Mode game gets a CHEAT MODE button in the menu (the FRIENDS button's look: the frame and lettering of Options.apt's page), under
+	// the menu's own buttons; it opens an OpenBFME page (OpenBFMEOptionsPage: RotWK's combobox.wnd gadgets, Options.apt's frames and Albertus lettering)
+	// over the menu. The device describes the page's rows and acts on its events (godot/scripts/cheat_panel.gd); the menu only hosts it.
+	static constexpr int kCheatButtonLeft = 412, kCheatButtonTop = 604, kCheatButtonRight = 612, kCheatButtonBottom = 636; // stage pixels (1024 x 768)
+	void setCheatButton(const UnicodeString &label);
+	const UnicodeString &cheatButton() const { return m_cheatLabel; }
+	bool openCheatPage(const OpenBFMEPageSpec &spec, std::string *error);
+	void closeCheatPage();
+	bool cheatPageOpen() const { return m_cheatPage && m_cheatPage->shown(); }
+	OpenBFMEOptionsPage *cheatPage() const { return m_cheatPage.get(); }
+	std::vector<OpenBFMEPageEvent> takeCheatEvents();
+	void runInit() override;
+	WindowMsgHandledType gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2) override;
+
 private:
+	void takeHooks(); // the mouse filter and the decorator (again after a screen that covered the menu took and cleared them)
+	bool cheatMouse(int kind, float x, float y);
+	void decorate(GadgetDrawList &out);
 	void post(int action, const std::string &name, const std::string &argument);
 
 	ShellEnvironment &m_env;
@@ -65,4 +85,9 @@ private:
 	std::vector<std::string> m_requests;
 	bool m_exiting = false;        // + 0x27C (lane SAVE-UI1)
 	bool m_keepBackground = false; // + 0x27D (lane SAVE-UI1)
+	// lane CHEAT-1
+	UnicodeString m_cheatLabel;
+	bool m_cheatHot = false, m_cheatPressed = false;
+	std::unique_ptr<OpenBFMEOptionsPage> m_cheatPage;
+	std::vector<OpenBFMEPageEvent> m_cheatEvents;
 };

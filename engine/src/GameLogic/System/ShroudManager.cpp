@@ -16,6 +16,7 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/SimMath.h"
+#include "Common/JobSystem.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -1085,16 +1086,16 @@ void ShroudManager::clearCoverage(Record &r)
 }
 
 // the cells the object's geometry covers (RW 0xB4EB70 sphere / cylinder, RW 0xB4E660 box, RW 0xB4ECA0 small geometry)
-void ShroudManager::cover(Record &r, const Object &obj, const TemplateVision &tv)
+void ShroudManager::coverCells(const Object &obj, const TemplateVision &tv, std::vector<int> &cells) const
 {
-	const std::uint32_t slot = m_slotById[r.id] - 1;
+	// (lane BIGBATTLE-1: the cells only, in their order and each once, as cover added them to the record's empty list; applyRecord writes them)
+	cells.clear();
 	auto addCell = [&](int index) {
-		if (std::find(r.covered.begin(), r.covered.end(), index) != r.covered.end())
+		if (std::find(cells.begin(), cells.end(), index) != cells.end())
 		{
 			return;
 		}
-		r.covered.push_back(index);
-		m_cells[(size_t)index].coveredBy.push_back(slot);
+		cells.push_back(index);
 	};
 	const Coord3D &pos = *obj.getPosition();
 	ObjectGeometry::Shape g = tv.shape;
@@ -1222,35 +1223,84 @@ void ShroudManager::cover(Record &r, const Object &obj, const TemplateVision &tv
 // RW 0xB4EF50
 void ShroudManager::processRecord(Record &r)
 {
-	Object *obj = m_logic.findObjectByID(r.id);
-	if (!obj)
+	Prepared p;
+	prepareRecord(r, p);
+	applyRecord(r, p);
+}
+
+void ShroudManager::prepareRecord(Record &r, Prepared &p)
+{
+	// (lane BIGBATTLE-1) the reading half of RW 0xB4EF50: the record and its object only; may run on the logic job pool
+	p.obj = m_logic.findObjectByID(r.id);
+	if (!p.obj)
+	{
+		return;
+	}
+	// the template is read once per processing (RW reads its fields directly: always the current values)
+	const ThingTemplate *tt = p.obj->getTemplate()->getFinalOverride();
+	if (m_logic.uber())
+	{
+		// lane UBER-3W (Uber only): read again only when the record's object has another final template (a template's vision rows do not change in a game;
+		// each record is prepared by one job, so the record's copy is written by one thread)
+		if (r.tvTemplate != tt)
+		{
+			r.tv = templateVision(*tt);
+			r.tvTemplate = tt;
+		}
+		p.tv = r.tv;
+	}
+	else
+	{
+		p.tv = templateVision(*tt);
+	}
+	coverCells(*p.obj, p.tv, p.cells);
+	const Coord3D &pos = *p.obj->getPosition();
+	p.cx = SimMath::floorToInt(SimMath::pc24Mul(SimMath::pc24Sub(pos.x, m_loX), m_cellSizeInv));
+	p.cy = SimMath::floorToInt(SimMath::pc24Mul(SimMath::pc24Sub(pos.y, m_loY), m_cellSizeInv));
+	p.facing = p.obj->getOrientation();
+	p.force = r.force;
+	if (p.cx == r.lookX && p.cy == r.lookY && r.radii.forward >= 0 && (r.radii.forward != r.radii.side || r.radii.forward != r.radii.rear) && p.facing != r.facing)
+	{
+		p.force = true;
+	}
+	p.look = p.cx != r.lookX || p.cy != r.lookY || p.force;
+	if (p.look)
+	{
+		// the look reads the object, its owner's alliances and the terrain (and refreshes this record's ground reference), never the cells: preparing it before
+		// the record's coverage and unlook change gives the values the serial order gave
+		p.in = LookInputs();
+		p.in.mask = r.mask; // the object writes the mask only when it looks (RW 0x694A45)
+		if (m_source.look)
+		{
+			m_source.look(*p.obj, p.tv, p.in);
+		}
+	}
+}
+
+void ShroudManager::applyRecord(Record &r, Prepared &p)
+{
+	// (lane BIGBATTLE-1) the writing half of RW 0xB4EF50, in the dirty list's order
+	if (!p.obj)
 	{
 		return;
 	}
 	clearCoverage(r);
-	// the template is read once per processing (RW reads its fields directly: always the current values)
-	const TemplateVision tv = templateVision(*obj->getTemplate()->getFinalOverride());
-	cover(r, *obj, tv);
-	const Coord3D &pos = *obj->getPosition();
-	const int cx = SimMath::floorToInt(SimMath::pc24Mul(SimMath::pc24Sub(pos.x, m_loX), m_cellSizeInv));
-	const int cy = SimMath::floorToInt(SimMath::pc24Mul(SimMath::pc24Sub(pos.y, m_loY), m_cellSizeInv));
-	const float facing = obj->getOrientation();
-	if (cx == r.lookX && cy == r.lookY && r.radii.forward >= 0 && (r.radii.forward != r.radii.side || r.radii.forward != r.radii.rear) && facing != r.facing)
+	const std::uint32_t slot = m_slotById[r.id] - 1;
+	for (int index : p.cells)
 	{
-		r.force = true;
+		r.covered.push_back(index);
+		m_cells[(size_t)index].coveredBy.push_back(slot);
 	}
-	if (cx != r.lookX || cy != r.lookY || r.force)
+	const int cx = p.cx, cy = p.cy;
+	const float facing = p.facing;
+	r.force = p.force;
+	if (p.look)
 	{
 		if (r.radii.forward >= 0)
 		{
 			queueUnlook(r);
 		}
-		LookInputs in;
-		in.mask = r.mask; // the object writes the mask only when it looks (RW 0x694A45)
-		if (m_source.look)
-		{
-			m_source.look(*obj, tv, in);
-		}
+		const LookInputs &in = p.in;
 		r.mask = in.mask;
 		r.facing = facing;
 		const float ranges[3] = { in.forward, in.side, in.rear };
@@ -1276,6 +1326,54 @@ void ShroudManager::update()
 {
 	// RW 0xB51970
 	++m_counter;
+	// lane BIGBATTLE-1: a long dirty list (a moving army) is prepared on the logic job pool, each record by one chunk (prepareRecord reads only
+	// the record and its object), then applied here in the list's order, the head first, exactly as the loop below takes them. Should the list change under
+	// the applies (no apply queues a record today), the loop below takes over from the first record that is not where the order expects it
+	constexpr size_t kParallelRecords = 32;
+	if (m_dirty.size() >= kParallelRecords)
+	{
+		m_preparedOrder.assign(m_dirty.rbegin(), m_dirty.rend()); // the processing order: the back (the head) first
+		const size_t n = m_preparedOrder.size();
+		if (m_prepared.size() < n)
+		{
+			m_prepared.resize(n);
+		}
+		// review of #62: the prepare reads the radii (CombatQueries::boundingCircleRadius, of the object and its horde or container), and a template's
+		// first read makes its movement info (AIWorld::movementInfo inserts into a map); made here, before the jobs, the jobs only find them. Without an
+		// AIWorld there is no movement info to make (CombatQueries::geometry throws): the jobs read a radius only for a builder or a horde member
+		if (m_logic.aiWorld())
+		{
+			for (const auto &k : m_preparedOrder)
+			{
+				if (const Object *o = m_logic.findObjectByID(m_records[k].id))
+				{
+					CombatQueries::boundingCircleRadius(*o);
+					if (const Object *h = o->getContainedBy())
+					{
+						CombatQueries::boundingCircleRadius(*h);
+					}
+				}
+			}
+		}
+		JobSystem::logic().parallelFor(n, 16, [this](size_t, size_t begin, size_t end) {
+			for (size_t i = begin; i < end; ++i)
+			{
+				Prepared &p = m_prepared[i];
+				std::vector<int> cells = std::move(p.cells); // its storage is kept (review #62: a reset allocated it again for every record, every frame)
+				p = Prepared();
+				p.cells = std::move(cells);
+				p.cells.clear();
+				prepareRecord(m_records[m_preparedOrder[i]], p);
+			}
+		});
+		for (size_t i = 0; i < n && !m_dirty.empty() && m_dirty.back() == m_preparedOrder[i]; ++i)
+		{
+			m_dirty.pop_back();
+			Record &r = m_records[m_preparedOrder[i]];
+			r.dirty = false;
+			applyRecord(r, m_prepared[i]);
+		}
+	}
 	while (!m_dirty.empty())
 	{
 		const std::uint32_t slot = m_dirty.back(); // the head of RW's prepend list
@@ -1488,6 +1586,20 @@ float shroudClearingRange(const Object &obj, ShroudManager &sm, const ShroudMana
 float ShroudManager::visionRange(const Object &obj)
 {
 	const ThingTemplate *tt = static_cast<const ThingTemplate *>(obj.getTemplate())->getFinalOverride();
+	if (m_logic.uber())
+	{
+		// lane UBER-3W (Uber only): the record's template vision (prepareRecord's), read again only for another template (the emotion tracker asks this for
+		// every horde and frame)
+		if (Record *r = recordOf(obj))
+		{
+			if (r->tvTemplate != tt)
+			{
+				r->tv = templateVision(*tt);
+				r->tvTemplate = tt;
+			}
+			return shroudClearingRange(obj, *this, r->tv);
+		}
+	}
 	return shroudClearingRange(obj, *this, templateVision(*tt));
 }
 

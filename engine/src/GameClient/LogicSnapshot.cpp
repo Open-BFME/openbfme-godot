@@ -49,6 +49,19 @@ CellShroudStatus ShroudView::statusAt(float x, float y) const
 
 const ObjectSnapshot *LogicSnapshot::find(ObjectID id) const
 {
+	if (!idToIndex.empty())
+	{
+		if (id >= idToIndex.size())
+		{
+			return nullptr;
+		}
+		const int ix = idToIndex[id];
+		if (ix < 0 || (size_t)ix >= objects.size() || objects[(size_t)ix].id != id)
+		{
+			return nullptr;
+		}
+		return &objects[(size_t)ix];
+	}
 	auto it = std::lower_bound(objects.begin(), objects.end(), id, [](const ObjectSnapshot &o, ObjectID v) { return o.id < v; });
 	return (it != objects.end() && it->id == id) ? &*it : nullptr;
 }
@@ -319,6 +332,26 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 		}
 	}
 	std::stable_sort(snap->objects.begin(), snap->objects.end(), [](const ObjectSnapshot &a, const ObjectSnapshot &b) { return a.id < b.id; });
+	// Direct id lookup for the render frame (syncTransforms calls find twice per drawable). The index dies with this snapshot.
+	{
+		ObjectID hi = snap->nextObjectId;
+		for (const ObjectSnapshot &o : snap->objects)
+		{
+			if (o.id >= hi)
+			{
+				hi = o.id + 1;
+			}
+		}
+		// A runaway id would make the table enormous; those snapshots keep the binary search.
+		if (hi > 0 && hi <= 4000000u)
+		{
+			snap->idToIndex.assign((size_t)hi, -1);
+			for (size_t i = 0; i < snap->objects.size(); ++i)
+			{
+				snap->idToIndex[snap->objects[i].id] = (int)i;
+			}
+		}
+	}
 	// RW 0x69355D: the frame of the last transform change (a new object counts as changed now)
 	for (ObjectSnapshot &s : snap->objects)
 	{

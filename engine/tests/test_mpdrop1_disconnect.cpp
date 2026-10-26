@@ -599,17 +599,17 @@ TEST_CASE("mpdrop1 hostile: a forged vote or drop is refused by name and changes
 		CHECK(g.peers[0].hashes.at(common) == g.peers[1].hashes.at(common));
 		CHECK(g.peers[0].hashes.at(common) == g.peers[2].hashes.at(common));
 	}
-	// a vote out of range never decodes (NetPacket: "about slot 9")
+	// a vote out of range never decodes (NetPacket: "about slot 16")
 	NetCommandMsg v;
 	v.type = NETCOMMANDTYPE_DISCONNECTVOTE;
 	v.slot = 1;
 	v.targetSlot = 2;
 	std::vector<std::uint8_t> b = encode(v);
-	b[6] = 9;
+	b[6] = MAX_SLOTS;
 	NetCommandMsg out;
 	std::string error;
 	CHECK_FALSE(NetPacket::decodeCommand(b, out, &error));
-	CHECK(error.find("about slot 9") != std::string::npos);
+	CHECK(error.find("about slot " + std::to_string(MAX_SLOTS)) != std::string::npos);
 }
 
 
@@ -935,4 +935,96 @@ TEST_CASE("mpdrop1 hostile (Sol r2): at the load barrier a drop of the healthy r
 	REQUIRE(rx.errors().size() == 2);
 	CHECK(rx.errors()[1].find("this player did not announce that frame") != std::string::npos);
 	CHECK(rx.errors()[1].find("never announced") == std::string::npos);
+}
+
+// lane CHEAT-1 (Sol review r2 / r3): a resent frame holding MSG_OPENBFME_CHEAT. (1) The host's frame with a Cheat Mode command reached one survivor only,
+// then the host died: the survivors still reach the same frame and drop it (the silent owner's resend is taken), exactly as with an ordinary command.
+// (2) While the host is heard, a resend of a host frame holding a Cheat Mode command is set aside even when another player's silence put the disconnect
+// screen up: the frame waits for the host's own packet, and every peer runs the same frame
+TEST_CASE("cheat1 disconnect: a host frame with a Cheat Mode command that one survivor missed still lets the survivors drop the host")
+{
+	for (const bool cheat : { false, true })
+	{
+		Game g(3, false);
+		for (int t = 0; t < 60; ++t)
+		{
+			g.tick();
+		}
+		g.hub.cut(0, 2, true);
+		GameMessage command(cheat ? MSG_OPENBFME_CHEAT : MSG_DO_STOP, 10);
+		if (cheat)
+		{
+			for (int v : { 1, 10, 2000 })
+			{
+				command.appendIntegerArgument(v);
+			}
+		}
+		g.peers[0].pending.append(command);
+		for (int t = 0; t < 5; ++t)
+		{
+			g.tick();
+		}
+		g.kill(0);
+		const auto took = runUntilDropped(g, { 1, 2 }, 0, 60000);
+		for (int t = 0; t < 50; ++t)
+		{
+			g.tick();
+		}
+		INFO(g.logs({ 1, 2 }));
+		CHECK(took > 0);                    // tolerance: the drop's time follows the disconnect timers; it must happen at all
+		CHECK(g.peers[1].frame > 100);      // tolerance: both survivors play on past the drop
+		CHECK(g.peers[2].frame > 100);      // tolerance: both survivors play on past the drop
+		CHECK(g.peers[1].hashes[100] == g.peers[2].hashes[100]); // Sol r4 follow-up: and run the same game
+	}
+}
+
+TEST_CASE("cheat1 disconnect: while the host is heard, a resent host frame holding a Cheat Mode command is set aside even with the disconnect screen up")
+{
+	Game g(3, false);
+	for (int t = 0; t < 60; ++t)
+	{
+		g.tick();
+	}
+	g.hub.cut(1, 2, true); // slot 1 goes silent for slot 2 (its screen comes up); the host's link stays healthy
+	for (int t = 0; t < 8; ++t)
+	{
+		g.tick();
+	}
+	auto &victim = g.peers[2];
+	REQUIRE(victim.net->disconnectManager().state() != DisconnectManager::SCREENOFF);
+	const auto targetFrame = std::max(g.peers[0].frame, victim.frame) + 10;
+	NetCommandMsg resend;
+	resend.slot = 1;
+	resend.type = NETCOMMANDTYPE_FRAMERESEND;
+	resend.targetSlot = 0;
+	resend.frame = targetFrame;
+	auto msg = std::make_shared<GameMessage>(MSG_OPENBFME_CHEAT, 11);
+	for (int v : { 8, -1, 0 })
+	{
+		msg->appendIntegerArgument(v);
+	}
+	resend.messages.push_back(msg);
+	const auto errors = victim.net->errors().size();
+	g.hub.endpoint(2).inbox.push_back({ 1, NetPacket::encodeCommand(resend, nullptr) });
+	victim.net->update(victim.frame, victim.pending);
+	CHECK(victim.net->errors().size() == errors + 1);
+	g.hub.cut(1, 2, false);
+	for (int t = 0; t < 70; ++t)
+	{
+		g.tick();
+	}
+	REQUIRE(g.peers[0].frame > targetFrame); // tolerance: both played past the frame
+	REQUIRE(victim.frame > targetFrame);     // tolerance: both played past the frame
+	bool hostCheat = false, victimCheat = false;
+	for (const auto &c : g.peers[0].relayed[targetFrame])
+	{
+		hostCheat = hostCheat || c == "32001 10";
+	}
+	for (const auto &c : victim.relayed[targetFrame])
+	{
+		victimCheat = victimCheat || c == "32001 10";
+	}
+	CHECK_FALSE(hostCheat);
+	CHECK_FALSE(victimCheat);
+	CHECK(g.peers[0].hashes[targetFrame + 1] == victim.hashes[targetFrame + 1]);
 }

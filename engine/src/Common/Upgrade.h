@@ -39,6 +39,7 @@
 #include <string>
 #include <vector>
 
+class Xfer;
 struct ObjectFilter;
 class Object;
 class Player;
@@ -46,15 +47,24 @@ class ThingFactory;
 class ThingTemplate;
 
 // RW: 0x24 words (1152 bits)
+// Lane MODS-3 (stop S-5303): mods with more than 1152 upgrades (BOTTA 6.0.22: ~1160, Edain Volker Sub Mod 1.7: ~1395; the All In One launcher's
+// packages) run in retail because newUpgrade (RW 0x66FC27) keeps counting: their bits land past the 0x90-byte masks, in the memory after them. The
+// port cannot reproduce that, so the storage holds CAPACITY_BITS and the extra bits behave like the others; WORDS / BITS stay retail's: the
+// binary's whole-mask walks (RW 0x8D2810 / 0x8D292B / 0x8BD7AE stop at bit 0x480) keep their limit, and the state hash and the saves write
+// activeWords(): retail's 0x24 words unless the loaded data has more upgrades than BITS (identical for every retail game).
 struct UpgradeMaskType
 {
 	static constexpr unsigned WORDS = 0x24;
 	static constexpr unsigned BITS = WORDS * 32;
-	std::array<std::uint32_t, WORDS> words{};
+	static constexpr unsigned CAPACITY_WORDS = 0x40;
+	static constexpr unsigned CAPACITY_BITS = CAPACITY_WORDS * 32;
+	std::array<std::uint32_t, CAPACITY_WORDS> words{};
+	// the words the state hash and the saves carry: WORDS, or as many as the loaded upgrades need (TheUpgradeCenter's next mask bit)
+	static unsigned activeWords();
 
 	void set(unsigned bit) { words[bit >> 5] |= 1u << (bit & 31); }
 	void clear(unsigned bit) { words[bit >> 5] &= ~(1u << (bit & 31)); }
-	bool test(unsigned bit) const { return bit < BITS && ((words[bit >> 5] >> (bit & 31)) & 1u) != 0; }
+	bool test(unsigned bit) const { return bit < CAPACITY_BITS && ((words[bit >> 5] >> (bit & 31)) & 1u) != 0; }
 	bool any() const
 	{
 		for (std::uint32_t w : words)
@@ -69,7 +79,7 @@ struct UpgradeMaskType
 	// RW 0x8097D6 testForAny: some bit of `m` is set here
 	bool testForAny(const UpgradeMaskType &m) const
 	{
-		for (unsigned i = 0; i < WORDS; ++i)
+		for (unsigned i = 0; i < CAPACITY_WORDS; ++i)
 		{
 			if (words[i] & m.words[i])
 			{
@@ -81,7 +91,7 @@ struct UpgradeMaskType
 	// RW 0x6AACB3 testForAll: every bit of `m` is set here
 	bool testForAll(const UpgradeMaskType &m) const
 	{
-		for (unsigned i = 0; i < WORDS; ++i)
+		for (unsigned i = 0; i < CAPACITY_WORDS; ++i)
 		{
 			if ((words[i] & m.words[i]) != m.words[i])
 			{
@@ -92,7 +102,7 @@ struct UpgradeMaskType
 	}
 	void orWith(const UpgradeMaskType &m)
 	{
-		for (unsigned i = 0; i < WORDS; ++i)
+		for (unsigned i = 0; i < CAPACITY_WORDS; ++i)
 		{
 			words[i] |= m.words[i];
 		}
@@ -187,8 +197,10 @@ public:
 	void parseUpgradeDefinition(INI *ini);
 	static void parseUpgradeDefinitionGlobal(INI *ini); ///< into TheUpgradeCenter (a missing center is a code 8 INIException)
 	void registerBlock(INIBlockRegistry &registry);
-	// resolve every SubUpgradeTemplateNames list (call after the load); false + *error for a name that is not an upgrade
+	// resolve every SubUpgradeTemplateNames list (call after the load); a name that is not an upgrade is skipped as retail does
 	bool resolveSubUpgrades(std::string *error);
+	// lane MODS-2: the SubUpgradeTemplateNames that name no upgrade (retail skips them, RW 0x66FBED); one line each, from resolveSubUpgrades
+	const std::vector<std::string> &unknownSubUpgrades() const { return m_unknownSubUpgrades; }
 	// resolve UseObjectTemplateForCostDiscount against the loaded templates (an unknown name keeps the upgrade's own cost, as RW 0x66F2ED does)
 	void resolveTemplates(const ThingFactory &things);
 
@@ -209,6 +221,7 @@ public:
 	static void parseUpgradeMask(INI *ini, UpgradeMaskType &mask, std::vector<std::string> *names);
 
 private:
+	std::vector<std::string> m_unknownSubUpgrades; // lane MODS-2
 	UpgradeTemplate *newUpgrade(const std::string &name, bool assignBit); // RW 0x66FC27
 	std::map<std::string, std::unique_ptr<UpgradeTemplate>> m_byName;
 	std::vector<UpgradeTemplate *> m_byBit;
@@ -221,4 +234,7 @@ private:
 extern thread_local UpgradeCenter *TheUpgradeCenter;
 // lane SAVE-4e (closed sets): a loaded upgrade mask holds only bits of TheUpgradeCenter's upgrades (below nextMaskBit); an XferException naming `what` and
 // the bit otherwise. Without TheUpgradeCenter every set bit is refused (no upgrade exists)
+// lane MODS-3: an upgrade mask in a save: the word count (activeWords()), then the words; a load refuses another count and any bit beyond this game's
+// upgrades (`what` names the mask). The count is the retail 0x24 for every game with at most 1152 upgrades, the layout of SnapshotXfer::words.
+void xferUpgradeMask(Xfer &x, UpgradeMaskType &mask, const std::string &what);
 void checkLoadedUpgradeMask(const UpgradeMaskType &mask, const std::string &what);

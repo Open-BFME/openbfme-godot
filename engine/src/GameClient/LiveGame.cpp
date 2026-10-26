@@ -16,6 +16,7 @@
 #include "GameLogic/HeroSystem.h"
 
 #include "GameLogic/UpgradeCommands.h"
+#include "GameLogic/BeaconCommands.h"
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
@@ -90,6 +91,7 @@ LiveGame::~LiveGame()
 	if (m_ai)
 	{
 		m_ai->detach(); // the AI world is destroyed after the logic (members are destroyed in reverse order): it must not touch the logic then
+		m_ai->setWallMeshes(nullptr);
 	}
 }
 
@@ -153,6 +155,28 @@ bool LiveGame::load(const Options &options, std::string *error)
 	{
 		return false;
 	}
+	if (options.start)
+	{
+		MapCacheEntry actual;
+		actual.name = options.start->message.game.mapName;
+		actual.numPlayers = options.start->mapPlayerCount;
+		for (const Waypoint &waypoint : m_terrain.waypoints())
+		{
+			const std::string &name = waypoint.name;
+			if (name.rfind("Player_", 0) != 0 || name.size() < 6 || name.compare(name.size() - 6, 6, "_Start") != 0) continue;
+			int number = 0;
+			for (int i = 1; i <= MAX_SLOTS; ++i)
+			{
+				if (name == "Player_" + std::to_string(i) + "_Start") number = i;
+			}
+			if (!number || !actual.startPositions.emplace(number, waypoint.location).second)
+			{
+				if (error) *error = "invalid or duplicate start waypoint '" + name + "'";
+				return false;
+			}
+		}
+		if (!MapCache::validateStartPositions(actual, error)) return false;
+	}
 	m_report.mapIniErrors = cr.mapIni.errors;
 	m_report.mapObjects = m_classified.report.objects;
 	m_report.classificationErrors = m_classified.report.errors;
@@ -199,9 +223,6 @@ bool LiveGame::load(const Options &options, std::string *error)
 		}
 		progress(12); // the sides exist (RW 0x62FBC7)
 		m_players->setSpellGameMode(SpellGameMode{ options.start->message.mode == NewGameMode::Skirmish, false }); // SPELL-1 (GameLogic + 0x110 == 2)
-		m_report.playerNotes = m_players->newGame(built.sides, defaultCash);
-		m_report.startSlotPlayers = built.slotPlayerNames;
-		sidesUsed = built.sides;
 		for (const std::string &n : built.slotPlayerNames)
 		{
 			if (!n.empty())
@@ -209,6 +230,23 @@ bool LiveGame::load(const Options &options, std::string *error)
 				slotSides.insert(n);
 			}
 		}
+		// lane MODS-3: the slot sides' script libraries are read before the players exist: their teams become the side's teams (retail's
+		// Player::initFromDict copies them, RW 0x6B07EF; MapScriptSetup.h). Edain's spieler library hands each player its fortress plot
+		// through its team "Base"
+		if (mapScriptsWanted(options))
+		{
+			if (!buildMapScriptSetup(built.sides, slotSides, error))
+			{
+				return false;
+			}
+			for (const Dict &t : m_scriptSetup->libraryTeams())
+			{
+				built.sides.teams.push_back(t);
+			}
+		}
+		m_report.playerNotes = m_players->newGame(built.sides, defaultCash);
+		m_report.startSlotPlayers = built.slotPlayerNames;
+		sidesUsed = built.sides;
 		if (options.start->observer)
 		{
 			// lane ONLINE-3: a spectator (no local slot): retail's replay-mode tail of the new game (RW 0x6282F0; BFME2 decomp
@@ -295,9 +333,32 @@ bool LiveGame::load(const Options &options, std::string *error)
 	if (options.start)
 	{
 		m_logic->economy().context().sandbox = options.start->message.game.isSandbox(options.start->localSlot);
+		// lane SCRIPT-4 r2: more than one human slot is more than one machine (EconomyContext::multiplayerSession)
+		int humanSlots = 0;
+		for (const SkirmishGameSlot &slot : options.start->message.game.slots)
+		{
+			humanSlots += slot.isHuman() ? 1 : 0;
+		}
+		m_logic->economy().context().multiplayerSession = humanSlots > 1;
 	}
 	m_logic->setGameRules(gameRules);
 	m_logic->setLegendaryHeroes(options.start ? options.start->message.game.legendaryHeroes : LegendaryHeroes::kOff);
+	// lane CHEAT-1: the cheat seat (the setup's slot) as the logic player of that slot; a seat without a player is an error, never a game without the seat
+	if (options.start && options.start->message.game.cheatModeOn())
+	{
+		const int slot = options.start->message.game.cheatMode;
+		const std::string side = slot < (int)m_report.startSlotPlayers.size() ? m_report.startSlotPlayers[(size_t)slot] : std::string();
+		const Player *seat = side.empty() ? nullptr : m_players->findPlayerWithName(side);
+		if (!seat)
+		{
+			if (error)
+			{
+				*error = "Cheat Mode: the cheat seat's slot " + std::to_string(slot) + " has no player";
+			}
+			return false;
+		}
+		m_logic->cheatMode().configure(slot, seat->getPlayerIndex());
+	}
 	// lane UBER-1: the game setup's simulation profile (a game without a start message, a map viewer or a tool, is Faithful unless its options say Uber)
 	m_logic->setSimulationProfile(options.start ? options.start->message.game.simulationProfile : options.simulationProfile);
 	m_logic->economy().initAllCommandPoints();
@@ -389,6 +450,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 		m_shroud->applyNewGameShroud(m_vision.useShroud, revealed, observers);
 	}
 	UpgradeCommands::registerHandlers(*m_dispatch); // UPGRADE-1: MSG_QUEUE_UPGRADE / MSG_CANCEL_UPGRADE
+	BeaconCommands::registerHandlers(*m_dispatch);  // CHAT-1: MSG_PLACE_BEACON (the multiplayer beacon, RW 0x77C634)
 	HordeCommands::registerHandlers(*m_dispatch);   // HORDE-2: the formation swap
 	GarrisonCommands::registerHandlers(*m_dispatch); // GARRISON-1: MSG_ENTER / MSG_EVACUATE / MSG_EXIT
 	CastleCommands::registerHandlers(*m_dispatch);   // BACKLOG2: MSG_CASTLE_UNPACK / MSG_CASTLE_PACK / MSG_CASTLE_UNPACK_EXPLICIT_OBJECT (S-951)
@@ -400,6 +462,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 	HeroAbilityModules::registerHandlers(*m_dispatch); // HERO-2: MSG_DO_AUTO_ABILITY (RW 0x77B9BA)
 	m_spellCommands.registerHandlers(*m_dispatch); // SPELL-1: the spell book messages
 	TributeCommands::registerHandlers(*m_dispatch); // PLAY-1: MSG_GIVE_MONEY, the tribute (RW 0x6264E1)
+	CheatMode::registerHandlers(*m_dispatch);       // CHEAT-1: MSG_OPENBFME_CHEAT (refused unless the game setup has Cheat Mode)
 	SpecialPowerModules::installScienceHooks(*m_logic);
 	m_drawables = std::make_unique<DrawableManager>(m_assets, *m_logic);
 	// SMOOTH-1: the logic talks to its client through ordered events (ClientEvents.h); the render side applies them (DrawableManager::applyEvents)
@@ -414,6 +477,10 @@ bool LiveGame::load(const Options &options, std::string *error)
 	m_launchBones = std::make_unique<DrawableLaunchBones>(*m_launchAssets, m_logic->settings().standardPublicBones);
 	m_launchBones->reset();
 	m_logic->combat().setLaunchOffsets(m_launchBones.get());
+	// WALL-1: a wall piece's footprint routine (RW 0x936B7D -> ClassifyWall) asks its drawable for the WallBoundsMesh / RampMesh surfaces; the same files answer
+	// it from the template data, before the map's objects enter the pathfinder's map
+	m_wallMeshes = std::make_unique<DrawableWallMeshes>(*m_launchAssets);
+	m_ai->setWallMeshes(m_wallMeshes.get());
 	// the script engine and the ONE creation path (LuaScriptEngine::sendObjectCreated through GameLogic::setObjectCreatedProc, world hooks)
 	m_scripting = std::make_unique<LiveScripting>(*m_logic, m_fs, m_world.nameKeys());
 	if (!m_scripting->start(MapClassification::mapDirectory(lowerName), error))
@@ -426,12 +493,18 @@ bool LiveGame::load(const Options &options, std::string *error)
 	{
 		m_logic->economy().context().gameMode = EconomyContext::MODE_SINGLE_PLAYER;
 	}
-	m_mapScripts = options.mapScripts == 1 || (options.mapScripts < 0 && (options.start || options.campaign));
+	m_mapScripts = mapScriptsWanted(options);
 	if (m_mapScripts && !setupMapScripts(options, sidesUsed, slotSides, error))
 	{
 		return false;
 	}
 	progress(14); // the script engine knows the map (RW 0x62FC1A)
+	// lane CAMPUI-1: TheMissionObjectiveTracker takes the map.ini's MissionObjectiveList (RW 0x836497 installs it while the map.ini is read, after the
+	// game's reset RW 0x835E03); a map without one has no list (the objective actions then do nothing)
+	if (m_world.hasMapObjectives())
+	{
+		m_logic->missionObjectives().installList(m_world.mapObjectives());
+	}
 	const auto t0 = std::chrono::steady_clock::now();
 	progress(30); // the map's objects (RW 0x62FE02 ff)
 	m_report.loop = MapObjectLoop::create(*m_logic, m_map, m_classified, [](Object &obj, const MapObjectDrawable &d) { DrawableManager::applyPlacement(obj, d); });
@@ -470,6 +543,11 @@ bool LiveGame::load(const Options &options, std::string *error)
 		for (const std::string &e : placed.errors)
 		{
 			m_report.startErrors.push_back(e);
+		}
+		if (!m_report.startErrors.empty())
+		{
+			if (error) *error = m_report.startErrors.front();
+			return false;
 		}
 	}
 	{
@@ -642,7 +720,12 @@ private:
 };
 } // namespace
 
-bool LiveGame::setupMapScripts(const Options &options, const SidesList &sidesUsed, const std::set<std::string> &slotSides, std::string *error)
+bool LiveGame::mapScriptsWanted(const Options &options)
+{
+	return options.mapScripts == 1 || (options.mapScripts < 0 && (options.start || options.campaign));
+}
+
+bool LiveGame::buildMapScriptSetup(const SidesList &sidesUsed, const std::set<std::string> &slotSides, std::string *error)
 {
 	// the playerAIType of every side: a slot side of a started game: a human the Multiplayer_Human library, a computer its faction's
 	// DefaultPlayerAIType (RW 0x627C1F; S-1181); a map side its dict's playerAIType
@@ -667,9 +750,15 @@ bool LiveGame::setupMapScripts(const Options &options, const SidesList &sidesUse
 			aiTypes[i] = d.getAsciiString("playerAIType");
 		}
 	}
-	(void)options;
 	m_scriptSetup = std::make_unique<MapScriptSetup>();
-	if (!m_scriptSetup->build(m_fs, m_world.skirmishAI(), sidesUsed, m_map, slotSides, aiTypes, error))
+	return m_scriptSetup->build(m_fs, m_world.skirmishAI(), sidesUsed, m_map, slotSides, aiTypes, error);
+}
+
+bool LiveGame::setupMapScripts(const Options &options, const SidesList &sidesUsed, const std::set<std::string> &slotSides, std::string *error)
+{
+	(void)options;
+	// a started game built it before its players (its libraries' teams); a campaign mission builds it here
+	if (!m_scriptSetup && !buildMapScriptSetup(sidesUsed, slotSides, error))
 	{
 		return false;
 	}
@@ -692,6 +781,14 @@ bool LiveGame::setupMapScripts(const Options &options, const SidesList &sidesUse
 		m_report.mapScripts.push_back(n);
 	}
 	return true;
+}
+
+std::vector<CheatMode::LogEntry> LiveGame::takeCheatAnnouncements()
+{
+	std::vector<CheatMode::LogEntry> out;
+	const std::unique_lock<std::mutex> lock = lockPublication("takeCheatAnnouncements");
+	out.swap(m_publishedCheatLines);
+	return out;
 }
 
 std::vector<ScriptClientRequest> LiveGame::takeScriptRequests()
@@ -1126,8 +1223,16 @@ std::shared_ptr<const FrameCompletion> LiveGame::captureCompletion(const WorkIte
 	}
 	else if (item.capture.hashEveryFrame || m_options.hashEveryFrame)
 	{
-		c->hash = m_logic->computeStateHash();
-		c->hashed = true;
+		if (!m_options.hashEveryFrame && m_logic->uber() && c->frame % (UnsignedInt)LiveGameFrameDriver::kUberRecordedHashEvery != 0 &&
+			!(item.driver && item.driver->hashWanted(c->frame)))
+		{
+			c->hashSkipped = true; // lane UBER-2C: the Uber recording's cadence
+		}
+		else
+		{
+			c->hash = m_logic->computeStateHash();
+			c->hashed = true;
+		}
 	}
 	std::uint32_t rng = 0x811C9DC5u;
 	for (std::uint32_t w : m_logic->random().seedArray())
@@ -1199,7 +1304,15 @@ void LiveGame::publish(std::shared_ptr<const FrameCompletion> completion)
 	m_recorder->captureObserverFrame();
 	std::vector<ClientEvent> events = m_recorder->take();
 	std::vector<ScriptClientRequest> scriptRequests = m_logic->scriptEngine().takeClientRequests(); // lane SCRIPT-1
+	std::vector<CheatMode::LogEntry> cheatLines = m_logic->cheatMode().takeAnnouncements();        // lane CHEAT-1
 	std::lock_guard<std::mutex> lock(m_pubMutex);
+	for (CheatMode::LogEntry &e : cheatLines)
+	{
+		if (m_publishedCheatLines.size() < CheatMode::kLogCap) // a render side that never takes them keeps a bounded queue
+		{
+			m_publishedCheatLines.push_back(std::move(e));
+		}
+	}
 	m_publishedPrev = m_published;
 	m_published = snap;
 	for (ScriptClientRequest &r : scriptRequests)
@@ -1271,6 +1384,19 @@ LiveGame::Report LiveGame::report() const
 			r.stops.push_back(s);
 		}
 		r.launchBoneProblems = m_launchBones->problems();
+	}
+	if (m_wallMeshes)
+	{
+		// a mesh the INI names that the model lacks is retail data (RotWK's HelmsDeepCulvert names RampMesh1 / 2 = P2 / P3, RBHDDWCulv has neither: retail's
+		// getRamp finds no mesh and makes no ramp); a missing model is an error
+		r.wallMeshProblems = m_wallMeshes->problems();
+		for (const std::string &e : r.wallMeshProblems)
+		{
+			if (e.find(" is not a mesh of ") == std::string::npos)
+			{
+				r.errors.push_back("wall meshes: " + e);
+			}
+		}
 	}
 	for (const std::string &s : r.movementStops)
 	{

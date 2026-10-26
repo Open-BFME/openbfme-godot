@@ -508,7 +508,8 @@ std::vector<std::string> HordeContainModuleData::unverified()
 	return {
 		"S-082: HordeContain fields parsed exactly but with no reader found in the RotWK binary (spec section 4): "
 		"RankInfo 'Leader <rank> <index>' (slot record +0x18), BackUpMinDelayTime/BackUpMaxDelayTime/BackUpMinDistance/"
-		"BackUpMaxDistance/BackupPercentage, CowerRadius, FrontAngle, FlankedDuration, RanksToJustFreeWhenAttacking, "
-		"and RanksToReleaseWhenAttacking (RotWK consumer not located; BFME1's skip melee hordes)."
+		"BackUpMaxDistance/BackupPercentage, CowerRadius, RanksToJustFreeWhenAttacking, "
+		"and RanksToReleaseWhenAttacking (RotWK consumer not located; BFME1's skip melee hordes). FrontAngle (+0x264) and FlankedDuration (+0x26C) are read by the "
+		"flank test RW 0x876FC4 and FlankedDelay (+0x268) by the update RW 0x872EFC (lane FLANK-1; S-582)."
 	};
 }

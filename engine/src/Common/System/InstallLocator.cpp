@@ -2,6 +2,7 @@
 // See Common/InstallLocator.h (lane RELEASE-1).
 
 #include "Common/InstallLocator.h"
+#include "Common/PathIO.h"
 
 #include "Common/AsciiString.h"
 
@@ -254,12 +255,12 @@ std::vector<std::string> steamLibraries(const std::string &home)
 	std::vector<std::string> libs;
 	for (const std::string &root : roots)
 	{
-		if (!isDir(fs::u8path(root)))
+		if (!isDir(PathIO::native(root)))
 			continue;
 		libs.push_back(root);
 		for (const char *vdf : { "/steamapps/libraryfolders.vdf", "/config/libraryfolders.vdf" })
 		{
-			std::istringstream in(readText(fs::u8path(root + vdf)));
+			std::istringstream in(readText(PathIO::native(root + vdf)));
 			std::string line;
 			while (std::getline(in, line))
 			{
@@ -315,8 +316,8 @@ std::string shortHome(const std::string &path, const std::string &home)
 
 void discoverInPrefix(Collector &c, const std::string &prefix, const std::string &home)
 {
-	const std::string systemReg = readText(fs::u8path(prefix) / "system.reg");
-	const std::string userReg = readText(fs::u8path(prefix) / "user.reg");
+	const std::string systemReg = readText(PathIO::native(prefix) / "system.reg");
+	const std::string userReg = readText(PathIO::native(prefix) / "user.reg");
 	const std::string label = "Wine prefix " + shortHome(prefix, home);
 	for (const char *game : { kRotwk, kBfme2 })
 	{
@@ -334,7 +335,7 @@ void discoverInPrefix(Collector &c, const std::string &prefix, const std::string
 				std::string value;
 				if (wineRegistryValue(q.hive == "HKLM" ? systemReg : userReg, k, q.value, value) && !value.empty())
 				{
-					c.add(game, fs::u8path(wineToHost(prefix, stripTrailingSeparators(value))),
+					c.add(game, PathIO::native(wineToHost(prefix, stripTrailingSeparators(value))),
 						label + ": registry " + q.hive + "\\" + k + " " + q.value + queryTag(q));
 				}
 			}
@@ -343,7 +344,7 @@ void discoverInPrefix(Collector &c, const std::string &prefix, const std::string
 		{
 			for (const std::string &hint : folderHints(game))
 			{
-				c.add(game, fs::u8path(wineToHost(prefix, pf + hint)), label + ": folder " + pf + hint + kInferenceTag);
+				c.add(game, PathIO::native(wineToHost(prefix, pf + hint)), label + ": folder " + pf + hint + kInferenceTag);
 			}
 		}
 	}
@@ -386,10 +387,7 @@ std::vector<std::string> folderHints(const std::string &game)
 DiscoveryEnvironment DiscoveryEnvironment::host()
 {
 	DiscoveryEnvironment e;
-	auto get = [](const char *name) {
-		const char *v = std::getenv(name);
-		return v ? std::string(v) : std::string();
-	};
+	auto get = PathIO::environment;
 	for (const char *name : { "WINEPREFIX", "XDG_DATA_HOME", "ProgramFiles(x86)", "ProgramFiles", "ProgramW6432" })
 	{
 		std::string v = get(name);
@@ -405,46 +403,48 @@ DiscoveryEnvironment DiscoveryEnvironment::host()
 		if (!(mask & (1u << i)))
 			continue;
 		std::string root = std::string(1, (char)('A' + i)) + ":\\";
-		if (GetDriveTypeA(root.c_str()) == DRIVE_FIXED)
+		if (GetDriveTypeW(PathIO::widen(root).c_str()) == DRIVE_FIXED)
 			e.drives.push_back(root);
 	}
 	e.registry = [](const RegistryQuery &q, std::string &out) {
-		auto widen = [](const std::string &s) {
-			int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-			std::wstring w(n > 0 ? (size_t)n : 1, L'\0');
-			MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], n);
-			w.resize(wcslen(w.c_str()));
-			return w;
-		};
 		HKEY hive = q.hive == "HKCU" ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE;
-		std::wstring key = widen(q.key), value = widen(q.value);
+		std::wstring key = PathIO::widen(q.key), value = PathIO::widen(q.value);
 		// the 32-bit view: retail is a 32-bit program and its installers write there (WOW6432Node on 64-bit Windows). RegOpenKeyExW with
 		// KEY_WOW64_32KEY, then RegQueryValueExW: RegGetValueW's RRF_SUBKEY_WOW6432KEY found nothing under Wine (RELEASE-1 r5, the first run
 		// of the Windows package), and the flag needs Windows 10.
 		HKEY handle = nullptr;
 		if (RegOpenKeyExW(hive, key.c_str(), 0, KEY_QUERY_VALUE | KEY_WOW64_32KEY, &handle) != ERROR_SUCCESS)
 			return false;
-		wchar_t buffer[1024] = {};
-		DWORD bytes = sizeof(buffer) - sizeof(wchar_t); // room for a terminator the stored string may lack
+		DWORD bytes = 0;
 		DWORD type = 0;
-		const LONG r = RegQueryValueExW(handle, value.c_str(), nullptr, &type, reinterpret_cast<BYTE *>(buffer), &bytes);
+		LONG r = RegQueryValueExW(handle, value.c_str(), nullptr, &type, nullptr, &bytes);
+		std::vector<wchar_t> buffer;
+		while (r == ERROR_SUCCESS || r == ERROR_MORE_DATA)
+		{
+			buffer.assign(bytes / sizeof(wchar_t) + 1, L'\0');
+			r = RegQueryValueExW(handle, value.c_str(), nullptr, &type, reinterpret_cast<BYTE *>(buffer.data()), &bytes);
+			if (r != ERROR_MORE_DATA) break;
+		}
 		RegCloseKey(handle);
-		if (r != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ))
+		if (r != ERROR_SUCCESS || bytes % sizeof(wchar_t) || (type != REG_SZ && type != REG_EXPAND_SZ))
 			return false;
 		buffer[bytes / sizeof(wchar_t)] = L'\0';
+		std::wstring text(buffer.data());
 		if (type == REG_EXPAND_SZ)
 		{
-			wchar_t expanded[1024] = {};
-			const DWORD n = ExpandEnvironmentStringsW(buffer, expanded, 1024);
-			if (n == 0 || n > 1024)
-				return false;
-			wcscpy(buffer, expanded);
+			DWORD n = ExpandEnvironmentStringsW(text.c_str(), nullptr, 0);
+			for (;;)
+			{
+				if (!n) return false;
+				std::vector<wchar_t> expanded(n);
+				const DWORD used = ExpandEnvironmentStringsW(text.c_str(), expanded.data(), n);
+				if (!used) return false;
+				if (used > n) { n = used; continue; }
+				text.assign(expanded.data());
+				break;
+			}
 		}
-		int n = WideCharToMultiByte(CP_UTF8, 0, buffer, -1, nullptr, 0, nullptr, nullptr);
-		std::string s(n > 0 ? (size_t)n : 1, '\0');
-		WideCharToMultiByte(CP_UTF8, 0, buffer, -1, &s[0], n, nullptr, nullptr);
-		s.resize(strlen(s.c_str()));
-		out = s;
+		out = PathIO::narrow(text);
 		return true;
 	};
 #else
@@ -500,16 +500,16 @@ std::string wineToHost(const std::string &prefix, const std::string &windowsPath
 	const char drive = (char)std::tolower((unsigned char)windowsPath[0]);
 	fs::path root;
 	std::error_code ec;
-	fs::path dosdevice = fs::u8path(prefix) / "dosdevices" / (std::string(1, drive) + ":");
+	fs::path dosdevice = PathIO::native(prefix) / "dosdevices" / (std::string(1, drive) + ":");
 	if (fs::exists(dosdevice, ec))
 	{
 		root = fs::canonical(dosdevice, ec);
 		if (ec)
 			return std::string();
 	}
-	else if (drive == 'c' && isDir(fs::u8path(prefix) / "drive_c"))
+	else if (drive == 'c' && isDir(PathIO::native(prefix) / "drive_c"))
 	{
-		root = fs::u8path(prefix) / "drive_c";
+		root = PathIO::native(prefix) / "drive_c";
 	}
 	else
 	{
@@ -537,19 +537,19 @@ std::vector<std::string> winePrefixes(const DiscoveryEnvironment &e)
 			found.push_back(s);
 	};
 	auto eachChild = [&](const std::string &dir) {
-		for (const fs::path &p : sortedSubdirs(fs::u8path(dir)))
+		for (const fs::path &p : sortedSubdirs(PathIO::native(dir)))
 			consider(p);
 	};
 	const std::string wineprefix = envOf(e, "WINEPREFIX");
 	if (!wineprefix.empty())
-		consider(fs::u8path(wineprefix));
+		consider(PathIO::native(wineprefix));
 	if (e.home.empty())
 		return found;
 	const std::string &h = e.home;
-	consider(fs::u8path(h + "/.wine"));
+	consider(PathIO::native(h + "/.wine"));
 	for (const std::string &lib : steamLibraries(h))
 	{
-		for (const fs::path &app : sortedSubdirs(fs::u8path(lib) / "steamapps" / "compatdata"))
+		for (const fs::path &app : sortedSubdirs(PathIO::native(lib) / "steamapps" / "compatdata"))
 			consider(app / "pfx");
 	}
 	eachChild(h + "/Games");                          // Lutris (one prefix per game)
@@ -571,7 +571,7 @@ bool readDownloaded(const std::string &markerPath, Downloaded &out, std::string 
 			*error = markerPath + ": " + e;
 		return false;
 	};
-	std::ifstream in(fs::u8path(markerPath), std::ios::binary);
+	std::ifstream in(PathIO::native(markerPath), std::ios::binary);
 	if (!in)
 		return fail("cannot be read");
 	out = Downloaded{};
@@ -606,10 +606,10 @@ std::vector<Candidate> discover(const DiscoveryEnvironment &e)
 	Collector c;
 	// lane AIO-1: the folders the launcher downloaded and checked come first (the player still confirms them)
 	Downloaded downloaded;
-	if (!e.downloadedMarker.empty() && fs::exists(fs::u8path(e.downloadedMarker)) && readDownloaded(e.downloadedMarker, downloaded, nullptr))
+	if (!e.downloadedMarker.empty() && fs::exists(PathIO::native(e.downloadedMarker)) && readDownloaded(e.downloadedMarker, downloaded, nullptr))
 	{
-		c.add(kRotwk, fs::u8path(downloaded.rotwk), "downloaded by the OpenBFME launcher (" + downloaded.source + ")");
-		c.add(kBfme2, fs::u8path(downloaded.bfme2), "downloaded by the OpenBFME launcher (" + downloaded.source + ")");
+		c.add(kRotwk, PathIO::native(downloaded.rotwk), "downloaded by the OpenBFME launcher (" + downloaded.source + ")");
+		c.add(kBfme2, PathIO::native(downloaded.bfme2), "downloaded by the OpenBFME launcher (" + downloaded.source + ")");
 	}
 	if (e.windows)
 	{
@@ -621,7 +621,7 @@ std::vector<Candidate> discover(const DiscoveryEnvironment &e)
 				{
 					std::string value;
 					if (e.registry(q, value) && !value.empty())
-						c.add(game, fs::u8path(stripTrailingSeparators(value)), "registry " + q.hive + "\\" + q.key + " " + q.value + queryTag(q));
+						c.add(game, PathIO::native(stripTrailingSeparators(value)), "registry " + q.hive + "\\" + q.key + " " + q.value + queryTag(q));
 				}
 			}
 		}
@@ -643,7 +643,7 @@ std::vector<Candidate> discover(const DiscoveryEnvironment &e)
 			{
 				for (const std::string &hint : folderHints(game))
 				{
-					fs::path p = fs::u8path(root);
+					fs::path p = PathIO::native(root);
 					for (const std::string &part : splitWindowsPath(hint))
 						p /= fs::u8path(part);
 					c.add(game, p, "folder " + p.u8string() + kInferenceTag);
@@ -671,8 +671,14 @@ InstallCheck checkInstall(const std::string &game, const std::string &root, cons
 		r.errors.push_back("no folder chosen for " + name);
 		return r;
 	}
+	std::string pathError;
+	if (!PathIO::checkInstallPath(root, pathError))
+	{
+		r.errors.push_back(pathError);
+		return r;
+	}
 	std::error_code ec;
-	const fs::path base = fs::u8path(root);
+	const fs::path base = PathIO::native(root);
 	if (!fs::exists(base, ec))
 	{
 		r.errors.push_back("the folder does not exist: " + root);
@@ -796,8 +802,8 @@ std::vector<InstallCheck> checkPair(const std::string &rotwkRoot, const std::str
 	out[0] = checkInstall(kRotwk, rotwkRoot, rotwk, &bfme2);
 	out[1] = checkInstall(kBfme2, bfme2Root, bfme2, &rotwk);
 	std::error_code e1, e2;
-	if (!rotwkRoot.empty() && !bfme2Root.empty() && fs::exists(fs::u8path(rotwkRoot), e1) && fs::exists(fs::u8path(bfme2Root), e2) &&
-		fs::equivalent(fs::u8path(rotwkRoot), fs::u8path(bfme2Root), e1))
+	if (!rotwkRoot.empty() && !bfme2Root.empty() && fs::exists(PathIO::native(rotwkRoot), e1) && fs::exists(PathIO::native(bfme2Root), e2) &&
+		fs::equivalent(PathIO::native(rotwkRoot), PathIO::native(bfme2Root), e1))
 	{
 		const std::string msg = "the same folder was picked for both games: RotWK and BFME2 are two separate installs";
 		for (InstallCheck &c : out)
@@ -813,9 +819,7 @@ Configured configured(const std::string &configPath)
 {
 	Configured c;
 	c.source = "none";
-	const char *er = std::getenv("ROTWK_INSTALL");
-	const char *eb = std::getenv("BFME2_INSTALL");
-	if ((er && er[0]) || (eb && eb[0]))
+	if (!PathIO::environment("ROTWK_INSTALL").empty() || !PathIO::environment("BFME2_INSTALL").empty())
 	{
 		// a developer / test override (ResolveInstallPath reads the environment first): the mount uses it as is
 		c.source = "env";
@@ -835,13 +839,14 @@ bool remember(const std::string &configPath, const std::string &rotwkRoot, const
 			*error = e;
 		return false;
 	};
-	if (rotwkRoot.empty() || bfme2Root.empty() || rotwkRoot.find('\n') != std::string::npos || bfme2Root.find('\n') != std::string::npos)
-		return fail("both folders are needed (one line each)");
-	const fs::path target = fs::u8path(configPath);
+	std::string pathError;
+	if (!PathIO::checkInstallPath(rotwkRoot, pathError) || !PathIO::checkInstallPath(bfme2Root, pathError))
+		return fail(pathError);
+	const fs::path target = PathIO::native(configPath);
 	std::error_code ec;
 	if (target.has_parent_path())
 		fs::create_directories(target.parent_path(), ec);
-	const fs::path temp = fs::u8path(configPath + ".tmp");
+	const fs::path temp = PathIO::native(configPath + ".tmp");
 	{
 		std::ofstream out(temp, std::ios::binary | std::ios::trunc);
 		out << "# OpenBFME: the game folders chosen on the first start. Delete this file to choose again.\n";

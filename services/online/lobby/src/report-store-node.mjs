@@ -13,10 +13,12 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { normalizeRoster, validReceipt, validateReportSource } from './reports.mjs';
+import { repairStoredText } from './stored-text.mjs';
 
 const COMPACT_AFTER_MS = 24 * 60 * 60 * 1000;
 const KEY_PATTERNS = [
   /^report:R-[0-9a-f]{24}$/,
+  /^evidence:R-[0-9a-f]{24}$/,
   /^index:\d{16}:R-[0-9a-f]{24}$/,
   /^attempts:[0-9a-f]{32}$/,
   /^receipt:[0-9a-f]{32}:[A-Za-z0-9_-]{8,64}$/,
@@ -90,6 +92,19 @@ function exactRecord(value, fields, what, lineNumber) {
 function validateValue(key, value, lineNumber) {
   try {
     if (key.startsWith('report:')) return validateReportSource(value, key.slice(7));
+    if (key.startsWith('evidence:')) {
+      exactRecord(value, ['expires_at', 'lines'], 'report evidence', lineNumber);
+      if (!Number.isSafeInteger(value.expires_at) || value.expires_at < 0 ||
+          !Array.isArray(value.lines) || value.lines.length > 50) throw new Error('evidence malformed');
+      for (const line of value.lines) {
+        exactRecord(line, ['game_id', 'nick', 'text', 'at'], 'report evidence line', lineNumber);
+        if (typeof line.game_id !== 'string' || !/^[0-9a-f]{16}$/.test(line.game_id) ||
+            typeof line.nick !== 'string' || !line.nick.length || Array.from(line.nick).length > 24 || !line.nick.isWellFormed() ||
+            typeof line.text !== 'string' || Array.from(line.text).length > 200 || !line.text.isWellFormed() ||
+            (line.at !== null && (!Number.isSafeInteger(line.at) || line.at < 0))) throw new Error('evidence line malformed');
+      }
+      return;
+    }
     if (key.startsWith('roster:')) return normalizeRoster(value, key.slice(7));
     if (key.startsWith('receipt:')) return validReceipt(value);
     if (key.startsWith('attempts:')) {
@@ -176,7 +191,7 @@ export class NodeReportStore {
       if (!line) throw new Error(`report journal: empty record at line ${index + 1}`);
       let record;
       try {
-        record = JSON.parse(line);
+        record = repairStoredText(JSON.parse(line));
       } catch {
         throw new Error(`report journal: invalid JSON at line ${index + 1}`);
       }

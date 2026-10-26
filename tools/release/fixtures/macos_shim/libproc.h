@@ -18,6 +18,32 @@
 #include <unistd.h>
 #include <linux/fs.h>
 
+/* macOS also supplies these libc functions; older Linux test hosts do not. */
+#ifdef __GLIBC__
+#if !__GLIBC_PREREQ(2, 38)
+static inline size_t openbfme_test_strlcpy(char *dst, const char *src, size_t size) {
+    size_t length = strlen(src);
+    if (size != 0) {
+        size_t copied = length < size ? length : size - 1;
+        memcpy(dst, src, copied);
+        dst[copied] = '\0';
+    }
+    return length;
+}
+#define strlcpy openbfme_test_strlcpy
+#endif
+
+#if !__GLIBC_PREREQ(2, 36)
+static inline uint32_t openbfme_test_arc4random(void) {
+    uint32_t value;
+    if (getentropy(&value, sizeof(value)) != 0)
+        abort();
+    return value;
+}
+#define arc4random openbfme_test_arc4random
+#endif
+#endif
+
 #define PROC_ALL_PIDS 1
 #define PROC_PIDTBSDINFO 3
 #define PROC_PIDPATHINFO_MAXSIZE 4096

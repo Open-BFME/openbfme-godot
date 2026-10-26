@@ -60,6 +60,7 @@ TEST_CASE("pathfind retail: the configuration values come from the mounted INI f
 	CHECK(c.meleeApproachTolerance == 20.0f); // lane PHYS-1: AIData MeleeApproachTolerance (+0x90)  // lane PHYS-1: AIData MeleeApproachDist (+0x94)
 	CHECK(c.hordesWaitForHordes);          // lane PHYS-1: AIData HordesWaitForHordes (+0xB9), default/aidata.ini Yes
 	CHECK(c.castleSiegeStandBackDistance == 500.0f); // lane PHYS-1 round 6: AIData CastleSiegeStandBackDistance (+0xD4)
+	CHECK(c.attackUsesLineOfSight); // lane ATTACKPATH-1: AIData AttackUsesLineOfSight (+0x67), default/aidata.ini Yes
 	CHECK(c.adjustToPossibleLimit == 400);
 	CHECK(c.examineTowardsGoalLimit == 25000);
 	CHECK(c.zoneBlockSize == 16);

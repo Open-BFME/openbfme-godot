@@ -3,6 +3,7 @@
 
 #include "GameClient/MapWeather.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -126,6 +127,82 @@ void MapWeatherScan::applyText(const std::string &text, MapWeather &w)
 			parseXY(val, w.cloudOffsetPerSecond);
 		}
 	}
+}
+
+void WaterSetScan::applyText(const std::string &text, int timeOfDay, float diffuse[4])
+{
+	static const char *const NAMES[4] = { "morning", "afternoon", "evening", "night" };
+	const std::string wanted = NAMES[std::max(0, std::min(3, timeOfDay - 1))];
+	size_t pos = 0;
+	bool inSet = false;
+	while (pos <= text.size())
+	{
+		size_t nl = text.find('\n', pos);
+		if (nl == std::string::npos)
+		{
+			nl = text.size();
+		}
+		std::string line = text.substr(pos, nl - pos);
+		pos = nl + 1;
+		size_t semi = line.find(';');
+		if (semi != std::string::npos)
+		{
+			line.erase(semi);
+		}
+		line = lower(trim(line));
+		if (line.empty())
+		{
+			continue;
+		}
+		if (!inSet)
+		{
+			if (line.rfind("waterset", 0) == 0 && trim(line.substr(8)) == wanted)
+			{
+				inSet = true;
+			}
+			continue;
+		}
+		if (line == "end")
+		{
+			inSet = false;
+			continue;
+		}
+		size_t eq = line.find('=');
+		if (eq == std::string::npos || trim(line.substr(0, eq)) != "diffusecolor")
+		{
+			continue;
+		}
+		int r, g, b, a = 255;
+		if (std::sscanf(trim(line.substr(eq + 1)).c_str(), "r:%d g:%d b:%d a:%d", &r, &g, &b, &a) >= 3)
+		{
+			diffuse[0] = r / 255.0f;
+			diffuse[1] = g / 255.0f;
+			diffuse[2] = b / 255.0f;
+			diffuse[3] = a / 255.0f;
+		}
+	}
+}
+
+bool WaterSetScan::load(ArchiveFileSystem &fs, const std::string &mapDir, int timeOfDay, float diffuse[4], std::string *error)
+{
+	diffuse[0] = diffuse[1] = diffuse[2] = 175.0f / 255.0f;
+	diffuse[3] = 1.0f;
+	std::vector<std::uint8_t> bytes;
+	if (!fs.readFile("data\\ini\\water.ini", bytes, error))
+	{
+		return false;
+	}
+	applyText(std::string(bytes.begin(), bytes.end()), timeOfDay, diffuse);
+	const std::string mapIni = "maps\\" + mapDir + "\\map.ini";   // as MapWeatherScan::load
+	if (fs.doesFileExist(mapIni))
+	{
+		if (!fs.readFile(mapIni, bytes, error))
+		{
+			return false;
+		}
+		applyText(std::string(bytes.begin(), bytes.end()), timeOfDay, diffuse);
+	}
+	return true;
 }
 
 bool MapWeatherScan::load(ArchiveFileSystem &fs, const std::string &mapDir, MapWeather &out, std::string *error)

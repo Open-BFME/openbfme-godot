@@ -174,6 +174,7 @@ private:
 	const HordeGarrisonContainModuleData *m_horde;
 	bool m_rosterCreated = false;
 	bool m_hiddenFlag = false;                        // RW + 0x9BD
+	std::uint32_t m_originalTeam = 0;                 // RW + 0xDC (a TeamID) (lane GARRISON-4): the team the container goes back to when empty
 	std::array<GarrisonPoint, MAX_GARRISON_POINTS> m_points{};
 	int m_pointsInUse = 0;                            // RW + 0x420
 	std::array<std::array<Coord3D, MAX_GARRISON_POINTS>, GARRISON_POINT_CONDITIONS> m_pointPositions{}; // RW + 0x424

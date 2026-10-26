@@ -415,22 +415,30 @@ ObjectID pickDozer(GameLogic &logic, const AIBuildState &s, const Coord3D &pos)
 // the enemy count of RW 0x97DFCD and RW 0x9A1FA4 (the same four partition filters, range 300 around `site`)
 int enemiesNear(GameLogic &logic, const Player &player, const Coord3D &site)
 {
+	// lane BIGBATTLE-1: the KindOf bits looked up once (isKindOfName searched the names for every object, five times), and the range tested
+	// first: every test here is pure, so their order does not change the count; the AI asks this for every build request and walked every object
+	static const int kGollum = KindOfTokens::indexOf("NEUTRALGOLLUM"), kCanAttack = KindOfTokens::indexOf("CAN_ATTACK"),
+					 kStructure = KindOfTokens::indexOf("STRUCTURE"), kHero = KindOfTokens::indexOf("HERO"),
+					 kSupport = KindOfTokens::indexOf("SUPPORT");
+	const auto kind = [](const Object &o, int bit) { return bit >= 0 && o.isKindOf((unsigned)bit); };
+	const float range2 = SimMath::mulf32(kEnemyScanRadius, kEnemyScanRadius);
 	int enemies = 0;
 	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
 	{
+		const float dx = SimMath::subf32(o->getPosition()->x, site.x), dy = SimMath::subf32(o->getPosition()->y, site.y);
+		if (!(SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy)) <= range2))
+		{
+			continue;
+		}
 		// the four partition filters of RW 0x97DFCD: accept KindOf any of CAN_ATTACK | STRUCTURE | HERO | SUPPORT (RW 0xC309B4 -> 0x661359), reject
 		// NEUTRALGOLLUM (RW 0xC110A4), the AI's player ENEMIES with the object's team (RW 0xC1676C, mask 4), alive
 		// (object + 0x458 bit 0 clear, RW 0xC10E20); range 300 from the centre in 2D (partition vslot 0x34, mode 0)
-		if (o->isEffectivelyDead() || !o->isInWorld() || !isEnemyOf(player, *o) || o->isKindOfName("NEUTRALGOLLUM") ||
-			!(o->isKindOfName("CAN_ATTACK") || o->isKindOfName("STRUCTURE") || o->isKindOfName("HERO") || o->isKindOfName("SUPPORT")))
+		if (o->isEffectivelyDead() || !o->isInWorld() || !isEnemyOf(player, *o) || kind(*o, kGollum) ||
+			!(kind(*o, kCanAttack) || kind(*o, kStructure) || kind(*o, kHero) || kind(*o, kSupport)))
 		{
 			continue; // lane GARRISON-1: a contain's rider out of the world (RW 0x68C18F) is not in the partition
 		}
-		const float dx = SimMath::subf32(o->getPosition()->x, site.x), dy = SimMath::subf32(o->getPosition()->y, site.y);
-		if (SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy)) <= SimMath::mulf32(kEnemyScanRadius, kEnemyScanRadius))
-		{
-			++enemies;
-		}
+		++enemies;
 	}
 	return enemies;
 }

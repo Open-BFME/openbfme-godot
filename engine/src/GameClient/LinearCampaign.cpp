@@ -122,9 +122,8 @@ std::vector<std::string> LinearCampaignManager::stopLines()
 		"under CampaignMenu.apt (RW 0x925699 restarts the shell's music for the types 2 / 3 only)",
 		"[S-4903] the campaign's carry-over units (RW 0x5EBAEE's record of the CarryoverUnit objects of a won mission, their spawn in the next mission) "
 		"are not ported: a mission starts with the map's own units",
-		"[S-1711] the military caption (SHOW_MILITARY_CAPTION, the campaign's subtitles) is drawn whole in the client's own style: retail types it (RW "
-		"0x69CE5F: a character per InGameUI MilitaryCaptionDelayMS on the real-time clock, MiscAudio MissionBriefingCharacterClick per character, up to 4 "
-		"lines, held 2 s after the last character, then faded) with InGameUI.ini's MilitaryCaption* colour / position / font, which the port does not parse",
+		"[S-1711] the military caption (SHOW_MILITARY_CAPTION) is typed as retail types it (RW 0x69CE5F, lane CAMPUI-1) with InGameUI.ini's MilitaryCaption* "
+		"settings and language.ini's caption font; the incoming character's slide (RW 0x69B7BE's + 0x28 string) is not drawn",
 	};
 }
 

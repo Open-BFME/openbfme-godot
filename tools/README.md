@@ -1,11 +1,13 @@
 # Python tool tests
 
-Use Python 3.13 (the release scanner requires Python 3.11 or newer):
+From the repository root on Linux/macOS with a POSIX shell and Python 3.13
+(the release scanner requires Python 3.11 or newer):
 
 ```sh
 python3.13 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r tools/requirements-test.txt
+python -m pip install capstone pefile
 python -m pytest -n 8 --dist worksteal -q -p no:cacheprovider tools --durations=50 -ra
 ```
 
@@ -18,19 +20,26 @@ this command. The public PR check's `tools/release/pr_pytest.py` is deliberately
 a smaller subset; it is not a replacement for the full `tools` suite.
 
 Godot, Node, platform-specific native builds, reference audio fixtures and
-privately installed retail games enable additional existing tests. Install
-`capstone` and `pefile` for binary-analysis tests. Missing prerequisites are
+privately installed retail games enable additional existing tests. The
+`capstone` and `pefile` packages above are needed for binary-analysis tests;
+they are not in `tools/requirements-test.txt`. Missing prerequisites are
 reported by `-ra`; never add game data or generated retail-format fixtures to
 the repository.
 
-Some release checks fail closed when Godot is missing rather than skipping.
+Godot-dependent release tests skip with a specific reason when its executable
+is absent; the release tools themselves still fail closed without Godot.
+The historical bridge grammar probes also need the exact published launcher
+trees documented in `docs/WINDOWS.md`; their skip messages name the missing
+tree and the tag to fetch. Current-source probes and Python bridge rules do
+not depend on that history.
 Completing the suite within its time budget is not the same as passing it:
 retain the nonzero exit status and investigate every reported failure.
 
 ## CI must check exit status
 
 Run the command directly, or preserve both timeout and pytest failures when
-capturing output (Bash):
+capturing output (Linux Bash, with GNU `timeout` and `tee`, after activating
+the environment above):
 
 ```sh
 set -o pipefail

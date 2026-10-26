@@ -17,11 +17,19 @@
 #include "GameClient/HudContext.h"
 #include "GameClient/MessageStream/MessageStream.h"
 
+#include <functional>
+
 class GUICommandTranslator : public MessageTranslator
 {
 public:
 	explicit GUICommandTranslator(HudContext &ctx) : m_ctx(ctx) {}
 	MessageDisposition translate(const ClientMessage &message) override;
+
+	// lane SPELLRC-1: the spell book's power waiting for its target (InGameHud: InGameSpellBookModel, which the port keeps beside InGameUI's GUI command).
+	// RotWK's GUI command translator (RW 0x83D7AD) ends a waiting command on a right click that was not dragged (MSG_MOUSE_RIGHT_CLICK / _DOUBLE_CLICK with
+	// + 0x30 clear: setGUICommand(0) at RW 0x83DB8D, the click destroyed); a right drag leaves it waiting and the raw press reaches the LookAt translator (the
+	// camera's RMB scroll). The hook answers whether such a power was waiting and cancels it
+	void setHudTargetCancel(std::function<bool()> cancel) { m_hudTargetCancel = std::move(cancel); }
 
 	// guard modes (ZH GuardMode)
 	enum GuardMode
@@ -33,4 +41,7 @@ public:
 
 private:
 	HudContext &m_ctx;
+	std::function<bool()> m_hudTargetCancel; ///< lane SPELLRC-1
+	ICoord2D m_rightAnchor{ 0, 0 };          ///< lane SPELLRC-1: RW 0x83D7AD + 0x20: the right press's pixel
+	bool m_rightDragged = false;             ///< lane SPELLRC-1: RW 0x83D7AD + 0x30: the pointer left the drag tolerance since the right press
 };

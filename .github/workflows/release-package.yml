@@ -1,0 +1,293 @@
+# Lane MACACT-1: one platform's release package built on GitHub's own runners, for tools/release/autorelease.sh (docs/RELEASE.md, "Release
+# builds on GitHub Actions"). The release's Deck pushes the exact public commit it will publish to a staging branch (staging/<version>),
+# dispatches this workflow on it with the commit, the version, the platform and a one-time request id, waits for the run, downloads the
+# artifact, checks it the way it checks a build of its own hosts, and only then seals and signs. Nothing here is signed with the release
+# key and nothing here can reach it: no secrets (not even GITHUB_TOKEN's write scopes: `contents: read`), no caches (a fresh build, and no
+# cache another workflow could have written), every action pinned by its full commit sha, every download checked against a pinned hash.
+#
+#   macos    macos-15 (arm64): tools/release/package_macos.py exactly as the Mac build host runs it (build_macos_release.sh): a fresh
+#            arm64 build, macOS 13 minimum, the Godot 4.7.2 export with the pinned templates, ad-hoc codesign (no Apple key), the strict
+#            audit. Artifact: <stem>.zip, <stem>.zip.sha256, <stem>.inventory.txt, README-MAC.txt (the set autorelease.sh accepts).
+#   linux    ubuntu-24.04: tools/release/build_linux.sh (Godot's own Linux SDK: the GLIBC 2.28 floor, checked there). Artifact: the GDExtension
+#            .so, which the Deck compares byte for byte with the build host's.
+#   windows  ubuntu-24.04: tools/release/build_windows.sh --no-export (the release's pinned llvm-mingw cross build; the same toolchain binary
+#            as the build host's, so the two builds can be compared byte for byte). Artifact: the GDExtension .dll only: its PDB is private
+#            (build_windows.sh) and never leaves the runner.
+#
+# Only someone with write access to the repository can dispatch a workflow; the Deck accepts a run only when it is the one its own dispatch
+# created (the run id GitHub returns), on the staging commit (head_sha), dispatched by the release account, and an artifact only when its
+# SHA-256 is GitHub's recorded digest of what this run uploaded.
+name: Release package
+
+run-name: Release package ${{ inputs.platform }} ${{ inputs.version }} (request ${{ inputs.request }})
+
+on:
+  # RELSIGN-1: the release workflow (release.yml) calls these same jobs for its builds (one platform per call; no secrets are passed and
+  # none are declared, the caller's job has contents: read only)
+  workflow_call:
+    inputs:
+      platform:
+        required: true
+        type: string
+      commit:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      request:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: macos, linux or windows
+        required: true
+        type: choice
+        options:
+          - macos
+          - linux
+          - windows
+      commit:
+        description: the public commit to build (40 hex; the head of the staging branch)
+        required: true
+        type: string
+      version:
+        description: the release version (v1.2.3 or v1.2.3-nightly.261023200)
+        required: true
+        type: string
+      request:
+        description: the Deck's one-time request id (32 hex)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-package-${{ inputs.platform }}-${{ inputs.version }}-${{ inputs.request }}
+  cancel-in-progress: false
+
+env:
+  IN_COMMIT: ${{ inputs.commit }}
+  IN_VERSION: ${{ inputs.version }}
+  IN_REQUEST: ${{ inputs.request }}
+
+jobs:
+  macos:
+    name: macOS arm64 package
+    if: inputs.platform == 'macos'
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Check the inputs
+        # the inputs reach the shell only through the environment, never pasted into a script; checked before anything uses them
+        run: |
+          [[ "$IN_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "commit is not 40 hex"; exit 1; }
+          [[ "$IN_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|nightly|preview)\.[0-9]+)?$ ]] || { echo "version is not a release version"; exit 1; }
+          [[ "$IN_REQUEST" =~ ^[0-9a-f]{32}$ ]] || { echo "request is not 32 hex"; exit 1; }
+          # dispatched by the Deck on staging/<version>: the ref's head is the commit (this file is the commit's own). Called by the release
+          # workflow on main (GITHUB_WORKFLOW_REF names the caller; the runner sets it): its plan job checked the tag and that the commit is on main
+          if [ "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main" ]; then
+            [ "$GITHUB_REF" = refs/heads/main ] || { echo "the release workflow runs on $GITHUB_REF, not main"; exit 1; }
+          else
+            [ "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/release-package.yml@refs/heads/staging/$IN_VERSION" ] \
+              || { echo "dispatched as $GITHUB_WORKFLOW_REF, not on staging/$IN_VERSION"; exit 1; }
+            [ "$GITHUB_SHA" = "$IN_COMMIT" ] || { echo "the dispatched ref is at $GITHUB_SHA, not $IN_COMMIT"; exit 1; }
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+          submodules: true
+      - name: Tag the commit locally as the release (never pushed)
+        # the build host builds a checkout of the release tag (git describe = the version); the same here, with a tag only this runner has
+        # .gitattributes marks *.png as Git LFS while the public tree holds them as plain blobs; the runner's git-lfs clean filter would
+        # turn them into pointers on every status read and make the checkout dirty (git describe --dirty, the build record, the package's
+        # clean-tree check). The build hosts have no git-lfs filter; this repository's checkout gets none either
+        run: |
+          git config --local filter.lfs.process ""
+          git config --local filter.lfs.clean ""
+          git config --local filter.lfs.smudge ""
+          git config --local filter.lfs.required false
+          [ "$(git rev-parse HEAD)" = "$IN_COMMIT" ] || { echo "the checkout is not $IN_COMMIT"; exit 1; }
+          [ -z "$(git status --porcelain --untracked-files=all)" ] || { git status --short | head -20; echo "the checkout is not clean"; exit 1; }
+          git tag "$IN_VERSION" "$IN_COMMIT"
+          d=$(git describe --tags --match 'v[0-9]*' --exclude '*-playtest.*' --always --dirty --abbrev=10)
+          [ "$d" = "$IN_VERSION" ] || { echo "the checkout describes as $d, not $IN_VERSION"; exit 1; }
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Download Godot 4.7.2, its export templates and ninja (pinned hashes)
+        # Godot's SHA-512 from its release's SHA512-SUMS.txt; the templates' SHA-256 is package_macos_preview.py's TEMPLATE_SHA256 (checked
+        # again by package_macos.py); ninja 1.13.2's macOS build (the Mac build host's version)
+        run: |
+          T="$RUNNER_TEMP/tools"; mkdir -p "$T/bin"; cd "$T"
+          base=https://github.com/godotengine/godot/releases/download/4.7.2-stable
+          curl -fsSLo godot.zip "$base/Godot_v4.7.2-stable_macos.universal.zip"
+          curl -fsSLo Godot_v4.7.2-stable_export_templates.tpz "$base/Godot_v4.7.2-stable_export_templates.tpz"
+          curl -fsSLo ninja.zip https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-mac.zip
+          echo "38aa16e5bba2083941fc5b3e54be0089bd4cc35e32415f5b9fd9a8a6a7b9818255d44532ea8ef94b5aef56c4b407c2d634fa4f657e4ebe681ebbf59b7bac69ca  godot.zip" | shasum -a 512 -c
+          echo "f298490b8d44d934be425a5a65a51bf15f422428b229a06a6e11d9ffea248011  Godot_v4.7.2-stable_export_templates.tpz" | shasum -a 256 -c
+          echo "c99048673aa765960a99cf10c6ddb9f1fad506099ff0a0e137ad8960a88f321b  ninja.zip" | shasum -a 256 -c
+          ditto -x -k godot.zip .
+          unzip -q ninja.zip -d bin
+          rm godot.zip ninja.zip
+          echo "$T/bin" >> "$GITHUB_PATH"
+          "$T/Godot.app/Contents/MacOS/Godot" --headless --version
+      - name: Build the package (package_macos.py)
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          python3 tools/release/package_macos.py --version "$IN_VERSION" --godot "$RUNNER_TEMP/tools/Godot.app/Contents/MacOS/Godot" \
+            --templates "$RUNNER_TEMP/tools/Godot_v4.7.2-stable_export_templates.tpz" --out "$RUNNER_TEMP/out" --jobs 3 \
+            > "$RUNNER_TEMP/package.log" 2>&1 || { tail -80 "$RUNNER_TEMP/package.log"; exit 1; }
+          grep -E '^(MACOS|PACKAGE|AUDIT)' "$RUNNER_TEMP/package.log" || true
+          ls -l "$RUNNER_TEMP/out"
+          stem="openbfme-$IN_VERSION-macos-arm64"
+          got=$(find "$RUNNER_TEMP/out" -mindepth 1 -maxdepth 1 -exec basename {} \; | sort | tr '\n' ' ')
+          want=$(printf '%s\n' "$stem.zip" "$stem.zip.sha256" "$stem.inventory.txt" README-MAC.txt | sort | tr '\n' ' ')
+          [ "$got" = "$want" ] || { echo "the package folder is '$got', not '$want'"; exit 1; }
+          shasum -a 256 "$RUNNER_TEMP/out/"*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: openbfme-${{ inputs.version }}-macos-arm64-${{ inputs.request }}
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  linux:
+    name: Linux GDExtension (Godot's Linux SDK)
+    if: inputs.platform == 'linux'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    # the release builder's layout (a checkout named src, the build folder beside it as src.<platform>): the libraries record the
+    # source paths relative to the build folder, so the same layout gives the same bytes as the build host's (actions-compare)
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - name: Check the inputs
+        working-directory: ${{ github.workspace }}   # before the checkout: src/ is not there yet
+        # the inputs reach the shell only through the environment, never pasted into a script; checked before anything uses them
+        run: |
+          [[ "$IN_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "commit is not 40 hex"; exit 1; }
+          [[ "$IN_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|nightly|preview)\.[0-9]+)?$ ]] || { echo "version is not a release version"; exit 1; }
+          [[ "$IN_REQUEST" =~ ^[0-9a-f]{32}$ ]] || { echo "request is not 32 hex"; exit 1; }
+          # dispatched by the Deck on staging/<version>: the ref's head is the commit (this file is the commit's own). Called by the release
+          # workflow on main (GITHUB_WORKFLOW_REF names the caller; the runner sets it): its plan job checked the tag and that the commit is on main
+          if [ "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main" ]; then
+            [ "$GITHUB_REF" = refs/heads/main ] || { echo "the release workflow runs on $GITHUB_REF, not main"; exit 1; }
+          else
+            [ "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/release-package.yml@refs/heads/staging/$IN_VERSION" ] \
+              || { echo "dispatched as $GITHUB_WORKFLOW_REF, not on staging/$IN_VERSION"; exit 1; }
+            [ "$GITHUB_SHA" = "$IN_COMMIT" ] || { echo "the dispatched ref is at $GITHUB_SHA, not $IN_COMMIT"; exit 1; }
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          path: src
+          persist-credentials: false
+          submodules: true
+      - name: Tag the commit locally as the release (never pushed)
+        # the build host builds a checkout of the release tag (git describe = the version); the same here, with a tag only this runner has
+        # .gitattributes marks *.png as Git LFS while the public tree holds them as plain blobs; the runner's git-lfs clean filter would
+        # turn them into pointers on every status read and make the checkout dirty (git describe --dirty, the build record, the package's
+        # clean-tree check). The build hosts have no git-lfs filter; this repository's checkout gets none either
+        run: |
+          git config --local filter.lfs.process ""
+          git config --local filter.lfs.clean ""
+          git config --local filter.lfs.smudge ""
+          git config --local filter.lfs.required false
+          [ "$(git rev-parse HEAD)" = "$IN_COMMIT" ] || { echo "the checkout is not $IN_COMMIT"; exit 1; }
+          [ -z "$(git status --porcelain --untracked-files=all)" ] || { git status --short | head -20; echo "the checkout is not clean"; exit 1; }
+          git tag "$IN_VERSION" "$IN_COMMIT"
+          d=$(git describe --tags --match 'v[0-9]*' --exclude '*-playtest.*' --always --dirty --abbrev=10)
+          [ "$d" = "$IN_VERSION" ] || { echo "the checkout describes as $d, not $IN_VERSION"; exit 1; }
+      - name: Build (build_linux.sh)
+        # the SDK's own cmake / ninja / python3; the GLIBC floor and the export map are checked by the script
+        run: |
+          OPENBFME_LINUX_DIR="$GITHUB_WORKSPACE/src.linux" JOBS=4 tools/release/build_linux.sh
+          mkdir -p "$RUNNER_TEMP/out"
+          cp godot/bin/openbfme.linux.template_debug.x86_64.so "$RUNNER_TEMP/out/"
+          sha256sum "$RUNNER_TEMP/out/"*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: openbfme-${{ inputs.version }}-linux-x64-${{ inputs.request }}
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows GDExtension (llvm-mingw cross build)
+    if: inputs.platform == 'windows'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    # the release builder's layout (a checkout named src, the build folder beside it as src.<platform>): the libraries record the
+    # source paths relative to the build folder, so the same layout gives the same bytes as the build host's (actions-compare)
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - name: Check the inputs
+        working-directory: ${{ github.workspace }}   # before the checkout: src/ is not there yet
+        # the inputs reach the shell only through the environment, never pasted into a script; checked before anything uses them
+        run: |
+          [[ "$IN_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "commit is not 40 hex"; exit 1; }
+          [[ "$IN_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|nightly|preview)\.[0-9]+)?$ ]] || { echo "version is not a release version"; exit 1; }
+          [[ "$IN_REQUEST" =~ ^[0-9a-f]{32}$ ]] || { echo "request is not 32 hex"; exit 1; }
+          # dispatched by the Deck on staging/<version>: the ref's head is the commit (this file is the commit's own). Called by the release
+          # workflow on main (GITHUB_WORKFLOW_REF names the caller; the runner sets it): its plan job checked the tag and that the commit is on main
+          if [ "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main" ]; then
+            [ "$GITHUB_REF" = refs/heads/main ] || { echo "the release workflow runs on $GITHUB_REF, not main"; exit 1; }
+          else
+            [ "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/release-package.yml@refs/heads/staging/$IN_VERSION" ] \
+              || { echo "dispatched as $GITHUB_WORKFLOW_REF, not on staging/$IN_VERSION"; exit 1; }
+            [ "$GITHUB_SHA" = "$IN_COMMIT" ] || { echo "the dispatched ref is at $GITHUB_SHA, not $IN_COMMIT"; exit 1; }
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          path: src
+          persist-credentials: false
+          submodules: true
+      - name: Tag the commit locally as the release (never pushed)
+        # the build host builds a checkout of the release tag (git describe = the version); the same here, with a tag only this runner has
+        # .gitattributes marks *.png as Git LFS while the public tree holds them as plain blobs; the runner's git-lfs clean filter would
+        # turn them into pointers on every status read and make the checkout dirty (git describe --dirty, the build record, the package's
+        # clean-tree check). The build hosts have no git-lfs filter; this repository's checkout gets none either
+        run: |
+          git config --local filter.lfs.process ""
+          git config --local filter.lfs.clean ""
+          git config --local filter.lfs.smudge ""
+          git config --local filter.lfs.required false
+          [ "$(git rev-parse HEAD)" = "$IN_COMMIT" ] || { echo "the checkout is not $IN_COMMIT"; exit 1; }
+          [ -z "$(git status --porcelain --untracked-files=all)" ] || { git status --short | head -20; echo "the checkout is not clean"; exit 1; }
+          git tag "$IN_VERSION" "$IN_COMMIT"
+          d=$(git describe --tags --match 'v[0-9]*' --exclude '*-playtest.*' --always --dirty --abbrev=10)
+          [ "$d" = "$IN_VERSION" ] || { echo "the checkout describes as $d, not $IN_VERSION"; exit 1; }
+      - name: Install the build tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends ninja-build ccache
+      - name: Build (build_windows.sh --no-export)
+        # the PDB stays here: it is private (build_windows.sh, archive_symbols.sh); only the DLL is uploaded.
+        # Through ccache with an empty cache, as the build host builds the DLL: ccache's base_dir makes the compiler's source paths relative
+        # (../../src/engine/...), and those land in the DLL's __FILE__ strings, so the same rewriting gives the same bytes (actions-compare)
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_NOHASHDIR: "1"
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+        run: |
+          OPENBFME_WIN_DIR="$GITHUB_WORKSPACE/src.win" JOBS=4 tools/release/build_windows.sh --no-export
+          mkdir -p "$RUNNER_TEMP/out"
+          cp godot/bin/openbfme.windows.template_debug.x86_64.dll "$RUNNER_TEMP/out/"
+          sha256sum "$RUNNER_TEMP/out/"*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: openbfme-${{ inputs.version }}-windows-x64-${{ inputs.request }}
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
+          retention-days: 7

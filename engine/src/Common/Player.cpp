@@ -98,6 +98,7 @@ void Player::init(const PlayerTemplate *pt, std::uint32_t defaultStartingCash)
 	m_handicap = 0;
 	m_colorExplicit = false;
 	m_unitsShouldHunt = false; // RW 0x6B0401: + 0x35D cleared by the init (lane DECOMP-2, Sol's review)
+	m_resourceGathering.reset(); // lane LUMBER1: ZH Player::init makes a new ResourceGatheringManager (RW + 0x304)
 	m_money.init();
 	m_money.setPlayerIndex(m_index);
 	// RW 0x6B06D4 .. 0x6B0707 (the player's reset): score, cost modifier lists, command points; the upgrades are the upgrade lane's reset
@@ -199,18 +200,25 @@ void Player::crc(StateHasher &h) const
 	m_commandPoints.crc(h);
 	m_science.crc(h); // SPELL-1
 	m_heroes.crc(h);  // HERO-1
+	if (!m_resourceGathering.supplyCenters().empty() || !m_resourceGathering.supplyWarehouses().empty())
+	{
+		h.addU32(0x5C);
+		m_resourceGathering.crc(h); // lane LUMBER1: hashed only once a supply center registered (a game without one keeps its hash)
+	}
 	h.addU32((std::uint32_t)m_upgradeRecords.size()); // UPGRADE-1: the records in list order, then both masks
 	for (const UpgradeRecord &r : m_upgradeRecords)
 	{
 		h.addI32(r.upgrade ? r.upgrade->getMaskBit() : -1);
 		h.addI32(r.status);
 	}
-	for (std::uint32_t w : m_upgradesInProgress.words)
+	for (unsigned i = 0; i < UpgradeMaskType::activeWords(); ++i) // lane MODS-3: retail's 0x24 words unless the data has more upgrades
 	{
+		const std::uint32_t w = m_upgradesInProgress.words[i];
 		h.addU32(w);
 	}
-	for (std::uint32_t w : m_upgradesCompleted.words)
+	for (unsigned i = 0; i < UpgradeMaskType::activeWords(); ++i) // lane MODS-3: retail's 0x24 words unless the data has more upgrades
 	{
+		const std::uint32_t w = m_upgradesCompleted.words[i];
 		h.addU32(w);
 	}
 	h.addU32((std::uint32_t)m_costModifiers.size());
@@ -697,7 +705,7 @@ void Player::checkLoadedIndices(int playerCount) const
 
 void Player::xfer(Xfer &x, TeamFactory &teams)
 {
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 2 }; // lane LUMBER1: version 2 adds the ResourceGatheringManager (RW + 0x304) at the end
 	x.xferVersion(v);
 	// the identity the START made: checked, never overwritten
 	std::int32_t index = m_index;
@@ -845,4 +853,12 @@ void Player::xfer(Xfer &x, TeamFactory &teams)
 		xferIds(x, squad);
 	}
 	x.xferInt(&m_orderMode);
+	if (v.current >= 2)
+	{
+		m_resourceGathering.xfer(x); // lane LUMBER1 (RW 0x8FAD17)
+	}
+	else if (x.isLoading())
+	{
+		m_resourceGathering.reset(); // a version 1 snapshot predates the supply centers' registration
+	}
 }

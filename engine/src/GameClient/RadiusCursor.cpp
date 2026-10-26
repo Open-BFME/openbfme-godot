@@ -101,6 +101,7 @@ struct LoadState
 {
 	std::map<std::string, RadiusDecalTemplate> *out = nullptr;
 	TerrainResourceUiSettings *resourceUi = nullptr; // lane OWNERFIX-2
+	PlayerMessageSettings *messages = nullptr;
 	bool inGameUi = false;
 };
 
@@ -136,7 +137,23 @@ void parseNamedRadiusDecalTemplate(INI *ini, void *instance, void *, const void 
 	(*static_cast<LoadState *>(instance)->out)[lower(name)] = t;
 }
 
+// Reuse this InGameUI pass for the message fields; retain the native INI parsers.
+template <void (*Parse)(INI *, void *, void *, const void *), size_t Offset>
+void parseMessageField(INI *ini, void *instance, void *, const void *)
+{
+	auto *settings = static_cast<LoadState *>(instance)->messages;
+	Parse(ini, settings, reinterpret_cast<char *>(settings) + Offset, nullptr);
+}
+#define MESSAGE_FIELD(name, parser, member) \
+	{ name, parseMessageField<INI::parser, offsetof(PlayerMessageSettings, member)>, nullptr, 0 }
 const FieldParse kInGameUiFields[] = {
+	MESSAGE_FIELD("MessageColor1", parseColorInt, color1),
+	MESSAGE_FIELD("MessageColor2", parseColorInt, color2),
+	MESSAGE_FIELD("MessagePosition", parseICoord2D, position),
+	MESSAGE_FIELD("MessageFont", parseAsciiString, font),
+	MESSAGE_FIELD("MessagePointSize", parseInt, pointSize),
+	MESSAGE_FIELD("MessageBold", parseBool, bold),
+	MESSAGE_FIELD("MessageDelayMS", parseInt, delayMs),
 	{ "RadiusCursorTemplate", parseNamedRadiusDecalTemplate, nullptr, 0 },
 	{ "TerrainResourceClaimDecal", parseResourceClaimDecal, nullptr, 0 },
 	{ "PlaceTerrainResourceClaimantDecal", parseResourcePlaceDecal, nullptr, 0 },
@@ -144,8 +161,9 @@ const FieldParse kInGameUiFields[] = {
 	{ "PlaceTerrainResourceClaimantFontColor", parseResourcePlaceFontColor, nullptr, 0 },
 	{ nullptr, skipField, nullptr, 0 },
 };
+#undef MESSAGE_FIELD
 
-bool run(ArchiveFileSystem *fs, const std::string &path, const std::string *memory, std::map<std::string, RadiusDecalTemplate> &out, TerrainResourceUiSettings &ui,
+bool run(ArchiveFileSystem *fs, const std::string &path, const std::string *memory, std::map<std::string, RadiusDecalTemplate> &out, TerrainResourceUiSettings &ui, PlayerMessageSettings &messages,
 	std::string *error)
 {
 	INIEnvironment env;
@@ -155,6 +173,8 @@ bool run(ArchiveFileSystem *fs, const std::string &path, const std::string *memo
 	state.out = &out;
 	ui = TerrainResourceUiSettings();
 	state.resourceUi = &ui;
+	messages = PlayerMessageSettings();
+	state.messages = &messages;
 	RegisterRecordingBlockStubs(env.blocks, recorder, { "InGameUI" }, StubExtent::Lenient);
 	env.blocks.registerBlock("InGameUI", [&state](INI *ini) {
 		state.inGameUi = true;
@@ -204,13 +224,13 @@ bool RadiusCursorTemplates::load(ArchiveFileSystem &fs, std::string *error)
 		return false;
 	}
 	m_templates.clear();
-	return run(&fs, file, nullptr, m_templates, m_resourceUi, error);
+	return run(&fs, file, nullptr, m_templates, m_resourceUi, m_messageUi, error);
 }
 
 bool RadiusCursorTemplates::scan(const std::string &inGameUiIni, std::string *error)
 {
 	m_templates.clear();
-	return run(nullptr, "ingameui.ini", &inGameUiIni, m_templates, m_resourceUi, error);
+	return run(nullptr, "ingameui.ini", &inGameUiIni, m_templates, m_resourceUi, m_messageUi, error);
 }
 
 const RadiusDecalTemplate *RadiusCursorTemplates::find(const std::string &name) const

@@ -25,6 +25,7 @@ class LANAPI;
 class OptionPreferences;
 class GameLODManager;
 struct PlayerStatusInfo;
+struct ObjectivesScreenInfo;
 struct CreateAHeroScreenContext;
 class ArchiveFileSystem;
 class GlobalLanguage;
@@ -83,6 +84,7 @@ struct ShellEnvironment
 	bool openbfmeOptionsMenu = false;
 	bool shellMapOn = false;                  // lane FB7-1: GameData ShellMapOn (GlobalData + 0xAF0; Shell::showShellMap)
 	PlayerStatusInfo *playerStatus = nullptr; // lane HUD-5: the players screen's Status rows (GUI/PlayerStatusInfo.h); null: the page shows no rows and says so
+	ObjectivesScreenInfo *objectivesScreen = nullptr; // lane CAMPUI-1: what Objectives.apt lists (GUI/AptScreens/AptObjectivesMenu.h); null: no rows, said so
 	CreateAHeroScreenContext *createAHero = nullptr; // lane CAH-1: what CreateAHero.apt edits (GUI/AptScreens/AptCreateAHero.h); null: it says so
 	ArchiveFileSystem *fileSystem = nullptr;  // lane UI-4: the mounted archives (the credits roll reads Data\INI\Credits.ini); null: the credits say so
 	ProfileSwitch *profileSwitch = nullptr;   // lane UBERJOIN-1: switches the performance mode for one game (GUI/ProfileSwitch.h); null: a game of the other mode says it cannot be joined

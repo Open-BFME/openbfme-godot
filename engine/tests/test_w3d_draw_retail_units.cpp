@@ -472,8 +472,8 @@ TEST_CASE("retail: weapon launch bones, public bones and turret bones of an arch
 		{
 			if (run > 0)
 			{
-				char suffix[8];
-				std::snprintf(suffix, sizeof(suffix), "%02d", (int)i + 1);
+				char suffix[32];
+				std::snprintf(suffix, sizeof(suffix), "%02zu", i + 1);
 				CHECK(bones.barrels[0][i].fxBone == 0);
 				const int idx = pivotIndexByName(*proto->Tree, std::string("ARROW") + suffix);
 				// the launch bone's pristine transform is that pivot's bind pose transform

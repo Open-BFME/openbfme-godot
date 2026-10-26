@@ -523,15 +523,17 @@ TEST_CASE("fly1 retail: Drogoth's breath: his fireball (SpecialAbilityDrogothFir
 	}
 	MESSAGE("the fireball's first damage after " << f << " frames: " << total0 << " -> " << hordeHealth() << ", Drogoth " << arena.above(*drogoth) << " above the ground");
 	// DrogothFireballWarhead on each GondorFighter within DROGOTH_FIREBALL_RADIUS 30: 400 FLAME + 50 MAGIC + 400 MAGIC (DROGOTH_FIREBALL_DAMAGE_SIEGE, its 300 %
-	// only on fell beasts and Gwaihir) at SoldierArmor's 100 % is 850, above GONDOR_SOLDIER_HEALTH 200: the six soldiers the blast covers die, 6 x 200
-	CHECK(total0 - hordeHealth() == 1200.0f);
+	// only on fell beasts and Gwaihir) at SoldierArmor's 100 % is 850, above GONDOR_SOLDIER_HEALTH 200: the soldiers the blast covers die, 200 each. Lane FLANK-1:
+	// DrogothFireballProjectile is not NO_COLLIDE and its warhead's ProjectileCollidesWith has ENEMIES (RW 0x6CC79C), so the ball goes off on the first soldier it
+	// touches, backed off its path (RW 0x85EA5F), not at the aimed soldier at the path's end: nine soldiers are inside the blast there (six before), 9 x 200
+	CHECK(total0 - hordeHealth() == 1800.0f);
 	int killed = 0;
 	for (ObjectID id : members)
 	{
 		Object *m = logic.findObjectByID(id);
 		killed += !m || m->isEffectivelyDead() ? 1 : 0;
 	}
-	CHECK(killed == 6);
+	CHECK(killed == 9);
 }
 
 TEST_CASE("fly1 retail: every template of the retail data with a GiantBirdAIUpdate, by exact name, runs the class and flies to a point")

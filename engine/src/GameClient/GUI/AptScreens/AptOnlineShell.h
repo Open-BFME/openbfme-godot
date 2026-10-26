@@ -47,14 +47,18 @@
 //   * the staging room's state machine beyond the facts above (which state the update moves from, the GameSpy NAT negotiation, the countdown) is
 //     OpenBFME's: the host's Play Game sends the lobby's START; a lobby without a relay refuses it (no_relay), which the player sees as a message box
 //     [S-4074];
-//   * Strategic (War of the Ring online) and the Messenger are not ported: their pages report "not available" [S-4075]; lane ONLINEHUB-1 ported the
-//     TOURNAMENT (OnlineQuickMatch: Quick Match and the tournaments) and STATS pages on the OpenBFME platform (GUI/AptScreens/AptOnlineHub.h).
+//   * Strategic (War of the Ring online) is not ported: its page reports "not available" [S-4075]; lane ONLINEHUB-1 ported the TOURNAMENT
+//     (OnlineQuickMatch: Quick Match and the tournaments) and STATS pages on the OpenBFME platform (GUI/AptScreens/AptOnlineHub.h); SOCIAL-1 (Devin,
+//     landed by lane ONLINEMENU-1) the Messenger (GUI/AptScreens/AptMessenger.h)
 
 #pragma once
 
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
+#include "GameClient/GUI/AptScreens/OpenBFMEOptionsPage.h"
 #include "Common/SimulationProfile.h"
+#include "GameNetwork/RelayProbe.h" // lane ONLINEMENU-1: RelayProbe::Result kept (m_lastLink)
 
+#include <array>
 #include <functional>
 #include <map>
 #include <memory>
@@ -64,6 +68,10 @@
 
 class AptMessageBox;
 class AptOnlineHub;
+class AptMessenger;
+class RelayProbe;
+#include "GameNetwork/JoinBuild.h"
+
 class OnlineLobbyClient;
 
 // What the online screens need from the host program (ShellEnvironment::online)
@@ -104,6 +112,17 @@ public:
 	int sortColumn() const { return m_sortColumn; } ///< lane MENUWORK-1: the game list's sort (the menu inventory's evidence)
 	bool sortDescending() const { return m_sortDescending; }
 	AptMessageBox *messageBox() const { return m_box.get(); }
+	AptMessenger *messenger() const { return m_messenger.get(); }
+	// lane ONLINEMENU-1 (owner, 2026-10-20: friends in the game's own Messenger, no OpenBFME page): a Yes / No question the host program asks in
+	// GuiFX's own box (a friend's game invite: RotWK's APT:BuddyInviteTitle / APT:BuddyInviteTextOpenPlay). False while a box is up (ask again
+	// later); the answer comes back once as "<key>|yes" or "<key>|no" (takeAnswers)
+	bool askYesNo(const std::string &key, const std::u16string &title, const std::u16string &text);
+	std::vector<std::string> takeAnswers();
+	// Sol (delta review): whether the box still shows that question (false once answered, or when another box took its place: the room closed
+	// under the player, a refusal); the host asks again or drops it, never acting on it
+	bool asking(const std::string &key);
+	void cancelAsk(const std::string &key);
+	bool createChallenge(const std::string &pid, const std::string &mode, const std::string &password);
 	// the rows of the game list (tests): "name|map|players|lock"
 	const std::vector<std::string> &gameRows() const { return m_gameRows; }
 	const std::vector<std::string> &gameIds() const { return m_rowIds; }
@@ -135,6 +154,30 @@ public:
 	void startRunning(const std::string &id, bool rejoin);
 	// lane ONLINEUX-1 (tests): whether the movie was last told to enable its Login button (-1: not told yet)
 	int loginButtonState() const { return m_loginButton; }
+	// lane ONLINEMENU-1 (tests): the Connections screen's cells as last drawn ("" not drawn), and whether it is open
+	const std::string &connectionCell(int row, int column) const { return m_gridFrames[(size_t)(row * MAX_SLOTS + column)]; }
+	bool connectionsOpen() const { return m_connectionsOpen; }
+	const std::string &gridCaller() const { return m_gridCaller; }
+	// lane ONLINEMENU-1 (owner, 2026-10-20: the grid "makes like no sense just have it show like ping to server, ping to other players etc"): the
+	// Connections screen is covered by an OpenBFME page (OpenBFMEOptionsPage) that says it in words: the lobby server's
+	// response time, the player's ping to the game relay and its loss, and each other player's ping to the player through the relay. NOT RETAIL. The
+	// grid underneath still follows the links (drawConnectionGrid); the screen's own DONE closes both
+	bool networkPageOpen() const { return m_networkPage && m_networkPage->shown(); }
+	OpenBFMEOptionsPage *networkPage() const { return m_networkPage.get(); }
+	// a room player's ping as the room shows it (the Players list's second column, the page): the player's own ping to the relay, another player's
+	// ping to the local player (their two pings to the relay: what a message between them crosses); "" when the room has no relay or `slot` no player
+	UnicodeString pingText(int slot, Color *color) const;
+	bool networkMouse(int kind, float x, float y); ///< the window manager's mouse filter while the shell is on top
+	// lane JOINVER-1: the DETAILS button of a build refusal (virtual 1024 x 768, under the GuiFX box's OK)
+	static constexpr int kDetailsLeft = 452, kDetailsTop = 548, kDetailsRight = 572, kDetailsBottom = 576;
+	/// lane JOINVER-1: the text DETAILS copied (once; "" when nothing waits): the host puts it on the system clipboard
+	std::string takeClipboard() { std::string out; out.swap(m_clipboard); return out; }
+	const std::string &joinDetails() const { return m_joinDetails; } ///< lane JOINVER-1: the DETAILS text while the build refusal is up, else ""
+	bool buildDetailsUp() const;
+	/// lane JOINVER-1: whether a listed game runs another build than this client's (same performance mode, a profile other than ours)
+	bool otherBuild(const std::string &state, const std::string &profile, SimulationProfile mode) const;
+	void showBuildRefusal(const JoinBuild::Build &host, const std::string &hostProfile);
+	void takeDecorator();
 	void nicknameEdited() { applyLoginButton(false); } ///< the nickname set by the host program (a script): as a typed change
 	// the home page's ticker rows the screens filled ("label|value"), in the movie's order
 	const std::vector<std::string> &tickerRows() const { return m_tickerRows; }
@@ -148,13 +191,15 @@ protected:
 	void lobbyChanged() override;
 	bool lobbyEditable(int slot) const override;
 	void onReadyPress(const std::string &argument) override;
-	bool heroChoiceAvailable() const override { return false; } // lane ONLINE-5: S-4076 (no Create-a-Hero record through the lobby): shown locked
-	bool handicapChoiceAvailable() const override { return false; } // lane OWNERFIX-2: the online start carries no handicap (S-4552): shown locked
+	// lane ONLINEMENU-1: the lobby carries each player's Create-a-Hero record (was locked: ONLINE-5, S-4076), so the Hero combo works as the LAN one does
+	// lane ONLINEMENU-1: the lobby carries each slot's handicap into the START (was locked: OWNERFIX-2, S-4552), so the combo works as the LAN one does
 	int setupFlags() const override { return 0x200001F0; } // lane ONLINE-5: RW 0x9AF464 (BFME2 0x5A5BC7's 0x200001F0)
 	bool applySlotHero(int slot, const CreateAHeroHero *hero) override;
 	void onKickPlayer(const std::string &argument) override;
 	void onChatSend(const std::u16string &text) override;
+	UnicodeString chatPlayerNote(int slot, Color *color) const override { return pingText(slot, color); } // lane ONLINEMENU-1
 	bool showChat() const override;
+	bool cheatModeOffered() const override; // lane CHEAT-1: never in a Quick Match / tournament room
 	void ruleNotice(const std::u16string &line) override;
 	void showRuleWarning(const std::u16string &title, const std::u16string &text) override;
 
@@ -189,6 +234,12 @@ private:
 	void fillTicker();                          ///< RW 0x9C881D / 0x9C8694: the home page's ticker rows
 	bool gameLeft(const std::string &id) const; ///< a started game this player left (ctx leftGames)
 	void showSelectedGameMap();                 ///< the browser's MAP panel shows the selected game's map (the panel is read only there)
+	// lane ONLINEMENU-1
+	std::string connectionFrame(int row, int column) const; ///< BFME2 0x005DB512: a cell's frame
+	void drawConnectionGrid();                              ///< BFME2 0x005DB647 RedrawGrid
+	void updateRelayLink();                                 ///< probe the room's relay, report the link
+	void updateNetworkPage();                               ///< shows / refreshes / closes the page over the Connections screen
+	OpenBFMEPageSpec networkSpec() const;
 
 	void update();
 	void pumpClient();
@@ -235,9 +286,38 @@ private:
 	std::map<std::string, PageNames> m_pages;  // + 0x280 (the loaded pages)
 	std::string m_advMode = "0";
 	std::unique_ptr<AptMessageBox> m_box;
+	std::unique_ptr<AptMessenger> m_messenger;
+	std::string m_challengeTarget, m_challengeMode, m_challengePassword;
+	bool m_socialJoined = false;
 	std::vector<std::string> m_boxes;
 	std::vector<std::string> m_startRefusals;
-	int m_closeConnections = 0; ///< lane ONLINE-5 (S-4550): updates until the Connections screen the movie opened is closed again (0: none)
+	std::vector<std::string> m_answers; ///< lane ONLINEMENU-1: askYesNo's answers not yet taken
+	std::string m_askKey;               ///< the question the box shows ("" none)
+	std::u16string m_askTitle, m_askText;
+	// lane ONLINEMENU-1: the Connections screen on the relay (RelayProbe.h)
+	bool m_connectionsOpen = false;
+	int m_gridDue = 0;                      ///< updates until the grid is drawn after the screen opened
+	std::string m_gridDrawn;                ///< what the grid shows now (redrawn when it changes)
+	std::string m_gridPath = "?";           ///< where the movie's grid functions were found
+	std::string m_gridCaller;               ///< the clip that called Connection::RedrawGrid (its target path)
+	// lane JOINVER-1: a join refused for a different build: the box says both builds in plain words; the profile ids are behind its DETAILS
+	// button (drawn on the gadget layer while that box is up), which shows them and copies them for a bug report (takeClipboard)
+	std::string m_joinDetails;
+	bool m_detailsShown = false, m_detailsHot = false, m_detailsPressed = false;
+	std::string m_clipboard;
+	std::vector<bool> m_rowOtherBuild; ///< lane JOINVER-1: a row of a game of another build (greyed: it cannot be joined)
+	void decorateAll(GadgetDrawList &out);
+	std::array<std::string, MAX_SLOTS * MAX_SLOTS> m_gridFrames; ///< each cell's frame as last drawn (tests)
+	std::unique_ptr<RelayProbe> m_probe;
+	std::uint64_t m_probeDueMs = 0;
+	std::uint64_t m_probeDoneMs = 0;        ///< when the last measurement ended (0 none)
+	std::string m_probeTarget;              ///< "room <relay>" / "lobby <relay>" being measured ("" none)
+	RelayProbe::Result m_lastLink;          ///< Sol: the last completed measurement (shown while the next one runs)
+	bool m_hasLastLink = false;
+	std::string m_relayErrorNoted;          ///< the lobby's relay lookup failure last noted
+	std::unique_ptr<OpenBFMEOptionsPage> m_networkPage;
+	std::string m_networkRows;              ///< the page's row keys as shown (a change rebuilds it; values change in place)
+	std::string m_linkReported;             ///< the band last reported to the lobby ("" none)
 	// login
 	GameWindow *m_nickname = nullptr, *m_email = nullptr, *m_password = nullptr, *m_remember = nullptr;
 	bool m_loginSent = false;

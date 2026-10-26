@@ -1,0 +1,10 @@
+[
+  "engine/src/GameClient/GUI/AptScreens/AptOnlineShell.cpp",
+  "engine/src/GameClient/GUI/AptScreens/AptSimpleScreens.cpp",
+  "engine/src/GameClient/GUI/AptScreens/AptSkirmish.cpp",
+  "engine/src/GameClient/GUI/AptScreens/AptCreateAHero.cpp",
+  "engine/src/GameClient/VP6Decoder.cpp",
+  "engine/src/GameClient/InGameHud.cpp",
+  "engine/src/Common/Audio/Mp3Decoder.cpp",
+  "engine/src/GameClient/GUI/AptScreens/AptOnlineHub.cpp"
+]

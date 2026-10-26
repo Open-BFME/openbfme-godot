@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <utility>
 
 namespace
 {
@@ -17,6 +18,7 @@ constexpr std::uint8_t kVersion = LANAPI::kProtocolVersion;
 constexpr std::uint32_t kBroadcast = 0xFFFFFFFFu;
 constexpr std::uint32_t kLoopback = 0x7F000001u;
 constexpr std::uint64_t kStartGiveUpMs = 10000; // OpenBFME: a host stops resending GAME_START after this (reported)
+constexpr size_t kMaxDatagramBytes = 65507; // IPv4's 65535 bytes minus its 20-byte header and UDP's 8-byte header
 
 NetAddress discoveryAddress(const NetAddress &previous, const NetAddress &incoming)
 {
@@ -83,8 +85,13 @@ void LANAPI::applySlotRequest(SkirmishGameInfo &info, int slot, int playerTempla
 	}
 }
 
-bool LANAPI::slotRequestValid(int playerTemplate, int color, int team, int startPos, int handicap, std::string *why) const
+bool LANAPI::slotRequestValid(const SkirmishGameInfo &info, int playerTemplate, int color, int team, int startPos, int handicap, std::string *why) const
 {
+	if (info.mapStartCount < LEGACY_MAX_SLOTS || info.mapStartCount > MAX_SLOTS)
+	{
+		if (why) *why = "invalid map capacity " + std::to_string(info.mapStartCount);
+		return false;
+	}
 	auto check = [&](const char *name, int v, int count) {
 		if (v == kKeep || (v >= -1 && v < count))
 		{
@@ -96,8 +103,11 @@ bool LANAPI::slotRequestValid(int playerTemplate, int color, int team, int start
 		}
 		return false;
 	};
-	if (!(check("faction", playerTemplate, m_options.playerTemplateCount) && check("colour", color, m_options.colorCount) && check("team", team, MAX_SLOTS / 2)
-			&& check("start position", startPos, MAX_SLOTS)))
+	// lane P16: team bounds track the game's own slot count and start positions the map's advertised
+	// capacity — see SkirmishGameSetup::teamEntries for the same rule
+	const int slotCount = info.serializedSlotCount();
+	if (!(check("faction", playerTemplate, m_options.playerTemplateCount) && check("colour", color, m_options.colorCount) && check("team", team, slotCount / 2)
+			&& check("start position", startPos, info.mapStartCount)))
 	{
 		return false;
 	}
@@ -130,7 +140,8 @@ bool LANAPI::gameInfoValid(const SkirmishGameInfo &info, std::string *why) const
 	{
 		const SkirmishGameSlot &s = info.slots[i];
 		std::string w;
-		if (!slotRequestValid(s.playerTemplate, s.color, s.teamNumber, s.startPos, s.handicap, &w) || s.playerTemplate == kKeep || s.color == kKeep || s.teamNumber == kKeep
+		if (!slotRequestValid(info, s.playerTemplate, s.color, s.teamNumber, s.startPos, s.handicap, &w) || s.playerTemplate == kKeep || s.color == kKeep
+			|| s.teamNumber == kKeep
 			|| s.startPos == kKeep)
 		{
 			if (why)
@@ -267,7 +278,14 @@ void LANAPI::sendTo(const NetAddress &to, const std::vector<std::uint8_t> &bytes
 {
 	if (m_lobbySocket && to.port != 0)
 	{
-		m_lobbySocket->sendTo(to, bytes.data(), bytes.size());
+		if (bytes.size() > kMaxDatagramBytes)
+		{
+			m_errors.push_back("LAN datagram of " + std::to_string(bytes.size()) + " bytes exceeds the IPv4 UDP payload limit: not sent to " + to.text());
+		}
+		else if (!m_lobbySocket->sendTo(to, bytes.data(), bytes.size()))
+		{
+			m_errors.push_back("failed to send LAN datagram of " + std::to_string(bytes.size()) + " bytes to " + to.text());
+		}
 	}
 }
 
@@ -335,7 +353,8 @@ void LANAPI::broadcastOptions()
 	w.u8(OPT_FULL);
 	w.wstr(m_current.name);
 	NetPacket::writeGameInfo(w, m_current.info);
-	for (int s = 0; s < MAX_SLOTS; ++s)
+	// lane P16: the trailing per-slot entries follow the record's wire layout: 8 for a legacy (<=8 start) map, 16 for an extended one
+	for (int s = 0; s < m_current.info.serializedSlotCount(); ++s)
 	{
 		writeAddress(w, m_current.lobby[(size_t)s]);
 		writeAddress(w, m_current.game[(size_t)s]);
@@ -685,23 +704,36 @@ bool LANAPI::hostStartGame(std::string *reason)
 		}
 	}
 	// the start every peer begins from (GameNetwork/LANLobby.h LobbyStart)
-	m_start = LobbyStart();
-	m_start.game.mode = NewGameMode::Skirmish;
-	m_start.game.game = m_current.info;
-	m_start.game.game.inProgress = true;
-	if (m_start.game.game.seed == 0)
+	LobbyStart start;
+	start.game.mode = NewGameMode::Skirmish;
+	start.game.game = m_current.info;
+	start.game.game.inProgress = true;
+	if (start.game.game.seed == 0)
 	{
-		m_start.game.game.seed = (std::uint32_t)(m_now * 2654435761u) | 1u; // the host's choice (retail: GetTickCount)
+		start.game.game.seed = (std::uint32_t)(m_now * 2654435761u) | 1u; // the host's choice (retail: GetTickCount)
 	}
-	m_start.runAhead = m_options.runAhead;
-	m_start.crcInterval = m_options.crcInterval;
-	m_start.profile = m_profile;
+	start.runAhead = m_options.runAhead;
+	start.crcInterval = m_options.crcInterval;
+	start.profile = m_profile;
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
-		m_start.networkSlot[(size_t)s] = m_current.info.slots[s].isHuman();
-		m_start.addresses[(size_t)s] = m_current.game[(size_t)s]; // the host's own ip is 0: a player takes the address it heard the host from
+		start.networkSlot[(size_t)s] = m_current.info.slots[s].isHuman();
+		start.addresses[(size_t)s] = m_current.game[(size_t)s]; // the host's own ip is 0: a player takes the address it heard the host from
 	}
-	m_start.localSlot = 0;
+	NetByteWriter body;
+	body.u8(0); // the receiver's slot
+	body.bytes(LANLobby::encodeStart(start));
+	const size_t bytes = header(LANMessageType::GAME_START).size() + body.data().size();
+	if (bytes > kMaxDatagramBytes)
+	{
+		if (reason)
+		{
+			*reason = "LAN START of " + std::to_string(bytes) + " bytes exceeds the IPv4 UDP payload limit (" + std::to_string(kMaxDatagramBytes) + ")";
+		}
+		return false;
+	}
+	start.localSlot = 0;
+	m_start = std::move(start);
 	m_current.inProgress = true;
 	m_starting = true;
 	m_startAcked.fill(false);
@@ -1397,7 +1429,7 @@ bool LANAPI::handleGameOptions(NetByteReader &r, const NetAddress &from, std::ui
 		m_errors.push_back("malformed game options: " + error);
 		return false;
 	}
-	for (int s = 0; s < MAX_SLOTS; ++s)
+	for (int s = 0; s < g.info.serializedSlotCount(); ++s)
 	{
 		g.lobby[(size_t)s] = readAddress(r);
 		g.game[(size_t)s] = readAddress(r);
@@ -1451,7 +1483,7 @@ bool LANAPI::handleSlotRequest(NetByteReader &r, const NetAddress &from)
 		return false;
 	}
 	std::string why;
-	if (!slotRequestValid(playerTemplate, color, team, startPos, handicap, &why))
+	if (!slotRequestValid(m_current.info, playerTemplate, color, team, startPos, handicap, &why))
 	{
 		m_errors.push_back("a slot request from " + from.text() + " with the " + why + ": refused");
 		return false;

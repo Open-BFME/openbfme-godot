@@ -222,7 +222,7 @@ func _browse(edit: LineEdit, what: String) -> void:
 
 
 func _recheck() -> void:
-	var r: Dictionary = _setup.check(_rotwk_edit.text.strip_edges(), _bfme2_edit.text.strip_edges())
+	var r: Dictionary = _setup.check(_rotwk_edit.text, _bfme2_edit.text)
 	_checked_ok = r.ok
 	_start.disabled = not r.ok
 	var t := ""
@@ -243,7 +243,7 @@ func _on_start() -> void:
 	_status.text = "Checking every game file (the first time this can take a minute)..."
 	await get_tree().process_frame
 	await get_tree().process_frame
-	var mount := _mount_and_remember(_rotwk_edit.text.strip_edges(), _bfme2_edit.text.strip_edges())
+	var mount := _mount_and_remember(_rotwk_edit.text, _bfme2_edit.text)
 	if mount.ok:
 		finished.emit(mount)
 		return

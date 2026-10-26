@@ -22,6 +22,7 @@
 #include "Common/Team.h"
 #include "GameClient/ClientEvents.h"
 #include "GameClient/DrawableLaunchBones.h"
+#include "GameClient/DrawableWallMeshes.h"
 #include "GameClient/LogicSnapshot.h"
 #include "GameClient/DrawableManager.h"
 #include "GameClient/LiveGameFrameDriver.h"
@@ -310,6 +311,8 @@ public:
 	// lane SCRIPT-1: the script engine's client requests (camera, UI, audio ...) published with the frames, in execution order (render side; taken once)
 	std::vector<ScriptClientRequest> takeScriptRequests();
 	bool mapScriptsRunning() const { return m_mapScripts; }
+	// lane CHEAT-1: the Cheat Mode lines (GameLogic/CheatMode.h) published with the frames, in execution order (render side; taken once)
+	std::vector<CheatMode::LogEntry> takeCheatAnnouncements();
 
 	struct Report
 	{
@@ -334,6 +337,7 @@ public:
 		std::vector<std::string> movement;     ///< MOVE-1: the AI world's movement-data errors
 		std::vector<std::string> movementStops; ///< MOVE-1: the stops the movers raised
 		std::vector<std::string> launchBoneProblems; ///< RENDER-2: the launch-bone provider's data problems (missing models / bones / pose animations); counted in its S-460 stop
+		std::vector<std::string> wallMeshProblems;   ///< WALL-1: the wall-mesh provider's data problems (a missing wall model, in errors too; a named mesh the model lacks)
 	};
 	// the load-time part is fixed; logic and drawables are read when this is called
 	Report report() const;
@@ -357,6 +361,7 @@ private:
 	std::unique_ptr<PlayerList> m_players;
 	std::unique_ptr<WW3DDrawAssets> m_launchAssets;      // RENDER-2: the launch bone provider's view of the assets
 	std::unique_ptr<DrawableLaunchBones> m_launchBones; // RENDER-2: the drawables' launch bones (RW 0x6756A1) for the logic's projectile launches; before the logic
+	std::unique_ptr<DrawableWallMeshes> m_wallMeshes;   // WALL-1: the wall pieces' walkable surfaces for the pathfinder (RW 0x936B7D); before the AI world
 	std::unique_ptr<DrawableManager> m_drawables; // before the logic: the logic deletes its objects (and calls the manager) in its destructor first
 	std::unique_ptr<LiveScripting> m_scripting;   // likewise: the objects' destructors call the world hooks
 	std::unique_ptr<class MapScriptSetup> m_scriptSetup; // lane SCRIPT-1: the libraries the script engine's lists point into (outlive the logic)
@@ -418,6 +423,8 @@ private:
 	std::shared_ptr<const FrameCompletion> captureCompletion(const WorkItem &item, std::int64_t simUs = -1); ///< simulation owner, after the frame
 
 	// lane SCRIPT-1: the sides' lists and libraries into the logic's ScriptEngine (before the map's objects exist)
+	static bool mapScriptsWanted(const Options &options);
+	bool buildMapScriptSetup(const SidesList &sidesUsed, const std::set<std::string> &slotSides, std::string *error);
 	bool setupMapScripts(const Options &options, const SidesList &sidesUsed, const std::set<std::string> &slotSides, std::string *error);
 	// ---- lane SMOOTH-1: the simulation owner, the publication and the presentation ----
 	void runFrameOwned(const WorkItem &item); ///< one logic frame, its hash, its snapshot and events published (on the owner's thread)
@@ -442,6 +449,7 @@ private:
 	mutable std::condition_variable m_pubCv;
 	std::shared_ptr<const LogicSnapshot> m_published, m_publishedPrev; ///< guarded by m_pubMutex
 	std::vector<ClientEvent> m_publishedEvents;                         ///< guarded: published, not yet taken by the render side
+	std::vector<CheatMode::LogEntry> m_publishedCheatLines;               ///< guarded: lane CHEAT-1, published, not yet taken
 	std::vector<ScriptClientRequest> m_publishedScriptRequests;         ///< guarded: lane SCRIPT-1, published, not yet taken
 	std::vector<std::pair<UnsignedInt, std::uint32_t>> m_frameHashes;   ///< guarded
 	std::deque<WorkItem> m_work;          ///< guarded: frames requested from the worker (numbered batches with a driver), not started

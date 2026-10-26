@@ -104,6 +104,15 @@ bool decodeWith(const char *alphabet, const std::string &text, bool padded, std:
 	return (acc & ((1u << bits) - 1)) == 0;
 }
 
+void put16(std::uint8_t *p, std::uint16_t v)
+{
+	p[0] = (std::uint8_t)v;
+	p[1] = (std::uint8_t)(v >> 8);
+}
+std::uint16_t get16(const std::uint8_t *p)
+{
+	return (std::uint16_t)(p[0] | ((std::uint16_t)p[1] << 8));
+}
 void put32(std::uint8_t *p, std::uint32_t v)
 {
 	for (int i = 0; i < 4; ++i)
@@ -131,51 +140,134 @@ const char *refuseReasonName(int reason)
 	case REFUSE_NO_LOG: return "the relay keeps no log of the game";
 	case REFUSE_SPECTATOR: return "a spectator sends no commands";
 	case REFUSE_REJOIN_BEFORE_BIND: return "cannot rejoin: the original player never connected to the relay";
+	case REFUSE_CAPABILITY: return "the client lacks the capability the game's mode requires";
+	case REFUSE_MODE_MIXED: return "the ticket's mode disagrees with the game's";
+	case REFUSE_AUTH_REQUIRED: return "the game requires authenticated datagrams (update the client)";
 	default: return "unknown reason";
 	}
 }
 
-std::array<std::uint8_t, kTicketBytes> signTicket(const Ticket &t, const std::vector<std::uint8_t> &key)
+size_t ticketSize(std::uint8_t version)
 {
-	std::array<std::uint8_t, kTicketBytes> b{};
-	b[0] = 1;
+	switch (version)
+	{
+	case 1: return kTicketBytes;
+	case 2:
+	case 3: return kTicketBytesV2;
+	case 4: return kTicketBytes16;
+	case 5:
+	case 6: return kTicketBytesV2_16;
+	case 7: return kTicketBytesFlags;
+	default: return 0;
+	}
+}
+
+namespace
+{
+std::vector<std::uint8_t> sign(const Ticket &t, const std::vector<std::uint8_t> &key, std::uint8_t kind)
+{
+	// lane NET-SYNC: a mode-flagged START ticket is version 7 (version 4 plus the u8 mode byte)
+	if (kind == 1 && t.mode)
+	{
+		std::vector<std::uint8_t> b(ticketSize(7), 0);
+		b[0] = 7;
+		b[1] = t.keyId;
+		put32(&b[2], (std::uint32_t)(t.gameId & 0xFFFFFFFFu));
+		put32(&b[6], (std::uint32_t)(t.gameId >> 32));
+		b[10] = t.slot;
+		b[11] = (std::uint8_t)t.slotMask;
+		b[12] = (std::uint8_t)(t.slotMask >> 8);
+		b[13] = t.mode;
+		put32(&b[14], t.expires);
+		put16(&b[18], t.frameMs); // ROUTER-1
+		const size_t signedBytes = b.size() - kTicketMacBytes;
+		const std::array<std::uint8_t, 32> mac = HmacSha256(key.data(), key.size(), b.data(), signedBytes);
+		std::memcpy(b.data() + signedBytes, mac.data(), kTicketMacBytes);
+		return b;
+	}
+	const size_t extra = t.slotMask > 0xff ? 1 : 0;
+	const std::uint8_t version = (std::uint8_t)(kind + (extra ? 3 : 0));
+	std::vector<std::uint8_t> b(ticketSize(version), 0);
+	b[0] = version;
 	b[1] = t.keyId;
 	put32(&b[2], (std::uint32_t)(t.gameId & 0xFFFFFFFFu));
 	put32(&b[6], (std::uint32_t)(t.gameId >> 32));
 	b[10] = t.slot;
-	b[11] = t.slotMask;
-	put32(&b[12], t.expires);
-	const std::array<std::uint8_t, 32> mac = HmacSha256(key.data(), key.size(), b.data(), 16);
-	std::memcpy(&b[16], mac.data(), kTicketMacBytes);
+	b[11] = (std::uint8_t)t.slotMask;
+	if (extra)
+	{
+		b[12] = (std::uint8_t)(t.slotMask >> 8);
+	}
+	put32(&b[12 + extra], t.expires);
+	if (kind != 1)
+	{
+		const std::uint16_t value = kind == 3 ? t.delaySeconds : t.generation;
+		b[16 + extra] = (std::uint8_t)value;
+		b[17 + extra] = (std::uint8_t)(value >> 8);
+	}
+	const size_t signedBytes = b.size() - kTicketMacBytes;
+	const std::array<std::uint8_t, 32> mac = HmacSha256(key.data(), key.size(), b.data(), signedBytes);
+	std::memcpy(b.data() + signedBytes, mac.data(), kTicketMacBytes);
 	return b;
+}
+} // namespace
+
+std::vector<std::uint8_t> signTicket(const Ticket &t, const std::vector<std::uint8_t> &key)
+{
+	return sign(t, key, 1);
 }
 
 std::vector<std::uint8_t> signRejoinTicket(const Ticket &t, const std::vector<std::uint8_t> &key)
 {
-	std::vector<std::uint8_t> b(kTicketBytesV2, 0);
-	b[0] = 2;
-	b[1] = t.keyId;
-	put32(&b[2], (std::uint32_t)(t.gameId & 0xFFFFFFFFu));
-	put32(&b[6], (std::uint32_t)(t.gameId >> 32));
-	b[10] = t.slot;
-	b[11] = t.slotMask;
-	put32(&b[12], t.expires);
-	b[16] = (std::uint8_t)(t.generation & 0xFF);
-	b[17] = (std::uint8_t)(t.generation >> 8);
-	const std::array<std::uint8_t, 32> mac = HmacSha256(key.data(), key.size(), b.data(), 18);
-	std::memcpy(&b[18], mac.data(), kTicketMacBytes);
-	return b;
+	return sign(t, key, 2);
 }
 
 std::vector<std::uint8_t> signSpectatorTicket(const Ticket &t, const std::vector<std::uint8_t> &key)
 {
-	Ticket s = t;
-	s.generation = t.delaySeconds;
-	std::vector<std::uint8_t> b = signRejoinTicket(s, key); // the same layout; byte 0 and the MAC differ
-	b[0] = 3;
-	const std::array<std::uint8_t, 32> mac = HmacSha256(key.data(), key.size(), b.data(), 18);
-	std::memcpy(&b[18], mac.data(), kTicketMacBytes);
-	return b;
+	return sign(t, key, 3);
+}
+
+bool readTicketFields(const std::uint8_t *bytes, size_t size, Ticket &out, std::string *error)
+{
+	auto fail = [&](const std::string &why) {
+		if (error)
+		{
+			*error = why;
+		}
+		return false;
+	};
+	if (!bytes || !size || !ticketSize(bytes[0]) || size != ticketSize(bytes[0]))
+	{
+		return fail("a ticket of " + std::to_string(size) + " bytes or another ticket version");
+	}
+	const size_t extra = bytes[0] >= 4 ? 1 : 0;
+	const int kind = bytes[0] == 7 ? 1 : bytes[0] - (extra ? 3 : 0);
+	Ticket t;
+	t.keyId = bytes[1];
+	t.gameId = (std::uint64_t)get32(bytes + 2) | ((std::uint64_t)get32(bytes + 6) << 32);
+	t.slot = bytes[10];
+	t.slotMask = (std::uint16_t)(bytes[11] | (extra ? bytes[12] << 8 : 0));
+	t.mode = bytes[0] == 7 ? bytes[13] : 0;
+	t.frameMs = bytes[0] == 7 ? get16(bytes + 18) : 0; // ROUTER-1: 0 = the 200 ms default
+	t.expires = get32(bytes + 12 + extra + (bytes[0] == 7 ? 1 : 0));
+	t.generation = kind == 2 ? (std::uint16_t)(bytes[16 + extra] | (bytes[17 + extra] << 8)) : 0;
+	t.spectator = kind == 3;
+	t.delaySeconds = t.spectator ? (std::uint16_t)(bytes[16 + extra] | (bytes[17 + extra] << 8)) : 0;
+	if (kind == 2 && !t.generation)
+	{
+		return fail("a rejoin ticket of generation 0");
+	}
+	if (t.spectator ? t.slot >= kMaxSpectators : (t.slot >= kMaxSlots || !(t.slotMask & (1u << t.slot))))
+	{
+		return fail(t.spectator ? "spectator index " + std::to_string(t.slot) + " (0 .. 15)"
+			: "ticket slot " + std::to_string(t.slot) + " is not one of the game's network slots");
+	}
+	if (!t.slotMask)
+	{
+		return fail("a ticket with no network slots");
+	}
+	out = t;
+	return true;
 }
 
 bool verifyTicket(const std::uint8_t *bytes, size_t size, const KeyRing &keys, std::uint32_t nowUnix, Ticket &out, std::string *error, RefuseReason *reason)
@@ -191,10 +283,7 @@ bool verifyTicket(const std::uint8_t *bytes, size_t size, const KeyRing &keys, s
 		}
 		return false;
 	};
-	// lane ONLINE-3: version 1 (32 bytes, the START's) or version 2 (34 bytes, a rejoin ticket with its generation)
-	const bool v3 = size == kTicketBytesV2 && bytes[0] == 3; // lane ONLINE-3: a spectator ticket
-	const bool v2 = size == kTicketBytesV2 && (bytes[0] == 2 || v3);
-	if (!(size == kTicketBytes && bytes[0] == 1) && !v2)
+	if (!bytes || !size || !ticketSize(bytes[0]) || size != ticketSize(bytes[0]))
 	{
 		return fail(REFUSE_BAD_TICKET, "a ticket of " + std::to_string(size) + " bytes or another ticket version");
 	}
@@ -203,41 +292,17 @@ bool verifyTicket(const std::uint8_t *bytes, size_t size, const KeyRing &keys, s
 	{
 		return fail(REFUSE_BAD_TICKET, "ticket key id " + std::to_string(bytes[1]) + " is not in the key ring");
 	}
-	const size_t signedBytes = v2 ? 18 : 16;
+	const size_t signedBytes = size - kTicketMacBytes;
 	const std::array<std::uint8_t, 32> mac = HmacSha256(key->second.data(), key->second.size(), bytes, signedBytes);
 	if (!ConstantTimeEqual(mac.data(), bytes + signedBytes, kTicketMacBytes))
 	{
 		return fail(REFUSE_BAD_TICKET, "the ticket's signature does not match");
 	}
 	Ticket t;
-	t.keyId = bytes[1];
-	t.gameId = (std::uint64_t)get32(bytes + 2) | ((std::uint64_t)get32(bytes + 6) << 32);
-	t.slot = bytes[10];
-	t.slotMask = bytes[11];
-	t.expires = get32(bytes + 12);
-	t.generation = v2 && !v3 ? (std::uint16_t)(bytes[16] | (bytes[17] << 8)) : 0;
-	if (v2 && !v3 && t.generation == 0)
+	std::string why;
+	if (!readTicketFields(bytes, size, t, &why))
 	{
-		return fail(REFUSE_BAD_TICKET, "a rejoin ticket of generation 0");
-	}
-	if (v3)
-	{
-		t.spectator = true;
-		t.delaySeconds = (std::uint16_t)(bytes[16] | (bytes[17] << 8));
-		if (t.slot >= kMaxSpectators)
-		{
-			return fail(REFUSE_BAD_TICKET, "spectator index " + std::to_string(t.slot) + " (0 .. 15)");
-		}
-		if (nowUnix > t.expires)
-		{
-			return fail(REFUSE_EXPIRED, "the ticket expired");
-		}
-		out = t;
-		return true;
-	}
-	if (t.slot >= kMaxSlots || !(t.slotMask & (1u << t.slot)))
-	{
-		return fail(REFUSE_BAD_TICKET, "ticket slot " + std::to_string(t.slot) + " is not one of the game's network slots");
+		return fail(REFUSE_BAD_TICKET, why);
 	}
 	if (nowUnix > t.expires)
 	{
@@ -354,16 +419,18 @@ void putHeader(std::vector<std::uint8_t> &out, Kind kind)
 	out.push_back((std::uint8_t)kind);
 }
 
-std::vector<std::uint8_t> encodeHello(const std::vector<std::uint8_t> &ticket, const std::vector<std::uint8_t> &sessionToken)
+std::vector<std::uint8_t> encodeHello(const std::vector<std::uint8_t> &ticket, const std::vector<std::uint8_t> &sessionToken, std::uint8_t caps)
 {
 	std::vector<std::uint8_t> d;
 	putHeader(d, HELLO);
 	d.insert(d.end(), ticket.begin(), ticket.end());
 	d.insert(d.end(), sessionToken.begin(), sessionToken.end());
+	d.push_back(caps); // lane NET-SYNC: the v4 HELLO's capability bits (always present on this envelope)
 	return d;
 }
 
-std::vector<std::uint8_t> encodeWelcome(std::uint64_t gameId, std::uint8_t slot, const std::array<std::uint8_t, kSessionTokenBytes> &sessionToken)
+std::vector<std::uint8_t> encodeWelcome(std::uint64_t gameId, std::uint8_t slot,
+	const std::array<std::uint8_t, kSessionTokenBytes> &sessionToken, std::uint64_t epoch)
 {
 	std::vector<std::uint8_t> d;
 	putHeader(d, WELCOME);
@@ -373,6 +440,13 @@ std::vector<std::uint8_t> encodeWelcome(std::uint64_t gameId, std::uint8_t slot,
 	}
 	d.push_back(slot);
 	d.insert(d.end(), sessionToken.begin(), sessionToken.end());
+	if (epoch) // lane NET-SYNC: canonical games tell the client the commit epoch their channel belongs to
+	{
+		for (int i = 0; i < 8; ++i)
+		{
+			d.push_back((std::uint8_t)(epoch >> (8 * i)));
+		}
+	}
 	return d;
 }
 

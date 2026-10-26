@@ -167,6 +167,10 @@ WindowMsgHandledType GadgetHorizontalSliderSystem(GameWindow *window, std::uint3
 			break;
 		case GGM_LEFT_DRAG:
 		{
+			if (s->minVal == s->maxVal || s->numTicks == 0.0f)
+			{
+				break;
+			}
 			const int mousex = (int)(mData2 & 0xFFFF);
 			int x, y;
 			GameWindow *child = window->winGetChild();
@@ -233,7 +237,7 @@ WindowMsgHandledType GadgetHorizontalSliderSystem(GameWindow *window, std::uint3
 			GameWindow *child = window->winGetChild();
 			s->minVal = (int)mData1;
 			s->maxVal = (int)mData2;
-			s->numTicks = (float)(size.x - HORIZONTAL_SLIDER_THUMB_WIDTH) / (float)(s->maxVal - s->minVal);
+			s->numTicks = s->maxVal == s->minVal ? 0.0f : (float)(size.x - HORIZONTAL_SLIDER_THUMB_WIDTH) / (float)(s->maxVal - s->minVal);
 			s->position = s->minVal;
 			child->winSetPosition(0, HORIZONTAL_SLIDER_THUMB_Y);
 			break;
@@ -260,7 +264,7 @@ WindowMsgHandledType GadgetHorizontalSliderSystem(GameWindow *window, std::uint3
 		{
 			// lane FB7-1, RotWK RW 0x7237F8 (message 0x4004): the ticks follow the new width and the thumb is 13 wide and the full height
 			const int width = (int)mData1, height = (int)mData2;
-			s->numTicks = (float)(width - HORIZONTAL_SLIDER_THUMB_WIDTH) / (float)(s->maxVal - s->minVal);
+			s->numTicks = s->maxVal == s->minVal ? 0.0f : (float)(width - HORIZONTAL_SLIDER_THUMB_WIDTH) / (float)(s->maxVal - s->minVal);
 			if (GameWindow *thumb = window->winGetChild())
 			{
 				thumb->winSetSize(HORIZONTAL_SLIDER_THUMB_WIDTH, height);
@@ -400,6 +404,10 @@ WindowMsgHandledType GadgetVerticalSliderSystem(GameWindow *window, std::uint32_
 			break;
 		case GGM_LEFT_DRAG:
 		{
+			if (s->minVal == s->maxVal || s->numTicks == 0.0f)
+			{
+				break;
+			}
 			const int mousey = (int)(mData2 >> 16);
 			int x, y, delta;
 			ICoord2D size, childSize, childCenter;
@@ -465,7 +473,7 @@ WindowMsgHandledType GadgetVerticalSliderSystem(GameWindow *window, std::uint32_
 			window->winGetSize(&size.x, &size.y);
 			s->minVal = (int)mData1;
 			s->maxVal = (int)mData2;
-			s->numTicks = (float)(size.y - GADGET_SIZE) / (float)(s->maxVal - s->minVal);
+			s->numTicks = s->maxVal == s->minVal ? 0.0f : (float)(size.y - GADGET_SIZE) / (float)(s->maxVal - s->minVal);
 			s->position = s->minVal;
 			child->winSetPosition(0, (int)((s->maxVal - s->minVal) * s->numTicks));
 			break;

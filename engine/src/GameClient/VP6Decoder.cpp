@@ -24,6 +24,7 @@
 // block 0 on top) and the output is flipped (the EA container's VP6 is stored upside down).
 
 #include "GameClient/VP6Decoder.h"
+#include "Common/PathIO.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -843,13 +844,14 @@ struct VP6Decoder::Impl
 		huffmanCoeffs = false;
 		if (coeffOffset)
 		{
-			buf += coeffOffset;
-			bufSize -= coeffOffset;
-			if (bufSize < 0)
+			// Reject an out-of-frame partition before forming a pointer beyond the padded packet.
+			if (coeffOffset > bufSize)
 			{
 				*error = "VP6 coefficient partition outside the frame";
 				return -1;
 			}
+			buf += coeffOffset;
+			bufSize -= coeffOffset;
 			if (useHuffman)
 			{
 				huffmanCoeffs = true;
@@ -2021,9 +2023,10 @@ bool parseChunks(size_t size, Read read, EAVP6Movie &out, std::string *error)
 			{
 				out.hasAlpha = true;
 			}
-			if (p[0] != 'v' && p[0] != 'V')
+			const std::string codec((const char *)p, 4);
+			if (codec != "vp60" && codec != "vp61" && codec != "VP60")
 			{
-				*error = tag + " codec '" + std::string((const char *)p, 4) + "' is not VP6";
+				*error = tag + " codec '" + codec + "' is not VP6";
 				return false;
 			}
 		}
@@ -2045,6 +2048,11 @@ bool parseChunks(size_t size, Read read, EAVP6Movie &out, std::string *error)
 			return false;
 		}
 		off += chunk;
+	}
+	if (off != size)
+	{
+		*error = "trailing " + std::to_string(size - off) + " bytes at " + std::to_string(off);
+		return false;
 	}
 	if (!header)
 	{
@@ -2090,7 +2098,7 @@ bool EAVP6Movie::parse(const std::uint8_t *data, size_t size, EAVP6Movie &out, s
 
 bool EAVP6Movie::parseFile(const std::string &path, EAVP6Movie &out, std::string *error)
 {
-	std::ifstream f(path, std::ios::binary);
+	std::ifstream f(PathIO::native(path), std::ios::binary);
 	if (!f)
 	{
 		*error = "cannot open " + path;

@@ -55,6 +55,7 @@
 #include "Common/INIDataTypes.h"
 #include "Common/PlayerScience.h"
 #include "GameLogic/ObjectTypes.h"
+#include "GameLogic/ScriptEngine/AttackPriority.h"
 #include "GameLogic/ScriptEngine/Scripts.h"
 
 #include <array>
@@ -142,6 +143,8 @@ public:
 	bool objectsReceiveDifficultyBonus() const { return m_objectsReceiveDifficultyBonus; }
 	bool loaded() const { return m_loaded; }
 	void reset();
+	// lane TARGET-1: the attack priority table (TheScriptEngine + 0x19200, RW 0x605938 getAttackInfo; AttackPriority.h)
+	AttackPriorityStore &attackPriorities() { return m_attackPriorities; }
 
 	// ---- the frame ---------------------------------------------------------------------------------------------------------------------------
 	// RW 0x60CC67 (see the header). GameLogic calls it first in phase 1's subsystem row.
@@ -151,10 +154,17 @@ public:
 	// Object::setName calls it: a name already in the cache gets the new object, a new name is appended. The cache keeps ids: an object that is
 	// gone (its id no longer resolves) is the retail entry whose object pointer was cleared
 	void objectNamed(Object &obj);
-	Object *getUnitNamed(const std::string &name) const; // RW 0x75A243 (the cache)
-	// RW 0x60A1D5: a cache entry for `name` (a new name appended, a known one re-pointed) without renaming the object (SET_REF_TO_... actions)
-	void nameInCache(const std::string &name, Object &obj);
-	// lane CAMP-1: RW 0x759601, the object has an entry in the named cache
+	// RW 0x75A243: lane CASTLE-UNPACK: an object reference of the name (qualified, RW 0x604043 -> 0x72C43C) answers first, with its object or null when
+	// that is gone (no further look); else the named cache by name
+	Object *getUnitNamed(const std::string &name) const;
+	// lane CASTLE-UNPACK: RW 0x608397, the script object references (+ 0x191B8: a map from (the current side + 0x1A20C, the name as given, not
+	// qualified) to the object's id + 0x74): the entry is made or re-pointed; the object keeps its name (SET_REF_TO_... and NAMED_BASE_UNPACK)
+	void setReference(const std::string &name, const Object &obj);
+	// RW 0x60A1D5: a named cache entry for `name` (a new name appended, a known one re-pointed) without renaming the object; SET_REF_TO_...
+	// writes it after the reference (RW 0x7C3FBB)
+	void nameInCache(const std::string &name, const Object &obj);
+	const std::map<std::pair<std::string, std::string>, ObjectID> &references() const { return m_references; }
+	// lane CAMP-1: RW 0x759601: the object has a name (+ 0x88 is not ""), or an object reference names it
 	bool isInNamedCache(const Object &obj) const;
 	bool didUnitExist(const std::string &name) const;    // RW 0x758F46: an entry whose object is gone
 
@@ -317,6 +327,10 @@ public:
 	void appendSequentialScript(const SequentialScript &r);
 	// RW 0x604C9F / 0x604CD9 (UNIT_ / TEAM_STOP_SEQUENTIAL_SCRIPT)
 	void removeSequentialScriptsOf(ObjectID object, std::uint32_t team);
+	// lane SCRIPT-4: RW 0x603939 (an object) / RW 0x60396C (a team) ScriptEngine::setSequentialTimer (BFME2 decomp 0x203FCF / 0x204002, tier A): the first
+	// slot whose head record is that object's (+ 8 == the object id) or that team's (+ 4) gets its frames to wait (+ 0x20); the later records of a chain
+	// are not looked at; nothing when there is none
+	void setSequentialTimer(ObjectID object, std::uint32_t team, std::int32_t frames);
 
 	// lane BACKLOG4 (S-529): the special powers triggered, RW ScriptEngine + 0x1A368: per player (20) a list of { CRC_String(the template's name) (RW
 	// 0x7ED86B), the caster's object id }. SpecialPowerModule::aboutToDoSpecialPower (RW 0x89713F) appends (RW 0x759986, the list's end); the conditions
@@ -419,6 +433,7 @@ private:
 	void callSubroutine(const ScriptActionRec &a);
 
 	GameLogic &m_logic;
+	AttackPriorityStore m_attackPriorities{ m_logic };
 	ScriptEngineHost *m_host = nullptr;
 	bool m_loaded = false;
 	bool m_firstUpdate = true;
@@ -429,6 +444,7 @@ private:
 	std::map<std::pair<std::string, std::string>, Counter> m_counters;
 	std::map<std::pair<std::string, std::string>, bool> m_flags;
 	std::vector<std::pair<std::string, ObjectID>> m_namedObjects; ///< insertion order
+	std::map<std::pair<std::string, std::string>, ObjectID> m_references; ///< lane CASTLE-UNPACK: RW + 0x191B8 (hashed once one exists)
 	std::vector<std::pair<std::string, std::vector<std::string>>> m_objectLists; ///< creation order
 	const std::vector<TriggerArea> *m_triggers = nullptr;
 	struct RuntimeTrigger
