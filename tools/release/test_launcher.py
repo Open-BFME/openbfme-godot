@@ -599,7 +599,7 @@ def _layout_run(project: Path, tmp_path: Path, *args: str) -> subprocess.Complet
                           env=env, capture_output=True, text=True, timeout=900, stdin=subprocess.DEVNULL)
 
 
-LAYOUT_STATES = ["main", "news", "multiplayer", "mods", "games", "games-bfme1", "games-downloading", "settings", "display", "about", "update", "downloading",
+LAYOUT_STATES = ["main", "news", "multiplayer", "multiplayer-populated", "mods", "games", "games-bfme1", "games-downloading", "settings", "display", "about", "update", "downloading",
                  "error", "glibc", "first-run", "offline", "verifying", "paused", "update-launcher", "warning", "ask", "playing", "long",
                  "picker", "update-launcher+123", "update-launcher+10000000", "long+123", "long+10000000"]
 LAYOUT_SIZES = ["1280x720", "1280x800", "1920x1080", "2560x1440", "3440x1440", "960x540", "960x1000", "2704x1521", "3146x1769"]
@@ -2056,9 +2056,13 @@ def test_an_offline_start_asks_nothing(tmp_path, server, keys):
 
 
 def test_the_policy_allows_only_the_lobbys_stats_path():
-    """NetPolicy: the lobby host, over https without a port, for GET /v1/stats alone; any other path or host stays refused"""
+    """NetPolicy: the lobby host, over https without a port, for GET /v1/stats and GET /v1/games only; any other path stays off the list"""
     text = (LAUNCHER / "scripts/net/net_policy.gd").read_text()
-    assert 'const LOBBY_STATS_PATH := "/v1/stats"' in text and "u.path == LOBBY_STATS_PATH" in text
+    assert 'const LOBBY_PATHS := ["/v1/stats", "/v1/games"]' in text
+    assert 'lobby_host != "" and host == lobby_host and u.path in LOBBY_PATHS' in text
+    # the allow-list is those two paths and nothing else the lobby publishes
+    listed = text.split('const LOBBY_PATHS := [', 1)[1].split("]", 1)[0]
+    assert listed.count('"/v1/') == 2 and '"/v1/stats"' in listed and '"/v1/games"' in listed
 
 
 @pytest.mark.parametrize("size", ["1280x720", "1024x768", "1920x1080", "1600x900"])

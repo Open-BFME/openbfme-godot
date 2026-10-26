@@ -9,6 +9,12 @@ signal problem_reported(detail: String, operation: int)
 const PROVIDER_NAMES := {"discord": "Discord", "email": "e-mail"}
 const PRIVACY_URL := "https://openbfme.com/privacy"
 const Style := preload("res://scripts/ui/style.gd")
+const GameList := preload("res://scripts/core/game_list.gd")
+const GAME_COLUMNS := ["Game", "Host", "Players", "Map"]
+
+signal host_pressed
+signal join_pressed(game_id: String)
+signal refresh_pressed
 
 var client: Node
 var _signin: PanelContainer
@@ -55,6 +61,15 @@ var _oauth_hint: Label
 var _oauth_check: Button
 var _oauth_cancel: Button
 var _oauth_adopting := false
+# the public game list (GET /v1/games): shown signed in or not, only what the lobby returned (set_games)
+var _host: Button
+var _join: Button
+var _rows: VBoxContainer
+var _empty: Label
+var _games_status: Label
+var _games: Array = []
+var _selected := -1
+var _play_ready := false
 
 
 func _init() -> void:
@@ -167,6 +182,7 @@ func build(_repo: String) -> void:
 	_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_tabs.visible = false
 	body.add_child(_tabs)
+	_build_games(body)
 	var friends_page := _page("Friends")
 	var add_row := W.hbox()
 	_friend_code = _text_input("Friend code: XXXX-XXXX-XX", 12)
@@ -720,3 +736,149 @@ func _set_action_buttons(node: Node, disabled: bool) -> void:
 func _exit_tree() -> void:
 	if is_instance_valid(_toast):
 		_toast.queue_free()
+
+
+## Open games on the lobby. Addresses stay behind the relay. A locked, started or full game is listed and is not joined from here
+## (there is no password field: a locked game is joined inside the game). LAN games stay in the game's own Multiplayer menu.
+func _build_games(body: VBoxContainer) -> void:
+	var p := W.panel(0)
+	p.panel.name = "PublicGames"
+	p.panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(p.panel)
+	var top := W.hbox(8)
+	var what := W.wrap("Open games on this launcher's lobby. A locked game is joined from inside the game, and everyone in a match " +
+		"needs the same build.", "Muted")
+	what.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	what.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_host = W.button("Host game")
+	_host.name = "HostGame"
+	_join = W.button("Join")
+	_join.name = "JoinGame"
+	var refresh := W.button("Refresh")
+	refresh.name = "RefreshGames"
+	for b in [_host, _join, refresh]:
+		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_host.pressed.connect(func() -> void: host_pressed.emit())
+	_join.pressed.connect(_on_join)
+	refresh.pressed.connect(func() -> void: refresh_pressed.emit())
+	top.add_child(_host)
+	top.add_child(_join)
+	top.add_child(refresh)
+	top.add_child(what)  # the buttons first: on the left edge, as the sign-in panel's name field above
+	p.box.add_child(top)
+	var gap := Control.new()
+	gap.custom_minimum_size.y = 12
+	p.box.add_child(gap)
+	var head := W.hbox(0)
+	for c in GAME_COLUMNS.size():
+		var l := W.label(String(GAME_COLUMNS[c]).to_upper(), "Section")
+		l.custom_minimum_size = Vector2(0, 30)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		l.size_flags_stretch_ratio = 3.0 if c == 0 else 1.0
+		head.add_child(l)
+	p.box.add_child(head)
+	var rule := ColorRect.new()
+	rule.color = Style.LINE
+	rule.custom_minimum_size.y = 1
+	p.box.add_child(rule)
+	_empty = W.label("No open games")
+	Style.text(_empty, "CormorantGaramond-Italic", 500, 22, Style.TEXT2)
+	_empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_empty.custom_minimum_size.y = 80
+	_empty.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	p.box.add_child(_empty)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	p.box.add_child(scroll)
+	_rows = W.vbox(0)
+	_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_rows)
+	_games_status = W.label("", "Muted")
+	_games_status.visible = false
+	p.box.add_child(_games_status)
+	set_games([])
+
+
+## Host and Join follow whether a version can be started. Join also needs a joinable row.
+func set_ready(can_play: bool) -> void:
+	_play_ready = can_play
+	_apply_ready()
+
+
+## replace the list. Only rows the lobby returned. Pass [] for none.
+func set_games(games: Array) -> void:
+	_games = games
+	_selected = -1
+	for c in _rows.get_children():
+		_rows.remove_child(c)
+		c.free()
+	_empty.visible = games.is_empty()
+	_rows.get_parent().visible = not games.is_empty()
+	for i in games.size():
+		var g: Dictionary = games[i]
+		var row := Button.new()
+		# a Button does not grow to fit the labels inside it: without this the rows are about 12 px and overlap
+		row.custom_minimum_size.y = 32
+		row.theme_type_variation = "FlatButton"
+		row.focus_mode = Control.FOCUS_ALL
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var box := W.hbox(0)
+		box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		row.add_child(box)
+		var cells := [GameList.display_name(g), str(g.host), "%d" % int(g.players), str(g.map)]
+		for c in cells.size():
+			var l := W.trim_label(cells[c])
+			l.tooltip_text = cells[c]
+			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			l.size_flags_stretch_ratio = 3.0 if c == 0 else 1.0
+			l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			l.custom_minimum_size = Vector2(0, 32)
+			box.add_child(l)
+		var index := i
+		row.pressed.connect(_select.bind(index))
+		row.gui_input.connect(_on_row_input.bind(index))
+		_rows.add_child(row)
+	_apply_ready()
+
+
+func set_games_status(text: String) -> void:
+	_games_status.text = text
+	_games_status.visible = text != ""
+
+
+func _select(index: int) -> void:
+	_selected = index
+	for i in _rows.get_child_count():
+		var row := _rows.get_child(i) as Button
+		if row == null:
+			continue
+		row.modulate = Color(1, 1, 1, 1) if i != index else Color(1.15, 1.08, 0.85, 1)
+	_apply_ready()
+
+
+func _on_row_input(event: InputEvent, index: int) -> void:
+	if event is InputEventMouseButton and event.pressed and event.double_click and event.button_index == MOUSE_BUTTON_LEFT:
+		_select(index)
+		if _can_join():
+			join_pressed.emit(str(_games[index].id))
+
+
+func _on_join() -> void:
+	if _can_join():
+		join_pressed.emit(str(_games[_selected].id))
+
+
+func _can_join() -> bool:
+	return _play_ready and _selected >= 0 and _selected < _games.size() and GameList.joinable(_games[_selected])
+
+
+func _apply_ready() -> void:
+	if _host == null:
+		return
+	_host.disabled = not _play_ready
+	_join.disabled = not _can_join()
+	_host.tooltip_text = "" if _play_ready else "Install a version before hosting"
+	_join.tooltip_text = "" if _can_join() else "Select an open game"
