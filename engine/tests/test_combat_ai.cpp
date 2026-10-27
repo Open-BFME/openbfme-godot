@@ -112,9 +112,13 @@ TEST_CASE("combat ai: with the idle scan switched off (the movement sweeps) noth
 
 TEST_CASE("combat ai: attack-move marches to the goal, attacks the enemy it meets on the way and then resumes the march")
 {
-	CombatWorld w;
+	const char *target = "Dummy";
+	SUBCASE("enemy unit") {}
+	SUBCASE("enemy building") { target = "MarchBuilding"; }
+	CombatWorld w("ChildObject MarchBuilding Dummy\n KindOf = STRUCTURE IMMOBILE SELECTABLE SCORE\nEnd\n");
 	Object *a = w.unit("Slasher", 'A', 100, 300);
-	Object *v = w.unit("Dummy", 'B', 300, 330);
+	Object *v = w.unit(target, 'B', 300, 330);
+	if (std::string(target) == "MarchBuilding") w.ai->addObjectToPathfindMap(*v);
 	w.frames(2);
 	const ObjectID vid = v->getID();
 	w.select(w.playerIndex("Alice"), { a });
