@@ -476,6 +476,35 @@ const char kLists[] =
 	"ObjectCreationList OCL_Debris\n  CreateDebris\n    ModelNames = SomeModel\n  End\nEnd\n";
 } // namespace
 
+TEST_CASE("summon1 OCL: a created structure owns its footprint at its final placement")
+{
+	OCLWorld f(
+		"ObjectCreationList OCL_Structure\n CreateObject\n ObjectNames = SummonedStructure\n OrientInSecondaryDirection = Yes\n End\nEnd\n",
+		"Object SummonedStructure\n KindOf = STRUCTURE IMMOBILE SELECTABLE\n"
+		" Geometry = BOX\n GeometryMajorRadius = 20\n GeometryMinorRadius = 10\n GeometryHeight = 20\n GeometryIsSmall = No\n"
+		" Body = ActiveBody Body\n MaxHealth = 100\n End\nEnd\n");
+	Object *source = f.unit("Swordsman", 'A', 200, 200);
+	bool rotated = false;
+	SUBCASE("initial orientation") {}
+	SUBCASE("secondary facing") { rotated = true; }
+	const Coord3D secondary{500, 600, 0};
+	const auto made = f.list("OCL_Structure").create(*f.logic, source, Coord3D{500, 500, 0}, rotated ? &secondary : nullptr);
+	REQUIRE(made.size() == 1);
+	const PathfindCell *cell = f.ai->pathfinder().getCell(LAYER_GROUND, made[0]->getPosition());
+	REQUIRE(cell);
+	CHECK(cell->isObstaclePresent(made[0]->getID()));
+	const Coord3D alongX{515, 505, 0}, alongY{505, 515, 0};
+	CHECK(f.ai->pathfinder().getCell(LAYER_GROUND, &alongX)->isObstaclePresent(made[0]->getID()) == !rotated);
+	CHECK(f.ai->pathfinder().getCell(LAYER_GROUND, &alongY)->isObstaclePresent(made[0]->getID()) == rotated);
+	const Coord3D origin{0, 0, 0};
+	const PathfindCell *originCell = f.ai->pathfinder().getCell(LAYER_GROUND, &origin);
+	REQUIRE(originCell);
+	CHECK_FALSE(originCell->isObstaclePresent(made[0]->getID()));
+	f.logic->destroyObject(made[0]);
+	f.frames(1); // destruction and footprint removal are deferred to the frame tail
+	CHECK_FALSE(cell->getType() == PathfindCell::CELL_OBSTACLE);
+}
+
 // RW 0xBF6E50 / 0xBF74F8: DispositionIntensity is a velocity (RW 0x73A4B6: per second * 0.2), the angles degrees (RW 0x42EE15), the lifetimes durations
 // (RW 0x73A429: 5 frames a second), the health a percent (RW 0x42EEFA); the defaults are RW 0x5F0689's
 TEST_CASE("summon1 OCL: the CreateObject rows parse with the binary's parsers and defaults (RW 0xBF6E50 / 0xBF74F8)")

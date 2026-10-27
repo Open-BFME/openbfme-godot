@@ -20,6 +20,7 @@
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/BitFlags.h"
+#include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/FindPositionAround.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Locomotor.h"
@@ -763,7 +764,12 @@ std::vector<Object *> ObjectCreationList::createCore(GameLogic &logic, const OCL
 			}
 		}
 		o->setProducer(source); // RW 0x5F1656: RW 0x68B6A1
-		// RW 0x5F1661: a STRUCTURE (template + 0x108 bit 7) is added to the pathfinder's map (RW 0x6E85E9): the port's newObject registers its footprint
+		// RW 0x5F1661: a STRUCTURE (template + 0x108 bit 7) enters the pathfinder map (RW 0x6E85E9).
+		// newObject only allocates the object; register after its final placement and orientation.
+		if (o->isKindOf((unsigned)CombatNames::kinds().structure))
+		{
+			if (AIWorld *ai = logic.aiWorld()) ai->addObjectToPathfindMap(*o);
+		}
 		// RW 0x5F1678 .. 0x5F17B7: FadeIn / FadeOut (the FadeSound and the drawable fade), the drawable refresh: client
 	}
 	return made;
@@ -819,7 +825,12 @@ std::vector<Object *> ObjectCreationList::createObjectNugget(GameLogic &logic, c
 			}
 			// RW 0x5F28F8: atan2(secondary.y - y, secondary.x - x) on doubles, RW 0x644FD0, setOrientation
 			const float dy = SimMath::subf32(secondary->y, o->getPosition()->y), dx = SimMath::subf32(secondary->x, o->getPosition()->x);
+			// The secondary-facing pass follows createCore's registration. Refresh the
+			// footprint explicitly: this port's transform callback only updates unit cells.
+			AIWorld *world = o->isKindOf((unsigned)CombatNames::kinds().structure) ? logic.aiWorld() : nullptr;
+			if (world) world->removeObjectFromPathfindMap(*o);
 			o->setOrientation(normalizeAngle(SimMath::fstpDword(SimMath::atan2d(dy, dx))));
+			if (world) world->addObjectToPathfindMap(*o);
 		}
 	}
 	return made;

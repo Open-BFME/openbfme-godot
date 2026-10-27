@@ -59,7 +59,7 @@ const char *const kStopAlliedStack =
 // lane PATH-2 (item 2): the incremental registration of placed objects
 const char *const kStopRegistration =
 	"S-610 a placed structure's footprint enters the pathfinder at the creation sites the port has (map objects RW 0x62E192, starting bases RW 0x629EC9, construction, "
-	"castle unpack, LiveGame::createObject as RW 0x62C98D); the other callers of RW addObjectToPathfindMap 0x6E85E9 (an OCL's object RW 0x5F1673, Object state changes "
+	"castle unpack, LiveGame::createObject as RW 0x62C98D, and OCL structures RW 0x5F1673); the other callers of RW addObjectToPathfindMap 0x6E85E9 (Object state changes "
 	"RW 0x68B2A1 / 0x68BCDB / 0x6923EB / 0x694838 / 0x698BDA, RW 0x67B43B, 0x6AA755 and 39 module sites RW 0x797949 .. 0x911DB9) are not traced";
 
 // ---- raw field readers (the object table's rows are kept as raw tokens, S-072) ------------------------------------------------
