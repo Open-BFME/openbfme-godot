@@ -83,14 +83,17 @@ func _first_ok(game: String) -> String:
 
 func _check_folders(rotwk: String, bfme2: String) -> Dictionary:
 	var result: Dictionary = _setup.check(rotwk, bfme2)
-	if rotwk.is_empty():
+	if Release.selected_game() == "bfme2-106":
 		result.ok = result.bfme2.ok
 		result.errors = result.bfme2.errors
 	return result
 
 
 func _mount_and_remember(rotwk: String, bfme2: String) -> Dictionary:
-	var mount: Dictionary = _fs.mount_bfme2_path(bfme2) if rotwk.is_empty() else _fs.mount_retail_paths(rotwk, bfme2)
+	if Release.selected_game() == "bfme2-106": rotwk = ""
+	var checked := _check_folders(rotwk, bfme2)
+	if not checked.ok: return {"ok": false, "errors": checked.errors}
+	var mount: Dictionary = _fs.mount_bfme2_path(bfme2) if Release.selected_game() == "bfme2-106" else _fs.mount_retail_paths(rotwk, bfme2)
 	print("FIRST RUN mount: ok %s" % str(mount.ok))
 	if not mount.ok:
 		for e in mount.errors:
@@ -102,7 +105,7 @@ func _mount_and_remember(rotwk: String, bfme2: String) -> Dictionary:
 		return {"ok": false, "errors": ["the game folders work but could not be saved: " + saved.error]}
 	var selection := ConfigFile.new()
 	selection.load("user://game-selection.cfg")
-	selection.set_value("game", "selected", "bfme2-106" if rotwk.is_empty() else "bfme2")
+	selection.set_value("game", "selected", Release.selected_game())
 	var err := selection.save("user://game-selection.cfg")
 	if err != OK: return {"ok": false, "errors": ["Could not save game selection: " + error_string(err)]}
 	return mount
@@ -141,7 +144,7 @@ func _build_ui(problem: String) -> void:
 		warn.text = problem
 		box.add_child(warn)
 
-	var rows := [["The Rise of the Witch-king 2.01 (optional for BFME2 only)", "rotwk"], ["The Battle for Middle-earth II 1.06", "bfme2"]]
+	var rows := [["The Rise of the Witch-king 2.01 (unused when BFME2 standalone is selected)", "rotwk"], ["The Battle for Middle-earth II 1.06", "bfme2"]]
 	for row in rows:
 		var label := Label.new()
 		label.text = row[0]
@@ -242,8 +245,8 @@ func _recheck() -> void:
 	_start.disabled = not r.ok
 	var t := ""
 	for game in [["rotwk", "The Rise of the Witch-king"], ["bfme2", "The Battle for Middle-earth II"]]:
-		if game[0] == "rotwk" and _rotwk_edit.text.is_empty():
-			t += "BFME2 only (RotWK not selected).\n"
+		if game[0] == "rotwk" and Release.selected_game() == "bfme2-106":
+			t += "BFME2 standalone selected; RotWK folder is unused.\n"
 			continue
 		var g: Dictionary = r[game[0]]
 		if g.ok:

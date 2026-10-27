@@ -6,8 +6,12 @@ RotWK and BFME2 installations. To install only the base game, choose
 then download the game files. The existing consent and pinned-file checks
 apply; only the BFME2 package is requested.
 
-For an existing BFME2 1.06 installation, choose its folder on first run and
-leave the optional RotWK field blank. The selection and folder are remembered.
+For an existing BFME2 1.06 installation, select standalone BFME2 in the launcher,
+then choose its folder on first run. The RotWK field is unused in this mode, even
+if filled. RotWK selection requires both folders; leaving its folder blank does
+not change the launcher selection. The selection and folder are remembered.
+If a remembered BFME2 folder moves or becomes unusable, windowed launches reopen
+folder setup with the mount errors; headless launches return those errors.
 Switch back to RotWK in the launcher to use the expansion again; selecting
 BFME2 never mounts an available RotWK installation over the base game.
 

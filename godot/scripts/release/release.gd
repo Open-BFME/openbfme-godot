@@ -377,14 +377,16 @@ func _mount_retail_folders(fs: RefCounted) -> Dictionary:
 		var setup: RefCounted = ClassDB.instantiate("InstallSetup")
 		var conf: Dictionary = setup.configured()
 		var folder: String = conf.get("bfme2", "")
+		var problem := "Choose the BFME2 1.06 folder for standalone play."
 		if not folder.is_empty():
 			var report: Dictionary = fs.mount_bfme2_path(folder)
 			for stop in report.get("stops", []): print(stop)
-			return report
+			if report.ok or _headless(): return report
+			problem = "The BFME2 folder chosen before does not work any more:\n" + "\n".join(report.errors)
 		if _headless(): return {"ok": false, "errors": ["BFME2-only mode requires BFME2_INSTALL or a remembered BFME2 folder."]}
 		var screen: CanvasLayer = preload("res://scripts/release/first_run.gd").new()
 		add_child(screen)
-		var result: Dictionary = await screen.run(fs, setup, "Choose BFME2 1.06; leave RotWK blank for a BFME2-only installation.", {})
+		var result: Dictionary = await screen.run(fs, setup, problem, {})
 		screen.queue_free()
 		return result
 	if selected_game() == "bfme1":

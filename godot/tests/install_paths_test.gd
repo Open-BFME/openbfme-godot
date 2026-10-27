@@ -11,7 +11,10 @@ class Setup extends RefCounted:
 	func check(r: String, b: String) -> Dictionary:
 		checked = [r, b]
 		var good := {"ok": true, "present": 1, "expected": 1, "errors": []}
-		return {"ok": true, "rotwk": good, "bfme2": good, "errors": []}
+		var rotwk := good.duplicate()
+		rotwk.ok = not r.is_empty()
+		rotwk.errors = [] if rotwk.ok else ["RotWK required"]
+		return {"ok": rotwk.ok, "rotwk": rotwk, "bfme2": good, "errors": rotwk.errors}
 	func remember(r: String, b: String) -> Dictionary:
 		saved = [r, b]
 		var f := FileAccess.open(config, FileAccess.WRITE)
@@ -71,11 +74,19 @@ func run() -> void:
 		check(FileAccess.get_file_as_string(setup.config) == "ROTWK_INSTALL=" + folder + "\nBFME2_INSTALL=" + second + "\n", "remembered text preserves all bytes")
 		ui._rotwk_edit.text = ""
 		ui._recheck()
+		check(ui._start.disabled, "RotWK selection rejects a missing RotWK folder")
+		root.get_node("Release").game = "bfme2-106"
+		ui._rotwk_edit.text = folder
+		ui._recheck()
 		check(not ui._start.disabled, "BFME2 alone enables Start when RotWK is deliberately blank")
 		ui._on_start()
 		result = await ui.finished
 		check(result.ok and mount.mounted == ["", second], "BFME2-only Start uses no RotWK overlay")
 		check(setup.saved == ["", second], "BFME2-only folders are remembered")
+		var selection := ConfigFile.new()
+		selection.load("user://game-selection.cfg")
+		check(selection.get_value("game", "selected") == "bfme2-106", "setup preserves the launcher standalone choice even with both folders")
+		root.get_node("Release").game = "bfme2"
 		ui.queue_free()
 		await process_frame
 	print("PATH FIRST-RUN checks=", checks, " failed=", failed, " cases=", cases.size())
