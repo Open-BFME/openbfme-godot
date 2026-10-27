@@ -17,7 +17,7 @@ func _run() -> void:
 			"start_pos": i if i < 2 else -1, "player_template": 3 if i < 2 else -1, "team": i})
 	assert(world.prepare_new_game({"mode": "skirmish", "difficulty": 1,
 		"map": "maps/map mp harlindon/map mp harlindon.map", "map_crc": 0,
-		"map_size": 0, "map_mask": 0, "seed": 2723, 
+		"map_size": 0, "map_mask": 0, "seed": 2723,
 		"starting_cash": 4000, "slots": slots}).ok)
 	assert(world.start_new_game({"logic_thread": false, "wall_rebalance": false,
 		"starting_walls": false}).ok)
