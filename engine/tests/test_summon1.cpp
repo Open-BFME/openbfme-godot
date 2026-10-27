@@ -493,9 +493,10 @@ TEST_CASE("summon1 OCL: a created structure owns its footprint at its final plac
 	const PathfindCell *cell = f.ai->pathfinder().getCell(LAYER_GROUND, made[0]->getPosition());
 	REQUIRE(cell);
 	CHECK(cell->isObstaclePresent(made[0]->getID()));
+	// Secondary facing changes orientation without registering the footprint again.
 	const Coord3D alongX{515, 505, 0}, alongY{505, 515, 0};
-	CHECK(f.ai->pathfinder().getCell(LAYER_GROUND, &alongX)->isObstaclePresent(made[0]->getID()) == !rotated);
-	CHECK(f.ai->pathfinder().getCell(LAYER_GROUND, &alongY)->isObstaclePresent(made[0]->getID()) == rotated);
+	CHECK(f.ai->pathfinder().getCell(LAYER_GROUND, &alongX)->isObstaclePresent(made[0]->getID()));
+	CHECK_FALSE(f.ai->pathfinder().getCell(LAYER_GROUND, &alongY)->isObstaclePresent(made[0]->getID()));
 	const Coord3D origin{0, 0, 0};
 	const PathfindCell *originCell = f.ai->pathfinder().getCell(LAYER_GROUND, &origin);
 	REQUIRE(originCell);

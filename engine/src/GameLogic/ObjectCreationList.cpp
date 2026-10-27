@@ -825,12 +825,7 @@ std::vector<Object *> ObjectCreationList::createObjectNugget(GameLogic &logic, c
 			}
 			// RW 0x5F28F8: atan2(secondary.y - y, secondary.x - x) on doubles, RW 0x644FD0, setOrientation
 			const float dy = SimMath::subf32(secondary->y, o->getPosition()->y), dx = SimMath::subf32(secondary->x, o->getPosition()->x);
-			// The secondary-facing pass follows createCore's registration. Refresh the
-			// footprint explicitly: this port's transform callback only updates unit cells.
-			AIWorld *world = o->isKindOf((unsigned)CombatNames::kinds().structure) ? logic.aiWorld() : nullptr;
-			if (world) world->removeObjectFromPathfindMap(*o);
 			o->setOrientation(normalizeAngle(SimMath::fstpDword(SimMath::atan2d(dy, dx))));
-			if (world) world->addObjectToPathfindMap(*o);
 		}
 	}
 	return made;
