@@ -49,6 +49,7 @@ struct SubsystemLoadOptions
 	// catch). true: errors are recorded in the report and loading continues with the next file
 	// (the test harness).
 	bool collectErrors = false;
+	bool bfme2 = false; // standalone BFME2 uses the base legend; exact init-order parity is S-5911
 };
 
 struct SubsystemLoadReport

@@ -42,6 +42,7 @@ public:
 	// (hashes cached in user://retail-md5-cache.tsv by path+size+mtime). Returns a report; on any
 	// error nothing is mounted.
 	Dictionary mount_retail();
+	Dictionary mount_bfme2_path(const String &root);
 	// Standalone BFME1 installation, using its own archives for both menus and gameplay.
 	Dictionary mount_bfme1_path(const String &root);
 	bool is_bfme1() const { return m_bfme1; }

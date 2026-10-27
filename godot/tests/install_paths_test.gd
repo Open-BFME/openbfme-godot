@@ -23,6 +23,9 @@ class Setup extends RefCounted:
 
 class Mount extends RefCounted:
 	var mounted: Array = []
+	func mount_bfme2_path(b: String) -> Dictionary:
+		mounted = ["", b]
+		return {"ok": true, "errors": []}
 	func mount_retail_paths(r: String, b: String) -> Dictionary:
 		mounted = [r, b]
 		return {"ok": true, "errors": []}
@@ -66,6 +69,13 @@ func run() -> void:
 		check(mount.mounted == [folder, second], "Start mounts exactly the checked folders")
 		check(setup.saved == [folder, second], "Start remembers exactly the mounted folders")
 		check(FileAccess.get_file_as_string(setup.config) == "ROTWK_INSTALL=" + folder + "\nBFME2_INSTALL=" + second + "\n", "remembered text preserves all bytes")
+		ui._rotwk_edit.text = ""
+		ui._recheck()
+		check(not ui._start.disabled, "BFME2 alone enables Start when RotWK is deliberately blank")
+		ui._on_start()
+		result = await ui.finished
+		check(result.ok and mount.mounted == ["", second], "BFME2-only Start uses no RotWK overlay")
+		check(setup.saved == ["", second], "BFME2-only folders are remembered")
 		ui.queue_free()
 		await process_frame
 	print("PATH FIRST-RUN checks=", checks, " failed=", failed, " cases=", cases.size())

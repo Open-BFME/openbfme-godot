@@ -62,6 +62,7 @@ void RetailFileSystem::_bind_methods()
 	ClassDB::bind_method(D_METHOD("mount_bfme1_path", "root"), &RetailFileSystem::mount_bfme1_path);
 	ClassDB::bind_method(D_METHOD("is_bfme1"), &RetailFileSystem::is_bfme1);
 	ClassDB::bind_method(D_METHOD("mount_retail"), &RetailFileSystem::mount_retail);
+	ClassDB::bind_method(D_METHOD("mount_bfme2_path", "root"), &RetailFileSystem::mount_bfme2_path);
 	ClassDB::bind_method(D_METHOD("mount_retail_paths", "rotwk", "bfme2"), &RetailFileSystem::mount_retail_paths); // RELEASE-1
 	ClassDB::bind_method(D_METHOD("create_bfme2_shell"), &RetailFileSystem::create_bfme2_shell);
 	ClassDB::bind_method(D_METHOD("is_mounted"), &RetailFileSystem::is_mounted);
@@ -233,6 +234,23 @@ Dictionary RetailFileSystem::mount_retail()
 		errors.push_back(toGodot(error));
 	}
 	return mountFrom(rotwkRoot, bfme2Root, errors);
+}
+
+Dictionary RetailFileSystem::mount_bfme2_path(const String &root)
+{
+	setBfme1Mounted(false);
+	m_bfme1 = false;
+	m_bfme1Root.clear();
+	m_modReport = ModMountReport();
+	m_installModReport = ModMountReport();
+	ModEngineFeatures::reset();
+	Dictionary result = mountBfme2Shell(toNative(root));
+	m_shellSource = false; // explicit gameplay mount; menu-only factory retains its role
+	result["rotwk_install"] = root; // gi.dat / saves belong to this active game install
+	PackedStringArray stops;
+	stops.push_back("[S-5911] BFME2-only gameplay uses the shared simulation; BFME2 versus RotWK logic differences remain unverified, including the stored-only PreLandingEmotionAffectsAllies filter");
+	result["stops"] = stops;
+	return result;
 }
 
 Dictionary RetailFileSystem::mount_retail_paths(const String &rotwk, const String &bfme2)

@@ -1184,7 +1184,12 @@ func game_arguments(args: PackedStringArray = PackedStringArray()) -> Dictionary
 			return {"ok": false, "error": L10n.t("launcher.updater.no_bfme1")}
 		if not "--" in args: args.append("--")
 		args.append_array(PackedStringArray(["--game=bfme1", "--bfme1-install=" + folder]))
+	elif get_state("launcher", "game", "bfme2") == "bfme2-106":
+		if not "--" in args: args.append("--")
+		args.append("--game=bfme2-106")
 	elif get_state("launcher", "game", "bfme2") != "bfme1":
+		if not "--" in args: args.append("--")
+		args.append("--game=bfme2")
 		var mod := ModInstall.active_args(data_dir.path_join("mods"))
 		if not mod.ok:
 			return {"ok": false, "error": mod.error}

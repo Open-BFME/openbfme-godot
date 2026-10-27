@@ -46,6 +46,9 @@ OpenBFME is unofficial. It is not made or endorsed by EA.
 
 ## Play it
 
+RotWK remains selected by default. BFME2 1.06 can also be installed and played
+without RotWK; see [BFME2-only installation](docs/BFME2_STANDALONE.md).
+
 > **Alpha builds.** These are early alpha builds for testers. Expect missing
 > features and rough edges; see [Status](#status) and the known issues in the
 > [player guide](docs/PLAYING.md#known-issues). Releases have plain numbers:
@@ -133,7 +136,7 @@ the original are still missing.
 not reinvent it. Where the evidence runs out and the team has to make an
 educated guess, that guess is not hidden: it is recorded as an *acceptance
 stop* in [docs/STOPS.md](docs/STOPS.md), reported by the game at runtime and
-pinned by a test. There are **792 open stops** today. Some are big
+pinned by a test. There are **793 open stops** today. Some are big
 (retail save files), most are small details waiting for better evidence. The plan to
 get to a 1:1 game is in [docs/ROADMAP.md](docs/ROADMAP.md).
 

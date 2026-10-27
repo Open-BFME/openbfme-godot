@@ -510,3 +510,27 @@ TEST_CASE("RotWK subsystem init order: recovered from GameEngine::init (RW 0x63A
 	// no duplicates
 	CHECK(std::set<std::string>(names.begin(), names.end()).size() == names.size());
 }
+
+TEST_CASE("RunSubsystemIniLoad: explicit BFME2 mode uses the base legend without an expansion overlay")
+{
+	const std::string body = "Armor X\nEnd\n";
+	FileList files = hardcodedFiles(body);
+	files.push_back({"Data\\INI\\Default\\SubsystemLegend.ini",
+		"LoadSubsystem TheScienceStore\n InitFile = Data\\INI\\Science.ini\nEnd\n"});
+	files.push_back({"Data\\INI\\Science.ini", body});
+	LegendFixture fx(files);
+	INIBlockRecorder rec;
+	SubsystemLegend legend;
+	RegisterRecordingBlockStubs(fx.env.blocks, rec, {"LoadSubsystem"});
+	legend.registerBlock(fx.env.blocks);
+	INI ini(fx.env);
+	SubsystemLoadOptions options;
+	options.bfme2 = true;
+	options.collectErrors = true;
+	SubsystemLoadReport report;
+	RunSubsystemIniLoad(legend, ini, options, report);
+	REQUIRE_FALSE(ini.loadedFiles().empty());
+	CHECK(ini.loadedFiles().front() == "Data\\INI\\Default\\SubsystemLegend.ini");
+	CHECK(report.errors.empty());
+	CHECK(legend.findEntry("TheScienceStore") != nullptr);
+}

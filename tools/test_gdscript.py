@@ -42,6 +42,7 @@ GAME_OWNERS = {
     "save4e_flow_test.gd": "tools/save/test_save_flow.py",
 }
 LAUNCHER_OWNERS = {
+    "bfme2_offer_test.gd": "tools/release/test_bfme2_standalone.py",
     **dict.fromkeys(("background_play_test.gd", "crypto_test.gd", "layout_test.gd", "macos_preview_test.gd", "oauth_test.gd",
                     "social_launch_test.gd", "social_ui_test.gd", "unit_test.gd", "write_failure_test.gd",
                     "oauth_integration_test.gd", "social_client_test.gd"), "tools/release/test_launcher.py"),
@@ -113,6 +114,7 @@ CI_GATES = scripts("""
 # Denylist part 2: manual dedicated invocations only, not pytest skips. Having
 # retail paths, a GPU or an opt-in environment variable must not schedule these.
 DENYLIST = {
+    "bfme2_standalone_test.gd": "manual: requires private BFME2 data and the native extension",
     **dict.fromkeys(scripts("bfme1_hud bfme1_map_memory bfme1_plot bfme1_quit bfme1_castle_path bfme1"),
                     "manual: needs a private BFME1 installation"),
     **dict.fromkeys(scripts("""

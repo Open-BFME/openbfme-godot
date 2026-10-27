@@ -1391,7 +1391,7 @@ func _boot() -> void:
 		return
 	if not str(menu_settings.problem).is_empty():
 		print("GAME options: ", menu_settings.problem)
-	_menu_style = menu_settings.style
+	_menu_style = "bfme2" if Release.selected_game() == "bfme2-106" else menu_settings.style
 	_pending_menu_style = _menu_style
 	_shell_config = shell_config
 	if not _configure_menu_style(_menu_style):
@@ -1854,6 +1854,7 @@ func _options_path() -> String:
 
 
 func request_menu_style(style: String) -> void:
+	if Release.selected_game() == "bfme2-106": return # BFME2 content supplies its own shell
 	if style not in ["rotwk", "bfme2"]:
 		_fail("unknown main menu style: " + style)
 		return

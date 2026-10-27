@@ -71,17 +71,17 @@ static func _regex_escape(s: String) -> String:
 
 
 ## The game folders the game will use or offer: {found: bool, rotwk, bfme2, source: "env" | "config" | "downloaded" | ""}. found only
-## when both folders exist. The first complete source wins, in the game's order (InstallLocator::configured reads the environment, then
+## when both folders exist (or only BFME2 with bfme2_only). The first complete source wins, in the game's order (InstallLocator::configured reads the environment, then
 ## the config; discover() offers the downloaded folders first).
-static func game_folders(user_dir: String = GameOptions.game_user_dir()) -> Dictionary:
+static func game_folders(user_dir: String = GameOptions.game_user_dir(), bfme2_only := false) -> Dictionary:
 	var sources := [["env", {"ROTWK_INSTALL": OS.get_environment("ROTWK_INSTALL"), "BFME2_INSTALL": OS.get_environment("BFME2_INSTALL")}],
 		["config", read_cfg(user_dir.path_join(CONFIG))], ["downloaded", read_cfg(user_dir.path_join(MARKER))]]
 	for s in sources:
 		var d: Dictionary = s[1]
 		var r: String = d.get("ROTWK_INSTALL", "")
 		var b: String = d.get("BFME2_INSTALL", "")
-		if r != "" and b != "":
-			return {"found": DirAccess.dir_exists_absolute(r) and DirAccess.dir_exists_absolute(b), "rotwk": r, "bfme2": b, "source": s[0]}
+		if b != "" and (bfme2_only or r != ""):
+			return {"found": (bfme2_only or DirAccess.dir_exists_absolute(r)) and DirAccess.dir_exists_absolute(b), "rotwk": r, "bfme2": b, "source": s[0]}
 	return {"found": false, "rotwk": "", "bfme2": "", "source": ""}
 
 

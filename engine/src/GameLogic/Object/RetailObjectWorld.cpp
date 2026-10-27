@@ -393,6 +393,7 @@ bool RetailObjectWorld::loadState(std::string *error)
 	SubsystemLoadOptions options;
 	options.collectErrors = true;
 	options.bfme1 = isBfme1Data(m_fs);
+	options.bfme2 = !options.bfme1 && m_fs.doesFileExist("Data\\INI\\Default\\SubsystemLegend.ini") && !m_fs.doesFileExist(kSubsystemLegendFile);
 	options.cinematics = true; // the census counts the Cinematic folder (338 templates), like the object-model retail test
 	const auto t0 = std::chrono::steady_clock::now();
 	try
