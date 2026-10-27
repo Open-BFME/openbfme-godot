@@ -22,11 +22,12 @@ class Audio extends Node:
 	func remove_event(handle: int) -> void: removed.append(handle)
 
 class World extends Node:
-	func get_movie(title: String) -> Dictionary:
-		return {"ok": true, "audio_events": [title + "_Music", title] if title in ["Moves", "Heroes"] else []}
+	func get_movie(_title: String) -> Dictionary:
+		assert(false, "Per-frame movie audio must never query the waiting world accessor")
+		return {}
 
 func movie(title: String, callback := "", frame := 0) -> Dictionary:
-	return {"path": "clip", "title": title, "completion": callback, "frame": frame, "frames": 100, "error": ""}
+	return {"path": "clip", "title": title, "completion": callback, "frame": frame, "frames": 100, "error": "", "audio_events": PackedStringArray([title + "_Music", title]) if title in ["Moves", "Heroes"] else PackedStringArray()}
 
 func _initialize() -> void:
 	var audio := Audio.new()

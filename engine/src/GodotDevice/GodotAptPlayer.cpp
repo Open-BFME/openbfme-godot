@@ -791,6 +791,7 @@ struct AptMenuPlayer::Impl
 		bool loop = false;
 		int level = -1;
 		std::string completion;
+		PackedStringArray audioEvents;
 		bool completed = false;
 		bool drawn = false;
 		std::string error;
@@ -4402,6 +4403,8 @@ void AptMenuPlayer::drawSegment(const AptCanvasList &list, size_t segment, const
 						}
 						else
 						{
+							// Cache metadata from the stream-opening lookup; get_movies never waits on the world.
+							slot.audioEvents = info.get("audio_events", PackedStringArray());
 							slot.stream.instantiate();
 							Dictionary opened = slot.stream->open(String(info.get("full_path", "")));
 							if (!(bool)opened.get("ok", false))
@@ -6264,6 +6267,7 @@ Array AptMenuPlayer::get_movies() const
 		d["frames"] = kv.second.stream.is_valid() ? kv.second.stream->get_frame_count() : (int64_t)0;
 		d["loop"] = kv.second.loop;
 		d["completion"] = toGodot(kv.second.completion);
+		d["audio_events"] = kv.second.audioEvents;
 		d["completed"] = kv.second.completed;
 		d["error"] = toGodot(kv.second.error);
 		out.push_back(d);

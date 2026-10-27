@@ -188,3 +188,7 @@ menu music with the existing audio fade; exact view-wide transition timing is
 still unverified under S-5017. The BFME1 movie regression checks actual narration
 voices and music suppression/restoration; `shell_movie_audio_test.gd` checks
 handle ownership without retail assets.
+
+Battle School audio reads the audio-event metadata cached by the shell when it opens
+the movie stream. Per-frame synchronization never calls the waiting GameWorld movie
+lookup; changing lessons replaces the cached events with the new stream metadata.

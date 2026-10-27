@@ -47,17 +47,14 @@ func sync(movies: Array) -> void:
 				_stop(path)
 		if not _streams.has(path):
 			var handles: Array = []
-			var info: Dictionary = world.get_movie(title)
-			if not info.get("ok", false):
-				_error(title + ": " + str(info.get("error", "movie lookup failed")))
-			else:
-				for event in info.audio_events:
-					var handle: int = audio.play_sound(event)
-					# AudioHandleSpecialValues are 0..4, not playing voices.
-					if handle <= 0: # AHSV_Error (or an invalid handle).
-						_error(title + ": could not play " + str(event))
-					elif handle >= 5:
-						handles.append(handle)
+			# The shell cached these events when opening the stream. No world/render wait here.
+			for event in movie.audio_events:
+				var handle: int = audio.play_sound(event)
+				# AudioHandleSpecialValues are 0..4, not playing voices.
+				if handle <= 0:
+					_error(title + ": could not play " + str(event))
+				elif handle >= 5:
+					handles.append(handle)
 			_streams[path] = {"title": title, "frame": frame, "handles": handles}
 		_streams[path].frame = frame
 	for path in _streams.keys():
