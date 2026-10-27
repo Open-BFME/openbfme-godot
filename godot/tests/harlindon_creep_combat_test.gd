@@ -55,7 +55,7 @@ func _run() -> void:
 		assert(hit, "Aragorn failed to hit " + template)
 	for i in 20:
 		world.advance(0.2)
-	# tolerance: any health loss proves that camp defenders can retaliate during peace time.
+	# tolerance: any health loss proves that camp defenders can retaliate in upstream gameplay.
 	assert(world.get_object(hero_id).health < initial_health, "Creeps did not retaliate")
-	print("PASS: Harlindon northern camp melee and creep retaliation during peace time")
+	print("PASS: Harlindon northern camp melee and creep retaliation in upstream gameplay")
 	quit()
