@@ -50,6 +50,12 @@ uniform vec2 atlas_size = vec2(2048.0, 2048.0);
 uniform float max_atlas_lod = 2.0;
 // terrain.fxo MaxAnisotropy of the Base / Normal samplers
 uniform float max_anisotropy = 8.0;
+// lane TERRAIN-BAKES: retail bakes a tile nearer than 430 * clamp(width / 1024, 0.5, 2.5) + 25 units at 32 px/cell and every other 16 x 16 cell tile at 16 px/cell
+// (engine TerrainBake.h; the game's refresh_terrain_bake writes the flags each frame). One texel a tile, 255 = a 16 px/cell tile: its ground is the atlas at mip 1.
+uniform sampler2D bake_far : filter_nearest, repeat_disable, hint_default_black;
+uniform vec2 bake_origin = vec2(0.0);  // SAGE x, y of the tile grid's corner
+uniform vec2 bake_extent = vec2(1.0);  // the grid's size in world units
+varying vec2 v_bake_uv;
 
 uniform vec3 sun_dir_sage = vec3(0.0, 0.0, 1.0); // toward the light (see stop S-033: -lightPos)
 uniform vec3 sun_color = vec3(1.0);
@@ -127,7 +133,7 @@ void terrain_vertex(vec3 vtx, vec3 nrm, vec3 cam_world, float time, out vec3 lts
 // hardware reads N = min(ceil(major / minor), level) texels along the major axis at LOD log2(major / N) (Vulkan 16.9 / D3D9's anisotropic filter). Retail's
 // MaxAnisotropy is 8: a footprint thinner than 1:8 has its minor axis lengthened to major / 8, so a viewport level of 16 reads no more than retail's 8 probes.
 // ZH's three mip levels (max_atlas_lod) bound the LOD: a footprint that would take a deeper one is shrunk to it, because a deeper mip bleeds past the class gutters.
-void atlas_gradients(vec2 uv, out vec2 gx, out vec2 gy) {
+void atlas_gradients(vec2 uv, float min_lod, out vec2 gx, out vec2 gy) {
 	vec2 dx = dFdx(uv) * atlas_size;
 	vec2 dy = dFdy(uv) * atlas_size;
 	float lx = length(dx);
@@ -142,7 +148,8 @@ void atlas_gradients(vec2 uv, out vec2 gx, out vec2 gy) {
 	}
 	float probes = min(ceil(major / max(minor, 0.00001)), max_anisotropy);
 	float lod = log2(max(major / probes, 0.00000001));
-	float shrink = lod > max_atlas_lod ? exp2(max_atlas_lod - lod) : 1.0;
+	// the LOD is held between min_lod (a 16 px/cell tile's ground is the atlas at mip 1) and ZH's last mip level, the footprint's shape kept
+	float shrink = exp2(clamp(lod, min_lod, max_atlas_lod) - lod);
 	gx = dx * shrink / atlas_size;
 	gy = dy * shrink / atlas_size;
 }
@@ -183,14 +190,16 @@ vec4 record_texel(int rec, int k) {
 	return texelFetch(records, ivec2(col * 9 + k, row), 0);
 }
 
-// One layer's lit colour in retail (gamma) space, before cloud / macro / fog.
-vec3 shade_layer(vec2 uv_unwrapped, vec4 rect, vec4 vcol, vec2 gx, vec2 gy) {
+// One layer's texels: the albedo and the normal map, filtered (atlas_gradients) and wrapped into the class.
+void layer_texels(vec2 uv_unwrapped, vec4 rect, vec2 gx, vec2 gy, out vec3 albedo, out vec4 nm) {
 	vec2 uv = wrap_into_class(rect, uv_unwrapped);
-	vec3 albedo = textureGrad(base_atlas, uv, gx, gy).rgb;
-	if (debug_mode == 7) {
-		return albedo;
-	}
-	vec4 nm = textureGrad(normal_atlas, uv, gx, gy);
+	albedo = textureGrad(base_atlas, uv, gx, gy).rgb;
+	nm = textureGrad(normal_atlas, uv, gx, gy);
+}
+
+// The lighting of ps_2_0 on the COMPOSITE texels, once (lane TERRAIN-BAKES). Retail bakes the layers' albedo and normal-map texels into one texture each on the CPU
+// (blendTile mixes both with the same alpha, RW 0x4AC035) and lights that texel a single time, so a blend seam is lit as the mixed texel, not as the mix of two lit layers.
+vec3 light_composite(vec3 albedo, vec4 nm, vec4 vcol) {
 	vec2 nxy = 2.0 * nm.xy - 1.0;
 	float nz = sqrt(max(1.0 - dot(nxy, nxy), 0.0));
 	vec3 N = normalize(vec3(nxy, nz));
@@ -205,9 +214,6 @@ vec3 shade_layer(vec2 uv_unwrapped, vec4 rect, vec4 vcol, vec2 gx, vec2 gy) {
 	if (overbright) {
 		lit = 2.0 * lit;
 	}
-	if (debug_mode == 1) { return albedo; }
-	if (debug_mode == 2) { return vcol.rgb; }
-	if (debug_mode == 3) { return nm.rgb; }
 	return lit;
 }
 
@@ -231,18 +237,33 @@ vec3 terrain_output(vec2 uv0, vec4 vcol) {
 	vec4 rect1 = record_texel(rec, 3);
 	vec4 rect2 = record_texel(rec, 7);
 
+	float min_lod = texture(bake_far, v_bake_uv).r > 0.5 ? 1.0 : 0.0;
 	vec2 g0x, g0y, g1x, g1y, g2x, g2y;
-	atlas_gradients(uv0, g0x, g0y);
-	atlas_gradients(uv1, g1x, g1y);
-	atlas_gradients(uv2, g2x, g2y);
+	atlas_gradients(uv0, min_lod, g0x, g0y);
+	atlas_gradients(uv1, min_lod, g1x, g1y);
+	atlas_gradients(uv2, min_lod, g2x, g2y);
 
-	vec3 comp = shade_layer(uv0, v_wrap, vcol, g0x, g0y);
+	vec3 albedo;
+	vec4 nm;
+	layer_texels(uv0, v_wrap, g0x, g0y, albedo, nm);
 	if (has1) {
-		comp = mix(comp, shade_layer(uv1, rect1, vcol, g1x, g1y), alpha1);
+		vec3 albedo1;
+		vec4 nm1;
+		layer_texels(uv1, rect1, g1x, g1y, albedo1, nm1);
+		albedo = mix(albedo, albedo1, alpha1);
+		nm = mix(nm, nm1, alpha1);
 	}
 	if (has2) {
-		comp = mix(comp, shade_layer(uv2, rect2, vcol, g2x, g2y), alpha2);
+		vec3 albedo2;
+		vec4 nm2;
+		layer_texels(uv2, rect2, g2x, g2y, albedo2, nm2);
+		albedo = mix(albedo, albedo2, alpha2);
+		nm = mix(nm, nm2, alpha2);
 	}
+	vec3 comp = albedo;
+	if (debug_mode == 2) { comp = vcol.rgb; }
+	else if (debug_mode == 3) { comp = nm.rgb; }
+	else if (debug_mode != 1 && debug_mode != 7) { comp = light_composite(albedo, nm, vcol); }
 	if (debug_mode == 4) { return vec3(fract(uv0 * 16.0), 0.0); }
 	if (debug_mode == 7) { return retail_output(clamp(comp, 0.0, 1.0)); }
 	if (debug_mode == 1 || debug_mode == 2 || debug_mode == 3) { return retail_output(clamp(comp, 0.0, 1.0)); }

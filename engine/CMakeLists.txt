@@ -367,6 +367,7 @@ add_library(openbfme_core STATIC
     src/GameEngineDevice/W3DDevice/GameClient/AssetCatalog.cpp
     src/GameEngineDevice/W3DDevice/GameClient/HeightMapMesh.cpp
     src/GameEngineDevice/W3DDevice/GameClient/TerrainComposite.cpp
+    src/GameEngineDevice/W3DDevice/GameClient/TerrainBake.cpp
     src/GameEngineDevice/W3DDevice/GameClient/WorldHeightMap.cpp
     src/GameEngineDevice/W3DDevice/GameClient/WorldHeightMapUV.cpp
     src/Libraries/Compression/CompressionManager.cpp

@@ -33,6 +33,7 @@ void vertex() {
 	vec3 world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_shroud_uv = (vec2(world.x, -world.z) - shroud_origin) / shroud_extent;
 	v_sage_xy = vec2(world.x, -world.z);
+	v_bake_uv = (v_sage_xy - bake_origin) / bake_extent;
 }
 
 void fragment() {
