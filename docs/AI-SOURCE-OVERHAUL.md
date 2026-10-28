@@ -118,3 +118,38 @@ Final defensive-targeting validation passed 9 focused cases / 280 assertions
 and 3 data-mounted difficulty/offensive-tactic cases / 15,263 assertions. The
 four-difficulty repeat checks matched every simulation frame. Native build,
 installed commit gate and whitespace checks passed.
+
+## BFME2 roaming defense follow-up
+
+Ported AIRoamingDefenseTactic from Open-BFME-2: eligibility RVA `0x5AAC35`,
+cleanup `0x5AAD26`, run `0x5AAB9C`, update `0x5AB085`, and destination selection
+`0x5AAE3F`. The native vtable's team-count slot resolves to the zero-return body
+at VA `0x4D43D0`. Easy alone schedules a check five seconds later. The tactic
+recruits no teams and sends the first idle default-team army registration not
+leaving a factory. Tactic membership is also excluded because the port represents
+native team assignment in its tactic records (S-418).
+
+Owned economy registrations strictly within 900 units of the AI center in 3D
+are selected with source-line 164's random draw. If economy registrations exist
+but none qualify, no order is issued. Only an empty economy registry falls back
+to the first DOZER_FACTORY: an integer angle 0..6 radians, source line 186,
+places an attack-move destination 400 units from it. Cleanup clears both named
+counters without drawing a cooldown. The roaming flag reuses the disjoint
+per-tactic +0x58 field already saved and hashed; no snapshot layout changes.
+
+Three source regression cases cover all four difficulty gates, exact delay,
+zero-team readiness/run/end, factory-exit filtering, first eligible unit,
+strict economy boundary, no-fallback behavior, first fortress and absent fortress,
+and random call sites/bounds. Wider targetless registry/order and team/formation
+limitations remain open; the trig facade retains S-081. This closes a tactic
+body, not the overall retail replay parity gate.
+
+Validation: the native Release build passed; 88 selected source/power/expansion/
+save cases passed 15,190 assertions. The four-difficulty repeated 1,500-frame
+matrix, seven-faction construction/economy/attack case and offensive tactics
+passed four cases / 15,328 assertions. The focused roaming tests passed three
+cases / 156 assertions. The installed commit gate and whitespace checks passed.
+The gameplay fixture mounts the existing combined BFME2/RotWK assets, so these
+runs establish native regressions and determinism, not a pure BFME2 retail trace
+match. BFME2 executable facts ran against BFME2_INSTALL; RotWK-only binary facts
+were skipped without RW_GAME_DAT. No graphical or cross-play gate was run.

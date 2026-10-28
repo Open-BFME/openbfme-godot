@@ -165,7 +165,7 @@ struct AITactic
 	std::vector<Coord3D> waypoints;  ///< FlankAttack / PincerAttack waypoints (+ 0x58 -> vector)
 	Coord3D gatherPos;               ///< FormationAttack + 0x58 -> + 4: the team's centre at the launch
 	Coord3D aimPos;                  ///< FormationAttack + 0x58 -> + 0x10: the target position at the launch
-	bool mainLaunched = false;       ///< FeintAttack + 0x58: the main team was sent
+	bool mainLaunched = false;       ///< FeintAttack main-team flag / BFME2 RoamingDefense roaming flag (+0x58)
 	std::uint32_t launchFrame = 0;   ///< FeintAttack + 0x5C: the launch frame
 	// lane AIEXPAND-1: SimpleExpansion (ctor RW 0x9B5190): + 0x58 its plain structure request (also in the AI's queues while unfinished); its + 0x5C stage is `step`
 	std::shared_ptr<AIBuildRequest> request;
@@ -231,5 +231,7 @@ void flankWaypointsForTest(GameLogic &logic, AITactic &tac, const AITarget &t, c
 void addAttackedAtForTest(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D &pos);
 // test hook (lane AIEXPAND-1): the EXPANSION heuristic (RW 0x97D191, with its gate RW 0x97D035) for `ai` on the target `t`
 void expansionHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &t);
+bool roamingDefenseAppliesForTest(GameLogic &logic, AISkirmishPlayer &ai);
+void updateRoamingDefenseForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac);
 void pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const Coord3D &start, const Coord3D &target);
 } // namespace AITacticalAI

@@ -745,7 +745,7 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"the horde's turn is kept from carrying the members (the port's contain would place them); G2 measured, not solved: GondorFighterHorde engages 20 % of "
 		"its members on average against MordorFighterHorde (test_move2_slot_distance's MOVE2 MELEE report)",
 		"[S-893] skirmish ai targetless tactics (lane AI-2 r3): the 11 prototypes, FarmKillSquad's constructor draw, the per-frame pick RW 0x90C5E2 and FarmKillSquad's "
-		"applicability, setup, cleanup and update flow are ported, as is FlagCaptureSquad (RW 0x9BC39F / 0x9BC1A0 / 0x9BBFDC / 0x9BC3F4); the other 9 prototypes' applicability and bodies and FarmKillSquad's farm choice (RW 0x9BBA51 / "
+		"applicability, setup, cleanup and update flow are ported, as is FlagCaptureSquad (RW 0x9BC39F / 0x9BC1A0 / 0x9BBFDC / 0x9BC3F4); BFME2 RoamingDefense eligibility, zero-team lifecycle and roaming orders are ported (RVA 0x5AAC35 / 0x5AB085 / 0x5AAE3F); the other 8 prototypes' applicability and bodies and FarmKillSquad's farm choice (RW 0x9BBA51 / "
 		"0x9BB5E4 and their draws) are not (a nearest-farm stand-in)",
 		"[S-894] produced member of a destroyed horde (lane AI-2 r4): a member the queue exit hands to a horde that is already destroyed is destroyed with it "
 		"(HordeContain::acceptCreatedMember); RW's acceptance slot for a destroyed horde is not read",

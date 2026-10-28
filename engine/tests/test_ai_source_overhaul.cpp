@@ -2,6 +2,8 @@
 #include "doctest.h"
 #include <limits>
 #include "CombatTestUtil.h"
+#include "GameLogic/Combat/CombatNames.h"
+
 #include "Common/XferSave.h"
 #include "Common/XferLoad.h"
 #include "GameClient/ControlBarCommands.h"
@@ -338,4 +340,138 @@ TEST_CASE("BFME2 base defense: support-only enemies are excluded and native draw
    CHECK(call.hi == 0);
   }
  CHECK(draws == 1);
+}
+
+TEST_CASE("BFME2 roaming defense: Easy-only delay and running gate")
+{
+ Scenario s;
+ auto *player = s.w.players.findPlayerWithName("Alice");
+ for (int difficulty = 1; difficulty != 4; ++difficulty) {
+  player->setSkirmishDifficulty(difficulty);
+  CHECK_FALSE(AITacticalAI::roamingDefenseAppliesForTest(*s.w.logic, s.bot));
+  CHECK(s.bot.brain.namedCounters.empty());
+ }
+ player->setSkirmishDifficulty(0);
+ CHECK_FALSE(AITacticalAI::roamingDefenseAppliesForTest(*s.w.logic, s.bot));
+ CHECK(s.bot.brain.namedCounters["AIRoamingDefenseTactic_NextLogicFrameRun"] == 25);
+ s.w.frames(24);
+ CHECK_FALSE(AITacticalAI::roamingDefenseAppliesForTest(*s.w.logic, s.bot));
+ s.w.frames(1);
+ CHECK(AITacticalAI::roamingDefenseAppliesForTest(*s.w.logic, s.bot));
+ s.bot.brain.namedCounters["AIRoamingDefenseTactic_IsRunning"] = 1;
+ CHECK_FALSE(AITacticalAI::roamingDefenseAppliesForTest(*s.w.logic, s.bot));
+}
+
+TEST_CASE("BFME2 roaming defense: zero-team lifecycle and strict economy radius")
+{
+ for (const int distance : {899, 900, 901}) {
+  CAPTURE(distance);
+  Scenario s;
+  REQUIRE(s.w.w.load("SkirmishAIData RoamData\nEnd\nChildObject RoamFarm BreachWall\n KindOf = STRUCTURE ECONOMY_STRUCTURE\nEnd\nChildObject RoamFortress BreachWall\n KindOf = STRUCTURE DOZER_FACTORY\nEnd\n").empty());
+  auto &manager = s.w.logic->skirmishAI();
+  manager.setStore(&s.store);
+  manager.newGame(true);
+  const int index = s.w.players.findPlayerWithName("Alice")->getPlayerIndex();
+  auto *ai = const_cast<AISkirmishPlayer *>(manager.findAI(index));
+  REQUIRE(ai);
+  ai->disabled = true;
+  ai->build.startPosition = {0, 500, 0};
+  auto *busy = s.w.unit("Swordsman", 'A', 100, 500);
+  busy->setStatus((unsigned)CombatNames::status("IS_LEAVING_FACTORY"), true);
+  auto *unit = s.w.unit("Swordsman", 'A', 110, 500);
+  auto *other = s.w.unit("Swordsman", 'A', 120, 500);
+  auto *farm = s.w.unit("RoamFarm", 'A', (float)distance, 500);
+  s.w.unit("RoamFortress", 'A', 200, 500); // Must not be used when economy is registered but out of range.
+  REQUIRE(manager.record(index)->economy().size() == 1);
+  AITactic tactic;
+  tactic.kindIndex = 107;
+  tactic.kind = "AIRoamingDefenseTactic";
+  tactic.targetless = true;
+  auto &random = s.w.logic->random();
+  random.enableCallLog(true);
+  random.clearCallLog();
+  s.w.frames(1);
+  AITacticalAI::updateRoamingDefenseForTest(*s.w.logic, *ai, tactic);
+  CHECK(tactic.ready);
+  CHECK_FALSE(tactic.started);
+  REQUIRE(tactic.teams.empty());
+  s.w.frames(1);
+  AITacticalAI::updateRoamingDefenseForTest(*s.w.logic, *ai, tactic);
+  CHECK(tactic.started);
+  CHECK(tactic.mainLaunched);
+  CHECK_FALSE(tactic.ended);
+  AITacticalAI::updateRoamingDefenseForTest(*s.w.logic, *ai, tactic);
+  CHECK(tactic.ended);
+  CHECK(unit->getAIUpdateInterface()->attackMoveActive() == (distance == 899));
+  CHECK_FALSE(busy->getAIUpdateInterface()->attackMoveActive());
+  CHECK_FALSE(other->getAIUpdateInterface()->attackMoveActive());
+  if (distance < 900) {
+   REQUIRE(unit->getAIUpdateInterface()->resumeAttackMove());
+   const auto &goal = unit->getAIUpdateInterface()->stateMachine().goalPosition();
+   CHECK(goal.x == farm->getPosition()->x);
+   CHECK(goal.y == farm->getPosition()->y);
+  }
+  int draws = 0;
+  for (const auto &call : random.callLog()) {
+   if (call.file != "AIRoamingDefenseTactic.cpp") { continue; }
+   ++draws;
+   CHECK(call.line == 164);
+   CHECK(call.lo == 0);
+   CHECK(call.hi == 0);
+  }
+  CHECK(draws == (distance == 899 ? 1 : 0));
+  CHECK(ai->brain.namedCounters["AIRoamingDefenseTactic_IsRunning"] == 0);
+  CHECK(ai->brain.namedCounters["AIRoamingDefenseTactic_NextLogicFrameRun"] == 0);
+ }
+}
+
+TEST_CASE("BFME2 roaming defense: empty economy uses first fortress or issues no order")
+{
+ for (bool hasFortress : {false, true}) {
+  Scenario s;
+  REQUIRE(s.w.w.load("SkirmishAIData RoamData\nEnd\nChildObject RoamFortress BreachWall\n KindOf = STRUCTURE DOZER_FACTORY\nEnd\n").empty());
+  auto &manager = s.w.logic->skirmishAI();
+  manager.setStore(&s.store);
+  manager.newGame(true);
+  const int index = s.w.players.findPlayerWithName("Alice")->getPlayerIndex();
+  auto *ai = const_cast<AISkirmishPlayer *>(manager.findAI(index));
+  REQUIRE(ai);
+  ai->disabled = true;
+  auto *unit = s.w.unit("Swordsman", 'A', 100, 500);
+  if (hasFortress) {
+   s.w.unit("RoamFortress", 'A', 100, 500);
+   s.w.unit("RoamFortress", 'A', 3000, 500);
+  }
+  auto &random = s.w.logic->random();
+  // Find an angle-zero seed before exercising the decision: exact coordinates need no trig tolerance.
+  unsigned seed = 0;
+  for (; seed < 100; ++seed) {
+   GameLogicRandom oracle = random;
+   oracle.seedRandom(seed);
+   if (oracle.getValue(0, 6, "AIRoamingDefenseTactic.cpp", 186) == 0) { break; }
+  }
+  REQUIRE(seed < 100); // tolerance: bounded fixture seed search, not a simulation-result tolerance.
+  random.seedRandom(seed);
+  random.enableCallLog(true);
+  random.clearCallLog();
+  AITactic tactic;
+  tactic.kindIndex = 107;
+  tactic.targetless = true;
+  tactic.started = true;
+  tactic.mainLaunched = true;
+  AITacticalAI::updateRoamingDefenseForTest(*s.w.logic, *ai, tactic);
+  CHECK(tactic.ended);
+  CHECK(unit->getAIUpdateInterface()->attackMoveActive() == hasFortress);
+  if (hasFortress) {
+   REQUIRE(unit->getAIUpdateInterface()->resumeAttackMove());
+   CHECK(unit->getAIUpdateInterface()->stateMachine().goalPosition().x == 500);
+   CHECK(unit->getAIUpdateInterface()->stateMachine().goalPosition().y == 500);
+  }
+  REQUIRE(random.callLog().size() == (hasFortress ? 1 : 0));
+  if (hasFortress) {
+   CHECK(random.callLog()[0].line == 186);
+   CHECK(random.callLog()[0].lo == 0);
+   CHECK(random.callLog()[0].hi == 6);
+  }
+ }
 }
