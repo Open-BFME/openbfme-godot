@@ -176,3 +176,20 @@ assertions. The broad selection passed 90 of 91 cases; its sole failure was the
 Athelas engine timing pin, 22 -> 25. A control disabling only the new selector
 restored exactly 22. The pin is updated with this cause; it is not a retail
 frame oracle. The final targeted rerun covers the corrected pin.
+
+## Shared path-to-structure query
+
+Added the BFME2 `PathfinderQuickStructure.cpp` no-locomotor-override form, its
+`Pathfinder::rva002F4AC1` boundary helper and `Rva002E7261Info::cellCallback`.
+It rejects missing AI and incompatible surface masks, checks geometry shape 0's
+unrotated offset when the origin is unobstructed, and probes +X, -X, +Y, -Y out
+of the actual obstacle footprint. The first differing obstacle ID supplies the
+zone; effective-zone equivalence and the existing portal query decide access.
+The ray length is exactly `2 - trunc(radius * -0.1f)`. Existing layer, zone and
+portal facades retain their documented limitations. This adds the shared query;
+siege bodies and farm-raiding callers are separate remaining work.
+
+Two synthetic cases pass 12 assertions for AI/surface refusal, clear and isolated
+targets, and all four cardinal exits. The combined focused run, including tech
+selection, the corrected Athelas pin and existing pathfinding regressions,
+passed nine cases / 359 assertions. Native Release build passed.

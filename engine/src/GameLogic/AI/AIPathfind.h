@@ -992,6 +992,8 @@ public:
 	// terrain-and-structure zone test, no search (ZH clientSafeQuickDoesPathExist). Lane WALL-2: with the unit (RW 0x6F5BB0 QuickDoesPathExist's first argument)
 	// different zones still pass when a portal chain joins them (RW 0x6F5EE7 -> 0x6F5547)
 	bool clientSafeQuickDoesPathExist(const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to, const PathfindObject *obj = nullptr);
+	// BFME2 PathfinderQuickStructure.cpp / RVA 0x2F4AC1: no-override-set form, using the unit's current locomotor.
+	bool quickDoesPathExistToStructure(const PathfindObject &obj, const PathfindLocomotorInfo &loco, const Coord3D &from, const PathfindObject &target);
 	// RW 0x6F2FC3: the straight line is passable for the unit (the optimiser's test)
 	bool isLinePassable(const PathfindObject *obj, unsigned acceptableSurfaces, PathfindLayerEnum layer, const Coord3D &startWorld,
 		const Coord3D &endWorld, bool blocked, bool allowPinched = false);
