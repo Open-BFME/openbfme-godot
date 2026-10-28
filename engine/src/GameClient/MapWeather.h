@@ -35,6 +35,16 @@ void applyText(const std::string &text, int timeOfDay, float diffuse[4]);
 bool load(ArchiveFileSystem &fs, const std::string &mapDir, int timeOfDay, float diffuse[4], std::string *error);
 } // namespace WaterSetScan
 
+// The ReflectionOn flag of the "WaterTransparency ... End" block (TheWaterTransparency + 0x50, the field table of BFME2 INIWaterTransparency.cpp):
+// data\ini\water.ini (retail: ReflectionOn = No), then <mapDir>\map.ini, the last block that sets it winning. WaterRenderObjClass binds the
+// ReflectionTexture effect parameter to the rendered reflection only when this holds together with WaterLOD >= 2 (Rva0007EBFBWaterDraw.cpp:419).
+namespace WaterTransparencyScan
+{
+void applyText(const std::string &text, bool &reflectionOn);
+// mapDir as MapWeatherScan::load takes it. Missing map.ini is fine; a missing water.ini is an error.
+bool load(ArchiveFileSystem &fs, const std::string &mapDir, bool &reflectionOn, std::string *error);
+} // namespace WaterTransparencyScan
+
 namespace MapWeatherScan
 {
 // Applies the keys of every "Weather ... End" block in `text` on top of `weather`.

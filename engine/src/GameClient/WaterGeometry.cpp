@@ -185,7 +185,9 @@ void WaterGeometry::riverVertexColour(const RiverArea &river, const TimeOfDayLig
 					v += down * tod->terrain[i].diffuse[c];
 				}
 			}
-			out[c] = v * waterDiffuse[c];
+			// RW 0x500400..0x500530: the WaterSet colour is packed A<<24|R<<16|G<<8|B (loadSetting, RW 0x47E9D5..0x47EA1A) but drawRiverWater reads its low
+			// byte as the red and its third byte as the blue, so red and blue trade places
+			out[c] = v * waterDiffuse[c == 0 ? 2 : (c == 2 ? 0 : c)];
 		}
 	}
 	else if (river.r == 0 && river.g == 0 && river.b == 0)
@@ -221,9 +223,9 @@ bool WaterGeometry::readStandingMaterial(const MeshShaderMaterialDef &source, St
 		unsigned expected = 0;
 		if (n == "materialcolordiffuse" || n == "gwampfreqphasesteepness1" || n == "gwampfreqphasesteepness2" || n == "gwampfreqphasesteepness3") expected = W3DSHADERMATERIAL_PROPERTY_VECTOR4;
 		else if (n == "specularcolor") expected = W3DSHADERMATERIAL_PROPERTY_VECTOR3;
-		else if (n == "bumpuvscale" || n == "envuvscale" || n == "waveuvscale" || n == "pcabumpuvscale" || n == "pcawaveuvscale") expected = W3DSHADERMATERIAL_PROPERTY_VECTOR2;
-		else if (n == "blendusingterrainalpha") expected = W3DSHADERMATERIAL_PROPERTY_BOOL;
-		else if (n == "dimmingfactor" || n == "bumpscale" || n == "specularexponent" || n == "windangle" || n == "windspeed" || n == "waveangle" || n == "wavespeed" || n == "reflectionperturbation") expected = W3DSHADERMATERIAL_PROPERTY_FLOAT;
+		else if (n == "bumpuvscale" || n == "envuvscale" || n == "waveuvscale" || n == "pcabumpuvscale" || n == "pcawaveuvscale" || n == "myspeculardirection") expected = W3DSHADERMATERIAL_PROPERTY_VECTOR2;
+		else if (n == "blendusingterrainalpha" || n == "usemyspeculardirection") expected = W3DSHADERMATERIAL_PROPERTY_BOOL;
+		else if (n == "dimmingfactor" || n == "bumpscale" || n == "specularexponent" || n == "windangle" || n == "windspeed" || n == "waveangle" || n == "wavespeed" || n == "reflectionperturbation" || n == "reflectionstrength") expected = W3DSHADERMATERIAL_PROPERTY_FLOAT;
 		else if (n == "waterpcatexture1" || n == "waterpcatexture2" || n == "waterpcatexture3" || n == "pcanoisetexture" || n == "pcafrothtexture" || n == "waterbumptexture" || n == "waterenvtexture" || n == "wavetexture") expected = W3DSHADERMATERIAL_PROPERTY_TEXTURE;
 		const bool wider = expected >= W3DSHADERMATERIAL_PROPERTY_VECTOR2 && expected <= W3DSHADERMATERIAL_PROPERTY_VECTOR4
 			&& p.Type > expected && p.Type <= W3DSHADERMATERIAL_PROPERTY_VECTOR4;
@@ -253,6 +255,9 @@ bool WaterGeometry::readStandingMaterial(const MeshShaderMaterialDef &source, St
 		else if (n == "pcawaveuvscale") std::copy(p.Float, p.Float + 2, out.pcaWaveUV);
 		else if (n == "specularcolor") std::copy(p.Float, p.Float + 3, out.specular);
 		else if (n == "reflectionperturbation") out.reflectionPerturbation = p.Float[0];
+		else if (n == "reflectionstrength") out.reflectionStrength = p.Float[0];
+		else if (n == "usemyspeculardirection") out.useMySpecularDirection = p.Bool;
+		else if (n == "myspeculardirection") std::copy(p.Float, p.Float + 2, out.mySpecularDirection);
 		else if (n == "waterpcatexture1") out.pcaTexture[0] = p.StringValue;
 		else if (n == "waterpcatexture2") out.pcaTexture[1] = p.StringValue;
 		else if (n == "waterpcatexture3") out.pcaTexture[2] = p.StringValue;
@@ -265,6 +270,87 @@ bool WaterGeometry::readStandingMaterial(const MeshShaderMaterialDef &source, St
 	return true;
 }
 
+std::string WaterGeometry::standingShaderStem(const std::string &base, int waterLod, const std::function<bool(const std::string &)> &exists)
+{
+	static const char *const kFileSuffix[kWaterLodCount] = { "L", "M", "", "" }; // WaterShaderSuffixes {'L', 0, 'M', 0, 0, 0, 0, 0}, two bytes per level
+	for (int lod = std::max(waterLod, 0); lod < kWaterLodCount; ++lod)
+	{
+		if (exists(base + kFileSuffix[lod])) return base + kFileSuffix[lod];
+	}
+	return base; // WaterNoShaderSuffix
+}
+
+bool WaterGeometry::resolveTechnique(const std::vector<std::string> &effect, const std::string &authored, int lodLimit, ResolvedTechnique &out, std::string *error)
+{
+	out = ResolvedTechnique{};
+	if (lodLimit < 0 || lodLimit >= kWaterLodCount)
+	{
+		if (error) *error = "WaterLOD " + std::to_string(lodLimit) + " is outside 0.." + std::to_string(kWaterLodCount - 1);
+		return false;
+	}
+	static const char *const kSuffix[kWaterLodCount] = { "_L", "_M", "", "_U" }; // fxshadersetup.cpp:443
+	std::string name = authored;
+	int nameLod = 2;
+	for (int i = 0; i < kWaterLodCount; ++i)
+	{
+		const std::string suffix = kSuffix[i];
+		if (!suffix.empty() && name.size() >= suffix.size() && AsciiStringUtil::compareNoCase(name.substr(name.size() - suffix.size()), suffix) == 0)
+		{
+			name.resize(name.size() - suffix.size());
+			nameLod = i;
+			break;
+		}
+	}
+	if (nameLod == 2 && lodLimit == 3) nameLod = 3;
+	nameLod = std::min(nameLod, lodLimit);
+	auto has = [&](const std::string &candidate) { return std::find(effect.begin(), effect.end(), candidate) != effect.end(); };
+	for (int i = nameLod; i >= 0; --i)
+	{
+		if (has(name + kSuffix[i])) { out.name = name + kSuffix[i]; out.lod = i; return true; }
+	}
+	for (int i = nameLod + 1; i < kWaterLodCount; ++i)
+	{
+		if (has(name + kSuffix[i])) { out.name = name + kSuffix[i]; out.lod = i; return true; }
+	}
+	if (error) *error = "no technique " + authored + " (any LOD) in the compiled effect";
+	return false;
+}
+
+const WaterGeometry::StandingShaderTraits *WaterGeometry::standingShaderTraits(const std::string &technique)
+{
+	// watershader.fxo blobs: PCA ps 0/1 + vs 13, PCA_U ps 2/3 + vs 14, BumpSpecular ps 4/5 + vs 19, BumpSpecular_M ps 8 + vs 9
+	static const StandingShaderTraits kTraits[] = {
+		{ "BumpSpecular", 0, true, true, 0.0f, 0, false, 4, 19 },
+		{ "BumpSpecular_M", 0, false, true, 0.0f, 0, false, 8, 9 },
+		{ "PCA", 1, false, true, 0.15f, 2, false, 0, 13 },
+		{ "PCA_U", 2, false, false, 0.33f, 3, true, 2, 14 },
+	};
+	for (const StandingShaderTraits &t : kTraits)
+	{
+		if (technique == t.technique) return &t;
+	}
+	return nullptr;
+}
+
+void WaterGeometry::specularDirection(const StandingMaterial &material, const StandingShaderTraits &traits, const float toLight1[3], float out[3])
+{
+	if (material.useMySpecularDirection && traits.pcaMode == 0)
+	{
+		const float toRadians = 3.14159265358979f / 180.0f;
+		const float x = material.mySpecularDirection[0] * toRadians, y = material.mySpecularDirection[1] * toRadians;
+		out[0] = std::cos(x) * std::cos(y);
+		out[1] = std::sin(x) * std::cos(y);
+		out[2] = -std::sin(y);
+	}
+	else
+	{
+		std::copy(toLight1, toLight1 + 3, out);
+	}
+	if (traits.bumpHigh)
+	{
+		for (int c = 0; c < 3; ++c) out[c] = std::min(std::max(out[c], 0.0f), 1.0f); // oD1
+	}
+}
 
 // BFME2 donor: GameEngine/Source/GameLogic/Map/StandingWaterAreaLoadPCA.cpp
 // RVA 0x3093F6. Samplers: GameEngineDevice/Source/W3DDevice/GameClient/

@@ -106,15 +106,106 @@ func _check_wave_geometry(source: ShaderMaterial) -> bool:
 	viewport.queue_free()
 	return frozen==still and silhouette_changed
 
+## a water-only build of a retail map at a WaterLOD: [report, root node]
+func _water_build(fs, map_name: String, lod: int) -> Array:
+	var builder = ClassDB.instantiate("MapTerrainBuilder")
+	var node = builder.build_map(fs, map_name, {"markers":false, "terrain":false, "rivers":false, "roads":false, "water_lod":lod})
+	return [builder.get_report(), node]
+
+func _material_of(node: Node, index: int) -> ShaderMaterial:
+	return node.get_node("StandingWater").get_child(index).mesh.surface_get_material(0)
+
+func _any_stop(report: Dictionary, needle: String) -> bool:
+	for line in report.water.material_stops:
+		if String(line).contains(needle):
+			return true
+	return false
+
+## WaterLOD picks the W3D file and the technique (FXShaderSetup::InitializeShader); the RotWK facts are pinned in tools/render/test_water_binary_facts.py
+## and engine/tests/test_water_retail.cpp. Returns "" or the first failure.
+func _check_lod_resolution(fs) -> String:
+	# Harlindon: waterplanepca authors PCA_U
+	var expected := {
+		0: ["WaterPlanePCAL", "PCA_L", false],
+		1: ["WaterPlanePCA", "PCA_M", false],
+		2: ["WaterPlanePCA", "PCA", true],
+		3: ["WaterPlanePCA", "PCA_U", true],
+	}
+	for lod in expected:
+		var built := _water_build(fs, "map mp harlindon", lod)
+		var report: Dictionary = built[0]
+		var info: Dictionary = report.water.materials[0]
+		if not report.errors.is_empty():
+			return "harlindon lod %d: %s" % [lod, str(report.errors)]
+		if info.shader_stem != expected[lod][0] or info.technique != expected[lod][1] or info.authored_technique != ("PCA_L" if lod == 0 else "PCA_U") or info.water_lod != lod:
+			return "harlindon lod %d resolved %s" % [lod, str(info)]
+		if info.pca_enabled != expected[lod][2]:
+			return "harlindon lod %d pca_enabled %s" % [lod, str(info.pca_enabled)]
+		if not expected[lod][2] and not _any_stop(report, "is not ported; drawn with the BumpSpecular_M path"):
+			return "harlindon lod %d: the unported %s is not reported: %s" % [lod, expected[lod][1], str(report.water.material_stops)]
+		if lod >= 2:
+			var material := _material_of(built[1], 0)
+			if material.get_shader_parameter("pca_mode") != (1 if lod == 2 else 2):
+				return "harlindon lod %d pca_mode %s" % [lod, str(material.get_shader_parameter("pca_mode"))]
+			# PCA: 0.15 steepness and two basis textures; PCA_U: 0.33, three and the noise texture
+			if not is_equal_approx(material.get_shader_parameter("wave_steepness"), 0.15 if lod == 2 else 0.33):
+				return "harlindon lod %d wave_steepness %s" % [lod, str(material.get_shader_parameter("wave_steepness"))]
+			if (material.get_shader_parameter("pca_tex2") != null) != (lod == 3) or (material.get_shader_parameter("pca_noise_tex") != null) != (lod == 3):
+				return "harlindon lod %d basis textures" % lod
+			if material.get_shader_parameter("clamp_diffuse") != (lod == 2):
+				return "harlindon lod %d clamp_diffuse" % lod
+			if not _any_stop(report, "ReflectionOn and WaterLOD >= 2"):
+				return "harlindon lod %d: ReflectionOn is Yes and the unported reflection is not reported" % lod
+		built[1].free()
+
+	# Adorn River's only area (97 points) fails the ear clipper: not drawn, reported (S-035; the pin is in test_water_retail.cpp)
+	var adorn := _water_build(fs, "map mp adorn river", 2)
+	if adorn[0].water.areas != 0 or adorn[0].water.triangulation_failed != 1 or adorn[0].water.areas_in_map != 1:
+		return "adorn river: the rejected polygon is not reported: %s" % str(adorn[0].water)
+	adorn[1].free()
+	# Fords of Isen II (wtr_riv01, ReflectionStrength 0.8, and wtr_riv02, 0): BumpSpecular at High, BumpSpecular_M at Medium
+	for map_name in ["map mp fords of isen ii"]:
+		for lod in [1, 2]:
+			var built := _water_build(fs, map_name, lod)
+			var report: Dictionary = built[0]
+			if not report.errors.is_empty():
+				return "%s lod %d: %s" % [map_name, lod, str(report.errors)]
+			var seen_strengths := []
+			for i in report.water.materials.size():
+				var info: Dictionary = report.water.materials[i]
+				var material := _material_of(built[1], i)
+				if info.technique != ("BumpSpecular" if lod == 2 else "BumpSpecular_M") or info.authored_technique != "BumpSpecular":
+					return "%s lod %d resolved %s" % [map_name, lod, str(info)]
+				if material.get_shader_parameter("pca_mode") != null or material.get_shader_parameter("bump_high") != (lod == 2) or material.get_shader_parameter("clamp_diffuse") != true:
+					return "%s lod %d bump parameters" % [map_name, lod]
+				if not seen_strengths.has(snappedf(material.get_shader_parameter("reflection_strength"), 0.01)):
+					seen_strengths.append(snappedf(material.get_shader_parameter("reflection_strength"), 0.01))
+				# the half-vector's light is DirectionalLight[1]; BumpSpecular sends it through oD1, which clamps it to 0..1
+				var direction: Vector3 = material.get_shader_parameter("specular_direction")
+				if lod == 2 and direction != direction.clamp(Vector3.ZERO, Vector3.ONE):
+					return "%s lod %d specular_direction %s is not clamped to 0..1" % [map_name, lod, str(direction)]
+				# the map's hardware fog (Fords of Isen II's map.ini Weather: HardwareFogStart 350, End 2000, colour 220 226 235)
+				if material.get_shader_parameter("fog_enabled") != 1.0 or material.get_shader_parameter("fog_range_start") != 350.0 or material.get_shader_parameter("fog_range_end") != 2000.0:
+					return "%s lod %d fog %s" % [map_name, lod, str(material.get_shader_parameter("fog_range_start"))]
+				if material.get_shader_parameter("fog_color") != Vector3(220.0 / 255.0, 226.0 / 255.0, 235.0 / 255.0):
+					return "%s lod %d fog colour" % [map_name, lod]
+			seen_strengths.sort()
+			if seen_strengths != [0.0, 0.8]:
+				return "%s lod %d reflection strengths %s" % [map_name, lod, str(seen_strengths)]
+			if _any_stop(report, "ReflectionOn and WaterLOD >= 2") != (lod == 2):
+				return "%s lod %d: the unported reflection is reported iff WaterLOD >= 2: %s" % [map_name, lod, str(report.water.material_stops)]
+			built[1].free()
+	return ""
+
 func _run() -> void:
-	create_timer(90).timeout.connect(func(): push_error("Standing water test timed out"); quit(1))
+	create_timer(240).timeout.connect(func(): push_error("Standing water test timed out"); quit(1))
 	var fs = ClassDB.instantiate("RetailFileSystem")
 	if not (fs.mount_retail().ok):
 		push_error('fs.mount_retail().ok')
 		quit(1)
 		return
 	var builder = ClassDB.instantiate("MapTerrainBuilder")
-	var map = builder.build_map(fs, "map mp harlindon", {"markers":false})
+	var map = builder.build_map(fs, "map mp harlindon", {"markers":false, "water_lod":3}) # UltraHigh: PCA_U; the lower levels are _check_lod_resolution's
 	if not (map != null):
 		push_error('map != null')
 		quit(1)
@@ -241,6 +332,11 @@ func _run() -> void:
 		return
 	if not (checked > 0):
 		push_error('checked > 0')
+		quit(1)
+		return
+	var lod_error := _check_lod_resolution(fs)
+	if not lod_error.is_empty():
+		push_error(lod_error)
 		quit(1)
 		return
 	if DisplayServer.get_name() != "headless":

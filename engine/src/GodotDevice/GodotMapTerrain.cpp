@@ -986,6 +986,32 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 			std::string lightError;
 			if (lighting && !W3DObjectLightingUtil::fromMap(*lighting, waterLights, &lightError))
 				errors.push_back(toGodot(lightError));
+			// WaterLOD: the player's static detail level (GameLODManager + 0x1784); the game hands it in (GameWorld.set_water_lod), a caller that does not
+			// gets High, the retail default level's, and the report says so
+			int waterLod = 2;
+			if (options.has("water_lod"))
+			{
+				waterLod = (int)options["water_lod"];
+				if (waterLod < 0 || waterLod >= WaterGeometry::kWaterLodCount)
+				{
+					errors.push_back(toGodot("water_lod " + std::to_string(waterLod) + " is outside 0.." + std::to_string(WaterGeometry::kWaterLodCount - 1) + "; resolved as 2 (High)"));
+					waterLod = 2;
+				}
+			}
+			else materialStops.push_back(toGodot("[S-035] no water_lod option: the techniques are resolved for WaterLOD 2 (High)"));
+			bool reflectionOn = false;
+			{
+				std::string reflectionError;
+				if (!WaterTransparencyScan::load(*arch, mapDir, reflectionOn, &reflectionError)) errors.push_back(toGodot("water reflection: " + reflectionError));
+			}
+			// Rva0007EBFBWaterDraw.cpp:419: the reflection texture is the rendered one only when WaterLOD >= 2 (GlobalData + 0x5E) and ReflectionOn
+			const bool reflectionRendered = waterLod >= 2 && reflectionOn;
+			MapWeather waterWeather;
+			{
+				std::string weatherError;
+				if (!MapWeatherScan::load(*arch, mapDir, waterWeather, &weatherError)) errors.push_back(toGodot("weather: " + weatherError));
+				if (!optBool(options, "fog", true)) waterWeather.fogEnabled = false; // as the terrain's viewer option
+			}
 			for (const StandingWaterArea &a : map.chunks.standingWaterAreas)
 			{
 				std::vector<std::uint32_t> tri;
@@ -996,10 +1022,14 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				}
 				WaterGeometry::StandingMaterial params;
 				bool authored = false;
+				std::string shaderStem;
 				if (!a.fxShader.empty())
 				{
 					std::string stem = a.fxShader;
 					if (stem.size() > 4 && AsciiStringUtil::compareNoCase(stem.substr(stem.size() - 4), ".w3d") == 0) stem.resize(stem.size() - 4);
+					// StandingWaterArea::loadFXShaderSetup: <name>L / <name>M / <name> by the player's WaterLOD
+					stem = WaterGeometry::standingShaderStem(stem, waterLod, [&](const std::string &candidate) { return waterSource.Exists(W3D_Asset_Path(candidate, waterSource.FlatAssetLayout())); });
+					shaderStem = stem;
 					std::string error;
 					const W3DFileContents *fx = waterAssets.Load_File(W3D_Asset_Path(stem, waterSource.FlatAssetLayout()), &error);
 					if (!fx) errors.push_back(toGodot("water material " + a.fxShader + ": " + error));
@@ -1013,7 +1043,8 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 							}
 				}
 				if (!authored) materialStops.push_back(toGodot("[S-035] " + a.name + ": no WaterShader.FX material; effect defaults with map textures are an inferred legacy-water approximation"));
-				std::string technique;
+				std::string technique, authoredTechnique;
+				const WaterGeometry::StandingShaderTraits *traits = nullptr;
 				int pcaMode = 0;
 				WaterGeometry::PcaBasis pcaBasis;
 				std::string pcaPath;
@@ -1027,10 +1058,19 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 						if (!rfs.readBytes("shaders\\compiled\\watershader.fxo", bytes, &error) || !WaterGeometry::readEffectTechniques(bytes, waterTechniques, &error)) errors.push_back(toGodot("water techniques: " + error));
 					}
 					if (params.technique >= waterTechniques.size()) errors.push_back(toGodot("water material " + a.fxShader + ": technique index outside compiled effect"));
-					else technique = waterTechniques[params.technique];
-					if (technique == "PCA" || technique == "PCA_U")
+					else
 					{
-						pcaMode = technique == "PCA_U" ? 2 : 1;
+						// Load_W3D stores the authored technique's name; the second InitializeShader call picks the one for the WaterLOD
+						authoredTechnique = waterTechniques[params.technique];
+						WaterGeometry::ResolvedTechnique resolved;
+						std::string resolveError;
+						if (!WaterGeometry::resolveTechnique(waterTechniques, authoredTechnique, waterLod, resolved, &resolveError)) errors.push_back(toGodot("water material " + a.fxShader + ": " + resolveError));
+						else technique = resolved.name;
+					}
+					traits = WaterGeometry::standingShaderTraits(technique);
+					if (traits && traits->pcaMode != 0)
+					{
+						pcaMode = traits->pcaMode;
 						if (params.pcaTexture[0].size() < 3 || AsciiStringUtil::compareNoCase(params.pcaTexture[0], "None") == 0)
 							errors.push_back(toGodot("water material " + a.fxShader + ": PCA technique lacks WaterPCATexture1"));
 						else
@@ -1040,10 +1080,12 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 							std::string error;
 							if (!rfs.readBytes(pcaPath, bytes, &error) || !WaterGeometry::readPcaBasis(std::string(bytes.begin(), bytes.end()), pcaBasis, &error)) errors.push_back(toGodot(pcaPath + ": " + error));
 						}
-						materialStops.push_back(toGodot("[S-035] " + a.name + ": PCA normals and shoreline Gerstner geometry follow authored data; Godot clock, high-detail grid selection, planar reflections and shadow-map filtering remain unverified"));
+						materialStops.push_back(toGodot("[S-035] " + a.name + ": PCA normals and shoreline Gerstner geometry follow authored data; Godot clock, high-detail grid selection and shadow-map filtering remain unverified"));
 					}
-					else if (technique.compare(0, 3, "PCA") == 0) materialStops.push_back(toGodot("[S-035] " + a.name + ": unsupported PCA LOD technique " + technique + "; using reported bump approximation"));
-					else if (!technique.empty() && technique != "BumpSpecular_M") materialStops.push_back(toGodot("[S-035] " + a.name + ": technique " + technique + " uses the BumpSpecular_M approximation; its reflection/pass differences remain unported"));
+					else if (!technique.empty() && !traits)
+						materialStops.push_back(toGodot("[S-035] " + a.name + ": technique " + technique + " (authored " + authoredTechnique + ", WaterLOD " + std::to_string(waterLod) + ") is not ported; drawn with the BumpSpecular_M path"));
+					if (traits && reflectionRendered && (traits->bumpHigh || traits->pcaMode != 0))
+						materialStops.push_back(toGodot("[S-035] " + a.name + ": ReflectionOn and WaterLOD >= 2: retail renders the planar reflection into WaterReflectionTexture (WaterRenderObjClass 0x0007F87C); it is not ported and the texture stays black"));
 				}
 				Ref<ShaderMaterial> m;
 				if (sh.is_valid())
@@ -1080,12 +1122,27 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 							else { auto tex = loadTexture(rfs, name, texErrors); if (tex.is_valid()) m->set_shader_parameter(uniform, tex); }
 						};
 						pcaTexture(params.pcaFrothTexture, "pca_froth_tex");
-						for (int texIndex = 0; texIndex < (pcaMode == 2 ? 3 : 2); ++texIndex)
+						for (int texIndex = 0; texIndex < traits->basisTextures; ++texIndex)
 							pcaTexture(params.pcaTexture[texIndex], String("pca_tex") + String::num_int64(texIndex));
-						if (pcaMode == 2) pcaTexture(params.pcaNoiseTexture, "pca_noise_tex");
-						m->set_shader_parameter("specular_color", Vector3(params.specular[0], params.specular[1], params.specular[2]));
-						m->set_shader_parameter("reflection_perturbation", params.reflectionPerturbation);
+						if (traits->noiseFlattening) pcaTexture(params.pcaNoiseTexture, "pca_noise_tex");
+						m->set_shader_parameter("wave_steepness", traits->waveSteepness);
 					}
+					m->set_shader_parameter("specular_color", Vector3(params.specular[0], params.specular[1], params.specular[2]));
+					m->set_shader_parameter("reflection_perturbation", params.reflectionPerturbation);
+					m->set_shader_parameter("reflection_strength", params.reflectionStrength);
+					{
+						// the half-vector's light is DirectionalLight[1] (WaterGeometry::specularDirection); a technique the port does not draw takes the M path's
+						const WaterGeometry::StandingShaderTraits &drawn = traits ? *traits : *WaterGeometry::standingShaderTraits("BumpSpecular_M");
+						float direction[3];
+						WaterGeometry::specularDirection(params, drawn, waterLights.objects.toLight[1], direction);
+						m->set_shader_parameter("specular_direction", Vector3(direction[0], direction[1], direction[2]));
+						m->set_shader_parameter("bump_high", drawn.bumpHigh);
+						m->set_shader_parameter("clamp_diffuse", drawn.clampDiffuse);
+					}
+					m->set_shader_parameter("fog_enabled", waterWeather.fogEnabled ? 1.0f : 0.0f);
+					m->set_shader_parameter("fog_color", Vector3(waterWeather.fogColor[0], waterWeather.fogColor[1], waterWeather.fogColor[2]));
+					m->set_shader_parameter("fog_range_start", waterWeather.fogStart);
+					m->set_shader_parameter("fog_range_end", waterWeather.fogEnd);
 					m->set_shader_parameter("material_diffuse", Vector4(params.diffuse[0], params.diffuse[1], params.diffuse[2], params.diffuse[3]));
 					m->set_shader_parameter("dimming", params.dimming);
 					m->set_shader_parameter("bump_scale", params.bumpScale);
@@ -1117,7 +1174,12 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				materialInfo["effect"] = toGodot(a.fxShader);
 				materialInfo["authored"] = authored;
 				materialInfo["technique_index"] = (int64_t)params.technique;
+				materialInfo["authored_technique"] = toGodot(authoredTechnique);
 				materialInfo["technique"] = toGodot(technique);
+				materialInfo["shader_stem"] = toGodot(shaderStem);
+				materialInfo["water_lod"] = (int64_t)waterLod;
+				materialInfo["reflection_strength"] = params.reflectionStrength;
+				materialInfo["reflection_rendered"] = reflectionRendered;
 				materialInfo["pca_enabled"] = pcaMode != 0 && !pcaBasis.frames.empty();
 				materialInfo["pca_basis"] = toGodot(pcaPath);
 				materialInfo["pca_frames"] = (int64_t)pcaBasis.frames.size();

@@ -333,6 +333,7 @@ func apply_detail() -> Dictionary:
 		problems.append("detail: " + str(_detail.get("error", "no level")))
 		return _detail
 	ClassDB.class_call_static("GameWorld", "set_texture_reduction", _detail.texture_reduction)
+	ClassDB.class_call_static("GameWorld", "set_water_lod", _detail.water_lod) # the standing water's shader file and technique, for the maps loaded next
 	if _world != null and _world.has_method("get_fx_player"):
 		var fx = _world.get_fx_player()
 		if fx != null:

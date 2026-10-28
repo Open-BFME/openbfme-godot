@@ -19,11 +19,14 @@ struct MeshShaderMaterialDef;
 
 namespace WaterGeometry
 {
-// Defaults from retail watershader.fxo. Authored technique indices select the
-// supported PCA geometry/normal or bump paths; reflections remain S-035.
+// Defaults from retail watershader.fxo. The authored technique index names the technique FXShaderSetup::Load_W3D asks for; which one
+// runs is resolveTechnique's answer for the player's WaterLOD. Reflections remain S-035.
 struct StandingMaterial
 {
 	unsigned technique = 0;
+	float reflectionStrength = 0.2f;                         // fxo default; BumpSpecular's PS blends the lit colour toward WaterReflectionTexture by it
+	bool useMySpecularDirection = false;                     // fxo default 0
+	float mySpecularDirection[2] = { 30.0f, 60.0f };         // fxo default, degrees
 	float gerstner[3][4] = {{1, .1f, .1f, .5f}, { .00001f, .00001f, .00001f, .00001f}, { .00001f, .00001f, .00001f, .00001f}};
 	float pcaUV[2] = { 1.5f, 3.0f }, pcaWaveUV[2] = { 0.01f, 0.0075f };
 	float specular[3] = { 0.8f, 0.8f, 0.8f };
@@ -52,6 +55,49 @@ bool readPcaBasis(const std::string &text, PcaBasis &out, std::string *error);
 PcaFrame samplePcaBasis(const PcaBasis &basis, float clientTime);
 // fx_2_0 technique names in file order. Bounds-checked; no baked content indices.
 bool readEffectTechniques(const std::vector<std::uint8_t> &bytes, std::vector<std::string> &names, std::string *error);
+
+// ---- WaterLOD: which file, which technique ----
+// WaterLOD is the static detail level's (GameLODManager + 0x1784, RW 0xD9E700: Low, Medium, High, UltraHigh = 0..3).
+constexpr int kWaterLodCount = 4;
+
+// StandingWaterArea::loadFXShaderSetup (BFME2 0x308C31, StandingWaterAreaLoadFXShaderSetup.cpp): `base` is the area's shader file
+// name without its extension. From the player's WaterLOD up to 3 the loop tries base + {"L", "M", "", ""}[lod] and takes the first
+// that exists (so Low reads <name>L, then <name>M, then <name>; Medium <name>M, then <name>; High and UltraHigh <name>); none:
+// `base` alone (WaterNoShaderSuffix), whose load then reports the missing file.
+std::string standingShaderStem(const std::string &base, int waterLod, const std::function<bool(const std::string &)> &exists);
+
+// FXShaderSetup::InitializeShader (BFME2 0x15288F, fxshadersetup.cpp:605-672) as the water makes its second call
+// (rva152d1c(WaterShaderLODs[level]), so lodLimit = the WaterLOD): `authored` is the technique name Load_W3D stored (the effect's
+// technique at the W3D's index), `effect` the effect's technique names in file order. The authored name's LOD suffix
+// ({"_L", "_M", "", "_U"}) gives its own level (a bare name is High, 2; UltraHigh raises a bare name to 3); the level is capped by
+// lodLimit; the search goes down from there (name + suffix[i]), then up. `lod` is the suffix index of the technique found.
+struct ResolvedTechnique
+{
+	std::string name;
+	int lod = 0;
+};
+bool resolveTechnique(const std::vector<std::string> &effect, const std::string &authored, int lodLimit, ResolvedTechnique &out, std::string *error);
+
+// What the port draws for a resolved technique; null for a technique it does not port (DefaultTechnique, the _L techniques, PCA_M,
+// DepthOnly: the builder reports them, S-035). Blob numbers are watershader.fxo's shader blobs in file order
+// (tools/render/d3d9_disasm.py), pinned by tools/render/test_water_binary_facts.py.
+struct StandingShaderTraits
+{
+	const char *technique;
+	int pcaMode;                  // 0 the BumpSpecular family (bump texture normal), 1 PCA, 2 PCA_U
+	bool bumpHigh;                // BumpSpecular: ps blob 4 reflection blend, SpecularColor highlight, direction through oD1 (clamped to 0..1)
+	bool clampDiffuse;            // vs_2_0 clamps oD0 (2*Dimming*Diffuse) to 0..1; PCA_U's vs_3_0 output does not
+	float waveSteepness;          // PCA VS 13 0.15, PCA_U VS 14 0.33 (the Gerstner steepness); 0 for the bump family
+	int basisTextures;            // WaterPCATexture1..N the pixel shader reads: PCA 2, PCA_U 3
+	bool noiseFlattening;         // PCA_U's PCANoiseSampler term
+	int pixelBlob, vertexBlob;    // the first pixel blob (the shadow variant is +1, none for blob 8) and the vertex blob
+};
+const StandingShaderTraits *standingShaderTraits(const std::string &technique);
+
+// The specular direction the shader's half-vector uses: DirectionalLight[1].Direction (the VS bases c14 / c13 and PS bases c7 / c12
+// put it at c17 / c16 / c10 / c15) or, for the bump family when UseMySpecularDirection is set, the authored angles (VS blob 19/9:
+// (cos x cos y, sin x cos y, -sin y), degrees). BumpSpecular sends it through oD1, which D3D9 clamps to 0..1; the others keep it unclamped.
+void specularDirection(const StandingMaterial &material, const StandingShaderTraits &traits, const float toLight1[3], float out[3]);
 
 // Triangulates a simple polygon (either winding, non-convex allowed). Returns false for degenerate input
 // (fewer than 3 points, zero area, or a polygon the ear search cannot finish). indices are triangle triples.
@@ -95,7 +141,8 @@ bool buildRiverStrip(const RiverArea &river, RiverStrip &out);
 
 // The colour every vertex of a river gets (RGBA 0..1). A white river (every retail one) takes the terrain's ambient (light 0)
 // plus each terrain light's diffuse times its downward component (-lightPos.z, the direction as stored), times
-// waterDiffuse (the time of day's WaterSet DiffuseColor, MapWeather.h), whose alpha is the vertex alpha; a black one is
+// waterDiffuse (the time of day's WaterSet DiffuseColor, MapWeather.h) with its red and blue trading places (retail packs the colour
+// A<<24|R<<16|G<<8|B and reads the low byte as red: RW 0x500400..0x500530), whose alpha is the vertex alpha; a black one is
 // white; any other colour is used as it is. `tod` null: no terrain light.
 void riverVertexColour(const RiverArea &river, const TimeOfDayLights *tod, const float waterDiffuse[4], float out[4]);
 } // namespace WaterGeometry

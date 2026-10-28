@@ -782,7 +782,7 @@ TEST_CASE("water acceptance: remaining shader and geometry approximations stay e
 {
 	const auto *stop = MapStops::find("S-035");
 	REQUIRE(stop != nullptr);
-	CHECK(std::string(stop->gap) == "Standing water preserves authored FX techniques, PCA/PCA_U normals and shoreline Gerstner displacement on a donor high-detail grid alongside the bump/specular path; TIME, LOD selection, scene-light binding and terrain depth are inferred; reflections, shadow filtering, other PCA LODs, river outline cross-section start and minimum water LOD, depth-colour LUT and legacy shoreline texture tracks remain unported");
+	CHECK(std::string(stop->gap) == "Standing water resolves its W3D (<name>L / <name>M / <name>) and technique from the player's WaterLOD as retail does (StandingWaterArea::loadFXShaderSetup, FXShaderSetup::InitializeShader) and draws BumpSpecular, BumpSpecular_M, PCA and PCA_U from RotWK's watershader.fxo (the scene's DirectionalLight[1] as the specular light, the map's hardware fog, shoreline Gerstner displacement on a donor high-detail grid); TIME, the scene-light fill, terrain depth and whether a technique validates on the player's hardware (Has_Technique) are inferred; the planar reflection texture (WaterReflectionSampler: rendered in retail for ReflectionOn maps at WaterLOD 2 and above) stays black, and shadow filtering, DefaultTechnique, the _L techniques, PCA_M, DepthOnly, standing water polygons the ear clipper rejects (Adorn River's, water.triangulation_failed), river outline cross-section start and minimum water LOD, depth-colour LUT and legacy shoreline texture tracks remain unported");
 }
 
 namespace
@@ -999,4 +999,229 @@ TEST_CASE("water PCA basis: oversized declared tracks fail before allocation")
 	CHECK_FALSE(WaterGeometry::readPcaBasis(text, basis, &error));
 	CHECK(error == "PCA basis: frame count exceeds coefficient payload");
 	CHECK(basis.frames.empty());
+}
+
+// ---- WaterLOD: which W3D file, which technique (items 1, 3 and 5 of the retail-water fix) --------------------------------------------------
+
+namespace
+{
+// watershader.fxo's technique names in file order (RotWK shaders.big; pinned against the file by tools/render/test_water_binary_facts.py)
+const std::vector<std::string> kRotwkTechniques = { "DefaultTechnique", "BumpSpecular", "DefaultTechnique_L", "BumpSpecular_L", "DepthOnly",
+	"PCA_U", "PCA", "PCA_L", "PCA_M", "BumpSpecular_M" };
+
+std::string resolved(const std::string &authored, int lod)
+{
+	WaterGeometry::ResolvedTechnique r;
+	std::string error;
+	REQUIRE_MESSAGE(WaterGeometry::resolveTechnique(kRotwkTechniques, authored, lod, r, &error), error);
+	return r.name;
+}
+}
+
+TEST_CASE("water technique: FXShaderSetup::InitializeShader's LOD resolution of every RotWK technique at every WaterLOD")
+{
+	struct Row { const char *authored; const char *at[4]; };
+	// the suffix of the authored name is its own level (bare = High, _M 1, _L 0, _U 3), capped by the WaterLOD, searched downward then upward;
+	// UltraHigh lifts a bare name to _U
+	const Row table[] = {
+		{ "DefaultTechnique",   { "DefaultTechnique_L", "DefaultTechnique_L", "DefaultTechnique", "DefaultTechnique" } },
+		{ "BumpSpecular",       { "BumpSpecular_L", "BumpSpecular_M", "BumpSpecular", "BumpSpecular" } },
+		{ "DefaultTechnique_L", { "DefaultTechnique_L", "DefaultTechnique_L", "DefaultTechnique_L", "DefaultTechnique_L" } },
+		{ "BumpSpecular_L",     { "BumpSpecular_L", "BumpSpecular_L", "BumpSpecular_L", "BumpSpecular_L" } },
+		{ "DepthOnly",          { "DepthOnly", "DepthOnly", "DepthOnly", "DepthOnly" } },
+		{ "PCA_U",              { "PCA_L", "PCA_M", "PCA", "PCA_U" } },
+		{ "PCA",                { "PCA_L", "PCA_M", "PCA", "PCA_U" } },
+		{ "PCA_L",              { "PCA_L", "PCA_L", "PCA_L", "PCA_L" } },
+		{ "PCA_M",              { "PCA_L", "PCA_M", "PCA_M", "PCA_M" } },
+		{ "BumpSpecular_M",     { "BumpSpecular_L", "BumpSpecular_M", "BumpSpecular_M", "BumpSpecular_M" } },
+	};
+	for (const Row &row : table)
+	{
+		for (int lod = 0; lod < WaterGeometry::kWaterLodCount; ++lod)
+		{
+			CAPTURE(row.authored);
+			CAPTURE(lod);
+			CHECK(resolved(row.authored, lod) == row.at[lod]);
+		}
+	}
+}
+
+TEST_CASE("water technique: the suffix is matched without case, the search goes up when nothing is at or below the level, a missing family is an error")
+{
+	// the effect has no Alpha_L: Low finds nothing at 0 and goes up
+	const std::vector<std::string> effect = { "Alpha_M", "Alpha_U", "Beta" };
+	WaterGeometry::ResolvedTechnique r;
+	std::string error;
+	REQUIRE(WaterGeometry::resolveTechnique(effect, "Alpha_m", 0, r, &error)); // own level 1 capped at 0; nothing at 0: up to _M (the name keeps its case, only the suffix test ignores it)
+	CHECK(r.name == "Alpha_M");
+	CHECK(r.lod == 1);
+	REQUIRE(WaterGeometry::resolveTechnique(effect, "Alpha", 3, r, &error)); // a bare name is lifted to _U by UltraHigh
+	CHECK(r.name == "Alpha_U");
+	CHECK(r.lod == 3);
+	REQUIRE(WaterGeometry::resolveTechnique(effect, "Alpha", 2, r, &error)); // High: nothing at 2, 1 is Alpha_M
+	CHECK(r.name == "Alpha_M");
+	CHECK_FALSE(WaterGeometry::resolveTechnique(effect, "Gamma", 2, r, &error));
+	CHECK(error == "no technique Gamma (any LOD) in the compiled effect");
+	CHECK_FALSE(WaterGeometry::resolveTechnique(effect, "Beta", 4, r, &error));
+	CHECK(error == "WaterLOD 4 is outside 0..3");
+	CHECK_FALSE(WaterGeometry::resolveTechnique(effect, "Beta", -1, r, &error));
+}
+
+TEST_CASE("water technique: StandingWaterArea::loadFXShaderSetup reads <name>L, <name>M or <name> by the WaterLOD")
+{
+	auto stem = [](const std::set<std::string> &files, int lod) {
+		return WaterGeometry::standingShaderStem("wtr_x", lod, [&](const std::string &s) { return files.count(s) != 0; });
+	};
+	const std::set<std::string> all = { "wtr_x", "wtr_xL", "wtr_xM" };
+	CHECK(stem(all, 0) == "wtr_xL");
+	CHECK(stem(all, 1) == "wtr_xM");
+	CHECK(stem(all, 2) == "wtr_x");
+	CHECK(stem(all, 3) == "wtr_x");
+	const std::set<std::string> noMedium = { "wtr_x", "wtr_xL" }; // wtr_gondor: L but no M
+	CHECK(stem(noMedium, 0) == "wtr_xL");
+	CHECK(stem(noMedium, 1) == "wtr_x");
+	const std::set<std::string> noLow = { "wtr_x", "wtr_xM" };
+	CHECK(stem(noLow, 0) == "wtr_xM"); // Low falls through L to M
+	CHECK(stem({ "wtr_x" }, 0) == "wtr_x");
+	CHECK(stem({}, 1) == "wtr_x"); // WaterNoShaderSuffix: the base name is asked for anyway
+	CHECK(stem({ "wtr_xL" }, 2) == "wtr_x"); // High never tries L
+}
+
+TEST_CASE("water technique: the shader parameters per technique")
+{
+	const auto *bump = WaterGeometry::standingShaderTraits("BumpSpecular");
+	const auto *bumpM = WaterGeometry::standingShaderTraits("BumpSpecular_M");
+	const auto *pca = WaterGeometry::standingShaderTraits("PCA");
+	const auto *pcaU = WaterGeometry::standingShaderTraits("PCA_U");
+	REQUIRE((bump && bumpM && pca && pcaU));
+	CHECK(bump->pcaMode == 0);  CHECK(bump->bumpHigh);   CHECK(bump->clampDiffuse);  CHECK(bump->pixelBlob == 4);  CHECK(bump->vertexBlob == 19);
+	CHECK(bumpM->pcaMode == 0); CHECK_FALSE(bumpM->bumpHigh); CHECK(bumpM->clampDiffuse); CHECK(bumpM->pixelBlob == 8); CHECK(bumpM->vertexBlob == 9);
+	CHECK(pca->pcaMode == 1);   CHECK(pca->waveSteepness == 0.15f);  CHECK(pca->basisTextures == 2); CHECK_FALSE(pca->noiseFlattening);
+	CHECK(pca->clampDiffuse);   CHECK(pca->pixelBlob == 0);  CHECK(pca->vertexBlob == 13);
+	CHECK(pcaU->pcaMode == 2);  CHECK(pcaU->waveSteepness == 0.33f); CHECK(pcaU->basisTextures == 3); CHECK(pcaU->noiseFlattening);
+	CHECK_FALSE(pcaU->clampDiffuse); CHECK(pcaU->pixelBlob == 2); CHECK(pcaU->vertexBlob == 14);
+	// the techniques the port does not draw
+	for (const char *name : { "DefaultTechnique", "DefaultTechnique_L", "BumpSpecular_L", "DepthOnly", "PCA_L", "PCA_M", "" })
+	{
+		CAPTURE(name);
+		CHECK(WaterGeometry::standingShaderTraits(name) == nullptr);
+	}
+}
+
+TEST_CASE("water specular: DirectionalLight[1] drives the half-vector; BumpSpecular clamps it like oD1, the others keep it; MySpecularDirection replaces it")
+{
+	WaterGeometry::StandingMaterial m;
+	const float light1[3] = { -0.5f, 0.25f, 2.0f };
+	float out[3];
+	WaterGeometry::specularDirection(m, *WaterGeometry::standingShaderTraits("BumpSpecular"), light1, out);
+	CHECK(out[0] == 0.0f); CHECK(out[1] == 0.25f); CHECK(out[2] == 1.0f); // D3D9 clamps the oD1 colour to 0..1
+	WaterGeometry::specularDirection(m, *WaterGeometry::standingShaderTraits("BumpSpecular_M"), light1, out);
+	CHECK(out[0] == -0.5f); CHECK(out[1] == 0.25f); CHECK(out[2] == 2.0f); // vs blob 9 c16 -> oT6: not a colour register
+	WaterGeometry::specularDirection(m, *WaterGeometry::standingShaderTraits("PCA"), light1, out);
+	CHECK(out[0] == -0.5f); CHECK(out[2] == 2.0f); // ps blob 0 c10
+	WaterGeometry::specularDirection(m, *WaterGeometry::standingShaderTraits("PCA_U"), light1, out);
+	CHECK(out[1] == 0.25f); // ps blob 2 c10
+	// UseMySpecularDirection (authored 0 in every retail water): (cos x cos y, sin x cos y, -sin y), degrees; only the bump family has the branch
+	m.useMySpecularDirection = true;
+	m.mySpecularDirection[0] = 90.0f;
+	m.mySpecularDirection[1] = 0.0f;
+	WaterGeometry::specularDirection(m, *WaterGeometry::standingShaderTraits("BumpSpecular_M"), light1, out);
+	CHECK(std::fabs(out[0]) < 1e-6f); // tolerance: cos(90 degrees) in float
+	CHECK(out[1] == 1.0f);
+	CHECK(out[2] == -0.0f);
+	WaterGeometry::specularDirection(m, *WaterGeometry::standingShaderTraits("PCA"), light1, out);
+	CHECK(out[0] == -0.5f); // PCA has no MySpecularDirection branch
+}
+
+TEST_CASE("water material: ReflectionStrength, UseMySpecularDirection and MySpecularDirection are read with the effect's defaults")
+{
+	MeshShaderMaterialDef source;
+	source.TypeName = "WaterShader.FX";
+	WaterGeometry::StandingMaterial material;
+	REQUIRE(WaterGeometry::readStandingMaterial(source, material));
+	CHECK(material.reflectionStrength == 0.2f); // watershader.fxo: ReflectionStrength = 0.2
+	CHECK_FALSE(material.useMySpecularDirection);
+	CHECK(material.mySpecularDirection[0] == 30.0f);
+	CHECK(material.mySpecularDirection[1] == 60.0f);
+	MeshShaderMaterialProperty strength; strength.Name = "ReflectionStrength"; strength.Type = W3DSHADERMATERIAL_PROPERTY_FLOAT; strength.Float[0] = 0.8f;
+	MeshShaderMaterialProperty use; use.Name = "UseMySpecularDirection"; use.Type = W3DSHADERMATERIAL_PROPERTY_BOOL; use.Bool = true;
+	MeshShaderMaterialProperty angles; angles.Name = "MySpecularDirection"; angles.Type = W3DSHADERMATERIAL_PROPERTY_VECTOR4;
+	angles.Float[0] = 10; angles.Float[1] = 20;
+	source.Properties = { strength, use, angles };
+	std::string error;
+	REQUIRE(WaterGeometry::readStandingMaterial(source, material, &error));
+	CHECK(error.empty());
+	CHECK(material.reflectionStrength == 0.8f);
+	CHECK(material.useMySpecularDirection);
+	CHECK(material.mySpecularDirection[0] == 10.0f);
+	CHECK(material.mySpecularDirection[1] == 20.0f);
+	source.Properties = { strength };
+	source.Properties[0].Type = W3DSHADERMATERIAL_PROPERTY_TEXTURE; // a wrong type is an error, not a default
+	CHECK_FALSE(WaterGeometry::readStandingMaterial(source, material, &error));
+	CHECK(error == "WaterShader.FX property ReflectionStrength: expected type 2, got 1");
+}
+
+TEST_CASE("WaterGeometry::riverVertexColour: the WaterSet colour's red and blue trade places (RW 0x500400..0x500530)")
+{
+	// retail packs waterDiffuse A<<24|R<<16|G<<8|B and drawRiverWater reads its low byte as red, its third byte as blue
+	TimeOfDayLights tod;
+	for (int c = 0; c < 3; ++c)
+	{
+		tod.terrain[0].ambient[c] = 0.5f;
+		tod.terrain[0].lightPos[c] = 0.0f;
+	}
+	const float water[4] = { 0.25f, 0.5f, 1.0f, 0.75f }; // R 0.25, G 0.5, B 1.0
+	RiverArea r;
+	r.r = r.g = r.b = 255;
+	float out[4];
+	WaterGeometry::riverVertexColour(r, &tod, water, out);
+	CHECK(out[0] == 0.5f);   // the river's red = light * the water's BLUE
+	CHECK(out[1] == 0.25f);  // green is not swapped
+	CHECK(out[2] == 0.125f); // the river's blue = light * the water's RED
+	CHECK(out[3] == 0.75f);  // the alpha byte is the vertex alpha as it is
+	// a river with its own colour is not lit and not swapped
+	r.r = 51; r.g = 102; r.b = 255;
+	WaterGeometry::riverVertexColour(r, &tod, water, out);
+	CHECK(out[0] == 51 / 255.0f);
+	CHECK(out[2] == 1.0f);
+}
+
+TEST_CASE("WaterTransparencyScan::applyText: ReflectionOn of the WaterTransparency block, the last block that sets it winning")
+{
+	bool on = false;
+	WaterTransparencyScan::applyText("WaterTransparency\n  TransparentWaterDepth = 3.0\n  ReflectionPlaneZ = 59.0;\n  ReflectionOn = No\nEnd\n", on);
+	CHECK_FALSE(on);
+	WaterTransparencyScan::applyText("; map override\nWaterTransparency\n  ReflectionOn = Yes ; comment\nEnd\n", on);
+	CHECK(on);
+	WaterTransparencyScan::applyText("WaterSet MORNING\n  ReflectionOn = No\nEnd\n", on); // another block's key is not this block's
+	CHECK(on);
+	WaterTransparencyScan::applyText("WaterTransparency\n  ReflectionOn = no\nEnd\n", on);
+	CHECK_FALSE(on);
+}
+
+TEST_CASE("WaterTransparencyScan::load: water.ini, then the map's map.ini")
+{
+	const std::string waterIni = "WaterTransparency\n  ReflectionOn = No\nEnd\n";
+	const std::string mapIni = "WaterTransparency\n  ReflectionOn = Yes\nEnd\n";
+	std::string error;
+	bool on = true;
+	{
+		Win32BIGFileSystem fsys;
+		auto big = fsys.openArchiveFromMemory("w.big", std::make_shared<const std::vector<std::uint8_t>>(bigtest::makeBig("BIGF", {
+			{ "data\\ini\\water.ini", waterIni }, { "maps\\map mp adorn river\\map.ini", mapIni } })), &error);
+		REQUIRE(big);
+		fsys.mountArchive(std::move(big), "w.big", false);
+		REQUIRE_MESSAGE(WaterTransparencyScan::load(fsys, "maps\\map mp adorn river", on, &error), error);
+		CHECK(on);
+		REQUIRE_MESSAGE(WaterTransparencyScan::load(fsys, "maps\\map mp other", on, &error), error); // no map.ini: water.ini's value
+		CHECK_FALSE(on);
+	}
+	{
+		Win32BIGFileSystem fsys;
+		auto big = fsys.openArchiveFromMemory("w.big", std::make_shared<const std::vector<std::uint8_t>>(bigtest::makeBig("BIGF", {
+			{ "data\\ini\\other.ini", "" } })), &error);
+		REQUIRE(big);
+		fsys.mountArchive(std::move(big), "w.big", false);
+		CHECK_FALSE(WaterTransparencyScan::load(fsys, "maps\\x", on, &error)); // a missing water.ini is an error
+	}
 }

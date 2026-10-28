@@ -2,6 +2,8 @@
 
 #include "doctest.h"
 
+#include <ostream> // doctest stringifies a std::string_view operand: MSVC 14.44 needs the complete basic_ostream
+
 #include "GameClient/OpenBFMEText.h"
 
 namespace

@@ -79,10 +79,51 @@ crest/shallow-water froth and displaced depth alpha now accompany moving
 vertices. Culling bounds include horizontal and vertical displacement.
 Zero amplitude/frequency contributes no wave, avoiding undefined division.
 
+## WaterLOD: which file, which technique, which shader (lane WATER-LOD)
+
+RotWK picks the water's W3D file and effect technique from the player's WaterLOD (the static detail level's, GameLODManager + 0x1784: Low 0, Medium 1,
+High 2, UltraHigh 3), not from the raw technique index the W3D stores:
+
+- `StandingWaterArea::loadFXShaderSetup` (RW 0x70A3F1, BFME2 0x308C31) reads `<name>L`, `<name>M` or `<name>` by the level (suffix table RW 0xC1E3C4):
+  Low tries L, then M, then the base file; Medium M, then the base; High and UltraHigh the base. `WaterGeometry::standingShaderStem`.
+- the stored index names a technique of RotWK's `watershader.fxo` (DefaultTechnique, BumpSpecular, DefaultTechnique_L, BumpSpecular_L, DepthOnly, PCA_U,
+  PCA, PCA_L, PCA_M, BumpSpecular_M), and `FXShaderSetup::InitializeShader` (body RW 0x552269..0x5524DE, BFME2 0x15288F) is run again with lodLimit = WaterLOD: the
+  authored name's `_L` / `_M` / `_U` suffix is its own level (a bare name is 2; UltraHigh lifts it to 3), capped by the WaterLOD, searched downward and then upward.
+  `WaterGeometry::resolveTechnique`. So wtr_riv01 and the other BumpSpecular files draw BumpSpecular at High and BumpSpecular_M at Medium (their `m` files author
+  plain BumpSpecular too); waterplanepca and the other authored PCA_U water draw PCA at High, PCA_U only at UltraHigh and PCA_M at Medium; Low reads the `l`
+  files, PCA_L.
+- ported: BumpSpecular (ps blob 4, vs blob 19), BumpSpecular_M (blobs 8 / 9), PCA (0 / 13), PCA_U (2 / 14). DefaultTechnique, the `_L` techniques, PCA_M and
+  DepthOnly are reported per area in `water.material_stops` and drawn with the BumpSpecular_M path (S-035).
+
+BumpSpecular's pixel shader lights `DirectionalLight[0].Color * (env * 2 * Dimming * Diffuse * N.L + SpecularColor * N.H^SpecularExponent)`, blends that toward
+WaterReflectionTexture by ReflectionStrength, adds the two wave samples, fogs and applies the shroud. The environment lookup is offset by
+ReflectionPerturbation times the scaled bump normal's xy. N.H uses the half-vector of the eye and **DirectionalLight[1].Direction** (a struct {Color,
+Direction} has two registers per element: the vertex shader's base c14 puts it at c17, BumpSpecular_M's base c13 at c16, PCA's pixel shader base c7 at c10, PCA_U's
+c10); BumpSpecular sends it through oD1, a colour register that D3D9 clamps to 0..1, and `UseMySpecularDirection` replaces it with the authored angles.
+2 * Dimming * Diffuse leaves a vs_2_0 shader through oD0 and is clamped to 0..1 (PCA_U's vs_3_0 does not clamp). Slot 1 of the scene lights is the second light
+the object light set accepts (S-390), (0, 0, 1) when there is none.
+
+The reflection texture is the rendered reflection only when WaterLOD >= 2 and the WaterTransparency block's `ReflectionOn` holds (water.ini: No; 66 of the
+123 map.ini files say Yes: Rva0007EBFBWaterDraw.cpp:419); otherwise retail binds a black texture. The planar reflection pass (WaterRenderObjClass 0x0007F87C
+renders the scene through a mirror camera at ReflectionPlaneZ into the texture) is not ported: the texture is black and every area where retail would render it
+reports so, which makes BumpSpecular water on those maps darker than retail's. PCA water is blended toward the reflection by (1 - eye.n)^2 the same way.
+`MapTerrainBuilder` takes the level as its `water_lod` option (`GameWorld.set_water_lod`, set by `game_options.gd` from the detail state); without it the
+level is High and the report says so.
+
+Every ported water shader fogs toward the map's hardware fog colour (the same range fog as the terrain), then applies the shroud. Rivers do not: the retail
+river pixel shader never reads a fog factor and every pass sets FogEnable = 0.
+
+Rivers: the WaterSet `DiffuseColor` is packed `A<<24|R<<16|G<<8|B` and `drawRiverWater` reads its low byte as red and its third byte as blue (RW 0x47E9D5 /
+0x500400), so a white river's red and blue channels trade places (`WaterGeometry::riverVertexColour`; latent while the retail colours are grey).
+
+Pinned by `tools/render/test_water_binary_facts.py` (game.dat, watershader.fxo), `engine/tests/test_water_retail.cpp` (Adorn River, Fords of Isen II,
+Harlindon, Anfalas, Evendim) and `godot/tests/standing_water_test.gd`. Adorn River's single 97-point standing-water polygon is rejected by the ear clipper and is
+not drawn (`water.triangulation_failed`); retail fills every standing water from the grid PCA water already uses.
+
 S-035 remains open: the high-detail choice, Godot TIME/trigonometry and terrain
 height sampling are presentation bridges, not verified target numeric/LOD
-parity. Planar reflections, shadow filtering, other PCA LODs, legacy shoreline
-texture tracks and full fog parity remain unported.
+parity. Planar reflections, shadow filtering, the DefaultTechnique / `_L` / PCA_M /
+DepthOnly techniques and legacy shoreline texture tracks remain unported.
 Legacy areas without a
 WaterShader.FX material retain their explicit reported approximation.
 Malformed `.basis` input is bounds-checked and rejected; reproducing the
