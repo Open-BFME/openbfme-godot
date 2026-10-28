@@ -192,6 +192,8 @@ void W3D_Ensure_Light_Globals()
 	rs->global_shader_parameter_add(StringName("w3d_fog_shift"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, 0.0f);
 	// lane VISUAL-2: the fogged light fraction (RW 0x46DFD0: GameData FogAlpha / ClearAlpha), set by the map's game
 	rs->global_shader_parameter_add(StringName("w3d_fogged_frac"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, 1.0f);
+	// lane WATER-REFLECT (S-035): the planar reflection's plane height (Godot y), clipped below in the reflection pass; far below the world when none renders
+	rs->global_shader_parameter_add(StringName("w3d_reflect_y"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, W3D_REFLECT_PLANE_NONE);
 	// lane OCCLUDE-1: the behind-building colours and their switch (W3D_Set_Occlusion), off until a game sets them
 	rs->global_shader_parameter_add(StringName("w3d_occl_on"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, 0.0f);
 	rs->global_shader_parameter_add(StringName("w3d_occl_colors"), RenderingServer::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
@@ -218,6 +220,15 @@ void W3D_Set_Fog_Shift(float shift)
 	if (RenderingServer *rs = RenderingServer::get_singleton())
 	{
 		rs->global_shader_parameter_set(StringName("w3d_fog_shift"), shift);
+	}
+}
+
+void W3D_Set_Reflect_Plane(float y)
+{
+	W3D_Ensure_Light_Globals();
+	if (RenderingServer *rs = RenderingServer::get_singleton())
+	{
+		rs->global_shader_parameter_set(StringName("w3d_reflect_y"), y);
 	}
 }
 

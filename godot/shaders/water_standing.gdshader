@@ -6,8 +6,9 @@
 //   PCA            (High)       ps blob 0 / vs blob 13        PCA_U (UltraHigh) ps blob 2 / vs blob 14 (ps_3_0): the PCA normal reconstruction
 // Coefficient layout/interpolation comes from the matched BFME2 water loader/samplers (WaterGeometry.cpp).
 // Every path fogs toward the map's hardware fog colour (vs oD1.w / oT6.w / oD1.x, ps lrp) and then takes the shroud, as the blobs do.
-// S-035: the planar reflection texture (WaterReflectionSampler) is black here, as retail binds it unless WaterLOD >= 2 and the map's
-// WaterTransparency ReflectionOn holds (the builder reports that case); shadows, Godot TIME and bilinear terrain depth also prevent full parity.
+// WaterReflectionSampler (S-035): the planar reflection WaterReflection renders (RW 0x47F1AC) when WaterLOD >= 2 and the map's WaterTransparency ReflectionOn
+// hold, else black (RW 0x47F952 binds the black texture), sampled with the main view's screen coordinates plus ReflectionPerturbation times the normal's xy.
+// Shadows, Godot TIME and bilinear terrain depth also prevent full parity.
 shader_type spatial;
 render_mode unshaded, blend_mix, depth_draw_never, cull_disabled;
 
@@ -15,6 +16,10 @@ uniform sampler2D bump_tex : filter_linear_mipmap, repeat_enable, hint_default_w
 uniform sampler2D sky_tex : filter_linear_mipmap, repeat_enable, hint_default_white;
 uniform sampler2D wave_tex : filter_linear_mipmap, repeat_enable, hint_default_black;
 uniform sampler2D terrain_height_tex : filter_linear, repeat_disable;
+// WaterReflectionSampler: sampler states MIPFILTER none, MIN/MAG linear, ADDRESSU/V clamp (RW watershader.fxo, tools/render/test_water_binary_facts.py). The
+// viewport texture holds the gamma-space bytes the shaders hand over, as retail's 8-bit render target does.
+uniform sampler2D reflection_tex : filter_linear, repeat_disable, hint_default_black;
+uniform bool reflection_enabled = false;
 uniform vec4 material_diffuse = vec4(0.15, 0.3, 0.35, 0.5);
 uniform float dimming = 0.8;
 uniform float bump_scale = 0.2;
@@ -177,6 +182,9 @@ void fragment() {
 	vec3 eye = vec3(eye_g.x, -eye_g.z, eye_g.y);
 	vec3 half_vector = normalize(eye + specular_direction);
 	// WaterReflectionSampler: black unless the reflection pass renders (WaterLOD >= 2 and ReflectionOn, Rva0007EBFBWaterDraw.cpp:419); S-035
+	// vs blob 19 oT2 = ((x + w) / 2, (y + w) / 2, w), ps divides by w: u = (ndc.x + 1) / 2, v = (ndc.y + 1) / 2 with no flip; the reflection camera's up is negated,
+	// so the texture is upside down and that v lands on the right row. SCREEN_UV is (ndc.x + 1) / 2, (1 - ndc.y) / 2.
+	vec2 reflection_uv = vec2(SCREEN_UV.x, 1.0 - SCREEN_UV.y);
 	vec3 reflection = vec3(0.0);
 	// vs oD0.xyz = 2 * DimmingFactor * MaterialColorDiffuse (BumpSpecular_M also times DirectionalLight[0].Color: vs blob 9 preshader)
 	vec3 diffuse_rgb = material_diffuse.rgb * (2.0 * dimming);
@@ -210,9 +218,10 @@ void fragment() {
 		vec3 lit = light_color * (env * diffuse_rgb * ndotl + highlight);
 		// the lit colour is blended toward the reflection by (1 - eye.n)^2 (ps blob 0: add r0.w, -r6.x, -c20.x; mul r0.w, r0.w, r0.w; lrp)
 		float fresnel = 1.0 - dot(eye, n);
+		vec2 perturbation = reflection_perturbation * n.xy;
+		if (reflection_enabled) reflection = texture(reflection_tex, reflection_uv + perturbation).rgb; // ps blob 0 / 2: t2.xy / t2.z + c18.x * n.xy
 		col = mix(lit, reflection, fresnel * fresnel);
 		// VS 13/14 baseline plus interpolated crest and shallow-water foam.
-		vec2 perturbation = reflection_perturbation * n.xy;
 		col += v_froth * texture(pca_froth_tex, v_world * pca_wave_uv_scale.x + perturbation).rgb
 			* texture(pca_froth_tex, v_world * pca_wave_uv_scale.y + perturbation).rgb;
 	} else {
@@ -228,6 +237,8 @@ void fragment() {
 			vec3 env = texture(sky_tex, base * env_uv_scale + reflection_perturbation * scaled_xy).rgb;
 			float gate = (ndotl > 0.0 && ndoth > 0.0) ? pow(ndoth, specular_exponent) : 0.0;
 			vec3 lit = light_color * (env * diffuse_rgb * max(ndotl, 0.0) + specular_color * gate);
+			// ps blob 4: mad r1.xy, c11.x, r0, r1 with r0 the BumpScale-scaled bump xy
+			if (reflection_enabled) reflection = texture(reflection_tex, reflection_uv + reflection_perturbation * scaled_xy).rgb;
 			col = mix(lit, reflection, reflection_strength) + waves;
 		} else {
 			// BumpSpecular_M: ps blob 8 (vs blob 9)

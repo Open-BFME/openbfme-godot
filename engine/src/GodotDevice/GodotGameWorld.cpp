@@ -1834,6 +1834,13 @@ void GameWorld::refresh_views(double deltaMs)
 							{
 								dyn->set_instance_infantry_light(ev.instance, true); // RENDER-1: the infantry light set (S-390)
 							}
+							if (ev.instance >= 0)
+							{
+								// lane WATER-REFLECT (S-035), RW 0x470D50..0x470D5E: the mirror flag or KindOf CAN_CAST_REFLECTIONS draws it into the reflection; KindOf SKYBOX only there
+								const bool skybox = d->isKindOfName("SKYBOX");
+								const bool mirror = d->drawsInMirror() || d->isKindOfName("CAN_CAST_REFLECTIONS");
+								if (mirror || skybox) dyn->set_instance_mirror(ev.instance, mirror, skybox);
+							}
 						}
 					}
 				}

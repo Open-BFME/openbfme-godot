@@ -181,6 +181,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	line("global uniform mat3 w3d_lcol_inf;");
 	line("global uniform mat3 w3d_ldir_inf;");
 	line("global uniform float w3d_fogged_frac;"); // lane VISUAL-2: RW 0x46DFD0 FogAlpha / ClearAlpha
+	line("global uniform float w3d_reflect_y;"); // lane WATER-REFLECT: the planar reflection's plane (the fragments below it are clipped in that pass)
 	if (k.OcclusionPass == W3D_OCCLUSION_PASS_COLOR)
 	{
 		// lane OCCLUDE-1: the players' occluded colours by slot (0xAARRGGBB as RGBA8 texels, RTS3DSceneOcclusion::occludedColor) and the switch
@@ -353,6 +354,9 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\t\tVERTEX += inverse(mat3(MODEL_MATRIX)) * (w3d_to_godot(sw.xyz) * h);");
 		line("\t}");
 	}
+	// lane WATER-REFLECT: the reflection pass draws the mirror instances only, every other pass skips the reflection-only ones (INSTANCE_CUSTOM.w)
+	line("\tbool w3d_reflecting = CAMERA_VISIBLE_LAYERS == " + std::to_string(W3D_REFLECTION_LAYER_BIT) + "u;");
+	line("\tif (w3d_reflecting ? (wi & " + std::to_string(W3D_MIRROR_BIT) + ") == 0 : (wi & " + std::to_string(W3D_MIRROR_ONLY_BIT) + ") != 0) { VERTEX = vec3(0.0); }");
 	line("\tNORMAL = normalize(w3d_to_godot(n));");
 	if (k.Tangents)
 	{
@@ -432,6 +436,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	{
 		// lane OCCLUDE-1: an instance that does not take part collapses to a point (no fragments); the colour pass carries the slot in v_instance.z
 		line("\tint occl = wi >> " + std::to_string(W3D_OCCLUSION_SLOT_SHIFT) + ";");
+		line("\tif (w3d_reflecting) { VERTEX = vec3(0.0); }"); // lane WATER-REFLECT: the behind-building marks are a main-view overlay
 		if (k.OcclusionPass == W3D_OCCLUSION_PASS_MARK)
 		{
 			line("\tif ((occl & " + std::to_string(W3D_OCCLUSION_OCCLUDER_BIT >> W3D_OCCLUSION_SLOT_SHIFT) + ") == 0) { VERTEX = vec3(0.0); }");
@@ -454,6 +459,8 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("}");
 		return c;
 	}
+	// lane WATER-REFLECT: the reflection camera's oblique near plane (RW 0x47EA2B) as a clip: nothing below the plane z = ReflectionPlaneZ (Godot y)
+	line("\tif (CAMERA_VISIBLE_LAYERS == " + std::to_string(W3D_REFLECTION_LAYER_BIT) + "u && (INV_VIEW_MATRIX * vec4(v_vpos, 1.0)).y < w3d_reflect_y) { discard; }");
 	// per stage coordinates: matrix rows applied to (u, v, 1, 0) or to the generated vector (x, y, z, 1) in D3D camera space
 	for (int s = 0; s < 2; ++s)
 	{

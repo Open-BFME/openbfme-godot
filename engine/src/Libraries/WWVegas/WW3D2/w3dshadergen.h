@@ -97,6 +97,18 @@ constexpr int W3D_OCCLUSION_STENCIL_DONE = 1;
 constexpr int W3D_OCCLUSION_PRIORITY_MARK = -128;
 constexpr int W3D_OCCLUSION_PRIORITY_COLOR = -127;
 
+// lane WATER-REFLECT (stop S-035): the planar water reflection. The reflection camera's cull mask is exactly this visual-instance layer (bit 18, "layer 19"; layer 20 is the terrain-decal layer), the
+// main cameras see every layer, so a shader tells the reflection pass by CAMERA_VISIBLE_LAYERS == W3D_REFLECTION_LAYER_BIT. A node is drawn into the reflection
+// when it also carries the bit. INSTANCE_CUSTOM.w bits above the occlusion's: bit 21 the instance is drawn in the reflection (RW 0x470D50 .. 0x470D5E: in the
+// reflection pass a drawable draws only when its mirror flag (drawable + 0x114 bit 0) or KindOf CAN_CAST_REFLECTIONS (template + 0x108 bit 0x20) holds), bit 22
+// the instance is drawn in the reflection ONLY (KindOf SKYBOX, template + 0x121 bit 4: RW 0x470D53 hides it in every other pass). The sum stays below 2^23.
+constexpr unsigned W3D_REFLECTION_LAYER_BIT = 1u << 18;
+constexpr int W3D_MIRROR_BIT = 1 << 21;
+constexpr int W3D_MIRROR_ONLY_BIT = 1 << 22;
+// the global w3d_reflect_y: the reflection plane's height in Godot world space (W3D z); fragments below it are clipped in the reflection pass. Far below
+// the world when no reflection renders.
+constexpr float W3D_REFLECT_PLANE_NONE = -1.0e30f;
+
 enum class W3DSamplerPolicy { Anisotropic, Metal16 };
 
 std::string Generate_W3D_Shader_Code(const W3DShaderKey &key, W3DSamplerPolicy samplers = W3DSamplerPolicy::Anisotropic);

@@ -154,6 +154,9 @@ void W3D_Set_Fogged_Light_Frac(float frac);
 // their switch (w3d_occl_on: GameData UseBehindBuildingMarker and TheGameLogic + 0x99); the caller owns the texture (GameWorld)
 void W3D_Set_Occlusion(bool on, const Ref<Texture2D> &colors);
 void W3D_Set_Fog_Shift(float shift);
+// lane WATER-REFLECT (S-035): the height (Godot y = W3D z) of the planar reflection's plane, the global w3d_reflect_y the shaders clip below in the reflection
+// pass (W3D_REFLECTION_LAYER_BIT cameras); W3D_REFLECT_PLANE_NONE when no reflection renders
+void W3D_Set_Reflect_Plane(float y);
 // The light of the model viewers that show no map (not retail data): ambient 0.3 (defaultw3d.fxo's own AmbientLightColor default),
 // one white light toward (-0.5, -0.5, 0.7) SAGE, for both sets.
 void W3D_Apply_Viewer_Lighting();

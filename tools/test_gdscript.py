@@ -117,6 +117,7 @@ DENYLIST = {
     "water_normal_test.gd": "manual: requires GPU rendering for fixed-input water normals",
     "standing_water_test.gd": "manual: requires private retail assets and GPU water rendering",
     "water_vertex_test.gd": "manual: requires GPU rendering for the per-vertex water fog and half-vector",
+    "water_reflection_test.gd": "manual: requires a window and GPU rendering (part 3 also private retail assets)",
     **dict.fromkeys(scripts("bfme1_hud bfme1_map_memory bfme1_plot bfme1_quit bfme1_castle_path bfme1"),
                     "manual: needs a private BFME1 installation"),
     **dict.fromkeys(scripts("""

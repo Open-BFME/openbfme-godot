@@ -205,10 +205,11 @@ bool WaterSetScan::load(ArchiveFileSystem &fs, const std::string &mapDir, int ti
 	return true;
 }
 
-void WaterTransparencyScan::applyText(const std::string &text, bool &reflectionOn)
+bool WaterTransparencyScan::applyText(const std::string &text, Result &result, std::string *error)
 {
 	size_t pos = 0;
 	bool inBlock = false;
+	bool ok = true;
 	while (pos <= text.size())
 	{
 		size_t nl = text.find('\n', pos);
@@ -239,23 +240,57 @@ void WaterTransparencyScan::applyText(const std::string &text, bool &reflectionO
 			continue;
 		}
 		const size_t eq = line.find('=');
-		if (eq != std::string::npos && trim(line.substr(0, eq)) == "reflectionon")
+		if (eq == std::string::npos)
 		{
-			const std::string value = trim(line.substr(eq + 1));
-			reflectionOn = value == "yes" || value == "1" || value == "true"; // INI::parseBool
+			continue;
+		}
+		const std::string key = trim(line.substr(0, eq));
+		const std::string value = trim(line.substr(eq + 1));
+		if (key == "reflectionon")
+		{
+			result.reflectionOn = value == "yes" || value == "1" || value == "true"; // INI::parseBool
+		}
+		else if (key == "reflectionplanez")
+		{
+			// INI::parseReal: the whole token is a number
+			char *end = nullptr;
+			const float z = std::strtof(value.c_str(), &end);
+			if (value.empty() || end != value.c_str() + value.size())
+			{
+				if (error && ok)
+				{
+					*error = "WaterTransparency ReflectionPlaneZ \"" + value + "\" is not a real";
+				}
+				ok = false;
+				continue;
+			}
+			result.reflectionPlaneZ = z;
+			result.reflectionPlaneZSet = true;
 		}
 	}
+	return ok;
 }
 
-bool WaterTransparencyScan::load(ArchiveFileSystem &fs, const std::string &mapDir, bool &reflectionOn, std::string *error)
+void WaterTransparencyScan::applyText(const std::string &text, bool &reflectionOn)
 {
-	reflectionOn = false; // the setting's constructor
+	Result r;
+	r.reflectionOn = reflectionOn;
+	applyText(text, r, nullptr);
+	reflectionOn = r.reflectionOn;
+}
+
+bool WaterTransparencyScan::load(ArchiveFileSystem &fs, const std::string &mapDir, Result &result, std::string *error)
+{
+	result = Result(); // the setting's constructor
 	std::vector<std::uint8_t> bytes;
 	if (!fs.readFile("data\\ini\\water.ini", bytes, error))
 	{
 		return false;
 	}
-	applyText(std::string(bytes.begin(), bytes.end()), reflectionOn);
+	if (!applyText(std::string(bytes.begin(), bytes.end()), result, error))
+	{
+		return false;
+	}
 	const std::string mapIni = mapDir + "\\map.ini";
 	if (fs.doesFileExist(mapIni))
 	{
@@ -263,9 +298,20 @@ bool WaterTransparencyScan::load(ArchiveFileSystem &fs, const std::string &mapDi
 		{
 			return false;
 		}
-		applyText(std::string(bytes.begin(), bytes.end()), reflectionOn);
+		if (!applyText(std::string(bytes.begin(), bytes.end()), result, error))
+		{
+			return false;
+		}
 	}
 	return true;
+}
+
+bool WaterTransparencyScan::load(ArchiveFileSystem &fs, const std::string &mapDir, bool &reflectionOn, std::string *error)
+{
+	Result r;
+	const bool ok = load(fs, mapDir, r, error);
+	reflectionOn = r.reflectionOn;
+	return ok;
 }
 
 bool MapWeatherScan::load(ArchiveFileSystem &fs, const std::string &mapDir, MapWeather &out, std::string *error)

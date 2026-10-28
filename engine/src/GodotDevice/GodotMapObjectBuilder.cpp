@@ -340,6 +340,8 @@ Node3D *MapObjectBuilder::build_objects(const Ref<RetailFileSystem> &fsRef, cons
 	size_t tinted = 0, skippedMissing = 0, instancesStatic = 0, instancesDynamic = 0, missingModels = 0, poseFailures = 0, hiddenSets = 0, drawablesDone = 0, skippedHiddenModule = 0;
 	std::set<size_t> drawablesSeen;
 	const int infantryLightBit = MapObjectCreation::kindOfIndex("INFANTRY");
+	const int skyboxBit = MapObjectCreation::kindOfIndex("SKYBOX");
+	const int canCastBit = MapObjectCreation::kindOfIndex("CAN_CAST_REFLECTIONS");
 	for (MapPlacedModel &p : m_runtime->models())
 	{
 		if (maxObjects > 0 && drawablesSeen.size() >= (size_t)maxObjects && !drawablesSeen.count(p.drawable))
@@ -401,6 +403,13 @@ Node3D *MapObjectBuilder::build_objects(const Ref<RetailFileSystem> &fsRef, cons
 		if (infantryLightBit >= 0 && d.info && d.info->kindOf_test(infantryLightBit))
 		{
 			target->set_instance_infantry_light(instance, true); // RENDER-1: the infantry light set (S-390)
+		}
+		{
+			// lane WATER-REFLECT (S-035), RW 0x470D50..0x470D5E: the mirror flag (FLAG_DRAWS_IN_MIRROR) or KindOf CAN_CAST_REFLECTIONS draws it into the reflection;
+			// KindOf SKYBOX only there
+			const bool skybox = skyboxBit >= 0 && d.info && d.info->kindOf_test(skyboxBit);
+			const bool mirror = d.drawsInMirror || (canCastBit >= 0 && d.info && d.info->kindOf_test(canCastBit));
+			if (mirror || skybox) target->set_instance_mirror(instance, mirror, skybox);
 		}
 		if (playerColored) ++tinted;
 		if (p.draw)

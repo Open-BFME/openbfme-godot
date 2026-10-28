@@ -18,6 +18,7 @@
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "GodotDevice/GodotW3DInstancer.h"
 #include "GodotDevice/GodotVideoStream.h"
+#include "GodotDevice/GodotWaterReflection.h"
 #include "GodotDevice/GodotW3DModelBuilder.h"
 
 #include <gdextension_interface.h>
@@ -37,6 +38,7 @@ static void initialize_openbfme(ModuleInitializationLevel p_level)
 	GDREGISTER_CLASS(W3DModelBuilder);
 	GDREGISTER_CLASS(MapTerrainBuilder);
 	GDREGISTER_CLASS(MapObjectBuilder);
+	GDREGISTER_CLASS(WaterReflectionView); // WATER-REFLECT (S-035)
 	GDREGISTER_CLASS(PathfindView);
 	GDREGISTER_CLASS(W3DInstancer);
 	GDREGISTER_CLASS(LogicClock);

@@ -16,6 +16,7 @@
 #include "GameClient/TerrainTypes.h"
 #include "GameClient/UserDataFolder.h"
 #include "GameClient/WaterGeometry.h"
+#include "GameClient/WaterReflection.h"
 #include "GameEngineDevice/W3DDevice/GameClient/HeightMapMesh.h"
 #include "GameEngineDevice/W3DDevice/GameClient/W3DObjectLighting.h"
 #include "GameEngineDevice/W3DDevice/GameClient/TerrainComposite.h"
@@ -27,6 +28,7 @@
 #include "GameEngineDevice/W3DDevice/GameClient/W3DLookupTablePostEffect.h"
 #include "GodotDevice/GodotPostEffects.h"
 #include "GodotDevice/GodotW3DMaterial.h"
+#include "GodotDevice/GodotWaterReflection.h"
 
 #include <godot_cpp/classes/array_mesh.hpp>
 #include <godot_cpp/classes/box_mesh.hpp>
@@ -915,7 +917,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 			mi->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
 			// lane UI-4: the terrain also sits on visual layer 20, the only layer the selection markers' decals project onto (RotWK's projected shadow decals
 			// are drawn on the terrain, not on the units: W3DProjectedShadowManager)
-			mi->set_layer_mask(1u | (1u << 19));
+			mi->set_layer_mask(1u | (1u << 19) | W3D_REFLECTION_LAYER_BIT); // lane WATER-REFLECT: the reflection camera draws the terrain too
 			terrainRoot->add_child(mi);
 		}
 		timings["godot_nodes"] = nowMs() - t3;
@@ -999,13 +1001,20 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				}
 			}
 			else materialStops.push_back(toGodot("[S-035] no water_lod option: the techniques are resolved for WaterLOD 2 (High)"));
-			bool reflectionOn = false;
+			WaterTransparencyScan::Result waterTransparency;
 			{
 				std::string reflectionError;
-				if (!WaterTransparencyScan::load(*arch, mapDir, reflectionOn, &reflectionError)) errors.push_back(toGodot("water reflection: " + reflectionError));
+				if (!WaterTransparencyScan::load(*arch, mapDir, waterTransparency, &reflectionError)) errors.push_back(toGodot("water reflection: " + reflectionError));
 			}
 			// Rva0007EBFBWaterDraw.cpp:419: the reflection texture is the rendered one only when WaterLOD >= 2 (GlobalData + 0x5E) and ReflectionOn
-			const bool reflectionRendered = waterLod >= 2 && reflectionOn;
+			bool reflectionRendered = waterLod >= 2 && waterTransparency.reflectionOn;
+			if (reflectionRendered && !waterTransparency.reflectionPlaneZSet)
+			{
+				errors.push_back(toGodot("water reflection: ReflectionOn holds but data\\ini\\water.ini and the map's map.ini set no ReflectionPlaneZ; no reflection is rendered"));
+				reflectionRendered = false;
+			}
+			WaterReflectionView *reflectionView = nullptr; // one per map, shared by every standing water (RW 0x47E1BD: the water object's + 0xF8)
+			Array reflectionPolygons;
 			MapWeather waterWeather;
 			{
 				std::string weatherError;
@@ -1085,7 +1094,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 					else if (!technique.empty() && !traits)
 						materialStops.push_back(toGodot("[S-035] " + a.name + ": technique " + technique + " (authored " + authoredTechnique + ", WaterLOD " + std::to_string(waterLod) + ") is not ported; drawn with the BumpSpecular_M path"));
 					if (traits && reflectionRendered && (traits->bumpHigh || traits->pcaMode != 0))
-						materialStops.push_back(toGodot("[S-035] " + a.name + ": ReflectionOn and WaterLOD >= 2: retail renders the planar reflection into WaterReflectionTexture (WaterRenderObjClass 0x0007F87C); it is not ported and the texture stays black"));
+						materialStops.push_back(toGodot("[S-035] " + a.name + ": ReflectionOn and WaterLOD >= 2: the planar reflection is rendered into WaterReflectionTexture (WaterReflectionView, plane z " + std::to_string(waterTransparency.reflectionPlaneZ) + "); what differs from RW 0x47F1AC is in water.reflection_stops"));
 				}
 				Ref<ShaderMaterial> m;
 				if (sh.is_valid())
@@ -1167,6 +1176,18 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 					m->set_shader_parameter("max_alpha_depth", map.chunks.environment.waterMaxAlphaDepth);
 					m->set_shader_parameter("deep_water_alpha", map.chunks.environment.deepWaterAlpha);
 					m->set_shader_parameter("blend_terrain_alpha", params.blendTerrainAlpha);
+					if (reflectionRendered && authored)
+					{
+						// RW 0x47F952: the effect's ReflectionTexture parameter is the rendered texture (GlobalData + 0x5E, the water object, ReflectionOn), else black
+						if (!reflectionView)
+						{
+							reflectionView = memnew(WaterReflectionView);
+							reflectionView->set_name("WaterReflection");
+							root->add_child(reflectionView); // beside StandingWater, whose children are the area meshes
+						}
+						m->set_shader_parameter("reflection_tex", reflectionView->get_reflection_texture());
+						m->set_shader_parameter("reflection_enabled", true);
+					}
 					for (int64_t j = 0; j < texErrors.size(); ++j) errors.push_back(texErrors[j]);
 				}
 				Dictionary materialInfo;
@@ -1179,7 +1200,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				materialInfo["shader_stem"] = toGodot(shaderStem);
 				materialInfo["water_lod"] = (int64_t)waterLod;
 				materialInfo["reflection_strength"] = params.reflectionStrength;
-				materialInfo["reflection_rendered"] = reflectionRendered;
+				materialInfo["reflection_rendered"] = reflectionRendered && authored;
 				materialInfo["pca_enabled"] = pcaMode != 0 && !pcaBasis.frames.empty();
 				materialInfo["pca_basis"] = toGodot(pcaPath);
 				materialInfo["pca_frames"] = (int64_t)pcaBasis.frames.size();
@@ -1261,7 +1282,33 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 						renderedWaves[size_t(v.waveArea)] = true;
 				++areas;
 				tris += (int64_t)tri.size() / 3;
+				if (reflectionView && authored)
+				{
+					// RW 0x47F695: an entry whose FX shader loaded at level >= 2 (WaterLOD >= 2 here) tests its polygon against the viewing frustum
+					PackedVector3Array polygon;
+					for (const auto &pt : a.points) polygon.push_back(toG(pt.x, pt.y, float(a.waterHeight)));
+					reflectionPolygons.push_back(polygon);
+				}
 			}
+			Dictionary reflectionInfo;
+			reflectionInfo["rendered"] = reflectionView != nullptr;
+			reflectionInfo["reflection_on"] = waterTransparency.reflectionOn;
+			reflectionInfo["plane_z"] = waterTransparency.reflectionPlaneZ;
+			reflectionInfo["plane_z_set"] = waterTransparency.reflectionPlaneZSet;
+			reflectionInfo["polygons"] = (int64_t)reflectionPolygons.size();
+			reflectionInfo["texture_size"] = WaterReflection::kTextureSize;
+			Array reflectionStops;
+			if (reflectionView)
+			{
+				reflectionView->configure(waterTransparency.reflectionPlaneZ, reflectionPolygons);
+				// what the port does not match of RW 0x47EA2B / 0x47F1AC (docs/STOPS.md S-035)
+				reflectionStops.push_back(toGodot("[S-035] reflection camera: Godot has no custom projection matrix, so RW 0x47EA2B's oblique near plane is a clip in the terrain and W3D model shaders (global w3d_reflect_y); a draw with another shader is not on the reflection layer"));
+				reflectionStops.push_back(toGodot("[S-035] reflection texture: retail renders 512 x 512 with the viewing camera's aspect stretched into it; here the height is 512 and the width 512 x the viewing aspect (a Godot camera takes its aspect from the viewport)"));
+				reflectionStops.push_back(toGodot("[S-035] reflection scene: the terrain (base layer without cloud and macro textures) and the W3D models with the mirror flag or KindOf CAN_CAST_REFLECTIONS are drawn; the RTS3DScene render list of the pass beyond the terrain and those drawables (particles, projectiles, bridges, the shroud) and the terrain effect retail's pass uses are not read, so those draws are absent; models outside the viewing frustum keep an unevaluated pose"));
+			}
+			reflectionInfo["stops"] = reflectionStops;
+			w["reflection"] = reflectionInfo;
+			if (reflectionView) w["reflection_stops"] = reflectionStops;
 		}
 		w["max_alpha_depth"] = map.chunks.environment.waterMaxAlphaDepth;
 		w["deep_water_alpha"] = map.chunks.environment.deepWaterAlpha;

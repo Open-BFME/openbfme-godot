@@ -364,6 +364,7 @@ add_library(openbfme_core STATIC
     src/GameClient/TerrainAtlas.cpp
     src/GameClient/TerrainRoads.cpp
     src/GameClient/WaterGeometry.cpp
+    src/GameClient/WaterReflection.cpp
     src/GameEngineDevice/W3DDevice/GameClient/AssetCatalog.cpp
     src/GameEngineDevice/W3DDevice/GameClient/HeightMapMesh.cpp
     src/GameEngineDevice/W3DDevice/GameClient/TerrainComposite.cpp
@@ -597,6 +598,7 @@ add_library(openbfme SHARED
     src/GodotDevice/GodotW3DInstancer.cpp
     src/GodotDevice/GodotLogicClock.cpp
     src/GodotDevice/GodotMapTerrain.cpp
+    src/GodotDevice/GodotWaterReflection.cpp # WATER-REFLECT
     src/GodotDevice/GodotMapObjectBuilder.cpp
     # APT-3: the retail menus on screen
     src/GodotDevice/GodotAptPlayer.cpp
@@ -839,6 +841,7 @@ add_executable(openbfme_tests
     tests/test_map_terrain.cpp
     tests/test_map_render.cpp
     tests/test_water_retail.cpp
+    tests/test_water_reflection.cpp
     tests/test_mod5_user_maps.cpp
     tests/RetailTestMount.cpp
     tests/test_md5_json.cpp

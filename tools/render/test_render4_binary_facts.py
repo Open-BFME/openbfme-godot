@@ -6,7 +6,7 @@ Sky (no code change, STOPS S-1653): GameData.ini sets DrawSkyBox = Yes, but RotW
 W3DDisplay::reset (0x442D32, slot 2 of the vtable at 0xBD9C44) clears it to 0.0f, the map.ini override (0x644148) only preserves it, and the binary has
 neither ZH / BFME1's water skybox model ("new_skybox") nor the SkyboxSettings map chunk name; the SkyboxTextureSet store (0xDE4EDC) is written by its INI
 parser and never looked up. Retail's script help names the default: "End skybox mode (draw black background).". The visible skies are map objects
-(KindOf SKYBOX domes such as WaterReflectionSkydome_*), drawn as ordinary models.
+drawn as ordinary models; the KindOf SKYBOX domes (WaterReflectionSkydome_*) are drawn in the water reflection pass only (RW 0x470D53, S-035).
 Fog: 0x537CE0 is ShaderClass::Enable_Fog (source blend bits 14-15, the jump table at 0x537D4C).
 Colour grade: 0x511763 builds PostFX_LookupTable.fx; the chunk writer 0x4AF7A9 names Default_vol.tga when a map has none; postfx_lookuptable.fxo's
 pixel shader is texld, texld (volume), lrp; Default_vol.tga is the identity strip (x = R, rows from the top = G, slices = B).
