@@ -524,8 +524,8 @@ Object *firstBusyArmyUnit(GameLogic &logic, const Player &player, bool allowHero
 	return nullptr;
 }
 
-// RW 0xA0260A: around `unit`, within `radius`, its controlling player's ALLIES and ENEMIES (mask 6) alive (unsorted, RW 0xA39340 order 0) that are not
-// STRUCTURE and are CAN_ATTACK, HERO or SUPPORT: those the unit holds as ENEMIES (RW 0x68D7AB) count in `enemies` and add their ratio (a horde member's or a
+// BFME2 RVA 0x5EEBF6: around `unit`, within `radius`, its controlling player's ALLIES and ENEMIES (mask 6), alive, unsorted, not
+// STRUCTURE and with CAN_ATTACK or HERO: those the unit holds as ENEMIES (RW 0x68D7AB) count in `enemies` and add their ratio (a horde member's or a
 // horde's: the horde contain's member average, slot 0x264; else the body's slot 0x14; x87 fadd, fstp dword) to `enemyRatio`, the others to `others` /
 // `otherRatio`; each sum then divided by its count (fild of the unsigned count, fdivr, fstp) when the count is not 0
 struct BattleStats
@@ -538,12 +538,14 @@ struct BattleStats
 
 BattleStats battleStats(GameLogic &logic, Object &unit, float radius)
 {
-	static const int kStructure = kind("STRUCTURE"), kCanAttack = kind("CAN_ATTACK"), kHero = kind("HERO"), kSupport = kind("SUPPORT");
+	// BFME2 AISpellBookBaseGetStatsInCombatRange.cpp RVA 0x5EEBF6:
+	// template bit 3 CAN_ATTACK or bit 90 HERO; SUPPORT alone does not count.
+	static const int kStructure = kind("STRUCTURE"), kCanAttack = kind("CAN_ATTACK"), kHero = kind("HERO");
 	BattleStats st;
 	for (const PartitionHit &h : scanAtUnsorted(logic, unit.getControllingPlayer(), *unit.getPosition(), radius, 6u))
 	{
 		Object &c = *h.object;
-		if (hasKind(c, kStructure) || !(hasKind(c, kCanAttack) || hasKind(c, kHero) || hasKind(c, kSupport)))
+		if (hasKind(c, kStructure) || !(hasKind(c, kCanAttack) || hasKind(c, kHero)))
 		{
 			continue;
 		}
@@ -858,34 +860,40 @@ bool AISpecialPowerUpdate::decideCitadel(Object &obj)
 	return setLocationIfValid(obj, location);
 }
 
-bool AISpecialPowerUpdate::decideArmyBreaker(Object &obj)
+bool AISpecialPowerUpdate::decideSpellBookHeal(Object &obj)
 {
-	// TARGET RW 0x9E92CA: RotWK uses attacked-at threat totals, unlike the BFME2 busy-unit/count test.
-	// DONOR AISpellBookArmyBreaker.cpp supplies the independent per-player timer shape. TARGET RW 0x9E9222
-	// and startup RW 0xBCA418 / 0xBCA42F: delay 15..30 seconds, line 0x53 (S-001 caveat).
+	// BFME2 AISpellBookHeal.cpp RVA 0x5D81A4. This branch targets BFME2,
+	// not RotWK's different order-list decision at RW 0x9E85C6.
 	GameLogic &logic = obj.logic();
 	const Player *player = obj.getControllingPlayer();
-	const auto *ai = player ? logic.skirmishAI().findAI(player->getPlayerIndex()) : nullptr;
-	if (!ai)
-		return false;
-	for (const AIAttackedAt &battle : ai->brain.attackedAt)
+	Object *unit = player ? firstBusyArmyUnit(logic, *player, true, true, false) : nullptr;
+	if (!unit) return false;
+	const BattleStats stats = battleStats(logic, *unit, 350.0f);
+	return stats.otherRatio < 0.8f && setLocationIfValid(obj, *unit->getPosition());
+}
+
+bool AISpecialPowerUpdate::decideArmyBreaker(Object &obj)
+{
+	// BFME2 AISpellBookArmyBreaker.cpp RVA 0x5D8619: a busy unit's combat
+	// tally, not RotWK's attacked-at threat records. Location validation
+	// precedes the per-player cooldown, so a rejected location spends no draw.
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	Object *unit = player ? firstBusyArmyUnit(logic, *player, true, true, false) : nullptr;
+	if (!unit) return false;
+	const BattleStats stats = battleStats(logic, *unit, 350.0f);
+	if (stats.enemies < 4 || (float)stats.others > SimMath::mulf32((float)stats.enemies, 0.5f)) return false;
+	Object *victim = goalObject(*unit);
+	if (!victim || !setLocationIfValid(obj, *victim->getPosition())) return false;
+	auto &timers = logic.skirmishAI().spellBookArmyBreakerTimers();
+	auto it = std::find_if(timers.begin(), timers.end(), [&](const auto &entry) { return entry.first == player->getPlayerIndex(); });
+	if (it == timers.end())
 	{
-		if (!(battle.enemies.v[0] >= m_decision->range) || !(SimMath::mulf32(battle.enemies.v[0], 0.5f) >= battle.others.v[0]))
-			continue;
-		if (!setLocationIfValid(obj, battle.position))
-			continue;
-		auto &timers = logic.skirmishAI().spellBookArmyBreakerTimers();
-		auto it = std::find_if(timers.begin(), timers.end(), [&](const auto &entry) { return entry.first == player->getPlayerIndex(); });
-		if (it == timers.end())
-		{
-			timers.push_back({player->getPlayerIndex(), logic.getFrame()});
-			it = timers.end() - 1;
-		}
-		if (it->second > logic.getFrame())
-			continue;
-		it->second = logic.getFrame() +
-					 (unsigned)logic.random().getValue(15 * LOGICFRAMES_PER_SECOND, 30 * LOGICFRAMES_PER_SECOND, "AISpellBookArmyBreaker.cpp", 0x53);
-		return true;
+		timers.push_back({player->getPlayerIndex(), logic.getFrame()});
+		it = timers.end() - 1;
 	}
-	return false;
+	if (it->second > logic.getFrame()) return false;
+	// Rva007B4C70FrameScaleInits.cpp: 15 and 30 seconds at 5 logic FPS.
+	it->second = logic.getFrame() + (unsigned)logic.random().getValue(75, 150, "AISpellBookArmyBreaker.cpp", 0x4E);
+	return true;
 }

@@ -501,10 +501,10 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 	const std::vector<std::string> ai = AISpecialPowerUpdate::stopLines();
 	REQUIRE(ai.size() == 2);
 	CHECK(ai[0].rfind("[S-1421]", 0) == 0);
-	CHECK(ai[0].find("48 of the 53 decisions run") != std::string::npos);
+	CHECK(ai[0].find("49 of the 53 decisions run") != std::string::npos);
 	CHECK(ai[0].find("SOUL_FREEZE") != std::string::npos);
 	CHECK(ai[1].rfind("[S-1875]", 0) == 0);
-	// Still unported: SOUL_FREEZE, ATTACK_HEAL_AOE, HEAL, and the two building debuffs.
+	// Still unported: SOUL_FREEZE, ATTACK_HEAL_AOE and the two building debuffs.
 	int unported = 0;
 	for (int t = 0; t < AI_SPECIAL_POWER_TYPE_COUNT; ++t)
 	{
@@ -515,7 +515,7 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 			CHECK_MESSAGE((spellBook || t == 44 || t == 49), TheAISpecialPowerTypeNames[t]);
 		}
 	}
-	CHECK(unported == 5);
+	CHECK(unported == 4);
 	CHECK(AISpecialPowerDecision::decisionPorted(21));
 	CHECK(AISpecialPowerDecision::decisionPorted(25));
 	CHECK(AISpecialPowerDecision::decisionPorted(34));
@@ -1085,66 +1085,6 @@ TEST_CASE("source AI structure powers: dense human structure group and fortress-
 	CHECK(citadel.decidedLocation().y == y);
 }
 
-TEST_CASE("source AI Army Breaker: threat thresholds, independent timer, and snapshot restore")
-{
-	OPENBFME_REQUIRE_START(s);
-	Arena a;
-	std::string err;
-	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 6102, &err), err);
-	auto *player = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
-	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *player);
-	REQUIRE(book);
-	a.advance(2);
-	a.logic->shroud()->revealMapForPlayerPermanently(player->getPlayerIndex());
-	AISpecialPowerUpdateModuleData data;
-	data.m_commandButtonName = "Command_SpellBookArrowVolleyGood";
-	data.m_specialPowerAIType = 24;
-	data.m_specialPowerRange = 100;
-	AISpecialPowerUpdate power(book, &data);
-	power.initAsIfInCommandSetForTest();
-	REQUIRE(power.decision());
-	auto *ai = const_cast<AISkirmishPlayer *>(a.logic->skirmishAI().findAI(player->getPlayerIndex()));
-	REQUIRE(ai);
-	AIAttackedAt battle;
-	battle.id = 1;
-	battle.position = a.where;
-	battle.enemies.v[0] = 99;
-	battle.others.v[0] = 0;
-	ai->brain.attackedAt = {battle};
-	a.logic->skirmishAI().attackedAtIds() = 1;
-	CHECK_FALSE(power.decideNow());
-	ai->brain.attackedAt[0].enemies.v[0] = 100;
-	ai->brain.attackedAt[0].others.v[0] = 51;
-	CHECK_FALSE(power.decideNow());
-	ai->brain.attackedAt[0].others.v[0] = 50;
-	auto &random = a.logic->random();
-	random.enableCallLog(true);
-	random.clearCallLog();
-	CHECK(power.decideNow());
-	REQUIRE(random.callLog().size() == 1);
-	const auto call = random.callLog()[0];
-	CHECK(call.file == "AISpellBookArmyBreaker.cpp");
-	CHECK(call.line == 0x53);
-	CHECK(call.lo == 75);
-	CHECK(call.hi == 150);
-	CHECK(power.decidedLocation().x == a.where.x);
-	CHECK(power.decidedLocation().y == a.where.y);
-	auto &manager = a.logic->skirmishAI();
-	REQUIRE(manager.spellBookArmyBreakerTimers().size() == 1);
-	CHECK(manager.spellBookArmyBreakerTimers()[0].second == a.logic->getFrame() + (unsigned)call.result);
-	CHECK(manager.spellBookAssistTimers().empty());
-	CHECK_FALSE(power.decideNow());
-	CHECK(random.callLog().size() == 1);
-	XferSave save;
-	manager.xfer(save);
-	const auto timer = manager.spellBookArmyBreakerTimers()[0];
-	manager.spellBookArmyBreakerTimers().clear();
-	XferLoad load(save.data());
-	manager.xfer(load);
-	REQUIRE(manager.spellBookArmyBreakerTimers().size() == 1);
-	CHECK(manager.spellBookArmyBreakerTimers()[0] == timer);
-	CHECK_FALSE(power.decideNow());
-}
 TEST_CASE("source AI tree killer: largest group, global selection, invalid cast consumption, and snapshot restore")
 {
 	OPENBFME_REQUIRE_START(s);
@@ -1215,4 +1155,136 @@ TEST_CASE("source AI tree killer: largest group, global selection, invalid cast 
 	CHECK_FALSE(power.decideNow());
 	decision->button = button;
 	CHECK_FALSE(power.decideNow());
+}
+
+TEST_CASE("BFME2 spellbook Heal: first busy friendly unit and strict average-health boundary")
+{
+ OPENBFME_REQUIRE_START(s);
+ Arena a;
+ std::string error;
+ REQUIRE_MESSAGE(a.start(*s, "FactionMen", 6201, &error), error);
+ auto *player = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+ Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *player);
+ REQUIRE(book);
+ a.advance(2);
+ a.logic->shroud()->revealMapForPlayerPermanently(player->getPlayerIndex());
+ AISpecialPowerUpdateModuleData data;
+ data.m_commandButtonName = "Command_SpellBookHeal";
+ data.m_specialPowerAIType = 26;
+ AISpecialPowerUpdate heal(book, &data);
+ heal.initAsIfInCommandSetForTest();
+ REQUIRE(heal.decision());
+ REQUIRE(heal.decision()->button);
+ Object *mine = a.make("GondorAragorn", a.ai, 0, 0);
+ Object *enemy = a.make("GondorAragorn", a.human, 40, 0);
+ setHealthRatio(*mine, 0.5f);
+ CHECK_FALSE(heal.decideNow()); // BFME2 findUnitInCombat requires an actual victim.
+ REQUIRE(mine->getAIUpdateInterface()->aiAttackObject(enemy, CMD_FROM_PLAYER));
+ mine->getAIUpdateInterface()->setCurrentVictim(enemy);
+ REQUIRE(mine->getAIUpdateInterface()->currentVictim() == enemy);
+ Object *untaggedInfantry = a.make("GondorFighter", a.human, 0, 30);
+ CHECK_FALSE(untaggedInfantry->isKindOfName("CAN_ATTACK"));
+ setHealthRatio(*mine, 0.8f);
+ CHECK_FALSE(heal.decideNow()); // BFME2 RVA 0x5D81A4: strict < float32 0.8, not <=.
+ setHealthRatio(*mine, 0.79f);
+ CHECK(heal.decideNow());
+ CHECK(heal.decidedLocation().x == mine->getPosition()->x);
+ CHECK(heal.decidedLocation().y == mine->getPosition()->y);
+ setHealthRatio(*mine, 1.0f);
+ setHealthRatio(*enemy, 0.1f);
+ CHECK_FALSE(heal.decideNow()); // Enemy wounds do not lower the friendly average.
+ Object *friendUnit = a.make("GondorAragorn", a.ai, -40, 0);
+ setHealthRatio(*mine, 0.5f);
+ setHealthRatio(*friendUnit, 1.0f);
+ CHECK(heal.decideNow()); // Two friendly objects average 0.75.
+ setHealthRatio(*friendUnit, 1.0f);
+ setHealthRatio(*mine, 0.75f);
+ CHECK_FALSE(heal.decideNow()); // Average 0.875; not just the busy unit's health.
+}
+
+TEST_CASE("BFME2 Army Breaker: local unit-count boundaries, victim location, cooldown and snapshot")
+{
+ OPENBFME_REQUIRE_START(s);
+ Arena a;
+ std::string error;
+ REQUIRE_MESSAGE(a.start(*s, "FactionMen", 6202, &error), error);
+ auto *player = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+ Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *player);
+ REQUIRE(book);
+ a.advance(2);
+ a.logic->shroud()->revealMapForPlayerPermanently(player->getPlayerIndex());
+ AISpecialPowerUpdateModuleData data;
+ data.m_commandButtonName = "Command_SpellBookArrowVolleyGood";
+ data.m_specialPowerAIType = 24;
+ data.m_specialPowerRange = 100000; // BFME2 ignores RotWK's threat threshold parameter here.
+ AISpecialPowerUpdate power(book, &data);
+ power.initAsIfInCommandSetForTest();
+ Object *mine = a.make("GondorAragorn", a.ai, 0, 0);
+ Object *victim = a.make("GondorAragorn", a.human, 40, 0);
+ a.make("GondorAragorn", a.human, 50, 0);
+ a.make("GondorAragorn", a.human, 60, 0);
+ for (int i = 0; i < 4; ++i)
+  a.make("GondorFighter", a.human, 30, (float)(i * 10)); // No CAN_ATTACK/HERO bit: excluded by the donor tally.
+ REQUIRE(mine->getAIUpdateInterface()->aiAttackObject(victim, CMD_FROM_PLAYER));
+ mine->getAIUpdateInterface()->setCurrentVictim(victim);
+ REQUIRE(mine->getAIUpdateInterface()->currentVictim() == victim);
+ auto &random = a.logic->random();
+ random.enableCallLog(true);
+ random.clearCallLog();
+ CHECK_FALSE(power.decideNow()); // Three enemies: source requires at least four.
+ CHECK(random.callLog().empty());
+ a.make("GondorAragorn", a.human, 70, 0);
+ a.make("GondorAragorn", a.ai, -40, 0);
+ random.clearCallLog();
+ CHECK(power.decideNow()); // Exactly four enemies / two friendly units passes.
+ CHECK(power.decidedLocation().x == victim->getPosition()->x);
+ CHECK(power.decidedLocation().y == victim->getPosition()->y);
+ REQUIRE(random.callLog().size() == 1);
+ const auto call = random.callLog()[0];
+ CHECK(call.file == "AISpellBookArmyBreaker.cpp");
+ CHECK(call.line == 0x4E);
+ CHECK(call.lo == 75);
+ CHECK(call.hi == 150);
+ auto &manager = a.logic->skirmishAI();
+ REQUIRE(manager.spellBookArmyBreakerTimers().size() == 1);
+ const auto timer = manager.spellBookArmyBreakerTimers()[0];
+ CHECK(timer.second == a.logic->getFrame() + (unsigned)call.result);
+ CHECK(manager.spellBookAssistTimers().empty());
+ CHECK_FALSE(power.decideNow());
+ CHECK(random.callLog().size() == 1);
+ XferSave save;
+ manager.xfer(save);
+ manager.spellBookArmyBreakerTimers().clear();
+ XferLoad load(save.data());
+ manager.xfer(load);
+ CHECK(manager.spellBookArmyBreakerTimers()[0] == timer);
+ manager.spellBookArmyBreakerTimers()[0].second = a.logic->getFrame();
+ a.make("GondorAragorn", a.ai, -60, 0);
+ random.clearCallLog();
+ CHECK_FALSE(power.decideNow()); // Four enemies / three friendlies fails the half-count test.
+ CHECK(random.callLog().empty());
+}
+
+TEST_CASE("BFME2 AI decision facts: all 41 retail names, Heal/Army Breaker vtables, and logic clock")
+{
+ const char *root = std::getenv("BFME2_INSTALL");
+ if (!root || !*root) { retailtest::printSkip("BFME2 AI facts (set BFME2_INSTALL)"); return; }
+ retailtest::PeImage pe(std::string(root) + "/game.dat");
+ // Open-BFME-2 INIAsciiIndexParse.cpp: target VA DD3068 has exactly 41 names.
+ for (unsigned type = 0; type < 41; ++type)
+ {
+  CHECK(pe.cstring(pe.u32At(0xDD3068 + 4 * type)) == TheAISpecialPowerTypeNames[type]);
+  CHECK(AISpecialPowerDecision::decisionPorted((int)type));
+ }
+ CHECK(pe.u32At(0xC75F84 + 6 * 4) == 0x9D81A4); // AISpellBookHeal.cpp, RVA 5D81A4.
+ CHECK(pe.u32At(0xC760A4 + 6 * 4) == 0x9D8619); // AISpellBookArmyBreaker.cpp, RVA 5D8619.
+ CHECK(pe.u32At(0xDBA4E4) == 5); // Canonical BfmeLogicFramesPerSecond data owner.
+}
+
+TEST_CASE("BFME2 AI registry coverage: each of the donor's 41 types has a decision implementation")
+{
+ for (int type = 0; type < 41; ++type)
+  CHECK_MESSAGE(AISpecialPowerDecision::decisionPorted(type), TheAISpecialPowerTypeNames[type]);
+ CHECK(std::string(TheAISpecialPowerTypeNames[26]) == "AI_SPELLBOOK_HEAL");
+ CHECK(std::string(TheAISpecialPowerTypeNames[40]) == "AI_SPECIAL_POWER_STANCEHOLDGROUND");
 }

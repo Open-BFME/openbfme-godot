@@ -1,4 +1,4 @@
-# Source AI overhaul on upstream main
+# AI source overhaul and BFME2 parity work
 
 This branch ports the source-based AI work from the personal fork onto upstream
 `87579746eb`. It carries no enhanced counter-production, retreat micro, siege
@@ -7,9 +7,11 @@ The current upstream expansion and capture-history implementations are retained.
 
 ## Source evidence and difficulty
 
-The donor is Open-BFME-2 `e190ef5fe4` (BFME2 1.06). Established RotWK differences
-retain priority under PLAN.md. Existing S-001 target-binary provenance and numeric
-parity caveats remain; successful engine tests do not establish retail replay parity.
+Current direction (owner, 28 October 2026): target BFME2 1.06 AI behavior in
+Open-BFME-2 `e190ef5fe4`, rather than RotWK-specific differences. Earlier ports
+on this branch were researched against RotWK and still require a BFME2 audit
+where they differ. The BFME2 follow-up below records which paths have been
+corrected. Native determinism tests alone do not establish retail replay parity.
 
 | Port | Source evidence | Regression coverage |
 | --- | --- | --- |
@@ -41,11 +43,14 @@ existing format difference is reported by S-4252.
 
 This port does not close native siege/wall construction, remaining targetless
 families, tech-building opportunity scoring, team reassignment/formation limitations,
-or all power decisions. Five of 53 power decisions still refuse with S-1421:
-SOUL_FREEZE, ATTACK_HEAL_AOE, spellbook HEAL, DEBUFFECONOMYBUILDING and
-DEBUFFPRODUCTIONBUILDING. Existing source stops remain visible at runtime.
+or full per-decision behavioral parity. BFME2 has 41 AI decision names; all now
+have implementation paths. Four entries from the wider RotWK registry still
+refuse with S-1421: SOUL_FREEZE, ATTACK_HEAL_AOE, DEBUFFECONOMYBUILDING and
+DEBUFFPRODUCTIONBUILDING. Those four are outside the BFME2 baseline. Existing
+source stops remain visible at runtime. The engine still accepts the wider
+registry; strict BFME2 parser acceptance is not established by the 41-name test.
 
-## Validation
+## Earlier overhaul validation
 
 Native build and exact source regressions pass. The unmodified upstream baseline
 passed 19 AI/data/manager cases (452 assertions) with the installed game files.
@@ -65,3 +70,35 @@ or retail parity claim is made. The installed commit gate and whitespace check
 passed. Full-suite, multiplayer cross-play and graphical runtime were not tested. The four-difficulty gameplay test runs each scenario twice and
 compares every simulation frame; this is determinism coverage, not an external
 retail oracle. Asset-free tests pin the source's exact expected decisions and values.
+
+## BFME2 follow-up
+
+- Spellbook Heal now follows `AISpellBookHeal.cpp` RVA 0x5D81A4: first busy
+  friendly unit (heroes and structure victims allowed), combat statistics in
+  radius 350, friendly mean health strictly below float32 0.8, then the AoE
+  location validator. RotWK's order-list implementation is deliberately not used.
+- Army Breaker now follows `AISpellBookArmyBreaker.cpp` RVA 0x5D8619: at least
+  four enemies and no more than half as many friendly units, then the busy unit's
+  victim position, then its separate per-player timer. Rejected count/location
+  checks do not consume the cooldown draw. The source draw site is line 0x4E;
+  `Rva007B4C70FrameScaleInits.cpp` supplies 15..30 seconds (75..150 logic frames).
+  This replaces the earlier RotWK attacked-at threat/range selection.
+- Combat statistics follow `AISpellBookBaseGetStatsInCombatRange.cpp` RVA
+  0x5EEBF6: CAN_ATTACK or HERO, excluding structures. SUPPORT alone is not counted.
+- A read-only BFME2 executable test checks all 41 names at VA 0xDD3068,
+  the Heal and Army Breaker vtable decision slots, and the logic clock at
+  0xDBA4E4. It passed 85 assertions against the installed BFME2 game.dat.
+- The two live decision cases passed 59 assertions. Their fixtures use the
+  existing combined-archive test arena; this is not a pure BFME2 startup or
+  external frame-trace comparison. Remaining engine numeric, pathfinding,
+  targetless-tactic, wall/siege and formation gaps still block full parity.
+
+The BFME2 executable bytes are read only at test time and are never committed.
+Full game parity is not claimed. Final source/power/expansion/save regressions
+passed 84 selected cases and 15,008 assertions. The four-difficulty, seven-faction
+attack, and offensive-tactic gameplay selection passed 4 cases / 15,328 assertions.
+The Udun expansion engine pins changed to 1821/1821/1824/1825/2593/2593. An
+isolated control with only Heal returning false restored all six old pins
+(2425/2425/2428/2429/3169/3169), identifying the new Heal decision/cooldown RNG
+consumption as the cause. These pins are engine regressions, not retail timing
+oracles. Native build, installed commit gate and whitespace checks passed.
