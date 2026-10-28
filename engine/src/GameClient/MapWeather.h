@@ -46,13 +46,14 @@ struct Result
 	bool reflectionOn = false;  // the setting's constructor
 	float reflectionPlaneZ = 0.0f;
 	bool reflectionPlaneZSet = false;
+	bool blockSeen = false;     // a WaterTransparency block was parsed (a second one is "found twice" unless the file loads as overrides)
 };
-// A key whose value INI::parseReal / parseBool would reject sets `error` (and is not applied).
-bool applyText(const std::string &text, Result &result, std::string *error);
-void applyText(const std::string &text, bool &reflectionOn);
-// mapDir as MapWeatherScan::load takes it. Missing map.ini is fine; a missing water.ini is an error. A plane no file sets stays reflectionPlaneZSet = false (the caller that needs it reports it).
+// Reads the block through the INI pipeline (macros, #ADD(...) expressions, MSVCR71's "%f" prefix reading, Yes / No only); a key or value retail's parse procs reject,
+// or a second block outside an override load, fails with the INIException's text in `error`. `mapOverride`: the text is a map.ini (INI_LOAD_CREATE_OVERRIDES).
+bool applyText(const std::string &text, Result &result, std::string *error, bool mapOverride = false);
+// mapDir as MapWeatherScan::load takes it. Missing map.ini is fine; a missing water.ini is an error. A plane no file sets stays reflectionPlaneZSet = false (the
+// caller that needs it reports it).
 bool load(ArchiveFileSystem &fs, const std::string &mapDir, Result &result, std::string *error);
-bool load(ArchiveFileSystem &fs, const std::string &mapDir, bool &reflectionOn, std::string *error);
 } // namespace WaterTransparencyScan
 
 namespace MapWeatherScan

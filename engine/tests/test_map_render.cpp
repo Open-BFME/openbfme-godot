@@ -1188,15 +1188,16 @@ TEST_CASE("WaterGeometry::riverVertexColour: the WaterSet colour's red and blue 
 
 TEST_CASE("WaterTransparencyScan::applyText: ReflectionOn of the WaterTransparency block, the last block that sets it winning")
 {
-	bool on = false;
-	WaterTransparencyScan::applyText("WaterTransparency\n  TransparentWaterDepth = 3.0\n  ReflectionPlaneZ = 59.0;\n  ReflectionOn = No\nEnd\n", on);
-	CHECK_FALSE(on);
-	WaterTransparencyScan::applyText("; map override\nWaterTransparency\n  ReflectionOn = Yes ; comment\nEnd\n", on);
-	CHECK(on);
-	WaterTransparencyScan::applyText("WaterSet MORNING\n  ReflectionOn = No\nEnd\n", on); // another block's key is not this block's
-	CHECK(on);
-	WaterTransparencyScan::applyText("WaterTransparency\n  ReflectionOn = no\nEnd\n", on);
-	CHECK_FALSE(on);
+	WaterTransparencyScan::Result r;
+	std::string error;
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("WaterTransparency\n  TransparentWaterDepth = 3.0\n  ReflectionPlaneZ = 59.0;\n  ReflectionOn = No\nEnd\n", r, &error), error);
+	CHECK_FALSE(r.reflectionOn);
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("; map override\nWaterTransparency\n  ReflectionOn = Yes ; comment\nEnd\n", r, &error, true), error);
+	CHECK(r.reflectionOn);
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("WaterSet MORNING\n  ReflectionOn = No\nEnd\n", r, &error, true), error); // another block's key is not this block's
+	CHECK(r.reflectionOn);
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("WaterTransparency\n  ReflectionOn = no\nEnd\n", r, &error, true), error);
+	CHECK_FALSE(r.reflectionOn);
 }
 
 TEST_CASE("WaterTransparencyScan::load: water.ini, then the map's map.ini")
@@ -1204,7 +1205,7 @@ TEST_CASE("WaterTransparencyScan::load: water.ini, then the map's map.ini")
 	const std::string waterIni = "WaterTransparency\n  ReflectionOn = No\nEnd\n";
 	const std::string mapIni = "WaterTransparency\n  ReflectionOn = Yes\nEnd\n";
 	std::string error;
-	bool on = true;
+	WaterTransparencyScan::Result on;
 	{
 		Win32BIGFileSystem fsys;
 		auto big = fsys.openArchiveFromMemory("w.big", std::make_shared<const std::vector<std::uint8_t>>(bigtest::makeBig("BIGF", {
@@ -1212,9 +1213,9 @@ TEST_CASE("WaterTransparencyScan::load: water.ini, then the map's map.ini")
 		REQUIRE(big);
 		fsys.mountArchive(std::move(big), "w.big", false);
 		REQUIRE_MESSAGE(WaterTransparencyScan::load(fsys, "maps\\map mp adorn river", on, &error), error);
-		CHECK(on);
+		CHECK(on.reflectionOn);
 		REQUIRE_MESSAGE(WaterTransparencyScan::load(fsys, "maps\\map mp other", on, &error), error); // no map.ini: water.ini's value
-		CHECK_FALSE(on);
+		CHECK_FALSE(on.reflectionOn);
 	}
 	{
 		Win32BIGFileSystem fsys;

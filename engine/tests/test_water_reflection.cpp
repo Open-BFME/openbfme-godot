@@ -303,23 +303,117 @@ TEST_CASE("water reflection: WaterTransparency's ReflectionPlaneZ and Reflection
 	WaterTransparencyScan::Result r;
 	std::string error;
 	// water.ini's block, then a map override that sets the plane with a trailing ';' comment, as the retail maps write it
-	REQUIRE(WaterTransparencyScan::applyText("WaterTransparency\n  TransparentWaterDepth = 3.0\n  ReflectionPlaneZ = 59.0;\n  ReflectionOn = No\nEnd\n", r, &error));
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("WaterTransparency\n  TransparentWaterDepth = 3.0\n  ReflectionPlaneZ = 59.0;\n  ReflectionOn = No\nEnd\n", r, &error), error);
 	CHECK(r.reflectionPlaneZSet);
 	CHECK(r.reflectionPlaneZ == 59.0f);
 	CHECK_FALSE(r.reflectionOn);
-	REQUIRE(WaterTransparencyScan::applyText("; MP ARGONATH\nWaterTransparency\n  ReflectionPlaneZ = 89.0;\n  ReflectionOn = Yes\nEnd\nWeather\n  HardwareFogEnable = Yes\nEnd\n", r, &error));
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("; MP ARGONATH\nWaterTransparency\n  ReflectionPlaneZ = 89.0;\n  ReflectionOn = Yes\nEnd\nWeather\n  HardwareFogEnable = Yes\nEnd\n", r, &error, true), error);
 	CHECK(r.reflectionPlaneZ == 89.0f);
 	CHECK(r.reflectionOn);
 	// keys outside the block and other blocks are not read
 	WaterTransparencyScan::Result other;
-	REQUIRE(WaterTransparencyScan::applyText("Weather\n  ReflectionPlaneZ = 5\nEnd\n", other, &error));
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("Weather\n  ReflectionPlaneZ = 5\nEnd\n", other, &error), error);
 	CHECK_FALSE(other.reflectionPlaneZSet);
-	// a plane that is not a real is an error, not a default
-	WaterTransparencyScan::Result bad;
-	error.clear();
-	CHECK_FALSE(WaterTransparencyScan::applyText("WaterTransparency\n  ReflectionPlaneZ = high\nEnd\n", bad, &error));
-	CHECK(error == "WaterTransparency ReflectionPlaneZ \"high\" is not a real");
-	CHECK_FALSE(bad.reflectionPlaneZSet);
+	CHECK_FALSE(other.blockSeen);
+}
+
+TEST_CASE("water reflection: ReflectionPlaneZ is scanned as RW 0x42ED00 scans a real: macros, expressions, the %f prefix; nan, inf and garbage fail")
+{
+	struct Row
+	{
+		const char *value;
+		bool ok;
+		float expected;       // when ok
+		const char *errorHas; // when not ok
+	};
+	const Row rows[] = {
+		{ "89.0", true, 89.0f, "" },
+		{ "-12", true, -12.0f, "" },
+		{ "13.", true, 13.0f, "" },
+		// scanReal resolves #ADD / #SUBTRACT / #MULTIPLY / #DIVIDE expressions (spaces between the tokens, as the INI math writes them)
+		{ "#ADD( 10 79 )", true, 89.0f, "" },
+		{ "#MULTIPLY( 2 45 )", true, 90.0f, "" },
+		{ "#SUBTRACT( 100 11 )", true, 89.0f, "" },
+		{ "#DIVIDE( 180 2 )", true, 90.0f, "" },
+		// sscanf("%f") of MSVCR71 reads the numeric prefix and ignores the rest: "3e" is 3, "59.5abc" is 59.5
+		{ "3e", true, 3.0f, "" },
+		{ "59.5abc", true, 59.5f, "" },
+		{ "110%", true, 110.0f, "" },
+		// no number at the start: scanReal's error, and neither nan nor inf is one (MSVCR71's converter does not read them)
+		{ "nan", false, 0.0f, "Expected floating point value, math op, or predefined macro, but found 'nan'" },
+		{ "NaN", false, 0.0f, "Expected floating point value" },
+		{ "inf", false, 0.0f, "Expected floating point value, math op, or predefined macro, but found 'inf'" },
+		{ "-inf", false, 0.0f, "Expected floating point value" },
+		{ "infinity", false, 0.0f, "Expected floating point value" },
+		{ "high", false, 0.0f, "Expected floating point value, math op, or predefined macro, but found 'high'" },
+		{ "e5", false, 0.0f, "Expected floating point value" },
+		{ "#BOGUS( 1 )", false, 0.0f, "" },
+	};
+	for (const Row &row : rows)
+	{
+		CAPTURE(row.value);
+		WaterTransparencyScan::Result r;
+		std::string error;
+		const std::string text = std::string("WaterTransparency\n  ReflectionPlaneZ = ") + row.value + "\nEnd\n";
+		const bool ok = WaterTransparencyScan::applyText(text, r, &error);
+		CHECK(ok == row.ok);
+		if (row.ok)
+		{
+			CHECK(r.reflectionPlaneZ == row.expected);
+			CHECK(std::isfinite(r.reflectionPlaneZ));
+			CHECK(r.reflectionPlaneZSet);
+		}
+		else
+		{
+			CHECK_MESSAGE(error.find(row.errorHas) != std::string::npos, error);
+			CHECK_FALSE(r.reflectionPlaneZSet);
+		}
+	}
+	// a #define resolves through the macro table
+	WaterTransparencyScan::Result r;
+	std::string error;
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("#define PLANE_Z 77.5\nWaterTransparency\n  ReflectionPlaneZ = PLANE_Z\nEnd\n", r, &error), error);
+	CHECK(r.reflectionPlaneZ == 77.5f);
+	// no token at all
+	WaterTransparencyScan::Result missing;
+	CHECK_FALSE(WaterTransparencyScan::applyText("WaterTransparency\n  ReflectionPlaneZ =\nEnd\n", missing, &error));
+}
+
+TEST_CASE("water reflection: ReflectionOn is Yes or No (RW 0x42E558); every other word fails; the block's keys are the table's; a second block is an error")
+{
+	for (const char *good : { "Yes", "yes", "YES", "No", "no" })
+	{
+		CAPTURE(good);
+		WaterTransparencyScan::Result r;
+		std::string error;
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText(std::string("WaterTransparency\n  ReflectionOn = ") + good + "\nEnd\n", r, &error), error);
+		CHECK(r.reflectionOn == (good[0] == 'Y' || good[0] == 'y'));
+	}
+	for (const char *bad : { "1", "true", "On", "yes!", "0" })
+	{
+		CAPTURE(bad);
+		WaterTransparencyScan::Result r;
+		std::string error;
+		CHECK_FALSE(WaterTransparencyScan::applyText(std::string("WaterTransparency\n  ReflectionOn = ") + bad + "\nEnd\n", r, &error));
+		CHECK_MESSAGE(error.find(std::string("invalid boolean token ") + bad + " -- expected Yes or No") != std::string::npos, error);
+	}
+	// every key of RW 0xC1E570..0xC1E610 parses (with its own parse proc), an unknown key is an error
+	WaterTransparencyScan::Result all;
+	std::string error;
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("WaterTransparency\n  TransparentWaterMinOpacity = 1.0\n  TransparentWaterDepth = 3.0\n  RiverTransparencyMultiplier = 1.0\n  StandingWaterColor = R:255 G:255 B:255\n"
+		"  StandingWaterTexture = TWWater01.tga\n  AdditiveBlending = no\n  RadarWaterColor = R:140 G:140 B:255\n  ReflectionPlaneZ = 59.0\n  ReflectionOn = No\n  ReflectionGuard = X:1 Y:2\nEnd\n", all, &error), error);
+	WaterTransparencyScan::Result unknown;
+	CHECK_FALSE(WaterTransparencyScan::applyText("WaterTransparency\n  ReflectionPlaneX = 5\nEnd\n", unknown, &error));
+	WaterTransparencyScan::Result badColor;
+	CHECK_FALSE(WaterTransparencyScan::applyText("WaterTransparency\n  StandingWaterColor = R:300 G:0 B:0\nEnd\n", badColor, &error));
+	// "WaterTransparency found twice": a second block in a file that is not loaded as overrides
+	WaterTransparencyScan::Result twice;
+	CHECK_FALSE(WaterTransparencyScan::applyText("WaterTransparency\n  ReflectionOn = No\nEnd\nWaterTransparency\n  ReflectionOn = Yes\nEnd\n", twice, &error));
+	CHECK_MESSAGE(error.find("WaterTransparency found twice") != std::string::npos, error);
+	WaterTransparencyScan::Result overrides;
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("WaterTransparency\n  ReflectionOn = No\nEnd\n", overrides, &error), error);
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("WaterTransparency\n  ReflectionOn = Yes\nEnd\n", overrides, &error, true), error);
+	CHECK(overrides.reflectionOn);
 }
 
 TEST_CASE("water reflection: the retail maps' ReflectionPlaneZ against the mounted files")
@@ -348,4 +442,42 @@ TEST_CASE("water reflection: the retail maps' ReflectionPlaneZ against the mount
 		CHECK(r.reflectionPlaneZ == row.planeZ);
 		CHECK(r.reflectionOn == row.on);
 	}
+}
+
+TEST_CASE("water reflection: every retail map.ini reads through the INI pipeline; 66 of 123 set ReflectionOn = Yes")
+{
+	retailtest::Mount *mount = retailtest::pureMount();
+	if (!mount)
+	{
+		retailtest::printSkip("water reflection retail corpus");
+		return;
+	}
+	REQUIRE_MESSAGE(mount->fs != nullptr, mount->error);
+	FilenameList list;
+	mount->fs->getFileListInDirectory("", "", "map.ini", list, true);
+	int total = 0, on = 0;
+	for (const std::string &path : list)
+	{
+		std::string lowered = path;
+		for (char &c : lowered)
+		{
+			c = (char)std::tolower((unsigned char)c);
+		}
+		const std::string suffix = "map.ini";
+		if (lowered.size() <= suffix.size() + 1 || lowered.compare(lowered.size() - suffix.size(), suffix.size(), suffix) != 0 || lowered.rfind("maps", 0) != 0)
+		{
+			continue;
+		}
+		const std::string mapDir = path.substr(0, path.size() - suffix.size() - 1);
+		CAPTURE(mapDir);
+		WaterTransparencyScan::Result r;
+		std::string error;
+		REQUIRE_MESSAGE(WaterTransparencyScan::load(*mount->fs, mapDir, r, &error), error);
+		CHECK(r.reflectionPlaneZSet); // water.ini sets it
+		CHECK(std::isfinite(r.reflectionPlaneZ));
+		++total;
+		on += r.reflectionOn ? 1 : 0;
+	}
+	CHECK(total == 123);
+	CHECK(on == 66);
 }

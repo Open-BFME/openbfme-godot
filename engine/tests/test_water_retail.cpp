@@ -82,10 +82,10 @@ std::map<std::string, WaterFacts> mapWater(retailtest::Mount &mount, const std::
 
 bool reflectionOn(retailtest::Mount &mount, const std::string &map)
 {
-	bool on = false;
+	WaterTransparencyScan::Result on;
 	std::string error;
 	REQUIRE_MESSAGE(WaterTransparencyScan::load(*mount.fs, "maps\\" + map, on, &error), error);
-	return on;
+	return on.reflectionOn;
 }
 
 } // namespace

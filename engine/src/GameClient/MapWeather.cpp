@@ -3,6 +3,9 @@
 
 #include "GameClient/MapWeather.h"
 
+#include "Common/INI.h"
+#include "Common/INI/INIBlockStubs.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -205,113 +208,139 @@ bool WaterSetScan::load(ArchiveFileSystem &fs, const std::string &mapDir, int ti
 	return true;
 }
 
-bool WaterTransparencyScan::applyText(const std::string &text, Result &result, std::string *error)
+// WaterTransparency: the block is read through the INI pipeline (Common/INI), so a value is scanned as retail scans it: INI::parseReal (RW 0x42ED00:
+// getNextToken, then scanReal 0x42EAAD, which resolves macros and #ADD / #SUBTRACT / #MULTIPLY / #DIVIDE expressions and reads the prefix MSVCR71's sscanf "%f"
+// takes) and INI::parseBool (RW 0x42E558, scanBool 0x42CE52: Yes or No only, anything else is an error). The field table is RW 0xC1E570..0xC1E610
+// (BFME2 INIWaterTransparency.cpp): TransparentWaterDepth +0x18, TransparentWaterMinOpacity +0x1C, StandingWaterColor +0x20, RadarWaterColor +0x2C,
+// AdditiveBlending +0x38, StandingWaterTexture +0x3C, RiverTransparencyMultiplier +0x40, ReflectionPlaneZ +0x4C, ReflectionOn +0x50, ReflectionGuard +0x54; a key
+// outside it is an error. Only the reflection's two fields are kept; the others are scanned (and fail) exactly as retail's do. A second block is an error
+// unless the file loads as overrides ("WaterTransparency found twice": water.ini loads as INI_LOAD_OVERWRITE, a map.ini as INI_LOAD_CREATE_OVERRIDES).
+namespace
 {
-	size_t pos = 0;
-	bool inBlock = false;
-	bool ok = true;
-	while (pos <= text.size())
-	{
-		size_t nl = text.find('\n', pos);
-		if (nl == std::string::npos)
-		{
-			nl = text.size();
-		}
-		std::string line = text.substr(pos, nl - pos);
-		pos = nl + 1;
-		size_t semi = line.find(';');
-		if (semi != std::string::npos)
-		{
-			line.erase(semi);
-		}
-		line = lower(trim(line));
-		if (line.empty())
-		{
-			continue;
-		}
-		if (!inBlock)
-		{
-			inBlock = line == "watertransparency";
-			continue;
-		}
-		if (line == "end")
-		{
-			inBlock = false;
-			continue;
-		}
-		const size_t eq = line.find('=');
-		if (eq == std::string::npos)
-		{
-			continue;
-		}
-		const std::string key = trim(line.substr(0, eq));
-		const std::string value = trim(line.substr(eq + 1));
-		if (key == "reflectionon")
-		{
-			result.reflectionOn = value == "yes" || value == "1" || value == "true"; // INI::parseBool
-		}
-		else if (key == "reflectionplanez")
-		{
-			// INI::parseReal: the whole token is a number
-			char *end = nullptr;
-			const float z = std::strtof(value.c_str(), &end);
-			if (value.empty() || end != value.c_str() + value.size())
-			{
-				if (error && ok)
-				{
-					*error = "WaterTransparency ReflectionPlaneZ \"" + value + "\" is not a real";
-				}
-				ok = false;
-				continue;
-			}
-			result.reflectionPlaneZ = z;
-			result.reflectionPlaneZSet = true;
-		}
-	}
-	return ok;
+using WaterTransparencyResult = WaterTransparencyScan::Result;
+
+void wtReal(INI *ini, void *, void *, const void *)
+{
+	float discarded;
+	INI::parseReal(ini, nullptr, &discarded, nullptr); // RW 0x42ED00
+}
+void wtBool(INI *ini, void *, void *, const void *)
+{
+	bool discarded;
+	INI::parseBool(ini, nullptr, &discarded, nullptr); // RW 0x42E558
+}
+void wtColor(INI *ini, void *, void *, const void *)
+{
+	RGBColor discarded;
+	INI::parseRGBColor(ini, nullptr, &discarded, nullptr); // RW 0x42EF99
+}
+void wtString(INI *ini, void *, void *, const void *)
+{
+	std::string discarded;
+	INI::parseAsciiString(ini, nullptr, &discarded, nullptr); // RW 0x42EE5E
+}
+void wtCoord2D(INI *ini, void *, void *, const void *)
+{
+	Coord2D discarded;
+	INI::parseCoord2D(ini, nullptr, &discarded, nullptr); // RW 0x42F298
+}
+void wtReflectionPlaneZ(INI *ini, void *instance, void *, const void *)
+{
+	WaterTransparencyResult *r = static_cast<WaterTransparencyResult *>(instance);
+	INI::parseReal(ini, nullptr, &r->reflectionPlaneZ, nullptr); // RW 0x42ED00, + 0x4C
+	r->reflectionPlaneZSet = true;
+}
+void wtReflectionOn(INI *ini, void *instance, void *, const void *)
+{
+	INI::parseBool(ini, nullptr, &static_cast<WaterTransparencyResult *>(instance)->reflectionOn, nullptr); // RW 0x42E558, + 0x50
 }
 
-void WaterTransparencyScan::applyText(const std::string &text, bool &reflectionOn)
+const FieldParse kWaterTransparencyFields[] = {
+	{ "TransparentWaterDepth", wtReal, nullptr, 0x18 },
+	{ "TransparentWaterMinOpacity", wtReal, nullptr, 0x1C },
+	{ "StandingWaterColor", wtColor, nullptr, 0x20 },
+	{ "StandingWaterTexture", wtString, nullptr, 0x3C },
+	{ "AdditiveBlending", wtBool, nullptr, 0x38 },
+	{ "RadarWaterColor", wtColor, nullptr, 0x2C },
+	{ "RiverTransparencyMultiplier", wtReal, nullptr, 0x40 },
+	{ "ReflectionPlaneZ", wtReflectionPlaneZ, nullptr, 0x4C },
+	{ "ReflectionOn", wtReflectionOn, nullptr, 0x50 },
+	{ "ReflectionGuard", wtCoord2D, nullptr, 0x54 },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+
+// One environment per scan: the macro table (the #define values of water.ini stay for the map.ini, as retail's one global table does), the blocks (every other
+// RotWK keyword is skipped by its stub, as the camera settings' reader does) and the file system the #includes come from.
+class WaterTransparencyLoad
 {
-	Result r;
-	r.reflectionOn = reflectionOn;
-	applyText(text, r, nullptr);
-	reflectionOn = r.reflectionOn;
+public:
+	WaterTransparencyLoad(ArchiveFileSystem *fs, WaterTransparencyResult &result) : m_result(result)
+	{
+		m_env.fileSystem = fs;
+		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "WaterTransparency" }, StubExtent::Lenient, false);
+		m_env.blocks.registerBlock("WaterTransparency", [this](INI *ini) {
+			if (m_result.blockSeen && ini->getLoadType() != INI_LOAD_CREATE_OVERRIDES)
+			{
+				throw INIException(3, "WaterTransparency found twice");
+			}
+			m_result.blockSeen = true;
+			ini->initFromINI(&m_result, kWaterTransparencyFields);
+		});
+	}
+	bool run(const std::string &name, const std::string &text, INILoadType type, std::string *error)
+	{
+		return guarded(name, error, [&](INI &ini) { ini.loadMemory(name, std::vector<std::uint8_t>(text.begin(), text.end()), type); });
+	}
+	bool runFile(const std::string &path, INILoadType type, std::string *error)
+	{
+		return guarded(path, error, [&](INI &ini) { ini.load(path, type); });
+	}
+
+private:
+	template <class F> bool guarded(const std::string &name, std::string *error, F &&load)
+	{
+		INI ini(m_env);
+		try
+		{
+			load(ini);
+		}
+		catch (const std::exception &e)
+		{
+			if (error)
+			{
+				*error = name + ": " + e.what();
+			}
+			return false;
+		}
+		return true;
+	}
+
+	INIEnvironment m_env;
+	INIBlockRecorder m_recorder;
+	WaterTransparencyResult &m_result;
+};
+} // namespace
+
+bool WaterTransparencyScan::applyText(const std::string &text, Result &result, std::string *error, bool mapOverride)
+{
+	WaterTransparencyLoad load(nullptr, result);
+	return load.run(mapOverride ? "map.ini" : "water.ini", text, mapOverride ? INI_LOAD_CREATE_OVERRIDES : INI_LOAD_OVERWRITE, error);
 }
 
 bool WaterTransparencyScan::load(ArchiveFileSystem &fs, const std::string &mapDir, Result &result, std::string *error)
 {
 	result = Result(); // the setting's constructor
-	std::vector<std::uint8_t> bytes;
-	if (!fs.readFile("data\\ini\\water.ini", bytes, error))
-	{
-		return false;
-	}
-	if (!applyText(std::string(bytes.begin(), bytes.end()), result, error))
+	WaterTransparencyLoad load(&fs, result);
+	if (!load.runFile("data\\ini\\water.ini", INI_LOAD_OVERWRITE, error))
 	{
 		return false;
 	}
 	const std::string mapIni = mapDir + "\\map.ini";
-	if (fs.doesFileExist(mapIni))
+	if (fs.doesFileExist(mapIni) && !load.runFile(mapIni, INI_LOAD_CREATE_OVERRIDES, error))
 	{
-		if (!fs.readFile(mapIni, bytes, error))
-		{
-			return false;
-		}
-		if (!applyText(std::string(bytes.begin(), bytes.end()), result, error))
-		{
-			return false;
-		}
+		return false;
 	}
 	return true;
-}
-
-bool WaterTransparencyScan::load(ArchiveFileSystem &fs, const std::string &mapDir, bool &reflectionOn, std::string *error)
-{
-	Result r;
-	const bool ok = load(fs, mapDir, r, error);
-	reflectionOn = r.reflectionOn;
-	return ok;
 }
 
 bool MapWeatherScan::load(ArchiveFileSystem &fs, const std::string &mapDir, MapWeather &out, std::string *error)
