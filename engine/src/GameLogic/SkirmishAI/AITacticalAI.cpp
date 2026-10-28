@@ -845,8 +845,8 @@ enum OffensiveKind
 	SIMPLE_EXPANSION,   // RW 0x9B5190 "SimpleExpansion" (RW 0xC898D4)
 	SIMPLE_DEFENSE      // RW 0x9B4F8F "SimpleDefense" (RW 0xC89890)
 };
-constexpr OffensiveKind kOffensivePrototypes[] = { SIMPLE_ATTACK, SIMPLE_ATTACK, FORMATION_ATTACK, FORMATION_ATTACK, FLANK_ATTACK, PINCER_ATTACK, FEINT_ATTACK,
-	BASE_PENETRATION, SIMPLE_SIEGE, SIEGE_GATES };
+// BFME2 AITacticsGenerator.cpp RVA 0x505E5D: exact native registration order, no duplicate weights.
+constexpr OffensiveKind kOffensivePrototypes[] = { SIMPLE_ATTACK, FLANK_ATTACK, SIMPLE_SIEGE, SIEGE_GATES, BASE_PENETRATION };
 const char *const kOffensiveNames[] = { "SimpleAttack", "FormationAttack", "FlankAttack", "PincerAttack", "FeintAttack", "AIBasePenetrationTroopsTactic",
 	"SimpleSiege", "SiegeGates", "SimpleExpansion", "SimpleDefense" };
 const char *const kExpansionBuilding = "MenFortress"; // RW 0x9B51E9: the literal RW 0xC899B4, whatever the AI's side
@@ -979,7 +979,7 @@ void setupTeam(GameLogic &logic, OffensiveKind kind, int index, const AITarget &
 	case FLANK_ATTACK:
 		if (t.type == kEnemyStructure)
 		{
-			team.minimum = logic.random().getValue(3, 5, "AITactic.cpp", 0x1C7); // RW 0x8F121F
+			team.minimum = logic.random().getValue(3, 5, "AITactic.cpp", 0x182); // RW 0x8F121F
 		}
 		break;
 	case FORMATION_ATTACK: // RW 0x9B49CE
@@ -1110,7 +1110,7 @@ void enemyStructureTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &
 	{
 		return;
 	}
-	const OffensiveKind kind = applicable[(size_t)logic.random().getValue(0, (int)applicable.size() - 1, "AITacticsGenerator.cpp", 0x158)];
+	const OffensiveKind kind = applicable[(size_t)logic.random().getValue(0, (int)applicable.size() - 1, "AITacticsGenerator.cpp", 326)];
 	AITactic tac;
 	tac.kindIndex = (int)kind;
 	tac.kind = kOffensiveNames[kind];
@@ -1140,7 +1140,7 @@ void expansionTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 	{
 		return;
 	}
-	const OffensiveKind kind = applicable[(size_t)logic.random().getValue(0, (int)applicable.size() - 1, "AITacticsGenerator.cpp", 0x196)];
+	const OffensiveKind kind = applicable[(size_t)logic.random().getValue(0, (int)applicable.size() - 1, "AITacticsGenerator.cpp", 388)];
 	AITactic tac;
 	tac.kindIndex = (int)kind;
 	tac.kind = kOffensiveNames[kind];
@@ -1155,7 +1155,7 @@ void expansionTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 // TARGET RW 0x90C436: the defensive library has one SimpleDefense prototype, whose canRun is true.
 void defensiveTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AIBrainState &owner, int targetIndex, int ownerIndex)
 {
-	(void)logic.random().getValue(0, 0, "AITacticsGenerator.cpp", 0x177);
+	(void)logic.random().getValue(0, 0, "AITacticsGenerator.cpp", 357);
 	AITactic tactic;
 	tactic.kindIndex = SIMPLE_DEFENSE;
 	tactic.kind = "SimpleDefense";
@@ -1216,7 +1216,8 @@ constexpr int kTargetlessBase = 100; // port only: AITactic::kindIndex of target
 const char *const kTargetlessNames[] = { "FlagCaptureSquad", "FarmKillSquad", "AIRingHeroTactic", "StructureCreep", "LumberMillBuild", "ReturnTheRing",
 	"AIStartWoTRBattleTactic", "AIRoamingDefenseTactic", "AIWoTRForfeitTactic", "WallTactic", "FarmBuilder" };
 constexpr bool kTargetlessAlways[] = { false, false, false, false, false, true, false, false, true, false, false };
-constexpr int kTargetlessCount = 11;
+// Stable internal indices keep native snapshot identifiers; only these six BFME2 prototypes are generated.
+constexpr int kTargetlessPrototypes[] = {1, 2, 3, 5, 6, 7};
 constexpr int TL_FLAG_CAPTURE = 0;
 constexpr int TL_FARM_KILL = 1;
 constexpr int TL_ROAMING_DEFENSE = 7;
@@ -2668,7 +2669,7 @@ void pickTargetless(GameLogic &logic, AISkirmishPlayer &ai)
 {
 	AIBrainState &b = ai.brain;
 	std::vector<int> always, pool;
-	for (int i = 0; i < kTargetlessCount; ++i)
+	for (int i : kTargetlessPrototypes)
 	{
 		if (targetlessApplies(logic, ai, i))
 		{
@@ -2678,7 +2679,7 @@ void pickTargetless(GameLogic &logic, AISkirmishPlayer &ai)
 	if (!pool.empty())
 	{
 		++b.targetlessPicks;
-		always.push_back(pool[(size_t)logic.random().getValue(0, (int)pool.size() - 1, kTargetlessFile, 0x1BC)]);
+		always.push_back(pool[(size_t)logic.random().getValue(0, (int)pool.size() - 1, kTargetlessFile, 426)]);
 	}
 	for (int index : always)
 	{
@@ -2818,6 +2819,19 @@ bool AITacticalAI::teamMeetsThreatForTest(GameLogic &logic, const AITactic &tac,
 void AITacticalAI::updateInterestZonesForTest(GameLogic &logic, AISkirmishPlayer &ai)
 {
 	updateAttackedAt(logic, ai);
+}
+
+std::vector<std::string> AITacticalAI::offensivePrototypesForTest()
+{
+	std::vector<std::string> names;
+	for (auto kind : kOffensivePrototypes) { names.push_back(kOffensiveNames[kind]); }
+	return names;
+}
+std::vector<std::string> AITacticalAI::targetlessPrototypesForTest()
+{
+	std::vector<std::string> names;
+	for (int index : kTargetlessPrototypes) { names.push_back(kTargetlessNames[index]); }
+	return names;
 }
 
 ObjectID AITacticalAI::farmKillTargetForTest(GameLogic &logic, const AITactic &tac, int enemy, bool production)

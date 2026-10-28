@@ -943,13 +943,9 @@ TEST_CASE("skirmish ai vs ai: produced members catch up with their horde (RW 0x8
 	CHECK(run.worstSpread < 300.0f);
 }
 
-TEST_CASE("skirmish ai targetless: the generator's FarmKillSquad draw at creation, the per-frame pick and the squads' counters (RW 0x9BB3CA / 0x90C5E2 / 0x9BC39F / 0x9BB1C4 / 0x9BB479)")
+TEST_CASE("skirmish ai targetless: BFME2 native pool starts FarmKillSquad without RotWK capture squads")
 {
-	// community #113 (FlagCaptureSquad ported, RW 0x9BC39F / 0x9BC1A0): FarmKillSquad is no longer the only targetless tactic that can apply. FlagCaptureSquad is
-	// the first prototype in RW 0x90C0EE's order and applies with no squad running and its next-run frame due (both counters start as 0, RW 0x6C7EDD) while a
-	// non-allied CAPTUREFLAG object stands (Evendim's neutral buildings); FarmKillSquad applies with its early flag set (RW 0x9BB1C4). Measured (engine pins, a
-	// CI host): at frame 10 both apply, the pick draws 0 of 0 .. 1 and starts the FlagCaptureSquad; at frame 11 it is running, so the pick draws among the
-	// FarmKillSquad alone (0 .. 0) and starts it
+	// BFME2 AITacticsGenerator.cpp RVA 0x506020 / 0x506411: six prototypes; only FarmKillSquad applies here.
 	OPENBFME_REQUIRE_START(s);
 	static std::vector<MapCacheEntry> cache;
 	std::string error;
@@ -978,83 +974,34 @@ TEST_CASE("skirmish ai targetless: the generator's FarmKillSquad draw at creatio
 	for (const auto &call : logic.random().callLog())
 		if (call.file == "AIFarmKillSquad.cpp" && call.line == 53) { CHECK(ai->brain.farmKillEarly == (call.result < 20)); } // tolerance: exact source branch.
 	const_cast<AISkirmishPlayer *>(ai)->brain.farmKillEarly = true;
-	auto started = [&](const char *kind) {
-		auto it = ai->brain.tacticsByKind.find(kind);
-		return it == ai->brain.tacticsByKind.end() ? 0 : it->second;
-	};
-	auto counter = [&](const char *name) {
-		auto it = ai->brain.namedCounters.find(name);
-		return it == ai->brain.namedCounters.end() ? -1 : it->second;
-	};
-	int firstStart = -1, farmKillStart = -1;
-	for (int i = 0; i < 2400 && farmKillStart < 0; ++i)
-	{
+
+	int farmStart = -1;
+	for (int i=0; i<60 && farmStart<0; ++i) {
 		game.advance(0.2);
-		if (firstStart < 0 && ai->brain.targetlessStarted > 0)
-		{
-			firstStart = (int)logic.getFrame();
-			MESSAGE("first targetless start at frame " << firstStart << ": FlagCaptureSquad " << started("FlagCaptureSquad") << ", FarmKillSquad "
-													 << started("FarmKillSquad") << ", picks " << ai->brain.targetlessPicks << ", unported applicability checks "
-													 << ai->brain.targetlessUnported);
-			CHECK(firstStart == 10);
-			CHECK(started("FlagCaptureSquad") == 1);
-			CHECK(started("FarmKillSquad") == 0);
-			CHECK(counter("AIFlagCaptureSquad_IsRunning") == 1);
-			CHECK(ai->brain.targetlessUnported == 8); // the other 8 prototypes' applicability, once per pick frame (S-893)
-		}
-		if (started("FarmKillSquad") > 0)
-		{
-			farmKillStart = (int)logic.getFrame();
-		}
+		if (ai->brain.tacticsByKind.count("FarmKillSquad")) farmStart=(int)logic.getFrame();
 	}
-	MESSAGE("FarmKillSquad early flag " << ai->brain.farmKillEarly << ", first targetless start at frame " << firstStart << ", FarmKillSquad's at "
-									  << farmKillStart << ", picks " << ai->brain.targetlessPicks << ", started " << ai->brain.targetlessStarted
-									  << " (FlagCaptureSquad " << started("FlagCaptureSquad") << "), unported applicability checks " << ai->brain.targetlessUnported);
-	REQUIRE(firstStart > 0);
-	REQUIRE(farmKillStart == 11);
-	// RW 0x90C5E2: the two always-started prototypes never apply here, so every start is one pick's draw
-	CHECK(ai->brain.targetlessPicks == ai->brain.targetlessStarted);
-	CHECK(ai->brain.targetlessStarted == 2);
-	CHECK(started("FlagCaptureSquad") == 1);
-	CHECK(started("FarmKillSquad") == 1);
-	CHECK(counter("AIFarmKillSquad_IsRunning") == 1);
-	CHECK(ai->brain.targetlessUnported == 16);
-	// RW 0x90C0EE constructs the prototype (its draw); each pick draws among the pool (AITacticsGenerator.cpp 0x1BC: 0 .. pool size - 1); a FlagCaptureSquad
-	// team draws its maximum (AIFlagCaptureSquad.cpp 0xEF, RW 0x9BC1A0) and its end its next run (0xD5, RW 0x9BBFDC); RW 0x9BB43D constructs the FarmKillSquad
-	// clone before copying its prototype flag, and RW 0x9BB479 sets it up (0x267)
+	REQUIRE(farmStart==10);
+	CHECK(ai->brain.targetlessPicks==1);
+	CHECK(ai->brain.targetlessStarted==1);
+	CHECK(ai->brain.targetlessUnported==4);
+	CHECK(ai->brain.tacticsByKind.count("FlagCaptureSquad")==0);
+	REQUIRE(ai->brain.namedCounters.count("AIFarmKillSquad_IsRunning")==1);
+	CHECK(ai->brain.namedCounters.at("AIFarmKillSquad_IsRunning")==1);
 	std::vector<GameLogicRandom::Call> draws;
-	for (const auto &c : logic.random().callLog())
-	{
-		if (c.file == "AIFarmKillSquad.cpp" || c.file == "AIFlagCaptureSquad.cpp" || (c.file == "AITacticsGenerator.cpp" && c.line == 0x1BC))
-		{
-			draws.push_back(c);
-		}
+	for (const auto &call : logic.random().callLog()) {
+		CHECK_FALSE(call.file=="AIFlagCaptureSquad.cpp");
+		if(call.file=="AIFarmKillSquad.cpp" || (call.file=="AITacticsGenerator.cpp" && call.line==426)) draws.push_back(call);
 	}
-	struct Draw
-	{
-		const char *file;
-		int line, lo, hi;
-	};
-	const Draw expected[] = { { "AIFarmKillSquad.cpp", 53, 1, 100 }, // the prototype at creation
-		{ "AITacticsGenerator.cpp", 0x1BC, 0, 1 },                       // frame 10: FlagCaptureSquad and FarmKillSquad apply
-		{ "AIFlagCaptureSquad.cpp", 0xEF, 1, 3 },                        // the FlagCaptureSquad team's maximum
-		{ "AITacticsGenerator.cpp", 0x1BC, 0, 0 },                       // frame 11: FarmKillSquad alone
-		{ "AIFarmKillSquad.cpp", 53, 1, 100 },                         // its clone's constructor
-		{ "AIFarmKillSquad.cpp", 371, ai->build.phase == 0 ? 1 : 2, 3 } };
-	REQUIRE(draws.size() == 6);
-	for (size_t i = 0; i < draws.size(); ++i)
-	{
-		INFO("draw " << i);
-		CHECK(draws[i].file == expected[i].file);
-		CHECK(draws[i].line == expected[i].line);
-		CHECK(draws[i].lo == expected[i].lo);
-		CHECK(draws[i].hi == expected[i].hi);
-		CHECK(draws[i].drewNumber);
+	REQUIRE(draws.size()==4);
+	const int lines[]={53,426,53,371};
+	const int lows[]={1,0,1,1}, highs[]={100,0,100,3};
+	for(size_t i=0;i<draws.size();++i) {
+		CHECK(draws[i].line==lines[i]); CHECK(draws[i].lo==lows[i]); CHECK(draws[i].hi==highs[i]);
+		CHECK(draws[i].file==(i==1 ? "AITacticsGenerator.cpp" : "AIFarmKillSquad.cpp"));
 	}
-	CHECK(draws[1].result == 0); // the first in the pool: FlagCaptureSquad
 }
 
-TEST_CASE("skirmish ai tactics: the offensive bodies make retail's draws in order and walk their waypoints (Flank RW 0x9B461D, Pincer RW 0x9B4041, Feint RW 0x9B396A, Formation RW 0x9B4C32)")
+TEST_CASE("skirmish ai tactics: BFME2 native generator excludes RotWK prototypes and preserves Flank draws")
 {
 	OPENBFME_REQUIRE_START(s);
 	static std::vector<MapCacheEntry> cache;
@@ -1066,16 +1013,7 @@ TEST_CASE("skirmish ai tactics: the offensive bodies make retail's draws in orde
 	std::map<std::string, int> launched;
 	int flankChecked = 0, pincerChecked = 0, formationSteps = 0;
 	int flankDistances = 0, pincerDistances = 0;
-	// seeds 13 and 17 (lane MODULES-2 merge): the retail draws of the emotion trackers and the group bonus shift every game's random stream, and with them the
-	// four original seeds launch no Pincer within 2600 frames; seed 13 launches one Pincer (and a Flank), seed 17 three. Lane BUILD-3 (RotWK's dozer machines: a
-	// dock position without a contact point draws its random start angle, RW 0x68592D, and the builds start and end at other frames): none of the six hands a
-	// Pincer team its waypoints within 2600 frames any more; seeds 19 and 31 do (1 and 2 distances; 29, 37 and 67 would too)
-	// Merge MOD-4 + AUDIO-4 + ANIM-1: the random stream moved again and none of these eight hands a Pincer team its waypoints within 2600 frames; a probe of
-	// 18 seeds on the merged tree found seeds 29 and 67 (one Pincer each)
-	// Merge of IDLE-1 (update phases) into MOVE-3 r4: none of these ten hands a Pincer team its waypoints within 2600 frames (1234 and 11 start one); a probe of
-	// 15 seeds on the merged tree found seeds 37 and 41
-	// Lane SUMMON-1 (the OCLs' retail random draws, DoCommandUpgrade's rock-throw toggles): none of these twelve hands a Pincer team its waypoints within 2600
-	// frames; a probe of 16 seeds on the lane's tree (Deck) found 53 (two distances), 71, 101 and 113 (one each)
+	// Fixed seed matrix exercises native Flank routing and rejects extra RotWK tactic registrations.
 	for (std::uint32_t seed : { 1234u, 2u, 7u, 11u, 13u, 17u, 19u, 31u, 29u, 67u, 37u, 41u, 53u, 71u })
 	{
 		NewGameStart start(RandomAlgorithm::ZH_CarryChain);
@@ -1226,7 +1164,13 @@ TEST_CASE("skirmish ai tactics: the offensive bodies make retail's draws in orde
 	MESSAGE("tactics started: " << kinds << "; flank frames checked " << flankChecked << ", pincer " << pincerChecked << ", formation reached step " << formationSteps
 								 << "; waypoint distances pinned: flank " << flankDistances << ", pincer " << pincerDistances);
 	CHECK(launched.size() >= 3);
-	CHECK(pincerDistances >= 1); // (no FlankAttack team is handed over within 2600 frames in these games: the next test pins its distance directly)
+	CHECK(pincerDistances == 0);
+	CHECK(formationSteps == 0);
+	CHECK(launched.count("PincerAttack") == 0);
+	CHECK(launched.count("FormationAttack") == 0);
+	CHECK(launched.count("FeintAttack") == 0);
+	CHECK(launched.count("FlagCaptureSquad") == 0);
+	CHECK(flankDistances >= 1); // tolerance: at least one live native Flank launch must exercise the exact waypoint/draw comparisons above.
 }
 
 namespace

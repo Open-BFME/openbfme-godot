@@ -735,3 +735,10 @@ TEST_CASE("BFME2 interest zones: attacking member position and raw enemy threat 
  StateHasher restored; manager.crc(restored);
  CHECK(restored.value()==before.value());
 }
+
+TEST_CASE("BFME2 generator: native prototype names and registration order")
+{
+ // Donor AITacticsGenerator.cpp RVA 0x505E5D / 0x506020, not the RotWK ten/eleven lists.
+ CHECK(AITacticalAI::offensivePrototypesForTest() == std::vector<std::string>{"SimpleAttack","FlankAttack","SimpleSiege","SiegeGates","AIBasePenetrationTroopsTactic"});
+ CHECK(AITacticalAI::targetlessPrototypesForTest() == std::vector<std::string>{"FarmKillSquad","AIRingHeroTactic","StructureCreep","ReturnTheRing","AIStartWoTRBattleTactic","AIRoamingDefenseTactic"});
+}

@@ -609,13 +609,15 @@ TEST_CASE("aiexpand1 expansion in a game: the Medium Men computer kept above 300
 	// Heal returning false restored all six former pins (2425/2425/2428/2429/3169/3169).
 	// BFME2 farm raiding moves the sequence again. A control restoring only the prior
 	// farm behavior restored all six 1821/1821/1824/1825/2593/2593 pins.
+	// BFME2 native generator lists move the sequence again; restoring only the old
+	// lists restores 1519/1519/1565/1566/2369/2369 exactly.
 	// These are engine regressions, not external retail timing oracles.
-	CHECK(chosenFrame == 1519);
-	CHECK(tacticFrame == 1519);
-	CHECK(requestFrame == 1565);
-	CHECK(inProgressFrame == 1566);
-	CHECK(doneFrame == 2369);
-	CHECK(baseFrame == 2369);
+	CHECK(chosenFrame == 2123);
+	CHECK(tacticFrame == 2123);
+	CHECK(requestFrame == 2126);
+	CHECK(inProgressFrame == 2127);
+	CHECK(doneFrame == 2869);
+	CHECK(baseFrame == 2869);
 	MESSAGE("EXPANSION target on frame " << chosenFrame << " at (" << chosenAt.x << ", " << chosenAt.y << "); SimpleExpansion on frame " << tacticFrame
 		<< ", its request on " << requestFrame << " (last state " << lastState << ", in progress on " << inProgressFrame << ", complete on " << doneFrame
 		<< "), the second base on " << baseFrame << "; bases " << aiPtr->build.bases.size() << ", tactics started " << aiPtr->brain.tacticsStarted

@@ -260,3 +260,55 @@ Validation: all 101 selected source/power/expansion/manager/targetless/save case
 passed 15,084 assertions, including the existing interest-zone registration tests.
 The four repeated-difficulty/faction/offensive-tactic cases passed 6,995 assertions.
 The native Release build passed. No timing pin changed in this follow-up.
+
+## BFME2 native generator lists
+
+`AITacticsGenerator.cpp` RVA `0x505E5D` registers exactly SimpleAttack,
+FlankAttack, SimpleSiege, SiegeGates, AIBasePenetrationTroopsTactic, once each and
+in that order. RVA `0x506020` registers FarmKillSquad, AIRingHeroTactic,
+StructureCreep, ReturnTheRing, AIStartWoTRBattleTactic, AIRoamingDefenseTactic.
+The branch now generates those lists rather than the wider RotWK ten/eleven
+lists. Formation/Pincer/Feint/FlagCaptureSquad and the other extended prototypes
+retain internal identifiers and bodies for native snapshot handling, but are not
+new BFME2 generator candidates. Source pick sites are 326 offensive, 357 defensive,
+388 expansion and 426 targetless; the base offensive minimum draw is line 386.
+The capture-history registry remains, including tech-building selection; this
+list correction does not establish the complete BFME2 AI capture execution path.
+
+The targetless gameplay fixture now pins a single native FarmKillSquad start,
+four unported native applicability checks, and exact source draws. The offensive
+matrix requires live Flank waypoint/draw coverage and zero generated RotWK-only
+Formation/Pincer/Feint/FlagCaptureSquad tactics. It and the all-difficulty repeat
+and faction attack checks passed four cases / 20,580 assertions.
+
+The broad selection passed 100 of 102 cases; only the derived expansion and
+Athelas timing assertions changed. Restoring just the prior registration lists
+restored all six 1519/1519/1565/1566/2369/2369 pins and Athelas 24 exactly. Native
+lists produce 2123/2123/2126/2127/2869/2869 and Athelas 23. These are engine
+regressions, not retail timing oracles. No save layout changed beyond version 6.
+
+## Remaining closure gates after this audit
+
+The requested full gap closure is **not complete**. These are concrete remaining
+implementation and evidence gates, rather than items inferred closed from a
+successful native run:
+
+| Area | Source/dependency still needed | Closure gate |
+| --- | --- | --- |
+| Four native targetless families | RingHero, StructureCreep, ReturnTheRing, StartWoTRBattle; StructureCreep has substantial donor bodies, while sibling bodies are split among address-named units and need a complete callgraph audit | Native eligibility, recruitment, orders, cleanup, RNG and save tests for each applicable mode |
+| Siege tactics | Rva005A9ACDTactic / Rva005A9CB3Tactic / Rva005DC87BXfer bodies, native defined-unit team setup and offensive reachability gate; the structure query is now present | Unreachable target selects the native siege tactic; breach transitions and team orders match source |
+| AI wall planning/construction | AIWallBuilder, AIWall, map wall-library loading and buildable wall request lifecycle | Source plan selection, affordability, hub/gate/segment order, completion/failure and snapshots |
+| Native teams and reassignment | AITeamBuilder recruitment predicate, Team/TeamPrototype identity, recruitment availability and priority; current tactic vectors represent membership | Ownership changes and defensive/priority transfers follow native rules without duplicate membership |
+| Group formation/movement | Native formation manager, group ownership and remaining AIGroup state transitions | Native route/turn/order fixtures plus deterministic save continuation |
+| Remaining BFME2 differences | Legacy RotWK manager/builder, target threat/counter logic and individual power decisions still need per-body BFME2 audits; 41 names alone are insufficient | Each active native body has source-backed decisions, numeric order and RNG tests |
+| AI capture execution | Native opportunity-target execution/capture behavior after removal of the RotWK-only capture squad from generation | Neutral and enemy-held sites are captured through native orders without unintended damage |
+| Retail evidence | Pure BFME2 startup/data fixtures and external native decision/frame traces; present gameplay fixtures mount combined BFME2/RotWK archives | All six BFME2 factions and four difficulties compared against native evidence; numeric/pathfinding dependencies remain explicit |
+
+Full retail replay or multiplayer parity remains outside what the current native
+regressions establish. Open shared-engine numeric, pathfinding and formation
+stops remain visible; none were suppressed to call this overhaul complete.
+
+Final generator validation: the corrected timing tests, native prototype list
+facts and native targetless gameplay case passed four cases / 762 assertions.
+The earlier broad run's other 100 cases passed. Native Release build, installed
+commit gate and whitespace checks passed. The work remains local.

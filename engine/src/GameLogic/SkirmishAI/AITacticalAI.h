@@ -234,6 +234,8 @@ void addAttackedAtForTest(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D 
 void expansionHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &t);
 bool teamMeetsThreatForTest(GameLogic &logic, const AITactic &tac, const AITacticTeam &team);
 void updateInterestZonesForTest(GameLogic &logic, AISkirmishPlayer &ai);
+std::vector<std::string> offensivePrototypesForTest();
+std::vector<std::string> targetlessPrototypesForTest();
 ObjectID farmKillTargetForTest(GameLogic &logic, const AITactic &tac, int enemy, bool production);
 void startFarmKillForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac);
 void techBuildingHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &target);
