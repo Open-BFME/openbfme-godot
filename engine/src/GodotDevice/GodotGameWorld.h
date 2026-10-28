@@ -717,6 +717,8 @@ private:
 	void refresh_terrain_bake(); // lane TERRAIN-BAKES: which 16 x 16 cell tiles are 16 px/cell (TerrainBake.h), from the camera, each render frame
 	std::vector<std::uint8_t> m_bakeFar; // the flags last uploaded
 	TerrainBake::TileGrid m_bakeGrid;    // the tiles of the terrain m_bakeTerrainId
+	PackedByteArray m_bakeTexels;         // what was uploaded: 255 a far tile, 0 a near one
+	Dictionary get_terrain_bake_tiles() const;
 	uint64_t m_bakeTerrainId = 0; // the instance id of that terrain
 	Ref<godot::ImageTexture> m_shroudTexture;
 	ShroudFade m_shroudFade; ///< lane FOGFX-1: the texels' fade toward their cell's level (RW 0x472CF2), client only

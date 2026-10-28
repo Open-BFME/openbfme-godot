@@ -286,6 +286,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_shroud_drawn", "on"), &GameWorld::set_shroud_drawn);
 	ClassDB::bind_method(D_METHOD("set_shroud_fade", "on"), &GameWorld::set_shroud_fade); // lane FOGFX-1: off = the texels snap (the proof's "before")
 	ClassDB::bind_method(D_METHOD("get_shroud_cells"), &GameWorld::get_shroud_cells);
+	ClassDB::bind_method(D_METHOD("get_terrain_bake_tiles"), &GameWorld::get_terrain_bake_tiles); // lane TERRAIN-BAKES
 	ClassDB::bind_method(D_METHOD("get_projectiles"), &GameWorld::get_projectiles);
 	ClassDB::bind_method(D_METHOD("get_victory_report"), &GameWorld::get_victory_report);
 	ClassDB::bind_method(D_METHOD("start_victory_rules", "players"), &GameWorld::start_victory_rules, DEFVAL(PackedStringArray()));
@@ -5819,15 +5820,27 @@ void GameWorld::refresh_terrain_bake()
 		return;
 	}
 	m_bakeFar = flags;
+	m_bakeTexels.resize((int64_t)flags.size());
+	for (size_t i = 0; i < flags.size(); ++i)
+	{
+		m_bakeTexels[(int64_t)i] = flags[i] ? 255 : 0; // an L8 texel reads back as v / 255: the shader's far test is > 0.5
+	}
 	Ref<ImageTexture> tex = terrain->get_meta("bake_far_texture");
 	if (tex.is_null())
 	{
 		return;
 	}
-	PackedByteArray bytes;
-	bytes.resize((int64_t)flags.size());
-	std::memcpy(bytes.ptrw(), flags.data(), flags.size());
-	tex->update(Image::create_from_data(grid.tilesX, grid.tilesY, false, Image::FORMAT_L8, bytes));
+	tex->update(Image::create_from_data(grid.tilesX, grid.tilesY, false, Image::FORMAT_L8, m_bakeTexels));
+}
+
+// lane TERRAIN-BAKES: the tile flags the last render frame uploaded (255 far, 0 near), for the tests: the dummy renderer of a headless run keeps a texture's first image only
+Dictionary GameWorld::get_terrain_bake_tiles() const
+{
+	Dictionary d;
+	d["tiles_x"] = m_bakeGrid.tilesX;
+	d["tiles_y"] = m_bakeGrid.tilesY;
+	d["texels"] = m_bakeTexels;
+	return d;
 }
 
 Array GameWorld::get_ai_report() const

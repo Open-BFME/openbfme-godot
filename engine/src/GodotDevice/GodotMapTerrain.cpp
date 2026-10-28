@@ -926,7 +926,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 		Node3D *terrainRoot = memnew(Node3D);
 		terrainRoot->set_name("Terrain");
 		{
-			// the tile boxes and the flag texture for the game's per-frame judgement of near and far tiles
+			// the tile boxes and the flag texture for the game's per-frame judgement of near and far tiles, on the node build_map returns (the game names it "Terrain"; the viewers add it as it is)
 			PackedFloat32Array boxes;
 			boxes.resize((int64_t)bakeGrid.boxes.size() * 6);
 			for (size_t i = 0; i < bakeGrid.boxes.size(); ++i)
@@ -937,10 +937,10 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 					boxes[(int64_t)i * 6 + 3 + k] = bakeGrid.boxes[i].extent[k];
 				}
 			}
-			terrainRoot->set_meta("bake_tiles_x", bakeGrid.tilesX);
-			terrainRoot->set_meta("bake_tiles_y", bakeGrid.tilesY);
-			terrainRoot->set_meta("bake_boxes", boxes);
-			terrainRoot->set_meta("bake_far_texture", bakeTex);
+			root->set_meta("bake_tiles_x", bakeGrid.tilesX);
+			root->set_meta("bake_tiles_y", bakeGrid.tilesY);
+			root->set_meta("bake_boxes", boxes);
+			root->set_meta("bake_far_texture", bakeTex);
 		}
 		root->add_child(terrainRoot);
 		for (size_t ci = 0; ci < chunks.size(); ++ci)

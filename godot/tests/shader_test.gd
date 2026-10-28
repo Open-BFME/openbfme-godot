@@ -135,12 +135,17 @@ func _process(_delta: float) -> bool:
 			_frame = 0
 			_start_map()
 		return false
+	if _phase == 4:
+		_frame += 1
+		_game_step()
+		return false
 	if _phase == 2:
 		_frame += 1
 		if _frame >= 6:
 			_check_map()
-			print("SHADER TEST %s" % ["PASS" if _failures == 0 else "FAIL"])
-			quit(EXIT_PASS if _failures == 0 else EXIT_FAIL)
+			_phase = 4
+			_frame = 0
+			_start_game()
 		return false
 	if _case >= _cases.size():
 		return false
@@ -409,6 +414,80 @@ func _check_map() -> void:
 	print("  map render: %d distinct 18-bit colours over %d samples, mean luminance %.3f" % [seen.size(), n, lum])
 	_check_ok(seen.size() > 400, "the rendered map has many distinct colours (%d)" % seen.size())
 	_check_ok(lum > 0.05 and lum < 0.9, "the rendered map is neither black nor blown out (mean luminance %.3f)" % lum)
+
+
+## lane TERRAIN-BAKES: a LOADED GAME (GameWorld, terrain on) with a real camera: the tiles the camera is far from must take the far path. The flag texture the game updates is read
+## back from the GPU: over the first tile the first tile reads 0 and the last 255 (the shader's far test is > 0.5, an L8 texel of 1 would read 1 / 255), over the last tile the other way.
+var _game: Node3D
+var _game_cam: Camera3D
+var _game_stage := 0
+var _game_boxes: PackedFloat32Array
+var _game_tiles := 0
+
+
+func _start_game() -> void:
+	var rotwk := OS.get_environment("ROTWK_INSTALL")
+	if rotwk.is_empty() or OS.get_environment("BFME2_INSTALL").is_empty() or not ClassDB.class_exists("GameWorld"):
+		print("  SKIP loaded game: set ROTWK_INSTALL and BFME2_INSTALL")
+		_game_stage = 99
+		return
+	var fs: RefCounted = ClassDB.instantiate("RetailFileSystem")
+	if not fs.mount_retail().ok:
+		print("  FAIL loaded game: mount_retail")
+		_failures += 1
+		_game_stage = 99
+		return
+	_game = ClassDB.instantiate("GameWorld")
+	root.add_child(_game)
+	_game.setup(fs)
+	var slots := [
+		{"player": "Player_1", "faction": "FactionMen", "human": true, "team": 0},
+		{"player": "Player_2", "faction": "FactionMordor", "human": false, "team": 1}]
+	var rep: Dictionary = _game.load_map("map mp fall back 4p", {"slots": slots, "terrain": true})
+	if not rep.ok:
+		print("  FAIL loaded game: load_map ", rep.errors.slice(0, 3))
+		_failures += 1
+		_game_stage = 99
+		return
+	var terrain: Node = _game.find_child("Terrain", false, false)
+	_game_boxes = terrain.get_meta("bake_boxes")
+	_game_tiles = int(terrain.get_meta("bake_tiles_x")) * int(terrain.get_meta("bake_tiles_y"))
+	_game_cam = Camera3D.new()
+	_game_cam.far = 20000.0
+	root.add_child(_game_cam)
+	_game_cam.current = true
+	_game_stage = 0
+
+
+func _flags_from_gpu() -> PackedByteArray:
+	var terrain: Node = _game.find_child("Terrain", false, false)
+	var tex: ImageTexture = terrain.get_meta("bake_far_texture")
+	return tex.get_image().get_data()
+
+
+func _game_step() -> void:
+	if _game_stage == 99:
+		print("SHADER TEST %s" % ["PASS" if _failures == 0 else "FAIL"])
+		quit(EXIT_PASS if _failures == 0 else EXIT_FAIL)
+		return
+	var last := _game_tiles - 1
+	if _game_stage == 0:
+		# SAGE (x, y, z) is Godot's (x, z, -y): over the first tile
+		_game_cam.global_position = Vector3(_game_boxes[0], _game_boxes[2] + 100.0, -_game_boxes[1])
+		_game.advance(0.05)
+		_game_stage = 1
+		_frame = 0
+	elif _game_stage == 1 and _frame >= 4:
+		var f := _flags_from_gpu()
+		_check_ok(f.size() == _game_tiles and f[0] == 0 and f[last] == 255, "loaded game, camera over the first tile: it reads %d, the last tile %d (the GPU's flag texel is 255 for a far tile)" % [f[0], f[last]])
+		_game_cam.global_position = Vector3(_game_boxes[last * 6], _game_boxes[last * 6 + 2] + 100.0, -_game_boxes[last * 6 + 1])
+		_game.advance(0.05)
+		_game_stage = 2
+		_frame = 0
+	elif _game_stage == 2 and _frame >= 4:
+		var f2 := _flags_from_gpu()
+		_check_ok(f2[last] == 0 and f2[0] == 255, "loaded game, camera over the last tile: it reads %d, the first tile %d" % [f2[last], f2[0]])
+		_game_stage = 99
 
 
 func _check_ok(ok: bool, what: String) -> void:
