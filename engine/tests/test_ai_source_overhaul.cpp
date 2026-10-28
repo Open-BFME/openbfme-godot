@@ -475,3 +475,85 @@ TEST_CASE("BFME2 roaming defense: empty economy uses first fortress or issues no
   }
  }
 }
+
+TEST_CASE("BFME2 tech opportunity: linked sites, danger zones and phase gate")
+{
+ for (int phase : {0, 1, 2}) {
+  for (bool danger : {false, true}) {
+   for (bool economy : {false, true}) {
+    CAPTURE(phase); CAPTURE(danger); CAPTURE(economy);
+    Scenario s;
+    REQUIRE(s.w.w.load("SkirmishAIData TechData\nEnd\nObject TechFlag\n KindOf = CAPTUREFLAG\nEnd\nChildObject TechBuilding BreachWall\n KindOf = STRUCTURE LINKED_TO_FLAG\nEnd\nChildObject TechFarm TechBuilding\n KindOf = STRUCTURE LINKED_TO_FLAG ECONOMY_STRUCTURE\nEnd\n").empty());
+    auto &manager = s.w.logic->skirmishAI();
+    manager.setStore(&s.store);
+    manager.newGame(true);
+    s.w.logic->partition().setRegion(0, 0, 2000, 2000);
+    auto *flag = s.w.unit("TechFlag", 'B', 200, 500);
+    auto *building = s.w.unit(economy ? "TechFarm" : "TechBuilding", 'B', 210, 500);
+    REQUIRE(building->isKindOfName("LINKED_TO_FLAG"));
+    REQUIRE(manager.captureFlags().size() == 1);
+    REQUIRE(s.w.players.findPlayerWithName("Alice")->getRelationship(flag->getTeam()) == ENEMIES);
+    s.w.logic->partition().update();
+    s.bot.build.phase = phase;
+    if (danger) { AITacticalAI::addAttackedAtForTest(*s.w.logic, s.bot, {500,500,0}); }
+    auto &random = s.w.logic->random();
+    random.enableCallLog(true); random.clearCallLog();
+    AITarget target;
+    AITacticalAI::techBuildingHeuristicForTest(*s.w.logic, s.bot, target);
+    const bool accepted = phase == 0 || !danger || economy;
+    CHECK(target.inactive == !accepted);
+    CHECK(target.object == (accepted ? flag->getID() : INVALID_ID));
+    CHECK(random.callLog().empty());
+    if (accepted) {
+     CHECK(target.position.x == 200);
+     CHECK(target.radius == s.store.data().defaultTargetThreatRadius);
+    }
+   }
+  }
+ }
+}
+
+TEST_CASE("BFME2 tech opportunity: nearest linked object determines alliance, not a farther enemy")
+{
+ Scenario s;
+ REQUIRE(s.w.w.load("SkirmishAIData TechData\nEnd\nObject TechFlag\n KindOf = CAPTUREFLAG\nEnd\nChildObject TechBuilding BreachWall\n KindOf = STRUCTURE LINKED_TO_FLAG\nEnd\n").empty());
+ auto &manager = s.w.logic->skirmishAI();
+ manager.setStore(&s.store); manager.newGame(true);
+    s.w.logic->partition().setRegion(0, 0, 2000, 2000);
+ auto *flag = s.w.unit("TechFlag", 'B', 200, 500);
+ s.w.unit("TechBuilding", 'A', 210, 500);
+ s.w.unit("TechBuilding", 'B', 220, 500);
+ s.w.logic->partition().update();
+ AITarget target;
+ AITacticalAI::techBuildingHeuristicForTest(*s.w.logic, s.bot, target);
+ CHECK(target.inactive);
+ // Ownership of the flag is also an independent guard.
+ flag->setCapturedTeam(s.w.players.findPlayerWithName("Alice")->getDefaultTeam());
+ AITacticalAI::techBuildingHeuristicForTest(*s.w.logic, s.bot, target);
+ CHECK(target.inactive);
+}
+
+TEST_CASE("BFME2 tech opportunity: missing linked object, inclusive radius and registration-order ties")
+{
+ for (int distance : {999, 1000, 1001}) {
+  Scenario s;
+  REQUIRE(s.w.w.load("SkirmishAIData TechData\nEnd\nObject TechFlag\n KindOf = CAPTUREFLAG\nEnd\nChildObject TechBuilding BreachWall\n KindOf = STRUCTURE LINKED_TO_FLAG\nEnd\n").empty());
+  auto &manager = s.w.logic->skirmishAI();
+  manager.setStore(&s.store); manager.newGame(true);
+    s.w.logic->partition().setRegion(0, 0, 2000, 2000);
+  s.bot.build.startPosition = {0,0,0};
+  auto *first = s.w.unit("TechFlag", 'B', (float)distance, 0);
+  s.w.unit("TechFlag", 'B', 0, (float)distance);
+  AITarget missing;
+  s.w.logic->partition().update();
+  AITacticalAI::techBuildingHeuristicForTest(*s.w.logic, s.bot, missing);
+  CHECK(missing.inactive);
+  s.w.unit("TechBuilding", 'B', (float)distance, 10);
+  s.w.unit("TechBuilding", 'B', 10, (float)distance);
+  s.w.logic->partition().update();
+  AITarget target;
+  AITacticalAI::techBuildingHeuristicForTest(*s.w.logic, s.bot, target);
+  CHECK(target.inactive == (distance == 1001));
+  CHECK(target.object == (distance == 1001 ? INVALID_ID : first->getID()));
+ }
+}

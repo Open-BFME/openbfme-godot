@@ -313,9 +313,37 @@ void heuristicDozers(GameLogic &logic, const AISkirmishPlayer &ai, AIBrainState 
 	}
 }
 
-// RW 0x97CE90 (OPPORTUNITY heuristic RW 0xC85584, the capture flags) is NOT ported (S-417): it walks the manager's + 0xA68 list, which RW 0x6A9D9C fills when
-// an object with KindOf CAPTUREFLAG is created and which then holds objects that have since lost that KindOf (a captured flag); a scan of the current
-// flags cannot reproduce it (retail needs the historical registration)
+// BFME2 AITargetHeuristicTechBuilding.cpp RVA 0x572EFF. The manager registry retains
+// sites after CAPTUREFLAG is removed. TacticalAI +0x20 is its interest-zone list, not its tactics.
+void heuristicTechBuilding(GameLogic &logic, const AISkirmishPlayer &ai, AIBrainState &b, AITarget &target)
+{
+	const Player *owner = playerOf(logic, ai.playerIndex);
+	if (!owner) { return; }
+	Object *best = nullptr;
+	float bestDistance = 0.0f;
+	PartitionFilterFn linked([](Object &o) { return o.isKindOfName("LINKED_TO_FLAG"); });
+	for (ObjectID id : logic.skirmishAI().captureFlags())
+	{
+		Object *site = logic.findObjectByID(id);
+		if (!site || owner->getRelationship(site->getTeam()) == ALLIES) { continue; }
+		const Object *building = site;
+		if (site->isKindOfName("CAPTUREFLAG"))
+		{
+			building = logic.partition().getClosestObject(*site->getPosition(), 150.0f, FROM_CENTER_3D, {&linked});
+			if (!building || owner->getRelationship(building->getTeam()) == ALLIES) { continue; }
+		}
+		if (ai.build.phase != 0 && !building->isKindOfName("ECONOMY_STRUCTURE") && !b.attackedAt.empty()) { continue; }
+		const float x = SimMath::subf32(site->getPosition()->x, ai.build.startPosition.x);
+		const float y = SimMath::subf32(site->getPosition()->y, ai.build.startPosition.y);
+		const float distance = SimMath::addf32(SimMath::mulf32(x, x), SimMath::mulf32(y, y));
+		if ((!best || bestDistance > distance) && distance <= 1000000.0f)
+		{
+			bestDistance = distance;
+			best = site;
+		}
+	}
+	if (best) { setTarget(logic, b, target, *best, ai.store->data().defaultTargetThreatRadius, *owner); }
+}
 
 // RW 0x97CDA0 (OPPORTUNITY heuristic RW 0xC85574): in the EndGame phase, while the player lacks the upgrade "Upgrade_RingHero" (the name is the binary's,
 // RW 0xC795B0), the first object of the game object list with KindOf NEUTRALGOLLUM or ONE_RING (template + 0x120 & 0x82000)
@@ -546,7 +574,7 @@ void updateChooser(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b)
 		}
 		else if (h == 3)
 		{
-			++b.unportedTypes; // the capture flag rule RW 0x97CE90: S-417
+			heuristicTechBuilding(logic, ai, b, t);
 		}
 		else if (h == 4)
 		{
@@ -2767,6 +2795,11 @@ bool teamMeetsThreat(GameLogic &logic, const AITactic &tac, const AITacticTeam &
 	return sum >= enemy.v[0];
 }
 } // namespace
+
+void AITacticalAI::techBuildingHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &target)
+{
+	heuristicTechBuilding(logic, ai, ai.brain, target);
+}
 
 bool AITacticalAI::roamingDefenseAppliesForTest(GameLogic &logic, AISkirmishPlayer &ai)
 {

@@ -42,7 +42,7 @@ existing format difference is reported by S-4252.
 ## Remaining gaps
 
 This port does not close native siege/wall construction, remaining targetless
-families, tech-building opportunity scoring, team reassignment/formation limitations,
+families, team reassignment/formation limitations,
 or full per-decision behavioral parity. BFME2 has 41 AI decision names; all now
 have implementation paths. Four entries from the wider RotWK registry still
 refuse with S-1421: SOUL_FREEZE, ATTACK_HEAL_AOE, DEBUFFECONOMYBUILDING and
@@ -153,3 +153,26 @@ The gameplay fixture mounts the existing combined BFME2/RotWK assets, so these
 runs establish native regressions and determinism, not a pure BFME2 retail trace
 match. BFME2 executable facts ran against BFME2_INSTALL; RotWK-only binary facts
 were skipped without RW_GAME_DAT. No graphical or cross-play gate was run.
+
+## BFME2 tech-building opportunity follow-up
+
+Ported `AITargetHeuristicTechBuilding.cpp` RVA `0x572EFF` using the existing
+historical capture registry. Uncaptured flags require the closest LINKED_TO_FLAG
+object within 150 units in 3D, and both site and linked object must be non-allied.
+The nearest qualifying site within an inclusive 1,000 units in 2D wins, preserving
+registration order on ties. After Rush, a non-economy site is rejected while
+TacticalAI's interest-zone vector (+0x20, represented by attackedAt) is nonempty.
+This vector is not the running tactic list. Selection consumes no random draw;
+the target uses DefaultTargetThreatRadius, manager +0x884 in BFME2.
+
+Three synthetic source cases pass 302 assertions across phases, danger states,
+economy kinds, allied nearest-linked objects, absent linked objects, exact range
+boundaries and stable ties. The partition fixture has an explicit map region,
+so getClosestObject uses its normal range rather than its no-map zero range.
+Historical registration and snapshot regressions remain in the manager tests.
+
+Validation: the four data-mounted difficulty/faction/tactic cases passed 11,768
+assertions. The broad selection passed 90 of 91 cases; its sole failure was the
+Athelas engine timing pin, 22 -> 25. A control disabling only the new selector
+restored exactly 22. The pin is updated with this cause; it is not a retail
+frame oracle. The final targeted rerun covers the corrected pin.

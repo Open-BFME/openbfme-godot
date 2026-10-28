@@ -681,7 +681,8 @@ TEST_CASE("AIPOW-1: end to end: a Hard computer's wounded Aragorn uses Athelas o
 	// before the power's roll. Merge queue q28 (the random stream moves with the merged batch; measured once on the merged tree and at each merge point): 26.
 	// Merge queue q29 (measured once on the merged tree and at each merge point): 22; community #113 moves it 26 -> 24 (its FlagCaptureSquad's draws) and
 	// FBSIM-1 24 -> 22 (the computer player's phantom sites)
-	CHECK(frame == 22);
+	// BFME2 tech opportunity: 25. Disabling only the new selector restores exactly 22; enabling it changes downstream tactic/mood RNG consumption.
+	CHECK(frame == 25);
 	CHECK(AISpecialPowerUpdate::stats().executedByType[10] == 1);
 	a.advance(10); // Athelas's heal lands a few frames after the cast
 	CHECK(AISpecialPowerUpdate::healthRatio(*mine) > wounded);    // healed
