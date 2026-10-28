@@ -675,3 +675,63 @@ TEST_CASE("BFME2 farm raid: both selectors precede the choice draw, cleanup sche
  CHECK(random.callLog()[0].lo == 150);
  CHECK(random.callLog()[0].hi == 600);
 }
+
+TEST_CASE("BFME2 team handover: raw template totals, support exclusion and danger maximum")
+{
+ Scenario s;
+ REQUIRE(s.w.w.load("SkirmishAIData ThreatData\nEnd\nChildObject Raw120 Swordsman\n ThreatLevel = 120\nEnd\nChildObject Hero60 Swordsman\n KindOf = HERO SELECTABLE\n ThreatLevel = 60\nEnd\nChildObject Support800 Swordsman\n KindOf = SUPPORT SELECTABLE\n ThreatLevel = 800\nEnd\n").empty());
+ auto &manager = s.w.logic->skirmishAI(); manager.setStore(&s.store); manager.newGame(true);
+ const int index = s.w.players.findPlayerWithName("Alice")->getPlayerIndex();
+ auto *ai = const_cast<AISkirmishPlayer *>(manager.findAI(index)); REQUIRE(ai); ai->disabled=true;
+ auto *first = s.w.unit("Raw120",'A',100,100);
+ auto *second = s.w.unit("Raw120",'A',110,100);
+ auto *hero = s.w.unit("Hero60",'A',120,100);
+ auto *support = s.w.unit("Support800",'A',130,100);
+ AITarget target; target.threat=230; ai->brain.targets.push_back(target);
+ AITactic tactic; tactic.targetOwner=index; tactic.targetIndex=0;
+ AITacticTeam team; team.members={support->getID()};
+ CHECK_FALSE(AITacticalAI::teamMeetsThreatForTest(*s.w.logic,tactic,team));
+ team.members={first->getID(),second->getID(),support->getID()};
+ CHECK(AITacticalAI::teamMeetsThreatForTest(*s.w.logic,tactic,team)); // 240 >= 230, support adds zero
+ AIAttackedAt zone; zone.nativeThreat=300; ai->brain.attackedAt.push_back(zone);
+ CHECK_FALSE(AITacticalAI::teamMeetsThreatForTest(*s.w.logic,tactic,team));
+ team.members.push_back(hero->getID());
+ CHECK(AITacticalAI::teamMeetsThreatForTest(*s.w.logic,tactic,team)); // exactly 300
+ ai->brain.targets[0].threat=301;
+ CHECK_FALSE(AITacticalAI::teamMeetsThreatForTest(*s.w.logic,tactic,team));
+ tactic.targetless=true;
+ CHECK(AITacticalAI::teamMeetsThreatForTest(*s.w.logic,tactic,team)); // no target means threshold zero
+}
+
+TEST_CASE("BFME2 interest zones: attacking member position and raw enemy threat survive snapshots")
+{
+ Scenario s;
+ REQUIRE(s.w.w.load("SkirmishAIData ThreatData\nEnd\nChildObject Enemy200 Swordsman\n ThreatLevel = 200\nEnd\nChildObject Support900 Swordsman\n KindOf = SUPPORT SELECTABLE\n ThreatLevel = 900\nEnd\n").empty());
+ auto &manager = s.w.logic->skirmishAI(); manager.setStore(&s.store); manager.newGame(true);
+ const int index=s.w.players.findPlayerWithName("Alice")->getPlayerIndex();
+ auto *ai=const_cast<AISkirmishPlayer *>(manager.findAI(index)); REQUIRE(ai); ai->disabled=true;
+ auto *member=s.w.unit("Swordsman",'A',100,500);
+ auto *enemy=s.w.unit("Enemy200",'B',300,500);
+ s.w.unit("Support900",'B',310,500);
+ member->getAIUpdateInterface()->setCurrentVictim(enemy);
+ AITactic tactic; tactic.kind="SimpleAttack"; tactic.kindIndex=0;
+ AITacticTeam team; team.index=0; team.members={member->getID()}; tactic.teams.push_back(team);
+ ai->brain.tactics.push_back(tactic);
+ s.w.logic->partition().update();
+ AITacticalAI::updateInterestZonesForTest(*s.w.logic,*ai);
+ REQUIRE(ai->brain.attackedAt.size()==1);
+ CHECK(ai->brain.attackedAt[0].position.x==100);
+ CHECK(ai->brain.attackedAt[0].position.y==500);
+ CHECK(ai->brain.attackedAt[0].nativeThreat==200);
+ ai->brain.tactics.clear(); // Keep this snapshot fixture independent of recruitment state.
+ XferSave save; save.beginBlock(); manager.xfer(save); save.endBlock();
+ StateHasher before; manager.crc(before);
+ ai->brain.attackedAt[0].nativeThreat=999;
+ StateHasher changed; manager.crc(changed);
+ CHECK_FALSE(before.value()==changed.value());
+ XferLoad load(save.data()); load.beginBlock(); manager.xfer(load); load.endBlock();
+ ai=const_cast<AISkirmishPlayer *>(manager.findAI(index)); REQUIRE(ai);
+ CHECK(ai->brain.attackedAt[0].nativeThreat==200);
+ StateHasher restored; manager.crc(restored);
+ CHECK(restored.value()==before.value());
+}

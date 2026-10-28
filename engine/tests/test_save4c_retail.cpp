@@ -454,7 +454,7 @@ TEST_CASE("save4c retail T5: each block's version window (RW 0xA1F5B9's two mess
 		// reserve), (3, 3) since community #113 (the capture-flag registration history, which older snapshots cannot recover), (3, 4) since lane AIEXPAND-1 (the
 		// EXPANSION heuristic's frame counter)
 		const bool skirmish = t == "obfme:SkirmishAI";
-		const std::uint8_t version = skirmish ? 5 : 1, earliest = skirmish ? 5 : 1;
+		const std::uint8_t version = skirmish ? 6 : 1, earliest = skirmish ? 6 : 1;
 		REQUIRE(one[at] == version);
 		std::vector<std::uint8_t> above = one, below = one;
 		above[at] = (std::uint8_t)(version + 1);

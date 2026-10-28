@@ -30,7 +30,7 @@ difficulty gate as the source does. No damage boost is invented.
 
 ## Native snapshots
 
-The skirmish AI block now requires version 5: spatial registrations/groups,
+The skirmish AI block now requires version 6: BFME2 interest-zone threat, spatial registrations/groups,
 ArmyBreaker timers, defensive target sizes and team recruitment origins affect
 future decisions. Older layouts are refused explicitly. SimpleExpansion keeps
 upstream prototype index 8; SimpleDefense uses 9. Capture history and expansion
@@ -231,3 +231,32 @@ assertions. Assertions inside per-frame loops vary with tactic lifetimes; the
 fixed scenario checks still require each difficulty to train, survive and repeat
 all 1,500 frame hashes exactly. These are native checks using combined archives,
 not BFME2 retail traces. No native snapshot layout changed.
+
+## BFME2 interest zones and team handover
+
+Ported the handover comparison from `AITeamBuilder_doesTeamMeetThreat.cpp`
+RVA `0x59A1C1` and `Rva002C589BMax.cpp` RVA `0x2C5AE6`: sum raw template
+ThreatLevel for CAN_ATTACK/HERO members, in native member order, and compare it
+with the larger of target threat and interest-zone threat. SUPPORT alone adds
+nothing. The RotWK counter-category weighting is no longer used for handover.
+
+`Rva002C5EF0Xfer.cpp`'s constructor samples enemy CAN_ATTACK/HERO raw template
+threat once when the interest zone is created. This value is stored rather than
+rescanned during recruitment. `TacticalAI_updateInterestZones.cpp` records the
+attacking member's position, not its victim's position, and excludes support-only
+members. The native four-second lifetime is confirmed by
+`Rva007ABC6FFrameRateInits.cpp`'s g_00DFEFCC initializer.
+
+The native AI save layout is version 6, rejecting earlier layouts, because this
+recorded scalar affects future handover. It is included in the state hash. The
+legacy category records used by other still-RotWK tactical paths remain present;
+this change does not claim those paths now match BFME2. Native AI team objects,
+script recruitment availability, priority reassignment, and formation remain open.
+Two synthetic cases passed 43 assertions for raw values, support exclusion,
+exact equality, danger-vs-target maximum, attacking position, hash sensitivity
+and snapshot restoration.
+
+Validation: all 101 selected source/power/expansion/manager/targetless/save cases
+passed 15,084 assertions, including the existing interest-zone registration tests.
+The four repeated-difficulty/faction/offensive-tactic cases passed 6,995 assertions.
+The native Release build passed. No timing pin changed in this follow-up.

@@ -63,6 +63,8 @@ int threatCategory(const ThingTemplate &tt);
 // RW 0x68F0EC: the threat value of one object, as the x87 register returns it, and stored as a float (RW 0x7EDB83)
 double threatValueWide(const Object &obj);
 float threatValue(const Object &obj);
+// BFME2 ThingTemplate +0x51C, unadjusted ThreatLevel (constructor default 1).
+float templateThreatLevel(const Object &obj);
 
 // RW 0x7EE057: the per-player records of the objects around `position` (`noStructures` is the finder's + 0x5B8)
 void scan(GameLogic &logic, const Coord3D &position, float radius, bool noStructures, ThreatRecord (&records)[kRecords]);

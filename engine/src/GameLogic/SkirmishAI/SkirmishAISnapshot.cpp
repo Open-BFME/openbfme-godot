@@ -411,13 +411,14 @@ void xferBrain(Xfer &x, AIBrainState &b, RequestTable &table, int version)
 	{
 		AIXfer::u64(x, *c);
 	}
-	x.xferVectorSize(b.attackedAt, 168);
+	x.xferVectorSize(b.attackedAt, 172);
 	for (AIAttackedAt &a : b.attackedAt)
 	{
 		x.xferUnsignedInt(&a.id);
 		AIXfer::coord(x, a.position);
 		x.xferReal(&a.radius);
 		x.xferUnsignedInt(&a.frame);
+		x.xferReal(&a.nativeThreat);
 		xferThreat(x, a.enemies);
 		xferThreat(x, a.others);
 	}
@@ -481,7 +482,7 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 	// history, which cannot be recovered from current KindOf flags: older snapshots are refused. Version 4 (lane AIEXPAND-1): the EXPANSION heuristic's frame
 	// counter, SimpleExpansion's request and plain structure requests. A version 3 snapshot comes from a build without the heuristic: it loads with 0, the
 	// count at a game's start (its first expansion check then comes 301 checks after the load)
-	XferVersion v{ 5, 5 }; // source AI groups, ArmyBreaker timers, defense fields; prior layouts are incompatible.
+	XferVersion v{ 6, 6 }; // BFME2 interest-zone threat scalar affects team handover; prior layouts are incompatible.
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	bool started = loading ? false : m_started;

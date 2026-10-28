@@ -621,6 +621,11 @@ AIAttackedAt makeAttackedAt(GameLogic &logic, const Player &player, const Coord3
 		const Player *op = o.getControllingPlayer();
 		const bool enemy = op && player.getRelationship(op) == ENEMIES; // RW 0x6ADC43: no player answers NEUTRAL
 		AIThreatFinder::accumulate(enemy ? r.enemies : r.others, AIThreatFinder::threatCategory(*o.getTemplate()), v);
+		// BFME2 Rva002C5EF0Xfer.cpp ctor: enemy CAN_ATTACK/HERO, raw template threat; SUPPORT alone is excluded.
+		if (player.getRelationship(o.getTeam()) == ENEMIES && (is(o, k.canAttack) || is(o, k.hero)))
+		{
+			r.nativeThreat = SimMath::addf32(r.nativeThreat, AIThreatFinder::templateThreatLevel(o));
+		}
 	}
 	return r;
 }
@@ -697,7 +702,7 @@ void updateAttackedAt(GameLogic &logic, AISkirmishPlayer &ai)
 				for (ObjectID id : members)
 				{
 					const Object *m = logic.findObjectByID(id);
-					if (!m || !(is(*m, k.canAttack) || is(*m, k.hero) || is(*m, k.support)))
+					if (!m || !(is(*m, k.canAttack) || is(*m, k.hero)))
 					{
 						continue;
 					}
@@ -710,7 +715,7 @@ void updateAttackedAt(GameLogic &logic, AISkirmishPlayer &ai)
 					const float dy = SimMath::subf32(goal->getPosition()->y, m->getPosition()->y), dx = SimMath::subf32(goal->getPosition()->x, m->getPosition()->x);
 					if (SimMath::addf32(SimMath::mulf32(dy, dy), SimMath::mulf32(dx, dx)) <= kAttackedAtNearSq)
 					{
-						addAttackedAt(logic, b, *player, *goal->getPosition(), -1);
+						addAttackedAt(logic, b, *player, *m->getPosition(), -1);
 						break;
 					}
 				}
@@ -2782,39 +2787,38 @@ int teamMembersWith(GameLogic &logic, const AITacticTeam &team, const std::vecto
 	return n;
 }
 
-// RW 0x9A26A1 (RotWK-only, the team builder's threat test): the allied group's target of the team's prototype (+ 0x2C4: the target id the start wrote, RW 0x8F22A0;
-// -1 for a targetless team; RW 0x6A95CD -> 0x8EDC45) answers true when there is none; else the enemy record of the target (RW 0x6C6743) against the members with
-// any of CAN_ATTACK, HERO, SUPPORT: sum = fstp(RW 0x7ED963(the record, the member's ThreatBreakdown category, its threat value RW 0x68F0EC stored) + sum)
-// (x87 at PC24), true when sum >= the record's total (comiss / jb: NaN fails). The members in the team list's order (ZH Object.cpp: setTeam prepends, so the
-// newest first: INFERENCE for RotWK's RW 0x69954A)
+// BFME2 AITeamBuilder_doesTeamMeetThreat.cpp RVA 0x59A1C1 and
+// Rva002C589BMax.cpp RVA 0x2C5AE6: raw CAN_ATTACK/HERO threat vs target/interest-zone maximum.
 bool teamMeetsThreat(GameLogic &logic, const AITactic &tac, const AITacticTeam &team)
 {
-	if (tac.targetless || tac.targetIndex < 0)
-	{
-		return true;
-	}
+	float threshold = 0.0f;
 	const AISkirmishPlayer *chooser = logic.skirmishAI().findAI(tac.targetOwner);
-	const Player *owner = playerOf(logic, tac.targetOwner);
-	if (!chooser || !owner || tac.targetIndex >= (int)chooser->brain.targets.size())
+	if (!tac.targetless && chooser && tac.targetIndex >= 0 && tac.targetIndex < (int)chooser->brain.targets.size())
 	{
-		return true;
+		float most = 0.0f;
+		for (const auto &zone : chooser->brain.attackedAt) { if (zone.nativeThreat > most) { most = zone.nativeThreat; } }
+		const float target = chooser->brain.targets[(size_t)tac.targetIndex].threat;
+		threshold = most > target ? most : target;
 	}
-	AIThreatFinder::ThreatRecord enemy = enemyRecord(logic, *chooser, *owner, chooser->brain.targets[(size_t)tac.targetIndex]);
-	const Kinds &k = kinds();
 	float sum = 0.0f;
 	for (auto it = team.members.rbegin(); it != team.members.rend(); ++it)
 	{
-		const Object *o = logic.findObjectByID(*it);
-		if (!o || o->isDestroyed() || !o->getTemplate() || !(is(*o, k.canAttack) || is(*o, k.hero) || is(*o, k.support)))
-		{
-			continue;
-		}
-		const double c = AIThreatFinder::counterValue(enemy, AIThreatFinder::threatCategory(*o->getTemplate()), AIThreatFinder::threatValue(*o));
-		sum = SimMath::fstpDword(SimMath::pc24AddW(c, (double)sum)); // RW 0x9A2731: fadd dword; fstp dword
+		const Object *unit = logic.findObjectByID(*it);
+		if (!unit || !(unit->isKindOfName("CAN_ATTACK") || unit->isKindOfName("HERO"))) { continue; }
+		sum = SimMath::addf32(sum, AIThreatFinder::templateThreatLevel(*unit));
 	}
-	return sum >= enemy.v[0];
+	return sum >= threshold;
 }
 } // namespace
+
+bool AITacticalAI::teamMeetsThreatForTest(GameLogic &logic, const AITactic &tac, const AITacticTeam &team)
+{
+	return teamMeetsThreat(logic, tac, team);
+}
+void AITacticalAI::updateInterestZonesForTest(GameLogic &logic, AISkirmishPlayer &ai)
+{
+	updateAttackedAt(logic, ai);
+}
 
 ObjectID AITacticalAI::farmKillTargetForTest(GameLogic &logic, const AITactic &tac, int enemy, bool production)
 {
@@ -3329,6 +3333,7 @@ void AITacticalAI::crc(const AIBrainState &b, StateHasher &h)
 		h.addFloat(e.position.z);
 		h.addFloat(e.radius);
 		h.addU32(e.frame);
+		h.addFloat(e.nativeThreat);
 		for (const AIThreatFinder::ThreatRecord *r : { &e.enemies, &e.others })
 		{
 			for (float f : r->v)

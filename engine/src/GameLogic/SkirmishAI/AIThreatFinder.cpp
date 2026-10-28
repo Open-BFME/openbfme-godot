@@ -266,6 +266,11 @@ double AIThreatFinder::threatValueWide(const Object &obj)
 	return SimMath::pc24MulW(ratio, (double)local);
 }
 
+float AIThreatFinder::templateThreatLevel(const Object &obj)
+{
+	return threatLevel(obj);
+}
+
 float AIThreatFinder::threatValue(const Object &obj)
 {
 	return SimMath::fstpDword(threatValueWide(obj)); // RW 0x7EDB83: fstp dword

@@ -177,6 +177,7 @@ struct AIAttackedAt
 	std::uint32_t id = 0;                    ///< + 0x00 (the manager's running id RW 0xDE4A08, or the merged record's)
 	Coord3D position;                        ///< + 0x04
 	float radius = 0.0f;                     ///< + 0x14 (300, RW 0xC16764)
+	float nativeThreat = 0.0f;               ///< BFME2 interest-zone +0x18: raw enemy template threat sum at creation
 	std::uint32_t frame = 0;                 ///< + 0x18
 	AIThreatFinder::ThreatRecord enemies;    ///< + 0x1C: the objects whose player is the AI's ENEMIES
 	AIThreatFinder::ThreatRecord others;     ///< + 0x64: the other (allied) objects
@@ -231,6 +232,8 @@ void flankWaypointsForTest(GameLogic &logic, AITactic &tac, const AITarget &t, c
 void addAttackedAtForTest(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D &pos);
 // test hook (lane AIEXPAND-1): the EXPANSION heuristic (RW 0x97D191, with its gate RW 0x97D035) for `ai` on the target `t`
 void expansionHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &t);
+bool teamMeetsThreatForTest(GameLogic &logic, const AITactic &tac, const AITacticTeam &team);
+void updateInterestZonesForTest(GameLogic &logic, AISkirmishPlayer &ai);
 ObjectID farmKillTargetForTest(GameLogic &logic, const AITactic &tac, int enemy, bool production);
 void startFarmKillForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac);
 void techBuildingHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &target);
