@@ -12,6 +12,7 @@
 #include "Common/Thing/KindOfTokens.h"
 #include "GameLogic/AI/AICommandSink.h"
 #include "GameLogic/AI/AIGroup.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
@@ -1221,10 +1222,10 @@ const char *const kFlagCaptureRunning = "AIFlagCaptureSquad_IsRunning";
 const char *const kFlagCaptureNextFrame = "AIFlagCaptureSquad_FrameNextRun";
 const char *const kTargetlessFile = "AITacticsGenerator.cpp";  // RW 0xC7AD48
 const char *const kFarmKillFile = "AIFarmKillSquad.cpp";        // RW 0xC8A218
-// the FarmKillSquad counters (RW keys DAT_00DEBEF8 / DAT_00DEBEFC, AsciiStrings whose text is set by an initialiser that is not read: the port's names)
-const char *const kFarmKillRunning = "FarmKillSquad::IsRunning";
-const char *const kFarmKillNextFrame = "FarmKillSquad::NextLogicFrame";
-constexpr int kFarmKillDelayMinSeconds = 10, kFarmKillDelayMaxSeconds = 60; // RW 0xBC9CBE / 0xBC9CCC: DAT_00DEBF04 = FPS * 10, DAT_00DEBF08 = FPS * 60
+// BFME2 AIFarmKillSquad.cpp static initializers: native key text and cooldown.
+const char *const kFarmKillRunning = "AIFarmKillSquad_IsRunning";
+const char *const kFarmKillNextFrame = "AIFarmKillSquad_FrameNextRun";
+constexpr int kFarmKillDelayMinSeconds = 30, kFarmKillDelayMaxSeconds = 120; // BFME2 g_00E06438 / g_00E0643C
 
 // RW 0x6C7EDD: the named value, a missing name is stored as 0 (RW 0x6C7EC5(name, 0))
 int namedCounter(AIBrainState &b, const char *name)
@@ -1317,9 +1318,9 @@ void targetlessCleanup(GameLogic &logic, AISkirmishPlayer &ai, const AITactic &t
 	}
 	if (tac.kindIndex == kTargetlessBase + TL_FARM_KILL)
 	{
-		// RW 0x9BB226: not running; the next start no earlier than frame + GetGameLogicRandomValue(FPS * 10, FPS * 60) (AIFarmKillSquad.cpp line 0x244)
+		// BFME2 RVA 0x5ACD51: clear running and schedule 30..120 seconds, source line 337.
 		ai.brain.namedCounters[kFarmKillRunning] = 0;
-		const int delay = logic.random().getValue(kLogicFramesPerSecond * kFarmKillDelayMinSeconds, kLogicFramesPerSecond * kFarmKillDelayMaxSeconds, kFarmKillFile, 0x244);
+		const int delay = logic.random().getValue(kLogicFramesPerSecond * kFarmKillDelayMinSeconds, kLogicFramesPerSecond * kFarmKillDelayMaxSeconds, kFarmKillFile, 337);
 		ai.brain.namedCounters[kFarmKillNextFrame] = (int)(logic.getFrame() + (unsigned)delay);
 	}
 }
@@ -2020,68 +2021,89 @@ void updateFlagCapture(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, 
 	endAnyTactic(logic, ai, b, tac, owner, true);
 }
 
+// BFME2 AIFarmKillSquad.cpp: first non-destroyed CAN_ATTACK team member (+0x5C starts invalid).
+Object *farmFinder(GameLogic &logic, const AITactic &tac)
+{
+	for (const auto &team : tac.teams)
+	{
+		if (team.index != 0) { continue; }
+		for (ObjectID id : team.members)
+		{
+			Object *unit = logic.findObjectByID(id);
+			if (unit && !unit->isDestroyed() && unit->isKindOfName("CAN_ATTACK")) { return unit; }
+		}
+	}
+	return nullptr;
+}
+
+// BFME2 RVA 0x5ACE15: perpendicular distance to the infinite 3D line, not a segment.
+float farmLineDistance(const Coord3D &point, const Coord3D &from, const Coord3D &to)
+{
+	const float x = SimMath::subf32(to.x, from.x), y = SimMath::subf32(to.y, from.y), z = SimMath::subf32(to.z, from.z);
+	const float length = (float)SimMath::length3d(x, y, z);
+	const float px = SimMath::mulf32(SimMath::subf32(point.x, from.x), x);
+	const float py = SimMath::mulf32(SimMath::subf32(point.y, from.y), y);
+	const float pz = SimMath::mulf32(SimMath::subf32(point.z, from.z), z);
+	const float t = SimMath::divf32(SimMath::addf32(SimMath::addf32(px, py), pz), SimMath::mulf32(length, length));
+	const float dx = SimMath::subf32(point.x, SimMath::addf32(SimMath::mulf32(x, t), from.x));
+	const float dy = SimMath::subf32(point.y, SimMath::addf32(SimMath::mulf32(y, t), from.y));
+	const float dz = SimMath::subf32(point.z, SimMath::addf32(SimMath::mulf32(z, t), from.z));
+	return (float)SimMath::length3d(dx, dy, dz);
+}
+
+// BFME2 findProductionTarget RVA 0x5AD243 / findFarmTarget RVA 0x5AD404.
+Object *farmKillTarget(GameLogic &logic, const AITactic &tac, int enemy, bool production)
+{
+	const auto &record = AITacticalAI::recordOf(logic, enemy);
+	const auto &ids = production ? record.structures() : record.economy();
+	Object *fortress = nullptr;
+	for (ObjectID id : record.structures())
+	{
+		Object *candidate = logic.findObjectByID(id);
+		if (candidate && candidate->isKindOfName("DOZER_FACTORY")) { fortress = candidate; break; }
+	}
+	if (!fortress)
+	{
+		if (ids.empty()) { return nullptr; }
+		const int pick = logic.random().getValue(0, (int)ids.size() - 1, kFarmKillFile, production ? 250 : 304);
+		return logic.findObjectByID(ids[(size_t)pick]);
+	}
+	Object *finder = farmFinder(logic, tac);
+	if (!finder || !finder->getAIUpdateInterface()) { return nullptr; }
+	Coord3D center{};
+	for (const auto &team : tac.teams) { if (team.index == 0) { teamCentre(logic, team, center); break; } }
+	AIWorld *world = logic.aiWorld();
+	if (!world || !world->mapReady()) { throw std::logic_error("FarmKillSquad: pathfinder map is not initialized"); }
+	std::map<float, Object *> byDistance;
+	for (ObjectID id : ids)
+	{
+		Object *candidate = logic.findObjectByID(id);
+		if (!candidate || candidate->isKindOfName("LINKED_TO_FLAG") || (production && candidate == fortress)) { continue; }
+		AIUpdateInterface *update = finder->getAIUpdateInterface();
+		if (!world->pathfinder().quickDoesPathExistToStructure(update->adapter(), update->locomotorInfo(), *finder->getPosition(), world->adapterFor(*candidate))) { continue; }
+		const float distance = farmLineDistance(*candidate->getPosition(), center, *fortress->getPosition());
+		if (production || distance > 300.0f) { byDistance.emplace(distance, candidate); }
+	}
+	return byDistance.empty() ? nullptr : byDistance.rbegin()->second;
+}
+
+// BFME2 AIFarmKillSquad::update RVA 0x5AD5DD: keep a resolving target until retargeting;
+// choose farm then production (both selectors run), with a 0..2 draw only when both exist.
 void updateFarmKill(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
 {
-	static const int canAttack = KindOfTokens::indexOf("CAN_ATTACK"), economy = KindOfTokens::indexOf("ECONOMY_STRUCTURE");
-	// RW 0x9BB27E: no team with index 0 (RW 0x8F128B(0)) ends it (0, 0)
-	if (tac.teams.empty())
-	{
-		endAnyTactic(logic, ai, b, tac, owner, false);
-		return;
-	}
+	if (tac.teams.empty()) { endAnyTactic(logic, ai, b, tac, owner, true); return; }
 	if (tac.squadTarget != INVALID_ID && !allTeamsDone(ai, tac))
 	{
-		// RW 0x9BBE8B ..: a gone, DESTROYED or dead target is dropped; a BLOCKING_GATE target is also dropped when its GateOpenAndCloseBehavior (vslot 0x18) says so (the
-		// gate behaviour is not ported: a gate is kept, S-893)
-		const Object *t = logic.findObjectByID(tac.squadTarget);
-		if (!alive(t))
-		{
-			tac.squadTarget = INVALID_ID;
-		}
+		if (!logic.findObjectByID(tac.squadTarget)) { tac.squadTarget = INVALID_ID; }
 		return;
-	}
-	// RW 0x9BB578: the squad's object (+ 0x5C) or the first living CAN_ATTACK member of team 0
-	const Object *unit = nullptr;
-	for (ObjectID id : tac.teams[0].members)
-	{
-		const Object *o = logic.findObjectByID(id);
-		if (alive(o) && is(*o, canAttack))
-		{
-			unit = o;
-			break;
-		}
 	}
 	const int enemy = enemyOfGroup(ai);
-	if (!unit || enemy < 0)
-	{
-		endAnyTactic(logic, ai, b, tac, owner, true); // RW 0x9BBFB8 / 0x9BBFBA: (1, 0)
-		return;
-	}
-	// RW 0x9BBF4C ..: the farm choice RW 0x9BBA51 (a weighted pick among the enemy's farms by path and distance, draws AIFarmKillSquad.cpp 0x203 / 0x20A / 0x21D),
-	// GetGameLogicRandomValue(0, 4) (line 0x8B) between it and RW 0x9BB5E4 (draws 0x186 / 0x18D / 0x1A0) is NOT ported (S-893). Stand-in: the enemy's living
-	// ECONOMY_STRUCTURE nearest to the squad's unit (2D, object list order on ties); no draw
-	const Player *them = playerOf(logic, enemy);
-	Object *target = nullptr;
-	float best = 0.0f;
-	for (Object *o = logic.getFirstObject(); o && them; o = o->getNextObject())
-	{
-		if (o->getControllingPlayer() != them || !alive(o) || !is(*o, economy))
-		{
-			continue;
-		}
-		const float dx = SimMath::subf32(o->getPosition()->x, unit->getPosition()->x), dy = SimMath::subf32(o->getPosition()->y, unit->getPosition()->y);
-		const float d = SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy));
-		if (!target || d < best)
-		{
-			target = o;
-			best = d;
-		}
-	}
-	if (!target)
-	{
-		endAnyTactic(logic, ai, b, tac, owner, true); // RW 0x9BBF94: (1, 0)
-		return;
-	}
+	if (!farmFinder(logic, tac) || enemy < 0) { endAnyTactic(logic, ai, b, tac, owner, true); return; }
+	Object *farm = farmKillTarget(logic, tac, enemy, false);
+	Object *production = farmKillTarget(logic, tac, enemy, true);
+	Object *target = farm;
+	if (production && (!farm || logic.random().getValue(0, 2, kFarmKillFile, 135) != 0)) { target = production; }
+	if (!target) { endAnyTactic(logic, ai, b, tac, owner, true); return; }
 	tac.squadTarget = target->getID();
 	teamAttackObject(logic, tac.teams[0], *target);
 }
@@ -2625,13 +2647,11 @@ void startTargetless(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac)
 		}
 		if (tac.kindIndex == kTargetlessBase + TL_FARM_KILL)
 		{
-			// RW 0x9BB479: RW 0x8F121F (no draw for a TARGETLESS team); the forbidden KindOf mask (RW 0x9BB491 .. 0x9BB499: + 0x307 |= 4, + 0x30C |= 0x20,
-			// + 0x2FD |= 0x48), + 0x21C = 500, the minimum 1 in the Rush phase else 2, the maximum GetGameLogicRandomValue(minimum, 3) (AIFarmKillSquad.cpp line
-			// 0x267), the squad marked running
-			team.forbiddenKinds = { kindBit("HERO"), kindBit("ARCHER"), kindBit("MACHINE"), kindBit("DOZER") };
-			team.priority = 500;
+			// BFME2 initializeTeamTemplate: HERO/ARCHER/MACHINE forbidden, priority 30, 1 (Rush) or 2 minimum; maximum draw at line 371.
+			team.forbiddenKinds = { kindBit("HERO"), kindBit("ARCHER"), kindBit("MACHINE") };
+			team.priority = 30;
 			team.minimum = ai.build.phase == 0 ? 1 : 2;
-			team.maximum = logic.random().getValue(team.minimum, 3, kFarmKillFile, 0x267);
+			team.maximum = logic.random().getValue(team.minimum, 3, kFarmKillFile, 371);
 			ai.brain.namedCounters[kFarmKillRunning] = 1;
 		}
 		tac.teams.push_back(team);
@@ -2666,7 +2686,7 @@ void pickTargetless(GameLogic &logic, AISkirmishPlayer &ai)
 		// RW 0x9BB43D clones through RW 0x9BB3CA, then overwrites the eligibility flag: the discarded constructor result still consumes a draw.
 		if (index == TL_FARM_KILL)
 		{
-			(void)logic.random().getValue(1, 100, kFarmKillFile, 0x39);
+			(void)logic.random().getValue(1, 100, kFarmKillFile, 53);
 		}
 		startTargetless(logic, ai, tac);
 		++b.tacticsByKind[tac.kind];
@@ -2796,6 +2816,18 @@ bool teamMeetsThreat(GameLogic &logic, const AITactic &tac, const AITacticTeam &
 }
 } // namespace
 
+ObjectID AITacticalAI::farmKillTargetForTest(GameLogic &logic, const AITactic &tac, int enemy, bool production)
+{
+	const Object *target = farmKillTarget(logic, tac, enemy, production);
+	return target ? target->getID() : INVALID_ID;
+}
+void AITacticalAI::startFarmKillForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac)
+{
+	tac.targetless = true;
+	tac.kindIndex = kTargetlessBase + TL_FARM_KILL;
+	startTargetless(logic, ai, tac);
+}
+
 void AITacticalAI::techBuildingHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &target)
 {
 	heuristicTechBuilding(logic, ai, ai.brain, target);
@@ -2805,7 +2837,7 @@ bool AITacticalAI::roamingDefenseAppliesForTest(GameLogic &logic, AISkirmishPlay
 {
 	return targetlessApplies(logic, ai, TL_ROAMING_DEFENSE);
 }
-void AITacticalAI::updateRoamingDefenseForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac)
+void AITacticalAI::updateTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac)
 {
 	updateTactic(logic, ai, ai.brain, tac, ai.brain);
 }
@@ -3141,9 +3173,9 @@ void AITacticalAI::updateIdleArmy(GameLogic &logic, AISkirmishPlayer &ai)
 void AITacticalAI::makeGenerator(GameLogic &logic, AISkirmishPlayer &ai)
 {
 	// RW 0x90CADA: the offensive (RW 0x90BE31), defensive (RW 0x90C04E), expansion (RW 0x90C09E) and targetless (RW 0x90C0EE) prototypes; of their constructors only
-	// FarmKillSquad's (RW 0x9BB3CA) draws: + 0x60 = GetGameLogicRandomValue(1, 100) (AIFarmKillSquad.cpp line 0x39) < 95
+	// BFME2 FarmKillSquad ctor RVA 0x5ACF38 draws at source line 53; +0x60 is the roll <20.
 	ai.brain.generatorMade = true;
-	ai.brain.farmKillEarly = logic.random().getValue(1, 100, kFarmKillFile, 0x39) < 95;
+	ai.brain.farmKillEarly = logic.random().getValue(1, 100, kFarmKillFile, 53) < 20;
 }
 
 void AITacticalAI::crc(const AIBrainState &b, StateHasher &h)

@@ -193,3 +193,41 @@ Two synthetic cases pass 12 assertions for AI/surface refusal, clear and isolate
 targets, and all four cardinal exits. The combined focused run, including tech
 selection, the corrected Athelas pin and existing pathfinding regressions,
 passed nine cases / 359 assertions. Native Release build passed.
+
+## BFME2 farm-raiding follow-up
+
+Replaced the RotWK nearest-farm stand-in with `AIFarmKillSquad.cpp` and
+`Rva005ACE15Finish.cpp`: constructor RVA `0x5ACF38`, cleanup `0x5ACD51`,
+production `0x5AD243`, farms `0x5AD404`, and update `0x5AD5DD`.
+
+- The constructor draws d100 at line 53 and admits rolls <20 (19/100).
+- Native named counters are AIFarmKillSquad_IsRunning / AIFarmKillSquad_FrameNextRun.
+  Cleanup draws 150..600 frames at line 337, rather than the RotWK 50..300.
+- One team has priority 30, HERO/ARCHER/MACHINE forbidden, minimum one in Rush
+  and two later, and a maximum drawn through three at line 371.
+- With an enemy fortress, reachable tracked buildings are ranked by perpendicular
+  distance from the infinite 3D line through the team center and first fortress.
+  Farms must score strictly above 300; production has no cutoff and excludes the
+  fortress. Equal scores retain the first registration. There is no weighted
+  nearest-farm substitute. With no fortress, selectors draw directly from tracked
+  registration order (farms line 304, structures line 250).
+- Both selectors run in order. When both succeed, the 0..2 draw at line 135 chooses
+  farms only on zero. BFME2 retains a resolving target until retargeting; the
+  earlier RotWK gate-specific drop behavior is not applied.
+
+Four exact synthetic cases passed 130 assertions. The targetless integration
+fixture first verifies the native constructor branch, then explicitly enables
+its early gate to test recruitment independently of that random roll; its
+source draw sites and eight remaining unported applicability checks are pinned.
+
+The broad selection passed 96 of 98 cases; only derived expansion and Athelas
+engine timing assertions changed. An isolated control restoring the prior farm
+behavior restored all six expansion pins (1821/1821/1824/1825/2593/2593) and
+Athelas 25. With BFME2 farm behavior enabled, the expansion sequence is
+1519/1519/1565/1566/2369/2369 and Athelas 24. Corrected pins and the four source
+cases passed six cases / 191 assertions. The all-difficulty repeated-frame,
+seven-faction attack and offensive-tactic selection passed four cases / 7,007
+assertions. Assertions inside per-frame loops vary with tactic lifetimes; the
+fixed scenario checks still require each difficulty to train, survive and repeat
+all 1,500 frame hashes exactly. These are native checks using combined archives,
+not BFME2 retail traces. No native snapshot layout changed.

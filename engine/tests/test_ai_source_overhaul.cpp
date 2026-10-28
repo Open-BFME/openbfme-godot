@@ -391,16 +391,16 @@ TEST_CASE("BFME2 roaming defense: zero-team lifecycle and strict economy radius"
   random.enableCallLog(true);
   random.clearCallLog();
   s.w.frames(1);
-  AITacticalAI::updateRoamingDefenseForTest(*s.w.logic, *ai, tactic);
+  AITacticalAI::updateTacticForTest(*s.w.logic, *ai, tactic);
   CHECK(tactic.ready);
   CHECK_FALSE(tactic.started);
   REQUIRE(tactic.teams.empty());
   s.w.frames(1);
-  AITacticalAI::updateRoamingDefenseForTest(*s.w.logic, *ai, tactic);
+  AITacticalAI::updateTacticForTest(*s.w.logic, *ai, tactic);
   CHECK(tactic.started);
   CHECK(tactic.mainLaunched);
   CHECK_FALSE(tactic.ended);
-  AITacticalAI::updateRoamingDefenseForTest(*s.w.logic, *ai, tactic);
+  AITacticalAI::updateTacticForTest(*s.w.logic, *ai, tactic);
   CHECK(tactic.ended);
   CHECK(unit->getAIUpdateInterface()->attackMoveActive() == (distance == 899));
   CHECK_FALSE(busy->getAIUpdateInterface()->attackMoveActive());
@@ -459,7 +459,7 @@ TEST_CASE("BFME2 roaming defense: empty economy uses first fortress or issues no
   tactic.targetless = true;
   tactic.started = true;
   tactic.mainLaunched = true;
-  AITacticalAI::updateRoamingDefenseForTest(*s.w.logic, *ai, tactic);
+  AITacticalAI::updateTacticForTest(*s.w.logic, *ai, tactic);
   CHECK(tactic.ended);
   CHECK(unit->getAIUpdateInterface()->attackMoveActive() == hasFortress);
   if (hasFortress) {
@@ -556,4 +556,122 @@ TEST_CASE("BFME2 tech opportunity: missing linked object, inclusive radius and r
   CHECK(target.inactive == (distance == 1001));
   CHECK(target.object == (distance == 1001 ? INVALID_ID : first->getID()));
  }
+}
+
+TEST_CASE("BFME2 farm raid: constructor roll and native team template")
+{
+ for (int phase : {0,1,2}) {
+  Scenario s;
+  s.bot.build.phase = phase;
+  auto &random = s.w.logic->random();
+  random.seedRandom(51027);
+  GameLogicRandom oracle = random;
+  const int early = oracle.getValue(1,100,"AIFarmKillSquad.cpp",53);
+  random.enableCallLog(true); random.clearCallLog();
+  AITacticalAI::makeGenerator(*s.w.logic, s.bot);
+  CHECK(s.bot.brain.farmKillEarly == (early < 20)); // tolerance: source's exact d100 branch, not an approximate numerical result.
+  REQUIRE(random.callLog().size() == 1);
+  CHECK(random.callLog()[0].line == 53);
+  AITactic tactic;
+  AITacticalAI::startFarmKillForTest(*s.w.logic, s.bot, tactic);
+  REQUIRE(tactic.teams.size() == 1);
+  const auto &team = tactic.teams[0];
+  CHECK(team.priority == 30);
+  CHECK(team.minimum == (phase == 0 ? 1 : 2));
+  CHECK(team.maximum == random.callLog()[1].result);
+  CHECK(team.forbiddenKinds == std::vector<int>{ObjectTemplateInfoBuilder::kindOfIndex("HERO"),ObjectTemplateInfoBuilder::kindOfIndex("ARCHER"),ObjectTemplateInfoBuilder::kindOfIndex("MACHINE")});
+  REQUIRE(random.callLog().size() == 2);
+  CHECK(random.callLog()[1].line == 371);
+  CHECK(random.callLog()[1].lo == team.minimum);
+  CHECK(random.callLog()[1].hi == 3);
+  CHECK(s.bot.brain.namedCounters["AIFarmKillSquad_IsRunning"] == 1);
+ }
+}
+
+TEST_CASE("BFME2 farm raid: no fortress draws from tracked registration order")
+{
+ Scenario s;
+ REQUIRE(s.w.w.load("SkirmishAIData RaidData\nEnd\nChildObject RaidFarm BreachWall\n KindOf = STRUCTURE ECONOMY_STRUCTURE\nEnd\n").empty());
+ auto &manager = s.w.logic->skirmishAI();
+ manager.setStore(&s.store); manager.newGame(true);
+ auto *first = s.w.unit("RaidFarm",'B',300,300);
+ auto *second = s.w.unit("RaidFarm",'B',700,700);
+ auto *workshop = s.w.unit("BreachWorkshop",'B',800,300);
+ const int enemy = s.w.players.findPlayerWithName("Bob")->getPlayerIndex();
+ auto &random = s.w.logic->random();
+ random.seedRandom(1234); random.enableCallLog(true); random.clearCallLog();
+ GameLogicRandom oracle = random;
+ const int farm = oracle.getValue(0,1,"AIFarmKillSquad.cpp",304);
+ AITactic tactic;
+ CHECK(AITacticalAI::farmKillTargetForTest(*s.w.logic,tactic,enemy,false) == (farm == 0 ? first->getID() : second->getID()));
+ CHECK(AITacticalAI::farmKillTargetForTest(*s.w.logic,tactic,enemy,true) == workshop->getID());
+ REQUIRE(random.callLog().size() == 2);
+ CHECK(random.callLog()[0].line == 304);
+ CHECK(random.callLog()[0].lo == 0);
+ CHECK(random.callLog()[0].hi == 1);
+ CHECK(random.callLog()[1].line == 250);
+ CHECK(random.callLog()[1].lo == 0);
+ CHECK(random.callLog()[1].hi == 0);
+}
+
+TEST_CASE("BFME2 farm raid: farms must exceed 300 from the fortress line, production has no cutoff")
+{
+ Scenario s;
+ REQUIRE(s.w.w.load("SkirmishAIData RaidData\nEnd\nChildObject RaidFarm BreachWall\n KindOf = STRUCTURE ECONOMY_STRUCTURE\nEnd\nChildObject RaidFortress BreachWall\n KindOf = STRUCTURE DOZER_FACTORY\nEnd\n").empty());
+ auto &manager = s.w.logic->skirmishAI();
+ manager.setStore(&s.store); manager.newGame(true);
+ auto *unit = s.w.unit("Swordsman",'A',100,100);
+ s.w.unit("RaidFortress",'B',900,100);
+ s.w.unit("RaidFarm",'B',500,400); // exactly 300 from horizontal line
+ auto *factory = s.w.unit("BreachWorkshop",'B',500,200); // only 100 from it
+ const int enemy = s.w.players.findPlayerWithName("Bob")->getPlayerIndex();
+ AITactic tactic;
+ AITacticTeam team; team.index=0; team.members={unit->getID()}; tactic.teams.push_back(team);
+ auto &random = s.w.logic->random();
+ random.enableCallLog(true); random.clearCallLog();
+ CHECK(AITacticalAI::farmKillTargetForTest(*s.w.logic,tactic,enemy,false) == INVALID_ID);
+ CHECK(AITacticalAI::farmKillTargetForTest(*s.w.logic,tactic,enemy,true) == factory->getID());
+ auto *first = s.w.unit("RaidFarm",'B',500,700);
+ s.w.unit("RaidFarm",'B',600,700); // equal score: first registration wins, not nearest to the finder
+ random.clearCallLog();
+ CHECK(AITacticalAI::farmKillTargetForTest(*s.w.logic,tactic,enemy,false) == first->getID());
+ CHECK(random.callLog().empty());
+}
+
+TEST_CASE("BFME2 farm raid: both selectors precede the choice draw, cleanup schedules 30 to 120 seconds")
+{
+ Scenario s;
+ REQUIRE(s.w.w.load("SkirmishAIData RaidData\nEnd\nChildObject RaidFarm BreachWall\n KindOf = STRUCTURE ECONOMY_STRUCTURE\nEnd\n").empty());
+ auto &manager = s.w.logic->skirmishAI();
+ manager.setStore(&s.store); manager.newGame(true);
+ auto *unit = s.w.unit("Swordsman",'A',100,100);
+ auto *farm = s.w.unit("RaidFarm",'B',500,700);
+ auto *factory = s.w.unit("BreachWorkshop",'B',500,200);
+ s.bot.brain.currentEnemy = s.w.players.findPlayerWithName("Bob")->getPlayerIndex();
+ AITactic tactic;
+ tactic.kindIndex=101; tactic.targetless=true; tactic.started=true;
+ AITacticTeam team; team.index=0; team.handedOver=true; team.members={unit->getID()}; tactic.teams.push_back(team);
+ auto &random = s.w.logic->random();
+ random.seedRandom(1234); random.enableCallLog(true); random.clearCallLog();
+ GameLogicRandom oracle = random;
+ (void)oracle.getValue(0,0,"AIFarmKillSquad.cpp",304);
+ (void)oracle.getValue(0,0,"AIFarmKillSquad.cpp",250);
+ const int choice = oracle.getValue(0,2,"AIFarmKillSquad.cpp",135);
+ AITacticalAI::updateTacticForTest(*s.w.logic,s.bot,tactic);
+ CHECK(tactic.squadTarget == (choice == 0 ? farm->getID() : factory->getID()));
+ std::vector<int> lines;
+ for (const auto &call : random.callLog()) { if(call.file == "AIFarmKillSquad.cpp") lines.push_back(call.line); }
+ CHECK(lines == std::vector<int>{304,250,135});
+ random.clearCallLog();
+ oracle = random;
+ const int delay = oracle.getValue(150,600,"AIFarmKillSquad.cpp",337);
+ tactic.teams.clear();
+ AITacticalAI::updateTacticForTest(*s.w.logic,s.bot,tactic);
+ CHECK(tactic.ended);
+ CHECK(s.bot.brain.namedCounters["AIFarmKillSquad_IsRunning"] == 0);
+ CHECK(s.bot.brain.namedCounters["AIFarmKillSquad_FrameNextRun"] == (int)s.w.logic->getFrame()+delay);
+ REQUIRE(random.callLog().size() == 1);
+ CHECK(random.callLog()[0].line == 337);
+ CHECK(random.callLog()[0].lo == 150);
+ CHECK(random.callLog()[0].hi == 600);
 }

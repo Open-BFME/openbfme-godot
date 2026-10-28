@@ -974,6 +974,10 @@ TEST_CASE("skirmish ai targetless: the generator's FarmKillSquad draw at creatio
 	const AISkirmishPlayer *ai = logic.skirmishAI().findAI(me->getPlayerIndex());
 	REQUIRE(ai != nullptr);
 	CHECK(ai->brain.generatorMade);
+	// BFME2 constructor threshold is <20. Force the early gate after checking its draw so this fixture independently exercises recruitment.
+	for (const auto &call : logic.random().callLog())
+		if (call.file == "AIFarmKillSquad.cpp" && call.line == 53) { CHECK(ai->brain.farmKillEarly == (call.result < 20)); } // tolerance: exact source branch.
+	const_cast<AISkirmishPlayer *>(ai)->brain.farmKillEarly = true;
 	auto started = [&](const char *kind) {
 		auto it = ai->brain.tacticsByKind.find(kind);
 		return it == ai->brain.tacticsByKind.end() ? 0 : it->second;
@@ -996,7 +1000,7 @@ TEST_CASE("skirmish ai targetless: the generator's FarmKillSquad draw at creatio
 			CHECK(started("FlagCaptureSquad") == 1);
 			CHECK(started("FarmKillSquad") == 0);
 			CHECK(counter("AIFlagCaptureSquad_IsRunning") == 1);
-			CHECK(ai->brain.targetlessUnported == 9); // the other 9 prototypes' applicability, once per pick frame (S-893)
+			CHECK(ai->brain.targetlessUnported == 8); // the other 8 prototypes' applicability, once per pick frame (S-893)
 		}
 		if (started("FarmKillSquad") > 0)
 		{
@@ -1013,8 +1017,8 @@ TEST_CASE("skirmish ai targetless: the generator's FarmKillSquad draw at creatio
 	CHECK(ai->brain.targetlessStarted == 2);
 	CHECK(started("FlagCaptureSquad") == 1);
 	CHECK(started("FarmKillSquad") == 1);
-	CHECK(counter("FarmKillSquad::IsRunning") == 1);
-	CHECK(ai->brain.targetlessUnported == 18);
+	CHECK(counter("AIFarmKillSquad_IsRunning") == 1);
+	CHECK(ai->brain.targetlessUnported == 16);
 	// RW 0x90C0EE constructs the prototype (its draw); each pick draws among the pool (AITacticsGenerator.cpp 0x1BC: 0 .. pool size - 1); a FlagCaptureSquad
 	// team draws its maximum (AIFlagCaptureSquad.cpp 0xEF, RW 0x9BC1A0) and its end its next run (0xD5, RW 0x9BBFDC); RW 0x9BB43D constructs the FarmKillSquad
 	// clone before copying its prototype flag, and RW 0x9BB479 sets it up (0x267)
@@ -1031,12 +1035,12 @@ TEST_CASE("skirmish ai targetless: the generator's FarmKillSquad draw at creatio
 		const char *file;
 		int line, lo, hi;
 	};
-	const Draw expected[] = { { "AIFarmKillSquad.cpp", 0x39, 1, 100 }, // the prototype at creation
+	const Draw expected[] = { { "AIFarmKillSquad.cpp", 53, 1, 100 }, // the prototype at creation
 		{ "AITacticsGenerator.cpp", 0x1BC, 0, 1 },                       // frame 10: FlagCaptureSquad and FarmKillSquad apply
 		{ "AIFlagCaptureSquad.cpp", 0xEF, 1, 3 },                        // the FlagCaptureSquad team's maximum
 		{ "AITacticsGenerator.cpp", 0x1BC, 0, 0 },                       // frame 11: FarmKillSquad alone
-		{ "AIFarmKillSquad.cpp", 0x39, 1, 100 },                         // its clone's constructor
-		{ "AIFarmKillSquad.cpp", 0x267, ai->build.phase == 0 ? 1 : 2, 3 } };
+		{ "AIFarmKillSquad.cpp", 53, 1, 100 },                         // its clone's constructor
+		{ "AIFarmKillSquad.cpp", 371, ai->build.phase == 0 ? 1 : 2, 3 } };
 	REQUIRE(draws.size() == 6);
 	for (size_t i = 0; i < draws.size(); ++i)
 	{

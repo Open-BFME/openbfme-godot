@@ -231,8 +231,10 @@ void flankWaypointsForTest(GameLogic &logic, AITactic &tac, const AITarget &t, c
 void addAttackedAtForTest(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D &pos);
 // test hook (lane AIEXPAND-1): the EXPANSION heuristic (RW 0x97D191, with its gate RW 0x97D035) for `ai` on the target `t`
 void expansionHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &t);
+ObjectID farmKillTargetForTest(GameLogic &logic, const AITactic &tac, int enemy, bool production);
+void startFarmKillForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac);
 void techBuildingHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &target);
 bool roamingDefenseAppliesForTest(GameLogic &logic, AISkirmishPlayer &ai);
-void updateRoamingDefenseForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac);
+void updateTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac);
 void pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const Coord3D &start, const Coord3D &target);
 } // namespace AITacticalAI
