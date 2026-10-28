@@ -102,7 +102,7 @@ func _init() -> void:
 	game_picker = OptionButton.new()
 	game_picker.add_item("RotWK 2.01 · BFME II 1.06")
 	game_picker.add_item("Battle for Middle-earth I 1.03")
-	game_picker.add_item("Battle for Middle-earth II 1.06 (without RotWK)")
+	game_picker.add_item(L10n.t("launcher.play_screen.game_bfme2_standalone"))
 	game_picker.item_selected.connect(func(index: int): game_selected.emit(["bfme2", "bfme1", "bfme2-106"][index]))
 	var status := W.label("")
 	_games_status = status
