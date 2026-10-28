@@ -16,14 +16,15 @@
 //
 // Per vertex (vs_1_1):  tangent frame T = (n.z, 0, -n.x), B = (0, n.z, -n.y) from the vertex normal;
 //   Lts = (L.T, L.B, L.n); Hts = normalize((normalize(eye - pos) + L) in the same frame).
-// Per pixel and layer (ps_2_0):
-//   nm = texture(normal atlas); N = normalize(2*nm.xy-1, sqrt(1-x^2-y^2))
+// Per pixel (ps_2_0), on the COMPOSITE texels (lane TERRAIN-BAKES: retail bakes the layers' albedo and normal-map texels into one pair on the CPU and lights that once):
+//   albedo = mix(mix(albedo0, albedo1, alpha1), albedo2, alpha2), nm likewise over the normal texels, each layer's UV and alpha interpolated as the GPU
+//   would have over that layer's own triangulation (interp_*)
+//   N = normalize(2*nm.xy-1, sqrt(1-x^2-y^2))
 //   diff = max(N.Lts, 0); spec = (N.Lts>0 && N.Hts>0) ? (N.Hts)^1200 * nm.b * 0.9 : 0
 //   sun = Overbright ? 0.5*SunColor : SunColor
 //   lit = (COLOR.rgb + 0.5*LightningColor)*albedo + sun*(diff*albedo + spec); Overbright: lit *= 2
-// Composite: lit = mix(mix(lit0, lit1, alpha1), lit2, alpha2) with each layer's UV and alpha interpolated as
-// the GPU would have over that layer's own triangulation (interp_*), then
 //   rgb = lerp(FogColor, lit*cloud*macro, fogF) * shroud;  output: the sRGB decode of rgb (retail_output)
+// A 16 px/cell tile (bake_far, engine TerrainBake.h) reads the atlas at mip 1.
 //
 // Cliff cells carry the class block their UVs must wrap into (ClassWrapRect): the UV of a cell that straddles
 // the class edge is interpolated unwrapped and wrapped PER PIXEL (wrap_into_class), so no texel of another
