@@ -247,8 +247,8 @@ TEST_CASE("source AI defense: small group chance and large group half-army sizin
 		random.seedRandom(1);
 		GameLogicRandom oracle = random;
 		(void)oracle.getValue(0, 0, "AITargetChooser.cpp", 0xB8);
-		(void)oracle.getValue(0, 0, "AITargetHeuristicBaseDefense.cpp", 0x57);
-		const int roll = oracle.getValue(0, 100, "AITargetHeuristicBaseDefense.cpp", 0x60);
+		(void)oracle.getValue(0, 0, "AITargetHeuristicBaseDefense.cpp", 0x56);
+		const int roll = oracle.getValue(0, 100, "AITargetHeuristicBaseDefense.cpp", 0x5F);
 		random.enableCallLog(true);
 		random.clearCallLog();
 		AITacticalAI::updateBrain(*s.w.logic, *ai, ai);
@@ -258,7 +258,7 @@ TEST_CASE("source AI defense: small group chance and large group half-army sizin
 		CHECK(ai->brain.targets[0].defenseSize == (structures == 1 ? 0 : 2));
 		bool gateFound = false;
 		for (const auto &call : random.callLog())
-			if (call.file == "AITargetHeuristicBaseDefense.cpp" && call.line == 0x60)
+			if (call.file == "AITargetHeuristicBaseDefense.cpp" && call.line == 0x5F)
 			{
 				gateFound = true;
 				CHECK(call.lo == 0);
@@ -296,4 +296,46 @@ TEST_CASE("source AI spatial snapshots: non-finite coordinates are refused")
  AIPositionSampler restored;
  XferLoad load(save.data());
  CHECK_THROWS_WITH(restored.xfer(load), "skirmish ai: non-finite spatial group");
+}
+
+TEST_CASE("BFME2 base defense: support-only enemies are excluded and native draw sites are used")
+{
+ Scenario s;
+ REQUIRE(s.w.w.load("SkirmishAIData NativeDefense\nEnd\nArmyDefinition NativeAlpha\n Side = Alpha\n TacticalAITargets = DEFENSIVE\n MaxTeamsPerTarget = 1\nEnd\nChildObject SupportOnly Swordsman\n KindOf = SELECTABLE SUPPORT\nEnd\n").empty());
+ s.w.unit("BreachWorkshop", 'A', 100, 500);
+ s.w.unit("BreachWall", 'A', 120, 500);
+ auto *support = s.w.unit("SupportOnly", 'B', 150, 500);
+ REQUIRE(support->isKindOfName("SUPPORT"));
+ REQUIRE_FALSE(support->isKindOfName("CAN_ATTACK"));
+ auto &manager = s.w.logic->skirmishAI();
+ manager.setStore(&s.store);
+ manager.newGame(true);
+ const int index = s.w.players.findPlayerWithName("Alice")->getPlayerIndex();
+ auto *ai = const_cast<AISkirmishPlayer *>(manager.findAI(index));
+ REQUIRE(ai);
+ ai->disabled = true;
+ ai->brain.farmKillEarly = false;
+ s.w.logic->partition().update();
+ AITacticalAI::updateBrain(*s.w.logic, *ai, ai);
+ REQUIRE(ai->brain.targets.size() == 1);
+ CHECK(ai->brain.targets[0].inactive);
+ CHECK(ai->brain.tactics.empty());
+ auto *enemy = s.w.unit("Swordsman", 'B', 160, 500);
+ s.w.logic->partition().update();
+ auto &random = s.w.logic->random();
+ random.enableCallLog(true);
+ random.clearCallLog();
+ AITacticalAI::updateBrain(*s.w.logic, *ai, ai);
+ CHECK_FALSE(ai->brain.targets[0].inactive);
+ CHECK(ai->brain.targets[0].object == enemy->getID());
+ unsigned draws = 0;
+ for (const auto &call : random.callLog())
+  if (call.file == "AITargetHeuristicBaseDefense.cpp")
+  {
+   ++draws;
+   CHECK(call.line == 0x56);
+   CHECK(call.lo == 0);
+   CHECK(call.hi == 0);
+  }
+ CHECK(draws == 1);
 }

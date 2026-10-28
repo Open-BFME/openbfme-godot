@@ -425,7 +425,8 @@ void heuristicExpansion(GameLogic &logic, const AISkirmishPlayer &ai, AIBrainSta
 	}
 }
 
-// DONOR AITargetHeuristicBaseDefense.cpp; TARGET RW 0x97D74F (S-001 caveat).
+// BFME2 AITargetHeuristicBaseDefense.cpp RVA 0x5737D6: CAN_ATTACK/HERO only.
+// BFME2 draw sites are 0x56 and 0x5F; the old RotWK SUPPORT extension is not used.
 void heuristicBaseDefense(GameLogic &logic, const AISkirmishPlayer &ai, AIBrainState &b, AITarget &target)
 {
 	const Player *player = playerOf(logic, ai.playerIndex);
@@ -441,7 +442,7 @@ void heuristicBaseDefense(GameLogic &logic, const AISkirmishPlayer &ai, AIBrainS
 	{
 		PartitionFilterFn enemy([&](Object &o) { return player->getRelationship(o.getTeam()) == ENEMIES; });
 		PartitionFilterFn eligible([&](Object &o) {
-			if (!(is(o, kinds().canAttack) || is(o, kinds().hero) || is(o, kinds().support)))
+			if (!(is(o, kinds().canAttack) || is(o, kinds().hero)))
 				return false;
 			for (int bit : excluded)
 				if (is(o, bit))
@@ -454,9 +455,9 @@ void heuristicBaseDefense(GameLogic &logic, const AISkirmishPlayer &ai, AIBrainS
 	}
 	if (found.empty())
 		return;
-	const auto &pick = found[(size_t)logic.random().getValue(0, (int)found.size() - 1, "AITargetHeuristicBaseDefense.cpp", 0x57)];
+	const auto &pick = found[(size_t)logic.random().getValue(0, (int)found.size() - 1, "AITargetHeuristicBaseDefense.cpp", 0x56)];
 	target.defenseSize = pick.second == 1 ? 0 : (pick.second == 2 ? 1 : 2);
-	if (pick.second == 1 && logic.random().getValue(0, 100, "AITargetHeuristicBaseDefense.cpp", 0x60) >= 30)
+	if (pick.second == 1 && logic.random().getValue(0, 100, "AITargetHeuristicBaseDefense.cpp", 0x5F) >= 30)
 		return;
 	setTarget(logic, b, target, *pick.first, 200.0f, *player);
 }

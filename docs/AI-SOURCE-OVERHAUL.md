@@ -102,3 +102,19 @@ isolated control with only Heal returning false restored all six old pins
 (2425/2425/2428/2429/3169/3169), identifying the new Heal decision/cooldown RNG
 consumption as the cause. These pins are engine regressions, not retail timing
 oracles. Native build, installed commit gate and whitespace checks passed.
+
+### BFME2 defensive targeting
+
+`AITargetHeuristicBaseDefense.cpp` RVA 0x5737D6 admits CAN_ATTACK or HERO,
+not SUPPORT alone. The branch now uses that filter and the native draw sites
+0x56 (group selection) / 0x5F (small-group gate), replacing the RotWK labels
+0x57 / 0x60. Group ordering, the 30/101 small-group gate and 1/3/half-army
+recruitment limits are retained. A regression places a support-only enemy near
+an owned base, verifies it is ignored, then introduces an eligible attacker and
+checks the exact selected object and RNG record. The focused defense/spatial
+selection passed 8 cases / 267 assertions, including all four difficulties.
+
+Final defensive-targeting validation passed 9 focused cases / 280 assertions
+and 3 data-mounted difficulty/offensive-tactic cases / 15,263 assertions. The
+four-difficulty repeat checks matched every simulation frame. Native build,
+installed commit gate and whitespace checks passed.
