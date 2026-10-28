@@ -1044,3 +1044,10 @@ TEST_CASE("save4d script engine: a non-default acquired-science queue and generi
 	CHECK(b.g.engine().references().size() == 1u);
 	CHECK(b.g.engine().sequentialScripts().size() == 1u);
 }
+
+
+TEST_CASE("source AI tree snapshots: native group preservation differs from retail load and is reported")
+{
+ const auto stops=GameLogic::save4dStopLines();
+ CHECK(stops[2].find("native block version 2 preserves cached AI tree groups and selection flags, whereas retail rebuilds the groups on load")!=std::string::npos);
+}

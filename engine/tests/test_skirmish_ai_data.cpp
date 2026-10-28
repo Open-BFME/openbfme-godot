@@ -395,3 +395,28 @@ TEST_CASE("skirmish ai data: the store hash covers every parsed field and the la
 	CHECK(moved([&] { base.structures.back().angle = 0.5f; }));
 	CHECK(moved([&] { const_cast<PlayerAIType &>(l.store.playerAITypes()[0]).libraryMap = "M"; }));
 }
+
+TEST_CASE("source AI difficulty data: all four effective retail tuning rows")
+{
+ OPENBFME_REQUIRE_START(s);
+ const auto &data = s->world->skirmishAI().data();
+ // Effective RotWK 2.01 SkirmishAIData; Hard/Brutal retain constructor-default probabilities.
+ const int economyNumerator[] = {1, 10, 1, 1}, economyDenominator[] = {1050, 100, 1, 1};
+ const int powerNumerator[] = {1, 10, 1, 1}, powerDenominator[] = {250, 150, 1, 1};
+ const int offensiveDenominator[] = {500, 1, 1, 1};
+ for (int difficulty = 0; difficulty < 4; ++difficulty)
+ {
+  CAPTURE(difficulty);
+  const auto &row = data.difficultyTuning[difficulty];
+  CHECK(row.economyUpgrade.numerator == economyNumerator[difficulty]);
+  CHECK(row.economyUpgrade.denominator == economyDenominator[difficulty]);
+  CHECK(row.specialPower.numerator == powerNumerator[difficulty]);
+  CHECK(row.specialPower.denominator == powerDenominator[difficulty]);
+  CHECK(row.offensiveTactic.numerator == 1);
+  CHECK(row.offensiveTactic.denominator == offensiveDenominator[difficulty]);
+  CHECK(row.economyMaxFarms == (difficulty == 0 ? 3 : -1));
+ }
+ // parsePercentToReal multiplies parsed 15 by float32 0.01: exactly 0x3e199999.
+ CHECK(data.brutalCheats.buildCostReduction == 0x1.333332p-3f);
+ CHECK(data.brutalCheats.buildTimeReduction == 0x1.333332p-3f);
+}

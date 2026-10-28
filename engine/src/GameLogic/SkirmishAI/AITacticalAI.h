@@ -104,6 +104,7 @@ struct AISkirmishGroup;
 struct AITarget
 {
 	int type = 0;                    ///< + 0x04 (AITARGET index)
+	int defenseSize = 0;             ///< + 0x2C: 0 small / 1 medium / 2 large spatial base group
 	std::uint32_t frame = 0;         ///< + 0x08 (0 at creation, the frame it was set; -1 after a reset)
 	Coord3D position;                ///< + 0x0C
 	bool inactive = true;            ///< + 0x18
@@ -132,6 +133,8 @@ struct AITacticTeam
 	bool wantsMembers = true;        ///< + 0x31C
 	bool handedOver = false;         ///< + 0x31D
 	std::vector<ObjectID> members;   ///< S-418: the recruited units (RW: the team's members)
+	bool hasRecruitOrigin = false;   ///< native prototype +0x324
+	Coord3D recruitOrigin{};         ///< native prototype +0x328: sort recruits by distance from this point
 	Coord3D lastPosition;            ///< tactic team entry + 0x04: the team centre when it last moved (RW 0x8F135E)
 	int index = 0;                   ///< the pooled prototype's + 0x2DC: the team's index in its tactic (RW 0x8F128B / 0x8F12C3 look teams up by it)
 	int idleFrames = 0;              ///< entry + 0x10: frames without moving or fighting (RW 0x8F135E; done at TeamTimeUntilConsideredIdle seconds, RW 0x8F1725)

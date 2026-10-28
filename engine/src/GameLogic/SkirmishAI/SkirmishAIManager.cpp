@@ -345,9 +345,6 @@ void SkirmishAIManager::updateAI(AISkirmishPlayer &ai, AISkirmishGroup &g)
 	// base builder and the request processor; the other sub systems are S-412), then the brain (S-412)
 	AIBaseBuilder::updatePhase(m_logic, ai);
 	AIBaseBuilder::update(m_logic, ai);
-	// the team builder (+ 0x90, RW 0x9A3366) runs inside AIPlayer::update after the unit builder; it draws no random value and touches only the tactic teams,
-	// so running it after the request processor keeps the retail order of every observable effect
-	AITacticalAI::updateTeamBuilder(m_logic, ai);
 	++m_counters.aiPlayerUpdates;
 	// the brain (+ 0x164, RW 0x6C74C2); the group's first AI owns the target chooser the others share (+ 0x18)
 	AITacticalAI::updateBrain(m_logic, ai, groupFirstAI(g));
@@ -551,6 +548,7 @@ void SkirmishAIManager::reset()
 	m_attackedAtIds = 0; // RW 0x6A922D
 	m_expansionHeuristicFrames = 0;
 	m_assistTimers.clear();
+	m_armyBreakerTimers.clear();
 }
 
 const AISkirmishPlayer *SkirmishAIManager::findAI(int playerIndex) const
@@ -590,6 +588,12 @@ void SkirmishAIManager::crc(StateHasher &h) const
 	{
 		h.addI32(t.first);
 		h.addU32(t.second);
+	}
+	if (!m_armyBreakerTimers.empty())
+	{
+		h.addU32(0x4142524Bu); // ArmyBreaker timer state; empty games retain their existing hash.
+		h.addU32((std::uint32_t)m_armyBreakerTimers.size());
+		for (const auto &t : m_armyBreakerTimers) { h.addI32(t.first); h.addU32(t.second); }
 	}
 	// the data the AI decides from (SkirmishAIData, armies, bases and their layouts, dozers, PlayerAITypes): a peer with other data diverges here
 	h.addBool(m_store != nullptr);
@@ -667,8 +671,8 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"tactic's idle counters, position and idle end (RW 0x8F28DD / 0x8F135E / 0x8F27AD / 0x8F175A / 0x9B4DE7) and (r5) the bodies of FormationAttack, "
 		"FlankAttack, PincerAttack, FeintAttack and AIBasePenetrationTroopsTactic with their draws (FlankAttack RW 0x9B4642 / 0x9B4720, PincerAttack RW 0x9B4067, "
 		"FeintAttack RW 0x9B398D / 0x9B3A5A / 0x9B3AE4) are ported; lane BACKLOG6: AIGroup's stealth delay draw RW 0x774CEB is ported for the groups the formation "
-		"manager does not take (S-895); not ported: the siege bodies, the end's merge into a nearby AI team with its draw RW 0x8F1F08 (the units are released), "
-		"the DEFENSIVE heuristic and tactics (RW 0x90C436) (only the One Ring OPPORTUNITY heuristic is "
+		"manager does not take (S-895); DEFENSIVE targeting and SimpleDefense are ported (RW 0x97D74F / 0x9B4EF0); not ported: the siege bodies, the end's merge into a nearby AI team with its draw RW 0x8F1F08 (the units are released), "
+		"(only the One Ring OPPORTUNITY heuristic is "
 		"ported; the tech-building OPPORTUNITY heuristic remains unported), the targetless tactics other than FarmKillSquad and FlagCaptureSquad, RW 0x90CCCB, the AI team objects; "
 		"lane AIEXPAND-1 ported the EXPANSION heuristic (RW 0x97D035 / 0x97D191: the nearest free Player_N_Start as a position target; its frame "
 		"counter is per game, retail's runs on across a process's games) and the EXPANSION tactic (RW 0x90C50C, SimpleExpansion RW 0x9B5190 / 0x9B52BD: "
@@ -688,7 +692,7 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"unfinished structures as targets (lane DECOMP-2: RW's AI::findClosestEnemy RW 0x701443 -> 0x7006D7 and its attack test RW 0x68D6A6 / 0x6C9147 / "
 		"0x6C8652 never test UNDER_CONSTRUCTION); INFERENCE: the worker kill runs at the port's delete point, the defeat frames are engine pins",
 		"[S-418] skirmish ai tactical layer inference: (lane DECOMP-3: the player info record AIStatCollector RW 0x8E46D9 is ported and filled by the object "
-		"events RW 0x6A9D9C / 0x6A99CB, so its lists keep RW's event order; its position sampler and listeners are not ported; newGame's pass walks the port's "
+		"events RW 0x6A9D9C / 0x6A99CB, so its lists keep RW's event order; its position sampler is ported; the economy listener remains unported; newGame's pass walks the port's "
 		"default team backwards as RW's prepended member list); (lane DECOMP-2: the team builder's recruit test "
 		"RW 0x9A24FC, the SUPPORT rule, the hand-over at the minimum when DEFENSIVE, full or meeting the target's threat RW 0x9A26A1, the pooled defaults and the "
 		"idle dispatch RW 0x9A3040 are ported; its unit list is taken as the army list) a unit in another team is never taken (RW's priority and DEFENSIVE-target branches), a member counts until it is destroyed, the threat sum runs "

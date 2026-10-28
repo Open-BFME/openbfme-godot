@@ -16,6 +16,7 @@
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 
 #include "Common/Player.h"
+#include <cmath>
 #include "Common/PlayerList.h"
 #include "Common/StateHash.h"
 #include "GameLogic/AI/AIXfer.h"
@@ -303,6 +304,8 @@ void xferBrain(Xfer &x, AIBrainState &b, RequestTable &table, int version)
 	for (AITarget &t : b.targets)
 	{
 		x.xferInt(&t.type);
+		x.xferInt(&t.defenseSize);
+		AIXfer::inRange(t.defenseSize, 0, 2, "skirmish ai: a defensive target size");
 		x.xferUnsignedInt(&t.frame);
 		AIXfer::coord(x, t.position);
 		x.xferBool(&t.inactive);
@@ -337,8 +340,8 @@ void xferBrain(Xfer &x, AIBrainState &b, RequestTable &table, int version)
 		{
 			// an offensive prototype 0 .. 7 or the expansion prototype 8 (version 4) by its name, or a targetless one (100 + 0 .. 10, AITacticalAI.cpp)
 			static const char *const kOffensive[] = { "SimpleAttack", "FormationAttack", "FlankAttack", "PincerAttack", "FeintAttack",
-				"AIBasePenetrationTroopsTactic", "SimpleSiege", "SiegeGates", "SimpleExpansion" };
-			const int prototypes = version >= 4 ? 9 : 8;
+				"AIBasePenetrationTroopsTactic", "SimpleSiege", "SiegeGates", "SimpleExpansion", "SimpleDefense" };
+			const int prototypes = 10;
 			if (!(tac.kindIndex >= 0 && tac.kindIndex < prototypes && tac.kind == kOffensive[tac.kindIndex]) && !(tac.kindIndex >= 100 && tac.kindIndex < 111))
 			{
 				throw XferException("skirmish ai: a tactic '" + tac.kind + "' of the prototype " + std::to_string(tac.kindIndex));
@@ -357,6 +360,8 @@ void xferBrain(Xfer &x, AIBrainState &b, RequestTable &table, int version)
 			x.xferBool(&team.wantsMembers);
 			x.xferBool(&team.handedOver);
 			AIXfer::ids(x, team.members);
+			x.xferBool(&team.hasRecruitOrigin);
+			AIXfer::coord(x, team.recruitOrigin);
 			AIXfer::coord(x, team.lastPosition);
 			x.xferInt(&team.index);
 			x.xferInt(&team.idleFrames);
@@ -426,9 +431,36 @@ void xferBrain(Xfer &x, AIBrainState &b, RequestTable &table, int version)
 }
 } // namespace
 
+void AIPositionSampler::xfer(Xfer &x)
+{
+	x.xferReal(&m_padding);
+	if (x.isLoading() && !std::isfinite(m_padding)) throw XferException("skirmish ai: non-finite spatial padding");
+	AIXfer::ids(x, m_members);
+	x.xferVectorSize(m_groups, 21);
+	for (Group &g : m_groups)
+	{
+		x.xferReal(&g.radius);
+		AIXfer::coord(x, g.center);
+		x.xferBool(&g.selected);
+		AIXfer::ids(x, g.members);
+		if (g.members.empty()) throw XferException("skirmish ai: empty spatial group");
+		if (x.isLoading() && (!std::isfinite(g.radius) || !std::isfinite(g.center.x) || !std::isfinite(g.center.y) || !std::isfinite(g.center.z)))
+			throw XferException("skirmish ai: non-finite spatial group");
+	}
+	if (x.isLoading())
+	{
+		std::vector<ObjectID> grouped;
+		for (const Group &g : m_groups) grouped.insert(grouped.end(), g.members.begin(), g.members.end());
+		auto members = m_members;
+		std::sort(members.begin(), members.end());
+		std::sort(grouped.begin(), grouped.end());
+		if (members != grouped) throw XferException("skirmish ai: spatial groups differ from registrations");
+	}
+}
+
 void AIStatCollector::xfer(Xfer &x)
 {
-	XferVersion v{ 2, 2 }; // version 2 (lane AI5): the money reserve and its target (the block's version 2 refuses older snapshots)
+	XferVersion v{ 3, 3 }; // version 3: preserve registration order and spatial groups
 	x.xferVersion(v);
 	for (std::vector<ObjectID> *l : { &m_army, &m_dozers, &m_ships, &m_structures, &m_pads, &m_economy, &m_heroes })
 	{
@@ -438,6 +470,7 @@ void AIStatCollector::xfer(Xfer &x)
 		x.xferAsciiString(&k);
 		x.xferInt(&n);
 	});
+	m_positions.xfer(x);
 	x.xferUnsignedInt(&m_reserve);
 	x.xferUnsignedInt(&m_reserveTarget);
 }
@@ -448,7 +481,7 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 	// history, which cannot be recovered from current KindOf flags: older snapshots are refused. Version 4 (lane AIEXPAND-1): the EXPANSION heuristic's frame
 	// counter, SimpleExpansion's request and plain structure requests. A version 3 snapshot comes from a build without the heuristic: it loads with 0, the
 	// count at a game's start (its first expansion check then comes 301 checks after the load)
-	XferVersion v{ 3, 4 };
+	XferVersion v{ 5, 5 }; // source AI groups, ArmyBreaker timers, defense fields; prior layouts are incompatible.
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	bool started = loading ? false : m_started;
@@ -471,6 +504,8 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 		x.xferInt(&t.first);
 		AIXfer::uns(x, t.second);
 	}
+	x.xferVectorSize(m_armyBreakerTimers, 8);
+	for (auto &t : m_armyBreakerTimers) { x.xferInt(&t.first); AIXfer::uns(x, t.second); }
 	// the data the AI decides from is the game's (the START's identity): its hash must be the saved one
 	bool hasStore = m_store != nullptr;
 	std::uint32_t storeHash = 0;
@@ -768,6 +803,12 @@ void SkirmishAIManager::checkLoaded() const
 			throw XferException("skirmish ai: player " + std::to_string(t.first) + " has two spell book assist timers");
 		}
 	}
+	std::set<int> broken;
+	for (const auto &t : m_armyBreakerTimers)
+	{
+		player(t.first, "skirmish ai: the player of an army breaker timer");
+		if (!broken.insert(t.first).second) throw XferException("skirmish ai: player " + std::to_string(t.first) + " has two army breaker timers");
+	}
 	// objects the AI keeps up to date with the object events (RW 0x6A9D9C / 0x6A99CB): a request's producer, the free dozers, the dozer and unit
 	// factories, the player info records' lists. They must be objects of the loaded game
 	auto object = [&](ObjectID id, const char *what) {
@@ -975,6 +1016,11 @@ void SkirmishAIManager::checkLoaded() const
 	}
 	for (const auto &kv : m_records)
 	{
+		for (ObjectID id : kv.second->positions().members())
+		{
+			object(id, "a spatial registration");
+			owned(id, kv.first, "a spatial registration");
+		}
 		for (const std::vector<ObjectID> *list : kv.second->lists())
 		{
 			for (ObjectID id : *list)
@@ -1003,6 +1049,7 @@ void SkirmishAIManager::xfer(Xfer &x)
 	m_attackedAtIds = loaded.m_attackedAtIds;
 	m_expansionHeuristicFrames = loaded.m_expansionHeuristicFrames;
 	m_assistTimers = std::move(loaded.m_assistTimers);
+	m_armyBreakerTimers = std::move(loaded.m_armyBreakerTimers);
 	m_groups = std::move(loaded.m_groups);
 	m_infoPlayers = std::move(loaded.m_infoPlayers);
 	m_captureFlags = std::move(loaded.m_captureFlags);

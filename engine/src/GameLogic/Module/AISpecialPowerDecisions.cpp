@@ -24,6 +24,7 @@
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
+#include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/AIThreatFinder.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/System/ShroudManager.h"
@@ -754,6 +755,137 @@ bool AISpecialPowerUpdate::decideBuffEconomy(Object &obj)
 			m_decision->buffedIds.insert(o->getID());
 			return true;
 		}
+	}
+	return false;
+}
+
+namespace
+{
+// TARGET RW 0x6C7807: the allied group's first AI owns the chooser/current enemy.
+const AISkirmishPlayer *chooserOwner(Object &obj)
+{
+	const Player *player = obj.getControllingPlayer();
+	const auto *ai = player ? obj.logic().skirmishAI().findAI(player->getPlayerIndex()) : nullptr;
+	return ai ? (ai->groupFirst ? ai->groupFirst : ai) : nullptr;
+}
+const AIStatCollector *primaryEnemyRecord(Object &obj)
+{
+	const auto *ai = chooserOwner(obj);
+	return ai && ai->brain.chooser ? obj.logic().skirmishAI().record(ai->brain.currentEnemy) : nullptr;
+}
+Object *enemyFortress(Object &obj)
+{
+	const auto *record = primaryEnemyRecord(obj);
+	static const int fortress = kind("DOZER_FACTORY"); // TARGET template+0x120 bit2, not COMMANDCENTER.
+	if (record)
+		for (ObjectID id : record->structures())
+		{
+			Object *o = obj.logic().findObjectByID(id);
+			if (o && hasKind(*o, fortress))
+				return o;
+		}
+	return nullptr;
+}
+} // namespace
+bool AISpecialPowerUpdate::decideStructureBreaker(Object &obj)
+{
+	// DONOR: AISpellBookStructureBreaker_shouldActivate.cpp / AISpellBookBase_findDenseStructureCenter.cpp.
+	// TARGET RW 0x9E7A98 / 0xA024DA; variants RW 0x9E7942 / 0x9E6EF4 (S-001 caveat).
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	const int type = m_decision->type;
+	if (type != AISP_SPELLBOOK_STRUCTURE_BREAKER)
+	{
+		Object *unit = player ? firstBusyArmyUnit(logic, *player, true, true, false) : nullptr;
+		if (unit)
+		{
+			static const int wallKinds[] = {kind("WALK_ON_TOP_OF_WALL"), kind("DEFENSIVE_WALL"), kind("WALL_UPGRADE"), kind("WALL_HUB"),
+											kind("WALL_SEGMENT")};
+			static const int fortress = kind("DOZER_FACTORY");
+			PartitionFilterFn kinds([&](Object &o) {
+				if (type == AISP_SPELLBOOK_STRUCTURE_BASEKILL)
+					return hasKind(o, fortress);
+				for (int k : wallKinds)
+					if (hasKind(o, k))
+						return true;
+				return false;
+			});
+			PartitionFilterFn enemy([&](Object &o) { return relationIn(player, o, 4u); });
+			PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); });
+			const auto hits = logic.partition().iterateObjectsInRange(*unit->getPosition(), 500.0f, FROM_CENTER_2D, {&enemy, &kinds, &alive},
+																	  ITER_SORTED_NEAR_TO_FAR);
+			if (!hits.empty())
+				return setLocationIfValid(obj, *(*hits.begin()).object->getPosition());
+		}
+		// Base-kill waits for a busy unit near a still-standing enemy fortress.
+		if (type == AISP_SPELLBOOK_STRUCTURE_BASEKILL && enemyFortress(obj))
+			return false;
+	}
+	const auto *record = primaryEnemyRecord(obj);
+	if (!record || !player || !logic.shroud())
+		return false;
+	size_t best = 0;
+	Coord3D point{};
+	for (const auto &group : record->positions().groups())
+	{
+		if (group.members.size() <= best)
+			continue;
+		if (logic.shroud()->getStatusAt(player->getPlayerIndex(), group.center.x, group.center.y) == CELLSHROUD_SHROUDED)
+			continue;
+		best = group.members.size();
+		point = group.center;
+	}
+	return best != 0 && setLocationIfValid(obj, point);
+}
+bool AISpecialPowerUpdate::decideCitadel(Object &obj)
+{
+	// DONOR Common/Rva005D7395CitadelPick.cpp; TARGET RW 0x9E6CCB (S-001 caveat).
+	const auto *fortress = enemyFortress(obj);
+	const auto *owner = obj.getControllingPlayer() ? obj.logic().skirmishAI().findAI(obj.getControllingPlayer()->getPlayerIndex()) : nullptr;
+	if (!fortress || !owner)
+		return false;
+	const Coord3D own = owner->build.startPosition;
+	const Coord3D enemy = *fortress->getPosition();
+	const float fraction = obj.logic().random().getValueReal(0, 1, "AISpellBookCitadel.cpp", 73);
+	const Coord3D delta{SimMath::subf32(enemy.x, own.x), SimMath::subf32(enemy.y, own.y), SimMath::subf32(enemy.z, own.z)};
+	Coord3D location{SimMath::addf32(own.x, SimMath::mulf32(delta.x, fraction)), SimMath::addf32(own.y, SimMath::mulf32(delta.y, fraction)),
+					 SimMath::addf32(own.z, SimMath::mulf32(delta.z, fraction))};
+	const float z = obj.logic().random().getValueReal(-1, 1, "AISpellBookCitadel.cpp", 81);
+	const Coord3D offset{SimMath::subf32(SimMath::mulf32(delta.y, z), SimMath::mulf32(delta.z, 0.0f)),
+						 SimMath::subf32(SimMath::mulf32(delta.z, 0.0f), SimMath::mulf32(delta.x, z)),
+						 SimMath::subf32(SimMath::mulf32(delta.x, 0.0f), SimMath::mulf32(delta.y, 0.0f))};
+	location = {SimMath::addf32(location.x, offset.x), SimMath::addf32(location.y, offset.y), SimMath::addf32(location.z, offset.z)};
+	return setLocationIfValid(obj, location);
+}
+
+bool AISpecialPowerUpdate::decideArmyBreaker(Object &obj)
+{
+	// TARGET RW 0x9E92CA: RotWK uses attacked-at threat totals, unlike the BFME2 busy-unit/count test.
+	// DONOR AISpellBookArmyBreaker.cpp supplies the independent per-player timer shape. TARGET RW 0x9E9222
+	// and startup RW 0xBCA418 / 0xBCA42F: delay 15..30 seconds, line 0x53 (S-001 caveat).
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	const auto *ai = player ? logic.skirmishAI().findAI(player->getPlayerIndex()) : nullptr;
+	if (!ai)
+		return false;
+	for (const AIAttackedAt &battle : ai->brain.attackedAt)
+	{
+		if (!(battle.enemies.v[0] >= m_decision->range) || !(SimMath::mulf32(battle.enemies.v[0], 0.5f) >= battle.others.v[0]))
+			continue;
+		if (!setLocationIfValid(obj, battle.position))
+			continue;
+		auto &timers = logic.skirmishAI().spellBookArmyBreakerTimers();
+		auto it = std::find_if(timers.begin(), timers.end(), [&](const auto &entry) { return entry.first == player->getPlayerIndex(); });
+		if (it == timers.end())
+		{
+			timers.push_back({player->getPlayerIndex(), logic.getFrame()});
+			it = timers.end() - 1;
+		}
+		if (it->second > logic.getFrame())
+			continue;
+		it->second = logic.getFrame() +
+					 (unsigned)logic.random().getValue(15 * LOGICFRAMES_PER_SECOND, 30 * LOGICFRAMES_PER_SECOND, "AISpellBookArmyBreaker.cpp", 0x53);
+		return true;
 	}
 	return false;
 }

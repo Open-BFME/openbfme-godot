@@ -3,7 +3,7 @@
 //
 // AISpecialPowerUpdate (lane MOD-4, QA-1 U2): a computer player's units use their powers on their own. A BFME class (ZH has none); the decision objects
 // live in the binary's SkirmishAI\AISpecialPowers\AISPecialPower*.cpp (RW 0xC87E90 / 0xC910D0 name the files). Ported from the RotWK binary (caveat S-001);
-// Open-BFME-2 has no matching source for these functions.
+// Matching Open-BFME-2 donors are cited on the decision bodies where available; established RotWK differences take precedence.
 //
 // TARGET FACTS (each read from the disassembly):
 //   * the class (create RW 0x64FAD8, size 0x28, constructor RW 0x8B703A over the UpdateModule constructor RW 0x653114; vtables RW 0xC6DA14 / behaviour
@@ -192,6 +192,9 @@ private:
 	bool decideRebuild(Object &obj);                            // RW 0x9E7744
 	bool decideEnshroudingMist(Object &obj);                    // RW 0x9E7869
 	bool decideCallTheHorde(Object &obj);                       // RW 0x9E71B0
+	bool decideStructureBreaker(Object &obj);                 // RW 0x9E7A98 / 0x9E7942 / 0x9E6EF4
+	bool decideArmyBreaker(Object &obj);                       // RW 0x9E92CA
+	bool decideCitadel(Object &obj);                          // RW 0x9E6CCB
 	bool decideBuffEconomy(Object &obj);                        // RW 0x9E7671
 	// the location base (RW 0xA01C6B): RW 0xA021D8 (the ActionManager's test and SpellMakesAStructure), RW 0xA0229F (that test at the location, else with
 	// RandomizeTargetLocation at 15, 30, .. 150 along one random direction, RW 0xA01C9C); the first that passes becomes the location (+ 0x20)

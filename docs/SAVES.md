@@ -1048,3 +1048,8 @@ and native paths instead; the command below is the Linux form.
 ```sh
 engine/build/openbfme_peer --load-save workspace/saved.obfmesave --replay workspace/full.replay --verify-log --report workspace/save-check.txt
 ```
+
+Source AI overhaul: obfme:SkirmishAI now requires version 5 for spatial groups,
+independent ArmyBreaker timers and SimpleDefense recruitment state; earlier
+layouts are explicitly refused. AIStatCollector is version 3 and TerrainTrees
+version 2. See [AI source overhaul](AI-SOURCE-OVERHAUL.md).

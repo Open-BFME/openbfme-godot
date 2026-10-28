@@ -17,6 +17,8 @@ class PlayerEconomyHost
 {
 public:
 	virtual ~PlayerEconomyHost() = default;
+	// RW 0x73C344 / 0x73C567: only Brutal players with a registered skirmish AI receive these reductions.
+	virtual float aiProductionReduction(const Player &player, bool time) const = 0;
 	// RW 0x6ABD0B Player::hasObjectMatching(filter, completedOnly): the player owns a live object (not destroyed, not a sold / ghost object) whose template the
 	// filter allows; `completedOnly` additionally skips structures that are still under construction (RW 0x7A075A)
 	virtual bool hasObjectMatching(const Player &player, const ObjectFilter &filter, bool completedOnly) const = 0;

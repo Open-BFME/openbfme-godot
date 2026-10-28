@@ -10,6 +10,8 @@
 #include "StartTestUtil.h"
 
 #include "Common/Player.h"
+#include "Common/XferSave.h"
+#include "Common/XferLoad.h"
 #include "Common/PlayerList.h"
 #include "Common/SpecialPower.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -25,6 +27,7 @@
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/System/ShroudManager.h"
 #include "GameLogic/Object/Object.h"
@@ -261,6 +264,12 @@ TEST_CASE("AIPOW-1: the decision functions of RW 0x992724's classes and their co
 		{ 21, 0xC8E224, 0x9B501B }, // SPELLBOOK_ALWAYS_FIRE (`mov al, 1`)
 		{ 25, 0xC8E090, 0x9E86BE }, // SPELLBOOK_CAPTURE_CREEP
 		{ 34, 0xC8DFB4, 0x9E7CA3 }, // SPELLBOOK_SHROUD_REVEAL
+		{ 27, 0xC8DF88, 0x9E7A98 }, // STRUCTURE_BREAKER
+		{ 28, 0xC8DF60, 0x9E7942 }, // STRUCTURE_BREAKER_PREF_WALLS
+		{ 36, 0xC8DDFC, 0x9E6EF4 }, // STRUCTURE_BASEKILL
+		{ 37, 0xC8DD50, 0x9E6CCB }, // CITADEL
+		{ 24, 0xC8E178, 0x9E92CA }, // ARMY_BREAKER
+		{ 35, 0xC8DE20, 0x9E70B6 }, // TREE_KILLER
 	};
 	for (const Row &r : rows)
 	{
@@ -492,11 +501,10 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 	const std::vector<std::string> ai = AISpecialPowerUpdate::stopLines();
 	REQUIRE(ai.size() == 2);
 	CHECK(ai[0].rfind("[S-1421]", 0) == 0);
-	CHECK(ai[0].find("42 of the 53 decisions run") != std::string::npos);
+	CHECK(ai[0].find("48 of the 53 decisions run") != std::string::npos);
 	CHECK(ai[0].find("SOUL_FREEZE") != std::string::npos);
 	CHECK(ai[1].rfind("[S-1875]", 0) == 0);
-	// the decisions still unported: SOUL_FREEZE, ATTACK_HEAL_AOE and 9 spell book ones (ARMY_BREAKER, HEAL, STRUCTURE_BREAKER (+ _PREF_WALLS, BASEKILL),
-	// TREE_KILLER, CITADEL, DEBUFFECONOMYBUILDING, DEBUFFPRODUCTIONBUILDING)
+	// Still unported: SOUL_FREEZE, ATTACK_HEAL_AOE, HEAL, and the two building debuffs.
 	int unported = 0;
 	for (int t = 0; t < AI_SPECIAL_POWER_TYPE_COUNT; ++t)
 	{
@@ -507,7 +515,7 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 			CHECK_MESSAGE((spellBook || t == 44 || t == 49), TheAISpecialPowerTypeNames[t]);
 		}
 	}
-	CHECK(unported == 11);
+	CHECK(unported == 5);
 	CHECK(AISpecialPowerDecision::decisionPorted(21));
 	CHECK(AISpecialPowerDecision::decisionPorted(25));
 	CHECK(AISpecialPowerDecision::decisionPorted(34));
@@ -983,4 +991,228 @@ TEST_CASE("AIPOW-1 r2: the Elves' BUFFTERRAIN (Elven Wood, RW 0x9E77EE) and ENSH
 	CHECK(distance2D(mist->decidedLocation(), *mine->getPosition()) <= 150.0f);
 	MESSAGE("BUFFTERRAIN " << distance2D(terrain->decidedLocation(), *mine->getPosition()) << ", ENSHROUDINGMIST "
 	                       << distance2D(mist->decidedLocation(), *mine->getPosition()) << " from the unit");
+}
+
+TEST_CASE("source AI structure powers: dense human structure group and fortress-aware basekill")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 6101, &err), err);
+	auto *player = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *player);
+	REQUIRE(book);
+	a.advance(2);
+	a.logic->shroud()->revealMapForPlayerPermanently(player->getPlayerIndex());
+	// Reuse a real location power/module for the shared A0229F acceptance test.
+	AISpecialPowerUpdateModuleData data;
+	data.m_commandButtonName = "Command_SpellBookArrowVolleyGood";
+	data.m_specialPowerAIType = 27;
+	AISpecialPowerUpdate breaker(book, &data);
+	breaker.initAsIfInCommandSetForTest();
+	REQUIRE(breaker.decision());
+	REQUIRE(breaker.decision()->button);
+	auto *ai = const_cast<AISkirmishPlayer *>(a.logic->skirmishAI().findAI(player->getPlayerIndex()));
+	REQUIRE(ai);
+	REQUIRE(ai->groupFirst);
+	ai->groupFirst->brain.currentEnemy = -1;
+	CHECK_FALSE(breaker.decideNow());
+	ai->groupFirst->brain.currentEnemy = a.human->getPlayerIndex();
+	for (int i = 0; i < 20; ++i)
+	{
+		Object *farm = a.make("GondorFarm", a.human, 0, 0);
+		// LiveGame's developer creation helper assigns position after construction.
+		// Exercise the native re-registration event at the final placement, as a command-set change does.
+		a.logic->skirmishAI().objectRemoved(*farm);
+		a.logic->skirmishAI().objectAdded(*farm);
+	}
+	CHECK(breaker.decideNow());
+	CHECK(breaker.decidedLocation().x == a.where.x);
+	CHECK(breaker.decidedLocation().y == a.where.y);
+	data.m_specialPowerAIType = 36;
+	AISpecialPowerUpdate basekill(book, &data);
+	basekill.initAsIfInCommandSetForTest();
+	CHECK_FALSE(basekill.decideNow()); // Enemy fortress exists, but no busy army unit near it.
+	Object *mine = a.make("GondorFighterHorde", a.ai, 0, 0);
+	Object *victim = a.make("GondorFighterHorde", a.human, 30, 0);
+	Object *fortress = a.make("MenFortressCitadel", a.human, 0, 200);
+	REQUIRE(mine->getAIUpdateInterface()->aiAttackObject(victim, CMD_FROM_PLAYER));
+	CHECK(basekill.decideNow());
+	CHECK(basekill.decidedLocation().x == fortress->getPosition()->x);
+	CHECK(basekill.decidedLocation().y == fortress->getPosition()->y);
+	data.m_specialPowerAIType = 28;
+	AISpecialPowerUpdate walls(book, &data);
+	walls.initAsIfInCommandSetForTest();
+	Object *farWall = a.make("MenWallSegmentSmall", a.human, 0, 120);
+	Object *nearWall = a.make("MenWallSegmentSmall", a.human, 0, 80);
+	(void)farWall;
+	CHECK(walls.decideNow());
+	CHECK(walls.decidedLocation().x == nearWall->getPosition()->x);
+	CHECK(walls.decidedLocation().y == nearWall->getPosition()->y);
+	// Citadel targets the first fortress in record order and consumes exactly two named draws.
+	Object *firstFortress = nullptr;
+	for (ObjectID id : AITacticalAI::recordOf(*a.logic, a.human->getPlayerIndex()).structures())
+	{
+		Object *o = a.logic->findObjectByID(id);
+		if (o && o->isKindOfName("DOZER_FACTORY"))
+		{
+			firstFortress = o;
+			break;
+		}
+	}
+	REQUIRE(firstFortress);
+	Coord3D enemy = a.where;
+	enemy.x += 200.0f;
+	firstFortress->setPosition(&enemy);
+	ai->build.startPosition = a.where;
+	ai->build.startPosition.x -= 200.0f;
+	data.m_specialPowerAIType = 37;
+	AISpecialPowerUpdate citadel(book, &data);
+	citadel.initAsIfInCommandSetForTest();
+	a.logic->random().seedRandom(1);
+	a.logic->random().enableCallLog(true);
+	a.logic->random().clearCallLog();
+	CHECK(citadel.decideNow());
+	const auto &calls = a.logic->random().callLog();
+	REQUIRE(calls.size() == 2);
+	CHECK(calls[0].file == "AISpellBookCitadel.cpp");
+	CHECK(calls[0].line == 73);
+	CHECK(calls[1].file == "AISpellBookCitadel.cpp");
+	CHECK(calls[1].line == 81);
+	const float x = SimMath::addf32(ai->build.startPosition.x, SimMath::mulf32(400.0f, calls[0].rresult));
+	const float y = SimMath::addf32(a.where.y, SimMath::subf32(0.0f, SimMath::mulf32(400.0f, calls[1].rresult)));
+	CHECK(citadel.decidedLocation().x == x);
+	CHECK(citadel.decidedLocation().y == y);
+}
+
+TEST_CASE("source AI Army Breaker: threat thresholds, independent timer, and snapshot restore")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 6102, &err), err);
+	auto *player = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *player);
+	REQUIRE(book);
+	a.advance(2);
+	a.logic->shroud()->revealMapForPlayerPermanently(player->getPlayerIndex());
+	AISpecialPowerUpdateModuleData data;
+	data.m_commandButtonName = "Command_SpellBookArrowVolleyGood";
+	data.m_specialPowerAIType = 24;
+	data.m_specialPowerRange = 100;
+	AISpecialPowerUpdate power(book, &data);
+	power.initAsIfInCommandSetForTest();
+	REQUIRE(power.decision());
+	auto *ai = const_cast<AISkirmishPlayer *>(a.logic->skirmishAI().findAI(player->getPlayerIndex()));
+	REQUIRE(ai);
+	AIAttackedAt battle;
+	battle.id = 1;
+	battle.position = a.where;
+	battle.enemies.v[0] = 99;
+	battle.others.v[0] = 0;
+	ai->brain.attackedAt = {battle};
+	a.logic->skirmishAI().attackedAtIds() = 1;
+	CHECK_FALSE(power.decideNow());
+	ai->brain.attackedAt[0].enemies.v[0] = 100;
+	ai->brain.attackedAt[0].others.v[0] = 51;
+	CHECK_FALSE(power.decideNow());
+	ai->brain.attackedAt[0].others.v[0] = 50;
+	auto &random = a.logic->random();
+	random.enableCallLog(true);
+	random.clearCallLog();
+	CHECK(power.decideNow());
+	REQUIRE(random.callLog().size() == 1);
+	const auto call = random.callLog()[0];
+	CHECK(call.file == "AISpellBookArmyBreaker.cpp");
+	CHECK(call.line == 0x53);
+	CHECK(call.lo == 75);
+	CHECK(call.hi == 150);
+	CHECK(power.decidedLocation().x == a.where.x);
+	CHECK(power.decidedLocation().y == a.where.y);
+	auto &manager = a.logic->skirmishAI();
+	REQUIRE(manager.spellBookArmyBreakerTimers().size() == 1);
+	CHECK(manager.spellBookArmyBreakerTimers()[0].second == a.logic->getFrame() + (unsigned)call.result);
+	CHECK(manager.spellBookAssistTimers().empty());
+	CHECK_FALSE(power.decideNow());
+	CHECK(random.callLog().size() == 1);
+	XferSave save;
+	manager.xfer(save);
+	const auto timer = manager.spellBookArmyBreakerTimers()[0];
+	manager.spellBookArmyBreakerTimers().clear();
+	XferLoad load(save.data());
+	manager.xfer(load);
+	REQUIRE(manager.spellBookArmyBreakerTimers().size() == 1);
+	CHECK(manager.spellBookArmyBreakerTimers()[0] == timer);
+	CHECK_FALSE(power.decideNow());
+}
+TEST_CASE("source AI tree killer: largest group, global selection, invalid cast consumption, and snapshot restore")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 6103, &err), err);
+	auto *player = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *player);
+	REQUIRE(book);
+	a.advance(2);
+	a.logic->shroud()->revealMapForPlayerPermanently(player->getPlayerIndex());
+	auto &trees = a.logic->trees();
+	trees.reset();
+	trees.setExtent(-300, -300, 7000, 7000);
+	const auto *tmpl = s->world->things().findTemplate("GenericInteractableOptimizedTree");
+	REQUIRE(tmpl);
+	const Coord3D largest = a.where;
+	const Coord3D smaller{a.where.x, a.where.y + 200, a.where.z};
+	REQUIRE(trees.addTree(*tmpl, largest, 1));
+	REQUIRE(trees.addTree(*tmpl, largest, 2));
+	REQUIRE(trees.addTree(*tmpl, smaller, 3));
+	AISpecialPowerUpdateModuleData data;
+	data.m_commandButtonName = "Command_SpellBookArrowVolleyGood";
+	data.m_specialPowerAIType = 35;
+	AISpecialPowerUpdate power(book, &data);
+	power.initAsIfInCommandSetForTest();
+	REQUIRE(power.decision());
+	CHECK(power.decideNow());
+	CHECK(power.decidedLocation().x == largest.x);
+	CHECK(power.decidedLocation().y == largest.y);
+	XferSave save;
+	trees.xfer(save);
+	AISpecialPowerUpdate other(book, &data);
+	other.initAsIfInCommandSetForTest();
+	CHECK(other.decideNow()); // Selection is shared by every spell decision/player, not local to the caster.
+	CHECK(other.decidedLocation().x == smaller.x);
+	CHECK(other.decidedLocation().y == smaller.y);
+	CHECK_FALSE(power.decideNow());
+	XferLoad load(save.data());
+	trees.xfer(load);
+	CHECK(power.decideNow());
+	CHECK(power.decidedLocation().x == smaller.x);
+	CHECK(power.decidedLocation().y == smaller.y);
+	// Depletion clears record positions but must not change the cached runtime group when reloaded.
+	XferLoad restore(save.data());
+	trees.xfer(restore);
+	auto *depleted = trees.findClosestTree(smaller, 1.0f, false, 0);
+	REQUIRE(depleted);
+	const int value = depleted->value;
+	REQUIRE(trees.harvestTree(*depleted, value) == value);
+	CHECK(depleted->position.x == 0.0f);
+	CHECK(depleted->position.y == 0.0f);
+	XferSave afterHarvest;
+	trees.xfer(afterHarvest);
+	CHECK(power.decideNow());
+	CHECK(power.decidedLocation().y == smaller.y);
+	XferLoad restoreHarvest(afterHarvest.data());
+	trees.xfer(restoreHarvest);
+	CHECK(power.decideNow());
+	CHECK(power.decidedLocation().y == smaller.y);
+	// Source marks the chosen group before the shared location picker answers no.
+	trees.reset();
+	trees.setExtent(-300, -300, 7000, 7000);
+	REQUIRE(trees.addTree(*tmpl, largest, 4));
+	auto *decision = const_cast<AISpecialPowerDecision *>(power.decision());
+	const auto *button = decision->button;
+	decision->button = nullptr;
+	CHECK_FALSE(power.decideNow());
+	decision->button = button;
+	CHECK_FALSE(power.decideNow());
 }

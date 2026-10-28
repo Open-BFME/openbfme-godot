@@ -1640,14 +1640,17 @@ int checkWithReserve(GameLogic &logic, const AIBuildRequest &r, Player &player, 
 	return code;
 }
 
-// RW 0x96190B before vslot 0x3C: a request with + 0x21 whose cost (vslot 0x24, ftol) is above 0 and within the reserve draws it from the reserve (RW 0x99E79A)
+// DONOR Open-BFME-2 Common/AIBuildable_doBuild.cpp (0x55ADE2): withdraw only price minus cash,
+// and only when the reserve covers the entire shortfall. TARGET RW 0x96190B (S-001 provenance caveat).
 void drawExecutionCost(GameLogic &logic, const AIBuildRequest &r, Player &player)
 {
-	const int cost = requestCost(logic, r, player);
+	const float cost = (float)requestCost(logic, r, player);
+	const float cash = (float)player.getMoney()->countMoney();
+	const int shortfall = SimMath::truncToInt32(SimMath::subf32(cost, cash));
 	const AIStatCollector *rec = logic.skirmishAI().record(player.getPlayerIndex());
-	if (r.reserveMoney && rec && cost > 0 && (std::uint32_t)cost <= rec->reserve())
+	if (r.reserveMoney && rec && cost > cash && (std::uint32_t)shortfall <= rec->reserve())
 	{
-		AIBaseBuilder::withdrawFromReserve(logic, player, (std::uint32_t)cost);
+		AIBaseBuilder::withdrawFromReserve(logic, player, (std::uint32_t)shortfall);
 	}
 }
 
@@ -1924,7 +1927,9 @@ void AIBaseBuilder::update(GameLogic &logic, AISkirmishPlayer &ai)
 	{
 		updateUnitBuilder(logic, ai, *player);
 	}
-	// RW 0x8F0F23: the team builder (+ 0x90) runs here in RW (AITacticalAI::updateTeamBuilder, called after this function: it draws no random value), then the
+	// DONOR Open-BFME-2 AIBuilderUpdate.cpp: base, wall, units, teams, economy, upgrades, request processor.
+	// TARGET RW 0x8F0F23 (S-001): recruitment and command ownership precede the economy and upgrade/request work.
+	AITacticalAI::updateTeamBuilder(logic, ai);
 	// economy builder (+ 0xC0)
 	if (!s.economy.disabled && ai.army && ai.store)
 	{
