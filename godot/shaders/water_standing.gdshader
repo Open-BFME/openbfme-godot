@@ -95,6 +95,10 @@ vec4 pca_coefficient(int row) {
 
 varying vec2 v_world;
 varying vec3 v_world_position;
+// per vertex, as the vertex shaders compute them: the range-fog factor (vs blob 19 oD1.w, blob 9 oT6.w, blob 13 oD1.x) and BumpSpecular_M's normalised
+// half-vector (vs blob 9: nrm r4.xyz, r3 -> oT6.xyz), which the pixel shader (blob 8) uses interpolated, without normalising it again
+varying float v_fog;
+varying vec3 v_half;
 // lane ZOOM-1: the local player's shroud (GameWorld::refresh_shroud sets these on the terrain and on this layer): ZH WaterRenderObjClass modulates its
 // water with the shroud texture in a second pass / stage (W3DWater.cpp, the ST_SHROUD_TEXTURE passes); the border level outside the map is black
 uniform sampler2D shroud_tex : filter_linear, repeat_disable, hint_default_white;
@@ -133,6 +137,9 @@ void vertex() {
 	}
 	v_world = vec2(world.x, -world.z);
 	v_world_position = world;
+	v_fog = 1.0 - fog_enabled * clamp((length(CAMERA_POSITION_WORLD - world) - w3d_fog_shift - fog_range_start) / max(fog_range_end - fog_range_start, 0.0001), 0.0, 1.0);
+	vec3 eye_v = normalize(CAMERA_POSITION_WORLD - world);
+	v_half = normalize(vec3(eye_v.x, -eye_v.z, eye_v.y) + specular_direction);
 	vec3 shroud_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_shroud_uv = (vec2(shroud_world.x, -shroud_world.z) - shroud_origin) / shroud_extent;
 }
@@ -226,13 +233,12 @@ void fragment() {
 			// BumpSpecular_M: ps blob 8 (vs blob 9)
 			vec3 env = texture(sky_tex, base * env_uv_scale).rgb;
 			vec3 v0 = clamp(material_diffuse.rgb * (2.0 * dimming) * light_color, 0.0, 1.0);
-			float lighting = clamp(dot(n, light_direction), 0.0, 1.0) + pow(clamp(dot(n, half_vector), 0.0, 1.0), specular_exponent);
+			float lighting = clamp(dot(n, light_direction), 0.0, 1.0) + pow(clamp(dot(n, v_half), 0.0, 1.0), specular_exponent);
 			col = env * v0 * lighting + waves;
 		}
 	}
-	// fog, then the shroud (ps: lrp toward Fog.Color by the vertex's fog factor, then mul shroud)
-	float fog_factor = 1.0 - fog_enabled * clamp((length(CAMERA_POSITION_WORLD - v_world_position) - w3d_fog_shift - fog_range_start) / max(fog_range_end - fog_range_start, 0.0001), 0.0, 1.0);
-	col = mix(fog_color, col, fog_factor);
+	// fog (the interpolated per-vertex factor: ps lrp toward Fog.Color), then the shroud
+	col = mix(fog_color, col, v_fog);
 	float alpha = material_diffuse.a;
 	if (blend_terrain_alpha && max_alpha_depth > 0.0 && deep_water_alpha > 0.0) {
 		vec2 grid = (v_world - terrain_origin) / 10.0;

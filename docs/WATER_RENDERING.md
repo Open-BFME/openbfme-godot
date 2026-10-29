@@ -110,7 +110,10 @@ reports so, which makes BumpSpecular water on those maps darker than retail's. P
 `MapTerrainBuilder` takes the level as its `water_lod` option (`GameWorld.set_water_lod`, set by `game_options.gd` from the detail state); without it the
 level is High and the report says so.
 
-Every ported water shader fogs toward the map's hardware fog colour (the same range fog as the terrain), then applies the shroud. Rivers do not: the retail
+Every ported water shader fogs toward the map's hardware fog colour (the same range fog as the terrain), then applies the shroud. The fog factor is computed per
+vertex and interpolated (vs blob 19 oD1.w, blob 9 oT6.w, blob 13 oD1.x, ps `lrp` by the interpolated value), and so is BumpSpecular_M's half-vector (vs blob 9 `nrm`,
+pixel blob 8 does not normalise it again): `water_vertex_test.gd`. Water drawn from a bare polygon (bump water; PCA water uses the 20-unit grid) therefore
+interpolates across big triangles, where retail's vertices are denser. Rivers do not: the retail
 river pixel shader never reads a fog factor and every pass sets FogEnable = 0.
 
 Rivers: the WaterSet `DiffuseColor` is packed `A<<24|R<<16|G<<8|B` and `drawRiverWater` reads its low byte as red and its third byte as blue (RW 0x47E9D5 /

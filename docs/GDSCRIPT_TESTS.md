@@ -230,6 +230,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/update_handover_test.gd` | `tools/release/test_onezip.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/windows_crash_test.gd` | Manual only; no generic pytest runner | Denied here: destructive Windows debug crash/minidump probe; explicit opt-in required. |
 | `godot/tests/water_normal_test.gd` | Manual only; no generic pytest runner | GPU rendering; synthetic textures, no retail assets. |
+| `godot/tests/water_vertex_test.gd` | Manual only; no generic pytest runner | GPU rendering (`--rendering-method gl_compatibility`); synthetic meshes, no retail assets. |
 | `godot/tests/standing_water_test.gd` | Manual only; no generic pytest runner | Private retail assets and GPU water rendering. |
 
 ## OAuth readiness regression

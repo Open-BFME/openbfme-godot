@@ -228,6 +228,8 @@ def test_bump_specular_m_shaders(blobs):
     assert "pre mul t2.xyz, t3.xyz, DirectionalLight.xyz" in vs and "mov oD0.xyz, c12" in code
     pcode = ops(ps)
     assert "dp3_sat_pp r4.x, r4, c1" in pcode and "dp3_sat_pp r5.x, r4, t6" in pcode and "lrp_pp r1.xyz, t6.w, r2, c3" in pcode
+    # the half-vector (oT6.xyz) is normalised in the vertex shader only; the pixel shader dots the interpolated t6 as it is, and the fog factor (t6.w) is the vertex's
+    assert not any(l.startswith("nrm") and "t6" in l for l in pcode)
 
 
 @needs_installs
