@@ -103,10 +103,37 @@ c10); BumpSpecular sends it through oD1, a colour register that D3D9 clamps to 0
 2 * Dimming * Diffuse leaves a vs_2_0 shader through oD0 and is clamped to 0..1 (PCA_U's vs_3_0 does not clamp). Slot 1 of the scene lights is the second light
 the object light set accepts (S-390), (0, 0, 1) when there is none.
 
-The reflection texture is the rendered reflection only when WaterLOD >= 2 and the WaterTransparency block's `ReflectionOn` holds (water.ini: No; 66 of the
-123 map.ini files say Yes: Rva0007EBFBWaterDraw.cpp:419); otherwise retail binds a black texture. The planar reflection pass (WaterRenderObjClass 0x0007F87C
-renders the scene through a mirror camera at ReflectionPlaneZ into the texture) is not ported: the texture is black and every area where retail would render it
-reports so, which makes BumpSpecular water on those maps darker than retail's. PCA water is blended toward the reflection by (1 - eye.n)^2 the same way.
+## The planar reflection (lane WATER-REFLECT)
+
+The reflection texture is the rendered reflection only when WaterLOD >= 2 (GlobalData + 0x5E) and the WaterTransparency block's `ReflectionOn` holds (water.ini:
+No; 66 of the 123 map.ini files say Yes), else retail binds a black texture (RW 0x47FAAD, BFME2 Rva0007EBFBWaterDraw.cpp:419). PCA water blends toward it by
+(1 - eye.n)^2 and BumpSpecular by ReflectionStrength.
+
+What retail renders (RotWK 2.01; every address is pinned in `tools/render/test_water_binary_facts.py`):
+- ONE texture per map, not per water height: 512 x 512, default format, in the water object at + 0xF8 (RW 0x47E1BD). Standing waters share it.
+- The plane is `ReflectionPlaneZ` of the WaterTransparency setting (water.ini 59.0; map.ini overrides: Adorn River 13, Anfalas 69, Fords of Isen II 294, Harlindon
+  90, Argonath 89, ...), normal (0, 0, 1). The camera is the viewing camera with its axes and position reflected in the plane and the reflected up negated, so the
+  matrix stays a rotation (RW 0x47EA2B, BFME2 Rva0007F0FB), and an oblique near plane on the water plane clips everything below it.
+- Each frame, after the shadow map and before the main Begin_Render (RW 0x449E38), `IsReflectionVisible` (RW 0x47F695) decides: WaterLOD >= 2, ReflectionOn, and some
+  standing water whose FX shader loaded at level >= 2 has its polygon inside the viewing frustum. Then the pass (RW 0x47F1AC) sets the texture as the target, clears
+  it to black, and draws the scene through the mirror camera under the projection override byte (RW 0xDD3445).
+- Under the override: the water, the roads and floors, the terrain tracks do not draw; the terrain draws its base texture alone (ST_TERRAIN_BASE); a drawable draws only
+  when its mirror flag (FLAG_DRAWS_IN_MIRROR on a placed map object) or KindOf CAN_CAST_REFLECTIONS holds (RW 0x470D50); and a KindOf SKYBOX drawable (the
+  `WaterReflectionSkydome_*` low-resolution domes) is hidden in every other pass (RW 0x470D53).
+- The water samples it with the main view's clip coordinates: u = (x/w + 1)/2, v = (y/w + 1)/2 (vs blob 19 oT2, ps blob 4), plus ReflectionPerturbation times the scaled
+  bump normal's xy (blob 0 / 2: the normalised normal's xy). The sampler clamps and filters linearly without mips.
+
+The port: `GameClient/WaterReflection.*` holds the maths (mirror camera, oblique projection, frustum test, UV) and `GodotDevice/GodotWaterReflection.*` the node
+(`WaterReflectionView`: a SubViewport sharing the world, a mirror Camera3D whose cull mask is visual layer 19 alone). The terrain and every W3DInstancer model that has a
+mirror instance carry that layer; shaders tell the pass by `CAMERA_VISIBLE_LAYERS == 262144` and clip below the global `w3d_reflect_y`; the instancer carries the mirror and
+mirror-only bits in INSTANCE_CUSTOM.w. `MapTerrainBuilder` makes the node (beside StandingWater) when the conditions above hold and reports it in `water.reflection`.
+The viewport texture holds the gamma-space bytes the shaders hand over, as retail's 8-bit target does, so the water shader samples it without a conversion.
+
+Differences from RW 0x47F1AC, reported in `water.reflection_stops` and registered under S-035: the oblique near plane is a fragment clip (Godot cannot take a custom
+projection matrix); the texture is 512 rows by 512 x the viewing aspect (a Godot camera takes its aspect from its viewport; retail stretches the aspect into 512 x 512); the
+scene is the terrain (with its normal-map lighting; no cloud or macro texture) and the mirror drawables, without whatever else the render list holds under the override
+(particles, projectiles, bridges, the shroud); the pose of a model outside the viewing frustum is not evaluated for the reflection.
+
 `MapTerrainBuilder` takes the level as its `water_lod` option (`GameWorld.set_water_lod`, set by `game_options.gd` from the detail state); without it the
 level is High and the report says so.
 
@@ -125,7 +152,7 @@ not drawn (`water.triangulation_failed`); retail fills every standing water from
 
 S-035 remains open: the high-detail choice, Godot TIME/trigonometry and terrain
 height sampling are presentation bridges, not verified target numeric/LOD
-parity. Planar reflections, shadow filtering, the DefaultTechnique / `_L` / PCA_M /
+parity. Shadow filtering, the DefaultTechnique / `_L` / PCA_M /
 DepthOnly techniques and legacy shoreline texture tracks remain unported.
 Legacy areas without a
 WaterShader.FX material retain their explicit reported approximation.

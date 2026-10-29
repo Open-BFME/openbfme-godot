@@ -36,17 +36,25 @@ void vertex() {
 }
 
 void fragment() {
-	ALBEDO = terrain_output(UV, COLOR);
+	// lane WATER-REFLECT (S-035): the reflection camera (cull mask = W3D_REFLECTION_LAYER_BIT only, bit 18) draws the terrain above the water plane, base texture only
+	bool reflecting = CAMERA_VISIBLE_LAYERS == 262144u;
+	ALBEDO = terrain_output(UV, COLOR, reflecting);
 	// lane SELPERF-1: the selection's merge decals over the terrain, as RotWK's stencil passes draw them after it (selection_decals.gdshaderinc)
 	vec4 sel = sel_merge(v_sage_xy);
-	if (sel.a > 0.0) {
+	if (!reflecting && sel.a > 0.0) { // not in the reflection: RotWK draws the decals as later passes
 		ALBEDO = mix(ALBEDO, retail_output(sel.rgb), sel.a);
 	}
 	// Composite the retail radius texture with the terrain, as with selection decals.
 	vec4 cursor = radius_cursor_sample(v_sage_xy);
-	if (radius_cursor_params.y > 0.5) {
+	if (reflecting) {
+		// no radius cursor in the reflection
+	} else if (radius_cursor_params.y > 0.5) {
 		ALBEDO = mix(ALBEDO, retail_output(cursor.rgb), cursor.a);
 	} else {
 		ALBEDO += retail_output(cursor.rgb) * cursor.a;
+	}
+	// the clip comes last so that the screen derivatives above stay in uniform control flow
+	if (reflecting && (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).y < w3d_reflect_y) {
+		discard;
 	}
 }

@@ -334,6 +334,7 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_instance_infantry_light", "instance", "infantry"), &W3DInstancer::set_instance_infantry_light);
 	ClassDB::bind_method(D_METHOD("set_instance_opacity", "instance", "opacity"), &W3DInstancer::set_instance_opacity);
 	ClassDB::bind_method(D_METHOD("set_instance_occlusion", "instance", "occluder", "slot"), &W3DInstancer::set_instance_occlusion); // lane OCCLUDE-1
+	ClassDB::bind_method(D_METHOD("set_instance_mirror", "instance", "mirror", "mirror_only"), &W3DInstancer::set_instance_mirror); // lane WATER-REFLECT
 	ClassDB::bind_method(D_METHOD("get_occlusion_pass_counts"), &W3DInstancer::get_occlusion_pass_counts);
 	ClassDB::bind_method(D_METHOD("get_auto_update"), &W3DInstancer::get_auto_update);
 	ClassDB::bind_method(D_METHOD("probe_shaders", "origin"), &W3DInstancer::probe_shaders);
@@ -392,6 +393,26 @@ void W3DInstancer::set_instance_fogged(int64_t instance, bool fogged)
 {
 	if (instance < 0 || instance >= (int64_t)Instances.size() || Instances[(size_t)instance].Fogged == fogged) return;
 	Instances[(size_t)instance].Fogged = fogged;
+	PoseDirty = true;
+	mark_model(instance);
+}
+
+void W3DInstancer::set_instance_mirror(int64_t instance, bool mirror, bool mirror_only)
+{
+	if (instance < 0 || instance >= (int64_t)Instances.size()) return;
+	Instance &inst = Instances[(size_t)instance];
+	if (inst.Mirror == mirror && inst.MirrorOnly == mirror_only) return;
+	inst.Mirror = mirror;
+	inst.MirrorOnly = mirror_only;
+	Model &m = *Models[(size_t)inst.Model];
+	if ((mirror || mirror_only) && !m.ReflectionLayer)
+	{
+		m.ReflectionLayer = true;
+		for (DrawItem &d : m.Draws)
+		{
+			if (d.Node) d.Node->set_layer_mask(d.Node->get_layer_mask() | W3D_REFLECTION_LAYER_BIT);
+		}
+	}
 	PoseDirty = true;
 	mark_model(instance);
 }
@@ -1884,7 +1905,8 @@ void W3DInstancer::write_buffers()
 				o[13] = fade;
 				o[14] = inst.HcPacked;
 				o[15] = (float)((rigid ? (int)bone : 0) + 1024 * inst.Sway + (inst.Fogged ? 16384 : 0) // lane VISUAL-2: the sway type, the fogged light
-					+ (inst.OcclusionSlot << W3D_OCCLUSION_SLOT_SHIFT) + (inst.Occluder ? W3D_OCCLUSION_OCCLUDER_BIT : 0)); // lane OCCLUDE-1
+					+ (inst.OcclusionSlot << W3D_OCCLUSION_SLOT_SHIFT) + (inst.Occluder ? W3D_OCCLUSION_OCCLUDER_BIT : 0) // lane OCCLUDE-1
+					+ (inst.Mirror ? W3D_MIRROR_BIT : 0) + (inst.MirrorOnly ? W3D_MIRROR_ONLY_BIT : 0)); // lane WATER-REFLECT
 				++count;
 			}
 			d.MM->set_buffer(d.Buffer);

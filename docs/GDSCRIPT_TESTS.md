@@ -232,6 +232,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/water_normal_test.gd` | Manual only; no generic pytest runner | GPU rendering; synthetic textures, no retail assets. |
 | `godot/tests/water_vertex_test.gd` | Manual only; no generic pytest runner | GPU rendering (`--rendering-method gl_compatibility`); synthetic meshes, no retail assets. |
 | `godot/tests/standing_water_test.gd` | Manual only; no generic pytest runner | Private retail assets and GPU water rendering. |
+| `godot/tests/water_reflection_test.gd` | Manual only; no generic pytest runner | GPU rendering of the planar water reflection; parts 1 and 2 use no retail assets, part 3 (W3D models through the instancer) does. |
 
 ## OAuth readiness regression
 

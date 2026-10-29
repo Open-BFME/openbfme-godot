@@ -782,7 +782,7 @@ TEST_CASE("water acceptance: remaining shader and geometry approximations stay e
 {
 	const auto *stop = MapStops::find("S-035");
 	REQUIRE(stop != nullptr);
-	CHECK(std::string(stop->gap) == "Standing water resolves its W3D (<name>L / <name>M / <name>) and technique from the player's WaterLOD as retail does (StandingWaterArea::loadFXShaderSetup, FXShaderSetup::InitializeShader) and draws BumpSpecular, BumpSpecular_M, PCA and PCA_U from RotWK's watershader.fxo (the scene's DirectionalLight[1] as the specular light, the map's hardware fog, shoreline Gerstner displacement on a donor high-detail grid); TIME, the scene-light fill, terrain depth and whether a technique validates on the player's hardware (Has_Technique) are inferred; the planar reflection texture (WaterReflectionSampler: rendered in retail for ReflectionOn maps at WaterLOD 2 and above) stays black, and shadow filtering, DefaultTechnique, the _L techniques, PCA_M, DepthOnly, standing water polygons the ear clipper rejects (Adorn River's, water.triangulation_failed), river outline cross-section start and minimum water LOD, depth-colour LUT and legacy shoreline texture tracks remain unported");
+	CHECK(std::string(stop->gap) == "Standing water resolves its W3D (<name>L / <name>M / <name>) and technique from the player's WaterLOD as retail does (StandingWaterArea::loadFXShaderSetup, FXShaderSetup::InitializeShader) and draws BumpSpecular, BumpSpecular_M, PCA and PCA_U from RotWK's watershader.fxo (the scene's DirectionalLight[1] as the specular light, the map's hardware fog, shoreline Gerstner displacement on a donor high-detail grid); TIME, the scene-light fill, terrain depth and whether a technique validates on the player's hardware (Has_Technique) are inferred; the planar reflection texture (WaterReflectionSampler: rendered in retail for ReflectionOn maps at WaterLOD 2 and above) is rendered by WaterReflectionView but differs from retail's pass: its oblique near plane is a shader clip, its width is 512 x the viewing aspect (retail 512 x 512), its scene is the terrain's base layer plus the mirror-flag / CAN_CAST_REFLECTIONS models (no particles, projectiles, bridges or shroud; the terrain keeps its normal-map lighting) and models outside the viewing frustum keep an unevaluated pose, and shadow filtering, DefaultTechnique, the _L techniques, PCA_M, DepthOnly, standing water polygons the ear clipper rejects (Adorn River's, water.triangulation_failed), river outline cross-section start and minimum water LOD, depth-colour LUT and legacy shoreline texture tracks remain unported");
 }
 
 namespace
@@ -1188,15 +1188,58 @@ TEST_CASE("WaterGeometry::riverVertexColour: the WaterSet colour's red and blue 
 
 TEST_CASE("WaterTransparencyScan::applyText: ReflectionOn of the WaterTransparency block, the last block that sets it winning")
 {
-	bool on = false;
-	WaterTransparencyScan::applyText("WaterTransparency\n  TransparentWaterDepth = 3.0\n  ReflectionPlaneZ = 59.0;\n  ReflectionOn = No\nEnd\n", on);
-	CHECK_FALSE(on);
-	WaterTransparencyScan::applyText("; map override\nWaterTransparency\n  ReflectionOn = Yes ; comment\nEnd\n", on);
-	CHECK(on);
-	WaterTransparencyScan::applyText("WaterSet MORNING\n  ReflectionOn = No\nEnd\n", on); // another block's key is not this block's
-	CHECK(on);
-	WaterTransparencyScan::applyText("WaterTransparency\n  ReflectionOn = no\nEnd\n", on);
-	CHECK_FALSE(on);
+	WaterTransparencyScan::Result r;
+	std::string error;
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("WaterTransparency\n  TransparentWaterDepth = 3.0\n  ReflectionPlaneZ = 59.0;\n  ReflectionOn = No\nEnd\n", r, &error), error);
+	CHECK_FALSE(r.reflectionOn);
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("; map override\nWaterTransparency\n  ReflectionOn = Yes ; comment\nEnd\n", r, &error, true), error);
+	CHECK(r.reflectionOn);
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("WaterSet MORNING\n  ReflectionOn = No\nEnd\n", r, &error, true), error); // another block's key is not this block's
+	CHECK(r.reflectionOn);
+	REQUIRE_MESSAGE(WaterTransparencyScan::applyText("WaterTransparency\n  ReflectionOn = no\nEnd\n", r, &error, true), error);
+	CHECK_FALSE(r.reflectionOn);
+}
+
+TEST_CASE("WaterTransparencyScan::applyText: an unrelated block ends at its own End, so an indented WaterTransparency after it still overrides water.ini")
+{
+	const std::string water = "WaterTransparency\n  ReflectionPlaneZ = 59.0\n  ReflectionOn = No\nEnd\n";
+	std::string error;
+	// the reviewer's case: Weather ... End, then an INDENTED WaterTransparency (retail's tokenizer skips leading whitespace and its Weather parser stops at its End)
+	{
+		WaterTransparencyScan::Result r;
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText(water, r, &error), error);
+		CHECK(r.reflectionPlaneZ == 59.0f);
+		CHECK_FALSE(r.reflectionOn);
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText("Weather\n  HardwareFogEnable = Yes\n  HardwareFogStart = 350\nEnd\n\n  WaterTransparency\n    ReflectionPlaneZ = 123.5\n    ReflectionOn = Yes\n  End\n", r, &error, true), error);
+		CHECK(r.reflectionPlaneZ == 123.5f);
+		CHECK(r.reflectionPlaneZSet);
+		CHECK(r.reflectionOn);
+	}
+	// an unrelated block with a nested block (its End at the wrong indentation, as retail's Harlindon map.ini has) and a keyword-named FIELD inside it, then a tab-indented
+	// WaterTransparency after a comment line
+	{
+		WaterTransparencyScan::Result r;
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText(water, r, &error), error);
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText("Object Foo\n  Draw = W3DModelDraw ModuleTag_01\n    ModelConditionState = WORLD_BUILDER\n   Model = locator\n End\n  Weapon = PRIMARY Bar\n  End\nEnd\n; the water\n\tWaterTransparency\n\t\tReflectionPlaneZ = 77.25\n\t\tReflectionOn = Yes\n\tEnd\n", r, &error, true), error);
+		CHECK(r.reflectionPlaneZ == 77.25f);
+		CHECK(r.reflectionOn);
+	}
+	// a keyword-named line inside an unrelated block that is not preceded by an End (or is a field) does not end it: the values inside stay out
+	{
+		WaterTransparencyScan::Result r;
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText(water, r, &error), error);
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText("Weather\n  WaterTransparency = Foo\n  ReflectionPlaneZ = 5\n  ReflectionOn = Yes\nEnd\n", r, &error, true), error);
+		CHECK(r.reflectionPlaneZ == 59.0f);
+		CHECK_FALSE(r.reflectionOn);
+	}
+	// column 0 keeps working
+	{
+		WaterTransparencyScan::Result r;
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText(water, r, &error), error);
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText("Weather\n  HardwareFogEnable = Yes\nEnd\nWaterTransparency\n  ReflectionPlaneZ = 88\n  ReflectionOn = Yes\nEnd\n", r, &error, true), error);
+		CHECK(r.reflectionPlaneZ == 88.0f);
+		CHECK(r.reflectionOn);
+	}
 }
 
 TEST_CASE("WaterTransparencyScan::load: water.ini, then the map's map.ini")
@@ -1204,7 +1247,7 @@ TEST_CASE("WaterTransparencyScan::load: water.ini, then the map's map.ini")
 	const std::string waterIni = "WaterTransparency\n  ReflectionOn = No\nEnd\n";
 	const std::string mapIni = "WaterTransparency\n  ReflectionOn = Yes\nEnd\n";
 	std::string error;
-	bool on = true;
+	WaterTransparencyScan::Result on;
 	{
 		Win32BIGFileSystem fsys;
 		auto big = fsys.openArchiveFromMemory("w.big", std::make_shared<const std::vector<std::uint8_t>>(bigtest::makeBig("BIGF", {
@@ -1212,9 +1255,9 @@ TEST_CASE("WaterTransparencyScan::load: water.ini, then the map's map.ini")
 		REQUIRE(big);
 		fsys.mountArchive(std::move(big), "w.big", false);
 		REQUIRE_MESSAGE(WaterTransparencyScan::load(fsys, "maps\\map mp adorn river", on, &error), error);
-		CHECK(on);
+		CHECK(on.reflectionOn);
 		REQUIRE_MESSAGE(WaterTransparencyScan::load(fsys, "maps\\map mp other", on, &error), error); // no map.ini: water.ini's value
-		CHECK_FALSE(on);
+		CHECK_FALSE(on.reflectionOn);
 	}
 	{
 		Win32BIGFileSystem fsys;

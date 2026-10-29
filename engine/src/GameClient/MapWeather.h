@@ -35,14 +35,25 @@ void applyText(const std::string &text, int timeOfDay, float diffuse[4]);
 bool load(ArchiveFileSystem &fs, const std::string &mapDir, int timeOfDay, float diffuse[4], std::string *error);
 } // namespace WaterSetScan
 
-// The ReflectionOn flag of the "WaterTransparency ... End" block (TheWaterTransparency + 0x50, the field table of BFME2 INIWaterTransparency.cpp):
-// data\ini\water.ini (retail: ReflectionOn = No), then <mapDir>\map.ini, the last block that sets it winning. WaterRenderObjClass binds the
-// ReflectionTexture effect parameter to the rendered reflection only when this holds together with WaterLOD >= 2 (Rva0007EBFBWaterDraw.cpp:419).
+// The ReflectionOn flag and the ReflectionPlaneZ of the "WaterTransparency ... End" block (TheWaterTransparency + 0x50 and + 0x4C, the field table of BFME2
+// INIWaterTransparency.cpp): data\ini\water.ini (retail: ReflectionOn = No, ReflectionPlaneZ = 59.0), then <mapDir>\map.ini, the last block that sets a key
+// winning. WaterRenderObjClass binds the ReflectionTexture effect parameter to the rendered reflection only when ReflectionOn holds together with WaterLOD >= 2
+// (Rva0007EBFBWaterDraw.cpp:419), and mirrors the camera in the plane z = ReflectionPlaneZ (WaterReflection.h).
 namespace WaterTransparencyScan
 {
-void applyText(const std::string &text, bool &reflectionOn);
-// mapDir as MapWeatherScan::load takes it. Missing map.ini is fine; a missing water.ini is an error.
-bool load(ArchiveFileSystem &fs, const std::string &mapDir, bool &reflectionOn, std::string *error);
+struct Result
+{
+	bool reflectionOn = false;  // the setting's constructor
+	float reflectionPlaneZ = 0.0f;
+	bool reflectionPlaneZSet = false;
+	bool blockSeen = false;     // a WaterTransparency block was parsed (a second one is "found twice" unless the file loads as overrides)
+};
+// Reads the block through the INI pipeline (macros, #ADD(...) expressions, MSVCR71's "%f" prefix reading, Yes / No only); a key or value retail's parse procs reject,
+// or a second block outside an override load, fails with the INIException's text in `error`. `mapOverride`: the text is a map.ini (INI_LOAD_CREATE_OVERRIDES).
+bool applyText(const std::string &text, Result &result, std::string *error, bool mapOverride = false);
+// mapDir as MapWeatherScan::load takes it. Missing map.ini is fine; a missing water.ini is an error. A plane no file sets stays reflectionPlaneZSet = false (the
+// caller that needs it reports it).
+bool load(ArchiveFileSystem &fs, const std::string &mapDir, Result &result, std::string *error);
 } // namespace WaterTransparencyScan
 
 namespace MapWeatherScan

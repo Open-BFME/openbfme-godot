@@ -127,6 +127,10 @@ public:
 	void set_instance_sway(int64_t instance, int type);
 	// lane VISUAL-2: the instance is lit by the fogged light (a last-seen object in the fog: lights and ambient times w3d_fogged_frac), INSTANCE_CUSTOM.w += 16384
 	void set_instance_fogged(int64_t instance, bool fogged);
+	// lane WATER-REFLECT (S-035): the instance's part in the planar water reflection (RW 0x470D50 .. 0x470D5E): `mirror` = it is drawn into the reflection
+	// (the drawable's mirror flag or KindOf CAN_CAST_REFLECTIONS), `mirror_only` = it is drawn there and nowhere else (KindOf SKYBOX, RW 0x470D53). INSTANCE_CUSTOM.w
+	// carries the bits; a model with a mirror instance puts its draw nodes on W3D_REFLECTION_LAYER_BIT too (the reflection camera sees that layer only)
+	void set_instance_mirror(int64_t instance, bool mirror, bool mirror_only);
 	// lane OCCLUDE-1: the instance's behind-building role (GameClient/RTS3DSceneOcclusion.h): an occluder marks the stencil where it is in front, an
 	// occludee (colour slot 1 .. 31 of the global w3d_occl_colors) is drawn in its colour where a mark covers it. The model's opaque surfaces get the
 	// occlusion passes (W3DShaderKey::OcclusionPass) chained the first time one of its instances asks for them. INSTANCE_CUSTOM.w carries the bits
@@ -254,6 +258,7 @@ private:
 		int Dithered = 0;                // S-029 counts of the last write of this model
 		int SortedItems = 0;
 		float CullRadius = -1.0f;        // lane PERF-3: cull_radius, computed on first use
+		bool ReflectionLayer = false;    // lane WATER-REFLECT: the draw nodes carry W3D_REFLECTION_LAYER_BIT (a mirror instance exists)
 	};
 	struct Instance
 	{
@@ -276,6 +281,7 @@ private:
 		bool InfantryLight = false;           // set_instance_infantry_light (INSTANCE_CUSTOM.x < 0)
 		int Sway = 0;                         // lane VISUAL-2: set_instance_sway (INSTANCE_CUSTOM.w += 1024 * Sway)
 		bool Fogged = false;                  // lane VISUAL-2: set_instance_fogged (INSTANCE_CUSTOM.w += 16384)
+		bool Mirror = false, MirrorOnly = false; // lane WATER-REFLECT: set_instance_mirror (INSTANCE_CUSTOM.w += W3D_MIRROR_BIT / W3D_MIRROR_ONLY_BIT)
 		bool Occluder = false;                // lane OCCLUDE-1: set_instance_occlusion (INSTANCE_CUSTOM.w += W3D_OCCLUSION_OCCLUDER_BIT)
 		int OcclusionSlot = 0;                // lane OCCLUDE-1: (INSTANCE_CUSTOM.w += slot << W3D_OCCLUSION_SLOT_SHIFT)
 		std::vector<std::uint8_t> HiddenSubs; // by sub object index; empty = none hidden (set_instance_hidden_subobjects)

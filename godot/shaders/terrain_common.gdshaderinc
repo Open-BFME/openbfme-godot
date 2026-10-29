@@ -71,6 +71,7 @@ uniform vec3 shroud_color = vec3(1.0);
 uniform bool shroud_enabled = false;
 varying vec2 v_shroud_uv;
 uniform float output_gamma = 2.2; // != 1: decode for Godot's linear output (retail_output)
+global uniform float w3d_reflect_y; // lane WATER-REFLECT: the planar reflection's plane height (Godot y); the reflection pass clips below it
 // Debug views (0 = retail maths): 1 albedo, 2 vertex colour, 3 normal map, 4 uv, 5 lit without cloud/macro,
 // 6 cloud*macro, 7 the gamma-space composite of the raw layer albedos converted once (numeric shader test)
 uniform int debug_mode = 0;
@@ -188,7 +189,7 @@ vec3 shade_layer(vec2 uv_unwrapped, vec4 rect, vec4 vcol, float lod) {
 	return lit;
 }
 
-vec3 terrain_output(vec2 uv0, vec4 vcol) {
+vec3 terrain_output(vec2 uv0, vec4 vcol, bool reflecting) {
 	vec2 p = v_local;
 	bool has_rec = v_rec > -0.5;
 	int rec = has_rec ? int(v_rec + 0.5) : 0;
@@ -225,6 +226,12 @@ vec3 terrain_output(vec2 uv0, vec4 vcol) {
 	if (debug_mode == 5) { return retail_output(clamp(comp, 0.0, 1.0)); }
 	vec3 cloud = texture(cloud_tex, v_cloud).rgb;
 	vec3 macro = texture(macro_tex, v_macro).rgb;
+	if (reflecting) {
+		// lane WATER-REFLECT (S-035): the planar reflection draws the terrain "just the base texture" (BFME2 HeightMap.cpp:2087, ST_TERRAIN_BASE, chosen when
+		// ShaderClass::Is_Backface_Culling_Inverted(), i.e. in the reflection pass): no cloud and no macro texture
+		cloud = vec3(1.0);
+		macro = vec3(1.0);
+	}
 	if (debug_mode == 6) { return retail_output(cloud * macro); }
 	vec3 col = mix(fog_color, comp * cloud * macro, v_fog);
 	col = col * shroud;

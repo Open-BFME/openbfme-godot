@@ -197,6 +197,89 @@ func _check_lod_resolution(fs) -> String:
 			built[1].free()
 	return ""
 
+## The planar reflection (S-035): one WaterReflectionView per map where WaterLOD >= 2 and the map's ReflectionOn hold, none otherwise; the materials bind its texture.
+## ReflectionPlaneZ values are the map.ini ones read by tools/render/test_water_binary_facts.py's scan (Harlindon 90, Argonath 89). Returns "" or the first failure.
+func _check_reflection_nodes(fs) -> String:
+	for lod in [0, 1, 2, 3]:
+		var built := _water_build(fs, "map mp harlindon", lod)
+		var report: Dictionary = built[0]
+		var node: Node = built[1]
+		var reflection: Dictionary = report.water.reflection
+		var view := node.get_node_or_null("WaterReflection")
+		if lod >= 2:
+			if view == null or view.get_class() != "WaterReflectionView":
+				return "harlindon lod %d: no WaterReflectionView" % lod
+			if not reflection.rendered or reflection.plane_z != 90.0 or reflection.polygons != 1 or reflection.texture_size != 512 or not reflection.reflection_on:
+				return "harlindon lod %d reflection %s" % [lod, str(reflection)]
+			var state: Dictionary = view.get_state()
+			if state.plane_y != 90.0 or state.polygons != 1:
+				return "harlindon lod %d reflection state %s" % [lod, str(state)]
+			var material := _material_of(node, 0)
+			if material.get_shader_parameter("reflection_enabled") != true or material.get_shader_parameter("reflection_tex") == null:
+				return "harlindon lod %d: the water material does not bind the reflection" % lod
+			if not report.water.has("reflection_stops") or report.water.reflection_stops.size() != 3:
+				return "harlindon lod %d: the reflection's differences are not reported: %s" % [lod, str(report.water.get("reflection_stops"))]
+		else:
+			# WaterLOD < 2: GlobalData + 0x5E is clear, retail binds the black texture and never runs the pass (RW 0x47FAAD, 0x47F695)
+			if view != null or reflection.rendered or reflection.reflection_on != true:
+				return "harlindon lod %d: a reflection although WaterLOD < 2: %s" % [lod, str(reflection)]
+			var material := _material_of(node, 0)
+			if material.get_shader_parameter("reflection_enabled") == true or material.get_shader_parameter("reflection_tex") != null:
+				return "harlindon lod %d: the water material binds a reflection" % lod
+		built[1].free()
+	# a map that sets no ReflectionOn (water.ini says No): no node at any level
+	for lod in [1, 2, 3]:
+		var built := _water_build(fs, "map mp amon sul fortress", lod)
+		var report: Dictionary = built[0]
+		if report.water.areas == 0:
+			return "amon sul fortress has no standing water at lod %d: the ReflectionOn = No check needs a map with some" % lod
+		if built[1].get_node_or_null("WaterReflection") != null or report.water.reflection.rendered or report.water.reflection.reflection_on:
+			return "amon sul fortress lod %d: a reflection on a ReflectionOn = No map: %s" % [lod, str(report.water.reflection)]
+		if _material_of(built[1], 0).get_shader_parameter("reflection_enabled") == true:
+			return "amon sul fortress lod %d: the water material binds a reflection" % lod
+		built[1].free()
+	return ""
+
+## The rendered reflection of a ReflectionOn map: Anfalas (ReflectionPlaneZ 69, water at the plane's height) seen from the shore at 80 units above the plane looks
+## across the water at land that rises above it; the texture holds that land (a Harlindon view over the open sea mirrors only sky, which is black). Returns "" or the first failure.
+func _check_reflection_render(fs) -> String:
+	var builder = ClassDB.instantiate("MapTerrainBuilder")
+	var map = builder.build_map(fs, "map mp anfalas", {"markers": false, "water_lod": 2})
+	if map == null or not builder.get_report().errors.is_empty():
+		return "anfalas build: %s" % str(builder.get_report().errors)
+	root.add_child(map)
+	var view: Node = map.get_node("WaterReflection")
+	var camera := Camera3D.new()
+	camera.far = 20000
+	root.add_child(camera)
+	camera.position = Vector3(3375.0, 149.0, -2250.0)
+	camera.look_at(Vector3(3375.0, 149.0, -2750.0))
+	camera.current = true
+	for frame in 20:
+		await process_frame
+	await RenderingServer.frame_post_draw
+	var state: Dictionary = view.get_state()
+	print("ANFALAS REFLECTION STATE ", state)
+	if not (state.error == "" and state.updating and state.visible_polygons > 0): # tolerance: a count
+		return "anfalas: the reflection pass did not run: %s" % str(state)
+	var reflected: Image = view.get_reflection_texture().get_image()
+	var data: PackedByteArray = reflected.get_data()
+	var lit := 0
+	for i in range(0, data.size(), 4):
+		if data[i] > 8 or data[i + 1] > 8 or data[i + 2] > 8: # tolerance: not black
+			lit += 1
+	var total: int = reflected.get_width() * reflected.get_height()
+	print("ANFALAS REFLECTION TEXTURE ", reflected.get_size(), " lit pixels ", lit, " of ", total)
+	if not OS.get_environment("OPENBFME_WATER_SCREENSHOT").is_empty():
+		reflected.save_png(OS.get_environment("OPENBFME_WATER_SCREENSHOT").get_basename() + "_anfalas_reflection.png")
+		root.get_texture().get_image().save_png(OS.get_environment("OPENBFME_WATER_SCREENSHOT").get_basename() + "_anfalas.png")
+	var error := ""
+	if not (lit * 20 > total): # tolerance: at least a twentieth of the texture holds the reflected land
+		error = "anfalas: the reflection texture is black: %d of %d pixels lit" % [lit, total]
+	camera.queue_free()
+	map.queue_free()
+	return error
+
 func _run() -> void:
 	create_timer(240).timeout.connect(func(): push_error("Standing water test timed out"); quit(1))
 	var fs = ClassDB.instantiate("RetailFileSystem")
@@ -339,6 +422,11 @@ func _run() -> void:
 		push_error(lod_error)
 		quit(1)
 		return
+	var reflection_error := _check_reflection_nodes(fs)
+	if not reflection_error.is_empty():
+		push_error(reflection_error)
+		quit(1)
+		return
 	if DisplayServer.get_name() != "headless":
 		var water_mesh = map.get_node("StandingWater").get_child(0)
 		if not (await _check_wave_geometry(water_mesh.mesh.surface_get_material(0))):
@@ -364,6 +452,14 @@ func _run() -> void:
 			push_error('image != null and not image.is_empty()')
 			quit(1)
 			return
+		# the reflection pass ran for the water in view (Harlindon's water is the open sea at the plane: its mirror shows sky only, so the pixels are _check_reflection_render's)
+		var view: Node = map.get_node("WaterReflection")
+		var state: Dictionary = view.get_state()
+		print("REFLECTION STATE ", state)
+		if not (state.error == "" and state.updating and state.visible_polygons == 1 and state.frames_updated > 0): # tolerance: a counter
+			push_error("the reflection pass did not run for the water in view: " + str(state))
+			quit(1)
+			return
 		var capture := OS.get_environment("OPENBFME_WATER_SCREENSHOT")
 		if not capture.is_empty():
 			if not (image.save_png(capture) == OK):
@@ -371,5 +467,14 @@ func _run() -> void:
 				quit(1)
 				return
 	map.queue_free()
+	if DisplayServer.get_name() != "headless":
+		for node in root.get_children():
+			if node is Camera3D:
+				node.queue_free()
+		var render_error: String = await _check_reflection_render(fs)
+		if not render_error.is_empty():
+			push_error(render_error)
+			quit(1)
+			return
 	print("STANDING WATER PASS: ", checked, " materials")
 	quit()

@@ -304,3 +304,165 @@ def test_water_w3d_techniques_and_reflection_strength(mount):
     # Gondor has no Medium file: WaterLOD 1 reads the base file (PCA_U, resolved to PCA_M)
     assert not mount.exists("art\\w3d\\wt\\wtr_gondorm.w3d")
     assert mount.exists("art\\w3d\\wt\\wtr_gondorl.w3d")
+
+
+# ---- the binary: the planar reflection (lane WATER-REFLECT, S-035) -------------------------------------------------------------------------------
+# These addresses are RotWK 2.01's (game.dat, community-modified image, S-001); the BFME2 donors are Open-BFME-2's W3DWater.cpp (rva0007F87C),
+# W3DWaterRva0007F0FB.cpp, WaterRenderObjClass_IsReflectionVisible.cpp, Rva0007EBFBWaterDraw.cpp and RTS3DSceneVisibilityCheck.cpp.
+
+@needs_binary
+def test_reflection_texture_is_512_square_at_water_plus_f8(img):
+    lines = body(img, 0x47E1CC, 0x2C)
+    assert "47e1d5 push 0" in lines and "47e1d7 mov eax, 0x200" in lines
+    # Create_Render_Target(0x200, 0x200, 0) (width, height, format 0), stored at the water object's + 0xF8
+    assert [l.split(" ", 1)[1] for l in lines if " push eax" in l][:2] == ["push eax", "push eax"]
+    assert "47e1e2 call 0x51dac0" in lines and "47e1ea lea ecx, [esi + 0xf8]" in lines
+
+
+@needs_binary
+def test_reflection_pass_renders_the_scene_through_the_mirror_camera(img):
+    # 0x47F1AC (BFME2 rva0007F87C): the camera setup 0x47EA2B(camera, false), then, with the mirror camera at + 0xFC, the texture + 0xF8 as the target,
+    # Begin_Render(clear, clear z, black, alpha 0), the scene through the camera at + 0xFC, the override byte cleared and the default target restored
+    head = body(img, 0x47F1BD, 0x1E)
+    assert "47f1bd push ebx" in head and "47f1be push dword ptr [ebp + 0xc]" in head and "47f1c3 call 0x47ea2b" in head
+    assert "47f1c8 cmp dword ptr [esi + 0xfc], ebx" in head
+    target = body(img, 0x47F1D0, 0x20)
+    assert "47f1d7 lea eax, [esi + 0xf8]" in target and "47f1e1 call 0x5201d0" in target
+    clear = body(img, 0x47F1F8, 0x28)
+    assert "47f1fb fldz " in clear and "47f205 push 1" in clear and "47f207 push 1" in clear and "47f218 call 0x517b30" in clear
+    draw = body(img, 0x47F224, 0x24)
+    assert "47f224 push dword ptr [esi + 0xfc]" in draw and "47f22a push dword ptr [ebp + 8]" in draw and "47f22d call 0x518000" in draw
+    assert "47f23d mov byte ptr [0xdd3445], bl" in body(img, 0x47F23D, 6)  # the projection override byte cleared
+    # the guard 0x47F25A: the terrain and its map (+ 0x37C0) must exist
+    guard = body(img, 0x47F25A, 0x18)
+    assert "47f25a mov eax, dword ptr [0xdc78ec]" in guard and "47f263 cmp dword ptr [eax + 0x37c0], 0" in guard and "47f26c jmp 0x47f1ac" in guard
+
+
+@needs_binary
+def test_reflection_camera_mirrors_in_the_plane_z_of_the_water_transparency(img):
+    # 0x47EA2B (BFME2 Rva0007F0FB): the plane's w is TheWaterTransparency's final override + 0x4C; the first element finite test; the projection override set
+    lines = body(img, 0x47EA2B, 0x200)
+    assert "47eb54 movss xmm0, dword ptr [eax + 0x4c]" in lines
+    assert "47ea84 mov eax, dword ptr [0xde4ed0]" in lines  # TheWaterTransparency
+    assert "47f175 mov byte ptr [0xdd3445], 1" in body(img, 0x47F175, 7)  # bfmeCameraProjectionOverride = true before camera->Apply()
+    assert "47f187 cmp byte ptr [ebp + 0xc], bl" in body(img, 0x47F187, 3)  # clearOverride (the pass passes false)
+
+
+@needs_binary
+def test_reflection_runs_only_for_visible_standing_water_with_waterlod_2_and_reflection_on(img):
+    lines = body(img, 0x47F695, 0x7C)
+    assert "47f69d jne 0x47f6a3" in lines and "47f69f xor al, al" in lines  # a null camera: false
+    assert "47f6a3 mov eax, dword ptr [0xde4364]" in lines and "47f6a8 cmp byte ptr [eax + 0x5e], 0" in lines  # GlobalData + 0x5E = WaterLOD >= 2
+    assert "47f6b0 mov esi, dword ptr [0xde4ed0]" in lines and "47f6df cmp byte ptr [eax + 0x50], 0" in lines  # TheWaterTransparency ReflectionOn
+    assert "47f6e5 mov esi, dword ptr [ebx + 0x108]" in lines  # the standing water entries
+    assert "47f6ef mov ecx, dword ptr [edi + 0x40]" in lines and "47f6f2 call 0x70a5b0" in lines  # the area's FX shader
+    assert "47f6fb cmp dword ptr [eax + 0x1c], 2" in lines and "47f6ff jl 0x47f710" in lines  # loaded at level >= 2
+    assert "47f707 call 0x47f491" in lines  # the polygon against the camera's frustum
+    # the shader's level is set from WaterShaderLODs[WaterLOD] (test_water_lod_reads_the_file_suffix_table): +0x1C is that level
+    # W3DDisplay::draw (RW 0x449E12): IsReflectionVisible(view + 0x104) then the pass "UpdateWaterReflection" with the scene and that camera
+    draw = body(img, 0x449E12, 0x56)
+    assert "449e12 mov ecx, dword ptr [0xdc7a40]" in draw and "449e22 push dword ptr [edi + 0x104]" in draw and "449e28 call 0x47f695" in draw
+    assert "449e47 push dword ptr [edi + 0x104]" in draw and "449e53 push dword ptr [0xdc7574]" in draw and "449e5d call 0x47f25a" in draw
+    assert img.cstr(0xBD9DD4) == "UpdateWaterReflection"
+
+
+@needs_binary
+def test_reflection_texture_parameter_is_the_render_target_or_black(img):
+    # the "ReflectionTexture" callback (BFME2 Rva00080168ReflectionTexture, RW 0x47FAAD): GlobalData + 0x5E, the water object (0xdc7a40) and ReflectionOn,
+    # then SetTexture(water + 0xF8's texture); otherwise the black texture
+    assert img.cstr(0xBDCF00) == "ReflectionTexture"
+    lines = body(img, 0x47FAAD, 0x80)
+    assert "47fabd cmp byte ptr [eax + 0x5e], 0" in lines and "47fac6 mov ebx, dword ptr [0xdc7a40]" in lines
+    assert "47faff cmp byte ptr [eax + 0x50], 0" in lines and "47fb0a lea ecx, [ebx + 0xf8]" in lines and "47fb1a call dword ptr [edi + 0xd0]" in lines
+
+
+@needs_binary
+def test_visibility_check_draws_skyboxes_and_mirror_drawables_only_in_the_reflection(img):
+    # RTS3DScene::Visibility_Check (BFME2 RTS3DSceneVisibilityCheck.cpp): under the projection override (0xdd3445) a drawable draws when its mirror flag
+    # (drawable + 0x114 bit 0) or the template's KindOf byte 0 bit 0x20 (CAN_CAST_REFLECTIONS, bit 5) holds; otherwise the template's KindOf byte 0x19 bit 4
+    # (bit 202, SKYBOX) hides it
+    lines = body(img, 0x470D05, 0x60)
+    assert "470d05 cmp byte ptr [0xdd3445], 0" in lines and "470d0c je 0x470d50" in lines and "470d0e call 0x46ec65" in lines
+    assert "470d53 test byte ptr [eax + 0x121], 4" in lines and "470d5c jmp 0x470d17" in lines
+    mirror = body(img, 0x46EC65, 0x1C)
+    assert any("0x114" in l for l in mirror)
+    assert any("0x108" in l and "0x20" in l for l in mirror)
+    # the water render object draws nothing under the override (BFME2 W3DWaterRender.cpp)
+    water = body(img, 0x4717C3, 0x20)
+    assert "4717cc cmp byte ptr [0xdd3445], 0" in water and "4717d3 jne 0x4717e0" in water
+
+
+def test_the_kindof_bits_of_the_reflection_are_the_ports_names():
+    import re
+
+    names = (ROOT.parent / "engine" / "src" / "GameLogic" / "BitFlagNames.cpp").read_text()
+    start = names.index('"OBSTACLE"')
+    listed = re.findall(r'"([A-Z0-9_]+)"', names[start - 4:start + 12000])
+    assert listed[5] == "CAN_CAST_REFLECTIONS"      # template + 0x108 byte 0, bit 0x20
+    assert listed[202] == "SKYBOX"                  # template + 0x108 + 0x19, bit 4 (+ 0x121)
+
+
+# ---- the effect: how the water samples the reflection ------------------------------------------------------------------------------------------
+
+def sampler_states(data, name, last=6):
+    """The (state id -> value) of the last `last` states of a sampler parameter's sampler_state block of an fx_2_0 effect (states: 164 TEXTURE, 165/166
+    ADDRESSU/V, 169 MAG, 170 MIN, 171 MIP, 174 MAXANISOTROPY); the block's states precede the parameter's name string (a length dword, then the name)."""
+    base = 8
+    i = data.find(name.encode() + bytes(1))
+    out = {}
+    for k in range(last):
+        op, _index, _typedef, value = struct.unpack_from("<IIII", data, i - 4 - last * 16 + 16 * k)
+        out[op] = struct.unpack_from("<I", data, base + value)[0]
+    return out
+
+
+@needs_installs
+def test_reflection_sampler_clamps_and_filters_linearly_without_mips(mount):
+    data = mount.read("shaders\\compiled\\watershader.fxo")
+    reflection = sampler_states(data, "WaterReflectionSampler")
+    assert struct.unpack_from("<I", data, data.find(b"WaterReflectionSampler\0") - 4 - 6 * 16 - 4)[0] == 6  # exactly six states: texture, mip, min, mag, u, v
+    # D3DTEXF_NONE = 1 mip filter, D3DTEXF_LINEAR = 2 min and mag, D3DTADDRESS_CLAMP = 3 both ways
+    assert (reflection[171], reflection[170], reflection[169], reflection[165], reflection[166]) == (1, 2, 2, 3, 3)
+    bump = sampler_states(data, "WaterBumpSampler")
+    assert (bump[165], bump[166]) == (1, 1)  # the bump map wraps (D3DTADDRESS_WRAP)
+
+
+@needs_installs
+def test_water_vertex_shader_hands_the_reflection_the_clip_position_over_w(blobs):
+    vs = blobs[19]
+    code = ops(vs)
+    # r2 = oPos.xyw: oT2.xy = (x + w, y + w) / 2, oT2.z = w; the pixel shader divides by it: u = (x / w + 1) / 2, v = (y / w + 1) / 2, no flip
+    assert code.count("mov oPos.xyw, r2") == 1
+    i = code.index("add r1.xy, r2, r2.w")
+    assert code[i + 1] == "mul oT2.xy, r1, c42.w" and "mov oT2.z, r2.w" in code
+    assert "def c42, 1, 0, 0.00166667, 0.5" in vs
+    ps = ops(blobs[4])
+    j = ps.index("rcp r1.w, t2.z")
+    assert ps[j + 1:j + 3] == ["mul r1.xy, r1.w, t2", "mad r1.xy, c11.x, r0, r1"]  # + ReflectionPerturbation * the scaled bump xy
+    assert "texld r3, r1, s2" in ps  # s2 = WaterReflectionSampler
+    # the PCA pixel shader perturbs by the normalised normal's xy: mad r3.xy, t2, r1.w, r0 with r0 = n.xy * ReflectionPerturbation
+    pca = ops(blobs[0])
+    k = pca.index("rcp r1.w, t2.z")
+    assert pca[k - 1] == "mul r0.xy, r7, c18.x" and pca[k + 1] == "mad r3.xy, t2, r1.w, r0"
+
+
+@needs_installs
+def test_the_only_skybox_objects_are_the_ten_water_reflection_skydomes(mount):
+    """KindOf SKYBOX (bit 202) hides a drawable in every pass but the reflection (RW 0x470D53): retail's only such objects are the low-resolution domes."""
+    import re
+
+    found = {}
+    for name in mount.files:
+        if not name.lower().endswith(".ini") or "object" not in name.lower():
+            continue
+        current = None
+        for line in mount.read(name).decode("latin1").splitlines():
+            text = line.split(";")[0].strip()
+            match = re.match(r"(?i)^(Object|ChildObject)\s+(\S+)", text)
+            if match:
+                current = match.group(2)
+            elif current and re.match(r"(?i)^KindOf\s*=", text) and re.search(r"\bSKYBOX\b", text):
+                found[current] = "CAN_CAST_REFLECTIONS" in text.upper()
+    assert sorted(found) == sorted("WaterReflectionSkydome_" + n for n in
+                                   ("Cave", "Celduin", "DarkCloud", "DarkCloud2", "DarkCloud3", "DolGul", "Ettenmoors", "GapOfRohan", "MinasMorgul", "Mirkwood"))
+    assert all(found.values())
