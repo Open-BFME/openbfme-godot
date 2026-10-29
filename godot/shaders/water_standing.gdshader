@@ -1,10 +1,13 @@
 // OpenBFME. GPL-3.0.
 //
-// Retail watershader.fxo: bump/specular blobs 8/9 and the PCA/PCA_U normal
-// reconstruction from pixel blobs 0/3. Coefficient layout/interpolation comes
-// from the matched BFME2 water loader/samplers (WaterGeometry.cpp).
-// S-035: omitted reflections/shadows, Godot
-// TIME and bilinear terrain depth prevent full target technique parity.
+// Retail watershader.fxo (RotWK's, shaders.big shaders/compiled), the techniques WaterGeometry::resolveTechnique picks for the player's WaterLOD:
+//   BumpSpecular   (High)       ps blob 4 / vs blob 19: lit colour blended toward WaterReflectionTexture by ReflectionStrength, then the wave term
+//   BumpSpecular_M (Medium)     ps blob 8 / vs blob 9
+//   PCA            (High)       ps blob 0 / vs blob 13        PCA_U (UltraHigh) ps blob 2 / vs blob 14 (ps_3_0): the PCA normal reconstruction
+// Coefficient layout/interpolation comes from the matched BFME2 water loader/samplers (WaterGeometry.cpp).
+// Every path fogs toward the map's hardware fog colour (vs oD1.w / oT6.w / oD1.x, ps lrp) and then takes the shroud, as the blobs do.
+// S-035: the planar reflection texture (WaterReflectionSampler) is black here, as retail binds it unless WaterLOD >= 2 and the map's
+// WaterTransparency ReflectionOn holds (the builder reports that case); shadows, Godot TIME and bilinear terrain depth also prevent full parity.
 shader_type spatial;
 render_mode unshaded, blend_mix, depth_draw_never, cull_disabled;
 
@@ -23,8 +26,21 @@ uniform float wind_angle = 0.0;
 uniform float wind_speed = 0.02;
 uniform float wave_angle = 0.2;
 uniform float wave_speed = 0.0;
-uniform vec3 light_direction = vec3(0.0, 0.0, 1.0);
-uniform vec3 light_color = vec3(1.0);
+uniform vec3 light_direction = vec3(0.0, 0.0, 1.0);   // DirectionalLight[0].Direction: the N.L light
+uniform vec3 light_color = vec3(1.0);                 // DirectionalLight[0].Color
+// The half-vector's light: DirectionalLight[1].Direction (vs blob 19 c17 -> oD1, clamped to 0..1; blob 9 c16; ps blobs 0 / 2 c10), or the
+// authored MySpecularDirection angles: WaterGeometry::specularDirection
+uniform vec3 specular_direction = vec3(0.0, 0.0, 1.0);
+uniform bool bump_high = false;            // pca_mode 0: BumpSpecular (true) or BumpSpecular_M (false)
+uniform bool clamp_diffuse = true;         // vs_2_0 oD0 clamps 2 * Dimming * Diffuse to 0..1; PCA_U's vs_3_0 does not
+uniform float reflection_strength = 0.2;   // BumpSpecular's ReflectionStrength
+uniform float wave_steepness = 0.15;       // vs blob 13 (PCA) 0.15, blob 14 (PCA_U) 0.33
+// the map's hardware fog, as terrain.gdshader: 1 - Fog.Enable * clamp((|eye - position| - Start) / (End - Start), 0, 1), then lerp toward Fog.Color
+uniform float fog_enabled = 0.0;
+uniform vec3 fog_color = vec3(0.5);
+uniform float fog_range_start = 0.0;
+uniform float fog_range_end = 1.0;
+global uniform float w3d_fog_shift; // lane PLAY-1: the free camera's extra eye distance (TacticalCamera::fogShift; 0 = retail)
 uniform vec2 terrain_origin = vec2(0.0);
 uniform vec2 terrain_size = vec2(1.0);
 uniform float water_height = 0.0;
@@ -79,6 +95,10 @@ vec4 pca_coefficient(int row) {
 
 varying vec2 v_world;
 varying vec3 v_world_position;
+// per vertex, as the vertex shaders compute them: the range-fog factor (vs blob 19 oD1.w, blob 9 oT6.w, blob 13 oD1.x) and BumpSpecular_M's normalised
+// half-vector (vs blob 9: nrm r4.xyz, r3 -> oT6.xyz), which the pixel shader (blob 8) uses interpolated, without normalising it again
+varying float v_fog;
+varying vec3 v_half;
 // lane ZOOM-1: the local player's shroud (GameWorld::refresh_shroud sets these on the terrain and on this layer): ZH WaterRenderObjClass modulates its
 // water with the shroud texture in a second pass / stage (W3DWater.cpp, the ST_SHROUD_TEXTURE passes); the border level outside the map is black
 uniform sampler2D shroud_tex : filter_linear, repeat_disable, hint_default_white;
@@ -100,7 +120,7 @@ void vertex() {
 		if (v_depth<100.0 && distance_to_shore<CUSTOM0.w) {
 			vec2 direction=CUSTOM1.xy;
 			vec2 turn=vec2(-direction.y,direction.x)*0.4;
-			float steepness=pca_mode==2 ? 0.33 : 0.15;
+			float steepness=wave_steepness;
 			gerstner(gerstner0,direction,point,fract(point.x)*0.0005,steepness,offset,v_wave_normal);
 			gerstner(gerstner1,normalize(direction+turn),point,fract(point.y)*0.0003,steepness,offset,v_wave_normal);
 			gerstner(gerstner2,normalize(direction-turn),point,fract(point.z)*0.0003,steepness,offset,v_wave_normal);
@@ -117,6 +137,9 @@ void vertex() {
 	}
 	v_world = vec2(world.x, -world.z);
 	v_world_position = world;
+	v_fog = 1.0 - fog_enabled * clamp((length(CAMERA_POSITION_WORLD - world) - w3d_fog_shift - fog_range_start) / max(fog_range_end - fog_range_start, 0.0001), 0.0, 1.0);
+	vec3 eye_v = normalize(CAMERA_POSITION_WORLD - world);
+	v_half = normalize(vec3(eye_v.x, -eye_v.z, eye_v.y) + specular_direction);
 	vec3 shroud_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_shroud_uv = (vec2(shroud_world.x, -shroud_world.z) - shroud_origin) / shroud_extent;
 }
@@ -152,9 +175,14 @@ void fragment() {
 	vec3 col;
 	vec3 eye_g = normalize(CAMERA_POSITION_WORLD - v_world_position);
 	vec3 eye = vec3(eye_g.x, -eye_g.z, eye_g.y);
-	vec3 half_vector = normalize(eye + light_direction);
+	vec3 half_vector = normalize(eye + specular_direction);
+	// WaterReflectionSampler: black unless the reflection pass renders (WaterLOD >= 2 and ReflectionOn, Rva0007EBFBWaterDraw.cpp:419); S-035
+	vec3 reflection = vec3(0.0);
+	// vs oD0.xyz = 2 * DimmingFactor * MaterialColorDiffuse (BumpSpecular_M also times DirectionalLight[0].Color: vs blob 9 preshader)
+	vec3 diffuse_rgb = material_diffuse.rgb * (2.0 * dimming);
+	if (clamp_diffuse) diffuse_rgb = clamp(diffuse_rgb, 0.0, 1.0);
 	if (pca_mode != 0) {
-		// Retail PCA / PCA_U pixel blobs 0 / 3, with interpolated geometric normal.
+		// Retail PCA / PCA_U pixel blobs 0 / 2, with interpolated geometric normal.
 		// c0..c6 consume only two basis groups; texture 3 augments both in PCA_U.
 		// See docs/WATER_PCA_NORMALS.md and tests/water_normal_test.gd.
 		vec2 uv0 = vec2(dot(base, d0), dot(base, vec2(-d0.y, d0.x))) * pca_uv_scale.x;
@@ -179,7 +207,10 @@ void fragment() {
 		float ndoth = max(dot(n, half_vector), 0.0);
 		vec3 env = texture(sky_tex, base * env_uv_scale + reflection_perturbation * n.xy).rgb;
 		vec3 highlight = ndotl > 0.0 ? specular_color * pow(ndoth, specular_exponent) : vec3(0.0);
-		col = light_color * (env * material_diffuse.rgb * (2.0 * dimming) * ndotl + highlight);
+		vec3 lit = light_color * (env * diffuse_rgb * ndotl + highlight);
+		// the lit colour is blended toward the reflection by (1 - eye.n)^2 (ps blob 0: add r0.w, -r6.x, -c20.x; mul r0.w, r0.w, r0.w; lrp)
+		float fresnel = 1.0 - dot(eye, n);
+		col = mix(lit, reflection, fresnel * fresnel);
 		// VS 13/14 baseline plus interpolated crest and shallow-water foam.
 		vec2 perturbation = reflection_perturbation * n.xy;
 		col += v_froth * texture(pca_froth_tex, v_world * pca_wave_uv_scale.x + perturbation).rgb
@@ -187,12 +218,27 @@ void fragment() {
 	} else {
 		n = 2.0 * (texture(bump_tex, b0).rgb + texture(bump_tex, b1).rgb) - vec3(2.0, 2.0, 1.0);
 		n.xy *= bump_scale;
-		n = normalize(n);
-		float lighting = max(dot(n, light_direction), 0.0) + pow(max(dot(n, half_vector), 0.0), specular_exponent);
-		vec3 env = texture(sky_tex, base * env_uv_scale).rgb;
+		vec2 scaled_xy = n.xy; // the env perturbation below uses this, not the normalised normal (ps blob 4: mad r2.xy, c11.x, r0, t1)
+		n *= inversesqrt(dot(n, n) + 0.00001 * 0.00001);
 		vec3 waves = texture(wave_tex, w0).rgb * texture(wave_tex, w1).rgb;
-		col = env * material_diffuse.rgb * dimming * (2.0 * light_color) * lighting + waves;
+		if (bump_high) {
+			// BumpSpecular: ps blob 4 (vs blob 19)
+			float ndotl = dot(n, light_direction);
+			float ndoth = dot(n, half_vector);
+			vec3 env = texture(sky_tex, base * env_uv_scale + reflection_perturbation * scaled_xy).rgb;
+			float gate = (ndotl > 0.0 && ndoth > 0.0) ? pow(ndoth, specular_exponent) : 0.0;
+			vec3 lit = light_color * (env * diffuse_rgb * max(ndotl, 0.0) + specular_color * gate);
+			col = mix(lit, reflection, reflection_strength) + waves;
+		} else {
+			// BumpSpecular_M: ps blob 8 (vs blob 9)
+			vec3 env = texture(sky_tex, base * env_uv_scale).rgb;
+			vec3 v0 = clamp(material_diffuse.rgb * (2.0 * dimming) * light_color, 0.0, 1.0);
+			float lighting = clamp(dot(n, light_direction), 0.0, 1.0) + pow(clamp(dot(n, v_half), 0.0, 1.0), specular_exponent);
+			col = env * v0 * lighting + waves;
+		}
 	}
+	// fog (the interpolated per-vertex factor: ps lrp toward Fog.Color), then the shroud
+	col = mix(fog_color, col, v_fog);
 	float alpha = material_diffuse.a;
 	if (blend_terrain_alpha && max_alpha_depth > 0.0 && deep_water_alpha > 0.0) {
 		vec2 grid = (v_world - terrain_origin) / 10.0;

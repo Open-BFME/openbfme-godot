@@ -116,6 +116,7 @@ CI_GATES = scripts("""
 DENYLIST = {
     "water_normal_test.gd": "manual: requires GPU rendering for fixed-input water normals",
     "standing_water_test.gd": "manual: requires private retail assets and GPU water rendering",
+    "water_vertex_test.gd": "manual: requires GPU rendering for the per-vertex water fog and half-vector",
     "map_water_ini_error_test.gd": "manual: requires private retail assets (a synthetic mod water.ini over a retail map)",
     "ini_error_in_extension_test.gd": "manual: requires private retail assets (a synthetic mod INI over a retail map)",
     **dict.fromkeys(scripts("bfme1_hud bfme1_map_memory bfme1_plot bfme1_quit bfme1_castle_path bfme1"),

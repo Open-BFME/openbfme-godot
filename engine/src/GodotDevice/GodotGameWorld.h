@@ -528,6 +528,10 @@ public:
 	// lane OPTS-2: the texture reduction of the static detail level for the W3D textures loaded from now on (W3DMaterialFactory::Set_Texture_Reduction)
 	static void set_texture_reduction(int64_t reduction);
 	static int64_t get_texture_reduction();
+	// the static detail level's WaterLOD (0 Low .. 3 UltraHigh; -1 = not set): picks the standing water's shader file and technique (WaterGeometry::resolveTechnique);
+	// load_internal hands it to the terrain builder as its water_lod option
+	static void set_water_lod(int64_t level);
+	static int64_t get_water_lod();
 	// a select message and an attack-object message (MSG_DO_ATTACK_OBJECT) for the objects `ids` on `target`, through the lockstep command path. { ok, error, player, objects }
 	Dictionary order_attack(const Array &ids, int64_t target);
 

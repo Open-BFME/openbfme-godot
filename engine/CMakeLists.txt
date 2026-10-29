@@ -856,6 +856,7 @@ add_executable(openbfme_tests
     tests/test_map_cache.cpp
     tests/test_map_terrain.cpp
     tests/test_map_render.cpp
+    tests/test_water_retail.cpp
     tests/test_mod5_user_maps.cpp
     tests/RetailTestMount.cpp
     tests/test_md5_json.cpp

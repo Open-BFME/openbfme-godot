@@ -412,6 +412,8 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_glow_host"), &GameWorld::get_glow_host);
 	ClassDB::bind_static_method("GameWorld", D_METHOD("set_texture_reduction", "reduction"), &GameWorld::set_texture_reduction); // lane OPTS-2
 	ClassDB::bind_static_method("GameWorld", D_METHOD("get_texture_reduction"), &GameWorld::get_texture_reduction);
+	ClassDB::bind_static_method("GameWorld", D_METHOD("set_water_lod", "level"), &GameWorld::set_water_lod);
+	ClassDB::bind_static_method("GameWorld", D_METHOD("get_water_lod"), &GameWorld::get_water_lod);
 	ClassDB::bind_method(D_METHOD("order_attack", "ids", "target"), &GameWorld::order_attack);
 }
 
@@ -1224,6 +1226,10 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 		if (!terrainOptions.has("fog"))
 		{
 			terrainOptions["fog"] = false;
+		}
+		if (!terrainOptions.has("water_lod") && get_water_lod() >= 0)
+		{
+			terrainOptions["water_lod"] = get_water_lod();
 		}
 		Node3D *terrain = terrainBuilder->build_map(m_fs, map_name, terrainOptions);
 		const Dictionary trep = terrainBuilder->get_report();
@@ -6022,6 +6028,21 @@ void GameWorld::set_texture_reduction(int64_t reduction)
 int64_t GameWorld::get_texture_reduction()
 {
 	return W3DMaterialFactory::Get_Texture_Reduction();
+}
+
+namespace
+{
+int64_t g_waterLod = -1;
+} // namespace
+
+void GameWorld::set_water_lod(int64_t level)
+{
+	g_waterLod = level;
+}
+
+int64_t GameWorld::get_water_lod()
+{
+	return g_waterLod;
 }
 
 Node3D *GameWorld::get_fx_player() const
