@@ -101,7 +101,8 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 		"EmotionNugget", // MODULES-2: TheEmotionSystem (RW 0x8E0D59)
 		"CreateAHeroSystem", "AwardSystem", // HERO-2: TheCreateAHeroSystem (its own file, RW 0x61A10F)
 		"LinearCampaign", // CAMP-1: TheLinearCampaignManager (RW 0x5ECCB9)
-		"MissionObjectiveList" }; // CAMPUI-1: TheMissionObjectiveTracker's block (RW 0x836497)
+		"MissionObjectiveList", // CAMPUI-1: TheMissionObjectiveTracker's block (RW 0x836497)
+		"GlowEffect" }; // GLOW-1: RW 0x70B734 (GlowEffectStore)
 	// AUDIO-1: the audio blocks (AudioEvent, DialogEvent, MusicTrack, ..., EvaEvent, AudioSettings, MiscAudio) are parsed for real
 	skip.insert(skip.end(), AudioIniState::blockKeywords().begin(), AudioIniState::blockKeywords().end());
 	// AI-1: the skirmish AI blocks are parsed for real (GameLogic/SkirmishAI/SkirmishAIData.h)
@@ -132,6 +133,7 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	m_stances.registerBlock(m_env.blocks); // INTEG-1: TheStanceTemplateStore (RW 0xDE8C80; StanceTemplate RW 0x835967)
 	m_emotions.registerBlock(m_env.blocks); // MODULES-2: TheEmotionSystem (RW 0xDE8C88; EmotionNugget RW 0x8E0D59)
 	m_createAHero.registerBlock(m_env.blocks); // HERO-2: TheCreateAHeroSystem (RW 0xDE3D84)
+	m_glow.registerBlock(m_env.blocks);        // GLOW-1: the GlowEffect block (RW 0x70B734)
 	SpellStores::registerBlocks(m_env.blocks); // SPELL-1
 	m_linearCampaigns.registerBlock(m_env.blocks); // CAMP-1
 	m_env.blocks.registerBlock("MissionObjectiveList", [this](INI *ini) { MissionObjectiveTracker::parseList(ini, m_mapObjectives, m_mapObjectivesParsed); });

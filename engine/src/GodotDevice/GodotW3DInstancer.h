@@ -123,6 +123,10 @@ public:
 	// RENDER-1 (stop S-390): the instance is lit by the map's infantry light set (KINDOF_INFANTRY drawables) instead of the objects set;
 	// the buffer stores the palette base as -(base + 1) for it.
 	void set_instance_infantry_light(int64_t instance, bool infantry);
+	// lane GLOW-1 (stop S-5231): the model's draws are also drawn by the glow pass's camera (GodotGlowEffect.h kGlowLayer), as retail's glow-flagged render objects
+	// are in pass mode 3 (RW 0x46FE84): every instance of this model glows, so the caller keys glowing and plain draws of one W3D model apart. With
+	// emissive_only (GlowEmissive, RW 0xDD1E18) a mesh glows only when its first vertex material's emissive is above 0.01 (MeshClass::Render).
+	void set_model_glow(int64_t model, bool emissive_only);
 	// lane VISUAL-2: the tree's vegetation sway type (0 none, 1 .. 10: W3DVegetationSway, RW 0x4EC93A), written to INSTANCE_CUSTOM.w as bone + 1024 * type
 	void set_instance_sway(int64_t instance, int type);
 	// lane VISUAL-2: the instance is lit by the fogged light (a last-seen object in the fog: lights and ambient times w3d_fogged_frac), INSTANCE_CUSTOM.w += 16384

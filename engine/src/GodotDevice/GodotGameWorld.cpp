@@ -40,6 +40,8 @@
 #include "GameClient/LiveFX.h"
 #include "GameClient/Visual2Stops.h"
 #include "GodotDevice/GodotFXPlayer.h"
+#include "GodotDevice/GodotGlowEffect.h"
+#include "GodotDevice/GodotPostEffects.h"
 #include "Common/Audio/AudioRequests.h"
 #include "Common/JobSystem.h"
 #include "Common/WindowsCrashDump.h"
@@ -406,6 +408,8 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_audio_report"), &GameWorld::get_audio_report);
 	ClassDB::bind_method(D_METHOD("get_fx_report"), &GameWorld::get_fx_report);
 	ClassDB::bind_method(D_METHOD("get_fx_player"), &GameWorld::get_fx_player);
+	ClassDB::bind_method(D_METHOD("set_effects_lod", "lod"), &GameWorld::set_effects_lod); // lane GLOW-1
+	ClassDB::bind_method(D_METHOD("get_glow_host"), &GameWorld::get_glow_host);
 	ClassDB::bind_static_method("GameWorld", D_METHOD("set_texture_reduction", "reduction"), &GameWorld::set_texture_reduction); // lane OPTS-2
 	ClassDB::bind_static_method("GameWorld", D_METHOD("get_texture_reduction"), &GameWorld::get_texture_reduction);
 	ClassDB::bind_static_method("GameWorld", D_METHOD("set_water_lod", "level"), &GameWorld::set_water_lod);
@@ -749,6 +753,13 @@ void GameWorld::clear_scene()
 		remove_child(c);
 		c->queue_free();
 	}
+}
+
+// lane GLOW-1 (S-5231): a model draw module's GlowEnabled / GlowEmissive (module data + 0x128 / + 0x129, RW 0x4C518B): 0 none, 1 glows, 2 glows emissive only
+static int staticGlowOf(const ModuleData *data)
+{
+	const W3DModelDrawModuleData *md = dynamic_cast<const W3DModelDrawModuleData *>(data);
+	return md && md->m_glowEnabled ? (md->m_glowEmissive ? 2 : 1) : 0;
 }
 
 // stops S-115 / S-5015: a W3DFloorDraw's WeatherTexture of the map's weather (the first entry, as RW 0x4CFA9A picks a streak's) replaces the floor model's
@@ -1235,6 +1246,26 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 		timings["terrain_ms"] = timing::elapsedMs(t0);
 	}
 	emit(97);
+
+	{
+		// lane GLOW-1 (S-5231): retail's glow pass and the effects-LOD gate on the post chain. The active GlowEffect is the world's after the map.ini was read
+		// (LiveGame::load above); the colour grade host is the terrain's.
+		GlowPostEffectHost *glow = memnew(GlowPostEffectHost);
+		glow->set_name("GlowPass");
+		MapPostEffectsHost *grade = nullptr;
+		if (Node *terrainRoot = get_node_or_null(NodePath("Terrain")))
+		{
+			grade = Object::cast_to<MapPostEffectsHost>(terrainRoot->get_node_or_null(NodePath("PostEffects")));
+		}
+		glow->configure(m_world->glowEffect().active(), grade);
+		glow->set_effects_lod(m_effectsLod);
+		add_child(glow);
+		m_glowHost = glow->get_instance_id();
+		if (m_world->glowEffect().active().glowEnabled)
+		{
+			stops.push_back("S-5231");
+		}
+	}
 
 	t0 = nowMs();
 	build_static_layer(m_fs, report, errors, stops);
@@ -1778,7 +1809,15 @@ void GameWorld::refresh_views(double deltaMs)
 					}
 					swappedModel = (!coloredModel.empty() ? coloredModel : ev.rawLowered) + ev.swapSuffix;
 				}
-				const std::string &model = !swappedModel.empty() ? swappedModel : !coloredModel.empty() ? coloredModel : shown ? ev.rawLowered : kNoModel;
+				const std::string &plainModel = !swappedModel.empty() ? swappedModel : !coloredModel.empty() ? coloredModel : shown ? ev.rawLowered : kNoModel;
+				// lane GLOW-1 (S-5231): a draw module with GlowEnabled gets a model of its own (the glow layer is a property of the model's draws), so another
+				// drawable that shows the same W3D model without the flag does not glow
+				std::string glowModel;
+				if (shown && f.glow != 0)
+				{
+					glowModel = plainModel + (f.glow == 2 ? "|glow-emissive" : "|glow");
+				}
+				const std::string &model = glowModel.empty() ? plainModel : glowModel;
 				if (model != ev.model)
 				{
 					if (ev.instance >= 0)
@@ -1814,6 +1853,10 @@ void GameWorld::refresh_views(double deltaMs)
 							else
 							{
 								mid = dyn->add_model(toGodot(*f.modelName));
+							}
+							if (mid >= 0 && f.glow != 0)
+							{
+								dyn->set_model_glow(mid, f.glow == 2);
 							}
 							m_dynamicModels[model] = mid;
 							m_lastNewModelMs = timing::sumMs(m_lastNewModelMs, timing::elapsedMs(tm));
@@ -1911,6 +1954,11 @@ void GameWorld::refresh_views(double deltaMs)
 					ev.staticKeyColored = m_houseColors && ev.staticKeyPalette.kind > 0;
 					ev.staticKeySwaps = e.kind == W3D_DRAWKIND_FLOOR ? floorWeatherSwaps(e.data, m_streakWeather) : std::vector<std::pair<std::string, std::string>>();
 					ev.staticKey = AsciiStringUtil::lowered(e.staticModel) + W3DInstancer::Texture_Swap_Suffix(ev.staticKeySwaps);
+					ev.staticGlow = staticGlowOf(e.data); // lane GLOW-1 (S-5231): a glowing module's model is a copy of its own, as on the animated path
+					if (ev.staticGlow != 0)
+					{
+						ev.staticKey += ev.staticGlow == 2 ? "|glow-emissive" : "|glow";
+					}
 					if (ev.staticKeyColored)
 					{
 						const HouseColorParams &pp = ev.staticKeyPalette;
@@ -1944,6 +1992,10 @@ void GameWorld::refresh_views(double deltaMs)
 						 PackedInt64Array colors;for(auto color:palette.colors) colors.push_back((int64_t)color);
 						 mid=dyn->add_model_colored(toGodot(e.staticModel),palette.kind,colors);
 						} else mid = dyn->add_model(toGodot(e.staticModel));
+						if (mid >= 0 && ev.staticGlow != 0)
+						{
+							dyn->set_model_glow(mid, ev.staticGlow == 2);
+						}
 						m_dynamicModels[model] = mid;
 						m_lastNewModelMs = timing::sumMs(m_lastNewModelMs, timing::elapsedMs(tm));
 						++m_lastNewModels;
@@ -5996,6 +6048,20 @@ int64_t GameWorld::get_water_lod()
 Node3D *GameWorld::get_fx_player() const
 {
 	return m_fxPlayer;
+}
+
+void GameWorld::set_effects_lod(int64_t lod)
+{
+	m_effectsLod = lod;
+	if (GlowPostEffectHost *host = Object::cast_to<GlowPostEffectHost>(ObjectDB::get_instance(m_glowHost)))
+	{
+		host->set_effects_lod(lod);
+	}
+}
+
+Node3D *GameWorld::get_glow_host() const
+{
+	return Object::cast_to<GlowPostEffectHost>(ObjectDB::get_instance(m_glowHost));
 }
 
 Dictionary GameWorld::get_fx_report() const

@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 
 #include "GodotDevice/GodotGammaComposite.h"
+#include "GodotDevice/GodotGlowEffect.h"
 #include "GodotDevice/GodotW3DInstancer.h"
 
 #include <cstdio>
@@ -332,6 +333,7 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_instance_house_color", "instance", "color"), &W3DInstancer::set_instance_house_color);
 	ClassDB::bind_method(D_METHOD("add_model_colored", "model", "kind", "colors"), &W3DInstancer::add_model_colored); // lane CAH-2
 	ClassDB::bind_method(D_METHOD("set_instance_infantry_light", "instance", "infantry"), &W3DInstancer::set_instance_infantry_light);
+	ClassDB::bind_method(D_METHOD("set_model_glow", "model", "emissive_only"), &W3DInstancer::set_model_glow);
 	ClassDB::bind_method(D_METHOD("set_instance_opacity", "instance", "opacity"), &W3DInstancer::set_instance_opacity);
 	ClassDB::bind_method(D_METHOD("set_instance_occlusion", "instance", "occluder", "slot"), &W3DInstancer::set_instance_occlusion); // lane OCCLUDE-1
 	ClassDB::bind_method(D_METHOD("get_occlusion_pass_counts"), &W3DInstancer::get_occlusion_pass_counts);
@@ -370,6 +372,35 @@ void W3DInstancer::set_instance_house_color(int64_t instance, const Color &color
 	inst.HcPacked = color.a < 0.5f ? 0.0f : W3D_Pack_House_Color((int)std::lround(color.r * 255.0f), (int)std::lround(color.g * 255.0f), (int)std::lround(color.b * 255.0f));
 	PoseDirty = true;
 	mark_model(instance);
+}
+
+void W3DInstancer::set_model_glow(int64_t model, bool emissive_only)
+{
+	if (model < 0 || (size_t)model >= Models.size())
+	{
+		warn("set_model_glow: unknown model " + std::to_string(model));
+		return;
+	}
+	for (DrawItem &d : Models[(size_t)model]->Draws)
+	{
+		bool glow = true;
+		if (emissive_only)
+		{
+			// MeshClass::Render: the mesh's first vertex material, emissive above 0.01 in any channel
+			glow = false;
+			for (const MeshDrawSurface &surface : d.Mesh->Data.Surfaces)
+			{
+				if (surface.HasVertexMaterial)
+				{
+					const W3dRGBStruct &e = surface.VertexMaterial.Emissive;
+					glow = e.R / 255.0f > 0.01f || e.G / 255.0f > 0.01f || e.B / 255.0f > 0.01f;
+					break;
+				}
+			}
+		}
+		const uint32_t layers = d.Node->get_layer_mask();
+		d.Node->set_layer_mask(glow ? (layers | GlowPass::kGlowLayer) : (layers & ~GlowPass::kGlowLayer));
+	}
 }
 
 void W3DInstancer::set_instance_infantry_light(int64_t instance, bool infantry)

@@ -117,6 +117,7 @@ struct W3DDrawPoseView
 	const std::set<int> *hiddenSubObjects = nullptr; ///< indices into model->SubObjects (frame() names them; empty without a model)
 	std::uint32_t hiddenGeneration = 0;             ///< changes whenever the module's hidden set may have changed (with the same model: the same set)
 	const std::vector<std::pair<std::string, std::string>> *textureSwaps = nullptr; ///< the state's `Texture = A B` pairs (stop S-5015); never null after poseView
+	int glow = 0;                                    ///< lane GLOW-1: the module's GlowEnabled / GlowEmissive (module data + 0x128 / + 0x129): 0 none, 1 glows, 2 glows emissive only
 };
 
 struct W3DScriptedModelDrawOptions

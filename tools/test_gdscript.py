@@ -131,7 +131,7 @@ DENYLIST = {
         p16_ui_legacy_shape spellbook_rightclick cah_camera_retail shellfb1_cursor shellfb1_spell_store_escape
     """) | {"object_corpus_sweep.gd"}, "manual: needs private RotWK/BFME2 assets and game/frame setup"),
     **dict.fromkeys(scripts("""
-        apt_canvas_pixel building_render fx_render gamma_composite hud_image_mode_pixel
+        apt_canvas_pixel building_render fx_render gamma_composite glow hud_image_mode_pixel
         menu_backdrop_resize online_branding pro_camera pro_camera_bokeh radial_background render4 road_shader shader
     """), "manual: GPU/window/render readback required (some also need retail assets)"),
     "pingwheel_test.gd": "manual: mixed UI/timer checks and retail skirmish/hash runs; not wholly asset-free",

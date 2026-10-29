@@ -146,6 +146,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/friends_walk.gd` | `godot/scripts/game.gd` | Support/opt-in walk, not an independently scheduled test. |
 | `godot/tests/fx_render_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/gamma_composite_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
+| `godot/tests/glow_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/hero_radius_cursor_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/hud_image_mode_pixel_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/hudredraw_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |

@@ -472,6 +472,10 @@
    "reason": "the map's colour grade on the 3D colour buffer (LookupTablePostEffect, RENDER-4 / S-1650): rendering only"
   },
   {
+   "glob": "src/GodotDevice/GodotGlowEffect.cpp",
+   "reason": "retail's glow pass on the 3D colour buffer and the effects-LOD gate on the post chain (GLOW-1 / S-5231): rendering only"
+  },
+  {
    "glob": "src/GodotDevice/GodotFXPlayer.cpp",
    "reason": "plays FXLists and particle systems on the GPU: client-side effects (FX-1)"
   },
