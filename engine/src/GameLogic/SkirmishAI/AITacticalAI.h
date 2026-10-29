@@ -129,9 +129,10 @@ struct AITacticTeam
 	int maximum = -1;                ///< + 0x2D0 (-1 = 0xFFFFFFFF: no maximum)
 	std::vector<int> requiredKinds;  ///< + 0x2E0: a recruit has one of these KindOf bits (RW 0x9A25C8; empty: any)
 	std::vector<int> forbiddenKinds; ///< + 0x2FC: a recruit has none of these (RW 0x9A25E5)
-	int priority = 0;                ///< + 0x21C (FarmKillSquad: 500)
+	int priority = 0;                ///< + 0x21C (BFME2 FarmKillSquad: 30)
 	bool wantsMembers = true;        ///< + 0x31C
 	bool handedOver = false;         ///< + 0x31D
+	std::vector<std::string> remainingUnits; ///< BFME2 predefined unit-info requests, consumed in registration order
 	std::vector<ObjectID> members;   ///< S-418: the recruited units (RW: the team's members)
 	bool hasRecruitOrigin = false;   ///< native prototype +0x324
 	Coord3D recruitOrigin{};         ///< native prototype +0x328: sort recruits by distance from this point
@@ -165,7 +166,7 @@ struct AITactic
 	std::vector<Coord3D> waypoints;  ///< FlankAttack / PincerAttack waypoints (+ 0x58 -> vector)
 	Coord3D gatherPos;               ///< FormationAttack + 0x58 -> + 4: the team's centre at the launch
 	Coord3D aimPos;                  ///< FormationAttack + 0x58 -> + 0x10: the target position at the launch
-	bool mainLaunched = false;       ///< FeintAttack main-team flag / BFME2 RoamingDefense roaming flag (+0x58)
+	bool mainLaunched = false;       ///< FeintAttack main-team / RoamingDefense roaming / SiegeGates reached flag
 	std::uint32_t launchFrame = 0;   ///< FeintAttack + 0x5C: the launch frame
 	// lane AIEXPAND-1: SimpleExpansion (ctor RW 0x9B5190): + 0x58 its plain structure request (also in the AI's queues while unfinished); its + 0x5C stage is `step`
 	std::shared_ptr<AIBuildRequest> request;
@@ -234,6 +235,11 @@ void addAttackedAtForTest(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D 
 void expansionHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &t);
 bool teamMeetsThreatForTest(GameLogic &logic, const AITactic &tac, const AITacticTeam &team);
 void updateInterestZonesForTest(GameLogic &logic, AISkirmishPlayer &ai);
+Coord3D siegeStandBackPointForTest(const Coord3D &from, const Coord3D &wall);
+bool siegeAppliesForTest(GameLogic &logic, const AISkirmishPlayer &ai, const AITarget &target, bool simple);
+void startSiegeForTest(GameLogic &logic, AISkirmishPlayer &ai, int targetIndex, bool simple);
+void runSiegeForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac);
+void updateSiegeForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac);
 std::vector<std::string> offensivePrototypesForTest();
 std::vector<std::string> targetlessPrototypesForTest();
 ObjectID farmKillTargetForTest(GameLogic &logic, const AITactic &tac, int enemy, bool production);

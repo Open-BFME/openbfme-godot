@@ -742,3 +742,187 @@ TEST_CASE("BFME2 generator: native prototype names and registration order")
  CHECK(AITacticalAI::offensivePrototypesForTest() == std::vector<std::string>{"SimpleAttack","FlankAttack","SimpleSiege","SiegeGates","AIBasePenetrationTroopsTactic"});
  CHECK(AITacticalAI::targetlessPrototypesForTest() == std::vector<std::string>{"FarmKillSquad","AIRingHeroTactic","StructureCreep","ReturnTheRing","AIStartWoTRBattleTactic","AIRoamingDefenseTactic"});
 }
+
+namespace {
+struct SiegeScenario : Scenario {
+ AISkirmishPlayer *ai = nullptr;
+ Object *unit = nullptr, *gate = nullptr, *objective = nullptr;
+ SiegeScenario() {
+  REQUIRE(w.w.load(R"ini(
+SkirmishAIData SiegeData
+End
+ChildObject SiegeGate BreachWall
+ KindOf = STRUCTURE IMMOBILE WALL_GATE
+ GeometryMinorRadius = 500
+End
+ChildObject SiegeSegment BreachWall
+ KindOf = STRUCTURE IMMOBILE WALL_SEGMENT
+End
+ChildObject WalkableSegment SiegeSegment
+ KindOf = STRUCTURE IMMOBILE WALL_SEGMENT WALK_ON_TOP_OF_WALL
+End
+ChildObject NoAcquireGate BreachWall
+ KindOf = STRUCTURE IMMOBILE WALL_GATE NOT_AUTOACQUIRABLE
+End
+ChildObject SiegeFortress BreachWall
+ KindOf = STRUCTURE IMMOBILE DOZER_FACTORY
+End
+ChildObject SiegeUnit Swordsman
+ ThreatLevel = 1000
+ ThreatBreakdown
+ AIKindOf = SIEGEWEAPON
+ End
+End
+)ini").empty());
+  auto &manager=w.logic->skirmishAI(); manager.setStore(&store); manager.newGame(true);
+  ai=const_cast<AISkirmishPlayer *>(manager.findAI(bot.playerIndex)); REQUIRE(ai); ai->disabled=true;
+  ai->build.phase=1; ai->brain.currentEnemy=w.players.findPlayerWithName("Bob")->getPlayerIndex();
+  unit=w.unit("Swordsman",'A',100,500);
+  gate=w.unit("SiegeGate",'B',500,500);
+  objective=w.unit("BreachWall",'B',800,500);
+  w.buildMap();
+  AITarget target; target.type=0; target.object=objective->getID(); target.position=*objective->getPosition();
+  target.inactive=false; target.maxTeams=2; target.id=ai->brain.nextTargetId++;
+  ai->brain.targets.push_back(target);
+ }
+ void breach() { w.logic->destroyObject(gate); gate=nullptr; w.buildMap(); }
+};
+}
+
+TEST_CASE("BFME2 siege: closed wall selects gates, category seven selects SimpleSiege, breach refuses both")
+{
+ for (int difficulty=0;difficulty<4;++difficulty) {
+  CAPTURE(difficulty);
+  SiegeScenario s;
+  s.w.players.findPlayerWithName("Alice")->setSkirmishDifficulty(difficulty);
+  CHECK(AITacticalAI::siegeAppliesForTest(*s.w.logic,*s.ai,s.ai->brain.targets[0],false));
+  CHECK_FALSE(AITacticalAI::siegeAppliesForTest(*s.w.logic,*s.ai,s.ai->brain.targets[0],true));
+  auto *siege=s.w.unit("SiegeUnit",'A',120,500);
+  REQUIRE_FALSE(siege->isKindOfName("SIEGEENGINE")); // Native choice is ThreatBreakdown category 7.
+  CHECK_FALSE(AITacticalAI::siegeAppliesForTest(*s.w.logic,*s.ai,s.ai->brain.targets[0],false));
+  CHECK(AITacticalAI::siegeAppliesForTest(*s.w.logic,*s.ai,s.ai->brain.targets[0],true));
+  auto *fortress=s.w.unit("SiegeFortress",'B',800,600);
+  s.ai->brain.targets[0].object=fortress->getID(); s.ai->brain.targets[0].position=*fortress->getPosition();
+  s.ai->build.phase=0;
+  CHECK_FALSE(AITacticalAI::siegeAppliesForTest(*s.w.logic,*s.ai,s.ai->brain.targets[0],false));
+  CHECK_FALSE(AITacticalAI::siegeAppliesForTest(*s.w.logic,*s.ai,s.ai->brain.targets[0],true));
+  s.ai->build.phase=1;
+  s.breach();
+  CHECK_FALSE(AITacticalAI::siegeAppliesForTest(*s.w.logic,*s.ai,s.ai->brain.targets[0],false));
+  CHECK_FALSE(AITacticalAI::siegeAppliesForTest(*s.w.logic,*s.ai,s.ai->brain.targets[0],true));
+ }
+}
+
+TEST_CASE("BFME2 siege gates: native setup, nearest valid wall, breach and idle completion")
+{
+ SiegeScenario s;
+ s.w.unit("WalkableSegment",'B',150,500);
+ s.w.unit("NoAcquireGate",'B',160,500);
+ auto *near=s.w.unit("SiegeSegment",'B',300,500);
+ s.w.unit("SiegeSegment",'B',300,500); // Equal distance keeps the first registration.
+ AITacticalAI::startSiegeForTest(*s.w.logic,*s.ai,0,false);
+ auto &tactic=s.ai->brain.tactics.back();
+ REQUIRE(tactic.teams.size()==1);
+ CHECK(tactic.teams[0].minimum==1); CHECK(tactic.teams[0].maximum==-1);
+ CHECK(tactic.teams[0].forbiddenKinds==std::vector<int>{ObjectTemplateInfoBuilder::kindOfIndex("ARCHER")});
+ tactic.teams[0].members={s.unit->getID()}; tactic.teams[0].handedOver=true; tactic.teams[0].wantsMembers=false;
+ tactic.started=true;
+ AITacticalAI::runSiegeForTest(*s.w.logic,*s.ai,tactic);
+ CHECK(tactic.squadTarget==near->getID());
+ CHECK(s.unit->getAIUpdateInterface()->stateMachine().goalObjectID()==near->getID());
+ // Remove every physical segment too: the target path must actually become reachable.
+ std::vector<Object *> walls;
+ for(Object *o=s.w.logic->getFirstObject();o;o=o->getNextObject()) if(o!=s.objective && o->getControllingPlayer()==s.objective->getControllingPlayer()) walls.push_back(o);
+ for(Object *o:walls) s.w.logic->destroyObject(o);
+ s.gate=nullptr; s.w.buildMap();
+ AITacticalAI::updateSiegeForTest(*s.w.logic,*s.ai,tactic);
+ CHECK(tactic.mainLaunched); CHECK(s.unit->getAIUpdateInterface()->attackMoveActive());
+ tactic.teams[0].idleFrames=1000;
+ AITacticalAI::updateSiegeForTest(*s.w.logic,*s.ai,tactic);
+ CHECK(tactic.ended); CHECK(tactic.success);
+}
+
+TEST_CASE("BFME2 SimpleSiege: predefined templates recruit before handover and save unfinished requests")
+{
+ SiegeScenario s;
+ auto *first=s.w.unit("SiegeUnit",'A',110,500);
+ auto *second=s.w.unit("SiegeUnit",'A',120,500);
+ AITacticalAI::startSiegeForTest(*s.w.logic,*s.ai,0,true);
+ auto &tactic=s.ai->brain.tactics.back();
+ REQUIRE(tactic.teams.size()==2);
+ CHECK(tactic.teams[0].remainingUnits==std::vector<std::string>{"SiegeUnit","SiegeUnit"});
+ CHECK(tactic.teams[0].minimum==1); CHECK(tactic.teams[0].maximum==-1);
+ CHECK(tactic.teams[1].minimum==1); CHECK(tactic.teams[1].maximum==-1);
+ auto &manager=s.w.logic->skirmishAI();
+ XferSave saved; saved.beginBlock(); manager.xfer(saved); saved.endBlock();
+ tactic.teams[0].remainingUnits.clear();
+ XferLoad load(saved.data()); load.beginBlock(); manager.xfer(load); load.endBlock();
+ s.ai=const_cast<AISkirmishPlayer *>(manager.findAI(s.bot.playerIndex)); REQUIRE(s.ai);
+ auto &restored=s.ai->brain.tactics.back();
+ CHECK(restored.teams[0].remainingUnits==std::vector<std::string>{"SiegeUnit","SiegeUnit"});
+ restored.teams[0].remainingUnits={"MissingSiegeTemplate"};
+ XferSave corrupt; corrupt.beginBlock(); manager.xfer(corrupt); corrupt.endBlock();
+ restored.teams[0].remainingUnits={"SiegeUnit","SiegeUnit"};
+ StateHasher beforeBad; manager.crc(beforeBad);
+ XferLoad bad(corrupt.data()); bad.beginBlock();
+ CHECK_THROWS_WITH(manager.xfer(bad),"skirmish ai: unknown predefined unit template 'MissingSiegeTemplate'");
+ StateHasher afterBad; manager.crc(afterBad);
+ CHECK(afterBad.value()==beforeBad.value());
+
+ s.w.frames(50);
+ AITacticalAI::updateTeamBuilder(*s.w.logic,*s.ai);
+ CHECK(restored.teams[0].remainingUnits.empty());
+ CHECK(restored.teams[0].members==std::vector<ObjectID>{first->getID(),second->getID()});
+ CHECK(restored.teams[0].priority==20);
+ CHECK(restored.teams[0].handedOver);
+ CHECK(restored.teams[1].members==std::vector<ObjectID>{s.unit->getID()});
+}
+
+TEST_CASE("BFME2 SimpleSiege: stand back 500, wait for breach, advance assault team, finish at idle")
+{
+ SiegeScenario s;
+ auto *siege=s.w.unit("SiegeUnit",'A',100,500);
+ AITacticalAI::startSiegeForTest(*s.w.logic,*s.ai,0,true);
+ auto &tactic=s.ai->brain.tactics.back();
+ tactic.teams[0].remainingUnits.clear(); tactic.teams[0].members={siege->getID()};
+ tactic.teams[1].members={s.unit->getID()}; tactic.started=true;
+ AITacticalAI::updateSiegeForTest(*s.w.logic,*s.ai,tactic);
+ CHECK(tactic.step==1); CHECK(tactic.squadTarget==s.gate->getID());
+ CHECK(siege->getAIUpdateInterface()->stateMachine().goalObjectID()==s.gate->getID());
+ REQUIRE(s.unit->getAIUpdateInterface()->attackMoveActive());
+ REQUIRE(s.unit->getAIUpdateInterface()->resumeAttackMove());
+ // Source destination before the existing AIGroup placement/clipping facade.
+ const Coord3D standBack=AITacticalAI::siegeStandBackPointForTest(*siege->getPosition(),*s.gate->getPosition());
+ CHECK(standBack.x==0); CHECK(standBack.y==500); CHECK(standBack.z==0);
+ AITacticalAI::updateSiegeForTest(*s.w.logic,*s.ai,tactic); CHECK(tactic.step==1);
+ s.breach();
+ AITacticalAI::updateSiegeForTest(*s.w.logic,*s.ai,tactic); CHECK(tactic.step==2);
+ AITacticalAI::updateSiegeForTest(*s.w.logic,*s.ai,tactic); CHECK(tactic.step==3);
+ REQUIRE(s.unit->getAIUpdateInterface()->resumeAttackMove());
+ CHECK(s.unit->getAIUpdateInterface()->attackMoveActive());
+ tactic.teams[1].idleFrames=1000;
+ AITacticalAI::updateSiegeForTest(*s.w.logic,*s.ai,tactic);
+ CHECK(tactic.ended); CHECK(tactic.success);
+}
+
+TEST_CASE("BFME2 SimpleSiege: save between breach and assault resumes the next stage")
+{
+ SiegeScenario s;
+ auto *siege=s.w.unit("SiegeUnit",'A',100,500);
+ AITacticalAI::startSiegeForTest(*s.w.logic,*s.ai,0,true);
+ auto &tactic=s.ai->brain.tactics.back();
+ tactic.started=true; tactic.step=1;
+ tactic.teams[0].remainingUnits.clear(); tactic.teams[0].members={siege->getID()};
+ tactic.teams[1].members={s.unit->getID()};
+ s.breach();
+ AITacticalAI::updateSiegeForTest(*s.w.logic,*s.ai,tactic); REQUIRE(tactic.step==2);
+ auto &manager=s.w.logic->skirmishAI();
+ XferSave saved; saved.beginBlock(); manager.xfer(saved); saved.endBlock();
+ tactic.step=3;
+ XferLoad load(saved.data()); load.beginBlock(); manager.xfer(load); load.endBlock();
+ s.ai=const_cast<AISkirmishPlayer *>(manager.findAI(s.bot.playerIndex)); REQUIRE(s.ai);
+ auto &restored=s.ai->brain.tactics.back();
+ CHECK(restored.step==2);
+ AITacticalAI::updateSiegeForTest(*s.w.logic,*s.ai,restored);
+ CHECK(restored.step==3); CHECK(s.unit->getAIUpdateInterface()->attackMoveActive());
+}

@@ -16,6 +16,7 @@
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 
 #include "Common/Player.h"
+#include "Common/Thing/ThingFactory.h"
 #include <cmath>
 #include "Common/PlayerList.h"
 #include "Common/StateHash.h"
@@ -347,7 +348,7 @@ void xferBrain(Xfer &x, AIBrainState &b, RequestTable &table, int version)
 				throw XferException("skirmish ai: a tactic '" + tac.kind + "' of the prototype " + std::to_string(tac.kindIndex));
 			}
 		}
-		x.xferVectorSize(tac.teams, 50);
+		x.xferVectorSize(tac.teams, 54);
 		for (AITacticTeam &team : tac.teams)
 		{
 			x.xferAsciiString(&team.name);
@@ -360,6 +361,7 @@ void xferBrain(Xfer &x, AIBrainState &b, RequestTable &table, int version)
 			x.xferBool(&team.wantsMembers);
 			x.xferBool(&team.handedOver);
 			AIXfer::ids(x, team.members);
+			AIXfer::strings(x,team.remainingUnits);
 			x.xferBool(&team.hasRecruitOrigin);
 			AIXfer::coord(x, team.recruitOrigin);
 			AIXfer::coord(x, team.lastPosition);
@@ -482,7 +484,7 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 	// history, which cannot be recovered from current KindOf flags: older snapshots are refused. Version 4 (lane AIEXPAND-1): the EXPANSION heuristic's frame
 	// counter, SimpleExpansion's request and plain structure requests. A version 3 snapshot comes from a build without the heuristic: it loads with 0, the
 	// count at a game's start (its first expansion check then comes 301 checks after the load)
-	XferVersion v{ 6, 6 }; // BFME2 interest-zone threat scalar affects team handover; prior layouts are incompatible.
+	XferVersion v{ 7, 7 }; // BFME2 predefined siege-unit requests affect recruitment; prior layouts are incompatible.
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	bool started = loading ? false : m_started;
@@ -978,6 +980,10 @@ void SkirmishAIManager::checkLoaded() const
 					throw XferException(what + "s " + std::to_string(tac.step) + " / " + std::to_string(tac.step2) + " are not PincerAttack's codes");
 				}
 				break;
+			case 6: // BFME2 SimpleSiege stages
+				AIXfer::inRange(tac.step,0,3,what.c_str());
+				AIXfer::inRange(tac.step2,0,0,what.c_str());
+				break;
 			case 8:
 				// lane AIEXPAND-1: SimpleExpansion's stages 0 .. 4 (RW 0x9B52BD); a running one has its request from stage 1 on (made with the move to 1, RW 0x9B51E9);
 				// an ended one has none (its end ran the cleanup RW 0x9B5042; it is dropped at the next update, RW 0x90BA94) whatever its stage; the request is plain
@@ -1005,6 +1011,10 @@ void SkirmishAIManager::checkLoaded() const
 			}
 			for (const AITacticTeam &team : tac.teams)
 			{
+				for (const std::string &name : team.remainingUnits)
+				{
+					if (name.empty() || !m_logic.things().findTemplate(name)) { throw XferException("skirmish ai: unknown predefined unit template '"+name+"'"); }
+				}
 				for (const std::vector<int> *bits : { &team.requiredKinds, &team.forbiddenKinds })
 				{
 					for (int bit : *bits)

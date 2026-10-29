@@ -30,7 +30,7 @@ difficulty gate as the source does. No damage boost is invented.
 
 ## Native snapshots
 
-The skirmish AI block now requires version 6: BFME2 interest-zone threat, spatial registrations/groups,
+The skirmish AI block now requires version 7: predefined siege-unit requests, BFME2 interest-zone threat, spatial registrations/groups,
 ArmyBreaker timers, defensive target sizes and team recruitment origins affect
 future decisions. Older layouts are refused explicitly. SimpleExpansion keeps
 upstream prototype index 8; SimpleDefense uses 9. Capture history and expansion
@@ -296,7 +296,7 @@ successful native run:
 | Area | Source/dependency still needed | Closure gate |
 | --- | --- | --- |
 | Four native targetless families | RingHero, StructureCreep, ReturnTheRing, StartWoTRBattle; StructureCreep has substantial donor bodies, while sibling bodies are split among address-named units and need a complete callgraph audit | Native eligibility, recruitment, orders, cleanup, RNG and save tests for each applicable mode |
-| Siege tactics | Rva005A9ACDTactic / Rva005A9CB3Tactic / Rva005DC87BXfer bodies, native defined-unit team setup and offensive reachability gate; the structure query is now present | Unreachable target selects the native siege tactic; breach transitions and team orders match source |
+| Siege tactics | SiegeGates/SimpleSiege bodies and predefined recruitment are now ported (see follow-up below); general native team ownership and movement facades still have open dependencies | External retail decision/frame comparison and native team/formation parity |
 | AI wall planning/construction | AIWallBuilder, AIWall, map wall-library loading and buildable wall request lifecycle | Source plan selection, affordability, hub/gate/segment order, completion/failure and snapshots |
 | Native teams and reassignment | AITeamBuilder recruitment predicate, Team/TeamPrototype identity, recruitment availability and priority; current tactic vectors represent membership | Ownership changes and defensive/priority transfers follow native rules without duplicate membership |
 | Group formation/movement | Native formation manager, group ownership and remaining AIGroup state transitions | Native route/turn/order fixtures plus deterministic save continuation |
@@ -312,3 +312,43 @@ Final generator validation: the corrected timing tests, native prototype list
 facts and native targetless gameplay case passed four cases / 762 assertions.
 The earlier broad run's other 100 cases passed. Native Release build, installed
 commit gate and whitespace checks passed. The work remains local.
+
+## BFME2 siege tactics follow-up
+
+Ported `AITacticOffensiveCheckTarget.cpp`, `AITacticSiege_sideHasIdleSiegeWeapons.cpp`,
+`Rva005DC87BXfer.cpp`, `Rva005A9ACDTactic.cpp` and `Rva005A9CB3Tactic.cpp`.
+The first mobile CAN_ATTACK registration now performs the actual position or
+structure path query; unreachable targets admit siege tactics and refuse normal
+attacks. The native empty/final-registration null guard is retained. A live
+DOZER_FACTORY target is refused during Rush on every difficulty, as BFME2 does.
+Siege availability uses default-team ThreatBreakdown category 7, rather than a
+SIEGEENGINE KindOf, health or selection filter.
+
+SiegeGates uses pooled team sizes, forbids ARCHER, attacks the nearest registered
+enemy gate or non-walkable wall segment, excludes NOT_AUTOACQUIRABLE/destroyed
+objects and preserves first-registration ties. After a real breach it attack-moves
+all teams to the target and completes when idle. SimpleSiege requests one unit
+per tracked category-7 template for team 0, has a second assault team, attacks the
+wall, stages the assault 500 units back, waits for reachability, then advances
+and finishes at idle. Its native predefined-recruitment pass consumes matching
+requests in army registration order at priority >=20; unfinished requests block
+handover. General cross-team priority/defensive reassignment remains S-418.
+Team object attacks now use the native player command source.
+
+Predefined requests are saved and hashed; native AI layout version 7 rejects
+older layouts. Unknown requested templates and invalid siege stages are refused
+transactionally. Existing AIGroup placement/clipping, native team representation
+and shared pathfinding limits remain explicit: the stand-back geometry is tested
+before that movement facade, not presented as a retail route trace.
+
+The first focused run passed four cases / 175 assertions. The broad source/power/
+manager/targetless/save selection passed 106 cases / 17,375 assertions. The
+four-difficulty repeated 1,500-frame matrix, seven-faction attack and native
+Flank selection passed four cases / 16,063 assertions. No timing pins changed.
+Additional focused checks cover malformed predefined requests, mid-stage save
+continuation and the Rush guard at all difficulties. AI wall construction itself
+is still separate from these attacking tactics.
+
+Final siege checks passed five cases / 209 assertions, including malformed-save
+rollback and resumption between breach and assault. Native Release build,
+installed commit gate and whitespace checks passed. Commits remain local.
