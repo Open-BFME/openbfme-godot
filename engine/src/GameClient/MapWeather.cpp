@@ -15,6 +15,23 @@
 namespace
 {
 
+std::string lower(std::string s)
+{
+	for (char &c : s)
+	{
+		c = (char)std::tolower((unsigned char)c);
+	}
+	return s;
+}
+
+std::string trim(const std::string &s)
+{
+	size_t a = 0, b = s.size();
+	while (a < b && std::isspace((unsigned char)s[a])) ++a;
+	while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
+	return s.substr(a, b - a);
+}
+
 bool equalsNoCase(const char *a, const char *b)
 {
 	for (; *a && *b; ++a, ++b)
