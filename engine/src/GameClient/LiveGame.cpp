@@ -556,6 +556,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 		m_logic->victory().init();
 		// RW 0x6313A6 (load progress 97, after the starting bases): TheSkirmishAIManager::newGame gives every computer slot its AI (lane AI-1)
 		m_logic->skirmishAI().setStore(&m_world.skirmishAI());
+		m_logic->skirmishAI().loadWallLibrary(m_map.chunks.objects);
 		m_logic->skirmishAI().newGame(true, false, mapFileNameOf(options.start->message.game.mapName));
 		for (const std::string &e : placed.errors)
 		{

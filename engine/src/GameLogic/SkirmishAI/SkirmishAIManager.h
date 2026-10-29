@@ -35,6 +35,7 @@
 
 #pragma once
 
+#include "GameLogic/SkirmishAI/AIWallBuilder.h"
 #include "Common/NameKeyGenerator.h"
 #include "GameLogic/SkirmishAI/AIBaseBuilder.h"
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
@@ -96,6 +97,9 @@ public:
 	// RW 0x6AA030. `skirmishOrMultiplayer`: TheGameInfo says so (a game started from a skirmish setup); `loadingSave`: RW 0x5FF924. Returns the
 	// number of AI players made.
 	// `mapFileName`: the current map's file name as the map cache holds it ("map mp evendim.map"), compared with AIBase GameMapToUseOn
+	void loadWallLibrary(const std::vector<MapObject> &objects);
+	const std::vector<AIWallBuilder::Plan> &wallLibrary() const { return m_wallLibrary; }
+	std::uint32_t wallLibraryCrc() const;
 	int newGame(bool skirmishOrMultiplayer, bool loadingSave = false, const std::string &mapFileName = std::string());
 	// RW 0x6A96A0, once per logic frame in phase 5 (GameLogic::update)
 	void update();
@@ -208,6 +212,7 @@ private:
 	std::vector<std::unique_ptr<AISkirmishGroup>> m_groups;
 	std::vector<int> m_infoPlayers;
 	std::vector<ObjectID> m_captureFlags;
+	std::vector<AIWallBuilder::Plan> m_wallLibrary; // immutable map-authored plans; execution state is not yet ported
 	std::map<int, std::unique_ptr<AIStatCollector>> m_records; ///< manager + 0xA3C: the player info records by player index (lane DECOMP-3)
 	void makeRecord(const Player &player);
 	std::vector<std::shared_ptr<AIBuildRequest>> m_farmSites; ///< RW 0xDE9EEC (made by the first economy builder, RW 0x8EEBAC)

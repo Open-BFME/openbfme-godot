@@ -1049,7 +1049,9 @@ and native paths instead; the command below is the Linux form.
 engine/build/openbfme_peer --load-save workspace/saved.obfmesave --replay workspace/full.replay --verify-log --report workspace/save-check.txt
 ```
 
-Source AI overhaul: obfme:SkirmishAI now requires version 7 for predefined siege-unit requests, BFME2 interest-zone threat, and spatial groups,
+Source AI overhaul: obfme:SkirmishAI now requires version 8 for predefined siege-unit requests, BFME2 interest-zone threat, and spatial groups,
 independent ArmyBreaker timers and SimpleDefense recruitment state; earlier
 layouts are explicitly refused. AIStatCollector is version 3 and TerrainTrees
 version 2. See [AI source overhaul](AI-SOURCE-OVERHAUL.md).
+
+Native AI layout 8 appends the immutable map-authored wall-library identity; a different loaded library is refused transactionally. Layouts before 8 are rejected.

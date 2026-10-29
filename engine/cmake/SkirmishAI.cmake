@@ -5,6 +5,7 @@ set(OPENBFME_SKIRMISH_AI_SOURCES
     src/GameLogic/SkirmishAI/SkirmishAIData.cpp
     src/GameLogic/SkirmishAI/SkirmishAIManager.cpp
     src/GameLogic/SkirmishAI/AIBaseBuilder.cpp
+    src/GameLogic/SkirmishAI/AIWallBuilder.cpp
     src/GameLogic/SkirmishAI/AITacticalAI.cpp
     src/GameLogic/SkirmishAI/AIThreatFinder.cpp
     src/GameLogic/SkirmishAI/AIPositionSampler.cpp
@@ -14,6 +15,7 @@ set(OPENBFME_SKIRMISH_AI_SOURCES
 set(OPENBFME_SKIRMISH_AI_TESTS
     tests/test_skirmish_ai_data.cpp
     tests/test_ai_source_overhaul.cpp
+    tests/test_ai_wall_builder.cpp
     tests/test_skirmish_ai_manager.cpp
     tests/test_skirmish_ai_base.cpp
     tests/test_skirmish_ai_attack.cpp

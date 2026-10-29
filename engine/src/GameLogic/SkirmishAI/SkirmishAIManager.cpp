@@ -31,6 +31,15 @@ bool SkirmishAIManager::countsAsAI(const Player &p) const
 	return p.getPlayerType() == PLAYER_COMPUTER || (m_store && m_store->data().makeAllSkirmishSidesAIControlled);
 }
 
+void SkirmishAIManager::loadWallLibrary(const std::vector<MapObject> &objects)
+{
+	m_wallLibrary = AIWallBuilder::loadWallLibrary(objects);
+}
+std::uint32_t SkirmishAIManager::wallLibraryCrc() const
+{
+	StateHasher hash; AIWallBuilder::crc(m_wallLibrary,hash); return hash.value();
+}
+
 int SkirmishAIManager::newGame(bool skirmishOrMultiplayer, bool loadingSave, const std::string &mapFileName)
 {
 	m_mapFileName = mapFileName;
@@ -540,6 +549,7 @@ void SkirmishAIManager::reset()
 	m_groups.clear();
 	m_infoPlayers.clear();
 	m_captureFlags.clear();
+	m_wallLibrary.clear();
 	m_records.clear();
 	m_farmSites.clear();
 	m_started = false;
@@ -611,6 +621,7 @@ void SkirmishAIManager::crc(StateHasher &h) const
 	{
 		kv.second->crc(h);
 	}
+	if (!m_groups.empty() && !m_wallLibrary.empty()) { h.addString("AIWallLibrary"); h.addU32(wallLibraryCrc()); }
 	// Only AI groups can use the capture registry; keep no-AI and empty-registry hashes unchanged.
 	if (!m_groups.empty() && !m_captureFlags.empty())
 	{
@@ -660,7 +671,7 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"before RW's table (the port rejects it, S-411)",
 		"[S-412] skirmish ai: TheSkirmishAIManager's creation rules, groups and update cadence are ported (RW 0x6AA030, 0x6A9EAD, 0x6A96A0, 0x8EDDF6, "
 		"0x6C7946); the bodies they call are not: the manager object + 0xA74, the group tasks (RW 0x8EDB2C), "
-		"AISkirmishPlayer RW 0x6C75B5 / the shutdown, the wall builder (RW 0x8F0EB4's + 0xE4); a computer player builds its base (S-413), trains its army "
+		"AISkirmishPlayer RW 0x6C75B5 / the shutdown, wall activation/construction (the map wall library is loaded; RW 0x8F0EB4's + 0xE4); a computer player builds its base (S-413), trains its army "
 		"(S-415) builds farms (S-419), attacks with its tactic teams (S-417) and (lane AI5) buys its units' and structures' upgrades and its plots' expansions "
 		"(+ 0x108 AIUnitUpgrader, + 0x12C AIUpgradeScienceBuilder, the player info record's listeners: S-1876); lane BACKLOG6: AIPlayer::update RW 0x8F0EB4 is checked against the BFME2 "
 		"byte-matched source (RotWK adds the code 9 failure RW 0x8F1048): a request left in the queue gives up its producer; its last call, the money saver "

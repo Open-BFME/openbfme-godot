@@ -297,7 +297,7 @@ successful native run:
 | --- | --- | --- |
 | Four native targetless families | RingHero, StructureCreep, ReturnTheRing, StartWoTRBattle; StructureCreep has substantial donor bodies, while sibling bodies are split among address-named units and need a complete callgraph audit | Native eligibility, recruitment, orders, cleanup, RNG and save tests for each applicable mode |
 | Siege tactics | SiegeGates/SimpleSiege bodies and predefined recruitment are now ported (see follow-up below); general native team ownership and movement facades still have open dependencies | External retail decision/frame comparison and native team/formation parity |
-| AI wall planning/construction | AIWallBuilder, AIWall, map wall-library loading and buildable wall request lifecycle | Source plan selection, affordability, hub/gate/segment order, completion/failure and snapshots |
+| AI wall planning/construction | Map wall-library loading and planning queries ported (below); activation, occupancy triggers and buildable wall request lifecycle remain | Source plan selection, affordability, hub/gate/segment order, completion/failure and snapshots |
 | Native teams and reassignment | AITeamBuilder recruitment predicate, Team/TeamPrototype identity, recruitment availability and priority; current tactic vectors represent membership | Ownership changes and defensive/priority transfers follow native rules without duplicate membership |
 | Group formation/movement | Native formation manager, group ownership and remaining AIGroup state transitions | Native route/turn/order fixtures plus deterministic save continuation |
 | Remaining BFME2 differences | Legacy RotWK manager/builder, target threat/counter logic and individual power decisions still need per-body BFME2 audits; 41 names alone are insufficient | Each active native body has source-backed decisions, numeric order and RNG tests |
@@ -352,3 +352,32 @@ is still separate from these attacking tactics.
 Final siege checks passed five cases / 209 assertions, including malformed-save
 rollback and resumption between breach and assault. Native Release build,
 installed commit gate and whitespace checks passed. Commits remain local.
+
+
+## BFME2 wall-library follow-up
+
+LiveGame now loads map-authored AI wall plans before starting the skirmish manager.
+The loader follows BFME2's typed GenericAIObjectID marker (not the serialized
+bridge flag), type-0 grouping, first duplicate hub retention, unsigned consecutive
+hub indices, rejection of incomplete groups, and upper-median starting node.
+Source planning queries cover every node strictly within 1500 map units in 3D
+of an owned COMMANDCENTER, native candidate/priority RNG sites, and endpoint or
+random interior gate midpoint selection. The 70..110 draw is request priority,
+confirmed at the native request writes, rather than a timer.
+
+The immutable loaded library is hashed and native AI save layout 8 checks its
+identity transactionally against the current map. Older layouts are rejected.
+No planning RNG is consumed by the loader. Selection queries are not yet wired
+to autonomous construction: occupancy triggers, activation, affordability,
+hub/segment/gate request execution and completion/failure remain open. Native
+map linked-list ordering versus the engine's file-order vector still needs
+corroboration before claiming live wall-selection trace parity.
+
+The broad source/save selection passed 113 cases / 17,486 assertions before two
+additional hash assertions. The wall/gate/weapon selection passed 13 of 16
+cases: four existing weapon health expectations failed in three cases. A control
+with pre-siege AITacticalAI.cpp reproduced all four exact values (trebuchet
+5929.4707/5506.29492, catapult 2935.83984, mumak 3998.5). Those expectations
+were left unchanged; this is not a clean full-suite pass or a retail trace.
+
+Final combined siege/wall checks passed 11 cases / 288 assertions. Native Release build and whitespace checks passed.

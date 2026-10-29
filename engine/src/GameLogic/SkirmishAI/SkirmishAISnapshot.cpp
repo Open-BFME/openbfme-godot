@@ -484,7 +484,7 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 	// history, which cannot be recovered from current KindOf flags: older snapshots are refused. Version 4 (lane AIEXPAND-1): the EXPANSION heuristic's frame
 	// counter, SimpleExpansion's request and plain structure requests. A version 3 snapshot comes from a build without the heuristic: it loads with 0, the
 	// count at a game's start (its first expansion check then comes 301 checks after the load)
-	XferVersion v{ 7, 7 }; // BFME2 predefined siege-unit requests affect recruitment; prior layouts are incompatible.
+	XferVersion v{ 8, 8 }; // Immutable map wall-library identity; prior layouts are incompatible.
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	bool started = loading ? false : m_started;
@@ -705,6 +705,9 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 		AIXfer::u64(x, *c);
 	}
 	AIXfer::ids(x, m_captureFlags);
+	std::uint32_t wallIdentity=wallLibraryCrc();
+	x.xferUnsignedInt(&wallIdentity);
+	if (loading && wallIdentity!=wallLibraryCrc()) { throw XferException("skirmish ai: wall library does not match the loaded map"); }
 }
 
 // rule 4 (validate before linking): every player index and every reference between the loaded AIs (the info records, the groups' members, the enemies,
@@ -1052,6 +1055,7 @@ void SkirmishAIManager::xfer(Xfer &x)
 	}
 	SkirmishAIManager loaded(m_logic);
 	loaded.m_store = m_store;
+	loaded.m_wallLibrary = m_wallLibrary; // reconstructed from this map, validated against the saved identity
 	loaded.xferState(x, m_worldHooks != 0);
 	AIXfer::blockReadToEnd(x, "skirmish ai"); // before the commit below (GameState's endBlock check comes after this xfer)
 	loaded.checkLoaded();
