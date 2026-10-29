@@ -214,6 +214,8 @@ public:
 	// trigger update RW 0x69264D). The index of a run-time trigger in the combined list is the map's count + its own index.
 	typedef std::function<void(Object &obj, bool entered)> TriggerCallback;
 	int addPolygonTrigger(const TriggerArea &area, TriggerCallback callback);
+	// Retire a runtime trigger without renumbering saved object trigger indices.
+	void disablePolygonTrigger(int index);
 	size_t triggerAreaCount() const;
 	const TriggerArea &triggerAreaAt(size_t i) const;
 	void triggerCallback(size_t i, Object &obj, bool entered) const;

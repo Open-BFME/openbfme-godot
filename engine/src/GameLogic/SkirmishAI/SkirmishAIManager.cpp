@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <stdexcept>
 
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
@@ -16,6 +17,8 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "Common/Thing/KindOfTokens.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
+#include "GameClient/MapChunks.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 
@@ -33,7 +36,26 @@ bool SkirmishAIManager::countsAsAI(const Player &p) const
 
 void SkirmishAIManager::loadWallLibrary(const std::vector<MapObject> &objects)
 {
+	for (int id : m_wallTriggerIds)
+	{
+		m_logic.scriptEngine().disablePolygonTrigger(id);
+	}
+	m_wallTriggerIds.clear();
 	m_wallLibrary = AIWallBuilder::loadWallLibrary(objects);
+	m_wallEntryCounts.assign(m_wallLibrary.size(), {});
+	static std::uint32_t serial = 0; // native wallTriggerSerial: process-wide generated names only
+	for (size_t index = 0; index < m_wallLibrary.size(); ++index)
+	{
+		for (auto &area : AIWallBuilder::occupancyTriggers(m_wallLibrary[index]))
+		{
+			area.name = "AIWallTrigger_" + std::to_string((std::int32_t)serial++);
+			m_wallTriggerIds.push_back(m_logic.scriptEngine().addPolygonTrigger(area, [this, index](Object &object, bool entered) {
+				const Player *owner = object.getControllingPlayer();
+				if (!owner) { throw std::logic_error("AIWall: trigger object has no controlling player"); }
+				AIWallBuilder::recordEntry(m_wallEntryCounts.at(index), owner->getPlayerIndex(), entered);
+			}));
+		}
+	}
 }
 std::uint32_t SkirmishAIManager::wallLibraryCrc() const
 {
@@ -549,6 +571,9 @@ void SkirmishAIManager::reset()
 	m_groups.clear();
 	m_infoPlayers.clear();
 	m_captureFlags.clear();
+	for (int id : m_wallTriggerIds) { m_logic.scriptEngine().disablePolygonTrigger(id); }
+	m_wallTriggerIds.clear();
+	m_wallEntryCounts.clear();
 	m_wallLibrary.clear();
 	m_records.clear();
 	m_farmSites.clear();
@@ -622,6 +647,16 @@ void SkirmishAIManager::crc(StateHasher &h) const
 		kv.second->crc(h);
 	}
 	if (!m_groups.empty() && !m_wallLibrary.empty()) { h.addString("AIWallLibrary"); h.addU32(wallLibraryCrc()); }
+ // Trigger callbacks run even without a computer player. Preserve historical
+ // empty hashes, but include every recorded wall entry once any entry exists.
+ if(std::any_of(m_wallEntryCounts.begin(),m_wallEntryCounts.end(),[](const auto &v){return !v.empty();})) {
+  h.addString("AIWallEntries");
+  h.addU32((std::uint32_t)m_wallEntryCounts.size());
+  for(const auto &counts:m_wallEntryCounts) {
+   h.addU32((std::uint32_t)counts.size());
+   for(const auto &entry:counts) {h.addI32(entry.player);h.addU32(entry.count);}
+  }
+ }
 	// Only AI groups can use the capture registry; keep no-AI and empty-registry hashes unchanged.
 	if (!m_groups.empty() && !m_captureFlags.empty())
 	{
@@ -671,7 +706,7 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"before RW's table (the port rejects it, S-411)",
 		"[S-412] skirmish ai: TheSkirmishAIManager's creation rules, groups and update cadence are ported (RW 0x6AA030, 0x6A9EAD, 0x6A96A0, 0x8EDDF6, "
 		"0x6C7946); the bodies they call are not: the manager object + 0xA74, the group tasks (RW 0x8EDB2C), "
-		"AISkirmishPlayer RW 0x6C75B5 / the shutdown, wall activation/construction (the map wall library is loaded; RW 0x8F0EB4's + 0xE4); a computer player builds its base (S-413), trains its army "
+		"AISkirmishPlayer RW 0x6C75B5 / the shutdown, live wall construction scheduling/gate upgrades (map wall library and occupancy triggers are loaded; RW 0x8F0EB4's + 0xE4); a computer player builds its base (S-413), trains its army "
 		"(S-415) builds farms (S-419), attacks with its tactic teams (S-417) and (lane AI5) buys its units' and structures' upgrades and its plots' expansions "
 		"(+ 0x108 AIUnitUpgrader, + 0x12C AIUpgradeScienceBuilder, the player info record's listeners: S-1876); lane BACKLOG6: AIPlayer::update RW 0x8F0EB4 is checked against the BFME2 "
 		"byte-matched source (RotWK adds the code 9 failure RW 0x8F1048): a request left in the queue gives up its producer; its last call, the money saver "

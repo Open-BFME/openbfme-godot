@@ -254,3 +254,86 @@ TEST_CASE("BFME2 AI wall queue: all difficulties wait for funds then execute a s
   CHECK(owner.getMoney()->countMoney()==1000u-(std::uint32_t)r->cost);
  }
 }
+
+#include "GameClient/MapChunks.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
+#include "GameLogic/ScriptEngine/ScriptConditions.h"
+#include <cmath>
+TEST_CASE("BFME2 AI wall triggers: median-first geometry preserves aliased cross product and native corner order")
+{
+ auto vertical=loadWallLibrary({marker("Wall",0,100,100,900),marker("Wall",1,100,300,-900)})[0];
+ auto areas=occupancyTriggers(vertical); REQUIRE(areas.size()==2); REQUIRE(areas[0].points.size()==4);
+ const float xy[4][2]={{140,260},{140,60},{60,340},{60,140}};
+ for(size_t i=0;i<4;++i) {CHECK(areas[0].points[i].x==xy[i][0]);CHECK(areas[0].points[i].y==xy[i][1]);}
+ CHECK(ScriptConditions::pointInTrigger(areas[0],130,100));
+ CHECK_FALSE(ScriptConditions::pointInTrigger(areas[0],100,100));
+ // A horizontal source segment collapses: aliased new Y reads the new X=0.
+ auto horizontal=occupancyTriggers(loadWallLibrary({marker("Wall",0,100,100),marker("Wall",1,300,100)})[0]);
+ CHECK(horizontal[0].points[0].x==300);CHECK(horizontal[0].points[0].y==100);
+ CHECK(horizontal[0].points[1].x==100);CHECK(horizontal[0].points[1].y==100);
+ CHECK_FALSE(ScriptConditions::pointInTrigger(horizontal[0],200,100));
+ auto coincident=occupancyTriggers(loadWallLibrary({marker("Wall",0,100,100),marker("Wall",1,100,100)})[0]);
+ CHECK(std::isnan(coincident[0].points[0].x)); CHECK(std::isnan(coincident[0].points[0].y));
+ CHECK_FALSE(ScriptConditions::pointInTrigger(coincident[0],100,100));
+}
+TEST_CASE("BFME2 AI wall triggers: counters append in first-entry order, ignore exits and wrap")
+{
+ std::vector<EntryCount> counts;
+ recordEntry(counts,4,false); CHECK(counts.empty());
+ recordEntry(counts,4,true); recordEntry(counts,2,true); recordEntry(counts,4,true); recordEntry(counts,4,false);
+ REQUIRE(counts.size()==2); CHECK(counts[0].player==4); CHECK(counts[0].count==2); CHECK(counts[1].player==2); CHECK(counts[1].count==1);
+ counts[0].count=0xFFFFFFFFu; recordEntry(counts,4,true); CHECK(counts[0].count==0);
+}
+TEST_CASE("BFME2 AI wall triggers: real movement counts each overlapping trigger and reset retires callbacks")
+{
+ combattest::CombatWorld w;
+ auto &manager=w.logic->skirmishAI(); auto &scripts=w.logic->scriptEngine();
+ const size_t first=scripts.triggerAreaCount();
+ manager.loadWallLibrary({marker("Wall",0,100,100),marker("Wall",1,100,300)});
+ REQUIRE(scripts.triggerAreaCount()==first+2);
+ CHECK(scripts.triggerAreaAt(first).name.find("AIWallTrigger_")==0);
+ CHECK(manager.wallEntryCounts()[0].empty());
+ w.frames(1); // object trigger flags use zero as the no-event-frame sentinel
+ auto *unit=w.unit("Swordsman",'A',400,400);
+ Coord3D inside{130,100,0}, outside{400,400,0}, outside2{401,400,0};
+ unit->setPosition(&inside); unit->updateTriggerAreaFlags();
+ REQUIRE(manager.wallEntryCounts()[0].size()==1); CHECK(manager.wallEntryCounts()[0][0].count==2);
+ unit->updateTriggerAreaFlags(); CHECK(manager.wallEntryCounts()[0][0].count==2);
+ unit->setPosition(&outside); unit->updateTriggerAreaFlags();
+ unit->setPosition(&outside2); unit->updateTriggerAreaFlags(); // native exit uses previous integer position
+ CHECK(manager.wallEntryCounts()[0][0].count==2);
+ w.frames(1); // exited trigger slots clear on a later frame's cell movement
+ unit->setPosition(&inside); unit->updateTriggerAreaFlags(); CHECK(manager.wallEntryCounts()[0][0].count==4);
+ auto *enemy=w.unit("Swordsman",'B',400,400); enemy->setPosition(&inside); enemy->updateTriggerAreaFlags();
+ REQUIRE(manager.wallEntryCounts()[0].size()==2); CHECK(manager.wallEntryCounts()[0][1].count==2);
+ CHECK(manager.wallEntryCounts()[0][0].player==unit->getControllingPlayer()->getPlayerIndex());
+ CHECK(manager.wallEntryCounts()[0][1].player==enemy->getControllingPlayer()->getPlayerIndex());
+ manager.reset(); CHECK(manager.wallEntryCounts().empty());
+ CHECK(scripts.triggerAreaCount()==first+2); CHECK(scripts.triggerAreaAt(first).points.empty());
+ scripts.triggerCallback(first,*unit,true); // disabled callback cannot touch cleared manager state
+ manager.loadWallLibrary({marker("NewWall",0,100,100),marker("NewWall",1,100,300)});
+ scripts.triggerCallback(first,*unit,true); CHECK(manager.wallEntryCounts()[0].empty());
+}
+TEST_CASE("BFME2 AI wall triggers: native save restores counters without registering duplicate polygons")
+{
+ combattest::CombatWorld w;
+ auto &manager=w.logic->skirmishAI(); auto &scripts=w.logic->scriptEngine();
+ manager.loadWallLibrary({marker("Wall",0,100,100),marker("Wall",1,100,300)});
+ auto *unit=w.unit("Swordsman",'A',400,400);
+ scripts.triggerCallback(0,*unit,true);
+ const size_t triggerCount=scripts.triggerAreaCount();
+ StateHasher before; manager.crc(before);
+ XferSave saved; saved.beginBlock(); manager.xfer(saved); saved.endBlock();
+ scripts.triggerCallback(0,*unit,true);
+ StateHasher changed; manager.crc(changed); CHECK_FALSE(changed.value()==before.value());
+ XferLoad load(saved.data()); load.beginBlock(); manager.xfer(load); load.endBlock();
+ CHECK(scripts.triggerAreaCount()==triggerCount); CHECK(manager.wallEntryCounts()[0][0].count==1);
+ StateHasher restored; manager.crc(restored); CHECK(restored.value()==before.value());
+ auto &counts=const_cast<std::vector<std::vector<EntryCount>>&>(manager.wallEntryCounts());
+ counts[0].push_back(counts[0][0]);
+ XferSave malformed; malformed.beginBlock(); manager.xfer(malformed); malformed.endBlock();
+ counts[0].pop_back();
+ XferLoad bad(malformed.data()); bad.beginBlock(); CHECK_THROWS_WITH(manager.xfer(bad),"skirmish ai: repeated wall entry player");
+ StateHasher after; manager.crc(after); CHECK(after.value()==before.value());
+ scripts.triggerCallback(0,*unit,true); CHECK(manager.wallEntryCounts()[0][0].count==2);
+}

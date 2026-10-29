@@ -488,7 +488,7 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 	// history, which cannot be recovered from current KindOf flags: older snapshots are refused. Version 4 (lane AIEXPAND-1): the EXPANSION heuristic's frame
 	// counter, SimpleExpansion's request and plain structure requests. A version 3 snapshot comes from a build without the heuristic: it loads with 0, the
 	// count at a game's start (its first expansion check then comes 301 checks after the load)
-	XferVersion v{ 9, 9 }; // Wall segment request identity/start hub; prior layouts are incompatible.
+	XferVersion v{ 10, 10 }; // Native wall entry counters; prior layouts are incompatible.
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	bool started = loading ? false : m_started;
@@ -712,6 +712,18 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 	std::uint32_t wallIdentity=wallLibraryCrc();
 	x.xferUnsignedInt(&wallIdentity);
 	if (loading && wallIdentity!=wallLibraryCrc()) { throw XferException("skirmish ai: wall library does not match the loaded map"); }
+ std::uint32_t walls=(std::uint32_t)m_wallEntryCounts.size();
+ x.xferCount(&walls,4,sizeof(std::vector<AIWallBuilder::EntryCount>));
+ if(walls!=m_wallLibrary.size()) throw XferException("skirmish ai: wall entry registry does not match the loaded map");
+ if(loading) m_wallEntryCounts.resize(walls);
+ for(auto &counts:m_wallEntryCounts) {
+  std::uint32_t count=(std::uint32_t)counts.size();
+  x.xferCount(&count,8,sizeof(AIWallBuilder::EntryCount));
+  if(count>(std::uint32_t)m_logic.players().getPlayerCount()) throw XferException("skirmish ai: too many wall entry players");
+  if(loading) counts.resize(count);
+  for(auto &entry:counts) {x.xferInt(&entry.player);x.xferUnsignedInt(&entry.count);}
+ }
+
 }
 
 // rule 4 (validate before linking): every player index and every reference between the loaded AIs (the info records, the groups' members, the enemies,
@@ -728,6 +740,14 @@ void SkirmishAIManager::checkLoaded() const
 		if (!flags.insert(id).second) { throw XferException("skirmish ai: repeated registered capture flag"); }
 	}
 	auto player = [&](int i, const char *what) { AIXfer::inRange(i, 0, players - 1, what); };
+ for(const auto &counts:m_wallEntryCounts) {
+  std::set<int> seen;
+  for(const auto &entry:counts) {
+   player(entry.player,"skirmish ai: a wall entry player");
+   if(!seen.insert(entry.player).second) throw XferException("skirmish ai: repeated wall entry player");
+  }
+ }
+
 	std::set<int> info(m_infoPlayers.begin(), m_infoPlayers.end());
 	if (info.size() != m_infoPlayers.size())
 	{
@@ -1073,6 +1093,7 @@ void SkirmishAIManager::xfer(Xfer &x)
 	m_groups = std::move(loaded.m_groups);
 	m_infoPlayers = std::move(loaded.m_infoPlayers);
 	m_captureFlags = std::move(loaded.m_captureFlags);
+	m_wallEntryCounts = std::move(loaded.m_wallEntryCounts);
 	m_records = std::move(loaded.m_records);
 	m_farmSites = std::move(loaded.m_farmSites);
 	m_errors = std::move(loaded.m_errors);

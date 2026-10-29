@@ -297,7 +297,7 @@ successful native run:
 | --- | --- | --- |
 | Four native targetless families | RingHero, StructureCreep, ReturnTheRing, StartWoTRBattle; StructureCreep has substantial donor bodies, while sibling bodies are split among address-named units and need a complete callgraph audit | Native eligibility, recruitment, orders, cleanup, RNG and save tests for each applicable mode |
 | Siege tactics | SiegeGates/SimpleSiege bodies and predefined recruitment are now ported (see follow-up below); general native team ownership and movement facades still have open dependencies | External retail decision/frame comparison and native team/formation parity |
-| AI wall planning/construction | Map loading, planning queries, directional request lifecycle and queued span execution ported (below); live wall ownership/scheduling, occupancy triggers and gate-upgrade execution remain | Source plan selection, affordability, hub/gate/segment order, completion/failure and snapshots |
+| AI wall planning/construction | Map loading, planning queries, directional request lifecycle and queued span execution ported (below); live wall ownership/scheduling and gate-upgrade execution remain | Source plan selection, affordability, hub/gate/segment order, completion/failure and snapshots |
 | Native teams and reassignment | AITeamBuilder recruitment predicate, Team/TeamPrototype identity, recruitment availability and priority; current tactic vectors represent membership | Ownership changes and defensive/priority transfers follow native rules without duplicate membership |
 | Group formation/movement | Native formation manager, group ownership and remaining AIGroup state transitions | Native route/turn/order fixtures plus deterministic save continuation |
 | Remaining BFME2 differences | Legacy RotWK manager/builder, target threat/counter logic and individual power decisions still need per-body BFME2 audits; 41 names alone are insufficient | Each active native body has source-backed decisions, numeric order and RNG tests |
@@ -412,3 +412,37 @@ plan activation has been enabled in live matches.
 The source/save/wall regression selection passed 74 cases / 38,025 assertions before the final queue-case extension. The legacy non-wall request processor still uses RotWK code-9 failure; wall requests now follow BFME2 retry semantics.
 
 Final combined checks passed 17 cases / 525 assertions, including the request processor at all four difficulties, invalid-quote retry, insufficient funds, terminal-hub output, directional handoff/failure and transactional save validation. Release build and whitespace checks passed.
+
+
+## BFME2 wall occupancy-trigger follow-up
+
+Ported AIWall::rva004EBB58 (0x4EBB58..4EBDF9) and
+informInstanceOnTriggerEntered (0x4EBAF7..4EBB58). Loaded wall plans now
+register one runtime polygon per order, starting from the median position and
+visiting every node in source order. The calculation ignores Z, normalizes
+without a zero-length guard, performs the native aliased cross product, scales
+by 40, and keeps the original four-corner order. Horizontal segments can
+collapse; coincident nodes produce NaNs; the corner order can cross itself.
+These source behaviors are retained rather than replaced by regular rectangles.
+
+The callback records cumulative entry events by controlling-player index in
+first-entry order. Exits do nothing; re-entry and overlapping polygons increment
+again, with 32-bit wrapping. Thus these are not current-occupant counts.
+Existing Object/ScriptEngine trigger machinery supplies integer-position,
+previous-position exit and inert/projectile filtering behavior; no separate
+polling or RNG was added. Generated AIWallTrigger names use a process-wide
+serial, as the source does. Native map linked-list versus file-vector ordering
+and shared trigger/numeric parity limits still apply.
+
+Library replacement/reset retires callback and polygon geometry without shifting
+object trigger IDs. Native AI save layout 10 stores cumulative counters and
+validates map registry size, player indices and duplicates transactionally.
+Loading restores counters into the existing callbacks without registering more
+polygons. This is an OpenBFME native checkpoint guarantee: BFME2 AIWall::DoXfer
+stores trigger count but does not serialize its +0x28 entry-counter vector.
+Retail save import is not established. Autonomous wall ownership/scheduling and
+gate-upgrade execution remain separate open work.
+
+Focused wall plus shared trigger-tracking checks passed 17 cases / 422 assertions; the wall-only selection passed 16 cases / 385 assertions. Release build and whitespace checks passed.
+
+The broad BFME2/source AI, manager, shared trigger, gate and save selection passed 106 cases / 39,019 assertions, including all four difficulties. The installed commit gate passed.

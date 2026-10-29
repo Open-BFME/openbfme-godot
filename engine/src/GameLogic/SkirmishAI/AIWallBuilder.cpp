@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 #include "GameLogic/SkirmishAI/AIWallBuilder.h"
 #include "Common/MapObject.h"
+#include "GameClient/MapChunks.h"
 #include "Common/Player.h"
 #include "Common/Money.h"
 #include "GameLogic/WallSpan.h"
@@ -39,6 +40,45 @@ std::vector<Plan> loadWallLibrary(const std::vector<MapObject> &objects)
   return false;
  }),plans.end());
  return plans;
+}
+
+std::vector<TriggerArea> occupancyTriggers(const Plan &plan)
+{
+ // AIWall::rva004EBB58, 0x4EBB58..4EBDF9. Normalize has no zero-length
+ // guard. The native cross product aliases its input: new Y reads new X.
+ if(plan.selected>=plan.nodes.size()) throw std::logic_error("AIWall: invalid trigger plan");
+ std::vector<TriggerArea> triggers;
+ Coord3D previous=plan.nodes[plan.selected].position;
+ for(const auto &node:plan.nodes) {
+  const auto &current=node.position;
+  float x=SimMath::subf32(previous.x,current.x), y=SimMath::subf32(previous.y,current.y);
+  const float squared=SimMath::addf32(SimMath::addf32(SimMath::mulf32(x,x),SimMath::mulf32(y,y)),0.0f);
+  const float length=SimMath::sqrtPC24(squared);
+  const float scale=SimMath::divf32(1.0f,length);
+  x=SimMath::mulf32(x,scale); y=SimMath::mulf32(y,scale);
+  float z=SimMath::mulf32(0.0f,scale);
+  x=SimMath::subf32(SimMath::mulf32(y,1.0f),SimMath::mulf32(z,0.0f));
+  y=SimMath::subf32(SimMath::mulf32(z,0.0f),SimMath::mulf32(x,1.0f));
+  x=SimMath::mulf32(x,40.0f); y=SimMath::mulf32(y,40.0f);
+  TriggerArea area;
+  area.points.push_back({SimMath::addf32(previous.x,x),SimMath::addf32(previous.y,y)});
+  area.points.push_back({SimMath::addf32(current.x,x),SimMath::addf32(current.y,y)});
+  x=SimMath::mulf32(x,-1.0f); y=SimMath::mulf32(y,-1.0f);
+  area.points.push_back({SimMath::addf32(previous.x,x),SimMath::addf32(previous.y,y)});
+  area.points.push_back({SimMath::addf32(current.x,x),SimMath::addf32(current.y,y)});
+  triggers.push_back(std::move(area));
+  previous=current;
+ }
+ return triggers;
+}
+void recordEntry(std::vector<EntryCount> &counts,int player,bool entered)
+{
+ // AIWall::informInstanceOnTriggerEntered 0x4EBAF7: exits do nothing;
+ // append each player's first entry and increment with native 32-bit wrapping.
+ if(!entered) return;
+ auto entry=std::find_if(counts.begin(),counts.end(),[&](const EntryCount &e){return e.player==player;});
+ if(entry==counts.end()) { counts.push_back({player,0}); entry=counts.end()-1; }
+ ++entry->count;
 }
 
 bool nearCommandCenters(const Plan &plan,const std::vector<Coord3D> &centers)

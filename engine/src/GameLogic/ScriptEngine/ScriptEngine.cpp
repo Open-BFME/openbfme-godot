@@ -361,6 +361,15 @@ int ScriptEngine::addPolygonTrigger(const TriggerArea &area, TriggerCallback cal
 	return (int)triggerAreaCount() - 1;
 }
 
+void ScriptEngine::disablePolygonTrigger(int index)
+{
+	const size_t mapCount = m_triggers ? m_triggers->size() : 0;
+	if (index < 0 || (size_t)index < mapCount || (size_t)index - mapCount >= m_runtimeTriggers.size()) { return; }
+	auto &trigger = m_runtimeTriggers[(size_t)index - mapCount];
+	trigger.callback = {};
+	trigger.area->points.clear();
+}
+
 size_t ScriptEngine::triggerAreaCount() const
 {
 	return (m_triggers ? m_triggers->size() : 0) + m_runtimeTriggers.size();

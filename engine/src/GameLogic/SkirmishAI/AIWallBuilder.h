@@ -12,6 +12,7 @@ class GameLogicRandom;
 class MapObject;
 class Player;
 class StateHasher;
+struct TriggerArea;
 struct AIBuildRequest;
 struct AIBuildState;
 namespace AIWallBuilder {
@@ -24,6 +25,11 @@ struct Plan {
  std::vector<Node> nodes;
  std::uint32_t selected=0; // upper median, floor(count/2)
 };
+struct EntryCount { int player=-1; std::uint32_t count=0; };
+// Native trigger creation starts at the median and visits every order, using
+// the original aliased cross product and corner order (not a repaired rectangle).
+std::vector<TriggerArea> occupancyTriggers(const Plan &plan);
+void recordEntry(std::vector<EntryCount> &counts,int player,bool entered);
 struct Choice {
  int index=-1;
  float priority=0;
