@@ -291,7 +291,14 @@ void AptMainMenu::registerAll()
 		// AptMainMenuConstructor.cpp:275, without its body); without the call no menu button ever appears
 		if (m_env && m_env->fileSystem && isBfme1Data(*m_env->fileSystem))
 		{
+			// BFME1 MainMenu.apt's movieContainer frame 13 reads _root.InGame,
+			// whereas InitialSetup reads _global.InGame. Mirror the host flag so
+			// the native movie callback, rather than the authored preview, ends the book.
+			// INFERENCE: the native writer is not located; report it under S-5017.
+			windows().note("unverified", "[S-5017] BFME1 MainMenu _root.InGame mirrors the host flag; native writer unverified");
 			std::string err;
+			if (!windows().setAptRootMember(level(), "InGame", AptValue::boolean(true), &err))
+				windows().note("bfme1-main-menu", "InGame could not be set: " + err);
 			if (level() < 0 || !windows().invokeAS(level(), "ShowMainMenu", {}, nullptr, &err))
 				windows().note("bfme1-main-menu", "ShowMainMenu() could not be called: " + err);
 		}

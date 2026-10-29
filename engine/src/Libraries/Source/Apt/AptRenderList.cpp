@@ -154,7 +154,7 @@ void Apt::buildRenderList(AptRenderList &out)
 				// for is `_Frame`, RW 0x813514's "_frame=" command); booleans and numbers as their string form
 				// lane UI-4: a script-tagged BinkMovie's `_MovieName` / `_Loop` / `_UseAlpha` (MainMenu's credits page sets them in the clip's Initialize
 				// event at APT offset 0x1328C; without them the device had no title: "the clip names no _MovieName")
-				for (const char *name : { "_AnimMode", "_KeepAspectRatio", "_Frame", "_MovieName", "_Loop", "_UseAlpha" })
+				for (const char *name : { "_AnimMode", "_KeepAspectRatio", "_Frame", "_MovieName", "_Loop", "_UseAlpha", "_CallOnLastFrame" })
 				{
 					AptValue v;
 					if (inst->getOwn(name, v) && (v.isString() || v.isNumber() || v.isBoolean()))
