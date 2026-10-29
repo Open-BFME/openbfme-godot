@@ -120,6 +120,13 @@ public:
 	// the reduction applied to one decoded image (true when it lost levels)
 	static bool Reduce_Image(Ref<Image> &image, int reduction);
 
+	// The static level's ShaderMaterialReplacement (gamelod.ini; RW 0xDD1E50, RW 0x516A30): on, every classic surface W3D_Fx_Conversion_Refusal accepts is
+	// lit as retail's DefaultW3D.fx replacement (W3DShaderKey::ConvertedFx); off, none is (the fixed-function stage ops). One setting for every factory,
+	// as retail's. Default on: the level the port draws (GameLODManager::kDetectedLevel, UltraHigh). INFERENCE / stop S-6021: the Options screen's
+	// ShaderLOD does not reach it yet.
+	static void Set_Shader_Material_Replacement(bool on);
+	static bool Get_Shader_Material_Replacement();
+
 private:
 	Ref<Texture2D> Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing = false, std::vector<std::string> *notes = nullptr);
 	static Ref<Texture2D> Placeholder_Texture(bool flatNormal);

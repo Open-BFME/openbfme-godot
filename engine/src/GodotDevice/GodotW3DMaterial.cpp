@@ -12,6 +12,7 @@
 #include "GameEngineDevice/W3DDevice/GameClient/W3DObjectLighting.h"
 #include "GameEngineDevice/W3DDevice/GameClient/W3DHardwareFog.h"
 #include "Libraries/WWVegas/WW3D2/shader.h"
+#include "Libraries/WWVegas/WW3D2/w3dfxconvert.h"
 #include "Libraries/WWVegas/WW3D2/textureloader.h"
 
 #include <godot_cpp/classes/image.hpp>
@@ -326,6 +327,21 @@ int W3DMaterialFactory::Get_Texture_Reduction()
 	return g_textureReduction;
 }
 
+namespace
+{
+bool g_shaderMaterialReplacement = true; // see Set_Shader_Material_Replacement
+}
+
+void W3DMaterialFactory::Set_Shader_Material_Replacement(bool on)
+{
+	g_shaderMaterialReplacement = on;
+}
+
+bool W3DMaterialFactory::Get_Shader_Material_Replacement()
+{
+	return g_shaderMaterialReplacement;
+}
+
 bool W3DMaterialFactory::Reduce_Image(Ref<Image> &image, int reduction)
 {
 	if (image.is_null() || reduction <= 0 || !image->has_mipmaps())
@@ -584,6 +600,7 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 	bool hasInfo[2] = { false, false };
 	std::string normalMapName;
 	std::shared_ptr<TextureMapperClass> simpleUv; // RENDER-2: simple.fxo's TexCoordTransform_0 as the stage 0 matrix
+	W3DFxConversionSurface conv; // classic surfaces: how retail's conversion and house colour recolour see the mesh
 
 	if (surf.Kind == MATERIAL_CLASSIC)
 	{
@@ -600,6 +617,34 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 		key.DetailColor = st.DetailColorFunc;
 		key.DetailAlpha = st.DetailAlphaFunc;
 		key.Unshaded = st.PriGradient == W3D_GRADIENT_DISABLE;
+		key.SecGradient = st.SecGradient;
+		// the mesh's pass-0 surface as retail's conversion and its house colour recolour judge it (w3dfxconvert.h)
+		conv.Shader = &surf.Shader;
+		conv.HasVertexMaterial = surf.HasVertexMaterial;
+		conv.PassCount = 0;
+		conv.Pass0Surfaces = 0; // one draw surface per (pass, shader, vertex material, textures): a second one in pass 0 is a material / shader / texture array
+		const MeshDrawSurface *first = nullptr;
+		for (const MeshDrawSurface &other : mesh.Surfaces)
+		{
+			conv.PassCount = std::max(conv.PassCount, other.Pass + 1);
+			if (other.Pass != 0) continue;
+			++conv.Pass0Surfaces;
+			if (!first) first = &other;
+			else if (other.Stage[0].TextureName != first->Stage[0].TextureName) conv.Pass0TexturesDiffer = true;
+		}
+		for (int s = 0; s < 2; ++s)
+		{
+			conv.StageTexture[s] = surf.Stage[s].HasTexture;
+			conv.MapperType[s] = surf.Stage[s].MapperType;
+			conv.MapperArgs[s] = surf.Stage[s].MapperArgs;
+		}
+		if (g_shaderMaterialReplacement)
+		{
+			// RW 0x516A30 / MeshModelClass::Register_For_Rendering: the conversion to DefaultW3D.fx
+			key.ConvertedFx = W3D_Fx_Conversion_Refusal(conv).empty();
+			const std::string stop = W3D_Fx_Conversion_Stop(conv); // S-6020
+			if (!stop.empty()) out.Notes.push_back(stop);
+		}
 		alphaRef = st.AlphaRef / 255.0f - 0.5f / 255.0f; // GREATEREQUAL on an 8 bit value
 		if (st.PriGradient == W3D_GRADIENT_ADD) out.Notes.push_back("primary gradient ADD drawn as a modulated colour");
 		if (st.NeverDraws) out.Notes.push_back("depth function NEVER: nothing passes the depth test");
@@ -611,6 +656,17 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 			emissive = Color(vm.Emissive.R / 255.0f, vm.Emissive.G / 255.0f, vm.Emissive.B / 255.0f, 1.0f);
 			specColor = Color(vm.Specular.R / 255.0f, vm.Specular.G / 255.0f, vm.Specular.B / 255.0f, 1.0f);
 			shininess = vm.Shininess;
+		}
+		if (key.ConvertedFx && st.PriGradient == W3D_GRADIENT_DISABLE)
+		{
+			// MeshMatDescFXShaderConversion.cpp:286-327 / RW 0x599865-0x599a62: useMaterialColors = Get_Lighting() && primary gradient != 0, so an unlit surface
+			// hands DefaultW3D.fx ColorAmbient / ColorDiffuse / ColorSpecular as the record's zero vector (the record constructor RW 0x550B8C clears it), ColorEmissive
+			// 1, 1, 1 and Opacity 1.0; the vertex shader then outputs v0 = 0.5 * vertex colour (alpha: vertex colour alpha) and v1 = 0 (W3DShaderKey: the secondary
+			// texture code reads v_lit0 / v_lit1)
+			diffuse = Color(0, 0, 0, 1);
+			ambientMat = Color(0, 0, 0, 1);
+			emissive = Color(1, 1, 1, 1);
+			specColor = Color(0, 0, 0, 1);
 		}
 		for (int s = 0; s < 2; ++s)
 		{
@@ -746,8 +802,12 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 			out.Errors.insert(out.Errors.end(), hcErrors.begin(), hcErrors.end());
 			if (hcTex.is_valid())
 			{
+				const std::string houseStop = W3D_House_Color_Stop(conv, key.ConvertedFx); // S-6022
+				if (!houseStop.empty()) out.Notes.push_back(houseStop);
+				const std::string specStop = W3D_FixedFunction_House_Color_Stop(key.ConvertedFx, key.PriGradient != W3D_GRADIENT_DISABLE, key.SecGradient); // S-6023
+				if (!specStop.empty()) out.Notes.push_back(specStop);
 				key.HouseColor = true;
-				out.Notes.push_back("house colour texture " + *hc + " masks the team colour (hypothesis S-119)");
+				out.Notes.push_back("house colour texture " + *hc + ": the recoloured texel is combined with the lit base by its alpha (" + std::string(key.ConvertedFx ? "DefaultW3D.fx HouseColorEnable" : "fixed-function BLENDTEXTUREALPHA") + ", S-022)");
 			}
 			else
 			{

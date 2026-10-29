@@ -716,6 +716,59 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 		m_report["camera"] = cam;
 	}
 
+	// The map's lighting inputs of the terrain effect (terrain.fxo): the sun, the overbright switch, the cloud and macro textures, the map size and the fog.
+	// Retail builds one light environment for the terrain and hands it to the roads too (FlatHeightMap.cpp:768-791, :816), so the terrain mesh and the roads
+	// take them from here, whether or not the terrain mesh itself is built (lane ROADS-1).
+	MapWeather weather;
+	{
+		std::string werr;
+		if (!MapWeatherScan::load(*arch, mapDir, weather, &werr))
+		{
+			errors.push_back(toGodot("weather: " + werr));
+		}
+		if (!optBool(options, "fog", true))
+		{
+			weather.fogEnabled = false; // viewer option: the retail camera never sees the far map, an overview does
+		}
+	}
+	Ref<Texture2D> cloudTex, macroTex;
+	if ((wantTerrain || wantRoads) && map.chunks.hasEnvironmentData)
+	{
+		Array texErrors;
+		cloudTex = loadTexture(rfs, map.chunks.environment.cloudTexture, texErrors);
+		macroTex = loadTexture(rfs, map.chunks.environment.macroTexture, texErrors);
+		for (int64_t i = 0; i < texErrors.size(); ++i)
+		{
+			errors.push_back(texErrors[i]);
+		}
+	}
+	auto applyMapLighting = [&](const Ref<ShaderMaterial> &m) {
+		if (cloudTex.is_valid()) m->set_shader_parameter("cloud_tex", cloudTex);
+		if (macroTex.is_valid()) m->set_shader_parameter("macro_tex", macroTex);
+		if (tod)
+		{
+			const GlobalLight &sun = tod->terrain[0];
+			// stop S-033: the shader wants the direction TOWARD the light = -lightPos (ZH lightRay)
+			m->set_shader_parameter("sun_dir_sage", Vector3(-sun.lightPos[0], -sun.lightPos[1], -sun.lightPos[2]));
+			// terrain.fxo MainDirectionalLight binds Sas.DirectionalLight[0]. The
+			// SAS callback RW 0x54CFD0 doubles its colour before the shader's overbright half-scale.
+			m->set_shader_parameter("sun_color", Vector3(sun.diffuse[0], sun.diffuse[1], sun.diffuse[2]) * effectColorScale);
+		}
+		m->set_shader_parameter("overbright", overbright);
+		m->set_shader_parameter("cloud_scale", Vector2(1.0f / weather.cloudSize[0], 1.0f / weather.cloudSize[1]));
+		m->set_shader_parameter("cloud_offset_per_second", Vector2(weather.cloudOffsetPerSecond[0], weather.cloudOffsetPerSecond[1]));
+		if (map.chunks.hasEnvironmentData)
+		{
+			m->set_shader_parameter("macro_stretched", map.chunks.environment.isMacroTextureStretched);
+		}
+		m->set_shader_parameter("map_size", Vector2((float)hm.m_width * MAP_XY_FACTOR, (float)hm.m_height * MAP_XY_FACTOR));
+		m->set_shader_parameter("map_border_width", (float)hm.m_borderSize * MAP_XY_FACTOR);
+		m->set_shader_parameter("fog_enabled", weather.fogEnabled ? 1.0f : 0.0f);
+		m->set_shader_parameter("fog_color", Vector3(weather.fogColor[0], weather.fogColor[1], weather.fogColor[2]));
+		m->set_shader_parameter("fog_range_start", weather.fogStart);
+		m->set_shader_parameter("fog_range_end", weather.fogEnd);
+	};
+
 	// ---- 2. the terrain: atlas, mesh, materials ----------------------------------------------------
 	if (wantTerrain)
 	{
@@ -835,30 +888,9 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 			return fail("terrain shader is missing (res://shaders/terrain.gdshader)");
 		}
 
-		MapWeather weather;
-		std::string werr;
-		if (!MapWeatherScan::load(*arch, mapDir, weather, &werr))
-		{
-			errors.push_back(toGodot("weather: " + werr));
-		}
-		if (!optBool(options, "fog", true))
-		{
-			weather.fogEnabled = false; // viewer option: the retail camera never sees the far map, an overview does
-		}
 		// lane RENDER-4 (S-1651): the same hardware fog on the W3D models and the CPU particles (W3DHardwareFog.h)
 		W3D_Apply_Fog(weather.fogEnabled, weather.fogColor, weather.fogStart, weather.fogEnd);
 		m_report["object_fog"] = toGodot(W3DHardwareFog::StopText());
-		Ref<Texture2D> cloudTex, macroTex;
-		if (map.chunks.hasEnvironmentData)
-		{
-			Array texErrors;
-			cloudTex = loadTexture(rfs, map.chunks.environment.cloudTexture, texErrors);
-			macroTex = loadTexture(rfs, map.chunks.environment.macroTexture, texErrors);
-			for (int64_t i = 0; i < texErrors.size(); ++i)
-			{
-				errors.push_back(texErrors[i]);
-			}
-		}
 
 		auto makeMat = [&](const Ref<Shader> &shader, int priority) {
 			Ref<ShaderMaterial> m;
@@ -867,32 +899,9 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 			m->set_render_priority(priority);
 			m->set_shader_parameter("base_atlas", baseTex);
 			m->set_shader_parameter("normal_atlas", normalTex);
-			if (cloudTex.is_valid()) m->set_shader_parameter("cloud_tex", cloudTex);
-			if (macroTex.is_valid()) m->set_shader_parameter("macro_tex", macroTex);
 			m->set_shader_parameter("atlas_size", Vector2((float)images.width, (float)images.height));
-			if (tod)
-			{
-				const GlobalLight &sun = tod->terrain[0];
-				// stop S-033: the shader wants the direction TOWARD the light = -lightPos (ZH lightRay)
-				m->set_shader_parameter("sun_dir_sage", Vector3(-sun.lightPos[0], -sun.lightPos[1], -sun.lightPos[2]));
-				// terrain.fxo MainDirectionalLight binds Sas.DirectionalLight[0]. The
-				// SAS callback RW 0x54CFD0 doubles its colour before the shader's overbright half-scale.
-				m->set_shader_parameter("sun_color", Vector3(sun.diffuse[0], sun.diffuse[1], sun.diffuse[2]) * effectColorScale);
-			}
-			m->set_shader_parameter("overbright", overbright);
+			applyMapLighting(m);
 			m->set_shader_parameter("debug_mode", (int)(options.has("debug_mode") ? (int)options["debug_mode"] : 0));
-			m->set_shader_parameter("cloud_scale", Vector2(1.0f / weather.cloudSize[0], 1.0f / weather.cloudSize[1]));
-			m->set_shader_parameter("cloud_offset_per_second", Vector2(weather.cloudOffsetPerSecond[0], weather.cloudOffsetPerSecond[1]));
-			if (map.chunks.hasEnvironmentData)
-			{
-				m->set_shader_parameter("macro_stretched", map.chunks.environment.isMacroTextureStretched);
-			}
-			m->set_shader_parameter("map_size", Vector2((float)hm.m_width * MAP_XY_FACTOR, (float)hm.m_height * MAP_XY_FACTOR));
-			m->set_shader_parameter("map_border_width", (float)hm.m_borderSize * MAP_XY_FACTOR);
-			m->set_shader_parameter("fog_enabled", weather.fogEnabled ? 1.0f : 0.0f);
-			m->set_shader_parameter("fog_color", Vector3(weather.fogColor[0], weather.fogColor[1], weather.fogColor[2]));
-			m->set_shader_parameter("fog_range_start", weather.fogStart);
-			m->set_shader_parameter("fog_range_end", weather.fogEnd);
 			return m;
 		};
 		Ref<ShaderMaterial> terrainMat = makeMat(terrainShader, TERRAIN_RENDER_PRIORITY);
@@ -1396,6 +1405,8 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 		std::vector<RoadStrip> strips;
 		RoadTypeIndex roadTypes;
 		const float lift = 0.15f; // presentation-only: ZH raises roads by MAP_HEIGHT_SCALE/8, which z-fights here
+		int64_t withNormalMap = 0, withFallbackNormal = 0; // road types with their _nrm texture / with the 1x1 fallback (RoadShading)
+		Array normalMapNames;
 		if (wantRoads)
 		{
 			if (!TerrainRoads::load(*arch, roadTypes, &error))
@@ -1410,6 +1421,15 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 		if (!strips.empty())
 		{
 			Ref<Shader> sh = loadShader("res://shaders/road.gdshader", errors);
+			// Lane ROADS-1: retail draws a road with terrain.fxo "Default", RenderingMode 2 (RoadShading), so it takes the terrain material's effect inputs.
+			// A road type without a _nrm texture binds a 1x1 (127, 127, 255, 0) texel, W3DRoadBuffer + 0x18 (RoadShading::FALLBACK_NORMAL_*).
+			Ref<Texture2D> fallbackNormal;
+			{
+				PackedByteArray texel;
+				texel.resize(4);
+				memcpy(texel.ptrw(), RoadShading::FALLBACK_NORMAL_RGBA, 4);
+				fallbackNormal = ImageTexture::create_from_image(Image::create_from_data(1, 1, false, Image::FORMAT_RGBA8, texel));
+			}
 			Node3D *roadRoot = memnew(Node3D);
 			roadRoot->set_name("Roads");
 			root->add_child(roadRoot);
@@ -1424,6 +1444,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				PackedVector3Array vtx;
 				PackedVector2Array uv;
 				PackedColorArray col;
+				PackedVector3Array nrm;
 				PackedInt32Array idx;
 				for (const RoadStrip *s : g.second)
 				{
@@ -1433,6 +1454,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 					{
 						const float x = s->position[(size_t)i * 3], y = s->position[(size_t)i * 3 + 1], z = s->position[(size_t)i * 3 + 2];
 						vtx.push_back(toG(x, y, z));
+						nrm.push_back(toG(RoadShading::VERTEX_NORMAL[0], RoadShading::VERTEX_NORMAL[1], RoadShading::VERTEX_NORMAL[2]));
 						uv.push_back(Vector2(s->uv[(size_t)i * 2], s->uv[(size_t)i * 2 + 1]));
 						std::uint8_t rgb[3];
 						HeightMapMesh::staticDiffuseAt(hm, lighting, vcm, (int)std::lround(x / MAP_XY_FACTOR) + hm.m_borderSize,
@@ -1447,6 +1469,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				Array arrays;
 				arrays.resize(Mesh::ARRAY_MAX);
 				arrays[Mesh::ARRAY_VERTEX] = vtx;
+				arrays[Mesh::ARRAY_NORMAL] = nrm;
 				arrays[Mesh::ARRAY_COLOR] = col;
 				arrays[Mesh::ARRAY_TEX_UV] = uv;
 				arrays[Mesh::ARRAY_INDEX] = idx;
@@ -1465,7 +1488,31 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 					Array texErrors;
 					Ref<Texture2D> t = loadTexture(rfs, g.second.front()->texture, texErrors);
 					if (t.is_valid()) m->set_shader_parameter("road_tex", t);
-					m->set_shader_parameter("overbright", overbright ? 2.0f : 1.0f);
+					// RoadType::loadTexture: the _nrm companion when it exists (Render_Obj_Exists), else the fallback texel. Only "not found" is the
+					// optional case; a companion that exists but cannot be decoded is an error.
+					const std::string nrmName = RoadShading::normalTextureName(g.second.front()->texture);
+					Array nrmErrors;
+					Ref<Texture2D> nrmTex = loadTexture(rfs, nrmName, nrmErrors);
+					if (nrmTex.is_valid())
+					{
+						++withNormalMap;
+						normalMapNames.push_back(toGodot(nrmName));
+					}
+					else
+					{
+						++withFallbackNormal;
+						nrmTex = fallbackNormal;
+						for (int64_t i = 0; i < nrmErrors.size(); ++i)
+						{
+							if (nrmErrors[i] != Variant(toGodot("texture not found: " + nrmName)))
+							{
+								errors.push_back(nrmErrors[i]);
+							}
+						}
+					}
+					m->set_shader_parameter("road_normal_tex", nrmTex);
+					// the terrain's light environment (applyMapLighting), also with the terrain mesh disabled
+					applyMapLighting(m);
 					for (int64_t i = 0; i < texErrors.size(); ++i)
 					{
 						errors.push_back(texErrors[i]);
@@ -1479,6 +1526,10 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				roadRoot->add_child(mi);
 			}
 		}
+		rd["shading"] = "terrain.fxo Default, RenderingMode 2: PSDefault_Array element " + String::num_int64(RoadShading::pixelShaderElement(RoadShading::RENDERING_MODE, 0, false));
+		rd["normal_maps"] = withNormalMap;
+		rd["fallback_normals"] = withFallbackNormal;
+		rd["normal_map_names"] = normalMapNames;
 		if (!strips.empty())
 		{
 			rd["sample_strip"] = toG(strips[0].position[0], strips[0].position[1], strips[0].position[2]);

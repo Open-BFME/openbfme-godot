@@ -62,9 +62,19 @@ rem fangorn map are drawn and read back. 77 = no display/extension: reported, no
 echo == Godot shader test (windowed, GPU)
 "%GODOT%" --path "%ROOT%godot" --script res://tests/shader_test.gd
 set "SHADER=%ERRORLEVEL%"
-if "%SHADER%"=="0" goto all_passed
+if "%SHADER%"=="0" goto road_shader_test
 if "%SHADER%"=="77" goto shader_skipped
 echo SHADER TEST FAILED (exit %SHADER%)
+exit /b 1
+
+:road_shader_test
+rem The road shader (terrain.fxo PSDefault_Array element 2) rendered and read back, same display rules as above.
+echo == Godot road shader test (windowed, GPU)
+"%GODOT%" --path "%ROOT%godot" --script res://tests/road_shader_test.gd
+set "ROADSHADER=%ERRORLEVEL%"
+if "%ROADSHADER%"=="0" goto all_passed
+if "%ROADSHADER%"=="77" goto shader_skipped
+echo ROAD SHADER TEST FAILED (exit %ROADSHADER%)
 exit /b 1
 
 :shader_skipped

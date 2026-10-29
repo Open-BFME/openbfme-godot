@@ -558,7 +558,38 @@ TEST_CASE("TerrainRoads: tees replace overlapping center rectangles with their a
 	CHECK(report.miteredJoins == 0);
 	CHECK(report.roundedJoins == 0);
 	REQUIRE(MapStops::find("S-036"));
-	CHECK(std::string(MapStops::find("S-036")->gap) == "Straight paths, mitered and curved corners, tee and four-way atlas junctions and authored JOIN end caps are rendered; Y/H junctions, cross-type alpha alignment and BFME2 stacking remain unported");
+	CHECK(std::string(MapStops::find("S-036")->gap) == "Straight paths, mitered and curved corners, tee and four-way atlas junctions and authored JOIN end caps are rendered; Y/H junctions, cross-type alpha alignment and BFME2 stacking remain unported. Roads are shaded as retail draws them (lane ROADS-1, RoadShading in GameClient/TerrainRoads.h): terrain.fxo technique Default with RenderingMode 2, PSDefault_Array element 2 (ps_2_0 blob at 0xC160) and the effect's vs_1_1 blob at 0x1C780, vertex normal (0, 0, 1) (RW 0x4D7D32 .. 0x4D7D3C), the road's _nrm texture or the 1x1 (127, 127, 255, 0) fallback (RW 0x4D7132 .. 0x4D7176), and the sun, cloud, macro, fog and shroud inputs of the terrain material. Not ported or unresolved: the shadow-receiving element (NumShadows >= 1: element 7) and the resource-texture elements (IsResourceTextureEnabled: element 12); the road's blend and depth states (the Default pass declares ALPHABLENDENABLE 0, ZWRITEENABLE 0, SRCBLEND / DESTBLEND SRCALPHA / INVSRCALPHA, ZFUNC LESSEQUAL: the port keeps the former alpha-blended, depth-tested draw without depth writes as inference); the dynamic-light road variant (loadLit4PtSection, roads under dynamic lights: its terrain normal and light gradient are not ported); the gate TheGlobalLighting + 0x3E that FlatHeightMap.cpp:811 tests before it draws roads (not read: roads always draw); GlobalData + 0x49, the flag that loads the _nrm companions (its RotWK writer is not read: the companions are loaded when they exist)");
+}
+
+TEST_CASE("RoadShading: a road draws with the terrain effect's RenderingMode 2 element, its _nrm companion or the 1x1 fallback, and the (0, 0, 1) vertex normal")
+{
+	// terrain.fxo PSDefault_Array selector (the preshader at 0x1c4bc): min(RenderingMode, 4) + 5 * min(NumShadows, 1) + 10 * IsResourceTextureEnabled
+	CHECK(RoadShading::RENDERING_MODE == 2); // RW 0x4d73cc: push 2; call [eax] (setRenderingMode)
+	CHECK(RoadShading::pixelShaderElement(RoadShading::RENDERING_MODE, 0, false) == 2);
+	CHECK(RoadShading::pixelShaderElement(2, 1, false) == 7);
+	CHECK(RoadShading::pixelShaderElement(2, 4, false) == 7);
+	CHECK(RoadShading::pixelShaderElement(2, 0, true) == 12);
+	CHECK(RoadShading::pixelShaderElement(2, 1, true) == 17);
+	CHECK(RoadShading::pixelShaderElement(9, 0, false) == 4);
+	CHECK(RoadShading::pixelShaderElement(0, 0, false) == 0);
+	// RoadType::loadTexture (BFME2 W3DRoadBuffer.cpp:294-309): makeNrmTextureName inserts _nrm before the last extension
+	CHECK(RoadShading::normalTextureName("TRDirtRoad2B.tga") == "TRDirtRoad2B_nrm.tga");
+	CHECK(RoadShading::normalTextureName("a.b.tga") == "a.b_nrm.tga");
+	CHECK(RoadShading::normalTextureName("noext") == "noext_nrm");
+	// the fallback normal: the dword 0x007F7FFF stored into a 1x1 A8R8G8B8 texel (RW 0x4d7155 push 0x7f7fff; RW 0x51667a mov [eax], edx)
+	CHECK(RoadShading::FALLBACK_NORMAL_ARGB == 0x007F7FFFu);
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[0] == ((RoadShading::FALLBACK_NORMAL_ARGB >> 16) & 0xFFu)); // R
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[1] == ((RoadShading::FALLBACK_NORMAL_ARGB >> 8) & 0xFFu));  // G
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[2] == (RoadShading::FALLBACK_NORMAL_ARGB & 0xFFu));         // B
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[3] == (RoadShading::FALLBACK_NORMAL_ARGB >> 24));          // A: the specular mask, 0
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[0] == 127u);
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[1] == 127u);
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[2] == 255u);
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[3] == 0u);
+	// loadFloat4PtSection stores nx = ny = 0, nz = 1.0f (RW 0x4d7d32 .. 0x4d7d3c)
+	CHECK(RoadShading::VERTEX_NORMAL[0] == 0.0f);
+	CHECK(RoadShading::VERTEX_NORMAL[1] == 0.0f);
+	CHECK(RoadShading::VERTEX_NORMAL[2] == 1.0f);
 }
 
 TEST_CASE("TerrainRoads: four-way tile connects four stubs independent of branch direction")

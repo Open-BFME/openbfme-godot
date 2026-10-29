@@ -6,6 +6,8 @@
 
 #include "GameClient/OpenBFMEText.h"
 
+#include <ostream> // doctest stringifies the std::string_view operands of CHECK(a == b) through std::ostream
+
 namespace
 {
 std::u16string fmt(std::u16string_view pattern, std::vector<OpenBFMEText::Argument> args, std::string_view language = "en",

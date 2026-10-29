@@ -205,6 +205,8 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/renderwait1_teardown_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/replay_args_test.gd` | `tools/release/test_replay_open.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/replay_refusal_test.gd` | Manual only; no generic pytest runner | Denied here: mixed stub checks and retail replay subprocess; not wholly asset-free. |
+| `godot/tests/road_shader_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
+| `godot/tests/road_shading_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/save4e_flow_test.gd` | `tools/save/test_save_flow.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/save_route_game.gd` | `godot/tests/save_route_test.gd` | Fixture of its runner; not scheduled separately by pytest. |
 | `godot/tests/save_route_test.gd` | `tools/release/test_replay_open.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
@@ -232,6 +234,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/water_normal_test.gd` | Manual only; no generic pytest runner | GPU rendering; synthetic textures, no retail assets. |
 | `godot/tests/water_vertex_test.gd` | Manual only; no generic pytest runner | GPU rendering (`--rendering-method gl_compatibility`); synthetic meshes, no retail assets. |
 | `godot/tests/standing_water_test.gd` | Manual only; no generic pytest runner | Private retail assets and GPU water rendering. |
+| `godot/tests/ini_error_in_extension_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod object INI over a retail map. |
 
 ## OAuth readiness regression
 
