@@ -36,6 +36,10 @@ Add an input to `helpers.json` when a helper starts including a new source or he
 
 `ROTWK_INSTALL` / `BFME2_INSTALL` name the install folders (defaults `F:\RotWK`, `F:\BFME2`).
 The suite SKIPS loudly (reason shown with `-rs`) if the helper is not built or a binary is absent.
+A binary that is present but is not the image a test's addresses were read from FAILS with the reason (never a fault at
+an unmapped address). `test_apt_handlers.py` identifies `BFME2_INSTALL\game.dat` first (`apt_handlers.identify_image`: base,
+SizeOfImage and the SHA-256 of `.text`) and accepts only the clean BFME2 1.06 image (base `0x400000`); anything else is
+refused with its base, size and digest.
 `tools/retail_oracle/disasm.py <game.dat> <va hex> [count]` disassembles a VA (needs `capstone`).
 
 ## What the helper does and does not do
