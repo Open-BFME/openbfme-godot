@@ -30,7 +30,7 @@ difficulty gate as the source does. No damage boost is invented.
 
 ## Native snapshots
 
-The skirmish AI block now requires version 7: predefined siege-unit requests, BFME2 interest-zone threat, spatial registrations/groups,
+The skirmish AI block now requires version 10: wall request/entry state, predefined siege-unit requests, BFME2 interest-zone threat, spatial registrations/groups,
 ArmyBreaker timers, defensive target sizes and team recruitment origins affect
 future decisions. Older layouts are refused explicitly. SimpleExpansion keeps
 upstream prototype index 8; SimpleDefense uses 9. Capture history and expansion
@@ -41,9 +41,10 @@ existing format difference is reported by S-4252.
 
 ## Remaining gaps
 
-This port does not close native siege/wall construction, remaining targetless
-families, team reassignment/formation limitations,
-or full per-decision behavioral parity. BFME2 has 41 AI decision names; all now
+SiegeGates and SimpleSiege are ported. Autonomous wall ownership/scheduling,
+active construction snapshots, gate upgrades, remaining targetless
+families and team reassignment/formation limitations remain open.
+Full per-decision behavioral parity is not established. BFME2 has 41 AI decision names; all now
 have implementation paths. Four entries from the wider RotWK registry still
 refuse with S-1421: SOUL_FREEZE, ATTACK_HEAL_AOE, DEBUFFECONOMYBUILDING and
 DEBUFFPRODUCTIONBUILDING. Those four are outside the BFME2 baseline. Existing
