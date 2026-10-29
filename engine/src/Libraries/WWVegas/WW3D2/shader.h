@@ -76,6 +76,9 @@ enum
 	W3D_DETAILCOLOR_ADDSIGNED2X = 10,
 	W3D_DETAILCOLOR_SCALE2X = 11,
 	W3D_DETAILCOLOR_MODALPHAADDCOLOR = 12,
+	// ShaderClass::DETAILCOLOR_MAX (BFME2 ShaderClassApply.cpp:1425): the house colour mode MeshClass::RecolorHouseColor sets on a legacy
+	// mesh (bfme2_mesh_material_pass.cpp:350, bits 0x1A00000): BLENDTEXTUREALPHA of the recoloured texture over the lit base
+	W3D_DETAILCOLOR_HOUSECOLOR = 13,
 
 	W3D_DETAILALPHA_DISABLE = 0,
 	W3D_DETAILALPHA_DETAIL = 1,

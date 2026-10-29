@@ -66,6 +66,38 @@ float W3D_NormalMapped_Specular(const float nt[3], const float lt[3], const floa
 	return (ndh > 0.0f && ndl > 0.0f) ? std::pow(ndh, exponent) : 0.0f;
 }
 
+void W3D_FixedFunction_House_Color(const float t0[4], const float diffuse[3], float diffuseAlpha, const float specular[3], bool secondaryGradient,
+	const float hc[4], float rgb[3], float *alpha)
+{
+	float a = t0[3] * diffuseAlpha;
+	for (int i = 0; i < 3; ++i)
+	{
+		const float lit = t0[i] * diffuse[i] * 2.0f;
+		rgb[i] = lit + (hc[i] - lit) * hc[3];
+	}
+	if (secondaryGradient)
+	{
+		for (int i = 0; i < 3; ++i)
+		{
+			const float spec = std::min(specular[i] * 2.0f, 1.0f);
+			rgb[i] += a * spec; // stage 2: MODULATEALPHA_ADDCOLOR(CURRENT, SPECULAR)
+			rgb[i] += spec;     // D3DRS_SPECULARENABLE
+		}
+	}
+	*alpha = a;
+}
+
+std::string W3D_FixedFunction_House_Color_Stop(bool converted, bool lit, int secGradient)
+{
+	if (converted || !lit || secGradient == 0)
+	{
+		return std::string();
+	}
+	return "[S-6023] fixed-function house colour with the secondary gradient set: the specular is added after the BLENDTEXTUREALPHA blend twice (stage 2 "
+		"MODULATEALPHA_ADDCOLOR(CURRENT, SPECULAR) scaled by the current alpha, then D3DRS_SPECULARENABLE), as RW 0x53764F-0x5376A4 / 0x537AE5 set up; the caps "
+		"(Max_Textures_Per_Pass > 2, ModAlphaAddClr) are assumed set and D3D9's fixed-function specular rules are taken from the runtime's documentation";
+}
+
 void W3D_SimpleFx_Uv_Matrix(const float transform[4], float timeSeconds, float row0[4], float row1[4])
 {
 	row0[0] = transform[0];
@@ -89,6 +121,8 @@ std::string W3DShaderKey::Id() const
 	if (HouseColor) id += "_hc1"; // appended only when set: every existing id stays what it was
 	if (HouseColorBaked) id += "_hcb"; // lane CAH-2
 	if (SimpleFx) id += "_sfx1";
+	if (ConvertedFx) id += "_cfx1"; // retail's DefaultW3D.fx replacement of a classic material (w3dfxconvert.h)
+	if (SecGradient && HouseColor) id += "_sg" + std::to_string(SecGradient); // D3DRS_SPECULARENABLE: only the house colour combine reads it
 	if (Fog) id += "_fog" + std::to_string(Fog); // lane RENDER-4
 	if (AlphaOverride) id += "_ao"; // lane BUILD-5 r3
 	if (OcclusionPass) id += "_occl" + std::to_string(OcclusionPass); // lane OCCLUDE-1
@@ -492,22 +526,27 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	line("\tvec4 t0 = vec4(1.0);");
 	line("\tvec4 t1 = vec4(1.0);");
 	if (k.Tex[0]) line("\tt0 = texture(w3d_tex0, uvs0);");
-	if (k.HouseColor && k.HouseColorBaked && k.Tex[0])
+	// House colour (stops S-022 / S-119): `hc` is the recoloured house colour texel of the stage 0 texture (housecolor.ini), its alpha the team region. Retail
+	// combines it AFTER the diffuse light, not into the base texel (the override below the secondary texture code), so only its value is derived here.
+	// Classic surfaces only: normalmapped.fxo and simple.fxo have no house colour parameter.
+	const bool houseColor = k.HouseColor && k.Tex[0] && k.Texturing && !k.Fx && !k.SimpleFx;
+	if (houseColor && k.HouseColorBaked)
 	{
-		// lane CAH-2 (S-1408): the texture was recoloured per texel before filtering (RW 0x531C77 on the CPU, mipmaps made from the recoloured level);
-		// INFERENCE: it replaces the base where its alpha is set (the combine is unrecovered, S-022 / S-119); the instance's team colour is not used
-		line("\t{");
-		line("\t\tvec4 hcb = texture(w3d_hc_tex, uvs0);");
-		line("\t\tt0.rgb = mix(t0.rgb, hcb.rgb, hcb.a);");
-		line("\t}");
+		// lane CAH-2 (S-1408): the texture was recoloured per texel before filtering (RW 0x531C77 on the CPU, mipmaps made from the recoloured level)
+		line("\tvec4 hc = texture(w3d_hc_tex, uvs0);");
 	}
-	else if (k.HouseColor && k.Tex[0])
+	else if (houseColor)
 	{
-		// S-119 hypothesis: team colour (8 bit sRGB packed by W3D_Pack_House_Color) tints the base where the housecolor mask is set
-		line("\tif (v_instance.z > 0.5) {");
+		// the map builder's per-instance colour (INFERENCE: retail has no per-instance colour, it recolours a texture per palette): the recolour of kind 1
+		// (RW 0x531C77: out = (R * colour) >> 8 per channel of the 8 bit colour, alpha kept) applied to the filtered texel; the team colour is 8 bit
+		// sRGB packed by W3D_Pack_House_Color, none (<= 0.5) leaves the surface as it is
+		line("\tvec4 hc = vec4(0.0);");
+		line("\tbool hc_on = v_instance.z > 0.5;");
+		line("\tif (hc_on) {");
 		line("\t\tfloat hv = v_instance.z - 1.0;");
-		line("\t\tvec3 team = vec3(floor(hv / 65536.0), floor(mod(hv, 65536.0) / 256.0), mod(hv, 256.0)) / 255.0;");
-		line("\t\tt0.rgb = mix(t0.rgb, t0.rgb * team, texture(w3d_hc_tex, uvs0).a);");
+		line("\t\tvec3 team = vec3(floor(hv / 65536.0), floor(mod(hv, 65536.0) / 256.0), mod(hv, 256.0));");
+		line("\t\tvec4 hr = texture(w3d_hc_tex, uvs0);");
+		line("\t\thc = vec4(floor(hr.r * 255.0 * team / 256.0) / 255.0, hr.a);");
 		line("\t}");
 	}
 	if (k.Tex[1]) line("\tt1 = texture(w3d_tex1, uvs1);");
@@ -564,10 +603,78 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\tvec4 diff = vec4(v_lit0.rgb + v_lit1, v_lit0.a);");
 		line(k.Texturing ? "\tcur = vec4(t0.rgb * diff.rgb * 2.0, t0.a * diff.a);" : "\tcur = vec4(diff.rgb * 2.0, diff.a);");
 	}
-	if (k.Tex[1] && k.Texturing && (k.DetailColor != W3D_DETAILCOLOR_DISABLE || k.DetailAlpha != W3D_DETAILALPHA_DISABLE))
+	if (k.Tex[1] && k.Texturing && k.ConvertedFx && (k.DetailColor == W3D_DETAILCOLOR_DETAILBLEND || k.DetailColor == W3D_DETAILCOLOR_MODALPHAADDCOLOR))
 	{
+		// defaultw3d.fxo ps_2_0, NumTextures 2 (PS_Array[8] and [11] of tools/render/d3d9_disasm.py: blobs 195 and 198, MeshMatDescFXShaderConversion.cpp:416-433). The
+		// modes combine the texels with the LIGHT terms, before the final x2, not with the already doubled colour:
+		//   DetailBlend (mode 2):       r3 = t1 - t0 * (v0 + v1); r0 = t0 * v0, alpha t0.a * v0.a; r0.rgb = r0.rgb' + alpha * r3; * cloud; * 2
+		//                               = 2 * lerp(t0 * (diffuse + specular), t1, alpha)   (t1 is doubled with the rest)
+		//   ModAlphaAddColor (mode 3):  r0 = t0 * v0; r0.rgb += v1 * r0.a; * cloud; * 2, Texture_1 is not sampled
+		//                               = 2 * (t0 * diffuse + specular * alpha)
+		// The cloud factor is not applied (S-390). An unlit surface (primary gradient Disable) takes the same expressions: its v0 / v1 are the vertex stage's, and
+		// the material factory gives such a converted surface the conversion's parameters (ColorDiffuse / ColorAmbient / ColorSpecular 0, ColorEmissive 1,
+		// Opacity 1: MeshMatDescFXShaderConversion.cpp:286-327, RW 0x599865-0x599a62), which the vertex shaders (VS_Array, every permutation: oD0.rgb =
+		// (lights * ColorDiffuse + ambient * ColorAmbient + ColorEmissive) * vertex colour * 0.5, oD0.a = vertex alpha * Opacity * OpacityOverride,
+		// oD1 = specular * ColorSpecular * 0.5; tools/render/test_secondary_texture_binary_facts.py) turn into v0 = 0.5 * vertex colour, v1 = 0
+		line("\t{ float al = t0.a * v_lit0.a;");
+		if (k.DetailColor == W3D_DETAILCOLOR_DETAILBLEND)
+		{
+			line("\t\tcur = vec4(2.0 * mix(t0.rgb * (v_lit0.rgb + v_lit1), t1.rgb, al), al); }");
+		}
+		else
+		{
+			line("\t\tcur = vec4(2.0 * (t0.rgb * v_lit0.rgb + v_lit1 * al), al); }");
+		}
+	}
+	else if (k.Tex[1] && k.Texturing && (k.DetailColor != W3D_DETAILCOLOR_DISABLE || k.DetailAlpha != W3D_DETAILALPHA_DISABLE))
+	{
+		// fixed function (ShaderClassApply.cpp:1325-1445) and the converted Scale / Scale2X (the same product: blobs 189, 192): stage 1 combines with the stage 0 result
+		// (the doubled lit texel); DetailBlend is D3DTOP_BLENDCURRENTALPHA(TEXTURE, CURRENT) = lerp(CURRENT, TEXTURE, CURRENT.a), the texture NOT doubled
 		line("\t{ vec4 l = cur; vec4 o = t1;");
 		line("\t\tcur = vec4(" + detailColorExpr(k.DetailColor) + ", " + detailAlphaExpr(k.DetailAlpha) + "); }");
+	}
+	if (houseColor)
+	{
+		// The house colour combine; the mesh's own second texture is dropped (retail replaces it: MeshClass::RecolorHouseColor, RW 0x54BDE0).
+		line(k.HouseColorBaked ? "\t{" : "\tif (hc_on) {");
+		if (k.PriGradient == W3D_GRADIENT_DISABLE)
+		{
+			// unlit: FX: v0 = ColorEmissive 1 * 0.5 so lerp(t0 * 0.5, hc * 0.5, hc.a) * 2; fixed function: BLENDTEXTUREALPHA over the texel: the same
+			line("\t\tcur = vec4(mix(t0.rgb, hc.rgb, hc.a), t0.a);");
+		}
+		else if (k.ConvertedFx)
+		{
+			// defaultw3d.fxo ps_2_0 with HouseColorEnable (PS_Array[144 + ...]; blob 342 of tools/render/d3d9_disasm.py): NumTextures 2 and SecondaryTextureBlendMode 3,
+			//   r0 = Texture_0 * oD0; r2.rgb = hc * 0.5 - r0.rgb; r0.rgb += hc.a * r2.rgb; r0.rgb += oD1 * r0.a; * cloud; * 2
+			// = 2 * (lerp(t0 * diffuse light, hc * 0.5, hc.a) + specular * alpha): the house colour region is not lit (hc * 0.5 * 2), the specular is added after
+			// the lerp and scaled by the alpha. The cloud factor is not applied (S-390)
+			line("\t\tfloat al = t0.a * v_lit0.a;");
+			line("\t\tcur = vec4(2.0 * (mix(t0.rgb * v_lit0.rgb, hc.rgb * 0.5, hc.a) + v_lit1 * al), al);");
+		}
+		else
+		{
+			// fixed function (ShaderClassApply.cpp:1425-1436, RotWK RW 0x53764F-0x5376A4): stage 0 modulates the diffuse (x2), stage 1
+			// BLENDTEXTUREALPHA(TEXTURE, CURRENT) with the recoloured texture, the alpha stays the current one. The specular is NOT part of the lit term here
+			// (it was blended away under an opaque house region): it is added after the blend (below)
+			line("\t\tcur = vec4(mix(t0.rgb * v_lit0.rgb * 2.0, hc.rgb, hc.a), t0.a * v_lit0.a);");
+		}
+		if (!k.ConvertedFx && k.DetailAlpha != W3D_DETAILALPHA_DISABLE)
+		{
+			line("\t\t{ vec4 l = cur; vec4 o = hc; cur.a = " + detailAlphaExpr(k.DetailAlpha) + "; }");
+		}
+		if (!k.ConvertedFx && k.PriGradient != W3D_GRADIENT_DISABLE && k.SecGradient != 0)
+		{
+			// The vertex specular exists only with D3DRS_SPECULARENABLE = the shader's secondary gradient bit (RW 0x537AE5: (word >> 13) & 1). With the
+			// stage 2 setup of DETAILCOLOR_MAX (stage 2 applied when Max_Textures_Per_Pass > 2, RW 0x537973; MODULATEALPHA_ADDCOLOR(CURRENT, SPECULAR) when
+			// the caps allow it, RW 0x537688) the specular is added TWICE: cur.rgb + cur.a * spec (stage 2, the alpha after the blend and any DetailAlpha), then
+			// + spec (the pipeline's specular add after the last stage). INFERENCE (stop S-6023): the caps are taken as set; the D3D9 fixed-function rules
+			// (vertex specular zero without SPECULARENABLE, added after the cascade with it) are the runtime's, not game.dat's. The lit specular is the vertex
+			// shader's v_lit1 (x2: the 0.5 of the effect convention), saturated like a vertex colour
+			line("\t\tvec3 spec = min(v_lit1 * 2.0, vec3(1.0));");
+			line("\t\tcur.rgb += cur.a * spec;");
+			line("\t\tcur.rgb += spec;");
+		}
+		line("\t}");
 	}
 	line("\tfloat a = cur.a;");
 	if (k.AlphaTest)

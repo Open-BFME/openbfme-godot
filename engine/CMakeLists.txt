@@ -101,6 +101,17 @@ option(OPENBFME_BUILD_FUZZERS "Build the asset-free save and replay libFuzzer ha
 option(OPENBFME_BUILD_TESTS "Build the C++ unit tests (five MP3 cases require verified fixtures when run)" ON)
 if(OPENBFME_BUILD_GODOT)
 add_subdirectory(thirdparty/godot-cpp EXCLUDE_FROM_ALL)
+if(MSVC)
+    # godot-cpp exports -D_HAS_EXCEPTIONS=0 (GODOTCPP_DISABLE_EXCEPTIONS) to everything that links it. The extension's own sources would then see a different
+    # std::exception than openbfme_core does, so INIException (an std::exception with a std::string) has two layouts in one DLL and the linker picks one
+    # copy of its inline special members: a `catch (INIException &)` in the core read a thrown INIException's message as garbage and crashed (godot/tests/
+    # ini_error_in_extension_test.gd). godot-cpp keeps the define for its own sources; only the interface copy goes.
+    get_target_property(OPENBFME_GODOTCPP_DEFS godot-cpp INTERFACE_COMPILE_DEFINITIONS)
+    if(OPENBFME_GODOTCPP_DEFS)
+        list(FILTER OPENBFME_GODOTCPP_DEFS EXCLUDE REGEX "_HAS_EXCEPTIONS")
+        set_property(TARGET godot-cpp PROPERTY INTERFACE_COMPILE_DEFINITIONS "${OPENBFME_GODOTCPP_DEFS}")
+    endif()
+endif()
 endif()
 
 option(OPENBFME_COVERAGE "Instrument engine tests for gcov line and branch coverage (GCC/Clang)" OFF)
@@ -162,6 +173,7 @@ include(cmake/Upgrade.cmake)    # OPENBFME_UPGRADE_SOURCES / OPENBFME_UPGRADE_TE
 include(cmake/Render2.cmake)    # RENDER-2: launch bones, construction look (appends to OPENBFME_SIM_SOURCES; OPENBFME_RENDER2_TESTS)
 include(cmake/Render3.cmake)    # OPENBFME_RENDER3_TESTS (lane RENDER-3, client / draw only)
 include(cmake/Render4.cmake)    # OPENBFME_RENDER4_SOURCES / _TESTS / _GODOT_SOURCES (lane RENDER-4, client / draw only)
+include(cmake/Glow1.cmake)      # OPENBFME_GLOW1_SOURCES / _TESTS / _GODOT_SOURCES (lane GLOW-1, client / draw only)
 include(cmake/Path2.cmake)      # OPENBFME_PATH2_SOURCES / OPENBFME_PATH2_TESTS (lane PATH-2)
 include(cmake/Net.cmake)        # OPENBFME_NET_SOURCES / OPENBFME_NET_TESTS, openbfme_peer (lane MP-1)
 include(cmake/Experience.cmake) # OPENBFME_XP_SOURCES / OPENBFME_XP_TESTS (lane XP-1)
@@ -305,6 +317,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_STRUCTURE_SOURCES}
     ${OPENBFME_RENDER_SOURCES}
     ${OPENBFME_RENDER4_SOURCES}
+    ${OPENBFME_GLOW1_SOURCES}
     ${OPENBFME_RENDER2_SOURCES}
     ${OPENBFME_FX2_SOURCES}
     ${OPENBFME_FX3_SOURCES}
@@ -384,6 +397,7 @@ add_library(openbfme_core STATIC
     src/Libraries/WWVegas/WW3D2/meshrender.cpp
     src/Libraries/WWVegas/WW3D2/w3dstops.cpp
     src/Libraries/WWVegas/WW3D2/w3dshadergen.cpp
+    src/Libraries/WWVegas/WW3D2/w3dfxconvert.cpp
     src/Libraries/WWVegas/WW3D2/textureloader.cpp
     src/GameEngineDevice/W3DDevice/GameClient/HouseColor.cpp
     src/Libraries/WWVegas/WW3D2/shader.cpp
@@ -611,6 +625,7 @@ add_library(openbfme SHARED
     ${OPENBFME_START_GODOT_SOURCES}
     ${OPENBFME_RENDER3_GODOT_SOURCES}
     ${OPENBFME_RENDER4_GODOT_SOURCES}
+    ${OPENBFME_GLOW1_GODOT_SOURCES}
     ${OPENBFME_AUDIO_GODOT_SOURCES}
     ${OPENBFME_SCRIPT1_GODOT_SOURCES}
     ${OPENBFME_CHEAT1_GODOT_SOURCES}
@@ -705,6 +720,7 @@ add_executable(openbfme_tests
     ${OPENBFME_INTEG1_TESTS}
     ${OPENBFME_RENDER3_TESTS}
     ${OPENBFME_RENDER4_TESTS}
+    ${OPENBFME_GLOW1_TESTS}
     ${OPENBFME_FX2_TESTS}
     ${OPENBFME_FX3_TESTS}
     ${OPENBFME_FX4_TESTS}
@@ -826,8 +842,10 @@ add_executable(openbfme_tests
     tests/test_w3d_mapper.cpp
     tests/test_w3d_shader.cpp
     tests/test_w3d_shadergen.cpp
+    tests/test_w3d_fxconvert.cpp
     tests/test_w3d_stops.cpp
     tests/test_w3d_render.cpp
+    tests/test_w3d_secondary_texture.cpp
     tests/test_w3d_retail_models.cpp
     tests/test_w3d_render_corpus.cpp
     tests/test_asset_catalog.cpp

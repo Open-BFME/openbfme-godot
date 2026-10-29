@@ -10,8 +10,10 @@
 #include "GameClient/MapUtil.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "GameEngineDevice/W3DDevice/GameClient/W3DObjectLighting.h"
+#include "Libraries/WWVegas/WW3D2/meshrender.h"
 #include "Libraries/WWVegas/WW3D2/w3dshadergen.h"
 
+#include <array>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -186,6 +188,102 @@ TEST_CASE("render lighting: FX surfaces are lit like normalmapped.fxo (frame -bi
 	CHECK(has(code, "cur = vec4(col, t0.a);"));
 	CHECK_FALSE(has(code, "hint_normal"));
 	CHECK_FALSE(has(code, "v_lit0"));
+}
+
+// The sign chain of the normal-map frame from the W3D file to the pixel (stop S-023). Retail (FXShaderGeometry.cpp:557-558, normalmapped.fxo vertex
+// shader blob 22): the file's tangent T and bitangent B go raw into the vertex buffer; oT1.xyz = (L . -nrm(World B), L . -nrm(World T), L . nrm(World N)).
+// The port: the instancer gives Godot TANGENT = (T, Godot_Tangent_Sign), Godot's BINORMAL = cross(N, T.xyz) * w (godot/tests/tangent_convention_test.gd
+// measures it on the running Godot) and the generated vertex shader takes fx = -BINORMAL, fy = -TANGENT. Identity world here (a rotation keeps every
+// dot product).
+namespace
+{
+using V3 = std::array<float, 3>;
+V3 cross3(const V3 &a, const V3 &b)
+{
+	return { a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
+}
+V3 unit3(const V3 &a)
+{
+	const float l = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+	return { a[0] / l, a[1] / l, a[2] / l };
+}
+float dot3(const V3 &a, const V3 &b)
+{
+	return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+V3 neg3(const V3 &a)
+{
+	return { -a[0], -a[1], -a[2] };
+}
+// L_t of oT1 for the light L (toward the light) in the frame (fx, fy, n)
+V3 lightInFrame(const V3 &l, const V3 &fx, const V3 &fy, const V3 &n)
+{
+	return { dot3(l, fx), dot3(l, fy), dot3(l, n) };
+}
+} // namespace
+
+TEST_CASE("render lighting: the normal-map frame of the port is retail's (-bitangent, -tangent, normal) for either handedness of the file")
+{
+	struct Vertex
+	{
+		V3 n, t, b;
+		float wExpected;
+	};
+	const Vertex vertices[] = {
+		{ { 0, 0, 1 }, { -1, 0, 0 }, { 0, -1, 0 }, +1.0f }, // the file's bitangent along cross(N, T)
+		{ { 0, 0, 1 }, { 1, 0, 0 }, { 0, -1, 0 }, -1.0f },  // a mirrored UV island: against cross(N, T)
+		{ { 0, 1, 0 }, { 0, 0, -1 }, { -1, 0, 0 }, +1.0f },
+		{ { 0, 1, 0 }, { 0, 0, -1 }, { 1, 0, 0 }, -1.0f },
+	};
+	const V3 light = unit3({ 0.2f, 0.6f, 0.77f });
+	// a normal-map texel (2 * rgb - 1, normalized) tilted towards -x of the frame
+	const V3 texel = unit3({ -0.71f, -0.059f, 0.702f });
+	for (const Vertex &v : vertices)
+	{
+		CAPTURE(v.wExpected);
+		const float w = Godot_Tangent_Sign(v.n.data(), v.t.data(), v.b.data());
+		CHECK(w == v.wExpected);
+		// Godot (measured): BINORMAL = cross(N, T) * w, normalized
+		V3 binormal = unit3(cross3(v.n, v.t));
+		for (float &c : binormal)
+		{
+			c *= w;
+		}
+		// the generated shader: fx = -BINORMAL, fy = -TANGENT, fz = N
+		const V3 portFx = neg3(binormal);
+		// retail's blob 22: x = -nrm(B), y = -nrm(T), z = nrm(N)
+		const V3 retailFx = neg3(unit3(v.b));
+		CHECK(portFx == retailFx);
+		const V3 lp = lightInFrame(light, portFx, neg3(v.t), v.n);
+		const V3 lr = lightInFrame(light, retailFx, neg3(v.t), v.n);
+		CHECK(lp == lr);
+		// the mirrored frame (the sign the port had before: BINORMAL = -B) changes N.L of a tilted texel
+		const V3 lm = lightInFrame(light, neg3(portFx), neg3(v.t), v.n);
+		CHECK(std::fabs(dot3(texel, lm) - dot3(texel, lr)) > 0.2f); // tolerance: a margin, the mirror moves N.L by 2 * 0.71 * L.x of the frame (0.28 to 0.86 here)
+	}
+	// B is not exactly cross(N, T) (a texture seam's skew): the sign follows the side of cross(N, T) it lies on
+	const V3 n{ 0, 1, 0 }, t{ 0, 0, -1 }, skewed{ -0.96f, 0, 0.281f }, skewedMirror{ 0.96f, 0, 0.281f };
+	CHECK(Godot_Tangent_Sign(n.data(), t.data(), skewed.data()) == +1.0f);
+	CHECK(Godot_Tangent_Sign(n.data(), t.data(), skewedMirror.data()) == -1.0f);
+	// the numbers of the first vertex: retail L_t = (0.6, 0.2, 0.77) / |L| gives N.L 0.10309 for the tilted texel (the mirrored frame: 0.95796)
+	const V3 lt = lightInFrame(light, neg3(vertices[0].b), neg3(vertices[0].t), vertices[0].n);
+	CHECK(dot3(texel, lt) == doctest::Approx(0.103087f)); // tolerance: float rounding of a three-term dot product (the default relative epsilon)
+}
+
+TEST_CASE("render lighting: the generated FX vertex shader takes the file's bitangent from Godot's BINORMAL and negates it")
+{
+	W3DShaderKey k;
+	k.Fx = true;
+	k.Texturing = true;
+	k.Tex[0] = true;
+	k.NormalMap = true;
+	k.Tangents = true;
+	k.PriGradient = W3D_GRADIENT_MODULATE;
+	const std::string code = Generate_W3D_Shader_Code(k);
+	CHECK(has(code, "vec3 tg = w3d_dir(base, b, TANGENT);"));
+	CHECK(has(code, "vec3 bn = w3d_dir(base, b, BINORMAL);"));
+	CHECK(has(code, "vec3 fx = -normalize(mat3(MODEL_MATRIX) * w3d_to_godot(bn));"));
+	CHECK(has(code, "vec3 fy = -normalize(mat3(MODEL_MATRIX) * w3d_to_godot(tg));"));
 }
 
 TEST_CASE("render lighting: the normalmapped specular uses the interpolated half vector unrenormalized (review r1)")

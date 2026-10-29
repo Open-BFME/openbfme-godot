@@ -15,6 +15,7 @@
 ## What the retail detail level drives here (each with its source; the rest is stop S-3402, docs/OPTIONS.md):
 ##   max_particle_count, min_particle_priority, min_particle_skip_priority -> the live FX player (FXPlayer.set_particle_lod: GlobalData + 0xAC8 and the
 ##     manager's + 0x17A0 / + 0x17A4, read by ParticleSystem::createParticle RW 0x5FA2CE);
+##   effects_lod -> GameWorld.set_effects_lod (EffectsLOD VeryLow / Low draw neither the map's colour grade nor the GlowEffect pass, RW 0x48789F; lane GLOW-1);
 ##   texture_reduction -> GameWorld.set_texture_reduction (W3D textures lose mip levels; models loaded afterwards: the next game);
 ##   all_health_bars -> the HUD's decorations (DecalLOD Off forces them, RW 0x601CD3).
 ## Brightness: RW 0x641E8B's gamma drawn as DX8Wrapper::Set_Gamma's ramp (DONOR ZH: out = pow(i / 256, 1 / gamma)) by a full-window pass over everything;
@@ -337,6 +338,9 @@ func apply_detail() -> Dictionary:
 		var fx = _world.get_fx_player()
 		if fx != null:
 			fx.set_particle_lod(_detail.max_particle_count, _detail.min_particle_priority, _detail.min_particle_skip_priority)
+	# lane GLOW-1 (S-5231): EffectsLOD VeryLow / Low draw neither the map's colour grade nor the glow (RW 0x48789F)
+	if _world != null and _world.has_method("set_effects_lod"):
+		_world.set_effects_lod(int(_detail.effects_lod))
 	return _detail
 
 

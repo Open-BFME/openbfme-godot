@@ -101,8 +101,8 @@ public:
 	bool set_instance_hidden_subobjects(int64_t instance, const PackedStringArray &names);
 	int64_t get_instance_count() const { return (int64_t)Instances.size(); }
 	// Stop S-119 (lane MAPOBJ-1): team colours. After setup() and BEFORE the first add_model, enable them and every classic surface whose stage
-	// 0 texture has a housecolor.ini texture gets the HouseColor shader permutation (W3DShaderKey::HouseColor: base = mix(base, base * team,
-	// house texture alpha), a HYPOTHESIS: the combine is unrecovered, S-022); the per-surface S-022 reports are replaced by one S-119 report
+	// 0 texture has a housecolor.ini texture gets the HouseColor shader permutation (W3DShaderKey::HouseColor: the texture recoloured with the instance's
+	// colour, combined after the light as retail does, S-022); the per-surface S-022 reports are replaced by one S-119 report
 	// per mesh. set_instance_house_color then tints one instance (alpha < 0.5: none).
 	void set_house_colors_enabled(bool enabled);
 	bool get_house_colors_enabled() const { return HouseColorEnabled; }
@@ -123,6 +123,10 @@ public:
 	// RENDER-1 (stop S-390): the instance is lit by the map's infantry light set (KINDOF_INFANTRY drawables) instead of the objects set;
 	// the buffer stores the palette base as -(base + 1) for it.
 	void set_instance_infantry_light(int64_t instance, bool infantry);
+	// lane GLOW-1 (stop S-5231): the model's draws are also drawn by the glow pass's camera (GodotGlowEffect.h kGlowLayer), as retail's glow-flagged render objects
+	// are in pass mode 3 (RW 0x46FE84): every instance of this model glows, so the caller keys glowing and plain draws of one W3D model apart. With
+	// emissive_only (GlowEmissive, RW 0xDD1E18) a mesh glows only when its first vertex material's emissive is above 0.01 (MeshClass::Render).
+	void set_model_glow(int64_t model, bool emissive_only);
 	// lane VISUAL-2: the tree's vegetation sway type (0 none, 1 .. 10: W3DVegetationSway, RW 0x4EC93A), written to INSTANCE_CUSTOM.w as bone + 1024 * type
 	void set_instance_sway(int64_t instance, int type);
 	// lane VISUAL-2: the instance is lit by the fogged light (a last-seen object in the fog: lights and ambient times w3d_fogged_frac), INSTANCE_CUSTOM.w += 16384

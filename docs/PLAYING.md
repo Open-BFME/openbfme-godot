@@ -769,8 +769,8 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   game itself.
 
 **Looks or sounds different**
-- Team colours on units and buildings are an educated guess at how the
-  original blends them, and may look different (S-119).
+- Team colours on units and buildings use the original's blend, but which
+  colour a map without one gets is an educated guess (S-119).
 - The computer opponent builds, attacks and finishes games, and uses its
   heroes, spell book and powers, but it does not yet defend or expand the way
   the original does, and it skips some powers (S-413, S-415, S-417, S-1421).

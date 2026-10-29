@@ -521,6 +521,11 @@ public:
 	Dictionary get_fx_report() const;
 	// the FXPlayer that draws the live effects (null before setup() succeeded)
 	Node3D *get_fx_player() const;
+	// lane GLOW-1 (S-5231): the static detail level's EffectsLOD (GameLODManager::state().effectsLOD, 0 VeryLow .. 4 UltraHigh): VeryLow and Low draw neither the map's
+	// colour grade nor the glow (RW 0x48789F). Applied at once to the loaded game's glow host and to the ones loaded later.
+	void set_effects_lod(int64_t lod);
+	// the glow pass host of the loaded game (null without one): get_glow_stats / get_choice
+	Node3D *get_glow_host() const;
 	// lane OPTS-2: the texture reduction of the static detail level for the W3D textures loaded from now on (W3DMaterialFactory::Set_Texture_Reduction)
 	static void set_texture_reduction(int64_t reduction);
 	static int64_t get_texture_reduction();
@@ -694,6 +699,7 @@ private:
 		bool staticKeyHouse = false;        ///< m_houseColors when it was made
 		std::uint32_t staticKeyOwner = 0, staticKeyCustom[3] = { 0u, 0u, 0u };
 		std::string staticKey;             ///< the key
+		int staticGlow = 0;                ///< lane GLOW-1: the static model's glow flags (0 none, 1 glow, 2 emissive only), part of staticKey
 		HouseColorParams staticKeyPalette; ///< and what it was made from (used when a new model is built)
 		bool staticKeyColored = false;
 		std::vector<std::pair<std::string, std::string>> staticKeySwaps;
@@ -901,6 +907,8 @@ private:
 	void reset_streaks();                      ///< drops trails, materials, errors and the texture factory (it references m_fs)
 	// lane FX-2
 	FXPlayer *m_fxPlayer = nullptr;            ///< child node, kept by clear_scene
+	ObjectID m_glowHost;                       ///< lane GLOW-1: the loaded game's glow pass host (a child, freed by clear_scene)
+	int64_t m_effectsLod = 4;                  ///< lane GLOW-1: GameLODManager::kDetectedLevel until the options say otherwise
 	std::unique_ptr<LiveFX> m_liveFX;          ///< destroyed before m_game (it is the logic's FX sink and the drawables' FX host)
 	// lane SPELL-4: the BuffNugget buffs (GameClient/BuffDraw.h) as instances of the live objects' instancer, by TBuff serial
 	std::map<uint64_t, int64_t> m_buffInstances;

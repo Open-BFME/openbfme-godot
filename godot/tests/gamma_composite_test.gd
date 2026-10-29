@@ -316,6 +316,12 @@ func _case_terrain(fs: RefCounted, with_instancer: bool) -> void:
 	var img := Image.create(2, 2, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0.5, 0.5, 0.5, 0.5))
 	rm.set_shader_parameter("road_tex", ImageTexture.create_from_image(img))
+	# the road is lit like the terrain (road_shader_test.gd): no sun and no overbright leave texture x vertex colour, white here
+	var flat := Image.create(2, 2, false, Image.FORMAT_RGBA8)
+	flat.fill(Color8(127, 127, 255, 0))
+	rm.set_shader_parameter("road_normal_tex", ImageTexture.create_from_image(flat))
+	rm.set_shader_parameter("sun_color", Vector3.ZERO)
+	rm.set_shader_parameter("overbright", false)
 	rm.set_shader_parameter("output_gamma", road_gamma if road_gamma > 0.0 else 1.0)
 	road.material_override = rm
 	vp.add_child(road)

@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 
 #include "GodotDevice/GodotGammaComposite.h"
+#include "GodotDevice/GodotGlowEffect.h"
 #include "GodotDevice/GodotW3DInstancer.h"
 
 #include <cstdio>
@@ -332,6 +333,7 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_instance_house_color", "instance", "color"), &W3DInstancer::set_instance_house_color);
 	ClassDB::bind_method(D_METHOD("add_model_colored", "model", "kind", "colors"), &W3DInstancer::add_model_colored); // lane CAH-2
 	ClassDB::bind_method(D_METHOD("set_instance_infantry_light", "instance", "infantry"), &W3DInstancer::set_instance_infantry_light);
+	ClassDB::bind_method(D_METHOD("set_model_glow", "model", "emissive_only"), &W3DInstancer::set_model_glow);
 	ClassDB::bind_method(D_METHOD("set_instance_opacity", "instance", "opacity"), &W3DInstancer::set_instance_opacity);
 	ClassDB::bind_method(D_METHOD("set_instance_occlusion", "instance", "occluder", "slot"), &W3DInstancer::set_instance_occlusion); // lane OCCLUDE-1
 	ClassDB::bind_method(D_METHOD("get_occlusion_pass_counts"), &W3DInstancer::get_occlusion_pass_counts);
@@ -370,6 +372,35 @@ void W3DInstancer::set_instance_house_color(int64_t instance, const Color &color
 	inst.HcPacked = color.a < 0.5f ? 0.0f : W3D_Pack_House_Color((int)std::lround(color.r * 255.0f), (int)std::lround(color.g * 255.0f), (int)std::lround(color.b * 255.0f));
 	PoseDirty = true;
 	mark_model(instance);
+}
+
+void W3DInstancer::set_model_glow(int64_t model, bool emissive_only)
+{
+	if (model < 0 || (size_t)model >= Models.size())
+	{
+		warn("set_model_glow: unknown model " + std::to_string(model));
+		return;
+	}
+	for (DrawItem &d : Models[(size_t)model]->Draws)
+	{
+		bool glow = true;
+		if (emissive_only)
+		{
+			// MeshClass::Render: the mesh's first vertex material, emissive above 0.01 in any channel
+			glow = false;
+			for (const MeshDrawSurface &surface : d.Mesh->Data.Surfaces)
+			{
+				if (surface.HasVertexMaterial)
+				{
+					const W3dRGBStruct &e = surface.VertexMaterial.Emissive;
+					glow = e.R / 255.0f > 0.01f || e.G / 255.0f > 0.01f || e.B / 255.0f > 0.01f;
+					break;
+				}
+			}
+		}
+		const uint32_t layers = d.Node->get_layer_mask();
+		d.Node->set_layer_mask(glow ? (layers | GlowPass::kGlowLayer) : (layers & ~GlowPass::kGlowLayer));
+	}
 }
 
 void W3DInstancer::set_instance_infantry_light(int64_t instance, bool infantry)
@@ -612,15 +643,12 @@ std::shared_ptr<W3DInstancer::MeshGpu> W3DInstancer::build_mesh(const MeshModelC
 		tangents.resize(nv * 4);
 		for (int64_t v = 0; v < nv; ++v)
 		{
-			Vector3 n(d.Normal[v * 3], d.Normal[v * 3 + 1], d.Normal[v * 3 + 2]);
-			Vector3 t(d.Tangent[v * 3], d.Tangent[v * 3 + 1], d.Tangent[v * 3 + 2]);
-			Vector3 b(d.Bitangent[v * 3], d.Bitangent[v * 3 + 1], d.Bitangent[v * 3 + 2]);
-			// V is flipped on load (u, 1 - v), so +v' runs along -bitangent; Godot's binormal = cross(normal, tangent) * w
-			float w = n.cross(t).dot(-b) < 0.0f ? -1.0f : 1.0f;
-			tangents.set(v * 4 + 0, t.x);
-			tangents.set(v * 4 + 1, t.y);
-			tangents.set(v * 4 + 2, t.z);
-			tangents.set(v * 4 + 3, w);
+			// Godot's BINORMAL = cross(NORMAL, TANGENT.xyz) * w is made the file's bitangent: retail's vertex buffer holds it raw and
+			// normalmapped.fxo blob 22 negates it (the generated shader's fx = -BINORMAL); S-023
+			tangents.set(v * 4 + 0, d.Tangent[v * 3]);
+			tangents.set(v * 4 + 1, d.Tangent[v * 3 + 1]);
+			tangents.set(v * 4 + 2, d.Tangent[v * 3 + 2]);
+			tangents.set(v * 4 + 3, Godot_Tangent_Sign(&d.Normal[v * 3], &d.Tangent[v * 3], &d.Bitangent[v * 3]));
 		}
 	}
 	PackedFloat32Array custom0, custom1, custom2;
@@ -741,8 +769,8 @@ std::shared_ptr<W3DInstancer::MeshGpu> W3DInstancer::build_mesh(const MeshModelC
 			W3DStopHit h;
 			h.Id = "S-119";
 			h.Message = W3D_Stop_Message("S-119", mesh.Get_Name() + (mat.Key.HouseColorBaked
-			 ? ": house texels recoloured before filtering; alpha replacement combine remains inferred (S-022)"
-			 : ": instance colour uses the approximate base * team mask path (S-022)"));
+			 ? ": house texels recoloured before filtering, combined after the light as retail's DefaultW3D.fx / fixed-function rules do; the owner's colour source is inferred (S-119)"
+			 : ": instance colour recolours the filtered house texel as RW 0x531C77 kind 1 (retail recolours before filtering), combined after the light; the owner's colour source is inferred (S-119)"));
 			gpu->Stops.push_back(h);
 		}
 	}

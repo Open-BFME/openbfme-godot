@@ -15,7 +15,7 @@ func _run() -> void:
 	for mesh in map.find_children("*", "MeshInstance3D", true, false):
 		for surface in mesh.mesh.get_surface_count():
 			var mat = mesh.mesh.surface_get_material(surface)
-			if mat is ShaderMaterial and mat.shader.code.contains("terrain_common"):
+			if mat is ShaderMaterial and mat.shader.code.contains("terrain_common") and mesh.get_parent().name != "Roads": # the roads share the include (road_shading_test.gd)
 				assert(mat.get_shader_parameter("sun_color") == expected)
 				assert(mat.get_shader_parameter("overbright") == true)
 				checked += 1
