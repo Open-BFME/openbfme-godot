@@ -277,7 +277,9 @@ public:
 	WaterTransparencyLoad(ArchiveFileSystem *fs, WaterTransparencyResult &result) : m_result(result)
 	{
 		m_env.fileSystem = fs;
-		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "WaterTransparency" }, StubExtent::Lenient, false);
+		// LenientAfterEnd: an unrelated block of a map.ini ends at its own End, and the keyword after it is found at any indentation (a Weather block followed by an
+		// indented WaterTransparency still overrides the plane), as retail's per-block parsers and whitespace-skipping tokenizer do
+		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "WaterTransparency" }, StubExtent::LenientAfterEnd, false);
 		m_env.blocks.registerBlock("WaterTransparency", [this](INI *ini) {
 			if (m_result.blockSeen && ini->getLoadType() != INI_LOAD_CREATE_OVERRIDES)
 			{

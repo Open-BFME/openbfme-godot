@@ -1200,6 +1200,48 @@ TEST_CASE("WaterTransparencyScan::applyText: ReflectionOn of the WaterTransparen
 	CHECK_FALSE(r.reflectionOn);
 }
 
+TEST_CASE("WaterTransparencyScan::applyText: an unrelated block ends at its own End, so an indented WaterTransparency after it still overrides water.ini")
+{
+	const std::string water = "WaterTransparency\n  ReflectionPlaneZ = 59.0\n  ReflectionOn = No\nEnd\n";
+	std::string error;
+	// the reviewer's case: Weather ... End, then an INDENTED WaterTransparency (retail's tokenizer skips leading whitespace and its Weather parser stops at its End)
+	{
+		WaterTransparencyScan::Result r;
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText(water, r, &error), error);
+		CHECK(r.reflectionPlaneZ == 59.0f);
+		CHECK_FALSE(r.reflectionOn);
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText("Weather\n  HardwareFogEnable = Yes\n  HardwareFogStart = 350\nEnd\n\n  WaterTransparency\n    ReflectionPlaneZ = 123.5\n    ReflectionOn = Yes\n  End\n", r, &error, true), error);
+		CHECK(r.reflectionPlaneZ == 123.5f);
+		CHECK(r.reflectionPlaneZSet);
+		CHECK(r.reflectionOn);
+	}
+	// an unrelated block with a nested block (its End at the wrong indentation, as retail's Harlindon map.ini has) and a keyword-named FIELD inside it, then a tab-indented
+	// WaterTransparency after a comment line
+	{
+		WaterTransparencyScan::Result r;
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText(water, r, &error), error);
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText("Object Foo\n  Draw = W3DModelDraw ModuleTag_01\n    ModelConditionState = WORLD_BUILDER\n   Model = locator\n End\n  Weapon = PRIMARY Bar\n  End\nEnd\n; the water\n\tWaterTransparency\n\t\tReflectionPlaneZ = 77.25\n\t\tReflectionOn = Yes\n\tEnd\n", r, &error, true), error);
+		CHECK(r.reflectionPlaneZ == 77.25f);
+		CHECK(r.reflectionOn);
+	}
+	// a keyword-named line inside an unrelated block that is not preceded by an End (or is a field) does not end it: the values inside stay out
+	{
+		WaterTransparencyScan::Result r;
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText(water, r, &error), error);
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText("Weather\n  WaterTransparency = Foo\n  ReflectionPlaneZ = 5\n  ReflectionOn = Yes\nEnd\n", r, &error, true), error);
+		CHECK(r.reflectionPlaneZ == 59.0f);
+		CHECK_FALSE(r.reflectionOn);
+	}
+	// column 0 keeps working
+	{
+		WaterTransparencyScan::Result r;
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText(water, r, &error), error);
+		REQUIRE_MESSAGE(WaterTransparencyScan::applyText("Weather\n  HardwareFogEnable = Yes\nEnd\nWaterTransparency\n  ReflectionPlaneZ = 88\n  ReflectionOn = Yes\nEnd\n", r, &error, true), error);
+		CHECK(r.reflectionPlaneZ == 88.0f);
+		CHECK(r.reflectionOn);
+	}
+}
+
 TEST_CASE("WaterTransparencyScan::load: water.ini, then the map's map.ini")
 {
 	const std::string waterIni = "WaterTransparency\n  ReflectionOn = No\nEnd\n";
