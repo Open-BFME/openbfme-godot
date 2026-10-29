@@ -288,6 +288,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_shroud_drawn", "on"), &GameWorld::set_shroud_drawn);
 	ClassDB::bind_method(D_METHOD("set_shroud_fade", "on"), &GameWorld::set_shroud_fade); // lane FOGFX-1: off = the texels snap (the proof's "before")
 	ClassDB::bind_method(D_METHOD("get_shroud_cells"), &GameWorld::get_shroud_cells);
+	ClassDB::bind_method(D_METHOD("get_terrain_bake_tiles"), &GameWorld::get_terrain_bake_tiles); // lane TERRAIN-BAKES
 	ClassDB::bind_method(D_METHOD("get_projectiles"), &GameWorld::get_projectiles);
 	ClassDB::bind_method(D_METHOD("get_victory_report"), &GameWorld::get_victory_report);
 	ClassDB::bind_method(D_METHOD("start_victory_rules", "players"), &GameWorld::start_victory_rules, DEFVAL(PackedStringArray()));
@@ -2186,6 +2187,7 @@ void GameWorld::advance(double delta)
 	m_lastNewModelMs = 0.0;
 	// lane FOGFX-1: the shroud fades on the wall clock (RW 0x472CF2 reads timeGetTime), the render frame's unscaled delta (fixed under Movie Maker)
 	refresh_shroud(false, timing::secondsToMs(delta));
+	refresh_terrain_bake();
 	const double tv = nowMs();
 	m_lastShroudMs = timing::spanMs(tv, t1);
 	refresh_views(dt * 1000.0);
@@ -5816,6 +5818,81 @@ void GameWorld::refresh_shroud(bool force, double dtMs)
 			m->set_shader_parameter("shroud_enabled", m_shroudDrawn);
 		}
 	}
+}
+
+// lane TERRAIN-BAKES: retail's W3DTerrainBackground::updateCenter (RW 0x511DCB .. 0x511F3B) judges every 16 x 16 cell tile against the camera each frame: a tile nearer
+// than the 2x distance is baked at 32 px/cell, the others at 16 (TerrainBake.h). TARGET FACTS: the camera's position (Get_Position of the first camera) and TheDisplay's
+// width in pixels; GlobalData + 0x4A (allow 2x) is GameLOD's UseDistanceDependantTerrainTextures, Yes at every level from Medium (gamelod.ini), and the renderer draws at
+// UltraHigh (S-2481); GlobalData + 0xEA0 (StretchTerrain) is No. INFERENCE: the viewport's width stands for TheDisplay's, the free camera's position for the camera's.
+void GameWorld::refresh_terrain_bake()
+{
+	Node *terrain = get_node_or_null(NodePath("Terrain"));
+	if (!terrain || !terrain->has_meta("bake_boxes"))
+	{
+		return;
+	}
+	Viewport *vp = get_viewport();
+	Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
+	if (!cam)
+	{
+		return;
+	}
+	if ((uint64_t)terrain->get_instance_id() != m_bakeTerrainId)
+	{
+		m_bakeTerrainId = (uint64_t)terrain->get_instance_id();
+		m_bakeFar.clear();
+		m_bakeGrid = TerrainBake::TileGrid();
+		m_bakeGrid.tilesX = terrain->get_meta("bake_tiles_x");
+		m_bakeGrid.tilesY = terrain->get_meta("bake_tiles_y");
+		const PackedFloat32Array boxes = terrain->get_meta("bake_boxes");
+		m_bakeGrid.boxes.resize((size_t)m_bakeGrid.tilesX * (size_t)m_bakeGrid.tilesY);
+		if ((int64_t)m_bakeGrid.boxes.size() * 6 != boxes.size())
+		{
+			m_bakeGrid.boxes.clear();
+		}
+		for (size_t i = 0; i < m_bakeGrid.boxes.size(); ++i)
+		{
+			for (int k = 0; k < 3; ++k)
+			{
+				m_bakeGrid.boxes[i].center[k] = boxes[(int64_t)i * 6 + k];
+				m_bakeGrid.boxes[i].extent[k] = boxes[(int64_t)i * 6 + 3 + k];
+			}
+		}
+	}
+	if (m_bakeGrid.boxes.empty())
+	{
+		return;
+	}
+	const TerrainBake::TileGrid &grid = m_bakeGrid;
+	const Vector3 g = cam->get_global_position(); // Godot's frame: SAGE (x, y, z) = (g.x, -g.z, g.y)
+	const float camera[3] = { g.x, -g.z, g.y };
+	const std::vector<std::uint8_t> flags = TerrainBake::farTiles(grid, camera, true, (unsigned)vp->get_visible_rect().size.x, true, false);
+	if (flags == m_bakeFar)
+	{
+		return;
+	}
+	m_bakeFar = flags;
+	m_bakeTexels.resize((int64_t)flags.size());
+	for (size_t i = 0; i < flags.size(); ++i)
+	{
+		m_bakeTexels[(int64_t)i] = flags[i] ? 255 : 0; // an L8 texel reads back as v / 255: the shader's far test is > 0.5
+	}
+	Ref<ImageTexture> tex = terrain->get_meta("bake_far_texture");
+	if (tex.is_null())
+	{
+		return;
+	}
+	tex->update(Image::create_from_data(grid.tilesX, grid.tilesY, false, Image::FORMAT_L8, m_bakeTexels));
+}
+
+// lane TERRAIN-BAKES: the tile flags the last render frame uploaded (255 far, 0 near), for the tests: the dummy renderer of a headless run keeps a texture's first image only
+Dictionary GameWorld::get_terrain_bake_tiles() const
+{
+	Dictionary d;
+	d["tiles_x"] = m_bakeGrid.tilesX;
+	d["tiles_y"] = m_bakeGrid.tilesY;
+	d["texels"] = m_bakeTexels;
+	return d;
 }
 
 Array GameWorld::get_ai_report() const

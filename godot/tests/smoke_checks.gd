@@ -1037,6 +1037,7 @@ func _game_world(fs: RefCounted) -> void:
 		found = found or String(p).contains("'Player_1' FactionMen")
 	_check(found and String(sk.players[10]).ends_with("$1500"), "the lobby slot gave Player_1 the Men and GameData's default starting cash: %s" % [sk.players.slice(10, 12)])
 	_shroud_texels(fs, skirm)
+	_bake_tiles(fs, skirm)
 	_production(other, third, skirm, sk)
 	_heroes(other, skirm) # lane HERO-1
 	print("  info game world: celduin in %d ms, %d objects, %d drawables, logic frame %.1f ms, sync %.1f ms" % [ms, l.objects, d.live, world.get_stats().last_logic_ms, world.get_stats().last_sync_ms])
@@ -1087,6 +1088,62 @@ func _shroud_texels(fs: RefCounted, skirm: Dictionary) -> void:
 	_check(seen.has(0) and seen.has(255), "the border / shrouded cells read 0 and the cleared cells 255 (levels seen %s)" % [seen.keys()])
 	_check(not seen.has(127), "no texel holds the unquantised FogAlpha 127 (a fogged cell is 119 = 7 / 15: pinned in test_fogfx1_shroud_fade.cpp)")
 	world.queue_free()
+
+
+## Lane TERRAIN-BAKES: in a LOADED GAME the camera decides which 16 x 16 cell tiles are 16 px/cell (retail's W3DTerrainBackground::updateCenter, engine TerrainBake.h). The tile boxes
+## and the flag texture sit on the node the map builder returns (the game's "Terrain"); every render frame the game judges each tile and writes 255 for a far one. Here a camera over the
+## first tile makes the last tile far and itself near, then a camera over the last tile swaps them, and the material's bake_far parameter is that same texture. The windowed
+## shader_test.gd reads the real texture back from the GPU.
+func _bake_tiles(fs: RefCounted, skirm: Dictionary) -> void:
+	var world: Node3D = ClassDB.instantiate("GameWorld")
+	_tree.root.add_child(world)
+	world.setup(fs)
+	var with_terrain: Dictionary = skirm.duplicate()
+	with_terrain["terrain"] = true
+	world.load_map("map mp fall back 4p", with_terrain)
+	var terrain: Node = world.find_child("Terrain", false, false)
+	_check(terrain != null and terrain.has_meta("bake_boxes") and terrain.has_meta("bake_far_texture"), "the game's Terrain node carries the tile boxes and the flag texture")
+	if terrain == null or not terrain.has_meta("bake_boxes"):
+		world.queue_free()
+		return
+	var tiles_x: int = terrain.get_meta("bake_tiles_x")
+	var tiles_y: int = terrain.get_meta("bake_tiles_y")
+	var boxes: PackedFloat32Array = terrain.get_meta("bake_boxes")
+	var tex: ImageTexture = terrain.get_meta("bake_far_texture")
+	var first := Vector3(boxes[0], boxes[1], boxes[2])
+	var last_i := tiles_x * tiles_y - 1
+	var last := Vector3(boxes[last_i * 6], boxes[last_i * 6 + 1], boxes[last_i * 6 + 2])
+	_check(first.distance_to(last) > 1500.0, "the map is wider than the 2x distance (%.0f units corner to corner)" % first.distance_to(last))
+	var mat: ShaderMaterial = null
+	for mi in terrain.find_children("*", "MeshInstance3D", true, false):
+		mat = (mi as MeshInstance3D).mesh.surface_get_material(0)
+		break
+	_check(mat != null and mat.get_shader_parameter("bake_far") == tex, "the terrain material's bake_far is the flag texture the game updates")
+	var cam := Camera3D.new()
+	_tree.root.add_child(cam)
+	cam.current = true
+	# SAGE (x, y, z) is Godot's (x, z, -y)
+	cam.global_position = Vector3(first.x, first.z + 100.0, -first.y)
+	world.advance(0.05)
+	var flags: PackedByteArray = world.get_terrain_bake_tiles().texels # what the render frame uploaded (a headless renderer keeps only a texture's first image)
+	_check(flags.size() == tiles_x * tiles_y, "one flag texel a tile (%d)" % flags.size())
+	_check(flags[0] == 0 and flags[last_i] == 255, "a camera over the first tile: it is near (%d), the last tile is far and its texel is 255 (%d)" % [flags[0], flags[last_i]])
+	var far_count := 0
+	for f in flags:
+		_check_flag_value(f)
+		far_count += 1 if f == 255 else 0
+	_check(far_count > 0 and far_count < flags.size(), "some tiles are far and some near (%d of %d far)" % [far_count, flags.size()])
+	cam.global_position = Vector3(last.x, last.z + 100.0, -last.y)
+	world.advance(0.05)
+	flags = world.get_terrain_bake_tiles().texels
+	_check(flags[last_i] == 0 and flags[0] == 255, "a camera over the last tile swaps them (first %d, last %d)" % [flags[0], flags[last_i]])
+	cam.queue_free()
+	world.queue_free()
+
+
+func _check_flag_value(f: int) -> void:
+	if f != 0 and f != 255:
+		_check(false, "a flag texel is 0 or 255 (%d)" % f)
 
 
 ## FX-1: the retail FX data and the FXPlayer. Truth for the counts is a GDScript line scan of the two INI files (independent of the C++

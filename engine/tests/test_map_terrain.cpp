@@ -7,6 +7,7 @@
 #include "GameClient/TerrainAtlas.h"
 #include "GameClient/TerrainTypes.h"
 #include "GameEngineDevice/W3DDevice/GameClient/HeightMapMesh.h"
+#include "GameEngineDevice/W3DDevice/GameClient/TerrainBake.h"
 #include "GameEngineDevice/W3DDevice/GameClient/TerrainComposite.h"
 #include "GameEngineDevice/W3DDevice/GameClient/WorldHeightMap.h"
 #include "GameLogic/Map/TerrainLogic.h"
@@ -1005,4 +1006,102 @@ TEST_CASE("TerrainComposite::build refuses blend layers that are not subsequence
 	TerrainComposite::Stats cs;
 	CHECK_FALSE(TerrainComposite::build(chunks, out, rec, cs, &err));
 	CHECK(err.find("terrain composite:") != std::string::npos);
+}
+
+// ---- lane TERRAIN-BAKES: retail's CPU bake arithmetic and the near / far tile rule (TerrainBake.h) ----------------------------------------------------------
+
+TEST_CASE("terrain bake: the blend loop is (src * alpha + (255 - alpha) * dst) >> 8 per byte, RW 0x4AC035, so a full alpha is not an identity")
+{
+	using TerrainBake::blendByte;
+	CHECK(blendByte(200, 100, 0) == (100 * 255) / 256);      // 99: the base keeps 255/256 of itself
+	CHECK(blendByte(200, 100, 255) == (200 * 255) / 256);    // 199
+	CHECK(blendByte(255, 255, 255) == 254);
+	CHECK(blendByte(0, 0, 128) == 0);
+	CHECK(blendByte(255, 0, 128) == (255 * 128) / 256);      // 127
+	CHECK(blendByte(10, 250, 64) == (10 * 64 + 191 * 250) / 256); // 189
+}
+
+TEST_CASE("terrain bake: updateFlat drops the low 3 bits of every channel into an A1R5G5B5 texel with the alpha bit set, Direct3D reads n * 255 / 31 back")
+{
+	using namespace TerrainBake;
+	CHECK(toA1R5G5B5(255, 255, 255) == 0xFFFF);
+	CHECK(toA1R5G5B5(0, 0, 0) == 0x8000);
+	CHECK(toA1R5G5B5(7, 7, 7) == 0x8000);       // below the first step
+	CHECK(toA1R5G5B5(8, 16, 24) == (0x8000 | (1 << 10) | (2 << 5) | 3));
+	CHECK(toA1R5G5B5(0xF8, 0x80, 0x07) == (0x8000 | (31 << 10) | (16 << 5) | 0));
+	CHECK(expand5(0) == 0);
+	CHECK(expand5(31) == 255);
+	CHECK(expand5(16) == 132); // 16 * 255 / 31 = 131.6
+	CHECK(channelR(toA1R5G5B5(200, 0, 0)) == expand5(25));
+	// a blended cell: base 100, blend 200 at alpha 128: (200 * 128 + 127 * 100) >> 8 = 149 -> 18 -> 18 * 255 / 31 = 148
+	const std::uint8_t base[3] = { 100, 100, 100 }, blend[3] = { 200, 200, 200 };
+	const std::uint16_t texel = bakeBlended(base, blend, 128);
+	CHECK(texel == toA1R5G5B5(149, 149, 149));
+	CHECK(channelG(texel) == 148);
+}
+
+TEST_CASE("terrain bake: the 2x distance is 430 * clamp(width / 1024, 0.5, 2.5) + 25, or 455 without a display (updateCenter, RW 0x511E73 .. 0x511EF5)")
+{
+	using TerrainBake::mip2xDistance;
+	CHECK(mip2xDistance(false, 0) == 455.0f);
+	CHECK(mip2xDistance(true, 1024) == 455.0f);
+	CHECK(mip2xDistance(true, 1920) == 1.875f * 260.0f + (1.875f * 170.0f + 25.0f));
+	CHECK(mip2xDistance(true, 100) == 0.5f * 260.0f + (0.5f * 170.0f + 25.0f));   // clamped up to 0.5: 240
+	CHECK(mip2xDistance(true, 100) == 240.0f);
+	CHECK(mip2xDistance(true, 7680) == 2.5f * 260.0f + (2.5f * 170.0f + 25.0f));  // clamped down to 2.5: 1100
+	CHECK(mip2xDistance(true, 7680) == 1100.0f);
+}
+
+TEST_CASE("terrain bake: a tile is near when the nearest of its 27 box points is closer than the 2x distance, and only with allow-2x or a stretched terrain")
+{
+	using namespace TerrainBake;
+	Box box;
+	box.center[0] = 100.0f; box.center[1] = 100.0f; box.center[2] = 50.0f;
+	box.extent[0] = 80.0f; box.extent[1] = 80.0f; box.extent[2] = 10.0f;
+	// a camera straight above the centre at 500: the nearest point is the top face's centre (z = 60) at 440
+	float cam[3] = { 100.0f, 100.0f, 500.0f };
+	CHECK(nearestPointDistanceSquared(box, cam) == 440.0f * 440.0f);
+	CHECK(textureMultiplier(box, cam, false, 0, true, false) == 2);   // 440 < 455
+	cam[2] = 515.0f;                                                   // 455 away: not nearer (strictly)
+	CHECK(nearestPointDistanceSquared(box, cam) == 455.0f * 455.0f);
+	CHECK(textureMultiplier(box, cam, false, 0, true, false) == 1);
+	CHECK(textureMultiplier(box, cam, false, 0, false, false) == 1);  // allow-2x off (GlobalData + 0x4A)
+	CHECK(textureMultiplier(box, cam, false, 0, true, true) == 2);    // StretchTerrain (+ 0xEA0) bakes every visible tile at 2x
+	CHECK(textureMultiplier(box, cam, false, 0, false, true) == 1);   // the stretch needs allow-2x as well: the && of RW 0x511F16 .. 0x511F32
+	// off to the side: the nearest point is a corner of the box, (20, 20, 40)
+	const float side[3] = { -355.0f, 20.0f, 40.0f };
+	CHECK(nearestPointDistanceSquared(box, side) == 375.0f * 375.0f);
+	CHECK(textureMultiplier(box, side, false, 0, true, false) == 2);
+	// a wider display moves the distance out: 1920 px is 1.875 * 430 + 25 = 831.25
+	cam[2] = 515.0f;
+	CHECK(textureMultiplier(box, cam, true, 1920, true, false) == 2);
+}
+
+TEST_CASE("terrain bake: the map's 16 x 16 cell tiles, their boxes and the far flags")
+{
+	WorldHeightMap m = makeMap(41, 41, 2); // 40 x 40 cells: 3 x 3 tiles, the last one 8 cells wide
+	m.m_data[(size_t)20 * 41 + 20] = 512; // 2 * 10 = 20 units high, tile (1, 1)
+	const TerrainBake::TileGrid g = TerrainBake::buildTileGrid(m);
+	REQUIRE(g.tilesX == 3);
+	REQUIRE(g.tilesY == 3);
+	CHECK(g.originX == -20.0f);
+	CHECK(g.originY == -20.0f);
+	const TerrainBake::Box &mid = g.boxes[1 * 3 + 1];
+	CHECK(mid.center[0] == -20.0f + 24.0f * 10.0f); // samples 16 .. 32 = x -20 + 160 .. -20 + 320
+	CHECK(mid.extent[0] == 80.0f);
+	CHECK(mid.center[2] == 10.0f);
+	CHECK(mid.extent[2] == 10.0f);
+	const TerrainBake::Box &last = g.boxes[2 * 3 + 2];
+	CHECK(last.extent[0] == 40.0f); // samples 32 .. 40
+	CHECK(last.center[2] == 0.0f);
+	// a camera at (-100, -100, 100): tile (0, 0)'s nearest corner (-20, -20, 0) is 151 away (near); tile (2, 2)'s (300, 300, 0) is 574 away (far)
+	const float cam[3] = { -100.0f, -100.0f, 100.0f };
+	const std::vector<std::uint8_t> flags = TerrainBake::farTiles(g, cam, false, 0, true, false);
+	REQUIRE(flags.size() == 9u);
+	CHECK(flags[0] == 0);
+	CHECK(flags[2 * 3 + 2] == 1);
+	// from straight above tile (0, 0) at 100: tile (2, 2)'s nearest point is 435.9 away, inside 455
+	const float above[3] = { 0.0f, 0.0f, 100.0f };
+	CHECK(TerrainBake::farTiles(g, above, false, 0, true, false)[2 * 3 + 2] == 0);
+	CHECK(TerrainBake::farTiles(g, above, false, 0, false, false)[0] == 1); // without allow-2x every tile is a 1x tile
 }

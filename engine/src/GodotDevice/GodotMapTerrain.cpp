@@ -19,6 +19,7 @@
 #include "GameEngineDevice/W3DDevice/GameClient/HeightMapMesh.h"
 #include "GameEngineDevice/W3DDevice/GameClient/W3DObjectLighting.h"
 #include "GameEngineDevice/W3DDevice/GameClient/TerrainComposite.h"
+#include "GameEngineDevice/W3DDevice/GameClient/TerrainBake.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/ObjectNameIndex.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
@@ -488,7 +489,18 @@ Node3D *MapTerrainBuilder::build_test_patch(const Dictionary &spec)
 	mat->set_shader_parameter("base_atlas", baseTex);
 	mat->set_shader_parameter("records", makeRecordsTexture(records));
 	mat->set_shader_parameter("atlas_size", Vector2((float)atlas->get_width(), (float)atlas->get_height()));
-	mat->set_shader_parameter("debug_mode", 7);
+	// lane TERRAIN-BAKES: a spec with a normal_atlas is lit (debug_mode 0; "overbright" picks the effect's half-scale), one without is the composite of the raw albedos (debug_mode 7)
+	Ref<Image> normalAtlas = spec.get("normal_atlas", Variant());
+	if (normalAtlas.is_valid() && !normalAtlas->is_empty())
+	{
+		mat->set_shader_parameter("normal_atlas", ImageTexture::create_from_image(normalAtlas));
+		mat->set_shader_parameter("debug_mode", 0);
+		mat->set_shader_parameter("overbright", (bool)spec.get("overbright", true));
+	}
+	else
+	{
+		mat->set_shader_parameter("debug_mode", 7);
+	}
 	Ref<ArrayMesh> mesh = makeCompositeMesh(composite[0]);
 	mesh->surface_set_material(0, mat);
 	MeshInstance3D *mi = memnew(MeshInstance3D);
@@ -906,9 +918,39 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 		};
 		Ref<ShaderMaterial> terrainMat = makeMat(terrainShader, TERRAIN_RENDER_PRIORITY);
 		terrainMat->set_shader_parameter("records", recordsTex);
+		// lane TERRAIN-BAKES: one flag per 16 x 16 cell tile, 1 = a 16 px/cell tile (TerrainBake.h); every tile starts near (32 px/cell) until a camera has judged it
+		// (GameWorld::refresh_terrain_bake, each render frame; a viewer without a game keeps them near)
+		const TerrainBake::TileGrid bakeGrid = TerrainBake::buildTileGrid(hm);
+		Ref<ImageTexture> bakeTex;
+		{
+			PackedByteArray flags;
+			flags.resize((int64_t)bakeGrid.tilesX * bakeGrid.tilesY);
+			flags.fill(0);
+			bakeTex = ImageTexture::create_from_image(Image::create_from_data(bakeGrid.tilesX, bakeGrid.tilesY, false, Image::FORMAT_L8, flags));
+			terrainMat->set_shader_parameter("bake_far", bakeTex);
+			terrainMat->set_shader_parameter("bake_origin", Vector2(bakeGrid.originX, bakeGrid.originY));
+			terrainMat->set_shader_parameter("bake_extent", Vector2((float)bakeGrid.tilesX, (float)bakeGrid.tilesY) * ((float)TerrainBake::TILE_CELLS * MAP_XY_FACTOR));
+		}
 
 		Node3D *terrainRoot = memnew(Node3D);
 		terrainRoot->set_name("Terrain");
+		{
+			// the tile boxes and the flag texture for the game's per-frame judgement of near and far tiles, on the node build_map returns (the game names it "Terrain"; the viewers add it as it is)
+			PackedFloat32Array boxes;
+			boxes.resize((int64_t)bakeGrid.boxes.size() * 6);
+			for (size_t i = 0; i < bakeGrid.boxes.size(); ++i)
+			{
+				for (int k = 0; k < 3; ++k)
+				{
+					boxes[(int64_t)i * 6 + k] = bakeGrid.boxes[i].center[k];
+					boxes[(int64_t)i * 6 + 3 + k] = bakeGrid.boxes[i].extent[k];
+				}
+			}
+			root->set_meta("bake_tiles_x", bakeGrid.tilesX);
+			root->set_meta("bake_tiles_y", bakeGrid.tilesY);
+			root->set_meta("bake_boxes", boxes);
+			root->set_meta("bake_far_texture", bakeTex);
+		}
 		root->add_child(terrainRoot);
 		for (size_t ci = 0; ci < chunks.size(); ++ci)
 		{

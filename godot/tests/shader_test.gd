@@ -72,6 +72,14 @@ func _atlas() -> Image:
 	return img
 
 
+func _lit_normals() -> Image:
+	var img := Image.create(16, 4, false, Image.FORMAT_RGBA8)
+	for y in 4:
+		for x in 16:
+			img.set_pixel(x, y, Color8(128, 128, 0) if x < 8 else Color8(255, 128, 0))
+	return img
+
+
 func _uv(u: float) -> PackedVector2Array:
 	return PackedVector2Array([Vector2(u, V), Vector2(u, V), Vector2(u, V), Vector2(u, V)])
 
@@ -110,6 +118,11 @@ func _make_cases() -> Array:
 	cases.append(["cliff UV past the class edge wraps back into the class (red, not the blue neighbour)", {"uv0": _uv(BLACK_U), "layers": [_layer(0.80, _alpha(1.0), false, red_block)]}, Color8(255, 0, 0)])
 	cases.append(["the same UV without a wrap rect leaks into the neighbour (blue) - what the wrap prevents", {"uv0": _uv(BLACK_U), "layers": [_layer(0.80, _alpha(1.0))]}, Color8(0, 0, 255)])
 	cases.append(["base cliff layer past its class edge wraps (white block 0.25..0.5, u = 0.55 -> 0.30 white)", {"uv0": _uv(0.55), "base_wrap": Rect2(0.25, 0.0, 0.25, 1.0), "layers": []}, Color8(255, 255, 255)])
+	# lane TERRAIN-BAKES: the composite is lit ONCE. Both layers have the same grey albedo (64) and the vertex colour is white; layer A's normal points up (N.L = 1), layer B's
+	# points sideways (N.L = 0), the light is straight up and the alpha is 0.5. Lit per layer and mixed: 0.25098 * (2 + 1) / 2 = 0.3765 -> 96. Lit once as retail does: the mixed
+	# normal texel (0.751, 0.502) decodes to N = (0.502, 0.004, 0.865), N.L = 0.865 and the pixel is 0.25098 * 1.865 = 0.468 -> 119.
+	cases.append(["a blend seam is lit once, as the mixed texel (119), not as the mix of two lit layers (96)",
+		{"uv0": _uv(0.125), "normal_atlas": _lit_normals(), "overbright": false, "layers": [_layer(0.625, _alpha(0.5))], "grey_albedo": true}, Color8(119, 119, 119)])
 	return cases
 
 
@@ -122,12 +135,17 @@ func _process(_delta: float) -> bool:
 			_frame = 0
 			_start_map()
 		return false
+	if _phase == 4:
+		_frame += 1
+		_game_step()
+		return false
 	if _phase == 2:
 		_frame += 1
 		if _frame >= 6:
 			_check_map()
-			print("SHADER TEST %s" % ["PASS" if _failures == 0 else "FAIL"])
-			quit(EXIT_PASS if _failures == 0 else EXIT_FAIL)
+			_phase = 4
+			_frame = 0
+			_start_game()
 		return false
 	if _case >= _cases.size():
 		return false
@@ -160,6 +178,10 @@ func _start_case() -> void:
 	var spec: Dictionary = _cases[_case][1]
 	spec = spec.duplicate()
 	spec["base_atlas"] = _atlas()
+	if spec.has("grey_albedo"):
+		var grey := Image.create(16, 4, false, Image.FORMAT_RGBA8)
+		grey.fill(Color8(64, 64, 64))
+		spec["base_atlas"] = grey
 	_patch = _builder.build_test_patch(spec)
 	if _patch == null:
 		print("  FAIL ", _cases[_case][0], ": build_test_patch returned null")
@@ -208,6 +230,69 @@ func _aniso_atlas() -> Image:
 
 
 var _aniso_views: Array = [] # [SubViewport at 16x, SubViewport with the filter off]
+var _tile_views: Array = []  # lane TERRAIN-BAKES: [a 32 px/cell tile, a 16 px/cell tile] seen straight down at 2 pixels a texel
+
+
+## lane TERRAIN-BAKES: a 16 px/cell tile (the bake_far flag) shows the atlas at mip 1, a 32 px/cell tile at mip 0. The atlas alternates black / white every texel, so mip 1 is
+## uniform grey; the patch is seen from straight above at two pixels a texel, where mip 0 keeps every stripe.
+func _tile_atlas() -> Image:
+	var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	for y in 64:
+		for x in 64:
+			img.set_pixel(x, y, Color.WHITE if x % 2 == 0 else Color.BLACK)
+	img.generate_mipmaps()
+	return img
+
+
+func _start_tiles() -> void:
+	_tile_views.clear()
+	for far in [false, true]:
+		var vp := SubViewport.new()
+		vp.size = Vector2i(32, 32)
+		vp.own_world_3d = true
+		vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		root.add_child(vp)
+		var uv := PackedVector2Array([Vector2(0, 0), Vector2(0.25, 0), Vector2(0.25, 1), Vector2(0, 1)]) # 16 texels across the cell: 2 pixels a texel
+		var patch: Node3D = _builder.build_test_patch({"base_atlas": _tile_atlas(), "uv0": uv, "layers": []})
+		if patch == null:
+			print("  FAIL tile resolution: build_test_patch returned null")
+			_failures += 1
+			return
+		var mat: ShaderMaterial = (patch as MeshInstance3D).mesh.surface_get_material(0)
+		var flag := Image.create_from_data(1, 1, false, Image.FORMAT_L8, PackedByteArray([255 if far else 0]))
+		mat.set_shader_parameter("bake_far", ImageTexture.create_from_image(flag))
+		vp.add_child(patch)
+		var cam := Camera3D.new()
+		cam.projection = Camera3D.PROJECTION_ORTHOGONAL
+		cam.size = 10.0
+		cam.near = 0.1
+		cam.far = 50.0
+		vp.add_child(cam)
+		cam.position = Vector3(5.0, 10.0, -5.0)
+		cam.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+		cam.current = true
+		_tile_views.append(vp)
+
+
+func _row_contrast(vp: SubViewport) -> float:
+	var img := vp.get_texture().get_image()
+	var lo := 1.0
+	var hi := 0.0
+	for x in range(2, 30):
+		var p := img.get_pixel(x, 16)
+		lo = minf(lo, p.r)
+		hi = maxf(hi, p.r)
+	return hi - lo
+
+
+func _check_tiles() -> void:
+	if _tile_views.size() != 2:
+		return
+	var near := _row_contrast(_tile_views[0])
+	var far := _row_contrast(_tile_views[1])
+	print("  tile resolution: stripe contrast %.3f in a 32 px/cell tile, %.3f in a 16 px/cell tile" % [near, far])
+	_check_ok(near > 0.3, "a 32 px/cell tile keeps the texel stripes (contrast %.3f)" % near) # tolerance: bilinear at two pixels a texel; the claim is stripes vs grey
+	_check_ok(far < 0.1, "a 16 px/cell tile reads the atlas at mip 1: the stripes average to grey (contrast %.3f)" % far) # tolerance: mip 1 of one-texel stripes is uniform to rounding
 
 
 func _start_aniso() -> void:
@@ -235,6 +320,7 @@ func _start_aniso() -> void:
 		cam.look_at(Vector3(5.0, 0.0, -5.0))
 		cam.current = true
 		_aniso_views.append(vp)
+	_start_tiles()
 
 
 func _stripe_contrast(vp: SubViewport) -> float:
@@ -258,6 +344,7 @@ func _stripe_contrast(vp: SubViewport) -> float:
 
 
 func _check_aniso() -> void:
+	_check_tiles()
 	if _aniso_views.size() != 2:
 		return
 	var on := _stripe_contrast(_aniso_views[0])
@@ -327,6 +414,80 @@ func _check_map() -> void:
 	print("  map render: %d distinct 18-bit colours over %d samples, mean luminance %.3f" % [seen.size(), n, lum])
 	_check_ok(seen.size() > 400, "the rendered map has many distinct colours (%d)" % seen.size())
 	_check_ok(lum > 0.05 and lum < 0.9, "the rendered map is neither black nor blown out (mean luminance %.3f)" % lum)
+
+
+## lane TERRAIN-BAKES: a LOADED GAME (GameWorld, terrain on) with a real camera: the tiles the camera is far from must take the far path. The flag texture the game updates is read
+## back from the GPU: over the first tile the first tile reads 0 and the last 255 (the shader's far test is > 0.5, an L8 texel of 1 would read 1 / 255), over the last tile the other way.
+var _game: Node3D
+var _game_cam: Camera3D
+var _game_stage := 0
+var _game_boxes: PackedFloat32Array
+var _game_tiles := 0
+
+
+func _start_game() -> void:
+	var rotwk := OS.get_environment("ROTWK_INSTALL")
+	if rotwk.is_empty() or OS.get_environment("BFME2_INSTALL").is_empty() or not ClassDB.class_exists("GameWorld"):
+		print("  SKIP loaded game: set ROTWK_INSTALL and BFME2_INSTALL")
+		_game_stage = 99
+		return
+	var fs: RefCounted = ClassDB.instantiate("RetailFileSystem")
+	if not fs.mount_retail().ok:
+		print("  FAIL loaded game: mount_retail")
+		_failures += 1
+		_game_stage = 99
+		return
+	_game = ClassDB.instantiate("GameWorld")
+	root.add_child(_game)
+	_game.setup(fs)
+	var slots := [
+		{"player": "Player_1", "faction": "FactionMen", "human": true, "team": 0},
+		{"player": "Player_2", "faction": "FactionMordor", "human": false, "team": 1}]
+	var rep: Dictionary = _game.load_map("map mp fall back 4p", {"slots": slots, "terrain": true})
+	if not rep.ok:
+		print("  FAIL loaded game: load_map ", rep.errors.slice(0, 3))
+		_failures += 1
+		_game_stage = 99
+		return
+	var terrain: Node = _game.find_child("Terrain", false, false)
+	_game_boxes = terrain.get_meta("bake_boxes")
+	_game_tiles = int(terrain.get_meta("bake_tiles_x")) * int(terrain.get_meta("bake_tiles_y"))
+	_game_cam = Camera3D.new()
+	_game_cam.far = 20000.0
+	root.add_child(_game_cam)
+	_game_cam.current = true
+	_game_stage = 0
+
+
+func _flags_from_gpu() -> PackedByteArray:
+	var terrain: Node = _game.find_child("Terrain", false, false)
+	var tex: ImageTexture = terrain.get_meta("bake_far_texture")
+	return tex.get_image().get_data()
+
+
+func _game_step() -> void:
+	if _game_stage == 99:
+		print("SHADER TEST %s" % ["PASS" if _failures == 0 else "FAIL"])
+		quit(EXIT_PASS if _failures == 0 else EXIT_FAIL)
+		return
+	var last := _game_tiles - 1
+	if _game_stage == 0:
+		# SAGE (x, y, z) is Godot's (x, z, -y): over the first tile
+		_game_cam.global_position = Vector3(_game_boxes[0], _game_boxes[2] + 100.0, -_game_boxes[1])
+		_game.advance(0.05)
+		_game_stage = 1
+		_frame = 0
+	elif _game_stage == 1 and _frame >= 4:
+		var f := _flags_from_gpu()
+		_check_ok(f.size() == _game_tiles and f[0] == 0 and f[last] == 255, "loaded game, camera over the first tile: it reads %d, the last tile %d (the GPU's flag texel is 255 for a far tile)" % [f[0], f[last]])
+		_game_cam.global_position = Vector3(_game_boxes[last * 6], _game_boxes[last * 6 + 2] + 100.0, -_game_boxes[last * 6 + 1])
+		_game.advance(0.05)
+		_game_stage = 2
+		_frame = 0
+	elif _game_stage == 2 and _frame >= 4:
+		var f2 := _flags_from_gpu()
+		_check_ok(f2[last] == 0 and f2[0] == 255, "loaded game, camera over the last tile: it reads %d, the first tile %d" % [f2[last], f2[0]])
+		_game_stage = 99
 
 
 func _check_ok(ok: bool, what: String) -> void:
