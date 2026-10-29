@@ -22,6 +22,7 @@
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "GameLogic/SkirmishAI/AIUpgrade.h"
+#include "GameLogic/SkirmishAI/AIWallBuilder.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "Libraries/WWVegas/WWMath/quat.h"
@@ -1599,6 +1600,7 @@ void updateFortressTask(GameLogic &logic, AISkirmishPlayer &ai, AIBaseInstance &
 // its factory; else as a structure), an upgrade's or expansion's base RW 0x7A69E1 (0.0f; the expansion draws in its own execute, RW 0x9ED951)
 int requestCost(GameLogic &logic, const AIBuildRequest &r, const Player &player)
 {
+	if (r.wall && r.wallStartNode != INVALID_ID) return r.cost; // BFME2 0x596C6B: signed cached span quote
 	if (r.upgrade || r.expansion)
 	{
 		return 0;
@@ -1724,7 +1726,7 @@ void processRequests(GameLogic &logic, AISkirmishPlayer &ai, Player &player)
 			req->producer = pickDozer(logic, s, req->sitePosition(logic));
 		}
 		assigned = true;
-		const int code = checkWithReserve(logic, *req, player, [&]() { return req->unit ? checkUnitRequest(logic, *req) : checkRequest(logic, *req, player); }); // RW 0x961975
+		const int code = checkWithReserve(logic, *req, player, [&]() { return req->wall && req->wallStartNode != INVALID_ID ? AIWallBuilder::checkSegment(logic,*req,player) : req->unit ? checkUnitRequest(logic, *req) : checkRequest(logic, *req, player); }); // RW 0x961975
 		req->lastCheck = code;
 		if (code == 0)
 		{
@@ -1742,6 +1744,24 @@ void processRequests(GameLogic &logic, AISkirmishPlayer &ai, Player &player)
 			{
 				req->state = 3; // RW 0x961901 -> the unit request's reset RW 0x993D2E (only the state)
 				req->producer = INVALID_ID; // no success and a producer assigned this frame (lane BACKLOG6, see the waits below)
+				++s.failed;
+			}
+			s.pending.erase(s.pending.begin() + (long)i);
+			return;
+		}
+		if (code == 0 && req->wall && req->wallStartNode != INVALID_ID)
+		{
+			if (AIWallBuilder::buildSegment(logic, *req, player))
+			{
+				req->state = 1;
+				s.inProgress.push_back(req);
+				s.freeDozers.erase(std::remove(s.freeDozers.begin(), s.freeDozers.end(), req->producer), s.freeDozers.end()); // BFME2 AIBuilder::update: unregister assigned dozer
+				++s.executed;
+			}
+			else
+			{
+				req->state = 3;
+				req->producer = INVALID_ID;
 				++s.failed;
 			}
 			s.pending.erase(s.pending.begin() + (long)i);
@@ -1788,7 +1808,9 @@ void processRequests(GameLogic &logic, AISkirmishPlayer &ai, Player &player)
 		{
 			req->producer = INVALID_ID; // RW 0x8F103F
 		}
-		if (code == 10 || code == 9)
+		// BFME2 AIBuilder::update only fails code 10. Keep wall quote code 9
+		// pending; the legacy non-wall RotWK code-9 rule is still a separate gap.
+		if (code == 10 || (code == 9 && !req->wall))
 		{
 			resetRequest(logic, *req, 3); // RW 0x961901
 			++s.failed;
@@ -2158,6 +2180,7 @@ void AIBaseBuilder::crcRequest(const AIBuildRequest &r, StateHasher &h)
 	h.addI32(r.failures);
 	h.addI32(r.siteIndex);
 	h.addU32((r.requeueOnProducerDeath ? 1u : 0u) | (r.reserveMoney ? 2u : 0u) | (r.plain ? 4u : 0u)); // one word: a request of 32 words would make the rotate-add hash blind to swaps
+	if(r.wall) { h.addString("AIWallSegment"); h.addU32(r.wallStartNode); h.addI32(r.cost); }
 	// lane AI5: the upgrade / expansion part (a request of neither kind adds nothing)
 	if (r.upgrade || r.expansion)
 	{

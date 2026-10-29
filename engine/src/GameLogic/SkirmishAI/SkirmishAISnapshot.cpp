@@ -102,8 +102,12 @@ void xferRequest(Xfer &x, AIBuildRequest &r, int version)
 	{
 		x.xferBool(&r.plain); // version 4 (lane AIEXPAND-1): SimpleExpansion's plain structure request
 	}
+	x.xferBool(&r.wall);
+	x.xferObjectID(&r.wallStartNode);
 	if (x.isLoading())
 	{
+		if(r.wall && (!r.plain || r.cost<0)) throw XferException("skirmish ai: invalid wall segment request");
+		if(!r.wall && r.wallStartNode!=INVALID_ID) throw XferException("skirmish ai: non-wall request has a start hub");
 		AIXfer::inRange(r.state, 0, 3, "skirmish ai: a build request's state"); // waiting, in progress, complete, failed
 		AIXfer::inRange(r.heuristicType, -1, 7, "skirmish ai: an upgrade request's heuristic"); // none and the 8 of RW 0xDB4F44
 		AIXfer::inRange(r.heuristicResult, 0, 3, "skirmish ai: an upgrade request's heuristic result");          // the heuristics answer 0 .. 3
@@ -484,7 +488,7 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 	// history, which cannot be recovered from current KindOf flags: older snapshots are refused. Version 4 (lane AIEXPAND-1): the EXPANSION heuristic's frame
 	// counter, SimpleExpansion's request and plain structure requests. A version 3 snapshot comes from a build without the heuristic: it loads with 0, the
 	// count at a game's start (its first expansion check then comes 301 checks after the load)
-	XferVersion v{ 8, 8 }; // Immutable map wall-library identity; prior layouts are incompatible.
+	XferVersion v{ 9, 9 }; // Wall segment request identity/start hub; prior layouts are incompatible.
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	bool started = loading ? false : m_started;
@@ -593,7 +597,7 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 		}
 	}
 	std::uint32_t requests = (std::uint32_t)table.list.size();
-	x.xferCount(&requests, 100, sizeof(AIBuildRequest) + 32); // a request with empty names; its shared control block
+	x.xferCount(&requests, 105, sizeof(AIBuildRequest) + 32); // a request with empty names; its shared control block
 	if (loading)
 	{
 		for (std::uint32_t i = 0; i < requests; ++i)
@@ -846,6 +850,7 @@ void SkirmishAIManager::checkLoaded() const
 		// clears it only for a dozer's unfinished request): an id the game has issued
 		AIXfer::issued(r->producer, "skirmish ai: the producer of a build request");
 		AIXfer::issued(r->built, "skirmish ai: the structure of a build request");
+		AIXfer::issued(r->wallStartNode, "skirmish ai: the start hub of a wall request");
 		if (r->owner != -1)
 		{
 			player(r->owner, "skirmish ai: the AI using a farm site");

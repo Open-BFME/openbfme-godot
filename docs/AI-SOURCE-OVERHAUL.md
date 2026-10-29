@@ -297,7 +297,7 @@ successful native run:
 | --- | --- | --- |
 | Four native targetless families | RingHero, StructureCreep, ReturnTheRing, StartWoTRBattle; StructureCreep has substantial donor bodies, while sibling bodies are split among address-named units and need a complete callgraph audit | Native eligibility, recruitment, orders, cleanup, RNG and save tests for each applicable mode |
 | Siege tactics | SiegeGates/SimpleSiege bodies and predefined recruitment are now ported (see follow-up below); general native team ownership and movement facades still have open dependencies | External retail decision/frame comparison and native team/formation parity |
-| AI wall planning/construction | Map wall-library loading and planning queries ported (below); activation, occupancy triggers and buildable wall request lifecycle remain | Source plan selection, affordability, hub/gate/segment order, completion/failure and snapshots |
+| AI wall planning/construction | Map loading, planning queries, directional request lifecycle and queued span execution ported (below); live wall ownership/scheduling, occupancy triggers and gate-upgrade execution remain | Source plan selection, affordability, hub/gate/segment order, completion/failure and snapshots |
 | Native teams and reassignment | AITeamBuilder recruitment predicate, Team/TeamPrototype identity, recruitment availability and priority; current tactic vectors represent membership | Ownership changes and defensive/priority transfers follow native rules without duplicate membership |
 | Group formation/movement | Native formation manager, group ownership and remaining AIGroup state transitions | Native route/turn/order fixtures plus deterministic save continuation |
 | Remaining BFME2 differences | Legacy RotWK manager/builder, target threat/counter logic and individual power decisions still need per-body BFME2 audits; 41 names alone are insufficient | Each active native body has source-backed decisions, numeric order and RNG tests |
@@ -381,3 +381,34 @@ with pre-siege AITacticalAI.cpp reproduced all four exact values (trebuchet
 were left unchanged; this is not a clean full-suite pass or a retail trace.
 
 Final combined siege/wall checks passed 11 cases / 288 assertions. Native Release build and whitespace checks passed.
+
+
+## BFME2 wall request lifecycle follow-up
+
+Ported AIWall::activate (0x4EAF18), updateState (0x4EB405) and the gate-ready
+predicate in update (0x4EBA96). Activation registers only the median hub and
+initializes both directions; each direction waits for the completed product,
+passes its ID to the next order, stops on failure and unregisters/requeues a
+missing product. The gate priority is the wall priority plus ten. The native
+unsigned endpoint comparisons and separate state-1/state-2 updates are retained.
+
+AIBuildableWallSegment's quote/cached-cost/build behavior (0x596E15,
+0x596C6B, 0x596D99) is now connected to the existing AI request processor.
+Unset start-hub requests retain plain structure construction. Later requests use
+the shared span quote: code 7 or insufficient funds waits, invalid quotes return code 9 (BFME2 retains these requests for retry),
+and only successful quotes cache cost. Builds record the terminal hub rather
+than a segment tile. The shared span API exposes its existing end hub or last
+created hub; this adaptation does not establish native span topology parity.
+S-657's legality, terrain and existing-hub linkage limitations remain applicable.
+Wall request kind/start ID and cached cost are saved and hashed in native AI
+layout 9, including transactional malformed-save rejection.
+
+The directional lifecycle is available to the builder but is not automatically
+scheduled yet. Its live ownership and save lifecycle, occupancy triggers,
+autonomous plan selection and gate-upgrade request execution must be connected
+before automatic AI wall building can be claimed. No partially implemented
+plan activation has been enabled in live matches.
+
+The source/save/wall regression selection passed 74 cases / 38,025 assertions before the final queue-case extension. The legacy non-wall request processor still uses RotWK code-9 failure; wall requests now follow BFME2 retry semantics.
+
+Final combined checks passed 17 cases / 525 assertions, including the request processor at all four difficulties, invalid-quote retry, insufficient funds, terminal-hub output, directional handoff/failure and transactional save validation. Release build and whitespace checks passed.

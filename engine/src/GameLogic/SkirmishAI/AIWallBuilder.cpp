@@ -2,11 +2,14 @@
 #include "GameLogic/SkirmishAI/AIWallBuilder.h"
 #include "Common/MapObject.h"
 #include "Common/Player.h"
+#include "Common/Money.h"
+#include "GameLogic/WallSpan.h"
 #include "Common/RandomValue.h"
 #include "Common/StateHash.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/SkirmishAI/AIBaseBuilder.h"
 #include <algorithm>
 #include <stdexcept>
 namespace AIWallBuilder {
@@ -77,6 +80,100 @@ Coord3D calcGatePosition(GameLogicRandom &random,const Plan &plan)
   random.getValueReal(0,1,"AIWall.cpp",560)>0.5f ? index+1 : index-1;
  const Coord3D &a=plan.nodes[index].position, &b=plan.nodes[other].position;
  return Coord3D{SimMath::mulf32(SimMath::addf32(a.x,b.x),0.5f),SimMath::mulf32(SimMath::addf32(a.y,b.y),0.5f),SimMath::mulf32(SimMath::addf32(a.z,b.z),0.5f)};
+}
+Construction activate(const Plan &plan,int owner,float priority,const std::string &hubTemplate,AIBuildState &builder)
+{
+ // AIWall::activate RVA 0x4EAF18: set both states to 1, set every order's
+ // priority/template, register only the median, and create gate priority +10.
+ if(plan.nodes.size()<2 || plan.selected>=plan.nodes.size()) throw std::logic_error("AIWall: invalid construction plan");
+ Construction wall;
+ wall.owner=owner;
+ wall.leftState=wall.rightState=1;
+ wall.leftIndex=wall.rightIndex=(int)plan.selected;
+ wall.gatePriority=SimMath::addf32(priority,10.0f);
+ for(const auto &node:plan.nodes) {
+  auto request=std::make_shared<AIBuildRequest>();
+  request->plain=true;
+  request->wall=true;
+  request->templateName=hubTemplate;
+  request->priority=priority;
+  request->offset=node.position;
+  request->serial=builder.nextSerial++;
+  wall.orders.push_back(request);
+ }
+ AIBaseBuilder::startPlainRequest(builder,wall.orders[plan.selected]);
+ return wall;
+}
+void updateDirection(GameLogic &logic,Construction &wall,const Plan &plan,AIBuildState &builder,bool left)
+{
+ // AIWall::updateState RVA 0x4EB405. State 1 only observes the median;
+ // it does not also perform state 2's work during the same update.
+ if(wall.orders.size()!=plan.nodes.size() || plan.selected>=wall.orders.size()) throw std::logic_error("AIWall: invalid construction orders");
+ int &state=left ? wall.leftState : wall.rightState;
+ int &index=left ? wall.leftIndex : wall.rightIndex;
+ if(state==1) {
+  const int selectedState=wall.orders[plan.selected]->state;
+  if(selectedState==1) state=2;
+  else if(selectedState==3) state=4;
+ } else if(state==2) {
+  if(index>=(int)wall.orders.size()) throw std::logic_error("AIWall: invalid construction cursor");
+  auto &current=wall.orders[index<0 ? plan.selected : (size_t)index];
+  if(current->state==3) state=4;
+  else if(current->state!=0) {
+   Object *built=logic.findObjectByID(current->built);
+   if(built) {
+    if(built->getConstructionPercent()==-1.0f) {
+     current->state=2;
+     index+=left ? -1 : 1;
+     if(index>=0 && (size_t)index<wall.orders.size()) {
+      auto &next=wall.orders[(size_t)index];
+      next->wallStartNode=built->getID();
+      AIBaseBuilder::startPlainRequest(builder,next);
+     } else state=4;
+    }
+   } else {
+    AIBaseBuilder::leaveQueues(builder,current.get());
+    AIBaseBuilder::startPlainRequest(builder,current);
+   }
+  }
+ }
+}
+bool readyForGate(const Construction &wall,const Plan &plan,bool gateHasProducer)
+{
+ // AIWall::update RVA 0x4EBA96 uses unsigned comparisons, including
+ // selected==0's wrapping selected-1. Keep that observable endpoint behavior.
+ return !gateHasProducer &&
+  ((std::uint32_t)wall.leftIndex<plan.selected-1u || wall.leftState==4) &&
+  ((std::uint32_t)wall.rightIndex>plan.selected+1u || wall.rightState==4);
+}
+int checkSegment(GameLogic &logic,AIBuildRequest &request,Player &owner)
+{
+ // AIBuildableWallSegment::canMake RVA 0x596E15. Caller handles unset
+ // startNode with the base structure path; the quote uses option=false.
+ Object *start=logic.findObjectByID(request.wallStartNode);
+ if(!start) throw std::logic_error("AIWall: missing start hub for span quote");
+ WallSpan::Plan quote;
+ if(!WallSpan::plan(logic,*start,*start->getPosition(),request.sitePosition(logic),0,quote)) return 9;
+ if(quote.worstCode==7) return 2;
+ if(quote.worstCode!=0) return 9;
+ if(owner.getMoney()->countMoney()<(std::uint32_t)quote.cost) return 2;
+ request.cost=quote.cost;
+ return 0;
+}
+bool buildSegment(GameLogic &logic,AIBuildRequest &request,Player &owner)
+{
+ // AIBuildableWallSegment::build RVA 0x596D99: store the returned terminal
+ // hub, not the first span tile. Shared WallSpan legality/topology remains S-657.
+ Object *start=logic.findObjectByID(request.wallStartNode);
+ if(!start) throw std::logic_error("AIWall: missing start hub for span build");
+ Object *terminal=nullptr;
+ if(!WallSpan::build(logic,*start,*start->getPosition(),request.sitePosition(logic),owner,0,nullptr,&terminal)) {
+  request.state=3;
+  return false;
+ }
+ if(!terminal) throw std::logic_error("AIWall: span build returned no terminal hub");
+ request.built=terminal->getID();
+ return true;
 }
 void crc(const std::vector<Plan> &plans,StateHasher &h)
 {

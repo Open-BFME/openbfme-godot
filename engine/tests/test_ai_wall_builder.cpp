@@ -108,3 +108,149 @@ TEST_CASE("BFME2 AI wall map identity: save mismatch is rejected transactionally
  StateHasher restoredHash; manager.crc(restoredHash); CHECK(restoredHash.value()==savedHash.value());
  manager.reset(); CHECK(manager.wallLibrary().empty());
 }
+
+#include "Common/Money.h"
+#include "GameLogic/SkirmishAI/AIBaseBuilder.h"
+#include "GameLogic/WallSpan.h"
+TEST_CASE("BFME2 AI wall construction: median starts alone, both directions wait and hand off terminal hubs")
+{
+ combattest::CombatWorld w;
+ const auto plan=loadWallLibrary({marker("Wall",0,100),marker("Wall",1,200),marker("Wall",2,300)})[0];
+ AIBuildState builder;
+ auto wall=activate(plan,1,80,"Swordsman",builder);
+ CHECK(wall.owner==1); CHECK(wall.gatePriority==90);
+ CHECK(wall.leftState==1); CHECK(wall.rightState==1);
+ REQUIRE(builder.pending.size()==1); CHECK(builder.pending[0]==wall.orders[1]);
+ CHECK(builder.nextSerial==4);
+ for(const auto &r:wall.orders) { CHECK(r->wall); CHECK(r->plain); CHECK(r->priority==80); CHECK(r->templateName=="Swordsman"); }
+ CHECK_FALSE(readyForGate(wall,plan,false));
+ updateDirection(*w.logic,wall,plan,builder,true); CHECK(wall.leftState==1);
+ auto *middle=w.unit("Swordsman",'A',200,0); middle->setConstructionPercent(50);
+ wall.orders[1]->state=1; wall.orders[1]->built=middle->getID();
+ updateDirection(*w.logic,wall,plan,builder,true); updateDirection(*w.logic,wall,plan,builder,false);
+ CHECK(wall.leftState==2); CHECK(wall.rightState==2); CHECK(builder.pending.size()==1);
+ updateDirection(*w.logic,wall,plan,builder,true); CHECK(wall.leftIndex==1);
+ middle->setConstructionPercent(-1);
+ updateDirection(*w.logic,wall,plan,builder,true); updateDirection(*w.logic,wall,plan,builder,false);
+ CHECK(wall.leftIndex==0); CHECK(wall.rightIndex==2); CHECK(wall.orders[1]->state==2);
+ REQUIRE(builder.pending.size()==3);
+ CHECK(builder.pending[1]==wall.orders[0]); CHECK(builder.pending[2]==wall.orders[2]);
+ CHECK(wall.orders[0]->wallStartNode==middle->getID()); CHECK(wall.orders[2]->wallStartNode==middle->getID());
+ CHECK_FALSE(readyForGate(wall,plan,false));
+ for(int index:{0,2}) {
+  auto *hub=w.unit("Swordsman",'A',100.0f+index*100.0f,0);
+  wall.orders[index]->built=hub->getID(); wall.orders[index]->state=1;
+ }
+ updateDirection(*w.logic,wall,plan,builder,true); updateDirection(*w.logic,wall,plan,builder,false);
+ CHECK(wall.leftState==4); CHECK(wall.rightState==4); CHECK(wall.leftIndex==-1); CHECK(wall.rightIndex==3);
+ CHECK(readyForGate(wall,plan,false)); CHECK_FALSE(readyForGate(wall,plan,true));
+}
+TEST_CASE("BFME2 AI wall construction: failed median stops both ends and missing product requeues once")
+{
+ combattest::CombatWorld w;
+ const auto plan=loadWallLibrary({marker("Wall",0,100),marker("Wall",1,200)})[0];
+ AIBuildState builder;
+ auto wall=activate(plan,1,70,"Swordsman",builder);
+ wall.orders[1]->state=3;
+ updateDirection(*w.logic,wall,plan,builder,true); updateDirection(*w.logic,wall,plan,builder,false);
+ CHECK(wall.leftState==4); CHECK(wall.rightState==4); CHECK(readyForGate(wall,plan,false));
+ builder=AIBuildState(); wall=activate(plan,1,70,"Swordsman",builder);
+ auto median=wall.orders[1]; median->state=1;
+ updateDirection(*w.logic,wall,plan,builder,true); updateDirection(*w.logic,wall,plan,builder,false);
+ updateDirection(*w.logic,wall,plan,builder,true); updateDirection(*w.logic,wall,plan,builder,false);
+ CHECK(median->state==0); REQUIRE(builder.pending.size()==1); CHECK(builder.pending[0]==median); CHECK(builder.inProgress.empty());
+ // Native endpoint unsigned underflow is retained rather than replaced by signed arithmetic.
+ auto endpoint=plan; endpoint.selected=0; wall=Construction(); wall.leftIndex=0; wall.rightIndex=2;
+ CHECK(readyForGate(wall,endpoint,false));
+}
+namespace {
+const char wallDefinitions[]=
+ "Object AIWallHub\n KindOf = STRUCTURE IMMOBILE WALL_HUB\n BuildCost = 20\n Geometry = BOX\n GeometryMajorRadius = 4\n GeometryMinorRadius = 10\n GeometryHeight = 20\n Behavior = WallHubBehavior Hub\n SegmentTemplateName = AIWallTile\n DefaultSegmentTemplateName = AIWallTile\n HubCapTemplateName = AIWallHub\n BuilderRadius = 10\n End\nEnd\n"
+ "Object AIWallTile\n KindOf = STRUCTURE IMMOBILE WALL_SEGMENT\n BuildCost = 10\n Geometry = BOX\n GeometryMajorRadius = 4\n GeometryMinorRadius = 10\n GeometryHeight = 20\nEnd\n";
+}
+TEST_CASE("BFME2 AI wall segment: quote caches cost only on success and build returns terminal hub")
+{
+ combattest::CombatWorld w(wallDefinitions);
+ w.logic->settings().buildRulesLoaded=true; w.logic->settings().allowedHeightVariationForBuilding=10; w.logic->settings().maxLineBuildObjects=50;
+ auto *hub=w.unit("AIWallHub",'A',300,500); auto &owner=*hub->getControllingPlayer();
+ owner.getMoney()->withdraw(owner.getMoney()->countMoney(),false); owner.getMoney()->deposit(1000,false);
+ AIBuildRequest request; request.wall=true; request.plain=true; request.wallStartNode=hub->getID(); request.offset={700,500,0}; request.cost=17;
+ WallSpan::Plan quote; REQUIRE(WallSpan::plan(*w.logic,*hub,*hub->getPosition(),request.offset,0,quote));
+ REQUIRE(quote.worstCode==0);
+ CHECK(checkSegment(*w.logic,request,owner)==0); CHECK(request.cost==quote.cost);
+ const auto money=owner.getMoney()->countMoney();
+ REQUIRE(buildSegment(*w.logic,request,owner));
+ auto *terminal=w.logic->findObjectByID(request.built); REQUIRE(terminal);
+ CHECK(terminal->isKindOfName("WALL_HUB")); CHECK_FALSE(terminal==hub);
+ CHECK(owner.getMoney()->countMoney()==money-(std::uint32_t)quote.cost);
+ CHECK(terminal->getConstructionPercent()==0);
+ request.wallStartNode=INVALID_ID;
+ CHECK_THROWS_WITH(checkSegment(*w.logic,request,owner),"AIWall: missing start hub for span quote");
+ CHECK_THROWS_WITH(buildSegment(*w.logic,request,owner),"AIWall: missing start hub for span build");
+}
+TEST_CASE("BFME2 AI wall segment: insufficient money waits, invalid quote fails without spending")
+{
+ combattest::CombatWorld w(wallDefinitions);
+ w.logic->settings().buildRulesLoaded=true; w.logic->settings().allowedHeightVariationForBuilding=10; w.logic->settings().maxLineBuildObjects=50;
+ auto *hub=w.unit("AIWallHub",'A',300,500); auto &owner=*hub->getControllingPlayer();
+ owner.getMoney()->withdraw(owner.getMoney()->countMoney(),false);
+ AIBuildRequest request; request.wall=true; request.plain=true; request.wallStartNode=hub->getID(); request.offset={700,500,0}; request.cost=17;
+ CHECK(checkSegment(*w.logic,request,owner)==2); CHECK(request.cost==17); CHECK(owner.getMoney()->countMoney()==0);
+ CHECK_FALSE(buildSegment(*w.logic,request,owner)); CHECK(request.state==3); CHECK(request.built==INVALID_ID);
+ owner.getMoney()->deposit(1000,false);
+ request.offset=*hub->getPosition();
+ CHECK(checkSegment(*w.logic,request,owner)==9); CHECK(request.cost==17); CHECK(owner.getMoney()->countMoney()==1000);
+}
+TEST_CASE("BFME2 AI wall requests: save keeps start hub and cached quote, malformed kind rolls back")
+{
+ combattest::CombatWorld w;
+ SkirmishAIStore store(w.w.keys); store.registerBlocks(w.w.fx.env.blocks);
+ REQUIRE(w.w.load("SkirmishAIData Walls\nEnd\n").empty());
+ auto *owner=w.players.findPlayerWithName("Alice"); owner->setPlayerType(PLAYER_COMPUTER,true);
+ auto *hub=w.unit("Swordsman",'A',100,100);
+ auto &manager=w.logic->skirmishAI(); manager.setStore(&store); manager.newGame(true);
+ auto *ai=const_cast<AISkirmishPlayer *>(manager.findAI(owner->getPlayerIndex())); REQUIRE(ai);
+ auto r=std::make_shared<AIBuildRequest>(); r->plain=true; r->wall=true; r->wallStartNode=hub->getID(); r->cost=123; r->serial=ai->build.nextSerial++; r->templateName="Swordsman";
+ AIBaseBuilder::startPlainRequest(ai->build,r);
+ StateHasher before; manager.crc(before);
+ XferSave saved; saved.beginBlock(); manager.xfer(saved); saved.endBlock();
+ r->wallStartNode=INVALID_ID; r->cost=0;
+ XferLoad load(saved.data()); load.beginBlock(); manager.xfer(load); load.endBlock();
+ ai=const_cast<AISkirmishPlayer *>(manager.findAI(owner->getPlayerIndex())); REQUIRE(ai);
+ REQUIRE(ai->build.pending.size()==1); r=ai->build.pending[0];
+ CHECK(r->wall); CHECK(r->wallStartNode==hub->getID()); CHECK(r->cost==123);
+ StateHasher restored; manager.crc(restored); CHECK(restored.value()==before.value());
+ r->plain=false;
+ XferSave malformed; malformed.beginBlock(); manager.xfer(malformed); malformed.endBlock();
+ r->plain=true;
+ XferLoad bad(malformed.data()); bad.beginBlock();
+ CHECK_THROWS_WITH(manager.xfer(bad),"skirmish ai: invalid wall segment request");
+ StateHasher after; manager.crc(after); CHECK(after.value()==before.value());
+}
+TEST_CASE("BFME2 AI wall queue: all difficulties wait for funds then execute a span through the request processor")
+{
+ for(int difficulty=0;difficulty<4;++difficulty) {
+  CAPTURE(difficulty);
+  combattest::CombatWorld w(wallDefinitions);
+  SkirmishAIStore store(w.w.keys); store.registerBlocks(w.w.fx.env.blocks);
+  REQUIRE(w.w.load("SkirmishAIData Walls\n DisableTeamBuilding = Yes\nEnd\n").empty());
+  w.logic->settings().buildRulesLoaded=true; w.logic->settings().allowedHeightVariationForBuilding=10; w.logic->settings().maxLineBuildObjects=50;
+  auto *hub=w.unit("AIWallHub",'A',300,500); auto &owner=*hub->getControllingPlayer(); owner.setSkirmishDifficulty(difficulty);
+  owner.getMoney()->withdraw(owner.getMoney()->countMoney(),false);
+  AISkirmishPlayer bot; bot.playerIndex=owner.getPlayerIndex(); bot.store=&store; bot.build.baseBuilderDisabled=true;
+  auto r=std::make_shared<AIBuildRequest>(); r->wall=true; r->plain=true; r->wallStartNode=hub->getID(); r->offset={700,500,0}; r->templateName="AIWallHub"; r->priority=80;
+  AIBaseBuilder::startPlainRequest(bot.build,r);
+  r->offset=*hub->getPosition();
+  AIBaseBuilder::update(*w.logic,bot);
+  CHECK(r->lastCheck==9); CHECK(r->state==0); CHECK(bot.build.failed==0); CHECK(r->producer==INVALID_ID);
+  r->offset={700,500,0};
+  AIBaseBuilder::update(*w.logic,bot);
+  CHECK(r->lastCheck==2); CHECK(r->state==0); CHECK(bot.build.waitedForMoney==1); REQUIRE(bot.build.pending.size()==1);
+  owner.getMoney()->deposit(1000,false);
+  AIBaseBuilder::update(*w.logic,bot);
+  CHECK(r->lastCheck==0); CHECK(r->state==1); CHECK(bot.build.pending.empty()); REQUIRE(bot.build.inProgress.size()==1);
+  CHECK(bot.build.inProgress[0]==r); CHECK(bot.build.executed==1); CHECK(bot.build.failed==0);
+  auto *terminal=w.logic->findObjectByID(r->built); REQUIRE(terminal); CHECK(terminal->isKindOfName("WALL_HUB"));
+  CHECK(owner.getMoney()->countMoney()==1000u-(std::uint32_t)r->cost);
+ }
+}

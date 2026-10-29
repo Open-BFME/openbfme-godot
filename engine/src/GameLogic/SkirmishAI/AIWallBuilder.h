@@ -1,16 +1,19 @@
 // OpenBFME. GPL-3.0.
 // BFME2 AIWallBuilder.cpp / AIWall_init.cpp: the map-authored wall library.
-// Construction request execution remains separate from immutable plan loading.
+// Immutable plan loading, directional request lifecycle and shared span execution.
 #pragma once
 #include "Common/INIDataTypes.h"
 #include <cstdint>
 #include <string>
+#include <memory>
 #include <vector>
 class GameLogic;
 class GameLogicRandom;
 class MapObject;
 class Player;
 class StateHasher;
+struct AIBuildRequest;
+struct AIBuildState;
 namespace AIWallBuilder {
 struct Node {
  std::uint32_t index=0;
@@ -35,5 +38,20 @@ std::vector<Coord3D> commandCenters(GameLogic &logic,const Player &owner);
 // Caller supplies the eligible inactive plans; this function does not activate or build them.
 Choice choosePlan(GameLogicRandom &random,const std::vector<int> &eligible);
 Coord3D calcGatePosition(GameLogicRandom &random,const Plan &plan);
+// Native AIWall::activate/updateState: both directional construction cursors.
+// This state is owned by the future live wall builder; queue operations use the
+// existing AIBuilder request queues, not a second construction system.
+struct Construction {
+ int owner=-1;
+ int leftState=0, rightState=0;
+ int leftIndex=0, rightIndex=0;
+ float gatePriority=0;
+ std::vector<std::shared_ptr<AIBuildRequest>> orders;
+};
+Construction activate(const Plan &plan,int owner,float priority,const std::string &hubTemplate,AIBuildState &builder);
+void updateDirection(GameLogic &logic,Construction &wall,const Plan &plan,AIBuildState &builder,bool left);
+bool readyForGate(const Construction &wall,const Plan &plan,bool gateHasProducer);
+int checkSegment(GameLogic &logic,AIBuildRequest &request,Player &owner);
+bool buildSegment(GameLogic &logic,AIBuildRequest &request,Player &owner);
 void crc(const std::vector<Plan> &plans,StateHasher &hasher);
 }
