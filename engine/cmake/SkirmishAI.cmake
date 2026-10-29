@@ -16,6 +16,7 @@ set(OPENBFME_SKIRMISH_AI_TESTS
     tests/test_skirmish_ai_data.cpp
     tests/test_ai_source_overhaul.cpp
     tests/test_ai_wall_builder.cpp
+    tests/test_ai_save_compat.cpp
     tests/test_skirmish_ai_manager.cpp
     tests/test_skirmish_ai_base.cpp
     tests/test_skirmish_ai_attack.cpp

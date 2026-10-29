@@ -30,9 +30,9 @@ difficulty gate as the source does. No damage boost is invented.
 
 ## Native snapshots
 
-The skirmish AI block now requires version 10: wall request/entry state, predefined siege-unit requests, BFME2 interest-zone threat, spatial registrations/groups,
+The skirmish AI block writes version 10 and loads versions 1–10: wall request/entry state, predefined siege-unit requests, BFME2 interest-zone threat, spatial registrations/groups,
 ArmyBreaker timers, defensive target sizes and team recruitment origins affect
-future decisions. Older layouts are refused explicitly. SimpleExpansion keeps
+future decisions. Older layouts read the fields they contain and default later additions. SimpleExpansion keeps
 upstream prototype index 8; SimpleDefense uses 9. Capture history and expansion
 requests/counters retain their upstream representations. AIStatCollector version 3
 and TerrainTrees version 2 retain complete spatial and tree-selection state.
@@ -447,3 +447,32 @@ gate-upgrade execution remain separate open work.
 Focused wall plus shared trigger-tracking checks passed 17 cases / 422 assertions; the wall-only selection passed 16 cases / 385 assertions. Release build and whitespace checks passed.
 
 The broad BFME2/source AI, manager, shared trigger, gate and save selection passed 106 cases / 39,019 assertions, including all four difficulties. The installed commit gate passed.
+
+
+## PR #151 review: audit declarations and historical save compatibility
+
+The two new player-index transfers are declared in the closed-set registry as
+checked by SkirmishAIManager::checkLoaded. Runtime range/duplicate validation
+remains in place; no audit checks or tests were weakened. All 14 closed-set tests
+pass, including the hostile extra weapon-mask transfer checks.
+
+This supersedes earlier notes about rejecting old AI/tree layouts. The AI block
+now reads v1–v10 and continues writing v10; nested player-info records read
+v1–v3. Fields are gated at their historical introduction, including v1's absence
+of upgrade fields, v3 capture history, v4 expansion fields, v5 defense/spatial
+state, v6 raw threat, v7 predefined units, v8 wall identity, v9 wall request state
+and v10 wall counters. Fields absent from old layouts use their constructor
+defaults, not state left in the running game. TerrainTrees also accepts its
+pre-overhaul v1 layout, rebuilding unselected groups from restored records.
+
+Nine populated synthetic fixtures were written by the historical implementations
+and are checked independently against the new reader. v3 uses the v4 historical
+writer's existing version branches with its output version set to 3. Every
+fixture loads, preserves existing requests/teams/targets/timers, defaults only
+missing fields and round-trips through v10 with an identical resulting hash.
+Truncated payloads are refused without committing partial manager state.
+A separate terrain-v1 fixture loads and round-trips through v2. These are
+synthetic native-format saves, not retail bytes. Larger AI scope changes remain
+on hold pending the maintainers' decision.
+
+Review-fix validation: native Release build passed; historical AI/tree compatibility tests passed 3 cases / 602 assertions; combined compatibility/wall checks passed 19 cases / 987 assertions; the asset-backed source/AI/save selection passed 113 cases / 46,584 assertions. All 14 closed-set tests, Python syntax check, stop-count check (793), whitespace checks and installed commit gate passed.

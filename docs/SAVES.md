@@ -1049,13 +1049,35 @@ and native paths instead; the command below is the Linux form.
 engine/build/openbfme_peer --load-save workspace/saved.obfmesave --replay workspace/full.replay --verify-log --report workspace/save-check.txt
 ```
 
-Source AI overhaul: obfme:SkirmishAI now requires version 10 for predefined siege-unit requests, BFME2 interest-zone threat, and spatial groups,
-independent ArmyBreaker timers and SimpleDefense recruitment state; earlier
-layouts are explicitly refused. AIStatCollector is version 3 and TerrainTrees
-version 2. See [AI source overhaul](AI-SOURCE-OVERHAUL.md).
+Source AI overhaul: `obfme:SkirmishAI` writes layout 10 and loads layouts
+1–10. Historical fields keep their original byte positions; fields absent from
+older layouts receive constructor defaults. AIStatCollector similarly writes v3
+and loads v1–v3. TerrainTrees writes v2 and loads v1–v2, rebuilding unselected
+spatial groups from restored records when the old layout has no cached groups.
+See [AI source overhaul](AI-SOURCE-OVERHAUL.md).
 
-Native AI layout 8 appends the immutable map-authored wall-library identity; a different loaded library is refused transactionally. Layouts before 8 are rejected.
+| AI layout | Fields introduced (absent in earlier layouts) |
+| --- | --- |
+| 2 | Upgrade/expansion request fields and upgrader/science-builder state; nested collector v2 adds money reserve/target |
+| 3 | Capture-flag history (defaults empty for v1–v2) |
+| 4 | Expansion heuristic counter, plain request kind and tactic request references |
+| 5 | Army Breaker timers, defense size, recruitment origins; nested collector v3 adds spatial groups |
+| 6 | Native interest-zone threat scalar |
+| 7 | Predefined siege recruitment requests |
+| 8 | Immutable map-authored wall-library identity (validated when present) |
+| 9 | Wall request kind and start-hub ID; cached quote cost uses the existing cost field |
+| 10 | Cumulative wall trigger-entry counters, defaulted empty for older layouts |
 
-Native AI layout 9 stores wall request kind and start-hub ID; cached span cost uses the request cost field. Invalid wall/plain combinations, non-wall start hubs and unissued IDs are refused before committing loaded state. Earlier layouts are rejected.
+Loading still validates player/object references, request kinds, duplicate entries
+and map/data identity before committing state. Unsupported future versions,
+truncated streams and malformed values remain errors. New fields are defaulted
+only when the selected historical layout actually lacks them; corrupt current
+snapshots are not treated as old ones. Loads restore counters without duplicating
+map-authored triggers. This is OpenBFME native save compatibility, not BFME2
+retail save import: the retail wall transfer omits its entry-counter vector.
 
-Native AI layout 10 stores per-wall cumulative trigger entry counters in first-player-entry order. The loaded map reconstructs polygon/callback identity; loads replace counters without duplicating triggers. Registry size, player range and duplicate players are checked before commit. This preserves native checkpoints, not BFME2 save compatibility: the source wall transfer omits its entry-counter vector. Earlier native AI layouts are rejected.
+The synthetic v1–v9 compatibility fixtures were generated with historical snapshot
+writers, independently of the current reader. Their generator, source commits
+and hashes are committed alongside tests of populated fields, defaults,
+conversion to v10 and transactional truncation refusal. No retail save bytes
+are included.

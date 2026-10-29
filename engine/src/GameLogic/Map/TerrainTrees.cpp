@@ -495,7 +495,7 @@ void TerrainTrees::crc(StateHasher &h) const
 void TerrainTrees::xfer(Xfer &x)
 {
 	const bool loading = x.isLoading();
-	XferVersion v{ 2, 2 }; // version 2 preserves AI tree-group selection state.
+	XferVersion v{ 1, 2 }; // v1 tree records; v2 adds cached AI groups and selection.
 	x.xferVersion(v);
 	std::uint32_t records = loading ? 0 : (std::uint32_t)m_records.size();
 	x.xferUnsignedInt(&records);
@@ -590,9 +590,24 @@ void TerrainTrees::xfer(Xfer &x)
 	}
 	AIPositionSampler loadedGroups;
 	AIPositionSampler &groups = loading ? loadedGroups : m_groups;
-	groups.xfer(x);
-	bool groupStateChanged = m_groupStateChanged;
-	x.xferBool(&groupStateChanged);
+	bool groupStateChanged = false;
+	if (v.current >= 2)
+	{
+		groups.xfer(x);
+		groupStateChanged = m_groupStateChanged;
+		x.xferBool(&groupStateChanged);
+	}
+	else if (loading)
+	{
+		// v1 has no cached group geometry or selection. Rebuild unselected
+		// groups from the restored records, not this game's later cached state.
+		auto restored = m_start.empty() ? m_records : m_start;
+		for (const auto &entry : loaded) { restored[entry.first] = entry.second; }
+		for (size_t id = 0; id < restored.size(); ++id)
+		{
+			groups.add((ObjectID)id, 100.0f, [&](ObjectID key) { return restored.at(key).position; });
+		}
+	}
 	if (loading)
 	{
 		if (groups.members().size() != m_records.size()) throw XferException("terrain trees: spatial registrations differ from tree count");
