@@ -376,6 +376,7 @@ public:
 	// ---- modules ----------------------------------------------------------------------------------------------------------
 	const std::vector<std::unique_ptr<BehaviorModule>> &modules() const { return m_modules; }
 	size_t helperCount() const { return m_helperCount; }
+	bool hasCrateCollide() const { return m_hasCrateCollide; }
 	BodyModuleInterface *getBodyModule() const { return m_body; }
 	ContainModuleInterface *getContain() const { return m_contain; }
 	AIUpdateInterface *getAIUpdateInterface() const { return m_ai; }
@@ -562,6 +563,7 @@ private:
 
 	std::vector<std::unique_ptr<BehaviorModule>> m_modules; ///< helpers first, then the template's behaviors
 	std::vector<CollideModuleInterface *> m_collideModules; ///< lane UBER-2B: m_modules' collide interfaces, in order (rebuilt by buildModules / friend_replaceModule)
+	bool m_hasCrateCollide = false;
 	bool m_collideModulesKnown = true;
 	BehaviorModule *m_attributePool = nullptr; ///< lane UBER-3W: findModule("AttributeModifierPoolUpdate"), valid once m_moduleCachesBuilt
 	bool m_moduleCachesBuilt = false;

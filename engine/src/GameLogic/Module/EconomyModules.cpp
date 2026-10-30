@@ -2,6 +2,7 @@
 // See GameLogic/Module/EconomyModules.h.
 
 #include "GameLogic/Module/EconomyModules.h"
+#include "GameLogic/Module/CrateCollide.h"
 
 #include "Common/Thing/ModuleFactory.h"
 #include "GameLogic/Module/AutoDepositUpdate.h"
@@ -42,4 +43,7 @@ void EconomyModules::registerAll(ModuleFactory &modules)
 	modules.bindTypedData<PillageModuleData>("PillageModule", MODULETYPE_BEHAVIOR);
 	bindRuntime<PillageModule, PillageModuleData>(modules, "PillageModule");
 	modules.bindTypedData<SalvageCrateCollideModuleData>("SalvageCrateCollide", MODULETYPE_BEHAVIOR);
+	bindRuntime<SalvageCrateCollide, SalvageCrateCollideModuleData>(modules, "SalvageCrateCollide");
+	modules.bindTypedData<VeterancyCrateCollideModuleData>("VeterancyCrateCollide", MODULETYPE_BEHAVIOR);
+	bindRuntime<VeterancyCrateCollide, VeterancyCrateCollideModuleData>(modules, "VeterancyCrateCollide");
 }

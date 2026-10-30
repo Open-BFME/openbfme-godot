@@ -3,6 +3,7 @@
 // install.
 
 #include "HudTestUtil.h"
+#include "GameClient/HudObjects.h"
 
 #include "GameLogic/AI/GarrisonCommands.h"
 #include "GameLogic/Combat/CombatNames.h"
@@ -144,4 +145,35 @@ TEST_CASE("ring delivery hud: right-clicking a fortress with a selected ring car
 	for (int i = 0; i < 600 && !fortress->hasUpgrade("Upgrade_FortressRingHero"); ++i) r.frame(1);
 	CHECK(fortress->hasUpgrade("Upgrade_FortressRingHero"));
 	CHECK_FALSE(carrier->testStatus((unsigned)CombatNames::status("HOLDING_THE_RING")));
+}
+
+TEST_CASE("treasure hud: an enemy-owned chest is a move destination rather than an attack target")
+{
+	if (!haveWorld("treasure hud")) return;
+	Rig r(shared());
+	float mx = 0, my = 0;
+	REQUIRE(r.logic().terrain()->getExtent(0, mx, my));
+	const Coord3D c = r.freeSpot(mx * 0.5f, my * 0.5f, 300.0f);
+	Player *enemy = r.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemy != nullptr);
+	Object *unit = r.make("GondorArcherHorde", c.x - 200.0f, c.y);
+	Object *chest = r.make("TreasureChest1", c.x, c.y, enemy);
+	const ObjectID chestID = chest->getID();
+	r.lookAt(Coord3D{ c.x - 100.0f, c.y, 0.0f }, 420.0f, 600.0f);
+	r.frame(3);
+	const ICoord2D pu = r.screenOf({ c.x - 200.0f, c.y, 6.0f });
+	r.leftClick(pu.x, pu.y);
+	r.frame();
+	REQUIRE(r.local->selection().size() == 1);
+	REQUIRE(r.local->selection()[0] == unit->getID());
+	r.input->commandTranslator().setUseAlternateMouse(true);
+	const ICoord2D pc = r.screenOf({ c.x, c.y, 6.0f });
+	REQUIRE(HudObjects::pickObject(r.input->context(), pc) == chest);
+	r.move(pc.x, pc.y);
+	CHECK(r.input->ui().cursor() == "Move");
+	r.rightClick(pc.x, pc.y);
+	CHECK(logCountOf(*r.input, "MSG_DO_MOVETO") == 1);
+	CHECK(logCountOf(*r.input, "MSG_DO_ATTACK_OBJECT") == 0);
+	for (int i = 0; i < 600 && r.logic().findObjectByID(chestID); ++i) r.frame();
+	CHECK(r.logic().findObjectByID(chestID) == nullptr);
 }

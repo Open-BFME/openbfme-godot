@@ -3,7 +3,7 @@
 // The money-moving modules that act on deaths and hits (lane ECON-1): RefundDie (RW create proc 0x64C502, data 0x6536A3, die interface mask 2), PillageModule (RW create
 // 0x64C492, data 0x6535ED, interface mask 0x2000: "damage dealt"), and the data of SalvageCrateCollide (RW create 0x651052, data 0x655980, collide interface mask 0x10).
 // What calls them (the death pipeline, the damage pipeline, the collision system) belongs to other lanes (stop S-257): RefundDie answers Object::friend_onDie,
-// PillageModule::onDamageDealt is the function the damage pipeline calls for each hit its object lands, SalvageCrateCollide is data only (stop S-260).
+// PillageModule::onDamageDealt is the function the damage pipeline calls for each hit its object lands, SalvageCrateCollide runtime is in CrateCollide.cpp (see docs/CRATE_PICKUPS.md).
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001):
 //   * DieMuxData (the start of every die module's table, RW 0xC76BD8 extra 8; defaults RW 0x8D2970): DeathTypes (RW 0x73A68A, default ALL), ExemptStatus (+4) and
@@ -95,8 +95,8 @@ private:
 	unsigned m_counter = 0; // RW module + 0x18
 };
 
-// the data of the crate collide (no runtime: stop S-260)
-class SalvageCrateCollideModuleData : public ModuleData
+// Shared CrateCollide fields, also used by the veterancy shields.
+class CrateCollideModuleData : public ModuleData
 {
 public:
 	KindOfMaskType m_requiredKindOf{};   // +8
@@ -109,7 +109,13 @@ public:
 	std::string m_executeAnimation;      // +0x4C
 	float m_executeAnimationTime = 0.0f; // +0x50
 	float m_executeAnimationZRise = 0.0f; // +0x54
-	bool m_executeAnimationFades = false; // +0x58
+	bool m_executeAnimationFades = true; // +0x58 (BFME2 constructor)
+	static void buildFieldParse(MultiIniFieldParse &p);
+};
+
+class SalvageCrateCollideModuleData : public CrateCollideModuleData
+{
+public:
 	float m_porterChance = 0.0f;         // +0x5C
 	float m_bannerChance = 0.0f;         // +0x60
 	float m_levelUpChance = 0.0f;        // +0x64

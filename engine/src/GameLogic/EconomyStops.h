@@ -37,8 +37,6 @@ inline std::vector<std::string> lines()
 		"[S-259] the live playable player count (the MPn command point tier and the MultiPlayMoneyMult index, RW 0x6A8630) counts every player of the map whose template has "
 		"PlayableSide and that is not an observer or defeated: the map's placeholder skirmish sides (SkirmishElves .. SkirmishAngmar) count unless a map script defeated or "
 		"re-templated them first; map scripts do not run in this build and the lobby's slot count is not consulted, so the tier follows the map's own player list (RotWK 2.01 "
-		"retail behaviour on that point was not verified in a running game)",
-		"[S-260] SalvageCrateCollide (RW create 0x651052, data 0x655980) has typed data but no runtime: the collide interface and the crate pickup belong to the collision / crate lane; "
-		"a salvage crate does not pay money or upgrade a weapon in this build" };
+		"retail behaviour on that point was not verified in a running game)" };
 }
 } // namespace EconomyStops

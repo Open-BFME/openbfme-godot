@@ -420,6 +420,15 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 			return msgType;
 		}
 	}
+	// OpenBFME input adaptation: retail CRATE objects are pickup destinations.
+	// Contact-command priority is not verified against RotWK (see CRATE_PICKUPS.md).
+	if (obj && obj->isKindOf((unsigned)CombatNames::kindOf("CRATE")) && !m_ctx.ui.isInForceAttackMode())
+	{
+		const Coord3D destination = *obj->getPosition();
+		if (type == EvaluateType::DoHint) hint(MouseCursorName::Move);
+		else return issueMove(nullptr, &destination, type);
+		return m_teamExists ? MSG_DO_MOVETO : 0;
+	}
 	// an UNATTACKABLE enemy fails the attack test and reaches the capture test below: a capture flag an enemy took is recaptured, not attacked
 	if (obj && !m_ctx.ui.isInForceAttackMode() && HudObjects::relationshipToLocal(m_ctx, *obj) == ENEMIES && !isUnattackableTarget(*obj) && selectionCanAttack())
 	{
