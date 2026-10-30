@@ -257,6 +257,12 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 				d->fadeIn((double)ev.fadeFrames);
 			}
 			break;
+		case ClientEvent::FADE_OUT: // lane PORTERFOG-1 (RW 0x670A50)
+			if (Drawable *d = findByObject(ev.object))
+			{
+				d->fadeOut((double)ev.fadeFrames);
+			}
+			break;
 		case ClientEvent::SHOW_MODULE:
 			if (Drawable *d = findByObject(ev.object))
 			{
@@ -296,6 +302,9 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 			{
 				m_heroFlashHandler(ev.name, ev.flashFrames);
 			}
+			break;
+		case ClientEvent::EVA_DAMAGED: // lane EVADAMAGE-1 (RW 0x67B4B7's Eva half)
+			EvaDamage::apply(ev, *this, m_evaDamage);
 			break;
 		}
 	}

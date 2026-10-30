@@ -781,10 +781,17 @@ func _live_overlay() -> void:
 		JSON.stringify(_game_world.get_stats().get("commands", {}))]
 
 
-## The models are lit by the map's object lighting at its time of day (GlobalLighting objects[0]): a DirectionalLight3D from the
-## diffuse colour and the light direction, the ambient colour in the environment (the terrain shader is unshaded and ignores both).
+func _exit_tree() -> void:
+	if _sun != null:
+		load("res://scripts/object_shadows.gd").disable()
+
+
+## The shaders retain map lighting; the directional light supplies shadow coverage.
 func _apply_object_lighting(rep: Dictionary) -> void:
 	if not rep.has("lighting"):
+		if _sun != null:
+			_sun.visible = false
+			load("res://scripts/object_shadows.gd").disable()
 		print("MAPOBJ no GlobalLighting chunk: object lighting is the viewer default")
 		_world_env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 		_world_env.environment.ambient_light_color = Color(0.6, 0.6, 0.6)
@@ -794,12 +801,13 @@ func _apply_object_lighting(rep: Dictionary) -> void:
 	_world_env.environment.ambient_light_color = lit.ambient
 	_world_env.environment.ambient_light_energy = 1.0
 	if _sun != null:
+		_sun.visible = false
 		_sun.queue_free()
 	_sun = DirectionalLight3D.new()
 	_sun.name = "ObjectSun"
 	_sun.light_color = lit.diffuse
 	_sun.light_energy = 1.0
-	_sun.shadow_enabled = false
+	load("res://scripts/object_shadows.gd").configure(_sun, lit)
 	var dir: Vector3 = lit.direction
 	if dir.length() > 0.0001:
 		_sun.transform = Transform3D(Basis.looking_at(dir.normalized(), Vector3.UP if absf(dir.normalized().y) < 0.99 else Vector3.RIGHT), Vector3.ZERO)

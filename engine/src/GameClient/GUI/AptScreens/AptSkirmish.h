@@ -36,6 +36,7 @@
 #include "GameClient/GUI/AptScreen.h"
 #include "GameClient/GUI/ShellEnvironment.h"
 #include "GameClient/GUI/Skirmish/SkirmishGameSetup.h"
+#include "GameClient/OptionPreferences.h"
 
 struct CreateAHeroHero;
 class AptMessageBox;
@@ -96,6 +97,10 @@ public:
 	const std::vector<GameWindow *> &currentMapSpots() const { return m_currentMapChildren; }
 	GameWindow *mapInfoWindow() const { return m_mapInfo; }
 	GameWindow *profileListWindow() const { return m_profileList; }
+	GameWindow *profileComboWindow() const { return m_bfme1ProfileCombo; }
+	GameWindow *mapTypeWindow() const { return m_bfme1MapType; }
+	bool bfme1OfficialMaps() const { return m_bfme1OfficialMaps; }
+	void recordsChanged();
 	// lane END-1: dead gadgets are dropped first (a window the movie's popup already destroyed must not be handed out: the lobby hook wrote into one)
 	GameWindow *profileEntryWindow()
 	{
@@ -301,6 +306,9 @@ private:
 	void update();      // the screen's per-update state machine (RotWK 0x928CDB), run by the WindowManager while the screen exists
 	// ---- profiles ----
 	void refreshProfileList();
+	void refreshBfme1ProfileDisplay();
+	void refreshBfme1ProfileCombo();
+	bool selectProfile(const std::u16string &name);
 	std::u16string playerName() const;
 	void applyProfileName();
 	// RotWK 0x9294B3 (the Enter key of the persona entry, a double click in the profile list): close the popup through the movie's CloseProfilePopup,
@@ -362,6 +370,12 @@ private:
 	// Skirmish profile gadgets
 	GameWindow *m_profileList = nullptr;
 	GameWindow *m_profileEntry = nullptr;
+	GameWindow *m_bfme1ProfileCombo = nullptr;
+	GameWindow *m_bfme1MapType = nullptr;
+	bool m_bfme1OfficialMaps = true;
+	OptionPreferences m_bfme1Honors;
+	int m_bfme1ProfileMovie = -1;
+	int m_bfme1ProfileProgress = -1;
 	bool m_suppressStrategicPromo = false;
 	// The profile state of RotWK's AptSkirmish (field +0x6B8): 1 set by OnInitialized (0x9280DB), 10 by StartGame (0x9280F0), 8 by the stats commands
 	// (0x9280FD); the update (0x928CDB) takes 1 -> ShowMain -> 5; the popup states 2 (new profile), 4 (change profile) and 3 (delete) close to 7 / 5

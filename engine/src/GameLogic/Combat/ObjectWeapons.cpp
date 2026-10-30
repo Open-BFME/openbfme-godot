@@ -249,7 +249,8 @@ public:
 		}
 		return false;
 	}
-	float meleeRunDownLimit() override { return 0.0f; }
+	// lane AIDATA-1: RW 0x6CC07C reads [TheAI + 0x18] + 0xD0, AIData ChaseFromBehindLimit (retail aidata.ini 50.0; the constructor's 50.0 RW 0xBD88C4)
+	float meleeRunDownLimit() override { return m_w.owner().logic().settings().chaseFromBehindLimit; }
 	bool victimFlag11A_40() override { return false; }
 	int layerOf(bool) override { return 0; }
 	bool victimLayerException() override { return false; }

@@ -72,6 +72,8 @@ public:
 	// lane FX-4: a ViewShake nugget (RW 0x5DFF32 -> TheTacticalView vslot 0x1AC = W3DView::shake RW 0x486D86) with the angle already drawn from the client stream:
 	// true when the world shook its camera (else it is noted as an event, as before)
 	virtual bool viewShake(const Coord3D & /*epicenter*/, int /*type*/, float /*angle*/) { return false; }
+	// lane WEATHER-1: the map's weather the FXList nuggets filter on (RW TheWritableGlobalData + 0x138: 0 NORMAL, 1 SNOWY; the map's WorldInfo "weather")
+	virtual int mapWeather() const = 0;
 };
 
 class FXPlayback

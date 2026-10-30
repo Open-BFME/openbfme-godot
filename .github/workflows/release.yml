@@ -87,7 +87,8 @@ jobs:
 
   # RELSIGN-1: the three builds are release-package.yml's jobs, the same ones the Deck dispatches on a staging branch (MACACT-1): one
   # definition, the build host's folder layout and ccache rewriting (so the Linux library is the build host's byte for byte and the Windows
-  # DLL but for its CodeView GUID), no secrets passed (none declared there), contents: read inherited from the top level
+  # DLL but for its CodeView GUID), contents: read inherited from the top level. CRASHACT-1: the macOS call alone passes one secret, the crash
+  # service's client key, which the package carries anyway (tools/release/crash_key.py; tools/release/public_workflows.py pins the lines)
   macos:
     name: macOS
     needs: plan
@@ -97,6 +98,8 @@ jobs:
       commit: ${{ inputs.commit }}
       version: ${{ inputs.tag }}
       request: ${{ inputs.request }}
+    secrets:
+      CRASH_CLIENT_KEY: ${{ secrets.CRASH_CLIENT_KEY }}
 
   linux-lib:
     name: Linux
@@ -159,6 +162,8 @@ jobs:
           rm godot.zip templates.tpz
           cd "$D" && awk -F '  ' '!/^#/ && NF {print $1 "  " $2}' "$GITHUB_WORKSPACE/tools/release/godot_templates.txt" | sha256sum -c --strict
       - name: Build the packages (package.sh)
+        env:
+          CRASH_CLIENT_KEY: ${{ secrets.CRASH_CLIENT_KEY }}
         run: |
           mkdir -p godot/bin "$RUNNER_TEMP/out"
           cp "$RUNNER_TEMP/linux-lib/openbfme.linux.template_debug.x86_64.so" godot/bin/

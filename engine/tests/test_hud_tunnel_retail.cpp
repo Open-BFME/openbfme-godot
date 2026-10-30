@@ -194,11 +194,11 @@ TEST_CASE("tunnel retail: a Goblin horde enters one mine shaft and comes out of 
 	CHECK(ta->getContainCount() == 0u);
 	// in again by the first; both tunnels die: the last one lets the horde out (RotWK: no cave-in kill)
 	REQUIRE(enter(r, *horde, *a, 400));
-	a->kill(0);
+	a->kill(DAMAGE_UNRESISTABLE, 0);
 	r.frame(5);
 	CHECK(horde->getContainedBy() == b); // b still stands: the horde stays in the network, now as entered by b (RW 0x8FA4E8)
 	CHECK(enemy->tunnelTracker().tunnelCount() >= 1u);
-	b->kill(0);
+	b->kill(DAMAGE_UNRESISTABLE, 0);
 	r.frame(30);
 	size_t alive = 0;
 	for (ObjectID id : memberIds) // a member may be gone: only its id is read

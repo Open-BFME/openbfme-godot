@@ -3,8 +3,15 @@
 
 #include "GameClient/GUI/Skirmish/SkirmishPreferences.h"
 #include "Common/PathIO.h"
+#include "GameClient/GameRecords.h"
+#include "GameClient/GUI/Skirmish/RealTimeStats.h"
+#include "GameNetwork/OnlineLobbyClient.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <system_error>
 
 namespace
@@ -355,4 +362,133 @@ std::string SkirmishPreferences::folder() const
 		out += (char)std::filesystem::path::preferred_separator;
 	}
 	return out;
+}
+
+namespace
+{
+bool loadBfme1Stats(const std::string &path, OptionPreferences &stats, std::string *error)
+{
+	std::error_code status;
+	const bool exists = std::filesystem::exists(PathIO::native(path), status);
+	if (status)
+	{
+		if (error) *error = path + ": " + status.message();
+		return false;
+	}
+	return !exists || stats.load(path, error);
+}
+}
+
+bool Bfme1SkirmishProfiles::create(SkirmishProfileStore &profiles, std::time_t created, std::string *error)
+{
+	if (profiles.current().empty() || created == std::time_t(-1))
+	{
+		if (error) *error = "a profile and a valid creation time are required";
+		return false;
+	}
+	std::tm local{};
+#ifdef _WIN32
+	const bool converted = localtime_s(&local, &created) == 0;
+#else
+	const bool converted = localtime_r(&created, &local) != nullptr;
+#endif
+	char date[32] = {};
+	if (!converted || !std::strftime(date, sizeof(date), "%Y-%m-%d", &local))
+	{
+		if (error) *error = "the profile creation date could not be formatted";
+		return false;
+	}
+	profiles.setProfileValue(0, "OpenBFMEProfileCreatedDate", date);
+	profiles.flush();
+	if (profiles.folder().empty()) return true;
+	const std::string path = profiles.folder() + OnlineLobbyClient::utf16ToUtf8(profiles.current()) + "SkirmishStats.ini";
+	OptionPreferences stats;
+	stats.set("ProfileCreatedDate", date);
+	return stats.save(path, error);
+}
+
+bool Bfme1SkirmishProfiles::recordGame(const SkirmishProfileStore &profiles, const SkirmishSetupSource &source, const GameRecord &record, std::string *error,
+	const SkirmishHonorsGame *game)
+{
+	const GameRecord::Player *player = record.me();
+	if (record.kind != "skirmish" || record.cheatMode || !player || !player->human || !record.vsComputerOnly() || profiles.folder().empty()) return true;
+	if (std::none_of(record.players.begin(), record.players.end(), [&](const GameRecord::Player &other) { return !other.human && other.team != player->team; })) return true;
+	const auto names = profiles.names();
+	const auto profile = std::find_if(names.begin(), names.end(), [&](const std::u16string &name) { return OnlineLobbyClient::utf16ToUtf8(name) == player->nick; });
+	const auto &factions = source.factions();
+	const auto faction = std::find_if(factions.begin(), factions.end(), [&](const SkirmishFaction &entry) {
+		return entry.templateName == player->faction && entry.playableSide && !entry.isObserver;
+	});
+	if (profile == names.end() || faction == factions.end()) return true;
+	const std::string path = profiles.folder() + OnlineLobbyClient::utf16ToUtf8(*profile) + "SkirmishStats.ini";
+	OptionPreferences stats;
+	if (!loadBfme1Stats(path, stats, error)) return false;
+	const std::string recorded = "OpenBFMERecordedGame:" + record.id;
+	if (stats.has(recorded)) return true;
+	const std::string &side = faction->side;
+	auto count = [&](const char *suffix) {
+		return std::clamp(std::strtoll(stats.get(side + suffix).c_str(), nullptr, 10), 0LL, (long long)std::numeric_limits<int>::max());
+	};
+	auto set = [&](const char *suffix, long long value) {
+		stats.set(side + suffix, std::to_string(std::min(value, (long long)std::numeric_limits<int>::max())));
+	};
+	if (record.winnerTeam >= 0)
+	{
+		if (record.won())
+		{
+			set("Wins", count("Wins") + 1);
+			set("WinStreak", count("WinStreak") + 1);
+			set("BestWinStreak", std::max(count("BestWinStreak"), count("WinStreak")));
+			set("LossStreak", 0);
+			bool knownGame = game && game->mapKey == record.map && game->localSlot == record.meSlot && game->mapPlayers > 1;
+			if (knownGame)
+			{
+				int occupied = 0;
+				for (int slot = 0; slot < MAX_SLOTS; ++slot) occupied += game->occupied(slot) ? 1 : 0;
+				knownGame = occupied == (int)record.players.size();
+				for (const auto &participant : record.players)
+				{
+					if (participant.slot < 0 || participant.slot >= MAX_SLOTS) { knownGame = false; break; }
+					const int state = game->slots[(std::size_t)participant.slot].state;
+					knownGame = knownGame && (participant.human ? state == SLOT_PLAYER : state >= SLOT_EASY_AI && state <= SLOT_HARD_AI);
+				}
+			}
+			if (knownGame)
+			{
+				int easy = 0, medium = 0, hard = 0;
+				bool alliedAI = false;
+				for (int slot = 0; slot < MAX_SLOTS; ++slot)
+				{
+					if (!game->isAI(slot)) continue;
+					if (game->isAlly(slot)) { alliedAI = true; continue; }
+					const int state = game->slots[(std::size_t)slot].state;
+					easy += state == SLOT_EASY_AI ? 1 : 0;
+					medium += state == SLOT_MED_AI ? 1 : 0;
+					hard += state == SLOT_HARD_AI ? 1 : 0;
+				}
+				if (!alliedAI && (easy || medium || hard))
+				{
+					const bool allHard = hard && game->mapPlayers - 1 == hard;
+					const int points = allHard ? 4 : hard ? 3 : medium ? 2 : 1;
+					set("Points", count("Points") + points);
+					const int difficulty = allHard ? 5 : hard ? 4 : medium ? 3 : 2;
+					const int opponents = hard ? hard : medium ? medium : easy;
+					const std::string key = RealTimeStatsPreferences::statsMapName(game->mapKey) + "_" + std::to_string(difficulty);
+					stats.set(key, std::to_string(std::max(std::atoi(stats.get(key).c_str()), opponents)));
+				}
+			}
+		}
+		else
+		{
+			set("Losses", count("Losses") + 1);
+			set("LossStreak", count("LossStreak") + 1);
+			set("WorstLostStreak", std::max(count("WorstLostStreak"), count("LossStreak")));
+			set("WinStreak", 0);
+		}
+	}
+	const double previous = std::strtod(stats.get(side + "TimePlayed").c_str(), nullptr);
+	const double seconds = (std::isfinite(previous) ? std::max(0.0, previous) : 0.0) + std::max<std::int64_t>(0, record.durationS);
+	stats.set(side + "TimePlayed", std::to_string(seconds));
+	stats.set(recorded, "1");
+	return stats.save(path, error);
 }

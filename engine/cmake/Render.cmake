@@ -5,8 +5,10 @@
 
 set(OPENBFME_RENDER_SOURCES
     src/GameEngineDevice/W3DDevice/GameClient/W3DObjectLighting.cpp
+    src/GameEngineDevice/W3DDevice/GameClient/TerrainLightScale.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DStreakDraw.cpp)
 
 set(OPENBFME_RENDER_TESTS
     tests/test_render_lighting.cpp
+    tests/test_terrain_light_scale.cpp
     tests/test_render_streak.cpp)

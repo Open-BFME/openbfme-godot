@@ -379,7 +379,7 @@ std::vector<std::string> HudInput::acceptanceStops()
 				  "BUILD_PLACEMENT_CURSOR, opacity 0.45, the builder's colour (RW 0x674504) and the draw module's own model, animation and BeginScript; a castle's layout "
 				  "pieces turned by the ghost's angle, its BASE_SITE slots judged one by one; the tint through the W3D lighting (ZH W3DScene's colorTint); the faction bib "
 				  "(RW 0x49249D extents, TBRedBib / TBBib); W_Arrow while anchored (RW 0x48EAD8); the alpha blend (ZH dx8renderer's translucent pass, W3DShaderKey::AlphaOverride); "
-				  "not ported: the restricted-area code 8 (RW 0x707141), its shadow (SHADOW_VOLUME; no drawable casts one yet, S-3304), RotWK's own "
+				  "not ported: the restricted-area code 8 (RW 0x707141), its shadow (SHADOW_VOLUME; translucent ghosts cast no shadow map, S-3304), RotWK's own "
 				  "tint lighting (the donor is ZH's), the bib quad's own buffer (ZH's W3DBibBuffer)");
 	out.push_back(FormationPlacement::stopLine());
 	return out;

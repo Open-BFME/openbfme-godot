@@ -252,7 +252,10 @@ struct HordeSquishState : AIState
 		Coord3D g{ SimMath::addf32(SimMath::mulf32(dx, d), m_victimPos.x), SimMath::addf32(m_victimPos.y, SimMath::mulf32(dy, d)), SimMath::addf32(m_victimPos.z, SimMath::mulf32(dz, d)) };
 		if (!m_move)
 		{
-			m_move = std::make_unique<AIMoveToState>(h.mover(), g, true);
+			// lane IDLEMOTION-1: no destination adjustment. The state is an internal move (its onEnter ends in the move's onEnter, RW 0x74F30E -> 0x74DADA) whose
+			// adjust byte + 0x48 the onEnter clears (RW 0x74F28D), and computePath requests the point itself as not final (RW 0x742425: RW 0x667ED1(point, 0)); the
+			// port adjusted the point and reserved it as a final goal
+			m_move = std::make_unique<AIMoveToState>(h.mover(), g, false);
 		}
 		else
 		{
@@ -436,13 +439,13 @@ HordeAIUpdate &hordeAi(AIState &s)
 //   * onEnter RW 0x74EB5C: no goal or a stealthed goal -> FAILURE; a goal that is fleeing (RW 0x7468D5) or not yet ready (HordeContainInterface slot 0x154) is approached:
 //     unless the horde has STAND_GROUND / the AI byte +0x3CC, computePath (vslot 0x44 RW 0x74A594) then the move; a ready, not fleeing goal -> SUCCESS;
 //   * update RW 0x74AA03: no goal -> FAILURE; a fleeing goal (it faces away from the horde and its locomotor is faster than a quarter of its maximum speed, RW 0x5E4CA7):
-//     the desired speed becomes the horde's speed + the gap (edge distance, >= 0) and RUNNING_DOWN_FROM_BEHIND (75) is set while the gap is below the horde's maximum
-//     speed; else the flag is cleared when set; then setMeleeTargetID; a fleeing goal: the run-down (slot 0x158 RW 0x87631F: with RUNNING_DOWN_FROM_BEHIND every member that
-//     is not attacking attacks the goal), else a ready goal -> setLocomotorGoalNone, SUCCESS; a goal out of the world or stealthed -> FAILURE; computePath false -> SUCCESS;
+//     the desired speed becomes the goal's speed + the gap (centre distance less both radii; the sum >= 0, lane AIDATA-1) and RUNNING_DOWN_FROM_BEHIND (75) is set across the horde (RW 0x748650: members, then the
+//     horde) while the gap is below the horde's maximum speed; else the flag is cleared when set; then setMeleeTargetID; a fleeing goal: the run-down (slot 0x158 RW 0x87631F: with RUNNING_DOWN_FROM_BEHIND every member
+//     whose AI state is not active (vslot 0x1BC; lane IDLEMOTION-1) attacks the goal), else a ready goal -> setLocomotorGoalNone, SUCCESS; a goal out of the world or stealthed -> FAILURE; computePath false -> SUCCESS;
 //     the move's end -> SUCCESS;
 //   * computePath RW 0x74A594: the goal (its horde for a member) moved more than 1/10 of its distance (RW 0x741450) or there is no path, at most every
 //     LOGICFRAMES_PER_SECOND frames; path extra distance 100; a fleeing goal is led by its facing * (bounding radius * 2 + 60); else the goal's position;
-//   * onExit RW 0x74AC0C: RUNNING_DOWN_FROM_BEHIND off, desired speed 999999, and a horde within sqrt(12.5) of the goal point snaps onto it.
+//   * onExit RW 0x74AC0C: RUNNING_DOWN_FROM_BEHIND off across the horde (RW 0x74AC39), desired speed 999999, and a horde within sqrt(12.5) of the goal point snaps onto it.
 // Lane PHYS-1 (review r4) ports computePath's non-fleeing chain with inferences (see nonFleeingGoal: the 0.7 * radius pullback, RW 0x6F2F8F / 0x746783 / 0x7463E8 /
 // 0x6FB67A through the port's line test, valid-position steps and destination adjustments, the progress test, the ordinary request RW 0x667ED1).
 // INFERENCE (stop S-590): not ported STAND_GROUND's RW 0x6FF7FA decision, the machine-busy test and the
@@ -702,27 +705,40 @@ struct HordeMeleeApproachState : AIState
 		const bool fleeing = targetFleeing(self, *victim);
 		if (fleeing)
 		{
-			const float e = edgeDistance(self, *victim);
+			// lane AIDATA-1, RW 0x74AA69 .. 0x74AADE: the GOAL's speed (RW 0x68B34C with ECX = the goal: its locomotor's current speed when above 0, else 0; the
+			// port took the horde's own) plus the centre distance (RW 0x66137C x87 wide, CRT sqrt, fstp) less both bounding radii (SSE, not clamped), fadd and fst
+			// under PC24; below 0 -> 0
+			const Coord3D *sp = self.getPosition(), *vp = victim->getPosition();
+			const double dx = SimMath::pc24SubW((double)sp->x, (double)vp->x), dy = SimMath::pc24SubW((double)sp->y, (double)vp->y);
+			const float d = SimMath::fstpDword(SimMath::sqrtPC24(SimMath::pc24AddW(SimMath::pc24MulW(dx, dx), SimMath::pc24MulW(dy, dy))));
+			const float e = SimMath::subf32(d, SimMath::addf32(CombatQueries::boundingCircleRadius(*victim), CombatQueries::boundingCircleRadius(self)));
+			AIUpdateInterface *victimAi = victim->getAIUpdateInterface();
+			const Locomotor *victimLoco = victimAi ? victimAi->curLocomotor() : nullptr;
+			const float victimSpeed = victimLoco && victimLoco->speed() > 0.0f ? victimLoco->speed() : 0.0f;
+			float gap = SimMath::fstpDword(SimMath::pc24AddW((double)victimSpeed, (double)e));
+			gap = 0.0f > gap ? 0.0f : gap;
 			Locomotor *loco = h.curLocomotor();
-			float gap = SimMath::addf32(loco ? loco->speed() : 0.0f, e);
-			gap = gap < 0.0f ? 0.0f : gap;
 			const float maxSpeed = loco ? loco->getMaxSpeedForCondition(h.locomotorHost()) : 999999.0f;
 			h.setDesiredSpeed(gap);
-			self.setStatus((unsigned)runningDown, gap < maxSpeed);
+			// lane AIDATA-1: RW 0x74AB3D calls RW 0x748650(0x4B, flag), RW 0x694569 on the horde: every member, then the horde (the port set the horde's alone, so no
+			// member was ever RUNNING_DOWN_FROM_BEHIND and the run-down range of RW 0x6CC07C, tested on the member, never applied)
+			self.setStatusAcrossHorde((unsigned)runningDown, gap < maxSpeed);
 		}
 		else if (self.testStatus((unsigned)runningDown))
 		{
-			self.setStatus((unsigned)runningDown, false);
+			self.setStatusAcrossHorde((unsigned)runningDown, false); // RW 0x748650(0x4B, 0) (lane AIDATA-1)
 		}
 		if (fleeing)
 		{
-			// RW 0x87631F: the run-down
+			// RW 0x87631F: the run-down. Lane IDLEMOTION-1: a member is ordered when its AI state is not active (RW 0x87636B: AI vslot 0x1BC, RW 0x662B3C, the
+			// current state's slot 0x24), so a BUSY member (AIBusyState vtable RW 0xC274F8 slot 0x24 = RW 0x9188EB, false) is ordered again and one in an attack whose
+			// own machine is idle as well; the port tested "not in an attack state"
 			if (self.testStatus((unsigned)runningDown))
 			{
 				for (Object *m : aliveMembers(self))
 				{
 					AIUpdateInterface *ai = m->getAIUpdateInterface();
-					if (ai && !ai->isAttacking())
+					if (ai && !ai->isStateActive())
 					{
 						ai->aiAttackObject(victim, CMD_FROM_AI);
 					}
@@ -768,7 +784,7 @@ struct HordeMeleeApproachState : AIState
 		{
 			return;
 		}
-		self.setStatus((unsigned)CombatNames::statuses().runningDownFromBehind, false);
+		self.setStatusAcrossHorde((unsigned)CombatNames::statuses().runningDownFromBehind, false); // RW 0x74AC39: RW 0x748650(0x4B, 0) (lane AIDATA-1)
 		h.setDesiredSpeed(999999.0f); // RW 0xC27440
 		h.mover().ignoreObstacle(PATHFIND_INVALID_ID); // RW 0x74AC57: ignoreObstacle(0) (lane ATTACKPATH-1)
 		const float dx = SimMath::subf32(m_goal.x, self.getPosition()->x), dy = SimMath::subf32(m_goal.y, self.getPosition()->y);

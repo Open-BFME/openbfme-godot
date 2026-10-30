@@ -369,7 +369,7 @@ void Object::doCommandButton(const CommandButton *button, CommandSourceType cmdS
 			logic().reportError("Object::doCommandButton: SET_STANCE button " + b.m_name + " names no stance in 0 .. 5 (RW 0x697759 / 0x697767)");
 			return;
 		}
-		s->setStance((StanceType)b.m_stances[0]); // RW 0x6977BB
+		s->setStance((StanceType)b.m_stances[0], "Object::doCommandButton:RW_6977BB");
 		return;
 	}
 	case GUI_COMMAND_EXIT_CONTAINER:

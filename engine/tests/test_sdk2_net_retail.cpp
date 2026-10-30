@@ -68,15 +68,19 @@ struct Pair
 	std::string hostReport, joinReport, hostHashes, joinHashes, hostErr, joinErr;
 };
 
-// a host and a joiner, each its own process, with their own extras (the mod)
-Pair runPair(const std::string &tag, int frames, const std::string &common, const std::string &hostExtra, const std::string &joinExtra)
+// a host and a joiner, each its own process, with their own extras (the mod). Each peer starts its lobby clock after it has loaded the game
+// and the mod, so on a loaded machine the host can wait long for the joiner: `lobbySeconds` is generous, also for the pair that is refused
+// (60 s: its joiner must arrive to be refused; the host then waits its window out)
+Pair runPair(const std::string &tag, int frames, const std::string &common, const std::string &hostExtra, const std::string &joinExtra,
+	int lobbySeconds = 120)
 {
 	const int p = port();
 	Pair r;
 	const std::string base = "sdk2_" + tag;
-	const std::string host = peerBase() + " --frames " + std::to_string(frames) + " " + common + " --host " + std::to_string(p) + " " + hostExtra +
+	const std::string lobby = " --lobby-timeout " + std::to_string(lobbySeconds) + " ";
+	const std::string host = peerBase() + " --frames " + std::to_string(frames) + lobby + common + " --host " + std::to_string(p) + " " + hostExtra +
 		" --report " + base + "_h.txt --hashes " + base + "_hh.txt 2> " + base + "_he.txt";
-	const std::string join = peerBase() + " --frames " + std::to_string(frames) + " " + common + " --join 127.0.0.1:" + std::to_string(p) +
+	const std::string join = peerBase() + " --frames " + std::to_string(frames) + lobby + common + " --join 127.0.0.1:" + std::to_string(p) +
 		" --name Joiner " + joinExtra + " --report " + base + "_j.txt --hashes " + base + "_jh.txt 2> " + base + "_je.txt";
 	std::thread th([&] { r.hostRc = runCommand(host); });
 	std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -90,6 +94,8 @@ Pair runPair(const std::string &tag, int frames, const std::string &common, cons
 	r.joinErr = readFile(base + "_je.txt");
 	for (const char *s : { "_h.txt", "_j.txt", "_hh.txt", "_jh.txt", "_he.txt", "_je.txt" })
 		std::remove((base + s).c_str());
+	if (r.hostRc != 0 || r.joinRc != 0)
+		MESSAGE(tag << ": host exit " << r.hostRc << ", joiner exit " << r.joinRc << "\nhost stderr:\n" << r.hostErr << "joiner stderr:\n" << r.joinErr);
 	return r;
 }
 
@@ -110,7 +116,7 @@ struct TempCopy
 	}
 };
 
-const char kCommon[] = "--map \"maps/map mp evendim/map mp evendim.map\" --seed 7 --lobby-timeout 25 --cash 1000";
+const char kCommon[] = "--map \"maps/map mp evendim/map mp evendim.map\" --seed 7 --cash 1000";
 const char kSlots[] = "--slot human,FactionMen,0,0 --slot human,FactionMordor,1,1";
 
 } // namespace
@@ -148,7 +154,7 @@ TEST_CASE("SDK-2 net retail: two peers with the sample mod's sim script stay in 
 		text.replace(at, 18, "local AMOUNT = 300");
 		std::ofstream(script, std::ios::binary) << text;
 	}
-	Pair refused = runPair("refused", 50, kCommon, std::string(kSlots) + mod, " --mod \"" + tuned.path.u8string() + "\"");
+	Pair refused = runPair("refused", 50, kCommon, std::string(kSlots) + mod, " --mod \"" + tuned.path.u8string() + "\"", 60);
 	MESSAGE("joiner refused:\n" << refused.joinErr);
 	CHECK(refused.hostRc == 3); // the host's game never filled
 	CHECK(refused.joinRc == 3); // the joiner was refused

@@ -1562,7 +1562,9 @@ void Network::disconnectPlayer(int slot, UnsignedInt frame)
 	m_leftNotices.push_back(playerName(slot));
 	if (!m_reconstructing)
 	{
-		m_transport.retire(slot); // lane ONLINE-3 r2: beginLive retires the slots gone at its end
+		// lane MPDROP-3: the drop's DISCONNECTPLAYER (sent just before) keeps going to the dropped slot until it acknowledges it (retire dropped it with the
+		// rest of the queue: a hung game that lost the datagram never learned it was dropped, S-1341)
+		m_transport.retireDropped(slot, m_config.settings.playerTimeoutTime); // lane ONLINE-3 r2: beginLive retires the slots gone at its end
 	}
 	passRouterRole(slot, frame);
 	if (m_config.holdForRejoin && !sd.handedOver)

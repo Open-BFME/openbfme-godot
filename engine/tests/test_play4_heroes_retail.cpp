@@ -403,9 +403,11 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				const bool drogoth = hero == "Drogoth";
 				// merge queue q28 (measured once on the merged tree and at each merge point): on his own Drogoth now strikes the horde once (975 health, 13 of 20
 				// killed); the fell beasts still strike nothing
-				CHECK(own.shots == (drogoth ? 1u : 0u));
-				CHECK(own.lost == (drogoth ? 975.0f : 0.0f));
-				CHECK(own.membersKilled == (drogoth ? 13u : 0u));
+				// merge queue q29 (measured once on the merged tree and at each merge point): on his own Drogoth strikes nothing again, like the fell beasts
+				// (DEVPORT-SIM: one strike, 825 health, 11 killed; none from community #113 on, whose capture squads move the scene's computer opponent)
+				CHECK(own.shots == 0u);
+				CHECK(own.lost == 0.0f);
+				CHECK(own.membersKilled == 0u);
 				// lane BACKLOG4: 3 strikes (4 before): the hero's creation uses the teleport form (RW 0x7814CF: RW 0x696E63(pos, 0)), which idles the new
 				// hero's AI and wakes it; the fight's damage and kills are unchanged (measured with and without that call)
 				// lane STEALTHFLY1: 2 strikes (3 before): recruited from the fortress, Drogoth leaves along its production exit path in the bird's own follow
@@ -434,9 +436,11 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 			// every other hero
 			// Merge queue q28 (measured once on the merged tree and at each merge point): Haldir's guard takes the creep first again (1 strike, nothing taken from
 			// the horde); every other hero fights the horde
+			// Merge queue q29 (measured once on the merged tree and at each merge point): Haldir fights the horde again from DEVPORT-SIM on (a hero leaving the
+			// fortress drops IS_LEAVING_FACTORY, RW 0x74B77D, and takes its Battle stance's guard), all 20 killed (1500 health) on the merged tree
 			if (hero == "ElvenHaldir")
 			{
-				CHECK(own.lost == 0.0f);
+				CHECK(own.lost == 1500.0f);
 			}
 			else
 			{
@@ -576,8 +580,13 @@ TEST_CASE("attack1 heroes retail: the mounted Witch-king and Mouth of Sauron, or
 	// and at each merge point): the Witch-king 6 shots, 18 killed (225 in the crush run), 3 swings (the first took 450, 1125 outside the run), nearest 5.53305,
 	// with CRUSHER_LEVEL -1 blocked 10 frames from frame 30, one swing taking 600 from 50.9059; the Mouth of Sauron 10 swings (75 / 750), 10 killed, nearest
 	// 40.9154, with CRUSHER_LEVEL -1 blocked 18 frames from frame 7, 5 swings taking 375 from 69.7602. The duels are unchanged. Engine pins, not retail values.
-	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 6u, 18u, 225.0f, { 800.0f, 112.0f }, 3u, 450.0f, 1125.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 10, 30, 1u, 600.0f, 50.9059f, 5.53305f },
-			 Case{ "FactionMordor", "MordorMouthOfSauron", 10u, 10u, 0.0f, { 640.0f, 320.0f }, 10u, 75.0f, 750.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 18, 7, 5u, 375.0f, 69.7602f, 40.9154f } })
+	// Merge queue q29 (measured once on the merged tree and at each merge point): PATHPRIO-1's onCollide attack-target exits (RW 0x66E2D1 .. 0x66E309 with
+	// RW 0x68B36F) end the CRUSHER_LEVEL -1 blocking (0 frames from its merge point on, as its lane measured); the numbers then move with FBSIM-1 (the scene's
+	// computer opponent builds phantom sites): the Witch-king 4 shots, all swings of his mace (the first took 450, 1200 outside the run, nothing in a crush run),
+	// 16 killed, nearest 29.9244, with CRUSHER_LEVEL -1 4 swings taking 1200 from 29.5534; the Mouth of Sauron 6 shots, 6 killed (300 in the crush run), 2
+	// swings (75 / 150), nearest 1.00478, with CRUSHER_LEVEL -1 5 swings taking 375 from 59.6801. The duels are unchanged. Engine pins, not retail values.
+	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 4u, 16u, 0.0f, { 800.0f, 112.0f }, 4u, 450.0f, 1200.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 4u, 1200.0f, 29.5534f, 29.9244f },
+			 Case{ "FactionMordor", "MordorMouthOfSauron", 6u, 6u, 300.0f, { 640.0f, 320.0f }, 2u, 75.0f, 150.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 5u, 375.0f, 59.6801f, 1.00478f } })
 	{
 		INFO(std::string(c.hero));
 		const ThingTemplate *tt = s->world->things().findTemplate(c.hero);

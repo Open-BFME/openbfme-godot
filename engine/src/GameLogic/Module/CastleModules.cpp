@@ -1032,7 +1032,7 @@ void CastleBehavior::forEachMember(bool kill)
 			Object *victim = o->isKindOf((unsigned)n.baseFoundation) ? occupantOf(*o) : o;
 			if (victim)
 			{
-				victim->kill(DEATH_NORMAL);
+				victim->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x797F40: kill(8, 0)
 			}
 		}
 		else if (o->isKindOf((unsigned)n.baseFoundation))
@@ -1080,7 +1080,7 @@ void CastleBehavior::releaseCrew(bool kill)
 			logic.noteStop("[S-951] castle: the crew's release (RW 0x798344, EntEnragedUpdate / LifetimeUpdate) is not ported");
 			if (kill)
 			{
-				o->kill(DEATH_NORMAL); // RW 0x79A2D9: Object::kill(UNRESISTABLE, NORMAL)
+				o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x79A284: kill(8 = UNRESISTABLE, 0 = NORMAL)
 			}
 		}
 	}

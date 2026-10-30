@@ -255,7 +255,7 @@ void ReplaceSelfUpgrade::upgradeImplementation()
 		{
 			if (h.object && !h.object->isEffectivelyDead())
 			{
-				h.object->kill(0); // RW 0x698EC3(8, 0)
+				h.object->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x8BB8A0: kill(8, 0)
 			}
 		}
 		Object *piece = Construction::buildObjectNow(logic, obj, *tt, cur, angle, *owner); // RW 0x8BB8D9

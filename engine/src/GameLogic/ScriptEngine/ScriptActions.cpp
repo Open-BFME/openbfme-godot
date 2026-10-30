@@ -77,6 +77,9 @@ const std::set<int> &clientActions()
 			// lane SCRIPT-4: RW 0x7BC604 doSetBorderShroud (BFME2 ScriptActions.cpp, tier A): TheDisplay vslot 0x138 with GlobalData ClearAlpha (+ 0xBE8) / ShroudAlpha
 			// (+ 0xBEA): the shroud border's fill (client, not saved)
 			"DISABLE_BORDER_SHROUD", "ENABLE_BORDER_SHROUD",
+			// lane CAMANIM-1: case 0x226 (RW 0x7CB8F4) -> RW 0x7BBB9D: TheCameraAnimationList's animation of that name (RW 0x7320BA) to TheTacticalView's
+			// slot 0x68 (RW 0x4864F9); client state only (GameClient/CameraAnimation.h)
+			"MOVE_CAMERA_BY_ANIMATION",
 		};
 		std::set<int> out;
 		for (const char *n : names)
@@ -394,6 +397,13 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 		engine.addEndRequest(false, name); // RW 0x7BF15E
 		return;
 	}
+	if (name == "OPTIONS_SET_OCCLUSION_MODE")
+	{
+		// lane OCCLUDE-1: case 298 (RW 0x7CE207): TheGameLogic + 0x99 = (param 0's int (+ 8) != 0) through RW 0x7BD549; the renderer's occluded-object
+		// colours read it (GameLogic::getShowBehindBuildingMarkers)
+		logic.setShowBehindBuildingMarkers(param(a, 0).intValue != 0);
+		return;
+	}
 	if (name == "RADAR_CREATE_EVENT" || name == "OBJECT_CREATE_RADAR_EVENT" || name == "TEAM_CREATE_RADAR_EVENT")
 	{
 		radarEventAction(engine, a, name);
@@ -531,7 +541,7 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 		{
 			if (!o->isEffectivelyDead())
 			{
-				o->kill(DEATH_NORMAL);
+				o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x7BBF6C: kill(8, 0)
 			}
 		}
 		return;
@@ -548,7 +558,7 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 				}
 				else if (!o->isEffectivelyDead())
 				{
-					o->kill(DEATH_NORMAL);
+					o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x7BCEDA (the TEAM_KILL member callback): kill(8, 0)
 				}
 			}
 		}

@@ -2047,7 +2047,7 @@ void heroesOf(const std::string &faction, Results &res)
 				const ObjectID heroId = hero->getID();
 				const int level = hero->getExperienceTracker() ? hero->getExperienceTracker()->getRank() : -1;
 				const ObjectID beforeDeath = g.highestID();
-				hero->kill(0);
+				hero->kill(DAMAGE_UNRESISTABLE, 0);
 				for (int f = 0; f < 400 && g.logic().findObjectByID(heroId); ++f)
 				{
 					g.step(1);
@@ -2073,7 +2073,7 @@ void heroesOf(const std::string &faction, Results &res)
 			}
 			// the death: a killing hit, then the record becomes a revive record
 			const ObjectID heroId = hero->getID();
-			hero->kill(0);
+			hero->kill(DAMAGE_UNRESISTABLE, 0);
 			for (int f = 0; f < 400 && g.logic().findObjectByID(heroId); ++f)
 			{
 				g.step(1);

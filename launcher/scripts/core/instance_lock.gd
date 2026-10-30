@@ -9,13 +9,20 @@
 ## a changed exclusion table cannot hide a running holder. Publish only after listening, then check all published peers before success.
 ## Nothing else is sent or read (tools/release/net_guard.py permits only this protocol and the exact read-only query). Godot sets neither
 ## SO_REUSEADDR nor SO_EXCLUSIVEADDRUSE on Windows, and on Linux SO_REUSEADDR never lets a second process listen on a listened port.
+## FLAKEFIX-2: the ports lay in 49200..65199, inside the operating systems' ephemeral ranges (Linux 32768..60999, Windows and macOS
+## 49152..65535), so another program's outgoing connection could hold a launcher's port and the launcher refused to start. They now lie
+## in 17000..31999, below every modern ephemeral range (Windows before Vista used 1025..5000). A launcher still asks the old port
+## (LEGACY_FIRST_PORT) whether an older launcher holds it; only that launcher's hello counts there, anything else on it is ignored.
 extends RefCounted
 const L10n := preload("res://scripts/l10n/l10n.gd")
 
-const FIRST_PORT := 49200
-const PORTS := 16000  # 49200..65199, inside the dynamic range
+const FIRST_PORT := 17000
+const PORTS := 15000  # 17000..31999, outside every OS's ephemeral port range
+const LEGACY_FIRST_PORT := 49200
+const LEGACY_PORTS := 16000  # 49200..65199, the launchers before FLAKEFIX-2
 const HELLO := "OPENBFME-LAUNCHER "
 const PROBE_MS := 2000
+const LEGACY_PROBE_MS := 500  # an older launcher answers within milliseconds; a closed port there may take seconds to fail on Windows
 
 var port := 0
 var error := ""            # why acquire() failed
@@ -25,13 +32,16 @@ var _server: TCPServer
 var _thread: Thread
 var _serving := false
 var _first_port := 0
+var _legacy_port := 0
 var _ports_dir := ""
 var _probe_busy := false
 
 
 func _init(data_dir: String, version := "") -> void:
-	port = FIRST_PORT + int(data_dir.simplify_path().md5_text().substr(0, 8).hex_to_int() % PORTS)
+	var digest := data_dir.simplify_path().md5_text().substr(0, 8).hex_to_int()
+	port = FIRST_PORT + int(digest % PORTS)
 	_first_port = port
+	_legacy_port = LEGACY_FIRST_PORT + int(digest % LEGACY_PORTS)
 	_ports_dir = data_dir.path_join("launcher-lock-ports")
 	_version = version
 
@@ -45,6 +55,8 @@ func acquire() -> bool:
 	other_launcher = ""
 	var windows := OS.get_name() == "Windows"
 	if windows and not _check_published():
+		return false
+	if _older_launcher(_legacy_port):
 		return false
 	var ranges: Array = []
 	var queried := false
@@ -116,11 +128,16 @@ func _check_published(own_port := 0) -> bool:
 	var exclusions := {}
 	var exclusions_queried := false
 	for name in dir.get_directories():
-		if not name.is_valid_int() or str(int(name)) != name or int(name) < FIRST_PORT or int(name) >= FIRST_PORT + PORTS:
+		var legacy := name.is_valid_int() and int(name) >= LEGACY_FIRST_PORT and int(name) < LEGACY_FIRST_PORT + LEGACY_PORTS
+		if not name.is_valid_int() or str(int(name)) != name or (not legacy and (int(name) < FIRST_PORT or int(name) >= FIRST_PORT + PORTS)):
 			error = L10n.t("launcher.instance_lock.marker_invalid", {"name": name})
 			return false
 		var candidate := int(name)
 		if candidate == own_port:
+			continue
+		if legacy:  # published by an older launcher: only its hello counts
+			if _older_launcher(candidate):
+				return false
 			continue
 		var proof := TCPServer.new()
 		# A successful bind proves this marker is stale; a concurrent owner publishes and rescans after binding.
@@ -142,6 +159,20 @@ func _check_published(own_port := 0) -> bool:
 				continue
 		_refused(candidate, hello)
 		return false
+	return true
+
+
+## true (and refused) when an older launcher answers its hello on `candidate`, a port of the old range; anything else there is ignored.
+## A port that can be bound holds no launcher and is not probed.
+func _older_launcher(candidate: int) -> bool:
+	var proof := TCPServer.new()
+	if proof.listen(candidate, "127.0.0.1") == OK:
+		proof.stop()
+		return false
+	var hello := _probe(candidate, LEGACY_PROBE_MS)
+	if not hello.begins_with(HELLO):
+		return false
+	_refused(candidate, hello)
 	return true
 
 
@@ -228,15 +259,15 @@ func _serve() -> void:
 		item[0].disconnect_from_host()
 
 
-## the first line the port's holder sends within PROBE_MS ("" when it sends nothing)
-func _probe(candidate: int) -> String:
+## the first line the port's holder sends within `wait_ms` ("" when it sends nothing)
+func _probe(candidate: int, wait_ms := PROBE_MS) -> String:
 	_probe_busy = false
 	var c := StreamPeerTCP.new()
 	if c.connect_to_host("127.0.0.1", candidate) != OK:
 		return ""
 	var got := PackedByteArray()
 	var start := Time.get_ticks_msec()
-	while Time.get_ticks_msec() - start < PROBE_MS and got.size() < 256 and not got.has(10):
+	while Time.get_ticks_msec() - start < wait_ms and got.size() < 256 and not got.has(10):
 		c.poll()
 		var st := c.get_status()
 		# A connected socket proves a listener; STATUS_CONNECTING at timeout does not.

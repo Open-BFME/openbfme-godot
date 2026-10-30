@@ -12,7 +12,7 @@ import { mkdirSync, readFileSync, renameSync, unlinkSync, readdirSync, existsSyn
   openSync, writeSync, fsyncSync, closeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { Lobby, route, configFromEnv, parseBlobKey, MAX_JSON_BYTES, MAX_LOG_BYTES, validateSighting, withoutGameIp } from './lobby.mjs';
+import { Lobby, route, configFromEnv, parseBlobKey, bodyLimitFor, MAX_JSON_BYTES, MAX_LOG_BYTES, validateSighting, withoutGameIp } from './lobby.mjs';
 import { createNodeReportStore } from './report-store-node.mjs';
 import { createNodeSocialStore } from './social-store-node.mjs';
 import { repairStoredText } from './stored-text.mjs';
@@ -26,7 +26,7 @@ export function readEnv(env = process.env) {
 }
 
 export function fileStore(dir) {
-  for (const sub of ['games', 'starts', 'logs', 'players', 'meta', 'enforcement', 'sightings', 'reports', 'moderation-receipts']) mkdirSync(join(dir, sub), { recursive: true });
+  for (const sub of ['games', 'starts', 'archives', 'logs', 'players', 'meta', 'enforcement', 'sightings', 'reports', 'moderation-receipts']) mkdirSync(join(dir, sub), { recursive: true });
   const reports = createNodeReportStore(join(dir, 'reports'));
   const gamesDir = join(dir, 'games');
   const syncDirectory = (path) => {
@@ -161,7 +161,7 @@ export function fileStore(dir) {
       return { started: times('starts'), finished: times('logs') };
     },
     // INFRA-2: the admin backup's listing, in key order after `after` (the keys lobby.mjs's parseBlobKey accepts)
-    listBlobs: (after, limit) => ['logs', 'players', 'starts'].flatMap((sub) => readdirSync(join(dir, sub)).map((f) => `${sub}/${f}`))
+    listBlobs: (after, limit) => ['archives', 'logs', 'players', 'starts'].flatMap((sub) => readdirSync(join(dir, sub)).map((f) => `${sub}/${f}`))
       .filter((k) => parseBlobKey(k) && k > after).sort().slice(0, limit)
       .map((key) => {
         const st = statSync(join(dir, key));
@@ -192,7 +192,7 @@ export function startServer(env = readEnv(), { log = console.log } = {}) {
   const server = createServer((req, res) => {
     // ONLINE-2 r2 (Sol: a chunked 20 KB JSON body passed the 16 KiB check): the bytes are counted as they arrive; beyond the route's limit the
     // request is answered 413 at once and the rest is not read
-    const limit = req.url.startsWith('/v1/relay/logs/') || req.url.startsWith('/v1/admin/blobs/') ? MAX_LOG_BYTES : MAX_JSON_BYTES;
+    const limit = bodyLimitFor(req.url.split('?')[0]); // lane PROFILE-2: one table (lobby.mjs)
     // ONLINE-2 r4 (Sol r3): a body-only TOTAL deadline (not an inactivity timer: a dripping body must not outlast it), started with the request
     // and cleared once the body is complete or refused, so a complete request is never cut while the lobby handles it
     let refused = false;

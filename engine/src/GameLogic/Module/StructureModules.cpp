@@ -736,7 +736,7 @@ UpdateSleepTime LifetimeUpdate::update()
 		score.addObjectBuilt(obj->logic(), *obj, -1);
 		score.setCounting(was);
 	}
-	obj->kill(m_data->m_deathType);
+	obj->kill(DAMAGE_UNRESISTABLE, m_data->m_deathType); // RW 0x7A802D: kill(8, DeathType)
 	return UPDATE_SLEEP_FOREVER;
 }
 

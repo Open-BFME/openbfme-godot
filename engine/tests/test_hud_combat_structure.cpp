@@ -371,7 +371,7 @@ Victory playVictory(const char *attackerFaction, const char *attackerHorde, cons
 		{
 			if (Object *victim = a.logic.findObjectByID(wId))
 			{
-				victim->kill(DEATH_NORMAL);
+				victim->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 				attackedWorker = true;
 			}
 		}

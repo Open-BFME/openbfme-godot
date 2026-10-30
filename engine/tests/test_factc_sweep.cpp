@@ -1132,7 +1132,7 @@ HeroResult runHero(HudRig &h, Object *keep, int index)
 		return r;
 	}
 	h.frames(20);
-	hero->kill(DEATH_NORMAL);
+	hero->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	h.frames(60);
 	if (liveHero(logic, h.rig.local, r.hero))
 	{

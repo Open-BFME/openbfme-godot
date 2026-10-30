@@ -269,7 +269,7 @@ TEST_CASE("emotions: the SCARY / HERO list loses a dead member by swapping the l
 	Object *b = f.at("Champion", "Bob", 200.0f, 100.0f);
 	Object *c = f.at("Troll", "Bob", 300.0f, 100.0f);
 	CHECK(f.logic->emotions().scaryOrHeroes() == std::vector<ObjectID>{ a->getID(), b->getID(), c->getID() });
-	a->kill(0);
+	a->kill(DAMAGE_UNRESISTABLE, 0);
 	CHECK(f.logic->emotions().scaryOrHeroes() == std::vector<ObjectID>{ c->getID(), b->getID() });
 	Object *s = f.at("Scared", "Alice", 900.0f, 900.0f);
 	f.frames(1);

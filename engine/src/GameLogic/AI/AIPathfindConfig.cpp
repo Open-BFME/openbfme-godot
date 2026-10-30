@@ -3,10 +3,11 @@
 
 #include "GameLogic/AI/AIPathfindConfig.h"
 
+#include "GameLogic/GameLogic.h"
+
 #include "Common/ArchiveFileSystem.h"
 #include "Common/BfmeGame.h"
 #include "Common/AsciiString.h"
-#include "Common/INI/HostRealText.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -86,24 +87,6 @@ bool getBool(const Values &v, const char *key, bool &out, const char *file, std:
 	return false;
 }
 
-bool getFloat(const Values &v, const char *key, float &out, const char *file, std::string *error)
-{
-	auto it = v.kv.find(AsciiStringUtil::lowered(key));
-	if (it == v.kv.end())
-	{
-		if (error) *error = std::string(file) + ": key " + key + " not found";
-		return false;
-	}
-	char *end = nullptr;
-	const float f = strtofPortable(it->second.c_str(), &end);
-	if (end == it->second.c_str())
-	{
-		if (error) *error = std::string(file) + ": " + key + " is not a number: '" + it->second + "'";
-		return false;
-	}
-	out = f;
-	return true;
-}
 } // namespace
 
 bool PathfindConfigLoader::scanBlock(const std::string &text, const std::string &blockName, std::string *error,
@@ -147,20 +130,27 @@ bool PathfindConfigLoader::scanBlock(const std::string &text, const std::string 
 	return true;
 }
 
+void PathfindConfigLoader::applyAIData(const GameLogicSettings &s, PathfindConfig &c, bool bfme1)
+{
+	c.wadeWaterDepth = s.wadeWaterDepth;
+	// BFME1's AIData has no DeepWaterDepth row (Open-BFME-1 ai.cpp field table): no deep water class
+	c.deepWaterDepth = bfme1 ? std::numeric_limits<float>::max() : s.deepWaterDepth;
+	c.hordesWaitForHordes = s.hordesWaitForHordes;
+	c.meleeApproachTolerance = s.meleeApproachTolerance; // lane PHYS-1: AIData +0x90 (row RW 0xC1CDB0)
+	c.meleeApproachDist = s.meleeApproachDist; // lane PHYS-1: AIData +0x94 (row RW 0xC1CDC0)
+	c.castleSiegeStandBackDistance = s.castleSiegeStandBackDistance; // lane PHYS-1: AIData +0xD4 (row RW 0xC1CF00)
+	c.attackUsesLineOfSight = s.attackUsesLineOfSight; // lane ATTACKPATH-1: AIData +0x67 (row RW 0xC1CCA0)
+}
+
 bool PathfindConfigLoader::load(ArchiveFileSystem &fs, PathfindConfig &out, std::string *error)
 {
 	std::string text, err;
-	Values ai;
-	// default\aidata.ini then aidata.ini (the second one overrides key by key; its AIData block may be empty)
-	if (!readText(fs, "data\\ini\\default\\aidata.ini", text, error) || !scanBlock(text, "AIData", &err, collect, &ai))
+	// lane AIDATA-1: the AIData fields through the shared AIData table (GameLogicSettingsLoader: default\aidata.ini then aidata.ini, macros, nested blocks,
+	// the constructor's value for a field the files leave out)
+	GameLogicSettings ai;
+	if (!GameLogicSettingsLoader::loadAIData(fs, ai, error))
 	{
-		if (error && error->empty()) *error = "data\\ini\\default\\aidata.ini: " + err;
 		return false;
-	}
-	if (readText(fs, "data\\ini\\aidata.ini", text, nullptr))
-	{
-		std::string e2;
-		scanBlock(text, "AIData", &e2, collect, &ai); // a missing block here is not an error: the file only overrides
 	}
 	Values gd;
 	if (!readText(fs, "data\\ini\\gamedata.ini", text, error) || !scanBlock(text, "GameData", &err, collect, &gd))
@@ -170,15 +160,7 @@ bool PathfindConfigLoader::load(ArchiveFileSystem &fs, PathfindConfig &out, std:
 	}
 	PathfindConfig c;
 	const bool bfme1 = isBfme1Data(fs);
-	if (!getFloat(ai, "WadeWaterDepth", c.wadeWaterDepth, "aidata.ini", error)) return false;
-	if (bfme1)
-		c.deepWaterDepth = std::numeric_limits<float>::max(); // BFME1's AIData has no DeepWaterDepth row (Open-BFME-1 ai.cpp field table): no deep water class
-	else if (!getFloat(ai, "DeepWaterDepth", c.deepWaterDepth, "aidata.ini", error)) return false;
-	if (!getBool(ai, "HordesWaitForHordes", c.hordesWaitForHordes, "aidata.ini", error)) return false;
-	if (!getFloat(ai, "MeleeApproachTolerance", c.meleeApproachTolerance, "aidata.ini", error)) return false; // lane PHYS-1: AIData +0x90 (row RW 0xC1CDB0)
-	if (!getFloat(ai, "MeleeApproachDist", c.meleeApproachDist, "aidata.ini", error)) return false; // lane PHYS-1: AIData +0x94 (row RW 0xC1CDC0) // lane PHYS-1: AIData +0xB9 (row RW 0xC1CE40)
-	if (!getFloat(ai, "CastleSiegeStandBackDistance", c.castleSiegeStandBackDistance, "aidata.ini", error)) return false; // lane PHYS-1: AIData +0xD4 (row RW 0xC1CF00)
-	if (!getBool(ai, "AttackUsesLineOfSight", c.attackUsesLineOfSight, "aidata.ini", error)) return false; // lane ATTACKPATH-1: AIData +0x67 (row RW 0xC1CCA0)
+	applyAIData(ai, c, bfme1);
 	if (bfme1)
 	{
 		// BFME1's pathfinder compiles its search budgets in; BFME2 moved them to GameData MaxCells* (none of which BFME1's gamedata.ini has).

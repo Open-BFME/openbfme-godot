@@ -40,8 +40,7 @@ namespace
 const char *const kStopAI =
 	"S-220 AIWorld reads the movement data of a template (Geometry*, FenceWidth, PathfindDiameter, SlopeLimitIndex, CanPathThroughGates, CrusherLevel, CrushableLevel) from the "
 	"raw field slots and LocomotorSet through the real RW parser over the raw blocks; canCrushOrSquish is crusher level above crushable level (RW 0x68D524 not read); the "
-	"collision pass is a circle overlap over a 10-unit grid of the AI units (the partition and collision managers of RW 0x62E93B are not ported, S-142); the unit's "
-	"veterancy level is 0 (no experience tracker)";
+	"collision pass is a circle overlap over a 10-unit grid of the AI units (the partition and collision managers of RW 0x62E93B are not ported, S-142)";
 // lane PHYS-1: what the overlap pass is not (RW's collision manager), noted when the pass meets its first pair
 const char *const kStopCollisionManager =
 	"[S-780] collision: the contact pairs are a circle overlap of the AI units' bounding circles (RotWK: the collision manager RW 0xDE4360, vtable 0xD0BF08, update "
@@ -1075,7 +1074,7 @@ static void notifyPathHasInvalidPortals(AIWorld &world, AIUpdateInterface &ai)
 	{
 		if (!obj.isKindOfName("HORDE"))
 		{
-			obj.kill(0); // RW 0x668D6A: kill(8, 0)
+			obj.kill(DAMAGE_UNRESISTABLE, 0); // RW 0x668D6E: kill(8, 0)
 			return;
 		}
 		world.pathfinder().noteStop(pathstops::kPortalLostHorde);

@@ -352,3 +352,34 @@ TEST_CASE("move: the collision pass finds overlapping units whatever their size 
 	mw.ai->processCollisions();
 	CHECK(mw.ai->collisionPairsLastFrame() == 2);
 }
+
+TEST_CASE("move: allied clearing animates the displaced unit and clears the animation on arrival or interruption")
+{
+	for (bool interrupt : {false, true})
+	{
+		CAPTURE(interrupt);
+		MoveWorld mw;
+		mw.buildMap();
+		Object *requester = mw.spawn("Walker", 405, 505);
+		Object *unit = mw.spawn("Walker", 425, 505);
+		mw.frames(2);
+		auto *ai = mw.aiOf(unit);
+		const int moving = AIUpdateInterface::modelConditionBit("MOVING");
+		CHECK_FALSE(unit->testModelCondition(moving));
+		const Coord3D start = *unit->getPosition();
+		ai->aiMoveAwayFromUnit(requester, *requester->getPosition(), CMD_FROM_AI);
+		bool animatedDisplacement = false;
+		for (int frame = 0; frame < 60; ++frame)
+		{
+			mw.frames(1);
+			if (unit->testModelCondition(moving) && dist2d(start, *unit->getPosition()) > 0)
+			{
+				animatedDisplacement = true;
+				if (interrupt) ai->aiIdle(CMD_FROM_PLAYER);
+			}
+		}
+		CHECK(animatedDisplacement);
+		CHECK(ai->isIdle());
+		CHECK_FALSE(unit->testModelCondition(moving));
+	}
+}

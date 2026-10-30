@@ -63,8 +63,22 @@ objects.
 
 - The game files must still be clean 2.01. A loose file in the RotWK install folder that would override a game archive while a mod is
   loaded is refused: move it into the mod folder.
-- The mod is fingerprinted when it is loaded: every archive and every loose file, by name, size and MD5. Lobbies and replays compare that
-  fingerprint, so everyone in a game has the same mod. Editing a mod file while the game runs is an error; restart instead.
+- The mod is fingerprinted when it is loaded: every archive and every loose file, by name, size and MD5. Editing a mod file while the game
+  runs is an error; restart instead.
+- **What has to match to play together (profile 3, lane PROFILE-3).** Lobbies, replays and saves compare what the simulation reads: every
+  file under `data\ini\`, `data\scripts\`, `bases\` (the AI's base layouts) and `libraries\` (the AI's script libraries), every
+  file in a map's folder except its pictures and strings (the map, `map.ini`, `scripts.lua` ...), and every model under `art\w3d\`, as
+  the game resolves them with the mod loaded. A test traces every file a retail game and a mod game read and fails on any file outside
+  that list. On top of that they compare the mod's sim scripts (`sdk sim`, below) and its engine
+  features. The mod's name, its folder and its other files (textures, sounds, music, videos, strings, the menus' and HUD's art: Apt
+  files) don't count. Command buttons and command sets are in `data\ini\` and do count.
+  - Two players with differently named copies of the same mod play together.
+  - A player with a mod that changes only textures, sounds, music, videos, strings or the menus' and HUD's art plays with a player without it.
+  - A mod that changes a model (`art\w3d\*.w3d`) has to match, even if it only changes how the model looks: the simulation reads models
+    (a projectile's launch bone, a wall's footprint). Such a player plays only with players who have the same model files. Asset packs
+    (below) are the way to change how a model looks without this.
+  When the game data differ, the refusal names both players' mods and the archives that differ. The mod's name and fingerprint still travel in the LAN
+  START, the replay and the checker's report.
 
 ## One-click mods in the launcher (lane MODS-3)
 
@@ -155,12 +169,16 @@ button. `--asset-packs`, `--asset-pack-on=<name>` and `--asset-pack-off=<name>` 
 - **Which file wins.** The base game, then `--mod-install`, then `-mod`, then the asset packs. A pack draws over a mod's file of the same
   name too, and is checked against the mod's model. Packs load in folder-name order, then the `--asset-pack` ones, and the later pack
   wins. One pack holding two files for the same asset is an error that names both.
-- **Offline only for now (lane SDK-1b).** Skirmish and campaign games use the packs. LAN and online games don't: every player sees the
-  game's own models and textures, and the start log says so ("GAME asset packs: not used in this LAN / online game"). The checks that
-  will let packs into online games, so that a pack cannot change what one player sees and another does not, come next. A pack may hold
-  only models, textures and its own text (`.txt`, `.md`, `README`, `LICENSE`); any other file (INI, scripts, maps, archives, sounds,
-  programs) refuses the whole pack with a message, because game data belongs in a mod. Only drawing reads the packs: the game logic
-  keeps reading the original files, and packs never enter the mod fingerprint the lobby and the replays compare.
+- **Online is permissive (lane SDK-1c, the owner's choice, 2026-10-27).** Every game uses your packs, LAN and online too, and other
+  players may use different packs or none. Packs only change what is drawn: the simulation never reads them, so players with different
+  packs stay in lockstep. There is no allowlist and no review: the only files left out are the ones that would break the game itself, a
+  model that does not fit the skeleton (above) and a file that cannot be read, and the start log and the launcher's card name them
+  ("26 models not used ...", with the reasons behind Details; written to `asset-packs/report.json` at every start). The honest limit:
+  a pack can change what one player sees and another does not. Since profile 3 the game's record carries one line per pack in use
+  (`pack <name> <files> <sha256>`, in the LAN START and the replay; the replay checker reports packs that differ). These lines never
+  refuse a game. They keep honest players honest; they don't catch a renderer cheat. A modified client can draw whatever it likes, and the replay checker sees what a client plays (the game
+  state), not what it draws. A pack may hold only models, textures and its own text (`.txt`, `.md`, `README`, `LICENSE`); any other file
+  refuses the whole pack. Only drawing reads the packs, and the game logic keeps reading the original files.
 - **From a mod's HD archive.** `python3 tools/mod/asset_pack_from_big.py <archive.big> <new folder>` copies the models and textures of
   an archive into a pack and lists what it leaves out. For example, the All In One launcher's *RotWK 2.02 HD Edition* gives 503 models
   and 466 textures. Over the original 2.01 game, 477 of its models fit. The other 26 are its redesigned citadel, statues and barracks
@@ -168,7 +186,7 @@ button. `--asset-packs`, `--asset-pack-on=<name>` and `--asset-pack-off=<name>` 
 - Not replaced yet: terrain tile textures (they are cut into the map's texture atlas at the original size), UI (Apt) textures, and model
   formats other than W3D (glTF is planned, with automatic skeleton mapping and LODs).
 
-## Mod scripts in Luau (lane SDK-2, in progress)
+## Mod scripts in Luau (lanes SDK-2, SDK-2b)
 
 A `-mod` folder can carry Luau scripts in files retail never reads. Retail's own Lua scripting (`Scripts.lua`, `ScriptEvents.xml`) works
 as before. The scripts are loose files of the folder, never inside its archives:
@@ -186,6 +204,7 @@ as before. The scripts are loose files of the folder, never inside its archives:
   - **Presentation** scripts only draw, play sounds and show UI, so they may differ between players.
   - A script can only `require` modules of its own role.
 - **Events of a sim script:** each runs at the end of a logic frame, in this order:
+  - `onGameLoaded()` once in a game loaded from a save (see below);
   - `onGameStart()` once;
   - `onObjectCreated(id, template, player)` and `onObjectDestroyed(id, template, player)` for the objects of that frame;
   - `onFrame(frame)` every frame.
@@ -195,13 +214,25 @@ as before. The scripts are loose files of the folder, never inside its archives:
 - **Presentation scripts** get the same events after the sim scripts, a read-only `game` (no `addMoney`; plus `game.localPlayer()`, the
   player this machine plays) and `ui.banner(text)`, a message centred near the top of the screen for a few seconds. They use their own `math.random`, never
   change the game, and an error stops only them.
-- **Sample:** `tools/sdk/samples/income-banner` is a complete mod folder: every player gets 250 resources every 10 seconds, and a
-  banner announces each payday (`openbfme -- -mod "<path>/tools/sdk/samples/income-banner"`).
+- **Sample:** `tools/sdk/samples/income-banner` is a complete mod folder: every player gets 250 resources every 10 seconds, a
+  banner announces each payday, and the count of paydays is kept in `sdk.state` across saves (`openbfme -- -mod "<path>/tools/sdk/samples/income-banner"`).
 - **Sandbox.** There is no `os`, `io`, `debug`, `getfenv` / `setfenv`, `loadstring` or `collectgarbage`, and the globals are
   read-only. `sdk.read('path')` reads a file of the mod folder and nothing outside it. There is no network.
 - **Limits.** A call into a script runs at most a fixed number of VM steps (counted by the VM, so the same on every machine), and a
   script's memory is capped. A script that goes over a limit or raises an error stops that mod's scripts with a message naming the
   mod, at the same frame for every player. A broken manifest, or a script that does not load, stops the game from starting.
+- **Saves (lane SDK-2b).** A game with sim scripts saves. **`sdk.state` is the only thing of a script that survives a save.** It is a
+  table the sim scripts fill in place (the table itself can't be replaced). It holds booleans, numbers (not NaN), strings, and tables of
+  them keyed by strings or whole numbers. Each table appears once, with no metatable, at most 16 tables deep and 64 KB in all. A loaded
+  game starts the scripts afresh: their top level runs again, `sdk.state` comes back as it was saved, and `onGameLoaded()` runs before
+  anything else, so a script can rebuild its other variables from `sdk.state` there. Its local and global variables start as their
+  top level sets them.
+  - Because a top level runs again on every load, it may not change the game. `game.addMoney`, `math.random` and a write to
+    `sdk.state` there are an error that stops the game from starting, the same on every machine. Change the game from an event,
+    including `onGameLoaded`; a module required from an event keeps the same rule for its own top level.
+  - `sdk.state` joins the game's state hash at the end of every frame, so players whose scripts kept different state desync. A value it
+    can't hold (a function, a table twice ...) stops the mod's scripts at that frame with the path named, for every player.
+  - A save made with other sim scripts is refused on load, quoting both `sdk sim` lines.
 - **Online, replays and saves.** The sim scripts are one line of the mod's identity, `sdk sim <sha256>`: every file below
   `openbfme/sdk/sim/` with its own SHA-256, then the manifest's sim entries and the SDK version. Players whose sim scripts differ do not start a game together, and a replay or a save made with
   other sim scripts is refused; both messages quote that line. Presentation scripts are not part of the identity at all.

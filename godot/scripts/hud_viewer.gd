@@ -72,6 +72,10 @@
 ##                           cycles with `perf stat` (written to <prefix>-<segment>-main.txt / -all.txt) and prints PERF3 STAT per render frame (the work
 ##                           per frame, which a loaded machine does not change, unlike the frame time)
 ##   --fx-frames=<n>         (fx_battle) the render frames to run at most (default 2400); --fx-speed=<f> the logic speed (default 1.0)
+##   --scenario=occlude1     (lane OCCLUDE-1) the behind-building markers: our --oc-building (default MenFortressCitadel) at --m2-from, our --oc-horde (default
+##                           GondorFighterHorde) marching across behind it (--oc-behind=<d> world units beyond it, default 160) and back; the camera fixed at
+##                           --s2-height. The first pass with the markers on (GameData UseBehindBuildingMarker), then script action OPTIONS_SET_OCCLUSION_MODE 0 turns
+##                           them off for the way back. --bench-seconds per pass (default 8); saves occlude1-on.png / occlude1-off.png in --shots
 extends Node3D
 
 var _map_name := "map mp fall back 4p"
@@ -123,6 +127,9 @@ var _m3_same := "GondorFighterHorde"
 var _m3_barracks := "GondorBarracks"  # lane MOVE-3 r2: --m3-barracks=<Template> the producer of the first scene, --m3-prod=<Template> the two hordes it makes,
 var _m3_prod := "GondorFighterHorde"  # --m3-cp-source=<Template> a building made far off for their command points
 var _m3_cp_source := "MenFortressCitadel"
+var _oc_building := "MenFortressCitadel" # lane OCCLUDE-1: --oc-building / --oc-horde / --oc-behind (scenario occlude1)
+var _oc_horde := "GondorFighterHorde"
+var _oc_behind := 160.0
 var _m2_fixed_camera := false          # lane MOVE-2: --m2-fixed-camera the camera stays where it starts (the frame pacing of the units alone)
 var _s2_follow := -1    # lane SMOOTH-3: --s2-follow=<n> the camera follows the members of the n-th --spawn only (default: all of ours)
 var _logic_thread := true   # lane SMOOTH-1: --logic-thread=on|off (the logic worker, S-810, or the main-thread fallback)
@@ -247,6 +254,12 @@ func _ready() -> void:
 			_s2_follow = int(arg.substr(12))
 		elif arg == "--m2-fixed-camera":
 			_m2_fixed_camera = true
+		elif arg.begins_with("--oc-building="):
+			_oc_building = arg.substr(14)
+		elif arg.begins_with("--oc-horde="):
+			_oc_horde = arg.substr(11)
+		elif arg.begins_with("--oc-behind="):
+			_oc_behind = float(arg.substr(12))
 		elif arg.begins_with("--m3-a="):
 			_m3_a = arg.substr(7)
 		elif arg.begins_with("--m3-b="):
@@ -347,7 +360,7 @@ func _ready() -> void:
 		slots.append({"player": "Player_3", "faction": _army_factions[3], "human": false, "team": 0, "start_index": 2})
 		slots.append({"player": "Player_4", "faction": _army_factions[4], "human": false, "team": 1, "start_index": 3})
 	# lane BACKLOG3: the proof scenarios run a script action and a hit through the test hooks
-	var rep: Dictionary = _world.load_map(_map_name, {"slots": slots, "seed": 4711, "logic_thread": _logic_thread, "test_hooks": _scenario.begins_with("backlog3")})
+	var rep: Dictionary = _world.load_map(_map_name, {"slots": slots, "seed": 4711, "logic_thread": _logic_thread, "test_hooks": _scenario.begins_with("backlog3") or _scenario == "occlude1"})
 	if not rep.ok:
 		_fail("load_map failed: %s" % [rep.errors.slice(0, 5)])
 		return
@@ -1769,6 +1782,8 @@ func _run_scenario() -> void:
 			await _move2()
 		"move3":
 			await _move3()
+		"occlude1":
+			await _occlude1(shots)
 		"fx_battle":
 			await _fx_battle(shots)
 		"phys1_melee":
@@ -2234,6 +2249,45 @@ func _smooth2_segment(label: String, csv: FileAccess) -> void:
 # lane MOVE-2 (FEEDBACK-1 F4): the slot-distance test's march (engine/tests/test_move2_slot_distance.cpp) drawn: every --m2-horde side by side 110 apart at
 # --m2-from, each ordered on its own to --m2-to (offset sideways as it started), then left standing; the camera follows the members' drawn centre from
 # --s2-height. Every 2 s it prints MOVE2 SPREAD: per horde the largest distance of a member from its horde object (a lost member stays far behind).
+# lane OCCLUDE-1: a horde walks behind a building and back; the markers on, then off through script action 298 (OPTIONS_SET_OCCLUSION_MODE)
+func _occlude1(shots: String) -> void:
+	var c := _m2_from
+	var building: int = _world.create_object(_oc_building, _local_index, c.x, c.y, 0.0)
+	if building <= 0:
+		_fail("occlude1: cannot create " + _oc_building)
+		return
+	var a := c + Vector2(-300.0, _oc_behind)
+	var b := c + Vector2(300.0, _oc_behind)
+	var horde: int = _world.create_object(_oc_horde, _local_index, a.x, a.y, 0.0)
+	if horde <= 0:
+		_fail("occlude1: cannot create " + _oc_horde)
+		return
+	_cam_target = c
+	_cam_height = _s2_height
+	_place_camera()
+	await _frames(20)
+	for pass_index in 2:
+		var on := pass_index == 0
+		if not on:
+			var r: Dictionary = _world.debug_script_action("OPTIONS_SET_OCCLUSION_MODE", [{"type": 8, "int": 0}])
+			if not r.get("ok", false):
+				_fail("occlude1: OPTIONS_SET_OCCLUSION_MODE: %s" % [r])
+				return
+		_caption = "Behind-building markers ON (GameData UseBehindBuildingMarker)" if on else "Markers OFF (script action OPTIONS_SET_OCCLUSION_MODE 0)"
+		var to := b if on else a
+		_world.order_move([horde], to.x, to.y, {})
+		var t := 0.0
+		var shot_taken := false
+		while t < _bench_seconds:
+			await get_tree().process_frame
+			t += get_process_delta_time()
+			if not shot_taken and t >= _bench_seconds * 0.5 and not shots.is_empty():
+				_save(shots.path_join("occlude1-on.png" if on else "occlude1-off.png"))
+				shot_taken = true
+		print("OCCLUDE1 pass %s done" % ("on" if on else "off"))
+	print("OCCLUDE1 DONE")
+
+
 func _move2() -> void:
 	if _m2_hordes.is_empty():
 		_fail("move2 needs --m2-horde objects")

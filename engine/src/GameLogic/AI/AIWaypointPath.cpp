@@ -14,13 +14,15 @@
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/AI/AIXfer.h"
+#include "GameLogic/ScriptEngine/ScriptActions.h"
+#include "Common/Player.h"
 #include "GameLogic/SimMath.h"
 
 const char *waypointPathStopLine()
 {
 	return "[S-1189] AI waypoint paths (RW 0xC28F90 states 2 .. 5): a team's formation offsets are ported (lane BACKLOG-8: RW 0x94FCBA through RW 0x771E7D "
-		   "and the state's group offset); a team without a formation keeps no offset from its group's centre, a human team's group-radius arrival, the "
-		   "SHIP water path (state 0x49) and the attack-follow states are not ported; the internal move is the port's AIMoveToState";
+		   "and the state's group offset); a team without a formation keeps no offset from its group's centre, the AI group of a skirmish team's arrival test "
+		   "keeps no group id or membership (lane AIDATA-1 ported the test), the SHIP water path (state 0x49) and the attack-follow states are not ported; the internal move is the port's AIMoveToState";
 }
 
 AIFollowWaypointPathState::AIFollowWaypointPathState(AIStateMachine &m, bool asTeam, bool exact)
@@ -133,7 +135,11 @@ StateReturnType AIFollowWaypointPathState::update()
 	{
 		return STATE_FAILURE;
 	}
-	const StateReturnType moved = m_move->update();
+	StateReturnType moved = m_move->update();
+	if (m_asTeam && team && skirmishTeamCloseEnough(*team))
+	{
+		moved = STATE_SUCCESS; // RW 0x755C08: or [ebp-4], -1
+	}
 	if (moved != STATE_SUCCESS && moved != STATE_FAILURE)
 	{
 		return STATE_CONTINUE;
@@ -152,6 +158,63 @@ StateReturnType AIFollowWaypointPathState::update()
 	}
 	const StateReturnType r = startMove();
 	return r == STATE_FAILURE ? STATE_FAILURE : STATE_CONTINUE;
+}
+
+bool AIFollowWaypointPathState::skirmishTeamCloseEnough(Team &team)
+{
+	// lane AIDATA-1, RW 0x755B77 .. 0x755C08 (BFME2 decomp AIStatesDerivedOnExit_ComputeGoal_ComputeGoal.cpp AIFollowWaypointPathState::update, the
+	// m_moveAsGroup block): the controlling player (RW 0x68B678) has a skirmish AI (RW 0x6AA5B3: Player + 0x2FC's vslot 0x2C, AISkirmishPlayer; the port's
+	// Player::isSkirmishAI, ZH Player::initFromDict's AISkirmishPlayer / AIPlayer choice)
+	const Player *player = owner().getControllingPlayer();
+	if (!player || !player->isSkirmishAI())
+	{
+		return false;
+	}
+	// TheAI->createGroup (RW 0x70042A) filled by Team::getTeamAsAIGroup (RW 0x7A3D3D); INFERENCE (S-1189): the port keeps no AI group list, group ids or an
+	// object's group membership, so the new group is the member list alone
+	const std::vector<Object *> members = ScriptActions::teamAIGroup(team);
+	// AIGroup::getCenter RW 0x76EDA7 (SSE): the members that are not held (Object + 0x1C8 bit 3), mobile (RW 0x690E97) and have an AI; with none of them, every
+	// member that is not held; the sums times 1.0f / count (no member: 1 / 0 and a NaN centre, which fails the compare below)
+	Coord3D center{ 0.0f, 0.0f, 0.0f };
+	int counted = 0;
+	const auto held = [](const Object &o) { return (o.getDisabledMask() & (1u << DISABLED_HELD)) != 0; };
+	for (const Object *o : members)
+	{
+		if (held(*o) || !GarrisonRules::isMobile(*o) || !o->getAIUpdateInterface())
+		{
+			continue;
+		}
+		center.x = SimMath::addf32(center.x, o->getPosition()->x);
+		center.y = SimMath::addf32(o->getPosition()->y, center.y);
+		center.z = SimMath::addf32(o->getPosition()->z, center.z);
+		++counted;
+	}
+	if (counted == 0)
+	{
+		for (const Object *o : members)
+		{
+			if (held(*o))
+			{
+				continue;
+			}
+			center.x = SimMath::addf32(o->getPosition()->x, center.x);
+			center.y = SimMath::addf32(o->getPosition()->y, center.y);
+			center.z = SimMath::addf32(o->getPosition()->z, center.z);
+			++counted;
+		}
+	}
+	const float scale = SimMath::divf32(1.0f, (float)counted);
+	center.x = SimMath::mulf32(scale, center.x);
+	center.y = SimMath::mulf32(scale, center.y);
+	// the offset to the state's goal position (+ 0x20 / + 0x24: the waypoint plus the group offset, as the internal move holds it), z = 0
+	const Coord3D &goal = m_move->goal();
+	const float dx = SimMath::subf32(center.x, goal.x);
+	const float dy = SimMath::subf32(center.y, goal.y);
+	// Coord3D::length RW 0x403111 (its PC24 root stays in ST0), then fild count, fmul AIData + 0x58 (SkirmishGroupFudgeDistance) under PC24, fcomip: reached
+	// unless the product is below the length (a NaN length is unordered: not reached)
+	const double length = SimMath::sqrtPC24((double)SimMath::sumSquares3(dx, dy, 0.0f));
+	const double limit = SimMath::pc24MulW((double)(int)members.size(), (double)owner().logic().settings().skirmishGroupFudgeDistance);
+	return limit >= length;
 }
 
 void AIFollowWaypointPathState::onExit(StateExitType)

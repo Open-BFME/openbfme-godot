@@ -50,7 +50,7 @@ TEST_CASE("combat ai: an attack order on an ally, on a dead object or by a unit 
 	CHECK(a->getAIUpdateInterface()->aiForceAttackObject(ally, CMD_FROM_PLAYER));       // unless the player forces it
 	a->getAIUpdateInterface()->aiIdle(CMD_FROM_PLAYER);
 	CHECK_FALSE(unarmed->getAIUpdateInterface()->aiAttackObject(enemy, CMD_FROM_PLAYER)); // no weapon
-	enemy->kill(DEATH_NORMAL);
+	enemy->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	CHECK_FALSE(a->getAIUpdateInterface()->aiAttackObject(enemy, CMD_FROM_PLAYER));       // already dead
 	CHECK(a->getAIUpdateInterface()->isIdle());
 }
@@ -200,7 +200,7 @@ TEST_CASE("combat ai: when the victim is killed by somebody else the attacker go
 	w.frames(2);
 	a->getAIUpdateInterface()->aiAttackObject(v, CMD_FROM_PLAYER);
 	w.frames(3);
-	v->kill(DEATH_NORMAL);
+	v->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	w.frames(3);
 	CHECK(a->getAIUpdateInterface()->isIdle());
 	CHECK(a->getAIUpdateInterface()->currentVictimId() == INVALID_ID);
@@ -216,7 +216,7 @@ TEST_CASE("combat ai: a dead unit's AI stops, it takes no orders and its footpri
 	CHECK(w.inPathfinder(id));
 	a->getAIUpdateInterface()->aiMoveToPosition(Coord3D{ 500.0f, 300.0f, 0.0f }, CMD_FROM_PLAYER);
 	w.frames(3);
-	a->kill(DEATH_NORMAL);
+	a->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	REQUIRE(a->isEffectivelyDead());
 	CHECK(a->getAIUpdateInterface()->isAiInDeadState());
 	CHECK_FALSE(w.inPathfinder(id));

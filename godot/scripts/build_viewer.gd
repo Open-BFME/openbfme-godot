@@ -192,6 +192,11 @@ func _fail(message: String) -> void:
 	get_tree().quit(1)
 
 
+func _exit_tree() -> void:
+	if _sun != null:
+		load("res://scripts/object_shadows.gd").disable()
+
+
 func _apply_lighting(rep: Dictionary) -> void:
 	if not rep.has("lighting"):
 		return
@@ -200,7 +205,7 @@ func _apply_lighting(rep: Dictionary) -> void:
 	_env.environment.ambient_light_energy = 1.0
 	_sun = DirectionalLight3D.new()
 	_sun.light_color = lit.diffuse
-	_sun.shadow_enabled = false
+	load("res://scripts/object_shadows.gd").configure(_sun, lit)
 	var dir: Vector3 = lit.direction
 	if dir.length() > 0.0001:
 		_sun.transform = Transform3D(Basis.looking_at(dir.normalized(), Vector3.UP if absf(dir.normalized().y) < 0.99 else Vector3.RIGHT), Vector3.ZERO)

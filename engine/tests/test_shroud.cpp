@@ -296,6 +296,62 @@ TEST_CASE("shroud objects: the status of an object for a player (RW 0xB4E890) an
 	CHECK(f.shroud.getCellStatus(alice, 2, 2) == CELLSHROUD_FOGGED);
 }
 
+TEST_CASE("shroud objects (PORTERFOG-1): a contain's world exit keeps the record and only stops the look (RW 0x68C18F -> 0xB4E2A0, RW 0x694A45); the "
+		  "entry keeps it (RW 0x68E31F); the destructor frees it out of the world (RW 0x69A8BC -> 0xB4F510); no record answers CLEAR (RW 0x68D8F7)")
+{
+	Fx f;
+	const int alice = f.idx("Alice"), bob = f.idx("Bob");
+	Object *scout = f.place("Scout", "Alice", 420.0f, 420.0f);
+	Object *porter = f.place("Scout", "Bob", 500.0f, 420.0f); // cell (12, 10): inside the scout's look; its own look clears (12 +- 3, 10) for Bob
+	f.shroud.update();
+	const size_t records = f.shroud.recordCount();
+	CHECK(f.shroud.getCellStatus(bob, 15, 10) == CELLSHROUD_CLEAR);
+	CHECK(f.shroud.getObjectStatus(*porter, alice) == OBJECTSHROUD_CLEAR);
+	// the porter hides in its site (DozerAIUpdate::hideInStructure RW 0x88C51B -> RW 0x68C18F): the record stays, dirty and forced
+	f.logic->friend_containLeaveWorld(*porter);
+	CHECK_FALSE(porter->isInWorld());
+	CHECK(f.shroud.hasRecord(*porter));
+	CHECK(f.shroud.recordCount() == records);
+	CHECK(f.shroud.dirtyCount() == 1);
+	// the forced re-look asks RW 0x694A45, which answers radii -1 out of the world: the last look is queued off and Bob's cells fog after the unlook delay
+	for (int i = 0; i < 3; ++i)
+	{
+		f.shroud.update();
+	}
+	CHECK(f.shroud.getCellStatus(bob, 15, 10) == CELLSHROUD_FOGGED);
+	CHECK(f.shroud.pendingUnlooks() == 0);
+	// it still covers its cells: Alice sees it while she sees them, and a mobile enemy in her fog is hidden (RW 0x68EDD0)
+	CHECK(f.shroud.getObjectStatus(*porter, alice) == OBJECTSHROUD_CLEAR);
+	Coord3D away{ 100.0f, 100.0f, 0.0f };
+	scout->setPosition(&away);
+	for (int i = 0; i < 3; ++i)
+	{
+		f.shroud.update();
+	}
+	CHECK(f.shroud.getCellStatus(alice, 12, 10) == CELLSHROUD_FOGGED);
+	CHECK(f.shroud.getObjectStatus(*porter, alice) == OBJECTSHROUD_SHROUDED);
+	CHECK(f.shroud.clientObjectStatus(*porter, alice) == OBJECTSHROUD_SHROUDED);
+	// back in the world (RW 0x88D6AE -> RW 0x68E31F): the same record, the look returns
+	f.logic->friend_containEnterWorld(*porter);
+	CHECK(f.shroud.recordCount() == records);
+	f.shroud.update();
+	CHECK(f.shroud.getCellStatus(bob, 15, 10) == CELLSHROUD_CLEAR);
+	// out of the world again, then destroyed there: the destructor frees the record (no leak)
+	f.logic->friend_containLeaveWorld(*porter);
+	f.shroud.update();
+	f.logic->destroyObject(porter);
+	f.logic->processDestroyList();
+	CHECK(f.shroud.recordCount() == records - 1);
+	CHECK(f.shroud.dirtyCount() == 0);
+	// an object without a record (here: the manager detached before it was made) presents CLEAR, not 0
+	f.shroud.detach();
+	Object *late = f.place("Blind", "Bob", 700.0f, 420.0f);
+	f.shroud.attach();
+	CHECK_FALSE(f.shroud.hasRecord(*late));
+	CHECK(f.shroud.getObjectStatus(*late, alice) == OBJECTSHROUD_CLEAR);
+	CHECK(f.shroud.clientObjectStatus(*late, alice) == OBJECTSHROUD_CLEAR);
+}
+
 TEST_CASE("shroud hash: two identical runs agree, one extra look moves the hash, the logic's state hash includes the shroud")
 {
 	auto run = [](bool extra) {

@@ -65,7 +65,7 @@ int64_t GameWorld::set_stance(const Array &ids, int64_t stance)
 		::Object *o = m_game->logic().findObjectByID((::ObjectID)(int64_t)ids[i]);
 		if (StancesBehavior *sb = o ? dynamic_cast<StancesBehavior *>(o->findModule("StancesBehavior")) : nullptr)
 		{
-			n += sb->setStance((StanceType)stance) ? 1 : 0;
+			n += sb->setStance((StanceType)stance, "GameWorld::set_stance") ? 1 : 0;
 		}
 	}
 	return n;

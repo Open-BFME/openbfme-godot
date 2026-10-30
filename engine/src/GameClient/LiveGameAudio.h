@@ -98,7 +98,8 @@ public:
 		size_t largeGroupMembers = 0;        ///< lane AUDIO-4: members held by the Sound blocks (a member counts once per block)
 		size_t largeGroupPlaying = 0;   ///< qualifying cells whose sound is queued or playing
 		size_t largeGroupQualified = 0; ///< cells above their thresholds (with or without a sound)
-		std::uint64_t evaDamaged = 0, evaDeaths = 0; ///< S-709: the Eva events the body watch reported
+		std::uint64_t evaDamaged = 0; ///< lane EVADAMAGE-1: the damage notices that picked an event for TheEva (DrawableManager::evaDamageStats().picked)
+		std::uint64_t evaDeaths = 0;  ///< S-709: the death events the watch reported
 		std::uint64_t battleAmbientTemplates = 0; ///< S-706: objects whose template has SoundAmbientBattle (not ported)
 		size_t ambientPlaying = 0;
 	};
@@ -128,8 +129,6 @@ private:
 	struct EvaWatch
 	{
 		bool known = false, dead = false;
-		float health = 0.0f;
-		unsigned damageFrame = 0xFFFFFFFFu; ///< ActiveBody::lastDamageFrame at the last watch
 	};
 	void evaWatch(const Object &o);
 	void largeGroupUpdate();

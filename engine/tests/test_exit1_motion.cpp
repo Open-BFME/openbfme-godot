@@ -357,7 +357,7 @@ TEST_CASE("idle1 retail: horde members turning where they stand end the frame wi
 	}
 	MESSAGE("member-frames turning on the spot " << probe.turned << " (with MOVING " << probe.turnedMoving << ", still the frame after outside the attack state " << probe.turnedMovingOutsideAttack << "); attacking " << probe.turnedAttacking << " ("
 										   << probe.turnedAttackingMoving << "); cavalry " << probe.turnedCavalry << " (" << probe.turnedCavalryMoving
-										   << "); members standing with MOVING for 5 frames " << probe.stillMovingStreaks << "; held by a back-up record (the pass skipping them): turns " << probe.turnedHeldByBackUp << ", standing frames with MOVING " << probe.framesHeldByBackUp << "; turned, then the horde walked: " << probe.turnedThenHordeMoved << "\n"
+										   << "); members standing with MOVING for 5 frames " << probe.stillMovingStreaks << "; held by a back-up record (the pass skipping them): turns " << probe.turnedHeldByBackUp << ", standing frames with MOVING " << probe.framesHeldByBackUp << "; held by the run-down and the leash: " << probe.framesHeldByRunDown << "; turned, then the horde walked: " << probe.turnedThenHordeMoved << "\n"
 										   << probe.samples.str());
 	// not vacuous: the game turns members on the spot, attacking ones (melee and the buildings' attackers) among them (the riders: test_idle1_turns.cpp)
 	CHECK(probe.turned >= 1000);
@@ -366,6 +366,8 @@ TEST_CASE("idle1 retail: horde members turning where they stand end the frame wi
 	// the attack's own aim turn (RW 0x75232F's vslot 0x21C, cleared by the aim's exit RW 0x74BEE7 with vslot 0x220 before the member update clears MOVING: it goes
 	// with the member's next update or its horde's pass, within the 5 frame rule below)
 	CHECK(probe.turnedMovingOutsideAttack == 0);
+	// lane IDLEMOTION-1: a member left behind while its horde runs a fleeing target down stands busy with MOVING, held by the run-down (RW 0x87631F) and the leash
+	// (RW 0x877B4F) until the run-down ends (test_hud_idlemotion1_retail.cpp): those frames are counted apart, as the back-up record's
 	CHECK(probe.stillMovingStreaks == 0);
 }
 

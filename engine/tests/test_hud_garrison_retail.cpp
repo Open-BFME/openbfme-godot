@@ -351,7 +351,7 @@ TEST_CASE("garrison retail: a destroyed tower ejects its garrison (EjectPassenge
 	const GarrisonRun r = garrisonAndFight(a, tower, archers, orcs, 5);
 	REQUIRE(r.framesToEnter > 0);
 	const size_t members = membersOf(*archers).size();
-	tower->kill(0);
+	tower->kill(DAMAGE_UNRESISTABLE, 0);
 	a.run(2);
 	CHECK(archers->getContainedBy() == nullptr);
 	CHECK(archers->isInWorld());
@@ -836,7 +836,7 @@ TEST_CASE("ring delivery retail: a battalion whose last approaching member dies 
 	for (size_t i = 0; i + 1 < members.size(); ++i)
 		REQUIRE(contain->addToContain(members[i]));
 	REQUIRE_FALSE(horde->allMembersEntered());
-	members.back()->kill(0);
+	members.back()->kill(DAMAGE_UNRESISTABLE, 0);
 	a.run(100);
 	CHECK(horde->allMembersEntered());
 	CHECK_FALSE(a.player(0)->hasUpgradeComplete("Upgrade_RingHero"));

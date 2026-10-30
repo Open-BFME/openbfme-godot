@@ -394,7 +394,7 @@ void killThroughMembers(::Object &o)
 	{
 		o.getBodyModule()->setIndestructible(false);
 	}
-	o.kill(DEATH_NORMAL);
+	o.kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 }
 } // namespace
 

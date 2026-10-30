@@ -427,7 +427,7 @@ TEST_CASE("garrison backlog: a destroyed keep searches its exit rally point arou
 	// in the kill's own random calls
 	a.logic.random().enableCallLog(true);
 	a.logic.random().clearCallLog();
-	tower->kill(0);
+	tower->kill(DAMAGE_UNRESISTABLE, 0);
 	a.run(2);
 	int searches = 0;
 	for (const GameLogicRandom::Call &c : a.logic.random().callLog())

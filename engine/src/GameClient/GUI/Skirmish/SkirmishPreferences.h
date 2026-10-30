@@ -26,8 +26,19 @@
 #include "GameClient/GUI/Skirmish/SkirmishSetup.h"
 #include "GameClient/OptionPreferences.h"
 
+#include <ctime>
 #include <string>
 #include <vector>
+
+struct GameRecord;
+struct SkirmishHonorsGame;
+
+namespace Bfme1SkirmishProfiles
+{
+bool create(SkirmishProfileStore &profiles, std::time_t created, std::string *error);
+bool recordGame(const SkirmishProfileStore &profiles, const SkirmishSetupSource &source, const GameRecord &record, std::string *error,
+	const SkirmishHonorsGame *game = nullptr);
+}
 
 class SkirmishPreferences : public SkirmishProfileStore
 {

@@ -426,37 +426,19 @@ void DozerAIUpdate::removeUnplacedStructure()
 
 bool DozerAIUpdate::placeUnplacedStructure()
 {
-	// RW 0x88D44F. The port's structure exists since the order (S-304), so the site's legality check (flags 0x15) is not repeated: the structure would overlap
-	// itself; what the placement changes on the object is ported: the health set to 1 (RW 0x88D53A: body vslot 0x84 with 1.0 - health)
-	const ObjectID id = m_unplacedStructure;
-	m_unplacedStructure = INVALID_ID;
-	Object *obj = getObject()->logic().findObjectByID(id);
+	// RW 0x88D44F (lane FBSIM-1: Construction::placePhantomStructure); a site no longer legal removes the structure (slot 0x6C, RW 0x88CFFE: the price back)
+	Object *obj = getObject()->logic().findObjectByID(m_unplacedStructure);
 	if (!obj || obj->isDestroyed())
 	{
+		m_unplacedStructure = INVALID_ID;
 		return true;
 	}
-	// lane TREES1: RW 0x88D4F4 .. 0x88D533: a structure that is neither NO_COLLIDE (template + 0x10B bit 6) nor DO_NOT_CLASSIFY (+ 0x11A bit 5) takes the site:
-	// clearRemovableForConstruction (RW 0x796576) and moveObjectsForConstruction (RW 0x797465) are not run here (S-304), then removeTreesForConstruction
-	// (RW 0x684BCA) with the structure's position, geometry and angle: the trees, shrubs and props under it go
-	static const int noCollide = ObjectTemplateInfoBuilder::kindOfIndex("NO_COLLIDE");
-	static const int doNotClassify = ObjectTemplateInfoBuilder::kindOfIndex("DO_NOT_CLASSIFY");
-	if (noCollide < 0 || doNotClassify < 0)
+	if (!Construction::placePhantomStructure(*getObject(), *obj))
 	{
-		throw std::logic_error("dozer placement: the KindOf names NO_COLLIDE / DO_NOT_CLASSIFY are not known");
+		removeUnplacedStructure();
+		return false;
 	}
-	if (!obj->isKindOf((unsigned)noCollide) && !obj->isKindOf((unsigned)doNotClassify))
-	{
-		const ThingTemplate &tt = *static_cast<const ThingTemplate *>(obj->getTemplate())->getFinalOverride();
-		obj->logic().trees().removeTreesForConstruction(*obj->getPosition(), ObjectGeometry::shapesOf(tt), obj->getOrientation());
-	}
-	if (ActiveBody *body = dynamic_cast<ActiveBody *>(obj->getBodyModule()))
-	{
-		body->internalChangeHealth(SimMath::fstpDword(SimMath::pc24SubW(1.0, (double)body->getHealth())));
-	}
-	// lane PLAY-4: RW 0x88D61B .. 0x88D63A: PENDING_CONSTRUCTION and PHANTOM_STRUCTURE (0x57 / 0x58) cleared (RW 0x68D440 with 0); the port's structure carries
-	// only the first (Construction::constructByDozer)
-	static const int pending = ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION");
-	obj->setStatus((unsigned)pending, false);
+	m_unplacedStructure = INVALID_ID;
 	return true;
 }
 
@@ -486,6 +468,28 @@ void DozerAIUpdate::hideInStructure()
 	if (self->isInWorld())
 	{
 		self->logic().friend_containLeaveWorld(*self); // RW 0x68C18F
+	}
+}
+
+// lane PORTERFOG-1: the porter's drawable fade (GlobalData + 0x11E0 BuilderFadeInTime / + 0x11DC BuilderFadeOutTime), client only
+void DozerAIUpdate::builderFade(Object &self, bool in)
+{
+	GameLogic &logic = self.logic();
+	if (!logic.settings().builderFadeLoaded)
+	{
+		logic.noteStop("[S-1282] dozer: GameData BuilderFadeOutTime / BuilderFadeInTime were not loaded (RW GlobalData + 0x11DC / + 0x11E0): the porter's drawable does not fade");
+		return;
+	}
+	if (ObjectClientHooks *client = logic.clientHooks())
+	{
+		if (in)
+		{
+			client->fadeIn(self, logic.settings().builderFadeInFrames);
+		}
+		else
+		{
+			client->fadeOut(self, logic.settings().builderFadeOutFrames);
+		}
 	}
 }
 
@@ -529,7 +533,7 @@ void DozerAIUpdate::showFromStructure(const Object *built)
 	{
 		logic.friend_containEnterWorld(*self); // RW 0x68E31F
 	}
-	// (the drawable fades in over BuilderFadeInTime: the client's)
+	builderFade(*self, true); // RW 0x88D6C8 .. 0x88D6CE: Drawable::fadeIn(BuilderFadeInTime) (RW 0x670AA2), which shows the hidden drawable (lane PORTERFOG-1)
 	for (const char *name : kHiddenStatuses)
 	{
 		self->setStatus((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex(name), false); // RW 0x68D440(mask, 0)
@@ -558,7 +562,7 @@ Object *DozerAIUpdate::construct(const ThingTemplate &what, const Coord3D &pos, 
 	{
 		cancelTaskInternal(DOZER_TASK_BUILD); // RW 0x88C2C3
 	}
-	// slot 0x64 (RW 0x88D272): ZH DozerAIUpdate::construct: the foundation made with the builder as producer, the owner pays the price up front (S-304: made at once)
+	// slot 0x64 (RW 0x88D272): the inert phantom with the builder as producer, the owner pays the price up front (lane FBSIM-1: Construction::constructByDozer)
 	Object *structure = Construction::constructByDozer(*getObject(), what, pos, angle, owner);
 	if (!structure)
 	{
@@ -954,7 +958,13 @@ int DozerAIUpdate::updateMoveToActionPos(int t)
 				// RW 0x88C6E6 .. 0x88C704: the porter goes in (RW 0x88C51B), the structure placed (slot 0x68); RW 0x68B21D and the script engine's note (RW
 				// 0x756C87(3, dozer)) are not ported (S-1282)
 				hideInStructure();
-				placeUnplacedStructure();
+				if (!placeUnplacedStructure())
+				{
+					// lane FBSIM-1, INFERENCE (S-304): RotWK goes on to DO_ACTION with the removed goal, which fails; the port fails here and shows the porter again
+					// (RW 0x88CFFE does not show it; the task's failure path is not read)
+					showFromStructure(nullptr);
+					return STATE_FAILURE;
+				}
 			}
 			// RW 0x88C709: AWAITING_CONSTRUCTION -> PARTIALLY_CONSTRUCTED + ACTIVELY_BEING_CONSTRUCTED
 			Construction::setModelConditions(*goal, { "AWAITING_CONSTRUCTION" }, { "PARTIALLY_CONSTRUCTED", "ACTIVELY_BEING_CONSTRUCTED" });
@@ -1007,6 +1017,12 @@ int DozerAIUpdate::updateDoAction(int t)
 		if (task == DOZER_TASK_BUILD)
 		{
 			startBuildingSound(*goal, "UnderConstruction"); // RW 0x88DD74 (lane AUDIO-3)
+			// RW 0x88DDC1 .. 0x88DDE3: unless the dozer is a worker (RW 0x88B897, the gate of RW 0x88C51B), its drawable fades out over BuilderFadeOutTime
+			// (RW 0x670A50; Drawable::update hides it once the opacity * 255 is below 1, RW 0x675B7E): how a porter in its site disappears (lane PORTERFOG-1)
+			if (!m_isWorker)
+			{
+				builderFade(*self, false);
+			}
 		}
 		else
 		{

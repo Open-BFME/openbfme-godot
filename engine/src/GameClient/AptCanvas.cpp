@@ -84,6 +84,14 @@ std::string lowerAscii(std::string s)
 }
 } // namespace
 
+std::string AptTextureStore::packedTextureStem(const std::string &name) const
+{
+	const std::string stem = lowerAscii(name.substr(0, name.find_last_of('.')));
+	const bool bfme1 = m_source.fileExists("data/ini/default/subsystemlegend.ini") &&
+		!m_source.fileExists("data/ini/default/subsystemlegendexpansion1.ini") && !m_source.fileExists("data/ini/awardsystem.ini");
+	return bfme1 ? "art/textures/" + stem : "art/compiledtextures/" + stem.substr(0, 2) + "/" + stem;
+}
+
 const AptTextureStore::Entry &AptTextureStore::get(const std::string &name)
 {
 	const std::string key = lowerAscii(name);
@@ -97,6 +105,12 @@ const AptTextureStore::Entry &AptTextureStore::get(const std::string &name)
 	std::string error;
 	std::string path = "art/textures/" + name;
 	bool found = m_source.readFile(path, bytes, &error);
+	const std::string packed = packedTextureStem(name);
+	if (!found && packed.rfind("art/textures/", 0) == 0 && m_source.fileExists(packed + ".dds"))
+	{
+		path = packed + ".dds";
+		found = m_source.readFile(path, bytes, &error);
+	}
 	if (!found && name.size() > 2)
 	{
 		// the packed textures of the install (the gadget skins' AptComponents_001.tga): art\compiledtextures\<first two letters>\<name> (RotWK Textures1.big layout)

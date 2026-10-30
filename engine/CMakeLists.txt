@@ -185,6 +185,7 @@ include(cmake/Transport.cmake)  # GARRISON-2: transports, siege carriers, turret
 include(cmake/Hud2.cmake)       # OPENBFME_HUD2_SOURCES / OPENBFME_HUD2_TESTS (lane HUD-2: radar terrain picture, Palantir globe and power cap)
 include(cmake/Radar1.cmake)     # OPENBFME_RADAR1_TESTS (lane RADAR-1: the radar's objects and view box as RotWK draws them)
 include(cmake/Smooth.cmake)     # OPENBFME_SMOOTH_SOURCES / OPENBFME_SMOOTH_TESTS (lane SMOOTH-1, client only)
+include(cmake/Occlude1.cmake)   # OPENBFME_OCCLUDE1_SOURCES / OPENBFME_OCCLUDE1_TESTS (lane OCCLUDE-1: behind-building markers, client only)
 include(cmake/Phys1.cmake)      # PHYS-1: collision and separation, PhysicsBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_PHYS1_TESTS)
 include(cmake/Perf1.cmake)      # OPENBFME_PERF1_TESTS (lane PERF-1: benchmarks, optimisation determinism)
 include(cmake/PathPerf1.cmake)  # PATHPERF-1: findPath's hierarchical corridor (appends to OPENBFME_SIM_SOURCES; OPENBFME_PATHPERF1_TESTS)
@@ -192,6 +193,7 @@ include(cmake/Perf2.cmake)      # PERF-2: the job system, parallel phases (appen
 include(cmake/Perf3.cmake)      # PERF-3: client frame-time work (OPENBFME_PERF3_TESTS)
 include(cmake/Audio3.cmake)     # AUDIO-3: the sound request log, building sounds (appends to OPENBFME_SIM_SOURCES; OPENBFME_AUDIO3_TESTS)
 include(cmake/Audio4.cmake)     # AUDIO-4: QA-1's sound follow-ups (OPENBFME_AUDIO4_TESTS)
+include(cmake/EvaDamage1.cmake) # EVADAMAGE-1: the Eva half of the drawable damage notice (appends to OPENBFME_SIM_SOURCES; OPENBFME_EVADAMAGE1_CLIENT_SOURCES / _TESTS)
 include(cmake/End1.cmake)       # END-1: the score keeper, the end sequence and the score screen (appends to OPENBFME_SIM_SOURCES; OPENBFME_END1_SOURCES / _TESTS)
 include(cmake/Qa1.cmake)       # OPENBFME_QA1_SOURCES / OPENBFME_QA1_TESTS (lane QA-1: the drawn-model pick)
 include(cmake/Mp2.cmake)        # MP-2: the disconnect path, a dropped player's assets (appends to OPENBFME_SIM_SOURCES; OPENBFME_MP2_TESTS)
@@ -280,15 +282,18 @@ include(cmake/Menufix1.cmake)   # MENUFIX-1: the menus, consistent and retail-lo
 include(cmake/Hudredraw1.cmake) # HUDREDRAW-1: the HUD redraws only the changed Apt levels (OPENBFME_HUDREDRAW1_TESTS)
 include(cmake/Chat1.cmake)      # CHAT-1: in-game chat and beacons (OPENBFME_CHAT1_CLIENT_SOURCES / _TESTS)
 include(cmake/Campui1.cmake)    # CAMPUI-1: the campaign presentation, the mission objectives (appends to OPENBFME_SIM_SOURCES; OPENBFME_CAMPUI1_TESTS)
+include(cmake/Camanim1.cmake)   # CAMANIM-1: MOVE_CAMERA_BY_ANIMATION, the map's camera animations (OPENBFME_CAMANIM1_SOURCES / _TESTS)
 include(cmake/Offmap1.cmake)    # OFFMAP-1: off-map map objects and horde members (OPENBFME_OFFMAP1_TESTS)
 include(cmake/Wall1.cmake)      # WALL-1: walkable wall tops and ramps (appends to OPENBFME_SIM_SOURCES; OPENBFME_WALL1_TESTS)
 include(cmake/Wall2.cmake)      # WALL-2: portals, portal modules, raised walkways (appends to OPENBFME_SIM_SOURCES; OPENBFME_WALL2_TESTS)
 include(cmake/Bridge1.cmake)    # BRIDGE-1: retail bridges crossed and destroyed (OPENBFME_BRIDGE1_TESTS)
 include(cmake/Siege1.cmake)     # SIEGE-1: the siege units (appends to OPENBFME_SIM_SOURCES; OPENBFME_SIEGE1_TESTS)
+include(cmake/Weather1.cmake)   # WEATHER-1: snow, rain, darkness, lightning, the weather sound (client sources; OPENBFME_WEATHER1_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
     ${OPENBFME_AUDIO4_CLIENT_SOURCES}
+    ${OPENBFME_EVADAMAGE1_CLIENT_SOURCES}
     ${OPENBFME_DECOMP2_CLIENT_SOURCES}
     ${OPENBFME_FX_SOURCES}
     ${OPENBFME_PROD_SOURCES}
@@ -307,6 +312,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_FX3_SOURCES}
     ${OPENBFME_FOGFX1_SOURCES}
     ${OPENBFME_SMOOTH_SOURCES}
+    ${OPENBFME_OCCLUDE1_SOURCES}
     ${OPENBFME_PROJ2_SOURCES}
     ${OPENBFME_STEALTH_SOURCES}
     ${OPENBFME_END1_SOURCES}
@@ -324,6 +330,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_OWNERFIX3_CLIENT_SOURCES}
     ${OPENBFME_ANTICHEAT_SOURCES}
     ${OPENBFME_SCRIPT1_SOURCES}
+    ${OPENBFME_CAMANIM1_SOURCES}
     ${OPENBFME_CAMP1_SOURCES}
     ${OPENBFME_HUD5_CLIENT_SOURCES}
     ${OPENBFME_HUD6_CLIENT_SOURCES}
@@ -379,6 +386,7 @@ add_library(openbfme_core STATIC
     src/Libraries/WWVegas/WW3D2/meshrender.cpp
     src/Libraries/WWVegas/WW3D2/w3dstops.cpp
     src/Libraries/WWVegas/WW3D2/w3dshadergen.cpp
+    src/Libraries/WWVegas/WW3D2/w3dfxconvert.cpp
     src/Libraries/WWVegas/WW3D2/textureloader.cpp
     src/GameEngineDevice/W3DDevice/GameClient/HouseColor.cpp
     src/Libraries/WWVegas/WW3D2/shader.cpp
@@ -546,6 +554,7 @@ list(APPEND OPENBFME_SIM_SOURCES
 list(REMOVE_DUPLICATES OPENBFME_SIM_SOURCES)
 target_sources(openbfme_core PRIVATE ${OPENBFME_SIM_SOURCES})
 target_sources(openbfme_core PRIVATE ${OPENBFME_SPELL_CLIENT_SOURCES}) # lane SPELL-2 (client sources, Spell.cmake)
+target_sources(openbfme_core PRIVATE ${OPENBFME_WEATHER1_CLIENT_SOURCES}) # lane WEATHER-1 (client sources, Weather1.cmake)
 # Simulation sources of the GDExtension (they need godot-cpp, so they are registered with the `openbfme` target, not the core): GodotGameWorld.cpp calls the core
 # game start (GameLogic/NewGame, a thin caller since START-1), creates the logic objects and queues the player's commands (HUD-1 moves the commands into core);
 # GodotGameStart.cpp marshals the lobby's NewGameMessage between Godot Dictionaries and the logic's struct (the values the logic consumes), so it is audited too.
@@ -618,7 +627,8 @@ add_library(openbfme SHARED
     ${OPENBFME_UI6_GODOT_SOURCES}
     ${OPENBFME_HUD4_GODOT_SOURCES}
     ${OPENBFME_HUD6_GODOT_SOURCES}
-    ${OPENBFME_CAH1_GODOT_SOURCES})
+    ${OPENBFME_CAH1_GODOT_SOURCES}
+    ${OPENBFME_WEATHER1_GODOT_SOURCES})
 target_sources(openbfme PRIVATE ${OPENBFME_SIM_SOURCES_GODOT}) # the simulation sources of the extension (listed in the manifest)
 target_link_libraries(openbfme PRIVATE openbfme_core godot-cpp)
 if(UNIX AND NOT APPLE)
@@ -715,8 +725,10 @@ add_executable(openbfme_tests
     ${OPENBFME_PERF3_TESTS}
     ${OPENBFME_AUDIO3_TESTS}
     ${OPENBFME_AUDIO4_TESTS}
+    ${OPENBFME_EVADAMAGE1_TESTS}
     ${OPENBFME_PROJ2_TESTS}
     ${OPENBFME_STEALTH_TESTS}
+    ${OPENBFME_OCCLUDE1_TESTS}
     ${OPENBFME_GARRISON_TESTS}
     ${OPENBFME_TRANSPORT_TESTS}
     ${OPENBFME_BUILD_TEST_SOURCES}
@@ -779,6 +791,7 @@ add_executable(openbfme_tests
     ${OPENBFME_FACTC_TESTS}
     ${OPENBFME_BUGS1_TESTS}
     ${OPENBFME_CAMPUI1_TESTS}
+    ${OPENBFME_CAMANIM1_TESTS}
     ${OPENBFME_OFFMAP1_TESTS}
     ${OPENBFME_BACKLOG4_TESTS}
     ${OPENBFME_FLY1_TESTS}
@@ -801,6 +814,7 @@ add_executable(openbfme_tests
     ${OPENBFME_WALL2_TESTS}
     ${OPENBFME_BRIDGE1_TESTS}
     ${OPENBFME_SIEGE1_TESTS}
+    ${OPENBFME_WEATHER1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_parser_fuzz_regressions.cpp
@@ -819,8 +833,10 @@ add_executable(openbfme_tests
     tests/test_w3d_mapper.cpp
     tests/test_w3d_shader.cpp
     tests/test_w3d_shadergen.cpp
+    tests/test_w3d_fxconvert.cpp
     tests/test_w3d_stops.cpp
     tests/test_w3d_render.cpp
+    tests/test_w3d_secondary_texture.cpp
     tests/test_w3d_retail_models.cpp
     tests/test_w3d_render_corpus.cpp
     tests/test_asset_catalog.cpp

@@ -587,7 +587,7 @@ void OpenContain::onDelete()
 		r->friend_setContainedBy(nullptr);
 		if (r->isKindOf((unsigned)hero))
 		{
-			r->kill(0); // RW 0x698EC3(8, 0)
+			r->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x8670EB: kill(8, 0)
 		}
 		else
 		{
@@ -787,7 +787,7 @@ void OpenContain::processDamageToRider(Object *rider)
 		rider->attemptDamage(info);
 		if (!rider->isDestroyed() && openData().m_damagePercentToUnits == 1.0f)
 		{
-			rider->kill(0); // RW 0x698EC3(8, 0)
+			rider->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x866C4E: kill(8, 0)
 		}
 		return;
 	}
@@ -800,7 +800,7 @@ void OpenContain::processDamageToRider(Object *rider)
 		const float *m = rider->getBasis();
 		phys->fling(Coord3D{ SimMath::mulf32(m[0], k), SimMath::mulf32(m[3], k), k });
 	}
-	rider->kill(0);
+	rider->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x866CF5: kill(8, 0)
 	if (const ActiveBody *ab = dynamic_cast<const ActiveBody *>(container->getBodyModule()))
 	{
 		if (Object *killer = logic.findObjectByID(ab->lastDamager()))

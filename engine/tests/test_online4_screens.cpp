@@ -345,9 +345,21 @@ const OnlineLobbyClient::Event *findEvent(const std::vector<OnlineLobbyClient::E
 }
 #endif
 
+// lane ONLINEMENU-1 (2026-10-27): a gate host with node and the peer / relay programs sets OPENBFME_REQUIRE_LOBBY_E2E=1:
+// there a missing piece FAILS the case instead of skipping it (the real-lobby cases skipped on every gate for days, unseen)
+bool lobbyE2eRequired()
+{
+	const char *v = std::getenv("OPENBFME_REQUIRE_LOBBY_E2E");
+	return v && std::string(v) == "1";
+}
+
 #define ONLINE4_REQUIRE_NODE()                                                                                                                      \
 	if (!haveNode())                                                                                                                                \
 	{                                                                                                                                               \
+		if (lobbyE2eRequired())                                                                                                                     \
+		{                                                                                                                                           \
+			FAIL("OPENBFME_REQUIRE_LOBBY_E2E=1 but Node.js or services/online/lobby/src/server.mjs is missing here");                               \
+		}                                                                                                                                           \
 		MESSAGE("SKIP LOUDLY: Node.js or services/online/lobby/src/server.mjs is missing here (set OPENBFME_LOBBY_SERVER), so the online lobby " \
 				"tests did not run");                                                                                                               \
 		return;                                                                                                                                     \
@@ -2525,6 +2537,10 @@ TEST_CASE("online4 retail e2e: the START from the online screens' staging room t
 	const std::string peer = envOr("OPENBFME_PEER", kPeerExe), relayExe = envOr("OPENBFME_RELAY", kRelayExe);
 	if (peer.empty() || relayExe.empty() || !std::filesystem::exists(peer) || !std::filesystem::exists(relayExe))
 	{
+		if (lobbyE2eRequired())
+		{
+			FAIL("OPENBFME_REQUIRE_LOBBY_E2E=1 but no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY)");
+		}
 		MESSAGE("SKIP LOUDLY: no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY), so the online START was not played");
 		return;
 	}
@@ -2695,6 +2711,10 @@ TEST_CASE("online4 retail rejoin: a player that crashes mid-game restarts, signs
 	const std::string peer = envOr("OPENBFME_PEER", kPeerExe), relayExe = envOr("OPENBFME_RELAY", kRelayExe);
 	if (peer.empty() || relayExe.empty() || !std::filesystem::exists(peer) || !std::filesystem::exists(relayExe))
 	{
+		if (lobbyE2eRequired())
+		{
+			FAIL("OPENBFME_REQUIRE_LOBBY_E2E=1 but no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY)");
+		}
 		MESSAGE("SKIP LOUDLY: no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY), so the rejoin was not played");
 		return;
 	}
@@ -2914,6 +2934,10 @@ TEST_CASE("online5 retail e2e: three players in the staging room: the Ready colu
 	const std::string peer = envOr("OPENBFME_PEER", kPeerExe), relayExe = envOr("OPENBFME_RELAY", kRelayExe);
 	if (peer.empty() || relayExe.empty() || !std::filesystem::exists(peer) || !std::filesystem::exists(relayExe))
 	{
+		if (lobbyE2eRequired())
+		{
+			FAIL("OPENBFME_REQUIRE_LOBBY_E2E=1 but no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY)");
+		}
 		MESSAGE("SKIP LOUDLY: no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY), so the three-player online game was not played");
 		return;
 	}
@@ -3431,6 +3455,10 @@ TEST_CASE("online5 retail e2e rejoin: three players through a local relay; one i
 	const std::string peer = envOr("OPENBFME_PEER", kPeerExe), relayExe = envOr("OPENBFME_RELAY", kRelayExe);
 	if (peer.empty() || relayExe.empty() || !std::filesystem::exists(peer) || !std::filesystem::exists(relayExe))
 	{
+		if (lobbyE2eRequired())
+		{
+			FAIL("OPENBFME_REQUIRE_LOBBY_E2E=1 but no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY)");
+		}
 		MESSAGE("SKIP LOUDLY: no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY), so the three-player rejoin was not played");
 		return;
 	}
@@ -3599,6 +3627,10 @@ TEST_CASE("solo1 retail e2e: a single human's custom game through the real scree
 	const std::string peer = envOr("OPENBFME_PEER", kPeerExe), relayExe = envOr("OPENBFME_RELAY", kRelayExe);
 	if (peer.empty() || relayExe.empty() || !std::filesystem::exists(peer) || !std::filesystem::exists(relayExe))
 	{
+		if (lobbyE2eRequired())
+		{
+			FAIL("OPENBFME_REQUIRE_LOBBY_E2E=1 but no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY)");
+		}
 		MESSAGE("SKIP LOUDLY: no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY), so the solo online game was not played");
 		return;
 	}

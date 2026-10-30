@@ -235,13 +235,13 @@ void GameLODManager::applyStaticLODLevel(int level, const OptionPreferences &pre
 
 std::string GameLODManager::unappliedEffects()
 {
-	return "[S-3402] the detail level drives the particle cap and priorities, the texture reduction (models loaded afterwards) and the health bars; not "
-		   "drawn: shadows (volumes, decals, mapping), heat effects, model / animation / terrain / water / shader detail, props, tank tracks, the decal style";
+	return "[S-3402] the detail level drives the particle cap and priorities, texture reduction (models loaded afterwards), health bars and Godot object shadow maps; not "
+		   "drawn: retail stencil and decal shadows, heat effects, model / animation / terrain / water / shader detail, props, tank tracks, the decal style";
 }
 
 bool GameLODManager::advancedOptionDrawn(int index)
 {
-	return index == 2 || index == 6 || index == 8;
+	return index == 2 || index == 3 || index == 6 || index == 8;
 }
 
 int GameLODManager::init(const OptionPreferences &prefs, std::string *stop)

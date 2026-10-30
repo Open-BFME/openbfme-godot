@@ -242,7 +242,8 @@ public:
 	// answers 0). secondsToReach(qx, qy) must equal speed > 0 ? divf32(length2d(subf32(qx, x), subf32(qy, y)), speed) : 0 for every point. false: not
 	// provided, the search asks secondsToReach itself
 	virtual bool reachInputs(float &x, float &y, float &speed) const { (void)x; (void)y; (void)speed; return false; }
-	// the object stands still (AI vtable +0x228 false): only such units hold a position slot
+	// AI vtable +0x228 (RW 0x66288A) false: the unit does not follow a path with a special node (a moving ground unit is "stationary" here); only such
+	// units hold a position slot (RW 0x8E26B7)
 	virtual bool isStationary() const { return true; }
 	// object status bits the footprint code reads (RW status index 0x58 and 0x4D; names INFERRED: S-164)
 	virtual bool footprintSkippedByStatus() const { return false; }

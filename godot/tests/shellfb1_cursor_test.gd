@@ -72,4 +72,19 @@ func _run() -> int:
 		"a shell with a bad configured install root fails explicitly")
 	OS.set_environment("ROTWK_INSTALL", old_rotwk_install)
 
+	var bfme1_install := OS.get_environment("BFME1_INSTALL")
+	if not bfme1_install.is_empty():
+		# Reusing a BFME2 presentation source must not leave its install root or role behind.
+		var reused_fs: RefCounted = fs.create_bfme2_shell()
+		_check(reused_fs != null, "BFME2 presentation source is available for remount")
+		if reused_fs != null:
+			var first_mount: Dictionary = reused_fs.mount_bfme1_path(bfme1_install)
+			_check(first_mount.get("ok", false), "BFME1 remount: %s" % str(first_mount.get("errors", [])))
+			_check(reused_fs.install_root() == bfme1_install, "BFME1 remount uses its own install root")
+			_check(not reused_fs.is_shell_source(), "BFME1 remount is a normal game source")
+			_check(reused_fs.create_bfme2_shell() == null, "BFME1 remount retains no BFME2 presentation root")
+			var failed_mount: Dictionary = reused_fs.mount_bfme1_path(missing_root)
+			_check(not failed_mount.get("ok", false), "missing BFME1 remount fails")
+			_check(reused_fs.install_root().is_empty(), "failed BFME1 remount clears the install root")
+
 	return 0 if _failures == 0 else 1

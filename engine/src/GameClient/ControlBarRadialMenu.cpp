@@ -579,7 +579,6 @@ std::vector<std::string> ControlBarRadialMenu::acceptanceStops()
 		"[S-2701] radial command bubbles (HUD-6): ported RW 0x9459D1 / 0x9D6521 / 0x9D6320 / 0x9D5CCE / 0x9457FE (count, size, radius, ring, centre) and the "
 		"look of W3DGadgetPushButtonImageDrawOne RW 0x4A5112; not identified: the clock colours (the control bar's clock colour, GlobalData + 0x1160 / + 0x1164), "
 		"the 0x808080 multiplier condition (RW 0x327E0E's flag; lane HUD-7: the grey-overlay and always-colour statuses are RotWK's availability 0 / 6 / 7 / 8); not ported: the ring's button flash animations (RW 0x9D5BDC / "
-		"0x9D6250); the right press cancels only a CANCELABLE button's queue (RW 0x940C70; upgrade cancels not ported: "
-		"ControlBar::cancelQueued is UNIT_BUILD and REVIVE), the hit area is the window rectangle with inclusive edges (RW 0x715A84); INFERENCE: a point outside the view rectangle is off the frustum, the ring is drawn under the Palantir movie; radial icon fills ignore texture alpha inside the ellipse to retain their RGB backgrounds (target blend state unverified)"
+		"0x9D6250); the right press cancels only a CANCELABLE button's queue (RW 0x940C70; an upgrade's RW 0x940E77 / 0x940FB3, lane FBSIM-1), the hit area is the window rectangle with inclusive edges (RW 0x715A84); INFERENCE: a point outside the view rectangle is off the frustum, the ring is drawn under the Palantir movie; radial icon fills ignore texture alpha inside the ellipse to retain their RGB backgrounds (target blend state unverified)"
 	};
 }

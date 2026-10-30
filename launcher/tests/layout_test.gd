@@ -60,7 +60,7 @@ static func _cases() -> Dictionary:
 		"games-bfme1": _case("games-bfme1", "games", ["BATTLE FOR MIDDLE-EARTH I (OPTIONAL)", "Downloaded from BFME Arena (bfmeladder.com)*", "Download"]),
 		"games-downloading": _case("games-downloading", "games", ["Pause", "Cancel", "RotWK: game files 412 of 1 830*"]),
 		"settings": _case("settings", "settings", ["Channel", "Free camera", "Offer to download the games"]),
-		"display": _case("display", "settings", ["Display settings are in the game"]),
+		"display": _case("display", "settings", ["Window mode", "Resolution", "Automatic", "More display settings"]),
 		"about": _case("about", "settings", ["Installed versions", "Play this version", "Install"]),
 		"update": _case("update", "play", ["Update to*", "Check for updates"]),
 		"downloading": _case("downloading", "play", ["Pause", "Cancel", "Updating to*"]),

@@ -315,7 +315,7 @@ TEST_CASE("target1 mood scan: a player's attack order with a melee weapon is rem
 	CHECK(ai->orderedMeleeTarget() == v->getID());
 	ai->aiIdle(CMD_FROM_PLAYER);
 	CHECK(ai->getNextMoodTarget(false, true) == v);
-	v->kill(DEATH_NORMAL);
+	v->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	w.frames(1);
 	CHECK(ai->getNextMoodTarget(false, true) == nullptr); // the dead target is dropped and nothing else is within the vision range
 	CHECK(ai->orderedMeleeTarget() == INVALID_ID); // forgotten once dead (+ 0x458 bit 0)

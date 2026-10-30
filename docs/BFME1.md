@@ -3,6 +3,28 @@
 BFME1 is an experimental, separate game mode. It uses a BFME1 installation for
 both menus and gameplay, without mixing in BFME2 or RotWK data.
 
+The main menu loads BFME1's mapped textures from `art/textures`, including
+JPEG colour with a companion PNG alpha mask. The backdrop and native
+`RenderImage` logo use the same texture loader as the menu gadgets.
+`Video FrontEnd` in BFME1's `Video.ini` identifies `big_movie_with_alpha.vp6`
+as the movie for front-end menus. It loops over `ShellMapLowLOD`, preserves
+its alpha, and stops when the shell backdrop is hidden for gameplay.
+The movie fills the aspect-fitted backdrop beneath the APT menu and logo;
+this placement and immediate start/stop are presentation inferences, not a
+verified port of retail's display transitions.
+
+Submenus retain their authored 3D front-end background. When the BFME1 main
+menu becomes active again, it hides that background through its existing
+APT instant-hide function so it no longer covers the continuing movie. This
+main-menu activation rule is also a presentation inference; BFME2 and RotWK
+keep their existing background behaviour.
+
+`godot/tests/bfme1_menu_backdrop_test.gd` requires `BFME1_INSTALL` and a GPU.
+It compares independently decoded JPEG/PNG and VP6 assets against the menu
+at four resolutions, checks repeated Skirmish/Options returns, looping and
+gameplay/menu transitions, and writes screenshots under `BFME1_MENU_TEST_DIR`
+when that variable is set.
+
 From the checkout root on **Linux or macOS (POSIX shell)**, with a matching
 Godot 4.7 editor binary on `PATH`, the GDExtension already built into
 `godot/bin/`, and BFME1 data in `games/BFME1`, launch:
@@ -115,6 +137,12 @@ These are the places where BFME1's data or menus differ from RotWK's. Each one i
   as well as scripted model draws. Hidden floors remain unpickable.
 - **Skirmish maps:** the lobby lists the mapcache's multiplayer maps, as for RotWK (Sol review r1: no file-name filter; in BFME1 1.03 every
   multiplayer entry is a `map mp` map with two or more players).
+- **Skirmish presentation:** gadget atlases use BFME1's flat `art/textures` packed textures, including TGA data stored under `.dds` names. The map list uses the retail two-column
+  badge/count-bearing-name layout and BFME1 difficulty badges; the profile and map-type dropdowns bind their actual choices. Profile text,
+  faction presentation and rank read the selected profile's `SkirmishStats.ini`; unavailable historical values are not invented.
+  New personas start with fresh statistics even when reusing a deleted name; map badges refresh with profile changes and recorded results.
+  Faction presentation uses the loaded `PlayerTemplate` index and `Side` (`APT:<Side>Caps`), not a retail-faction table. Rank artwork follows
+  BFME1 `Rva0046F910RankDisplay.cpp`: use the mounted `AptRankIcon<Side><Rank>` image when present, otherwise the native generic `AptRankIcon<Rank>`.
 - **Texture replacements:** PNG/JPEG files are accepted by BFME1 texture lookup (including `GBCampFloor`), and image signatures are recognized even when replacements retain `.dds` filenames.
 - **Palantir commands:** BFME1 uses six fixed `CommandButtons.Command1` … `Command6` slots and `SetCommandButtonState`, rather than BFME2's dynamic content frames. Slot state updates only run when content changes, so show animations can finish.
 - **Command tooltips:** BFME1's legacy cursor blocks are skipped to their `End` when loading help fonts. A native help panel displays the existing command-help text because BFME1 has no BFME2 `OnHelpBoxLoaded` content-frame callback.

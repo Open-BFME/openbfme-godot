@@ -11,6 +11,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <fstream>
 
 namespace
 {
@@ -165,7 +166,13 @@ TEST_CASE("shader text: the normal-mapped building permutation fits Intel Arc's 
 	{
 		if (line.find("varying ") == 0) ++varyings;
 	}
-	CHECK(varyings == 14);
+	std::ifstream shadowInclude(std::string(OPENBFME_DOCS_DIR) + "/../godot/shaders/object_shadow.gdshaderinc");
+	REQUIRE(shadowInclude.good());
+	while (std::getline(shadowInclude, line))
+	{
+		if (line.find("varying ") == 0) ++varyings;
+	}
+	CHECK(varyings == 14); // includes the fragment-to-light shadow colour; unused v_col was removed
 	// the two UV sets share one interpolator, and the world position is a vertex() local
 	CHECK(has(code, "varying vec4 v_uv;"));
 	CHECK(has(code, "v_uv = vec4(UV, UV2);"));

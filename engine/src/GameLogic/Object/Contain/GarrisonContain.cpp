@@ -569,6 +569,8 @@ void GarrisonContain::onRemoving(Object *obj)
 	{
 		m_hiddenFlag = false;
 	}
+	// RW 0x87C094 .. 0x87C0A8 (lane OCCLUDE-1): the rider's safe occlusion frame (+ 0x444) = the frame + its template's OcclusionDelay (presentation only)
+	obj->setSafeOcclusionFrame(obj->logic().getFrame() + Object::occlusionDelayOf(*obj->getTemplate(), obj->logic()));
 	recalcApparentControllingPlayer(); // RW 0x87C06B: slot 0x50
 	// RW 0x87C073: the killing branch (KillPassengersOnDeath with the dying byte and no health left): the rider is flung and killed, an ENCLOSED one destroyed
 	if (m_killingRiders && openData().m_killPassengersOnDeath && container->getBodyModule() && !(container->getBodyModule()->getHealth() > 0.0f))
@@ -1056,7 +1058,9 @@ UpdateSleepTime GarrisonContain::update()
 	{
 		if (obj->isEffectivelyDead())
 		{
-			removeFromContain(obj); // RW 0x87C928: interface slot 0xA4(obj, false); + 0x444 (the safe occlusion frame) is client side
+			removeFromContain(obj); // RW 0x87C928: interface slot 0xA4(obj, false)
+			// RW 0x87C93C .. 0x87C951 (lane OCCLUDE-1): + 0x444 = the frame + LOGICFRAMES_PER_SECOND (RW 0xD9F608 = 5) * 1000 (presentation only)
+			obj->setSafeOcclusionFrame(obj->logic().getFrame() + 5u * 1000u);
 		}
 	}
 	removeInvalidObjectsFromGarrisonPoints();

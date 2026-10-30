@@ -10,7 +10,7 @@
 // w3d_tint, set on the icon's own instancer's nodes); INFERENCE (stop S-3302): RotWK's scene lighting of the tint was not read; the bib is ZH's W3DBibBuffer
 // quad (alpha blended, the corners at the drawable's height). Every problem (a model, a texture, a layout) is an error reported once (push_error) and listed
 // in state().errors, never a silent stand-in. r3: the instancers draw in the alpha-blended pass (W3DInstancer::set_alpha_override, DONOR ZH dx8renderer.cpp:1884-1916);
-// the ghost casts no shadow (no drawable does yet, stop S-3304).
+// the ghost casts no shadow (translucent drawables are not shadow-map casters, stop S-3304).
 
 #pragma once
 

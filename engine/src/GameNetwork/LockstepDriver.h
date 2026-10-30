@@ -8,6 +8,9 @@
 //
 // The stall watch (ZH NetworkDisconnectTime, GameData.ini 15000 ms in 2.01: the disconnect screen comes up after that long on one frame) is reported, not
 // acted on: the disconnect vote (DisconnectManager) is not ported (stop S-723).
+//
+// lane MPDROP-2: once the Network asks the local player to leave (Network::quitRequested: dropped by the others, its own link failed, the disconnect
+// screen's Quit) acquire() hands out no further batch, whatever commands are in (ZH Network::quitGame ends the game at that update).
 
 #pragma once
 

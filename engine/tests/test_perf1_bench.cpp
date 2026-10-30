@@ -387,6 +387,18 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // it looks, and the new AI state and AIData rows are hashed. Community #73 (the formations centred on their hordes, RW 0x86C4EA) and #74 (the destination
 // adjustment spiralling around the cell, RW 0x6FA2A4) re-measured both on the merged tree (OPENBFME_PERF1_REGEN=1); #73 alone differs from these from frame 0
 // (the big battle) and frame 69 (the skirmish).
+// Lane AIDATA-1 re-measured both (OPENBFME_PERF1_REGEN=1 on its tree): a horde running down a fleeing target sets RUNNING_DOWN_FROM_BEHIND on its members
+// (RW 0x748650) with the goal's speed in the gap (RW 0x74AA69) and its riders are in melee range within ChaseFromBehindLimit (RW 0x6CC07C, 0 before); the
+// battle's first changed frame is 36, the skirmish's 820. Lane IDLEMOTION-1 re-measured the skirmish (OPENBFME_PERF1_REGEN=1 on its tree): the crush state
+// requests its point unadjusted and not as a final goal (RW 0x74F28D / RW 0x742425), so the riders' crush paths differ from frame 1184; the big battle is unchanged.
+// Lane AIEXPAND-1 re-measured both (OPENBFME_PERF1_REGEN=1): the skirmish AI's state hash holds the EXPANSION heuristic's frame counter (both differ from
+// frame 0) and the AIs take expansion targets and run SimpleExpansion (RW 0x97D035 / 0x97D191 / 0x90C50C).
+// Merge queue q29 re-measured both once on the merged tree (OPENBFME_PERF1_REGEN=1, a CI host): AIEXPAND-1's frame counter in the skirmish AI's hash moves
+// both from frame 0; before it, compared at merge points, the big battle reached its value at AIDATA-1's merge point (DEVPORT-SIM / KILLSRC-1's points differ
+// from frame 23) and the skirmish still moved after it.
+// Merge queue q30 re-measured both once on the merged tree (OPENBFME_PERF1_REGEN=1, a CI host), compared at each merge point: PORTERFOG-1 (an object out of
+// the world keeps its shroud record, RW 0x68C18F / 0x68E31F) moves the skirmish from frame 8 and leaves the battle; #130 (allied clearing runs the move
+// state's update and exit, RW 0x749497 -> 0x748E46 / 0x74949C -> 0x748D8A: MOVING while clearing) moves the battle from frame 103 and the skirmish again from frame 2506.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	const std::vector<std::uint32_t> battleRef = perf1::readHashes("big_battle_400.hashes");

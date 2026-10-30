@@ -211,7 +211,7 @@ TEST_CASE("BACKLOG2 S-653: a dead structure that starts its rebuild sends the al
 	Object *wall = spawn(logic, "GondorCastleWallSegment", *men, site);
 	wall->friend_onBuildComplete();
 	logic.runLogicFrame();
-	wall->kill(0);
+	wall->kill(DAMAGE_UNRESISTABLE, 0);
 	for (int i = 0; i < 3; ++i)
 	{
 		logic.runLogicFrame();
@@ -693,7 +693,14 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// pathfinder position update) moves it (bisected: the q24 tree with CAMPUI-1 alone keeps q23's hash); measured once on the merged tree
 	// merge queue q26 (community #73 / #74 with BANNER-1, SIEGE-1 and the rest, measured once on the merged tree): 0x0E2AE1AF -> 0x4BFCBFF6
 	// merge queue q28 (measured once on the merged tree and at each merge point): 0x5572D938 -> 0x30F97357
-	CHECK(a.hashes.back() == 0x30F97357U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// lane AIEXPAND-1 (on q27's tree): 0x5572D938 -> 0xAE2CC3E1, goals and positions unchanged: the skirmish AI's state hash holds the EXPANSION heuristic's frame
+	// counter (RW 0x97D035); measured on a CI host
+	// merge queue q29 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x30F97357 -> 0xCE63EAC9: community #113
+	// (0xCC8A6937: the capture registry in the AI's hash, its FlagCaptureSquad's draws), FBSIM-1 (0x4629C1DE: phantom sites), AIEXPAND-1 (the EXPANSION
+	// heuristic's frame counter in the AI's hash)
+	// merge queue q30 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0xCE63EAC9 -> 0x3B3C3468: PORTERFOG-1 (an
+	// object out of the world keeps its shroud record, RW 0x68C18F / 0x68E31F: the porters at their sites keep their hashed shroud state); #130 keeps it
+	CHECK(a.hashes.back() == 0x3B3C3468U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);

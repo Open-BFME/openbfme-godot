@@ -36,7 +36,7 @@ rem AptValue.cpp / AptObject.cpp / NumericState.cpp, compared with the real BFME
 powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%helper_stale.ps1" -Name apt_driver
 if errorlevel 2 exit /b 1
 if not errorlevel 1 echo up to date: apt_driver & goto skip_apt
-cmd /c ""%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul && cl /nologo /EHsc /O2 /std:c++17 /I"%HERE%..\..\engine\src" /Fo"%HERE%build\\" /Fe"%HERE%build\apt_driver.exe" "%HERE%apt_driver.cpp" "%HERE%..\..\engine\src\Libraries\Source\Apt\AptValue.cpp" "%HERE%..\..\engine\src\Libraries\Source\Apt\AptObject.cpp" "%HERE%..\..\engine\src\Common\System\NumericState.cpp""
+cmd /c ""%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul && cl /nologo /EHsc /O2 /std:c++17 /I"%HERE%..\..\engine\src" /I"%HERE%..\..\engine\thirdparty\fast_float\include" /Fo"%HERE%build\\" /Fe"%HERE%build\apt_driver.exe" "%HERE%apt_driver.cpp" "%HERE%..\..\engine\src\Common\System\FloatFromChars.cpp" "%HERE%..\..\engine\src\Libraries\Source\Apt\AptValue.cpp" "%HERE%..\..\engine\src\Libraries\Source\Apt\AptObject.cpp" "%HERE%..\..\engine\src\Common\System\NumericState.cpp""
 if errorlevel 1 exit /b 1
 :skip_apt
 
@@ -45,6 +45,7 @@ rem (built first by the top-level build.bat): a hand list of sources fell behind
 rem the INI block parsers) and no longer linked.
 set "ES=%HERE%..\..\engine\src"
 set "CORELIB=%HERE%..\..\engine\build\openbfme_core.lib"
+set "FLOATLIB=%HERE%..\..\engine\build\openbfme_float_chars.lib"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%helper_stale.ps1" -Name hash_driver
 if errorlevel 2 exit /b 1
 if not errorlevel 1 echo up to date: hash_driver & goto skip_hash
@@ -53,9 +54,10 @@ rem current here; a no-op when it already is. cmake must be on PATH (it is for t
 if exist "%HERE%..\..\engine\build" cmake --build "%HERE%..\..\engine\build" --target openbfme_core
 if errorlevel 1 exit /b 1
 if not exist "%CORELIB%" echo ERROR: %CORELIB% not found; run build.bat at the repo root first. & exit /b 1
+if not exist "%FLOATLIB%" echo ERROR: %FLOATLIB% not found; run build.bat at the repo root first. & exit /b 1
 rem Assumes the core lib was built with the static CRT (/MT), which the default Release configure gives through
 rem godot-cpp's cached CMAKE_MSVC_RUNTIME_LIBRARY; the core is built with PUBLIC NOMINMAX, so the driver is too.
-cmd /c ""%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul && cl /nologo /EHsc /O1 /MT /std:c++17 /DNOMINMAX /I"%ES%" /Fo"%HERE%build\\" /Fe"%HERE%build\hash_driver.exe" "%HERE%hash_driver.cpp" "%CORELIB%" shlwapi.lib"
+cmd /c ""%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul && cl /nologo /EHsc /O1 /MT /std:c++17 /DNOMINMAX /I"%ES%" /Fo"%HERE%build\\" /Fe"%HERE%build\hash_driver.exe" "%HERE%hash_driver.cpp" "%CORELIB%" "%FLOATLIB%" shlwapi.lib shell32.lib"
 if errorlevel 1 exit /b 1
 :skip_hash
 

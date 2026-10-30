@@ -412,7 +412,7 @@ int killAll(GameLogic &logic, const Player &p, bool structures)
 	{
 		if (!o->isEffectivelyDead() && !o->isDestroyed())
 		{
-			o->kill(DEATH_NORMAL);
+			o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 		}
 	}
 	return (int)victims.size();

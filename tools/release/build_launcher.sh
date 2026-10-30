@@ -100,6 +100,8 @@ EOF
   rm -rf "$WORK/stage.sorted"
 fi
 P="$WORK/stage/launcher"
+# lane CRASHACT-1: the crash service key (CRASH_CLIENT_KEY) into the staged project, or nothing (the launcher then sends no crash report)
+python3 "$REPO/tools/release/crash_key.py" "$P" || fail "the crash service key (tools/release/crash_key.py)"
 DATE=$(python3 - "$MTIME" <<'PY'
 from datetime import datetime, timezone
 import sys

@@ -169,7 +169,7 @@ const char *TunnelContain::stopLine()
 {
 	return "[S-1107] TunnelContain (lane GARRISON-2): ported from RW 0x880E29 .. 0x881404 and the player's TunnelTracker RW 0x8FA152 .. 0x8FA4E8 (the network's "
 	       "riders, MaxTunnelCapacity, onBuildComplete, the heal, the last tunnel lets everyone out); not ported: the tracker's nemesis (RW 0x8FA702, read by the "
-	       "AI's tunnel network guard state, not ported), the safe occlusion frame and the unload sound of a rider that leaves (client), the exposed stealth units";
+	       "AI's tunnel network guard state, not ported), the unload sound of a rider that leaves (client), the exposed stealth units";
 }
 
 TunnelTracker *TunnelContain::tracker() const
@@ -283,7 +283,10 @@ void TunnelContain::onRemoving(Object *obj)
 		obj->logic().friend_containEnterWorld(*obj); // RW 0x68E31F (+ 0x474)
 	}
 	obj->setPosition(getObject()->getPosition()); // RW 0x70C201: out at this tunnel
-	obj->setDrawableHidden(false);                // RW 0x6718FB(0); the safe occlusion frame (+ 0x444) and the unload sound are the client's (S-1107)
+	// RW 0x881006 .. 0x88101C (lane OCCLUDE-1; inside the drawable test RW 0x881002, every object here has one): + 0x444 = the frame + the template's
+	// OcclusionDelay, then the drawable shown
+	obj->setSafeOcclusionFrame(obj->logic().getFrame() + Object::occlusionDelayOf(*obj->getTemplate(), obj->logic()));
+	obj->setDrawableHidden(false);                // RW 0x6718FB(0); the unload sound is the client's (S-1107)
 }
 
 UpdateSleepTime TunnelContain::update()

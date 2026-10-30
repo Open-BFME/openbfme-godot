@@ -735,6 +735,68 @@ TEST_CASE("hud6 retail: a right press on a bubble cancels only a CANCELABLE butt
 	CHECK(pu->getProductionCount() == 0);
 }
 
+TEST_CASE("fbsim1 retail: a right press on a CANCELABLE upgrade bubble cancels the research and refunds it (FB-0037, RW 0x940E77 / 0x940FB3 / 0x8A1140)")
+{
+	if (!haveWorld("fbsim1 upgrade cancel"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Hud6Rig h(s, "FactionMordor");
+	h.frames(10);
+	h.rig.local->getMoney()->deposit(5000, false);
+	const Coord3D c = h.rig.freeSpot(2400, 1400, 300.0f);
+	Object *citadel = h.rig.make("MordorFortressCitadel", c.x, c.y);
+	h.rig.lookAt({ c.x, c.y, 0 });
+	h.frames(10);
+	h.clickSelect(citadel);
+	REQUIRE(h.hud->input().ui().selected() == std::vector<ObjectID>{ citadel->getID() });
+	h.frames(30);
+	const ControlBarRadialMenu &radial = h.hud->radialMenu();
+	auto find = [&](const char *name) {
+		for (const ControlBarRadialMenu::Button &b : radial.buttons())
+		{
+			if (b.source.button && b.source.button->m_name == name)
+			{
+				return b;
+			}
+		}
+		return ControlBarRadialMenu::Button{};
+	};
+	auto press = [&](HudInput::Button which, const ControlBarRadialMenu::Button &b) {
+		const int x = b.rect.x + b.rect.w / 2, y = b.rect.y + b.rect.h / 2;
+		h.hud->mouseMove(x, y, 0);
+		h.hud->mouseButton(which, true, x, y, 0, 1000);
+		h.hud->mouseButton(which, false, x, y, 0, 1040);
+		h.frames(4);
+	};
+	const ControlBarRadialMenu::Button upgrades = find("Command_SelectUpgradesMordorFortress");
+	REQUIRE(upgrades.slot >= 0); // tolerance: found on the ring (-1 = absent); the slot number is the layout's
+	press(HudInput::Button::Left, upgrades); // opens the upgrades ring
+	h.frames(10);
+	const ControlBarRadialMenu::Button moat = find("Command_PurchaseUpgradeMordorFortressLavaMoat");
+	REQUIRE(moat.slot >= 0); // tolerance: found on the ring (-1 = absent)
+	REQUIRE(moat.source.button->hasOption(COMMAND_OPTION_CANCELABLE)); // retail commandbutton.ini: Options = CANCELABLE
+	const UpgradeTemplate *u = TheUpgradeCenter->findUpgrade(moat.source.button->m_upgradeName);
+	REQUIRE(u != nullptr);
+	ProductionUpdateInterface *pu = citadel->getProductionUpdate();
+	REQUIRE(pu != nullptr);
+	const unsigned before = h.rig.local->getMoney()->countMoney();
+	press(HudInput::Button::Left, moat); // MSG_QUEUE_UPGRADE
+	h.frames(30);
+	REQUIRE(pu->isUpgradeInQueue(u));
+	const unsigned paid = before - h.rig.local->getMoney()->countMoney();
+	CHECK(paid > 0); // tolerance: the price is the upgrade's INI cost; the property is the refund of exactly what was paid
+	// the in-progress bubble's right press: MSG_CANCEL_UPGRADE { mask bit }, the logic's cancelUpgrade refunds the stored cost
+	press(HudInput::Button::Right, find("Command_PurchaseUpgradeMordorFortressLavaMoat"));
+	h.frames(30);
+	CHECK(radial.cancels() == 1);
+	CHECK_FALSE(pu->isUpgradeInQueue(u));
+	CHECK(pu->getProductionCount() == 0);
+	CHECK_FALSE(citadel->hasUpgrade(u));
+	CHECK(h.rig.local->getMoney()->countMoney() == before);
+}
+
 TEST_CASE("hud6 retail: the help's upgrade warnings follow RW 0x807D8F .. 0x807EB0: only after a DescriptLabel, queue full first, the local player's money")
 {
 	if (!haveWorld("hud6 help guards"))

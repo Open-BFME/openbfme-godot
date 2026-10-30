@@ -22,6 +22,7 @@ using retailtest::PeImage;
 #include "GameClient/LogicSnapshot.h"
 #include "GameLogic/FXEvents.h"
 #include "GameLogic/Module/BehaviorModule.h"
+#include "GameLogic/Module/DozerAIUpdate.h"
 #include "GameClient/LiveFX.h"
 #include "GameClient/Visual2Stops.h"
 #include "GameEngineDevice/W3DDevice/GameClient/W3DVegetationSway.h"
@@ -111,7 +112,7 @@ TEST_CASE("visual2 shroud look: an object seen clear stays unobscured for 2 s (1
 	dead.update((int)OBJECTSHROUD_FOGGED, true, 325);
 	CHECK(dead.fullyObscured);
 	CHECK_FALSE(dead.hidden); // fogged: the device layer stands the drawable in for the ghost (S-561)
-	// OBJECTSHROUD_INVALID (no shroud displayed, ALWAYS_VISIBLE): never obscured, the clear frame untouched
+	// OBJECTSHROUD_INVALID (no shroud displayed): never obscured, the clear frame untouched (no record / ALWAYS_VISIBLE answer CLEAR, RW 0x68D8F7)
 	DrawableShroudLook none;
 	none.update(0, false, 50);
 	CHECK_FALSE(none.fullyObscured);
@@ -612,8 +613,8 @@ std::set<FXParticleSystem::ParticleSystemID> liveSystemIds(FXPlayback &pb)
 }
 } // namespace
 
-TEST_CASE("visual2 r2 retail: an enemy garrisoned in the shroud plays no object effect (RW 0x5E22C4: no partition data asks the cell) and its systems are hidden "
-		  "(RW 0x5FA6E9); seen, the effect plays")
+TEST_CASE("visual2 r2 retail: an enemy garrisoned in the shroud keeps its shroud record (RW 0x68C18F, PORTERFOG-1), plays no object effect (RW 0x5E2282: "
+		  "its status is SHROUDED) and its systems are hidden (RW 0x5FA6E9); seen, the effect plays")
 {
 	if (!hudtest::haveWorld("visual2 r2 retail garrisoned enemy in the shroud"))
 	{
@@ -647,15 +648,16 @@ TEST_CASE("visual2 r2 retail: an enemy garrisoned in the shroud plays no object 
 	man = rig.logic().findObjectByID(mid);
 	REQUIRE(man != nullptr);
 	REQUIRE(man->getContainedBy() == rig.logic().findObjectByID(kid));
-	// the review's state: the garrisoned enemy has no shroud record (GARRISON-1's containment hook), so its presented status is 0 like an ALWAYS_VISIBLE one
-	CHECK_FALSE(sm->hasRecord(*man));
+	// RW 0x68C18F (the contain's world exit) keeps the record (Object + 0x4E4) and only marks it dirty, forced (RW 0xB4E2A0); the record goes in the destructor
+	// (RW 0x69A8BC). So the garrisoned enemy presents its own status: its cells are never seen, SHROUDED
+	CHECK(sm->hasRecord(*man));
 	{
 		const std::shared_ptr<const LogicSnapshot> snap = rig.game->presentedSnapshot();
 		REQUIRE(snap);
 		const ObjectSnapshot *rec = snap->find(mid);
 		REQUIRE(rec != nullptr);
-		CHECK(rec->objectShroud == 0);
-		CHECK_FALSE(rec->shroudRecord);
+		CHECK(rec->objectShroud == (int)OBJECTSHROUD_SHROUDED);
+		CHECK(rec->shroudRecord);
 		CHECK(rec->drawableHidden); // the keep encloses it (RW 0x6718FB)
 	}
 	const std::vector<const FXList *> lists = plainParticleLists(*playback, 40);
@@ -714,6 +716,99 @@ TEST_CASE("visual2 r2 retail: an enemy garrisoned in the shroud plays no object 
 	rig.frame(2);
 	CHECK(playOnMan(lists[pick]) == 0u);
 	MESSAGE("visual2 r2: garrison test FXList " << lists[pick]->name() << " (candidate " << pick << " of " << lists.size() << ")");
+}
+
+TEST_CASE("porterfog1 retail: an enemy porter building in the shroud keeps its shroud record (RW 0x68C18F) and presents SHROUDED; its drawable fades out "
+		  "over BuilderFadeOutTime and is hidden (RW 0x88DDC1 -> 0x670A50, RW 0x675B7E); when it comes out it fades in (RW 0x88D6CE -> 0x670AA2)")
+{
+	if (!hudtest::haveWorld("porterfog1 retail porter in the shroud"))
+	{
+		return;
+	}
+	hudtest::SharedWorld &s = hudtest::shared();
+	hudtest::Rig rig(s);
+	const auto context = s.world->enterContext();
+	creeptest::removeCreeps(rig.logic());
+	ShroudManager *sm = rig.logic().shroud();
+	REQUIRE(sm != nullptr);
+	sm->setDisplayed(true);
+	REQUIRE(rig.logic().settings().builderFadeLoaded);
+	const Coord3D at = farCorner(rig, *sm);
+	Player *enemy = rig.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemy != nullptr);
+	enemy->depositMoney(5000);
+	Object *porter = rig.make("IsengardPorter", at.x, at.y, enemy);
+	REQUIRE(porter != nullptr);
+	const ObjectID pid = porter->getID();
+	DozerAIUpdate *dozer = dynamic_cast<DozerAIUpdate *>(porter->getAIUpdateInterface());
+	REQUIRE(dozer != nullptr);
+	const ThingTemplate *furnace = rig.logic().things().findTemplate("IsengardFurnace")->getFinalOverride();
+	Coord3D site;
+	bool found = false;
+	for (float r = 120.0f; r <= 400.0f && !found; r += 40.0f)
+	{
+		for (int k = 0; k < 16 && !found; ++k)
+		{
+			Coord3D c{ at.x + (float)(r * std::cos(k * 0.39269908169872414)), at.y + (float)(r * std::sin(k * 0.39269908169872414)), 0.0f };
+			c.z = rig.logic().getGroundHeight(c.x, c.y);
+			if (dozer->siteIsLegal(*furnace, c, 0.0f, *enemy))
+			{
+				site = c;
+				found = true;
+			}
+		}
+	}
+	REQUIRE(found);
+	REQUIRE(dozer->construct(*furnace, site, 0.0f, *enemy) != nullptr);
+	bool inside = false;
+	for (int guard = 0; guard < 600 && !inside; ++guard)
+	{
+		rig.frame(1);
+		porter = rig.logic().findObjectByID(pid);
+		REQUIRE(porter != nullptr);
+		inside = dozer->working() && !porter->isInWorld();
+	}
+	REQUIRE_MESSAGE(inside, "the porter never went into its site");
+	const Drawable *d = rig.game->drawables().findByObject(pid);
+	REQUIRE(d != nullptr);
+	// the fade out starts with the work (sub task 3) over BuilderFadeOutTime client frames (the fade's target stays after it ends)
+	bool hidden = false;
+	for (int guard = 0; guard < 60 && !hidden; ++guard)
+	{
+		rig.frame(1);
+		hidden = d->fade().hidden;
+	}
+	CHECK(hidden);
+	CHECK(d->fade().target == (double)rig.logic().settings().builderFadeOutFrames);
+	CHECK(d->fade().mode == 0);
+	CHECK(d->drawOpacity() == 0.0f);
+	porter = rig.logic().findObjectByID(pid);
+	REQUIRE(porter != nullptr);
+	CHECK(sm->hasRecord(*porter));
+	CHECK(sm->lookRadius(*porter) == -1); // out of the world it does not look (RW 0x694A45)
+	{
+		const std::shared_ptr<const LogicSnapshot> snap = rig.game->presentedSnapshot();
+		REQUIRE(snap);
+		const ObjectSnapshot *rec = snap->find(pid);
+		REQUIRE(rec != nullptr);
+		CHECK(rec->shroudRecord);
+		CHECK(rec->objectShroud == (int)OBJECTSHROUD_SHROUDED); // never seen cells
+		CHECK_FALSE(rec->drawableHidden); // no container encloses it: the fade is what hides it
+	}
+	// the work ends: back in the world, the fade in starts at opacity 0 and shows the drawable
+	bool out = false;
+	for (int guard = 0; guard < 3000 && !out; ++guard)
+	{
+		rig.frame(1);
+		porter = rig.logic().findObjectByID(pid);
+		REQUIRE(porter != nullptr);
+		out = porter->isInWorld();
+	}
+	REQUIRE_MESSAGE(out, "the porter did not come out of its site");
+	rig.frame(1);
+	CHECK_FALSE(d->fade().hidden);
+	CHECK(d->fade().target == (double)rig.logic().settings().builderFadeInFrames); // the fade in over BuilderFadeInTime (RW 0x670AA2)
+	CHECK(sm->lookRadius(*porter) == 3); // back in the world it looks again
 }
 
 namespace

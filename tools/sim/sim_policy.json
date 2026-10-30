@@ -196,12 +196,20 @@
    "reason": "lane CAMP-1: TheLinearCampaignManager's LinearCampaign INI blocks and the shell's campaign progress (which mission to load next); no logic state, the logic gets only the map name and the difficulty"
   },
   {
+   "glob": "src/GameClient/CameraAnimation.cpp",
+   "reason": "lane CAMANIM-1: the map's camera animations played by the tactical view (MOVE_CAMERA_BY_ANIMATION): track interpolation, slerp and Look_At on the client frame clock; the logic only records the client request and never reads any of it"
+  },
+  {
    "glob": "src/GameClient/ScriptCameraDirector.cpp",
    "reason": "lane SCRIPT-1: the client half of the script engine's camera / letterbox / caption / fade requests on the render clock; the logic only records the requests and never reads this state"
   },
   {
    "glob": "src/GameClient/EndGame.cpp",
    "reason": "lane END-1: the client half of the end of a game (the local player's end screen, messages and Eva, the human player's win / loss script library run over the logic snapshot, the score screen data copied when the game is left): reads the logic, never writes simulation state"
+  },
+  {
+   "glob": "src/GameClient/RTS3DSceneOcclusion.cpp",
+   "reason": "lane OCCLUDE-1: the behind-building markers' choice of drawables and their colours (RW 0x470B83 / 0x470176): reads objects while the logic snapshot is built and the snapshot in the renderer, writes only the snapshot and draw state, never simulation state"
   },
   {
    "glob": "src/GameClient/StealthLook.cpp",
@@ -258,6 +266,26 @@
   {
    "glob": "src/GameClient/MapWeather.cpp",
    "reason": "weather particle parameters: rendering"
+  },
+  {
+   "glob": "src/GameClient/WeatherSetting.cpp",
+   "reason": "lane WEATHER-1: the Weather / WeatherData / CloudEffect INI data of the client's weather: rendering and audio"
+  },
+  {
+   "glob": "src/GameClient/SnowManager.cpp",
+   "reason": "lane WEATHER-1: TheSnowManager (falling snow / rain, its client random): rendering"
+  },
+  {
+   "glob": "src/GameClient/CloudEffect.cpp",
+   "reason": "lane WEATHER-1: TheCloudEffect (the darkening and lightning lights): rendering"
+  },
+  {
+   "glob": "src/GameClient/WeatherClient.cpp",
+   "reason": "lane WEATHER-1: the client weather of a game (client frames, the weather sound): rendering and audio"
+  },
+  {
+   "glob": "src/GodotDevice/GodotWeather.cpp",
+   "reason": "lane WEATHER-1: the weather in the Godot scene: rendering"
   },
   {
    "glob": "src/GameClient/MapCache.cpp",
@@ -502,6 +530,10 @@
   {
    "glob": "src/GameClient/AnimationSoundClientBehavior.cpp",
    "reason": "AUDIO-4, the footsteps (AnimationSoundClientBehavior and TheAnimationSoundModuleManager): a ClientBehavior module of the drawables; reads the drawables' animation frames and the listener, plays on the audio manager; never read by the logic"
+  },
+  {
+   "glob": "src/GameClient/EvaDamage.cpp",
+   "reason": "EVADAMAGE-1, the client half of the drawable damage notice's Eva part (RW 0x67B4B7): picks the Eva event from the drawable's template and the attacker drawable's shroud look, keeps the drawable's far frame and reports to the Eva; applies recorded client events, never read by the logic"
   },
   {
    "glob": "src/GameClient/SoundSelectorClientBehavior.cpp",

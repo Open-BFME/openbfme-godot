@@ -138,7 +138,9 @@ Relationship relationshipToLocal(const HudContext &ctx, const Object &obj)
 
 bool isPickable(const Object &obj)
 {
-	return !obj.isDestroyed();
+	// lane FBSIM-1, INFERENCE: a dozer's phantom structure is out of the world and effectively dead (RW 0x88D0D8): nothing picks it
+	static const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
+	return !obj.isDestroyed() && !(phantom >= 0 && obj.testStatus((unsigned)phantom));
 }
 
 Object *selectionRepresentative(Object &obj)

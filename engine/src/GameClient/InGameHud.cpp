@@ -247,7 +247,7 @@ bool InGameHud::boot(std::string *error)
 	m_palantirRef->setStanceHandler([this](int stance) {
 		whenHeld([this, stance]() {
 			const auto worldContext = enterContext();
-			m_bar->sendChangeStance(stance);
+			m_bar->sendChangeStance(stance, "Palantir:stance-radial:RW_96F53C");
 		});
 	});
 	m_palantirRef->setRightButtonHandler([this](int slot, bool inPalantir) { // lane AUTOCAST-1

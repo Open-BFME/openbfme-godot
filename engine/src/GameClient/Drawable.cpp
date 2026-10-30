@@ -474,6 +474,7 @@ void Drawable::syncFromSnapshot(const ObjectSnapshot &rec, UnsignedInt snapshotF
 	}
 	m_zBasisCached = false; // the next prepareSync recomputes its trigonometry
 	updateConstruction(rec, snapshotFrame, alpha); // RENDER-2 (DrawableConstruction.cpp)
+	updatePhantomLook(rec);                        // lane FBSIM-1
 	m_moveSpeed = rec.moveSpeed;                   // lane SMOOTH-3: the walk / run cycle's speed source (RW 0x4B67D4)
 	m_scriptTarget = rec.scriptTarget;             // lane FX-3
 }
@@ -511,8 +512,19 @@ void Drawable::prepareSync(const ObjectSnapshot &rec, UnsignedInt snapshotFrame,
 	}
 	// the transform does not enter these (the construction look reads the record and the flags): done here, before commitSync sets it
 	updateConstruction(rec, snapshotFrame, alpha); // RENDER-2 (DrawableConstruction.cpp)
+	updatePhantomLook(rec);                        // lane FBSIM-1
 	m_moveSpeed = rec.moveSpeed;                   // lane SMOOTH-3: the walk / run cycle's speed source (RW 0x4B67D4)
 	m_scriptTarget = rec.scriptTarget;             // lane FX-3
+}
+
+void Drawable::updatePhantomLook(const ObjectSnapshot &rec)
+{
+	// lane FBSIM-1: a dozer's phantom structure is drawn at 0.4 opacity (RW 0x88D3E5: Drawable + 0xB0 = RW 0xBE0DE4) until the placement sets 1.0 (RW 0x88D683, RW 0xBD1908)
+	if (rec.phantomStructure != m_phantomLook)
+	{
+		m_phantomLook = rec.phantomStructure;
+		setDrawableOpacity(m_phantomLook ? 0.4f : 1.0f);
+	}
 }
 
 void Drawable::commitSync(const SyncPrep &prep)

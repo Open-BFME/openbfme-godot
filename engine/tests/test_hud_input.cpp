@@ -130,6 +130,7 @@ TEST_CASE("hud input: a drag box selects the units inside, shift adds and toggle
 	}
 	SharedWorld &s = shared();
 	Rig r(s);
+	r.input->commandTranslator().setUseAlternateMouse(true);
 	const Coord3D c0 = center(r);
 	r.lookAt(c0);
 	// three units of one type in a row, a fourth of another type apart (positions free of map objects)
@@ -248,6 +249,7 @@ TEST_CASE("hud input: control groups (ctrl+digit creates, the digit selects, shi
 	}
 	SharedWorld &s = shared();
 	Rig r(s);
+	r.input->commandTranslator().setUseAlternateMouse(true);
 	const Coord3D c0 = r.freeSpot(center(r).x, center(r).y, 200.0f);
 	std::vector<Object *> us;
 	for (int i = 0; i < 2; ++i)
@@ -264,8 +266,8 @@ TEST_CASE("hud input: control groups (ctrl+digit creates, the digit selects, shi
 	r.frame(1);
 	CHECK(r.local->hotkeySquad(1) == std::vector<ObjectID>{ us[0]->getID() });
 	CHECK(r.logic().computeStateHash() != h0); // the squad is in the hash
-	// deselect (right click in the standard setup), then the digit selects the group again
-	r.rightClick(px(us[0]).x + 200, px(us[0]).y + 150);
+	// Deselect on empty ground in the right-click-orders setup, then select the group again.
+	r.leftClick(px(us[0]).x + 200, px(us[0]).y + 150);
 	r.frame(1);
 	CHECK(r.local->selection().empty());
 	r.pressKey(KEY_1);
@@ -754,7 +756,9 @@ TEST_CASE("synthetic HUD: an unarmed selection or no selection cannot issue an e
 	{
 		r.click(100, 100); r.drain();
 		r.click(400, 100, HudInput::Button::Right);
-		CHECK(r.commands.messages().empty());
+		// no attack: the eligibility (RW 0x69D1D4 -> 0x82CFD4) is 0 for a unit that is not isAbleToAttack (RW 0x691269), and result 0 reaches
+		// evaluateContextCommand's final location order with the enemy picked (RW 0x81F646 -> 0x81F757 -> issueMove RW 0x81DB0C)
+		r.locationCommand(MSG_DO_MOVETO, 400, 100);
 	}
 }
 

@@ -19,6 +19,7 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIEmotionStates.h"
 #include "GameLogic/Module/SiegeModules.h"
+#include "GameLogic/Module/SquishCollide.h"
 #include "GameLogic/AI/AIAttackMelee.h"
 #include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/AI/AIHunt.h"
@@ -89,6 +90,7 @@ struct StatusBits
 {
 	int hordeMember = objectStatusBit("HORDE_MEMBER");
 	int immobile = objectStatusBit("IMMOBILE");
+	int deployed = objectStatusBit("DEPLOYED");
 };
 const StatusBits &statusBits()
 {
@@ -103,6 +105,7 @@ struct KindBits
 	int dozer = ObjectTemplateInfoBuilder::kindOfIndex("DOZER");
 	int cavalry = ObjectTemplateInfoBuilder::kindOfIndex("CAVALRY");
 	int horde = ObjectTemplateInfoBuilder::kindOfIndex("HORDE");
+	int siegeTower = ObjectTemplateInfoBuilder::kindOfIndex("SIEGE_TOWER");
 };
 const KindBits &kindBits()
 {
@@ -1537,7 +1540,8 @@ Coord2D AIUpdateInterface::unitDirectionOf(const PathfindObject &o) const
 	return d;
 }
 
-// RW 0x663F48: (DOZER ? 100 : 0) + 10 * veterancy level (0 until the experience tracker, S-142) + (CAVALRY ? 5 : 0)
+// RW 0x663F48: (DOZER ? 100 : 0) + 10 * the crushable level (RW 0x68D4D0, its byte sign-extended: movsx) + (CAVALRY ? 5 : 0) (lane PATHPRIO-1;
+// the port had no middle term). BFME2: AIUpdateInterfaceRva0026417F.cpp:68
 int AIUpdateInterface::pathPriority() const
 {
 	int p = 0;
@@ -1545,6 +1549,7 @@ int AIUpdateInterface::pathPriority() const
 	{
 		p += 100;
 	}
+	p += 10 * ObjectCrush::crushableLevel(*getObject());
 	if (hasKind(*getObject(), kindBits().cavalry))
 	{
 		p += 5;
@@ -1552,9 +1557,42 @@ int AIUpdateInterface::pathPriority() const
 	return p;
 }
 
-PathfindObjectID AIUpdateInterface::attackTargetOf(const PathfindObject &) const
+// RW 0x66E2A4 .. 0x66E2BB: KindOf SIEGE_TOWER (template + 0x113 bit 0x20) with status DEPLOYED (0x3B, RW 0x44DDEC)
+bool AIUpdateInterface::isDeployedSiegeTower() const
 {
-	return PATHFIND_INVALID_ID; // the attack machine is the combat milestone's
+	return hasKind(*getObject(), kindBits().siegeTower) && getObject()->testStatus((unsigned)statusBits().deployed);
+}
+
+// RW 0x68B36F: the object's AI (+ 0x260) whose vslot 0x1BC answers true (RW 0x662B3C: the current state's isActive, true with none) -> its current victim
+// (RW 0x668303: AI + 0x40 -> findObjectByID RW 0x449681), else none (lane PATHPRIO-1; the port answered none for every object)
+PathfindObjectID AIUpdateInterface::attackTargetOf(const PathfindObject &o) const
+{
+	Object *obj = getObject()->logic().findObjectByID((ObjectID)o.getID());
+	const AIUpdateInterface *ai = obj ? obj->getAIUpdateInterface() : nullptr;
+	if (ai == nullptr || !ai->isStateActive())
+	{
+		return PATHFIND_INVALID_ID;
+	}
+	const Object *victim = ai->currentVictim();
+	return victim ? (PathfindObjectID)victim->getID() : PATHFIND_INVALID_ID;
+}
+
+// AI vslot 0x1FC (RW 0x664D12, ZH getEnterTarget AIUpdate.cpp:4292): the machine's goal object (RW 0x8DBACE) while the state type (RW 0x662D70) is 15 (AI_ENTER),
+// 0x18, 0x19, 0x2B, 0x31 or 52 (AI_HORDE_ENTER), or 56 (AI_MOVE_TO_POSITION_AND_ENTER) with a SHIP goal (its template + 0x11F bit 0x80); else none
+PathfindObjectID AIUpdateInterface::enterTargetOf(const PathfindObject &o) const
+{
+	Object *obj = getObject()->logic().findObjectByID((ObjectID)o.getID());
+	const AIUpdateInterface *ai = obj ? obj->getAIUpdateInterface() : nullptr;
+	const AIStateMachine *m = ai ? ai->stateMachineOrNull() : nullptr;
+	const Object *goal = m ? m->goalObject() : nullptr;
+	if (goal == nullptr)
+	{
+		return PATHFIND_INVALID_ID;
+	}
+	static const int kShip = ObjectTemplateInfoBuilder::kindOfIndex("SHIP");
+	const unsigned t = ai->aiStateType();
+	const bool entering = t == 15 || t == 0x31 || t == 0x18 || t == 0x2B || t == 0x19 || t == 52 || (t == 56 && hasKind(*goal, kShip));
+	return entering ? (PathfindObjectID)goal->getID() : PATHFIND_INVALID_ID;
 }
 
 bool AIUpdateInterface::crushOrSquishPolicy(const PathfindObject &other) const

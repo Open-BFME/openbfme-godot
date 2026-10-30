@@ -164,6 +164,10 @@ void ScriptCameraDirector::apply(const ScriptClientRequest &r, const Coord3D &ca
 		m_followId = r.objectId;
 		return;
 	}
+	if (a == "MOVE_CAMERA_BY_ANIMATION")
+	{
+		return; // lane CAMANIM-1: the tactical view plays it (GameClient/CameraAnimation.h: CameraAnimationPlayback), not the script camera
+	}
 	if (a == "CAMERA_STOP_FOLLOW") // RW 0x7BCCE1
 	{
 		m_followId = 0;

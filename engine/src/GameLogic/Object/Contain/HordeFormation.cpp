@@ -192,7 +192,7 @@ HordeContain *HordeContain::toggleFormation()
 	// (slot 0xF0), else Battle (RW 0x8620DD)
 	if (StancesBehavior *stances = StancesBehavior::of(*horde))
 	{
-		stances->setStance(fresh->hordeData().m_isPorcupineFormation ? STANCE_PORCUPINE : STANCE_BATTLE);
+		stances->setStance(fresh->hordeData().m_isPorcupineFormation ? STANCE_PORCUPINE : STANCE_BATTLE, "changeToFormation:RW_87629F");
 	}
 	if (!fresh->hordeData().m_isPorcupineFormation)
 	{

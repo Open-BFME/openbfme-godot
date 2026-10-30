@@ -145,7 +145,7 @@ struct Mission
 		{
 			o.getBodyModule()->setIndestructible(false);
 		}
-		o.kill(DEATH_NORMAL);
+		o.kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	}
 	void killNamed(const std::string &n)
 	{

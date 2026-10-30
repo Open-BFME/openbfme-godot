@@ -12,6 +12,7 @@
 #include "GameLogic/BuildPlacement.h"
 #include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/GUI/WindowManager.h"
 #include "StartTestUtil.h"
@@ -158,10 +159,12 @@ TEST_CASE("hud build: click a Porter, press the barracks button, place the ghost
 		}
 	}
 	REQUIRE(building != nullptr);
-	CHECK(building->isUnderConstruction());
+	// lane FBSIM-1: RotWK's phantom until the Porter arrives (RW 0x88D272), then UNDER_CONSTRUCTION (RW 0x88D44F)
+	static const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
+	CHECK(building->testStatus((unsigned)phantom));
 	CHECK(moneyStart - rig.local->getMoney()->countMoney() == (std::uint32_t)BuildAssistant::calcCostToBuild(*building->getTemplate(), rig.local, porter, -1)); // paid once, at the construct
 	int guard = 1200;
-	while (building->isUnderConstruction() && guard-- > 0)
+	while ((building->isUnderConstruction() || building->testStatus((unsigned)phantom)) && guard-- > 0)
 	{
 		frames(1);
 	}

@@ -43,6 +43,9 @@ struct HeightMapMeshOptions
 	TerrainUvOptions uv;
 	VertexColorMode colorMode = VERTEX_COLOR_AMBIENT_PLUS_ACCENT_LIGHTS;
 	int chunkCells = VERTEX_BUFFER_TILE_LENGTH;
+	// RW 0x4690C1 (BaseHeightMap::doTheLight): each terrain light's diffuse is multiplied by the map's light scale (GlobalData + 0x944 ..)
+	// when the terrain rendering mode is below 1; TerrainLightScale::Scales::terrain holds the factors (1.0 where retail does not scale).
+	float lightScale[3] = { 1.0f, 1.0f, 1.0f };
 };
 
 struct TerrainLayerMesh
@@ -93,12 +96,14 @@ bool build(const WorldHeightMap &map, const GlobalLightingData *lighting, const 
 	std::vector<TerrainChunk> &chunks, TerrainMeshStats &stats, std::string *error);
 
 // Vertex colour of ZH doTheLight as configured by options.colorMode: clamped to [0,1].
-void vertexLight(const TimeOfDayLights &lights, VertexColorMode mode, const float normal[3], float rgb[3]);
+// `lightScale` (null = 1, 1, 1) is the per-light diffuse scale of RW 0x4690C1.
+void vertexLight(const TimeOfDayLights &lights, VertexColorMode mode, const float normal[3], float rgb[3], const float *lightScale = nullptr);
 
 // ZH updateVB vertex normal of grid vertex (gx,gy): central differences with edge clamping.
 void gridNormal(const WorldHeightMap &map, int gx, int gy, float normal[3]);
 
 // The static diffuse (vertex colour bytes) of grid vertex (gx,gy), as build() stores it; white when
 // `lighting` is null. Used by roads (ZH RoadSegment::updateSegLighting reads getStaticDiffuse).
-void staticDiffuseAt(const WorldHeightMap &map, const GlobalLightingData *lighting, VertexColorMode mode, int gx, int gy, std::uint8_t rgb[3]);
+void staticDiffuseAt(const WorldHeightMap &map, const GlobalLightingData *lighting, VertexColorMode mode, int gx, int gy, std::uint8_t rgb[3],
+	const float *lightScale = nullptr);
 } // namespace HeightMapMesh

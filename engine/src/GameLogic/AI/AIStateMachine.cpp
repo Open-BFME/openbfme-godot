@@ -782,6 +782,11 @@ void AIFollowPathState::onExit(StateExitType status)
 	{
 		ai().setCanPathThroughUnits(false);
 	}
+	// RW 0x74B77D (BFME2 RVA 0x349D92): both path forms release individuals; the horde waits for its members in RW 0x89E2D0.
+	if (!owner().isKindOfName("HORDE"))
+	{
+		owner().setStatus(0x5A, false);
+	}
 }
 
 StateReturnType AIFollowPathState::update()

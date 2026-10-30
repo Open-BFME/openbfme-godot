@@ -681,6 +681,30 @@ void HordeContain::teleportMembers()
 	}
 }
 
+// lane BFME2CAMP1: RW 0x870667, interface slot 0x170 (Object::setTeam RW 0x69954A, contain slot 0x7C, for a non-null team): the contained members, read into
+// a list first (contain slot 0x118), each Object::setTeam(team); then the members on the way into a garrison (interface + 0x54, its ids in order) that still
+// exist (RW 0x449681). A member on the way is not in the contain list, so no member is visited twice
+void HordeContain::setMembersTeam(Team *team)
+{
+	const std::vector<Object *> members(m_members.begin(), m_members.end());
+	for (Object *m : members)
+	{
+		if (m)
+		{
+			m->setTeam(team);
+		}
+	}
+	GameLogic &logic = getObject()->logic();
+	const std::vector<ObjectID> entering(m_garrisonEntering.begin(), m_garrisonEntering.end());
+	for (ObjectID id : entering)
+	{
+		if (Object *m = logic.findObjectByID(id))
+		{
+			m->setTeam(team);
+		}
+	}
+}
+
 // RW 0x86D8FE, interface slot 0x1B4 (BFME2 decomp HordeContain::rva0046A78F, tier A): slot 0x40, then every contained member gets the transform with its
 // translation replaced by slot 7's position (Object RW 0x68DA67)
 void HordeContain::teleportMembersTransform(const float basis[9])

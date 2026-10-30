@@ -52,7 +52,9 @@ namespace W3DObjectLightingUtil
 float effectColorScale(const GlobalLightingData &lighting);
 
 // The light sets of the map's current time of day. Fails (with *error) when the time of day is not 1..4.
-bool fromMap(const GlobalLightingData &lighting, W3DObjectLighting &out, std::string *error);
+// `lightScale` (null = 1, 1, 1; TerrainLightScale::Scales::objects) multiplies the directional lights' colours, not the ambient: RTS3DScene::
+// updateFixedLightEnvironments (RW 0x46E009, the global lights' diffuse only) when the shader LOD is below 2.
+bool fromMap(const GlobalLightingData &lighting, W3DObjectLighting &out, std::string *error, const float *lightScale = nullptr);
 
 // The lines this lighting reports (stop S-390 and the facts above), for the model / world reports.
 std::vector<std::string> stopLines();

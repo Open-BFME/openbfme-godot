@@ -261,7 +261,7 @@ public:
 	// RW 0x6ED843 (the partition's melee reach test) and the layer rule (RW 0x68BBE0 / 0x863983); only the melee branch calls them
 	// lane PLAY-4 r1: `sourcePos` is RW 0x6CC07C's source position (RW 0x6ED843's second argument: the point the reach is tested from)
 	virtual bool meleeReach(const RangeSubject &source, const Coord3D &sourcePos, const RangeSubject &victim) = 0;
-	virtual float meleeRunDownLimit() = 0; ///< RW GameData+0x18 -> +0xD0
+	virtual float meleeRunDownLimit() = 0; ///< RW [TheAI 0xDE4B40] + 0x18 -> AIData + 0xD0 (ChaseFromBehindLimit, RW 0x6CC0F6)
 	virtual bool victimFlag11A_40() = 0;   ///< RW victim template +0x11A & 0x40
 	virtual int layerOf(bool victim) = 0;  ///< RW 0x68BBE0
 	virtual bool victimLayerException() = 0; ///< RW 0x863983 && +0x3C

@@ -690,9 +690,21 @@ std::vector<std::string> listColumn(GameWindow *list, int column)
 }
 } // namespace
 
+// lane ONLINEMENU-1 (2026-10-27): a gate host with node and the peer / relay programs sets OPENBFME_REQUIRE_LOBBY_E2E=1:
+// there a missing piece FAILS the case instead of skipping it (the real-lobby cases skipped on every gate for days, unseen)
+bool hubE2eRequired()
+{
+	const char *v = std::getenv("OPENBFME_REQUIRE_LOBBY_E2E");
+	return v && std::string(v) == "1";
+}
+
 #define HUB_REQUIRE_TOOLS()                                                                                                                        \
 	if (!haveTools())                                                                                                                              \
 	{                                                                                                                                              \
+		if (hubE2eRequired())                                                                                                                      \
+		{                                                                                                                                          \
+			FAIL("OPENBFME_REQUIRE_LOBBY_E2E=1 but Node.js, Python 3, the lobby server or fake_server.py is missing here");                     \
+		}                                                                                                                                          \
 		MESSAGE("SKIP LOUDLY: Node.js, Python 3, the lobby server or tools/platform_fake/fake_server.py is missing here, so the TOURNAMENT / STATS page " \
 				"tests did not run");                                                                                                              \
 		return;                                                                                                                                    \
@@ -908,6 +920,10 @@ TEST_CASE("onlinehub1 retail e2e: a Quick Match's START from both TOURNAMENT pag
 	const std::string peer = envOr("OPENBFME_PEER", kPeerExe), relayExe = envOr("OPENBFME_RELAY", kRelayExe);
 	if (peer.empty() || relayExe.empty() || !std::filesystem::exists(peer) || !std::filesystem::exists(relayExe))
 	{
+		if (hubE2eRequired())
+		{
+			FAIL("OPENBFME_REQUIRE_LOBBY_E2E=1 but no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY)");
+		}
 		MESSAGE("SKIP LOUDLY: no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY), so the Quick Match's START was not played");
 		return;
 	}

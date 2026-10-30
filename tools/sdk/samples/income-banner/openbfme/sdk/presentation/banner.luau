@@ -12,3 +12,8 @@ function onFrame(frame)
 		ui.banner(string.format("Payday! +250 (you now have %d)", game.money(me)))
 	end
 end
+
+-- a game loaded from a save: this script started afresh too
+function onGameLoaded()
+	ui.banner("Income Banner: welcome back, the paydays go on")
+end

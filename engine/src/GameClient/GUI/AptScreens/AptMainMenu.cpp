@@ -75,6 +75,15 @@ AptMainMenu::~AptMainMenu()
 	windows().clearRenderCallback("AptMainMenu::RenderCredits");
 }
 
+void AptMainMenu::runInit()
+{
+	AptScreen::runInit();
+	if (m_env && m_env->fileSystem && isBfme1Data(*m_env->fileSystem))
+	{
+		windows().hideBackground(true);
+	}
+}
+
 namespace
 {
 // the main menu's requests that open a screen of their own (the names as the menu's buttons call them), and why a build has no screen for it, in the

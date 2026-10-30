@@ -20,6 +20,11 @@ The menu on the left: Play, News (release notes), Multiplayer, Mods, Game files 
 Settings (the channel, the free camera, updating by itself; About & logs: the installed versions and older releases, the log
 folder). The launcher's fonts (Cinzel, Cormorant Garamond, Inter) are under the SIL Open Font License 1.1.
 
+Settings > Display chooses one window mode and resolution for both games. Automatic preserves the window size in windowed mode and uses the desktop resolution in fullscreen modes.
+In borderless and fullscreen modes, the selected resolution is rendered and scaled to fit, with black bars when the aspect ratios differ.
+Launcher edits apply on the next launch. Accepting changes in the game's options updates the same settings; return to the launcher
+or reopen Display to see them. Other display and graphics settings remain in the game's options.
+
 Replay and save files
 ---------------------
 Use Play > Open replay..., drop one .replay file on the launcher, or double-click a downloaded replay. The launcher starts

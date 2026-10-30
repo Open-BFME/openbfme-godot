@@ -503,7 +503,7 @@ TEST_CASE("MOD-4: a Cave Troll Lair spawns its troll, which guards the lair, and
 	CHECK(distToLair() <= 400.0f * 400.0f);
 	// the troll dies: a replacement frame now + SpawnReplaceDelay (120 s = 600 frames) is queued, and a new troll comes after it
 	const unsigned diedAt = logic.getFrame();
-	troll->kill(0);
+	troll->kill(DAMAGE_UNRESISTABLE, 0);
 	g.live->advance(0.2);
 	CHECK(spawner->spawns().empty());
 	REQUIRE(spawner->replacementFrames().size() == 1);
@@ -520,7 +520,7 @@ TEST_CASE("MOD-4: a Cave Troll Lair spawns its troll, which guards the lair, and
 	// the lair dies: its troll loses its slaver (DieOnMastersDeath is not set for the cave troll) and lives on
 	Object *second = logic.findObjectByID(spawner->spawns().front());
 	REQUIRE(second);
-	lair->kill(0);
+	lair->kill(DAMAGE_UNRESISTABLE, 0);
 	for (int i = 0; i < 5; ++i)
 	{
 		g.live->advance(0.2);

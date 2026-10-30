@@ -36,6 +36,7 @@
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 #include "GameClient/MessageStream/MetaEvent.h"
 #include "GameClient/TacticalCamera.h"
+#include "GameClient/CameraAnimation.h"
 #include "GameClient/LiveFX.h"
 #include "GameClient/TacticalView.h"
 #include "GameLogic/Object/Object.h"
@@ -184,6 +185,10 @@ struct HudDevice : public AptNativeHook
 	// lane CAM-1: the retail tactical camera; the Godot camera is set from it every frame (applyCamera)
 	std::unique_ptr<TacticalCamera> cam;
 	DisplayedCameraView shown; // picking and projection follow the displayed (interpolated) pose (TacticalCamera.h, lane BUILD-5 r3)
+	// lane CAMANIM-1: the view's camera animation (W3DView mode 4) over the map's CameraAnimationList (built at the first request; the map is immutable)
+	CameraAnimationList camAnimList;
+	bool camAnimListBuilt = false;
+	CameraAnimationPlayback camAnim;
 	double clientClock = 0.0;
 	double updateMs = 0.0, cameraMs = 0.0, cursorMs = 0.0; ///< SMOOTH-1: the parts of the last _process
 	double viewClock = 0.0; ///< lane ANTICHEAT-1: seconds since the last view sample (GameWorld::net_submit_view, 2 a second)
@@ -1126,6 +1131,17 @@ void HudDevice::applyCamera(const Vector2 &window, double alpha)
 	Transform3D t;
 	t.origin = eye;
 	t.basis = Basis::looking_at((target - eye).normalized(), Vector3(0, 1, 0));
+	// lane CAMANIM-1: in mode 4 the camera build (RW 0x502858) takes the animation's transform and the view plane its FOV as the horizontal angle
+	// (RW 0x48B919); the W3D camera looks down its -Z with Y up as Godot's does, so the matrix's columns map axis by axis (SAGE -> Godot)
+	Matrix3D tm;
+	float animFov = 0.0f;
+	if (camAnim.transform(alpha, tm, animFov))
+	{
+		auto col = [&](int c) { return toGodotAxes(Coord3D{ tm.Row[0][c], tm.Row[1][c], tm.Row[2][c] }); };
+		t.basis = Basis(col(0), col(1), col(2));
+		t.origin = col(3);
+		camera->set_fov((real_t)(animFov * 180.0f / 3.14159265f));
+	}
 	camera->set_global_transform(t);
 }
 
@@ -1197,6 +1213,8 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("camera_set_height", "height_above_ground"), &InGameHudNode::camera_set_height);
 	ClassDB::bind_method(D_METHOD("camera_reset", "sage_xy"), &InGameHudNode::camera_reset);                 // lane CAMPUI-1
 	ClassDB::bind_method(D_METHOD("camera_set_zoom_limited", "on"), &InGameHudNode::camera_set_zoom_limited); // lane CAMPUI-1
+	ClassDB::bind_method(D_METHOD("camera_animation_request", "action", "name"), &InGameHudNode::camera_animation_request); // lane CAMANIM-1
+	ClassDB::bind_method(D_METHOD("camera_animation_state"), &InGameHudNode::camera_animation_state);                  // lane CAMANIM-1
 	ClassDB::bind_method(D_METHOD("set_objectives_screen_open", "open"), &InGameHudNode::set_objectives_screen_open); // lane CAMPUI-1
 	ClassDB::bind_method(D_METHOD("flash_palantir_button", "slot", "seconds"), &InGameHudNode::flash_palantir_button); // lane CAMPUI-1
 	ClassDB::bind_method(D_METHOD("is_objectives_flag_flashing"), &InGameHudNode::is_objectives_flag_flashing); // lane CAMPUI-1
@@ -1986,6 +2004,8 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 		{
 			const Vector3 s = options["camera_start"];
 			d->cam = std::make_unique<TacticalCamera>(gd);
+			d->camAnim.stop(); // lane CAMANIM-1: a new map: its own animation list (built at the first request)
+			d->camAnimListBuilt = false;
 			d->cam->setViewport((int)window.x, (int)window.y);
 			const LoadedMap &lm = game.map();
 			d->cam->startMap(game.logic(), lm.heightMap, lm.chunks.hasWorldInfo ? &lm.chunks.worldInfo : nullptr, Coord3D{ s.x, -s.z, 0.0f });
@@ -3194,6 +3214,7 @@ void InGameHudNode::_process(double delta)
 	while (d->clientClock >= step && guard < 8)
 	{
 		d->hud->input().cameraFrame((unsigned)Time::get_singleton()->get_ticks_msec(), d->world && d->world->is_paused());
+		d->camAnim.clientFrame(); // lane CAMANIM-1: the view update's mode-4 step (RW 0x48AA25), one client frame
 		d->clientClock -= step;
 		++guard;
 	}
@@ -3799,6 +3820,62 @@ void InGameHudNode::camera_reset(const Vector2 &sage_xy)
 		d->cam->resetCamera(&at);
 		d->cam->snapInterpolation();
 	}
+}
+
+bool InGameHudNode::camera_animation_request(const String &action, const String &name)
+{
+	// lane CAMANIM-1: client state (the map's records are immutable after the load), no wait for the logic worker
+	const std::string a = action.utf8().get_data();
+	if (a != "MOVE_CAMERA_BY_ANIMATION" && !CameraAnimationPlayback::cancelsAnimation(a))
+	{
+		return false;
+	}
+	if (!d->camAnimListBuilt)
+	{
+		LiveGame *game = d->world ? d->world->hud_game() : nullptr;
+		if (!game)
+		{
+			UtilityFunctions::printerr("CAMANIM ", action, ": no game (the map's camera animations are unknown)");
+			return false;
+		}
+		std::vector<std::string> errors;
+		d->camAnimList.build(game->map().chunks.cameraAnimations, errors);
+		d->camAnimListBuilt = true;
+		for (const std::string &e : errors)
+		{
+			UtilityFunctions::printerr("CAMANIM ", String::utf8(e.c_str()));
+			d->drawNotes.insert("[CAMANIM-1] " + e);
+		}
+	}
+	const std::string n = name.utf8().get_data();
+	const bool changed = d->camAnim.applyRequest(d->camAnimList, a, n);
+	if (a == "MOVE_CAMERA_BY_ANIMATION")
+	{
+		if (changed)
+		{
+			UtilityFunctions::print("CAMANIM start '", name, "' (", (int64_t)d->camAnimList.find(n)->numFrames(), " frames)");
+		}
+		else
+		{
+			// RW 0x7BBB9D: no animation of that name, the view is not called
+			UtilityFunctions::print("CAMANIM '", name, "' is not in the map's CameraAnimationList (", (int64_t)d->camAnimList.size(), " animations): no camera change");
+		}
+	}
+	else if (changed)
+	{
+		UtilityFunctions::print("CAMANIM ", action, " ends the camera animation");
+	}
+	return changed;
+}
+
+Dictionary InGameHudNode::camera_animation_state() const
+{
+	Dictionary r;
+	r["active"] = d->camAnim.active();
+	r["name"] = String::utf8(d->camAnim.name().c_str());
+	r["time"] = d->camAnim.time();
+	r["animations"] = (int64_t)d->camAnimList.size();
+	return r;
 }
 
 void InGameHudNode::set_objectives_screen_open(bool open)
