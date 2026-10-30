@@ -2,6 +2,7 @@
 // See GameLogic/AI/AIWorld.h for the sources and what is inference.
 
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/Module/CrateCollide.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Module/PortalModules.h"
 #include "GameLogic/Module/CollideModule.h"
@@ -1237,6 +1238,7 @@ void AIWorld::processPathfindQueue()
 void AIWorld::processCollisions()
 {
 	m_collisionPairs = 0;
+	if (m_mapReady) CrateCollide::processContacts(m_logic);
 	m_collisionPairsSkipped = 0;
 	if (!m_mapReady || m_ais.size() < 2)
 	{

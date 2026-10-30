@@ -3,6 +3,7 @@
 
 # simulation sources (sim audit manifest): every module here is object state that enters the lockstep hash
 list(APPEND OPENBFME_SIM_SOURCES
+    src/GameLogic/Module/CrateCollide.cpp
     src/GameLogic/Module/ExtraModules.cpp
     src/GameLogic/Module/ExtraUpgradeModules.cpp
     src/GameLogic/Module/ExtraDieModules.cpp
