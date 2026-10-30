@@ -43,10 +43,11 @@ def test_tactic_draw_sites_in_the_binary():
     assert _sorted(draw_table(Path(path).read_bytes())) == _sorted(EXPECTED)
 
 
-def test_the_port_makes_the_ported_draws_and_reports_the_others():
-    # the setup draw is ported (AITacticalAI.cpp setupTeam); every other site is named in the S-417 stop the manager reports
+def test_the_bfme2_port_keeps_its_draw_tags_and_reports_remaining_families():
+    # BFME2 AITactic::initializeTeamTemplate (0x4ECE61) uses line 386;
+    # RotWK uses 455. This branch follows BFME2; the binary test above stays RotWK.
     src = (ROOT / "engine/src/GameLogic/SkirmishAI/AITacticalAI.cpp").read_text()
-    assert '"AITactic.cpp", 0x1C7' in src
+    assert 'getValue(3, 5, "AITactic.cpp", 0x182)' in src
     # lane AI-2 r5: the bodies' own draws (binary site -> the port's file constant and line)
     for name, line in (("kFlankFile", "0x4E"), ("kFlankFile", "0x5B"), ("kPincerFile", "0x87"), ("kFeintFile", "0x43"), ("kFeintFile", "0x66"),
                        ("kFeintFile", "0x7A")):
@@ -54,8 +55,11 @@ def test_the_port_makes_the_ported_draws_and_reports_the_others():
     stops = (ROOT / "engine/src/GameLogic/SkirmishAI/SkirmishAIManager.cpp").read_text()
     s417 = stops[stops.index('"[S-417]'):]
     s417 = s417[:s417.index('",\n\t\t"[S-')]
-    for slots in EXPECTED.values():
-        for sites in slots.values():
-            for _kind, site in sites:
-                if site != MIN_SIZE[1]:
-                    assert site in s417, site
+    # End-merge is now ported; it must retain its real draw, rather than merely
+    # listing its address in the old blanket stop.
+    assert 'getValueReal(0.0f, c, "AITactic.cpp", 0x3FC)' in src
+    group = (ROOT / "engine/src/GameLogic/AI/AIGroup.cpp").read_text()
+    assert 'getValue(0, kLogicFramesPerSecond, "AIGroup.cpp", 0x874)' in group
+    for family in ("RingHero", "StructureCreep", "ReturnTheRing", "StartWoTRBattle"):
+        assert family in s417, family
+    assert "BFME2 audits of legacy RotWK tactical paths" in s417

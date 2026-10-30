@@ -1,4 +1,5 @@
 // OpenBFME. GPL-3.0. BFME2 source wall-library and planning regressions.
+#include <ostream> // libstdc++ shared_ptr diagnostics need the pointer insertion overload
 #include "doctest.h"
 #include "CombatTestUtil.h"
 #include "Common/MapObject.h"
