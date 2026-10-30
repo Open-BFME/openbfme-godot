@@ -99,6 +99,8 @@ const FieldParse kBezierParse[] = {
 	{ "CurveFlattenMinDist", INI::parseReal, nullptr, BP_OFF(m_curveFlattenMinDist) },
 	{ "PreLandingEmotion", parseEmotion, nullptr, BP_OFF(m_preLandingEmotion) },
 	{ "PreLandingEmotionRadius", INI::parseReal, nullptr, BP_OFF(m_preLandingEmotionRadius) },
+	// Open-BFME-2 reverse/fieldparse_tables.tsv: 0x841B58, bool +0xB4.
+	{ "PreLandingEmotionAffectsAllies", INI::parseBool, nullptr, BP_OFF(m_preLandingEmotionAffectsAllies) },
 	{ "InvisibleFrames", INI::parseUnsignedInt, nullptr, BP_OFF(m_invisibleFrames) },
 	{ "FadeInTime", INI::parseUnsignedInt, nullptr, BP_OFF(m_fadeInTime) },
 	{ "PostLandingStateTime", INI::parseDurationUnsignedInt, nullptr, BP_OFF(m_postLandingStateTime) },

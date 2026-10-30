@@ -990,6 +990,7 @@ const TEXT := {
 		"launcher.play_screen.download_games": "Download the games",
 		"launcher.play_screen.folders_found": "Folders found",
 		"launcher.play_screen.folders_missing": "Not found",
+		"launcher.play_screen.game_bfme2_standalone": "Battle for Middle-earth II 1.06 (without RotWK)",
 		"launcher.play_screen.installed_already": "Installed already? The game finds them when it starts.",
 		"launcher.play_screen.not_found": "The Rise of the Witch-king 2.01 and Battle for Middle-earth II 1.06 were not found.",
 		"launcher.play_screen.notes_placeholder": "The notes of your version appear here after the first update check.",

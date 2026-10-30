@@ -61,10 +61,11 @@ func _run_test(pick: Dictionary) -> Dictionary:
 	if pick.get("accept", false):
 		rotwk = _first_ok("rotwk")
 		bfme2 = _first_ok("bfme2")
-		if rotwk.is_empty() or bfme2.is_empty():
+		if bfme2.is_empty():
 			print("FIRST RUN nothing to accept: rotwk '%s', bfme2 '%s'" % [Release.info.redact(rotwk), Release.info.redact(bfme2)])
 			return {"ok": false, "errors": ["the first-run test found no usable game folders to accept"]}
-	var checked: Dictionary = _setup.check(rotwk, bfme2)
+	if Release.selected_game() == "bfme2-106": rotwk = ""
+	var checked: Dictionary = _check_folders(rotwk, bfme2)
 	print("FIRST RUN check: ok %s" % str(checked.ok))
 	for e in checked.errors:
 		print("FIRST RUN rejected: ", e)
@@ -80,8 +81,19 @@ func _first_ok(game: String) -> String:
 	return ""
 
 
+func _check_folders(rotwk: String, bfme2: String) -> Dictionary:
+	var result: Dictionary = _setup.check(rotwk, bfme2)
+	if Release.selected_game() == "bfme2-106":
+		result.ok = result.bfme2.ok
+		result.errors = result.bfme2.errors
+	return result
+
+
 func _mount_and_remember(rotwk: String, bfme2: String) -> Dictionary:
-	var mount: Dictionary = _fs.mount_retail_paths(rotwk, bfme2)
+	if Release.selected_game() == "bfme2-106": rotwk = ""
+	var checked := _check_folders(rotwk, bfme2)
+	if not checked.ok: return {"ok": false, "errors": checked.errors}
+	var mount: Dictionary = _fs.mount_bfme2_path(bfme2) if Release.selected_game() == "bfme2-106" else _fs.mount_retail_paths(rotwk, bfme2)
 	print("FIRST RUN mount: ok %s" % str(mount.ok))
 	if not mount.ok:
 		for e in mount.errors:
@@ -91,6 +103,11 @@ func _mount_and_remember(rotwk: String, bfme2: String) -> Dictionary:
 	print("FIRST RUN remembered: %s %s" % [str(saved.ok), saved.error])
 	if not saved.ok:
 		return {"ok": false, "errors": ["the game folders work but could not be saved: " + saved.error]}
+	var selection := ConfigFile.new()
+	selection.load("user://game-selection.cfg")
+	selection.set_value("game", "selected", Release.selected_game())
+	var err := selection.save("user://game-selection.cfg")
+	if err != OK: return {"ok": false, "errors": ["Could not save game selection: " + error_string(err)]}
 	return mount
 
 
@@ -118,7 +135,7 @@ func _build_ui(problem: String) -> void:
 	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	intro.text = ("OpenBFME plays on your own copy of the game: The Rise of the Witch-king patched to 2.01 and The Battle for Middle-earth II "
 		+ "patched to 1.06, in any language. They stay where they are; OpenBFME only reads them and never changes them.\n"
-		+ "Choose the two folders that hold the games' .big files. Folders found on this computer are offered below.")
+		+ "Choose the folders that hold the games' .big files. Folders found on this computer are offered below.")
 	box.add_child(intro)
 	if not problem.is_empty():
 		var warn := Label.new()
@@ -127,7 +144,7 @@ func _build_ui(problem: String) -> void:
 		warn.text = problem
 		box.add_child(warn)
 
-	var rows := [["The Rise of the Witch-king 2.01", "rotwk"], ["The Battle for Middle-earth II 1.06", "bfme2"]]
+	var rows := [["The Rise of the Witch-king 2.01 (unused when BFME2 standalone is selected)", "rotwk"], ["The Battle for Middle-earth II 1.06", "bfme2"]]
 	for row in rows:
 		var label := Label.new()
 		label.text = row[0]
@@ -167,6 +184,7 @@ func _build_ui(problem: String) -> void:
 			_bfme2_found = found
 		# preselect the first usable folder found
 		for i in range(1, found.item_count):
+			if row[1] == "rotwk" and Release.selected_game() == "bfme2-106": break
 			if str(found.get_item_text(i)).begins_with("OK"):
 				found.select(i)
 				edit.text = str(found.get_item_metadata(i))
@@ -222,11 +240,14 @@ func _browse(edit: LineEdit, what: String) -> void:
 
 
 func _recheck() -> void:
-	var r: Dictionary = _setup.check(_rotwk_edit.text, _bfme2_edit.text)
+	var r: Dictionary = _check_folders(_rotwk_edit.text, _bfme2_edit.text)
 	_checked_ok = r.ok
 	_start.disabled = not r.ok
 	var t := ""
 	for game in [["rotwk", "The Rise of the Witch-king"], ["bfme2", "The Battle for Middle-earth II"]]:
+		if game[0] == "rotwk" and Release.selected_game() == "bfme2-106":
+			t += "BFME2 standalone selected; RotWK folder is unused.\n"
+			continue
 		var g: Dictionary = r[game[0]]
 		if g.ok:
 			# issue #49: the language the folder holds (the game plays in it; the launcher's Game files screen downloads another)

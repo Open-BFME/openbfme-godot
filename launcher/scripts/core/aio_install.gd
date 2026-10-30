@@ -61,6 +61,7 @@ const RECORD := "aio-install.json"
 const MARKER := "downloaded-installs.cfg"   # InstallLocator::kDownloadedMarkerName
 # community PR #36: the optional BFME1 download
 const GAMES := "games"                      # the base download: Pins.PACKAGES (RotWK + BFME2)
+const BFME2_ONLY := "bfme2-106"
 const BFME1 := "bfme1"                      # the optional BFME1 package: Pins.BFME1_PACKAGES
 const BFME1_RECORD := "aio-install-bfme1.json"
 const BFME1_MARKER := "downloaded-bfme1.cfg"  # read by scripts/ui/paths.gd bfme1_folder and the game's release.gd mount_retail
@@ -76,7 +77,7 @@ var service := SERVICE
 var files_origin := FILES
 var packages: Array = Pins.PACKAGES
 var bfme1_packages: Array = Pins.BFME1_PACKAGES
-var choice := GAMES  # what install() downloads: GAMES or BFME1 (choose)
+var choice := GAMES  # default RotWK+BFME2, optional BFME2_ONLY or BFME1
 var text_language := "EN"  # issue #49: the base download's text language (a code of offered_languages)
 var voice_language := ""   # its voice language ("" = the text language's own speech)
 var stop_request := ""  # "pause" or "cancel", set from the UI thread (with updater.http.cancelled)
@@ -239,9 +240,9 @@ func set_test_pins(path: String) -> String:
 	return ""
 
 
-## Which download install() runs: GAMES (the base, the default) or BFME1 (community PR #36: optional). "" or why not.
+## Which download install() runs: GAMES (RotWK+BFME2, default), BFME2_ONLY or BFME1 (optional). "" or why not.
 func choose(which: String) -> String:
-	if which not in [GAMES, BFME1]:
+	if which not in [GAMES, BFME1, BFME2_ONLY]:
 		return L10n.t("launcher.aio_install.no_download", {"which": which, "games": GAMES, "bfme1": BFME1})
 	choice = which
 	return ""
@@ -249,7 +250,9 @@ func choose(which: String) -> String:
 
 ## the packages of the chosen download
 func chosen() -> Array:
-	return bfme1_packages if choice == BFME1 else packages
+	if choice == BFME1: return bfme1_packages
+	if choice == BFME2_ONLY: return packages.filter(func(p): return p.key == "bfme2")
+	return packages
 
 
 ## the launcher's chosen game is Battle for Middle-earth I (main.gd --game, the Play screen's game picker)
@@ -278,7 +281,7 @@ func consent_text() -> String:
 	lines.append(L10n.t("launcher.aio_install.consent_servers", {"project": project(), "service": SERVICE.trim_prefix("https://"), "files": FILES.trim_prefix("https://")}))
 	for p in chosen():
 		lines.append(L10n.t("launcher.aio_install.consent_package", {"label": p.label, "name": p.name, "guid": p.guid}))
-	if choice == GAMES:
+	if choice != BFME1:
 		lines.append(L10n.t("launcher.aio_install.consent_language", {"language": language_text()}))
 	lines.append(L10n.t("launcher.aio_install.consent_size", {"gb": total_size() / 1e9}))
 	return "\n".join(lines)
@@ -604,7 +607,7 @@ func write_marker(folders: Dictionary) -> String:
 	if err != OK and not DirAccess.dir_exists_absolute(dir):
 		return L10n.t("launcher.aio_install.cannot_create", {"path": dir, "reason": error_string(err)})
 	var guids := PackedStringArray()
-	for p in packages:
+	for p in chosen():
 		guids.append(p.guid)
 	var lines := PackedStringArray(["# Written by the OpenBFME launcher after it downloaded and checked these folders. The game offers them on its first start.",
 		"SOURCE=All In One BFME Launcher service: " + ", ".join(guids)])

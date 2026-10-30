@@ -157,7 +157,7 @@ const std::vector<std::string> &RotwkNeverLoadedSubsystems()
 void RunSubsystemIniLoad(SubsystemLegend &legend, INI &ini, const SubsystemLoadOptions &options, SubsystemLoadReport &report)
 {
 	legend.reset();
-	LoadSubsystemFile(ini, options.bfme1 ? "Data\\INI\\Default\\SubsystemLegend.ini" : kSubsystemLegendFile, options, &report);
+	LoadSubsystemFile(ini, (options.bfme1 || options.bfme2) ? "Data\\INI\\Default\\SubsystemLegend.ini" : kSubsystemLegendFile, options, &report);
 	report.subsystemsLoaded.push_back("TheSubsystemLegend");
 
 	const std::vector<std::string> &never = RotwkNeverLoadedSubsystems();

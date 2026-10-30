@@ -515,8 +515,35 @@ func language_warning(mount: Dictionary) -> bool:
 	return false
 
 
+func selected_game() -> String:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--game="):
+			return arg.trim_prefix("--game=")
+	var cfg := ConfigFile.new()
+	cfg.load("user://game-selection.cfg")
+	return str(cfg.get_value("game", "selected", "bfme2")) # legacy key: RotWK is the default
+
+
 func _mount_retail_folders(fs: RefCounted) -> Dictionary:
-	if OS.get_cmdline_user_args().has("--game=bfme1"):
+	if selected_game() == "bfme2-106":
+		if Array(OS.get_cmdline_user_args()).any(func(a): return a.begins_with("--mod-engine=")) or not mod_args(OS.get_cmdline_user_args(), OS.get_environment("OPENBFME_MOD")).is_empty() or not install_mod_args(OS.get_cmdline_user_args(), OS.get_environment("OPENBFME_MOD_INSTALL")).is_empty():
+			return {"ok": false, "errors": ["BFME2-only mode currently supports the verified base game without RotWK mods."]}
+		var setup: RefCounted = ClassDB.instantiate("InstallSetup")
+		var conf: Dictionary = setup.configured()
+		var folder: String = conf.get("bfme2", "")
+		var problem := "Choose the BFME2 1.06 folder for standalone play."
+		if not folder.is_empty():
+			var report: Dictionary = fs.mount_bfme2_path(folder)
+			for stop in report.get("stops", []): print(stop)
+			if report.ok or _headless(): return report
+			problem = "The BFME2 folder chosen before does not work any more:\n" + "\n".join(report.errors)
+		if _headless(): return {"ok": false, "errors": ["BFME2-only mode requires BFME2_INSTALL or a remembered BFME2 folder."]}
+		var screen: CanvasLayer = preload("res://scripts/release/first_run.gd").new()
+		add_child(screen)
+		var result: Dictionary = await screen.run(fs, setup, problem, {})
+		screen.queue_free()
+		return result
+	if selected_game() == "bfme1":
 		if not mod_args(OS.get_cmdline_user_args(), OS.get_environment("OPENBFME_MOD")).is_empty():
 			return {"ok": false, "errors": ["-mod is RotWK's switch (lane MODS-1); BFME1 mode mounts no mods"]}
 		var install := OS.get_environment("BFME1_INSTALL")

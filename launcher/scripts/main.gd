@@ -31,7 +31,7 @@
 ##   --online-count=on|off    (lane ONLINECOUNT-1) the setting "Show how many players are online" (on by default): the Play card's "N players online" from
 ##                            the lobby's GET /v1/stats (scripts/core/online_count.gd); off, the launcher never asks the lobby, and the game's menus follow it
 ##   --free-camera=on|off     (lane INPUT-1) the game's free camera (Options.ini OpenBFMEFreeCamera, see scripts/core/game_options.gd)
-##   --game=bfme1|bfme2      remember which game Play starts (BFME1 uses its own asset folder)
+##   --game=bfme1|bfme2|bfme2-106 remember which game Play starts (BFME1 uses its own asset folder)
 ##   --aio=on|off             (lane AIO-1, on by default: AioInstall.DEFAULT_ENABLED) the setting "Offer to download the games"
 ##                            (Settings; the All In One BFME Launcher's service)
 ##   --aio-install=<folder> --aio-consent   with that setting on: download RotWK 2.01 and BFME2 1.06 from the All In One BFME Launcher's
@@ -809,8 +809,8 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 	for a in args:
 		if a.begins_with("--game="):
 			var game := a.trim_prefix("--game=")
-			if game not in ["bfme1", "bfme2"]:
-				Log.line("LAUNCHER --game takes bfme1 or bfme2")
+			if game not in ["bfme1", "bfme2", "bfme2-106"]:
+				Log.line("LAUNCHER --game takes bfme1, bfme2 (RotWK), or bfme2-106")
 				return 1
 			updater.set_state("launcher", "game", game)
 	if "--version" in args:
@@ -1178,7 +1178,7 @@ func _build_ui() -> void:
 	stack.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	cv.add_child(stack)
 	_play_screen = PlayScreen.new()
-	_play_screen.game_picker.select(1 if updater.get_state("launcher", "game", "bfme2") == "bfme1" else 0)
+	_play_screen.game_picker.select(maxi(0, ["bfme2", "bfme1", "bfme2-106"].find(updater.get_state("launcher", "game", "bfme2"))))
 	_play_screen.game_selected.connect(func(game: String):
 		updater.set_state("launcher", "game", game)
 		_refresh_games())
@@ -1607,7 +1607,7 @@ func _start_aio(dir: String, resume := false) -> void:
 	if not resume:
 		# community PR #36: the package the panel showed when Download was pressed (BFME1 only when that is the chosen game: install refuses
 		# it otherwise)
-		aio.choose(AioInstall.BFME1 if _games_screen.offer_bfme1 else AioInstall.GAMES)
+		aio.choose(AioInstall.BFME1 if _games_screen.offer_bfme1 else (AioInstall.BFME2_ONLY if updater.get_state("launcher", "game", "bfme2") == "bfme2-106" else AioInstall.GAMES))
 	_aio_target = dir
 	_start_job(_job_aio.bind(dir), "aio")
 
@@ -1759,7 +1759,7 @@ func _show_notes() -> void:
 
 
 func _refresh_games() -> void:
-	_show_games(Paths.game_folders())
+	_show_games(Paths.game_folders(GameOptions.game_user_dir(), updater.get_state("launcher", "game", "bfme2") == "bfme2-106"))
 
 
 func _show_games(g: Dictionary, demo := false) -> void:
@@ -1770,6 +1770,7 @@ func _show_games(g: Dictionary, demo := false) -> void:
 		var b := Paths.short(g.bfme2)
 		var common := r.get_base_dir()
 		where = L10n.t("launcher.main.games_in", {"folder": common}) if common == b.get_base_dir() and common != "" else L10n.t("launcher.main.games_two", {"first": r, "second": b})
+	if g.found and g.rotwk.is_empty(): where = Paths.short(g.bfme2)
 	var bfme1 := Paths.bfme1_folder()
 	g["bfme1"] = bfme1
 	var use_bfme1: bool = updater.get_state("launcher", "game", "bfme2") == "bfme1"
@@ -1814,8 +1815,8 @@ func _set_buttons() -> void:
 	# community PR #36: the Game files download follows the chosen game (BFME1: the optional BFME1 package), except while a download
 	# runs or is paused: that one keeps its package (Resume continues what was started)
 	if not aio_running and _paused != "aio" and not _demo_bfme1:
-		aio.choose(AioInstall.BFME1 if aio.bfme1_chosen() else AioInstall.GAMES)
-	if _games_screen.offer_bfme1 != (aio.choice == AioInstall.BFME1):
+		aio.choose(AioInstall.BFME1 if aio.bfme1_chosen() else (AioInstall.BFME2_ONLY if updater.get_state("launcher", "game", "bfme2") == "bfme2-106" else AioInstall.GAMES))
+	if not aio_running and _paused != "aio":
 		_games_screen.set_offer(aio.choice == AioInstall.BFME1, aio.total_size() / 1e9, aio.chosen())
 	_games_screen.set_download_state(aio_running, _paused == "aio", busy and not aio_running, aio.enabled())
 	var mod_running := busy and _job_kind == "mod"

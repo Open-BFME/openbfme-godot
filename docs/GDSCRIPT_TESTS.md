@@ -250,3 +250,10 @@ runner is claimed. All paths below are relative to the repository root.
 Friend seeding can trigger `SocialClient`'s inbox-driven friends refresh. Creating a recovery code while that action owns the client emits `action_done("recovery", false)` and does not emit `recovery_ready`. The old integration ignored the rejection and waited for a code until timeout; no OAuth callback had run yet.
 
 The test now waits for a signed-in, populated, idle social client, connects both terminal signals before issuing the request, and checks successful completion and a nonempty code. A controlled busy-client probe holds readiness until explicitly released, proves no request was sent while busy, and then proves exactly one successful request. There is no fixed sleep or larger timeout. The real Node/SQLite integration still exercises both Discord rounds and all callback, restore, unlink and offline-provider assertions.
+
+## BFME2-only installation
+
+| Script | Runner | Requirements |
+| --- | --- | --- |
+| `launcher/tests/bfme2_offer_test.gd` | `tools/release/test_bfme2_standalone.py` | Asset-free launcher package, selection and folder checks. |
+| `godot/tests/bfme2_standalone_test.gd` | Manual invocation | Private BFME2 1.06 data and the native extension. |

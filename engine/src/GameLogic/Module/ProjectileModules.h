@@ -114,6 +114,7 @@ public:
 	std::string m_groundBounceWeapon;         // +0xA8
 	int m_preLandingEmotion = -1;             // +0xAC
 	float m_preLandingEmotionRadius = 0.0f;   // +0xB0
+	bool m_preLandingEmotionAffectsAllies = false; // BFME2 field table 0x841B58 +0xB4; runtime filter remains S-5911
 	unsigned m_postLandingStateTime = 0;      // +0xB4
 	int m_postLandingEmotion = -1;            // +0xB8
 	float m_postLandingEmotionRadius = 0.0f;  // +0xBC

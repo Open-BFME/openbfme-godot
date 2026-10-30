@@ -74,7 +74,7 @@ def main() -> int:
         project.mkdir()
         (project / "project.godot").write_text(
             '[application]\nconfig/name="Synthetic path test"\n[autoload]\nRelease="*res://release.gd"\n')
-        (project / "release.gd").write_text('extends Node\nvar info: RefCounted\nfunc display_line() -> String:\n\treturn "synthetic"\n')
+        (project / "release.gd").write_text('extends Node\nvar info: RefCounted\nvar game := "bfme2"\nfunc display_line() -> String:\n\treturn "synthetic"\nfunc selected_game() -> String:\n\treturn game\n')
         source = ROOT / "godot/scripts/release/first_run.gd"
         if args.first_run_ref:
             text = subprocess.check_output(["git", "show", f"{args.first_run_ref}:godot/scripts/release/first_run.gd"], cwd=ROOT)

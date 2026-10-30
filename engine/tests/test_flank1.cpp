@@ -216,6 +216,7 @@ const char kFlankObjects[] =
 	"    PreLandingStateTime = 400\n"
 	"    PreLandingEmotion = DOOM\n"
 	"    PreLandingEmotionRadius = 20\n"
+	"    PreLandingEmotionAffectsAllies = Yes\n"
 	"  End\n"
 	"  Geometry = Sphere\n"
 	"  GeometryMajorRadius = 3\n"
@@ -456,7 +457,11 @@ TEST_CASE("flank1 projectile: PreLandingEmotion reaches every live object of any
 	w.frames(2);
 	const Coord3D target{ 500.0f, 300.0f, 0.0f };
 	ObjectWeapons::createAndFireTempWeapon(w.weapon("FlankScare"), shooter, target);
-	REQUIRE(w.flyingProjectile("FlankScareStone") != nullptr);
+	Object *stone = w.flyingProjectile("FlankScareStone");
+	REQUIRE(stone != nullptr);
+	auto *projectile = dynamic_cast<BezierProjectileBehavior *>(stone->findModule("BezierProjectileBehavior"));
+	REQUIRE(projectile != nullptr);
+	CHECK(projectile->data()->m_preLandingEmotionAffectsAllies); // BFME2 field retained; runtime filter remains S-5911.
 	w.frames(30);
 	CHECK(w.combat().counters().projectilePreLandingEmotions == 2);
 	CHECK(w.combat().counters().projectileContactHits == 0); // ProjectileCollidesWith STRUCTURES: the units are not met
