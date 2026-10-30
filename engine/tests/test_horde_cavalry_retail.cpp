@@ -237,7 +237,7 @@ TEST_CASE("horde lifetime retail: a member produced into a horde that is already
 	REQUIRE(!members.empty());
 	for (Object *x : members)
 	{
-		x->kill(0); // the horde dies with its last member (HordeContain::removeFromContain)
+		x->kill(DAMAGE_UNRESISTABLE, 0); // the horde dies with its last member (HordeContain::removeFromContain)
 	}
 	REQUIRE(horde->isDestroyed());
 	// the queue exit hands the next produced member to the horde while it is still findable (RW 0x8A402D: findObjectByID, the contain's acceptance slot)

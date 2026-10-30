@@ -1099,9 +1099,12 @@ int ControlBar::stanceSlotOf(const CommandButton &b, Object &obj)
 	{
 		return -1;
 	}
+	// RW 0x96FF2F -> 0x861D8E: the toggle looks up the stance's class, not the stance (Uninitialized shows Battle, Porcupine / HoldGroundMoving show
+	// HoldGround), in the button's Stances (RW 0x96F2DA); the change listener RW 0x96F5DE gets the class too
+	const int stanceClass = StancesBehavior::stanceClass(sb->getStance());
 	for (size_t i = 0; i < b.m_stances.size(); ++i)
 	{
-		if (b.m_stances[i] == (int)sb->getStance())
+		if (b.m_stances[i] == stanceClass)
 		{
 			return (int)i;
 		}

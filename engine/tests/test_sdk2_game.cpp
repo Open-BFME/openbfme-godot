@@ -14,6 +14,8 @@
 #include "GameNetwork/ProfileIdentity.h"
 
 #include <chrono>
+#include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -209,24 +211,20 @@ TEST_CASE("SDK-2: the sim scripts run in lockstep: two identical games hash alik
 	}
 	CHECK(a.logic->computeStateHash() != plain.logic->computeStateHash()); // the scripts did change the game
 	CHECK(ha.reports() == hb.reports());
-	REQUIRE(ha.reports().size() == 3);
-	CHECK(ha.reports()[0] == "SDK Income: this game cannot be saved: a mod's sim scripts are not saved yet");
-	CHECK(ha.reports()[1] == "SDK Income: start at frame 1, players " + std::to_string(a.players.getPlayerCount()));
+	REQUIRE(ha.reports().size() == 2);
+	CHECK(ha.reports()[0] == "SDK Income: start at frame 1, players " + std::to_string(a.players.getPlayerCount()));
 	const std::uint32_t alice = a.players.findPlayerWithName("Alice")->getMoney()->countMoney();
 	// the three Fighters were all created by frame 60 (two before the first frame, one at frame 45)
-	CHECK(ha.reports()[2].rfind("SDK Income: frame 60: created 3, money ", 0) == 0);
+	CHECK(ha.reports()[1].rfind("SDK Income: frame 60: created 3, money ", 0) == 0);
 	CHECK(alice > moneyBefore + 300); // tolerance: three paydays of 100 + 1 .. 10 (frames 30, 60, 90)
 	CHECK(alice <= moneyBefore + 330); // tolerance: as above
 	CHECK(ha.calls() == hb.calls());
 	CHECK(ha.steps() == hb.steps());
 	CHECK_FALSE(ha.stopped());
-	// Sol r1: a running script VM is not saved yet: the save is refused naming the mod's scripts, and the players were told at the start
+	// lane SDK-2b: the game saves (its scripts' block: test_sdk2b_saves.cpp)
 	std::vector<std::uint8_t> snapshot;
 	std::string why;
-	CHECK_FALSE(a.logic->saveSnapshot(snapshot, &why));
-	CHECK(why.find("obfme:SdkScripts (the sim scripts of the mod Income)") != std::string::npos);
-	std::vector<std::uint8_t> plainSnapshot;
-	CHECK_MESSAGE(plain.logic->saveSnapshot(plainSnapshot, &why), why); // the same game without the mod saves
+	CHECK_MESSAGE(a.logic->saveSnapshot(snapshot, &why), why);
 }
 
 TEST_CASE("SDK-2: a sim script error stops that mod's scripts at the same frame on every peer, reported with the mod's name")
@@ -246,8 +244,7 @@ TEST_CASE("SDK-2: a sim script error stops that mod's scripts at the same frame 
 		REQUIRE(a.logic->computeStateHash() == b.logic->computeStateHash());
 	}
 	CHECK(ha.stopped());
-	CHECK(ha.reports() == std::vector<std::string>{ "SDK Boom: this game cannot be saved: a mod's sim scripts are not saved yet",
-							  "SDK Boom: openbfme/sdk/sim/boom.luau:1: boom at 20 (frame 20; the mod's scripts are stopped)" });
+	CHECK(ha.reports() == std::vector<std::string>{ "SDK Boom: openbfme/sdk/sim/boom.luau:1: boom at 20 (frame 20; the mod's scripts are stopped)" });
 	CHECK(ha.reports() == hb.reports());
 
 	MountedMod bad({ { "openbfme/sdk/mod.json", R"({"sdk": 1, "name": "Bad", "sim": ["bad"]})" }, { "openbfme/sdk/sim/bad.luau", "this is not luau" } });
@@ -297,13 +294,11 @@ end)";
 		for (const std::string &s : hb.takeBanners())
 			bannersB.push_back(s);
 	}
-	const std::string unsaved = "Look: this game cannot be saved (its scripts are not saved yet)";
-	CHECK(bannersA == std::vector<std::string>{ unsaved, "hello Alice" });
+	CHECK(bannersA == std::vector<std::string>{ "hello Alice" });
 	const std::uint32_t bobMoney = b.players.findPlayerWithName("Bob")->getMoney()->countMoney();
-	CHECK(bannersB == std::vector<std::string>{ unsaved, "frame 10, you have " + std::to_string(bobMoney), "frame 20, you have " + std::to_string(bobMoney),
+	CHECK(bannersB == std::vector<std::string>{ "frame 10, you have " + std::to_string(bobMoney), "frame 20, you have " + std::to_string(bobMoney),
 						  "frame 30, you have " + std::to_string(bobMoney) });
-	CHECK(hb.takeNewReports() == std::vector<std::string>{ "SDK Look: this game cannot be saved: a mod's sim scripts are not saved yet",
-								 "SDK presentation Look: nil" }); // a presentation script cannot pay anyone
+	CHECK(hb.takeNewReports() == std::vector<std::string>{ "SDK presentation Look: nil" }); // a presentation script cannot pay anyone
 	CHECK(ha.calls() == hb.calls()); // only the sim script's calls count
 }
 
@@ -379,4 +374,317 @@ TEST_CASE("SDK-2 (Sol r4 follow-up): a presentation script that defines the sim 
 		REQUIRE(wa.logic->computeStateHash() == wb.logic->computeStateHash());
 	}
 	CHECK(ha.calls() == hb.calls());
+}
+
+// ---- lane SDK-2b: sdk.state, the only thing of a script a save keeps ---------------------------------------------------------------------
+
+namespace
+{
+
+std::string stateError(const char *fill)
+{
+	LuauScriptState s(SdkScriptRole::Sim, "State", SdkScriptLimits(), [](const std::string &, std::string &, std::string &e) {
+		e = "no files";
+		return false;
+	});
+	std::string error;
+	REQUIRE_MESSAGE(s.load("fill", std::string("function fill() ") + fill + " end", error), error);
+	REQUIRE_MESSAGE(s.call("fill", {}, error), error);
+	std::string bytes;
+	CHECK_FALSE(s.serializeState(bytes, error));
+	return error;
+}
+
+} // namespace
+
+TEST_CASE("SDK-2b: sdk.state has canonical bytes: plain data in key order; a restore gives the same bytes; what it cannot hold is named")
+{
+	std::string error, bytes;
+	{
+		LuauScriptState s(SdkScriptRole::Sim, "State", SdkScriptLimits(), [](const std::string &, std::string &, std::string &e) {
+			e = "no files";
+			return false;
+		});
+		REQUIRE_MESSAGE(s.load("fill", "function fill() sdk.state.b = true; sdk.state[2] = 'x'; sdk.state.a = { [1] = -0.5 } end", error), error);
+		REQUIRE(s.serializeState(bytes, error));
+		CHECK(bytes == std::string("T\0\0\0\0", 5)); // empty after the top level
+		REQUIRE_MESSAGE(s.call("fill", {}, error), error);
+		REQUIRE_MESSAGE(s.serializeState(bytes, error), error);
+	}
+	// T, 3 pairs: the number key 2 first, then "a" and "b" bytewise
+	std::string expected("T\3\0\0\0", 5);
+	auto num = [](double d) {
+		std::string o = "N";
+		std::uint64_t bits;
+		std::memcpy(&bits, &d, 8);
+		for (int i = 0; i < 8; ++i)
+			o += (char)((bits >> (8 * i)) & 0xFF);
+		return o;
+	};
+	auto str = [](const std::string &v) { return std::string("S") + (char)v.size() + std::string(3, '\0') + v; };
+	expected += num(2) + str("x") + str("a") + std::string("T\1\0\0\0", 5) + num(1) + num(-0.5) + str("b") + "R";
+	CHECK(bytes == expected);
+	{
+		LuauScriptState t(SdkScriptRole::Sim, "State", SdkScriptLimits(), [](const std::string &, std::string &, std::string &e) {
+			e = "no files";
+			return false;
+		});
+		REQUIRE_MESSAGE(t.load("read", "function read() assert(sdk.state.a[1] == -0.5 and sdk.state[2] == 'x' and sdk.state.b) end", error), error);
+		REQUIRE_MESSAGE(t.restoreState(bytes, error), error);
+		REQUIRE_MESSAGE(t.call("read", {}, error), error);
+		std::string again;
+		REQUIRE(t.serializeState(again, error));
+		CHECK(again == bytes);
+		CHECK_FALSE(t.restoreState(bytes, error)); // only into an empty sdk.state
+	}
+	// damaged bytes are refused, never half read
+	CHECK_FALSE(LuauScriptState::checkStateBytes(bytes + "R", error));
+	CHECK(error.find("bytes after the end") != std::string::npos);
+	CHECK_FALSE(LuauScriptState::checkStateBytes(bytes.substr(0, bytes.size() - 1), error));
+	std::string swapped = std::string("T\2\0\0\0", 5) + str("b") + "R" + str("a") + "F";
+	CHECK_FALSE(LuauScriptState::checkStateBytes(swapped, error));
+	CHECK(error.find("keys out of order") != std::string::npos);
+	CHECK_FALSE(LuauScriptState::checkStateBytes(std::string("T\1\0\0\0", 5) + str("n") + num(std::nan("")), error));
+
+	CHECK(stateError("sdk.state.f = print") == "sdk.state.f is a function (sdk.state holds booleans, numbers, strings and tables of them)");
+	CHECK(stateError("sdk.state[1.5] = 1") == "sdk.state[1.5]: a key that is not a whole number (sdk.state's keys are strings or whole numbers)");
+	CHECK(stateError("sdk.state[true] = 1") == "sdk.state has a boolean key (sdk.state's keys are strings or whole numbers)");
+	CHECK(stateError("local t = {} sdk.state.a = t sdk.state.b = t") == "sdk.state.b is a table sdk.state already holds elsewhere (it holds each table once)");
+	CHECK(stateError("sdk.state.m = setmetatable({}, {})") == "sdk.state.m has a metatable (a save keeps plain tables only)");
+	CHECK(stateError("sdk.state.n = 0/0") == "sdk.state.n is NaN (sdk.state holds numbers that are not NaN)");
+	CHECK(stateError("local t = sdk.state for i = 1, 16 do t.x = {} t = t.x end") == "sdk.state.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x is more than 16 tables deep");
+	CHECK(stateError("for i = 1, 3000 do sdk.state[i] = string.rep('x', 20) end") == "sdk.state is over 64 KB serialized");
+	{
+		LuauScriptState s(SdkScriptRole::Sim, "State", SdkScriptLimits(), [](const std::string &, std::string &, std::string &e) {
+			e = "no files";
+			return false;
+		});
+		CHECK_FALSE(s.load("top", "sdk.state.n = 1", error)); // a top level reruns on a load
+		CHECK(error == "State: top: its top level changed sdk.state (a top level reruns when a save is loaded: change sdk.state from an event, such as "
+					   "onGameStart or onGameLoaded)");
+	}
+	{
+		LuauScriptState s(SdkScriptRole::Sim, "State", SdkScriptLimits(), [](const std::string &, std::string &, std::string &e) {
+			e = "no files";
+			return false;
+		});
+		CHECK_FALSE(s.load("swap", "function f() sdk.state = {} end f()", error)); // sdk is read-only: the table itself stays
+	}
+}
+
+namespace
+{
+// the paydays of kIncome, with what the script must remember kept in sdk.state; onGameLoaded rebuilds its own variable (`label`)
+const char kSaved[] = R"(
+local label = "fresh"
+function onGameStart() sdk.state.paid = 0; sdk.state.days = {} end
+function onGameLoaded() label = "loaded"; print("loaded at frame " .. game.frame() .. ", " .. sdk.state.paid .. " paydays") end
+function onFrame(frame)
+	if frame % 30 == 0 then
+		for i = 0, game.playerCount() - 1 do game.addMoney(i, 100 + math.random(1, 10)) end
+		sdk.state.paid += 1
+		table.insert(sdk.state.days, frame)
+	end
+	if frame == 100 then print(label .. ": paid " .. sdk.state.paid .. " on " .. table.concat(sdk.state.days, ",")) end
+end
+)";
+
+std::map<std::string, std::string> savedMod(const char *script)
+{
+	return { { "openbfme/sdk/mod.json", R"({"sdk": 1, "name": "Saved", "sim": ["s"]})" }, { "openbfme/sdk/sim/s.luau", script } };
+}
+} // namespace
+
+TEST_CASE("SDK-2b: a game with sim scripts saves; loaded, the scripts restart with sdk.state and the game hashes as the uninterrupted one")
+{
+	MountedMod mod(savedMod(kSaved));
+	REQUIRE_MESSAGE(mod.report.ok, joined(mod.report.errors));
+	World a, b, d;
+	SdkScriptHost ha(*a.logic), hb(*b.logic), hd(*d.logic);
+	std::string error;
+	REQUIRE_MESSAGE(ha.start(mod.fsys.modLooseLayer(), error), error);
+	REQUIRE_MESSAGE(hb.start(mod.fsys.modLooseLayer(), error), error);
+	REQUIRE_MESSAGE(hd.start(mod.fsys.modLooseLayer(), error), error);
+	a.make("Fighter", a.teamOf("Alice"));
+	for (int frame = 1; frame <= 45; ++frame)
+		a.logic->runLogicFrame();
+	std::vector<std::uint8_t> saved;
+	REQUIRE_MESSAGE(a.logic->saveSnapshot(saved, &error), error);
+	const std::uint32_t savedHash = a.logic->computeStateHash();
+	std::vector<std::uint32_t> hashes;
+	for (int frame = 46; frame <= 120; ++frame)
+	{
+		a.logic->runLogicFrame();
+		hashes.push_back(a.logic->computeStateHash());
+	}
+	// two other games (the same mod; two peers of a loaded multiplayer game) load the save: the same hash, then frame by frame in lockstep with
+	// each other and with the uninterrupted game
+	REQUIRE_MESSAGE(b.logic->loadSnapshot(saved, &error), error);
+	REQUIRE_MESSAGE(d.logic->loadSnapshot(saved, &error), error);
+	CHECK(b.logic->computeStateHash() == savedHash);
+	CHECK(d.logic->computeStateHash() == savedHash);
+	std::vector<std::uint8_t> again;
+	REQUIRE_MESSAGE(b.logic->saveSnapshot(again, &error), error);
+	CHECK(again == saved);
+	for (size_t i = 0; i < hashes.size(); ++i)
+	{
+		b.logic->runLogicFrame();
+		d.logic->runLogicFrame();
+		REQUIRE(b.logic->computeStateHash() == hashes[i]);
+		REQUIRE(d.logic->computeStateHash() == hashes[i]);
+	}
+	CHECK(hd.reports() == hb.reports());
+	CHECK(hd.stateBytes() == hb.stateBytes());
+	CHECK(ha.reports() == std::vector<std::string>{ "SDK Saved: fresh: paid 3 on 30,60,90" });
+	CHECK(hb.reports() == std::vector<std::string>{ "SDK Saved: loaded at frame 46, 1 paydays", "SDK Saved: loaded: paid 3 on 30,60,90" });
+	CHECK(ha.calls() == hb.calls()); // onGameLoaded is the load's: not counted
+	CHECK(ha.stateBytes() == hb.stateBytes());
+
+	// a game whose mod has other sim scripts refuses the save, naming both
+	MountedMod tuned(savedMod((std::string(kSaved) + "\n-- tuned").c_str()));
+	World c;
+	SdkScriptHost hc(*c.logic);
+	REQUIRE_MESSAGE(hc.start(tuned.fsys.modLooseLayer(), error), error);
+	CHECK_FALSE(c.logic->loadSnapshot(saved, &error));
+	CHECK(error.find("obfme:SdkScripts: the save's mod scripts ('" + ha.simFingerprint() + "') are not the loaded mod's ('" + hc.simFingerprint() +
+				"', the mod Saved): load the save with the mod it was made with") != std::string::npos);
+}
+
+TEST_CASE("SDK-2b: a top level may not change the game (it reruns on a load): game.addMoney, math.random and sdk.state there are errors")
+{
+	struct Case
+	{
+		const char *script, *error;
+	};
+	const Case cases[] = {
+		{ "game.addMoney(0, 100)", "game.addMoney: called from a script's top level, which runs again when a save is loaded" },
+		{ "local r = math.random(1, 6)", "math.random: called from a script's top level, which runs again when a save is loaded" },
+		{ "sdk.state.started = true", "its top level changed sdk.state" },
+	};
+	for (const Case &c : cases)
+	{
+		CAPTURE(c.script);
+		MountedMod mod(savedMod(c.script));
+		REQUIRE(mod.report.ok);
+		World w;
+		SdkScriptHost h(*w.logic);
+		std::string error;
+		CHECK_FALSE(h.start(mod.fsys.modLooseLayer(), error)); // the game does not start, the same on every peer
+		CHECK(error.find(c.error) != std::string::npos);
+	}
+	// inside an event it is the game's: a module required there keeps the rule for its own top level
+	MountedMod lazy({ { "openbfme/sdk/mod.json", R"({"sdk": 1, "name": "Lazy", "sim": ["s"]})" },
+		{ "openbfme/sdk/sim/s.luau", "function onFrame(f) if f == 3 then require('pay') end end" },
+		{ "openbfme/sdk/sim/pay.luau", "game.addMoney(0, 5)" } });
+	REQUIRE(lazy.report.ok);
+	World w;
+	SdkScriptHost h(*w.logic);
+	std::string error;
+	REQUIRE_MESSAGE(h.start(lazy.fsys.modLooseLayer(), error), error);
+	for (int frame = 1; frame <= 5; ++frame)
+		w.logic->runLogicFrame();
+	CHECK(h.stopped());
+	REQUIRE(h.reports().size() == 1);
+	CHECK(h.reports()[0].find("game.addMoney: called from a script's top level") != std::string::npos);
+	CHECK(h.reports()[0].find("(frame 3; the mod's scripts are stopped)") != std::string::npos);
+}
+
+TEST_CASE("SDK-2b: sdk.state that cannot be saved stops the scripts at that frame on every peer, named")
+{
+	MountedMod mod(savedMod("function onFrame(f) if f == 5 then sdk.state.cb = print end end"));
+	REQUIRE(mod.report.ok);
+	World a, b;
+	SdkScriptHost ha(*a.logic), hb(*b.logic);
+	std::string error;
+	REQUIRE(ha.start(mod.fsys.modLooseLayer(), error));
+	REQUIRE(hb.start(mod.fsys.modLooseLayer(), error));
+	for (int frame = 1; frame <= 8; ++frame)
+	{
+		a.logic->runLogicFrame();
+		b.logic->runLogicFrame();
+		REQUIRE(a.logic->computeStateHash() == b.logic->computeStateHash());
+	}
+	CHECK(ha.stopped());
+	CHECK(ha.reports() == std::vector<std::string>{ "SDK Saved: sdk.state.cb is a function (sdk.state holds booleans, numbers, strings and tables of "
+													 "them) (frame 5; the mod's scripts are stopped)" });
+	CHECK(ha.reports() == hb.reports());
+}
+
+TEST_CASE("SDK-2b (Sol r1): a loaded game iterates sdk.state (pairs) in the uninterrupted game's order")
+{
+	// keys put in out of order, some removed and put back: the running table's slots are not in key order
+	const char kOrder[] = R"(
+function onGameStart()
+	sdk.state.m = {}
+	for i = 30, 1, -1 do sdk.state.m["k" .. i] = i end
+	for i = 1, 30, 3 do sdk.state.m["k" .. i] = nil end
+	sdk.state.m.c = 1; sdk.state.m.a = 2; sdk.state.m[7] = 3; sdk.state.m[2] = 4
+	for i = 1, 30, 3 do sdk.state.m["k" .. i] = -i end
+end
+function onFrame(frame)
+	if frame == 50 then sdk.state.m.zz = 5; sdk.state.m.a = nil end
+	if frame == 60 or frame == 40 then
+		local s = {}
+		for k, v in pairs(sdk.state.m) do table.insert(s, tostring(k)) end
+		print(frame .. ": " .. table.concat(s, ","))
+	end
+end
+)";
+	MountedMod mod(savedMod(kOrder));
+	REQUIRE_MESSAGE(mod.report.ok, joined(mod.report.errors));
+	World a, b;
+	SdkScriptHost ha(*a.logic), hb(*b.logic);
+	std::string error;
+	REQUIRE_MESSAGE(ha.start(mod.fsys.modLooseLayer(), error), error);
+	REQUIRE_MESSAGE(hb.start(mod.fsys.modLooseLayer(), error), error);
+	for (int frame = 1; frame <= 45; ++frame)
+		a.logic->runLogicFrame();
+	std::vector<std::uint8_t> saved;
+	REQUIRE_MESSAGE(a.logic->saveSnapshot(saved, &error), error);
+	for (int frame = 46; frame <= 70; ++frame)
+		a.logic->runLogicFrame();
+	REQUIRE_MESSAGE(b.logic->loadSnapshot(saved, &error), error);
+	for (int frame = 46; frame <= 70; ++frame)
+		b.logic->runLogicFrame();
+	REQUIRE(ha.reports().size() == 2);
+	REQUIRE(hb.reports().size() == 1);
+	CHECK(hb.reports()[0] == ha.reports()[1]); // frame 60, after a change past the save
+	CHECK(a.logic->computeStateHash() == b.logic->computeStateHash());
+	MESSAGE(ha.reports()[0] << "\n" << ha.reports()[1]);
+}
+
+TEST_CASE("SDK-2b (Sol r2): sdk.state's upkeep that meets the memory cap is the script's error, never the game's")
+{
+	// a state close to its cap: the per-frame refill (canonicalizeState) needs memory; over the cap it fails, reported, and nothing throws
+	SdkScriptLimits limits;
+	limits.memoryBytes = 2u << 20;
+	int refused = 0, done = 0;
+	for (int kb = 200; kb <= 1950; kb += 6)
+	{
+		CAPTURE(kb);
+		LuauScriptState s(SdkScriptRole::Sim, "Heavy", limits, [](const std::string &, std::string &, std::string &e) {
+			e = "no files";
+			return false;
+		});
+		std::string error;
+		REQUIRE_MESSAGE(s.load("fill", "function fill(kb) keep = buffer.create(kb * 1024); sdk.state.m = {}; for i = 1, 2500 do sdk.state.m['k' .. i] = i end end",
+							error),
+			error);
+		if (!s.callNumbers("fill", { (double)kb }, error))
+			continue; // the script itself met the cap
+		std::string bytes;
+		if (!s.serializeState(bytes, error))
+			continue;
+		if (s.canonicalizeState(error))
+			++done;
+		else
+		{
+			++refused;
+			CHECK(error == "sdk.state: not enough memory (the script's memory cap)");
+			CHECK(s.failed());
+		}
+	}
+	MESSAGE(done << " refilled, " << refused << " met the cap");
+	CHECK(done > 0); // tolerance: the sweep only has to meet both outcomes; where the cap falls depends on the allocator's block sizes
+	CHECK(refused > 0); // tolerance: as above
 }

@@ -110,6 +110,11 @@ struct AIBuildRequest
 	int heuristicFortressResult = 3;                ///< the FORTRESS heuristic's + 0xC (RW 0x9ED351: 3)
 	std::vector<std::string> heuristicUnlocks;      ///< the FACTORY_UNITUNLOCK heuristic's templates (+ 8, RW 0x9ED4D2), by name
 
+	// lane AIEXPAND-1: a plain structure request (vtable RW 0xC85750, ctor RW 0x97DA21 over the request base RW 0x961B48), the one SimpleExpansion makes
+	// (RW 0x9B51E9): its site is `offset` as RW 0x97D986 stored it (vslot 0x34 = RW 0x97DA4E) at its own `angle` (vslot 0x44 = RW 0x48DA54); its check
+	// RW 0x97DC99 has no enemy count; its start is RW 0x9618BA (no start count); its vslot 0x1C is RW 0x993D2E (the state only)
+	bool plain = false;
+
 	bool finished() const { return state == 2 || state == 3; } // RW 0x8EDA5E
 	float bestPriority() const;                                 // RW 0x961BB9: max(effective, base)
 	Coord3D sitePosition(const GameLogic &logic) const;         // RW 0x97DED8
@@ -231,6 +236,14 @@ std::vector<std::shared_ptr<AIBuildRequest>> makeFarmSites(GameLogic &logic);
 void updatePhase(GameLogic &logic, AISkirmishPlayer &ai);
 // RW 0x90D6BF; `mapFileName` = the current map's file name ("map mp evendim.map"); appends problems to `errors`
 void init(GameLogic &logic, AISkirmishPlayer &ai, const std::string &mapFileName, const std::vector<int> &anyTypeDisabledSlots, std::vector<std::string> &errors);
+// RW 0x90D3C7 (lane AIEXPAND-1, factored out of init): a new AIBase at `pos` facing the map centre (RW 0x9BC7CF, index = the number of bases), its layout
+// chosen as RW 0x9BD03A -> 0x9BCA8E does (the "is an expansion" argument is unused there) and its slots made (RW 0x9BCBED); appends problems to `errors`
+void addBase(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D &pos, const std::string &mapFileName, const std::vector<int> &anyTypeDisabledSlots,
+	std::vector<std::string> &errors);
+// lane AIEXPAND-1: RW 0x9618BA(player, 0) on a plain request: state 0, then RW 0x8F0B92 queues it
+void startPlainRequest(AIBuildState &s, const std::shared_ptr<AIBuildRequest> &req);
+// RW 0x9618E3 -> RW 0x8F0602: the request leaves the pending and the in-progress queues
+void leaveQueues(AIBuildState &s, const AIBuildRequest *req);
 // RW 0x90D3C7's angle (exposed for tests)
 float baseAngle(const Coord3D &pos, float extentX, float extentY);
 // RW 0x9BCA8E's filter (the random pick is done by init); exposed for tests

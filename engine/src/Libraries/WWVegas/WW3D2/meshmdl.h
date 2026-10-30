@@ -49,6 +49,7 @@ struct MeshShaderMaterialProperty
 struct MeshShaderMaterialDef
 {
 	uint8 Number = 0;
+	uint8 Technique = 0; // BFME2 FXShaderSetup::Load_W3D (RVA 0x152E4D): index into the compiled effect
 	std::string TypeName; // "normalmapped.fx", ...
 	std::vector<MeshShaderMaterialProperty> Properties;
 };

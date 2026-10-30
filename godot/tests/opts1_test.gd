@@ -9,7 +9,8 @@
 ##
 ##   godot --headless --path godot --script res://tests/opts1_test.gd
 ##
-## The unit part runs without the games; the two game runs need ROTWK_INSTALL and BFME2_INSTALL (SKIP lines without). Exit codes: 0 pass, 1 fail.
+## The unit part runs without the games; menu and live-game runs for both presentations need ROTWK_INSTALL and BFME2_INSTALL (SKIP lines without).
+## Exit codes: 0 pass, 1 fail.
 extends SceneTree
 
 const DisplaySettings := preload("res://scripts/display_settings.gd")
@@ -38,8 +39,18 @@ func _run() -> int:
 	if not ClassDB.class_exists("AptMenuPlayer"):
 		_check(false, "the openbfme extension is loaded")
 		return 1
-	_game_run(["--display-check", "--max-fps=77"], 50, "the menu check (a command-line cap the file does not hold)")
-	_game_run(["--auto", "--advance=2", "--display-game"], 8, "the in-game check")
+	for style in ["rotwk", "bfme2"]:
+		var path := OS.get_user_data_dir().path_join("opts1-" + style + "-Options.ini")
+		var file := FileAccess.open(path, FileAccess.WRITE)
+		_check(file != null, "create isolated %s options" % style)
+		if file == null:
+			continue
+		file.store_string("OpenBFMEMainMenuStyle = %s\n" % style)
+		file.close()
+		var options := "--options-file=" + path
+		_game_run(["--display-check", "--max-fps=77", "--res=1100x700", options], 50, "%s menu check (a command-line cap the file does not hold)" % style)
+		_game_run(["--auto", "--advance=2", "--display-game", options], 8, "%s in-game check" % style)
+		DirAccess.remove_absolute(path)
 	return 0 if _failures == 0 else 1
 
 
@@ -88,6 +99,9 @@ func _settings_checks() -> void:
 
 func _apply_checks() -> void:
 	var window: Window = root
+	window.size = Vector2i(1280, 720)
+	DisplaySettings.new().apply(window)
+	_check(window.size == Vector2i(1280, 720), "Automatic windowed startup keeps the project window size")
 	var a = DisplaySettings.new()
 	a.max_fps = 120
 	a.render_scale = 0.5
@@ -134,5 +148,7 @@ func _game_run(args: Array, min_ok: int, what: String) -> void:
 				oks += 1
 			if line.begins_with("DISPLAY RESULT"):
 				result = line
+	if code != 0 or not result.ends_with(" 0 failed"):
+		printerr(text)
 	_check(code == 0 and result.ends_with(" 0 failed") and oks >= min_ok,
 		"%s (%s): exit %d, %s, %d ok (at least %d), %.0f s" % [what, " ".join(args), code, result if not result.is_empty() else "NO RESULT", oks, min_ok, (Time.get_ticks_msec() - t0) / 1000.0])

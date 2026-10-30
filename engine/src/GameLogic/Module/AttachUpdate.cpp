@@ -262,21 +262,7 @@ UpdateSleepTime AttachUpdate::update()
 		{
 			AudioApi::reportEva(m_diedEva, obj->getPosition());
 		}
-		// RW 0x698EC3(8, 0) (lane CAMP-1H r2, Sol): the body's attemptDamage with source 0 (not the object itself: that would set its player's attacked-by-self
-		// state), DAMAGE_UNRESISTABLE, DEATH_NORMAL, the maximum health as the amount and the kill flag
-		if (BodyModuleInterface *body = obj->getBodyModule())
-		{
-			if (!obj->isEffectivelyDead())
-			{
-				DamageInfo damage;
-				damage.m_input.m_sourceID = 0;
-				damage.m_input.m_damageType = DAMAGE_UNRESISTABLE;
-				damage.m_input.m_deathType = DEATH_NORMAL;
-				damage.m_input.m_amount = body->getMaxHealth();
-				damage.m_input.m_kill = true;
-				body->attemptDamage(damage);
-			}
-		}
+		obj->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x895453
 		return UPDATE_SLEEP_FOREVER;
 	}
 	const Coord3D at = anchorOf(*parent);

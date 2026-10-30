@@ -313,7 +313,7 @@ public:
 	static std::string hordeMemberUpdateStop();
 	bool isDoingGroundMovement() const;       // B1 AIUpdate.cpp:3978
 	bool isAircraftThatAdjustsDestination() const; // B1 AIUpdate.cpp:4010
-	bool canPathThroughUnits() const { return m_canPathThroughUnits; }
+	bool canPathThroughUnits() const override { return m_canPathThroughUnits; } // AI + 0x3BA
 	void setCanPathThroughUnits(bool v) { m_canPathThroughUnits = v; }
 	CommandSourceType lastCommandSource() const { return m_lastCommandSource; }
 	void setLastCommandSource(CommandSourceType s) { m_lastCommandSource = s; } // AI + 0x48 (lane HEROCAST-1: public, AIGroup's groupDoSpecialPower* write it)
@@ -395,6 +395,7 @@ public:
 	bool isImmobile() const override;
 	bool isStatusImmobile() const override;
 	bool isContained() const override;
+	bool isDeployedSiegeTower() const override; // RW 0x66E2A4
 	int stateId() const override { return (int)currentStateId(); }
 	AIMover *moverOf(PathfindObjectID id) override;
 	AIMover *containerMover() override;
@@ -402,6 +403,7 @@ public:
 	Coord2D unitDirectionOf(const PathfindObject &o) const override;
 	int pathPriority() const override;
 	PathfindObjectID attackTargetOf(const PathfindObject &o) const override;
+	PathfindObjectID enterTargetOf(const PathfindObject &o) const override; // AI vslot 0x1FC, RW 0x664D12
 	bool crushOrSquishPolicy(const PathfindObject &other) const override; // lane ATTACK-1: RW 0x69519A(other, 2)
 	float wanderFactor() const override;
 	float closeEnoughDist() const override;

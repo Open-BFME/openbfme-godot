@@ -105,6 +105,7 @@ class GameState;
 class Xfer;
 struct CrushTemplateInfo;
 struct LuaEventArgs;
+struct EvaDamageNotice;
 
 // ZH GameLogic::sendObjectCreated / Object::~Object's sendObjectDestroyed go to the client; the client layer implements this.
 // Lane SMOOTH-1 (S-810): the simulation never holds or calls a Drawable. Everything it tells the client is a call on these hooks, which the
@@ -136,10 +137,16 @@ public:
 	// lane BUILD-4, RW 0x670AA2 Drawable::fadeIn(frames) called by the simulation (a wall span's tiles, RW 0x7954A8): the object's drawable fades in over
 	// `frames` client frames (0: shown at once)
 	virtual void fadeIn(Object &obj, UnsignedInt frames) { (void)obj; (void)frames; }
+	// lane PORTERFOG-1, RW 0x670A50 Drawable::fadeOut(frames) called by the simulation (a porter starting its work, RW 0x88DDC1): the drawable fades out over
+	// `frames` client frames (0: at once) and is hidden once its opacity * 255 is below 1 (RW 0x675B7E)
+	virtual void fadeOut(Object &obj, UnsignedInt frames) { (void)obj; (void)frames; }
 	// RW 0x67B78C -> 0x6D4789: a qualifying hit on a local hero, independently of the EVA gate.
 	// RW 0x69560B: profile statistics are recorded before the normal kill-score gates.
 	virtual void createAHeroKill(Object &, Object &) {}
 	virtual void heroAttacked(Object &obj) { (void)obj; }
+	// lane EVADAMAGE-1, RW 0x67B4B7's Eva half: a qualifying hit (ShouldPlayUnderAttackEva) on a local object, with the logic's part of the choice
+	// (GameLogic/Object/EvaDamageNotice.h); the client picks the event, keeps the drawable's far frame and reports it to TheEva
+	virtual void evaDamaged(Object &obj, const EvaDamageNotice &notice) { (void)obj; (void)notice; }
 	virtual void flashHeroButton(const std::string &templateName, int frames) { (void)templateName; (void)frames; }
 	// lane CAH-2, RW 0x80AF0B (a Create-a-Hero record's flag 8): the drawable's house colour set (RW 0x80959A: kind 3 and the record's three colours,
 	// RW 0x6727B0 -> every draw module's vslot 0x7C); client only (HouseColor.h)
@@ -153,19 +160,23 @@ struct ObjectFilter;
 
 struct GameLogicSettings
 {
-	bool enableRepulsors = true;                     ///< AIData EnableRepulsors (RW 0xDE4B40 + 0x18 + 0x64): the RepulsorHelper condition
+	// lane AIDATA-1: every AIData default below is the AIData constructor's (RW 0x6FFBEF; BFME2 decomp AIConstructor_Unresolved.cpp TAiData::TAiData), so a mod
+	// aidata.ini that leaves a field out gets retail's value; no AIData field is required (retail's parser RW 0x7017AA requires none)
+	bool enableRepulsors = false;                    ///< AIData EnableRepulsors (RW 0xDE4B40 + 0x18 + 0x64, ctor 0): the RepulsorHelper condition
 	float repulsedDistance = 0.0f;                   ///< AIData RepulsedDistance (+ 0x60, lane MODULES-3): the safe path radius beyond the vision range
 	bool useFormations = true;                       ///< AIData UseFormations (+ 0xBD, row RW 0xC1CE90 parseBool; the constructor RW 0x6FFDE5 stores 1; lane BACKLOG6): AIGroup RW 0x774897's formation gate
 	float minDistanceForGroup = 100.0f;              ///< AIData MinDistanceForGroup (+ 0x6C, row RW 0xC1D390 parseReal; the constructor stores RW 0xBD88D8 = 100.0f at RW 0x6FFD56; lane BACKLOG6): RW 0x76F115's group move distance
 	// lane PLAY-4: the guard machine's AIData rows (table RW 0xC1CC00 ..: GuardChaseUnitsDuration + 0x3C, GuardEnemyScanRate + 0x40, GuardEnemyReturnScanRate
-	// + 0x44 through parseDurationUnsignedInt RW 0x73A429 (frames); AlertRangeModifier + 0x4C, AggressiveRangeModifier + 0x50 through parseReal RW 0x42ED00);
-	// guardRulesLoaded is true when the loader read the three durations (the guard machine reports their absence)
+	// + 0x44 through parseDurationUnsignedInt RW 0x73A429 (frames); AlertRangeModifier + 0x4C, AggressiveRangeModifier + 0x50 through parseReal RW 0x42ED00).
+	// lane AIDATA-1: the constructor's defaults (RW 0x6FFBEF: + 0x3C = 0, + 0x40 = LOGICFRAMES_PER_SECOND / 2 = [RW 0xD9F608] / 2, + 0x44 = [RW 0xD9F608],
+	// + 0x4C = + 0x50 = 0.0). guardRulesLoaded only records that the loader read the three durations (a diagnostic: the guard machine uses the values either way;
+	// still hashed, so the settings hash of a game with retail data is unchanged)
 	bool guardRulesLoaded = false;
 	unsigned guardChaseUnitsFrames = 0;
-	unsigned guardEnemyScanRate = 0;
-	unsigned guardEnemyReturnScanRate = 0;
-	float alertRangeModifier = 1.0f;
-	float aggressiveRangeModifier = 1.0f;
+	unsigned guardEnemyScanRate = 5 / 2;
+	unsigned guardEnemyReturnScanRate = 5;
+	float alertRangeModifier = 0.0f;
+	float aggressiveRangeModifier = 0.0f;
 	// lane BACKLOG-8: AIGroup::createFormation's AIData rows (table RW 0xC1CDF0 ..: FormationColumnWidth + 0xA0, FormationRowDepth + 0xA4, FormationSquadSpacing
 	// + 0xA8 through parseReal RW 0x42ED00, FormationColumns + 0xB4 through parseInt RW 0x42EC5E); the defaults are the AIData constructor's (RW 0x6FFCAD ..
 	// 0x6FFD87: 65.0 RW 0xC1D710 twice, 30.0 RW 0xBDAE54, 2)
@@ -187,11 +198,28 @@ struct GameLogicSettings
 	// ForceIdleMSEC + 0x14 (parseDurationUnsignedInt RW 0x73A429: frames), AttackPriorityDistanceModifier + 0x54 (parseReal RW 0x42ED00, ctor 0.0),
 	// AttackUsesLineOfSight + 0x67 (parseBool RW 0x42E558, ctor 1), AttackIgnoreInsignificantBuildings + 0x68 (ctor 0), ArtilleryMaxFriendlyFire + 0xF0
 	// (parsePercentToReal RW 0x42EEFA, ctor 1.0); the AttackPriority blocks (+ 0xFC, RW 0x70153B: see AttackPriorityDef)
-	unsigned forceIdleFrames = 0;
+	unsigned forceIdleFrames = 1; // lane AIDATA-1: the constructor's 1 (RW 0x6FFBEF: + 0x14)
 	float attackPriorityDistanceModifier = 0.0f;
 	bool attackUsesLineOfSight = true;
 	bool attackIgnoreInsignificantBuildings = false;
 	float artilleryMaxFriendlyFire = 1.0f;
+	// lane AIDATA-1: ChaseFromBehindLimit + 0xD0 (row RW 0xC1CEF0, parseReal RW 0x42ED00; ctor 50.0 = RW 0xBD88C4): a melee unit that is
+	// RUNNING_DOWN_FROM_BEHIND (status 0x4B) is in range of its victim within this distance (isWithinAttackRange RW 0x6CC07C). SkirmishGroupFudgeDistance
+	// + 0x58 (row RW 0xC1CC30, parseReal, ctor 0.0): a skirmish AI team on a waypoint path counts a waypoint reached when the team centre is within members x this of the goal
+	// (AIFollowWaypointPathState::update RW 0x755A20, asm RW 0x755B77 .. 0x755C08)
+	float chaseFromBehindLimit = 50.0f;
+	float skirmishGroupFudgeDistance = 0.0f;
+	// lane AIDATA-1: the pathfinder's AIData rows (before: PathfindConfigLoader's own text scan; now the shared table, so a map.ini / solo.ini AIData block
+	// reaches the pathfinder too: PathfindConfigLoader::applyAIData). Rows and constructor values (RW 0x6FFBEF): WadeWaterDepth + 0x98 (row RW 0xC1CDD0, 5.0 RW
+	// 0xBDAE58), DeepWaterDepth + 0x9C (RW 0xC1CDE0, 50.0 RW 0xBD88C4), MeleeApproachTolerance + 0x90 (RW 0xC1CDB0, 20.0 RW 0xBDBC6C), MeleeApproachDist + 0x94
+	// (RW 0xC1CDC0, 60.0 RW 0xBDC1F8), CastleSiegeStandBackDistance + 0xD4 (RW 0xC1CF00, 100.0 RW 0xBD88D8), all parseReal; HordesWaitForHordes + 0xB9 (RW
+	// 0xC1CE40, parseBool, 1); AttackUsesLineOfSight is above
+	float wadeWaterDepth = 5.0f;
+	float deepWaterDepth = 50.0f;
+	float meleeApproachTolerance = 20.0f;
+	float meleeApproachDist = 60.0f;
+	float castleSiegeStandBackDistance = 100.0f;
+	bool hordesWaitForHordes = true;
 	// RW 0x70153B: an `AttackPriority <name>` block of AIData (def 0x14 bytes, ctor RW 0x701323: Default 1). A repeated name re-parses the same def (its
 	// targets cleared, Default kept unless the block sets it); a new one is pushed at the list head. `Target = <template> <int>` (RW 0x7013C2) lines in
 	// file order (RW inserts each at the front of its list: TARGET 0x7004B4; the store applies them back to front)
@@ -218,6 +246,11 @@ struct GameLogicSettings
 	// lane BUILD-3 (GameData, RW GlobalData + 0x11E4): BuilderMoveFromNewStructureDistance, the walk of a porter out of the structure it built (RW 0x88D6AE); loaded when a block read it
 	bool builderMoveLoaded = false;
 	float builderMoveFromNewStructureDistance = 0.0f;
+	// lane PORTERFOG-1 (GameData BuilderFadeOutTime / BuilderFadeInTime, RW GlobalData + 0x11DC / + 0x11E0, parseDurationUnsignedInt): the frames of the porter's drawable
+	// fades (RW 0x88DDC1 -> 0x670A50, RW 0x88D6CE -> 0x670AA2); client values (the drawable's fade), not part of the settings hash
+	bool builderFadeLoaded = false;
+	unsigned builderFadeOutFrames = 0;
+	unsigned builderFadeInFrames = 0;
 	// RW GlobalData +0xA88, parseUnsignedInt (seconds).
 	bool repairDamageDelayLoaded = false;
 	unsigned timeAfterDamageUntilRepairAllowed = 0;
@@ -299,6 +332,14 @@ struct GameLogicSettings
 	// lane GARRISON-2: MaxTunnelCapacity (GameData row RW 0xC00360, parseInt RW 0x42EC5E, + 0xA98; the GlobalData constructor's 0, RW 0x642FB5): the riders a
 	// player's tunnel network holds (TunnelTracker RW 0x8FA152)
 	int maxTunnelCapacity = 0;
+	// lane OCCLUDE-1: the behind-building marker's GameData rows: UseBehindBuildingMarker (row RW 0xBFF830, parseBool RW 0x42E558, + 0x68),
+	// DefaultOcclusionDelay (row RW 0xBFF9E0, parseDurationUnsignedInt RW 0x73A429, + 0xCC), OccludedColorLuminanceScale (row RW 0xBFFFE0, parseReal RW 0x42ED00,
+	// + 0x984). Defaults: the GlobalData constructor's (RW 0x642A63: 1; RW 0x642B5F: LOGICFRAMES_PER_SECOND (RW 0xD9F608 = 5) * 3 = 15 frames; RW 0x642D18:
+	// 0.5f, RW 0xBD869C). Retail 2.01 gamedata.ini sets Yes / 3000 ms / 0.5. Read by the renderer's occluded-object pass (GameClient/RTS3DSceneOcclusion.h) and
+	// the objects' safe occlusion frame (Object + 0x444); presentation only: not in the settings hash
+	bool useBehindBuildingMarker = true;
+	unsigned defaultOcclusionDelay = 15;
+	float occludedColorLuminanceScale = 0.5f;
 	unsigned initialCredits[5] = { 0, 0, 0, 0, 0 };  ///< MultiplayerSettings InitialCreditsVeryLow .. VeryHigh: the lobby's money choices
 	// lane CHAT-1: MultiplayerSettings MaxBeaconsPerPlayer (+ 0x18): a player's beacons at most (retail multiplayer.ini: 3). INFERENCE: the default is ZH's
 	// MultiplayerSettings constructor value (RotWK's constructor was not read). Not hashed (crc below): data every peer of a game reads alike (the profile)
@@ -328,10 +369,13 @@ class ArchiveFileSystem;
 namespace GameLogicSettingsLoader
 {
 // Reads data\ini\gamedata.ini (GameData: ForceModelsToFollowTimeOfDay, ForceModelsToFollowWeather, UnitDamagedThreshold, UnitReallyDamagedThreshold,
-// DefaultStartingCash), data\ini\default\aidata.ini (AIData: EnableRepulsors) and data\ini\multiplayer.ini (InitialCredits*) through the shared INI
-// pipeline (macros, retail field parsers, later blocks override). A missing file, a missing key or a malformed value is an error (*error), never a
-// default (PLAN rule 10). The scan* forms read one block's text (tests, tools).
+// DefaultStartingCash), data\ini\default\aidata.ini then data\ini\aidata.ini (TheAI's two InitFiles in SubsystemLegendExpansion1.ini; AIData: no field is
+// required, a field left out keeps the AIData constructor's value) and data\ini\multiplayer.ini (InitialCredits*) through the shared INI pipeline (macros,
+// retail field parsers, later blocks override). A missing file, a missing required key or a malformed value is an error (*error), never a default (PLAN
+// rule 10). The scan* forms read one block's text (tests, tools).
 bool load(ArchiveFileSystem &fs, GameLogicSettings &out, std::string *error);
+// lane AIDATA-1: only the AIData files (default\aidata.ini, then aidata.ini): the pathfinder's configuration without the rest of the settings
+bool loadAIData(ArchiveFileSystem &fs, GameLogicSettings &out, std::string *error);
 bool scanGameData(const std::string &text, GameLogicSettings &out, std::string *error);
 bool scanAIData(const std::string &text, GameLogicSettings &out, std::string *error);
 bool scanMultiplayer(const std::string &text, GameLogicSettings &out, std::string *error);
@@ -503,6 +547,11 @@ public:
 	// player's objects outside a multiplayer game (Player::applyDifficultyBonusesForObject RW 0x6AC3E3) and the mission restart (RW 0x9221B6). Hashed.
 	void setGameDifficulty(int d) { m_gameDifficulty = d; }
 	int getGameDifficulty() const { return m_gameDifficulty; }
+	// lane OCCLUDE-1: TheGameLogic + 0x99, the behind-building markers' switch: script action 298 OPTIONS_SET_OCCLUSION_MODE writes it (RW 0x7CE207 ->
+	// RW 0x7BD549), GameLogic::init / reset / startNewGame set it (RW 0x62D1D2 / 0x62D3D6 / 0x62A22F); the renderer draws the occluded colours only while it
+	// and GameData UseBehindBuildingMarker are set (RW 0x47074D). Not hashed and not saved (no GameLogic xfer reads it): presentation only
+	void setShowBehindBuildingMarkers(bool on) { m_showBehindBuildingMarkers = on; }
+	bool getShowBehindBuildingMarkers() const { return m_showBehindBuildingMarkers; }
 	// lane RULES-1: the game setup's rules (RotWK TheGameInfo RW 0xDE892C + 0x60; all -1 when the game has no rule block, Common/MpGameRules.h) and
 	// OpenBFME's Legendary Heroes factor (1 = off). Both are part of the state hash only when set, so a game without them keeps its hashes
 	void setGameRules(const GameRules &rules) { m_gameRules = rules; }
@@ -960,6 +1009,7 @@ private:
 
 	UnsignedInt m_frame = 0;
 	int m_gameDifficulty = 1;     ///< lane CAMP-1H: RW GameLogic + 0xA4
+	bool m_showBehindBuildingMarkers = true; ///< lane OCCLUDE-1: RW GameLogic + 0x99
 	GameRules m_gameRules = MpGameRules::none(); ///< lane RULES-1
 	int m_legendaryHeroes = LegendaryHeroes::kOff; ///< lane RULES-1 (OpenBFME)
 	CheatMode::State m_cheatMode;                  ///< lane CHEAT-1 (OpenBFME)

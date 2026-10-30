@@ -138,7 +138,8 @@ const Video *VideoPlayer::getVideo(const std::string &title) const
 	return nullptr;
 }
 
-VideoStreamInfo VideoPlayer::locate(const std::string &title, const std::string &installRoot, const std::string &modRoot, const std::string &language) const
+VideoStreamInfo VideoPlayer::locate(const std::string &title, const std::string &installRoot, const std::string &modRoot, const std::string &language,
+	const std::vector<std::string> &overlays) const
 {
 	VideoStreamInfo info;
 	info.title = title;
@@ -158,11 +159,17 @@ VideoStreamInfo VideoPlayer::locate(const std::string &title, const std::string 
 	{
 		dirs.push_back({ modRoot, "Data\\Movies\\" });
 	}
+	// the game directory's two folders; each in the install-folder mods first (lane MODCOMPAT-1: their files sit in the game directory in retail)
+	auto gameDir = [&](const std::string &relative) {
+		for (const std::string &o : overlays)
+			dirs.push_back({ o, relative });
+		dirs.push_back({ installRoot, relative });
+	};
 	if (!language.empty())
 	{
-		dirs.push_back({ installRoot, "Lang\\" + language + "\\Data\\Movies\\" }); // RW 0xBDDEDC, the localized directory
+		gameDir("Lang\\" + language + "\\Data\\Movies\\"); // RW 0xBDDEDC, the localized directory
 	}
-	dirs.push_back({ installRoot, "Data\\Movies\\" });
+	gameDir("Data\\Movies\\");
 	std::string tried;
 	for (const Dir &d : dirs)
 	{

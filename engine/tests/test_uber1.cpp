@@ -102,7 +102,10 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // frames with 1, 4 and 16 logic threads and 4 again, every frame's hash equal to the stored Uber pin vector (tests/data/uber1/battle3000_40.hashes,
 // measured with 1 thread by the build that introduced it; OPENBFME_UBER1_REGEN=1 rewrites it, only for a change MEANT to alter the Uber simulation or
 // its hash, said in the commit; lane TARGET-1 re-measured it: RotWK's target choice and mood-check timing; community #73 + #74 re-measured it on the merged tree: the formations centred
-// on their hordes, RW 0x86C4EA, and the destination adjustment spiralling around the cell, RW 0x6FA2A4, #73 alone differs from it from frame 0). The state hash's own dispatches are counted
+// on their hordes, RW 0x86C4EA, and the destination adjustment spiralling around the cell, RW 0x6FA2A4, #73 alone differs from it from frame 0; lane AIDATA-1: the horde run-down, RW 0x748650 /
+// 0x74AA69 / 0x6CC07C; lane AIEXPAND-1 re-measured it: the skirmish AI's state hash holds the EXPANSION heuristic's frame counter, RW 0x97D035; merge queue q29
+// re-measured it once on the merged tree: AIEXPAND-1's counter, before it AIDATA-1's run-down, compared at each merge point; merge queue q30 re-measured it
+// once on the merged tree: #130's allied clearing with the move state's update and exit, RW 0x749497 / 0x74949C, from frame 12; PORTERFOG-1 keeps it). The state hash's own dispatches are counted
 // apart from the frame's (PERF-2's collision jobs): with more than one
 // thread the hash itself ran chunks on workers. The Uber hash is not the Faithful one, and a Faithful hash dispatches nothing.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "

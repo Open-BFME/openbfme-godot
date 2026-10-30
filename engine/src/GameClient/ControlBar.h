@@ -137,9 +137,9 @@ public:
 	// ZH ControlBar::processCommandUI: the press of the button in `slot`. Returns false when the slot has no usable button (counted, reported through ui messages).
 	bool pressButton(int slot, bool inPalantir);
 	// lane CAMPUI-1: the stance toggle's SetStance (RW 0x96F53C): MSG_CHANGE_STANCE with `stance` (a stance item of the Palantir's radial, a SET_STANCE button)
-	bool sendChangeStance(int stance);
+	bool sendChangeStance(int stance, const char *site = "ControlBar:SET_STANCE");
 	// right press on a build button: cancels one queued unit, or all with Shift and no MaxSimultaneousOfType (RW 0x940CD0); on a REVIVE button the hero record by
-	// its index (RW 0x940C57)
+	// its index (RW 0x940C57); on a PLAYER / OBJECT / CASTLE_UPGRADE button MSG_CANCEL_UPGRADE { mask bit } (RW 0x940E77 / 0x940FB3, lane FBSIM-1)
 	bool cancelQueued(int slot, bool inPalantir, bool shift = false);
 	// lane AUTOCAST-1: the right press of a command button: the clip's gate (RW 0x9D28D4: a _disabled / _cantAfford button only when CANCELABLE) and
 	// processCommandUI's right press (RW 0x940435 with its second argument 0): an AutoAbility (+ 0x10C) or CANCELABLE button of the source object sends

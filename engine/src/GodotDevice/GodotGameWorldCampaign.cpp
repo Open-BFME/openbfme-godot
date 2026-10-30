@@ -456,7 +456,9 @@ Dictionary GameWorld::get_movie(const String &title)
 	// (RetailArchivePolicy.h "Languages"; none: "", that directory is then not searched)
 	const std::string language = DetectRetailLanguageOfInstall(root);
 	const AudioIniState &audio = m_world->audio();
-	const VideoStreamInfo info = m_videos->open(n(title), root, m_fs.is_valid() ? m_fs->modFolder() : std::string(), language, [&audio](const std::string &e) { return audio.infos.find(e) != nullptr; });
+	const VideoStreamInfo info = m_videos->open(n(title), root, m_fs.is_valid() ? m_fs->modFolder() : std::string(), language,
+		[&audio](const std::string &e) { return audio.infos.find(e) != nullptr; },
+		m_fs.is_valid() ? m_fs->installOverlayFolders() : std::vector<std::string>()); // lane MODCOMPAT-1: install-folder mods' movies
 	d["ok"] = info.ok;
 	d["error"] = g(info.error);
 	d["path"] = g(info.path);

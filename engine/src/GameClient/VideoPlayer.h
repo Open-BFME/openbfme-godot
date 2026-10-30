@@ -67,11 +67,14 @@ public:
 
 	// RW 0x490EE6's lookup: `installRoot` is the game directory (the loose movies), `modRoot` the mod's directory ("" none), `language` the install's
 	// language ("English"). `audioKnown` answers whether an audio event exists (TheAudio vslot 300). Errors name the title and the paths tried.
+	// `overlays` (lane MODCOMPAT-1): the install-folder mods' folders, highest priority first (Common/ModMount.h, MountInstallOverlay). Retail has
+	// their files copied INTO the game directory, so each of the game directory's movie folders is looked up in the overlays first (a mod's
+	// Data\Movies\<file> replaced the game's), then in `installRoot`.
 	template <class Known>
 	VideoStreamInfo open(const std::string &title, const std::string &installRoot, const std::string &modRoot, const std::string &language,
-		Known audioKnown) const
+		Known audioKnown, const std::vector<std::string> &overlays = {}) const
 	{
-		VideoStreamInfo info = locate(title, installRoot, modRoot, language);
+		VideoStreamInfo info = locate(title, installRoot, modRoot, language, overlays);
 		if (info.ok)
 		{
 			const Video *v = getVideo(title);
@@ -85,7 +88,8 @@ public:
 		}
 		return info;
 	}
-	VideoStreamInfo locate(const std::string &title, const std::string &installRoot, const std::string &modRoot, const std::string &language) const;
+	VideoStreamInfo locate(const std::string &title, const std::string &installRoot, const std::string &modRoot, const std::string &language,
+		const std::vector<std::string> &overlays = {}) const;
 
 	// EA's VP6 container header ("MVhd"); false + *error for anything else
 	static bool readHeader(const std::uint8_t *data, size_t size, VideoStreamInfo &out, std::string *error);

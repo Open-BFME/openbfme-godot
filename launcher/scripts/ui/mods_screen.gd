@@ -192,12 +192,41 @@ func set_asset_packs(packs: Array) -> void:
 			var l := W.wrap(L10n.t("launcher.mods_screen.packs_problem", {"why": why}), "Muted")
 			l.add_theme_color_override("font_color", Style.BAD)
 			left.add_child(l)
+		# lane SDK-1b (b): what the game left out at its last start; the Details toggle (beside On) lists the files and the reasons
+		var details: VBoxContainer = null
+		if p.problems.is_empty():
+			if not p.get("checked", false):
+				left.add_child(W.wrap(L10n.t("launcher.mods_screen.packs_unchecked"), "Muted"))
+			var findings := []
+			if not p.get("misfits", []).is_empty():
+				findings.append([L10n.t("launcher.mods_screen.packs_misfits", {"count": p.misfits.size()}), p.misfits])
+			if not findings.is_empty():
+				details = W.vbox(1)
+				details.visible = false
+				for f in findings:
+					var l := W.wrap(f[0], "Muted")
+					l.add_theme_color_override("font_color", Style.WARN)
+					left.add_child(l)
+					for item in f[1]:
+						details.add_child(W.wrap(L10n.t("launcher.mods_screen.packs_finding", {"file": str(item.get("file", "")), "why": str(item.get("why", ""))}), "Muted"))
+				left.add_child(details)
 		var box := CheckBox.new()
 		box.text = L10n.t("launcher.mods_screen.packs_on")
 		box.button_pressed = p.enabled
 		var name: String = p.name
 		box.toggled.connect(func(on: bool) -> void: asset_pack_toggled.emit(name, on))
-		_packs_box.add_child(W.row(left, box, i == packs.size() - 1))
+		var right: Control = box
+		if details != null:
+			var both := W.hbox(8)
+			var toggle := W.button(L10n.t("launcher.mods_screen.packs_details"), "", "", 12)
+			var shown := details
+			toggle.pressed.connect(func() -> void:
+				shown.visible = not shown.visible
+				toggle.text = L10n.t("launcher.mods_screen.packs_hide_details") if shown.visible else L10n.t("launcher.mods_screen.packs_details"))
+			both.add_child(toggle)
+			both.add_child(box)
+			right = both
+		_packs_box.add_child(W.row(left, right, i == packs.size() - 1))
 
 
 ## running: a mod download runs; paused: one is paused (Resume continues it); busy: another job runs
@@ -380,8 +409,10 @@ func demo() -> void:
 		"enhancements": [e.call("demo-timer", "Patch Timer Addon", "1.0.0", ModCatalog.NEEDS, ["Patch Timer Addon: timer.asi"])]}
 	var tales := {"guid": "demo-tales", "name": "Tiny Tales", "version": "2.0.1", "author": "A. Storyteller", "type": 1, "size": 650000000,
 		"status": ModCatalog.READY, "engine_edits": PackedStringArray(), "error": "", "enhancements": []}
-	set_asset_packs([{"name": "HD Gondor", "enabled": true, "models": 12, "textures": 40, "bytes": 182000000, "problems": PackedStringArray()},
-		{"name": "Sharper Trees", "enabled": false, "models": 0, "textures": 9, "bytes": 21000000, "problems": PackedStringArray()}])
+	set_asset_packs([{"name": "HD Gondor", "enabled": true, "models": 12, "textures": 40, "bytes": 182000000, "problems": PackedStringArray(), "checked": true,
+			"misfits": [{"file": "art/w3d/gb/gbcitadel.w3d", "why": "different bones or models than the game's"}]},
+		{"name": "Sharper Trees", "enabled": false, "models": 0, "textures": 9, "bytes": 21000000, "problems": PackedStringArray(), "checked": false,
+			"misfits": []}])
 	_records = {}
 	_chosen = {"demo-realms": {"demo-nointro": true}}
 	set_installed([{"guid": "demo-realms", "name": "Example Realms", "version": "1.2.0", "enhancements": ["demo-nointro"], "engine_edits": []}],

@@ -51,6 +51,7 @@
 
 #include "GameLogic/ArmorSet.h"
 #include "GameLogic/BitFlags.h"
+#include "GameLogic/Damage.h"
 #include "Common/Player.h"
 #include "Common/Upgrade.h"
 
@@ -207,8 +208,10 @@ public:
 	// RW 0x697EB6 Object::updatePendingDamage: the pending hits' delays count down one per frame, a hit whose delay went below 0 applies (list order)
 	void updatePendingDamage();
 	size_t pendingDamageCount() const;
-	// ZH Object::kill: UNRESISTABLE damage that kills (the body's health goes to 0 through the normal pipeline)
-	void kill(int deathType);
+	// RW 0x698EC3 Object::kill(damageType, deathType) (BFME2 decomp ObjectKill.cpp:61, tier B same-shape; ZH Object::kill): a killing hit through attemptDamage
+	// (RW 0x698E7D) with no source (+ 0x08 = 0), the caller's damage and death types and the body's maximum health (vslot 0x1C) as the amount. Every RotWK caller
+	// passes damage type 8 (UNRESISTABLE) except one module destructor (RW 0x887A18: DEFAULT, death 0xD) that is not ported
+	void kill(DamageType damageType, int deathType);
 	// RW 0x6955BC Object::scoreTheKill(victim, scoreType): the kill credit walks up PASS_EXPERIENCE_TO_PRODUCER producers, scores each victim once, pays the bounty
 	// (Economy::awardBounty), gives the victim's player its own-guys-die skill points and the killer (or its contained / container objects) the experience
 	void scoreTheKill(Object &victim, int scoreType = 1);
@@ -476,6 +479,14 @@ public:
 
 	// ---- scheduler support ------------------------------------------------------------------------------------------------
 	UnsignedInt getCreationFrame() const { return m_creationFrame; }
+	// lane OCCLUDE-1: RW + 0x444, the safe occlusion frame: the renderer's occluded-object pass leaves the object out until the logic frame reaches it
+	// (RW 0x470E80, RTS3DScene::Visibility_Check). Set at construction (RW 0x69A687: frame + the template's OcclusionDelay, + 0x564) and when a garrison or
+	// tunnel lets it out (RW 0x87C0A8 / 0x88101C; RW 0x87C951 for a dead rider). Presentation only: never read by the logic, not hashed, not saved
+	UnsignedInt getSafeOcclusionFrame() const { return m_safeOcclusionFrame; }
+	void setSafeOcclusionFrame(UnsignedInt frame) { m_safeOcclusionFrame = frame; }
+	// the template's OcclusionDelay (+ 0x564, row RW 0xDA45E8, parseDurationUnsignedInt): the ThingTemplate constructor copies GameData DefaultOcclusionDelay
+	// into it (RW 0x740178) and the row overrides it; no retail 2.01 object sets the row
+	static UnsignedInt occlusionDelayOf(const ThingTemplate &tt, const GameLogic &logic);
 	// phase 1 end-of-frame checks (RW 0x690A42 checkDisabledStatus, 0x690AB9 checkIgnoreAICommandStatus, 0x690AE5 checkNoCollisionsStatus)
 	void checkDisabledStatus(UnsignedInt frame);
 	void checkIgnoreAICommandStatus(UnsignedInt frame);
@@ -534,6 +545,7 @@ private:
 	WeaponConditionFlags m_weaponlessSetFlags{}; ///< lane HUD-4: RW + 0x38C of an object without ObjectWeapons
 	UnsignedInt m_noCollisionsExpire = 0;
 	UnsignedInt m_creationFrame = 0;
+	UnsignedInt m_safeOcclusionFrame = 0; ///< lane OCCLUDE-1: RW + 0x444
 	int m_creationSeed = 0;
 	std::string m_name;
 	std::uint8_t m_scriptStatus = 0; ///< lane SCRIPT-2: RW + 0x457 (hashed when not zero)

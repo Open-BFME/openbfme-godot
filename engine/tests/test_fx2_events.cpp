@@ -430,7 +430,7 @@ TEST_CASE("STOPS-B1 S-685: unresolved OCL and weapon entries do not enable death
 	Object *corpse = w.unit("MissingPhaseCorpse", 'A', 300, 300);
 	w.frames(2);
 	w.logic->random().enableCallLog(true);
-	corpse->kill(0);
+	corpse->kill(DAMAGE_UNRESISTABLE, 0);
 	for (const auto &call : w.logic->random().callLog())
 	{
 		CHECK_FALSE((call.file == "SlowDeathBehavior.cpp" && (call.line == 0x221 || call.line == 0x22B)));

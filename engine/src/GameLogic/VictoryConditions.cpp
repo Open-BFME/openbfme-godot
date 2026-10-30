@@ -382,7 +382,7 @@ void VictoryConditions::killPlayer(Player *p)
 	{
 		if (!o->isEffectivelyDead() && !o->isDestroyed())
 		{
-			o->kill(DEATH_NORMAL); // RW 0x7A4CAE: push 0 (death type NORMAL), push 8 (damage type UNRESISTABLE) into Object::kill, whose first argument is the damage type (see the header)
+			o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x7A4CAE: push 0 (death type NORMAL), push 8 (damage type UNRESISTABLE) into Object::kill, whose first argument is the damage type (see the header)
 			++m_objectsKilled;
 		}
 	}

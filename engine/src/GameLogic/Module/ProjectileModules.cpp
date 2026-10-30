@@ -980,7 +980,7 @@ void BezierProjectileBehavior::landed()
 	if (d->m_dieOnImpact)
 	{
 		obj->setModelConditionState(kModelConditionSplatted, true);
-		obj->kill(DEATH_NORMAL);
+		obj->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x85FA95: kill(8, 0)
 	}
 	obj->setStatus((unsigned)CombatNames::statuses().noAttack, false);
 	++logic.combat().counters().projectilesLanded;
@@ -1032,7 +1032,7 @@ void BezierProjectileBehavior::detonate()
 		}
 		if (m_data && m_data->m_detonateCallsKill)
 		{
-			obj->kill(DEATH_DETONATED);
+			obj->kill(DAMAGE_UNRESISTABLE, DEATH_DETONATED); // RW 0x85F227: kill(8, DETONATED)
 		}
 		else
 		{
@@ -1041,7 +1041,7 @@ void BezierProjectileBehavior::detonate()
 	}
 	else
 	{
-		obj->kill(DEATH_DETONATED);
+		obj->kill(DAMAGE_UNRESISTABLE, DEATH_DETONATED); // RW 0x85F249: kill(8, DETONATED)
 	}
 	m_hasDetonated = true;
 	obj->setStatus(OBJECT_STATUS_NO_COLLISIONS, true);
@@ -1071,7 +1071,7 @@ ProjectileUpdateInterface::ClientInfo BezierProjectileBehavior::projectileClient
 // RW 0x85E54D (slot 5): kill, damage type 8 (UNRESISTABLE), death 0
 void BezierProjectileBehavior::projectileNowJammed()
 {
-	getObject()->kill(DEATH_NORMAL);
+	getObject()->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x85E554: kill(8, 0)
 }
 
 void BezierProjectileBehavior::crc(StateHasher &h) const

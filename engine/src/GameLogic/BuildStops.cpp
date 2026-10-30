@@ -21,9 +21,10 @@ std::vector<std::string> BuildStops::lines()
 		"RW 0x859198's own construct for a member (slot 7, RW 0x858701 with the castle as the plot: the port places the member itself), FactionDecal, the damage "
 		"evacuation of a member, WallUpgradeUpdate",
 		"[S-304] dozer (lane BUILD-3): RotWK's dozer machines are ported (DozerAIUpdate.h: the tasks and dock points, newTask RW 0x88CCFC with the dock position "
-		"RW 0x88C2FE, the primary machine RW 0x88C06B, PickActionPos / MoveToActionPos / DoAction RW 0x88D7D2 / 0x88C5C7 / 0x88D993); INFERENCE: the structure is "
-		"made at the order with every BUILD-1 effect (RW makes it PHANTOM and places it on arrival, RW 0x88D44F: the port keeps the placement's health of 1 and "
-		"removes the unplaced structure with a refund when the task is cancelled before arrival, but does not repeat its legality test, flags 0x15)",
+		"RW 0x88C2FE, the primary machine RW 0x88C06B, PickActionPos / MoveToActionPos / DoAction RW 0x88D7D2 / 0x88C5C7 / 0x88D993); lane FBSIM-1: the structure "
+		"is made as RotWK's inert phantom (RW 0x88D272 / 0x88D0D8) and placed on arrival (RW 0x88D44F with its legality test, flags 0x15); not ported: the "
+		"placement's TerrainLogic calls RW 0x684BCA / 0x684CBA and the dozer interface's + 0x28 byte; INFERENCE: a site no longer legal on arrival fails the "
+		"task and shows the porter again (RotWK's path after RW 0x88CFFE is not read)",
 		"[S-306] placement mode (lane BUILD-5: RotWK's PlaceEventTranslator RW 0x83E486 and placement update RW 0x6A2AE5 are ported: the right button is tracked "
 		"and passed on (right-drag scrolls), a right click cancels unless it was a drag held DragToleranceMS, the left press anchors, a 5 pixel drag turns the ghost, "
 		"the left click places with the options 0x49F or shows the code's label and BadBuildingPlacementSound, no shift to keep placing, the ghost's legality "
@@ -61,8 +62,9 @@ std::vector<std::string> BuildStops::lines()
 	              "via Object::getWorldspaceBestContactPoint RW 0x690BD2 and AIUpdateInterface::findNearestLabeledContactPointOnTarget RW 0x667C76) are ported; the "
 	              "shapes and points are the template's (retail: the object's own GeometryInfo, which a GeometryUpgrade can change); the other modes (1: the highest "
 	              "point, 3: a random point) and a call without `preferred` (the overlap test) are refused; the label compare is taken as exact bytes (RW 0x406585)");
-	out.push_back("[S-1282] dozer machine gaps (lane BUILD-3): not ported: the client side of a porter's stay inside the structure it builds (RW 0x88C51B / "
-	              "0x88D6AE: the selection removed, the fade in over BuilderFadeInTime), the face command 0x26 before the work (AI state 36), the bridge tower branch of the dock position "
+	out.push_back("[S-1282] dozer machine gaps (lane BUILD-3): not ported: the selection removed when a porter goes into the structure it builds (RW 0x88C51B; "
+	              "its drawable's fade out / in over BuilderFadeOutTime / BuilderFadeInTime is ported, lane PORTERFOG-1; a snapshot loaded while it works "
+	              "makes the drawable again without the fade, so it is drawn until it comes out), the face command 0x26 before the work (AI state 36), the bridge tower branch of the dock position "
 	              "(RW 0x88CC08), the bored wander of an AI player's idle dozer (RW 0x88E17F), the ActionManager's canRepairObject / canResumeConstructionOf (RW "
 	              "0x82D7F2 / 0x82C84C: the owner's finished resp. unfinished structure stands for them), the script engine's note at the arrival (RW 0x756C87); the "
 	              "idle worker list is the dozer's marked flag (TheInGameUI vslots 0x1A4 / 0x1A8); the primary machine reset after a PLAYER command runs before the "

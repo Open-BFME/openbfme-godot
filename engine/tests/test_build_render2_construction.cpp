@@ -325,12 +325,25 @@ TEST_CASE("render2 construction: a Porter builds GondorBarracks - the waiting, r
 	}
 	REQUIRE(r.problems.empty());
 	REQUIRE(r.samples.size() > 10);
-	// waiting for the Porter: AWAITING_CONSTRUCTION -> Model GBBarracks_A, the ABLD animation held at frame 0 (START_FRAME_FIRST, MANUAL); the floor hidden
+	// lane FBSIM-1: waiting for the Porter the structure is RotWK's phantom (RW 0x88D272: only the PHANTOM_STRUCTURE condition, no construction state), drawn
+	// with the default state's model GBBarracks_SKN (at 0.4 opacity for its owner) and no build-up animation
 	const Sample &first = r.samples.front();
-	CHECK(AsciiStringUtil::compareNoCase(first.model, "GBBarracks_A") == 0);
-	CHECK(first.buildFrame == 0.0f);
-	CHECK(first.floorPresent);
-	CHECK(first.floorHidden);
+	CHECK(AsciiStringUtil::compareNoCase(first.model, "GBBarracks_SKN") == 0);
+	CHECK(first.buildFrame == -1.0f);
+	// placed (RW 0x88D44F, then RW 0x88C709's PARTIALLY_CONSTRUCTED + ACTIVELY_BEING_CONSTRUCTED): Model GBBarracks_A, the ABLD animation at frame 0; the floor hidden
+	const Sample *placed = nullptr;
+	for (const Sample &smp : r.samples)
+	{
+		if (!placed && smp.state == "BeingConstructed")
+		{
+			placed = &smp;
+		}
+	}
+	REQUIRE(placed != nullptr);
+	CHECK(AsciiStringUtil::compareNoCase(placed->model, "GBBarracks_A") == 0);
+	CHECK(placed->buildFrame == 0.0f);
+	CHECK(placed->floorPresent);
+	CHECK(placed->floorHidden);
 	// rising: state BeingConstructed; the frame follows the percent cached on the first client frame of the logic frame plus the sub-frame term of the
 	// last client frame (alpha 5/6 of 1 / buildFrames); never backwards
 	int rising = 0;

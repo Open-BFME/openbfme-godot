@@ -267,7 +267,7 @@ TEST_CASE("modules retail: CreateObjectDie runs its ObjectCreationList when the 
 		const size_t before = g.logic->getObjectCount();
 		CHECK(cod->createdCount() == 0);
 		const std::uint32_t h0 = g.hash();
-		o->kill(DEATH_NORMAL);
+		o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 		CHECK(cod->createdCount() > 0);
 		CHECK(g.logic->getObjectCount() >= before + cod->createdCount());
 		CHECK(g.hash() != h0);
@@ -337,7 +337,7 @@ TEST_CASE("modules retail: FireWeaponWhenDeadBehavior fires its DeathWeapon at t
 			CHECK(fw->isAlreadyUpgraded()); // StartsActive gives the module its own upgrade (RW 0x855388)
 			g.run(2);
 			const ObjectID id = o->getID();
-			o->kill(DEATH_NORMAL);
+			o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 			if (!delayed)
 			{
 				CHECK(fw->shots() == 1);
@@ -649,7 +649,7 @@ TEST_CASE("modules retail: UpgradeDie takes its upgrade back from the producer (
 		REQUIRE(producer->hasUpgrade(u));
 	}
 	const std::uint32_t h0 = g.hash();
-	o->kill(DEATH_NORMAL);
+	o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	if (u->getUpgradeType() == UPGRADE_TYPE_PLAYER)
 	{
 		CHECK_FALSE(g.player->hasUpgradeComplete(u));
@@ -692,7 +692,7 @@ TEST_CASE("modules retail: HeroDie makes its special power ready at once on the 
 	REQUIRE(sp);
 	sp->setReadyFrame(g.logic->getFrame() + 1000);
 	const std::uint32_t h0 = g.hash();
-	hero->kill(DEATH_NORMAL);
+	hero->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	CHECK(sp->getReadyFrame() == g.logic->getFrame());
 	CHECK(g.hash() != h0);
 	CHECK_FALSE(reportHas(g, "[S-980] HeroDie")); // lane MODULES-2: the walk order is unobservable (RW 0x8C642D only sets the ready frame)

@@ -1,5 +1,5 @@
 ## Lane UI-5: Settings, three tabs as in the prototype. General: the channel, the free camera, updating by itself, offering the game
-## download. Display: the game's display options are set in the game (lane OPTS-1's screen has not reached this launcher's tree yet).
+## download. Display: shared window mode and resolution for both games.
 ## About & logs: the versions, the log folder, the installed versions and older releases (a rollback is the player's pick), the fonts'
 ## licence. Lane UI-3's Settings dialog as a screen (its game folders moved to Game files). It only shows and asks; scripts/main.gd does
 ## the work (signals).
@@ -15,11 +15,14 @@ signal install_release(tag: String)
 signal open_logs
 signal replay_association_toggled(on: bool)
 signal language_picked(code: String)  # lane L10N-1: "" = Automatic
+signal display_changed(key: String, value: String)
+signal display_refresh_requested
 
 const W := preload("res://scripts/ui/widgets.gd")
 const Style := preload("res://scripts/ui/style.gd")
 const Semver := preload("res://scripts/core/semver.gd")
 const L10n := preload("res://scripts/l10n/l10n.gd")
+const GameDisplay := preload("res://scripts/core/game_display.gd")
 
 const TABS := [["general", "launcher.settings.tab_general"], ["display", "launcher.settings.tab_display"], ["about", "launcher.settings.tab_about"]]
 const CHANNELS := ["stable", "preview"]  # lane NIGHTLY-1: shown as Stable, Nightly (in this order)
@@ -42,6 +45,10 @@ var _versions: ItemList
 var _use: Button
 var _releases: OptionButton
 var _install: Button
+var _window_mode: OptionButton
+var _resolution: OptionButton
+var _display_note: Label
+var _display_error: Label
 
 
 func _init(macos_preview := false) -> void:
@@ -104,7 +111,26 @@ func _init(macos_preview := false) -> void:
 
 	# Display
 	var d := _page(s.box, "display")
+	_window_mode = OptionButton.new()
+	_window_mode.tooltip_text = L10n.t("launcher.settings.window_mode")
+	for label in [L10n.t("launcher.settings.mode_windowed"), L10n.t("launcher.settings.mode_borderless"), L10n.t("launcher.settings.mode_fullscreen")]:
+		_window_mode.add_item(label)
+	_window_mode.item_selected.connect(func(i: int): display_changed.emit("window_mode", GameDisplay.MODES[i]))
+	d.add_child(W.row(_with_note(L10n.t("launcher.settings.window_mode"), L10n.t("launcher.settings.display_shared")), _window_mode))
+	_resolution = OptionButton.new()
+	_resolution.tooltip_text = L10n.t("launcher.settings.resolution")
+	_resolution.get_popup().max_size.y = 400
+	_resolution.item_selected.connect(func(i: int):
+		if not _resolution.is_item_separator(i):
+			display_changed.emit("resolution", str(_resolution.get_item_metadata(i))))
+	var resolution_label := _with_note(L10n.t("launcher.settings.resolution"), "")
+	_display_note = resolution_label.get_child(1)
+	d.add_child(W.row(resolution_label, _resolution))
 	d.add_child(W.row(_with_note(L10n.t("launcher.settings.display_in_game"), L10n.t("launcher.settings.display_in_game_note")), null, true))
+	_display_error = W.wrap("", "Muted")
+	_display_error.add_theme_color_override("font_color", Style.BAD)
+	_display_error.visible = false
+	d.add_child(_display_error)
 
 	# About & logs
 	var a := _page(s.box, "about")
@@ -182,6 +208,30 @@ func show_tab(key: String) -> void:
 	for k in _pages:
 		_pages[k].visible = k == key
 		_tabs[k].set_pressed_no_signal(k == key)
+	if key == "display":
+		display_refresh_requested.emit()
+
+
+func set_display(display: Dictionary) -> void:
+	_window_mode.select(GameDisplay.MODES.find(display.window_mode))
+	_resolution.clear()
+	_resolution.add_item(L10n.t("launcher.settings.resolution_auto"))
+	_resolution.set_item_metadata(0, "")
+	_resolution.select(0)
+	for group in GameDisplay.grouped_choices(display.screen_size, display.resolution):
+		_resolution.add_separator(group.aspect)
+		for size in group.sizes:
+			_resolution.add_item("%d × %d" % [size.x, size.y])
+			_resolution.set_item_metadata(_resolution.item_count - 1, "%dx%d" % [size.x, size.y])
+			if size == display.resolution:
+				_resolution.select(_resolution.item_count - 1)
+	_display_note.text = L10n.t("launcher.settings.resolution_note")
+	if display.screen_size.x >= 320 and display.screen_size.y >= 240:
+		_display_note.text += " " + L10n.t("launcher.settings.desktop_resolution", {"width": display.screen_size.x, "height": display.screen_size.y})
+	_display_error.text = display.error
+	_display_error.visible = display.error != ""
+	_window_mode.disabled = display.error != ""
+	_resolution.disabled = display.error != ""
 
 
 func set_channel(ch: String) -> void:

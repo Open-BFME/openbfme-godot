@@ -50,7 +50,7 @@ void killWithBody(Object *o)
 {
 	if (o && !o->isDestroyed() && !o->isEffectivelyDead() && o->getBodyModule())
 	{
-		o->kill(DEATH_NORMAL);
+		o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	}
 }
 

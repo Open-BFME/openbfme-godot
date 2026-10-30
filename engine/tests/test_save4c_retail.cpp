@@ -29,6 +29,7 @@
 #include "GameLogic/System/ShroudManager.h"
 #include "Common/PlayerList.h"
 #include "GameLogic/AI/AIGarrisonStates.h"
+#include "GameLogic/AI/AIClosestEnemy.h"
 #include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
@@ -449,16 +450,19 @@ TEST_CASE("save4c retail T5: each block's version window (RW 0xA1F5B9's two mess
 		late.logic().gameState().saveBlocks({ t }, one);
 		const size_t at = payloadOffset(t);
 		REQUIRE(one.size() > at); // tolerance: an index precondition (the version byte must exist before it is read)
-		// every SAVE-4c block starts with its version: 1, except obfme:SkirmishAI's (2, 2) since lane AI5 (the upgrade builders and the money reserve)
-		const std::uint8_t version = t == "obfme:SkirmishAI" ? 2 : 1;
+		// every SAVE-4c block starts with its version: 1, except obfme:SkirmishAI's: (earliest 2, current 2) since lane AI5 (the upgrade builders and the money
+		// reserve), (3, 3) since community #113 (the capture-flag registration history, which older snapshots cannot recover), (3, 4) since lane AIEXPAND-1 (the
+		// EXPANSION heuristic's frame counter)
+		const bool skirmish = t == "obfme:SkirmishAI";
+		const std::uint8_t version = skirmish ? 4 : 1, earliest = skirmish ? 3 : 1;
 		REQUIRE(one[at] == version);
 		std::vector<std::uint8_t> above = one, below = one;
 		above[at] = (std::uint8_t)(version + 1);
-		below[at] = (std::uint8_t)(version - 1);
+		below[at] = (std::uint8_t)(earliest - 1);
 		CHECK(loadError(late.logic(), { t }, above) == "block '" + t + "': Don't know how to load version " + std::to_string(version + 1) + " (most recent is " +
 			std::to_string(version) + ")");
-		CHECK(loadError(late.logic(), { t }, below) == "block '" + t + "': Found version " + std::to_string(version - 1) + " but the earliest supported is " +
-			std::to_string(version));
+		CHECK(loadError(late.logic(), { t }, below) == "block '" + t + "': Found version " + std::to_string(earliest - 1) + " but the earliest supported is " +
+			std::to_string(earliest));
 	}
 	// another moment of the same game: the AI modules are not the same set
 	std::vector<std::uint8_t> ai;
@@ -707,16 +711,17 @@ TEST_CASE("save4c retail hostile inputs (SAVES.md section 8, rules 3 to 5): for 
 		refused(t, { "shroud" }, withU32(one, records[1], id0), "block '" + t + "': shroud: object " + std::to_string(id0) + " has two records");
 		refused(t, { "shroud" }, badStatus, "block '" + t + "': shroud: a record's status 9 is outside 0 .. 4");
 	}
-	// ---- obfme:SkirmishAI: version, started, the attacked-at ids, the assist timers (count, 8 bytes each), the data flag and hash, the info players ----
+	// ---- obfme:SkirmishAI: version, started, the attacked-at ids, the EXPANSION heuristic's frame counter (version 3), the assist timers (count, 8 bytes
+	// each), the data flag and hash, the info players ----
 	{
 		const std::string t = "obfme:SkirmishAI";
 		std::vector<std::uint8_t> one;
 		logic.gameState().saveBlocks({ t }, one);
-		const size_t p = payloadOffset(t), assist = p + 6;
+		const size_t p = payloadOffset(t), assist = p + 10;
 		const size_t info = assist + 4 + 8 * (size_t)u32At(one, assist) + 5;
 		REQUIRE(u32At(one, info) >= 2u); // tolerance: a precondition (two info players to make one the other's twin)
 		const int players = logic.players().getPlayerCount();
-		refused(t, { "skirmish AI" }, withU32(one, assist, big), "block '" + t + "': " + countError(big, 8, payloadSize(one, t) - 10));
+		refused(t, { "skirmish AI" }, withU32(one, assist, big), "block '" + t + "': " + countError(big, 8, payloadSize(one, t) - 14));
 		refused(t, { "skirmish AI" }, withU32(one, info + 4, 99),
 			"block '" + t + "': skirmish ai: a player info player 99 is outside 0 .. " + std::to_string(players - 1));
 		refused(t, { "skirmish AI" }, withU32(one, info + 8, u32At(one, info + 4)), "block '" + t + "': skirmish ai: a player is twice among the player info players");
@@ -935,7 +940,11 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 	// merge queue q28 (#117's fortress module in the update schedule moves the AIs' game): seed 4132 has no frame of 1500 .. 3000 holding the actors (the
 	// #96 merge point alone still had them at 1500), so the scene moves to seed 4133 (scene at 1500); seeds 4133 .. 4138 measured on the merged tree: 4133 ..
 	// 4137 hold the actors (1500 / 2100 / 1800 / 2700 / 2700), 4138's rider is no longer in its garrison order at the stepped frame
-	const NewGameMessage m = fourPlayerMessage(*s, 4133);
+	// merge queue q29 (measured at each merge point: seed 4133 holds the actors through IDLEMOTION-1 and none from FBSIM-1 on, whose computer players' phantom
+	// sites move the AIs' game): seed 4133 has no frame of 1500 .. 3000 holding the actors on the merged tree, so the scene moves to seed 4136 (scene at 3000);
+	// seeds 4134 .. 4141 measured on the merged tree: 4136 / 4137 / 4138 / 4140 hold the actors (3000 / 1800 / 2700 / 1800); 4134, 4135, 4139 and 4141 fail
+	// later in the scene (the attacker's order refused, the garrison rider not entering, an actor's order no longer in flight in the saved game)
+	const NewGameMessage m = fourPlayerMessage(*s, 4136);
 	// lane DEVPORT-7: the scene frame is found, not assumed. The test pinned 2700 / 3000, but which units of this 4-AI game live then is the AI's play,
 	// not a retail fact: with BloodthirstyUpdate ported (an update module on every Mordor / Isengard horde, woken at creation and every 2 s + 1 frame as
 	// retail's, RW 0x85123F / BFME2 0x44E0AA; it changes nothing in this game, but its update slots reorder the others', RW 0x62B921) the same seed has
@@ -972,6 +981,11 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 		}
 		return ids;
 	};
+	// lane AIDATA-1: the hunter must have a victim for the hunt's first scan (AIHuntState::findVictim's search, RW 0x701443 with 0x4A over 9999.9; without
+	// one the hunt ends at that scan, RW 0x7481F9)
+	auto hasPrey = [](Object *o) {
+		return AI::findClosestEnemy(*o, 9999.9f, AI::CAN_ATTACK | AI::ATTACK_BUILDINGS | AI::AUTO_ACQUIRE, o->getAIUpdateInterface()->attackInfo(), nullptr, 0) != nullptr;
+	};
 	UnsignedInt scene = 0;
 	{
 		Game c;
@@ -994,9 +1008,15 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 				const Player *p = lc.players().getNthPlayer(kv.first);
 				menUnits += p && p->getPlayerTemplate() && p->getPlayerTemplate()->getName() == "FactionMen" ? (int)kv.second.size() : 0;
 			}
-			// the attacker (first player), the guard (third), the hunter (fourth), and a second unit of FactionMen beside the attacker for the garrison
-			if (any(ids[0], [&](Object *o) { return armed(o) && takes(o, 0xB); }) && any(ids[2], [&](Object *o) { return takes(o, 0); }) &&
-				any(ids[3], [&](Object *o) { return armed(o) && takes(o, 0x12) && GarrisonRules::isMobile(*o); }) && menUnits >= 2)
+			// the attacker (first player), the guard (third), the hunter (fourth, lane AIDATA-1: or any other player, see below), and a second unit of
+			// FactionMen beside the attacker for the garrison
+			bool hunterFound = false;
+			for (int p : ids)
+			{
+				hunterFound = hunterFound || any(p, [&](Object *o) { return armed(o) && takes(o, 0x12) && GarrisonRules::isMobile(*o) && hasPrey(o); });
+			}
+			if (any(ids[0], [&](Object *o) { return armed(o) && takes(o, 0xB); }) && any(ids[2], [&](Object *o) { return takes(o, 0); }) && hunterFound &&
+				menUnits >= 2)
 			{
 				scene = t;
 			}
@@ -1004,6 +1024,46 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 	}
 	REQUIRE_MESSAGE(scene != 0, "no frame of 1500 .. 3000 (every 300) has the actors among the objects alive 300 frames before"); // tolerance: 0 is "none found"; the frame itself is the AI's play
 	MESSAGE("save4c units attacking: the scene is at frame " << scene << " (its modules' earlier state from frame " << scene - 300 << ")");
+	// lane AIDATA-1: the hunter must also keep its hunt through the frame the test steps: a unit the skirmish AI is walking somewhere gets its next order from
+	// the AI in that frame (the frame-2400 scene's only candidate of the fourth player, an Isengard pike horde, was back in AI_MOVE_TO). A scratch game of its
+	// own, at the scene, gives every candidate of every player the hunt and steps once; the candidates still hunting are the ones the two games below may
+	// choose, the fourth player's first, else the first of another player that is not an actor yet (the scratch game is gone before they load: one live game
+	// per world, S-3808)
+	std::set<ObjectID> keepsHunt;
+	{
+		Game d;
+		load(*s, m, d);
+		GameLogic &ld = d.logic();
+		runTo(d, scene - 300);
+		const std::set<ObjectID> before = aiIds(ld);
+		runTo(d, scene);
+		std::vector<ObjectID> tried;
+		std::map<int, std::vector<Object *>> by = candidates(ld, before);
+		for (Object *o : [&] {
+				 std::vector<Object *> all;
+				 for (int p : ld.skirmishAI().infoPlayers())
+				 {
+					 all.insert(all.end(), by[p].begin(), by[p].end());
+				 }
+				 return all;
+			 }())
+		{
+			if (armed(o) && takes(o, 0x12) && GarrisonRules::isMobile(*o) && hasPrey(o) && o->getAIUpdateInterface()->aiHunt(CMD_FROM_SCRIPT))
+			{
+				tried.push_back(o->getID());
+			}
+		}
+		step(d);
+		for (ObjectID id : tried)
+		{
+			const Object *o = ld.findObjectByID(id);
+			if (o && o->getAIUpdateInterface() && o->getAIUpdateInterface()->currentStateId() == AI_HUNT)
+			{
+				keepsHunt.insert(id);
+			}
+		}
+	}
+	REQUIRE(!keepsHunt.empty());
 	const UnsignedInt pre = scene - 300;
 	Game a, b;
 	load(*s, m, a);
@@ -1093,9 +1153,14 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 	};
 	Object *mover = firstOf(playerIds[1], [&](Object *o) { return takes(o, 0) && reachableMover(o); });
 	Object *guard = firstOf(playerIds[2], [&](Object *o) { return takes(o, 0); });
-	auto canHunt = [&](Object *o) { return armed(o) && takes(o, 0x12) && GarrisonRules::isMobile(*o); }; // RW 0x66450F's test
-	Object *hunter = firstOf(playerIds[3], [&](Object *o) { return canHunt(o) && !inAITeam(o); });
-	hunter = hunter ? hunter : firstOf(playerIds[3], canHunt);
+	auto huntable = [&](Object *o) { return armed(o) && takes(o, 0x12) && GarrisonRules::isMobile(*o) && hasPrey(o) && keepsHunt.count(o->getID()) == 1; }; // RW 0x66450F's test
+	Object *hunter = firstOf(playerIds[3], [&](Object *o) { return huntable(o) && !inAITeam(o); });
+	hunter = hunter ? hunter : firstOf(playerIds[3], huntable);
+	for (int p : playerIds)
+	{
+		Object *c = firstOf(p, [&](Object *o) { return huntable(o) && o != attacker && o != mover && o != guard; });
+		hunter = hunter ? hunter : c;
+	}
 	if (!mover)
 	{
 		// merge queue q16: the second player has only horde members and new units at frame 2700 (nothing older to snapshot): its role goes to the first
@@ -1399,7 +1464,7 @@ TEST_CASE("save4c hostile inputs, nested containers and caps (review r2): an ove
 		const std::string t = "obfme:SkirmishAI";
 		std::vector<std::uint8_t> one;
 		logic.gameState().saveBlocks({ t }, one);
-		const size_t p = payloadOffset(t), assist = p + 6;
+		const size_t p = payloadOffset(t), assist = p + 10;
 		const size_t info = assist + 4 + 8 * (size_t)u32At(one, assist) + 5;
 		const size_t records = info + 4 + 4 * (size_t)u32At(one, info);
 		REQUIRE(u32At(one, records) > 0u); // tolerance: a precondition (the game has player info records)

@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbfme.com/schemas/crash/report-v1.json",
+  "title": "OpenBFME crash report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "build_kind",
+    "version",
+    "client",
+    "os_name",
+    "os_version",
+    "cpu_name",
+    "gpu_name",
+    "backtrace",
+    "log_tail",
+    "context",
+    "settings"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "build_kind": {"const": "release"},
+    "version": {"type": "string", "minLength": 1, "maxLength": 64},
+    "client": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "version"],
+      "properties": {
+        "platform": {"enum": ["windows", "linux", "macos"]},
+        "version": {"type": "string", "minLength": 1, "maxLength": 64}
+      }
+    },
+    "os_name": {"type": "string", "minLength": 1, "maxLength": 128},
+    "os_version": {"type": "string", "minLength": 1, "maxLength": 128},
+    "cpu_name": {"type": "string", "minLength": 1, "maxLength": 256},
+    "gpu_name": {"type": "string", "minLength": 1, "maxLength": 256},
+    "backtrace": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {"type": "string", "maxLength": 2048}
+    },
+    "log_tail": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {"type": "string", "maxLength": 2048}
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["map", "mode", "factions"],
+      "properties": {
+        "map": {"type": "string", "maxLength": 256},
+        "mode": {"enum": ["skirmish", "multiplayer", "campaign", "replay", "unknown", "menu"]},
+        "factions": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {"type": "string", "maxLength": 64}
+        }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resolution_width", "resolution_height", "texture_quality", "shadows", "vsync"],
+      "properties": {
+        "resolution_width": {
+          "anyOf": [
+            {"type": "integer", "minimum": 0, "maximum": 16384},
+            {"const": "unknown"}
+          ]
+        },
+        "resolution_height": {
+          "anyOf": [
+            {"type": "integer", "minimum": 0, "maximum": 16384},
+            {"const": "unknown"}
+          ]
+        },
+        "texture_quality": {"enum": ["low", "medium", "high", "unknown"]},
+        "shadows": {"anyOf": [{"type": "boolean"}, {"const": "unknown"}]},
+        "vsync": {"anyOf": [{"type": "boolean"}, {"const": "unknown"}]}
+      }
+    }
+  }
+}

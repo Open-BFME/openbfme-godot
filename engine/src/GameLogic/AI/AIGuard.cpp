@@ -31,14 +31,10 @@ namespace
 {
 const char *const kGuardFile = "AIGuard.cpp";
 
+// lane AIDATA-1: the guard rows keep the AIData constructor's values when no aidata.ini names them (RW 0x6FFBEF), as retail's guard machine reads them
 const GameLogicSettings &settingsOf(const Object &obj)
 {
-	const GameLogicSettings &s = obj.logic().settings();
-	if (!s.guardRulesLoaded)
-	{
-		obj.logic().reportError("AIGuard: AIData GuardChaseUnitsDuration / GuardEnemyScanRate / GuardEnemyReturnScanRate were not read [S-3802]");
-	}
-	return s;
+	return obj.logic().settings();
 }
 
 bool attackCommonTarget(const Team *t)
@@ -805,6 +801,6 @@ void AIUpdateInterface::stancesOnCommand(CommandSourceType source)
 	}
 	if (StancesBehavior *sb = StancesBehavior::of(*getObject()))
 	{
-		sb->onMoveStart();
+		sb->onMoveStart(source == CMD_FROM_PLAYER ? "player-command:onMoveStart" : "script-command:onMoveStart");
 	}
 }

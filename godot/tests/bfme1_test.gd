@@ -10,6 +10,7 @@ func _run() -> void:
 	var mounted: Dictionary = fs.mount_bfme1_path(install)
 	print("BFME1 MOUNT ", mounted)
 	if not mounted.ok: quit(1); return
+	assert(fs.install_root() == install, "BFME1 loose resources must use the BFME1 install")
 	var world = ClassDB.instantiate("GameWorld")
 	root.add_child(world)
 	var setup: Dictionary = world.setup(fs)
@@ -21,6 +22,11 @@ func _run() -> void:
 	var boot: Dictionary = shell.boot_shell(fs, world, {"skirmish_ini": OS.get_user_data_dir() + "/bfme1-test-skirmish.ini"})
 	print("BFME1 SHELL ", boot)
 	if not boot.ok: quit(1); return
+	var cursor: Dictionary = shell.get_cursor_image()
+	assert(cursor.get("name", "") == "Arrow")
+	assert(cursor.get("texture") != null, "BFME1 must load its native cursor image")
+	assert(not cursor.get("hidden", true))
+	assert(shell.get_report().get("cursor_errors", []).is_empty())
 	if not shell.shell_push("MainMenu.apt"): print(shell.get_shell_report()); quit(1); return
 	for i in 90: shell.tick(0.033)
 	print("BFME1 MENU ", shell.get_shell_report())

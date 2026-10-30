@@ -338,7 +338,8 @@ void OnlineLobbyClient::signInGuest(const std::u16string &name)
 	// ONLINEMENU-1 (BATCH-P3): the lobby's features first (the queue is serial: they are known when the sign-in's answer starts the social
 	// session); a lobby that names no "social" (the deployed lobby before the social routes) gets no social request at all
 	m_lobbyFeatures.clear();
-	if (m_options.enableSocial)
+	m_archivesUploaded.clear(); // lane PROFILE-2: another lobby (or a fresh connection) is sent the list again
+	if (m_options.enableSocial || !m_options.profileArchives.empty()) // lane PROFILE-2 (Sol review P2): "archives" too, social or not
 	{
 		queue("features", "GET", "/v1/health", "");
 	}
@@ -424,7 +425,8 @@ void OnlineLobbyClient::useSession(const std::string &token)
 	// ONLINEMENU-1 (BATCH-P3): a kept session starts the social session too (below, once /v1/mine accepts it): the features first, as for a
 	// guest sign-in
 	m_lobbyFeatures.clear();
-	if (m_options.enableSocial)
+	m_archivesUploaded.clear(); // lane PROFILE-2: another lobby (or a fresh connection) is sent the list again
+	if (m_options.enableSocial || !m_options.profileArchives.empty()) // lane PROFILE-2 (Sol review P2): "archives" too, social or not
 	{
 		queue("features", "GET", "/v1/health", "");
 	}
@@ -578,7 +580,7 @@ void OnlineLobbyClient::createGame(const std::u16string &name, const std::string
 		slots += "}";
 	}
 	std::string body = "{\"name\":" + jsonQuote(utf16ToUtf8(name)) + ",\"profile\":" + jsonQuote(m_options.profileDigest) + ",\"mode\":\"" +
-		modeName(m_options.profile) + "\"" + platformField() + buildField() + ",\"hostSlot\":" +
+		modeName(m_options.profile) + "\"" + platformField() + buildField() + archivesField() + ",\"hostSlot\":" +
 		std::to_string(hostSlot) + ",\"setup\":{" + setupFields(setup) + ",\"slots\":[" + slots + "]}";
 	if (!password.empty())
 	{
@@ -600,7 +602,7 @@ void OnlineLobbyClient::joinByCode(const std::string &roomCode)
 		refuse("join", "bad_field", "a room code is 6 .. 32 characters of A-Z a-z 0-9 _ -");
 		return;
 	}
-	queue("join:code", "POST", "/v1/rooms/" + roomCode + "/join", "{\"profile\":" + jsonQuote(m_options.profileDigest) + ",\"mode\":\"" + modeName(m_options.profile) + "\"" + platformField() + buildField() + "}");
+	queue("join:code", "POST", "/v1/rooms/" + roomCode + "/join", "{\"profile\":" + jsonQuote(m_options.profileDigest) + ",\"mode\":\"" + modeName(m_options.profile) + "\"" + platformField() + buildField() + archivesField() + "}");
 }
 
 bool OnlineLobbyClient::parseMode(const std::string &name, SimulationProfile *out)
@@ -633,6 +635,38 @@ bool OnlineLobbyClient::setProfile(SimulationProfile profile, const std::string 
 	m_options.profile = profile;
 	m_options.profileDigest = digest;
 	return true;
+}
+
+std::string OnlineLobbyClient::archivesId(const std::vector<std::string> &lines)
+{
+	std::string joined;
+	for (const std::string &l : lines)
+	{
+		joined += l + "\n";
+	}
+	const auto h = Sha256::hash(joined.data(), joined.size());
+	return HexBytes(h.data(), h.size());
+}
+
+std::string OnlineLobbyClient::archivesField()
+{
+	if (!lobbyHasFeature("archives") || m_options.profileArchives.empty())
+	{
+		return "";
+	}
+	const std::string id = archivesId(m_options.profileArchives);
+	if (id != m_archivesUploaded)
+	{
+		// queued before the create / join that names it: the requests go out in order
+		std::string lines;
+		for (const std::string &l : m_options.profileArchives)
+		{
+			lines += (lines.empty() ? "" : ",") + jsonQuote(l);
+		}
+		queue("archives", "POST", "/v1/profile-archives", "{\"id\":\"" + id + "\",\"lines\":[" + lines + "]}");
+		m_archivesUploaded = id;
+	}
+	return ",\"archives\":\"" + id + "\"";
 }
 
 std::string OnlineLobbyClient::platformField() const
@@ -692,7 +726,7 @@ void OnlineLobbyClient::joinGame(const std::string &id, const std::string &passw
 		refuse("join", "bad_field", "a game id is 16 hex digits");
 		return;
 	}
-	std::string body = "{\"profile\":" + jsonQuote(m_options.profileDigest) + ",\"mode\":\"" + modeName(m_options.profile) + "\"" + platformField() + buildField();
+	std::string body = "{\"profile\":" + jsonQuote(m_options.profileDigest) + ",\"mode\":\"" + modeName(m_options.profile) + "\"" + platformField() + buildField() + archivesField();
 	if (!password.empty())
 	{
 		body += ",\"password\":" + jsonQuote(password);
@@ -1350,6 +1384,7 @@ void OnlineLobbyClient::deliver(int id, int status, const std::string &body, con
 	{
 		// ONLINEMENU-1: data for the social session; any failure leaves the features empty (no social), nothing refused, no box
 		m_lobbyFeatures.clear();
+		m_archivesUploaded.clear(); // lane PROFILE-2
 		JsonValue health;
 		std::string why;
 		if (transportError.empty() && status == 200 && body.size() <= kMaxBodyBytes && JsonValue::parse(body, health, &why) && health.isObject())
@@ -1402,6 +1437,21 @@ void OnlineLobbyClient::deliver(int id, int status, const std::string &body, con
 		return;
 	}
 	const bool socialRequest = kind.rfind("social_", 0) == 0;
+	if (kind == "archives")
+	{
+		// lane PROFILE-2: the archive-list upload is not the player's request: its failure is kept (lastArchivesError) and retried at the next
+		// create / join, never a refusal on screen (the game plays; the checker reports the slot's archives as not uploaded)
+		if (transportError.empty() && status == 200)
+		{
+			m_archivesError.clear();
+		}
+		else
+		{
+			m_archivesUploaded.clear();
+			m_archivesError = transportError.empty() ? "HTTP " + std::to_string(status) : transportError;
+		}
+		return;
+	}
 	if (kind == "poll" && !held)
 	{
 		m_pollQueued = false;

@@ -140,6 +140,11 @@ public:
 	void setLocalFolder(const std::string &folder);
 	const std::string &localFolder() const { return m_localFolder; }
 
+	// OpenBFME, lane PROFILE-3 (the simdata coverage check): every path asked of this file system from now on goes into *trace as
+	// "read <path>", "exists <path>" or "list <directory><pattern>" (lower case, '\\' separators); nullptr stops it. A test hook: the
+	// headless peer's --read-trace. Never set in a product game
+	void setReadTrace(std::set<std::string> *trace) { m_readTrace = trace; }
+
 	// Union of every mounted archive's file list (ZH getFileListInDirectory).
 	void getFileListInDirectory(const std::string &currentDirectory, const std::string &originalDirectory,
 		const std::string &searchName, FilenameList &filenameList, bool searchSubdirectories) const;
@@ -185,6 +190,8 @@ private:
 
 	std::string m_localFolder;
 	bool m_preferLocalFiles = false; // RW 0xDEC490
+	std::set<std::string> *m_readTrace = nullptr; // lane PROFILE-3: setReadTrace
+	void trace(const char *what, const std::string &path) const;
 	ModLooseIndex m_modLoose;        // RW 0xDEC498's folder, frozen at mount
 	struct DerivedFile
 	{

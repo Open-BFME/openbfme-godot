@@ -11,9 +11,13 @@
 #include "luau/luacode.h"
 #include "luau/lualib.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <memory>
+#include <set>
 
 namespace
 {
@@ -74,6 +78,9 @@ int simRandom(lua_State *L)
 	const int n = lua_gettop(L);
 	if (n > 2)
 		luaL_error(L, "wrong number of arguments");
+	const std::string refused = s->actionRefusal(); // lane SDK-2b: a draw changes the game's generator
+	if (!refused.empty())
+		luaL_error(L, "math.random: %s", refused.c_str());
 	const std::uint32_t r = s->randomBits();
 	if (n == 0)
 	{
@@ -170,8 +177,17 @@ int scriptRequire(lua_State *L)
 		self(L)->leaveModule();
 		lua_error(L);
 	}
-	lua_call(L, 0, 1);
+	// lane SDK-2b: a module's top level reruns when a save is loaded, so it may not change sdk.state
+	std::string before, after, stateError;
+	const bool sim = self(L)->role() == SdkScriptRole::Sim;
+	const bool hadState = sim && self(L)->serializeState(before, stateError);
+	const int status = lua_pcall(L, 0, 1, 0); // Sol r1 of SDK-2b: the module is left also when its top level fails (a caught error)
 	self(L)->leaveModule();
+	if (status != LUA_OK)
+		lua_error(L);
+	if (hadState && (!self(L)->serializeState(after, stateError) || after != before))
+		luaL_error(L, "require '%s': its top level changed sdk.state (a top level reruns when a save is loaded: change sdk.state from an event)",
+			name.c_str());
 	if (lua_isnil(L, -1))
 	{
 		lua_pop(L, 1);
@@ -281,6 +297,11 @@ LuauScriptState::LuauScriptState(SdkScriptRole role, std::string modName, SdkScr
 	{
 		lua_pushstring(m_L, m_modName.c_str());
 		lua_setfield(m_L, -2, "mod");
+	}
+	if (m_role == SdkScriptRole::Sim)
+	{
+		lua_newtable(m_L); // lane SDK-2b: sdk.state, what a save keeps (sdk itself is made read-only below; the table stays writable)
+		lua_setfield(m_L, -2, "state");
 	}
 	lua_setglobal(m_L, "sdk");
 
@@ -493,7 +514,25 @@ bool LuauScriptState::load(const std::string &chunkName, const std::string &sour
 		error = m_failure;
 		return false;
 	}
-	return run(T, 0, error);
+	// lane SDK-2b: the top level reruns when a save is loaded: it may not change the game (the action gate) or sdk.state (compared below)
+	std::string before, after;
+	if (m_role == SdkScriptRole::Sim && !serializeState(before, error))
+	{
+		fail(error);
+		error = m_failure;
+		return false;
+	}
+	m_topLevel = true;
+	const bool ok = run(T, 0, error);
+	m_topLevel = false;
+	if (ok && m_role == SdkScriptRole::Sim && (!serializeState(after, error) || after != before))
+	{
+		fail(error.empty() || after != before ? chunkName + ": its top level changed sdk.state (a top level reruns when a save is loaded: change "
+			"sdk.state from an event, such as onGameStart or onGameLoaded)" : error);
+		error = m_failure;
+		return false;
+	}
+	return ok;
 }
 
 bool LuauScriptState::loadFile(const std::string &name, std::string &error)
@@ -578,4 +617,502 @@ bool LuauScriptState::hasFunction(const std::string &name)
 	const bool is = lua_isfunction(T, -1);
 	lua_pop(T, 1);
 	return is;
+}
+
+// ---- lane SDK-2b: sdk.state's canonical bytes ----------------------------------------------------------------------------------------------
+
+namespace
+{
+
+struct StateKey
+{
+	bool number;
+	double n;
+	std::string s;
+	bool operator<(const StateKey &o) const
+	{
+		if (number != o.number)
+			return number; // numbers first
+		return number ? n < o.n : s < o.s;
+	}
+};
+
+void putU32(std::string &out, std::uint32_t v)
+{
+	for (int i = 0; i < 4; ++i)
+		out += (char)((v >> (8 * i)) & 0xFF);
+}
+
+void putNumber(std::string &out, double d)
+{
+	std::uint64_t bits;
+	std::memcpy(&bits, &d, 8);
+	out += 'N';
+	for (int i = 0; i < 8; ++i)
+		out += (char)((bits >> (8 * i)) & 0xFF);
+}
+
+void putString(std::string &out, const std::string &v)
+{
+	out += 'S';
+	putU32(out, (std::uint32_t)v.size());
+	out += v;
+}
+
+std::string keyPath(const std::string &path, const StateKey &k)
+{
+	if (!k.number)
+		return path + "." + k.s;
+	char buf[40];
+	std::snprintf(buf, sizeof buf, "[%.17g]", k.n);
+	return path + buf;
+}
+
+// the value at the top of L's stack
+bool serializeValue(lua_State *L, const std::string &path, int depth, std::set<const void *> &seen, std::string &out, std::string &error)
+{
+	if (out.size() > LuauScriptState::kStateBytes)
+	{
+		error = "sdk.state is over " + std::to_string(LuauScriptState::kStateBytes / 1024) + " KB serialized";
+		return false;
+	}
+	switch (lua_type(L, -1))
+	{
+	case LUA_TBOOLEAN:
+		out += lua_toboolean(L, -1) ? 'R' : 'F';
+		return true;
+	case LUA_TNUMBER:
+	{
+		const double d = lua_tonumber(L, -1);
+		if (std::isnan(d))
+		{
+			error = path + " is NaN (sdk.state holds numbers that are not NaN)";
+			return false;
+		}
+		putNumber(out, d);
+		return true;
+	}
+	case LUA_TSTRING:
+	{
+		size_t len = 0;
+		const char *p = lua_tolstring(L, -1, &len);
+		putString(out, std::string(p, len));
+		return true;
+	}
+	case LUA_TTABLE:
+		break;
+	default:
+		error = path + " is a " + std::string(lua_typename(L, lua_type(L, -1))) +
+			" (sdk.state holds booleans, numbers, strings and tables of them)";
+		return false;
+	}
+	if (depth > LuauScriptState::kStateDepth)
+	{
+		error = path + " is more than " + std::to_string(LuauScriptState::kStateDepth) + " tables deep";
+		return false;
+	}
+	if (!seen.insert(lua_topointer(L, -1)).second)
+	{
+		error = path + " is a table sdk.state already holds elsewhere (it holds each table once)";
+		return false;
+	}
+	if (lua_getmetatable(L, -1))
+	{
+		lua_pop(L, 1);
+		error = path + " has a metatable (a save keeps plain tables only)";
+		return false;
+	}
+	if (lua_getreadonly(L, -1))
+	{
+		error = path + " is frozen (a save keeps plain tables only)";
+		return false;
+	}
+	if (!lua_checkstack(L, 4))
+	{
+		error = path + ": no stack left";
+		return false;
+	}
+	const int t = lua_gettop(L);
+	std::vector<StateKey> keys;
+	lua_pushnil(L);
+	while (lua_next(L, t))
+	{
+		StateKey k{ false, 0.0, std::string() };
+		if (lua_type(L, -2) == LUA_TNUMBER)
+		{
+			k.number = true;
+			k.n = lua_tonumber(L, -2);
+			if (k.n != DetLibm::floor(k.n) || DetLibm::fabs(k.n) > 9007199254740992.0)
+			{
+				lua_pop(L, 2);
+				error = keyPath(path, k) + ": a key that is not a whole number (sdk.state's keys are strings or whole numbers)";
+				return false;
+			}
+		}
+		else if (lua_type(L, -2) == LUA_TSTRING)
+		{
+			size_t len = 0;
+			const char *p = lua_tolstring(L, -2, &len);
+			k.s.assign(p, len);
+		}
+		else
+		{
+			const std::string type = lua_typename(L, lua_type(L, -2));
+			lua_pop(L, 2);
+			error = path + " has a " + type + " key (sdk.state's keys are strings or whole numbers)";
+			return false;
+		}
+		keys.push_back(std::move(k));
+		lua_pop(L, 1);
+	}
+	std::sort(keys.begin(), keys.end());
+	out += 'T';
+	putU32(out, (std::uint32_t)keys.size());
+	for (const StateKey &k : keys)
+	{
+		if (k.number)
+		{
+			putNumber(out, k.n);
+			lua_pushnumber(L, k.n);
+		}
+		else
+		{
+			putString(out, k.s);
+			lua_pushlstring(L, k.s.data(), k.s.size());
+		}
+		lua_rawget(L, t);
+		const bool ok = serializeValue(L, keyPath(path, k), depth + 1, seen, out, error);
+		lua_pop(L, 1);
+		if (!ok)
+			return false;
+	}
+	return true;
+}
+
+// parses canonical bytes; with L, pushes each value as it is read (a table's pairs set raw, in order)
+struct StateReader
+{
+	const std::string &b;
+	size_t at = 0;
+	lua_State *L = nullptr;
+	std::string error;
+
+	bool fail(const std::string &why)
+	{
+		if (error.empty())
+			error = "sdk.state bytes at " + std::to_string(at) + ": " + why;
+		return false;
+	}
+	bool u32(std::uint32_t &v)
+	{
+		if (b.size() - at < 4)
+			return fail("cut short");
+		v = 0;
+		for (int i = 0; i < 4; ++i)
+			v |= (std::uint32_t)(unsigned char)b[at + i] << (8 * i);
+		at += 4;
+		return true;
+	}
+	bool number(double &d)
+	{
+		if (b.size() - at < 8)
+			return fail("cut short");
+		std::uint64_t bits = 0;
+		for (int i = 0; i < 8; ++i)
+			bits |= (std::uint64_t)(unsigned char)b[at + i] << (8 * i);
+		at += 8;
+		std::memcpy(&d, &bits, 8);
+		return std::isnan(d) ? fail("a NaN") : true;
+	}
+	bool string(std::string &s)
+	{
+		std::uint32_t n = 0;
+		if (!u32(n))
+			return false;
+		if (b.size() - at < n)
+			return fail("cut short");
+		s = b.substr(at, n);
+		at += n;
+		return true;
+	}
+	bool value(int depth)
+	{
+		if (at >= b.size())
+			return fail("cut short");
+		const char tag = b[at++];
+		if (tag == 'F' || tag == 'R')
+		{
+			if (L)
+				lua_pushboolean(L, tag == 'R');
+			return true;
+		}
+		if (tag == 'N')
+		{
+			double d;
+			if (!number(d))
+				return false;
+			if (L)
+				lua_pushnumber(L, d);
+			return true;
+		}
+		if (tag == 'S')
+		{
+			std::string s;
+			if (!string(s))
+				return false;
+			if (L)
+				lua_pushlstring(L, s.data(), s.size());
+			return true;
+		}
+		if (tag == 'T')
+			return table(depth, false);
+		return fail("an unknown tag");
+	}
+	// `into`: fill the table at L's top instead of pushing a new one
+	bool table(int depth, bool into)
+	{
+		if (depth > LuauScriptState::kStateDepth)
+			return fail("more than " + std::to_string(LuauScriptState::kStateDepth) + " tables deep");
+		std::uint32_t n = 0;
+		if (!u32(n))
+			return false;
+		if (n > b.size() - at)
+			return fail("more pairs than bytes");
+		if (L)
+		{
+			if (!lua_checkstack(L, 4))
+				return fail("no stack left");
+			if (!into)
+				lua_createtable(L, 0, 0);
+		}
+		bool havePrev = false;
+		StateKey prev{ false, 0.0, std::string() };
+		for (std::uint32_t i = 0; i < n; ++i)
+		{
+			if (at >= b.size())
+				return fail("cut short");
+			StateKey k{ false, 0.0, std::string() };
+			const char tag = b[at++];
+			if (tag == 'N')
+			{
+				k.number = true;
+				if (!number(k.n))
+					return false;
+				if (k.n != DetLibm::floor(k.n) || DetLibm::fabs(k.n) > 9007199254740992.0)
+					return fail("a key that is not a whole number");
+			}
+			else if (tag == 'S')
+			{
+				if (!string(k.s))
+					return false;
+			}
+			else
+				return fail("a key that is not a number or a string");
+			if (havePrev && !(prev < k))
+				return fail("keys out of order");
+			prev = k;
+			havePrev = true;
+			if (L)
+			{
+				if (k.number)
+					lua_pushnumber(L, k.n);
+				else
+					lua_pushlstring(L, k.s.data(), k.s.size());
+			}
+			if (!value(depth + 1))
+				return false;
+			if (L)
+				lua_rawset(L, -3);
+		}
+		return true;
+	}
+	bool root()
+	{
+		if (at >= b.size() || b[at] != 'T')
+			return fail("not a table");
+		++at;
+		if (!table(1, L != nullptr))
+			return false;
+		return at == b.size() ? true : fail("bytes after the end");
+	}
+};
+
+} // namespace
+
+namespace
+{
+// runs `fn` on the state inside lua_pcall (Sol r2 of SDK-2b): a Lua error it raises (the memory cap) comes back as the error text and never
+// reaches the game's frame
+struct ProtectedWork
+{
+	const std::function<void(lua_State *)> *fn;
+};
+
+int protectedWork(lua_State *L)
+{
+	const ProtectedWork *w = static_cast<const ProtectedWork *>(lua_tolightuserdata(L, 1));
+	lua_remove(L, 1);
+	(*w->fn)(L);
+	return 0;
+}
+
+bool runProtected(lua_State *L, const std::function<void(lua_State *)> &fn, std::string &error)
+{
+	const int base = lua_gettop(L);
+	ProtectedWork w{ &fn };
+	const int status = lua_cpcall(L, protectedWork, &w); // Sol r3: the closure is made inside the protection too
+	if (status != LUA_OK)
+	{
+		const char *msg = lua_gettop(L) > base ? lua_tostring(L, -1) : nullptr;
+		error = status == LUA_ERRMEM ? "not enough memory (the script's memory cap)" : (msg ? msg : "error");
+	}
+	lua_settop(L, base);
+	return status == LUA_OK;
+}
+} // namespace
+
+bool LuauScriptState::serializeState(std::string &out, std::string &error)
+{
+	out.clear();
+	if (m_role != SdkScriptRole::Sim || !m_L)
+	{
+		error = m_modName + ": a presentation script has no sdk.state";
+		return false;
+	}
+	bool ok = false;
+	const std::function<void(lua_State *)> work = [&](lua_State *L) {
+		lua_getglobal(L, "sdk");
+		lua_getfield(L, -1, "state");
+		std::set<const void *> seen;
+		ok = serializeValue(L, "sdk.state", 1, seen, out, error) &&
+			(out.size() <= kStateBytes || (error = "sdk.state is over " + std::to_string(kStateBytes / 1024) + " KB serialized", false));
+	};
+	if (!runProtected(m_L, work, error))
+		ok = false;
+	if (!ok)
+		out.clear();
+	return ok;
+}
+
+bool LuauScriptState::checkStateBytes(const std::string &bytes, std::string &error)
+{
+	if (bytes.size() > kStateBytes)
+	{
+		error = "sdk.state is over " + std::to_string(kStateBytes / 1024) + " KB serialized";
+		return false;
+	}
+	StateReader r{ bytes };
+	if (!r.root())
+	{
+		error = r.error;
+		return false;
+	}
+	return true;
+}
+
+bool LuauScriptState::restoreState(const std::string &bytes, std::string &error)
+{
+	if (!checkStateBytes(bytes, error))
+		return false;
+	if (m_role != SdkScriptRole::Sim || !m_L || m_failed)
+	{
+		error = m_failed ? m_failure : m_modName + ": a presentation script has no sdk.state";
+		return false;
+	}
+	bool ok = false;
+	const std::function<void(lua_State *)> work = [&](lua_State *L) {
+		lua_getglobal(L, "sdk");
+		lua_getfield(L, -1, "state");
+		lua_pushnil(L);
+		const bool empty = lua_next(L, -2) == 0;
+		if (!empty)
+		{
+			error = m_modName + ": sdk.state is not empty before its restore";
+			return;
+		}
+		lua_openbfme_resettable(L, -1); // a top level that added and removed a key grew it: back to a fresh table's layout
+		StateReader r{ bytes };
+		r.L = L;
+		ok = r.root();
+		if (!ok)
+			error = r.error;
+	};
+	if (!runProtected(m_L, work, error))
+		ok = false;
+	return ok;
+}
+
+namespace
+{
+// the table at the top of L's stack and every table in it (sdk.state passed serializeState: plain data, a tree), refilled in key order
+void canonicalizeTable(lua_State *L)
+{
+	const int t = lua_gettop(L);
+	lua_checkstack(L, 8);
+	std::vector<StateKey> keys;
+	lua_pushnil(L);
+	while (lua_next(L, t))
+	{
+		StateKey k{ lua_type(L, -2) == LUA_TNUMBER, 0.0, std::string() };
+		if (k.number)
+			k.n = lua_tonumber(L, -2);
+		else
+		{
+			size_t len = 0;
+			const char *p = lua_tolstring(L, -2, &len);
+			k.s.assign(p, len);
+		}
+		keys.push_back(std::move(k));
+		lua_pop(L, 1);
+	}
+	std::sort(keys.begin(), keys.end());
+	// the values, in key order, kept on a holding table's array part while the table is emptied
+	lua_createtable(L, (int)keys.size(), 0);
+	const int hold = lua_gettop(L);
+	for (size_t i = 0; i < keys.size(); ++i)
+	{
+		if (keys[i].number)
+			lua_pushnumber(L, keys[i].n);
+		else
+			lua_pushlstring(L, keys[i].s.data(), keys[i].s.size());
+		lua_rawget(L, t);
+		lua_rawseti(L, hold, (int)i + 1);
+	}
+	lua_openbfme_resettable(L, t);
+	for (size_t i = 0; i < keys.size(); ++i)
+	{
+		if (keys[i].number)
+			lua_pushnumber(L, keys[i].n);
+		else
+			lua_pushlstring(L, keys[i].s.data(), keys[i].s.size());
+		lua_rawgeti(L, hold, (int)i + 1);
+		if (lua_type(L, -1) == LUA_TTABLE)
+		{
+			lua_pushvalue(L, -1);
+			canonicalizeTable(L);
+			lua_pop(L, 1);
+		}
+		lua_rawset(L, t);
+	}
+	lua_settop(L, t);
+}
+} // namespace
+
+bool LuauScriptState::canonicalizeState(std::string &error)
+{
+	if (m_role != SdkScriptRole::Sim || !m_L || m_failed)
+	{
+		error = m_failed ? m_failure : m_modName + ": a presentation script has no sdk.state";
+		return false;
+	}
+	const std::function<void(lua_State *)> work = [](lua_State *L) {
+		lua_getglobal(L, "sdk");
+		lua_getfield(L, -1, "state");
+		canonicalizeTable(L);
+	};
+	if (runProtected(m_L, work, error))
+		return true;
+	error = "sdk.state: " + error;
+	fail(error); // a table may be half refilled: the state is not used again
+	return false;
 }

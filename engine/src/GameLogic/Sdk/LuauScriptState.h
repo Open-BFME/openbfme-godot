@@ -22,6 +22,17 @@
 // Running out of steps or output is sticky for the rest of the call: catching the error (pcall, a coroutine) only meets it again.
 // A script error is never skipped: the call fails with the message, the state is marked failed and refuses further calls, and the host
 // reports it (for a sim script on every peer at the same frame, as the inputs are the same).
+//
+// lane SDK-2b: a sim state has `sdk.state`, a table the scripts fill in place (`sdk` is read-only, so the table itself cannot be replaced).
+// It is the only thing of a script that a save keeps: a loaded game starts the scripts afresh, runs their top level again, then restores
+// sdk.state (serializeState / restoreState). It holds plain data: booleans, numbers (not NaN), strings, and tables of them keyed by strings
+// or whole numbers (|n| <= 2^53), each table once (a tree), with no metatable and not frozen; at most kStateDepth tables deep and
+// kStateBytes serialized. The canonical bytes: a table is 'T', u32 count, then its pairs with the keys in order (numbers ascending, then
+// strings bytewise); a value is 'F' / 'R' (false / true), 'N' + the double's 8 bytes (little endian), 'S' + u32 length + bytes, or a table.
+// The tables are rebuilt in that key order at the end of every frame (canonicalizeState) and built so by a restore, so `pairs` runs in the
+// same order in a loaded game as in the uninterrupted one.
+// Since a top level reruns on load, it may not change the game: the host's action gate (setActionGate) refuses math.random there, and the
+// host refuses its game actions; a top level that changed sdk.state is an error after it ran (runningTopLevel, the before / after bytes).
 
 #pragma once
 
@@ -75,6 +86,27 @@ public:
 	// do the loaded chunks define a global function `name`
 	bool hasFunction(const std::string &name);
 
+	// lane SDK-2b: sdk.state (sim role) as its canonical bytes; false + error naming the path of what it cannot hold
+	static constexpr std::size_t kStateBytes = 64u << 10;
+	static constexpr int kStateDepth = 16;
+	bool serializeState(std::string &out, std::string &error);
+	// fills an empty sdk.state from canonical bytes; false + error (bytes that are not canonical: a damaged save, or the memory cap). The
+	// three run inside a protected call: a Lua error (the memory cap) is their error, never the caller's
+	bool restoreState(const std::string &bytes, std::string &error);
+	// the same parse without a state: are these canonical bytes
+	static bool checkStateBytes(const std::string &bytes, std::string &error);
+	// rebuilds every table of sdk.state in place (the same tables, so the scripts' references stay) in the canonical key order, as a
+	// restore builds them: the running game and a game loaded from its save then iterate sdk.state (pairs / next) in the same order. The
+	// host calls it at the end of every frame, after serializeState succeeded (Sol r1 of SDK-2b)
+	// false + error when the state ran out of memory doing it (the state is then failed: its tables may be half refilled)
+	bool canonicalizeState(std::string &error);
+	// a top level is running: a chunk being loaded, or a module being required
+	bool runningTopLevel() const { return m_topLevel || !m_loading.empty(); }
+	// "" when the scripts may change the game now, else why not (the host's rule; checked by math.random of a sim state)
+	using ActionGate = std::function<std::string()>;
+	void setActionGate(ActionGate gate) { m_gate = std::move(gate); }
+	std::string actionRefusal() const { return m_gate ? m_gate() : std::string(); }
+
 	SdkScriptRole role() const { return m_role; }
 	const std::string &modName() const { return m_modName; }
 	bool failed() const { return m_failed; }
@@ -126,4 +158,6 @@ private:
 	bool m_budgetExceeded = false;      // sticky for the rest of a call (Sol r1)
 	std::size_t m_printedThisCall = 0, m_printedTotal = 0;
 	bool m_printOverflow = false;
+	bool m_topLevel = false;            // lane SDK-2b: inside load()
+	ActionGate m_gate;
 };

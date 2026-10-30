@@ -15,6 +15,7 @@
 extends Node
 
 const OnlineList := preload("res://scripts/online_list.gd")
+const HttpTimed := preload("res://scripts/http_timed.gd") ## a time limit in running frames (a blocking load does not use it up)
 
 signal started(start_json: String)
 signal failed(message: String)
@@ -75,7 +76,7 @@ func _make_http() -> void:
 	if _http != null:
 		return
 	_http = HTTPRequest.new()
-	_http.timeout = 20.0
+	HttpTimed.set_budget(_http, 20.0)
 	_http.max_redirects = 0 # ONLINE-2 r2: never follow a redirect (Godot would send the bearer token to the new origin)
 	_http.body_size_limit = BODY_LIMIT # Sol r1 (ONLINE-4): a hostile lobby's answer is not read beyond the bound
 	add_child(_http)

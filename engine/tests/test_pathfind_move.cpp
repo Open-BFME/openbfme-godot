@@ -134,7 +134,12 @@ struct Unit : AIMoveHost
 	float speedOf(const PathfindObject &o) const override;
 	Coord2D unitDirectionOf(const PathfindObject &o) const override;
 	int pathPriority() const override { return priority; }
-	PathfindObjectID attackTargetOf(const PathfindObject &) const override { return PATHFIND_INVALID_ID; }
+	PathfindObjectID attackTarget = PATHFIND_INVALID_ID, enterTarget = PATHFIND_INVALID_ID; // lane PATHPRIO-1: RW 0x68B36F / AI vslot 0x1FC of this unit
+	PathfindObjectID attackTargetOf(const PathfindObject &o) const override;
+	PathfindObjectID enterTargetOf(const PathfindObject &o) const override;
+	bool pathThroughUnits = false, deployedSiegeTower = false; // lane PATHPRIO-1: onCollide's exits (AI + 0x3BA, SIEGE_TOWER + DEPLOYED)
+	bool canPathThroughUnits() const override { return pathThroughUnits; }
+	bool isDeployedSiegeTower() const override { return deployedSiegeTower; }
 	bool crushOrSquishPolicy(const PathfindObject &other) const override { return obj.canCrushOrSquish(other); } // the mock's levels are its template's
 	float wanderFactor() const override { return 0.0f; }
 	float closeEnoughDist() const override { return 10.0f; }
@@ -308,6 +313,16 @@ Unit::Unit(Sim *s, const LocomotorTemplate *t, PathfindObjectID id, float x, flo
 }
 unsigned Unit::frame() const { return sim->frame; }
 const PathfindObject *Unit::findPathfindObject(PathfindObjectID id) { return sim->world.findObjectByID(id); }
+PathfindObjectID Unit::attackTargetOf(const PathfindObject &o) const
+{
+	auto it = sim->units.find(o.getID());
+	return it == sim->units.end() ? PATHFIND_INVALID_ID : it->second->attackTarget;
+}
+PathfindObjectID Unit::enterTargetOf(const PathfindObject &o) const
+{
+	auto it = sim->units.find(o.getID());
+	return it == sim->units.end() ? PATHFIND_INVALID_ID : it->second->enterTarget;
+}
 AIMover *Unit::moverOf(PathfindObjectID id)
 {
 	auto it = sim->units.find(id);
@@ -410,7 +425,7 @@ TEST_CASE("ai move: two enemy units crossing head on both arrive (nobody deadloc
 	}
 	CHECK(bothDone);
 	// the lower id (1) is blocked by the priority rule (equal priority, both moving, not the same way) and patches its path (lane MOVE-3: RotWK's blocked repath
-	// RW 0x6631BF / 0x6F7938): the first free point is next to it (a moving unit holds no position, RW 0x8E26B7), the patch leads straight on and clears the
+	// RW 0x6631BF / 0x6F7938): the first free point is next to it (this harness registers no position cells; RotWK's moving ground units hold theirs, RW 0x8E26B7), the patch leads straight on and clears the
 	// blocked frames, so the unit no longer stops to give up after 11 frames (the old whole-path repath found no other way and waited for the give-up); with the
 	// harness's physical blocking stand-in the two would hold each other forever, RotWK lets them pass
 	CHECK(maxBlocked >= 1);
@@ -489,6 +504,81 @@ TEST_CASE("ai move: onCollide goes on only for enemies (getRelationship 0 = ENEM
 	{
 		CHECK(s.find("allied units never block") == std::string::npos);
 	}
+}
+
+TEST_CASE("pathprio1: onCollide ends for a unit that may path through units or is a deployed siege tower (RW 0x66E233)")
+{
+	Sim sim(40, 20);
+	sim.build();
+	Unit &a = sim.add(1, 55.0f, 105.0f);
+	Unit &e = sim.add(3, 60.0f, 105.0f, 1);
+	sim.order(a, 355.0f, 105.0f);
+	sim.step(false);
+	++sim.frame;
+	a.pathThroughUnits = true; // RW 0x66E253: AI + 0x3BA
+	a.ai->onCollide(e.obj);
+	CHECK(!a.ai->isBlocked());
+	CHECK(a.ai->colliderCount() == 0);
+	a.pathThroughUnits = false;
+	a.deployedSiegeTower = true; // RW 0x66E2A4: SIEGE_TOWER with status DEPLOYED
+	a.ai->onCollide(e.obj);
+	CHECK(!a.ai->isBlocked());
+	CHECK(a.ai->colliderCount() == 0);
+	a.deployedSiegeTower = false; // the same enemy blocks once the exits are off (equal priority, the lower id)
+	a.ai->onCollide(e.obj);
+	CHECK(a.ai->isBlocked());
+	CHECK(a.ai->blockedFrames() == 1);
+}
+
+TEST_CASE("pathprio1: onCollide ends when either unit attacks the other; blockedBy lets a unit that enters this one pass (RW 0x66E2D1, RW 0x66D20A)")
+{
+	Sim sim(40, 20);
+	sim.build();
+	Unit &a = sim.add(1, 55.0f, 105.0f);
+	Unit &e = sim.add(3, 60.0f, 105.0f, 1);
+	sim.order(a, 355.0f, 105.0f);
+	sim.step(false);
+	++sim.frame;
+	a.attackTarget = 3; // my victim is the other (RW 0x68B36F(self))
+	a.ai->onCollide(e.obj);
+	CHECK(a.ai->colliderCount() == 0);
+	a.attackTarget = PATHFIND_INVALID_ID;
+	e.attackTarget = 1; // I am the other's victim
+	a.ai->onCollide(e.obj);
+	CHECK(a.ai->colliderCount() == 0);
+	e.attackTarget = PATHFIND_INVALID_ID;
+	e.enterTarget = 1; // the other enters me: onCollide goes on, blockedBy answers no block
+	a.ai->onCollide(e.obj);
+	CHECK(!a.ai->isBlocked());
+	CHECK(a.ai->colliderCount() == 0);
+	e.enterTarget = PATHFIND_INVALID_ID;
+	a.ai->onCollide(e.obj);
+	CHECK(a.ai->isBlocked());
+	CHECK(a.ai->blockedFrames() == 1);
+}
+
+TEST_CASE("pathprio1: two moving units meeting head-on compare their path priorities signed (RW 0x66D553), a negative priority gives way")
+{
+	Sim sim(40, 20);
+	sim.build();
+	sim.physicalBlocking = false;
+	Unit &a = sim.add(1, 55.0f, 105.0f);
+	Unit &e = sim.add(3, 155.0f, 105.0f, 1);
+	e.priority = -10; // a crushable level of -1 (an attribute modifier): unsigned it would be the highest priority
+	sim.order(a, 355.0f, 105.0f);
+	sim.order(e, 25.0f, 105.0f);
+	for (int f = 0; f < 4; ++f)
+	{
+		sim.step(false);
+	}
+	REQUIRE(a.ai->isMoving());
+	REQUIRE(e.ai->isMoving());
+	++sim.frame;
+	sim.world.frame = sim.frame;
+	a.ai->onCollide(e.obj); // a (0) against e (-10): 0 > -10, a walks on
+	CHECK(a.ai->blockedFrames() == 0);
+	e.ai->onCollide(a.obj); // e (-10) against a (0): e is blocked
+	CHECK(e.ai->blockedFrames() == 1);
 }
 
 TEST_CASE("ai move: the repath cadence: a path found from the queue is not asked for again while the goal stands (isSame) and the timestamp throttles")

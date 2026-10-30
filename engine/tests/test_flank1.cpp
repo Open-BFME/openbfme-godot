@@ -558,7 +558,7 @@ TEST_CASE("flank1 crush: the charge state takes the next crushable enemy as its 
 	m.defineState(MELEE_SQUISH, makeMeleeSquishState(m), MACHINE_DONE_SUCCESS, MACHINE_DONE_FAILURE);
 	m.setGoalObject(first->getID());
 	REQUIRE(m.setState(MELEE_SQUISH) == STATE_CONTINUE);
-	first->kill(DEATH_NORMAL);
+	first->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	REQUIRE(first->isEffectivelyDead());
 	REQUIRE(ObjectCrush::canCrush(*rider));
 	m.updateStateMachine();

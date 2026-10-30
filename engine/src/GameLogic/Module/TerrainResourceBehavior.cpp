@@ -85,6 +85,13 @@ void TerrainResourceBehavior::onDie(const DieModuleInterface::Event &)
 	obj->logic().economy().resources().unclaim(*obj, m_data->m_radius);
 }
 
+void TerrainResourceBehavior::onDelete()
+{
+	// RW 0x885362: TerrainResourceManager::unclaim (RW 0x75BE1C) of this object with the module's radius; nothing when it holds no claim (onDie took it)
+	Object *obj = getObject();
+	obj->logic().economy().resources().unclaim(*obj, m_data->m_radius);
+}
+
 UpdateSleepTime TerrainResourceBehavior::update()
 {
 	Object *obj = getObject();

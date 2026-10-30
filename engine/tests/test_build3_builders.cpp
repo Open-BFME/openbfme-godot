@@ -11,13 +11,16 @@
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/ControlBarCommands.h"
+#include "GameClient/LogicSnapshot.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/BuildPlacement.h"
+#include "GameLogic/Construction.h"
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/ObjectGeometry.h"
+#include "GameLogic/System/ShroudManager.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 
 #include <algorithm>
@@ -132,7 +135,7 @@ void buildOne(LiveGame &live, Player &player, Object &dozerObj, const ThingTempl
 			out.problem = "the structure vanished while rising";
 			return;
 		}
-		if (!building->isUnderConstruction())
+		if (!building->isUnderConstruction() && dozer->unplacedStructure() != id) // lane FBSIM-1: a phantom (RW 0x88D272) is not UNDER_CONSTRUCTION yet
 		{
 			break;
 		}
@@ -403,7 +406,9 @@ TEST_CASE("BUILD-3: every faction's builder builds every structure it offers on 
 	}
 }
 
-TEST_CASE("BUILD-3: a site cancelled before its Porter arrives is paid back once (MSG_DOZER_CANCEL_CONSTRUCT and the dozer's own removal RW 0x88CFFE)")
+// lane FBSIM-1: the site is RotWK's inert phantom until the Porter arrives (out of the world, not pickable, not UNDER_CONSTRUCTION, so MSG_DOZER_CANCEL_CONSTRUCT
+// cannot name it); the player cancels it by giving the Porter another order (aiDoCommand RW 0x88E44F cancels the task, RW 0x88CFFE removes the phantom with the refund)
+TEST_CASE("BUILD-3: a site cancelled before its Porter arrives is paid back once (a new order to the Porter: the dozer's own removal RW 0x88CFFE)")
 {
 	OPENBFME_REQUIRE_START(s);
 	std::string error;
@@ -449,12 +454,183 @@ TEST_CASE("BUILD-3: a site cancelled before its Porter arrives is paid back once
 	CHECK(player->getMoney()->countMoney() < before);
 	logic.runLogicFrame();
 	REQUIRE(dozer->unplacedStructure() == id); // still walking
-	live.commands().append(selectMsg(pi, id));
-	live.commands().append(GameMessage(MSG_DOZER_CANCEL_CONSTRUCT, pi));
+	GameMessage mv(MSG_DO_MOVETO, pi);
+	mv.appendLocationArgument(*dozerObj->getPosition());
+	live.commands().append(mv);
 	logic.runLogicFrame();
 	logic.runLogicFrame();
 	CHECK(logic.findObjectByID(id) == nullptr);
 	CHECK(dozer->unplacedStructure() == INVALID_ID);
 	CHECK(dozer->taskTarget() == INVALID_ID);
-	CHECK(player->getMoney()->countMoney() == before); // one refund (the dispatcher's), not two
+	CHECK(player->getMoney()->countMoney() == before); // one refund
+}
+
+// lane FBSIM-1 (FB-0039): RotWK's dozer makes its structure an inert phantom at the order (DozerAIUpdate slot 0x64 RW 0x88D272 + RW 0x88D0D8: PENDING_CONSTRUCTION
+// and PHANTOM_STRUCTURE, the PHANTOM_STRUCTURE model condition, effectively dead, out of the world, no UNDER_CONSTRUCTION, drawn at 0.4 for its owner and hidden for
+// everyone else) and only makes it a construction site when the Porter arrives (slot 0x68 RW 0x88D44F: in the world, UNDER_CONSTRUCTION at 1 hit point)
+TEST_CASE("fbsim1: a dozer's site is an inert phantom until the Porter arrives, then a 1 hit point construction site (FB-0039, RW 0x88D272 / 0x88D0D8 / 0x88D44F)")
+{
+	OPENBFME_REQUIRE_START(s);
+	std::string error;
+	buildtest::Game g;
+	REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", "FactionMordor", 5150, g, &error), error);
+	LiveGame &live = *g.live;
+	GameLogic &logic = live.logic();
+	Player *player = humanOf(live);
+	REQUIRE(player);
+	Object *fortress = fortressOf(live, player);
+	Object *dozerObj = dozerOf(live, player);
+	REQUIRE(fortress);
+	REQUIRE(dozerObj);
+	DozerAIUpdate *dozer = dynamic_cast<DozerAIUpdate *>(dozerObj->getAIUpdateInterface());
+	const ThingTemplate *farm = logic.things().findTemplate("GondorFarm")->getFinalOverride();
+	Coord3D site;
+	bool found = false;
+	for (float r = 600.0f; r >= 300.0f && !found; r -= 40.0f)
+	{
+		for (int k = 0; k < 24 && !found; ++k)
+		{
+			Coord3D c = *fortress->getPosition();
+			c.x += (float)(r * std::cos(k * 0.2617993877991494));
+			c.y += (float)(r * std::sin(k * 0.2617993877991494));
+			c.z = logic.getGroundHeight(c.x, c.y);
+			if (dozer->siteIsLegal(*farm, c, 0.0f, *player))
+			{
+				site = c;
+				found = true;
+			}
+		}
+	}
+	REQUIRE(found);
+	const std::uint32_t before = player->getMoney()->countMoney();
+	const int pi = player->getPlayerIndex();
+	live.commands().append(selectMsg(pi, dozerObj->getID()));
+	live.commands().append(dozerMsg(pi, *farm, site, 0.0f));
+	logic.runLogicFrame();
+	Object *structure = logic.findObjectByID(dozer->unplacedStructure());
+	REQUIRE(structure);
+	const ObjectID id = structure->getID();
+	const int pending = ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION");
+	const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
+	const int phantomCondition = Construction::modelConditionIndex("PHANTOM_STRUCTURE");
+	CHECK(player->getMoney()->countMoney() == before - (std::uint32_t)BuildAssistant::calcCostToBuild(*farm, player, dozerObj, -1)); // paid at the order
+	CHECK(structure->testStatus((unsigned)pending));
+	CHECK(structure->testStatus((unsigned)phantom));
+	CHECK_FALSE(structure->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION));
+	CHECK(structure->testModelCondition(phantomCondition));
+	CHECK(structure->isEffectivelyDead());
+	CHECK_FALSE(structure->isInWorld());
+	{
+		// the client: the owner (the local player here) sees it at 0.4, nobody else does
+		std::shared_ptr<const LogicSnapshot> snap = LogicSnapshot::build(logic, nullptr, false, 0);
+		const ObjectSnapshot *rec = snap->find(id);
+		REQUIRE(rec != nullptr);
+		CHECK(rec->phantomStructure);
+		CHECK(rec->drawableHidden == (player != logic.players().getLocalPlayer()));
+	}
+	int frames = 0;
+	while (dozer->unplacedStructure() == id && frames < 900)
+	{
+		logic.runLogicFrame();
+		++frames;
+		REQUIRE(logic.findObjectByID(id) == structure);
+		if (dozer->unplacedStructure() == id)
+		{
+			REQUIRE(structure->testStatus((unsigned)phantom)); // still a phantom while the Porter walks
+		}
+	}
+	MESSAGE("the Porter placed the site after " << frames << " frames");
+	REQUIRE(dozer->unplacedStructure() == INVALID_ID);
+	CHECK(frames > 30); // tolerance: the walk to a site 300 .. 600 away takes seconds; the exact frame is the path's
+	CHECK_FALSE(structure->testStatus((unsigned)pending));
+	CHECK_FALSE(structure->testStatus((unsigned)phantom));
+	CHECK(structure->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION));
+	CHECK_FALSE(structure->testModelCondition(phantomCondition));
+	CHECK_FALSE(structure->isEffectivelyDead());
+	CHECK(structure->isInWorld());
+	CHECK(structure->getBodyModule()->getHealth() == 1.0f); // RW 0x88D53A: the site rises from 1 hit point
+	{
+		std::shared_ptr<const LogicSnapshot> snap = LogicSnapshot::build(logic, nullptr, false, 0);
+		const ObjectSnapshot *rec = snap->find(id);
+		REQUIRE(rec != nullptr);
+		CHECK_FALSE(rec->phantomStructure);
+		CHECK_FALSE(rec->drawableHidden);
+	}
+	for (int i = 0; i < 3000 && structure->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION); ++i)
+	{
+		logic.runLogicFrame();
+	}
+	CHECK_FALSE(structure->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION)); // and the Porter finishes it
+}
+
+TEST_CASE("PORTERFOG-1: an Isengard porter at work keeps its shroud record but stops looking (RW 0x68C18F -> 0xB4E2A0, RW 0x694A45), presents SHROUDED to the "
+		  "enemy in its fog, and comes out with the same record (RW 0x68E31F)")
+{
+	OPENBFME_REQUIRE_START(s);
+	std::string error;
+	buildtest::Game g;
+	REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionIsengard", "FactionMen", 5150, g, &error), error);
+	LiveGame &live = *g.live;
+	GameLogic &logic = live.logic();
+	ShroudManager *sm = logic.shroud();
+	REQUIRE(sm);
+	Player *player = humanOf(live);
+	Player *enemy = live.players().findPlayerWithName(live.report().startSlotPlayers[1]);
+	REQUIRE(player);
+	REQUIRE(enemy);
+	Object *fortress = fortressOf(live, player);
+	Object *porterObj = dozerOf(live, player);
+	REQUIRE(fortress);
+	REQUIRE(porterObj);
+	REQUIRE(porterObj->isKindOfName("PORTER"));
+	DozerAIUpdate *porter = dynamic_cast<DozerAIUpdate *>(porterObj->getAIUpdateInterface());
+	const ThingTemplate *furnace = logic.things().findTemplate("IsengardFurnace")->getFinalOverride();
+	Coord3D site;
+	bool found = false;
+	for (float r = 200.0f; r <= 500.0f && !found; r += 40.0f)
+	{
+		for (int k = 0; k < 24 && !found; ++k)
+		{
+			Coord3D c = *fortress->getPosition();
+			c.x += (float)(r * std::cos(k * 0.2617993877991494));
+			c.y += (float)(r * std::sin(k * 0.2617993877991494));
+			c.z = logic.getGroundHeight(c.x, c.y);
+			if (porter->siteIsLegal(*furnace, c, 0.0f, *player))
+			{
+				site = c;
+				found = true;
+			}
+		}
+	}
+	REQUIRE(found);
+	logic.runLogicFrame();
+	REQUIRE(sm->hasRecord(*porterObj));
+	const int radius = sm->lookRadius(*porterObj);
+	CHECK(radius == 3); // in the world it looks for its owner (IsengardPorter's clearing range: ceil(range / 40) cells)
+	const int pi = player->getPlayerIndex(), ei = enemy->getPlayerIndex();
+	live.commands().append(selectMsg(pi, porterObj->getID()));
+	live.commands().append(dozerMsg(pi, *furnace, site, 0.0f));
+	bool worked = false;
+	for (int guard = 0; guard < 600 && !worked; ++guard)
+	{
+		logic.runLogicFrame();
+		worked = porter->working() && !porterObj->isInWorld();
+	}
+	REQUIRE_MESSAGE(worked, "the porter never went into its site");
+	logic.runLogicFrame(); // the shroud update after the world exit
+	CHECK(sm->hasRecord(*porterObj)); // not freed by the world exit
+	CHECK(sm->lookRadius(*porterObj) == -1);
+	// the enemy starts across the map: the porter's cells are fogged (Evendim starts explored) for it, and a mobile enemy in fog is hidden (RW 0x68EDD0)
+	CHECK(sm->clientObjectStatus(*porterObj, ei) == OBJECTSHROUD_SHROUDED);
+	CHECK(sm->clientObjectStatus(*porterObj, pi) == OBJECTSHROUD_CLEAR); // its owner's fortress sees its cells
+	bool out = false;
+	for (int guard = 0; guard < 3000 && !out; ++guard)
+	{
+		logic.runLogicFrame();
+		out = porterObj->isInWorld();
+	}
+	REQUIRE_MESSAGE(out, "the porter did not come out of its site");
+	logic.runLogicFrame();
+	CHECK(sm->hasRecord(*porterObj));
+	CHECK(sm->lookRadius(*porterObj) == radius);
 }

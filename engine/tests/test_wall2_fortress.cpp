@@ -240,7 +240,7 @@ TEST_CASE("wall2 fortress retail: a Men wall span's segment upgraded to a poster
 	CHECK(sawPortal);
 	CHECK((q.x - sideB.x) * (q.x - sideB.x) + (q.y - sideB.y) * (q.y - sideB.y) < 900.0f); // tolerance: within the close-enough distance of the goal
 	// destroyed, the gate's portal goes (onDie): the path is around again
-	gate->kill(DEATH_NORMAL);
+	gate->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	for (int f = 0; f < 5; ++f)
 	{
 		logic.runLogicFrame();

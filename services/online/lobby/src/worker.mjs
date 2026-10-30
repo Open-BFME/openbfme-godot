@@ -6,7 +6,7 @@
 // ONLINE-2 r2 (Sol r1): a Durable Object runs another request whenever one awaits (storage, crypto, R2), so the object queues the requests itself: one
 // request through the lobby at a time, as the self-hosted server does.
 
-import { Lobby, LobbyError, route, configFromEnv, MAX_JSON_BYTES, validateEnforcementRecord, validateSighting, withoutGameIp } from './lobby.mjs';
+import { Lobby, LobbyError, route, configFromEnv, bodyLimitFor, MAX_JSON_BYTES, validateEnforcementRecord, validateSighting, withoutGameIp } from './lobby.mjs';
 import { SqliteIdentityStore } from './identity-store.mjs';
 import { repairStoredText } from './stored-text.mjs';
 import { SocialStorageError, socialSqlTransaction, socialStorageError } from './social-store.mjs';
@@ -391,7 +391,7 @@ export class LobbyObject {
     if (isLog) this.reading.logs += 1;
     let out;
     try {
-      const body = await readBodyLimited(request, isLog ? this.lobby.maxLogBytes() : MAX_JSON_BYTES, this.bodyTimeoutMs);
+      const body = await readBodyLimited(request, isLog ? this.lobby.maxLogBytes() : bodyLimitFor(path), this.bodyTimeoutMs); // lane PROFILE-2
       const reportPost = request.method === 'POST' && path === '/v1/reports';
       if (body.status && !(reportPost && body.status === 413)) return refuse(body.status, body.code, body.error);
       const run = this.queue.then(() => this.handle(request, body.bytes ?? new Uint8Array(), body.status && reportPost

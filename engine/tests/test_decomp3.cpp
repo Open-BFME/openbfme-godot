@@ -202,7 +202,7 @@ TEST_CASE("decomp3 S-418: the record keeps the order of the object events; a dyi
 	const ObjectID trollId = troll->getID();
 	const int trolls = theirs.countOf("MordorMountainTroll");
 	REQUIRE(theirs.army().back() == trollId);
-	troll->kill(0);
+	troll->kill(DAMAGE_UNRESISTABLE, 0);
 	logic.runLogicFrame();
 	Object *dying = logic.findObjectByID(trollId);
 	REQUIRE(dying);

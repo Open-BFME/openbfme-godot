@@ -19,6 +19,14 @@
 // inputs are the same). A broken manifest or a script that fails to load stops the game from starting (start returns false). The calls
 // made and the VM steps they took join the logic's state hash (a contributor), so a peer that ran its scripts differently is a desync.
 //
+// lane SDK-2b, saves: the block obfme:SdkScripts keeps the mod's "sdk sim <hex>" line, the calls / steps / stopped / started the state hash
+// holds, and sdk.state's canonical bytes (LuauScriptState::serializeState, taken at the end of every frame and joining the state hash). A load
+// with other sim scripts is refused, naming both lines. After every block has loaded, the scripts start afresh: their top level runs again,
+// sdk.state is restored, and the next frame's end delivers onGameLoaded() first (its calls and steps are not counted, so a loaded game that
+// only rebuilds its own variables there hashes as the uninterrupted one). Nothing else of a script survives a save. Because a top level reruns
+// on a load, it may not change the game: game.addMoney and math.random there are an error, and so is a top level that changed sdk.state.
+// sdk.state that cannot be serialized (a function in it, over 64 KB ...) is a script error at that frame's end, the same on every peer.
+//
 // Presentation scripts (the manifest's "presentation" entries) run in a state of their own after the sim scripts, with the same events but
 // a read-only `game` (no addMoney; plus game.localPlayer(), the player this machine plays), their own math.random, and `ui.banner(text)`: a message shown in the middle of the screen
 // (takeBanners(), drained by the client each frame; at most 8 per frame). They never join the state hash and never change the logic; an
@@ -28,6 +36,7 @@
 
 #include "Common/ArchiveFileSystem.h"
 #include "GameLogic/Sdk/LuauScriptState.h"
+#include "GameLogic/Sdk/SdkManifest.h"
 
 #include <cstdint>
 #include <functional>
@@ -38,6 +47,7 @@
 
 class GameLogic;
 class SdkModFiles;
+class Xfer;
 
 class SdkScriptHost
 {
@@ -64,6 +74,14 @@ public:
 
 	// the game API's work (LuauScriptState's C functions; not for hosts)
 	GameLogic &logic() { return m_logic; }
+	// lane SDK-2b: "" when the sim scripts may change the game now (inside an event, outside a top level), else why not
+	std::string actionRefusal() const;
+	const std::string &simFingerprint() const { return m_fingerprint; } // "sdk sim <hex>" ("" without sim scripts)
+	const std::string &stateBytes() const { return m_stateBytes; }      // sdk.state at the end of the last frame
+	// the save block's work (obfme:SdkScripts; not for hosts): its xfer, and the scripts' restart after every block loaded (throws
+	// XferException with the reason)
+	void xferBlock(Xfer &x);
+	void afterLoad();
 
 private:
 	struct Event
@@ -74,7 +92,10 @@ private:
 		int player;
 	};
 	void endOfFrame(std::uint32_t frame);
-	bool callIfDefined(const char *name, const std::function<int(lua_State *T)> &push);
+	bool callIfDefined(const char *name, const std::function<int(lua_State *T)> &push, bool counted = true);
+	bool buildSim(bool counted, std::string &error);
+	void buildPresentation();
+	void takeState(std::uint32_t frame);
 	void presentationCall(const char *name, const std::function<int(lua_State *T)> &push);
 	void report(const std::string &line);
 
@@ -92,6 +113,15 @@ private:
 	std::size_t m_reportBytes = 0, m_newReportBytes = 0;
 	bool m_reportsFull = false;
 	std::string m_modName;
+	SdkManifest m_manifest;
+	std::string m_fingerprint, m_stateBytes;
+	bool m_inEvent = false, m_loadedPending = false;
+	struct Staged
+	{
+		std::uint64_t calls = 0, steps = 0;
+		bool stopped = false, started = false;
+		std::string state;
+	} m_staged; // what the save block read, taken by afterLoad
 	std::vector<Event> m_events;
 	std::vector<std::string> m_reports;
 	bool m_started = false;
@@ -100,4 +130,5 @@ private:
 	std::uint64_t m_steps = 0;
 	size_t m_printedSeen = 0;
 	int m_worldHooks = 0, m_frameHook = 0, m_hashContributor = 0;
+	class Snapshot *m_block = nullptr; // the save block's adapter (the registry owns it)
 };

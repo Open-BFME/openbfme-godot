@@ -133,6 +133,10 @@ public:
 	// RW 0x443C81: TheTacticalView slot 0x1C setZoomLimited(!enable)) on the HUD's own camera, so a cinematic moves the camera the player then keeps
 	void camera_reset(const Vector2 &sage_xy);
 	void camera_set_zoom_limited(bool on);
+	// lane CAMANIM-1: a map script's camera request in the client's order for the view's camera animation (MOVE_CAMERA_BY_ANIMATION starts the map's
+	// animation of that name, the mode-writing camera actions end it: GameClient/CameraAnimation.h); true when the playback changed
+	bool camera_animation_request(const String &action, const String &name);
+	Dictionary camera_animation_state() const; ///< { active, name, time (client frames), animations (the map's count) }
 	// lane CAMPUI-1: the objectives screen's state for the Palantir's flag and a script's FLASH_*_BUTTON (slot 0 spell store, 1 objectives, 2 planning mode)
 	void set_objectives_screen_open(bool open);
 	void flash_palantir_button(int slot, int seconds);

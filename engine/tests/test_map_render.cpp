@@ -12,11 +12,13 @@
 #include "GameClient/WaterGeometry.h"
 #include "GameClient/MapUtil.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
+#include "Libraries/WWVegas/WW3D2/meshmdl.h"
 
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <limits>
 #include <sstream>
 #include <string>
 
@@ -556,7 +558,38 @@ TEST_CASE("TerrainRoads: tees replace overlapping center rectangles with their a
 	CHECK(report.miteredJoins == 0);
 	CHECK(report.roundedJoins == 0);
 	REQUIRE(MapStops::find("S-036"));
-	CHECK(std::string(MapStops::find("S-036")->gap) == "Straight paths, mitered and curved corners, tee and four-way atlas junctions and authored JOIN end caps are rendered; Y/H junctions, cross-type alpha alignment and BFME2 stacking remain unported");
+	CHECK(std::string(MapStops::find("S-036")->gap) == "Straight paths, mitered and curved corners, tee and four-way atlas junctions and authored JOIN end caps are rendered; Y/H junctions, cross-type alpha alignment and BFME2 stacking remain unported. Roads are shaded as retail draws them (lane ROADS-1, RoadShading in GameClient/TerrainRoads.h): terrain.fxo technique Default with RenderingMode 2, PSDefault_Array element 2 (ps_2_0 blob at 0xC160) and the effect's vs_1_1 blob at 0x1C780, vertex normal (0, 0, 1) (RW 0x4D7D32 .. 0x4D7D3C), the road's _nrm texture or the 1x1 (127, 127, 255, 0) fallback (RW 0x4D7132 .. 0x4D7176), and the sun, cloud, macro, fog and shroud inputs of the terrain material. Not ported or unresolved: the shadow-receiving element (NumShadows >= 1: element 7) and the resource-texture elements (IsResourceTextureEnabled: element 12); the road's blend and depth states (the Default pass declares ALPHABLENDENABLE 0, ZWRITEENABLE 0, SRCBLEND / DESTBLEND SRCALPHA / INVSRCALPHA, ZFUNC LESSEQUAL: the port keeps the former alpha-blended, depth-tested draw without depth writes as inference); the dynamic-light road variant (loadLit4PtSection, roads under dynamic lights: its terrain normal and light gradient are not ported); the gate TheGlobalLighting + 0x3E that FlatHeightMap.cpp:811 tests before it draws roads (not read: roads always draw); GlobalData + 0x49, the flag that loads the _nrm companions (its RotWK writer is not read: the companions are loaded when they exist)");
+}
+
+TEST_CASE("RoadShading: a road draws with the terrain effect's RenderingMode 2 element, its _nrm companion or the 1x1 fallback, and the (0, 0, 1) vertex normal")
+{
+	// terrain.fxo PSDefault_Array selector (the preshader at 0x1c4bc): min(RenderingMode, 4) + 5 * min(NumShadows, 1) + 10 * IsResourceTextureEnabled
+	CHECK(RoadShading::RENDERING_MODE == 2); // RW 0x4d73cc: push 2; call [eax] (setRenderingMode)
+	CHECK(RoadShading::pixelShaderElement(RoadShading::RENDERING_MODE, 0, false) == 2);
+	CHECK(RoadShading::pixelShaderElement(2, 1, false) == 7);
+	CHECK(RoadShading::pixelShaderElement(2, 4, false) == 7);
+	CHECK(RoadShading::pixelShaderElement(2, 0, true) == 12);
+	CHECK(RoadShading::pixelShaderElement(2, 1, true) == 17);
+	CHECK(RoadShading::pixelShaderElement(9, 0, false) == 4);
+	CHECK(RoadShading::pixelShaderElement(0, 0, false) == 0);
+	// RoadType::loadTexture (BFME2 W3DRoadBuffer.cpp:294-309): makeNrmTextureName inserts _nrm before the last extension
+	CHECK(RoadShading::normalTextureName("TRDirtRoad2B.tga") == "TRDirtRoad2B_nrm.tga");
+	CHECK(RoadShading::normalTextureName("a.b.tga") == "a.b_nrm.tga");
+	CHECK(RoadShading::normalTextureName("noext") == "noext_nrm");
+	// the fallback normal: the dword 0x007F7FFF stored into a 1x1 A8R8G8B8 texel (RW 0x4d7155 push 0x7f7fff; RW 0x51667a mov [eax], edx)
+	CHECK(RoadShading::FALLBACK_NORMAL_ARGB == 0x007F7FFFu);
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[0] == ((RoadShading::FALLBACK_NORMAL_ARGB >> 16) & 0xFFu)); // R
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[1] == ((RoadShading::FALLBACK_NORMAL_ARGB >> 8) & 0xFFu));  // G
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[2] == (RoadShading::FALLBACK_NORMAL_ARGB & 0xFFu));         // B
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[3] == (RoadShading::FALLBACK_NORMAL_ARGB >> 24));          // A: the specular mask, 0
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[0] == 127u);
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[1] == 127u);
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[2] == 255u);
+	CHECK((unsigned)RoadShading::FALLBACK_NORMAL_RGBA[3] == 0u);
+	// loadFloat4PtSection stores nx = ny = 0, nz = 1.0f (RW 0x4d7d32 .. 0x4d7d3c)
+	CHECK(RoadShading::VERTEX_NORMAL[0] == 0.0f);
+	CHECK(RoadShading::VERTEX_NORMAL[1] == 0.0f);
+	CHECK(RoadShading::VERTEX_NORMAL[2] == 1.0f);
 }
 
 TEST_CASE("TerrainRoads: four-way tile connects four stubs independent of branch direction")
@@ -743,4 +776,258 @@ TEST_CASE("TerrainRoads: endpoint index isolates coordinates and matches mixed-c
 	CHECK(report.teeJoins==64);
 	CHECK(report.specialJunctionsPending==0);
 	CHECK(strips.size()==256);
+}
+
+TEST_CASE("water material: retail effect defaults and authored scales replace the placeholder colour")
+{
+	MeshShaderMaterialDef source;
+	source.TypeName = "WaterShader.FX";
+	WaterGeometry::StandingMaterial material;
+	REQUIRE(WaterGeometry::readStandingMaterial(source, material));
+	CHECK(material.diffuse[0] == 0.15f);
+	CHECK(material.diffuse[3] == 0.5f);
+	CHECK(material.dimming == 0.8f);
+	CHECK(material.bumpUV[0] == 7.0f);
+	CHECK(material.envUV[0] == 0.2f);
+	CHECK(material.windSpeed == 0.02f);
+	// WaterPlaneFX's authored scale and texture, read from the mounted W3D.
+	MeshShaderMaterialProperty scale;
+	scale.Name = "BumpUVScale";
+	scale.Type = W3DSHADERMATERIAL_PROPERTY_VECTOR2;
+	scale.Float[0] = scale.Float[1] = 60.0f;
+	source.Properties.push_back(scale);
+	MeshShaderMaterialProperty texture;
+	texture.Name = "WaterBumpTexture";
+	texture.Type = W3DSHADERMATERIAL_PROPERTY_TEXTURE;
+	texture.StringValue = "WtrBump_01.tga";
+	source.Properties.push_back(texture);
+	REQUIRE(WaterGeometry::readStandingMaterial(source, material));
+	CHECK(material.bumpUV[0] == 60.0f);
+	CHECK(material.bumpUV[1] == 60.0f);
+	CHECK(material.bumpTexture == "WtrBump_01.tga");
+	source.TypeName = "normalmapped.fx";
+	CHECK_FALSE(WaterGeometry::readStandingMaterial(source, material));
+}
+
+TEST_CASE("water acceptance: remaining shader and geometry approximations stay explicit")
+{
+	const auto *stop = MapStops::find("S-035");
+	REQUIRE(stop != nullptr);
+	CHECK(std::string(stop->gap) == "Standing water preserves authored FX techniques, PCA/PCA_U normals and shoreline Gerstner displacement on a donor high-detail grid alongside the bump/specular path; TIME, LOD selection, scene-light binding and terrain depth are inferred; reflections, shadow filtering, other PCA LODs, river outline cross-section start and minimum water LOD, depth-colour LUT and legacy shoreline texture tracks remain unported");
+}
+
+namespace
+{
+std::string syntheticPcaBasis()
+{
+	std::ostringstream text;
+	text << "NumFrames: 2\nSpeed: 0.5\n";
+	for (int row = 0; row < 13; ++row)
+	{
+		text << "Row:";
+		for (int value = 0; value < 6; ++value) text << " " << (row + value) * 255;
+		text << "\n";
+	}
+	return text.str();
+}
+}
+
+TEST_CASE("water PCA basis: donor XZY layout, normalization, interpolation and wrap")
+{
+	WaterGeometry::PcaBasis basis;
+	std::string error;
+	REQUIRE_MESSAGE(WaterGeometry::readPcaBasis(syntheticPcaBasis(), basis, &error), error);
+	REQUIRE(basis.frames.size() == 2);
+	CHECK(basis.speed == 0.5f);
+	CHECK(basis.frames[0][0] == WaterGeometry::PcaVector{0, 4, 2, 0});
+	CHECK(basis.frames[1][0] == WaterGeometry::PcaVector{1, 5, 3, 0});
+	CHECK(basis.frames[0][1] == WaterGeometry::PcaVector{1, 2, 3, 4});
+	CHECK(basis.frames[0][2] == WaterGeometry::PcaVector{5, 6, 7, 8});
+	CHECK(basis.frames[0][3] == WaterGeometry::PcaVector{3, 4, 5, 6});
+	CHECK(basis.frames[0][9] == WaterGeometry::PcaVector{11, 12, 13, 14});
+	CHECK(WaterGeometry::samplePcaBasis(basis, 1.0f)[0] == WaterGeometry::PcaVector{0.5f, 4.5f, 2.5f, 0});
+	CHECK(WaterGeometry::samplePcaBasis(basis, 3.0f)[0] == WaterGeometry::PcaVector{0.5f, 4.5f, 2.5f, 0});
+	CHECK(WaterGeometry::samplePcaBasis(basis, 4.0f) == basis.frames[0]);
+	CHECK(WaterGeometry::samplePcaBasis(WaterGeometry::PcaBasis{}, 0.0f)[0] == WaterGeometry::PcaVector{0, 0, 1, 0});
+}
+
+TEST_CASE("water PCA basis: malformed data fails without retaining a prior track")
+{
+	WaterGeometry::PcaBasis basis;
+	std::string error;
+	REQUIRE(WaterGeometry::readPcaBasis(syntheticPcaBasis(), basis, &error));
+	CHECK_FALSE(WaterGeometry::readPcaBasis("NumFrames: 2\nSpeed: 1\n", basis, &error));
+	CHECK(error == "PCA basis: frame count exceeds coefficient payload");
+	CHECK(basis.frames.empty());
+	CHECK_FALSE(WaterGeometry::readPcaBasis("NumFrames: 0\n", basis, &error));
+	CHECK(error == "PCA basis: invalid frame count");
+	CHECK_FALSE(WaterGeometry::readPcaBasis(syntheticPcaBasis() + "extra\n", basis, &error));
+	CHECK(error == "PCA basis: trailing data");
+}
+
+TEST_CASE("water effect techniques: names come from the effect table with checked offsets")
+{
+	std::vector<std::uint8_t> bytes(96, 0);
+	auto put = [&](size_t offset, std::uint32_t value) { for (unsigned i = 0; i < 4; ++i) bytes[offset + i] = (std::uint8_t)(value >> (8 * i)); };
+	put(0, 0xfeff0901); put(4, 0); put(12, 1); // no parameters, one technique
+	put(24, 56); put(32, 1); // name at 8+56, one pass
+	put(44, 1); // one pass state, occupying 48..63
+	const std::string name = "CustomPCA";
+	put(64, (std::uint32_t)name.size() + 1);
+	std::copy(name.begin(), name.end(), bytes.begin() + 68);
+	std::vector<std::string> names;
+	std::string error;
+	REQUIRE_MESSAGE(WaterGeometry::readEffectTechniques(bytes, names, &error), error);
+	CHECK(names == std::vector<std::string>{ "CustomPCA" });
+	put(24, 0xfffffff0);
+	CHECK_FALSE(WaterGeometry::readEffectTechniques(bytes, names, &error));
+	CHECK(names.empty());
+}
+
+TEST_CASE("WaterGeometry::standing grid shares vertices and queries active shoreline segments")
+{
+	StandingWaterArea area; area.points={{0,0},{40,0},{40,40},{0,40}}; area.waterHeight=20;
+	StandingWaveArea wave; wave.points={{0,20},{40,20}}; wave.enablePcaWave=1;
+	WaterGeometry::StandingGrid grid;
+	REQUIRE(WaterGeometry::buildStandingGrid(area,{wave},[](float,float){return 0.0f;},grid));
+	CHECK(grid.spacing==20);
+	CHECK(grid.vertices.size()==9);
+	CHECK(grid.indices==std::vector<uint32_t>{0,3,2,0,1,3,1,5,3,1,4,5,2,7,6,2,3,7,3,8,7,3,5,8});
+	for(const auto &v:grid.vertices) {
+		CHECK(v.nearest.x==20); CHECK(v.nearest.y==20); CHECK(v.waveArea==0);
+		CHECK(v.direction.x==0); CHECK(v.direction.y==-1); CHECK(v.halfLength==20);
+	}
+	wave.enablePcaWave=0;
+	REQUIRE(WaterGeometry::buildStandingGrid(area,{wave},[](float,float){return 0.0f;},grid));
+	CHECK(grid.vertices[0].halfLength==0);
+	CHECK(grid.vertices[0].nearest.x==100000); CHECK(grid.vertices[0].waveArea==-1);
+	wave.enablePcaWave=1;
+	REQUIRE(WaterGeometry::buildStandingGrid(area,{wave},[](float,float){return -80.0f;},grid));
+	CHECK(grid.vertices[0].halfLength==0); // source strict depth < 100
+	wave.points={{20,20},{20,20}};
+	REQUIRE(WaterGeometry::buildStandingGrid(area,{wave},[](float,float){return 0.0f;},grid));
+	CHECK(grid.vertices[0].halfLength==0);
+	area.points={{0,0},{4000,0},{4000,6000},{0,6000}};
+	REQUIRE(WaterGeometry::buildStandingGrid(area,{},[](float,float){return 0.0f;},grid));
+	CHECK(grid.spacing==40);
+	CHECK(grid.vertices.size()==15251);
+	CHECK(grid.indices.size()==90000);
+	area.points={{-39,-39},{1,-39},{1,1},{-39,1}};
+	REQUIRE(WaterGeometry::buildStandingGrid(area,{},[](float,float){return 0.0f;},grid));
+	CHECK(grid.vertices[0].point.x==-20); // donor truncates grid origin toward zero
+	CHECK(grid.vertices[0].point.y==-20);
+}
+TEST_CASE("water material: authored Gerstner vectors remain distinct")
+{
+	MeshShaderMaterialDef source; source.TypeName="WaterShader.FX";
+	for(int i=0;i<3;++i) {
+		MeshShaderMaterialProperty prop; prop.Type=W3DSHADERMATERIAL_PROPERTY_VECTOR4; prop.Name="GWAmpFreqPhaseSteepness"+std::to_string(i+1);
+		for(int j=0;j<4;++j) prop.Float[j]=float(i*4+j+1);
+		source.Properties.push_back(prop);
+	}
+	WaterGeometry::StandingMaterial material;
+	REQUIRE(WaterGeometry::readStandingMaterial(source,material));
+	for(int i=0;i<3;++i) for(int j=0;j<4;++j) CHECK(material.gerstner[i][j]==float(i*4+j+1));
+}
+
+TEST_CASE("WaterGeometry::standing grid rejects non-finite and overflowing coordinates")
+{
+	StandingWaterArea area;
+	WaterGeometry::StandingGrid grid;
+	auto ground = [](float, float) { return 0.0f; };
+	for (float invalid : {std::numeric_limits<float>::quiet_NaN(),
+		std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(),
+		1e12f, -1e12f})
+	{
+		for (int axis = 0; axis < 2; ++axis)
+		{
+			area.points = {{0,0},{40,0},{40,40},{0,40},{0,20}};
+			// A late NaN otherwise leaves the right edge selecting cells even though
+			// min/max silently omit the invalid coordinate.
+			if (axis == 0) area.points.back().x = invalid;
+			else area.points.back().y = invalid;
+			CHECK_FALSE(WaterGeometry::buildStandingGrid(area, {}, ground, grid));
+			CHECK(grid.vertices.empty());
+			CHECK(grid.indices.empty());
+		}
+	}
+}
+
+TEST_CASE("water material: every recognized property rejects wrong W3D value types")
+{
+	const std::pair<const char *, unsigned> fields[] = {
+		{"MaterialColorDiffuse", 5},
+		{"GWAmpFreqPhaseSteepness1", 5},
+		{"GWAmpFreqPhaseSteepness2", 5},
+		{"GWAmpFreqPhaseSteepness3", 5},
+		{"SpecularColor", 4},
+		{"BumpUVScale", 3},
+		{"EnvUVScale", 3},
+		{"WaveUVScale", 3},
+		{"PCABumpUVScale", 3},
+		{"PCAWaveUVScale", 3},
+		{"BlendUsingTerrainAlpha", 7},
+		{"DimmingFactor", 2},
+		{"BumpScale", 2},
+		{"SpecularExponent", 2},
+		{"WindAngle", 2},
+		{"WindSpeed", 2},
+		{"WaveAngle", 2},
+		{"WaveSpeed", 2},
+		{"ReflectionPerturbation", 2},
+		{"WaterPCATexture1", 1},
+		{"WaterPCATexture2", 1},
+		{"WaterPCATexture3", 1},
+		{"PCANoiseTexture", 1},
+		{"PCAFrothTexture", 1},
+		{"WaterBumpTexture", 1},
+		{"WaterEnvTexture", 1},
+		{"WaveTexture", 1},
+	};
+	for (const auto &field : fields)
+		for (unsigned type = 1; type <= 7; ++type)
+		{
+			CAPTURE(field.first);
+			CAPTURE(type);
+			MeshShaderMaterialDef source; source.TypeName = "WaterShader.FX";
+			MeshShaderMaterialProperty property; property.Name = field.first; property.Type = type;
+			source.Properties.push_back(property);
+			WaterGeometry::StandingMaterial material;
+			std::string error;
+			const bool compatible = type == field.second || (field.second >= 3 && field.second <= 5 && type > field.second && type <= 5);
+			CHECK(WaterGeometry::readStandingMaterial(source, material, &error) == compatible);
+			if (!compatible)
+			{
+				CHECK(error.find(field.first) != std::string::npos);
+				CHECK(error.find("expected type " + std::to_string(field.second)) != std::string::npos);
+				CHECK(material.diffuse[3] == 0.5f);
+			}
+			else CHECK(error.empty());
+		}
+}
+
+TEST_CASE("water material: retail Vector4 specular and UV properties retain their leading components")
+{
+	MeshShaderMaterialDef source; source.TypeName = "WaterShader.FX";
+	for (const char *name : {"SpecularColor", "BumpUVScale", "EnvUVScale", "WaveUVScale", "PCABumpUVScale", "PCAWaveUVScale"})
+	{
+		MeshShaderMaterialProperty p; p.Name = name; p.Type = W3DSHADERMATERIAL_PROPERTY_VECTOR4;
+		p.Float[0] = 2; p.Float[1] = 3; p.Float[2] = 4; p.Float[3] = 5;
+		source.Properties.push_back(p);
+	}
+	WaterGeometry::StandingMaterial material; std::string error;
+	REQUIRE(WaterGeometry::readStandingMaterial(source, material, &error));
+	CHECK(error.empty());
+	CHECK(material.specular[0] == 2); CHECK(material.specular[1] == 3); CHECK(material.specular[2] == 4);
+	for (const float *uv : {material.bumpUV, material.envUV, material.waveUV, material.pcaUV, material.pcaWaveUV})
+	{ CHECK(uv[0] == 2); CHECK(uv[1] == 3); }
+}
+
+TEST_CASE("water PCA basis: oversized declared tracks fail before allocation")
+{
+	WaterGeometry::PcaBasis basis; std::string error;
+	const std::string text = "NumFrames: 1000000\nSpeed: 1\n" + std::string(1000000, ' ');
+	CHECK_FALSE(WaterGeometry::readPcaBasis(text, basis, &error));
+	CHECK(error == "PCA basis: frame count exceeds coefficient payload");
+	CHECK(basis.frames.empty());
 }

@@ -9,6 +9,7 @@
 
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/AI/AIGarrisonStates.h"
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Module/AIUpdate.h"
@@ -125,7 +126,8 @@ Object *buildTunnel(LiveGame &live, Player &player, Object &porter, const ThingT
 	{
 		Object *b = logic.findObjectByID(id);
 		REQUIRE(b != nullptr);
-		if (!b->isUnderConstruction())
+		static const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
+		if (!b->isUnderConstruction() && !b->testStatus((unsigned)phantom)) // lane FBSIM-1: a phantom until the porter places it (RW 0x88D44F)
 		{
 			return b;
 		}
@@ -293,7 +295,7 @@ TEST_CASE("tunnel1 flow: a Goblin porter builds two mine shafts; a horde ordered
 
 	// the entrance dies while the horde is inside: it stays in the network as entered by the second shaft (RW 0x8FA4E8), whose exit button still lets it out
 	REQUIRE_MESSAGE(orderEnter(live, pi, *horde, *a), "the horde never got back into the first shaft");
-	a->kill(0);
+	a->kill(DAMAGE_UNRESISTABLE, 0);
 	for (int i = 0; i < 5; ++i)
 	{
 		logic.runLogicFrame();

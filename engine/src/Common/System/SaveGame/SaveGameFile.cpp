@@ -425,7 +425,8 @@ SaveGameCompatibility SaveGameCompatibility::checkMenuSave(const SaveGameHeader 
 	// a campaign menu save holds no log, so the build that made it does not matter (an update between missions keeps the campaign), but its data and
 	// rules must be the running ones (a mod's other campaign list or archives are a named refusal), and its campaign, mission and difficulty must exist
 	SaveGameCompatibility c;
-	const ProfileIdentity a = ProfileIdentity::fromText(dataOnly(running.text));
+	// lane PROFILE-2: a save of a build before PROFILE-2 (a version 1 identity) against the running identity in that format
+	const ProfileIdentity a = ProfileIdentity::fromText(dataOnly(ProfileIdentity::inFormatOf(running, save.profile).text));
 	const ProfileIdentity b = ProfileIdentity::fromText(dataOnly(save.profile.text));
 	if (a != b)
 	{
@@ -451,7 +452,7 @@ SaveGameCompatibility SaveGameCompatibility::check(const SaveGameHeader &save, c
 		c.refusal = RecordingBuild::openWith(save.buildVersion, save.buildDate);
 		return c;
 	}
-	const ProfileIdentity a = ProfileIdentity::fromText(withoutProfileLine(running.text));
+	const ProfileIdentity a = ProfileIdentity::fromText(withoutProfileLine(ProfileIdentity::inFormatOf(running, save.profile).text)); // lane PROFILE-2
 	const ProfileIdentity b = ProfileIdentity::fromText(withoutProfileLine(save.profile.text));
 	if (a != b)
 	{

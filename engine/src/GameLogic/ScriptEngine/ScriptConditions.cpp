@@ -1031,10 +1031,6 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 				if (ShroudManager *shroud = logic.shroud(); shroud && !isKindOfName(*o, "ALWAYS_VISIBLE"))
 				{
 					status = shroud->getObjectStatus(*o, p->getPlayerIndex());
-					if (status == OBJECTSHROUD_INVALID)
-					{
-						status = OBJECTSHROUD_CLEAR;
-					}
 				}
 				if (status == OBJECTSHROUD_CLEAR || status == OBJECTSHROUD_PARTIAL_CLEAR)
 				{

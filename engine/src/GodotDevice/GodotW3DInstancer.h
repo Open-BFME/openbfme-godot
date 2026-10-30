@@ -12,7 +12,7 @@
 //
 // Scope limits (reported by get_model_report): no model condition states of its own (the draw module runtime,
 // GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DScriptedModelDraw.h, chooses model and clips and hands a clip pair to
-// set_instance_pose), no turrets / captured bones, no house colour, no shadows, no emitters. See GodotW3DMaterial.h for the shading divergences.
+// set_instance_pose), no turrets / captured bones, no projected/decal shadows, no emitters. See GodotW3DMaterial.h for the shading divergences.
 
 #pragma once
 
@@ -101,8 +101,8 @@ public:
 	bool set_instance_hidden_subobjects(int64_t instance, const PackedStringArray &names);
 	int64_t get_instance_count() const { return (int64_t)Instances.size(); }
 	// Stop S-119 (lane MAPOBJ-1): team colours. After setup() and BEFORE the first add_model, enable them and every classic surface whose stage
-	// 0 texture has a housecolor.ini texture gets the HouseColor shader permutation (W3DShaderKey::HouseColor: base = mix(base, base * team,
-	// house texture alpha), a HYPOTHESIS: the combine is unrecovered, S-022); the per-surface S-022 reports are replaced by one S-119 report
+	// 0 texture has a housecolor.ini texture gets the HouseColor shader permutation (W3DShaderKey::HouseColor: the texture recoloured with the instance's
+	// colour, combined after the light as retail does, S-022); the per-surface S-022 reports are replaced by one S-119 report
 	// per mesh. set_instance_house_color then tints one instance (alpha < 0.5: none).
 	void set_house_colors_enabled(bool enabled);
 	bool get_house_colors_enabled() const { return HouseColorEnabled; }
@@ -127,6 +127,21 @@ public:
 	void set_instance_sway(int64_t instance, int type);
 	// lane VISUAL-2: the instance is lit by the fogged light (a last-seen object in the fog: lights and ambient times w3d_fogged_frac), INSTANCE_CUSTOM.w += 16384
 	void set_instance_fogged(int64_t instance, bool fogged);
+	// lane OCCLUDE-1: the instance's behind-building role (GameClient/RTS3DSceneOcclusion.h): an occluder marks the stencil where it is in front, an
+	// occludee (colour slot 1 .. 31 of the global w3d_occl_colors) is drawn in its colour where a mark covers it. The model's opaque surfaces get the
+	// occlusion passes (W3DShaderKey::OcclusionPass) chained the first time one of its instances asks for them. INSTANCE_CUSTOM.w carries the bits
+	void set_instance_occlusion(int64_t instance, bool occluder, int slot);
+	// lane OCCLUDE-1: the instance's bounding sphere (the pose culling's, S-1730) lies outside one of `frustum`'s planes (outward normals, Camera3D::get_frustum);
+	// false for an empty frustum or an unknown instance
+	bool instance_outside(int64_t instance, const std::vector<Plane> &frustum);
+	// the occlusion pass materials made so far (for tests): { marks, colours }
+	Dictionary get_occlusion_pass_counts() const;
+	// Presentation only. Shadow-only batches share the posed mesh and palette, but contain only eligible instances.
+	void set_instance_cast_shadow(int64_t instance, bool enabled);
+	// Set before adding models. UI / standalone model viewers default to no shadow reception.
+	void set_shadow_receiving(bool enabled) { ShadowReceiving = enabled; }
+	// Engine-wide, set with the w3d_shadow global (object_shadows.gd): while no shadow map is drawn, casters are pose-culled like any instance.
+	static void set_shadow_maps_enabled(bool enabled) { ShadowMapsEnabled = enabled; }
 	// lane PROJ-2: the drawable's opacity (RW Drawable +0xB0, the fade of DrawableFade): multiplies every pivot's fade of the instance; 0 draws nothing
 	void set_instance_opacity(int64_t instance, double opacity);
 	// A scene that needs no per-frame work (every instance static) turns the automatic update off and calls update_now() itself after
@@ -210,6 +225,9 @@ private:
 		std::set<int> SortPriorities;    // render priorities of the sorted blended surfaces
 		bool HasSorted = false;          // a surface with MeshDrawSurface::Sorted that blends: instances need back to front order
 		bool HasOpaque = false;          // an opaque surface: the pivot fade is drawn with a dither (S-029)
+		std::vector<W3DShaderKey> Keys;  // lane OCCLUDE-1: the surfaces' keys, in Materials' order
+		std::vector<Ref<ShaderMaterial>> MarkPasses, ColorPasses; // lane OCCLUDE-1: by surface; null where none (yet, or a blended surface)
+		bool HasMark = false, HasColor = false;
 	};
 	struct DrawItem
 	{
@@ -219,6 +237,8 @@ private:
 		MultiMeshInstance3D *Node = nullptr;
 		Ref<MultiMesh> MM;
 		PackedFloat32Array Buffer;
+		Ref<MultiMesh> ShadowMM;
+		PackedFloat32Array ShadowBuffer;
 		int Allocated = 0;
 		std::vector<int> Order;          // instance ids as written by the last write_buffers
 		W3DSortBatch Batch;              // SMOOTH-1: the depths of the last write (sorted items), kept for the S-029 check of frames that skip this model
@@ -264,6 +284,9 @@ private:
 		bool InfantryLight = false;           // set_instance_infantry_light (INSTANCE_CUSTOM.x < 0)
 		int Sway = 0;                         // lane VISUAL-2: set_instance_sway (INSTANCE_CUSTOM.w += 1024 * Sway)
 		bool Fogged = false;                  // lane VISUAL-2: set_instance_fogged (INSTANCE_CUSTOM.w += 16384)
+		bool Occluder = false;                // lane OCCLUDE-1: set_instance_occlusion (INSTANCE_CUSTOM.w += W3D_OCCLUSION_OCCLUDER_BIT)
+		int OcclusionSlot = 0;                // lane OCCLUDE-1: (INSTANCE_CUSTOM.w += slot << W3D_OCCLUSION_SLOT_SHIFT)
+		bool CastShadow = false;
 		std::vector<std::uint8_t> HiddenSubs; // by sub object index; empty = none hidden (set_instance_hidden_subobjects)
 		bool Removed = false;                 // remove_instance: skipped by the pose and buffer passes
 		float Opacity = 1.0f;                 // set_instance_opacity (lane PROJ-2)
@@ -283,6 +306,7 @@ private:
 	void ensure_pose(int64_t instance) const; // the bone queries: a pose that culling left pending is evaluated now
 
 	void warn(const std::string &message);
+	void ensure_occlusion_passes(MeshGpu &gpu, bool mark, bool color); // lane OCCLUDE-1
 	const HAnimClass *resolve_clip(const Model &m, const std::string &name); // nullptr (and an error recorded) when the clip is not registered
 	std::shared_ptr<MeshGpu> build_mesh(const MeshModelClass &mesh, std::vector<std::string> &errors);
 	int64_t build_model(const String &model_name); // add_model without the pending texture swaps' set-up
@@ -313,6 +337,8 @@ private:
 	std::vector<std::pair<std::string, std::string>> PendingSwaps; // stop S-5015: Set_Build_Texture_Swaps, taken by the next add_model
 	std::vector<std::unique_ptr<Model>> Models;
 	std::vector<Instance> Instances;
+	bool ShadowReceiving = false;
+	static inline bool ShadowMapsEnabled = false;
 	std::vector<Ref<ShaderMaterial>> AllMaterials;
 	std::vector<W3DMapperBinding> Mappers;
 

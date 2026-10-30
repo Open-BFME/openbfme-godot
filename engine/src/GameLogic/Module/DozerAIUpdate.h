@@ -47,8 +47,8 @@
 //   * a porter (a dozer without a supply interface, RW 0x88B897) that reaches a structure it is to place goes into it (RW 0x88C51B: UNSELECTABLE, UNATTACKABLE,
 //     DO_NOT_PICK_ME and WONT_RIDE_WITH_YOU set, out of the world RW 0x68C18F) and comes out (RW 0x88D6AE) when the build ends (walking BuilderMoveFromNewStructure
 //     Distance away from it, a PLAYER-sourced move) or the task is cancelled: back in the world RW 0x68E31F, the statuses cleared.
-// INFERENCE / NOT PORTED (stops S-304, S-1282): the structure is made at the order with every BUILD-1 effect (RW makes it PHANTOM and places it on arrival); the
-// client side of the hiding (the selection removed, the fade in over BuilderFadeInTime); the face command 0x26 (the AI face state 36) runs as nothing; the bridge tower branch of the dock position; the bored wander (RW 0x88E17F, an AI player's dozer); the TheInGameUI idle worker
+// INFERENCE / NOT PORTED (stops S-304, S-1282): the placement's TerrainLogic calls (RW 0x684BCA / 0x684CBA, lane FBSIM-1 ported the phantom and its placement); the
+// selection removed at the hiding (TheInGameUI; the drawable's fade out at the work and in at the exit is ported, lane PORTERFOG-1); the face command 0x26 (the AI face state 36) runs as nothing; the bridge tower branch of the dock position; the bored wander (RW 0x88E17F, an AI player's dozer); the TheInGameUI idle worker
 // list is the marked flag (isIdleWorker); the primary machine reset after a PLAYER command runs before the command (RW: after it); the dozer's "a task ended"
 // notification to the AI player is also sent when a task is cancelled or fails (S-890).
 //
@@ -186,6 +186,7 @@ protected:
 	void notifyAIPlayerDozerFree();                 // slot 0x7C, RW 0x88BF4E
 	void hideInStructure();                         // RW 0x88C51B: a porter (not a worker) goes into the structure it starts
 	void showFromStructure(const Object *built);    // RW 0x88D6AE: it comes out (and walks away from `built` when given)
+	static void builderFade(Object &self, bool in); // lane PORTERFOG-1: RW 0x670AA2 / 0x670A50 with BuilderFadeInTime / BuilderFadeOutTime (client)
 
 	// the primary machine (ZH StateMachine semantics)
 	int primarySetState(int id);

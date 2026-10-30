@@ -248,7 +248,12 @@ def test_the_workflow_passes_the_public_policy_and_is_dispatch_or_release_call_o
     # RELSIGN-1: workflow_call too, for release.yml's builds (test_release_workflow.py: the policy allows it in this file alone)
     assert sorted(doc[True]) == ["workflow_call", "workflow_dispatch"], "no push / pull_request trigger"
     assert doc["permissions"] == {"contents": "read"}
-    assert "secrets." not in text and "actions/cache" not in text, "no secrets, no caches"
+    # CRASHACT-1: the one secret, the crash service's client key, declared for workflow_call and handed to the macOS package step alone
+    assert text.count("secrets.") == 1 and "          CRASH_CLIENT_KEY: ${{ secrets.CRASH_CLIENT_KEY }}" in text, "the crash key alone"
+    assert doc[True]["workflow_call"]["secrets"] == {"CRASH_CLIENT_KEY": {"required": False}}
+    keyed = [(j, st["name"]) for j, job in doc["jobs"].items() for st in job.get("steps", []) if "secrets." in str(st)]
+    assert keyed == [("macos", "Build the package (package_macos.py)")]
+    assert "actions/cache" not in text, "no caches"
     assert set(doc[True]["workflow_dispatch"]["inputs"]) == {"platform", "commit", "version", "request"}
 
 

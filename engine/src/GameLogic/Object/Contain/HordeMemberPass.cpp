@@ -522,11 +522,11 @@ void HordeContain::attackTargetNow(Object *victim, bool closestMemberOnly)
 	}
 }
 
-// HordeContainInterface slot 0 (RW 0x875550): the same guard; every member in the member map with an AI and a released rank gets aiAttackPosition(pos, 0x7FFFFFFF, 2)
-// (RW 0x6961F1, tier A to the BFME2 decomp's AICommandInterface::aiAttackPosition). The port has no attack-position command (S-325): the orders are counted only.
+// HordeContainInterface slot 0 (RW 0x875550; BFME2 decomp HordeContainIface11CSlots.cpp:4218, byte-matched; BFME1 6b159dc07 adds an AI vslot 0x184 test RotWK
+// lacks): the same guard; every member of a copy of the member map (RW 0x865598) with an AI (+ 0x260) and a released rank (+ 0x1B8) gets aiAttackPosition(pos,
+// 0x7FFFFFFF shots, CMD_FROM_AI) (RW 0x6961F1, tier A to the BFME2 decomp's AICommandInterface::aiAttackPosition; lane HORDEPOS-1)
 void HordeContain::attackPositionNow(const Coord3D &pos)
 {
-	(void)pos;
 	if (meleeHordeRefusesRelease(*getObject()))
 	{
 		return;
@@ -536,14 +536,12 @@ void HordeContain::attackPositionNow(const Coord3D &pos)
 	for (Object *m : members)
 	{
 		bool hasSlot = false;
-		if (m && memberRankReleased(*m_core, data, *m, hasSlot) && m->getAIUpdateInterface())
+		AIUpdateInterface *ai = m ? m->getAIUpdateInterface() : nullptr;
+		if (ai && memberRankReleased(*m_core, data, *m, hasSlot))
 		{
+			ai->aiAttackPosition(pos, 0x7FFFFFFF, CMD_FROM_AI);
 			++m_attackStats.positionOrders;
 		}
-	}
-	if (AIUpdateInterface *ai = getObject()->getAIUpdateInterface())
-	{
-		ai->world().noteStop("S-325 attack commands: aiAttackObject / aiForceAttackObject; guard, hunt, attack position / area / squad and the weapon fire commands are not executed");
 	}
 }
 
@@ -553,7 +551,8 @@ const char *HordeContain::attackStopLine()
 	       "every enemy member in reach has its distance times GameLogicRandomValueReal(0.66, 1.33), the smallest product wins), read in full; INFERENCE / not ported: the "
 	       "line of sight filter RW 0x6616AC of ATTACK_NEEDS_LINE_OF_SIGHT / CAN_SHOOT_OVER_WALLS attackers is ported (lane LOS-1), RW 0x6FF7FA's AI byte + 0x3CC is "
 	       "taken as unset and its layers as equal, the melee member's touch attack RW 0x69675C uses the Amoeba reach rule (S-588), a victim held by a container that is "
-	       "not a HordeContain stays the pick (that contain's slot 0x48 is not read), and the position fire RW 0x875550 orders nothing (aiAttackPosition, S-325)";
+	       "not a HordeContain stays the pick (that contain's slot 0x48 is not read); the position fire RW 0x875550 orders every released member to attack the position "
+	       "(aiAttackPosition RW 0x6961F1, lane HORDEPOS-1)";
 }
 
 // TransportContain::update, the part BFME added (B1 TransportContainUpdate.cpp): the owner's MOVING (condition 60 in BFME1, 61 in RotWK's registry) is
@@ -696,6 +695,8 @@ bool HordeContain::runMemberPass()
 	owner.computeTrig(); // lane UBER-2B: once for every member below
 	m_workDone = false;
 	++m_stats.passes;
+	m_leashedInLastPass.clear();
+	m_lastPassFrame = horde->logic().getFrame();
 	// lane HORDE-2: the RotWK member pass (RW 0x873FE8, read with Ghidra) calls the member order (vslot 0x90 = RW 0x877A7A) with force = 1 - isMoving(horde)
 	// (`'\x01' - (cVar1 != '\0')` at RW 0x8744D0): a PARKED horde never lets a member wait ahead of its slot, so the survivors of a melee re-form; the wait of
 	// UseSlowHordeMovement only applies while the horde moves
@@ -784,6 +785,7 @@ void HordeContain::memberOrder(Object &member, const Coord3D &slotPos, float ori
 			// 0x89E169 -> slot 0x14 RW 0x87594C: a horde order first makes the members busy, so they leave their attacks), and the active-member rule below
 			a->aiBusy(CMD_FROM_AI);
 			++m_stats.leashCommands;
+			m_leashedInLastPass.push_back(member.getID());
 		}
 	}
 	// lane MOVE-2 r2, RW 0x877B69 .. 0x877C32 (read with Ghidra): a member whose AI state is active (AI vslot 0x1BC: attacking, hunting, or no state) is not driven to

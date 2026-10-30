@@ -299,6 +299,9 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("add_model", "model_name"), &W3DInstancer::add_model);
 	ClassDB::bind_method(D_METHOD("get_model_report", "model"), &W3DInstancer::get_model_report);
 	ClassDB::bind_method(D_METHOD("add_instance", "model", "transform", "clip", "start_time", "speed"), &W3DInstancer::add_instance, DEFVAL(String()), DEFVAL(0.0), DEFVAL(1.0));
+	ClassDB::bind_method(D_METHOD("set_instance_cast_shadow", "instance", "enabled"), &W3DInstancer::set_instance_cast_shadow);
+	ClassDB::bind_method(D_METHOD("set_shadow_receiving", "enabled"), &W3DInstancer::set_shadow_receiving);
+	ClassDB::bind_static_method("W3DInstancer", D_METHOD("set_shadow_maps_enabled", "enabled"), &W3DInstancer::set_shadow_maps_enabled);
 	ClassDB::bind_method(D_METHOD("set_instance_transform", "instance", "transform"), &W3DInstancer::set_instance_transform);
 	ClassDB::bind_method(D_METHOD("remove_instance", "instance"), &W3DInstancer::remove_instance);
 	ClassDB::bind_method(D_METHOD("set_instance_clip", "instance", "clip", "start_time", "speed"), &W3DInstancer::set_instance_clip, DEFVAL(0.0), DEFVAL(1.0));
@@ -333,6 +336,8 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("add_model_colored", "model", "kind", "colors"), &W3DInstancer::add_model_colored); // lane CAH-2
 	ClassDB::bind_method(D_METHOD("set_instance_infantry_light", "instance", "infantry"), &W3DInstancer::set_instance_infantry_light);
 	ClassDB::bind_method(D_METHOD("set_instance_opacity", "instance", "opacity"), &W3DInstancer::set_instance_opacity);
+	ClassDB::bind_method(D_METHOD("set_instance_occlusion", "instance", "occluder", "slot"), &W3DInstancer::set_instance_occlusion); // lane OCCLUDE-1
+	ClassDB::bind_method(D_METHOD("get_occlusion_pass_counts"), &W3DInstancer::get_occlusion_pass_counts);
 	ClassDB::bind_method(D_METHOD("get_auto_update"), &W3DInstancer::get_auto_update);
 	ClassDB::bind_method(D_METHOD("probe_shaders", "origin"), &W3DInstancer::probe_shaders);
 }
@@ -392,6 +397,115 @@ void W3DInstancer::set_instance_fogged(int64_t instance, bool fogged)
 	Instances[(size_t)instance].Fogged = fogged;
 	PoseDirty = true;
 	mark_model(instance);
+}
+
+void W3DInstancer::set_instance_occlusion(int64_t instance, bool occluder, int slot)
+{
+	if (instance < 0 || instance >= (int64_t)Instances.size()) return;
+	if (slot < 0 || slot >= W3D_OCCLUSION_SLOTS)
+	{
+		warn("set_instance_occlusion: slot " + std::to_string(slot) + " is out of 0 .. " + std::to_string(W3D_OCCLUSION_SLOTS - 1) + ": not an occludee");
+		slot = 0;
+	}
+	Instance &inst = Instances[(size_t)instance];
+	if (inst.Occluder == occluder && inst.OcclusionSlot == slot) return;
+	inst.Occluder = occluder;
+	inst.OcclusionSlot = slot;
+	if (occluder || slot != 0)
+	{
+		for (DrawItem &d : Models[(size_t)inst.Model]->Draws)
+		{
+			ensure_occlusion_passes(*d.Mesh, occluder, slot != 0);
+		}
+	}
+	PoseDirty = true;
+	mark_model(instance);
+}
+
+void W3DInstancer::set_instance_cast_shadow(int64_t instance, bool enabled)
+{
+	if (instance < 0 || instance >= (int64_t)Instances.size()) return;
+	Instance &inst = Instances[(size_t)instance];
+	if (inst.Removed || inst.CastShadow == enabled) return;
+	inst.CastShadow = enabled;
+	PoseDirty = true;
+	mark_model(instance);
+}
+
+void W3DInstancer::ensure_occlusion_passes(MeshGpu &gpu, bool mark, bool color)
+{
+	if ((!mark || gpu.HasMark) && (!color || gpu.HasColor)) return;
+	gpu.HasMark = gpu.HasMark || mark;
+	gpu.HasColor = gpu.HasColor || color;
+	gpu.MarkPasses.resize(gpu.Materials.size());
+	gpu.ColorPasses.resize(gpu.Materials.size());
+	for (size_t i = 0; i < gpu.Materials.size() && i < gpu.Keys.size(); ++i)
+	{
+		const W3DShaderKey &base = gpu.Keys[i];
+		// retail renders the whole object into the stencil; here the opaque surfaces (the blended ones draw in the transparent pass, sorted with
+		// the passes, and their alpha mostly leaves no shape)
+		if (base.Blend != W3D_GODOT_BLEND_OPAQUE || base.AlphaOverride || !base.DepthWrite || base.DepthTestDisabled) continue;
+		auto make = [&](int pass, int priority) {
+			W3DShaderKey k = base;
+			k.OcclusionPass = pass;
+			Ref<ShaderMaterial> m = gpu.Materials[i]->duplicate(); // the surface's textures and colours: the passes keep its alpha test
+			m->set_shader(Materials->Get_Shader(k));
+			m->set_render_priority(priority);
+			m->set_next_pass(Ref<Material>());
+			AllMaterials.push_back(m); // the palette binding follows (rebuild_layout)
+			m->set_shader_parameter("w3d_palette", palette_sampler());
+			return m;
+		};
+		if (gpu.HasMark && gpu.MarkPasses[i].is_null()) gpu.MarkPasses[i] = make(W3D_OCCLUSION_PASS_MARK, W3D_OCCLUSION_PRIORITY_MARK);
+		if (gpu.HasColor && gpu.ColorPasses[i].is_null()) gpu.ColorPasses[i] = make(W3D_OCCLUSION_PASS_COLOR, W3D_OCCLUSION_PRIORITY_COLOR);
+		// the chain: surface -> mark -> colour (either may be absent)
+		const Ref<ShaderMaterial> &mk = gpu.MarkPasses[i];
+		const Ref<ShaderMaterial> &co = gpu.ColorPasses[i];
+		if (mk.is_valid())
+		{
+			mk->set_next_pass(co);
+			gpu.Materials[i]->set_next_pass(mk);
+		}
+		else
+		{
+			gpu.Materials[i]->set_next_pass(co);
+		}
+	}
+}
+
+bool W3DInstancer::instance_outside(int64_t instance, const std::vector<Plane> &frustum)
+{
+	if (frustum.empty() || instance < 0 || instance >= (int64_t)Instances.size() || Instances[(size_t)instance].Removed) return false;
+	const Instance &inst = Instances[(size_t)instance];
+	const Transform3D nodeXf = is_inside_tree() ? get_global_transform() : get_transform();
+	const Vector3 centre = nodeXf.xform(inst.Xf.origin);
+	const Vector3 sc = inst.Xf.basis.get_scale_abs();
+	const Vector3 ns = nodeXf.basis.get_scale_abs();
+	const real_t r = cull_radius(*Models[(size_t)inst.Model]) * std::max(sc.x, std::max(sc.y, sc.z)) * std::max(ns.x, std::max(ns.y, ns.z));
+	for (const Plane &pl : frustum)
+	{
+		if (pl.distance_to(centre) > r) return true;
+	}
+	return false;
+}
+
+Dictionary W3DInstancer::get_occlusion_pass_counts() const
+{
+	int marks = 0, colors = 0;
+	std::set<const MeshGpu *> seen;
+	for (const std::unique_ptr<Model> &mp : Models)
+	{
+		for (const DrawItem &d : mp->Draws)
+		{
+			if (!d.Mesh || !seen.insert(d.Mesh.get()).second) continue;
+			for (const Ref<ShaderMaterial> &m : d.Mesh->MarkPasses) marks += m.is_valid() ? 1 : 0;
+			for (const Ref<ShaderMaterial> &m : d.Mesh->ColorPasses) colors += m.is_valid() ? 1 : 0;
+		}
+	}
+	Dictionary r;
+	r["marks"] = marks;
+	r["colors"] = colors;
+	return r;
 }
 
 void W3DInstancer::set_instance_opacity(int64_t instance, double opacity)
@@ -511,15 +625,12 @@ std::shared_ptr<W3DInstancer::MeshGpu> W3DInstancer::build_mesh(const MeshModelC
 		tangents.resize(nv * 4);
 		for (int64_t v = 0; v < nv; ++v)
 		{
-			Vector3 n(d.Normal[v * 3], d.Normal[v * 3 + 1], d.Normal[v * 3 + 2]);
-			Vector3 t(d.Tangent[v * 3], d.Tangent[v * 3 + 1], d.Tangent[v * 3 + 2]);
-			Vector3 b(d.Bitangent[v * 3], d.Bitangent[v * 3 + 1], d.Bitangent[v * 3 + 2]);
-			// V is flipped on load (u, 1 - v), so +v' runs along -bitangent; Godot's binormal = cross(normal, tangent) * w
-			float w = n.cross(t).dot(-b) < 0.0f ? -1.0f : 1.0f;
-			tangents.set(v * 4 + 0, t.x);
-			tangents.set(v * 4 + 1, t.y);
-			tangents.set(v * 4 + 2, t.z);
-			tangents.set(v * 4 + 3, w);
+			// Godot's BINORMAL = cross(NORMAL, TANGENT.xyz) * w is made the file's bitangent: retail's vertex buffer holds it raw and
+			// normalmapped.fxo blob 22 negates it (the generated shader's fx = -BINORMAL); S-023
+			tangents.set(v * 4 + 0, d.Tangent[v * 3]);
+			tangents.set(v * 4 + 1, d.Tangent[v * 3 + 1]);
+			tangents.set(v * 4 + 2, d.Tangent[v * 3 + 2]);
+			tangents.set(v * 4 + 3, Godot_Tangent_Sign(&d.Normal[v * 3], &d.Tangent[v * 3], &d.Bitangent[v * 3]));
 		}
 	}
 	PackedFloat32Array custom0, custom1, custom2;
@@ -629,6 +740,7 @@ std::shared_ptr<W3DInstancer::MeshGpu> W3DInstancer::build_mesh(const MeshModelC
 		W3DMaterialResult mat = Materials->Create(d, surf, mesh, hasUv2);
 		gpu->Mesh->surface_set_material(surfaceIndex, mat.Material);
 		gpu->Materials.push_back(mat.Material);
+		gpu->Keys.push_back(mat.Key);
 		for (const W3DMapperBinding &b : mat.Mappers) gpu->Mappers.push_back(b);
 		for (const std::string &n : mat.Notes) gpu->Notes.push_back(n);
 		for (const std::string &e : mat.Errors) gpu->Errors.push_back(e);
@@ -639,8 +751,8 @@ std::shared_ptr<W3DInstancer::MeshGpu> W3DInstancer::build_mesh(const MeshModelC
 			W3DStopHit h;
 			h.Id = "S-119";
 			h.Message = W3D_Stop_Message("S-119", mesh.Get_Name() + (mat.Key.HouseColorBaked
-			 ? ": house texels recoloured before filtering; alpha replacement combine remains inferred (S-022)"
-			 : ": instance colour uses the approximate base * team mask path (S-022)"));
+			 ? ": house texels recoloured before filtering, combined after the light as retail's DefaultW3D.fx / fixed-function rules do; the owner's colour source is inferred (S-119)"
+			 : ": instance colour recolours the filtered house texel as RW 0x531C77 kind 1 (retail recolours before filtering), combined after the light; the owner's colour source is inferred (S-119)"));
 			gpu->Stops.push_back(h);
 		}
 	}
@@ -806,6 +918,7 @@ int64_t W3DInstancer::build_model(const String &model_name)
 			item.Node->set_name(toGodot(name + "_" + sub.Name));
 			item.Node->set_multimesh(item.MM);
 			item.Node->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+			item.Node->set_instance_shader_parameter("w3d_receive_shadows", ShadowReceiving);
 			add_child(item.Node);
 			model->Draws.push_back(std::move(item));
 		}
@@ -1781,11 +1894,49 @@ void W3DInstancer::write_buffers()
 				o[12] = inst.InfantryLight ? -(float)(inst.PaletteOffset + 1) : (float)inst.PaletteOffset;
 				o[13] = fade;
 				o[14] = inst.HcPacked;
-				o[15] = (float)((rigid ? (int)bone : 0) + 1024 * inst.Sway + (inst.Fogged ? 16384 : 0)); // lane VISUAL-2: the sway type, the fogged light
+				o[15] = (float)((rigid ? (int)bone : 0) + 1024 * inst.Sway + (inst.Fogged ? 16384 : 0) // lane VISUAL-2: the sway type, the fogged light
+					+ (inst.OcclusionSlot << W3D_OCCLUSION_SLOT_SHIFT) + (inst.Occluder ? W3D_OCCLUSION_OCCLUDER_BIT : 0)); // lane OCCLUDE-1
 				++count;
 			}
 			d.MM->set_buffer(d.Buffer);
 			d.MM->set_visible_instance_count(count);
+			// Share the actual surface shaders: skinning, vegetation sway and alpha cutouts must match the visible mesh.
+			// Separate batches are necessary because casting is a GeometryInstance property, while eligibility is per drawable.
+			int shadowCount = 0;
+			for (int id : ids)
+				if (Instances[(size_t)id].CastShadow) ++shadowCount;
+			if (shadowCount != 0 && d.ShadowMM.is_null())
+			{
+				d.ShadowMM.instantiate();
+				d.ShadowMM->set_transform_format(MultiMesh::TRANSFORM_3D);
+				d.ShadowMM->set_use_custom_data(true);
+				d.ShadowMM->set_mesh(d.Mesh->Mesh);
+				MultiMeshInstance3D *shadow = memnew(MultiMeshInstance3D);
+				shadow->set_name(String(d.Node->get_name()) + "_shadow");
+				shadow->set_multimesh(d.ShadowMM);
+				shadow->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
+				add_child(shadow);
+			}
+			if (d.ShadowMM.is_valid())
+			{
+				if (d.ShadowMM->get_instance_count() != d.Allocated)
+				{
+					d.ShadowMM->set_instance_count(d.Allocated);
+					d.ShadowBuffer.resize((int64_t)d.Allocated * 16);
+				}
+				float *shadowBuffer = d.ShadowBuffer.ptrw();
+				int out = 0;
+				for (size_t i = 0; i < ids.size(); ++i)
+				{
+					if (Instances[(size_t)ids[i]].CastShadow)
+					{
+						std::memcpy(shadowBuffer + (size_t)out * 16, d.Buffer.ptr() + i * 16, 16 * sizeof(float));
+						++out;
+					}
+				}
+				d.ShadowMM->set_buffer(d.ShadowBuffer);
+				d.ShadowMM->set_visible_instance_count(shadowCount);
+			}
 			visible += count;
 			m.Dithered += d.Dithered;
 		}
@@ -1920,7 +2071,7 @@ void W3DInstancer::update_now()
 		Instance &inst = Instances[i];
 		if (!inst.Removed && (inst.PoseStale || (timeMoved && inst.Anim != nullptr && !inst.Explicit)))
 		{
-			if (cull)
+			if (cull && !(inst.CastShadow && ShadowMapsEnabled)) // an off-screen caster still throws an on-screen shadow
 			{
 				// the bounding sphere of the model around the instance's origin, scaled by the larger of the node's and the instance's scale
 				const Vector3 centre = nodeXf.xform(inst.Xf.origin);

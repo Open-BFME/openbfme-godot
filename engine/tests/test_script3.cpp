@@ -429,6 +429,52 @@ TEST_CASE("script3 TEAM_FOLLOW_WAYPOINTS as a team (RW 0x7BFE32 -> command 7, st
 	}
 }
 
+// lane AIDATA-1, RW 0x755B77 .. 0x755C08 (AIFollowWaypointPathState::update): a team whose controlling player has a SKIRMISH AI (RW 0x6AA5B3) counts the waypoint
+// reached as soon as the centre of its AI group (RW 0x76EDA7) is within members x AIData SkirmishGroupFudgeDistance (+ 0x58) of the goal; any other team only
+// when a member's own move ends. Three members start about 80 from W1; with a fudge of 20 the skirmish team moves on while its centre is still about 60 away
+TEST_CASE("aidata1 TEAM_FOLLOW_WAYPOINTS: a skirmish AI team moves on when its centre is within members x SkirmishGroupFudgeDistance of the goal; a human "
+		  "team waits for a member's arrival")
+{
+	struct Advance
+	{
+		int frame = -1;
+		float distance = 0.0f; // the members' centre to W1 when the team's waypoint changed
+	};
+	const auto firstAdvance = [](bool skirmish, float fudge) {
+		PathWorld p(1);
+		std::vector<Object *> members;
+		for (int i = 0; i < 3; ++i)
+		{
+			members.push_back(p.w.unit("Dummy", 'A', 220.0f + 25.0f * (float)i, 240.0f));
+		}
+		Team *t = p.w.teamA();
+		if (skirmish)
+		{
+			t->getControllingPlayer()->setPlayerType(PLAYER_COMPUTER, true);
+		}
+		p.w.logic->settings().skirmishGroupFudgeDistance = fudge;
+		run(p.w.logic->scriptEngine(), act("TEAM_FOLLOW_WAYPOINTS", { sp(3, qual(t)), sp(24, "Path"), ip(8, 1), ip(8, 0) }));
+		REQUIRE(t->currentWaypointId() == 1);
+		Advance a;
+		a.frame = p.w.runUntil([&] { return t->currentWaypointId() != 1; }, 3000);
+		float x = 0.0f, y = 0.0f;
+		for (Object *o : members)
+		{
+			x += o->getPosition()->x / 3.0f;
+			y += o->getPosition()->y / 3.0f;
+		}
+		a.distance = std::sqrt((x - 300.0f) * (x - 300.0f) + (y - 300.0f) * (y - 300.0f));
+		return a;
+	};
+	const Advance human = firstAdvance(false, 20.0f);
+	const Advance skirmish = firstAdvance(true, 20.0f);
+	const Advance skirmishNoFudge = firstAdvance(true, 0.0f);
+	CHECK(human.frame == 17);   // a member's move ended about 8 from W1 (merge queue q28, on the archive with MERGEQ-27: 17, was 16; an engine pin)
+	CHECK(skirmish.frame == 7); // the centre about 40 from W1
+	CHECK(skirmish.distance <= 60.0f); // tolerance: within 3 x 20 of W1 (the test's own centre, double precision)
+	CHECK(skirmishNoFudge.frame == human.frame); // a fudge of 0: only a member's arrival moves the team on
+}
+
 TEST_CASE("script3 a one-shot script ends after its false actions too (RW 0x6099DC: 0x609C0F -> 0x609C16); a repeating script runs them every frame")
 {
 	ScriptGame g;

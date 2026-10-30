@@ -69,7 +69,7 @@ float healthOfMembers(Object &horde)
 
 void kill(Object &o)
 {
-	o.kill(0); // RW 0x698EC3: UNRESISTABLE damage of the maximum health
+	o.kill(DAMAGE_UNRESISTABLE, 0); // RW 0x698EC3: UNRESISTABLE damage of the maximum health
 }
 
 bool reportHas(GameLogic &logic, const char *id)

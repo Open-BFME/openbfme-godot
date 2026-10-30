@@ -33,6 +33,7 @@ public:
 	// `environment` (lane UI-4): the archives and language.ini's fonts the credits roll reads; null: Credits reports that it cannot roll
 	AptMainMenu(WindowManager &windows, Shell &shell, ShellServices &services, const ShellEnvironment *environment = nullptr);
 	~AptMainMenu() override;
+	void runInit() override;
 
 	// The RotWK names in binary order, for the registry test (commands and the render component).
 	static const std::vector<std::string> &retailNames();

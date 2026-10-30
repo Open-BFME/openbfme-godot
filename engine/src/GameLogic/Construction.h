@@ -60,9 +60,12 @@ void completeConstruction(Object &structure, Object *builder);
 // ones that are not the plain "plot busy / no money" refusals).
 Object *constructOnPlot(Object &plot, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool instant);
 
-// ZH DozerAIUpdate::construct (the builder's vslot 0x1F8, RW 0x797796 for a DOZER builder): the structure is made UNDER_CONSTRUCTION with the builder as producer, the owner pays
-// the price now, the progress runs while the builder works (GettingBuiltBehavior with needsBuilder). Null when refused.
+// DozerAIUpdate::construct (the builder's vslot 0x1F8, RW 0x797796 for a DOZER builder; slot 0x64 RW 0x88D272): the structure is made as an inert phantom (PENDING_CONSTRUCTION,
+// PHANTOM_STRUCTURE, effectively dead, out of the world) with the builder as producer, the owner pays the price now; null when refused. lane FBSIM-1
 Object *constructByDozer(Object &dozer, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
+// slot 0x68 RW 0x88D44F: the dozer reached its phantom: false when the site is no longer legal (the caller removes it), else the structure is in the world, UNDER_CONSTRUCTION
+// at 1 hit point with its pathfinder footprint (lane FBSIM-1)
+bool placePhantomStructure(Object &dozer, Object &structure);
 // BuildAssistant slot 0x38 for a builder that is neither a dozer nor a plot (the script engine, the AI): the structure appears complete at once (RW 0x7978A1 ff)
 Object *buildObjectNow(GameLogic &logic, Object *builder, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
 

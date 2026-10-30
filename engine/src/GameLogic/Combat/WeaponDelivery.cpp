@@ -547,7 +547,7 @@ void apply(GameLogic &logic, const MetaImpactNugget &n, ObjectID sourceId, Objec
 	if (source && ObjectFilterMatch::isValid(&n.m_killObjectFilter) &&
 		ObjectFilterMatch::allows(logic, n.m_killObjectFilter, victim, source->getControllingPlayer()))
 	{
-		victim.kill(DEATH_NORMAL);
+		victim.kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x910695: kill(8, 0)
 		++counters.metaImpactKills;
 		return;
 	}
@@ -1244,7 +1244,7 @@ void spawnAndFade(GameLogic &logic, const SpawnAndFadeNugget &n, ObjectID source
 	p.z = sai ? sai->layerHeightAt(p.x, p.y) : logic.getGroundHeight(p.x, p.y);
 	o->setPosition(&p);
 	o->setOrientation(angle);
-	source->kill(DEATH_FADED);
+	source->kill(DAMAGE_UNRESISTABLE, DEATH_FADED); // RW 0x911D9F: kill(8, FADED)
 	if (o->isKindOf((unsigned)kDeployedMine))
 	{
 		if (AIWorld *ai = logic.aiWorld())
@@ -1413,7 +1413,7 @@ void damageContained(GameLogic &logic, const DamageContainedNugget &n, ObjectID 
 	int killed = 0;
 	auto killOne = [&](Object &o) {
 		source->scoreTheKill(o, 1);
-		o.kill(n.m_deathType);
+		o.kill(DAMAGE_UNRESISTABLE, n.m_deathType); // RW 0x91133E / 0x91136E: kill(8, DeathType)
 		++killed;
 	};
 	for (ObjectID id : idsOf(*c))

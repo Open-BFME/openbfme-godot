@@ -12,4 +12,5 @@ set(OPENBFME_SDK2_TESTS
     tests/test_sdk2_luau.cpp
     tests/test_sdk2_game.cpp
     tests/test_sdk2_net_retail.cpp
+    tests/test_sdk2b_retail.cpp
 )

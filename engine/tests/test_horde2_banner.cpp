@@ -54,7 +54,7 @@ TEST_CASE("horde2 banner: no carrier at rank 0; at rank 1 the carrier joins, sta
 		}
 	}
 	REQUIRE(victim != nullptr);
-	victim->kill(0);
+	victim->kill(DAMAGE_UNRESISTABLE, 0);
 	w.frames(40);
 	BannerCarrierUpdate *b = dynamic_cast<BannerCarrierUpdate *>(banner->findModule("BannerCarrierUpdate"));
 	REQUIRE(b != nullptr);

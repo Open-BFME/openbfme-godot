@@ -4,6 +4,8 @@
 #include "doctest.h"
 #include "FactATestUtil.h"
 
+#include "Common/Player.h"
+#include "Common/ScoreKeeper.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/BuildAssistantSell.h"
 #include "GameLogic/Damage.h"
@@ -88,6 +90,7 @@ TEST_CASE("FACT-A sell: every sellable structure of Men, Elves and Dwarves sells
 			const ObjectID id = o->getID();
 			CHECK_MESSAGE(r.select(o), name);
 			const unsigned before = r.money();
+			const unsigned long long lostBefore = r.local()->getScoreKeeper().counters().lostCalls;
 			const ControlBarButton *b = r.find(sell->m_name);
 			REQUIRE_MESSAGE(b, name);
 			CHECK_MESSAGE(b->state == ButtonState::Enabled, name);
@@ -97,6 +100,10 @@ TEST_CASE("FACT-A sell: every sellable structure of Men, Elves and Dwarves sells
 			Object *after = r.logic().findObjectByID(id);
 			CHECK((after == nullptr || after->isEffectivelyDead()));
 			CHECK(r.money() == before + expect);
+			// lane KILLSRC-1: one loss, retail's explicit addObjectLost (RW 0x79487A); the kill after it (RW 0x794885 -> 0x698EC3) has no source, so no
+			// scoreTheKill counts it again (calls, not structuresLost: a wall segment is no STRUCTURE + SCORE template and counts in neither)
+			CHECK(r.local()->getScoreKeeper().counters().lostCalls == lostBefore + 1);
+			CHECK_FALSE(r.local()->getAttackedBy(r.local()->getPlayerIndex()));
 			CHECK(r.hud->input().ui().selected().empty());
 			CHECK(r.local()->selection().empty());
 			CHECK(r.unhandled().count(MSG_SELL) == 0);

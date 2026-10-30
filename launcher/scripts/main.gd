@@ -86,6 +86,7 @@ const Semver := preload("res://scripts/core/semver.gd")
 const Log := preload("res://scripts/core/launcher_log.gd")
 const GlibcCheck := preload("res://scripts/core/glibc_check.gd")
 const GameOptions := preload("res://scripts/core/game_options.gd")
+const GameDisplay := preload("res://scripts/core/game_display.gd")
 const AioInstall := preload("res://scripts/core/aio_install.gd")
 const GameFiles := preload("res://scripts/core/game_files.gd")
 const VerifyFilesPanel := preload("res://scripts/ui/verify_files_panel.gd")
@@ -109,6 +110,7 @@ const SettingsScreen := preload("res://scripts/ui/settings_screen.gd")
 const MessagePanel := preload("res://scripts/ui/message_panel.gd")
 const PlayerMessages := preload("res://scripts/ui/player_messages.gd")
 const InstanceLock := preload("res://scripts/core/instance_lock.gd")
+const LauncherCrash := preload("res://scripts/core/launcher_crash.gd")
 const GameStart := preload("res://scripts/core/game_start.gd")
 const OnlineCount := preload("res://scripts/core/online_count.gd")  # lane ONLINECOUNT-1
 const HttpFetch := preload("res://scripts/net/http_fetch.gd")
@@ -132,6 +134,7 @@ const RECHECK_SECONDS := 3600.0  # lane UI-5: while the launcher stays open, it 
 var info: RefCounted
 var updater: Updater
 var _instance: InstanceLock  # lane UI-5 (Sol r2): one launcher at a time
+var _crash_marker := false   # lane CRASHACT-1: this launcher wrote user://launcher.running (removed when it ends normally)
 var aio: AioInstall
 var game_files: GameFiles
 var _verify_panel: VerifyFilesPanel
@@ -382,6 +385,7 @@ func _ready() -> void:
 	_problem = problem
 	_build_ui()
 	_init_social()
+	_crash_start()
 	if start.message != "":
 		_set_status(start.message)
 	_refresh_installed()
@@ -414,6 +418,30 @@ func _ready() -> void:
 	for a in args:
 		if a.begins_with("--screenshot="):
 			_screenshot(a.substr(13))
+
+
+## lane CRASHACT-1 (scripts/core/launcher_crash.gd): the last launcher's crash reported (queued, or offered when automatic reports are off), this
+## launcher's marker written, the queue sent in the background. Only a packaged launcher (or a test's loopback crash service), holding the lock.
+func _crash_start() -> void:
+	if not LauncherCrash.eligible(info.packaged) or _demo != "" or _instance == null:
+		return
+	var previous := LauncherCrash.take_previous()
+	LauncherCrash.write_marker(info.version)
+	_crash_marker = true
+	var automatic := LauncherCrash.automatic()
+	if not previous.is_empty():
+		var r: Dictionary = LauncherCrash.report(previous)
+		if not r.ok:
+			Log.line("LAUNCHER CRASH the last launcher did not end normally; not reported: " + str(r.error))
+		elif automatic:
+			LauncherCrash.enqueue(r.wire)
+		else:
+			Log.line("LAUNCHER CRASH the last launcher did not end normally; automatic reports are off: Send report offered")
+			_message.ask(L10n.t("launcher.crash.title"), L10n.t("launcher.crash.offer"), L10n.t("launcher.crash.send"), func() -> void:
+				if LauncherCrash.enqueue(r.wire).is_empty():
+					LauncherCrash.upload(self))
+	if automatic:
+		LauncherCrash.upload(self)
 
 
 ## tests (MACPLAY-1): press the real PLAY button `times` times, each once no job runs (its pressed signal: the player's click, _on_play),
@@ -1190,6 +1218,9 @@ func _build_ui() -> void:
 	_settings = SettingsScreen.new(updater.macos_preview())
 	_settings.channel_picked.connect(_on_channel)
 	_settings.free_camera_toggled.connect(_on_free_camera)
+	_settings.display_changed.connect(_on_display_changed)
+	_settings.display_refresh_requested.connect(_refresh_display)
+	get_window().focus_entered.connect(_refresh_display)
 	_settings.auto_update_toggled.connect(_on_auto_update)
 	_settings.aio_toggled.connect(_on_aio_toggled)
 	_settings.show_online_count_toggled.connect(_on_online_count_toggled)
@@ -1347,6 +1378,7 @@ func _show_screen(key: String) -> void:
 		if OnlineCount.stale(_count_text, float(Time.get_ticks_msec() - _count_got_ms) / 1000.0):
 			_refresh_count()
 	if key == "settings":
+		_refresh_display()
 		_settings.set_options(GameOptions.free_camera(), updater.auto_update(), aio.enabled(), _about())
 		_settings.set_online_count(updater.show_online_count())
 		_settings.set_replay_association(bool(updater.get_state("launcher", "replay_association", true)))
@@ -1417,6 +1449,19 @@ func _update_label(version: String) -> String:
 	if _launcher_only:
 		return L10n.t("launcher.main.update_launcher_to", {"version": version})
 	return L10n.t("launcher.main.update_to" if _pv != "" else "launcher.main.install_version", {"version": version})
+
+
+func _refresh_display() -> void:
+	if _settings != null:
+		var screen_size := DisplayServer.screen_get_size(get_window().current_screen)
+		_settings.set_display(GameDisplay.read(screen_size))
+
+
+func _on_display_changed(key: String, value: String) -> void:
+	var why := GameDisplay.save(key, value)
+	_refresh_display()
+	if why != "":
+		_show_error(L10n.t("launcher.main.setting_not_saved"), why)
 
 
 func _on_free_camera(on: bool) -> void:
@@ -2511,5 +2556,7 @@ func _exit_tree() -> void:
 			mods.request_stop("pause")
 		updater.http.cancelled = true
 		_thread.wait_to_finish()
+	if _crash_marker:
+		LauncherCrash.remove_marker()
 	if _instance != null:
 		_instance.release()

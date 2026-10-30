@@ -26,11 +26,31 @@ static func list(dir := "") -> Array:
 	var names := DirAccess.get_directories_at(r)
 	names.sort()
 	var off := disabled(r)
+	var checked := report(r)
 	for n in names:
-		var p := {"name": n, "enabled": not off.has(n.to_lower()), "models": 0, "textures": 0, "bytes": 0, "problems": PackedStringArray()}
+		var p := {"name": n, "enabled": not off.has(n.to_lower()), "models": 0, "textures": 0, "bytes": 0, "problems": PackedStringArray(),
+			"checked": checked.has(n), "misfits": []}
+		if checked.has(n):
+			p.misfits = checked[n].get("misfits", [])
 		var seen := {}
 		_scan(r.path_join(n), "", p, seen)
 		out.append(p)
+	return out
+
+
+## lane SDK-1b (b): the game's check of the packs at its last start (<dir>/report.json, scripts/release/release.gd): pack name -> {misfits: [{file,
+## why}]}; empty when the game has not checked them yet (or the file is not the game's report)
+static func report(dir := "") -> Dictionary:
+	var path := (dir if dir != "" else root()).path_join("report.json")
+	var out := {}
+	if not FileAccess.file_exists(path):
+		return out
+	var data = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not (data is Dictionary) or data.get("format", "") != "openbfme.asset-pack-report 1" or not (data.get("packs") is Array):
+		return out
+	for p in data.packs:
+		if p is Dictionary and p.get("name") is String:
+			out[p.name] = p
 	return out
 
 

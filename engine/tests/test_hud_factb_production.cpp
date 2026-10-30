@@ -881,10 +881,9 @@ TEST_CASE("factb structures: every Mordor unit and structure upgrade from the st
 	Results r;
 	operateEveryStructure("FactionMordor", r);
 	r.print("structures FactionMordor");
-	// the catapult leaves the siege works but barely moves when ordered away (19 of 300 in 120 frames; placed in the open it walks and fights):
-	// the exit from a production building is MOVE-3's (reported, not fixed here)
-	r.check({ { "train MordorCatapult at MordorSiegeWorks", "MOVE-3: the catapult stuck at the siege works' door" },
-		{ "research Upgrade_MordorFortressGorgorothSpire at MordorFortressCitadel", "the castle path: factb fortress (a citadel made outside a castle has no castle to hand Iron Plating / Morgul Sorcery over)" } });
+	// the catapult leaves the siege works and walks away when ordered: it passes since STANCE-1's follow-path exit clears IS_LEAVING_FACTORY (RW 0x74B77D),
+	// which before stayed set (it delays the Battle stance and refuses requests to move aside); before, it barely moved, 19 of 300 in 120 frames
+	r.check({ { "research Upgrade_MordorFortressGorgorothSpire at MordorFortressCitadel", "the castle path: factb fortress (a citadel made outside a castle has no castle to hand Iron Plating / Morgul Sorcery over)" } });
 }
 
 TEST_CASE("factb found: every Isengard castle expansion from its pad's buttons")

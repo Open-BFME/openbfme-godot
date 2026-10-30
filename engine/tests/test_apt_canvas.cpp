@@ -336,6 +336,37 @@ TEST_CASE("canvas: a solid fill is window-space triangles with the fill colour t
 	CHECK(list.unverified == std::vector<std::string>{ "stage-mapping" });
 }
 
+TEST_CASE("canvas: packed gadget textures use BFME1's flat layout without changing BFME2 or RotWK")
+{
+	MemorySource source;
+	AptTextureStore textures(source);
+	CHECK(textures.packedTextureStem("AptComponents_001.tga") == "art/compiledtextures/ap/aptcomponents_001");
+	source.files["data/ini/default/subsystemlegend.ini"] = bytesOf("legend");
+	CHECK(textures.packedTextureStem("AptComponents_001.tga") == "art/textures/aptcomponents_001");
+	CHECK(textures.packedTextureStem("ScrollShroud.tga") == "art/textures/scrollshroud");
+	source.files["data/ini/awardsystem.ini"] = bytesOf("awards");
+	CHECK(textures.packedTextureStem("AptComponents_001.tga") == "art/compiledtextures/ap/aptcomponents_001");
+	source.files.erase("data/ini/awardsystem.ini");
+	source.files["data/ini/default/subsystemlegendexpansion1.ini"] = bytesOf("expansion");
+	CHECK(textures.packedTextureStem("AptComponents_001.tga") == "art/compiledtextures/ap/aptcomponents_001");
+}
+
+TEST_CASE("canvas: BFME1 gadget atlases decode TGA bytes packed under DDS names only for BFME1 data")
+{
+	MemorySource source;
+	source.files["data/ini/default/subsystemlegend.ini"] = bytesOf("legend");
+	source.files["art/textures/aptcomponents_004.dds"] = makeTga(1, 1, { { 3, 2, 1, 255 } });
+	AptTextureStore textures(source);
+	const auto &atlas = textures.get("AptComponents_004.tga");
+	REQUIRE_MESSAGE(atlas.ok, atlas.error);
+	CHECK(atlas.width == 1);
+	CHECK(atlas.height == 1);
+	CHECK(atlas.rgba == std::vector<std::uint8_t>{ 1, 2, 3, 255 });
+	source.files["data/ini/awardsystem.ini"] = bytesOf("awards");
+	AptTextureStore bfme2(source);
+	CHECK_FALSE(bfme2.get("AptComponents_004.tga").ok);
+}
+
 TEST_CASE("canvas: a textured fill takes UV = tc matrix * vertex / texture size, with rows flipped so v counts from the top; a missing texture is an error and draws nothing")
 {
 	TestMovie m;

@@ -39,6 +39,8 @@
 #include "GameLogic/VictoryConditions.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/System/PathfinderResourceTerrain.h"
+#include "GameLogic/AI/AIPathfindConfig.h"
+#include "Common/BfmeGame.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
 #include <chrono>
@@ -381,6 +383,8 @@ bool LiveGame::load(const Options &options, std::string *error)
 	{
 		return false;
 	}
+	// lane AIDATA-1: the pathfinder reads TheAI's AIData (RW [0xDE4B40] + 0x18) like every other consumer: the map's AIData block (applied above) reaches it too
+	PathfindConfigLoader::applyAIData(m_logic->settings(), aiConfig.pathfind, isBfme1Data(m_fs));
 	m_pathTerrain = std::make_unique<TerrainPathfindSource>(m_terrain, m_map.heightMap, m_map.chunks);
 	m_ai = std::make_unique<AIWorld>(*m_logic, aiConfig, m_world.iniMacros());
 	m_ai->attach();

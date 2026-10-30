@@ -191,6 +191,18 @@ void run(starttest::Shared &s, const Barracks &b, Outcome &out, bool produce = t
 	}
 	out.placedFrame = (int)logic.getFrame();
 	out.moneyAfterPlace = (int)player->getMoney()->countMoney();
+	// lane FBSIM-1: the order makes RotWK's inert phantom (RW 0x88D272: PENDING_CONSTRUCTION + PHANTOM_STRUCTURE, no UNDER_CONSTRUCTION, no footprint); the
+	// Porter's arrival places it (RW 0x88D44F: UNDER_CONSTRUCTION, the footprint)
+	static const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
+	if (!building->testStatus((unsigned)phantom) || building->isUnderConstruction() || building->getConstructionPercent() < 0.0f)
+	{
+		out.problems.push_back("the order did not make a phantom site");
+		return;
+	}
+	for (int walk = 0; walk < 1500 && building->testStatus((unsigned)phantom); ++walk)
+	{
+		step();
+	}
 	if (!building->isUnderConstruction() || building->getConstructionPercent() < 0.0f)
 	{
 		out.problems.push_back("the foundation is not under construction");
@@ -455,7 +467,7 @@ struct SiteFx
 };
 } // namespace
 
-TEST_CASE("construction legality: the Dozer construct body refuses an overlapping, an off-map and a same-frame duplicate site without creating, paying or tasking (RW 0x88C2A5)")
+TEST_CASE("construction legality: the Dozer construct body refuses an overlapping and an off-map site without creating, paying or tasking (RW 0x88C2A5); a same-frame duplicate replaces the phantom")
 {
 	OPENBFME_REQUIRE_START(s);
 	std::string error;
@@ -482,14 +494,16 @@ TEST_CASE("construction legality: the Dozer construct body refuses an overlappin
 	CHECK(f.player->getMoney()->countMoney() == money);
 	CHECK(dozer->taskTarget() == INVALID_ID);
 	CHECK(commands.stats().refused == 2);
-	// the same legal site twice in one frame: the first is built, the second finds the first's foundation in the way
+	// the same legal site twice in one frame (lane FBSIM-1): the first order's structure is RotWK's phantom, out of the world (RW 0x88D0D8), so the second is legal
+	// too; the dozer's second construct cancels its pending build (RW 0x88C2C3), whose phantom goes with the refund (RW 0x88CFFE): one site, paid once
 	f.g.live->commands().append(selectMsg(f.player->getPlayerIndex(), f.porter->getID()));
 	f.g.live->commands().append(dozerMsg(f.player->getPlayerIndex(), *f.barracks, f.site));
 	f.g.live->commands().append(dozerMsg(f.player->getPlayerIndex(), *f.barracks, f.site));
 	logic.runLogicFrame();
+	logic.runLogicFrame(); // the first phantom's destruction
 	CHECK(f.count("GondorBarracks") == 1);
-	CHECK(commands.stats().dozerBuilds == 1);
-	CHECK(commands.stats().refused == 3);
+	CHECK(commands.stats().dozerBuilds == 2);
+	CHECK(commands.stats().refused == 2);
 	CHECK(money - f.player->getMoney()->countMoney() == (std::uint32_t)BuildAssistant::calcCostToBuild(*f.barracks, f.player, f.porter, -1));
 	CHECK(dozer->taskTarget() != INVALID_ID);
 }

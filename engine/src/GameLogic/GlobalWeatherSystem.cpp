@@ -54,7 +54,7 @@ void GlobalWeatherSystem::setWeather(int weather, unsigned burnDecay, unsigned f
 	m_weather = weather;
 	m_weatherFrames = frames;
 	m_burnDecay = burnDecay;
-	++m_weatherChanges; // RW 0x719DEE: the client's sky / rain / lighting change (S-922)
+	++m_weatherChanges; // RW 0x719DEE: the weather sound (the client follows the snapshot's weather: WeatherClient, S-4892)
 }
 
 void GlobalWeatherSystem::update()
@@ -257,7 +257,8 @@ void GlobalWeatherSystem::xfer(Xfer &x)
 
 std::vector<std::string> GlobalWeatherSystem::stopLines()
 {
-	return { "[S-922] GlobalWeatherSystem (RW 0xDE772C): the weather state, the weather-based attribute modifier and their countdowns run; the client's "
-			 "weather change (RW 0x719DEE: sky, rain, lighting) is counted, the burn decay value goes to an unidentified subsystem (RW 0xDE46A8 + 0x98, "
-			 "kept here), and the weather at game start is taken as NONE (the map's setting is not traced)" };
+	return { "[S-922] GlobalWeatherSystem (RW 0xDE772C): the weather state, the weather-based attribute modifier and their countdowns run; the burn "
+			 "decay value goes to an unidentified subsystem (RW 0xDE46A8 + 0x98, kept here); lane WEATHER-1 resolved the rest: RW 0x719DEE is the "
+			 "weather sound (played by the client from the presented weather, S-4892) and the weather at game start is NONE (ctor RW 0x719EBE, reset "
+			 "RW 0x719FDB; setWeather is called only by the power trigger and the update)" };
 }

@@ -329,7 +329,7 @@ UpdateSleepTime SlavedUpdate::update()
 		if (!slaver || slaver->isEffectivelyDead())
 		{
 			// the player's RW 0x79F486 (+ 0x3DC) is not identified (S-1426)
-			obj->kill(0); // RW 0x698EC3(8 = UNRESISTABLE, 0 = NORMAL)
+			obj->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x8A5DA6: kill(8 = UNRESISTABLE, 0 = NORMAL)
 			++stats().mastersDeathKills;
 			return UPDATE_SLEEP_FOREVER;
 		}

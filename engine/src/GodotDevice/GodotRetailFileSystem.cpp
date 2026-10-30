@@ -11,6 +11,8 @@
 #include "GameClient/UserDataFolder.h"
 #include "Common/ModEngineFeatures.h"
 #include "Common/MD5.h"
+#include <memory>
+#include "GameNetwork/ProfileIdentity.h"
 #include "GameClient/UserDataFolder.h"
 #include <algorithm>
 #include <filesystem>
@@ -34,6 +36,7 @@ namespace godot
 
 namespace
 {
+
 String toGodot(const std::string &s)
 {
 	return String::utf8(s.c_str(), (int64_t)s.size());
@@ -78,6 +81,7 @@ void RetailFileSystem::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_mod_report"), &RetailFileSystem::get_mod_report);
 	ClassDB::bind_method(D_METHOD("get_file_sources", "path"), &RetailFileSystem::get_file_sources);
 	ClassDB::bind_method(D_METHOD("set_asset_packs", "folders"), &RetailFileSystem::set_asset_packs); // SDK-0
+	ClassDB::bind_method(D_METHOD("get_asset_pack_report"), &RetailFileSystem::get_asset_pack_report); // SDK-1b
 	ClassDB::bind_method(D_METHOD("set_install_mod", "folder"), &RetailFileSystem::set_install_mod); // MODS-2
 	ClassDB::bind_method(D_METHOD("set_install_mods", "folders"), &RetailFileSystem::set_install_mods);
 	ClassDB::bind_method(D_METHOD("set_mod_engines", "md5s"), &RetailFileSystem::set_mod_engines); // MODS-3
@@ -101,6 +105,7 @@ Dictionary RetailFileSystem::set_asset_packs(const PackedStringArray &folders)
 	if (errors.empty())
 	{
 		m_packs = std::move(packs); // all or nothing: a pack with an error changes nothing
+		m_packLinesRead = false; // lane PROFILE-3
 	}
 	for (const std::string &s : m_packs.packs())
 	{
@@ -159,6 +164,64 @@ std::vector<std::string> RetailFileSystem::modIdentity() const
 	std::vector<std::string> lines = m_installModReport.identity; // the install-folder mod first: it is mounted first
 	lines.insert(lines.end(), m_modReport.identity.begin(), m_modReport.identity.end());
 	return lines;
+}
+
+std::vector<std::string> RetailFileSystem::packIdentity() const
+{
+	if (m_packs.empty())
+	{
+		return {}; // none loaded, or suspended for this game (GameWorld::set_asset_packs_used)
+	}
+	if (!m_packLinesRead)
+	{
+		std::string why;
+		if (!m_packs.identityLines(m_packLines, why))
+		{
+			UtilityFunctions::push_error(String("profile identity: the asset packs' lines: ") + why.c_str());
+			m_packLines = { "pack-error" };
+		}
+		m_packLinesRead = true;
+	}
+	return m_packLines;
+}
+
+std::string RetailFileSystem::simulationData(std::string *error) const
+{
+	if (!m_mounted || !m_fs)
+	{
+		if (error)
+		{
+			*error = "simulation data: no retail mount";
+		}
+		return "";
+	}
+	std::string key;
+	for (const MountedArchive &a : m_mountedArchives)
+	{
+		key += a.install + ":" + a.canonicalPath + " " + a.md5 + " " + std::to_string(a.size) + "\n";
+	}
+	for (const std::string &l : modIdentity())
+	{
+		key += l + "\n";
+	}
+	if (!m_simData.empty() && key == m_simDataKey)
+	{
+		return m_simData;
+	}
+	// a disk cache, as the archive md5s have (user://retail-md5-cache.tsv): the digest reads every INI, script, map and model, once per install
+	std::string digest, warning;
+	if (!SimulationData::cachedDigest(*m_fs, key, toNative(ProjectSettings::get_singleton()->globalize_path("user://simdata-cache.tsv")), digest, error,
+			&warning))
+	{
+		return "";
+	}
+	if (!warning.empty())
+	{
+		UtilityFunctions::push_warning(warning.c_str());
+	}
+	m_simData = digest;
+	m_simDataKey = key;
+	return m_simData;
 }
 
 Dictionary RetailFileSystem::get_mod_report() const
@@ -261,6 +324,8 @@ Dictionary RetailFileSystem::mount_bfme1_path(const String &root)
 	m_loose.clear();
 	m_userMapFolder.clear();
 	m_userMapError.clear();
+	m_shellSource = false;
+	m_installRoot.clear();
 	PackedStringArray errors;
 	std::string pathError;
 	if (!PathIO::checkInstallPath(toNative(root), pathError))
@@ -616,7 +681,9 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 		{
 			ArchiveW3DFileSource mounted(*m_fs);
 			std::vector<std::string> packErrors;
-			if (!m_packs.checkModels(mounted, packErrors))
+			const bool modelsOk = m_packs.checkModels(mounted, packErrors);
+			m_packLinesRead = false; // lane PROFILE-3: the misfits are left out now
+			if (!modelsOk)
 			{
 				for (const std::string &e : packErrors)
 				{
@@ -827,7 +894,7 @@ Dictionary RetailFileSystem::mountBfme2Shell(const std::string &bfme2Root)
 
 String RetailFileSystem::install_root() const
 {
-	return toGodot(m_installRoot);
+	return toGodot(m_bfme1 ? m_bfme1Root : m_installRoot);
 }
 
 ArchiveFileSystem *RetailFileSystem::archive_fs() const
@@ -924,6 +991,40 @@ PackedByteArray RetailFileSystem::read_file(const String &path)
 		memcpy(bytes.ptrw(), data.data(), data.size());
 	}
 	return bytes;
+}
+
+Dictionary RetailFileSystem::get_asset_pack_report() const
+{
+	Dictionary out;
+	Array packs;
+	for (const std::string &name : m_packs.packs())
+	{
+		Dictionary p;
+		Array misfits;
+		for (const AssetPacks::Refusal &r : m_packs.misfits())
+		{
+			if (r.pack != name)
+				continue;
+			Dictionary d;
+			d["file"] = toGodot(r.relative);
+			d["why"] = toGodot(r.why);
+			misfits.push_back(d);
+		}
+		p["name"] = toGodot(name);
+		p["misfits"] = misfits;
+		packs.push_back(p);
+	}
+	out["packs"] = packs;
+	return out;
+}
+
+std::vector<std::string> RetailFileSystem::installOverlayFolders() const
+{
+	std::vector<std::string> out;
+	if (m_mounted)
+		for (int64_t i = 0; i < m_installModArgs.size(); ++i)
+			out.push_back(toNative(m_installModArgs[i]));
+	return out;
 }
 
 } // namespace godot

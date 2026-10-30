@@ -24,7 +24,7 @@
 //     whose members are all in (horde slot 0xF4) is let out here (RW 0x881105).
 // TunnelTracker (RW Player + 0x308): the tunnel ids + 0x8, the riders + 0x10 (count + 0x18), the tunnel count + 0x1C, the nemesis + 0x20 / + 0x24.
 // NOT PORTED (stop S-1107, TunnelContain::stopLine()): the tracker's nemesis (RW 0x8FA702 / 0x8FA451: read by the AI's tunnel network guard state, not ported),
-// the safe occlusion frame of a rider that leaves (+ 0x444, client), the unload sound, the tunnel network guard AI, the exposed stealth units.
+// the unload sound (the safe occlusion frame + 0x444 is set since lane OCCLUDE-1), the tunnel network guard AI, the exposed stealth units.
 
 #pragma once
 

@@ -66,7 +66,9 @@ void ClientEventRecorder::objectCreated(Object &obj)
 		if (p->hasTeamColor())
 		{
 			e.hasHouseColor = true;
-			e.houseColor = p->getPlayerColor();
+			// lane WEATHER-1: Drawable::friend_bindToObject (RW 0x674566) colours the drawable with Object::getNightIndicatorColor (RW 0x68B71F: the
+			// player's + 0x2A4) when TheGlobalData's time of day is NIGHT (+ 0x134 == 4), else getIndicatorColor (RW 0x68B6F5, + 0x2A0)
+			e.houseColor = settings.night ? p->getPlayerNightColor() : p->getPlayerColor();
 		}
 	}
 	// the client modules of the drawable, resolved here on the logic owner in the drawable's creation order (review r2: the render side must not
@@ -106,6 +108,12 @@ void ClientEventRecorder::fadeIn(Object &obj, UnsignedInt frames)
 	e.fadeFrames = frames;
 }
 
+void ClientEventRecorder::fadeOut(Object &obj, UnsignedInt frames)
+{
+	ClientEvent &e = push(ClientEvent::FADE_OUT, obj);
+	e.fadeFrames = frames;
+}
+
 void ClientEventRecorder::setCustomColors(Object &obj, int kind, std::uint32_t c0, std::uint32_t c1, std::uint32_t c2)
 {
 	ClientEvent &e = push(ClientEvent::CUSTOM_COLORS, obj);
@@ -118,6 +126,14 @@ void ClientEventRecorder::setCustomColors(Object &obj, int kind, std::uint32_t c
 void ClientEventRecorder::heroAttacked(Object &obj)
 {
 	push(ClientEvent::HERO_ATTACKED, obj);
+}
+
+// lane EVADAMAGE-1: RW 0x67B4B7's Eva half, the logic's part (EvaDamageNotice.h); the report goes to TheEva at the object's position (+ 0x38)
+void ClientEventRecorder::evaDamaged(Object &obj, const EvaDamageNotice &notice)
+{
+	ClientEvent &e = push(ClientEvent::EVA_DAMAGED, obj);
+	e.position = *obj.getPosition();
+	e.eva = notice;
 }
 
 void ClientEventRecorder::flashHeroButton(const std::string &templateName, int frames)

@@ -246,7 +246,7 @@ void BuildAssistantSell::update()
 		{
 			player->getScoreKeeper().addObjectLost(m_logic, *obj); // RW 0x79487A
 		}
-		obj->kill(DEATH_LASERED); // RW 0x794885: Object::kill(8 = UNRESISTABLE, 8 = the death type named LASERED in RW 0xDA1630)
+		obj->kill(DAMAGE_UNRESISTABLE, DEATH_SUICIDED); // RW 0x794885: Object::kill(8 = UNRESISTABLE, 8 = SUICIDED, the 9th name of RW 0xDA1630)
 		it = m_list.erase(it);
 	}
 }

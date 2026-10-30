@@ -96,7 +96,12 @@ void ShroudManager::attach()
 	}
 	m_attached = true;
 	m_logic.setShroud(this);
-	m_hookToken = m_logic.addWorldHooks([this](Object &o) { registerObject(o); }, [this](Object &o) { unregisterObject(o); }, true); // part of RW 0x68E31F / 0x68C18F (lane GARRISON-1: a contain's world exit too)
+	// lane PORTERFOG-1: the world entry RW 0x68E31F registers an object without a record (RW 0x68E355 -> 0xB4D900) and marks the record dirty, forced
+	// (RW 0x68E364 -> 0xB4E2A0); the world exit RW 0x68C18F only marks it dirty, forced (RW 0x68C19B -> 0xB4E2A0). Both run for a contain's transitions too
+	// (lane GARRISON-1). The record goes only in the destructor, after its world exit (RW 0x69A8BC -> 0xB4D920 -> 0xB4F510): a non-containment listener's
+	// `left`, which also runs for an object a contain already took out of the world
+	m_hookToken = m_logic.addWorldHooks([this](Object &o) { registerObject(o); }, [this](Object &o) { markDirty(o, true); }, true);
+	m_destroyHookToken = m_logic.addWorldHooks(GameLogic::WorldHook(), [this](Object &o) { unregisterObject(o); }, false);
 	// RW 0x62EB85: the shroud manager is the first of the four subsystem updates before the destroy list (the other three, RW 0xDE435C / 0xDE8200 / 0xDE3BE8,
 	// are not ported: the row is this lane's until a lane ports one of them)
 	m_logic.installPhaseWork("subsystemsBeforeDestroy", [this]() { update(); });
@@ -119,6 +124,7 @@ void ShroudManager::detach()
 		m_logic.setShroud(nullptr);
 	}
 	m_logic.removeWorldHooks(m_hookToken);
+	m_logic.removeWorldHooks(m_destroyHookToken);
 	m_logic.installPhaseWork("subsystemsBeforeDestroy", std::function<void()>());
 	m_logic.removeStateHashContributor(m_hashToken);
 }
@@ -734,12 +740,12 @@ ObjectShroudStatus ShroudManager::peekObjectStatus(const Object &obj, int player
 
 ObjectShroudStatus ShroudManager::getObjectStatus(const Object &obj, int player)
 {
-	// RW 0x68D8F7: no record, or ALWAYS_VISIBLE -> 0
+	// RW 0x68D8F7: no record, or ALWAYS_VISIBLE (template + 0x10E bit 5) -> CLEAR (1, RW 0x68D914)
 	static const int alwaysVisible = kindIndex("ALWAYS_VISIBLE");
 	Record *r = recordOf(obj);
 	if (!r || obj.isKindOf((unsigned)alwaysVisible))
 	{
-		return OBJECTSHROUD_INVALID;
+		return OBJECTSHROUD_CLEAR;
 	}
 	if (player < 0 || player >= kMaxPlayers)
 	{
@@ -811,6 +817,12 @@ bool ShroudManager::hasRecord(const Object &obj) const
 	return recordOf(obj) != nullptr;
 }
 
+int ShroudManager::lookRadius(const Object &obj) const
+{
+	const Record *r = recordOf(obj);
+	return r ? r->radii.forward : -1;
+}
+
 ObjectShroudStatus ShroudManager::clientObjectStatus(const Object &obj, int player) const
 {
 	// getObjectStatus without its cache write (the client's read must not change state the simulation hashes)
@@ -818,7 +830,7 @@ ObjectShroudStatus ShroudManager::clientObjectStatus(const Object &obj, int play
 	const Record *r = recordOf(obj);
 	if (!r || obj.isKindOf((unsigned)alwaysVisible))
 	{
-		return OBJECTSHROUD_INVALID;
+		return OBJECTSHROUD_CLEAR; // RW 0x68D914
 	}
 	if (player < 0 || player >= kMaxPlayers)
 	{
@@ -1611,6 +1623,10 @@ ShroudManager::ObjectSource ShroudManager::retailObjectSource()
 		static const int revealToAll = kindIndex("REVEAL_TO_ALL"), horde = kindIndex("HORDE");
 		static const int hordeMember = CombatNames::status("HORDE_MEMBER");
 		in.forward = in.side = in.rear = -1.0f;
+		if (!obj.isInWorld())
+		{
+			return; // RW 0x694A4F: Object + 0x474 clear (a contain took it out of the world): radii -1, the mask unchanged (lane PORTERFOG-1)
+		}
 		const Player *owner = obj.getControllingPlayer();
 		if (!owner)
 		{

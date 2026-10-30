@@ -541,7 +541,7 @@ void PhysicsBehavior::rest(bool final)
 	else
 	{
 		setCondition(physNames().splatted, true);
-		obj->kill(0); // RW 0x698EC3(8, 0)
+		obj->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x7930EB: kill(8, 0)
 	}
 	if (m_extraB != 0)
 	{
@@ -853,8 +853,8 @@ bool ObjectKnockback::shockWave(Object &obj, const DamageInfo &info)
 		{
 			killer->scoreTheKill(obj, 1); // RW 0x6955BC
 		}
-		obj.kill(DEATH_NORMAL); // RW 0x698EC3(8, 0), twice
-		obj.kill(DEATH_NORMAL);
+		obj.kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x696E17 and 0x696E22: kill(8, 0), twice
+		obj.kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 		++counters.shockwaveRampageKills;
 	}
 	if (AIUpdateInterface *ai2 = obj.getAIUpdateInterface())

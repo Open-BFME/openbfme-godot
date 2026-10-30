@@ -171,7 +171,7 @@ LiveFXObject eventPrimary(GameLogic &logic, Object *obj, const FXEvent &e)
 }
 } // namespace
 
-LiveFX::LiveFX(LiveGame &game, FXPlayback &playback) : m_game(game), m_playback(playback)
+LiveFX::LiveFX(LiveGame &game, FXPlayback &playback) : m_game(game), m_mapWeather(game.logic().settings().snowy ? 1 : 0), m_playback(playback)
 {
 	m_playback.setWorld(this);
 	m_game.logic().fxEvents().setSink(this);
@@ -397,7 +397,7 @@ int LiveFX::shroudStatusAt(const Coord3D &pos)
 }
 
 // RW 0x5E2282 (FXList::doFXObj's test): the object's status for the local player (RW 0x68D8F7) above PARTIAL_CLEAR; an object without partition data
-// (Object + 0x4E4 == 0: a contained object) asks its position's cell, not CLEAR: skipped (RW 0x5E22C4 .. 0x5E22F9). INFERENCE (S-4971): the status is the
+// (Object + 0x4E4 == 0) asks its position's cell, not CLEAR: skipped (RW 0x5E22C4 .. 0x5E22F9). INFERENCE (S-4971): the status is the
 // presented record's (ObjectSnapshot::shroudRecord stands for the partition data); an object the presented snapshot does not hold yet (created this
 // frame) asks its position's cell
 bool LiveFX::objectShroudedForLocalPlayer(const FXObject &obj)

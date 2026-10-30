@@ -489,54 +489,31 @@ std::string LiveGameAudio::evaField(const Object &obj, const char *field)
 
 void LiveGameAudio::evaWatch(const Object &o)
 {
-	// INFERENCE (S-709): retail reports these from the logic's damage and death code (the call sites were not decoded); here the client watches the body:
-	// a health drop of a local player's object reports EvaEventDamagedOwner at its position, a death EvaEventDieOwner / Ally / Enemy by the relationship of the
-	// object's player to the local player. Eva's own TimeBetweenEventsMS / QuietTime rules (Eva.ini) throttle the repeats.
-	// Only a drop that comes with a new damage record (ActiveBody::attemptDamage's frame stamp) is damage: the builder setting a placed structure to 1.0
-	// health when it starts building (DozerAIUpdate, RW 0x85895D), wall spans and max-health changes lower health without an attack.
-	const BodyModuleInterface *body = o.getBodyModule();
-	if (!body)
-	{
-		return;
-	}
+	// INFERENCE (S-709): retail reports the deaths from the logic's death code (the call sites were not decoded); here the client watches the objects: a death
+	// reports EvaEventDieOwner / Ally / Enemy by the relationship of the object's player to the local player. Eva's own TimeBetweenEventsMS / QuietTime rules
+	// (Eva.ini) throttle the repeats. Lane EVADAMAGE-1: the damage events are retail's drawable damage notice (RW 0x67B4B7: ClientEvent::EVA_DAMAGED,
+	// GameClient/EvaDamage.h), no longer a watch of the health
 	const Player *local = m_game.players().getLocalPlayer();
 	const Player *owner = o.getControllingPlayer();
-	if (!local || !owner)
+	if (!o.getBodyModule() || !local || !owner)
 	{
 		return;
 	}
 	EvaWatch &w = m_eva[o.getID()];
-	const float health = body->getHealth();
 	const bool dead = o.isEffectivelyDead() || o.isDestroyed();
-	const ActiveBody *active = dynamic_cast<const ActiveBody *>(body);
-	const unsigned damageFrame = active ? active->lastDamageFrame() : 0xFFFFFFFFu;
-	if (w.known && !w.dead)
+	if (w.known && !w.dead && dead)
 	{
-		if (dead)
+		const Relationship r = owner == local ? ALLIES : owner->getRelationship(local);
+		const char *field = owner == local ? "EvaEventDieOwner" : r == ALLIES ? "EvaEventDieAlly" : r == ENEMIES ? "EvaEventDieEnemy" : nullptr;
+		const std::string ev = field ? evaField(o, field) : std::string();
+		if (!ev.empty())
 		{
-			const Relationship r = owner == local ? ALLIES : owner->getRelationship(local);
-			const char *field = owner == local ? "EvaEventDieOwner" : r == ALLIES ? "EvaEventDieAlly" : r == ENEMIES ? "EvaEventDieEnemy" : nullptr;
-			const std::string ev = field ? evaField(o, field) : std::string();
-			if (!ev.empty())
-			{
-				AudioApi::reportEva(ev, o.getPosition());
-				++m_stats.evaDeaths;
-			}
-		}
-		else if (health < w.health && owner == local && damageFrame != w.damageFrame)
-		{
-			const std::string ev = evaField(o, "EvaEventDamagedOwner");
-			if (!ev.empty())
-			{
-				AudioApi::reportEva(ev, o.getPosition());
-				++m_stats.evaDamaged;
-			}
+			AudioApi::reportEva(ev, o.getPosition());
+			++m_stats.evaDeaths;
 		}
 	}
 	w.known = true;
 	w.dead = dead;
-	w.health = health;
-	w.damageFrame = damageFrame;
 }
 
 void LiveGameAudio::largeGroupUpdate()
@@ -779,6 +756,7 @@ void LiveGameAudio::update()
 		return; // see the destructor
 	}
 	flushEventLog(); // AUDIO-3: the requests since the last update (their drawables and objects are looked up now)
+	m_stats.evaDamaged = m_game.drawables().evaDamageStats().picked; // lane EVADAMAGE-1
 	GameLogic &logic = m_game.logic();
 	m_audio.setLogFrame(logic.getFrame());
 	AudioApi::updateWeaponFireSounds(logic.getFrame()); // the looping fire sounds whose FireSoundLoopTime ran out
@@ -1005,9 +983,8 @@ std::vector<std::string> LiveGameAudio::acceptanceStops()
 		"whose pending stop frame also keeps the tracker awake in retail); the move sounds are AIInternalMoveToState's (lane AUDIO-3: startMoveSound RW 0x748C0B "
 		"at onEnter RW 0x74E06F, the loop removed at onEnter / onExit) with the move loop's handle kept by the audio side (AudioApi::postHeldSound), not at "
 		"state + 0x40, and without the draw module's sound overrides (RW 0x676A8A, S-701)",
-		"[S-709] Eva from damage and death: EvaEventDamagedOwner and EvaEventDieOwner / Ally / Enemy are reported by a client watch of the bodies (a health drop of a "
-		"local object, a death); retail's logic call sites (ActiveBody / the death pipeline) were not decoded, nor the other Eva rows (DamagedFromShroudedSource, "
-		"DamagedByFire, SecondDamageFarFromFirst, Ambushed, the sighting and detection events)",
+		"[S-709] Eva from deaths and sightings (narrowed by EVADAMAGE-1: the damage rows are retail's RW 0x67B4B7, stop S-7090): EvaEventDieOwner / Ally / "
+		"Enemy are reported by a client watch of the objects (a death); retail's death call sites (RW 0x698F06) were not decoded, nor the sighting and detection events",
 		"[S-1240] held sounds (lane AUDIO-3): the handles retail keeps in its modules (GettingBuiltBehavior + 0x24, the dozer's building sound, "
 		"AIInternalMoveToState + 0x40) are kept by the audio side keyed by the holder object (AudioApi::postHeldSound); an object keeps one move loop (retail: one per "
 		"move state instance); the dozer's building sound starts at RW's dock sub task 2 -> 3 (RW 0x88DD65, ported by lane BUILD-3)",

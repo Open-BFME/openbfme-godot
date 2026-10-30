@@ -220,8 +220,8 @@ void OrdersIntoFog::sample(UnsignedInt label)
 				continue;
 			}
 			const ObjectShroudStatus st = shroud->clientObjectStatus(*o, t.player);
-			// INVALID: no shroud record (contained) or ALWAYS_VISIBLE: taken as seen (the check abstains rather than flags)
-			const bool cellsVisible = st == OBJECTSHROUD_INVALID || st == OBJECTSHROUD_CLEAR || st == OBJECTSHROUD_PARTIAL_CLEAR;
+			// no shroud record or ALWAYS_VISIBLE answer CLEAR (RW 0x68D8F7): taken as seen (the check abstains rather than flags)
+			const bool cellsVisible = st == OBJECTSHROUD_CLEAR || st == OBJECTSHROUD_PARTIAL_CLEAR;
 			if (cellsVisible && !InvisibilityManager::isStealthedAndUndetected(*o, viewer))
 			{
 				t.lastVisible[o->getID()] = label;
@@ -305,8 +305,9 @@ void OrdersIntoFog::judgeTarget(UnsignedInt batch, const GameMessage &m, ObjectI
 	}
 	const ShroudManager *shroud = m_logic.shroud();
 	const ObjectShroudStatus st = shroud->clientObjectStatus(*target, t->player);
-	if (st == OBJECTSHROUD_INVALID)
+	if (!shroud->hasRecord(*target) || target->isKindOfName("ALWAYS_VISIBLE"))
 	{
+		// no record or ALWAYS_VISIBLE: RW 0x68D8F7 answers CLEAR without looking at any cell, so there is nothing to judge
 		++res.abstained;
 		return;
 	}

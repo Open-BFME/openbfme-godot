@@ -124,6 +124,8 @@ public:
 
 	const std::vector<std::unique_ptr<AISkirmishGroup>> &groups() const { return m_groups; }
 	const AISkirmishPlayer *findAI(int playerIndex) const;
+	// RW 0x6A9D9C: historical registration order; dead and captured flags stay listed.
+	const std::vector<ObjectID> &captureFlags() const { return m_captureFlags; }
 	const AISkirmishGroup *findGroup(int playerIndex) const;
 	// manager + 0xA3C: the players with a player info record (every playable player of a started game), in index order
 	const std::vector<int> &infoPlayers() const { return m_infoPlayers; }
@@ -173,9 +175,19 @@ public:
 	// players first asked, RW 0x9E880B). Retail's is a static the process keeps across games; here it belongs to the game (cleared by reset), so the first
 	// game of a process is retail's and later ones start clean (INFERENCE, S-1421)
 	std::vector<std::pair<int, unsigned>> &spellBookAssistTimers() { return m_assistTimers; }
+	// lane AIEXPAND-1: the EXPANSION heuristic's frame counter (+ 8 of the one AITargetHeuristicExpansionBase in TheAITargetHeuristicLibrary, ctor RW 0x97D00D,
+	// read by RW 0x97D035), shared by every AI. Retail's library is made once (RW 0x82EF7B) and its reset (RW 0x63F3BF) does nothing, so the count runs on
+	// across the games of a process; here it belongs to the game (cleared by reset), so the first game of a process is retail's (INFERENCE, S-417)
+	std::uint32_t &expansionHeuristicFrames() { return m_expansionHeuristicFrames; }
+	// lane AIEXPAND-1: the map file name newGame was given (RW reads TheGlobalData's map name, RW 0xDE4364 + 0xC, when a base is made: RW 0x9BCA8E) and the
+	// AnyTypeTemplateDisabledSlots list (manager + 0x970), for the bases a SimpleExpansion adds (RW 0x9B5020 -> RW 0x90D3C7)
+	const std::string &mapFileName() const { return m_mapFileName; }
+	std::vector<std::string> &errors() { return m_errors; }
 
 private:
 	std::uint32_t m_attackedAtIds = 0;
+	std::uint32_t m_expansionHeuristicFrames = 0;
+	std::string m_mapFileName;
 	std::vector<std::pair<int, unsigned>> m_assistTimers;
 	AISkirmishPlayer *addAIPlayer(Player &player);
 	bool groupAccepts(const AISkirmishGroup &g, const Player &player) const;
@@ -193,6 +205,7 @@ private:
 	const SkirmishAIStore *m_store = nullptr;
 	std::vector<std::unique_ptr<AISkirmishGroup>> m_groups;
 	std::vector<int> m_infoPlayers;
+	std::vector<ObjectID> m_captureFlags;
 	std::map<int, std::unique_ptr<AIStatCollector>> m_records; ///< manager + 0xA3C: the player info records by player index (lane DECOMP-3)
 	void makeRecord(const Player &player);
 	std::vector<std::shared_ptr<AIBuildRequest>> m_farmSites; ///< RW 0xDE9EEC (made by the first economy builder, RW 0x8EEBAC)

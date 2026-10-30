@@ -60,7 +60,7 @@ read only there), so it has no effect in 2.01.
 | 0 | `ModelLOD` | Low .. UltraHigh | manager + 0x1774; GlobalData + 0x24 = ModelLOD <= 0 | stop S-3402 |
 | 1 | `AnimationLOD` | VeryLow .. UltraHigh | + 0x1788 | stop S-3402 |
 | 2 | `EffectsLOD` | VeryLow .. UltraHigh | + 0x1778; MaxParticleCount (+ 0xAC8) and the two particle priorities (+ 0x17A0 / + 0x17A4) of that preset; UseHeatEffects = >= 2 (+ 0x25) | particle cap and priorities applied (FX player); heat effects stop S-3402 (no smudge pass, S-194) |
-| 3 | `ShadowLOD` | Off .. UltraHigh | decals = 1..2, volumes = 2, shadow mapping = >= 3 (+ 0x60 / 61 / 62) | stop S-3402 (the renderer draws no shadows yet) |
+| 3 | `ShadowLOD` | Off .. UltraHigh | decals = 1..2, volumes = 2, shadow mapping = >= 3 (+ 0x60 / 61 / 62) | directional volume shadow maps: Medium and High a 2048 atlas, UltraHigh 4096 (each of the four cascades gets RotWK's MapSize, at least 2048 at UltraHigh); Off/Low disable maps; retail decals/stencil parity remains S-3402 |
 | 4 | `TerrainLOD` | Low .. High | normal map >= 2, distance textures and ShowProps >= 1 (+ 0x49 / 4A / 1C), tank tracks of preset Low / Medium / High | stop S-3402 |
 | 5 | `WaterLOD` | Low .. UltraHigh | + 0x1784; + 0x5E = >= 2; soft water edge >= 1 (+ 0x84) | stop S-3402 |
 | 6 | `TextureQualityLOD` | Low .. High | TextureReductionFactor 2 / 1 / 0 (RW 0x517540) | applied: W3D textures lose mip levels (models loaded afterwards; retail reloads at once: S-3402) |
@@ -128,6 +128,7 @@ disables its Graphics list there; the online rows are enabled only when the onli
 | Online IP, Port Number, Send Delay | Online | retail (enabled from the online screens) | `GameSpyIPAddress`, `FirewallPortOverride`, `SendDelay` |
 | Refresh NAT | Online | retail (refused by name: S-1913) | |
 | Share my game results for statistics, Show my ping in the online menus | Online | OpenBFME | `OpenBFMEShareResults`, `OpenBFMEShowPing` (both yes by default) |
+| Send crash reports automatically | Interface | OpenBFME | `OpenBFMECrashReports` (yes by default; lane CRASHACT-1: a crash's privacy-filtered report goes to the OpenBFME crash service at the next start; off: the crash message offers Send report; the launcher reads the same key) |
 | Game invitations, Challenges | Online | OpenBFME social privacy | `privacy.invites`, `privacy.challenges`: Friends and room players / Friends only |
 | Player friend requests | Online | OpenBFME social privacy | `privacy.requests`: Anyone / Nobody |
 | Show my status | Online | OpenBFME social privacy | `privacy.presence`: Friends / Nobody |
@@ -294,8 +295,7 @@ another profile). Tabs:
   camera is client state: the simulation, replays and multiplayer never read
   it (sim_audit). `--widescreen=original|wider` sets it for one run.
 
-Left out, with the reason, in `docs/ROADMAP.md`: shadow map resolution (no
-shadows drawn yet), tooltip delay (the HUD's tooltips are not ported),
+Left out, with the reason, in `docs/ROADMAP.md`: a separate shadow map resolution control (atlas size follows ShadowLOD), tooltip delay (the HUD's tooltips are not ported),
 double-click guard (RotWK 2.01 never reads it), colour-blind player colours
 (player colours are part of the game setup), hotkey rebinding.
 

@@ -66,7 +66,7 @@ bool ObjectCommandButton::doCommandButton(Object &obj, const CommandButton *b, C
 		{
 			if (!b->m_stances.empty() && b->m_stances[0] >= 0 && b->m_stances[0] < STANCE_COUNT)
 			{
-				s->setStance((StanceType)b->m_stances[0]);
+				s->setStance((StanceType)b->m_stances[0], "ObjectCommandButton:SET_STANCE");
 			}
 		}
 		return true;

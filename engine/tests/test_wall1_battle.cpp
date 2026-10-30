@@ -65,8 +65,12 @@ TEST_CASE("wall1 battle retail: the mine carrier drops its charge at Helm's Deep
 	REQUIRE(charge);
 	std::printf("  info: the charge dropped at frame %d at (%.1f %.1f %.1f)\n", dropped, (double)charge->getPosition()->x, (double)charge->getPosition()->y,
 				(double)charge->getPosition()->z);
+	// the carrier fades (Object::kill(8, FADED), RW 0x911D9F) from inside its own AI update, so the kill waits a frame in the pending list (RW 0x698EC3 ->
+	// attemptDamage RW 0x698E7D, UPDATING_AI) and lands before the torch below
 	const Object *c0 = g.game->logic().findObjectByID(carrierId);
-	CHECK((!c0 || c0->isEffectivelyDead())); // the carrier fades (DEATH_FADED)
+	REQUIRE(c0);
+	CHECK_FALSE(c0->isEffectivelyDead());
+	CHECK(c0->pendingDamageCount() == 1);
 	CHECK(charge->getTeam() == berserker->getTeam());
 	CHECK(dropped == 61);
 	// the scenario's scripts: the charge named (as SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER names it), the berserker's torch lit
@@ -89,6 +93,8 @@ TEST_CASE("wall1 battle retail: the mine carrier drops its charge at Helm's Deep
 	};
 	use("HD_Berserker", "Command_SpecialAbilityLightTorch");
 	g.frames(30); // ToggleOnSleepFrames 25
+	const Object *c1 = g.game->logic().findObjectByID(carrierId);
+	CHECK((!c1 || c1->isEffectivelyDead()));
 	CHECK(((berserker->getWeaponSetFlags()[0] >> 24) & 1u) == 1u); // WEAPONSET_TOGGLE_1, weapon set flag 24
 	use("HD_Bomb", "Command_IsengardMineDetonate");
 	// WeaponFireSpecialAbilityUpdate: UnpackTime 20000 (100 frames), then IsegardDetonateMine from the charge (it has no weapon set: the module's own host);

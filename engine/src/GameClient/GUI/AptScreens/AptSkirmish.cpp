@@ -7,10 +7,12 @@
 #include "GameClient/GUI/AptScreens/AptStats.h"
 #include "GameClient/GUI/Skirmish/SkirmishGameRecord.h"
 #include "GameClient/GUI/Skirmish/RealTimeStats.h"
+#include "GameClient/GUI/Skirmish/SkirmishPreferences.h"
 
 #include "GameClient/GUI/AptMessageBox.h"
 #include "GameClient/OptionPreferences.h"
 #include "Common/AsciiString.h"
+#include "Common/PathIO.h"
 #include "GameLogic/CreateAHeroSystem.h"
 #include "GameClient/GUI/AptScreens/AptCreateAHero.h"
 #include "GameClient/CreateAHeroHeroList.h"
@@ -28,6 +30,8 @@
 #include <cstdlib>
 #include <iterator>
 #include <cctype>
+#include <cmath>
+#include <filesystem>
 #include <set>
 
 namespace
@@ -282,6 +286,7 @@ void AptSkirmish::registerAll()
 	registerCommand("AptSkirmish::OnInitialized", [this](const std::string &) {
 		++m_initializedCount;
 		m_profileState = kStateInitialized; // RotWK 0x9280DB; the update does the rest [S-179]
+		refreshBfme1ProfileDisplay();
 	});
 	// the screen's update: owned by this screen, removed with it (AptScreen::~AptScreen)
 	windows().addUpdateListener(this, [this]() { update(); });
@@ -363,6 +368,8 @@ void AptSkirmish::registerProfileCommands()
 	registerCommand("AptSkirmish::Skirmish::PersonaRemove", [this](const std::string &) {
 		pruneDeadGadgets();
 		deleteProfileFromList();
+		invokeRoot("CloseProfilePopup");
+		closePopupState();
 	});
 	registerCommand("AptSkirmish::Skirmish::PersonaOk", [](const std::string &) {});
 	}
@@ -444,6 +451,12 @@ bool AptSkirmish::addProfileFromEntry()
 		keepGame();
 	}
 	m_profiles->setCurrent(name);
+	if (m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
+	{
+		std::string error;
+		if (!Bfme1SkirmishProfiles::create(*m_profiles, std::time(nullptr), &error))
+			windows().note("skirmish-profile-stats", error);
+	}
 	if (!previous.empty())
 	{
 		reloadGameForProfile();
@@ -469,6 +482,11 @@ bool AptSkirmish::changeProfileFromList()
 		return false;
 	}
 	const std::u16string name = GadgetListBoxGetText(m_profileList, selected, 0);
+	return selectProfile(name);
+}
+
+bool AptSkirmish::selectProfile(const std::u16string &name)
+{
 	// lane UI-6: RW 0x9293F5 (BFME2 decomp AptSkirmishCallbacks.cpp OnChangeProfile): another profile keeps the current one's game first (RW 0x929440),
 	// and its own game is set up again (state 5: InitTheGame, RW 0x9288D0)
 	// The list may outlive an external profile deletion. A stale row is not a successful profile change:
@@ -650,19 +668,21 @@ void AptSkirmish::runShutdown(bool *immediate)
 
 bool AptSkirmish::deleteProfileFromList()
 {
-	if (!m_profileList)
+	const bool bfme1 = m_env.fileSystem && isBfme1Data(*m_env.fileSystem);
+	if (!m_profileList && !bfme1)
 	{
 		windows().note("profile-gadget-missing", "Skirmish::SelectProfile has not been initialised");
 		return false;
 	}
 	int selected = -1;
-	GadgetListBoxGetSelected(m_profileList, &selected);
-	if (selected < 0)
+	if (!bfme1) GadgetListBoxGetSelected(m_profileList, &selected);
+	if (!bfme1 && selected < 0)
 	{
 		windows().note("profile-rejected", "a profile delete with no profile selected");
 		return false;
 	}
-	const std::u16string name = GadgetListBoxGetText(m_profileList, selected, 0);
+	const std::u16string name = bfme1 ? m_profiles->current() : GadgetListBoxGetText(m_profileList, selected, 0);
+	if (name.empty()) return false;
 	const bool wasCurrent = name == m_profiles->current();
 	m_profiles->remove(name);
 	// lane UI-6 review: deleting the current profile drops its game with it (BFME2 0x43C2EB) and makes the first remaining profile current: the lobby is
@@ -1438,6 +1458,8 @@ void AptSkirmish::pruneDeadGadgets()
 	check(m_currentMap);
 	check(m_profileList);
 	check(m_profileEntry);
+	check(m_bfme1ProfileCombo);
+	check(m_bfme1MapType);
 	check(m_chatList);
 	check(m_chatPlayers);
 	check(m_chatEntry);
@@ -1477,6 +1499,16 @@ void AptSkirmish::initSkirmishGadget(const std::string &name, GameWindow *window
 		m_profileEntry = window;
 		GadgetTextEntrySetText(window, std::u16string());
 	}
+	else if (name == "Skirmish::PlayerProfile" && m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
+	{
+		m_bfme1ProfileCombo = window;
+		refreshBfme1ProfileCombo();
+		refreshBfme1ProfileDisplay();
+	}
+	else if (name == "Skirmish::GameInfo" && m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
+	{
+		refreshBfme1ProfileDisplay();
+	}
 	else if (name == "Skirmish::GameInfo" || name == "Skirmish::PlayerProfile")
 	{
 		windows().note("unported-gadget-init", "AptSkirmish::InitGadgets(" + name + "): BFME1 name, not placed by RotWK's Skirmish.apt [S-175]");
@@ -1494,11 +1526,39 @@ void AptSkirmish::initMpGameSetupGadget(const std::string &name, GameWindow *win
 	{
 		return;
 	}
+	if (m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
+	{
+		if (name == "MpGameSetup::MapType")
+		{
+			m_bfme1MapType = window;
+			GadgetComboBoxReset(window);
+			GadgetComboBoxAddEntry(window, fetchOrMissing(m_env.gameText, "Apt:OfficialMaps"), 0xFFFFFFFFu);
+			GadgetComboBoxAddEntry(window, fetchOrMissing(m_env.gameText, "Apt:PlayerMadeMaps"), 0xFFFFFFFFu);
+			GadgetComboBoxSetSelectedPos(window, m_bfme1OfficialMaps ? 0 : 1, false);
+			return;
+		}
+		if (name == "MpGameSetup::GameType")
+		{
+			GadgetComboBoxReset(window);
+			GadgetComboBoxAddEntry(window, fetchOrMissing(m_env.gameText, "Apt:HeadToHead"), 0xFFFFFFFFu);
+			GadgetComboBoxSetSelectedPos(window, 0, false);
+			window->winEnable(false);
+			return;
+		}
+	}
 	if (name == "MapList")
 	{
 		m_mapList = window;
-		const int widths[5] = { 8, 2, 0x46, 10, 10 };
-		GadgetListBoxSetColumnWidths(window, 5, widths);
+		if (m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
+		{
+			const int widths[2] = { 10, 90 };
+			GadgetListBoxSetColumnWidths(window, 2, widths);
+		}
+		else
+		{
+			const int widths[5] = { 8, 2, 0x46, 10, 10 };
+			GadgetListBoxSetColumnWidths(window, 5, widths);
+		}
 		populateMapList();
 		return;
 	}
@@ -1711,11 +1771,13 @@ void AptSkirmish::populateMapList()
 	m_mapStates.clear();
 	m_mapImages.clear();
 	createMapCapacityFilter();
+	const bool bfme1 = m_env.fileSystem && isBfme1Data(*m_env.fileSystem);
+	if (bfme1) refreshBfme1ProfileDisplay();
 	const std::vector<MapCacheEntry> &maps = m_setup->source().maps();
 	// lane OWNERFIX-3: RW 0x8460B5 with the flag bit 0: the current profile's stats (SkirmishPreferences RW 0x821A14 -> RealTimeStatsPreferences RW 0x93E72F)
 	RealTimeStatsPreferences statsFile;
 	const RealTimeStatsPreferences *stats = nullptr;
-	if (setupFlags() & 1)
+	if (!bfme1 && (setupFlags() & 1))
 	{
 		if (!m_env.profiles)
 		{
@@ -1742,7 +1804,24 @@ void AptSkirmish::populateMapList()
 	{
 		const MapCacheEntry &m = maps[(std::size_t)index];
 		if (m_largeMapsOnly && (m.numPlayers <= LEGACY_MAX_SLOTS || m.numPlayers > MAX_SLOTS)) continue;
-		const int state = RealTimeStatsPreferences::conquestState(stats, m);
+		if (bfme1 && m.isOfficial != m_bfme1OfficialMaps) continue;
+		int state = RealTimeStatsPreferences::conquestState(stats, m);
+		if (bfme1)
+		{
+			state = m.isMultiplayer && (setupFlags() & 1) ? 1 : 0;
+			if (state)
+			{
+				const std::string key = RealTimeStatsPreferences::statsMapName(m.name) + "_";
+				for (int difficulty = 5; difficulty >= 2; --difficulty)
+				{
+					if (std::atoi(m_bfme1Honors.get(key + std::to_string(difficulty)).c_str()) != 0)
+					{
+						state = difficulty;
+						break;
+					}
+				}
+			}
+		}
 		rows.push_back(Row{ index, state, m_setup->mapDisplayName(m, true) });
 	}
 	const int keys[2] = { m_sortPrimary, m_sortSecondary };
@@ -1789,10 +1868,11 @@ void AptSkirmish::populateMapList()
 		return state < 0;
 	});
 	const int numColumns = GadgetListBoxGetNumColumns(m_mapList);
-	if (numColumns < 3)
+	const int minimumColumns = bfme1 ? 2 : 3;
+	if (numColumns < minimumColumns)
 	{
 		// retail writes to column numColumns - 3 unchecked: a mod's list with fewer columns has no retail result to match
-		windows().note("map-list-columns", "MpGameSetup MapList has " + std::to_string(numColumns) + " columns; RW 0x8460B5 needs 3 or more");
+		windows().note("map-list-columns", "MpGameSetup MapList has " + std::to_string(numColumns) + " columns; needs " + std::to_string(minimumColumns) + " or more");
 		m_refreshing = false;
 		return;
 	}
@@ -1804,17 +1884,16 @@ void AptSkirmish::populateMapList()
 	for (const Row &r : rows)
 	{
 		const MapCacheEntry &m = maps[(std::size_t)r.index];
-		const char *image = RealTimeStatsPreferences::conquestImage(r.state);
+		static const char *bfme1Images[] = { "AptDifficultyNotConquered", "AptDifficultyNotConquered", "AptDifficultyEasyConquered",
+			"AptDifficultyMedConquered", "AptDifficultyHardConquered", "AptDifficultyHardGlowConquered" };
+		const char *image = bfme1 ? bfme1Images[r.state] : RealTimeStatsPreferences::conquestImage(r.state);
 		int row = GadgetListBoxAddEntryImage(m_mapList, image, -1, 0, size, size, true, white);
-		row = GadgetListBoxAddEntryText(m_mapList, m_setup->mapDisplayName(m, false), white, row, numColumns - 3);
-		char16_t count[16];
-		const std::string digits = std::to_string(m.numPlayers);
-		std::size_t n = 0;
-		for (char c : digits)
+		row = GadgetListBoxAddEntryText(m_mapList, m_setup->mapDisplayName(m, bfme1), white, row, bfme1 ? numColumns - 1 : numColumns - 3);
+		if (!bfme1)
 		{
-			count[n++] = (char16_t)c;
+			const std::string digits = std::to_string(m.numPlayers);
+			GadgetListBoxAddEntryText(m_mapList, std::u16string(digits.begin(), digits.end()), white, row, numColumns - 1);
 		}
-		GadgetListBoxAddEntryText(m_mapList, std::u16string(count, n), white, row, numColumns - 1);
 		m_mapKeys.push_back(m.name);
 		m_mapStates.push_back(r.state);
 		m_mapImages.push_back(image);
@@ -1983,6 +2062,7 @@ void AptSkirmish::refreshAll()
 	refreshRuleGadgets(); // lane RULES-1: a network game's rules come with the host's options
 	refreshChatPlayers(); // lane ONLINE-5
 	m_refreshing = outer;
+	refreshBfme1ProfileDisplay();
 }
 
 void AptSkirmish::updateMapPreview()
@@ -2509,6 +2589,39 @@ void AptSkirmish::updateMapStartSpots()
 
 void AptSkirmish::onComboSelected(GameWindow *combo)
 {
+	if (!m_refreshing && combo && combo == m_bfme1ProfileCombo)
+	{
+		int selected = -1;
+		GadgetComboBoxGetSelectedPos(combo, &selected);
+		const auto names = m_profiles->names();
+		if (selected >= 0 && selected < (int)names.size())
+			selectProfile(names[(std::size_t)selected]);
+		else if (selected == (int)names.size())
+		{
+			m_profileState = kStateNewProfile;
+			if (m_profileEntry) GadgetTextEntrySetText(m_profileEntry, std::u16string());
+			invokeRoot("ShowAddProfile");
+		}
+		else if (selected == (int)names.size() + 1 && !m_profiles->current().empty())
+		{
+			m_profileState = kStateDeleteProfile;
+			std::string error;
+			windows().invokeAS(level(), "PopUpRemove", {}, nullptr, &error);
+		}
+		refreshBfme1ProfileCombo();
+		return;
+	}
+	if (!m_refreshing && combo && combo == m_bfme1MapType)
+	{
+		int selected = -1;
+		GadgetComboBoxGetSelectedPos(combo, &selected);
+		if (selected == 0 || selected == 1)
+		{
+			m_bfme1OfficialMaps = selected == 0;
+			populateMapList();
+		}
+		return;
+	}
 	if (m_refreshing || !m_setup)
 	{
 		return;
@@ -2781,6 +2894,13 @@ bool AptSkirmish::startGame()
 		if (line.kind == 1)
 		{
 			m_env.newGame->startRefused(std::u16string(), line.text);
+			// RW 0x928482 -> MessageBoxOk: reporting to the sink alone does
+			// not put the refusal on screen in the Godot host.
+			if (!m_ruleBox)
+			{
+				m_ruleBox = std::make_unique<AptMessageBox>(windows(), shell());
+			}
+			m_ruleBox->show(AptMessageBox::TYPE_OK, std::u16string(), line.text);
 		}
 	}
 	if (!check.ok)
@@ -2832,6 +2952,114 @@ bool AptSkirmish::startGame()
 
 // ---- profiles -------------------------------------------------------------------------------------------------------------------------------
 
+void AptSkirmish::refreshBfme1ProfileCombo()
+{
+	if (!m_bfme1ProfileCombo) return;
+	const bool outer = m_refreshing;
+	m_refreshing = true;
+	GadgetComboBoxReset(m_bfme1ProfileCombo);
+	const auto names = m_profiles->names();
+	for (std::size_t index = 0; index < names.size(); ++index)
+	{
+		GadgetComboBoxAddEntry(m_bfme1ProfileCombo, names[index], 0xFFFFFFFFu);
+		if (names[index] == m_profiles->current())
+			GadgetComboBoxSetSelectedPos(m_bfme1ProfileCombo, (int)index, false);
+	}
+	GadgetComboBoxAddEntry(m_bfme1ProfileCombo, fetchOrMissing(m_env.gameText, "APT:NewProfile"), 0xFFFFFFFFu);
+	GadgetComboBoxAddEntry(m_bfme1ProfileCombo, fetchOrMissing(m_env.gameText, "APT:DeleteProfile"), 0xFFFFFFFFu);
+	m_refreshing = outer;
+}
+
+void AptSkirmish::refreshBfme1ProfileDisplay()
+{
+	if (m_lan || !m_env.fileSystem || !isBfme1Data(*m_env.fileSystem)) return;
+	const std::u16string profile = m_profiles->current();
+	m_bfme1Honors = OptionPreferences();
+	if (!profile.empty() && !m_profiles->folder().empty())
+	{
+		const std::string path = m_profiles->folder() + u16ToUtf8(profile) + "SkirmishStats.ini";
+		std::error_code status;
+		const bool exists = std::filesystem::exists(PathIO::native(path), status);
+		std::string error;
+		if (status || (exists && !m_bfme1Honors.load(path, &error)))
+			windows().note("skirmish-profile-stats", path + ": " + (status ? status.message() : error));
+	}
+	const std::u16string dash = fetchOrMissing(m_env.gameText, "APT:DashDash");
+	auto set = [&](const char *name, const std::u16string &value) { windows().setAptText(name, u16ToUtf8(value)); };
+	auto number = [](long long value) {
+		const std::string digits = std::to_string(value);
+		return std::u16string(digits.begin(), digits.end());
+	};
+	auto format = [&](const char *label, const std::vector<std::u16string> &values) {
+		std::u16string result = fetchOrMissing(m_env.gameText, label);
+		std::size_t start = 0;
+		for (const auto &value : values)
+		{
+			const std::size_t at = result.find(u'%', start);
+			if (at == std::u16string::npos) break;
+			const std::size_t length = result.compare(at, 3, u"%ls") == 0 ? 3 : 2;
+			if (result.compare(at, 2, u"%d") && result.compare(at, 2, u"%s") && result.compare(at, 3, u"%ls")) break;
+			result.replace(at, length, value);
+			start = at + value.size();
+		}
+		return result;
+	};
+	for (const char *name : { "APT:SkirmishProfileCreatedNum", "APT:PlayerNameNum", "APT:TotalCareerWinsNum", "APT:TotalCareerLossesNum",
+		"APT:TotalCareerGamesNum", "APT:CurrentWinStreakNumA", "APT:BestWinStreakNumA", "APT:TotalTimePlayedNum", "APT:CurFactionNameStr", "APT:NextWinsNumber" })
+		set(name, dash);
+	set("APT:CurrentLevelFormat", format("APT:CurrentLevelFormat", { dash }));
+	if (!profile.empty())
+	{
+		set("APT:PlayerNameNum", profile);
+		std::string date = m_bfme1Honors.get("ProfileCreatedDate");
+		if (date.empty()) date = m_profiles->profileValue(0, "OpenBFMEProfileCreatedDate");
+		if (!date.empty()) windows().setAptText("APT:SkirmishProfileCreatedNum", date);
+	}
+	int movie = 0;
+	int progress = 0;
+	std::string icon = "AptRankIcon0";
+	const int faction = m_setup ? m_setup->info().slots[m_setup->localSlot()].playerTemplate : PLAYERTEMPLATE_RANDOM;
+	if (!profile.empty() && m_setup && faction >= 0 && faction < (int)m_setup->source().factions().size())
+	{
+		const SkirmishFaction &entry = m_setup->source().factions()[(std::size_t)faction];
+		if (entry.playableSide && !entry.isObserver)
+		{
+			const std::string &side = entry.side;
+			auto count = [&](const char *suffix) { return std::max(0, std::atoi(m_bfme1Honors.get(side + suffix).c_str())); };
+			const int wins = count("Wins"), losses = count("Losses");
+			set("APT:TotalCareerWinsNum", number(wins));
+			set("APT:TotalCareerLossesNum", number(losses));
+			set("APT:TotalCareerGamesNum", number((long long)wins + losses));
+			set("APT:CurrentWinStreakNumA", number(count("WinStreak")));
+			set("APT:BestWinStreakNumA", number(count("BestWinStreak")));
+			const double seconds = std::strtod(m_bfme1Honors.get(side + "TimePlayed").c_str(), nullptr);
+			const long long hours = std::isfinite(seconds) && seconds > 0 ? (long long)(std::min(seconds, 2147483647.0) / 3600) : 0;
+			set("APT:TotalTimePlayedNum", format("Apt:TimePlayed", { number(hours / 24), number(hours % 24) }));
+			set("APT:CurFactionNameStr", fetchOrMissing(m_env.gameText, "APT:" + side + "Caps"));
+			movie = faction;
+			static const int thresholds[] = { 0, 5, 10, 30, 50, 150, 300, 500, 800, 1500 };
+			const int points = count("Points");
+			int rank = 1;
+			while (rank < 10 && points >= thresholds[rank]) ++rank;
+			const int remaining = rank == 10 ? 0 : thresholds[rank] - points;
+			set("APT:CurrentLevelFormat", format("APT:CurrentLevelNumFormat", { number(rank) }));
+			set("APT:NextWinsNumber", format(remaining == 1 ? "APT:WinsNumFormatForOnePoint" : "APT:WinsNumFormat", { number(remaining) }));
+			progress = rank == 10 ? 100 : (int)(100LL * (points - thresholds[rank - 1]) / (thresholds[rank] - thresholds[rank - 1]));
+			icon = "AptRankIcon" + side + std::to_string(rank);
+			const MappedImageCollection *images = windows().gadgetLayer() ? windows().gadgetLayer()->gadgets().images() : nullptr;
+			if (!images || !images->findImageByName(icon)) icon = "AptRankIcon" + std::to_string(rank);
+		}
+	}
+	windows().setAptImage("CreateComponents/ImageLevelIconMain", icon);
+	auto invoke = [&](const char *name, int value, int &previous) {
+		if (previous == value || level() < 0) return;
+		std::string error;
+		if (windows().invokeAS(level(), name, { std::to_string(value) }, nullptr, &error)) previous = value;
+	};
+	invoke("ShowSkirmishMovie", movie, m_bfme1ProfileMovie);
+	invoke("SetProgressBar", progress, m_bfme1ProfileProgress);
+}
+
 void AptSkirmish::applyProfileName()
 {
 	pruneDeadGadgets();
@@ -2843,6 +3071,16 @@ void AptSkirmish::applyProfileName()
 	refreshSlot(0);
 }
 
+void AptSkirmish::recordsChanged()
+{
+	if (isHidden() || m_lan || !m_env.fileSystem || !isBfme1Data(*m_env.fileSystem)) return;
+	pruneDeadGadgets();
+	if (m_mapList && m_setup)
+		populateMapList();
+	else
+		refreshBfme1ProfileDisplay();
+}
+
 void AptSkirmish::refreshProfileList()
 {
 	// lane END-1: a covered or closing screen (runShutdown: the load screen pushed over it, the shell popping it) leaves its gadgets alone; its movie still runs
@@ -2852,6 +3090,8 @@ void AptSkirmish::refreshProfileList()
 		return;
 	}
 	pruneDeadGadgets();
+	refreshBfme1ProfileCombo();
+	recordsChanged();
 	// BFME1 SkirmishScreenRefreshProfile.cpp: reset, one row per profile, the current one selected
 	if (!m_profileList)
 	{

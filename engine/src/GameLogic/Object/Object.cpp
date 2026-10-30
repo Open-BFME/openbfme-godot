@@ -12,6 +12,7 @@
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
+#include "GameLogic/Object/EvaDamageNotice.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Module/CollideModule.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
@@ -146,8 +147,21 @@ Object::Object(GameLogic &logic, const ThingTemplate *tt, const ObjectStatusMask
 		logic.friend_removeObjectFromLookup(this);
 		throw;
 	}
-	// RW 0x69A684: the construction-time stamp of RW + 0x444 (frame + tt + 0x564) is not ported (S-142)
+	// RW 0x69A67F .. 0x69A690: + 0x444 = the frame + the template's OcclusionDelay (lane OCCLUDE-1: the renderer's occluded-object pass reads it)
+	m_safeOcclusionFrame = logic.getFrame() + occlusionDelayOf(*m_template, logic);
 	m_constructed = true;
+}
+
+UnsignedInt Object::occlusionDelayOf(const ThingTemplate &tt, const GameLogic &logic)
+{
+	if (const FieldValue *v = tt.findField("OcclusionDelay"))
+	{
+		if (const long long *n = std::get_if<long long>(v))
+		{
+			return (UnsignedInt)*n;
+		}
+	}
+	return logic.settings().defaultOcclusionDelay; // RW 0x740178: the constructor's copy of GameData + 0xCC
 }
 
 Object::~Object()
@@ -619,6 +633,19 @@ void Object::setTeam(Team *team)
 				m_client->observerEvent(*this, ObserverEvent::Capture);
 			}
 		}
+	}
+	// lane BFME2CAMP1: RW 0x69962F .. 0x699650, for a non-null team: a horde's members join the team too (contain slot 0x7C, then HordeContain interface slot
+	// 0x170, RW 0x870667: its contained members and those on the way into a garrison). Without it a horde a script gives a player (UNIT_SET_TEAM: MAP GOOD
+	// Rivendell's 'First recruit') kept members of its old owner, which stood still while the horde had the new owner's orders
+	if (team && m_contain)
+	{
+		if (HordeContainInterface *horde = m_contain->getHordeContainInterface())
+		{
+			horde->setMembersTeam(team);
+		}
+	}
+	if (m_constructed)
+	{
 		// lane FACT-B (FACT-C's bdf99d54 finding): RW 0x69954A Object::setTeam (tier B, BFME2 decomp ObjectSetTeam.cpp) ends, for a non-null team,
 		// with updateUpgradeModules (RW 0x699658 -> RW 0x6936FE): the upgrade modules run against the new owner's upgrades, so a captured building takes
 		// its new owner's faction command set (CommandSetUpgrade TriggeredBy Upgrade_<Side>Faction). INFERENCE: RW makes the call for any object; an
@@ -717,7 +744,7 @@ void Object::restoreOriginalTeam()
 	const Player *owner = getControllingPlayer();
 	if (owner && owner->isDefeated())
 	{
-		kill(0);
+		kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x69AB83
 	}
 }
 
@@ -1815,6 +1842,12 @@ void Object::doAttemptDamage(DamageInfo &info)
 			if (info.m_input.m_shouldPlayUnderAttackEva)
 			{
 				m_radarAttackFrame = m_logic.getFrame();
+				// lane EVADAMAGE-1: RW 0x67B580 .. 0x67B776, the Eva half for the local player's object (RW 0x6AA7B2): the logic's part of the choice and
+				// the scan (EvaDamageNotice.h; reads only), the rest is the client's (ClientEvent::EVA_DAMAGED)
+				if (notifyDrawable && m_client && owner == m_logic.players().getLocalPlayer())
+				{
+					m_client->evaDamaged(*this, EvaDamage::makeNotice(m_logic, *this, info, *owner));
+				}
 			}
 			// RW 0x67B78C: the HERO effect is outside ShouldPlayUnderAttackEva and the radar-list gate.
 			if (notifyDrawable && m_client && owner == m_logic.players().getLocalPlayer() && isKindOfName("HERO"))
@@ -1920,20 +1953,18 @@ size_t Object::pendingDamageCount() const
 	return m_pendingDamage.size();
 }
 
-// ZH Object::kill: UNRESISTABLE damage with kill set
-void Object::kill(int deathType)
+// RW 0x698EC3: DamageInfo ctor (RW 0x66365E), source (+ 0x08) cleared, + 0x10 the damage type, + 0x1C the death type, + 0x20 the body's getMaxHealth (vslot 0x1C),
+// + 0x24 kill = 1, then attemptDamage (RW 0x698E7D: a kill made while this object runs its AI waits a frame like any hit). With no source the body credits no
+// killer (no scoreTheKill, no attacked-by entry) and the die modules see source 0
+void Object::kill(DamageType damageType, int deathType)
 {
 	DamageInfo info;
-	info.m_input.m_damageType = DAMAGE_UNRESISTABLE;
+	info.m_input.m_sourceID = INVALID_ID;
+	info.m_input.m_damageType = damageType;
 	info.m_input.m_deathType = deathType;
-	info.m_input.m_sourceID = getID();
-	info.m_input.m_amount = 0.0f;
+	info.m_input.m_amount = m_body ? m_body->getMaxHealth() : 0.0f;
 	info.m_input.m_kill = true;
-	info.m_input.m_delay = 0.0f;
-	if (!m_effectivelyDead && m_body)
-	{
-		m_body->attemptDamage(info);
-	}
+	attemptDamage(info);
 }
 
 // RW 0x6955BC scoreTheKill (lane XP-1 extends the COMBAT-1 port):

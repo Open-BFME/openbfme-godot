@@ -260,8 +260,7 @@ private:
 	Object &m_me;
 };
 
-// vtable 0xC1D63C, allow RW 0x661027: RW 0x68D8F7(obj, player index) == CLEAR (no shroud record or ALWAYS_VISIBLE answers CLEAR there: TARGET 0x68D914;
-// the port's getObjectStatus answers INVALID for those)
+// vtable 0xC1D63C, allow RW 0x661027: RW 0x68D8F7(obj, player index) == CLEAR (no shroud record or ALWAYS_VISIBLE answers CLEAR there: TARGET 0x68D914)
 class FreeOfFogFilter : public PartitionFilter
 {
 public:
@@ -277,7 +276,7 @@ public:
 			return true; // no shroud manager, no record (+ 0x4E4): CLEAR
 		}
 		const ObjectShroudStatus s = shroud->getObjectStatus(obj, m_player);
-		return s == OBJECTSHROUD_CLEAR || s == OBJECTSHROUD_INVALID;
+		return s == OBJECTSHROUD_CLEAR;
 	}
 
 private:

@@ -16,6 +16,7 @@
 #include "GameClient/ClientEvents.h"
 #include "GameClient/AnimationSoundClientBehavior.h"
 #include "GameClient/Drawable.h"
+#include "GameClient/EvaDamage.h"
 #include "GameClient/LogicSnapshot.h"
 #include "GameClient/MapObjectDrawables.h"
 #include "GameLogic/GameLogic.h"
@@ -40,6 +41,8 @@ public:
 	// the simulation's client events, in order: creation, destruction, model conditions, module / sub object visibility, placement
 	void applyEvents(const std::vector<ClientEvent> &events);
 	void setHeroAttackedHandler(std::function<void(ObjectID)> handler) { m_heroAttackedHandler = std::move(handler); }
+	// lane EVADAMAGE-1: what the EVA_DAMAGED events did (EvaDamage::apply)
+	const EvaDamage::Stats &evaDamageStats() const { return m_evaDamage; }
 	void setHeroFlashHandler(std::function<void(const std::string &, int)> handler) { m_heroFlashHandler = std::move(handler); }
 	size_t eventsApplied() const { return m_eventsApplied; }
 
@@ -133,6 +136,7 @@ private:
 	DrawServices m_services;
 	std::map<ObjectID, DrawableID> m_byObject;
 	std::function<void(ObjectID)> m_heroAttackedHandler;
+	EvaDamage::Stats m_evaDamage; ///< lane EVADAMAGE-1
 	std::function<void(const std::string &, int)> m_heroFlashHandler;
 	size_t m_dependencyUpdates = 0; ///< lane COMBAT-4: dependent drawables whose shared flags changed (RW 0x4BF2D8)
 	std::uint32_t m_nextSeq = 0;

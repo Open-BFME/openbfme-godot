@@ -88,11 +88,16 @@ struct ObjectSnapshot
 	// an ALWAYS_VISIBLE object and for one without a record (a contained object); FXList::doFXObj asks the cell at the position of the latter (RW 0x5E22C4)
 	bool shroudRecord = false;
 	bool effectivelyDead = false;  ///< lane VISUAL-2: Object::isEffectivelyDead (the drawable's shroud grace is 3 s longer, RW 0x64849E: GameClient/DrawableShroud.h)
+	// lane OCCLUDE-1: the behind-building roles the object qualifies for at this frame (RTS3DSceneOcclusion::eligibility bits: occluder, occludee)
+	std::uint8_t occlusion = 0;
 	// lane STEALTH-1: the invisibility look for the local player (InvisibilityManager::clientLook, RW 0x81AA03): 0 normal, 1 / 4 the friend's opacity pulse, 3 detected
 	// for an enemy, 5 invisible for an enemy (not drawn, not picked)
 	int stealthLook = 0;
 	// lane GARRISON-1: Object::isDrawableHidden (RW 0x6718FB, set by the contains): the device layer draws nothing for it
 	bool drawableHidden = false;
+	// lane FBSIM-1: a dozer's phantom structure (status PHANTOM_STRUCTURE, DozerAIUpdate slot 0x64 RW 0x88D272): its drawable is drawn at 0.4 opacity (RW 0xBE0DE4) when
+	// its owner is the local player (RW 0x6AA7B2) and hidden for everyone else (drawableHidden set; RW 0x6718FB(1))
+	bool phantomStructure = false;
 	// lane COMBAT-4: the object this one is contained in (Object + 0x27C; INVALID_ID when none): the drawable of a rider / crew member takes its container's
 	// DependencySharedModelFlags (RW 0x4BF2D8, DrawableManager::syncTransforms)
 	ObjectID containedBy = INVALID_ID;
@@ -139,7 +144,12 @@ struct PlayerView
 struct LogicSnapshot
 {
 	UnsignedInt frame = 0;          ///< the completed logic frame
+	bool showBehindBuildingMarkers = true; ///< lane OCCLUDE-1: TheGameLogic + 0x99 (script action 298)
+	// lane OCCLUDE-1: GameData UseBehindBuildingMarker and OccludedColorLuminanceScale, carried here so the renderer never waits for the logic to read them
+	bool useBehindBuildingMarker = true;
+	float occludedColorLuminanceScale = 0.5f;
 	ObjectID nextObjectId = 1;      ///< the logic's next object id at that frame: an id below it that the snapshot lacks is gone, one at or above it is not published yet
+	int globalWeather = 0;          ///< lane WEATHER-1: TheGlobalWeatherSystem + 0x10 at that frame (0 NONE .. 4 SUNNY), read by the client weather
 	bool hashed = false;
 	std::uint32_t stateHash = 0;    ///< the state hash of the frame (when hashed)
 	std::vector<ObjectSnapshot> objects; ///< ascending id

@@ -8,6 +8,7 @@
 #include "doctest.h"
 
 #include "GameNetwork/DisconnectManager.h"
+#include "GameNetwork/LockstepDriver.h"
 #include "GameNetwork/NetPacket.h"
 #include "GameNetwork/Network.h"
 
@@ -190,10 +191,64 @@ struct Peer
 	std::vector<UnsignedInt> selfDestructFrames;
 	std::uint32_t hash = 0x811C9DC5u;
 	std::map<UnsignedInt, std::uint32_t> hashes; ///< logic frame after the frame -> fakeHash
+	// lane MPDROP-2: the frames go through the skirmish frame driver (LockstepDriver: pump, acquire, completed, as LiveGame::advance calls it), up to
+	// `catchUp` a tick (LiveGame acquires every due frame of an advance: a game that hung is many frames behind its clock)
+	std::unique_ptr<LockstepDriver> driver;
+	int catchUp = 1;
+	int framesAfterQuit = 0; ///< frames handed out while the network asked this player to leave
+	void record(UnsignedInt f, const std::vector<GameMessage> &messages)
+	{
+		std::vector<std::string> cmds;
+		for (const GameMessage &m : messages)
+		{
+			cmds.push_back(std::to_string(m.getType()) + " " + std::to_string(m.getPlayerIndex()));
+			if (m.getType() == MSG_SELF_DESTRUCT)
+			{
+				selfDestructFrames.push_back(f);
+			}
+		}
+		relayed[f] = cmds;
+		hash = fakeHash(hash, f, cmds);
+		hashes[f + 1] = hash;
+	}
+	void order()
+	{
+		if (frame % 7 == 3)
+		{
+			// the player gives an order now and then (its commands are part of every frame's list)
+			GameMessage m(MSG_DO_STOP, net->config().slotPlayerIndex[(size_t)net->config().localSlot]);
+			pending.append(m);
+		}
+	}
+	void stepDriver(UnsignedInt stopAt)
+	{
+		for (int i = 0; i < catchUp && frame < stopAt; ++i)
+		{
+			driver->pump(frame, pending);
+			FrameBatch b;
+			if (!driver->acquire(frame, b))
+			{
+				return;
+			}
+			framesAfterQuit += net->quitRequested() ? 1 : 0;
+			record(frame, b.commands);
+			FrameCompletion c;
+			c.batchFrame = frame;
+			c.frame = frame + 1;
+			driver->completed(c);
+			++frame;
+			order();
+		}
+	}
 	void step(UnsignedInt stopAt)
 	{
 		if (!running)
 		{
+			return;
+		}
+		if (driver)
+		{
+			stepDriver(stopAt);
 			return;
 		}
 		net->update(frame, pending);
@@ -201,25 +256,9 @@ struct Peer
 		{
 			CommandList out;
 			net->relayCommands(frame, out);
-			std::vector<std::string> cmds;
-			for (const GameMessage &m : out.messages())
-			{
-				cmds.push_back(std::to_string(m.getType()) + " " + std::to_string(m.getPlayerIndex()));
-				if (m.getType() == MSG_SELF_DESTRUCT)
-				{
-					selfDestructFrames.push_back(frame);
-				}
-			}
-			relayed[frame] = cmds;
-			hash = fakeHash(hash, frame, cmds);
-			hashes[frame + 1] = hash;
+			record(frame, out.messages());
 			++frame;
-			if (frame % 7 == 3)
-			{
-				// the player gives an order now and then (its commands are part of every frame's list)
-				GameMessage m(MSG_DO_STOP, net->config().slotPlayerIndex[(size_t)net->config().localSlot]);
-				pending.append(m);
-			}
+			order();
 		}
 	}
 };
@@ -229,7 +268,8 @@ struct Game
 	Hub hub;
 	std::vector<Peer> peers;
 	// `loading`: a slot whose game never finishes loading (it sends no LOADCOMPLETE, and nothing else: it crashed on the load screen)
-	Game(int n, bool online, int loading = -1)
+	// `catchUp` > 0 (lane MPDROP-2): every peer runs its frames through a LockstepDriver, up to that many a tick
+	Game(int n, bool online, int loading = -1, int catchUp = 0)
 		: hub(n)
 		, peers((size_t)n)
 	{
@@ -238,6 +278,11 @@ struct Game
 			peers[(size_t)i].net = std::make_unique<Network>(configFor(i, n, online), hub.endpoint(i));
 			Hub *h = &hub;
 			peers[(size_t)i].net->setClock([h] { return h->clock; });
+			if (catchUp > 0)
+			{
+				peers[(size_t)i].driver = std::make_unique<LockstepDriver>(peers[(size_t)i].net.get(), nullptr);
+				peers[(size_t)i].catchUp = catchUp;
+			}
 		}
 		for (int i = 0; i < n; ++i)
 		{
@@ -263,6 +308,16 @@ struct Game
 	{
 		hub.silence(slot, true);
 		peers[(size_t)slot].running = false;
+	}
+	// the process of `slot` hangs (lane MPDROP-2): it runs nothing and nothing is heard from it (what it sent waits on the way, the transport resends
+	// it); datagrams to it still arrive and wait in its inbox. `on` false: it runs again
+	void hang(int slot, bool on)
+	{
+		for (int i = 0; i < (int)peers.size(); ++i)
+		{
+			hub.cut(slot, i, on);
+		}
+		peers[(size_t)slot].running = !on;
 	}
 	bool screensUp(const std::vector<int> &survivors) const
 	{
@@ -1027,4 +1082,62 @@ TEST_CASE("cheat1 disconnect: while the host is heard, a resent host frame holdi
 	CHECK_FALSE(hostCheat);
 	CHECK_FALSE(victimCheat);
 	CHECK(g.peers[0].hashes[targetFrame + 1] == victim.hashes[targetFrame + 1]);
+}
+
+// lane MPDROP-2 (found by WOTR2's stalled-client test on the strategic map): a skirmish player whose game hangs past the disconnect time is dropped by the
+// others; when its game runs again, its network learns it was dropped ("dropped by the other players", DisconnectManager) in the same update that brings
+// in the others' commands for the frames they ran, the drop's frame included. LiveGame acquires every due frame of an advance (a hung game is far behind
+// its clock) before GDScript reads quit_requested, so the frame driver itself must hand out no frame once its network asks the player to leave: the drop's
+// frame runs on the others without this player (its army handed over, LAN), so running it here is a game of its own
+TEST_CASE("mpdrop2: a skirmish player whose game hangs is dropped by the others; when it runs again its frame driver runs no frame once its network asks "
+		  "it to leave, and every frame it ran is one the others ran with the same state")
+{
+	for (const bool online : { false, true })
+	{
+		CAPTURE(online);
+		Game g(3, online, -1, 8);
+		for (int t = 0; t < 60; ++t)
+		{
+			g.tick();
+		}
+		const std::vector<int> survivors{ 0, 1 };
+		g.hang(2, true);
+		const UnsignedInt hungAt = g.peers[2].frame;
+		REQUIRE(runUntilDropped(g, survivors, 2, 4 * (kDisconnectMs + kTimeoutMs)) != 0); // tolerance: the drop's timing is the two-to-eight case's; here only that it came
+		for (int t = 0; t < 10; ++t)
+		{
+			g.tick(); // the survivors run on without it
+		}
+		INFO(g.logs({ 0, 1, 2 }));
+		REQUIRE(g.peers[0].frame > hungAt + 5); // tolerance: the survivors played on past the drop
+		CHECK(g.peers[2].frame == hungAt);
+		// its game runs again and its player gives an order at once (its first frames are ones the others ran without it: a split game if they run)
+		g.hang(2, false);
+		g.peers[2].pending.append(GameMessage(MSG_DO_STOP, g.peers[2].net->config().slotPlayerIndex[2]));
+		bool asked = false;
+		for (int t = 0; t < 50 && !asked; ++t)
+		{
+			g.tick();
+			asked = g.peers[2].net->quitRequested();
+		}
+		for (int t = 0; t < 20; ++t)
+		{
+			g.tick(); // and its game runs on a while
+		}
+		REQUIRE(asked);
+		CHECK(g.peers[2].net->quitReason().find("dropped by the other players") == 0);
+		CHECK(g.peers[2].framesAfterQuit == 0);
+		CHECK(g.peers[2].frame == hungAt); // the drop came in with the first update after the hang: it ran nothing more
+		CHECK(g.peers[2].selfDestructFrames.empty());
+		// every frame it ran is one the survivors ran, with the same state (no split game)
+		const Peer &a = g.peers[0];
+		for (const auto &h : g.peers[2].hashes)
+		{
+			CAPTURE(h.first);
+			REQUIRE(a.hashes.count(h.first));
+			CHECK(a.hashes.at(h.first) == h.second);
+		}
+		checkInStep(g, survivors, g.peers[1].frame);
+		CHECK(g.peers[0].selfDestructFrames.size() == (online ? 0u : 1u));
+	}
 }

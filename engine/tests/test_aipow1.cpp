@@ -633,7 +633,10 @@ TEST_CASE("SUMMONLOC-1: end to end: a Hard computer's Dain summons his Royal Gua
 	}
 	MESSAGE("the Royal Guard summon ran after " << frame << " frames");
 	// engine pin (seed 5105): the module's 25-frame counter (RW 0x99302D) from its first update and the roll above Hard's chance pass on this frame
-	CHECK(frame == 22);
+	// lane FBSIM-1 (the scene's computer players build through their dozers, whose sites are now RotWK's phantoms until placed, RW 0x88D272 / 0x88D44F: the shared random stream and the AIs' play move), measured on the lane's tree (a CI host): 22 -> 24
+	// merge queue q29 (measured once on the merged tree and at each merge point): 23; community #113 moves it 22 -> 23 (its FlagCaptureSquad's draws, RW 0x9BC1A0,
+	// shift the shared random stream) and FBSIM-1 on that tree keeps 23
+	CHECK(frame == 23);
 	CHECK(AISpecialPowerUpdate::stats().executedByType[11] == 1);
 }
 
@@ -667,8 +670,10 @@ TEST_CASE("AIPOW-1: end to end: a Hard computer's wounded Aragorn uses Athelas o
 	// pass on that frame here. Engine pin (seed 5107). Lane PATHPERF-1: 23 with findPath's hierarchical corridor (RW 0x6F8601); 22 with it switched off (a
 	// test switch, measured): the corridor's routes move the frame on which the roll passes. Lane TARGET-1: 22: the mood scan's one-off random offset of its
 	// next check (RW 0x6686F0, GameLogicRandomValue line 0x2079 after the idle entry's resetNextMoodCheckTime RW 0x662DD9) draws from the logic generator
-	// before the power's roll. Merge queue q28 (the random stream moves with the merged batch; measured once on the merged tree and at each merge point): 26
-	CHECK(frame == 26);
+	// before the power's roll. Merge queue q28 (the random stream moves with the merged batch; measured once on the merged tree and at each merge point): 26.
+	// Merge queue q29 (measured once on the merged tree and at each merge point): 22; community #113 moves it 26 -> 24 (its FlagCaptureSquad's draws) and
+	// FBSIM-1 24 -> 22 (the computer player's phantom sites)
+	CHECK(frame == 22);
 	CHECK(AISpecialPowerUpdate::stats().executedByType[10] == 1);
 	a.advance(10); // Athelas's heal lands a few frames after the cast
 	CHECK(AISpecialPowerUpdate::healthRatio(*mine) > wounded);    // healed

@@ -27,6 +27,7 @@ lockstep mode (`lua_openbfme_setlockstep`, new file `VM/src/lopenbfme.cpp`, a fl
 | `VM/src/lgc.cpp` | in lockstep mode, the collector's trigger is the heap goal alone | Luau estimates the trigger from wall-clock time, which would make each collection, and the bytes counted against a script's memory cap, differ between machines |
 | `VM/src/lapi.cpp` | in lockstep mode, `lua_encodepointer` returns 0 | `tostring` of a table (and the default `math.random` seed) would show an address |
 | `VM/src/lstate.h`, `VM/src/lstate.cpp` | the flag `openbfmelockstep`, cleared when a state is created | |
+| `VM/src/lopenbfme.cpp` (new) | `lua_openbfme_resettable` empties a table back to a fresh `{}` (lane SDK-2b) | `sdk.state` is refilled in key order at every frame's end, so its `pairs` order is the one a game loaded from a save builds |
 | `VM/include/luaconf.h` | `LUAU_FASTMATH_BEGIN` / `_END` are always empty | under MSVC they turned `/fp:precise` off for a few functions, which `/fp:strict` (the simulation contract) forbids, and fast maths could differ between compilers |
 
 Not patched, because the script state handles it:

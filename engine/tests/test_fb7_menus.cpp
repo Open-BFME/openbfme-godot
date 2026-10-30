@@ -1133,7 +1133,7 @@ TEST_CASE("opts2 options retail: the advanced rows the device cannot show are gr
 	std::string error;
 	REQUIRE_MESSAGE(fx.wm->invokeAS(options->level(), "ShowAdvancedSettings", {}, nullptr, &error), error);
 	fx.tick(150);
-	const std::set<int> want = { 0, 1, 3, 4, 5, 7 };
+	const std::set<int> want = { 0, 1, 4, 5, 7 }; // ShadowLOD now controls the Godot shadow-map substitute.
 	CHECK(options->greyedRows() == want);
 	// a greyed row takes no click: its buttons are disabled; an EffectsLOD button still is enabled
 	int disabled = 0;

@@ -2,6 +2,7 @@
 // See CommandXlat.h.
 
 #include "GameClient/MessageStream/CommandXlat.h"
+#include "GameLogic/Module/StancesBehavior.h"
 
 #include "Common/Team.h"
 #include "GameClient/Radar.h"
@@ -493,11 +494,7 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 		}
 		return msgType;
 	}
-	// everything else: move to the location (ZH's final else branch, CommandXlat.cpp:2252). A click on an object of ours that has nothing more specific to do is
-	// no command (it is a selection): only a location click moves. Lane WALL-1 (INFERENCE, S-4840): a wall piece units walk on (KindOf WALK_ON_TOP_OF_WALL: RotWK
-	// gives it the selectable pick type, RW 0x4B583C, so the order click picks the wall section under the cursor) is ground to walk on, like ZH's own mine
-	// (CommandXlat.cpp:1448): the click moves onto the wall top it lands on. RotWK's evaluateContextCommand (RW 0x81E60B) was not read for this case
-	const bool walkOn = obj && obj->isKindOfName("WALK_ON_TOP_OF_WALL");
+	// No more specific context action: move to the clicked location, including when scenery was picked.
 	if (pos)
 	{
 		if (type == EvaluateType::DoHint)
@@ -508,9 +505,11 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 				hint(msgType == MSG_DO_ATTACKMOVETO ? MouseCursorName::AttackMove : MouseCursorName::Move);
 			}
 		}
-		else if (!obj || walkOn)
+		else
 		{
-			msgType = issueMove(obj, pos, type);
+			// RW 0x81E60B -> 0x81DB0C: a drawable does not veto the final location order. Only BASE_FOUNDATION drops the drawable.
+			// BFME2 CommandXlat_Rva004297bb.cpp, RVA 0x429E11 (tier B, operand-only differences); issueMove RVA 0x4292F6 (tier A).
+			msgType = issueMove(obj && obj->isKindOfName("BASE_FOUNDATION") ? nullptr : obj, pos, type);
 		}
 	}
 	return msgType;
@@ -648,6 +647,14 @@ void CommandTranslator::selectHero()
 
 void CommandTranslator::changeStance(int stance)
 {
+	for (ObjectID id : m_ctx.ui.selected())
+	{
+		Object *obj = m_ctx.logic.findObjectByID(id);
+		if (StancesBehavior *sb = obj ? StancesBehavior::of(*obj) : nullptr)
+		{
+			sb->traceQueuedStance(stance, "CommandTranslator:stance-hotkey");
+		}
+	}
 	ClientMessage &m = m_ctx.stream.append(MSG_CHANGE_STANCE); // the logic case RW 0x77BC59 (StancesBehavior::registerHandlers)
 	m.appendInteger(stance);
 }

@@ -94,6 +94,42 @@ void coordOf(const ThingTemplate &tt, const std::vector<std::string> &tokens, fl
 		}
 	}
 }
+// INI::getNextAsciiString (Common/INI/INI.cpp; ZH INI.cpp) on a row's tokens: a token that starts with a quote loses it; alone, its closing quote goes too;
+// followed by more of the line, getNextTokenOrNull with the quote separators ("\"\n=") takes the rest up to the next quote, joined with one space (the raw
+// tokens no longer hold the line's own spacing: every retail quoted geometry name is one token)
+std::string asciiStringOf(const std::vector<std::string> &tokens)
+{
+	if (tokens.empty())
+	{
+		return std::string();
+	}
+	const std::string &t = tokens[0];
+	if (t.empty() || t[0] != '"')
+	{
+		return t;
+	}
+	std::string buff = t.size() > 1 ? t.substr(1) : std::string();
+	if (tokens.size() == 1)
+	{
+		if (!buff.empty() && buff.back() == '"')
+		{
+			buff.pop_back();
+		}
+		return buff;
+	}
+	std::string rest;
+	for (size_t i = 1; i < tokens.size(); ++i)
+	{
+		rest += (i > 1 ? " " : "") + tokens[i];
+	}
+	const size_t q = rest.find('"');
+	rest = rest.substr(0, q);
+	if (!rest.empty())
+	{
+		buff += " " + rest;
+	}
+	return buff;
+}
 } // namespace
 
 const std::vector<ObjectGeometry::Shape> &ObjectGeometry::cachedShapesOf(const ThingTemplate &tt)
@@ -153,9 +189,11 @@ std::vector<ObjectGeometry::Shape> ObjectGeometry::shapesOf(const ThingTemplate 
 		}
 		else if (e.row == "GeometryName")
 		{
-			// lane HUD-5: RW 0xAD16B0 -> INI::parseAsciiString (the next token; none: the empty string, as getNextAsciiString answers: retail's
-			// AngmarHallofTwilight has `GeometryName =`)
-			shapes.back().name = e.tokens.empty() ? std::string() : e.tokens[0];
+			// lane HUD-5: RW 0xAD16B0 -> INI::parseAsciiString -> getNextAsciiString (none: the empty string: retail's AngmarHallofTwilight has
+			// `GeometryName =`). Lane BFME2CAMP1: getNextAsciiString drops a quoted token's quotes (Common/INI/INI.cpp, ZH INI::getNextAsciiString): the
+			// gates' `GeometryName = "Closed"` / "OpenLeft" / "OpenRight" (RivGate, the castle wall gates, ...) are the names GateOpenAndCloseBehavior
+			// toggles; with the quotes kept no gate ever opened in the pathfinder's map
+			shapes.back().name = asciiStringOf(e.tokens);
 		}
 		else if (e.row == "GeometryActive")
 		{

@@ -853,7 +853,8 @@ void Pathfinder::removeGoal(PathfindObject &obj)
 
 void Pathfinder::updatePos(PathfindObject &obj)
 {
-	// TARGET RW 0x8E26B7: only a stationary ground unit holds a position
+	// TARGET RW 0x8E26B7: a ground unit holds its position cell, moving or not; only one that follows a path with a special node (AI vtable + 0x228,
+	// RW 0x66288A, the port's isStationary false) releases it (lane PATHPRIO-1: the comment said "only a stationary unit")
 	if (!m_isMapReady)
 	{
 		return;

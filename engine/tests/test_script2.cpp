@@ -168,7 +168,7 @@ TEST_CASE("script2 UNIT_AFFECT_OBJECT_PANEL_FLAGS (RW 0x7C569E): Indestructible 
 	CHECK(u.getBodyModule()->isIndestructible());
 	CHECK(h0 != f.g.lw.logic->computeStateHash());
 	CHECK(damage(u, 10.0f) == 0.0f);
-	u.kill(DEATH_NORMAL); // kill is UNRESISTABLE damage: blocked too
+	u.kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // kill is UNRESISTABLE damage: blocked too
 	CHECK_FALSE(u.isEffectivelyDead());
 	run(f.g, act("UNIT_AFFECT_OBJECT_PANEL_FLAGS", { sp(14, "U"), sp(46, "Enabled"), ip(8, 0) }));
 	CHECK((u.scriptStatus() & 1u) != 0);

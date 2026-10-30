@@ -23,6 +23,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
 import audit_package  # noqa: E402
+import crash_key  # noqa: E402
 import lib_provenance  # noqa: E402
 import make_archive  # noqa: E402
 import release_keys  # noqa: E402
@@ -677,6 +678,9 @@ def package(
         stage = work / "stage"
         extract_git_archive(["godot", "launcher", "LICENSE", "NOTICE", "tools/release/README-MAC.txt"], stage)
         project = stage / "godot"
+        # lane CRASHACT-1: the crash service key (CRASH_CLIENT_KEY) into both staged projects, or nothing (no crash report is sent)
+        for staged in (project, stage / "launcher"):
+            print(crash_key.write(staged))
         manifest = project / "openbfme.gdextension"
         manifest.write_text(arm64_manifest_text(manifest.read_text(encoding="utf-8")), encoding="utf-8")
         trust = (project / "scripts/release/release_trust.gd").read_text(encoding="utf-8")

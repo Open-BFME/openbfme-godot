@@ -620,6 +620,62 @@ func _scenario_ghosts() -> String:
 	return "" if fails.is_empty() else "; ".join(fails)
 
 
+## lane FBSIM-1 (FB-0039): the builder's site is RotWK's phantom until the builder arrives (drawn at 0.4 for its owner, RW 0x88D272), then a
+## construction site (RW 0x88D44F): a farm placed a few hundred away, screenshots while the builder walks and after it arrived
+func _scenario_phantom() -> String:
+	await _headless_window()
+	var base := Vector2()
+	for o in own_objects():
+		if o.commandcenter:
+			base = Vector2(o.x, o.y)
+	var builder: Dictionary = {}
+	var button: Dictionary = {}
+	for o in own_objects():
+		if o.structure:
+			continue
+		await look_by_radar(Vector2(o.x, o.y))
+		if not await select_object(o):
+			continue
+		await game._step(4)
+		for b in hud.get_command_buttons():
+			if b.command == "DOZER_CONSTRUCT" and str(b.template).contains("Farm"):
+				button = b
+		if not button.is_empty():
+			builder = o
+			break
+	if builder.is_empty():
+		return "no own builder offers a farm"
+	await look_by_radar(base)
+	await click(palantir_button(button.frame))
+	await game._step(6)
+	var placed := false
+	for k in 16:
+		var a := TAU * float(k) / 16.0 + 0.3
+		var p := base + Vector2(cos(a), sin(a)) * 330.0
+		var px := to_pixel(p.x, p.y)
+		if not on_screen(px):
+			continue
+		await move_to(px)
+		await game._step(3)
+		var pl: Dictionary = hud.get_placement()
+		if pl.get("has_ghost", false) and int(pl.legal) == 0:
+			await click(px)
+			placed = true
+			print("PLAY1 phantom: %s ordered at (%.0f, %.0f)" % [button.template, p.x, p.y])
+			break
+	if not placed:
+		return "no legal farm site on the screen"
+	await game._step(2)
+	# a placed order already ends the placement mode; a right click on the ground then would be a move order that cancels the phantom (Sol review of FBSIM-1)
+	if hud.get_placement().get("has_ghost", false):
+		await click(window_size() * 0.5, MOUSE_BUTTON_RIGHT) # leave the placement mode
+	await game._step(4)
+	for i in 14:
+		await game._step(10)
+		shot("phantom-%02d" % i)
+	return ""
+
+
 ## lane FOGFX-1 (FB-0055, "a brief 30-40% FPS drop when selecting a building for the builder to construct"): the frames around starting a placement.
 ## The builder is selected; for each of its first --buildperf-count DOZER_CONSTRUCT buttons (default 4): an idle window (30 frames), the button
 ## clicked and the pointer moved over the ground beside the citadel (20 frames: the frames that make the ghost), a right click ends it, and the same

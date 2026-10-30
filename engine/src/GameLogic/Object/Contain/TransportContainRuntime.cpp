@@ -488,7 +488,7 @@ void TransportContain::killRidersWhoAreNotFreeToExit()
 			}
 			else
 			{
-				r->kill(0); // RW 0x698EC3(8, 0)
+				r->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x86B0CB: kill(8, 0)
 			}
 			++m_stats.ridersKilledNotFree;
 		}
@@ -1039,7 +1039,7 @@ void HordeTransportContain::onDie(const DieModuleInterface::Event &event)
 		for (Object *v : victims)
 		{
 			removeFromContain(v);
-			v->kill(0);
+			v->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x990FA0 / 0x990FE9: kill(8, 0)
 			v->setDrawableHidden(true);
 			++m_openStats.ridersDestroyedOnDeath;
 		}
@@ -1110,7 +1110,7 @@ int HordeTransportContain::throwMemberOff(Object *member, HordeContainInterface 
 		setCondition(*member, stunnedFlailing, true); // RW 0x87ABA6 .. 0x87ABBB (+ 0x118 bit 31)
 		phys->fling(Coord3D{ SimMath::mulf32(m[0], k), SimMath::mulf32(m[3], k), k });
 	}
-	member->kill(0); // RW 0x698EC3(8, 0)
+	member->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x87AC40: kill(8, 0)
 	++m_openStats.ridersDestroyedOnDeath;
 	return idx;
 }
@@ -1144,7 +1144,7 @@ UpdateSleepTime HordeTransportContain::update()
 					{
 						h->releaseMemberForGarrison(m);
 						removeFromContain(m);
-						m->kill(0);
+						m->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x87AD4C: kill(8, 0)
 						m->setDrawableHidden(true);
 					}
 				}

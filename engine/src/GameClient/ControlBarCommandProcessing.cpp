@@ -5,6 +5,7 @@
 // arguments only) or a GUI command mode. Kept apart from the view model (ControlBar.cpp) because it BUILDS GameMessages: this file is in the simulation audit manifest.
 
 #include "GameClient/ControlBar.h"
+#include "GameLogic/Module/StancesBehavior.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/GateModules.h"
@@ -23,8 +24,16 @@
 
 // lane CAMPUI-1: RW 0x96F53C (InGameToggleStanceCommandButton::SetStance): TheMessageStream's new message 0x468 (MSG_CHANGE_STANCE, vslot 0x48) with the stance as its
 // integer (RW 0x7111E5); the logic applies it to the sender's selection (RW 0x77BC59)
-bool ControlBar::sendChangeStance(int stance)
+bool ControlBar::sendChangeStance(int stance, const char *site)
 {
+	for (ObjectID id : m_ctx.ui.selected())
+	{
+		Object *obj = m_ctx.logic.findObjectByID(id);
+		if (StancesBehavior *sb = obj ? StancesBehavior::of(*obj) : nullptr)
+		{
+			sb->traceQueuedStance(stance, site);
+		}
+	}
 	ClientMessage &m = m_ctx.stream.append(MSG_CHANGE_STANCE);
 	m.appendInteger(stance);
 	return true;
@@ -452,6 +461,25 @@ bool ControlBar::cancelQueued(int slot, bool inPalantir, bool shift)
 		m.appendBoolean(false);
 		return true;
 	}
+	if (cb && cb->button
+		&& (cb->button->m_command == GUI_COMMAND_PLAYER_UPGRADE || cb->button->m_command == GUI_COMMAND_OBJECT_UPGRADE
+			|| cb->button->m_command == GUI_COMMAND_CASTLE_UPGRADE))
+	{
+		// lane FBSIM-1 (FB-0037), TARGET FACTS (processCommandUI RW 0x940435, the right press: the byte argument at ebp + 0xC is 0; caveat S-001): PLAYER_UPGRADE
+		// (RW 0x940CEA) and CASTLE_UPGRADE (RW 0x940EAB) jump to RW 0x940FB3, OBJECT_UPGRADE (RW 0x940D49) to RW 0x940E77. Each cancels only for a CANCELABLE
+		// button (Options + 0x1C bit 31) with an upgrade (+ 0x24) of an object whose controlling player (RW 0x68B678) is the local one: MSG_CANCEL_UPGRADE
+		// (0x416) { int the upgrade's mask bit (+ 0x38) } (RW 0x940AE9 -> 0x940FA9). RotWK does not ask whether the upgrade is queued (the logic's
+		// cancelUpgrade RW 0x8A1140 finds nothing then) nor what the button's state is
+		Object *obj = m_ctx.logic.findObjectByID(m_source);
+		const UpgradeTemplate *u = TheUpgradeCenter && !cb->button->m_upgradeName.empty() ? TheUpgradeCenter->findUpgrade(cb->button->m_upgradeName) : nullptr;
+		if (!u || !cb->button->hasOption(COMMAND_OPTION_CANCELABLE) || !obj || obj->getControllingPlayer() != m_ctx.localPlayer())
+		{
+			return false;
+		}
+		ClientMessage &m = m_ctx.stream.append(MSG_CANCEL_UPGRADE);
+		m.appendInteger(u->getMaskBit());
+		return true;
+	}
 	if (!cb || !cb->button || cb->button->m_command != GUI_COMMAND_UNIT_BUILD || cb->queued <= 0)
 	{
 		return false;
@@ -545,7 +573,11 @@ bool ControlBar::rightPressButton(int slot, bool inPalantir, bool shift)
 		case GUI_COMMAND_UNIT_BUILD:
 		case GUI_COMMAND_REVIVE: // lane HUD-7: the same case in RotWK (RW 0x940B0E)
 			return cancelable && cancelQueued(slot, inPalantir, shift); // RW 0x940C59 .. 0x940C70 (the production cancel, lane HUD-6)
+		case GUI_COMMAND_PLAYER_UPGRADE:
+		case GUI_COMMAND_OBJECT_UPGRADE:
+		case GUI_COMMAND_CASTLE_UPGRADE:
+			return cancelQueued(slot, inPalantir, shift); // lane FBSIM-1: the upgrade cancel RW 0x940E77 / 0x940FB3
 		default:
-			return false; // INFERENCE / not ported here: the other right press cases (upgrade cancel RW 0x940FB3, ...) stay the left press handlers' (S-3460)
+			return false; // INFERENCE / not ported here: the other right press cases stay the left press handlers' (S-3460)
 	}
 }

@@ -129,3 +129,13 @@ std::unique_ptr<TextureMapperClass> Create_Texture_Mapper(int attributeType, uns
 	std::uint32_t syncTimeMs, const MapperRandom &random, std::string *error, bool *unknownType = nullptr);
 
 const char *W3D_Mapper_Type_Name(int type);
+
+// Whether retail's legacy material -> DefaultW3D.fx conversion (MeshMatDescFXShaderConversion.cpp, rva00199FFB, BFME2 0x00199FFB) accepts the mapper of a
+// stage: it calls the mapper's vtable slot 8 (+0x20, TextureMapperFXShaderConvert.cpp; RotWK RW 0x586EE0 Scale, RW 0x5870A0 LinearOffset, RW 0x587320 Grid)
+// and a stage without a mapper object (plain UV, SILHOUETTE, an undefined type) has nothing to convert. Target facts (RW game.dat, caveat S-001): the
+// three bodies test Mapper_ID() == 8 (RW 0x581920, Scale) / 1 (RW 0x420770, LinearOffset) / 9 (RW 0x581930, Grid); the other mapper class tables that share
+// a body report other IDs (observed 4, 0xA .. 0xD, 0x10 .. 0x12, 0x14 .. 0x16) and so are refused, and the base slot (RW 0x582150) returns false. INFERENCE:
+// W3D types Scale / LinearOffset / Grid are the IDs 8 / 1 / 9 classes; a second class table (RW 0xBEB8D0) also reports ID 9 and was not matched to a W3D
+// type (stop S-6020). Scale: stage 0 or 1. LinearOffset: stage 0 or 1, |UOffset| and |VOffset| <= 0.001 (double at RW 0xBDCD88) and no
+// ClampFix. Grid: stage 0 only. False + *reason (the retail message's content) when refused.
+bool W3D_Mapper_Fx_Convertible(int type, unsigned stage, const std::string &argsText, std::string *reason);

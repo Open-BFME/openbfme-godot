@@ -76,6 +76,10 @@ float AIBuildRequest::bestPriority() const
 
 Coord3D AIBuildRequest::sitePosition(const GameLogic &logic) const
 {
+	if (plain)
+	{
+		return offset; // RW 0x97DA4E: + 0x30 .. + 0x38 as stored (RW 0x97D986: z = the ground height at the position)
+	}
 	// RW 0x97DED8: (offset + base) in SSE, z = the ground height there
 	Coord3D p;
 	p.x = SimMath::addf32(basePosition.x, offset.x);
@@ -86,6 +90,10 @@ Coord3D AIBuildRequest::sitePosition(const GameLogic &logic) const
 
 float AIBuildRequest::siteAngle() const
 {
+	if (plain)
+	{
+		return angle; // RW 0x48DA54: fld [ecx + 0x3C]
+	}
 	return normalizeAngle(SimMath::addf32(baseAngle, angle)); // RW 0x97DDB8: x87 fadd of two floats, stored as float
 }
 
@@ -214,6 +222,21 @@ void AIBaseBuilder::init(GameLogic &logic, AISkirmishPlayer &ai, const std::stri
 	Coord3D pos = wp->location;
 	pos.z = logic.getGroundHeight(pos.x, pos.y);
 	s.startPosition = pos;
+	AIBaseBuilder::addBase(logic, ai, pos, mapFileName, anyTypeDisabledSlots, errors);
+}
+
+void AIBaseBuilder::addBase(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D &pos, const std::string &mapFileName, const std::vector<int> &anyTypeDisabledSlots,
+	std::vector<std::string> &errors)
+{
+	AIBuildState &s = ai.build;
+	Player *player = logic.players().getNthPlayer(ai.playerIndex);
+	const TerrainLogic *terrain = logic.terrain();
+	if (!player || !terrain || !ai.store)
+	{
+		errors.push_back("[S-413] skirmish ai base builder: player " + std::to_string(ai.playerIndex) + " has no terrain or data");
+		return;
+	}
+	const int startPos = player->getMultiplayerStartIndex(); // RW 0x9BC734 / 0x9BCB40: the player's slot start position (RW 0x90CE35 + 0x10), for every base
 	// RW 0x90D3C7: the angle facing the map centre (the active extent: boundary 0)
 	float ex = 0.0f, ey = 0.0f;
 	terrain->getExtent(0, ex, ey);
@@ -303,10 +326,28 @@ void startRequest(AIBuildState &s, const std::shared_ptr<AIBuildRequest> &req, b
 	}
 }
 
+} // namespace
+
+void AIBaseBuilder::startPlainRequest(AIBuildState &s, const std::shared_ptr<AIBuildRequest> &req)
+{
+	// RW 0x9618BA(player, 0): the state is 0; RW 0x8F0B92 (state 0) appends it to the pending queue
+	req->state = 0;
+	s.pending.push_back(req);
+}
+
+void AIBaseBuilder::leaveQueues(AIBuildState &s, const AIBuildRequest *req)
+{
+	auto same = [&](const std::shared_ptr<AIBuildRequest> &r) { return r.get() == req; };
+	s.pending.erase(std::remove_if(s.pending.begin(), s.pending.end(), same), s.pending.end());
+	s.inProgress.erase(std::remove_if(s.inProgress.begin(), s.inProgress.end(), same), s.inProgress.end());
+}
+
+namespace
+{
 // RW 0x97DDC9 reset(state); an upgrade's or expansion's vslot 0x1C is RW 0x993D2E (the state only; lane AI5)
 void resetRequest(GameLogic &logic, AIBuildRequest &req, int state)
 {
-	if (state == 3 && !req.upgrade && !req.expansion)
+	if (state == 3 && !req.upgrade && !req.expansion && !req.plain)
 	{
 		req.counts = false;
 		req.rebuildFrame = logic.getFrame() + kRebuildDelayFrames;
@@ -447,11 +488,11 @@ int enemiesNear(GameLogic &logic, const Player &player, const Coord3D &site)
 int checkRequest(GameLogic &logic, const AIBuildRequest &req, Player &player)
 {
 	const Coord3D site = req.sitePosition(logic);
-	if (enemiesNear(logic, player, site) > 2)
+	if (!req.plain && enemiesNear(logic, player, site) > 2)
 	{
 		return 9;
 	}
-	// RW 0x97DC99
+	// RW 0x97DC99 (a plain request's whole check, lane AIEXPAND-1)
 	Object *dozer = logic.findObjectByID(req.producer);
 	const DozerAIUpdate *d = dozer ? dynamic_cast<const DozerAIUpdate *>(dozer->getAIUpdateInterface()) : nullptr;
 	if (!dozer || !d || d->taskTarget() != INVALID_ID) // AIUpdate vslot 0x1B8 (S-414: taken as "has a task", travelling to a site included)
@@ -2111,7 +2152,7 @@ void AIBaseBuilder::crcRequest(const AIBuildRequest &r, StateHasher &h)
 	h.addI32(r.owner);
 	h.addI32(r.failures);
 	h.addI32(r.siteIndex);
-	h.addU32((r.requeueOnProducerDeath ? 1u : 0u) | (r.reserveMoney ? 2u : 0u)); // one word: a request of 32 words would make the rotate-add hash blind to swaps
+	h.addU32((r.requeueOnProducerDeath ? 1u : 0u) | (r.reserveMoney ? 2u : 0u) | (r.plain ? 4u : 0u)); // one word: a request of 32 words would make the rotate-add hash blind to swaps
 	// lane AI5: the upgrade / expansion part (a request of neither kind adds nothing)
 	if (r.upgrade || r.expansion)
 	{

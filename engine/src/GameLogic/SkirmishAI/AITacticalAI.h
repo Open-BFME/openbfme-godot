@@ -62,7 +62,17 @@
 //     + 0x38 = the average of the team centres), the origin + 0x44 (the first position), vslot 0x20, RW 0x8F144C, vslot 0x2C (RW 0x8F2784: the retreat on a
 //     negative threat); SimpleAttack's started update RW 0x9B4DE7 ends the tactic with success when every team is idle for TeamTimeUntilConsideredIdle seconds
 //     (RW 0x8F175A / 0x8F1725) or the target is inactive.
-// What is not ported (stops S-417 / S-418, reported at runtime): the other 8 offensive tactics (the pick draws among the 2 SimpleAttack prototypes only), the
+//   * FlagCaptureSquad: applicability RW 0x9BC39F, setup RW 0x9BC1A0, nearest registered flag RW 0x9BC213, update RW 0x9BC3F4,
+//     cleanup RW 0x9BBFDC. The pending recruitment prototypes (+4) survive until handover into the active team list (+0x14).
+//   * lane AIEXPAND-1: the EXPANSION heuristic (library index 2, AITargetHeuristicExpansionBase, ctor RW 0x97D00D, vtable RW 0xC85598): RW 0x97D191 with its
+//     gate RW 0x97D035 (AITacticalAI.cpp heuristicExpansion: a frame counter shared by every AI, 3000 money, the MidGame phase, one draw <= 0.5; then the
+//     nearest free "Player_<n>_Start" waypoint is the target position, no object). The EXPANSION dispatch RW 0x90C50C draws (AITacticsGenerator.cpp line
+//     0x196) among the generator's + 0x34 prototypes, which hold one SimpleExpansion (RW 0x90C09E -> ctor RW 0x9B5190, vtable RW 0xC898D4: applies always
+//     (RW 0x9B501B), one team (RW 0x490AC4) of at most GetGameLogicRandomValue(2, 2) (RW 0x9B5081, line 0xA0), launch RW 0x63F3BF (nothing), cleanup vslot 2
+//     RW 0x9B5042, started update RW 0x9B52BD: a plain structure request for "MenFortress" (whatever the side; RW 0x9B51E9 -> ctor RW 0x97DA21, vtable
+//     RW 0xC85750, priority 3000) at the target, the team attack-moves there once the request is in progress, a complete request adds a base at the target
+//     (RW 0x9B5020 -> RW 0x90D3C7, AIBaseBuilder::addBase), a failed one ends the tactic (0, 0)). All ported.
+// Historical initial-lane limitations (the current S-417 / S-418 runtime reports and docs/FEATURE-MAP.md track subsequent ports): the other 8 offensive tactics, the
 // DEFENSIVE / OPPORTUNITY / EXPANSION heuristics and tactics, the targetless tactics (RW 0x90C5E2: FarmBuilder, StructureCreep, ...), the AIThreatFinder (threat
 // taken as 0: no draw at RW 0x90B2A0), RW 0x6C7344, RW 0x90CCCB, RW 0x8F144C (the teams' AIGroup step) and RW 0x8F2784's retreat (no threat finder), the other tactics'
 // launch / update bodies, the end's merge of the teams, the AI team objects (members stay in the player's team), the pathfinder check of RW 0x9EF9AF (taken as reachable), the filters
@@ -84,6 +94,7 @@
 
 class GameLogic;
 class AIStatCollector;
+struct AIBuildRequest;
 class Player;
 class StateHasher;
 struct AISkirmishPlayer;
@@ -144,7 +155,7 @@ struct AITactic
 	Coord3D origin;                  ///< + 0x44: the first such centre after the start (RW 0x8F2955), where a retreat goes (RW 0x8F243A)
 	bool retreated = false;          ///< + 0x50
 	bool targetless = false;         ///< lane AI-2 r3: a clone of a targetless prototype (generator list + 0x58)
-	ObjectID squadTarget = INVALID_ID; ///< FarmKillSquad + 0x58: the object the squad attacks
+	ObjectID squadTarget = INVALID_ID; ///< FarmKillSquad / FlagCaptureSquad + 0x58: the attack or capture target
 	// lane AI-2 r5: the offensive bodies' own state (the tactic's + 0x58 object / fields)
 	int step = 0;                    ///< FormationAttack state (+ 0x58 -> + 0); FlankAttack waypoint index; PincerAttack team 0's waypoint index
 	int step2 = 0;                   ///< PincerAttack team 1's waypoint index
@@ -153,6 +164,8 @@ struct AITactic
 	Coord3D aimPos;                  ///< FormationAttack + 0x58 -> + 0x10: the target position at the launch
 	bool mainLaunched = false;       ///< FeintAttack + 0x58: the main team was sent
 	std::uint32_t launchFrame = 0;   ///< FeintAttack + 0x5C: the launch frame
+	// lane AIEXPAND-1: SimpleExpansion (ctor RW 0x9B5190): + 0x58 its plain structure request (also in the AI's queues while unfinished); its + 0x5C stage is `step`
+	std::shared_ptr<AIBuildRequest> request;
 };
 
 // lane AI-3: an attacked-at record of the brain's list + 0x20 (0xAC bytes, ctor RW 0x6C6F01): where the AI's team members fight
@@ -213,5 +226,7 @@ void makeGenerator(GameLogic &logic, AISkirmishPlayer &ai);
 void flankWaypointsForTest(GameLogic &logic, AITactic &tac, const AITarget &t, const Coord3D &start);
 // test hook (lane AI-3): RW 0x6C720A(pos, -1) on the AI's attacked-at list
 void addAttackedAtForTest(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D &pos);
+// test hook (lane AIEXPAND-1): the EXPANSION heuristic (RW 0x97D191, with its gate RW 0x97D035) for `ai` on the target `t`
+void expansionHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &t);
 void pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const Coord3D &start, const Coord3D &target);
 } // namespace AITacticalAI
