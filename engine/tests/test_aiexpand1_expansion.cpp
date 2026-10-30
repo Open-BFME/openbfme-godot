@@ -604,16 +604,20 @@ TEST_CASE("aiexpand1 expansion in a game: the Medium Men computer kept above 300
 	CHECK(requestTemplate == "MenFortress");
 	CHECK(roundTripDone);
 	CHECK(endedTripDone);
-	// engine pins (Udun, seed 1234, measured on lane AIEXPAND-1's tree): a later simulation change moves them; re-measure and say why
-	// merge queue q29 (AIEXPAND-1 joins after nine simulation items; measured on the merged tree, a CI host, not split per item): the other items move this
-	// AI game, so the heuristic's gate first passes later: the same start is chosen at 2425 (was 1519), its request at 2428 (1964), in progress at 2429 (1965),
-	// complete with the second base at 3169 (2736)
-	CHECK(chosenFrame == 2425);
-	CHECK(tacticFrame == 2425);
-	CHECK(requestFrame == 2428);
-	CHECK(inProgressFrame == 2429);
-	CHECK(doneFrame == 3169);
-	CHECK(baseFrame == 3169);
+	// Engine pins, Udun seed 1234: enabling BFME2 Heal adds its real decision/cooldown
+	// draws and moves the later expansion sequence. An isolated control with only
+	// Heal returning false restored all six former pins (2425/2425/2428/2429/3169/3169).
+	// BFME2 farm raiding moves the sequence again. A control restoring only the prior
+	// farm behavior restored all six 1821/1821/1824/1825/2593/2593 pins.
+	// BFME2 native generator lists move the sequence again; restoring only the old
+	// lists restores 1519/1519/1565/1566/2369/2369 exactly.
+	// These are engine regressions, not external retail timing oracles.
+	CHECK(chosenFrame == 2123);
+	CHECK(tacticFrame == 2123);
+	CHECK(requestFrame == 2126);
+	CHECK(inProgressFrame == 2127);
+	CHECK(doneFrame == 2869);
+	CHECK(baseFrame == 2869);
 	MESSAGE("EXPANSION target on frame " << chosenFrame << " at (" << chosenAt.x << ", " << chosenAt.y << "); SimpleExpansion on frame " << tacticFrame
 		<< ", its request on " << requestFrame << " (last state " << lastState << ", in progress on " << inProgressFrame << ", complete on " << doneFrame
 		<< "), the second base on " << baseFrame << "; bases " << aiPtr->build.bases.size() << ", tactics started " << aiPtr->brain.tacticsStarted

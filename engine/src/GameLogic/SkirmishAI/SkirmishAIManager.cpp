@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <stdexcept>
 
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
@@ -16,6 +17,8 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "Common/Thing/KindOfTokens.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
+#include "GameClient/MapChunks.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 
@@ -29,6 +32,34 @@ bool SkirmishAIManager::countsAsAI(const Player &p) const
 {
 	// RW 0x8EDAAB / 0x8EDADE: COMPUTER, or SkirmishAIData MakeAllSkirmishSidesAIControlled (manager + 0x96C)
 	return p.getPlayerType() == PLAYER_COMPUTER || (m_store && m_store->data().makeAllSkirmishSidesAIControlled);
+}
+
+void SkirmishAIManager::loadWallLibrary(const std::vector<MapObject> &objects)
+{
+	for (int id : m_wallTriggerIds)
+	{
+		m_logic.scriptEngine().disablePolygonTrigger(id);
+	}
+	m_wallTriggerIds.clear();
+	m_wallLibrary = AIWallBuilder::loadWallLibrary(objects);
+	m_wallEntryCounts.assign(m_wallLibrary.size(), {});
+	static std::uint32_t serial = 0; // native wallTriggerSerial: process-wide generated names only
+	for (size_t index = 0; index < m_wallLibrary.size(); ++index)
+	{
+		for (auto &area : AIWallBuilder::occupancyTriggers(m_wallLibrary[index]))
+		{
+			area.name = "AIWallTrigger_" + std::to_string((std::int32_t)serial++);
+			m_wallTriggerIds.push_back(m_logic.scriptEngine().addPolygonTrigger(area, [this, index](Object &object, bool entered) {
+				const Player *owner = object.getControllingPlayer();
+				if (!owner) { throw std::logic_error("AIWall: trigger object has no controlling player"); }
+				AIWallBuilder::recordEntry(m_wallEntryCounts.at(index), owner->getPlayerIndex(), entered);
+			}));
+		}
+	}
+}
+std::uint32_t SkirmishAIManager::wallLibraryCrc() const
+{
+	StateHasher hash; AIWallBuilder::crc(m_wallLibrary,hash); return hash.value();
 }
 
 int SkirmishAIManager::newGame(bool skirmishOrMultiplayer, bool loadingSave, const std::string &mapFileName)
@@ -345,9 +376,6 @@ void SkirmishAIManager::updateAI(AISkirmishPlayer &ai, AISkirmishGroup &g)
 	// base builder and the request processor; the other sub systems are S-412), then the brain (S-412)
 	AIBaseBuilder::updatePhase(m_logic, ai);
 	AIBaseBuilder::update(m_logic, ai);
-	// the team builder (+ 0x90, RW 0x9A3366) runs inside AIPlayer::update after the unit builder; it draws no random value and touches only the tactic teams,
-	// so running it after the request processor keeps the retail order of every observable effect
-	AITacticalAI::updateTeamBuilder(m_logic, ai);
 	++m_counters.aiPlayerUpdates;
 	// the brain (+ 0x164, RW 0x6C74C2); the group's first AI owns the target chooser the others share (+ 0x18)
 	AITacticalAI::updateBrain(m_logic, ai, groupFirstAI(g));
@@ -543,6 +571,10 @@ void SkirmishAIManager::reset()
 	m_groups.clear();
 	m_infoPlayers.clear();
 	m_captureFlags.clear();
+	for (int id : m_wallTriggerIds) { m_logic.scriptEngine().disablePolygonTrigger(id); }
+	m_wallTriggerIds.clear();
+	m_wallEntryCounts.clear();
+	m_wallLibrary.clear();
 	m_records.clear();
 	m_farmSites.clear();
 	m_started = false;
@@ -551,6 +583,7 @@ void SkirmishAIManager::reset()
 	m_attackedAtIds = 0; // RW 0x6A922D
 	m_expansionHeuristicFrames = 0;
 	m_assistTimers.clear();
+	m_armyBreakerTimers.clear();
 }
 
 const AISkirmishPlayer *SkirmishAIManager::findAI(int playerIndex) const
@@ -591,6 +624,12 @@ void SkirmishAIManager::crc(StateHasher &h) const
 		h.addI32(t.first);
 		h.addU32(t.second);
 	}
+	if (!m_armyBreakerTimers.empty())
+	{
+		h.addU32(0x4142524Bu); // ArmyBreaker timer state; empty games retain their existing hash.
+		h.addU32((std::uint32_t)m_armyBreakerTimers.size());
+		for (const auto &t : m_armyBreakerTimers) { h.addI32(t.first); h.addU32(t.second); }
+	}
 	// the data the AI decides from (SkirmishAIData, armies, bases and their layouts, dozers, PlayerAITypes): a peer with other data diverges here
 	h.addBool(m_store != nullptr);
 	if (m_store)
@@ -607,6 +646,17 @@ void SkirmishAIManager::crc(StateHasher &h) const
 	{
 		kv.second->crc(h);
 	}
+	if (!m_groups.empty() && !m_wallLibrary.empty()) { h.addString("AIWallLibrary"); h.addU32(wallLibraryCrc()); }
+ // Trigger callbacks run even without a computer player. Preserve historical
+ // empty hashes, but include every recorded wall entry once any entry exists.
+ if(std::any_of(m_wallEntryCounts.begin(),m_wallEntryCounts.end(),[](const auto &v){return !v.empty();})) {
+  h.addString("AIWallEntries");
+  h.addU32((std::uint32_t)m_wallEntryCounts.size());
+  for(const auto &counts:m_wallEntryCounts) {
+   h.addU32((std::uint32_t)counts.size());
+   for(const auto &entry:counts) {h.addI32(entry.player);h.addU32(entry.count);}
+  }
+ }
 	// Only AI groups can use the capture registry; keep no-AI and empty-registry hashes unchanged.
 	if (!m_groups.empty() && !m_captureFlags.empty())
 	{
@@ -656,26 +706,15 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"before RW's table (the port rejects it, S-411)",
 		"[S-412] skirmish ai: TheSkirmishAIManager's creation rules, groups and update cadence are ported (RW 0x6AA030, 0x6A9EAD, 0x6A96A0, 0x8EDDF6, "
 		"0x6C7946); the bodies they call are not: the manager object + 0xA74, the group tasks (RW 0x8EDB2C), "
-		"AISkirmishPlayer RW 0x6C75B5 / the shutdown, the wall builder (RW 0x8F0EB4's + 0xE4); a computer player builds its base (S-413), trains its army "
+		"AISkirmishPlayer RW 0x6C75B5 / the shutdown, live wall construction scheduling/gate upgrades (map wall library and occupancy triggers are loaded; RW 0x8F0EB4's + 0xE4); a computer player builds its base (S-413), trains its army "
 		"(S-415) builds farms (S-419), attacks with its tactic teams (S-417) and (lane AI5) buys its units' and structures' upgrades and its plots' expansions "
 		"(+ 0x108 AIUnitUpgrader, + 0x12C AIUpgradeScienceBuilder, the player info record's listeners: S-1876); lane BACKLOG6: AIPlayer::update RW 0x8F0EB4 is checked against the BFME2 "
 		"byte-matched source (RotWK adds the code 9 failure RW 0x8F1048): a request left in the queue gives up its producer; its last call, the money saver "
 		"RW 0x8F0502, is ported by lane AI5 (S-413)",
-		"[S-417] skirmish ai tactical layer: the enemy manager, the targets and their ENEMY_STRUCTURE heuristics, the best target, the difficulty gate, the 10 "
-		"offensive prototypes' applicability, team counts and team sizes (RW 0x90BE31: SimpleAttack x2, FormationAttack x2, FlankAttack, PincerAttack, FeintAttack, "
-		"AIBasePenetrationTroopsTactic, SimpleSiege, SiegeGates) with the pick's draw, the SimpleAttack body, the team builder and (lane AI-2) the started "
-		"tactic's idle counters, position and idle end (RW 0x8F28DD / 0x8F135E / 0x8F27AD / 0x8F175A / 0x9B4DE7) and (r5) the bodies of FormationAttack, "
-		"FlankAttack, PincerAttack, FeintAttack and AIBasePenetrationTroopsTactic with their draws (FlankAttack RW 0x9B4642 / 0x9B4720, PincerAttack RW 0x9B4067, "
-		"FeintAttack RW 0x9B398D / 0x9B3A5A / 0x9B3AE4) are ported; lane BACKLOG6: AIGroup's stealth delay draw RW 0x774CEB is ported for the groups the formation "
-		"manager does not take (S-895); not ported: the siege bodies, the end's merge into a nearby AI team with its draw RW 0x8F1F08 (the units are released), "
-		"the DEFENSIVE heuristic and tactics (RW 0x90C436) (only the One Ring OPPORTUNITY heuristic is "
-		"ported; the tech-building OPPORTUNITY heuristic remains unported), the targetless tactics other than FarmKillSquad and FlagCaptureSquad, RW 0x90CCCB, the AI team objects; "
-		"lane AIEXPAND-1 ported the EXPANSION heuristic (RW 0x97D035 / 0x97D191: the nearest free Player_N_Start as a position target; its frame "
-		"counter is per game, retail's runs on across a process's games) and the EXPANSION tactic (RW 0x90C50C, SimpleExpansion RW 0x9B5190 / 0x9B52BD: "
-		"a MenFortress request at the target, then a second base, RW 0x9B5020); "
-		"lane AI-3 ported the threat finder (S-1300), the targets' threat, the retreat (RW 0x8F2784 / 0x8F243A), the failed end's threat move (RW 0x6C644C), "
-		"each team's AIGroup step (RW 0x8F144C -> 0x774F2B, S-1301), a defeated AI's brain (RW 0x6C79A1), the end's merge (RW 0x8F1D88), RW 0x6C7344 and the "
-		"best target's threat gate (RW 0x90B2A0, S-1302)",
+		"[S-417] BFME2 tactical AI: five offensive and six targetless prototypes follow AITacticsGenerator.cpp RVA 0x505E5D / 0x506020. "
+		"Enemy, defense, tech-building opportunity and expansion targeting are ported, as are raw-threat team handover and FarmKillSquad/RoamingDefense. "
+		"SiegeGates/SimpleSiege reachability, breach stages and predefined siege recruitment are ported; still unported: RingHero/StructureCreep/ReturnTheRing/StartWoTRBattle targetless families, native AI team objects and remaining "
+		"BFME2 audits of legacy RotWK tactical paths. Retained Formation/Pincer/Feint/FlagCaptureSquad bodies are not generated by the BFME2 lists",
 		"[S-419] skirmish ai economy builder (+ 0xC0, RW 0x8EEF8F): farms on the map's FarmTemplate sites (RW 0x8EEC71), the farm decision (RW 0x8EE765), the "
 		"difficulty gate (RW 0x99327C), the farm priority growth (RW 0x99F313) and the unit request's effective priority (RW 0x9EDA17) are ported; inference: the "
 		"farm site pool is made at newGame in object list order (lane DECOMP-3: the economy structure count is the player info record's economy list)",
@@ -688,11 +727,11 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"unfinished structures as targets (lane DECOMP-2: RW's AI::findClosestEnemy RW 0x701443 -> 0x7006D7 and its attack test RW 0x68D6A6 / 0x6C9147 / "
 		"0x6C8652 never test UNDER_CONSTRUCTION); INFERENCE: the worker kill runs at the port's delete point, the defeat frames are engine pins",
 		"[S-418] skirmish ai tactical layer inference: (lane DECOMP-3: the player info record AIStatCollector RW 0x8E46D9 is ported and filled by the object "
-		"events RW 0x6A9D9C / 0x6A99CB, so its lists keep RW's event order; its position sampler and listeners are not ported; newGame's pass walks the port's "
+		"events RW 0x6A9D9C / 0x6A99CB, so its lists keep RW's event order; its position sampler is ported; the economy listener remains unported; newGame's pass walks the port's "
 		"default team backwards as RW's prepended member list); (lane DECOMP-2: the team builder's recruit test "
 		"RW 0x9A24FC, the SUPPORT rule, the hand-over at the minimum when DEFENSIVE, full or meeting the target's threat RW 0x9A26A1, the pooled defaults and the "
-		"idle dispatch RW 0x9A3040 are ported; its unit list is taken as the army list) a unit in another team is never taken (RW's priority and DEFENSIVE-target branches), a member counts until it is destroyed, the threat sum runs "
-		"newest member first; RW 0x9EF9AF's path check is taken as reachable; the enemy score root is the double root of the float sum",
+		"idle dispatch RW 0x9A3040 are ported; BFME2 handover uses raw template threat and the stored interest-zone maximum (RVA 0x59A1C1 / 0x2C5AE6); its unit list is taken as the army list) a unit in another team is never taken (RW's priority and DEFENSIVE-target branches), a member counts until it is destroyed, the threat sum runs "
+		"newest member first; BFME2 AITacticOffensiveCheckTarget.cpp now uses the real position/structure reachability query; the enemy score root is the double root of the float sum",
 		"[S-415] skirmish ai unit builder (+ 0x38, RW 0x9A1196): the factories by unit (RW 0x9A0838, BuildAssistant slot 0x68), the composition from the "
 		"ArmyDefinition percentages blended by the phase fraction (RW 0x9A0E2B / 0x82FCAB), the request list (RW 0x9A0D4F), one new request per frame among "
 		"the members below their share of the command point limit with a free factory (RW 0x9A0BC0 / 0x9A0B26, one logic random draw), priority 500 in Rush "
@@ -740,9 +779,9 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"Amoeba's always-turn near arm). INFERENCE: HoldGround's record turn states (its slots 0x20 / 0x28 / 0x2C) are not modelled (the 10 degree rule), and "
 		"the horde's turn is kept from carrying the members (the port's contain would place them); G2 measured, not solved: GondorFighterHorde engages 20 % of "
 		"its members on average against MordorFighterHorde (test_move2_slot_distance's MOVE2 MELEE report)",
-		"[S-893] skirmish ai targetless tactics (lane AI-2 r3): the 11 prototypes, FarmKillSquad's constructor draw, the per-frame pick RW 0x90C5E2 and FarmKillSquad's "
-		"applicability, setup, cleanup and update flow are ported, as is FlagCaptureSquad (RW 0x9BC39F / 0x9BC1A0 / 0x9BBFDC / 0x9BC3F4); the other 9 prototypes' applicability and bodies and FarmKillSquad's farm choice (RW 0x9BBA51 / "
-		"0x9BB5E4 and their draws) are not (a nearest-farm stand-in)",
+		"[S-893] BFME2 targetless AI: the native six-prototype registration order and pick at source line 426 are ported. FarmKillSquad "
+		"and RoamingDefense are ported. The four remaining native applicability/body families are counted and do not apply: RingHero, StructureCreep, "
+		"ReturnTheRing and StartWoTRBattle. Extended RotWK prototypes, including FlagCaptureSquad, are not generated",
 		"[S-894] produced member of a destroyed horde (lane AI-2 r4): a member the queue exit hands to a horde that is already destroyed is destroyed with it "
 		"(HordeContain::acceptCreatedMember); RW's acceptance slot for a destroyed horde is not read",
 		"[S-895] skirmish ai offensive tactic bodies (lane AI-2 r5): Formation, Flank, Pincer, Feint and BasePenetration launch / update with their draws "

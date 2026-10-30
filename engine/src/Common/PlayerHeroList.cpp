@@ -11,6 +11,7 @@
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Economy.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
@@ -118,18 +119,24 @@ int PlayerHeroList::recordFrames(GameLogic &logic, const Player &owner, const He
 	return SimMath::truncToInt32(NumericState::pc24Mul((float)frames, m));
 }
 
-// RW 0x780AD3 (the Brutal AI discount of RW 0x780AF1 .. 0x780B5C is stop S-204)
+// TARGET RW 0x780AD3 (S-001): the Brutal discount is applied again after recordCost.
 int PlayerHeroList::costAt(GameLogic &logic, const Player &owner, int index, const Object *producer) const
 {
 	const HeroRecord *r = at(index);
-	return r ? recordCost(logic, owner, *r, producer) : 0;
+	if (!r) return 0;
+	const int cost = recordCost(logic, owner, *r, producer);
+	const float reduction = logic.economy().aiProductionReduction(owner, false);
+	return SimMath::truncToInt32(SimMath::mulf32((float)cost, SimMath::subf32(1.0f, reduction)));
 }
 
-// RW 0x780B72 (Brutal AI: S-204)
+// TARGET RW 0x780B72 (S-001): wrapper discount truncates the already rounded record frames.
 int PlayerHeroList::framesForProductionID(GameLogic &logic, const Player &owner, std::uint32_t id, const Object *producer) const
 {
 	const HeroRecord *r = findByProductionID(id);
-	return r ? recordFrames(logic, owner, *r, producer) : 0;
+	if (!r) return 0;
+	const int frames = recordFrames(logic, owner, *r, producer);
+	const float reduction = logic.economy().aiProductionReduction(owner, true);
+	return SimMath::truncToInt32(SimMath::mulf32((float)frames, SimMath::subf32(1.0f, reduction)));
 }
 
 // RW 0x780C11

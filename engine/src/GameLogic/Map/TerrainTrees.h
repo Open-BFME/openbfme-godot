@@ -49,6 +49,7 @@
 #pragma once
 
 #include "Common/INIDataTypes.h"
+#include "GameLogic/SkirmishAI/AIPositionSampler.h"
 #include "Common/StateHash.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 
@@ -134,7 +135,9 @@ public:
 	const std::vector<Record> &records() const { return m_records; }
 	// the client events in order; the client reads from its last index (the list only grows during a game)
 	const std::vector<Event> &events() const { return m_events; }
-	bool anyChanged() const { return m_changed > 0; }
+	bool anyChanged() const { return m_changed > 0 || m_groupStateChanged; }
+	// Source tree-killer selection marks a group before validating the cast, even if the cast is rejected.
+	bool selectUnselectedGroup(int player, Coord3D &position);
 	// the changed records (toppled or harvested), in list order: a game where no tree changed keeps its hash
 	void crc(StateHasher &h) const;
 	// lane SAVE-4d: the block obfme:TerrainTrees (see TerrainTrees.cpp, S-4252): the changed records in retail's record layout; a load goes into a game of the
@@ -162,4 +165,6 @@ private:
 	float m_toppleSpeed = 0.0f;      ///< + 0x1918
 	std::uint32_t m_changedFrame = 0; ///< + 0x1910
 	int m_changed = 0;
+	AIPositionSampler m_groups; ///< TerrainLogic +0x584, padding 100.
+	bool m_groupStateChanged = false;
 };

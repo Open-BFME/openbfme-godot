@@ -425,7 +425,7 @@ bool WallSpan::plan(GameLogic &logic, Object &hub, const Coord3D &start, const C
 	return false;
 }
 
-bool WallSpan::build(GameLogic &logic, Object &hub, const Coord3D &start, const Coord3D &end, Player &owner, unsigned options, std::vector<ObjectID> *made)
+bool WallSpan::build(GameLogic &logic, Object &hub, const Coord3D &start, const Coord3D &end, Player &owner, unsigned options, std::vector<ObjectID> *made, Object **terminalHub)
 {
 	Plan p;
 	if (!plan(logic, hub, start, end, options, p) || (p.worstCode != 0 && p.worstCode != 10) || owner.getMoney()->countMoney() < (std::uint32_t)p.cost)
@@ -510,7 +510,9 @@ bool WallSpan::build(GameLogic &logic, Object &hub, const Coord3D &start, const 
 		}
 		link(hub, tile);
 	}
-	(void)lastHub;
+ // Expose the terminal hub to the AI segment request. Existing-hub links
+ // retain S-657's limitations; no new topology or legality rule is inferred here.
+ if (terminalHub) *terminalHub = endHub ? endHub : lastHub;
 	owner.withdrawMoney((std::uint32_t)p.cost, true); // RW 0x7954D6
 	// RW 0x795637 .. 0x795647 (lane END-2): the spend by kind with the first planned tile's template (RW 0x795126(0) -> TheThingFactory by name)
 	owner.getScoreKeeper().addMoneySpentByKind(logic, p.tiles.empty() ? nullptr : p.tiles[0].tmpl, p.cost);

@@ -68,6 +68,8 @@ NewGameMessage attackMessage(const starttest::Shared &s, const std::string &aiFa
 
 struct AttackRun
 {
+	int difficulty = -1;
+	bool hasTrainedArmy = false;
 	std::vector<std::uint32_t> hashes;
 	int firstAttackFrame = -1;     // the frame the first SimpleAttack team was sent
 	int arrivalFrame = -1;         // the first frame an AI army unit stood within kArrival of the human start
@@ -151,6 +153,7 @@ void runAttackGame(starttest::Shared &s, const NewGameMessage &message, int fram
 		}
 	}
 	const Player *aiPlayer = logic.players().getNthPlayer(ai->playerIndex);
+	out.difficulty = aiPlayer->getSkirmishDifficulty();
 	for (int i = 0; i < frames; ++i)
 	{
 		game.advance(0.2);
@@ -200,6 +203,7 @@ void runAttackGame(starttest::Shared &s, const NewGameMessage &message, int fram
 			}
 		}
 	}
+	out.hasTrainedArmy = !AITacticalAI::recordOf(logic, ai->playerIndex).army().empty();
 	out.farmSites = ai->farmSites ? ai->farmSites->size() : 0;
 	out.farmsBuilt = ai->build.economy.built;
 	out.farmsInFlight = ai->build.economy.inFlight;
@@ -427,4 +431,28 @@ TEST_CASE("skirmish ai attack: AI vs AI on Evendim (Medium Mordor against Medium
 		CHECK(run.farmsBuilt >= 1);
 		CHECK(run.attacksLaunched >= 1);
 	}
+}
+
+TEST_CASE("source AI difficulty integration: Easy, Medium, Hard and Brutal build armies and repeat every frame")
+{
+ OPENBFME_REQUIRE_START(s);
+ for (int difficulty = 0; difficulty < 4; ++difficulty)
+ {
+  CAPTURE(difficulty);
+  auto message = attackMessage(*s, "FactionMordor", "FactionMen", false, 51027);
+  message.game.slots[1].state = (SlotState)(SLOT_EASY_AI + difficulty);
+  AttackRun first, repeated;
+  runAttackGame(*s, message, 1500, first, true);
+  runAttackGame(*s, message, 1500, repeated, true);
+  CHECK(first.difficulty == difficulty);
+  CHECK(first.hashes.size() == 1500);
+  CHECK(first.hashes == repeated.hashes);
+  CHECK(first.hasTrainedArmy);
+  CHECK(first.hasTrainedArmy == repeated.hasTrainedArmy);
+  CHECK_FALSE(first.aiDefeated);
+  if (difficulty == 0)
+   CHECK(first.farmsBuilt + first.farmsInFlight <= 3); // tolerance: retail EASY EconomyMaxFarms is 3, checked before every farm request (AIDifficulty.cpp 0x2D).
+  MESSAGE("difficulty=" << difficulty << " farms=" << first.farmsBuilt << " farm refusals=" << first.farmRefused
+    << " tactics=" << first.tacticsStarted << " attacks=" << first.attacksLaunched << " cash=" << first.aiMoney);
+ }
 }

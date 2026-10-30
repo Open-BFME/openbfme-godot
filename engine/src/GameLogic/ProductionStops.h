@@ -24,7 +24,7 @@ inline std::vector<std::string> lines()
 		"VeteranUnitsFromVeteranFactory and the PRODUCTION rate are PRODUCTION1's): audio (voices, the speed bonus loop) and EVA messages, "
 		"the speed bonus model condition, script naming of a produced object, the horde join of entry + 0x3C, the pending template name set (RW +0x130) and the score keeper",
 		"[S-204] build cost and time use neutral inputs where their sources are not ported: the lobby handicap (RW 0x7B19BF), the energy ratio of calcTimeToBuild (RW 0x8E3503), "
-		"the Brutal AI reductions, the MultipleFactory facility count (an APPEARS_AT_RALLY_POINT template with GameData MultipleFactory != 1.0 "
+		"the MultipleFactory facility count (an APPEARS_AT_RALLY_POINT template with GameData MultipleFactory != 1.0 "
 		"throws), the Create-A-Hero surcharge (the CostModifierUpgrade factor RW 0x6AD8A7 IS applied since UPGRADE-1)",
 		"[S-205] closed by UPGRADE-1: the UpgradeCenter, the upgrade masks, the upgrade modules and the research through the production queue are ported "
 		"(what remains of the research is S-486)",

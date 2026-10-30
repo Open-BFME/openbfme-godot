@@ -15,6 +15,7 @@
 #include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Module/SquishCollide.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/System/ShroudManager.h"
 
 #include <stdexcept>
 #include <variant>
@@ -65,6 +66,8 @@ TerrainTrees::TerrainTrees(GameLogic &logic) : m_logic(logic)
 void TerrainTrees::reset()
 {
 	m_records.clear();
+	m_groups = AIPositionSampler{};
+	m_groupStateChanged = false;
 	m_events.clear();
 	m_heads.assign((size_t)BUCKETS * BUCKETS, (std::int16_t)-1);
 	m_hasExtent = false;
@@ -129,6 +132,9 @@ bool TerrainTrees::addTree(const ThingTemplate &tmpl, const Coord3D &position, s
 	r.grabbable = boolField(tmpl, "IsGrabbable");     // + 0x5FB
 	r.harvestable = boolField(tmpl, "IsHarvestable"); // + 0x5FC
 	m_records.push_back(r);
+	// DONOR TerrainLogicCtor.cpp / TerrainLogicXfer.cpp:addTree: group every tree record with padding 100.
+	m_groups.add((ObjectID)(m_records.size() - 1), 100.0f, [&](ObjectID key) { return m_records.at(key).position; });
+	if (m_logic.getFrame() != 0) m_groupStateChanged = true;
 	return true;
 }
 
@@ -429,6 +435,29 @@ int TerrainTrees::removeTreesForConstruction(const Coord3D &position, const std:
 	return removed;
 }
 
+bool TerrainTrees::selectUnselectedGroup(int player, Coord3D &position)
+{
+	// DONOR Common/AISpellBookTreeKiller_shouldActivate.cpp (5D7766), TARGET RW9E70B6, S-001 caveat.
+	if (!m_logic.shroud())
+		return false;
+	AIPositionSampler::Group *best = nullptr;
+	size_t count = 0;
+	for (auto &group : m_groups.groups())
+	{
+		if (group.selected || group.members.size() <= count)
+			continue;
+		if (m_logic.shroud()->getStatusAt(player, group.center.x, group.center.y) == CELLSHROUD_SHROUDED)
+			continue;
+		best = &group;
+		count = group.members.size();
+	}
+	if (!best)
+		return false;
+	best->selected = true;
+	m_groupStateChanged = true;
+	position = best->center;
+	return true;
+}
 void TerrainTrees::crc(StateHasher &h) const
 {
 	h.addU32((std::uint32_t)m_changed);
@@ -446,6 +475,11 @@ void TerrainTrees::crc(StateHasher &h) const
 		h.addFloat(r.toppleDirection.y);
 		h.addI32(r.value);
 	}
+	if (m_changed || m_groupStateChanged)
+	{
+		h.addU32(0x54524750u);
+		m_groups.crc(h);
+	}
 }
 
 // lane SAVE-4d. Retail saves the tree records inside TerrainLogic::xfer (CHUNK_TerrainLogic, RW 0x683F8C, window (1, 2), tier A: the record count, every
@@ -461,7 +495,7 @@ void TerrainTrees::crc(StateHasher &h) const
 void TerrainTrees::xfer(Xfer &x)
 {
 	const bool loading = x.isLoading();
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 2 }; // v1 tree records; v2 adds cached AI groups and selection.
 	x.xferVersion(v);
 	std::uint32_t records = loading ? 0 : (std::uint32_t)m_records.size();
 	x.xferUnsignedInt(&records);
@@ -554,6 +588,38 @@ void TerrainTrees::xfer(Xfer &x)
 		r.changed = true;
 		loaded.emplace_back(index, r);
 	}
+	AIPositionSampler loadedGroups;
+	AIPositionSampler &groups = loading ? loadedGroups : m_groups;
+	bool groupStateChanged = false;
+	if (v.current >= 2)
+	{
+		groups.xfer(x);
+		groupStateChanged = m_groupStateChanged;
+		x.xferBool(&groupStateChanged);
+	}
+	else if (loading)
+	{
+		// v1 has no cached group geometry or selection. Rebuild unselected
+		// groups from the restored records, not this game's later cached state.
+		auto restored = m_start.empty() ? m_records : m_start;
+		for (const auto &entry : loaded) { restored[entry.first] = entry.second; }
+		for (size_t id = 0; id < restored.size(); ++id)
+		{
+			groups.add((ObjectID)id, 100.0f, [&](ObjectID key) { return restored.at(key).position; });
+		}
+	}
+	if (loading)
+	{
+		if (groups.members().size() != m_records.size()) throw XferException("terrain trees: spatial registrations differ from tree count");
+		std::vector<bool> seen(m_records.size(), false);
+		for (ObjectID id : groups.members())
+		{
+			if (id >= seen.size() || seen[id]) throw XferException("terrain trees: invalid spatial tree registration");
+			seen[id] = true;
+		}
+		for (const auto &group : groups.groups())
+			if (group.selected && !groupStateChanged) throw XferException("terrain trees: selected group without changed state");
+	}
 	if (!loading)
 	{
 		return;
@@ -569,6 +635,10 @@ void TerrainTrees::xfer(Xfer &x)
 	m_changed = (int)changed;
 	m_changedFrame = changedFrame;
 	m_toppleSpeed = toppleSpeed;
+	// This native snapshot preserves runtime group geometry as well as flags: harvesting clears a
+	// tree record's position without changing its group's cached sphere (the retail save rebuild differs).
+	m_groups = std::move(loadedGroups);
+	m_groupStateChanged = groupStateChanged;
 }
 
 std::string TerrainTrees::stopLine()

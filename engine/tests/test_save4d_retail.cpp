@@ -408,9 +408,10 @@ TEST_CASE("save4d retail trees: changed records of version 1 (no running index, 
 	CHECK_FALSE(lb.trees().anyChanged());
 
 	// version 1: the same record without its running index (the block 4 bytes shorter, its end offset with it)
-	std::vector<std::uint8_t> v1(v2.begin(), v2.end() - 7 - 4);
+	std::vector<std::uint8_t> v1 = v2;
 	v1[rec + 4] = 1;
-	v1.insert(v1.end(), v2.end() - 7, v2.end());
+	const size_t runningIndex = link + 2 + 2; // link, grabbable, harvestable; group state follows the record
+	v1.erase(v1.begin() + runningIndex, v1.begin() + runningIndex + 4);
 	putU32At(v1, payload - 4, u32At(v2, payload - 4) - 4);
 	REQUIRE(treesLoadError(lb, v1) == "(loaded)");
 	CHECK(lb.trees().records()[index].toppled);
