@@ -242,6 +242,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/update_handover_test.gd` | `tools/release/test_onezip.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/weatherfx_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: the Enhanced weather's effects against a stub GameWorld and synthetic images; headless, 20 s timeout. |
 | `godot/tests/windows_crash_test.gd` | Manual only; no generic pytest runner | Denied here: destructive Windows debug crash/minidump probe; explicit opt-in required. |
+| `godot/tests/harlindon_creep_combat_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
 | `godot/tests/water_normal_test.gd` | Manual only; no generic pytest runner | GPU rendering; synthetic textures, no retail assets. |
 | `godot/tests/standing_water_test.gd` | Manual only; no generic pytest runner | Private retail assets and GPU water rendering. |
 

@@ -869,6 +869,8 @@ public:
 	// tops, ramps and walkways; bit 17) fire on maps with walls (lanes WALL-1 / WALL-2); the line walks the target's layer (RW 0x680A75).
 	bool canApproachToTarget(const PathfindObject &obj, const PathfindLocomotorInfo &loco, const Coord3D &target, float weaponRange, bool meleeWeapon,
 		bool stopAtFirstMiss = false);
+	// RW 0x6ED937: ground-layer structure reach by obstacle identity in perimeter rings.
+	bool meleeStructureReach(const PathfindObject &unit, const Coord3D &from, const PathfindObject &target, int rangeCells);
 	// lane PLAY-4 r1: RW 0x6ED843's unit branch (the melee reach of RW 0x6CC07C for a victim that is not a STRUCTURE): the unit's footprint box at `from` (its cell,
 	// RW 0x6ECFDE: centred when its footprint is odd; the low corner = the cell + size / -2, C division, RW 0x6ED89A; size RW 0x6EAF79) grown by `rangeCells` on
 	// every side, against the target's box at its own position (RW 0x6EDB15 .. 0x6EDB31); the bounds lo + size are compared inclusively (RW 0x6EDB57 .. 0x6EDB69)

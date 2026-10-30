@@ -856,3 +856,31 @@ TEST_CASE("combat retail: every faction's basic melee horde and basic archer hor
 			f.side[0].alive, f.side[1].alive);
 	}
 }
+
+TEST_CASE("combat retail: Aragorn closes to and damages goblin creeps")
+{
+	if (!haveWorld()) return;
+	Arena a(shared(), "FactionMen", "FactionWild");
+	Object *hero = a.place("GondorAragornMP", 0, 300, 300);
+	const char *target = "MoriarGoblinLair";
+	SUBCASE("lair") {}
+	SUBCASE("swordsman") { target = "MordorGoblinSwordsman_Slaved"; }
+	SUBCASE("archer") { target = "MordorGoblinArcher_Slaved"; }
+	Object *victim = a.place(target, 1, 420, 300);
+	// Bare GameLogic creation does not register placed structures, unlike LiveGame.
+	if (std::string(target) == "MoriarGoblinLair") a.ai->addObjectToPathfindMap(*victim);
+	// Register both objects with the movement world before issuing the order.
+	a.logic.runLogicFrame();
+	a.logic.runLogicFrame();
+	REQUIRE(hero->getAIUpdateInterface()->aiAttackObject(victim, CMD_FROM_PLAYER));
+	const ObjectID targetId = victim->getID();
+	auto health = [&]() {
+		const Object *object = a.logic.findObjectByID(targetId);
+		return object && object->getBodyModule() ? object->getBodyModule()->getHealth() : 0.0f;
+	};
+	const float before = health();
+	for (int i = 0; i < 50 && health() == before; ++i)
+		a.logic.runLogicFrame();
+	// tolerance: at least one sword hit must land within ten seconds of approaching a nearby creep.
+	CHECK(health() < before);
+}
