@@ -3401,6 +3401,9 @@ void AptSkirmish::refreshBfme1ProfileDisplay()
 			set("APT:TotalTimePlayedNum", format("Apt:TimePlayed", { number(hours / 24), number(hours % 24) }));
 			set("APT:CurFactionNameStr", fetchOrMissing(m_env.gameText, "APT:" + side + "Caps"));
 			movie = faction;
+			// BFME1 1.03: Rva004D8EE0Ctor.cpp (RVA 0x004D8EE0) initializes these constants;
+			// SkirmishBattleHonors::getRank (RVA 0x0009D2F0) promotes on >=. Binary identity,
+			// constructor call path and delta/width helpers: docs/BFME1.md#skirmish-profile-rank-thresholds.
 			static const int thresholds[] = { 0, 5, 10, 30, 50, 150, 300, 500, 800, 1500 };
 			const int points = count("Points");
 			int rank = 1;
