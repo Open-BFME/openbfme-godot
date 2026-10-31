@@ -434,7 +434,12 @@ struct ArmySummaryDescription
 class LivingWorldStores
 {
 public:
-	static const std::vector<std::string> &blockKeywords();
+	// BFME1's Good/Evil campaigns are not War of the Ring scenarios. Until their
+	// parsers and runtime are ported, retain recording handlers and report S-5017.
+	// This is a loading boundary, not an implementation of BFME1 campaign rules.
+	explicit LivingWorldStores(bool bfme1Data = false) : m_bfme1Data(bfme1Data) {}
+	const std::vector<std::string> &blockKeywords() const;
+	std::vector<std::string> acceptanceStops() const;
 	void registerBlocks(INIBlockRegistry &registry);
 	void clear();
 
@@ -471,6 +476,9 @@ public:
 	void parseMapInfo(INI *ini);
 	void parseRegionEffects(INI *ini);
 	void parseIcon(INI *ini, IconTemplate::Kind kind);
+
+private:
+	bool m_bfme1Data;
 };
 
 // The stop every unported nested field throws (rule 10: a mod using it fails loudly instead of losing data)

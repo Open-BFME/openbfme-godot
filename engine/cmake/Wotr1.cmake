@@ -36,4 +36,5 @@ set(OPENBFME_WOTR1_TESTS
     tests/test_wotr2.cpp
     tests/test_wotr4.cpp
     tests/test_wotr8_net.cpp
+    tests/test_wotr9_online.cpp
 )

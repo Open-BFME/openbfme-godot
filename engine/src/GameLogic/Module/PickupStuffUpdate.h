@@ -1,6 +1,6 @@
 // OpenBFME. GPL-3.0.
 // Ported from the RotWK 2.01 binary (caveat S-001); BFME2 decomp cross-check (decomp-progress/bfme2 Code/GameEngine/Source/GameLogic/Object/Update/
-// PickupStuffUpdate*.cpp, Common/PickupStuffUpdate_xfer.cpp, Common/Rva00491DD3Method.cpp: the same fields and steps, the AI at Object + 0x258 there).
+// PickupStuffUpdate*.cpp, Common/PickupStuffUpdate.cpp (xfer and update helpers): the same fields and steps, the AI at Object + 0x258 there).
 // ZH has no such class.
 //
 // PickupStuffUpdate (lane MODCOMPAT-MOD1, census rank 3: every horde of the base game carries it): a skirmish AI's unit looks for crates around it every

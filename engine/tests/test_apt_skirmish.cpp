@@ -31,6 +31,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -3608,6 +3610,139 @@ TEST_CASE("bfme1 skirmish profile: real honors, faction artwork and rank follow 
 	CHECK(fixture.movieValue("profileProgress") == "0");
 	CHECK(*fixture.windows.aptImage("CreateComponents/ImageLevelIconMain") == "AptRankIcon0");
 }
+
+TEST_CASE("bfme1 skirmish profile: diagnostics retain filenames and causes without nested directory paths")
+{
+	const std::string filename = "EowynSkirmishStats.ini";
+	const std::string temporary = std::filesystem::temp_directory_path().u8string();
+	for (const std::string &directory : { temporary + "/" + "home/private-profile/", std::string("C:\\") + "Users\\private-profile\\" })
+	{
+		const std::string path = directory + filename;
+		for (const std::string &cause : { std::string("cannot read "), std::string("cannot write "), std::string("write failed: ") })
+		{
+			const std::string diagnostic = Bfme1SkirmishProfiles::statsDiagnostic(path, cause + path);
+			CHECK(diagnostic == cause + filename);
+			CHECK(diagnostic.find(directory) == std::string::npos);
+			CHECK(diagnostic.find(temporary) == std::string::npos);
+			CHECK(diagnostic.find("private-profile") == std::string::npos);
+		}
+		const std::string nested = Bfme1SkirmishProfiles::statsDiagnostic(path, path + ": cannot read " + path);
+		CHECK(nested == filename + ": cannot read " + filename);
+		CHECK(Bfme1SkirmishProfiles::statsDiagnostic(path, "cannot inspect: Permission denied") == filename + ": cannot inspect: Permission denied");
+	}
+	CHECK(Bfme1SkirmishProfiles::statsDiagnostic(filename, "cannot read " + filename) == "cannot read " + filename);
+}
+
+TEST_CASE("bfme1 skirmish profile: creation write failures stay visible without directory paths")
+{
+	Bfme1ProfileFixture fixture;
+	std::filesystem::remove(fixture.folder / "AliceSkirmishStats.ini");
+	std::filesystem::create_directory(fixture.folder / "AliceSkirmishStats.ini");
+	std::string error;
+	CHECK_FALSE(Bfme1SkirmishProfiles::create(*fixture.profiles, std::time(nullptr), &error));
+	CHECK(error == "cannot write AliceSkirmishStats.ini");
+	CHECK(error.find(fixture.folder.u8string()) == std::string::npos);
+	std::filesystem::create_directory(fixture.folder / "CharlieSkirmishStats.ini");
+	fixture.choose(fixture.screen->profileComboWindow(), 2);
+	REQUIRE(fixture.screen->profileEntryWindow());
+	GadgetTextEntrySetText(fixture.screen->profileEntryWindow(), u"Charlie");
+	REQUIRE(fixture.windows.invokeCallback("AptSkirmish::OnAddProfileAccept", ""));
+	bool reported = false;
+	for (const auto &note : fixture.windows.notes())
+	{
+		if (note.kind != "skirmish-profile-stats") continue;
+		CHECK(note.detail.find(fixture.folder.u8string()) == std::string::npos);
+		if (note.detail == "cannot write CharlieSkirmishStats.ini") reported = true;
+	}
+	CHECK(reported);
+}
+
+#ifndef _WIN32
+// POSIX permissions let these tests exercise real status, open-for-read and open-for-write failures without I/O mocks.
+TEST_CASE("bfme1 skirmish profile: status, read and recording write failures expose no private directories")
+{
+	Bfme1ProfileFixture fixture;
+	const std::filesystem::path path = fixture.folder / "AliceSkirmishStats.ini";
+	GameRecord record;
+	record.id = "bfme1-profile-io-error";
+	record.kind = "skirmish";
+	record.players = { { 0, "Alice", "FactionGondor", 0, true }, { 1, "AI", "FactionRohan", 1, false } };
+	record.meSlot = 0;
+	record.winnerTeam = 0;
+	std::filesystem::path restricted;
+	std::filesystem::perms permissions{};
+	std::string expected;
+	bool refresh = true;
+	SUBCASE("file status failure")
+	{
+		restricted = fixture.folder;
+		permissions = std::filesystem::perms::none;
+		expected = "AliceSkirmishStats.ini: cannot inspect: " + std::make_error_code(std::errc::permission_denied).message();
+	}
+	SUBCASE("read failure")
+	{
+		restricted = path;
+		permissions = std::filesystem::perms::none;
+		expected = "cannot read AliceSkirmishStats.ini";
+	}
+	SUBCASE("recording write failure")
+	{
+		restricted = path;
+		permissions = std::filesystem::perms::owner_read;
+		expected = "cannot write AliceSkirmishStats.ini";
+		refresh = false;
+	}
+	struct RestorePermissions
+	{
+		std::filesystem::path path;
+		std::filesystem::perms original;
+		~RestorePermissions()
+		{
+			std::error_code ignored;
+			std::filesystem::permissions(path, original, ignored);
+		}
+	} restore{ restricted, std::filesystem::status(restricted).permissions() };
+	std::filesystem::permissions(restricted, permissions);
+	// Root/capabilities or filesystem ACLs may bypass mode bits. Verify the denial before testing its diagnostic.
+	bool bypassesPermissions = false;
+	if (restricted == fixture.folder)
+	{
+		std::error_code status;
+		bypassesPermissions = std::filesystem::exists(path, status) && !status;
+	}
+	else if (refresh)
+	{
+		bypassesPermissions = (bool)std::ifstream(path, std::ios::binary);
+	}
+	else
+	{
+		// Append mode probes write access without truncating the existing statistics.
+		bypassesPermissions = (bool)std::ofstream(path, std::ios::binary | std::ios::app);
+	}
+	if (bypassesPermissions)
+	{
+		std::printf("SKIP: BFME1 statistics permission-denial subcase: this process can bypass the denied filesystem permissions\n");
+		return; // RestorePermissions still restores the fixture for cleanup.
+	}
+	std::string error;
+	CHECK_FALSE(Bfme1SkirmishProfiles::recordGame(*fixture.profiles, fixture.setup, record, &error));
+	CHECK(error == expected);
+	CHECK(error.find(fixture.folder.u8string()) == std::string::npos);
+	CHECK(error.find(std::filesystem::temp_directory_path().u8string()) == std::string::npos);
+	if (const char *home = std::getenv("HOME")) CHECK(error.find(home) == std::string::npos);
+	if (refresh)
+	{
+		fixture.screen->recordsChanged();
+		REQUIRE_FALSE(fixture.windows.notes().empty());
+		const auto &note = fixture.windows.notes().back();
+		CHECK(note.kind == "skirmish-profile-stats");
+		CHECK(note.detail == expected);
+		CHECK(note.detail.find(fixture.folder.u8string()) == std::string::npos);
+		CHECK(note.detail.find(std::filesystem::temp_directory_path().u8string()) == std::string::npos);
+		if (const char *home = std::getenv("HOME")) CHECK(note.detail.find(home) == std::string::npos);
+	}
+}
+#endif
 
 TEST_CASE("bfme1 skirmish profile: loaded faction indices, renamed sides and mounted rank images drive presentation")
 {

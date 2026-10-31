@@ -134,6 +134,8 @@ func _delete(path: String) -> void:
 func load_save(path: String) -> String:
 	var name := path.get_file().get_basename()
 	if _mode == 2 and _flags == 16:
+		if game._shell.online_status().get("page", "") == "OnlineStrategic":
+			return await game._online_load_war(path)
 		return await game._lan_load_war(path) # WOTR2 milestone 8 (step 4): the LAN lobby's Load Game: the save is hosted, resumed (not loaded here)
 	var check: Dictionary = game._world.check_save(path)
 	if not check.get("ok", false):

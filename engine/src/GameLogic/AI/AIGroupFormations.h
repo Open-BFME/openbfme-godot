@@ -25,7 +25,7 @@
 //   * RW 0x76E90A rotateOffset(position, goal, offset): the offset turned from the formation's frame (x along the direction position -> goal) to the world.
 //   * RW 0x76FFF0: the members a formation command keeps: not held, an AI with a current locomotor (AI + 0x1F0), not KindOf IMMOBILE.
 // DONOR: BFME2 decomp Code/GameEngine/Source/GameLogic/AI/AIGroupFormations.cpp (AIGroup::createFormation and its helpers, byte-matched),
-// AIGroupSetPositionInFormation.cpp, Common/Rva0036E346Count.cpp (AIGroup::rva0036E357).
+// AIGroup.cpp (AIGroup::groupSetPositionInFormation and AIGroup::rva0036E357).
 // INFERENCE (stop S-4460): the port's near-to-far order of members at equal distance is the group's order (RW sorts with STLport's unstable sort).
 // lane BACKLOG-8 r2: RW 0x76FFF0's other two tests are identified: Object + 0x1C8 bit 3 is DISABLED_HELD, template + 0x108 bit 2 is KindOf IMMOBILE.
 

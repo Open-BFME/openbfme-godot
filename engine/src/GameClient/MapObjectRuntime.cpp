@@ -342,7 +342,8 @@ void MapObjectRuntime::build(const MapObjectDrawables &drawables, bool createDra
 			}
 			else if (AsciiStringUtil::compareNoCase(listName, "None") != 0)
 			{
-				m_report.errors.push_back(d.info->name + ": AILuaEventsList " + listName + " is not an EventList of scriptevents.xml");
+				m_report.stops.push_back("[S-127] " + d.info->name + ": AILuaEventsList " + listName +
+					" is not an EventList of scriptevents.xml; retail binds a null event list (RW 0x7396E8)");
 			}
 		}
 		LuaScriptEngine::sendObjectCreated(*m_logicRandomPtr, dispatch ? m_lua.get() : nullptr, dispatch ? &objInfo : nullptr,

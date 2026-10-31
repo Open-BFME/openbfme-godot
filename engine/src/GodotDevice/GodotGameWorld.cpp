@@ -382,6 +382,9 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("lan_war_battle_departed"), &GameWorld::lan_war_battle_departed);
 	ClassDB::bind_method(D_METHOD("lan_host_set_resume", "save", "state_hash", "seats", "lobby"), &GameWorld::lan_host_set_resume);
 	ClassDB::bind_method(D_METHOD("lan_war_battle_end_frame"), &GameWorld::lan_war_battle_end_frame);
+	ClassDB::bind_method(D_METHOD("online_war_phase", "start_json", "phase"), &GameWorld::online_war_phase);
+	ClassDB::bind_method(D_METHOD("online_war_map_begin"), &GameWorld::online_war_map_begin);
+	ClassDB::bind_method(D_METHOD("net_is_online"), &GameWorld::net_is_online);
 	ClassDB::bind_method(D_METHOD("net_status"), &GameWorld::net_status);
 	ClassDB::bind_method(D_METHOD("net_finish"), &GameWorld::net_finish);
 	ClassDB::bind_method(D_METHOD("net_write_census", "path"), &GameWorld::net_write_census); // lane MP-3
@@ -1050,7 +1053,7 @@ Dictionary GameWorld::prepare_new_game(const Dictionary &message)
 	}
 	if (m_netStarted)
 	{
-		start->localSlot = m_netStart.localSlot; // MP-1: GameInfo::getLocalSlotNum of this peer
+		start->localSlot = m_netStart.gameSlot(m_netStart.localSlot); // MP-1: tactical player slot (the online battle's authenticated relay slot stays original)
 		start->observer = m_netStart.spectatorIndex >= 0; // lane ONLINE-3: a spectator watches as the ReplayObserver side
 	}
 	result["resolved"] = newGameToDictionary(start->message);
@@ -4309,6 +4312,11 @@ Dictionary GameWorld::net_online(const String &start_json)
 			return r;
 		}
 	}
+	if (start.spectatorIndex >= 0 && start.game.game.warOfTheRing())
+	{
+		r["error"] = "online War of the Ring spectators need a strategic relay log [S-4075]";
+		return r;
+	}
 	m_netSession.reset();
 	m_netClient.reset();
 	m_netHost.reset();
@@ -4319,6 +4327,9 @@ Dictionary GameWorld::net_online(const String &start_json)
 		return r;
 	}
 	m_netStart = start;
+	m_onlineWarRootId = start.game.game.warOfTheRing() && start.online ? start.onlineGameId : 0;
+	m_onlineWarPhase = 0;
+	m_onlineNextReady = false;
 	m_netStarted = true;
 	r["ok"] = true;
 	r["slot"] = start.localSlot;
@@ -4328,6 +4339,50 @@ Dictionary GameWorld::net_online(const String &start_json)
 		r["spectator"] = start.spectatorIndex;
 		r["delay"] = start.spectatorDelay;
 	}
+	return r;
+}
+
+Dictionary GameWorld::online_war_phase(const String &start_json, int64_t phase)
+{
+	Dictionary r;
+	r["ok"] = false;
+	if (!m_netStarted || !m_netStart.online || !m_netStart.game.game.warOfTheRing() ||
+		(phase & 1) == m_warBattle || phase != m_onlineWarPhase + 1 || m_onlineNextReady)
+	{
+		r["error"] = "the next online war phase is out of order or the current relay session is not live";
+		return r;
+	}
+	const LobbyStart &war = m_warBattle ? m_warStart : m_netStart;
+	LobbyStart next;
+	std::string error;
+	const CharString json = start_json.utf8();
+	if (!OnlineStart::parsePhase(std::string(json.get_data(), (size_t)json.length()), war, m_onlineWarRootId, (int)phase, next, &error))
+	{
+		r["error"] = toGodot(error);
+		return r;
+	}
+	m_onlineNextPhase = std::move(next);
+	m_onlineNextReady = true;
+	r["ok"] = true;
+	return r;
+}
+
+Dictionary GameWorld::online_war_map_begin()
+{
+	Dictionary r;
+	r["ok"] = false;
+	if (!m_warBattle || !m_netStart.online || !m_onlineNextReady || m_onlineWarPhase % 2 != 1)
+	{
+		r["error"] = "online war: a valid map-phase ticket is required before leaving the battle";
+		return r;
+	}
+	m_netSession.reset();
+	m_netStart = std::move(m_onlineNextPhase);
+	m_netStarted = true;
+	m_warBattle = false;
+	++m_onlineWarPhase;
+	m_onlineNextReady = false;
+	r["ok"] = true;
 	return r;
 }
 
@@ -4414,15 +4469,21 @@ Dictionary GameWorld::lan_strategic_begin(Object *living_world, const Array &slo
 		r["error"] = "lan_strategic_begin needs a started LAN game (lan_begin) and a LivingWorldGame";
 		return r;
 	}
-	if (m_netStart.online || !m_netStart.game.game.warOfTheRing())
+	if (!m_netStart.game.game.warOfTheRing())
 	{
-		r["error"] = m_netStart.online ? "an online War of the Ring is not ported yet (WOTR2 milestone 8 step 4)" : "the started game is not a War of the Ring";
+		r["error"] = "the started game is not a War of the Ring";
+		return r;
+	}
+	if (m_netStart.online && m_netStart.rejoinGeneration > 0)
+	{
+		r["error"] = "an online War of the Ring cannot rejoin a running strategic map without its relay command log";
 		return r;
 	}
 	NetworkConfig config;
 	config.localSlot = m_netStart.localSlot;
 	config.runAhead = m_netStart.runAhead;
 	config.crcInterval = m_netStart.crcInterval;
+	config.holdForRejoin = m_netStart.online; // ONLINE-3: the relay holds a silent slot, unlike LAN's immediate hand-over
 	std::string error;
 	if (!m_fs.is_valid() || !NetworkSettings::load(*m_fs->archive_fs(), config.settings, &error))
 	{
@@ -4457,7 +4518,15 @@ Dictionary GameWorld::lan_strategic_begin(Object *living_world, const Array &slo
 			return r;
 		}
 	}
-	auto transport = std::make_unique<Transport>(*m_netSocket, m_netStart.localSlot, Transport::Options());
+	Transport::Options transportOptions;
+	if (m_netStart.online)
+	{
+		transportOptions.relay.enabled = true;
+		transportOptions.relay.address = m_netStart.relay;
+		transportOptions.relay.ticket = m_netStart.ticket;
+		transportOptions.relay.macKey = m_netStart.macKey;
+	}
+	auto transport = std::make_unique<Transport>(*m_netSocket, m_netStart.localSlot, transportOptions);
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
 		if (m_netStart.networkSlot[(size_t)s] && s != m_netStart.localSlot)
@@ -4504,6 +4573,10 @@ void GameWorld::lan_strategic_end()
 	m_netHost.reset();
 	m_netSocket.reset();
 	m_netStart = LobbyStart();
+	m_onlineNextPhase = LobbyStart();
+	m_onlineWarRootId = 0;
+	m_onlineWarPhase = 0;
+	m_onlineNextReady = false;
 	m_netStarted = false;
 	m_netLoaded = false;
 	m_netScript = false;
@@ -4522,6 +4595,12 @@ Dictionary GameWorld::lan_war_battle(const Dictionary &message, const Array &lob
 		r["error"] = "lan_war_battle needs a running LAN War of the Ring (lan_strategic_begin) and no battle running";
 		return r;
 	}
+	const bool online = m_netStart.online;
+	if (online && (!m_onlineNextReady || m_onlineWarPhase % 2 != 0))
+	{
+		r["error"] = "online war: a valid battle-phase ticket is required before parking the map";
+		return r;
+	}
 	LobbyStart battle;
 	std::string error;
 	if (!newGameFromDictionary(message, battle.game, &error))
@@ -4529,10 +4608,21 @@ Dictionary GameWorld::lan_war_battle(const Dictionary &message, const Array &lob
 		r["error"] = toGodot("the battle's start: " + error);
 		return r;
 	}
-	battle.runAhead = m_netStart.runAhead;
-	battle.crcInterval = m_netStart.crcInterval;
-	battle.profile = m_netStart.profile;
-	battle.localSlot = -1;
+	if (online)
+	{
+		const NewGameMessage tactical = battle.game;
+		battle = m_onlineNextPhase; // original relay slots, credentials and a fresh game id; never the prior phase's transport
+		battle.game = tactical;
+		battle.battleUsesWarSlots = true;
+	}
+	else
+	{
+		battle.runAhead = m_netStart.runAhead;
+		battle.crcInterval = m_netStart.crcInterval;
+		battle.profile = m_netStart.profile;
+		battle.localSlot = -1;
+	}
+	std::uint16_t liveMask = 0;
 	for (int64_t s = 0; s < lobby_slot_of_battle_slot.size() && s < MAX_SLOTS; ++s)
 	{
 		const int lobby = (int)(int64_t)lobby_slot_of_battle_slot[s];
@@ -4540,11 +4630,33 @@ Dictionary GameWorld::lan_war_battle(const Dictionary &message, const Array &lob
 		{
 			continue; // an AI or an empty battle slot
 		}
-		battle.networkSlot[(size_t)s] = true;
-		battle.addresses[(size_t)s] = m_netStart.addresses[(size_t)lobby];
-		if (lobby == m_netStart.localSlot)
+		if (online)
 		{
-			battle.localSlot = (int)s;
+			if (liveMask & (1u << lobby))
+			{
+				r["error"] = "a battle's original relay seat appears twice";
+				return r;
+			}
+			liveMask = (std::uint16_t)(liveMask | 1u << lobby);
+			battle.battleSlotOfWarSlot[(size_t)lobby] = (int)s;
+		}
+		else
+		{
+			battle.networkSlot[(size_t)s] = true;
+			battle.addresses[(size_t)s] = m_netStart.addresses[(size_t)lobby];
+			if (lobby == m_netStart.localSlot)
+				battle.localSlot = (int)s;
+		}
+	}
+	if (online)
+	{
+		std::uint16_t ticketMask = 0;
+		for (int s = 0; s < MAX_SLOTS; ++s)
+			if (battle.networkSlot[(size_t)s]) ticketMask = (std::uint16_t)(ticketMask | 1u << s);
+		if (ticketMask != liveMask)
+		{
+			r["error"] = "the battle's players do not match the phase ticket's original seats";
+			return r;
 		}
 	}
 	if (battle.localSlot < 0)
@@ -4555,11 +4667,16 @@ Dictionary GameWorld::lan_war_battle(const Dictionary &message, const Array &lob
 	}
 	m_warStart = m_netStart;
 	m_netStart = battle;
+	if (online)
+	{
+		++m_onlineWarPhase;
+		m_onlineNextReady = false;
+	}
 	m_warBattle = true;
 	m_warLeftBeforeEnd = false;
 	m_warOtherDepartedBeforeEnd = false;
 	r["ok"] = true;
-	r["local_slot"] = battle.localSlot;
+	r["local_slot"] = battle.gameSlot(battle.localSlot);
 	return r;
 }
 
@@ -4674,7 +4791,7 @@ Dictionary GameWorld::net_begin(const Dictionary &options)
 		// the desync dump (GameNetwork/DesyncDump.h): the caller's directory (game.gd: the user data directory), the local slot's name
 		so.desyncDirectory = options.has("desync_dir") ? std::string(String(options["desync_dir"]).utf8().get_data()) : std::string();
 		so.exeName = "openbfme";
-		so.playerName = loadScreenU16ToUtf8(m_netStart.game.game.slots[m_netStart.localSlot].name);
+		so.playerName = loadScreenU16ToUtf8(m_netStart.game.game.slots[m_netStart.gameSlot(m_netStart.localSlot)].name);
 	}
 	if (options.has("record"))
 	{
@@ -4702,7 +4819,7 @@ Dictionary GameWorld::net_begin(const Dictionary &options)
 	m_netScript = optBool(options, "script", false);
 	m_netScriptFrame = 0xFFFFFFFFu;
 	m_netPlayer = m_netSession->config().slotPlayerIndex[(size_t)m_netStart.localSlot];
-	m_netStartPos = m_start ? m_start->message.game.slots[m_netStart.localSlot].startPos : -1;
+	m_netStartPos = m_start ? m_start->message.game.slots[m_netStart.gameSlot(m_netStart.localSlot)].startPos : -1;
 	m_netScripted = 0;
 	r["ok"] = true;
 	r["player"] = m_netPlayer;

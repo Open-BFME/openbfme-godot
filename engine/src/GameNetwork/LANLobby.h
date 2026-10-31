@@ -38,6 +38,10 @@ struct LobbyStart
 	int crcInterval = 100;
 	std::array<NetAddress, MAX_SLOTS> addresses{}; ///< per slot, the network players' addresses (the local one is its own socket's)
 	std::array<bool, MAX_SLOTS> networkSlot{};     ///< the human slots of the game
+	// WOTR2 milestone 9: the online battle keeps the war's relay seat while its tactical game uses compact player slots (RW 0x6B5E3E).
+	bool battleUsesWarSlots = false;
+	std::array<int, MAX_SLOTS> battleSlotOfWarSlot{};
+	int gameSlot(int networkSlot) const { return battleUsesWarSlots ? battleSlotOfWarSlot[(size_t)networkSlot] : networkSlot; }
 	ProfileIdentity profile;                       ///< the host's (equal to every player's: checked)
 	// lane ONLINE-2: an online game (GameNetwork/OnlineStart.h: the START the lobby service built): every peer is behind the relay (Transport relay mode),
 	// `addresses` are unused

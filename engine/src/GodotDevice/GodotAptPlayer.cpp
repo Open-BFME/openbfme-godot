@@ -606,6 +606,8 @@ const char *shellActionName(ShellAction a)
 		case ShellAction::ObjectivesReturnToGame: return "ObjectivesReturnToGame"; // lane CAMPUI-1
 		case ShellAction::CreateAHeroExit: return "CreateAHeroExit";
 		case ShellAction::OnlineGameStart: return "OnlineGameStart"; // lane ONLINE-4
+		case ShellAction::OnlineLoadWar: return "OnlineLoadWar";
+		case ShellAction::LanLoadWar: return "LanLoadWar";
 		case ShellAction::SaveGameFile: return "SaveGameFile"; // lane SAVE-2
 		case ShellAction::LoadGameFile: return "LoadGameFile";
 		case ShellAction::DeleteGameFile: return "DeleteGameFile";
@@ -1357,6 +1359,10 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("online_take_requests"), &AptMenuPlayer::online_take_requests);
 	ClassDB::bind_method(D_METHOD("online_deliver", "id", "status", "body", "error"), &AptMenuPlayer::online_deliver);
 	ClassDB::bind_method(D_METHOD("online_status"), &AptMenuPlayer::online_status);
+	ClassDB::bind_method(D_METHOD("online_phase_request", "phase", "slots"), &AptMenuPlayer::online_phase_request);
+	ClassDB::bind_method(D_METHOD("online_phase_status"), &AptMenuPlayer::online_phase_status);
+	ClassDB::bind_method(D_METHOD("online_stage_saved_war", "lobby", "save", "hash", "seats"), &AptMenuPlayer::online_stage_saved_war);
+	ClassDB::bind_method(D_METHOD("online_resume_check", "save", "why"), &AptMenuPlayer::online_resume_check);
 	ClassDB::bind_method(D_METHOD("online_apply", "spec"), &AptMenuPlayer::online_apply);
 	ClassDB::bind_method(D_METHOD("online_social_status"), &AptMenuPlayer::online_social_status);
 	ClassDB::bind_method(D_METHOD("online_social_events"), &AptMenuPlayer::online_social_events);
@@ -3362,6 +3368,10 @@ Dictionary AptMenuPlayer::strategic_setup(const Dictionary &request)
 	if (!screen)
 	{
 		screen = dynamic_cast<AptLanLobby *>(m->shell->shell->findScreenByFilename("LanLobby.apt")); // WOTR2 milestone 8: the LanStrategic page
+	}
+	if (!screen)
+	{
+		screen = dynamic_cast<AptOnlineShell *>(m->shell->shell->findScreenByFilename("OnlineShell.apt")); // BFME2 AptOnlineCustomMatchCtor.cpp: strategic flag 1
 	}
 	if (!screen || !screen->strategicMode() || !screen->setup())
 	{
@@ -7974,6 +7984,15 @@ Dictionary AptMenuPlayer::online_status()
 	r["room_mode"] = toGodot(std::string(OnlineLobbyClient::modeName(c.gameMode())));
 	r["slot"] = (int64_t)c.localSlot();
 	r["game_id"] = toGodot(c.gameId());
+	r["game_mode"] = (int64_t)c.gameInfo().gameMode;
+	r["resume_save"] = toGodot(c.gameInfo().resumeSave);
+	r["resume_hash"] = (int64_t)c.gameInfo().resumeHash;
+	if (c.localSlot() >= 0 && c.localSlot() < MAX_SLOTS)
+	{
+		const auto &check = c.slotViews()[(size_t)c.localSlot()].resumeCheck;
+		r["resume_check_save"] = toGodot(check.save);
+		r["resume_check_ok"] = check.known && check.ok;
+	}
 	r["busy"] = c.busy();
 	Array ready;
 	for (int i = 0; i < c.gameInfo().serializedSlotCount(); ++i)
@@ -8030,6 +8049,99 @@ Dictionary AptMenuPlayer::online_status()
 		r["start_spots"] = spots;
 	}
 	return r;
+}
+
+Dictionary AptMenuPlayer::online_phase_request(int64_t phase, const Array &slots)
+{
+	Dictionary r;
+	r["ok"] = false;
+	if (!m->shell || !m->shell->online || phase < 1 || phase > 1000)
+	{
+		r["error"] = "an online War of the Ring game and phase 1 .. 1000 are required";
+		return r;
+	}
+	std::vector<int> seats;
+	for (int64_t i = 0; i < slots.size(); ++i)
+	{
+		if (slots[i].get_type() != Variant::INT || (int64_t)slots[i] < 0 || (int64_t)slots[i] >= MAX_SLOTS)
+		{
+			r["error"] = "a phase's seats must be original human slot numbers";
+			return r;
+		}
+		seats.push_back((int)(int64_t)slots[i]);
+	}
+	if (!m->shell->online->requestPhase((int)phase, seats))
+	{
+		r["error"] = "the phase request is not for this war's live seats or another phase is pending";
+		return r;
+	}
+	r["ok"] = true;
+	return r;
+}
+
+Dictionary AptMenuPlayer::online_phase_status() const
+{
+	Dictionary r;
+	if (!m->shell || !m->shell->online)
+	{
+		r["error"] = "the online lobby is no longer available";
+		return r;
+	}
+	const OnlineLobbyClient &c = *m->shell->online;
+	r["phase"] = c.phaseNumber();
+	r["pending"] = c.phasePending();
+	r["waiting"] = c.phaseWaiting();
+	r["start"] = toGodot(c.phaseStartJson());
+	r["error"] = toGodot(c.phaseError());
+	return r;
+}
+
+Dictionary AptMenuPlayer::online_stage_saved_war(const Dictionary &lobby, const String &save, int64_t hash, const Array &seats)
+{
+	Dictionary result;
+	result["ok"] = false;
+	auto refuse = [&](const std::string &why) {
+		result["error"] = toGodot(why);
+		return result;
+	};
+	if (!m->shell || !m->shell->online || hash < 0 || hash > 0xFFFFFFFFll)
+		return refuse("the online saved war needs an active lobby and a 32-bit state hash");
+	AptOnlineShell *screen = dynamic_cast<AptOnlineShell *>(m->shell->shell->findScreenByFilename("OnlineShell.apt"));
+	if (!screen)
+		return refuse("the online strategic screen is not open");
+	NewGameMessage saved;
+	std::string why;
+	if (!newGameFromDictionary(lobby, saved, &why))
+		return refuse("the save's lobby is damaged: " + why);
+	std::vector<std::pair<int, std::u16string>> expected;
+	for (int64_t i = 0; i < seats.size(); ++i)
+	{
+		if (seats[i].get_type() != Variant::ARRAY)
+			return refuse("the save's human seat is not a slot and name");
+		const Array seat = seats[i];
+		if (seat.size() != 2 || seat[0].get_type() != Variant::INT || seat[1].get_type() != Variant::STRING)
+			return refuse("the save's human seat is not a slot and name");
+		expected.emplace_back((int)(int64_t)seat[0], utf8ToU16(toNative(String(seat[1]))));
+	}
+	if (!screen->stageSavedWar(saved.game, expected, toNative(save), (std::uint32_t)hash, &why))
+		return refuse(why);
+	result["ok"] = true;
+	return result;
+}
+
+Dictionary AptMenuPlayer::online_resume_check(const String &save, const String &why)
+{
+	Dictionary result;
+	result["ok"] = false;
+	if (!m->shell || !m->shell->online || !m->shell->online->inGame() || !m->shell->online->gameInfo().resumed() ||
+		toNative(save) != m->shell->online->gameInfo().resumeSave || toNative(why).size() > 512)
+	{
+		result["error"] = "the room has no matching saved war, or the save check is too long";
+		return result;
+	}
+	m->shell->online->setResumeCheck(toNative(save), why.is_empty(), toNative(why));
+	result["ok"] = true;
+	return result;
 }
 
 Dictionary AptMenuPlayer::online_social_status() const

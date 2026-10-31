@@ -172,7 +172,7 @@ const std::vector<std::string> &Locomotor::allStops()
 		"operation order and PC24 precision are reproduced through NumericState, the trigonometry is NumericState's deterministic double-double "
 		"(lane WIN-1: the same bits on every OS), not the retail CRT / x87 results.",
 		"S-084: locomotor cases not ported: the ScalesWalls look-ahead (RW 0x5E8956-0x5E8FF8), "
-		"ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT and ABSOLUTE_HEIGHT (the last three: lane SHIP-1; the stealth reveal of a climbing object, RW 0x5E7C0A, is not ported) and the layer / projectile / falling special cases of RW 0x5E774A / 0x5E5785, "
+		"ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT, ABSOLUTE_HEIGHT, FIXED_SURFACE_RELATIVE_HEIGHT and FIXED_ABSOLUTE_HEIGHT (the last two: RW 0x5E78DB; the stealth reveal of a climbing object, RW 0x5E7C0A, is not ported) and the layer / projectile / falling special cases of RW 0x5E774A / 0x5E5785, "
 		"and the HORDE mover's formation path nodes (types 2, 3, 7, 8; RW 0x5E6E20-0x5E7148).",
 		"S-1750: maintainCurrentPosition (RW 0x5E7CC7) is ported without its tail: the held position's z behaviour (RW 0x5E76AC on +0x08) with its "
 		"constant-calling result, the transform write (RW 0x70BA76) are not run for non-WINGS appearances; an idle unit's height and sleep follow "
@@ -1359,6 +1359,25 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 		host.setPendingPosition(Coord3D{ effective.x, effective.y, SimMath::subf32(SimMath::mulf32(p.z, 2.0f), cur.z) });
 		return;
 	}
+	if (zAxis == Z_FIXED_SURFACE_RELATIVE_HEIGHT || zAxis == Z_FIXED_ABSOLUTE_HEIGHT)
+	{
+		// TARGET: RW 0x5E78DB-0x5E7926 selects the water/ground surface only for case 4, then RW 0x5E7ACC adds the preferred height
+		// and writes the working translation; the common tail RW 0x5E7C40 extrapolates pending z. Unlike cases 2/3 there is no damping.
+		// DONOR: BFME2 Locomotor.cpp:2022-2038 describes fixed surface/absolute heights, but that body is present-unmatched, not target evidence.
+		Coord3D p{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] };
+		float surface = 0.0f;
+		if (zAxis == Z_FIXED_SURFACE_RELATIVE_HEIGHT)
+		{
+			float waterZ = 0.0f;
+			surface = host.isUnderwater(p.x, p.y, &waterZ) ? waterZ : host.groundHeightAt(p.x, p.y); // RW 0x5E3960
+		}
+		p.z = SimMath::addf32(m_preferredHeight, surface);
+		m_matrix.m[2][3] = p.z;
+		const Coord3D cur = host.getPosition();
+		const Coord3D effective = host.hasPendingPosition() ? host.getPendingPosition() : cur;
+		host.setPendingPosition(Coord3D{ effective.x, effective.y, SimMath::subf32(SimMath::mulf32(p.z, 2.0f), cur.z) });
+		return;
+	}
 	if (zAxis == Z_SURFACE_RELATIVE_HEIGHT || zAxis == Z_ABSOLUTE_HEIGHT)
 	{
 		// lane SHIP-1, RW 0x5E7AF6 .. 0x5E7C3B (cases 2 and 3 of the table RW 0x5E7CA3): nothing while the preferred height (+ 0x48) is 0 and flag 8 (ZH
@@ -1427,7 +1446,7 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 	if (zAxis != Z_NO_Z_MOTIVE_FORCE)
 	{
 		noteStopOf(1);
-		throw std::logic_error("S-084: ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT, ABSOLUTE_HEIGHT and SCALING_WALLS is not ported");
+		throw std::logic_error("S-084: ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT, ABSOLUTE_HEIGHT, FIXED_SURFACE_RELATIVE_HEIGHT, FIXED_ABSOLUTE_HEIGHT and SCALING_WALLS is not ported");
 	}
 	Coord3D pos{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] }; // RW 0x5E3A5A
 	if (!host.zMotionSuppressed())

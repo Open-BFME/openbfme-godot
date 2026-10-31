@@ -95,7 +95,7 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	m_spellStores = std::make_unique<SpellStores>(m_keys);
 	m_audio = std::make_unique<AudioIniState>();
 	m_skirmishAI = std::make_unique<SkirmishAIStore>(m_keys);
-	m_livingWorld = std::make_shared<LivingWorld::LivingWorldStores>(); // WOTR-1
+	m_livingWorld = std::make_shared<LivingWorld::LivingWorldStores>(isBfme1Data(m_fs));
 	m_env.fileSystem = &m_fs;
 	m_legend.registerBlock(m_env.blocks);
 	m_things->registerBlocks(m_env.blocks);
@@ -117,8 +117,9 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	{
 		skip.push_back(*k); // SPELL-1: Science, Rank, SpecialPower
 	}
-	// WOTR-1: the War of the Ring blocks with real parsers (GameLogic/LivingWorld/LivingWorldData.h); the presentation and AutoResolve blocks stay stubs
-	skip.insert(skip.end(), LivingWorld::LivingWorldStores::blockKeywords().begin(), LivingWorld::LivingWorldStores::blockKeywords().end());
+	// Only replace recording handlers for the selected Living World data mode.
+	// BFME1 campaigns remain explicitly unavailable (S-5017).
+	skip.insert(skip.end(), m_livingWorld->blockKeywords().begin(), m_livingWorld->blockKeywords().end());
 	RegisterRecordingBlockStubs(m_env.blocks, m_recorder, skip, StubExtent::Lenient);
 	m_audio->registerBlocks(m_env.blocks);
 	m_skirmishAI->registerBlocks(m_env.blocks);
@@ -616,6 +617,10 @@ RetailObjectWorld::MapIniResult RetailObjectWorld::applyMapIni(const std::string
 std::vector<std::string> RetailObjectWorld::acceptanceStops() const
 {
 	std::vector<std::string> out = m_s->m_things->acceptanceStops();
+	for (const std::string &line : m_s->m_livingWorld->acceptanceStops())
+	{
+		out.push_back(line);
+	}
 	for (const std::string &u : m_s->m_playerTemplates->unverified())
 	{
 		out.push_back(u);

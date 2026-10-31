@@ -82,6 +82,7 @@ SUPPORT = {
     "social_privacy_walk.gd": "godot/tests/social_walk.gd",
     "new_game_loading_art_host.gd": "godot/tests/new_game_loading_art_test.gd",
     "online_social_node.gd": "godot/tests/online_social_node.tscn",
+    "online_war_walk.gd": "godot/scripts/game.gd",
     "smoke_checks.gd": "godot/tests/smoke_test.gd",
     "uberjoin1_lan_test.gd": "godot/tests/start_test.gd",
     "save_route_game.gd": "godot/tests/save_route_test.gd",
@@ -104,6 +105,7 @@ ALLOWLIST = {
     "controller_routing_test.gd": "controller input routing and scaled, letterboxed pointer motion/clicks",
     "online_list_test.gd": "online list parsing and paging against synthetic responses",
     "online_list_client_test.gd": "the native list client against synthetic responses",
+    "online_war_phase_test.gd": "battle relay tickets name only human original seats while tactical seats retain AI",
     "timeline_markers_test.gd": "score timeline markers against a stub shell",
     "weatherfx_test.gd": "the Enhanced weather's effects against a stub GameWorld and synthetic images",
 }
@@ -144,6 +146,7 @@ DENYLIST = {
     "pingwheel_test.gd": "manual: mixed UI/timer checks and retail skirmish/hash runs; not wholly asset-free",
     "replay_refusal_test.gd": "manual: mixed stub checks and retail replay subprocess; not wholly asset-free",
     "windows_crash_test.gd": "manual: destructive Windows debug crash/minidump probe; explicit opt-in required",
+    "edainfactions1_test.gd": "manual: needs the Edain 4.8.5.3 install (OPENBFME_EDAIN_INSTALL); without it the script only parses",
 }
 ENGINE_ERRORS = re.compile(r"(?m)^\s*(?:SCRIPT ERROR|ERROR):")
 

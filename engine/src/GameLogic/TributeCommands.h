@@ -2,7 +2,7 @@
 //
 // TributeCommands (lane PLAY-1): the tribute, MSG_GIVE_MONEY (1126), the money a player sends an ally from PlayerTribute.apt (the Palantir's flag).
 //
-// TARGET FACTS (RotWK game.dat, caveat S-001; donor: the BFME2 decomp GameLogic/System/GameLogic_CallPlayerGiveMoney.cpp GameLogic::CallPlayerGiveMoney, byte-matched,
+// TARGET FACTS (RotWK game.dat, caveat S-001; donor: the BFME2 decomp GameLogic/System/GameLogic.cpp GameLogic::CallPlayerGiveMoney, byte-matched,
 // tier B same-shape for RW 0x6264E1):
 //   * the screen's Send (RW 0x914DD6): for every row whose player is not the local one, is active (RW 0x6AAC52) and whose slider holds an amount > 0, one
 //     MSG_GIVE_MONEY (0x466) with three integers: the local player's index (Player + 0x54), the row player's index, the amount;
