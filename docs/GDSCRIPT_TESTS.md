@@ -254,6 +254,8 @@ runner is claimed. All paths below are relative to the repository root.
 
 | `godot/tests/fortress_exit_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
 | `godot/tests/edainfactions1_test.gd` | Manual only; no generic pytest runner | Needs the Edain 4.8.5.3 install (OPENBFME_EDAIN_INSTALL, OPENBFME_EDAIN_ASSETS_INSTALL); without them it only parses. Runs the Dwarven clan choices and the Dwarven AI in real skirmishes. |
+| `godot/tests/bfme1_battle_school_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and original movie playback. |
+| `godot/tests/shell_movie_audio_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: narration switching, reserved handles and menu-music restoration against stubs; headless, 20 s timeout. |
 
 ## OAuth readiness regression
 

@@ -840,6 +840,10 @@ struct AptMenuPlayer::Impl
 		double durationMs = 0.0;
 		double fps = 30.0;
 		bool loop = false;
+		int level = -1;
+		std::string completion;
+		PackedStringArray audioEvents;
+		bool completed = false;
 		bool drawn = false;
 		std::string error;
 	};
@@ -1598,6 +1602,11 @@ void AptMenuPlayer::advanceMovies(double deltaMs)
 {
 	// lane CAMP-2: each BinkMovie on screen shows the frame of its time (at the movie's rate); a looping one starts again at its end (a new stream: VP6
 	// starts over at a key frame); one that left the screen is closed
+	// BFME1 Rva00465770MovieProperties (0x465770) stores _CallOnLastFrame;
+	// its callback 0x465670 (BfmeConv1944.cpp) invokes it with the window name.
+	// Dispatch after traversal: the movie's script can remove/recreate clips.
+	struct Completion { int level; std::string function, path; };
+	std::vector<Completion> completions;
 	for (auto it = m->movies.begin(); it != m->movies.end();)
 	{
 		Impl::MovieSlot &s = it->second;
@@ -1626,8 +1635,24 @@ void AptMenuPlayer::advanceMovies(double deltaMs)
 				m->movieErrors.insert("BinkMovie " + s.title + ": " + s.error);
 				UtilityFunctions::printerr(toGodot("MOVIE ERROR BinkMovie " + s.title + ": " + s.error));
 			}
+			if (s.error.empty() && !s.completed && !s.completion.empty() &&
+				s.stream->get_frame() == s.stream->get_frame_count() - 1)
+			{
+				s.completed = true;
+				completions.push_back({ s.level, s.completion, it->first });
+			}
 		}
 		++it;
+	}
+	for (const Completion &call : completions)
+	{
+		std::string error;
+		if (!m->shell->wm->invokeAS(call.level, call.function, { call.path }, nullptr, &error))
+		{
+			m->movieErrors.insert("BinkMovie completion " + call.function + ": " + error);
+			UtilityFunctions::printerr(toGodot("MOVIE ERROR BinkMovie completion " + call.function + ": " + error));
+		}
+		m->dirty = true;
 	}
 }
 
@@ -4791,8 +4816,8 @@ void AptMenuPlayer::drawSegment(const AptCanvasList &list, size_t segment, const
 					// 0x81487B; RotWK's registration RW 0x814EFA was not read): the clip's script names the Video (`_MovieName`, e.g. MainMenu's
 					// movieCredits), `_Loop` and `_UseAlpha`; its picture fills the clip's bounds. INFERENCE (stop S-2342, unverified: the credits page is not ported): the movie starts when the clip is
 					// first drawn and loops when `_Loop` is true; `_UseAlpha` = false draws the alpha stream opaque; `_Init` / BinkMovieInit and the
-					// movie-complete callback (OnlineHome's MovieComplete) are not ported
-					std::string title, loop, useAlpha;
+					// movie-complete callback outside BFME1 (OnlineHome's MovieComplete) are not ported
+					std::string title, loop, useAlpha, completion;
 					for (const auto &kv : op.nativeVars)
 					{
 						if (kv.first == "_MovieName")
@@ -4803,16 +4828,25 @@ void AptMenuPlayer::drawSegment(const AptCanvasList &list, size_t segment, const
 						{
 							loop = kv.second;
 						}
+						else if (kv.first == "_CallOnLastFrame")
+						{
+							completion = kv.second;
+						}
 						else if (kv.first == "_UseAlpha")
 						{
 							useAlpha = kv.second;
 						}
 					}
 					Impl::MovieSlot &slot = m->movies[op.path];
+					// A lesson can replace the movie at the same instance path.
+					if (slot.title != title) slot = Impl::MovieSlot();
 					slot.drawn = true;
 					if (slot.stream.is_null() && slot.error.empty())
 					{
 						slot.title = title;
+						slot.level = op.level;
+						// BFME1 target evidence only; other games retain S-2342.
+						if (m->shell && m->fs.is_valid() && m->fs->is_bfme1()) slot.completion = completion;
 						slot.loop = loop == "true" || loop == "1";
 						Dictionary info;
 						if (m->presentationFs.is_valid() && m->presentationFs->is_shell_source() && m->presentationVideos && !title.empty())
@@ -4836,6 +4870,8 @@ void AptMenuPlayer::drawSegment(const AptCanvasList &list, size_t segment, const
 						}
 						else
 						{
+							// Cache metadata from the stream-opening lookup; get_movies never waits on the world.
+							slot.audioEvents = info.get("audio_events", PackedStringArray());
 							slot.stream.instantiate();
 							Dictionary opened = slot.stream->open(String(info.get("full_path", "")));
 							if (!(bool)opened.get("ok", false))
@@ -6826,6 +6862,9 @@ Array AptMenuPlayer::get_movies() const
 		d["frames"] = kv.second.stream.is_valid() ? kv.second.stream->get_frame_count() : (int64_t)0;
 		d["frames_decoded"] = kv.second.stream.is_valid() ? kv.second.stream->get_stats().get("frames_decoded", (int64_t)0) : Variant((int64_t)0);
 		d["loop"] = kv.second.loop;
+		d["completion"] = toGodot(kv.second.completion);
+		d["audio_events"] = kv.second.audioEvents;
+		d["completed"] = kv.second.completed;
 		d["error"] = toGodot(kv.second.error);
 		out.push_back(d);
 	}
