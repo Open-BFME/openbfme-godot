@@ -49,6 +49,13 @@ int angleToCode(float a)
 
 Pathfinder::UnitRecord &Pathfinder::unit(PathfindObjectID id)
 {
+	// performance (the same record): a unit already indexed is found through m_unitIndex, not the std::map of every unit (~32k nodes at 30k troops); it is
+	// asked on every transform change (updatePos) and goal update. Records are never erased; the index is rebuilt wherever the map is cleared or loaded,
+	// so an index entry is the map's record
+	if (UnitRecord *known = indexedUnit(id))
+	{
+		return *known;
+	}
 	UnitRecord &r = m_units[id];
 	if (id < (PathfindObjectID)kUnitIndexMax)
 	{
@@ -1240,10 +1247,15 @@ void Pathfinder::updateGoalAngle(PathfindObject &obj, const Coord3D *newGoalPos,
 void Pathfinder::removeGoal(PathfindObject &obj)
 {
 	// RW 0x8E2138
-	auto it = m_units.find(obj.getID());
-	if (it != m_units.end() && it->second.goal.occupied)
+	UnitRecord *u = indexedUnit(obj.getID());
+	if (!u)
 	{
-		releaseSlot(obj.getID(), it->second.goal);
+		auto it = m_units.find(obj.getID());
+		u = it == m_units.end() ? nullptr : &it->second;
+	}
+	if (u && u->goal.occupied)
+	{
+		releaseSlot(obj.getID(), u->goal);
 	}
 }
 
@@ -1291,10 +1303,15 @@ void Pathfinder::updatePos(PathfindObject &obj)
 void Pathfinder::removePos(PathfindObject &obj)
 {
 	// RW 0x8E215C
-	auto it = m_units.find(obj.getID());
-	if (it != m_units.end() && it->second.pos.occupied)
+	UnitRecord *u = indexedUnit(obj.getID());
+	if (!u)
 	{
-		releaseSlot(obj.getID(), it->second.pos);
+		auto it = m_units.find(obj.getID());
+		u = it == m_units.end() ? nullptr : &it->second;
+	}
+	if (u && u->pos.occupied)
+	{
+		releaseSlot(obj.getID(), u->pos);
 	}
 }
 

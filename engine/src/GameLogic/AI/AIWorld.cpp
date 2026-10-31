@@ -898,11 +898,24 @@ void AIWorld::reportMovementFailure(const Object &obj, const std::string &text)
 
 void AIWorld::noteStop(const char *stop)
 {
-	const std::string_view text(stop);
-	if (m_noted.find(text) == m_noted.end())
+	// performance (diagnostics only): every ordinary AI update notes kStopUpdate. The text was looked up in the set (keys of ~300 characters sharing long
+	// prefixes) each time; a text seen before is found by its address, its content compared once more (an address may be reused for another text)
+	const auto fast = m_notedFast.find(stop);
+	if (fast != m_notedFast.end() && std::strcmp(fast->second->c_str(), stop) == 0)
 	{
-		m_noted.emplace(text);
+		return;
 	}
+	const std::string_view text(stop);
+	auto it = m_noted.find(text);
+	if (it == m_noted.end())
+	{
+		it = m_noted.emplace(text).first;
+	}
+	if (m_notedFast.size() >= kNotedFastMax)
+	{
+		m_notedFast.clear(); // a caller that notes a temporary string brings a new address each time
+	}
+	m_notedFast[stop] = &*it;
 }
 
 std::vector<std::string> AIWorld::allStops()

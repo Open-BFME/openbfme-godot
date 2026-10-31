@@ -1204,6 +1204,20 @@ static Object *amoebaReachAmong(Object &m, const std::vector<Object *> &cands)
 	// and candidate) only for a candidate that would beat the best so far; the nearest enemy in range is the same. Uber because the range test leaves the
 	// melee reach it computed in the weapon's range host, which then holds another candidate's value (every reader but a point target's sets it first)
 	const bool rangeLast = m.logic().uber();
+	// performance (the same answers): the weapon's bonus is the attacker's alone, so it is computed once for the candidates, not per range test
+	WeaponBonus bonus;
+	bool haveBonus = false;
+	auto inRange = [&](Object &e) {
+		if (!haveBonus)
+		{
+			haveBonus = true;
+			if (!w->currentWeaponBonus(bonus))
+			{
+				return false;
+			}
+		}
+		return w->isWithinAttackRangeWithBonus(e, bonus);
+	};
 	ObjectID sacrificeTarget = INVALID_ID;
 	if (m.testStatus((unsigned)CombatNames::status("BLOODTHIRSTY")))
 	{
@@ -1236,7 +1250,7 @@ static Object *amoebaReachAmong(Object &m, const std::vector<Object *> &cands)
 			{
 				continue;
 			}
-			if (!w->isWithinAttackRange(*e))
+			if (!inRange(*e))
 			{
 				continue;
 			}
@@ -1245,7 +1259,7 @@ static Object *amoebaReachAmong(Object &m, const std::vector<Object *> &cands)
 			continue;
 		}
 		// lane UBER-2B: a candidate of a list built before this member (the Uber tick's) may have died since; a fresh list holds only living ones
-		if (!CombatQueries::isAlive(*e) || (!sacrifice && m.getRelationship(*e) != ENEMIES) || !w->isWithinAttackRange(*e))
+		if (!CombatQueries::isAlive(*e) || (!sacrifice && m.getRelationship(*e) != ENEMIES) || !inRange(*e))
 		{
 			continue;
 		}
@@ -1529,6 +1543,7 @@ void HordeAIUpdate::meleeTick(Object &targetIn)
 			ICoord2D bestCell = cell;
 			bool valid[3][3] = {};
 			Coord3D cellPos[3][3];
+			const Pathfinder::CrowdStepContext crowd = pf.crowdStepContext(ai->adapter(), ai->locomotorInfo()); // once for the eight candidates (the same answers)
 			for (int ix = -1; ix <= 1; ++ix)
 			{
 				for (int iy = -1; iy <= 1; ++iy)
@@ -1545,7 +1560,7 @@ void HordeAIUpdate::meleeTick(Object &targetIn)
 						"[S-783] amoeba: the step test of RW 0x6F1C90 is ported (Pathfinder::crowdingAllowsStep, footprint extents RW 0x6ED0A0 = N / 2 and N - N / 2 of RW 0x6EAF79, "
 						"the reserving unit's blocked-frame counter for RW AI + 0x16C) and the step moves the member's goal reservation (RW 0x68B3BD); only the ground layer";
 					logic.noteStop(kStopCrowd);
-					if (!pf.crowdingAllowsStep(ai->adapter(), ai->locomotorInfo(), p))
+					if (!pf.crowdingAllowsStep(crowd, ai->adapter(), p))
 					{
 						continue;
 					}
@@ -1705,17 +1720,10 @@ void HordeAIUpdate::meleeTick(Object &targetIn)
 		}
 		if (!moved)
 		{
-			if (Object *e = amoebaReach(*m, target))
-			{
-				clearIdle();
-				rec.historyCount = 0;
-				rec.dirty = true;
-				if (amoebaAttack(*m, *e))
-				{
-					++m_stats.orders;
-				}
-			}
-			else if (world().mapReady())
+			// RW asks the reach check again here (the attack branch of the first ask, above). Between the two asks the member did not move, its weapon did not
+			// change and nothing joined or left the target (the idle cycle draws a random and the step search reads), so the same candidates in the same order
+			// give the first ask's answer, none, and leave the same melee reach in the weapon's range host: the second ask is not repeated (performance)
+			if (world().mapReady())
 			{
 				ICoord2D cell{ 0, 0 };
 				world().pathfinder().worldToCell(m->getPosition(), &cell);

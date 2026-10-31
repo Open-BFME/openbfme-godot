@@ -363,6 +363,17 @@ void EmotionTrackerUpdate::clearEmotionRequest(Object &obj, int type)
 
 void EmotionTrackerUpdate::threats(int &enemyThreat, unsigned &friendThreat) const
 {
+	if (!m_threatsKnown)
+	{
+		threatsComputed(m_threatsEnemy, m_threatsFriend);
+		m_threatsKnown = true;
+	}
+	enemyThreat = m_threatsEnemy;
+	friendThreat = m_threatsFriend;
+}
+
+void EmotionTrackerUpdate::threatsComputed(int &enemyThreat, unsigned &friendThreat) const
+{
 	// RW 0x8B5A15 .. 0x8B5A78 (and RW 0x8B54FF in the choice): the shroud's channel 1 at the object for the players RW 0x6A8695(index, 4) (enemies) and
 	// (index, 3) (itself and its allies)
 	enemyThreat = 0;
@@ -611,6 +622,11 @@ void EmotionTrackerUpdate::tauntScan(Object *&taunt, float &closest)
 
 UpdateSleepTime EmotionTrackerUpdate::update()
 {
+	struct ThreatsForget // the threats are computed at their first use in this update and forgotten at its end
+	{
+		const EmotionTrackerUpdate &t;
+		~ThreatsForget() { t.m_threatsKnown = false; }
+	} threatsForget{ *this };
 	resetSeerTemplate(); // lane PERF-HD: canSee's template memo is this update's scans'
 	// RW 0x8B5738
 	Object *obj = getObject();
@@ -673,6 +689,16 @@ UpdateSleepTime EmotionTrackerUpdate::update()
 			if (!o->isInWorld())
 			{
 				continue; // RW 0x8B5AF3: + 0x474 (in the world)
+			}
+			// performance (the same result): every branch below needs the entry nearer than the fear, point or hero distance found so far (fear2 > d2,
+			// closest > d2, hero2 > d2, with the same edge distance) and the rest is pure, so an entry beyond all three is passed over before the relationship,
+			// the filters and canSee. The list holds every SCARY / HERO object of the game and every horde walks it every frame
+			{
+				const float d2 = edgeDistanceSquared(*obj, *o);
+				if (!(fear2 > d2) && !(closest > d2) && !(hero2 > d2))
+				{
+					continue;
+				}
 			}
 			const Relationship rel = obj->getRelationship(*o); // RW 0x68D7AB
 			if (kScary >= 0 && o->isKindOf((unsigned)kScary))

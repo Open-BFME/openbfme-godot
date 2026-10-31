@@ -1285,6 +1285,34 @@ bool ObjectWeapons::isSlotWithinAttackRange(int slot, const Object &victim, floa
 	return WeaponIsWithinAttackRange(t, bonus, *self->m_rangeHost, src, src.position, &vic, vic.position, extra, checkMin);
 }
 
+bool ObjectWeapons::currentWeaponBonus(WeaponBonus &out) const
+{
+	const Weapon *w = weaponInSlot(m_curSlot);
+	if (!w || !w->getTemplate())
+	{
+		return false;
+	}
+	w->computeBonus(*const_cast<ObjectWeapons *>(this)->m_host, 0, out);
+	return true;
+}
+
+bool ObjectWeapons::isWithinAttackRangeWithBonus(const Object &victim, const WeaponBonus &bonus) const
+{
+	// isSlotWithinAttackRange(m_curSlot, victim, 0.0f, true) with the bonus given
+	const Weapon *w = weaponInSlot(m_curSlot);
+	if (!w || !w->getTemplate())
+	{
+		return false;
+	}
+	const WeaponTemplate &t = *w->getTemplate();
+	ObjectWeapons *self = const_cast<ObjectWeapons *>(this);
+	const RangeSubject src = subjectOf(*m_owner);
+	const RangeSubject vic = subjectOf(victim);
+	const float dz = SimMath::subf32(vic.position.z, src.position.z);
+	self->m_rangeHost->m_meleeReach = WeaponGetAttackRange(t, bonus, *self->m_rangeHost, src, dz);
+	return WeaponIsWithinAttackRange(t, bonus, *self->m_rangeHost, src, src.position, &vic, vic.position, 0.0f, true);
+}
+
 bool ObjectWeapons::isWithinAttackRange(const Coord3D &pos) const
 {
 	const Weapon *w = weaponInSlot(m_curSlot);

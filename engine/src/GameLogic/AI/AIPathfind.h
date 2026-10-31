@@ -865,6 +865,17 @@ public:
 	// lane PHYS-1: RW 0x6F1C90, the Amoeba's test of a one-cell step to `dest` (AIPathfindCrowd.cpp): the step must be valid (RW 0x6F1B3E) and the cells the unit would
 	// stand on must hold fewer other units' goal reservations than the cells it stands on, none of them blocked
 	bool crowdingAllowsStep(const PathfindObject &obj, const PathfindLocomotorInfo &loco, const Coord3D &dest);
+	// the unit's half of crowdingAllowsStep (its movement, its cell, its footprint and the other units' goal reservations around it): the same for each of the
+	// Amoeba's eight candidates (nothing reserves between them), so it is computed once per member (performance, the same answers)
+	struct CrowdStepContext
+	{
+		PathfindMovement mv;
+		ICoord2D here{ 0, 0 };
+		int below = 0, above = 0, current = 0;
+		PathfindObjectID self = PATHFIND_INVALID_ID;
+	};
+	CrowdStepContext crowdStepContext(const PathfindObject &obj, const PathfindLocomotorInfo &loco);
+	bool crowdingAllowsStep(const CrowdStepContext &ctx, const PathfindObject &obj, const Coord3D &dest);
 	// lane PHYS-1: RW 0x6EEBC1 (AIPathfindMelee.cpp): the melee approach destination check. True with `dest` unchanged when its cell is in the unit's zone and its footprint
 	// passes RW 0x6EBE89; else the first cell of an outward spiral (budget MaxCellsAdjustToMeleeDestination) that is in the zone, strictly closer to the unit than `dest`
 	// and passes RW 0x6EBE89 (`dest` becomes its coordinate); false when none
@@ -1441,6 +1452,8 @@ private:
 	PathfindRequestRing m_queue2; // blocked repaths (AI vtable +0x234)
 	std::map<PathfindObjectID, UnitRecord> m_units;
 	std::vector<UnitRecord *> m_unitIndex; // lane PATHPERF-1: m_units by id (see findUnit)
+	// the indexed record of a unit, or null (not indexed: an id at or above kUnitIndexMax, or no record yet)
+	UnitRecord *indexedUnit(PathfindObjectID id) const { return id < (PathfindObjectID)m_unitIndex.size() ? m_unitIndex[id] : nullptr; }
 	// lane PATHPERF-1: the search memo (occupantFacts): active for m_memoObj during internalFindPath; entries are valid when their gen is m_memoGen
 	std::vector<OccupantFacts> m_memo;
 	OccupantFacts m_memoScratch;
