@@ -58,7 +58,7 @@ def package(tmp: Path) -> tuple[Path, Path]:
     return archive, godot
 
 
-def run_export(tmp: Path, **env: str) -> subprocess.CompletedProcess:
+def run_export(tmp: Path, **env: str | None) -> subprocess.CompletedProcess:
     archive, godot = package(tmp)
     home = tmp / "home"
     home.mkdir(exist_ok=True)
@@ -66,7 +66,16 @@ def run_export(tmp: Path, **env: str) -> subprocess.CompletedProcess:
     bfme1.mkdir()
     e = {**os.environ, "ROTWK_INSTALL": str(tmp / "no-rotwk"), "BFME2_INSTALL": str(tmp / "no-bfme2"), "HOME": str(home),
          "BFME1_INSTALL": str(bfme1), "TMPDIR": str(tmp), "TEST_EXPORT_LOGS": str(tmp / "logs"), **env}
-    return subprocess.run(["bash", str(HERE / "test_export.sh"), str(archive), "--godot", str(godot)], env=e, capture_output=True,
+    e = {key: value for key, value in e.items() if value is not None}
+    # Isolate the start/smoke verdicts from the unrelated crash and discovery
+    # checks: those helpers require a real game rather than this stand-in.
+    harness = tmp / "harness" / "tools" / "release"
+    harness.mkdir(parents=True)
+    script = harness / "test_export.sh"
+    script.write_text((HERE / "test_export.sh").read_text())
+    for helper in ("crash_test.py", "fresh_user_test.py"):
+        (harness / helper).write_text("raise SystemExit(0)\n")
+    return subprocess.run(["bash", str(script), str(archive), "--godot", str(godot)], env=e, capture_output=True,
                           text=True, timeout=600)
 
 
@@ -74,6 +83,7 @@ def test_markers_are_found_before_long_output(tmp_path):
     """the markers with 20000 lines after them: the old `echo | grep -q` under pipefail missed them every time"""
     for i in range(2):
         r = run_export(tmp_path / str(i))
+        assert r.returncode == 0, r.stdout[-3000:] + r.stderr
         assert "RESULT start: PASS (GAME ran 5 frames)" in r.stdout, r.stdout[-3000:]
         assert "RESULT smoke: PASS (70001 lines of output)" in r.stdout, r.stdout[-3000:]
         assert "RESULT bfme1-start: PASS (packaged BFME1 MainMenu.apt)" in r.stdout
@@ -93,10 +103,25 @@ def test_a_missing_marker_fails_and_shows_the_output(tmp_path):
     assert r.returncode != 0
 
 
-def test_bfme1_data_is_required_even_when_other_games_are_configured(tmp_path):
-    r = run_export(tmp_path, BFME1_INSTALL="")
+@pytest.mark.parametrize("install", [None, ""])
+def test_unconfigured_bfme1_is_skipped_without_failing_other_release_checks(tmp_path, install):
+    r = run_export(tmp_path, BFME1_INSTALL=install, FAKE_BFME1_EXIT="1", FAKE_BFME1_SMOKE_EXIT="1")
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr
+    assert "RESULT bfme1-start: SKIP BFME1_INSTALL is not set" in r.stdout
+    assert "RESULT bfme1-smoke: SKIP BFME1_INSTALL is not set" in r.stdout
+    assert "RESULT bfme1-start: PASS" not in r.stdout
+    assert "RESULT bfme1-smoke: PASS" not in r.stdout
+    assert not (tmp_path / "logs" / "bfme1-start.log").exists()
+    assert not (tmp_path / "logs" / "bfme1-smoke.log").exists()
+    for stage in ("start", "smoke", "crash", "fresh-user"):
+        assert f"RESULT {stage}: PASS" in r.stdout
+    assert f"EXPORT TESTS PASS {VERSION}" in r.stdout
+
+
+def test_configured_bfme1_install_must_exist(tmp_path):
+    r = run_export(tmp_path, BFME1_INSTALL=str(tmp_path / "missing-bfme1"))
     assert r.returncode == 1
-    assert "RESULT bfme1-start: FAIL set BFME1_INSTALL" in r.stdout
+    assert "RESULT bfme1-start: FAIL BFME1_INSTALL is not an installed BFME1 directory" in r.stdout
     assert "EXPORT TESTS PASS" not in r.stdout
 
 

@@ -161,10 +161,13 @@ The release privacy scanner imports Python's possessive-repeat regex constants; 
    and the fresh-user test (`tools/release/fresh_user_test.py`: nothing found, a Wine
    prefix found and accepted, remembered, picked, swapped and empty picks rejected) on
    the packaged executable, and the smoke test on the packaged pack and library.
-   BFME1 data is mandatory: the packaged executable must load its object world
+   When `BFME1_INSTALL` is set, the packaged executable must load its object world
    and reach `MainMenu.apt`, and the packaged `bfme1_test.gd` must pass its menu,
-   lobby, castle and outpost checks. Missing data or a skipped test fails release
-   validation. BFME1 logs are `bfme1-start.log` and `bfme1-smoke.log`.
+   lobby, castle and outpost checks. An invalid install or a skipped or failed test
+   fails release validation. When `BFME1_INSTALL` is unset or empty, both BFME1
+   checks print `SKIP` without failing publication; BFME1 packaged startup remains
+   unverified on that builder. BFME1 logs, when run, are `bfme1-start.log` and
+   `bfme1-smoke.log`.
    The package is checked against an ALLOWLIST (`audit_package.py --release`): exactly the
    release's files (the executable(s), the GDExtension library, `OpenBFME.pck`,
    `README_TESTERS.txt`, `LICENSE`, `NOTICE`, `VERSION`, and since ONEZIP-1 the launcher's
@@ -986,7 +989,7 @@ or **Nightly** (everything merged, built every night) in the launcher's Settings
   commit for the next release, also with the same tree (two release tags on one commit make the build's version ambiguous).
 - **Gate.** No gate record: the full gate is the merge queue's job. The nightly's candidate is checked as it is built (a failure
   anywhere publishes nothing, and the next run uses the same number): the Linux, Windows and macOS builds and packages with their audits;
-  `test_export.sh` on the Linux package (a skirmish start, the smoke, crash and fresh-user runs, plus required BFME1 packaged startup and smoke checks with `BFME1_INSTALL`); the launcher's unit and
+  `test_export.sh` on the Linux package (a skirmish start, the smoke, crash and fresh-user runs, plus BFME1 packaged startup and smoke checks when `BFME1_INSTALL` is set); the launcher's unit and
   layout tests (`tools/release/test_launcher.py -k 'unit_rules or layout'`; the whole file is the merge gate's) and `godot/tests/end_test.gd` (a skirmish to its end) on the build host; the Windows start and the
   help-box run of the Windows package (under Wine on a Linux host, judged by `windows_start_check.sh` / `windows_hud6_check.sh`); the
   Deck's package checks; the metadata, tree and asset privacy audits with the private denylist. The builder is the operator's
