@@ -1,13 +1,15 @@
 #!/bin/bash
 # Lane RELEASE-1: the tests of an exported Linux package (tools/release/package.sh's .tar.gz), unpacked into a fresh folder.
 #
-#   ROTWK_INSTALL=<dir> BFME2_INSTALL=<dir> tools/release/test_export.sh <openbfme-...-linux-x64.tar.gz> [--godot BIN]
+#   ROTWK_INSTALL=<dir> BFME2_INSTALL=<dir> BFME1_INSTALL=<dir> tools/release/test_export.sh <openbfme-...-linux-x64.tar.gz> [--godot BIN]
 #
 #   start       the packaged executable (Godot's debug export template, see package.sh) plays a skirmish start (the start test's command: -- --auto --check --advance=1) and prints
 #               the version of the package's VERSION file
 #   smoke       godot/tests/smoke_test.gd on the packaged pack and GDExtension library. `--script` exists only in Godot's editor builds (the
 #               export templates have no "standalone tools"), so the package's executable is replaced by the official Godot 4.7.2 editor
 #               binary, which loads the adjacent OpenBFME.pck and openbfme .so exactly as the template does
+#   bfme1-start the packaged executable loads BFME1 data and reaches MainMenu.apt
+#   bfme1-smoke the packaged BFME1 test loads the menu, lobby, castles and outposts
 #   crash       tools/release/crash_test.py: SIGSEGV on the main menu leaves the native backtrace in the session log, nothing of the home
 #               folder or the user name in the log or the console, and the next start names the crashed log
 #   fresh-user  tools/release/fresh_user_test.py --exe on the packaged executable
@@ -25,6 +27,10 @@ ARCHIVE=${1:?usage: test_export.sh <package.tar.gz> [--godot BIN]}
 GODOT_BIN="${GODOT:-godot}"
 [ "${2:-}" = "--godot" ] && GODOT_BIN=$3
 [ -n "${ROTWK_INSTALL:-}" ] && [ -n "${BFME2_INSTALL:-}" ] || { echo "SKIP export tests: ROTWK_INSTALL and BFME2_INSTALL are needed"; exit 77; }
+[ -n "${BFME1_INSTALL:-}" ] && [ -d "$BFME1_INSTALL" ] || { echo "RESULT bfme1-start: FAIL set BFME1_INSTALL to an installed BFME1 directory (required release gate)"; exit 1; }
+# The package runs from another directory; preserve relative install arguments.
+BFME1_INSTALL=$(cd "$BFME1_INSTALL" && pwd)
+export BFME1_INSTALL
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/openbfme-export-test.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 tar -xzf "$ARCHIVE" -C "$WORK" || { echo "RESULT unpack: FAIL"; exit 1; }
@@ -45,6 +51,20 @@ else
   echo "RESULT start: FAIL exit $code"; failed_output "$LOGS/start.log"; ok=0
 fi
 
+# No --auto: its BFME2 menu-click route is not the BFME1 menu's. Check the
+# actual packaged player startup, then exercise skirmish in bfme1_test.gd.
+(cd "$PKG" && ROTWK_INSTALL= BFME2_INSTALL= XDG_DATA_HOME="$WORK/bfme1-user" timeout 600 ./OpenBFME.x86_64 \
+  --headless --quit-after 600 -- --game=bfme1 --bfme1-install="$BFME1_INSTALL" --no-intro --no-update-check \
+  --options-file="$WORK/bfme1-Options.ini") > "$LOGS/bfme1-start.log" 2>&1; code=$?
+if [ $code = 0 ] && grep -q "^OpenBFME $VERSION (" "$LOGS/bfme1-start.log" \
+  && grep -q '^GAME object world: ok=true,' "$LOGS/bfme1-start.log" \
+  && grep -q '^GAME screen: MainMenu\.apt$' "$LOGS/bfme1-start.log" \
+  && ! grep -Eq '^(GAME (FAIL|FATAL):|SCRIPT ERROR:)' "$LOGS/bfme1-start.log"; then
+  echo "RESULT bfme1-start: PASS (packaged BFME1 MainMenu.apt)"
+else
+  echo "RESULT bfme1-start: FAIL exit $code"; failed_output "$LOGS/bfme1-start.log"; ok=0
+fi
+
 "$GODOT_BIN" --version | grep -q "^4\.7\.2\.stable" || { echo "RESULT smoke: FAIL the editor binary is not Godot 4.7.2 ($("$GODOT_BIN" --version))"; ok=0; }
 cp -r "$PKG" "$WORK/smoke"
 cp "$(command -v "$GODOT_BIN" | xargs readlink -f)" "$WORK/smoke/OpenBFME.x86_64"
@@ -54,6 +74,15 @@ if [ $code = 0 ] && grep -q "^SMOKE PASS" "$LOGS/smoke.log"; then
   echo "RESULT smoke: PASS ($(grep -c '' "$LOGS/smoke.log") lines of output)"
 else
   echo "RESULT smoke: FAIL exit $code"; failed_output "$LOGS/smoke.log"; ok=0
+fi
+
+(cd "$WORK/smoke" && ROTWK_INSTALL= BFME2_INSTALL= XDG_DATA_HOME="$WORK/bfme1-user" timeout 900 ./OpenBFME.x86_64 \
+  --headless --script res://tests/bfme1_test.gd) > "$LOGS/bfme1-smoke.log" 2>&1; code=$?
+if [ $code = 0 ] && grep -q '^BFME1 PASS$' "$LOGS/bfme1-smoke.log" \
+  && ! grep -Eq '^(BFME1 SKIP|FAIL:|SCRIPT ERROR:)' "$LOGS/bfme1-smoke.log"; then
+  echo "RESULT bfme1-smoke: PASS (packaged BFME1 menu, lobby and skirmish)"
+else
+  echo "RESULT bfme1-smoke: FAIL exit $code"; failed_output "$LOGS/bfme1-smoke.log"; ok=0
 fi
 
 python3 "$REPO/tools/release/crash_test.py" "$PKG/OpenBFME.x86_64"; code=$?

@@ -18,6 +18,7 @@
 #include "Common/XferLoad.h"
 #include "Common/XferSave.h"
 #include "GameLogic/Module/AutoPickUpUpdate.h"
+#include "GameLogic/LivingWorld/LivingWorldData.h"
 #include "GameLogic/Module/BloodthirstyUpdate.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/ExperienceWorld.h"
@@ -615,6 +616,47 @@ TEST_CASE("bfme1 isolation: bloodthirsty awards experience on each sacrifice, no
 	module->cancelSacrifice();
 	CHECK(module->kills() == 0);
 	CHECK(module->bestTargetID() == INVALID_ID);
+}
+
+TEST_CASE("bfme1 isolation: unavailable Living World campaigns do not abort the startup INI load")
+{
+	initest::Fixture fixture(kBfme1Legend);
+	RetailObjectWorld world(fixture.fsys);
+	// Synthetic campaign fields that stopped the 261031100 nightly. Nested
+	// Object is a campaign row, not a top-level unit definition.
+	const std::string text =
+		"LivingWorldMapInfo\n  GondorBanner = TestBanner\nEnd\n"
+		"LivingWorldCampaign TestCampaign\n  Act = 1\n"
+		"    WorldText = Test:Caption\n    AudioEvent = TestSound\n    EnableRegion = TestRegion\n"
+		"    Object = TestCampaignObject\n  End\nEnd\n"
+		"Object AfterCampaign\n  KindOf = INFANTRY\nEnd\n";
+	REQUIRE(initest::loadError(world.iniEnvironment(), "campaign-startup.ini", text).empty());
+	CHECK(world.things().findTemplate("AfterCampaign") != nullptr);
+	CHECK(world.things().findTemplate("TestCampaignObject") == nullptr);
+	CHECK(world.livingWorld().campaigns.empty());
+	CHECK(world.livingWorld().mapInfo.banners[0].empty());
+	const auto stops = world.livingWorld().acceptanceStops();
+	REQUIRE(stops.size() == 1);
+	CHECK(stops[0] == "[S-5017] BFME1 Living World campaigns and saves are unavailable: campaign blocks use recording stubs, not the BFME2/RotWK War of the Ring parsers; field validation and exact nested block boundaries are unverified");
+	const auto worldStops = world.acceptanceStops();
+	CHECK(std::count(worldStops.begin(), worldStops.end(), stops[0]) == 1);
+}
+
+TEST_CASE("bfme1 isolation: BFME2 and RotWK still validate Living World fields")
+{
+	for (const auto &files : { kRotwkLegends, initest::FileList{
+		{ "Data\\INI\\Default\\SubsystemLegend.ini", "; BFME2\n" }, { "Data\\INI\\AwardSystem.ini", "; BFME2 marker\n" } } })
+	{
+		initest::Fixture fixture(files);
+		RetailObjectWorld world(fixture.fsys);
+		CHECK(world.livingWorld().acceptanceStops().empty());
+		CHECK(initest::loadError(world.iniEnvironment(), "map.ini", "LivingWorldMapInfo\n  GondorBanner = Test\nEnd\n")
+			.find("Unknown field 'GondorBanner'") != std::string::npos);
+		CHECK(initest::loadError(world.iniEnvironment(), "map.ini", "LivingWorldMapInfo\n  MenBanner = Test\nEnd\n").empty());
+		CHECK(world.livingWorld().mapInfo.banners[0] == "Test");
+		CHECK(initest::loadError(world.iniEnvironment(), "campaign.ini", "LivingWorldCampaign Test\n  Act = 1\n    WorldText = Test:Text\n  End\nEnd\n")
+			.find("[S-1321] Living World field 'WorldText' is not ported") != std::string::npos);
+	}
 }
 
 TEST_CASE("bfme1 isolation retail: installed BFME1 object world loads without aborted files")
