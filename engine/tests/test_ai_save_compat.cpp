@@ -62,6 +62,40 @@ TEST_CASE("AI save compatibility: historical v1 through v9 writers load populate
   StateHasher after; manager.crc(after); CHECK(after.value()==before.value());
  }
 }
+TEST_CASE("AI save compatibility: farm squad storage aliases retain active and cooldown guards")
+{
+ for (bool running : {false, true}) {
+  CAPTURE(running);
+  legacy_ai_save::Scenario s;
+  // The named-counter map has the same encoding in every supported layout.
+  // Exercise historical key text independently of the current runtime names.
+  s.ai->brain.namedCounters = {{"FarmKillSquad::IsRunning", running ? 1 : 0},
+   {"FarmKillSquad::NextLogicFrame", 12345}};
+  XferSave old; old.beginBlock(); s.manager().xfer(old); old.endBlock();
+  s.ai->brain.namedCounters.clear();
+  load(s, old.data());
+  CHECK(s.ai->brain.namedCounters.at("AIFarmKillSquad_IsRunning") == (running ? 1 : 0));
+  CHECK(s.ai->brain.namedCounters.at("AIFarmKillSquad_FrameNextRun") == 12345);
+  CHECK(s.ai->brain.namedCounters.count("FarmKillSquad::IsRunning") == 0);
+  CHECK(s.ai->brain.namedCounters.count("FarmKillSquad::NextLogicFrame") == 0);
+  StateHasher before; s.manager().crc(before);
+  XferSave current; current.beginBlock(); s.manager().xfer(current); current.endBlock();
+  load(s, current.data());
+  StateHasher after; s.manager().crc(after);
+  CHECK(after.value() == before.value());
+ }
+}
+TEST_CASE("AI save compatibility: conflicting farm squad aliases fail transactionally")
+{
+ legacy_ai_save::Scenario s;
+ s.ai->brain.namedCounters = {{"FarmKillSquad::IsRunning", 1}, {"AIFarmKillSquad_IsRunning", 0}};
+ XferSave invalid; invalid.beginBlock(); s.manager().xfer(invalid); invalid.endBlock();
+ StateHasher before; s.manager().crc(before);
+ CHECK_THROWS_WITH(load(s, invalid.data()), "skirmish ai: conflicting farm squad counter aliases");
+ StateHasher after; s.manager().crc(after);
+ CHECK(after.value() == before.value());
+}
+
 TEST_CASE("AI save compatibility: truncated legacy snapshots fail transactionally")
 {
  for(const auto &fixture:legacy_ai_save::fixtures) {

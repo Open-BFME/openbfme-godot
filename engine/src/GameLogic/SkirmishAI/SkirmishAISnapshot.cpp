@@ -425,6 +425,25 @@ void xferBrain(Xfer &x, AIBrainState &b, RequestTable &table, int version)
 		x.xferAsciiString(&k);
 		x.xferInt(&v);
 	});
+	if (x.isLoading())
+	{
+		// Native save compatibility, both shared editions: pre-overhaul saves
+		// persisted the port's old keys. Preserve their running/cooldown state
+		// under the BFME2 source names used by the current tactic generator.
+		for (const auto &names : { std::pair{"FarmKillSquad::IsRunning", "AIFarmKillSquad_IsRunning"},
+				 std::pair{"FarmKillSquad::NextLogicFrame", "AIFarmKillSquad_FrameNextRun"} })
+		{
+			auto old = b.namedCounters.find(names.first);
+			if (old == b.namedCounters.end()) { continue; }
+			auto current = b.namedCounters.find(names.second);
+			if (current != b.namedCounters.end() && current->second != old->second)
+			{
+				throw XferException("skirmish ai: conflicting farm squad counter aliases");
+			}
+			b.namedCounters[names.second] = old->second;
+			b.namedCounters.erase(old);
+		}
+	}
 	for (unsigned long long *c : { &b.targetlessPicks, &b.targetlessStarted, &b.targetlessUnported })
 	{
 		AIXfer::u64(x, *c);

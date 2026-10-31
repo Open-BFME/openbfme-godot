@@ -484,7 +484,16 @@ TEST_CASE("skirmish ai capture registry: neutral map flags register once, "
 	save.endBlock();
 	StateHasher before;
 	m.crc(before);
-	// The v3 registry is the last field: count, then two IDs. Refused loads must be atomic.
+	// Locate the final encoded registry instead of assuming it is the
+	// snapshot's final field (v8/v10 append wall state). Refused loads stay atomic.
+	XferSave registry;
+	unsigned count = 2, encodedFirst = firstId, encodedSecond = secondId;
+	registry.xferUnsignedInt(&count);
+	registry.xferUnsignedInt(&encodedFirst);
+	registry.xferUnsignedInt(&encodedSecond);
+	const auto begin = std::find_end(save.data().begin(), save.data().end(), registry.data().begin(), registry.data().end());
+	REQUIRE(begin != save.data().end());
+	const auto firstOffset = (size_t)(begin - save.data().begin()) + 4;
 	auto rejected = [&](std::vector<std::uint8_t> bytes, const char *message) {
 		XferLoad bad(bytes);
 		bad.beginBlock();
@@ -494,10 +503,10 @@ TEST_CASE("skirmish ai capture registry: neutral map flags register once, "
 		CHECK(unchanged.value() == before.value());
 	};
 	auto duplicate = save.data();
-	std::copy(duplicate.end() - 8, duplicate.end() - 4, duplicate.end() - 4);
+	std::copy_n(duplicate.begin() + firstOffset, 4, duplicate.begin() + firstOffset + 4);
 	rejected(duplicate, "skirmish ai: repeated registered capture flag");
 	auto invalid = save.data();
-	std::fill(invalid.end() - 4, invalid.end(), 0);
+	std::fill_n(invalid.begin() + firstOffset + 4, 4, 0);
 	rejected(invalid, "skirmish ai: an invalid registered capture flag");
 	Object *third = fx.make("TestFlag", fx.players.getNeutralPlayer()->getDefaultTeam());
 	REQUIRE(m.captureFlags().size() == 3);
@@ -554,11 +563,17 @@ TEST_CASE("skirmish ai pending attack: recruitment survives a brain update and l
 	fx.players.findPlayerWithName("C")->setSkirmishDifficulty(3);
 	fx.store.data().difficultyTuning[3].offensiveTactic.numerator = 1;
 	fx.store.data().difficultyTuning[3].offensiveTactic.denominator = 1;
-	ai->brain.namedCounters["FarmKillSquad::IsRunning"] = 1;
+	ai->brain.namedCounters["AIFarmKillSquad_IsRunning"] = 1;
 	AITarget target;
 	target.inactive = false;
 	target.position = { 100.0f, 100.0f, 0.0f };
 	ai->brain.targets.push_back(target);
+	// The source eligibility query requires a registered army unit. A new unit
+	// establishes reachability but cannot be recruited until the 50-frame age gate.
+	Object *scout = fx.make("Recruit", fx.teamOf("C"));
+	REQUIRE(scout);
+	const Coord3D scoutPosition{ 300.0f, 100.0f, 0.0f };
+	scout->setPosition(&scoutPosition);
 	// Let the actual chooser, generator and startTactic reserve the target and create the pending team.
 	AITacticalAI::updateBrain(*fx.logic, *ai, ai);
 	REQUIRE(ai->brain.tactics.size() == 1);
@@ -570,8 +585,8 @@ TEST_CASE("skirmish ai pending attack: recruitment survives a brain update and l
 	CHECK_FALSE(ai->brain.tactics[0].started);
 	CHECK(ai->brain.targets[0].teams == 1);
 	CHECK(ai->brain.bestTarget == -1); // The occupied target is unavailable to another attack.
-	std::vector<ObjectID> recruits;
-	for (int i = 0; i < 5; ++i)
+	std::vector<ObjectID> recruits{ scout->getID() };
+	for (int i = 0; i < 4; ++i)
 	{
 		Object *unit = fx.make("Recruit", fx.teamOf("C"));
 		REQUIRE(unit);
@@ -609,7 +624,7 @@ TEST_CASE("skirmish ai stranded attack: target expiry releases its occupied slot
 	auto *ai = const_cast<AISkirmishPlayer *>(fx.logic->skirmishAI().findAI(fx.indexOf("C")));
 	REQUIRE(ai);
 	ai->brain.chooser = false;
-	ai->brain.namedCounters["FarmKillSquad::IsRunning"] = 1;
+	ai->brain.namedCounters["AIFarmKillSquad_IsRunning"] = 1;
 	AITarget target;
 	target.inactive = false;
 	target.teams = 1;
@@ -635,53 +650,25 @@ TEST_CASE("skirmish ai stranded attack: target expiry releases its occupied slot
 	CHECK(ai->brain.tactics[0].ended);
 }
 
-TEST_CASE("skirmish ai capture squad: allied flags do not start a squad; a neutral flag starts one that survives waiting for recruits")
+TEST_CASE("skirmish ai BFME2 generator: capture flags do not enable the RotWK-only FlagCaptureSquad prototype")
 {
+	// BFME2 AITacticsGenerator.cpp RVA 0x506020 registers six targetless
+	// prototypes and no FlagCaptureSquad. Neutral tech-building opportunities
+	// are covered separately by source AI tech-building heuristic tests.
 	for (bool allied : { true, false })
 	{
 		INFO(allied);
 		AIFixture fx({ { "H", "FactionA", true, 0, 0, 0 }, { "C", "FactionA", false, 1, 0, 1 } });
 		REQUIRE(fx.w.load("Object TestFlag\n KindOf = CAPTUREFLAG\nEnd\n").empty());
-		fx.make("TestFlag", allied ? fx.teamOf("C") : fx.players.getNeutralPlayer()->getDefaultTeam());
-		SkirmishAIManager &m = fx.logic->skirmishAI();
-		REQUIRE(m.newGame(true) == 1);
-		AISkirmishPlayer *ai = const_cast<AISkirmishPlayer *>(m.findAI(fx.indexOf("C")));
+		Object *flag = fx.make("TestFlag", allied ? fx.teamOf("C") : fx.players.getNeutralPlayer()->getDefaultTeam());
+		auto &manager = fx.logic->skirmishAI();
+		REQUIRE(manager.newGame(true) == 1);
+		CHECK(manager.captureFlags() == std::vector<ObjectID>{ flag->getID() });
+		auto *ai = const_cast<AISkirmishPlayer *>(manager.findAI(fx.indexOf("C")));
 		REQUIRE(ai);
-		ai->brain.namedCounters["FarmKillSquad::IsRunning"] = 1; // Isolate capture eligibility from the other implemented targetless tactic.
-		fx.logic->random().enableCallLog(true);
+		ai->brain.namedCounters["AIFarmKillSquad_IsRunning"] = 1;
 		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
-		CHECK(ai->brain.tacticsByKind.count("FlagCaptureSquad") == (allied ? 0 : 1));
-		if (allied) { continue; }
-		REQUIRE(ai->brain.tactics.size() == 1);
-		REQUIRE(ai->brain.tactics[0].teams.size() == 1);
-		const AITacticTeam &team = ai->brain.tactics[0].teams[0];
-		CHECK(team.members.empty());
-		CHECK_FALSE(team.handedOver);
-		CHECK(team.minimum == 1);
-		CHECK(team.priority == 30);
-		const GameLogicRandom::Call &setup = fx.logic->random().callLog().back();
-		CHECK(setup.file == "AIFlagCaptureSquad.cpp");
-		CHECK(setup.line == 0xEF);
-		CHECK(setup.lo == 1);
-		CHECK(setup.hi == 3);
-		CHECK(team.maximum == setup.result);
-		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
-		REQUIRE(ai->brain.tactics.size() == 1);
-		CHECK(ai->brain.tactics[0].teams.size() == 1);
-		CHECK(ai->brain.namedCounters.at("AIFlagCaptureSquad_IsRunning") == 1);
-		// A handed-over team losing its final member ends the squad and schedules its next attempt.
-		ai->brain.tactics[0].teams[0].handedOver = true;
-		ai->brain.tactics[0].started = true;
-		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
-		CHECK(ai->brain.tactics[0].ended);
-		CHECK(ai->brain.namedCounters.at("AIFlagCaptureSquad_IsRunning") == 0);
-		const GameLogicRandom::Call &cleanup = fx.logic->random().callLog().back();
-		CHECK(cleanup.file == "AIFlagCaptureSquad.cpp");
-		CHECK(cleanup.line == 0xD5);
-		CHECK(cleanup.lo == 100);
-		CHECK(cleanup.hi == 450);
-		CHECK(ai->brain.namedCounters.at("AIFlagCaptureSquad_FrameNextRun") == (int)fx.logic->getFrame() + cleanup.result);
-		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+		CHECK(ai->brain.tacticsByKind.count("FlagCaptureSquad") == 0);
 		CHECK(ai->brain.tactics.empty());
 	}
 }
