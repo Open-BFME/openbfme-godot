@@ -3427,7 +3427,7 @@ struct Bfme1ProfileFixture
 	Shell shell;
 	AptSkirmish *screen = nullptr;
 
-	explicit Bfme1ProfileFixture(bool bfme1 = true, bool existing = true, const std::string &templates = {})
+	explicit Bfme1ProfileFixture(bool bfme1 = true, bool existing = true, const std::string &templates = {}, bool rotwk = false)
 		: windows(source, services), layer(windows, source, skins), shell(windows, factories, services, environment)
 	{
 		std::filesystem::create_directories(folder);
@@ -3442,6 +3442,7 @@ struct Bfme1ProfileFixture
 			"maps\\fords\\fords.map_5 = 1\nmaps\\hard\\hard.map_4 = 1\nmaps\\medium\\medium.map_3 = 1\nmaps\\easy\\easy.map_2 = 1\n";
 		fs.setDerivedFile("Data/INI/Default/SubsystemLegend.ini", {}, "test", {});
 		if (!bfme1) fs.setDerivedFile("Data/INI/AwardSystem.ini", {}, "test", {});
+		if (rotwk) fs.setDerivedFile("Data/INI/Default/SubsystemLegendExpansion1.ini", {}, "test", {});
 		setup.fac = { FakeSetup::faction("FactionGondor", "Gondor", true, "Castle"), FakeSetup::faction("FactionRohan", "Rohan", true, "Castle") };
 		if (!templates.empty())
 		{
@@ -3735,9 +3736,10 @@ TEST_CASE("bfme1 skirmish profile: absent profiles show dashes without inventing
 
 TEST_CASE("bfme1 skirmish profile: BFME2 and RotWK data do not receive BFME1 profile records or dropdowns")
 {
-	Bfme1ProfileFixture fixture(false);
+	bool rotwk = false;
 	SUBCASE("BFME2 data") {}
-	SUBCASE("RotWK data") { fixture.fs.setDerivedFile("Data/INI/Default/SubsystemLegendExpansion1.ini", {}, "test", {}); }
+	SUBCASE("RotWK data") { rotwk = true; }
+	Bfme1ProfileFixture fixture(false, true, {}, rotwk);
 	fixture.text.labels.erase("APT:GondorCaps");
 	fixture.text.set("INI:FactionGondor", "Custom Gondor");
 	CHECK(fixture.value("APT:CurFactionNameStr") == "<unset>");
