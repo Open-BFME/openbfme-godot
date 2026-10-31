@@ -128,6 +128,20 @@ func _run() -> void:
 	_check(not DirAccess.dir_exists_absolute(main.mods.dir.path_join("test-siege")), "its folder is gone")
 	_check(DirAccess.dir_exists_absolute(main.mods.dir.path_join("test-realms/install")), "the other mod stays")
 	_check(main._status.text == "Sample Siege was removed.", "status: " + main._status.text)
+
+	# 6. lane SDK-1: Asset packs: the game's asset-packs folder (test_mods.py made "HD Units" and "Sneaky" in it), each with a box
+	var packs: Array = screen._packs
+	_check(packs.size() == 2 and packs[0].name == "HD Units" and packs[1].name == "Sneaky", "two asset packs are listed: " + str(packs))
+	var texts := _texts(screen._packs_box)
+	_check("1 models, 1 textures, 1 MB" in texts, "the pack's contents are shown: " + str(texts))
+	_check(Array(texts).any(func(t): return t.begins_with("The game will not start with it: weapon.ini is not a model or texture")), "the refused pack says why")
+	var boxes: Array = screen._packs_box.find_children("*", "CheckBox", true, false)
+	_check(boxes.size() == 2 and boxes[0].button_pressed, "each pack has an On box, on by default")
+	if boxes.size() == 2:
+		boxes[1].button_pressed = false
+		await _frames(2)
+		var off := FileAccess.get_file_as_string(OS.get_environment("OPENBFME_GAME_USER_DIR").path_join("asset-packs/disabled.txt"))
+		_check("\nsneaky\n" in off, "turning a pack off writes it to asset-packs/disabled.txt: " + off)
 	main.queue_free()
 	await _frames(2)
 	_end()

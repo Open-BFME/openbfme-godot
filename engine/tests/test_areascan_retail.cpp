@@ -171,7 +171,7 @@ TEST_CASE("hit reaction retail: an Arnor captain that loses health while idle sh
 	g.run(1);
 	CHECK_FALSE(soldier->testModelCondition(reaction));
 	CHECK_FALSE(soldier->testModelCondition(level3));
-	// S-1024: the static line and the note of the unidentified slot 0x84 interface
+	// S-1024: the static line; lane MODCOMPAT-MOD1 identified the slot 0x84 interface (ClickReactionBehavior), so no runtime note is left
 	bool line = false, note = false;
 	for (const std::string &l : g.logic.report().stops)
 	{
@@ -179,5 +179,5 @@ TEST_CASE("hit reaction retail: an Arnor captain that loses health while idle sh
 		note = note || l.find("[S-1024] HitReactionBehavior: the interface RW 0x68C409") == 0;
 	}
 	CHECK(line);
-	CHECK(note);
+	CHECK_FALSE(note);
 }

@@ -513,7 +513,7 @@ void SpawnBehavior::onSpawnDeath(ObjectID deadSpawn, const DieModuleInterface::E
 					killer->scoreTheKill(*obj, 1); // RW 0x6955BC
 				}
 			}
-			obj->kill(0); // RW 0x698EC3(8, 0)
+			obj->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x862E43: kill(8, 0)
 		}
 		return;
 	}
@@ -547,7 +547,7 @@ void SpawnBehavior::onDie(const DieModuleInterface::Event &event)
 			Object *s = logic.findObjectByID(id);
 			if (s && !s->isEffectivelyDead())
 			{
-				s->kill(0); // RW 0x698EC3(8, 0)
+				s->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x86291C: kill(8, 0)
 			}
 		}
 	}
@@ -608,7 +608,7 @@ void SpawnBehavior::killSpawns(int count)
 		Object *s = logic.findObjectByID(id);
 		if (s && !s->isEffectivelyDead())
 		{
-			s->kill(0);
+			s->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x863265: kill(8, 0)
 			if (++killed == count)
 			{
 				return;

@@ -131,8 +131,7 @@ struct RetailText
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string error;
-		REQUIRE_MESSAGE(s.mount->fs->readFile("data/lotr.str", bytes, &error), error);
-		REQUIRE_MESSAGE(text.table.parse(bytes, &error), error);
+		REQUIRE_MESSAGE(text.table.loadRetail(*s.mount->fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 	}
 	std::string get(const std::string &label)
 	{
@@ -277,12 +276,13 @@ TEST_CASE("campsave1 save file: the campaign menu save point (header version 2) 
 	CHECK(headerOnly.header.autoSave);
 
 	const std::vector<std::uint8_t> head = headOf(bytes);
-	REQUIRE(head.size() > 12); // tolerance: guard before indexing the save point and flags preceding the empty build date
-	const size_t point = head.size() - 12; // u32 save point, four flags, then the empty build-date string
+	REQUIRE(head.size() > 16); // tolerance: a guard before the last 16 bytes (the save point, the flags, the empty build date and carry-over) are indexed
+	const size_t point = head.size() - 16; // u32 save point, four flags, the empty build-date string (version 3), then (version 4, lane BFME2CAMP1) the carry-over string's u32 length
 	{
 		std::vector<std::uint8_t> h = head;
-		h[point] = 2;
-		CHECK(parseError(withHead(bytes, h)) == "the save's save point 2 is not one this build saves (0 a game, 1 the campaign menu)");
+		h[point] = 4; // lane WOTR2 milestone 3: 2 is the War of the Ring map; milestone 6: 3 a War of the Ring battle
+		CHECK(parseError(withHead(bytes, h)) == "the save's save point 4 is not one this build saves (0 a game, 1 the campaign menu, 2 the War of the Ring map, "
+			"3 a War of the Ring battle)");
 	}
 	for (int i = 0; i < 4; ++i)
 	{
@@ -291,7 +291,7 @@ TEST_CASE("campsave1 save file: the campaign menu save point (header version 2) 
 		CHECK(parseError(withHead(bytes, h)) == "the save's campaign flag " + std::to_string(i) + " is 7 (0 or 1)");
 	}
 	{
-		std::vector<std::uint8_t> h(head.begin(), head.end() - 3); // the header ends inside the flags
+		std::vector<std::uint8_t> h(head.begin(), head.end() - 11); // the header ends inside the flags
 		CHECK(parseError(withHead(bytes, h)) == "the save is damaged (its header part ends early)");
 	}
 	SaveGameFile withLog = menuSave();
@@ -326,7 +326,7 @@ TEST_CASE("campsave1 save file: the campaign menu save point (header version 2) 
 	v1.log = { 9, 9 };
 	const std::vector<std::uint8_t> v2bytes = v1.encode();
 	std::vector<std::uint8_t> h1 = headOf(v2bytes);
-	h1.resize(h1.size() - 12);
+	h1.resize(h1.size() - 16);
 	h1[0] = 1; // the header version word
 	SaveGameFile old;
 	REQUIRE_MESSAGE(SaveGameFile::parse(withHead(v2bytes, h1), old, &error), error);
@@ -336,10 +336,26 @@ TEST_CASE("campsave1 save file: the campaign menu save point (header version 2) 
 	CHECK(old.log == std::vector<std::uint8_t>{ 9, 9 });
 	CHECK(old.header.buildDate.empty());
 	auto h2 = headOf(v2bytes);
-	h2.resize(h2.size() - 4);
+	h2.resize(h2.size() - 8);
 	h2[0] = 2;
 	REQUIRE_MESSAGE(SaveGameFile::parse(withHead(v2bytes, h2), old, &error), error);
 	CHECK(old.header.buildDate.empty());
+	// lane BFME2CAMP1: a version 3 header (no carry-over string) still loads, without a carry-over
+	std::vector<std::uint8_t> h3 = headOf(bytes);
+	h3.resize(h3.size() - 4);
+	h3[0] = 3;
+	SaveGameFile v3;
+	REQUIRE_MESSAGE(SaveGameFile::parse(withHead(bytes, h3), v3, &error), error);
+	CHECK(v3.header.autoSave);
+	CHECK(v3.header.campaignCarryover.empty());
+	// version 4: the campaign's carry-over text reads back; a malformed one is refused by name, as is one in a skirmish
+	SaveGameFile carried = menuSave();
+	carried.header.campaignCarryover = "skill 0\nbounty 0\nrecord left 0 0 1 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 ElvenGlorfindel\n";
+	SaveGameFile back4;
+	REQUIRE_MESSAGE(SaveGameFile::parse(carried.encode(), back4, &error), error);
+	CHECK(back4.header.campaignCarryover == carried.header.campaignCarryover);
+	carried.header.campaignCarryover = "skill 0\n";
+	CHECK(parseError(carried.encode()) == "the save's campaign carry-over: the skill points or the bounty share is missing");
 }
 
 TEST_CASE("campsave1 retail: ANGMAR_CAMPAIGN through RotWK's end-of-game logic: each won mission auto-saves and names the next one on the menu "
@@ -383,8 +399,16 @@ TEST_CASE("campsave1 retail: ANGMAR_CAMPAIGN through RotWK's end-of-game logic: 
 		}
 	}
 	CHECK(autoSaves == 7);
-	// the names the menu shows after missions 1 .. 7 (lotr.str)
-	CHECK(shown == std::vector<std::string>{ "Conquest of Rhudaur", "Amon Sul", "Dark Lord's Eye", "Barrow-downs", "Carn Dum", "Plague Bearer", "Fornost" });
+	// the names the menu shows after missions 1 .. 7 (lotr.str): game text in every language, these words in English
+	for (const std::string &n : shown)
+	{
+		CHECK_MESSAGE(n.find("<missing") == std::string::npos, n);
+	}
+	const bool english = retailtest::installLanguage() == "English";
+	if (english)
+	{
+		CHECK(shown == std::vector<std::string>{ "Conquest of Rhudaur", "Amon Sul", "Dark Lord's Eye", "Barrow-downs", "Carn Dum", "Plague Bearer", "Fornost" });
+	}
 	const LinearCampaign *bonus = m.find("ANGMAR_BONUS_CAMPAIGN");
 	REQUIRE(bonus != nullptr);
 	CampaignProgress b;
@@ -393,7 +417,15 @@ TEST_CASE("campsave1 retail: ANGMAR_CAMPAIGN through RotWK's end-of-game logic: 
 	b.victorious = true;
 	b.gameOver();
 	CHECK(b.afterScore(m) == CampaignProgress::AfterScore::BonusUnlock);
-	CHECK(text.get("CampaignName:" + bonus->missions[0].name) == "Fall of Angmar");
+	CHECK(text.get("CampaignName:" + bonus->missions[0].name).find("<missing") == std::string::npos);
+	if (english)
+	{
+		CHECK(text.get("CampaignName:" + bonus->missions[0].name) == "Fall of Angmar");
+	}
+	else
+	{
+		retailtest::skipUnlessEnglish("campsave1: the English mission names");
+	}
 }
 
 TEST_CASE("campsave1 retail: CampaignMenu.apt after a won mission: the five commands and CampaignMenu:Victorious registered (RW 0x927B9F), the next "
@@ -420,10 +452,16 @@ TEST_CASE("campsave1 retail: CampaignMenu.apt after a won mission: the five comm
 	std::string value;
 	CHECK(menu.fx.wm->getExtern("CampaignMenu:Victorious", value) == AptExternResult::Number);
 	CHECK(value == "1");
-	CHECK(menu.screen->missionText() == "Conquest of Rhudaur");
+	RetailText names(*s); // the install's language: lotr.str's CampaignName:Rhudaur ("Conquest of Rhudaur" in English)
+	const std::string rhudaur = names.get("CampaignName:Rhudaur");
+	CHECK(menu.screen->missionText() == rhudaur);
 	std::string record;
 	CHECK(menu.fx.wm->aptTextShown("APT:CampaignMissionName", record));
-	CHECK(record == "Conquest of Rhudaur");
+	CHECK(record == rhudaur);
+	if (retailtest::installLanguage() == "English")
+	{
+		CHECK(rhudaur == "Conquest of Rhudaur");
+	}
 	const std::string *image = menu.fx.wm->aptImage("AptCampaign::LoadImage");
 	REQUIRE(image != nullptr);
 	CHECK(*image == "CampaignAngmar_Rhudaur_Loadscreen");
@@ -490,7 +528,12 @@ TEST_CASE("campsave1 retail: CampaignMenu.apt after a defeat: \"Failed Mission:\
 	std::string value;
 	CHECK(menu.fx.wm->getExtern("CampaignMenu:Victorious", value) == AptExternResult::Number);
 	CHECK(value == "0");
-	CHECK(menu.screen->missionText() == "Amon Sul");
+	RetailText names(*s); // lotr.str's CampaignName:Amonsul ("Amon Sul" in English)
+	CHECK(menu.screen->missionText() == names.get("CampaignName:Amonsul"));
+	if (retailtest::installLanguage() == "English")
+	{
+		CHECK(menu.screen->missionText() == "Amon Sul");
+	}
 	for (const char *b : { "LastMission", "MainMenu", "LoadGame" })
 	{
 		REQUIRE_MESSAGE(menu.button(b), b);

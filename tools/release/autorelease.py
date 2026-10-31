@@ -86,7 +86,7 @@ TEST_PATHS = ("engine/tests/", "godot/tests/", "launcher/tests/")
 
 LANE_ID = re.compile(r"^(?:[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+|[A-Z][a-z]+\d+)(?: r\d+)?(?: \([^()]*\))?:?\s+")
 JARGON = re.compile(r"\bRW\b|0x[0-9A-Fa-f]{3,}|\bS-\d+|\bFB-\d+|\bSol\b|\b[A-Z]{2,}[0-9]*-[0-9A-Z]+\b|#\d|\br\d+\b|\bstack\d+\b|"
-                    r"\bpins?\b|\bgate\b|\.(?:cpp|h|py|sh|gd|md)\b|\b[a-z]+[A-Z][A-Za-z]*(?:'s)?\b")
+                    r"\bpins?\b|\b(?:full|CI|commit|privacy|Boat) gates?\b|\bgates? (?:run|result|log|passed|failed)\b|\.(?:cpp|h|py|sh|gd|md)\b|\b[a-z]+[A-Z][A-Za-z]*(?:'s)?\b")
 FIXED = re.compile(r"\b(?:fix(?:es|ed)?|regression|crash(?:es|ed)?|no longer|stops?\b|instead of|bugs?|broken|wrong)\b", re.I)
 # an integration round's lane merge, "Merge lane/x (<sha>) into integ/p3: ...": its words are the integrator's summary for
 # reviewers; the round's player notes are its release-notes commit's `Release-note:` lines (preview.3 printed "Ce7997fd into integ/p3: ...").
@@ -99,8 +99,9 @@ MAX_ITEM = 140
 # workflow, .github/workflows/pr.yml); every file in them passes the same audit as the rest of the tree
 GHPR_TOP = frozenset({".github", "CONTRIBUTING.md"})
 # the public main's top level (the sync recipe: the archive sha's tree without archive/, plus the README line; a PRIVACY.md is not carried any more, PR #34); anything else is refused. ONLINE-2: services/
-# (the online relay and lobby service source) is public by the owner's decision of 2026-10-11; its secrets come from the environment at deploy time
-PUBLIC_TOP = frozenset({".gitattributes", ".gitignore", ".gitmodules", "CLAUDE.md", "LICENSE", "NOTICE", "README.md",
+# (the online relay and lobby service source) is public by the owner's decision of 2026-10-11; its secrets come from the environment at deploy time.
+# BFME2MODE-0: AGENTS.md (the game-editions contributor rules) is public by the owner's decision of 2026-10-29
+PUBLIC_TOP = frozenset({".gitattributes", ".gitignore", ".gitmodules", "AGENTS.md", "CLAUDE.md", "LICENSE", "NOTICE", "README.md",
                         "build.bat", "docs", "engine", "godot", "launcher", "pytest.ini", "run_tests.bat", "services", "tools"} | GHPR_TOP)
 PRIVATE_DIRS = frozenset({"workspace", "archive", "reference", "references"})
 URL = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://\S*|\bwww\.\S+|\bmailto:\S+")
@@ -296,6 +297,10 @@ def knows_alpha(semver_gd: str) -> bool:
     with tempfile.TemporaryDirectory() as d:
         Path(d, "project.godot").write_text('config_version=5\n\n[application]\n\nconfig/name="semver probe"\n')
         Path(d, "semver.gd").write_text(semver_gd)
+        # L10N-1: semver.gd preloads the launcher's text runtime for its display strings; the probe checks the grammar only, so a stub
+        # that returns the id stands in for it (an older tree's semver.gd does not preload it: the stub is then unused)
+        Path(d, "scripts/l10n").mkdir(parents=True)
+        Path(d, "scripts/l10n/l10n.gd").write_text("extends RefCounted\nstatic func t(id: String, _args: Dictionary = {}) -> String:\n\treturn id\n")
         Path(d, "probe.gd").write_text(_ALPHA_PROBE)
         env = dict(os.environ, XDG_DATA_HOME=str(Path(d, "data")), XDG_CONFIG_HOME=str(Path(d, "config")), XDG_CACHE_HOME=str(Path(d, "cache")))
         try:
@@ -639,9 +644,22 @@ def _cap(t: str) -> str:
     return t[:1].upper() + t[1:]
 
 
+NOTE_REFS = re.compile(r"\s*\(\s*(#\d+(?:\s*,\s*#\d+)*)\s*\)\s*$")
+
+
+def note_refs(text: str) -> tuple[str, list[int]]:
+    """RELNOTES-1: a `Release-note:` text without its closing `(#12)` / `(#12, #13)`, and those pull request numbers (the community pull
+    requests the line came from: the nightly notes credit their authors on this line only, nightly_notes.note_credits)"""
+    m = NOTE_REFS.search(text)
+    if not m:
+        return text.strip(), []
+    return text[:m.start()].strip(), sorted({int(n) for n in re.findall(r"\d+", m.group(1))})
+
+
 def parse_note(text: str) -> tuple[str, str, str]:
     """(kind, area, text) of one `Release-note:` text: `Kind [Area]: text`, `Fix: text` or a bare text (Added, or Fixed when its words say
     so). area is the AREAS entry the brackets name (case-insensitive) or "" for none / an unknown name (note_warnings names it)."""
+    text = note_refs(text)[0]
     m = NOTE_HEAD.match(text.strip())
     if not m:
         t = text.strip()
@@ -1034,8 +1052,8 @@ class SyncAudit(audit_package.Audit):
 
 
 def is_detached_signature(name: str, data: bytes, depth: int, payload_tar: bool = False) -> bool:
-    """PUBLICCI-1: a release's detached Ed25519 signature (manifest*.json.sig, sign_manifest.py, and SIGNKMS-1's manifest*.json.sig2,
-    kms_sign.py: 64 raw bytes, top level) is random; about
+    """PUBLICCI-1: a release's detached Ed25519 signature (manifest*.json.sig, sign_manifest.py, and SIGNKMS-1's manifest*.json.sig2
+    slot: 64 raw bytes, top level) is random; about
     1 in 992 starts with a valid zlib header (the hosted pull request checks hit one in test_autorelease). Such a file that does NOT decode
     as zlib is a signature, not a finding; one that decodes is still decoded and checked like any other stream.
     The signed payload sidecar at a release package root has the same random bytes (one archive layer, or the Linux gzip stream followed by its tar)."""
@@ -1315,8 +1333,9 @@ BUILTIN_RULES = [
                 # r3: a file name after the '@' is no address (the game's library holds "...o@multiplayer.ini")
                 r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?!(?:ini|cfg|txt|json|big|str|dat|map|wnd|apt|w3d|tga|dds|png|gd|tscn|tres)\b)"
                 r"[A-Za-z]{2,}\b"},
-    # operational files by name: deploy notes, the deploy folder (the sync drops it), logs, agent and orchestration files, CI config
-    {"id": "operational-file", "kind": "regex", "paths": True,
+    # operational files by name: deploy notes, the deploy folder (the sync drops it), logs, agent and orchestration files, CI config.
+    # BFME2MODE-0: the root AGENTS.md is the public contributor rules for game editions (owner, 2026-10-29); any other AGENTS.md stays refused
+    {"id": "operational-file", "kind": "regex", "paths": True, "allow": ["AGENTS.md"],
      "pattern": r"(?:^|/)DEPLOY[^/]*\.md$|^services/online/deploy/|\.log$|(?:^|/)\.codex|(?:^|/)\.lane-|(?:^|/)orchestration/|"
                 r"(?:^|/)briefs/|(?:^|/)AGENTS\.md$|^\.gitea/|"
                 r"^(?:services|tools/net)/(?:.*/)?[^/]*(?<![a-z0-9])(?:backup|monitor|watch|infra|ops)(?![a-z0-9])[^/]*$"},

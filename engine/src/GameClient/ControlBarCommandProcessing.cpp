@@ -5,6 +5,7 @@
 // arguments only) or a GUI command mode. Kept apart from the view model (ControlBar.cpp) because it BUILDS GameMessages: this file is in the simulation audit manifest.
 
 #include "GameClient/ControlBar.h"
+#include "GameLogic/Module/StancesBehavior.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/GateModules.h"
@@ -23,8 +24,16 @@
 
 // lane CAMPUI-1: RW 0x96F53C (InGameToggleStanceCommandButton::SetStance): TheMessageStream's new message 0x468 (MSG_CHANGE_STANCE, vslot 0x48) with the stance as its
 // integer (RW 0x7111E5); the logic applies it to the sender's selection (RW 0x77BC59)
-bool ControlBar::sendChangeStance(int stance)
+bool ControlBar::sendChangeStance(int stance, const char *site)
 {
+	for (ObjectID id : m_ctx.ui.selected())
+	{
+		Object *obj = m_ctx.logic.findObjectByID(id);
+		if (StancesBehavior *sb = obj ? StancesBehavior::of(*obj) : nullptr)
+		{
+			sb->traceQueuedStance(stance, site);
+		}
+	}
 	ClientMessage &m = m_ctx.stream.append(MSG_CHANGE_STANCE);
 	m.appendInteger(stance);
 	return true;
@@ -44,6 +53,13 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 	// (the port's retail bar has none yet, S-290)
 	if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedObserverCommandRange) && !localPlayerActive(m_ctx.localPlayer()) &&
 		b.m_command != GUI_COMMAND_PUSH_VISIBLE_COMMAND_RANGE && b.m_command != GUI_COMMAND_POP_VISIBLE_COMMAND_RANGE)
+	{
+		return false;
+	}
+	// RW 0x940435: IsClickable (+0x105) gates processCommandUI. INFERENCE: the NONPRESSABLE refusal: RotWK's processCommandUI never tests
+	// that option bit (its option tests are 0x227, bits 5, 17 and 31); retail draws such a button with its _static clip (RW 0x9D2BFA), which
+	// takes no click, so a direct / shortcut press is refused here instead of casting its placeholder power.
+	if (!b.m_isClickable || b.hasOption(COMMAND_OPTION_NONPRESSABLE))
 	{
 		return false;
 	}
@@ -363,7 +379,8 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 			if (b.hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT | COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT | COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT | COMMAND_OPTION_NEED_TARGET_POS
 					| COMMAND_OPTION_CONTEXTMODE_COMMAND))
 			{
-				m_ctx.ui.setGUICommand(&b);
+				// RW 0x940877..0x94089C: pressing the current target command cancels it.
+				m_ctx.ui.setGUICommand(m_ctx.ui.getGUICommand() == &b ? nullptr : &b);
 				return true;
 			}
 			ClientMessage &m = m_ctx.stream.append(MSG_DO_WEAPON);
@@ -384,14 +401,17 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 				++m_unported["SPECIAL_POWER (no template)"];
 				return false;
 			}
-			if (b.hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT | COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT | COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT | COMMAND_OPTION_NEED_TARGET_POS))
+			// RW 0x940877: the same Options & 0x227 gate as FIRE_WEAPON, including
+			// context-only buttons handled by the special-power dispatcher.
+			if (b.hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT | COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT | COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT | COMMAND_OPTION_NEED_TARGET_POS
+					| COMMAND_OPTION_CONTEXTMODE_COMMAND))
 			{
-				m_ctx.ui.setGUICommand(&b);
+				m_ctx.ui.setGUICommand(m_ctx.ui.getGUICommand() == &b ? nullptr : &b);
 				return true;
 			}
 			ClientMessage &m = m_ctx.stream.append(MSG_DO_SPECIAL_POWER);
 			m.appendInteger((int)t->getID());
-			m.appendInteger(0);
+			m.appendInteger((int)b.m_options);
 			m.appendObjectID(obj->getID());
 			return true;
 		}
@@ -441,6 +461,25 @@ bool ControlBar::cancelQueued(int slot, bool inPalantir, bool shift)
 		m.appendBoolean(false);
 		return true;
 	}
+	if (cb && cb->button
+		&& (cb->button->m_command == GUI_COMMAND_PLAYER_UPGRADE || cb->button->m_command == GUI_COMMAND_OBJECT_UPGRADE
+			|| cb->button->m_command == GUI_COMMAND_CASTLE_UPGRADE))
+	{
+		// lane FBSIM-1 (FB-0037), TARGET FACTS (processCommandUI RW 0x940435, the right press: the byte argument at ebp + 0xC is 0; caveat S-001): PLAYER_UPGRADE
+		// (RW 0x940CEA) and CASTLE_UPGRADE (RW 0x940EAB) jump to RW 0x940FB3, OBJECT_UPGRADE (RW 0x940D49) to RW 0x940E77. Each cancels only for a CANCELABLE
+		// button (Options + 0x1C bit 31) with an upgrade (+ 0x24) of an object whose controlling player (RW 0x68B678) is the local one: MSG_CANCEL_UPGRADE
+		// (0x416) { int the upgrade's mask bit (+ 0x38) } (RW 0x940AE9 -> 0x940FA9). RotWK does not ask whether the upgrade is queued (the logic's
+		// cancelUpgrade RW 0x8A1140 finds nothing then) nor what the button's state is
+		Object *obj = m_ctx.logic.findObjectByID(m_source);
+		const UpgradeTemplate *u = TheUpgradeCenter && !cb->button->m_upgradeName.empty() ? TheUpgradeCenter->findUpgrade(cb->button->m_upgradeName) : nullptr;
+		if (!u || !cb->button->hasOption(COMMAND_OPTION_CANCELABLE) || !obj || obj->getControllingPlayer() != m_ctx.localPlayer())
+		{
+			return false;
+		}
+		ClientMessage &m = m_ctx.stream.append(MSG_CANCEL_UPGRADE);
+		m.appendInteger(u->getMaskBit());
+		return true;
+	}
 	if (!cb || !cb->button || cb->button->m_command != GUI_COMMAND_UNIT_BUILD || cb->queued <= 0)
 	{
 		return false;
@@ -488,7 +527,8 @@ bool ControlBar::rightPressButton(int slot, bool inPalantir, bool shift)
 	// processCommandUI (RW 0x940435), the right press: nothing for a button that is not clickable (+ 0x105); "autoable" (the byte at ebp + 0xB) is
 	// AutoAbility (+ 0x10C) or CANCELABLE. A FIRE_WEAPON / SPECIAL_POWER button whose command is not available (RW 0x75CC3E) stops there unless autoable;
 	// the other commands' availability (RW 0x942733) is asked only when not autoable, and a right press stops after it either way
-	if (!b.m_isClickable)
+	// INFERENCE: the NONPRESSABLE refusal (RW 0x940435 does not test the bit; retail shows such a button _static, RW 0x9D2BFA), as pressButton
+	if (!b.m_isClickable || b.hasOption(COMMAND_OPTION_NONPRESSABLE))
 	{
 		return false;
 	}
@@ -533,7 +573,11 @@ bool ControlBar::rightPressButton(int slot, bool inPalantir, bool shift)
 		case GUI_COMMAND_UNIT_BUILD:
 		case GUI_COMMAND_REVIVE: // lane HUD-7: the same case in RotWK (RW 0x940B0E)
 			return cancelable && cancelQueued(slot, inPalantir, shift); // RW 0x940C59 .. 0x940C70 (the production cancel, lane HUD-6)
+		case GUI_COMMAND_PLAYER_UPGRADE:
+		case GUI_COMMAND_OBJECT_UPGRADE:
+		case GUI_COMMAND_CASTLE_UPGRADE:
+			return cancelQueued(slot, inPalantir, shift); // lane FBSIM-1: the upgrade cancel RW 0x940E77 / 0x940FB3
 		default:
-			return false; // INFERENCE / not ported here: the other right press cases (upgrade cancel RW 0x940FB3, ...) stay the left press handlers' (S-3460)
+			return false; // INFERENCE / not ported here: the other right press cases stay the left press handlers' (S-3460)
 	}
 }

@@ -96,8 +96,10 @@ void xferInfo(Xfer &x, Pathfinder::WallState::Info &in)
 void Pathfinder::xferWalls(Xfer &x, WallState &w)
 {
 	const bool loading = x.isLoading();
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 2 }; // 2: the raised layers' wall connect cells (review of #161)
 	x.xferVersion(v);
+	const int version = v.current;
+	w.connectsSaved = version >= 2;
 	// the wall heights and pieces (WALL-1, WALL-2's raised layers of a piece)
 	if (!loading)
 	{
@@ -197,6 +199,29 @@ void Pathfinder::xferWalls(Xfer &x, WallState &w)
 		if (loading && (r.width < 0 || r.depth < 0 || (std::uint64_t)r.width * (std::uint64_t)r.depth > (std::uint64_t)m_blockOfMapCells.size()))
 		{
 			throw XferException("pathfinder: raised layer " + std::to_string(l) + " of " + std::to_string(r.width) + " x " + std::to_string(r.depth) + " cells");
+		}
+		// the wall connect cells (+ 0x18 / + 0x20, saved by RW's layer xfer RW 0x7683B8) in their live order: a removed piece's rebuild resets them and
+		// gives back only those of the ramps it meets (restampWalls), which the ramps on the map need not make again
+		if (version >= 2)
+		{
+			for (int k = 0; k < 2; ++k)
+			{
+				if (!loading)
+				{
+					r.connect[k] = mine->connect[k];
+				}
+				AIXfer::icoord2(x, r.connect[k]);
+				// none (-1, -1), or a grid cell; the second one only after a first, and not the first (AddWallConnectCell RW 0x76879E)
+				const ICoord2D &c = r.connect[k];
+				const bool none = c.x == -1 && c.y == -1;
+				const bool inGrid = c.x >= m_extent.lo.x && c.y >= m_extent.lo.y && c.x <= m_extent.hi.x && c.y <= m_extent.hi.y;
+				const bool afterFirst = k == 0 || (r.connect[0].x != -1 && (c.x != r.connect[0].x || c.y != r.connect[0].y));
+				if (loading && !none && !(inGrid && afterFirst))
+				{
+					throw XferException("pathfinder: raised layer " + std::to_string(l) + "'s wall connect cell (" + std::to_string(c.x) + ", " +
+						std::to_string(c.y) + ")");
+				}
+			}
 		}
 		const size_t cells = (size_t)r.width * (size_t)r.depth;
 		if (loading)
@@ -482,7 +507,7 @@ void Pathfinder::xferWalls(Xfer &x, WallState &w)
 		}
 		for (const WallState::Info &in : r.infos)
 		{
-			object(in.obstacle, "the obstacle of a raised cell");
+			AIXfer::issued(in.obstacle, "pathfinder: the obstacle of a raised cell"); // an orphaned footprint cell (AIPathfindSnapshot.cpp, the ground cells)
 			for (const std::vector<std::uint32_t> &chain : in.owners)
 			{
 				for (std::uint32_t owner : chain)
@@ -518,6 +543,8 @@ void Pathfinder::applyWalls(WallState &w, bool loaded)
 		mine.origin = r.origin;
 		mine.width = r.width;
 		mine.depth = r.depth;
+		mine.connect[0] = r.connect[0];
+		mine.connect[1] = r.connect[1];
 		mine.cells.assign(r.words.size(), PathfindCell());
 		for (size_t i = 0; i < r.words.size(); ++i)
 		{
@@ -543,6 +570,12 @@ void Pathfinder::applyWalls(WallState &w, bool loaded)
 				}
 			}
 		}
+	}
+	// the raised layers' wall connect cells: RW's layer xfer (RW 0x7683B8) saves them (+ 0x18 / + 0x20), as a version 2 snapshot does; a version 1
+	// snapshot has none, and they are made again from the restored ramps, whose cells they follow (review of #161, Greptile P1)
+	if (!w.connectsSaved)
+	{
+		rebuildWallConnectCells();
 	}
 	for (PathfindCell &c : m_blockOfMapCells)
 	{

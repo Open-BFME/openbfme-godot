@@ -20,13 +20,18 @@
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/AI/AIPathfindHost.h"
 #include "GameLogic/GameMessage.h"
+#include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/GateModules.h"
+#include "GameLogic/Module/NotifyCrushModules.h"
+#include "GameLogic/SimMath.h"
 #include "GameLogic/NewGame/NewGame.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
+#include <cmath>
 #include <functional>
 #include <string>
 #include <vector>
@@ -396,6 +401,152 @@ TEST_CASE("hud5 gates retail: Minas Tirith's computer-owned gate has no AIGateUp
 	g.send(b->isOpen() ? MSG_CLOSE_GATE : MSG_OPEN_GATE, ai->getPlayerIndex(), gate->getID());
 	g.frames(3);
 	CHECK(b->state() == (start == GateOpenAndCloseBehavior::OPEN ? GateOpenAndCloseBehavior::CLOSING : GateOpenAndCloseBehavior::OPENING));
+}
+
+// ---- lane GATEPUSH-1: the push-out scan (RW 0x89C759) and the repel (RW 0x89C6F5) --------------------------------------------------------------
+namespace
+{
+// one of the two move-away requesters RW 0x66DA5F records (AI + 0x198 / + 0x19C) is the gate
+bool askedBy(const Object &unit, const Object &gate)
+{
+	const AIUpdateInterface *ai = unit.getAIUpdateInterface();
+	return ai && (ai->moveAwayRequester(0) == gate.getID() || ai->moveAwayRequester(1) == gate.getID());
+}
+
+// the scan's cylinder: the template's bounding circle radius, centred 0.66 x radius ahead of the gate
+struct Gateway
+{
+	float radius = 0.0f;
+	Coord3D centre{};
+	float dirX = 1.0f, dirY = 0.0f;
+};
+Gateway gatewayOf(Object &gate)
+{
+	Gateway w;
+	PathfindGeometry g;
+	ObjectGeometry::fillPathfindGeometry(*gate.getTemplate()->getFinalOverride(), g);
+	w.radius = g.boundingCircleRadius();
+	w.dirX = SimMath::cosDet(gate.getOrientation());
+	w.dirY = SimMath::sinDet(gate.getOrientation());
+	w.centre = *gate.getPosition();
+	w.centre.x += w.dirX * 0.66f * w.radius;
+	w.centre.y += w.dirY * 0.66f * w.radius;
+	return w;
+}
+
+// the unit overlaps one of the gate's active shapes (its closed footprint once closed)
+bool insideGate(GateGame &g, Object &gate, Object &unit)
+{
+	std::vector<ObjectGeometry::Shape> active;
+	const std::vector<ObjectGeometry::Shape> shapes = ObjectGeometry::shapesOf(*gate.getTemplate());
+	for (const ObjectGeometry::Shape &sh : shapes)
+	{
+		if (g.shapeActive(gate, sh.name))
+		{
+			active.push_back(sh);
+		}
+	}
+	return NotifyCrushModules::geometriesOverlap(active, *gate.getPosition(), gate.getOrientation(), ObjectGeometry::shapesOf(*unit.getTemplate()->getFinalOverride()),
+	                                            *unit.getPosition(), unit.getOrientation());
+}
+} // namespace
+
+TEST_CASE("gatepush1 gates retail: a gate closing on a unit in its gateway asks it to move away that frame and it ends outside the closed gate; a unit beside it and a horde member are not asked")
+{
+	OPENBFME_REQUIRE_START(s);
+	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+	g.frames(2);
+	Object *gate = g.named("Main Gate");
+	REQUIRE(gate);
+	GateOpenAndCloseBehavior *b = GateOpenAndCloseBehavior::findGate(*gate);
+	REQUIRE(b);
+	REQUIRE(b->isOpen());
+	Player *owner = gate->getControllingPlayer();
+	REQUIRE(owner);
+	const Gateway w = gatewayOf(*gate);
+	MESSAGE("Helm's Deep main gate: radius " << w.radius << ", gateway centre (" << w.centre.x << ", " << w.centre.y << ")");
+	REQUIRE(w.radius > 10.0f); // tolerance: a guard that the template has a geometry; the push-out itself is asserted exactly below
+	std::string error;
+	Object *inGateway = g.game->createObject("MenPorter", owner->getPlayerIndex(), w.centre, 0.0f, &error);
+	REQUIRE_MESSAGE(inGateway, error);
+	// beside the gate: across its facing, clear of the cylinder
+	const Coord3D beside{ w.centre.x - w.dirY * (w.radius + 60.0f), w.centre.y + w.dirX * (w.radius + 60.0f), w.centre.z };
+	Object *besideUnit = g.game->createObject("MenPorter", owner->getPlayerIndex(), beside, 0.0f, &error);
+	REQUIRE_MESSAGE(besideUnit, error);
+	// a horde in the gateway too: the horde object may be asked (it is no HORDE_MEMBER), its members are not (status 0x26 filter)
+	Object *horde = g.game->createObject("GondorFighterHorde", owner->getPlayerIndex(), w.centre, 0.0f, &error);
+	REQUIRE_MESSAGE(horde, error);
+	g.frames(3);
+	std::vector<Object *> members;
+	for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getContainedBy() == horde)
+		{
+			members.push_back(o);
+		}
+	}
+	REQUIRE_FALSE(members.empty());
+	REQUIRE_FALSE(askedBy(*inGateway, *gate));
+	const unsigned before = b->pushOutRequests();
+	g.send(MSG_CLOSE_GATE, owner->getPlayerIndex(), gate->getID());
+	g.frames(1);
+	REQUIRE(b->state() == GateOpenAndCloseBehavior::CLOSING);
+	CHECK(askedBy(*inGateway, *gate)); // close() ran the scan first (RW 0x89C9BA -> 0x89C759)
+	CHECK(b->pushOutRequests() == before + 2); // the gateway porter and the horde object (seed 9)
+	CHECK_FALSE(askedBy(*besideUnit, *gate));
+	for (Object *m : members)
+	{
+		CHECK_FALSE(askedBy(*m, *gate));
+	}
+	CHECK(askedBy(*horde, *gate)); // the horde object is no HORDE_MEMBER: asked; its members are left to it
+	g.frames(80);
+	REQUIRE(b->state() == GateOpenAndCloseBehavior::CLOSED);
+	const float d = std::hypot(inGateway->getPosition()->x - w.centre.x, inGateway->getPosition()->y - w.centre.y);
+	MESSAGE("the gateway unit walked " << d << " from the gateway centre");
+	CHECK_FALSE(insideGate(g, *gate, *inGateway));
+	CHECK_FALSE(askedBy(*besideUnit, *gate));
+}
+
+TEST_CASE("gatepush1 gates retail: the closed gate repels a colliding unit (RepelCollidingUnits, RotWK's default Yes) unless the unit attacks the gate; an open gate repels nobody")
+{
+	OPENBFME_REQUIRE_START(s);
+	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+	g.frames(2);
+	Object *gate = g.named("Main Gate");
+	REQUIRE(gate);
+	GateOpenAndCloseBehavior *b = GateOpenAndCloseBehavior::findGate(*gate);
+	REQUIRE(b);
+	Player *owner = gate->getControllingPlayer();
+	Player *enemy = g.game->players().findPlayerWithName("Player_2");
+	REQUIRE(owner);
+	REQUIRE(enemy);
+	const Gateway w = gatewayOf(*gate);
+	// outside the gate, in front of its doorway
+	const Coord3D front{ w.centre.x + w.dirX * (w.radius + 40.0f), w.centre.y + w.dirY * (w.radius + 40.0f), w.centre.z };
+	std::string error;
+	Object *bumper = g.game->createObject("MenPorter", enemy->getPlayerIndex(), front, 0.0f, &error);
+	REQUIRE_MESSAGE(bumper, error);
+	Object *attacker = g.game->createObject("MenPorter", enemy->getPlayerIndex(), Coord3D{ front.x - w.dirY * 30.0f, front.y + w.dirX * 30.0f, front.z }, 0.0f, &error);
+	REQUIRE_MESSAGE(attacker, error);
+	g.frames(2);
+	CollideModuleInterface *collide = b->getCollide();
+	REQUIRE(collide == b);
+	// open: the geometry is not CLOSED (+0x2C != 1)
+	REQUIRE(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_OPEN);
+	collide->onCollide(bumper, nullptr, nullptr);
+	CHECK_FALSE(askedBy(*bumper, *gate));
+	CHECK_FALSE(collide->wouldLikeToCollideWith(*bumper));
+	g.send(MSG_CLOSE_GATE, owner->getPlayerIndex(), gate->getID());
+	g.frames(80);
+	REQUIRE(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_CLOSED);
+	CHECK(collide->wouldLikeToCollideWith(*bumper)); // RW 0x89C35E
+	// the gate's attacker: its current victim is the gate (RW 0x668303)
+	attacker->getAIUpdateInterface()->setCurrentVictim(gate);
+	collide->onCollide(attacker, nullptr, nullptr);
+	CHECK_FALSE(askedBy(*attacker, *gate));
+	// a plain unit at the closed gate is repelled (RW 0x89C6F5 -> 0x89C5A2)
+	collide->onCollide(bumper, nullptr, nullptr);
+	CHECK(askedBy(*bumper, *gate));
 }
 
 TEST_CASE("hud5 gates: the acceptance stops are reported")

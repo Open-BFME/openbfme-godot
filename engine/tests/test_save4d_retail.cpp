@@ -173,7 +173,18 @@ TEST_CASE("save4d retail: a 4-player skirmish at frame 3,000: the SAVE-4d blocks
 		CHECK_MESSAGE(sectionsA.count(name) == 1u, name);
 	}
 	CHECK(sectionsA.count("create-a-hero") == 0u);
-	CHECK(sectionsA.count("terrain trees") == 0u);
+	// lane TREES1: the AIs' crushers (RW 0x6858BE) and the structures their workers place (RW 0x684BCA) change trees in play: the section is there exactly
+	// when a tree changed, the same in both games
+	const bool playChanged = la.trees().anyChanged();
+	size_t playToppled = 0, playCleared = 0;
+	for (const TerrainTrees::Record &r : la.trees().records())
+	{
+		playToppled += r.changed && r.toppled ? 1u : 0u;
+		playCleared += r.changed && r.clientId == 0 ? 1u : 0u;
+	}
+	MESSAGE("SAVE-4d: trees changed in play by frame 3000: " << playToppled << " toppled, " << playCleared << " cleared");
+	CHECK(sectionsA.count("terrain trees") == (playChanged ? 1u : 0u));
+	CHECK(lb.trees().anyChanged() == playChanged);
 	REQUIRE(la.scriptEngine().loaded());
 	REQUIRE(la.economy().resources().claimants().size() > 0u); // tolerance: a precondition (the AIs' farms and buildings claim ground), the exact list is compared below
 
@@ -280,7 +291,7 @@ TEST_CASE("save4d retail: a 4-player skirmish at frame 3,000: the SAVE-4d blocks
 	REQUIRE(sectionValues(la).count("terrain trees") == 1u);
 	std::vector<std::uint8_t> trees;
 	la.gameState().saveBlocks({ "obfme:TerrainTrees" }, trees);
-	REQUIRE(sectionValues(lb).count("terrain trees") == 0u);
+	REQUIRE(sectionValues(lb).count("terrain trees") == (playChanged ? 1u : 0u));
 	lb.gameState().loadBlocks({ "obfme:TerrainTrees" }, trees);
 	CHECK(sectionValues(lb).at("terrain trees") == sectionValues(la).at("terrain trees"));
 	const TerrainTrees::Record &tb = lb.trees().records()[toppled];

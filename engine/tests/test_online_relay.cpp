@@ -457,6 +457,351 @@ TEST_CASE("online2: the relay log assembly ends when no slot runs a frame, whate
 	CHECK(huge.problems == small.problems);
 }
 
+namespace
+{
+// RELAY-4: a one-human room's relay log by hand (one network slot, slot 0, plays player 0)
+struct SoloLog
+{
+	RelayLogFile log;
+	NetworkConfig config;
+	SoloLog()
+	{
+		log.version = 2;
+		log.slotMask = 0x01;
+		config.slotPlayerIndex.fill(-1);
+		config.slotPlayerIndex[0] = 0;
+	}
+	void add(const NetCommandMsg &m)
+	{
+		RelayLogFile::Command c;
+		c.sender = 0;
+		c.msg = m;
+		log.commands.push_back(c);
+	}
+	void info(std::uint32_t frame, int count = 0) { add(relaylogprobe::frameInfo(0, frame, count)); }
+	void frames(std::uint32_t first, std::uint32_t last)
+	{
+		for (std::uint32_t f = first; f <= last; ++f)
+		{
+			info(f);
+		}
+	}
+	void restart(int generation) // a REJOINED record: the slot's commands from here on are its next incarnation's
+	{
+		RelayLogFile::Rejoined j;
+		j.slot = 0;
+		j.generation = generation;
+		j.firstCommand = log.commands.size();
+		log.rejoins.push_back(j);
+	}
+	void rejoin(std::uint32_t frame, int target = 0) // the restarted game's REJOIN (of itself: target 0)
+	{
+		NetCommandMsg r;
+		r.type = NETCOMMANDTYPE_REJOIN;
+		r.executionFrame = frame;
+		r.targetSlot = (std::uint8_t)target;
+		add(r);
+	}
+	// assembles (it must succeed) and returns the milliseconds it took
+	double assemble(RelayLog::Assembled &a, bool live = false) const
+	{
+		std::string error;
+		const auto t0 = std::chrono::steady_clock::now();
+		const bool ok = RelayLog::assemble(log, config, a, &error, live);
+		const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+		REQUIRE_MESSAGE(ok, error);
+		return ms;
+	}
+};
+
+size_t rejoinsIn(const RelayLog::Assembled &a)
+{
+	return (size_t)std::count_if(a.membership.begin(), a.membership.end(), [](const Network::MembershipEvent &m) { return m.kind == Network::MembershipEvent::REJOIN; });
+}
+} // namespace
+
+// relaylogprobe::soloDigest(1500) with lane SOLO-1's RelayLog::assemble (ca2855068: the frame-by-frame walk, before lane NETDIAG-1's early end) and
+// with the batch's first combined one (8c612813a), both compiled against these headers: the same value
+constexpr std::uint64_t kSolo1SoloDigest = 0xe34ac3178b3e26fdull;
+
+// RELAY-4 (the fourth relay deploy's check of the one-human walk): a held slot, a client-chosen frame at the top of the frame range and the
+// restarted game's own REJOIN far ahead: the walk jumps to the REJOIN, runs the rejoined incarnation and ends at its first missing frame.
+// A command naming frame 0xFFFFFFFF is never read: it is the "never left" frame, and a slot's frames from its leave on are discarded
+TEST_CASE("relay4: a one-human room's held slot, a hostile frame 0xFFFFFFFE / 0xFFFFFFFF and its own REJOIN far ahead assemble in milliseconds")
+{
+	const std::uint32_t far = 3000000000u;
+	for (const std::uint32_t hostile : { 0xFFFFFFFEu, 0xFFFFFFFFu })
+	{
+		for (const bool live : { false, true })
+		{
+			CAPTURE(hostile);
+			CAPTURE(live);
+			SoloLog b;
+			b.frames(0, 2);
+			b.restart(1);
+			b.info(hostile); // the held incarnation's frame info at the hostile frame
+			b.rejoin(far);
+			b.info(far, 1);
+			b.frames(far + 1, far + 2);
+			RelayLog::Assembled a;
+			const double ms = b.assemble(a, live);
+			MESSAGE("hostile frame ", hostile, " live ", live, ": ", ms, " ms");
+			CHECK(ms < 100.0); // tolerance: microseconds; the walk to the REJOIN frame by frame took seconds, to the hostile frame minutes
+			REQUIRE(a.membership.size() == 1);
+			CHECK(a.membership[0].kind == Network::MembershipEvent::REJOIN);
+			CHECK(a.membership[0].frame == far);
+			CHECK(a.membership[0].generation == 1);
+			CHECK(a.joinFrame[0] == far + 1);
+			CHECK(a.lastCompleteFrame == far + 2); // frame far + 3 is missing: the hostile frame after it is a log gap, not the game's end
+			CHECK(a.frames.empty());
+			CHECK(a.incarnations[0] == 2);
+			CHECK(a.latestFrames[0].size() == (hostile == 0xFFFFFFFEu ? 4u : 3u)); // the frame 0xFFFFFFFF one is not in the log's frames
+			if (live || hostile == 0xFFFFFFFFu)
+			{
+				CHECK(a.problems.empty());
+			}
+			else
+			{
+				REQUIRE(a.problems.size() == 2);
+				CHECK(a.problems[0] == "slot 0 has no frame info for frame " + std::to_string(far + 3) + " but has some later: a log gap");
+				CHECK(a.problems[1].find("a crash at the end (S-3710)") != std::string::npos);
+			}
+		}
+	}
+	// the REJOIN itself at the hostile frame: on 0xFFFFFFFE it runs but its join frame is the "not joined" value (the incarnation stays held);
+	// on 0xFFFFFFFF it is not read: the walk ends at the first incarnation's last frame
+	for (const std::uint32_t hostile : { 0xFFFFFFFEu, 0xFFFFFFFFu })
+	{
+		CAPTURE(hostile);
+		SoloLog b;
+		b.frames(0, 2);
+		b.restart(1);
+		b.rejoin(hostile);
+		RelayLog::Assembled a;
+		CHECK(b.assemble(a) < 100.0); // tolerance: microseconds; a walk frame by frame to the hostile frame takes minutes
+		CHECK(a.frames.empty());
+		CHECK(a.joinFrame[0] == 0xFFFFFFFFu);
+		if (hostile == 0xFFFFFFFEu)
+		{
+			REQUIRE(a.membership.size() == 1);
+			CHECK(a.membership[0].frame == hostile);
+			CHECK(a.lastCompleteFrame == hostile);
+		}
+		else
+		{
+			CHECK(a.membership.empty());
+			CHECK(a.lastCompleteFrame == 2);
+		}
+	}
+	// the hostile frame in the first incarnation: on 0xFFFFFFFE (its end, the frame after its last, is then the "never" frame: no wrap to 0)
+	// its frames end at frame 3 with a later one logged, a gap, and the restarted game's REJOIN after the gap is not reached; on 0xFFFFFFFF
+	// (not read) the restarted game rejoins as in a valid log
+	for (const std::uint32_t hostile : { 0xFFFFFFFEu, 0xFFFFFFFFu })
+	{
+		CAPTURE(hostile);
+		SoloLog b;
+		b.frames(0, 2);
+		b.info(hostile);
+		b.restart(1);
+		b.rejoin(far);
+		b.info(far, 1);
+		RelayLog::Assembled a;
+		CHECK(b.assemble(a) < 100.0); // tolerance: microseconds; a walk frame by frame to the hostile frame takes minutes
+		if (hostile == 0xFFFFFFFEu)
+		{
+			CHECK(a.lastCompleteFrame == 2);
+			CHECK(a.membership.empty());
+			CHECK(a.joinFrame[0] == 0xFFFFFFFFu);
+			REQUIRE(a.problems.size() == 2);
+			CHECK(a.problems[0] == "slot 0 has no frame info for frame 3 but has some later: a log gap");
+		}
+		else
+		{
+			CHECK(a.lastCompleteFrame == far);
+			CHECK(rejoinsIn(a) == 1);
+			CHECK(a.joinFrame[0] == far + 1);
+			CHECK(a.problems.empty());
+		}
+	}
+}
+
+TEST_CASE("relay4: a one-human room's held slot and a hostile frame without its own REJOIN end at the first frame no slot runs")
+{
+	for (const std::uint32_t hostile : { 0xFFFFFFFEu, 0xFFFFFFFFu })
+	{
+		for (const int target : { -1, 3, 0x0F }) // no REJOIN at all, or one far ahead that takes back another (not a network) slot
+		{
+			for (const bool live : { false, true })
+			{
+				CAPTURE(hostile);
+				CAPTURE(target);
+				CAPTURE(live);
+				SoloLog b;
+				b.frames(0, 2);
+				b.restart(1);
+				b.info(hostile);
+				if (target >= 0)
+				{
+					b.rejoin(3000000000u, target);
+					b.info(3000000000u, 1);
+				}
+				RelayLog::Assembled a;
+				CHECK(b.assemble(a, live) < 100.0); // tolerance: microseconds; a walk frame by frame to the hostile frame takes minutes
+				// lane NETDIAG-1's end: every frame after the last one slot 0 ran is that frame again, up to the highest frame the log names
+				// (a frame info on 0xFFFFFFFF is not read)
+				std::uint32_t highest = 2;
+				if (hostile == 0xFFFFFFFEu)
+				{
+					highest = hostile;
+				}
+				else if (target != -1)
+				{
+					highest = 3000000000u;
+				}
+				CHECK(a.anyComplete);
+				CHECK(a.lastCompleteFrame == highest);
+				CHECK(a.frames.empty());
+				CHECK(a.membership.empty());
+				CHECK(a.joinFrame[0] == 0xFFFFFFFFu);
+				CHECK(a.problems.empty());
+			}
+		}
+	}
+}
+
+TEST_CASE("relay4: many one-human REJOINs spread over the whole frame range, or behind many foreign REJOINs, assemble in linear time")
+{
+	// 60,000 restarts, each one's own REJOIN 70,000 frames after the last: the walk jumps from one to the next up to frame 4.2 billion
+	{
+		SoloLog b;
+		b.frames(0, 2);
+		const int kRestarts = 60000;
+		const std::uint32_t kSpacing = 70000u;
+		for (int k = 1; k <= kRestarts; ++k)
+		{
+			b.restart(k);
+			const std::uint32_t at = (std::uint32_t)k * kSpacing;
+			b.rejoin(at);
+			b.info(at, 1);
+			b.info(at + 1);
+		}
+		RelayLog::Assembled a;
+		const double ms = b.assemble(a);
+		MESSAGE(kRestarts, " restarts up to frame ", kRestarts * kSpacing, ": ", b.log.commands.size(), " records in ", ms, " ms");
+		CHECK(ms < 1000.0); // tolerance: tens of milliseconds; a frame-by-frame walk is four billion frames
+		CHECK(rejoinsIn(a) == (size_t)kRestarts);
+		CHECK(a.joinFrame[0] == (std::uint32_t)kRestarts * kSpacing + 1u);
+		CHECK(a.lastCompleteFrame == (std::uint32_t)kRestarts * kSpacing + 1u);
+	}
+	// 200 restarts, each held behind 500 frames of REJOINs of a slot that is not in the game (never its own): each is scanned once
+	{
+		SoloLog b;
+		b.frames(0, 2);
+		const int kRestarts = 200, kForeign = 500;
+		std::uint32_t at = 10;
+		for (int k = 1; k <= kRestarts; ++k)
+		{
+			b.restart(k);
+			for (int f = 0; f < kForeign; ++f)
+			{
+				b.rejoin(at, 5);
+				b.info(at, 1);
+				at += 7;
+			}
+			b.rejoin(at);
+			b.info(at, 1);
+			b.info(at + 1);
+			at += 1000;
+		}
+		RelayLog::Assembled a;
+		const double ms = b.assemble(a);
+		MESSAGE(kRestarts, " restarts behind ", kForeign, " foreign REJOINs each: ", b.log.commands.size(), " records in ", ms, " ms");
+		CHECK(ms < 1000.0); // tolerance: tens of milliseconds; scanning every pending incarnation's frames at each frame is quadratic
+		CHECK(rejoinsIn(a) == (size_t)kRestarts);
+		CHECK(a.joinFrame[0] == at - 1000u + 1u);
+	}
+	// 60,000 restarts whose REJOINs all name frames the walk has passed: only the first can run (it must come before its successors'), so the
+	// walk ends at once
+	{
+		SoloLog b;
+		b.frames(0, 2);
+		for (int k = 1; k <= 60000; ++k)
+		{
+			b.restart(k);
+			b.rejoin(5);
+			b.info(5, 1);
+		}
+		RelayLog::Assembled a;
+		const double ms = b.assemble(a);
+		MESSAGE("60000 restarts at frame 5: ", ms, " ms");
+		CHECK(ms < 1000.0); // tolerance: tens of milliseconds; looking at every pending incarnation at each frame is quadratic
+		CHECK(rejoinsIn(a) == 1);
+		CHECK(a.joinFrame[0] == 0xFFFFFFFFu);
+	}
+}
+
+// RELAY-4: valid one-human room logs (the REJOIN the last frame of the log, or frames after it; several restarts; complete and live) assemble as
+// lane SOLO-1's frame-by-frame walk did
+TEST_CASE("relay4: valid one-human room logs assemble exactly as lane SOLO-1's walk did, the REJOIN before or after the last frame")
+{
+	const std::uint64_t digest = relaylogprobe::soloDigest(1500, [](const RelayLogFile &l, const NetworkConfig &c, RelayLog::Assembled &a, std::string *e, bool live) {
+		return RelayLog::assemble(l, c, a, e, live);
+	});
+	CHECK(digest == kSolo1SoloDigest);
+	for (const bool live : { false, true })
+	{
+		CAPTURE(live);
+		// the REJOIN is the log's last frame (the restarted game asked; nothing after it yet)
+		{
+			SoloLog b;
+			b.frames(0, 4);
+			b.restart(1);
+			b.rejoin(7);
+			RelayLog::Assembled a;
+			b.assemble(a, live);
+			CHECK(a.lastCompleteFrame == 7);
+			CHECK(a.joinFrame[0] == 8);
+			CHECK(a.problems.empty());
+			REQUIRE(a.membership.size() == 1);
+			CHECK(a.membership[0].frame == 7);
+			CHECK(a.membership[0].generation == 1);
+		}
+		// frames after the REJOIN, a second restart whose REJOIN carries a frame info, a leave at the end
+		{
+			SoloLog b;
+			b.frames(0, 4);
+			b.restart(1);
+			b.rejoin(7);
+			b.frames(8, 12);
+			b.restart(2);
+			b.rejoin(20);
+			b.info(20, 1);
+			b.frames(21, 30);
+			NetCommandMsg leave;
+			leave.type = NETCOMMANDTYPE_PLAYERLEAVE;
+			leave.executionFrame = 31;
+			b.add(leave);
+			b.log.endReason = 1;
+			RelayLog::Assembled a;
+			b.assemble(a, live);
+			CHECK(a.lastCompleteFrame == 30);
+			CHECK(a.joinFrame[0] == 21);
+			CHECK(a.leaveFrame[0] == 31);
+			CHECK(a.incarnations[0] == 3);
+			CHECK(a.problems.empty());
+			REQUIRE(a.membership.size() == 3); // the leave is read with the commands, the REJOINs in the walk
+			CHECK(a.membership[0].kind == Network::MembershipEvent::LEAVE);
+			CHECK(a.membership[0].frame == 31);
+			CHECK(a.membership[1].kind == Network::MembershipEvent::REJOIN);
+			CHECK(a.membership[1].frame == 7);
+			CHECK(a.membership[2].kind == Network::MembershipEvent::REJOIN);
+			CHECK(a.membership[2].frame == 20);
+			CHECK(a.membership[2].generation == 2);
+			CHECK(a.latestFrames[0].size() == 11); // its frames 20 .. 30
+		}
+	}
+}
+
 TEST_CASE("online health: passive game metrics have exact counts, bounded samples and no endpoint or payload identity")
 {
 	using namespace RelayProtocol;
@@ -1149,6 +1494,50 @@ TEST_CASE("online2: the online START becomes a LobbyStart; another profile, a mi
 	CHECK(u.size() == 2);
 	CHECK_FALSE(OnlineStart::utf8ToUtf16("\xC0\x80", u)); // overlong
 	CHECK_FALSE(OnlineStart::utf8ToUtf16("\xED\xA0\x80", u)); // a surrogate
+}
+
+TEST_CASE("wotr9 online START: strategic setup and saved war identity require version 2")
+{
+	const ProfileIdentity own = ProfileIdentity::fromText("openbfme-profile 1\ntest\n");
+	const OnlineStart::Limits limits{ 8, 8 };
+	const std::string ticket = "AQHvzauJZ0UjAQEHAJQ1dxkKDPX40Zd_QbpSaTVc2UI"; // slot 1, mask 0x07
+	const std::string slots = "[{\"state\":\"player\",\"name\":\"Ann\",\"faction\":0,\"color\":0,\"startPos\":8,\"team\":0},"
+		"{\"state\":\"player\",\"name\":\"Bea\",\"faction\":1,\"color\":1,\"startPos\":9,\"team\":1},"
+		"{\"state\":\"player\",\"name\":\"Cy\",\"faction\":2,\"color\":2,\"startPos\":10,\"team\":2}]";
+	const std::string prefix = "{\"v\":2,\"kind\":\"openbfme-start\",\"game\":\"0123456789abcdef\",\"slot\":1,\"relay\":\"192.0.2.10:7350\","
+		"\"ticket\":\"" + ticket + "\",\"runAhead\":3,\"crcInterval\":100,\"profile\":\"" + own.digest + "\",\"setup\":{";
+	const std::string suffix = "\"map\":\"maps/strategic/strategic.map\",\"seed\":4242,\"startingCash\":-1,\"superweaponRestriction\":0,"
+		"\"rules\":null,\"legendaryHeroes\":1,\"slots\":" + slots + "}}";
+	auto parse = [&](const std::string &fields, LobbyStart &out, std::string &error) {
+		return OnlineStart::parse(prefix + fields + suffix, own, limits, out, &error);
+	};
+	LobbyStart start;
+	std::string error;
+	REQUIRE_MESSAGE(parse("\"gameMode\":1,\"scenario\":\"WarScenario\",", start, error), error);
+	CHECK(start.game.game.gameMode == 1);
+	CHECK(start.game.game.scenario == "WarScenario");
+	CHECK(start.game.game.slots[1].startPos == 9); // a region index, not a map's eighth start
+	CHECK(start.game.game.resumeSave.empty());
+	const std::string save = "0123456789abcdef0123456789abcdef";
+	REQUIRE_MESSAGE(parse("\"gameMode\":1,\"scenario\":\"WarScenario\",\"resumeSave\":\"" + save + "\",\"resumeHash\":42,", start, error), error);
+	CHECK(start.game.game.resumeSave == save);
+	CHECK(start.game.game.resumeHash == 42);
+	CHECK_FALSE(parse("\"gameMode\":0,\"scenario\":\"WarScenario\",", start, error));
+	CHECK(error.find("\"gameMode\"") != std::string::npos);
+	CHECK_FALSE(parse("\"gameMode\":1,\"scenario\":\"\",", start, error));
+	CHECK(error.find("\"scenario\"") != std::string::npos);
+	CHECK_FALSE(parse("\"gameMode\":1,\"scenario\":\"WarScenario\",\"resumeSave\":\"\",\"resumeHash\":42,", start, error));
+	CHECK(error.find("\"resumeHash\"") != std::string::npos);
+	CHECK_FALSE(parse("\"gameMode\":1,\"scenario\":\"WarScenario\",\"resumeSave\":\"ABCDEF0123456789abcdef0123456789\",\"resumeHash\":42,", start, error));
+	CHECK(error.find("\"resumeSave\"") != std::string::npos);
+	CHECK_FALSE(parse("\"gameMode\":1,\"scenario\":\"WarScenario\",\"resumeSave\":\"\",\"resumeHash\":-1,", start, error));
+	CHECK(error.find("\"resumeHash\"") != std::string::npos);
+	CHECK_FALSE(parse("", start, error));
+	CHECK(error.find("\"gameMode\"") != std::string::npos);
+	std::string legacy = prefix + "\"gameMode\":1,\"scenario\":\"WarScenario\",\"resumeSave\":\"\",\"resumeHash\":0," + suffix;
+	legacy.replace(legacy.find("\"v\":2"), 5, "\"v\":1");
+	CHECK_FALSE(OnlineStart::parse(legacy, own, limits, start, &error));
+	CHECK(error.find("version 1 is Open Play only") != std::string::npos);
 }
 
 TEST_CASE("online2: the relay binds by ticket, forwards in place, enforces the slot check, the targets, the budget, and answers NOT_BOUND / REFUSED")

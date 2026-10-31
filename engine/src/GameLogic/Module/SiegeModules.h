@@ -161,6 +161,7 @@ public:
 	const SpecialPowerTemplate *m_specialPowerTemplate = nullptr; // + 0x08
 	std::string m_specialPowerTemplateName;
 	std::string m_initiateSound;      // + 0x0C (client)
+	std::string m_initiateSound2;     // BFME1 only; retained for the client, like SpecialPowerModuleData
 	bool m_startsPaused = false;      // + 0x14
 	static void buildFieldParse(MultiIniFieldParse &p); // RW 0x9911B3
 };

@@ -20,9 +20,11 @@
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/BitFlags.h"
+#include "GameLogic/ConstructionSite.h"
 #include "GameLogic/FindPositionAround.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Locomotor.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
@@ -30,6 +32,7 @@
 #include "GameLogic/Module/StructureModules.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameLogic/SimMath.h"
@@ -401,9 +404,11 @@ void ObjectCreationList::doStuffToObj(GameLogic &logic, const OCLNugget &n, Obje
 	{
 		obj->setSpecialModelConditionState(0xDA, n.justBuiltDuration); // RW 0x5F1D12: JUST_BUILT (RW 0x68B581)
 	}
-	if (n.startingBusyTime > 0 && obj->getAIUpdateInterface())
+	if (n.startingBusyTime > 0 && obj->getAIUpdateInterface()) // RW 0x5F1D17 .. 0x5F1D2C: + 0xA4 above 0 and the object's AI (+ 0x260)
 	{
-		unported(logic, m_unportedUses, "StartingBusyTime (AI command 0x31 through AI vslot 0x140, RW 0x5F1D2E)");
+		// lane SPELLFIX-1: RW 0x5F1D2E .. 0x5F1D58: AICommandParms(0x31, CMD_FROM_AI) with the frames at parms + 0x34, sent through the AI interface's
+		// aiDoCommand (slot 0): RW 0x66498A runs the busy state as the temporary state for that long. BFME2 1.06 the same
+		obj->getAIUpdateInterface()->aiBusyFor(n.startingBusyTime, CMD_FROM_AI);
 	}
 	Coord3D offset = n.offset;
 	if (n.offsetInLocalSpace && source)
@@ -660,7 +665,15 @@ std::vector<Object *> ObjectCreationList::createCore(GameLogic &logic, const OCL
 		}
 		if (n.clearRemovables)
 		{
-			unported(logic, m_unportedUses, "ClearRemovables (RW 0x796576 / 0x797465 / 0x684BCA)");
+			// lane SPELLFIX-1: RW 0x5F12D8 .. 0x5F1339, before the object is made, at the OCL's position and angle: TheBuildAssistant's
+			// clearRemovableForConstruction (RW 0x796576), with a team whose controlling player (RW 0x79FD6F) exists moveObjectsForConstruction (RW 0x797465),
+			// then TheTerrainLogic's removeTreesForConstruction with the template's geometry (+ 0xA0, RW 0x684BCA). BFME2 1.06 the same
+			ConstructionSite::clearRemovableForConstruction(logic, *tt, where, angle);
+			if (Player *owner = team ? team->getControllingPlayer() : nullptr)
+			{
+				ConstructionSite::moveObjectsForConstruction(logic, *tt, where, angle, *owner);
+			}
+			logic.trees().removeTreesForConstruction(where, ObjectGeometry::shapesOf(*tt->getFinalOverride()), angle);
 		}
 		if (!team)
 		{

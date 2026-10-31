@@ -10,7 +10,7 @@
 // w3d_tint, set on the icon's own instancer's nodes); INFERENCE (stop S-3302): RotWK's scene lighting of the tint was not read; the bib is ZH's W3DBibBuffer
 // quad (alpha blended, the corners at the drawable's height). Every problem (a model, a texture, a layout) is an error reported once (push_error) and listed
 // in state().errors, never a silent stand-in. r3: the instancers draw in the alpha-blended pass (W3DInstancer::set_alpha_override, DONOR ZH dx8renderer.cpp:1884-1916);
-// the ghost casts no shadow (no drawable does yet, stop S-3304).
+// the ghost casts no shadow (translucent drawables are not shadow-map casters, stop S-3304).
 
 #pragma once
 
@@ -61,8 +61,14 @@ public:
 	//   instances, piece, base_site } ], errors: [...] }
 	Dictionary state() const;
 	const std::vector<std::string> &errors() const { return m_errors; }
+	double lastIconsMs() const { return m_lastIconsMs; } // lane FOGFX-1: the last sync's PlacementIcons::update and its icons' draw
+	double lastDrawMs() const { return m_lastDrawMs; }
+	const double *lastDrawParts() const { return m_partMs; } // the instances, update_now, the tint, the bib, the shadow decal
 
 private:
+	double m_lastIconsMs = 0.0, m_lastDrawMs = 0.0;
+	double m_partMs[5] = {};
+	unsigned long long m_modelsBuilt = 0, m_instancersMade = 0;
 	struct EntryView
 	{
 		int64_t model = -1, instance = -1;
@@ -91,10 +97,15 @@ private:
 		int instances = 0;
 	};
 	void error(const std::string &e);
+	void clearTransient(); // the formation preview, the resource decal and label
+	void parkViews(const std::string &templateName); // lane FOGFX-1: m_views hidden and kept under the template's name
+	static constexpr size_t kMaxParked = 48;         ///< lane FOGFX-1: more parked templates than this and the parked ones are freed
+	std::map<std::string, std::vector<IconView>> m_parked;
 	W3DInstancer *newInstancer(const char *name);
 	void drawIcon(size_t i, PlacementIcons::Icon &icon, IconView &view);
 	void applyTint(IconView &view, const Color &tint);
 	void updateBib(PlacementIcons::Icon &icon, IconView &view);
+	Ref<StandardMaterial3D> bibMaterial(const std::string &tex, const Ref<Texture2D> &t); // lane FOGFX-1: shared per texture
 	void updateShadowDecal(PlacementIcons::Icon &icon, IconView &view); // lane OWNERFIX-2
 	void updateArrow(const InGameUI &ui);
 	void updateFormation(LiveGame &game,const InGameUI &ui,bool idle);
@@ -116,6 +127,7 @@ private:
 	LiveGame *m_game = nullptr;
 	std::vector<IconView> m_views;
 	std::map<std::string, Ref<Texture2D>> m_textures;
+	std::map<std::string, Ref<StandardMaterial3D>> m_bibMaterials; ///< lane FOGFX-1: the bib's material per texture, shared by every bib
 	Ref<W3DModelBuilder> m_textureLoader;
 	W3DInstancer *m_arrow = nullptr;
 	uint64_t m_arrowId = 0;

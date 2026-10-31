@@ -24,8 +24,8 @@
 ## "Nightly 0.4.13 build 261023200", never a wrong date. Shown here as "Nightly 0.4.13 (2026-10-23, evening)".
 extends RefCounted
 
-## the word before a plain number in what players see ("Alpha 0.4.5"; tools/release/autorelease.py STAGE)
-const STAGE := "Alpha"
+const L10n := preload("res://scripts/l10n/l10n.gd")
+
 
 const _PATTERN := "^v(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})(?:-(alpha|nightly|preview)\\.(0|[1-9][0-9]{0,8}))?$"
 
@@ -40,7 +40,7 @@ static func parse(tag: String) -> Dictionary:
 	var m := _rx.search(tag) if tag.length() <= 40 else null
 	# the match must be the whole tag ('$' also matches before a final newline)
 	if m == null or m.get_start() != 0 or m.get_end() != tag.length():
-		return {"ok": false, "error": "'%s' is not a release version (v<major>.<minor>.<patch>, v<major>.<minor>.<patch>-alpha.<n>, -nightly.<n> or -preview.<n>)" % tag.left(80).c_escape()}
+		return {"ok": false, "error": L10n.t("launcher.semver.not_a_release", {"tag": tag.left(80).c_escape()})}
 	var pre := m.get_string(5)
 	return {"ok": true, "error": "", "core": [m.get_string(1).to_int(), m.get_string(2).to_int(), m.get_string(3).to_int()],
 		"kind": m.get_string(4), "preview": pre.to_int() if pre != "" else -1}
@@ -76,7 +76,12 @@ static func channel_of(tag: String) -> String:
 ## (the pre-release channel "preview": nightly builds, and the earlier alpha builds and previews). VERSION-1 had shown them as "Alpha" /
 ## "Preview". The ids are unchanged, so a player's remembered pick and --channel=stable / preview keep working.
 static func channel_name(ch: String) -> String:
-	return {"stable": "Stable", "preview": "Nightly"}.get(ch, ch)
+	match ch:
+		"stable":
+			return L10n.t("launcher.semver.channel_stable")
+		"preview":
+			return L10n.t("launcher.semver.channel_nightly")
+	return ch
 
 
 ## lane VERSION-1: a version as players read it: "v0.4.5" -> "Alpha 0.4.5", "v0.4.0-alpha.3" -> "v0.4.0 Alpha 3" (its GitHub title), a
@@ -88,9 +93,9 @@ static func display(tag: String) -> String:
 		return tag
 	var core := "%d.%d.%d" % p.core
 	if p.kind == "":
-		return "%s %s" % [STAGE, core]
+		return L10n.t("launcher.semver.display_alpha", {"core": core})
 	if p.kind == "alpha":
-		return "v%s Alpha %d" % [core, p.preview]
+		return L10n.t("launcher.semver.display_old_alpha", {"core": core, "n": p.preview})
 	if p.kind == "nightly":
 		return nightly_text(core, p.preview)
 	return tag
@@ -102,7 +107,7 @@ static func display(tag: String) -> String:
 static func display_short(tag: String) -> String:
 	var p := parse(tag)
 	if p.ok and p.kind == "nightly":
-		return "Nightly %d.%d.%d" % p.core
+		return L10n.t("launcher.semver.nightly_short", {"core": "%d.%d.%d" % p.core})
 	return display(tag)
 
 
@@ -117,11 +122,14 @@ static func nightly_text(core: String, n: int) -> String:
 		var m2 := (ymd / 100) % 100
 		var d2 := ymd % 100
 		if m2 >= 1 and m2 <= 12 and d2 >= 1 and d2 <= 31:
-			return "Nightly %s (%04d-%02d-%02d, %s)" % [core, 2000 + yy, m2, d2, "morning" if (n / 100) % 10 == 1 else "evening"]
-		return "Nightly %s build %d" % [core, n]
+			var date := "%04d-%02d-%02d" % [2000 + yy, m2, d2]
+			if (n / 100) % 10 == 1:
+				return L10n.t("launcher.semver.nightly_morning", {"core": core, "date": date})
+			return L10n.t("launcher.semver.nightly_evening", {"core": core, "date": date})
+		return L10n.t("launcher.semver.nightly_build", {"core": core, "n": n})
 	var y := n / 10000
 	var mo := (n / 100) % 100
 	var d := n % 100
 	if n >= 10000000 and n <= 99999999 and mo >= 1 and mo <= 12 and d >= 1 and d <= 31:
-		return "Nightly %s (%04d-%02d-%02d)" % [core, y, mo, d]
-	return "Nightly %s build %d" % [core, n]
+		return L10n.t("launcher.semver.nightly_date", {"core": core, "date": "%04d-%02d-%02d" % [y, mo, d]})
+	return L10n.t("launcher.semver.nightly_build", {"core": core, "n": n})

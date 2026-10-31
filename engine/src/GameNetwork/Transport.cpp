@@ -698,7 +698,7 @@ bool Transport::sendTo(int slot, const std::vector<std::uint8_t> &bytes, std::st
 		}
 		return false;
 	};
-	if (slot < 0 || slot >= MAX_SLOTS || !m_peers[(size_t)slot].known || m_peers[(size_t)slot].retiring)
+	if (slot < 0 || slot >= MAX_SLOTS || !m_peers[(size_t)slot].known || m_peers[(size_t)slot].retiring || m_peers[(size_t)slot].dropped)
 	{
 		return fail("slot " + std::to_string(slot) + " is not a connected peer");
 	}
@@ -748,6 +748,57 @@ void Transport::retire(int slot)
 	p.retiring = true;
 	p.ackOwed = true; // the final ack (of its leave) goes out with the next flush
 	++m_stats.peersRetired;
+}
+
+void Transport::retireDropped(int slot, std::uint32_t holdMs)
+{
+	if (slot < 0 || slot >= MAX_SLOTS || !m_peers[(size_t)slot].known || m_peers[(size_t)slot].retiring)
+	{
+		return;
+	}
+	Peer &p = m_peers[(size_t)slot];
+	if (p.unacked.empty())
+	{
+		retire(slot); // nothing it has not acknowledged: as a leave
+		return;
+	}
+	size_t bytes = 0;
+	for (const Outgoing &o : p.unacked)
+	{
+		bytes += o.bytes.size() + kRecordHeaderBytes;
+	}
+	if (p.unacked.size() > kDroppedBacklogRecords || bytes > kDroppedBacklogBytes)
+	{
+		error("the dropped slot " + std::to_string(slot) + "'s backlog of " + std::to_string(p.unacked.size()) + " records (" + std::to_string(bytes)
+			+ " bytes) is beyond the cap: not resent (if its game runs again it may not learn it was dropped)");
+		retire(slot);
+		return;
+	}
+	p.early.clear();
+	p.partial.clear();
+	p.partialNext = p.partialCount = 0;
+	p.dropped = true;
+	p.droppedAt = nowMs();
+	p.holdMs = holdMs;
+	++m_stats.peersRetired;
+}
+
+size_t Transport::droppedBacklog(int slot, size_t *bytes) const
+{
+	size_t b = 0, n = 0;
+	if (slot >= 0 && slot < MAX_SLOTS && m_peers[(size_t)slot].dropped)
+	{
+		for (const Outgoing &o : m_peers[(size_t)slot].unacked)
+		{
+			b += o.bytes.size() + kRecordHeaderBytes;
+		}
+		n = m_peers[(size_t)slot].unacked.size();
+	}
+	if (bytes)
+	{
+		*bytes = b;
+	}
+	return n;
 }
 
 bool Transport::receive(int &fromSlot, std::vector<std::uint8_t> &bytes)
@@ -817,6 +868,32 @@ int Transport::plannedRoundTripMs(int slot) const
 void Transport::flush(int slot, std::uint64_t now)
 {
 	Peer &p = m_peers[(size_t)slot];
+	if (p.dropped)
+	{
+		// lane MPDROP-3: a dropped peer gets its unacknowledged records (its DISCONNECTPLAYER last) until it acknowledges them: resent while the drop or
+		// the last datagram from it is within holdMs, at most once a second; no acks, no keep-alives
+		if (p.unacked.empty())
+		{
+			p = Peer(); // it has everything: forgotten (later datagrams from it count as unknown senders)
+			return;
+		}
+		if (now - std::max(p.droppedAt, p.lastHeard) >= (std::uint64_t)p.holdMs)
+		{
+			// quiet until it sends again: a game hung far longer than NetworkPlayerTimeoutTime that runs again is answered with its drop (its packets set
+			// lastHeard, handlePacket), a dead one gets nothing more
+			return;
+		}
+		if (p.lastDroppedRound != 0 && now - p.lastDroppedRound < 1000)
+		{
+			return; // one round a second
+		}
+		p.lastDroppedRound = now;
+		p.ackOwed = false;
+		p.lastSent = now; // no keep-alive
+		// a record goes again once per pass over the backlog (the cap's number of rounds): each round takes the next records in order, the front first
+		p.rto = 1000 * ((kDroppedBacklogBytes + kDroppedRoundBytes - 1) / kDroppedRoundBytes) - 500;
+	}
+	size_t roundBytes = 0;
 	size_t i = 0;
 	bool sentAny = false;
 	// an ack or a keep-alive is due (lane ONLINE-3: never to the relay log stream, which only carries records)
@@ -832,7 +909,7 @@ void Transport::flush(int slot, std::uint64_t now)
 		p.rto = (std::uint64_t)m_options.resendMs;
 	}
 	bool timedOut = false;
-	while (i < inFlight || (!sentAny && wantPacket))
+	while ((i < inFlight || (!sentAny && wantPacket)) && !(p.dropped && roundBytes >= kDroppedRoundBytes))
 	{
 		std::vector<std::uint8_t> d(4, 0); // the CRC goes first, written last
 		put16(d, kMagic);
@@ -898,6 +975,7 @@ void Transport::flush(int slot, std::uint64_t now)
 			d = RelayProtocol::encodeData((std::uint8_t)slot, d); // lane ONLINE-2: the envelope names the target slot
 			sealRelay(d);                                         // lane AUTH-1
 		}
+		roundBytes += d.size();
 		sendDatagram(slot, p.address, std::move(d), now);
 		sentAny = true;
 		p.lastSent = now;
@@ -1154,6 +1232,12 @@ void Transport::handlePacket(const NetAddress &from, const std::vector<std::uint
 				}
 			}
 		}
+	}
+	if (p.dropped)
+	{
+		// lane MPDROP-3: a dropped peer's packet: its ack is taken (above) and lastHeard brings back its resends (flush); its records are not delivered
+		++m_stats.droppedPeerPackets;
+		return;
 	}
 	for (const Parsed &r : records)
 	{

@@ -82,6 +82,7 @@ TEST_CASE("smooth1 retail: the posed meshes of fighting horde members against th
 			sel.appendObjectIDArgument(id);
 		}
 		game.commands().append(sel);
+		// lane LOS-1: with the terrain line of sight the two sides crossing Fall Back's plateau edge no longer see each other once they have passed
 		GameMessage mv(MSG_DO_ATTACKMOVETO, player); // an attack move fights what it meets (a move does not stop for enemies)
 		mv.appendLocationArgument(to);
 		game.commands().append(mv);

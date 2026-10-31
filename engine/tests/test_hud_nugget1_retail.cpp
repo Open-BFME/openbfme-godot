@@ -2,6 +2,7 @@
 // RotWK 2.01's weapon.ini). They share the HUD tests' retail world (the file name sorts with the test_hud_* files) and SKIP when ROTWK_INSTALL / BFME2_INSTALL
 // are unset. Every expected value comes from the retail data (the INI numbers quoted at each check) or the binary (the RW address quoted), not from a run.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -116,6 +117,7 @@ struct Arena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(angle);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	void frames(int n)
@@ -663,9 +665,9 @@ TEST_CASE("nugget1 damage field: FireWeaponUpdate's snapshot loads version 1, re
 	CHECK(victim->getBodyModule()->getHealth() < hp);
 }
 
-// the two kinds left counted (S-321): SlaveAttackNugget (SlaveWatcherBehavior, S-1995) and FireLogicNugget (TheFireLogicSystem, S-191) still go to unportedNuggets;
-// every other kind of retail weapon.ini is delivered
-TEST_CASE("nugget1: only SlaveAttack and FireLogic nuggets are still counted as not delivered")
+// the kind left counted (S-321): FireLogicNugget (TheFireLogicSystem, S-191) still goes to unportedNuggets; every other kind of retail weapon.ini is
+// delivered (lane MODCOMPAT-MOD1: SlaveAttackNugget orders the expansion's slave, test_slavewatcher.cpp; a source without a SlaveWatcherBehavior: nothing)
+TEST_CASE("nugget1: only FireLogic nuggets are still counted as not delivered")
 {
 	if (!haveWorld())
 	{
@@ -677,10 +679,10 @@ TEST_CASE("nugget1: only SlaveAttack and FireLogic nuggets are still counted as 
 	unsigned long long counted = 0;
 	const Coord3D at{ 900.0f, 900.0f, 0.0f };
 	DeliverNuggets(a.logic, src->getID(), only(weapon("GondorTrebuchetExpansionWeapon"), NUGGET_SLAVE_ATTACK), WeaponBonus{}, nullptr, &at, false, &counted);
-	CHECK(counted == 1u);
+	CHECK(counted == 0u);
 	const WeaponTemplate fire = only(weapon("BabyDrakeInferno"), NUGGET_FIRE_LOGIC);
 	DeliverNuggets(a.logic, src->getID(), fire, WeaponBonus{}, nullptr, &at, false, &counted);
-	CHECK(counted == 1u + fire.m_nuggets.size());
+	CHECK(counted == fire.m_nuggets.size());
 	counted = 0;
 	// the mine drop last: it fades its source
 	for (const char *name : { "AngmarMorgramirRuinWeapon", "CreateAHeroStealMoney", "MordorGateWatchersFearWeapon", "EarthquakePhaseInitialWeapon",

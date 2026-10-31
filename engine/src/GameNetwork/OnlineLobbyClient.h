@@ -54,6 +54,10 @@ public:
 		// lane UBERJOIN-1: the simulation profile that digest is of (the player's performance mode): the room made and the room joined carry it as their
 		// "mode" ("normal" / "uber"); a join of a room in the other mode is the lobby's "mode" refusal. setProfile changes both together
 		SimulationProfile profile = SimulationProfile::Faithful;
+		// lane PROFILE-2 (owner decision 10-26 "A"): the profile identity's archive lines without their index ("<install>:<path> <md5> <size>", mount
+		// order). A lobby with the "archives" feature is sent them once (POST /v1/profile-archives) and a create / join names them by their SHA-256,
+		// so an integrity checker can name the archives a player had that it lacks. Empty: nothing is sent
+		std::vector<std::string> profileArchives;
 		int playerTemplateCount = 0; ///< factions are indices below this (or -1 random); required
 		int colorCount = 0;          ///< colours likewise; required
 		std::uint32_t pollMs = 1000; ///< the staging room's poll interval (a lobby that does not hold polls; the pause after a poll that failed)
@@ -206,6 +210,9 @@ public:
 		int players = 0;         ///< human players in it
 		int openSlots = 0;
 		int mapStartCount = LEGACY_MAX_SLOTS;
+		int gameMode = 0; ///< WOTR2 milestone 9: 1 is War of the Ring, 0 Open Play
+		std::string scenario;
+		bool resume = false;
 		bool password = false;
 		SimulationProfile mode = SimulationProfile::Faithful; ///< lane UBERJOIN-1: the game's performance mode ("mode": absent = "normal", a room of an old client)
 		bool cheatMode = false;  ///< lane CHEAT-1: the host turned Cheat Mode on ("cheatMode": absent = off, a lobby before CHEAT-1)
@@ -254,6 +261,12 @@ public:
 	// A lobby slot as the lobby holds it (lobby.mjs gameView), next to its SkirmishGameSlot
 	struct SlotView
 	{
+		struct ResumeCheck
+		{
+			std::string save, why;
+			bool ok = false;
+			bool known = false;
+		};
 		std::string state;  ///< open / closed / player / easy / medium / hard / brutal
 		bool ready = false;
 		bool you = false;
@@ -267,6 +280,7 @@ public:
 		// linkKnown false = not reported yet; rttMs -1 = the relay did not answer them at all (loss 100)
 		bool linkKnown = false;
 		int rttMs = -1, lossPct = 100;
+		ResumeCheck resumeCheck; ///< this member's answer for the saved war's MD5; a different MD5 is stale
 	};
 
 	// the bounds of an answer (lobby.mjs's own limits; Sol r1: a hostile lobby must not exhaust memory). The transport stops reading a body at
@@ -293,6 +307,7 @@ public:
 	// digits) and the profile digest (32) stay
 	static std::string redact(const std::string &text);
 	std::string platformField() const;
+	std::string archivesField(); ///< lane PROFILE-2: ",\"archives\":\"<sha256>\"" (queues the upload first, once per lobby), or ""
 	std::string buildField() const; ///< lane JOINVER-1: ",\"build\":{...}" for create / join bodies, or "" (an odd version is not told) // lane PLATFORMICON-1: ,"platform":"<name>" or nothing
 
 	explicit OnlineLobbyClient(const Options &options);
@@ -333,7 +348,8 @@ public:
 	// lane ONLINEMENU-1: `handicap` the slot's GameSlot + 0x20 (0, -5 .. -95: SkirmishGameSlot::handicapValid); kKeep leaves it
 	void setOwnSlot(int faction, int color, int startPos, int team, int handicap = kKeep);
 	// host: a slot that is not a player's (its state open / closed / an AI level, and the AI's choices)
-	void setOtherSlot(int slot, SlotState state, int faction, int color, int startPos, int team, int handicap = kKeep);
+	void setOtherSlot(int slot, SlotState state, int faction, int color, int startPos, int team, int handicap = kKeep,
+		const std::u16string &name = {});
 	// lane ONLINEMENU-1: the local player's Create-a-Hero for its own slot (POST .../slot {"cah": base64 of its wire form | null}); false + *error when the
 	// record is over kMaxCreateAHeroBytes (nothing is sent)
 	bool setOwnCreateAHero(const CreateAHeroHero *hero, std::string *error);
@@ -374,14 +390,26 @@ public:
 	const std::string &profileDigest() const { return m_options.profileDigest; }
 	/// ONLINEMENU-1: a feature the lobby's /v1/health `features` names ("social", "oauth", "email"), asked before each guest sign-in
 	bool lobbyHasFeature(const std::string &name) const { return m_lobbyFeatures.count(name) != 0; }
+	// lane PROFILE-2: why the last archive-list upload failed ("" after one that succeeded); a failure never stops a create or join (the game plays,
+	// the checker reports the slot's archives as not uploaded); the next create / join uploads again
+	const std::string &lastArchivesError() const { return m_archivesError; }
+	// lane PROFILE-2: the SHA-256 (hex) of Options::profileArchives joined with "\n" after each line: the id a create / join names
+	static std::string archivesId(const std::vector<std::string> &lines);
 	const std::string &lobbyRelay() const { return m_lobbyRelay; }
 	const std::string &relayLookupError() const { return m_relayLookupError; }
 	// host: the game options (POST .../setup)
 	void setSetup(const SkirmishGameInfo &setup);
+	void setResumeCheck(const std::string &save, bool ok, const std::string &why); // this player's checked copy (not another member's)
 	void setReady(bool ready);
 	void chat(const std::u16string &text);
 	void kick(int slot);
 	void start();                                         // host: POST .../start (the lobby builds every player's START)
+	bool requestPhase(int phase, const std::vector<int> &slots); // WOTR2 milestone 9: next battle/map ticket, while the current relay is still live
+	bool phasePending() const { return m_phasePending; }
+	bool phaseWaiting() const { return m_phaseWaiting; }
+	int phaseNumber() const { return m_phaseNumber; }
+	const std::string &phaseStartJson() const { return m_phaseStartJson; }
+	const std::string &phaseError() const { return m_phaseError; }
 	void refreshSocial();
 	bool setPrivacy(const Privacy &privacy);
 	bool setPresence(const std::string &state, bool hasHidden = false, bool hidden = false);
@@ -523,6 +551,10 @@ private:
 	std::uint32_t m_seq = 0;      ///< the game view's seq
 	std::uint32_t m_chatSince = 0; ///< the last chat line read
 	std::string m_startJson;
+	int m_phaseNumber = 0;
+	bool m_phasePending = false;
+	bool m_phaseWaiting = false;
+	std::string m_phaseStartJson, m_phaseError;
 	std::string m_playedGame; // lane ONLINEUX-1
 	std::vector<std::string> m_mineLeft; // lane ONLINEUX-1 r2
 	std::uint64_t m_nextPoll = 0;
@@ -561,5 +593,6 @@ private:
 	bool m_roomRelayTold = false; ///< lane JOINVER-1
 	ProfileRefusal m_profileRefusal; ///< lane JOINVER-1
 	std::set<std::string> m_lobbyFeatures; ///< ONLINEMENU-1: /v1/health `features` (empty: an older lobby, or the answer was unreadable)
+	std::string m_archivesUploaded, m_archivesError; ///< lane PROFILE-2: the archives id this lobby holds (sent this connection); the last upload's failure
 	std::string m_lobbyRelay, m_relayLookupError; ///< fetchRelays
 };

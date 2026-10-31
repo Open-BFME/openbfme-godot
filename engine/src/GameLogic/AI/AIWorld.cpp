@@ -5,6 +5,11 @@
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Module/PortalModules.h"
 #include "GameLogic/Module/CollideModule.h"
+#include "GameLogic/Module/NotifyCrushModules.h"
+#include "GameLogic/Module/SalvageCrateCollide.h"
+#include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Combat/CombatQueries.h"
+#include "GameLogic/Object/PartitionManager.h"
 
 #include "Common/ArchiveFileSystem.h"
 #include "Common/AsciiString.h"
@@ -19,6 +24,8 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/AI/AIGroup.h"
+#include "GameLogic/Combat/CombatLineOfSight.h"
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/SlavedUpdate.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
@@ -38,8 +45,7 @@ namespace
 const char *const kStopAI =
 	"S-220 AIWorld reads the movement data of a template (Geometry*, FenceWidth, PathfindDiameter, SlopeLimitIndex, CanPathThroughGates, CrusherLevel, CrushableLevel) from the "
 	"raw field slots and LocomotorSet through the real RW parser over the raw blocks; canCrushOrSquish is crusher level above crushable level (RW 0x68D524 not read); the "
-	"collision pass is a circle overlap over a 10-unit grid of the AI units (the partition and collision managers of RW 0x62E93B are not ported, S-142); the unit's "
-	"veterancy level is 0 (no experience tracker)";
+	"collision pass is a circle overlap over a 10-unit grid of the AI units (the partition and collision managers of RW 0x62E93B are not ported, S-142)";
 // lane PHYS-1: what the overlap pass is not (RW's collision manager), noted when the pass meets its first pair
 const char *const kStopCollisionManager =
 	"[S-780] collision: the contact pairs are a circle overlap of the AI units' bounding circles (RotWK: the collision manager RW 0xDE4360, vtable 0xD0BF08, update "
@@ -475,6 +481,26 @@ bool ObjectPathfindAdapter::isSignificantlyAboveTerrain() const
 	return above > SimMath::pc24Mul(m_object->logic().settings().gravity, -9.0f);
 }
 
+// lane LOS-1: RW 0x68B58C(0), the attacker's current weapon (the IMMOBILE test of RW 0x6F4557 is the pathfinder's)
+bool ObjectPathfindAdapter::hasCurrentWeapon() const
+{
+	const ObjectWeapons *w = m_object->getWeapons();
+	return w && w->currentWeapon() != nullptr;
+}
+
+// lane LOS-1: RW 0x6CC6DD with the current weapon (CombatLineOfSight.h)
+bool ObjectPathfindAdapter::isClearGoalFiringLineOfSightTerrain(const Coord3D &goalPos, const PathfindObject &victim) const
+{
+	const ObjectPathfindAdapter *v = dynamic_cast<const ObjectPathfindAdapter *>(&victim);
+	const ObjectWeapons *w = m_object->getWeapons();
+	const Weapon *weapon = w ? w->currentWeapon() : nullptr;
+	if (!v || !weapon)
+	{
+		throw std::logic_error("LOS-1: the weapon terrain line (RW 0x6CC6DD) needs an object victim and the current weapon");
+	}
+	return CombatLineOfSight::isClearGoalFiringLineOfSightTerrain(*weapon, *m_object, goalPos, &v->object());
+}
+
 bool ObjectPathfindAdapter::isMobile() const
 {
 	return !isKindOf(PK_IMMOBILE);
@@ -524,23 +550,9 @@ const ObjectMovementInfo &ObjectPathfindAdapter::info() const
 
 const PathfindGeometry &ObjectPathfindAdapter::getGeometry() const
 {
-	// lane HUD-5: an object whose own GeometryInfo changed (Object + 0xA8, RW 0xAD3520) answers with its own shape flags
-	const std::vector<std::uint8_t> &active = m_object->geometryActive();
-	if (active.empty())
-	{
-		return info().geometry;
-	}
-	if (m_ownGeometryVersion != m_object->geometryVersion())
-	{
-		m_ownGeometry = info().geometry;
-		for (size_t i = 0; i < m_ownGeometry.shapes.size() && i < active.size(); ++i)
-		{
-			m_ownGeometry.shapes[i].active = active[i] != 0;
-		}
-		m_ownGeometry.cacheRadii(); // lane UBER-2B: the radii of the flags just set (see PathfindGeometry::cacheRadii)
-		m_ownGeometryVersion = m_object->geometryVersion();
-	}
-	return m_ownGeometry;
+	// lane HUD-5: an object whose own GeometryInfo changed (Object + 0xA8, RW 0xAD3520) answers with its own shape flags (lane MODCOMPAT-MOD1: the object's
+	// copy, Object::ownPathfindGeometry)
+	return m_object->ownPathfindGeometry(info().geometry);
 }
 
 float ObjectPathfindAdapter::getFenceWidth() const { return info().fenceWidth; }
@@ -794,7 +806,10 @@ void AIWorld::attach()
 	m_hooksToken = m_logic.addWorldHooks([this](Object &o) { objectEnteredWorld(o); }, [this](Object &o) { objectLeftWorld(o); });
 	m_hashToken = m_logic.addStateHashContributor([this](StateHasher &h) { crc(h); }, "pathfinder and AI movers");
 	m_logic.installPhaseWork("pathfinderQueue", [this]() { processPathfindQueue(); });
-	m_logic.installPhaseWork("partitionAndCollision", [this]() { processCollisions(); });
+	m_logic.installPhaseWork("partitionAndCollision", [this]() {
+		processCollisions();
+		processCrateContacts(); // lane MODCOMPAT-MOD1: the crates' contacts, after the AI units' pass (S-780)
+	});
 	// PROD-1's hand-off: what production asks the AI of a produced object (move to the rally point, follow the exit path, idle, regroup) runs here, at the call sites
 	// production already has (GameLogic/AI/AICommandSink.h)
 	m_logic.aiCommands().setHandler([this](Object &obj, const AICommand &c) { return executeCommand(obj, c); });
@@ -945,6 +960,7 @@ std::vector<std::string> AIWorld::stops() const
 // ---- the map ----------------------------------------------------------------------------------------------------------------------
 void AIWorld::newMap(const PathfindTerrain &terrain)
 {
+	m_cratesValid = false; // lane MODCOMPAT-MOD1: the crate list is rebuilt from the objects by the next crate pass
 	// RW 0x6EA1F2: classify the terrain, then every object's footprint, then the zones
 	std::vector<PathfindObject *> structures;
 	for (Object *o = m_logic.getFirstObject(); o; o = o->getNextObject())
@@ -1053,7 +1069,7 @@ static void notifyPathHasInvalidPortals(AIWorld &world, AIUpdateInterface &ai)
 	{
 		if (!obj.isKindOfName("HORDE"))
 		{
-			obj.kill(0); // RW 0x668D6A: kill(8, 0)
+			obj.kill(DAMAGE_UNRESISTABLE, 0); // RW 0x668D6E: kill(8, 0)
 			return;
 		}
 		world.pathfinder().noteStop(pathstops::kPortalLostHorde);
@@ -1113,13 +1129,28 @@ const ObjectMovementInfo &AIWorld::movementInfo(const ThingTemplate &tt)
 	return *it->second;
 }
 
-void AIWorld::objectEnteredWorld(Object &)
+void AIWorld::objectEnteredWorld(Object &obj)
 {
 	// a structure's footprint enters the map with newMap (the live game) or addObjectToPathfindMap (construction); nothing to do for the seam itself
+	// lane MODCOMPAT-MOD1: a crate joins the crate contact pass (RW 0x68E31F registers it with the collision manager); a stale list is rebuilt whole
+	if (m_cratesValid && CrateCollide::isCrate(obj))
+	{
+		const auto it = std::lower_bound(m_crates.begin(), m_crates.end(), obj.getID());
+		if (it == m_crates.end() || *it != obj.getID())
+		{
+			m_crates.insert(it, obj.getID());
+		}
+	}
 }
 
 void AIWorld::objectLeftWorld(Object &obj)
 {
+	// lane MODCOMPAT-MOD1: RW 0x68C18F unregisters it from the collision manager
+	const auto crate = std::lower_bound(m_crates.begin(), m_crates.end(), obj.getID());
+	if (crate != m_crates.end() && *crate == obj.getID())
+	{
+		m_crates.erase(crate);
+	}
 	if (!m_attached)
 	{
 		return;
@@ -1234,6 +1265,10 @@ void AIWorld::processCollisions()
 		if (ai->getObject()->isDestroyed() || ai->isImmobile() || !ai->getObject()->isInWorld())
 		{
 			continue; // lane GARRISON-1: a contain's rider out of the world (RW 0x68C18F) is not in the partition (ZH PartitionManager::processCollisions)
+		}
+		if (ai->getObject()->isOutOfCollisionManager())
+		{
+			continue; // lane MODCOMPAT-MOD1: its collision manager record was removed (RW 0xB6C480, CritterEmitterUpdate RW 0x8CD1F6)
 		}
 		units.push_back(CollisionUnit{ kv.first, ai, 0.0f, 0.0f, 0.0f, 0, &ai->adapter().getGeometry() });
 		if (uberFacts)
@@ -1363,7 +1398,7 @@ void AIWorld::processCollisions()
 	// lane UBER-2B (Uber only): the facts every pair's handlers test first, once per unit and pass. A pair whose handlers would all return at those tests is
 	// counted and skipped: AIMover::onCollide returns for a contained unit or a contained other (both ways), the collide modules as ObjectCollide::pairIsInert
 	// says. lane UBER-3W: the facts of every unit with a pair are taken before the first pair meets, on the logic job pool (each job writes only its own
-	// units' facts and their objects' lazily found physics module; the one shared lazy cache, GameLogic::crushInfo, was filled above on this thread). They
+	// units' facts; the physics module is kept by Object since buildModules; the one shared lazy cache, GameLogic::crushInfo, was filled above on this thread). They
 	// were taken on this thread at the unit's first pair, 5% of a one-thread 30,000-troop clash frame. Uber rule change (snapshot semantics): a unit's facts
 	// are those from before the pass's first pair (UBER-2B: before its own first pair), so a pair after a crush or a stun in the same pass reads them from before it
 	const bool filter = m_logic.uber();
@@ -1426,5 +1461,90 @@ void AIWorld::processCollisions()
 	if (alliedPair)
 	{
 		m_logic.noteStop(kStopAlliedStack);
+	}
+}
+
+// lane MODCOMPAT-MOD1 (S-260 / S-780): the crates' contacts (see the header). The candidates are the projectile pass's (CombatState::processProjectileContacts):
+// the partition's objects within the crate's bounding sphere, then each pair's narrow test from its lower ObjectID's side with each object's own
+// GeometryInfo (RW 0xB6D060 -> 0x68C7B2 -> RW 0xAD2CE0)
+void AIWorld::processCrateContacts()
+{
+	if (!m_mapReady)
+	{
+		return;
+	}
+	if (!m_cratesValid)
+	{
+		m_crates.clear();
+		for (Object *o = m_logic.getFirstObject(); o; o = o->getNextObject())
+		{
+			if (!o->isDestroyed() && o->isInWorld() && CrateCollide::isCrate(*o))
+			{
+				m_crates.push_back(o->getID());
+			}
+		}
+		std::sort(m_crates.begin(), m_crates.end());
+		m_cratesValid = true;
+	}
+	if (m_crates.empty())
+	{
+		return;
+	}
+	static const int kNoCollide = CombatNames::kindOf("NO_COLLIDE"), kHorde = CombatNames::kindOf("HORDE");
+	static const unsigned kNoCollisions = (unsigned)CombatNames::statuses().noCollisions;
+	const auto registered = [&](const Object &o) {
+		// RW 0x68E31F: no collision manager record for NO_COLLIDE (template + 0x108 bit 30) or HORDE (+ 0x115 bit 5); RW 0xB6C480 removed records
+		return o.isInWorld() && !o.isDestroyed() && !o.isKindOf((unsigned)kNoCollide) && !o.isKindOf((unsigned)kHorde) && !o.testStatus(kNoCollisions) &&
+			!o.isOutOfCollisionManager();
+	};
+	m_crateScratch.assign(m_crates.begin(), m_crates.end()); // a contact destroys crates and can make objects: walk a copy
+	for (PathfindObjectID id : m_crateScratch)
+	{
+		Object *crate = m_logic.findObjectByID(id);
+		if (!crate || crate->isDestroyed())
+		{
+			const auto it = std::lower_bound(m_crates.begin(), m_crates.end(), id);
+			if (it != m_crates.end() && *it == id)
+			{
+				m_crates.erase(it);
+			}
+			continue;
+		}
+		if (!registered(*crate) || crate->geometryShapes().empty())
+		{
+			continue;
+		}
+		PartitionFilterFn candidate([&](Object &o) { return &o != crate && o.getAIUpdateInterface() && registered(o); });
+		const PartitionHits hits =
+			m_logic.partition().iterateObjectsInRange(*crate->getPosition(), CombatQueries::boundingSphereRadius(*crate), FROM_BOUNDINGSPHERE_3D, { &candidate }, ITER_FASTEST);
+		m_crateHits.clear();
+		for (const PartitionHit &h : hits)
+		{
+			m_crateHits.push_back(h.object->getID());
+		}
+		std::sort(m_crateHits.begin(), m_crateHits.end());
+		for (PathfindObjectID otherId : m_crateHits)
+		{
+			if (crate->isDestroyed())
+			{
+				break; // collected by an earlier contact
+			}
+			Object *o = m_logic.findObjectByID(otherId);
+			if (!o || o->isDestroyed())
+			{
+				continue;
+			}
+			const bool crateFirst = crate->getID() < o->getID();
+			Object &first = crateFirst ? *crate : *o;
+			Object &second = crateFirst ? *o : *crate;
+			if (!NotifyCrushModules::geometriesOverlap(first.geometryShapes(), *first.getPosition(), first.getOrientation(), second.geometryShapes(), *second.getPosition(),
+			                                           second.getOrientation()))
+			{
+				continue;
+			}
+			++m_crateContacts;
+			ObjectCollide::onCollide(first, second);
+			ObjectCollide::onCollide(second, first);
+		}
 	}
 }

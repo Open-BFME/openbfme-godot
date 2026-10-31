@@ -25,6 +25,7 @@ double elapsedMs(double sinceMs) { return nowMs() - sinceMs; }
 double elapsedSeconds(double sinceMs) { return (nowMs() - sinceMs) / 1000.0; }
 double spanMs(double laterMs, double earlierMs) { return laterMs - earlierMs; }
 double sumMs(double a, double b) { return a + b; }
+double secondsToMs(double seconds) { return seconds * 1000.0; }
 double threadCpuMs()
 {
 #ifdef _WIN32

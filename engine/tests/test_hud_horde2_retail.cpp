@@ -2,6 +2,7 @@
 // hordes re-forming after a melee, two-run determinism and hash mutation. They share the HUD tests' retail world (the file name sorts with the test_hud_* files, see
 // test_hud_combat_retail.cpp) and SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -98,6 +99,7 @@ struct Arena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(angle);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	std::vector<ObjectID> memberIds(Object *horde)
@@ -468,6 +470,66 @@ TEST_CASE("horde2 retail: the formation swap gives the horde object the alternat
 	{
 		CHECK(m->testModelCondition(CombatNames::modelCondition("PRIMARY_FORMATION")));
 	}
+}
+
+// lane FBSIM-1 (FB-0041): GondorFighterHordeBlock's contain applies ModifierList GondorFighterBlock (Category FORMATION, SPEED 60%, retail attributemodifier.ini):
+// the same march in shield wall covers 60 % of the line formation's distance once both are at speed
+TEST_CASE("fbsim1 retail: a Gondor soldier horde in shield wall marches at the GondorFighterBlock SPEED 60% of its line formation's speed (FB-0041)")
+{
+	if (!haveWorld())
+	{
+		return;
+	}
+	auto march = [](bool block) {
+		Arena a(shared(), "FactionMen", "FactionMordor");
+		Object *h = a.place("GondorFighterHorde", 0, 400.0f, 600.0f, 0.0f);
+		for (int i = 0; i < 20; ++i)
+		{
+			a.logic.runLogicFrame();
+		}
+		const ObjectID id = h->getID();
+		if (block)
+		{
+			GameLogicDispatch dispatch(a.logic);
+			HordeCommands::registerHandlers(dispatch);
+			GameMessage msg(MSG_HORDE_TOGGLE_FORMATION, a.player(0)->getPlayerIndex());
+			msg.appendObjectIDArgument(id);
+			dispatch.dispatch(msg);
+			HordeContain *alt = dynamic_cast<HordeContain *>(h->getContain());
+			REQUIRE(alt != nullptr);
+			for (const Object *m : *alt->getContainedItemsList())
+			{
+				REQUIRE(m->testModelCondition(CombatNames::modelCondition("ALTERNATE_FORMATION"))); // GondorFighterHordeBlock's contain
+			}
+			for (int i = 0; i < 120; ++i)
+			{
+				a.logic.runLogicFrame(); // the members reach their block slots
+			}
+		}
+		const Coord3D goal{ 2400.0f, 600.0f, 0.0f };
+		AIUpdateInterface *ai = h->getAIUpdateInterface();
+		REQUIRE(ai != nullptr);
+		ai->aiMoveToPosition(goal, CMD_FROM_PLAYER);
+		for (int i = 0; i < 20; ++i)
+		{
+			a.logic.runLogicFrame(); // up to speed (both are by frame 20; the line horde reaches the arena's edge after frame 70)
+		}
+		const float x0 = h->getPosition()->x;
+		for (int i = 0; i < 40; ++i)
+		{
+			a.logic.runLogicFrame();
+		}
+		float product = 1.0f;
+		const bool modified = h->attributeModifierProduct(ATTRIBUTE_SPEED, nullptr, true, product);
+		CHECK(modified == block);
+		CHECK(product == doctest::Approx(block ? 0.6f : 1.0f)); // tolerance: the pool's float product of SPEED 60%; Locomotor::getMaxSpeedForCondition multiplies by it (RW 0x5E401E)
+		return h->getPosition()->x - x0;
+	};
+	const float line = march(false);
+	const float block = march(true);
+	MESSAGE("line formation " << line << ", shield wall " << block << " (ratio " << block / line << ")");
+	REQUIRE(line > 50.0f); // tolerance: the horde marched at all
+	CHECK(block / line == doctest::Approx(0.6f).epsilon(0.001)); // tolerance: SPEED 60% over 40 frames at full speed (measured 400.0 and 240.0 on a CI host)
 }
 
 // review DEVPORT-7e (Sol #1): a formation command names its horde in argument 0, and the network stamps only the sender's player (Network.cpp: the slot's

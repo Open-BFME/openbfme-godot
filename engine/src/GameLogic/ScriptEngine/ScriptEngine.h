@@ -72,6 +72,8 @@ class Object;
 class Player;
 class StateHasher;
 class Team;
+class TeamFactory;
+class TeamPrototype;
 class ThingTemplate;
 struct TriggerArea;
 struct NamedCamera;
@@ -95,6 +97,25 @@ public:
 		picked = false;
 		return false;
 	}
+	// lane BFME2CAMP1 (the tutorials, stop S-1182): the local client's view, read by the logic the way retail does: CAMERA_SCROLL_DISTANCE reads the
+	// distance the player scrolled the camera since its last reset (TheTacticalView vslot 0x23C = RW 0x48731A: W3DView + 0x24F4) and
+	// OBJECTIVES_SCREEN_IS_OPEN whether the objectives screen exists (RW 0xDE9EA8). Client state: a replay does not reproduce what they answered (nor
+	// does retail's); the port answers false in a multiplayer game. False here: no local client (a headless game)
+	virtual bool cameraScrollDistance(float &distance)
+	{
+		distance = 0.0f;
+		return false;
+	}
+	virtual bool objectivesScreenOpen() { return false; }
+};
+
+// lane BFME2CAMP1: what the local client's HUD tells the script host (GameClient/InGameHud registers itself with LiveGame)
+class ScriptLocalView
+{
+public:
+	virtual ~ScriptLocalView() = default;
+	virtual float cameraScrollDistance() const = 0; ///< the camera's scroll total since its last reset (W3DView + 0x24F4)
+	virtual bool objectivesScreenOpen() const = 0; ///< the objectives screen is up (RW 0xDE9EA8 not null)
 };
 
 // One client-facing script action (camera, UI, audio, input ...): executed in the logic frame, applied by the client (stop S-1182). Never read
@@ -160,9 +181,16 @@ public:
 	// lane CASTLE-UNPACK: RW 0x608397, the script object references (+ 0x191B8: a map from (the current side + 0x1A20C, the name as given, not
 	// qualified) to the object's id + 0x74): the entry is made or re-pointed; the object keeps its name (SET_REF_TO_... and NAMED_BASE_UNPACK)
 	void setReference(const std::string &name, const Object &obj);
+	// lane MODCOMPAT-AI: RW 0x608504 (SET_UNIT_REFERENCE_TO_REFERENCE): the source reference's object id (its key "Side/name" or the current side,
+	// RW 0x72C43C) copied to the reference (the current side, name); nothing when the source is empty or not in the map
+	void copyReference(const std::string &name, const std::string &source);
 	// RW 0x60A1D5: a named cache entry for `name` (a new name appended, a known one re-pointed) without renaming the object; SET_REF_TO_...
 	// writes it after the reference (RW 0x7C3FBB)
 	void nameInCache(const std::string &name, const Object &obj);
+	// lane BFME2CAMP1: RW 0x759467 (ZH ScriptEngine::transferObjectName): an empty name does nothing; a named `obj` first leaves the cache (its entries
+	// point at no object, RW 0x603912); `obj` takes the name and the cache entry of that name points at it (no entry is added: an unnamed map's name
+	// stays out of the cache). The former holder's colour reset (RW 0x68B6ED / 0x68B6CB) is the client's
+	void transferObjectName(const std::string &name, Object &obj);
 	const std::map<std::pair<std::string, std::string>, ObjectID> &references() const { return m_references; }
 	// lane CAMP-1: RW 0x759601: the object has a name (+ 0x88 is not ""), or an object reference names it
 	bool isInNamedCache(const Object &obj) const;
@@ -214,6 +242,18 @@ public:
 	// trigger update RW 0x69264D). The index of a run-time trigger in the combined list is the map's count + its own index.
 	typedef std::function<void(Object &obj, bool entered)> TriggerCallback;
 	int addPolygonTrigger(const TriggerArea &area, TriggerCallback callback);
+	// lane CASTLEAREA-1: PolygonTrigger::removePolygonTrigger RW 0x6E4ABE (the castle's RW 0x79A37D): the trigger leaves the list, then RW 0x6263AF clears every
+	// object's entries of it (Object::removeTriggerEntries: no exit callback runs). The port keeps the slot, empty, so the later indices stay. An index outside the
+	// run-time list (one the engine's reset already dropped) is ignored. Retail's vslot 0x180 call on RW 0xDE42FC after the walk was not read
+	void removePolygonTrigger(int index);
+	// lane CASTLEAREA-1: the run-time triggers in a snapshot load (OpenBFME native, S-4190). retail rebuilds them from its modules' xfers (CastleBehavior RW
+	// 0x79B9D6 -> RW 0x79B881); the port's objects block clears the list once the old objects are gone (beginRuntimeTriggerLoad), each owner's xfer puts its
+	// triggers back at their saved indices (addPolygonTriggerAt; a slot given twice or a map trigger's index is an error), every slot no owner gave is an
+	// empty (removed) one, and endRuntimeTriggerLoad closes the load. In between no callback runs (the objects' saved entries and the owners' saved sets are the
+	// state) and addPolygonTrigger is an error
+	void beginRuntimeTriggerLoad();
+	void addPolygonTriggerAt(int index, const TriggerArea &area, TriggerCallback callback);
+	void endRuntimeTriggerLoad();
 	size_t triggerAreaCount() const;
 	const TriggerArea &triggerAreaAt(size_t i) const;
 	void triggerCallback(size_t i, Object &obj, bool entered) const;
@@ -254,12 +294,13 @@ public:
 		// lane CAMP-1H: the team scripts run (runScript, by the team field that asked: "OnCreate", "EnemySighted", ...) and the generic hooks that fired
 		std::map<std::string, unsigned long long> teamScripts;
 		unsigned long long genericScriptsFired = 0;
+		unsigned long long teamCreateActionsRun = 0; ///< lane TEAMEVENTS-1: production-condition action runs of a new team (RW 0x7A6E8E)
 	};
 	const Stats &stats() const { return m_stats; }
 	Stats &mutableStats() { return m_stats; }
 	void noteUnportedCondition(const std::string &name) { ++m_stats.unportedConditions[name]; }
 	void noteUnportedAction(const std::string &name) { ++m_stats.unportedActions[name]; }
-	// lane VISUAL-2: the breeze the trees sway in (RW ScriptEngine + 0x1A5A8; BFME2 + 0x1A4A8, decomp ScriptEngineReset.cpp / Rva0020385FHost.cpp).
+	// lane VISUAL-2: the breeze the trees sway in (RW ScriptEngine + 0x1A5A8; BFME2 + 0x1A4A8, decomp ScriptEngineReset.cpp / ScriptEngine_setSway.cpp).
 	// Client state only: read by the tree draw (GameClient/TreeSway.h), never hashed (retail's logic CRC does not read it either: INFERENCE, S-4972)
 	struct BreezeInfo
 	{
@@ -350,6 +391,14 @@ public:
 	// RW 0x758CBF: the first entry of the player's list with the name's CRC and, when `source` is not 0, that source; removed when `remove`
 	bool isSpecialPowerTriggered(int playerIndex, const std::string &name, bool remove, ObjectID source);
 	const std::vector<TriggeredSpecialPower> &triggeredSpecialPowers(int playerIndex) const { return m_triggeredSpecialPowers[(size_t)playerIndex]; }
+	// lane MODCOMPAT-AI: the upgrades completed, RW ScriptEngine + 0x1A458, the sibling list of the same shape (per player (20) { CRC_String(the upgrade's
+	// name), the producer's object id }). ProductionUpdate::update (RW 0x8A1B9F) appends when an upgrade entry completes (RW 0x8A2065 .. 0x8A207B ->
+	// RW 0x759A1C: the producer's controlling player's index (+ 0x54), UpgradeTemplate + 8, the producer's id); PLAYER_BUILT_UPGRADE[_FROM_NAMED]
+	// (RW 0x7E4F6A) asks RW 0x758DE5, which removes the entry it finds (the same walk as RW 0x758CBF). Nothing else removes entries
+	void notifyOfCompletedUpgrade(int playerIndex, const std::string &name, ObjectID source);
+	// RW 0x758DE5: the first entry of the player's list with the name's CRC and, when `source` is not 0, that source; removed when `remove`
+	bool isUpgradeCompleted(int playerIndex, const std::string &name, bool remove, ObjectID source);
+	const std::vector<TriggeredSpecialPower> &completedUpgrades(int playerIndex) const { return m_completedUpgrades[(size_t)playerIndex]; }
 
 	// lane SCRIPT-3: HAS_FINISHED_AUDIO's list (RW ScriptEngine + 0x1A35C, a list of { name key, end frame }, appended at the end, RW 0x759903)
 	struct AudioTimer
@@ -388,6 +437,11 @@ public:
 	// lane CAMP-1H: Player::update's team pass (RW 0x6AF269 -> RW 0x7A267D Team::updateGenericScripts) for one player
 	void updateGenericScripts(Player &p);
 	void updateGenericScripts(Team &t);
+	// lane TEAMEVENTS-1: TeamFactory's create-actions hook (RW 0x7A6E8E, prototype + 0x240 set): RW 0x758ECB makes the prototype owner's side current
+	// (RW 0x604243) around RW 0x604A5D, which finds the production-condition script (+ 0x23C) by its side-qualified name and answers that side; then
+	// RW 0x60D053 runs the script's TRUE actions (Script + 0x34, RW 0x60C1C9) with that side current, no team (+ 0x1A210 = 0) and so no current player
+	// (+ 0x1A230 = 0), whatever the script's active flag, difficulty or conditions; all restored after. False (nothing run) while no scripts are loaded
+	bool runTeamCreateActions(TeamPrototype &proto);
 
 	struct RSide
 	{
@@ -436,6 +490,7 @@ private:
 	AttackPriorityStore m_attackPriorities{ m_logic };
 	ScriptEngineHost *m_host = nullptr;
 	bool m_loaded = false;
+	TeamFactory *m_createActionsTeams = nullptr; ///< lane TEAMEVENTS-1: the factory whose create-actions hook is this engine's (cleared by the destructor)
 	bool m_firstUpdate = true;
 	bool m_warOfTheRing = false;
 	int m_gameDifficulty = 1;
@@ -452,7 +507,8 @@ private:
 		std::shared_ptr<TriggerArea> area; ///< shared: the type is incomplete here (the deleter is made in ScriptEngine.cpp)
 		TriggerCallback callback;
 	};
-	std::vector<RuntimeTrigger> m_runtimeTriggers; ///< lane HUD-5 (see addPolygonTrigger)
+	std::vector<RuntimeTrigger> m_runtimeTriggers; ///< lane HUD-5 (see addPolygonTrigger); a removed slot has an empty area and no callback
+	bool m_runtimeTriggerLoad = false;              ///< lane CASTLEAREA-1 (see beginRuntimeTriggerLoad)
 	const std::vector<NamedCamera> *m_cameras = nullptr;
 	Player *m_currentPlayer = nullptr;
 	std::string m_currentSide;
@@ -465,6 +521,7 @@ private:
 	std::array<AcquiredScienceQueue, 20> m_acquiredSciences; ///< lane AUDIO-4: + 0x1A3A8, one per player index (RW 0x759646 bound 0x14)
 	std::vector<AudioTimer> m_audioTimers;                  ///< lane SCRIPT-3: RW + 0x1A35C
 	std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers> m_triggeredSpecialPowers; ///< lane BACKLOG4: RW + 0x1A368
+	std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers> m_completedUpgrades;      ///< lane MODCOMPAT-AI: RW + 0x1A458
 	std::uint32_t m_conditionTeam = 0; ///< lane SCRIPT-3: RW + 0x1A218 while a sequential action runs (the record's team): "<This Team>" (not state)
 	Team *m_thisTeam = nullptr;        ///< lane CAMP-1H: RW + 0x1A210 while a team script runs (not state: set and restored inside one call)
 	// lane CAMP-1H: the generic scripts of a prototype (RW 0x7A1759: looked up once by name in the prototype owner's side and DUPLICATED, RW 0x7B7F2B: the copy

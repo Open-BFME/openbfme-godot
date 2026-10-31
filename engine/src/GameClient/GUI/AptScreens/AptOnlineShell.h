@@ -17,7 +17,7 @@
 //   * ShellLoadScreen (BFME2 0x517724, decomp AptOnlineShellScreens.cpp): the current page is deactivated, the page of that name is made from the table
 //     (OnlineLogin, OnlineHome, OnlineOpenPlay, OnlineStrategic, OnlineQuickMatch, Stats; a page already up is not made twice), kept and made current;
 //     ShellUnloadScreen deletes the page of that name;
-//   * the update (BFME2 0x51805B, decomp AptOnlineShellUpdate.cpp): every page updates; a page asked for (AptOnlineShell::LoadChildScreen, BFME2 0x517027)
+//   * the update (BFME2 0x51805B, decomp AptOnline.cpp): every page updates; a page asked for (AptOnlineShell::LoadChildScreen, BFME2 0x517027)
 //     goes to the movie's LoadScreen(name);
 //   * OnlineLogin (RW 0x97C819, BFME2 0x572885 tier A): AptOnline::Login::Login (RW 0x97C5C6), DeleteNickname, Register, ServiceTerms, AcceptLocale,
 //     CancelLogin (RW 0x977B0F), OfficialSite, GameSpy and the screen reference AptOnlineLogin::InitGadgets (RW 0x97A413: OnlineLogin::Password (16
@@ -47,7 +47,7 @@
 //   * the staging room's state machine beyond the facts above (which state the update moves from, the GameSpy NAT negotiation, the countdown) is
 //     OpenBFME's: the host's Play Game sends the lobby's START; a lobby without a relay refuses it (no_relay), which the player sees as a message box
 //     [S-4074];
-//   * Strategic (War of the Ring online) is not ported: its page reports "not available" [S-4075]; lane ONLINEHUB-1 ported the TOURNAMENT
+//   * Strategic shares the custom-match page in War of the Ring mode; Load Game, saved-seat checks and relay battles remain open [S-4075]; lane ONLINEHUB-1 ported the TOURNAMENT
 //     (OnlineQuickMatch: Quick Match and the tournaments) and STATS pages on the OpenBFME platform (GUI/AptScreens/AptOnlineHub.h); SOCIAL-1 (Devin,
 //     landed by lane ONLINEMENU-1) the Messenger (GUI/AptScreens/AptMessenger.h)
 
@@ -144,6 +144,9 @@ public:
 	const std::vector<std::string> &boxesShown() const { return m_boxes; }
 	// lane ONLINE-5: the labels of the host's refused starts (the start check's refusal: "GUI:NotifiedStartIntent" while a player is not ready)
 	const std::vector<std::string> &startRefusals() const { return m_startRefusals; }
+	// WOTR2 milestone 9: stage a saved war in this host's room and retain its seat contract until START.
+	bool stageSavedWar(const SkirmishGameInfo &saved, const std::vector<std::pair<int, std::u16string>> &seats,
+		const std::string &md5, std::uint32_t hash, std::string *why);
 	// Sol r1: the host program could not play the START the screens handed on (GodotAptPlayer.online_start_failed: the relay socket would not open):
 	// the player is told in a box and is back at the game list (a recoverable lobby error, never the game's end)
 	void startFailed(const std::string &why);
@@ -154,8 +157,10 @@ public:
 	void startRunning(const std::string &id, bool rejoin);
 	// lane ONLINEUX-1 (tests): whether the movie was last told to enable its Login button (-1: not told yet)
 	int loginButtonState() const { return m_loginButton; }
+	// BFME2 0x005DB647 RedrawGrid: the Connections grid's rows and columns (retail's eight players; a 16-player room keeps it, S-4550)
+	static constexpr int kConnectionGrid = LEGACY_MAX_SLOTS;
 	// lane ONLINEMENU-1 (tests): the Connections screen's cells as last drawn ("" not drawn), and whether it is open
-	const std::string &connectionCell(int row, int column) const { return m_gridFrames[(size_t)(row * MAX_SLOTS + column)]; }
+	const std::string &connectionCell(int row, int column) const { return m_gridFrames.at((size_t)(row * kConnectionGrid + column)); }
 	bool connectionsOpen() const { return m_connectionsOpen; }
 	const std::string &gridCaller() const { return m_gridCaller; }
 	// lane ONLINEMENU-1 (owner, 2026-10-20: the grid "makes like no sense just have it show like ping to server, ping to other players etc"): the
@@ -225,7 +230,7 @@ private:
 	void registerLogin();
 	void showNicknameOnly();
 	void registerHome();
-	void registerOpenPlay();
+	void registerOpenPlay(const std::string &page);
 	void notAvailable(const std::string &what, const std::string &stop, const std::u16string &playerText = std::u16string());
 	// lane ONLINEUX-1
 	void applyLoginButton(bool force);         ///< RW 0x97A668 (BFME2 0x5706D4): Login enabled while the nickname has a printable character
@@ -291,6 +296,10 @@ private:
 	bool m_socialJoined = false;
 	std::vector<std::string> m_boxes;
 	std::vector<std::string> m_startRefusals;
+	std::string m_savedRoom, m_savedMd5;
+	std::uint32_t m_savedHash = 0;
+	SkirmishGameInfo m_savedInfo;
+	std::vector<std::pair<int, std::u16string>> m_savedSeats;
 	std::vector<std::string> m_answers; ///< lane ONLINEMENU-1: askYesNo's answers not yet taken
 	std::string m_askKey;               ///< the question the box shows ("" none)
 	std::u16string m_askTitle, m_askText;
@@ -307,7 +316,7 @@ private:
 	std::string m_clipboard;
 	std::vector<bool> m_rowOtherBuild; ///< lane JOINVER-1: a row of a game of another build (greyed: it cannot be joined)
 	void decorateAll(GadgetDrawList &out);
-	std::array<std::string, MAX_SLOTS * MAX_SLOTS> m_gridFrames; ///< each cell's frame as last drawn (tests)
+	std::array<std::string, kConnectionGrid * kConnectionGrid> m_gridFrames; ///< each cell's frame as last drawn (tests)
 	std::unique_ptr<RelayProbe> m_probe;
 	std::uint64_t m_probeDueMs = 0;
 	std::uint64_t m_probeDoneMs = 0;        ///< when the last measurement ended (0 none)

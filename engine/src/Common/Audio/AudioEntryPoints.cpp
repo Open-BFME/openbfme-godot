@@ -354,6 +354,39 @@ bool reportEva(int event, const Coord3D *position)
 	return eva->reportEvent(event, position, mgr->nowMs());
 }
 
+std::string reportEvaDamage(const std::string &event, const std::string &second, bool farFrameDue, const Coord3D &position)
+{
+	// lane EVADAMAGE-1: the TheEva half of RW 0x67B644 .. 0x67B6A4 on the Eva's thread (a report made elsewhere waits like reportEva's, S-814)
+	switch (route(Binding::Manager, [event, second, farFrameDue, position]() { reportEvaDamage(event, second, farFrameDue, position); }))
+	{
+	case Route::Run:
+		break;
+	case Route::Deferred:
+		return std::string();
+	case Route::Unbound:
+		g_withoutEva.fetch_add(1, std::memory_order_relaxed);
+		return std::string();
+	}
+	Eva *eva = nullptr;
+	AudioManager *mgr = nullptr;
+	{
+		std::lock_guard<std::mutex> lock(g_bindMutex);
+		eva = g_eva;
+		mgr = g_manager;
+	}
+	if (!eva || !mgr)
+	{
+		g_withoutEva.fetch_add(1, std::memory_order_relaxed);
+		return std::string();
+	}
+	const double now = mgr->nowMs();
+	const int index = eva->findEvent(event);
+	const bool busy = eva->isEventBlockedByTimeout(index, now) || eva->isEventAboutToPlay(index); // RW 0x5DCC88, RW 0x5DCCEB
+	const std::string &chosen = farFrameDue && busy && !second.empty() ? second : event;
+	eva->reportEventByName(chosen, &position, now); // RW 0x5DD9EE(event, position, null)
+	return chosen;
+}
+
 void installUnitVoiceHandler(UnitVoiceHandler handler, const void *owner)
 {
 	UnitVoiceHandler old;
@@ -505,7 +538,7 @@ void postHeldSound(int slot, const std::string &n, std::uint32_t holderId, std::
 		mgr->removeAudioEvent(it->second);
 		held.erase(it);
 	}
-	static const char *const kTag[HELD_SOUND_SLOTS] = { "building loop", "move loop" };
+	static const char *const kTag[HELD_SOUND_SLOTS] = { "building loop", "move loop", "upgrade loop" };
 	AudioLog::Scope scope(kTag[slot]);
 	const AudioHandle h = mgr->playSoundForObject(n, objectId);
 	if (h >= AHSV_FirstHandle)

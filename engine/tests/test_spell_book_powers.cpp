@@ -6,6 +6,7 @@
 // defection. Tier 1 / 2 powers and the tier-4 summons must show their effect; the others are reported. Then determinism, the weather hash
 // mutations and the stop lines.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "SpellTestAI.h"
 #include "StartTestUtil.h"
@@ -112,6 +113,7 @@ struct BookGame
 		REQUIRE(o);
 		Coord3D pos{ x, y, 0.0f };
 		o->setPosition(&pos);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	bool purchase(int i, ScienceType st)
@@ -619,12 +621,13 @@ TEST_CASE("SPELL-2 retail: two identical cast sequences hash alike; another targ
 TEST_CASE("SPELL-2 stops: S-920 .. S-924 are reported once each by the lane and by the retail world")
 {
 	const std::vector<std::string> lines = SpellBookPowers::stopLines();
-	REQUIRE(lines.size() == 6); // lane SPELL-3: S-930 (the terrain trees) last
+	REQUIRE(lines.size() == 7); // lane SPELL-3: S-930 (the terrain trees); lane TREES1: S-5260 (trees crushed and cleared) last
 	for (int i = 0; i < 5; ++i)
 	{
 		CHECK(lines[(size_t)i].rfind("[S-92" + std::to_string(i) + "]", 0) == 0);
 	}
 	CHECK(lines[5].rfind("[S-930]", 0) == 0);
+	CHECK(lines[6].rfind("[S-5260]", 0) == 0);
 	OPENBFME_REQUIRE_START(shared);
 	const std::vector<std::string> all = shared->world->acceptanceStops();
 	for (const std::string &l : lines)

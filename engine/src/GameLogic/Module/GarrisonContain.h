@@ -85,6 +85,20 @@ public:
 	const OpenContainModuleData &open() const { return horde.m_garrison.m_open; }
 };
 
+// RotWK tables 0xC5EFE8 / 0xC5F080; delivery runtime ported from BFME2's
+// CitadelSlaughterHordeContain (0x48071D, 0x4807C7, 0x480E9A, 0x480FE2).
+class CitadelSlaughterHordeContainBehaviorData : public HordeGarrisonContainBehaviorData
+{
+public:
+	float cashBackPercent = 0.5f;
+	ObjectFilter canAlwaysEnter;
+	ObjectStatusMaskType statusRequired{}, ringStatus{};
+	ObjectFilter objectToDestroy;
+	std::vector<std::string> ringUpgrades;
+	std::string ringFX;
+	static void buildFieldParse(MultiIniFieldParse &p);
+};
+
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif

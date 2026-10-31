@@ -31,7 +31,7 @@ HudInput::HudInput(GameLogic &logic, AIWorld *ai, TacticalView &view, CommandLis
 	, m_meta(m_ctx, metaMap)
 	, m_formation(m_ctx)
 	, m_place(m_ctx)
-	, m_guiCommand(m_ctx)
+	, m_guiCommand(m_ctx, m_command)
 	, m_command(m_ctx)
 	, m_selection(m_ctx, m_command)
 	, m_hotKey(m_ctx)
@@ -379,7 +379,7 @@ std::vector<std::string> HudInput::acceptanceStops()
 				  "BUILD_PLACEMENT_CURSOR, opacity 0.45, the builder's colour (RW 0x674504) and the draw module's own model, animation and BeginScript; a castle's layout "
 				  "pieces turned by the ghost's angle, its BASE_SITE slots judged one by one; the tint through the W3D lighting (ZH W3DScene's colorTint); the faction bib "
 				  "(RW 0x49249D extents, TBRedBib / TBBib); W_Arrow while anchored (RW 0x48EAD8); the alpha blend (ZH dx8renderer's translucent pass, W3DShaderKey::AlphaOverride); "
-				  "not ported: the restricted-area code 8 (RW 0x707141), its shadow (SHADOW_VOLUME; no drawable casts one yet, S-3304), RotWK's own "
+				  "not ported: the restricted-area code 8 (RW 0x707141), its shadow (SHADOW_VOLUME; translucent ghosts cast no shadow map, S-3304), RotWK's own "
 				  "tint lighting (the donor is ZH's), the bib quad's own buffer (ZH's W3DBibBuffer)");
 	out.push_back(FormationPlacement::stopLine());
 	return out;
@@ -391,8 +391,8 @@ std::vector<std::string> HudInput::stops() const
 	// lane FACT-C (S-286 keeps the other context commands)
 	out.push_back("[S-2000] special power targets: a SPECIAL_POWER button waiting for its target sends RotWK's messages on the click (evaluateContextCommand RW 0x81E60B -> "
 				  "issueSpecialPowerCommand RW 0x81E147: AT_OBJECT for an object of a relationship the options allow, AT_LOCATION with the chained CommandTrigger buttons, "
-				  "source NONE); the action check RW 0x6A4260 (range, KindOf and the power's own target rules) and the kind-of / option 0x10 / 0x200000 target drops "
-				  "before it are not ported: the option's target kind alone makes a click valid");
+				  "source NONE); location targets use ActionManager's ported rules; object action checks (KindOf / module filters), unported per-type location rules "
+				  "and the kind-of / option 0x10 / 0x200000 target drops are not ported");
 	out.push_back("[S-2002] capture context command: a click on a building the selection can capture issues the first selected object's capture button (power type 0x1A / 0x1D) "
 				  "at it (RW 0x81E60B, canCaptureBuilding RW 0x82D0A1); not ported: a capture power's ObjectFilter (none in retail data; counted), the status pair + 0x438 / "
 				  "+ 0x110, the + 0x80 word, the shroud test, CAPTURE_FORBIDDEN, the per-player refusal RW 0x6943B2, stealth riders and the vision test");

@@ -1,0 +1,198 @@
+--- a/luau-0.744/Compiler/src/ConstantFolding.cpp
++++ b/luau-0.744/Compiler/src/ConstantFolding.cpp
+@@ -1,3 +1,4 @@
++// ALTERED SOURCE VERSION (OpenBFME lane SDK-2: see engine/src/Libraries/Luau/README.md)
+ // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+ #include "ConstantFolding.h"
+ 
+@@ -8,6 +9,7 @@
+ 
+ #include <vector>
+ #include <math.h>
++extern "C" double openbfme_detlibm_pow(double x, double y); // OpenBFME SDK-2
+ 
+ LUAU_FASTFLAG(LuauIntegerType2)
+ LUAU_FASTFLAG(LuauExperimentalIfLocalSyntax)
+@@ -464,7 +466,7 @@
+         if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+         {
+             result.type = Constant::Type_Number;
+-            result.valueNumber = pow(la.valueNumber, ra.valueNumber);
++            result.valueNumber = openbfme_detlibm_pow(la.valueNumber, ra.valueNumber); // OpenBFME SDK-2: the VM's deterministic pow
+         }
+         break;
+ 
+--- a/luau-0.744/VM/include/luaconf.h
++++ b/luau-0.744/VM/include/luaconf.h
+@@ -1,3 +1,4 @@
++// ALTERED SOURCE VERSION (OpenBFME lane SDK-2: see engine/src/Libraries/Luau/README.md)
+ // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+ // This code is based on Lua 5.x implementation licensed under MIT License; see lua_LICENSE.txt for details
+ #pragma once
+@@ -12,13 +13,10 @@
+ 
+ // To force MSVC2017+ to generate SSE2 code for some stdlib functions we need to locally enable /fp:fast
+ // Note that /fp:fast changes the semantics of floating point comparisons so this is only safe to do for functions without ones
+-#if defined(_MSC_VER) && !defined(__clang__)
+-#define LUAU_FASTMATH_BEGIN __pragma(float_control(precise, off, push))
+-#define LUAU_FASTMATH_END __pragma(float_control(pop))
+-#else
++// OpenBFME SDK-2 (Sol r1): never: the library carries the simulation floating-point contract (MSVC /fp:strict, which forbids float_control(precise,
++// off); a sim script's arithmetic must not depend on the compiler's fast-math choices)
+ #define LUAU_FASTMATH_BEGIN
+ #define LUAU_FASTMATH_END
+-#endif
+ 
+ // Some functions like floor/ceil have SSE4.1 equivalents but we currently support systems without SSE4.1
+ // Note that we only need to do this when SSE4.1 support is not guaranteed by compiler settings, as otherwise compiler will optimize these for us.
+--- a/luau-0.744/VM/src/lapi.cpp
++++ b/luau-0.744/VM/src/lapi.cpp
+@@ -1,3 +1,4 @@
++// ALTERED SOURCE VERSION (OpenBFME lane SDK-2: see engine/src/Libraries/Luau/README.md)
+ // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+ // This code is based on Lua 5.x implementation licensed under MIT License; see lua_LICENSE.txt for details
+ #include "lapi.h"
+@@ -1061,6 +1062,15 @@
+     {
+         api_check(L, ttistable(L->top - 1));
+         mt = hvalue(L->top - 1);
++        // OpenBFME SDK-2: a lockstep state has no weak tables (what one holds would depend on when the collector runs): a metatable
++        // with __mode is an error, and a metatable once set is frozen, so __mode cannot be added afterwards (a sim script's setmetatable
++        // always comes here: it is compiled as a call, never as its fast path)
++        if (L->global->openbfmelockstep)
++        {
++            if (!ttisnil(luaH_getstr(mt, L->global->tmname[TM_MODE])))
++                luaG_runerror(L, "weak tables (__mode) are not lockstep-safe in a sim script");
++            mt->readonly = true;
++        }
+     }
+     switch (ttype(obj))
+     {
+@@ -1846,6 +1856,10 @@
+ {
+     global_State* g = L->global;
+ 
++    // OpenBFME SDK-2: a lockstep state never shows an address (tostring of a table, the math.random seed): always 0
++    if (g->openbfmelockstep)
++        return 0;
++
+     if (!g->ptrencactive)
+         return p;
+ 
+--- a/luau-0.744/VM/src/lgc.cpp
++++ b/luau-0.744/VM/src/lgc.cpp
+@@ -1,3 +1,4 @@
++// ALTERED SOURCE VERSION (OpenBFME lane SDK-2: see engine/src/Libraries/Luau/README.md)
+ // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+ // This code is based on Lua 5.x implementation licensed under MIT License; see lua_LICENSE.txt for details
+ #include "lgc.h"
+@@ -1289,6 +1290,11 @@
+ {
+     // adjust threshold based on a guess of how many bytes will be allocated between the cycle start and sweep phase
+     // our goal is to begin the sweep when used memory has reached the heap goal
++    // OpenBFME SDK-2: a lockstep state paces its collector by allocation alone (the wall-clock estimate below would make the moment of
++    // each collection, and so the bytes in use when a script's memory cap is checked, differ between machines)
++    if (g->openbfmelockstep)
++        return heapgoal;
++
+     const double durationthreshold = 1e-3;
+     double allocationduration = g->gcstats.atomicstarttimestamp - g->gcstats.endtimestamp;
+ 
+--- a/luau-0.744/VM/src/lnumutils.h
++++ b/luau-0.744/VM/src/lnumutils.h
+@@ -1,3 +1,4 @@
++// ALTERED SOURCE VERSION (OpenBFME lane SDK-2: see engine/src/Libraries/Luau/README.md)
+ // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+ // This code is based on Lua 5.x implementation licensed under MIT License; see lua_LICENSE.txt for details
+ #pragma once
+@@ -9,7 +10,9 @@
+ #define luai_numsub(a, b) ((a) - (b))
+ #define luai_nummul(a, b) ((a) * (b))
+ #define luai_numdiv(a, b) ((a) / (b))
+-#define luai_numpow(a, b) (pow(a, b))
++// OpenBFME SDK-2: the deterministic libm (Common/DeterministicLibm.h), so a lockstep script's ^ is the same on every platform
++extern "C" double openbfme_detlibm_pow(double x, double y);
++#define luai_numpow(a, b) (openbfme_detlibm_pow(a, b))
+ #define luai_numunm(a) (-(a))
+ #define luai_numisnan(a) ((a) != (a))
+ #define luai_numeq(a, b) ((a) == (b))
+--- a/luau-0.744/VM/src/lstate.cpp
++++ b/luau-0.744/VM/src/lstate.cpp
+@@ -1,3 +1,4 @@
++// ALTERED SOURCE VERSION (OpenBFME lane SDK-2: see engine/src/Libraries/Luau/README.md)
+ // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+ // This code is based on Lua 5.x implementation licensed under MIT License; see lua_LICENSE.txt for details
+ #include "lstate.h"
+@@ -217,6 +218,7 @@
+ 
+     g->cb = lua_Callbacks();
+     g->ecb = lua_ExecutionCallbacks();
++    g->openbfmelockstep = 0; // OpenBFME SDK-2
+     g->gcstats = GCStats();
+ 
+     g->lastprotoid = 1;
+--- a/luau-0.744/VM/src/lstate.h
++++ b/luau-0.744/VM/src/lstate.h
+@@ -1,3 +1,4 @@
++// ALTERED SOURCE VERSION (OpenBFME lane SDK-2: see engine/src/Libraries/Luau/README.md)
+ // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+ // This code is based on Lua 5.x implementation licensed under MIT License; see lua_LICENSE.txt for details
+ #pragma once
+@@ -240,6 +241,8 @@
+ 
+     lua_ExecutionCallbacks ecb;
+ 
++    uint8_t openbfmelockstep; // OpenBFME SDK-2: lua_openbfme_setlockstep (lua_openbfme.h)
++
+     alignas(16) uint8_t ecbdata[LUA_EXECUTION_CALLBACK_STORAGE];
+ 
+     // Set of userdata __index/__newindex/__namecall metamethods for a direct access
+--- a/luau-0.744/VM/src/ltable.cpp
++++ b/luau-0.744/VM/src/ltable.cpp
+@@ -1,3 +1,4 @@
++// ALTERED SOURCE VERSION (OpenBFME lane SDK-2: see engine/src/Libraries/Luau/README.md)
+ // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+ // This code is based on Lua 5.x implementation licensed under MIT License; see lua_LICENSE.txt for details
+ 
+@@ -1276,6 +1277,16 @@
+ 
+ TValue* luaH_newkey(lua_State* L, LuaTable* t, const TValue* key)
+ {
++    // OpenBFME SDK-2: in a lockstep state a key's place in the hash part must not depend on a memory address (tables, functions,
++    // userdata, threads and buffers hash by address, so iterating such a table would differ between machines): an error at the
++    // insertion, the same on every peer. (Weak tables: lua_setmetatable, lapi.cpp.)
++    if (L->global->openbfmelockstep)
++    {
++        if (iscollectable(key) && !ttisstring(key))
++            luaG_runerror(L, "a %s as a table key is not lockstep-safe in a sim script (use a number or a string)", luaT_typenames[ttype(key)]);
++        if (ttislightuserdata(key))
++            luaG_runerror(L, "a userdata as a table key is not lockstep-safe in a sim script");
++    }
+     switch (ttype(key))
+     {
+     case LUA_TNIL:
+--- a/luau-0.744/VM/src/lvmexecute.cpp
++++ b/luau-0.744/VM/src/lvmexecute.cpp
+@@ -1,3 +1,4 @@
++// ALTERED SOURCE VERSION (OpenBFME lane SDK-2: see engine/src/Libraries/Luau/README.md)
+ // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+ // This code is based on Lua 5.x implementation licensed under MIT License; see lua_LICENSE.txt for details
+ #include "lclass.h"
+@@ -2044,7 +2045,7 @@
+                 // fast-path
+                 if (ttisnumber(rb) && ttisnumber(rc))
+                 {
+-                    setnvalue(ra, pow(nvalue(rb), nvalue(rc)));
++                    setnvalue(ra, luai_numpow(nvalue(rb), nvalue(rc))); // OpenBFME SDK-2: the deterministic pow
+                     VM_NEXT();
+                 }
+                 else
+@@ -2279,7 +2280,7 @@
+                     double nk = nvalue(kv);
+ 
+                     // pow is very slow so we specialize this for ^2, ^0.5 and ^3
+-                    double r = (nk == 2.0) ? nb * nb : (nk == 0.5) ? sqrt(nb) : (nk == 3.0) ? nb * nb * nb : pow(nb, nk);
++                    double r = (nk == 2.0) ? nb * nb : (nk == 0.5) ? sqrt(nb) : (nk == 3.0) ? nb * nb * nb : luai_numpow(nb, nk); // OpenBFME SDK-2
+ 
+                     setnvalue(ra, r);
+                     VM_NEXT();

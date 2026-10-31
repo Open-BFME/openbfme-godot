@@ -19,6 +19,8 @@
 //
 // ATTACK RULE (inference, stop S-286): an object is attackable by the click when it is an enemy of the local player and some selected object (or a member of
 // a selected horde) can possibly have a weapon (canPossiblyHaveAnyWeapon, RW 0x73C191), which stands for ZH's ActionManager::canAttackObject.
+// TARGET FACT: not when the object is UNATTACKABLE (KindOf 54 or status 0x3C): RotWK's WeaponSet::getAbleToAttackSpecificObject (RW 0x6C9147) refuses it for
+// every attacker (RW 0x6C91FA / 0x6C9207).
 
 #pragma once
 

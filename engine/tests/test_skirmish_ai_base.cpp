@@ -17,6 +17,7 @@
 #include "GameLogic/Module/DozerAIUpdate.h"
 #include "GameLogic/NewGame/NewGame.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SkirmishAI/AIBaseBuilder.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
@@ -427,10 +428,11 @@ const AISkirmishPlayer &theAI(GameLogic &logic)
 struct FortressRun
 {
 	std::string name;                 // the AI's StartingBuilding
-	std::vector<ObjectID> others;     // every object of that template the AI gets after the kill frame, in order of appearance
+	std::vector<ObjectID> others;     // every object of that template the AI gets after the kill frame within 350 of the base (RW 0x9BC882's radius), in order
+	std::vector<Coord3D> elsewhere;   // lane AIEXPAND-1: the positions of the new ones farther away (SimpleExpansion's MenFortress at an expansion target)
 	Coord3D basePosition{ 0.0f, 0.0f, 0.0f };
 	Coord3D firstPosition{ 0.0f, 0.0f, 0.0f };
-	bool firstUnderConstruction = false, firstBuilderIsAIDozer = false;
+	bool firstPhantom = false, firstBuilderIsAIDozer = false;
 	int firstFrame = -1, firstPhase = -1;
 	unsigned long long tasksInRush = 0, tasks = 0;
 	float taskPriority = -1.0f, armyPriority = -2.0f;
@@ -448,6 +450,7 @@ FortressRun runFortressGame(starttest::Shared &s, const char *faction, bool kill
 	BaseRun run;
 	int killFrame = -1;
 	std::vector<ObjectID> before; // the StartingBuilding objects of the AI at the kill frame
+	std::vector<ObjectID> seenElsewhere;
 	const int frames = 4000;      // the callback's own end is the phase's + 400
 	bool done = false;
 	runBaseGame(s, aiMessage(s, faction), frames, run, false, [&](GameLogic &logic) {
@@ -480,9 +483,11 @@ FortressRun runFortressGame(starttest::Shared &s, const char *faction, bool kill
 		}
 		std::vector<Object *> standing;
 		int factoriesAtBase = 0;
+		static const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
 		for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
 		{
-			if (o->getControllingPlayer() != p || o->isEffectivelyDead())
+			// lane FBSIM-1: a dozer's site is RotWK's phantom (effectively dead, RW 0x88D0D8) until the dozer places it: counted from the order
+			if (o->getControllingPlayer() != p || (o->isEffectivelyDead() && !o->testStatus((unsigned)phantom)))
 			{
 				continue;
 			}
@@ -499,7 +504,7 @@ FortressRun runFortressGame(starttest::Shared &s, const char *faction, bool kill
 					++factoriesAtBase;
 					if (kill)
 					{
-						o->kill(0);
+						o->kill(DAMAGE_UNRESISTABLE, 0);
 					}
 				}
 			}
@@ -530,8 +535,16 @@ FortressRun runFortressGame(starttest::Shared &s, const char *faction, bool kill
 		}
 		for (Object *o : standing)
 		{
-			if (std::find(before.begin(), before.end(), o->getID()) != before.end() || std::find(out.others.begin(), out.others.end(), o->getID()) != out.others.end())
+			if (std::find(before.begin(), before.end(), o->getID()) != before.end() || std::find(out.others.begin(), out.others.end(), o->getID()) != out.others.end() ||
+				std::find(seenElsewhere.begin(), seenElsewhere.end(), o->getID()) != seenElsewhere.end())
 			{
+				continue;
+			}
+			const float ex = o->getPosition()->x - out.basePosition.x, ey = o->getPosition()->y - out.basePosition.y;
+			if (ex * ex + ey * ey > 350.0f * 350.0f)
+			{
+				seenElsewhere.push_back(o->getID());
+				out.elsewhere.push_back(*o->getPosition());
 				continue;
 			}
 			if (out.others.empty())
@@ -539,7 +552,7 @@ FortressRun runFortressGame(starttest::Shared &s, const char *faction, bool kill
 				out.firstFrame = frame;
 				out.firstPhase = ai.build.phase;
 				out.firstPosition = *o->getPosition();
-				out.firstUnderConstruction = o->isUnderConstruction();
+				out.firstPhantom = o->testStatus((unsigned)phantom);
 				const Object *builder = logic.findObjectByID(o->getBuilderID());
 				out.firstBuilderIsAIDozer = builder && builder->getControllingPlayer() == p && builder->isKindOfName("DOZER");
 			}
@@ -548,7 +561,11 @@ FortressRun runFortressGame(starttest::Shared &s, const char *faction, bool kill
 	});
 	MESSAGE(std::string(faction) << std::string(kill ? " (fortress killed)" : " (control)") << ": " << out.name << ", Rush ends at frame " << out.rushFrames << ", free dozers at the kill frame: " << out.freeDozersAtKill << ", tasks " << out.tasks
 		<< " (in Rush " << out.tasksInRush << "), new fortress objects " << out.others.size() << ", first at frame " << out.firstFrame << " phase " << out.firstPhase
-		<< " executed " << run.executed << " failed " << run.failed);
+		<< " executed " << run.executed << " failed " << run.failed << "; elsewhere " << out.elsewhere.size());
+	for (const Coord3D &e : out.elsewhere)
+	{
+		MESSAGE("  a new " << out.name << " away from the base at (" << e.x << ", " << e.y << ")");
+	}
 	return out;
 }
 } // namespace
@@ -564,6 +581,11 @@ TEST_CASE("skirmish ai base: an AI past the Rush phase rebuilds its lost fortres
 		CHECK_FALSE(control.defeated);
 		CHECK(control.tasks == 0);
 		CHECK(control.others.empty());
+		// lane AIEXPAND-1: with 20000 money past the Rush phase the Men computer's SimpleExpansion builds a MenFortress at its EXPANSION target, away from the base
+		// (RW 0x9B51E9's "MenFortress" whatever the side: Mordor's request never passes canMakeUnit). Engine pins: Evendim, seed 1234
+		// merge queue q29 (AIEXPAND-1 after nine simulation items, measured on the merged tree, a CI host): no expansion fortress of the Men stands within this
+		// run (it ends 400 frames after the Rush phase) any more; the expansion itself is test_aiexpand1_expansion.cpp's
+		CHECK(control.elsewhere.size() == 0u);
 		// the fortress falls 300 frames before the Rush phase ends (killing its DOZER_FACTORY, the citadel, takes the whole castle)
 		const FortressRun lost = runFortressGame(*s, faction, true);
 		CHECK_FALSE(lost.defeated);            // the AI still has structures: it plays on
@@ -574,7 +596,7 @@ TEST_CASE("skirmish ai base: an AI past the Rush phase rebuilds its lost fortres
 		CHECK(lost.firstFrame == lost.rushFrames); // the frame the phase turns: the task is made, checked and executed by the free dozer in one update
 		CHECK(lost.firstPosition.x == lost.basePosition.x); // a zero offset from the base position
 		CHECK(lost.firstPosition.y == lost.basePosition.y);
-		CHECK(lost.firstUnderConstruction);
+		CHECK(lost.firstPhantom); // lane FBSIM-1: the dozer's site is RotWK's phantom until it arrives (RW 0x88D272)
 		CHECK(lost.firstBuilderIsAIDozer);
 		CHECK(lost.taskPriority == lost.armyPriority); // ArmyDefinition FortressRebuildPriority
 		CHECK(lost.taskReserve);

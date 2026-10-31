@@ -209,14 +209,16 @@ jobs:
           key: ccache-windows-${{ github.sha }}
 
   macos:
-    name: macOS arm64 build (compile only)
+    name: macOS arm64 build and console tests
     # the configuration of the Mac package (tools/release/package_macos.py cmake_configure_args) without the export
     runs-on: macos-15
+    needs: fixtures
     timeout-minutes: 40
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 2G
       CCACHE_NOHASHDIR: "1"
+      OPENBFME_AUDIO_FIXTURES: ${{ github.workspace }}/workspace/audio_fixtures
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -224,6 +226,10 @@ jobs:
           submodules: true
       - name: Install the build tools
         run: brew install ninja ccache
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: mp3-reference-fixtures
+          path: workspace/audio_fixtures
       - name: Restore the compiler cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -232,13 +238,13 @@ jobs:
           restore-keys: ccache-macos-
       - name: Configure
         run: >-
-          cmake -S engine -B engine/build-macos -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENBFME_BUILD_TESTS=OFF -DOPENBFME_BUILD_GODOT=ON
+          cmake -S engine -B engine/build-macos -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENBFME_BUILD_TESTS=ON -DOPENBFME_BUILD_GODOT=ON
           -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-      - name: Build the GDExtension
+      - name: Build the GDExtension and unit test executable
         run: |
           ccache -z
-          cmake --build engine/build-macos --target openbfme
+          cmake --build engine/build-macos --target openbfme openbfme_tests
           ccache -s
       - name: Save the compiler cache (pushes only)
         # a push to main saves the cache pull requests restore; a ci/** branch's cache is visible to that branch only
@@ -247,6 +253,9 @@ jobs:
         with:
           path: .ccache
           key: ccache-macos-${{ github.sha }}
+      - name: Console filter regression tests
+        # Exercise the real macOS /dev/null sink as well as privacy filtering and bounded shutdown.
+        run: engine/build-macos/openbfme_tests --test-case="release1:*console*,onezip1:*console*"
 
   ci:
     name: CI

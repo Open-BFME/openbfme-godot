@@ -151,8 +151,7 @@ struct MenuRig
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string error;
-		REQUIRE_MESSAGE(mount.fs.readFile("data/lotr.str", bytes, &error), error);
-		REQUIRE_MESSAGE(text.table.parse(bytes, &error), error);
+		REQUIRE_MESSAGE(text.table.loadRetail(mount.fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 		REQUIRE_MESSAGE(CursorTooltipSettings::load(mount.fs, settings, &error), error);
 		REQUIRE_MESSAGE(AptButtonTooltipMap::load(mount.fs, names, &error), error);
 		registerAptScreenFactories(factories);
@@ -445,8 +444,9 @@ TEST_CASE("hover1 retail: every visible button of the main menu (each navigation
 	{
 		FAIL_CHECK("the string file has the tool tip but it never showed: " << n);
 	}
-	// the exact set: the 19 labelled static areas (kShownStatic) and the 7 of OnlineShell's login page, which ActionScript attaches (no static path)
-	const std::set<std::string> expected = { "TOOLTIP:OpeningMenu/LoadGameButton", "TOOLTIP:OpeningMenu/BonusButtonDisabled",
+	// the exact set: the 19 labelled static areas (kShownStatic), the added Good Campaign row's (lane BFME2CAMP1: RotWK's tool tip map still names
+	// MainMenu/SoloPlayNav/GoodCampaign/bttn; its EvilCampaign line is commented out) and the 7 of OnlineShell's login page, which ActionScript attaches
+	const std::set<std::string> expected = { "TOOLTIP:OpeningMenu/GoodCampaignButton", "TOOLTIP:OpeningMenu/LoadGameButton", "TOOLTIP:OpeningMenu/BonusButtonDisabled",
 		"TOOLTIP:OpeningMenu/Expansion1Button", "TOOLTIP:OpeningMenu/WaroftheRingButton", "TOOLTIP:OpeningMenu/SkirmishButton",
 		"TOOLTIP:OpeningMenu/OnlineButton", "TOOLTIP:OpeningMenu/NetworkButton", "TOOLTIP:OpeningMenu/ReplaysButton", "TOOLTIP:OpeningMenu/SettingsButton",
 		"TOOLTIP:OpeningMenu/CustomSettingsButton", "TOOLTIP:OpeningMenu/CreditsButton", "TOOLTIP:Settings/EAX", "TOOLTIP:Settings/HighQualityAudio",
@@ -459,7 +459,8 @@ TEST_CASE("hover1 retail: every visible button of the main menu (each navigation
 	std::set<std::string> shownStatic;
 	for (const std::string &p : tally.shownPaths)
 	{
-		if (p.rfind("onlineshell/onlinelogin", 0) != 0)
+		// lane BFME2CAMP1: the added Good Campaign row is made at run time (duplicateMovieClip), not a static area of the movie
+		if (p.rfind("onlineshell/onlinelogin", 0) != 0 && p != "mainmenu/soloplaynav/goodcampaign/bttn")
 		{
 			shownStatic.insert(p);
 		}
@@ -510,6 +511,10 @@ std::vector<std::string> pathLabels(const std::vector<std::uint8_t> &str)
 TEST_CASE("hover1 inventory: every Apt movie's hover areas (buttons of every timeline, through imports and exports) against the string file's TOOLTIP labels")
 {
 	OPENBFME_REQUIRE_RETAIL(mount);
+	if (retailtest::skipUnlessEnglish("hover1 inventory (the counts of English lotr.str's TOOLTIP labels)"))
+	{
+		return;
+	}
 	AptArchiveFileSource source(mount.fs);
 	AptLoader loader(source);
 	std::vector<std::uint8_t> str;

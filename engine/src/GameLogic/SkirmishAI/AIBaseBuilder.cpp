@@ -13,6 +13,7 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/BuildPlacement.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/RebuildHoleModules.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
 #include "GameLogic/Module/ProductionUpdate.h"
@@ -76,6 +77,10 @@ float AIBuildRequest::bestPriority() const
 
 Coord3D AIBuildRequest::sitePosition(const GameLogic &logic) const
 {
+	if (plain)
+	{
+		return offset; // RW 0x97DA4E: + 0x30 .. + 0x38 as stored (RW 0x97D986: z = the ground height at the position)
+	}
 	// RW 0x97DED8: (offset + base) in SSE, z = the ground height there
 	Coord3D p;
 	p.x = SimMath::addf32(basePosition.x, offset.x);
@@ -86,6 +91,10 @@ Coord3D AIBuildRequest::sitePosition(const GameLogic &logic) const
 
 float AIBuildRequest::siteAngle() const
 {
+	if (plain)
+	{
+		return angle; // RW 0x48DA54: fld [ecx + 0x3C]
+	}
 	return normalizeAngle(SimMath::addf32(baseAngle, angle)); // RW 0x97DDB8: x87 fadd of two floats, stored as float
 }
 
@@ -214,6 +223,21 @@ void AIBaseBuilder::init(GameLogic &logic, AISkirmishPlayer &ai, const std::stri
 	Coord3D pos = wp->location;
 	pos.z = logic.getGroundHeight(pos.x, pos.y);
 	s.startPosition = pos;
+	AIBaseBuilder::addBase(logic, ai, pos, mapFileName, anyTypeDisabledSlots, errors);
+}
+
+void AIBaseBuilder::addBase(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D &pos, const std::string &mapFileName, const std::vector<int> &anyTypeDisabledSlots,
+	std::vector<std::string> &errors)
+{
+	AIBuildState &s = ai.build;
+	Player *player = logic.players().getNthPlayer(ai.playerIndex);
+	const TerrainLogic *terrain = logic.terrain();
+	if (!player || !terrain || !ai.store)
+	{
+		errors.push_back("[S-413] skirmish ai base builder: player " + std::to_string(ai.playerIndex) + " has no terrain or data");
+		return;
+	}
+	const int startPos = player->getMultiplayerStartIndex(); // RW 0x9BC734 / 0x9BCB40: the player's slot start position (RW 0x90CE35 + 0x10), for every base
 	// RW 0x90D3C7: the angle facing the map centre (the active extent: boundary 0)
 	float ex = 0.0f, ey = 0.0f;
 	terrain->getExtent(0, ex, ey);
@@ -303,10 +327,28 @@ void startRequest(AIBuildState &s, const std::shared_ptr<AIBuildRequest> &req, b
 	}
 }
 
+} // namespace
+
+void AIBaseBuilder::startPlainRequest(AIBuildState &s, const std::shared_ptr<AIBuildRequest> &req)
+{
+	// RW 0x9618BA(player, 0): the state is 0; RW 0x8F0B92 (state 0) appends it to the pending queue
+	req->state = 0;
+	s.pending.push_back(req);
+}
+
+void AIBaseBuilder::leaveQueues(AIBuildState &s, const AIBuildRequest *req)
+{
+	auto same = [&](const std::shared_ptr<AIBuildRequest> &r) { return r.get() == req; };
+	s.pending.erase(std::remove_if(s.pending.begin(), s.pending.end(), same), s.pending.end());
+	s.inProgress.erase(std::remove_if(s.inProgress.begin(), s.inProgress.end(), same), s.inProgress.end());
+}
+
+namespace
+{
 // RW 0x97DDC9 reset(state); an upgrade's or expansion's vslot 0x1C is RW 0x993D2E (the state only; lane AI5)
 void resetRequest(GameLogic &logic, AIBuildRequest &req, int state)
 {
-	if (state == 3 && !req.upgrade && !req.expansion)
+	if (state == 3 && !req.upgrade && !req.expansion && !req.plain)
 	{
 		req.counts = false;
 		req.rebuildFrame = logic.getFrame() + kRebuildDelayFrames;
@@ -447,11 +489,11 @@ int enemiesNear(GameLogic &logic, const Player &player, const Coord3D &site)
 int checkRequest(GameLogic &logic, const AIBuildRequest &req, Player &player)
 {
 	const Coord3D site = req.sitePosition(logic);
-	if (enemiesNear(logic, player, site) > 2)
+	if (!req.plain && enemiesNear(logic, player, site) > 2)
 	{
 		return 9;
 	}
-	// RW 0x97DC99
+	// RW 0x97DC99 (a plain request's whole check, lane AIEXPAND-1)
 	Object *dozer = logic.findObjectByID(req.producer);
 	const DozerAIUpdate *d = dozer ? dynamic_cast<const DozerAIUpdate *>(dozer->getAIUpdateInterface()) : nullptr;
 	if (!dozer || !d || d->taskTarget() != INVALID_ID) // AIUpdate vslot 0x1B8 (S-414: taken as "has a task", travelling to a site included)
@@ -1449,21 +1491,28 @@ void updateDozerManager(GameLogic &logic, AISkirmishPlayer &ai, Player &player)
 // RW 0x90D16A (the base builder, AIPlayer + 4): a structure of the AI's bases that died is built again: every base entry (RW 0x9BC76C collects them by template
 // name) whose structure (+ 0x24) is the dead object gets RW 0x9618E3, its priority multiplied by the ArmyDefinition's StructureRebuildPriorityModifier (+ 0x88,
 // SSE), the money reserve flag (+ 0x21) and a new start (vslot 0x18 = RW 0x97DE12). A RebuildHoleBehavior object stands for its
-// structure (RW 0x886448: its template and id); the port has no rebuild holes (the module is not ported), so the dead object is always the structure itself.
+// structure (RW 0x886448; lane MODCOMPAT-MOD1: the hole interface's slot 3 getRebuildTemplate, its name, and slot 1 getSpawnerID, the dead structure's id).
 void rebuildDestroyedStructure(GameLogic &logic, AISkirmishPlayer &ai, const Object &dead)
 {
 	if (!ai.army || !dead.getTemplate())
 	{
 		return;
 	}
-	const std::string &name = dead.getTemplate()->getName();
+	const RebuildHoleBehavior *hole = RebuildHoleBehavior::of(dead);
+	if (hole && !hole->getRebuildTemplate())
+	{
+		logic.reportError("the skirmish AI's rebuild: the hole " + dead.getTemplate()->getName() + " has no rebuild template (RW 0x90D1A5 reads it unchecked)");
+		return;
+	}
+	const std::string &name = hole ? hole->getRebuildTemplate()->getName() : dead.getTemplate()->getName(); // + 0x64
+	const ObjectID deadID = hole ? hole->getSpawnerID() : dead.getID();
 	for (AIBaseInstance &b : ai.build.bases)
 	{
 		for (AIBaseSlot &slot : b.slots)
 		{
 			for (auto &e : slot.entries)
 			{
-				if (e->templateName != name || e->built != dead.getID())
+				if (e->templateName != name || e->built != deadID)
 				{
 					continue;
 				}
@@ -1965,7 +2014,7 @@ void AIBaseBuilder::onObjectLeft(GameLogic &logic, AISkirmishPlayer &ai, Object 
 			f.erase(it);
 		}
 	}
-	// RW 0x8F0C69: an FS_FACTORY leaves the unit builder (RW 0x9A051D, BFME2 decomp Rva00598149Map.cpp tier A): every entry of the object goes and the
+	// RW 0x8F0C69: an FS_FACTORY leaves the unit builder (RW 0x9A051D, BFME2 decomp AIUnitBuilder.cpp tier A): every entry of the object goes and the
 	// composition is computed again (+ 0x2C = 1, RW 0x9A055D); the event of a death (the object leaving the world) or of a change of owner (the old owner)
 	if (isKind(obj, fsFactory))
 	{
@@ -2111,7 +2160,7 @@ void AIBaseBuilder::crcRequest(const AIBuildRequest &r, StateHasher &h)
 	h.addI32(r.owner);
 	h.addI32(r.failures);
 	h.addI32(r.siteIndex);
-	h.addU32((r.requeueOnProducerDeath ? 1u : 0u) | (r.reserveMoney ? 2u : 0u)); // one word: a request of 32 words would make the rotate-add hash blind to swaps
+	h.addU32((r.requeueOnProducerDeath ? 1u : 0u) | (r.reserveMoney ? 2u : 0u) | (r.plain ? 4u : 0u)); // one word: a request of 32 words would make the rotate-add hash blind to swaps
 	// lane AI5: the upgrade / expansion part (a request of neither kind adds nothing)
 	if (r.upgrade || r.expansion)
 	{

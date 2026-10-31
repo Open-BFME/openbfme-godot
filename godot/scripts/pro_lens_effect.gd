@@ -8,9 +8,10 @@
 ## circle reaches the pixel joining a running average with equal weight, so a blurred foreground spreads over a sharp
 ## background while a sample behind the pixel counts with at most twice the pixel's circle, so a sharp foreground keeps
 ## its edge; then the exposure, 2^ev. The disc's pattern turns per pixel, which trades a fixed pattern's repeated copies
-## for fine grain. It works in linear light: on a camera OpenBFME draws, attach() keeps it after the gamma composite's
-## decode (GammaCompositeEffect, lane RENDER-3), and the map's colour grade (LookupTablePostEffect, which keeps itself
-## last) comes after it. Without an aperture, an exposure or log output it costs nothing.
+## for fine grain. A depth- and blur-guided 5 x 5 resolve smooths that grain in defocused regions, leaving focused pixels
+## alone. Colour and depth gathers use nearest sampling; the resolve smooths their grain. It works in linear light: on a
+## camera OpenBFME draws, attach() keeps it after the gamma composite's decode (GammaCompositeEffect, lane RENDER-3);
+## the map's colour grade (LookupTablePostEffect, which keeps itself last) comes after it. Without an aperture, an exposure or log output it costs nothing.
 ##
 ## `log_output` (off by default) writes the frame as ACEScct instead, a log encoding to colour grade later: the linear
 ## light turned from Rec. 709 primaries into ACES AP1 (the Bradford-adapted matrix the ACES project publishes), then the
@@ -57,6 +58,7 @@ var _sampler: RID
 var _params: RID
 var _probe: RID
 var _copy: RID
+var _blur: RID
 var _tiles: RID
 var _reach: RID
 var _size := Vector2i.ZERO
@@ -83,7 +85,7 @@ func _notification(what: int) -> void:
 		for key in ["tonemap_mode", "tonemap_exposure", "glow_enabled", "adjustment_enabled"]:
 			_neutral.environment.set(key, _neutral[key])
 	if _rd != null:
-		for rid in [_copy, _tiles, _reach, _params, _probe, _sampler, _pipeline, _shader]:
+		for rid in [_copy, _blur, _tiles, _reach, _params, _probe, _sampler, _pipeline, _shader]:
 			if rid.is_valid():
 				_rd.free_rid(rid)
 
@@ -298,7 +300,8 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 		_uniform(RenderingDevice.UNIFORM_TYPE_IMAGE, 4, [_tiles]),
 		_uniform(RenderingDevice.UNIFORM_TYPE_IMAGE, 5, [_reach]),
 		_uniform(RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER, 6, [_probe]),
-		_uniform(RenderingDevice.UNIFORM_TYPE_IMAGE, 7, [_copy])])
+		_uniform(RenderingDevice.UNIFORM_TYPE_IMAGE, 7, [_copy]),
+		_uniform(RenderingDevice.UNIFORM_TYPE_IMAGE, 8, [_blur])])
 	var tiles := Vector2i(ceili(float(size.x) / TILE), ceili(float(size.y) / TILE))
 	if probing:
 		# each request's pixel, read into its own slot of the probe buffer; the buffer read once for all of them
@@ -326,7 +329,8 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	if lens.aperture > 0.0:
 		_pass(uniforms, inverse, size, lens, 0, Vector2i(ceili(tiles.x / 8.0), ceili(tiles.y / 8.0)))
 		_pass(uniforms, inverse, size, lens, 1, Vector2i(ceili(tiles.x / 8.0), ceili(tiles.y / 8.0)))
-	_pass(uniforms, inverse, size, lens, 2, pixels)
+		_pass(uniforms, inverse, size, lens, 2, pixels)     # gather into a separate image, never read while writing
+	_pass(uniforms, inverse, size, lens, 5, pixels)         # guided resolve, then exposure and log encoding
 
 
 func _pass(uniforms: RID, inverse: Projection, size: Vector2i, lens: Dictionary, index: int, groups: Vector2i) -> void:
@@ -345,15 +349,16 @@ func _pass(uniforms: RID, inverse: Projection, size: Vector2i, lens: Dictionary,
 	_rd.compute_list_end()
 
 
-## The frame's copy and the tiles' images, made again when the size or the colour format changes.
+## The frame's copy, blur gather and tile images, made again when the size or the colour format changes.
 func _targets(size: Vector2i, format: int) -> void:
 	if size == _size and _copy.is_valid() and _rd.texture_get_format(_copy).format == format:
 		return
-	for rid in [_copy, _tiles, _reach]:
+	for rid in [_copy, _blur, _tiles, _reach]:
 		if rid.is_valid():
 			_rd.free_rid(rid)
 	_size = size
 	_copy = _texture(size, format, RenderingDevice.TEXTURE_USAGE_STORAGE_BIT)
+	_blur = _texture(size, format, RenderingDevice.TEXTURE_USAGE_STORAGE_BIT)
 	var tiles := Vector2i(ceili(float(size.x) / TILE), ceili(float(size.y) / TILE))
 	_tiles = _texture(tiles, RenderingDevice.DATA_FORMAT_R32_SFLOAT, RenderingDevice.TEXTURE_USAGE_STORAGE_BIT)
 	_reach = _texture(tiles, RenderingDevice.DATA_FORMAT_R32_SFLOAT, RenderingDevice.TEXTURE_USAGE_STORAGE_BIT)
@@ -384,9 +389,9 @@ const SOURCE := """#version 450
 // Lane LENS-1: the pro camera's depth of field and exposure (NOT RETAIL: an OpenBFME addition), compiled by
 // scripts/pro_lens_effect.gd, whose header has the method: each pixel's blur circle from its depth by the thin lens
 // (scripts/pro_lens.gd); the largest blur in each TILE x TILE tile (pass 0), then the largest of the tiles it can reach
-// (pass 1); the blur itself, a single pass over a disc as large as that reach, in linear colour, then the exposure and,
-// with log_output, the ACEScct encode (pass 2). Pass 3 reads the distance at one pixel into its slot, to focus on it;
-// pass 4 copies the frame for pass 2 to read. The colour buffer is linear here (after OpenBFME's gamma composite decode); bright
+// (pass 1); the blur gather over a disc as large as that reach (pass 2), then the guided resolve, exposure and optional
+// ACEScct encode (pass 5). Pass 3 reads the distance at one pixel into its slot, to focus on it; pass 4 copies the frame
+// for pass 2 to read. The colour buffer is linear here (after OpenBFME's gamma composite decode); bright
 // pixels keep their energy, so a light out of focus spreads into a bright disc.
 //
 // Sources: blur_pass's gather loop (the clamp behind the pixel, the smoothstep reach, the running average) is adapted
@@ -423,10 +428,11 @@ layout(set = 0, binding = 6, std430) restrict writeonly buffer Probe {
 } probe_out;
 // the frame's copy (pass 4), read by pass 2
 layout(rgba16f, set = 0, binding = 7) uniform restrict image2D copy_img;
+layout(rgba16f, set = 0, binding = 8) uniform restrict image2D blur_img;
 
 const int TILE = 16;
 
-// The copy's colour at uv, the nearest pixel.
+// Nearest colour from the untouched frame; the guided resolve removes sampling grain.
 vec4 frame_at(vec2 uv) {
 	ivec2 at = clamp(ivec2(uv * p.size), ivec2(0), ivec2(p.size) - 1);
 	return imageLoad(copy_img, at);
@@ -516,6 +522,38 @@ void blur_pass(ivec2 pixel) {
 		}
 		c /= total;
 	}
+	imageStore(blur_img, pixel, vec4(c, own.a));
+}
+
+// A small binomial kernel resolves the per-pixel sampling grain. Reject different surfaces and blur radii;
+// fade out at focus, so sharp detail and foreground silhouettes are not softened by a full-frame blur.
+// All reads use the completed gather, not the colour buffer being written by neighbouring invocations.
+void resolve_pass(ivec2 pixel) {
+	vec4 own = p.use_dof > 0.5 ? imageLoad(blur_img, pixel) : imageLoad(copy_img, pixel);
+	vec3 c = own.rgb;
+	if (p.use_dof > 0.5) {
+		float z0 = view_z(texelFetch(depth_tex, pixel, 0).r);
+		float s0 = radius(z0);
+		float amount = smoothstep(1.0, 3.0, s0);
+		if (amount > 0.0) {
+			const float kernel[5] = float[5](1.0, 4.0, 6.0, 4.0, 1.0);
+			vec3 sum = vec3(0.0);
+			float total = 0.0;
+			for (int y = -2; y <= 2; y++) {
+				for (int x = -2; x <= 2; x++) {
+					ivec2 at = clamp(pixel + ivec2(x, y), ivec2(0), ivec2(p.size) - 1);
+					float z = view_z(texelFetch(depth_tex, at, 0).r);
+					float s = radius(z);
+					float depth_weight = 1.0 - smoothstep(0.005, 0.02, abs(z - z0) / max(abs(z0), 1e-3));
+					float blur_weight = 1.0 - smoothstep(0.5, 2.0, abs(s - s0));
+					float w = kernel[x + 2] * kernel[y + 2] * depth_weight * blur_weight;
+					sum += imageLoad(blur_img, at).rgb * w;
+					total += w;
+				}
+			}
+			c = mix(c, sum / total, amount);
+		}
+	}
 	c *= p.exposure;
 	if (p.log_output > 0.5) {
 		c = srgb_decode(acescct(REC709_TO_AP1 * max(c, vec3(0.0))));
@@ -535,12 +573,14 @@ void main() {
 		} else {
 			spread_pass(id);
 		}
-	} else if (pass_index == 2 || pass_index == 4) {
+	} else if (pass_index == 2 || pass_index == 4 || pass_index == 5) {
 		if (any(greaterThanEqual(id, ivec2(p.size)))) {
 			return;
 		}
 		if (pass_index == 2) {
 			blur_pass(id);
+		} else if (pass_index == 5) {
+			resolve_pass(id);
 		} else {
 			imageStore(copy_img, id, imageLoad(color_img, id));
 		}

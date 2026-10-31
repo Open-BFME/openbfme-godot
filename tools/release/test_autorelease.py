@@ -156,7 +156,7 @@ def builds(world) -> list[dict]:
 
 
 def mac_package_dir(checkout: Path, version: str, out: Path, fault: str = "", commit: str = "") -> Path:
-    """MACREL-1: the Mac build host's output as package_macos.py writes it (<stem>.zip, .zip.sha256, .inventory.txt, README-MAC.txt), a
+    """MACREL-1 / RELGH-2: GitHub Actions' macOS output as package_macos.py writes it (<stem>.zip, .zip.sha256, .inventory.txt, README-MAC.txt), a
     package that passes the strict macos-arm64 audit (test_macos_release.generic_package) with VERSION naming the checkout's commit and a
     launcher whose build_info.json trusts the checkout's launcher/release_key.pub. `fault`: what a broken build host returns instead"""
     import tempfile
@@ -166,8 +166,9 @@ def mac_package_dir(checkout: Path, version: str, out: Path, fault: str = "", co
     commit = commit or git(checkout, "rev-parse", "HEAD")   # `commit`: the tagged public commit the host built (mac_publish_dir)
     key = (checkout / "launcher/release_key.pub").read_text().strip()
     keys = [ln.split()[0] for ln in (checkout / "launcher/release_keys.pub").read_text().splitlines() if ln.strip() and not ln.startswith("#")]
+    nightly = [ln.split()[0] for ln in (checkout / "launcher/nightly_keys.pub").read_text().splitlines() if ln.strip() and not ln.startswith("#")]
     info = {"version": version, "display_version": f"{version} Mac Unstable Preview (Apple Silicon)", "commit": commit, "date": "2026-10-16",
-            "repo": TARGET, "release_key": key, "release_keys": keys, "test_build": False, "local_trial": False, "macos_preview": False,
+            "repo": TARGET, "release_key": key, "release_keys": keys, "nightly_keys": nightly, "test_build": False, "local_trial": False, "macos_preview": False,
             "macos_updates": True}
     if fault == "wrong-key":
         info["release_key"] = "ab" * 32
@@ -237,6 +238,10 @@ class World:
         files = {"README.md": "OpenBFME\n" + ARCHIVE_LINE, "launcher/release_key.pub": pub.stdout.strip() + "\n",
                  # SIGNKMS-1: the trusted list, the Deck key first (the Mac launcher's build_info.json carries it)
                  "launcher/release_keys.pub": pub.stdout.strip() + "  deck-2026\n",
+                 # RELGH-2: the nightly-only key list (none: the Mac launcher's build_info.json carries "nightly_keys": [])
+                 "launcher/nightly_keys.pub": "# the nightly-only keys: none\n",
+                 # the workflow GitHub builds the packages with (actions_build.py stage refuses a commit without it)
+                 ".github/workflows/release-package.yml": (REPO / ".github/workflows/release-package.yml").read_text(),
                  # RELNAME-1: the launcher's release grammar (a bridge's launcher must know -alpha)
                  "launcher/scripts/core/semver.gd": (REPO / "launcher/scripts/core/semver.gd").read_text(),
                  "engine/a.cpp": "1\n", ".gitignore": "/workspace/\n*.secret\n", "archive/old.txt": "legacy\n",
@@ -260,27 +265,6 @@ package_dir(Path(sys.argv[3]), sys.argv[2], extra=os.environ.get("STANDIN_EXTRA"
             legacy=os.environ.get("OPENBFME_RELEASE_LEGACY_LAUNCHERS", "1") == "1")
 """)
         (self.standin / "verify").write_text('#!/bin/bash\necho "stand-in verify $3"; [ "${STANDIN_TAMPERED:-0}" = 0 ]\n')
-        # MACREL-1: the Mac build host's package (the Deck's Mac checks run on it as on a real one), and a stand-in ssh for the readiness
-        # check: FAKE_MAC=down answers like an unreachable host (ssh's 255), notready like a host without Godot; every call is logged
-        (self.standin / "build-mac").write_text(f"""#!{sys.executable}
-import sys; sys.path.insert(0, {str(HERE)!r})
-from pathlib import Path
-from test_autorelease import mac_package_dir
-import os
-open(os.environ["FAKE_MAC_LOG"], "a").write("build-mac " + sys.argv[2] + "\\n")
-if os.environ.get("STANDIN_MAC_FAIL") == "1":
-    print("MAC BUILD FAIL: fatal: hardlink different from source (a stand-in failure)"); sys.exit(1)
-mac_package_dir(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), os.environ.get("STANDIN_MAC_FAULT", ""))
-""")
-        (self.standin / "ssh").write_text('''#!/bin/bash
-echo "ssh $*" >> "$FAKE_MAC_LOG"
-cat > /dev/null
-case "${FAKE_MAC:-up}" in
-  down) echo "ssh: connect to host mac port 22: Operation timed out" >&2; exit 255 ;;
-  notready) echo "MAC NOT READY: Godot is '', not 4.7.2.stable"; exit 1 ;;
-  *) echo "MAC READY 26.6 arm64 Godot 4.7.2.stable.official.test"; exit 0 ;;
-esac
-''')
         # MACACT-1: what the stand-in GitHub Actions run builds (gh_stand_in.py runs it at the dispatch): the Mac package as the Mac host
         # would, or a platform's GDExtension; it logs what it built and what the public remote had then (the tag must not be there yet)
         (self.standin / "actions-build").write_text(f"""#!{sys.executable}
@@ -294,15 +278,16 @@ tag = subprocess.run(["git", "ls-remote", remote, "refs/tags/" + version], captu
 head = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
 open(os.environ["FAKE_ACTIONS_LOG"], "a").write(json.dumps({{"platform": platform, "version": version, "head": head, "remote_tag": tag}}) + "\\n")
 if platform == "macos":
+    if os.environ.get("STANDIN_MAC_FAIL") == "1":
+        print("MAC BUILD FAIL: a stand-in failure"); sys.exit(1)
     mac_package_dir(checkout, version, out, os.environ.get("STANDIN_MAC_FAULT", ""))
 else:
     p = "linux-x64" if platform == "linux" else "windows-x64"
     data = actions_lib(p, version, github=True, differs=os.environ.get("STANDIN_ACTIONS_FAULT") == "lib-differs")
     (out / LIBS[p]).write_bytes(data)
 """)
-        for f in ("build", "verify", "build-mac", "ssh", "actions-build"):
+        for f in ("build", "verify", "actions-build"):
             (self.standin / f).chmod(0o755)
-        self.mac_log = tmp / "mac.log"
         self.actions_log = tmp / "actions.jsonl"
         self.gh = tmp / "bin" / "gh"
         self.gh.parent.mkdir()
@@ -335,8 +320,7 @@ else:
                 # the stand-in build imports this module: pytest from the user site of the real home
                 "PYTHONPATH": str(Path(pytest.__file__).resolve().parents[1]),
                 "OPENBFME_RELEASE_STANDIN": str(self.standin), "BFME_COMMUNITY": str(self.tmp / "no-community"),
-                "OPENBFME_RELEASE_MAC_SSH": str(self.standin / "ssh"), "FAKE_MAC_LOG": str(self.mac_log), "OPENBFME_RELEASE_MAC_ROOT": "ci-root",
-                "OPENBFME_RELEASE_MIN_COMMIT": self.first,
+                                "OPENBFME_RELEASE_MIN_COMMIT": self.first,
                 "STANDIN_BUILD_LOG": str(self.tmp / "builds.jsonl"),
                 "FAKE_GH_ACTIONS_BUILD": str(self.standin / "actions-build"), "FAKE_ACTIONS_LOG": str(self.actions_log),
                 "OPENBFME_RELEASE_ACTIONS_POLL": "0",
@@ -390,7 +374,8 @@ def test_real_release_end_to_end(world):
             "itself") in rel["body"]
     mac = "openbfme-v0.4.5-macos-arm64.zip"
     assert f"| **[{mac}]({base}/{mac})** | **OpenBFME for Mac (Apple Silicon, macOS 13 or later), an unstable preview.**" in rel["body"]
-    assert world.mac_log.read_text().splitlines()[-1] == "build-mac v0.4.5" and "MAC READY mac" in r.stdout
+    # RELGH-2: the Mac package came from GitHub Actions (the stand-in run), no Mac host was asked
+    assert [b["platform"] for b in actions_builds(world)] == ["macos"] and "ACTIONS BUILD OK macos v0.4.5" in r.stdout
     # RELCAND-1: no sync PR; the public main is the candidate's own commit, one commit on the old main, its tree the archive's without
     # archive/ plus the README line, no PRIVACY.md; the tag is the candidate's tag on it
     assert gh["prs"] == {} and world.remote_refs("refs/heads/sync/*") == ""
@@ -482,29 +467,31 @@ def test_a_failed_homepage_update_is_a_warning(world):
 # ---- MACREL-1: the macOS package -------------------------------------------------------------------------------------------------------
 def nothing_published(world, main: str = "") -> bool:
     """no PR, no sync branch, no tag, no release, no open intent, the public main where it was: nothing left the Deck"""
-    return (world.gh_data() == {"prs": {}, "releases": []} and world.remote_refs("refs/heads/sync/*") == ""
+    gh = world.gh_data()   # RELGH-2: the macOS build runs on the Actions stand-in: its runs / artifacts are not publications, the staging branch is
+    return (gh["prs"] == {} and gh["releases"] == [] and world.remote_refs("refs/heads/staging/*") == "" and world.remote_refs("refs/heads/sync/*") == ""
             and world.remote_refs("refs/tags/*") == "" and not (world.state / "intent").exists()
             and git(world.remote, "rev-parse", "refs/heads/main") == (main or world.seed_main))
 
 
-@pytest.mark.parametrize("fake,why", [
-    ("down", "the Mac build host 'mac' does not answer over ssh"),
-    ("notready", "MAC NOT READY: Godot is ''"),
-])
-def test_a_release_without_a_ready_mac_host_stops_before_anything_is_published(world, fake, why):
+def actions_builds(world) -> list[dict]:
+    """what the stand-in GitHub Actions runs built (RELGH-2: the macOS package always)"""
+    return [json.loads(x) for x in world.actions_log.read_text().splitlines()] if world.actions_log.exists() else []
+
+
+def test_the_mac_build_host_is_refused_and_actions_is_the_default(world):
+    """RELGH-2: OPENBFME_RELEASE_MAC_BUILDER=host is an error (exit 2, nothing pushed); unset builds macOS on the Actions stand-in"""
     sha = world.change({"engine/a.cpp": "2\n"}, "X-1: something new for players to see")
     world.gate(sha)
     for extra in ((), ("--dry-run",)):
-        r = world.release(sha, "--since", world.first, *extra, FAKE_MAC=fake)
-        assert r.returncode == 1, r.stdout + r.stderr
-        assert why in r.stdout + r.stderr
-        assert "AUTORELEASE FAIL at step mac-check (v0.4.5): the Mac build host (mac) is not ready (above): nothing was pushed or published" in r.stdout
-        assert "OPENBFME_RELEASE_SKIP_MAC=1 to release without the macOS package" in r.stdout
+        r = world.release(sha, "--since", world.first, *extra, OPENBFME_RELEASE_MAC_BUILDER="host")
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "OPENBFME_RELEASE_MAC_BUILDER is actions" in r.stderr
         assert nothing_published(world), extra
-    assert "build-mac" not in world.mac_log.read_text(), "no build was started"
-    # the host comes back: the same sha is released, Mac package included
-    r = world.release(sha, "--since", world.first)
+        assert not actions_builds(world)
+    assert world.remote_refs("refs/heads/*").split()[0] == world.seed_main and world.remote_refs("refs/tags/*") == ""
+    r = world.release(sha, "--since", world.first)   # the variable unset
     assert r.returncode == 0 and "AUTORELEASE OK v0.4.5" in r.stdout, r.stdout + r.stderr
+    assert [b["platform"] for b in actions_builds(world)] == ["macos"]
     check_mac_release(world, world.tmp / "work/v0.4.5/pkg", "v0.4.5", pr_merge(world))
 
 
@@ -512,15 +499,15 @@ def test_skip_mac_is_explicit_and_said(world):
     sha = world.change({"engine/a.cpp": "2\n"}, "X-1: something new for players to see")
     world.gate(sha)
     for bad in ("yes", "true", "2", " 1"):
-        r = world.release(sha, "--since", world.first, OPENBFME_RELEASE_SKIP_MAC=bad, FAKE_MAC="down")
+        r = world.release(sha, "--since", world.first, OPENBFME_RELEASE_SKIP_MAC=bad)
         assert r.returncode == 2 and "OPENBFME_RELEASE_SKIP_MAC is 1" in r.stderr and nothing_published(world), bad
-    r = world.release(sha, "--since", world.first, OPENBFME_RELEASE_SKIP_MAC="1", FAKE_MAC="down")
+    r = world.release(sha, "--since", world.first, OPENBFME_RELEASE_SKIP_MAC="1")
     assert r.returncode == 0 and "AUTORELEASE OK v0.4.5" in r.stdout, r.stdout + r.stderr
     warning = "AUTORELEASE WARNING: OPENBFME_RELEASE_SKIP_MAC=1: v0.4.5 is released WITHOUT the macOS package"
     assert warning in r.stdout and "AUTORELEASE WARNING: v0.4.5 has no macOS package (OPENBFME_RELEASE_SKIP_MAC=1)" in r.stdout
     summary = (world.tmp / "logs/autorelease-summary.log").read_text()
     assert warning in summary and "has no macOS package" in summary
-    assert not world.mac_log.exists(), "the Mac host is not asked anything"
+    assert not actions_builds(world), "no macOS build is started"
     (rel,) = world.gh_data()["releases"]
     names = sorted(a["name"] for a in rel["assets"])
     assert "openbfme-v0.4.5-macos-arm64.zip" not in names and {"manifest-macos.json", "manifest-macos.json.sig"} <= set(names)
@@ -1427,7 +1414,7 @@ def test_the_key_path_is_never_printed(world):
     r = world.release(sha, "--since", world.first, "--dry-run")
     assert r.returncode == 0 and "AUTORELEASE DRY RUN OK" in r.stdout, r.stdout + r.stderr
     assert "sign_manifest.py --key \\<release\\ key\\>" in r.stdout, "the WOULD RUN line names the key only as <release key>"
-    assert world.remote_refs("refs/heads/sync/*") == "" and not world.gh_state.exists(), "the dry run writes nothing to GitHub"
+    assert world.remote_refs("refs/heads/sync/*") == "" and nothing_published(world), "the dry run publishes nothing on GitHub (RELGH-2: its macOS build run on the staging branch, deleted again, is all)"
     assert "WOULD RUN: " in r.stdout and "PATCH repos/" in r.stdout and "homepage=https://github.com/" in r.stdout  # RELTEST-1
     world.key.chmod(0o644)
     r2 = world.release(sha, "--since", world.first)
@@ -1916,6 +1903,8 @@ def _launcher_view(tmp_path, notes: str) -> str:
     shutil.copy(HERE.parent.parent / "launcher/scripts/core/release_notes.gd", proj / "release_notes.gd")
     (proj / "scripts/core").mkdir(parents=True, exist_ok=True)   # VERSION-1: release_notes.gd preloads the launcher's semver.gd
     shutil.copy(HERE.parent.parent / "launcher/scripts/core/semver.gd", proj / "scripts/core/semver.gd")
+    # L10N-1: release_notes.gd and semver.gd preload the launcher's text runtime and its catalog
+    shutil.copytree(HERE.parent.parent / "launcher/scripts/l10n", proj / "scripts/l10n", dirs_exist_ok=True)
     shutil.copy(HERE / "fixtures/notes_view.gd", proj / "notes_view.gd")
     (tmp_path / "notes.md").write_text(re.sub(r"\\(.)", r"\1", notes), encoding="utf-8")   # Updater.plain_text undoes the Markdown escapes first
     env = dict(os.environ, XDG_DATA_HOME=str(tmp_path / "d"), XDG_CONFIG_HOME=str(tmp_path / "c"), XDG_CACHE_HOME=str(tmp_path / "k"))
@@ -2878,33 +2867,6 @@ def test_the_asset_audit_refuses_nothing_and_missing_files(tmp_path, world):
     assert r.returncode == 1 and "a release asset cannot be read" in r.stdout, r.stdout + r.stderr
 
 
-@pytest.mark.parametrize("root, why", [
-    (None, "OPENBFME_RELEASE_MAC_ROOT is not set"),
-    ("", "OPENBFME_RELEASE_MAC_ROOT is not set"),
-    ("../elsewhere", "is not a folder relative to the host's home"),
-    ("ci/../../x", "is not a folder relative to the host's home"),
-    ("/abs/ci", "is not a folder relative to the host's home"),
-    ("ci root", "is not a folder relative to the host's home"),
-])
-def test_the_mac_build_host_folder_comes_from_the_private_environment(tmp_path, root, why):
-    """merge queue q21: build_macos_release.sh names no private folder of the Mac host; its CI folder is the operator's
-    OPENBFME_RELEASE_MAC_ROOT, refused by name when unset or not a plain relative folder, before ssh is ever run"""
-    log = tmp_path / "ssh.log"
-    ssh = tmp_path / "ssh"
-    ssh.write_text(f'#!/bin/bash\necho "ssh $*" >> {log}\ncat > /dev/null\necho "MAC READY test"\n')
-    ssh.chmod(0o755)
-    env = {k: v for k, v in os.environ.items() if k != "OPENBFME_RELEASE_MAC_ROOT"}
-    env["OPENBFME_RELEASE_MAC_SSH"] = str(ssh)
-    if root is not None:
-        env["OPENBFME_RELEASE_MAC_ROOT"] = root
-    r = subprocess.run(["bash", str(HERE / "build_macos_release.sh"), "--check"], capture_output=True, text=True, env=env)
-    assert r.returncode == 1 and why in r.stderr and not log.exists(), (r.returncode, r.stdout, r.stderr)
-    env["OPENBFME_RELEASE_MAC_ROOT"] = "ci-root"   # the control: a plain folder reaches the host, and the check names that folder
-    r = subprocess.run(["bash", str(HERE / "build_macos_release.sh"), "--check"], capture_output=True, text=True, env=env)
-    assert r.returncode == 0 and "MAC READY" in r.stdout and log.exists(), (r.stdout, r.stderr)
-
-
-
 # ---- RELCAND-1: candidate first, tag last ---------------------------------------------------------------------------------------------
 def released(world, version: str) -> dict:
     (rel,) = [x for x in world.gh_data()["releases"] if x["tag_name"] == version]
@@ -2948,7 +2910,7 @@ def test_the_candidate_is_built_and_tested_before_anything_is_pushed_and_publish
 
 @pytest.mark.parametrize("env,step", [
     ({"STANDIN_BUILD_FAIL": "1"}, "build"),            # the Linux / Windows build, package.sh, test_export, the Windows start + HUD6
-    ({"STANDIN_MAC_FAIL": "1"}, "mac-build"),          # v0.4.11: the Mac clone failed after Linux, Windows and HUD6 had passed
+    ({"STANDIN_MAC_FAIL": "1"}, "actions-dispatch"),   # RELGH-2: the macOS build on GitHub failed (the stand-in builds at the dispatch)
     ({"STANDIN_TAMPERED": "1"}, "deck-verify"),        # step 5's trusted-checkout checks (package.sh --verify in a real run)
     ({"STANDIN_MAC_FAULT": "wrong-commit"}, "deck-verify"),
 ])
@@ -3187,7 +3149,8 @@ def paused_remote(world, tmp: Path) -> dict:
     hook = world.remote / "hooks/pre-receive"
     hook.write_text(f"""#!{sys.executable}
 import pathlib, sys, time
-sys.stdin.read()
+if " refs/tags/" not in sys.stdin.read():   # RELGH-2: only the release push (it carries the tag) is held, not the macOS staging push
+    sys.exit(0)
 if not pathlib.Path({str(f['pause'])!r}).exists():
     sys.exit(0)
 pathlib.Path({str(f['received'])!r}).touch()
@@ -3203,7 +3166,8 @@ sys.exit(int(pathlib.Path({str(f['rc'])!r}).read_text()))
     receiver.write_text(f"""#!{sys.executable}
 import pathlib, subprocess, sys
 result = subprocess.run([{shutil.which('git')!r}, "receive-pack", *sys.argv[1:]])
-pathlib.Path({str(f['done'])!r}).touch()
+if pathlib.Path({str(f['received'])!r}).exists():   # RELGH-2: the held release push, not the macOS staging push before it
+    pathlib.Path({str(f['done'])!r}).touch()
 sys.exit(result.returncode)
 """)
     receiver.chmod(0o755)

@@ -9,6 +9,7 @@
 #include "Common/NumericState.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "Common/Player.h"
+#include "Common/Upgrade.h"
 #include "Common/StateHash.h"
 #include "Common/Team.h"
 #include "Common/Thing/ModuleFactory.h"
@@ -27,6 +28,8 @@
 #include "GameLogic/Module/GarrisonContain.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/PartitionManager.h"
+#include "GameLogic/FXEvents.h"
 #include "GameLogic/ObjectFilter.h"
 #include "GameLogic/ObjectFilterMatch.h"
 #include "GameLogic/SimMath.h"
@@ -203,6 +206,12 @@ GarrisonContain::~GarrisonContain() = default;
 
 void GarrisonContain::registerClasses(ModuleFactory &modules)
 {
+	modules.bindTypedData<CitadelSlaughterHordeContainBehaviorData>("CitadelSlaughterHordeContain", MODULETYPE_BEHAVIOR);
+	modules.bindModuleProc("CitadelSlaughterHordeContain", MODULETYPE_BEHAVIOR, [](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &) -> std::unique_ptr<Module> {
+		const auto *typed = dynamic_cast<const CitadelSlaughterHordeContainBehaviorData *>(data);
+		if (!typed) throw std::logic_error("CitadelSlaughterHordeContain: module data is not typed");
+		return std::make_unique<CitadelSlaughterHordeContain>(thing, typed);
+	});
 	modules.bindTypedData<GarrisonContainBehaviorData>("GarrisonContain", MODULETYPE_BEHAVIOR);
 	modules.bindTypedData<HordeGarrisonContainBehaviorData>("HordeGarrisonContain", MODULETYPE_BEHAVIOR);
 	modules.bindModuleProc("GarrisonContain", MODULETYPE_BEHAVIOR, [](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &) -> std::unique_ptr<Module> {
@@ -560,6 +569,8 @@ void GarrisonContain::onRemoving(Object *obj)
 	{
 		m_hiddenFlag = false;
 	}
+	// RW 0x87C094 .. 0x87C0A8 (lane OCCLUDE-1): the rider's safe occlusion frame (+ 0x444) = the frame + its template's OcclusionDelay (presentation only)
+	obj->setSafeOcclusionFrame(obj->logic().getFrame() + Object::occlusionDelayOf(*obj->getTemplate(), obj->logic()));
 	recalcApparentControllingPlayer(); // RW 0x87C06B: slot 0x50
 	// RW 0x87C073: the killing branch (KillPassengersOnDeath with the dying byte and no health left): the rider is flung and killed, an ENCLOSED one destroyed
 	if (m_killingRiders && openData().m_killPassengersOnDeath && container->getBodyModule() && !(container->getBodyModule()->getHealth() > 0.0f))
@@ -1047,7 +1058,9 @@ UpdateSleepTime GarrisonContain::update()
 	{
 		if (obj->isEffectivelyDead())
 		{
-			removeFromContain(obj); // RW 0x87C928: interface slot 0xA4(obj, false); + 0x444 (the safe occlusion frame) is client side
+			removeFromContain(obj); // RW 0x87C928: interface slot 0xA4(obj, false)
+			// RW 0x87C93C .. 0x87C951 (lane OCCLUDE-1): + 0x444 = the frame + LOGICFRAMES_PER_SECOND (RW 0xD9F608 = 5) * 1000 (presentation only)
+			obj->setSafeOcclusionFrame(obj->logic().getFrame() + 5u * 1000u);
 		}
 	}
 	removeInvalidObjectsFromGarrisonPoints();
@@ -1418,4 +1431,129 @@ void GarrisonContain::xfer(Xfer &x)
 	{
 		SnapshotXfer::u64(x, *s);
 	}
+}
+
+const char *CitadelSlaughterHordeContain::stopLine()
+{
+	return "[S-6010] CitadelSlaughterHordeContain: ring delivery uses the BFME2 donor entry/upgrade/exit path with RotWK's INI fields; ordinary troop slaughter and CanAlwaysEnter "
+		   "are not ported; RotWK binary equivalence is not established";
+}
+
+CitadelSlaughterHordeContain::CitadelSlaughterHordeContain(Thing *thing, const CitadelSlaughterHordeContainBehaviorData *data)
+	: GarrisonContain(thing, data, data->horde.m_garrison, data->m_dieMux, &data->horde), m_citadel(data)
+{
+	getObject()->logic().noteStop(stopLine());
+}
+
+bool CitadelSlaughterHordeContain::hasRingStatus(const Object &obj) const
+{
+	// BFME2 0x4807C7: any overlap, also testing the producer of a horde member.
+	for (size_t i = 0; i < m_citadel->ringStatus.size(); ++i)
+		if (m_citadel->ringStatus[i] & obj.getStatusBits()[i])
+			return true;
+	return false;
+}
+
+bool CitadelSlaughterHordeContain::isValidContainerFor(const Object &obj, bool, bool checkPath) const
+{
+	if (obj.getControllingPlayer() != getObject()->getControllingPlayer())
+		return false;
+	bool ring = hasRingStatus(obj);
+	if (!ring && obj.testStatus((unsigned)CombatNames::statuses().hordeMember))
+		if (const Object *producer = obj.logic().findObjectByID(obj.getProducerID()))
+			ring = hasRingStatus(*producer);
+	if (!ring)
+		return false;
+	if (checkPath)
+		if (const AIUpdateInterface *ai = obj.getAIUpdateInterface())
+		{
+			Coord3D entry;
+			getEntryOffset(entry);
+			const Coord3D from = *obj.getPosition();
+			Pathfinder &pf = ai->world().pathfinder();
+			if (!pf.clientSafeQuickDoesPathExist(ai->locomotorInfo(), &from, &entry, &ai->adapter()) && !quickPathToContainer(pf, ai->locomotorInfo(), from, *getObject(), &ai->adapter()))
+				return false;
+		}
+	return true;
+}
+
+bool CitadelSlaughterHordeContain::addToContain(Object *obj)
+{
+	if (!obj || !isValidContainerFor(*obj, true, false))
+		return false;
+	if (!GarrisonContain::addToContain(obj))
+		return false;
+	if (hordeOf(*obj))
+		return true; // the horde enters first; its members must actually reach the entry
+	Object *parent = obj->getContainedBy();
+	if (parent && parent != getObject())
+	{
+		// BFME2 SlaughterHordeContain::AddHordeMember: a HORDE_MEMBER rejoins;
+		// only the final member invokes the citadel callback on its parent.
+		// RotWK checks the delivery only here, when an object enters (RW 0x883FC3..0x88403F in RW 0x883B4A: the horde's slot 0xF4, no member
+		// on the way); nothing else calls the callback RW 0x8840FC, so a last approaching member that dies leaves the delivery undone, as in retail.
+		if (auto *horde = hordeOf(*parent); horde && horde->allMembersEntered())
+			deliverRing(*parent);
+	}
+	else
+		deliverRing(*obj);
+	return true;
+}
+
+void CitadelSlaughterHordeContain::deliverRing(Object &rider)
+{
+	Object *obj = &rider;
+	// BFME2 CitadelSlaughterHordeContain 0x480E9A: idle, clear the configured
+	// status, destroy (not kill) the closest filtered object, apply upgrades by
+	// type, emit FX, and remember the carrier for next update's exit.
+	if (auto *ai = obj->getAIUpdateInterface())
+		ai->aiIdle(ai->lastCommandSource());
+	for (unsigned bit = 0; bit < 128; ++bit)
+		if (m_citadel->ringStatus[bit / 32] & (1u << (bit % 32)))
+			obj->setStatus(bit, false);
+	GameLogic &logic = getObject()->logic();
+	PartitionFilterFn filter([&](Object &candidate) { return ObjectFilterMatch::allows(logic, m_citadel->objectToDestroy, candidate, obj->getControllingPlayer()); });
+	if (Object *ring = logic.partition().getClosestObject(*getObject()->getPosition(), 9999.0f, FROM_BOUNDINGSPHERE_3D, {&filter}))
+		logic.destroyObject(ring);
+	for (const std::string &name : m_citadel->ringUpgrades)
+	{
+		const UpgradeTemplate *upgrade = Player::resolveUpgrade(name, true);
+		if (upgrade->getUpgradeType() == UPGRADE_TYPE_PLAYER)
+			getObject()->getControllingPlayer()->addUpgrade(upgrade, Player::UPGRADE_STATUS_COMPLETE);
+		else
+			getObject()->giveUpgrade(upgrade);
+	}
+	if (!m_citadel->ringFX.empty())
+		logic.fxEvents().emit(FXEventLog::objectEvent(FXEvent::OBJECT_FX, "CitadelSlaughterHordeContain", logic.getFrame(), m_citadel->ringFX, *getObject()));
+	m_ringExit = obj->getID();
+}
+
+UpdateSleepTime CitadelSlaughterHordeContain::update()
+{
+	// BFME2 0x480FE2: the ring carrier exits on the following update.
+	if (Object *obj = getObject()->logic().findObjectByID(m_ringExit))
+		if (auto *ai = obj->getAIUpdateInterface())
+		{
+			if (hordeOf(*obj))
+				ai->aiHordeExit(getObject(), ai->lastCommandSource());
+			else
+				ai->aiExit(getObject(), ai->lastCommandSource());
+		}
+	m_ringExit = INVALID_ID;
+	// RotWK's update (RW 0x884244 -> 0x8840D4) never checks for a delivery: a battalion whose last approaching member dies after the others
+	// entered keeps the ring inside until it is evacuated and enters again (see addToContain)
+	return GarrisonContain::update();
+}
+
+void CitadelSlaughterHordeContain::crc(StateHasher &h) const
+{
+	GarrisonContain::crc(h);
+	h.addU32(m_ringExit);
+}
+
+void CitadelSlaughterHordeContain::xfer(Xfer &x)
+{
+	SnapshotXfer::version(x, 1, 1);
+	GarrisonContain::xfer(x);
+	x.xferObjectID(&m_ringExit);
 }

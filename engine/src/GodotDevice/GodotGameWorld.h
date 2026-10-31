@@ -17,10 +17,13 @@
 
 #pragma once
 
+#include "GameLogic/Object/ObjectGeometry.h"
+
 #include <array>
 
 #include "GameClient/VideoPlayer.h" // lane CAMP-1H: m_videos (complete for the unique_ptr)
 #include "GameClient/EndGame.h"
+#include "GameClient/ShroudFade.h" // lane FOGFX-1: m_shroudFade
 #include "GameClient/CommandLogLoad.h" // lane SAVE-2: m_saveLoad (complete for the unique_ptr)
 #include "Common/System/SaveGame/SaveGameFile.h"
 #include "GameClient/ScriptCameraDirector.h"
@@ -70,6 +73,7 @@ namespace godot
 {
 
 class FXPlayer;
+class GodotWeather; // lane WEATHER-1
 class RetailFileSystem;
 class W3DInstancer;
 
@@ -151,6 +155,7 @@ public:
 	int64_t get_shroud_status_at(double x, double y) const;
 	int64_t get_object_shroud_status(int64_t objectId) const;
 	void set_shroud_drawn(bool on);
+	void set_shroud_fade(bool on); // lane FOGFX-1: the shroud texture's fade (RW 0x472CF2); off: the texels land at once (a before / after proof)
 	PackedByteArray get_shroud_cells() const;
 	// lane PROJ-1: the projectile objects in flight (KindOf PROJECTILE with a BezierProjectileBehavior): id, template, position, the position of the previous logic frame, the unit
 	// X axis of the basis, the flight step / segment count and whether it has landed. The client draws them (the streak draw module is not ported: stop S-365).
@@ -162,6 +167,12 @@ public:
 	Dictionary get_end_game_state() const;
 	int hud_end_game_timer() const;
 	Array take_end_game_requests();
+	// lane SDK-1b (a): switches the asset packs on or off; game.gd switches them on before every game (lane SDK-1c: online too). When the
+	// answer changes, the scene is cleared and the drawables' asset manager and the effects' textures are rebuilt, so nothing drawn before
+	// stays. {loaded: any packs, used: they are applied, changed}
+	Dictionary set_asset_packs_used(bool used);
+	PackedStringArray take_sdk_banners(); // lane SDK-2: the mod scripts' ui.banner texts since the last call
+	PackedStringArray take_sdk_reports(); // lane SDK-2: their report lines ("SDK <mod>: ...")
 	// GameLogic::clearGameData (RW 0x7792BC): keeps the score screen's data (when `show_score_screen`) and tears the game down (the worker stopped, the
 	// network session, audio, effects and objects released); a new game may start afterwards. { ok, score_screen: { type, frames, entries: [...] } }
 	Dictionary clear_game_data(bool show_score_screen);
@@ -184,6 +195,9 @@ public:
 	Dictionary debug_clear_weather();
 	// lane BACKLOG-8 r2 (proof captures): AIData UseFormations for the running game (test hooks only, never in a network game)
 	Dictionary debug_set_use_formations(bool on);
+	// lane WEATHER-1 (logged test hook, test_hooks only): TheGlobalWeatherSystem::setWeather(weather, 0, frames) (RW 0x71A024) without a power, so a viewer
+	// sees the client weather of Freezing Rain (RAINY) or Darkness (CLOUDY) on a map loaded without starting bases (no spell book can be used there)
+	Dictionary debug_set_weather(int64_t weather, int64_t frames);
 	// read-only: the live objects of `player` [{ id, template, structure, commandcenter, x, y, z }] (between logic frames)
 	Array get_player_objects(const String &player);
 	Array get_logic_trees(double x, double y, double radius) const; // lane SPELL-3: the logic's map trees within radius (2D): x, y, id, toppled, value
@@ -333,6 +347,7 @@ public:
 	// the builder's hero (a .cah record) on the loaded map's preview object (RW 0x9C0E03 then RW 0x80ACE3 through CreateAHeroGame::applyBuilder): { ok, error };
 	// refused in a started skirmish, a network game or under the logic worker, and while cah_builder is off
 	Dictionary cah_preview_apply(int64_t object_id, const PackedByteArray &record);
+	Dictionary cah_preview_set_orientation(int64_t object_id, double angle);
 	// the builder's map locations (AptMyHero + 0x164, RW 0x9C09FC: an object whose map name holds '_' is the location atoi(after the '_')), indexed by
 	// MapLocation: [{ id (0: none), name, template, x, y, z, angle }]
 	Array cah_preview_locations() const;
@@ -347,7 +362,8 @@ public:
 	// real, string } ], has_position, x, y, z } ]
 	Array take_script_requests();
 	// steps the script camera director by `delta_ms` of render time: { moving, has_target, x, y, z (SAGE), has_angle, angle, reset_view, letterbox,
-	// input_disabled, caption (label), caption_text (the game text), caption_ms, fade }; `camera` gives the current look-at { x, y, z, angle } (the start of a move)
+	// input_disabled, caption (label), caption_text (the game text), caption_ms, fade (the presented intensity), fade_type (retail TFade) };
+	// `camera` gives the current look-at { x, y, z, angle } (the start of a move)
 	Dictionary update_script_view(double delta_ms, const Dictionary &camera);
 	// lane CAMPUI-1: InGameUI.ini's MilitaryCaption* rows with language.ini's caption fonts (MilitaryCaptionSettings): { ok, error, color (Color),
 	// position (Vector2 fractions), centered, font, point_size, bold, title_font, title_point_size, title_bold, delay_ms }
@@ -374,6 +390,11 @@ public:
 	Dictionary debug_script_team(const String &name);
 	Dictionary debug_script_place_at(const String &name, double x, double y);
 	Dictionary debug_script_kill_team(const String &name);
+	// lane BFME2CAMP1 (test_hooks only, never in a network game): a named unit (`team` false) or every live member of a script team (`team` true) ordered
+	// to a point as a player's move (aiMoveToPosition, CMD_FROM_PLAYER), or teleported there (Object::teleportTo without keeping the AI: it idles and
+	// drops its path, RW 0x696E63); { ok, count }
+	Dictionary debug_script_move_to(const String &name, bool team, double x, double y);
+	Dictionary debug_script_teleport(const String &name, bool team, double x, double y);
 	static void bindScriptMethods();
 	// ---- lane CHEAT-1 (GodotDevice/GodotGameWorldCheats.cpp): the open Cheat Mode (GameLogic/CheatMode.h; the API: docs/CHEAT_MODE.md) ----
 	// { enabled, seat_slot, seat_player, seat_name, local_is_seat, voided, executed, refused, label }
@@ -397,6 +418,7 @@ public:
 	// logic_thread, progress, test_hooks, record_memory (lane SAVE-2: the mission is recorded in memory so it can be saved) }; the report of start_new_game plus "start" { local_player, local_player_index, camera_start (the map's
 	// InitialCameraPosition waypoint, else Player_1_Start), slot_players [], starting_objects [] } and "mission" (the mission's record)
 	Dictionary start_campaign_mission(const Dictionary &options);
+	Dictionary start_tutorial(const Dictionary &options); // lane BFME2CAMP1: AptMainMenu::OnTutorial's Basic / Advanced (GodotGameWorldCampaign.cpp)
 	// the running mission's end: { ended, victory, action, frame } (the script engine's VICTORY / QUICKVICTORY / DEFEAT, ScriptEngine::endRequests)
 	Dictionary campaign_status() const;
 	// the campaign progress sidecar of lanes CAMP-1 .. SAVE-4 (CampaignProgress's text): load -> { ok, campaign, mission, difficulty, victorious, error }.
@@ -419,6 +441,17 @@ public:
 	// victorious, ready, advanced, description, auto_save -> {ok, path, map, menu_mission} or {ok false, error}
 	Dictionary save_campaign_menu(const String &path, const Dictionary &options);
 	SaveGameCompatibility menuSaveVerdict(const SaveGameHeader &header) const; // lane CAMPSAVE-1: one verdict for the listing and check_save
+	// lane WOTR2 milestone 3: the War of the Ring map's save (save point 2, game kind 8; LivingWorldGame::save_state's bytes in the LWLD part): options
+	// description, scenario (the LivingWorldCampaign), state (PackedByteArray), state_hash, session (the host's, PackedByteArray) -> { ok, error, path,
+	// bytes }; read_wotr_save(path) reads one back after the verdict -> { ok, error, scenario, description, state, state_hash, session }
+	Dictionary save_wotr_map(const String &path, const Dictionary &options);
+	// WOTR2 milestone 6: a save inside a War of the Ring battle (save point 3): the battle's game at F plus the strategic game and session (options)
+	Dictionary save_wotr_battle(const String &path, const Dictionary &options);
+	Dictionary read_wotr_save(const String &path) const;
+	// like a campaign menu save it holds no log: the data identity must match and the scenario must exist (the build need not be the same; the block's
+	// own version is checked by the load)
+	SaveGameCompatibility wotrSaveVerdict(const SaveGameHeader &header) const;
+	SaveGameCompatibility wotrBattleSaveVerdict(const SaveGameHeader &header) const; // WOTR2 milestone 6
 	static std::string campaignMapPath(const std::string &map);   // lane CAMPSAVE-1: "MAP ANG Angmar" -> "maps/map ang angmar/map ang angmar.map"
 	std::string campaignMapDisplay(const std::string &map) const; // its map cache display name (the map itself when the cache lacks it)
 	// list_saves(dir): the saved games of a folder, newest first: the .obfmesave files read by their header (path, name, map, date, time, kind, frame,
@@ -507,8 +540,22 @@ public:
 	// missing_fx_lists, unresolved_particle_systems (lane FX-3: retail's NULL templates, not played), fire_fx_at_bone, fire_fx_on_object, attached_live, attached_created, attached_destroyed, bone_misses, sounds,
 	// logic_events, stops, particles: FXPlayer.get_stats() }
 	Dictionary get_fx_report() const;
+	// lane WEATHER-1: the weather of the live game (GodotWeather::report): { loaded, files, snow, cloud, sound, client_frame, terrain_materials, errors, stops }
+	Dictionary get_weather_report() const;
+	// lane WEATHERFX-1: GodotWeather::fxState (the Enhanced look's weather reads it every render frame; empty without weather)
+	Dictionary get_weather_fx_state() const;
+	// lane WEATHERFX-1: the Enhanced look's wind: the vegetation SwayOffsets drawn times `scale` (1 = retail, the default; presentation only)
+	void set_weather_fx_sway(double scale);
+	// lane WEATHERFX-1: the ground height at SAGE (x, y) from the map's height map as loaded (GodotWeather::groundHeight): never waits for the logic
+	// worker (get_ground_height reads the live logic), so the Enhanced weather can place its rain, mist and bolts every render frame
+	double get_weather_fx_ground(double x, double y) const;
 	// the FXPlayer that draws the live effects (null before setup() succeeded)
 	Node3D *get_fx_player() const;
+	// lane GLOW-1 (S-5231): the static detail level's EffectsLOD (GameLODManager::state().effectsLOD, 0 VeryLow .. 4 UltraHigh): VeryLow and Low draw neither the map's
+	// colour grade nor the glow (RW 0x48789F). Applied at once to the loaded game's glow host and to the ones loaded later.
+	void set_effects_lod(int64_t lod);
+	// the glow pass host of the loaded game (null without one): get_glow_stats / get_choice
+	Node3D *get_glow_host() const;
 	// lane OPTS-2: the texture reduction of the static detail level for the W3D textures loaded from now on (W3DMaterialFactory::Set_Texture_Reduction)
 	static void set_texture_reduction(int64_t reduction);
 	static int64_t get_texture_reduction();
@@ -528,8 +575,30 @@ public:
 	// lane ONLINE-2: an online game: the START JSON the lobby service sent (GameNetwork/OnlineStart.h); {ok, slot, relay | error}; then net_poll / net_begin as
 	// for a LAN game. net_profile_digest: this install's profile identity MD5 (the lobby compares the players')
 	Dictionary net_online(const String &start_json);
+	Dictionary online_war_phase(const String &start_json, int64_t phase); // validate the new relay ticket before parking the current phase
+	Dictionary online_war_map_begin(); // return from a battle only with a validated, fresh map ticket
+	bool net_is_online() const { return m_netStarted && m_netStart.online; }
 	String net_profile_digest() const;
 	Dictionary net_begin(const Dictionary &options);
+	// WOTR2 milestone 8 (step 2b): a LAN War of the Ring (lan_begin's start of a game mode 1): the strategic map's lockstep on the game socket, attached
+	// to `living_world` (a LivingWorldGame whose war started from the START's GameInfo); `slot_of_player`: the war's player i plays from lobby slot
+	// slot_of_player[i]. options: { disconnect_ms, player_timeout_ms } (tests). { ok | error }
+	Dictionary lan_strategic_begin(Object *living_world, const Array &slot_of_player, const Dictionary &options);
+	// WOTR2 milestone 8 (Sol wotr2m8s2b): the LAN war is over for this client (after LivingWorldGame.net_leave): the game socket, the start and the lobby
+	// objects go as clear_game_data's teardown of a LAN game, so the next skirmish starts as a skirmish
+	void lan_strategic_end();
+	// WOTR2 milestone 8 (step 3): a LAN war's real-time battle (RW 0x6497EC on every peer: no host message): the battle's start built from the war's START
+	// (`message`: the battle NewGameMessage wotr.gd built from the war state; `lobby_slot_of_battle_slot`: the war lobby slot of each battle slot, -1 none):
+	// the battle slots' human addresses, the local battle slot. The next start_new_game + net_begin plays it on the war's socket; clear_game_data keeps the
+	// socket and the war's START; lan_war_battle_end puts the war's START back for the strategic session. { ok, local_slot | error }
+	Dictionary lan_war_battle(const Dictionary &message, const Array &lobby_slot_of_battle_slot);
+	void lan_war_battle_end();
+	// (Sol review wotr2m8s3) a human of the war battle's network game left or was dropped: retail ends the war for everyone (0x6B8 during a battle ->
+	// QuitWar RW 0x6B94C6); every peer sees the departure at one frame of the lockstep
+	bool lan_war_battle_departed() const;
+	// WOTR2 milestone 8 (step 3): T_end of the battle from the logic's victory events (EndGameController::victoryTimerEndFrame), -1 before the victory;
+	// waits for the logic (an Exit's one-off check, not a per-frame read)
+	int64_t lan_war_battle_end_frame() const;
 	Dictionary net_status() const;
 	// lane ANTICHEAT-1 (C++ only, from the HUD): the local player's view for the relay's log of an online game it plays (not a spectator, not LAN):
 	// Network::submitView with the logic frame shown; ignored otherwise
@@ -595,6 +664,9 @@ public:
 	// answering late starts while the game runs; lan_close drops it. lan_status: { open, in_game, host, slot, started, games, players, humans, accepted (the
 	// joiners'), accepted_me, map, errors, log }
 	Dictionary lan_open(const Dictionary &options);
+	// WOTR2 milestone 8 (step 4): the host's game becomes the saved war resumed: `lobby` the save's lobby (its START dictionary: the scenario, the rules,
+	// every slot), `seats` the saved humans' seats other than the host's ([slot, name]); the seats are reopened for their players
+	Dictionary lan_host_set_resume(const String &save, int64_t state_hash, const Array &seats, const Dictionary &lobby);
 	void lan_close();
 	Dictionary lan_begin();
 	// lane HERO-2: the local player's Create-a-Hero for its slot (get_create_a_hero_record's record; empty: none), sent to the host with the whole record
@@ -604,6 +676,8 @@ public:
 	LANAPI *lan() const { return m_lan.get(); }
 	// lane ONLINE-4: the faction and colour counts the online lobby client checks the lobby's game views against (false before setup())
 	bool onlineLimits(int &factions, int &colors) const;
+	// WOTR2 milestone 8: the regions of a War of the Ring scenario's region campaign (a LAN war's start positions), -1 when the stores have no such scenario
+	int warRegionCount(const std::string &scenario) const;
 	Dictionary prepare_replay(const String &path);
 	Dictionary start_replay(const Dictionary &options);
 	Dictionary replay_status() const;
@@ -648,6 +722,7 @@ protected:
 private:
 	mutable Dictionary m_observedRead; ///< net_observed_unwaiting(): the last net_observed() read where the logic was held
 	Dictionary load_internal(const LiveGame::Options &lo, const String &map_name, const Dictionary &options, const Callable &progress, bool withTerrain);
+	Dictionary campaignHudStart() const; ///< lane BFME2CAMP1: the HUD's start of a campaign mission or tutorial (the local player, the first camera)
 	std::unique_ptr<NewGameStart> m_start;           ///< the prepared new game (LiveGame::Options::start points into it)
 	std::vector<MapCacheEntry> m_mapCache;           ///< maps\\mapcache.ini, read by setup()
 	struct EntryView
@@ -670,6 +745,11 @@ private:
 		int64_t tireInstance = -1;          ///< the instance they were handed to
 		bool fogLook = false;               ///< lane VISUAL-2: the instance is drawn with the fogged light (a last-seen object in the fog)
 		int64_t fogLookInstance = -1;       ///< the instance it was handed to
+		int occlusion = 0;                  ///< lane OCCLUDE-1: the behind-building code the instance shows (occluder bit 0x100 | colour slot)
+		int64_t occlusionInstance = -1;     ///< the instance it was handed to
+		const void *shadowState = nullptr;  ///< S-3304: the model condition state and module data the shadow eligibility was made from
+		const void *shadowData = nullptr;
+		int64_t shadowInstance = -1;        ///< the instance it was handed to
 		std::uint32_t colorsRevision = 0;   ///< lane CAH-2: Drawable::customColorRevision the model choice saw
 		// lane HCKEY-1: a static entry's model key (lowered name + floor swap suffix + palette) and the inputs it was made from, rebuilt only
 		// when one of them changes (community PR #60 made it every frame for every coloured static drawable)
@@ -680,6 +760,16 @@ private:
 		bool staticKeyHouse = false;        ///< m_houseColors when it was made
 		std::uint32_t staticKeyOwner = 0, staticKeyCustom[3] = { 0u, 0u, 0u };
 		std::string staticKey;             ///< the key
+		int staticGlow = 0;                ///< lane GLOW-1: the static model's glow flags (0 none, 1 glow, 2 emissive only), part of staticKey
+		// lane PERF-HD: a posed entry's model key inputs (refresh_views made the house-coloured key string, compared it and looked the shadow
+		// flag up by dynamic_cast for every animated drawable every frame): while these hold, `model` is still the key they make
+		bool animKeyValid = false;
+		bool animKeyShown = false, animKeyHouse = false;
+		const std::string *animKeyName = nullptr; ///< the poseView's modelName (a model condition state's string, stable while the state holds)
+		const void *animKeySwaps = nullptr;       ///< the poseView's textureSwaps
+		int animKeyKind = -1;
+		int animKeyGlow = 0;                      ///< lane GLOW-1: the poseView's glow flags (part of the key since the glow pass)
+		std::uint32_t animKeyColors[3] = { 0u, 0u, 0u };
 		HouseColorParams staticKeyPalette; ///< and what it was made from (used when a new model is built)
 		bool staticKeyColored = false;
 		std::vector<std::pair<std::string, std::string>> staticKeySwaps;
@@ -699,8 +789,11 @@ private:
 	void build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &report, Array &errors, Array &stops);
 	void refresh_views(double deltaMs);
 	// VIS-1: the local player's shroud as a cell texture on the terrain materials (S-567)
-	void refresh_shroud(bool force);
+	void refresh_shroud(bool force, double dtMs = 0.0);
+	void loadWeather(const String &map_name, Dictionary &report); // lane WEATHER-1: errors under report["weather_errors"]
 	Ref<godot::ImageTexture> m_shroudTexture;
+	ShroudFade m_shroudFade; ///< lane FOGFX-1: the texels' fade toward their cell's level (RW 0x472CF2), client only
+	bool m_shroudFadeOn = true;
 	bool m_shroudDrawn = true;
 	// lane BIGBATTLE-1: the shroud parameters the terrain's materials were last given (refresh_shroud visits them only when one changes)
 	bool m_shroudParamsSet = false;
@@ -718,6 +811,7 @@ private:
 	std::string m_videosError;             // lane CAMP-1H: why the Video INIs did not load
 	std::unique_ptr<GameLogicSettings> m_settings;   ///< GameData / AIData / MultiplayerSettings (and the lobby colours), read once by setup()
 	std::unique_ptr<MapObjectOptions> m_options;
+	void rebuildPackAssets(); // lane SDK-1b: the scene cleared, the drawables' asset manager and the effects' textures rebuilt
 	std::unique_ptr<W3DFileSource> m_source;
 	std::unique_ptr<WW3DAssetManager> m_assets;
 	mutable UnsignedInt m_netHashFrame = 0;   ///< lane RENDERWAIT-1: net_status's last state hash (computed where the logic is held) and its frame
@@ -738,6 +832,14 @@ private:
 	std::unique_ptr<LANLobbyHost> m_netHost;
 	std::unique_ptr<LANLobbyClient> m_netClient;
 	LobbyStart m_netStart;
+	LobbyStart m_warStart;  ///< WOTR2 milestone 8: the war's START while one of its battles runs (m_netStart is the battle's)
+	LobbyStart m_onlineNextPhase;
+	std::uint64_t m_onlineWarRootId = 0;
+	int m_onlineWarPhase = 0;
+	bool m_onlineNextReady = false;
+	bool m_warBattle = false; ///< a LAN war's battle runs: clear_game_data keeps the socket and the war's START
+	bool m_warLeftBeforeEnd = false; ///< net_finish of a war battle: the local leave came before T_end (clear_game_data's war_left_before_end)
+	bool m_warOtherDepartedBeforeEnd = false; ///< net_finish of a war battle: another player's departure came before T_end (war_other_departed_before_end)
 	bool m_netStarted = false;
 	std::unique_ptr<NetGameSession> m_netSession;
 	// lane MP-2: the recording of a local game (start_new_game option "record") and the playback of a replay (start_replay)
@@ -764,10 +866,12 @@ private:
 	{
 		std::string campaign, map;
 		int mission = 0, difficulty = 1;
+		std::string carryover; ///< lane BFME2CAMP1: the campaign's carry-over at the mission's start (CampaignCarryover::State text; "" none)
 	};
 	CampaignStart m_campaignStart, m_pendingCampaign;
 	// the identity a game of `profile` runs under (net_profile is the player's option's; a campaign mission always runs Faithful)
 	ProfileIdentity profileIdentityFor(SimulationProfile profile) const;
+	std::string profileSimulationData() const; // lane PROFILE-2: the identity's simdata line ("error" when the mount's game data cannot be read)
 	void releaseLocalDrivers();
 	bool m_netLoaded = false, m_netScript = false;
 	bool m_netRejoining = false; ///< lane ONLINE-3: the rejoin's catch-up runs (NetGameSession::rejoinStep)
@@ -808,6 +912,17 @@ private:
 	};
 	std::unique_ptr<TreeTopple> m_treeTopple;
 	std::vector<ToppleTreeView> m_treeViews; ///< index = the animator's tree index
+	// lane TREES1: the client-only shrubs and props a construction (TheTerrainVisual slot 0x48) or a felled tree (slot 0x4C, props only) removes
+	struct FootprintView
+	{
+		int64_t instance = -1;
+		Coord3D position{};
+		float scale = 1.0f;
+		bool prop = false; ///< MAPOBJ_CLIENT_PROP (the prop buffer), else a shrub (the shrub buffer)
+		bool removed = false;
+	};
+	std::vector<FootprintView> m_footprintViews;
+	void clearFootprint(const Coord3D &pos, float angle, const std::vector<ObjectGeometry::Shape> &shapes, bool propsOnly);
 	size_t m_treeEventsSeen = 0;
 	void heldClientWork(); // lane RENDERWAIT-1: the render side's reads of the live logic, where it is held
 	void updateTreeTopple(double dt);
@@ -826,7 +941,6 @@ private:
 	bool m_textureAnimation = true;
 	double m_timeScale = 1.0;
 	double m_textureClock = 0.0;
-	double m_stealthClockMs = 0.0; ///< lane STEALTH-1: the client clock of the friend's invisibility opacity pulse
 	double m_lastAdvanceMs = 0.0, m_lastLogicMs = 0.0, m_lastSyncMs = 0.0, m_lastStreakMs = 0.0;
 	// lane PERF-1: what the last advance spent where, for the hitch report of the benchmarks (get_frame_timings): the shroud texture, the views, the effect
 	// player, and the first-use work (models the dynamic instancer built, streak materials created) with its time
@@ -850,6 +964,11 @@ private:
 		bool hidden = false;  ///< lane VISUAL-2 r2: the drawable is not drawn (Drawable::presentedLook): no point recorded, no ribbon
 	};
 	W3DDrawPoseView m_viewPose;               ///< lane PERF-3: refresh_views reads the pose request by reference (W3DScriptedModelDraw::poseView)
+	// lane OCCLUDE-1: the behind-building colours by slot (controlling player index + 1; RTS3DSceneOcclusion::occludedColor) and the switch they were
+	// last handed to the shaders with (W3D_Set_Occlusion); the texture is rewritten only when a colour changed
+	Ref<ImageTexture> m_occlusionColors;
+	std::uint32_t m_occlusionTable[W3D_OCCLUSION_SLOTS] = {};
+	int m_occlusionOn = -1;
 	int m_streakWeather = 0;                  ///< lane PERF-1: the map's WeatherType for the streak textures (0 NORMAL, 1 SNOWY), set by load_map
 	std::map<uint64_t, StreakView> m_streaks;  ///< key = drawable id << 8 | entry index
 	std::unique_ptr<W3DMaterialFactory> m_streakTextures;
@@ -861,7 +980,10 @@ private:
 	void reset_streaks();                      ///< drops trails, materials, errors and the texture factory (it references m_fs)
 	// lane FX-2
 	FXPlayer *m_fxPlayer = nullptr;            ///< child node, kept by clear_scene
+	ObjectID m_glowHost;                       ///< lane GLOW-1: the loaded game's glow pass host (a child, freed by clear_scene)
+	int64_t m_effectsLod = 4;                  ///< lane GLOW-1: GameLODManager::kDetectedLevel until the options say otherwise
 	std::unique_ptr<LiveFX> m_liveFX;          ///< destroyed before m_game (it is the logic's FX sink and the drawables' FX host)
+	std::unique_ptr<GodotWeather> m_weather;   ///< lane WEATHER-1: the map's weather (snow / rain, darkness, lightning, its sound); destroyed before m_game
 	// lane SPELL-4: the BuffNugget buffs (GameClient/BuffDraw.h) as instances of the live objects' instancer, by TBuff serial
 	std::map<uint64_t, int64_t> m_buffInstances;
 	unsigned long long m_buffsDrawn = 0;

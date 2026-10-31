@@ -5,7 +5,7 @@
 # key and nothing here can reach it: no secrets (not even GITHUB_TOKEN's write scopes: `contents: read`), no caches (a fresh build, and no
 # cache another workflow could have written), every action pinned by its full commit sha, every download checked against a pinned hash.
 #
-#   macos    macos-15 (arm64): tools/release/package_macos.py exactly as the Mac build host runs it (build_macos_release.sh): a fresh
+#   macos    macos-15 (arm64): tools/release/package_macos.py as the Mac build host ran it before RELGH-2: a fresh
 #            arm64 build, macOS 13 minimum, the Godot 4.7.2 export with the pinned templates, ad-hoc codesign (no Apple key), the strict
 #            audit. Artifact: <stem>.zip, <stem>.zip.sha256, <stem>.inventory.txt, README-MAC.txt (the set autorelease.sh accepts).
 #   linux    ubuntu-24.04: tools/release/build_linux.sh (Godot's own Linux SDK: the GLIBC 2.28 floor, checked there). Artifact: the GDExtension
@@ -22,9 +22,12 @@ name: Release package
 run-name: Release package ${{ inputs.platform }} ${{ inputs.version }} (request ${{ inputs.request }})
 
 on:
-  # RELSIGN-1: the release workflow (release.yml) calls these same jobs for its builds (one platform per call; no secrets are passed and
-  # none are declared, the caller's job has contents: read only)
+  # RELSIGN-1: the release workflow (release.yml) calls these same jobs for its builds (one platform per call; the caller's job has
+  # contents: read only). CRASHACT-1: one secret is declared, the crash service's client key, for the macOS package step alone
   workflow_call:
+    secrets:
+      CRASH_CLIENT_KEY:
+        required: false
     inputs:
       platform:
         required: true
@@ -136,6 +139,8 @@ jobs:
           echo "$T/bin" >> "$GITHUB_PATH"
           "$T/Godot.app/Contents/MacOS/Godot" --headless --version
       - name: Build the package (package_macos.py)
+        env:
+          CRASH_CLIENT_KEY: ${{ secrets.CRASH_CLIENT_KEY }}
         run: |
           mkdir -p "$RUNNER_TEMP/out"
           python3 tools/release/package_macos.py --version "$IN_VERSION" --godot "$RUNNER_TEMP/tools/Godot.app/Contents/MacOS/Godot" \

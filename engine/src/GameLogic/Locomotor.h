@@ -339,8 +339,8 @@ void parseLocomotorSet(INI *ini, void *instance, void *store, const void *userDa
 //   0x5E76AC for NO_Z_MOTIVE_FORCE, FLOATING_Z, SCALING_WALLS (off a wall), SEA_LEVEL, SURFACE_RELATIVE_HEIGHT and ABSOLUTE_HEIGHT; HOVER 0x5E742E and
 //   SHIP 0x5E613F (lane SHIP-1).
 // NOT ported (reported through Locomotor::unverified(), acceptance stops S-081, S-084):
-//   x87/SSE parity of the CRT trigonometry, the ScalesWalls look-ahead of the dispatcher (RW 0x5E8956-0x5E8FF8), the ZAxisBehaviors
-//   FIXED_* and RELATIVE_TO_HIGHEST_LAYER, the cliff / wading
+//   x87/SSE parity of the CRT trigonometry, the ScalesWalls look-ahead of the dispatcher (RW 0x5E8956-0x5E8FF8), the remaining ZAxisBehaviors
+//   FIXED_RELATIVE_TO_GROUND_AND_BUILDINGS and RELATIVE_TO_HIGHEST_LAYER, the cliff / wading
 //   condition updates of RW 0x5E5785, and the HORDE mover's formation path nodes (types 2, 3, 7, 8).
 // =====================================================================================================
 
@@ -527,12 +527,15 @@ public:
 	void moveTowardsPositionLegs(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);   // RW 0x5E63F3
 	void moveTowardsPositionWheels(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed); // RW 0x5E83FD
 	void moveTowardsPositionHorde(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);  // RW 0x5E6D4F
+	void maintainCurrentPositionWings(LocomotorHost &host); // RW 0x5E74C1
 	void moveTowardsPositionOther(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);  // RW 0x5E6835
 	void moveTowardsPositionHover(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);  // RW 0x5E742E (lane SHIP-1)
 	void moveTowardsPositionShip(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);   // RW 0x5E613F (lane SHIP-1)
 	void moveForward(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);              // RW 0x5E586F
-	// RW 0x5E4F44 (ground branch): turns the working matrix by at most `maxTurnRate` radians towards `goal`.
+	// RW 0x5E4F44: turns the working matrix by at most `maxTurnRate` radians towards `goal`.
 	void rotateTowardsPosition(LocomotorHost &host, const Coord3D &goal, float maxTurnRate, float *outRelAngle);
+	// RW 0x5E4FD0 .. 0x5E5413 (lane TAKEOVER-1): its GIANT_BIRD branch (the transform turned about the pivot); false: nothing to turn
+	bool rotateGiantBird(LocomotorHost &host, const Coord3D &goal, float maxTurnRate, float *outRelAngle);
 	// RW 0x5E60C7: copy the object's transform into the working matrix, then rotateTowardsPosition with this
 	// locomotor's turn rate.
 	void rotateTowardsWrapper(LocomotorHost &host, const Coord3D &goal, float *outRelAngle);

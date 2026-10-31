@@ -821,6 +821,17 @@ def test_the_games_side_of_the_hand_over(tmp_path, keys):
         (d / "launcher-manifest.json.sig").write_bytes(ed25519.sign(keys["kms"], release_keys.envelope("manifest.json", body)))
         (d / LEXE).write_bytes(b"the launcher of v0.6.0")
 
+    nightly_secret = os.urandom(32)   # lane RELGH-2: a key trusted for nightly files only
+
+    def nightly_payload(version, secret=nightly_secret):
+        def change(d):
+            body = json.loads((d / "payload.json").read_bytes())
+            body["version"] = version
+            raw = (json.dumps(body, indent=2, sort_keys=True) + "\n").encode()
+            (d / "payload.json").write_bytes(raw)
+            (d / "payload.json.sig").write_bytes(ed25519.sign(secret, raw))
+        return change
+
     checks = [
         {"name": "the package's launcher", "dir": variant("ok", lambda d: None), "want": ""},
         {"name": "a replaced launcher", "dir": variant("replaced", lambda d: (d / LEXE).write_bytes(
@@ -855,6 +866,12 @@ def test_the_games_side_of_the_hand_over(tmp_path, keys):
         # SIGNKMS-1: the trusted list (old key, new key); the new key signs the envelope of the file's kind
         {"name": "an inventory sealed by the new key", "dir": variant("kms-payload", kms_sealed), "want": ""},
         {"name": "an update proven by the new key", "dir": variant("kms-proof", kms_proof), "want": ""},
+        # RELGH-2: the nightly-only key signs a nightly inventory, never a stable one
+        {"name": "a nightly inventory sealed by the nightly key", "dir": variant("nightly-payload", nightly_payload("v0.5.0-nightly.20261024")), "want": ""},
+        {"name": "a stable inventory sealed by the nightly key", "dir": variant("nightly-key-stable", nightly_payload("v0.5.0")),
+         "want": "the package's payload.json: the signature is not the OpenBFME release's"},
+        {"name": "an inventory sealed by a key in neither list", "dir": variant("nightly-other-key", nightly_payload("v0.5.0-nightly.20261024", os.urandom(32))),
+         "want": "the package's payload.json: the signature is not the OpenBFME release's"},
         {"name": "an inventory signature of the wrong kind", "dir": variant("kms-wrong-kind", lambda d: kms_sealed(d, "manifest.json")),
          "want": "the package's payload.json: the signature is not the OpenBFME release's"},
     ])
@@ -880,7 +897,7 @@ def test_the_games_side_of_the_hand_over(tmp_path, keys):
         (enospc / "request.json.tmp").write_bytes(b"")
     else:
         (enospc / "request.json.tmp").symlink_to("/dev/full")
-    cases = {"enospc_dir": str(enospc), "key": f"{ed25519.public_key(k).hex()},{ed25519.public_key(keys['kms']).hex()}", "repo": TEST_REPO, "check": checks, "launcher_dir": str(ldir), "version": "v0.6.0",
+    cases = {"enospc_dir": str(enospc), "key": f"{ed25519.public_key(k).hex()},{ed25519.public_key(keys['kms']).hex()}", "nightly_key": ed25519.public_key(nightly_secret).hex(), "repo": TEST_REPO, "check": checks, "launcher_dir": str(ldir), "version": "v0.6.0",
              "requests": str(tmp_path / "requests"), "unsigned_dir": str(folders["replaced"])}
     (tmp_path / "cases.json").write_text(json.dumps(cases))
     env = isolated_environment(tmp_path, OPENBFME_TEST_ARGS=str(argv), OPENBFME_TEST_MARKER=str(marker))

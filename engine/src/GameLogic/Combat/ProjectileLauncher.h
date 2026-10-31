@@ -7,8 +7,10 @@
 // TARGET FACTS (RotWK game.dat, caveat S-001): the object is made by ThingFactory::newObject (RW 0x6D165E) for the controlling player's default team of the source; the module loop walks the
 // object's module list (RW + 0x24C) asking each for the projectile interface (vtable + 0x48) and stops at the first answer; with none the new object is destroyed (RW 0x90FB6C); the
 // producer is set (RW 0x68B6A1) before the launch call, whose arguments are (victim | null, position | null, source, weapon slot, barrel, the firing weapon, the warhead, null); the slot is the
-// nugget's WeaponLaunchBoneSlotOverride when it is 0 .. 5 (RW 0x90FC05..0x90FC17). A nugget without a ProjectileTemplateName (the resolved template at RW + 0x14C is null) launches nothing.
-// INFERENCE (S-360): the garrison variant (ProjectileFilterInContainer: the container creates the projectile, RW 0x90FA81..0x90FAC9), the "source is its own projectile" variant (RW 0x90FACB)
+// nugget's WeaponLaunchBoneSlotOverride when it is 0 .. 5 (RW 0x90FC05..0x90FC17). ProjectileSelf selects the source object before testing ProjectileTemplateName
+// (RW 0x90FACB / 0x90FDAA). For position targets its launch transform is the source's transform (RW 0x90FDB6 .. 0x90FE2E); for object targets it uses the launch bone.
+// Without ProjectileSelf, a nugget without a ProjectileTemplateName (the resolved template at RW + 0x14C is null) launches nothing.
+// INFERENCE (S-360): the garrison variant (ProjectileFilterInContainer: the container creates the projectile, RW 0x90FA81..0x90FAC9)
 // and ProjectileStreamName are not ported.
 
 #pragma once

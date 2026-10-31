@@ -30,7 +30,7 @@ files.
 ## What you need
 
 - **The Rise of the Witch-king, patched to 2.01**, and **The Battle for
-  Middle-earth II, patched to 1.06**, both in **English**. RotWK always needs
+  Middle-earth II, patched to 1.06**, in any language. RotWK always needs
   BFME2 next to it, as in the original. All In One launcher installs work.
   A disc install patched with EA's official patch
   (`LotrBfMe2EP1-131073-english.exe`, which updates `INI.big` and `Maps.big`
@@ -55,7 +55,12 @@ files.
   8.6 GB, with Pause, Resume and Cancel. Every file is checked against
   OpenBFME's list of the 2.01 / 1.06 files, and the game offers the folders on
   its first start. It is on the launcher's **Game files** page; to hide it,
-  turn off *Offer to download the games* in Settings.
+  turn off *Offer to download the games* in Settings. Its **Language** picks
+  the game's text (and speech) language, and **Voices** can pick another
+  language's speech: English, Dutch, French, German, Italian, Norwegian,
+  Polish, Spanish or Swedish (Turkish and Russian are not offered: the
+  service does not list the sizes of some of their files). It starts in the
+  language of the games already found, and remembers the choice.
 - **Windows 10 or 11** (64-bit) with a graphics card that supports Vulkan or
   Direct3D 12, **x86-64 Linux** with Vulkan graphics (Mesa or the
   proprietary drivers), or **macOS 13 or newer on Apple Silicon** with Metal.
@@ -151,7 +156,30 @@ Wine, Proton (Steam), Lutris, Heroic and Bottles prefixes. It shows what it
 found; confirm the folders or choose them with **Browse...**.
 
 It then checks every game archive (size and MD5) against the list of the
-English 2.01 / 1.06 files; `Data1.big` (fonts, scripts and the built-in
+2.01 / 1.06 files. The game's language is taken from its `lang` folder
+(`lang/German.big` means German): the language-independent archives are the
+same in every language and are checked as always, and the language's own
+archives (`lang/<Language>.big`, `<Language>Audio.big` and the patch's
+`<language>patch201.big` / `<language>patch105.big`) are checked against the
+known MD5s of that language: English, Dutch, French, German, Italian,
+Norwegian, Polish, Russian, Spanish, Swedish and Turkish, as the All In One
+BFME Launcher service lists them (the German ones were also checked against a
+German retail install). The speech archive can be another language's: a
+folder with `lang/German.big` and `lang/FrenchAudio.big` plays German text
+with French voices. A language OpenBFME has not checked yet is accepted too:
+its language files must be there and be valid game archives (a missing or
+damaged one is still refused), and the game shows a warning when it starts.
+The warning says what that can mean (some text may look wrong, and in rare
+cases the game can crash) and that you can still play online with players
+who have the same language files. Its **Copy details** button copies the
+language, the file names, their sizes and checksums: post them in the OpenBFME
+Discord's `#feedback` channel or in a GitHub issue (see
+[Reporting a bug](#reporting-a-bug)) so we can check that language for
+everyone. Tick *Don't show this again for this install* to hide it for those
+folders (it comes back if the language files change; the choice is kept in
+`language-warning.cfg` in the game's data folder). The same details are in the
+session log. Set `OPENBFME_STRICT_LANGUAGE=1` to refuse such an install
+instead. `Data1.big` (fonts, scripts and the built-in
 Create-a-Heroes) is checked file by file inside it, because the disc and All
 In One copies of it differ. This takes about a minute the first time and is
 cached afterwards. The folders are remembered in `install-paths.cfg` in the
@@ -724,25 +752,33 @@ These are the open gaps a player is most likely to notice. Each one is a
 recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
 
 **Not available yet**
-- Your heroes' experience does not carry over from one campaign mission to
-  the next yet (S-4903), and the campaign's saves are OpenBFME's own, not the
-  original game's (S-1360).
-- War of the Ring.
+- Heroes carry over from one campaign mission to the next with their
+  experience, but the campaign's saves are OpenBFME's own, not the original
+  game's: a campaign saved in the original game cannot be continued (S-1360).
+- War of the Ring can be played alone or over LAN, and saved and resumed,
+  but not online yet (S-4075). A battle with more armies than its map has
+  start positions is decided automatically instead of being fought (S-1342).
 - Online play is a test feature; Quick Match, tournaments, statistics and
   friends have service-backed implementations, but War of the Ring online
   is not available (see [Online play](#online-play-test-feature)).
-- Game languages other than English: other installs are refused on the first
-  start (S-1561).
+- A language the All In One BFME Launcher service does not list is accepted,
+  but its language archives are not checked: the game shows a warning when it
+  starts (once per install, with *Copy details*; S-1561).
+  OpenBFME's own texts (the online screens, the rules tab) are English only.
+  Players whose games are in different languages may not be able to join
+  each other's games or play each other's replays.
 
 **Looks or sounds different**
-- Team colours on units and buildings are an educated guess at how the
-  original blends them, and may look different (S-119).
+- Team colours on units and buildings use the original's blend, but which
+  colour a map without one gets is an educated guess (S-119).
 - The computer opponent builds, attacks and finishes games, and uses its
-  heroes, spell book and powers, but it does not yet defend or expand the way
-  the original does, and it skips some powers (S-413, S-415, S-417, S-1421).
-- Ordinary unit and building shadows are not drawn yet (S-3304). Placement
-  previews can draw authored decal shadows, including area-of-effect decals;
-  that is not general model-shadow support.
+  heroes, spell book and powers, but it does not yet defend its base the way
+  the original does, it expands to a second base with only some factions, and
+  it skips some powers (S-417, S-1421).
+- Units, buildings and trees cast shadows, but they are not yet drawn exactly
+  like the original's, and a building's placement preview casts no model
+  shadow (S-3304). Placement previews can draw authored decal shadows,
+  including area-of-effect decals.
 - A destroyed enemy building out of your sight disappears at once instead of
   staying in the fog until you look again (S-561).
 - Some sounds are missing: units being damaged, scripted music and parts of
@@ -752,19 +788,16 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   click targets can be slightly off (S-130, S-455).
 
 **Menus**
-- Menus support keyboard navigation (arrows, Enter, Esc and PageUp/PageDown)
-  and controller navigation (D-pad/left stick, A/B and shoulder buttons).
-  This does not add controller orders during gameplay.
-- Skirmish's profile statistics page uses recorded local game results, not
-  placeholder labels.
-- The graphics detail settings set the particle limit, texture quality and
-  health bars, but OpenBFME doesn't draw shadows yet, and the model,
-  animation, terrain, water and shader detail rows are greyed out (S-3402).
-  A texture quality change shows from the next game.
+- Menus work with the keyboard (arrows, Enter, Esc and PageUp/PageDown) and
+  a game controller (D-pad/left stick, A/B and shoulder buttons), but a
+  controller cannot give orders during a game.
+- The graphics detail settings set the particle limit, texture quality,
+  shadows and health bars, but the model, animation, terrain, water and
+  shader detail rows are greyed out (S-3402). A texture quality change shows
+  from the next game.
 - Replays can be watched from *Load Replay*, with caster playback controls
-  (pause, speed and seeking), but Save Replay on the score screen is not
-  ported (S-1125, S-1126). The score screen's graphs are simplified (S-1063).
-- LAN: the disconnect screen has no chat (S-1123).
+  (pause, speed and seeking), but a replay cannot be saved under a name
+  (S-1125). The score screen's graphs are simplified (S-1063).
 - Online: when a player's game crashes, the others drop that player when the
   disconnect screen's bar runs out, but only if the game's first player still
   in it (the packet router) runs this version or later: everyone in an online
@@ -774,9 +807,16 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   bar runs out (S-4811).
 
 **In-game interface**
-- Help boxes include hero-bar and spell-book providers and command costs;
-  text wrapping and centering still use an inferred layout, and two retail
-  visibility guards are not ported (S-2702, S-2703).
+- Radar: the Ring and beacon markers and the stealth alerts are missing
+  (S-2451, S-2452).
+- Hero bar: a Create-a-Hero hero shows its class's icon, not its own picture
+  (S-2521).
+- Help boxes and tool tips: a hero's help does not count battles fought, the
+  main menu's My Heroes and Quit buttons show no tool tip, and the lobby, the
+  Create-a-Hero builder's power tips, the disband and rename tips, the control
+  bar's resource, command point and menu buttons and the War of the Ring map
+  have no tool tips yet (S-4612, S-4610). Help box text wrapping is an
+  educated guess (S-2702).
 - Build bubbles don't flash yet; queued-unit counts are drawn (S-2701).
 - Selection rings always use the highest-detail look, whatever the detail
   setting (S-2522).
@@ -788,7 +828,7 @@ There are many more, smaller stops; the README gives the current count.
 ## Troubleshooting
 
 **The game can't find my install, or refuses it.** Make sure both games are
-installed and patched (RotWK 2.01, BFME2 1.06) and in English. Choose the
+installed and patched (RotWK 2.01, BFME2 1.06), both in the same language. Choose the
 folders by hand with *Browse...*: the RotWK folder holds RotWK's archives,
 the BFME2 folder BFME2's. The screen says what is wrong with a folder: which
 file differs and what to do. A RotWK folder that mixes the two 2.01 layouts

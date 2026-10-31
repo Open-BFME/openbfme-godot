@@ -10,8 +10,8 @@
 //     logic frame (the row's phase is "every phase": six calls per logic frame, each with the cell budget of PATH-1's processPathfindQueue);
 //   * Object::~Object leaves the world (RW 0x69A89D) and the pathfinder drops the unit's reservations first (ZH Object::~Object calls
 //     removeObjectFromPathfindMap; RW 0x69A6C6 / 0x69A89D are the world seams GameLogic exposes);
-//   * pathPriority RW 0x663F48 = (DOZER ? 100 : 0) + 10 * (int8) veterancy level (RW 0x68D4D0) + (CAVALRY ? 5 : 0): the level is 0 until the
-//     experience tracker is ported (stop S-142);
+//   * pathPriority RW 0x663F48 = (DOZER ? 100 : 0) + 10 * (int8) crushable level (RW 0x68D4D0) + (CAVALRY ? 5 : 0) (lane PATHPRIO-1: the middle term
+//     was misread as the veterancy level);
 //   * isContained RW 0x6939DF, isIdle RW 0x6643FC, isMoving RW 0x664485 as read in the disassembly; speedOf RW 0x68B34C (the current speed of
 //     the AI's locomotor, 0 without one); the unit direction is the X axis of the object's transform (RW 0x70B9E0).
 // DONOR: ZH AI.cpp / AIPathfind.cpp ownership (TheAI->pathfinder()), ZH Object.cpp (relationships, canCrushOrSquish).
@@ -133,6 +133,8 @@ public:
 	const PathfindWallGeometry *getWallGeometry() const override; // lane WALL-1: from the world's PathfindWallMeshSource, kept while the transform holds
 	bool isSkirmishAIControlled() const override; // lane WALL-2: Waypoint::isValidUnitType's AllowNonSkirmishAI test
 	bool inMoveAwaySearch() const override;       // lane WALL-2: RW AI + 0x3CF (Waypoint::isValidUnitType's type 7 test)
+	bool hasCurrentWeapon() const override;             // lane LOS-1: RW 0x68B58C(0)
+	bool isClearGoalFiringLineOfSightTerrain(const Coord3D &goalPos, const PathfindObject &victim) const override; // lane LOS-1: RW 0x6CC6DD
 
 private:
 	// AIWorld::movementInfo of the object's template, remembered with the template it was looked up for (lane PERF-1: the pathfinder and the
@@ -145,9 +147,6 @@ private:
 	PathfindLayerEnum m_layer = LAYER_GROUND;
 	mutable const ThingTemplate *m_infoTemplate = nullptr;
 	mutable const ObjectMovementInfo *m_info = nullptr;
-	// lane HUD-5: the template's geometry with the object's own shape flags (Object::setGeometryActive, RW 0xAD3520: a gate's open / closed shapes)
-	mutable PathfindGeometry m_ownGeometry;
-	mutable std::uint32_t m_ownGeometryVersion = 0xFFFFFFFFu;
 	// lane WALL-1: the wall surfaces at the transform they were computed for
 	mutable PathfindWallGeometry m_wallGeometry;
 	mutable bool m_wallLooked = false, m_hasWall = false;
@@ -226,6 +225,14 @@ public:
 	// the overlap pass of the collision manager for mobile units: every pair of AI units whose footprints overlap meets in
 	// AIUpdateInterface::onCollide (RW 0x66E233), both ways, in id order (phase 2, RW 0x62E93B)
 	void processCollisions();
+	// lane MODCOMPAT-MOD1 (S-260 / S-780): RotWK's collision manager also holds the objects without an AI (every object whose KindOf has no NO_COLLIDE and no
+	// HORDE, RW 0x68E31F -> 0xB6C470); the overlap pass above has only the AI units, so the crates (objects with a crate collide, CrateCollide::isCrate) get
+	// their own pass after it in the same row: each live crate in id order meets the AI objects (no NO_COLLIDE, no HORDE) whose shapes overlap its own,
+	// in id order, both ways (ObjectCollide::onCollide, the lower id first). The crate list is derived (not saved): kept by the world hooks, rebuilt from
+	// the objects after a load or a new map
+	void processCrateContacts();
+	unsigned long long crateContacts() const { return m_crateContacts; } ///< the overlapping crate pairs met so far (statistics)
+	size_t crateCount() const { return m_crates.size(); }
 	// lane PHYS-1: RW moveAllies 0x6F503B (AIUpdateAllies.cpp): every stationary ally on the cells along `path` is asked to step away; false when not done
 	bool moveAllies(AIUpdateInterface &mover, Path &path, bool force);
 	// lane MOVE-3 r2: RW 0x6F85A6 moveAlliesAwayFromDestination (RW 0x6F7F3E -> the Bresenham line RW 0x6F57C3 -> each cell RW 0x6F53AF): every cell of the line
@@ -309,6 +316,10 @@ private:
 	std::vector<ObjectCollide::PairFacts> m_collisionFacts;
 	std::vector<std::uint8_t> m_collisionFactState; ///< 0: not taken yet, 1: taken, 2: taken and AIUpdateInterface::isContained
 	unsigned long long m_collisionPairsSkipped = 0;
+	// lane MODCOMPAT-MOD1: processCrateContacts' crate ids (sorted), its scratch copies, and whether the list is current (false: rebuilt from the objects)
+	std::vector<PathfindObjectID> m_crates, m_crateScratch, m_crateHits;
+	bool m_cratesValid = false;
+	unsigned long long m_crateContacts = 0;
 	PathfindWallMeshSource *m_wallMeshes = nullptr; // lane WALL-1
 	int m_moveAlliesDepth = 0; // lane PHYS-1: RW pathfinder + 0x1C1BC, the recursion guard of moveAllies
 	int m_peakTickCells = 0;

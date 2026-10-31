@@ -726,7 +726,10 @@ TEST_CASE("net retail hud5: two peer processes on Helm's Deep, the fortress' gat
 	CHECK(field(r.joinReport, "desyncs") == "0");
 	CHECK(field(r.hostReport, "crc_checks_passed") == field(r.joinReport, "crc_checks_passed"));
 	CHECK(std::atoi(field(r.hostReport, "crc_checks_passed").c_str()) >= 15);
-	CHECK(std::atoi(field(r.hostReport, "gate_messages").c_str()) >= 10); // the fortress' gates, toggled repeatedly
+	// merge queue q27: 8 messages (12 before; measured at each merge point and on the merged tree, twice): the scripted players' spell book casts
+	// (MSG_DO_SPECIAL_POWER_AT_LOCATION) go through HEROCAST-1's group cast (its command source, RW 0x77A4C4 .. 0x77A6DB), which moves the scripted game,
+	// so more of the 60-frame toggle points find a gate still opening or closing
+	CHECK(std::atoi(field(r.hostReport, "gate_messages").c_str()) >= 8); // tolerance: the fortress' gates toggled repeatedly; the count is the scripted game's
 	CHECK(field(r.joinReport, "gate_messages") == "0");                  // start 2 holds no gate
 	CHECK(!field(r.hostReport, "gates").empty());
 	CHECK(field(r.hostReport, "gates") == field(r.joinReport, "gates"));

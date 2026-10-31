@@ -308,6 +308,17 @@ func _run() -> void:
 	for bad in ["http://lobby.example.org", "https://lobby.example.org:8443", "https://lobby.example.org/x", "https://u@lobby.example.org", "ftp://x", "", "https://"]:
 		_check(lp.set_lobby(bad) != "" and lp.lobby_host == "", "a lobby of %s is refused and leaves none set" % bad)
 	_check(NetPolicy.new().check("https://api.github.com/repos/a/b/releases") == "", "GitHub stays allowed beside a lobby")
+	# PR #93 follow-up: a lobby request sets its lobby on its own copy; the shared policy (read by running threads) is untouched
+	var shared := NetPolicy.new()
+	shared.test_origin = "http://127.0.0.1:8123"
+	shared.extra_hosts = ["aio.example.org"]
+	var own: NetPolicy = shared.copy()
+	_check(own != shared and own.test_origin == shared.test_origin and own.extra_hosts == shared.extra_hosts, "a copy keeps the rules")
+	_check(own.set_lobby("https://play.openbfme.com") == "" and own.check("https://play.openbfme.com/v1/games") == "", "the copy allows its lobby")
+	_check(shared.lobby_host == "" and shared.check("https://play.openbfme.com/v1/games") != "", "setting the copy's lobby leaves the shared policy as it was")
+	own.extra_hosts.append("x.example.org")
+	_check(shared.extra_hosts == ["aio.example.org"], "the copy's extra hosts are its own")
+	_check(own.set_lobby("http://bad") != "" and shared.copy().lobby_host == "", "a refused lobby on a copy changes nothing shared")
 	# the player count's answer: exactly version 1 with whole counts
 	for t in [[200, '{"v":1,"players":1,"games_open":0,"games_running":0}', "1 player online"], [200, '{"v":1,"players":0,"games_open":3,"games_running":2,"as_of":5}', "0 players online"],
 			[200, '{"v":1,"players":1234,"games_open":0,"games_running":0}', "1234 players online"]]:
@@ -544,7 +555,109 @@ func _signkms(path: String) -> void:
 		nine.append("%064x" % (i + 1))
 	for broken in ["", dh + ",", dh + "," + dh, dh.to_upper(), dh.left(63), dh + "00", dh + ",," + kh, ",".join(nine), dh + ";" + kh]:
 		_check(not ReleaseSignature.parse_hex_list(broken).ok, "a malformed key list is refused: '%s'" % broken.left(40))
+	_nightly(fx, deck, kms)
+	_stable_actions(fx, deck, kms)
 	_slots(fx, deck, kms)
+
+
+## lane RELGH-3: the stable Actions key (stable-2026), the SECOND key of launcher/release_keys.pub ("kms" plays it here), signs raw on GitHub
+## Actions once the owner approved the run: valid for every release document under the two-key list a launcher since this lane carries;
+## a launcher whose list is the Deck key alone (made before the transition) refuses it; as a nightly-only key it would be valid for nightlies
+## only (it is a stable key: never in nightly_keys.pub)
+func _stable_actions(fx: Dictionary, deck: PackedByteArray, stable_key: PackedByteArray) -> void:
+	var h := func(k: String) -> PackedByteArray: return String(fx[k]).hex_decode()
+	var V := ReleaseSignature
+	var both := [deck, stable_key]
+	var nightly := [h.call("nightly")]
+	var expect := {"repo": "Test/repo"}
+	print("UNIT stable actions: the stable Actions key checks run")
+	var ok := Manifest.verify(h.call("s_manifest"), h.call("a_manifest_raw"), both, expect, "standard", nightly)
+	_check(ok.ok and ok.manifest.channel == "stable", "stable actions: a stable release signed raw by the list's second key is valid (%s)" % ok.error)
+	_check(V.signer(both, "manifest.json", h.call("s_manifest"), h.call("a_manifest_raw")) == 1, "stable actions: the signer is the list's second key")
+	var old := Manifest.verify(h.call("s_manifest"), h.call("a_manifest_raw"), [deck], expect, "standard", nightly)
+	_check(not old.ok and String(old.error).contains("signature"), "stable actions: a launcher that trusts the Deck key alone refuses it (%s)" % old.error)
+	_check(V.valid_scoped(both, nightly, "manifest-macos.json", h.call("macos"), h.call("a_macos_raw")), "stable actions: its raw signature on a macOS manifest")
+	var pv := Manifest.verify_payload(h.call("payload"), h.call("a_payload_raw"), both, {"repo": "Test/repo", "platform": "linux-x64"}, nightly)
+	_check(pv.ok, "stable actions: its raw signature on a payload (%s)" % pv.error)
+	_check(V.valid_scoped(both, nightly, "manifest.json", h.call("n_manifest"), h.call("a_n_manifest_raw")), "stable actions: a stable key is valid on a nightly too")
+	_check(not V.valid_scoped([deck], [stable_key], "manifest.json", h.call("s_manifest"), h.call("a_manifest_raw")), "stable actions: the same key as a nightly-only key would sign no stable release")
+	_check(Manifest.signature_ok(h.call("s_manifest"), h.call("a_manifest_raw"), both, "standard", nightly) and not Manifest.signature_ok(h.call("s_manifest"), h.call("a_manifest_raw"), [deck], "standard", nightly), "stable actions: signature_ok follows the same rule")
+	# build_info.json with the committed shape: the Deck key first, the stable Actions key second
+	var info: RefCounted = BuildInfo.from_text(BuildInfo.new(), JSON.stringify({"version": "v1.0.0", "repo": "Test/repo", "release_key": deck.hex_encode(),
+		"release_keys": [deck.hex_encode(), stable_key.hex_encode()], "nightly_keys": [nightly[0].hex_encode()], "test_build": false}))
+	_check(info.error == "" and info.release_keys == both, "stable actions: build_info carries both stable keys, the Deck key first (%s)" % info.error)
+	var swapped: RefCounted = BuildInfo.from_text(BuildInfo.new(), JSON.stringify({"version": "v1.0.0", "repo": "Test/repo", "release_key": deck.hex_encode(),
+		"release_keys": [stable_key.hex_encode(), deck.hex_encode()], "test_build": false}))
+	_check(swapped.error.contains("does not begin with release_key"), "stable actions: a list that does not begin with the Deck key is refused (%s)" % swapped.error)
+
+
+## lane RELGH-2: the nightly-only key. valid_scoped: the stable list as ever, or a nightly key AND a nightly document (version v<x.y.z>-nightly.<n>;
+## a manifest's channel "preview"); a stable manifest / payload, a nightly version on channel stable or an empty nightly list is refused
+func _nightly(fx: Dictionary, deck: PackedByteArray, kms: PackedByteArray) -> void:
+	var h := func(k: String) -> PackedByteArray: return String(fx[k]).hex_decode()
+	var nk: PackedByteArray = h.call("nightly")
+	var stable := [deck, kms]
+	var nightly := [nk]
+	var V := ReleaseSignature
+	print("UNIT nightly: the nightly-key checks run")
+	# the stable keys are valid for every document, with or without a nightly list
+	_check(V.valid_scoped(stable, nightly, "manifest.json", h.call("manifest"), h.call("manifest_raw")), "nightly: a stable key on a stable manifest")
+	_check(V.valid_scoped(stable, [], "manifest.json", h.call("manifest"), h.call("manifest_env")), "nightly: a stable key, an empty nightly list")
+	_check(V.valid_scoped(stable, nightly, "manifest.json", h.call("n_manifest"), h.call("n_manifest_deck")), "nightly: a stable key on a nightly manifest")
+	# the nightly key on nightly documents
+	_check(V.is_nightly_document("manifest.json", h.call("n_manifest")) and V.is_nightly_document("payload.json", h.call("n_payload")), "nightly: nightly documents are recognised")
+	_check(V.valid_scoped(stable, nightly, "manifest.json", h.call("n_manifest"), h.call("n_manifest_raw")), "nightly: its raw signature on a nightly manifest")
+	_check(V.valid_scoped(stable, nightly, "manifest.json", h.call("n_manifest"), h.call("n_manifest_env")), "nightly: its envelope signature on a nightly manifest")
+	_check(V.valid_scoped(stable, nightly, "manifest-macos.json", h.call("n_macos"), h.call("n_macos_env")), "nightly: its envelope signature on a nightly macOS manifest")
+	_check(V.valid_scoped(stable, nightly, "payload.json", h.call("n_payload"), h.call("n_payload_raw")), "nightly: its raw signature on a nightly payload")
+	_check(V.valid_scoped(stable, nightly, "payload.json", h.call("n_payload"), h.call("n_payload_env")), "nightly: its envelope signature on a nightly payload")
+	# refused
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("s_manifest"), h.call("s_manifest_raw")), "nightly: its raw signature on a stable manifest is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("s_manifest"), h.call("s_manifest_env")), "nightly: its envelope signature on a stable manifest is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("n_chan"), h.call("n_chan_raw")), "nightly: a nightly version on channel stable is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("n_otherver"), h.call("n_otherver_raw")), "nightly: a preview that is no nightly tag is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("n_newline"), h.call("n_newline_raw")), "nightly: a version with a trailing newline is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("n_intver"), h.call("n_intver_raw")), "nightly: a version that is not a String is refused")
+	_check(not V.valid_scoped(stable, nightly, "payload.json", h.call("payload"), h.call("s_payload_raw")), "nightly: its raw signature on a stable payload is refused")
+	_check(not V.valid_scoped(stable, nightly, "payload.json", h.call("payload"), h.call("s_payload_env")), "nightly: its envelope signature on a stable payload is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest-macos.json", h.call("macos"), h.call("s_macos_env")), "nightly: its envelope signature on a stable macOS manifest is refused")
+	_check(not V.valid_scoped(stable, [], "manifest.json", h.call("n_manifest"), h.call("n_manifest_raw")), "nightly: an empty nightly list refuses the nightly key")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("n_manifest"), h.call("n_manifest_env_wrong_kind")), "nightly: an envelope of another kind is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("n_manifest"), h.call("n_manifest_other")), "nightly: an unknown key is refused")
+	_check(not V.valid_scoped([], [], "manifest.json", h.call("n_manifest"), h.call("n_manifest_raw")), "nightly: no keys at all")
+	_check(not V.valid(stable, "manifest.json", h.call("n_manifest"), h.call("n_manifest_raw")), "nightly: valid() alone does not know the nightly key")
+	# Manifest.verify / verify_payload / signature_ok
+	var expect := {"repo": "Test/repo"}
+	var ok := Manifest.verify(h.call("n_manifest"), h.call("n_manifest_raw"), stable, expect, "standard", nightly)
+	_check(ok.ok and ok.manifest.version == "v1.2.3-nightly.20261024", "nightly: Manifest.verify accepts a nightly release signed by the nightly key (%s)" % ok.error)
+	var no_list := Manifest.verify(h.call("n_manifest"), h.call("n_manifest_raw"), stable, expect)
+	_check(not no_list.ok and String(no_list.error).contains("signature"), "nightly: a call site that forgets the list refuses it (%s)" % no_list.error)
+	var refused := Manifest.verify(h.call("s_manifest"), h.call("s_manifest_raw"), stable, expect, "standard", nightly)
+	_check(not refused.ok and String(refused.error).contains("signature"), "nightly: a stable release signed by the nightly key is refused by name (%s)" % refused.error)
+	_check(Manifest.signature_ok(h.call("n_manifest"), h.call("n_manifest_raw"), stable, "standard", nightly) and not Manifest.signature_ok(h.call("s_manifest"), h.call("s_manifest_raw"), stable, "standard", nightly), "nightly: signature_ok follows the same rule")
+	_check(not Manifest.signature_ok(h.call("n_manifest"), h.call("n_manifest_raw"), stable), "nightly: signature_ok with the default list refuses")
+	var pexpect := {"repo": "Test/repo", "platform": "linux-x64"}
+	var pn := Manifest.verify_payload(h.call("n_payload"), h.call("n_payload_raw"), stable, pexpect, nightly)
+	_check(pn.ok, "nightly: verify_payload accepts a nightly payload signed by the nightly key (%s)" % pn.error)
+	_check(not Manifest.verify_payload(h.call("n_payload"), h.call("n_payload_raw"), stable, pexpect).ok, "nightly: verify_payload with the default list refuses")
+	_check(not Manifest.verify_payload(h.call("payload"), h.call("s_payload_raw"), stable, pexpect, nightly).ok, "nightly: verify_payload refuses a stable payload signed by the nightly key")
+	# parse_nightly_list
+	var nh := nk.hex_encode()
+	_check(V.parse_nightly_list("").ok and V.parse_nightly_list("").keys.is_empty(), "nightly: empty text is no keys")
+	_check(V.parse_nightly_list(nh).keys == [nk], "nightly: one key parses")
+	for broken in [nh + ",", nh + "," + nh, nh.to_upper(), nh.left(63), ",".join(PackedStringArray(["%064x" % 1, "%064x" % 2, "%064x" % 3, "%064x" % 4, "%064x" % 5]))]:
+		_check(not V.parse_nightly_list(broken).ok, "nightly: a malformed nightly list is refused: '%s'" % broken.left(30))
+	# build_info.json: nightly_keys
+	var base := {"version": "v1.0.0", "repo": "Test/repo", "release_key": deck.hex_encode(), "release_keys": [deck.hex_encode(), kms.hex_encode()], "test_build": false}
+	var parse := func(extra: Dictionary) -> RefCounted:
+		return BuildInfo.from_text(BuildInfo.new(), JSON.stringify(base.merged(extra)))
+	_check(parse.call({}).error == "" and parse.call({}).nightly_keys.is_empty(), "nightly: build_info without nightly_keys: none")
+	_check(parse.call({"nightly_keys": []}).error == "" and parse.call({"nightly_keys": []}).nightly_keys.is_empty(), "nightly: an empty nightly_keys: none")
+	_check(parse.call({"nightly_keys": [nh]}).error == "" and parse.call({"nightly_keys": [nh]}).nightly_keys == [nk], "nightly: build_info nightly_keys parse")
+	for bad in [nh, [nh, nh], [nh.to_upper()], [nh.left(10)], [5], [nh + "," + nh], [deck.hex_encode()], [kms.hex_encode()], ["", nh], {"a": nh},
+			["%064x" % 1, "%064x" % 2, "%064x" % 3, "%064x" % 4, "%064x" % 5]]:
+		var r2: RefCounted = parse.call({"nightly_keys": bad})
+		_check(r2.error.contains("nightly_keys") and r2.nightly_keys.is_empty(), "nightly: build_info refuses nightly_keys %s (%s)" % [str(bad).left(30), r2.error])
 
 
 ## lane SIGNKMS-1: a release's two signature slots (Updater.release_signature): X.sig, else X.sig2; whichever verified is cached as X.sig

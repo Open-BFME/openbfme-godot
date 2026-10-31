@@ -51,6 +51,8 @@
 ##   --cine-drive=angmar     (lane SCRIPT-2) MAP ANG Angmar: after the intro the heroes are placed at Rogash and his attackers killed (test hooks), so
 ##                           the "Rogash joins the Witch King" cinematic plays; =rhudaur (lane SCRIPT-3) MAP ANG Rhudaur to its victory: the barricade, the
 ##                           villages (the warriors hunt), the forts and King Argeleb by test hooks, the rest by the map's scripts
+##   --campaign-carryover=C  (lane BFME2CAMP1, with --campaign) the campaign C's first-mission carry-over heroes, as its start spawns them (MAP GOOD
+##                           Rivendell's Glorfindel: --campaign-carryover=GOOD_CAMPAIGN); --cine-drive=rivendell plays its first objective (test hooks)
 ##   --campaign              (lane SCRIPT-1; implies --live) the map as a campaign mission: its own sides, the map script engine runs its scripts, and the
 ##                           script requests (camera moves, letterbox, captions, fades) drive the view (scripts/campaign_cine.gd); --cine-start=<waypoint>
 ##                           names the waypoint the camera starts at (default InitialCameraPosition)
@@ -107,6 +109,7 @@ var _look := false
 var _cam_pos := Vector3.INF   # --campos=x,y,z in Godot space (overrides the preset)
 var _cam_look := Vector3.INF  # --camlook=x,y,z
 var _campaign := false        # --campaign (lane SCRIPT-1)
+var _campaign_carryover := ""  # --campaign-carryover=CAMPAIGN (lane BFME2CAMP1): the campaign's first-mission carry-over heroes (GameWorld.load_map carryover_campaign)
 var _campaign_audio := true   # --no-audio turns the campaign's retail audio off (lane SCRIPT-2)
 var _cine_drive := ""         # --cine-drive=angmar: the player's part of MAP ANG Angmar's first objective done by test hooks (lane SCRIPT-2)
 var _audio: Node
@@ -166,6 +169,8 @@ func _ready() -> void:
 		elif arg == "--campaign":
 			_live = true
 			_campaign = true
+		elif arg.begins_with("--campaign-carryover="):
+			_campaign_carryover = arg.substr(21) # lane BFME2CAMP1
 		elif arg.begins_with("--cine-start="):
 			_cine_start = arg.substr(13)
 		elif arg.begins_with("--advance="):
@@ -512,6 +517,8 @@ func _build_live() -> void:
 		opts["slots"] = slots
 	if _campaign:
 		opts["campaign"] = true
+		if not _campaign_carryover.is_empty():
+			opts["carryover_campaign"] = _campaign_carryover
 		if not _cine_drive.is_empty():
 			opts["test_hooks"] = true
 	var t0 := Time.get_ticks_msec()
@@ -781,10 +788,17 @@ func _live_overlay() -> void:
 		JSON.stringify(_game_world.get_stats().get("commands", {}))]
 
 
-## The models are lit by the map's object lighting at its time of day (GlobalLighting objects[0]): a DirectionalLight3D from the
-## diffuse colour and the light direction, the ambient colour in the environment (the terrain shader is unshaded and ignores both).
+func _exit_tree() -> void:
+	if _sun != null:
+		load("res://scripts/object_shadows.gd").disable()
+
+
+## The shaders retain map lighting; the directional light supplies shadow coverage.
 func _apply_object_lighting(rep: Dictionary) -> void:
 	if not rep.has("lighting"):
+		if _sun != null:
+			_sun.visible = false
+			load("res://scripts/object_shadows.gd").disable()
 		print("MAPOBJ no GlobalLighting chunk: object lighting is the viewer default")
 		_world_env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 		_world_env.environment.ambient_light_color = Color(0.6, 0.6, 0.6)
@@ -794,12 +808,13 @@ func _apply_object_lighting(rep: Dictionary) -> void:
 	_world_env.environment.ambient_light_color = lit.ambient
 	_world_env.environment.ambient_light_energy = 1.0
 	if _sun != null:
+		_sun.visible = false
 		_sun.queue_free()
 	_sun = DirectionalLight3D.new()
 	_sun.name = "ObjectSun"
 	_sun.light_color = lit.diffuse
 	_sun.light_energy = 1.0
-	_sun.shadow_enabled = false
+	load("res://scripts/object_shadows.gd").configure(_sun, lit)
 	var dir: Vector3 = lit.direction
 	if dir.length() > 0.0001:
 		_sun.transform = Transform3D(Basis.looking_at(dir.normalized(), Vector3.UP if absf(dir.normalized().y) < 0.99 else Vector3.RIGHT), Vector3.ZERO)

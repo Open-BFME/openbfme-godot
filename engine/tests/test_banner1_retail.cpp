@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0. Lane BANNER-1: a rank-two horde's banner carrier refills the horde after a real fight (owner, nightly 2026-10-22: "banner
 // carriers don't auto replace units if they are lvl 2"). Retail: BannerCarrierUpdate::update RW 0x89ACE4, the horde's combat test RW 0x86EE52,
 // the member spawn RW 0x89A392 / 0x873AE3.
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "CampaignTestUtil.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
@@ -81,7 +82,7 @@ struct BannerGame : campaigntest::Mission
 		Object *o = logic().newObject(tt, player->getDefaultTeam(), ObjectStatusMaskType{});
 		REQUIRE(o);
 		place(*o, at);
-		return o;
+		return testutil::completeHorde(o);
 	}
 
 	static HordeContain &contain(Object &horde)
@@ -255,9 +256,10 @@ TEST_CASE("banner1 retail: a rank-two Gondor horde refills after a real fight, m
 		REQUIRE(m->getExperienceTracker()->getRank() == 2);
 	}
 	MESSAGE("full " << full << " " << g.probe(*horde));
-	// three orc hordes: one alone dies without costing a rank-two Gondor horde a man
+	// two orc hordes: one alone dies without costing a rank-two Gondor horde a man; three beat it (all fifteen dead by frame 155) now that its members
+	// stay where they fight instead of being put back on their slots at every transform change (RW 0x871536 moves no member); two cost it five men
 	std::vector<ObjectID> foes;
-	for (int i = 0; i < 3; ++i)
+	for (int i = 0; i < 2; ++i)
 	{
 		Coord3D foeAt = g.position;
 		foeAt.x += 120.0f;
@@ -278,6 +280,10 @@ TEST_CASE("banner1 retail: a rank-two Gondor horde refills after a real fight, m
 	const size_t left = g.payload(*horde).size();
 	MESSAGE("after the fight: " << g.probe(*horde));
 	REQUIRE(left < full); // tolerance: the fight must cost members (how many is the fight's); the claim needs losses to refill
+	// lane MODCOMPAT-MOD1 (PickupStuffUpdate: every horde's update in the sleepy update vectors, RW 0x62E982, changes this fight's course): the carrier may
+	// fall in the fight (f275: 3 members left, no carrier); retail makes a new one after the dead carrier's DiedRespawnTime (RW 0x8719BC .. 0x8719CE sets the
+	// countdown, then the banner check RW 0x870204 makes it: f291), so the refill below waits for it
+	REQUIRE(g.until([&] { return c.bannerCarrier() != 0; }, 600)); // tolerance: object ids are allocated per run; the claim is that a new carrier comes
 	REQUIRE(c.bannerCarrier() != 0); // tolerance: object ids are allocated per run; the claim is that a carrier exists
 	// the survivors' rank: the horde may have gained a rank in the fight; its experience pool is what a new member takes (RW 0x873BD3 .. 0x873C35)
 	const int survivorRank = g.payload(*horde).front()->getExperienceTracker()->getRank();

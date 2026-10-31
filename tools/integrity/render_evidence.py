@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -112,6 +113,21 @@ def render(terrain, frame_data, targets_now, scale: int) -> tuple[int, int, byte
     return W, H, img
 
 
+def ffmpeg_major(ffmpeg: str) -> int:
+    """The major version `ffmpeg -version` names ("ffmpeg version 6.1.1-3ubuntu5", "ffmpeg version n7.1"); an answer it does not parse (a git
+    build "N-...", a failed run) is an error: the filter-script option depends on it."""
+    r = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True)
+    m = re.match(r"ffmpeg version n?(\d+)\.", r.stdout) if r.returncode == 0 else None
+    if not m:
+        raise RuntimeError(f"cannot read the ffmpeg version (exit {r.returncode}): {(r.stdout or r.stderr).splitlines()[:1]}")
+    return int(m.group(1))
+
+
+def filter_script_args(major: int, script: Path) -> list[str]:
+    """ffmpeg 7 deprecated -filter_script (9 removes it: "Option not found"); its replacement is the file form of the option, -/filter:v FILE"""
+    return ["-/filter:v", str(script)] if major >= 7 else ["-filter_script:v", str(script)]
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dump", required=True)
@@ -178,7 +194,12 @@ def main(argv: list[str]) -> int:
         script = Path(tmp) / "filters.txt"
         script.write_text(",".join(filters))
         common = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
-        rc = subprocess.call(common + ["-framerate", "10", "-i", str(Path(tmp) / "f%05d.ppm"), "-filter_script:v", str(script),
+        try:
+            major = ffmpeg_major(ffmpeg)
+        except RuntimeError as e:
+            print(f"render_evidence: {e}", file=sys.stderr)
+            return 1
+        rc = subprocess.call(common + ["-framerate", "10", "-i", str(Path(tmp) / "f%05d.ppm"), *filter_script_args(major, script),
                                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", str(out / f"{a.name}.mp4")])
         if rc != 0:
             return rc

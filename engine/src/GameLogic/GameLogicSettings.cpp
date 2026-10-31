@@ -57,7 +57,9 @@ enum Seen : unsigned
 	SEEN_GUARD_CHASE = 1u << 26,  // lane PLAY-4: the guard machine's AIData durations
 	SEEN_GUARD_SCAN = 1u << 27,
 	SEEN_GUARD_RETURN = 1u << 28,
-	SEEN_REPAIR_DELAY = 1u << 29
+	SEEN_REPAIR_DELAY = 1u << 29,
+	SEEN_BUILDERFADE_OUT = 1u << 30, // lane PORTERFOG-1: GameData BuilderFadeOutTime / BuilderFadeInTime
+	SEEN_BUILDERFADE_IN = 1u << 31
 };
 
 struct BlockState
@@ -83,16 +85,6 @@ void parseNoting(INI *ini, void *instance, void *store, const void *userData)
 	static_cast<BlockState *>(instance)->seen |= (unsigned)(std::uintptr_t)userData;
 }
 
-size_t indentOf(const std::string &line)
-{
-	size_t n = 0;
-	while (n < line.size() && (line[n] == ' ' || line[n] == '\t'))
-	{
-		++n;
-	}
-	return n;
-}
-
 // the line without its ; or // comment
 std::string withoutComment(const std::string &line)
 {
@@ -103,6 +95,32 @@ std::string withoutComment(const std::string &line)
 		cut = slashes;
 	}
 	return cut == std::string::npos ? line : line.substr(0, cut);
+}
+
+// lane MODCOMPAT-1: a line opening one of the nested blocks of AIData's SideInfo / SkirmishBuildList / AttackPriority (no `=`, the first token one
+// of RotWK's block rows): Structure (BuildListInfo), SkillSet1 .. SkillSet5 (SideInfo), and the blocks themselves when nested
+bool opensSubBlock(const std::string &line)
+{
+	const std::string l = withoutComment(line);
+	if (l.find('=') != std::string::npos)
+	{
+		return false;
+	}
+	const size_t b = l.find_first_not_of(" \t");
+	if (b == std::string::npos)
+	{
+		return false;
+	}
+	const size_t e = l.find_first_of(" \t", b);
+	const std::string token = l.substr(b, e == std::string::npos ? std::string::npos : e - b);
+	for (const char *k : { "Structure", "SkillSet1", "SkillSet2", "SkillSet3", "SkillSet4", "SkillSet5", "SideInfo", "SkirmishBuildList", "AttackPriority" })
+	{
+		if (AsciiStringUtil::compareNoCase(token, k) == 0)
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 bool firstTokenIsEnd(const std::string &line)
@@ -118,8 +136,12 @@ bool firstTokenIsEnd(const std::string &line)
 }
 
 // the catch-all row (token NULL): userData is the field name. A `Field = value` line is consumed (the rest of the line is not read). A line without
-// `=` is a nested block of the block being read (AIData's SideInfo / SkirmishBuildList / AttackPriority, with their own Structure sub blocks): it ends at
-// the first End that is not indented deeper than its header, the rule the recording stubs use for these same files.
+// `=` is a nested block of the block being read (AIData's SideInfo / SkirmishBuildList, with their own Structure / SkillSet sub blocks). Retail reads
+// these blocks token by token (ZH AI::parseSkirmishBuildList / BuildListInfo::parseStructure / AI::parseSideInfo through initFromINI; RotWK's AIData
+// field names at RW 0x81D3A4 SkirmishBuildList, 0x81D3B8 SideInfo, 0x81D738 .. 0x81D768 SkillSet5 .. 1): every sub block ends at its own End, and
+// the indentation means nothing (lane MODCOMPAT-1: Ennorath writes `SkirmishBuildList Rohan` at column 0 with deeper Ends, which the old
+// indentation rule read past the AIData block's own End). So the skip counts them: a line whose first token opens one of those sub blocks goes a
+// level deeper, an End goes a level up, and the block ends at the End of its own level.
 void noteUnapplied(INI *ini, void *instance, void *, const void *userData)
 {
 	static_cast<BlockState *>(instance)->unapplied.insert(std::string(ini->getCurBlockStart()) + "." + static_cast<const char *>(userData));
@@ -128,7 +150,7 @@ void noteUnapplied(INI *ini, void *instance, void *, const void *userData)
 	{
 		return;
 	}
-	const size_t headerIndent = indentOf(header);
+	int depth = 1;
 	for (;;)
 	{
 		const std::string *next = ini->peekNextLine();
@@ -139,9 +161,16 @@ void noteUnapplied(INI *ini, void *instance, void *, const void *userData)
 		}
 		const std::string line = *next;
 		ini->readLine();
-		if (firstTokenIsEnd(line) && indentOf(line) <= headerIndent)
+		if (firstTokenIsEnd(line))
 		{
-			return;
+			if (--depth == 0)
+			{
+				return;
+			}
+		}
+		else if (opensSubBlock(line))
+		{
+			++depth;
 		}
 	}
 }
@@ -204,6 +233,10 @@ const FieldParse kGameDataFields[] = {
 	{ "MaxLineBuildObjects", parseNoting<INI::parseInt>, SEEN_DATA(SEEN_LINEBUILD), (int)offsetof(BlockState, values.maxLineBuildObjects) },
 	// lane BUILD-3: BuilderMoveFromNewStructureDistance (row RW 0xC010D0, parseReal, GlobalData + 0x11E4): the walk of a porter out of the structure it built (RW 0x88D6AE)
 	{ "BuilderMoveFromNewStructureDistance", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_BUILDERMOVE), (int)offsetof(BlockState, values.builderMoveFromNewStructureDistance) },
+	// lane PORTERFOG-1: BuilderFadeOutTime / BuilderFadeInTime (BFME2 decomp GlobalData.cpp:1199-1200: parseDurationUnsignedInt, GlobalData + 0x11DC / + 0x11E0): the porter's
+	// drawable fades out when its work starts (RW 0x88DDC1) and in when it comes out (RW 0x88D6CE); client values, not hashed
+	{ "BuilderFadeOutTime", parseNoting<INI::parseDurationUnsignedInt>, SEEN_DATA(SEEN_BUILDERFADE_OUT), (int)offsetof(BlockState, values.builderFadeOutFrames) },
+	{ "BuilderFadeInTime", parseNoting<INI::parseDurationUnsignedInt>, SEEN_DATA(SEEN_BUILDERFADE_IN), (int)offsetof(BlockState, values.builderFadeInFrames) },
 	// lane FACT-A: SellPercentage (row RW 0xC00690, parsePercentToReal RW 0x42EEFA, GlobalData + 0xB94): the share of the price a sold structure pays back (RW 0x794729)
 	{ "SellPercentage", parseNoting<INI::parsePercentToReal>, SEEN_DATA(SEEN_SELL), (int)offsetof(BlockState, values.sellPercentage) },
 	// lane COMBAT-2: Gravity (RW GlobalData + 0xC4, row RW 0xBFF9C0, parseAccelerationReal RW 0x73A4DC: value * k * k per frame^2) and DefaultStructureRubbleHeight (RW + 0xAE4,
@@ -251,6 +284,8 @@ const FieldParse kGameDataFields[] = {
 	{ "InvisibilityOpacityMin", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_OPMIN), (int)offsetof(BlockState, values.invisibilityOpacityMin) },
 	{ "InvisibilityOpacityMax", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_OPMAX), (int)offsetof(BlockState, values.invisibilityOpacityMax) },
 	{ "InvisibilityOpacityCycleFrames", parseNoting<INI::parseUnsignedInt>, SEEN_DATA(SEEN_OPCYCLE), (int)offsetof(BlockState, values.invisibilityOpacityCycleFrames) },
+	// lane LOS-1: RW 0xC01060 (parseReal RW 0x42ED00, + 0x11C4; optional, the constructor's 40.0f stands otherwise)
+	{ "ClampedLOSHeightForCastleStructures", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.clampedLOSHeightForCastleStructures) },
 	// lane GARRISON-1: the garrison rows (RW 0xC011D0 / 0xC011F0 / 0xC01200; optional, the GlobalData constructor's defaults stand otherwise)
 	{ "GarrisonedRangeMultiplier", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.garrisonedRangeMultiplier) },
 	{ "MaxNumMembersToForceToImmediatelyEnter", parseNoting<INI::parseUnsignedInt>, 0, (int)offsetof(BlockState, values.maxNumMembersToForceToImmediatelyEnter) },
@@ -259,6 +294,10 @@ const FieldParse kGameDataFields[] = {
 	{ "MaxTunnelCapacity", parseNoting<INI::parseInt>, 0, (int)offsetof(BlockState, values.maxTunnelCapacity) },
 	// lane BACKLOG-8 r2: GroupMoveClickToGatherAreaFactor (row RW 0xC00600, parseReal RW 0x42ED00, GameData + 0xB60)
 	{ "GroupMoveClickToGatherAreaFactor", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.groupMoveClickToGatherAreaFactor) },
+	// lane OCCLUDE-1: the behind-building marker (rows RW 0xBFF830 / 0xBFF9E0 / 0xBFFFE0; optional, the GlobalData constructor's defaults stand otherwise)
+	{ "UseBehindBuildingMarker", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.useBehindBuildingMarker) },
+	{ "DefaultOcclusionDelay", parseNoting<INI::parseDurationUnsignedInt>, 0, (int)offsetof(BlockState, values.defaultOcclusionDelay) },
+	{ "OccludedColorLuminanceScale", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.occludedColorLuminanceScale) },
 	{ nullptr, noteUnapplied, nullptr, 0 }
 };
 const FieldParse kAIDataFields[] = {
@@ -293,6 +332,18 @@ const FieldParse kAIDataFields[] = {
 	{ "AttackIgnoreInsignificantBuildings", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.attackIgnoreInsignificantBuildings) },
 	{ "ArtilleryMaxFriendlyFire", parseNoting<INI::parsePercentToReal>, 0, (int)offsetof(BlockState, values.artilleryMaxFriendlyFire) },
 	{ "AttackPriority", parseAttackPriorityBlock, nullptr, 0 },
+	// lane AIDATA-1: ChaseFromBehindLimit (row RW 0xC1CEF0, + 0xD0) and SkirmishGroupFudgeDistance (row RW 0xC1CC30, + 0x58), parseReal RW 0x42ED00
+	{ "ChaseFromBehindLimit", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.chaseFromBehindLimit) },
+	{ "SkirmishGroupFudgeDistance", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.skirmishGroupFudgeDistance) },
+	// lane AIDATA-1: the pathfinder's rows (were PathfindConfigLoader's text scan): RW 0xC1CDD0 WadeWaterDepth + 0x98, 0xC1CDE0 DeepWaterDepth + 0x9C,
+	// 0xC1CDB0 MeleeApproachTolerance + 0x90, 0xC1CDC0 MeleeApproachDist + 0x94, 0xC1CF00 CastleSiegeStandBackDistance + 0xD4 (parseReal RW 0x42ED00);
+	// 0xC1CE40 HordesWaitForHordes + 0xB9 (parseBool RW 0x42E558)
+	{ "WadeWaterDepth", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.wadeWaterDepth) },
+	{ "DeepWaterDepth", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.deepWaterDepth) },
+	{ "MeleeApproachTolerance", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.meleeApproachTolerance) },
+	{ "MeleeApproachDist", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.meleeApproachDist) },
+	{ "CastleSiegeStandBackDistance", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.castleSiegeStandBackDistance) },
+	{ "HordesWaitForHordes", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.hordesWaitForHordes) },
 	{ nullptr, noteUnapplied, nullptr, 0 }
 };
 const FieldParse kMultiplayerFields[] = {
@@ -344,11 +395,11 @@ public:
 		{
 			// recording stubs only: the world's own map.ini pass parses the Weapon / Locomotor / Armor / DamageFX / FX blocks into their stores, a second
 			// parse here would apply them again
-			RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "AIData" }, StubExtent::Lenient, false);
+			RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "AIData" }, StubExtent::LenientAfterEnd, false);
 			reg("AIData", kAIDataFields, 2u);
 			return;
 		}
-		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "GameData", "AIData", "MultiplayerSettings", "MultiplayerColor" }, StubExtent::Lenient);
+		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "GameData", "AIData", "MultiplayerSettings", "MultiplayerColor" }, StubExtent::LenientAfterEnd);
 		reg("GameData", kGameDataFields, 1u);
 		reg("AIData", kAIDataFields, 2u);
 		reg("MultiplayerSettings", kMultiplayerFields, 4u);
@@ -438,7 +489,8 @@ std::string firstMissing(unsigned seen, const std::vector<std::pair<unsigned, co
 const std::vector<std::pair<unsigned, const char *>> kGameDataNeeds = {
 	{ SEEN_TOD, "ForceModelsToFollowTimeOfDay" }, { SEEN_WEATHER, "ForceModelsToFollowWeather" }, { SEEN_DAMAGED, "UnitDamagedThreshold" },
 	{ SEEN_REALLY, "UnitReallyDamagedThreshold" }, { SEEN_CASH, "DefaultStartingCash" } };
-const std::vector<std::pair<unsigned, const char *>> kAIDataNeeds = { { SEEN_REPULSORS, "EnableRepulsors" }, { SEEN_REPULSED, "RepulsedDistance" } };
+// lane AIDATA-1: retail's AIData parser (RW 0x7017AA over table RW 0xC1CB20) requires no field: one left out keeps the constructor's value (RW 0x6FFBEF)
+const std::vector<std::pair<unsigned, const char *>> kAIDataNeeds = {};
 const std::vector<std::pair<unsigned, const char *>> kMultiplayerNeeds = {
 	{ SEEN_CREDITS0 << 0, "InitialCreditsVeryLow" }, { SEEN_CREDITS0 << 1, "InitialCreditsLow" }, { SEEN_CREDITS0 << 2, "InitialCreditsMedium" },
 	{ SEEN_CREDITS0 << 3, "InitialCreditsHigh" }, { SEEN_CREDITS0 << 4, "InitialCreditsVeryHigh" } };
@@ -469,6 +521,7 @@ bool finish(Load &l, unsigned blockBit, const char *blockName, const std::vector
 		out.buildRulesLoaded = true;
 	}
 	out.builderMoveLoaded = (l.state().seen & SEEN_BUILDERMOVE) != 0; // lane BUILD-3
+	out.builderFadeLoaded = (l.state().seen & (SEEN_BUILDERFADE_OUT | SEEN_BUILDERFADE_IN)) == (SEEN_BUILDERFADE_OUT | SEEN_BUILDERFADE_IN); // lane PORTERFOG-1
 	out.repairDamageDelayLoaded = (l.state().seen & SEEN_REPAIR_DELAY) != 0;
 	out.guardRulesLoaded = (l.state().seen & (SEEN_GUARD_CHASE | SEEN_GUARD_SCAN | SEEN_GUARD_RETURN)) == (SEEN_GUARD_CHASE | SEEN_GUARD_SCAN | SEEN_GUARD_RETURN); // lane PLAY-4
 	out.sellPercentageLoaded = (l.state().seen & SEEN_SELL) != 0; // lane FACT-A
@@ -507,6 +560,36 @@ bool GameLogicSettingsLoader::scanAIData(const std::string &text, GameLogicSetti
 	return l.text("default\\aidata.ini", text, error) && finish(l, 2u, "AIData", kAIDataNeeds, "default\\aidata.ini", out, error);
 }
 
+namespace
+{
+bool loadRequired(ArchiveFileSystem &fs, Load &l, const char *file, std::string *error)
+{
+	if (!fs.doesFileExist(file))
+	{
+		if (error)
+		{
+			*error = std::string("file not found in any mounted archive: ") + file;
+		}
+		return false;
+	}
+	return l.file(file, error);
+}
+
+// TheAI's InitFiles (SubsystemLegendExpansion1.ini `LoadSubsystem TheAI`: Data\INI\Default\AIData.ini, then Data\INI\AIData.ini). The second only overrides
+// (retail's is an empty AIData block): INFERENCE, a missing one is skipped like the pathfinder's loader before lane AIDATA-1 did (the legend loader's handling
+// of a missing InitFile was not traced)
+bool loadAIDataFiles(ArchiveFileSystem &fs, Load &l, std::string *error)
+{
+	return loadRequired(fs, l, "data\\ini\\default\\aidata.ini", error) && (!fs.doesFileExist("data\\ini\\aidata.ini") || l.file("data\\ini\\aidata.ini", error));
+}
+} // namespace
+
+bool GameLogicSettingsLoader::loadAIData(ArchiveFileSystem &fs, GameLogicSettings &out, std::string *error)
+{
+	Load l(&fs, out, true);
+	return loadAIDataFiles(fs, l, error) && finish(l, 2u, "AIData", kAIDataNeeds, "default\\aidata.ini", out, error);
+}
+
 bool GameLogicSettingsLoader::scanMultiplayer(const std::string &text, GameLogicSettings &out, std::string *error)
 {
 	Load l(nullptr, out);
@@ -524,20 +607,10 @@ bool GameLogicSettingsLoader::load(ArchiveFileSystem &fs, GameLogicSettings &out
 	// the three files through one environment: the macros an earlier file defined are visible to the later ones, like retail's one INI table
 	Load l(&fs, out);
 	l.state().values.multiplayerColors.clear(); // the colour list is what the files define
-	for (const char *file : { "data\\ini\\gamedata.ini", "data\\ini\\default\\aidata.ini", "data\\ini\\multiplayer.ini" })
+	// lane AIDATA-1: AIData from default\\aidata.ini, then aidata.ini (TheAI's two InitFiles)
+	if (!loadRequired(fs, l, "data\\ini\\gamedata.ini", error) || !loadAIDataFiles(fs, l, error) || !loadRequired(fs, l, "data\\ini\\multiplayer.ini", error))
 	{
-		if (!fs.doesFileExist(file))
-		{
-			if (error)
-			{
-				*error = std::string("file not found in any mounted archive: ") + file;
-			}
-			return false;
-		}
-		if (!l.file(file, error))
-		{
-			return false;
-		}
+		return false;
 	}
 	if (isBfme1Data(fs) && (l.state().seen & (SEEN_VSTRUCT | SEEN_VUNIT)) != (SEEN_VSTRUCT | SEEN_VUNIT))
 	{
@@ -677,6 +750,10 @@ void GameLogicSettings::crc(StateHasher &h) const
 	h.addFloat(invisibilityOpacityMin);
 	h.addFloat(invisibilityOpacityMax);
 	h.addU32(invisibilityOpacityCycleFrames);
+	if (clampedLOSHeightForCastleStructures != 40.0f)
+	{
+		h.addFloat(clampedLOSHeightForCastleStructures); // lane LOS-1: only data that sets another value (the hash of every retail game is unchanged)
+	}
 	h.addFloat(garrisonedRangeMultiplier); // lane GARRISON-1
 	h.addU32(maxNumMembersToForceToImmediatelyEnter);
 	h.addU32(waitToForceMemberToEnterDelay);

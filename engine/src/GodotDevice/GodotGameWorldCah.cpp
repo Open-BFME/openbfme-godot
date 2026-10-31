@@ -20,6 +20,7 @@
 
 #include <godot_cpp/core/class_db.hpp>
 #include <cstdlib>
+#include <cmath>
 #include <vector>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 
@@ -29,6 +30,7 @@ void GameWorld::bindCreateAHeroMethods()
 {
 	ClassDB::bind_method(D_METHOD("cah_builder", "on"), &GameWorld::cah_builder);
 	ClassDB::bind_method(D_METHOD("cah_preview_apply", "object_id", "record"), &GameWorld::cah_preview_apply);
+	ClassDB::bind_method(D_METHOD("cah_preview_set_orientation", "object_id", "angle"), &GameWorld::cah_preview_set_orientation);
 	ClassDB::bind_method(D_METHOD("cah_preview_locations"), &GameWorld::cah_preview_locations);
 	ClassDB::bind_method(D_METHOD("cah_view_info", "class", "subclass"), &GameWorld::cah_view_info);
 }
@@ -85,6 +87,33 @@ Dictionary GameWorld::cah_preview_apply(int64_t objectId, const PackedByteArray 
 	}
 	m_game->logic().createAHeroes().applyBuilder(*player, hero, *obj);
 	out["portrait"] = String(PalantirCommandUI::objectPortrait(*obj).c_str());
+	out["ok"] = true;
+	return out;
+}
+
+Dictionary GameWorld::cah_preview_set_orientation(int64_t objectId, double angle)
+{
+	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
+	Dictionary out;
+	out["ok"] = false;
+	if (!m_game || !TheCreateAHeroSystem || !TheCreateAHeroSystem->inBuilder || m_start || m_netHost || m_netClient || m_netStarted || m_netSession || m_game->logicThread())
+	{
+		out["error"] = String("cah_preview_set_orientation: requires the isolated builder world without a logic worker");
+		return out;
+	}
+	if (objectId <= 0 || objectId > UINT32_MAX || !std::isfinite(angle) || !std::isfinite((float)angle))
+	{
+		out["error"] = String("cah_preview_set_orientation: invalid object id or angle");
+		return out;
+	}
+	::Object *obj = m_game->logic().findObjectByID((::ObjectID)objectId);
+	if (!obj)
+	{
+		out["error"] = String("cah_preview_set_orientation: no such object");
+		return out;
+	}
+	// RW 0x9BFE74 -> 0x70C31E: turn the preview object, not the camera.
+	obj->setOrientation((float)angle);
 	out["ok"] = true;
 	return out;
 }
@@ -150,11 +179,23 @@ Dictionary GameWorld::cah_view_info(int64_t cls, int64_t sub) const
 	out["ok"] = false;
 	if (!m_world)
 	{
+		out["error"] = String("cah_view_info: no world is loaded");
+		return out;
+	}
+	if (cls < 0 || sub < 0 || cls > UINT32_MAX || sub > UINT32_MAX)
+	{
+		out["error"] = String("cah_view_info: invalid class or subclass index");
 		return out;
 	}
 	const CreateAHeroSubClass *s = m_world->createAHeroSystem().subClass((std::uint32_t)cls, (std::uint32_t)sub);
 	if (!s)
 	{
+		out["error"] = String("cah_view_info: no such class or subclass");
+		return out;
+	}
+	if (!s->viewInfo.loaded)
+	{
+		out["error"] = String("cah_view_info: subclass has no ViewInfo block");
 		return out;
 	}
 	if (!m_game || m_fs.is_null() || !m_fs->archive_fs())
@@ -172,7 +213,12 @@ Dictionary GameWorld::cah_view_info(int64_t cls, int64_t sub) const
 			return out;
 		}
 		const auto &chunks = m_game->map().chunks;
-		const MapCameraValues values = MapCameraValues::resolve(settings, chunks.hasWorldInfo ? &chunks.worldInfo : nullptr);
+		if (!chunks.hasWorldInfo)
+		{
+			out["error"] = String("cah_view_info: preview map has no WorldInfo camera data");
+			return out;
+		}
+		const MapCameraValues values = MapCameraValues::resolve(settings, &chunks.worldInfo);
 		Coord3D offset;
 		float angle;
 		bool legacy;

@@ -7,7 +7,7 @@
 // TARGET FACTS (RotWK game.dat, caveat S-001):
 //   * TheGameLODManager (RW 0xDE3B84) holds six 0x4C-byte StaticGameLOD records at + 0, one per level of the name list RW 0xD9E6A4 (VeryLow, Low,
 //     Medium, High, UltraHigh, Custom); + 0x1768 the current static level, + 0x17C4 the ideal one (the benchmark's, not ported: S-2481).
-//   * the block StaticGameLOD (RW 0x60252D; BFME2 decomp Rva00202BB2Parse.cpp, tier A): the name is looked up in RW 0xD9E6A4 with a case-insensitive
+//   * the block StaticGameLOD (RW 0x60252D; BFME2 decomp GameLOD.cpp, tier A): the name is looked up in RW 0xD9E6A4 with a case-insensitive
 //     compare (RW 0x6024E7 -> RW 0x4372C0); a name that is not there (or no manager) leaves the block's lines unread; else the record is filled by the
 //     field table RW 0xBF9468 (23 rows: ModelLOD + 0x00 .. MinParticleSkipPriority + 0x48; parseIndexList RW 0x42E956, parseInt RW 0x42EC5E, parseBool
 //     RW 0x42E558). Its index lists are NOT NULL terminated: each runs on through the neighbouring lists up to RW 0xD9E778 (kLODNameRun below), so

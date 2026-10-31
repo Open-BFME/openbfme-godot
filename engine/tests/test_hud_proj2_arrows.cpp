@@ -4,6 +4,7 @@
 // the arrows and the archers are checked against the retail draw data (the arrow's W3DStreakDraw modules: texture, width, length, additive, colour; the archer's
 // FireArowTip sub object shown by its SubObjectsUpgrade). They run only when ROTWK_INSTALL and BFME2_INSTALL are set (otherwise SKIP).
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 #include "PeImage.h"
@@ -106,6 +107,7 @@ struct ArrowArena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(side == 0 ? 0.0f : 3.14159265f);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	void clientFrame()
@@ -426,6 +428,7 @@ TEST_CASE("proj2 arrows: in a live game the archers' flaming tip sprites hide at
 		REQUIRE(t);
 		Object *h = game.logic().newObject(t, owner->getDefaultTeam(), ObjectStatusMaskType{});
 		REQUIRE(h);
+		testutil::completeHorde(h); // a horde makes its members (onBuildComplete, RW 0x8718ED)
 		game.logic().runLogicFrame();
 		game.refreshClient(1000.0 / 30.0, 0.0);
 		// the idle state's BeginScript of the Mordor archer (CurDrawableShowSubObject("arrownock"), a plain show) on every member: retail's apply (RW 0x4BA74F)

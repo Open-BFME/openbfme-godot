@@ -14,8 +14,8 @@
 #      written by tools/release/record_gate.sh) and be on the archive branch; releases only move forward: the sha must descend from the
 #      last released archive sha ($STATE/last-released) and differ from it, whatever --since says; the release is skipped when nothing
 #      under engine/ godot/ launcher/ tools/release/ changed since the last released sha. --since only sets where the notes start (the
-#      first release has no state and needs it). MACREL-1: the Mac build host must answer and have its tools (build_macos_release.sh
-#      --check): no release leaves without the Mac package unless OPENBFME_RELEASE_SKIP_MAC=1 is set, which the log and the summary say
+#      first release has no state and needs it). MACREL-1: no release leaves without the Mac package (RELGH-2: built on GitHub Actions,
+#      no Mac host is asked) unless OPENBFME_RELEASE_SKIP_MAC=1 is set, which the log and the summary say
 #      (the release then carries a signed manifest-macos.json naming no Mac package). The public metadata (the sync commit's message, the
 #      tag message, the release title, the notes) is written and passes the privacy audit;
 #   2. the candidate's public commit: the sha's public tree (<remote>/main's tree is replaced by the sha's without archive/ and without
@@ -40,14 +40,14 @@
 #      "GAME screen: MainMenu.apt" and the template count; then, lane BUGS-1, a Men skirmish whose help box over a barracks bubble must
 #      draw its text: windows_hud6_check.sh); the packages come back to $WORK/returned. `git describe` of the checkout must be the
 #      version: the libraries, VERSION files and build records name the tag and the public commit that will be pushed;
-#  4a. (MACACT-1) with a platform built on GitHub Actions (OPENBFME_RELEASE_MAC_BUILDER / _LINUX_BUILDER / _WINDOWS_BUILDER=actions;
-#      host, the default, is the path below): the candidate's public commit (audited in step 2, the tag stays local) is pushed to the
+#  4a. (MACACT-1) with a platform built on GitHub Actions (macOS always since RELGH-2; OPENBFME_RELEASE_LINUX_BUILDER /
+#      _WINDOWS_BUILDER=actions; host, their default, is the path below): the candidate's public commit (audited in step 2, the tag stays local) is pushed to the
 #      staging branch staging/<version> of the remote, GitHub can only build what it has, and .github/workflows/release-package.yml is
-#      dispatched there once per such platform (actions_build.py: the run GitHub created for that dispatch, recorded in $WORK/actions.json).
+#      dispatched there once per such platform (RELGH-2: macOS always: the Mac build host is in no release's path any more) (actions_build.py: the run GitHub created for that dispatch, recorded in $WORK/actions.json).
 #      They build while step 4 runs; each is collected after it (4m / 5x), and the staging branch is deleted after the last one and on any
 #      failure (the cleanup). A failed, refused or timed-out run fails the release (no fallback to a host);
-#  4m. (MACREL-1) the macOS Apple Silicon package on the Mac build host (build_macos_release.sh: package_macos.py from a fresh clone of
-#      the local tag, ad-hoc signed, nothing signed with the release key there);
+#  4m. (MACREL-1, RELGH-2) the macOS Apple Silicon package, built by release-package.yml on GitHub's macos-15 runner (package_macos.py
+#      at the candidate commit, ad-hoc signed, nothing signed with the release key there), collected here;
 #   5. checks the returned packages on the Deck, with the scripts of a trusted checkout ($WORK/trusted: a fresh worktree of the tag made
 #      here, never written by the build host, whose tree must be the audited sync tree of the archive sha): exactly the package files,
 #      the release allowlist of every archive, each library's build record against the tag and the engine id of the tag's engine/,
@@ -119,9 +119,9 @@
 #   OPENBFME_RELEASE_LOGS (the log folder), OPENBFME_RELEASE_KEY (the release key file: an absolute, normalised path, r6),
 #   OPENBFME_RELEASE_DENYLIST (the private denylist, autorelease.py load_denylist()), OPENBFME_RELEASE_BUILDER (step 4; not with a stand-in),
 #   OPENBFME_RELEASE_TEMPLATES (4657: the templates the Windows start must load),
-#   OPENBFME_RELEASE_SKIP_MAC (unset or 0; 1: release without the macOS package, logged), OPENBFME_RELEASE_MAC_HOST (mac),
-#   MACACT-1: OPENBFME_RELEASE_MAC_BUILDER (host: the Mac build host, step 4m; actions: the package is built on GitHub Actions, macos-15, and
-#   checked here exactly as a host build is), OPENBFME_RELEASE_LINUX_BUILDER and OPENBFME_RELEASE_WINDOWS_BUILDER (host: the build host's
+#   OPENBFME_RELEASE_SKIP_MAC (unset or 0; 1: release without the macOS package, logged),
+#   MACACT-1: OPENBFME_RELEASE_MAC_BUILDER (RELGH-2: actions only, for every release: macos-15 on GitHub Actions; `host`, the owner's Mac,
+#   is refused: the Mac is for tests only), OPENBFME_RELEASE_LINUX_BUILDER and OPENBFME_RELEASE_WINDOWS_BUILDER (host: the build host's
 #   library only; actions: GitHub Actions builds the GDExtension too and the build host's, inside the returned package, must be byte for byte
 #   GitHub's: step 5x; the packages and their tests stay on the build host, they need the game files), OPENBFME_RELEASE_ACTIONS_TIMEOUT
 #   (7200: seconds one GitHub build may take, then it is cancelled and the release fails),
@@ -161,16 +161,13 @@ if [ "$NIGHTLY" = 1 ]; then
   STATE=$CSTATE/nightly
 fi
 WORK_ROOT=${OPENBFME_RELEASE_WORK:-$HOME/.cache/openbfme-release}
-# SIGNKMS-1: who signs (see OPENBFME_RELEASE_SIGNER below) and the committed signing phase: the actions path in phase kms needs no
-# Deck key at all (it is kept offline then, docs/RELEASE.md "Release signing"); every other run needs it
+# SIGNKMS-1, RELGH-2, RELGH-3: who signs (see OPENBFME_RELEASE_SIGNER below): deck (the default) needs the release key; actions (the release
+# workflow signs: a nightly with the nightly key of its GitHub environment, a stable release with the stable Actions key once the owner
+# approved the run) needs no key on this machine at all
 SIGNER=${OPENBFME_RELEASE_SIGNER:-deck}
 case $SIGNER in deck|actions) ;; *) echo "AUTORELEASE FAIL: OPENBFME_RELEASE_SIGNER is deck or actions" >&2; exit 2 ;; esac
-PHASE=transition
-if [ "$SIGNER" = actions ]; then
-  PHASE=$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["phase"])' < <(python3 "$REPO/tools/release/release_keys.py" --policy)) \
-    || { echo "AUTORELEASE FAIL: tools/release/signing_policy.json cannot be read" >&2; exit 2; }
-fi
-NEEDKEY=OPENBFME_RELEASE_KEY; if [ "$SIGNER" = actions ] && [ "$PHASE" = kms ]; then NEEDKEY=""; fi
+KIND=stable; if [ "$NIGHTLY" = 1 ]; then KIND=nightly; fi
+NEEDKEY=OPENBFME_RELEASE_KEY; if [ "$SIGNER" = actions ]; then NEEDKEY=""; fi
 # PUBLISH-2: the private values come from the operator's release environment, never from defaults in this public file
 for v in OPENBFME_RELEASE_LOGS $NEEDKEY OPENBFME_RELEASE_DENYLIST; do
   [ -n "${!v:-}" ] || { echo "AUTORELEASE FAIL: $v is not set (the operator's private release environment)" >&2; exit 2; }
@@ -197,9 +194,11 @@ STANDIN=${OPENBFME_RELEASE_STANDIN:-}
 # MACREL-1: the macOS package is part of every release; only OPENBFME_RELEASE_SKIP_MAC=1, given explicitly, releases without it
 SKIP_MAC=${OPENBFME_RELEASE_SKIP_MAC:-0}
 case $SKIP_MAC in 0|1) ;; *) echo "AUTORELEASE FAIL: OPENBFME_RELEASE_SKIP_MAC is 1 (release without the macOS package) or unset" >&2; exit 2 ;; esac
-MAC_HOST=${OPENBFME_RELEASE_MAC_HOST:-mac}
-# MACACT-1: who builds each platform (host, the default, until the owner switches; actions: GitHub Actions, release-package.yml)
-MAC_BUILDER=${OPENBFME_RELEASE_MAC_BUILDER:-host}; LINUX_BUILDER=${OPENBFME_RELEASE_LINUX_BUILDER:-host}
+# MACACT-1: who builds each platform (host, the default, until the owner switches; actions: GitHub Actions, release-package.yml).
+# RELGH-2 (owner, 2026-10-24: "the mac is online but I want it to compile on github actions"): macOS is built on Actions for every release
+MAC_BUILDER=${OPENBFME_RELEASE_MAC_BUILDER:-actions}
+[ "$MAC_BUILDER" = actions ] || { echo "AUTORELEASE FAIL: OPENBFME_RELEASE_MAC_BUILDER is actions (the Mac build host is in no release's path since RELGH-2)" >&2; exit 2; }
+LINUX_BUILDER=${OPENBFME_RELEASE_LINUX_BUILDER:-host}
 WINDOWS_BUILDER=${OPENBFME_RELEASE_WINDOWS_BUILDER:-host}
 for b in "MAC_BUILDER=$MAC_BUILDER" "LINUX_BUILDER=$LINUX_BUILDER" "WINDOWS_BUILDER=$WINDOWS_BUILDER"; do
   case ${b#*=} in host|actions) ;; *) echo "AUTORELEASE FAIL: OPENBFME_RELEASE_${b%%=*} is host or actions" >&2; exit 2 ;; esac
@@ -209,13 +208,17 @@ if [ "$MAC_BUILDER" = actions ] && [ "$SKIP_MAC" = 0 ]; then ACTIONS+=(macos); f
 if [ "$LINUX_BUILDER" = actions ]; then ACTIONS+=(linux); fi
 if [ "$WINDOWS_BUILDER" = actions ]; then ACTIONS+=(windows); fi
 STAGED=0     # 1 while the staging branch may be on the remote (the cleanup deletes it)
-# SIGNKMS-1 (docs/RELEASE.md, "Release signing"): who signs the release. deck (the default until the owner switches): this run seals and
-# signs with $OPENBFME_RELEASE_KEY and publishes, as before. actions: the candidate is built, tested and checked here as always, sealed
-# and signed with a throwaway key for the pre-flight only; after the push (step P) step 8 dispatches .github/workflows/release.yml on main
-# (tools/release/actions_release.py), which rebuilds the tag, seals and signs through AWS KMS and leaves a draft; this run waits for it
-# (a stable waits for the owner's approval of the `stable` environment; OPENBFME_RELEASE_SIGN_TIMEOUT seconds, default 4 h, then the
-# intent stays open and the next run waits again), checks the draft and adds the transition's Deck co-signature (cosign_release.py),
-# compares its packages with the tested candidate (actions_release.py compare), and publishes it with publish_release.sh --resume-id.
+# SIGNKMS-1, RELGH-2, RELGH-3 (docs/RELEASE.md, "Nightly signing on GitHub Actions", "Stable signing on GitHub Actions"): who signs. deck
+# (the default): this run seals and signs with $OPENBFME_RELEASE_KEY and publishes, as before. actions: the candidate is built, tested and
+# checked here as always, sealed and signed with a throwaway key for the pre-flight only; before anything is pushed, actions_release.py
+# trust-check: the newest stable release already trusts the key that will sign (the candidate's nightly keys, or for a stable release its
+# stable Actions key: the transition rule), and (a stable release) the environment stable-signing is exactly
+# tools/release/stable_environment.json and this machine's gh account (the release account, which dispatches) is no reviewer of it; after
+# the push (step P) step 8 dispatches .github/workflows/release.yml on main, which rebuilds the tag, seals and signs it (a nightly: with the
+# nightly key of the environment nightly-signing; a stable release: with the stable Actions key of stable-signing, once the owner approved
+# the run on GitHub) and leaves a draft; this run waits for it (OPENBFME_RELEASE_SIGN_TIMEOUT seconds, default 4 h, then the intent stays
+# open and the next run waits again: the owner may approve later), checks the draft (check_draft.py: nothing is added, the Deck signs
+# nothing), compares its packages with the tested candidate (actions_release.py compare) and publishes it with publish_release.sh --resume-id.
 SIGN_TIMEOUT=${OPENBFME_RELEASE_SIGN_TIMEOUT:-14400}   # RELSIGN-1: not ACTIONS_TIMEOUT, which bounds one MACACT-1 build (actions_build.py)
 [[ "$SIGN_TIMEOUT" =~ ^[0-9]{1,6}$ ]] || { echo "AUTORELEASE FAIL: OPENBFME_RELEASE_SIGN_TIMEOUT is a number of seconds" >&2; exit 2; }
 if [ "$SIGNER" = actions ] && [ "$SKIP_MAC" = 1 ]; then
@@ -225,7 +228,7 @@ fi
 # Every line this script and the helpers it runs print, stdout and stderr, and every line of its logs, goes through redact: the release
 # key's path, its folder and the home folder (both as given and resolved) become <release key>, <release key folder> and ~.
 KEYDISP="<release key>"
-if [ -n "$KEY" ]; then   # SIGNKMS-1: no key in the actions path's phase kms, nothing of it to mask
+if [ -n "$KEY" ]; then   # RELGH-2: no key on the actions path, nothing of it to mask
   export AR_KEY=$KEY AR_KEYREAL=$(realpath -m "$KEY") AR_KEYDIR=$(dirname "$KEY") AR_KEYDIRREAL=$(dirname "$(realpath -m "$KEY")")
 fi
 export AR_HOME=$HOME AR_HOMEREAL=$(realpath -m "$HOME")
@@ -380,7 +383,7 @@ validate_intent() {  # $1 = published: the release of the intent's version is pu
   if [ "${1:-}" = published ]; then
     [ -n "$I_PUBLIC" ] && [ -n "$tagc" ] || intent_bad "$I_VER is published but the intent has no public commit or the tag is missing"
     # the published manifest and signature are the intent's package folder's, and name this version, public commit and repository
-    # (SIGNKMS-1: on the actions path the folder is the workflow's draft as cosign_release.py downloaded it, actions-pkg/)
+    # (SIGNKMS-1: on the actions path the folder is the workflow's draft as check_draft.py downloaded it, actions-pkg/)
     local a f VPKG="$I_WORK/pkg"
     if [ "$SIGNER" = actions ]; then VPKG="$I_WORK/actions-pkg"; fi
     for f in manifest.json manifest.json.sig $([ -f "$VPKG/manifest-macos.json" ] && echo manifest-macos.json manifest-macos.json.sig); do
@@ -395,11 +398,12 @@ m = json.load(open(sys.argv[1]))
 sys.exit(0 if (m.get("version"), m.get("commit"), m.get("repo")) == tuple(sys.argv[2:5]) else 1)
 PY
     if [ "$SIGNER" = actions ]; then
-      # the workflow's release: manifest.json.sig is the Deck's co-signature (phase transition) or the KMS signature (phase kms), both
-      # valid under the sha's trusted list
+      # the workflow's release (RELGH-2, RELGH-3): manifest.json.sig is the nightly key's or the stable Actions key's, valid under the sha's
+      # lists by the scope rule
       git_ show "$I_SHA:launcher/release_keys.pub" > "$RJ.keys" || intent_bad "$I_SHA has no launcher/release_keys.pub"
-      python3 "$HERE/sign_manifest.py" --verify "$RJ.keys" "$VPKG/manifest.json" \
-        || intent_bad "the published manifest's signature does not verify under launcher/release_keys.pub of $I_SHA"
+      git_ show "$I_SHA:launcher/nightly_keys.pub" > "$RJ.nkeys" || intent_bad "$I_SHA has no launcher/nightly_keys.pub"
+      python3 "$HERE/sign_manifest.py" --verify "$RJ.keys" --nightly "$RJ.nkeys" "$VPKG/manifest.json" \
+        || intent_bad "the published manifest's signature does not verify under launcher/release_keys.pub + nightly_keys.pub of $I_SHA"
     else
     keyed python3 "$HERE/sign_manifest.py" --verify "$(git_ show "$I_SHA:launcher/release_key.pub" | tr -d '[:space:]')" "$VPKG/manifest.json" \
       || intent_bad "the published manifest's signature does not verify under launcher/release_key.pub of $I_SHA"
@@ -518,7 +522,7 @@ if [ -f "$INTENT" ]; then
     "$GH" api "repos/$TARGET/releases/$ids" > "$RJ" || fail "cannot read the release $ids ($I_VER) back (fail closed)"
     draft=$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1])).get("draft")).lower())' "$RJ")
     if [ "$draft" = false ]; then
-      # SIGNKMS-1: the actions path publishes the workflow's draft as cosign_release.py downloaded it (actions-pkg/), not the candidate
+      # SIGNKMS-1: the actions path publishes the workflow's draft as check_draft.py downloaded it (actions-pkg/), not the candidate
       IPKG="$I_WORK/pkg"; if [ "$SIGNER" = actions ]; then IPKG="$I_WORK/actions-pkg"; fi
       [ -f "$IPKG/manifest.json" ] || fail "$I_VER is published, but its package folder $IPKG is gone: verify it by hand, then record it in $STATE/last-released and delete $INTENT"
       # VERSION-1: a plain release is a full release, an alpha build or a bridge a pre-release (the channel of its version)
@@ -614,15 +618,22 @@ if [ "$MODE" = plan ]; then
   python3 "$HERE/autorelease.py" --git-dir "$REPO" warnings --from "$BASE" --to "$SHA" --denylist "$DENYLIST"   # NOTES-1: a Release-note that needs splitting; never fails
   exit 0
 fi
-# ---- MACREL-1: the Mac build host answers and is ready, before anything is pushed (a release without the Mac package is the operator's call) --
+# ---- MACREL-1: the macOS package (a release without it is the operator's call; RELGH-2: GitHub builds it, no Mac host is asked) ----------
 STEP=mac-check
 MACOPT="--mac-manifest --mac"   # the notes' download rows (autorelease.py download_section)
 if [ "$SKIP_MAC" = 1 ]; then
   MACOPT=--mac-manifest
   summary "AUTORELEASE WARNING: OPENBFME_RELEASE_SKIP_MAC=1: $VERSION is released WITHOUT the macOS package (manifest-macos.json names no Mac package; Macs keep their version)"
-elif [ "$MAC_BUILDER" = host ]; then
-  bash "$HERE/build_macos_release.sh" --check \
-    || fail "the Mac build host ($MAC_HOST) is not ready (above): nothing was pushed or published. Wake it / fix it and run again, or set OPENBFME_RELEASE_SKIP_MAC=1 to release without the macOS package"
+fi
+# RELGH-2, RELGH-3: a release signed on GitHub Actions only once the launchers players have trust its key (the transition rule) and, for a
+# stable release, only with the environment stable-signing as configured and a dispatching account that cannot approve: before anything is pushed
+if [ "$SIGNER" = actions ]; then
+  STEP=trust-check
+  python3 "$HERE/actions_release.py" trust-check --kind "$KIND" --commit "$SHA" --git-dir "$REPO" --remote "$REMOTE" --repo "$TARGET" \
+    || fail "the $KIND signing key of $SHA is not trusted by the newest stable release yet, or (a stable release) the environment stable-signing or this machine's GitHub account is not ready (above): nothing was pushed or published. Ship the transition launcher first, or sign on the Deck (OPENBFME_RELEASE_SIGNER=deck)"
+  st=$("$GH" api "repos/$TARGET/actions/workflows/release.yml" --jq .state) \
+    || fail "GitHub does not know .github/workflows/release.yml of $TARGET (it must have been on main once): nothing was pushed or published"
+  [ "$st" = active ] || fail "the workflow release.yml of $TARGET is '$st', not active: nothing was pushed or published"
 fi
 # MACACT-1: the GitHub builds need the workflow on GitHub (a workflow can be dispatched once GitHub knows it: once it was on main)
 if [ ${#ACTIONS[@]} -gt 0 ]; then
@@ -652,7 +663,7 @@ if [ -n "$KEY" ]; then
 pub=$(keyed python3 "$HERE/sign_manifest.py" --public-key "$KEY") || fail "cannot read the release key's public half"
 [ "$pub" = "$(git_ show "$SHA:launcher/release_key.pub" | tr -d '[:space:]')" ] || fail "the release key does not match launcher/release_key.pub of $SHA"
 else
-  echo "AUTORELEASE signer: actions in phase kms: no Deck key on this machine (the KMS key signs; nothing is co-signed)"
+  echo "AUTORELEASE signer: actions (a $KIND release): no Deck key on this machine (the release workflow signs with the $KIND key$([ "$KIND" = stable ] && echo ' after the owner approves the run' || true); nothing is co-signed)"
 fi
 command -v "$GH" >/dev/null || fail "gh not found"
 # the public commits and the tag carry the GitHub account's noreply address (GitHub refuses pushes that publish a private one, GH007;
@@ -887,10 +898,6 @@ if [ "$SKIP_MAC" = 1 ]; then
 elif [ "$MAC_BUILDER" = actions ]; then
   actions collect --platform macos --record "$WORK/actions.json" --out "$MACOUT" \
     || fail "the macOS package build on GitHub Actions failed, timed out or was refused (above): nothing was published"
-elif [ -n "$STANDIN" ]; then
-  "$STANDIN/build-mac" "$WT" "$VERSION" "$MACOUT" || fail "the stand-in Mac build failed"
-else
-  bash "$HERE/build_macos_release.sh" "$WT" "$VERSION" "$MACOUT" || fail "the macOS package build on $MAC_HOST failed (above)"
 fi
 
 # ---- 5. the Deck's checks of what came back, with the trusted checkout (5a) ------------------------------------------------------------
@@ -944,7 +951,8 @@ if [ "$SKIP_MAC" = 0 ]; then
   want=$(printf '%s f\n' "$MACZIP" "$MACZIP.sha256" "${MACZIP%.zip}.inventory.txt" README-MAC.txt | sort)
   [ "$got" = "$want" ] || fail "the returned Mac folder is not exactly the Mac package files: $(echo $got)"
   python3 "$T/make_macos_manifest.py" --verify-package "$MACOUT/$MACZIP" --checksum "$MACOUT/$MACZIP.sha256" --version "$VERSION" \
-    --commit "$PUBLIC" --repo "$TARGET" --release-key-file "$TRUSTED/launcher/release_keys.pub" || fail "$MACZIP failed the Deck's checks"
+    --commit "$PUBLIC" --repo "$TARGET" --release-key-file "$TRUSTED/launcher/release_keys.pub" \
+    --nightly-key-file "$TRUSTED/launcher/nightly_keys.pub" || fail "$MACZIP failed the Deck's checks"
 fi
 # ---- 5x. MACACT-1: a library GitHub Actions built too must be byte for byte the build host's (the one in the returned package) -------------
 for p in linux windows; do
@@ -989,7 +997,7 @@ if [ "$SKIP_MAC" = 0 ]; then
 fi
 if [ "$MODE" = dry ] || [ "$SIGNER" = actions ]; then
   # SIGNKMS-1: on the actions path the throwaway key serves the pre-flight checks alone; the release's seals and signatures come from the
-  # release workflow (AWS KMS) and, in the transition, the Deck's co-signature (step 8)
+  # release workflow (RELGH-2: the nightly key, step 8)
   mkdir -p "$WORK/dry-key"; chmod 700 "$WORK/dry-key"
   rm -f "$WORK/dry-key/throwaway.pem" "$WORK/dry-key/throwaway.pub"
   python3 "$T/sign_manifest.py" --generate-key "$WORK/dry-key/throwaway.pem" > "$WORK/dry-key/throwaway.pub"
@@ -1049,6 +1057,8 @@ STEP=preflight
 # RELNAME-1 (Sol r2): an alpha build, also one resumed from an open intent (its version is kept; VERSION-1: only an intent opened before
 # the plain releases can still be one), is published only while the launchers up to v0.3.0-preview.4 still have their verified bridge on
 # the page they read, with room for this release; otherwise the run stops here (docs/RELEASE.md, "The alpha builds")
+# RELGH-3: the release workflow signs nightlies and plain stable versions only
+if [ "$SIGNER" = actions ]; then case $VERSION in *-alpha.*) fail "$VERSION is an alpha build: the release workflow signs nightlies and plain stable versions only (OPENBFME_RELEASE_SIGNER=deck)" ;; esac; fi
 case $VERSION in
   *-alpha.*) python3 "$HERE/autorelease.py" --git-dir "$REPO" bridge-ok --remote "$REMOTE" --repo "$TARGET" --sha "$SHA" --gh "$GH" \
        || fail "the bridge for the launchers up to v0.3.0-preview.4 is gone: $VERSION is not published" ;;
@@ -1130,30 +1140,32 @@ else would community_prs.py record --public "$PUBLIC"; fi
 # ---- 8. publish the candidate (the trusted checkout's publish_release.sh: draft, assets checked, published, read back) ----------------
 STEP=publish
 if [ "$SIGNER" = actions ]; then
-  # SIGNKMS-1: the release workflow builds, seals and signs the tag and leaves a draft; this run checks it and publishes it
-  KIND=stable; if [ "$NIGHTLY" = 1 ]; then KIND=nightly; fi
+  # SIGNKMS-1, RELGH-2, RELGH-3: the release workflow builds, seals and signs the release (the nightly key, or the stable Actions key after
+  # the owner's approval) and leaves a draft; this run checks it and publishes it (nothing is signed here)
   REQF="$STATE/intent.request"; AP="$WORK/actions-pkg"
   if [ "$MODE" = dry ]; then
-    would python3 "$T/actions_release.py" dispatch --tag "$VERSION" --commit "$PUBLIC" --kind "$KIND" --repo "$TARGET" --out "$REQF"
+    would python3 "$T/actions_release.py" dispatch --tag "$VERSION" --commit "$PUBLIC" --repo "$TARGET" --out "$REQF"
     would python3 "$T/actions_release.py" wait --request-file "$REQF" --repo "$TARGET" --timeout "$SIGN_TIMEOUT"
-    would python3 "$T/cosign_release.py" --repo "$TARGET" --tag "$VERSION" --release-id "<draft id>" --request "<request>" --out "$AP" --key "$KEYDISP"
+    would python3 "$T/check_draft.py" --repo "$TARGET" --tag "$VERSION" --release-id "<draft id>" --request "<request>" --out "$AP"
     would python3 "$T/actions_release.py" compare --candidate "$PKG" --actions "$AP" --version "$VERSION"
     would "$T/publish_release.sh" "$AP" --repo "$TARGET" --notes-file "$WORK/notes.md" --denylist "$DENYLIST" --execute --confirm-tag "$VERSION" --resume-id "<draft id>"
   else
     intent_set step=publishing
     if [ ! -f "$REQF" ]; then
-      python3 "$T/actions_release.py" dispatch --tag "$VERSION" --commit "$PUBLIC" --kind "$KIND" --repo "$TARGET" --out "$REQF" \
+      python3 "$T/actions_release.py" dispatch --tag "$VERSION" --commit "$PUBLIC" --repo "$TARGET" --out "$REQF" \
         || fail "dispatching the release workflow failed (above); the intent stays open: delete $REQF to dispatch again"
     else
       echo "AUTORELEASE actions: the release workflow was dispatched by an earlier run ($REQF): waiting for that run"
+    fi
+    if [ "$KIND" = stable ]; then
+      echo "AUTORELEASE actions: the release run of $VERSION waits for the owner's review of the environment stable-signing (Approve on the run's page)"
     fi
     RID=$(python3 "$T/actions_release.py" wait --request-file "$REQF" --repo "$TARGET" --timeout "$SIGN_TIMEOUT") \
       || fail "the release workflow left no signed draft of $VERSION yet (above); the intent stays open: the next run waits again"
     echo "$RID" > "$STATE/intent.rid"
     REQ=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["request"])' "$REQF")
     rm -rf "$AP"
-    KEYOPT=(); if [ -n "$KEY" ]; then KEYOPT=(--key "$KEY"); fi
-    keyed python3 "$T/cosign_release.py" --repo "$TARGET" --tag "$VERSION" --release-id "$RID" --request "$REQ" --out "$AP" "${KEYOPT[@]}" \
+    python3 "$T/check_draft.py" --repo "$TARGET" --tag "$VERSION" --release-id "$RID" --request "$REQ" --out "$AP" \
       || fail "the release workflow's draft $RID of $VERSION failed the Deck's checks (above): it stays a draft, nothing published"
     python3 "$T/actions_release.py" compare --candidate "$PKG" --actions "$AP" --version "$VERSION" \
       || fail "the release workflow's packages are not the candidate this run tested (above): the draft $RID stays a draft"

@@ -137,9 +137,9 @@ public:
 	// ZH ControlBar::processCommandUI: the press of the button in `slot`. Returns false when the slot has no usable button (counted, reported through ui messages).
 	bool pressButton(int slot, bool inPalantir);
 	// lane CAMPUI-1: the stance toggle's SetStance (RW 0x96F53C): MSG_CHANGE_STANCE with `stance` (a stance item of the Palantir's radial, a SET_STANCE button)
-	bool sendChangeStance(int stance);
+	bool sendChangeStance(int stance, const char *site = "ControlBar:SET_STANCE");
 	// right press on a build button: cancels one queued unit, or all with Shift and no MaxSimultaneousOfType (RW 0x940CD0); on a REVIVE button the hero record by
-	// its index (RW 0x940C57)
+	// its index (RW 0x940C57); on a PLAYER / OBJECT / CASTLE_UPGRADE button MSG_CANCEL_UPGRADE { mask bit } (RW 0x940E77 / 0x940FB3, lane FBSIM-1)
 	bool cancelQueued(int slot, bool inPalantir, bool shift = false);
 	// lane AUTOCAST-1: the right press of a command button: the clip's gate (RW 0x9D28D4: a _disabled / _cantAfford button only when CANCELABLE) and
 	// processCommandUI's right press (RW 0x940435 with its second argument 0): an AutoAbility (+ 0x10C) or CANCELABLE button of the source object sends
@@ -151,7 +151,7 @@ public:
 	const std::map<std::string, unsigned> &unportedPresses() const { return m_unported; }
 
 	// ---- lane DEVPORT-8 (FALSEDEF-1): the under-attack blink of the control bar ----
-	// TARGET FACTS (RotWK game.dat, caveat S-001; BFME2 decomp ControlBarRva0031AEC9.cpp / ControlBarBlink0031AEFF.cpp, tier B same-shape: RotWK's fields
+	// TARGET FACTS (RotWK game.dat, caveat S-001; BFME2 decomp ControlBar.cpp, tier B same-shape: RotWK's fields
 	// are + 0x298 / + 0x29C / + 0x2A0 where BFME2 has + 0x290 / + 0x294 / + 0x298; checked in Ghidra):
 	//   * the window (+ 0x2A0) is ControlBar.wnd:WinUAttack, looked up by name when the control bar is made (RW 0x71E1E7 at RW 0x71E8C4); no window, no blink
 	//   * start (RW 0x71C7E4, called only by Radar::tryUnderAttackEvent RW 0x6D9BF3 after a new UNDER_ATTACK event): the flag (+ 0x298) set, the count

@@ -13,12 +13,18 @@
 //       - (to.x, to.y) == (0, 0) or the map not ready -> none; from / to clipped to the grid (RW 0x6E8A14); + 0x38 (tunnelling) = 0;
 //       - the mineshaft branch: when the unit's player has a usable network (RW 0x77559F) the type 8 waypoints nearest the unit and the goal become an
 //         intermediate goal (NOT PORTED, reported: kHierarchical);
-//       - the goal cell (RW 0x6E8CE6 centred, RW 0x5E2E9C) and the start cell (RW 0x6EA076) get records (RW 0x6E9FF8); none -> none; start == goal -> none;
-//         a start in an obstacle that is not the ignored one -> none;
-//       - the goal record is reset (RW 0x934400); the start's total cost is RW 0x6F1F0D (start, goal); the goal's zone is the effective zone (RW 0x9389A6, the
-//         non-terrain variant) on the ground and wall layers (RW 0x76550F), with the goal's block;
-//       - the loop pops the open heap (RW 0x6F4AF2), closes the cell (RW 0x934594) and is done when the cell's effective zone and block are the goal's; else
-//         the bridge links (RW 0x9389CE) and the block portals (RW 0x937F2D / 0x937F7F) of the block (the bridge links: not ported, S-161 / S-4856; the portals: lane WALL-2), the closest cell by
+//       - the goal cell (RW 0x6E8CE6 centred, RW 0x5E2E9C on the layer TheTerrainLogic::getLayerForDestination RW 0x680A75 names) and the start cell
+//         (RW 0x6EA076, the same for the start) get records (RW 0x6E9FF8); none -> none; start == goal -> none; a start in an obstacle that is not the
+//         ignored one -> none;
+//       - the goal record is reset (RW 0x934400); the start's total cost is RW 0x6F1F0D (start, goal); the goal's zone is its block zone (RW 0x9389A6, the
+//         even, block-local union tables: PathfindZoneManager::getBlockZone) on the ground grid's layers (RW 0x76550F: 1 and 0x10 ..), with the goal's
+//         block; a goal on a raised layer (2 .. 15) has its own zone and no block (-1);
+//       - a start on a raised layer (RW 0x6F8846 .. 0x6F8986): when both of its layer's wall connect cells (PathfindLayer + 0x18 / + 0x20, see
+//         AIPathfindRaised.cpp) are ground grid cells, the start is popped and closed and the two cells (+ 0x18's first) are pushed with the start as their
+//         parent, their cost so far their RW 0x9345AA distance to the start and their total their distance to the goal;
+//       - the loop pops the open heap (RW 0x6F4AF2), closes the cell (RW 0x934594) and is done when the cell's zone (the block zone on the ground grid's
+//         layers, else its own) is the goal's and the goal has no block or the cell lies in it; else the raised links (RW 0x9389CE, the branch
+//         RW 0x6F8CC7 .. 0x6F8F7B: hierarchicalRaisedLinks below) and the block portals (RW 0x937F2D / 0x937F7F, lane WALL-2) of the block, the closest cell by
 //         dy*dy + dx*dx (float, below 999999995904.0f, RW 0xC1C4AC), then the four edges of the block: x = bx*16 (left, step -1), bx*16 + 15 (right, +1), y = by*16
 //         (bottom), by*16 + 15 (top), each edge's 16 cells from its middle outward (8, 9, 7, 10, 6, ... , 15, 1, 16 from the block's corner), a cell
 //         that exists, is neither open nor closed and (a human's search) lies in the logical extent goes to RW 0x6F6454 with a zone list cleared per edge;
@@ -26,8 +32,8 @@
 //         (the open and closed lists released, their counts added to the queue's cell counter + 0x3C), the goal's record released (RW 0x9347C6), adjustedTo = the
 //         clipped goal; not found: closestOK and a closest cell that is not the start -> adjustedTo = its centre (RW 0x6EA0CB) and the corridor of its chain,
 //         else none (the waypoint vector + 0x1C1CC cleared); RW 0x6F5519 and the goal's release either way;
-//   * RW 0x6F6454 (tier A, no decomp source): the edge cell in the extent, its effective zone (RW 0x9389A6) the parent's, not open or closed; the cell across
-//     the edge in the extent, not open or closed, its effective zone `z`; `z` already in this edge's list -> that cell is closed (RW 0x934594) and nothing more;
+//   * RW 0x6F6454 (tier A, no decomp source): the edge cell in the extent, its block zone (RW 0x9389A6) the parent's, not open or closed; the cell across
+//     the edge in the extent, not open or closed, its block zone `z`; `z` already in this edge's list -> that cell is closed (RW 0x934594) and nothing more;
 //     the two raw zones must join (RW 0x938240); the edge cell gets a record and is closed, the cell across gets a record; c1 = its RW 0x9345AA distance to
 //     the parent, c2 to the goal; +20 to c1 when either cell is pinched (bit 16) or has bit 23, else `z` joins the list; its cost so far = the parent's + c1,
 //     its total = cost so far + c2 (16 bit), its parent the parent (RW 0x93443D), pushed (RW 0x6F57A1);
@@ -45,6 +51,7 @@
 #include "GameLogic/SimMath.h"
 
 #include <cstdlib>
+#include <utility>
 
 namespace
 {
@@ -169,7 +176,7 @@ void Pathfinder::examineHierarchicalEdgeCell(const ICoord2D &cell, const ICoord2
 		return;
 	}
 	PathfindCell *edge = getCell(LAYER_GROUND, cell.x, cell.y);
-	if (!edge || m_zoneManager.getEffectiveZone(mv, false, edge->getZone()) != parentZone)
+	if (!edge || m_zoneManager.getBlockZone(mv, edge->getZone()) != parentZone)
 	{
 		return;
 	}
@@ -187,7 +194,7 @@ void Pathfinder::examineHierarchicalEdgeCell(const ICoord2D &cell, const ICoord2
 	{
 		return;
 	}
-	const zoneStorageType z = m_zoneManager.getEffectiveZone(mv, false, across->getZone());
+	const zoneStorageType z = m_zoneManager.getBlockZone(mv, across->getZone());
 	for (int i = 0; i < zoneCount; ++i)
 	{
 		if (zones[i] == z)
@@ -232,6 +239,95 @@ void Pathfinder::examineHierarchicalEdgeCell(const ICoord2D &cell, const ICoord2
 	m_open.push(across);
 }
 
+bool Pathfinder::hierarchicalRaisedLinks(PathfindCell *c, PathfindCell *goal, zoneStorageType cz, zoneStorageType goalZone, const PathfindMovement &mv,
+	int &cellCount)
+{
+	// RW 0x6F8CC7 .. 0x6F8F7B (BFME2 decomp internal_findHierarchicalPath, the m_layers loop): every layer 0 .. 15 in use (RW 0x768326) and not marked
+	// (+ 0x30, the bridge kind's; never for a walkway) with both wall connect cells set. The near cell is + 0x18 unless + 0x18 lies outside the popped cell's
+	// block (then + 0x20, the far one + 0x18); it must lie in the block and have the popped cell's block zone (RW 0x9389A6), else, when the far cell lies in
+	// the block too, the two swap and the far one is asked. A layer whose zone (+ 0x2C) is the goal's ends the search as found. Otherwise the far cell, a
+	// ground grid cell neither open nor closed and not the near one, joins the open list: the near cell (when it is not the popped one) gets a record, the
+	// popped cell as parent, and is closed unless open or closed; the far cell's parent is the near cell, its cost so far the near cell's plus their
+	// RW 0x9345AA distance, its total that plus its distance to the goal
+	const int bx = c->getXIndex() / kBlock, by = c->getYIndex() / kBlock;
+	for (int l = (int)LAYER_TOP; l <= (int)LAYER_RAISED_LAST; ++l) // layers 0 and 1 are never in use
+	{
+		const RaisedLayer &rl = m_raised[(size_t)l];
+		if (!rl.used())
+		{
+			continue;
+		}
+		ICoord2D from = rl.connect[0], to = rl.connect[1];
+		if (from.x / kBlock != bx || from.y / kBlock != by)
+		{
+			std::swap(from, to);
+		}
+		if (from.x < 0 || from.y < 0 || to.x < 0 || to.y < 0 || from.x / kBlock != bx || from.y / kBlock != by)
+		{
+			continue;
+		}
+		const PathfindCell *near = getCell(LAYER_GROUND, from.x, from.y);
+		zoneStorageType z = near ? m_zoneManager.getBlockZone(mv, near->getZone()) : 0;
+		if (z != cz)
+		{
+			if (to.x / kBlock == bx && to.y / kBlock == by)
+			{
+				std::swap(from, to);
+				near = getCell(LAYER_GROUND, from.x, from.y);
+				z = near ? m_zoneManager.getBlockZone(mv, near->getZone()) : 0;
+			}
+			if (z != cz)
+			{
+				continue;
+			}
+		}
+		if (raisedLayerZone((PathfindLayerEnum)l) == goalZone)
+		{
+			return true;
+		}
+		PathfindCell *farCell = getCell(LAYER_GROUND, to.x, to.y);
+		if (!farCell || (farCell->hasInfo() && (farCell->getOpen() || farCell->getClosed())))
+		{
+			continue;
+		}
+		PathfindCell *nearCell = getCell(LAYER_GROUND, from.x, from.y);
+		if (!nearCell || nearCell == farCell)
+		{
+			continue;
+		}
+		if (nearCell != c)
+		{
+			if (!nearCell->allocateInfo(m_pool, from))
+			{
+				continue;
+			}
+			nearCell->setParentCell(c);
+			if (!nearCell->getOpen() && !nearCell->getClosed())
+			{
+				markClosed(nearCell);
+			}
+		}
+		if (!farCell->allocateInfo(m_pool, to))
+		{
+			continue;
+		}
+		farCell->setParentCell(nearCell);
+		++cellCount;
+		farCell->setCostSoFar((std::uint16_t)(nearCell->getCostSoFar() + farCell->costToHierGoal(nearCell)));
+		farCell->setTotalCost((std::uint16_t)(farCell->getCostSoFar() + farCell->costToHierGoal(goal)));
+		m_open.push(farCell);
+	}
+	return false;
+}
+
+void Pathfinder::ensureZoneBlocks()
+{
+	if (!m_zoneManager.hasZoneBlocks())
+	{
+		m_zoneManager.rebuildZoneBlocks(gridView(), PathfindRegion{ m_extent.lo, m_extent.hi });
+	}
+}
+
 bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, bool isHuman, const Coord3D *from, const Coord3D *to,
 	Coord3D *adjustedTo)
 {
@@ -245,13 +341,13 @@ bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const Pathfind
 	Coord3D fromPos = *from;
 	clip(&fromPos, &goalPos);
 	m_isTunneling = false;
-	note(pathstops::kHierarchical); // the mineshaft branch (RW 0x77559F) and the bridge branch below are not ported (S-161, S-162); the portal branch is (WALL-2)
+	note(pathstops::kHierarchical); // the mineshaft branch (RW 0x77559F) is not ported (S-162); the raised branch and the portal branch are
 	ICoord2D goalNdx;
 	if (worldToCell(&goalPos, true, &goalNdx))
 	{
 		return false; // RW 0x5E2E9C: no cell off the grid (the port's worldToCell clamps and reports it)
 	}
-	PathfindCell *goal = getCell(LAYER_GROUND, goalNdx.x, goalNdx.y);
+	PathfindCell *goal = getCell(searchDestinationLayer(goalPos), goalNdx.x, goalNdx.y); // RW 0x680A75 -> RW 0x5E2E9C
 	if (goal && goal->getType() == PathfindCell::CELL_OBSTACLE && m_ignoreObstacleID != PATHFIND_INVALID_ID && goal->getObstacleID() == m_ignoreObstacleID)
 	{
 		// INFERENCE (S-162, kHierarchical): a goal inside the obstacle the unit ignores (a builder walking onto the site it builds) is in an obstacle zone no
@@ -263,7 +359,7 @@ bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const Pathfind
 	{
 		return false;
 	}
-	PathfindCell *start = getClippedCell(LAYER_GROUND, &fromPos); // the start's ground grid cell (the corridor's raised branch RW 0x9389CE is not ported: S-4856)
+	PathfindCell *start = getClippedCell(searchDestinationLayer(fromPos), &fromPos); // RW 0x680A75 -> RW 0x6EA076
 	if (!start)
 	{
 		return false;
@@ -287,17 +383,48 @@ bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const Pathfind
 		return false;
 	}
 	const PathfindMovement mv = makeMovement(obj, loco);
+	ensureZoneBlocks();
 	const bool expand = obj && obj->isKindOf(PK_SHIP);
 	goal->startPathfind(nullptr);
 	start->clearParentCell();
 	start->setTotalCost(start->costToGoal(goal));
-	const zoneStorageType goalZone = m_zoneManager.getEffectiveZone(mv, false, goal->getZone());
-	const int goalBx = goal->getXIndex() / kBlock, goalBy = goal->getYIndex() / kBlock;
+	// RW 0x76550F: the ground grid's layers (1, and 0x10 on: the ramps and wall tops) compare block zones; a raised layer's cell its own zone
+	auto searchZone = [&](const PathfindCell *c) {
+		const int l = (int)c->getLayer();
+		return l == (int)LAYER_GROUND || l >= (int)LAYER_RAMP ? m_zoneManager.getBlockZone(mv, c->getZone()) : c->getZone();
+	};
+	const bool goalOnGrid = (int)goal->getLayer() == (int)LAYER_GROUND || (int)goal->getLayer() >= (int)LAYER_RAMP;
+	const zoneStorageType goalZone = searchZone(goal);
+	const int goalBx = goalOnGrid ? goal->getXIndex() / kBlock : -1, goalBy = goalOnGrid ? goal->getYIndex() / kBlock : -1;
 	ICoord2D blocks;
 	m_zoneManager.getExtent(blocks);
 	m_open.clear();
 	m_closedList = nullptr;
 	m_open.push(start);
+	const int startLayer = (int)start->getLayer();
+	if (startLayer != (int)LAYER_GROUND && startLayer < (int)LAYER_RAMP && isRaisedLayer((PathfindLayerEnum)startLayer))
+	{
+		// RW 0x6F8846 .. 0x6F8986: a start on a raised layer goes on from its layer's two wall connect cells
+		const RaisedLayer &rl = m_raised[(size_t)startLayer];
+		PathfindCell *second = getCell(LAYER_GROUND, rl.connect[1].x, rl.connect[1].y);
+		PathfindCell *first = getCell(LAYER_GROUND, rl.connect[0].x, rl.connect[0].y);
+		if (second && first)
+		{
+			m_open.pop();
+			markClosed(start);
+			for (const std::pair<PathfindCell *, ICoord2D> &e : { std::make_pair(first, rl.connect[0]), std::make_pair(second, rl.connect[1]) })
+			{
+				if (!e.first->allocateInfo(m_pool, e.second))
+				{
+					continue;
+				}
+				e.first->setParentCell(start);
+				e.first->setCostSoFar((std::uint16_t)e.first->costToHierGoal(start));
+				e.first->setTotalCost((std::uint16_t)e.first->costToHierGoal(goal)); // RW: the distance to the goal alone
+				m_open.push(e.first);
+			}
+		}
+	}
 	PathfindCell *closest = nullptr;
 	float bestKey = 999999995904.0f; // RW 0xC1C4AC
 	zoneStorageType zones[kBlock];
@@ -318,9 +445,24 @@ bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const Pathfind
 	{
 		PathfindCell *c = m_open.pop();
 		markClosed(c);
-		const zoneStorageType cz = m_zoneManager.getEffectiveZone(mv, false, c->getZone());
+		if (m_uberLimits && m_uberSearchAllocs > m_uberSearchCap)
+		{
+			break; // lane PERF-HD: the Uber queue's cap (an unreachable goal zone scanned the whole map's blocks); the closest block so far answers below
+		}
+		const zoneStorageType cz = searchZone(c);
 		const int bx = c->getXIndex() / kBlock, by = c->getYIndex() / kBlock;
-		if (cz == goalZone && bx == goalBx && by == goalBy)
+		int linkCells = 0;
+		bool found = cz == goalZone && (goalBx == -1 || (bx == goalBx && by == goalBy));
+		if (!found && m_zoneManager.interactsWithRaisedLayer(c->getXIndex(), c->getYIndex()))
+		{
+			found = hierarchicalRaisedLinks(c, goal, cz, goalZone, mv, linkCells);
+		}
+		// lane WALL-2: the portals of the cell's block (RW 0x6F9089 .. 0x6F9371)
+		if (!found)
+		{
+			found = hierarchicalPortals(c, goal, cz, goalZone, mv, obj, linkCells);
+		}
+		if (found)
 		{
 			if (c != goal)
 			{
@@ -333,9 +475,6 @@ bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const Pathfind
 			*adjustedTo = goalPos;
 			return true;
 		}
-		// lane WALL-2: the portals of the cell's block (RW 0x6F9089 .. 0x6F9371; the bridge branch before it, RW 0x6F8CC7 .. 0x6F8F7B, is S-161 / S-4856)
-		int portalCells = 0;
-		hierarchicalPortals(c, goal, cz, goalZone, mv, obj, portalCells);
 		const float key = hierarchicalClosestKey((int)goal->getXIndex() - (int)c->getXIndex(), (int)goal->getYIndex() - (int)c->getYIndex());
 		if (bestKey > key) // RW 0x6F93C2: comiss best, key; jbe keeps the first of equal keys
 		{

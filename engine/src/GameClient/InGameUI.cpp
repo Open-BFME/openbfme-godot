@@ -3,6 +3,8 @@
 
 #include "GameClient/InGameUI.h"
 
+#include "GameClient/ControlBarCommands.h"
+
 #include "GameClient/MessageStream/MessageStream.h"
 #include "GameClient/HudContext.h"
 #include "GameClient/HudObjects.h"
@@ -185,7 +187,51 @@ void InGameUI::mirrorSelection(const std::vector<ObjectID> &ids)
 
 void InGameUI::setGUICommand(const CommandButton *command)
 {
+	// BFME2 InGameUI::setGUICommand (0x0029A889, InGameUIInputModes.cpp, matched): the command is kept, the cursor is set to Arrow (setMouseCursor(ARROW)) and
+	// the GUI command mode's cursor (+ 0x800) becomes the mouse's cursor, Arrow. Not ported here: the recorder playback guard, the drop of a command whose
+	// Options need no target, the radius cursor (the HUD's: InGameHud::updateRadiusCursor)
 	m_guiCommand = command;
+	setCursor(MouseCursorName::Arrow);
+	m_guiModeCursor = MouseCursorName::Arrow;
+}
+
+int InGameUI::mouseMode() const
+{
+	if (isPlacing())
+	{
+		return 1;
+	}
+	// BFME2 0x0029A889: MOUSEMODE_GUI_COMMAND (2) for a command other than DOZER_CONSTRUCT (0x35) with an Options bit of COMMAND_OPTION_NEED_TARGET (0x227)
+	if (m_guiCommand && m_guiCommand->m_command != GUI_COMMAND_DOZER_CONSTRUCT && (m_guiCommand->m_options & 0x227u) != 0)
+	{
+		return 2;
+	}
+	return 0;
+}
+
+const std::string &InGameUI::mouseModeCursor() const
+{
+	static const std::string target = MouseCursorName::Target, arrow = MouseCursorName::Arrow;
+	switch (mouseMode())
+	{
+		case 1:
+			return target;
+		case 2:
+			return m_guiModeCursor;
+		default:
+			return arrow;
+	}
+}
+
+void InGameUI::setCursor(const std::string &name)
+{
+	// BFME2 InGameUI::setMouseCursor (0x0029A5D6, InGameUIInputModes.cpp, matched): TheMouse->setCursor, then in the GUI command mode (2) a cursor other than
+	// Arrow / Scroll becomes the mode's cursor (+ 0x800)
+	m_cursor = name;
+	if (mouseMode() == 2 && name != MouseCursorName::Arrow && name != MouseCursorName::Scroll)
+	{
+		m_guiModeCursor = name;
+	}
 }
 
 void InGameUI::setScrolling(bool on)

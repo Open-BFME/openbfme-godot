@@ -9,6 +9,7 @@
 
 #include "doctest.h"
 #include "BigTestUtil.h"
+#include "AptPlayerTestUtil.h"
 
 #include "Common/ArchiveFile.h"
 #include "Common/MD5.h"
@@ -201,6 +202,88 @@ TEST_CASE("MODS-1: precedence: loose mod files, then the folder's archives (last
 	CHECK(none.text.find("\nmods none\n") != std::string::npos); // the text of every build before MODS-1
 	CHECK(id != none);
 	CHECK(report.stops == std::vector<std::string>{ ModMountStopLine() });
+}
+
+TEST_CASE("MODS-1: an overridden Apt movie executes branches to a detached End and retains its mask")
+{
+	// Entirely synthetic MainMenu pair: the mod's frame action must execute, not be discarded by the decoder.
+	for (int mode : { 0, 1, 2 }) // unconditional, conditional taken, conditional not taken
+	{
+		auto movieFiles = [&](bool mod) {
+			apttest::TestMovie movie;
+			apttest::Asm a = movie.program();
+			a.pushString("source").pushString(mod ? "mod" : "base").op(APT_OP_SETVARIABLE);
+			if (mod)
+			{
+				if (mode == 0)
+				{
+					a.branchAlways("terminal");
+				}
+				else
+				{
+					a.pushByte(mode == 1 ? 1 : 0).branchIfTrue("terminal");
+				}
+				a.pushString("fallthrough").pushByte(1).op(APT_OP_SETVARIABLE).op(APT_OP_END);
+				a.op(0xFE).op(0xFF).label("terminal");
+			}
+			a.op(APT_OP_END);
+			const auto offset = movie.commit(a);
+			movie.addCharacter(0);
+			const auto shape = movie.addCharacter(movie.addShape(0, 0, 10, 10, 1));
+			auto mask = apttest::placeChar(shape, 1, "mask");
+			mask.clipDepth = mod ? 2 : -1; // RW 0xB0D0C0 reads this even without HASCLIPDEPTH
+			movie.setRootFrames({ { movie.addPlaceItem(mask), movie.addPlaceItem(apttest::placeChar(shape, 2, "content")),
+				movie.addActionItem(offset) } });
+			std::vector<std::uint8_t> apt, cst;
+			movie.build(apt, cst);
+			return std::vector<std::pair<std::string, std::string>>{ { "MainMenu.apt", asString(apt) }, { "MainMenu.const", asString(cst) } };
+		};
+		TempDir tmp;
+		Win32BIGFileSystem fsys;
+		std::string error;
+		auto base = fsys.openArchiveFromMemory("base.big",
+			std::make_shared<const std::vector<std::uint8_t>>(makeBig("BIGF", movieFiles(false))), &error);
+		REQUIRE_MESSAGE(base, error);
+		fsys.mountArchive(std::move(base), "base.big", false);
+		AptArchiveFileSource source(fsys);
+		{
+			AptStubHost host;
+			Apt player(source, host);
+			REQUIRE_MESSAGE(player.loadMovie(0, "MainMenu", &error), error);
+			REQUIRE(player.level(0));
+			AptValue value;
+			REQUIRE(player.level(0)->getMember("source", value));
+			CHECK(value.toString() == "base");
+			REQUIRE(player.level(0)->childAtDepth(1));
+			CHECK(player.level(0)->childAtDepth(1)->clipDepth == -1);
+			CHECK(host.errors.empty());
+		}
+		const fs::path modDir = tmp.path / "MenuMod";
+		writeBig(modDir / "menu.big", movieFiles(true));
+		ModOperand op;
+		op.dir = modDir.u8string() + "/";
+		ModMountOptions options;
+		options.rotwkInstallRoot = (tmp.path / "install").u8string();
+		fs::create_directories(options.rotwkInstallRoot);
+		const auto report = MountRetailMod(fsys, op, options);
+		REQUIRE_MESSAGE(report.ok, joined(report.errors));
+		CHECK(fsys.sourcesOf("MainMenu.apt") == std::vector<std::string>{ (modDir / "menu.big").u8string(), "base.big" });
+		AptStubHost host;
+		Apt player(source, host);
+		REQUIRE_MESSAGE(player.loadMovie(0, "MainMenu", &error), error);
+		REQUIRE(player.level(0));
+		CHECK(host.errors.empty());
+		AptValue value;
+		REQUIRE(player.level(0)->getMember("source", value));
+		CHECK(value.toString() == "mod");
+		REQUIRE(player.level(0)->childAtDepth(1));
+		CHECK(player.level(0)->childAtDepth(1)->clipDepth == 2);
+		CHECK(player.level(0)->getMember("fallthrough", value) == (mode == 2));
+		if (mode == 2)
+		{
+			CHECK(value.toInteger() == 1);
+		}
+	}
 }
 
 TEST_CASE("MODS-1: the mod folder joins directory listings (RW 0xA14D2B), recursive only when asked")

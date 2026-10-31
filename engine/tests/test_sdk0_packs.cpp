@@ -71,7 +71,6 @@ TEST_CASE("SDK-0: a pack replaces textures by stem and models by file name, any 
 	writeFile(tmp.path / "HDUnits" / "textures" / "GUMaArms.DDS", "DDS hd");
 	writeFile(tmp.path / "HDUnits" / "gumaarms_skn.W3D", "w3d hd");
 	writeFile(tmp.path / "HDUnits" / "readme.txt", "notes");
-	writeFile(tmp.path / "HDUnits" / "preview.blend", "x");
 	writeFile(tmp.path / "Better" / "gumaarms.png", "png better");
 
 	AssetPacks packs;
@@ -82,7 +81,7 @@ TEST_CASE("SDK-0: a pack replaces textures by stem and models by file name, any 
 	CHECK(packs.model("art\\w3d\\gu\\GUMaArms_SKN.w3d")->relative == "gumaarms_skn.W3D");
 	CHECK(packs.model("art\\w3d\\gu\\gumaarms_skl.w3d") == nullptr);
 	CHECK(packs.texture("gumaarmsx") == nullptr);
-	CHECK(packs.notes() == std::vector<std::string>{ "HDUnits: preview.blend is not a model or texture (.w3d, .dds, .tga, .png, .jpg): not used" });
+	CHECK(packs.notes().empty()); // the readme is the pack's own text (lane SDK-1: any other kind of file refuses the pack, test_sdk1_packs.cpp)
 
 	REQUIRE_MESSAGE(packs.addPack((tmp.path / "Better").u8string(), errors), joined(errors));
 	CHECK(packs.texture("gumaarms.tga")->relative == "gumaarms.png");

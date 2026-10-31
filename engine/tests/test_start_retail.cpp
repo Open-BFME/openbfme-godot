@@ -9,18 +9,26 @@
 
 #include "Common/Player.h"
 #include "Common/StateHash.h"
+#include "Common/ModMount.h"
+#include "Common/RetailArchivePolicy.h"
 #include "GameClient/LiveGame.h"
+#include "GameClient/MapCreationHooks.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/NewGame/NewGame.h"
 #include "GameLogic/NewGame/StartingBase.h"
 #include "GameLogic/NewGame/SkirmishRandom.h"
 #include "GameLogic/Object/Object.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
+#include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
 #include "StartGolden.h"
 
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <map>
 #include <set>
 
@@ -29,6 +37,179 @@ using namespace startgolden;
 
 namespace
 {
+std::string surveyEnv(const char *name)
+{
+	const char *value = std::getenv(name);
+	return value ? value : "";
+}
+
+// An optional, uncommitted matrix recording. The same index the lobby sends is handed to NewGame,
+// then checked against the actual player and objects after two logic frames.
+TEST_CASE("factionswap survey: every playable faction at every start of every multiplayer map")
+{
+	const std::string output = surveyEnv("OPENBFME_FACTION_SURVEY_OUT");
+	if (output.empty()) return;
+	const std::string mod = surveyEnv("OPENBFME_FACTION_MOD_INSTALL");
+	const std::string dependency = surveyEnv("OPENBFME_FACTION_MOD_DEPENDENCY");
+	std::unique_ptr<retailtest::Mount> modMount;
+	std::unique_ptr<Shared> owned;
+	Shared *s = nullptr;
+	std::string error;
+	if (!mod.empty())
+	{
+		REQUIRE_FALSE(dependency.empty());
+		RetailInstall rotwk, bfme2;
+		rotwk.label = "rotwk";
+		rotwk.root = surveyEnv("ROTWK_INSTALL");
+		bfme2.label = "bfme2";
+		bfme2.root = surveyEnv("BFME2_INSTALL");
+		REQUIRE_MESSAGE(RetailArchivePolicy::loadBuiltin("rotwk-201", rotwk.policy, &error), error);
+		REQUIRE_MESSAGE(RetailArchivePolicy::loadBuiltin("bfme2-106", bfme2.policy, &error), error);
+		auto base = std::make_unique<Win32BIGFileSystem>();
+		RetailMountOptions retailOptions;
+		retailOptions.md5CachePath = (std::filesystem::temp_directory_path() / "factionswap-retail-md5.tsv").string();
+		const RetailMountReport retail = MountRetailArchives(*base, { rotwk, bfme2 }, retailOptions);
+		REQUIRE_MESSAGE(retail.ok, "retail mount: " << (retail.errors.empty() ? "" : retail.errors.front()));
+		modMount = std::make_unique<retailtest::Mount>();
+		modMount->fs = std::make_unique<Win32BIGFileSystem>();
+		ModMountOptions modOptions;
+		modOptions.rotwkInstallRoot = rotwk.root;
+		modOptions.md5CachePath = (std::filesystem::temp_directory_path() / "factionswap-mod-md5.tsv").string();
+		const ModMountReport mounted = MountInstallOverlay(*modMount->fs, retail, { dependency, mod }, modOptions);
+		REQUIRE_MESSAGE(mounted.ok, "mod mount: " << (mounted.errors.empty() ? "" : mounted.errors.front()));
+		owned = std::make_unique<Shared>();
+		owned->mount = modMount.get();
+		owned->world = std::make_unique<RetailObjectWorld>(*modMount->fs);
+		REQUIRE_MESSAGE(owned->world->load(&error), error);
+		REQUIRE_MESSAGE(MapObjectGameData::load(*modMount->fs, owned->options, &error), error);
+		REQUIRE_MESSAGE(MapObjectGameData::loadPlayerTemplates(*modMount->fs, owned->options, &error), error);
+		REQUIRE_MESSAGE(MapCreationHooks::load(*modMount->fs, owned->options.creationScripts, &error), error);
+		REQUIRE_MESSAGE(GameLogicSettingsLoader::load(*modMount->fs, owned->settings, &error), error);
+		s = owned.get();
+	}
+	else
+	{
+		s = starttest::shared();
+		if (!s)
+		{
+			retailtest::printSkip("factionswap survey");
+			return;
+		}
+	}
+	REQUIRE_MESSAGE(s->world, s->error);
+	auto context = s->world->enterContext();
+	std::vector<MapCacheEntry> maps;
+	REQUIRE_MESSAGE(IniSkirmishSetupSource::loadMapCache(*s->mount->fs, maps, &error), error);
+	std::ofstream csv(output);
+	REQUIRE_MESSAGE(csv.good(), "cannot write " << output);
+	csv << "map,start,chosen,player,observed,side,starting,owned,result\n";
+	const std::string mapFilter = surveyEnv("OPENBFME_FACTION_SURVEY_MAP");
+	const std::string factionFilter = surveyEnv("OPENBFME_FACTION_SURVEY_FACTION");
+	const bool allHuman = surveyEnv("OPENBFME_FACTION_SURVEY_ALL_HUMAN") == "1";
+	const int humanPos = surveyEnv("OPENBFME_FACTION_SURVEY_HUMAN_POS").empty() ? 0 : std::stoi(surveyEnv("OPENBFME_FACTION_SURVEY_HUMAN_POS"));
+	const int limit = surveyEnv("OPENBFME_FACTION_SURVEY_LIMIT").empty() ? 0 : std::stoi(surveyEnv("OPENBFME_FACTION_SURVEY_LIMIT"));
+	const int skipGames = surveyEnv("OPENBFME_FACTION_SURVEY_SKIP_GAMES").empty() ? 0 : std::stoi(surveyEnv("OPENBFME_FACTION_SURVEY_SKIP_GAMES"));
+	int cases = 0, games = 0, visitedGames = 0, swaps = 0, failures = 0;
+	const PlayerTemplateStore &store = s->world->setupPlayerTemplates();
+	const auto factions = store.playableSideIndices();
+	REQUIRE_FALSE(factions.empty());
+	for (const MapCacheEntry &map : maps)
+	{
+		if (!map.isMultiplayer || (!mapFilter.empty() && map.name.find(mapFilter) == std::string::npos)) continue;
+		const bool humanStartAvailable = humanPos >= 0 && humanPos < map.numPlayers;
+		const bool validHumanStart = allHuman || humanStartAvailable;
+		REQUIRE_MESSAGE(validHumanStart, "human start " << humanPos << " is unavailable on " << map.name);
+		for (int shift = 0; shift < (int)factions.size(); ++shift)
+		{
+			if (++visitedGames <= skipGames) continue;
+			if (limit && games >= limit) break;
+			++games;
+			NewGameMessage message;
+			message.game.mapName = map.name;
+			message.game.seed = 42;
+			for (int startPos = 0; startPos < map.numPlayers; ++startPos)
+			{
+				SkirmishGameSlot &slot = message.game.slots[startPos];
+				slot.state = allHuman || startPos == humanPos ? SLOT_PLAYER : SLOT_EASY_AI;
+				slot.name = u"Survey";
+				slot.startPos = startPos;
+				slot.playerTemplate = factions[(size_t)((startPos + shift) % (int)factions.size())];
+				slot.color = startPos;
+			}
+			NewGameStart prepared(RandomAlgorithm::ZH_CarryChain);
+			error.clear();
+			const bool preparedOk = NewGame::prepareNewGame(message, store, s->settings, maps, RandomAlgorithm::ZH_CarryChain, prepared, &error);
+			auto record = [&](LiveGame *game, const std::string &gameError) {
+				for (int startPos = 0; startPos < map.numPlayers; ++startPos)
+				{
+					const int index = message.game.slots[startPos].playerTemplate;
+					const PlayerTemplate *chosen = store.getNthPlayerTemplate(index);
+					if (!factionFilter.empty() && chosen->getName() != factionFilter) continue;
+					++cases;
+					std::string playerName, observed, side, starting, ownedObjects, result = gameError;
+					if (game)
+					{
+						playerName = game->report().startSlotPlayers[startPos];
+						const Player *player = game->players().findPlayerWithName(playerName);
+						if (!player || !player->getPlayerTemplate())
+						{
+							result = "no slot player or PlayerTemplate";
+						}
+						else
+						{
+							observed = player->getPlayerTemplate()->getName();
+							side = player->getSide();
+							for (const StartingBase::Placed &p : game->report().startingObjects)
+							{
+								if (const Object *o = game->logic().findObjectByID(p.id); o && o->getControllingPlayer() == player)
+									starting += (starting.empty() ? "" : "|") + p.templateName;
+							}
+							std::map<std::string, int> counts;
+							for (const Object *o = game->logic().getFirstObject(); o; o = o->getNextObject())
+								if (o->getControllingPlayer() == player && o->getTemplate()) ++counts[o->getTemplate()->getName()];
+							for (const auto &entry : counts)
+								ownedObjects += (ownedObjects.empty() ? "" : "|") + entry.first + ":" + std::to_string(entry.second);
+							result = observed == chosen->getName() ? "ok" : "SWAP";
+						}
+					}
+					if (result == "SWAP") ++swaps;
+					else if (result != "ok") ++failures;
+					csv << std::quoted(map.name) << ',' << startPos << ',' << std::quoted(chosen->getName()) << ',' << std::quoted(playerName) << ','
+						<< std::quoted(observed) << ',' << std::quoted(side) << ',' << std::quoted(starting) << ',' << std::quoted(ownedObjects) << ','
+						<< std::quoted(result) << '\n';
+				}
+				csv.flush();
+			};
+			if (!preparedOk)
+			{
+				record(nullptr, "prepare: " + error);
+				continue;
+			}
+			ArchiveW3DFileSource source(*s->mount->fs);
+			WW3DAssetManager assets(source);
+			LiveGame game(*s->world, *s->mount->fs, assets, s->options);
+			LiveGame::Options options;
+			options.start = &prepared;
+			if (!game.load(options, &error))
+			{
+				record(nullptr, "load: " + error);
+			}
+			else
+			{
+				game.advance(0.2);
+				game.advance(0.2);
+				record(&game, "ok");
+			}
+		}
+		if (limit && games >= limit) break;
+	}
+	std::printf("FACTIONSWAP survey %s (%s): %d games, %d slots, %d swaps, %d failures (%s)\n",
+		mod.empty() ? "retail" : "mod", allHuman ? "all human" : "human and AI", games, cases, swaps, failures, output.c_str());
+	CHECK_FALSE(cases == 0);
+	CHECK(swaps == 0);
+	CHECK(failures == 0);
+}
+
 // the lobby clicked from the main menu to a NewGameMessage: map `mapKey`, slot 0 the faction `faction` (a template name; "" = Random), slot 1 an AI of the row `aiRow`
 // of its Player combo (Open, Closed, Easy, Medium, Hard, Brutal -> 2..5), the colour of slot 0 the row `colorRow` of the image combo (0 = random)
 NewGameMessage lobbyMessage(Shared &s, const std::string &mapKey, const std::string &faction, int aiRow, int colorRow, std::uint32_t seed, std::string *error)

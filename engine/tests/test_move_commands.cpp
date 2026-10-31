@@ -2,6 +2,7 @@
 
 #include "doctest.h"
 #include "MoveTestUtil.h"
+#include "Common/GameState.h"
 #include "GameClient/FormationAssistant.h"
 
 #include <algorithm>
@@ -315,4 +316,228 @@ TEST_CASE("commands: malformed formation and firing-arc orders with non-finite v
 	CHECK(mw.aiCommands.stats().formationMoves == 1);
 	CHECK_FALSE(a->getAIUpdateInterface()->isIdle());
 	CHECK_FALSE(b->getAIUpdateInterface()->isIdle());
+}
+
+// issue #100: an accepted oriented player move replaces an earlier attack-move (as aiMoveToPosition does); with the formation order's attack flag the
+// accepted move's installed slot goal is armed (RW 0x94E72B -> RW 0x770CA5); a refused member and an internal (CMD_FROM_AI) move keep the earlier intent
+namespace
+{
+struct FormationIntentWorld : MoveWorld
+{
+	int player = 0;
+	FormationAssistant formation;
+	FormationIntentWorld()
+	{
+		buildMap();
+		player = playerIndex("Alice");
+		std::string error;
+		REQUIRE(formation.scan(kOneRowFormation, &error));
+		aiCommands.setFormationAssistant(&formation);
+	}
+	void order(bool attack, const Coord3D &where = { 605.0f, 605.0f, 0.0f })
+	{
+		send(formationOrder(player, where, 0.0f, attack));
+		frames(1);
+	}
+};
+
+void checkGoal(const Coord3D &actual, const Coord3D &expected)
+{
+	CHECK(actual.x == expected.x);
+	CHECK(actual.y == expected.y);
+	CHECK(actual.z == expected.z);
+}
+
+// a subclass that takes every routed command (lane FLY-1 routing, as GiantBirdAIUpdate / DeployStyleAIUpdate do), counted by type
+struct RoutedIntentAI : AIUpdateInterface
+{
+	using AIUpdateInterface::AIUpdateInterface;
+	bool routing = false;
+	std::vector<int> types;
+	std::vector<Coord3D> positions;
+	bool routeCommand(const RoutedCommand &c) override
+	{
+		if (!routing)
+		{
+			return false;
+		}
+		types.push_back(c.type);
+		positions.push_back(c.position);
+		return true;
+	}
+};
+}
+
+TEST_CASE("formation intent: an attack formation arms each accepted member's own installed slot goal, which the resume after an interruption takes")
+{
+	FormationIntentWorld w;
+	Object *a = w.spawn("Walker", 105.0f, 105.0f);
+	Object *b = w.spawn("Walker", 145.0f, 105.0f);
+	w.frames(2);
+	w.select(w.player, { a, b });
+	w.order(true);
+	const Coord3D slotA = w.aiOf(a)->stateMachine().goalPosition(), slotB = w.aiOf(b)->stateMachine().goalPosition();
+	CHECK_FALSE((slotA.x == slotB.x && slotA.y == slotB.y)); // two slots of the one row
+	for (Object *o : { a, b })
+	{
+		AIUpdateInterface *ai = w.aiOf(o);
+		const Coord3D slot = ai->stateMachine().goalPosition();
+		CHECK(ai->attackMoveActive());
+		ai->aiMoveToPosition(Coord3D{ 205.0f, 305.0f, 0.0f }, CMD_FROM_AI); // an internal temporary move keeps the intent
+		CHECK(ai->stateMachine().inTemporaryState());
+		ai->aiMoveToPositionAndOrientate(Coord3D{ 305.0f, 305.0f, 0.0f }, 0.0f, CMD_FROM_AI); // an internal oriented move too
+		CHECK(ai->attackMoveActive());
+		REQUIRE(ai->resumeAttackMove());
+		checkGoal(ai->stateMachine().goalPosition(), slot);
+	}
+}
+
+TEST_CASE("formation intent: held, command-locked and paralyzed members keep their earlier intent while the accepted member takes its new slot")
+{
+	FormationIntentWorld w;
+	Object *accepted = w.spawn("Walker", 105.0f, 105.0f);
+	Object *refused = w.spawn("Walker", 145.0f, 105.0f);
+	w.frames(2);
+	w.select(w.player, { accepted, refused });
+	w.frames(1);
+	AIUpdateInterface *ai = w.aiOf(refused);
+	const Coord3D old{ 805.0f, 805.0f, 0.0f };
+	bool prior = true;
+	unsigned disabled = DISABLED_HELD;
+	bool lock = false;
+	SUBCASE("held, earlier attack-move") {}
+	SUBCASE("held, no earlier attack-move") { prior = false; }
+	SUBCASE("paralyzed, earlier attack-move") { disabled = DISABLED_PARALYZED; }
+	SUBCASE("paralyzed, no earlier attack-move") { disabled = DISABLED_PARALYZED; prior = false; }
+	SUBCASE("player commands prevented, earlier attack-move") { lock = true; }
+	SUBCASE("player commands prevented, no earlier attack-move") { lock = true; prior = false; }
+	if (prior)
+	{
+		REQUIRE(ai->armAttackMove(old));
+	}
+	if (lock)
+	{
+		ai->setPreventPlayerCommands(true);
+	}
+	else
+	{
+		refused->setDisabled(disabled, 100000);
+	}
+	const Coord3D before = ai->stateMachine().goalPosition();
+	const unsigned stateBefore = ai->currentStateId();
+	w.order(true);
+	CHECK(w.aiCommands.stats().formationMoves == 1);
+	CHECK(w.aiOf(accepted)->attackMoveActive());
+	CHECK(ai->attackMoveActive() == prior);
+	CHECK(ai->currentStateId() == stateBefore);
+	checkGoal(ai->stateMachine().goalPosition(), before);
+	w.order(false, Coord3D{ 405.0f, 605.0f, 0.0f });
+	CHECK_FALSE(w.aiOf(accepted)->attackMoveActive());
+	CHECK(ai->attackMoveActive() == prior);
+	ai->setPreventPlayerCommands(false);
+	refused->clearDisabled(disabled);
+	CHECK(ai->resumeAttackMove() == prior);
+	if (prior)
+	{
+		checkGoal(ai->stateMachine().goalPosition(), old);
+	}
+}
+
+TEST_CASE("formation intent: a plain formation move after an attack-move ends it, so an interrupted unit does not walk back to the old point")
+{
+	FormationIntentWorld w;
+	Object *a = w.spawn("Walker", 105.0f, 105.0f);
+	Object *b = w.spawn("Walker", 145.0f, 105.0f);
+	w.frames(2);
+	w.select(w.player, { a, b });
+	w.moveTo(w.player, 805.0f, 805.0f, MSG_DO_ATTACKMOVETO);
+	w.frames(1);
+	REQUIRE(w.aiOf(a)->attackMoveActive());
+	REQUIRE(w.aiOf(b)->attackMoveActive());
+	w.order(false, Coord3D{ 125.0f, 405.0f, 0.0f });
+	w.frames(10);
+	for (Object *o : { a, b })
+	{
+		AIUpdateInterface *ai = w.aiOf(o);
+		CHECK_FALSE(ai->attackMoveActive());
+		// the interruption: the move is broken off internally (a fight's end idles the unit with CMD_FROM_AI); the idle state's resume must not
+		// take the old attack-move point (AIIdleState::update -> resumeAttackMove)
+		ai->aiIdle(CMD_FROM_AI);
+	}
+	w.frames(3);
+	for (Object *o : { a, b })
+	{
+		CHECK(w.aiOf(o)->isIdle());
+		CHECK_FALSE(w.aiOf(o)->resumeAttackMove());
+	}
+	// a direct oriented player move ends an attack-move the same way
+	REQUIRE(w.aiOf(a)->armAttackMove(Coord3D{ 805.0f, 805.0f, 0.0f }));
+	GameMessage m(MSG_DO_MOVE_AND_ORIENTATE_OBJECTTO, w.player);
+	m.appendObjectIDArgument(a->getID());
+	m.appendLocationArgument(Coord3D{ 605.0f, 405.0f, 0.0f });
+	m.appendRealArgument(1.5707963f);
+	w.send(m);
+	w.frames(1);
+	CHECK(w.aiCommands.stats().orientMoves == 1);
+	CHECK_FALSE(w.aiOf(a)->attackMoveActive());
+}
+
+TEST_CASE("formation intent: a subclass that takes the routed oriented move also gets the attack-move, toward the slot point, and no base intent")
+{
+	FormationIntentWorld w;
+	w.w.modules.bindModuleProc("AIUpdateInterface", MODULETYPE_BEHAVIOR,
+		[](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &) -> std::unique_ptr<Module> {
+			return std::make_unique<RoutedIntentAI>(thing, data);
+		});
+	Object *o = w.spawn("Walker", 105.0f, 105.0f);
+	Object *b = w.spawn("Walker", 145.0f, 105.0f);
+	w.frames(2);
+	w.select(w.player, { o, b });
+	w.frames(1);
+	auto *ai = dynamic_cast<RoutedIntentAI *>(w.aiOf(o));
+	REQUIRE(ai);
+	ai->routing = true;
+	w.order(true);
+	REQUIRE(ai->types.size() == 2);
+	const int orientedMove = AIUpdateInterface::kCommandUnidentifiedMove;
+	CHECK(ai->types[0] == orientedMove);
+	CHECK(ai->types[1] == 0xF);
+	checkGoal(ai->positions[1], ai->positions[0]);
+	CHECK_FALSE(ai->attackMoveActive());
+	CHECK(w.aiOf(b)->attackMoveActive());
+}
+
+TEST_CASE("formation intent: the armed slot goal and a refused member's kept goal survive an obfme:AIWorld save and load")
+{
+	FormationIntentWorld w;
+	Object *a = w.spawn("Walker", 105.0f, 105.0f);
+	Object *b = w.spawn("Walker", 145.0f, 105.0f);
+	w.frames(2);
+	w.select(w.player, { a, b });
+	w.frames(1);
+	const Coord3D old{ 805.0f, 805.0f, 0.0f };
+	REQUIRE(w.aiOf(b)->armAttackMove(old));
+	b->setDisabled(DISABLED_PARALYZED, 100000);
+	w.order(true);
+	const Coord3D slot = w.aiOf(a)->stateMachine().goalPosition();
+	std::vector<std::uint8_t> saved;
+	w.logic->gameState().saveBlocks({ "obfme:AIWorld" }, saved);
+	const auto hash = w.logic->computeStateHash();
+	for (Object *o : { a, b })
+	{
+		REQUIRE(w.aiOf(o)->armAttackMove(Coord3D{ 905.0f, 105.0f, 0.0f })); // a different retained goal, the object not moved
+	}
+	CHECK_FALSE(w.logic->computeStateHash() == hash);
+	w.logic->gameState().loadBlocks({ "obfme:AIWorld" }, saved);
+	CHECK(w.logic->computeStateHash() == hash);
+	std::vector<std::uint8_t> again;
+	w.logic->gameState().saveBlocks({ "obfme:AIWorld" }, again);
+	CHECK(again == saved);
+	b->clearDisabled(DISABLED_PARALYZED);
+	REQUIRE(w.aiOf(a)->attackMoveActive());
+	REQUIRE(w.aiOf(b)->attackMoveActive());
+	REQUIRE(w.aiOf(a)->resumeAttackMove());
+	checkGoal(w.aiOf(a)->stateMachine().goalPosition(), slot);
+	REQUIRE(w.aiOf(b)->resumeAttackMove());
+	checkGoal(w.aiOf(b)->stateMachine().goalPosition(), old);
 }

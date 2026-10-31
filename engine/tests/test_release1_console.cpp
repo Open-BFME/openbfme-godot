@@ -276,6 +276,47 @@ TEST_CASE("onezip1: the console filter ends when its console takes nothing")
 	::close(sink[1]);
 }
 
+TEST_CASE("release1: launcher console output to dev null drains beyond the pipe capacity")
+{
+	std::fflush(stdout);
+	std::fflush(stderr);
+	const pid_t child = ::fork();
+	REQUIRE(child != -1);
+	if (child == 0)
+	{
+		const int nullSink = ::open("/dev/null", O_WRONLY);
+		if (nullSink < 0 || ::dup2(nullSink, STDOUT_FILENO) < 0 || ::dup2(nullSink, STDERR_FILENO) < 0)
+			::_exit(1);
+		if (nullSink > STDERR_FILENO)
+			::close(nullSink);
+		std::string error;
+		if (!ConsoleFilter::install({}, &error))
+			::_exit(2);
+		const std::string line = std::string(1023, 'x') + "\n";
+		for (int index = 0; index < 256; ++index)
+		{
+			if (std::fwrite(line.data(), 1, line.size(), stdout) != line.size() || std::fflush(stdout) != 0 ||
+				std::fwrite(line.data(), 1, line.size(), stderr) != line.size() || std::fflush(stderr) != 0)
+				::_exit(3);
+		}
+		ConsoleFilter::uninstall();
+		::_exit(0);
+	}
+	int status = 0;
+	pid_t finished = 0;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	while ((finished = ::waitpid(child, &status, WNOHANG)) == 0 && std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	if (finished == 0)
+	{
+		::kill(child, SIGKILL);
+		::waitpid(child, &status, 0);
+	}
+	REQUIRE_MESSAGE(finished == child, "console forwarding to /dev/null did not finish within 5 seconds");
+	REQUIRE(WIFEXITED(status));
+	CHECK(WEXITSTATUS(status) == 0);
+}
+
 TEST_CASE("release1: a blocked console cannot hang the crash writer")
 {
 	int sink[2];

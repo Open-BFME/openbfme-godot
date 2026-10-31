@@ -31,6 +31,7 @@
 #include "Common/ModelState.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/ObjectTypes.h"
+#include "GameLogic/Object/EvaDamageNotice.h"
 #include "Common/Thing/ModuleFactory.h"
 #include "GameClient/DrawableScriptTarget.h"
 #include "GameClient/ObserverTimeline.h"
@@ -59,11 +60,13 @@ struct ClientEvent
 		REPLACED,        ///< lane STEALTH-2 (RW 0x776F03): the drawable made again as CREATED's fields say (tmpl: the look, flags: the object's conditions)
 		MODEL_FLUSH,     ///< lane ANIM-1 (RW 0x67449C / 0x6759C4): the drawable's changed flags reach its draw modules; scriptTarget, weapon timing
 		FADE_IN,         ///< lane BUILD-4 (RW 0x670AA2): fadeFrames client frames
+		FADE_OUT,        ///< lane PORTERFOG-1 (RW 0x670A50): fadeFrames client frames
 		CUSTOM_COLORS,   ///< lane CAH-2 (RW 0x80AF0B -> 0x6727B0): customKind and customColors, the drawable's house colour set
 		HERO_ATTACKED,   ///< RW 0x67B78C: the local hero-select bar's attacked effect
 		HERO_FLASH,      ///< RW 0x7BDD7A: name = exact template name, flashFrames = signed client-frame duration
 		CAH_STATISTICS,   ///< hero unique id and the matching statistic names, client profile data
 		MODEL_CONDITIONS, ///< lane SAVE-4e: flags, the object's whole set stored (Drawable::replaceModelConditionFlags RW 0x679512 takes a whole set)
+		EVA_DAMAGED,      ///< lane EVADAMAGE-1 (RW 0x67B4B7's Eva half): position (the object's, + 0x38), eva (the logic's part of the choice)
 	};
 	std::string heroUniqueID;
 	std::vector<std::string> heroStatistics;
@@ -99,6 +102,7 @@ struct ClientEvent
 	int flashFrames = 0;
 	int customKind = 0;                             ///< CUSTOM_COLORS (lane CAH-2)
 	std::uint32_t customColors[3] = { 0u, 0u, 0u }; ///< CUSTOM_COLORS: ARGB
+	EvaDamageNotice eva;                            ///< EVA_DAMAGED (lane EVADAMAGE-1)
 };
 
 class ClientEventRecorder : public ObjectClientHooks
@@ -119,9 +123,11 @@ public:
 	void showSubObject(Object &obj, const std::string &name, bool visible, bool permanent) override;
 	void replaceDrawable(Object &obj, const ThingTemplate *tmpl, bool hasColor, std::uint32_t color) override;
 	void fadeIn(Object &obj, UnsignedInt frames) override;
+	void fadeOut(Object &obj, UnsignedInt frames) override;
 	void setCustomColors(Object &obj, int kind, std::uint32_t c0, std::uint32_t c1, std::uint32_t c2) override; // lane CAH-2
 	void createAHeroKill(Object &killer, Object &victim) override;
 	void heroAttacked(Object &obj) override;
+	void evaDamaged(Object &obj, const EvaDamageNotice &notice) override; // lane EVADAMAGE-1
 	void flashHeroButton(const std::string &templateName, int frames) override;
 	// MapObjectLoop's afterCreate for a map object (DrawableManager::applyPlacement): the client part of the placement
 	void placement(Object &obj, const MapObjectDrawable &placement);

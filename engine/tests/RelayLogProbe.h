@@ -115,6 +115,94 @@ inline RelayLogFile classicLog(std::uint64_t seed, NetworkConfig &config)
 	return log;
 }
 
+// RELAY-4: a one-human room's log as the relay writes it (one network slot, 0 .. 7, plays player = slot; CRC interval 5): its first incarnation
+// from frame 0, then 0 .. 3 restarts, each a REJOINED record and the restarted game's own REJOIN of itself some frames after the last frame
+// the previous incarnation ran (with or without a FRAMEINFO counting it), then 0 .. 19 frames (0: the REJOIN is the log's last frame);
+// sometimes a run-ahead change, a leave at the end, the END of every BYE
+inline RelayLogFile soloLog(std::uint64_t seed, NetworkConfig &config)
+{
+	std::uint64_t x = seed * 0xD1B54A32D192ED03ull + 7;
+	RelayLogFile log;
+	log.version = 2;
+	const int s = (int)(next(x) % 8);
+	log.slotMask = (std::uint16_t)(1u << s);
+	config.slotPlayerIndex.fill(-1);
+	config.slotPlayerIndex[(size_t)s] = s;
+	config.crcInterval = 5;
+	auto add = [&](const NetCommandMsg &m) {
+		RelayLogFile::Command c;
+		c.sender = s;
+		c.msg = m;
+		log.commands.push_back(c);
+	};
+	auto frame = [&](std::uint32_t f, int extra) {
+		int entries = extra;
+		if (f % 5 == 4)
+		{
+			NetCommandMsg m;
+			m.type = NETCOMMANDTYPE_GAMECOMMAND;
+			m.slot = (std::uint8_t)s;
+			m.executionFrame = f;
+			m.message = std::make_shared<GameMessage>(MSG_LOGIC_CRC, s);
+			m.message->appendIntegerArgument((int)(f * 7 + 1));
+			add(m);
+			++entries;
+		}
+		if (next(x) % 9 == 0)
+		{
+			NetCommandMsg m;
+			m.type = NETCOMMANDTYPE_RUNAHEAD;
+			m.slot = (std::uint8_t)s;
+			m.executionFrame = f;
+			m.frame = 1 + (std::uint32_t)(next(x) % 3);
+			add(m);
+			++entries;
+		}
+		add(frameInfo(s, f, entries));
+	};
+	std::uint32_t end = 1 + (std::uint32_t)(next(x) % 30); // the first incarnation runs frames 0 .. end - 1
+	for (std::uint32_t f = 0; f < end; ++f)
+	{
+		frame(f, 0);
+	}
+	const int restarts = (int)(next(x) % 4);
+	for (int g = 1; g <= restarts; ++g)
+	{
+		RelayLogFile::Rejoined j;
+		j.slot = s;
+		j.generation = g;
+		j.firstCommand = log.commands.size();
+		log.rejoins.push_back(j);
+		const std::uint32_t at = end + (std::uint32_t)(next(x) % 10) + ((next(x) % 8) == 0 ? 500u : 0u);
+		NetCommandMsg r;
+		r.type = NETCOMMANDTYPE_REJOIN;
+		r.slot = (std::uint8_t)s;
+		r.executionFrame = at;
+		r.targetSlot = (std::uint8_t)s;
+		add(r);
+		if (next(x) % 2 == 0)
+		{
+			add(frameInfo(s, at, 1));
+		}
+		const std::uint32_t length = (std::uint32_t)(next(x) % 20);
+		for (std::uint32_t f = at + 1; f <= at + length; ++f)
+		{
+			frame(f, 0);
+		}
+		end = at + length + 1;
+	}
+	if (next(x) % 4 == 0)
+	{
+		NetCommandMsg m;
+		m.type = NETCOMMANDTYPE_PLAYERLEAVE;
+		m.slot = (std::uint8_t)s;
+		m.executionFrame = end;
+		add(m);
+	}
+	log.endReason = next(x) % 2 == 0 ? 1 : 0;
+	return log;
+}
+
 inline std::string summary(bool ok, const std::string &error, const RelayLog::Assembled &a)
 {
 	std::ostringstream o;
@@ -182,6 +270,30 @@ template <typename Assemble> std::uint64_t classicDigest(int count, Assemble ass
 		std::string error;
 		const bool ok = assemble(log, config, a, &error);
 		h = fnv(h, summary(ok, error, a));
+	}
+	return h;
+}
+// RELAY-4: the hash of the summaries (and the REJOINs' generations) of one-human room logs 1 .. count (soloLog), each assembled complete and
+// as a rejoining client's live copy
+template <typename Assemble> std::uint64_t soloDigest(int count, Assemble assemble)
+{
+	std::uint64_t h = 0xCBF29CE484222325ull;
+	for (int seed = 1; seed <= count; ++seed)
+	{
+		for (bool live : { false, true })
+		{
+			NetworkConfig config;
+			const RelayLogFile log = soloLog((std::uint64_t)seed, config);
+			RelayLog::Assembled a;
+			std::string error;
+			const bool ok = assemble(log, config, a, &error, live);
+			std::string generations = "|G";
+			for (const auto &m : a.membership)
+			{
+				generations += ' ' + std::to_string(m.generation);
+			}
+			h = fnv(h, summary(ok, error, a) + generations);
+		}
 	}
 	return h;
 }

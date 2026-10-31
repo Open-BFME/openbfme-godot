@@ -1741,7 +1741,8 @@ The MAP panel's map list keeps its own highlight while the preview and descripti
 
 Retail-first: 1 (RW 0x97A668 / BFME2 0x5706D4, 0x57166C), 3 and 4 (the player's OnlineShell.apt scripts), 5 (RW 0x9C8694, 0x9C881D, the label table RW
 0xDB9290), 11 (RW 0x91D9F9) and 12 (RW 0x9AB748) are ported; the rest is OpenBFME's (its lobby, its texts) and registered as stops S-5140 .. S-5144.
-Single-human online starts (the owner's "solo online") wait for lane SOLO-1 (not merged).
+Single-human online starts (the owner's "solo online") came with SOLO-1: a custom game may start with one human (its result is nobody's
+statistics, see PLATFORM_API.md), and the solo player's own REJOIN is assembled from the relay log like any other rejoin.
 
 **Lobby change for the coordinator (not deployed: deploys need review and the owner's OK).** `services/online/lobby/src/lobby.mjs`: a player who
 leaves a started game (`POST /v1/games/<id>/leave`) is done with it: the game is no longer in their `/v1/mine` and `POST .../rejoin` is refused with

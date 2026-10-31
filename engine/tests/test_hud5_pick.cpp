@@ -6,6 +6,8 @@
 #include "doctest.h"
 
 #include "HudTestUtil.h"
+#include "LogicTestUtil.h"
+#include "Common/ModelState.h"
 
 #include "Common/Player.h"
 #include "Common/Thing/ThingFactory.h"
@@ -418,4 +420,85 @@ TEST_CASE("play3 drag box retail: the selection box follows the pointer while th
 	r.button(HudInput::Button::Left, false, 300, 380);
 	CHECK_FALSE(InGameHud::selectionRegionOp(r.input->ui(), op));
 	CHECK_FALSE(r.input->ui().isSelecting());
+}
+
+// lane HUD-5 (performance): collisionTypeOf's rules (RW 0x4B583C .. 0x4B59DE) for each KindOf combination as the owner, the local player, the script
+// status, death and rubble change, in two worlds, so the KindOf indices it keeps cannot carry an object's state. No retail files.
+TEST_CASE("hud5 pick: fixed kind indices preserve collision precedence and live state across owners and worlds")
+{
+	struct Case
+	{
+		const char *kinds;
+		unsigned base;
+		bool walkOnWall = false;
+		bool keep = false;
+		bool deathExempt = false;
+		bool structure = false;
+	};
+	const Case cases[] = {
+		{"NONE", 0},
+		{"SELECTABLE", 0x04},
+		{"WALK_ON_TOP_OF_WALL", 0x04, true},
+		{"SELECTABLE HERO", 0x84},
+		{"SELECTABLE MONSTER", 0x84},
+		{"SELECTABLE DEPLOYED_MINE", 0x84},
+		{"SHRUBBERY", 0x08},
+		{"ROCK", 0x200},
+		{"ROCK_VENDOR", 0x200},
+		{"SELECTABLE SHRUBBERY HERO", 0x08},
+		{"SELECTABLE ROCK", 0x200},
+		{"SELECTABLE ROCK_VENDOR", 0x200},
+		{"SHRUBBERY ROCK", 0x08},
+		{"SELECTABLE FORCEATTACKABLE", 0x20},
+		{"SELECTABLE FORCEATTACKABLE CLICK_THROUGH", 0},
+		{"SELECTABLE STRUCTURE", 0x04, false, false, false, true},
+		{"SELECTABLE STRUCTURE", 0x04, false, true, true, true},
+		{"SELECTABLE STRUCTURE BRIDGE", 0x04, false, false, true, true},
+		{"SELECTABLE STRUCTURE BRIDGE_TOWER", 0x04, false, false, true, true},
+		{"SELECTABLE WALK_ON_TOP_OF_WALL HERO", 0x84, true},
+	};
+	// A second independent world exercises the function-local cache without reusing player/template state.
+	for (int world = 0; world < 2; ++world)
+	{
+		logictest::LogicWorld w;
+		PinholeView view;
+		InGameUI ui;
+		MessageStream stream;
+		HudContext ctx{*w.logic, nullptr, view, ui, stream, nullptr, {}};
+		Player *alice = w.players.findPlayerWithName("Alice");
+		Player *bob = w.players.findPlayerWithName("Bob");
+		REQUIRE(alice);
+		REQUIRE(bob);
+		int index = 0;
+		for (const Case &c : cases)
+		{
+			CAPTURE(world);
+			CAPTURE(c.kinds);
+			const std::string name = "PickKinds" + std::to_string(index++);
+			REQUIRE(w.w.load("Object " + name + "\n KindOf = " + c.kinds +
+				"\n KeepSelectableWhenDead = " + (c.keep ? "Yes" : "No") + "\nEnd\n").empty());
+			w.players.setLocalPlayer(alice);
+			Object *o = w.make(name, w.teamOf("Alice"));
+			REQUIRE(o);
+			const unsigned own = c.base | ((c.base & 0x04u) ? 0x100u : 0u);
+			CHECK(HudObjects::collisionTypeOf(ctx, *o) == own);
+			o->setTeam(w.teamOf("Bob"));
+			REQUIRE(HudObjects::relationshipToLocal(ctx, *o) == ENEMIES);
+			const unsigned enemy = c.base | (((c.base & 0x04u) && !c.walkOnWall) ? 0x10u : 0u);
+			CHECK(HudObjects::collisionTypeOf(ctx, *o) == enemy);
+			w.players.setLocalPlayer(bob);
+			CHECK(HudObjects::collisionTypeOf(ctx, *o) == own);
+			o->setTeam(nullptr);
+			CHECK(HudObjects::collisionTypeOf(ctx, *o) == c.base);
+			o->setScriptStatus(0x10, true);
+			CHECK(HudObjects::collisionTypeOf(ctx, *o) == 0x40u);
+			o->friend_setEffectivelyDead(true);
+			CHECK(HudObjects::collisionTypeOf(ctx, *o) == (c.deathExempt ? 0x40u : 0u));
+			o->setScriptStatus(0x10, false);
+			CHECK(HudObjects::collisionTypeOf(ctx, *o) == (c.deathExempt ? c.base : 0u));
+			o->friend_setEffectivelyDead(false);
+			o->setModelConditionState(ModelCondition::indexOf("RUBBLE"), true);
+			CHECK(HudObjects::collisionTypeOf(ctx, *o) == ((c.structure && !c.deathExempt) ? 0u : c.base));
+		}
+	}
 }

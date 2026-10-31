@@ -71,6 +71,15 @@ public:
 	virtual void service() {}
 	// the slot left the game (its leave took effect): nothing more goes to it, what was queued for it is dropped
 	virtual void retire(int slot) { (void)slot; }
+	// lane MPDROP-3: the slot was DROPPED (the disconnect path, its game hung or died): nothing new goes to it, but what was queued for it (its
+	// DISCONNECTPLAYER last) keeps going until it acknowledges it, resent while it was dropped or last heard within `holdMs`, and again whenever
+	// anything comes from it later (a hung game that runs again learns it was dropped instead of dropping the others: a split game). Its own records are
+	// no longer delivered. The default retires it (a transport that cannot lose a command: the in-memory test hubs)
+	virtual void retireDropped(int slot, std::uint32_t holdMs)
+	{
+		(void)holdMs;
+		retire(slot);
+	}
 	// lane MP-2: the time (the Network's clock, ms) anything last arrived from the slot, 0 never or unknown (the disconnect path's silence test)
 	virtual std::uint64_t lastHeardFrom(int slot) const
 	{
@@ -181,6 +190,8 @@ struct NetworkConfig
 	// retail's MSG_SELF_DESTRUCT) once the rejoin window has passed, or takes the player back (REJOIN) when its restarted game asks (REJOINREQUEST)
 	bool holdForRejoin = false;
 	std::uint32_t rejoinWindowMs = 300000; ///< OpenBFME's choice (S-3900): five minutes
+	// WOTR2 milestone 8 (step 2): the messages the game's commands carry (NetPacket::MessageFamily): Strategic for a War of the Ring's strategic map
+	NetPacket::MessageFamily messages = NetPacket::MessageFamily::Logic;
 };
 
 // The breakdown of one peer's state hash for one frame (GameLogic::computeStateHashBreakdown), as exchanged after a mismatch
@@ -284,6 +295,8 @@ public:
 	bool isGameSlot(int slot) const { return slot >= 0 && slot < MAX_SLOTS && m_slots[(size_t)slot].active; } ///< lane MP-DROP-1: a network player of the game
 	/// lane MP-DROP-1: the slot left or was dropped at some frame here (a rejoined slot keeps its departure: it is never router or decider again)
 	bool hasDeparted(int slot) const { return slot >= 0 && slot < MAX_SLOTS && m_departureFrame[(size_t)slot] != 0xFFFFFFFFu; }
+	// WOTR2 milestone 8 (read only): the slot's departure frame (its leave or drop, the earliest: passRouterRole), 0xFFFFFFFF none
+	UnsignedInt departureFrame(int slot) const { return slot >= 0 && slot < MAX_SLOTS ? m_departureFrame[(size_t)slot] : 0xFFFFFFFFu; }
 	// "Network:PlayerLeftGame" notices (RW 0x8D57D8), one per dropped or departed player, for the UI
 	const std::vector<std::u16string> &leftGameNotices() const { return m_leftNotices; }
 	// the clock of the disconnect path (default NetMilliseconds); a test drives its own

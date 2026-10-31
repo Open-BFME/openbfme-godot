@@ -145,6 +145,7 @@ public:
 	// the hero the 3D view shows (the class page's pair hero or the edited one) and a counter that moves whenever it changes
 	const CreateAHeroHero *displayedHero() const;
 	std::uint32_t displayRevision() const { return m_displayRevision; }
+	std::uint32_t cameraRevision() const { return m_cameraRevision; }
 	bool rotateLeft() const { return m_rotateLeft; }
 	bool rotateRight() const { return m_rotateRight; }
 	bool zoomIn() const { return m_zoomIn; }
@@ -217,7 +218,7 @@ private:
 	void notAvailable(const std::u16string &text);                                          // lane MENUWORK-1 (S-4755)
 	void selectHeroSort(int key);                                                            // lane MENUWORK-1: RW 0x9C4EBD
 	bool heroBefore(const CreateAHeroListEntry &a, const CreateAHeroListEntry &b) const;     // lane MENUWORK-1: RW 0x9C54C4
-	void bumpDisplay() { ++m_displayRevision; }
+	void bumpDisplay(bool resetCamera = false) { ++m_displayRevision; if (resetCamera) ++m_cameraRevision; }
 	bool nameIsFree(const std::u16string &name) const;
 	std::u16string entryName() const;
 	void invoke(const std::string &function, const std::vector<std::string> &args);
@@ -232,6 +233,7 @@ private:
 	char m_previousPage = 0;
 	int m_selectedHero = -1;
 	std::uint32_t m_displayRevision = 1;
+	std::uint32_t m_cameraRevision = 1;
 	bool m_rotateLeft = false, m_rotateRight = false, m_zoomIn = false, m_zoomOut = false;
 	int m_pictureFrames = 0;
 	bool m_takePicture = false; ///< lane CAHPIC-1: + 0x437 (RW 0x919D98)

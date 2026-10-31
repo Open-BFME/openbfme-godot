@@ -146,6 +146,16 @@ public:
 	const Options &options() const { return m_options; } ///< the effective options (the constructor raises / clamps some)
 	// drops everything queued for / buffered from the slot, sends it one last ack, then forgets it
 	void retire(int slot) override;
+	void retireDropped(int slot, std::uint32_t holdMs) override; // lane MPDROP-3
+	// lane MPDROP-3: the bounds of what a dropped peer can cost. Its backlog (the records it had not acknowledged at the drop: issued between its last
+	// ack and the drop, nothing after) is kept only up to these (beyond: retired as before, an error by name); resends to it go in rounds at most once a
+	// second, each at most kDroppedRoundBytes of datagrams. Its own packets are never filed (no memory), so a peer that sends forever costs at most
+	// kDroppedRoundBytes a second
+	static constexpr size_t kDroppedBacklogRecords = 4096;
+	static constexpr size_t kDroppedBacklogBytes = 128 * 1024;
+	static constexpr size_t kDroppedRoundBytes = 32 * 1024;
+	// the slot's dropped backlog (records, their bytes); 0 when it is not a dropped peer
+	size_t droppedBacklog(int slot, size_t *bytes = nullptr) const;
 	// sends what is due, reads every waiting datagram; call often
 	void service() override;
 	// Test clock, as in Network: set before servicing; monotonic milliseconds, real time by default.
@@ -155,6 +165,7 @@ public:
 	{
 		unsigned long long packetsSent = 0, packetsReceived = 0, commandsSent = 0, recordsSent = 0, commandsResent = 0, commandsDelivered = 0, duplicates = 0;
 		unsigned long long badPackets = 0, unknownSenders = 0, dropped = 0, sendErrors = 0, fragmentedCommands = 0, peersRetired = 0;
+		unsigned long long droppedPeerPackets = 0; ///< lane MPDROP-3: packets from a dropped peer (their acks taken, their records not delivered)
 		// lane ONLINE-1 (the relay's bandwidth budget, docs/ONLINE.md): the transport datagrams' bytes (UDP payload, IP / UDP headers not included) handed to
 		// the socket and read from it, and the datagrams sent that carry no record (an ack or a keep-alive only)
 		unsigned long long bytesSent = 0, bytesReceived = 0, ackOnlyPacketsSent = 0;
@@ -177,9 +188,11 @@ public:
 	static constexpr size_t kRttWindow = 32;      ///< about six seconds of samples (a record goes to every peer each 200 ms frame)
 	static constexpr size_t kRttPlanSamples = 16; ///< about three seconds
 	// the last time anything arrived from the slot (NetMilliseconds), 0 never
-	std::uint64_t lastHeardFrom(int slot) const override { return m_peers[(size_t)slot].lastHeard; }
+	// lane MPDROP-3: a dropped peer counts as unheard, as before it was kept (the disconnect path's silence and rejoin tests see a forgotten peer)
+	std::uint64_t lastHeardFrom(int slot) const override { return m_peers[(size_t)slot].dropped ? 0 : m_peers[(size_t)slot].lastHeard; }
 	// every record sent to the slot is acked (a retired or unknown slot: true)
-	bool allAcked(int slot) const { return m_peers[(size_t)slot].unacked.empty(); }
+	// lane MPDROP-3: a dropped peer's resends are not waited for (a finished game does not stay for a player the others dropped)
+	bool allAcked(int slot) const { return m_peers[(size_t)slot].dropped || m_peers[(size_t)slot].unacked.empty(); }
 	// the records waiting for an ack, every peer
 	size_t unackedRecords() const;
 	bool isPeer(int slot) const { return m_peers[(size_t)slot].known; }
@@ -242,6 +255,12 @@ private:
 	{
 		bool known = false;
 		bool retiring = false;          ///< retire(): one last ack, then forgotten
+		// lane MPDROP-3 (retireDropped): no new records and none delivered from it; the unacknowledged ones are resent (at most once a second) while the
+		// drop or the last datagram from it is within holdMs, then nothing until it sends again; forgotten once it acknowledged everything
+		bool dropped = false;
+		std::uint64_t droppedAt = 0;
+		std::uint32_t holdMs = 0;
+		std::uint64_t lastDroppedRound = 0; ///< the last resend round to it (at most one a second)
 		NetAddress address;
 		std::uint64_t issued = 0;       ///< records given to this peer since setPeer (an ack can name at most this many)
 		std::uint64_t acked = 0;        ///< records the peer has acknowledged (monotonic): the unacked records are the ordinals acked .. issued - 1

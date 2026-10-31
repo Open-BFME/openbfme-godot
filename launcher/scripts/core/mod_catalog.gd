@@ -14,6 +14,7 @@
 extends RefCounted
 
 const AioInstall := preload("res://scripts/core/aio_install.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const GAME := 2                      # The Rise of the Witch-king (the service's Game 2)
 const TYPES := [0, 1, 2]             # the catalogue: patches / data mods (0), -mod mods (1), enhancements (2)
@@ -32,7 +33,15 @@ const SCHEMA := "openbfme.aio-package 1"
 
 
 static func type_name(t: int) -> String:
-	return {0: "patch", 1: "mod", 2: "enhancement", 3: "maps", 4: "snapshot"}.get(t, "type %d" % t)
+	var ids := {0: "launcher.mod_catalog.type_patch", 1: "launcher.mod_catalog.type_mod", 2: "launcher.mod_catalog.type_enhancement",
+		3: "launcher.mod_catalog.type_maps", 4: "launcher.mod_catalog.type_snapshot"}
+	return L10n.t(ids[t]) if ids.has(t) else L10n.t("launcher.mod_catalog.type_other", {"type": t})
+
+
+## the plural noun of a catalogue type ("patches", "mods", "enhancements"), for the list headings and progress lines
+static func type_plural(t: int) -> String:
+	var ids := {0: "launcher.mod_catalog.plural_patch", 1: "launcher.mod_catalog.plural_mod", 2: "launcher.mod_catalog.plural_enhancement"}
+	return L10n.t(ids[t]) if ids.has(t) else L10n.t("launcher.mod_catalog.plural_other", {"type": t})
 
 
 static func dependency_guid(dep: String) -> String:
@@ -67,16 +76,16 @@ static func parse_json(body: PackedByteArray) -> Variant:
 static func parse_query(body: PackedByteArray) -> Dictionary:
 	var d = parse_json(body)
 	if typeof(d) != TYPE_ARRAY:
-		return {"ok": false, "error": "the service's mod list is not a JSON array", "items": []}
+		return {"ok": false, "error": L10n.t("launcher.mod_catalog.list_not_array"), "items": []}
 	var items := []
 	for p in d:
 		if typeof(p) != TYPE_DICTIONARY or typeof(p.get("Guid")) != TYPE_STRING or typeof(p.get("Name")) != TYPE_STRING \
 				or not _whole(p.get("Type")) or not _whole(p.get("Game")):
-			return {"ok": false, "error": "the service's mod list has an entry OpenBFME does not recognise", "items": []}
+			return {"ok": false, "error": L10n.t("launcher.mod_catalog.list_bad_entry"), "items": []}
 		if base_game(p.Guid):
 			continue
 		if not safe_guid(p.Guid):
-			return {"ok": false, "error": "the service's mod list has a package id OpenBFME does not accept: '%s'" % p.Guid.left(80).c_escape(), "items": []}
+			return {"ok": false, "error": L10n.t("launcher.mod_catalog.list_bad_guid", {"guid": p.Guid.left(80).c_escape()}), "items": []}
 		var size = p.get("Size", 0)
 		items.append({"guid": p.Guid, "name": p.Name.strip_edges(), "version": _text(p.get("Version")).strip_edges(),
 			"author": _text(p.get("Author")).strip_edges(), "type": int(p.Type), "game": int(p.Game), "size": int(size) if _whole(size) and size >= 0 else 0})
@@ -88,25 +97,23 @@ static func parse_query(body: PackedByteArray) -> Dictionary:
 ## content-addressed store; the uploader is not always the entry's Owner). {ok, error, entry: {guid, name, version, author, type, game,
 ## deps: [dependency strings], files: [{name, rel, md5, size, url, language}]}}
 static func check_entry(m: Variant, guid: String, files_origin: String) -> Dictionary:
-	var what := "The service's package %s" % guid
-	var bad := func(why: String) -> Dictionary: return {"ok": false, "error": "%s %s" % [what, why], "entry": {}}
 	if typeof(m) != TYPE_DICTIONARY:
-		return bad.call("is not a package OpenBFME knows (not a JSON object).")
+		return {"ok": false, "error": L10n.t("launcher.mod_catalog.entry_not_object", {"guid": guid}), "entry": {}}
 	if m.get("Guid") != dependency_guid(guid):
-		return bad.call("answered with the package '%s'." % str(m.get("Guid")).left(80))
+		return {"ok": false, "error": L10n.t("launcher.mod_catalog.entry_wrong_package", {"guid": guid, "other": str(m.get("Guid")).left(80)}), "entry": {}}
 	if typeof(m.get("Name")) != TYPE_STRING or not _whole(m.get("Game")) or not _whole(m.get("Type")):
-		return bad.call("has no name, game or type.")
+		return {"ok": false, "error": L10n.t("launcher.mod_catalog.entry_no_name", {"guid": guid}), "entry": {}}
 	if typeof(m.get("Files")) != TYPE_ARRAY or m.Files.size() > MAX_FILES:
-		return bad.call("has no file list.")
+		return {"ok": false, "error": L10n.t("launcher.mod_catalog.entry_no_files", {"guid": guid}), "entry": {}}
 	var deps := []
 	var raw = m.get("Dependencies", [])
 	if raw == null:
 		raw = []
 	if typeof(raw) != TYPE_ARRAY:
-		return bad.call("has a dependency list OpenBFME does not recognise.")
+		return {"ok": false, "error": L10n.t("launcher.mod_catalog.entry_bad_deps", {"guid": guid}), "entry": {}}
 	for dep in raw:
 		if typeof(dep) != TYPE_STRING or not safe_guid(dependency_guid(dep)):
-			return bad.call("depends on '%s', which is not a package id OpenBFME accepts." % str(dep).left(80).c_escape())
+			return {"ok": false, "error": L10n.t("launcher.mod_catalog.entry_bad_dep", {"guid": guid, "dep": str(dep).left(80).c_escape()}), "entry": {}}
 		deps.append(dep)
 	var hex := RegEx.create_from_string("^[0-9a-f]{32}$")
 	var where := RegEx.create_from_string("^" + files_origin.replace(".", "\\.") + "/[A-Za-z0-9-]{1,64}/([0-9a-f]{32})$")
@@ -114,22 +121,22 @@ static func check_entry(m: Variant, guid: String, files_origin: String) -> Dicti
 	for f in m.Files:
 		if typeof(f) != TYPE_DICTIONARY or typeof(f.get("Name")) != TYPE_STRING or typeof(f.get("Md5")) != TYPE_STRING \
 				or typeof(f.get("Url")) != TYPE_STRING:
-			return bad.call("has a file entry OpenBFME does not recognise.")
+			return {"ok": false, "error": L10n.t("launcher.mod_catalog.entry_bad_file", {"guid": guid}), "entry": {}}
 		var lang = f.get("Language", "")
 		if lang == null:
 			lang = ""
 		if typeof(lang) != TYPE_STRING:
-			return bad.call("lists %s with a language OpenBFME does not recognise." % f.Name.left(120).c_escape())
+			return {"ok": false, "error": L10n.t("launcher.mod_catalog.entry_bad_language", {"guid": guid, "file": f.Name.left(120).c_escape()}), "entry": {}}
 		if not _whole(f.get("Size")) or f.Size < 0:
-			return bad.call("lists %s with the size %s." % [f.Name.left(120).c_escape(), JSON.stringify(f.get("Size"))])
+			return {"ok": false, "error": L10n.t("launcher.mod_catalog.entry_bad_size", {"guid": guid, "file": f.Name.left(120).c_escape(), "size": JSON.stringify(f.get("Size"))}), "entry": {}}
 		var rel := AioInstall.safe_relative(f.Name)
 		if rel == "":
-			return bad.call("lists a file name that is not a plain relative path: '%s'." % f.Name.left(120).c_escape())
+			return {"ok": false, "error": L10n.t("launcher.mod_catalog.entry_bad_name", {"guid": guid, "file": f.Name.left(120).c_escape()}), "entry": {}}
 		if hex.search(f.Md5) == null:
-			return bad.call("lists %s with a malformed MD5." % rel)
+			return {"ok": false, "error": L10n.t("launcher.mod_catalog.entry_bad_md5", {"guid": guid, "file": rel}), "entry": {}}
 		var at := where.search(f.Url)
 		if at == null or at.get_string(1) != f.Md5:
-			return bad.call("lists %s at '%s', not in the service's file store (%s/<uploader>/<md5>)." % [rel, f.Url.left(160), files_origin])
+			return {"ok": false, "error": L10n.t("launcher.mod_catalog.entry_bad_url", {"guid": guid, "file": rel, "url": f.Url.left(160), "origin": files_origin}), "entry": {}}
 		files.append({"name": f.Name, "rel": rel, "md5": f.Md5, "size": int(f.Size), "url": f.Url, "language": lang})
 	return {"ok": true, "error": "", "entry": {"guid": m.Guid, "name": m.Name.strip_edges(), "version": _text(m.get("Version")).strip_edges(),
 		"author": _text(m.get("Author")).strip_edges(), "type": int(m.Type), "game": int(m.Game), "deps": deps, "files": files}}
@@ -210,11 +217,11 @@ static func plan(first: Array, rest: Array) -> Dictionary:
 				engine_edits.append(show)
 				engine_md5s.append(String(f.md5).to_lower())
 			elif TOOL_EXT.any(func(x): return low.ends_with(x)):
-				left_out.append(show + " (a tool)")
+				left_out.append(L10n.t("launcher.mod_catalog.left_tool", {"file": show}))
 			elif int(e.game) != GAME:
-				left_out.append(show + " (for another game: not mounted from a mod yet)")
+				left_out.append(L10n.t("launcher.mod_catalog.left_other_game", {"file": show}))
 			elif part == "maps":
-				left_out.append(show + " (a map: maps from the service are not supported yet)")
+				left_out.append(L10n.t("launcher.mod_catalog.left_map", {"file": show}))
 			else:
 				files.append({"part": part, "rel": f.rel, "md5": f.md5, "size": int(f.size), "url": f.url, "layer": e.name})
 	return {"files": files, "engine_edits": engine_edits, "engine_md5s": engine_md5s, "left_out": left_out}
@@ -246,9 +253,9 @@ static func resolve(guid: String, enhancement_guids: Array, fetched: Dictionary)
 		return {"ok": false, "error": "", "missing": PackedStringArray([guid])}
 	var entry: Dictionary = fetched[guid]
 	if entry.game != GAME:
-		return {"ok": false, "error": "%s is a package for another game, not for The Rise of the Witch-king" % entry.name, "missing": PackedStringArray()}
+		return {"ok": false, "error": L10n.t("launcher.mod_catalog.other_game", {"name": entry.name}), "missing": PackedStringArray()}
 	if entry.type not in TYPES:
-		return {"ok": false, "error": "%s is a %s: only patches, mods and enhancements can be installed" % [entry.name, type_name(entry.type)], "missing": PackedStringArray()}
+		return {"ok": false, "error": L10n.t("launcher.mod_catalog.bad_type", {"name": entry.name, "type": type_name(entry.type)}), "missing": PackedStringArray()}
 	var enh := []
 	var missing := PackedStringArray()
 	for g in enhancement_guids:
@@ -264,9 +271,9 @@ static func resolve(guid: String, enhancement_guids: Array, fetched: Dictionary)
 	var own: Array = closure(entry, [], fetched).deps
 	for e in enh:
 		if e.type != 2 or e.game != GAME:
-			return {"ok": false, "error": "%s is not an enhancement for The Rise of the Witch-king" % e.name, "missing": PackedStringArray()}
+			return {"ok": false, "error": L10n.t("launcher.mod_catalog.not_enhancement", {"name": e.name}), "missing": PackedStringArray()}
 		if not fits(e, entry, own):
-			return {"ok": false, "error": "%s does not extend %s" % [e.name, entry.name], "missing": PackedStringArray()}
+			return {"ok": false, "error": L10n.t("launcher.mod_catalog.not_extending", {"name": e.name, "base": entry.name}), "missing": PackedStringArray()}
 	var l := layers(entry, c.deps)
 	var p := plan(l[0], l[1])
 	return {"ok": true, "error": "", "missing": PackedStringArray(), "entry": entry, "deps": c.deps, "first": l[0], "rest": l[1], "plan": p,
@@ -297,8 +304,8 @@ static func group(items: Array, fetched: Dictionary, problems: Dictionary) -> Di
 			else:
 				var why := PackedStringArray()
 				for g in Array(r.missing).slice(0, 3):
-					why.append(problems.get(g, "%s was not read" % g))
-				row.error = r.error if r.error != "" else "a package it needs could not be read: " + "; ".join(why)
+					why.append(problems.get(g, L10n.t("launcher.mod_catalog.not_read", {"guid": g})))
+				row.error = r.error if r.error != "" else L10n.t("launcher.mod_catalog.need_unread", {"why": "; ".join(why)})
 		rows[it.guid] = row
 		if it.type != 2:
 			packages.append(row)

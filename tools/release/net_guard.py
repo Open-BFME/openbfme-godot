@@ -69,7 +69,9 @@ ALLOWED_LAUNCHER = {"launcher/scripts/net/http_fetch.gd": {"HTTPClient"},
                     # redirects, one request call each), opens the system browser only on an allow-listed Discord authorize URL or that lobby's
                     # own e-mail page, and takes the OAuth callback on a 127.0.0.1 listener: test_launcher_tools pins each of these
                     "launcher/scripts/core/oauth_account.gd": {"HTTPRequest", "HTTPClient", "TCPServer", "StreamPeerTCP"},
-                    "launcher/scripts/net/social_client.gd": {"HTTPRequest", "HTTPClient"}}
+                    "launcher/scripts/net/social_client.gd": {"HTTPRequest", "HTTPClient"},
+                    # lane CRASHACT-1: the launcher's crash reports (the game's crash client, the same file): crash_client_problems
+                    "launcher/scripts/net/crash_client.gd": {"HTTPRequest", "HTTPClient"}}
 # lane ONLINE-2: game file -> the findings it may have: the online lobby client (its requests: online_lobby_problems)
 # lane ONLINE-4: the online screens' transport (scripts/online_http.gd: the requests OnlineShell.apt's lobby client queues), the same rule
 # lane ONEZIP-1: a game started directly runs the OpenBFME Launcher beside it once (the one updater; the game itself still opens no
@@ -77,8 +79,13 @@ ALLOWED_LAUNCHER = {"launcher/scripts/net/http_fetch.gd": {"HTTPClient"},
 # lane ONLINECOUNT-1: the menus' "N players online" (scripts/online_stats.gd): one GET of the lobby's /v1/stats, the same request rule
 ALLOWED_GAME = {"godot/scripts/online_lobby.gd": {"HTTPRequest", "HTTPClient"}, "godot/scripts/online_http.gd": {"HTTPRequest", "HTTPClient"},
                 "godot/scripts/online_stats.gd": {"HTTPRequest"},
-                "godot/scripts/release/update_handover.gd": {"OS.create_process"}}
+                "godot/scripts/release/update_handover.gd": {"OS.create_process"},
+                # lane CRASHACT-1: crash reports to the crash service (the player's Options toggle, on by default): crash_client_problems
+                "godot/scripts/crash/crash_client.gd": {"HTTPRequest", "HTTPClient"}}
 ONLINE_LOBBY = "godot/scripts/online_lobby.gd"
+CRASH_CLIENT_FILES = ("godot/scripts/crash/crash_client.gd", "launcher/scripts/net/crash_client.gd")
+CRASH_ENDPOINT = 'const ENDPOINT := "https://api.openbfme.com/v1/reports"'
+CRASH_TEST_ENDPOINT = '"^http://127\\\\.0\\\\.0\\\\.1:([1-9][0-9]{0,4})/v1/reports$"'
 ONLINE_LOBBY_FILES = ("godot/scripts/online_lobby.gd", "godot/scripts/online_http.gd", "godot/scripts/online_stats.gd")
 
 GODOT_NET = re.compile(r"(HTTPRequest|HTTPClient|WebSocketPeer|WebSocketMultiplayerPeer|StreamPeerTCP|StreamPeerTLS|TCPServer|PacketPeerUDP|"
@@ -446,6 +453,25 @@ def online_lobby_problems(text: str) -> list[str]:
     return []
 
 
+def crash_client_problems(text: str) -> list[str]:
+    """lane CRASHACT-1: a crash report goes to the crash service and nowhere else: one `.request_raw(` call (no `.request(`), whose URL is
+    CrashClient.target()'s: the ENDPOINT constant (the service), or a test's loopback URL (127.0.0.1 only); redirects off"""
+    tokens = [(t, line) for t, line in lex_gd(text)[0]]
+    names = [t for t, _ in tokens]
+    raw = [k for k in range(1, len(names) - 1) if names[k] == "request_raw" and names[k - 1] == "." and names[k + 1] == "("]
+    plain = [k for k in range(1, len(names) - 1) if names[k] == "request" and names[k - 1] == "." and names[k + 1] == "("]
+    out = []
+    if len(raw) != 1 or plain:
+        out.append(f"{len(raw)} .request_raw( and {len(plain)} .request( calls (exactly one .request_raw( is allowed)")
+    if CRASH_ENDPOINT not in text:
+        out.append("the ENDPOINT constant is not the crash service's https://api.openbfme.com/v1/reports")
+    if CRASH_TEST_ENDPOINT not in text:
+        out.append("the test endpoint is not limited to http://127.0.0.1:<port>/v1/reports")
+    if not any(names[i:i + 3] == ["max_redirects", "=", "0"] for i in range(len(names) - 2)):
+        out.append("the HTTPRequest does not set max_redirects = 0")
+    return out
+
+
 def main() -> int:
     bad = 0
     for path, findings in scan().items():
@@ -457,6 +483,10 @@ def main() -> int:
         for p in online_lobby_problems((REPO / lobby_file).read_text(encoding="utf-8")):
             bad += 1
             print(f"FINDING {lobby_file}: {p}")
+    for crash_file in CRASH_CLIENT_FILES:
+        for p in crash_client_problems((REPO / crash_file).read_text(encoding="utf-8")):
+            bad += 1
+            print(f"FINDING {crash_file}: {p}")
     for path, findings in scan_launcher().items():
         for f in findings:
             allowed = launcher_finding_allowed(path, f)

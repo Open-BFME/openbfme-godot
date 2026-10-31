@@ -34,7 +34,7 @@ const REQUIRED_ROWS := {
 		"Retail.MovieVolume", "Retail.MusicVolume", "Retail.SoundFxVolume", "Retail.VoiceVolume"],
 	"Camera": ["OpenBFMEConfineMouse", "OpenBFMEEdgeScroll", "OpenBFMEFreeCamera", "OpenBFMEInvertDragScroll", "OpenBFMEMaxZoomOut", "OpenBFMERotateSpeed",
 		"Retail.ScrollSpeed"],
-	"Interface": ["AlternateMouseSetup", "OpenBFMEGameClock", "OpenBFMEHealthBars", "OpenBFMEMainMenuStyle", "OpenBFMEPingKey", "OpenBFMEPingWheel", "OpenBFMEUIScale", "Retail.HealthBars"],
+	"Interface": ["AlternateMouseSetup", "OpenBFMECrashReports", "OpenBFMEGameClock", "OpenBFMEHealthBars", "OpenBFMEMainMenuStyle", "OpenBFMEPingKey", "OpenBFMEPingWheel", "OpenBFMEUIScale", "Retail.HealthBars"],
 	"Online": ["OpenBFMEShareResults", "OpenBFMEShowPing", "Retail.OnlineIp", "Retail.OnlinePortNum", "Retail.RefreshNat", "Retail.SendDelay",
 		"Social.challenges", "Social.hidden", "Social.invites", "Social.presence", "Social.requests"], # ONLINEMENU-1: who may ask, invite, challenge, see you
 	"Performance": ["OpenBFMEUberPerformance"],
@@ -43,7 +43,8 @@ const REQUIRED_ROWS := {
 const REQUIRED_BAR := ["accept", "cancel", "reset"]
 const REQUIRED_MAIN := ["MultiPlayNav", "MyHeroes", "OptionsNav", "QuitMainMenu", "SoloPlayNav", "corner"] # the corner button (a 194 x 105 box) has no name
 const REQUIRED_SUB := {
-	"SoloPlayNav": ["BonusCampaign", "Expansion1Campaign", "LoadGame", "Skirmish", "WarOfTheRing"],
+	# lane BFME2CAMP1 (owner): RotWK's list also has BFME2's Evil / Good Campaign rows (an OpenBFME addition, AptMainMenu.h ExtraRows)
+	"SoloPlayNav": ["BonusCampaign", "EvilCampaign", "Expansion1Campaign", "GoodCampaign", "LoadGame", "Skirmish", "WarOfTheRing"],
 	"MultiPlayNav": ["LocalNetwork", "Online", "Replay"],
 	"OptionsNav": ["AdvancedSettings", "Credits", "Settings"],
 }
@@ -1238,9 +1239,9 @@ func screen_inventory(name: String) -> Array:
 				"LanOpenPlay.LobbyMain.instance224.OnSortName.OnSortName", "LanOpenPlay.LobbyMain.instance224.OnSortMap.OnSortHeroMap",
 				"LanOpenPlay.LobbyMain.instance224.OnSortPlayers.OnSortPlayers", "LanOpenPlay.LobbyMain.TopRightFrame.LanLobby::NameEntry",
 				"LanOpenPlay.LobbyMain.instance224.LanLobby::CustomGamesList", "LanOpenPlay.LobbyMain.TopRightFrame.CreateGame.instance11",
+				# the game browser is no host (MpGameSetup::HostMode is the owner's host flag, RW 0x845AE2 = BFME2 AptMpGameSetup::ExternFunc query 0):
+				# the map list and its sort tabs belong to Create Game's setup; the selected game's map info stays
 				"LanOpenPlay.LobbyMain.instance1.TabMap.instance7", "LanOpenPlay.LobbyMain.instance1.TabButtons.RulesTab.bttn",
-				"LanOpenPlay.LobbyMain.instance1.MapsTabSelected.MapsTab_Assorted.ArrowTab.OnSortIcon", "LanOpenPlay.LobbyMain.instance1.MapsTabSelected.MapsTab_Assorted.NameTab.OnSortName",
-				"LanOpenPlay.LobbyMain.instance1.MapsTabSelected.MapsTab_Assorted.PlayersTab.OnSortPlayers", "LanOpenPlay.LobbyMain.instance1.MapsTabSelected.MapsTab_Assorted.instance22.MapList",
 				"LanOpenPlay.LobbyMain.instance1.MapsTabSelected.instance1.MapInfo.MapInfo", "MainButtons.MainMenu.bttn", "MainButtons.Options.bttn", "instance82.MessengerButton.bttn"]
 	return []
 

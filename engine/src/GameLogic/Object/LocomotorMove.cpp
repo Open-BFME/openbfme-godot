@@ -11,7 +11,7 @@
 //   S-081  numeric parity: the movers mix x87 and SSE (moveForward RW 0x5E586F) and call the CRT / x87
 //          trigonometry; the facade reproduces the operation order and precision, but sin / cos / atan2 come
 //          from the platform libm (SimMath.h) and no retail oracle compares full sequences.
-//   S-084  movers and cases not ported (HOVER and SHIP: lane SHIP-1): GIANT_BIRD's rotateTowardsPosition branch (the GIANT_BIRD movers: LocomotorGiantBird.cpp), ScalesWalls look-ahead, ZAxisBehavior other
+//   S-084  movers and cases not ported (HOVER and SHIP: lane SHIP-1; GIANT_BIRD's rotateTowardsPosition branch: lane TAKEOVER-1), ScalesWalls look-ahead, ZAxisBehavior other
 //          than NO_Z_MOTIVE_FORCE, FLOATING_Z and SEA_LEVEL and their layer / projectile / falling special cases, the HORDE formation
 //          path nodes.
 
@@ -171,11 +171,11 @@ const std::vector<std::string> &Locomotor::allStops()
 		"S-081: locomotor numeric parity unproven: the movers mix x87 and SSE (moveForward RW 0x5E586F) and use the CRT / x87 sin, cos and atan2; "
 		"operation order and PC24 precision are reproduced through NumericState, the trigonometry is NumericState's deterministic double-double "
 		"(lane WIN-1: the same bits on every OS), not the retail CRT / x87 results.",
-		"S-084: locomotor cases not ported: the GIANT_BIRD branch of rotateTowardsPosition (the GIANT_BIRD movers are GiantBirdAIUpdate's, lane FLY-1), the ScalesWalls look-ahead (RW 0x5E8956-0x5E8FF8), "
-		"ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT and ABSOLUTE_HEIGHT (the last three: lane SHIP-1; the stealth reveal of a climbing object, RW 0x5E7C0A, is not ported) and the layer / projectile / falling special cases of RW 0x5E774A / 0x5E5785, "
+		"S-084: locomotor cases not ported: the ScalesWalls look-ahead (RW 0x5E8956-0x5E8FF8), "
+		"ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT, ABSOLUTE_HEIGHT, FIXED_SURFACE_RELATIVE_HEIGHT and FIXED_ABSOLUTE_HEIGHT (the last two: RW 0x5E78DB; the stealth reveal of a climbing object, RW 0x5E7C0A, is not ported) and the layer / projectile / falling special cases of RW 0x5E774A / 0x5E5785, "
 		"and the HORDE mover's formation path nodes (types 2, 3, 7, 8; RW 0x5E6E20-0x5E7148).",
 		"S-1750: maintainCurrentPosition (RW 0x5E7CC7) is ported without its tail: the held position's z behaviour (RW 0x5E76AC on +0x08) with its "
-		"constant-calling result, the transform write (RW 0x70BA76) and the WINGS hold (RW 0x5E74C1) are not run; an idle unit's height and sleep follow "
+		"constant-calling result, the transform write (RW 0x70BA76) are not run for non-WINGS appearances; an idle unit's height and sleep follow "
 		"the movers' last frame."
 	};
 	return stops;
@@ -520,50 +520,34 @@ void Locomotor::moveForward(LocomotorHost &host, const Coord3D &goal, float onPa
 	}
 }
 
-// ---- rotateTowardsPosition (RW 0x5E4F44, ground branch from RW 0x5E5418) -------------------------------------------
-void Locomotor::rotateTowardsPosition(LocomotorHost &host, const Coord3D &goal, float maxTurnRate, float *outRelAngle)
+// RW 0x5E4FD0 .. 0x5E5413 (lane TAKEOVER-1), the GIANT_BIRD branch of rotateTowardsPosition: the pivot and the 0.1 test as the ground branch; the turn
+// direction against the template's TurnThreshold (not the near-path-end sixteenth), the clamp to maxTurnRate, no turn-limited halving; then the object's
+// transform O (obj + 0x08) turned about the pivot point p: M = T(p) Rz(rel) T(-p), written as the binary's inlined product (SSE float, every product
+// with its 0 kept, the sums in its order) and stored into the working matrix by RW 0x5E3C56 (M O). false: nothing to turn (rotateTowardsPosition returns)
+bool Locomotor::rotateGiantBird(LocomotorHost &host, const Coord3D &goal, float maxTurnRate, float *outRelAngle)
 {
 	const LocomotorTemplate &t = *m_template;
-	const Bits &b = bits();
-	if (t.m_appearance == LOCO_GIANT_BIRD)
-	{
-		noteStopOf(1);
-		throw std::logic_error("S-084: rotateTowardsPosition for GIANT_BIRD locomotors is not ported");
-	}
-
-	const float objAngle = host.getAngle();                 // [ebp+0x54]
-	const float pivotOffset = t.m_turnPivotOffset;          // [ebp+0x64]
-	float turnThreshold = t.m_turnThreshold;                // [ebp+0x70]
-	if (m_nearPathEnd)
-	{
-		turnThreshold = SimMath::mulf32(turnThreshold, 0.0625f);            // RW 0xBDD39C
-	}
-	const bool turnLimited = host.isTurnLimited();          // bl
-	m_turnDirection = 0;                                    // and [edi+0xa8], 0
-
-	const float pivot = SimMath::mulf32(host.getBoundingRadius(), pivotOffset); // obj+0xB8 * offset
+	const float objAngle = host.getAngle();
+	const float pivot = SimMath::mulf32(host.getBoundingRadius(), t.m_turnPivotOffset);
 	const Coord3D pos = host.getPosition();
-	const Coord2D dir = host.getUnitDirectionVector2D();   // RW 0x70B9E0
-	float px = SimMath::mulf32(dir.x, pivot);
-	px = SimMath::addf32(px, pos.x);
-	float py = SimMath::mulf32(dir.y, pivot);
-	py = SimMath::addf32(py, pos.y);
+	const Coord2D dir = host.getUnitDirectionVector2D(); // RW 0x70B9E0
+	const float px = SimMath::addf32(SimMath::mulf32(dir.x, pivot), pos.x);
+	const float py = SimMath::addf32(SimMath::mulf32(dir.y, pivot), pos.y);
 	const float dx = SimMath::subf32(goal.x, px);
 	const float dy = SimMath::subf32(goal.y, py);
 	if (fabsd(dx) < kTinyAngle && fabsd(dy) < kTinyAngle)
 	{
-		return; // RW 0x5E54AB: both within 0.1 of the pivot: nothing to turn
+		return false; // RW 0x5E5067 -> 0x5E577B: rotateTowardsPosition returns
 	}
-	// atan2 stays a double in ST0; the subtraction runs at PC24, then RW 0x644FD0 wraps it
-	const double ang = SimMath::atan2d(dy, dx);
-	float rel = normalizeAngle(NumericState::pc24SubD(ang, (double)objAngle));
+	float rel = normalizeAngle(NumericState::pc24SubD(SimMath::atan2d(dy, dx), (double)objAngle)); // RW 0x441BF4, fsub, RW 0x644FD0
 	if (outRelAngle)
 	{
 		*outRelAngle = rel;
 	}
-	if (rel > 0.0f)
+	const float zero = 0.0f;
+	if (rel > zero)
 	{
-		if (rel > turnThreshold)
+		if (rel > t.m_turnThreshold)
 		{
 			m_turnDirection = 1;
 		}
@@ -574,34 +558,131 @@ void Locomotor::rotateTowardsPosition(LocomotorHost &host, const Coord3D &goal, 
 	}
 	else
 	{
-		const float negThreshold = SimMath::subf32(0.0f, turnThreshold);
-		if (negThreshold > rel)
+		if (SimMath::subf32(zero, t.m_turnThreshold) > rel)
 		{
 			m_turnDirection = -1;
 		}
-		const float negMax = SimMath::subf32(0.0f, maxTurnRate);
+		const float negMax = SimMath::subf32(zero, maxTurnRate);
 		if (negMax > rel)
 		{
 			rel = negMax;
 		}
 	}
-	if (turnLimited)
-	{
-		rel = SimMath::mulf32(rel, 0.5f);
-	}
-	const float c = SimMath::cosf32(rel);
-	const float s = SimMath::sinf32(rel);
-	// RW 0x5E5558-0x5E55FB: rotate the first two rows of the working matrix about Z
+	using SimMath::addf32;
+	using SimMath::mulf32;
+	using SimMath::subf32;
+	const float c = SimMath::cosf32(rel); // RW 0xA3CF84
+	const float s = SimMath::sinf32(rel); // RW 0xA3CF90
+	const float c0 = mulf32(c, zero), s0 = mulf32(s, zero);
+	const float r00 = subf32(c, s0), r01 = subf32(c0, s), r02 = subf32(c0, s0);
+	const float r10 = addf32(s, c0), r11 = addf32(s0, c), r12 = addf32(c0, s0);
+	const float npx = subf32(zero, px), npy = subf32(zero, py);
+	const float t0 = addf32(addf32(addf32(mulf32(r01, npy), mulf32(npx, r00)), mulf32(r02, zero)), addf32(mulf32(py, zero), px));
+	const float t1 = addf32(addf32(addf32(mulf32(r10, npx), mulf32(r11, npy)), mulf32(r12, zero)), addf32(mulf32(px, zero), py));
+	const float t2 = addf32(mulf32(addf32(npx, npy), zero), addf32(mulf32(px, zero), mulf32(py, zero)));
+	const LocomotorMatrix o = host.getTransform();
+	LocomotorMatrix m = o;
 	for (int col = 0; col < 3; ++col)
 	{
-		const float a = m_matrix.m[0][col];
-		const float bb = m_matrix.m[1][col];
-		const float ac = SimMath::mulf32(a, c);
-		const float bs = SimMath::mulf32(bb, s);
-		const float as = SimMath::mulf32(a, s);
-		const float bc = SimMath::mulf32(bb, c);
-		m_matrix.m[0][col] = SimMath::subf32(ac, bs);
-		m_matrix.m[1][col] = SimMath::addf32(as, bc);
+		const float a = o.m[0][col], bb = o.m[1][col], cc = o.m[2][col];
+		m.m[0][col] = addf32(addf32(mulf32(r02, cc), mulf32(r01, bb)), mulf32(a, r00));
+		m.m[1][col] = addf32(addf32(mulf32(r12, cc), mulf32(r11, bb)), mulf32(r10, a));
+		m.m[2][col] = addf32(mulf32(addf32(bb, a), zero), cc);
+	}
+	const float a = o.m[0][3], bb = o.m[1][3], cc = o.m[2][3];
+	m.m[0][3] = addf32(addf32(addf32(mulf32(r02, cc), mulf32(r01, bb)), mulf32(a, r00)), t0);
+	m.m[1][3] = addf32(addf32(addf32(mulf32(r12, cc), mulf32(r11, bb)), mulf32(r10, a)), t1);
+	m.m[2][3] = addf32(addf32(mulf32(addf32(bb, a), zero), t2), cc);
+	m_matrix = m; // RW 0x5E3C56
+	return true;
+}
+
+// ---- rotateTowardsPosition (RW 0x5E4F44, ground branch from RW 0x5E5418) -------------------------------------------
+void Locomotor::rotateTowardsPosition(LocomotorHost &host, const Coord3D &goal, float maxTurnRate, float *outRelAngle)
+{
+	const LocomotorTemplate &t = *m_template;
+	const Bits &b = bits();
+
+	const float objAngle = host.getAngle();                 // [ebp+0x54]
+	const float pivotOffset = t.m_turnPivotOffset;          // [ebp+0x64]
+	float turnThreshold = t.m_turnThreshold;                // [ebp+0x70]
+	if (m_nearPathEnd)
+	{
+		turnThreshold = SimMath::mulf32(turnThreshold, 0.0625f);            // RW 0xBDD39C
+	}
+	const bool turnLimited = host.isTurnLimited();          // bl
+	m_turnDirection = 0;                                    // and [edi+0xa8], 0
+	if (t.m_appearance == LOCO_GIANT_BIRD)
+	{
+		if (!rotateGiantBird(host, goal, maxTurnRate, outRelAngle)) // RW 0x5E4FD0 .. 0x5E5413, then the model conditions (RW 0x5E5603)
+		{
+			return;
+		}
+	}
+	else
+	{
+		const float pivot = SimMath::mulf32(host.getBoundingRadius(), pivotOffset); // obj+0xB8 * offset
+		const Coord3D pos = host.getPosition();
+		const Coord2D dir = host.getUnitDirectionVector2D();   // RW 0x70B9E0
+		float px = SimMath::mulf32(dir.x, pivot);
+		px = SimMath::addf32(px, pos.x);
+		float py = SimMath::mulf32(dir.y, pivot);
+		py = SimMath::addf32(py, pos.y);
+		const float dx = SimMath::subf32(goal.x, px);
+		const float dy = SimMath::subf32(goal.y, py);
+		if (fabsd(dx) < kTinyAngle && fabsd(dy) < kTinyAngle)
+		{
+			return; // RW 0x5E54AB: both within 0.1 of the pivot: nothing to turn
+		}
+		// atan2 stays a double in ST0; the subtraction runs at PC24, then RW 0x644FD0 wraps it
+		const double ang = SimMath::atan2d(dy, dx);
+		float rel = normalizeAngle(NumericState::pc24SubD(ang, (double)objAngle));
+		if (outRelAngle)
+		{
+			*outRelAngle = rel;
+		}
+		if (rel > 0.0f)
+		{
+			if (rel > turnThreshold)
+			{
+				m_turnDirection = 1;
+			}
+			if (rel > maxTurnRate)
+			{
+				rel = maxTurnRate;
+			}
+		}
+		else
+		{
+			const float negThreshold = SimMath::subf32(0.0f, turnThreshold);
+			if (negThreshold > rel)
+			{
+				m_turnDirection = -1;
+			}
+			const float negMax = SimMath::subf32(0.0f, maxTurnRate);
+			if (negMax > rel)
+			{
+				rel = negMax;
+			}
+		}
+		if (turnLimited)
+		{
+			rel = SimMath::mulf32(rel, 0.5f);
+		}
+		const float c = SimMath::cosf32(rel);
+		const float s = SimMath::sinf32(rel);
+		// RW 0x5E5558-0x5E55FB: rotate the first two rows of the working matrix about Z
+		for (int col = 0; col < 3; ++col)
+		{
+			const float a = m_matrix.m[0][col];
+			const float bb = m_matrix.m[1][col];
+			const float ac = SimMath::mulf32(a, c);
+			const float bs = SimMath::mulf32(bb, s);
+			const float as = SimMath::mulf32(a, s);
+			const float bc = SimMath::mulf32(bb, c);
+			m_matrix.m[0][col] = SimMath::subf32(ac, bs);
+			m_matrix.m[1][col] = SimMath::addf32(as, bc);
+		}
 	}
 
 	// ---- turn animation model conditions (RW 0x5E5603-0x5E5774) ----
@@ -1278,6 +1359,25 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 		host.setPendingPosition(Coord3D{ effective.x, effective.y, SimMath::subf32(SimMath::mulf32(p.z, 2.0f), cur.z) });
 		return;
 	}
+	if (zAxis == Z_FIXED_SURFACE_RELATIVE_HEIGHT || zAxis == Z_FIXED_ABSOLUTE_HEIGHT)
+	{
+		// TARGET: RW 0x5E78DB-0x5E7926 selects the water/ground surface only for case 4, then RW 0x5E7ACC adds the preferred height
+		// and writes the working translation; the common tail RW 0x5E7C40 extrapolates pending z. Unlike cases 2/3 there is no damping.
+		// DONOR: BFME2 Locomotor.cpp:2022-2038 describes fixed surface/absolute heights, but that body is present-unmatched, not target evidence.
+		Coord3D p{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] };
+		float surface = 0.0f;
+		if (zAxis == Z_FIXED_SURFACE_RELATIVE_HEIGHT)
+		{
+			float waterZ = 0.0f;
+			surface = host.isUnderwater(p.x, p.y, &waterZ) ? waterZ : host.groundHeightAt(p.x, p.y); // RW 0x5E3960
+		}
+		p.z = SimMath::addf32(m_preferredHeight, surface);
+		m_matrix.m[2][3] = p.z;
+		const Coord3D cur = host.getPosition();
+		const Coord3D effective = host.hasPendingPosition() ? host.getPendingPosition() : cur;
+		host.setPendingPosition(Coord3D{ effective.x, effective.y, SimMath::subf32(SimMath::mulf32(p.z, 2.0f), cur.z) });
+		return;
+	}
 	if (zAxis == Z_SURFACE_RELATIVE_HEIGHT || zAxis == Z_ABSOLUTE_HEIGHT)
 	{
 		// lane SHIP-1, RW 0x5E7AF6 .. 0x5E7C3B (cases 2 and 3 of the table RW 0x5E7CA3): nothing while the preferred height (+ 0x48) is 0 and flag 8 (ZH
@@ -1346,7 +1446,7 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 	if (zAxis != Z_NO_Z_MOTIVE_FORCE)
 	{
 		noteStopOf(1);
-		throw std::logic_error("S-084: ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT, ABSOLUTE_HEIGHT and SCALING_WALLS is not ported");
+		throw std::logic_error("S-084: ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT, ABSOLUTE_HEIGHT, FIXED_SURFACE_RELATIVE_HEIGHT, FIXED_ABSOLUTE_HEIGHT and SCALING_WALLS is not ported");
 	}
 	Coord3D pos{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] }; // RW 0x5E3A5A
 	if (!host.zMotionSuppressed())
@@ -1446,7 +1546,7 @@ void Locomotor::setSpeedTowards(const LocomotorHost &host, float v)
 //   Then flag 1 (braking) and +0x98 are cleared. No physics module (obj+0x264): true. By appearance (template +0x74): LEGS_TWO, WHEELS_FOUR,
 //   LEGS_FOUR_HUGE, HORDE, LEGS_TWO_HUGE: speed (+0x40) = 0, MOVING cleared (RW 0x5E5D7E), result false; TREADS: MOVING cleared, result false (the
 //   speed is kept); HOVER, GIANT_BIRD: speed = 0, true; WINGS: RW 0x5E74C1, true; any other: speed = 0, MOVING cleared, true. Then RW 0x5E76AC on the
-//   held position (true when it says so) and the transform write RW 0x70BA76 (both not ported: S-1750).
+//   held position (true when it says so) and the transform write RW 0x70BA76 (ported below for WINGS; other appearances: S-1750).
 // Before this port the goal-less unit's locomotor did nothing, so a unit whose walk ended without the move state's exit (a horde member released to its
 // melee, an idle member of a parked horde) kept MOVING and the turn conditions: the run cycle on the spot of QA-2's finding 2.
 bool Locomotor::locomotorMaintainCurrentPosition(LocomotorHost &host)
@@ -1496,8 +1596,11 @@ bool Locomotor::locomotorMaintainCurrentPosition(LocomotorHost &host)
 		m_speed = 0.0f;
 		break;
 	case LOCO_WINGS:
-		noteStopOf(2); // RW 0x5E74C1, not ported
-		break;
+		maintainCurrentPositionWings(host);
+		// RW 0x5E7E60: wings always need another update, including while climbing from the ground.
+		handleBehaviorZ(host, m_maintainPosition);
+		host.setTransform(m_matrix);
+		return true;
 	default:
 		m_speed = 0.0f;
 		if (host.testModelCondition(b.moving))
@@ -1508,6 +1611,39 @@ bool Locomotor::locomotorMaintainCurrentPosition(LocomotorHost &host)
 	}
 	noteStopOf(2); // the tail (RW 0x5E76AC on the held position, RW 0x70BA76) is not run
 	return result;
+}
+
+// TARGET: RW 0x5E74C1..0x5E7604, read from RotWK's disassembly. BFME2's
+// maintainCurrentPosition dispatch and BFME1's matched wings body explain the field names.
+// This is idle flight, not an AI move order: retain the original hold point across frames.
+void Locomotor::maintainCurrentPositionWings(LocomotorHost &host)
+{
+	const Coord3D pos = host.getPosition();
+	if (!(pos.z > host.groundHeightAt(pos.x, pos.y))) // RW 0x4B12E8 -> height above terrain > 0
+	{
+		return;
+	}
+	m_flags |= LOCOMOTOR_FLAG_NO_BRAKE;
+	float radius = m_template->m_circlingRadius;
+	if (radius == 0.0f)
+	{
+		const float turn = getMaxTurnRate(host);
+		radius = turn > 0.0f ? SimMath::divf32(getMinSpeed(host), turn) : 99999.0f; // RW 0x5E38FA
+	}
+	const float dx = NumericState::pc24Sub(m_maintainPosition.x, pos.x);
+	const float dy = SimMath::subf32(m_maintainPosition.y, pos.y);
+	float angle = fabsd(dx) < 0.001f && fabsd(dy) < 0.001f ? host.getAngle() : (float)SimMath::atan2d(dy, dx);
+	float aim = 2.7488937377929688f; // RW 0xBF4B2C: pi - pi/8
+	if (radius < 0.0f)
+	{
+		radius = SimMath::subf32(0.0f, radius);
+		aim = -2.7488937377929688f;
+	}
+	angle = NumericState::pc24Add(aim, angle);
+	Coord3D goal = m_maintainPosition;
+	goal.x = NumericState::pc24Add(NumericState::pc24Mul(SimMath::cosDet(angle), radius), goal.x);
+	goal.y = NumericState::pc24Add(NumericState::pc24Mul(SimMath::sinDet(angle), radius), goal.y);
+	moveTowardsPositionOther(host, goal, 0.0f, getMinSpeed(host)); // RW 0x5E740D -> 0x5E6835
 }
 
 // ---- the dispatcher (RW 0x5E8865) ---------------------------------------------------------------------------------------------

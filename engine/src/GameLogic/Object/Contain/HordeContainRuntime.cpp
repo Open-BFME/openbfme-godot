@@ -283,7 +283,19 @@ void HordeContain::updateFormation()
 
 
 
+// RotWK HordeContain's create interface (+ 0x34, vtable RW 0xC5B470): slot 0, onCreate (RW 0x86C77D), only sets a flag (+ 0x291, when module data + 0x1D8 is
+// 0; not ported); slot 1, onBuildComplete (RW 0x8718ED), makes the payload (primary slot 28, RW 0x871B9B). Every creator runs onBuildComplete after it has
+// placed the object (the map loop RW 0x62DCE4: setPosition RW 0x62E13F, then RW 0x68D252 at 0x62E176; the OCL RW 0x5F1623; ProductionUpdate; the transport
+// payload RW 0x86A104), so the members are made around the horde where it stands: onContaining (RW 0x872D0A) puts each on its slot (RW 0x877D89 ->
+// 0x875847). The port made the payload in onCreate, inside newObject, before the horde had a position, and relied on containReactToTransformChange to carry the
+// members along when the creator then placed the horde (RotWK's moves no member).
 void HordeContain::onCreate()
+{
+}
+
+// RW 0x8718ED. After the payload RotWK tail-jumps to the banner carrier spawn RW 0x870204 when the horde's producer (Object + 0x78) is 0 and module data
+// + 0x27C is 0 (the field is not identified): not ported (S-587, bannerCheck spawns carriers later)
+void HordeContain::onBuildComplete()
 {
 	createPayload();
 }
@@ -330,7 +342,7 @@ void HordeContain::createPayload()
 			}
 		}
 	}
-	// RW 0x871C10 .. 0x871CB4 (lane DECOMP-1; BFME2 decomp HordeContainRva0046E8EE.cpp, tier B same-shape): an unproduced horde destroys (int)((100 - H) * 0.01 *
+	// RW 0x871C10 .. 0x871CB4 (lane DECOMP-1; BFME2 decomp HordeContain_createPayload.cpp, tier B same-shape): an unproduced horde destroys (int)((100 - H) * 0.01 *
 	// count) of its members that have a body, H being HordeContain + 0x2A8. Its only writer is the constructor (RW 0x872972: 100; a scan of every
 	// `mov [reg + 0x2A8]` in RotWK's .text finds no other HordeContain one), so the count is 0 and nothing is destroyed whatever DamagePercentToUnits says
 	applyFormationModifiers(); // lane COMBAT-3: RW 0x871D2C, the end of the payload (an unproduced horde only): interface slot 0x1E4
@@ -681,6 +693,30 @@ void HordeContain::teleportMembers()
 	}
 }
 
+// lane BFME2CAMP1: RW 0x870667, interface slot 0x170 (Object::setTeam RW 0x69954A, contain slot 0x7C, for a non-null team): the contained members, read into
+// a list first (contain slot 0x118), each Object::setTeam(team); then the members on the way into a garrison (interface + 0x54, its ids in order) that still
+// exist (RW 0x449681). A member on the way is not in the contain list, so no member is visited twice
+void HordeContain::setMembersTeam(Team *team)
+{
+	const std::vector<Object *> members(m_members.begin(), m_members.end());
+	for (Object *m : members)
+	{
+		if (m)
+		{
+			m->setTeam(team);
+		}
+	}
+	GameLogic &logic = getObject()->logic();
+	const std::vector<ObjectID> entering(m_garrisonEntering.begin(), m_garrisonEntering.end());
+	for (ObjectID id : entering)
+	{
+		if (Object *m = logic.findObjectByID(id))
+		{
+			m->setTeam(team);
+		}
+	}
+}
+
 // RW 0x86D8FE, interface slot 0x1B4 (BFME2 decomp HordeContain::rva0046A78F, tier A): slot 0x40, then every contained member gets the transform with its
 // translation replaced by slot 7's position (Object RW 0x68DA67)
 void HordeContain::teleportMembersTransform(const float basis[9])
@@ -698,24 +734,14 @@ void HordeContain::teleportMembersTransform(const float basis[9])
 	}
 }
 
-// ZH OpenContain::containReactToTransformChange: the contents follow the container
+// RotWK HordeContain's contain slot 0xC (RW 0x871536; the same entry in all three horde contain vtables, RW 0xC5B1F8 / 0xC5BE98 / 0xC5CFA8): RW 0x68C02E on the
+// horde and on every contained member (Object + 0x4AC = 1, + 0x4B0 = the logic frame), nothing else. A horde's move or turn never repositions its members:
+// they walk to their slots in the member pass (RW 0x87468B), and an explicit teleport moves them (contain slot 0x1B8 RW 0x86D881, teleportMembers). The port
+// had ZH OpenContain's "the contents follow the container" here: every member was put on its slot whenever the horde's transform changed outside its
+// locomotor, e.g. AIMoveToState's final-angle snap (RW 0x748E46 -> 0x70C31E), so members jumped up to 40 units at the end of a move.
+// NOT PORTED: the + 0x4AC / + 0x4B0 mark (its readers are not decoded).
 void HordeContain::containReactToTransformChange()
 {
-	if (m_garrisoned)
-	{
-		return; // lane GARRISON-1: the garrison places the members
-	}
-	if (m_locomoting)
-	{
-		return; // MOVE-1: the horde's own locomotor moved it; its members walk to their slots (the member pass)
-	}
-	for (Object *m : m_members)
-	{
-		if (std::find(m_producedMembers.begin(), m_producedMembers.end(), m->getID()) == m_producedMembers.end())
-		{
-			placeMember(m);
-		}
-	}
 }
 
 void HordeContain::crc(StateHasher &h) const

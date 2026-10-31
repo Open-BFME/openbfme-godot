@@ -309,11 +309,20 @@ def test_launcher_preset_and_build_info_are_preview_only(tmp_path: Path):
         "repo": "Open-BFME/openbfme-godot",
         "release_key": key,
         "release_keys": [key, kms],
+        "nightly_keys": [],
         "test_build": False,
         "local_trial": False,
         "macos_preview": True,
         "macos_updates": False,
     }
+    # RELGH-2: the staged launcher's nightly_keys.pub is carried; a nightly key that is also a release key is refused
+    nk = ed25519.public_key(b"\x03" * 32).hex()
+    (launcher / "nightly_keys.pub").write_text(f"# nightly\n{nk}  nightly-2026\n")
+    assert package_macos_preview.write_launcher_build_info(launcher, COMMIT, 1_700_000_000)["nightly_keys"] == [nk]
+    (launcher / "nightly_keys.pub").write_text(f"{kms}  nightly-2026\n")
+    with pytest.raises(SystemExit):
+        package_macos_preview.write_launcher_build_info(launcher, COMMIT, 1_700_000_000)
+    (launcher / "nightly_keys.pub").unlink()
     # SIGNKMS-1: the list must begin with release_key.pub's key, and parse; a test key alone is a one-key list
     (launcher / "release_keys.pub").write_text(f"{kms}  kms-2026\n{key}  deck-2026\n")
     with pytest.raises(SystemExit):

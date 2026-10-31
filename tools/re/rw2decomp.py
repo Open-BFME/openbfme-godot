@@ -109,6 +109,8 @@ def show(r, decomp, query_note=""):
                  "generated": "byte-matched generated C++ (EH funclet / thunk)",
                  "attempt": "recovered C++, NOT byte-matching yet",
                  "tu-only": "no code yet; decomp assigns it to this file",
+                 "assembly": "byte-matched reviewed assembly (not C++)",
+                 "data": "verified data in .text (no code)",
                  "library": "prebuilt library (no source)", "dump": "re-encoded bytes only (no source)"}.get(st, st)
         print(f"  decomp: {label}")
         print(f"    {loc}" + (f"  {name}" if name else ""))

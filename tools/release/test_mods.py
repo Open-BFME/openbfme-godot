@@ -151,11 +151,89 @@ def test_mod_catalog_rules():
     assert r.returncode == 0 and "MODS OK" in r.stdout, r.stdout[-4000:] + r.stderr[-2000:]
 
 
+def make_asset_packs(root: Path) -> None:
+    """lane SDK-1: two made-up asset packs: "HD Units" (a model, a texture, a readme) and "Sneaky" (a texture and an INI file)"""
+    (root / "HD Units" / "textures").mkdir(parents=True)
+    (root / "HD Units" / "gumaarms_skn.w3d").write_bytes(b"w" * 600)
+    (root / "HD Units" / "textures" / "GUMaArms.dds").write_bytes(b"DDS " + b"t" * 420)
+    (root / "HD Units" / "README.md").write_text("about")
+    (root / "Sneaky").mkdir()
+    (root / "Sneaky" / "tree.dds").write_bytes(b"DDS ")
+    (root / "Sneaky" / "weapon.ini").write_text("Weapon X\nEnd\n")
+
+
+@needs_godot
+def test_asset_packs_listed_and_turned_off(tmp_path, service):
+    """lane SDK-1: --asset-packs lists the game's asset-packs folder with the game's rules; --asset-pack-off / -on write disabled.txt"""
+    root = tmp_path / "game-user" / "asset-packs"
+    make_asset_packs(root)
+    r = launch(tmp_path, service, "--asset-packs")
+    assert r.code == 0 and r.has("LAUNCHER ASSET PACKS 2 in "), r  # the folder itself is scrubbed from the log (launcher_log.gd)
+    assert r.has("LAUNCHER ASSET PACK HD Units | on | 1 models, 1 textures | 1 MB"), r
+    assert r.has("LAUNCHER ASSET PACK Sneaky problem: weapon.ini is not a model or texture"), r
+    r = launch(tmp_path, service, "--asset-pack-off=Sneaky", "--asset-packs")
+    assert r.code == 0 and r.has("LAUNCHER ASSET PACK Sneaky | off |"), r
+    assert (root / "disabled.txt").read_text().splitlines()[1:] == ["sneaky"]
+    r = launch(tmp_path, service, "--asset-pack-on=sneaky", "--asset-pack-off=Nope", "--asset-packs")
+    assert r.code == 1 and r.has("LAUNCHER ASSET PACK Sneaky | on |") and r.has("cannot turn it off: there is no asset pack Nope"), r
+    assert service.server.requests == [], "asset packs ask nothing of the service"
+
+
+@needs_godot
+def test_asset_packs_card_shows_the_games_findings(tmp_path, service):
+    """lane SDK-1b (b): the game's report.json (scripts/release/release.gd) per pack: the models left out, with their reasons; a pack the
+    game has not checked says so (lane SDK-1c: no online findings, online is permissive)"""
+    root = tmp_path / "game-user" / "asset-packs"
+    make_asset_packs(root)
+    (root / "Unchecked").mkdir()
+    (root / "Unchecked" / "tree.dds").write_bytes(b"DDS ")
+    report = {"format": "openbfme.asset-pack-report 1", "checked": "2026-10-27T00:00:00", "packs": [
+        {"name": "HD Units", "misfits": [{"file": "art/w3d/db/dbcitadel.w3d", "why": "different bones or models than the game's (x)"}]}]}
+    (root / "report.json").write_text(json.dumps(report))
+    script = tmp_path / "card.gd"
+    script.write_text("""extends SceneTree
+const AssetPacks := preload("res://scripts/core/asset_packs.gd")
+const Screen := preload("res://scripts/ui/mods_screen.gd")
+func shown(c: Node, top: Node) -> bool:
+	while c != null and c != top:
+		if c is CanvasItem and not c.visible:
+			return false
+		c = c.get_parent()
+	return true
+func _initialize() -> void:
+	var s = Screen.new()
+	root.add_child(s)
+	s.set_asset_packs(AssetPacks.list())
+	for c in s._packs_box.find_children("*", "", true, false):
+		if c is Label or c is Button:
+			print("CARD ", c.text, " | ", shown(c, s))
+	for b in s._packs_box.find_children("*", "Button", true, false):
+		if b.text == "Details":
+			b.pressed.emit()
+			break
+	for c in s._packs_box.find_children("*", "Label", true, false):
+		if c.text.begins_with("art/w3d/db/dbcitadel.w3d"):
+			print("SHOWN ", shown(c, s))
+	quit(0)
+""")
+    env = dict(os.environ, OPENBFME_GAME_USER_DIR=str(tmp_path / "game-user"), XDG_DATA_HOME=str(tmp_path / "data"))
+    r = subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--script", str(script)], env=env, capture_output=True, text=True, timeout=180,
+                       stdin=subprocess.DEVNULL)
+    out = r.stdout + r.stderr
+    assert "CARD 1 models not used: they don't fit the game's (different bones or models), so the game's own are drawn | true" in out, out
+    assert "CARD art/w3d/db/dbcitadel.w3d: different bones or models than the game's (x) | false" in out, out  # behind the toggle
+    assert "online" not in out.lower(), out  # lane SDK-1c: online is permissive, the card names no online finding
+    assert "SHOWN true" in out, out  # the toggle shows the reasons
+    assert "CARD Not checked against your game files yet: start the game once. | true" in out, out  # the pack the game has not checked
+    assert "SCRIPT ERROR" not in out, out
+
+
 @needs_godot
 def test_mods_window(tmp_path, service):
     """the real window (scripts/main.gd, headless, offline): Load the list, the question before the first mod download, Install with an
     enhancement, Play with, Pause / Resume, Remove (tests/mods_window_test.gd)"""
     (tmp_path / "home").mkdir()
+    make_asset_packs(tmp_path / "game-user" / "asset-packs")
     env = dict(os.environ, XDG_DATA_HOME=str(tmp_path / "data"), OPENBFME_GAME_USER_DIR=str(tmp_path / "game-user"), HOME=str(tmp_path / "home"))
     cmd = [GODOT, "--headless", "--path", str(LAUNCHER), "--script", "res://tests/mods_window_test.gd", "--", "--offline",
            f"--aio-base={service.server.origin}"]

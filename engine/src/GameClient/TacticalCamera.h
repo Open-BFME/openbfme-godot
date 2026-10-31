@@ -91,7 +91,7 @@ public:
 	bool worldToScreen(const Coord3D &world, ICoord2D &screen) const override { return m_pinhole.worldToScreen(world, screen); }
 	bool screenToRay(const ICoord2D &pixel, Coord3D &origin, Coord3D &direction) const override { return m_pinhole.screenToRay(pixel, origin, direction); }
 	Coord3D position() const override { return m_pos; }
-	// RW View::lookAt / ZH W3DView::lookAt: the ground point goes to the centre of the view (z is not used)
+	// RW 0x48CEA3 / BFME2 W3DView::lookAt: centre on the ground point immediately, including the displayed pose (z is not used).
 	void lookAt(const Coord3D &world) override;
 
 	// ---- View state ----
@@ -123,6 +123,9 @@ public:
 	int scrollBy(float dx, float dy);
 	float lastScrollX() const { return m_scrollX; }
 	float lastScrollY() const { return m_scrollY; }
+	// lane BFME2CAMP1: TheTacticalView vslot 0x23C (RW 0x48731A: W3DView + 0x24F4), the length of every scroll move added up (RW 0x48C9B9 .. 0x48C9D4:
+	// Coord3D::length of the ground move, x87, stored as a float) since the last resetCamera (RW 0x48D286: RW 0x485126 clears it); CAMERA_SCROLL_DISTANCE
+	float scrollDistance() const { return m_scrollDistance; }
 
 	// ---- the follow lock (RW update, the lock branch) ----
 	enum LockType
@@ -164,10 +167,15 @@ public:
 	// committed and previous poses become the live one. Without it the render interpolation mixed the previous committed pose with a live pose that had moved
 	// meanwhile, and a camera moved every render frame stepped at 30 Hz (frame-to-frame screen motion alternating about 4 : 1 at 60 fps)
 	void snapInterpolation();
+	// Device presentation may already have run when an Apt button jumps the camera.
+	void setJumpHandler(std::function<void()> handler) { m_jumpHandler = std::move(handler); }
 	void commitFrame();
 	float nearPlane() const { return 10.0f; }
-	// retail's 1800 (RW 0x48B7B1); with the free camera or a zoom-out factor, plus twice fogShift() so the far map stays drawn when zoomed out beyond retail's limit
+	// retail's 1800 (RW 0x48B7B1) times GlobalData + 0x950 (1.0; a map script's SET_CAMERA_CLIP_DEPTH_MULTIPLIER sets it); with the free camera or a zoom-out
+	// factor, plus twice fogShift() so the far map stays drawn when zoomed out beyond retail's limit
 	float farPlane() const;
+	void setClipDepthMultiplier(float m) { m_clipDepthMultiplier = m; }
+	float clipDepthMultiplier() const { return m_clipDepthMultiplier; }
 
 	// ---- lane PLAY-1: the free camera (the owner's presentation option, NOT retail; client state only, never seen by the logic) ----
 	// Off (the default): retail's limits. On: the camera may zoom out up to freeMaxHeight() above the ground (the larger map extent, at least the map's
@@ -244,6 +252,7 @@ private:
 	Coord3D m_pos{ 870.0f, 770.0f, 0.0f }; // RW 0x48B6A4 (87.0f * 10, 77.0f * 10)
 	float m_angle = 0.0f, m_pitch = 0.0f, m_zoom = 1.0f, m_heightAboveGround = 0.0f;
 	bool m_zoomLimited = true;
+	float m_clipDepthMultiplier = 1.0f; // GlobalData + 0x950 (lane MODCOMPAT-AI)
 	float m_defaultAngle = 0.0f, m_defaultPitch = 0.0f;
 	float m_fov = 0.8726646f; // RW 0xBDD410: 50 degrees
 	bool m_widescreenWider = false; // lane UI-6: the Widescreen view option (Wider = Hor+; false = retail)
@@ -256,9 +265,11 @@ private:
 	float m_constraintLo[2] = { 0, 0 }, m_constraintHi[2] = { 0, 0 };
 	bool m_constraintValid = false;
 	float m_scrollX = 0.0f, m_scrollY = 0.0f;
+	float m_scrollDistance = 0.0f; ///< lane BFME2CAMP1: W3DView + 0x24F4
 	// the lock
 	ObjectID m_lockObject = 0;
 	std::function<int(ObjectID, Coord3D &)> m_objectSource;
+	std::function<void()> m_jumpHandler;
 	int lockTarget(Coord3D &position) const; ///< the lock object's position (m_objectSource, else the live object): 1 found, 0 gone, -1 not published yet
 	LockType m_lockType = LOCK_FOLLOW;
 	float m_lockDistance = 0.0f;
@@ -286,4 +297,3 @@ public:
 	Coord3D position() const override { return cam->position(); }
 	void lookAt(const Coord3D &world) override { cam->lookAt(world); }
 };
-

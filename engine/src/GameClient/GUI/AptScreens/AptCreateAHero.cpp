@@ -501,12 +501,11 @@ const std::vector<std::string> &AptCreateAHero::stopLines()
 		"(RW 0x9C2xxx not read in full: selected, book full, level too low, prerequisite, palantir full), the icons (CreateAHeroUIIconImageName, else the "
 		"first ButtonImage), the row names, the labels without their hot-key marks, the wizard line and the matrix's first scroll position are inferred",
 		"[S-1405] Create-a-Hero screen: OnPlayGame's test map, the picture's date and time in US English (TAKE PICTURE, lane CAHPIC-1: RotWK uses the system locale), which page \"CreateAHero\" forwards to, the "
-		"SuppressCahPromo preference (kept for the session), the color picker's \"?<picker>Color\" externs (undefined), the 3D view's camera (ViewInfo, "
-		"RW 0x9BFE74: the ground point, angle, blend and field of view as retail; the mode-1 eye transform follows BFME2; RotWK named-camera mode and remaining device flags unverified, lane CAH-2) and the name prompt (ShowNamePrompt: \"1\" while the entry is empty; the movie reads it when the page opens, so its text "
+		"SuppressCahPromo preference (kept for the session), the color picker's \"?<picker>Color\" externs (undefined), and the name prompt (ShowNamePrompt: \"1\" while the entry is empty; the movie reads it when the page opens, so its text "
 		"stays over a name typed later) are inferred or not ported",
 		"[S-1408] Create-a-Hero appearance (lane CAH-2 r2: ported): the record's three colours reach the drawable as kind 3 (RW 0x80AF0B -> 0x80959A -> "
-		"0x6727B0) and its model's house colour textures are recoloured texel by texel before filtering as RW 0x531C77 (mipmaps from the recoloured level); INFERENCE: the recoloured texel replaces the base where the house texture's alpha "
-		"is set (the combine is unrecovered, S-022 / S-119), and the A4R4G4B4 path is not ported. The ColorPicker component (RW 0xB55146 ..) draws "
+		"0x6727B0) and its model's house colour textures are recoloured texel by texel before filtering as RW 0x531C77 (mipmaps from the recoloured level); the recoloured texel is combined with the lit base as retail's DefaultW3D.fx / fixed-function rules do (S-022); "
+		"INFERENCE: the A4R4G4B4 path is not ported. The ColorPicker component (RW 0xB55146 ..) draws "
 		"AptColorChooserPallete, reads the texel under the cursor and places the cursor for a colour in the update rather than the draw. The rows' "
 		"StatVal fields are retail-exact: no movie places a StatVal, so no bling name is shown"
 	};
@@ -601,7 +600,7 @@ bool AptCreateAHero::suppressPromo() const
 
 void AptCreateAHero::selectHeroSort(int key)
 {
-	// RW 0x9C4EBD (BFME2 0x9B5BDC, Rva005B5BDC.cpp): the same key again its odd (reversed) twin; another key the primary, the old one the secondary
+	// RW 0x9C4EBD (BFME2 0x9B5BDC, AptCreateAHeroManager.cpp): the same key again its odd (reversed) twin; another key the primary, the old one the secondary
 	// unless it was the new key's reversed twin; then the list again (RW 0x9C5A66)
 	const int next = key + 1;
 	const int old = m_heroSortKey0;
@@ -1279,7 +1278,7 @@ void AptCreateAHero::showPage(char page)
 		default:
 			break;
 	}
-	bumpDisplay();
+	bumpDisplay(true); // RW 0x9C00D0: reset the view range on a page transition.
 	refreshTexts();
 }
 
@@ -1321,7 +1320,7 @@ void AptCreateAHero::setClassAndType(int cls, int type)
 				m_myHero->edit(m_classHeroes[i], true);
 			}
 			refreshClassPage();
-			bumpDisplay();
+			bumpDisplay(true);
 			refreshTexts();
 			return;
 		}
@@ -1365,7 +1364,7 @@ void AptCreateAHero::selectHero(int index)
 	windows().setAptText("APT:HeroPowersDescription", " ");
 	m_showClassHero = false;
 	invoke("EnableCustomizeButtons", { e->system ? "false" : "true" });
-	bumpDisplay();
+	bumpDisplay(true);
 	refreshTexts();
 	invoke("UpdateHeroBuildCost", { std::to_string(m_myHero->buildCost()) });
 }

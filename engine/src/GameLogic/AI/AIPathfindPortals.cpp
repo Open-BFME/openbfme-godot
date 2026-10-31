@@ -446,17 +446,16 @@ unsigned Pathfinder::costToGoal(const PathfindCell *cell, const PathfindCell *go
 // the hierarchical search's portal branch (RW 0x6F909A .. 0x6F936B; WB internal_findHierarchicalPath lines 936-1086)
 // ---------------------------------------------------------------------------------------------------------
 // Every portal of the popped cell's block the unit may take (a type 8 one only while the mineshaft goal is set: never here) is tried from its start cell to
-// each link's cell: the start cell must lie in the popped cell's block and its effective zone (non-terrain variant, RW 0x9389A6) be the popped cell's. RW
-// then reads the RAISED LAYER whose index is the portal's index in the block: when the start cell is not in the block it takes that layer's two end cells
-// instead (the start cell from the end, the link cell from the start), and a portal whose layer's zone (layer + 0x2C) is the goal's ends the search as found
-// (the BFME2 decompile has the same reads: a retail quirk, ported as read; without that raised layer neither applies). Otherwise the link cell, neither open
+// each link's cell: the start cell must lie in the popped cell's block and its block zone (RW 0x9389A6, PathfindZoneManager::getBlockZone) be the popped cell's. RW
+// then reads the RAISED LAYER whose index is the portal's index in the block: when the start cell is not in the block it takes that layer's two wall connect
+// cells instead (the start cell from + 0x20, the link cell from + 0x18; (-1, -1) for a layer without them, as layers 0 and 1), and a portal whose layer's
+// zone (layer + 0x2C) is the goal's ends the search as found (the BFME2 decompile has the same reads: a retail quirk, ported as read). Otherwise the link cell, neither open
 // nor closed, joins the open list: the start cell (when it is not the popped one) gets a record, the popped cell as parent, and is closed; the link cell's
 // parent is the start cell with the waypoint (RW 0x93443D), its cost so far the start cell's plus 500 for a type 8 waypoint, else the 1/10-cell distance
 // between the two (RW 0x9345AA), its total that plus its distance to the goal.
 bool Pathfinder::hierarchicalPortals(PathfindCell *c, PathfindCell *goal, zoneStorageType cz, zoneStorageType goalZone, const PathfindMovement &mv,
 	const PathfindObject *obj, int &cellCount)
 {
-	(void)goalZone;
 	const int bs = m_zoneManager.blockSize();
 	const int cx = c->getXIndex(), cy = c->getYIndex();
 	if (!m_zoneManager.interactsWithPortal(cx, cy))
@@ -494,26 +493,32 @@ bool Pathfinder::hierarchicalPortals(PathfindCell *c, PathfindCell *goal, zoneSt
 				worldToCell(&p, true, &to);
 			}
 			ICoord2D f = from;
+			const PathfindLayerEnum quirkLayer = (PathfindLayerEnum)i; // the layer record at the portal's index in the block (see above)
 			if (f.x / bs != bx || f.y / bs != by)
 			{
-				// the raised layer `i`'s end cells (see above); the wall connect cells (RW + 0x18 / + 0x20) are not kept by the port (S-4856): (-1, -1)
 				note(pathstops::kPortalLayerQuirk);
-				continue;
+				const bool kept = isRaisedLayer(quirkLayer);
+				to = kept ? m_raised[(size_t)i].connect[0] : ICoord2D{ -1, -1 };
+				f = kept ? m_raised[(size_t)i].connect[1] : ICoord2D{ -1, -1 };
 			}
-			if (f.x < 0 || f.y < 0 || to.x < 0 || to.y < 0)
+			if (f.x < 0 || f.y < 0 || to.x < 0 || to.y < 0 || f.x / bs != bx || f.y / bs != by)
 			{
 				continue;
+			}
+			PathfindCell *fromCell = getCell(LAYER_GROUND, f.x, f.y);
+			if (!fromCell || m_zoneManager.getBlockZone(mv, fromCell->getZone()) != cz) // the block zone the search compares (getBlockZone)
+			{
+				continue;
+			}
+			if (isRaisedLayer(quirkLayer) && raisedLayerZone(quirkLayer) == goalZone)
+			{
+				return true;
 			}
 			if (to.x == f.x && to.y == f.y)
 			{
 				// OpenBFME guard, not RotWK: RW tests the link cell's open / closed state (RW 0x6F91FE .. 0x6F9216) before it closes the source cell
 				// (RW 0x6F9235 ..), as the port does, so a link whose two ends share a cell would make that cell its own parent and the corridor's parent
 				// walk (RW 0x6F49BC, makeHierarchicalPathPassable) would never end. Such a link moves nobody: it is skipped before either record changes
-				continue;
-			}
-			PathfindCell *fromCell = getCell(LAYER_GROUND, f.x, f.y);
-			if (!fromCell || m_zoneManager.getEffectiveZone(mv, false, fromCell->getZone()) != cz)
-			{
 				continue;
 			}
 			PathfindCell *linkCell = getCell(LAYER_GROUND, to.x, to.y);

@@ -3,6 +3,28 @@
 BFME1 is an experimental, separate game mode. It uses a BFME1 installation for
 both menus and gameplay, without mixing in BFME2 or RotWK data.
 
+The main menu loads BFME1's mapped textures from `art/textures`, including
+JPEG colour with a companion PNG alpha mask. The backdrop and native
+`RenderImage` logo use the same texture loader as the menu gadgets.
+`Video FrontEnd` in BFME1's `Video.ini` identifies `big_movie_with_alpha.vp6`
+as the movie for front-end menus. It loops over `ShellMapLowLOD`, preserves
+its alpha, and stops when the shell backdrop is hidden for gameplay.
+The movie fills the aspect-fitted backdrop beneath the APT menu and logo;
+this placement and immediate start/stop are presentation inferences, not a
+verified port of retail's display transitions.
+
+Submenus retain their authored 3D front-end background. When the BFME1 main
+menu becomes active again, it hides that background through its existing
+APT instant-hide function so it no longer covers the continuing movie. This
+main-menu activation rule is also a presentation inference; BFME2 and RotWK
+keep their existing background behaviour.
+
+`godot/tests/bfme1_menu_backdrop_test.gd` requires `BFME1_INSTALL` and a GPU.
+It compares independently decoded JPEG/PNG and VP6 assets against the menu
+at four resolutions, checks repeated Skirmish/Options returns, looping and
+gameplay/menu transitions, and writes screenshots under `BFME1_MENU_TEST_DIR`
+when that variable is set.
+
 From the checkout root on **Linux or macOS (POSIX shell)**, with a matching
 Godot 4.7 editor binary on `PATH`, the GDExtension already built into
 `godot/bin/`, and BFME1 data in `games/BFME1`, launch:
@@ -62,6 +84,42 @@ Stances/Create-a-Hero initialization. Language files under `lang/english` are
 exposed at the root, as expected by existing menu readers. Both the shell and
 in-game text consumers understand CSF.
 
+## Skirmish profile rank thresholds
+
+The profile table `{0,5,10,30,50,150,300,500,800,1500}` comes from BFME1
+1.03's engine constants. The reading aid is
+[Open-BFME-1 at `f633d0e97a953289405438821be0c09b28527bbb`](https://github.com/Open-BFME/Open-BFME-1/tree/f633d0e97a953289405438821be0c09b28527bbb/game/GameEngine/Source/Common),
+with the following source files relative to `game/GameEngine/Source/Common/`.
+All addresses here are **RVAs**; the inspected image base is `0x00400000`.
+
+- `Rva004D8EE0Ctor.cpp`, RVA `0x004D8EE0` (VA `0x008D8EE0`), writes those ten
+  integers in order at offsets `+0x00` through `+0x24`.
+- `SkirmishBattleHonorsConstructor.cpp`, RVA `0x0009E130`, passes `this+0x14`
+  to that initializer through the jump thunk at RVA `0x00010807`. This ties
+  the table to the skirmish honors object, beyond the address-based name.
+- `SkirmishBattleHonors_rankHelpers.cpp`, `getRank` at RVA `0x0009D2F0`,
+  scans the nine promotion thresholds starting at `this+0x18` (the value 5),
+  advances while `points >= threshold`, and returns a rank from 1 to 10.
+- `SkirmishBattleHonors_getPointsToNextRank.cpp`, RVA `0x0009D390`, subtracts
+  points from the next threshold; `SkirmishBattleHonors_getRankWidth.cpp`,
+  RVA `0x0009D4E0`, subtracts the current threshold from the next. Both
+  return zero for rank 10.
+
+The instructions were inspected in the donor's `bfme1.retail-1.03-unpacked`
+baseline, `inputs/baselines/bfme1/retail-1.03-unpacked/files/lotrbfme.exe`,
+SHA-256 `1fbdc0ced8f283732c094c4f0804ce8dc1e3e3675b720bcab066c94fed964e75`.
+Its manifest describes a SafeDisc-unpacked image with crack patches reverted,
+and records remaining repairs/unknown regions. None of its `reverted_patches`
+or `no_ground_truth` ranges overlaps the constructors, thunk or rank helpers
+cited above. This is static evidence from that identified baseline, rather
+than independent certification of a pristine retail image or a new byte-exact
+recovery claim.
+
+The profile display preserves its existing boundaries: reaching a threshold
+promotes immediately. Below rank 10, progress resets to zero at the start of
+the new interval; rank 10 keeps zero points remaining and 100 percent progress.
+These constants and this documentation apply only to the BFME1 profile display.
+
 ## Isolation
 
 BFME1 support never changes RotWK / BFME2 behaviour (community PR #36 review). `Common/BfmeGame.h`:
@@ -115,12 +173,43 @@ These are the places where BFME1's data or menus differ from RotWK's. Each one i
   as well as scripted model draws. Hidden floors remain unpickable.
 - **Skirmish maps:** the lobby lists the mapcache's multiplayer maps, as for RotWK (Sol review r1: no file-name filter; in BFME1 1.03 every
   multiplayer entry is a `map mp` map with two or more players).
+- **Skirmish presentation:** gadget atlases use BFME1's flat `art/textures` packed textures, including TGA data stored under `.dds` names. The map list uses the retail two-column
+  badge/count-bearing-name layout and BFME1 difficulty badges; the profile and map-type dropdowns bind their actual choices. Profile text,
+  faction presentation and rank read the selected profile's `SkirmishStats.ini`; unavailable historical values are not invented.
+  New personas start with fresh statistics even when reusing a deleted name; map badges refresh with profile changes and recorded results.
+  Faction presentation uses the loaded `PlayerTemplate` index and `Side` (`APT:<Side>Caps`), not a retail-faction table. Rank artwork follows
+  BFME1 `Rva0046F910RankDisplay.cpp`: use the mounted `AptRankIcon<Side><Rank>` image when present, otherwise the native generic `AptRankIcon<Rank>`.
 - **Texture replacements:** PNG/JPEG files are accepted by BFME1 texture lookup (including `GBCampFloor`), and image signatures are recognized even when replacements retain `.dds` filenames.
 - **Palantir commands:** BFME1 uses six fixed `CommandButtons.Command1` … `Command6` slots and `SetCommandButtonState`, rather than BFME2's dynamic content frames. Slot state updates only run when content changes, so show animations can finish.
 - **Command tooltips:** BFME1's legacy cursor blocks are skipped to their `End` when loading help fonts. A native help panel displays the existing command-help text because BFME1 has no BFME2 `OnHelpBoxLoaded` content-frame callback.
 - **Pause menu:** BFME1 uses type-8 `PushData` constants to reference the active constant pool. Resolving these initializes each button's own text and callback, including the Restart/Exit confirmations.
 - **Keys and voices:** only `Data\INI\CommandMap.ini` exists (there's no root `CommandMap.ini`), and there's no
   `CrowdResponse.ini`, because BFME1 has no crowd responses.
+- **Siege initiation sounds:** the update-based siege deploy powers retain BFME1's `InitiateSound2` alongside
+  `InitiateSound` in their own base parser. BFME2/RotWK still reject the extra row. This fixes siege-ladder object
+  loading; initiation-sound playback remains unimplemented under S-4942.
+- **Legacy behavior fields:** `DynamicPortalBehaviour` reads `AllowKindOf` and `RejectKindOf` only for BFME1 data.
+  A unit must match any allowed kind and no rejected kind; an explicitly empty allow mask admits nothing.
+  These become the shared waypoint filter with an ANY rule, not ordinary Object fields. Sources: Open-BFME-1
+  `DynamicPortalBehaviourRva001F96E0.cpp` and `Map/Waypoint_method001ABBB0.cpp`.
+  The default allows all defined kinds and rejects none. Rejecting `CAVALRY` also rejects units with the
+  `MOUNTED` model condition, even without the cavalry kind. This does not establish full BFME1 waypoint parity.
+- **Automatic pickup:** BFME1 selects its own typed `AutoPickUpUpdate` data and runtime variant. Its
+  `PickUpKindOf` mask admits any matching kind, retains `+`/`-` edits and clears with `NONE`.
+  `Bored` and `BoredFilter` run the integrated allied-target boredom scan after eating and before ordinary
+  pickup, using the same scan/button gate. Sources: BFME1 field table VA `0x010BB9D0` and Open-BFME-1
+  `GameLogic/Object/Update/AutoPickUpUpdateUpdate.cpp`, RVA `0x00281F40`. The port maps the boredom power's
+  name to the shared enum ordinal; BFME1's binary ordinal differs. BFME2/RotWK retain `PickUpFilter`
+  (RW `0xC65B60`) and their separate `BoredUpdate`; they reject the BFME1-only fields. `PickUpKindOf2`
+  is absent from BFME1's verified table and is rejected. The shared tree-point/automatic-throw limitations
+  remain reported by S-7160; BFME1's broader simulation compatibility remains S-5017.
+  `BloodthirstyUpdate` also reads BFME1's `NumToSacrifice` (default 1) and `InitiateVoice2` without widening
+  BFME2/RotWK's field tables. The second initiation voice plays alongside the first, independently of crowd responses
+  (`MessageStream/CommandXlatVoice.cpp`, case `0x7E9` and its two-slot playback tail). Voice voting groups the ordered
+  pair of initiation sounds case-insensitively, including choices with only a second sound.
+  The recovered BFME1 `Update/Rva00287290Update.cpp` awards experience on every accepted sacrifice, as the shared
+  runtime does; it does not gate experience on `NumToSacrifice`. That field is retained, but any further purpose is
+  unverified, so no quota-based veterancy rule is invented.
 - **Main menu:** `MainMenu.apt` shows its menu bar only when `ShowMainMenu()` is called. INFERENCE: BFME1's
   `OnInitialized` makes that call (Open-BFME-1 declares `_bfme_onInitialized` without its body). Its button instance
   names don't match the buttons: the clip named `Skirmish` is the Campaign button, and `Tutorial` is Skirmish. Scripts
@@ -140,13 +229,32 @@ its original particle budget is not reproduced. One shipped unresolved mounted
 Faramir voice reference (`UnitSpecificSounds` `VoiceGarrison = FaramirKnightVoiceGarrison`, which no AudioEvent defines) loads as BFME1 loads
 it: BFME1's `UnitSpecificSounds` lines store the event name without looking it up (Open-BFME-1 `ThingTemplate_parseArbitrarySoundsIntoMap.cpp`).
 
-The Living World Good/Evil campaigns and their saves are not implemented. Their
+The Living World Good/Evil campaigns and their saves are not implemented.
+`LivingWorldStores` selects the BFME1 loading mode once from the mounted data.
+Its campaign blocks retain recording handlers instead of using BFME2/RotWK
+War of the Ring field tables. The object-world report explicitly names this
+under S-5017: campaign field validation and exact nested block boundaries are
+unverified. This preserves menu/skirmish startup without claiming campaign support.
+BFME2/RotWK keep their typed parsers and S-1321 errors for unported fields. Their
+schemas are not widened to accept BFME1 campaign rows. BFME1 campaign
 menu requests display the existing unavailable-screen message instead of trying
 to start a BFME2 linear campaign. BFME1 currently uses the English language view.
 
 ## Checks
 
 Synthetic CSF tests are included in `openbfme_tests --test-case="GameText:*"`.
+Legacy portal filtering, both bloodthirsty voice slots, per-sacrifice experience, and BFME2/RotWK rejection are
+covered by `openbfme_tests --test-case="bfme1 isolation:*"`. A core-only installed-data check can run without Godot:
+
+```sh
+BFME1_INSTALL="$PWD/games/BFME1" engine/build/openbfme_tests \
+  --test-case="bfme1 isolation retail: installed BFME1 object world*"
+```
+
+It mounts BIG archives in BFME1 order (excluding launcher-generated `!!!` overrides), checks every subsystem parse
+error, and verifies the castle-upgrade parent and child templates load. Without `BFME1_INSTALL` it prints SKIP;
+that is not a passed installed-data check. It does not launch gameplay or write player settings.
+
 Run `engine/build/openbfme_tests --test-case="GameText:*"` from the checkout
 root on Linux after building the core tests (Windows: `engine\build\openbfme_tests.exe`
 with the same argument). No retail data is needed for these synthetic tests.

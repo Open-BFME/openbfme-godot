@@ -269,7 +269,7 @@ TEST_CASE("emotions: the SCARY / HERO list loses a dead member by swapping the l
 	Object *b = f.at("Champion", "Bob", 200.0f, 100.0f);
 	Object *c = f.at("Troll", "Bob", 300.0f, 100.0f);
 	CHECK(f.logic->emotions().scaryOrHeroes() == std::vector<ObjectID>{ a->getID(), b->getID(), c->getID() });
-	a->kill(0);
+	a->kill(DAMAGE_UNRESISTABLE, 0);
 	CHECK(f.logic->emotions().scaryOrHeroes() == std::vector<ObjectID>{ c->getID(), b->getID() });
 	Object *s = f.at("Scared", "Alice", 900.0f, 900.0f);
 	f.frames(1);
@@ -304,4 +304,38 @@ TEST_CASE("emotions: RW 0x6634BF's edge distance at a radius-100 boundary (Sol r
 	CHECK(CombatQueries::edgeDistanceSquared2D(b, 3.0f, b, 50.0f) == 0.0f);
 	const Coord3D c{ 60.0f, 0.0f, 0.0f };
 	CHECK(CombatQueries::edgeDistanceSquared2D(c, 3.0f, b, 50.0f) == 49.0f);
+}
+
+// lane PERF-HD (Uber only): a contained object's tracker sleeps (EmotionTrackerUpdate::update returns UPDATE_SLEEP_FOREVER), and leaving the container
+// wakes it for the next frame (Object::friend_setContainedBy); Faithful keeps retail's call every frame
+TEST_CASE("emotions (lane PERF-HD): an Uber game's contained tracker sleeps until its object leaves the container; Faithful calls it every frame")
+{
+	for (SimulationProfile p : { SimulationProfile::Faithful, SimulationProfile::Uber })
+	{
+		INFO((p == SimulationProfile::Uber ? "Uber" : "Faithful"));
+		EmoFx f;
+		f.logic->setSimulationProfile(p);
+		Object *s = f.at("Scared", "Alice", 500.0f, 500.0f);
+		Object *box = f.at("Champion", "Alice", 520.0f, 500.0f);
+		Object *src = f.at("Champion", "Bob", 900.0f, 900.0f); // far away: no scan finds it
+		EmotionTrackerUpdate *t = EmotionTrackerUpdate::of(*s);
+		REQUIRE(t);
+		f.frames(1);
+		s->friend_setContainedBy(box);
+		f.frames(2);
+		if (p == SimulationProfile::Uber)
+		{
+			CHECK(t->friend_getNextCallFrame() == (UnsignedInt)UPDATE_SLEEP_FOREVER); // asleep while contained
+		}
+		else
+		{
+			CHECK(t->friend_getNextCallFrame() == f.logic->getFrame() + 1); // called every frame
+		}
+		s->friend_setContainedBy(nullptr);
+		CHECK(t->friend_getNextCallFrame() == f.logic->getFrame() + 1); // due next frame (Uber: the release woke it)
+		EmotionTrackerUpdate::requestEmotion(*s, EMOTION_FEAR, src, 1);
+		f.frames(1);
+		REQUIRE(t->current());
+		CHECK(t->current()->sourceID() == src->getID());
+	}
 }

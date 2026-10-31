@@ -78,6 +78,8 @@ struct ModMountReport
 	std::vector<std::string> notes;       // lane MODS-2: files of an install overlay that are not archives (not used)
 	std::vector<MountedArchive> merged;   // lane MODS-2: an install overlay's whole mount order (retail + mod archives; first wins)
 	int filesHashed = 0, md5CacheHits = 0;
+	std::string sdkName;                  // lane SDK-2: the mod's openbfme/sdk/mod.json "name" ("" = the mod has no scripts manifest)
+	std::string sdkSimFingerprint;        // lane SDK-2: SdkSimFingerprint ("" = no sim scripts); the identity line "sdk sim <hex>"
 };
 
 // The -mod tail RW 0x7BAA44 over an already-mounted retail file system: m_modBIG, then m_modDir's direct *.big archives, both with

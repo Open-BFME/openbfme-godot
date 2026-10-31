@@ -1,8 +1,10 @@
 # Troubleshooting preview and nightly builds
 
 Use the OpenBFME Launcher to check for updates and start the game. The game
-reads the English Rise of the Witch-king (RotWK) 2.01 and Battle for
-Middle-earth II (BFME2) 1.06 installations from **two separate folders**.
+reads Rise of the Witch-king (RotWK) 2.01 and Battle for Middle-earth II
+(BFME2) 1.06 installations in any language from **two separate folders**. A
+language OpenBFME has not checked yet starts with a warning box; see
+[PLAYING.md](PLAYING.md).
 Messages below are quoted exactly, or by their exact start. Text in `<angle
 brackets>` stands for a version, file, folder or other value shown on your
 computer. A message may appear inside a longer error box.
@@ -27,15 +29,17 @@ it provides.
 | `could not list <folder>:` | The folder cannot be read. Check drive access and permissions, then try again. |
 | `this folder holds <other game>, not <game>:` | RotWK and BFME2 were swapped. Select the matching folder for each. |
 | `no <game> archives in <folder>` | No expected `.big` files were found in that folder or its checked subfolders. Choose the installation root, not its parent or a subfolder. |
-| `missing <number> of <number> <game> archives:` | Some English 2.01/1.06 archives are absent. Restore a complete install at the named patch level; then choose it again. |
-| `<number> archives differ from <game>:` | Archive sizes do not match a supported install. Use unmodified English 2.01/1.06 files; remove mods or restore the original files. |
+| `missing <number> of <number> <game> archives:` | Some 2.01/1.06 archives are absent. Restore a complete install at the named patch level; then choose it again. |
+| `<number> archives differ from <game>:` | Archive sizes do not match a supported install. Use unmodified 2.01/1.06 files; remove mods or restore the original files. |
 | `<number> archives in <folder> are not part of <game>:` | Extra `.big` files may be from a mod or patch. Restore a clean installation; do not combine installs. |
 | `the same folder was picked for both games:` | Each game needs its own installation root. Choose two different folders. |
-| `<game>: this folder is not a complete <patch> install:` | The files do not fit a recognized archive layout. Check the rest of the message, then restore a complete, unmodified install. If this is an official English patch, include the message in a bug report. |
+| `<game>: this folder is not a complete <patch> install:` | The files do not fit a recognized archive layout. Check the rest of the message, then restore a complete, unmodified install. If this is an official patch, include the message in a bug report. |
 | `md5 mismatch for <archive>:` / `could not read <archive>` | A file is modified, damaged or unreadable. Restore the named archive from the correct installation and check the drive. |
 
 The game refuses missing, modified and unfamiliar archives rather than
-silently loading a partial installation. It reads your game files without
+silently loading a partial installation. The one exception is a language
+OpenBFME has not checked yet: its files load, and a warning box says so once
+per install (see [PLAYING.md](PLAYING.md)). It reads your game files without
 changing them.
 
 ## Crash or game startup error

@@ -72,12 +72,25 @@ func _run() -> void:
 			[first, first.to_upper()], [first.to_upper(), first.to_upper()]]:
 		var b := LauncherCheck.trusted_keys(bad[0], bad[1])
 		check(not b.ok and b.keys.is_empty() and b.error != "", "no trusted list of %s" % str(bad).left(60))
+	# lane RELGH-2: release_trust.gd's NIGHTLY_KEYS text: empty is none, up to 4 distinct keys, anything else (or a release key) is an error
+	var nk := String(cases.nightly_key)
+	var nightly: Array = LauncherCheck.nightly_keys(nk, keys).keys
+	check(nightly.size() == 1 and LauncherCheck.nightly_keys(nk, keys).ok, "the nightly list of one key")
+	check(LauncherCheck.nightly_keys("", keys).ok and LauncherCheck.nightly_keys("", keys).keys.is_empty(), "an empty NIGHTLY_KEYS is no keys")
+	check(LauncherCheck.nightly_keys(first + "x", keys).ok == false and LauncherCheck.nightly_keys(nk + ",", keys).ok == false, "a malformed nightly list is an error")
+	check(not LauncherCheck.nightly_keys(nk + "," + nk, keys).ok, "a key twice in the nightly list is an error")
+	check(not LauncherCheck.nightly_keys(first, keys).ok, "a release key in the nightly list is an error")
+	check(not LauncherCheck.nightly_keys(nk.to_upper(), keys).ok, "an upper-case nightly key is an error")
+	var five := []
+	for i in 5:
+		five.append(("%02x" % (i + 1)).repeat(32))
+	check(not LauncherCheck.nightly_keys(",".join(five), keys).ok and LauncherCheck.nightly_keys(",".join(five.slice(0, 4)), keys).keys.size() == 4, "at most 4 nightly keys")
 	check(LauncherCheck.check(cases.check[0].dir, [], cases.repo) == "this game has no release key", "an empty list: no launcher is started")
 
 	# the launcher beside the game: authenticated before it is started
 	for c in cases.check:
 		var before := OS.get_static_memory_peak_usage()
-		var got := LauncherCheck.check(c.dir, keys, cases.repo)
+		var got := LauncherCheck.check(c.dir, keys, cases.repo, nightly)
 		var grew := OS.get_static_memory_peak_usage() - before
 		print("CHECK %s: %s (peak memory +%d)" % [c.name, got if got != "" else "ok", grew])
 		# tolerance: the 1 MiB hashing buffer and the small signed files; the 32 MiB case's file is never read whole (Sol r2)

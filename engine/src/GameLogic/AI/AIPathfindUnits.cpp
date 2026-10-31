@@ -22,6 +22,7 @@
 #include "GameLogic/SimMath.h"
 #include "GameLogic/AI/AIPathfindStops.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 
@@ -409,6 +410,12 @@ bool Pathfinder::checkForMovement(const PathfindObject *obj, PathfindCheckMoveme
 			// the units standing on the cell (the position list, RW info+0x20)
 			for (const PathfindOccupant *node = c->occupants(OCC_POSITION); node; node = node->next)
 			{
+				// lane PERF-HD: the id tests below first (the facts are looked up by this id, so o->getID() == node->owner): the unit just seen in the
+				// neighbouring cell of the footprint skips the memo lookup
+				if (node->owner == info.ignoreId || node->owner == lastId)
+				{
+					continue;
+				}
 				const OccupantFacts *f = occupantFacts(obj, node->owner);
 				if (!f)
 				{
@@ -489,6 +496,395 @@ bool Pathfinder::checkForMovement(const PathfindObject *obj, PathfindCheckMoveme
 		}
 	}
 	return true;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// lane PERF-LOGIC: the per-search cell facts (see AIPathfind.h)
+// ---------------------------------------------------------------------------------------------------------
+namespace
+{
+enum : std::uint16_t
+{
+	kFactPenaltyMask = 7,    // the cell's terrain penalty (0 .. 4)
+	kFactGoal = 8,           // the ground goal list is not empty
+	kFactFail = 16,          // the occupant walk refuses the footprint
+	kFactAllyPresent = 32,   // allyPresent when the walk ended (or refused)
+	kFactAllyFixed = 64,     // allyFixed when the walk ended (or refused)
+	kFactClear = 128,        // the walk cleared goalListNonEmpty (a LARGE_RECTANGLE_PATHFIND searcher meeting an ally that is not one)
+	kFactClearLater = 256,   // ... and did so again after its first unit's own turn (the answer when that unit was the previous cell's last)
+};
+} // namespace
+
+// one cell's part of checkForMovement: its terrain penalty, and (for an uncovered cell) the goal flag and the occupant walk's outcome, the walk starting with no
+// last id. In the original walk the last id carries over from the previous uncovered cell, so a unit met at the end of one cell and again first in the next is
+// skipped there. Walking it again repeats only its sticky effects (the flags it set, the refusal it would have given the first time), except the one flag a
+// LARGE_RECTANGLE_PATHFIND searcher clears: so the walk records whether it cleared the flag at all and whether it did after the first unit's turn, and the ids
+// of its first and last unit; checkForMovementCached picks the one that applies
+Pathfinder::CellMoveFacts Pathfinder::cellMoveFacts(const PathfindObject *obj, const PathfindCheckMovement &info, const PathfindCell *c)
+{
+	const SearcherFacts &self = m_memoSelf;
+	unsigned pen = 0;
+	if (c->getType() == PathfindCell::CELL_BRIDGE_IMPASSABLE)
+	{
+		pen++;
+	}
+	if (c->getImpassableToPlayers() && self.isHuman)
+	{
+		pen++;
+	}
+	if ((info.flags & 8) && info.layer != c->getLayer())
+	{
+		bool bad;
+		if (info.layer == LAYER_GROUND)
+		{
+			bad = (int)c->getLayer() != 0x10;
+		}
+		else
+		{
+			bad = (int)info.layer >= 0x11 && (int)info.layer <= 0x40 && (int)c->getLayer() != 0x10;
+		}
+		if (bad) pen++;
+	}
+	if ((info.flags & 4) && !validMovementPosition(info.mv, c))
+	{
+		pen++;
+	}
+	CellMoveFacts r;
+	r.f = (std::uint16_t)pen;
+	r.first = PATHFIND_INVALID_ID;
+	r.last = PATHFIND_INVALID_ID;
+	if (c->hasOccupants(OCC_GROUND_GOAL))
+	{
+		r.f |= kFactGoal;
+	}
+	bool allyPresent = false, allyFixed = false, fail = false, clear = false, clearLater = false;
+	PathfindObjectID lastId = PATHFIND_INVALID_ID;
+	for (const PathfindOccupant *node = c->occupants(OCC_POSITION); node; node = node->next)
+	{
+		if (node->owner == info.ignoreId || node->owner == lastId)
+		{
+			continue;
+		}
+		const OccupantFacts *of = occupantFacts(obj, node->owner);
+		if (!of)
+		{
+			continue;
+		}
+		const PathfindObject *o = of->o;
+		if (o == obj || o->getID() == info.ignoreId || o->getID() == lastId)
+		{
+			continue;
+		}
+		lastId = o->getID();
+		const bool firstUnit = r.first == PATHFIND_INVALID_ID;
+		if (firstUnit)
+		{
+			r.first = lastId;
+		}
+		const bool ally = of->rel == PATHFIND_ALLIES;
+		if (ally)
+		{
+			allyPresent = true;
+		}
+		const bool check = (info.transient && ally) || of->parked || (!ally && (info.flags & 0x10));
+		if (!check)
+		{
+			continue;
+		}
+		if (ally && self.throughEachOther && of->throughEachOther)
+		{
+			continue;
+		}
+		if (self.pathThroughInfantry && of->infantry)
+		{
+			continue;
+		}
+		if (ally && self.largeRect)
+		{
+			if (!of->largeRect)
+			{
+				clear = true;
+				if (!firstUnit)
+				{
+					clearLater = true;
+				}
+				continue;
+			}
+		}
+		if (ally)
+		{
+			if (!of->hasAI || (info.flags & 2))
+			{
+				fail = true;
+				break;
+			}
+			allyFixed = true;
+			if (!of->largeRect || self.largeRect)
+			{
+				continue;
+			}
+			fail = true;
+			break;
+		}
+		if (obj->canCrushOrSquish(*o))
+		{
+			continue;
+		}
+		if (!(info.flags & 0x11))
+		{
+			continue;
+		}
+		if (!self.hasAI)
+		{
+			fail = true;
+			break;
+		}
+		if (obj->ignoresAsTarget(*o))
+		{
+			continue;
+		}
+		fail = true;
+		break;
+	}
+	r.last = lastId;
+	if (fail) r.f |= kFactFail;
+	if (allyPresent) r.f |= kFactAllyPresent;
+	if (allyFixed) r.f |= kFactAllyFixed;
+	if (clear) r.f |= kFactClear;
+	if (clearLater) r.f |= kFactClearLater;
+	return r;
+}
+
+bool Pathfinder::checkForMovementCached(const PathfindObject *obj, PathfindCheckMovement &info, const ICoord2D *prev)
+{
+	if (!obj || !m_searchShortcuts || !m_memoActive || obj != m_memoObj || m_blockOfMapCells.empty())
+	{
+		return checkForMovement(obj, info, prev);
+	}
+	CellFactsSlot &s = m_cellFacts[(info.flags & 4) ? 1 : 0];
+	if (!s.bound || s.memoGen != m_memoGen || s.flags != info.flags || s.transient != info.transient || s.ignoreId != info.ignoreId || s.layer != info.layer ||
+		s.mv.surf != info.mv.surf || s.mv.b4 != info.mv.b4 || s.mv.b5 != info.mv.b5 || s.mv.i8 != info.mv.i8 || s.mv.bC != info.mv.bC)
+	{
+		if (s.stamp.size() != m_blockOfMapCells.size())
+		{
+			s.stamp.assign(m_blockOfMapCells.size(), 0u);
+			s.facts.assign(m_blockOfMapCells.size(), CellMoveFacts());
+			s.gen = 0;
+		}
+		if (++s.gen == 0)
+		{
+			std::fill(s.stamp.begin(), s.stamp.end(), 0u);
+			s.gen = 1;
+		}
+		s.bound = true;
+		s.memoGen = m_memoGen;
+		s.flags = info.flags;
+		s.transient = info.transient;
+		s.ignoreId = info.ignoreId;
+		s.layer = info.layer;
+		s.mv = info.mv;
+	}
+	info.allyFixed = false;
+	info.allyPresent = false;
+	info.goalListNonEmpty = false;
+	info.terrainPenalty = 0;
+	const PathfindCell *base = m_blockOfMapCells.data();
+	const size_t cells = m_blockOfMapCells.size();
+	const int n = info.radius + (info.center ? 1 : 0);
+	PathfindObjectID lastId = PATHFIND_INVALID_ID;
+	CellMoveFacts scratch;
+	for (int i = info.cell.x - info.radius; i < info.cell.x + n; i++)
+	{
+		for (int j = info.cell.y - info.radius; j < info.cell.y + n; j++)
+		{
+			const PathfindCell *c = getCell(info.layer, i, j);
+			if (!c)
+			{
+				return false; // off the map
+			}
+			const CellMoveFacts *f;
+			// the ground grid's slot of (i, j), as getCell computes it; a raised layer's own cell lives in another array (compared, never subtracted)
+			const size_t k = (size_t)i * (size_t)m_stride + (size_t)j;
+			if (k < cells && c == base + k)
+			{
+				if (s.stamp[k] != s.gen)
+				{
+					s.facts[k] = cellMoveFacts(obj, info, c);
+					s.stamp[k] = s.gen;
+				}
+				f = &s.facts[k];
+			}
+			else
+			{
+				scratch = cellMoveFacts(obj, info, c); // a raised layer's own cell
+				f = &scratch;
+			}
+			const unsigned bits = f->f;
+			info.terrainPenalty += (int)(bits & kFactPenaltyMask);
+			if (prev)
+			{
+				const int px = prev->x, py = prev->y;
+				if (i >= px - info.radius && i < px + n && j >= py - info.radius && j < py + n)
+				{
+					continue; // the cell lies inside the previous footprint
+				}
+			}
+			if (bits & kFactGoal)
+			{
+				info.goalListNonEmpty = true;
+			}
+			// the original walk skips the cell's first unit when it is the last one met (see cellMoveFacts)
+			const bool skipFirst = f->first != PATHFIND_INVALID_ID && f->first == lastId;
+			if (bits & (skipFirst ? kFactClearLater : kFactClear))
+			{
+				info.goalListNonEmpty = false;
+			}
+			if (bits & kFactAllyPresent)
+			{
+				info.allyPresent = true;
+			}
+			if (bits & kFactAllyFixed)
+			{
+				info.allyFixed = true;
+			}
+			if (bits & kFactFail)
+			{
+				return false;
+			}
+			if (f->last != PATHFIND_INVALID_ID)
+			{
+				lastId = f->last;
+			}
+		}
+	}
+	return true;
+}
+
+// one cell's part of occupantCost: the occupants that add 8 whatever the cell, and the reach times of those that add 4 when the searcher is slower to the cell
+void Pathfinder::cellCostFacts(const PathfindObject *obj, const PathfindCell *c, int i, int j, std::uint16_t &fixed8, std::vector<float> &reach)
+{
+	const SearcherFacts &self = m_memoSelf;
+	fixed8 = 0;
+	for (const PathfindOccupant *node = c->occupants(OCC_GROUND_GOAL); node; node = node->next)
+	{
+		const OccupantFacts *f = occupantFacts(obj, node->owner);
+		if (!f || f->o == obj || f->container == obj)
+		{
+			continue;
+		}
+		if (f->rel == PATHFIND_ENEMIES)
+		{
+			continue; // skipEnemies (every caller of the cached form)
+		}
+		if (!f->hasAI)
+		{
+			continue;
+		}
+		if (self.aiPriority > f->aiPriority)
+		{
+			continue;
+		}
+		if (f->parked || !self.hasLocomotor || !f->hasLocomotor)
+		{
+			++fixed8;
+			continue;
+		}
+		const float qx = SimMath::mulf32((SimMath::addf32((float)i, 0.5f)), 10.0f), qy = SimMath::mulf32((SimMath::addf32((float)j, 0.5f)), 10.0f);
+		reach.push_back(reachSeconds(*f->o, f->reach, qx, qy));
+	}
+}
+
+int Pathfinder::occupantCostCached(const PathfindObject *obj, const PathfindCell *parent, int cx, int cy, int r, int n)
+{
+	if (!parent || !obj)
+	{
+		return 0;
+	}
+	if (!m_searchShortcuts || !m_memoActive || obj != m_memoObj || m_blockOfMapCells.empty())
+	{
+		return occupantCost(obj, parent, cx, cy, r, n, true);
+	}
+	if (!m_memoSelf.hasAI)
+	{
+		return 0; // every occupant is passed over
+	}
+	if (!m_cellCostBound || m_cellCostMemoGen != m_memoGen)
+	{
+		if (m_cellCost.size() != m_blockOfMapCells.size())
+		{
+			m_cellCost.assign(m_blockOfMapCells.size(), CellCostRecord());
+			m_cellCostGen = 0;
+		}
+		if (++m_cellCostGen == 0)
+		{
+			for (CellCostRecord &rec : m_cellCost)
+			{
+				rec.stamp = 0;
+			}
+			m_cellCostGen = 1;
+		}
+		m_cellCostBound = true;
+		m_cellCostMemoGen = m_memoGen;
+		m_cellCostReach.clear();
+	}
+	const int shift = r >= 4 ? 2 : (r > 1 ? 1 : 0);
+	const PathfindCell *base = m_blockOfMapCells.data();
+	const size_t cells = m_blockOfMapCells.size();
+	unsigned fixed = 0, slower = 0;
+	float selfT = -1.0f;
+	for (int i = cx - r; i < cx + n; i++)
+	{
+		for (int j = cy - r; j < cy + n; j++)
+		{
+			const PathfindCell *c = getCell(parent->getLayer(), i, j);
+			if (!c || !c->hasOccupants(OCC_GROUND_GOAL))
+			{
+				continue;
+			}
+			std::uint16_t fixed8 = 0;
+			const float *reach = nullptr;
+			size_t count = 0;
+			const size_t k = (size_t)i * (size_t)m_stride + (size_t)j; // the ground slot of (i, j), as in checkForMovementCached
+			if (k < cells && c == base + k)
+			{
+				CellCostRecord &rec = m_cellCost[k];
+				if (rec.stamp != m_cellCostGen)
+				{
+					rec.stamp = m_cellCostGen;
+					rec.start = (std::uint32_t)m_cellCostReach.size();
+					cellCostFacts(obj, c, i, j, rec.fixed8, m_cellCostReach);
+					rec.count = (std::uint16_t)(m_cellCostReach.size() - rec.start);
+				}
+				fixed8 = rec.fixed8;
+				reach = m_cellCostReach.data() + rec.start;
+				count = rec.count;
+			}
+			else
+			{
+				m_cellCostScratch.clear();
+				cellCostFacts(obj, c, i, j, fixed8, m_cellCostScratch); // a raised layer's own cell
+				reach = m_cellCostScratch.data();
+				count = m_cellCostScratch.size();
+			}
+			fixed += fixed8;
+			if (count != 0)
+			{
+				const float qx = SimMath::mulf32((SimMath::addf32((float)i, 0.5f)), 10.0f), qy = SimMath::mulf32((SimMath::addf32((float)j, 0.5f)), 10.0f);
+				if (selfT < 0.0f)
+				{
+					selfT = reachSeconds(*obj, m_memoSelfReach, qx, qy); // the first cell that compares (the original's lazy selfT)
+				}
+				for (size_t q = 0; q < count; ++q)
+				{
+					if (selfT > reach[q])
+					{
+						++slower;
+					}
+				}
+			}
+		}
+	}
+	return (int)(fixed * (8u >> shift) + slower * (4u >> shift));
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -853,7 +1249,8 @@ void Pathfinder::removeGoal(PathfindObject &obj)
 
 void Pathfinder::updatePos(PathfindObject &obj)
 {
-	// TARGET RW 0x8E26B7: only a stationary ground unit holds a position
+	// TARGET RW 0x8E26B7: a ground unit holds its position cell, moving or not; only one that follows a path with a special node (AI vtable + 0x228,
+	// RW 0x66288A, the port's isStationary false) releases it (lane PATHPRIO-1: the comment said "only a stationary unit")
 	if (!m_isMapReady)
 	{
 		return;
@@ -1485,11 +1882,16 @@ void Pathfinder::processPathfindQueue(PathfindRequestHandler &handler)
 		budget *= 100;
 	}
 	const int half = budget / 2;
+	auto capSearch = [&]() { // lane PERF-HD (Uber only): the search may count what the call has left, at least kUberSearchFloor
+		m_uberSearchCap = m_uberLimits ? std::max((int)kUberSearchFloor, budget - m_cumulativeCellsAllocated) : 0x7fffffff;
+		m_uberSearchAllocs = 0;
+	};
 	while (half > 0 && !m_queue2.empty() && m_cumulativeCellsAllocated < half)
 	{
 		const PathfindObjectID id = m_queue2.pop();
 		if (m_world && m_world->findObjectByID(id))
 		{
+			capSearch();
 			handler.doBlockedRepath(id);
 		}
 	}
@@ -1498,7 +1900,9 @@ void Pathfinder::processPathfindQueue(PathfindRequestHandler &handler)
 		const PathfindObjectID id = m_queue1.pop();
 		if (m_world && m_world->findObjectByID(id))
 		{
+			capSearch();
 			handler.doPathfind(id);
 		}
 	}
+	m_uberSearchCap = 0x7fffffff;
 }

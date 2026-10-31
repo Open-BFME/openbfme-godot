@@ -4,11 +4,16 @@
 #include "GameClient/AssetPacks.h"
 
 #include "Common/AsciiString.h"
+#include "Common/Sha256.h"
+
+#include <cstdio>
+#include <memory>
 
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <system_error>
 
 namespace fs = std::filesystem;
@@ -19,6 +24,13 @@ namespace
 bool isTextureExtension(const std::string &e)
 {
 	return e == "dds" || e == "tga" || e == "png" || e == "jpg";
+}
+
+// lane SDK-1: the text a pack may carry besides its assets (its readme, its licence, the credits): never read by the game
+bool isPackTextFile(const std::string &lowerName, const std::string &extension)
+{
+	return extension == "txt" || extension == "md" || lowerName == "openbfme-pack.json" || lowerName == "license" || lowerName == "licence" ||
+		lowerName == "readme";
 }
 
 // the last path component, without the folders ('\' or '/')
@@ -38,8 +50,118 @@ std::string stemOf(const std::string &fileName)
 
 const char *AssetPacks::notCovered()
 {
-	return "asset packs replace W3D model files and the textures of W3D model surfaces; particle, terrain, UI (Apt) and decal textures and "
-		   "non-W3D model formats are not replaced yet (lane SDK-0)";
+	return "asset packs replace W3D model files and the textures of models, particles, decals, roads, rivers, water and the sky; the "
+		   "terrain tile textures, UI (Apt) textures and non-W3D model formats are not replaced yet (lane SDK-1)";
+}
+
+std::vector<std::string> AssetPacks::compareSkeletons(const W3DFileContents &original, const W3DFileContents &replacement)
+{
+	std::vector<std::string> out;
+	auto same = [](const std::string &a, const std::string &b) { return AsciiStringUtil::lowered(a) == AsciiStringUtil::lowered(b); };
+	for (const HTreeClass &o : original.HTrees)
+	{
+		const HTreeClass *r = replacement.Find_HTree(o.Get_Name());
+		if (!r)
+		{
+			out.push_back("it has no hierarchy " + o.Get_Name() + " (the original's skeleton)");
+			continue;
+		}
+		if (r->Num_Pivots() != o.Num_Pivots())
+		{
+			out.push_back("its hierarchy " + o.Get_Name() + " has " + std::to_string(r->Num_Pivots()) + " bones, the original's " +
+				std::to_string(o.Num_Pivots()));
+			continue;
+		}
+		for (int i = 0; i < o.Num_Pivots(); ++i)
+		{
+			if (!same(r->Get_Pivot(i).Name, o.Get_Pivot(i).Name) || r->Get_Pivot(i).ParentIdx != o.Get_Pivot(i).ParentIdx)
+			{
+				out.push_back("its hierarchy " + o.Get_Name() + ": bone " + std::to_string(i) + " is " + r->Get_Pivot(i).Name + " (parent " +
+					std::to_string(r->Get_Pivot(i).ParentIdx) + "), the original's " + o.Get_Pivot(i).Name + " (parent " +
+					std::to_string(o.Get_Pivot(i).ParentIdx) + ")");
+				break;
+			}
+		}
+	}
+	for (const HLodDefClass &o : original.HLods)
+	{
+		const HLodDefClass *r = replacement.Find_HLod(o.Name);
+		if (!r)
+		{
+			out.push_back("it has no model " + o.Name + " (the original's HLOD)");
+		}
+		else if (!same(r->HierarchyName, o.HierarchyName))
+		{
+			out.push_back("its model " + o.Name + " uses the hierarchy " + r->HierarchyName + ", the original's " + o.HierarchyName);
+		}
+	}
+	auto anims = [&](const auto &list) {
+		for (const auto &a : list)
+		{
+			if (!replacement.Find_Animation(a.Get_Name()))
+			{
+				out.push_back("it has no animation " + a.Get_Name());
+			}
+		}
+	};
+	anims(original.RawAnims);
+	anims(original.CompressedAnims);
+	return out;
+}
+
+bool AssetPacks::checkModels(W3DFileSource &base, std::vector<std::string> &errors)
+{
+	const size_t errorsBefore = errors.size();
+	std::vector<std::string> misfits;
+	for (const auto &e : m_models)
+	{
+		const AssetPackFile &f = e.second;
+		const std::string label = "asset pack " + f.pack + ": " + f.relative;
+		std::vector<std::uint8_t> mine, theirs;
+		std::string error;
+		W3DFileContents replacement, original;
+		if (!read(f, mine, &error))
+		{
+			errors.push_back(error);
+			continue;
+		}
+		if (!Load_W3D_File(mine.data(), mine.size(), replacement, &error))
+		{
+			errors.push_back(label + " is not a W3D file the game can read: " + error);
+			continue;
+		}
+		const std::string path = W3D_Asset_Path(stemOf(e.first), base.FlatAssetLayout());
+		if (!base.Exists(path))
+		{
+			m_notes.push_back(f.pack + ": " + f.relative + " replaces no model of the game or the mod (" + path + "): not used");
+			misfits.push_back(e.first); // review r1: not used means not drawn (a hierarchy or HLOD naming a missing file would reach it)
+			continue;
+		}
+		if (!base.Read(path, theirs, &error) || !Load_W3D_File(theirs.data(), theirs.size(), original, &error))
+		{
+			errors.push_back(label + ": cannot read the model it replaces, " + path + ": " + error);
+			continue;
+		}
+		const std::vector<std::string> why = compareSkeletons(original, replacement);
+		if (!why.empty())
+		{
+			std::string all;
+			for (const std::string &w : why)
+			{
+				all += (all.empty() ? "" : "; ") + w;
+			}
+			m_notes.push_back(f.pack + ": " + f.relative + " does not fit " + path + " (" + all + "): not used, the game's model is drawn (a "
+				"replacement model keeps the original's skeleton, models and animations, or the game's animations and effects would not fit it)");
+			m_misfits.push_back(Refusal{ f.pack, f.relative, "different bones or models than the game's (" + all + ")", true });
+			misfits.push_back(e.first);
+			continue;
+		}
+	}
+	for (const std::string &k : misfits)
+	{
+		m_models.erase(k);
+	}
+	return errors.size() == errorsBefore;
 }
 
 bool AssetPacks::addPack(const std::string &folder, std::vector<std::string> &errors)
@@ -115,9 +237,12 @@ bool AssetPacks::addPack(const std::string &folder, std::vector<std::string> &er
 		}
 		else
 		{
-			if (lowerName != "openbfme-pack.json" && lowerName != "readme.txt" && lowerName != "readme.md")
+			// lane SDK-1: cosmetic only, so a whitelist: anything but a model, a texture or the pack's own text is refused (game data belongs
+			// in a mod, which the lobby and the replays fingerprint)
+			if (!isPackTextFile(lowerName, f.extension))
 			{
-				notes.push_back(name + ": " + f.relative + " is not a model or texture (.w3d, .dds, .tga, .png, .jpg): not used");
+				errors.push_back("asset pack " + name + ": " + f.relative + " is not a model or texture (.w3d, .dds, .tga, .png, .jpg): an asset pack "
+					"only changes how the game looks; game data (INI, scripts, maps, archives, sounds, programs) belongs in a mod (-mod)");
 			}
 			continue;
 		}
@@ -154,21 +279,23 @@ bool AssetPacks::addPack(const std::string &folder, std::vector<std::string> &er
 
 const AssetPackFile *AssetPacks::texture(const std::string &textureName) const
 {
-	if (m_textures.empty())
+	if (m_suspended || m_textures.empty())
 	{
 		return nullptr;
 	}
-	auto it = m_textures.find(stemOf(AsciiStringUtil::lowered(fileNameOf(textureName))));
+	const std::string key = stemOf(AsciiStringUtil::lowered(fileNameOf(textureName)));
+	auto it = m_textures.find(key);
 	return it == m_textures.end() ? nullptr : &it->second;
 }
 
 const AssetPackFile *AssetPacks::model(const std::string &w3dPath) const
 {
-	if (m_models.empty())
+	if (m_suspended || m_models.empty())
 	{
 		return nullptr;
 	}
-	auto it = m_models.find(AsciiStringUtil::lowered(fileNameOf(w3dPath)));
+	const std::string key = AsciiStringUtil::lowered(fileNameOf(w3dPath));
+	auto it = m_models.find(key);
 	return it == m_models.end() ? nullptr : &it->second;
 }
 
@@ -195,6 +322,48 @@ bool AssetPacks::read(const AssetPackFile &file, std::vector<std::uint8_t> &out,
 			*error = "cannot read asset pack file " + file.pack + "/" + file.relative;
 		}
 		return false;
+	}
+	return true;
+}
+
+// ---- lane SDK-1c: the packs' presentation lines (profile 3, agreed with Anti-cheat) --------------------------------------------------------
+
+bool AssetPacks::identityLines(std::vector<std::string> &out, std::string &error) const
+{
+	out.clear();
+	std::map<std::string, std::vector<std::string>> byPack; // pack name -> its used files' lines
+	auto add = [&](const char *kind, const std::map<std::string, AssetPackFile> &files) {
+		for (const auto &kv : files)
+		{
+			std::vector<std::uint8_t> bytes;
+			if (!read(kv.second, bytes, &error))
+				return false;
+			const auto d = Sha256::hash(bytes.data(), bytes.size());
+			byPack[kv.second.pack].push_back(std::string(kind) + " " + kv.first + " " + HexBytes(d.data(), d.size()));
+		}
+		return true;
+	};
+	if (!add("model", m_models) || !add("texture", m_textures))
+		return false;
+	for (const std::string &name : m_packs)
+	{
+		auto it = byPack.find(name);
+		if (it == byPack.end())
+			continue;
+		std::vector<std::string> &lines = it->second;
+		std::sort(lines.begin(), lines.end());
+		Sha256 h;
+		for (const std::string &l : lines)
+		{
+			h.update(l.data(), l.size());
+			h.update("\n", 1);
+		}
+		const auto d = h.finish();
+		std::string shown = name;
+		for (char &c : shown)
+			if ((unsigned char)c < 0x20 || c == 0x7F)
+				c = '?';
+		out.push_back("pack " + shown + " " + std::to_string(lines.size()) + " " + HexBytes(d.data(), d.size()));
 	}
 	return true;
 }

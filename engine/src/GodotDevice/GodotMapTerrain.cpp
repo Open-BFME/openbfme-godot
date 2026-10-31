@@ -6,6 +6,7 @@
 #include "GodotDevice/GodotMapTerrain.h"
 
 #include "Common/ArchiveFileSystem.h"
+#include "Common/AsciiString.h"
 #include "GameClient/MapClassification.h"
 #include "GameClient/MapStops.h"
 #include "GameClient/MapUtil.h"
@@ -17,6 +18,7 @@
 #include "GameClient/WaterGeometry.h"
 #include "GameEngineDevice/W3DDevice/GameClient/HeightMapMesh.h"
 #include "GameEngineDevice/W3DDevice/GameClient/W3DObjectLighting.h"
+#include "GameEngineDevice/W3DDevice/GameClient/TerrainLightScale.h"
 #include "GameEngineDevice/W3DDevice/GameClient/TerrainComposite.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/ObjectNameIndex.h"
@@ -172,6 +174,11 @@ bool optBool(const Dictionary &o, const char *key, bool def)
 	return o.has(key) ? (bool)o[key] : def;
 }
 
+int optInt(const Dictionary &o, const char *key, int def)
+{
+	return o.has(key) ? (int)o[key] : def;
+}
+
 String optStr(const Dictionary &o, const char *key, const char *def)
 {
 	return o.has(key) ? (String)o[key] : String(def);
@@ -273,6 +280,28 @@ Ref<Texture2D> MapTerrainBuilder::loadTexture(RetailFileSystem &fs, const std::s
 	{
 		return cached->second;
 	}
+	// lane SDK-1: an asset pack's replacement first (the sky, cloud and macro textures, water, rivers and roads load here; the terrain tile
+	// textures go through the atlas instead and are not replaced: GameClient/AssetPacks.h)
+	{
+		std::string packError;
+		Ref<Image> packImage = Load_Asset_Pack_Image(fs.assetPacks().empty() ? nullptr : &fs.assetPacks(), name, packError);
+		if (!packError.empty())
+		{
+			errors.push_back(toGodot("texture " + name + ": " + packError));
+			return Ref<Texture2D>();
+		}
+		if (packImage.is_valid())
+		{
+			if (mipmaps && !packImage->has_mipmaps() && !packImage->is_compressed())
+			{
+				packImage->generate_mipmaps();
+			}
+			Ref<ImageTexture> tex = ImageTexture::create_from_image(packImage);
+			tex->set_meta("retail_path", packImage->get_meta("retail_path"));
+			m_textureCache[key] = tex;
+			return tex;
+		}
+	}
 	// BFME keeps textures compiled under a two-letter folder (W3D_Compiled_Texture_Path): usually DDS, but some
 	// are a colour JPG with a separate PNG that carries the alpha (e.g. TRWagonTraveled, TSCracks02). Loose
 	// art\textures and the terrain archive are checked next.
@@ -311,6 +340,13 @@ Ref<Texture2D> MapTerrainBuilder::loadTexture(RetailFileSystem &fs, const std::s
 			return Ref<Texture2D>();
 		}
 		used = dds;
+	}
+	else if (fs.existsNative(stem + ".tga"))
+	{
+		// RW 0x530D29: uncompressed compiled TGA precedes packed JPEG.
+		// PCA basis textures ship in this form instead of DDS.
+		if (!readImage(stem + ".tga", image)) return Ref<Texture2D>();
+		used = stem + ".tga";
 	}
 	else if (fs.existsNative(stem + ".jpg"))
 	{
@@ -650,6 +686,27 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 	const float effectColorScale = lighting ? W3DObjectLightingUtil::effectColorScale(*lighting) : 1.0f;
 	const bool overbright = effectColorScale > 1.0f;
 
+	// stop S-033: the map's terrain light scale (GlobalLighting v8) applies at the low terrain tiers only (TerrainLightScale.h). The viewer / tests
+	// may name the tier ("use_terrain_normal_map", "terrain_lod", "shader_lod"); the default is the High tier this renderer draws (scale 1).
+	TerrainLightScale::Lod lod;
+	lod.useTerrainNormalMap = optBool(options, "use_terrain_normal_map", lod.useTerrainNormalMap);
+	lod.terrainLOD = optInt(options, "terrain_lod", lod.terrainLOD);
+	lod.shaderLOD = optInt(options, "shader_lod", lod.shaderLOD);
+	TerrainLightScale::Scales lightScales;
+	if (lighting)
+	{
+		std::string scaleError;
+		if (!TerrainLightScale::resolve(*lighting, lod, lightScales, &scaleError))
+		{
+			memdelete(root);
+			return fail(scaleError);
+		}
+		for (const std::string &line : TerrainLightScale::stopLines())
+		{
+			stops.push_back(toGodot(line));
+		}
+	}
+
 	if (lighting)
 	{
 		Dictionary lit;
@@ -669,6 +726,12 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 			terrainLights.push_back(l);
 		}
 		lit["terrain_lights"] = terrainLights;
+		lit["terrain_light_scale"] = Vector3(lightScales.raw[0], lightScales.raw[1], lightScales.raw[2]);
+		lit["terrain_rendering_mode"] = lightScales.terrainMode;
+		lit["terrain_light_scale_applied"] = Vector3(lightScales.terrain[0], lightScales.terrain[1], lightScales.terrain[2]);
+		// the factor retail's object lights get at this tier (RW 0x46E009). This builder draws no objects and lights no model: MapObjectBuilder
+		// applies it (its report's lighting.object_light_scale_applied); the water here is not a reader of the scale (stop S-033)
+		lit["object_light_scale_retail"] = Vector3(lightScales.objects[0], lightScales.objects[1], lightScales.objects[2]);
 		m_report["lighting"] = lit;
 	}
 
@@ -685,6 +748,64 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 		cam["size_y"] = maxY;
 		m_report["camera"] = cam;
 	}
+
+	// The map's lighting inputs of the terrain effect (terrain.fxo): the sun, the overbright switch, the cloud and macro textures, the map size and the fog.
+	// Retail builds one light environment for the terrain and hands it to the roads too (FlatHeightMap.cpp:768-791, :816), so the terrain mesh and the roads
+	// take them from here, whether or not the terrain mesh itself is built (lane ROADS-1).
+	MapWeather weather;
+	{
+		std::string werr;
+		if (!MapWeatherScan::load(*arch, mapDir, weather, &werr))
+		{
+			// retail: an INIException from weather.ini / map.ini (RW 0x62710d, no try block) unwinds out of the map start to GameEngine::update's
+			// catch (RW 0x639f4c); the map is not built, so there is no fog or cloud setting to invent
+			memdelete(root);
+			return fail("weather: " + werr);
+		}
+		if (!optBool(options, "fog", true))
+		{
+			weather.fogEnabled = false; // viewer option: the retail camera never sees the far map, an overview does
+		}
+	}
+	Ref<Texture2D> cloudTex, macroTex;
+	if ((wantTerrain || wantRoads) && map.chunks.hasEnvironmentData)
+	{
+		Array texErrors;
+		cloudTex = loadTexture(rfs, map.chunks.environment.cloudTexture, texErrors);
+		macroTex = loadTexture(rfs, map.chunks.environment.macroTexture, texErrors);
+		for (int64_t i = 0; i < texErrors.size(); ++i)
+		{
+			errors.push_back(texErrors[i]);
+		}
+	}
+	auto applyMapLighting = [&](const Ref<ShaderMaterial> &m) {
+		if (cloudTex.is_valid()) m->set_shader_parameter("cloud_tex", cloudTex);
+		if (macroTex.is_valid()) m->set_shader_parameter("macro_tex", macroTex);
+		if (tod)
+		{
+			const GlobalLight &sun = tod->terrain[0];
+			// stop S-033: the shader wants the direction TOWARD the light = -lightPos (ZH lightRay)
+			m->set_shader_parameter("sun_dir_sage", Vector3(-sun.lightPos[0], -sun.lightPos[1], -sun.lightPos[2]));
+			// terrain.fxo MainDirectionalLight binds Sas.DirectionalLight[0]. The
+			// SAS callback RW 0x54CFD0 doubles its colour before the shader's overbright half-scale.
+			// RW 0x4E2B3A: the sun's diffuse is scaled by GlobalData + 0x944 .. when the terrain rendering mode is below 1, before the SAS doubling
+			m->set_shader_parameter("sun_color", Vector3(lightScales.terrain[0] * sun.diffuse[0], lightScales.terrain[1] * sun.diffuse[1],
+				lightScales.terrain[2] * sun.diffuse[2]) * effectColorScale);
+		}
+		m->set_shader_parameter("overbright", overbright);
+		m->set_shader_parameter("cloud_scale", Vector2(1.0f / weather.cloudSize[0], 1.0f / weather.cloudSize[1]));
+		m->set_shader_parameter("cloud_offset_per_second", Vector2(weather.cloudOffsetPerSecond[0], weather.cloudOffsetPerSecond[1]));
+		if (map.chunks.hasEnvironmentData)
+		{
+			m->set_shader_parameter("macro_stretched", map.chunks.environment.isMacroTextureStretched);
+		}
+		m->set_shader_parameter("map_size", Vector2((float)hm.m_width * MAP_XY_FACTOR, (float)hm.m_height * MAP_XY_FACTOR));
+		m->set_shader_parameter("map_border_width", (float)hm.m_borderSize * MAP_XY_FACTOR);
+		m->set_shader_parameter("fog_enabled", weather.fogEnabled ? 1.0f : 0.0f);
+		m->set_shader_parameter("fog_color", Vector3(weather.fogColor[0], weather.fogColor[1], weather.fogColor[2]));
+		m->set_shader_parameter("fog_range_start", weather.fogStart);
+		m->set_shader_parameter("fog_range_end", weather.fogEnd);
+	};
 
 	// ---- 2. the terrain: atlas, mesh, materials ----------------------------------------------------
 	if (wantTerrain)
@@ -763,6 +884,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 		HeightMapMeshOptions mo;
 		mo.uv.cliffUnit = cliffAtlas ? CLIFF_UV_ATLAS_2048 : CLIFF_UV_BFME2_HYPOTHESIS_256PX_WRAP;
 		mo.colorMode = vertexAll ? VERTEX_COLOR_ALL_GLOBAL_LIGHTS : VERTEX_COLOR_AMBIENT_PLUS_ACCENT_LIGHTS;
+		std::copy(lightScales.terrain, lightScales.terrain + 3, mo.lightScale); // RW 0x4690C1
 		std::vector<TerrainChunk> chunks;
 		TerrainMeshStats mstats;
 		if (!HeightMapMesh::build(hm, lighting, mo, chunks, mstats, &error))
@@ -805,30 +927,9 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 			return fail("terrain shader is missing (res://shaders/terrain.gdshader)");
 		}
 
-		MapWeather weather;
-		std::string werr;
-		if (!MapWeatherScan::load(*arch, mapDir, weather, &werr))
-		{
-			errors.push_back(toGodot("weather: " + werr));
-		}
-		if (!optBool(options, "fog", true))
-		{
-			weather.fogEnabled = false; // viewer option: the retail camera never sees the far map, an overview does
-		}
 		// lane RENDER-4 (S-1651): the same hardware fog on the W3D models and the CPU particles (W3DHardwareFog.h)
 		W3D_Apply_Fog(weather.fogEnabled, weather.fogColor, weather.fogStart, weather.fogEnd);
 		m_report["object_fog"] = toGodot(W3DHardwareFog::StopText());
-		Ref<Texture2D> cloudTex, macroTex;
-		if (map.chunks.hasEnvironmentData)
-		{
-			Array texErrors;
-			cloudTex = loadTexture(rfs, map.chunks.environment.cloudTexture, texErrors);
-			macroTex = loadTexture(rfs, map.chunks.environment.macroTexture, texErrors);
-			for (int64_t i = 0; i < texErrors.size(); ++i)
-			{
-				errors.push_back(texErrors[i]);
-			}
-		}
 
 		auto makeMat = [&](const Ref<Shader> &shader, int priority) {
 			Ref<ShaderMaterial> m;
@@ -837,32 +938,9 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 			m->set_render_priority(priority);
 			m->set_shader_parameter("base_atlas", baseTex);
 			m->set_shader_parameter("normal_atlas", normalTex);
-			if (cloudTex.is_valid()) m->set_shader_parameter("cloud_tex", cloudTex);
-			if (macroTex.is_valid()) m->set_shader_parameter("macro_tex", macroTex);
 			m->set_shader_parameter("atlas_size", Vector2((float)images.width, (float)images.height));
-			if (tod)
-			{
-				const GlobalLight &sun = tod->terrain[0];
-				// stop S-033: the shader wants the direction TOWARD the light = -lightPos (ZH lightRay)
-				m->set_shader_parameter("sun_dir_sage", Vector3(-sun.lightPos[0], -sun.lightPos[1], -sun.lightPos[2]));
-				// terrain.fxo MainDirectionalLight binds Sas.DirectionalLight[0]. The
-				// SAS callback RW 0x54CFD0 doubles its colour before the shader's overbright half-scale.
-				m->set_shader_parameter("sun_color", Vector3(sun.diffuse[0], sun.diffuse[1], sun.diffuse[2]) * effectColorScale);
-			}
-			m->set_shader_parameter("overbright", overbright);
+			applyMapLighting(m);
 			m->set_shader_parameter("debug_mode", (int)(options.has("debug_mode") ? (int)options["debug_mode"] : 0));
-			m->set_shader_parameter("cloud_scale", Vector2(1.0f / weather.cloudSize[0], 1.0f / weather.cloudSize[1]));
-			m->set_shader_parameter("cloud_offset_per_second", Vector2(weather.cloudOffsetPerSecond[0], weather.cloudOffsetPerSecond[1]));
-			if (map.chunks.hasEnvironmentData)
-			{
-				m->set_shader_parameter("macro_stretched", map.chunks.environment.isMacroTextureStretched);
-			}
-			m->set_shader_parameter("map_size", Vector2((float)hm.m_width * MAP_XY_FACTOR, (float)hm.m_height * MAP_XY_FACTOR));
-			m->set_shader_parameter("map_border_width", (float)hm.m_borderSize * MAP_XY_FACTOR);
-			m->set_shader_parameter("fog_enabled", weather.fogEnabled ? 1.0f : 0.0f);
-			m->set_shader_parameter("fog_color", Vector3(weather.fogColor[0], weather.fogColor[1], weather.fogColor[2]));
-			m->set_shader_parameter("fog_range_start", weather.fogStart);
-			m->set_shader_parameter("fog_range_end", weather.fogEnd);
 			return m;
 		};
 		Ref<ShaderMaterial> terrainMat = makeMat(terrainShader, TERRAIN_RENDER_PRIORITY);
@@ -930,70 +1008,216 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 	{
 		Dictionary w;
 		int64_t areas = 0, tris = 0, failed = 0;
+		std::vector<bool> renderedWaves(map.chunks.standingWaveAreas.size(), false);
+		Array waterMaterials, materialStops;
 		if (wantWater && !map.chunks.standingWaterAreas.empty())
 		{
 			Ref<Shader> sh = loadShader("res://shaders/water_standing.gdshader", errors);
 			Node3D *waterRoot = memnew(Node3D);
 			waterRoot->set_name("StandingWater");
 			root->add_child(waterRoot);
-			std::map<std::string, Ref<ShaderMaterial>> matCache;
+			ArchiveW3DFileSource waterSource(*rfs.archive_fs());
+			WW3DAssetManager waterAssets(waterSource);
+			std::vector<std::string> waterTechniques;
+			bool techniquesRead = false;
+			PackedByteArray heightBytes;
+			heightBytes.resize((int64_t)hm.m_width * hm.m_height * sizeof(float));
+			for (int y = 0; y < hm.m_height; ++y)
+				for (int x = 0; x < hm.m_width; ++x)
+				{
+					const float z = hm.getHeight(x, y) * MAP_HEIGHT_SCALE;
+					std::memcpy(heightBytes.ptrw() + ((int64_t)y * hm.m_width + x) * sizeof(float), &z, sizeof(float));
+				}
+			Ref<Image> heights = Image::create_from_data(hm.m_width, hm.m_height, false, Image::FORMAT_RF, heightBytes);
+			Ref<ImageTexture> heightTexture = ImageTexture::create_from_image(heights);
+			W3DObjectLighting waterLights;
+			std::string lightError;
+			if (lighting && !W3DObjectLightingUtil::fromMap(*lighting, waterLights, &lightError))
+				errors.push_back(toGodot(lightError));
 			for (const StandingWaterArea &a : map.chunks.standingWaterAreas)
 			{
-				std::vector<std::uint32_t> tri;
-				if (a.points.size() < 3 || !WaterGeometry::triangulate(a.points, tri))
-				{
-					++failed;
-					continue;
+				// RotWK draws every standing water area as the grid that AllocateAndFillBuffers (RW 0x482A16)
+				// fills from its polygon, whatever the shader technique; there is no polygon triangulation.
+				// An area the grid cannot fill is reported, never drawn some other way.
+				WaterGeometry::StandingGrid grid;
+				if (!WaterGeometry::buildStandingGrid(a, map.chunks.standingWaveAreas,
+					[&](float x,float y) { return terrain.getGroundHeight(x,y); }, grid)) {
+					errors.push_back(toGodot("water grid has no cells: " + a.name)); ++failed; continue;
 				}
-				const std::string key = a.bumpMapTexture + "|" + a.skyTexture + "|" + a.depthColors;
+				const std::vector<std::uint32_t> &tri = grid.indices;
+				WaterGeometry::StandingMaterial params;
+				bool authored = false;
+				if (!a.fxShader.empty())
+				{
+					std::string stem = a.fxShader;
+					if (stem.size() > 4 && AsciiStringUtil::compareNoCase(stem.substr(stem.size() - 4), ".w3d") == 0) stem.resize(stem.size() - 4);
+					std::string error;
+					const W3DFileContents *fx = waterAssets.Load_File(W3D_Asset_Path(stem, waterSource.FlatAssetLayout()), &error);
+					if (!fx) errors.push_back(toGodot("water material " + a.fxShader + ": " + error));
+					else for (const auto &mesh : fx->Meshes)
+						for (const auto &material : mesh.ShaderMaterials)
+							if (!authored)
+							{
+								std::string materialError;
+								authored = WaterGeometry::readStandingMaterial(material, params, &materialError);
+								if (!materialError.empty()) errors.push_back(toGodot("water material " + a.fxShader + ": " + materialError));
+							}
+				}
+				if (!authored) materialStops.push_back(toGodot("[S-035] " + a.name + ": no WaterShader.FX material; effect defaults with map textures are an inferred legacy-water approximation"));
+				std::string technique;
+				int pcaMode = 0;
+				WaterGeometry::PcaBasis pcaBasis;
+				std::string pcaPath;
+				if (authored)
+				{
+					if (!techniquesRead)
+					{
+						techniquesRead = true;
+						std::vector<std::uint8_t> bytes;
+						std::string error;
+						if (!rfs.readBytes("shaders\\compiled\\watershader.fxo", bytes, &error) || !WaterGeometry::readEffectTechniques(bytes, waterTechniques, &error)) errors.push_back(toGodot("water techniques: " + error));
+					}
+					if (params.technique >= waterTechniques.size()) errors.push_back(toGodot("water material " + a.fxShader + ": technique index outside compiled effect"));
+					else technique = waterTechniques[params.technique];
+					if (technique == "PCA" || technique == "PCA_U")
+					{
+						pcaMode = technique == "PCA_U" ? 2 : 1;
+						if (params.pcaTexture[0].size() < 3 || AsciiStringUtil::compareNoCase(params.pcaTexture[0], "None") == 0)
+							errors.push_back(toGodot("water material " + a.fxShader + ": PCA technique lacks WaterPCATexture1"));
+						else
+						{
+							pcaPath = "art\\textures\\" + params.pcaTexture[0].substr(0, params.pcaTexture[0].size() - 3) + "basis";
+							std::vector<std::uint8_t> bytes;
+							std::string error;
+							if (!rfs.readBytes(pcaPath, bytes, &error) || !WaterGeometry::readPcaBasis(std::string(bytes.begin(), bytes.end()), pcaBasis, &error)) errors.push_back(toGodot(pcaPath + ": " + error));
+						}
+						materialStops.push_back(toGodot("[S-035] " + a.name + ": PCA normals and shoreline Gerstner geometry follow authored data; Godot clock, high-detail grid selection, planar reflections and shadow-map filtering remain unverified"));
+					}
+					else if (technique.compare(0, 3, "PCA") == 0) materialStops.push_back(toGodot("[S-035] " + a.name + ": unsupported PCA LOD technique " + technique + "; using reported bump approximation"));
+					else if (!technique.empty() && technique != "BumpSpecular_M") materialStops.push_back(toGodot("[S-035] " + a.name + ": technique " + technique + " uses the BumpSpecular_M approximation; its reflection/pass differences remain unported"));
+				}
 				Ref<ShaderMaterial> m;
-				auto it = matCache.find(key);
-				if (it != matCache.end())
-				{
-					m = it->second;
-				}
-				else if (sh.is_valid())
+				if (sh.is_valid())
 				{
 					m.instantiate();
 					m->set_shader(sh);
 					m->set_render_priority(WATER_RENDER_PRIORITY);
-					// lane RENDER-3 (S-831): the standing water blends in the transparent pass, which the map root (a GammaCompositeHost) composites in retail's gamma
-					// space: the gamma-space colour is handed over unconverted
 					m->set_shader_parameter("output_gamma", 1.0f);
 					Array texErrors;
-					Ref<Texture2D> bump = loadTexture(rfs, a.bumpMapTexture, texErrors);
-					Ref<Texture2D> sky = loadTexture(rfs, a.skyTexture, texErrors);
-					Ref<Texture2D> lut = loadTexture(rfs, a.depthColors, texErrors, false);
-					if (bump.is_valid()) m->set_shader_parameter("bump_tex", bump);
-					if (sky.is_valid()) m->set_shader_parameter("sky_tex", sky);
-					if (lut.is_valid()) m->set_shader_parameter("tint_lut", lut);
-					m->set_shader_parameter("scroll_speed", a.uvScrollSpeed);
-					for (int64_t i = 0; i < texErrors.size(); ++i)
+					const std::string bumpName = params.bumpTexture.empty() ? a.bumpMapTexture : params.bumpTexture;
+					const std::string envName = params.envTexture.empty() ? a.skyTexture : params.envTexture;
+					if (!bumpName.empty()) { auto tex = loadTexture(rfs, bumpName, texErrors); if (tex.is_valid()) m->set_shader_parameter("bump_tex", tex); }
+					if (!envName.empty()) { auto tex = loadTexture(rfs, envName, texErrors); if (tex.is_valid()) m->set_shader_parameter("sky_tex", tex); }
+					if (!params.waveTexture.empty()) { auto tex = loadTexture(rfs, params.waveTexture, texErrors); if (tex.is_valid()) m->set_shader_parameter("wave_tex", tex); }
+					if (pcaMode && !pcaBasis.frames.empty())
 					{
-						errors.push_back(texErrors[i]);
+						PackedByteArray coefficients;
+						coefficients.resize((int64_t)pcaBasis.frames.size() * 10 * 4 * sizeof(float));
+						for (size_t row = 0; row < 10; ++row)
+							for (size_t frame = 0; frame < pcaBasis.frames.size(); ++frame)
+								std::memcpy(coefficients.ptrw() + (row * pcaBasis.frames.size() + frame) * 4 * sizeof(float), pcaBasis.frames[frame][row].data(), 4 * sizeof(float));
+						Ref<Image> image = Image::create_from_data((int)pcaBasis.frames.size(), 10, false, Image::FORMAT_RGBAF, coefficients);
+						m->set_shader_parameter("pca_coefficients", ImageTexture::create_from_image(image));
+						m->set_shader_parameter("pca_frame_rate", pcaBasis.speed * 30.0f); // BFME2 callbacks: SyncTime/1000 * client FPS, then basis speed
+						m->set_shader_parameter("pca_mode", pcaMode);
+						m->set_shader_parameter("wave_geometry_enabled", true);
+						for (int g = 0; g < 3; ++g)
+							m->set_shader_parameter(String("gerstner") + String::num_int64(g), Vector4(params.gerstner[g][0], params.gerstner[g][1], params.gerstner[g][2], params.gerstner[g][3]));
+						m->set_shader_parameter("pca_uv_scale", Vector2(params.pcaUV[0], params.pcaUV[1]));
+						m->set_shader_parameter("pca_wave_uv_scale", Vector2(params.pcaWaveUV[0], params.pcaWaveUV[1]));
+						auto pcaTexture = [&](const std::string &name, const String &uniform) {
+							if (name.empty() || AsciiStringUtil::compareNoCase(name, "None") == 0)
+								texErrors.push_back(String("PCA required texture is unset: ") + uniform);
+							else { auto tex = loadTexture(rfs, name, texErrors); if (tex.is_valid()) m->set_shader_parameter(uniform, tex); }
+						};
+						pcaTexture(params.pcaFrothTexture, "pca_froth_tex");
+						for (int texIndex = 0; texIndex < (pcaMode == 2 ? 3 : 2); ++texIndex)
+							pcaTexture(params.pcaTexture[texIndex], String("pca_tex") + String::num_int64(texIndex));
+						if (pcaMode == 2) pcaTexture(params.pcaNoiseTexture, "pca_noise_tex");
+						m->set_shader_parameter("specular_color", Vector3(params.specular[0], params.specular[1], params.specular[2]));
+						m->set_shader_parameter("reflection_perturbation", params.reflectionPerturbation);
 					}
-					matCache[key] = m;
+					m->set_shader_parameter("material_diffuse", Vector4(params.diffuse[0], params.diffuse[1], params.diffuse[2], params.diffuse[3]));
+					m->set_shader_parameter("dimming", params.dimming);
+					m->set_shader_parameter("bump_scale", params.bumpScale);
+					m->set_shader_parameter("specular_exponent", params.specularExponent);
+					m->set_shader_parameter("wind_angle", params.windAngle);
+					m->set_shader_parameter("wind_speed", params.windSpeed);
+					m->set_shader_parameter("wave_angle", params.waveAngle);
+					m->set_shader_parameter("wave_speed", params.waveSpeed);
+					m->set_shader_parameter("bump_uv_scale", Vector2(params.bumpUV[0], params.bumpUV[1]));
+					m->set_shader_parameter("env_uv_scale", Vector2(params.envUV[0], params.envUV[1]));
+					m->set_shader_parameter("wave_uv_scale", Vector2(params.waveUV[0], params.waveUV[1]));
+					if (waterLights.objects.count)
+					{
+						m->set_shader_parameter("light_direction", Vector3(waterLights.objects.toLight[0][0], waterLights.objects.toLight[0][1], waterLights.objects.toLight[0][2]));
+						m->set_shader_parameter("light_color", Vector3(waterLights.objects.color[0][0], waterLights.objects.color[0][1], waterLights.objects.color[0][2]));
+					}
+					else m->set_shader_parameter("light_color", Vector3());
+					m->set_shader_parameter("terrain_height_tex", heightTexture);
+					m->set_shader_parameter("terrain_origin", Vector2(-hm.m_borderSize * MAP_XY_FACTOR, -hm.m_borderSize * MAP_XY_FACTOR));
+					m->set_shader_parameter("terrain_size", Vector2(hm.m_width, hm.m_height));
+					m->set_shader_parameter("water_height", (float)a.waterHeight);
+					m->set_shader_parameter("max_alpha_depth", map.chunks.environment.waterMaxAlphaDepth);
+					m->set_shader_parameter("deep_water_alpha", map.chunks.environment.deepWaterAlpha);
+					m->set_shader_parameter("blend_terrain_alpha", params.blendTerrainAlpha);
+					for (int64_t j = 0; j < texErrors.size(); ++j) errors.push_back(texErrors[j]);
 				}
+				Dictionary materialInfo;
+				materialInfo["area"] = toGodot(a.name);
+				materialInfo["effect"] = toGodot(a.fxShader);
+				materialInfo["authored"] = authored;
+				materialInfo["technique_index"] = (int64_t)params.technique;
+				materialInfo["technique"] = toGodot(technique);
+				materialInfo["pca_enabled"] = pcaMode != 0 && !pcaBasis.frames.empty();
+				materialInfo["pca_basis"] = toGodot(pcaPath);
+				materialInfo["pca_frames"] = (int64_t)pcaBasis.frames.size();
+				materialInfo["pca_frame_rate"] = pcaBasis.speed * 30.0f;
+				materialInfo["color"] = Vector4(params.diffuse[0], params.diffuse[1], params.diffuse[2], params.diffuse[3]);
+				materialInfo["bump_uv_scale"] = Vector2(params.bumpUV[0], params.bumpUV[1]);
+				waterMaterials.push_back(materialInfo);
 				PackedVector3Array vtx;
 				PackedVector2Array uv;
 				PackedInt32Array idx;
-				vtx.resize((int64_t)a.points.size());
-				uv.resize((int64_t)a.points.size());
-				for (size_t i = 0; i < a.points.size(); ++i)
-				{
-					vtx.set((int64_t)i, toG(a.points[i].x, a.points[i].y, (float)a.waterHeight));
-					uv.set((int64_t)i, Vector2(a.points[i].x / 100.0f, a.points[i].y / 100.0f));
+
+				bool geometry = pcaMode && !pcaBasis.frames.empty();
+				PackedFloat32Array shore, direction;
+				vtx.resize(grid.vertices.size()); uv.resize(grid.vertices.size());
+				for (size_t i=0;i<grid.vertices.size();++i) {
+					const auto &v=grid.vertices[i];
+					vtx.set(i,toG(v.point.x,v.point.y,float(a.waterHeight)));
+					uv.set(i,Vector2(v.point.x/100,v.point.y/100));
 				}
-				idx.resize((int64_t)tri.size());
-				memcpy(idx.ptrw(), tri.data(), tri.size() * sizeof(int32_t));
-				Array arrays;
-				arrays.resize(Mesh::ARRAY_MAX);
-				arrays[Mesh::ARRAY_VERTEX] = vtx;
-				arrays[Mesh::ARRAY_TEX_UV] = uv;
-				arrays[Mesh::ARRAY_INDEX] = idx;
+				materialInfo["grid_spacing"] = grid.spacing;
+				if (geometry) {
+					shore.resize(grid.vertices.size()*4); direction.resize(grid.vertices.size()*4);
+					int64_t active = 0;
+					for (size_t i=0;i<grid.vertices.size();++i) {
+						const auto &v=grid.vertices[i];
+						shore.set(i*4,v.nearest.x); shore.set(i*4+1,v.nearest.y);
+						shore.set(i*4+2,v.ground); shore.set(i*4+3,v.halfLength);
+						direction.set(i*4,v.direction.x); direction.set(i*4+1,v.direction.y);
+						direction.set(i*4+2,100); direction.set(i*4+3,0);
+						if (float(a.waterHeight)-v.ground<100 &&
+							std::hypot(v.point.x-v.nearest.x,v.point.y-v.nearest.y)<v.halfLength) ++active;
+					}
+					materialInfo["wave_vertices"] = active;
+				}
+				materialInfo["vertices"] = vtx.size();
+				waterMaterials[waterMaterials.size()-1] = materialInfo;
+				idx.resize(tri.size());
+				memcpy(idx.ptrw(),tri.data(),tri.size()*sizeof(int32_t));
+				Array arrays; arrays.resize(Mesh::ARRAY_MAX);
+				arrays[Mesh::ARRAY_VERTEX]=vtx; arrays[Mesh::ARRAY_TEX_UV]=uv; arrays[Mesh::ARRAY_INDEX]=idx;
+				uint64_t format = 0;
+				if (geometry) {
+					arrays[Mesh::ARRAY_CUSTOM0]=shore; arrays[Mesh::ARRAY_CUSTOM1]=direction;
+					format = (uint64_t(Mesh::ARRAY_CUSTOM_RGBA_FLOAT)<<Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT)
+						   | (uint64_t(Mesh::ARRAY_CUSTOM_RGBA_FLOAT)<<Mesh::ARRAY_FORMAT_CUSTOM1_SHIFT);
+				}
 				Ref<ArrayMesh> mesh;
 				mesh.instantiate();
-				mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+				mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), format);
 				if (m.is_valid())
 				{
 					mesh->surface_set_material(0, m);
@@ -1001,17 +1225,34 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				MeshInstance3D *mi = memnew(MeshInstance3D);
 				mi->set_name(toGodot(a.name.empty() ? "water" : a.name));
 				mi->set_mesh(mesh);
+				if (geometry) {
+					float margin=0;
+					for (auto &g:params.gerstner) {
+						margin += std::abs(g[0]*.075f);
+						if(g[1]!=0) margin += std::abs(g[3]*.33f/g[1]);
+					}
+					mi->set_extra_cull_margin(margin);
+				}
 				mi->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
 				waterRoot->add_child(mi);
+				if (geometry) for (const auto &v : grid.vertices)
+					if (v.waveArea >= 0 && float(a.waterHeight)-v.ground < 100 &&
+						std::hypot(v.point.x-v.nearest.x,v.point.y-v.nearest.y) < v.halfLength)
+						renderedWaves[size_t(v.waveArea)] = true;
 				++areas;
 				tris += (int64_t)tri.size() / 3;
 			}
 		}
+		w["max_alpha_depth"] = map.chunks.environment.waterMaxAlphaDepth;
+		w["deep_water_alpha"] = map.chunks.environment.deepWaterAlpha;
+		w["materials"] = waterMaterials;
+		w["material_stops"] = materialStops;
 		w["areas"] = areas;
 		w["triangles"] = tris;
-		w["triangulation_failed"] = failed;
+		w["grid_failed"] = failed;
 		w["areas_in_map"] = (int64_t)map.chunks.standingWaterAreas.size();
-		w["wave_areas_not_rendered"] = (int64_t)map.chunks.standingWaveAreas.size();
+		w["pca_wave_areas"] = (int64_t)std::count_if(map.chunks.standingWaveAreas.begin(), map.chunks.standingWaveAreas.end(), [](const StandingWaveArea &a) { return a.enablePcaWave != 0; });
+		w["wave_areas_not_rendered"] = (int64_t)std::count(renderedWaves.begin(), renderedWaves.end(), false);
 		m_report["water"] = w;
 	}
 
@@ -1039,9 +1280,12 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				}
 			}
 			int64_t additiveRendered = 0;
-			float waterDiffuse[4];
+			// the rivers are lit with the time of day's WaterSet DiffuseColor: a water.ini / map.ini the INI parse rejects is reported and no river is built
+			// from a colour that was never read (no fallback colour)
+			float waterDiffuse[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 			std::string waterError;
-			if (!WaterSetScan::load(*arch, name, lighting ? lighting->timeOfDay : 2, waterDiffuse, &waterError))
+			const bool waterSetRead = WaterSetScan::load(*arch, mapDir, lighting ? lighting->timeOfDay : 2, waterDiffuse, &waterError);
+			if (!waterSetRead)
 			{
 				errors.push_back(toGodot("water.ini: " + waterError));
 			}
@@ -1052,7 +1296,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 			for (const RiverArea &r : map.chunks.riverAreas)
 			{
 				WaterGeometry::RiverStrip strip;
-				if (!WaterGeometry::buildRiverStrip(r, strip) || sh.is_null())
+				if (!waterSetRead || !WaterGeometry::buildRiverStrip(r, strip) || sh.is_null())
 				{
 					continue;
 				}
@@ -1135,6 +1379,8 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 		std::vector<RoadStrip> strips;
 		RoadTypeIndex roadTypes;
 		const float lift = 0.15f; // presentation-only: ZH raises roads by MAP_HEIGHT_SCALE/8, which z-fights here
+		int64_t withNormalMap = 0, withFallbackNormal = 0; // road types with their _nrm texture / with the 1x1 fallback (RoadShading)
+		Array normalMapNames;
 		if (wantRoads)
 		{
 			if (!TerrainRoads::load(*arch, roadTypes, &error))
@@ -1149,6 +1395,15 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 		if (!strips.empty())
 		{
 			Ref<Shader> sh = loadShader("res://shaders/road.gdshader", errors);
+			// Lane ROADS-1: retail draws a road with terrain.fxo "Default", RenderingMode 2 (RoadShading), so it takes the terrain material's effect inputs.
+			// A road type without a _nrm texture binds a 1x1 (127, 127, 255, 0) texel, W3DRoadBuffer + 0x18 (RoadShading::FALLBACK_NORMAL_*).
+			Ref<Texture2D> fallbackNormal;
+			{
+				PackedByteArray texel;
+				texel.resize(4);
+				memcpy(texel.ptrw(), RoadShading::FALLBACK_NORMAL_RGBA, 4);
+				fallbackNormal = ImageTexture::create_from_image(Image::create_from_data(1, 1, false, Image::FORMAT_RGBA8, texel));
+			}
 			Node3D *roadRoot = memnew(Node3D);
 			roadRoot->set_name("Roads");
 			root->add_child(roadRoot);
@@ -1163,6 +1418,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				PackedVector3Array vtx;
 				PackedVector2Array uv;
 				PackedColorArray col;
+				PackedVector3Array nrm;
 				PackedInt32Array idx;
 				for (const RoadStrip *s : g.second)
 				{
@@ -1172,10 +1428,11 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 					{
 						const float x = s->position[(size_t)i * 3], y = s->position[(size_t)i * 3 + 1], z = s->position[(size_t)i * 3 + 2];
 						vtx.push_back(toG(x, y, z));
+						nrm.push_back(toG(RoadShading::VERTEX_NORMAL[0], RoadShading::VERTEX_NORMAL[1], RoadShading::VERTEX_NORMAL[2]));
 						uv.push_back(Vector2(s->uv[(size_t)i * 2], s->uv[(size_t)i * 2 + 1]));
 						std::uint8_t rgb[3];
 						HeightMapMesh::staticDiffuseAt(hm, lighting, vcm, (int)std::lround(x / MAP_XY_FACTOR) + hm.m_borderSize,
-							(int)std::lround(y / MAP_XY_FACTOR) + hm.m_borderSize, rgb);
+							(int)std::lround(y / MAP_XY_FACTOR) + hm.m_borderSize, rgb, lightScales.terrain);
 						col.push_back(Color(rgb[0] / 255.0f, rgb[1] / 255.0f, rgb[2] / 255.0f, 1.0f));
 					}
 					for (std::uint32_t ix : s->index)
@@ -1186,6 +1443,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				Array arrays;
 				arrays.resize(Mesh::ARRAY_MAX);
 				arrays[Mesh::ARRAY_VERTEX] = vtx;
+				arrays[Mesh::ARRAY_NORMAL] = nrm;
 				arrays[Mesh::ARRAY_COLOR] = col;
 				arrays[Mesh::ARRAY_TEX_UV] = uv;
 				arrays[Mesh::ARRAY_INDEX] = idx;
@@ -1204,7 +1462,31 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 					Array texErrors;
 					Ref<Texture2D> t = loadTexture(rfs, g.second.front()->texture, texErrors);
 					if (t.is_valid()) m->set_shader_parameter("road_tex", t);
-					m->set_shader_parameter("overbright", overbright ? 2.0f : 1.0f);
+					// RoadType::loadTexture: the _nrm companion when it exists (Render_Obj_Exists), else the fallback texel. Only "not found" is the
+					// optional case; a companion that exists but cannot be decoded is an error.
+					const std::string nrmName = RoadShading::normalTextureName(g.second.front()->texture);
+					Array nrmErrors;
+					Ref<Texture2D> nrmTex = loadTexture(rfs, nrmName, nrmErrors);
+					if (nrmTex.is_valid())
+					{
+						++withNormalMap;
+						normalMapNames.push_back(toGodot(nrmName));
+					}
+					else
+					{
+						++withFallbackNormal;
+						nrmTex = fallbackNormal;
+						for (int64_t i = 0; i < nrmErrors.size(); ++i)
+						{
+							if (nrmErrors[i] != Variant(toGodot("texture not found: " + nrmName)))
+							{
+								errors.push_back(nrmErrors[i]);
+							}
+						}
+					}
+					m->set_shader_parameter("road_normal_tex", nrmTex);
+					// the terrain's light environment (applyMapLighting), also with the terrain mesh disabled
+					applyMapLighting(m);
 					for (int64_t i = 0; i < texErrors.size(); ++i)
 					{
 						errors.push_back(texErrors[i]);
@@ -1218,6 +1500,10 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				roadRoot->add_child(mi);
 			}
 		}
+		rd["shading"] = "terrain.fxo Default, RenderingMode 2: PSDefault_Array element " + String::num_int64(RoadShading::pixelShaderElement(RoadShading::RENDERING_MODE, 0, false));
+		rd["normal_maps"] = withNormalMap;
+		rd["fallback_normals"] = withFallbackNormal;
+		rd["normal_map_names"] = normalMapNames;
 		if (!strips.empty())
 		{
 			rd["sample_strip"] = toG(strips[0].position[0], strips[0].position[1], strips[0].position[2]);

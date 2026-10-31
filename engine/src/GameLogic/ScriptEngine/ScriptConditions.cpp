@@ -22,6 +22,8 @@
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptTemplates.h"
 #include "GameLogic/SimMath.h"
+#include "Common/NumericState.h"
+#include <cfloat>
 #include "GameLogic/VictoryConditions.h"
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -38,6 +40,13 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+
+// Common/ModelState.h cannot be included next to Object.h (two ModelConditionFlags typedefs); the one function used is declared here (as
+// GameClient/MusicScripts.cpp does)
+namespace ModelCondition
+{
+int indexOf(const std::string &name);
+}
 #include <iostream>
 #include <set>
 #include <sstream>
@@ -93,6 +102,7 @@ enum ConditionType
 	PLAYER_HAS_OBJECT_COMPARISON = 58,
 	PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA = 74,
 	PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA_WITH_UPGRADE = 110,
+	UNIT_HAS_GAINED_LEVEL = 117, // lane BFME2CAMP1
 	UNIT_IS_AT_LEVEL = 118,
 	PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA_COMPLETELY_BUILT = 188,
 	PLAYER_HAS_CREDITS = 26,
@@ -142,7 +152,15 @@ enum ConditionType
 	PLAYER_HAS_NUMBER_OBJECTS_WITH_MODELCONDITION = 160,
 	COMPARE_NUM_PLAYERS_IN_GAME = 168,
 	EVAL_TEAM_HEALTH = 174,
-	TYPE_SELECTED = 200
+	TYPE_SELECTED = 200,
+	CAMERA_SCROLL_DISTANCE = 189,    // lane BFME2CAMP1
+	OBJECTIVES_SCREEN_IS_OPEN = 198, // lane BFME2CAMP1
+	// lane MODCOMPAT-AI (the mods' AI scripts, logs/mod-gap-census.md), each read from the RotWK body
+	PLAYER_ALL_DESTROYED = 5,
+	PLAYER_BUILT_UPGRADE = 69,
+	PLAYER_BUILT_UPGRADE_FROM_NAMED = 70,
+	CAN_BUILD_OBJECTTYPE_AT_BASE = 169,
+	PLAYER_HAS_NUM_UNITS_WITH_UPGRADE = 178
 };
 
 int kindOfBit(const char *name)
@@ -698,6 +716,28 @@ std::vector<std::string> ScriptConditions::typeNames(ScriptEngine &engine, const
 	return { parameter };
 }
 
+// RW 0x7A0ECD: the mean position of EVERY member (dead ones too), each axis summed in member order (pos + sum), times 1 / n; false for an empty team
+// (retail divides by zero there; its AI group is empty as well, so nothing moves)
+bool ScriptConditions::teamCentreAllMembers(const Team &t, Coord3D &out)
+{
+	float x = 0.0f, y = 0.0f, z = 0.0f;
+	int n = 0;
+	for (const Object *o = t.getFirstMember(); o; o = o->friend_teamNext())
+	{
+		x = SimMath::sseAdd(o->getPosition()->x, x);
+		y = SimMath::sseAdd(o->getPosition()->y, y);
+		z = SimMath::sseAdd(o->getPosition()->z, z);
+		++n;
+	}
+	if (n == 0)
+	{
+		return false;
+	}
+	const float inv = SimMath::sseDiv(1.0f, SimMath::sseFromInt32(n));
+	out = Coord3D{ SimMath::sseMul(inv, x), SimMath::sseMul(inv, y), SimMath::sseMul(inv, z) };
+	return true;
+}
+
 std::vector<Object *> ScriptConditions::members(const Team &t)
 {
 	std::vector<Object *> out;
@@ -706,6 +746,44 @@ std::vector<Object *> ScriptConditions::members(const Team &t)
 		out.push_back(o);
 	}
 	return out;
+}
+
+namespace
+{
+// RW 0x70CB46's bounds: strict comparisons from FLT_MAX (RW 0xBD1910) / -FLT_MAX (RW 0xBD190C)
+void triggerBounds(const TriggerArea &t, float &loX, float &loY, float &hiX, float &hiY)
+{
+	loX = loY = FLT_MAX;
+	hiX = hiY = -FLT_MAX;
+	for (const Point2F &q : t.points)
+	{
+		loX = q.x < loX ? q.x : loX;
+		loY = q.y < loY ? q.y : loY;
+		hiX = q.x > hiX ? q.x : hiX;
+		hiY = q.y > hiY ? q.y : hiY;
+	}
+}
+} // namespace
+
+Coord3D ScriptConditions::triggerCenter(GameLogic &logic, const TriggerArea &t)
+{
+	float loX, loY, hiX, hiY;
+	triggerBounds(t, loX, loY, hiX, hiY);
+	Coord3D c;
+	c.x = SimMath::mulf32(SimMath::addf32(hiX, loX), 0.5f); // RW 0x70CEB1: fadd; fmul 0.5 (RW 0xBD869C), PC24
+	c.y = SimMath::mulf32(SimMath::addf32(hiY, loY), 0.5f);
+	c.z = logic.getGroundHeight(c.x, c.y); // RW 0x6E4CC9: TheTerrainLogic vslot 0x18(x, y, 0)
+	return c;
+}
+
+float ScriptConditions::triggerRadius(const TriggerArea &t)
+{
+	float loX, loY, hiX, hiY;
+	triggerBounds(t, loX, loY, hiX, hiY);
+	const float hx = SimMath::mulf32(SimMath::subf32(hiX, loX), 0.5f); // RW 0x70CBCA
+	const float hy = SimMath::mulf32(SimMath::subf32(hiY, loY), 0.5f);
+	const float sum = SimMath::addf32(SimMath::mulf32(hx, hx), SimMath::mulf32(hy, hy));
+	return (float)NumericState::sqrtPC24((double)sum); // the CRT sqrt, fstp dword (+ 0x20)
 }
 
 bool ScriptConditions::pointInTrigger(const TriggerArea &t, float px, float py)
@@ -1031,10 +1109,6 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 				if (ShroudManager *shroud = logic.shroud(); shroud && !isKindOfName(*o, "ALWAYS_VISIBLE"))
 				{
 					status = shroud->getObjectStatus(*o, p->getPlayerIndex());
-					if (status == OBJECTSHROUD_INVALID)
-					{
-						status = OBJECTSHROUD_CLEAR;
-					}
 				}
 				if (status == OBJECTSHROUD_CLEAR || status == OBJECTSHROUD_PARTIAL_CLEAR)
 				{
@@ -1043,6 +1117,14 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 			}
 		}
 		return false;
+	}
+	case UNIT_HAS_GAINED_LEVEL: // lane BFME2CAMP1, RW 0x7E5A47 (BFME2 decomp ScriptConditions_Rva003E4E6A.cpp, tier B)
+	{
+		// the unit (RW 0x75A3D8) and its experience tracker (Object + 0x26C): its rank (+ 0x24) above the rank scalar helper's base rank (RW 0x79D102: + 0x2C,
+		// then + 0x0C). No unit or no tracker: false
+		const Object *o = engine.getUnitNamed(param(c, 0).stringValue);
+		const ExperienceTracker *xp = o ? o->getExperienceTracker() : nullptr;
+		return xp && xp->getRank() > xp->getBaseRank();
 	}
 	case UNIT_IS_AT_LEVEL: // RW 0x7E8B0B: _strcmpi(the experience tracker's level name, the parameter)
 	{
@@ -1400,9 +1482,14 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		return false;
 	}
 	case HAS_DELAYED_CARRYOVER_UNIT_OF_TYPE:
-		// RW 0x7EB69A: the campaign's carry-over store (the units a previous mission kept); a mission started on its own has none
-		engine.note("[S-1180] HAS_DELAYED_CARRYOVER_UNIT_OF_TYPE: no campaign carry-over store (a mission started on its own: false)");
-		return false;
+	{
+		// lane BFME2CAMP1: RW 0x7ED3CF -> RW 0x7EB69A(param 0's name, param 1): the object type list of that name (RW 0x759158; none or empty: a list of
+		// the one name, RW 0x778F6C); a current campaign (TheLinearCampaignManager + 0x10) answers RW 0x5EA8EF -> 0x5EA888: a record left (+ 0xB4) named
+		// by the list (GameLogic::campaignCarryover); the player is not read. Without a campaign RW 0x7EB6FC asks the War of the Ring manager
+		// ([0xDE4950], a Living World game: not one here) and is false without one
+		const CampaignCarryover::State *carry = logic.campaignCarryover();
+		return carry && CampaignCarryover::hasDelayed(*carry, typeNames(engine, param(c, 0).stringValue));
+	}
 	case IS_GAME_MODE_ACTIVE:
 	{
 		// RW 0x7E9E83: "ringheroes" (any case, RW 0x4372C0) and (no game options object RW 0xDE892C, or its + 0x68 == 1). lane RULES-1: the game setup's
@@ -1665,7 +1752,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		}
 		return false;
 	}
-	case TYPE_SIGHTED: // RW 0x7EB1C9 (BFME2 ScriptConditions_Rva003EA3AB.cpp:166, tier A; ZH evaluateTypeSighted)
+	case TYPE_SIGHTED: // RW 0x7EB1C9 (BFME2 ScriptConditions_evaluateTypeSighted.cpp:162, tier A; ZH evaluateTypeSighted)
 	{
 		// per player of the mask, ThePartitionManager's objects around the unit within its vision range (RW 0x68E43B, FROM_CENTER_2D) that the unit can
 		// see (RW 0x6612AC at the vision range), not stealthed from it (RW 0x660D2C), alive, controlled by the player, of the type set. Unlike
@@ -1751,7 +1838,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		});
 		return hit;
 	}
-	case PLAYER_HAS_NUMBER_OBJECTS_WITH_MODELCONDITION: // RW 0x7E6B50 (BFME2 ScriptConditions_Rva003E5F73.cpp, tier A)
+	case PLAYER_HAS_NUMBER_OBJECTS_WITH_MODELCONDITION: // RW 0x7E6B50 (BFME2 ScriptConditions_evaluatePlayerHasNumberObjectsWithModelCondition.cpp, tier A)
 	{
 		// the bit by name (RW 0x4B3B5B: _strcmpi over the 591 names, -1 unknown); per player of the mask RW 0x6AC74F(bit, limit): its team members (dead
 		// ones too) with the model condition bit, each count stopping at limit + 1, the walk over the players stopping once the total passes the limit.
@@ -1783,7 +1870,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		}
 		return compare(param(c, 2).intValue, total, limit);
 	}
-	case COMPARE_NUM_PLAYERS_IN_GAME: // RW 0x7E5FA5 (BFME2 ScriptConditions_Rva003E53C8.cpp, tier A) -> RW 0x6A8630(0)
+	case COMPARE_NUM_PLAYERS_IN_GAME: // RW 0x7E5FA5 (BFME2 ScriptConditions.cpp, tier A) -> RW 0x6A8630(0)
 	{
 		// the players with a template of a playable side (+ 0x151) that are not defeated (+ 0x754 / + 0x35A)
 		std::int32_t n = 0;
@@ -1832,6 +1919,121 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		}
 		const std::int32_t percent = maxCount != 0 ? curCount * 100 / maxCount : 0;
 		return compare(param(c, 1).intValue, percent, param(c, 2).intValue);
+	}
+	case CAMERA_SCROLL_DISTANCE: // lane BFME2CAMP1: RW 0x7E5AB2
+	case OBJECTIVES_SCREEN_IS_OPEN: // lane BFME2CAMP1: RW 0x7EB7CD case 0xC6
+	{
+		// client state the logic reads (ScriptEngineHost): CAMERA_SCROLL_DISTANCE is "the parameter (+ 0xC) < TheTacticalView vslot 0x23C" (fld, fcomp),
+		// OBJECTIVES_SCREEN_IS_OPEN "RW 0xDE9EA8 != 0". Retail tests no game mode here; every retail use is in the tutorial maps. The port answers false in a
+		// multiplayer game (as NAMED_SELECTED's gate above) so peers cannot diverge on it (S-1182)
+		const EconomyContext &context = logic.economy().context();
+		ScriptEngineHost *host = engine.host();
+		if (!host || context.gameMode == EconomyContext::MODE_LAN || context.gameMode == EconomyContext::MODE_INTERNET || context.multiplayerSession)
+		{
+			return false;
+		}
+		if (c.resolved == OBJECTIVES_SCREEN_IS_OPEN)
+		{
+			return host->objectivesScreenOpen();
+		}
+		float distance = 0.0f;
+		return host->cameraScrollDistance(distance) && param(c, 0).realValue < distance;
+	}
+	case PLAYER_ALL_DESTROYED:
+	{
+		// lane MODCOMPAT-AI: RW 0x7EB7CD case 5 -> RW 0x7E4866(param 0): before ftol(5 * SecondsBeforeBaseCheckActive) false (RW 0x7E486A .. 0x7E48A6: the
+		// frame [0xDE412C] + 0x40 against _ftol RW 0xA3CFA4 of cvtsi2ss [0xD9F608] = 5 times GlobalData + 0x110C, unsigned `jb`), as PLAYER_HAS_N_OR_FEWER_BASES.
+		// Then the mask (RW 0x75968D; empty: true) walked by RW 0x6A85EE: a player for whom Player::hasAnyObjects(0) (RW 0x6ABDF7: its team prototypes
+		// + 0x34C, RW 0x7A1AC1 over each one's teams + 0x334, RW 0x7A0956(0) per team) answers false
+		const unsigned delay = (unsigned)SimMath::truncToInt32(SimMath::mulf32(SimMath::sseFromInt32(5), logic.settings().secondsBeforeBaseCheckActive));
+		if (logic.getFrame() < delay)
+		{
+			return false;
+		}
+		for (Player *p : players(engine, param(c, 0).stringValue))
+		{
+			for (const auto &proto : logic.players().teams().prototypes())
+			{
+				if (proto->getControllingPlayer() != p)
+				{
+					continue;
+				}
+				for (Team *tm : proto->teams())
+				{
+					if (teamHasAnyUnits(*tm))
+					{
+						return false;
+					}
+				}
+			}
+		}
+		return true;
+	}
+	case PLAYER_BUILT_UPGRADE:
+	case PLAYER_BUILT_UPGRADE_FROM_NAMED:
+	{
+		// lane MODCOMPAT-AI: RW 0x7EB7CD cases 0x45 / 0x46 -> RW 0x7E4F6A(player, upgrade, unit or 0): with a unit parameter the named unit must exist
+		// (RW 0x75A3D8; none: false) and its id is the source, else 0 (any); the first player of the mask (RW 0x75968D / 0x6A85EE) whose completed-upgrade
+		// list holds the upgrade's name (RW 0x758DE5(index + 0x54, the name, remove 1, source)) answers true, its entry removed
+		ObjectID source = INVALID_ID;
+		if (c.resolved == PLAYER_BUILT_UPGRADE_FROM_NAMED)
+		{
+			const Object *o = engine.getUnitNamed(param(c, 2).stringValue);
+			if (!o)
+			{
+				return false;
+			}
+			source = o->getID();
+		}
+		for (Player *p : players(engine, param(c, 0).stringValue))
+		{
+			if (engine.isUpgradeCompleted(p->getPlayerIndex(), param(c, 1).stringValue, true, source))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+	case CAN_BUILD_OBJECTTYPE_AT_BASE:
+	{
+		// lane MODCOMPAT-AI: RW 0x7EB7CD case 0xA9 -> RW 0x7E5BF4(player, unit, object type): the template by name (RW 0x6D1305; none: false), the unit
+		// (RW 0x75A3D8), the mask's player (RW 0x75968D / 0x6A85B6: only a mask of exactly one player), who controls the unit (RW 0x68B678); its
+		// CastleBehavior (RW 0x68BDA5, key RW 0x797AC1) answers RW 0x7996D3(template): CastleBehavior::canBuildAtBase
+		const ThingTemplate *tt = logic.things().findTemplate(param(c, 2).stringValue);
+		Object *unit = tt ? engine.getUnitNamed(param(c, 1).stringValue) : nullptr;
+		if (!unit)
+		{
+			return false;
+		}
+		const Player *p = playerOfMask(engine, param(c, 0).stringValue);
+		if (!p || unit->getControllingPlayer() != p)
+		{
+			return false;
+		}
+		const CastleBehavior *cb = dynamic_cast<const CastleBehavior *>(unit->findModule("CastleBehavior"));
+		return cb && cb->canBuildAtBase(tt);
+	}
+	case PLAYER_HAS_NUM_UNITS_WITH_UPGRADE:
+	{
+		// lane MODCOMPAT-AI: RW 0x7EB7CD case 0xB2 -> RW 0x7E9356(player, count, upgrade): the mask's player (RW 0x75968D / 0x6A85B6: only a mask of
+		// exactly one player) and the upgrade by name (RW 0x66F5E5); either missing: false. Over the player's team prototypes (+ 0x34C), each one's teams (+ 0x334, RW 0x895BF7), each team's
+		// members (RW 0x66362D / 0x6632C9): a member without the status HORDE_MEMBER (0x26, RW 0x44DDEC) that has the upgrade (RW 0x691421) counts; no
+		// alive or KindOf test. True when count >= n (RW 0x7E9428: cmp count, n; setge)
+		Player *owner = playerOfMask(engine, param(c, 0).stringValue);
+		const UpgradeTemplate *upgrade = owner ? Player::resolveUpgrade(param(c, 2).stringValue, false) : nullptr;
+		if (!upgrade)
+		{
+			return false;
+		}
+		static const int hordeMember = ObjectTemplateInfoBuilder::objectStatusIndex("HORDE_MEMBER");
+		std::int32_t count = 0;
+		forPlayerTeamMembers(logic, owner, [&](Object &o) {
+			if (!o.testStatus((unsigned)hordeMember) && o.hasUpgrade(upgrade))
+			{
+				++count;
+			}
+		});
+		return count >= param(c, 1).intValue;
 	}
 	default:
 		engine.noteUnportedCondition(t->name);

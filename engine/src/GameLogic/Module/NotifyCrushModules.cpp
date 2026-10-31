@@ -360,8 +360,7 @@ bool NotifyCrushUpdate::mux(Object &obj, unsigned &sleep)
 	mid.y = SimMath::mulf32(SimMath::addf32(end.y, p.y), 0.5f);
 	mid.z = SimMath::mulf32(SimMath::addf32(end.z, p.z), 0.5f);
 	const float angle = (float)SimMath::atan2d(v.y, v.x); // RW 0x441BD2; fstp dword
-	const ThingTemplate *tt = static_cast<const ThingTemplate *>(obj.getTemplate())->getFinalOverride();
-	const std::vector<ObjectGeometry::Shape> shapes = ObjectGeometry::shapesOf(*tt);
+	const std::vector<ObjectGeometry::Shape> &shapes = obj.geometryShapes(); // the object's own GeometryInfo (lane MODCOMPAT-MOD1)
 	float height = m_data->m_scanHeight;
 	if (!(0.0f < height))
 	{
@@ -369,29 +368,8 @@ bool NotifyCrushUpdate::mux(Object &obj, unsigned &sleep)
 	}
 	mid.z = SimMath::subf32(mid.z, SimMath::mulf32(height, 0.333333343f)); // RW 0xBDBC78
 	// RW 0xAD2040: the local box of the active shapes, from 0 .. 0
-	float lo[3] = { 0.0f, 0.0f, 0.0f }, hi[3] = { 0.0f, 0.0f, 0.0f };
-	for (const ObjectGeometry::Shape &s : shapes)
-	{
-		if (!s.active)
-		{
-			continue;
-		}
-		const float yr = s.type == ObjectGeometry::SHAPE_BOX ? s.minorRadius : s.majorRadius;
-		lo[0] = std::min(lo[0], SimMath::subf32(s.offsetX, s.majorRadius));
-		lo[1] = std::min(lo[1], SimMath::subf32(s.offsetY, yr));
-		hi[0] = std::max(hi[0], SimMath::addf32(s.majorRadius, s.offsetX));
-		hi[1] = std::max(hi[1], SimMath::addf32(s.offsetY, yr));
-		if (s.type == ObjectGeometry::SHAPE_SPHERE)
-		{
-			lo[2] = std::min(lo[2], SimMath::subf32(s.offsetZ, s.majorRadius));
-			hi[2] = std::max(hi[2], SimMath::addf32(s.offsetZ, s.majorRadius));
-		}
-		else
-		{
-			lo[2] = std::min(lo[2], s.offsetZ);
-			hi[2] = std::max(hi[2], SimMath::addf32(s.height, s.offsetZ));
-		}
-	}
+	float lo[3], hi[3];
+	ObjectGeometry::localBox(shapes, lo, hi);
 	float width = m_data->m_scanWidth;
 	if (!(0.0f < width))
 	{
@@ -419,8 +397,7 @@ bool NotifyCrushUpdate::mux(Object &obj, unsigned &sleep)
 	region.hiY = b[3];
 	PartitionFilterFn policy([&obj](Object &o) { return crushPolicy(obj, o); }); // RW 0xC76CD8
 	PartitionFilterFn overlap([&](Object &o) {                                  // RW 0xC112C8
-		const ThingTemplate *ot = static_cast<const ThingTemplate *>(o.getTemplate())->getFinalOverride();
-		return NotifyCrushModules::geometriesOverlap(boxShapes, mid, angle, ObjectGeometry::shapesOf(*ot), *o.getPosition(), o.getOrientation());
+		return NotifyCrushModules::geometriesOverlap(boxShapes, mid, angle, o.geometryShapes(), *o.getPosition(), o.getOrientation());
 	});
 	PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); }); // RW 0xC10E20
 	const PartitionHits hits = logic.partition().iterateObjectsInRegion(region, { &policy, &overlap, &alive }, ITER_FASTEST);

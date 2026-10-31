@@ -42,7 +42,7 @@
 //   * Object::doKnockback RW 0x692223 (angle in degrees, power, z factor, projectile type): see ObjectKnockback::apply.
 // NOT PORTED (stop S-782, reported by PhysicsBehavior::stopLine the first time a fling runs): OrientToFlightPath / TumbleRandomly (the look-at transform
 // RW 0xB26610 / 0x70BA76: the position is set, the angle is not; one retail template), the pathfinder's landing clip RW 0x6EF8A8 and per step update RW 0x6F0741,
-// RW 0x6630D7 (the AI's second machine + 0x34 put back: the port's AI has one machine), the status 70 call
+// the status 70 call
 // RW 0x693919, the drawable refresh RW 0x67449C after a stun change and the drawable's projectile type (+0x360: client),
 // RW 0x6CF590 (no ported caller passes the fling's extra words), the shockwave handler RW 0x6968BC (weapons' ShockWave*, RamPower: S-1600) and the other fling
 // callers (slow death, weapons, ...: their lanes). INFERENCE: State slot 0x38 answers false for every state the port runs (RW 0x9188EB for the idle, follow-path

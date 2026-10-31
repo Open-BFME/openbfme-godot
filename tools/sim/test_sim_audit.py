@@ -363,7 +363,8 @@ def test_the_policy_is_the_reviewed_list():
         assert item["reason"].strip(), item
     # adding a registered facade implementation (an exemption from the AST check) is a reviewed change of THIS list
     assert policy["facade_files"] == ["src/Common/System/NumericState.cpp", "src/Common/NumericState.h",
-                                      "src/Common/System/DeterministicLibm.cpp"]  # DEP-2: the deterministic libm (Lua math)
+                                      "src/Common/System/DeterministicLibm.cpp",  # DEP-2: the deterministic libm (Lua math)
+                                      "src/GameLogic/Sdk/LuauSimMath.cpp"]  # SDK-2: a sim Luau script's math (on DetLibm)
     assert policy["facade_functions"] == ["SimMath::sqrtd", "SimMath::sinCosDet", "SimMath::atan2d", "SimMath::cosd", "SimMath::sind", "SimMath::cosf32",
                                           "SimMath::sinf32", "SimMath::atanDetUnit", "SimMath::acosDet"]
     # GodotDevice: no blanket exclusion, every file is classified on its own; the game world (game-start inputs, object creation, commands) is audited
@@ -373,8 +374,8 @@ def test_the_policy_is_the_reviewed_list():
                  "GodotW3DInstancer", "GodotW3DMaterial", "GodotW3DModelBuilder", "register_types"):
         assert any(i["glob"] == "src/GodotDevice/%s.cpp" % name for i in policy["excluded"]), name
     on_disk = sorted(n for n in os.listdir(os.path.join(sim_audit.ENGINE, "src", "GodotDevice")) if n.endswith(".cpp"))
-    for n in on_disk:  # every .cpp of the directory is classified: excluded by name, or a manifested simulation-input file (the game world, its hero commands (HERO-1), its garrison commands (GARRISON-1), the Create-a-Hero builder's map mode (CAH-1), the new-game message marshalling)
-        assert n in ("GodotGameWorld.cpp", "GodotGameWorldHeroes.cpp", "GodotGameWorldStealth.cpp", "GodotGameWorldGarrison.cpp", "GodotGameWorldCah.cpp", "GodotGameStart.cpp") or any(i["glob"] == "src/GodotDevice/" + n for i in policy["excluded"]), n
+    for n in on_disk:  # every .cpp of the directory is classified: excluded by name, or a manifested simulation-input file (the game world, its hero commands (HERO-1), its garrison commands (GARRISON-1), the Create-a-Hero builder's map mode (CAH-1), the new-game message marshalling, the War of the Ring orders (WOTR-1))
+        assert n in ("GodotGameWorld.cpp", "GodotGameWorldHeroes.cpp", "GodotGameWorldStealth.cpp", "GodotGameWorldGarrison.cpp", "GodotGameWorldCah.cpp", "GodotGameStart.cpp", "GodotLivingWorld.cpp") or any(i["glob"] == "src/GodotDevice/" + n for i in policy["excluded"]), n
     # the simulation data loaders are simulation, not excluded
     for src in ("src/Common/INI/INI.cpp", "src/Common/Thing/ThingTemplate.cpp", "src/GameLogic/Object/Weapon.cpp"):
         assert not any(fnmatch_(src, i["glob"]) for i in policy["excluded"]), src

@@ -242,7 +242,8 @@ public:
 	// answers 0). secondsToReach(qx, qy) must equal speed > 0 ? divf32(length2d(subf32(qx, x), subf32(qy, y)), speed) : 0 for every point. false: not
 	// provided, the search asks secondsToReach itself
 	virtual bool reachInputs(float &x, float &y, float &speed) const { (void)x; (void)y; (void)speed; return false; }
-	// the object stands still (AI vtable +0x228 false): only such units hold a position slot
+	// AI vtable +0x228 (RW 0x66288A) false: the unit does not follow a path with a special node (a moving ground unit is "stationary" here); only such
+	// units hold a position slot (RW 0x8E26B7)
 	virtual bool isStationary() const { return true; }
 	// object status bits the footprint code reads (RW status index 0x58 and 0x4D; names INFERRED: S-164)
 	virtual bool footprintSkippedByStatus() const { return false; }
@@ -280,6 +281,15 @@ public:
 	// lane WALL-2: RW AI + 0x3CF, the unit's AI is inside a move-away search (RW 0x66DBFB / 0x66DC4B set it around getMoveAwayFromPath); a type 7 waypoint
 	// refuses such a unit (RW 0x68230B)
 	virtual bool inMoveAwaySearch() const { return false; }
+	// lane LOS-1: RW 0x68B58C(0) (Object::getCurrentWeapon) is not null: the attack view test RW 0x6F4557 then asks the weapon's terrain line
+	virtual bool hasCurrentWeapon() const { return false; }
+	// lane LOS-1: RW 0x6CC6DD Weapon::isClearGoalFiringLineOfSightTerrain(this object, goalPos, victim) with the current weapon (asked only when hasCurrentWeapon)
+	virtual bool isClearGoalFiringLineOfSightTerrain(const Coord3D &goalPos, const PathfindObject &victim) const
+	{
+		(void)goalPos;
+		(void)victim;
+		return true;
+	}
 };
 
 // TheGameLogic->findObjectByID

@@ -78,11 +78,7 @@ void SelfDestruct::transferAssetsFromThat(GameLogic &logic, Player &ally, Player
 		Object *container = o->getContainedBy();
 		if (container && kindOf(*container, "HORDE"))
 		{
-			container->setTeam(team); // RW 0x6AF707: the horde container joins
-			if (o->getControllingPlayer() == &that)
-			{
-				o->setTeam(team); // INFERENCE (S-1122): the member follows its horde (ZH OpenContain::onCapture)
-			}
+			container->setTeam(team); // RW 0x6AF707: the horde container joins, and with it its members (Object::setTeam RW 0x69954A -> RW 0x870667, lane BFME2CAMP1)
 		}
 		else
 		{

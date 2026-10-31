@@ -254,6 +254,41 @@ TEST_CASE("campui1 stance retail: the Witch-king's stance button pops out HoldGr
 	CHECK(pal.stanceErrors().empty());
 }
 
+TEST_CASE("campui1 stance retail: the toggle shows the stance's class (RW 0x96FF2F -> 0x861D8E): Uninitialized as Battle, HoldGroundMoving as HoldGround")
+{
+	if (!haveWorld("campui1 stance"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	StanceRig h(s);
+	h.hud->setWindowSize(1024, 768);
+	h.rig.view.setScreen(1024, 768);
+	const Coord3D c = h.rig.freeSpot(2800, 1400, 200.0f);
+	Object *wk = h.rig.make("AngmarWitchking", c.x, c.y);
+	h.frames(10);
+	h.select(wk);
+	StancesBehavior *sb = StancesBehavior::of(*wk);
+	REQUIRE(sb);
+	const ControlBarButton *toggle = h.toggle();
+	REQUIRE(toggle);
+	const CommandButton &button = *toggle->button;
+	REQUIRE(button.m_stances == std::vector<int>{ STANCE_HOLD_GROUND, STANCE_BATTLE, STANCE_AGGRESSIVE });
+	REQUIRE(sb->getStance() == STANCE_BATTLE);
+	CHECK(ControlBar::stanceSlotOf(button, *wk) == 1);
+	REQUIRE(sb->setStance(STANCE_HOLD_GROUND));
+	sb->onMoveStart(); // RW 0x862275: HoldGround -> HoldGroundMoving, class 3
+	REQUIRE(sb->getStance() == STANCE_HOLD_GROUND_MOVING);
+	CHECK(ControlBar::stanceSlotOf(button, *wk) == 0);
+	// a fresh object has not run its first update (RW 0x8622E9) yet: Uninitialized is class 1, the Battle image, not the list's first (HoldGround)
+	const Coord3D c2 = h.rig.freeSpot(c.x + 300.0f, c.y, 200.0f);
+	Object *fresh = h.rig.make("AngmarWitchking", c2.x, c2.y);
+	StancesBehavior *freshStance = StancesBehavior::of(*fresh);
+	REQUIRE(freshStance);
+	REQUIRE(freshStance->getStance() == STANCE_UNINITIALIZED);
+	CHECK(ControlBar::stanceSlotOf(button, *fresh) == 1);
+}
+
 TEST_CASE("campui1 stance retail: a second press of the stance button fades the radial out without a stance; a selection change hides it")
 {
 	if (!haveWorld("campui1 stance"))

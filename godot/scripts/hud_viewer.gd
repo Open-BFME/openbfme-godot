@@ -23,6 +23,8 @@
 ##   --prefix=<name> / --timescale=<f>   (scenario projectiles) the screenshot name prefix (default proj1) and the logic speed (default 0.25); --air=<n> projectiles in the air for the volley shot (default 6)
 ##   --bow-shot              (scenario projectiles, lane RENDER-2) first a close view of our shooters, saved as <prefix>-bow.png when arrows have just left their launch bones
 ##   --report                print the HUD's report (stops, errors, notes) before quitting
+##   --asset-pack=<folder>   (lane SDK-1, repeatable) draw with that asset pack; --scenario=asset_pack circles the first --spawn object at
+##                           --s2-height for --bench-seconds and selects it halfway (the before / after clip of a pack)
 ##   --logic-thread=on|off   (lane SMOOTH-1, S-810) the logic on its worker thread (default) or on the main thread
 ##   --scenario=smooth_bench (lane SMOOTH-1) the frame-time benchmark and motion probe: every --spawn object marches, turns (a second move order at 90 degrees) and then
 ##                           attack-moves into every --enemy object (which attack-moves back); per segment it prints SMOOTH PERF (render frame times, the C++ timers of the
@@ -61,12 +63,19 @@
 ##   --army=<slot>:<Template>:<dx>,<dy>   (lane PERF-3, repeatable) an object for player slot 1..4 at exactly focus + (dx, dy) (no free-spot search: the
 ##                           benchmark's grid is laid out by its caller); slots 3 / 4 add Player_3 (--army3-faction, default FactionElves, our team) and
 ##                           Player_4 (--army4-faction, default FactionIsengard, the opponent's team)
+##   --scenario=los1         (lane LOS-1) on Tournament Rhudaur (--map="map mp tournament rhudaur"): Haldir west of a hill at (3950, 1900), three orcs right behind
+##                           it at x 4110 .. 4130 (the hill of test_los1_terrain.cpp; a horde's flank members would show beside this narrow hill); 8 s
+##                           of idle auto-acquire, then Haldir is ordered to attack the first orc; saves los1-idle.png and los1-attack.png in --shots, prints LOS1 lines
 ##   --scenario=perf3_battle (lane PERF-3) the 4-player mass battle: every army attack-moves into the middle of all armies; per segment (approach, melee, pan:
 ##                           the camera sweeps over the fight) SMOOTH PERF / TIMER / LOW as smooth_bench prints them; --bench-seconds=<s> per segment
 ##   --perf-stat=<prefix>    (lane PERF-3, Linux with perf) every benchmark segment counts the main thread's and the whole process's user instructions and
 ##                           cycles with `perf stat` (written to <prefix>-<segment>-main.txt / -all.txt) and prints PERF3 STAT per render frame (the work
 ##                           per frame, which a loaded machine does not change, unlike the frame time)
 ##   --fx-frames=<n>         (fx_battle) the render frames to run at most (default 2400); --fx-speed=<f> the logic speed (default 1.0)
+##   --scenario=occlude1     (lane OCCLUDE-1) the behind-building markers: our --oc-building (default MenFortressCitadel) at --m2-from, our --oc-horde (default
+##                           GondorFighterHorde) marching across behind it (--oc-behind=<d> world units beyond it, default 160) and back; the camera fixed at
+##                           --s2-height. The first pass with the markers on (GameData UseBehindBuildingMarker), then script action OPTIONS_SET_OCCLUSION_MODE 0 turns
+##                           them off for the way back. --bench-seconds per pass (default 8); saves occlude1-on.png / occlude1-off.png in --shots
 extends Node3D
 
 var _map_name := "map mp fall back 4p"
@@ -118,6 +127,9 @@ var _m3_same := "GondorFighterHorde"
 var _m3_barracks := "GondorBarracks"  # lane MOVE-3 r2: --m3-barracks=<Template> the producer of the first scene, --m3-prod=<Template> the two hordes it makes,
 var _m3_prod := "GondorFighterHorde"  # --m3-cp-source=<Template> a building made far off for their command points
 var _m3_cp_source := "MenFortressCitadel"
+var _oc_building := "MenFortressCitadel" # lane OCCLUDE-1: --oc-building / --oc-horde / --oc-behind (scenario occlude1)
+var _oc_horde := "GondorFighterHorde"
+var _oc_behind := 160.0
 var _m2_fixed_camera := false          # lane MOVE-2: --m2-fixed-camera the camera stays where it starts (the frame pacing of the units alone)
 var _s2_follow := -1    # lane SMOOTH-3: --s2-follow=<n> the camera follows the members of the n-th --spawn only (default: all of ours)
 var _logic_thread := true   # lane SMOOTH-1: --logic-thread=on|off (the logic worker, S-810, or the main-thread fallback)
@@ -242,6 +254,12 @@ func _ready() -> void:
 			_s2_follow = int(arg.substr(12))
 		elif arg == "--m2-fixed-camera":
 			_m2_fixed_camera = true
+		elif arg.begins_with("--oc-building="):
+			_oc_building = arg.substr(14)
+		elif arg.begins_with("--oc-horde="):
+			_oc_horde = arg.substr(11)
+		elif arg.begins_with("--oc-behind="):
+			_oc_behind = float(arg.substr(12))
 		elif arg.begins_with("--m3-a="):
 			_m3_a = arg.substr(7)
 		elif arg.begins_with("--m3-b="):
@@ -282,10 +300,23 @@ func _ready() -> void:
 		elif arg.begins_with("--fx-speed="):
 			_fx_speed = float(arg.substr(11))
 	_fs = ClassDB.instantiate("RetailFileSystem")
+	# lane SDK-1: --asset-pack=FOLDER (repeatable) draws with those asset packs (only these: the viewer never reads user://asset-packs)
+	var packs := PackedStringArray()
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--asset-pack="):
+			packs.push_back(arg.substr(13))
+	if not packs.is_empty():
+		var pr: Dictionary = _fs.set_asset_packs(packs)
+		if not pr.ok:
+			_fail("asset packs: %s" % [pr.errors])
+			return
+		print("HUD asset packs: ", ", ".join(pr.packs), " (", pr.textures, " textures, ", pr.models, " models)")
 	var mount: Dictionary = _fs.mount_retail()
 	if not mount.ok:
 		_fail("mount failed: %s" % [mount.errors])
 		return
+	for note in mount.get("asset_pack_notes", PackedStringArray()):
+		print("HUD asset packs: ", note)
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0, 0, 0) # the base game shows black outside the map (owner, 2026-10-06)
@@ -329,7 +360,7 @@ func _ready() -> void:
 		slots.append({"player": "Player_3", "faction": _army_factions[3], "human": false, "team": 0, "start_index": 2})
 		slots.append({"player": "Player_4", "faction": _army_factions[4], "human": false, "team": 1, "start_index": 3})
 	# lane BACKLOG3: the proof scenarios run a script action and a hit through the test hooks
-	var rep: Dictionary = _world.load_map(_map_name, {"slots": slots, "seed": 4711, "logic_thread": _logic_thread, "test_hooks": _scenario.begins_with("backlog3")})
+	var rep: Dictionary = _world.load_map(_map_name, {"slots": slots, "seed": 4711, "logic_thread": _logic_thread, "test_hooks": _scenario.begins_with("backlog3") or _scenario == "occlude1"})
 	if not rep.ok:
 		_fail("load_map failed: %s" % [rep.errors.slice(0, 5)])
 		return
@@ -832,6 +863,34 @@ func _run_scenario() -> void:
 		return
 	var shots := _shots_dir if not _shots_dir.is_empty() else "user://screens"
 	match _scenario:
+		"los1":
+			# lane LOS-1: the terrain line of sight. Before the lane both sides engaged through the hill at once; with it nobody acquires across it, and the
+			# ordered Haldir climbs until his bow sees the orcs
+			var hx := Vector2(3950.0, 1900.0)
+			var ex := Vector2(4120.0, 1900.0)
+			var mine: int = _world.create_object("ElvenHaldir", _local_index, hx.x, hx.y, 0.0)
+			var theirs: int = _world.create_object("MordorFighter", _enemy_index, 4110.0, 1900.0, PI)
+			var more1: int = _world.create_object("MordorFighter", _enemy_index, 4122.0, 1894.0, PI)
+			var more2: int = _world.create_object("MordorFighter", _enemy_index, 4130.0, 1905.0, PI)
+			if mine < 0 or theirs < 0 or more1 < 0 or more2 < 0:
+				_fail("los1: objects not created (%d, %d, %d, %d)" % [mine, theirs, more1, more2])
+				return
+			_cam_target = (hx + ex) * 0.5
+			_cam_height = 300.0
+			_place_camera()
+			await _frames(240)
+			print("LOS1 idle: ", _world.get_combat_report())
+			_save(shots.path_join("los1-idle.png"))
+			_world.order_attack([mine], theirs)
+			for i in 450:
+				await get_tree().process_frame
+				var mo: Dictionary = _world.get_object(mine)
+				if mo.get("ok", false):
+					_cam_target = _cam_target.lerp((Vector2(mo.x, mo.y) + ex) * 0.5, 0.02)
+					_place_camera()
+				if i == 300:
+					_save(shots.path_join("los1-attack.png"))
+			print("LOS1 attack: ", _world.get_combat_report())
 		"spell":
 			# lane SPELL-1: the player's spell book (its state in the label: the InGameSpellBook APT is not ported, S-529), buy --science through
 			# MSG_PURCHASE_SCIENCE, cast --power from the spell book at a point next to the focus through MSG_DO_SPECIAL_POWER_AT_LOCATION, follow
@@ -1129,6 +1188,29 @@ func _run_scenario() -> void:
 			await _frames(60)
 			print("HUD4 hero ", _hud.get_selection())
 			_save(shots.path_join("hud4-select-hero.png"))
+		"asset_pack":
+			# lane SDK-1 (the before / after clip of an asset pack): the camera circles the first --spawn object at --s2-height for
+			# --bench-seconds, selecting it halfway (its voice / selection sound), then quits
+			var name: String = _spawned.keys()[0]
+			var o: Dictionary = _world.get_object(_spawned[name])
+			if not o.get("ok", false):
+				_fail("the spawned object %s does not exist (%s)" % [name, o])
+				return
+			_cam_target = Vector2(o.x, o.y)
+			_hud.camera_look_at(_cam_target)
+			_hud.camera_set_height(_s2_height)
+			var frames := int(_bench_seconds * 30.0)
+			for i in frames:
+				_hud.camera_set_angle_pitch(0.6 + TAU * 0.35 * float(i) / float(frames), 0.0)
+				_hud.camera_look_at(_cam_target) # the angle turns the camera about itself: aim at the object again
+				if i == frames / 2:
+					await _click_world(_cam_target)
+				await _frames(1)
+			# the proof that a pack changes nothing the game logic sees: the same run with and without the pack prints the same lines
+			print("ASSET PACK state hash: ", _world.get_state_hash(), "; mod identity: ", _fs.get_mod_report().get("identity", PackedStringArray()))
+			print("ASSET PACK clip done: ", name)
+			_finish()
+			return
 		"select_building":
 			# the first spawned object: select it by a click, wait for the bar to fill, save the picture
 			var name: String = _spawned.keys()[0]
@@ -1700,6 +1782,8 @@ func _run_scenario() -> void:
 			await _move2()
 		"move3":
 			await _move3()
+		"occlude1":
+			await _occlude1(shots)
 		"fx_battle":
 			await _fx_battle(shots)
 		"phys1_melee":
@@ -2165,6 +2249,45 @@ func _smooth2_segment(label: String, csv: FileAccess) -> void:
 # lane MOVE-2 (FEEDBACK-1 F4): the slot-distance test's march (engine/tests/test_move2_slot_distance.cpp) drawn: every --m2-horde side by side 110 apart at
 # --m2-from, each ordered on its own to --m2-to (offset sideways as it started), then left standing; the camera follows the members' drawn centre from
 # --s2-height. Every 2 s it prints MOVE2 SPREAD: per horde the largest distance of a member from its horde object (a lost member stays far behind).
+# lane OCCLUDE-1: a horde walks behind a building and back; the markers on, then off through script action 298 (OPTIONS_SET_OCCLUSION_MODE)
+func _occlude1(shots: String) -> void:
+	var c := _m2_from
+	var building: int = _world.create_object(_oc_building, _local_index, c.x, c.y, 0.0)
+	if building <= 0:
+		_fail("occlude1: cannot create " + _oc_building)
+		return
+	var a := c + Vector2(-300.0, _oc_behind)
+	var b := c + Vector2(300.0, _oc_behind)
+	var horde: int = _world.create_object(_oc_horde, _local_index, a.x, a.y, 0.0)
+	if horde <= 0:
+		_fail("occlude1: cannot create " + _oc_horde)
+		return
+	_cam_target = c
+	_cam_height = _s2_height
+	_place_camera()
+	await _frames(20)
+	for pass_index in 2:
+		var on := pass_index == 0
+		if not on:
+			var r: Dictionary = _world.debug_script_action("OPTIONS_SET_OCCLUSION_MODE", [{"type": 8, "int": 0}])
+			if not r.get("ok", false):
+				_fail("occlude1: OPTIONS_SET_OCCLUSION_MODE: %s" % [r])
+				return
+		_caption = "Behind-building markers ON (GameData UseBehindBuildingMarker)" if on else "Markers OFF (script action OPTIONS_SET_OCCLUSION_MODE 0)"
+		var to := b if on else a
+		_world.order_move([horde], to.x, to.y, {})
+		var t := 0.0
+		var shot_taken := false
+		while t < _bench_seconds:
+			await get_tree().process_frame
+			t += get_process_delta_time()
+			if not shot_taken and t >= _bench_seconds * 0.5 and not shots.is_empty():
+				_save(shots.path_join("occlude1-on.png" if on else "occlude1-off.png"))
+				shot_taken = true
+		print("OCCLUDE1 pass %s done" % ("on" if on else "off"))
+	print("OCCLUDE1 DONE")
+
+
 func _move2() -> void:
 	if _m2_hordes.is_empty():
 		_fail("move2 needs --m2-horde objects")

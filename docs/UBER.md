@@ -365,7 +365,9 @@ That's a research item, not a plan.
     `tests/data/uber1/battle3000_40.hashes`;
   - the hash's own dispatches are counted apart from the frame's, and with
     more than one thread its chunks ran on workers;
-  - a Faithful hash dispatches nothing.
+  - a Faithful hash dispatches once (lane PERF-HD: its words are recorded on
+    the pool, the objects' and the other sections', and chained in order on
+    the calling thread: the serial walk's value).
 
   Every phase adds its own battle and threads to this test.
 - **Across machines, with every parallel simulation change (not only at U5):**
@@ -511,6 +513,38 @@ found no closest cell at all and gave no path, after 72% of all their cells.
   top of the first step (30k, 30 frames, a busy PC): 174 -> 161 ms default
   threads (clash frames 182 -> 154), 254 -> 237 ms one thread; the 10k battle
   within the noise. The Uber pin vector was regenerated again.
+
+### PERF-HD: the queue's searches capped at the call's budget (done)
+
+On Helm's Deep (11,700 objects) the profile ran 1.9x slower than Faithful with
+logic frames of up to 1.4 s: PATHPERF-4's burst budget never ended in the
+sustained melee (the queue sits at 300-450 requests), and retail's cell limit
+counts only cells that passed the movement checks, so a search in a press
+(nearly every neighbour occupied: a record already there, closed uncounted)
+closed 200,000+ cells, plus up to 25,000 of the shortcut walk.
+
+- **Uber rule change:** a request the queue serves is capped at the cells the
+  call has left of its budget (at least 2,000), counted in every cell the
+  search closes or walks, in every search kind (the main loop, the attack path,
+  the hierarchical block search, the patch, the safe and the move-away
+  searches); the capped search gives the exhausted search's answer. The cell
+  search after a block search (in `findPath` and `findAttackPath`) and the
+  attack path's fallback search each count from zero, so a block search that
+  spent the cap still leaves them a closest cell. The burst
+  scale is 2. What a player can notice: a unit in a press gets a partial path
+  sooner. The Uber pin vector was regenerated.
+- **Uber rule change:** a contained object's EmotionTrackerUpdate sleeps until
+  it leaves its container (Faithful calls it every frame for every horde
+  member; the wake frames are in the state hash).
+- Result (Helm's Deep, seed 7, 400 frames, headless): logic 180 -> 88 ms a
+  frame (Faithful 95), the worst frame 1,417 -> 384 ms, the melee's
+  pathfinding over 100 -> 24-28 ms a frame. In the client the profile's mean
+  frame is 4 % under Faithful's and its tail still worse: it plays the heavier
+  battle (every path request served; Faithful's 511-slot ring refuses many).
+- Result (the uber bench, map mp fall back 8p, 8 players, 16 threads, 50
+  frames, mean tick of two runs, without and with this rule): 10k troops
+  132 -> 92 ms, 20k 204 -> 133 ms, 40k 345 -> 217 ms; ticks over the 200 ms
+  clock at 20k: 23-30 -> 0-1 of 50, at 40k: 49-50 -> 25-29.
 
 ### U2: parallel queries and paths, GPU animation (next)
 

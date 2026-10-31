@@ -47,8 +47,8 @@
 //   * a porter (a dozer without a supply interface, RW 0x88B897) that reaches a structure it is to place goes into it (RW 0x88C51B: UNSELECTABLE, UNATTACKABLE,
 //     DO_NOT_PICK_ME and WONT_RIDE_WITH_YOU set, out of the world RW 0x68C18F) and comes out (RW 0x88D6AE) when the build ends (walking BuilderMoveFromNewStructure
 //     Distance away from it, a PLAYER-sourced move) or the task is cancelled: back in the world RW 0x68E31F, the statuses cleared.
-// INFERENCE / NOT PORTED (stops S-304, S-1282): the structure is made at the order with every BUILD-1 effect (RW makes it PHANTOM and places it on arrival); the
-// client side of the hiding (the selection removed, the fade in over BuilderFadeInTime); the face command 0x26 (the AI face state 36) runs as nothing; the bridge tower branch of the dock position; the bored wander (RW 0x88E17F, an AI player's dozer); the TheInGameUI idle worker
+// INFERENCE / NOT PORTED (stops S-304, S-1282): the placement's TerrainLogic calls (RW 0x684BCA / 0x684CBA, lane FBSIM-1 ported the phantom and its placement); the
+// selection removed at the hiding (TheInGameUI; the drawable's fade out at the work and in at the exit is ported, lane PORTERFOG-1); the face command 0x26 (the AI face state 36) runs as nothing; the bridge tower branch of the dock position; the bored wander (RW 0x88E17F, an AI player's dozer); the TheInGameUI idle worker
 // list is the marked flag (isIdleWorker); the primary machine reset after a PLAYER command runs before the command (RW: after it); the dozer's "a task ended"
 // notification to the AI player is also sent when a task is cancelled or fails (S-890).
 //
@@ -103,6 +103,9 @@ public:
 
 	DozerAIUpdate(Thing *thing, const ModuleData *data);
 	~DozerAIUpdate() override; // RW 0x88D1AC: finishBuildingSound (RW 0x88BFA9) first
+	// lane BFME2CAMP1 (review): RW 0x88D1AC's tail: a dozer that still has an unplaced phantom (+ 0x568) removes it (RW 0x88CFFE: the price back, the phantom
+	// destroyed). The port runs it when the dozer is destroyed in the game (Module::onDelete), not in the destructor, which also runs at the logic's teardown
+	void onDelete() override;
 	// RW 0x88E44F (DozerAIUpdate::aiDoCommand): a PLAYER command other than repair (0x13), resume construction (0x14) and move away (0x34) cancels the current task
 	// before it runs (dozer interface slot 0x34) and resets the primary machine
 	void commandAccepted(CommandSourceType source, int command, Object *target) override;
@@ -117,8 +120,10 @@ public:
 	// plus the RotWK bits 0x80 and 0x400 whose meaning is not read, S-301): a nonzero result rejects the order. The dispatcher asks it before it changes the builder's state
 	static constexpr unsigned kConstructLegalFlags = 0x49F;
 	bool siteIsLegal(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
-	// RW vslot 0x1F8 (RW 0x88C217): makes the foundation of `what` at `pos` and starts the build task; null when refused (illegal site, no money)
-	Object *construct(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
+	// RW vslot 0x1F8 (RW 0x88C217): makes the foundation of `what` at `pos` and starts the build task; null when refused (illegal site, no money). The 5th
+	// argument (lane BFME2CAMP1) is the rebuild flag, kept in + 0x4D0 (m_isRebuild) by every call: a rebuild (RebuildHoleBehavior) skips the can-make and
+	// legality tests (RW 0x88C23D), pays nothing (RW 0x88D2F9) and is placed without the legality test, RECONSTRUCTING (RW 0x88D44F)
+	Object *construct(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool isRebuild = false);
 	// MSG_RESUME_CONSTRUCTION: RW 0x8ACEA9 (vslot 0xB4): the ActionManager's test, then newTask(BUILD, structure); the command path first idles a dozer without a task
 	bool resumeConstruction(Object &structure);
 	// lane BUILD-2: RW 0x88BD8D (vslot 0xB0, MSG_DO_REPAIR, a worker spawned to repair): the ActionManager's test and a free sole benefactor, then newTask(REPAIR)
@@ -186,6 +191,7 @@ protected:
 	void notifyAIPlayerDozerFree();                 // slot 0x7C, RW 0x88BF4E
 	void hideInStructure();                         // RW 0x88C51B: a porter (not a worker) goes into the structure it starts
 	void showFromStructure(const Object *built);    // RW 0x88D6AE: it comes out (and walks away from `built` when given)
+	static void builderFade(Object &self, bool in); // lane PORTERFOG-1: RW 0x670AA2 / 0x670A50 with BuilderFadeInTime / BuilderFadeOutTime (client)
 
 	// the primary machine (ZH StateMachine semantics)
 	int primarySetState(int id);
@@ -213,6 +219,7 @@ protected:
 	int m_currentTask = DOZER_TASK_INVALID;
 	int m_buildSubTask = DOZER_SELECT_BUILD_DOCK_LOCATION;
 	ObjectID m_unplacedStructure = INVALID_ID;
+	bool m_isRebuild = false; ///< + 0x4D0 (lane BFME2CAMP1): the last construct's rebuild flag (RW 0x88C217)
 	// primary machine
 	int m_primaryState = -1;          ///< -1 until the machine is made (RW 0x88C1C1)
 	UnsignedInt m_idleTimestamp = 0;  ///< IDLE + 0x20

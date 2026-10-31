@@ -45,6 +45,9 @@ struct SubsystemLoadOptions
 	// The -cinematics command-line switch. Off by default, like a normal launch.
 	bool cinematics = false;
 	bool bfme1 = false;
+	// lane BFME2MODE-0: BFME2 1.06's archives alone (Common/GameEdition.h isBfme2Data): its legend is Data\INI\Default\SubsystemLegend.ini (BFME2 1.06
+	// ini.big has no SubsystemLegendExpansion1.ini). The load order stays RotWK's (Phase 0: RotWK's rules on BFME2 data)
+	bool bfme2 = false;
 	// false: an INI error propagates (retail SubsystemInterface::loadIniFilesFromLegend does not
 	// catch). true: errors are recorded in the report and loading continues with the next file
 	// (the test harness).
@@ -84,6 +87,8 @@ public:
 	// B1 SubsystemLegend.cpp findEntry: AsciiString compare, i.e. case-sensitive.
 	const SubsystemLegendEntry *findEntry(const std::string &name) const;
 	const std::vector<SubsystemLegendEntry> &entries() const { return m_entries; }
+	// lane BFME2CAMP1: puts back entries taken with entries() (LoadBfme2CampaignsFromLegend reads another legend into this one for a moment)
+	void restoreEntries(std::vector<SubsystemLegendEntry> entries) { m_entries = std::move(entries); }
 
 	// B1 SubsystemInterface.cpp loadIniFilesFromLegend. Returns true when the legend named any
 	// file or path (the hard-coded paths are then skipped by the caller).
@@ -126,3 +131,13 @@ extern const char *const kSubsystemLegendFile;
 //      unverifiedOrder: ACCEPTANCE STOP, their real position was not recovered)
 // `legend` must be the one whose registerBlock() was called on ini's registry.
 void RunSubsystemIniLoad(SubsystemLegend &legend, INI &ini, const SubsystemLoadOptions &options, SubsystemLoadReport &report);
+
+// lane BFME2CAMP1, an OPENBFME ADDITION (not retail RotWK behaviour): RotWK's legend (kSubsystemLegendFile) gives TheLinearCampaignManager only
+// LinearCampaignExpansion1.ini, so BFME2's GOOD_CAMPAIGN / EVIL_CAMPAIGN (Data\INI\LinearCampaign.ini, shipped in RotWK's own INI.big) are never
+// parsed, although RotWK's main menu still holds their starters (RW 0x91BE05 "GOOD_CAMPAIGN", RW 0x91BDA6 "EVIL_CAMPAIGN", reached from the unregistered
+// handlers RW 0x91AF46 / 0x91AF69). This reads BFME2's own legend (kBfme2SubsystemLegendFile, BFME2 1.06's: its TheLinearCampaignManager entry names
+// LinearCampaign.ini) and loads the InitFiles of that entry RotWK's entry does not already name, after RotWK's, into the same manager (the
+// campaigns are appended: RotWK's keep their positions). Nothing when the mount has no such legend or the legend has no such entry (a mod's
+// choice); `legend` is left holding RotWK's entries. Recorded in report.subsystemsLoaded as "TheLinearCampaignManager [BFME2 legend, OpenBFME]".
+extern const char *const kBfme2SubsystemLegendFile;
+void LoadBfme2CampaignsFromLegend(SubsystemLegend &legend, INI &ini, const SubsystemLoadOptions &options, SubsystemLoadReport &report);

@@ -6,6 +6,7 @@
 extends RefCounted
 
 const AppIcon := preload("res://scripts/ui/app_icon.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 const DESKTOP_FILE := "openbfme.desktop"
 const ICON_NAME := "openbfme"
 
@@ -24,25 +25,25 @@ static func data_home() -> String:
 ## writes the icon and the entry under `home`; {ok, error, where}
 static func install(exe: String, home: String) -> Dictionary:
 	if home == "" or exe == "":
-		return {"ok": false, "error": "no data folder or no launcher path"}
+		return {"ok": false, "error": L10n.t("launcher.desktop_entry.no_paths")}
 	var icon_dir := home.path_join("icons/hicolor/256x256/apps")
 	var app_dir := home.path_join("applications")
 	for d in [icon_dir, app_dir]:
 		var e := DirAccess.make_dir_recursive_absolute(d)
 		if e != OK and not DirAccess.dir_exists_absolute(d):
-			return {"ok": false, "error": "cannot make %s: %s" % [d, error_string(e)]}
+			return {"ok": false, "error": L10n.t("launcher.desktop_entry.cannot_make", {"path": d, "why": error_string(e)})}
 	var png := Marshalls.base64_to_raw(AppIcon.PNG_BASE64)
 	if AppIcon.image() == null:
-		return {"ok": false, "error": "the launcher's icon does not decode"}
+		return {"ok": false, "error": L10n.t("launcher.desktop_entry.icon_undecodable")}
 	var writes := {icon_dir.path_join(ICON_NAME + ".png"): png, app_dir.path_join(DESKTOP_FILE): text(exe).to_utf8_buffer()}
 	for path in writes:
 		var f := FileAccess.open(path, FileAccess.WRITE)
 		if f == null:
-			return {"ok": false, "error": "cannot write %s: %s" % [path, error_string(FileAccess.get_open_error())]}
+			return {"ok": false, "error": L10n.t("launcher.desktop_entry.cannot_write", {"path": path, "why": error_string(FileAccess.get_open_error())})}
 		var stored: bool = f.store_buffer(writes[path])
 		f.flush()
 		var err: Error = f.get_error()
 		f.close()
 		if not stored or err != OK:
-			return {"ok": false, "error": "cannot write %s: %s" % [path, error_string(err) if err != OK else "short write"]}
+			return {"ok": false, "error": L10n.t("launcher.desktop_entry.cannot_write", {"path": path, "why": error_string(err)}) if err != OK else L10n.t("launcher.desktop_entry.short_write", {"path": path})}
 	return {"ok": true, "error": "", "where": app_dir.path_join(DESKTOP_FILE)}

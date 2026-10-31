@@ -13,7 +13,7 @@
 ## --opts5-shots=DIR writes opts5-<tab>-<w>x<h>.png and the entry points.
 extends RefCounted
 
-## the page's panel and help line (OpenBFMEOptionsPage.h: kPanelLeft / kPanelRight / kTop, the help line's rule at kHelpTop - 4)
+## Fixed horizontal bounds; each page reports its actual help line, whose rule is four pixels above it.
 const PANEL := Rect2(305, 182, 622, 358)
 const LABEL_FONT := "Albertus MT"
 const LABEL_SIZE := 16
@@ -177,10 +177,16 @@ func retail_unreachable(what: String) -> void:
 
 func layout_check(tab: String) -> void:
 	var st := page()
+	check("%s: the page reports its footer position" % tab, st.has("help_top"), str(st))
+	if not st.has("help_top"):
+		return
+	var help_top := float(st.help_top)
+	check("%s: the two-line footer fits above the bottom bar" % tab, help_top >= 540 and help_top + 2 + 2 * 14 <= 602, str(help_top))
+	var panel := Rect2(PANEL.position, Vector2(PANEL.size.x, help_top - 4 - PANEL.position.y))
 	var rows: Dictionary = st.get("rows", {})
 	var keys: Array = rows.keys()
 	if tab == "Controls":
-		check("Controls: the hot key list fits the panel", st.has("list") and PANEL.encloses(st.list), str(st.get("list")))
+		check("Controls: the hot key list fits the panel", st.has("list") and panel.encloses(st.list), str(st.get("list")))
 		return
 	check("%s: the tab has rows" % tab, not keys.is_empty(), "")
 	var bad := PackedStringArray()
@@ -188,12 +194,12 @@ func layout_check(tab: String) -> void:
 	for key in keys:
 		var r: Dictionary = rows[key]
 		if r.has("rect"):
-			if not PANEL.encloses(r.rect):
-				bad.append("%s's gadget %s is outside the panel %s" % [key, r.rect, PANEL])
+			if not panel.encloses(r.rect):
+				bad.append("%s's gadget %s is outside the panel %s" % [key, r.rect, panel])
 			boxes.append([key, r.rect])
 		if r.has("label_rect"):
 			var lr: Rect2 = r.label_rect
-			if not PANEL.encloses(lr):
+			if not panel.encloses(lr):
 				bad.append("%s's label room %s is outside the panel" % [key, lr])
 			boxes.append([key + " (label)", lr])
 			var w: float = float(shell.font_metrics(LABEL_FONT, LABEL_SIZE, false, str(r.label)).width)

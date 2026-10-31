@@ -103,6 +103,42 @@ struct PortalGame
 			game->advance(0.2);
 		}
 	}
+	// every gate of the map closed (GateOpenAndCloseBehavior::close, slot 8) or opened (slot 7) and settled: the number of gates
+	int setGates(bool open)
+	{
+		std::vector<GateOpenAndCloseBehavior *> gates;
+		for (Object *o = game->logic().getFirstObject(); o; o = o->getNextObject())
+		{
+			if (GateOpenAndCloseBehavior *b = GateOpenAndCloseBehavior::findGate(*o))
+			{
+				if (open)
+				{
+					b->open();
+				}
+				else
+				{
+					b->close();
+				}
+				gates.push_back(b);
+			}
+		}
+		const GateOpenAndCloseBehavior::State want = open ? GateOpenAndCloseBehavior::OPEN : GateOpenAndCloseBehavior::CLOSED;
+		for (int f = 0; f < 600; ++f)
+		{
+			bool settled = true;
+			for (const GateOpenAndCloseBehavior *b : gates)
+			{
+				settled = settled && b->state() == want;
+			}
+			if (settled)
+			{
+				break;
+			}
+			frames(1);
+		}
+		return (int)gates.size();
+	}
+	int closeGates() { return setGates(false); }
 	Object *first(const char *name)
 	{
 		for (Object *o = game->logic().getFirstObject(); o; o = o->getNextObject())
@@ -203,6 +239,12 @@ TEST_CASE("wall2 modules retail: through Helm's Deep's postern gate: a hero orde
 	OPENBFME_REQUIRE_START(s);
 	PortalGame g(*s);
 	g.frames(2);
+	// the fortress's main gate is open by default (OpenByDefault): through it the far side of the culvert is reached the long way, up the Deeping Wall's
+	// stair (HelmsDeepdoSectionD's ramp), along the wall tops, down into the Hornburg's courtyard (HelmsDeepdoStairsA5) and out by the main gate (a complete
+	// path of 365 nodes since the block search compares block zones as RotWK does, RW 0x9389A6). Closed, the culvert is the only way across
+	const int gates = g.closeGates();
+	MESSAGE(gates << " gates closed");
+	CHECK(gates == 2); // measured: the map's gates
 	Pathfinder &pf = g.game->ai().pathfinder();
 	Object *culvert = g.first("HelmsDeepCulvert");
 	REQUIRE(culvert);
@@ -227,6 +269,10 @@ TEST_CASE("wall2 modules retail: through Helm's Deep's postern gate: a hero orde
 	CHECK(partial);
 	CHECK(p->getLastNode()->getPosition()->y == 2930.5f);
 	delete p;
+	// the gates open again (the map's state) for the postern gate's part. Closed, findPath's goal step-back (QuickDoesPathExist) would not see the postern
+	// gate's portal chain: the port files the portals under the terrain variant of the effective zone (portalPathExists) and asks for the ends' zones in the
+	// other variant (clientSafeQuickDoesPathExist), where RotWK asks both through RW 0x938D89 (RW 0x6F5BB0 -> 0x6F5547); a WALL-2 follow-up, not this test's
+	CHECK(g.setGates(true) == gates);
 	const UpgradeTemplate *u = TheUpgradeCenter ? TheUpgradeCenter->findUpgrade("Upgrade_PosternGate") : nullptr;
 	REQUIRE(u);
 	culvert->giveUpgrade(u);
@@ -301,6 +347,11 @@ TEST_CASE("wall2 modules retail: a horde ordered across Helm's Deep's culvert ta
 			const UpgradeTemplate *u = TheUpgradeCenter ? TheUpgradeCenter->findUpgrade("Upgrade_PosternGate") : nullptr;
 			REQUIRE(u);
 			culvert->giveUpgrade(u);
+		}
+		else
+		{
+			// the main gate open, the horde walks round through the Hornburg (see the hero's test above): closed, only the culvert is left
+			CHECK(g.closeGates() == 2);
 		}
 		const Coord3D outside{ 1730.0f, 3150.0f, 0.0f }, inside{ 1730.0f, 2790.0f, 0.0f };
 		std::string error;
@@ -825,8 +876,10 @@ TEST_CASE("wall2 raised retail: Minas Tirith: MinisGate1's RaisedWallMesh P1 is 
 	CHECK(overPassage == 0);
 	CHECK(pf.raisedLayerCount() == 0);
 	CHECK(g.game->report().wallMeshProblems.size() == 7);
-	CHECK(wallCells == 8291);
-	CHECK(rampCells == 1874);
+	// fix/ramp-bridge-cells (RotWK's ramp cell RW 0x93527F on getRamp's Bridge: joints only at a ramp's two end edges, a covered cell the ramp's even over
+	// a wall top): 8291 / 1874 -> 8143 / 1785
+	CHECK(wallCells == 8143);
+	CHECK(rampCells == 1785);
 	// a hero beside the fortress's command centre walks onto the nearest wall top it reaches and stands at its height
 	Object *keep = nullptr;
 	for (Object *o = g.game->logic().getFirstObject(); o && !keep; o = o->getNextObject())

@@ -96,7 +96,12 @@ void ShroudManager::attach()
 	}
 	m_attached = true;
 	m_logic.setShroud(this);
-	m_hookToken = m_logic.addWorldHooks([this](Object &o) { registerObject(o); }, [this](Object &o) { unregisterObject(o); }, true); // part of RW 0x68E31F / 0x68C18F (lane GARRISON-1: a contain's world exit too)
+	// lane PORTERFOG-1: the world entry RW 0x68E31F registers an object without a record (RW 0x68E355 -> 0xB4D900) and marks the record dirty, forced
+	// (RW 0x68E364 -> 0xB4E2A0); the world exit RW 0x68C18F only marks it dirty, forced (RW 0x68C19B -> 0xB4E2A0). Both run for a contain's transitions too
+	// (lane GARRISON-1). The record goes only in the destructor, after its world exit (RW 0x69A8BC -> 0xB4D920 -> 0xB4F510): a non-containment listener's
+	// `left`, which also runs for an object a contain already took out of the world
+	m_hookToken = m_logic.addWorldHooks([this](Object &o) { registerObject(o); }, [this](Object &o) { markDirty(o, true); }, true);
+	m_destroyHookToken = m_logic.addWorldHooks(GameLogic::WorldHook(), [this](Object &o) { unregisterObject(o); }, false);
 	// RW 0x62EB85: the shroud manager is the first of the four subsystem updates before the destroy list (the other three, RW 0xDE435C / 0xDE8200 / 0xDE3BE8,
 	// are not ported: the row is this lane's until a lane ports one of them)
 	m_logic.installPhaseWork("subsystemsBeforeDestroy", [this]() { update(); });
@@ -119,6 +124,7 @@ void ShroudManager::detach()
 		m_logic.setShroud(nullptr);
 	}
 	m_logic.removeWorldHooks(m_hookToken);
+	m_logic.removeWorldHooks(m_destroyHookToken);
 	m_logic.installPhaseWork("subsystemsBeforeDestroy", std::function<void()>());
 	m_logic.removeStateHashContributor(m_hashToken);
 }
@@ -734,12 +740,12 @@ ObjectShroudStatus ShroudManager::peekObjectStatus(const Object &obj, int player
 
 ObjectShroudStatus ShroudManager::getObjectStatus(const Object &obj, int player)
 {
-	// RW 0x68D8F7: no record, or ALWAYS_VISIBLE -> 0
+	// RW 0x68D8F7: no record, or ALWAYS_VISIBLE (template + 0x10E bit 5) -> CLEAR (1, RW 0x68D914)
 	static const int alwaysVisible = kindIndex("ALWAYS_VISIBLE");
 	Record *r = recordOf(obj);
 	if (!r || obj.isKindOf((unsigned)alwaysVisible))
 	{
-		return OBJECTSHROUD_INVALID;
+		return OBJECTSHROUD_CLEAR;
 	}
 	if (player < 0 || player >= kMaxPlayers)
 	{
@@ -811,6 +817,12 @@ bool ShroudManager::hasRecord(const Object &obj) const
 	return recordOf(obj) != nullptr;
 }
 
+int ShroudManager::lookRadius(const Object &obj) const
+{
+	const Record *r = recordOf(obj);
+	return r ? r->radii.forward : -1;
+}
+
 ObjectShroudStatus ShroudManager::clientObjectStatus(const Object &obj, int player) const
 {
 	// getObjectStatus without its cache write (the client's read must not change state the simulation hashes)
@@ -818,7 +830,7 @@ ObjectShroudStatus ShroudManager::clientObjectStatus(const Object &obj, int play
 	const Record *r = recordOf(obj);
 	if (!r || obj.isKindOf((unsigned)alwaysVisible))
 	{
-		return OBJECTSHROUD_INVALID;
+		return OBJECTSHROUD_CLEAR; // RW 0x68D914
 	}
 	if (player < 0 || player >= kMaxPlayers)
 	{
@@ -952,10 +964,12 @@ ShroudManager::TemplateVision ShroudManager::templateVision(const ThingTemplate 
 		}
 		return fallback;
 	};
-	v.shroudClearingRange = real(F_RANGE, 0.0f);
-	// community PR #36, BFME1 data only: Object::initObject in Open-BFME-1 (as ZH's) gives an object whose ShroudClearingRange is the template default -1
-	// (no row) its VisionRange; Gondor's castle keep relies on it. RotWK / BFME2 keep the port's 0 for an unset row
-	if (tt.bfme1Data() && real(F_RANGE, -1.0f) == -1.0f)
+	// the ThingTemplate ctor defaults ShroudClearingRange (+0x4C0) to -1 (RW 0x73FB7A, the constant at RW 0xBD19DC) and the Object ctor takes the VisionRange
+	// (+0x4BC) for a -1 (RW 0x69990F: the ucomiss at RW 0x699DE2, the store at RW 0x699DF9), so a template with no ShroudClearingRange row clears its
+	// VisionRange (Farsight's FarSeeingPing, PalantirVisionPing, EyeOfSauron). BFME2 1.06: the same (decomp ObjectConstructor.cpp:549-551); BFME1 too
+	// (Object::initObject in Open-BFME-1, community PR #36: Gondor's castle keep)
+	v.shroudClearingRange = real(F_RANGE, -1.0f);
+	if (v.shroudClearingRange == -1.0f)
 	{
 		v.shroudClearingRange = real(F_VISION, 0.0f);
 	}
@@ -1515,10 +1529,12 @@ std::vector<std::string> ShroudManager::stopLines()
 		"0x82C167, the action helper: human and not script, as ZH ActionManager isObjectShroudedForAction); its other callers and the other action types were not read",
 		"[S-566] stealth and detection: RotWK's invisibility (InvisibilityUpdate, StealthDetectorUpdate, the InvisibilityManager, the INVISIBLE_STEALTH / CAMOUFLAGE "
 		"conditions and the INVISIBLE_DETECTED statuses) is lane STEALTH-1's (S-1040 .. S-1042); the shroud does not change for a stealthed object",
-		"[S-567] shroud drawing: one texel per cell with bilinear filtering multiplies the terrain, the water, rivers and roads by ShroudColor * level / 255 "
-		"(ClearAlpha / FogAlpha / ShroudAlpha) inside W3DShroud's one-texel border at ShroudAlpha (RW 0x472480 / 0x472EF4 / 0x472792, lane ZOOM-1); objects the "
-		"local player cannot see are not drawn, fogged ones are lit by the fogged light (S-4970); the roads' shroud is inferred (ZH's road buffer has no shroud pass); the radar "
-		"picture is multiplied per pixel; W3DShroud's filter and 4444 texel and W3DRadar's own texture were not read",
+		"[S-567] shroud drawing: one texel per cell with bilinear filtering (terrain.fxo's ShroudSampler: linear, clamp) multiplies the terrain, the water, rivers and roads by the "
+		"4-bit red nibble of W3DShroud's A4R4G4B4 texel of the cell's level (ClearAlpha / FogAlpha / ShroudAlpha) times ShroudColor (RW 0x47266B: FogAlpha 127 reads 7/15, not 127 / 255; "
+		"lane TERRAIN-SAMPLING) inside W3DShroud's one-texel border at ShroudAlpha (RW 0x472480 / 0x472EF4 / 0x472792, lane ZOOM-1); objects the "
+		"local player cannot see are not drawn, fogged ones are lit by the fogged light (S-4970); the water, rivers' and roads' shroud passes are inferred (ZH's road buffer has no shroud "
+		"pass; they read the red nibble like the terrain, where ZH's fixed-function passes would use the texel's green and blue too); the radar "
+		"picture is multiplied per pixel by level / 255; W3DRadar's own texture and W3DShroud's filter switch (the fogged ShroudSampler is plain linear) were not read",
 	};
 }
 
@@ -1611,6 +1627,10 @@ ShroudManager::ObjectSource ShroudManager::retailObjectSource()
 		static const int revealToAll = kindIndex("REVEAL_TO_ALL"), horde = kindIndex("HORDE");
 		static const int hordeMember = CombatNames::status("HORDE_MEMBER");
 		in.forward = in.side = in.rear = -1.0f;
+		if (!obj.isInWorld())
+		{
+			return; // RW 0x694A4F: Object + 0x474 clear (a contain took it out of the world): radii -1, the mask unchanged (lane PORTERFOG-1)
+		}
 		const Player *owner = obj.getControllingPlayer();
 		if (!owner)
 		{

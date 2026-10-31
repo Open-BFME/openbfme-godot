@@ -43,10 +43,10 @@ unknown (`selectFarm` below is **INFERENCE**).
 * RW 0x6F5F65 is Pathfinder::QuickDoesPathExistToStructure
   (PathfinderQuickStructure.cpp); args finder, &finder.position, farm, false.
 * RW 0x68C82D(13, &value, 0, 1) is Object::rva0028C15E in
-  ObjectRva0028C149.cpp (attribute modifier query). Value starts 1. The
+  Object.cpp (attribute modifier query). Value starts 1. The
   attribute's semantic name remains unproven here; numeric index 13 is certain.
 * RW 0x9BB2A7 is `rva005ACDD2`, Euclidean 3D distance via Coord3D::length.
-  RW 0x9BB2EA is `rva005ACE15` (Rva005ACE15Finish.cpp), distance from a point
+  RW 0x9BB2EA is `rva005ACE15` (AIFarmKillSquad.cpp), distance from a point
   to the infinite line through two points, **not a clamped segment**.
 * RW 0x77532D is integer-key tree `insert_unique`, not multimap insertion.
   Node +0x10 is score, +0x14 Object*. RW 0x423EA0 / 0x423F10 are STLport

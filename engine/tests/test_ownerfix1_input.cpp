@@ -9,6 +9,7 @@
 // Each test drives the real HUD (mouse events, key events, the movies' buttons, the control bar), counts the messages that reach the command list and checks
 // the effect in the world. They SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset. GPL-3.0.
 
+#include "HordeCompleteTestUtil.h"
 #include "HudTestUtil.h"
 
 #include "Common/Player.h"
@@ -91,8 +92,7 @@ struct HudFix
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string textError;
-		REQUIRE_MESSAGE(s.mount->fs->readFile("data/lotr.str", bytes, &textError), textError);
-		REQUIRE_MESSAGE(text.table.parse(bytes, &textError), textError);
+		REQUIRE_MESSAGE(text.table.loadRetail(*s.mount->fs, &textError), textError); // data/lotr.str, or a non-English install's lotr.csf
 		InGameHud::Config cfg{ *rig.game, *s.world, *s.mount->fs, services, rig.view, s.mouse, s.meta, &text };
 		hud = std::make_unique<InGameHud>(cfg);
 		std::string error;
@@ -172,6 +172,7 @@ struct HudFix
 		REQUIRE(c);
 		Coord3D at{ 600.0f, 600.0f, 0.0f };
 		c->setPosition(&at);
+		testutil::completeHorde(c); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		c->friend_onBuildComplete();
 		rig.local->science().grantScience(TheScienceStore->getScienceFromInternalName(science));
 		rig.game->shroud().revealMapForPlayerPermanently(rig.index());
@@ -442,6 +443,7 @@ TEST_CASE("ownerfix1 cutscene input: a double click, a drag box and the hero bar
 	at.x += 120.0f;
 	at.z = f.logic().getGroundHeight(at.x, at.y);
 	hero->setPosition(&at);
+	testutil::completeHorde(hero); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	hero->friend_onBuildComplete();
 	f.frames(40);
 	InGameHeroSelect *bar = f.hud->heroSelect();
@@ -691,8 +693,7 @@ TEST_CASE("ownerfix1 cutscene input: InGameHud's DISABLE_INPUT drops the help pr
 	RecordingShellServices services;
 	GameTextTableSource text;
 	std::vector<std::uint8_t> bytes;
-	REQUIRE_MESSAGE(s.mount->fs->readFile("data/lotr.str", bytes, &err), err);
-	REQUIRE_MESSAGE(text.table.parse(bytes, &err), err);
+	REQUIRE_MESSAGE(text.table.loadRetail(*s.mount->fs, &err), err); // data/lotr.str, or a non-English install's lotr.csf
 	InGameHud::Config cfg{ game, *s.world, *s.mount->fs, services, cam, s.mouse, s.meta, &text };
 	InGameHud hud(cfg);
 	REQUIRE_MESSAGE(hud.boot(&err), err);
@@ -912,8 +913,7 @@ struct CampaignHud
 		REQUIRE_MESSAGE(game->load(o, &err), err);
 		view = PinholeView({ 0, -400, 500 }, { 0, 0, 0 }, 1024, 768, 0.7f);
 		std::vector<std::uint8_t> bytes;
-		REQUIRE_MESSAGE(s.mount->fs->readFile("data/lotr.str", bytes, &err), err);
-		REQUIRE_MESSAGE(text.table.parse(bytes, &err), err);
+		REQUIRE_MESSAGE(text.table.loadRetail(*s.mount->fs, &err), err); // data/lotr.str, or a non-English install's lotr.csf
 		InGameHud::Config cfg{ *game, *s.world, *s.mount->fs, services, view, s.mouse, s.meta, &text };
 		hud = std::make_unique<InGameHud>(cfg);
 		REQUIRE_MESSAGE(hud->boot(&err), err);

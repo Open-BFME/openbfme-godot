@@ -938,8 +938,21 @@ TEST_CASE("logic retail: the GameData / AIData / MultiplayerSettings values the 
 	CHECK(g.initialCredits[4] == 2500);
 	CHECK(g.bodyThresholdsLoaded);
 	CHECK(g.startingCashLoaded);
-	// through the shared INI pipeline: the three files were read, and the fields no row reads are recorded (S-152), nested blocks included
-	CHECK(g.filesLoaded.size() == 3);
+	// lane AIDATA-1: the AIData rows the run-down hit, the skirmish team's waypoint arrival and the pathfinder read (default\aidata.ini: ChaseFromBehindLimit
+	// 50.0, SkirmishGroupFudgeDistance 4.0, WadeWaterDepth 5.0, DeepWaterDepth 6.0, MeleeApproachDist 48.0, MeleeApproachTolerance 20.0,
+	// CastleSiegeStandBackDistance 500.0, HordesWaitForHordes Yes)
+	CHECK(g.chaseFromBehindLimit == 50.0f);
+	CHECK(g.skirmishGroupFudgeDistance == 4.0f);
+	CHECK(g.wadeWaterDepth == 5.0f);
+	CHECK(g.deepWaterDepth == 6.0f);
+	CHECK(g.meleeApproachDist == 48.0f);
+	CHECK(g.meleeApproachTolerance == 20.0f);
+	CHECK(g.castleSiegeStandBackDistance == 500.0f);
+	CHECK(g.hordesWaitForHordes);
+	CHECK(g.guardRulesLoaded);
+	// through the shared INI pipeline: the four files were read (gamedata.ini, default\aidata.ini, aidata.ini, multiplayer.ini), and the fields no row reads
+	// are recorded (S-152), nested blocks included
+	CHECK(g.filesLoaded.size() == 4);
 	CHECK(g.unappliedFields.size() > 100);
 	CHECK(g.unappliedFields.count("AIData.SideInfo") == 1);
 	CHECK(g.unappliedFields.count("AIData.SkirmishBuildList") == 1);

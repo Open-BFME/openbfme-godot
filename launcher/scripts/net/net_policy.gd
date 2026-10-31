@@ -10,6 +10,7 @@
 ## Lane AIO-1: while the player's opt-in download of the game files runs (scripts/core/aio_install.gd, off by default), extra_hosts also
 ## holds the All In One BFME Launcher service's two hosts (HTTPS, no explicit port, like GitHub's); it is empty otherwise.
 extends RefCounted
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const GITHUB_HOSTS := ["api.github.com", "github.com"]
 const GITHUB_ASSET_SUFFIX := ".githubusercontent.com"
@@ -22,27 +23,27 @@ var extra_hosts: Array = []  # exact host names allowed besides GitHub's (lane A
 
 ## {ok, error, scheme, host, port, path (with query), origin}
 static func parse_url(url: String) -> Dictionary:
-	var bad := func(why: String) -> Dictionary: return {"ok": false, "error": "refused URL '%s': %s" % [url.left(200), why]}
+	var bad := func(why: String) -> Dictionary: return {"ok": false, "error": L10n.t("launcher.net_policy.refused_url", {"url": url.left(200), "why": why})}
 	var scheme := ""
 	if url.begins_with("https://"):
 		scheme = "https"
 	elif url.begins_with("http://"):
 		scheme = "http"
 	else:
-		return bad.call("not http(s)")
+		return bad.call(L10n.t("launcher.net_policy.why_not_http"))
 	var rest := url.substr(scheme.length() + 3)
 	var slash := rest.find("/")
 	var authority := rest if slash < 0 else rest.substr(0, slash)
 	var path := "/" if slash < 0 else rest.substr(slash)
 	if authority.is_empty():
-		return bad.call("no host")
+		return bad.call(L10n.t("launcher.net_policy.why_no_host"))
 	if "@" in authority:
-		return bad.call("user info in the URL")
+		return bad.call(L10n.t("launcher.net_policy.why_user_info"))
 	if "#" in path:
-		return bad.call("a fragment")
+		return bad.call(L10n.t("launcher.net_policy.why_fragment"))
 	for c in url:
 		if c.unicode_at(0) <= 0x20 or c.unicode_at(0) >= 0x7f or c == "\\":
-			return bad.call("characters outside printable ASCII")
+			return bad.call(L10n.t("launcher.net_policy.why_characters"))
 	var host := authority
 	var port := 443 if scheme == "https" else 80
 	var colon := authority.rfind(":")
@@ -50,11 +51,11 @@ static func parse_url(url: String) -> Dictionary:
 		host = authority.substr(0, colon)
 		var p := authority.substr(colon + 1)
 		if not p.is_valid_int() or p.to_int() < 1 or p.to_int() > 65535:
-			return bad.call("a bad port")
+			return bad.call(L10n.t("launcher.net_policy.why_bad_port"))
 		port = p.to_int()
 	host = host.to_lower()
 	if host.is_empty() or host.begins_with("[") or host.begins_with(".") or host.ends_with("."):
-		return bad.call("a bad host")
+		return bad.call(L10n.t("launcher.net_policy.why_bad_host"))
 	return {"ok": true, "error": "", "scheme": scheme, "host": host, "port": port, "path": path,
 		"origin": "%s://%s" % [scheme, authority.to_lower()], "explicit_port": colon >= 0}
 
@@ -67,9 +68,9 @@ func check(url: String) -> String:
 	if test_origin != "" and u.origin == test_origin:
 		return ""
 	if u.scheme != "https":
-		return "refused URL '%s': not HTTPS" % url.left(200)
+		return L10n.t("launcher.net_policy.not_https", {"url": url.left(200)})
 	if u.explicit_port:
-		return "refused URL '%s': an explicit port" % url.left(200)
+		return L10n.t("launcher.net_policy.explicit_port", {"url": url.left(200)})
 	var host: String = u.host
 	if host in GITHUB_HOSTS or host in extra_hosts:
 		return ""
@@ -80,13 +81,25 @@ func check(url: String) -> String:
 		var rx := RegEx.create_from_string("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 		if rx.search(label) != null:
 			return ""
-	return "refused URL '%s': %s is not a %s" % [url.left(200), host, "GitHub release host" if extra_hosts.is_empty() else "GitHub release or All In One BFME Launcher host"]
+	if extra_hosts.is_empty():
+		return L10n.t("launcher.net_policy.not_release_host", {"url": url.left(200), "host": host})
+	return L10n.t("launcher.net_policy.not_release_or_aio_host", {"url": url.left(200), "host": host})
 
 
 ## "" when `origin` may be the test origin (a test build only): plain HTTP to the loopback address with a port
 static func check_test_origin(origin: String) -> String:
 	var rx := RegEx.create_from_string("^http://(127\\.0\\.0\\.1|localhost):[0-9]{1,5}$")
-	return "" if rx.search(origin) != null else "the test API origin must be http://127.0.0.1:<port> (got '%s')" % origin
+	return "" if rx.search(origin) != null else L10n.t("launcher.net_policy.test_origin_form", {"origin": origin})
+
+
+## A new policy with the same rules (test origin, extra hosts, lobby). Each lobby request sets its lobby on its own copy, so the shared
+## updater.policy that running download / count / game-list threads read is never changed under them (PR #93 follow-up).
+func copy() -> RefCounted:
+	var p: RefCounted = get_script().new()
+	p.test_origin = test_origin
+	p.lobby_host = lobby_host
+	p.extra_hosts = extra_hosts.duplicate()
+	return p
 
 
 ## "" when `url` may be the online lobby (https, a host name, no port, path, query or user info), else why not. Sets lobby_host. A test build's lobby is its test
@@ -99,6 +112,6 @@ func set_lobby(url: String) -> String:
 	if test_origin != "" and u.origin == test_origin and u.path == "/":
 		return ""
 	if u.scheme != "https" or u.explicit_port or u.path != "/":
-		return "the online lobby must be https://host (got '%s')" % url.left(200)
+		return L10n.t("launcher.net_policy.lobby_form", {"url": url.left(200)})
 	lobby_host = u.host
 	return ""

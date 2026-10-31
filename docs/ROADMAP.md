@@ -68,8 +68,7 @@ skirmish AI or over LAN between Windows and Linux. The QA lanes played 71
 scripted games through the real input paths with no crash or stall, and every
 replay matched bit for bit. The campaign plays mission by mission with its
 movies and narration. Not there yet: save / load, War of the Ring, the
-Create-a-Hero builder, online play and mods; team colours are drawn with an
-inferred blend (S-119). The README's
+Create-a-Hero builder, online play and mods. The README's
 status table is the player-facing summary of this one.
 
 ## Milestones
@@ -148,8 +147,9 @@ Gate: a human-controlled base builds, earns and upgrades exactly as retail
 
 State: done. A skirmish starts from the real menu and is played with the real
 HUD to the score screen (QA-1, QA-2, PLAY-1, INPUT-1); HUD-5 is running.
-Team colours are drawn with an inferred blend (S-119); the retail combine
-is not recovered (S-022).
+Team colours are drawn with retail's combine wherever an instancer enables them
+(S-022 now reports only the ones that do not); the owner's colour source for a
+map that names none is still inferred (S-119).
 
 Gate: start a skirmish from the real menu, play it with the real HUD, and win
 or lose.
@@ -163,7 +163,7 @@ or lose.
 - SHELL-2: View3D shell map behind the menus, BinkMovie (intro and menu
   movies), loading screen (LoadScreen.apt), score screen, options, profiles.
 - RENDER-1: shadows, decals, terrain post effects (S-031), exact water/river,
-  weather, time-of-day, house colour combine (S-119), LOD rules.
+  weather, time-of-day, house colour owner source (S-119), LOD rules.
 
 ### M5 - Full skirmish 1:1, all base-game factions
 

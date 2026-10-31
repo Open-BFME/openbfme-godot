@@ -408,7 +408,7 @@ TEST_CASE("backlog4 defect r1: a defecting spawner takes its due orphans (RW 0x8
 	spawner->setStatus(kUnderConstruction, false);
 	control->setStatus(kUnderConstruction, false);
 	Object *lateOrphan = f.unit("DefectOrphan", 'B', 300, 640);
-	orphan->kill(0);
+	orphan->kill(DAMAGE_UNRESISTABLE, 0);
 	f.frames(30);
 	CHECK(cb->spawns() == std::list<ObjectID>{ controlOrphan->getID(), controlOrphan2->getID() });
 	CHECK(controlOrphan->getProducerID() == control->getID());

@@ -6,8 +6,8 @@
 ##   window_mode    windowed | borderless | fullscreen   borderless = Godot's WINDOW_MODE_FULLSCREEN (a borderless window over the whole screen);
 ##                                                       fullscreen = WINDOW_MODE_EXCLUSIVE_FULLSCREEN (exclusive on Windows; the same as borderless on
 ##                                                       Linux and macOS, Godot's own rule)
-##   resolution     "WxH" the window's size in windowed mode; "" keeps the size the window has. Godot does not change the monitor's display mode, so
-##                  the two fullscreen modes always cover the screen at its own resolution; render_scale lowers the 3D resolution there.
+##   resolution     "WxH" the window's size in windowed mode, or the viewport's render size in either fullscreen mode (scaled to fit, preserving
+##                  aspect ratio). "" keeps the window's size in windowed mode and uses the desktop in fullscreen. The monitor's display mode is unchanged.
 ##   vsync          on | off | adaptive | mailbox             (DisplayServer vsync modes; the screen offers the first three, mailbox stays a file / --vsync value)
 ##   max_fps        0 (no limit) or a frame cap in frames per second (Engine.max_fps)
 ##   show_fps       the frame-rate counter (scripts/fps_overlay.gd; F11 toggles it)
@@ -197,7 +197,8 @@ static func window_mode_now(window: Window, fallback: String) -> String:
 ## What the window and the driver run with, to put back exactly (the options screen's CANCEL)
 static func snapshot(window: Window) -> Dictionary:
 	return {"vsync": DisplayServer.window_get_vsync_mode(), "max_fps": Engine.max_fps, "scaling_mode": window.scaling_3d_mode, "scale": window.scaling_3d_scale,
-		"mode": window.mode, "size": window.size, "position": window.position}
+		"mode": window.mode, "size": window.size, "position": window.position, "content_mode": window.content_scale_mode,
+		"content_size": window.content_scale_size, "content_aspect": window.content_scale_aspect}
 
 
 static func restore(window: Window, snap: Dictionary) -> void:
@@ -206,6 +207,9 @@ static func restore(window: Window, snap: Dictionary) -> void:
 	Engine.max_fps = snap.max_fps
 	window.scaling_3d_mode = snap.scaling_mode
 	window.scaling_3d_scale = snap.scale
+	window.content_scale_mode = snap.content_mode
+	window.content_scale_size = snap.content_size
+	window.content_scale_aspect = snap.content_aspect
 	if window.mode != snap.mode:
 		# a window comes back to its own size and place first, then is maximised / made full screen again
 		if window.mode != Window.MODE_WINDOWED:
@@ -318,7 +322,11 @@ func apply(window: Window, previous = null) -> Dictionary:
 		var want := window_mode_of(window_mode)
 		if window.mode != want:
 			window.mode = want
-	if window_mode == "windowed" and resolution != Vector2i.ZERO and (mode_changed or res_changed):
+	if mode_changed or res_changed:
+		window.content_scale_size = resolution if window_mode != "windowed" else Vector2i.ZERO
+		window.content_scale_mode = Window.CONTENT_SCALE_MODE_VIEWPORT if window_mode != "windowed" and resolution != Vector2i.ZERO else Window.CONTENT_SCALE_MODE_DISABLED
+		window.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
+	if window_mode == "windowed" and resolution.x >= 320 and resolution.y >= 240 and (mode_changed or res_changed):
 		if window.mode == Window.MODE_MAXIMIZED or window.mode == Window.MODE_MINIMIZED:
 			window.mode = Window.MODE_WINDOWED
 		if window.size != resolution:
@@ -328,5 +336,7 @@ func apply(window: Window, previous = null) -> Dictionary:
 			if area.size.x > 0 and area.size.y > 0:
 				window.position = area.position + (area.size - resolution) / 2
 	if mode_changed or res_changed:
-		applied.append("window %s %s" % [window_mode, resolution_text(window.size if window_mode == "windowed" else DisplayServer.screen_get_size())])
+		applied.append("window %s %s" % [window_mode, resolution_text(window.size if window_mode == "windowed" else DisplayServer.screen_get_size(window.current_screen))])
+		if window_mode != "windowed" and resolution != Vector2i.ZERO:
+			applied.append("render %s" % resolution_text(resolution))
 	return {"applied": applied, "problems": problems}

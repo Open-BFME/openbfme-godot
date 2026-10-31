@@ -78,6 +78,8 @@ public:
 	void onBuildComplete() override;
 	// DieModuleInterface
 	void onDie(const DieModuleInterface::Event &event) override;
+	// lane FBSIM-1: vtable RW 0xC5FC94 slot 8 (onDelete) RW 0x885362: the claim goes with the object too (a dozer's phantom removed before it is placed)
+	void onDelete() override;
 
 	// RW 0x5F2D53: the manager reports the share of the ground this module holds
 	void setClaimShare(float share) { m_share = share; }

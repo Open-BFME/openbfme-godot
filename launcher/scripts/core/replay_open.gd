@@ -1,12 +1,13 @@
 ## Shared bounded routing metadata. The game validates the complete file and mounted profile before loading.
 extends RefCounted
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const MAX_BYTES := 256 * 1024 * 1024
 const MAX_SAVE_BYTES := 2 * MAX_BYTES + 1024 * 1024 + 132
 
 
 static func refused(reason: String) -> Dictionary:
-	return {"ok": false, "error": "File refused: " + reason}
+	return {"ok": false, "error": L10n.t("launcher.replay_open.refused", {"reason": reason})}
 
 
 static func is_recording(path: String) -> bool:
@@ -28,7 +29,7 @@ static func arguments(args: PackedStringArray, test_prefixes: Array = []) -> Dic
 	elif rest.size() == 1:
 		path = rest[0].substr(9) if rest[0].begins_with("--replay=") else rest[0].substr(7) if rest[0].begins_with("--load=") else rest[0] if is_recording(rest[0]) else ""
 	if path.is_empty() or path.begins_with("--") or path.contains("\n") or path.contains("\r"):
-		return {"mode": true, "ok": false, "error": "Open exactly one replay or save: --replay <path> or --load <path> (no other actions)."}
+		return {"mode": true, "ok": false, "error": L10n.t("launcher.replay_open.bad_arguments")}
 	return {"mode": true, "ok": true, "path": path}
 
 
@@ -36,41 +37,41 @@ static func _string(file: FileAccess, maximum: int, end: int = -1) -> Dictionary
 	if end < 0:
 		end = file.get_length()
 	if end - file.get_position() < 4:
-		return refused("truncated recording header.")
+		return refused(L10n.t("launcher.replay_open.truncated_field"))
 	var n := file.get_32()
 	if n > maximum or n > end - file.get_position():
-		return refused("invalid or overlong recording header field.")
+		return refused(L10n.t("launcher.replay_open.overlong_field"))
 	var bytes := file.get_buffer(n)
 	if bytes.size() != n or bytes.has(0):
-		return refused("invalid recording header text.")
+		return refused(L10n.t("launcher.replay_open.invalid_text"))
 	var value := bytes.get_string_from_utf8()
 	if value.to_utf8_buffer() != bytes:
-		return refused("recording header is not UTF-8.")
+		return refused(L10n.t("launcher.replay_open.not_utf8"))
 	return {"ok": true, "value": value}
 
 
 static func read_header(path: String) -> Dictionary:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
-		return refused("cannot open file %s (%s)." % [path, error_string(FileAccess.get_open_error())])
+		return refused(L10n.t("launcher.replay_open.cannot_open", {"path": path, "reason": error_string(FileAccess.get_open_error())}))
 	if file.get_length() < 16:
-		return refused("truncated file header.")
+		return refused(L10n.t("launcher.replay_open.truncated_file"))
 	var magic := file.get_buffer(8).get_string_from_ascii()
 	var limit := MAX_SAVE_BYTES if magic == "OBFMESAV" else MAX_BYTES
 	if file.get_length() > limit:
-		return refused("the file exceeds the size limit of %d bytes." % limit)
+		return refused(L10n.t("launcher.replay_open.too_big", {"limit": limit}))
 	if magic == "OBFMESAV":
 		return _save_header(file)
 	if magic != "OBFMEREP":
-		return refused("not an OpenBFME replay or save (missing OBFMEREP / OBFMESAV header).")
+		return refused(L10n.t("launcher.replay_open.not_recording"))
 	var format := file.get_32()
 	if not format in [5, 6, 7, 8, 9, 10]:
-		return refused("replay version %d (this launcher reads 5 .. 10)." % format)
+		return refused(L10n.t("launcher.replay_open.replay_version", {"version": format}))
 	var profile := _string(file, 1024 * 1024)
 	if not profile.ok:
 		return profile
 	if format < 9:
-		return refused("legacy replay format %d did not record its release version or build date. Open it with the build that made it from the launcher; no version was guessed." % format)
+		return refused(L10n.t("launcher.replay_open.legacy_format", {"version": format}))
 	var version := _string(file, 128)
 	if not version.ok:
 		return version
@@ -89,7 +90,7 @@ static func _build(version: String, commit: String, date: String, kind: String) 
 	if version.is_empty() or version.contains("\n") or version.contains("\r") or version.contains("\t") or not _valid_date(date):
 		return _unknown_build()
 	if commit != "none" and RegEx.create_from_string("^[0-9a-f]{40}$").search(commit) == null:
-		return refused("invalid %s recording build." % kind)
+		return refused(L10n.t("launcher.replay_open.invalid_build", {"kind": kind}))
 	return {"ok": true, "error": "", "version": version, "commit": commit, "date": date, "kind": kind, "argument": "--load" if kind == "save" else "--replay"}
 
 
@@ -98,27 +99,27 @@ static func _valid_date(date: String) -> bool:
 
 
 static func _unknown_build() -> Dictionary:
-	return refused("Made with an unknown build. Open it with the build that made it from the launcher; no release version was guessed.")
+	return refused(L10n.t("launcher.replay_open.unknown_build"))
 
 
 static func _save_header(file: FileAccess) -> Dictionary:
 	if file.get_32() != 1 or file.get_buffer(4).get_string_from_ascii() != "HEAD":
-		return refused("unsupported save container or missing HEAD part.")
+		return refused(L10n.t("launcher.replay_open.save_container"))
 	var size := file.get_32()
 	if size > 1024 * 1024 or size < 4 or file.get_length() - file.get_position() < 32 + size:
-		return refused("invalid or truncated save HEAD part.")
+		return refused(L10n.t("launcher.replay_open.save_head"))
 	var digest := file.get_buffer(32)
 	var start := file.get_position()
 	var hash := HashingContext.new()
 	hash.start(HashingContext.HASH_SHA256)
 	hash.update(file.get_buffer(size))
 	if hash.finish() != digest:
-		return refused("the save is damaged (the header part's SHA-256 does not match its content).")
+		return refused(L10n.t("launcher.replay_open.save_damaged"))
 	file.seek(start)
 	var end := start + size
 	var format := file.get_32()
 	if not format in [1, 2, 3]:
-		return refused("save header version %d (this launcher reads 1, 2 and 3)." % format)
+		return refused(L10n.t("launcher.replay_open.save_version", {"version": format}))
 	var fields := []
 	for maximum in [128, 1024 * 1024, 40, 1024 * 1024, 1024 * 1024]:
 		var field := _string(file, maximum, end)
@@ -126,21 +127,21 @@ static func _save_header(file: FileAccess) -> Dictionary:
 			return field
 		fields.append(field.value)
 	if end - file.get_position() < 12:
-		return refused("truncated save header.")
+		return refused(L10n.t("launcher.replay_open.truncated_save"))
 	file.seek(file.get_position() + 12) # game kind, frame, state hash
 	for i in 5: # description, map path, map label, save date, save time (not the build date)
 		var field := _string(file, 1024 * 1024, end)
 		if not field.ok:
 			return field
 	if end - file.get_position() < 4:
-		return refused("truncated save header.")
+		return refused(L10n.t("launcher.replay_open.truncated_save"))
 	file.seek(file.get_position() + 4) # commands
 	var campaign := _string(file, 1024 * 1024, end)
 	if not campaign.ok:
 		return campaign
 	var tail := 8 + (8 if format >= 2 else 0) # mission, difficulty; save point and flags
 	if end - file.get_position() < tail:
-		return refused("truncated save header.")
+		return refused(L10n.t("launcher.replay_open.truncated_save"))
 	file.seek(file.get_position() + tail)
 	var date := {"ok": true, "value": ""}
 	if format >= 3:
@@ -148,7 +149,7 @@ static func _save_header(file: FileAccess) -> Dictionary:
 		if not date.ok:
 			return date
 	if file.get_position() != end:
-		return refused("unexpected bytes after save header fields.")
+		return refused(L10n.t("launcher.replay_open.save_extra"))
 	return _build(fields[0], fields[2], date.value, "save")
 
 
@@ -162,7 +163,7 @@ static func select_build(header: Dictionary, installed: Array) -> Dictionary:
 		return _unknown_build()
 	var date: String = header.get("date", "")
 	var label: String = preload("res://scripts/core/semver.gd").display(header.version)
-	var suffix := " (%s)" % ("build date unavailable" if date == "" else date)
+	var suffix := " " + L10n.t("launcher.replay_open.build_suffix", {"date": L10n.t("launcher.replay_open.build_date_unavailable") if date == "" else date})
 	if not label.ends_with(suffix):
 		label += suffix
-	return refused("Made with %s. Install that version from the launcher, then open this %s again. No matching build is installed; the selected or newest version was not started." % [label, header.get("kind", "replay")])
+	return refused(L10n.t("launcher.replay_open.not_installed", {"label": label, "kind": header.get("kind", "replay")}))

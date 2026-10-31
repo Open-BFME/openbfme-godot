@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Lane SIGNKMS-1: the trusted release keys, the signature envelope and the verification rule (docs/RELEASE.md, "The release keys").
+"""Lane SIGNKMS-1: the trusted release keys, the signature envelope and the verification rule (docs/RELEASE.md, "Nightly signing on GitHub Actions").
 
     python3 tools/release/release_keys.py --verify LIST|HEX KIND FILE SIGFILE     exit 0 and the key's label when SIGFILE is valid
     python3 tools/release/release_keys.py --check LIST                            the list parses (and its first entry is release_key.pub)
     python3 tools/release/release_keys.py --hex LIST [--format lines|csv|json]     the keys, in file order (package.sh, build_launcher.sh)
-    python3 tools/release/release_keys.py --policy [FILE]                          signing_policy.json parses; prints it
-    python3 tools/release/release_keys.py --spki-to-hex FILE                       the 64 hex of a public key file the AWS console downloads
-                                                                                   for a KMS key (DER SubjectPublicKeyInfo or PEM): the
-                                                                                   kms-2026 line's key
+    python3 tools/release/release_keys.py --verify LIST|HEX KIND FILE SIGFILE --nightly NLIST
+                                                                                   the same with NLIST's nightly-only keys (below)
+    python3 tools/release/release_keys.py --check-nightly NLIST [--stable LIST]    the nightly list parses (none of its keys in LIST)
+    python3 tools/release/release_keys.py --hex-nightly NLIST [--format ...]       its keys (possibly none: json [], csv/lines empty)
+    python3 tools/release/release_keys.py --spki-to-hex FILE                       the 64 hex of a DER SubjectPublicKeyInfo or PEM public key
 
 The list (launcher/release_keys.pub, committed, public): one key per line, `<64 lower-case hex>  <label>`; '#' comments and blank lines
 are allowed. 1..8 keys, no key twice, no label twice, labels [a-z0-9-]{1,32}. The first entry is the legacy key, the one every launcher
@@ -19,6 +20,12 @@ A 64-byte signature `sig` over the bytes `data` of the file kind `kind` is valid
     envelope(kind, data) = b"OpenBFME signature v2\\n" + kind + b"\\n" + sha512(data).hexdigest() + b"\\n"
 kind is one of manifest.json, manifest-macos.json, payload.json (launcher-manifest.json, a copy of a release's manifest.json, is
 "manifest.json"). Everything else fails closed: an unknown key, a wrong size, changed data, the wrong kind, an empty list.
+
+Lane RELGH-2: the NIGHTLY list (launcher/nightly_keys.pub, the same line format, 0..4 keys, none of them in the stable list) holds keys
+trusted for nightly releases ONLY. A signature under a nightly key is valid iff it verifies (raw or envelope) AND the signed file is a
+JSON object whose "version" is a nightly tag (NIGHTLY_VERSION) and, for the manifest kinds, whose "channel" is "preview"
+(is_nightly_document). So a nightly key can never make a stable manifest, a stable launcher proof or a stable package's payload.json
+valid; the launcher (launcher/scripts/crypto/release_signature.gd valid_scoped) and the game apply the same rule.
 Pure standard library plus tools/release/ed25519.py.
 """
 from __future__ import annotations
@@ -37,15 +44,17 @@ import ed25519  # noqa: E402
 
 ENVELOPE_MAGIC = b"OpenBFME signature v2\n"
 KINDS = ("manifest.json", "manifest-macos.json", "payload.json")
-# the file names a kind is taken from (sign_manifest.py --verify, kms_sign.py): a release's file, or the launcher's proof copy
+# the file names a kind is taken from (sign_manifest.py --verify): a release's file, or the launcher's proof copy
 KIND_OF_NAME = {"manifest.json": "manifest.json", "manifest-macos.json": "manifest-macos.json", "payload.json": "payload.json",
                 "launcher-manifest.json": "manifest.json"}
 MAX_KEYS = 8
 LABEL = re.compile(r"[a-z0-9-]{1,32}")
 HEX_KEY = re.compile(r"[0-9a-f]{64}")
-POLICY_FILE = HERE / "signing_policy.json"
-PHASES = ("transition", "kms")
 DEFAULT_LIST = HERE.parents[1] / "launcher" / "release_keys.pub"
+NIGHTLY_LIST = HERE.parents[1] / "launcher" / "nightly_keys.pub"
+MAX_NIGHTLY_KEYS = 4
+# a nightly's tag (autorelease.py nightly-version: <YYMMDD><1|2>00 since NIGHTLY-2, <YYYYMMDD> before)
+NIGHTLY_VERSION = re.compile(r"v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})-nightly\.[0-9]{8,9}")
 
 
 SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")   # SubjectPublicKeyInfo { id-Ed25519, BIT STRING (32) }
@@ -84,7 +93,7 @@ def envelope(kind: str, data: bytes) -> bytes:
     return ENVELOPE_MAGIC + kind.encode("ascii") + b"\n" + hashlib.sha512(data).hexdigest().encode("ascii") + b"\n"
 
 
-def parse(text: str, where: str = "the key list") -> list[tuple[str, bytes]]:
+def parse(text: str, where: str = "the key list", allow_empty: bool = False, max_keys: int = MAX_KEYS) -> list[tuple[str, bytes]]:
     """[(label, 32-byte key)] of a key list's text, strictly (KeyListError on any malformed line)"""
     keys: list[tuple[str, bytes]] = []
     for n, raw in enumerate(text.split("\n"), 1):
@@ -108,9 +117,9 @@ def parse(text: str, where: str = "the key list") -> list[tuple[str, bytes]]:
         if point is None or ed25519.is_small_order(point):
             raise KeyListError(f"{where} line {n}: {label} is not a usable Ed25519 public key (not a curve point, or of small order)")
         keys.append((label, key))
-        if len(keys) > MAX_KEYS:
-            raise KeyListError(f"{where}: more than {MAX_KEYS} keys")
-    if not keys:
+        if len(keys) > max_keys:
+            raise KeyListError(f"{where}: more than {max_keys} keys")
+    if not keys and not allow_empty:
         raise KeyListError(f"{where}: no key")
     return keys
 
@@ -175,33 +184,41 @@ def verify(keys, kind: str, data: bytes, sig: bytes) -> str | None:
     return got[0] if got else None
 
 
-def load_policy(path: Path | str = POLICY_FILE) -> dict:
-    """tools/release/signing_policy.json, strictly: exactly phase / kms_label / legacy_label"""
+def load_nightly(path: Path | str = NIGHTLY_LIST, stable: Path | str | None = DEFAULT_LIST) -> list[tuple[str, bytes]]:
+    """lane RELGH-2: the nightly-only keys of `path` (possibly none); none of them may be in the stable list `stable` (None: not checked)"""
+    path = Path(path)
     try:
-        p = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        raise KeyListError(f"{Path(path).name}: cannot be read ({e})")
-    if not isinstance(p, dict) or set(p) != {"phase", "kms_label", "legacy_label"}:
-        raise KeyListError(f"{Path(path).name}: must hold exactly phase, kms_label and legacy_label")
-    if p["phase"] not in PHASES:
-        raise KeyListError(f"{Path(path).name}: phase {p['phase']!r} is not one of {', '.join(PHASES)}")
-    for k in ("kms_label", "legacy_label"):
-        if not isinstance(p[k], str) or not LABEL.fullmatch(p[k]):
-            raise KeyListError(f"{Path(path).name}: {k} is not a key label")
-    if p["kms_label"] == p["legacy_label"]:
-        raise KeyListError(f"{Path(path).name}: kms_label and legacy_label are the same")
-    return p
+        text = path.read_text(encoding="ascii")
+    except (OSError, UnicodeDecodeError) as e:
+        raise KeyListError(f"{path}: cannot be read ({e})")
+    keys = parse(text, path.name, allow_empty=True, max_keys=MAX_NIGHTLY_KEYS)
+    if stable is not None:
+        both = {k for _, k in keys} & {k for _, k in load(stable)}
+        if both:
+            raise KeyListError(f"{path.name}: {len(both)} key(s) also in {Path(stable).name}: a nightly key is never a stable key")
+    return keys
 
 
-def policy_key(keys, policy: dict, which: str) -> bytes:
-    """the key the policy names (which: kms_label | legacy_label); the legacy key must be the list's first entry"""
-    label = policy[which]
-    found = [k for lb, k in keys if lb == label]
-    if not found:
-        raise KeyListError(f"the trusted list has no key labelled {label} ({which})")
-    if which == "legacy_label" and keys[0][0] != label:
-        raise KeyListError(f"the trusted list's first entry is {keys[0][0]}, not the legacy key {label}")
-    return found[0]
+def is_nightly_document(kind: str, data: bytes) -> bool:
+    """lane RELGH-2: the signed file is a nightly's: a JSON object whose version is a nightly tag (manifest kinds: and channel preview)"""
+    try:
+        d = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(d, dict) or not isinstance(d.get("version"), str) or not NIGHTLY_VERSION.fullmatch(d["version"]):
+        return False
+    return kind == "payload.json" or d.get("channel") == "preview"
+
+
+def verify_scoped(keys, nightly, kind: str, data: bytes, sig: bytes) -> tuple[str, str] | None:
+    """(label, scheme) under the stable list `keys`, else under a nightly-only key of `nightly` when the file is a nightly document;
+    None when neither"""
+    got = verify_detail(keys, kind, data, sig)
+    if got:
+        return got
+    if nightly and is_nightly_document(kind, data):
+        return verify_detail(nightly, kind, data, sig)
+    return None
 
 
 def main(argv: list[str]) -> int:
@@ -210,16 +227,20 @@ def main(argv: list[str]) -> int:
     g.add_argument("--verify", nargs=4, metavar=("LIST", "KIND", "FILE", "SIGFILE"))
     g.add_argument("--check", metavar="LIST")
     g.add_argument("--hex", metavar="LIST")
-    g.add_argument("--policy", nargs="?", const=str(POLICY_FILE), metavar="FILE")
+    g.add_argument("--check-nightly", metavar="NLIST")
+    g.add_argument("--hex-nightly", metavar="NLIST")
     g.add_argument("--spki-to-hex", metavar="FILE")
     ap.add_argument("--format", choices=("lines", "csv", "json"), default="lines")
+    ap.add_argument("--nightly", metavar="NLIST", help="--verify: also the nightly-only keys of NLIST (nightly documents only)")
+    ap.add_argument("--stable", metavar="LIST", default=str(DEFAULT_LIST), help="--check-nightly / --hex-nightly: the stable list")
     a = ap.parse_args(argv)
     try:
         if a.verify:
             lst, kind, f, s = a.verify
             if kind not in KINDS:
                 raise KeyListError(f"{kind!r} is not a signed file kind ({', '.join(KINDS)})")
-            got = verify_detail(load_any(lst), kind, Path(f).read_bytes(), Path(s).read_bytes())
+            nightly = load_nightly(a.nightly, None) if a.nightly else []
+            got = verify_scoped(load_any(lst), nightly, kind, Path(f).read_bytes(), Path(s).read_bytes())
             if got:
                 print(f"signature ok: {Path(s).name} for {Path(f).name} ({got[0]}, {got[1]})")
                 return 0
@@ -229,6 +250,14 @@ def main(argv: list[str]) -> int:
             keys = load(a.check)
             print(f"key list ok: {', '.join(lb for lb, _ in keys)}")
             return 0
+        if a.check_nightly or a.hex_nightly:
+            nkeys = load_nightly(a.check_nightly or a.hex_nightly, a.stable)
+            if a.check_nightly:
+                print(f"nightly key list ok: {', '.join(lb for lb, _ in nkeys) or 'no key'}")
+                return 0
+            hexes = [k.hex() for _, k in nkeys]
+            print({"lines": "\n".join(hexes), "csv": ",".join(hexes), "json": json.dumps(hexes)}[a.format])
+            return 0
         if a.spki_to_hex:
             print(spki_to_key(Path(a.spki_to_hex).read_bytes()).hex())
             return 0
@@ -236,8 +265,7 @@ def main(argv: list[str]) -> int:
             hexes = [k.hex() for _, k in load(a.hex)]
             print({"lines": "\n".join(hexes), "csv": ",".join(hexes), "json": json.dumps(hexes)}[a.format])
             return 0
-        print(json.dumps(load_policy(a.policy), sort_keys=True))
-        return 0
+        raise KeyListError("no command")
     except (KeyListError, OSError, ValueError) as e:
         print(f"release_keys: {e}", file=sys.stderr)
         return 2

@@ -134,7 +134,21 @@ struct Unit : AIMoveHost
 	float speedOf(const PathfindObject &o) const override;
 	Coord2D unitDirectionOf(const PathfindObject &o) const override;
 	int pathPriority() const override { return priority; }
-	PathfindObjectID attackTargetOf(const PathfindObject &) const override { return PATHFIND_INVALID_ID; }
+	PathfindObjectID attackTarget = PATHFIND_INVALID_ID, enterTarget = PATHFIND_INVALID_ID; // lane PATHPRIO-1: RW 0x68B36F / AI vslot 0x1FC of this unit
+	PathfindObjectID attackTargetOf(const PathfindObject &o) const override;
+	PathfindObjectID enterTargetOf(const PathfindObject &o) const override;
+	bool pathThroughUnits = false, deployedSiegeTower = false; // lane PATHPRIO-1: onCollide's exits (AI + 0x3BA, SIEGE_TOWER + DEPLOYED)
+	bool canPathThroughUnits() const override { return pathThroughUnits; }
+	bool isDeployedSiegeTower() const override { return deployedSiegeTower; }
+	// RW 0x666079 .. 0x66607C: the AI drops its path-through-units flag (the mock keeps it on the object) and takes the destination as its machine's goal
+	int exitQuickPaths = 0;
+	Coord3D exitQuickDest{};
+	void finishExitQuickPath(const Coord3D &d) override
+	{
+		++exitQuickPaths;
+		exitQuickDest = d;
+		obj.throughUnits = false;
+	}
 	bool crushOrSquishPolicy(const PathfindObject &other) const override { return obj.canCrushOrSquish(other); } // the mock's levels are its template's
 	float wanderFactor() const override { return 0.0f; }
 	float closeEnoughDist() const override { return 10.0f; }
@@ -308,6 +322,16 @@ Unit::Unit(Sim *s, const LocomotorTemplate *t, PathfindObjectID id, float x, flo
 }
 unsigned Unit::frame() const { return sim->frame; }
 const PathfindObject *Unit::findPathfindObject(PathfindObjectID id) { return sim->world.findObjectByID(id); }
+PathfindObjectID Unit::attackTargetOf(const PathfindObject &o) const
+{
+	auto it = sim->units.find(o.getID());
+	return it == sim->units.end() ? PATHFIND_INVALID_ID : it->second->attackTarget;
+}
+PathfindObjectID Unit::enterTargetOf(const PathfindObject &o) const
+{
+	auto it = sim->units.find(o.getID());
+	return it == sim->units.end() ? PATHFIND_INVALID_ID : it->second->enterTarget;
+}
 AIMover *Unit::moverOf(PathfindObjectID id)
 {
 	auto it = sim->units.find(id);
@@ -410,7 +434,7 @@ TEST_CASE("ai move: two enemy units crossing head on both arrive (nobody deadloc
 	}
 	CHECK(bothDone);
 	// the lower id (1) is blocked by the priority rule (equal priority, both moving, not the same way) and patches its path (lane MOVE-3: RotWK's blocked repath
-	// RW 0x6631BF / 0x6F7938): the first free point is next to it (a moving unit holds no position, RW 0x8E26B7), the patch leads straight on and clears the
+	// RW 0x6631BF / 0x6F7938): the first free point is next to it (this harness registers no position cells; RotWK's moving ground units hold theirs, RW 0x8E26B7), the patch leads straight on and clears the
 	// blocked frames, so the unit no longer stops to give up after 11 frames (the old whole-path repath found no other way and waited for the give-up); with the
 	// harness's physical blocking stand-in the two would hold each other forever, RotWK lets them pass
 	CHECK(maxBlocked >= 1);
@@ -491,6 +515,81 @@ TEST_CASE("ai move: onCollide goes on only for enemies (getRelationship 0 = ENEM
 	}
 }
 
+TEST_CASE("pathprio1: onCollide ends for a unit that may path through units or is a deployed siege tower (RW 0x66E233)")
+{
+	Sim sim(40, 20);
+	sim.build();
+	Unit &a = sim.add(1, 55.0f, 105.0f);
+	Unit &e = sim.add(3, 60.0f, 105.0f, 1);
+	sim.order(a, 355.0f, 105.0f);
+	sim.step(false);
+	++sim.frame;
+	a.pathThroughUnits = true; // RW 0x66E253: AI + 0x3BA
+	a.ai->onCollide(e.obj);
+	CHECK(!a.ai->isBlocked());
+	CHECK(a.ai->colliderCount() == 0);
+	a.pathThroughUnits = false;
+	a.deployedSiegeTower = true; // RW 0x66E2A4: SIEGE_TOWER with status DEPLOYED
+	a.ai->onCollide(e.obj);
+	CHECK(!a.ai->isBlocked());
+	CHECK(a.ai->colliderCount() == 0);
+	a.deployedSiegeTower = false; // the same enemy blocks once the exits are off (equal priority, the lower id)
+	a.ai->onCollide(e.obj);
+	CHECK(a.ai->isBlocked());
+	CHECK(a.ai->blockedFrames() == 1);
+}
+
+TEST_CASE("pathprio1: onCollide ends when either unit attacks the other; blockedBy lets a unit that enters this one pass (RW 0x66E2D1, RW 0x66D20A)")
+{
+	Sim sim(40, 20);
+	sim.build();
+	Unit &a = sim.add(1, 55.0f, 105.0f);
+	Unit &e = sim.add(3, 60.0f, 105.0f, 1);
+	sim.order(a, 355.0f, 105.0f);
+	sim.step(false);
+	++sim.frame;
+	a.attackTarget = 3; // my victim is the other (RW 0x68B36F(self))
+	a.ai->onCollide(e.obj);
+	CHECK(a.ai->colliderCount() == 0);
+	a.attackTarget = PATHFIND_INVALID_ID;
+	e.attackTarget = 1; // I am the other's victim
+	a.ai->onCollide(e.obj);
+	CHECK(a.ai->colliderCount() == 0);
+	e.attackTarget = PATHFIND_INVALID_ID;
+	e.enterTarget = 1; // the other enters me: onCollide goes on, blockedBy answers no block
+	a.ai->onCollide(e.obj);
+	CHECK(!a.ai->isBlocked());
+	CHECK(a.ai->colliderCount() == 0);
+	e.enterTarget = PATHFIND_INVALID_ID;
+	a.ai->onCollide(e.obj);
+	CHECK(a.ai->isBlocked());
+	CHECK(a.ai->blockedFrames() == 1);
+}
+
+TEST_CASE("pathprio1: two moving units meeting head-on compare their path priorities signed (RW 0x66D553), a negative priority gives way")
+{
+	Sim sim(40, 20);
+	sim.build();
+	sim.physicalBlocking = false;
+	Unit &a = sim.add(1, 55.0f, 105.0f);
+	Unit &e = sim.add(3, 155.0f, 105.0f, 1);
+	e.priority = -10; // a crushable level of -1 (an attribute modifier): unsigned it would be the highest priority
+	sim.order(a, 355.0f, 105.0f);
+	sim.order(e, 25.0f, 105.0f);
+	for (int f = 0; f < 4; ++f)
+	{
+		sim.step(false);
+	}
+	REQUIRE(a.ai->isMoving());
+	REQUIRE(e.ai->isMoving());
+	++sim.frame;
+	sim.world.frame = sim.frame;
+	a.ai->onCollide(e.obj); // a (0) against e (-10): 0 > -10, a walks on
+	CHECK(a.ai->blockedFrames() == 0);
+	e.ai->onCollide(a.obj); // e (-10) against a (0): e is blocked
+	CHECK(e.ai->blockedFrames() == 1);
+}
+
 TEST_CASE("ai move: the repath cadence: a path found from the queue is not asked for again while the goal stands (isSame) and the timestamp throttles")
 {
 	Sim sim(150, 20);
@@ -505,7 +604,7 @@ TEST_CASE("ai move: the repath cadence: a path found from the queue is not asked
 	// onEnter queued one request; after the path came, update asked for none or one more (the quick path leaves pathGoal stale)
 	CHECK(u.state->pathRequests() <= 2);
 	CHECK(u.ai->path() != nullptr);
-	CHECK(AIMover::allStops().size() == 7);
+	CHECK(AIMover::allStops().size() == 6);
 	for (const std::string &s : AIMover::allStops())
 	{
 		CHECK(s.compare(0, 6, "S-166 ") == 0);
@@ -1048,7 +1147,7 @@ bool hasLine(const std::vector<std::string> &lines, const char *exact)
 }
 } // namespace
 
-TEST_CASE("backlog5: the two withdrawn rules are named at runtime with their measured effect (S-163 goal offset, S-166 exit-production straight path)")
+TEST_CASE("backlog5: S-163 remains reported while retail exit-production consumes its straight-path flag")
 {
 	// S-163: a LARGE_RECTANGLE_PATHFIND unit's search raises the line and does not offset its goal (the path ends in the goal's cell)
 	{
@@ -1076,7 +1175,7 @@ TEST_CASE("backlog5: the two withdrawn rules are named at runtime with their mea
 			CHECK(line.find("goal offset of internalFindPath") == std::string::npos); // an ordinary unit raises nothing
 		}
 	}
-	// S-166: a unit in state 7 that may path through units gets the ordinary search around a cliff wall, not the straight path, and the line
+	// RW 0x666036: state 7 takes one unconditional quick path, then ordinary searches.
 	for (int state : { 1, 7 })
 	{
 		CAPTURE(state);
@@ -1090,13 +1189,43 @@ TEST_CASE("backlog5: the two withdrawn rules are named at runtime with their mea
 		a.stateIdValue = state;
 		a.obj.throughUnits = true;
 		REQUIRE(a.ai->computePath(Coord3D{ 405.0f, 105.0f, 0.0f }));
-		CHECK(a.ai->path()->nodeCount() == 29u); // around the wall (the pinned result of the ordinary search in both states), not the 2-node straight path
-		CHECK(a.obj.throughUnits); // the flag is not dropped
-		CHECK(hasLine(a.ai->stops(),
-			"S-166 computePath's straight path for a unit following its exit-production path (RW 0x666036 .. 0x66607C: state 7 with AI + 0x3BA; the flag is dropped and the machine's "
-			"goal becomes the destination, RW 0x6654AD) is read but not applied: applied, production exits moved (test_aipow1: a frame 22 for 23; test_play4_heroes_retail: 2 shots, "
-			"150 lost and 2 members killed in an order that has none) and the goal overwrite alone sent an idle Battle-stance unit 826.975 from its guard spot (test_play4_stances_retail, "
-			"bound 365; without the overwrite it passes); INFERENCE, not verified: the port's exit state and guard keep the machine's goal for something RotWK does not") == (state == 7));
+		CHECK(a.ai->path()->nodeCount() == (state == 7 ? 2u : 29u));
+		CHECK(a.obj.throughUnits == (state != 7));
+		// The exit flag is one-shot: a subsequent search takes the ordinary path.
+		if (state == 7) {
+			REQUIRE(a.ai->computePath(Coord3D{405, 105, 0}));
+			CHECK(a.ai->path()->nodeCount() == 29u);
+		}
+	}
+	// RW 0x666036 .. 0x66607C for a battalion member: state 7 with the flag takes ONE straight path (through the wall), the flag is dropped and the machine's goal is
+	// the destination; the next segment's path (the flag gone) is the ordinary search around the wall. No S-166 line for a battalion member
+	{
+		Sim sim(60, 30);
+		for (int y = 0; y < 22; ++y)
+		{
+			sim.terrain.cliff.insert({ 30, y });
+		}
+		sim.build();
+		Unit &horde = sim.add(3, 105.0f, 255.0f);
+		horde.obj.kinds.insert(PK_HORDE);
+		Unit &a = sim.add(2, 205.0f, 105.0f);
+		a.container = horde.ai.get();
+		a.stateIdValue = 7;
+		a.obj.throughUnits = true;
+		const Coord3D dest{ 405.0f, 105.0f, 0.0f };
+		REQUIRE(a.ai->computePath(dest));
+		CHECK(a.ai->path()->nodeCount() == 2u); // the straight path
+		CHECK(!a.obj.throughUnits);             // RW 0x666079
+		CHECK(a.exitQuickPaths == 1);           // RW 0x66607C
+		CHECK(a.exitQuickDest.x == dest.x);
+		CHECK(a.exitQuickDest.y == dest.y);
+		REQUIRE(a.ai->computePath(dest));
+		CHECK(a.ai->path()->nodeCount() == 29u); // one-shot: the second path goes around the wall (the ordinary search's pinned result above)
+		CHECK(a.exitQuickPaths == 1);
+		for (const std::string &line : a.ai->stops())
+		{
+			CHECK(line.find("straight path for a non-battalion unit") == std::string::npos);
+		}
 	}
 	// S-1830: patchPath names what its layer step leaves out (lane WALL-2: the bridge layers)
 	{

@@ -69,6 +69,11 @@ struct W3DMaterialResult
 	std::vector<std::string> Errors;  // textures that did not load, etc.
 };
 
+// lane SDK-1 (GameClient/AssetPacks.h): the asset pack replacement of the texture `name` decoded by its own bytes (DDS, PNG, JPEG, else TGA),
+// or a null image when no pack replaces it. A pack file that cannot be read or decoded is a null image with `error` set ("asset pack P: F ...").
+// Shared by every texture loader of the render side (model surfaces, particles, decals, roads / rivers / water / sky): one precedence.
+Ref<Image> Load_Asset_Pack_Image(const AssetPacks *packs, const std::string &name, std::string &error);
+
 // Builds materials and caches shaders and textures. Textures are read through the mounted archives.
 class W3DMaterialFactory
 {
@@ -115,8 +120,15 @@ public:
 	// the reduction applied to one decoded image (true when it lost levels)
 	static bool Reduce_Image(Ref<Image> &image, int reduction);
 
+	// The static level's ShaderMaterialReplacement (gamelod.ini; RW 0xDD1E50, RW 0x516A30): on, every classic surface W3D_Fx_Conversion_Refusal accepts is
+	// lit as retail's DefaultW3D.fx replacement (W3DShaderKey::ConvertedFx); off, none is (the fixed-function stage ops). One setting for every factory,
+	// as retail's. Default on: the level the port draws (GameLODManager::kDetectedLevel, UltraHigh). INFERENCE / stop S-6021: the Options screen's
+	// ShaderLOD does not reach it yet.
+	static void Set_Shader_Material_Replacement(bool on);
+	static bool Get_Shader_Material_Replacement();
+
 private:
-	Ref<Texture2D> Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing = false);
+	Ref<Texture2D> Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing = false, std::vector<std::string> *notes = nullptr);
 	static Ref<Texture2D> Placeholder_Texture(bool flatNormal);
 
 	ArchiveFileSystem &Fs;
@@ -128,6 +140,7 @@ private:
 	std::map<std::string, Ref<Shader>> Shaders;
 	std::map<std::string, Ref<Texture2D>> Textures; // by virtual path
 	std::map<std::string, std::string> PackedHouseTextureNotes; // retain S-1482 on cache hits
+	std::map<std::string, std::string> PackedTextureNotes; // retain S-1482 on cache hits
 	std::vector<std::string> TextureErrors;
 };
 
@@ -142,8 +155,13 @@ void W3D_Apply_Fog(bool enabled, const float color[3], float start, float end);
 // lane PLAY-1: the free camera moves every fog range out by `shift` world units (the global w3d_fog_shift; 0 = retail)
 // lane VISUAL-2: the vegetation SwayOffsets 1 .. 10 (W3D axes) the rigid W3D shaders read (w3dshadergen.cpp)
 void W3D_Set_Sway_Offsets(const float offsets[10][3]);
+// lane WEATHERFX-1: the Enhanced look's wind: the SwayOffsets drawn from now on times `scale` (1 = retail, the default; the sway's own state is untouched)
+void W3D_Set_Sway_Scale(double scale);
 // lane VISUAL-2: the fogged light fraction (RW 0x46DFD0: FogAlpha / ClearAlpha) a fogged instance's lights and ambient are scaled by
 void W3D_Set_Fogged_Light_Frac(float frac);
+// lane OCCLUDE-1: the behind-building colours (global w3d_occl_colors: a W3D_OCCLUSION_SLOTS x 1 RGBA8 texture, slot -> the colour, slot 0 unused) and
+// their switch (w3d_occl_on: GameData UseBehindBuildingMarker and TheGameLogic + 0x99); the caller owns the texture (GameWorld)
+void W3D_Set_Occlusion(bool on, const Ref<Texture2D> &colors);
 void W3D_Set_Fog_Shift(float shift);
 // The light of the model viewers that show no map (not retail data): ambient 0.3 (defaultw3d.fxo's own AmbientLightColor default),
 // one white light toward (-0.5, -0.5, 0.7) SAGE, for both sets.

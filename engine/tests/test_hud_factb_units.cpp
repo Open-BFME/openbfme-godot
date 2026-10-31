@@ -223,6 +223,8 @@ struct HitTracker
 		const ThingTemplate *tmpl;
 	};
 	std::map<ObjectID, Made> made; ///< the objects that appeared after the first frame tracked (not projectiles), with their owner then
+	/// per attribute modifier list, the first tracked frame each object carried it (a buffed unit can die in the scene's fight before the closing probe)
+	std::map<std::string, std::map<ObjectID, UnsignedInt>> modifierFirstSeen;
 	ObjectID highest = INVALID_ID;
 	void track(GameLogic &logic)
 	{
@@ -230,6 +232,13 @@ struct HitTracker
 		ObjectID top = first ? 0 : highest;
 		for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
 		{
+			if (const AttributeModifierPool *pool = static_cast<const AttributeModifierPool *>(o->findModule("AttributeModifierPoolUpdate")))
+			{
+				for (const std::string &n : pool->listNames())
+				{
+					modifierFirstSeen[n].emplace(o->getID(), logic.getFrame());
+				}
+			}
 			if (!first && o->getID() > highest && !made.count(o->getID()) && !o->isKindOfName("PROJECTILE"))
 			{
 				made[o->getID()] = { logic.getFrame(), o->getControllingPlayer(), o->getTemplate() };
@@ -743,6 +752,19 @@ struct EffectProbe
 					{
 						got = str("%s on object %u", e.modifier.c_str(), (unsigned)kv.first);
 						break;
+					}
+				}
+				// the tracker's frames: an object that took the list after the cast and lost it (died in the scene's fight) before this probe
+				if (got.empty() && hits && hits->modifierFirstSeen.count(e.modifier))
+				{
+					for (const auto &kv : hits->modifierFirstSeen.at(e.modifier))
+					{
+						const Seen *b = was(kv.first);
+						if (kv.second >= frame && (!b || !b->modifiers.count(e.modifier)))
+						{
+							got = str("%s on object %u (frame %u, gone by the closing probe)", e.modifier.c_str(), (unsigned)kv.first, (unsigned)kv.second);
+							break;
+						}
 					}
 				}
 				break;
@@ -2047,7 +2069,7 @@ void heroesOf(const std::string &faction, Results &res)
 				const ObjectID heroId = hero->getID();
 				const int level = hero->getExperienceTracker() ? hero->getExperienceTracker()->getRank() : -1;
 				const ObjectID beforeDeath = g.highestID();
-				hero->kill(0);
+				hero->kill(DAMAGE_UNRESISTABLE, 0);
 				for (int f = 0; f < 400 && g.logic().findObjectByID(heroId); ++f)
 				{
 					g.step(1);
@@ -2073,7 +2095,7 @@ void heroesOf(const std::string &faction, Results &res)
 			}
 			// the death: a killing hit, then the record becomes a revive record
 			const ObjectID heroId = hero->getID();
-			hero->kill(0);
+			hero->kill(DAMAGE_UNRESISTABLE, 0);
 			for (int f = 0; f < 400 && g.logic().findObjectByID(heroId); ++f)
 			{
 				g.step(1);
@@ -3816,7 +3838,7 @@ TEST_CASE("factc units: every Goblin and Angmar unit, horde and hero ability and
 			  { { "* Command_ToggleStance", "S-289" },
 				{ "AngmarDarkRangerHorde Command_AngmarLongShotAbility", "S-1997|HordeAttackNugget" }, { "AngmarKarsh Command_WhisperofDeath", "S-2006|AngmarWhisperofDeath: no result" },
 				{ "AngmarNecromancerHorde Command_NecromancerBlackIce", "S-2006|no effect of it is asserted" },
-				{ "AngmarPorter Command_PorterExtinguishFire", "S-1997|PorterFireExtinguisher: no result" }, { "AngmarRogash Command_RogashLeap", "S-2006|RogashLeap: no result" } });
+				{ "AngmarPorter Command_PorterExtinguishFire", "S-1997|PorterFireExtinguisher: no result" } });
 }
 
 TEST_CASE("factc heroes: every Goblin and Angmar hero is recruited and revived through the started keep's REVIVE buttons")
@@ -3881,8 +3903,23 @@ TEST_CASE("factc upgrade effects: every Goblin and Angmar weapon and armour upgr
 	// armour still does not change Boromir's HERO hit (S-2008 keeps the explanation)
 	// merge queue q24 (OFFMAP-1's exact start positions: without OFFMAP-1 the merged tree passes it): no two-hit frame without the armour again, the line fails
 	// as ATTACKPATH-1 found
-	factcCase("upgrade effects", "FactionAngmar", upgradeEffectsOf,
-			  { { "upgrade effect AngmarSnowTrollHorde Upgrade_AngmarDarkIronArmor", "S-2008|did not shrink" } });
+	// lane MODCOMPAT-MOD1 (ClickReactionBehavior, measured at its commit): the trolls' click reaction update in the sleepy update vectors (RW 0x85C704, RW
+	// 0x62E982) moves the Angmar scene: the scene without the armour has a two-hit frame again, the smallest hit "shrinks" and the line passes (the armour still
+	// does not change Boromir's HERO hit: S-2008 keeps the explanation)
+	// lane MODCOMPAT-MOD1 (PickupStuffUpdate, measured at its commit): every horde's update in the sleepy update vectors (RW 0x62E982) moves the Angmar scene:
+	// no two-hit frame without the armour again, the line fails as ATTACKPATH-1 found
+	// lane MODCOMPAT-MOD1 (AutoPickUpUpdate, measured at its commit): the trolls' scan countdown draws the logic random at their creation (RW 0x8994BF) and
+	// moves the Angmar scene: the scene without the armour has a two-hit frame again, the smallest hit "shrinks" and the line passes (the armour still does not
+	// change Boromir's HERO hit: S-2008 keeps the explanation)
+	// lane MODCOMPAT-MOD1 (BoredUpdate, measured at its commit): the trolls' logic random draw at their creation (RW 0x899F1F) moves the Angmar scene: no
+	// two-hit frame without the armour again, the line fails as ATTACKPATH-1 found
+	// merge queue q31 (#68's ambient wanderers draw from the game's random numbers; measured at each merge point): the scene without the armour has a
+	// two-hit frame again, so the line passes as in q23; the armour still does not change Boromir's HERO hit (S-2008 keeps the explanation)
+	// merge queue q33 (measured at each merge point): with MODCOMPAT-MOD1 on the archive's tree the scene without the armour keeps its two-hit frame
+	// (600 -> 300), so the line passes as in q31 (MODCOMPAT-MOD1's last expectation was measured on its older base)
+	// fix/horde-contain-no-follow (members walk to their slots, RW 0x871536): a two-hit frame without the armour again (600 -> 300), so the line passes and
+	// its pin goes; the armour still does not change Boromir's HERO hit (S-2008 keeps the explanation)
+	factcCase("upgrade effects", "FactionAngmar", upgradeEffectsOf, {});
 }
 
 TEST_CASE("factc spell book: every Goblin and Angmar spell bought in the store and cast through the spell bar shows its effect")

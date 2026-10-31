@@ -64,6 +64,7 @@ void OpenBFMEOptionsPage::layout()
 		twoColumns = twoColumns || row.column == 1;
 	}
 	m_built.assign(m_spec.rows.size(), Built{});
+	m_helpTop = kHelpTop;
 	int next[2] = { 0, 0 };
 	for (std::size_t i = 0; i < m_spec.rows.size(); ++i)
 	{
@@ -73,6 +74,8 @@ void OpenBFMEOptionsPage::layout()
 		b.narrow = twoColumns;
 		b.left = !twoColumns || column == 0 ? kPanelLeft : kPanelMiddle;
 		b.right = !twoColumns || column == 1 ? kPanelRight : kPanelMiddle;
+		// Engine-owned settings: keep the footer below either column, including the taller check boxes.
+		m_helpTop = std::max(m_helpTop, b.y + std::max(kRowHeight, kRowPitch) + 10);
 	}
 }
 
@@ -141,6 +144,14 @@ bool OpenBFMEOptionsPage::show(const OpenBFMEPageSpec &spec, std::string *error)
 	m_shown = false;
 	m_hoverRow = -1;
 	layout();
+	if (m_helpTop + 2 + 2 * kHelpSize > kBottom - 8)
+	{
+		if (error)
+		{
+			*error = "the OpenBFME page has too many rows for its footer";
+		}
+		return false;
+	}
 	for (std::size_t i = 0; i < m_spec.rows.size(); ++i)
 	{
 		const OpenBFMEPageRow &row = m_spec.rows[i];
@@ -203,7 +214,7 @@ bool OpenBFMEOptionsPage::show(const OpenBFMEPageSpec &spec, std::string *error)
 		std::string err;
 		// lane ONLINEMENU-1: below the page's first rows when the spec says so (the friends page: rows, then its list)
 		const int y0 = m_spec.listFromRow < 0 ? kRowTop : kRowTop + m_spec.listFromRow * kRowPitch;
-		const int y1 = kHelpTop - 10;
+		const int y1 = m_helpTop - 10;
 		m_list = m_layer.createEngineGadget(kListSkin, kLabelLeft, y0, kGadgetRight - kLabelLeft, y1 - y0, m_owner, &err);
 		if (!m_list)
 		{
@@ -716,10 +727,10 @@ void OpenBFMEOptionsPage::decorate(GadgetDrawList &out) const
 	rule.window = "OpenBFMEPage";
 	rule.x0 = kPanelLeft + 16;
 	rule.x1 = kPanelRight - 16;
-	rule.y0 = rule.y1 = kHelpTop - 4;
+	rule.y0 = rule.y1 = m_helpTop - 4;
 	rule.color = kFrameColor;
 	out.commands.push_back(std::move(rule));
-	text(out, helpText(), kLabelLeft, kHelpTop + 2, kHelpSize, kHelpColor, kGadgetRight - kLabelLeft, true);
+	text(out, helpText(), kLabelLeft, m_helpTop + 2, kHelpSize, kHelpColor, kGadgetRight - kLabelLeft, true);
 }
 
 bool OpenBFMEOptionsPage::rect(const std::string &name, std::array<int, 4> &out) const

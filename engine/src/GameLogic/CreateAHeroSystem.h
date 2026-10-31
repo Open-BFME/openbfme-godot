@@ -113,12 +113,14 @@ struct CreateAHeroAttribute ///< RW 0xD9EF88 (+0x54 of the subclass, by group)
 
 struct CreateAHeroViewInfo ///< RW 0xD9EE08 (client: the builder screen's cameras)
 {
-	float nearPitch = 0, nearZoom = 0, nearFloor = 0, nearDist = 0, nearShift = 0;            ///< +0x00 .. +0x10
-	float farPitch = 0, farZoom = 0, farFloor = 0, farDist = 0, farShift = 0;                 ///< +0x18 .. +0x28
-	float closeUpPitch = 0, closeUpZoom = 0, closeUpFloor = 0, closeUpDist = 0, closeUpShift = 0; ///< +0x30 .. +0x40
-	float portraitPitch = 0, portraitZoom = 0, portraitFloor = 0, portraitDist = 0, portraitShift = 0; ///< +0x48 .. +0x58
-	float normalCam = 0, cameraAngle = 0; ///< +0x60 / +0x64
+	// RW 0x6193B4 = BFME2 Rva002195E6::Rva002195E6 (RVA 0x2195E6, tier A).
+	float nearPitch = 0.3f, nearZoom = 0.2f, nearFloor = 50, nearDist = 30, nearShift = 0;            ///< +0x00 .. +0x10
+	float farPitch = 0.4f, farZoom = 0.3f, farFloor = 70, farDist = 50, farShift = 0;                 ///< +0x18 .. +0x28
+	float closeUpPitch = 0.3f, closeUpZoom = 0.2f, closeUpFloor = 50, closeUpDist = 30, closeUpShift = 0; ///< +0x30 .. +0x40
+	float portraitPitch = 0.3f, portraitZoom = 0.2f, portraitFloor = 50, portraitDist = 30, portraitShift = 0; ///< +0x48 .. +0x58
+	float normalCam = 0.5f, cameraAngle = 0; ///< +0x60 / +0x64
 	int mapLocation = 0;                  ///< +0x68
+	bool loaded = false;
 };
 
 struct CreateAHeroSubClass ///< RW 0x61E4AE (0xD8 bytes)

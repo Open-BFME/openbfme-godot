@@ -19,6 +19,9 @@
 #include "GameLogic/Object/Object.h"
 
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 
 const char *const TheStanceNames[] = { "Uninitialized", "Battle", "Aggressive", "HoldGround", "Porcupine", "HoldGroundMoving", nullptr }; // RW 0xC53660
@@ -110,6 +113,22 @@ StancesBehavior::StancesBehavior(Thing *thing, const StancesBehaviorModuleData *
 	: UpdateModule(thing, data)
 	, m_data(data)
 {
+	traceStance(-1, m_stance, "constructor", "write");
+}
+
+// STANCE-1: opt-in observation of the RW 0x8620DD setter and native snapshot writes.
+// No diagnostic state is serialized, hashed, or used to choose a simulation branch.
+void StancesBehavior::traceStance(int oldStance, int newStance, const char *site, const char *event) const
+{
+	const char *enabled = std::getenv("OPENBFME_TRACE_STANCES");
+	if (!enabled || std::strcmp(enabled, "1") != 0)
+	{
+		return;
+	}
+	const Object *obj = getObject();
+	std::fprintf(stderr, "STANCE frame=%u object=%u old=%d new=%d site=%s event=%s\n",
+		obj ? obj->logic().getFrame() : 0u, obj ? (unsigned)obj->getID() : (unsigned)INVALID_ID,
+		oldStance, newStance, site ? site : "unspecified", event);
 }
 
 void StancesBehavior::registerClass(ModuleFactory &modules)
@@ -165,14 +184,15 @@ UpdateSleepTime StancesBehavior::update()
 	}
 	if (m_stance == STANCE_UNINITIALIZED)
 	{
-		setStance(STANCE_BATTLE);
+		setStance(STANCE_BATTLE, "update:RW_8622E9");
 	}
 	return UPDATE_SLEEP_FOREVER;
 }
 
 // RW 0x8620DD
-bool StancesBehavior::setStance(StanceType stance)
+bool StancesBehavior::setStance(StanceType stance, const char *site)
 {
+	traceStance(m_stance, stance, site, "request");
 	if (stance == m_stance)
 	{
 		return false;
@@ -191,11 +211,13 @@ bool StancesBehavior::setStance(StanceType stance)
 	}
 	if (m_data->m_stanceTemplate.empty() || !TheStanceTemplateStore)
 	{
+		traceStance(m_stance, stance, site, "rejected:missing-template-or-store");
 		return false;
 	}
 	const StanceTemplate *t = TheStanceTemplateStore->find(m_data->m_stanceTemplate);
 	if (!t)
 	{
+		traceStance(m_stance, stance, site, "rejected:unknown-template");
 		return false;
 	}
 	// the current stance is read here, after a toggle above may have changed it (RW 0x862199 reads +0x30 now)
@@ -219,6 +241,7 @@ bool StancesBehavior::setStance(StanceType stance)
 	const StanceType old = m_stance;
 	const int oldClass = stanceClass(old);
 	m_stance = stance;
+	traceStance(old, m_stance, site, "write");
 	if (old != STANCE_UNINITIALIZED && oldClass == stanceClass(stance))
 	{
 		return true;
@@ -240,15 +263,15 @@ bool StancesBehavior::setStance(StanceType stance)
 }
 
 // RW 0x862275
-void StancesBehavior::onMoveStart()
+void StancesBehavior::onMoveStart(const char *site)
 {
 	if (m_stance == STANCE_HOLD_GROUND)
 	{
-		setStance(STANCE_HOLD_GROUND_MOVING);
+		setStance(STANCE_HOLD_GROUND_MOVING, site);
 	}
 	else if (m_stance == STANCE_PORCUPINE)
 	{
-		setStance(STANCE_BATTLE);
+		setStance(STANCE_BATTLE, site);
 	}
 }
 
@@ -257,7 +280,7 @@ void StancesBehavior::onMoveEnd()
 {
 	if (m_stance == STANCE_HOLD_GROUND_MOVING)
 	{
-		setStance(STANCE_HOLD_GROUND);
+		setStance(STANCE_HOLD_GROUND, "onMoveEnd:RW_86228E");
 	}
 	if (m_stance == STANCE_HOLD_GROUND || m_stance == STANCE_BATTLE || m_stance == STANCE_PORCUPINE)
 	{
@@ -312,7 +335,7 @@ void StancesBehavior::registerHandlers(GameLogicDispatch &d)
 		{
 			if (StancesBehavior *s = of(*o))
 			{
-				s->setStance((StanceType)a->integer);
+				s->setStance((StanceType)a->integer, "MSG_CHANGE_STANCE:RW_76FF27");
 			}
 		}
 		return true;
@@ -324,5 +347,7 @@ void StancesBehavior::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);
 	xferUpdateModule(x);
+	const StanceType old = m_stance;
 	SnapshotXfer::enumIn(x, m_stance, STANCE_UNINITIALIZED, STANCE_COUNT - 1, "a stance");
+	traceStance(old, m_stance, "native-snapshot", x.isLoading() ? "write" : "save");
 }

@@ -331,7 +331,7 @@ void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, c
 		}
 		// RW 0x4853EB: only a drawn drawable queues its icons (not hidden, RW 0x67055A; the shroud of the object for the local player at most 2, RW 0x68D8F7):
 		// an enemy's invisible object is not drawn (InvisibilityManager::clientLook 5, the drawable's hidden state RW 0x6760F9) and shows no bar, text or mark.
-		if (InvisibilityManager::clientLook(*obj, logic.players().getLocalPlayer()) == 5)
+		if (d->stealthHidden()) // lane STEALTHLOOK-1: the drawable's +0x43E (look 5 on a drawable that can hide, RW 0x6760F9)
 		{
 			continue;
 		}
@@ -425,8 +425,8 @@ void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, c
 				out.push_back(a);
 			}
 		}
-		// RW 0x677CF9: the construction text
-		if (obj.isUnderConstruction() && !obj.testStatus(19)) // status 0x13 SOLD (TheObjectStatusNames RW 0xD8AFF0)
+		// RW 0x677CF9 / 0x679AE8: a fresh drawable's cached percent is -1, leaving its construction caption empty during unit exit.
+		if (obj.isUnderConstruction() && !obj.testStatus(19) && obj.getConstructionPercent() != -1.0f) // status 0x13 SOLD (TheObjectStatusNames RW 0xD8AFF0)
 		{
 			std::string text;
 			if (!kindOf(obj, WALL_SEGMENT) && !kindOf(obj, DEFENSIVE_WALL))

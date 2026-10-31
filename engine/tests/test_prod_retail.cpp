@@ -10,6 +10,7 @@
 // delay, each contained by the horde. Independent expectations: workspace census, committed as tests/data/production/faction_trainable.json (the
 // units each faction can train and its structures).
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "Common/MiniJson.h"
@@ -344,6 +345,7 @@ FactionResult runFaction(Shared &sh, const std::string &faction)
 				};
 				Coord3D at = { nextX, 1000.0f, 0.0f };
 				b->setPosition(&at);
+				testutil::completeHorde(b); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 				if (SpawnBehaviorInterface *sb = SpawnBehaviorInterface::of(*b))
 				{
 					sb->stopSpawning(); // lane MOD-4: a lumber mill's own SpawnBehavior makes the same workers through the same exit: only the queue is measured
@@ -869,6 +871,7 @@ std::vector<RallyOutcome> runRally(Shared &sh, const std::string &faction)
 				REQUIRE(b != nullptr);
 				Coord3D at = { nextX, nextY, 0.0f };
 				b->setPosition(&at);
+				testutil::completeHorde(b); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 				ai.removeObjectFromPathfindMap(*b);
 				ai.addObjectToPathfindMap(*b); // the footprint where the building stands
 				if (SpawnBehaviorInterface *sb = SpawnBehaviorInterface::of(*b))

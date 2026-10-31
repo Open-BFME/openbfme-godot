@@ -997,7 +997,7 @@ std::vector<std::string> DisconnectManager::stopLines()
 		"(none here but OpenBFME's announced-frame rule)",
 		"[S-1122] self destruct: MSG_SELF_DESTRUCT (RW 0x77CA3D) and transferAssetsFromThat (RW 0x6AF598) are ported without the contain interface's "
 		"occupant hand-over (vslot 0x54), the RW 0xDE4AB8 lists, the end of a defection (RW 0x69ABA7) and the Living World branch; the objects change "
-		"owner in object list order (RotWK: team, then member order); a horde member follows its container (inferred)",
+		"owner in object list order (RotWK: team, then member order); a horde member follows its container (Object::setTeam RW 0x69954A -> RW 0x870667)",
 		"[S-1123] disconnect screen: DisconnectScreen.apt gets RotWK's texts, colour providers, SetBarPercent / Show / HideKickButton and its Kick / Quit "
 		"commands (RW 0x91988F) and its chat (lane CHAT-1: DISCONNECTCHAT 13); not ported: the in-game UI calls of show "
 		"(RW 0x9190F0), the level (the first free one)",

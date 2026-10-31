@@ -103,7 +103,8 @@ def validate_preview_sources(repo: Path) -> None:
             "_set_macos_releases_link" not in launcher or not macos_update.is_file() or not helper.is_file()):
         fail("HEAD lacks the signed macOS manifest, package updater, or atomic swap helper sources")
     trust = (repo / "godot/scripts/release/release_trust.gd").read_text(encoding="utf-8")
-    if trust.count('const RELEASE_KEY := ""') != 1 or trust.count('const RELEASE_KEYS := ""') != 1:
+    if trust.count('const RELEASE_KEY := ""') != 1 or trust.count('const RELEASE_KEYS := ""') != 1 \
+            or trust.count('const NIGHTLY_KEYS := ""') != 1:
         fail("release_trust must remain empty for the unsigned-payload Mac preview")
 
 

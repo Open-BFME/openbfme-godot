@@ -10,6 +10,7 @@
 //
 // Usage:
 //   openbfme_peer --rotwk DIR --bfme2 DIR (or ROTWK_INSTALL / BFME2_INSTALL) [--mod PATH ...] (lane MODS-1: RotWK -mod, Common/ModMount.h)
+//   lane BFME2MODE-0: --edition=bfme2 (or OPENBFME_EDITION=bfme2) mounts BFME2 1.06's archives alone, no --rotwk (docs/EDITIONS.md; developer switch)
 //     --host PORT [--bind IP] --map KEY --seed N --slot "human|easy|medium|hard|brutal,FactionName,startPos,team[,handicap]" (repeated, in slot order;
 //       lane OWNERFIX-2: the handicap 0, -5 .. -95, default 0; the report lists each playable player's `player_handicap`)
 //     | --join IP:PORT --name NAME
@@ -75,6 +76,10 @@
 //     snapshot, snapshot_bytes, load_ms), [--verify-log] catches it up from its log instead and compares the snapshot; --profile-text FILE
 //     writes this build's profile identity text to FILE (what a test records
 //     the game under, so the save is this build's) and exits
+//   lane PROFILE-3: [--read-trace FILE] (any mode) writes every path the game asked the mounted files for after the profile identity was
+//     computed ("read" / "exists" / "list" lines, sorted): the simdata coverage test (tests/test_profile3_retail.cpp) checks each is covered
+//   lane PROFILE-2: openbfme_peer --rotwk DIR --bfme2 DIR --print-profile-text   prints this build's whole profile identity text (its simdata and
+//     archive lines: an integrity checker names the archives a game's players had that it lacks) and exits
 //   lane ONLINE-2: openbfme_peer --rotwk DIR --bfme2 DIR --print-profile   prints this build's profile identity MD5 (what the lobby compares),
 //     then "faction INDEX NAME" lines (the START's faction numbers); lane STATS-1: [--print-ids] also "thing ID NAME", "upgrade BIT NAME",
 //     "science KEY NAME" and "power ID NAME" lines: the names behind the ids a GameMessage carries (they follow this build's INI load order), for
@@ -98,6 +103,7 @@
 // Exit code: 0 ok, 1 usage / load error / another profile's replay, 2 desync (or replay mismatch / an incomplete replay), 3 network failure (stall /
 // timeout, refused by the lobby: another profile), 4 network or recording errors (a command that could not be sent or recorded).
 
+#include "Common/GameEdition.h"
 #include "Common/JobSystem.h"
 #include "Common/PathIO.h"
 #include "Common/PlayerTemplate.h"
@@ -113,6 +119,7 @@
 #include "Common/PlayerList.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameClient/GUI/Skirmish/WorldSkirmishSetupSource.h"
+#include "GameClient/LinearCampaign.h"
 #include "GameClient/LiveGame.h"
 #include "GameClient/MapCreationHooks.h"
 #include "GameClient/MapObjectDrawables.h"
@@ -121,6 +128,8 @@
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Module/GateModules.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "Common/Thing/ThingFactory.h"
+#include "Common/Thing/ModuleFactory.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/NewGame/NewGame.h"
 #include "GameLogic/Object/Object.h"
@@ -160,10 +169,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <fstream>
+#include <set>
 #include <iterator>
 #include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -173,6 +185,7 @@ namespace
 struct Args
 {
 	std::string rotwk, bfme2;
+	GameEdition edition = GameEdition::RotWK201; ///< lane BFME2MODE-0: --edition=bfme2 / OPENBFME_EDITION=bfme2 mounts BFME2 1.06 alone
 	int hostPort = -1;
 	std::string bind = "127.0.0.1";
 	std::string join, name = "Player";
@@ -239,6 +252,7 @@ struct Args
 	bool bindGiven = false;
 	bool printProfile = false;              ///< lane ONLINE-2: --print-profile (the lobby compares the profile identity's MD5)
 	bool printIds = false;                  ///< lane STATS-1: --print-ids (with --print-profile: the id -> name tables)
+	bool printProfileText = false;          ///< lane PROFILE-2: --print-profile-text (the whole identity text: what a checker compares a game's archives with)
 	long long netPauseAt = -1;              ///< lane ONLINE-3: --net-pause-at FRAME
 	long long netResumeMs = -1;             ///< lane ONLINE-3: --net-resume-ms MS
 	long long rejoinWindowMs = -1;          ///< lane ONLINE-3: --rejoin-window-ms N
@@ -246,7 +260,12 @@ struct Args
 	bool spectateForge = false;             ///< lane ONLINE-3: --spectate-forge (a spectator sends one forged command: the relay must refuse it)
 	int spectateObserveEvery = 0;           ///< lane ONLINE-3: --spectate-observe N (every N frames the spectator's view steps to the next player)
 	bool frameTimes = false;                ///< lane ONLINE-3: --frame-times (the report's frame_ms lines: when every 100th frame ran)
+	std::string readTrace;                  ///< lane PROFILE-3: --read-trace FILE (every path the game asks the mounted files for)
 };
+
+// lane PROFILE-3: --read-trace's set (ArchiveFileSystem::setReadTrace), written to Args::readTrace when the process ends
+std::set<std::string> g_readTrace;
+std::string g_readTracePath;
 
 std::string envOr(const char *name)
 {
@@ -257,6 +276,10 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 {
 	a.rotwk = envOr("ROTWK_INSTALL");
 	a.bfme2 = envOr("BFME2_INSTALL");
+	if (!parseGameEdition(envOr("OPENBFME_EDITION"), a.edition, &error))
+	{
+		return false;
+	}
 	for (int i = 1; i < argc; ++i)
 	{
 		const std::string k = argv[i];
@@ -270,7 +293,14 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 			return true;
 		};
 		std::string v;
-		if (k == "--rotwk" && next(a.rotwk)) {}
+		if (k.rfind("--edition=", 0) == 0)
+		{
+			if (!parseGameEdition(k.substr(10), a.edition, &error))
+			{
+				return false;
+			}
+		}
+		else if (k == "--rotwk" && next(a.rotwk)) {}
 		else if (k == "--mod" && next(v)) { a.mods.push_back(v); }
 		else if (k == "--mod-install" && next(v)) { a.installMods.push_back(v); }
 		else if (k == "--mod-engine" && next(v)) { a.modEngines.push_back(v); }
@@ -281,6 +311,8 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 		else if (k == "--relay-log" && next(a.relayLog)) {}
 		else if (k == "--print-profile") a.printProfile = true;
 		else if (k == "--print-ids") a.printProfile = a.printIds = true;
+		else if (k == "--print-profile-text") a.printProfileText = true;
+		else if (k == "--read-trace" && next(a.readTrace)) {}
 		else if (k == "--net-pause-at" && next(v)) a.netPauseAt = std::atoll(v.c_str());
 		else if (k == "--net-resume-ms" && next(v)) a.netResumeMs = std::atoll(v.c_str());
 		else if (k == "--rejoin-window-ms" && next(v)) a.rejoinWindowMs = std::atoll(v.c_str());
@@ -412,9 +444,10 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 			return false;
 		}
 	}
-	if (a.rotwk.empty() || a.bfme2.empty())
+	if (a.edition == GameEdition::BFME2_106 ? a.bfme2.empty() : (a.rotwk.empty() || a.bfme2.empty()))
 	{
-		error = "the RotWK and BFME2 installs are required (--rotwk / --bfme2 or ROTWK_INSTALL / BFME2_INSTALL)";
+		error = a.edition == GameEdition::BFME2_106 ? "--edition=bfme2 needs the BFME2 install (--bfme2 or BFME2_INSTALL)"
+													: "the RotWK and BFME2 installs are required (--rotwk / --bfme2 or ROTWK_INSTALL / BFME2_INSTALL)";
 		return false;
 	}
 	if (a.lanHost && a.lanJoin)
@@ -450,7 +483,12 @@ struct World
 bool loadWorld(const Args &a, World &w, std::string &error)
 {
 	std::vector<RetailInstall> installs;
-	for (const auto &want : { std::make_pair(std::string("rotwk"), a.rotwk), std::make_pair(std::string("bfme2"), a.bfme2) })
+	std::vector<std::pair<std::string, std::string>> wanted = { { "rotwk", a.rotwk }, { "bfme2", a.bfme2 } };
+	if (a.edition == GameEdition::BFME2_106)
+	{
+		wanted.erase(wanted.begin()); // lane BFME2MODE-0: BFME2 1.06's archives alone (docs/EDITIONS.md); RotWK's rules in Phase 0
+	}
+	for (const auto &want : wanted)
 	{
 		RetailInstall inst;
 		inst.label = want.first;
@@ -527,8 +565,31 @@ bool loadWorld(const Args &a, World &w, std::string &error)
 		}
 		modLines.insert(modLines.end(), modReport.identity.begin(), modReport.identity.end());
 	}
+	std::string simData, cacheKey, warning; // lane PROFILE-2: the identity's simdata line, through the cache (SimulationData::defaultCachePath)
+	for (const MountedArchive &m : mountedArchives)
+	{
+		cacheKey += m.install + ":" + m.canonicalPath + " " + m.md5 + " " + std::to_string(m.size) + "\n";
+	}
+	for (const std::string &l : modLines)
+	{
+		cacheKey += l + "\n";
+	}
+	if (!SimulationData::cachedDigest(*w.fs, cacheKey, SimulationData::defaultCachePath(), simData, &error, &warning))
+	{
+		return false;
+	}
+	if (!warning.empty())
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", warning.c_str());
+	}
 	w.profile = ProfileIdentity::compute(mountedArchives, RandomAlgorithm::ZH_CarryChain, features, a.uber ? SimulationProfile::Uber : SimulationProfile::Faithful,
-		modLines);
+		modLines, simData);
+	if (!a.readTrace.empty())
+	{
+		// lane PROFILE-3: from here on (the digest's own reads above are not the game's): the object world, the map, the AI, every frame
+		g_readTracePath = a.readTrace;
+		w.fs->setReadTrace(&g_readTrace);
+	}
 	w.world = std::make_unique<RetailObjectWorld>(*w.fs);
 	if (!w.world->load(&error) || !MapObjectGameData::load(*w.fs, w.options, &error) || !MapObjectGameData::loadPlayerTemplates(*w.fs, w.options, &error)
 		|| !MapCreationHooks::load(*w.fs, w.options.creationScripts, &error) || !GameLogicSettingsLoader::load(*w.fs, w.settings, &error)
@@ -608,7 +669,12 @@ bool buildGame(const Args &a, const World &w, NewGameMessage &m, std::string &er
 		s.playerTemplate = templateIndex(w.world->setupPlayerTemplates(), f[1]);
 		if (s.playerTemplate < 0)
 		{
-			error = "unknown faction " + f[1];
+			// lane MODCOMPAT-1: name the playable factions (a mod renames them: Edain has FactionRohan / FactionGondor; tools/mod/gap_census.py reads them)
+			const PlayerTemplateStore &store = w.world->setupPlayerTemplates();
+			std::string playable;
+			for (int i : store.playableSideIndices())
+				playable += (playable.empty() ? "" : " ") + store.getNthPlayerTemplate(i)->getName();
+			error = "unknown faction " + f[1] + " (playable: " + playable + ")";
 			return false;
 		}
 		s.startPos = std::atoi(f[2].c_str());
@@ -757,9 +823,9 @@ void dumpFogState(const Args &a, GameLogic &logic, UnsignedInt next)
 		const Relationship r = viewer->getRelationship(owner);
 		const char *rel = owner == viewer ? "own" : r == ENEMIES ? "enemy" : r == ALLIES ? "ally" : "neutral";
 		const ObjectShroudStatus st = shroud->clientObjectStatus(*obj, a.fogView);
-		// what the client draws (Sol r2): not hidden by the shroud, not stealthed and undetected for the viewer; a contained object (no record) is
-		// drawn by its container, not here
-		const bool seen = shroud->hasRecord(*obj) && st != OBJECTSHROUD_SHROUDED && !InvisibilityManager::isStealthedAndUndetected(*obj, viewer);
+		// what the client draws (Sol r2): not hidden by the shroud, not stealthed and undetected for the viewer; an object out of the world (contained, or a
+		// porter in its site) is drawn by its container or not at all, not here
+		const bool seen = obj->isInWorld() && st != OBJECTSHROUD_SHROUDED && !InvisibilityManager::isStealthedAndUndetected(*obj, viewer);
 		o << "o " << obj->getID() << " " << rel << " " << obj->getPosition()->x << " " << obj->getPosition()->y << " " << (seen ? 1 : 0) << " "
 		  << (obj->isKindOfName("STRUCTURE") ? "s" : "u") << "\n";
 	}
@@ -806,6 +872,14 @@ int runReplay(const Args &a, World &w)
 		o.mapName = replay.header.game.game.mapName; // the mission's map directory ("map ang angmar")
 		o.campaign = true;
 		o.difficulty = save.header.campaignDifficulty;
+		// lane BFME2CAMP1 (review): the carry-over a real load restores (GameWorld::start_campaign_mission from the save's header: LiveGame::campaignCarryoverOptions)
+		const LinearCampaign *campaign = w.world->linearCampaigns().find(save.header.campaign);
+		std::string stop;
+		if (!campaign || !LiveGame::campaignCarryoverOptions(*campaign, save.header.campaignMission, save.header.campaignCarryover, o, stop, error))
+		{
+			std::fprintf(stderr, "openbfme_peer: the save's campaign start: %s\n", campaign ? error.c_str() : ("no campaign '" + save.header.campaign + "'").c_str());
+			return 2;
+		}
 	}
 	else
 	{
@@ -817,6 +891,9 @@ int runReplay(const Args &a, World &w)
 		return 1;
 	}
 	std::ostringstream r;
+	// lane PROFILE-3: what the recording's player had that never refuses a game (asset packs, a mod's names, the archive list), against this checker
+	const std::string presentation = ProfileIdentity::presentationDifference(w.profile, replay.header.profile);
+	r << "profile_presentation " << (presentation.empty() ? std::string("same") : presentation) << "\n";
 	if (!a.loadSave.empty())
 	{
 		// lane SAVE-2: the game is brought to the save's frame from the save's own log (a fresh process: nothing of the recording run is shared), then the
@@ -1328,7 +1405,32 @@ static int peerMain(int argc, char **argv);
 
 int main(int argc, char **argv)
 {
-	return PathIO::runMain(argc, argv, peerMain);
+	// lane MODCOMPAT-1: a data error the loaders throw (a mod's faction naming a science it does not define) is the peer's named error and
+	// exit 1, as a parse error is, not an abort (tools/mod/gap_census.py lists it for the package)
+	int rc = 1;
+	try
+	{
+		rc = PathIO::runMain(argc, argv, peerMain);
+	}
+	catch (const std::exception &e)
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", e.what());
+		rc = 1;
+	}
+	if (!g_readTracePath.empty())
+	{
+		std::ofstream out(PathIO::native(g_readTracePath), std::ios::binary | std::ios::trunc);
+		for (const std::string &l : g_readTrace)
+		{
+			out << l << "\n";
+		}
+		if (!out)
+		{
+			std::fprintf(stderr, "openbfme_peer: cannot write the read trace %s\n", g_readTracePath.c_str());
+			return rc ? rc : 1;
+		}
+	}
+	return rc;
 }
 
 static int peerMain(int argc, char **argv)
@@ -1349,6 +1451,11 @@ static int peerMain(int argc, char **argv)
 	{
 		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
 		return 1;
+	}
+	if (a.printProfileText)
+	{
+		std::fwrite(w.profile.text.data(), 1, w.profile.text.size(), stdout); // lane PROFILE-2
+		return 0;
 	}
 	if (a.printProfile)
 	{
@@ -1715,7 +1822,10 @@ static int peerMain(int argc, char **argv)
 		{
 			if (!client.error().empty() || NetMilliseconds() - lobbyStart > (std::uint64_t)a.lobbyTimeoutSeconds * 1000u)
 			{
-				std::fprintf(stderr, "openbfme_peer: %s\n", client.error().empty() ? "no START in 120 s" : client.error().c_str());
+				if (client.error().empty())
+					std::fprintf(stderr, "openbfme_peer: no START in %d s (--lobby-timeout)\n", a.lobbyTimeoutSeconds);
+				else
+					std::fprintf(stderr, "openbfme_peer: %s\n", client.error().c_str());
 				return 3;
 			}
 			NetSleepMilliseconds(2);
@@ -1951,6 +2061,8 @@ static int peerMain(int argc, char **argv)
 	unsigned long long gateMessages = 0;
 	const std::uint64_t runStart = NetMilliseconds();
 	std::uint64_t lastProgress = runStart;
+	std::uint64_t lastLoop = runStart; // lane MPDROP-3: a loop gap (the process was stopped, SIGSTOP) is no wait for a frame
+	std::uint64_t resumedAt = 0;       // lane MPDROP-3: the end of the last loop gap over a second; the report's quit_after_resume_ms
 	int exitCode = 0;
 	// SMOOTH-1: no batch beyond --frames (the worker may run ahead of presentation). lane NETLAG-2: --vanish-at stops the process exactly at its frame
 	// (a frame that waited and the next can now run in one advance: LiveGame's owed frame). KNOWN-3: --quit-at and a pending --blackout-at hold the
@@ -1972,6 +2084,7 @@ static int peerMain(int argc, char **argv)
 	// lane MP-2: a frame may wait for the disconnect path (the screen after NetworkDisconnectTime, the drop after NetworkPlayerTimeoutTime)
 	const std::uint64_t noProgressMs = 30000u + (std::uint64_t)so.network.disconnectTime + (std::uint64_t)so.network.playerTimeoutTime;
 	std::string disconnectQuit;
+	long long quitAfterResumeMs = -1; // lane MPDROP-3
 	std::vector<std::string> blackoutLog; // lane MP-3
 	std::vector<std::string> pauseLog;    // lane ONLINE-3
 	std::uint64_t pausedSince = 0, pausedMs = 0;
@@ -2053,6 +2166,7 @@ static int peerMain(int argc, char **argv)
 		if (session.quitRequested())
 		{
 			disconnectQuit = session.quitReason(); // lane MP-2: dropped by the others, the last one left, or the local connection failed
+			quitAfterResumeMs = resumedAt != 0 ? (long long)(NetMilliseconds() - resumedAt) : -1;
 			exitCode = 3;
 			break;
 		}
@@ -2227,6 +2341,12 @@ static int peerMain(int argc, char **argv)
 			lastAdvance = t;
 		}
 		const int ran = game.advance(step);
+		if (NetMilliseconds() - lastLoop > 1000)
+		{
+			// lane MPDROP-3: the process did not run for a while (stopped, starved, a hitch): the wait for a frame starts again, its network decides first
+			lastProgress = NetMilliseconds();
+			resumedAt = lastProgress;
+		}
 		if (a.paced)
 		{
 			NetSleepMilliseconds(5);
@@ -2249,10 +2369,12 @@ static int peerMain(int argc, char **argv)
 				break;
 			}
 		}
+		lastLoop = NetMilliseconds();
 	}
 	session.finish(game);
 	const std::uint64_t drain = NetMilliseconds();
-	while (!session.allAcked() && NetMilliseconds() - drain < 5000)
+	// lane MPDROP-3: a player the others dropped is acknowledged by nobody: no wait
+	while (disconnectQuit.rfind("dropped by the other players", 0) != 0 && !session.allAcked() && NetMilliseconds() - drain < 5000)
 	{
 		session.service();
 		session.network().update(game.protocolFrame(), game.commands());
@@ -2527,6 +2649,7 @@ static int peerMain(int argc, char **argv)
 		// lane MP-2: the disconnect path
 		const DisconnectManager &dm = net.disconnectManager();
 		r << "disconnect_quit " << (disconnectQuit.empty() ? "none" : disconnectQuit) << "\n";
+	r << "quit_after_resume_ms " << quitAfterResumeMs << "\n"; // lane MPDROP-3: -1 no quit after a loop gap
 		std::string dropped;
 		for (int s : dm.dropped())
 		{
@@ -2577,6 +2700,51 @@ static int peerMain(int argc, char **argv)
 		for (const std::string &l : lr.playerNotes)
 		{
 			r << "player_note " << l << "\n";
+		}
+		// lane MODCOMPAT-1 (the mod gap census, tools/mod/gap_census.py): what this game ran into that is not ported yet: the live objects carrying
+		// an UnportedModule (by class, S-140) and the script actions / conditions that did nothing / evaluated false (by name, S-1180)
+		for (const auto &kv : lr.logic.unportedModules)
+		{
+			r << "unported_module " << kv.first << " " << kv.second.objects << "\n";
+		}
+		for (const auto &kv : game.logic().scriptEngine().stats().unportedActions)
+		{
+			r << "unported_action " << kv.first << " " << kv.second << "\n";
+		}
+		for (const auto &kv : game.logic().scriptEngine().stats().unportedConditions)
+		{
+			r << "unported_condition " << kv.first << " " << kv.second << "\n";
+		}
+		// the static side (sizes the module ports beyond what one game reached): every object template (its final override) whose behavior
+		// modules name an unported class, by class. A ported class whose runtime falls back to an UnportedModule for some data is not
+		// counted here (only the live count sees it).
+		{
+			ModuleFactory &modules = game.logic().things().moduleFactory();
+			std::map<std::string, size_t> templatesUsing;
+			for (const ThingTemplate *t : game.logic().things().templates())
+			{
+				while (t->getNextOverride())
+				{
+					t = t->getNextOverride();
+				}
+				std::set<std::string> classes;
+				for (const ThingTemplate::Nugget &n : t->behaviorModules().nuggets())
+				{
+					const ModuleFactory::ModuleTemplate *mt = modules.findModuleTemplate(n.name, MODULETYPE_BEHAVIOR);
+					if (!mt || !mt->portedModule)
+					{
+						classes.insert(n.name);
+					}
+				}
+				for (const std::string &c : classes)
+				{
+					++templatesUsing[c];
+				}
+			}
+			for (const auto &kv : templatesUsing)
+			{
+				r << "unported_template_module " << kv.first << " " << kv.second << "\n";
+			}
 		}
 		for (int sl = 0; sl < MAX_SLOTS && (size_t)sl < lr.startSlotPlayers.size(); ++sl)
 		{

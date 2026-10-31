@@ -407,7 +407,9 @@ the Godot launcher project), put the launcher arguments after `--`; consent is
     same checks by hand in phase 1 (213 of 213 pins).
   - **No game-side discovery hint.** The game's first-run screen does not yet offer the downloaded folders by itself;
     the player browses to them.
-  - **No language choice.** Only the English tables exist.
+  - **No language choice.** Only the English tables exist. (Since issue #49: every language of the two base packages is
+    pinned from the manifests, `tools/release/aio_languages.py`, and the Game files screen picks the text and the voice language;
+    see "Languages" below.)
 
 ## Round 2 (2026-10-10): approved, hardened, and one real run
 
@@ -509,3 +511,22 @@ then checks whether those folders exist; it does not skip a stale complete sourc
 - **Never in our packages:** `tools/release/audit_package.py` refuses any file (any name, any container, any pack entry, and every file
   of a `--release` package) whose MD5 and size are one of the AIO pins, the BFME1 package's included.
 - BFME1 keeps working with the player's own install: `BFME1_INSTALL`, a remembered folder, `<games>/BFME1`.
+
+## Languages (issue #49)
+
+- **Pins.** `tools/release/aio_languages.py --capture <manifest dir>` reads the service's manifests of `original-RotWK` and
+  `original-BFME2` and writes `tools/release/aio_language_files.json` (per package and language code: the files the language adds,
+  the English files it drops) and the engine's `engine/data/retail-archives/language-archives.json` (each language's
+  `lang/*.big`). `tools/release/aio_pins.py` renders the first into `aio_pins.gd` (each base package's `languages`).
+  Captured 2026-10-20 from version 1.0.0 of both manifests; the six German archives equal a retail German install.
+- **What the manifests list.** Besides English: Dutch, French, German, Italian, Norwegian, Polish, Russian, Spanish, Swedish
+  and Turkish. Dutch, Norwegian, Polish and Swedish (and Turkish on RotWK) use `lang\EnglishAudio.big`. Every Turkish file and
+  BFME2's `lang\RussianAudio.big` are listed with `Size: 0`. RotWK's `lang\spanishpatch201.big` is tagged `SP` and the rest of
+  Spanish `ES`: the capture reads `SP` as `ES` (the AIO launcher's own language filter would miss that file for `ES`).
+  BFME2's `lang\Turkish.big` has the MD5 of `lang\English.big`.
+- **The download.** The launcher offers a language when both packages know every file it adds with a size (not Turkish, not
+  Russian). It takes the `ALL` files, the text language's files without its speech archive, and the voice language's speech
+  archive. A language-tagged file it does not take is skipped; one OpenBFME has no pin for, tagged with a language the pinned table
+  knows, stops the install as a changed package (one tagged only with a language the table does not know is skipped too). The command line has `--aio-language=<code>` and `--aio-voice=<code>`.
+- **The game** reads the language from the files on disk (`Common/RetailArchivePolicy.h`, "Languages"), the text language from
+  `lang/<Language>.big` and the voice language from `lang/<Language>Audio.big`.

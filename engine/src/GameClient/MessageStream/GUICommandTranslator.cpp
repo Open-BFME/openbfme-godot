@@ -1,11 +1,11 @@
 // OpenBFME. GPL-3.0.
 // See GUICommandTranslator.h.
 
-#include "Common/SpecialPower.h"
 #include "GameClient/MessageStream/GUICommandTranslator.h"
 
 #include "GameClient/ControlBarCommands.h"
 #include "GameClient/HudObjects.h"
+#include "GameClient/MessageStream/CommandXlat.h"
 #include "GameLogic/ActionManager.h"
 #include "GameLogic/Object/Object.h"
 
@@ -14,13 +14,22 @@ MessageDisposition GUICommandTranslator::translate(const ClientMessage &msg)
 	MessageDisposition disp = MessageDisposition::Keep;
 	// lane SPELLRC-1: RotWK's GUI command translator (RW 0x83D7AD) follows the right button before it reads the GUI command: the press keeps its pixel and
 	// clears the dragged flag (case 0xE: + 0x20, + 0x30), a pointer move beyond the drag tolerance from it sets the flag (case 3: RW 0x5ED4B9 -> + 0x30)
+	// BFME2 0x004314B1 follows the left button the same way (case 4: + 0x04, + 0x14 cleared; case 3: + 0x14 set beyond the drag tolerance)
 	switch (msg.type())
 	{
+		case CMSG_RAW_MOUSE_LEFT_BUTTON_DOWN:
+			m_leftAnchor = msg.arg(0).pixel;
+			m_leftDragged = false;
+			break;
 		case CMSG_RAW_MOUSE_RIGHT_BUTTON_DOWN:
 			m_rightAnchor = msg.arg(0).pixel;
 			m_rightDragged = false;
 			break;
 		case CMSG_RAW_MOUSE_POSITION:
+			if (m_ctx.mouse.isDragging(m_leftAnchor, msg.arg(0).pixel))
+			{
+				m_leftDragged = true;
+			}
 			if (m_ctx.mouse.isDragging(m_rightAnchor, msg.arg(0).pixel))
 			{
 				m_rightDragged = true;
@@ -44,6 +53,10 @@ MessageDisposition GUICommandTranslator::translate(const ClientMessage &msg)
 	{
 		return disp;
 	}
+	if (command->m_command == GUI_COMMAND_ATTACK_MOVE)
+	{
+		return translateAttackMove(msg);
+	}
 	switch (msg.type())
 	{
 		case CMSG_RAW_MOUSE_LEFT_BUTTON_DOWN:
@@ -53,16 +66,11 @@ MessageDisposition GUICommandTranslator::translate(const ClientMessage &msg)
 		case CMSG_MOUSE_LEFT_CLICK:
 		{
 			const ICoord2D mouse = msg.arg(0).region.hi;
-			// a context command is the CommandTranslator's, except a special power: lane FACT-B, DONOR ZH CommandXlat.cpp evaluateContextCommand (1503-1620):
-			// a pending GUI command that is a context command OR a SPECIAL_POWER issues issueSpecialPowerCommand (RW 0x81E147, tier A, BFME2 decomp
-			// CommandTranslator::issueSpecialPowerCommand) with the clicked object or the ground, the same message this case builds. Without it a
-			// CONTEXTMODE_COMMAND ability (Saruman's Dominate Enemy and Speechcraft, Sharku's Tame the Beast, the Mouth of Sauron's Dissent / Doubt, a
-			// porter's Extinguish Fire) sent a move order. INFERENCE: RotWK's context evaluation (not in the decomp) does the same for powers
-			// a context command is the CommandTranslator's, except a SPECIAL_POWER: lane FACT-A: RotWK's GUI command translator (RW 0x83D7AD) keeps every
-			// SPECIAL_POWER click (case 0x18) for the CommandTranslator, whose special power issue (RW 0x81E147) sends the same 0x410 / 0x411 / 0x412 for a
-			// context-mode button (Arrow Storm, Train Archers, the Royal Guard, Gimli's Leap: NEED_TARGET_* with CONTEXTMODE_COMMAND) as for the others; the
-			// port issues them all here (HERO-1's branch below)
-			if (command->hasOption(COMMAND_OPTION_CONTEXTMODE_COMMAND) && command->m_command != GUI_COMMAND_SPECIAL_POWER)
+			// RW 0x83D7AD case 0x18 leaves SPECIAL_POWER to CommandTranslator,
+			// including CONTEXTMODE_COMMAND (Gimli / Rogash Leap). Keep a single
+			// target-validation and message path: the old duplicate lost options,
+			// the object click's location and CommandTrigger, and ended invalid aims.
+			if (command->hasOption(COMMAND_OPTION_CONTEXTMODE_COMMAND) || command->m_command == GUI_COMMAND_SPECIAL_POWER)
 			{
 				break;
 			}
@@ -121,15 +129,6 @@ MessageDisposition GUICommandTranslator::translate(const ClientMessage &msg)
 							m.appendLocation(world);
 							m.appendInteger(mode);
 						}
-					}
-					break;
-				}
-				case GUI_COMMAND_ATTACK_MOVE:
-				{
-					Coord3D world;
-					if (m_ctx.ui.firstSelected() != INVALID_ID && m_ctx.view.screenToTerrain(mouse, m_ctx.logic, world))
-					{
-						m_ctx.stream.append(MSG_DO_ATTACKMOVETO).appendLocation(world);
 					}
 					break;
 				}
@@ -201,77 +200,6 @@ MessageDisposition GUICommandTranslator::translate(const ClientMessage &msg)
 					}
 					break;
 				}
-				case GUI_COMMAND_SPECIAL_POWER:
-				{
-					// lane HERO-1 (S-850): a hero ability's target. An object of the relationship the options name: MSG_DO_SPECIAL_POWER_AT_OBJECT { int id, objectID
-					// target, int options, objectID source }; else with NEED_TARGET_POS the ground: MSG_DO_SPECIAL_POWER_AT_LOCATION { int id, location, objectID target,
-					// int options, objectID source }. The radius cursor and the target validity rules of the binary's translator are S-290's
-					const SpecialPowerTemplate *t = TheSpecialPowerStore && !command->m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(command->m_specialPowerName) : nullptr;
-					const ObjectID source = m_ctx.ui.firstSelected();
-					if (!t || source == INVALID_ID)
-					{
-						break;
-					}
-					Object *target = nullptr;
-					if (command->hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT | COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT | COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT))
-					{
-						target = HudObjects::pickForGuiCommand(m_ctx, mouse, *command); // RW 0x83D41A
-						if (target)
-						{
-							const Relationship rel = HudObjects::relationshipToLocal(m_ctx, *target);
-							const bool ok = (rel == ENEMIES && command->hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT))
-								|| (rel == NEUTRAL && command->hasOption(COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT))
-								|| (rel == ALLIES && command->hasOption(COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT));
-							if (!ok)
-							{
-								target = nullptr;
-							}
-						}
-					}
-					if (target)
-					{
-						ClientMessage &m = m_ctx.stream.append(MSG_DO_SPECIAL_POWER_AT_OBJECT);
-						m.appendInteger((int)t->getID());
-						m.appendObjectID(target->getID());
-						m.appendInteger(0);
-						m.appendObjectID(source);
-					}
-					else
-					{
-						Coord3D world;
-						if (command->hasOption(COMMAND_OPTION_NEED_TARGET_POS) && m_ctx.view.screenToTerrain(mouse, m_ctx.logic, world))
-						{
-							// lane SUMMONLOC-1: RotWK's CommandTranslator case 0x18 (RW 0x81E9C5) asks RW 0x6A4260(button, no object, the location, 0, options,
-							// no source) before it issues: some selected object passes RW 0x82DFB7(object, location, 0, power, 0, options, 1); else RW 0x81EBE9
-							// issues nothing (the invalid feedback 0xAF) and, as the spell book's SPELL-4 path, the targeting goes on. INFERENCE: the last
-							// argument 1's own module / readiness test is left to the logic handler (SpellCommands), which refuses an unready power; a type
-							// whose test is not ported (S-1874) casts, as its radius cursor shows it (S-4641)
-							bool canCast = false;
-							for (ObjectID id : m_ctx.ui.selected())
-							{
-								Object *o = m_ctx.logic.findObjectByID(id);
-								bool unported = false;
-								if (o && (ActionManager::canDoSpecialPowerAtLocation(*o, world, t, command->m_options, &unported) || unported))
-								{
-									canCast = true;
-									break;
-								}
-							}
-							if (!canCast)
-							{
-								complete = false;
-								break;
-							}
-							ClientMessage &m = m_ctx.stream.append(MSG_DO_SPECIAL_POWER_AT_LOCATION);
-							m.appendInteger((int)t->getID());
-							m.appendLocation(world);
-							m.appendObjectID(INVALID_ID);
-							m.appendInteger(0);
-							m.appendObjectID(source);
-						}
-					}
-					break;
-				}
 				default:
 					break;
 			}
@@ -284,6 +212,48 @@ MessageDisposition GUICommandTranslator::translate(const ClientMessage &msg)
 		}
 		default:
 			break;
+	}
+	if (disp == MessageDisposition::Destroy)
+	{
+		m_ctx.ui.clearAttackMoveToMode();
+	}
+	return disp;
+}
+
+MessageDisposition GUICommandTranslator::translateAttackMove(const ClientMessage &msg)
+{
+	// BFME2 0x004314B1 (GUICommandTranslatorTranslateGameMessage.cpp, matched) for a waiting ATTACK_MOVE (type 0xA): a click that was not dragged is one
+	// of two roles. With GlobalData m_useAlternateMouse (+ 0x5C; RotWK's default, RW 0x642A4B) the right click carries the command out and the left click
+	// ends it; without it the left click carries it out and the right click ends it. The left press is destroyed; every other message is kept
+	const int t = msg.type();
+	const bool leftClick = (t == CMSG_MOUSE_LEFT_CLICK || t == CMSG_MOUSE_LEFT_DOUBLE_CLICK) && !m_leftDragged;
+	const bool rightClick = (t == CMSG_MOUSE_RIGHT_CLICK || t == CMSG_MOUSE_RIGHT_DOUBLE_CLICK) && !m_rightDragged;
+	const bool alternate = m_commands.useAlternateMouse();
+	const bool cancels = alternate ? leftClick : rightClick;
+	const bool carriesOut = alternate ? rightClick : leftClick;
+	MessageDisposition disp = MessageDisposition::Keep;
+	if (t == CMSG_RAW_MOUSE_LEFT_BUTTON_DOWN)
+	{
+		disp = MessageDisposition::Destroy;
+	}
+	else if (cancels)
+	{
+		disp = MessageDisposition::Destroy;
+		m_ctx.ui.setGUICommand(nullptr);
+	}
+	else if (carriesOut)
+	{
+		// doAttackMoveCommand (0x004311A7, doAttackMoveCommand.cpp, matched): nothing without a first selected drawable with an object, else MSG_DO_ATTACKMOVETO
+		// (0x430) { location: the terrain point under the click's region corner (hi) } and the unit voice (pickAndPlayUnitVoiceResponse 0x004DAAFD: the
+		// port plays it from the logic message, HudInput's observer). It returns 1: the command ends either way
+		const ICoord2D mouse = msg.arg(0).region.hi;
+		Coord3D world;
+		if (m_ctx.ui.firstSelected() != INVALID_ID && m_ctx.view.screenToTerrain(mouse, m_ctx.logic, world))
+		{
+			m_ctx.stream.append(MSG_DO_ATTACKMOVETO).appendLocation(world);
+		}
+		disp = MessageDisposition::Destroy;
+		m_ctx.ui.setGUICommand(nullptr);
 	}
 	if (disp == MessageDisposition::Destroy)
 	{

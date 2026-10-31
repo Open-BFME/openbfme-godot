@@ -4,6 +4,8 @@
 #include "doctest.h"
 #include "CampaignTestUtil.h"
 #include "StartTestUtil.h"
+#include "GameClient/HudInput.h"
+#include "GameClient/HudObjects.h"
 
 #include "Common/PlayerTemplate.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
@@ -11,6 +13,7 @@
 
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 
@@ -71,6 +74,131 @@ Walk walkTo(Mission &m, Object &o, const Coord3D &to, int maxFrames)
 	return w;
 }
 } // namespace
+
+TEST_CASE("bridgeclick1 retail: a right click reaches the river bridge or Celduin boardwalk deck")
+{
+	OPENBFME_REQUIRE_START(s);
+	const char *map = "map good rivendell";
+	const char *pickedTemplate = "RivBridge";
+	Coord3D start{ 3040.0f, 1520.0f, 0.0f };
+	Coord3D target{ 2869.0f, 1703.0f, 0.0f };
+	SUBCASE("Rivendell river bridge") {}
+	SUBCASE("Celduin dock segment A")
+	{
+		map = "map good celduin";
+		pickedTemplate = "CelduinDockSegmentA";
+		start = { 2828.0f, 1445.0f, 0.0f };
+		// The segment origin overlaps Outpost 1799; click the clear deck beside its footprint.
+		target = { 2760.5f, 1450.5f, 0.0f };
+	}
+	Mission m;
+	m.load(*s, map);
+	m.step(2);
+	Player *me = humanOf(m);
+	REQUIRE(me);
+	m.game->players().setLocalPlayer(me);
+	m.logic().combat().setAutoAcquireEnabled(false);
+	Pathfinder &pf = m.game->ai().pathfinder();
+	target.z = pf.getHighestLayerHeight(target.x, target.y);
+	start.z = pf.getHighestLayerHeight(start.x, start.y);
+	const PathfindLayerEnum layer = pf.getLayerAt(target.x, target.y, target.z);
+	INFO(map << " deck=" << target.x << "," << target.y << "," << target.z << " layer=" << (int)layer);
+	if (std::string(map) == "map good rivendell")
+	{
+		REQUIRE(isWallLayer(layer));
+	}
+	else
+	{
+		// CelduinDockSegmentA is NO_COLLIDE scenery over mapped terrain, without a wall or raised mesh.
+		REQUIRE(layer == LAYER_GROUND);
+		const PathfindCell *cell = pf.getCell(layer, &target);
+		REQUIRE(cell);
+		REQUIRE(cell->getType() == PathfindCell::CELL_CLEAR);
+		REQUIRE(cell->getObstacleID() == PATHFIND_INVALID_ID);
+	}
+	std::string error;
+	Object *hero = m.game->createObject("ElvenGlorfindel", me->getPlayerIndex(), start, 0.0f, &error);
+	REQUIRE_MESSAGE(hero, error);
+	hero->getBodyModule()->setIndestructible(true);
+	m.step(2);
+	MouseSettings mouse;
+	REQUIRE_MESSAGE(MouseSettings::load(*s->mount->fs, mouse, &error), error);
+	INIEnvironment env;
+	env.fileSystem = s->mount->fs.get();
+	MetaMap meta;
+	meta.registerBlocks(env);
+	REQUIRE_MESSAGE(meta.load(env, "Data\\INI\\CommandMap.ini", &error), error);
+	REQUIRE_MESSAGE(meta.load(env, "CommandMap.ini", &error), error);
+	PinholeView view({ target.x, target.y - 420.0f, target.z + 520.0f }, target, 1024, 768, 0.7f);
+	HudInput input(m.logic(), &m.game->ai(), view, m.game->commands(), mouse, meta);
+	input.commandTranslator().setUseAlternateMouse(true); // The device applies retail's right-click-orders setting.
+	std::vector<GameMessage> moves;
+	input.setLogicMessageObserver([&](const GameMessage &msg) {
+		if (msg.getType() == MSG_DO_MOVETO)
+		{
+			moves.push_back(msg);
+		}
+	});
+	ICoord2D unitPixel;
+	REQUIRE(view.worldToScreen(*hero->getPosition(), unitPixel));
+	input.mouseButton(HudInput::Button::Left, true, unitPixel.x, unitPixel.y, 0, 900);
+	input.update();
+	input.mouseButton(HudInput::Button::Left, false, unitPixel.x, unitPixel.y, 0, 920);
+	input.update();
+	m.step();
+	REQUIRE(input.ui().selected() == std::vector<ObjectID>{ hero->getID() });
+	REQUIRE(me->selection() == input.ui().selected());
+	// RW 0x81E60B: evaluating a plain location move does not exempt a locally controlled drawable or emit a command.
+	CHECK(input.commandTranslator().evaluateContextCommand(hero, hero->getPosition(), EvaluateType::EvaluateOnly) == MSG_DO_MOVETO);
+	CHECK(moves.empty());
+	ICoord2D pixel;
+	REQUIRE(view.worldToScreen(target, pixel));
+	Coord3D picked;
+	REQUIRE(view.screenToTerrain(pixel, m.logic(), picked));
+	Object *hit = HudObjects::pickObject(input.context(), pixel);
+	REQUIRE(hit);
+	REQUIRE(hit->getTemplate()->getName() == pickedTemplate);
+	CHECK(hit->isKindOfName("WALK_ON_TOP_OF_WALL") == isWallLayer(layer));
+	CHECK(hit->isKindOfName("NO_COLLIDE") == (layer == LAYER_GROUND));
+	CHECK(pf.getLayerAt(picked.x, picked.y, picked.z) == layer);
+	MESSAGE("bridgeclick pick=" << picked.x << "," << picked.y << "," << picked.z << " object=" << hit->getTemplate()->getName());
+	input.mouseMove(pixel.x, pixel.y);
+	input.update();
+	CHECK(input.ui().cursor() == MouseCursorName::Move);
+	input.mouseButton(HudInput::Button::Right, true, pixel.x, pixel.y, 0, 1000);
+	input.update();
+	input.mouseButton(HudInput::Button::Right, false, pixel.x, pixel.y, 0, 1020);
+	input.update();
+	REQUIRE(moves.size() == 1);
+	REQUIRE(moves.front().getArgumentCount() == 1); // RW 0x81DB0C emits XYZ, not a separate destination layer.
+	const GameMessageArgument *location = moves.front().getArgument(0);
+	REQUIRE(location->type == ARGUMENTDATATYPE_LOCATION);
+	CHECK(location->location.x == picked.x);
+	CHECK(location->location.y == picked.y);
+	CHECK(location->location.z == picked.z);
+	m.step();
+	AIUpdateInterface *ai = hero->getAIUpdateInterface();
+	REQUIRE(ai);
+	const Coord3D goal = ai->stateMachine().goalPosition();
+	CHECK(pf.getLayerAt(goal.x, goal.y, goal.z) == layer);
+	MESSAGE("bridgeclick goal=" << goal.x << "," << goal.y << "," << goal.z);
+	bool arrived = false;
+	for (int frame = 0; frame < 1500; ++frame)
+	{
+		m.step();
+		const Coord3D at = *hero->getPosition();
+		const float dx = at.x - picked.x, dy = at.y - picked.y;
+		// tolerance: the requested arrival radius is one pathfinding cell (10 world units), on the clicked surface, at rest.
+		if (dx * dx + dy * dy <= 100.0f && ai->adapter().getLayer() == layer && !ai->isMoving())
+		{
+			arrived = true;
+			break;
+		}
+	}
+	const Coord3D at = *hero->getPosition();
+	MESSAGE("bridgeclick finish=" << at.x << "," << at.y << "," << at.z << " layer=" << (int)ai->adapter().getLayer());
+	CHECK(arrived);
+}
 
 TEST_CASE("bridge1 retail: on MAP GOOD Rivendell a hero walks over the river on RivBridge (ramp, deck, ramp) and on to the far bank")
 {
@@ -549,7 +677,7 @@ TEST_CASE("bridge1 retail: on MAP MP Anfalas a GenericTreeBridge survives a kill
 	const float healthBefore = hero->getBodyModule()->getHealth();
 	// a kill does nothing to it (RotWK's InactiveBody constructor sets the object's dead bit, RW 0x8C1A06 -> 0x68D950, and doAttemptDamage RW 0x697E50 skips
 	// the body of a dead object): retail removes such a bridge only by deleting it (a script's delete, GameLogic::destroyObject)
-	bridge->kill(DEATH_NORMAL);
+	bridge->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	g.frames(150);
 	REQUIRE(g.game->logic().findObjectByID(bridgeID) == bridge);
 	CHECK(ai->adapter().getLayer() == deckLayer);

@@ -46,6 +46,7 @@
 #include <vector>
 
 class ModuleFactory;
+class CitadelSlaughterHordeContainBehaviorData;
 struct DieMuxData;
 struct GarrisonContainModuleData;
 struct HordeGarrisonContainModuleData;
@@ -185,4 +186,24 @@ private:
 	UnsignedInt m_nextExitFrame = 0;                  // HordeGarrisonContain RW + 0x9E0
 	Stats m_stats;
 	ExitStats m_exitStats;
+};
+
+// Ring-entry branch of the citadel contain. The unrelated troop-slaughter branch
+// remains an explicit stop; ordinary units must not become fortress garrisons.
+class CitadelSlaughterHordeContain : public GarrisonContain
+{
+public:
+	OBFME_MODULE_XFER(CitadelSlaughterHordeContain)
+	CitadelSlaughterHordeContain(Thing *thing, const CitadelSlaughterHordeContainBehaviorData *data);
+	bool isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const override;
+	bool addToContain(Object *obj) override;
+	UpdateSleepTime update() override;
+	void crc(StateHasher &h) const override;
+	static const char *stopLine();
+	ObjectID pendingRingExit() const { return m_ringExit; } // the carrier the next update sends out (RW 0x884244)
+private:
+	bool hasRingStatus(const Object &obj) const;
+	void deliverRing(Object &obj);
+	const CitadelSlaughterHordeContainBehaviorData *m_citadel;
+	ObjectID m_ringExit = INVALID_ID;
 };

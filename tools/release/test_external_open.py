@@ -41,8 +41,15 @@ def test_native_website_bridge_delegates_and_fails_closed():
 def test_suite_guard_rejects_a_bypassed_opener(tmp_path):
     shutil.copy(REPO / "tools/conftest.py", tmp_path / "conftest.py")
     (tmp_path / "test_bypass.py").write_text('import subprocess\ndef test_bypass():\n    subprocess.run(["xdg-open", "about:blank"])\n')
-    result = subprocess.run([sys.executable, "-m", "pytest", "-q", str(tmp_path)],
-                            capture_output=True, text=True, timeout=60)
+    # The nested session must not touch the shared /tmp/pytest-of-<user> root: every pytest start there deletes the garbage-*
+    # trees earlier runs left (gigabytes on a gate host), which took over a minute under load. A private basetemp skips that.
+    # No inherited xdist worker identity, no plugin autoload (the guard conftest needs only pytest), no cache dir, no stdin.
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_XDIST", "PYTEST_CURRENT_TEST"))}
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    result = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--basetemp={tmp_path / 'nested-tmp'}",
+                             str(tmp_path / "test_bypass.py")], cwd=tmp_path, env=env, stdin=subprocess.DEVNULL,
+                            capture_output=True, text=True,
+                            timeout=60)  # tolerance: second guard only; a real opener would block here, the cleanup stall is fixed above
     assert result.returncode == 1 and "a test subprocess attempted a real external open" in result.stdout, result.stdout + result.stderr
 
 

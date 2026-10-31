@@ -684,3 +684,20 @@ TEST_CASE("housecolor.ini: blocks map a base texture to its house colour texture
 	CHECK(error.find("not closed") != std::string::npos);
 	CHECK_FALSE(t.Parse("Colour\nEnd\n", &error));
 }
+
+TEST_CASE("texture resolution: packed model colours use JPEG after DDS and TGA, never the PNG mask alone")
+{
+	const std::string stem = "art\\compiledtextures\\gu\\gushadowfaxh";
+	std::set<std::string> files = { stem + ".jpg", stem + ".png" };
+	auto exists = [&](const std::string &path) { return files.count(path) != 0; };
+	auto resolved = Resolve_Packed_W3D_Texture("GUShadowFaxH.tga", exists);
+	REQUIRE(resolved.Found);
+	CHECK(resolved.Path == stem + ".jpg");
+	CHECK_FALSE(resolved.IsDDS);
+	files.insert(stem + ".tga");
+	CHECK(Resolve_Packed_W3D_Texture("GUShadowFaxH.tga", exists).Path == stem + ".tga");
+	files.insert(stem + ".dds");
+	CHECK(Resolve_Packed_W3D_Texture("GUShadowFaxH.tga", exists).Path == stem + ".dds");
+	files = { stem + ".png" };
+	CHECK_FALSE(Resolve_Packed_W3D_Texture("GUShadowFaxH.tga", exists).Found);
+}

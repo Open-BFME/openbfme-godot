@@ -15,7 +15,7 @@
 // name. Retail's id is -1 for a base texture that is not in the asset registry, so all such blocks collide in retail; the
 // table does not reproduce that. Unknown fields or stray lines are errors.
 //
-// The target's final texture combine remains unverified (S-119 / S-022). This module
+// The final texture combine is recovered from defaultw3d.fxo (S-022; docs/HOUSE_COLOR_PORT.md); S-119 keeps the owner's colour source. This module
 // supplies the table, per-texel recolouring and donor mesh-name/palette rules; see docs/HOUSE_COLOR_PORT.md.
 
 #pragma once

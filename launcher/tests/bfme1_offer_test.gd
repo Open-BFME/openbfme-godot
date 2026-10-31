@@ -11,6 +11,7 @@ extends SceneTree
 const MainScene := preload("res://scenes/main.tscn")
 const GamesScreen := preload("res://scripts/ui/games_screen.gd")
 const AioInstall := preload("res://scripts/core/aio_install.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 const Paths := preload("res://scripts/ui/paths.gd")
 
 var _failures := PackedStringArray()
@@ -53,7 +54,7 @@ func _pick(main, index: int) -> void:
 func _offers_bfme1(main, want: bool, where: String) -> void:
 	var gs = main._games_screen
 	_check(gs.offer_bfme1 == want, "%s: the Game files screen should offer %s" % [where, "the BFME1 package" if want else "the base download"])
-	_check(gs._dl_title.text == (GamesScreen.BFME1_TITLE if want else GamesScreen.DL_TITLE).to_upper(), "%s: the download title is '%s'" % [where, gs._dl_title.text])
+	_check(gs._dl_title.text == L10n.t(GamesScreen.BFME1_TITLE if want else GamesScreen.DL_TITLE).to_upper(), "%s: the download title is '%s'" % [where, gs._dl_title.text])
 	_check(gs._source.text.contains("BFME Arena") == want and gs._source.text.contains("third-party") == want,
 		"%s: the source line is '%s'" % [where, gs._source.text])
 	_check(gs._what.text.begins_with("BFME1 test, about") == want, "%s: the download names '%s'" % [where, gs._what.text])

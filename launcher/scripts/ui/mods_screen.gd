@@ -4,7 +4,9 @@
 ##   * Get mods: the source, Load the list / Refresh (nothing is asked of the service before that press), the download's progress with
 ##     Pause and Cancel;
 ##   * the list: every Rise of the Witch-king package (patches and mods) with its version, author, size and state, its enhancements as
-##     boxes to tick, and Install / Update / Apply. The question before the first download is main.gd's (the consent).
+##     boxes to tick, and Install / Update / Apply. The question before the first download is main.gd's (the consent);
+##   * lane SDK-1: Asset packs: the HD model and texture packs in the game's asset-packs folder (scripts/core/asset_packs.gd), each with
+##     what it holds, its problems, and a box to turn it on or off; Open the folder.
 ## It only shows and asks; scripts/main.gd does the work (signals). Lane UI-5's placeholder ("Edain coming later") is replaced.
 extends Control
 
@@ -14,18 +16,22 @@ signal remove(guid: String)
 signal pick(guid: String)
 signal pause_pressed
 signal cancel_pressed
+signal asset_pack_toggled(name: String, on: bool) # lane SDK-1
+signal open_asset_packs
 
 const W := preload("res://scripts/ui/widgets.gd")
 const Style := preload("res://scripts/ui/style.gd")
 const VectorIcon := preload("res://scripts/ui/vector_icon.gd")
 const ModCatalog := preload("res://scripts/core/mod_catalog.gd")
 const ModInstall := preload("res://scripts/core/mod_install.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
-const SOURCE := "Mods from bfmeladder.com, the workshop of the All In One BFME Launcher. They are made by their own authors, not by " + \
-	"OpenBFME. Every file is checked against the workshop's list; your game folders are never changed."
-const NEEDS := "Needs engine features: its changes to the game program are not in OpenBFME yet, so the game may look or play " + \
-	"differently, or fail to start. Not taken: %s."
-const NONE := "The original game (no mod)"
+const SOURCE := "launcher.mods_screen.source"
+const NEEDS := "launcher.mods_screen.needs"
+const NONE := "launcher.mods_screen.none"
+const ACTIONS := {"install": "launcher.mods_screen.action_install", "continue": "launcher.mods_screen.action_continue",
+	"update": "launcher.mods_screen.action_update", "apply": "launcher.mods_screen.action_apply", "installed": "launcher.mods_screen.action_installed"}
+const PACKS := "launcher.mods_screen.packs_note" # lane SDK-1
 
 var _pick: OptionButton
 var _pick_guids: Array = [""]
@@ -45,6 +51,8 @@ var _partial := {}    # guid -> name: a download that was started and not finish
 var _active := {"guid": "", "enhancements": []}
 var _chosen := {}     # package guid -> {enhancement guid: true}: the ticked boxes
 var _busy := false
+var _packs_box: VBoxContainer # lane SDK-1
+var _packs := []
 
 
 func _init() -> void:
@@ -52,7 +60,7 @@ func _init() -> void:
 	var v := W.vbox(Style.SCREEN_GAP)
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(v)
-	v.add_child(W.h2("Mods"))
+	v.add_child(W.h2(L10n.t("launcher.mods_screen.title")))
 	var s := W.scroll(Style.SCREEN_GAP)
 	v.add_child(s.scroll)
 	var grid := W.hbox(16)
@@ -63,10 +71,10 @@ func _init() -> void:
 	play.panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	play.panel.size_flags_vertical = Control.SIZE_FILL  # the two cards of the row end together
 	grid.add_child(play.panel)
-	play.box.add_child(W.h3("Play with"))
+	play.box.add_child(W.h3(L10n.t("launcher.mods_screen.play_with")))
 	_pick = OptionButton.new()
 	_pick.item_selected.connect(func(i: int) -> void: pick.emit(String(_pick_guids[i])))
-	play.box.add_child(W.row(_with_note("Mod", "Play starts the game with it."), _pick))
+	play.box.add_child(W.row(_with_note(L10n.t("launcher.mods_screen.mod"), L10n.t("launcher.mods_screen.mod_note")), _pick))
 	_pick_note = W.wrap("", "Muted")
 	play.box.add_child(_pick_note)
 	_installed = W.vbox(0)
@@ -76,9 +84,9 @@ func _init() -> void:
 	get.panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	get.panel.size_flags_vertical = Control.SIZE_FILL
 	grid.add_child(get.panel)
-	get.box.add_child(W.h3("Get mods"))
-	get.box.add_child(W.wrap(SOURCE, "Muted"))
-	_note = W.wrap("The list is not loaded yet. Nothing is asked of bfmeladder.com before you press Load the list.", "Muted")
+	get.box.add_child(W.h3(L10n.t("launcher.mods_screen.get_mods")))
+	get.box.add_child(W.wrap(L10n.t(SOURCE), "Muted"))
+	_note = W.wrap(L10n.t("launcher.mods_screen.not_loaded"), "Muted")
 	get.box.add_child(_note)
 	_progress = W.vbox(6)
 	_progress.visible = false
@@ -88,22 +96,38 @@ func _init() -> void:
 	_progress.add_child(_bar)
 	get.box.add_child(_progress)
 	var buttons := W.hbox(8)
-	_refresh = W.button("Load the list", "refresh", "", 15)
+	_refresh = W.button(L10n.t("launcher.mods_screen.load_list"), "refresh", "", 15)
 	_refresh.pressed.connect(func() -> void: refresh.emit(not _view.is_empty()))
 	buttons.add_child(_refresh)
-	_pause = W.button("Pause", "pause", "", 14)
+	_pause = W.button(L10n.t("launcher.games_screen.pause"), "pause", "", 14)
 	_pause.pressed.connect(func() -> void: pause_pressed.emit())
 	buttons.add_child(_pause)
-	_cancel = W.button("Cancel", "stop", "", 14)
+	_cancel = W.button(L10n.t("common.cancel"), "stop", "", 14)
 	_cancel.pressed.connect(func() -> void: cancel_pressed.emit())
 	buttons.add_child(_cancel)
 	get.box.add_child(buttons)
+
+	var packs := W.panel(6)
+	packs.panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	packs.panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	s.box.add_child(packs.panel)
+	var open := W.button(L10n.t("launcher.mods_screen.packs_open"), "folder", "", 14)
+	open.pressed.connect(func() -> void: open_asset_packs.emit())
+	var head := W.hbox(8) # the title with the folder button at the right, where the list's buttons end
+	var title := W.h3(L10n.t("launcher.mods_screen.packs_title"))
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	head.add_child(open)
+	packs.box.add_child(head)
+	packs.box.add_child(W.wrap(L10n.t(PACKS), "Muted"))
+	_packs_box = W.vbox(0)
+	packs.box.add_child(_packs_box)
 
 	var list := W.panel(0)
 	list.panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	list.panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	s.box.add_child(list.panel)
-	list.box.add_child(W.h3("The Rise of the Witch-king mods"))
+	list.box.add_child(W.h3(L10n.t("launcher.mods_screen.list_title")))
 	_list = W.vbox(0)
 	list.box.add_child(_list)
 	set_state(false, false, false)
@@ -129,8 +153,9 @@ func set_catalogue(view: Dictionary, time: float, from_cache := false) -> void:
 			for g in _records.get(row.guid, {}).get("enhancements", []):
 				_chosen[row.guid][g] = true
 	var t := Time.get_datetime_dict_from_unix_time(int(time) + int(Time.get_time_zone_from_system().get("bias", 0)) * 60)
-	set_note("%d packages, read at %02d:%02d%s." % [view.get("packages", []).size(), t.hour, t.minute, " (kept from the last half hour)" if from_cache else ""])
-	_refresh.text = "Refresh"
+	set_note(L10n.t("launcher.mods_screen.read_at", {"count": view.get("packages", []).size(), "time": "%02d:%02d" % [t.hour, t.minute],
+		"cached": L10n.t("launcher.mods_screen.kept") if from_cache else ""}))
+	_refresh.text = L10n.t("launcher.mods_screen.refresh")
 	_show()
 
 
@@ -148,13 +173,69 @@ func set_installed(records: Array, active: Dictionary, partial: Dictionary) -> v
 	_show()
 
 
+## lane SDK-1: the asset packs (AssetPacks.list())
+func set_asset_packs(packs: Array) -> void:
+	_packs = packs
+	for c in _packs_box.get_children():
+		c.queue_free()
+	if packs.is_empty():
+		_packs_box.add_child(W.wrap(L10n.t("launcher.mods_screen.packs_none"), "Muted"))
+		return
+	for i in packs.size():
+		var p: Dictionary = packs[i]
+		var left := W.vbox(1)
+		var n := W.label(p.name)
+		Style.text(n, "Inter", 500, 14, Style.TEXT)
+		left.add_child(n)
+		left.add_child(W.wrap(L10n.t("launcher.mods_screen.packs_contents", {"models": p.models, "textures": p.textures, "size": ModInstall.size_text(int(p.bytes))}), "Muted"))
+		for why in p.problems:
+			var l := W.wrap(L10n.t("launcher.mods_screen.packs_problem", {"why": why}), "Muted")
+			l.add_theme_color_override("font_color", Style.BAD)
+			left.add_child(l)
+		# lane SDK-1b (b): what the game left out at its last start; the Details toggle (beside On) lists the files and the reasons
+		var details: VBoxContainer = null
+		if p.problems.is_empty():
+			if not p.get("checked", false):
+				left.add_child(W.wrap(L10n.t("launcher.mods_screen.packs_unchecked"), "Muted"))
+			var findings := []
+			if not p.get("misfits", []).is_empty():
+				findings.append([L10n.t("launcher.mods_screen.packs_misfits", {"count": p.misfits.size()}), p.misfits])
+			if not findings.is_empty():
+				details = W.vbox(1)
+				details.visible = false
+				for f in findings:
+					var l := W.wrap(f[0], "Muted")
+					l.add_theme_color_override("font_color", Style.WARN)
+					left.add_child(l)
+					for item in f[1]:
+						details.add_child(W.wrap(L10n.t("launcher.mods_screen.packs_finding", {"file": str(item.get("file", "")), "why": str(item.get("why", ""))}), "Muted"))
+				left.add_child(details)
+		var box := CheckBox.new()
+		box.text = L10n.t("launcher.mods_screen.packs_on")
+		box.button_pressed = p.enabled
+		var name: String = p.name
+		box.toggled.connect(func(on: bool) -> void: asset_pack_toggled.emit(name, on))
+		var right: Control = box
+		if details != null:
+			var both := W.hbox(8)
+			var toggle := W.button(L10n.t("launcher.mods_screen.packs_details"), "", "", 12)
+			var shown := details
+			toggle.pressed.connect(func() -> void:
+				shown.visible = not shown.visible
+				toggle.text = L10n.t("launcher.mods_screen.packs_hide_details") if shown.visible else L10n.t("launcher.mods_screen.packs_details"))
+			both.add_child(toggle)
+			both.add_child(box)
+			right = both
+		_packs_box.add_child(W.row(left, right, i == packs.size() - 1))
+
+
 ## running: a mod download runs; paused: one is paused (Resume continues it); busy: another job runs
 func set_state(running: bool, paused: bool, busy: bool) -> void:
 	_busy = running or paused or busy
 	_refresh.disabled = _busy
 	_pause.visible = running or paused
 	_cancel.visible = running or paused
-	_pause.text = "Resume" if paused else "Pause"
+	_pause.text = L10n.t("launcher.games_screen.resume") if paused else L10n.t("launcher.games_screen.pause")
 	_pause.icon = VectorIcon.make("resume" if paused else "pause", 14)
 	_progress.visible = running or paused
 	_pick.disabled = running
@@ -189,54 +270,55 @@ func _show() -> void:
 	# Play with: the picker, what the picked mod is, the installed ones
 	_pick.clear()
 	_pick_guids = [""]
-	_pick.add_item(NONE)
+	_pick.add_item(L10n.t(NONE))
 	var names: Array = _records.values()
 	names.sort_custom(func(a, b): return String(a.name).naturalnocasecmp_to(String(b.name)) < 0)
 	for r in names:
-		_pick.add_item("%s %s" % [r.name, r.version])
+		_pick.add_item(L10n.t("launcher.mods_screen.name_version", {"name": r.name, "version": r.version}))
 		_pick_guids.append(r.guid)
 	var at := _pick_guids.find(_active.guid)
 	if at < 0 and _active.guid != "":
-		_pick.add_item("%s (not installed)" % _active.guid)
+		_pick.add_item(L10n.t("launcher.mods_screen.not_installed", {"guid": _active.guid}))
 		_pick_guids.append(_active.guid)
 		at = _pick_guids.size() - 1
 	_pick.select(maxi(at, 0))
 	var picked: Dictionary = _records.get(_active.guid, {})
 	if _active.guid == "":
-		_pick_note.text = "Play starts The Rise of the Witch-king 2.01 as it is."
+		_pick_note.text = L10n.t("launcher.mods_screen.plays_original")
 	elif picked.is_empty():
-		_pick_note.text = "This mod is not installed any more: Play does not start. Pick another one, or none."
+		_pick_note.text = L10n.t("launcher.mods_screen.gone")
 	else:
 		var with := PackedStringArray()
 		for g in picked.get("enhancements", []):
 			with.append(_name_of(g))
-		var text := "Ready: Play starts The Rise of the Witch-king with %s %s%s." % [picked.name, picked.version, " and " + ", ".join(with) if not with.is_empty() else ""]
+		var text := L10n.t("launcher.mods_screen.ready_with", {"name": picked.name, "version": picked.version,
+			"extras": L10n.t("launcher.mods_screen.and_extras", {"list": ", ".join(with)}) if not with.is_empty() else ""})
 		if not picked.get("engine_edits", []).is_empty():
-			text = NEEDS % ", ".join(PackedStringArray(picked.engine_edits))
+			text = L10n.t(NEEDS, {"edits": ", ".join(PackedStringArray(picked.engine_edits))})
 		if _chosen.has(_active.guid) and _sorted(chosen(_active.guid)) != _sorted(picked.get("enhancements", [])):
-			text += " The ticked enhancements are not installed yet: press Apply."
+			text += L10n.t("launcher.mods_screen.press_apply")
 		_pick_note.text = text
 	_pick_note.add_theme_color_override("font_color", Style.WARN if picked.get("engine_edits", []).size() > 0 or (_active.guid != "" and picked.is_empty()) else Style.TEXT3)
 	for c in _installed.get_children() + _list.get_children():
 		c.get_parent().remove_child(c)
 		c.queue_free()
-	var rows := names.map(func(r): return [r.guid, "%s %s" % [r.name, r.version], r.get("engine_edits", []).is_empty()])
+	var rows := names.map(func(r): return [r.guid, L10n.t("launcher.mods_screen.name_version", {"name": r.name, "version": r.version}), r.get("engine_edits", []).is_empty()])
 	for g in _partial:
 		if not _records.has(g):
-			rows.append([g, "%s (download not finished)" % _partial[g], true])
+			rows.append([g, L10n.t("launcher.mods_screen.partial", {"name": _partial[g]}), true])
 	for i in rows.size():
-		var rm := W.button("Remove", "stop", "", 14)
+		var rm := W.button(L10n.t("launcher.mods_screen.remove"), "stop", "", 14)
 		rm.add_to_group("mods_action")
 		rm.disabled = _busy
 		var guid: String = rows[i][0]
 		rm.pressed.connect(func() -> void: remove.emit(guid))
-		var left := _with_note(String(rows[i][1]), "Installed: ready" if rows[i][2] else "Installed: needs engine features")
+		var left := _with_note(String(rows[i][1]), L10n.t("launcher.mods_screen.installed_ready") if rows[i][2] else L10n.t("launcher.mods_screen.installed_needs"))
 		_installed.add_child(W.row(left, rm, i == rows.size() - 1))
 	# the list
 	var packages: Array = _view.get("packages", [])
 	var loose: Array = _view.get("loose", [])
 	if packages.is_empty() and loose.is_empty():
-		_list.add_child(W.row(W.wrap("Load the list to see the mods you can install.", "Muted"), null, true))
+		_list.add_child(W.row(W.wrap(L10n.t("launcher.mods_screen.load_to_see"), "Muted"), null, true))
 		return
 	var all := packages + loose
 	for i in all.size():
@@ -255,13 +337,13 @@ func _name_of(guid: String) -> String:
 
 ## one line of a row in a state's colour: ready (green), needs engine features (amber), cannot be installed (red)
 static func _state_line(row: Dictionary) -> Label:
-	var text := "Ready: it changes only the game's data, which OpenBFME loads like the original game does."
+	var text := L10n.t("launcher.mods_screen.state_ready")
 	var color := Style.GOOD
 	if row.error != "":
-		text = "Cannot be installed: " + row.error
+		text = L10n.t("launcher.mods_screen.state_error", {"error": row.error})
 		color = Style.BAD
 	elif not row.engine_edits.is_empty():
-		text = NEEDS % ", ".join(PackedStringArray(row.engine_edits))
+		text = L10n.t(NEEDS, {"edits": ", ".join(PackedStringArray(row.engine_edits))})
 		color = Style.WARN
 	var l := W.wrap(text, "Muted")
 	l.add_theme_color_override("font_color", color)
@@ -274,13 +356,15 @@ func _package_row(row: Dictionary, last: bool, alone: bool) -> VBoxContainer:
 	Style.text(title, "Inter", 600, 15, Style.TEXT)
 	left.add_child(title)
 	# the service's Type 0 is a patch or a mod installed into the game folder (Edain), Type 1 a mod in its own folder: both are mods here
-	var kind := "Enhancement of the original game" if alone else ("Enhancement" if row.type == 2 else "Mod")
-	left.add_child(W.label("%s · %s · by %s · about %s" % [kind, row.version, row.author if row.author != "" else "unknown",
-		ModInstall.size_text(int(row.get("bytes", row.size)))], "Muted"))
+	var kind := L10n.t("launcher.mods_screen.kind_alone") if alone else (L10n.t("launcher.mods_screen.kind_enhancement") if row.type == 2 else L10n.t("launcher.mods_screen.mod"))
+	left.add_child(W.label(L10n.t("launcher.mods_screen.row_line", {"kind": kind, "version": row.version,
+		"author": row.author if row.author != "" else L10n.t("launcher.mods_screen.unknown_author"),
+		"size": ModInstall.size_text(int(row.get("bytes", row.size)))}), "Muted"))
 	left.add_child(_state_line(row))
 	for e in row.enhancements:
 		var box := CheckBox.new()
-		box.text = "%s %s (%s)" % [e.name, e.version, e.status if e.error == "" else "cannot be installed"]
+		box.text = L10n.t("launcher.mods_screen.enhancement_box", {"name": e.name, "version": e.version,
+			"status": e.status if e.error == "" else L10n.t("launcher.mods_screen.cannot_install")})
 		box.disabled = e.error != ""
 		box.set_pressed_no_signal(_chosen.get(row.guid, {}).get(e.guid, false))
 		var g: String = row.guid
@@ -294,18 +378,18 @@ func _package_row(row: Dictionary, last: bool, alone: bool) -> VBoxContainer:
 		left.add_child(box)
 	var rec: Dictionary = _records.get(row.guid, {})
 	var want := chosen(row.guid)
-	var text := "Install"
+	var text := "install"
 	if _partial.has(row.guid):
-		text = "Continue"
+		text = "continue"
 	elif not rec.is_empty() and rec.version != row.version:
-		text = "Update"
+		text = "update"
 	elif not rec.is_empty() and _sorted(rec.get("enhancements", [])) != _sorted(want):
-		text = "Apply"
+		text = "apply"
 	elif not rec.is_empty():
-		text = "Installed"
-	var go := W.button(text, "download", "", 15)
+		text = "installed"
+	var go := W.button(L10n.t(ACTIONS[text]), "download", "", 15)
 	go.add_to_group("mods_action")
-	go.set_meta("done", text == "Installed" or row.error != "")
+	go.set_meta("done", text == "installed" or row.error != "")
 	go.disabled = _busy or go.get_meta("done")
 	var guid: String = row.guid
 	go.pressed.connect(func() -> void: install.emit(guid, chosen(guid)))
@@ -325,6 +409,10 @@ func demo() -> void:
 		"enhancements": [e.call("demo-timer", "Patch Timer Addon", "1.0.0", ModCatalog.NEEDS, ["Patch Timer Addon: timer.asi"])]}
 	var tales := {"guid": "demo-tales", "name": "Tiny Tales", "version": "2.0.1", "author": "A. Storyteller", "type": 1, "size": 650000000,
 		"status": ModCatalog.READY, "engine_edits": PackedStringArray(), "error": "", "enhancements": []}
+	set_asset_packs([{"name": "HD Gondor", "enabled": true, "models": 12, "textures": 40, "bytes": 182000000, "problems": PackedStringArray(), "checked": true,
+			"misfits": [{"file": "art/w3d/gb/gbcitadel.w3d", "why": "different bones or models than the game's"}]},
+		{"name": "Sharper Trees", "enabled": false, "models": 0, "textures": 9, "bytes": 21000000, "problems": PackedStringArray(), "checked": false,
+			"misfits": []}])
 	_records = {}
 	_chosen = {"demo-realms": {"demo-nointro": true}}
 	set_installed([{"guid": "demo-realms", "name": "Example Realms", "version": "1.2.0", "enhancements": ["demo-nointro"], "engine_edits": []}],

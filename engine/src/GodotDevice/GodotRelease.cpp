@@ -77,6 +77,9 @@ Dictionary checkToDict(const InstallLocator::InstallCheck &c)
 	d["missing"] = toArray(c.missing);
 	d["present"] = c.present;
 	d["expected"] = c.expected;
+	d["language"] = toGodot(c.language); // issue #49: the folder's text and voice languages (RetailArchivePolicy.h "Languages")
+	d["voice"] = toGodot(c.voice);
+	d["unpinned_language_archives"] = toArray(c.unpinnedLanguageArchives);
 	return d;
 }
 } // namespace

@@ -59,3 +59,23 @@ TextureResolution Resolve_W3D_Texture(const std::string &name, const std::functi
 	addCandidates(lower, exists, out, flatLayout);
 	return out;
 }
+
+TextureResolution Resolve_Packed_W3D_Texture(const std::string &name, const std::function<bool(const std::string &)> &exists, bool flatLayout)
+{
+	auto result = Resolve_W3D_Texture(name, exists, flatLayout);
+	if (result.Found || flatLayout) return result;
+	std::string stem = AsciiStringUtil::lowered(name);
+	const auto dot = stem.find_last_of('.');
+	if (dot != std::string::npos) stem.resize(dot);
+	if (stem.empty()) return result;
+	const auto path = "art\\compiledtextures\\" + stem.substr(0, 2) + "\\" + stem + ".jpg";
+	result.Tried.push_back(path);
+	if (exists(path))
+	{
+		result.Found = true;
+		result.Path = path;
+		result.IsDDS = false;
+		result.TerrainFolderPath.clear();
+	}
+	return result;
+}

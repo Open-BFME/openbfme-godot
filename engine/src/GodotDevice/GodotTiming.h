@@ -10,6 +10,7 @@ double elapsedMs(double sinceMs);
 double elapsedSeconds(double sinceMs);
 double spanMs(double laterMs, double earlierMs);
 double sumMs(double a, double b);
+double secondsToMs(double seconds); // lane FOGFX-1: a render frame's delta for the client's wall-clock fades
 // lane PERF-1: the calling thread's CPU time in ms (time it ran, not time it waited or was preempted: a frame cost that other processes' load does not inflate)
 double threadCpuMs();
 } // namespace timing

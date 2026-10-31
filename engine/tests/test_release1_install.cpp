@@ -60,8 +60,8 @@ RetailArchivePolicy tinyPolicy(const char *game, const char *first, int scale = 
 		R"({"path": ")" + first + R"(", "md5": "00000000000000000000000000000001", "size": )" + size(1000) + R"(},)"
 		R"({"path": "INI.big", "md5": "00000000000000000000000000000002", "size": )" + size(2000) + R"(},)"
 		R"({"path": "apt/MainMenu.big", "md5": "00000000000000000000000000000003", "size": )" + size(3000) + R"(},)"
-		R"({"path": "lang/English.big", "md5": "00000000000000000000000000000004", "size": )" + size(4000) + R"(},)"
-		R"({"path": "lang/englishpatch.big", "md5": "00000000000000000000000000000005", "size": )" + size(5000) + R"(}]})";
+		R"({"path": "lang/English.big", "md5": "00000000000000000000000000000004", "size": )" + size(4000) + R"(, "language": "EN"},)"
+		R"({"path": "lang/englishpatch.big", "md5": "00000000000000000000000000000005", "size": )" + size(5000) + R"(, "language": "EN"}]})";
 	const std::string excl = std::string(R"({"schema": "openbfme.retail-archive-exclusions", "schemaVersion": 1, "game": ")") + game +
 		R"(", "patch": "9.99", "archives": [{"path": "__patch202.big", "reason": "test"}]})";
 	RetailArchivePolicy p;
@@ -336,14 +336,20 @@ TEST_CASE("release1: checking a picked folder")
 		REQUIRE(m.unknown.size() == 1);
 		CHECK(m.unknown[0] == "a/b/shallow.big");
 	}
-	SUBCASE("another language")
+	SUBCASE("another language: accepted with its own language archives (no pins for it: their sizes are not checked)")
 	{
+		CHECK(checkInstall(kRotwk, good.u8string(), rotwk, &bfme2).language == "English");
 		fs::remove(good / "lang" / "English.big");
 		fs::remove(good / "lang" / "englishpatch.big");
-		sparseFile(good / "lang" / "German.big", 7);
+		sparseFile(good / "lang" / "german.big", 7);
 		InstallCheck m = checkInstall(kRotwk, good.u8string(), rotwk, &bfme2);
 		REQUIRE(m.errors.size() >= 1);
-		CHECK(m.errors[0].find("(another language version? this build supports the English 9.99 archives)") != std::string::npos);
+		CHECK(m.language == "German");
+		CHECK(m.errors[0].find("lang/germanpatch.big (the game's language archives for German are incomplete)") != std::string::npos);
+		sparseFile(good / "lang" / "germanpatch.big", 9);
+		InstallCheck ok = checkInstall(kRotwk, good.u8string(), rotwk, &bfme2);
+		CHECK_MESSAGE(ok.ok, (ok.errors.empty() ? std::string() : ok.errors[0]));
+		CHECK(ok.unpinnedLanguageArchives == std::vector<std::string>{ "lang/German.big", "lang/germanpatch.big" });
 	}
 }
 

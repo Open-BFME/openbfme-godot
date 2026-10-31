@@ -7,6 +7,7 @@ const HttpFetch := preload("res://scripts/net/http_fetch.gd")
 
 const BODY_CAP := 262144  # 200 games, each with a 200-byte map, still fit (JSON and the extra public fields included)
 const MAX_GAMES := 200
+const L10n := preload("res://scripts/l10n/l10n.gd")
 const MIN_GAP_SECONDS := 5.0
 const NAME_MAX_BYTES := 48  # lobby str(name, 48): UTF-8 bytes, the same bound as services/online/lobby
 const HOST_MAX_BYTES := 24  # a slot name (the public host)
@@ -16,21 +17,21 @@ const MAP_MAX_BYTES := 200  # setup.map
 ## {ok, games, why}. `games` is [] unless the whole answer is version 1 and every row is a public game (an empty list is success).
 static func parse(code: int, body: PackedByteArray) -> Dictionary:
 	if code != 200:
-		return {"ok": false, "games": [], "why": "the lobby answered %d" % code}
+		return {"ok": false, "games": [], "why": L10n.t("launcher.online_count.lobby_answered", {"code": code})}
 	var parser := JSON.new()
 	var j: Variant = parser.data if parser.parse(body.get_string_from_utf8()) == OK else null
 	if typeof(j) != TYPE_DICTIONARY or j.get("v") != 1.0:
-		return {"ok": false, "games": [], "why": "not a version 1 answer"}
+		return {"ok": false, "games": [], "why": L10n.t("launcher.online_count.not_version_1")}
 	var rows: Variant = j.get("games")
 	if typeof(rows) != TYPE_ARRAY:
-		return {"ok": false, "games": [], "why": "games is missing"}
+		return {"ok": false, "games": [], "why": L10n.t("launcher.game_list.games_missing")}
 	if rows.size() > MAX_GAMES:
-		return {"ok": false, "games": [], "why": "more than %d games" % MAX_GAMES}
+		return {"ok": false, "games": [], "why": L10n.t("launcher.game_list.too_many", {"count": MAX_GAMES})}
 	var games: Array = []
 	for row in rows:
 		var g := _game(row)
 		if g.is_empty():
-			return {"ok": false, "games": [], "why": "a game row is malformed"}
+			return {"ok": false, "games": [], "why": L10n.t("launcher.game_list.row_malformed")}
 		games.append(g)
 	return {"ok": true, "games": games, "why": ""}
 

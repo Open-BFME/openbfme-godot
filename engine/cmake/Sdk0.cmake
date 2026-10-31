@@ -7,5 +7,6 @@ set(OPENBFME_SDK0_SOURCES
 )
 set(OPENBFME_SDK0_TESTS
     tests/test_sdk0_packs.cpp
+    tests/test_sdk1_packs.cpp
     tests/test_mods3_engine.cpp
 )

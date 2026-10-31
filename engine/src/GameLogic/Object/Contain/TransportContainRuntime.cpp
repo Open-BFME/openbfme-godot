@@ -40,9 +40,9 @@ const char *const kStopTransport =
 	"container's rider RW 0x867AD4), OpenContain RW 0x868A70 (the riders on their PassengerBonePrefix bones, ForceOrientationContainer), 0x86B86D (update: "
 	"HealthRegen%PerSec, UpgradeCreationTrigger RW 0x86B169, TRANSPORT_MOVING, the PASSENGER_TYPE weapon sets), 0x86A1FA / 0x86A104 (InitialPayload), the horde "
 	"transport's 0x87A677 / 0x87A6D3 / 0x87A7B4 (a horde rides: the horde object out of the world, its members on the bones), its death 0x87AE0A (the members thrown "
-	"off, GameLogicRandomValue(5, 10)) and the exits RW 0x8682D9 / 0x87A89E. Inference: the payload is made when the object is created (RW's caller of main slot 0x70 "
+	"off, GameLogicRandomValue(5, 10)), the exits RW 0x8682D9 / 0x87A89E and GoAggressiveOnExit's attitude (RW 0x86AD06, lane GATEPUSH-1). Inference: the payload is made when the object is created (RW's caller of main slot 0x70 "
 	"is not located). Not ported: the fades and the drawable bone attachment (client), GrabWeapon / CanGrabStructure (the trolls' grab), ShouldThrowOutPassengers' "
-	"throw (RW 0x86A530), GoAggressiveOnExit (the AI attitude), the AI slot 0x1A8 of the exit test, the SHIP boarding AI (S-4160; lane SHIP-1 ported the shore spot RW 0x6EFBB8 of the entries and exits), an indestructible container's payload, "
+	"throw (RW 0x86A530), the AI slot 0x1A8 of the exit test, the SHIP boarding AI (S-4160; lane SHIP-1 ported the shore spot RW 0x6EFBB8 of the entries and exits), an indestructible container's payload, "
 	"PassengersInTurret, the arming of the falling riders (slot 0xF8: no caller located)";
 
 const char *const kHordeTransportCpp = "HordeTransportContain.cpp"; // RW 0xC5C568
@@ -288,7 +288,7 @@ void TransportContain::onRemoving(Object *obj)
 	AIUpdateInterface *ai = obj->getAIUpdateInterface();
 	if (m_transport->m_goAggressiveOnExit && ai)
 	{
-		++m_stats.unported; // RW 0x86AD06: the AI's attitude AGGRESSIVE (RW 0x66E12A(2)): not in the port (S-1103)
+		ai->setAttitude(2); // RW 0x86AD06: the AI's attitude AGGRESSIVE (RW 0x66E12A(2), lane GATEPUSH-1)
 	}
 	if (container->isEffectivelyDead() && !obj->isEffectivelyDead())
 	{
@@ -488,7 +488,7 @@ void TransportContain::killRidersWhoAreNotFreeToExit()
 			}
 			else
 			{
-				r->kill(0); // RW 0x698EC3(8, 0)
+				r->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x86B0CB: kill(8, 0)
 			}
 			++m_stats.ridersKilledNotFree;
 		}
@@ -1039,7 +1039,7 @@ void HordeTransportContain::onDie(const DieModuleInterface::Event &event)
 		for (Object *v : victims)
 		{
 			removeFromContain(v);
-			v->kill(0);
+			v->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x990FA0 / 0x990FE9: kill(8, 0)
 			v->setDrawableHidden(true);
 			++m_openStats.ridersDestroyedOnDeath;
 		}
@@ -1110,7 +1110,7 @@ int HordeTransportContain::throwMemberOff(Object *member, HordeContainInterface 
 		setCondition(*member, stunnedFlailing, true); // RW 0x87ABA6 .. 0x87ABBB (+ 0x118 bit 31)
 		phys->fling(Coord3D{ SimMath::mulf32(m[0], k), SimMath::mulf32(m[3], k), k });
 	}
-	member->kill(0); // RW 0x698EC3(8, 0)
+	member->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x87AC40: kill(8, 0)
 	++m_openStats.ridersDestroyedOnDeath;
 	return idx;
 }
@@ -1144,7 +1144,7 @@ UpdateSleepTime HordeTransportContain::update()
 					{
 						h->releaseMemberForGarrison(m);
 						removeFromContain(m);
-						m->kill(0);
+						m->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x87AD4C: kill(8, 0)
 						m->setDrawableHidden(true);
 					}
 				}

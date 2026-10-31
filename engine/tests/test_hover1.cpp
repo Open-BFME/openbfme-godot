@@ -4,6 +4,7 @@
 // The retail cases hover with a scripted pointer through the HUD (InGameHud::mouseMove) and compare what the help box holds with the string file's text
 // (data/lotr.str of the install) for the button's labels, the numbers taken from the logic's own cost functions; they SKIP loudly without the installs.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "HudTestUtil.h"
@@ -201,8 +202,7 @@ struct HoverRig
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string error;
-		REQUIRE_MESSAGE(s.mount->fs->readFile("data/lotr.str", bytes, &error), error);
-		REQUIRE_MESSAGE(text.table.parse(bytes, &error), error);
+		REQUIRE_MESSAGE(text.table.loadRetail(*s.mount->fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 		imageEnv.fileSystem = s.mount->fs.get();
 		images.registerBlocks(imageEnv.blocks);
 		INI ini(imageEnv);
@@ -777,6 +777,7 @@ TEST_CASE("hover1 retail: every spell book power of every faction shows its stri
 		REQUIRE(c);
 		Coord3D at{ 600.0f, 600.0f, 0.0f };
 		c->setPosition(&at);
+		testutil::completeHorde(c); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		c->friend_onBuildComplete();
 		h.frames(40);
 		REQUIRE(h.hud->palantir());

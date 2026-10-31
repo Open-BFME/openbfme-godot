@@ -79,17 +79,19 @@ TEST_CASE("rotwk-c availability: common gates preserve hidden results and model 
 		return;
 	}
 	SharedWorld &s = shared();
-	struct ButtonFixture
-	{
-		CommandSet *set;
-		CommandButton button;
-		~ButtonFixture() { set->setDynamicButton(0, nullptr); }
-	} fixture{ s.world->commands().newDynamicCommandSet("RotwkC_Availability") };
-	CommandButton &b = fixture.button;
+	// lane HEROHUDCRASH-1: the button outlives the HUD that shows it; the set is made after the rig, so the guard clears its slot while the set is
+	// alive. The rig's end reloads the world (LiveGame::WorldClaim, MAPRESET-1 S-3808: the old CommandStore is freed); a guard outliving the rig
+	// wrote through a dangling set into the reloaded state's heap (ASan: heap-buffer-overflow; a SIGSEGV in ~AudioIniState at exit in some runs).
+	CommandButton b;
 	b.m_command = GUI_COMMAND_STOP;
 	b.m_inPalantir = true;
-	fixture.set->setDynamicButton(0, &b);
 	HeroHudRig h(s);
+	struct SlotGuard
+	{
+		CommandSet *set;
+		~SlotGuard() { set->setDynamicButton(0, nullptr); }
+	} guard{ s.world->commands().newDynamicCommandSet("RotwkC_Availability") };
+	guard.set->setDynamicButton(0, &b);
 	auto ctx = h.hud->enterContext(); // lane DEVPORT-3C: the stores (TheSpecialPowerStore below) are this world's, not a world an earlier test left
 	const Coord3D c = h.rig.freeSpot(2800, 1400, 300.0f);
 	Object *hero = h.rig.make("GondorAragornMP", c.x, c.y);
@@ -337,6 +339,9 @@ TEST_CASE("hero hud: the fortress's REVIVE buttons show the hero records and a p
 	{
 		h.frames(1); // out of the fortress
 	}
+	// RotWK's default right-click orders: with the standard setup and the fortress selected, a left click on Aragorn is a location order, not a
+	// selection (RW 0x83C4F6 -> 0x71047C evaluates it; the final branch RW 0x81F757 -> 0x81DB0C issues the move with the hero picked)
+	h.hud->input().commandTranslator().setUseAlternateMouse(true);
 	h.select(aragorn);
 	REQUIRE(h.hud->input().ui().selected() == std::vector<ObjectID>{ aragorn->getID() });
 	auto powerButton = [&](const char *power) -> ControlBarButton {

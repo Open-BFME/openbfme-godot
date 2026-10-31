@@ -7,6 +7,7 @@
 ## `getconf GNU_LIBC_VERSION` ("glibc 2.35", glibc's gnu_get_libc_version), else the first line of `ldd --version`.
 extends RefCounted
 
+const L10n := preload("res://scripts/l10n/l10n.gd")
 const LINE_PREFIX := "requires GLIBC "
 
 
@@ -54,15 +55,14 @@ static func check(game_dir: String, system := "") -> String:
 	if need == "":
 		return ""
 	if _version_in(need) == "":
-		return "its VERSION file names an unreadable GLIBC requirement (%s)" % need
+		return L10n.t("launcher.glibc_check.unreadable_requirement", {"need": need})
 	var have := system if system != "" else system_version()
 	if have == "":
-		return "it needs GLIBC %s or newer, and this system's GLIBC version could not be read (getconf GNU_LIBC_VERSION, ldd --version)" % need
+		return L10n.t("launcher.glibc_check.version_unreadable", {"need": need})
 	if compare(have, need) < 0:
 		return too_old(need, have)
 	return ""
 
 
 static func too_old(need: String, have: String) -> String:
-	return ("this Linux system is too old for this build. Update to a Linux distribution with GLIBC %s or newer (this system has %s). "
-		+ "If you need help, use the OpenBFME Discord #bug-reports forum or GitHub issues.") % [need, have]
+	return L10n.t("launcher.glibc_check.too_old", {"need": need, "have": have})

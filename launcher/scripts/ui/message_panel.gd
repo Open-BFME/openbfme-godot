@@ -11,6 +11,7 @@ const Style := preload("res://scripts/ui/style.gd")
 const Paths := preload("res://scripts/ui/paths.gd")
 const PlayerMessages := preload("res://scripts/ui/player_messages.gd")
 const Log := preload("res://scripts/core/launcher_log.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 var _icon: TextureRect
 var _title: Label
@@ -44,19 +45,19 @@ func _init() -> void:
 	_text.custom_minimum_size.x = 540
 	m.body.add_child(_text)
 	var row := W.hbox(10)
-	_copy = W.button("Copy details", "copy")
+	_copy = W.button(L10n.t("launcher.message_panel.copy_details"), "copy")
 	_copy.pressed.connect(func() -> void:
 		DisplayServer.clipboard_set(_details)
-		_copy.text = "Copied")
+		_copy.text = L10n.t("launcher.message_panel.copied"))
 	row.add_child(_copy)
-	_logs = W.button("Open log folder", "folder")
+	_logs = W.button(L10n.t("launcher.message_panel.open_logs"), "folder")
 	_logs.pressed.connect(func() -> void: open_logs.emit())
 	row.add_child(_logs)
 	row.add_child(W.spacer())
-	_cancel = W.button("Cancel")
+	_cancel = W.button(L10n.t("common.cancel"))
 	_cancel.pressed.connect(_dismiss)
 	row.add_child(_cancel)
-	_ok = W.button("Close", "", "GoldButton")
+	_ok = W.button(L10n.t("common.close"), "", "GoldButton")
 	_ok.custom_minimum_size.x = 120
 	_ok.pressed.connect(func() -> void:
 		_dismiss()
@@ -74,10 +75,10 @@ func show_error(title: String, text: String, about: String, operation := PlayerM
 	_details = Paths.scrub("%s\n%s\n%s" % [title, text, about])
 	_icon.visible = true
 	_copy.visible = true
-	_copy.text = "Copy details"
+	_copy.text = L10n.t("launcher.message_panel.copy_details")
 	_logs.visible = true
 	_cancel.visible = false
-	_ok.text = "Close"
+	_ok.text = L10n.t("common.close")
 	_on_ok = Callable()
 	_open()
 

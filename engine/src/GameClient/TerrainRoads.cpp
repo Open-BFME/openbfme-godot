@@ -139,6 +139,21 @@ bool TerrainRoads::load(ArchiveFileSystem &fs, RoadTypeIndex &out, std::string *
 	return true;
 }
 
+int RoadShading::pixelShaderElement(int renderingMode, int numShadows, bool resourceTextureEnabled)
+{
+	return std::min(renderingMode, 4) + 5 * std::min(numShadows, 1) + 10 * (resourceTextureEnabled ? 1 : 0);
+}
+
+std::string RoadShading::normalTextureName(const std::string &roadTexture)
+{
+	const size_t dot = roadTexture.find_last_of('.');
+	if (dot == std::string::npos)
+	{
+		return roadTexture + "_nrm";
+	}
+	return roadTexture.substr(0, dot) + "_nrm" + roadTexture.substr(dot);
+}
+
 float TerrainRoads::getMaxCellHeight(const WorldHeightMap &map, float x, float y)
 {
 	int iX = (int)(x / MAP_XY_FACTOR) + map.m_borderSize;

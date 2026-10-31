@@ -14,8 +14,9 @@
 //     status of every object covering the cell and, for the local player (RW + 100), calls the client callback (RW + 0x6C: x, y, status).
 //   * revealMapForPlayer RW 0xB4F570 (add + remove on every cell: fog), revealMapForPlayerPermanently RW 0xB4F5D0 (add), undoRevealMapForPlayerPermanently
 //     RW 0xB519B0 (flush the unlook queue, remove), shroudMapForPlayer RW 0xB51A00 (flush, a count of 0 goes back to -1: RW 0xB52F60).
-//   * An object (RW Object + 0x4E4: its record, 0x11C bytes, ctor RW 0xB4E010) registers when it enters the world (RW 0x68E355 -> 0xB515E0) and leaves in its
-//     destructor (RW 0x69A8BC -> 0xB4F510). markDirty (RW 0xB4E2A0: forced) / (RW 0xB4E290: not forced) put the record at the head of the dirty list.
+//   * An object (RW Object + 0x4E4: its record, 0x11C bytes, ctor RW 0xB4E010) registers when it enters the world without a record (RW 0x68E355 -> 0xB515E0)
+//     and leaves in its destructor (RW 0x69A8BC -> 0xB4F510), after its world exit. A contain's world exit (RW 0x68C18F) and entry (RW 0x68E31F) keep the
+//     record and only mark it dirty, forced (lane PORTERFOG-1); out of the world its look is off (RW 0x694A45) but it keeps covering its cells. markDirty (RW 0xB4E2A0: forced) / (RW 0xB4E290: not forced) put the record at the head of the dirty list.
 //   * update (RW 0xB51970, the FIRST of the four subsystem updates before the destroy list, RW 0x62EB85): ++counter (+ 0x38); every dirty record from the head
 //     (RW 0xB4EF50) re-covers its geometry cells and, when its cell changed or it was forced (or its facing turned while its look is not round), queues the
 //     unlook of its last look (RW 0xB526A0: due at counter + UnlookPersistDuration), takes the three channels off, asks the object's look (vtable RW 0xC123B0
@@ -148,6 +149,7 @@ public:
 	void markDirty(const Object &obj, bool force); ///< RW 0xB4E2A0 (force) / 0xB4E290
 	void updateNow(const Object &obj);            ///< RW 0xB4F410: the record leaves the dirty list, then RW 0xB4EF50 (lane DECOMP-1)
 	bool isRegistered(const Object &obj) const;
+	int lookRadius(const Object &obj) const; ///< the record's last forward look radius in cells (-1: not looking or no record; tests)
 
 	// ---- the frame ----
 	void update(); ///< RW 0xB51970
@@ -165,13 +167,13 @@ public:
 	CellShroudStatus getCellStatus(int player, int cellX, int cellY) const; ///< out of the grid or of the player range: SHROUDED
 	CellShroudStatus getStatusAt(int player, float x, float y) const;       ///< RW 0xB4FB20
 	int lookerCount(int player, int cellX, int cellY) const;               ///< the raw int16 (-1 never seen)
-	// RW 0x68D8F7: OBJECTSHROUD_INVALID (0) for an object without a record; computes and caches like RW 0xB4E890
+	// RW 0x68D8F7: OBJECTSHROUD_CLEAR (1) for an object without a record or an ALWAYS_VISIBLE one; computes and caches like RW 0xB4E890
 	ObjectShroudStatus getObjectStatus(const Object &obj, int player);
 	// SMOOTH-1: the same status without getObjectStatus's lazy cache write (Record::status is hashed): what a client reader asks (the render snapshot,
 	// the radar), so that reading for the local player never changes a peer's state hash
 	ObjectShroudStatus clientObjectStatus(const Object &obj, int player) const;
 	ObjectShroudStatus peekObjectStatus(const Object &obj, int player) const; ///< the cached value (0 when invalid)
-	// lane VISUAL-2 r2: the object has a record (retail: partition data, Object + 0x4E4); a contained object has none (GARRISON-1's containment hook)
+	// lane VISUAL-2 r2: the object has a record (retail: partition data, Object + 0x4E4); a contained object keeps its record (PORTERFOG-1, RW 0x68C18F)
 	bool hasRecord(const Object &obj) const;
 	bool hasSeen(const Object &obj, int player) const;                       ///< RW 0xB4E270 (record + 0xC4)
 	bool worldToCell(float x, float y, int &cx, int &cy) const;             ///< floor((p - lo) * inverse), false outside the grid
@@ -304,7 +306,7 @@ private:
 	GameLogic &m_logic;
 	ObjectSource m_source;
 	bool m_attached = false;
-	int m_hashToken = 0, m_hookToken = 0;
+	int m_hashToken = 0, m_hookToken = 0, m_destroyHookToken = 0;
 
 	float m_cellSize = 1.0f, m_cellSizeInv = 1.0f;          ///< RW + 0x1C / + 0x20
 	float m_loX = 0.0f, m_loY = 0.0f, m_hiX = 0.0f, m_hiY = 0.0f;

@@ -165,6 +165,11 @@ TEST_CASE("audio retail: the files every event can play equal the independent sc
 	std::sort(pinned.begin(), pinned.end());
 	std::vector<std::string> got = r.missing;
 	std::sort(got.begin(), got.end());
+	// the missing files are the English speech archive's: another language's lang\<Language>Audio.big has its own set
+	if (retailtest::skipUnlessEnglish("audio retail: the pinned missing files (the English speech archive's)"))
+	{
+		return;
+	}
 	CHECK(got == pinned);
 	for (const std::string &m : got)
 	{

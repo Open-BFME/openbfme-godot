@@ -180,6 +180,7 @@ public:
 	std::uint32_t whenWeCanFireAgain() const { return m_whenWeCanFireAgain; } // +0x18
 	std::uint32_t whenPreAttackFinished() const { return m_whenPreAttackFinished; } // +0x1C
 	std::uint32_t whenFiringEnds() const { return m_whenFiringEnds; }    // +0x20
+	void clearWhenFiringEnds() { m_whenFiringEnds = 0; }                 // +0x20 = 0 (lane BFME2CAMP1: privateAttackTeam RW 0x66C07F)
 	std::uint32_t followThruEnd() const { return m_followThruEnd; }      // +0x24
 	std::uint32_t timerStart() const { return m_timerStart; }            // +0x28
 	std::uint32_t lastFireFrame() const { return m_lastFireFrame; }      // +0x2C
@@ -261,7 +262,7 @@ public:
 	// RW 0x6ED843 (the partition's melee reach test) and the layer rule (RW 0x68BBE0 / 0x863983); only the melee branch calls them
 	// lane PLAY-4 r1: `sourcePos` is RW 0x6CC07C's source position (RW 0x6ED843's second argument: the point the reach is tested from)
 	virtual bool meleeReach(const RangeSubject &source, const Coord3D &sourcePos, const RangeSubject &victim) = 0;
-	virtual float meleeRunDownLimit() = 0; ///< RW GameData+0x18 -> +0xD0
+	virtual float meleeRunDownLimit() = 0; ///< RW [TheAI 0xDE4B40] + 0x18 -> AIData + 0xD0 (ChaseFromBehindLimit, RW 0x6CC0F6)
 	virtual bool victimFlag11A_40() = 0;   ///< RW victim template +0x11A & 0x40
 	virtual int layerOf(bool victim) = 0;  ///< RW 0x68BBE0
 	virtual bool victimLayerException() = 0; ///< RW 0x863983 && +0x3C

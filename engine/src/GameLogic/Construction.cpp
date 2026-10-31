@@ -10,13 +10,17 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/BitFlags.h"
+#include "GameLogic/BuildPlacement.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 
 #include <cstring>
 #include <map>
@@ -311,52 +315,113 @@ Object *Construction::constructOnPlot(Object &plot, const ThingTemplate &what, c
 	return obj;
 }
 
-Object *Construction::constructByDozer(Object &dozer, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner)
+Object *Construction::constructByDozer(Object &dozer, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool isRebuild)
 {
+	// lane FBSIM-1 (FB-0039), TARGET FACTS (DozerAIUpdate slot 0x64 RW 0x88D272, caveat S-001): the structure is made as a phantom: ThingFactory::newObject with only
+	// PENDING_CONSTRUCTION and PHANTOM_STRUCTURE (0x57 / 0x58, RW 0x88D29B .. 0x88D2C9; not UNDER_CONSTRUCTION: the placement sets it), the PHANTOM_STRUCTURE model
+	// condition (Object + 0x118 bit 13 = condition 109, RW 0x88D2DB), producer and builder the dozer, the price paid, the position and orientation (no pathfinder
+	// footprint: RW 0x88D44F registers it), Player::onStructureCreated; its drawable is shown at 0.4 opacity (RW 0xBE0DE4) to its owner when that is the local
+	// player (RW 0x6AA7B2) and hidden for everyone else (the client's: LogicSnapshot::phantomStructure); then makePhantomStructureInert (RW 0x88D0D8): effectively
+	// dead (RW 0x68D950(1)) and out of the world (RW 0x68C18F) until the dozer arrives (DozerAIUpdate::placeUnplacedStructure -> placePhantomStructure)
 	GameLogic &logic = dozer.logic();
 	ObjectStatusMaskType status{};
-	const bool structure = templateKindOf(logic, what, "STRUCTURE");
-	if (structure)
-	{
-		MaskSet(status, OBJECT_STATUS_UNDER_CONSTRUCTION, true); // RW 0x797894
-	}
-	// lane PLAY-4: RotWK's dozer makes the structure as a phantom with PENDING_CONSTRUCTION and PHANTOM_STRUCTURE (RW 0x88D29B .. 0x88D2C9:
-	// createPhantomStructure, statuses 0x57 / 0x58) and clears both when it places it on arrival (RW 0x88D61B .. 0x88D63A). The port makes the structure
-	// at the order (S-304) with PENDING_CONSTRUCTION, so its GettingBuiltBehavior disables its production when it is created (RW 0x856434), as retail's
-	// phantom's does; DozerAIUpdate::placeUnplacedStructure clears it (PHANTOM_STRUCTURE is not set: S-304)
 	static const int pending = ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION");
+	static const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
 	MaskSet(status, (unsigned)pending, true);
+	MaskSet(status, (unsigned)phantom, true);
 	Object *obj = makeStructure(logic, what, owner, status);
 	if (!obj)
 	{
 		return nullptr;
 	}
+	const bool structure = templateKindOf(logic, what, "STRUCTURE");
+	setModelConditions(*obj, {}, { "PHANTOM_STRUCTURE" });
 	obj->setProducer(&dozer);
 	obj->setBuilder(&dozer); // RW 0x88D307
+	if (!isRebuild) // RW 0x88D2F9: the dozer's + 0x4D0 (lane BFME2CAMP1)
+	{
+		const int cost = BuildAssistant::calcCostToBuild(what, &owner, &dozer, -1);
+		owner.withdrawMoney((std::uint32_t)cost, true);
+		owner.getScoreKeeper().addMoneySpentByKind(logic, &what, cost); // RW 0x88D34A (lane END-2)
+		obj->setBuildCostPaid((float)cost);
+	}
 	Coord3D p = pos;
 	p.z = logic.getGroundHeight(p.x, p.y);
 	obj->setPosition(&p);
 	obj->setOrientation(angle);
-	if (AIWorld *ai = logic.aiWorld())
-	{
-		ai->addObjectToPathfindMap(*obj);
-	}
 	onStructureCreated(owner, &dozer, *obj);
-	const int cost = BuildAssistant::calcCostToBuild(what, &owner, &dozer, -1);
-	owner.withdrawMoney((std::uint32_t)cost, true);
-	owner.getScoreKeeper().addMoneySpentByKind(logic, &what, cost); // RW 0x88D34A (lane END-2)
-	obj->setBuildCostPaid((float)cost);
 	if (structure)
 	{
 		obj->setConstructionPercent(0.0f);
-		setModelConditions(*obj, { "AWAITING_CONSTRUCTION" }, { "PARTIALLY_CONSTRUCTED", "ACTIVELY_BEING_CONSTRUCTED" });
 		hasGettingBuilt(*obj, what); // the dozer builds it (DozerAIUpdate::workOnBuild, RW 0x88DE43)
 	}
 	else
 	{
 		obj->friend_onBuildComplete();
 	}
+	obj->friend_setEffectivelyDead(true); // RW 0x88D0D8: RW 0x68D950(1)
+	if (obj->isInWorld())
+	{
+		logic.friend_containLeaveWorld(*obj); // RW 0x68C18F
+	}
 	return obj;
+}
+
+bool Construction::placePhantomStructure(Object &dozer, Object &obj, bool isRebuild)
+{
+	// lane FBSIM-1 (FB-0039), TARGET FACTS (DozerAIUpdate slot 0x68 RW 0x88D44F, caveat S-001). The site must still be legal (BuildAssistant::isLocationLegalToBuild
+	// flags 0x15 with the dozer as builder, RW 0x88D4C9; skipped for a computer player (+ 0x5C == 1) no skirmish AI runs, RW 0x88D4A4 .. 0x88D4B4), else false: the
+	// caller removes the structure (slot 0x6C, the price back). Then makePhantomStructureNotInert (RW 0x88D123): back in the world (RW 0x68E31F), not effectively
+	// dead; unless the template is NO_COLLIDE or DO_NOT_CLASSIFY the site is cleared (clearRemovableForConstruction RW 0x796576, moveObjectsForConstruction RW
+	// 0x797465); the PHANTOM_STRUCTURE condition cleared, the health set to 1 (body vslots 0x10 / 0x84), the position put on the ground, UNDER_CONSTRUCTION set,
+	// PENDING_CONSTRUCTION and PHANTOM_STRUCTURE cleared (RW 0x88D61B .. 0x88D63A), the pathfinder footprint registered (RW 0x6E85E9). Not ported: RW 0x684CBA
+	// (TerrainLogic work over the footprint, not identified: S-304; RW 0x684BCA is lane TREES1's removeTreesForConstruction, run above). The dozer interface's + 0x28 byte
+	// is the rebuild flag (DozerAIUpdate + 0x4D0, set by construct RW 0x88C217; lane BFME2CAMP1): it skips the legality test and adds RECONSTRUCTING (status 21)
+	GameLogic &logic = dozer.logic();
+	const ThingTemplate &what = *static_cast<const ThingTemplate *>(obj.getTemplate());
+	Player *owner = dozer.getControllingPlayer();
+	const bool scriptComputer = owner && owner->getPlayerType() == PLAYER_COMPUTER && !logic.skirmishAI().findAI(owner->getPlayerIndex());
+	if (!isRebuild && !scriptComputer && // RW 0x88D47C: the rebuild flag skips the test
+		BuildPlacement::isLocationLegalToBuild(logic, *obj.getPosition(), *what.getFinalOverride(), obj.getOrientation(), 0x15u, &dozer, nullptr) != LBC_OK)
+	{
+		return false;
+	}
+	if (!obj.isInWorld())
+	{
+		logic.friend_containEnterWorld(obj); // RW 0x68E31F
+	}
+	obj.friend_setEffectivelyDead(false); // RW 0x68D950(0)
+	if (!templateKindOf(logic, what, "NO_COLLIDE") && !templateKindOf(logic, what, "DO_NOT_CLASSIFY"))
+	{
+		ConstructionSite::clearRemovableForConstruction(logic, what, *obj.getPosition(), obj.getOrientation());
+		if (Player *structureOwner = obj.getControllingPlayer())
+		{
+			ConstructionSite::moveObjectsForConstruction(logic, what, *obj.getPosition(), obj.getOrientation(), *structureOwner);
+		}
+		// lane TREES1 (community #105): RW 0x684BCA is removeTreesForConstruction, with the structure's position, geometry and angle (RW 0x88D4F4 .. 0x88D533):
+		// the trees, shrubs and props under it go
+		logic.trees().removeTreesForConstruction(*obj.getPosition(), ObjectGeometry::shapesOf(*what.getFinalOverride()), obj.getOrientation());
+	}
+	setModelConditions(obj, { "PHANTOM_STRUCTURE" }, {});
+	startAtOneHealth(obj); // RW 0x88D53A
+	Coord3D p = *obj.getPosition();
+	p.z = logic.getGroundHeight(p.x, p.y);
+	obj.setPosition(&p);
+	static const int pending = ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION");
+	static const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
+	obj.setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, true);
+	if (isRebuild)
+	{
+		static const int reconstructing = ObjectTemplateInfoBuilder::objectStatusIndex("RECONSTRUCTING");
+		obj.setStatus((unsigned)reconstructing, true); // RW 0x88D5F0 .. 0x88D601: mask bit 0x200000 with UNDER_CONSTRUCTION
+	}
+	obj.setStatus((unsigned)pending, false);
+	obj.setStatus((unsigned)phantom, false);
+	if (AIWorld *ai = logic.aiWorld())
+	{
+		ai->addObjectToPathfindMap(obj);
+	}
+	return true;
 }
 
 Object *Construction::buildObjectNow(GameLogic &logic, Object *builder, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner)
@@ -410,7 +475,7 @@ std::vector<std::string> Construction::stopLines()
 		"[S-650] GettingBuiltBehavior (RW 0x857E77 and its interface RW 0xC56BF0) is ported with these gaps (lane PLAY-4 found the writer of module + 0x36, RW 0x6AAF3B, and the production slot 0x60, setFactoryDisabled); "
 		"the recent-damage test asks the body only (RW 0x68C933 asks the module at Object + 0x258 first); a castle member's + 0x24 byte is taken as 0 (RW 0x8561C0); an idle builder of an "
 		"unfinished structure is not sent back to it (RW 0x857DEA); the player notification that counts a self-built structure's command points is inferred (BUILD-1's completion); RotWK's "
-		"dozer queues its structure and places it on arrival with 1 hit point (RW 0x88D44F, lane BUILD-3: the port makes it at the order and sets the health at the arrival, S-304); "
+		"dozer makes its structure an inert phantom and places it on arrival with 1 hit point (RW 0x88D272 / 0x88D44F, lane FBSIM-1); "
 		"BUILD-1's dozer completion sets CONSTRUCTION_COMPLETE, which RW 0x88DEE0 does not",
 		"[S-652] Object::attemptHealingFromSoleBenefactor (RW 0x690584): the tail behind the template byte + 0x642 (RUBBLE cleared, a dead object revived) is not ported: the field is not identified",
 		"[S-653] GettingBuiltBehavior: calls not identified and not ported: Player + 0x3DC's RW 0x79F0E1(object, 1) and Object + 0x456 at a rebuild's start, the body's slot "

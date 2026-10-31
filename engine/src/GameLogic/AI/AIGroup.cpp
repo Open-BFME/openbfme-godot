@@ -187,7 +187,7 @@ AIGroup::FormationVerdict AIGroup::formationManager(const Coord3D &pos, bool add
 	{
 		return FORMATION_NOT_OFFERED;
 	}
-	// RW 0x7747DE (decomp Common/BfmeConv986.cpp privateGatherAndMoveInFormationToPosition, tier A). First RW 0x76FFF0 (decomp Common/Rva0036E346Count.cpp
+	// RW 0x7747DE (decomp Common/BfmeC986.cpp privateGatherAndMoveInFormationToPosition, tier A). First RW 0x76FFF0 (decomp GameLogic/AI/AIGroup.cpp
 	// AIGroup::rva0036E357, tier B same-shape): a member that is held (object + 0x1C8 bit 3), has no AI or no current locomotor (AI + 0x1F0) or is IMMOBILE
 	// (template + 0x108 bit 2) leaves the group, and the walk starts again; the last member in the group that would leave stops it (the manager then returns 1
 	// and nothing moves)
@@ -369,7 +369,15 @@ void AIGroup::groupMoveToPosition(const Coord3D &posIn, bool addWaypoint, Comman
 		{
 			if (haveFinalAngle)
 			{
-				ai->aiMoveToPositionAndOrientate(dest, finalAngle, source);
+				Coord3D taken;
+				if (ai->aiMoveToPositionAndOrientate(dest, finalAngle, source, &taken) && attackMove)
+				{
+					// RW 0x94E72B's per-object step sends an attack-move (RW 0x770CA5, range 0x7FFFFFFF) when the formation order's attack flag is set
+					// (BFME2 MoveToFormationGroupOrder::rva00547E5C, RVA 0x547E5C: aiAttackMoveToPositionAndFaceDirection instead of the plain move). The port runs it as
+					// the accepted oriented move plus its attack-move toward the installed (clipped) goal; a refused member keeps its earlier intent.
+					// The native attack-move-and-face state and the formation attack-team routing (S-4463) are not ported
+					ai->armAttackMove(taken, source);
+				}
 			}
 			else
 			{

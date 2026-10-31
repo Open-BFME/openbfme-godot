@@ -59,6 +59,28 @@ function netModeOf(value, what) {
 }
 export const MAX_JSON_BYTES = 16384;          // a JSON request body (ONLINE-2 r2: counted as received)
 export const MAX_LOG_BYTES = 64 * 1024 * 1024; // a relay log upload
+// lane PROFILE-2 (owner decision 10-26 "A"): a player's archive list (POST /v1/profile-archives): its profile identity's archive lines, named by their
+// SHA-256 in a create / join ("archives") and in the replay START a checker reads. A pure 2.01 install is 213 lines, 15.4 KB as JSON; a mod adds its own
+export const MAX_ARCHIVES_BYTES = 65536;
+export const MAX_ARCHIVE_LINES = 1024;
+// Sol review P2 (storage): an uploaded list waits in memory, the oldest dropped past this many bytes; it is stored only when a game naming it starts,
+// so the store grows with started games (bounded like their logs), never with sign-ins
+export const MAX_PENDING_ARCHIVE_BYTES = 16 * 1024 * 1024;
+const ARCHIVE_LINE = /^[a-z0-9_]{1,16}:[^\u0000-\u001f]{1,200} [0-9a-f]{32} [0-9]{1,12}$/;
+const ARCHIVES_ID = /^[0-9a-f]{64}$/;
+// the request body bound of a path (the platforms read the body before the route runs)
+export function bodyLimitFor(path) {
+  if (path.startsWith('/v1/relay/logs/') || path.startsWith('/v1/admin/blobs/')) return MAX_LOG_BYTES;
+  if (path === '/v1/profile-archives') return MAX_ARCHIVES_BYTES;
+  return MAX_JSON_BYTES;
+}
+// lane PROFILE-2: a create / join body's optional "archives" (the id of a list the client uploaded); absent or null: none told (an older client)
+function archivesOf(body) {
+  const v = body?.archives;
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'string' || !ARCHIVES_ID.test(v)) throw bad('bad_field', 'archives must be the SHA-256 of the uploaded archive list (64 hex digits)');
+  return v;
+}
 const LOG_HEADER_BYTES = 25; // RelayCore.h "Log format": magic 8, version 4, game id 8, slot mask 1, start 4
 const MAX_SLOTS = 8; // a legacy (eight-start) room's places, the shape every client before P16 reads
 // lane ONLINE16-FIX (P16, docs/ONLINE.md "Extended map capacity"): a map with 9 .. 16 starts makes a sixteen-place room (`setup.mapStartCount`,
@@ -137,15 +159,50 @@ const ROOM_CODE = /^[A-Za-z0-9_-]{6,32}$/; // ONLINEHUB-1: a private room's code
 // PLATFORMICON-1: the one short value a client says about its system, shown beside its name (display only: nothing else about the machine). Absent
 // (an older client) or null is no icon; anything else is refused by name
 export const PLATFORMS = Object.freeze(['windows', 'linux', 'macos']);
-const NO_CHOICES = Object.freeze({ faction: -1, color: -1, startPos: -1, team: -1, handicap: 0, cah: null, link: null });
+const NO_CHOICES = Object.freeze({ faction: -1, color: -1, startPos: -1, team: -1, handicap: 0, cah: null, link: null, resumeCheck: null });
+// WOTR-9: a war's start position is a region of its scenario (0 .. 63; the client checks the scenario's region count, LANAPI warRegionCount)
+const WAR_REGIONS = 64;
+// WOTR-9: a war's phases (battles and returns to the map) at most; bounds the stored records of one war
+const MAX_WAR_PHASES = 1000;
+function sameSlots(a, b) {
+  return Array.isArray(a) && a.length === b.length && [...a].sort((x, y) => x - y).every((x, i) => x === b[i]);
+}
+const SCENARIO = /^[A-Za-z0-9_]{1,64}$/;
+const MD5_HEX = /^[0-9a-f]{32}$/;
+// WOTR-9: the war fields of a setup (gameMode 0 or absent: none of them; a skirmish stores none, so its setup keeps its old shape)
+function warSetupOf(setup) {
+  const gameMode = intIn(setup.gameMode ?? 0, 0, 1, 'setup.gameMode');
+  if (gameMode === 0) {
+    for (const k of ['scenario', 'resumeSave', 'resumeHash']) {
+      if (setup[k] !== undefined && setup[k] !== null && setup[k] !== '') throw bad('bad_field', `setup.${k} is for a War of the Ring game (setup.gameMode 1)`);
+    }
+    return {};
+  }
+  if (typeof setup.scenario !== 'string' || !SCENARIO.test(setup.scenario)) throw bad('bad_field', 'setup.scenario must be 1 .. 64 of A-Z a-z 0-9 _ in a War of the Ring game');
+  const resumeSave = setup.resumeSave ?? '';
+  if (typeof resumeSave !== 'string' || (resumeSave !== '' && !MD5_HEX.test(resumeSave))) throw bad('bad_field', 'setup.resumeSave must be "" or 32 lower-case hex digits');
+  if (resumeSave === '') {
+    if (setup.resumeHash !== undefined && setup.resumeHash !== null) throw bad('bad_field', 'setup.resumeHash is for a resumed war (setup.resumeSave)');
+    return { gameMode, scenario: setup.scenario };
+  }
+  return { gameMode, scenario: setup.scenario, resumeSave, resumeHash: intIn(setup.resumeHash, 0, 4294967295, 'setup.resumeHash') };
+}
+// WOTR-9: a member's check of its own copy of the resumed war's save: {save: the MD5 checked, ok, why (up to 512 characters)}; null clears it
+function checkResumeCheck(v) {
+  if (v === null) return null;
+  if (typeof v !== 'object' || Array.isArray(v)) throw bad('bad_field', 'resumeCheck must be null or {save, ok, why}');
+  allowFields(v, ['save', 'ok', 'why'], 'resumeCheck');
+  if (typeof v.save !== 'string' || !MD5_HEX.test(v.save)) throw bad('bad_field', 'resumeCheck.save must be 32 lower-case hex digits');
+  return { save: v.save, ok: boolOf(v.ok, 'resumeCheck.ok'), why: str(v.why ?? '', 512, 'resumeCheck.why', { empty: true }) };
+}
 // ONLINEMENU-1: a player's Create-a-Hero record (the .cah wire form, GameNetwork/GameInfo.h kMaxCreateAHeroBytes), standard base64 with padding
 const MAX_CAH_BYTES = 4096;
 // INFRA-2: the admin backup's signature window, page size and the blob keys it moves (the three kinds the lobby stores per started game)
 export const ADMIN_WINDOW_S = 300;
 export const ADMIN_PAGE = 1000;
-const BLOB_KEY = /^(?:logs\/[0-9a-f]{16}\.obfmerlog|(?:starts|players)\/[0-9a-f]{16}\.json)$/;
+const BLOB_KEY = /^(?:logs\/[0-9a-f]{16}\.obfmerlog|(?:starts|players|wars)\/[0-9a-f]{16}\.json|archives\/[0-9a-f]{64}\.json)$/; // lane PROFILE-2: archives; WOTR-9: wars
 export function parseBlobKey(key) {
-  return BLOB_KEY.test(key) ? { kind: key.split('/')[0], id: key.slice(key.indexOf('/') + 1, key.indexOf('/') + 17) } : null;
+  return BLOB_KEY.test(key) ? { kind: key.split('/')[0], id: key.slice(key.indexOf('/') + 1, key.lastIndexOf('.')) } : null; // a game id, or (archives) a SHA-256
 }
 
 // ---- bytes and encodings ---------------------------------------------------------------------------------------------------------------------------------
@@ -655,6 +712,8 @@ export class Lobby {
       if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{1,5}$/.test(r.address)) throw new Error(`lobby: relay address ${r.address} must be a.b.c.d:port`);
     }
     this.games = new Map(); // id -> game
+    this.phaseWar = new Map(); // WOTR-9: a phase's relay game id -> its war's id
+    this.phaseMaking = new Map(); // WOTR-9: war id -> the promise of the phase being made (in memory only)
     this.buckets = new Map(); // rate limit key -> { tokens, at }
     this.relayStatus = new Map(); // INFRA-2 r2: relay address -> its uploader's last status (relayStatus())
     this.waiters = new Map(); // ONLINE-5: game id -> Set of wake functions (held polls)
@@ -860,8 +919,18 @@ export class Lobby {
         if (slot.install === undefined) slot.install = null;
         if (slot.install !== null && !validInstall(slot.install)) throw new Error(`lobby: stored game ${g.id} has an invalid slot install`);
       }
+      if (g.phaseVotes !== undefined) {
+        const { phase, votes } = g.phaseVotes ?? {};
+        if (!Number.isInteger(phase) || phase !== (g.phases?.length ?? 0) + 1 || !votes || typeof votes !== 'object' || Array.isArray(votes) ||
+            Object.entries(votes).some(([seat, choice]) => !/^[0-7]$/.test(seat) || !Array.isArray(choice) ||
+              !choice.length || choice.length > MAX_SLOTS || !choice.includes(Number(seat)) ||
+              choice.some((i) => !Number.isInteger(i) || i < 0 || i >= MAX_SLOTS) || new Set(choice).size !== choice.length)) {
+          throw new Error(`lobby: stored game ${g.id} has invalid phase votes`);
+        }
+      }
       if (g.state === 'closed') continue; // SOCIAL-1: a host's closed room is saved once before it is deleted
       this.games.set(g.id, g);
+      for (const ph of g.phases ?? []) this.phaseWar.set(ph.game, g.id); // WOTR-9
     }
   }
 
@@ -1223,6 +1292,8 @@ export class Lobby {
       password: !!g.password,
       mode: g.mode ?? 'normal',
       cheatMode: !!g.setup.cheatMode, // CHEAT-1: tagged in the server browser before anyone joins
+      // WOTR-9: a War of the Ring game says so in the list, with its scenario and whether it resumes a saved war (absent on a skirmish: its old shape)
+      ...(g.setup.gameMode === 1 ? { gameMode: 1, scenario: g.setup.scenario, resume: !!g.setup.resumeSave } : {}),
       // lane JOINVER-1: the host's build and the game's profile id, so a client greys out a game it cannot join before the player clicks it
       profile: g.profile,
       build: g.hostBuild ?? null,
@@ -1251,6 +1322,7 @@ export class Lobby {
         team: s.team,
         handicap: s.handicap ?? 0,
         cah: s.state === 'player' ? s.cah ?? null : null,
+        resumeCheck: s.state === 'player' ? s.resumeCheck ?? null : null, // WOTR-9
         ready: !!s.ready,
         platform: s.state === 'player' ? s.platform ?? null : null,
         link: s.state === 'player' ? s.link ?? null : null,
@@ -1368,11 +1440,12 @@ export class Lobby {
   // the fields one by one, so a good faction before a bad colour stayed). `slots` / `index`: the game's slots and the slot the choices are for; a
   // start position or a colour another occupied slot holds is refused by name (random, -1, is never taken)
   // ONLINE16-FIX: `capacity`: the map's starts (start positions 0 .. capacity-1; a sixteen-place room has teams 0 .. 15 as OnlineStart reads them)
-  checkSlotChoice(s, body, slots = null, index = -1, capacity = MAX_SLOTS) {
+  // WOTR-9: `war`: the game is a War of the Ring game, whose start positions are its scenario's regions (0 .. 63, the client checks the count)
+  checkSlotChoice(s, body, slots = null, index = -1, capacity = MAX_SLOTS, war = false) {
     const out = {};
     if (body.faction !== undefined) out.faction = intIn(body.faction, -1, 63, 'faction');
     if (body.color !== undefined) out.color = intIn(body.color, -1, 63, 'color');
-    if (body.startPos !== undefined) out.startPos = intIn(body.startPos, -1, capacity - 1, 'startPos');
+    if (body.startPos !== undefined) out.startPos = intIn(body.startPos, -1, (war ? WAR_REGIONS : capacity) - 1, 'startPos');
     if (body.team !== undefined) out.team = intIn(body.team, -1, placesOf(capacity) - 1, 'team');
     // ONLINEMENU-1: the slot's handicap (RotWK GameSlot + 0x20: 0 or -5 .. -95 in steps of 5, the Handicap combo's item data, RW 0x840B9D)
     if (body.handicap !== undefined) {
@@ -1417,6 +1490,9 @@ export class Lobby {
         : intIn(setup.mapStartCount, MAX_SLOTS + 1, WIDE_SLOTS, 'setup.mapStartCount (8, or 9 .. 16 for an extended map)'),
       // ONLINE16-FIX (the AUTH-1 cut-over): the game's tickets carry TICKET_MODE_AUTH, so the relay refuses unauthenticated datagrams; off unless asked
       requireAuth: setup.requireAuth === undefined || setup.requireAuth === null ? undefined : boolOf(setup.requireAuth, 'setup.requireAuth') || undefined,
+      // WOTR-9 (War of the Ring online, the WOTR2 lead's field list): the game mode (0 skirmish, 1 a war; absent 0, stored absent), the war's
+      // scenario (a LivingWorldCampaign name: the client checks it exists), and for a resumed war its save's MD5 and the state hash
+      ...warSetupOf(setup),
     };
     if (typeof out.cheatMode !== 'boolean') throw bad('bad_field', 'setup.cheatMode must be true or false');
     if (out.rules !== null) {
@@ -1428,6 +1504,48 @@ export class Lobby {
       if (!Array.isArray(setup.slots) || setup.slots.length < 2 || setup.slots.length > places) throw bad('bad_field', `setup.slots must be 2 .. ${places} slots`);
     }
     return out;
+  }
+
+  // lane PROFILE-2: stores a client's archive list under its SHA-256 (content-addressed: the same install uploads the same blob; never overwritten)
+  async putArchives(account, body, ip) {
+    this.limit(`archives:${account.id}`, 10, 10);
+    this.limit(`archives-ip:${ip}`, 6, 12); // Sol review P2: guest accounts are free; the address is not
+    if (!this.env.store.putBlob || typeof this.env.sha256 !== 'function') throw new LobbyError(501, 'no_log_store', 'no blob store is configured (LOG_STORE)');
+    allowFields(body, ['id', 'lines'], 'body');
+    const id = body?.id;
+    if (typeof id !== 'string' || !ARCHIVES_ID.test(id)) throw bad('bad_field', 'id must be the SHA-256 of the lines (64 hex digits)');
+    const lines = body?.lines;
+    if (!Array.isArray(lines) || lines.length < 1 || lines.length > MAX_ARCHIVE_LINES) throw bad('bad_field', `lines must hold 1 .. ${MAX_ARCHIVE_LINES} archive lines`);
+    for (const [i, l] of lines.entries()) {
+      if (typeof l !== 'string' || !ARCHIVE_LINE.test(l)) throw bad('bad_field', `lines[${i}] must be "<install>:<path> <md5> <size>"`);
+    }
+    const bytes = enc.encode(lines.map((l) => `${l}\n`).join(''));
+    if (bytesToHex(await this.env.sha256(bytes)) !== id) throw bad('bad_field', 'id is not the SHA-256 of the lines (each followed by a newline)');
+    const pending = (this.pendingArchives ??= new Map());
+    const blob = enc.encode(JSON.stringify({ v: VERSION, lines }));
+    if (pending.has(id)) {
+      this.pendingArchiveBytes -= pending.get(id).length;
+      pending.delete(id); // re-added below: the newest
+    }
+    if (!(await this.env.store.getBlob?.(`archives/${id}.json`))) {
+      pending.set(id, blob);
+      this.pendingArchiveBytes = (this.pendingArchiveBytes ?? 0) + blob.length;
+      for (const [old, b] of pending) {
+        if (this.pendingArchiveBytes <= MAX_PENDING_ARCHIVE_BYTES) break;
+        pending.delete(old);
+        this.pendingArchiveBytes -= b.length;
+      }
+    }
+    return { v: VERSION, id };
+  }
+
+  // lane PROFILE-2: stores the lists a starting game names (each once: content-addressed); a list no longer held (dropped, or the lobby restarted
+  // since the upload) stays a name the checker reports as missing
+  async storeGameArchives(ids) {
+    for (const id of new Set(ids.filter(Boolean))) {
+      const blob = this.pendingArchives?.get(id);
+      if (blob && !(await this.env.store.getBlob?.(`archives/${id}.json`))) await this.env.store.putBlob(`archives/${id}.json`, blob);
+    }
   }
 
   async create(account, body) {
@@ -1465,12 +1583,12 @@ export class Lobby {
       if (i >= capacity && s.state !== 'closed') throw bad('bad_field', `setup.slots[${i}] is beyond the map's ${capacity} start positions: it must be "closed"`);
       const slot = { state: s.state, faction: -1, color: -1, startPos: -1, team: -1, handicap: 0, cah: null, ready: false };
       if (AI_STATES.has(s.state)) slot.name = str(s.name ?? 'Computer', 24, `setup.slots[${i}].name`);
-      const choices = this.checkSlotChoice(slot, s, null, -1, capacity);
+      const choices = this.checkSlotChoice(slot, s, null, -1, capacity, setup.gameMode === 1);
       if (s.state === 'player' || AI_STATES.has(s.state)) Object.assign(slot, choices); // Sol r1: an open or closed slot keeps none
       return slot;
     });
     // ONLINE-5: two occupied slots of a new game never share a start position or a colour either
-    for (const [i, sl] of slots.entries()) this.checkSlotChoice(sl, sl.state === 'player' || AI_STATES.has(sl.state) ? { startPos: sl.startPos, color: sl.color } : {}, slots, i, capacity);
+    for (const [i, sl] of slots.entries()) this.checkSlotChoice(sl, sl.state === 'player' || AI_STATES.has(sl.state) ? { startPos: sl.startPos, color: sl.color } : {}, slots, i, capacity, setup.gameMode === 1);
     while (slots.length < placesOf(capacity)) slots.push({ state: 'closed', faction: -1, color: -1, startPos: -1, team: -1, handicap: 0, cah: null, ready: false });
     const hostSlot = intIn(body.hostSlot ?? 0, 0, capacity - 1, 'hostSlot');
     if (slots[hostSlot].state !== 'player') throw bad('bad_field', `the host's slot ${hostSlot} must be "player"`);
@@ -1483,6 +1601,7 @@ export class Lobby {
     slots[hostSlot].name = account.name;
     slots[hostSlot].platform = platform;
     const hostBuild = checkBuild(body.build) ?? accountBuild(account); // lane JOINVER-1
+    const hostArchives = archivesOf(body); // lane PROFILE-2
     slots[hostSlot].maxSlots = account.maxSlots; // ONLINE16-FIX: what the member's client reads (never shown in a view)
     const id = bytesToHex(this.env.randomBytes(8));
     const g = {
@@ -1491,6 +1610,7 @@ export class Lobby {
       reportParticipants: [{ account: account.id, install: account.install ?? null, nick: account.name }],
     };
     if (roomCode !== null) g.roomCode = roomCode;
+    if (hostArchives !== null) g.archives = { [account.id]: hostArchives }; // lane PROFILE-2: per account (a slot can change hands)
     this.event(g, `${account.name} created the game`);
     await this.syncReportRoster(g);
     await this.save(g);
@@ -1536,6 +1656,7 @@ export class Lobby {
     if (g.setup.requireAuth && account.maxSlots === undefined) throw new LobbyError(409, 'update', NEEDS_AUTH);
     const platform = checkPlatform(body?.platform);
     checkBuild(body?.build); // lane JOINVER-1: a malformed build is refused whatever the profile
+    const archives = archivesOf(body); // lane PROFILE-2
     if (body?.profile !== g.profile) throw this.profileRefusal(g, account, body);
     for (const other of this.games.values()) {
       if (other !== g && other.state === 'open' && this.slotOf(other, account) >= 0) throw bad('in_game', `you are in game ${other.id} already: leave it first`);
@@ -1547,6 +1668,8 @@ export class Lobby {
     // Sol r1 (ONLINE-5): a joiner takes the slot with no choices of its own: nothing an earlier AI of the slot held (a start position, a colour others
     // may have claimed since) carries over to the player
     Object.assign(candidate.slots[slot], { state: 'player', account: account.id, install: account.install ?? null, pid: account.pid ?? null, name: account.name, ready: false, platform, maxSlots: account.maxSlots, ...NO_CHOICES });
+    if (archives !== null) (candidate.archives ??= {})[account.id] = archives; // lane PROFILE-2
+    else if (candidate.archives) delete candidate.archives[account.id];
     this.unreadyAll(candidate);
     await this.syncReportRoster(candidate);
     this.event(candidate, `${account.name} joined`);
@@ -1563,7 +1686,7 @@ export class Lobby {
     if (!ROOM_CODE.test(code ?? '')) throw bad('bad_field', 'a room code is 6 .. 32 characters of A-Z a-z 0-9 _ -');
     this.sweep();
     for (const g of this.games.values()) {
-      if (g.roomCode === code && g.state === 'open') return this.join(account, g.id, { profile: body?.profile, mode: body?.mode, platform: body?.platform }, true);
+      if (g.roomCode === code && g.state === 'open') return this.join(account, g.id, { profile: body?.profile, mode: body?.mode, platform: body?.platform, archives: body?.archives }, true);
     }
     throw new LobbyError(404, 'no_room', 'no open room has this code (the host has not made it yet, or it has started)');
   }
@@ -1651,12 +1774,19 @@ export class Lobby {
       }
       Object.assign(change, NO_CHOICES);
     } else {
-      Object.assign(change, this.checkSlotChoice(after, body, g.slots, target, capacity));
+      const war = g.setup.gameMode === 1;
+      Object.assign(change, this.checkSlotChoice(after, body, g.slots, target, capacity, war));
       // what the slot keeps (an AI level changed, a choice left as it was) is checked against the others as well
-      this.checkSlotChoice(after, { startPos: change.startPos ?? s.startPos, color: change.color ?? s.color }, g.slots, target, capacity);
+      this.checkSlotChoice(after, { startPos: change.startPos ?? s.startPos, color: change.color ?? s.color }, g.slots, target, capacity, war);
     }
+    // WOTR-9: a member's check of its copy of the resumed war's save (its own slot only); a request that only reports it unreadies no one
+    if (body.resumeCheck !== undefined) {
+      if (target !== own || s.state !== 'player') throw bad('bad_field', 'resumeCheck is a player\'s own report');
+      change.resumeCheck = checkResumeCheck(body.resumeCheck);
+    }
+    const checkOnly = Object.keys(body).every((k) => k === 'resumeCheck' || k === 'slot' || k === 'v');
     Object.assign(s, change);
-    this.unreadyAll(g);
+    if (!checkOnly) this.unreadyAll(g);
     await this.save(g);
     return { v: VERSION, game: this.gameView(g, account) };
   }
@@ -1665,7 +1795,11 @@ export class Lobby {
     const g = this.gameFor(account, id);
     if (g.state !== 'open') throw new LobbyError(409, 'started', 'the game has started');
     if (this.slotOf(g, account) !== g.hostSlot) throw new LobbyError(403, 'not_host', 'only the host changes the game options');
-    const setup = this.checkSetup({ ...g.setup, ...body }, false);
+    // WOTR-9: back to a skirmish (gameMode 0) or to a new war (resumeSave "") drops the stored war fields that no longer apply
+    const kept = { ...g.setup };
+    if (body.gameMode === 0) Object.assign(kept, { scenario: undefined, resumeSave: undefined, resumeHash: undefined });
+    if (body.resumeSave === '') kept.resumeHash = undefined;
+    const setup = this.checkSetup({ ...kept, ...body }, false);
     if (g.roomCode && setup.cheatMode) throw bad('bad_field', 'a room with a room_code has no Cheat Mode'); // CHEAT-1
     // ONLINE16-FIX: the capacity follows the map. Growing needs every member to read sixteen places; shrinking needs the places beyond the new
     // map's starts empty (an open one closes; a player or an AI there is moved or removed by the host first). Requiring tags needs every member
@@ -1683,6 +1817,9 @@ export class Lobby {
     while (g.slots.length < placesOf(capacity)) g.slots.push({ state: 'closed', faction: -1, color: -1, startPos: -1, team: -1, ready: false });
     // ONLINE-5: another map has other start positions: every slot is back to a random one (ZH GameInfo::setMap resets the start spots)
     if (setup.map !== g.setup.map) for (const s of g.slots) s.startPos = -1;
+    // WOTR-9: a war's start positions are its scenario's regions: another mode or scenario starts them over, and another save voids every check
+    if ((setup.gameMode ?? 0) !== (g.setup.gameMode ?? 0) || setup.scenario !== g.setup.scenario) for (const s of g.slots) s.startPos = -1;
+    if (setup.resumeSave !== g.setup.resumeSave) for (const s of g.slots) s.resumeCheck = null;
     g.setup = setup;
     this.unreadyAll(g);
     this.event(g, 'the host changed the game options');
@@ -1772,6 +1909,11 @@ export class Lobby {
     if (humans.length < (g.roomCode ? 2 : 1)) throw new LobbyError(409, 'players', 'an online game needs at least two players');
     const notReady = humans.filter(([s, i]) => i !== g.hostSlot && !s.ready).map(([s]) => s.name);
     if (notReady.length) throw new LobbyError(409, 'not_ready', `not ready: ${notReady.join(', ')}`);
+    // WOTR-9: a resumed war starts only when every other player reported a good copy of its save (the client refuses as well; a server-side guard)
+    if (g.setup.resumeSave) {
+      const unchecked = humans.filter(([s, i]) => i !== g.hostSlot && !(s.resumeCheck?.save === g.setup.resumeSave && s.resumeCheck.ok)).map(([s]) => s.name);
+      if (unchecked.length) throw new LobbyError(409, 'resume_check', `no good copy of the saved war: ${unchecked.join(', ')}`);
+    }
     // ONLINE-2 r2 (Sol: a player joined while the tickets were being signed, and got no START): from here the game takes no join, slot or setup
     // change ('starting' is not 'open'); the slots were read above, before the first await
     g.state = 'starting';
@@ -1805,6 +1947,9 @@ export class Lobby {
       superweaponRestriction: candidate.setup.superweaponRestriction,
       rules: candidate.setup.rules,
       legendaryHeroes: candidate.setup.legendaryHeroes,
+      // WOTR-9: the war's mode, scenario and save (absent on a skirmish: its START keeps its old shape)
+      ...(candidate.setup.gameMode === 1 ? { gameMode: 1, scenario: candidate.setup.scenario } : {}),
+      ...(candidate.setup.resumeSave ? { resumeSave: candidate.setup.resumeSave, resumeHash: candidate.setup.resumeHash } : {}),
       // CHEAT-1: the cheat seat is the host's slot (only when the host turned Cheat Mode on: a game without it has no field, as before CHEAT-1). The START is
       // the lobby's game record (starts/<id>.json): stats and any ranking read the field and leave the game out
       ...(candidate.setup.cheatMode ? { cheatMode: candidate.hostSlot } : {}),
@@ -1828,7 +1973,7 @@ export class Lobby {
       const ticket = await signTicket(this.env, keyId, key, g.id, i, mask, expires,
         NET_MODE_TICKET[g.setup.netMode] | (g.setup.requireAuth ? TICKET_MODE_AUTH : 0), g.setup.frameMs);
       starts[i] = {
-        v: VERSION,
+        v: candidate.setup.gameMode === 1 ? 2 : VERSION, // WOTR2 M9: a v1 client must not start a war as skirmish
         kind: 'openbfme-start',
         game: candidate.id,
         slot: i,
@@ -1850,12 +1995,16 @@ export class Lobby {
     candidate.state = 'started';
     candidate.startedAt = this.env.now();
     // Replay-start is a credential-free snapshot; live per-slot tickets never enter replay metadata.
-    const replayStart = { v: VERSION, kind: 'openbfme-replay-start', game: g.id, runAhead: this.config.runAhead, crcInterval: this.config.crcInterval, profile: g.profile, setup };
+    const replayStart = { v: candidate.setup.gameMode === 1 ? 2 : VERSION, kind: 'openbfme-replay-start', game: g.id, runAhead: this.config.runAhead, crcInterval: this.config.crcInterval, profile: g.profile, setup };
+    // lane PROFILE-2: each human slot's archive list id (null: its client told none). An added field, not a new START version: every checker
+    // release reads version 1 and ignores fields it does not know (OnlineStart.cpp), so the checkers of older releases keep reading new games
+    replayStart.archives = Object.fromEntries(humans.map(([s, i]) => [String(i), candidate.archives?.[s.account] ?? null]));
     this.event(candidate, 'the game started');
     const socialUndo = await this.social.recordGameStart(candidate);
     try {
       await this.syncReportRoster(candidate);
       // (no log store: no replay record either; /v1/replays then answers 'no_log_store')
+      if (this.env.store.putBlob) await this.storeGameArchives(Object.values(replayStart.archives)); // lane PROFILE-2
       await this.env.store.putBlob?.(`starts/${g.id}.json`, enc.encode(JSON.stringify(replayStart)));
       // CFDEPLOY-1 r2 (Sol r1: replay downloads were open to anyone): the accounts that played; only they read the game's replay files. docs/ONLINE.md
       // promises no public replays ("view online" is the player's own link), so a public listing would be a new decision
@@ -1929,6 +2078,115 @@ export class Lobby {
       .map((g) => g.id);
     return { v: VERSION, games, left };
   }
+  // WOTR-9 (Option A, the coordinator's decision 10-31): a War of the Ring game's phases. Phase 0 is the war's own START (the strategic map); each
+  // real-time battle (odd phases) and each return to the map (even phases) is a FRESH relay game: its own 16-hex id, its own tickets for the war's
+  // original slot numbers, its own relay log, linked to the war (war id + phase number). No relay wire change.
+  // body: { phase: N, kind: 'battle' | 'map', slots?: [slot, ...] }. N = the current phase + 1 records this player's vote; only matching votes
+  // from every participant of the current phase create the next relay game. N = the current phase retrieves the caller's ticket again; any other
+  // N is refused (409 phase_order). `slots` names the next phase's human seats (RW 0x6BE9A5: the client names who is still in), default all
+  // current seats that have not left. It must hold the caller; a player leaving must explicitly leave rather than exclude another's ticket.
+  async phase(account, id, body) {
+    this.limit(`phase:${account.id}`, 30, 10);
+    const g = this.gameFor(account, id);
+    const slot = this.slotOf(g, account);
+    if (slot < 0) throw new LobbyError(403, 'not_in_game', 'you have no slot in this war');
+    if (g.setup.gameMode !== 1) throw new LobbyError(409, 'not_a_war', 'phases are for a War of the Ring game');
+    if (g.state !== 'started' || !g.starts?.[slot]) throw new LobbyError(409, 'not_started', 'the war has not started');
+    if (g.finished) throw new LobbyError(409, 'finished', 'the war is over');
+    if (g.left?.[slot]) throw new LobbyError(409, 'left', 'you left this war');
+    if (typeof body !== 'object' || body === null) throw bad('bad_field', 'the body must be an object');
+    allowFields(body, ['v', 'phase', 'kind', 'slots'], 'body');
+    const n = intIn(body.phase, 1, MAX_WAR_PHASES, 'phase');
+    const kind = n % 2 === 1 ? 'battle' : 'map';
+    if (body.kind !== kind) throw bad('bad_field', `phase ${n} is a ${kind} phase (odd phases are battles, even phases the map)`);
+    g.phases ??= [];
+    const current = g.phases.length;
+    if (n === current && current > 0) {
+      const ph = g.phases[current - 1];
+      if (body.slots !== undefined && !sameSlots(body.slots, ph.slots)) throw new LobbyError(409, 'phase_slots', `phase ${n} was made with slots ${ph.slots.join(', ')}`);
+      if (!ph.starts[slot]) throw new LobbyError(403, 'not_in_phase', `you are not in phase ${n} of this war`);
+      return { v: VERSION, war: g.id, phase: n, start: ph.starts[slot] };
+    }
+    if (n !== current + 1) throw new LobbyError(409, 'phase_order', `the war is in phase ${current}: only phase ${current + 1} can be made next`);
+    if (this.phaseMaking.has(g.id)) { // another player's request is making it (between its awaits): the same phase, then this caller's ticket
+      await this.phaseMaking.get(g.id);
+      return this.phase(account, id, body);
+    }
+    const previous = current ? g.phases[current - 1].slots : g.slots.map((s, i) => i).filter((i) => !!g.starts?.[i]);
+    const humans = previous.filter((i) => g.slots[i].state === 'player' && g.starts?.[i] && !g.left?.[i]);
+    if (!humans.includes(slot)) throw new LobbyError(403, 'not_in_phase', `you are not in phase ${current} of this war`);
+    let slots = humans;
+    if (body.slots !== undefined) {
+      if (!Array.isArray(body.slots) || !body.slots.length || body.slots.length > humans.length) throw bad('bad_field', `slots must be 1 .. ${humans.length} of the war's human slots`);
+      slots = [...new Set(body.slots.map((x, i) => intIn(x, 0, g.slots.length - 1, `slots[${i}]`)))].sort((a, b) => a - b);
+      if (slots.length !== body.slots.length) throw bad('bad_field', 'slots has a slot twice');
+      const outside = slots.find((x) => !humans.includes(x));
+      if (outside !== undefined) throw bad('bad_field', `slot ${outside} is not a human slot of this war that is still in it`);
+    }
+    if (!slots.includes(slot)) throw bad('bad_field', 'slots must hold your own slot');
+    let done;
+    this.phaseMaking.set(g.id, new Promise((resolve) => { done = resolve; }));
+    try {
+      g.phaseVotes ??= { phase: n, votes: {} };
+      if (g.phaseVotes.phase !== n) throw new LobbyError(409, 'phase_order', `the votes are for phase ${g.phaseVotes.phase}, not ${n}`);
+      g.phaseVotes.votes[slot] = slots;
+      if (!humans.every((i) => sameSlots(g.phaseVotes.votes[i], slots))) {
+        await this.save(g);
+        throw new LobbyError(409, 'phase_wait', `phase ${n} is waiting for every current player to agree on its seats`);
+      }
+      const phaseId = bytesToHex(this.env.randomBytes(8));
+      const mask = slots.reduce((m, i) => m | (1 << i), 0);
+      const seedBytes = this.env.randomBytes(4);
+      const seed = new DataView(seedBytes.buffer, seedBytes.byteOffset, 4).getUint32(0, true);
+      const relay = this.config.relays[0];
+      if (!relay) throw new LobbyError(503, 'no_relay', 'no relay configured');
+      const keyId = Math.max(...this.config.ticketKeys.keys());
+      const key = this.config.ticketKeys.get(keyId);
+      const expires = Math.floor(this.env.now() / 1000) + this.config.ticketSeconds;
+      const starts = {};
+      for (const i of slots) {
+        const ticket = await signTicket(this.env, keyId, key, phaseId, i, mask, expires,
+          NET_MODE_TICKET[g.setup.netMode] | (g.setup.requireAuth ? TICKET_MODE_AUTH : 0), g.setup.frameMs);
+        starts[i] = {
+          v: 2, kind: 'openbfme-phase-start', war: g.id, phase: n, phaseKind: kind, game: phaseId, slot: i, slots, seed,
+          relay: relay.address, ticket, session_key: await sessionKey(this.env, key, ticket),
+          netMode: g.setup.netMode, frameMs: g.setup.frameMs, runAhead: this.config.runAhead, crcInterval: this.config.crcInterval, profile: g.profile,
+        };
+      }
+      // the phase's replay record and readers (uploadLog needs starts/<id>.json; replayFile reads players/<id>.json) and the war's phase index
+      const record = { v: 2, kind: 'openbfme-replay-phase', game: phaseId, war: g.id, phase: n, phaseKind: kind, slots, seed,
+        runAhead: this.config.runAhead, crcInterval: this.config.crcInterval, profile: g.profile };
+      const players = slots.map((i) => g.slots[i].account);
+      const ph = { phase: n, kind, game: phaseId, slots, mask, seed, startedAt: this.env.now(), starts };
+      if (this.env.store.putBlob) {
+        await this.env.store.putBlob(`starts/${phaseId}.json`, enc.encode(JSON.stringify(record)));
+        await this.env.store.putBlob(`players/${phaseId}.json`, enc.encode(JSON.stringify(players)));
+        const index = [...g.phases, ph].map(({ phase, kind: k, game, slots: sl, startedAt }) => ({ phase, kind: k, game, slots: sl, startedAt }));
+        await this.env.store.putBlob(`wars/${g.id}.json`, enc.encode(JSON.stringify({ v: 2, war: g.id, phases: index })));
+      }
+      g.phases.push(ph);
+      delete g.phaseVotes;
+      this.phaseWar.set(phaseId, g.id);
+      this.event(g, `the war goes to phase ${n} (${kind})`);
+      await this.save(g);
+      return { v: VERSION, war: g.id, phase: n, start: starts[slot] };
+    } finally {
+      this.phaseMaking.delete(g.id);
+      done();
+    }
+  }
+  // WOTR-9: a war's phase games for its players (the replays of a war: phase 0 is the war's own id); newest index wins
+  async warPhases(account, id) {
+    const store = this.logStore();
+    if (!/^[0-9a-f]{16}$/.test(id)) throw bad('bad_field', 'a game id is 16 hex digits');
+    const players = await store.getBlob(`players/${id}.json`);
+    if (!players) throw new LobbyError(404, 'no_replay', `no replay for game ${id}`);
+    if (!JSON.parse(dec.decode(players)).includes(account.id)) throw new LobbyError(403, 'not_a_player', `only the players of game ${id} read its replay`);
+    const g = this.games.get(id);
+    if (g) return { v: VERSION, war: id, phases: (g.phases ?? []).map(({ phase, kind, game, slots, startedAt }) => ({ phase, kind, game, slots, startedAt })) };
+    const b = await store.getBlob(`wars/${id}.json`); // the game left memory: its stored index (rewritten at each phase)
+    return { v: VERSION, war: id, phases: b ? JSON.parse(dec.decode(b)).phases : [] };
+  }
   // a fresh START for the player's slot of a running game: its ticket is a rejoin ticket of the next generation (the relay binds the slot's new
   // incarnation with it and refuses every older ticket of the slot); "rejoin" names the generation. Only the slot's own account gets one
   async rejoin(account, id) {
@@ -1944,6 +2202,20 @@ export class Lobby {
     const keyId = Math.max(...this.config.ticketKeys.keys());
     const key = this.config.ticketKeys.get(keyId);
     const expires = Math.floor(this.env.now() / 1000) + this.config.ticketSeconds;
+    // WOTR-9: a war in a later phase is rejoined in that phase's relay game (its own mask and generations)
+    const phase = g.phases?.length ? g.phases[g.phases.length - 1] : null;
+    if (phase) {
+      if (!phase.starts[slot]) throw new LobbyError(409, 'not_in_phase', `you are not in phase ${phase.phase} of this war`);
+      phase.rejoins ??= {};
+      const pg = (phase.rejoins[slot] ?? 0) + 1;
+      if (pg > 0xffff) throw new LobbyError(409, 'rejoins', 'this slot rejoined too often');
+      const pt = await signRejoinTicket(this.env, keyId, key, phase.game, slot, phase.mask, expires, pg);
+      phase.rejoins[slot] = pg;
+      this.event(g, `${g.slots[slot].name} rejoins the war (phase ${phase.phase})`);
+      await this.save(g);
+      this.social.rejoinStarted(g, account);
+      return { v: VERSION, game: this.gameView(g, account), start: { ...phase.starts[slot], ticket: pt, rejoin: pg, session_key: await sessionKey(this.env, key, pt) } };
+    }
     const mask = g.mask ?? g.slots.reduce((m, s, i) => (s.state === 'player' ? m | (1 << i) : m), 0);
     const ticket = await signRejoinTicket(this.env, keyId, key, g.id, slot, mask, expires, generation);
     g.rejoins[slot] = generation;
@@ -1964,6 +2236,7 @@ export class Lobby {
     if (capacityOf(g) > MAX_SLOTS && account.maxSlots !== WIDE_SLOTS) throw new LobbyError(409, 'capacity', NEEDS_WIDE); // ONLINE16-FIX
     if (g.setup.requireAuth && account.maxSlots === undefined) throw new LobbyError(409, 'update', NEEDS_AUTH);
     if (g.state !== 'started' || !g.starts) throw new LobbyError(409, 'not_started', 'the game has not started yet: ask again once it has');
+    if (g.setup.gameMode === 1) throw new LobbyError(409, 'not_available', 'online War of the Ring spectators need a strategic relay log');
     const index = g.spectatorsIssued ?? 0;
     if (index >= 16) throw new LobbyError(409, 'spectators_full', 'the game has had its 16 spectator places');
     g.spectatorsIssued = index + 1;
@@ -1979,7 +2252,7 @@ export class Lobby {
     await this.save(g);
     return {
       v: VERSION,
-      start: { v: VERSION, kind: 'openbfme-spectate', game: g.id, spectator: index, relay: any.relay, ticket, session_key: await sessionKey(this.env, key, ticket), delay, runAhead: any.runAhead, crcInterval: any.crcInterval, profile: g.profile, setup: any.setup }, // lane AUTH-1: relay->spectator only
+      start: { v: any.v, kind: 'openbfme-spectate', game: g.id, spectator: index, relay: any.relay, ticket, session_key: await sessionKey(this.env, key, ticket), delay, runAhead: any.runAhead, crcInterval: any.crcInterval, profile: g.profile, setup: any.setup }, // lane AUTH-1: relay->spectator only
     };
   }
 
@@ -2040,12 +2313,26 @@ export class Lobby {
     const old = await store.getBlob(key);
     if (old) {
       if (old.length === bytes.length && old.every((x, i) => x === bytes[i])) {
-        await this.markFinished(id);
-        return { v: VERSION, stored: key, unchanged: true };
+        const warId = this.phaseWar.get(id) ?? (this.games.get(id)?.phases?.length ? id : null); // WOTR-9: as below
+        const war = warId === null ? null : this.games.get(warId);
+        if (warId === null) await this.markFinished(id);
+        else if ((war?.phases?.length ? war.phases[war.phases.length - 1].game : warId) === id) await this.markFinished(warId);
+        return { v: VERSION, stored: key, unchanged: true, ...(warId === null ? {} : { war: warId }) };
       }
       throw new LobbyError(409, 'log_exists', `game ${id} has a different log stored already`);
     }
     await store.putBlob(key, bytes);
+    // WOTR-9: a war's relay games end at every phase change: the war is over only when the log of its LATEST phase comes in (the clients ask for the
+    // next phase's tickets before they leave the current relay game, so an earlier phase's log never ends the war)
+    const warId = this.phaseWar.get(id) ?? (this.games.get(id)?.phases?.length ? id : null);
+    if (warId !== null) {
+      const war = this.games.get(warId);
+      const latest = war?.phases?.length ? war.phases[war.phases.length - 1].game : warId;
+      if (latest !== id) return { v: VERSION, stored: key, war: warId };
+      this.noteGameRecord('finished');
+      await this.markFinished(warId);
+      return { v: VERSION, stored: key, war: warId };
+    }
     this.noteGameRecord('finished');
     await this.markFinished(id); // ONLINECOUNT-1: the relay's log is in, the game is over
     return { v: VERSION, stored: key };
@@ -2189,7 +2476,7 @@ export class Lobby {
     return { v: VERSION, blobs, next: blobs.length === n ? blobs[n - 1].key : null };
   }
   async adminGet(key) {
-    if (!parseBlobKey(key)) throw bad('bad_field', 'not a blob key (logs/<id>.obfmerlog, starts/<id>.json, players/<id>.json)');
+    if (!parseBlobKey(key)) throw bad('bad_field', 'not a blob key (logs/<id>.obfmerlog, starts/<id>.json, players/<id>.json, archives/<sha256>.json)');
     const b = await this.logStore().getBlob(key);
     if (!b) throw new LobbyError(404, 'no_blob', `no blob ${key}`);
     return b;
@@ -2198,7 +2485,7 @@ export class Lobby {
   async adminPut(key, bytes) {
     const store = this.logStore();
     const k = parseBlobKey(key);
-    if (!k) throw bad('bad_field', 'not a blob key (logs/<id>.obfmerlog, starts/<id>.json, players/<id>.json)');
+    if (!k) throw bad('bad_field', 'not a blob key (logs/<id>.obfmerlog, starts/<id>.json, players/<id>.json, archives/<sha256>.json)');
     if (k.kind === 'logs') {
       if (bytes.length > this.maxLogBytes()) throw new LobbyError(413, 'too_big', `a relay log of more than ${this.maxLogBytes()} bytes (the log store's limit)`);
       const logGame = logGameOf(bytes);
@@ -2210,8 +2497,16 @@ export class Lobby {
       } catch {
         throw bad('bad_json', `${key} must be JSON`);
       }
-      if (k.kind === 'starts' && (doc?.kind !== 'openbfme-replay-start' || doc.game !== k.id)) throw bad('bad_blob', `${key} is not game ${k.id}'s replay START record`);
+      if (k.kind === 'starts' && (!['openbfme-replay-start', 'openbfme-replay-phase'].includes(doc?.kind) || doc.game !== k.id)) throw bad('bad_blob', `${key} is not game ${k.id}'s replay START record`);
+      if (k.kind === 'wars' && (doc?.war !== k.id || !Array.isArray(doc.phases))) throw bad('bad_blob', `${key} is not war ${k.id}'s phase index`); // WOTR-9
       if (k.kind === 'players' && !(Array.isArray(doc) && doc.every((a) => typeof a === 'string'))) throw bad('bad_blob', `${key} is not a list of account ids`);
+      if (k.kind === 'archives') { // lane PROFILE-2: a restore brings back exactly the list its key names
+        const lines = doc?.lines;
+        if (doc?.v !== VERSION || !Array.isArray(lines) || lines.length < 1 || lines.length > MAX_ARCHIVE_LINES || !lines.every((l) => typeof l === 'string' && ARCHIVE_LINE.test(l))
+          || typeof this.env.sha256 !== 'function' || bytesToHex(await this.env.sha256(enc.encode(lines.map((l) => `${l}\n`).join('')))) !== k.id) {
+          throw bad('bad_blob', `${key} is not the archive list its SHA-256 names`);
+        }
+      }
     }
     const old = await store.getBlob(key);
     if (old) {
@@ -2568,6 +2863,7 @@ export class Lobby {
       features: [
         'social',
         'build', // lane JOINVER-1: list rows carry the host's build and profile; a 409 profile names both builds
+        ...(this.env.store.putBlob && typeof this.env.sha256 === 'function' ? ['archives'] : []), // lane PROFILE-2: POST /v1/profile-archives
         ...(this.config.oauth?.discord ? ['oauth'] : []),
         ...(this.config.email && !this.config.email.error ? ['email'] : []),
       ],
@@ -2602,9 +2898,10 @@ export async function route(lobby, req) {
         throw new LobbyError(req.bodyRejection.status, req.bodyRejection.code, req.bodyRejection.message);
       }
       // ONLINE-2 r2 (Sol: a chunked 20 KB body passed the Content-Length check): the bytes actually received count, whatever the headers say
-      if (Number(req.headers['content-length'] ?? 0) > MAX_JSON_BYTES) throw new LobbyError(413, 'too_big', `request body over ${MAX_JSON_BYTES} bytes`);
+      const limit = req.path === '/v1/profile-archives' ? MAX_ARCHIVES_BYTES : MAX_JSON_BYTES; // lane PROFILE-2: a JSON body's bound (bodyLimitFor)
+      if (Number(req.headers['content-length'] ?? 0) > limit) throw new LobbyError(413, 'too_big', `request body over ${limit} bytes`);
       const raw = await req.bytes();
-      if (raw.length > MAX_JSON_BYTES) throw new LobbyError(413, 'too_big', `request body over ${MAX_JSON_BYTES} bytes`);
+      if (raw.length > limit) throw new LobbyError(413, 'too_big', `request body over ${limit} bytes`);
       return raw;
     };
     const parseBody = (raw) => {
@@ -2864,11 +3161,17 @@ export async function route(lobby, req) {
       if (m === 'POST' && p.length === 5) return json(200, await lobby.adminPut(key, raw));
       return json(404, { v: VERSION, error: 'not_found', message: 'unknown admin path' });
     }
+    if (m === 'GET' && p[1] === 'replays' && p.length === 4 && p[3] === 'phases') { // WOTR-9: a war's phase games, for its replays
+      return json(200, await lobby.warPhases(await lobby.account(req.headers.authorization), p[2]));
+    }
     if (m === 'GET' && p[1] === 'replays' && p.length === 4 && (p[3] === 'start' || p[3] === 'log')) {
       const b = await lobby.replayFile(await lobby.account(req.headers.authorization), p[2], p[3]);
       return { status: 200, headers: { 'content-type': p[3] === 'log' ? 'application/octet-stream' : 'application/json' }, body: b };
     }
     if (m === 'GET' && p[1] === 'mine' && p.length === 2) return json(200, lobby.mine(await lobby.account(req.headers.authorization))); // ONLINE-3
+    if (m === 'POST' && p[1] === 'profile-archives' && p.length === 2) { // lane PROFILE-2
+      return json(200, await lobby.putArchives(await lobby.account(req.headers.authorization), await body(), req.ip));
+    }
     if (m === 'POST' && p[1] === 'rooms' && p.length === 4 && p[3] === 'join') { // ONLINEHUB-1: join a private room by its code
       const slotsHeader = req.headers['x-openbfme-max-slots'];
       const account = withMaxSlots(await lobby.account(req.headers.authorization), slotsHeader === undefined ? undefined : maxSlotsOf(req.headers));
@@ -2906,7 +3209,7 @@ export async function route(lobby, req) {
       return answer(hold?.backoff); // Sol r1: not held for a bound: the client is told how long to wait
 
     }
-    const actions = { join: 'join', leave: 'leave', slot: 'setSlot', setup: 'setSetup', ready: 'ready', chat: 'chat', kick: 'kick', start: 'start', rejoin: 'rejoin', spectate: 'spectate', link: 'link' };
+    const actions = { join: 'join', leave: 'leave', slot: 'setSlot', setup: 'setSetup', ready: 'ready', chat: 'chat', kick: 'kick', start: 'start', rejoin: 'rejoin', spectate: 'spectate', link: 'link', phase: 'phase' };
     if (m === 'POST' && p.length === 4 && actions[p[3]]) {
       const b = p[3] === 'leave' || p[3] === 'start' || p[3] === 'rejoin' || p[3] === 'spectate' ? {} : await body();
       return json(200, await lobby[actions[p[3]]](account, id, b));

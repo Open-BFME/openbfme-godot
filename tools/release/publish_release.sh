@@ -75,14 +75,19 @@ DIR=$(cd "$DIR" && pwd)
 [ $EXECUTE = 1 ] && { [ $TEST_KEY = 1 ] || [ $UNTAGGED = 1 ]; } && fail "--key-file and --allow-untagged are for dry runs only"
 [ -f "$DIR/manifest.json" ] || fail "no manifest.json in $DIR (tools/release/make_manifest.py)"
 [ -f "$DIR/manifest.json.sig" ] || [ -f "$DIR/manifest.json.sig2" ] \
-  || fail "no manifest.json.sig or manifest.json.sig2 in $DIR (tools/release/sign_manifest.py on the offline machine, kms_sign.py on GitHub)"
+  || fail "no manifest.json.sig or manifest.json.sig2 in $DIR (tools/release/sign_manifest.py on the offline machine or in the release workflow's sign job)"
 [ -f "$PUB" ] || fail "$PUB does not exist: launcher/release_keys.pub is not committed, so the launcher has no release keys to check this signature with"
+# RELGH-2: the nightly-only keys (launcher/nightly_keys.pub) the launcher is built with; a signature under one is valid for a nightly's
+# files only (release_keys.verify_scoped), so a stable release signed by a nightly key fails here as it fails in every launcher
+NIGHTLY_PUB="$REPO/launcher/nightly_keys.pub"
+[ -f "$NIGHTLY_PUB" ] || fail "launcher/nightly_keys.pub is not committed (it may list no key, but it must be there)"
+NIGHTLYOPT=(--nightly "$NIGHTLY_PUB")
 # SIGNKMS-1: every signature slot of $1 in the folder (X.sig, X.sig2) verifies under $PUB (raw or envelope, any trusted key)
 verify_slots() {
   local f=$1 slot
   for slot in sig sig2; do
     [ -e "$DIR/$f.$slot" ] || continue
-    python3 "$REPO/tools/release/sign_manifest.py" --verify "$PUB" --sig "$DIR/$f.$slot" "$DIR/$f" \
+    python3 "$REPO/tools/release/sign_manifest.py" --verify "$PUB" "${NIGHTLYOPT[@]}" --sig "$DIR/$f.$slot" "$DIR/$f" \
       || fail "the signature of $f does not verify under $PUB ($f.$slot)"
   done
 }
@@ -112,7 +117,7 @@ if [ -e "$DIR/manifest-macos.json" ] || [ -e "$DIR/manifest-macos.json.sig" ] ||
   # MACPLAY-1: the package's payload.json is sealed with a trusted key ($PUB); SIGNKMS-1: the Mac launcher's build_info.json carries
   # launcher/release_keys.pub (release_keys, release_key its first entry)
   python3 "$REPO/tools/release/make_macos_manifest.py" --check "$DIR" --release-key-file "$REPO/launcher/release_keys.pub" --seal-key-file "$PUB" \
-    || fail "manifest-macos.json is not the manifest of the folder's Mac package"
+    --nightly-key-file "$NIGHTLY_PUB" || fail "manifest-macos.json is not the manifest of the folder's Mac package"
 elif compgen -G "$DIR/openbfme-*-macos-*" >/dev/null; then
   fail "a Mac package is in $DIR without manifest-macos.json"
 fi

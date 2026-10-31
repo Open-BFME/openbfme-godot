@@ -103,7 +103,7 @@ bool GarrisonRules::isAboveTerrain(const Object &obj)
 	return SimMath::subf32(p.z, obj.logic().getGroundHeight(p.x, p.y)) > 0.0f;
 }
 
-// RW 0x82CFD4 ActionManager::getCanAttackObject(obj, victim, source, ATTACK_NEW_TARGET) (lane BACKLOG-1; BFME2 decomp ActionManagerGetCanAttackObject.cpp, tier B
+// RW 0x82CFD4 ActionManager::getCanAttackObject(obj, victim, source, ATTACK_NEW_TARGET) (lane BACKLOG-1; BFME2 decomp ActionManager.cpp, tier B
 // same-shape): no for a dead object or victim (+ 0x458 bit 0), the object itself, an object that is not able to attack (Object::isAbleToAttack RW 0x691269) or
 // one with DISABLED bit 4 (+ 0x1C8 & 0x10: ATTACK_NEW_TARGET is refused). A STRUCTURE asks its riders first (RW 0x82C8A7) and a SPAWNS_ARE_THE_WEAPONS object
 // its slave closest to the victim (RW 0x68C3A3 slot 8); neither enters a container (not mobile) and both are reported here. Then the object's own

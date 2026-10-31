@@ -6,6 +6,7 @@
 
 #include "Common/RecordingBuild.h"
 #include "Common/Sha256.h"
+#include "GameLogic/CampaignCarryover.h"
 #include "GameNetwork/NetPacket.h"
 
 #include <array>
@@ -20,8 +21,9 @@
 namespace
 {
 const char kMagic[8] = { 'O', 'B', 'F', 'M', 'E', 'S', 'A', 'V' };
-const char *const kPartTags[3] = { "HEAD", "LOG ", "SNAP" };
-const char *const kPartNames[3] = { "header", "command log", "snapshot" };
+// container version 2 (lane WOTR2 milestone 3) adds the fourth part, the War of the Ring strategic game
+const char *const kPartTags[4] = { "HEAD", "LOG ", "SNAP", "LWLD" };
+const char *const kPartNames[4] = { "header", "command log", "snapshot", "War of the Ring" };
 
 bool failWith(std::string *error, const std::string &why)
 {
@@ -116,6 +118,7 @@ std::vector<std::uint8_t> SaveGameFile::encode() const
 	h.u8(header.campaignAdvanced ? 1 : 0);
 	h.u8(header.autoSave ? 1 : 0);
 	h.str(header.buildDate);
+	h.str(header.campaignCarryover); // header version 4 (lane BFME2CAMP1)
 	std::vector<std::uint8_t> out(kMagic, kMagic + sizeof(kMagic));
 	NetByteWriter v;
 	v.u32(kContainerVersion);
@@ -123,6 +126,13 @@ std::vector<std::uint8_t> SaveGameFile::encode() const
 	putPart(out, 0, h.data());
 	putPart(out, 1, log);
 	putPart(out, 2, snapshot);
+	NetByteWriter lw;
+	if (!livingWorld.empty() || !livingWorldSession.empty())
+	{
+		lw.bytes(livingWorld);
+		lw.bytes(livingWorldSession);
+	}
+	putPart(out, 3, lw.data());
 	return out;
 }
 
@@ -212,14 +222,15 @@ bool SaveGameFile::parseFrom(Source &src, SaveGameFile &out, std::string *error,
 		return failWith(error, "the save is truncated (no container version)");
 	}
 	const std::uint32_t version = NetByteReader(lead + 8, 4).u32();
-	if (version != kContainerVersion)
+	if (version != kContainerVersion && version != 1)
 	{
-		return failWith(error, "save container version " + std::to_string(version) + " (this build reads version " + std::to_string(kContainerVersion) + ")");
+		return failWith(error, "save container version " + std::to_string(version) + " (this build reads versions 1 and " + std::to_string(kContainerVersion) + ")");
 	}
-	const std::uint64_t limits[3] = { kMaxHeaderBytes, kMaxLogBytes, kMaxSnapshotBytes };
-	std::vector<std::uint8_t> parts[3];
+	const int partCount = version == 1 ? 3 : 4; // version 1 has no War of the Ring part
+	const std::uint64_t limits[4] = { kMaxHeaderBytes, kMaxLogBytes, kMaxSnapshotBytes, kMaxLivingWorldBytes };
+	std::vector<std::uint8_t> parts[4];
 	std::uint64_t pos = 12;
-	for (int i = 0; i < 3; ++i)
+	for (int i = 0; i < partCount; ++i)
 	{
 		std::uint8_t ph[40];
 		if (size - pos < 40 || !src.read(pos, ph, 40))
@@ -264,9 +275,9 @@ bool SaveGameFile::parseFrom(Source &src, SaveGameFile &out, std::string *error,
 	}
 	NetByteReader r(parts[0]);
 	const std::uint32_t headerVersion = r.u32();
-	if (!r.failed() && headerVersion != kHeaderVersion && headerVersion != 1 && headerVersion != 2)
+	if (!r.failed() && (headerVersion < 1 || headerVersion > kHeaderVersion))
 	{
-		return failWith(error, "save header version " + std::to_string(headerVersion) + " (this build reads versions 1, 2 and 3)");
+		return failWith(error, "save header version " + std::to_string(headerVersion) + " (this build reads versions 1 to " + std::to_string(kHeaderVersion) + ")");
 	}
 	SaveGameHeader &h = out.header;
 	h.buildVersion = r.str();
@@ -295,9 +306,10 @@ bool SaveGameFile::parseFrom(Source &src, SaveGameFile &out, std::string *error,
 		{
 			f = r.u8();
 		}
-		if (!r.failed() && point > 1)
+		if (!r.failed() && point > 3)
 		{
-			return failWith(error, "the save's save point " + std::to_string(point) + " is not one this build saves (0 a game, 1 the campaign menu)");
+			return failWith(error, "the save's save point " + std::to_string(point) + " is not one this build saves (0 a game, 1 the campaign menu, 2 the War of the Ring map, "
+				"3 a War of the Ring battle)");
 		}
 		h.savePoint = (int)point;
 		for (int i = 0; i < 4 && !r.failed(); ++i)
@@ -320,6 +332,10 @@ bool SaveGameFile::parseFrom(Source &src, SaveGameFile &out, std::string *error,
 	h.campaignReady = flags[1] == 1;
 	h.campaignAdvanced = flags[2] == 1;
 	h.autoSave = flags[3] == 1;
+	if (headerVersion >= 4)
+	{
+		h.campaignCarryover = r.str(); // lane BFME2CAMP1: checked below
+	}
 	if (r.failed())
 	{
 		return failWith(error, "the save is damaged (its header part ends early)");
@@ -328,13 +344,66 @@ bool SaveGameFile::parseFrom(Source &src, SaveGameFile &out, std::string *error,
 	{
 		return failWith(error, "the save is damaged (" + std::to_string(r.remaining()) + " bytes after its header's fields)");
 	}
-	if (h.gameKind != 1 && h.gameKind != 2)
+	// WOTR2 milestone 8 (step 4, Sol wotr2m8s4 #1): 16 is a LAN War of the Ring's map save (retail's WOTRMP type, the LAN lobby's Load Game page; mode
+	// 6, RW 0x6DCFDF): a War of the Ring map save as 8, listed only there
+	const bool wotr = h.gameKind == 8 || h.gameKind == 16;
+	if (h.gameKind != 1 && h.gameKind != 2 && !wotr)
 	{
-		return failWith(error, "the save's game kind " + std::to_string(h.gameKind) + " is not one this build saves (1 Campaign, 2 Skirmish)");
+		return failWith(error, "the save's game kind " + std::to_string(h.gameKind) + " is not one this build saves (1 Campaign, 2 Skirmish, 8 War of the Ring, 16 a LAN War of the Ring)");
 	}
-	if ((h.gameKind == 1) != !h.campaign.empty())
+	if ((h.gameKind == 1 || wotr) != !h.campaign.empty())
 	{
-		return failWith(error, h.gameKind == 1 ? std::string("the save is a campaign mission without its campaign") : "the save is a skirmish that names a campaign");
+		return failWith(error, h.gameKind == 1 ? std::string("the save is a campaign mission without its campaign")
+			: wotr ? std::string("the War of the Ring save names no scenario") : "the save is a skirmish that names a campaign");
+	}
+	// lane WOTR2 milestone 3: the War of the Ring part (the strategic game's stream, then the host's session) belongs to War of the Ring saves, and only
+	// to them
+	if (!parts[3].empty())
+	{
+		NetByteReader lw(parts[3]);
+		out.livingWorld = lw.bytes();
+		out.livingWorldSession = lw.bytes();
+		if (lw.failed() || !lw.atEnd())
+		{
+			return failWith(error, "the save is damaged (its War of the Ring part is not a strategic game and a session)");
+		}
+	}
+	if (!headerOnly && wotr == out.livingWorld.empty())
+	{
+		return failWith(error, wotr ? std::string("the War of the Ring save carries no strategic game") : "the save carries a War of the Ring game it is not");
+	}
+	if (h.gameKind == 16 && h.savePoint != 2)
+	{
+		return failWith(error, "the LAN War of the Ring save is not at the strategic map");
+	}
+	if (h.gameKind == 8 && h.savePoint != 2 && h.savePoint != 3)
+	{
+		return failWith(error, "the War of the Ring save is neither at the strategic map nor inside a battle");
+	}
+	if (h.savePoint == 3)
+	{
+		// WOTR2 milestone 6: a War of the Ring battle (retail's mode 3, GameState RW 0x6DCFDF): the battle's RTS game at frame F (its log and snapshot) and
+		// the strategic game with its session
+		if (h.gameKind != 8)
+		{
+			return failWith(error, "the save is inside a War of the Ring battle without its strategic game");
+		}
+		if (h.frame == 0 || (!headerOnly && (parts[1].empty() || parts[2].empty())))
+		{
+			return failWith(error, "the War of the Ring battle save carries no RTS game (a frame, a log and a snapshot)");
+		}
+	}
+	if (h.savePoint == 2)
+	{
+		// the War of the Ring strategic map: its scenario and its strategic game, no RTS game (no frame, no log, no snapshot)
+		if (!wotr)
+		{
+			return failWith(error, "the save is at the War of the Ring map without its strategic game");
+		}
+		if (h.frame != 0 || h.commands != 0 || (!headerOnly && (!parts[1].empty() || !parts[2].empty())))
+		{
+			return failWith(error, "the War of the Ring map save carries an RTS game (a frame, commands, a log or a snapshot)");
+		}
 	}
 	if (h.savePoint == 1)
 	{
@@ -353,9 +422,22 @@ bool SaveGameFile::parseFrom(Source &src, SaveGameFile &out, std::string *error,
 			return failWith(error, "the campaign menu save carries a game (a frame, commands, a log or a snapshot)");
 		}
 	}
-	else if (h.campaignVictorious || h.campaignReady || h.campaignAdvanced || h.autoSave)
+	if (h.savePoint != 1 && (h.campaignVictorious || h.campaignReady || h.campaignAdvanced || h.autoSave))
 	{
 		return failWith(error, "the save is a game at its frame with the campaign menu's flags");
+	}
+	if (!h.campaignCarryover.empty())
+	{
+		CampaignCarryover::State st;
+		std::string why;
+		if (h.gameKind != 1)
+		{
+			return failWith(error, "the save is a skirmish with a campaign carry-over");
+		}
+		if (!CampaignCarryover::State::parse(h.campaignCarryover, st, &why))
+		{
+			return failWith(error, "the save's " + why);
+		}
 	}
 	out.log = std::move(parts[1]);
 	out.snapshot = std::move(parts[2]); // lane SAVE-4a
@@ -425,7 +507,8 @@ SaveGameCompatibility SaveGameCompatibility::checkMenuSave(const SaveGameHeader 
 	// a campaign menu save holds no log, so the build that made it does not matter (an update between missions keeps the campaign), but its data and
 	// rules must be the running ones (a mod's other campaign list or archives are a named refusal), and its campaign, mission and difficulty must exist
 	SaveGameCompatibility c;
-	const ProfileIdentity a = ProfileIdentity::fromText(dataOnly(running.text));
+	// lane PROFILE-2: a save of a build before PROFILE-2 (a version 1 identity) against the running identity in that format
+	const ProfileIdentity a = ProfileIdentity::fromText(dataOnly(ProfileIdentity::inFormatOf(running, save.profile).text));
 	const ProfileIdentity b = ProfileIdentity::fromText(dataOnly(save.profile.text));
 	if (a != b)
 	{
@@ -451,7 +534,7 @@ SaveGameCompatibility SaveGameCompatibility::check(const SaveGameHeader &save, c
 		c.refusal = RecordingBuild::openWith(save.buildVersion, save.buildDate);
 		return c;
 	}
-	const ProfileIdentity a = ProfileIdentity::fromText(withoutProfileLine(running.text));
+	const ProfileIdentity a = ProfileIdentity::fromText(withoutProfileLine(ProfileIdentity::inFormatOf(running, save.profile).text)); // lane PROFILE-2
 	const ProfileIdentity b = ProfileIdentity::fromText(withoutProfileLine(save.profile.text));
 	if (a != b)
 	{

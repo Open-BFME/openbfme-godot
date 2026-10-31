@@ -659,13 +659,16 @@ std::vector<Candidate> discover(const DiscoveryEnvironment &e)
 	return c.out;
 }
 
-InstallCheck checkInstall(const std::string &game, const std::string &root, const RetailArchivePolicy &policy, const RetailArchivePolicy *other)
+static InstallCheck checkListed(InstallCheck r, const std::string &game, const std::string &root, const RetailArchivePolicy &policy,
+	const RetailLanguageChoice &language, const std::map<std::string, std::uint64_t> &onDisk, const RetailArchivePolicy *other);
+
+InstallCheck checkInstall(const std::string &game, const std::string &root, const RetailArchivePolicy &englishPolicy, const RetailArchivePolicy *other)
 {
 	InstallCheck r;
 	r.game = game;
 	r.root = root;
-	r.expected = (int)policy.archives.size();
-	const std::string name = displayName(game) + " " + policy.patch;
+	r.expected = (int)englishPolicy.archives.size();
+	const std::string name = displayName(game) + " " + englishPolicy.patch;
 	if (root.empty())
 	{
 		r.errors.push_back("no folder chosen for " + name);
@@ -709,6 +712,19 @@ InstallCheck checkInstall(const std::string &game, const std::string &root, cons
 		r.errors.push_back("could not list " + root + ": " + ec.message());
 		return r;
 	}
+	// the folder's language, as the mount chooses it (Common/RetailArchivePolicy.h "Languages"): an English folder keeps the policy as it is
+	RetailLanguageChoice language;
+	const RetailArchivePolicy localized = LocalizeRetailPolicy(englishPolicy, onDisk, &language);
+	return checkListed(r, game, root, localized, language, onDisk, other);
+}
+
+static InstallCheck checkListed(InstallCheck r, const std::string &game, const std::string &root, const RetailArchivePolicy &policy,
+	const RetailLanguageChoice &language, const std::map<std::string, std::uint64_t> &onDisk, const RetailArchivePolicy *other)
+{
+	const std::string name = displayName(game) + " " + policy.patch;
+	r.language = language.language;
+	r.voice = language.voice;
+	r.unpinnedLanguageArchives = language.unpinned;
 	std::set<std::string> known;
 	for (const RetailArchiveEntry &a : policy.archives)
 		known.insert(normalizedKey(a.path));
@@ -722,7 +738,7 @@ InstallCheck checkInstall(const std::string &game, const std::string &root, cons
 		auto f = onDisk.find(normalizedKey(a.path));
 		if (f == onDisk.end())
 			r.missing.push_back(a.path);
-		else if (f->second != a.size && policy.entryCheckOf(a.path) == nullptr) // an entry-checked archive (Data1.big): the mount checks its entries
+		else if (a.pinned && a.sizeKnown && f->second != a.size && policy.entryCheckOf(a.path) == nullptr) // an entry-checked archive (Data1.big): the mount checks its entries
 			r.wrongSize.push_back(a.path + " (" + std::to_string(f->second) + " bytes, " + policy.patch + " has " + std::to_string(a.size) + ")");
 		else
 			++r.present;
@@ -767,7 +783,7 @@ InstallCheck checkInstall(const std::string &game, const std::string &root, cons
 	{
 		bool allLang = std::all_of(r.missing.begin(), r.missing.end(), [](const std::string &p) { return normalizedKey(p).compare(0, 5, "lang/") == 0; });
 		r.errors.push_back("missing " + std::to_string(r.missing.size()) + " of " + std::to_string(r.expected) + " " + name + " archives: " + list(r.missing) +
-			(allLang ? " (another language version? this build supports the English " + policy.patch + " archives)"
+			(allLang ? " (the game's language archives" + (language.language.empty() ? std::string() : " for " + language.language) + " are incomplete)"
 					 : " (an incomplete install, or not version " + policy.patch + ")"));
 	}
 	if (!r.wrongSize.empty())

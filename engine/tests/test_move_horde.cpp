@@ -5,6 +5,7 @@
 #include "MoveTestUtil.h"
 
 #include "GameLogic/Object/Contain/HordeContainCore.h"
+#include "GameLogic/Module/ExitInterface.h"
 
 #include <algorithm>
 #include <cmath>
@@ -524,5 +525,206 @@ TEST_CASE("backlog8 horde: a parked horde 25 above the ground: FLOATING_Z member
 			// FLOATING_Z: the slot as it is (the horde's height); any other: the member's height, on the ground where it may stand
 			CHECK(m->getPosition()->z == (std::string(name) == "FloatHorde" ? 25.0f : 0.0f));
 		}
+	}
+}
+
+TEST_CASE("horde production exit: a member's exit path starts with one straight path, then the member is steered to its slot (RW 0x666079, RW 0x877A7A)")
+{
+	MoveWorld mw;
+	mw.buildMap();
+	Object *horde = mw.spawn("Horde", 705.0f, 505.0f);
+	const auto members = mw.membersOf(horde);
+	REQUIRE(members.size() == 15);
+	Object *member = members.back();
+	mw.frames(2); // Finish the initial payload placement before simulating a produced member.
+	const Coord3D start{405.0f, 505.0f, 0.0f};
+	member->teleportTo(&start, true);
+	AIUpdateInterface *a = mw.aiOf(member);
+	// two segments: the first ends 10 past the start, so the segment advance (RW 0x74FA18) happens while the member is still in the exit state
+	a->aiFollowPath({Coord3D{415.0f, 505.0f, 0.0f}, Coord3D{555.0f, 505.0f, 0.0f}}, nullptr, CMD_FROM_AI, true);
+	REQUIRE(a->currentStateId() == AI_FOLLOW_EXITPRODUCTION_PATH);
+	CHECK(a->canPathThroughUnits()); // RW 0x74F8EE: set once, on the state's enter
+	bool straight = false, secondSegment = false;
+	for (int frame = 0; frame < 300 && a->currentStateId() == AI_FOLLOW_EXITPRODUCTION_PATH; ++frame)
+	{
+		mw.frames(1);
+		if (a->currentStateId() == AI_FOLLOW_EXITPRODUCTION_PATH && a->mover().path() && !a->canPathThroughUnits())
+		{
+			straight = straight || a->mover().path()->nodeCount() == 2u;
+		}
+		// tolerance: a path toward the second waypoint (555) rather than the first (415); the search may end on the goal cell's centre
+		if (a->currentStateId() == AI_FOLLOW_EXITPRODUCTION_PATH && straight && a->mover().path() && a->mover().path()->getLastNode()->getPosition()->x > 500.0f)
+		{
+			secondSegment = true; // the second segment's path is the one being walked
+		}
+		if (straight)
+		{
+			CHECK(!a->canPathThroughUnits()); // RW 0x666079: dropped after the straight path and never armed again by a segment (RW 0x74FA18)
+		}
+	}
+	CHECK(straight);
+	CHECK(secondSegment);
+	// RotWK's member order has no exit-state exemption: the member leaves the exit state and the formation pass brings it to its slot
+	CHECK(a->currentStateId() != AI_FOLLOW_EXITPRODUCTION_PATH);
+	mw.frames(300);
+	// tolerance: the formation pass's slot arrival (the other members stand in their slots already)
+	CHECK(worstSlotError(mw, horde) < 3.0f);
+}
+
+TEST_CASE("horde production exit: BFME1 and BFME2 members leave the building by their own exit paths then form ranks")
+{
+	for (bool bfme1 : {false, true})
+	{
+		CAPTURE(bfme1);
+		const char *building = R"(
+Object ExitBuilding
+ KindOf = STRUCTURE IMMOBILE
+ Geometry = BOX
+ GeometryMajorRadius = 40
+ GeometryMinorRadius = 40
+ Behavior = QueueProductionExitUpdate Exit
+  UnitCreatePoint = X:0 Y:0 Z:0
+  NaturalRallyPoint = X:200 Y:0 Z:0
+  ExitDelay = 400
+ End
+End
+)";
+		MoveWorld mw(100, 100, building, bfme1);
+		Object *producer = mw.spawn("ExitBuilding", 405.0f, 505.0f);
+		mw.buildMap();
+		mw.logic->setPendingProducer(producer->getID());
+		Object *horde = mw.make("Horde", mw.teamOf("Alice"));
+		auto *exit = producer->getObjectExitInterface();
+		REQUIRE(exit);
+		exit->exitObjectViaDoor(horde, DOOR_1);
+		mw.frames(2);
+		for (int index = 0; index < 15; ++index)
+		{
+			mw.logic->setPendingProducer(producer->getID());
+			Object *member = mw.make("MemberOfHorde", mw.teamOf("Alice"));
+			exit->exitObjectViaDoor(member, DOOR_1);
+			const auto &order = mw.logic->aiCommands().issued().back();
+			CHECK(order.object == member->getID());
+			CHECK(order.type == AICMD_FOLLOW_EXIT_PRODUCTION_PATH);
+			REQUIRE(order.path.size() == (bfme1 ? 1u : 3u));
+			CHECK(order.path.front().y == 505.0f);
+			mw.frames(8);
+			// tolerance: eight 0.2-second steps at speed 55 advance past creation but cannot reach the halfway waypoint (515).
+			CHECK(member->getPosition()->x > 405.0f);
+			// tolerance: the same speed/time bound rules out teleporting directly into formation.
+			CHECK(member->getPosition()->x < 515.0f);
+		}
+		exit->releaseLastExit();
+		mw.frames(200);
+		CHECK(mw.membersOf(horde).size() == 15);
+		for (Object *m : mw.membersOf(horde))
+		{
+			CHECK(mw.aiOf(m)->currentStateId() != AI_FOLLOW_EXITPRODUCTION_PATH); // no member is left in the exit state
+		}
+		// tolerance: after the common exit lane, every soldier must reach its authored formation slot.
+		CHECK(worstSlotError(mw, horde) < 3.0f);
+	}
+}
+
+TEST_CASE("production exit: rotated factories use the door before routing to a rally behind them")
+{
+	for (auto profile : {SimulationProfile::Faithful, SimulationProfile::Uber})
+	for (float angle : {0.0f, -0.74967724f, 1.57079633f, 2.39191532f})
+	{
+		CAPTURE(angle);
+		MoveWorld mw(140, 140, R"(
+Object DoorFactory
+	KindOf = STRUCTURE IMMOBILE
+	Geometry = BOX
+	GeometryMajorRadius = 60
+	GeometryMinorRadius = 60
+	GeometryHeight = 40
+	GeometryIsSmall = No
+	Behavior = QueueProductionExitUpdate Exit
+		UnitCreatePoint = X:0 Y:0 Z:0
+		NaturalRallyPoint = X:100 Y:0 Z:0
+	End
+End
+)");
+		mw.logic->setSimulationProfile(profile);
+		Object *factory = mw.spawn("DoorFactory", 605, 605, angle);
+		mw.buildMap();
+		Object *unit = mw.spawn("Walker", 605, 605, angle);
+		const float c = std::cos(angle), s = std::sin(angle);
+		// A preceding recruit may still reserve the front lane. Exit movement is
+		// allowed through units, so that reservation must not introduce a grid detour.
+		Object *preceding = mw.spawn("Walker", 605 + 80*c, 605 + 80*s, angle);
+		mw.ai->pathfinder().updateGoal(mw.aiOf(preceding)->adapter(), preceding->getPosition(), LAYER_GROUND);
+		Coord3D rally{605 - 220*c, 605 - 220*s, 0};
+		auto *exit = factory->getObjectExitInterface();
+		REQUIRE(exit);
+		exit->setRallyPoint(&rally);
+		exit->exitObjectViaDoor(unit, DOOR_1);
+		bool clearedDoor = false;
+		for (int frame = 0; frame < 240; ++frame)
+		{
+			mw.frames(1);
+			const float dx = unit->getPosition()->x - 605, dy = unit->getPosition()->y - 605;
+			const float forward = dx*c + dy*s, sideways = -dx*s + dy*c;
+			if (!clearedDoor)
+			{
+				// tolerance: continuous exit routing allows only binary32 integration error, not a grid-sized kink through the gate wall.
+				CHECK(std::abs(sideways) <= 0.05f);
+				if (forward > 100) clearedDoor = true;
+				if (forward > 1) CHECK_FALSE(mw.aiOf(unit)->canPathThroughUnits());
+			}
+			else
+			{
+				CHECK(mw.aiOf(unit)->mover().ignoredObstacleID() == PATHFIND_INVALID_ID);
+				const auto *cell = mw.ai->pathfinder().getCell(LAYER_GROUND, unit->getPosition());
+				REQUIRE(cell);
+				CHECK_FALSE(cell->isObstaclePresent(factory->getID()));
+			}
+		}
+		CHECK(clearedDoor);
+		// tolerance: the ordinary rally route ends within the locomotor's grid arrival tolerance.
+		CHECK(dist2d(*unit->getPosition(), rally) < 12.0f);
+		CHECK(mw.aiOf(unit)->mover().ignoredObstacleID() == PATHFIND_INVALID_ID);
+	}
+}
+
+TEST_CASE("production exit: cancelling the doorway walk clears the exit flag")
+{
+	MoveWorld mw;
+	Object *factory = mw.spawn("Block", 405, 505);
+	mw.buildMap();
+	Object *unit = mw.spawn("Walker", 405, 505);
+	mw.aiOf(unit)->aiFollowPath({Coord3D{505,505,0}}, nullptr, CMD_FROM_AI, true);
+	CHECK(mw.aiOf(unit)->mover().ignoredObstacleID() == PATHFIND_INVALID_ID);
+	mw.aiOf(unit)->aiIdle(CMD_FROM_PLAYER);
+	CHECK_FALSE(mw.aiOf(unit)->canPathThroughUnits());
+	CHECK(mw.aiOf(unit)->mover().ignoredObstacleID() == PATHFIND_INVALID_ID);
+}
+
+TEST_CASE("follow path: every path publishes its segment without facing and clears ignored obstacles on exit")
+{
+	for (bool exitProduction : {false, true})
+	{
+		MoveWorld mw;
+		mw.buildMap();
+		Object *unit = mw.spawn("Walker", 205, 505);
+		auto *ai = mw.aiOf(unit);
+		AIStateMachine machine(*ai, "FollowPathTest");
+		const Coord3D goal{405, 505, 0};
+		machine.setGoalPath({goal});
+		AIFollowPathState state(machine, exitProduction);
+		state.onEnter();
+		machine.setGoalPosition(Coord3D{905, 905, 0});
+		machine.setGoalAngle(1.0f);
+		state.update();
+		CHECK(machine.goalPosition().x == goal.x);
+		CHECK(machine.goalPosition().y == goal.y);
+		CHECK(machine.goalPosition().z == goal.z);
+		CHECK_FALSE(machine.haveGoalAngle());
+		ai->setCanPathThroughUnits(true);
+		ai->mover().ignoreObstacle(42);
+		state.onExit(EXIT_RESET);
+		CHECK_FALSE(ai->canPathThroughUnits());
+		CHECK(ai->mover().ignoredObstacleID() == PATHFIND_INVALID_ID);
 	}
 }

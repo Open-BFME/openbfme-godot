@@ -5,7 +5,9 @@
 // spell book then shows the power (_up, its image under InGameSpellBookSpell1Image), the reopened store shows it _already_purchased, and after a
 // cast the slot is _notReady with its recharge timer. SKIPs without ROTWK_INSTALL / BFME2_INSTALL.
 
+#include "HordeCompleteTestUtil.h"
 #include "HudTestUtil.h"
+#include "HudAudioTestUtil.h"
 
 #include "Common/Player.h"
 #include "Common/PlayerScience.h"
@@ -15,6 +17,7 @@
 #include "GameClient/GUI/LoadScreenInfo.h"
 #include "GameClient/GameTextTableSource.h"
 #include "GameClient/ControlBarCommands.h"
+#include "GameClient/AptCanvas.h"
 #include "GameClient/InGameHud.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/System/ShroudManager.h"
@@ -25,6 +28,8 @@
 #include "Libraries/Source/Apt/AptInput.h"
 #include "Libraries/Source/Apt/AptRenderList.h"
 
+#include <cmath>
+#include <limits>
 #include <string>
 
 using namespace hudtest;
@@ -38,15 +43,14 @@ const char *const kCitadels[7] = { "MenFortressCitadel", "ElvenCitadel", "Dwarve
 struct BookRig
 {
 	Rig rig;
-	RecordingShellServices services;
+	hudaudio::RecordingShellServices services;
 	GameTextTableSource text; // review r2: the help records need the game text (data/lotr.str)
 	std::unique_ptr<InGameHud> hud;
 	BookRig(SharedWorld &s, const char *faction) : rig(s, "map mp fall back 4p", faction)
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string textError;
-		REQUIRE_MESSAGE(s.mount->fs->readFile("data/lotr.str", bytes, &textError), textError);
-		REQUIRE_MESSAGE(text.table.parse(bytes, &textError), textError);
+		REQUIRE_MESSAGE(text.table.loadRetail(*s.mount->fs, &textError), textError); // data/lotr.str, or a non-English install's lotr.csf
 		InGameHud::Config cfg{ *rig.game, *s.world, *s.mount->fs, services, rig.view, s.mouse, s.meta, &text };
 		hud = std::make_unique<InGameHud>(cfg);
 		std::string error;
@@ -63,7 +67,141 @@ struct BookRig
 	}
 	std::string storeState(int i) { return AptSpellStore::stateName(hud->spellStore()->buttonState(i)); }
 };
+
+bool hitPoint(InGameHud &hud, int level, const std::string &path, int &x, int &y);
 } // namespace
+
+TEST_CASE("hud click audio: spell book active and not-ready movie requests")
+{
+	if (!haveWorld("hud click audio spell book"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	hudaudio::RetailAudio audio(*s.mount->fs);
+	BookRig b(s, "FactionMen");
+	auto context = b.hud->enterContext();
+	const ThingTemplate *cit = s.world->things().findTemplate("MenFortressCitadel");
+	REQUIRE(cit);
+	Object *fort = b.rig.logic().newObject(cit, b.rig.local->getDefaultTeam(), ObjectStatusMaskType{});
+	REQUIRE(fort);
+	Coord3D at{ 600.0f, 600.0f, 0.0f };
+	fort->setPosition(&at);
+	testutil::completeHorde(fort); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
+	fort->friend_onBuildComplete();
+	b.frames(40);
+	std::string error;
+	REQUIRE_MESSAGE(b.hud->openSpellStore(&error), error);
+	b.frames(40);
+	AptSpellStore *store = b.hud->spellStore();
+	REQUIRE(store);
+	int available = -1;
+	for (const SpellStoreModel::Button &button : store->model().buttons())
+	{
+		if (button.state == SpellStoreModel::STATE_AVAILABLE)
+		{
+			available = button.index;
+			break;
+		}
+	}
+	// tolerance: any available spell is valid; a missing candidate must fail.
+	REQUIRE(available >= 0);
+	REQUIRE(store->click(available));
+	b.hud->closeSpellStore();
+	b.frames(40);
+	AptPalantir *pal = b.hud->palantir();
+	REQUIRE(pal);
+	// tolerance: slot zero must resolve to a valid spell-store button index.
+	REQUIRE(pal->spellSlotButton(0) >= 0);
+	int x = 0, y = 0;
+	REQUIRE(hitPoint(*b.hud, pal->level(), pal->spellBookPath() + ".Spell1", x, y));
+	audio.manager->takeEventLog();
+	b.hud->mouseMove(x, y);
+	b.frames(2);
+	b.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 3000);
+	b.frames(2);
+	const std::vector<std::string> activeDown = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	b.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 3040);
+	b.frames(8);
+	const std::vector<std::string> activeUp = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	hudaudio::printSequence("spell book active", activeDown, activeUp);
+	CHECK(activeDown == std::vector<std::string>{ "Gui_PalantirSpellButtonClick" });
+	CHECK(activeUp.empty());
+	if (b.hud->spellBar().targeting())
+	{
+		b.rig.game->shroud().revealMapForPlayerPermanently(b.rig.local->getPlayerIndex());
+		b.rig.lookAt(at);
+		const ICoord2D target = b.rig.screenOf(at);
+		b.hud->mouseButton(HudInput::Button::Left, true, target.x, target.y, 0, 3080);
+		b.hud->mouseButton(HudInput::Button::Left, false, target.x, target.y, 0, 3120);
+		b.frames(20);
+	}
+	b.frames(8);
+	REQUIRE(pal->spellSlotState(0) == AptPalantir::SPELL_NOT_READY);
+	REQUIRE(hitPoint(*b.hud, pal->level(), pal->spellBookPath() + ".Spell1", x, y));
+	audio.manager->takeEventLog();
+	b.hud->mouseMove(x, y);
+	b.frames(2);
+	b.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 3200);
+	b.frames(2);
+	const std::vector<std::string> disabledDown = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	b.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 3240);
+	b.frames(8);
+	const std::vector<std::string> disabledUp = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	hudaudio::printSequence("spell book not-ready", disabledDown, disabledUp);
+	CHECK(disabledDown == std::vector<std::string>{ "Gui_PalantirSpellButtonDisabledClick" });
+	CHECK(disabledUp.empty());
+}
+
+TEST_CASE("shellfb1: SpellStore Escape cancellation discards a pending purchase while ordinary close accepts it")
+{
+	if (!haveWorld("shellfb1 spell store Escape"))
+	{
+		return;
+	}
+	BookRig b(shared(), "FactionMen");
+	std::string error;
+	REQUIRE_MESSAGE(b.hud->openSpellStore(&error), error);
+	b.frames(40);
+	AptSpellStore *st = b.hud->spellStore();
+	REQUIRE(st);
+	int first = -1;
+	for (int i = 0; i < SpellStoreModel::MAX_BUTTONS; ++i)
+	{
+		if (b.storeState(i) == "_active")
+		{
+			first = i;
+			break;
+		}
+	}
+	REQUIRE(first != -1);
+	const ScienceType science = st->model().buttons()[(size_t)first].science;
+	const int cost = st->model().buttons()[(size_t)first].cost;
+	const int points = b.rig.local->science().getSciencePurchasePoints();
+	REQUIRE_FALSE(b.rig.local->science().hasScience(science));
+	REQUIRE(st->click(first));
+	CHECK(st->model().points() == points - cost);
+	const auto messages = b.hud->input().messageLog();
+	b.hud->cancelSpellStore();
+	CHECK(b.hud->spellStore() == nullptr);
+	CHECK(b.hud->input().messageLog() == messages);
+	b.hud->cancelSpellStore();
+	CHECK(b.hud->input().messageLog() == messages);
+	b.frames(20);
+	CHECK_FALSE(b.rig.local->science().hasScience(science));
+	CHECK(b.rig.local->science().getSciencePurchasePoints() == points);
+	REQUIRE_MESSAGE(b.hud->openSpellStore(&error), error);
+	b.frames(40);
+	REQUIRE(b.hud->spellStore());
+	CHECK(b.storeState(first) == "_active");
+	REQUIRE(b.hud->spellStore()->click(first));
+	b.hud->closeSpellStore();
+	CHECK(b.hud->spellStore() == nullptr);
+	CHECK(b.hud->input().messageLog().size() == messages.size() + 1);
+	b.frames(20);
+	CHECK(b.rig.local->science().hasScience(science));
+	CHECK(b.rig.local->science().getSciencePurchasePoints() == points - cost);
+}
 
 TEST_CASE("SPELL-2 retail: the retail InGameSpellBook and SpellStore.apt movies of every faction: purchased, available, locked, recharging, close and reopen")
 {
@@ -84,6 +222,7 @@ TEST_CASE("SPELL-2 retail: the retail InGameSpellBook and SpellStore.apt movies 
 		REQUIRE(c);
 		Coord3D at{ 600.0f, 600.0f, 0.0f };
 		c->setPosition(&at);
+		testutil::completeHorde(c); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		c->friend_onBuildComplete();
 		b.frames(40);
 		AptPalantir *p = b.hud->palantir();
@@ -113,7 +252,7 @@ TEST_CASE("SPELL-2 retail: the retail InGameSpellBook and SpellStore.apt movies 
 		MESSAGE(std::string(kFactions[f]) << ": store " << st->model().commandSetName() << ", " << active << " _active, " << disabled << " _disabled");
 		CHECK(active >= 3);   // the tier-1 sciences with the rank-1 points
 		CHECK(disabled >= 7); // the dearer ones are locked
-		REQUIRE(first >= 0);
+		REQUIRE(first != -1);
 		const std::string *points = b.hud->windows().aptText("APT:SpellStoreSpellPoints");
 		REQUIRE(points);
 		CHECK(*points == "5");
@@ -159,6 +298,7 @@ TEST_CASE("SPELL-2 retail: the retail InGameSpellBook and SpellStore.apt movies 
 			REQUIRE(farm);
 			const Coord3D farmAt{ 800.0f, 600.0f, b.rig.logic().getGroundHeight(800.0f, 600.0f) };
 			farm->setPosition(&farmAt);
+			testutil::completeHorde(farm); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 			farm->friend_onBuildComplete();
 			b.frames(12); // a logic frame (5 a second) puts it into the partition
 			b.rig.lookAt(farmAt);
@@ -330,8 +470,13 @@ bool hitPoint(InGameHud &hud, int level, const std::string &path, int &x, int &y
 			const float d = (px - cx) * (px - cx) + (py - cy) * (py - cy);
 			if ((!found || d < best) && b->hitTest((float)(int)px, (float)(int)py) && hud.apt().input().hitTestButtons((float)(int)px, (float)(int)py) == b)
 			{
-				x = (int)px;
-				y = (int)py;
+				AptStageMapping mapping;
+				mapping.windowW = (float)hud.windowWidth();
+				mapping.windowH = (float)hud.windowHeight();
+				float windowX, windowY;
+				mapping.stageToWindow(px, py, windowX, windowY);
+				x = (int)windowX;
+				y = (int)windowY;
 				best = d;
 				found = true;
 			}
@@ -349,7 +494,278 @@ void clickAt(BookRig &b, int x, int y)
 	b.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 3040);
 	b.frames(4);
 }
+
+// The reported side boundaries belong to Title.instance1's banner/shade, not
+// the View3D power globe. Check the actual rendered geometry against the
+// authored transforms, including while the movie animates closed.
+void checkStoreBackdrop(InGameHud &hud, bool fullWidth = true)
+{
+	REQUIRE(hud.spellStore() != nullptr);
+	AptSpriteInst *root = hud.apt().level(hud.spellStore()->level());
+	REQUIRE(root != nullptr);
+	AptCharacterInst *backdrop = hud.apt().resolvePath(root, "Title.instance1");
+	REQUIRE(backdrop != nullptr);
+	const std::string prefix = backdrop->targetPath() + ".";
+	AptRenderList list;
+	hud.apt().buildRenderList(list);
+	AptStageMapping mapping;
+	mapping.windowW = (float)hud.windowWidth();
+	mapping.windowH = (float)hud.windowHeight();
+	float left = std::numeric_limits<float>::max();
+	float right = std::numeric_limits<float>::lowest();
+	bool checked = false;
+	for (const AptRenderCommand &command : list.commands)
+	{
+		if (!command.geometry || command.path.compare(0, prefix.size(), prefix) != 0)
+		{
+			continue;
+		}
+		AptCharacterInst *shape = hud.apt().resolvePath(root, command.path);
+		REQUIRE(shape != nullptr);
+		std::vector<AptCharacterInst *> chain;
+		for (AptCharacterInst *inst = shape; inst; inst = inst->parent())
+		{
+			chain.push_back(inst);
+		}
+		AptMatrix authored;
+		for (auto it = chain.rbegin(); it != chain.rend(); ++it)
+		{
+			authored = authored.concat((*it)->matrix);
+		}
+		const AptColorTransform color = shape->globalColor();
+		for (int channel = 0; channel < 4; ++channel)
+		{
+			CHECK(command.color.mul[channel] == color.mul[channel]);
+			CHECK(command.color.add[channel] == color.add[channel]);
+		}
+		for (const AptGeometryStyle &style : command.geometry->styles)
+		{
+			for (std::size_t i = 0; i + 1 < style.triangles.size(); i += 2)
+			{
+				float sx, sy, x, y, expectedX, expectedY;
+				command.matrix.apply(style.triangles[i], style.triangles[i + 1], sx, sy);
+				mapping.stageToWindow(sx, sy, x, y);
+				authored.apply(style.triangles[i], style.triangles[i + 1], sx, sy);
+				mapping.stageToWindow(sx, sy, expectedX, expectedY);
+				CHECK(std::lround(x) == std::lround(expectedX));
+				CHECK(std::lround(y) == std::lround(expectedY));
+				left = std::min(left, x);
+				right = std::max(right, x);
+				checked = true;
+			}
+		}
+	}
+	CHECK(checked);
+	if (fullWidth)
+	{
+		// tolerance: the authored banner overscans the stage edges by a few pixels.
+		CHECK(left <= 0.0f);
+		// tolerance: the authored banner overscans the stage edges by a few pixels.
+		CHECK(right >= (float)hud.windowWidth());
+	}
+}
 } // namespace
+
+TEST_CASE("spell store widescreen: the Powers movie preserves proportions and its centre through resizing and reopening")
+{
+	if (!haveWorld("spell store widescreen"))
+	{
+		return;
+	}
+	BookRig book(shared(), "FactionDwarves");
+	book.hud->setWindowSize(1024, 768);
+	book.frames(40);
+	std::string error;
+	REQUIRE_MESSAGE(book.hud->openSpellStore(&error), error);
+	book.frames(40);
+	AptSpriteInst *root = book.hud->apt().level(book.hud->spellStore()->level());
+	REQUIRE(root != nullptr);
+	const AptMatrix authored = root->matrix;
+	struct Viewport
+	{
+		int width, height;
+		float correction;
+	};
+	for (const Viewport &viewport : { Viewport{ 1024, 768, 1.0f }, Viewport{ 1280, 720, 0.75f }, Viewport{ 2560, 1080, 0.5625f },
+		Viewport{ 7680, 4320, 0.75f }, Viewport{ 3440, 1440, 24.0f / 43.0f }, Viewport{ 1280, 960, 1.0f },
+		Viewport{ 1024, 1024, 1.0f }, Viewport{ 1280, 720, 0.75f } })
+	{
+		INFO(viewport.width, "x", viewport.height);
+		book.hud->setWindowSize(viewport.width, viewport.height);
+		book.frames(2);
+		CHECK(root->matrix.a == authored.a);
+		CHECK(root->matrix.d == authored.d);
+		CHECK(root->matrix.tx == authored.tx);
+		CHECK(root->matrix.ty == authored.ty);
+		CHECK(root->viewportTransform.a == viewport.correction);
+		CHECK(root->viewportTransform.tx == 512.0f * (1.0f - viewport.correction));
+		checkStoreBackdrop(*book.hud);
+		AptStageMapping mapping;
+		mapping.windowW = (float)viewport.width;
+		mapping.windowH = (float)viewport.height;
+		if (viewport.width * 3 >= viewport.height * 4)
+		{
+			CHECK(root->viewportTransform.a == mapping.scaleY() / mapping.scaleX());
+		}
+		float stageX, stageY, windowX, windowY;
+		root->viewportTransform.apply(512, 384, stageX, stageY);
+		mapping.stageToWindow(stageX, stageY, windowX, windowY);
+		CHECK(windowX == (float)viewport.width * 0.5f);
+		CHECK(windowY == (float)viewport.height * 0.5f);
+		AptRenderList list;
+		book.hud->apt().buildRenderList(list);
+		bool imageChecked = false;
+		for (const AptRenderCommand &command : list.commands)
+		{
+			if (command.kind != AptRenderCommand::Kind::Placeholder || command.level != book.hud->spellStore()->level() ||
+				command.path.find(".SpellStore.Buttons.Spell") == std::string::npos)
+			{
+				continue;
+			}
+			AptCharacterInst *image = book.hud->apt().resolvePath(root, command.path);
+			REQUIRE(image != nullptr);
+			const AptMatrix global = image->globalMatrix();
+			CHECK(command.matrix.a == global.a);
+			CHECK(command.matrix.d == global.d);
+			CHECK(command.matrix.tx == global.tx);
+			CHECK(command.matrix.ty == global.ty);
+			imageChecked = true;
+		}
+		CHECK(imageChecked);
+	}
+	book.hud->closeSpellStore();
+	REQUIRE_MESSAGE(book.hud->openSpellStore(&error), error);
+	book.frames(40);
+	root = book.hud->apt().level(book.hud->spellStore()->level());
+	REQUIRE(root != nullptr);
+	CHECK(root->viewportTransform.a == 0.75f);
+	CHECK(root->viewportTransform.tx == 128.0f);
+	checkStoreBackdrop(*book.hud);
+	REQUIRE_MESSAGE(book.hud->windows().invokeASAt(book.hud->spellStore()->level(), "", "Close", {}, nullptr, &error), error);
+	for (int frame = 0; frame < 40 && book.hud->spellStore(); ++frame)
+	{
+		checkStoreBackdrop(*book.hud, false);
+		book.frames(1);
+	}
+	CHECK(book.hud->spellStore() == nullptr);
+}
+
+TEST_CASE("hud click audio: Men spell store purchase requests")
+{
+	if (!haveWorld("hud click audio Men spell store"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	hudaudio::RetailAudio audio(*s.mount->fs);
+	BookRig b(s, "FactionMen");
+	b.hud->setWindowSize(1024, 768);
+	b.rig.view.setScreen(1024, 768);
+	auto context = b.hud->enterContext();
+	const ThingTemplate *cit = s.world->things().findTemplate("MenFortressCitadel");
+	REQUIRE(cit);
+	Object *fort = b.rig.logic().newObject(cit, b.rig.local->getDefaultTeam(), ObjectStatusMaskType{});
+	REQUIRE(fort);
+	Coord3D at{ 600.0f, 600.0f, 0.0f };
+	fort->setPosition(&at);
+	testutil::completeHorde(fort); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
+	fort->friend_onBuildComplete();
+	b.frames(40);
+	AptPalantir *pal = b.hud->palantir();
+	REQUIRE(pal);
+	int x = 0, y = 0;
+	REQUIRE(hitPoint(*b.hud, pal->level(), "PalantirButtons.Buttons.PlayerMagic", x, y));
+	audio.manager->takeEventLog();
+	b.hud->mouseMove(x, y);
+	b.frames(2);
+	b.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 3000);
+	b.frames(2);
+	hudaudio::takeRequests(*audio.manager, "HUD movie");
+	b.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 3040);
+	b.frames(40);
+	hudaudio::takeRequests(*audio.manager, "HUD movie");
+	AptSpellStore *store = b.hud->spellStore();
+	REQUIRE_MESSAGE(store, b.hud->spellStoreError());
+	const std::string *points = b.hud->windows().aptText("APT:SpellStoreSpellPoints");
+	REQUIRE(points);
+	CHECK(*points == "5");
+	int first = -1, second = -1;
+	for (const SpellStoreModel::Button &button : store->model().buttons())
+	{
+		if (button.state != SpellStoreModel::STATE_AVAILABLE)
+		{
+			continue;
+		}
+		if (first < 0)
+		{
+			first = button.index;
+		}
+		else
+		{
+			second = button.index;
+			break;
+		}
+	}
+	// tolerance: both candidates must exist; their store indices are not fixed by this test.
+	REQUIRE(first >= 0);
+	// tolerance: the second available candidate must exist before testing zero-funds refusal.
+	REQUIRE(second >= 0);
+	CHECK(b.storeState(first) == "_active");
+	CHECK(b.storeState(second) == "_active");
+	int firstX = 0, firstY = 0, secondX = 0, secondY = 0;
+	REQUIRE(hitPoint(*b.hud, store->level(), "SpellStore.Buttons.Spell" + std::to_string(first + 1), firstX, firstY));
+	REQUIRE(hitPoint(*b.hud, store->level(), "SpellStore.Buttons.Spell" + std::to_string(second + 1), secondX, secondY));
+
+	audio.manager->takeEventLog();
+	b.hud->mouseMove(firstX, firstY);
+	b.frames(2);
+	b.hud->mouseButton(HudInput::Button::Left, true, firstX, firstY, 0, 4000);
+	for (int frame = 0; frame < 4 && b.storeState(first) != "_purchased"; ++frame)
+	{
+		b.frames(1);
+	}
+	const std::vector<std::string> purchaseDown = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	points = b.hud->windows().aptText("APT:SpellStoreSpellPoints");
+	REQUIRE(points);
+	CHECK(b.storeState(first) == "_purchased");
+	CHECK(*points == "0");
+	b.hud->mouseButton(HudInput::Button::Left, false, firstX, firstY, 0, 4040);
+	b.frames(4);
+	const std::vector<std::string> purchaseUp = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	hudaudio::printSequence("Men store available purchase", purchaseDown, purchaseUp);
+	CHECK(purchaseDown == std::vector<std::string>{ "Gui_PurchaseSpellClick" });
+	CHECK(purchaseUp.empty());
+	REQUIRE(b.storeState(first) == "_already_purchased");
+	REQUIRE(b.storeState(second) == "_disabled");
+
+	auto clickAndRead = [&](int clickX, int clickY, int time, std::vector<std::string> &down, std::vector<std::string> &up) {
+		audio.manager->takeEventLog();
+		b.hud->mouseMove(clickX, clickY);
+		b.frames(2);
+		b.hud->mouseButton(HudInput::Button::Left, true, clickX, clickY, 0, time);
+		b.frames(2);
+		down = hudaudio::takeRequests(*audio.manager, "HUD movie");
+		b.hud->mouseButton(HudInput::Button::Left, false, clickX, clickY, 0, time + 40);
+		b.frames(4);
+		up = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	};
+	std::vector<std::string> purchasedDown, purchasedUp;
+	clickAndRead(firstX, firstY, 5000, purchasedDown, purchasedUp);
+	hudaudio::printSequence("Men store already-purchased click", purchasedDown, purchasedUp);
+	CHECK(purchasedDown.empty());
+	CHECK(purchasedUp.empty());
+	CHECK(b.storeState(first) == "_already_purchased");
+
+	std::vector<std::string> unaffordableDown, unaffordableUp;
+	clickAndRead(secondX, secondY, 6000, unaffordableDown, unaffordableUp);
+	hudaudio::printSequence("Men store unaffordable click", unaffordableDown, unaffordableUp);
+	CHECK(unaffordableDown.empty());
+	CHECK(unaffordableUp.empty());
+	CHECK(b.storeState(second) == "_disabled");
+	points = b.hud->windows().aptText("APT:SpellStoreSpellPoints");
+	REQUIRE(points);
+	CHECK(*points == "0");
+}
 
 TEST_CASE("hud6 recovered spell and builder help retail")
 {
@@ -368,6 +784,7 @@ TEST_CASE("hud6 recovered spell and builder help retail")
 	REQUIRE(fort);
 	Coord3D at{ 600, 600, 0 };
 	fort->setPosition(&at);
+	testutil::completeHorde(fort); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	fort->friend_onBuildComplete();
 	b.frames(40);
 	std::string error;
@@ -429,40 +846,22 @@ TEST_CASE("hud6 recovered spell and builder help retail")
 	CHECK_FALSE(b.hud->helpBox().help()->name().empty());
 }
 
-TEST_CASE("play1 spell store by the mouse: the Palantir's button opens it, a power is bought, RESET undoes it, ACCEPT buys and closes, the locked powers are drawn grey")
+namespace
 {
-	if (!haveWorld("play1 spell store mouse"))
-	{
-		return;
-	}
-	SharedWorld &s = shared();
-	// lane SPELL-3: every faction (the owner's Angmar store took no click)
-	const char *faction = "FactionMen";
-	const char *factions[7] = { "FactionMen", "FactionElves", "FactionDwarves", "FactionIsengard", "FactionMordor", "FactionWild", "FactionAngmar" };
-	const char *citadels[7] = { "MenFortressCitadel", "ElvenCitadel", "DwarvenFortressCitadel", "IsengardFortressCitadel", "MordorFortressCitadel", "WildFortressCitadel", "AngmarFortressCitadel" };
-	const char *citadel = citadels[0];
-	int fi = 0;
-	SUBCASE("FactionMen") { fi = 0; }
-	SUBCASE("FactionElves") { fi = 1; }
-	SUBCASE("FactionDwarves") { fi = 2; }
-	SUBCASE("FactionIsengard") { fi = 3; }
-	SUBCASE("FactionMordor") { fi = 4; }
-	SUBCASE("FactionWild") { fi = 5; }
-	SUBCASE("FactionAngmar") { fi = 6; }
-	faction = factions[fi];
-	citadel = citadels[fi];
-	INFO(faction);
-	BookRig b(s, faction);
-	b.hud->setWindowSize(1024, 768);
-	b.rig.view.setScreen(1024, 768);
+void checkStoreMouse(SharedWorld &sharedWorld, const char *faction, const char *citadel, int width, int height)
+{
+	BookRig b(sharedWorld, faction);
+	b.hud->setWindowSize(width, height);
+	b.rig.view.setScreen(width, height);
 	{
 		auto ctx = b.hud->enterContext();
-		const ThingTemplate *cit = s.world->things().findTemplate(citadel);
+		const ThingTemplate *cit = sharedWorld.world->things().findTemplate(citadel);
 		REQUIRE(cit);
 		Object *c = b.rig.logic().newObject(cit, b.rig.local->getDefaultTeam(), ObjectStatusMaskType{});
 		REQUIRE(c);
 		Coord3D at{ 600.0f, 600.0f, 0.0f };
 		c->setPosition(&at);
+		testutil::completeHorde(c); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		c->friend_onBuildComplete();
 	}
 	b.frames(40);
@@ -473,6 +872,7 @@ TEST_CASE("play1 spell store by the mouse: the Palantir's button opens it, a pow
 	b.frames(40);
 	AptSpellStore *st = b.hud->spellStore();
 	REQUIRE_MESSAGE(st, b.hud->spellStoreError());
+	checkStoreBackdrop(*b.hud);
 	CHECK(b.hud->spellStoreRequests() == 1);
 	const int lvl = st->level();
 	// the locked powers are drawn grey: the movie's _disabled frame shows the RenderImageDisabled component (RW 0x8229B5 sets the states)
@@ -512,7 +912,7 @@ TEST_CASE("play1 spell store by the mouse: the Palantir's button opens it, a pow
 	{
 		first = b.storeState(i) == "_active" ? i : -1;
 	}
-	REQUIRE(first >= 0);
+	REQUIRE(first != -1);
 	const std::string spellPath = "SpellStore.Buttons.Spell" + std::to_string(first + 1);
 	REQUIRE(hitPoint(*b.hud, lvl, spellPath, x, y));
 	const size_t errsClick = b.hud->apt().vm().errors().size();
@@ -547,6 +947,38 @@ TEST_CASE("play1 spell store by the mouse: the Palantir's button opens it, a pow
 	CHECK(b.hud->spellStore() == nullptr);
 	CHECK(b.rig.local->science().hasScience(sci));
 }
+} // namespace
+
+TEST_CASE("play1 spell store by the mouse: the Palantir's button opens it, a power is bought, RESET undoes it, ACCEPT buys and closes, the locked powers are drawn grey")
+{
+	if (!haveWorld("play1 spell store mouse"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	// lane SPELL-3: every faction (the owner's Angmar store took no click)
+	const char *faction = "FactionMen";
+	const char *factions[7] = { "FactionMen", "FactionElves", "FactionDwarves", "FactionIsengard", "FactionMordor", "FactionWild", "FactionAngmar" };
+	const char *citadels[7] = { "MenFortressCitadel", "ElvenCitadel", "DwarvenFortressCitadel", "IsengardFortressCitadel", "MordorFortressCitadel", "WildFortressCitadel", "AngmarFortressCitadel" };
+	const char *citadel = citadels[0];
+	int fi = 0;
+	SUBCASE("FactionMen") { fi = 0; }
+	SUBCASE("FactionElves") { fi = 1; }
+	SUBCASE("FactionDwarves") { fi = 2; }
+	SUBCASE("FactionIsengard") { fi = 3; }
+	SUBCASE("FactionMordor") { fi = 4; }
+	SUBCASE("FactionWild") { fi = 5; }
+	SUBCASE("FactionAngmar") { fi = 6; }
+	faction = factions[fi];
+	citadel = citadels[fi];
+	INFO(faction);
+	for (int width : { 1024, 1280, 2560 })
+	{
+		const int height = width == 1024 ? 768 : (width == 1280 ? 720 : 1080);
+		INFO(width, "x", height);
+		checkStoreMouse(s, faction, citadel, width, height);
+	}
+}
 
 TEST_CASE("SPELL-3 store at an uneven render rate: every _active power shows its _active frame after the fade-in (the store opened 20 times)")
 {
@@ -566,6 +998,7 @@ TEST_CASE("SPELL-3 store at an uneven render rate: every _active power shows its
 		REQUIRE(c);
 		Coord3D at{ 600.0f, 600.0f, 0.0f };
 		c->setPosition(&at);
+		testutil::completeHorde(c); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		c->friend_onBuildComplete();
 		b.rig.local->science().addSciencePurchasePoints(40);
 	}
@@ -594,6 +1027,7 @@ TEST_CASE("SPELL-3 store at an uneven render rate: every _active power shows its
 		jitter(120);
 		AptSpellStore *st = b.hud->spellStore();
 		REQUIRE_MESSAGE(st, b.hud->spellStoreError());
+		checkStoreBackdrop(*b.hud);
 		const int lvl = st->level();
 		for (int i = 0; i < 12; ++i)
 		{

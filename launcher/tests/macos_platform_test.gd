@@ -17,6 +17,7 @@ class MacBuildInfo:
 	var packaged := true
 	var commit := "0123456789abcdef0123456789abcdef01234567"
 	var release_keys: Array = []   # lane SIGNKMS-1: the trusted key list
+	var nightly_keys: Array = []   # lane RELGH-2: the nightly-only keys (none here)
 	var error := ""
 
 	func platform() -> String:

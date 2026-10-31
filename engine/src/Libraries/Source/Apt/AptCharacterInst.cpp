@@ -169,11 +169,12 @@ AptSpriteInst *AptCharacterInst::movieRoot()
 
 AptMatrix AptCharacterInst::globalMatrix() const
 {
+	const AptMatrix local = viewportTransform.concat(matrix);
 	if (!m_parent)
 	{
-		return matrix;
+		return local;
 	}
-	return m_parent->globalMatrix().concat(matrix);
+	return m_parent->globalMatrix().concat(local);
 }
 
 AptColorTransform AptCharacterInst::globalColor() const
@@ -474,7 +475,7 @@ bool AptCharacterInst::setProperty(const std::string &n, const AptValue &value)
 		return false;
 	}
 	// lane BUGS-1: the transform and alpha setters go through factorySetProperty(index, value, true), which sets the AS changed flag (inference: the
-	// script property setter's flag argument is true; BFME2 decomp AptFactoryConstructors.cpp factorySetProperty, Rva006F9EF0Cluster.cpp passes true)
+	// script property setter's flag argument is true; BFME2 decomp AptFactoryConstructors.cpp factorySetProperty, AptInput.cpp passes true)
 	// (_width / _height set it below, only once the value is applied: an ignored assignment leaves the flag as it was)
 	if (n == "_x" || n == "_y" || n == "_xscale" || n == "_yscale" || n == "_rotation" || n == "_alpha")
 	{
@@ -965,11 +966,7 @@ void AptSpriteInst::gotoFrame(int target)
 						{
 							dst.ratio = p.ratio;
 						}
-						if (p.flags & APT_PLACE_HASCLIPDEPTH)
-						{
-							dst.clipDepth = p.clipDepth;
-						}
-						dst.flags |= (p.flags & (APT_PLACE_HASMATRIX | APT_PLACE_HASCOLORTRANSFORM | APT_PLACE_HASRATIO | APT_PLACE_HASCLIPDEPTH));
+						dst.flags |= (p.flags & (APT_PLACE_HASMATRIX | APT_PLACE_HASCOLORTRANSFORM | APT_PLACE_HASRATIO));
 						if (!c.hasBase)
 						{
 							c.anyOverlay = true;
@@ -1280,7 +1277,8 @@ void AptSpriteInst::applyPlaceFields(AptCharacterInst &inst, const AptPlaceObjec
 	{
 		inst.placeRatio = place.ratio; // the record's ratio field, read whether or not the flag is set
 	}
-	if (place.flags & APT_PLACE_HASCLIPDEPTH)
+	// RW 0xB0D0C0 (BFME2 AptMovieFrameControls.cpp, tier A): a new placement always passes clip depth; moves retain it.
+	if (isNew)
 	{
 		inst.clipDepth = place.clipDepth;
 	}
@@ -1663,6 +1661,14 @@ void AptSpriteInst::unloadContent()
 	playing = false;
 	eventFlags = 0;
 	clipEvents.clear();
+	// lane WOTR-2 [inference, Flash's MovieClip.unloadMovie, S-105]: the unloaded movie's variables go with it, so its init code runs again on the next load
+	// (StrategicHUD.apt's dialog frame unloads its "content" clip and loads the battle prompt into it again for every prompt)
+	std::vector<std::string> names;
+	ownNames(names);
+	for (const std::string &n : names)
+	{
+		deleteOwn(n);
+	}
 }
 
 bool AptSpriteInst::contentBounds(float &x0, float &y0, float &x1, float &y1) const

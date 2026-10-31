@@ -126,6 +126,7 @@ private:
 		bool shown = true;
 	};
 	std::shared_ptr<GameWindow> createGadget(AptComponentRequest &request);
+	std::shared_ptr<GameWindow> placeGadget(GameWindow *window, AptComponentRequest &request); // the placeholder's size, owner and record
 
 	WindowManager &m_windows;
 	AptFileSource &m_source;

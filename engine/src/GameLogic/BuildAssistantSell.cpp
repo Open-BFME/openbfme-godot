@@ -155,7 +155,7 @@ void BuildAssistantSell::sellObject(Object *obj)
 	m_list.push_front(Entry{ obj->getID(), m_logic.getFrame() }); // RW 0x79675B .. 0x79677D (the frame: TheGameLogic + 0x40)
 	obj->setStatus((unsigned)sold, true);         // RW 0x796782 .. 0x796794
 	obj->setStatus((unsigned)unselectable, true);
-	// RW 0x7967A7: GameLogic::deselectObject(obj, 0xFFFFF, true): every player's selection loses it (BFME2 decomp GameLogicDeselectObject.cpp, tier A); the
+	// RW 0x7967A7: GameLogic::deselectObject(obj, 0xFFFFF, true): every player's selection loses it (BFME2 decomp GameLogic.cpp, tier A); the
 	// client's deselectDrawable follows the UNSELECTABLE status
 	for (int i = 0; i < m_logic.players().getPlayerCount(); ++i)
 	{
@@ -246,7 +246,7 @@ void BuildAssistantSell::update()
 		{
 			player->getScoreKeeper().addObjectLost(m_logic, *obj); // RW 0x79487A
 		}
-		obj->kill(DEATH_LASERED); // RW 0x794885: Object::kill(8 = UNRESISTABLE, 8 = the death type named LASERED in RW 0xDA1630)
+		obj->kill(DAMAGE_UNRESISTABLE, DEATH_SUICIDED); // RW 0x794885: Object::kill(8 = UNRESISTABLE, 8 = SUICIDED, the 9th name of RW 0xDA1630)
 		it = m_list.erase(it);
 	}
 }

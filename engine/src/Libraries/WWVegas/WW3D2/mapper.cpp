@@ -845,3 +845,41 @@ std::unique_ptr<TextureMapperClass> Create_Texture_Mapper(int type, unsigned sta
 	}
 	return mapper;
 }
+
+bool W3D_Mapper_Fx_Convertible(int type, unsigned stage, const std::string &argsText, std::string *reason)
+{
+	auto refuse = [&](const std::string &why) {
+		if (reason) *reason = why;
+		return false;
+	};
+	if (reason) reason->clear();
+	// Create_Texture_Mapper builds no object for these: Peek_Mapper is null and the conversion's `mapper &&` test skips the stage
+	if (type < 0 || type > W3D_MAPPING_GRID_WS_ENVIRONMENT || type == W3D_MAPPING_UV || type == W3D_MAPPING_SILHOUETTE)
+	{
+		return true;
+	}
+	const std::string name = std::string(W3D_Mapper_Type_Name(type));
+	switch (type)
+	{
+	case W3D_MAPPING_SCALE:
+		return stage <= 1 ? true : refuse("Scale texture mapper supported in stage 0 or 1 only");
+	case W3D_MAPPING_LINEAR_OFFSET:
+	{
+		if (stage > 1) return refuse("LinearOffset texture mapper supported in stage 0 or 1 only");
+		MapperArgs args;
+		std::string parseError;
+		if (!args.Parse(argsText, &parseError)) return refuse("mapper arguments rejected: " + parseError);
+		// fabs(UOffset) > 0.001 || fabs(VOffset) > 0.001 as double comparisons (RW 0x587111 .. 0x587136)
+		if (std::fabs((double)args.Get_Float("UOffset", 0.0f)) > 0.001 || std::fabs((double)args.Get_Float("VOffset", 0.0f)) > 0.001)
+		{
+			return refuse("Can't convert LinearOffset texture mapper due to non-zero UOffset or VOffset value");
+		}
+		if (args.Get_Bool("ClampFix", false)) return refuse("Can't convert LinearOffset texture mapper due to usage of ClampFix option");
+		return true;
+	}
+	case W3D_MAPPING_GRID:
+		return stage == 0 ? true : refuse("Grid texture mapper supported in stage 0 only");
+	default:
+		return refuse("texture mapper " + name + " has no FX conversion");
+	}
+}

@@ -13,8 +13,10 @@
 #include "Common/ModelState.h"
 #include "Common/Player.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/GlobalWeatherSystem.h"
 #include "GameClient/HudObjects.h"
 #include "GameClient/Radar.h"
+#include "GameClient/RTS3DSceneOcclusion.h"
 #include "GameLogic/Locomotor.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -112,7 +114,12 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 	static const int kActivelyBeingConstructed = ModelCondition::indexOf("ACTIVELY_BEING_CONSTRUCTED");
 	auto snap = std::make_shared<LogicSnapshot>();
 	snap->frame = logic.getFrame();
+	snap->showBehindBuildingMarkers = logic.getShowBehindBuildingMarkers(); // lane OCCLUDE-1
+	snap->useBehindBuildingMarker = logic.settings().useBehindBuildingMarker;
+	snap->occludedColorLuminanceScale = logic.settings().occludedColorLuminanceScale;
+	const UnsignedInt occlusionFrame = RTS3DSceneOcclusion::occlusionFrame(snap->frame, logic.settings().defaultOcclusionDelay); // RW 0x470C15 .. 0x470C38
 	snap->nextObjectId = logic.getNextObjectID();
+	snap->globalWeather = logic.weather().weather(); // lane WEATHER-1: TheGlobalWeatherSystem + 0x10, what the client weather reads (WeatherClient)
 	snap->hashed = hashed;
 	snap->stateHash = stateHash;
 	snap->objects.reserve(previous ? previous->objects.size() + 16 : 256);
@@ -302,7 +309,14 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 			s.shroudRecord = sm->hasRecord(*o); // lane VISUAL-2 r2
 		}
 		s.drawableHidden = o->isDrawableHidden(); // lane GARRISON-1
+		static const int kPhantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
+		s.phantomStructure = kPhantom >= 0 && o->testStatus((unsigned)kPhantom); // lane FBSIM-1
+		if (s.phantomStructure && o->getControllingPlayer() != logic.players().getLocalPlayer())
+		{
+			s.drawableHidden = true; // RW 0x88D3B2 .. 0x88D3DB: not the local player's phantom (RW 0x6AA7B2; the owner's + 0x35A byte, RW 0x6AAC44, is not ported)
+		}
 		s.effectivelyDead = o->isEffectivelyDead(); // lane VISUAL-2
+		s.occlusion = RTS3DSceneOcclusion::eligibility(RTS3DSceneOcclusion::factsOf(*o), occlusionFrame); // lane OCCLUDE-1 (RW 0x470DD2 .. 0x470EC5)
 		s.containedBy = o->getContainedBy() ? o->getContainedBy()->getID() : (ObjectID)INVALID_ID; // lane COMBAT-4
 		s.stealthLook = InvisibilityManager::clientLook(*o, local); // lane STEALTH-1
 		if (teamVision && s.stealthLook == 5)
@@ -317,9 +331,10 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 				}
 			}
 		}
-		if (s.stealthLook == 1 || s.stealthLook == 4)
+		logic.invisibility().clientOpacityRange(*o, &s.stealthOpacityMin, &s.stealthOpacityMax, &s.stealthCycleSeconds); // lane STEALTHLOOK-1: every look
+		if (const Object *horde = o->getHordeObject(false); horde && horde != o) // lane STEALTHLOOK-1: the drawable imitates (RW 0x673114)
 		{
-			logic.invisibility().clientOpacityRange(*o, &s.stealthOpacityMin, &s.stealthOpacityMax, &s.stealthCycleFrames);
+			s.stealthParent = horde->getID();
 		}
 		s.constructionPercent = o->getConstructionPercent();
 		const bool building = s.constructionPercent >= 0.0f || (kActivelyBeingConstructed >= 0 && o->testModelCondition(kActivelyBeingConstructed));
@@ -331,7 +346,26 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 			}
 		}
 	}
-	std::stable_sort(snap->objects.begin(), snap->objects.end(), [](const ObjectSnapshot &a, const ObjectSnapshot &b) { return a.id < b.id; });
+	// lane PERF-HD: the records by id. stable_sort copied every record (about 300 bytes; 11,700 of them in a big battle) through its buffer on every merge
+	// pass, every frame; ids are unique, so sorting (id, index) pairs and moving each record once gives the same order. Nothing moves when it is sorted.
+	const auto byId = [](const ObjectSnapshot &a, const ObjectSnapshot &b) { return a.id < b.id; };
+	if (!std::is_sorted(snap->objects.begin(), snap->objects.end(), byId))
+	{
+		std::vector<std::pair<ObjectID, std::uint32_t>> order;
+		order.reserve(snap->objects.size());
+		for (size_t i = 0; i < snap->objects.size(); ++i)
+		{
+			order.emplace_back(snap->objects[i].id, (std::uint32_t)i);
+		}
+		std::sort(order.begin(), order.end());
+		std::vector<ObjectSnapshot> sorted;
+		sorted.reserve(snap->objects.size());
+		for (const auto &e : order)
+		{
+			sorted.push_back(std::move(snap->objects[e.second]));
+		}
+		snap->objects.swap(sorted);
+	}
 	// Direct id lookup for the render frame (syncTransforms calls find twice per drawable). The index dies with this snapshot.
 	{
 		ObjectID hi = snap->nextObjectId;

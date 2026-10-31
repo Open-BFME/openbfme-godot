@@ -654,7 +654,10 @@ StateReturnType AIMeleeReAcquireState::onEnter()
 	if (victimGone(victim))
 	{
 		const float range = SimMath::mulf32(a.world().pathfinder().config().meleeApproachDist, 2.0f);
-		victim = self.logic().combat().targets().findClosestEnemy(self, range, TargetFinder::MEMBERS_ONLY, CMD_FROM_AI);
+		// RW 0x74D46D (S-001 caveat), matching BFME2 AIMeleeReAcquireStateOnEnter.cpp:
+		// both building filters, including PartitionFilterInsignificantBuildings(true, false),
+		// and the kind filter refusing UNATTACKABLE, INERT and NOT_AUTOACQUIRABLE.
+		victim = self.logic().combat().targets().findClosestEnemy(self, range, TargetFinder::MEMBERS_ONLY | TargetFinder::IGNORE_INSIGNIFICANT_BUILDINGS, CMD_FROM_AI);
 	}
 	machine().setGoalObject(victim ? victim->getID() : (ObjectID)INVALID_ID);
 	a.setCurrentVictim(victim);

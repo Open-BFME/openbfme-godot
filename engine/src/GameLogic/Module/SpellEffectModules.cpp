@@ -396,7 +396,7 @@ UpdateSleepTime FloodUpdate::update()
 		++r.index;
 		if ((unsigned)r.index >= r.path.size()) // RW 0x891A18: unsigned
 		{
-			m->kill(DEATH_NORMAL); // RW 0x698EC3(8 = UNRESISTABLE, 0)
+			m->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x891A20: kill(8 = UNRESISTABLE, 0)
 			continue;
 		}
 		Coord3D p = r.path[(size_t)r.index];

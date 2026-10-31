@@ -1,4 +1,5 @@
 extends RefCounted
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const DesktopEntry := preload("res://scripts/core/desktop_entry.gd")
 const MIME := "application/x-openbfme-replay"
@@ -41,16 +42,16 @@ static func linux_entry(exe: String, kind := "replay") -> String:
 static func _run(command: String, args: PackedStringArray) -> Dictionary:
 	var output := []
 	var code := OS.execute(command, args, output, true)
-	return {"ok": code == 0, "error": "" if code == 0 else "%s failed (%d): %s" % [command, code, "".join(output).strip_edges()], "text": "".join(output)}
+	return {"ok": code == 0, "error": "" if code == 0 else L10n.t("launcher.replay_association.command_failed", {"command": command, "code": code, "output": "".join(output).strip_edges()}), "text": "".join(output)}
 
 
 static func _write(path: String, content: String) -> String:
 	var e := DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	if e != OK:
-		return "cannot create %s: %s" % [path.get_base_dir(), error_string(e)]
+		return L10n.t("launcher.replay_association.cannot_create", {"path": path.get_base_dir(), "reason": error_string(e)})
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
-		return "cannot write %s: %s" % [path, error_string(FileAccess.get_open_error())]
+		return L10n.t("launcher.replay_association.cannot_write", {"path": path, "reason": error_string(FileAccess.get_open_error())})
 	file.store_string(content)
 	return ""
 
@@ -140,7 +141,7 @@ static func set_enabled(exe: String, enabled: bool, previous := "", kind := "rep
 				if FileAccess.file_exists(path):
 					var e := DirAccess.remove_absolute(path)
 					if e != OK:
-						return {"ok": false, "error": "cannot remove %s: %s" % [path, error_string(e)]}
+						return {"ok": false, "error": L10n.t("launcher.replay_association.cannot_remove", {"path": path, "reason": error_string(e)})}
 			for job in [["update-mime-database", mime], ["update-desktop-database", apps]]:
 				if not DirAccess.dir_exists_absolute(job[1]):
 					continue
@@ -151,4 +152,4 @@ static func set_enabled(exe: String, enabled: bool, previous := "", kind := "rep
 	if OS.get_name() == "macOS":
 		# Launch Services reads the signed bundle's Info.plist; never rewrite it and invalidate the app's signature.
 		return {"ok": true, "error": ""}
-	return {"ok": false, "error": "Replay associations are not supported on " + OS.get_name()}
+	return {"ok": false, "error": L10n.t("launcher.replay_association.unsupported", {"os": OS.get_name()})}

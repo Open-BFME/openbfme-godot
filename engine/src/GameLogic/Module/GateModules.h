@@ -7,13 +7,13 @@
 // Code/GameEngine/Source/GameLogic/Object/Behavior/GateOpenAndCloseBehavior*.cpp, read as the donor; RotWK's offsets and edits taken from the disassembly):
 //   * the module data (constructor BFME2 0x898E2E, field table RW 0xC07D08): OpenByDefault (parseBool, +8, false), ResetTimeInMilliseconds
 //     (parseDurationUnsignedInt, +0xC, 50 frames), PercentOpenForPathing (parseUnsignedInt RW 0x42ECB2, +0x10, 50), Proxy (parseAsciiString, +0x14),
-//     RepelCollidingUnits (parseBool, +0x18, true), GeometryForOpen / GeometryForClosed (parseAsciiStringVectorAppend RW 0x42E59E, +0x2C / +0x38, the
+//     RepelCollidingUnits (parseBool, +0x18, true: RotWK's constructor RW 0x89C5DD stores 1, as BFME2's 0x898E2E), GeometryForOpen / GeometryForClosed (parseAsciiStringVectorAppend RW 0x42E59E, +0x2C / +0x38, the
 //     constructor's {"OpenLeft", "OpenRight"} / {"Closed"}), the sounds SoundOpeningGateLoop / SoundFinishedOpeningGate / SoundClosingGateLoop /
 //     SoundFinishedClosingGate (RW 0x73B217, +0x1C .. +0x28), TimeBeforePlayingOpenSound / TimeBeforePlayingClosedSound (parseDurationUnsignedInt, +0x44 /
 //     +0x48, -1 = the reset time);
 //   * the module (constructor RW 0x89C04B): the state (+0x28) starts open (1) with OpenByDefault, else closed (3); settled (+0x30) true; percent 100; the
 //     state frame now; the geometry state (+0x2C) 0, the want-open request (+0x40) -1. States: 0 opening, 1 open, 2 closing, 3 closed;
-//   * the primary interface (vtable RW 0xC668E0): slot 6 isOpen (state == 1, RW 0x8DC9AB), slot 7 open (RW 0x89C97A: when settled and not open: the push-out
+//   * the primary interface (vtable RW 0xC668E0, a collide interface: slot 0 onCollide RW 0x89C6F5, slot 1 wouldLikeToCollideWith RW 0x89C35E): slot 6 isOpen (state == 1, RW 0x8DC9AB), slot 7 open (RW 0x89C97A: when settled and not open: the push-out
 //     scan, state 0, unsettled, percent 0, the state frame now), slot 8 close (RW 0x89C9BA: the same when settled and open, state 2), slot 9 toggle
 //     (RW 0x89BFB5), slot 10 settled (RW 0x86277F: + 0x30); changeWantOpenCount (RW 0x89BFE0: +-1 only; a request below 0 starts from 0);
 //   * the update (RW 0x89CC29, every frame): under construction (status 2): unsettled. Dead: a non-open gate becomes opening at 100 %, the OPEN geometry, its
@@ -23,9 +23,22 @@
 //     finished sound once elapsed > TimeBeforePlayingClosedSound, unsettled, DOOR_1_CLOSING on; open (1): 100 %, settled, DOOR_1_OPENING on / DOOR_1_CLOSING
 //     off, the OPEN geometry; opening (0): the percent, at >= 100 open, above PercentOpenForPathing the OPEN geometry, the open sound after
 //     TimeBeforePlayingOpenSound, unsettled, DOOR_1_OPENING on. Under construction again at the end: unsettled.
+//   * the push-out scan (RW 0x89C759, BFME2 0x898FAA tier A, GateOpenAndCloseBehaviorPushOut.cpp): a GeometryInfo (RW 0x450429: CYLINDER, not small, height 30,
+//     both radii the template's bounding circle radius, template + 0xB0); its centre the gate's position moved along the gate's unit direction (RW 0x70BA23: cos /
+//     sin of the angle) by offset = circle (+0x10) * 0.66 (double RW 0xBDE9C8, x87 fmul, fstp dword; the direction products and sums SSE floats; z unchanged);
+//     ThePartitionManager's range query (RW 0xA39340) around it, radius sphere (+0x14) * 1.1f (RW 0xBE4398, mulss), distance type 3 (FROM_BOUNDINGSPHERE_3D),
+//     order 0, the filter chain in order: not DESTROYED (+0x458 bit 0, vtable RW 0xC10E20 -> 0x660E71), has an AI (+0x260, RW 0xC2E65C -> 0x660E5F), KindOf none of INERT / BASE_FOUNDATION /
+//     WALK_ON_TOP_OF_WALL / IMMOBILE (0x59 / 0x68 / 0x3C / 2, RW 0x46E771 -> 0x445139), status not HORDE_MEMBER (0x26, RW 0x6267C7 -> 0x76A28D), and the
+//     would-collide filter (ctor RW 0x67C5F3, vtable RW 0xC112C8 -> allow RW 0x66139C = BFME2 0x661603: the cylinder at the gate's angle overlaps the object's
+//     geometry, wanted true). Each hit (RW 0x89C5A2): with an AI that is not already moving away from the gate (RW 0x662B80), aiMoveAwayFromUnit(gate, the
+//     gate's position, CMD_FROM_AI) (RW 0x66C66E);
+//   * the collide interface: onCollide (RW 0x89C6F5): with RepelCollidingUnits, the CLOSED geometry (+0x2C == 1) and RW 0x89C33A(other) (not IMMOBILE, template
+//     KindOf byte + 0x108 bit 2, and on the ground layer, RW 0x68BBE0 == 1), unless other's AI goal object (AI + 0x30 machine, RW 0x8DBACE) or current victim
+//     (RW 0x668303) is the gate: the hit's move-away (RW 0x89C5A2). wouldLikeToCollideWith (RW 0x89C35E): the CLOSED geometry and RW 0x89C33A(other);
 //   * the geometry (RW 0x89C9FA closed / RW 0x89CA84 open): when it changes, the push-out scan, the object leaves the pathfinder's map (RW 0x6E861E), its
 //     shapes named in GeometryForOpen go active (open) or inactive (closed) and those in GeometryForClosed the other way (GeometryInfo::setActive RW 0xAD3520),
-//     the object's bounds are refreshed (RW 0x68B244) and it enters the map again (RW 0x6E85E9);
+//     the object's geometry refresh RW 0x68B244(1) runs (Object::geometryChanged: shroud and partition dirty, out of and into the pathfinder's map; lane
+//     MODCOMPAT-MOD1) and it enters the map again (RW 0x6E85E9);
 //   * MSG_OPEN_GATE (1079) / MSG_CLOSE_GATE (1081) (dispatcher RW 0x779A3D, cases RW 0x77BF7B / 0x77C037): argument 0's object; its GateOpenAndCloseBehavior,
 //     else its GateProxyBehavior; open when not open and settled / close when open and settled. No owner test;
 //   * the buttons (processCommandUI RW 0x9410D7): TOGGLE_GATE on the context object with a settled gate: MSG_CLOSE_GATE when open, else MSG_OPEN_GATE, the
@@ -37,8 +50,8 @@
 //     (c x - s y), y' = pos.y + (c y + s x), CRT sin / cos), corners (hx, hy), (hx, -hy), (-hx, -hy), (-hx, hy); its callback (RW 0x8B4AF4) counts the objects
 //     entering / leaving it by the gate's relationship to them: allies (+0x28), enemies (+0x2C). Each update with a settled gate: an open gate with no ally
 //     inside closes (RotWK dropped BFME2's "and an enemy inside"), a closed gate with an ally inside opens.
-// INFERENCE / NOT PORTED (stops S-1940 .. S-1942): the push-out scan of the units in the gate's way (RW 0x89C759) and the collide interface's repel (RW 0x89C6F5,
-// RepelCollidingUnits), GateProxyBehavior and the Proxy link (onObjectCreated RW 0x89CB19), the gate sounds (no logic sound path: counted, not played), the
+// INFERENCE / NOT PORTED (stops S-1940 .. S-1942): the repel (RW 0x89C6F5) runs only when the collision pass hands the gate a contact; the port's pass pairs AI
+// units only (S-581), so a gate meets no contact there; the layer of RW 0x68BBE0 is the pathfinder adapter's (ground without one, as EmotionModules); GateProxyBehavior and the Proxy link (onObjectCreated RW 0x89CB19), the gate sounds (no logic sound path: counted, not played), the
 // object interface call RW 0x68C3E6 -> vslot 2 at the start of the update, the AI notification RW 0x68BE59(9) and the skirmish AI's gate list
 // (TheSkirmishAIManager + 0xA74) (FakePathfindPortalBehaviour: lane WALL-2, PortalModules.h); the pathfinder's "keeping gate flags" removal (RW 0x6E861E) is the
 // plain removal here.
@@ -46,6 +59,7 @@
 #pragma once
 
 #include "Common/INI.h"
+#include "GameLogic/Module/CollideModule.h"
 #include "GameLogic/Module/OpenContain.h"
 #include "GameLogic/Module/UpdateModule.h"
 
@@ -73,7 +87,7 @@ public:
 	static void buildFieldParse(MultiIniFieldParse &p);
 };
 
-class GateOpenAndCloseBehavior : public UpdateModule
+class GateOpenAndCloseBehavior : public UpdateModule, public CollideModuleInterface
 {
 public:
 	OBFME_MODULE_XFER(GateOpenAndCloseBehavior) // lane SAVE-4b
@@ -101,6 +115,14 @@ public:
 	void toggle();                                   // slot 9
 	void changeWantOpenCount(int delta);             // RW 0x89BFE0
 
+	// the collide interface (vtable RW 0xC668E0 slots 0 / 1)
+	CollideModuleInterface *getCollide() override { return this; }
+	void onCollide(Object *other, const Coord3D *loc, const Coord3D *normal) override; // RW 0x89C6F5: the repel
+	bool wouldLikeToCollideWith(const Object &other) const override;                 // RW 0x89C35E
+	// RW 0x89C759: the push-out scan (open / close and each geometry change run it); the number of units it asked to move away so far
+	void pushOut();
+	unsigned pushOutRequests() const { return m_pushOutRequests; }
+
 	State state() const { return (State)m_state; }
 	GeometryState geometryState() const { return (GeometryState)m_geometryState; }
 	float percent() const { return m_percent; }
@@ -116,6 +138,7 @@ private:
 	void playFinishedSound();          // RW 0x89C1A4
 	void setGeometry(bool openGeometry, bool scan); // RW 0x89CA84 / 0x89C9FA
 	float elapsedPercent() const;
+	bool moveAway(Object &unit);       // RW 0x89C5A2: true when the unit was asked
 
 	const GateOpenAndCloseBehaviorModuleData *m_data;
 	int m_state = CLOSED;            ///< +0x28
@@ -126,6 +149,7 @@ private:
 	int m_request = -1;              ///< +0x40
 	bool m_soundPlayed = false;      ///< +0x48
 	std::vector<std::string> m_sounds;
+	unsigned m_pushOutRequests = 0; ///< diagnostics (not retail state, not hashed or saved)
 };
 
 class AIGateUpdateModuleData : public ModuleData
@@ -150,7 +174,7 @@ public:
 	int triggerIndex() const { return m_trigger; }
 
 private:
-	void loadTrigger(); // RW 0x8B4BB7
+	void loadTrigger(int savedIndex = -1); // RW 0x8B4BB7
 	const AIGateUpdateModuleData *m_data;
 	int m_trigger = -1;     ///< the trigger's index in the script engine's list (+0x24 holds its id)
 	int m_allies = 0;       ///< +0x28

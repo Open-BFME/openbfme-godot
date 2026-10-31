@@ -20,12 +20,14 @@ func _check(what: String, cond: bool, detail := "") -> void:
 	_ok = _ok and cond
 
 
-func _make(path: String, tokens := "") -> Node:
+## timeout: 1.5 s only where a timeout is the point (/slow answers after 3 s). Every other answer gets 10 s: HTTPRequest's timeout also counts
+## blocking frames, so on a loaded gate host the process's first request ran out at 1.5 s ("no answer: 13 / 0", srv1 om1node3-srv1).
+func _make(path: String, tokens := "", timeout := 10.0) -> Node:
 	var made: Dictionary = OnlineStats.start(root, _lobby + path, func() -> String: return tokens, PackedStringArray(), "", {}, "", false)
 	var n: Node = made.node
 	n.min_gap_s = 0.0
-	n.timeout_s = 1.5
-	n._http.timeout = 1.5
+	n.timeout_s = timeout
+	n._http.timeout = timeout
 	return n
 
 
@@ -33,7 +35,7 @@ func _make(path: String, tokens := "") -> Node:
 func _asked(n: Node, mode: String) -> String:
 	var before: int = n.requests_sent
 	n.set_mode(mode)
-	var until := Time.get_ticks_msec() + 5000
+	var until := Time.get_ticks_msec() + 15000
 	while Time.get_ticks_msec() < until and (n.requests_sent == before or n._in_flight):
 		await process_frame
 	await process_frame
@@ -56,7 +58,7 @@ func _run() -> void:
 	_check("no players", OnlineStats.line({"players": 0, "games_open": 0}, false) == "0 players online")
 	# every answer that is not a stats answer shows nothing
 	for bad in ["/e404", "/bad", "/float", "/neg", "/huge", "/redirect", "/slow"]:
-		var b := _make(bad)
+		var b := _make(bad, "", 1.5 if bad == "/slow" else 10.0)
 		var shown := await _asked(b, "menu")
 		_check("%s shows nothing" % bad, shown == "" and b.requests_sent == 1, "shown '%s', requests %d" % [shown, b.requests_sent])
 	# parse: the closed set of what a stats answer may be

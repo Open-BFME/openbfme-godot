@@ -37,8 +37,8 @@ namespace
 const char *const kStop =
 	"[S-782] physics: PhysicsBehavior's fling flight, the shock stun (RW 0x792A69 / 0x792AFF, ShockStunnedTime*, ShockStandingTime), the end of the flight (RW 0x793372: "
 	"GroundHitFX, SPLATTED, STUNNED), the rest (RW 0x79308D, KillWhenRestingOnGround), the bounce (RW 0x793224) and the fling's AI halt are ported (RW 0x792DBD, 0x792997, "
-	"0x79261A, 0x79350E); NOT ported: OrientToFlightPath / TumbleRandomly (the angle is not set), the pathfinder's landing clip (RW 0x6EF8A8) and per step update "
-	"(RW 0x6F0741), the AI's second machine (RW 0x6630D7), the status 70 call (RW 0x693919), the fling's extra words (RW 0x6CF590), the drawable's refresh and projectile "
+	"0x79261A, 0x79350E; lane MODCOMPAT-MOD1: the AI's temporary machine given back, RW 0x6630D7); NOT ported: OrientToFlightPath / TumbleRandomly (the angle is not set), "
+	"the pathfinder's landing clip (RW 0x6EF8A8) and per step update (RW 0x6F0741), the status 70 call (RW 0x693919), the fling's extra words (RW 0x6CF590), the drawable's refresh and projectile "
 	"type (client), the callers of the fling other than the crush knockback (shockwaves S-1600, slow death, weapons: their lanes)";
 
 const char *const kPhysicsUpdateCpp = "PhysicsUpdate.cpp"; // RW 0xC306F8
@@ -142,6 +142,10 @@ const char *PhysicsBehavior::stopLine()
 
 PhysicsBehavior *PhysicsBehavior::find(Object &obj)
 {
+	if (obj.moduleLookupsCached())
+	{
+		return obj.physicsModule(); // lane PERF-HD: kept by Object::rebuildCollideModules (the same first module)
+	}
 	for (const std::unique_ptr<BehaviorModule> &m : obj.modules())
 	{
 		if (PhysicsBehavior *p = dynamic_cast<PhysicsBehavior *>(m.get()))
@@ -173,9 +177,10 @@ void PhysicsBehavior::fling(const Coord3D &velocity, unsigned a, unsigned b)
 	GameLogic &logic = obj->logic();
 	logic.noteStop(kStop);
 	// RW 0x792DF9 .. 0x792E32: status 70 (RW 0x693919: S-782); an AI whose current state does not answer State slot 0x38 (false for every ported state) drops its
-	// orders: RW 0x6630D7 (the second machine: S-782), then aiIdle(CMD_FROM_AI) (RW 0x5E821A(2) on AI + 0x20)
+	// orders: RW 0x6630D7 (the temporary machine given back, lane MODCOMPAT-MOD1), then aiIdle(CMD_FROM_AI) (RW 0x5E821A(2) on AI + 0x20)
 	if (AIUpdateInterface *ai = obj->getAIUpdateInterface())
 	{
+		ai->endTemporaryStateMachine();
 		ai->aiIdle(CMD_FROM_AI);
 	}
 	setWakeFrame(obj, UPDATE_SLEEP_NONE);
@@ -541,7 +546,7 @@ void PhysicsBehavior::rest(bool final)
 	else
 	{
 		setCondition(physNames().splatted, true);
-		obj->kill(0); // RW 0x698EC3(8, 0)
+		obj->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x7930EB: kill(8, 0)
 	}
 	if (m_extraB != 0)
 	{
@@ -853,8 +858,8 @@ bool ObjectKnockback::shockWave(Object &obj, const DamageInfo &info)
 		{
 			killer->scoreTheKill(obj, 1); // RW 0x6955BC
 		}
-		obj.kill(DEATH_NORMAL); // RW 0x698EC3(8, 0), twice
-		obj.kill(DEATH_NORMAL);
+		obj.kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x696E17 and 0x696E22: kill(8, 0), twice
+		obj.kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 		++counters.shockwaveRampageKills;
 	}
 	if (AIUpdateInterface *ai2 = obj.getAIUpdateInterface())

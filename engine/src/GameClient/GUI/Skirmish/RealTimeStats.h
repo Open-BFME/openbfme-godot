@@ -11,7 +11,7 @@
 //     (SkirmishPreferences RW 0x821A14: the decoded, trimmed CurrentUserName) + "RealTimeStats.ini" (the leaf static RW 0xE05E00's text), read as a
 //     UserPreferences file (UserPreferences::load RW 0x7B2B7F: "key = value" lines, both trimmed, an empty key or value skipped); an empty profile name
 //     reads no file (loadStatsFile RW 0x93E669: the map is cleared, nothing loaded); then the constructor sets "UseMapListTooltips" (setBool: "1");
-//   * a map's counter (RW 0x93DAC6 get / RW 0x93DA51 set; decomp UserPreferencesRva00535CE4.cpp): the key "%s_%d" of the map name and the difficulty
+//   * a map's counter (RW 0x93DAC6 get / RW 0x93DA51 set; decomp UserPreferences.cpp): the key "%s_%d" of the map name and the difficulty
 //     (2 Easy, 3 Medium, 4 Hard, 5 Brutal, 6 every opponent Brutal), the value getInt (atoi, a missing key 0) / setInt ("%d");
 //   * the map list (MpGameSetup's fill RW 0x8460B5; decomp AptMpGameSetupRefreshMapList.cpp, tier B same-shape): with the setup panel's flag bit 0
 //     (+ 0x3A4; the skirmish screen passes 0x10000007, RW 0x929773) the stats of the current profile are read, and every MULTIPLAYER map (+ 0x24) gets the
@@ -21,7 +21,7 @@
 //     user-map medium state), 0x8004 AptUserMapHardConquered, 0x8005 AptUserMapBrutalConquered, 0x8006 AptUserMapMaxConquered; the sort's state key
 //     compares these numbers;
 //   * the record (Rva005BF4BCProcess RW 0x9CE8F3, tier B; called by the score screen's CollectPlayerData RW 0x9270AD for the LOCAL player in a type 2 game,
-//     the skirmish, RW 0x927205): nothing in a sandbox game (GameInfo::isSandbox, decomp GameInfoPlayerCounts.cpp, BFME2 0x7FF3E3, which the map does not pair with a
+//     the skirmish, RW 0x927205): nothing in a sandbox game (GameInfo::isSandbox, decomp GameSlotApparent.cpp, BFME2 0x7FF3E3, which the map does not pair with a
 //     RotWK function: every other occupied slot on the local slot's team, a team below 0 is never shared); on the local player's allied victory (VictoryConditions vslot isLocalAlliedVictory) the honors (Rva005BF2C7Update RW 0x9CE6FE):
 //     over the 8 slots, an AI slot (states 2 .. 5) that is not an ally (RW 0x9CE6C5: the local slot's own, or the same team number >= 0; no local slot:
 //     every slot is an ally) counts by its state; an AI ally voids the record; with any counted AI the counter of the HIGHEST difficulty present becomes
@@ -90,7 +90,7 @@ struct SkirmishHonorsGame
 
 	bool occupied(int i) const { return slots[(size_t)i].state >= 2 && slots[(size_t)i].state <= 6; }
 	bool isAI(int i) const { return slots[(size_t)i].state >= 2 && slots[(size_t)i].state <= 5; }
-	// GameInfo::isSandbox (decomp GameInfoPlayerCounts.cpp, BFME2 0x7FF3E3)
+	// GameInfo::isSandbox (decomp GameSlotApparent.cpp, BFME2 0x7FF3E3)
 	bool isSandbox() const;
 	// RW 0x9CE6C5 (decomp GameInfoAllyCheck.cpp)
 	bool isAlly(int i) const;

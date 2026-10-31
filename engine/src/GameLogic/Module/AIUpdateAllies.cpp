@@ -122,7 +122,12 @@ public:
 		{
 			return STATE_SUCCESS;
 		}
-		if (mv.locomotorDistanceToGoal() < ai().closeEnoughDist())
+		// RW state 26 delegates to the internal move update (0x749497 ->
+		// 0x748E46); BFME2 does the same. Keep its animation conditions even
+		// though this port follows the already installed clearing path directly.
+		const float dist = mv.locomotorDistanceToGoal();
+		mv.updateMoveConditions(dist);
+		if (dist < ai().closeEnoughDist())
 		{
 			mv.setGoalNone();
 			return STATE_SUCCESS;
@@ -137,6 +142,10 @@ public:
 	{
 		if (!ai().isDestroying())
 		{
+			for (const char *condition : {"MOVING", "BACKING_UP", "CLIMBING", "RAPPELLING"})
+			{
+				ai().mover().setMoveCondition(condition, false);
+			}
 			ai().mover().endingMove();
 			ai().mover().destroyPath();
 			ai().clearMoveOutOfWay();

@@ -47,6 +47,8 @@ class HordeContainBehaviorData;
 class ModuleFactory;
 
 // the interface other modules ask a horde through (ZH names it HordeContainInterface)
+class Team;
+
 class HordeContainInterface
 {
 public:
@@ -121,6 +123,9 @@ public:
 	virtual void exitContainer(Object *container, int source) = 0;
 	// the members on the way, in the map's (id) order
 	virtual std::vector<ObjectID> membersEntering() const = 0;
+	// slot 0x170 (RW 0x870667), called by Object::setTeam (RW 0x69954A) with its non-null team: every contained member (the list contain slot 0x118 fills),
+	// then every member on the way into a garrison (the map at interface + 0x54, by id) gets Object::setTeam(team)
+	virtual void setMembersTeam(Team *team) = 0;
 	// ---- lane GARRISON-3 (a horde leaving a garrison through GarrisonContain's exit RW 0x87CA2B; GameLogic/Object/Contain/HordeGarrisonLink.cpp) ----
 	// slot 0x98 (RW 0x86F18F): the horde object moves to the member (on the way, then in the contain list on a valid movement position for `about`) nearest to
 	// the members' centroid; `about` gives the start position and the locomotor of the test (the exit passes the horde object itself)
@@ -190,7 +195,7 @@ public:
 	HordeContainInterface *getHordeContainInterface() override { return this; }
 	// CreateModuleInterface
 	void onCreate() override;
-	void onBuildComplete() override {}
+	void onBuildComplete() override;
 	// HordeContainInterface
 	int getMemberSlot(const Object *member) const override;
 	unsigned getSlotCount() const override;
@@ -223,6 +228,7 @@ public:
 	void exitContainer(Object *container, int source) override;
 	void releaseMembersToward(Object *container, int source) override;
 	std::vector<ObjectID> membersEntering() const override { return std::vector<ObjectID>(m_garrisonEntering.begin(), m_garrisonEntering.end()); }
+	void setMembersTeam(Team *team) override;
 	// lane GARRISON-3 (HordeGarrisonLink.cpp)
 	void recentreOnMembers(Object *about) override;
 	void returnToFormation(bool regroup) override;
@@ -269,9 +275,10 @@ public:
 		unsigned long long orders = 0;           // members ordered to attack (RW 0x66C536)
 		unsigned long long outOfReach = 0;       // members whose pick was out of reach (RW 0x6FF7FA false): the horde is marked dirty
 		unsigned long long meleeMembers = 0;     // members holding a melee weapon (the branch RW 0x875320)
-		unsigned long long losAssumedClear = 0;  // RW 0x744AAA's line-of-sight filter (RW 0x6616AC) consulted: taken as clear (S-859)
+		unsigned long long losTests = 0;         // RW 0x744AAA's line-of-sight filter (RW 0x6616AC) asked (lane LOS-1)
+		unsigned long long losRefused = 0;       // ... and refused the member
 		unsigned long long otherContainer = 0;   // victims held by a container that is not a HordeContain (its slot 0x48 is not ported: the victim stays)
-		unsigned long long positionOrders = 0;   // members a position fire would order (RW 0x6961F1 aiAttackPosition is not executed, S-325)
+		unsigned long long positionOrders = 0;   // members a position fire ordered (RW 0x875550 -> aiAttackPosition RW 0x6961F1)
 	};
 	const AttackStats &attackStats() const { return m_attackStats; }
 	static const char *attackStopLine(); // S-2610
@@ -308,6 +315,10 @@ public:
 		unsigned long long handoffBusy = 0;   // lane MOVE-2: members a horde command made busy (slot 0x14, RW 0x87594C)
 	};
 	const PassStats &passStats() const { return m_stats; }
+	// lane IDLEMOTION-1 (diagnostics, the tests' idle1 probe; not hashed, not saved): the members the last member pass gave the leash command (RW 0x877B4F)
+	// and the logic frame of that pass
+	const std::vector<ObjectID> &leashedInLastPass() const { return m_leashedInLastPass; }
+	unsigned lastPassFrame() const { return m_lastPassFrame; }
 	bool dirty() const { return m_dirty; }
 	// diagnostics (tests, the viewer's report): the largest planar distance of a slotted member from its slot in the world; 0 without members
 	float worstMemberSlotError() const;
@@ -449,10 +460,12 @@ private:
 	float m_scalingReach = 0.0f; ///< H + 0x2EC
 	void crcWallScaling(StateHasher &h) const;
 	bool m_deleting = false;
-	bool m_locomoting = false;
+	bool m_locomoting = false; // saved and set by the locomotor; containReactToTransformChange no longer reads it (RW 0x871536 moves no member)
 	bool m_propagatedMoving = false;
 	unsigned m_formationRefreshFrame = 0;
 	PassStats m_stats;
+	std::vector<ObjectID> m_leashedInLastPass; // lane IDLEMOTION-1: diagnostics (see leashedInLastPass)
+	unsigned m_lastPassFrame = 0;
 	// HORDE-2 flank state: RW H+0x2CC vector<float> of orientations, H+0x2D8 ring index, H+0x2DC map<ObjectID, expiry frame>, H+0x2E8 can-flank byte
 	std::vector<float> m_flankAngles;
 	unsigned m_flankIndex = 0;

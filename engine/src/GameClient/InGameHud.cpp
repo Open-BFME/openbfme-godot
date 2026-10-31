@@ -58,6 +58,7 @@ InGameHud::InGameHud(Config config)
 	: m_config(config)
 	, m_source(config.fs)
 {
+	m_config.game.setScriptLocalView(this); // lane BFME2CAMP1
 	if (m_config.windows && m_config.shell)
 	{
 		m_wm = m_config.windows;
@@ -109,7 +110,7 @@ InGameHud::InGameHud(Config config)
 			{
 				// a FOGGED object is retail's ghost: W3DGhostObject draws a snapshot of the render object without the drawable's user data, so the pick
 				// meets no drawable there (ZH W3DGhostObject; the ghosts themselves are S-561). The device here still draws the real drawable.
-				if (rec->shroudedForLocal || rec->objectShroud >= (int)OBJECTSHROUD_FOGGED || rec->drawableHidden || StealthLook::hidden(*rec))
+				if (rec->shroudedForLocal || rec->objectShroud >= (int)OBJECTSHROUD_FOGGED || rec->drawableHidden || d->stealthHidden())
 				{
 					return DrawablePick::Result::NotDrawn;
 				}
@@ -159,8 +160,18 @@ InGameHud::InGameHud(Config config)
 	}, this);
 }
 
+float InGameHud::cameraScrollDistance() const
+{
+	const TacticalCamera *cam = m_input ? m_input->camera() : nullptr;
+	return cam ? cam->scrollDistance() : 0.0f;
+}
+
 InGameHud::~InGameHud()
 {
+	if (m_config.game.scriptLocalView() == this)
+	{
+		m_config.game.setScriptLocalView(nullptr); // lane BFME2CAMP1
+	}
 	m_config.game.drawables().destroyClientDrawable(m_rallyPointDrawable);
 	// lane SPELL-2 (review r2): an open spell store is a screen of the window manager below: it goes first, without sending its pending purchases
 	m_store.reset();
@@ -247,7 +258,7 @@ bool InGameHud::boot(std::string *error)
 	m_palantirRef->setStanceHandler([this](int stance) {
 		whenHeld([this, stance]() {
 			const auto worldContext = enterContext();
-			m_bar->sendChangeStance(stance);
+			m_bar->sendChangeStance(stance, "Palantir:stance-radial:RW_96F53C");
 		});
 	});
 	m_palantirRef->setRightButtonHandler([this](int slot, bool inPalantir) { // lane AUTOCAST-1
@@ -368,6 +379,14 @@ void InGameHud::setWindowSize(int width, int height)
 {
 	m_windowW = std::max(1, width);
 	m_windowH = std::max(1, height);
+	if (m_palantirRef)
+	{
+		m_palantirRef->setViewportSize(m_windowW, m_windowH);
+	}
+	if (m_store && !isBfme1Data(m_config.fs))
+	{
+		m_store->setViewportSize(m_windowW, m_windowH);
+	}
 }
 
 void InGameHud::whenHeld(std::function<void()> f)
@@ -455,6 +474,7 @@ void InGameHud::flashPalantirButton(int slot, int seconds)
 		m_palantirRef->flashButton(slot, seconds);
 	}
 }
+
 
 bool InGameHud::palantirObjectivesFlashing() const
 {
@@ -587,6 +607,7 @@ void InGameHud::update(double seconds)
 		m_wm->update((int)(seconds * 1000.0));
 	}
 	part(m_updateParts.windows);
+	m_palantirRef->setViewportSize(m_windowW, m_windowH);
 	// lane HUD-2: the local side and the control bar's context the Palantir's update reads (AptPalantir::syncLocal, PalantirCommandUI.h). INFERENCE: the context
 	// drawable is the selection's only object; a multiple selection hands NULL, as ZH's ControlBar does for its multi-select context (the RotWK context rules,
 	// RW 0x944390 .. 0x9450B3, were not read)
@@ -605,7 +626,7 @@ void InGameHud::update(double seconds)
 		local.skillPointsNext = sc.getSkillPointsLevelUp();
 		local.skillPointsThis = sc.getSkillPointsLevelDown();
 		local.storeOpen = m_store != nullptr;
-		// ControlBar RW 0x71FA12 (BFME2 decomp ControlBarPurchaseScienceStatus.cpp, tier A): button i of the player's purchase set has a science the player does not
+		// ControlBar RW 0x71FA12 (BFME2 decomp ControlBar.cpp, tier A): button i of the player's purchase set has a science the player does not
 		// own, has the prerequisites of and can pay for (RW 0x5FED5B). INFERENCE (S-923): the set is the template's PurchaseScienceCommandSet(MP), as the store's
 		const CommandSet *set = (pt && TheCommandStore)
 			? TheCommandStore->findCommandSet(sc.mode().skirmishOrMultiplayer ? pt->m_purchaseScienceCommandSetMP : pt->m_purchaseScienceCommandSet)
@@ -782,6 +803,8 @@ void InGameHud::updateRadarEvents()
 	}
 }
 
+
+
 // ---- lane SPELL-2 ------------------------------------------------------------------------------------------------------------------------------
 void InGameHud::send(const std::vector<GameMessage> &msgs)
 {
@@ -833,7 +856,7 @@ void InGameHud::updateFloatingText(const TacticalView &view, bool shroudDrawn)
 				continue;
 			}
 			Coord3D pos = e.textPos;
-			// BFME2 AutoDepositUpdateUpdate.cpp: "add a little z to make it show up above the unit".
+			// BFME2 AutoDepositUpdate.cpp: "add a little z to make it show up above the unit".
 			// Presentation offset: the income log keeps the simulation position unchanged.
 			if (e.textAnchor == Economy::IncomeEvent::TEXT_RAISED_10) pos.z += 10.0f;
 			if (e.textAnchor == Economy::IncomeEvent::TEXT_GEOMETRY_TOP)
@@ -1034,6 +1057,10 @@ void InGameHud::syncSpellBook()
 	m_palantirRef->syncSpellBook(slots);
 	if (m_store)
 	{
+		if (!isBfme1Data(m_config.fs))
+		{
+			m_store->setViewportSize(m_windowW, m_windowH);
+		}
 		// lane SPELL-3 (S-923 inference): the store's update (RW 0x822E43) runs only after the movie stepped a frame in this update. Its SetLayout swaps the
 		// SpellStore's Buttons clip when the movie next steps; SetSpellButtonState sent before that step reached the Spell<n> clips being replaced, the new
 		// ones started their fade-in without a targetState and fell through into _disabled (dead to clicks), and the state cache never sent them again. A
@@ -1173,8 +1200,22 @@ bool InGameHud::openSpellStore(std::string *error)
 	{
 		return false;
 	}
+	if (!isBfme1Data(m_config.fs))
+	{
+		store->setViewportSize(m_windowW, m_windowH);
+	}
 	m_store = std::move(store);
 	return true;
+}
+
+void InGameHud::cancelSpellStore()
+{
+	if (m_store)
+	{
+		// RW 0x8234C8: Escape resets (0x823484) before closing (0x82289A); Enter and grave only close.
+		m_store->reset();
+		closeSpellStore();
+	}
 }
 
 void InGameHud::closeSpellStore()
@@ -1689,4 +1730,3 @@ void InGameHud::presentBeacons()
 		}
 	}
 }
-

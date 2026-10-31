@@ -45,6 +45,7 @@ inline constexpr const char *ForceAttackObj = "ForceAttackObj";
 inline constexpr const char *ForceAttackGround = "ForceAttackGround";
 inline constexpr const char *GenericInvalid = "GenericInvalid";
 inline constexpr const char *EnterFriendly = "EnterFriendly";
+inline constexpr const char *DeliverRing = "DeliverRing";
 inline constexpr const char *EnterAggressive = "EnterAggressive";
 inline constexpr const char *SetRallyPoint = "SetRallyPoint";
 inline constexpr const char *ResumeConstruction = "ResumeConstruction"; // lane QA-1 (Mouse.ini MouseCursor ResumeConstruction)
@@ -148,21 +149,23 @@ public:
 	// ---- the pointer ----
 	// the cursor the translators chose this frame (a name of Mouse.ini)
 	const std::string &cursor() const { return m_cursor; }
-	// RotWK InGameUI::setMouseCursor (RW 0x69B06D, tier A: TheMouse->setCursor; in the GUI command mode a cursor other than Arrow / Scroll is the mode's own)
-	void setCursor(const std::string &name) { m_cursor = name; }
+	// RotWK InGameUI::setMouseCursor (RW 0x69B06D, tier A: TheMouse->setCursor; in the GUI command mode a cursor other than Arrow / Scroll is the mode's own:
+	// BFME2 InGameUI::setMouseCursor 0x0029A5D6, InGameUIInputModes.cpp, matched: + 0x800 takes it while + 0x7FC is 2)
+	void setCursor(const std::string &name);
 	// lane BUILD-5: RW 0x69BD53 (BFME2 decomp Rva0029B313.cpp, tier A), what createCommandHint calls: the cursor changes only while neither selecting nor scrolling
 	void hintCursor(const std::string &name)
 	{
 		if (!m_selecting && !m_scrolling)
 		{
-			m_cursor = name;
+			setCursor(name);
 		}
 	}
 	// lane BUILD-5: InGameUI + 0x7FC / + 0x800, the mouse mode and its cursor: 1 / Target while a building waits for its site (placeBuildAvailable RW 0x69C6A6),
-	// 0 / Arrow otherwise (the GUI command mode 2 is not ported here: S-283). createMouseoverHint (RW 0x69F637, BFME2 decomp InGameUICreateMouseoverHint.cpp:511) sets
-	// the mode's cursor when the mode is not 0
-	int mouseMode() const { return isPlacing() ? 1 : 0; }
-	const char *mouseModeCursor() const { return isPlacing() ? MouseCursorName::Target : MouseCursorName::Arrow; }
+	// 2 / the cursor setMouseCursor last kept while a GUI command waits for its target (BFME2 InGameUI::setGUICommand 0x0029A889, InGameUIInputModes.cpp, matched:
+	// mode 2 for a command other than DOZER_CONSTRUCT (0x35) whose Options need a target (0x227), the mode's cursor reset to Arrow), 0 / Arrow otherwise.
+	// createMouseoverHint (RW 0x69F637, BFME2 decomp InGameUICreateMouseoverHint.cpp:511) sets the mode's cursor when the mode is not 0
+	int mouseMode() const;
+	const std::string &mouseModeCursor() const;
 	ObjectID mouseoverObject() const { return m_mouseoverObject; }
 	bool hasMouseoverLocation() const { return m_hasMouseoverLocation; }
 	const Coord3D &mouseoverLocation() const { return m_mouseoverLocation; }
@@ -346,6 +349,7 @@ private:
 	IRegion2D m_areaHint{};
 	bool m_hasAreaHint = false;
 	std::string m_cursor = MouseCursorName::Arrow;
+	std::string m_guiModeCursor = MouseCursorName::Arrow; ///< BFME2 InGameUI + 0x800 in the GUI command mode (setMouseCursor 0x0029A5D6)
 	ObjectID m_mouseoverObject = INVALID_ID;
 	Coord3D m_mouseoverLocation;
 	bool m_hasMouseoverLocation = false;

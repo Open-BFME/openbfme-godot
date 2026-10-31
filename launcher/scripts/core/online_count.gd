@@ -3,6 +3,7 @@
 ## It is made only when the setting is on (Updater.show_online_count), at most once per MIN_GAP_SECONDS, never while offline, and an answer that is not
 ## exactly the lobby's version 1 counts, a 404 (a lobby without stats), a timeout or a refusal gives text "" = nothing shown (never an old number).
 extends RefCounted
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const Log := preload("res://scripts/core/launcher_log.gd")
 const HttpFetch := preload("res://scripts/net/http_fetch.gd")
@@ -17,17 +18,17 @@ const MAX_COUNT := 10000000
 ## "N players online" from an answer, or "" when it is not a stats answer. {ok, text, why}
 static func parse(code: int, body: PackedByteArray) -> Dictionary:
 	if code != 200:
-		return {"ok": false, "text": "", "why": "the lobby answered %d" % code}
+		return {"ok": false, "text": "", "why": L10n.t("launcher.online_count.lobby_answered", {"code": code})}
 	var parser := JSON.new() # (JSON.parse_string prints an engine error for text that is not JSON)
 	var j: Variant = parser.data if parser.parse(body.get_string_from_utf8()) == OK else null
 	if typeof(j) != TYPE_DICTIONARY or j.get("v") != 1.0:
-		return {"ok": false, "text": "", "why": "not a version 1 answer"}
+		return {"ok": false, "text": "", "why": L10n.t("launcher.online_count.not_version_1")}
 	for k in ["players", "games_open", "games_running"]:
 		var n: Variant = j.get(k)
 		if typeof(n) != TYPE_FLOAT or n != floorf(n) or n < 0.0 or n > MAX_COUNT:
-			return {"ok": false, "text": "", "why": "%s is not a count" % k}
+			return {"ok": false, "text": "", "why": L10n.t("launcher.online_count.not_a_count", {"field": k})}
 	var players := int(j.players)
-	return {"ok": true, "text": "%d %s online" % [players, "player" if players == 1 else "players"], "why": ""}
+	return {"ok": true, "text": L10n.t("launcher.online_count.players_online", {"count": players}), "why": ""}
 
 
 ## the chip's text now: `text` while it is younger than EXPIRY_SECONDS, else "" (never an old number)

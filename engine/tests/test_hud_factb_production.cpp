@@ -523,6 +523,20 @@ Outcome researchOne(factb::HudGame &g, Object *bld, const CommandButton *cb, Res
 		pending = str("%s not enabled (state %d)%s%s", cb->m_name.c_str(), (int)b.state, need.empty() ? "" : ", needs", need.c_str());
 		return Outcome::NotEnabled;
 	}
+	if (cb->hasOption(COMMAND_OPTION_NONPRESSABLE))
+	{
+		// the Hall of Twilight's technologies (_patch201 commandbutton.ini Options = NONPRESSABLE): retail draws them _static (RW 0x9D2BFA) and buys them
+		// itself through its DoCommandUpgrade modules; the bar refuses their press (ControlBar::pressButton, INFERENCE)
+		if (g.press(b))
+		{
+			res.fail(item, "a NONPRESSABLE button's press sent a message (" + cb->m_name + ")");
+		}
+		else
+		{
+			res.pass(item, "NONPRESSABLE: the press is refused (" + cb->m_name + ")");
+		}
+		return Outcome::Done;
+	}
 	const ObjectID bldId = bld->getID();
 	waitProductionIdle(g, bld);
 	if (!(bld = g.logic().findObjectByID(bldId)))
@@ -867,10 +881,9 @@ TEST_CASE("factb structures: every Mordor unit and structure upgrade from the st
 	Results r;
 	operateEveryStructure("FactionMordor", r);
 	r.print("structures FactionMordor");
-	// the catapult leaves the siege works but barely moves when ordered away (19 of 300 in 120 frames; placed in the open it walks and fights):
-	// the exit from a production building is MOVE-3's (reported, not fixed here)
-	r.check({ { "train MordorCatapult at MordorSiegeWorks", "MOVE-3: the catapult stuck at the siege works' door" },
-		{ "research Upgrade_MordorFortressGorgorothSpire at MordorFortressCitadel", "the castle path: factb fortress (a citadel made outside a castle has no castle to hand Iron Plating / Morgul Sorcery over)" } });
+	// the catapult leaves the siege works and walks away when ordered: it passes since STANCE-1's follow-path exit clears IS_LEAVING_FACTORY (RW 0x74B77D),
+	// which before stayed set (it delays the Battle stance and refuses requests to move aside); before, it barely moved, 19 of 300 in 120 frames
+	r.check({ { "research Upgrade_MordorFortressGorgorothSpire at MordorFortressCitadel", "the castle path: factb fortress (a citadel made outside a castle has no castle to hand Iron Plating / Morgul Sorcery over)" } });
 }
 
 TEST_CASE("factb found: every Isengard castle expansion from its pad's buttons")

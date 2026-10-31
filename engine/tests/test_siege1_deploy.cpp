@@ -9,6 +9,7 @@
 #include "doctest.h"
 
 #include "HudTestUtil.h"
+#include "ObjectTestUtil.h"
 
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
@@ -32,6 +33,7 @@
 #include "GameLogic/Weapon.h"
 #include "GameLogic/WeaponState.h"
 #include "GameLogic/Module/SiegeModules.h"
+#include "GameLogic/Module/LogicModules.h"
 #include "GameLogic/Object/Contain/SiegeEngineContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
@@ -47,6 +49,41 @@
 #include <vector>
 
 using namespace hudtest;
+
+TEST_CASE("bfme1 isolation: siege deploy powers retain the second initiation sound only for BFME1")
+{
+	const initest::FileList bfme1Legend = { { "Data\\INI\\Default\\SubsystemLegend.ini", "; BFME1\r\n" } };
+	const initest::FileList bfme2Legend = { { "Data\\INI\\Default\\SubsystemLegend.ini", "; legend\r\n" },
+		{ "Data\\INI\\AwardSystem.ini", "; BFME2\r\n" } };
+	const initest::FileList rotwkLegend = { { "Data\\INI\\Default\\SubsystemLegend.ini", "; legend\r\n" },
+		{ "Data\\INI\\Default\\SubsystemLegendExpansion1.ini", "; RotWK\r\n" } };
+	for (const std::string module : { "SiegeDeploySpecialPower", "SiegeDeployHordeSpecialPower" })
+	{
+		CAPTURE(module);
+		const std::string text = "Object TestSiege\n Behavior = " + module + " ModuleTag_Deploy\n"
+			" InitiateSound = TestPrimary\n InitiateSound2 = TestSecondary\n StartsPaused = Yes\n End\nEnd\n";
+		for (const auto &legend : { bfme2Legend, rotwkLegend })
+		{
+			objtest::World other;
+			LogicModules::registerAll(other.modules);
+			other.fx.mount(legend);
+			CHECK(other.load(text).find("Unknown field 'InitiateSound2'") != std::string::npos);
+		}
+		objtest::World bfme1(true);
+		LogicModules::registerAll(bfme1.modules);
+		bfme1.fx.mount(bfme1Legend);
+		const std::string error = bfme1.load(text);
+		REQUIRE_MESSAGE(error.empty(), error);
+		const auto *data = dynamic_cast<const SpecialPowerUpdateBaseModuleData *>(
+			bfme1.get("TestSiege")->behaviorModules().find("ModuleTag_Deploy")->data.get());
+		REQUIRE(data);
+		CHECK(data->m_initiateSound == "TestPrimary");
+		CHECK(data->m_initiateSound2 == "TestSecondary");
+		CHECK(data->m_startsPaused);
+	}
+	CHECK(SiegeDeploySpecialPowerModuleData{}.m_initiateSound2.empty());
+	CHECK(SiegeDeployHordeSpecialPowerModuleData{}.m_initiateSound2.empty());
+}
 
 namespace
 {
@@ -99,7 +136,7 @@ void orderPowerAt(Rig &r, Object &unit, const char *powerName, Object *target)
 	}());
 }
 
-// The WALL-2 integration point played by the test (S-4940): IsEndPortalAboveWall as Open-BFME-2 DynamicPortalBehaviourGetPosition.cpp has it (BFME2 0x460DF6,
+// The WALL-2 integration point played by the test (S-4940): IsEndPortalAboveWall as Open-BFME-2 DynamicPortalBehaviour.cpp has it (BFME2 0x460DF6,
 // RW 0x863EB3): the bone of the waypoint AboveWall of the template's DynamicPortalBehaviour (the ladder's and the tower's: BonePrefix Ladder, NumberOfBones 4,
 // AboveWall 3 -> WayPoint Index:3, the fourth bone "Ladder04") in world space, on a wall (Pathfinder::isPointOnWall(point, false)). The waypoints' creation and
 // removal are counted
@@ -559,7 +596,7 @@ TEST_CASE("siege1 retail review of #64: a ladder killed on its approach frees it
 		reserved += e.reservedBy == ladder ? 1 : 0;
 	}
 	REQUIRE(reserved == 1);
-	sc.ladder->kill(DEATH_NORMAL);
+	sc.ladder->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	r.frame(6); // the dock refreshes its reservations every 5 frames (RW 0x85D216 -> RW 0x85CBC8)
 	REQUIRE(r.logic().findObjectByID(ladder) != nullptr); // still there: its death plays
 	for (const SiegeDockingBehavior::Entry &e : SiegeDockingBehavior::of(*sc.wall)->entries())
@@ -642,7 +679,7 @@ TEST_CASE("siege1 retail: a player's order during the approach ends the deploy (
 		r.frame(1);
 	}
 	REQUIRE(sc.deploy->isDeployed());
-	sc.wall->kill(0);
+	sc.wall->kill(DAMAGE_UNRESISTABLE, 0);
 	int raised = -1;
 	for (int f = 1; f <= 40 && raised < 0; ++f)
 	{
@@ -837,10 +874,10 @@ TEST_CASE("siege1 retail: Grond (CrusherLevel 2) drives over an enemy soldier an
 			const Object *s = r.logic().findObjectByID(sid);
 			dead = !s || s->isEffectivelyDead();
 		}
-		r.logic().findObjectByID(eng->getID())->kill(0);
+		r.logic().findObjectByID(eng->getID())->kill(DAMAGE_UNRESISTABLE, 0);
 		if (Object *s = r.logic().findObjectByID(sid))
 		{
-			s->kill(0);
+			s->kill(DAMAGE_UNRESISTABLE, 0);
 		}
 		r.frame(2);
 		return dead;

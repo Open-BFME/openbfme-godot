@@ -7,17 +7,20 @@
 
 #include "HudTestUtil.h"
 #include "BuildTestUtil.h"
+#include "StructureArena.h"
 
 #include "GameClient/ControlBar.h"
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/InGameHud.h"
 #include "GameLogic/AI/AIEmotionStates.h"
 #include "GameLogic/AI/AIGuard.h"
+#include "GameLogic/AI/AIStateMachine.h"
 #include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/StancesBehavior.h"
+#include "GameLogic/Module/ProductionUpdate.h"
 
 #include "Common/GameCommon.h"
 
@@ -25,6 +28,118 @@
 #include <cmath>
 
 using namespace hudtest;
+
+TEST_CASE("stance1 retail: follow-path exit releases factory status on individuals but not hordes (RW 0x74B77D)")
+{
+	if (!haveWorld("stance1 factory exit"))
+	{
+		return;
+	}
+	structtest::Arena ar(shared(), "FactionMen", "FactionMordor");
+	for (const char *name : { "GondorFighter", "GondorFighterHorde" })
+	{
+		Object *o = ar.place(name, 0, 600.0f, 600.0f);
+		AIUpdateInterface *ai = o->getAIUpdateInterface();
+		REQUIRE(ai);
+		for (bool production : { false, true })
+		{
+			CAPTURE(name);
+			CAPTURE(production);
+			o->setStatus(0x5A, true);
+			AIFollowPathState state(ai->stateMachine(), production);
+			state.onExit(EXIT_NORMAL);
+			CHECK(o->testStatus(0x5A) == o->isKindOfName("HORDE"));
+		}
+	}
+}
+
+TEST_CASE("stance1 retail: a factory horde waits for its members then initializes Battle without a player command (RW 0x89E2D0)")
+{
+	if (!haveWorld("stance1 factory horde"))
+	{
+		return;
+	}
+	structtest::Arena ar(shared(), "FactionMen", "FactionMordor");
+	Object *horde = ar.place("GondorFighterHorde", 0, 600.0f, 600.0f);
+	StancesBehavior *stance = StancesBehavior::of(*horde);
+	REQUIRE(stance);
+	REQUIRE(horde->getContain());
+	const auto *members = horde->getContain()->getContainedItemsList();
+	REQUIRE(members);
+	REQUIRE_FALSE(members->empty());
+	Object *member = members->front();
+	REQUIRE(member);
+	horde->setStatus(0x5A, true);
+	member->setStatus(0x5A, true);
+	for (int i = 0; i < 20; ++i)
+	{
+		ar.logic.runLogicFrame();
+	}
+	CHECK(horde->testStatus(0x5A));
+	CHECK(stance->getStance() == STANCE_UNINITIALIZED);
+	member->setStatus(0x5A, false);
+	for (int i = 0; i < 20; ++i)
+	{
+		ar.logic.runLogicFrame();
+	}
+	CHECK_FALSE(horde->testStatus(0x5A));
+	CHECK(stance->getStance() == STANCE_BATTLE);
+}
+
+TEST_CASE("stance1 retail: barracks production gives a fresh battalion Battle without stance input (RW 0x8622E9)")
+{
+	OPENBFME_REQUIRE_START(s);
+	std::string error;
+	buildtest::Game g;
+	REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", "FactionMordor", 15, g, &error), error);
+	GameLogic &logic = g.live->logic();
+	Player *player = g.live->players().findPlayerWithName(g.live->report().startSlotPlayers[0]);
+	REQUIRE(player);
+	Object *fortress = nullptr;
+	for (const auto &p : g.live->report().startingObjects)
+	{
+		Object *o = p.structure ? logic.findObjectByID(p.id) : nullptr;
+		if (o && o->getControllingPlayer() == player)
+		{
+			fortress = o;
+		}
+	}
+	REQUIRE(fortress);
+	Coord3D pos = *fortress->getPosition();
+	pos.x += 400.0f;
+	Object *barracks = g.live->createObject("GondorBarracks", player->getPlayerIndex(), pos, 0.0f, &error);
+	REQUIRE_MESSAGE(barracks, error);
+	ProductionUpdateInterface *pu = barracks->getProductionUpdate();
+	REQUIRE(pu);
+	const ThingTemplate *type = logic.things().findTemplate("RohanSpearmenHorde");
+	REQUIRE(type);
+	REQUIRE(pu->queueCreateUnit(type, -1, pu->requestUniqueUnitID(), -1, false, "", false));
+	for (int i = 0; i < 1000 && pu->getProductionCount(); ++i)
+	{
+		logic.runLogicFrame();
+	}
+	REQUIRE(pu->getProductionCount() == 0);
+	Object *horde = nullptr;
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getProducerID() == barracks->getID() && o->isKindOfName("HORDE"))
+		{
+			REQUIRE(horde == nullptr);
+			horde = o;
+		}
+	}
+	REQUIRE(horde);
+	StancesBehavior *stance = StancesBehavior::of(*horde);
+	REQUIRE(stance);
+	for (int i = 0; i < 300; ++i)
+	{
+		logic.runLogicFrame();
+	}
+	CAPTURE(horde->getID());
+	CAPTURE(horde->getAIUpdateInterface()->currentStateId());
+	CHECK_FALSE(horde->testStatus(0x5A));
+	CHECK(stance->getStance() == STANCE_BATTLE);
+}
 
 namespace
 {

@@ -57,9 +57,14 @@ public:
 	virtual AIMover *containerMover() { return nullptr; }
 	virtual float speedOf(const PathfindObject &o) const = 0; // RW 0x68B34C: the locomotor's current speed or 0
 	virtual Coord2D unitDirectionOf(const PathfindObject &o) const = 0; // RW 0x70BA23 (cos, sin)
-	virtual int pathPriority() const = 0;           // RW 0x663F48
+	virtual int pathPriority() const = 0;           // RW 0x663F48: (DOZER ? 100 : 0) + 10 * crushable level + (CAVALRY ? 5 : 0)
+	// RW 0x66E233's early exits: the unit may path through units (AI + 0x3BA), a deployed SIEGE_TOWER (template + 0x113 bit 0x20, status 0x3B); default no
+	virtual bool canPathThroughUnits() const { return false; }
+	virtual bool isDeployedSiegeTower() const { return false; }
 	// RW 0x68B36F: the object (or its container) the unit is attacking or approaching, 0 when none
 	virtual PathfindObjectID attackTargetOf(const PathfindObject &o) const = 0;
+	// AI vslot 0x1FC (RW 0x664D12, ZH getEnterTarget): the object the unit `o` is entering (its machine's goal in an enter state), 0 when none; default none
+	virtual PathfindObjectID enterTargetOf(const PathfindObject &o) const { (void)o; return PATHFIND_INVALID_ID; }
 	// lane ATTACK-1: RW 0x69519A(other, 2) with this unit as the crusher (ECX), the crush exemption of blockedBy RW 0x66D16E: the object's crusher level
 	// (RW 0x695070: MountedCrusherLevel while MOUNTED, the CRUSHER_LEVEL modifiers) above the other's crushable level (RW 0x68D4D0), then the policy's
 	// status, relationship and weapon tests
@@ -106,6 +111,9 @@ public:
 	// RW 0x662A0E (a type 7 portal, after destroyPath RW 0x66276B): the AI's vslot 0x60 with CMD_FROM_AI (RW 0x66D8F5, the AI's private idle: INFERENCE S-4857,
 	// the port's aiIdle(CMD_FROM_AI)); default nothing
 	virtual void idleFromAI() {}
+	// RW 0x66606E .. 0x66607C: computePath made the exit-production straight path: the AI's path-through-units flag is dropped (AI + 0x3BA = 0, RW 0x666079) and
+	// the machine's goal becomes the destination (RW 0x6654AD with CMD_FROM_AI: no clip, then RW 0x8DB810: unless the machine is locked, angle FLT_MAX); default nothing
+	virtual void finishExitQuickPath(const Coord3D &destination) { (void)destination; }
 };
 
 enum AIGoalType
@@ -246,6 +254,7 @@ public:
 
 	// ---- the model-condition helper used by the move state ----
 	void setMoveCondition(const char *name, bool on);
+	void updateMoveConditions(float distanceToGoal);
 
 	// Acceptance-stop lines (docs/STOPS.md) raised so far; empty when none applied.
 	const std::vector<std::string> &stops() const { return m_stops; }

@@ -11,6 +11,7 @@
 extends RefCounted
 
 const GameOptions := preload("res://scripts/core/game_options.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const CONFIG := "install-paths.cfg"           # InstallLocator::remember (GodotRelease.cpp InstallSetup::config_path)
 const MARKER := "downloaded-installs.cfg"     # InstallLocator::kDownloadedMarkerName
@@ -106,7 +107,7 @@ static func forget_game_folders(user_dir: String = GameOptions.game_user_dir()) 
 	if not FileAccess.file_exists(p):
 		return ""
 	var err := DirAccess.remove_absolute(p)
-	return "" if err == OK else "cannot remove %s (%s)" % [p, error_string(err)]
+	return "" if err == OK else L10n.t("launcher.paths.cannot_remove", {"path": p, "error": error_string(err)})
 
 
 ## "Show folder" / "Open log folder": the launcher's file-manager policy (the shared helper owns the OS effect).
@@ -114,21 +115,21 @@ static func forget_game_folders(user_dir: String = GameOptions.game_user_dir()) 
 ## or one of the game folders game_folders() names now; a URL, a UNC path, a relative path or any other folder is refused. "" or why not.
 static func show_in_file_manager(path: String) -> String:
 	if path == "" or path.contains("://") or path.begins_with("//") or path.begins_with("\\\\") or not path.is_absolute_path():
-		return "not a local folder"
+		return L10n.t("launcher.paths.not_local")
 	var p := path.replace("\\", "/").simplify_path()
 	if p.split("/").has(".."):
-		return "not a plain folder path"
+		return L10n.t("launcher.paths.not_plain")
 	var data := OS.get_user_data_dir().replace("\\", "/").simplify_path()
 	var g := game_folders()
 	var games := [String(g.rotwk).replace("\\", "/").simplify_path(), String(g.bfme2).replace("\\", "/").simplify_path()] if g.found else []
 	if bfme1_folder() != "":
 		games.append(bfme1_folder().replace("\\", "/").simplify_path())  # community PR #36: the BFME1 folder the Game files screen lists
 	if not (p == data or p.begins_with(data + "/") or p in games):
-		return "not a folder the launcher shows"
+		return L10n.t("launcher.paths.not_shown")
 	if not DirAccess.dir_exists_absolute(p):
-		return "the folder does not exist"
+		return L10n.t("launcher.paths.not_exist")
 	var err := preload("res://scripts/core/external_open.gd").show_in_file_manager(p)
-	return "" if err == OK else "the file manager did not open (%s)" % error_string(err)
+	return "" if err == OK else L10n.t("launcher.paths.fm_failed", {"error": error_string(err)})
 
 
 ## where the Download the games screen puts the games by default: <home>/Games/BFME (the AIO packages go into its RotWK and BFME2)

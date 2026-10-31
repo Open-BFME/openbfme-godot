@@ -2,6 +2,8 @@
 // See GodotInGameHud.h.
 
 #include "Common/BfmeGame.h"
+#include "Common/Audio/AudioEntryPoints.h"
+#include "Common/Audio/AudioLog.h"
 #include "GodotDevice/GodotInGameHud.h"
 #include "GameClient/GUI/AptScreens/AptImageMode.h"
 #include "GodotDevice/GodotPackedTexture.h"
@@ -9,6 +11,7 @@
 #include "Common/SpecialPower.h"
 #include "GameClient/GameText.h"
 #include "GameClient/GUI/GameTextSource.h"
+#include "GameClient/GUI/PlacementTextStyle.h"
 #include "GameClient/GlobalLanguage.h"
 #include "GameLogic/BeaconCommands.h"
 #include "GameClient/GameTextTableSource.h"
@@ -33,6 +36,7 @@
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 #include "GameClient/MessageStream/MetaEvent.h"
 #include "GameClient/TacticalCamera.h"
+#include "GameClient/CameraAnimation.h"
 #include "GameClient/LiveFX.h"
 #include "GameClient/TacticalView.h"
 #include "GameLogic/Object/Object.h"
@@ -43,6 +47,7 @@
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "GodotDevice/GodotW3DInstancer.h"
 #include "GodotDevice/GodotW3DMaterial.h"
+#include "GodotDevice/GodotMouse.h"
 
 #include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/shader.hpp>
@@ -175,14 +180,20 @@ struct HudDevice : public AptNativeHook
 	std::unique_ptr<INIEnvironment> metaEnv;
 	MetaMap meta;
 	MouseSettings mouse;
+	std::shared_ptr<GodotMouse> godotMouse;
 	RecordingShellServices services;
 	// lane CAM-1: the retail tactical camera; the Godot camera is set from it every frame (applyCamera)
 	std::unique_ptr<TacticalCamera> cam;
 	DisplayedCameraView shown; // picking and projection follow the displayed (interpolated) pose (TacticalCamera.h, lane BUILD-5 r3)
+	// lane CAMANIM-1: the view's camera animation (W3DView mode 4) over the map's CameraAnimationList (built at the first request; the map is immutable)
+	CameraAnimationList camAnimList;
+	bool camAnimListBuilt = false;
+	CameraAnimationPlayback camAnim;
 	double clientClock = 0.0;
 	double updateMs = 0.0, cameraMs = 0.0, cursorMs = 0.0; ///< SMOOTH-1: the parts of the last _process
 	double viewClock = 0.0; ///< lane ANTICHEAT-1: seconds since the last view sample (GameWorld::net_submit_view, 2 a second)
 	double hudMs = 0.0, iconsMs = 0.0, decalsMs = 0.0, radialMs = 0.0; ///< SELPERF-1: updateMs's parts (InGameHud::update, the icon ops, the selection decals, HUD-6)
+	double placeMs = 0.0, ghostMs = 0.0; ///< lane FOGFX-1: the placement update and the ghost sync of the last frame
 	bool edgeScroll = false;
 	int edgeScrollMode = 0;   // lane OPTS-2: 0 retail (full screen only, or edge_scroll), 1 always, 2 never
 	float uiScale = 1.0f;     // lane OPTS-2: the decorations' scale (health bars, veterancy marks, texts) about each object's ops
@@ -257,27 +268,7 @@ struct HudDevice : public AptNativeHook
 	bool ensureGlobe();
 	bool makeGlobeLayer(GlobeLayer &layer, const char *name, const Color &clear, const char *hidden);
 	void globeProbe();
-	// the mouse cursors (Mouse.ini names, the install's loose Data\Cursors files)
-	std::map<std::string, MouseCursorEntry> cursorTable;
-	struct CursorSet
-	{
-		bool loaded = false;
-		CursorImage image;
-		// Native cursors need CPU pixels. A Texture2D forces GPU readback and is retained past renderer teardown by macOS's cursor cache.
-		std::vector<Ref<Image>> frames;
-	};
-	std::map<std::string, CursorSet> cursors; ///< by "<name>#<direction>"
-	std::string cursorDir, cursorName;
-	int cursorStep = 0, cursorDirection = 0;
-	double cursorClock = 0.0;
-	bool cursorHidden = false;
-	Ref<Image> blankCursor; ///< lane BUILD-5: the pointer of a cursor without a Mouse.ini block (retail SetCursor(null): none)
-	Ref<Image> cursorShown; ///< lane BUILD-5: the image the pointer shows now (null: none), for proof screenshots (a capture omits the OS pointer)
-	Vector2 cursorHot;
-	std::vector<std::string> cursorErrors;
 	std::unique_ptr<PlacementGhostRenderer> ghost; ///< lane BUILD-5 r2: the placement ghost, drawn after the displayed camera (GodotPlacementGhost.h)
-	void updateCursor(double delta, const std::string &wanted, float scrollX = 0.0f, float scrollY = 0.0f, bool scrolling = false);
-	void loadCursorTable(ArchiveFileSystem &fs);
 
 	void drawPlaceholder(const AptCanvasOp &op, RID item) override;
 	Ref<Image> imageFor(const std::string &file);
@@ -1105,149 +1096,6 @@ void HudDevice::drawIconOps(RID parent)
 	drawPlacementText(font, k); // lane OWNERFIX-2
 }
 
-void HudDevice::loadCursorTable(ArchiveFileSystem &fs)
-{
-	std::string dir;
-	if (OS *os = OS::get_singleton())
-	{
-		const String env = os->get_environment("ROTWK_INSTALL");
-		if (!env.is_empty())
-		{
-			dir = env.utf8().get_data();
-		}
-	}
-	if (dir.empty() && FileAccess::file_exists("user://install-paths.cfg"))
-	{
-		const String cfg = FileAccess::get_file_as_string("user://install-paths.cfg");
-		for (const String &line : cfg.split("\n"))
-		{
-			if (line.begins_with("ROTWK_INSTALL="))
-			{
-				dir = line.substr(14).trim_suffix("\r").utf8().get_data();
-			}
-		}
-	}
-	cursorDir = dir.empty() ? std::string() : dir + "/data/cursors";
-	std::vector<std::uint8_t> ini;
-	std::string error;
-	if (!fs.readFile("data/ini/mouse.ini", ini, &error) || !ParseMouseCursors(std::string(ini.begin(), ini.end()), cursorTable, &error))
-	{
-		cursorErrors.push_back("mouse.ini: " + error);
-	}
-}
-
-void HudDevice::updateCursor(double delta, const std::string &wanted, float scrollX, float scrollY, bool scrolling)
-{
-	if (cursorDir.empty())
-	{
-		return;
-	}
-	auto it = cursorTable.find(wanted);
-	if (it == cursorTable.end() || it->second.image.empty())
-	{
-		// lane BUILD-5: a cursor without a Mouse.ini block (retail: Build / InvalidBuild while placing) has no resource; Win32Mouse::setCursor (BFME2 decomp
-		// Win32Mouse.cpp:352, RW 0x441A83 row) then calls SetCursor(null): no pointer at all
-		if (!cursorHidden)
-		{
-			if (blankCursor.is_null())
-			{
-				blankCursor = Image::create_empty(1, 1, false, Image::FORMAT_RGBA8);
-				blankCursor->fill(Color(0, 0, 0, 0));
-			}
-			Input::get_singleton()->set_custom_mouse_cursor(blankCursor, Input::CURSOR_ARROW, Vector2());
-			cursorHidden = true;
-			cursorShown.unref();
-		}
-		cursorName = wanted;
-		return;
-	}
-	// lane BUILD-5: the frame of a directional cursor (W3DMouse::setCursorDirection RW 0x498B1A, refreshed every drawn frame)
-	const int dirs = it->second.directions > 1 ? it->second.directions : 1;
-	const int direction = ScrollCursorDirection(scrollX, scrollY, dirs, scrolling);
-	CursorSet &set = cursors[wanted + "#" + std::to_string(direction)];
-	if (!set.loaded)
-	{
-		set.loaded = true;
-		// Win32Mouse::initCursorResources (RW 0x441506): "<stem>.cur" for an image ending in .cur, else "<image>.ani"; "<stem><direction>.<ext>" per direction
-		const std::string file = CursorFileName(it->second.image, dirs, direction);
-		const std::string path = FindFileNoCase(cursorDir, file);
-		std::string error;
-		std::vector<std::uint8_t> bytes;
-		if (path.empty())
-		{
-			cursorErrors.push_back("cursor " + wanted + ": no file " + file);
-			UtilityFunctions::push_error(toGodot(cursorErrors.back()));
-		}
-		else
-		{
-			Ref<FileAccess> f = FileAccess::open(String::utf8(path.c_str()), FileAccess::READ);
-			if (f.is_null())
-			{
-				cursorErrors.push_back("cursor " + wanted + ": cannot read " + path);
-			UtilityFunctions::push_error(toGodot(cursorErrors.back()));
-			}
-			else
-			{
-				const PackedByteArray all = f->get_buffer((int64_t)f->get_length());
-				bytes.assign(all.ptr(), all.ptr() + all.size());
-				if (!DecodeCursorFile(bytes, set.image, &error))
-				{
-					cursorErrors.push_back("cursor " + wanted + ": " + error);
-			UtilityFunctions::push_error(toGodot(cursorErrors.back()));
-				}
-				else
-				{
-					for (const std::vector<std::uint8_t> &frame : set.image.frames)
-					{
-						PackedByteArray px;
-						px.resize((int64_t)frame.size());
-						memcpy(px.ptrw(), frame.data(), frame.size());
-						set.frames.push_back(Image::create_from_data(set.image.width, set.image.height, false, Image::FORMAT_RGBA8, px));
-					}
-				}
-			}
-		}
-	}
-	if (set.frames.empty())
-	{
-		// lane BUILD-5 r2 (S-295): a cursor whose file is missing or does not decode shows the engine's own pointer (reported once in cursorErrors and
-		// push_error), never the previous cursor
-		if (wanted != cursorName || direction != cursorDirection || cursorHidden || cursorShown.is_valid())
-		{
-			Input::get_singleton()->set_custom_mouse_cursor(Ref<Resource>(), Input::CURSOR_ARROW, Vector2());
-			cursorName = wanted;
-			cursorDirection = direction;
-			cursorHidden = false;
-			cursorShown.unref();
-		}
-		return;
-	}
-	if (wanted != cursorName || direction != cursorDirection || cursorHidden)
-	{
-		cursorName = wanted;
-		cursorDirection = direction;
-		cursorHidden = false;
-		cursorStep = 0;
-		cursorClock = 0.0;
-	}
-	else
-	{
-		cursorClock += delta;
-		const double step = (double)set.image.jiffies[(size_t)cursorStep % set.image.jiffies.size()] / 60.0;
-		if (set.image.sequence.size() <= 1 || cursorClock < step)
-		{
-			return;
-		}
-		cursorClock = 0.0;
-		cursorStep = (cursorStep + 1) % (int)set.image.sequence.size();
-	}
-	const int frame = set.image.sequence[(size_t)cursorStep % set.image.sequence.size()];
-	const int hx = it->second.hotX >= 0 ? it->second.hotX : set.image.hotX, hy = it->second.hotY >= 0 ? it->second.hotY : set.image.hotY;
-	Input::get_singleton()->set_custom_mouse_cursor(set.frames[(size_t)frame], Input::CURSOR_ARROW, Vector2((float)hx, (float)hy));
-	cursorShown = set.frames[(size_t)frame];
-	cursorHot = Vector2((float)hx, (float)hy);
-}
-
 // SAGE (x east, y north, z up) -> Godot (x, z, -y)
 static Vector3 toGodotAxes(const Coord3D &c)
 {
@@ -1283,6 +1131,17 @@ void HudDevice::applyCamera(const Vector2 &window, double alpha)
 	Transform3D t;
 	t.origin = eye;
 	t.basis = Basis::looking_at((target - eye).normalized(), Vector3(0, 1, 0));
+	// lane CAMANIM-1: in mode 4 the camera build (RW 0x502858) takes the animation's transform and the view plane its FOV as the horizontal angle
+	// (RW 0x48B919); the W3D camera looks down its -Z with Y up as Godot's does, so the matrix's columns map axis by axis (SAGE -> Godot)
+	Matrix3D tm;
+	float animFov = 0.0f;
+	if (camAnim.transform(alpha, tm, animFov))
+	{
+		auto col = [&](int c) { return toGodotAxes(Coord3D{ tm.Row[0][c], tm.Row[1][c], tm.Row[2][c] }); };
+		t.basis = Basis(col(0), col(1), col(2));
+		t.origin = col(3);
+		camera->set_fov((real_t)(animFov * 180.0f / 3.14159265f));
+	}
 	camera->set_global_transform(t);
 }
 
@@ -1324,6 +1183,7 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("select_objects_with_message", "ids"), &InGameHudNode::select_objects_with_message);
 	ClassDB::bind_method(D_METHOD("open_spell_store"), &InGameHudNode::open_spell_store);
 	ClassDB::bind_method(D_METHOD("close_spell_store"), &InGameHudNode::close_spell_store);
+	ClassDB::bind_method(D_METHOD("cancel_spell_store"), &InGameHudNode::cancel_spell_store);
 	ClassDB::bind_method(D_METHOD("spell_store_click", "index"), &InGameHudNode::spell_store_click);
 	ClassDB::bind_method(D_METHOD("press_spell_slot", "slot"), &InGameHudNode::press_spell_slot);
 	ClassDB::bind_method(D_METHOD("get_frame_timings"), &InGameHudNode::get_frame_timings);
@@ -1340,6 +1200,7 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("inject_key", "dik_code", "down"), &InGameHudNode::inject_key);
 	ClassDB::bind_method(D_METHOD("hold_input", "on"), &InGameHudNode::hold_input);                 // lane BACKLOG3 (QA)
 	ClassDB::bind_method(D_METHOD("set_input_enabled", "on"), &InGameHudNode::set_input_enabled); // lane BACKLOG3 (QA)
+	ClassDB::bind_method(D_METHOD("input_enabled"), &InGameHudNode::input_enabled); // lane BFME2CAMP1
 	ClassDB::bind_method(D_METHOD("script_input", "enable"), &InGameHudNode::script_input); // lane OWNERFIX-1
 	ClassDB::bind_method(D_METHOD("set_broadcast_clean", "on"), &InGameHudNode::set_broadcast_clean);
 	ClassDB::bind_method(D_METHOD("inject_mouse_wheel", "notches", "position"), &InGameHudNode::inject_mouse_wheel);
@@ -1353,6 +1214,9 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("camera_set_height", "height_above_ground"), &InGameHudNode::camera_set_height);
 	ClassDB::bind_method(D_METHOD("camera_reset", "sage_xy"), &InGameHudNode::camera_reset);                 // lane CAMPUI-1
 	ClassDB::bind_method(D_METHOD("camera_set_zoom_limited", "on"), &InGameHudNode::camera_set_zoom_limited); // lane CAMPUI-1
+	ClassDB::bind_method(D_METHOD("camera_animation_request", "action", "name"), &InGameHudNode::camera_animation_request); // lane CAMANIM-1
+	ClassDB::bind_method(D_METHOD("camera_animation_state"), &InGameHudNode::camera_animation_state);                  // lane CAMANIM-1
+	ClassDB::bind_method(D_METHOD("camera_set_clip_depth_multiplier", "m"), &InGameHudNode::camera_set_clip_depth_multiplier); // lane MODCOMPAT-AI
 	ClassDB::bind_method(D_METHOD("set_objectives_screen_open", "open"), &InGameHudNode::set_objectives_screen_open); // lane CAMPUI-1
 	ClassDB::bind_method(D_METHOD("flash_palantir_button", "slot", "seconds"), &InGameHudNode::flash_palantir_button); // lane CAMPUI-1
 	ClassDB::bind_method(D_METHOD("is_objectives_flag_flashing"), &InGameHudNode::is_objectives_flag_flashing); // lane CAMPUI-1
@@ -1513,7 +1377,17 @@ void HudDevice::drawResourceFeedback()
 				out[o + 3] = (uint8_t)std::lround(img.rgba[o + 3] * m / 255.0f);
 			}
 		}
-		placeDecalTexture = ImageTexture::create_from_image(Image::create_from_data(w, h, false, Image::FORMAT_RGBA8, px));
+		// lane FOGFX-1 (FB-0055): the decal's texture is updated in place (a new ImageTexture as the pointer crossed each claim cell made Godot pack its
+		// decal atlas again)
+		const Ref<Image> image = Image::create_from_data(w, h, false, Image::FORMAT_RGBA8, px);
+		if (placeDecalTexture.is_valid() && placeDecalTexture->get_width() == w && placeDecalTexture->get_height() == h)
+		{
+			placeDecalTexture->update(image);
+		}
+		else
+		{
+			placeDecalTexture = ImageTexture::create_from_image(image);
+		}
 		placeDecalVersion = rp.version;
 	}
 	if (!pd)
@@ -1666,7 +1540,8 @@ void HudDevice::drawPlacementText(const Ref<Font> &font, float k)
 		return;
 	}
 	const TerrainResourceUiSettings &ui = hud->radiusCursorTemplates().resourceUi();
-	const int size = std::max(1, (int)std::lround((float)(ui.fontSize > 0 ? ui.fontSize : 14) * k));
+	const PlacementTextStyle style = PlacementTextStyle::forViewport(ui.fontSize, hud->windowHeight(), k);
+	const int size = style.fontSize;
 	String text;
 	for (char16_t c : rp.text)
 	{
@@ -1675,12 +1550,12 @@ void HudDevice::drawPlacementText(const Ref<Font> &font, float k)
 	const Vector2 sz = font->get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size);
 	const int w = (int)sz.x, h = (int)std::ceil(sz.y);
 	int x = rp.pointerX + w / -2;
-	int y = rp.pointerY - 20 - h;
+	int y = rp.pointerY - style.pointerGap - h;
 	x = std::max(0, std::min(x, hud->windowWidth() - w));
 	y = std::max(0, std::min(y, hud->windowHeight() - h));
 	auto col = [](std::uint32_t argb) { return Color(((argb >> 16) & 0xFF) / 255.0f, ((argb >> 8) & 0xFF) / 255.0f, (argb & 0xFF) / 255.0f, ((argb >> 24) & 0xFF) / 255.0f); };
 	const Vector2 at((float)x, (float)y + font->get_ascent(size));
-	font->draw_string(iconItem, at + Vector2(1, 1), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0, 0, 0, 1));
+	font->draw_string(iconItem, at + Vector2(style.shadowOffset, style.shadowOffset), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0, 0, 0, 1));
 	font->draw_string(iconItem, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col(rp.color));
 	placeTextRect = Rect2((float)x, (float)y, (float)w, (float)h);
 	placeTextDrawn = true;
@@ -2131,6 +2006,8 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 		{
 			const Vector3 s = options["camera_start"];
 			d->cam = std::make_unique<TacticalCamera>(gd);
+			d->camAnim.stop(); // lane CAMANIM-1: a new map: its own animation list (built at the first request)
+			d->camAnimListBuilt = false;
 			d->cam->setViewport((int)window.x, (int)window.y);
 			const LoadedMap &lm = game.map();
 			d->cam->startMap(game.logic(), lm.heightMap, lm.chunks.hasWorldInfo ? &lm.chunks.worldInfo : nullptr, Coord3D{ s.x, -s.z, 0.0f });
@@ -2181,6 +2058,11 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 		}
 	}
 	d->applyCamera(window, 1.0);
+	// RW 0x48CEA3 updates the view immediately, even when an Apt command runs after this node's camera frame.
+	d->cam->setJumpHandler([this]() {
+		const Vector2 size = get_viewport()->get_visible_rect().get_size();
+		d->applyCamera(size, 1.0);
+	});
 	// lane SPELL-2 (review r2): the game text the HUD's screens read (the spell store's help): the shell's when attached, else data/lotr.str
 	GameTextSource *gameText = nullptr;
 	if (shellPlayer && shellPlayer->shell_object())
@@ -2237,7 +2119,19 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 	// the mapped images (button images, portraits) and the textures they name
 	d->source = std::make_unique<AptArchiveFileSource>(afs);
 	d->textures = std::make_unique<AptTextureStore>(*d->source);
-	d->loadCursorTable(afs);
+	if (shellPlayer)
+	{
+		d->godotMouse = shellPlayer->godot_mouse();
+		if (!d->godotMouse)
+		{
+			errors.push_back("shell player has no native cursor adapter");
+		}
+	}
+	else
+	{
+		d->godotMouse = std::make_shared<GodotMouse>();
+		d->godotMouse->loadCursorTable(afs, fs->install_root());
+	}
 	d->imageEnv = std::make_unique<INIEnvironment>();
 	d->imageEnv->fileSystem = &afs;
 	d->images.registerBlocks(d->imageEnv->blocks);
@@ -2910,6 +2804,15 @@ void InGameHudNode::close_spell_store()
 	}
 }
 
+void InGameHudNode::cancel_spell_store()
+{
+	if (d->hud)
+	{
+		const auto worldContext = d->hud->enterContext();
+		d->hud->cancelSpellStore();
+	}
+}
+
 bool InGameHudNode::spell_store_click(int64_t index)
 {
 	if (!d->hud || !d->hud->spellStore())
@@ -3160,14 +3063,18 @@ Dictionary InGameHudNode::get_report() const
 	}
 	{
 		Array ce;
-		for (const std::string &e : d->cursorErrors)
+		if (d->godotMouse)
 		{
-			ce.push_back(toGodot(e));
+			for (const std::string &e : d->godotMouse->cursorErrors())
+			{
+				ce.push_back(toGodot(e));
+			}
 		}
 		r["cursor_errors"] = ce;
-		r["cursor"] = toGodot(d->cursorName);
-		r["cursor_direction"] = d->cursorDirection; // lane BUILD-5
-		r["cursor_hidden"] = d->cursorHidden;
+		const Dictionary cursor = d->godotMouse ? d->godotMouse->getCursorImage(false) : Dictionary();
+		r["cursor"] = cursor.get("name", String());
+		r["cursor_direction"] = cursor.get("direction", 0);
+		r["cursor_hidden"] = cursor.get("hidden", false);
 	}
 	r["draw_counts"] = toGodot("images " + std::to_string(d->drawnImages) + " skipped " + std::to_string(d->skippedImages));
 	if (d->hud)
@@ -3248,6 +3155,14 @@ void InGameHudNode::_process(double delta)
 	}
 	const uint64_t t0 = Time::get_singleton()->get_ticks_usec();
 	d->hud->update(delta);
+	// A HUD without the shell owns this service queue; a shared shell drains its own. RW 0x815772: PlaySound queues a 2D UI event.
+	std::vector<std::string> sounds;
+	sounds.swap(d->services.sounds);
+	for (const std::string &name : sounds)
+	{
+		AudioLog::Scope sound("HUD movie");
+		AudioApi::playUiSound(name);
+	}
 	const uint64_t ta = Time::get_singleton()->get_ticks_usec();
 	d->drawIconOps(get_canvas_item()); // lane HUD-5
 	const uint64_t tb = Time::get_singleton()->get_ticks_usec();
@@ -3301,6 +3216,7 @@ void InGameHudNode::_process(double delta)
 	while (d->clientClock >= step && guard < 8)
 	{
 		d->hud->input().cameraFrame((unsigned)Time::get_singleton()->get_ticks_msec(), d->world && d->world->is_paused());
+		d->camAnim.clientFrame(); // lane CAMANIM-1: the view update's mode-4 step (RW 0x48AA25), one client frame
 		d->clientClock -= step;
 		++guard;
 	}
@@ -3320,10 +3236,18 @@ void InGameHudNode::_process(double delta)
 		{
 			d->hud->input().placeTranslator().setLivePointer({ (int)d->livePointer.x, (int)d->livePointer.y });
 		}
+		const uint64_t tp = Time::get_singleton()->get_ticks_usec();
 		d->hud->input().placementUpdate(idle);
+		const uint64_t tg = Time::get_singleton()->get_ticks_usec();
 		d->ghost->sync(*d->world->hud_game(), d->hud->input().ui(), delta, PlaceEventTranslator::ghostOptions(), idle);
+		d->placeMs = (double)(tg - tp) / 1000.0; // lane FOGFX-1 (FB-0055): the placement's legality and the ghost, apart
+		d->ghostMs = (double)(Time::get_singleton()->get_ticks_usec() - tg) / 1000.0;
 	}
 	const uint64_t t2 = Time::get_singleton()->get_ticks_usec();
+	if (d->player && !d->ownsPlayer)
+	{
+		d->godotMouse = d->player->godot_mouse();
+	}
 	{
 		// lane BUILD-5: while scrolling the cursor is InGameUI's Scroll whatever is under the pointer (createMouseoverHint's window test RW 0x69F637 is skipped
 		// while scrolling); its direction follows the scroll amount
@@ -3332,7 +3256,10 @@ void InGameHudNode::_process(double delta)
 		// lane OWNERFIX-1: DISABLE_INPUT's Mouse::setVisibility(false) (RW 0x5EDD0F): no pointer over the world; a menu over the game (Esc's quit menu, which
 		// still opens: CMSG_META_OPTIONS) shows the arrow. INFERENCE (S-4964): retail's pointer over a menu opened during a cutscene was not read
 		const bool hidden = d->hud->scriptMouseHidden() && !overGui;
-		d->updateCursor(delta, hidden ? std::string() : (overGui ? std::string(MouseCursorName::Arrow) : ui.cursor()), ui.scrollAmountX(), ui.scrollAmountY(), ui.isScrolling());
+		if (d->godotMouse)
+		{
+			d->godotMouse->updateCursor(delta, hidden ? std::string() : (overGui ? std::string(MouseCursorName::Arrow) : ui.cursor()), ui.scrollAmountX(), ui.scrollAmountY(), ui.isScrolling());
+		}
 	}
 	// lane ANTICHEAT-1 (owner 2026-10-21): twice a second, the player's view (the camera's look-at point, the ground under the pointer) for the relay's
 	// log of an online game (never sent to another player, never simulation input; GameWorld::net_submit_view decides whether a game takes it). The
@@ -3363,6 +3290,18 @@ Dictionary InGameHudNode::get_frame_timings() const
 	t["hud_icons_ms"] = d->iconsMs;
 	t["hud_decals_ms"] = d->decalsMs;
 	t["hud_radial_ms"] = d->radialMs;
+	t["hud_place_ms"] = d->placeMs; // lane FOGFX-1: hud_camera_ms's parts: the placement update and the ghost's sync
+	t["hud_ghost_ms"] = d->ghostMs;
+	t["hud_ghost_icons_ms"] = d->ghost ? d->ghost->lastIconsMs() : 0.0;
+	t["hud_ghost_draw_ms"] = d->ghost ? d->ghost->lastDrawMs() : 0.0;
+	if (d->ghost)
+	{
+		const char *names[5] = { "hud_ghost_inst_ms", "hud_ghost_update_ms", "hud_ghost_tint_ms", "hud_ghost_bib_ms", "hud_ghost_shadow_ms" };
+		for (int k = 0; k < 5; ++k)
+		{
+			t[names[k]] = d->ghost->lastDrawParts()[k];
+		}
+	}
 	if (d->hud)
 	{
 		// lane SELPERF-1: InGameHud::update's parts
@@ -3458,14 +3397,7 @@ Dictionary InGameHudNode::get_placement_ghost_state() const
 
 Dictionary InGameHudNode::get_cursor_image() const
 {
-	Dictionary c;
-	c["name"] = toGodot(d->cursorName);
-	c["direction"] = d->cursorDirection;
-	c["hidden"] = d->cursorHidden;
-	// Only the diagnostic overlay needs a GPU texture; the native cursor keeps the CPU image.
-	c["texture"] = d->cursorShown.is_valid() ? ImageTexture::create_from_image(d->cursorShown) : Ref<ImageTexture>();
-	c["hot"] = d->cursorHot;
-	return c;
+	return d->godotMouse ? d->godotMouse->getCursorImage() : Dictionary();
 }
 
 PackedStringArray InGameHudNode::take_misc_sounds()
@@ -3722,6 +3654,11 @@ void InGameHudNode::set_broadcast_clean(bool on)
 	}
 }
 
+bool InGameHudNode::input_enabled() const
+{
+	return d->ready && d->hud && d->hud->input().ui().getInputEnabled();
+}
+
 void InGameHudNode::set_input_enabled(bool on)
 {
 	if (d->ready && d->hud)
@@ -3892,6 +3829,62 @@ void InGameHudNode::camera_reset(const Vector2 &sage_xy)
 	}
 }
 
+bool InGameHudNode::camera_animation_request(const String &action, const String &name)
+{
+	// lane CAMANIM-1: client state (the map's records are immutable after the load), no wait for the logic worker
+	const std::string a = action.utf8().get_data();
+	if (a != "MOVE_CAMERA_BY_ANIMATION" && !CameraAnimationPlayback::cancelsAnimation(a))
+	{
+		return false;
+	}
+	if (!d->camAnimListBuilt)
+	{
+		LiveGame *game = d->world ? d->world->hud_game() : nullptr;
+		if (!game)
+		{
+			UtilityFunctions::printerr("CAMANIM ", action, ": no game (the map's camera animations are unknown)");
+			return false;
+		}
+		std::vector<std::string> errors;
+		d->camAnimList.build(game->map().chunks.cameraAnimations, errors);
+		d->camAnimListBuilt = true;
+		for (const std::string &e : errors)
+		{
+			UtilityFunctions::printerr("CAMANIM ", String::utf8(e.c_str()));
+			d->drawNotes.insert("[CAMANIM-1] " + e);
+		}
+	}
+	const std::string n = name.utf8().get_data();
+	const bool changed = d->camAnim.applyRequest(d->camAnimList, a, n);
+	if (a == "MOVE_CAMERA_BY_ANIMATION")
+	{
+		if (changed)
+		{
+			UtilityFunctions::print("CAMANIM start '", name, "' (", (int64_t)d->camAnimList.find(n)->numFrames(), " frames)");
+		}
+		else
+		{
+			// RW 0x7BBB9D: no animation of that name, the view is not called
+			UtilityFunctions::print("CAMANIM '", name, "' is not in the map's CameraAnimationList (", (int64_t)d->camAnimList.size(), " animations): no camera change");
+		}
+	}
+	else if (changed)
+	{
+		UtilityFunctions::print("CAMANIM ", action, " ends the camera animation");
+	}
+	return changed;
+}
+
+Dictionary InGameHudNode::camera_animation_state() const
+{
+	Dictionary r;
+	r["active"] = d->camAnim.active();
+	r["name"] = String::utf8(d->camAnim.name().c_str());
+	r["time"] = d->camAnim.time();
+	r["animations"] = (int64_t)d->camAnimList.size();
+	return r;
+}
+
 void InGameHudNode::set_objectives_screen_open(bool open)
 {
 	if (d->ready && d->hud)
@@ -3918,6 +3911,14 @@ void InGameHudNode::camera_set_zoom_limited(bool on)
 	if (d->cam)
 	{
 		d->cam->setZoomLimited(on); // lane CAMPUI-1: RW 0x443C81 (the letterbox lifts the zoom limit while it is on)
+	}
+}
+
+void InGameHudNode::camera_set_clip_depth_multiplier(double m)
+{
+	if (d->cam)
+	{
+		d->cam->setClipDepthMultiplier((float)m); // RW 0x7CAFA5 case 0x14E: GlobalData + 0x950, read by setCameraTransform (RW 0x48B7B1)
 	}
 }
 
@@ -4035,6 +4036,8 @@ Dictionary InGameHudNode::get_camera() const
 	out["far"] = c.farPlane();
 	out["eye"] = toGodotAxes(c.eye());
 	out["target"] = toGodotAxes(c.target());
+	out["displayed_target"] = toGodotAxes(d->shown.PinholeView::position());
+	out["displayed_eye"] = toGodotAxes(d->shown.eye());
 	out["offset"] = Vector3(c.cameraOffset().x, c.cameraOffset().y, c.cameraOffset().z);
 	out["constraint_valid"] = c.constraintValid();
 	float lim[4];

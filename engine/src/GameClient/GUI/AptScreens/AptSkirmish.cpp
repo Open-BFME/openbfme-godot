@@ -3,14 +3,17 @@
 
 #include "Common/BfmeGame.h"
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
+#include "GameClient/GUI/Skirmish/LivingWorldSetupText.h" // lane WOTR-2
 
 #include "GameClient/GUI/AptScreens/AptStats.h"
 #include "GameClient/GUI/Skirmish/SkirmishGameRecord.h"
 #include "GameClient/GUI/Skirmish/RealTimeStats.h"
+#include "GameClient/GUI/Skirmish/SkirmishPreferences.h"
 
 #include "GameClient/GUI/AptMessageBox.h"
 #include "GameClient/OptionPreferences.h"
 #include "Common/AsciiString.h"
+#include "Common/PathIO.h"
 #include "GameLogic/CreateAHeroSystem.h"
 #include "GameClient/GUI/AptScreens/AptCreateAHero.h"
 #include "GameClient/CreateAHeroHeroList.h"
@@ -28,6 +31,8 @@
 #include <cstdlib>
 #include <iterator>
 #include <cctype>
+#include <cmath>
+#include <filesystem>
 #include <set>
 
 namespace
@@ -208,6 +213,8 @@ AptSkirmish::~AptSkirmish()
 AptSkirmish::AptSkirmish(WindowManager &windows, Shell &shell, ShellEnvironment &environment, const char *filename, const char *codePrefix, bool lan)
 	: AptScreen(windows, shell, filename, codePrefix), m_env(environment), m_lan(lan)
 {
+	// RW 0x845AE2 queries the setup owner: a network browser is not a host (LAN owner RW 0x846D9A).
+	setHostModeText(lan ? "0" : "1");
 	m_profiles = environment.profiles;
 	if (!m_profiles)
 	{
@@ -280,6 +287,7 @@ void AptSkirmish::registerAll()
 	registerCommand("AptSkirmish::OnInitialized", [this](const std::string &) {
 		++m_initializedCount;
 		m_profileState = kStateInitialized; // RotWK 0x9280DB; the update does the rest [S-179]
+		refreshBfme1ProfileDisplay();
 	});
 	// the screen's update: owned by this screen, removed with it (AptScreen::~AptScreen)
 	windows().addUpdateListener(this, [this]() { update(); });
@@ -291,9 +299,18 @@ void AptSkirmish::registerAll()
 void AptSkirmish::registerProfileCommands()
 {
 	// the commands below prune first (see pruneDeadGadgets)
-	registerCommand("AptSkirmish::SuppressStrategicPromo", [this](const std::string &) {
-		m_suppressStrategicPromo = true;
-		windows().note("unported-command", "AptSkirmish::SuppressStrategicPromo: remembered for this screen only, no preference is written [S-179]");
+	// lane WOTR-1: SuppressStrategicPromo is a provider (RW 0x929745 registers it through RW 0x92B0C7, the handler RW 0x9296A3): the get answers the
+	// preference "SuppressStrategicPromo" (RW 0x6E63A0) as "1" / "0", the set writes the preference and saves the file (RW 0x7B274C).  The movie reads it
+	// before it shows the new-features page and writes the page's "don't show again" box on Continue.  The preference file is not wired: the value lives
+	// for this screen only [S-179]
+	registerProvider("AptSkirmish::SuppressStrategicPromo", [this](const std::string &, std::string &value, bool setting) {
+		if (setting)
+		{
+			m_suppressStrategicPromo = value == "1" || value == "true";
+			return true;
+		}
+		value = m_suppressStrategicPromo ? "1" : "0";
+		return true;
 	});
 	// lane MENU-1: RW 0x9280FD (state 8; the update makes it 9) and RW 0x9281C0 (8 or 9 -> 7). The profile page itself is Skirmish.apt's: its
 	// _open_profile loads Stats.swf into SkirmishStats once _close has closed the game setup (_root[vScreenName]); the page's contents (AptStats'
@@ -361,6 +378,8 @@ void AptSkirmish::registerProfileCommands()
 	registerCommand("AptSkirmish::Skirmish::PersonaRemove", [this](const std::string &) {
 		pruneDeadGadgets();
 		deleteProfileFromList();
+		invokeRoot("CloseProfilePopup");
+		closePopupState();
 	});
 	registerCommand("AptSkirmish::Skirmish::PersonaOk", [](const std::string &) {});
 	}
@@ -442,6 +461,12 @@ bool AptSkirmish::addProfileFromEntry()
 		keepGame();
 	}
 	m_profiles->setCurrent(name);
+	if (m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
+	{
+		std::string error;
+		if (!Bfme1SkirmishProfiles::create(*m_profiles, std::time(nullptr), &error))
+			windows().note("skirmish-profile-stats", error);
+	}
 	if (!previous.empty())
 	{
 		reloadGameForProfile();
@@ -467,6 +492,11 @@ bool AptSkirmish::changeProfileFromList()
 		return false;
 	}
 	const std::u16string name = GadgetListBoxGetText(m_profileList, selected, 0);
+	return selectProfile(name);
+}
+
+bool AptSkirmish::selectProfile(const std::u16string &name)
+{
 	// lane UI-6: RW 0x9293F5 (BFME2 decomp AptSkirmishCallbacks.cpp OnChangeProfile): another profile keeps the current one's game first (RW 0x929440),
 	// and its own game is set up again (state 5: InitTheGame, RW 0x9288D0)
 	// The list may outlive an external profile deletion. A stale row is not a successful profile change:
@@ -648,19 +678,21 @@ void AptSkirmish::runShutdown(bool *immediate)
 
 bool AptSkirmish::deleteProfileFromList()
 {
-	if (!m_profileList)
+	const bool bfme1 = m_env.fileSystem && isBfme1Data(*m_env.fileSystem);
+	if (!m_profileList && !bfme1)
 	{
 		windows().note("profile-gadget-missing", "Skirmish::SelectProfile has not been initialised");
 		return false;
 	}
 	int selected = -1;
-	GadgetListBoxGetSelected(m_profileList, &selected);
-	if (selected < 0)
+	if (!bfme1) GadgetListBoxGetSelected(m_profileList, &selected);
+	if (!bfme1 && selected < 0)
 	{
 		windows().note("profile-rejected", "a profile delete with no profile selected");
 		return false;
 	}
-	const std::u16string name = GadgetListBoxGetText(m_profileList, selected, 0);
+	const std::u16string name = bfme1 ? m_profiles->current() : GadgetListBoxGetText(m_profileList, selected, 0);
+	if (name.empty()) return false;
 	const bool wasCurrent = name == m_profiles->current();
 	m_profiles->remove(name);
 	// lane UI-6 review: deleting the current profile drops its game with it (BFME2 0x43C2EB) and makes the first remaining profile current: the lobby is
@@ -984,13 +1016,11 @@ void AptSkirmish::registerLobby()
 		return true;
 	});
 	registerProvider("MpGameSetup::HostMode", [this](const std::string &, std::string &value, bool setting) {
-		if (setting)
+		// RW 0x845AE2: query 0 reads the owner; writes do not change host status.
+		if (!setting)
 		{
-			m_hostModeText = value;
-			m_hostMode = value == "1";
-			return true;
+			value = m_hostModeText;
 		}
-		value = m_hostModeText;
 		return true;
 	});
 	registerProvider("MpGameSetup::IsInitialized", [this](const std::string &, std::string &value, bool setting) {
@@ -1003,7 +1033,7 @@ void AptSkirmish::registerLobby()
 		return true;
 	});
 	// the chat and clan tabs belong to online play; the generated rule rows have no data source in the engine yet [S-178]
-	// lane UI-1: AptMpGameRules::ShowChat is RW 0x845AE2's id 0: the host interface's slot 4 (the LAN lobby: TheLAN's slot 0xD8, RW 0x846D9A) as "1" / "0"
+	// RW 0x845AE2 query 3 reads the setup flags' chat bit, independently of HostMode (query 0).
 	registerProvider("AptMpGameRules::ShowChat", [this](const std::string &, std::string &value, bool setting) {
 		if (!setting)
 		{
@@ -1365,6 +1395,177 @@ void AptSkirmish::refreshLobby()
 	updateMapPreview();
 }
 
+void AptSkirmish::enterStrategicMode(const LivingWorldShellInfo &info)
+{
+	m_livingWorld = &info;
+	m_scenario = info.scenarios.empty() ? std::string() : info.scenarios.front().name;
+	if (info.scenarios.empty())
+	{
+		windows().note("wotr-no-scenarios", "the strategic setup has no LivingWorldCampaign with a Scenario block");
+	}
+	setGameMapType("Strategic");
+}
+
+void AptSkirmish::leaveStrategicMode()
+{
+	if (m_strategic)
+	{
+		setGameMapType("OpenPlay");
+	}
+}
+
+const LivingWorldScenarioEntry *AptSkirmish::selectedScenarioEntry() const
+{
+	if (!m_livingWorld)
+	{
+		return nullptr;
+	}
+	for (const LivingWorldScenarioEntry &e : m_livingWorld->scenarios)
+	{
+		if (e.name == m_scenario)
+		{
+			return &e;
+		}
+	}
+	return nullptr;
+}
+
+const LivingWorldSetupCampaign *AptSkirmish::strategicCampaign() const
+{
+	const LivingWorldScenarioEntry *sc = m_strategic ? selectedScenarioEntry() : nullptr;
+	return sc && m_livingWorld ? m_livingWorld->findCampaign(sc->regionCampaign) : nullptr;
+}
+
+bool AptSkirmish::regionSelectable(int region) const
+{
+	// RW 0x975D3F (mode 1): the region exists and is enabled (+ 0x1C2: DisableRegions turns it off) and RW 0x97572C: not in the scenario's
+	// DisallowStartInRegions (RW 0x902035 -> RW 0x9019BF); RW 0x975942: a historical scenario (+ 0xC0) takes no picks (StartingRestriction fixes them)
+	const LivingWorldScenarioEntry *sc = m_strategic ? selectedScenarioEntry() : nullptr;
+	const LivingWorldSetupCampaign *c = strategicCampaign();
+	if (!sc || !c || sc->historical || region < 0 || region >= (int)c->regions.size())
+	{
+		return false;
+	}
+	const std::string &name = c->regions[(size_t)region].name;
+	auto listed = [&](const std::vector<std::string> &l) { return std::find(l.begin(), l.end(), name) != l.end(); };
+	return !listed(sc->disableRegions) && !listed(sc->disallowStartInRegions);
+}
+
+void AptSkirmish::hoverRegion(int region)
+{
+	// RW 0x976D64: a selectable region under the mouse (no hover in a historical scenario): the region of its StartingRestriction group that a slot
+	// holds stands for the group (RW 0x976B0C / 0x901FA7, RW 0x9758A4), and its text fills the territory description (RW 0x976C4D)
+	if (region == m_hoverRegion)
+	{
+		return;
+	}
+	m_hoverRegion = region;
+	if (!regionSelectable(region))
+	{
+		return; // the description keeps what it showed (retail changes it only for a selectable region)
+	}
+	const LivingWorldScenarioEntry *sc = selectedScenarioEntry();
+	const LivingWorldSetupCampaign *c = strategicCampaign();
+	auto representative = [&]() {
+		for (const LivingWorld::StartingRestriction &r : sc->startingRestrictions)
+		{
+			if (std::find(r.regions.begin(), r.regions.end(), c->regions[(size_t)region].name) == r.regions.end())
+			{
+				continue;
+			}
+			for (const std::string &other : r.regions)
+			{
+				const int idx = c->regionIndex(other);
+				for (int slot = 0; idx >= 0 && slot < MAX_SLOTS; ++slot)
+				{
+					if (m_setup && m_setup->info().slots[slot].startPos == idx)
+					{
+						return idx;
+					}
+				}
+			}
+			break;
+		}
+		return region;
+	};
+	showTerritoryDescription(representative());
+}
+
+void AptSkirmish::showTerritoryDescription(int region)
+{
+	pruneDeadGadgets();
+	const LivingWorldSetupCampaign *c = strategicCampaign();
+	if (!m_territoryDescription || !c)
+	{
+		return;
+	}
+	GadgetListBoxReset(m_territoryDescription);
+	GadgetListBoxAddEntryText(m_territoryDescription, LivingWorldSetupText::territoryDescription(*c, region, m_env.gameText), 0xFFFFFFFFu, -1, -1, true);
+}
+
+bool AptSkirmish::pickStartRegion(int slot, int region)
+{
+	if (!m_setup || !regionSelectable(region) || !m_setup->setSlotStartPos(slot, region))
+	{
+		return false;
+	}
+	lobbyChanged();
+	refreshLobby();
+	return true;
+}
+
+bool AptSkirmish::clickRegion(int region, bool left)
+{
+	// a pick on the preview: RW 0x845830's start position branch (0x4008 left: a free region goes to RW 0x975C3A(0), a held one passes to the next
+	// selectable slot after its holder; 0x4009 right: a held one is freed), the position being the region index. [S-1333 inference: the route of the
+	// preview's click into RW 0x845830 was not traced; the region-index position is the lobby's own reading of it (RW 0x9770CF)]
+	if (!regionSelectable(region))
+	{
+		return false;
+	}
+	const bool taken = startPositionClicked(region, left);
+	showTerritoryDescription(region); // the picked region's text (the setup's region-selected listener RW 0x976E2D -> RW 0x976C4D)
+	return taken;
+}
+
+std::vector<std::pair<int, int>> AptSkirmish::regionHolders() const
+{
+	// RW 0x9770CF: every slot with a start position colours its region (RW 0x60E8DB(startPos)) and the regions of its StartingRestriction group
+	std::vector<std::pair<int, int>> out;
+	const LivingWorldScenarioEntry *sc = m_strategic ? selectedScenarioEntry() : nullptr;
+	const LivingWorldSetupCampaign *c = strategicCampaign();
+	if (!m_setup || !sc || !c)
+	{
+		return out;
+	}
+	for (int slot = 0; slot < MAX_SLOTS; ++slot)
+	{
+		const int pos = m_setup->info().slots[slot].startPos;
+		if (pos < 0 || pos >= (int)c->regions.size())
+		{
+			continue;
+		}
+		out.push_back({ pos, slot });
+		for (const LivingWorld::StartingRestriction &r : sc->startingRestrictions)
+		{
+			if (std::find(r.regions.begin(), r.regions.end(), c->regions[(size_t)pos].name) == r.regions.end())
+			{
+				continue;
+			}
+			for (const std::string &other : r.regions)
+			{
+				const int idx = c->regionIndex(other);
+				if (idx >= 0 && idx != pos)
+				{
+					out.push_back({ idx, slot });
+				}
+			}
+			break;
+		}
+	}
+	return out;
+}
+
 void AptSkirmish::setGameMapType(const std::string &type)
 {
 	m_gameMapType = type;
@@ -1377,6 +1578,7 @@ void AptSkirmish::setGameMapType(const std::string &type)
 		{
 			restoreGame(1); // lane UI-6: the War of the Ring lobby's kept game (mode 1)
 		}
+		m_setup->setWarScenario(m_scenario); // WOTR2 milestone 8: GT / SI of the game (a restored game's too)
 	}
 	for (int slot = 0; slot < MAX_SLOTS; ++slot)
 	{
@@ -1438,9 +1640,15 @@ void AptSkirmish::pruneDeadGadgets()
 	check(m_currentMap);
 	check(m_profileList);
 	check(m_profileEntry);
+	check(m_bfme1ProfileCombo);
+	check(m_bfme1MapType);
 	check(m_chatList);
 	check(m_chatPlayers);
 	check(m_chatEntry);
+	check(m_scenarioCombo);        // lane WOTR-2: the strategic setup's gadgets go with the movie too
+	check(m_scenarioDescription);
+	check(m_territoryDescription);
+	check(m_livingWorldWindow);
 	check(m_slotScroll);
 	check(m_slotRange);
 	for (auto &row : m_slots)
@@ -1477,6 +1685,16 @@ void AptSkirmish::initSkirmishGadget(const std::string &name, GameWindow *window
 		m_profileEntry = window;
 		GadgetTextEntrySetText(window, std::u16string());
 	}
+	else if (name == "Skirmish::PlayerProfile" && m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
+	{
+		m_bfme1ProfileCombo = window;
+		refreshBfme1ProfileCombo();
+		refreshBfme1ProfileDisplay();
+	}
+	else if (name == "Skirmish::GameInfo" && m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
+	{
+		refreshBfme1ProfileDisplay();
+	}
 	else if (name == "Skirmish::GameInfo" || name == "Skirmish::PlayerProfile")
 	{
 		windows().note("unported-gadget-init", "AptSkirmish::InitGadgets(" + name + "): BFME1 name, not placed by RotWK's Skirmish.apt [S-175]");
@@ -1494,11 +1712,39 @@ void AptSkirmish::initMpGameSetupGadget(const std::string &name, GameWindow *win
 	{
 		return;
 	}
+	if (m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
+	{
+		if (name == "MpGameSetup::MapType")
+		{
+			m_bfme1MapType = window;
+			GadgetComboBoxReset(window);
+			GadgetComboBoxAddEntry(window, fetchOrMissing(m_env.gameText, "Apt:OfficialMaps"), 0xFFFFFFFFu);
+			GadgetComboBoxAddEntry(window, fetchOrMissing(m_env.gameText, "Apt:PlayerMadeMaps"), 0xFFFFFFFFu);
+			GadgetComboBoxSetSelectedPos(window, m_bfme1OfficialMaps ? 0 : 1, false);
+			return;
+		}
+		if (name == "MpGameSetup::GameType")
+		{
+			GadgetComboBoxReset(window);
+			GadgetComboBoxAddEntry(window, fetchOrMissing(m_env.gameText, "Apt:HeadToHead"), 0xFFFFFFFFu);
+			GadgetComboBoxSetSelectedPos(window, 0, false);
+			window->winEnable(false);
+			return;
+		}
+	}
 	if (name == "MapList")
 	{
 		m_mapList = window;
-		const int widths[5] = { 8, 2, 0x46, 10, 10 };
-		GadgetListBoxSetColumnWidths(window, 5, widths);
+		if (m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
+		{
+			const int widths[2] = { 10, 90 };
+			GadgetListBoxSetColumnWidths(window, 2, widths);
+		}
+		else
+		{
+			const int widths[5] = { 8, 2, 0x46, 10, 10 };
+			GadgetListBoxSetColumnWidths(window, 5, widths);
+		}
 		populateMapList();
 		return;
 	}
@@ -1573,7 +1819,85 @@ void AptSkirmish::initMapPreviewGadget(const std::string &name, GameWindow *wind
 			}
 		}
 	}
+	// lane WOTR-1: RotWK's AptMapPreview::MapGadgetInit (RW 0x9777AB) knows four more names, the strategic setup's
+	else if (name == "StrategicScenarioType")
+	{
+		m_scenarioCombo = window; // +0x50, filled by RW 0x976B49
+		populateScenarioCombo();
+	}
+	else if (name == "StrategicScenarioDescription")
+	{
+		m_scenarioDescription = window; // +0x54, RW 0x9767ED
+	}
+	else if (name == "StrategicTerritoryDescription")
+	{
+		m_territoryDescription = window; // +0x58 (RW 0x976C4D fills it for the region under the mouse or picked)
+	}
+	else if (name == "LivingWorld")
+	{
+		// +0x68 (lane WOTR-2): the living-world map preview (RW 0x9777AB: the setup listens to it, then RW 0x976877(0) loads the selected scenario's region
+		// campaign into TheLivingWorld's display in preview mode, + 0x44 = 1). The device draws the map in this gadget's rectangle (S-1335 presentation)
+		m_livingWorldWindow = window;
+	}
 	updateMapPreview();
+}
+
+void AptSkirmish::populateScenarioCombo()
+{
+	// RW 0x976B49: the combo is reset, then every LivingWorldCampaign of TheLivingWorldCampaignManager that has a Scenario (+0x1C) adds the game text of its
+	// DisplayName with the campaign as the item data (RW 0x7B9605), the first row is selected and the description follows (RW 0x9767ED)
+	if (!m_scenarioCombo || !m_livingWorld)
+	{
+		return;
+	}
+	m_refreshing = true;
+	GadgetComboBoxReset(m_scenarioCombo);
+	int selected = 0;
+	for (size_t i = 0; i < m_livingWorld->scenarios.size(); ++i)
+	{
+		const LivingWorldScenarioEntry &e = m_livingWorld->scenarios[i];
+		const int row = GadgetComboBoxAddEntry(m_scenarioCombo, fetchOrMissing(m_env.gameText, e.displayLabel), 0xFFFFFFFFu);
+		GadgetComboBoxSetItemData(m_scenarioCombo, row, itemData((int)i));
+		if (e.name == m_scenario)
+		{
+			selected = row;
+		}
+	}
+	GadgetComboBoxSetSelectedPos(m_scenarioCombo, selected);
+	m_refreshing = false;
+	updateMapPreview();
+}
+
+bool AptSkirmish::selectScenario(const std::string &name, bool notify)
+{
+	if (!m_livingWorld)
+	{
+		return false;
+	}
+	for (size_t i = 0; i < m_livingWorld->scenarios.size(); ++i)
+	{
+		if (m_livingWorld->scenarios[i].name == name)
+		{
+			m_scenario = name;
+			if (m_setup)
+			{
+				m_setup->setWarScenario(name); // WOTR2 milestone 8: SI (+ 0x58)
+			}
+			if (m_scenarioCombo)
+			{
+				m_refreshing = true;
+				GadgetComboBoxSetSelectedPos(m_scenarioCombo, (int)i);
+				m_refreshing = false;
+			}
+			updateMapPreview();
+			if (notify)
+			{
+				lobbyChanged();
+			}
+			return true;
+		}
+	}
+	return false;
 }
 
 // ---- lobby ----------------------------------------------------------------------------------------------------------------------------------------
@@ -1708,14 +2032,17 @@ void AptSkirmish::populateMapList()
 	m_refreshing = true;
 	GadgetListBoxReset(m_mapList);
 	m_mapKeys.clear();
+	m_mapPlayers.clear();
 	m_mapStates.clear();
 	m_mapImages.clear();
 	createMapCapacityFilter();
+	const bool bfme1 = m_env.fileSystem && isBfme1Data(*m_env.fileSystem);
+	if (bfme1) refreshBfme1ProfileDisplay();
 	const std::vector<MapCacheEntry> &maps = m_setup->source().maps();
 	// lane OWNERFIX-3: RW 0x8460B5 with the flag bit 0: the current profile's stats (SkirmishPreferences RW 0x821A14 -> RealTimeStatsPreferences RW 0x93E72F)
 	RealTimeStatsPreferences statsFile;
 	const RealTimeStatsPreferences *stats = nullptr;
-	if (setupFlags() & 1)
+	if (!bfme1 && (setupFlags() & 1))
 	{
 		if (!m_env.profiles)
 		{
@@ -1742,7 +2069,24 @@ void AptSkirmish::populateMapList()
 	{
 		const MapCacheEntry &m = maps[(std::size_t)index];
 		if (m_largeMapsOnly && (m.numPlayers <= LEGACY_MAX_SLOTS || m.numPlayers > MAX_SLOTS)) continue;
-		const int state = RealTimeStatsPreferences::conquestState(stats, m);
+		if (bfme1 && m.isOfficial != m_bfme1OfficialMaps) continue;
+		int state = RealTimeStatsPreferences::conquestState(stats, m);
+		if (bfme1)
+		{
+			state = m.isMultiplayer && (setupFlags() & 1) ? 1 : 0;
+			if (state)
+			{
+				const std::string key = RealTimeStatsPreferences::statsMapName(m.name) + "_";
+				for (int difficulty = 5; difficulty >= 2; --difficulty)
+				{
+					if (std::atoi(m_bfme1Honors.get(key + std::to_string(difficulty)).c_str()) != 0)
+					{
+						state = difficulty;
+						break;
+					}
+				}
+			}
+		}
 		rows.push_back(Row{ index, state, m_setup->mapDisplayName(m, true) });
 	}
 	const int keys[2] = { m_sortPrimary, m_sortSecondary };
@@ -1789,10 +2133,11 @@ void AptSkirmish::populateMapList()
 		return state < 0;
 	});
 	const int numColumns = GadgetListBoxGetNumColumns(m_mapList);
-	if (numColumns < 3)
+	const int minimumColumns = bfme1 ? 2 : 3;
+	if (numColumns < minimumColumns)
 	{
 		// retail writes to column numColumns - 3 unchecked: a mod's list with fewer columns has no retail result to match
-		windows().note("map-list-columns", "MpGameSetup MapList has " + std::to_string(numColumns) + " columns; RW 0x8460B5 needs 3 or more");
+		windows().note("map-list-columns", "MpGameSetup MapList has " + std::to_string(numColumns) + " columns; needs " + std::to_string(minimumColumns) + " or more");
 		m_refreshing = false;
 		return;
 	}
@@ -1804,18 +2149,18 @@ void AptSkirmish::populateMapList()
 	for (const Row &r : rows)
 	{
 		const MapCacheEntry &m = maps[(std::size_t)r.index];
-		const char *image = RealTimeStatsPreferences::conquestImage(r.state);
+		static const char *bfme1Images[] = { "AptDifficultyNotConquered", "AptDifficultyNotConquered", "AptDifficultyEasyConquered",
+			"AptDifficultyMedConquered", "AptDifficultyHardConquered", "AptDifficultyHardGlowConquered" };
+		const char *image = bfme1 ? bfme1Images[r.state] : RealTimeStatsPreferences::conquestImage(r.state);
 		int row = GadgetListBoxAddEntryImage(m_mapList, image, -1, 0, size, size, true, white);
-		row = GadgetListBoxAddEntryText(m_mapList, m_setup->mapDisplayName(m, false), white, row, numColumns - 3);
-		char16_t count[16];
-		const std::string digits = std::to_string(m.numPlayers);
-		std::size_t n = 0;
-		for (char c : digits)
+		row = GadgetListBoxAddEntryText(m_mapList, m_setup->mapDisplayName(m, bfme1), white, row, bfme1 ? numColumns - 1 : numColumns - 3);
+		if (!bfme1)
 		{
-			count[n++] = (char16_t)c;
+			const std::string digits = std::to_string(m.numPlayers);
+			GadgetListBoxAddEntryText(m_mapList, std::u16string(digits.begin(), digits.end()), white, row, numColumns - 1);
 		}
-		GadgetListBoxAddEntryText(m_mapList, std::u16string(count, n), white, row, numColumns - 1);
 		m_mapKeys.push_back(m.name);
+		m_mapPlayers.push_back(m.numPlayers); // lane MODUI-1: the row's player count (the walk picks a map that takes its players)
 		m_mapStates.push_back(r.state);
 		m_mapImages.push_back(image);
 		if (m.name == m_setup->info().mapName)
@@ -1983,6 +2328,7 @@ void AptSkirmish::refreshAll()
 	refreshRuleGadgets(); // lane RULES-1: a network game's rules come with the host's options
 	refreshChatPlayers(); // lane ONLINE-5
 	m_refreshing = outer;
+	refreshBfme1ProfileDisplay();
 }
 
 void AptSkirmish::updateMapPreview()
@@ -1991,6 +2337,19 @@ void AptSkirmish::updateMapPreview()
 	// AptMapPreview::rva005217A0 -> rva005216B0 (title, MapInfo, description, picture)
 	if (!m_setup)
 	{
+		return;
+	}
+	if (const LivingWorldScenarioEntry *sc = m_strategic ? selectedScenarioEntry() : nullptr)
+	{
+		// RW 0x9767ED writes the selected scenario's text (RW 0x97606B, lane WOTR-2: the DisplayDescription, then RULE:VictoryType with the campaign's
+		// victory type of the game info's + 0x74 index: the Rules tab's victory type row is not ported, index 0 [S-1333]) into StrategicScenarioDescription
+		if (m_scenarioDescription)
+		{
+			GadgetListBoxReset(m_scenarioDescription);
+			GadgetListBoxAddEntryText(m_scenarioDescription, LivingWorldSetupText::scenarioDescription(*sc, 0, m_env.gameText), 0xFFFFFFFFu, -1, -1, true);
+		}
+		// RW 0x97759F: APT:SelectStartPoint is the fetched label in a strategic lobby (the game info's + 0x10 set), else the empty string
+		windows().setAptText("APT:SelectStartPoint", u16ToUtf8(fetchOrMissing(m_env.gameText, "APT:SelectStartPoint")));
 		return;
 	}
 	const MapCacheEntry *map = nullptr;
@@ -2395,6 +2754,18 @@ bool AptSkirmish::onStartSpotSelected(GameWindow *button, bool left)
 	{
 		return false;
 	}
+	return startPositionClicked(position, left);
+}
+
+bool AptSkirmish::startPositionClicked(int position, bool left)
+{
+	// RW 0x845830's 0x4008 / 0x4009 branch on a start position: a skirmish map's spot index, or (lane WOTR-2) a War of the Ring region index (the
+	// strategic lobby's slot start position is the index of a region of the scenario's region campaign: RW 0x9770CF / 0x9759BB look the region up with
+	// RW 0x60E8DB(startPos))
+	if (!m_setup || position < 0)
+	{
+		return false;
+	}
 	const SkirmishGameInfo &info = m_setup->info();
 	const int local = m_setup->localSlot();
 	bool changed = false;
@@ -2441,6 +2812,12 @@ bool AptSkirmish::onStartSpotSelected(GameWindow *button, bool left)
 
 void AptSkirmish::updateMapStartSpots()
 {
+	// lane WOTR-2: RW 0x977542 runs RW 0x7052BE only in mode 0; in the strategic setup (mode 1) it runs RW 0x9770CF, the start regions' colours on the
+	// map preview (regionHolders, drawn by the device): a strategic start position is a region index, which the map's spot count must not clear
+	if (m_strategic)
+	{
+		return;
+	}
 	// RW 0x7052BE (ZH updateMapStartSpots, onLoadScreen false): every spot blank with the tooltip TOOLTIP:StartPosition; then each slot whose start
 	// position is below the map's player count and that is not an observer labels its spot NUMBER:<slot + 1> with TOOLTIP:StartPositionN; a position
 	// at or past the player count is reset to -1. Without the map in the cache every spot is GUI:Blank (RW 0x7052F5).
@@ -2509,8 +2886,59 @@ void AptSkirmish::updateMapStartSpots()
 
 void AptSkirmish::onComboSelected(GameWindow *combo)
 {
+	if (!m_refreshing && combo && combo == m_bfme1ProfileCombo)
+	{
+		int selected = -1;
+		GadgetComboBoxGetSelectedPos(combo, &selected);
+		const auto names = m_profiles->names();
+		if (selected >= 0 && selected < (int)names.size())
+			selectProfile(names[(std::size_t)selected]);
+		else if (selected == (int)names.size())
+		{
+			m_profileState = kStateNewProfile;
+			if (m_profileEntry) GadgetTextEntrySetText(m_profileEntry, std::u16string());
+			invokeRoot("ShowAddProfile");
+		}
+		else if (selected == (int)names.size() + 1 && !m_profiles->current().empty())
+		{
+			m_profileState = kStateDeleteProfile;
+			std::string error;
+			windows().invokeAS(level(), "PopUpRemove", {}, nullptr, &error);
+		}
+		refreshBfme1ProfileCombo();
+		return;
+	}
+	if (!m_refreshing && combo && combo == m_bfme1MapType)
+	{
+		int selected = -1;
+		GadgetComboBoxGetSelectedPos(combo, &selected);
+		if (selected == 0 || selected == 1)
+		{
+			m_bfme1OfficialMaps = selected == 0;
+			populateMapList();
+		}
+		return;
+	}
 	if (m_refreshing || !m_setup)
 	{
+		return;
+	}
+	if (combo == m_scenarioCombo && m_livingWorld)
+	{
+		// lane WOTR-1: a scenario row (item data = the scenario's index)
+		int selected = -1;
+		GadgetComboBoxGetSelectedPos(combo, &selected);
+		const int index = selected >= 0 ? (int)(std::intptr_t)GadgetComboBoxGetItemData(combo, selected) : -1;
+		if (index >= 0 && index < (int)m_livingWorld->scenarios.size())
+		{
+			m_scenario = m_livingWorld->scenarios[(size_t)index].name;
+			if (m_setup)
+			{
+				m_setup->setWarScenario(m_scenario); // WOTR2 milestone 8: SI (+ 0x58)
+			}
+			updateMapPreview();
+			lobbyChanged();
+		}
 		return;
 	}
 	auto it = m_slotGadgets.find(combo);
@@ -2754,6 +3182,43 @@ void AptSkirmish::onMapListSelected(int row)
 	lobbyChanged();
 }
 
+void AptSkirmish::applyScenarioLimits()
+{
+	if (!m_strategic || !m_setup)
+	{
+		return;
+	}
+	{
+		// lane WOTR-2: the chosen scenario's limits and disabled factions (the start check reads them, RW 0x9758E3 / 0x97597F / 0x843447)
+		if (const LivingWorldScenarioEntry *sc = selectedScenarioEntry())
+		{
+			m_setup->setStrategicScenario({ sc->maxPlayers, sc->minPlayers, sc->disabledFactions });
+			// lane WOTR-2: every player picks a start region on the map preview (clickRegion); retail's check refuses a slot without one
+			// (GUI:NeedStartSpots, RW 0x8435F9). (The WOTR-2 r1 stand-in that gave such slots the lowest free position is gone.)
+			// INFERENCE [S-1333]: a historical scenario takes no picks (RW 0x975942) and its StartingRestriction fixes each faction's start, so a slot
+			// without a position takes the first region of its faction's restriction (the campaign start's own rule, S-1325)
+			const LivingWorldSetupCampaign *c = strategicCampaign();
+			for (int slot = 0; sc->historical && c && slot < MAX_SLOTS; ++slot)
+			{
+				const SkirmishGameSlot &gs = m_setup->info().slots[slot];
+				const SkirmishFaction *f = gs.isOccupied() && gs.startPos < 0 ? m_setup->faction(gs.playerTemplate) : nullptr;
+				for (const LivingWorld::StartingRestriction &r : f ? sc->startingRestrictions : std::vector<LivingWorld::StartingRestriction>())
+				{
+					if (std::find(r.factions.begin(), r.factions.end(), f->templateName) != r.factions.end() && !r.regions.empty())
+					{
+						m_setup->setSlotStartPos(slot, c->regionIndex(r.regions[0]));
+						break;
+					}
+				}
+			}
+		}
+		else
+		{
+			m_setup->clearStrategicScenario();
+		}
+	}
+}
+
 bool AptSkirmish::startGame()
 {
 	pruneDeadGadgets();
@@ -2771,6 +3236,7 @@ bool AptSkirmish::startGame()
 	// does not here.
 	// lane GAMEMODES-1: RotWK's start check (RW 0x8431B8, SkirmishGameSetup::checkStart). The skirmish owner's vslot 0x44 (RW 0x928482) shows only the lines of
 	// kind 1, as MessageBoxOk(L"", text) (RW 0x84ED5D); "Entering sandbox mode..." (kind 0) and the lines of kind 2 show nothing in a skirmish
+	applyScenarioLimits();
 	const SkirmishGameSetup::StartCheck check = m_setup->checkStart();
 	for (const std::string &stop : check.stops)
 	{
@@ -2781,6 +3247,13 @@ bool AptSkirmish::startGame()
 		if (line.kind == 1)
 		{
 			m_env.newGame->startRefused(std::u16string(), line.text);
+			// RW 0x928482 -> MessageBoxOk: reporting to the sink alone does
+			// not put the refusal on screen in the Godot host.
+			if (!m_ruleBox)
+			{
+				m_ruleBox = std::make_unique<AptMessageBox>(windows(), shell());
+			}
+			m_ruleBox->show(AptMessageBox::TYPE_OK, std::u16string(), line.text);
 		}
 	}
 	if (!check.ok)
@@ -2792,7 +3265,18 @@ bool AptSkirmish::startGame()
 	{
 		windows().note("sandbox", "AptSkirmish::StartGame: one team: a sandbox game (GUI:SandboxMode, RW 0x8436D8; the skirmish owner shows no kind 0 line)");
 	}
-	const NewGameMessage message = m_setup->makeNewGameMessage();
+	NewGameMessage message = m_setup->makeNewGameMessage();
+	if (m_strategic)
+	{
+		// lane WOTR-1: the strategic game starts the chosen LivingWorldCampaign (the battles name their own maps)
+		const LivingWorldScenarioEntry *sc = selectedScenarioEntry();
+		if (!sc)
+		{
+			windows().note("wotr-start-refused", "AptSkirmish::StartGame: strategic mode with no scenario selected");
+			return false;
+		}
+		message.livingWorldCampaign = sc->name;
+	}
 	const std::vector<std::string> unresolved = message.game.unresolvedRandomChoices();
 	if (!unresolved.empty())
 	{
@@ -2832,6 +3316,121 @@ bool AptSkirmish::startGame()
 
 // ---- profiles -------------------------------------------------------------------------------------------------------------------------------
 
+void AptSkirmish::refreshBfme1ProfileCombo()
+{
+	if (!m_bfme1ProfileCombo) return;
+	const bool outer = m_refreshing;
+	m_refreshing = true;
+	GadgetComboBoxReset(m_bfme1ProfileCombo);
+	const auto names = m_profiles->names();
+	for (std::size_t index = 0; index < names.size(); ++index)
+	{
+		GadgetComboBoxAddEntry(m_bfme1ProfileCombo, names[index], 0xFFFFFFFFu);
+		if (names[index] == m_profiles->current())
+			GadgetComboBoxSetSelectedPos(m_bfme1ProfileCombo, (int)index, false);
+	}
+	GadgetComboBoxAddEntry(m_bfme1ProfileCombo, fetchOrMissing(m_env.gameText, "APT:NewProfile"), 0xFFFFFFFFu);
+	GadgetComboBoxAddEntry(m_bfme1ProfileCombo, fetchOrMissing(m_env.gameText, "APT:DeleteProfile"), 0xFFFFFFFFu);
+	m_refreshing = outer;
+}
+
+void AptSkirmish::refreshBfme1ProfileDisplay()
+{
+	if (m_lan || !m_env.fileSystem || !isBfme1Data(*m_env.fileSystem)) return;
+	const std::u16string profile = m_profiles->current();
+	m_bfme1Honors = OptionPreferences();
+	if (!profile.empty() && !m_profiles->folder().empty())
+	{
+		const std::string path = m_profiles->folder() + u16ToUtf8(profile) + "SkirmishStats.ini";
+		std::error_code status;
+		const bool exists = std::filesystem::exists(PathIO::native(path), status);
+		std::string error;
+		if (status || (exists && !m_bfme1Honors.load(path, &error)))
+			windows().note("skirmish-profile-stats", Bfme1SkirmishProfiles::statsDiagnostic(path, status ? "cannot inspect: " + status.message() : error));
+	}
+	const std::u16string dash = fetchOrMissing(m_env.gameText, "APT:DashDash");
+	auto set = [&](const char *name, const std::u16string &value) { windows().setAptText(name, u16ToUtf8(value)); };
+	auto number = [](long long value) {
+		const std::string digits = std::to_string(value);
+		return std::u16string(digits.begin(), digits.end());
+	};
+	auto format = [&](const char *label, const std::vector<std::u16string> &values) {
+		std::u16string result = fetchOrMissing(m_env.gameText, label);
+		std::size_t start = 0;
+		for (const auto &value : values)
+		{
+			const std::size_t at = result.find(u'%', start);
+			if (at == std::u16string::npos) break;
+			const std::size_t length = result.compare(at, 3, u"%ls") == 0 ? 3 : 2;
+			if (result.compare(at, 2, u"%d") && result.compare(at, 2, u"%s") && result.compare(at, 3, u"%ls")) break;
+			result.replace(at, length, value);
+			start = at + value.size();
+		}
+		return result;
+	};
+	for (const char *name : { "APT:SkirmishProfileCreatedNum", "APT:PlayerNameNum", "APT:TotalCareerWinsNum", "APT:TotalCareerLossesNum",
+		"APT:TotalCareerGamesNum", "APT:CurrentWinStreakNumA", "APT:BestWinStreakNumA", "APT:TotalTimePlayedNum", "APT:CurFactionNameStr", "APT:NextWinsNumber" })
+		set(name, dash);
+	set("APT:CurrentLevelFormat", format("APT:CurrentLevelFormat", { dash }));
+	if (!profile.empty())
+	{
+		set("APT:PlayerNameNum", profile);
+		std::string date = m_bfme1Honors.get("ProfileCreatedDate");
+		if (date.empty()) date = m_profiles->profileValue(0, "OpenBFMEProfileCreatedDate");
+		if (!date.empty()) windows().setAptText("APT:SkirmishProfileCreatedNum", date);
+	}
+	int movie = 0;
+	int progress = 0;
+	std::string icon = "AptRankIcon0";
+	const int faction = m_setup ? m_setup->info().slots[m_setup->localSlot()].playerTemplate : PLAYERTEMPLATE_RANDOM;
+	if (!profile.empty() && m_setup && faction >= 0 && faction < (int)m_setup->source().factions().size())
+	{
+		const SkirmishFaction &entry = m_setup->source().factions()[(std::size_t)faction];
+		if (entry.playableSide && !entry.isObserver)
+		{
+			const std::string &side = entry.side;
+			auto count = [&](const char *suffix) { return std::max(0, std::atoi(m_bfme1Honors.get(side + suffix).c_str())); };
+			const int wins = count("Wins"), losses = count("Losses");
+			set("APT:TotalCareerWinsNum", number(wins));
+			set("APT:TotalCareerLossesNum", number(losses));
+			set("APT:TotalCareerGamesNum", number((long long)wins + losses));
+			set("APT:CurrentWinStreakNumA", number(count("WinStreak")));
+			set("APT:BestWinStreakNumA", number(count("BestWinStreak")));
+			const double seconds = std::strtod(m_bfme1Honors.get(side + "TimePlayed").c_str(), nullptr);
+			const long long hours = std::isfinite(seconds) && seconds > 0 ? (long long)(std::min(seconds, 2147483647.0) / 3600) : 0;
+			set("APT:TotalTimePlayedNum", format("Apt:TimePlayed", { number(hours / 24), number(hours % 24) }));
+			bool hasCaps = false;
+			std::u16string factionName = fetchOrMissing(m_env.gameText, "APT:" + side + "Caps", &hasCaps);
+			// Mod sides may provide only their PlayerTemplate DisplayName label.
+			if (!hasCaps && !entry.displayLabel.empty()) factionName = fetchOrMissing(m_env.gameText, entry.displayLabel);
+			set("APT:CurFactionNameStr", factionName);
+			movie = faction;
+			// BFME1 1.03: Rva004D8EE0Ctor.cpp (RVA 0x004D8EE0) initializes these constants;
+			// SkirmishBattleHonors::getRank (RVA 0x0009D2F0) promotes on >=. Binary identity,
+			// constructor call path and delta/width helpers: docs/BFME1.md#skirmish-profile-rank-thresholds.
+			static const int thresholds[] = { 0, 5, 10, 30, 50, 150, 300, 500, 800, 1500 };
+			const int points = count("Points");
+			int rank = 1;
+			while (rank < 10 && points >= thresholds[rank]) ++rank;
+			const int remaining = rank == 10 ? 0 : thresholds[rank] - points;
+			set("APT:CurrentLevelFormat", format("APT:CurrentLevelNumFormat", { number(rank) }));
+			set("APT:NextWinsNumber", format(remaining == 1 ? "APT:WinsNumFormatForOnePoint" : "APT:WinsNumFormat", { number(remaining) }));
+			progress = rank == 10 ? 100 : (int)(100LL * (points - thresholds[rank - 1]) / (thresholds[rank] - thresholds[rank - 1]));
+			icon = "AptRankIcon" + side + std::to_string(rank);
+			const MappedImageCollection *images = windows().gadgetLayer() ? windows().gadgetLayer()->gadgets().images() : nullptr;
+			if (!images || !images->findImageByName(icon)) icon = "AptRankIcon" + std::to_string(rank);
+		}
+	}
+	windows().setAptImage("CreateComponents/ImageLevelIconMain", icon);
+	auto invoke = [&](const char *name, int value, int &previous) {
+		if (previous == value || level() < 0) return;
+		std::string error;
+		if (windows().invokeAS(level(), name, { std::to_string(value) }, nullptr, &error)) previous = value;
+	};
+	invoke("ShowSkirmishMovie", movie, m_bfme1ProfileMovie);
+	invoke("SetProgressBar", progress, m_bfme1ProfileProgress);
+}
+
 void AptSkirmish::applyProfileName()
 {
 	pruneDeadGadgets();
@@ -2843,6 +3442,16 @@ void AptSkirmish::applyProfileName()
 	refreshSlot(0);
 }
 
+void AptSkirmish::recordsChanged()
+{
+	if (isHidden() || m_lan || !m_env.fileSystem || !isBfme1Data(*m_env.fileSystem)) return;
+	pruneDeadGadgets();
+	if (m_mapList && m_setup)
+		populateMapList();
+	else
+		refreshBfme1ProfileDisplay();
+}
+
 void AptSkirmish::refreshProfileList()
 {
 	// lane END-1: a covered or closing screen (runShutdown: the load screen pushed over it, the shell popping it) leaves its gadgets alone; its movie still runs
@@ -2852,6 +3461,8 @@ void AptSkirmish::refreshProfileList()
 		return;
 	}
 	pruneDeadGadgets();
+	refreshBfme1ProfileCombo();
+	recordsChanged();
 	// BFME1 SkirmishScreenRefreshProfile.cpp: reset, one row per profile, the current one selected
 	if (!m_profileList)
 	{

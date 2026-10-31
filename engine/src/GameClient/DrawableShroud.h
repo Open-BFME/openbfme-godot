@@ -39,7 +39,7 @@ struct DrawableShroudLook
 	bool hidden = false;         ///< the device layer does not draw it (grace-adjusted OBJECTSHROUD_SHROUDED)
 	unsigned long long viewer = 0; ///< whose shroud the statuses are (ShroudView: the local player and the players whose vision it shares)
 
-	// `objectShroud`: the presented ObjectShroudStatus for the local player (0 OBJECTSHROUD_INVALID: no shroud displayed, no record, ALWAYS_VISIBLE)
+	// `objectShroud`: the presented ObjectShroudStatus for the local player (0 OBJECTSHROUD_INVALID: no shroud displayed; no record and ALWAYS_VISIBLE present CLEAR, RW 0x68D8F7)
 	// `viewerKey`: whose shroud it is (viewerKeyOf); another viewer (a caster's / observer's POV switch) starts without a clear frame (INFERENCE, S-4970)
 	void update(int objectShroud, bool effectivelyDead, UnsignedInt logicFrame, unsigned long long viewerKey = 0)
 	{

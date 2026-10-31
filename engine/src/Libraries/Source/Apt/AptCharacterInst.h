@@ -155,6 +155,7 @@ public:
 
 	// placement state
 	AptMatrix matrix;
+	AptMatrix viewportTransform;
 	AptColorTransform color;
 	float ratio = 0;
 	float placeRatio = 0; // lane FB7-1: the ratio of the place object that created the instance (the seek's same-placement test, BFME2 0x00AF9589)
@@ -280,7 +281,8 @@ public:
 
 	// A loaded movie replaces the content of the instance (0x00AD17F0 -> setType 0x12, set data, advance).
 	void becomeMovie(const std::shared_ptr<const AptFile> &movie);
-	// lane CAH-1: unloadMovie / getURL("", clip): the content goes (Unload fired), the instance stays as an empty, stopped clip with its name and placement
+	// lane CAH-1: unloadMovie / getURL("", clip): the content goes (Unload fired), the instance stays as an empty, stopped clip with its name and placement;
+	// lane WOTR-2: its own variables go too
 	void unloadContent();
 	bool isMovie() const { return m_type == Type::Movie; }
 

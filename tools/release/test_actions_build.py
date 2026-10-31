@@ -24,10 +24,8 @@ WORKFLOW = REPO / ".github/workflows/release-package.yml"
 
 @pytest.fixture(scope="session")
 def world_template(tmp_path_factory):
-    w = World(tmp_path_factory.mktemp("actions-world"))
-    # the public tree must carry the workflow GitHub builds with (actions_build.py stage refuses a commit without it)
-    w.change({".github/workflows/release-package.yml": WORKFLOW.read_text()}, "the release package workflow")
-    return w
+    # the World's archive carries the workflow GitHub builds with (actions_build.py stage refuses a commit without it)
+    return World(tmp_path_factory.mktemp("actions-world"))
 
 
 @pytest.fixture
@@ -71,7 +69,6 @@ def test_the_mac_package_built_on_actions_is_released(world):
     # GitHub built the exact public commit that was then published, while its tag was still on the Deck only
     (b,) = built(world)
     assert b == {"platform": "macos", "version": "v0.4.5", "head": public, "remote_tag": ""}
-    assert not world.mac_log.exists(), "the Mac build host is neither asked nor used"
     (run,) = gh_state(world)["runs"].values()
     assert run["head_sha"] == public and run["head_branch"] == "staging/v0.4.5" and run["_inputs"]["commit"] == public
     assert re.fullmatch(r"[0-9a-f]{32}", run["_inputs"]["request"])
@@ -126,7 +123,6 @@ def test_a_wrong_or_failed_github_build_fails_the_release(world, fault, why):
     assert why in r.stdout + r.stderr, r.stdout + r.stderr
     assert re.search(r"AUTORELEASE FAIL at step (mac-build|actions-dispatch) \(v0\.4\.5\)", r.stdout), r.stdout
     assert nothing_published(world), fault
-    assert not world.mac_log.exists(), "no fallback to the Mac build host"
     assert not (world.tmp / "work/v0.4.5/pkg/manifest-macos.json").exists(), "nothing was signed"
 
 
@@ -194,7 +190,10 @@ def test_the_builder_is_host_or_actions(world, var):
     sha = world.change({"engine/a.cpp": "2\n"}, "X-1")
     world.gate(sha)
     r = world.release(sha, "--since", world.first, **{var: "github"})
-    assert r.returncode == 2 and f"{var} is host or actions" in r.stderr
+    if var == "OPENBFME_RELEASE_MAC_BUILDER":   # RELGH-2: any value but actions is refused
+        assert r.returncode == 2 and f"{var} is actions" in r.stderr
+    else:
+        assert r.returncode == 2 and f"{var} is host or actions" in r.stderr
     assert nothing_published(world)
 
 
@@ -204,10 +203,18 @@ def test_skip_mac_wins_over_the_mac_builder(world):
     assert not built(world) and "dispatches" not in world.gh_log.read_text()
 
 
-def test_the_default_is_the_host(world):
+def test_the_default_is_actions_for_the_mac(world):
+    """RELGH-2: the variable unset builds macOS on the Actions stand-in; Linux and Windows stay on the build host"""
     r = released(world)
-    assert r.returncode == 0 and "build-mac v0.4.5" in world.mac_log.read_text()
-    assert not built(world) and "actions/" not in world.gh_log.read_text()
+    assert r.returncode == 0 and "AUTORELEASE OK v0.4.5" in r.stdout, r.stdout + r.stderr
+    assert [b["platform"] for b in built(world)] == ["macos"] and "actions/workflows/release-package.yml/dispatches" in world.gh_log.read_text()
+
+
+def test_the_mac_build_host_is_refused(world):
+    """RELGH-2: MAC_BUILDER=host is exit 2 with nothing pushed (no staging branch, no tag, no build)"""
+    r = released(world, OPENBFME_RELEASE_MAC_BUILDER="host")
+    assert r.returncode == 2 and "OPENBFME_RELEASE_MAC_BUILDER is actions" in r.stderr, r.stdout + r.stderr
+    assert nothing_published(world) and not built(world)
 
 
 def test_unstage_refuses_a_staging_branch_someone_moved(world, tmp_path):
@@ -241,7 +248,12 @@ def test_the_workflow_passes_the_public_policy_and_is_dispatch_or_release_call_o
     # RELSIGN-1: workflow_call too, for release.yml's builds (test_release_workflow.py: the policy allows it in this file alone)
     assert sorted(doc[True]) == ["workflow_call", "workflow_dispatch"], "no push / pull_request trigger"
     assert doc["permissions"] == {"contents": "read"}
-    assert "secrets." not in text and "actions/cache" not in text, "no secrets, no caches"
+    # CRASHACT-1: the one secret, the crash service's client key, declared for workflow_call and handed to the macOS package step alone
+    assert text.count("secrets.") == 1 and "          CRASH_CLIENT_KEY: ${{ secrets.CRASH_CLIENT_KEY }}" in text, "the crash key alone"
+    assert doc[True]["workflow_call"]["secrets"] == {"CRASH_CLIENT_KEY": {"required": False}}
+    keyed = [(j, st["name"]) for j, job in doc["jobs"].items() for st in job.get("steps", []) if "secrets." in str(st)]
+    assert keyed == [("macos", "Build the package (package_macos.py)")]
+    assert "actions/cache" not in text, "no caches"
     assert set(doc[True]["workflow_dispatch"]["inputs"]) == {"platform", "commit", "version", "request"}
 
 

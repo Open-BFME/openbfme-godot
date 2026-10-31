@@ -116,7 +116,7 @@ void Apt::buildRenderList(AptRenderList &out)
 		{
 			return;
 		}
-		const AptMatrix M = parentM.concat(inst->matrix);
+		const AptMatrix M = parentM.concat(inst->viewportTransform.concat(inst->matrix));
 		const AptColorTransform C = parentC.concat(inst->color);
 		AptRenderCommand base;
 		base.path = std::move(path);

@@ -356,11 +356,11 @@ Bytes property(std::uint32_t type, const char *name, const std::vector<std::uint
 
 TEST_CASE("BFME FX shader materials: header and every property type")
 {
-	// header: u8 number, char[32] type name, u32 reserved  (37 bytes)
+	// Header: version, shader name, technique index and three padding bytes (37 bytes).
 	Bytes header;
 	header.u8(3);
 	header.str("normalmapped.fx", 32);
-	header.u32(0);
+	header.u32(0xAABBCC05); // nonzero padding must not become part of the technique index
 	REQUIRE(header.v.size() == 37);
 
 	Bytes texValue;
@@ -394,6 +394,7 @@ TEST_CASE("BFME FX shader materials: header and every property type")
 	REQUIRE(mesh.ShaderMaterials.size() == 1);
 	const MeshShaderMaterialDef &def = mesh.ShaderMaterials[0];
 	CHECK(def.Number == 3);
+	CHECK(def.Technique == 5);
 	CHECK(def.TypeName == "normalmapped.fx");
 	REQUIRE(def.Properties.size() == 7);
 	CHECK(def.Properties[0].Name == "DiffuseTexture");

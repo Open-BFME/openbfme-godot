@@ -5,9 +5,11 @@
 //   * Player::onStructureCreated (RW 0x6AAF3B) sets the structure's + 0x36 flag for a DOZER builder, so the control bar shows the under-construction context
 //     (RW 0x71EE8A -> populateUnderConstruction RW 0x944EFB: only Command_CancelConstruction), not the command set;
 //   * the completion (RW 0x6AA72B -> finishConstruction RW 0x8569B5) enables the production again; the flag clears with GettingBuiltBehavior's completion check.
-// The tester's item 11 (construction and damaged animations missing): the structure's model states. A rising structure has the construction states and,
-// although its body starts at 1 hit point (RW 0x85895D), not REALLYDAMAGED / DAMAGED: internalChangeHealth skips the visual change while the object is
-// UNDER_CONSTRUCTION (RW 0x8C3290 -> vslot 0x94); once complete the damage states show (the models _D1 / _D2 of the INI's DAMAGED / REALLYDAMAGED).
+// The tester's item 11 (construction and damaged animations missing): the structure's model states. A rising structure has the construction states;
+// internalChangeHealth skips the visual change while the object is UNDER_CONSTRUCTION (RW 0x8C3290 -> vslot 0x94), so a plot's structure, UNDER_CONSTRUCTION
+// before its body is set to 1 hit point (RW 0x85895D), rises without REALLYDAMAGED / DAMAGED. Lane FBSIM-1: a builder's site is RotWK's phantom until the
+// Porter arrives, and the placement (RW 0x88D44F) sets the 1 hit point (RW 0x88D53A, internalChangeHealth RW 0x8C31A5) before UNDER_CONSTRUCTION, so it
+// rises REALLYDAMAGED until GettingBuiltBehavior's completion clears the damage states (RW 0x857C9E ff); once complete the damage states follow the health.
 // Needs the retail install (SKIPs loudly without it).
 
 #include "doctest.h"
@@ -211,7 +213,7 @@ TEST_CASE("play4 construction retail: a barracks a builder puts up recruits noth
 	int frames = 0;
 	bool sawPlacedRising = false;
 	bool sawConstructionStates = false, sawDamageWhileRising = false, madeWhileRising = false;
-	while (structure->isUnderConstruction() && frames < 5 * 600)
+	while ((structure->isUnderConstruction() || dozer->unplacedStructure() == id) && frames < 5 * 600) // lane FBSIM-1: a phantom until the Porter arrives
 	{
 		sawConstructionStates = sawConstructionStates || (has(*structure, "PARTIALLY_CONSTRUCTED") && has(*structure, "ACTIVELY_BEING_CONSTRUCTED"));
 		sawDamageWhileRising = sawDamageWhileRising || has(*structure, "DAMAGED") || has(*structure, "REALLYDAMAGED");
@@ -238,7 +240,7 @@ TEST_CASE("play4 construction retail: a barracks a builder puts up recruits noth
 	REQUIRE_FALSE(structure->isUnderConstruction());
 	CHECK(sawConstructionStates);
 	CHECK_FALSE(madeWhileRising); // no GondorFighterHorde at any frame while it rose
-	CHECK_FALSE(sawDamageWhileRising); // item 11: RW 0x8C3290 (it rose from 1 hit point through the REALLYDAMAGED / DAMAGED health bands)
+	CHECK(sawDamageWhileRising); // lane FBSIM-1: the placement's 1 hit point (RW 0x88D53A) comes before UNDER_CONSTRUCTION (RW 0x8C3290 then skips the rise's heals)
 	CHECK(has(*structure, "CONSTRUCTION_COMPLETE"));
 	// the completion enabled the production; GettingBuiltBehavior's completion check clears + 0x36 within its one-second sleep
 	CHECK_FALSE(pu->isFactoryDisabled());
@@ -247,6 +249,8 @@ TEST_CASE("play4 construction retail: a barracks a builder puts up recruits noth
 		logic.runLogicFrame();
 	}
 	CHECK_FALSE(gb->forceComplete());
+	CHECK_FALSE(has(*structure, "REALLYDAMAGED")); // GettingBuiltBehavior's completion check cleared it
+	CHECK_FALSE(has(*structure, "DAMAGED"));
 	CHECK_FALSE(ControlBar::isUnderConstructionContext(*structure));
 	CHECK(BuildAssistant::canMakeUnit(*structure, soldiers, -1) == CANMAKE_OK);
 	CHECK(countOf(logic, player, *soldiers) == 0); // the order given while it rose left nothing queued

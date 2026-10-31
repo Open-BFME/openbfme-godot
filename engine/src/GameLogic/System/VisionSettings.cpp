@@ -130,7 +130,7 @@ public:
 	Load(ArchiveFileSystem *fs, const char *block, FieldParse *fields, bool State::*flag)
 	{
 		m_env.fileSystem = fs;
-		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { block }, StubExtent::Lenient);
+		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { block }, StubExtent::LenientAfterEnd);
 		m_env.blocks.registerBlock(block, [this, fields, flag](INI *ini) {
 			m_state->*flag = true;
 			ini->getNextTokenOrNull();

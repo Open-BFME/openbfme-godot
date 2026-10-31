@@ -456,6 +456,7 @@ bool MeshModelClass::read_shader_materials(ChunkLoadClass &cload, std::string *e
 					return false;
 				}
 				def.Number = h.Number;
+				def.Technique = static_cast<uint8>(h.Reserved & 0xffu);
 				def.TypeName = fixedName(h.TypeName, sizeof(h.TypeName));
 				haveHeader = true;
 				break;

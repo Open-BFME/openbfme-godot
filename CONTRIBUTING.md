@@ -67,7 +67,8 @@ Every pull request runs `.github/workflows/pr.yml` on GitHub's own runners, with
   no secrets, actions pinned by commit, GitHub's runners only);
 - actionlint and zizmor on the workflows;
 - a Linux build of the engine and its unit tests without game files;
-- a Windows build (the release's llvm-mingw cross build) and a macOS arm64 build of the game library, compile only;
+- a Windows build (the release's llvm-mingw cross build), compile only;
+- a macOS arm64 build of the game library and unit test executable, followed by the console filter regression tests;
 - the Python tests that need no game files.
 
 A maintainer then reviews the change. We may ask for changes, or for a test that shows the behaviour against the original game.

@@ -175,7 +175,7 @@ TEST_CASE("STOPS-B1 S-685 retail: slow-death sounds retain their dying object ow
 	rig.game->refreshClient(0.0, 1.0);
 	audio.manager->setListenerPosition(*soldier->getPosition(), Coord3D{ 0.0f, 1.0f, 0.0f });
 	audio.manager->takeEventLog();
-	soldier->kill(0);
+	soldier->kill(DAMAGE_UNRESISTABLE, 0);
 	fx.flushPending();
 	int deathSounds = 0;
 	for (const auto &entry : audio.manager->takeEventLog())

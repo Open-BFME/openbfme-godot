@@ -8,11 +8,12 @@ nightly (the morning's or the evening's, whichever was published last) and how t
 handle (owner, 15:30Z: "Thanks to @handle: ..."). docs/RELEASE.md, "Nightly builds".
 
     python3 tools/release/nightly_notes.py [--git-dir DIR] <command>
-      context --from A --to B --repo OWNER/NAME [--gh gh] --out CTX      the changes of A..B (first-parent), deterministic: their
+      context --from A --to B --repo OWNER/NAME [--gh gh] [--credits F] --out CTX   the changes of A..B (first-parent), deterministic: their
                   Release-note / Test lines, whether they touch what a player runs, the subjects of the branch each merge brought in, and
                   the community pull requests they carry (a `(cherry picked from commit X)` line whose X GitHub links to a pull request of
                   OWNER/NAME: its number, title and author's login, read from GitHub; a lookup that fails other than "no such commit" is an
-                  error, never a silent "no credit")
+                  error, never a silent "no credit"), and which pull requests each Release-note line came from (note_credits: the line's
+                  own "(#12)" ending, or the merge's row in F, tools/release/nightly_credits.json)
       draft --context CTX --out DRAFT                                    the plain-language text and the test steps of the changes, written
                   by the operator's model command ($OPENBFME_NIGHTLY_LLM, e.g. "claude -p --model sonnet": the prompt on stdin, JSON out),
                   then checked (check_draft); a draft that fails the checks is sent back once with the problems, then the run fails
@@ -50,6 +51,7 @@ MAX_STEPS = 6
 MAX_INNER = 60
 TEST_LINE = re.compile(r"^Test:\s*(.*)$", re.I)
 CHERRY = re.compile(r"^\(cherry picked from commit ([0-9a-f]{40})\)$", re.M)
+SUBJECT_REF = re.compile(r"(?<![\w&])#(\d+)\b")
 LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}")
 # a model text must read as plain words: no markup a page would render, no mention, issue reference or link (credits are added here)
 NOT_PLAIN = re.compile(r"[`*_\[\]<>|~@#\\]|://|www\.")
@@ -84,48 +86,103 @@ class GitHub:
         self.gh, self.repo, self.cache = gh, repo, {}
         self.attempts, self.backoff = max(1, attempts), backoff
 
-    def pulls_of(self, sha: str) -> list[dict]:
-        """the pull requests of the repository GitHub links to commit sha; [] when GitHub does not know the commit (an internal cherry-pick)"""
-        if sha in self.cache:
-            return self.cache[sha]
+    def _api(self, path: str, kind: type, what: str):
+        """GitHub's JSON answer of `gh api path` (a `kind`), None for "no such thing" (HTTP 404 / 422)"""
+        shape = "array" if kind is list else "object"
         # a nightly reads one commit per call (hundreds after a batch); GitHub sometimes answers with an empty body ("unexpected end of
         # JSON input", nightly 2026-10-22): try again, and fail closed only when every attempt fails
         for attempt in range(self.attempts):
-            r = subprocess.run([self.gh, "api", f"repos/{self.repo}/commits/{sha}/pulls"], capture_output=True, text=True)
+            r = subprocess.run([self.gh, "api", path], capture_output=True, text=True)
             if not r.returncode:
                 try:
-                    pulls = json.loads(r.stdout)
+                    data = json.loads(r.stdout)
                 except json.JSONDecodeError:
-                    error = "invalid JSON (expected a JSON array)"
+                    error = f"invalid JSON (expected a JSON {shape})"
                 else:
-                    if isinstance(pulls, list):
-                        break
-                    error = "expected a JSON array"
+                    if isinstance(data, kind):
+                        return data
+                    error = f"expected a JSON {shape}"
             elif re.search(r"HTTP (404|422)", r.stderr):
-                self.cache[sha] = []
-                return []
+                return None
             else:
                 error = r.stderr.strip()[:200]
             if attempt + 1 < self.attempts:
                 time.sleep(self.backoff * (attempt + 1))
-        else:
-            raise SystemExit(f"nightly_notes: cannot read the pull requests of commit {sha[:10]} from GitHub (fail closed): "
-                             f"{error}")
-        out = []
-        for p in pulls:
-            login = str((p.get("user") or {}).get("login", ""))
-            base = (p.get("base") or {}).get("repo") or {}
-            if base.get("full_name") != self.repo or not LOGIN.fullmatch(login) or not isinstance(p.get("number"), int):
-                continue
-            out.append({"pr": p["number"], "login": login, "title": str(p.get("title", ""))[:200]})
+        raise SystemExit(f"nightly_notes: cannot read {what} from GitHub (fail closed): {error}")
+
+    def _record(self, p: dict) -> dict | None:
+        login = str((p.get("user") or {}).get("login", ""))
+        base = (p.get("base") or {}).get("repo") or {}
+        if base.get("full_name") != self.repo or not LOGIN.fullmatch(login) or not isinstance(p.get("number"), int):
+            return None
+        return {"pr": p["number"], "login": login, "title": str(p.get("title", ""))[:200]}
+
+    def pulls_of(self, sha: str) -> list[dict]:
+        """the pull requests of the repository GitHub links to commit sha; [] when GitHub does not know the commit (an internal cherry-pick)"""
+        if sha in self.cache:
+            return self.cache[sha]
+        pulls = self._api(f"repos/{self.repo}/commits/{sha}/pulls", list, f"the pull requests of commit {sha[:10]}")
+        out = [q for q in (self._record(p) for p in pulls or []) if q]
         self.cache[sha] = out
         return out
 
+    def pull(self, n: int) -> dict:
+        """RELNOTES-1: pull request #n of the repository (a merge subject, a Release-note line or nightly_credits.json names it); a number
+        that is no pull request of the repository is an error, never a silent no credit"""
+        if n in self.cache:
+            return self.cache[n]
+        q = self._record(self._api(f"repos/{self.repo}/pulls/{n}", dict, f"pull request #{n}") or {})
+        if q is None:
+            raise SystemExit(f"nightly_notes: #{n} is not a pull request of {self.repo} (fail closed)")
+        self.cache[n] = q
+        return q
 
-def build_context(git_dir: str | None, a: str, b: str, github: GitHub) -> dict:
+
+def load_credits(path: Path | None) -> dict[str, list[list[int]]]:
+    """nightly_credits.json's merges: merge commit (40 hex) -> one list of pull request numbers per Release-note line, in order"""
+    if path is None:
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    merges = data.get("merges") if isinstance(data, dict) else None
+    if not isinstance(merges, dict):
+        raise SystemExit(f"nightly_notes: {path.name} has no \"merges\" object")
+    for sha, lines in merges.items():
+        if not re.fullmatch(r"[0-9a-f]{40}", sha) or not isinstance(lines, list) or not all(
+                isinstance(ln, list) and all(isinstance(n, int) and not isinstance(n, bool) and n > 0 for n in ln) for ln in lines):
+            raise SystemExit(f"nightly_notes: {path.name}: {sha[:12]!r} is not a full commit id with a list of pull request number lists")
+    return merges
+
+
+def note_credits(c: dict, refs: list[list[int]], hidden: bool, prs: dict[int, dict], credits: dict) -> list[list[int]]:
+    """RELNOTES-1 (owner + Discord 10-30: a batch's one community pull request was credited on every line of the batch): the pull requests
+    each Release-note line came from. A line's own `(#12)` / `(#12, #13)` ending, or the merge's row in nightly_credits.json (for merges
+    already in the history; it wins), names them; a line naming none is our own work. A merge of one Release-note line credits that line
+    with every pull request the merge carries. A pull request the merge carries (its subject's #12, or a cherry-picked commit of it) that
+    no line names is an error: one author is never spread over other notes, and no contributor is silently left out."""
+    lines = credits.get(c["sha"])
+    if lines is not None:
+        if len(lines) != len(refs):
+            raise SystemExit(f"nightly_notes: nightly_credits.json lists {len(lines)} lines for {c['sha'][:10]}, whose merge has {len(refs)} "
+                             "Release-note lines")
+        refs = [list(ln) for ln in lines]
+    elif len(refs) == 1 and not refs[0]:
+        refs = [sorted(prs)]
+    if hidden or not refs:
+        return [[] for _ in refs]
+    missing = sorted(set(prs) - {n for ln in refs for n in ln})
+    if missing:
+        raise SystemExit(f"nightly_notes: {c['sha'][:10]} ({c['subject'][:80]}) carries {', '.join(f'#{n}' for n in missing)} but none of its "
+                         "Release-note lines names it: end the line with (#N), or add the merge to tools/release/nightly_credits.json "
+                         "(fail closed: docs/RELEASE.md, \"Nightly builds\")")
+    return refs
+
+
+def build_context(git_dir: str | None, a: str, b: str, github: GitHub, credits: dict | None = None) -> dict:
     changes = []
     for c in ar.first_parent_commits(git_dir, a, b):
-        notes = ar.release_note_texts(c["body"])
+        split = [ar.note_refs(t) for t in ar.release_note_texts(c["body"])]
+        notes = [t for t, _ in split]
+        hidden = any(not t or t.lower() == "none" for t in notes)
         inner = inner_commits(git_dir, c["sha"])
         prs: dict[int, dict] = {}
         for e in [c] + inner:
@@ -134,16 +191,23 @@ def build_context(git_dir: str | None, a: str, b: str, github: GitHub) -> dict:
                     q = prs.setdefault(p["pr"], dict(p, subjects=[]))
                     if e is not c and e["subject"] not in q["subjects"]:
                         q["subjects"].append(e["subject"])
+        # a port's commits are new commits GitHub links to no pull request (MERGEQ-33, 10-30): the numbers the merge's subject names count too
+        for n in sorted({int(x) for x in SUBJECT_REF.findall(c["subject"])}):
+            prs.setdefault(n, dict(github.pull(n), subjects=[]))
+        lines = note_credits(c, [r for _, r in split], hidden, prs, credits or {})
+        for n in sorted({n for ln in lines for n in ln} - set(prs)):
+            prs[n] = dict(github.pull(n), subjects=[])
         changes.append({
             "sha": c["sha"],
             "subject": c["subject"],
             "notes": notes,
-            "hidden": any(not t or t.lower() == "none" for t in notes),
+            "hidden": hidden,
             "tests": test_lines(c["body"]),
             "player": any(f.startswith(ar.PLAYER_PATHS) and not f.startswith(ar.TEST_PATHS) for f in c["files"]),
             "files": c["files"][:40],
             "inner": [e["subject"] for e in inner],
             "community": [prs[n] for n in sorted(prs)],
+            "note_credits": [[{k: prs[n][k] for k in ("pr", "login", "title")} for n in sorted(set(ln))] for ln in lines],
         })
     return {"from": a, "to": b, "changes": changes}
 
@@ -159,6 +223,11 @@ def needs(ch: dict) -> str:
     return "judge"
 
 
+def union(lists: list[list[dict]]) -> list[dict]:
+    by = {p["pr"]: p for ln in lists for p in ln}
+    return [by[n] for n in sorted(by)]
+
+
 def units(ctx: dict) -> list[dict]:
     """what the notes describe, in the merges' order: a change, or (owner 15:30Z: community pull requests credited one by one) each
     community pull request of a change that has no Release-note lines; id, need (needs(); 'all': text and steps, always shown), credits"""
@@ -167,7 +236,7 @@ def units(ctx: dict) -> list[dict]:
         if ch["community"] and not ch["notes"] and not ch["hidden"]:
             out += [{"id": f"{ch['sha']}:pr{p['pr']}", "change": ch, "need": "all", "credits": [p], "pr": p} for p in ch["community"]]
         else:
-            out.append({"id": ch["sha"], "change": ch, "need": needs(ch), "credits": ch["community"], "pr": None})
+            out.append({"id": ch["sha"], "change": ch, "need": needs(ch), "credits": union(ch["note_credits"]), "pr": None})
     return out
 
 
@@ -298,7 +367,8 @@ def make_draft(ctx: dict, command: str, tries: int = 2) -> dict:
 
 # ---- render ---------------------------------------------------------------------------------------------------------------------------
 def entries(ctx: dict, draft: dict) -> list[dict]:
-    """the notes' changes in page order (community ones first, then the order of the merges): kind, area, text lines, test steps, credits"""
+    """the notes' changes in page order (community ones first, then the order of the merges): kind, area, text lines, test steps, credits
+    (item_credits: each line's own; credits: all of them, for the change's "What to test" entry)"""
     problems = check_draft(ctx, draft)
     if problems:
         raise SystemExit("nightly_notes: the draft does not fit this context:\n" + "\n".join(f"  {x}" for x in problems[:20]))
@@ -311,13 +381,15 @@ def entries(ctx: dict, draft: dict) -> list[dict]:
         e = got.get(u["id"], {})
         if ch["notes"]:
             items = [ar.parse_note(t) for t in ch["notes"]]
+            item_credits = ch["note_credits"]
         elif u["need"] == "all" or e.get("visible"):
             items = [(e["kind"], e.get("area", ""), e["text"].strip())]
+            item_credits = [u["credits"]]
         else:
             continue
         steps = ch["tests"] or [s.strip() for s in e.get("test", [])]
         out.append({"items": [(k, a, ar.neutral(t)) for k, a, t in items], "test": [ar.neutral(s) for s in steps],
-                    "credits": u["credits"]})
+                    "credits": union(item_credits), "item_credits": item_credits})
     return [x for x in out if x["credits"]] + [x for x in out if not x["credits"]]
 
 
@@ -329,7 +401,8 @@ def credit_text(credits: list[dict]) -> str:
         if not LOGIN.fullmatch(p["login"]) or not isinstance(p["pr"], int):
             raise SystemExit("nightly_notes: a credit is not a GitHub login and pull request number")
         by.setdefault(p["login"], []).append(p["pr"])
-    return "Thanks to " + ", ".join(f"@{who} ({', '.join(f'#{n}' for n in sorted(set(prs)))})" for who, prs in by.items())
+    names = [f"@{who} ({', '.join(f'#{n}' for n in sorted(set(prs)))})" for who, prs in by.items()]
+    return "Thanks to " + (", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else names[0])
 
 
 def render(ctx: dict, draft: dict, version: str, known_issues: list, repo: str, commit: str, date: str, legacy_launchers: bool,
@@ -345,17 +418,19 @@ def render(ctx: dict, draft: dict, version: str, known_issues: list, repo: str, 
            "Install or update it with the OpenBFME Launcher on the Nightly channel. It uses your installed The Rise of the Witch-king 2.01 "
            "and The Battle for Middle-earth II 1.06, or downloads them for you.", ""]
     out += ar.download_section(version, repo, legacy_launchers, mac, mac_manifest)
-    # the community's changes first, each in the notes' own plain words (the pull requests' titles are their authors' working titles)
+    # the community's changes first, each in the notes' own plain words (the pull requests' titles are their authors' working titles),
+    # each line credited to its own pull requests only (RELNOTES-1)
     community = [p for e in es for p in e["credits"]]
     if community:
-        out += ["## Thanks to our community", ""] + [f"- {credit_text(e['credits'])}: {ar.markdown(e['items'][0][2])}" for e in es if e["credits"]] + [""]
+        out += ["## Thanks to our community", ""] + [f"- {credit_text(c)}: {ar.markdown(t)}" for e in es
+                                                       for (_, _, t), c in zip(e["items"], e["item_credits"]) if c] + [""]
     titles = ar.TITLES[ar.DEFAULT_TITLES]
     for kind in KINDS:
         rows = []
         for e in es:
-            for k, a, t in e["items"]:
+            for (k, a, t), c in zip(e["items"], e["item_credits"]):
                 if k == kind:
-                    rows.append(f"- {ar.markdown(t)}" + (f" {credit_text(e['credits'])}." if e["credits"] else ""))
+                    rows.append(f"- {ar.markdown(t)}" + (f" {credit_text(c)}." if c else ""))
         if rows:
             out += [f"## {md(titles[kind])}", ""] + rows + [""]
     if not es:
@@ -414,6 +489,7 @@ def main(argv: list[str]) -> int:
     c.add_argument("--to", dest="b", required=True)
     c.add_argument("--repo", required=True)
     c.add_argument("--gh", default=os.environ.get("GH", "gh"))
+    c.add_argument("--credits", type=Path, default=HERE / "nightly_credits.json")
     c.add_argument("--out", type=Path, required=True)
     d = sub.add_parser("draft")
     d.add_argument("--context", type=Path, required=True)
@@ -440,7 +516,7 @@ def main(argv: list[str]) -> int:
     p.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     if a.cmd == "context":
-        ctx = build_context(a.git_dir, a.a, a.b, GitHub(a.gh, a.repo))
+        ctx = build_context(a.git_dir, a.a, a.b, GitHub(a.gh, a.repo), load_credits(a.credits))
         a.out.write_text(json.dumps(ctx, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
         n = sum(1 for u in units(ctx) if u["need"] != "none")
         print(f"NIGHTLY context: {len(ctx['changes'])} changes, {n} for the model, "

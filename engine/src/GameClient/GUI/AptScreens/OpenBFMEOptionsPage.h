@@ -196,6 +196,7 @@ public:
 	int hoveredRow() const { return m_hoverRow; }
 	// the help line drawn now
 	UnicodeString helpText() const;
+	int helpTop() const { return m_helpTop; }
 
 private:
 	struct Built
@@ -233,6 +234,7 @@ private:
 	bool m_shown = false;
 	bool m_syncing = false; // set while the page itself moves a gadget (no events)
 	int m_hoverRow = -1;
+	int m_helpTop = kHelpTop;
 	int m_hoverTab = -1;
 	int m_pressTab = -1;
 	int m_hoverButton = -1; // lane CHEAT-1: the Button row under the pointer / pressed

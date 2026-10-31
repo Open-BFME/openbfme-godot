@@ -78,6 +78,19 @@ bool LockstepDriver::acquire(UnsignedInt frame, FrameBatch &out)
 	{
 		m_network->update(m_protocolFrame, m_local); // what arrived since the pump (no new local message: m_local holds only the protocol's own)
 		m_notedLocal = std::min(m_notedLocal, m_local.messages().size());
+		// lane MPDROP-2: the network asks the local player to leave (the others dropped it, its own link failed, the disconnect screen's Quit): no
+		// further frame runs, not even one whose commands are all in (ZH Network::quitGame, Network.cpp:928: POSTGAME and MSG_CLEAR_GAME_DATA end the
+		// game at that update). A peer that hung and runs again learns of its drop in the update that brings in the others' commands for the frames
+		// they ran without it, the drop's frame included: running them here would be a game of its own. Not a stall (the game is over)
+		if (m_network->quitRequested())
+		{
+			m_waitStart = 0;
+			m_stallReported = false;
+			m_waitingSlots.clear();
+			m_gated = false;
+			m_paused = false;
+			return false;
+		}
 		// lane ONLINE-3: a pause holds the frame on every peer alike; it is not a network stall (no stall sample, no long-stall report)
 		m_paused = m_network->pausedBefore(frame);
 		if (m_paused)

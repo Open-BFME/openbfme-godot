@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -109,7 +110,15 @@ void writeAll(int fd, const std::string &text, int stopFd = -1, long long localD
 				return; // an error, or the deadline: the rest is dropped
 			if (stopFd >= 0 && !stopped && (fds[1].revents & (POLLIN | POLLHUP)) != 0)
 				stopped = true; // from now on bounded by the deadline (uninstall sets it before the stop)
-			if ((fds[0].revents & (POLLOUT | POLLERR | POLLHUP)) == 0)
+			if ((fds[0].revents & POLLNVAL) != 0)
+			{
+				struct stat sink = {}, nullSink = {};
+				if (::fstat(fd, &sink) != 0 ||
+					(!S_ISREG(sink.st_mode) &&
+						!(S_ISCHR(sink.st_mode) && ::stat("/dev/null", &nullSink) == 0 && sink.st_rdev == nullSink.st_rdev)))
+					return;
+			}
+			else if ((fds[0].revents & (POLLOUT | POLLERR | POLLHUP)) == 0)
 				continue;
 		}
 		const size_t piece = stopFd >= 0 || localDeadline != 0 ? std::min<size_t>(text.size() - done, PIPE_BUF) : text.size() - done;

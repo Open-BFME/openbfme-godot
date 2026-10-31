@@ -8,8 +8,11 @@
 #include "AptRetail.h"
 
 #include "GameClient/GUI/AptGadgetLayer.h"
+#include "GameClient/GUI/AptMessageBox.h"
 #include "GameClient/GUI/AptScreens/AptScreenFactories.h"
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
+#include "GameClient/GUI/AptScreens/AptStrategicHUD.h"
+#include "GameClient/GUI/Skirmish/LivingWorldShellInfo.h"
 #include "GameClient/GUI/Gadgets.h"
 #include "GameClient/GUI/Shell/Shell.h"
 #include "GameClient/GUI/ShellEnvironment.h"
@@ -21,11 +24,15 @@
 #include "GameClient/GUI/Skirmish/SkirmishGameSetup.h"
 #include "GameClient/GUI/WindowManager.h"
 #include "GameClient/GUI/MenuNavigator.h"
+#include "GameClient/GameRecords.h"
 
 #include "Libraries/Source/Apt/AptActionDecoder.h"
+#include "Libraries/Source/Apt/AptCharacterInst.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -976,17 +983,26 @@ TEST_CASE("retail lobby API: StartGame with more players than the map holds is r
 		}
 	}
 	REQUIRE(map);
-	for (int slot = 1; slot < LEGACY_MAX_SLOTS; ++slot)
+	REQUIRE(map->numPlayers == 2);
+	for (int slot = 1; slot < 3; ++slot)
 	{
 		GadgetComboBoxSetSelectedPos(fx.screen->slotGadget(slot, "Player"), 2, false); // every slot an easy AI
 	}
-	CHECK(fx.screen->setup()->info().numPlayers() == 8);
+	CHECK(fx.screen->setup()->info().numPlayers() == 3);
 	fx.wm->invokeCallback("AptSkirmish::StartGame", "");
 	fx.tick(2); // the screen update validates and posts (RotWK state 10)
 	CHECK(fx.sink.messages.empty());
 	REQUIRE(fx.sink.refusals.size() == 1);
 	CHECK(fx.sink.refusals[0].first.empty()); // lane GAMEMODES-1: MessageBoxOk(L"", text), RW 0x928482
 	CHECK(fx.sink.refusals[0].second == asciiToU16("Too many players: the map has " + std::to_string(map->numPlayers)));
+	REQUIRE(fx.screen->ruleBox());
+	CHECK(fx.screen->ruleBox()->type() == AptMessageBox::TYPE_OK);
+	CHECK(fx.screen->ruleBox()->title().empty());
+	CHECK(fx.screen->ruleBox()->text() == fx.sink.refusals[0].second);
+	fx.screen->ruleBox()->hide(true); // the API harness also runs the movie button's hide action
+	fx.wm->invokeCallback("_level" + std::to_string(fx.screen->ruleBox()->level()) + ".MessageBox_OnButtonOk", "");
+	fx.tick(30);
+	CHECK(fx.screen->ruleBox()->type() == AptMessageBox::TYPE_NONE);
 	// slots over the map's size are closed again: the lobby starts
 	for (int slot = (int)map->numPlayers; slot < LEGACY_MAX_SLOTS; ++slot)
 	{
@@ -1089,7 +1105,8 @@ TEST_CASE("retail lobby: a screen with no setup source or sink reports it and re
 	// every AptSkirmish and lobby name the screen owns is registered (commands, providers, screen references, the picture component)
 	for (const std::string &name : AptSkirmish::retailNames())
 	{
-		const bool known = name == "AptSkirmish::InitGadgets" ? fx.wm->hasScreenRef(name) : fx.wm->hasCommand(name);
+		// lane WOTR-1: SuppressStrategicPromo is a provider (RW 0x92B0C7 / 0x9296A3)
+		const bool known = name == "AptSkirmish::InitGadgets" ? fx.wm->hasScreenRef(name) : name == "AptSkirmish::SuppressStrategicPromo" ? fx.wm->hasProvider(name) : fx.wm->hasCommand(name);
 		CHECK_MESSAGE(known, name);
 	}
 	for (const char *name : { "MpGameSetup::HostMode", "MpGameSetup::IsInitialized", "AptMpGameRules::ShowChat", "AptMpGameRules::ShowClans", "MpGameRules::NumCheckBoxes",
@@ -1154,9 +1171,9 @@ TEST_CASE("stops S-178 / S-179: the lobby reports its inferences, the profile ga
 	CHECK(value == "3");
 	REQUIRE(fx.wm->getExtern("AptMpGameRules::ShowClans", value) == AptExternResult::Value);
 	CHECK(value == "0");
-	// SuppressStrategicPromo is remembered nowhere ([S-179])
-	fx.wm->invokeCallback("AptSkirmish::SuppressStrategicPromo", "");
-	CHECK(detail("unported-command").size() > 0);
+	// SuppressStrategicPromo is a provider remembered for the screen only ([S-179]; lane WOTR-1: RW 0x9296A3 answers "1" / "0")
+	REQUIRE(fx.wm->getExtern("AptSkirmish::SuppressStrategicPromo", value) == AptExternResult::Value);
+	CHECK(value == "0");
 	// the manager sets `_global.InGame` (nothing in the movies writes it)
 	AptValue v;
 	REQUIRE(fx.wm->apt().vm().global()->getMember("InGame", v));
@@ -1541,6 +1558,15 @@ TEST_CASE("retail lobby input: StartGame with more players than the map holds is
 	REQUIRE(fx.sink.refusals.size() == 1);
 	CHECK(fx.sink.refusals[0].first.empty()); // lane GAMEMODES-1: MessageBoxOk(L"", text), RW 0x928482
 	CHECK(fx.sink.refusals[0].second == asciiToU16("Too many players: the map has " + std::to_string(map->numPlayers)));
+	REQUIRE(fx.screen->ruleBox());
+	CHECK(fx.screen->ruleBox()->type() == AptMessageBox::TYPE_OK);
+	CHECK(fx.screen->ruleBox()->title().empty());
+	CHECK(fx.screen->ruleBox()->text() == fx.sink.refusals[0].second);
+	AptButtonInst *ok = firstButtonIn(fx.wm->apt().resolvePath(fx.wm->apt().level(fx.screen->ruleBox()->level()), "MessageBox.ButtonsOk.MessageBoxOk"));
+	REQUIRE(ok);
+	clickButton(fx, *ok);
+	fx.tick(30);
+	CHECK(fx.screen->ruleBox()->type() == AptMessageBox::TYPE_NONE);
 	for (int slot = (int)map->numPlayers; slot < LEGACY_MAX_SLOTS; ++slot)
 	{
 		chooseComboRow(fx, fx.screen->slotGadget(slot, "Player"), 1); // closed
@@ -2276,6 +2302,872 @@ TEST_CASE("ownerfix3 retail lobby: a won skirmish against a Hard AI marks its ma
 	CHECK(score.honorsRecorded);
 }
 
+TEST_CASE("retail strategic setup (WOTR-1): War of the Ring's Skirmish.apt shows the new-features page, Continue shows the setup, the scenario combo lists the scenarios and StartGame posts the chosen one")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	LobbyFx fx(mount, false);
+	LivingWorldShellInfo info;
+	info.strategicRequested = true; // RW 0xDB6BF0, set by the main menu's War of the Ring
+	LivingWorldScenarioEntry a;
+	a.name = "WOTRScenario044";
+	a.displayLabel = "LWScenario:WOTRScenario044";
+	a.minPlayers = 6;
+	LivingWorldScenarioEntry b;
+	b.name = "WOTRScenario001";
+	b.displayLabel = "LWScenario:WOTRScenario001";
+	b.descriptionLabel = "LWScenario:WOTRScenario001Description";
+	b.minPlayers = 2;
+	// lane WOTR-2: the scenario's region campaign for the map preview (three regions, Rohan not a start; Rivendell and Eregion one territory)
+	b.regionCampaign = "DefaultCampaign";
+	b.disallowStartInRegions = { "Rohan" };
+	b.victoryTypes = { { "LWScenario:WOTRGameType001", "LWScenario:WOTRObjectives001" } };
+	info.scenarios = { a, b };
+	LivingWorldSetupCampaign rc;
+	rc.name = "DefaultCampaign";
+	LivingWorldSetupRegion riv;
+	riv.name = "Rivendell";
+	riv.displayLabel = "LWRegion:Rivendell";
+	riv.bonus.attack = 10;
+	riv.bonus.resource = 25;
+	riv.createAutoFort = true;
+	riv.buildPlots = 3;
+	LivingWorldSetupRegion mor;
+	mor.name = "Mordor";
+	mor.displayLabel = "LWRegion:Mordor";
+	mor.buildPlots = 1;
+	LivingWorldSetupRegion roh;
+	roh.name = "Rohan";
+	roh.displayLabel = "LWRegion:Rohan";
+	// nine regions first: the picked ones have indices past any skirmish map's spot count (a strategic start position is a region index, which the
+	// skirmish spot update RW 0x7052BE must not clear: RW 0x977542 runs it only in mode 0)
+	for (int i = 0; i < 9; ++i)
+	{
+		LivingWorldSetupRegion filler;
+		filler.name = "Filler" + std::to_string(i);
+		rc.regions.push_back(filler);
+	}
+	rc.regions.push_back(riv); // 9
+	rc.regions.push_back(mor); // 10
+	rc.regions.push_back(roh); // 11
+	LivingWorldSetupTerritory eriador;
+	eriador.displayLabel = "LWTerritory:Eriador";
+	eriador.regions = { "Eregion", "Rivendell" };
+	eriador.bonus.defense = 5;
+	rc.territories = { eriador };
+	info.regionCampaigns = { rc };
+	fx.text.set("LWRegion:Rivendell", "Rivendell");
+	fx.text.set("LWRegion:Mordor", "Mordor");
+	fx.text.set("LWTerritory:Eriador", "Eriador");
+	fx.text.set("LW:TerritoryBonusHeader", "Bonuses: ");
+	fx.text.set("LW:ListSeparator", ", ");
+	fx.text.set("LW:RegionAttackBonus", "Attack +%d%%");
+	fx.text.set("LW:RegionDefenseBonus", "Defense +%d%%");
+	fx.text.set("LW:RegionBonusResource", "Resources +%d%%");
+	fx.text.set("LW:NoBonus", "None");
+	fx.text.set("LW:FortressMap", "\nFortress Map");
+	fx.text.set("LW:NumberOfBuildPlotsSingle", "\n%d Build Plot");
+	fx.text.set("LW:NumberOfBuildPlotsPlural", "\n%d Build Plots");
+	fx.text.set("LW:TerritoryPartOfRegion", "\n\nTerritory of Region: %ls");
+	fx.text.set("LW:UnifiedRegionBonus", "\nUnified Region Bonus: %ls");
+	fx.text.set("LWScenario:WOTRScenario001Description", "Freeform");
+	fx.text.set("RULE:VictoryType", "Victory Type");
+	fx.text.set("LWScenario:WOTRGameType001", "Capital Assault");
+	fx.text.set("LWScenario:WOTRObjectives001", "Take every capital");
+	fx.environment.livingWorld = &info;
+	fx.shell->push("Skirmish.apt");
+	fx.screen = dynamic_cast<AptSkirmish *>(fx.shell->top());
+	REQUIRE(fx.screen);
+	fx.tick(60);
+	CHECK(fx.screen->strategicMode());
+	std::string type;
+	REQUIRE(fx.wm->getExtern("AptMapPreview::GameMapType", type) == AptExternResult::Value);
+	CHECK(type == "Strategic");
+	// SuppressStrategicPromo is a provider the page reads (RW 0x9296A3)
+	std::string promo;
+	REQUIRE(fx.wm->getExtern("AptSkirmish::SuppressStrategicPromo", promo) == AptExternResult::Value);
+	CHECK(promo == "0");
+	// the profile first (the popup is modal), then Continue on the new-features page
+	fx.wm->invokeCallback("AptSkirmish::OnNewProfileMenu", "");
+	REQUIRE(fx.screen->profileEntryWindow());
+	GadgetTextEntrySetText(fx.screen->profileEntryWindow(), u"Gimli");
+	fx.wm->invokeCallback("AptSkirmish::OnAddProfileAccept", "");
+	REQUIRE(fx.wm->invokeASAt(1, "ProfilePopup", "ClosePop", {}));
+	fx.tick(30);
+	AptButtonInst *cont = firstButtonIn(fx.wm->apt().resolvePath(fx.wm->apt().level(1), "lobby.Continue"));
+	REQUIRE_MESSAGE(cont, "_root.lobby.Continue");
+	clickButton(fx, *cont);
+	fx.tick(120);
+	// RW 0x9777AB / 0x976B49: StrategicScenarioType holds the scenarios' DisplayName text, the first selected
+	GameWindow *combo = fx.screen->scenarioCombo();
+	REQUIRE(combo);
+	CHECK(GadgetComboBoxGetLength(combo) == 2);
+	CHECK(fx.screen->selectedScenario() == "WOTRScenario044");
+	GadgetComboBoxSetSelectedPos(combo, 1, false);
+	CHECK(fx.screen->selectedScenario() == "WOTRScenario001");
+	// lane WOTR-2: the scenario description (RW 0x97606B: "%s\n\n%s: %s\n%s" with the campaign's victory type 0)
+	REQUIRE(fx.screen->scenarioDescriptionWindow());
+	CHECK(GadgetListBoxGetText(fx.screen->scenarioDescriptionWindow(), 0) == u"Freeform\n\nVictory Type: Capital Assault\nTake every capital");
+	// the map preview's gadget (AptMapPreview::MapGadgetInit "LivingWorld", + 0x68) is placed by the retail movie
+	for (const std::string &e : fx.layer->errors())
+	{
+		CHECK_MESSAGE(e.find("LivingWorld") == std::string::npos, e); // the LivingWorldMap component is a bare window (no skin file to read)
+	}
+	CHECK(fx.screen->livingWorldWindow() != nullptr);
+	REQUIRE(fx.screen->strategicCampaign());
+	// StartGame before any pick: retail's check refuses a slot without a start region (GUI:NeedStartSpots, RW 0x8435F9)
+	AptButtonInst *start = firstButtonIn(fx.wm->apt().resolvePath(fx.wm->apt().level(1), "lobby.StartGame"));
+	REQUIRE(start);
+	clickButton(fx, *start);
+	fx.tick(30);
+	CHECK(fx.sink.messages.empty());
+	REQUIRE(fx.sink.refusals.size() == 1);
+	CHECK(fx.sink.refusals[0].second == u"MISSING: 'GUI:NeedStartSpots'");
+	// the refusal is on screen in the message box (RW 0x928482 -> MessageBoxOk, the archive's d0ba2f9fa): it is modal over StartGame until its OK
+	REQUIRE(fx.screen->ruleBox());
+	CHECK(fx.screen->ruleBox()->type() == AptMessageBox::TYPE_OK);
+	CHECK(fx.screen->ruleBox()->text() == fx.sink.refusals[0].second);
+	AptButtonInst *ok = firstButtonIn(fx.wm->apt().resolvePath(fx.wm->apt().level(fx.screen->ruleBox()->level()), "MessageBox.ButtonsOk.MessageBoxOk"));
+	REQUIRE(ok);
+	clickButton(fx, *ok);
+	fx.tick(30);
+	CHECK(fx.screen->ruleBox()->type() == AptMessageBox::TYPE_NONE);
+	fx.sink.refusals.clear();
+	// the region under the mouse: its territory description (RW 0x976C4D: DisplayName, "\n", the bonus header and list in RW 0x7F2440's order
+	// (attack before resources), LW:FortressMap, the build plots (plural), the territory and its unified bonus)
+	fx.screen->hoverRegion(9);
+	REQUIRE(fx.screen->territoryDescriptionWindow());
+	CHECK(GadgetListBoxGetText(fx.screen->territoryDescriptionWindow(), 0) ==
+		  u"Rivendell\nBonuses: Attack +10%, Resources +25%\nFortress Map\n3 Build Plots\n\nTerritory of Region: Eriador\nUnified Region Bonus: Defense +5%");
+	fx.screen->hoverRegion(10);
+	CHECK(GadgetListBoxGetText(fx.screen->territoryDescriptionWindow(), 0) == u"Mordor\nBonuses: None\n1 Build Plot");
+	// a region in DisallowStartInRegions takes no pick and leaves the text (RW 0x97572C)
+	fx.screen->hoverRegion(11);
+	CHECK(GadgetListBoxGetText(fx.screen->territoryDescriptionWindow(), 0) == u"Mordor\nBonuses: None\n1 Build Plot");
+	CHECK_FALSE(fx.screen->clickRegion(11, true));
+	// clicks: a free region goes to the next slot without a start (RW 0x975C3A: the local player, then the host's AI)
+	const SkirmishGameInfo &gi = fx.screen->setup()->info();
+	CHECK(fx.screen->nextStartSlot() == 0);
+	CHECK(fx.screen->clickRegion(9, true));
+	CHECK(gi.slots[0].startPos == 9);
+	CHECK(fx.screen->nextStartSlot() == 1);
+	CHECK(fx.screen->clickRegion(10, true));
+	CHECK(gi.slots[1].startPos == 10);
+	CHECK(fx.screen->nextStartSlot() == -1);
+	CHECK(fx.screen->regionHolders() == std::vector<std::pair<int, int>>{ { 9, 0 }, { 10, 1 } });
+	// a right click frees a held region (RW 0x845830, 0x4009); a left click on a free region gives it out again
+	CHECK(fx.screen->clickRegion(10, false));
+	CHECK(gi.slots[1].startPos == -1);
+	CHECK(fx.screen->clickRegion(10, true));
+	CHECK(gi.slots[1].startPos == 10);
+	// StartGame: two players fit the scenario, both placed; the message names it and carries the region indices
+	clickButton(fx, *start);
+	fx.tick(30);
+	REQUIRE_MESSAGE(fx.sink.messages.size() == 1, "refusals: " << fx.sink.refusals.size() << (fx.sink.refusals.empty() ? std::string() : " " + std::string(fx.sink.refusals[0].second.begin(), fx.sink.refusals[0].second.end())));
+	CHECK(fx.sink.messages[0].livingWorldCampaign == "WOTRScenario001");
+	CHECK(fx.sink.messages[0].game.numPlayers() == 2);
+	CHECK(fx.sink.messages[0].game.slots[0].startPos == 9);
+	CHECK(fx.sink.messages[0].game.slots[1].startPos == 10);
+}
+
+TEST_CASE("retail strategic HUD (WOTR-2): StrategicHUD.apt reports its nine parts; the stats, checklist and battle prompt records; END PHASE and AutoResolve reach the engine")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	LobbyFx fx(mount, false);
+	fx.text.set("STRATEGICHUD:StatsTreasury", "Treasury: %d");
+	fx.text.set("STRATEGICHUD:StatsTreasuryIncome", "Income: %d");
+	fx.text.set("APT:TacticalPhaseTitle", "TACTICAL PHASE");
+	// the StrategicHUD block's toggle button (the retail strategichud.ini's Image)
+	LivingWorldShellInfo lwInfo;
+	lwInfo.strategicHud.buttons["ToggleSelectionDetailsButton"].image = "Strategic_ToggleDetailsBlue";
+	fx.environment.livingWorld = &lwInfo;
+	AptStrategicHUD hud(*fx.wm, *fx.shell, fx.environment);
+	REQUIRE(hud.level() >= 0);
+	fx.tick(90);
+	CHECK(hud.initialized());
+	for (const std::string &part : AptStrategicHUD::partNames())
+	{
+		CHECK_MESSAGE(hud.loadedParts().count(part) == 1, part);
+	}
+	const std::string lv = "APT:_level" + std::to_string(hud.level()) + ".";
+	StrategicHudStats stats;
+	stats.treasury = 3000;
+	stats.income = 450;
+	hud.setStats(stats);
+	CHECK(hud.statRecords().at(lv + "main.stats.0_Text") == "Treasury: 3000"); // RW 0x983B39: "APT:_level%u.%s%d_Text"
+	CHECK(hud.statRecords().at(lv + "main.stats.6_Text") == "Income: 450");
+	hud.setTurn(3, 0);
+	CHECK(hud.statRecords().at(lv + "main.checklist_TurnNumber") == "3");
+	CHECK(hud.statRecords().at(lv + "main.checklist_PhaseTitle") == "TACTICAL PHASE");
+	hud.setTurn(3, 1);
+	CHECK(hud.statRecords().at(lv + "main.checklist_PhaseTitle").empty()); // RW 0xC865A8 has no title for phase 1
+	// END PHASE: the button's release runs FSCommand:<clip>_OnClicked
+	AptButtonInst *endTurn = firstButtonIn(fx.wm->apt().resolvePath(fx.wm->apt().level(hud.level()), "main.endTurnButton"));
+	REQUIRE(endTurn);
+	clickButton(fx, *endTurn);
+	fx.tick(10);
+	std::vector<std::string> requests = hud.takeRequests();
+	CHECK(std::count(requests.begin(), requests.end(), "end_turn") == 1);
+	// the palantir's command slot 0 (RW 0x97EE63): the toggle selection details button (the magnifier) in its frame, with the block's image; its press
+	// reaches the engine
+	fx.tick(30);
+	hud.setTurn(3, 0); // the sync runs the command UI's update
+	fx.tick(30);
+	REQUIRE_MESSAGE(!hud.commandFramePath(0).empty(), "the command UI reported no frame 0");
+	CHECK(hud.toggleDetailsShown());
+	const std::string content = "_level" + std::to_string(hud.level()) + "." + hud.commandFramePath(0) + ".content";
+	REQUIRE(fx.wm->aptImage(content + "_Image") != nullptr);
+	CHECK(*fx.wm->aptImage(content + "_Image") == "Strategic_ToggleDetailsBlue");
+	std::string count;
+	CHECK(fx.wm->aptTextShown("APT:" + content + "_ProductionCount", count));
+	CHECK(count == " "); // no production count over the magnifier
+	// the selection details tray: the HUD's first update enabled and opened it (RW 0x97EE63); the movie's _OnOpened ends the opening
+	CHECK(hud.detailsTrayState() == 2);
+	// the magnifier closes the open tray (RW 0x9DB97E -> Close, RW 0x985B5C); the movie's _OnClosed ends the closing (RW 0x985CFB); again: it opens
+	CHECK(fx.wm->invokeCallback(content + "_OnPress", ""));
+	CHECK(hud.detailsTrayState() == 3);
+	fx.tick(60);
+	CHECK(hud.detailsTrayState() == 0);
+	CHECK(fx.wm->invokeCallback(content + "_OnPress", ""));
+	CHECK(hud.detailsTrayState() == 1);
+	fx.tick(60);
+	CHECK(hud.detailsTrayState() == 2);
+	// the region details panel (StrategicDetailsRegion.swf in the tray's panel frame): its pages report in, the territory page shows and gets the bonus
+	// lines (none below 1, the percentage / absolute labels formatted with the value)
+	fx.text.set("STRATEGICHUD:RegionBonusNone", "None");
+	fx.text.set("STRATEGICHUD:RegionPercentageBonus", "+%d%%");
+	fx.text.set("STRATEGICHUD:RegionAbsoluteBonus", "+%d");
+	{
+		AptStrategicHUD::RegionPanel panel;
+		panel.mapName = "NoSuchMap";
+		panel.bonus[1] = 10; // attack
+		panel.bonus[6] = 300; // treasury income
+		panel.owned = false;
+		panel.firstPage = 2; // structures: disabled on another player's region, so the territory page
+		hud.showRegionPanel(panel);
+		fx.tick(90);
+		REQUIRE(hud.regionPanelLoaded());
+		CHECK(hud.regionPanelPage() == 0);
+		{
+			// the tabs show the territory tab current (SetTabsState("_territory"): the tabs clip stays on that label's frame)
+			AptCharacterInst *tabsChar = fx.wm->apt().resolvePath(fx.wm->apt().level(hud.level()), hud.regionClipPath() + ".main.tabs");
+			AptSpriteInst *tabs = dynamic_cast<AptSpriteInst *>(tabsChar);
+			REQUIRE(tabs);
+			const int territoryFrame = tabs->labelFrame("_territory");
+			const int armiesFrame = tabs->labelFrame("_armies");
+			CHECK(territoryFrame == 9); // StrategicDetailsRegion.swf's tabs: _territory at frame 9 (a stop), _armies at 19
+			CHECK(tabs->frame == territoryFrame); // the label's frame has a stop (frame 9); the next section, _armies, begins at frame 19
+			CHECK(armiesFrame == 19);
+		}
+		REQUIRE_MESSAGE(!hud.regionPagePath(0).empty(), "the territory page did not report itself");
+		const std::string page = "APT:_level" + std::to_string(hud.level()) + "." + hud.regionPagePath(0);
+		CHECK(hud.statRecords().at(page + "_Bonus0") == "None");
+		CHECK(hud.statRecords().at(page + "_Bonus1") == "+10%");
+		CHECK(hud.statRecords().at(page + "_Bonus6") == "+300");
+		const std::string *picture = fx.wm->aptImage("_level" + std::to_string(hud.level()) + "." + hud.regionPagePath(0) + "_MapPreview");
+		REQUIRE(picture);
+		CHECK(*picture == "MissingMap"); // no such map: the MissingMap image (as AptMapPreview's, RW 0x97640C)
+		// the armies page (RegionDetailsArmiesMovieClip): two armies, the first selected: two icon slots, their images under the movie's own record
+		// names, the selected army's name and command points; a click on the second slot's button asks to select that army
+		fx.text.set("STRATEGICHUD:StatsCommandPoints", "%d/%d");
+		panel.firstPage = 1;
+		panel.armies.resize(2);
+		panel.armies[0].id = 7;
+		panel.armies[0].portrait = "HeroPortraitA";
+		panel.armies[0].typeImage = "IconMenStrategic";
+		panel.armies[0].name = "Aragorn";
+		panel.armies[0].commandPoints = 120;
+		panel.armies[0].maxCommandPoints = 1500;
+		panel.armies[1].id = 9;
+		panel.armies[1].portrait = "UPGondor_Army";
+		panel.armies[1].typeImage = "IconMenStrategic";
+		panel.selectedArmy = 7;
+		hud.showRegionPanel(panel);
+		fx.tick(90);
+		REQUIRE(hud.regionPanelPage() == 1);
+		REQUIRE_MESSAGE(!hud.regionPagePath(1).empty(), "the armies page did not report itself");
+		const std::string armiesPage = hud.regionPagePath(1);
+		AptCharacterInst *level = fx.wm->apt().level(hud.level());
+		AptCharacterInst *slot1 = fx.wm->apt().resolvePath(level, armiesPage + ".slots.1");
+		REQUIRE_MESSAGE(slot1, "no icon slot 1 (SetIconSlotCount)");
+		CHECK(fx.wm->apt().resolvePath(level, armiesPage + ".slots.2") == nullptr);
+		// every RenderImage of slot 1 reads a record this panel wrote
+		std::vector<std::string> maps;
+		std::function<void(AptCharacterInst *)> walk = [&](AptCharacterInst *c) {
+			AptValue v;
+			if (c->getMember("_imageMap", v) && v.isString() && !v.asString().empty())
+			{
+				maps.push_back(v.asString());
+			}
+			if (AptSpriteInst *sp = dynamic_cast<AptSpriteInst *>(c))
+			{
+				for (AptCharacterInst *child : sp->children())
+				{
+					walk(child);
+				}
+			}
+		};
+		walk(slot1);
+		REQUIRE(maps.size() == 2);
+		for (const std::string &m : maps)
+		{
+			const std::string *img = fx.wm->aptImage(m);
+			REQUIRE_MESSAGE(img, m);
+			CHECK((*img == "UPGondor_Army" || *img == "IconMenStrategic"));
+		}
+		const std::string armyPrefix = "APT:_level" + std::to_string(hud.level()) + "." + armiesPage;
+		CHECK(hud.statRecords().at(armyPrefix + "_ArmyName") == "Aragorn");
+		CHECK(hud.statRecords().at(armyPrefix + "_CommandPoints") == "120/1500");
+		AptButtonInst *slotButton = firstButtonIn(slot1);
+		REQUIRE(slotButton);
+		hud.takeRequests();
+		clickButton(fx, *slotButton);
+		fx.tick(5);
+		requests = hud.takeRequests();
+		CHECK(std::count(requests.begin(), requests.end(), "select_army:9") == 1);
+		// the structures page: three plots (a farm built, a barracks being built 2 turns, an empty plot) on a fortress region of the local player
+		fx.text.set("STRATEGICHUD:ConstructionTurnsRemaining", "%d turns");
+		lwInfo.strategicHud.typeImages["BuildingResource"] = "Archetype_Resource";
+		lwInfo.strategicHud.typeImages["BuildingBarracks"] = "Archetype_Barracks";
+		lwInfo.strategicHud.typeImages["BuildingFortress"] = "Archetype_Fortress";
+		panel.owned = true;
+		panel.firstPage = 2;
+		panel.plots.resize(3);
+		panel.plots[0].built = true;
+		panel.plots[0].portrait = "BGFarm";
+		panel.plots[0].type = 3;
+		panel.plots[1].built = true;
+		panel.plots[1].portrait = "BGBarracks";
+		panel.plots[1].type = 4;
+		panel.plots[1].turnsLeft = 2;
+		panel.fortress = true;
+		panel.fortressPortrait = "LWFortressPortrait";
+		hud.showRegionPanel(panel);
+		fx.tick(90);
+		REQUIRE(hud.regionPanelPage() == 2);
+		REQUIRE_MESSAGE(!hud.regionPagePath(2).empty(), "the structures page did not report itself");
+		const std::string structures = hud.regionPagePath(2);
+		REQUIRE(fx.wm->apt().resolvePath(level, structures + ".slots.2"));
+		CHECK(fx.wm->apt().resolvePath(level, structures + ".slots.3") == nullptr);
+		maps.clear();
+		walk(fx.wm->apt().resolvePath(level, structures + ".slots.1"));
+		REQUIRE(maps.size() == 2);
+		for (const std::string &m : maps)
+		{
+			const std::string *img = fx.wm->aptImage(m);
+			REQUIRE_MESSAGE(img, m);
+			CHECK((*img == "BGBarracks" || *img == "Archetype_Barracks"));
+		}
+		const std::string structuresPrefix = "APT:_level" + std::to_string(hud.level()) + "." + structures;
+		CHECK(hud.statRecords().at(structuresPrefix + "_IconSlotTurnsRemaining1") == "2 turns");
+		// the build queue panel takes the tray's frame from the region panel (SetPanel WB 0x15E1450: UnloadContent, LoadContent of
+		// StrategicDetailsBuildQueue.swf): a unit in production with 3 turns left, two queued
+		fx.text.set("STRATEGICHUD:ConstructionOneTurnRemaining", "1 turn");
+		fx.text.set("STRATEGICHUD:BuildTimeSingularLabel", "Build Time: 1 Turn");
+		fx.text.set("STRATEGICHUD:BuildTimePluralLabel", "Build Time: %d Turns");
+		fx.text.set("STRATEGICHUD:CommandPointsLabel", "CP: %d");
+		AptStrategicHUD::BuildQueuePanel queue;
+		queue.buildingName = "Barracks";
+		queue.queue.resize(3);
+		lwInfo.strategicHud.typeImages["UnitSoldier"] = "Archetype_Soldier"; // retail strategichud.ini TypeImages
+		lwInfo.strategicHud.typeImages["UnitArcher"] = "Archetype_Archer";
+		lwInfo.strategicHud.typeImages["UnitCavalry"] = "Archetype_Cavalry";
+		queue.queue[0] = { "BPSoldiers", 0, 5, 3, "Soldiers", 20 };
+		queue.queue[1] = { "BPArchers", 1, 4, 2, "Archers", 25 };
+		queue.queue[2] = { "BPKnights", 3, 0, 1, "Knights", 30 };
+		hud.showBuildQueuePanel(queue);
+		fx.tick(90);
+		CHECK_FALSE(hud.regionPanelLoaded());
+		REQUIRE_MESSAGE(hud.buildQueuePanelLoaded(), "StrategicDetailsBuildQueue.swf did not load into the tray");
+		const std::string qclip = hud.buildQueueClipPath();
+		const std::string qprefix = "APT:_level" + std::to_string(hud.level()) + "." + qclip;
+		CHECK(hud.statRecords().at(qprefix + "_BuildingName") == "Barracks");
+		CHECK(hud.statRecords().at(qprefix + "_InProgressIconSlotQuantity") == "5");
+		CHECK(hud.statRecords().at(qprefix + "_InProgressIconSlotTurnsRemaining") == "3 turns");
+		CHECK(hud.statRecords().at(qprefix + "_QueuedIconSlotQuantity0") == "4");
+		CHECK(hud.statRecords().at(qprefix + "_QueuedIconSlotTurnsRemaining0") == "2 turns");
+		CHECK(hud.statRecords().at(qprefix + "_QueuedIconSlotQuantity1") == "");
+		CHECK(hud.statRecords().at(qprefix + "_QueuedIconSlotTurnsRemaining1") == "1 turn");
+		// the movie's own image maps under the slots carry the panel's records (in-progress: main.inProgressSlot, queued: main.slots.<n>)
+		// the movie holds six queued slots (main.slots.0 .. 5); the engine drives seven (WB 0x1FCD7D0), the seventh's calls find no clip
+		REQUIRE(fx.wm->apt().resolvePath(level, qclip + ".main.slots.5"));
+		CHECK(fx.wm->apt().resolvePath(level, qclip + ".main.slots.6") == nullptr);
+		AptCharacterInst *inProgress = fx.wm->apt().resolvePath(level, qclip + ".main.inProgressSlot");
+		REQUIRE(inProgress);
+		AptCharacterInst *queuedSlot1 = fx.wm->apt().resolvePath(level, qclip + ".main.slots.1");
+		REQUIRE(queuedSlot1);
+		maps.clear();
+		walk(inProgress);
+		REQUIRE(maps.size() == 2);
+		for (const std::string &m : maps)
+		{
+			const std::string *img = fx.wm->aptImage(m);
+			REQUIRE_MESSAGE(img, m);
+			CHECK((*img == "BPSoldiers" || *img == "Archetype_Soldier"));
+		}
+		maps.clear();
+		walk(queuedSlot1);
+		REQUIRE(maps.size() == 2);
+		for (const std::string &m : maps)
+		{
+			const std::string *img = fx.wm->aptImage(m);
+			REQUIRE_MESSAGE(img, m);
+			CHECK((*img == "BPKnights" || *img == "Archetype_Cavalry"));
+		}
+		// a left click on the first queued slot selects queue index 1: its name, build time and CP; a second click deselects it
+		AptCharacterInst *queuedSlot0 = fx.wm->apt().resolvePath(level, qclip + ".main.slots.0");
+		REQUIRE(queuedSlot0);
+		AptButtonInst *queued0 = firstButtonIn(queuedSlot0);
+		REQUIRE(queued0);
+		clickButton(fx, *queued0);
+		fx.tick(5);
+		CHECK(hud.buildQueueSelected() == 1);
+		CHECK(hud.statRecords().at(qprefix + "_UnitName") == "Archers");
+		CHECK(hud.statRecords().at(qprefix + "_BuildTime") == "Build Time: 2 Turns");
+		CHECK(hud.statRecords().at(qprefix + "_CommandPoints") == "CP: 25");
+		clickButton(fx, *queued0);
+		fx.tick(5);
+		CHECK(hud.buildQueueSelected() == -1);
+		// a right click (TheAptPlayer + 0x318 = 2) asks to dequeue that index (MSG_LW_DEQUEUE_UNIT_AT_INDEX)
+		hud.takeRequests();
+		fx.wm->setPressButton(2);
+		clickButton(fx, *queued0);
+		fx.tick(5);
+		fx.wm->setPressButton(0);
+		requests = hud.takeRequests();
+		CHECK(std::count(requests.begin(), requests.end(), "bq_dequeue:1") == 1);
+		CHECK(hud.buildQueueSelected() == -1);
+		// the army details panel (StrategicDetailsArmyRetinue.swf) replaces the build queue panel: a hero army, its leader and three members
+		fx.text.set("APT:RankLabel", "Level: %d");
+		fx.text.set("LWA:Swordsmen", "Swordsmen");
+		lwInfo.strategicHud.typeImages["UnitHero"] = "Archetype_Hero";
+		AptStrategicHUD::ArmyPanel army;
+		army.heroArmy = true;
+		army.leader = { "BPAragorn", 5, 1, 3, 0.5f, "LWA:Aragorn", 0, true };
+		army.members.push_back({ "BPGimli", 5, 1, 2, -1.0f, "LWA:Gimli", 0, true });
+		army.members.push_back({ "BPSwords", 0, 5, 7, 0.25f, "LWA:Swordsmen", 20, false });
+		army.members.push_back({ "BPArchers", 1, 5, 0, 0.0f, "LWA:Archers", 25, false });
+		hud.showArmyPanel(army);
+		fx.tick(90);
+		CHECK_FALSE(hud.buildQueuePanelLoaded());
+		REQUIRE_MESSAGE(hud.armyPanelLoaded(), "StrategicDetailsArmyRetinue.swf did not load into the tray");
+		CHECK(hud.armySlotsReady() == 3);
+		CHECK(hud.armyLeaderSelected()); // SelectLeader: the leader and every member
+		CHECK(hud.armyMemberSelected(2));
+		const std::string aclip = hud.armyClipPath();
+		const std::string aprefix = "APT:_level" + std::to_string(hud.level()) + "." + aclip;
+		CHECK(hud.statRecords().at(aprefix + "_LeaderRank") == "Level: 3");
+		CHECK(hud.statRecords().at(aprefix + "_LeaderQuantity") == "1");
+		CHECK(hud.statRecords().at(aprefix + "_CommandPoints") == "CP: 45"); // the selected members' CP (the leader's 0)
+		{
+			const std::string *img = fx.wm->aptImage("_level" + std::to_string(hud.level()) + "." + aclip + "_LeaderPortrait");
+			REQUIRE(img);
+			CHECK(*img == "BPAragorn");
+		}
+		// every member slot's icon shows its portrait and type image through the movie's own image maps
+		AptCharacterInst *slots = fx.wm->apt().resolvePath(level, aclip + ".main.slots");
+		REQUIRE_MESSAGE(slots, "no member slots clip");
+		AptSpriteInst *slotsSprite = slots->asSprite();
+		REQUIRE(slotsSprite);
+		// CreateUnitIconSlot names each slot by its id (0, 1, 2)
+		std::vector<AptCharacterInst *> memberSlots;
+		for (const char *id : { "0", "1", "2" })
+		{
+			AptCharacterInst *slot = fx.wm->apt().resolvePath(level, aclip + ".main.slots." + id);
+			REQUIRE_MESSAGE(slot, id);
+			memberSlots.push_back(slot);
+		}
+		CHECK(fx.wm->apt().resolvePath(level, aclip + ".main.slots.3") == nullptr);
+		// the grid (MoveUnitIconSlot from the stage and slot sizes the movie wrote to extern): the slots stand at different places
+		auto place = [&](AptCharacterInst *c) {
+			AptValue x, y;
+			c->getMember("_x", x);
+			c->getMember("_y", y);
+			return std::make_pair(x.toNumber(), y.toNumber());
+		};
+		CHECK(place(memberSlots[0]) != place(memberSlots[1]));
+		CHECK(place(memberSlots[1]) != place(memberSlots[2]));
+		std::size_t unhandled = 0; // every extern write of the panel's movies has its record (the slot sizes, the frames' content names)
+		for (const WindowManagerNote &nt : fx.wm->notes())
+		{
+			unhandled += nt.kind == "extern-write-unhandled" && nt.detail.find(aclip) != std::string::npos ? 1 : 0;
+		}
+		CHECK(unhandled == 0);
+		std::vector<std::string> seen;
+		for (AptCharacterInst *slot : memberSlots)
+		{
+			maps.clear();
+			walk(slot);
+			for (const std::string &m : maps)
+			{
+				if (const std::string *img = fx.wm->aptImage(m))
+				{
+					seen.push_back(*img);
+				}
+			}
+		}
+		for (const char *want : { "BPGimli", "BPSwords", "BPArchers", "Archetype_Hero", "Archetype_Soldier", "Archetype_Archer" })
+		{
+			CHECK_MESSAGE(std::count(seen.begin(), seen.end(), want) == 1, want);
+		}
+		// a click on the swordsmen's icon: only they are selected, the leader no longer
+		AptCharacterInst *swords = nullptr;
+		for (AptCharacterInst *slot : memberSlots)
+		{
+			maps.clear();
+			walk(slot);
+			for (const std::string &m : maps)
+			{
+				const std::string *img = fx.wm->aptImage(m);
+				if (img && *img == "BPSwords")
+				{
+					swords = slot;
+				}
+			}
+		}
+		REQUIRE(swords);
+		AptButtonInst *swordsButton = firstButtonIn(swords);
+		REQUIRE(swordsButton);
+		clickButton(fx, *swordsButton);
+		fx.tick(5);
+		CHECK(hud.armyLeaderSelected()); // WOTR2 milestone 4: RotWK's member click (RW 0x9F8007) leaves the leader icon's flag
+		CHECK(hud.armyMemberSelected(1));
+		CHECK_FALSE(hud.armyMemberSelected(0));
+		CHECK_FALSE(hud.armyMemberSelected(2));
+		CHECK(hud.statRecords().at(aprefix + "_CommandPoints") == "CP: 20");
+		hud.hideArmyPanel();
+		CHECK_FALSE(hud.armyPanelLoaded());
+		hud.hideRegionPanel();
+		CHECK_FALSE(hud.regionPanelLoaded());
+	}
+	// the radial menu (StrategicHUD::RadialMenu in InGameRadialMenuStage.swf): three building buttons around the centre of a 1024 x 768 display, each a
+	// StrategicCommandButton (StrategicHUD.apt's export) with its image; a click on the second asks "radial:1"
+	{
+		std::vector<AptStrategicHUD::RadialButton> buttons(3);
+		buttons[0].image = "BGFarm";
+		buttons[1].image = "BGBarracks";
+		buttons[2].image = "BGArmory";
+		hud.showRadialMenu(512, 384, 1024, 768, 1.0f, 1.0f, buttons);
+		fx.tick(30);
+		CHECK(hud.radialMenuShown());
+		CHECK(hud.radialButtonsReady() == 3);
+		auto stageIt = hud.loadedParts().find("RadialMenuStage");
+		REQUIRE(stageIt != hud.loadedParts().end());
+		const std::string stage = stageIt->second;
+		const std::string *img = fx.wm->aptImage(stage + ".1.bttnFrame.bttn_Image");
+		REQUIRE(img);
+		CHECK(*img == "BGBarracks");
+		AptCharacterInst *b1 = fx.wm->apt().resolvePath(fx.wm->apt().level(hud.level()), stage.substr(stage.find('.') + 1) + ".1.bttnFrame.bttn");
+		REQUIRE(b1);
+		AptButtonInst *press = firstButtonIn(b1);
+		REQUIRE(press);
+		hud.takeRequests();
+		clickButton(fx, *press);
+		fx.tick(5);
+		requests = hud.takeRequests();
+		CHECK(std::count(requests.begin(), requests.end(), "radial:1") == 1);
+		hud.hideRadialMenu();
+		CHECK_FALSE(hud.radialMenuShown());
+		fx.tick(5);
+		CHECK(fx.wm->apt().resolvePath(fx.wm->apt().level(hud.level()), stage.substr(stage.find('.') + 1) + ".1") == nullptr);
+	}
+	// the checklist (RW 0x985642): its empty message, and its arrow opens the list (RW 0x984CA4 -> the clip's OpenList; the movie's _OnOpen at the end
+	// of the animation, RW 0x98447C) and closes it again
+	fx.text.set("STRATEGICHUD:CriticalTasksWillBeDisplayedHere", "Critical tasks will be displayed here");
+	CHECK(hud.checklistState() == 0);
+	std::string expand;
+	for (const std::string &name : fx.wm->commandNames())
+	{
+		if (name.find("checklist_OnExpandButtonClicked") != std::string::npos)
+		{
+			expand = name;
+		}
+	}
+	REQUIRE(!expand.empty());
+	REQUIRE(fx.wm->aptText("APT:StrategicHUDNoChecklistItems") != nullptr);
+	// the arrow is enabled by the first sync (RW 0x985531 -> SetExpandButtonState "_up"); a real click on it opens the list
+	AptButtonInst *arrow = firstButtonIn(fx.wm->apt().resolvePath(fx.wm->apt().level(hud.level()), "main.checklist.ExpandButton"));
+	REQUIRE(arrow);
+	clickButton(fx, *arrow);
+	fx.tick(2);
+	CHECK(hud.checklistState() == 1);
+	fx.tick(90);
+	CHECK(hud.checklistState() == 2);
+	CHECK(std::count(hud.commandLog().begin(), hud.commandLog().end(), "Checklist_OnOpen") == 1);
+	CHECK(fx.wm->invokeCallback(expand, ""));
+	CHECK(hud.checklistState() == 3);
+	fx.tick(90);
+	CHECK(hud.checklistState() == 0);
+	CHECK(std::count(hud.commandLog().begin(), hud.commandLog().end(), "Checklist_OnClosed") == 1);
+	// the battle prompt in the dialog frame
+	hud.openBattlePrompt("Rohan", true, true, false);
+	fx.tick(90);
+	REQUIRE(hud.battlePromptLoaded());
+	bool regionRecord = false;
+	for (const auto &r : hud.statRecords())
+	{
+		regionRecord = regionRecord || (r.first.find("_RegionName") != std::string::npos && r.second == "Rohan");
+	}
+	CHECK(regionRecord);
+	std::string clicked;
+	for (const std::string &name : fx.wm->commandNames())
+	{
+		if (name.find("_OnAutoResolveButtonClicked") != std::string::npos)
+		{
+			clicked = name;
+		}
+	}
+	REQUIRE(!clicked.empty());
+	CHECK(fx.wm->invokeCallback(clicked, ""));
+	requests = hud.takeRequests();
+	CHECK(std::count(requests.begin(), requests.end(), "battle_autoresolve") == 1);
+	hud.closeBattlePrompt();
+	CHECK_FALSE(hud.battlePromptOpen());
+	fx.tick(60);
+	hud.openBattlePrompt("Gondor", true, true, true);
+	fx.tick(90);
+	// a second prompt: the dialog frame unloads its content clip and loads the movie into it again (the clip stays, emptied)
+	CHECK(hud.battlePromptLoaded());
+	// WOTR2 milestone 4: the palantir's slot 5 (a building selection's DestroyBuildingButton, CommandUIImpl::setSlot RW 0x9E1C2E): a StrategicCommandButton
+	// named "button" in the frame, the block's image (RW 0x9F3D56), enabled; a left click is the button's message; slots 1..4 stay empty
+	lwInfo.strategicHud.buttons["DestroyBuildingButton"].image = "BCSell";
+	lwInfo.strategicHud.buttons["DestroyBuildingButton"].title = "CONTROLBAR:SellBuilding";
+	hud.closeBattlePrompt();
+	fx.tick(30);
+	AptStrategicHUD::CommandButton destroy;
+	destroy.id = "DestroyBuildingButton";
+	hud.setCommandButtons({ {}, {}, {}, {}, destroy });
+	fx.tick(30);
+	hud.setTurn(3, 0);
+	fx.tick(30);
+	REQUIRE_MESSAGE(!hud.commandFramePath(5).empty(), "the command UI reported no frame 5");
+	CHECK(hud.commandButtonShown(5));
+	CHECK(hud.commandButtonEnabled(5));
+	CHECK_FALSE(hud.commandButtonShown(1));
+	const std::string slot5 = "_level" + std::to_string(hud.level()) + "." + hud.commandFramePath(5) + ".button";
+	REQUIRE(fx.wm->aptImage(slot5 + "_Image") != nullptr);
+	CHECK(*fx.wm->aptImage(slot5 + "_Image") == "BCSell");
+	hud.takeRequests();
+	CHECK(fx.wm->invokeCallback(slot5 + "_OnClicked", ""));
+	requests = hud.takeRequests();
+	CHECK(std::count(requests.begin(), requests.end(), "command:DestroyBuildingButton") == 1);
+	// disabled: the movie's Enable(false) (RW 0x9F3DD2), and a click sends nothing
+	destroy.enabled = false;
+	hud.setCommandButtons({ {}, {}, {}, {}, destroy });
+	fx.tick(10);
+	CHECK_FALSE(hud.commandButtonEnabled(5));
+	CHECK(fx.wm->invokeCallback(slot5 + "_OnClicked", ""));
+	requests = hud.takeRequests();
+	CHECK(std::count(requests.begin(), requests.end(), "command:DestroyBuildingButton") == 0);
+	// the help box part has its object (RW 0x839D7F): a rollover gives it the button's help (fetch(Title)), shown once the box sampled its width
+	CHECK(hud.helpBox().isLoaded());
+	fx.text.set("CONTROLBAR:SellBuilding", "Destroy");
+	CHECK(fx.wm->invokeCallback(slot5 + "_OnRollOver", ""));
+	REQUIRE(hud.helpBox().help() != nullptr);
+	CHECK(hud.helpBox().help()->name() == u"Destroy");
+	CHECK(fx.wm->invokeCallback(slot5 + "_OnRollOut", ""));
+	// cleared: the button released (RW 0x9E1C45; INFERENCE: its content deleted)
+	hud.setCommandButtons({});
+	fx.tick(10);
+	CHECK_FALSE(hud.commandButtonShown(5));
+	// set again: a new content (INFERENCE: DeleteContent then CreateContent)
+	hud.setCommandButtons({ {}, {}, {}, {}, destroy });
+	fx.tick(10);
+	for (const auto &n : fx.wm->notes())
+	{
+		CHECK_MESSAGE(n.detail.find("StrategicHUD command slot") == std::string::npos, n.detail);
+	}
+	CHECK(hud.commandButtonShown(5));
+	// WOTR2 milestone 5: the palantir's region stats tray (RW 0x9E2C20, RegionDisplay RW 0x9DAD60): "%d/%d" records, a space for a total of 0, the
+	// tray shown by SetState; its hot spots give RegionDisplay's help
+	REQUIRE_MESSAGE(!hud.regionStatsClip().empty(), "the palantir reported no region stats tray");
+	const std::string tray = "_level" + std::to_string(hud.level()) + "." + hud.regionStatsClip();
+	AptStrategicHUD::RegionStats rs;
+	rs.shown = true;
+	rs.values[0][0] = 1;
+	rs.values[0][1] = 3;
+	rs.values[2][0] = 40;
+	rs.values[2][1] = 1000;
+	hud.setRegionStats(rs);
+	fx.tick(5);
+	REQUIRE(fx.wm->aptText("APT:" + tray + "_BuildPlots") != nullptr);
+	CHECK(*fx.wm->aptText("APT:" + tray + "_BuildPlots") == "1/3");
+	CHECK(*fx.wm->aptText("APT:" + tray + "_ArmoryPoints") == " ");
+	CHECK(*fx.wm->aptText("APT:" + tray + "_CommandPoints") == "40/1000");
+	for (const auto &n : fx.wm->notes())
+	{
+		CHECK_MESSAGE(n.detail.find("regionStats") == std::string::npos, n.detail);
+	}
+	lwInfo.strategicHud.regionDisplay["CommandPointsTitle"] = "STRATEGICHUD:TerritoryCPTitle";
+	fx.text.set("STRATEGICHUD:TerritoryCPTitle", "Territory Command Points");
+	CHECK(fx.wm->invokeCallback(tray + "_OnCommandPointsRollOver", ""));
+	REQUIRE(hud.helpBox().help() != nullptr);
+	CHECK(hud.helpBox().help()->name() == u"Territory Command Points");
+	CHECK(fx.wm->invokeCallback(tray + "_OnCommandPointsRollOut", ""));
+	rs.shown = false;
+	hud.setRegionStats(rs);
+	fx.tick(5);
+	// WOTR2 milestone 5: a strategic notice (Notice::Show RW 0x900CBC) in GuiFX's StrategicMessageBox: the formatted records, Show("Ok"), and the
+	// movie's own OK button closes it: _OnHiding, _OnButtonOk, _OnHidden (the notice's state callback RW 0x900B6D: no longer shown)
+	fx.text.set("LW:HeroKilledTitle", "HERO KILLED");
+	fx.text.set("LW:HeroKilledText", "%ls was killed");
+	fx.text.set("OBJECT:GoodHero", "Aragorn");
+	hud.showNotice("LW:HeroKilledTitle", "LW:HeroKilledText", { { true, "OBJECT:GoodHero" } }, {});
+	REQUIRE(hud.noticeBox() != nullptr);
+	REQUIRE(hud.noticeBox()->level() == fx.wm->findAptMovieIndex("GuiFX.apt"));
+	for (int i = 0; i < 60; ++i)
+	{
+		hud.noticeBox()->update();
+		fx.tick(1);
+	}
+	const std::string box = "_level" + std::to_string(hud.noticeBox()->level()) + ".StrategicMessageBox";
+	REQUIRE(fx.wm->aptText("APT:" + box + "_Text") != nullptr);
+	CHECK(*fx.wm->aptText("APT:" + box + "_Text") == "Aragorn was killed");
+	CHECK(*fx.wm->aptText("APT:" + box + "_Title") == "HERO KILLED");
+	CHECK(hud.noticeShown());
+	const std::vector<std::string> &calls = hud.noticeBox()->calls();
+	CHECK(std::find(calls.begin(), calls.end(), "Show Ok false") != calls.end());
+	std::function<AptButtonInst *(AptCharacterInst *)> visibleButton = [&](AptCharacterInst *c) -> AptButtonInst * {
+		if (!c || !c->globallyVisible())
+		{
+			return nullptr;
+		}
+		if (AptButtonInst *b = c->asButton())
+		{
+			return b;
+		}
+		if (AptSpriteInst *sp = c->asSprite())
+		{
+			for (AptCharacterInst *k : sp->children())
+			{
+				if (AptButtonInst *b = visibleButton(k))
+				{
+					return b;
+				}
+			}
+		}
+		return nullptr;
+	};
+	// the box's depth 1 / 3 children (chars 97, 99) are action-less hit-only blockers; OK is button 198 inside ButtonsOk's 212 instance (its release
+	// action reads _parent._parent: the box, which plays _close)
+	AptButtonInst *ok = visibleButton(fx.wm->apt().resolvePath(fx.wm->apt().level(hud.noticeBox()->level()), "StrategicMessageBox.ButtonsOk.MessageBoxOk"));
+	REQUIRE_MESSAGE(ok != nullptr, "no visible button in the StrategicMessageBox");
+	clickButton(fx, *ok);
+	for (int i = 0; i < 90; ++i)
+	{
+		fx.tick(1);
+	}
+	const std::vector<std::string> &trace = hud.noticeBox()->trace();
+	CHECK(trace == std::vector<std::string>{ "state 0", "state 1", "state 2", "button 0", "state 3" });
+	CHECK_FALSE(hud.noticeShown());
+	hud.clearNotice();
+	// WOTR2 milestone 5: the army unit swapper in the dialog frame (RW 0xA09009): the slots' records ("CP: %d/%d" only with a maximum), the two retinue
+	// panels with the top one's selection copied, a button press asks the host, DONE fades it out and _OnClosed unloads it
+	fx.text.set("STRATEGICHUD:ArmyUnitSwapperCP", "CP: %d/%d");
+	AptStrategicHUD::SwapperSlot top, bottom;
+	top.armyId = 7;
+	top.regionName = "Rohan";
+	top.armyName = "Theoden's Army";
+	top.cp = 40;
+	top.maxCp = 100;
+	AptStrategicHUD::ArmyPanel::Member unit;
+	unit.portrait = "BCSell";
+	unit.quantity = 1;
+	unit.name = "OBJECT:GoodHero";
+	top.panel.members = { unit, unit };
+	top.keys = { 3, 5 };
+	top.selectedKeys = { 5 };
+	bottom.armyId = 8;
+	bottom.regionName = "Rohan";
+	bottom.armyName = "Garrison";
+	bottom.panel.members = { unit };
+	bottom.keys = { 1 };
+	REQUIRE(hud.openUnitSwapper(top, bottom));
+	for (int i = 0; i < 150; ++i)
+	{
+		fx.tick(1);
+	}
+	REQUIRE_MESSAGE(!hud.unitSwapperClip().empty(), "the dialog frame reported no swapper content");
+	const std::string sw = "_level" + std::to_string(hud.level()) + "." + hud.unitSwapperClip();
+	REQUIRE(fx.wm->aptText("APT:" + sw + "_TopCP") != nullptr);
+	CHECK(*fx.wm->aptText("APT:" + sw + "_TopCP") == "CP: 40/100");
+	CHECK(*fx.wm->aptText("APT:" + sw + "_BottomCP") == "");
+	CHECK(*fx.wm->aptText("APT:" + sw + "_TopArmyName") == "Theoden's Army");
+	CHECK(hud.swapperSelectedKeys(0) == std::vector<int>{ 5 });
+	CHECK(hud.swapperSelectedKeys(1).empty());
+	hud.setSwapperButtons(true, false, false);
+	hud.takeRequests();
+	CHECK(fx.wm->invokeCallback(sw + "_OnMoveDownButtonClicked", ""));
+	requests = hud.takeRequests();
+	CHECK(std::count(requests.begin(), requests.end(), "swapper_move_down") == 1);
+	CHECK(fx.wm->invokeCallback(sw + "_OnExitButtonClicked", ""));
+	for (int i = 0; i < 150 && hud.unitSwapperOpen(); ++i)
+	{
+		fx.tick(1);
+	}
+	CHECK_FALSE(hud.unitSwapperOpen());
+	requests = hud.takeRequests();
+	CHECK(std::count(requests.begin(), requests.end(), "swapper_closed") == 1);
+	// WOTR2 milestone 5: the map rollover help of an army (ArmyHelp RW 0x9735D3, the description RW 0x620B6A): the heroes' names, then "N Category"
+	fx.text.set("BANNERUI:SummaryUnitQuantity", "%%d %s");
+	fx.text.set("CONTROLBAR:LW_Unit_Soldiers", "Soldiers");
+	fx.text.set("OBJECT:GarrisonOfRohan", "Garrison of Rohan");
+	AptStrategicHUD::MapHelp mh;
+	mh.kind = AptStrategicHUD::MapHelp::ARMY;
+	mh.titleLabel = "OBJECT:GarrisonOfRohan";
+	mh.heroLabels = { "OBJECT:GoodHero", "OBJECT:GoodHero" };
+	mh.lines = { { "CONTROLBAR:LW_Unit_Soldiers", 3 } };
+	fx.text.set("OBJECT:GoodHero", "Aragorn");
+	hud.showMapHelp(mh);
+	REQUIRE(hud.helpBox().help() != nullptr);
+	CHECK(hud.helpBox().help()->name() == u"Garrison of Rohan");
+	CHECK(hud.helpBox().help()->longText() == u"Aragorn, Aragorn\n3 Soldiers");
+	CHECK(hud.mapHelpShown());
+	hud.hideMapHelp();
+	CHECK_FALSE(hud.mapHelpShown());
+	// WOTR2 milestone 6: the checklist's rows (ChecklistUIImpl RW 0x985642, spec T): CreateItem made in the movie, the row update sent, a required
+	// unticked row flashes on a refused END PHASE and opens the list, a click asks the host, an empty list deletes the rows
+	fx.text.set("STRATEGICHUD:PlanRetreatChecklistItem", "Battle lost in %s. Retreat %s from %s.");
+	fx.text.set("LWRegion:Rohan", "Rohan");
+	const std::vector<AptStrategicHUD::NoticeArg> rowArgs = { { true, "LWRegion:Rohan" }, { false, "Theoden's Army" }, { true, "LWRegion:Rohan" } };
+	std::vector<AptStrategicHUD::ChecklistItem> rows(2);
+	rows[0] = { "retreat:7", "STRATEGICHUD:PlanRetreatChecklistItem", rowArgs, 1, false };
+	rows[1] = { "retreat:8", "STRATEGICHUD:PlanRetreatChecklistItem", rowArgs, 1, true };
+	hud.setChecklistItems(rows);
+	for (int i = 0; i < 20; ++i)
+	{
+		hud.checklistUpdate();
+		fx.tick(1);
+	}
+	REQUIRE(hud.checklistRowCount() == 2);
+	AptCharacterInst *row0 = fx.wm->apt().resolvePath(fx.wm->apt().level(hud.level()), hud.checklistRowPath(0));
+	AptCharacterInst *row1 = fx.wm->apt().resolvePath(fx.wm->apt().level(hud.level()), hud.checklistRowPath(1));
+	REQUIRE(row0 != nullptr);
+	REQUIRE(row1 != nullptr);
+	AptValue y0, y1;
+	REQUIRE(row0->getProperty("_y", y0));
+	REQUIRE(row1->getProperty("_y", y1));
+	CHECK(y1.toNumberWide() > y0.toNumberWide()); // tolerance: stacked in creation order (the heights are the movie's)
+	const std::string listPath = hud.checklistRowPath(0).substr(0, hud.checklistRowPath(0).rfind(".it.ems"));
+	AptCharacterInst *noItems = fx.wm->apt().resolvePath(fx.wm->apt().level(hud.level()), listPath + ".it.noItemsMessage");
+	REQUIRE(noItems != nullptr);
+	CHECK_FALSE(noItems->visible);
+	REQUIRE(hud.hasIncompleteRequiredChecklistItem());
+	const int stateBefore = hud.checklistState();
+	CHECK(hud.flagIncompleteChecklistItems() == std::vector<std::string>{ "retreat:7" });
+	if (stateBefore == 0)
+	{
+		CHECK(hud.checklistState() == 1); // OpenList
+	}
+	hud.takeRequests();
+	CHECK(fx.wm->invokeCallback("_level" + std::to_string(hud.level()) + "." + hud.checklistRowPath(1) + "_OnClicked", ""));
+	requests = hud.takeRequests();
+	CHECK(std::count(requests.begin(), requests.end(), "checklist:retreat:8") == 1);
+	hud.setChecklistItems({});
+	fx.tick(2);
+	CHECK(hud.checklistRowCount() == 0);
+	CHECK(noItems->visible);
+}
+
 TEST_CASE("skirmish controller: shoulder tabs and explicit dropdown confirmation")
 {
 	OPENBFME_REQUIRE_RETAIL(mount);
@@ -2515,4 +3407,724 @@ TEST_CASE("results controller: A skips preview, More and Continue default, B ret
 	fx.tick(60);
 	nav.setControllerResults(true);
 	CHECK(nav.focusId().find(".MainButtons.More") != std::string::npos);
+}
+
+namespace
+{
+struct Bfme1ProfileFixture
+{
+	std::filesystem::path folder = std::filesystem::temp_directory_path() / ("openbfme-bfme1-profile-" + std::to_string(std::random_device{}()));
+	MemorySource source;
+	RecordingShellServices services;
+	MapGameText text;
+	FakeSetup setup;
+	RecordingNewGameSink games;
+	Win32BIGFileSystem fs;
+	std::unique_ptr<SkirmishPreferences> profiles;
+	ShellEnvironment environment;
+	AptScreenFactoryTable factories;
+	GadgetSkinData skins;
+	WindowManager windows;
+	AptGadgetLayer layer;
+	Shell shell;
+	AptSkirmish *screen = nullptr;
+
+	explicit Bfme1ProfileFixture(bool bfme1 = true, bool existing = true, const std::string &templates = {}, bool rotwk = false)
+		: windows(source, services), layer(windows, source, skins), shell(windows, factories, services, environment)
+	{
+		std::filesystem::create_directories(folder);
+		profiles = std::make_unique<SkirmishPreferences>((folder / "Skirmish.ini").string());
+		if (existing)
+		{
+			REQUIRE(profiles->add(u"Alice"));
+			REQUIRE(profiles->setCurrent(u"Alice"));
+			REQUIRE(profiles->add(u"Bob"));
+		}
+		std::ofstream(folder / "AliceSkirmishStats.ini") << "ProfileCreatedDate = 2025-04-17\nGondorWins = 7\nGondorLosses = 3\nGondorWinStreak = 2\nGondorBestWinStreak = 4\nGondorTimePlayed = 97200\nGondorPoints = 9\nRohanWins = 2\nRohanPoints = 1500\n"
+			"maps\\fords\\fords.map_5 = 1\nmaps\\hard\\hard.map_4 = 1\nmaps\\medium\\medium.map_3 = 1\nmaps\\easy\\easy.map_2 = 1\n";
+		fs.setDerivedFile("Data/INI/Default/SubsystemLegend.ini", {}, "test", {});
+		if (!bfme1) fs.setDerivedFile("Data/INI/AwardSystem.ini", {}, "test", {});
+		if (rotwk) fs.setDerivedFile("Data/INI/Default/SubsystemLegendExpansion1.ini", {}, "test", {});
+		setup.fac = { FakeSetup::faction("FactionGondor", "Gondor", true, "Castle"), FakeSetup::faction("FactionRohan", "Rohan", true, "Castle") };
+		if (!templates.empty())
+		{
+			std::string error;
+			REQUIRE_MESSAGE(IniSkirmishSetupSource::scanPlayerTemplates(templates, setup.fac, &error), error);
+		}
+		for (const char *name : { "AptRankIcon0", "AptRankIcon1", "AptRankIcon2", "AptRankIcon10", "AptRankIconGondor2", "AptRankIconRohan10" })
+		{
+			Image image;
+			image.name = name;
+			image.imageSize = { 8, 8 };
+			skins.images.addImage(image);
+		}
+		setup.map = { FakeSetup::mapEntry("maps/fords/fords.map", "Fords of Isen", 2, true, 1),
+			FakeSetup::mapEntry("maps/hard/hard.map", "Hard map", 2, true, 2),
+			FakeSetup::mapEntry("maps/medium/medium.map", "Medium map", 2, true, 3),
+			FakeSetup::mapEntry("maps/easy/easy.map", "Easy map", 2, true, 4),
+			FakeSetup::mapEntry("maps/custom/custom.map", "Custom map", 2, true, 5) };
+		for (auto &map : setup.map) map.isOfficial = map.name != "maps/custom/custom.map";
+		lobbyLabels(text);
+		for (const auto &label : std::map<std::string, std::string>{ { "APT:DashDash", "--" }, { "APT:NewProfile", "New profile" },
+			{ "APT:DeleteProfile", "Delete profile" }, { "APT:GondorCaps", "GONDOR" }, { "APT:RohanCaps", "ROHAN" },
+			{ "APT:CurrentLevelFormat", "Level %s" }, { "APT:CurrentLevelNumFormat", "Level %d" }, { "APT:WinsNumFormat", "%d wins" },
+			{ "APT:WinsNumFormatForOnePoint", "%d win" }, { "Apt:TimePlayed", "%d days %d hours" },
+			{ "Apt:OfficialMaps", "Official maps" }, { "Apt:PlayerMadeMaps", "Player-made maps" } }) text.set(label.first, label.second);
+		environment.gameText = &text;
+		environment.skirmish = &setup;
+		environment.profiles = profiles.get();
+		environment.newGame = &games;
+		environment.fileSystem = &fs;
+		TestMovie level0;
+		level0.setRootFrames({ {} });
+		source.add("AptLevel0", level0);
+		TestMovie movie;
+		const auto shape = movie.addCharacter(movie.addShape(0, 0, 100, 24, 0));
+		const auto sprite = movie.addCharacter(movie.addSprite({ { movie.addPlaceItem(placeChar(shape, 1, "bounds")) } }));
+		movie.addExport("ProfileCombo", sprite);
+		movie.addExport("ProfileList", sprite);
+		movie.addExport("ProfileEntry", sprite);
+		std::vector<std::uint32_t> frame;
+		int depth = 0;
+		for (const auto &widget : std::map<std::string, std::string>{ { "Skirmish::PlayerProfile", "AptSkirmish::InitGadgets" },
+			{ "Skirmish::CreatePersonaEntry", "AptSkirmish::InitGadgets" }, { "MapList", "MpGameSetup::GadgetInit" },
+			{ "MpGameSetup::MapType", "MpGameSetup::GadgetInit" }, { "0/PlayerTemplate", "MpGameSetup::GadgetInit" } })
+		{
+			++depth;
+			auto placement = placeChar(sprite, depth, "combo" + std::to_string(depth));
+			placement.flags |= APT_PLACE_HASCLIPACTION;
+			placement.events.push_back({ APT_CLIP_CONSTRUCT, 0, program(movie, [&](Asm &code) {
+				code.pushString("_type").setStringVar(widget.first == "MapList" ? "ProfileList" : widget.first == "Skirmish::CreatePersonaEntry" ? "ProfileEntry" : "ProfileCombo");
+				code.pushString("_Init").setStringVar(widget.second);
+				code.pushString("_WindowId").setStringVar(widget.first);
+			}) });
+			frame.push_back(movie.addPlaceItem(placement));
+		}
+		frame.insert(frame.begin(), movie.addActionItem(program(movie, [](Asm &code) {
+			code.defineFunction("ShowSkirmishMovie", { "value" }, [](Asm &body) {
+				body.getStringVar("_root").pushString("profileMovie").getStringVar("value").op(APT_OP_SETMEMBER);
+			});
+			code.defineFunction("SetProgressBar", { "value" }, [](Asm &body) {
+				body.getStringVar("_root").pushString("profileProgress").getStringVar("value").op(APT_OP_SETMEMBER);
+			});
+		})));
+		frame.push_back(movie.addActionItem(program(movie, [](Asm &code) { fscmd(code, "AptSkirmish::OnInitialized"); code.op(APT_OP_STOP); })));
+		movie.setRootFrames({ frame });
+		source.add("Skirmish", movie);
+		factories.registerFactory("Skirmish.apt", [](AptScreenContext &context) { return std::make_unique<AptSkirmish>(context.windows, context.shell, context.environment); });
+		for (const char *symbol : { "ProfileCombo", "ProfileList", "ProfileEntry" })
+		windows.registerComponent(symbol, [this](AptComponentRequest &request) -> std::shared_ptr<GameWindow> {
+			WinInstanceData instance;
+			GameWindow *window = nullptr;
+			if (request.type == "ProfileList")
+			{
+				instance.m_style = GWS_SCROLL_LISTBOX;
+				ListboxData data;
+				data.columns = 5;
+				data.columnWidthPercentage = { 8, 2, 70, 10, 10 };
+				data.listLength = 16;
+				window = layer.gadgets().gogoGadgetListBox(nullptr, WIN_STATUS_ENABLED, 0, 0, 300, 120, &instance, &data, nullptr, false);
+			}
+			else if (request.type == "ProfileEntry")
+			{
+				instance.m_style = GWS_ENTRY_FIELD;
+				EntryData data;
+				data.maxTextLen = 110;
+				window = layer.gadgets().gogoGadgetTextEntry(nullptr, WIN_STATUS_ENABLED, 0, 0, 150, 24, &instance, &data, nullptr, false);
+			}
+			else
+			{
+				instance.m_style = GWS_COMBO_BOX;
+				ComboBoxData data;
+				data.listboxTemplate.columns = 1;
+				data.listboxTemplate.listLength = 16;
+				data.maxDisplay = 8;
+				window = layer.gadgets().gogoGadgetComboBox(nullptr, WIN_STATUS_ENABLED, 0, 0, 100, 24, &instance, &data, nullptr, false);
+			}
+			if (!window) return {};
+			window->setAptInstanceName(request.instanceName);
+			return { window, [this](GameWindow *gadget) { layer.gadgets().winDestroy(gadget); layer.gadgets().processDestroyList(); } };
+		});
+		windows.init();
+		shell.push("Skirmish.apt");
+		screen = dynamic_cast<AptSkirmish *>(shell.top());
+		REQUIRE(screen);
+		for (int tick = 0; tick < 3; ++tick) windows.update(33);
+		REQUIRE(screen->setup());
+	}
+	~Bfme1ProfileFixture()
+	{
+		shell.clear();
+		std::error_code error;
+		std::filesystem::remove_all(folder, error);
+	}
+	std::string value(const std::string &name)
+	{
+		const auto *result = windows.aptText(name);
+		return result ? *result : "<unset>";
+	}
+	std::string movieValue(const std::string &name)
+	{
+		AptValue value;
+		return windows.apt().level(screen->level())->getMember(name, value) ? value.toString() : "<unset>";
+	}
+	void choose(GameWindow *combo, int row)
+	{
+		REQUIRE(combo);
+		GadgetComboBoxSetSelectedPos(combo, row, true);
+		layer.gadgets().winSendSystemMsg(screen->ownerWindow(), GCM_SELECTED, msgData(combo), 0);
+	}
+};
+}
+
+TEST_CASE("bfme1 skirmish profile: real honors, faction artwork and rank follow the selected faction")
+{
+	Bfme1ProfileFixture fixture;
+	CHECK(fixture.value("APT:PlayerNameNum") == "Alice");
+	CHECK(fixture.value("APT:SkirmishProfileCreatedNum") == "2025-04-17");
+	CHECK(fixture.value("APT:TotalCareerWinsNum") == "--");
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 1);
+	CHECK(fixture.value("APT:TotalCareerWinsNum") == "7");
+	CHECK(fixture.value("APT:TotalCareerLossesNum") == "3");
+	CHECK(fixture.value("APT:TotalCareerGamesNum") == "10");
+	CHECK(fixture.value("APT:CurrentWinStreakNumA") == "2");
+	CHECK(fixture.value("APT:BestWinStreakNumA") == "4");
+	CHECK(fixture.value("APT:TotalTimePlayedNum") == "1 days 3 hours");
+	CHECK(fixture.value("APT:CurFactionNameStr") == "GONDOR");
+	CHECK(fixture.value("APT:CurrentLevelFormat") == "Level 2");
+	CHECK(fixture.value("APT:NextWinsNumber") == "1 win");
+	CHECK(fixture.movieValue("profileMovie") == "0");
+	CHECK(fixture.movieValue("profileProgress") == "80");
+	REQUIRE(fixture.windows.aptImage("CreateComponents/ImageLevelIconMain"));
+	CHECK(*fixture.windows.aptImage("CreateComponents/ImageLevelIconMain") == "AptRankIconGondor2");
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 2);
+	CHECK(fixture.value("APT:CurFactionNameStr") == "ROHAN");
+	CHECK(fixture.value("APT:TotalCareerWinsNum") == "2");
+	CHECK(fixture.value("APT:CurrentLevelFormat") == "Level 10");
+	CHECK(fixture.value("APT:NextWinsNumber") == "0 wins");
+	CHECK(fixture.movieValue("profileMovie") == "1");
+	CHECK(fixture.movieValue("profileProgress") == "100");
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 0);
+	CHECK(fixture.value("APT:CurFactionNameStr") == "--");
+	CHECK(fixture.movieValue("profileMovie") == "0");
+	CHECK(fixture.movieValue("profileProgress") == "0");
+	CHECK(*fixture.windows.aptImage("CreateComponents/ImageLevelIconMain") == "AptRankIcon0");
+}
+
+TEST_CASE("bfme1 skirmish profile: diagnostics retain filenames and causes without nested directory paths")
+{
+	const std::string filename = "EowynSkirmishStats.ini";
+	const std::string temporary = std::filesystem::temp_directory_path().u8string();
+	for (const std::string &directory : { temporary + "/" + "home/private-profile/", std::string("C:\\") + "Users\\private-profile\\" })
+	{
+		const std::string path = directory + filename;
+		for (const std::string &cause : { std::string("cannot read "), std::string("cannot write "), std::string("write failed: ") })
+		{
+			const std::string diagnostic = Bfme1SkirmishProfiles::statsDiagnostic(path, cause + path);
+			CHECK(diagnostic == cause + filename);
+			CHECK(diagnostic.find(directory) == std::string::npos);
+			CHECK(diagnostic.find(temporary) == std::string::npos);
+			CHECK(diagnostic.find("private-profile") == std::string::npos);
+		}
+		const std::string nested = Bfme1SkirmishProfiles::statsDiagnostic(path, path + ": cannot read " + path);
+		CHECK(nested == filename + ": cannot read " + filename);
+		CHECK(Bfme1SkirmishProfiles::statsDiagnostic(path, "cannot inspect: Permission denied") == filename + ": cannot inspect: Permission denied");
+	}
+	CHECK(Bfme1SkirmishProfiles::statsDiagnostic(filename, "cannot read " + filename) == "cannot read " + filename);
+}
+
+TEST_CASE("bfme1 skirmish profile: creation write failures stay visible without directory paths")
+{
+	Bfme1ProfileFixture fixture;
+	std::filesystem::remove(fixture.folder / "AliceSkirmishStats.ini");
+	std::filesystem::create_directory(fixture.folder / "AliceSkirmishStats.ini");
+	std::string error;
+	CHECK_FALSE(Bfme1SkirmishProfiles::create(*fixture.profiles, std::time(nullptr), &error));
+	CHECK(error == "cannot write AliceSkirmishStats.ini");
+	CHECK(error.find(fixture.folder.u8string()) == std::string::npos);
+	std::filesystem::create_directory(fixture.folder / "CharlieSkirmishStats.ini");
+	fixture.choose(fixture.screen->profileComboWindow(), 2);
+	REQUIRE(fixture.screen->profileEntryWindow());
+	GadgetTextEntrySetText(fixture.screen->profileEntryWindow(), u"Charlie");
+	REQUIRE(fixture.windows.invokeCallback("AptSkirmish::OnAddProfileAccept", ""));
+	bool reported = false;
+	for (const auto &note : fixture.windows.notes())
+	{
+		if (note.kind != "skirmish-profile-stats") continue;
+		CHECK(note.detail.find(fixture.folder.u8string()) == std::string::npos);
+		if (note.detail == "cannot write CharlieSkirmishStats.ini") reported = true;
+	}
+	CHECK(reported);
+}
+
+#ifndef _WIN32
+// POSIX permissions let these tests exercise real status, open-for-read and open-for-write failures without I/O mocks.
+TEST_CASE("bfme1 skirmish profile: status, read and recording write failures expose no private directories")
+{
+	Bfme1ProfileFixture fixture;
+	const std::filesystem::path path = fixture.folder / "AliceSkirmishStats.ini";
+	GameRecord record;
+	record.id = "bfme1-profile-io-error";
+	record.kind = "skirmish";
+	record.players = { { 0, "Alice", "FactionGondor", 0, true }, { 1, "AI", "FactionRohan", 1, false } };
+	record.meSlot = 0;
+	record.winnerTeam = 0;
+	std::filesystem::path restricted;
+	std::filesystem::perms permissions{};
+	std::string expected;
+	bool refresh = true;
+	SUBCASE("file status failure")
+	{
+		restricted = fixture.folder;
+		permissions = std::filesystem::perms::none;
+		expected = "AliceSkirmishStats.ini: cannot inspect: " + std::make_error_code(std::errc::permission_denied).message();
+	}
+	SUBCASE("read failure")
+	{
+		restricted = path;
+		permissions = std::filesystem::perms::none;
+		expected = "cannot read AliceSkirmishStats.ini";
+	}
+	SUBCASE("recording write failure")
+	{
+		restricted = path;
+		permissions = std::filesystem::perms::owner_read;
+		expected = "cannot write AliceSkirmishStats.ini";
+		refresh = false;
+	}
+	struct RestorePermissions
+	{
+		std::filesystem::path path;
+		std::filesystem::perms original;
+		~RestorePermissions()
+		{
+			std::error_code ignored;
+			std::filesystem::permissions(path, original, ignored);
+		}
+	} restore{ restricted, std::filesystem::status(restricted).permissions() };
+	std::filesystem::permissions(restricted, permissions);
+	// Root/capabilities or filesystem ACLs may bypass mode bits. Verify the denial before testing its diagnostic.
+	bool bypassesPermissions = false;
+	if (restricted == fixture.folder)
+	{
+		std::error_code status;
+		bypassesPermissions = std::filesystem::exists(path, status) && !status;
+	}
+	else if (refresh)
+	{
+		bypassesPermissions = (bool)std::ifstream(path, std::ios::binary);
+	}
+	else
+	{
+		// Append mode probes write access without truncating the existing statistics.
+		bypassesPermissions = (bool)std::ofstream(path, std::ios::binary | std::ios::app);
+	}
+	if (bypassesPermissions)
+	{
+		std::printf("SKIP: BFME1 statistics permission-denial subcase: this process can bypass the denied filesystem permissions\n");
+		return; // RestorePermissions still restores the fixture for cleanup.
+	}
+	std::string error;
+	CHECK_FALSE(Bfme1SkirmishProfiles::recordGame(*fixture.profiles, fixture.setup, record, &error));
+	CHECK(error == expected);
+	CHECK(error.find(fixture.folder.u8string()) == std::string::npos);
+	CHECK(error.find(std::filesystem::temp_directory_path().u8string()) == std::string::npos);
+	if (const char *home = std::getenv("HOME")) CHECK(error.find(home) == std::string::npos);
+	if (refresh)
+	{
+		fixture.screen->recordsChanged();
+		REQUIRE_FALSE(fixture.windows.notes().empty());
+		const auto &note = fixture.windows.notes().back();
+		CHECK(note.kind == "skirmish-profile-stats");
+		CHECK(note.detail == expected);
+		CHECK(note.detail.find(fixture.folder.u8string()) == std::string::npos);
+		CHECK(note.detail.find(std::filesystem::temp_directory_path().u8string()) == std::string::npos);
+		if (const char *home = std::getenv("HOME")) CHECK(note.detail.find(home) == std::string::npos);
+	}
+}
+#endif
+
+TEST_CASE("bfme1 skirmish profile: loaded faction indices, renamed sides and mounted rank images drive presentation")
+{
+	const std::string templates =
+		"PlayerTemplate FactionHidden\nSide = Hidden\nPlayableSide = No\nEnd\n"
+		"PlayerTemplate FactionObserver\nSide = Observer\nPlayableSide = Yes\nIsObserver = Yes\nEnd\n"
+		"PlayerTemplate FactionRohan\nSide = Rohan\nPlayableSide = Yes\nDisplayName = INI:FactionRohan\nStartingBuilding = Castle\nEnd\n"
+		"PlayerTemplate FactionNorthRealm\nSide = Haven\nPlayableSide = Yes\nDisplayName = INI:FactionNorthRealm\nStartingBuilding = Castle\nEnd\n"
+		"PlayerTemplate FactionGondor\nSide = Gondor\nPlayableSide = Yes\nDisplayName = INI:FactionGondor\nStartingBuilding = Castle\nEnd\n";
+	Bfme1ProfileFixture fixture(true, true, templates);
+	fixture.text.set("INI:FactionNorthRealm", "Northern Haven");
+	fixture.text.set("APT:HavenCaps", "NORTHERN HAVEN");
+	std::ofstream(fixture.folder / "AliceSkirmishStats.ini", std::ios::app) << "HavenWins = 3\nHavenLosses = 1\nHavenPoints = 7\n";
+	std::string expectedIcon = "AptRankIcon2";
+	SUBCASE("a faction-specific mapped rank image takes precedence")
+	{
+		Image image;
+		image.name = "AptRankIconHaven2";
+		image.imageSize = { 8, 8 };
+		fixture.skins.images.addImage(image);
+		expectedIcon = image.name;
+	}
+	SUBCASE("the native generic rank image is used when faction artwork is absent") {}
+	GameWindow *combo = fixture.screen->slotGadget(0, "PlayerTemplate");
+	REQUIRE(combo);
+	CHECK(GadgetComboBoxGetLength(combo) == 4);
+	fixture.choose(combo, 1);
+	CHECK(fixture.screen->setup()->info().slots[0].playerTemplate == 2);
+	CHECK(fixture.value("APT:CurFactionNameStr") == "ROHAN");
+	CHECK(fixture.movieValue("profileMovie") == "2");
+	fixture.choose(combo, 2);
+	CHECK(fixture.screen->setup()->info().slots[0].playerTemplate == 3);
+	CHECK(fixture.value("APT:CurFactionNameStr") == "NORTHERN HAVEN");
+	CHECK(fixture.value("APT:TotalCareerWinsNum") == "3");
+	CHECK(fixture.value("APT:TotalCareerGamesNum") == "4");
+	CHECK(fixture.value("APT:CurrentLevelFormat") == "Level 2");
+	CHECK(fixture.value("APT:NextWinsNumber") == "3 wins");
+	CHECK(fixture.movieValue("profileMovie") == "3");
+	CHECK(fixture.movieValue("profileProgress") == "40");
+	REQUIRE(fixture.windows.aptImage("CreateComponents/ImageLevelIconMain"));
+	CHECK(*fixture.windows.aptImage("CreateComponents/ImageLevelIconMain") == expectedIcon);
+	fixture.choose(combo, 3);
+	CHECK(fixture.screen->setup()->info().slots[0].playerTemplate == 4);
+	CHECK(fixture.value("APT:CurFactionNameStr") == "GONDOR");
+	CHECK(fixture.movieValue("profileMovie") == "4");
+	fixture.choose(combo, 0);
+	CHECK(fixture.value("APT:CurFactionNameStr") == "--");
+	CHECK(fixture.movieValue("profileMovie") == "0");
+}
+
+TEST_CASE("bfme1 skirmish profile: faction name prefers CAPS then the loaded DisplayName and reports missing labels")
+{
+	bool hasCaps = false;
+	bool hasDisplayName = true;
+	bool hasDisplayText = true;
+	std::string expected = "Northern Haven";
+	SUBCASE("CAPS takes precedence over a different DisplayName")
+	{
+		hasCaps = true;
+		expected = "NORTHERN HAVEN";
+	}
+	SUBCASE("a renamed mod side without CAPS uses its configured DisplayName") {}
+	SUBCASE("CAPS does not require a resolved DisplayName")
+	{
+		hasCaps = true;
+		hasDisplayText = false;
+		expected = "NORTHERN HAVEN";
+	}
+	SUBCASE("an unresolved DisplayName retains its missing-label diagnostic")
+	{
+		hasDisplayText = false;
+		expected = "MISSING: 'INI:FactionNorthRealm'";
+	}
+	SUBCASE("an absent DisplayName retains the missing CAPS diagnostic")
+	{
+		hasDisplayName = false;
+		expected = "MISSING: 'APT:HavenCaps'";
+	}
+	const std::string templates =
+		"PlayerTemplate FactionHidden\nSide = Hidden\nPlayableSide = No\nEnd\n"
+		"PlayerTemplate FactionNorthRealm\nSide = Haven\nPlayableSide = Yes\n" +
+		std::string(hasDisplayName ? "DisplayName = INI:FactionNorthRealm\n" : "") + "StartingBuilding = Castle\nEnd\n";
+	Bfme1ProfileFixture fixture(true, true, templates);
+	if (hasDisplayText) fixture.text.set("INI:FactionNorthRealm", "Northern Haven");
+	if (hasCaps) fixture.text.set("APT:HavenCaps", "NORTHERN HAVEN");
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 1);
+	CHECK(fixture.screen->setup()->info().slots[0].playerTemplate == 1);
+	CHECK(fixture.value("APT:CurFactionNameStr") == expected);
+	CHECK(fixture.movieValue("profileMovie") == "1");
+	REQUIRE(fixture.windows.aptImage("CreateComponents/ImageLevelIconMain"));
+	CHECK(*fixture.windows.aptImage("CreateComponents/ImageLevelIconMain") == "AptRankIcon1");
+}
+
+TEST_CASE("bfme1 skirmish profile: profile and map type combos replace retail placeholder entries")
+{
+	Bfme1ProfileFixture fixture;
+	GameWindow *profiles = fixture.screen->profileComboWindow();
+	REQUIRE(profiles);
+	CHECK(GadgetComboBoxGetLength(profiles) == 4);
+	CHECK(GadgetComboBoxGetText(profiles) == u"Alice");
+	GameWindow *mapType = fixture.screen->mapTypeWindow();
+	REQUIRE(mapType);
+	CHECK(GadgetComboBoxGetLength(mapType) == 2);
+	CHECK(GadgetComboBoxGetText(mapType) == u"Official maps");
+	fixture.choose(mapType, 1);
+	CHECK_FALSE(fixture.screen->bfme1OfficialMaps());
+	CHECK(GadgetComboBoxGetText(mapType) == u"Player-made maps");
+	fixture.choose(profiles, 1);
+	CHECK(fixture.profiles->current() == u"Bob");
+	CHECK(fixture.value("APT:PlayerNameNum") == "Bob");
+	CHECK(fixture.value("APT:SkirmishProfileCreatedNum") == "--");
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 1);
+	CHECK(fixture.value("APT:TotalCareerWinsNum") == "0");
+	CHECK(fixture.value("APT:CurrentLevelFormat") == "Level 1");
+	CHECK_FALSE(std::filesystem::exists(fixture.folder / "BobSkirmishStats.ini"));
+}
+
+TEST_CASE("bfme1 skirmish profile: absent profiles show dashes without inventing a creation date")
+{
+	Bfme1ProfileFixture fixture(true, false);
+	CHECK(fixture.value("APT:PlayerNameNum") == "--");
+	CHECK(fixture.value("APT:SkirmishProfileCreatedNum") == "--");
+	CHECK(fixture.value("APT:TotalCareerWinsNum") == "--");
+	CHECK(fixture.value("APT:CurrentLevelFormat") == "Level --");
+}
+
+TEST_CASE("bfme1 skirmish profile: BFME2 and RotWK data do not receive BFME1 profile records or dropdowns")
+{
+	bool rotwk = false;
+	SUBCASE("BFME2 data") {}
+	SUBCASE("RotWK data") { rotwk = true; }
+	Bfme1ProfileFixture fixture(false, true, {}, rotwk);
+	fixture.text.labels.erase("APT:GondorCaps");
+	fixture.text.set("INI:FactionGondor", "Custom Gondor");
+	CHECK(fixture.value("APT:CurFactionNameStr") == "<unset>");
+	CHECK(fixture.value("APT:PlayerNameNum") == "<unset>");
+	CHECK(fixture.screen->profileComboWindow() == nullptr);
+	CHECK(fixture.screen->mapTypeWindow() == nullptr);
+	CHECK(fixture.windows.aptImage("CreateComponents/ImageLevelIconMain") == nullptr);
+	const auto images = fixture.screen->mapListImages();
+	fixture.screen->recordsChanged();
+	CHECK(fixture.screen->mapListImages() == images);
+	CHECK(fixture.value("APT:CurFactionNameStr") == "<unset>");
+	CHECK(fixture.value("APT:PlayerNameNum") == "<unset>");
+	REQUIRE(fixture.screen->profileEntryWindow());
+	GadgetTextEntrySetText(fixture.screen->profileEntryWindow(), u"BFME2New");
+	REQUIRE(fixture.windows.invokeCallback("AptSkirmish::OnAddProfileAccept", ""));
+	CHECK_FALSE(std::filesystem::exists(fixture.folder / "BFME2NewSkirmishStats.ini"));
+	CHECK(fixture.profiles->profileValue(0, "OpenBFMEProfileCreatedDate").empty());
+}
+
+TEST_CASE("bfme1 skirmish profile: new personas persist their real creation date without backfilling old profiles")
+{
+	Bfme1ProfileFixture fixture;
+	fixture.choose(fixture.screen->profileComboWindow(), 2);
+	REQUIRE(fixture.screen->profileEntryWindow());
+	GadgetTextEntrySetText(fixture.screen->profileEntryWindow(), u"Charlie");
+	const std::time_t before = std::time(nullptr);
+	REQUIRE(fixture.windows.invokeCallback("AptSkirmish::OnAddProfileAccept", ""));
+	const std::time_t after = std::time(nullptr);
+	REQUIRE(fixture.profiles->current() == u"Charlie");
+	auto date = [](std::time_t value) {
+		char result[32] = {};
+		const std::tm *local = std::localtime(&value);
+		if (local) std::strftime(result, sizeof(result), "%Y-%m-%d", local);
+		return std::string(result);
+	};
+	const std::string displayed = fixture.value("APT:SkirmishProfileCreatedNum");
+	CHECK((displayed == date(before) || displayed == date(after)));
+	OptionPreferences saved;
+	std::string error;
+	REQUIRE_MESSAGE(saved.load((fixture.folder / "CharlieSkirmishStats.ini").string(), &error), error);
+	CHECK(saved.get("ProfileCreatedDate") == displayed);
+	SkirmishPreferences reopened((fixture.folder / "Skirmish.ini").string());
+	CHECK(reopened.profileValue(0, "OpenBFMEProfileCreatedDate") == displayed);
+	fixture.choose(fixture.screen->profileComboWindow(), 1);
+	CHECK(fixture.value("APT:SkirmishProfileCreatedNum") == "--");
+	CHECK_FALSE(std::filesystem::exists(fixture.folder / "BobSkirmishStats.ini"));
+}
+
+TEST_CASE("bfme1 skirmish profile: recreating a deleted persona does not inherit its statistics")
+{
+	Bfme1ProfileFixture fixture;
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 1);
+	CHECK(fixture.value("APT:TotalCareerWinsNum") == "7");
+	std::ofstream(fixture.folder / "AliceSkirmishStats.ini", std::ios::app) << "OpenBFMERecordedGame:deleted-game = 1\n";
+	fixture.choose(fixture.screen->profileComboWindow(), 3);
+	REQUIRE(fixture.windows.invokeCallback("AptSkirmish::Skirmish::PersonaRemove", ""));
+	REQUIRE(fixture.profiles->current() == u"Bob");
+	fixture.choose(fixture.screen->profileComboWindow(), 1);
+	REQUIRE(fixture.screen->profileEntryWindow());
+	GadgetTextEntrySetText(fixture.screen->profileEntryWindow(), u"Alice");
+	REQUIRE(fixture.windows.invokeCallback("AptSkirmish::OnAddProfileAccept", ""));
+	REQUIRE(fixture.profiles->current() == u"Alice");
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 1);
+	for (const char *label : { "APT:TotalCareerWinsNum", "APT:TotalCareerLossesNum", "APT:TotalCareerGamesNum", "APT:CurrentWinStreakNumA", "APT:BestWinStreakNumA" })
+		CHECK(fixture.value(label) == "0");
+	CHECK(fixture.value("APT:CurrentLevelFormat") == "Level 1");
+	CHECK(fixture.value("APT:TotalTimePlayedNum") == "0 days 0 hours");
+	CHECK(fixture.movieValue("profileProgress") == "0");
+	CHECK(fixture.screen->mapListImages() == std::vector<std::string>(4, "AptDifficultyNotConquered"));
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 2);
+	CHECK(fixture.value("APT:TotalCareerWinsNum") == "0");
+	CHECK(fixture.value("APT:CurrentLevelFormat") == "Level 1");
+	OptionPreferences saved;
+	std::string error;
+	REQUIRE_MESSAGE(saved.load((fixture.folder / "AliceSkirmishStats.ini").string(), &error), error);
+	CHECK(saved.values().size() == 1);
+	CHECK(saved.get("ProfileCreatedDate") == fixture.value("APT:SkirmishProfileCreatedNum"));
+	CHECK(saved.get("ProfileCreatedDate") != "2025-04-17");
+	CHECK_FALSE(saved.has("OpenBFMERecordedGame:deleted-game"));
+	SkirmishPreferences reopened((fixture.folder / "Skirmish.ini").string());
+	CHECK(reopened.current() == u"Alice");
+	CHECK(reopened.profileValue(0, "OpenBFMEProfileCreatedDate") == saved.get("ProfileCreatedDate"));
+}
+
+TEST_CASE("bfme1 skirmish profile: switching personas refreshes map badges and preserves map selection and filter")
+{
+	Bfme1ProfileFixture fixture;
+	const auto keys = fixture.screen->mapListKeys();
+	const auto images = fixture.screen->mapListImages();
+	REQUIRE(keys.size() == 4);
+	auto selectMap = [&](int row) {
+		fixture.layer.gadgets().winSendSystemMsg(fixture.screen->ownerWindow(), GLM_SELECTED, msgData(fixture.screen->mapListWindow()), (WindowMsgData)row);
+	};
+	selectMap(0);
+	fixture.choose(fixture.screen->profileComboWindow(), 1);
+	selectMap(1);
+	fixture.choose(fixture.screen->profileComboWindow(), 0);
+	auto checkSelection = [&](const std::string &map) {
+		CHECK(fixture.screen->setup()->info().mapName == map);
+		const auto &currentKeys = fixture.screen->mapListKeys();
+		const auto selected = std::find(currentKeys.begin(), currentKeys.end(), map);
+		REQUIRE(selected != currentKeys.end());
+		int row = -1;
+		GadgetListBoxGetSelected(fixture.screen->mapListWindow(), &row);
+		CHECK(row == (int)std::distance(currentKeys.begin(), selected));
+	};
+	checkSelection(keys[0]);
+	fixture.choose(fixture.screen->profileComboWindow(), 1);
+	CHECK(fixture.screen->mapListKeys() == keys);
+	CHECK(fixture.screen->mapListImages() == std::vector<std::string>(4, "AptDifficultyNotConquered"));
+	checkSelection(keys[1]);
+	fixture.choose(fixture.screen->profileComboWindow(), 0);
+	CHECK(fixture.screen->mapListKeys() == keys);
+	CHECK(fixture.screen->mapListImages() == images);
+	checkSelection(keys[0]);
+	fixture.choose(fixture.screen->mapTypeWindow(), 1);
+	fixture.choose(fixture.screen->profileComboWindow(), 1);
+	CHECK_FALSE(fixture.screen->bfme1OfficialMaps());
+	CHECK(fixture.screen->mapListKeys() == std::vector<std::string>{ "maps/custom/custom.map" });
+	CHECK(fixture.screen->mapListImages() == std::vector<std::string>{ "AptDifficultyNotConquered" });
+	fixture.choose(fixture.screen->mapTypeWindow(), 0);
+	CHECK(fixture.screen->mapListImages() == std::vector<std::string>(4, "AptDifficultyNotConquered"));
+}
+
+TEST_CASE("bfme1 skirmish profile: recorded matches persist per-profile faction statistics once and refresh the display")
+{
+	Bfme1ProfileFixture fixture;
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 1);
+	GameRecord record;
+	record.id = "bfme1-profile-win";
+	record.kind = "skirmish";
+	record.mode = "faithful";
+	record.map = "maps/fords/fords.map";
+	record.start = 1700000000;
+	record.end = record.start + 3600;
+	record.durationS = 3600;
+	record.players = { { 0, "Alice", "FactionGondor", 0, true }, { 1, "AI", "FactionRohan", 1, false } };
+	record.meSlot = 0;
+	record.winnerTeam = 0;
+	std::string error;
+	REQUIRE_MESSAGE(Bfme1SkirmishProfiles::recordGame(*fixture.profiles, fixture.setup, record, &error), error);
+	REQUIRE(Bfme1SkirmishProfiles::recordGame(*fixture.profiles, fixture.setup, record, &error));
+	fixture.screen->recordsChanged();
+	CHECK(fixture.value("APT:TotalCareerWinsNum") == "8");
+	CHECK(fixture.value("APT:CurrentWinStreakNumA") == "3");
+	CHECK(fixture.value("APT:TotalTimePlayedNum") == "1 days 4 hours");
+	CHECK(fixture.value("APT:SkirmishProfileCreatedNum") == "2025-04-17");
+	CHECK(fixture.value("APT:CurrentLevelFormat") == "Level 2");
+	fixture.choose(fixture.screen->profileComboWindow(), 1);
+	record.id = "bfme1-profile-loss";
+	record.winnerTeam = 1;
+	REQUIRE(Bfme1SkirmishProfiles::recordGame(*fixture.profiles, fixture.setup, record, &error));
+	fixture.choose(fixture.screen->profileComboWindow(), 0);
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 1);
+	CHECK(fixture.value("APT:TotalCareerWinsNum") == "8");
+	CHECK(fixture.value("APT:TotalCareerLossesNum") == "4");
+	CHECK(fixture.value("APT:CurrentWinStreakNumA") == "0");
+	CHECK(fixture.value("APT:TotalTimePlayedNum") == "1 days 5 hours");
+	record.id = "bfme1-profile-cheat";
+	record.cheatMode = true;
+	REQUIRE(Bfme1SkirmishProfiles::recordGame(*fixture.profiles, fixture.setup, record, &error));
+	fixture.screen->recordsChanged();
+	CHECK(fixture.value("APT:TotalCareerLossesNum") == "4");
+	record.id = "bfme1-profile-lan";
+	record.cheatMode = false;
+	record.kind = "lan";
+	record.players[0].nick = "Bob";
+	REQUIRE(Bfme1SkirmishProfiles::recordGame(*fixture.profiles, fixture.setup, record, &error));
+	CHECK_FALSE(std::filesystem::exists(fixture.folder / "BobSkirmishStats.ini"));
+	record.id = "bfme1-profile-old-date-unknown";
+	record.kind = "skirmish";
+	REQUIRE(Bfme1SkirmishProfiles::recordGame(*fixture.profiles, fixture.setup, record, &error));
+	fixture.choose(fixture.screen->profileComboWindow(), 1);
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 1);
+	CHECK(fixture.value("APT:TotalCareerLossesNum") == "1");
+	CHECK(fixture.value("APT:SkirmishProfileCreatedNum") == "--");
+}
+
+TEST_CASE("bfme1 skirmish profile: rank points and hard-glow honors require a matching actual difficulty snapshot")
+{
+	Bfme1ProfileFixture fixture;
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 1);
+	GameRecord record;
+	record.id = "bfme1-profile-hard-win";
+	record.kind = "skirmish";
+	record.mode = "faithful";
+	record.map = "maps/fords/fords.map";
+	record.durationS = 3600;
+	record.players = { { 0, "Alice", "FactionGondor", 0, true }, { 1, "AI", "FactionRohan", 1, false } };
+	record.meSlot = 0;
+	record.winnerTeam = 0;
+	SkirmishHonorsGame game;
+	game.localSlot = 0;
+	game.mapKey = record.map;
+	game.mapPlayers = 2;
+	game.slots[0] = { SLOT_PLAYER, -1 };
+	game.slots[1] = { SLOT_HARD_AI, -1 };
+	std::string error;
+	OptionPreferences saved;
+	const std::string path = (fixture.folder / "AliceSkirmishStats.ini").string();
+	REQUIRE(saved.load(path, &error));
+	saved.erase("maps\\fords\\fords.map_5");
+	REQUIRE(saved.save(path, &error));
+	const auto keys = fixture.screen->mapListKeys();
+	const auto found = std::find(keys.begin(), keys.end(), record.map);
+	REQUIRE(found != keys.end());
+	const std::size_t row = (std::size_t)std::distance(keys.begin(), found);
+	fixture.screen->recordsChanged();
+	CHECK(fixture.screen->mapListImages()[row] == "AptDifficultyNotConquered");
+	REQUIRE_MESSAGE(Bfme1SkirmishProfiles::recordGame(*fixture.profiles, fixture.setup, record, &error, &game), error);
+	fixture.screen->recordsChanged();
+	CHECK(fixture.screen->mapListKeys() == keys);
+	CHECK(fixture.screen->mapListImages()[row] == "AptDifficultyHardGlowConquered");
+	CHECK(fixture.value("APT:CurrentLevelFormat") == "Level 3");
+	CHECK(fixture.value("APT:NextWinsNumber") == "17 wins");
+	CHECK(fixture.movieValue("profileProgress") == "15");
+	REQUIRE(saved.load(path, &error));
+	CHECK(saved.get("GondorPoints") == "13");
+	CHECK(saved.get("maps\\fords\\fords.map_5") == "1");
+	record.id = "bfme1-profile-mismatched-snapshot";
+	game.mapKey = "maps/other/other.map";
+	REQUIRE(Bfme1SkirmishProfiles::recordGame(*fixture.profiles, fixture.setup, record, &error, &game));
+	REQUIRE(saved.load(path, &error));
+	CHECK(saved.get("GondorPoints") == "13");
+	CHECK(saved.get("GondorWins") == "9");
+}
+
+TEST_CASE("bfme1 skirmish profile: map list uses two columns, counted names and hard-glow honors from SkirmishStats")
+{
+	Bfme1ProfileFixture fixture;
+	GameWindow *list = fixture.screen->mapListWindow();
+	REQUIRE(list);
+	CHECK(GadgetListBoxGetNumColumns(list) == 2);
+	const auto *data = static_cast<const ListboxData *>(list->winGetUserData());
+	REQUIRE(data);
+	CHECK(data->columnWidthPercentage == std::vector<int>{ 10, 90 });
+	const auto &keys = fixture.screen->mapListKeys();
+	REQUIRE(keys.size() == 4);
+	const std::map<std::string, std::pair<std::u16string, std::string>> expected = {
+		{ "maps/fords/fords.map", { u"Fords of Isen (2)", "AptDifficultyHardGlowConquered" } },
+		{ "maps/hard/hard.map", { u"Hard map (2)", "AptDifficultyHardConquered" } },
+		{ "maps/medium/medium.map", { u"Medium map (2)", "AptDifficultyMedConquered" } },
+		{ "maps/easy/easy.map", { u"Easy map (2)", "AptDifficultyEasyConquered" } }
+	};
+	for (std::size_t row = 0; row < keys.size(); ++row)
+	{
+		const auto &entry = expected.at(keys[row]);
+		CHECK(GadgetListBoxGetText(list, (int)row, 1) == entry.first);
+		CHECK(fixture.screen->mapListImages()[row] == entry.second);
+	}
+	fixture.choose(fixture.screen->mapTypeWindow(), 1);
+	CHECK(fixture.screen->mapListKeys() == std::vector<std::string>{ "maps/custom/custom.map" });
 }

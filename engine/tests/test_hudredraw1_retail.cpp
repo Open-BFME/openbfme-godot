@@ -6,6 +6,7 @@
 // Palantir's other segments kept), and with the store open only the store's three `_active` buttons are drawn again besides it; and neither the Apt notes
 // nor the window manager notes grow over 300 frames, open or closed. SKIPs without ROTWK_INSTALL / BFME2_INSTALL.
 
+#include "HordeCompleteTestUtil.h"
 #include "HudTestUtil.h"
 
 #include "Common/PlayerScience.h"
@@ -119,6 +120,7 @@ TEST_CASE("hudredraw1 retail: 300 frames closed and open, the Palantir draws aga
 		REQUIRE(c);
 		Coord3D at{ 600.0f, 600.0f, 0.0f };
 		c->setPosition(&at);
+		testutil::completeHorde(c); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		c->friend_onBuildComplete();
 		r.rig.local->science().addSciencePurchasePoints(40); // every tier-1 power buyable: `_active`
 	}
@@ -135,7 +137,9 @@ TEST_CASE("hudredraw1 retail: 300 frames closed and open, the Palantir draws aga
 	MESSAGE("closed: Palantir level " << pal << ", " << closed.segments[pal] << " segments, " << closed.redrawn[pal] << " drawn again; levels " << closed.segments.size());
 	CHECK(closed.full == 0);
 	CHECK(closed.segments.size() == 1);
-	CHECK(closed.segments[pal] == 52);
+	// 29 (was 52 before lane DEVPORT-UI): the six empty arc slots hold no content (RW 0x92FF5C creates no controller for a slot without a
+	// command button), so their inert disabled contents are no longer drawn
+	CHECK(closed.segments[pal] == 29);
 	CHECK(closed.redrawn[pal] == 302);
 	CHECK(closed.paths[pal] == std::map<std::string, int>{ { button, 300 }, { resources, 2 } });
 	// open: as the Palantir's PlayerMagic button does (play1 drives the click: test_spell_book_hud.cpp), then the fade-in
@@ -167,7 +171,7 @@ TEST_CASE("hudredraw1 retail: 300 frames closed and open, the Palantir draws aga
 	}
 	CHECK(open.full == 0);
 	CHECK(open.segments.size() == 2);
-	CHECK(open.segments[pal] == 52);
+	CHECK(open.segments[pal] == 29);
 	CHECK(open.redrawn[pal] == 302);
 	CHECK(open.paths[pal] == std::map<std::string, int>{ { button, 300 }, { resources, 2 } });
 	CHECK(open.segments[store] == 55);

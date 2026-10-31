@@ -236,7 +236,7 @@ TEST_CASE("archer1: when a member's target dies the member is free and the next 
 	Object *dead = goalOf(archer);
 	REQUIRE(dead != nullptr);
 	const ObjectID deadId = dead->getID();
-	dead->kill(DEATH_NORMAL);
+	dead->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	CHECK(w.hordeOf(w.targets)->getContainCount() == 5); // it left the horde
 	const int n = w.runUntil([&] {
 		Object *v = goalOf(archer);
@@ -276,6 +276,9 @@ TEST_CASE("archer1: ClosestMemberOnly orders only the member nearest the victim 
 	w.frames(3);
 	w.hordeOf(swords)->attackTargetNow(w.targets, false);
 	CHECK(w.hordeOf(swords)->attackStats().fires == 0);
+	// the position fire (RW 0x875550) has the same guard: the MELEE_HORDE orders nobody
+	w.hordeOf(swords)->attackPositionNow(Coord3D{ 300.0f, 450.0f, 0.0f });
+	CHECK(w.hordeOf(swords)->attackStats().positionOrders == 0);
 }
 
 TEST_CASE("archer1: two peers running the same archer battle hash alike in every frame; the pick's draws are part of the hash")
@@ -420,3 +423,119 @@ TEST_CASE("archer1 r2: LockWeaponSlot locks the members' slot before the horde's
 	}
 	CHECK(archers->testStatus((unsigned)kSwitched));
 }
+
+namespace
+{
+// lane HORDEPOS-1: the retail Bombard pairing (2.01 weapon.ini: the eleven *HordeRangefinderBombard weapons and the archers' NoVictimNeeded bombard bows, e.g.
+// GondorArcherBowBombard): the horde's HordeAttackNugget locks the members' TERTIARY slot, whose weapon may fire with no victim (RW 0x6C8AA7 .. 0x6C8AFA)
+const char kBombardArchers[] =
+	"Weapon BombardRangefinder\n"
+	"  AttackRange = 150\n"
+	"  DelayBetweenShots = 1000\n"
+	"  LeechRangeWeapon = Yes\n"
+	"  NoVictimNeeded = Yes\n"
+	"  HordeAttackNugget\n"
+	"    LockWeaponSlot = TERTIARY\n"
+	"  End\n"
+	"End\n"
+	"Weapon BowBombard\n"
+	"  AttackRange = 200\n"
+	"  WeaponSpeed = 100\n"
+	"  DelayBetweenShots = 800\n"
+	"  NoVictimNeeded = Yes\n"
+	"  ProjectileNugget\n"
+	"    ProjectileTemplateName = Arrow\n"
+	"    WarheadTemplateName = BowWarhead\n"
+	"  End\n"
+	"End\n"
+	"Object BombardArcher\n"
+	"  KindOf = INFANTRY SELECTABLE CAN_ATTACK SCORE\n"
+	"  VisionRange = 250\n"
+	"  Geometry = CYLINDER\n"
+	"  GeometryMajorRadius = 8\n"
+	"  GeometryMinorRadius = 8\n"
+	"  GeometryHeight = 20\n"
+	"  ArmorSet\n"
+	"    Conditions = None\n"
+	"    Armor = PlainArmor\n"
+	"  End\n"
+	"  WeaponSet\n"
+	"    Conditions = None\n"
+	"    Weapon = PRIMARY BowWeapon\n"
+	"    Weapon = TERTIARY BowBombard\n"
+	"  End\n"
+	"  Body = ActiveBody ModuleTag_Body\n"
+	"    MaxHealth = 60\n"
+	"  End\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+	"  End\n"
+	"  Behavior = DestroyDie ModuleTag_Destroy\n"
+	"  End\n"
+	"  LocomotorSet\n"
+	"    Locomotor = WalkerLoco\n"
+	"    Condition = SET_NORMAL\n"
+	"    Speed = 55\n"
+	"  End\n"
+	"End\n"
+	"Object BombardArcherHorde\n"
+	"  KindOf = HORDE LARGE_RECTANGLE_PATHFIND SELECTABLE CAN_ATTACK\n"
+	"  VisionRange = 250\n"
+	"  Geometry = BOX\n"
+	"  GeometryMajorRadius = 30\n"
+	"  GeometryMinorRadius = 45\n"
+	"  GeometryHeight = 20\n"
+	"  WeaponSet\n"
+	"    Conditions = None\n"
+	"    Weapon = PRIMARY BombardRangefinder\n"
+	"  End\n"
+	"  Body = ImmortalBody ModuleTag_Body\n"
+	"    MaxHealth = 1\n"
+	"  End\n"
+	"  Behavior = HordeAIUpdate ModuleTag_AI\n"
+	"  End\n"
+	"  Behavior = HordeContain ModuleTag_Contain\n"
+	"    RankInfo = RankNumber:1 UnitType:BombardArcher Position:X:50 Y:0 Position:X:50 Y:20 Position:X:50 Y:-20\n"
+	"    RankInfo = RankNumber:2 UnitType:BombardArcher Position:X:30 Y:0 Position:X:30 Y:20 Position:X:30 Y:-20\n"
+	"    InitialPayload = BombardArcher 6\n"
+	"    RanksToReleaseWhenAttacking = 1 2\n"
+	"  End\n"
+	"  LocomotorSet\n"
+	"    Locomotor = HordeLoco\n"
+	"    Condition = SET_NORMAL\n"
+	"    Speed = 50\n"
+	"  End\n"
+	"End\n";
+} // namespace
+
+TEST_CASE("archer1 (HORDEPOS-1): a HordeAttackNugget fired at a position with no victim (WeaponDelivery's slot 0, RW 0x875550) orders every released member to "
+		  "attack the spot (aiAttackPosition RW 0x6961F1, 0x7FFFFFFF shots, CMD_FROM_AI): bombard archers locked to TERTIARY shoot there")
+{
+	static const std::string extra = std::string(kDummyHorde) + kBombardArchers;
+	CombatWorld w(extra.c_str());
+	w.combat().setAutoAcquireEnabled(false);
+	Object *horde = w.unit("BombardArcherHorde", 'A', 300, 300);
+	w.frames(12);
+	HordeContain *hc = w.hordeOf(horde);
+	const std::vector<Object *> archers = w.membersOf(horde);
+	REQUIRE(archers.size() == 6);
+	const Coord3D spot{ 300.0f, 180.0f, w.logic->getGroundHeight(300.0f, 180.0f) };
+	horde->getWeapons()->fireCurrentWeapon(nullptr, &spot); // RW 0x6920AD: the rangefinder fires at the ground
+	CHECK(hc->attackStats().fires == 0);          // no victim: not attackTargetNow (slot 4)
+	CHECK(hc->attackStats().positionOrders == 6); // ranks 1 and 2 are released: every archer
+	for (Object *a : archers)
+	{
+		AIUpdateInterface *ai = a->getAIUpdateInterface();
+		CHECK(a->getWeapons()->curSlot() == 2); // LockWeaponSlot TERTIARY, locked before the orders (RW 0x69121A)
+		CHECK(ai->currentStateId() == (unsigned)AI_ATTACK_POSITION);
+		CHECK(ai->lastCommandSource() == CMD_FROM_AI);
+		CHECK(a->getWeapons()->currentWeapon()->maxShotCount() == 0x7FFFFFFF);
+	}
+	w.frames(20);
+	unsigned long long shots = 0;
+	for (Object *a : archers)
+	{
+		shots += a->getWeapons()->stats().shotsFired;
+	}
+	CHECK(shots == 18); // pinned: six archers, 20 frames of BowBombard (DelayBetweenShots 800 ms)
+}
+

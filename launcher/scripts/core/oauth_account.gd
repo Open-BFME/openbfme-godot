@@ -7,6 +7,7 @@ signal session_ready(response: Dictionary)
 signal recovery_code(code: String)
 
 const NetPolicy := preload("res://scripts/net/net_policy.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 const CALLBACK_PORT := 43827
 const CALLBACK_PATH := "/oauth/callback"
 const BODY_CAP := 65536
@@ -17,20 +18,20 @@ const EMAIL_FLOW_SECONDS := 30 * 60
 const EMAIL_POLL_SECONDS := 4.0
 ## ONLINEMENU-1 (PR #8 review, finding 2): the lobby's refusals of a link or an unlink, in words
 const REFUSALS := {
-	"recovery_required": "This needs your player's recovery code. Create one on the Account tab first if you have none.",
-	"bad_recovery": "That recovery code is not this player's.",
-	"install_proof": "Sign in again on this PC, then try again.",
-	"oauth_provider_exists": "That account type is already linked. Unlink it first.",
-	"oauth_conflict": "That account is linked to another player.",
-	"oauth_not_this_player": "That is not the account linked to this player.",
-	"provider_confirm_required": "Confirm with your linked account to make a recovery code.",
-	"email_in_use": "That e-mail address belongs to another player.",
-	"email_expired": "The e-mail sign-in expired. Start it again.",
-	"email_unavailable": "E-mail sign-in is not available on this lobby yet.",
-	"identity_banned": "That account belongs to a banned player.",
+	"recovery_required": "launcher.oauth_account.this_needs_your_player_s_recovery",
+	"bad_recovery": "launcher.oauth_account.that_recovery_code_is_not_this",
+	"install_proof": "launcher.oauth_account.sign_in_again_on_this_pc",
+	"oauth_provider_exists": "launcher.oauth_account.that_account_type_is_already_linked",
+	"oauth_conflict": "launcher.oauth_account.that_account_is_linked_to_another",
+	"oauth_not_this_player": "launcher.oauth_account.that_is_not_the_account_linked",
+	"provider_confirm_required": "launcher.oauth_account.confirm_with_your_linked_account_to",
+	"email_in_use": "launcher.oauth_account.that_e_mail_address_belongs_to",
+	"email_expired": "launcher.oauth_account.the_e_mail_sign_in_expired",
+	"email_unavailable": "launcher.oauth_account.e_mail_sign_in_is_not",
+	"identity_banned": "launcher.oauth_account.that_account_belongs_to_a_banned",
 	# ONLINEMENU-1 (BATCH-P3): the lobby answers not_found only for a path it does not have (lobby.mjs "unknown path"): a lobby from before
 	# account linking
-	"not_found": "Discord and e-mail sign-in are not available on this server yet.",
+	"not_found": "launcher.oauth_account.discord_and_e_mail_sign_in",
 }
 const LOBBY_HOST_PATTERN := "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
 
@@ -87,12 +88,12 @@ func configure(url: String, test_origin: String = "") -> String:
 	_policy = NetPolicy.new()
 	if test_origin != "":
 		if NetPolicy.check_test_origin(test_origin) != "":
-			return "The test lobby address is invalid."
+			return L10n.t("launcher.oauth_account.the_test_lobby_address_is_invalid")
 		_policy.test_origin = test_origin
 	var parsed_lobby: Dictionary = NetPolicy.parse_url(url.trim_suffix("/"))
 	if _policy.set_lobby(url) != "" or not parsed_lobby.ok \
 			or RegEx.create_from_string(LOBBY_HOST_PATTERN).search(parsed_lobby.host) == null:
-		return "The lobby address is invalid."
+		return L10n.t("launcher.oauth_account.the_lobby_address_is_invalid")
 	lobby_url = url.trim_suffix("/")
 	return ""
 
@@ -123,19 +124,19 @@ func begin(provider: String, mode: String, identity: Dictionary = {}, recovery: 
 	if busy:
 		return
 	if provider not in PROVIDERS or mode not in ["link", "restore", "confirm"]:
-		status_changed.emit("That sign-in choice is not available.")
+		status_changed.emit(L10n.t("launcher.oauth_account.that_sign_in_choice_is_not"))
 		return
 	if not _valid_origin():
-		status_changed.emit("Set an HTTPS lobby URL before signing in.")
+		status_changed.emit(L10n.t("launcher.oauth_account.set_an_https_lobby_url_before"))
 		return
 	if mode in ["link", "confirm"] and not _has_session():
-		_status("Sign in before linking an account.")
+		_status(L10n.t("launcher.oauth_account.sign_in_before_linking_an_account"))
 		return
 	if recovery != "" and not _valid_recovery(recovery):
-		_status("The recovery code is 16 letters and digits.")
+		_status(L10n.t("launcher.oauth_account.the_recovery_code_is_16_letters"))
 		return
 	if mode == "restore" and (_token != "" or identity.is_empty()):
-		_status("Sign out and provide this PC's install identity before restoring.")
+		_status(L10n.t("launcher.oauth_account.sign_out_and_provide_this_pc"))
 		return
 	_restore_identity = identity.duplicate(true) if mode == "restore" else {}
 	_recovery = recovery if mode == "link" else ""
@@ -143,17 +144,17 @@ func begin(provider: String, mode: String, identity: Dictionary = {}, recovery: 
 	_deadline = Time.get_ticks_msec() + FLOW_SECONDS * 1000
 	_provider = provider
 	_mode = mode
-	_status("Preparing secure sign-in…")
+	_status(L10n.t("launcher.oauth_account.preparing_secure_sign_in"))
 	if provider == "email":
 		_start_email()
 		return
 	if _server.listen(CALLBACK_PORT, "127.0.0.1") != OK:
-		_finish_error("The fixed sign-in callback port is unavailable.")
+		_finish_error(L10n.t("launcher.oauth_account.the_fixed_sign_in_callback_port"))
 		return
 	_state = _hex_random(32)
 	_verifier = _base64url(Crypto.new().generate_random_bytes(32))
 	if _verifier.length() < 43:
-		_finish_error("Cannot create a secure sign-in verifier.")
+		_finish_error(L10n.t("launcher.oauth_account.cannot_create_a_secure_sign_in"))
 		return
 	_start_oauth()
 
@@ -162,10 +163,10 @@ func refresh() -> void:
 	if busy:
 		return
 	if not _valid_origin() or not _has_session():
-		status_changed.emit("Set an HTTPS lobby URL to check linked accounts.")
+		status_changed.emit(L10n.t("launcher.oauth_account.set_an_https_lobby_url_to"))
 		return
 	busy = true
-	_status("Checking linked accounts…")
+	_status(L10n.t("launcher.oauth_account.checking_linked_accounts"))
 	_accounts()
 
 
@@ -173,18 +174,18 @@ func unlink(provider: String, recovery: String) -> void:
 	if busy:
 		return
 	if provider not in PROVIDERS:
-		status_changed.emit("That provider is not available.")
+		status_changed.emit(L10n.t("launcher.oauth_account.that_provider_is_not_available"))
 		return
 	if not _valid_origin() or not _has_session():
-		status_changed.emit("Set an HTTPS lobby URL before unlinking.")
+		status_changed.emit(L10n.t("launcher.oauth_account.set_an_https_lobby_url_before_2"))
 		return
 	if not _valid_recovery(recovery):
-		status_changed.emit("Unlinking needs this player's recovery code (16 letters and digits).")
+		status_changed.emit(L10n.t("launcher.oauth_account.unlinking_needs_this_player_s_recovery"))
 		return
 	busy = true
 	_provider = provider
 	_request_kind = "unlink"
-	_status("Unlinking account…")
+	_status(L10n.t("launcher.oauth_account.unlinking_account"))
 	_post("/v1/auth/oauth/unlink", {"v": 1, "provider": provider, "install": _install, "recovery": recovery})
 
 
@@ -192,7 +193,7 @@ func cancel() -> void:
 	if not busy:
 		return
 	_cleanup()
-	status_changed.emit("Sign-in cancelled.")
+	status_changed.emit(L10n.t("launcher.oauth_account.sign_in_cancelled"))
 
 
 func _has_session() -> bool:
@@ -239,7 +240,7 @@ func _email_poll_now() -> void:
 	if not busy or _provider != "email" or _email_ticket == "":
 		return
 	if Time.get_ticks_msec() > _deadline:
-		_finish_error("The e-mail sign-in timed out. Start it again.")
+		_finish_error(L10n.t("launcher.oauth_account.the_e_mail_sign_in_timed"))
 		return
 	_request_kind = "email_poll"
 	var raw := JSON.stringify({"v": 1, "ticket": _email_ticket, "poll": _email_poll})
@@ -249,21 +250,21 @@ func _email_poll_now() -> void:
 func _email_result(value: Dictionary) -> void:
 	if value.get("done") != true:
 		if not _only(value, ["v", "done", "state"]) or value.get("state") not in ["waiting", "sent"]:
-			_finish_error("The lobby returned an invalid e-mail sign-in answer.")
+			_finish_error(L10n.t("launcher.oauth_account.the_lobby_returned_an_invalid_e"))
 			return
-		_status("Check your inbox and click the link (it works for 15 minutes)…" if value.state == "sent" else "Enter your e-mail address on the page that opened in your browser…")
+		_status(L10n.t("launcher.oauth_account.check_your_inbox_and_click_the") if value.state == "sent" else L10n.t("launcher.oauth_account.enter_your_e_mail_address_on"))
 		_poll_timer.start()
 		return
 	if _mode == "confirm":
 		_handle_confirm(value)
 	elif _mode == "link":
 		if not _only(value, ["v", "done", "pid", "providers"]) or value.get("pid") != _pid or not _valid_providers(value.get("providers")):
-			_finish_error("The lobby returned an invalid e-mail sign-in answer.")
+			_finish_error(L10n.t("launcher.oauth_account.the_lobby_returned_an_invalid_e"))
 			return
 		_providers = value.providers.duplicate()
 		_cleanup()
 		completed.emit(_pid, _providers.duplicate())
-		_status("E-mail address linked to this player.")
+		_status(L10n.t("launcher.oauth_account.e_mail_address_linked_to_this"))
 	else:
 		var finished := value.duplicate()
 		finished.erase("done")
@@ -272,7 +273,7 @@ func _email_result(value: Dictionary) -> void:
 
 func _finish_oauth(code: String, state: String) -> void:
 	if state != _state:
-		_finish_error("The browser sign-in state did not match.")
+		_finish_error(L10n.t("launcher.oauth_account.the_browser_sign_in_state_did"))
 		return
 	_request_kind = "finish"
 	_post("/v1/auth/oauth/finish", {"v": 1, "transaction": _queued_transaction, "state": state, "code": code, "code_verifier": _verifier})
@@ -296,7 +297,7 @@ func _request(url: String, headers: PackedStringArray, method: int, body: String
 	else:
 		result = _http.request(url, headers, method, body)
 	if result != OK:
-		_finish_error("The lobby request could not be started.")
+		_finish_error(L10n.t("launcher.oauth_account.the_lobby_request_could_not_be"))
 
 
 func _on_request(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
@@ -308,20 +309,20 @@ func _on_request(result: int, code: int, _headers: PackedStringArray, body: Pack
 		_providers.clear()
 	if result == HTTPRequest.RESULT_SUCCESS and code in [403, 404, 409] and body.size() <= BODY_CAP:
 		var refusal: Variant = JSON.parse_string(body.get_string_from_utf8())
-		var why: String = REFUSALS.get(str(refusal.get("error", "")) if refusal is Dictionary else "", "")
-		if why != "":
-			_finish_error(why)
+		var why_id: String = REFUSALS.get(str(refusal.get("error", "")) if refusal is Dictionary else "", "")
+		if why_id != "":
+			_finish_error(L10n.t(why_id))
 			return
 	if result != HTTPRequest.RESULT_SUCCESS or code != 200 or body.size() > BODY_CAP:
-		_finish_error("The lobby could not complete the account action.")
+		_finish_error(L10n.t("launcher.oauth_account.the_lobby_could_not_complete_the"))
 		return
 	var parser := JSON.new()
 	if parser.parse(body.get_string_from_utf8()) != OK or typeof(parser.data) != TYPE_DICTIONARY:
-		_finish_error("The lobby returned an invalid account response.")
+		_finish_error(L10n.t("launcher.oauth_account.the_lobby_returned_an_invalid_account"))
 		return
 	var value: Dictionary = parser.data
 	if value.get("v") != 1:
-		_finish_error("The lobby returned an unsupported account response.")
+		_finish_error(L10n.t("launcher.oauth_account.the_lobby_returned_an_unsupported_account"))
 		return
 	if _request_kind == "accounts":
 		_apply_accounts(value)
@@ -329,29 +330,29 @@ func _on_request(result: int, code: int, _headers: PackedStringArray, body: Pack
 		if not _only(value, ["v", "transaction", "authorization_url", "pid"]) \
 				or not _matches(value.get("transaction"), "^[0-9a-f]{48}\\z") or typeof(value.get("authorization_url")) != TYPE_STRING \
 				or not value.has("pid") or (_mode in ["link", "confirm"] and value.pid != _pid) or (_mode == "restore" and value.pid != null):
-			_finish_error("The lobby returned an invalid sign-in URL.")
+			_finish_error(L10n.t("launcher.oauth_account.the_lobby_returned_an_invalid_sign"))
 			return
 		_queued_transaction = value.transaction
 		if not _allowed_authorization(value.authorization_url):
-			_finish_error("The lobby returned an unsafe sign-in URL.")
+			_finish_error(L10n.t("launcher.oauth_account.the_lobby_returned_an_unsafe_sign"))
 			return
 		var open_result: int = _browser_override.call(value.authorization_url) if _browser_override.is_valid() else preload("res://scripts/core/external_open.gd").open_url(value.authorization_url)
 		if open_result != OK:
-			_finish_error("The system browser could not be opened.")
+			_finish_error(L10n.t("launcher.oauth_account.the_system_browser_could_not_be"))
 			return
-		_status("Finish sign-in in your system browser…")
+		_status(L10n.t("launcher.oauth_account.finish_sign_in_in_your_system"))
 	elif _request_kind == "email_start":
 		var ticket: Variant = value.get("ticket")
 		if not _only(value, ["v", "ticket", "url", "expires"]) or not _matches(ticket, "^[0-9a-f]{48}\\z") \
 				or value.get("url") != lobby_url + "/email/" + str(ticket):
-			_finish_error("The lobby returned an invalid e-mail sign-in page.")
+			_finish_error(L10n.t("launcher.oauth_account.the_lobby_returned_an_invalid_e_2"))
 			return
 		_email_ticket = ticket
 		var open_result: int = _browser_override.call(value.url) if _browser_override.is_valid() else preload("res://scripts/core/external_open.gd").open_url(value.url)
 		if open_result != OK:
-			_finish_error("The system browser could not be opened.")
+			_finish_error(L10n.t("launcher.oauth_account.the_system_browser_could_not_be"))
 			return
-		_status("Enter your e-mail address on the page that opened in your browser…")
+		_status(L10n.t("launcher.oauth_account.enter_your_e_mail_address_on"))
 		_poll_timer.start()
 	elif _request_kind == "email_poll":
 		_email_result(value)
@@ -362,20 +363,20 @@ func _on_request(result: int, code: int, _headers: PackedStringArray, body: Pack
 	elif _request_kind == "unlink":
 		_apply_accounts(value)
 	else:
-		_finish_error("The account action was not recognized.")
+		_finish_error(L10n.t("launcher.oauth_account.the_account_action_was_not_recognized"))
 
 
 func _handle_confirm(value: Dictionary) -> void:
 	var fields := ["v", "pid", "providers", "code", "done"] if _provider == "email" else ["v", "pid", "providers", "code"]
 	if not _only(value, fields) or value.get("pid") != _pid or not _valid_providers(value.get("providers")) \
 			or not value.get("code") is String or not _valid_recovery(value.code):
-		_finish_error("The lobby did not complete the confirmation.")
+		_finish_error(L10n.t("launcher.oauth_account.the_lobby_did_not_complete_the"))
 		return
 	_providers = value.providers.duplicate()
 	_cleanup()
 	recovery_code.emit(value.code)
 	completed.emit(_pid, _providers.duplicate())
-	_status("New recovery code made.")
+	_status(L10n.t("launcher.oauth_account.new_recovery_code_made"))
 
 
 func _handle_finish(value: Dictionary) -> void:
@@ -388,7 +389,7 @@ func _handle_finish(value: Dictionary) -> void:
 			or _private_identity(value) \
 			or not _valid_providers(value.get("providers")) \
 			or (_mode == "link" and (account.pid != _pid or account.id != _account_id)):
-		_finish_error("The lobby did not complete sign-in.")
+		_finish_error(L10n.t("launcher.oauth_account.the_lobby_did_not_complete_sign"))
 		return
 	_token = value.token
 	_pid = account.pid
@@ -401,18 +402,18 @@ func _handle_finish(value: Dictionary) -> void:
 	session_ready.emit(value)
 	_providers = providers
 	completed.emit(account.pid, providers)
-	_status("Player restored on this PC." if restored else "Account linked to this player.")
+	_status(L10n.t("launcher.oauth_account.player_restored_on_this_pc") if restored else L10n.t("launcher.oauth_account.account_linked_to_this_player"))
 
 
 func _apply_accounts(value: Dictionary) -> void:
 	if not _only(value, ["v", "pid", "providers"]) or value.get("pid") != _pid or not _valid_providers(value.get("providers")):
-		_finish_error("The lobby returned invalid linked accounts.")
+		_finish_error(L10n.t("launcher.oauth_account.the_lobby_returned_invalid_linked_accounts"))
 		return
 	_providers = value.providers.duplicate()
 	var unlinked := _request_kind == "unlink"
 	_cleanup()
 	completed.emit(_pid, _providers.duplicate())
-	_status("Account unlinked." if unlinked else "Linked accounts checked.")
+	_status(L10n.t("launcher.oauth_account.account_unlinked") if unlinked else L10n.t("launcher.oauth_account.linked_accounts_checked"))
 
 
 func _only(value: Dictionary, fields: Array) -> bool:
@@ -470,7 +471,7 @@ func _process(_delta: float) -> void:
 	if _callback_finishing:
 		return
 	if _deadline > 0 and Time.get_ticks_msec() > _deadline:
-		_finish_error("The browser sign-in timed out.")
+		_finish_error(L10n.t("launcher.oauth_account.the_browser_sign_in_timed_out"))
 		return
 	while _server.is_connection_available():
 		if _clients.size() >= MAX_CALLBACK_CLIENTS:
@@ -511,13 +512,13 @@ func _read_callback(client: Dictionary) -> void:
 		return
 	_clients.erase(client)
 	if callback.get("cancelled", false):
-		socket.put_data(_callback_response("Sign-in was cancelled. You may close this window."))
+		socket.put_data(_callback_response(L10n.t("launcher.oauth_account.sign_in_was_cancelled_you_may")))
 		socket.disconnect_from_host()
 		_server.stop()
 		_cleanup()
-		_status("Sign-in was cancelled in the browser.")
+		_status(L10n.t("launcher.oauth_account.sign_in_was_cancelled_in_the"))
 		return
-	var page := "Sign-in received. You may close this window."
+	var page := L10n.t("launcher.oauth_account.sign_in_received_you_may_close")
 	socket.put_data(_callback_response(page))
 	socket.disconnect_from_host()
 	_drop_clients()
@@ -534,14 +535,14 @@ func _callback_response(page: String) -> PackedByteArray:
 func _parse_callback(text: String) -> Dictionary:
 	var lines := text.split("\r\n")
 	if lines.is_empty() or not lines[0].begins_with("GET "):
-		return {"ok": false, "error": "The browser callback was malformed."}
+		return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_was_malformed")}
 	var request_parts := lines[0].split(" ")
 	if request_parts.size() != 3 or request_parts[2] != "HTTP/1.1":
 		return {"ok": false}
 	var target := request_parts[1]
 	var target_parts := target.split("?")
 	if target_parts.size() != 2 or target_parts[0] != CALLBACK_PATH:
-		return {"ok": false, "error": "The browser callback path was not recognized."}
+		return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_path_was_not")}
 	var host := ""
 	var query := {}
 	var seen_headers := {}
@@ -550,46 +551,46 @@ func _parse_callback(text: String) -> Dictionary:
 			break
 		var pair := line.split(":", true, 1)
 		if pair.size() != 2:
-			return {"ok": false, "error": "The browser callback headers were malformed."}
+			return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_headers_were_malformed")}
 		var name := pair[0].to_lower()
 		if seen_headers.has(name):
-			return {"ok": false, "error": "The browser callback had duplicate headers."}
+			return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_had_duplicate_headers")}
 		seen_headers[name] = true
 		if name == "host":
 			host = pair[1].strip_edges()
 		elif name == "origin":
-			return {"ok": false, "error": "The browser callback origin was unexpected."}
+			return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_origin_was_unexpected")}
 		elif name == "content-length":
 			if pair[1].strip_edges() != "0":
-				return {"ok": false, "error": "The browser callback must not contain a body."}
+				return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_must_not_contain")}
 		elif name == "transfer-encoding":
-			return {"ok": false, "error": "The browser callback must not contain a body."}
+			return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_must_not_contain")}
 	var host_ok := host == "127.0.0.1:%d" % CALLBACK_PORT
 	if not host_ok:
-		return {"ok": false, "error": "The browser callback host was not recognized."}
+		return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_host_was_not")}
 	for part in target_parts[1].split("&"):
 		var kv := part.split("=", true, 1)
 		if kv.size() != 2 or query.has(kv[0].uri_decode()):
-			return {"ok": false, "error": "The browser callback had duplicate or malformed values."}
+			return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_had_duplicate_or")}
 		var name := kv[0].uri_decode()
 		var value := kv[1].uri_decode()
 		if name in query:
-			return {"ok": false, "error": "The browser callback had duplicate values."}
+			return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_had_duplicate_values")}
 		query[name] = value
 	var allowed := ["state", "code", "error"]
 	for name in query:
 		if name not in allowed or query[name].length() > 2048:
-			return {"ok": false, "error": "The browser callback contained an unsupported value."}
+			return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_contained_an_unsupported")}
 	if query.get("state", "") != _state:
-		return {"ok": false, "error": "The browser callback did not contain a valid response."}
+		return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_did_not_contain")}
 	if query.get("error", "") == "access_denied":
 		if query.has("code") or query.size() != 2:
 			return {"ok": false}
 		return {"ok": true, "cancelled": true}
 	if query.has("error") or not query.has("code") or query.size() < 2 or not RegEx.create_from_string("^[\\x21-\\x7e]{1,2048}$").search(query.code):
-		return {"ok": false, "error": "The browser callback did not contain a valid response."}
+		return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_did_not_contain")}
 	if query.size() != 2:
-		return {"ok": false, "error": "The browser callback did not contain a valid response."}
+		return {"ok": false, "error": L10n.t("launcher.oauth_account.the_browser_callback_did_not_contain")}
 	return {"ok": true, "code": query.code, "state": query.state}
 
 

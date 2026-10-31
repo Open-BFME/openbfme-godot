@@ -339,6 +339,29 @@ void AptPalantir::frameLoaded(bool arc, const std::string &arg, bool loaded)
 	}
 }
 
+// RW 0x92F990 / 0x92FF5C release the controller; RW 0x9D6EC7 hides its overlay
+// and deletes its content through RW 0x9D2640 (BFME2 donor RVAs 0x528F30,
+// 0x5294FC, 0x5C7954, 0x5C3209, all tier A). The frame itself survives.
+void AptPalantir::clearFrame(int position, bool arc)
+{
+	Slot &s = (arc ? m_arc : m_side)[position];
+	if (arc)
+	{
+		hideStanceMenu(position);
+	}
+	if (s.created)
+	{
+		const std::string frame = (arc ? m_arcFramePath : m_sideFramePath)[position];
+		const std::string key = levelPrefix() + frame + ".content";
+		setOverlay(s, frame, false);
+		call(frame, "DeleteContent", {});
+		m_images.erase(key + "_Image");
+		m_timers.erase(key + "_Timer");
+		windows().setAptText("APT:" + key + "_ProductionCount", " ");
+	}
+	s = Slot();
+}
+
 void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool arc)
 {
 	if (m_bfme1 && arc)
@@ -383,12 +406,6 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 				") has no frame in the movie (RW 0x92F082 stops at the first missing frame)");
 		}
 	}
-	// Empty arc slots retain their inert button content so the six circular
-	// frames remain drawn after selection is cleared. Slot -1 cannot dispatch.
-	ControlBarButton empty;
-	empty.slot = -1;
-	empty.state = ButtonState::Restricted;
-	if (arc) for (int i = 0; i < positions; ++i) if (!at[i]) at[i] = &empty;
 	for (int i = 0; i < positions; ++i)
 	{
 		// the clip of position i: the frame the movie reported for it (lane HUD-4; the arc's are CommandButtons.<i>, the side bar's
@@ -405,30 +422,17 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 		}
 		if (!at[i])
 		{
-			if (s.created)
-			{
-				if (arc)
-				{
-					hideStanceMenu(i); // lane CAMPUI-1: RW 0x96FCCB
-				}
-				const std::string key = levelPrefix() + frame + ".content";
-				setOverlay(s, frame, false); // lane AUTOCAST-1: the content's destructor hides the glow first (RW 0x9D6EC7 -> 0x9D6F07)
-				call(frame, "DeleteContent", {});
-				m_images.erase(key + "_Image");
-				m_timers.erase(key + "_Timer");
-				windows().setAptText("APT:" + key + "_ProductionCount", " ");
-				s = Slot();
-			}
+			clearFrame(i, arc);
 			continue;
 		}
 		const ControlBarButton &b = *at[i];
 		const std::string key = levelPrefix() + frame + ".content";
 		const std::string sig = std::to_string(b.slot) + "|" + std::to_string((int)b.state) + "|" + std::to_string(b.productionCount) + "|" + b.image + "|" + std::to_string((int)(b.timer * 100.0f)) + (b.autoAbility ? "|auto" : "");
-		// lane CAMPUI-1: the window's button changed: retail's factory (RW 0x92FF5C) replaces the content, and a stance toggle's destructor hides its open
-		// radial (RW 0x96FCCB)
+		// RW 0x930035 -> 0x92FF5C (BFME2 RVAs 0x5295D5 / 0x5294FC, tier A):
+		// a different button pointer replaces the controller, even with identical image/state.
 		if (arc && s.button != b.button)
 		{
-			hideStanceMenu(i);
+			clearFrame(i, arc);
 		}
 		s.button = b.button;
 		s.state = b.state;
@@ -463,11 +467,34 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 					}
 					else if (button == 0 && m_press)
 					{
+						// RW 0x9D285E (BFME2 Rva005C3427::Run, tier A): states 1/3/5 reject the press with the disabled cue.
+						// Enabled clicks are sounded by the movie, not by this callback.
+						if (shown.state == ButtonState::Restricted || shown.state == ButtonState::CantAfford ||
+							shown.state == ButtonState::Purchased || shown.state == ButtonState::NotReady)
+						{
+							windows().invokeCallback("PlaySound", "Gui_PalantirCommandButtonDisabledClick");
+							return;
+						}
 						m_press(shown.slot, inArc);
 					}
 					else if (button == 2 && m_rightPress)
 					{
+						// RW 0x9D28D4 (BFME2 Rva005C33DDWindowNotification, tier B): disabled and cant-afford right presses only
+						// cancel when the command is cancelable; the notification supplies the native cue for that path.
+						const bool disabled = shown.state == ButtonState::Restricted || shown.state == ButtonState::CantAfford ||
+							shown.state == ButtonState::Purchased;
+						if (disabled && (!shown.button || !shown.button->hasOption(COMMAND_OPTION_CANCELABLE)))
+						{
+							windows().invokeCallback("PlaySound", "Gui_PalantirCommandButtonDisabledClick");
+							return;
+						}
+						const bool nativeCue = disabled || shown.state == ButtonState::NotReady;
+						const bool enabledCue = disabled || (shown.button && shown.button->m_autoAbility);
 						m_rightPress(shown.slot, inArc);
+						if (nativeCue)
+						{
+							windows().invokeCallback("PlaySound", enabledCue ? "Gui_PalantirCommandButtonClick" : "Gui_PalantirCommandButtonDisabledClick");
+						}
 					}
 				});
 			}
@@ -615,12 +642,6 @@ void AptPalantir::syncLocal()
 	if (m_local.context && (!m_commandContext || m_local.contextObject != m_contextObject || m_local.commandSet != m_contextSet))
 	{
 		hideRank(); // RW 0x92F990: HideRankInterface when shown
-		// lane CAMPUI-1: the context's contents go (the stance toggle's destructor RW 0x96FCCB hides its open radial). INFERENCE: the content is rebuilt on
-		// a context switch (the factory RW 0x92FF5C's callers were not read)
-		for (int i = 0; i < kArcPositions; ++i)
-		{
-			hideStanceMenu(i);
-		}
 		if (m_commandShown)
 		{
 			call("", "HideCommandInterface", {});
@@ -630,6 +651,16 @@ void AptPalantir::syncLocal()
 		{
 			m_images.erase(portraitKey());
 			m_portraitShown.clear();
+		}
+		// RW 0x930809 -> 0x92F990 clears all six controller references before
+		// 0x92FF5C recreates them (BFME2 RVAs 0x529DA9 / 0x528F30 / 0x5294FC,
+		// tier A). Reusing a _static content leaves its passive ring in the movie.
+		if (!m_bfme1)
+		{
+			for (int i = 0; i < kArcPositions; ++i)
+			{
+				clearFrame(i, true);
+			}
 		}
 		m_commandContext = true;
 		m_contextObject = m_local.contextObject;
@@ -833,6 +864,45 @@ void AptPalantir::syncPlayerStats()
 	{
 		statsCall("HighlightPlayerMagicButton", { m_highlighted ? "1" : "0" });
 		m_magicHighlightedSent = m_highlighted;
+	}
+}
+
+void AptPalantir::setViewportSize(int width, int height)
+{
+	if (m_bfme1)
+	{
+		return;
+	}
+	AptSpriteInst *root = windows().apt().level(level());
+	if (!root || !root->timelineFile || width < 1 || height < 1)
+	{
+		return;
+	}
+	const float stageWidth = (float)root->timelineFile->width;
+	const float stageHeight = (float)root->timelineFile->height;
+	if (stageWidth <= 0.0f || stageHeight <= 0.0f)
+	{
+		return;
+	}
+	const float scale = std::min(1.0f, ((float)height / stageHeight) / ((float)width / stageWidth));
+	for (AptCharacterInst *child : root->children())
+	{
+		const std::string &name = child->instName();
+		if (name == "helpBox" || name == "ButtonFlashStage")
+		{
+			continue;
+		}
+		float anchor = 0.0f;
+		if (name == "SideCommandBar")
+		{
+			anchor = stageWidth;
+		}
+		else if (name == "planningModeUI")
+		{
+			anchor = stageWidth * 0.5f;
+		}
+		child->viewportTransform.a = scale;
+		child->viewportTransform.tx = anchor * (1.0f - scale);
 	}
 }
 
@@ -1325,6 +1395,13 @@ bool AptPalantir::createRadarPing(int id, const std::string &name)
 bool AptPalantir::moveRadarPing(int id, float stageX, float stageY)
 {
 	++m_radarPingCalls;
+	if (AptSpriteInst *root = windows().apt().level(level()))
+	{
+		if (AptCharacterInst *pings = root->childByName("RadarPings"))
+		{
+			stageX = (stageX - pings->viewportTransform.tx) / pings->viewportTransform.a;
+		}
+	}
 	char x[64], y[64];
 	std::snprintf(x, sizeof(x), "%f", (double)stageX);
 	std::snprintf(y, sizeof(y), "%f", (double)stageY);

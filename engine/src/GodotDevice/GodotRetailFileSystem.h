@@ -72,6 +72,8 @@ public:
 	// lane SDK-0 (GameClient/AssetPacks.h): the cosmetic asset packs, in order (the last wins a name). Replaces the packs of this file system;
 	// {ok, errors, packs, textures, models, notes, not_covered}. Takes effect for asset managers and material factories made afterwards.
 	Dictionary set_asset_packs(const PackedStringArray &folders);
+	// lane SDK-1b (b): per pack, the models left out (they do not fit), each with its reason (the launcher's card)
+	Dictionary get_asset_pack_report() const;
 
 	bool is_mounted() const { return m_mounted; }
 	bool is_shell_source() const { return m_shellSource; }
@@ -103,10 +105,20 @@ public:
 	bool mapsFolder(bool userMap, std::string &out, std::string *error) const;
 	// lane MODS-1: the mounted mod's ProfileIdentity lines (empty without a mod) and its folder (the movie player's "Mod Path", RW 0x490D1C)
 	std::vector<std::string> modIdentity() const; // the install-folder mod's lines, then the -mod's
+	// lane PROFILE-2: SimulationData::digest of this mount (the profile identity's simdata line, GameNetwork/ProfileIdentity.h), computed once per
+	// mounted archive list and mod; "" + *error when nothing is mounted or a listed file cannot be read
+	std::string simulationData(std::string *error) const;
+	// lane PROFILE-3: the profile identity's pack lines (AssetPacks::identityLines) of the packs this game uses: none while they are suspended or none
+	// is loaded. Read once per set of packs (every used file is hashed); a file that cannot be read gives the one line "pack-error" (the reason goes
+	// to the log): presentation only, it never refuses a game, but a checker sees the packs were in use
+	std::vector<std::string> packIdentity() const;
 	const std::string &modFolder() const { return m_modReport.loose.root; }
+	// lane MODCOMPAT-1: the install-folder mods' folders (--mod-install), highest priority first: their loose files (movies) sit in the game folder in retail
+	std::vector<std::string> installOverlayFolders() const;
 	// lane SDK-0: the packs (empty without any) and the W3D source of the RENDER side: the mounted files with the packs in front. Never for
 	// the simulation's asset manager (LiveGame's m_simAssetSource reads the archive file system directly).
 	const AssetPacks &assetPacks() const { return m_packs; }
+	AssetPacks &assetPacksMutable() { return m_packs; } // lane SDK-1b: GameWorld::set_asset_packs_used
 	std::unique_ptr<W3DFileSource> renderW3DSource();
 
 protected:
@@ -134,6 +146,9 @@ private:
 	PackedStringArray m_modEngines;     // lane MODS-3
 	ModMountReport m_installModReport;
 	AssetPacks m_packs;             // lane SDK-0
+	mutable std::string m_simDataKey, m_simData; // lane PROFILE-2: simulationData's cache (the archive lines and mod lines it was computed for)
+	mutable bool m_packLinesRead = false;         // lane PROFILE-3: packIdentity's cache (cleared when the packs or their checked models change)
+	mutable std::vector<std::string> m_packLines;
 };
 
 } // namespace godot

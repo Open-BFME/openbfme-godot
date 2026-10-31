@@ -15,6 +15,7 @@
 #pragma once
 
 #include "GameClient/GUI/AptScreens/AptPalantir.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameClient/GUI/AptScreens/AptSpellStore.h"
 #include "GameClient/SpellBookUI.h"
 #include "GameClient/GUI/Shell/Shell.h"
@@ -54,7 +55,7 @@ class GameTextSource;
 class LiveGame;
 class RetailObjectWorld;
 
-class InGameHud
+class InGameHud : public ScriptLocalView
 {
 public:
 	struct Config
@@ -157,6 +158,10 @@ public:
 	void scriptInput(bool enable);
 	// lane CAMPUI-1: the objectives screen is up (the Palantir's flag stops flashing, RW 0x6D7647), and a script's FLASH_*_BUTTON(seconds) (RW 0x6D455F)
 	void setObjectivesScreenOpen(bool open) { m_objectivesScreenOpen = open; }
+	// lane BFME2CAMP1: the script engine's client view (ScriptLocalView; registered with the game while the HUD lives): the attached camera's scroll total
+	// (TacticalCamera::scrollDistance, W3DView + 0x24F4) and the objectives screen above
+	float cameraScrollDistance() const override;
+	bool objectivesScreenOpen() const override { return m_objectivesScreenOpen; }
 	void flashPalantirButton(int slot, int seconds);
 	bool palantirObjectivesFlashing() const;
 	bool scriptMouseHidden() const { return m_input->ui().scriptMouseHidden(); } ///< DISABLE_INPUT's Mouse::setVisibility(false): the device shows no pointer
@@ -169,6 +174,7 @@ public:
 	// the store (AptPalantir::OnBttnSpellStore): SpellStore.apt in a window slot over the Palantir, bound to the local player; closing sends the purchases
 	bool openSpellStore(std::string *error = nullptr);
 	void closeSpellStore();
+	void cancelSpellStore();
 	AptSpellStore *spellStore() { return m_store.get(); }
 	const PlayerMessageLog &playerMessages() const { return m_playerMessages; }
 	// lane CHEAT-1: a line of text (not a game text label) in the message log, as InGameUI::message's handler adds one: the Cheat Mode announcements

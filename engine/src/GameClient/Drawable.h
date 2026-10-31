@@ -31,6 +31,7 @@
 #include "GameClient/DrawableShroud.h"
 #include "GameClient/LogicSnapshot.h"
 #include "GameClient/RenderInterpolation.h"
+#include "GameClient/StealthLook.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawServices.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLuaDrawScriptHost.h"
@@ -182,6 +183,9 @@ public:
 	bool hasAnimatedEntry() const;
 	// steps every model draw's animations by `elapsedMs` of render time
 	void advanceAnimation(double elapsedMs);
+	// lane PERF-HD: every animated draw's advance is advanceIsLocal (and the tires are this drawable's): advanceAnimation touches only this drawable
+	bool advanceIsLocal() const;
+	void advanceAnimationLocal(double elapsedMs); ///< advanceAnimation without the host's chunk name (nothing it runs reports through the host)
 	void advanceTires(DrawEntry &e, double elapsedMs); ///< lane COMBAT-4: W3DTruckDraw's tire spin (RW 0x4CBFFB)
 
 	// RW 0x6789B4 Drawable::showModule: the draw module whose tag is `name` (exact, case sensitive) takes the request (true: a module exists; the
@@ -207,7 +211,10 @@ public:
 		RenderInterpolation::Pose pose;
 		bool sameBasis = false; ///< a rotation about Z already set on this basis: no new orientation
 		float c = 0.0f, s = 0.0f;
+		bool committed = false; ///< lane PERF-HD: commitSync ran on the job pool with the reaction held back (DrawableManager::syncTransforms)
 	};
+	// lane PERF-HD: while muted, a transform change does not reach the client modules (syncTransforms makes the reaction afterwards, in slot order)
+	void setReactionMuted(bool muted) { m_reactionMuted = muted; }
 	void prepareSync(const ObjectSnapshot &rec, UnsignedInt snapshotFrame, double alpha, bool interpolate, SyncPrep &out);
 	void commitSync(const SyncPrep &prep);
 	// lane PERF-3: the record DrawableManager::syncTransforms found for this drawable in `snapshot` (null: none), so the render side asks the same snapshot
@@ -224,6 +231,10 @@ public:
 	}
 	// lane VISUAL-2: the shroud look of the last sync: fullyObscured is RW Drawable +0x440 (attached particle systems do not emit), hidden: not drawn
 	const DrawableShroudLook &shroudLook() const { return m_shroudLook; }
+	// lane EVADAMAGE-1: RW Drawable +0x388 (0 at creation), the logic frame until which a damage Eva event here is "near the first" (EvaDamage.h); RW 0x671DFD
+	// raises it, never lowers it
+	UnsignedInt evaDamageFarFrame() const { return m_evaDamageFarFrame; }
+	void raiseEvaDamageFarFrame(UnsignedInt frame) { m_evaDamageFarFrame = frame > m_evaDamageFarFrame ? frame : m_evaDamageFarFrame; }
 	// lane VISUAL-2 r2: whether the device layer draws this drawable for the presented snapshot `presented` (null: none yet), in one place for the models,
 	// the attached particle systems (RW 0x5FA2CE reads the drawable's visible byte +0x441), the buffs (TBuff's visible = +0x441, RW 0x4D12FA) and the
 	// streaks. `hidden`: not drawn (the grace-adjusted SHROUDED status while `shroudDrawn`, an enemy's invisible object, a drawable a container hid);
@@ -274,10 +285,26 @@ public:
 	// RW 0x670AA2 Drawable::fadeIn(frames): 0 shows at once; else the opacity rises from 0 over `frames` client frames (lane BUILD-4: public, the
 	// simulation's FADE_IN request for a wall span's tile)
 	void fadeIn(double frames);
+	void fadeOut(double frames); ///< RW 0x670A50 (lane PORTERFOG-1: public, the simulation's FADE_OUT request for a porter at work)
 	// what the device layer draws: 0 while hidden, else the fade's opacity (1 without a fade)
 	float drawOpacity() const { return m_fade.hidden ? 0.0f : m_fade.opacity; }
 	// lane BUILD-5: ZH Drawable::setDrawableOpacity, the opacity at Drawable + 0xB0 (the field the fade steps): the placement ghost's 0.45 (RW 0x69C714)
 	void setDrawableOpacity(float opacity) { m_fade.opacity = opacity; }
+	// lane FBSIM-1: the phantom structure's opacity (ObjectSnapshot::phantomStructure)
+	void updatePhantomLook(const ObjectSnapshot &rec);
+
+	// ---- lane STEALTHLOOK-1: the drawable's stealth look (GameClient/StealthLook.h; RW 0x6760F9 setter and the per-client-frame step RW 0x673114) ----
+	// the snapshot's look drives the setter (retail's callers hand it (look, min, max, cycle) unconditionally); the object's HORDE parent
+	// (ObjectSnapshot::stealthParent, RW 0x693A1A) makes the drawable imitate instead. `mgr` resolves the parent drawable
+	void syncStealthLook(const ObjectSnapshot &rec);
+	// RW 0x673114, once per client frame: imitate the stealth parent or step the pulse / blend. `parent` is the drawable of stealthParent (null: none / early out)
+	void updateStealthLook(const Drawable *parent);
+	ObjectID stealthParentId() const { return m_stealthParentId; }
+	const StealthLook::State &stealth() const { return m_stealth; }
+	float stealthOpacity() const { return m_stealth.opacity; }
+	bool stealthHidden() const { return m_stealth.hidden; }
+	// RW +0x3AB: a draw module's data is not affected by stealth (the drawable cannot hide for look 5)
+	bool cannotHideByStealth() const { return m_cannotHideByStealth; }
 
 private:
 	void addEntry(DrawServices &services, const ThingTemplate::Nugget &nugget, std::vector<std::string> &problems);
@@ -299,7 +326,11 @@ private:
 	std::vector<DrawEntry> m_entries;
 	std::vector<std::unique_ptr<DrawableModule>> m_clientModules;
 	bool m_clientHidden = false; ///< lane CHAT-1
+	bool m_phantomLook = false;  ///< lane FBSIM-1: drawn as a dozer's phantom structure (0.4 opacity)
 	Fade m_fade; ///< lane PROJ-2
+	StealthLook::State m_stealth;            ///< lane STEALTHLOOK-1: RW Drawable +0xB4 .. +0xD4, +0x164, +0x358, +0x43E
+	bool m_cannotHideByStealth = false;      ///< lane STEALTHLOOK-1: RW +0x3AB, set at construction (GameClient/StealthLook.cpp)
+	ObjectID m_stealthParentId = INVALID_ID; ///< lane STEALTHLOOK-1: the imitated parent's object (ObjectSnapshot::stealthParent)
 	bool m_buildingEntries = false;                                     ///< lane BUILD-4: the constructor is making the draw modules
 	std::vector<std::pair<std::string, bool>> m_pendingModuleRequests; ///< lane BUILD-4: script module requests made meanwhile
 	float m_moveSpeed = 0.0f; ///< lane SMOOTH-3: the presented record's moveSpeed (the Distance animations' speed sync)
@@ -310,12 +341,13 @@ private:
 	UnsignedInt m_syncFrame = 0;
 	const ObjectSnapshot *m_syncRec = nullptr;
 	DrawableShroudLook m_shroudLook; ///< lane VISUAL-2
+	UnsignedInt m_evaDamageFarFrame = 0; ///< lane EVADAMAGE-1: RW + 0x388
 	bool m_zBasisCached = false;
+	bool m_reactionMuted = false; ///< lane PERF-HD: see setReactionMuted
 	float m_zCachedAngle = 0.0f;
 	float m_zCachedBasis[9] = {};
 	bool m_flagsDirty = false;           ///< lane ANIM-1: RW Drawable + 0x443
 	bool m_hasWeaponTiming = false;      ///< lane ANIM-1: the last flush's weapon cycle (RW 0x4BEE31 reads the object's when the draw applies the flags)
 	int m_weaponTimingFrames = 0;
-	void fadeOut(double frames); ///< RW 0x670A50
 	void setFadeHidden(bool hidden); ///< RW 0x6718FB (bumps the change count when it changes)
 };

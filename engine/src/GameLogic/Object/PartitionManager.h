@@ -277,6 +277,7 @@ public:
 		float sphere = 0.0f;  ///< + 0x14
 		float centerZ = 0.0f; ///< + 0x20
 	};
+	// the object's GeometryInfo + 0x10 / + 0x14 / + 0x20: its template's, or (lane MODCOMPAT-MOD1) its own once it changed a shape flag (Object::geometryShapes)
 	const Geometry &geometryOf(const Object &obj) const;
 
 private:
@@ -303,6 +304,7 @@ private:
 	// skips the exact x87 arithmetic of a candidate it would reject anyway; never true for a NaN or a candidate near the boundary
 	bool surelyBeyond(DistanceCalculationType type, const Coord3D &center, const Entry &e, double radiusSqr) const;
 	const Geometry &entryGeometry(const Entry &e) const;
+	const Geometry &templateGeometryOf(const ThingTemplate *key) const;
 	std::vector<PartitionHit> takeBuffer() const;
 	friend class PartitionHits;
 	void recycle(std::vector<PartitionHit> &&hits) const;
@@ -317,6 +319,13 @@ private:
 	size_t m_entryCount = 0;
 	std::vector<std::unique_ptr<Entry>> m_byId; ///< Object + 0x4E8, indexed by object id
 	mutable std::unordered_map<const ThingTemplate *, Geometry> m_geometry; ///< looked up only (never iterated); element references stay valid
+	struct OwnGeometry
+	{
+		const Object *object = nullptr;
+		std::uint32_t version = 0;
+		Geometry g;
+	};
+	mutable std::unordered_map<ObjectID, OwnGeometry> m_ownGeometry; ///< lane MODCOMPAT-MOD1: geometryOf an object with own flags out of the partition (looked up only)
 	mutable std::vector<std::vector<PartitionHit>> m_hitPool;              ///< the buffers of finished queries (PartitionHits)
 	mutable std::vector<SearchNode> m_searchHeap;                          ///< getClosestObject's heap storage, kept between calls (lane UBER-2A)
 	bool m_preReject = true;

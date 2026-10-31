@@ -40,8 +40,11 @@ Tiers:
 
 Decomp status of the counterpart: `authored` / `vendored` / `generated` = byte-matched C++
 (the ledger row starting at the function), `attempt` = recovered C++ that does not match yet
-(`reverse/attempts/`), `tu-only` = no code, but the decomp assigns the function to a file,
-`library` / `dump` = no source, `partial-*` = ledger rows cover part of the extent, `none`.
+(`reverse/attempts/`; the folder is absent while nothing is banked), `tu-only` = no code, but the
+decomp assigns the function to a file, `assembly` = byte-matched reviewed assembly (not C++),
+`data` = verified data in `.text`, `library` / `dump` = no source, `partial-*` = ledger rows cover
+part of the extent, `none`. A ledger lane the tools don't know stops the rebuild: add it to
+`LANE_RANK` in `match_rotwk.py` (the clone's `tools/progress.py` `SOURCE_LANES` lists them).
 
 Always cite the RotWK address; BFME2 and the decomp are donors (PLAN source priority).
 
@@ -84,6 +87,10 @@ GhidraMCP server with the named program loaded.
    `workspace/rebuild/xmap/config.json`; back the folder up (`xmap.bak-<date>`) before a rebuild.
 4. Stops: `python tools/re/stops_xmap.py --out X/stops_xmap.md` ranks the open `docs/STOPS.md`
    rows whose cited code is tier A (or B) with byte-matched decomp source.
+
+`edition_census.py` (lane BFME2MODE-0) classifies every `RW 0x...` cite in `engine/src/GameLogic` and `engine/src/Common`:
+same behaviour / real divergence / RotWK-only, plus the BFME2-only GameLogic functions. It writes the generated section of
+`docs/EDITIONS.md`, which describes the method and its limits.
 
 `text_patches.py` lists `.text` references into the community-added sections of the installed
 RotWK `game.dat` (stop S-001).
