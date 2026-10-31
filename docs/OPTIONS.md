@@ -59,8 +59,8 @@ read only there), so it has no effect in 2.01.
 |---|---|---|---|---|
 | 0 | `ModelLOD` | Low .. UltraHigh | manager + 0x1774; GlobalData + 0x24 = ModelLOD <= 0 | stop S-3402 |
 | 1 | `AnimationLOD` | VeryLow .. UltraHigh | + 0x1788 | stop S-3402 |
-| 2 | `EffectsLOD` | VeryLow .. UltraHigh | + 0x1778; MaxParticleCount (+ 0xAC8) and the two particle priorities (+ 0x17A0 / + 0x17A4) of that preset; UseHeatEffects = >= 2 (+ 0x25) | particle cap and priorities applied (FX player); heat effects stop S-3402 (no smudge pass, S-194) |
-| 3 | `ShadowLOD` | Off .. UltraHigh | decals = 1..2, volumes = 2, shadow mapping = >= 3 (+ 0x60 / 61 / 62) | stop S-3402 (the renderer draws no shadows yet) |
+| 2 | `EffectsLOD` | VeryLow .. UltraHigh | + 0x1778; MaxParticleCount (+ 0xAC8) and the two particle priorities (+ 0x17A0 / + 0x17A4) of that preset; UseHeatEffects = >= 2 (+ 0x25) | particle cap and priorities applied (FX player); at VeryLow / Low neither the map's colour grade nor the glow pass is drawn (W3DView draw, RW 0x48789F; stop S-5231); heat effects stop S-3402 (no smudge pass, S-194) |
+| 3 | `ShadowLOD` | Off .. UltraHigh | decals = 1..2, volumes = 2, shadow mapping = >= 3 (+ 0x60 / 61 / 62) | directional volume shadow maps: Medium and High a 2048 atlas, UltraHigh 4096 (each of the four cascades gets RotWK's MapSize, at least 2048 at UltraHigh); Off/Low disable maps; retail decals/stencil parity remains S-3402 |
 | 4 | `TerrainLOD` | Low .. High | normal map >= 2, distance textures and ShowProps >= 1 (+ 0x49 / 4A / 1C), tank tracks of preset Low / Medium / High | stop S-3402 |
 | 5 | `WaterLOD` | Low .. UltraHigh | + 0x1784; + 0x5E = >= 2; soft water edge >= 1 (+ 0x84) | stop S-3402 |
 | 6 | `TextureQualityLOD` | Low .. High | TextureReductionFactor 2 / 1 / 0 (RW 0x517540) | applied: W3D textures lose mip levels (models loaded afterwards; retail reloads at once: S-3402) |
@@ -73,8 +73,9 @@ their saved values and the presets still carry them. The three usable rows act
 in part:
 
 - **VFX Detail (EffectsLOD):** the particle cap and the two particle priorities
-  take effect at once in a game; the heat effects it also turns on are not
-  drawn (no smudge pass).
+  take effect at once in a game, and at Very Low / Low the map's colour grade
+  and the glow pass (the GlowEffect block) are not drawn, as in retail (stop
+  S-5231); the heat effects it also turns on are not drawn (no smudge pass).
 - **Texture Quality:** the texture reduction applies to the models loaded
   after the change, so it shows from the next game (or map) loaded; retail
   reloads the textures at once.
@@ -127,8 +128,18 @@ disables its Graphics list there; the online rows are enabled only when the onli
 | Alternate mouse setup | Interface | retail key, OpenBFME row (RotWK 2.01's screen has no box for it) | `AlternateMouseSetup` |
 | Online IP, Port Number, Send Delay | Online | retail (enabled from the online screens) | `GameSpyIPAddress`, `FirewallPortOverride`, `SendDelay` |
 | Refresh NAT | Online | retail (refused by name: S-1913) | |
+| Share my game results for statistics, Show my ping in the online menus | Online | OpenBFME | `OpenBFMEShareResults`, `OpenBFMEShowPing` (both yes by default) |
+| Send crash reports automatically | Interface | OpenBFME | `OpenBFMECrashReports` (yes by default; lane CRASHACT-1: a crash's privacy-filtered report goes to the OpenBFME crash service at the next start; off: the crash message offers Send report; the launcher reads the same key) |
+| Game invitations, Challenges | Online | OpenBFME social privacy | `privacy.invites`, `privacy.challenges`: Friends and room players / Friends only |
+| Player friend requests | Online | OpenBFME social privacy | `privacy.requests`: Anyone / Nobody |
+| Show my status | Online | OpenBFME social privacy | `privacy.presence`: Friends / Nobody |
+| Online visibility | Online | OpenBFME social presence | `hidden`: Visible / Appear offline |
 | Uber performance mode | Performance | OpenBFME (UBER-1) | `OpenBFMEUberPerformance` |
 | Hot keys (read only) | Controls | retail data (CommandMap.ini) | |
+
+The social rows require a signed-in identity on a lobby with social support. ACCEPT sends changed privacy/visibility
+to that identity, not to `Options.ini`; defaults are Friends and room players for invitations/challenges, Anyone for
+requests, Friends for status and Visible for visibility. CANCEL does not submit those pending changes.
 
 Why there: the brightness is a property of the picture, so Display; the detail level and its custom settings are what the retail screen calls
 Graphics, with OpenBFME's renderer settings beside them in a second column (the tab has fourteen rows; two columns keep every row on screen);
@@ -190,9 +201,10 @@ Lane OPTS-3 made it a page of Options.apt, built from the menu's own pieces
   first (the check box to 26 pixels) and its 16 pixel texts were drawn at stage
   size and magnified, which is the softness the owner saw at 2560 x 1440.
 
-Defaults are retail behaviour, except the Max zoom-out (the owner's 2.5x, lane
-ZOOM-1); nothing here reaches the simulation (viewport, environment, audio
-buses, camera, HUD decorations), except the Uber performance mode, which picks
+Defaults are retail behaviour where there is a retail equivalent, except the Max zoom-out (the owner's 2.5x, lane
+ZOOM-1). New features such as the ping wheel, result sharing and ping display default on. Camera, graphics,
+audio and HUD settings stay outside simulation; the ping wheel sends pings and result sharing sends game summaries.
+Uber performance mode picks
 the simulation profile of the player's next games (refused, never mixed, with
 another profile). Tabs:
 
@@ -217,6 +229,8 @@ another profile). Tabs:
 | | Health bars on infantry and cavalry too | `AllHealthBars` (retail) | no |
 | | Alternate mouse setup | `AlternateMouseSetup` (retail) | no |
 | | Game clock | `OpenBFMEGameClock` | no |
+| | Ping wheel: hold the ping key for the wheel of pings (skirmish; not retail, see [Ping wheel](PLAYING.md#ping-wheel)) | `OpenBFMEPingWheel` | yes |
+| | Ping key: G held (a tap stays the game's G) / Alt+G / J / mouse back button / mouse forward button | `OpenBFMEPingKey` | g |
 | Audio | Master volume 0 .. 100 (live while it moves, with the sound effects sample: OPTS-4) | `OpenBFMEMasterVolume` | 100 |
 | | Mute in the background | `OpenBFMEMuteUnfocused` | no |
 | | Output device (Godot's list: Windows, Linux, macOS) | `OpenBFMEAudioDevice` | Default |
@@ -282,8 +296,7 @@ another profile). Tabs:
   camera is client state: the simulation, replays and multiplayer never read
   it (sim_audit). `--widescreen=original|wider` sets it for one run.
 
-Left out, with the reason, in `docs/ROADMAP.md`: shadow map resolution (no
-shadows drawn yet), tooltip delay (the HUD's tooltips are not ported),
+Left out, with the reason, in `docs/ROADMAP.md`: a separate shadow map resolution control (atlas size follows ShadowLOD), tooltip delay (the HUD's tooltips are not ported),
 double-click guard (RotWK 2.01 never reads it), colour-blind player colours
 (player colours are part of the game setup), hotkey rebinding.
 
@@ -364,18 +377,28 @@ movie's difficulty choice, and its Easy / Medium / Hard button sends
 0x91AFAF) to `campaign_flow.gd`. RotWK has no Continue Campaign button;
 you continue a campaign from Load Game (its auto-saves).
 
-BFME2's 1.06 `MainMenu.apt` (the BFME2 style) has no Angmar buttons, so
-in that style you can't start the Angmar campaigns from the menu; switch
-to the RotWK style to play them. BFME2's own Good / Evil campaign buttons
-stay hidden while `game.gd`'s `BFME2_CAMPAIGNS` is off (until B2CAMP-1).
-Load Game moves up into their place. A request that still names them,
-`game.gd.start_bfme2_campaign(alignment: String)` with `good` / `evil`
-(B2CAMP-1's entry point), gets the main menu's "not available" box
-("The BFME2 Good campaign is not available yet: ...").
+BFME2's 1.06 `MainMenu.apt` (the BFME2 style) has no Angmar buttons; OpenBFME
+adds them (lane BFME2CAMP1, an OpenBFME addition): while the Solo Play list is
+open, copies of its Good Campaign row named `Expansion1Campaign` ("ANGMAR
+CAMPAIGN") and `BonusCampaign` ("EPILOGUE", disabled until the bonus unlock as
+in RotWK) sit between Good Campaign and Load Game, the list's frame stretched to
+hold them; they open the movie's own difficulty choice, which sends RotWK's
+`AptMainMenu::Expansion1Campaign` / `BonusCampaign` (`AptMainMenu.h`
+`ExtraRows`). BFME2's own Good / Evil campaign buttons
+show in the BFME2 style (lane BFME2CAMP1 turned `game.gd`'s
+`BFME2_CAMPAIGNS` on) and start `GOOD_CAMPAIGN` / `EVIL_CAMPAIGN` with the
+chosen difficulty, as RotWK's own unregistered starters do (RW 0x91AF46 /
+0x91AF69 -> RW 0x91BE05 / 0x91BDA6). Those campaigns come from BFME2's
+legend's `LinearCampaign.ini`, which OpenBFME loads after RotWK's campaigns
+(an OpenBFME addition: RotWK's legend names only
+`LinearCampaignExpansion1.ini`). They play with RotWK 2.01's rules and data.
+With the switch off, or with data that has no such campaign,
+`game.gd.start_bfme2_campaign(alignment, difficulty)` shows the main menu's
+"not available" box instead.
 
 ### Checks
 
-With the extension built, run Godot headlessly with `--path godot --script`
+From the repository root on Linux, with Godot 4.7.2 on PATH and the extension built, run Godot headlessly with `--path godot --script`
 and each of `res://tests/menustyle_settings_test.gd`,
 `res://tests/menustyle_native_test.gd`, `res://tests/menustyle_test.gd`.
 The latter two need `ROTWK_INSTALL` and `BFME2_INSTALL`. The C++ test
@@ -385,7 +408,9 @@ The settings test checks a separate-process read and keeps the choice out
 of `Options.ini`. The runtime check covers Cancel, deferred Accept,
 repeated switches, world-state and gameplay provenance preservation.
 `--menu1-walk=DIR` drives real viewport mouse/key events in the selected
-style and saves screenshots in windowed runs. Use isolated options/menu
+style and saves screenshots in windowed runs. A step fails when the shell
+reported an error since the previous step (a movie that did not load) or
+the Skirmish lobby lists no map or no player slot (lane MODUI-1). Use isolated options/menu
 config files for each style and resolution; do not change the player's
 saved choice to run the walk.
 

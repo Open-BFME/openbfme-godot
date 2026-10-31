@@ -2,6 +2,7 @@
 // command buttons pressed through the movie. They SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset. GPL-3.0.
 
 #include "HudTestUtil.h"
+#include "HudAudioTestUtil.h"
 
 #include "GameClient/CursorFile.h"
 #include "GameClient/CameraSettings.h"
@@ -29,7 +30,7 @@ namespace
 struct HudRig
 {
 	Rig rig;
-	RecordingShellServices services;
+	hudaudio::RecordingShellServices services;
 	std::unique_ptr<InGameHud> hud;
 	explicit HudRig(SharedWorld &s) : rig(s)
 	{
@@ -102,6 +103,19 @@ TEST_CASE("hud palantir: a selected building fills the command arc with its Comm
 	REQUIRE(bar.palantirButtons().size() >= 3);
 }
 
+TEST_CASE("hud click audio: the movie root PlaySound reaches the audio request log")
+{
+	if (!haveWorld("hud click audio")) return;
+	SharedWorld &s = shared();
+	hudaudio::RetailAudio audio(*s.mount->fs);
+	HudRig h(s);
+	h.frames(40);
+	std::string error;
+	REQUIRE_MESSAGE(h.hud->windows().invokeAS(h.hud->palantir()->level(), "PlaySound", { "Gui_PalantirHeroButtonClick" }, nullptr, &error), error);
+	CHECK(h.services.sounds == std::vector<std::string>{ "Gui_PalantirHeroButtonClick" });
+	CHECK(hudaudio::takeRequests(*audio.manager, "HUD movie") == std::vector<std::string>{ "Gui_PalantirHeroButtonClick" });
+}
+
 namespace
 {
 AptButtonInst *firstButtonIn(AptCharacterInst *c)
@@ -155,6 +169,7 @@ TEST_CASE("hud palantir input: select a barracks by a click, press its first com
 		return;
 	}
 	SharedWorld &s = shared();
+	hudaudio::RetailAudio audio(*s.mount->fs);
 	HudRig h(s);
 	h.hud->setWindowSize(1024, 768);
 	h.rig.view.setScreen(1024, 768);
@@ -179,10 +194,19 @@ TEST_CASE("hud palantir input: select a barracks by a click, press its first com
 	const std::uint32_t money0 = h.rig.local->getMoney()->countMoney();
 	h.hud->mouseMove(x, y);
 	h.frames(2);
+	h.services.sounds.clear();
+	audio.manager->takeEventLog();
 	h.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 2000);
 	h.frames(2);
+	const std::vector<std::string> down = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	CHECK(h.services.sounds == std::vector<std::string>{ "Gui_PalantirCommandButtonClick" });
 	h.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 2040);
 	h.frames(2);
+	const std::vector<std::string> up = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	hudaudio::printSequence("APT enabled command", down, up);
+	CHECK(down == std::vector<std::string>{ "Gui_PalantirCommandButtonClick" });
+	CHECK(up.empty());
+	CHECK(h.services.sounds == std::vector<std::string>{ "Gui_PalantirCommandButtonClick" });
 	// the press became the retail message, and the click did not select / order anything in the world
 	bool queued = false;
 	for (const std::string &l : h.hud->input().messageLog())
@@ -210,6 +234,161 @@ TEST_CASE("hud palantir input: select a barracks by a click, press its first com
 		made += o->getProducerID() == b->getID() ? 1 : 0;
 	}
 	CHECK(made >= 1);
+}
+
+TEST_CASE("hud click audio: APT restricted DISABLED_HELD gate")
+{
+	if (!haveWorld("hud click audio restricted"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	hudaudio::RetailAudio audio(*s.mount->fs);
+	HudRig h(s);
+	h.hud->setWindowSize(1024, 768);
+	h.rig.view.setScreen(1024, 768);
+	const Coord3D c = h.rig.freeSpot(2800, 1400, 200.0f);
+	Object *b = h.rig.make("GondorBarracks", c.x, c.y);
+	h.rig.lookAt({ c.x, c.y, 0.0f });
+	h.frames(20);
+	h.hud->input().ui().selectObject(b->getID());
+	h.frames(40);
+	// tolerance: require a first command before indexing; other command slots do not affect this click.
+	REQUIRE(h.hud->controlBar().palantirButtons().size() >= 1);
+	b->setDisabled(DISABLED_HELD, 0x3FFFFFFFu);
+	h.frames(4);
+	const ControlBarButton &first = h.hud->controlBar().palantirButtons().front();
+	REQUIRE(first.button != nullptr);
+	REQUIRE(first.button->m_command == GUI_COMMAND_UNIT_BUILD);
+	REQUIRE(first.state == ButtonState::Restricted);
+	CHECK(AptPalantir::commandStateName(first.state, first.button->m_options) == std::string("_disabled"));
+	int x = 0, y = 0;
+	REQUIRE(buttonCentre(h, "CommandButtons.0.content", x, y));
+	const auto queued = [&]() {
+		size_t count = 0;
+		for (const std::string &line : h.hud->input().messageLog())
+		{
+			count += line.compare(0, 20, "MSG_QUEUE_UNIT_CREAT") == 0;
+		}
+		return count;
+	};
+	const size_t queuedBefore = queued();
+	audio.manager->takeEventLog();
+	h.hud->mouseMove(x, y);
+	h.frames(2);
+	h.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 2200);
+	h.frames(2);
+	const std::vector<std::string> down = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	h.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 2240);
+	h.frames(4);
+	const std::vector<std::string> up = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	hudaudio::printSequence("APT restricted DISABLED_HELD", down, up);
+	CHECK(down == std::vector<std::string>{ "Gui_PalantirCommandButtonDisabledClick" });
+	CHECK(up.empty());
+	CHECK(queued() == queuedBefore);
+}
+
+TEST_CASE("hud click audio: APT cannot-afford gate")
+{
+	if (!haveWorld("hud click audio cannot afford"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	hudaudio::RetailAudio audio(*s.mount->fs);
+	HudRig h(s);
+	h.hud->setWindowSize(1024, 768);
+	h.rig.view.setScreen(1024, 768);
+	const Coord3D c = h.rig.freeSpot(2800, 1400, 200.0f);
+	Object *b = h.rig.make("GondorBarracks", c.x, c.y);
+	h.rig.lookAt({ c.x, c.y, 0.0f });
+	h.frames(20);
+	h.hud->input().ui().selectObject(b->getID());
+	h.frames(40);
+	// tolerance: require a first command before indexing; other command slots do not affect this click.
+	REQUIRE(h.hud->controlBar().palantirButtons().size() >= 1);
+	ControlBarButton first = h.hud->controlBar().palantirButtons().front();
+	REQUIRE(first.button != nullptr);
+	REQUIRE(first.button->m_command == GUI_COMMAND_UNIT_BUILD);
+	const std::uint32_t total = h.rig.local->getMoney()->countMoney();
+	// tolerance: any positive balance establishes the transition to zero funds.
+	REQUIRE(total > 0);
+	h.rig.local->getMoney()->withdraw(total, false);
+	h.frames(4);
+	const ControlBarButton &shown = h.hud->controlBar().palantirButtons().front();
+	REQUIRE(shown.state == ButtonState::CantAfford);
+	CHECK(AptPalantir::commandStateName(shown.state, shown.button->m_options) == std::string("_cantAfford"));
+	int x = 0, y = 0;
+	REQUIRE(buttonCentre(h, "CommandButtons.0.content", x, y));
+	const auto queued = [&]() {
+		size_t count = 0;
+		for (const std::string &line : h.hud->input().messageLog())
+		{
+			count += line.compare(0, 20, "MSG_QUEUE_UNIT_CREAT") == 0;
+		}
+		return count;
+	};
+	const size_t queuedBefore = queued();
+	audio.manager->takeEventLog();
+	h.hud->mouseMove(x, y);
+	h.frames(2);
+	h.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 2300);
+	h.frames(2);
+	const std::vector<std::string> down = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	h.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 2340);
+	h.frames(4);
+	const std::vector<std::string> up = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	hudaudio::printSequence("APT cannot afford", down, up);
+	CHECK(down == std::vector<std::string>{ "Gui_PalantirCommandButtonDisabledClick" });
+	CHECK(up.empty());
+	CHECK(queued() == queuedBefore);
+}
+
+TEST_CASE("hud click audio: APT restricted cancelable right press")
+{
+	if (!haveWorld("hud click audio restricted right"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	hudaudio::RetailAudio audio(*s.mount->fs);
+	HudRig h(s);
+	h.hud->setWindowSize(1024, 768);
+	h.rig.view.setScreen(1024, 768);
+	const Coord3D c = h.rig.freeSpot(2800, 1400, 200.0f);
+	Object *b = h.rig.make("GondorBarracks", c.x, c.y);
+	h.rig.lookAt({ c.x, c.y, 0.0f });
+	h.frames(20);
+	h.hud->input().ui().selectObject(b->getID());
+	h.frames(40);
+	b->setDisabled(DISABLED_HELD, 0x3FFFFFFFu);
+	h.frames(4);
+	int position = -1;
+	for (size_t i = 0; i < h.hud->controlBar().palantirButtons().size(); ++i)
+	{
+		const ControlBarButton &candidate = h.hud->controlBar().palantirButtons()[i];
+		if (candidate.button && candidate.button->hasOption(COMMAND_OPTION_CANCELABLE) && candidate.state == ButtonState::Restricted)
+		{
+			position = static_cast<int>(i);
+			break;
+		}
+	}
+	// tolerance: the selected cancelable command may occupy any valid movie slot.
+	REQUIRE(position >= 0);
+	int x = 0, y = 0;
+	REQUIRE(buttonCentre(h, "CommandButtons." + std::to_string(position) + ".content", x, y));
+	audio.manager->takeEventLog();
+	h.hud->mouseMove(x, y);
+	h.frames(2);
+	h.hud->mouseButton(HudInput::Button::Right, true, x, y, 0, 2500);
+	h.frames(2);
+	const std::vector<std::string> down = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	h.hud->mouseButton(HudInput::Button::Right, false, x, y, 0, 2540);
+	h.frames(4);
+	const std::vector<std::string> up = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	hudaudio::printSequence("APT restricted cancelable right", down, up);
+	CHECK(down == std::vector<std::string>{ "Gui_PalantirCommandButtonClick" });
+	CHECK(up.empty());
 }
 
 TEST_CASE("hud palantir input: a reused button frame dispatches the slot it shows now, not the one it showed when it was created (review r1 #3)")
@@ -255,7 +434,7 @@ TEST_CASE("hud palantir input: a reused button frame dispatches the slot it show
 			{
 				firstButton[p] = b.button;
 			}
-			differing += firstButton[p] != b.button ? 1 : 0;
+			const bool allowed = b.state == ButtonState::Enabled || b.state == ButtonState::Active;
 			pressed.clear();
 			h.hud->mouseMove(x, y);
 			h.frames(2);
@@ -263,10 +442,18 @@ TEST_CASE("hud palantir input: a reused button frame dispatches the slot it show
 			h.frames(2);
 			h.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 2040);
 			h.frames(2);
-			REQUIRE(pressed.size() == 1);
-			CHECK(pressed[0].first == b.slot);
-			CHECK(pressed[0].second);
-			++pressesChecked;
+			if (allowed)
+			{
+				REQUIRE(pressed.size() == 1);
+				CHECK(pressed[0].first == b.slot);
+				CHECK(pressed[0].second);
+				differing += firstButton[p] != b.button ? 1 : 0;
+				++pressesChecked;
+			}
+			else
+			{
+				CHECK(pressed.empty());
+			}
 		}
 	}
 	CHECK(pressesChecked >= 8);
@@ -630,7 +817,7 @@ TEST_CASE("stops S-289 .. S-295: the control bar, the radar and the Palantir rep
 	{
 		ids.insert(l.substr(0, 7));
 	}
-	CHECK(ids == std::set<std::string>{ "[S-289]", "[S-290]", "[S-291]", "[S-292]", "[S-293]", "[S-294]", "[S-295]", "[S-761]", "[S-762]", "[S-763]", "[S-764]", "[S-1260", "[S-1674", "[S-1922", "[S-2450", "[S-2451", "[S-2452", "[S-2453", "[S-2454", "[S-2455", "[S-2456", "[S-2457", "[S-3460", "[S-1990", "[S-1992", "[S-3950", "[S-3801", "[S-3803", "[S-4531", "[S-5040" }); // lane HUD-4: S-1674 (the radar events) // lane UI-1: S-1260 (the id is eight characters) // lane RADAR-1: S-2450 .. S-2457 // lane AUTOCAST-1: S-3460 // lane FACT-B: S-1990 .. S-1992 // lane HUD-7: S-3950 // lane PLAY-4: S-3801 / S-3803 // lane NETLAG-1: S-4531 // lane OWNERFIX-3: S-5040
+	CHECK(ids == std::set<std::string>{ "[S-289]", "[S-290]", "[S-291]", "[S-292]", "[S-293]", "[S-294]", "[S-295]", "[S-761]", "[S-762]", "[S-763]", "[S-764]", "[S-1260", "[S-1674", "[S-1922", "[S-2450", "[S-2451", "[S-2452", "[S-2453", "[S-2454", "[S-2455", "[S-2456", "[S-2457", "[S-3460", "[S-1990", "[S-1992", "[S-3950", "[S-3801", "[S-3803", "[S-5040" }); // lane HUD-4: S-1674 (the radar events) // lane UI-1: S-1260 (the id is eight characters) // lane RADAR-1: S-2450 .. S-2457 // lane AUTOCAST-1: S-3460 // lane FACT-B: S-1990 .. S-1992 // lane HUD-7: S-3950
 }
 
 TEST_CASE("hud radar: the map picture, the object blips in the owners' colours, the view box and a click on the radar are world points")
@@ -820,6 +1007,7 @@ TEST_CASE("play1 palantir input: the key, the powers button and the flag above t
 		return;
 	}
 	SharedWorld &s = shared();
+	hudaudio::RetailAudio audio(*s.mount->fs);
 	HudRig h(s);
 	h.hud->setWindowSize(1024, 768);
 	h.rig.view.setScreen(1024, 768);
@@ -837,10 +1025,116 @@ TEST_CASE("play1 palantir input: the key, the powers button and the flag above t
 		CHECK(h.hud->isOverGui(x, y));
 		h.hud->mouseMove(x, y);
 		h.frames(2);
+		audio.manager->takeEventLog();
+		h.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 2000);
+		h.frames(2);
+		const std::vector<std::string> down = hudaudio::takeRequests(*audio.manager, "HUD movie");
+		h.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 2040);
+		h.frames(4);
+		const std::vector<std::string> up = hudaudio::takeRequests(*audio.manager, "HUD movie");
+		std::vector<std::string> sequence = down;
+		sequence.insert(sequence.end(), up.begin(), up.end());
+		hudaudio::printSequence(std::string("Palantir ") + p.path, down, up);
+		CHECK(sequence == std::vector<std::string>{ "Gui_PalantirButtonClick" });
+		CHECK_MESSAGE(commandSeen(h, p.command), p.command);
+	}
+}
+
+// lane MENUSND-1: the Palantir's click sounds, from its movies (Palantir.apt's buttons: Gui_PalantirButtonClick on the press; libInGameUI.apt's command
+// button, button 37 transition 4: _root.PlaySound("Gui_PalantirCommandButtonClick") before its FSCommand _OnPress), through the Palantir's PlaySound
+// (FSCommand PlaySound, RW 0x815772). The pointer on them asks for nothing.
+TEST_CASE("menusnd1 palantir input: the Palantir's buttons and a command button ask for RotWK's click sound on the press, once")
+{
+	if (!haveWorld("menusnd1 palantir input"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	HudRig h(s);
+	h.hud->setWindowSize(1024, 768);
+	h.rig.view.setScreen(1024, 768);
+	h.frames(40);
+	h.services.sounds.clear();
+	for (const char *path : { "PalantirButtons.Buttons.Options", "PalantirButtons.Buttons.PlayerMagic", "PalantirButtons.Buttons.Objectives" })
+	{
+		INFO(path);
+		int x = 0, y = 0;
+		REQUIRE(buttonHitPoint(h, path, x, y));
+		h.hud->mouseMove(x, y);
+		h.frames(4);
+		CHECK(h.services.sounds.empty());
 		h.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 2000);
 		h.frames(2);
 		h.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 2040);
-		h.frames(4);
-		CHECK_MESSAGE(commandSeen(h, p.command), p.command);
+		h.frames(10);
+		CHECK(h.services.sounds == std::vector<std::string>{ "Gui_PalantirButtonClick" });
+		h.services.sounds.clear();
+		h.hud->mouseMove(5, 5);
+		h.frames(30);
+		h.services.sounds.clear();
 	}
+	const Coord3D c = h.rig.freeSpot(2800, 1400, 200.0f);
+	h.rig.make("GondorBarracks", c.x, c.y);
+	h.rig.lookAt({ c.x, c.y, 0 });
+	h.frames(20);
+	const ICoord2D px = h.rig.screenOf({ c.x, c.y, 10.0f });
+	h.hud->mouseMove(px.x, px.y);
+	h.hud->mouseButton(HudInput::Button::Left, true, px.x, px.y, 0, 3000);
+	h.hud->mouseButton(HudInput::Button::Left, false, px.x, px.y, 0, 3040);
+	h.frames(40);
+	h.services.sounds.clear();
+	int x = 0, y = 0;
+	REQUIRE(buttonCentre(h, "CommandButtons.0.content", x, y));
+	h.hud->mouseMove(x, y);
+	h.frames(2);
+	CHECK(h.services.sounds.empty());
+	h.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 4000);
+	h.frames(2);
+	CHECK(h.services.sounds == std::vector<std::string>{ "Gui_PalantirCommandButtonClick" }); // on the press
+	h.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 4040);
+	h.frames(10);
+	CHECK(h.services.sounds == std::vector<std::string>{ "Gui_PalantirCommandButtonClick" });
+}
+
+TEST_CASE("hud click audio: hero portrait movie request")
+{
+	if (!haveWorld("hud click audio hero"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	hudaudio::RetailAudio audio(*s.mount->fs);
+	HudRig h(s);
+	h.hud->setWindowSize(1024, 768);
+	h.rig.view.setScreen(1024, 768);
+	const Coord3D c = h.rig.freeSpot(2800, 1400, 200.0f);
+	Object *hero = h.rig.make("GondorAragornMP", c.x, c.y);
+	h.rig.lookAt({ c.x, c.y, 0.0f });
+	h.frames(40);
+	REQUIRE(h.hud->heroSelect() != nullptr);
+	int heroSlot = -1;
+	for (int i = 0; i < 8; ++i)
+	{
+		if (h.hud->heroSelect()->slot(i).hero == hero->getID())
+		{
+			heroSlot = i;
+			break;
+		}
+	}
+	// tolerance: the hero may occupy any valid portrait slot, but must be present.
+	REQUIRE(heroSlot >= 0);
+	int x = 0, y = 0;
+	REQUIRE(buttonCentre(h, h.hud->heroSelect()->name() + ".Hero" + std::to_string(heroSlot + 1), x, y));
+	audio.manager->takeEventLog();
+	h.hud->mouseMove(x, y);
+	h.frames(2);
+	h.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 2400);
+	h.frames(2);
+	const std::vector<std::string> down = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	h.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 2440);
+	h.frames(4);
+	const std::vector<std::string> up = hudaudio::takeRequests(*audio.manager, "HUD movie");
+	hudaudio::printSequence("hero portrait", down, up);
+	CHECK(down == std::vector<std::string>{ "Gui_PalantirHeroButtonClick" });
+	CHECK(up.empty());
 }

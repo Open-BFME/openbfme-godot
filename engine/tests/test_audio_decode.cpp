@@ -13,6 +13,7 @@
 #include "Common/Audio/AudioDecode.h"
 #include "Common/Audio/Mp3Decoder.h"
 #include "Common/Audio/Mp3Tables.h"
+#include "Common/Sha256.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "RetailTestMount.h"
 
@@ -25,6 +26,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <set>
@@ -768,9 +770,65 @@ Bytes loadFixture(const std::string &name)
 	const std::string python = "python3";
 #endif
 	REQUIRE_MESSAGE(retailtest::readLocalFile(path, bytes, &err),
-		err << " -- the synthetic MP3 fixtures are generated, not committed: run `" << python << " tools/audio/gen_mp3_fixtures.py --out " << dir
-			<< "` (needs lame and mpg123 on PATH, docs/WINDOWS.md; the CMake target audio_mp3_fixtures does it at build time)");
+		err << " -- the synthetic MP3 fixtures are generated, not committed: run `" << python << " tools/audio/gen_mp3_fixtures.py --out \"" << dir
+			<< "\"` (needs lame and mpg123 on PATH outside the CMake sandbox; see engine/tests/data/audio/README.md)");
 	return Bytes(bytes.begin(), bytes.end());
+}
+
+void requireMp3Fixtures()
+{
+	const char *env = std::getenv("OPENBFME_AUDIO_FIXTURES");
+	const std::string dir = env && *env ? env : OPENBFME_AUDIO_FIXTURE_DIR;
+	std::ifstream manifest(retailtest::dataDir() + "/audio/mp3_fixtures.tsv");
+	std::string problem, line;
+	if (!manifest) problem = "MP3 fixture size/SHA-256 manifest is missing";
+	for (const Mp3Golden &g : loadGolden())
+	{
+		if (!problem.empty()) break;
+		while (std::getline(manifest, line) && (line.empty() || line[0] == '#')) {}
+		std::istringstream row(line);
+		std::string name, size, hash, extra;
+		if (!std::getline(row, name, '\t') || !std::getline(row, size, '\t') ||
+			!std::getline(row, hash, '\t') || std::getline(row, extra, '\t') || name != g.name)
+		{
+			problem = "MP3 fixture manifest names/columns do not match the decoder goldens";
+			break;
+		}
+		std::vector<unsigned char> bytes;
+		std::string err;
+		if (!retailtest::readLocalFile(dir + "/" + name + ".mp3.bin", bytes, &err))
+		{
+			problem = "MP3 fixture missing or unreadable: " + name + " (" + err + ")";
+			break;
+		}
+		auto digest = Sha256::hash(bytes.data(), bytes.size());
+		if (size != std::to_string(bytes.size()) || hash != HexBytes(digest.data(), digest.size()))
+		{
+			problem = "MP3 fixture size/SHA-256 mismatch for " + name;
+			break;
+		}
+	}
+	if (problem.empty())
+	{
+		while (std::getline(manifest, line))
+		{
+			if (!line.empty() && line[0] != '#')
+			{
+				problem = "MP3 fixture manifest has unexpected extra entries";
+				break;
+			}
+		}
+	}
+	std::ifstream status(OPENBFME_AUDIO_STATUS_FILE);
+	std::string diagnostic((std::istreambuf_iterator<char>(status)), std::istreambuf_iterator<char>());
+	if (diagnostic.empty() || diagnostic == "\n") diagnostic = "Generating fixtures requires lame 3.100 and mpg123";
+#ifdef _WIN32
+	const std::string python = "py -3";
+#else
+	const std::string python = "python3";
+#endif
+	REQUIRE_MESSAGE(problem.empty(), problem << " -- " << diagnostic << "\nGenerate on a LAME 3.100 reference host: "
+		<< python << " \"" << OPENBFME_AUDIO_GENERATOR << "\" --out \"" << dir << "\"");
 }
 
 } // namespace
@@ -804,6 +862,7 @@ TEST_CASE("audio decode: Layer III Huffman tables are prefix free and complete w
 
 TEST_CASE("audio decode: MP3 fixtures decode to the mpg123 golden numbers")
 {
+	requireMp3Fixtures();
 	std::vector<Mp3Golden> golden = loadGolden();
 	REQUIRE(golden.size() >= 15);
 	size_t points = 0;
@@ -848,6 +907,7 @@ TEST_CASE("audio decode: MP3 fixtures decode to the mpg123 golden numbers")
 
 TEST_CASE("audio decode: MP3 streaming equals the whole-file decode for any chunk size, rewind restarts")
 {
+	requireMp3Fixtures();
 	for (const char *name : {"joint_44k", "mpeg2_22k_mono", "id3_44k", "notag_44k"})
 	{
 		INFO("fixture " << std::string(name)); // a std::string: doctest printed the const char * as an address under MSVC (GitHub #23 log)
@@ -876,6 +936,7 @@ TEST_CASE("audio decode: MP3 streaming equals the whole-file decode for any chun
 
 TEST_CASE("audio decode: MP3 gapless handling, ID3 tags and frame walking")
 {
+	requireMp3Fixtures();
 	// a LAME / Info tag is honoured (delay + 529 skipped, padding - 529 trimmed), a plain stream is not trimmed
 	Bytes tagged = loadFixture("joint_44k");
 	Mp3Stream a(tagged.data(), tagged.size());
@@ -904,6 +965,7 @@ TEST_CASE("audio decode: MP3 gapless handling, ID3 tags and frame walking")
 
 TEST_CASE("audio decode: MP3 container defects are reported and decided")
 {
+	requireMp3Fixtures();
 	Bytes base = loadFixture("notag_44k"); // no Xing frame: every frame is audio
 	Mp3Stream clean(base.data(), base.size());
 	uint64_t cleanFrames = clean.info().frames;
@@ -971,6 +1033,7 @@ TEST_CASE("audio decode: MP3 container defects are reported and decided")
 
 TEST_CASE("audio decode: corrupted MP3 fixtures decode or throw AudioDecodeError, nothing else")
 {
+	requireMp3Fixtures();
 	// deterministic mutations (bit flips, truncation, inserted junk); run under ASan / UBSan in the lane's checks
 	uint32_t rng = 12345;
 	auto next = [&]() {
@@ -1201,7 +1264,11 @@ TEST_CASE("audio decode: every retail WAV and MP3 probes and decodes; the defect
 	for (const std::string &f : failures) FAIL_CHECK("retail file does not decode: " << f);
 	CHECK(failures.empty());
 
-	// the pinned defect list
+	// the pinned defect list (of the English speech archive: another language's lang\<Language>Audio.big has its own files)
+	if (retailtest::skipUnlessEnglish("audio decode: the pinned retail defect list (retail_defects.tsv)"))
+	{
+		return;
+	}
 	std::vector<unsigned char> pinnedBytes;
 	std::string err;
 	REQUIRE_MESSAGE(retailtest::readLocalFile(retailtest::dataDir() + "/audio/retail_defects.tsv", pinnedBytes, &err), err);

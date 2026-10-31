@@ -49,6 +49,10 @@ void installEva(Eva *eva); // nullptr uninstalls
 Eva *currentEva();
 bool reportEva(const std::string &eventName, const Coord3D *position);
 std::uint64_t callsWithoutEva();
+// lane EVADAMAGE-1 (RW 0x67B644 .. 0x67B6A4, the end of the drawable's damage notice): `second` (when not "") instead of `event` when `farFrameDue` (the
+// drawable's far frame, RW + 0x388, is not ahead of the logic frame) and TheEva calls `event` blocked by its timeout (RW 0x5DCC88) or about to play
+// (RW 0x5DCCEB); the one chosen is reported at `position` (RW 0x5DD9EE). Returns its name ("" when there is no Eva, or the call was queued for the Eva's thread)
+std::string reportEvaDamage(const std::string &event, const std::string &second, bool farFrameDue, const Coord3D &position);
 
 // AUDIO-2: the logic's unit voice events (retail calls the voice picker RW 0x8DEDBB from logic code with the client voice message types: ProductionUpdate
 // RW 0x8A2A48 posts 0x7DA (VoiceCreated) for the unit it made, GettingBuiltBehavior RW 0x857DB4 0x7E2 (VoiceFullyCreated), Object RW 0x69987C 0x7DF ...).

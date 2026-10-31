@@ -32,6 +32,7 @@
 #pragma once
 
 #include "Common/INI.h"
+#include "Common/GameEdition.h"
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Module/UpdateModule.h"
@@ -39,6 +40,7 @@
 #include <string>
 #include <vector>
 
+class GameLogic;
 class ModuleFactory;
 class Object;
 class WeaponTemplate;
@@ -56,7 +58,7 @@ public:
 	virtual ObjectID projectileGetLauncherID() const = 0;
 	// RW 0x85FDB7: the projectile hit `other` (null: the ground or the end of the path)
 	virtual bool projectileHandleCollision(Object *other) = 0;
-	// RW 0x85EF6A (the weapon's ProjectileCollidesWith test is not ported, S-364)
+	// RW 0x85EF6A (lane FLANK-1: with the warhead's ProjectileCollidesWith test RW 0x6CC79C)
 	virtual bool projectileCanCollideWith(const Object *other) const = 0;
 	virtual void projectileNowJammed() = 0;
 
@@ -116,8 +118,12 @@ public:
 	unsigned m_postLandingStateTime = 0;      // +0xB4
 	int m_postLandingEmotion = -1;            // +0xB8
 	float m_postLandingEmotionRadius = 0.0f;  // +0xBC
+	// lane BFME2MODE-0: BFME2 1.06 only (RotWK 2.01 dropped the row): PreLandingEmotionAffectsAllies, BFME2 + 0xB4 (table 0xC41B58, row 0xC41D58, parseBool; the
+	// data ctor BFME2 0x85B4F1 (Rva 0x45B4F1) writes 1). Read by the pre-landing scare in the BFME2 edition only (preLandingRelationshipMask)
+	bool m_preLandingEmotionAffectsAllies = true;
 
 	static void buildFieldParse(MultiIniFieldParse &p);
+	int preLandingRelationshipMask(GameEdition edition) const;
 };
 
 class BezierProjectileBehavior : public UpdateModule, public ProjectileUpdateInterface
@@ -170,6 +176,7 @@ private:
 	Coord3D aimPosition(const Object &victim);                       // RW 0x6CB85A with flag 1
 	UpdateSleepTime sleepTime() const;                               // RW 0x85EBAF
 	bool alreadyHit(ObjectID id) const;
+	void backOff(const Object &other); // RW 0x85EA5F (lane FLANK-1)
 
 	const BezierProjectileBehaviorModuleData *m_data;
 	ObjectID m_launcherID = INVALID_ID;       // +0x28
@@ -200,6 +207,8 @@ namespace ProjectileModules
 void registerAll(ModuleFactory &modules);
 // the stop lines of docs/STOPS.md S-360 .. S-379 that apply to a game
 std::vector<std::string> stops();
+// lane FLANK-1: RW 0x6CC79C WeaponTemplate::shouldProjectileCollideWith (`warhead` is the template's this; see ProjectileModules.cpp)
+bool shouldProjectileCollideWith(GameLogic &logic, const WeaponTemplate &warhead, const Object *launcher, const Object *projectile, const Object *other, ObjectID intendedVictim);
 } // namespace ProjectileModules
 
 // WWMath::Inv_Sqrt (RW 0x441C56): the magic-constant guess and three x87 Newton steps at 24 bits; `value` must not be 0

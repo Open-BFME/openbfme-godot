@@ -1,7 +1,8 @@
 ## Lane LAUNCH-1: the signed release manifest (written by tools/release/make_manifest.py, signed by tools/release/sign_manifest.py).
 ##
-## manifest.json is checked byte for byte against its detached Ed25519 signature (manifest.json.sig, 64 raw bytes) under the release key
-## compiled into the launcher BEFORE it is parsed; then its schema is checked strictly (unknown or missing keys, a wrong type, a bad
+## manifest.json is checked byte for byte against its detached Ed25519 signature (manifest.json.sig, 64 raw bytes) under the release keys
+## compiled into the launcher BEFORE it is parsed (lane SIGNKMS-1: valid under ANY trusted key, raw or over the signature envelope of kind
+## "manifest.json" / "manifest-macos.json", scripts/crypto/release_signature.gd); then its schema is checked strictly (unknown or missing keys, a wrong type, a bad
 ## version, channel, date, commit, asset name, size or digest are errors) and it must belong to the release it came with: the same
 ## repository, the tag as its version, its channel matching the release's pre-release flag. Format (docs/RELEASE.md, "The launcher"):
 ##   {"format": 1, "product": "OpenBFME", "repo": "<owner>/<name>", "version": "v0.3.0", "channel": "stable" | "preview",
@@ -19,9 +20,10 @@
 ## manifest-macos.json uses the same metadata/inventory contract with the explicit "macos" schema mode.
 extends RefCounted
 
-const Ed25519 := preload("res://scripts/crypto/ed25519.gd")
+const ReleaseSignature := preload("res://scripts/crypto/release_signature.gd")
 const Semver := preload("res://scripts/core/semver.gd")
 const Archive := preload("res://scripts/core/archive.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const FORMATS := [2, 3]
 const PLATFORMS := ["linux-x64", "windows-x64"]
@@ -45,33 +47,61 @@ static func top_folder(asset: String) -> String:
 
 
 ## {ok, error, manifest}. `expect`: {repo, tag, prerelease} of the release it was downloaded with ({} for a stored, already matched one
-## except `repo`, which is always checked).
-static func verify(bytes: PackedByteArray, sig: PackedByteArray, release_key: PackedByteArray, expect: Dictionary,
-		schema_mode := "standard") -> Dictionary:
+## except `repo`, which is always checked). `release_keys`: the trusted keys (BuildInfo.release_keys, each 32 bytes); `schema_mode`
+## "standard" (manifest.json) or "macos" (manifest-macos.json) also names the signature envelope's kind.
+## lane RELGH-2: `nightly_keys` (BuildInfo.nightly_keys): keys valid for a nightly manifest only (ReleaseSignature.valid_scoped); the
+## default [] trusts none, so a call site that forgets it refuses a nightly-key signature.
+static func verify(bytes: PackedByteArray, sig: PackedByteArray, release_keys: Array, expect: Dictionary,
+		schema_mode := "standard", nightly_keys := []) -> Dictionary:
 	var fail := func(why: String) -> Dictionary: return {"ok": false, "error": why, "manifest": {}}
-	if release_key.size() != 32:
-		return fail.call("this launcher has no release key (a development run without --trust-key?)")
+	if not has_keys(release_keys):
+		return fail.call(L10n.t("launcher.manifest.no_release_key_dev"))
 	if bytes.size() > MAX_BYTES:
-		return fail.call("manifest.json is %d bytes (at most %d)" % [bytes.size(), MAX_BYTES])
+		return fail.call(L10n.t("launcher.manifest.too_big", {"size": bytes.size(), "limit": MAX_BYTES}))
 	if sig.size() != 64:
-		return fail.call("manifest.json.sig is %d bytes (an Ed25519 signature is 64)" % sig.size())
-	if not Ed25519.verify(release_key, bytes, sig):
-		return fail.call("the manifest's signature is not valid for the release key: the release was not signed by the OpenBFME release key, or it was changed")
+		return fail.call(L10n.t("launcher.manifest.sig_size", {"size": sig.size()}))
+	if not ReleaseSignature.valid_scoped(release_keys, nightly_keys, signature_kind(schema_mode), bytes, sig):
+		return fail.call(not_signed_error(release_keys))
 	var text := bytes.get_string_from_utf8()
 	var json := JSON.new()
 	if json.parse(text) != OK or typeof(json.data) != TYPE_DICTIONARY:
-		return fail.call("manifest.json is not a JSON object")
+		return fail.call(L10n.t("launcher.manifest.not_json_object"))
 	var m: Dictionary = json.data
 	var why := _schema(m, schema_mode)
 	if why != "":
-		return fail.call("manifest.json: " + why)
+		return fail.call(L10n.t("launcher.manifest.manifest_why", {"why": why}))
 	if expect.has("repo") and m.repo != expect.repo:
-		return fail.call("the manifest is for %s, this launcher updates from %s" % [m.repo, expect.repo])
+		return fail.call(L10n.t("launcher.manifest.wrong_repo", {"repo": m.repo, "expected": expect.repo}))
 	if expect.has("tag") and m.version != expect.tag:
-		return fail.call("the manifest is for %s but came with the release %s" % [m.version, expect.tag])
+		return fail.call(L10n.t("launcher.manifest.wrong_tag", {"version": m.version, "tag": expect.tag}))
 	if expect.has("prerelease") and bool(expect.prerelease) != (m.channel == "preview"):
-		return fail.call("the manifest's channel (%s) does not match the release's pre-release flag" % m.channel)
+		return fail.call(L10n.t("launcher.manifest.wrong_channel", {"channel": m.channel}))
 	return {"ok": true, "error": "", "manifest": m}
+
+
+## lane SIGNKMS-1: the signature envelope's kind of a manifest checked in `schema_mode`
+static func signature_kind(schema_mode: String) -> String:
+	return "manifest-macos.json" if schema_mode == "macos" else "manifest.json"
+
+
+## true when `release_keys` is a usable trusted list: 1 or more keys, each 32 bytes
+static func has_keys(release_keys: Array) -> bool:
+	if release_keys.is_empty():
+		return false
+	for k in release_keys:
+		if typeof(k) != TYPE_PACKED_BYTE_ARRAY or k.size() != 32:
+			return false
+	return true
+
+
+## true when `sig` is a valid signature of the manifest `bytes` (kind of `schema_mode`) under one of `release_keys`; the signature alone
+## (Updater's choice between a release's X.sig and X.sig2 slots; the schema is Manifest.verify's)
+static func signature_ok(bytes: PackedByteArray, sig: PackedByteArray, release_keys: Array, schema_mode := "standard", nightly_keys := []) -> bool:
+	return has_keys(release_keys) and bytes.size() <= MAX_BYTES and ReleaseSignature.valid_scoped(release_keys, nightly_keys, signature_kind(schema_mode), bytes, sig)
+
+
+static func not_signed_error(release_keys: Array) -> String:
+	return L10n.t("launcher.manifest.not_signed", {"count": release_keys.size()})
 
 
 static func _keys(d: Dictionary, want: Array) -> String:
@@ -79,7 +109,7 @@ static func _keys(d: Dictionary, want: Array) -> String:
 	have.sort()
 	var w := want.duplicate()
 	w.sort()
-	return "" if have == w else "keys %s, expected %s" % [str(have), str(w)]
+	return "" if have == w else L10n.t("launcher.manifest.keys_expected", {"have": str(have), "want": str(w)})
 
 
 static func _int(v) -> int:
@@ -98,115 +128,115 @@ static func _schema(m: Dictionary, schema_mode := "standard") -> String:
 		return k
 	if not _int(m.format) in FORMATS:
 		var f = m.format
-		return "format %s (this launcher reads formats 2 and 3)" % (str(int(f)) if typeof(f) == TYPE_FLOAT and f == floor(f) and absf(f) < 1e15 else str(f))
+		return L10n.t("launcher.manifest.bad_format", {"format": str(int(f)) if typeof(f) == TYPE_FLOAT and f == floor(f) and absf(f) < 1e15 else str(f)})
 	for key in ["product", "repo", "version", "channel", "date", "commit"]:
 		if typeof(m[key]) != TYPE_STRING:
-			return "%s is not a string" % key
+			return L10n.t("launcher.manifest.not_a_string", {"key": key})
 	if m.product != "OpenBFME":
-		return "product '%s'" % m.product
+		return L10n.t("launcher.manifest.bad_product", {"product": m.product})
 	if RegEx.create_from_string("^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$").search(m.repo) == null:
-		return "repo '%s' is not <owner>/<name>" % m.repo
+		return L10n.t("launcher.manifest.bad_repo", {"repo": m.repo})
 	if not Semver.is_valid(m.version):
 		return Semver.parse(m.version).error
 	if m.channel != Semver.channel_of(m.version):
-		return "channel '%s' for version %s (a pre-release version is preview, a plain one stable)" % [m.channel, m.version]
+		return L10n.t("launcher.manifest.bad_channel", {"channel": m.channel, "version": m.version})
 	if RegEx.create_from_string("^20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$").search(m.date) == null:
-		return "date '%s'" % m.date
+		return L10n.t("launcher.manifest.bad_date", {"date": m.date})
 	if RegEx.create_from_string("^[0-9a-f]{40}$").search(m.commit) == null:
-		return "commit '%s' is not a 40-digit hex id" % m.commit
+		return L10n.t("launcher.manifest.bad_commit", {"commit": m.commit})
 	if typeof(m.assets) != TYPE_DICTIONARY:
-		return "assets is not an object"
+		return L10n.t("launcher.manifest.assets_not_object")
 	if schema_mode == "macos":
 		if _int(m.format) != 3:
-			return "macOS manifest format must be 3"
+			return L10n.t("launcher.manifest.macos_format")
 		k = _keys(m.assets, ["game"])
 		if k != "":
-			return "assets: " + k
+			return L10n.t("launcher.manifest.assets_why", {"why": k})
 		if typeof(m.assets.game) != TYPE_DICTIONARY:
-			return "assets.game is not an object"
+			return L10n.t("launcher.manifest.game_not_object")
 		if m.assets.game.is_empty():
 			return ""
 		if _keys(m.assets.game, ["macos-arm64"]) != "":
-			return "assets.game: keys %s, expected [] or [macos-arm64]" % str(m.assets.game.keys())
+			return L10n.t("launcher.manifest.game_keys", {"keys": str(m.assets.game.keys())})
 		var a = m.assets.game["macos-arm64"]
 		var where := "assets.game.macos-arm64"
 		if typeof(a) != TYPE_DICTIONARY:
-			return where + " is not an object"
+			return L10n.t("launcher.manifest.where_not_object", {"where": where})
 		k = _keys(a, ["name", "size", "sha256", "files"])
 		if k != "":
-			return "%s: %s" % [where, k]
+			return L10n.t("launcher.manifest.where_why", {"where": where, "why": k})
 		if typeof(a.name) != TYPE_STRING or a.name != macos_asset_name(m.version):
-			return "%s.name '%s', expected %s" % [where, str(a.name), macos_asset_name(m.version)]
+			return L10n.t("launcher.manifest.bad_name", {"where": where, "name": str(a.name), "expected": macos_asset_name(m.version)})
 		var size := _int(a.size)
 		if size <= 0 or size > MAX_ASSET:
-			return "%s.size %s" % [where, str(a.size)]
+			return L10n.t("launcher.manifest.bad_size", {"where": where, "size": str(a.size)})
 		a.size = size
 		if typeof(a.sha256) != TYPE_STRING or RegEx.create_from_string("^[0-9a-f]{64}$").search(a.sha256) == null:
-			return "%s.sha256 is not 64 lower-case hex digits" % where
+			return L10n.t("launcher.manifest.bad_sha256", {"where": where})
 		var file_why := _files_schema(a.get("files"), top_folder(a.name))
-		return "%s.files: %s" % [where, file_why] if file_why != "" else ""
+		return L10n.t("launcher.manifest.where_files", {"where": where, "why": file_why}) if file_why != "" else ""
 	if schema_mode != "standard":
-		return "unknown manifest schema mode '%s'" % schema_mode
+		return L10n.t("launcher.manifest.unknown_mode", {"mode": schema_mode})
 	var kinds: Array = KINDS.keys() if _int(m.format) == 2 else ["game"]
 	k = _keys(m.assets, kinds)
 	if k != "":
-		return "assets: " + k
+		return L10n.t("launcher.manifest.assets_why", {"why": k})
 	for kind in kinds:
 		if typeof(m.assets[kind]) != TYPE_DICTIONARY:
-			return "assets.%s is not an object" % kind
+			return L10n.t("launcher.manifest.kind_not_object", {"kind": kind})
 		k = _keys(m.assets[kind], PLATFORMS)
 		if k != "":
-			return "assets.%s: %s" % [kind, k]
+			return L10n.t("launcher.manifest.kind_why", {"kind": kind, "why": k})
 		for platform in PLATFORMS:
 			var a = m.assets[kind][platform]
 			var where := "assets.%s.%s" % [kind, platform]
 			if typeof(a) != TYPE_DICTIONARY:
-				return where + " is not an object"
+				return L10n.t("launcher.manifest.where_not_object", {"where": where})
 			k = _keys(a, ["name", "size", "sha256", "files"])
 			if k != "":
-				return "%s: %s" % [where, k]
+				return L10n.t("launcher.manifest.where_why", {"where": where, "why": k})
 			if typeof(a.name) != TYPE_STRING or a.name != asset_name(kind, m.version, platform):
-				return "%s.name '%s', expected %s" % [where, str(a.name), asset_name(kind, m.version, platform)]
+				return L10n.t("launcher.manifest.bad_name", {"where": where, "name": str(a.name), "expected": asset_name(kind, m.version, platform)})
 			var size := _int(a.size)
 			if size <= 0 or size > MAX_ASSET:
-				return "%s.size %s" % [where, str(a.size)]
+				return L10n.t("launcher.manifest.bad_size", {"where": where, "size": str(a.size)})
 			a.size = size
 			if typeof(a.sha256) != TYPE_STRING or RegEx.create_from_string("^[0-9a-f]{64}$").search(a.sha256) == null:
-				return "%s.sha256 is not 64 lower-case hex digits" % where
+				return L10n.t("launcher.manifest.bad_sha256", {"where": where})
 			var why := _files_schema(a.get("files"), top_folder(a.name))
 			if why != "":
-				return "%s.files: %s" % [where, why]
+				return L10n.t("launcher.manifest.where_files", {"where": where, "why": why})
 	return ""
 
 
 static func _files_schema(files, top: String) -> String:
 	if typeof(files) != TYPE_DICTIONARY or files.is_empty() or files.size() > Archive.MAX_MEMBERS:
-		return "not an object of 1 to %d files" % Archive.MAX_MEMBERS
+		return L10n.t("launcher.manifest.files_count", {"limit": Archive.MAX_MEMBERS})
 	var seen := {}
 	for rel in files:
 		if typeof(rel) != TYPE_STRING:
-			return "a file name is not a string"
+			return L10n.t("launcher.manifest.file_name_not_string")
 		var c := Archive.check_name(top + "/" + rel, top)
 		if not c.ok or c.rel != rel or c.dir:
-			return "the file name '%s' is not a path inside the package (%s)" % [str(rel).left(100).c_escape(), c.error]
+			return L10n.t("launcher.manifest.file_name_bad", {"name": str(rel).left(100).c_escape(), "why": c.error})
 		if seen.has(rel.to_lower()):
-			return "'%s' appears twice (ignoring case)" % rel
+			return L10n.t("launcher.manifest.file_twice", {"name": rel})
 		seen[rel.to_lower()] = true
 		var f = files[rel]
 		if typeof(f) != TYPE_DICTIONARY or _keys(f, ["size", "sha256"]) != "":
-			return "'%s' is not {size, sha256}" % rel
+			return L10n.t("launcher.manifest.file_not_entry", {"name": rel})
 		var size := _int(f.size)
 		if size < 0:
-			return "'%s' has a bad size" % rel
+			return L10n.t("launcher.manifest.file_bad_size", {"name": rel})
 		f.size = size
 		if typeof(f.sha256) != TYPE_STRING or RegEx.create_from_string("^[0-9a-f]{64}$").search(f.sha256) == null:
-			return "'%s' has a bad sha256" % rel
+			return L10n.t("launcher.manifest.file_bad_sha256", {"name": rel})
 	return ""
 
 
 ## Lane ONEZIP-1 r2: the signed payload inventory inside a combined package (tools/release/seal_package.py writes it on the machine with
 ## the release key, before the archive is finished, so it never names itself): payload.json, checked byte for byte against
-## payload.json.sig under the release key before it is parsed, then strictly:
+## payload.json.sig under the trusted release keys (raw or envelope of kind "payload.json", lane SIGNKMS-1) before it is parsed, then strictly:
 ##   {"format": 1, "product": "OpenBFME", "repo": "<owner>/<name>", "version": <release version>, "platform": "linux-x64" | "windows-x64" | "macos-arm64",
 ##    "files": {<path in the package>: {"size", "sha256"}, ...}}     every file of the package but payload.json and payload.json.sig
 ## `expect`: {repo, platform}. {ok, error, payload}
@@ -231,43 +261,43 @@ static func read_limited(path: String, max: int) -> PackedByteArray:
 	return read_bounded(path, max).bytes
 
 
-static func verify_payload(bytes: PackedByteArray, sig: PackedByteArray, release_key: PackedByteArray, expect: Dictionary) -> Dictionary:
+static func verify_payload(bytes: PackedByteArray, sig: PackedByteArray, release_keys: Array, expect: Dictionary, nightly_keys := []) -> Dictionary:
 	var fail := func(why: String) -> Dictionary: return {"ok": false, "error": why, "payload": {}}
-	if release_key.size() != 32:
-		return fail.call("this launcher has no release key")
+	if not has_keys(release_keys):
+		return fail.call(L10n.t("launcher.manifest.no_release_key"))
 	if bytes.is_empty():
-		return fail.call("there is no %s (not a signed package)" % PAYLOAD)
+		return fail.call(L10n.t("launcher.manifest.payload_missing", {"file": PAYLOAD}))
 	if bytes.size() > MAX_BYTES:
-		return fail.call("%s is %d bytes (at most %d)" % [PAYLOAD, bytes.size(), MAX_BYTES])
+		return fail.call(L10n.t("launcher.manifest.payload_too_big", {"file": PAYLOAD, "size": bytes.size(), "limit": MAX_BYTES}))
 	if sig.size() != 64:
-		return fail.call("%s is %d bytes (an Ed25519 signature is 64)" % [PAYLOAD_SIG, sig.size()])
-	if not Ed25519.verify(release_key, bytes, sig):
-		return fail.call("the signature of %s is not valid for the release key: the package was not made by the OpenBFME release, or it was changed" % PAYLOAD)
+		return fail.call(L10n.t("launcher.manifest.payload_sig_size", {"file": PAYLOAD_SIG, "size": sig.size()}))
+	if not ReleaseSignature.valid_scoped(release_keys, nightly_keys, PAYLOAD, bytes, sig):
+		return fail.call(L10n.t("launcher.manifest.payload_not_signed", {"file": PAYLOAD, "count": release_keys.size()}))
 	var json := JSON.new()
 	if json.parse(bytes.get_string_from_utf8()) != OK or typeof(json.data) != TYPE_DICTIONARY:
-		return fail.call("%s is not a JSON object" % PAYLOAD)
+		return fail.call(L10n.t("launcher.manifest.payload_not_json", {"file": PAYLOAD}))
 	var p: Dictionary = json.data
 	var k := _keys(p, ["format", "product", "repo", "version", "platform", "files"])
 	if k != "":
-		return fail.call("%s: %s" % [PAYLOAD, k])
+		return fail.call(L10n.t("launcher.manifest.payload_why", {"file": PAYLOAD, "why": k}))
 	if _int(p.format) != 1:
-		return fail.call("%s: format %s (this launcher reads format 1)" % [PAYLOAD, str(p.format)])
+		return fail.call(L10n.t("launcher.manifest.payload_format", {"file": PAYLOAD, "format": str(p.format)}))
 	for key in ["product", "repo", "version", "platform"]:
 		if typeof(p[key]) != TYPE_STRING:
-			return fail.call("%s: %s is not a string" % [PAYLOAD, key])
+			return fail.call(L10n.t("launcher.manifest.payload_not_string", {"file": PAYLOAD, "key": key}))
 	if p.product != "OpenBFME":
-		return fail.call("%s: product '%s'" % [PAYLOAD, p.product.left(40)])
+		return fail.call(L10n.t("launcher.manifest.payload_product", {"file": PAYLOAD, "product": p.product.left(40)}))
 	if p.repo != expect.get("repo", p.repo):
-		return fail.call("%s is for %s, this launcher updates from %s" % [PAYLOAD, p.repo.left(140), expect.repo])
+		return fail.call(L10n.t("launcher.manifest.payload_repo", {"file": PAYLOAD, "repo": p.repo.left(140), "expected": expect.repo}))
 	if not Semver.is_valid(p.version):
-		return fail.call("%s: %s" % [PAYLOAD, Semver.parse(p.version).error])
+		return fail.call(L10n.t("launcher.manifest.payload_why", {"file": PAYLOAD, "why": Semver.parse(p.version).error}))
 	if not p.platform in PAYLOAD_PLATFORMS or p.platform != expect.get("platform", p.platform):
-		return fail.call("%s is for the platform '%s'" % [PAYLOAD, p.platform.left(40)])
+		return fail.call(L10n.t("launcher.manifest.payload_platform", {"file": PAYLOAD, "platform": p.platform.left(40)}))
 	var why := _files_schema(p.get("files"), "openbfme-%s-%s" % [p.version, p.platform])
 	if why != "":
-		return fail.call("%s.files: %s" % [PAYLOAD, why])
+		return fail.call(L10n.t("launcher.manifest.payload_files", {"file": PAYLOAD, "why": why}))
 	if p.files.has(PAYLOAD) or p.files.has(PAYLOAD_SIG):
-		return fail.call("%s names itself" % PAYLOAD)
+		return fail.call(L10n.t("launcher.manifest.payload_names_itself", {"file": PAYLOAD}))
 	return {"ok": true, "error": "", "payload": p}
 
 
@@ -280,7 +310,7 @@ static func launcher_source(m: Dictionary, platform: String, exe: String) -> Dic
 		return {"ok": true, "error": "", "combined": true, "file": game.files[exe], "asset": game}
 	if m.assets.has("launcher"):
 		return {"ok": true, "error": "", "combined": false, "asset": m.assets.launcher[platform]}
-	return {"ok": false, "error": "the release %s has no launcher: %s is not in its package" % [m.version, exe]}
+	return {"ok": false, "error": L10n.t("launcher.manifest.no_launcher", {"version": m.version, "exe": exe})}
 
 
 ## MACFIX-1 (issue #47): a file Finder writes into any folder it shows (its view settings .DS_Store, a custom folder icon "Icon\r") or
@@ -297,19 +327,19 @@ static func check_files(dir: String, files: Dictionary, extra_ok: Array = [], an
 	for rel in files:
 		var p := dir.path_join(rel)
 		if not FileAccess.file_exists(p):
-			return "%s is missing" % rel
+			return L10n.t("launcher.manifest.file_missing", {"name": rel})
 		var f := FileAccess.open(p, FileAccess.READ)
 		if f == null or f.get_length() != int(files[rel].size):
-			return "%s does not have its signed size" % rel
+			return L10n.t("launcher.manifest.file_bad_signed_size", {"name": rel})
 		var hc := HashingContext.new()
 		hc.start(HashingContext.HASH_SHA256)
 		while f.get_position() < f.get_length():
 			hc.update(f.get_buffer(1 << 20))
 		if hc.finish().hex_encode() != files[rel].sha256:
-			return "%s does not match its signed SHA-256" % rel
+			return L10n.t("launcher.manifest.file_bad_hash", {"name": rel})
 	for rel in ([] if any_extra else _list(dir, "")):
 		if not files.has(rel) and not rel in extra_ok and not (finder_ok and finder_metadata(rel.get_file())):
-			return "%s is not a file of the signed package" % rel
+			return L10n.t("launcher.manifest.file_extra", {"name": rel})
 	return ""
 
 

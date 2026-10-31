@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GameLogic/Module/HeroAbilityModules.h (lane HERO-2).
 
+#include "Common/ModEngineFeatures.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
 #include "GameLogic/Module/BloodthirstyUpdate.h"
 #include "GameLogic/AttributeModifiers.h"
@@ -317,6 +318,26 @@ ShareExperienceBehavior *ShareExperienceBehavior::of(Object &obj)
 
 float ShareExperienceBehavior::dropOffFactor(const Coord3D &from, const Object &candidate) const
 {
+	// lane MODS-3, edain-unchained.share-experience-all (0xEE808C): a Radius other than 0 takes the new body: DropOff <= 0 is 1.0, otherwise
+	// 1 - clamp(d / Radius, 0, 1) * clamp(DropOff, 0, 1) in SSE (DropOff 0 and 1.0 give retail's values bit for bit; 0 < DropOff < 1 is a
+	// partial fall-off, Edain Unchained's 0.5). Radius 0 keeps the retail body below
+	if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedShareExperienceAll) && m_data->m_radius != 0.0f)
+	{
+		if (!(m_data->m_dropOff > 0.0f))
+		{
+			return 1.0f;
+		}
+		const Coord3D *q = candidate.getPosition();
+		const float ex = SimMath::subf32(q->x, from.x), ey = SimMath::subf32(q->y, from.y), ez = SimMath::subf32(q->z, from.z);
+		const double sq = NumericState::pc24AddW(NumericState::pc24AddW(NumericState::pc24MulW(ez, ez), NumericState::pc24MulW(ey, ey)), NumericState::pc24MulW(ex, ex));
+		const float d = NumericState::fstpDword(NumericState::sqrtPC24(sq)); // RW 0x4054F5, as the retail body
+		float ratio = SimMath::divf32(d, m_data->m_radius);
+		ratio = ratio > 0.0f ? ratio : 0.0f; // maxss
+		ratio = ratio < 1.0f ? ratio : 1.0f; // minss
+		float drop = m_data->m_dropOff > 0.0f ? m_data->m_dropOff : 0.0f;
+		drop = drop < 1.0f ? drop : 1.0f;
+		return SimMath::subf32(1.0f, SimMath::mulf32(ratio, drop));
+	}
 	if (m_data->m_dropOff != 1.0f) // RW 0x883265 .. 0x883275 (ucomiss; jp: not equal)
 	{
 		return 1.0f;
@@ -363,6 +384,18 @@ void ShareExperienceBehavior::share(float value)
 		ExperienceTracker *t = c->getExperienceTracker();
 		if (!t || !t->isAcceptingExperiencePoints()) // RW 0x88343D .. 0x883451
 		{
+			continue;
+		}
+		if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedShareExperienceAll))
+		{
+			// lane MODS-3 (0xEE803E): each candidate gets the original value: tmp = fstp(value * Percentage), tmp = fstp(dropOff * tmp); [ebp + 8] stays
+			float award = NumericState::pc24Mul(value, m_data->m_percentage);
+			award = NumericState::pc24Mul(dropOffFactor(from, *c), award);
+			if (award > 0.0f)
+			{
+				t->addExperiencePoints(award, true, true, true, false); // RW 0x79D833
+				++m_shares;
+			}
 			continue;
 		}
 		value = NumericState::pc24Mul(value, m_data->m_percentage); // RW 0x883453: fld; fmul; fstp [ebp + 8]
@@ -1368,7 +1401,12 @@ UpdateSleepTime DualWeaponBehavior::update()
 	{
 		// RW 0x701443(object, range, 0x62) -> RW 0x7006D7 (the AI's target search: INFERENCE, S-1228: the closest visible alive enemy)
 		PartitionFilterFn chain([&](Object &o) { return !o.isEffectivelyDead() && obj->getRelationship(o) == ENEMIES && EmotionModules::canSeeObject(*obj, o, range); });
-		for (const PartitionHit &h : obj->logic().partition().iterateObjectsInRange(*obj->getPosition(), range, FROM_CENTER_2D, { &chain }, ITER_SORTED_NEAR_TO_FAR))
+		// lane UBER-2A, Uber only: the chain accepts only ENEMIES, so the trees of the players this one does not see as enemies are skipped. The hits enter the
+		// sort in the same order (layer by layer); Uber rule change: an object whose owner changed since the frame's partition update is looked for on its old layer
+		PartitionFilterLayers enemyLayers(obj->getTeam() ? obj->getTeam()->enemyLayerMask() : 0u);
+		PartitionFilter *const chainList[] = { &chain, &enemyLayers };
+		const PartitionFilterList filters(chainList, obj->logic().uber() ? 2 : 1);
+		for (const PartitionHit &h : obj->logic().partition().iterateObjectsInRange(*obj->getPosition(), range, FROM_CENTER_2D, filters, ITER_SORTED_NEAR_TO_FAR))
 		{
 			victim = h.object;
 			break;
@@ -2425,8 +2463,8 @@ std::vector<std::string> HeroAbilityModules::stopLines()
 		"defection and given back (RW 0x663128 / 0x663171), the ability in use aborted (RW 0x693919 -> 0x851C92 / 0x8513E4), the slave released and the "
 		"spawner stopped (RW 0x8A4ED8 slot 2, RW 0x68C3A3 slots 9 / 12), the original team kept by name and looked up (RW 0x69959D / 0x7A7483), the kill of "
 		"an object returned to a defeated player (RW 0x69AB83) and setTeam's neutral team for a player who is not active (RW 0x699554). "
-		"Open (lane BACKLOG4 r1 inventory): (1) the AI's temporary machine slot (AI + 0x34): RW 0x6630D7 gives it back at defect / endDefection, but nothing "
-		"fills it in this port (BeginTemporaryStateMachine RW 0x6630A9's callers are not ported), so the call is absent; (2) a kept attack state's slot 0x40 "
+		"Open (lane BACKLOG4 r1 inventory): (1) closed by lane MODCOMPAT-MOD1: the AI's temporary machine (AI + 0x34, filled by PickupStuffUpdate through RW "
+		"0x6630A9) is given back at defect / endDefection (RW 0x6630D7); (2) a kept attack state's slot 0x40 "
 		"(RW 0x8DB749: the machine's slot 0x34 calls it for a state answering State slot 0x24) is not read, reported when met; (3) the defection's machine is "
 		"halted with its state's exit (retail's halt RW 0x8DB758 drops the state without it: INFERENCE that what the state holds is to be released); (4) RW "
 		"0x693919 aborts only SpecialAbilityUpdate's abilities: an active special power update of another class (WeaponModeSpecialPowerUpdate) is reported, "

@@ -6,8 +6,11 @@ user. I have permission from that mod project to use it."
 
 Status: option (b) is approved, built in the launcher and **on by default** since round 3
 (`AioInstall.DEFAULT_ENABLED` in `launcher/scripts/core/aio_install.gd`). Nothing downloads until the
-player presses Download. Since lane UI-3 the window shows the option only while no game folders are
-found (see "Lane UI-3" at the end). Research date: 2026-10-10.
+player presses Download. The Play card's shortcut is shown only when the selected game's folders
+are not found; the **Game files** screen still offers the download when folders are found.
+Turning off **Settings → General → Offer to download the games** hides the Play shortcut and disables
+Download in Game files. Research date: 2026-10-10; the research and round-by-round sections below
+describe their dated states, not fresh checks of the external launcher or service.
 
 ## Decisions (the owner, 2026-10-10)
 
@@ -45,7 +48,7 @@ found (see "Lane UI-3" at the end). Research date: 2026-10-10.
   alone. No AIO binary, no Wine, no admin rights, no registry writes, and it is native on Windows
   and Linux. What we need from the AIO team for this is listed under "Questions for the AIO team".
 
-## Phase 1: what the AIO launcher is (evidence)
+## Phase 1: what the AIO launcher was (2026-10-10 research evidence)
 
 Everything was downloaded into the ignored `workspace/aio/` and none of it is in git. Sources:
 
@@ -237,7 +240,12 @@ same folder to 2.02 / 1.09, and that rewrites files and deletes ours.
   - one version-hash GET;
   - five HEADs, one 100-byte range request and three small files (about 3.8 MB).
 
-## Phase 2: design
+## Phase 2: initial design (historical; hardened in rounds 2 and 3)
+
+This records the alternatives and original proposal. The implementation below pins **every** selected
+file, not just archives; uses the game-folder handoff; and defaults to `Games/BFME` beneath the OS
+account directory, not the proposed Windows-only target. It always sends the two unauthenticated
+service headers. The example silent-install CLI in (a) is hypothetical, not a supported command.
 
 ### (a) Download the AIO installer and drive it headlessly
 
@@ -325,7 +333,7 @@ screen and its ownership checkbox with one screen, *Download the games*:
 - one line naming the source: "Files from the All In One BFME Launcher service (BFME Foundation,
   Patch 2.22 team)", a link to bfmeladder.com/download, the two games and the size, the target folder
   (*Change...*), and **Download**. Nothing downloads before that press;
-- the setting *Offer to download the games* (Settings, or `--aio=on|off`) hides the button;
+- the setting *Offer to download the games* (Settings → General, or `--aio=on|off`) hides the Play card's shortcut and disables Game files' Download button;
 - the launcher log records the consent text (`AioInstall.consent_text`: the servers, the packages,
   the size, the checks, the privacy note);
 - the launcher README says the extra hosts are contacted **only** during that download.
@@ -346,11 +354,13 @@ Answered by the owner (see "Decisions"): permission, direct API use, pinning, ba
 Build (b). The owner approved it on 2026-10-10 (see "Decisions"); it is on by default since round 3,
 after Sol's review.
 
-## Phase 3: the prototype (off by default)
+## Phase 3: the initial prototype (historical: initially off by default)
 
-Option (b) is built in the launcher. Turn it on with the box "Install game files with the All In One BFME Launcher
-(prototype)", or with `--aio=on` on the command line. Nothing is downloaded until the player agrees to the consent
-text. In the window that is a dialog after the folder pick; on the command line it is
+Option (b) was first built with the box "Install game files with the All In One BFME Launcher
+(prototype)", or `--aio=on` on the command line. The box and dialog described here are historical;
+today the setting is on by default and the Game files screen's **Download** press is consent.
+On the command line (Windows, Linux or macOS, with the built launcher or
+the Godot launcher project), put the launcher arguments after `--`; consent is
 `--aio-install=<folder> --aio-consent`.
 
 - `launcher/scripts/core/aio_install.gd` does the flow of (b):
@@ -373,17 +383,33 @@ text. In the window that is a dialog after the folder pick; on the command line 
 - `NetPolicy.extra_hosts` holds the two service hosts only while the download runs. `HttpFetch.get_small` takes extra
   headers (the service's two `Auth*` headers). The HTTPS-only, no-port and redirect rules are unchanged.
 - **Tests:**
-  - `tools/release/test_aio.py`: 17 tests against a local stand-in service with made-up files and made-up pins. They
-    cover: off by default; the consent and the folder; a full install with every file checked; a second run that
+  - At this prototype stage, `tools/release/test_aio.py` had 17 tests against a local stand-in service with made-up files and made-up pins. They
+    covered: initially off by default; the consent and the folder; a full install with every file checked; a second run that
     downloads nothing; a pinned MD5 changed; nine kinds of changed package; a corrupt file; a cut download resumed with
     Range; a player's file never overwritten; a redirect to another host refused.
   - `launcher/tests/unit_test.gd`: the network policy, the path rule, the pinned counts.
-- **Not done:**
+
+  Current collection: `tools/release/test_aio.py` has 44 collected cases,
+  including default-on consent, malformed manifests, stop-before-handoff and
+  optional BFME1 coverage. Linux, from the project root with Python 3 and pytest:
+
+  ```sh
+  python3 tools/release/aio_pins.py --check
+  python3 -m pytest -q tools/release/test_aio.py
+  ```
+
+  The two pin checks run without Godot; the other 42 cases skip unless Godot
+  4.7.2 is available as `godot` or through `GODOT`. These tests use a local
+  stand-in, not the production service. The capture/generation commands above
+  rewrite tables and are not needed to check this checkout.
+- **Not done at the initial prototype stage (see rounds 2 and 3 for the download and handoff):**
   - **No real download through the prototype.** Its tests use the stand-in only. The real service's manifests passed the
     same checks by hand in phase 1 (213 of 213 pins).
   - **No game-side discovery hint.** The game's first-run screen does not yet offer the downloaded folders by itself;
     the player browses to them.
-  - **No language choice.** Only the English tables exist.
+  - **No language choice.** Only the English tables exist. (Since issue #49: every language of the two base packages is
+    pinned from the manifests, `tools/release/aio_languages.py`, and the Game files screen picks the text and the voice language;
+    see "Languages" below.)
 
 ## Round 2 (2026-10-10): approved, hardened, and one real run
 
@@ -419,7 +445,7 @@ text. In the window that is a dialog after the folder pick; on the command line 
     files are removed; checked files stay).
   - **Free space:** checked before the first byte; a folder whose free space can't be read is refused.
   - **User-Agent:** `OpenBFME-Launcher/<version> (+https://github.com/Open-BFME/openbfme-godot)`.
-- **Off by default:** `AioInstall.DEFAULT_ENABLED := false`. The player's setting (`--aio=on|off`, or
+- **Off by default at round 2 (changed in round 3):** `AioInstall.DEFAULT_ENABLED := false`. The player's setting (`--aio=on|off`, or
   the box) overrides it.
 
 ## Round 3 (2026-10-10): Sol's fixes, turned on
@@ -443,19 +469,26 @@ text. In the window that is a dialog after the folder pick; on the command line 
   were unchanged then (lane UI-3 later replaced both). The round-2 download (`workspace/aio-install/`) was deleted after the pins were
   captured.
 
-## Lane UI-3 (2026-10-10): the launcher redesign
+## Lane UI-3 (2026-10-10): the launcher redesign (historical layout)
 
 - *Download the games* appears on the main screen only while no game folders are found: none of the
   game's `install-paths.cfg`, the launcher's `downloaded-installs.cfg` or `ROTWK_INSTALL` /
   `BFME2_INSTALL` names two existing folders (`launcher/scripts/ui/paths.gd`). The game's own search
   (registry, Wine prefixes) still runs at its first start, so the card says "Installed already? The
   game finds them when it starts."
-- The screen: one source line, the link, the size, the folder (default `~/Games/BFME`), **Download**.
+- The screen: one source line, the link, the size, the folder (default `Games/BFME` beneath the OS account directory), **Download**.
   No ownership text or checkbox. The download runs in the main screen's one progress bar (MB, MB/s,
   time left) with **Pause** / **Resume** and **Cancel**; failures open the error dialog (*Copy
   details*, *Open log folder*).
 - `--aio-install=<folder> --aio-consent` is unchanged; the refusal for a switched-off setting now names
   it "Offer to download the games".
+
+The current layout moves the folder controls and download progress to **Game files**
+(`launcher/scripts/ui/games_screen.gd`), with **Change…**, **Download**, **Pause** /
+**Resume** and **Cancel**. The Play shortcut depends on the selected game: BFME1 checks its
+independent folder; the base game checks the RotWK / BFME2 pair. For that pair, folder lookup takes
+the first source naming both folders (environment, remembered config, then downloaded marker),
+then checks whether those folders exist; it does not skip a stale complete source to try the next.
 
 
 ## BFME1 (optional, community PR #36; restored 2026-10-18)
@@ -478,3 +511,22 @@ text. In the window that is a dialog after the folder pick; on the command line 
 - **Never in our packages:** `tools/release/audit_package.py` refuses any file (any name, any container, any pack entry, and every file
   of a `--release` package) whose MD5 and size are one of the AIO pins, the BFME1 package's included.
 - BFME1 keeps working with the player's own install: `BFME1_INSTALL`, a remembered folder, `<games>/BFME1`.
+
+## Languages (issue #49)
+
+- **Pins.** `tools/release/aio_languages.py --capture <manifest dir>` reads the service's manifests of `original-RotWK` and
+  `original-BFME2` and writes `tools/release/aio_language_files.json` (per package and language code: the files the language adds,
+  the English files it drops) and the engine's `engine/data/retail-archives/language-archives.json` (each language's
+  `lang/*.big`). `tools/release/aio_pins.py` renders the first into `aio_pins.gd` (each base package's `languages`).
+  Captured 2026-10-20 from version 1.0.0 of both manifests; the six German archives equal a retail German install.
+- **What the manifests list.** Besides English: Dutch, French, German, Italian, Norwegian, Polish, Russian, Spanish, Swedish
+  and Turkish. Dutch, Norwegian, Polish and Swedish (and Turkish on RotWK) use `lang\EnglishAudio.big`. Every Turkish file and
+  BFME2's `lang\RussianAudio.big` are listed with `Size: 0`. RotWK's `lang\spanishpatch201.big` is tagged `SP` and the rest of
+  Spanish `ES`: the capture reads `SP` as `ES` (the AIO launcher's own language filter would miss that file for `ES`).
+  BFME2's `lang\Turkish.big` has the MD5 of `lang\English.big`.
+- **The download.** The launcher offers a language when both packages know every file it adds with a size (not Turkish, not
+  Russian). It takes the `ALL` files, the text language's files without its speech archive, and the voice language's speech
+  archive. A language-tagged file it does not take is skipped; one OpenBFME has no pin for, tagged with a language the pinned table
+  knows, stops the install as a changed package (one tagged only with a language the table does not know is skipped too). The command line has `--aio-language=<code>` and `--aio-voice=<code>`.
+- **The game** reads the language from the files on disk (`Common/RetailArchivePolicy.h`, "Languages"), the text language from
+  `lang/<Language>.big` and the voice language from `lang/<Language>Audio.big`.

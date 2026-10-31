@@ -3,8 +3,8 @@
 // lane RULES-1: the Rules tab of the lobby movie (MpGameSetup.apt's rule rows): RotWK's AptMpGameRules, the panel at AptMpGameSetup + 0xD0.
 //
 // TARGET FACTS (rotwk201_game.exe, caveat S-001; every function below is tier A of its BFME2 1.06 twin unless marked, donor open-bfme-2
-// GUI/GUICallbacks/Apt/AptMpGameRulesCallbacks.cpp and AptMpGameRulesRefreshWidgets.cpp, byte-matched; the two Populate functions are the decomp's
-// recovered (not yet byte-matching) reverse/attempts/0x0057e7a1.cpp and 0x0057eaad.cpp):
+// GUI/GUICallbacks/Apt/AptMpGameRules.cpp, byte-matched; the two Populate functions are the decomp's
+// byte-matched since: AptMpGameRules.cpp):
 //   * the registration RW 0x987106 (tier B of BFME2 0x97F0AA: RotWK appends a tail, no change to the bindings): every "APT:RuleComboBox_<n>" and
 //     "APT:RuleCheckBox_<n>" text (n < 10) becomes " ", the rules get the mode's defaults (RW 0x960A74), the widgets are filed again, then the bindings
 //     MpGameRules::NumCheckBoxes / NumComboBoxes (RW 0x9865C9 queries 1 / 0), AptMpGameRules::Reset and the screen reference
@@ -31,6 +31,8 @@
 //   * MpGameSetup::OnTabSelect "RulesTab" refreshes the widgets.
 // OpenBFME: one more combo row after RotWK's in mode 0, "Legendary Heroes (OpenBFME rule)": Off / 2x / 3x / 4x (SkirmishGameSetup::setLegendaryHeroes);
 // Reset puts it back to Off.
+// OpenBFME (lane CHEAT-1): one more check row after RotWK's in mode 0, "Cheat Mode (OpenBFME rule)" (GameLogic/CheatMode.h: the host's open cheats, every
+// player sees the game marked), offered where cheatModeOffered() (never a Quick Match / tournament room); only the host changes it; Reset clears it.
 // INFERENCE (S-3600): the movie's generated rows read MpGameRules::NumComboBoxes: the extra row is a generated row like retail's (the movie is not
 // changed); the drop-down disable of a non-host (GadgetComboBoxHideDropDown) is the widget's disable here.
 
@@ -104,6 +106,16 @@ bool isCombo(GameWindow *w) { return (w->winGetStyle() & GWS_COMBO_BOX) != 0; }
 bool isCheck(GameWindow *w) { return (w->winGetStyle() & GWS_CHECK_BOX) != 0; }
 } // namespace
 
+int AptSkirmish::ruleCheckCount() const
+{
+	if (!m_setup)
+	{
+		return 0;
+	}
+	const int mode = m_setup->rulesMode();
+	return MpGameRules::numCheckBoxes(mode) + (mode == RULES_MODE_SKIRMISH && cheatModeOffered() ? 1 : 0);
+}
+
 int AptSkirmish::ruleComboCount() const
 {
 	if (!m_setup)
@@ -144,6 +156,14 @@ void AptSkirmish::initRuleGadget(const std::string &name, GameWindow *window)
 	{
 		widgets->resize((std::size_t)position + 1, nullptr);
 	}
+	// OpenBFME: the row's earlier window (another placement of the rows: the server browser's MAP / RULES panel before the staging room's) is
+	// hidden with the filing: only the filed rows are the tab's. The owner's online Rules tab of 2026-10-29 drew the browser panel's rows, shown
+	// by a populate before the room's rows were all filed and never hidden after, over the room's player list with their old values
+	GameWindow *earlier = (*widgets)[(std::size_t)position];
+	if (earlier && earlier != window)
+	{
+		earlier->winHide(true);
+	}
 	(*widgets)[(std::size_t)position] = window;
 	window->winHide(true);
 	if (m_rulesPopulated)
@@ -161,6 +181,7 @@ void AptSkirmish::refileRules()
 	m_rulesPopulated = false;
 	m_ruleWindows.fill(nullptr);
 	m_legendaryCombo = nullptr;
+	m_cheatCheck = nullptr;
 	tryPopulateRules();
 }
 
@@ -175,7 +196,7 @@ bool AptSkirmish::tryPopulateRules()
 		return false;
 	}
 	const int mode = m_setup->rulesMode();
-	if ((int)m_ruleCombos.size() < ruleComboCount() || (int)m_ruleChecks.size() < MpGameRules::numCheckBoxes(mode))
+	if ((int)m_ruleCombos.size() < ruleComboCount() || (int)m_ruleChecks.size() < ruleCheckCount())
 	{
 		return false;
 	}
@@ -301,7 +322,21 @@ void AptSkirmish::populateRuleChecks()
 			window->winEnable(false);
 		}
 	}
-	while (row < count && (std::size_t)row < m_ruleChecks.size())
+	// OpenBFME (lane CHEAT-1): the Cheat Mode row follows RotWK's rows (mode 0, where offered)
+	if (mode == RULES_MODE_SKIRMISH && cheatModeOffered() && (std::size_t)row < m_ruleChecks.size() && m_ruleChecks[(std::size_t)row])
+	{
+		GameWindow *window = m_ruleChecks[(std::size_t)row];
+		m_cheatCheck = window;
+		windows().setAptText("APT:RuleCheckBox_" + std::to_string(row++), toUtf8(CheatModeRule::label()));
+		window->winHide(false);
+		updateCheatGadget();
+	}
+	else if (!cheatModeOffered() && m_setup->info().cheatModeOn())
+	{
+		m_setup->setCheatMode(false); // a screen that does not offer the row never keeps the rule
+	}
+	const int checkRows = ruleCheckCount();
+	while (row < checkRows && (std::size_t)row < m_ruleChecks.size())
 	{
 		GameWindow *window = m_ruleChecks[(std::size_t)row];
 		if (!window)
@@ -329,6 +364,10 @@ void AptSkirmish::enableRuleGadgets()
 	if (m_legendaryCombo)
 	{
 		m_legendaryCombo->winEnable(host);
+	}
+	if (m_cheatCheck)
+	{
+		m_cheatCheck->winEnable(host);
 	}
 	m_ruleInput = true;
 }
@@ -367,6 +406,18 @@ void AptSkirmish::updateLegendaryGadget()
 	m_ruleInput = true;
 }
 
+void AptSkirmish::updateCheatGadget()
+{
+	if (!m_cheatCheck || !m_setup)
+	{
+		return;
+	}
+	m_ruleInput = false;
+	GadgetCheckBoxSetChecked(m_cheatCheck, m_setup->info().cheatModeOn());
+	m_cheatCheck->winEnable(amIHost());
+	m_ruleInput = true;
+}
+
 void AptSkirmish::refreshRuleGadgets()
 {
 	// AptMpGameRules::rva0057E6C1: every rule's UpdateRuleGadget
@@ -375,6 +426,7 @@ void AptSkirmish::refreshRuleGadgets()
 		updateRuleGadget(rule);
 	}
 	updateLegendaryGadget();
+	updateCheatGadget();
 }
 
 bool AptSkirmish::onRuleGadget(GameWindow *gadget)
@@ -383,6 +435,19 @@ bool AptSkirmish::onRuleGadget(GameWindow *gadget)
 	if (!gadget || !m_setup)
 	{
 		return false;
+	}
+	if (gadget == m_cheatCheck)
+	{
+		if (m_ruleInput && !m_refreshing)
+		{
+			if (!amIHost() || !m_setup->setCheatMode(GadgetCheckBoxIsChecked(gadget)))
+			{
+				updateCheatGadget(); // a client's change, or a setup that cannot take it, shows the model again
+				return true;
+			}
+			ruleChanged(-2, false);
+		}
+		return true;
 	}
 	if (gadget == m_legendaryCombo)
 	{
@@ -452,7 +517,8 @@ void AptSkirmish::ruleChanged(int kind, bool reset)
 	}
 	else
 	{
-		notice = fetchOrMissing(m_env.gameText, "GUI:RuleChangeWarning") + u" " + (kind < 0 ? LegendaryHeroes::label() : m_setup->ruleName(kind));
+		notice = fetchOrMissing(m_env.gameText, "GUI:RuleChangeWarning") + u" " +
+			(kind == -2 ? CheatModeRule::label() : kind < 0 ? LegendaryHeroes::label() : m_setup->ruleName(kind)); // -2: lane CHEAT-1's Cheat Mode
 	}
 	if (!notice.empty())
 	{
@@ -506,11 +572,13 @@ void AptSkirmish::pruneRuleGadgets(const std::set<const GameWindow *> &alive)
 		check(w);
 	}
 	check(m_legendaryCombo);
+	check(m_cheatCheck);
 	if (lost)
 	{
 		// the movie took the rows away (a tab or a frame change): the rules are filed again when it places them anew
 		m_rulesPopulated = false;
 		m_ruleWindows.fill(nullptr);
 		m_legendaryCombo = nullptr;
+		m_cheatCheck = nullptr;
 	}
 }

@@ -2,6 +2,7 @@
 // See GameClient/VideoPlayer.h.
 
 #include "GameClient/VideoPlayer.h"
+#include "Common/PathIO.h"
 
 #include "Common/AsciiString.h"
 #include "Common/INI.h"
@@ -29,13 +30,13 @@ const FieldParse kVideoParse[] = {
 std::string findNoCase(const stdfs::path &dir, const std::string &name)
 {
 	std::error_code ec;
-	if (stdfs::exists(dir / name, ec))
+	if (stdfs::exists(dir / stdfs::u8path(name), ec))
 	{
 		return name;
 	}
 	for (stdfs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
 	{
-		const std::string n = it->path().filename().string();
+		const std::string n = it->path().filename().u8string();
 		if (AsciiStringUtil::compareNoCase(n, name) == 0)
 		{
 			return n;
@@ -47,7 +48,7 @@ std::string findNoCase(const stdfs::path &dir, const std::string &name)
 // `relative` ('/' or '\' separated) below `root`, each component matched without regard to case; "" when a component is missing
 std::string resolveNoCase(const std::string &root, const std::string &relative)
 {
-	stdfs::path at(root);
+	stdfs::path at = PathIO::native(root);
 	std::string out;
 	std::string part;
 	auto step = [&](const std::string &comp) {
@@ -60,7 +61,7 @@ std::string resolveNoCase(const std::string &root, const std::string &relative)
 		{
 			return false;
 		}
-		at /= found;
+		at /= stdfs::u8path(found);
 		out += (out.empty() ? "" : "/") + found;
 		return true;
 	};
@@ -137,7 +138,8 @@ const Video *VideoPlayer::getVideo(const std::string &title) const
 	return nullptr;
 }
 
-VideoStreamInfo VideoPlayer::locate(const std::string &title, const std::string &installRoot, const std::string &modRoot, const std::string &language) const
+VideoStreamInfo VideoPlayer::locate(const std::string &title, const std::string &installRoot, const std::string &modRoot, const std::string &language,
+	const std::vector<std::string> &overlays) const
 {
 	VideoStreamInfo info;
 	info.title = title;
@@ -157,11 +159,17 @@ VideoStreamInfo VideoPlayer::locate(const std::string &title, const std::string 
 	{
 		dirs.push_back({ modRoot, "Data\\Movies\\" });
 	}
+	// the game directory's two folders; each in the install-folder mods first (lane MODCOMPAT-1: their files sit in the game directory in retail)
+	auto gameDir = [&](const std::string &relative) {
+		for (const std::string &o : overlays)
+			dirs.push_back({ o, relative });
+		dirs.push_back({ installRoot, relative });
+	};
 	if (!language.empty())
 	{
-		dirs.push_back({ installRoot, "Lang\\" + language + "\\Data\\Movies\\" }); // RW 0xBDDEDC, the localized directory
+		gameDir("Lang\\" + language + "\\Data\\Movies\\"); // RW 0xBDDEDC, the localized directory
 	}
-	dirs.push_back({ installRoot, "Data\\Movies\\" });
+	gameDir("Data\\Movies\\");
 	std::string tried;
 	for (const Dir &d : dirs)
 	{
@@ -172,7 +180,7 @@ VideoStreamInfo VideoPlayer::locate(const std::string &title, const std::string 
 		{
 			continue;
 		}
-		const std::string full = (stdfs::path(d.root) / found).string();
+		const std::string full = (PathIO::native(d.root) / stdfs::u8path(found)).u8string();
 		// lane CAMP-2: the container's chunk index (EAVP6Movie: the MVhd header wherever it is, every frame chunk present)
 		EAVP6Movie movie;
 		std::string err;

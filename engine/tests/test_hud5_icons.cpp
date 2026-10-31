@@ -49,8 +49,7 @@ struct IconRig
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string error;
-		REQUIRE_MESSAGE(s.mount->fs->readFile("data/lotr.str", bytes, &error), error);
-		REQUIRE_MESSAGE(text.table.parse(bytes, &error), error);
+		REQUIRE_MESSAGE(text.table.loadRetail(*s.mount->fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 		imageEnv.fileSystem = s.mount->fs.get();
 		images.registerBlocks(imageEnv.blocks);
 		INI ini(imageEnv);
@@ -122,13 +121,58 @@ TEST_CASE("hud5 icons retail: a building under construction shows lotr.str's \"B
 	b->setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, true);
 	b->setConstructionPercent(37.4f);
 	std::vector<IconUIOp> ops = IconRig::of(r.build({}, 0), b->getID());
+	// the install's CONTROLBAR:UnderConstructionDesc with the percent ("Building: %.0f%%" in English)
+	std::string fmt;
+	REQUIRE(r.text.table.lookup("CONTROLBAR:UnderConstructionDesc", fmt));
+	// the expected text without handing the install's string to printf (another language's table is not verified: PR #77): only "%.0f" and "%%"
+	// are expanded; a table whose text holds any other % sequence is only checked for a text
+	std::string want;
+	bool expandable = true;
+	for (size_t i = 0; i < fmt.size(); ++i)
+	{
+		if (fmt[i] != '%')
+		{
+			want += fmt[i];
+		}
+		else if (fmt.compare(i, 2, "%%") == 0)
+		{
+			want += '%';
+			i += 1;
+		}
+		else if (fmt.compare(i, 4, "%.0f") == 0)
+		{
+			want += "37";
+			i += 3;
+		}
+		else
+		{
+			expandable = false;
+			break;
+		}
+	}
+	const bool english = retailtest::installLanguage() == "English";
+	if (english)
+	{
+		REQUIRE(expandable); // "Building: %.0f%%"
+	}
 	int texts = 0;
 	for (const IconUIOp &op : ops)
 	{
 		if (op.kind == IconUIOp::TEXT)
 		{
 			++texts;
-			CHECK(op.text == "Building: 37%");
+			if (expandable)
+			{
+				CHECK(op.text == want);
+			}
+			else
+			{
+				CHECK_FALSE(op.text.empty());
+			}
+			if (english)
+			{
+				CHECK(op.text == "Building: 37%");
+			}
 			CHECK(op.color == 0xFFFFFFFFu);
 			CHECK(op.dropColor == 0xFF000000u);
 		}
@@ -140,6 +184,36 @@ TEST_CASE("hud5 icons retail: a building under construction shows lotr.str's \"B
 	{
 		CHECK(op.kind != IconUIOp::TEXT);
 	}
+}
+
+TEST_CASE("hud5 icons retail: a newly produced unit's construction sentinel has no caption (RW 0x677CF9 / 0x679AE8)")
+{
+	if (!haveWorld("hud5 icons construction sentinel"))
+	{
+		return;
+	}
+	IconRig r(shared());
+	Object *unit = r.place("GondorFighter", r.rig.local, 600.0f, 600.0f);
+	r.rig.game->advance(0.2);
+	r.look(*unit);
+	// QueueProductionExitUpdate temporarily sets this flag while a new unit exits; its percent remains CONSTRUCTION_COMPLETE.
+	REQUIRE(unit->getConstructionPercent() == -1.0f);
+	unit->setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, true);
+	for (const IconUIOp &op : IconRig::of(r.build({}, 0), unit->getID()))
+	{
+		CHECK(op.kind != IconUIOp::TEXT);
+	}
+	unit->setConstructionPercent(0.0f);
+	int texts = 0;
+	for (const IconUIOp &op : IconRig::of(r.build({}, 0), unit->getID()))
+	{
+		if (op.kind == IconUIOp::TEXT)
+		{
+			++texts;
+			CHECK(op.text == "Building: 0%");
+		}
+	}
+	CHECK(texts == 1);
 }
 
 TEST_CASE("hud5 icons retail: a structure's health bar when selected or under the mouse only: frames, the full green rows, a damaged one's bands")

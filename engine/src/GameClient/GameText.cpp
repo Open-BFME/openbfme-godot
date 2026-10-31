@@ -243,6 +243,14 @@ bool GameTextTable::loadRetail(ArchiveFileSystem &fs, std::string *error)
 	std::vector<std::uint8_t> bytes;
 	if (!isBfme1Data(fs))
 	{
+		// Retail (RotWK 2.01 GameTextManager init, RW 0x6E7E3D -> RW 0x6E7D9E with "data\lotr.str" and "Lotr.csf"): the .str file is tried
+		// first (RW 0x6E6E69), else the compiled .csf is read (RW 0x6E6C82); this is that order, not a fallback of ours.
+		// the English archives carry data\lotr.str; the other languages' lang\<Language>*.big carry the compiled table lotr.csf at their root
+		// (German RotWK 2.01 / BFME2 1.06: lang\german.big and lang\germanpatch201.big / germanpatch105.big, no data\lotr.str anywhere)
+		if (!fs.doesFileExist("data/lotr.str") && fs.doesFileExist("lotr.csf"))
+		{
+			return fs.readFile("lotr.csf", bytes, error) && parseCSF(bytes.data(), bytes.size(), error);
+		}
 		return fs.readFile("data/lotr.str", bytes, error) && parse(bytes, error);
 	}
 	FilenameList candidates;

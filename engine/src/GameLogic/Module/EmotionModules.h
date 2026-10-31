@@ -122,6 +122,7 @@ private:
 	ObjectID m_forcedSource = INVALID_ID;                       ///< + 0xB8
 	UnsignedInt m_nextHeroCheer = 0;                            ///< + 0xBC
 	bool m_heroFlag = false;                                    ///< + 0xC0
+	std::vector<ObjectID> m_scanIds; ///< update's copy of the scary / hero list, kept for its storage (not state: refilled before each scan)
 };
 
 class RadiateFearUpdateModuleData : public UpgradeModuleData

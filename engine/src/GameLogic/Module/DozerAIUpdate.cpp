@@ -2,6 +2,9 @@
 // See GameLogic/Module/DozerAIUpdate.h for the sources of every rule.
 
 #include "GameLogic/Module/DozerAIUpdate.h"
+#include "GameLogic/Module/WorkerAIUpdate.h"
+#include "Common/ModEngineFeatures.h"
+#include "GameLogic/Economy.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 
 #include "Common/Audio/AudioRequests.h"
@@ -19,10 +22,12 @@
 #include "GameLogic/FindPositionAround.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Locomotor.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/UnitSpecificSound.h"
@@ -31,6 +36,7 @@
 #include "Common/INI/HostRealText.h"
 
 #include <cstdlib>
+#include <stdexcept>
 
 namespace
 {
@@ -173,20 +179,21 @@ void DozerAIUpdate::registerClass(ModuleFactory &modules)
 
 void DozerAIUpdate::registerWorkerClass(ModuleFactory &modules)
 {
-	modules.bindModuleProc("WorkerAIUpdate", MODULETYPE_BEHAVIOR, [](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &info) -> std::unique_ptr<Module> {
-		if (!thing->asObject() || !thing->asObject()->logic().aiWorld())
-		{
-			return makeUnportedModule(thing, data, info.name, info.type, info.interfaceMask);
-		}
-		auto dozer = std::make_unique<DozerAIUpdate>(thing, data);
-		dozer->m_isWorker = true;
-		return dozer;
-	});
+	WorkerAIUpdate::registerClass(modules); // lane LUMBER1: the dozer half here, the supply half in WorkerAIUpdate
 }
 
 DozerAIUpdate::~DozerAIUpdate()
 {
 	finishBuildingSound(); // RW 0x88D1F6
+}
+
+void DozerAIUpdate::onDelete()
+{
+	AIUpdateInterface::onDelete();
+	if (m_unplacedStructure != INVALID_ID)
+	{
+		removeUnplacedStructure(); // RW 0x88D1AC: + 0x568 (the interface's + 0xC0) != 0 -> RW 0x88CFFE
+	}
 }
 
 // ---- the dozer interface ------------------------------------------------------------------------------------------------------
@@ -428,23 +435,19 @@ void DozerAIUpdate::removeUnplacedStructure()
 
 bool DozerAIUpdate::placeUnplacedStructure()
 {
-	// RW 0x88D44F. The port's structure exists since the order (S-304), so the site's legality check (flags 0x15) is not repeated: the structure would overlap
-	// itself; what the placement changes on the object is ported: the health set to 1 (RW 0x88D53A: body vslot 0x84 with 1.0 - health)
-	const ObjectID id = m_unplacedStructure;
-	m_unplacedStructure = INVALID_ID;
-	Object *obj = getObject()->logic().findObjectByID(id);
+	// RW 0x88D44F (lane FBSIM-1: Construction::placePhantomStructure); a site no longer legal removes the structure (slot 0x6C, RW 0x88CFFE: the price back)
+	Object *obj = getObject()->logic().findObjectByID(m_unplacedStructure);
 	if (!obj || obj->isDestroyed())
 	{
+		m_unplacedStructure = INVALID_ID;
 		return true;
 	}
-	if (ActiveBody *body = dynamic_cast<ActiveBody *>(obj->getBodyModule()))
+	if (!Construction::placePhantomStructure(*getObject(), *obj, m_isRebuild))
 	{
-		body->internalChangeHealth(SimMath::fstpDword(SimMath::pc24SubW(1.0, (double)body->getHealth())));
+		removeUnplacedStructure();
+		return false;
 	}
-	// lane PLAY-4: RW 0x88D61B .. 0x88D63A: PENDING_CONSTRUCTION and PHANTOM_STRUCTURE (0x57 / 0x58) cleared (RW 0x68D440 with 0); the port's structure carries
-	// only the first (Construction::constructByDozer)
-	static const int pending = ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION");
-	obj->setStatus((unsigned)pending, false);
+	m_unplacedStructure = INVALID_ID;
 	return true;
 }
 
@@ -474,6 +477,28 @@ void DozerAIUpdate::hideInStructure()
 	if (self->isInWorld())
 	{
 		self->logic().friend_containLeaveWorld(*self); // RW 0x68C18F
+	}
+}
+
+// lane PORTERFOG-1: the porter's drawable fade (GlobalData + 0x11E0 BuilderFadeInTime / + 0x11DC BuilderFadeOutTime), client only
+void DozerAIUpdate::builderFade(Object &self, bool in)
+{
+	GameLogic &logic = self.logic();
+	if (!logic.settings().builderFadeLoaded)
+	{
+		logic.noteStop("[S-1282] dozer: GameData BuilderFadeOutTime / BuilderFadeInTime were not loaded (RW GlobalData + 0x11DC / + 0x11E0): the porter's drawable does not fade");
+		return;
+	}
+	if (ObjectClientHooks *client = logic.clientHooks())
+	{
+		if (in)
+		{
+			client->fadeIn(self, logic.settings().builderFadeInFrames);
+		}
+		else
+		{
+			client->fadeOut(self, logic.settings().builderFadeOutFrames);
+		}
 	}
 }
 
@@ -517,7 +542,7 @@ void DozerAIUpdate::showFromStructure(const Object *built)
 	{
 		logic.friend_containEnterWorld(*self); // RW 0x68E31F
 	}
-	// (the drawable fades in over BuilderFadeInTime: the client's)
+	builderFade(*self, true); // RW 0x88D6C8 .. 0x88D6CE: Drawable::fadeIn(BuilderFadeInTime) (RW 0x670AA2), which shows the hidden drawable (lane PORTERFOG-1)
 	for (const char *name : kHiddenStatuses)
 	{
 		self->setStatus((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex(name), false); // RW 0x68D440(mask, 0)
@@ -531,14 +556,15 @@ bool DozerAIUpdate::siteIsLegal(const ThingTemplate &what, const Coord3D &pos, f
 	return BuildPlacement::isLocationLegalToBuild(getObject()->logic(), pos, *what.getFinalOverride(), angle, kConstructLegalFlags, getObject(), &owner) == LBC_OK;
 }
 
-Object *DozerAIUpdate::construct(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner)
+Object *DozerAIUpdate::construct(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool isRebuild)
 {
-	// RW 0x88C217: the machine made, nothing is created, paid or changed when the site is not legal
+	// RW 0x88C217: + 0x4D0 = the rebuild flag first (lane BFME2CAMP1); the machine made, nothing is created, paid or changed when the site is not legal
+	m_isRebuild = isRebuild;
 	if (m_primaryState < 0)
 	{
 		primarySetState(PRIMARY_IDLE);
 	}
-	if (!siteIsLegal(what, pos, angle, owner))
+	if (!isRebuild && !siteIsLegal(what, pos, angle, owner)) // RW 0x88C23D: a rebuild skips the tests
 	{
 		return nullptr;
 	}
@@ -546,8 +572,8 @@ Object *DozerAIUpdate::construct(const ThingTemplate &what, const Coord3D &pos, 
 	{
 		cancelTaskInternal(DOZER_TASK_BUILD); // RW 0x88C2C3
 	}
-	// slot 0x64 (RW 0x88D272): ZH DozerAIUpdate::construct: the foundation made with the builder as producer, the owner pays the price up front (S-304: made at once)
-	Object *structure = Construction::constructByDozer(*getObject(), what, pos, angle, owner);
+	// slot 0x64 (RW 0x88D272): the inert phantom with the builder as producer, the owner pays the price up front (lane FBSIM-1: Construction::constructByDozer)
+	Object *structure = Construction::constructByDozer(*getObject(), what, pos, angle, owner, isRebuild);
 	if (!structure)
 	{
 		return nullptr;
@@ -614,7 +640,7 @@ void DozerAIUpdate::commandAccepted(CommandSourceType source, int command, Objec
 	{
 		primarySetState(PRIMARY_IDLE);
 	}
-	if (source != CMD_FROM_PLAYER || command == 0x13 || command == 0x14 || command == 0x34)
+	if (source != CMD_FROM_PLAYER || command == 0x13 || command == 0x14 || (command == 0x34 && !m_isWorker)) // lane LUMBER1: RW 0x8AE798 has no 0x34 case
 	{
 		return;
 	}
@@ -942,7 +968,13 @@ int DozerAIUpdate::updateMoveToActionPos(int t)
 				// RW 0x88C6E6 .. 0x88C704: the porter goes in (RW 0x88C51B), the structure placed (slot 0x68); RW 0x68B21D and the script engine's note (RW
 				// 0x756C87(3, dozer)) are not ported (S-1282)
 				hideInStructure();
-				placeUnplacedStructure();
+				if (!placeUnplacedStructure())
+				{
+					// lane FBSIM-1, INFERENCE (S-304): RotWK goes on to DO_ACTION with the removed goal, which fails; the port fails here and shows the porter again
+					// (RW 0x88CFFE does not show it; the task's failure path is not read)
+					showFromStructure(nullptr);
+					return STATE_FAILURE;
+				}
 			}
 			// RW 0x88C709: AWAITING_CONSTRUCTION -> PARTIALLY_CONSTRUCTED + ACTIVELY_BEING_CONSTRUCTED
 			Construction::setModelConditions(*goal, { "AWAITING_CONSTRUCTION" }, { "PARTIALLY_CONSTRUCTED", "ACTIVELY_BEING_CONSTRUCTED" });
@@ -995,6 +1027,12 @@ int DozerAIUpdate::updateDoAction(int t)
 		if (task == DOZER_TASK_BUILD)
 		{
 			startBuildingSound(*goal, "UnderConstruction"); // RW 0x88DD74 (lane AUDIO-3)
+			// RW 0x88DDC1 .. 0x88DDE3: unless the dozer is a worker (RW 0x88B897, the gate of RW 0x88C51B), its drawable fades out over BuilderFadeOutTime
+			// (RW 0x670A50; Drawable::update hides it once the opacity * 255 is below 1, RW 0x675B7E): how a porter in its site disappears (lane PORTERFOG-1)
+			if (!m_isWorker)
+			{
+				builderFade(*self, false);
+			}
 		}
 		else
 		{
@@ -1040,7 +1078,17 @@ int DozerAIUpdate::workOnBuild(int t, Object &structure)
 		showFromStructure(&structure); // RW 0x88DE56 -> 0x88E156: already complete
 		return taskSucceeded(t);
 	}
-	const int frames = BuildAssistant::calcTimeToBuild(*structure.getTemplate(), self->getControllingPlayer(), self, -1, logic.productionSettings(), logic);
+	int frames = BuildAssistant::calcTimeToBuild(*structure.getTemplate(), self->getControllingPlayer(), self, -1, logic.productionSettings(), logic);
+	if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedProductionSplit))
+	{
+		// lane MODS-3: edain-unchained.production-split (its 0xED91A3 at RW 0x88DE6E): the STRUCTURE's PRODUCTION_CONSTRUCTION product f; f > 0 gives
+		// max(1, cvttss2si((float)t / f)) (cvtsi2ss, divss)
+		const float f = logic.economy().attributeModifierProduct(structure, 31); // ATTRIBUTE_PRODUCTION_CONSTRUCTION
+		if (f > 0.0f)
+		{
+			frames = std::max(1, SimMath::truncToInt32(SimMath::divf32(SimMath::sseFromInt32(frames), f)));
+		}
+	}
 	const float framesF = SimMath::sseFromInt32(frames);
 	structure.setConstructionPercent(SimMath::addf32(structure.getConstructionPercent(), SimMath::divf32(100.0f, framesF)));
 	if (ActiveBody *body = dynamic_cast<ActiveBody *>(structure.getBodyModule()))
@@ -1116,23 +1164,28 @@ UpdateSleepTime DozerAIUpdate::update()
 		primarySetState(PRIMARY_IDLE); // RW 0x88C1C1: the machine made and its default state entered
 	}
 	AIUpdateInterface::update(); // RW 0x66E58F
-	Object *self = getObject();
-	if (!self->isEffectivelyDead())
+	if (!getObject()->isEffectivelyDead())
 	{
-		if (m_currentTask == DOZER_TASK_REPAIR && !canRepair(*self, self->logic().findObjectByID(getTaskTarget(DOZER_TASK_REPAIR))))
-		{
-			cancelTaskInternal(DOZER_TASK_REPAIR); // RW 0x88CB6D (the ActionManager's test RW 0x82D7F2: S-1282)
-		}
-		// the primary machine (ZH StateMachine::updateStateMachine)
-		const int before = m_primaryState;
-		int status = before == PRIMARY_IDLE ? primaryUpdateIdle() : actionUpdate(before - PRIMARY_BUILD);
-		if (m_primaryState != before)
-		{
-			status = STATE_CONTINUE;
-		}
-		primaryCheckTransitions(status);
+		dozerMachineStep();
 	}
 	return UPDATE_SLEEP_NONE;
+}
+
+void DozerAIUpdate::dozerMachineStep()
+{
+	Object *self = getObject();
+	if (m_currentTask == DOZER_TASK_REPAIR && !canRepair(*self, self->logic().findObjectByID(getTaskTarget(DOZER_TASK_REPAIR))))
+	{
+		cancelTaskInternal(DOZER_TASK_REPAIR); // RW 0x88CB6D (the ActionManager's test RW 0x82D7F2: S-1282)
+	}
+	// the primary machine (ZH StateMachine::updateStateMachine)
+	const int before = m_primaryState;
+	int status = before == PRIMARY_IDLE ? primaryUpdateIdle() : actionUpdate(before - PRIMARY_BUILD);
+	if (m_primaryState != before)
+	{
+		status = STATE_CONTINUE;
+	}
+	primaryCheckTransitions(status);
 }
 
 void DozerAIUpdate::crc(StateHasher &h) const
@@ -1153,6 +1206,10 @@ void DozerAIUpdate::crc(StateHasher &h) const
 	h.addI32(m_currentTask);
 	h.addI32(m_buildSubTask);
 	h.addU32(m_unplacedStructure);
+	if (m_isRebuild)
+	{
+		h.addBool(true); // lane BFME2CAMP1: hashed once set, so games without a rebuild keep their hashes
+	}
 	h.addI32(m_primaryState);
 	h.addU32(m_idleTimestamp);
 	h.addI32(m_idlePlayer);

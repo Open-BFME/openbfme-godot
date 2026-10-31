@@ -1,8 +1,10 @@
 ## Real OnlineShell draw regression. Needs retail data and a window/GPU (not --headless).
 ## godot --path godot --script res://tests/online_branding_test.gd -- --captures=/absolute/external/folder
 ## Captures are optional and must remain outside the repository. No lobby requests are sent.
-## Optional --open-website clicks the real seal hit target once and launches the system browser.
+## Optional --open-website clicks the real seal hit target once and checks the recorded request (never launches a browser).
 extends SceneTree
+
+const ExternalOpen := preload("res://scripts/external_open.gd")
 
 var failures := 0
 
@@ -83,6 +85,7 @@ func _run() -> void:
 			var path := captures.path_join("online-%dx%d.png" % [size.x, size.y])
 			_check(image.save_png(path) == OK, "saved " + path)
 		if open_website:
+			ExternalOpen.requests.clear()
 			open_website = false
 			var opened: Array = []
 			player.shell_service.connect(func(kind: String, url: String, result: String) -> void:
@@ -98,7 +101,8 @@ func _run() -> void:
 				player.tick(0.034)
 				player.post_mouse_button(false)
 				player.tick(0.034)
-				_check(opened == [["https://openbfme.com", "0"]], "seal click opens the fixed project URL through the OS")
+				_check(opened == [["https://openbfme.com", "0"]], "seal click reports a successful project URL request")
+				_check(ExternalOpen.requests == [{"kind": "url", "target": "https://openbfme.com"}], "seal click records the fixed URL without opening a browser")
 		viewport.queue_free()
 		await process_frame
 	print("ONLINE BRANDING ", "PASS" if failures == 0 else "FAIL")

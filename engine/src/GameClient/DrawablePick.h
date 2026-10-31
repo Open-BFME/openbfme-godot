@@ -9,9 +9,12 @@
 // W3DDefaultDraw helper, a tree or prop of the batched buffers) cannot be picked. community PR #36: with BFME1 mounted, W3DFloorDraw models (its build plots) are tested too.
 // DATA FACT (RotWK): structure models are far larger than their GEOMETRY volumes (GondorBarracks: a cylinder of radius 8 and height 10 under a building
 // about 60 across), and a fortress shell (MenFortress) stands on the spot of its citadel; the geometry pick of S-284 selected the wrong object for both.
-// INFERENCE / NOT READ (stop S-1200): RotWK's own pick (the collision type W3DModelDraw sets, the LOD it tests, the animated pose) is not read from the
-// binary; the triangles are taken in the hierarchy's bind pose, the highest LOD, every visible mesh (W3D_MESH_FLAG_HIDDEN and script-hidden sub
-// objects are skipped), both faces.
+// TARGET FACTS (lane SELECT-1): RotWK's pick (RW 0x48AB28) casts at the scene (RW 0x471A5B) with the ray test's +0x42 flag set; HLodClass::Cast_Ray (RW
+// 0x59C680) then lets the first top-LOD OBBoxRenderObjClass child (class 0x1B, Cast_Ray RW 0x575220) answer alone, and HLod::Set_Collision_Type (RW
+// 0x53B5C0) gives that box the draw's collision type. Every RotWK soldier sampled carries such a box (its BOUNDINGBOX), so a soldier is hit by its box.
+// A model without an oriented box is tested by its triangles: the highest LOD and aggregates, every visible mesh (W3D_MESH_FLAG_HIDDEN and
+// script-hidden sub objects are skipped), both faces. A box on an animated bone is posed with the draw's track-0 animation frame; NOT READ (stop S-1200):
+// animation blending for it, the triangles' animated pose (they stand on the bind pose).
 //
 // Client state only: nothing here reaches the simulation (the pick yields an object id that the selection translator turns into a message).
 

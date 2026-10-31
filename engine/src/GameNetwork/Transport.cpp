@@ -279,10 +279,39 @@ Transport::Transport(UDP &socket, int localSlot, const Options &options)
 		error("maxPacketBytes " + std::to_string(m_options.maxPacketBytes) + " is not in packetBytes .. 65507: using packetBytes");
 		m_options.maxPacketBytes = m_options.packetBytes;
 	}
-	if (m_options.relay.enabled && m_options.relay.ticket.size() != RelayProtocol::kTicketBytes && m_options.relay.ticket.size() != RelayProtocol::kTicketBytesV2)
+	const auto &ticket = m_options.relay.ticket;
+	if (m_options.relay.enabled && (ticket.empty() || RelayProtocol::ticketSize(ticket.front()) == 0
+		|| ticket.size() != RelayProtocol::ticketSize(ticket.front())))
 	{
-		error("relay mode needs a " + std::to_string(RelayProtocol::kTicketBytes) + "-byte ticket (or a " + std::to_string(RelayProtocol::kTicketBytesV2)
-			+ "-byte rejoin ticket), got " + std::to_string(m_options.relay.ticket.size()) + " bytes: the relay will refuse it");
+		error("relay mode needs a supported ticket version with its exact encoded length, got "
+			+ std::to_string(ticket.size()) + " bytes: the relay will refuse it");
+	}
+	// lane AUTH-1: a START with a macKey authenticates every datagram (the authenticated envelope, version 5);
+	// an old lobby's START has none and the game stays unauthenticated (never a silent weak key)
+	if (m_options.relay.enabled && !m_options.relay.macKey.empty())
+	{
+		RelayProtocol::Ticket t;
+		std::string why;
+		if (m_options.relay.macKey.size() != RelayAuth::kSessionKeyBytes)
+		{
+			error("the START's session_key (macKey) is " + std::to_string(m_options.relay.macKey.size()) + " bytes, not "
+				+ std::to_string(RelayAuth::kSessionKeyBytes) + ": the game stays unauthenticated");
+		}
+		else if (!RelayProtocol::readTicketFields(ticket.data(), ticket.size(), t, &why))
+		{
+			error("the START's session_key (macKey) cannot pair with its ticket (" + why + "): the game stays unauthenticated");
+		}
+		else
+		{
+			RelayAuth::SessionKey k;
+			std::memcpy(k.data(), m_options.relay.macKey.data(), k.size());
+			m_authKeys = RelayAuth::packetKeys(k, t.gameId, t.slot, t.generation);
+			m_auth = true;
+			// ONLINE16-FIX (AUTH-1 review 5): the c2r counter starts at wall-clock microseconds, never a fixed 0, so a restarted
+			// client process of the same ticket is ahead of the relay's window for it
+			m_authSent = (std::uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::system_clock::now().time_since_epoch()).count();
+		}
 	}
 	if (m_options.window > 0x7FFFFFFFu)
 	{
@@ -315,31 +344,124 @@ Transport::~Transport()
 		const std::vector<std::uint8_t> bye = RelayProtocol::encodeEmpty(RelayProtocol::BYE);
 		for (int i = 0; i < 2; ++i)
 		{
-			m_socket.sendTo(m_options.relay.address, bye.data(), bye.size());
+			std::vector<std::uint8_t> d = bye;
+			sealRelay(d); // lane AUTH-1
+			m_socket.sendTo(m_options.relay.address, d.data(), d.size());
 		}
+	}
+}
+
+void Transport::sealRelay(std::vector<std::uint8_t> &d)
+{
+	if (m_relayLegacy)
+	{
+		d[2] = RelayProtocol::kVersionLegacy; // ONLINE16-FIX: a version-3-only relay (never with m_auth)
+	}
+	if (m_auth)
+	{
+		RelayAuth::seal(d, m_authKeys.c2r, m_authSent++); // lane AUTH-1
 	}
 }
 
 void Transport::sendHello(std::uint64_t now)
 {
-	const std::vector<std::uint8_t> hello = RelayProtocol::encodeHello(m_options.relay.ticket, m_relaySession); // ONLINE-2 r2: the token proves the slot
+	std::vector<std::uint8_t> hello = RelayProtocol::encodeHello(m_options.relay.ticket, m_relaySession, // ONLINE-2 r2: the token proves the slot
+		(std::uint8_t)(RelayProtocol::CAP_CANONICAL | (m_auth ? RelayProtocol::CAP_AUTH : 0))); // NET-SYNC + AUTH-1 capabilities
+	if (m_relayLegacy)
+	{
+		hello.pop_back(); // ONLINE16-FIX: the previous release's HELLO declares no capabilities (sealRelay stamps version 3)
+	}
 	if (m_impairment.blackedOut(now))
 	{
 		return; // lane MP-3: a blackout cuts the HELLO too
 	}
+	sealRelay(hello); // lane AUTH-1: the HELLO itself carries the tag its k proves
 	sendNow(m_options.relay.address, hello);
 	++m_stats.relayHellos;
 	m_lastHello = now;
 	m_helloSent = true;
 }
 
-void Transport::handleRelay(const std::vector<std::uint8_t> &d, std::uint64_t now)
+void Transport::handleRelay(std::vector<std::uint8_t> &d, std::uint64_t now)
 {
 	namespace RP = RelayProtocol; // (this file has its own kVersion / kHeaderBytes)
-	if (d[2] != RP::kVersion)
+	// lane AUTH-1: the authenticated envelope verifies before anything reads it; only the two negotiation
+	// answers stay acceptable unsigned (a forged NOT_BOUND costs an early re-HELLO, never an auth break)
+	const bool refuseVersion = d.size() == RP::kHeaderBytes + 1 && d[3] == RP::REFUSED && d[RP::kHeaderBytes] == RP::REFUSE_VERSION
+		&& (d[2] == RP::kVersion || d[2] == RP::kVersionLegacy);
+	if (d[2] == RP::kVersionAuth)
+	{
+		const size_t n = m_auth ? RelayAuth::open(d.data(), d.size(), m_authKeys.r2c, &m_authRecv) : 0;
+		if (!n)
+		{
+			++m_stats.relayAuthDropped;
+			// ONLINE16-FIX: which check refused it — a refused datagram is untouched, so the tag alone is checked again (no window): a good tag
+			// means the replay window refused a stale or repeated counter
+			if (m_auth && RelayAuth::open(d.data(), d.size(), m_authKeys.r2c, nullptr))
+			{
+				++m_stats.relayAuthStale;
+			}
+			return;
+		}
+		d.resize(n); // open() compacted the datagram to its v4 view
+		m_authVerified = true;
+	}
+	else if (m_auth)
+	{
+		// ONLINE16-FIX (AUTH-1 review 4): an unsigned answer can be anyone's. A NOT_BOUND (the relay forgot this address:
+		// a restart, a NAT rebinding — it has no key to sign with) only earns a rate-limited HELLO; it touches neither the
+		// binding nor the link timer. A REFUSE_VERSION counts only before the relay ever proved itself (a relay without
+		// AUTH-1); afterwards it is a forgery
+		if (d.size() == RP::kHeaderBytes && d[3] == RP::NOT_BOUND && (d[2] == RP::kVersion || d[2] == RP::kVersionLegacy))
+		{
+			++m_stats.relayNotBound;
+			if (!m_helloSent || now - m_lastHello >= (std::uint64_t)m_options.relay.helloMs)
+			{
+				sendHello(now);
+			}
+			return;
+		}
+		if (refuseVersion && !m_authVerified && m_relayRefusal == 0)
+		{
+			m_relayRefusal = RP::REFUSE_VERSION;
+			m_relayBound = false;
+			error(d[2] == RP::kVersionLegacy
+					? "the relay is an older release (envelope version 3) than this game's lobby: it cannot authenticate this game"
+					: std::string("the relay refused this client: ") + RP::refuseReasonName(RP::REFUSE_VERSION));
+			return;
+		}
+		++m_stats.relayAuthDropped; // an authenticated client hears the relay authenticated only
+		return;
+	}
+	else if (d[2] == RP::kVersionLegacy && !m_relayLegacy && refuseVersion && !m_relayBound)
+	{
+		// ONLINE16-FIX: a version-3-only relay (the previous release's) refused this build's version 4. A START without a
+		// macKey whose ticket the previous release reads (versions 1-3: eight slots, no mode) plays on in its envelope; any
+		// other ticket would be refused there anyway — a clear refusal instead
+		const std::uint8_t ticketVersion = m_options.relay.ticket.empty() ? 0 : m_options.relay.ticket.front();
+		if (ticketVersion >= 1 && ticketVersion <= 3)
+		{
+			m_relayLegacy = true;
+			++m_stats.relayLegacyEnvelope;
+			sendHello(now);
+			return;
+		}
+		if (m_relayRefusal == 0)
+		{
+			m_relayRefusal = RP::REFUSE_VERSION;
+			error("the relay speaks only the previous release's envelope (version 3), which cannot carry this game's version-"
+				+ std::to_string(ticketVersion) + " ticket");
+		}
+		return;
+	}
+	if (m_relayLegacy && refuseVersion)
+	{
+		return; // ONLINE16-FIX: the answer to a version-4 datagram sent before the switch (a version-3 relay never refuses version 3)
+	}
+	if (d[2] != (m_relayLegacy ? RP::kVersionLegacy : RP::kVersion))
 	{
 		++m_stats.badPackets;
-		error("the relay speaks envelope version " + std::to_string(d[2]) + ", this client " + std::to_string(RP::kVersion));
+		error("the relay speaks envelope version " + std::to_string(d[2]) + ", this client " + std::to_string(m_relayLegacy ? RP::kVersionLegacy : RP::kVersion));
 		return;
 	}
 	m_lastFromRelay = now; // lane ONLINE-3: the ping test (anything from the relay)
@@ -388,17 +510,59 @@ void Transport::handleRelay(const std::vector<std::uint8_t> &d, std::uint64_t no
 		}
 		const int source = d[RP::kHeaderBytes];
 		const std::vector<std::uint8_t> packet(d.begin() + (long)(RP::kHeaderBytes + 1), d.end());
+		if (m_relayCanonical && m_relayChannel)
+		{
+			// lane NET-SYNC: an NS channel packet, not a transport packet: acks return at once; delivered OBRC
+			// records queue for the canonical consumer
+			RelayBundleChannel::Bytes ack;
+			std::string error;
+			if (!m_relayChannel->receive(packet, now, ack, error))
+			{
+				++m_stats.badPackets;
+				return;
+			}
+			if (!ack.empty())
+			{
+				std::vector<std::uint8_t> envelope = ack;
+				sealRelay(envelope); // lane AUTH-1: the channel's ack packet is already a DATA envelope (queue made it)
+				m_socket.sendTo(m_options.relay.address, envelope.data(), envelope.size());
+			}
+			for (const RelayBundleChannel::Message &m : m_relayChannel->takeDelivered())
+			{
+				m_canonicalRecords.push_back(m.bytes);
+			}
+			return;
+		}
 		handlePacket(m_options.relay.address, packet, now, source);
 		return;
 	}
 	case RP::WELCOME:
-		if (d.size() == RP::kHeaderBytes + 9 + RP::kSessionTokenBytes
+		if ((d.size() == RP::kHeaderBytes + 9 + RP::kSessionTokenBytes
+				|| d.size() == RP::kHeaderBytes + 9 + RP::kSessionTokenBytes + 8)
 			&& d[RP::kHeaderBytes + 8] == (m_options.relay.spectatorIndex >= 0 ? (std::uint8_t)(RP::kSpectatorWelcome + m_options.relay.spectatorIndex) : (std::uint8_t)m_localSlot))
 		{
 			m_relayBound = true;
 			++m_stats.relayWelcomes;
 			// ONLINE-2 r2: the slot's session token: a later HELLO (after NOT_BOUND: a NAT rebinding) proves with it that this client owns the slot
-			m_relaySession.assign(d.begin() + (long)(RP::kHeaderBytes + 9), d.end());
+			m_relaySession.assign(d.begin() + (long)(RP::kHeaderBytes + 9), d.begin() + (long)(RP::kHeaderBytes + 9 + RP::kSessionTokenBytes));
+			// lane NET-SYNC: the epoch tail names a canonical game: open the client's NS channel to the relay
+			if (d.size() == RP::kHeaderBytes + 9 + RP::kSessionTokenBytes + 8)
+			{
+				m_relayEpoch = 0;
+				for (int i = 0; i < 8; ++i)
+				{
+					m_relayEpoch |= (std::uint64_t)d[RP::kHeaderBytes + 9 + RP::kSessionTokenBytes + i] << (8 * i);
+				}
+				RelayBundleChannel::Options co;
+				co.gameId = 0;
+				for (int i = 0; i < 8; ++i)
+				{
+					co.gameId |= (std::uint64_t)d[RP::kHeaderBytes + i] << (8 * i);
+				}
+				co.epoch = m_relayEpoch;
+				m_relayChannel = std::make_unique<RelayBundleChannel>(co);
+				m_relayCanonical = true;
+			}
 		}
 		else
 		{
@@ -489,7 +653,8 @@ void Transport::requestRelayLog(std::uint32_t offset)
 	{
 		return;
 	}
-	const std::vector<std::uint8_t> r = RelayProtocol::encodeLogRequest(offset);
+	std::vector<std::uint8_t> r = RelayProtocol::encodeLogRequest(offset);
+	sealRelay(r); // lane AUTH-1
 	if (!m_impairment.blackedOut(nowMs()))
 	{
 		sendNow(m_options.relay.address, r);
@@ -533,7 +698,7 @@ bool Transport::sendTo(int slot, const std::vector<std::uint8_t> &bytes, std::st
 		}
 		return false;
 	};
-	if (slot < 0 || slot >= MAX_SLOTS || !m_peers[(size_t)slot].known || m_peers[(size_t)slot].retiring)
+	if (slot < 0 || slot >= MAX_SLOTS || !m_peers[(size_t)slot].known || m_peers[(size_t)slot].retiring || m_peers[(size_t)slot].dropped)
 	{
 		return fail("slot " + std::to_string(slot) + " is not a connected peer");
 	}
@@ -583,6 +748,57 @@ void Transport::retire(int slot)
 	p.retiring = true;
 	p.ackOwed = true; // the final ack (of its leave) goes out with the next flush
 	++m_stats.peersRetired;
+}
+
+void Transport::retireDropped(int slot, std::uint32_t holdMs)
+{
+	if (slot < 0 || slot >= MAX_SLOTS || !m_peers[(size_t)slot].known || m_peers[(size_t)slot].retiring)
+	{
+		return;
+	}
+	Peer &p = m_peers[(size_t)slot];
+	if (p.unacked.empty())
+	{
+		retire(slot); // nothing it has not acknowledged: as a leave
+		return;
+	}
+	size_t bytes = 0;
+	for (const Outgoing &o : p.unacked)
+	{
+		bytes += o.bytes.size() + kRecordHeaderBytes;
+	}
+	if (p.unacked.size() > kDroppedBacklogRecords || bytes > kDroppedBacklogBytes)
+	{
+		error("the dropped slot " + std::to_string(slot) + "'s backlog of " + std::to_string(p.unacked.size()) + " records (" + std::to_string(bytes)
+			+ " bytes) is beyond the cap: not resent (if its game runs again it may not learn it was dropped)");
+		retire(slot);
+		return;
+	}
+	p.early.clear();
+	p.partial.clear();
+	p.partialNext = p.partialCount = 0;
+	p.dropped = true;
+	p.droppedAt = nowMs();
+	p.holdMs = holdMs;
+	++m_stats.peersRetired;
+}
+
+size_t Transport::droppedBacklog(int slot, size_t *bytes) const
+{
+	size_t b = 0, n = 0;
+	if (slot >= 0 && slot < MAX_SLOTS && m_peers[(size_t)slot].dropped)
+	{
+		for (const Outgoing &o : m_peers[(size_t)slot].unacked)
+		{
+			b += o.bytes.size() + kRecordHeaderBytes;
+		}
+		n = m_peers[(size_t)slot].unacked.size();
+	}
+	if (bytes)
+	{
+		*bytes = b;
+	}
+	return n;
 }
 
 bool Transport::receive(int &fromSlot, std::vector<std::uint8_t> &bytes)
@@ -652,6 +868,32 @@ int Transport::plannedRoundTripMs(int slot) const
 void Transport::flush(int slot, std::uint64_t now)
 {
 	Peer &p = m_peers[(size_t)slot];
+	if (p.dropped)
+	{
+		// lane MPDROP-3: a dropped peer gets its unacknowledged records (its DISCONNECTPLAYER last) until it acknowledges them: resent while the drop or
+		// the last datagram from it is within holdMs, at most once a second; no acks, no keep-alives
+		if (p.unacked.empty())
+		{
+			p = Peer(); // it has everything: forgotten (later datagrams from it count as unknown senders)
+			return;
+		}
+		if (now - std::max(p.droppedAt, p.lastHeard) >= (std::uint64_t)p.holdMs)
+		{
+			// quiet until it sends again: a game hung far longer than NetworkPlayerTimeoutTime that runs again is answered with its drop (its packets set
+			// lastHeard, handlePacket), a dead one gets nothing more
+			return;
+		}
+		if (p.lastDroppedRound != 0 && now - p.lastDroppedRound < 1000)
+		{
+			return; // one round a second
+		}
+		p.lastDroppedRound = now;
+		p.ackOwed = false;
+		p.lastSent = now; // no keep-alive
+		// a record goes again once per pass over the backlog (the cap's number of rounds): each round takes the next records in order, the front first
+		p.rto = 1000 * ((kDroppedBacklogBytes + kDroppedRoundBytes - 1) / kDroppedRoundBytes) - 500;
+	}
+	size_t roundBytes = 0;
 	size_t i = 0;
 	bool sentAny = false;
 	// an ack or a keep-alive is due (lane ONLINE-3: never to the relay log stream, which only carries records)
@@ -667,7 +909,7 @@ void Transport::flush(int slot, std::uint64_t now)
 		p.rto = (std::uint64_t)m_options.resendMs;
 	}
 	bool timedOut = false;
-	while (i < inFlight || (!sentAny && wantPacket))
+	while ((i < inFlight || (!sentAny && wantPacket)) && !(p.dropped && roundBytes >= kDroppedRoundBytes))
 	{
 		std::vector<std::uint8_t> d(4, 0); // the CRC goes first, written last
 		put16(d, kMagic);
@@ -731,7 +973,9 @@ void Transport::flush(int slot, std::uint64_t now)
 		if (m_options.relay.enabled)
 		{
 			d = RelayProtocol::encodeData((std::uint8_t)slot, d); // lane ONLINE-2: the envelope names the target slot
+			sealRelay(d);                                         // lane AUTH-1
 		}
+		roundBytes += d.size();
 		sendDatagram(slot, p.address, std::move(d), now);
 		sentAny = true;
 		p.lastSent = now;
@@ -791,7 +1035,7 @@ void Transport::deliver(int slot, Incoming &&r)
 	}
 }
 
-void Transport::handleDatagram(const NetAddress &from, const std::vector<std::uint8_t> &d, std::uint64_t now)
+void Transport::handleDatagram(const NetAddress &from, std::vector<std::uint8_t> &d, std::uint64_t now)
 {
 	if (m_options.relay.enabled)
 	{
@@ -989,6 +1233,12 @@ void Transport::handlePacket(const NetAddress &from, const std::vector<std::uint
 			}
 		}
 	}
+	if (p.dropped)
+	{
+		// lane MPDROP-3: a dropped peer's packet: its ack is taken (above) and lastHeard brings back its resends (flush); its records are not delivered
+		++m_stats.droppedPeerPackets;
+		return;
+	}
 	for (const Parsed &r : records)
 	{
 		p.ackOwed = true;
@@ -1013,6 +1263,63 @@ void Transport::handlePacket(const NetAddress &from, const std::vector<std::uint
 	}
 }
 
+bool Transport::emitCanonicalMessage(const RelayCanonicalInput::Message &message, std::uint64_t now, std::string &error)
+{
+	if (!m_relayCanonical || !m_relayChannel)
+	{
+		error = "canonical send outside a canonical game";
+		return false;
+	}
+	std::vector<std::uint8_t> wire;
+	if (!RelayCanonicalInput::encode(message, wire, error) || !m_relayChannel->queue(wire, error))
+	{
+		return false;
+	}
+	for (const RelayBundleChannel::Bytes &packet : m_relayChannel->poll(now, 64))
+	{
+		// lane NET-SYNC: an NS packet leaves in a DATA envelope whose target byte is this slot (the relay reads it
+		// as the channel's envelope byte, not a route)
+		std::vector<std::uint8_t> datagram = RelayProtocol::encodeData((std::uint8_t)m_localSlot, packet);
+		sealRelay(datagram); // lane AUTH-1
+		m_socket.sendTo(m_options.relay.address, datagram.data(), datagram.size());
+	}
+	return true;
+}
+
+bool Transport::sendCanonicalOrder(std::uint64_t id, const std::vector<std::uint8_t> &bytes,
+	std::uint64_t now, std::string &error)
+{
+	RelayCanonicalInput::Message message;
+	message.kind = RelayCanonicalInput::Kind::Order;
+	message.id = id;
+	message.bytes = bytes;
+	return emitCanonicalMessage(message, now, error);
+}
+
+bool Transport::sendCanonicalBeat(std::uint64_t id, std::uint64_t now, std::string &error)
+{
+	RelayCanonicalInput::Message message;
+	message.kind = RelayCanonicalInput::Kind::Beat;
+	message.id = id;
+	return emitCanonicalMessage(message, now, error);
+}
+
+std::uint64_t Transport::canonicalGame() const
+{
+	return m_relayChannel ? m_relayChannel->options().gameId : 0;
+}
+
+bool Transport::takeCanonicalRecord(std::vector<std::uint8_t> &bytes)
+{
+	if (m_canonicalRecords.empty())
+	{
+		return false;
+	}
+	bytes = std::move(m_canonicalRecords.front());
+	m_canonicalRecords.pop_front();
+	return true;
+}
+
 void Transport::service()
 {
 	const std::uint64_t now = nowMs();
@@ -1027,6 +1334,20 @@ void Transport::service()
 			continue;
 		}
 		handleDatagram(from, d, now);
+	}
+	if (m_relayCanonical && m_relayChannel)
+	{
+		std::string channelError;
+		for (const RelayBundleChannel::Bytes &packet : m_relayChannel->poll(now, 64, &channelError))
+		{
+			std::vector<std::uint8_t> datagram = RelayProtocol::encodeData((std::uint8_t)m_localSlot, packet);
+			sealRelay(datagram); // lane AUTH-1
+			m_socket.sendTo(m_options.relay.address, datagram.data(), datagram.size());
+		}
+		if (!channelError.empty())
+		{
+			error(channelError); // the channel's own diagnostics (a fatal channel ends the game, it never silently defaults)
+		}
 	}
 	if (m_options.relay.enabled && !m_relayBound && m_relayRefusal == 0 && (!m_helloSent || now - m_lastHello >= (std::uint64_t)m_options.relay.helloMs))
 	{

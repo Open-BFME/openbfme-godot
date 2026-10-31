@@ -300,6 +300,9 @@ TEST_CASE("structure collapse: a destroyed keep falls on the hand-computed sched
 TEST_CASE("structure collapse: the draws of one collapse follow the retail order (collapse delay, INITIAL list, burst delay, shudder y then x)")
 {
 	CombatWorld w(kStructures);
+	// lane TARGET-1: the swordsman's idle mood scan draws its one-off check offset (RW 0x6686F0) from the same generator; the scan is switched off so the log
+	// holds the collapse's draws alone
+	w.combat().setAutoAcquireEnabled(false);
 	Object *a = w.unit("Swordsman", 'A', 200, 300);
 	Object *keep = w.unit("Keep", 'B', 300, 300);
 	w.logic->random().enableCallLog(true);

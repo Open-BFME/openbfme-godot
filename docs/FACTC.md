@@ -1,8 +1,12 @@
 # FACT-C: Goblins (FactionWild) and Angmar, the creeps and neutral buildings
 
 The player's path through every item of the two factions, driven through the HUD (clicks, control-bar presses, the GUI command's target click,
-right-click orders with RotWK's default alternate mouse), is pinned by `engine/tests/test_factc_sweep.cpp`. The brief's "FactionGoblins" is
-the retail PlayerTemplate `FactionWild`.
+right-click orders with RotWK's default alternate mouse), is pinned by `engine/tests/test_factc_sweep.cpp`,
+`engine/tests/test_factc_started.cpp` and the `factc` cases in `engine/tests/test_hud_factb_units.cpp` /
+`engine/tests/test_hud_factb_production.cpp`. The brief's "FactionGoblins" is
+the retail PlayerTemplate `FactionWild`. Retail-dependent runs require both
+`ROTWK_INSTALL` and `BFME2_INSTALL`. The numeric counts, map inventory and generated
+tables below are the 2026-10-11 snapshot, not a fresh run.
 
 ## What each sweep checks
 
@@ -39,14 +43,17 @@ ArmorSetFlag (PLAYER_UPGRADE, RW 0x6542D8: the Goblin warriors' armour). Pins in
 Ported for the castle sweep: the CASTLE_UPGRADE button (ControlBar availability RW 0x942733 case 8, press RW 0x940435 case 8: restricted when the
 member's castle already has the upgrade; the press sends MSG_QUEUE_UPGRADE for the keep). Before it the House of Lamentation could not be bought.
 
-## Registered gaps (the tests pin them)
+## Registered gaps and subsequent closures
 
-- Drogoth (FellBeastLocomotor, Appearance GIANT_BIRD) cannot move: the GIANT_BIRD mover is S-084. Wing Blast and Incinerate time out walking to their
-  point, and a move or attack order out of his reach does nothing.
+- S-084 is closed: Drogoth has `GiantBirdAIUpdate` and GIANT_BIRD movement; his old ability, fight and first-hit failure pins are gone.
 - The cave troll's tree / goblin grab (GrabPassengerSpecialPower) is an unported module (S-140). The Angmar spike moat works (ObjectCreationUpgrade, S-2007).
 - The capture power's (S-2002) and the special power target click's (S-2000) unported ActionManager checks; HordeDispatchSpecialPower's kept target (S-2001).
-- The Troll Sling leaves the forge 36 frames late (S-2003); Karsh's first hit (S-2004); melee against a hero (S-2005); five ability weapons without
-  their hit (S-2006); three armour upgrade scenes without a hit taken and the riders' fire arrows (S-2008); the Fire Drake purchase (S-2009).
+- The Troll Sling's late exit (S-2003); Karsh's first hit (S-2004); the Angmar Necromancers' attack approach (S-2005); named ability weapons without
+  their hit (S-2006); the spider riders' fire arrows (S-2008).
+  The Goblin first-hit sweep now allows no failure; Angmar still pins the Necromancers and Karsh.
+  The castle-button sweep no longer allows a failed Fire Drake purchase (the old S-2009 finding).
+  The upgrade-effect sweep now allows only that Goblin fire-arrow failure and no Angmar failures. Snow Trolls' Dark Iron Armour still has the same
+  HERO coefficient; a two-hit frame can make the scene pass, so it is not evidence of a changed coefficient.
 - The buy-new wall catapult / giant buttons need SlaveWatcherBehavior (S-1995). Taint and Untamed Allegiance show no effect in the spell scene (S-1997).
 
 ## Neutral pieces of the multiplayer maps (`factc neutral inventory`)
@@ -369,4 +376,3 @@ WargLair (14 maps)
 - SCIENCE_SummonWights
 - SCIENCE_UntamedAllegiance
 - SCIENCE_WarChant
-

@@ -679,7 +679,7 @@ TEST_CASE("object model: case-insensitive members, prototype chain, arrays, mark
 
 // ---- the EA property hash table -----------------------------------------------------------------
 // External expected values: the hash constants 0x6BBD ("__proto__") and 0x0699 ("prototype") are asserted by
-// the BFME2 AptNativeHash constructor (0x00B0A740, decompiled in Open-BFME-2 AptNativeHashBFME2.cpp:81-108).
+// the BFME2 AptNativeHash constructor (0x00B0A740, decompiled in Open-BFME-2 AptNativeHash.cpp:186-217).
 // The slot layouts below come from an independent model of the table written from the disassembly of Set
 // 0x00B0AC90, Find 0x00B0AF90, Remove 0x00B0B2C0 and resize 0x00B0ABC0 (engine/tests/data/apt/apt_hash_model.py, run
 // separately; its output is pasted here as constants).

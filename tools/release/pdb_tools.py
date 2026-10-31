@@ -7,6 +7,7 @@ tools/precommit.py refuse a .pdb and any MSF bytes). So its content is not valid
     python3 tools/release/pdb_tools.py scrub <file.pdb>          blank every home folder prefix in the PDB (in place)
     python3 tools/release/pdb_tools.py scrub-dll <file.dll>      make the toolchain's build paths in the DLL relative (in place)
     python3 tools/release/pdb_tools.py check <file.dll> <file.pdb>  the PDB is the DLL's (CodeView GUID + age), no home folder path
+    python3 tools/release/pdb_tools.py same-build <a.dll> <b.dll>   (MACACT-1) the same bytes but for the CodeView GUID (same_build)
 
 The compiler side keeps build paths out of the debug info (engine/CMakeLists.txt: prefix maps, no command lines), but lld still records
 the toolchain's library archives, the linker's own path and its command line with their absolute paths. `scrub` replaces the whole home
@@ -85,6 +86,16 @@ def pdb_identity(data: bytes) -> tuple[bytes, int]:
 def pe_codeview(data: bytes) -> tuple[bytes, int, str]:
     """(GUID, age, PDB name) of a PE32+ image's CodeView (RSDS) debug record (read directly: no pefile on the build hosts). ValueError when
     it has none."""
+    pos = pe_codeview_offset(data)
+    raw = data[pos:]
+    guid = raw[4:20]
+    age, = struct.unpack_from("<I", raw, 20)
+    name = raw[24:].split(b"\0", 1)[0].decode("utf-8", "replace")
+    return guid, age, name
+
+
+def pe_codeview_offset(data: bytes) -> int:
+    """the file offset of a PE32+ image's CodeView (RSDS) record"""
     if data[:2] != b"MZ":
         raise ValueError("not a PE file")
     pe, = struct.unpack_from("<I", data, 0x3C)
@@ -108,13 +119,32 @@ def pe_codeview(data: bytes) -> tuple[bytes, int, str]:
     for i in range(debug_size // 28):
         _chars, _stamp, _major, _minor, typ, size, _rva, ptr = struct.unpack_from("<IIHHIIII", data, pos + 28 * i)
         raw = data[ptr:ptr + size]
-        if typ != 2 or raw[:4] != b"RSDS":  # IMAGE_DEBUG_TYPE_CODEVIEW
+        if typ != 2 or raw[:4] != b"RSDS" or size < 25:  # IMAGE_DEBUG_TYPE_CODEVIEW
             continue
-        guid = raw[4:20]
-        age, = struct.unpack_from("<I", raw, 20)
-        name = raw[24:].split(b"\0", 1)[0].decode("utf-8", "replace")
-        return guid, age, name
+        return ptr
     raise ValueError("no CodeView (RSDS) debug record")
+
+
+def same_build(a: bytes, b: bytes) -> list[str]:
+    """lane MACACT-1: two builds of the DLL from one commit (the build host's and GitHub Actions') are the same bytes but for the CodeView
+    GUID, which lld derives from the PDB's content, and the PDB holds the absolute paths of the build folder (scrub blanks only the home
+    folder, after the link). The GUID only pairs the DLL with its private PDB for crash symbols; it is not code or data the game runs.
+    Everything else, the record's age and PDB name included, must be identical."""
+    try:
+        oa, ob = pe_codeview_offset(a), pe_codeview_offset(b)
+    except (ValueError, struct.error) as e:
+        return [f"not a PE image with a CodeView record: {e}"]
+    if len(a) != len(b):
+        return [f"the sizes differ ({len(a)} and {len(b)} bytes)"]
+    if oa != ob:
+        return [f"the CodeView records are at different offsets ({oa:#x} and {ob:#x})"]
+    na = a[:oa + 4] + bytes(16) + a[oa + 20:]
+    nb = b[:ob + 4] + bytes(16) + b[ob + 20:]
+    if na != nb:
+        n = sum(x != y for x, y in zip(na, nb))
+        first = next(i for i, (x, y) in enumerate(zip(na, nb)) if x != y)
+        return [f"{n} byte(s) differ outside the CodeView GUID, the first at offset {first:#x}"]
+    return []
 
 
 def home_paths(data: bytes, toolchain_ok: bool = True) -> list[str]:
@@ -185,6 +215,15 @@ def main(argv: list[str]) -> int:
             p.write_bytes(out)
         print(f"DLL scrubbed: {p.name} ({sum(data.count(t) for t in TOOLCHAIN_PATHS)} toolchain build path(s) made relative)")
         return 0
+    if len(argv) == 4 and argv[1] == "same-build":
+        a, b = Path(argv[2]).read_bytes(), Path(argv[3]).read_bytes()
+        problems = same_build(a, b)
+        for problem in problems:
+            print(f"SAME BUILD: {problem}")
+        if not problems:
+            guid = "the same CodeView GUID" if a == b else f"CodeView GUIDs {pe_codeview(a)[0].hex()} and {pe_codeview(b)[0].hex()}"
+            print(f"SAME BUILD ok: {Path(argv[2]).name} and {Path(argv[3]).name} are byte for byte the same but for their {guid}")
+        return 1 if problems else 0
     if len(argv) == 4 and argv[1] == "check":
         problems = check(Path(argv[2]).read_bytes(), Path(argv[3]).read_bytes())
         for problem in problems:

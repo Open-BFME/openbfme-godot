@@ -3,7 +3,10 @@
 
 #include "GameClient/GUI/AptScreens/AptQuitMenu.h"
 
+#include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/GameTextSource.h"
+#include "GameClient/GUI/Shell/Shell.h"
+#include "GameClient/GUI/WindowManager.h"
 #include "GameClient/GUI/LoadScreenInfo.h"
 #include "GameClient/GUI/ShellEnvironment.h"
 #include "GameClient/GUI/ShellServices.h"
@@ -73,6 +76,19 @@ AptQuitMenu::AptQuitMenu(WindowManager &windows, Shell &shell, ShellEnvironment 
 
 AptQuitMenu::~AptQuitMenu()
 {
+	// lane CHEAT-1: nothing of the Cheat Mode panel may run after the menu is gone
+	if (m_cheatLabel.size() || m_cheatPage)
+	{
+		windows().setMouseFilter(nullptr);
+	}
+	if (AptGadgetLayer *layer = windows().gadgetLayer())
+	{
+		if (m_cheatPage)
+		{
+			m_cheatPage->hide();
+		}
+		layer->clearDecorator(this);
+	}
 	// lane SAVE-UI1: RW 0x9219B9 / 0x921A70 .. 0x921A96: after Exit (+ 0x27C) the front-end background (RW 0x6230B6(1)); else, unless a skirmish restart
 	// keeps it (+ 0x27D), the background is hidden with its animation (RW 0x622C88(0)) and the game is seen again
 	if (m_exiting)
@@ -89,6 +105,14 @@ AptQuitMenu::~AptQuitMenu()
 std::string AptQuitMenu::saveLoadType() const
 {
 	const QuitMenuContext *c = m_env.quitMenu;
+	if (c && c->inGame && c->gameKind == 0)
+	{
+		return "8"; // RW 0x92179F / 0x9217F0: + 0x114 == 0 first, a War of the Ring game (lane WOTR2 milestone 3)
+	}
+	if (c && c->isMultiplayer() && c->strategicMap)
+	{
+		return "16"; // RW 0x92179F: flags 0x10 (WOTRMP) when RW 0x610A21 (a network war's map)
+	}
 	if (c && c->isMultiplayer())
 	{
 		return "4";
@@ -99,13 +123,22 @@ std::string AptQuitMenu::saveLoadType() const
 std::string AptQuitMenu::restartPopupType() const
 {
 	const QuitMenuContext *c = m_env.quitMenu;
-	return (!c || !c->inGame || c->gameKind == 3) ? "Restart" : "Forfeit"; // "Surrender" belongs to the Living World (not ported)
+	// RW 0x9216EC (the decomp's AptQuitMenu::Externs, tier A): no game or + 0x114 == 3 "Restart", the War of the Ring map (isSelectionLocked) "Surrender"
+	if (!c || !c->inGame || c->gameKind == 3)
+	{
+		return "Restart";
+	}
+	return c->strategicMap ? "Surrender" : "Forfeit";
 }
 
 std::string AptQuitMenu::restartTooltip() const
 {
 	const QuitMenuContext *c = m_env.quitMenu;
-	return (!c || !c->inGame || c->gameKind == 3) ? "TOOLTIP:QuitMenu/Restart/TheButton" : "TOOLTIP:QuitMenu/Forfeit/WOTRForfeit";
+	if (!c || !c->inGame || c->gameKind == 3)
+	{
+		return "TOOLTIP:QuitMenu/Restart/TheButton";
+	}
+	return c->strategicMap ? "TOOLTIP:QuitMenu/Surrender/WOTRSurrender" : "TOOLTIP:QuitMenu/Forfeit/WOTRForfeit";
 }
 
 void AptQuitMenu::post(int action, const std::string &name, const std::string &argument)
@@ -140,9 +173,195 @@ void AptQuitMenu::onInitialized()
 		{
 			disable("Restart");
 		}
-		disable("Save"); // RW 0x921E3C (DAT 0xC4FF8C)
-		disable("Load"); // RW 0x921F83 (DAT 0xC4FF84)
+		else if (c->strategicMap)
+		{
+			disable("Restart"); // WOTR2 milestone 8: a network war map's Surrender (0x6B8 then the map left) is not ported [S-1064]; Exit leaves it
+		}
+		// RW 0x921E3C (DAT 0xC4FF8C): disabled unless a network war's map is up (FUN_00610a21 / FUN_00441e4a), where RotWK saves (GameState mode 6), and
+		// while some of the war's humans are gone (RW 0x6B5E3E). WOTR2 milestone 8 (step 4): the save page in its War of the Ring multiplayer mode (0x10)
+		if (!c->strategicMap || c->warPlayersGone)
+		{
+			disable("Save");
+		}
+		disable("Load"); // RW 0x921F83 (DAT 0xC4FF84): every network game
 	}
+	else if (c && c->inGame && c->strategicMap)
+	{
+		// lane WOTR2 milestone 3: the single player branch on the War of the Ring map (the decomp's OnInitialized, BFME2 0x51B5B5; RotWK RW 0x921D5B is
+		// tier B, "edited"): Save and Load stay (retail disables them while the LivingWorld's + 0x14 count is 0, and Save while RW 0x6B254F's test holds:
+		// neither is ported, INFERENCE: both are enabled on the map). The Surrender button is disabled: surrendering the strategic game (the dtor's
+		// message 0x6B8 MSG_LW_PLAYER_SURRENDERED, the local player id RW 0x6B3557) is not ported [S-1064]
+		disable("Restart");
+		windows().note("unported-command", "QuitMenu.apt: Surrender on the War of the Ring map is not ported [S-1064]");
+	}
+	// RW 0x921D5B's tail: + 0x114 != 3: "APT:Surrender" on the War of the Ring map, else "APT:Forfeit"; no game or + 0x114 == 3: "APT:Restart"
 	const bool restart = !c || !c->inGame || c->gameKind == 3;
-	windows().setAptText("APT:RestartOrSurrender", text(m_env, restart ? "APT:Restart" : "APT:Forfeit"));
+	windows().setAptText("APT:RestartOrSurrender", text(m_env, restart ? "APT:Restart" : c->strategicMap ? "APT:Surrender" : "APT:Forfeit"));
+}
+
+// ---- lane CHEAT-1: the Cheat Mode panel (see AptQuitMenu.h) ---------------------------------------------------------------------------------------------
+
+void AptQuitMenu::runInit()
+{
+	AptScreen::runInit();
+	if (!m_cheatLabel.empty() || cheatPageOpen())
+	{
+		takeHooks(); // a screen opened over the menu (Options) took the mouse filter and the decorator and cleared them on its way out
+	}
+}
+
+void AptQuitMenu::takeHooks()
+{
+	windows().setMouseFilter([this](int kind, float x, float y) { return cheatMouse(kind, x, y); });
+	if (AptGadgetLayer *layer = windows().gadgetLayer())
+	{
+		layer->setDecorator([this](GadgetDrawList &out) { decorate(out); }, this);
+	}
+}
+
+void AptQuitMenu::setCheatButton(const UnicodeString &label)
+{
+	m_cheatLabel = label;
+	m_cheatHot = m_cheatPressed = false;
+	takeHooks();
+}
+
+bool AptQuitMenu::openCheatPage(const OpenBFMEPageSpec &spec, std::string *error)
+{
+	AptGadgetLayer *layer = windows().gadgetLayer();
+	if (!layer || !ownerWindow())
+	{
+		if (error)
+		{
+			*error = "no gadget layer";
+		}
+		return false;
+	}
+	if (!m_cheatPage)
+	{
+		m_cheatPage = std::make_unique<OpenBFMEOptionsPage>(*layer, ownerWindow());
+		m_cheatPage->setSink([this](const OpenBFMEPageEvent &e) {
+			if (m_cheatEvents.size() < 256)
+			{
+				m_cheatEvents.push_back(e);
+			}
+		});
+	}
+	OpenBFMEPageSpec s = spec;
+	s.backdrop = true;
+	if (!m_cheatPage->show(s, error))
+	{
+		return false;
+	}
+	takeHooks();
+	return true;
+}
+
+void AptQuitMenu::closeCheatPage()
+{
+	if (m_cheatPage)
+	{
+		m_cheatPage->hide();
+	}
+}
+
+std::vector<OpenBFMEPageEvent> AptQuitMenu::takeCheatEvents()
+{
+	std::vector<OpenBFMEPageEvent> out;
+	out.swap(m_cheatEvents);
+	return out;
+}
+
+WindowMsgHandledType AptQuitMenu::gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2)
+{
+	if (cheatPageOpen() && m_cheatPage->message(msg, data1, data2))
+	{
+		return MSG_HANDLED;
+	}
+	return AptScreen::gadgetMessage(from, msg, data1, data2);
+}
+
+bool AptQuitMenu::cheatMouse(int kind, float x, float y)
+{
+	if (isHidden() || shell().inputTop() != this) // the in-game menu is the shell's overlay (lane OPTS-6): it is on top while nothing covers it
+	{
+		return false;
+	}
+	if (cheatPageOpen())
+	{
+		if (m_cheatPage->mouse(kind, x, y))
+		{
+			return true;
+		}
+		// the page's band is the page's: a press there never reaches the menu's buttons under it; its own gadgets still take it from the gadget layer
+		if (kind != 0 && x >= OpenBFMEOptionsPage::kTabsLeft - 8 && x <= OpenBFMEOptionsPage::kPanelRight + 8 && y >= OpenBFMEOptionsPage::kTop - 8 &&
+			y <= OpenBFMEOptionsPage::kBottom + 8)
+		{
+			if (AptGadgetLayer *layer = windows().gadgetLayer())
+			{
+				layer->mouseButton(kind == 1);
+			}
+			return true;
+		}
+		return false;
+	}
+	if (m_cheatLabel.empty())
+	{
+		m_cheatHot = m_cheatPressed = false;
+		return false;
+	}
+	const bool inside = x >= kCheatButtonLeft && x <= kCheatButtonRight && y >= kCheatButtonTop && y <= kCheatButtonBottom;
+	if (kind == 0)
+	{
+		m_cheatHot = inside;
+		return false;
+	}
+	if (kind == 1 && inside)
+	{
+		m_cheatPressed = true;
+		return true;
+	}
+	if (kind == 2 && m_cheatPressed)
+	{
+		m_cheatPressed = false;
+		if (inside)
+		{
+			OpenBFMEPageEvent e;
+			e.kind = OpenBFMEPageEvent::Kind::Entry;
+			e.key = "cheat_button";
+			m_cheatEvents.push_back(e);
+		}
+		return true;
+	}
+	return false;
+}
+
+void AptQuitMenu::decorate(GadgetDrawList &out)
+{
+	if (isHidden() || shell().inputTop() != this) // the in-game menu is the shell's overlay (lane OPTS-6): it is on top while nothing covers it
+	{
+		return;
+	}
+	if (cheatPageOpen())
+	{
+		m_cheatPage->decorate(out);
+		return;
+	}
+	if (m_cheatLabel.empty())
+	{
+		return;
+	}
+	// the FRIENDS button's look (AptOnlineShell::decorateAll): a dark box, the page's frame, the bottom bar's lettering, brighter when pointed
+	GadgetDrawCommand c;
+	c.kind = GadgetDrawCommand::Kind::FillRect;
+	c.window = "OpenBFMECheatMode";
+	c.x0 = kCheatButtonLeft;
+	c.y0 = kCheatButtonTop;
+	c.x1 = kCheatButtonRight;
+	c.y1 = kCheatButtonBottom;
+	c.color = m_cheatPressed ? 0xF0182028u : 0xE0050607u;
+	out.commands.push_back(c);
+	OpenBFMEOptionsPage::frame(out, kCheatButtonLeft, kCheatButtonTop, kCheatButtonRight, kCheatButtonBottom, UnicodeString());
+	OpenBFMEOptionsPage::text(out, m_cheatLabel, kCheatButtonLeft, kCheatButtonTop + 9, 14,
+		m_cheatHot ? OpenBFMEOptionsPage::kTabHotColor : OpenBFMEOptionsPage::kTabColor, kCheatButtonRight - kCheatButtonLeft, true);
 }

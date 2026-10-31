@@ -114,6 +114,26 @@ bool Eva::reportEvent(int index, const Coord3D *position, double nowMs)
 	return true;
 }
 
+bool Eva::isEventBlockedByTimeout(int index, double nowMs) const
+{
+	const EvaEventRecord *r = m_ini.eva.record(index, false);
+	if (!r)
+	{
+		return true;
+	}
+	const double lastPlayed = (size_t)index < m_lastPlayed.size() ? m_lastPlayed[(size_t)index] : -1.0;
+	return lastPlayed >= 0.0 && nowMs - lastPlayed < (double)r->timeBetweenEventsMS; // reportEvent's drop of an identical event
+}
+
+bool Eva::isEventAboutToPlay(int index) const
+{
+	if (!m_ini.eva.record(index, false))
+	{
+		return false;
+	}
+	return std::any_of(m_pending.begin(), m_pending.end(), [index](const Pending &p) { return p.index == index; });
+}
+
 void Eva::blockOthers(const EvaEventRecord &record, double nowMs)
 {
 	for (const int other : record.otherEventsToBlock)

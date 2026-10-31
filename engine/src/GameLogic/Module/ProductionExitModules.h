@@ -16,9 +16,10 @@
 //     points from the drawable's pristine bones (RW 0x8A7363); reserveDoorForExit RW 0x8A75B4: DOOR_1 while a bone has no occupier, else -1; exitObjectViaDoor
 //     RW 0x8A74B7 puts the object on the first free bone (its world position with Z, its angle), records it as the occupier and holds it (DISABLED_HELD, RW 0x692432);
 //     no AI command is given. Occupiers whose object is gone are freed by RW 0x8A757D.
-// Not ported (stops S-202, S-209): the pathfinder calls, the supply truck AI's setForceWantingState (RW +0x17C), and the bone positions: a drawable's pristine bones
-// (RW 0x672A73) are the client lane's, so a SpawnPoint exit never finds a bone, reserveDoorForExit stays DOOR_NONE_AVAILABLE (as retail does for an object without a
-// drawable) and the module reports it (GameLogic::reportError, once).
+//   Lane PRODUCTION1: the spawn points come from the logic's bone provider (RENDER-2 / GARRISON-1: RW 0x672A73's pristine bones from template data and logic
+//     state), so the Mordor barricades' archers and the mallorn trees' archer now stand on their bones; without a provider (no W3D assets) the module stays
+//     uninitialised and reports it once (GameLogic::reportError), as retail does for an object without a drawable.
+// Not ported (stops S-202, S-209): the pathfinder calls of the Default / SupplyCenter exits, the supply truck AI's setForceWantingState (RW +0x17C).
 
 #pragma once
 
@@ -134,6 +135,7 @@ public:
 	void releaseLastExit() override {}
 
 	bool bonesInitialized() const { return m_bonesInitialized; }
+	int spawnPointCount() const { return m_spawnPointCount; }
 
 private:
 	void initializeBonePositions();

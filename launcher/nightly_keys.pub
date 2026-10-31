@@ -1,0 +1,8 @@
+# Lane RELGH-2: the Ed25519 public keys trusted for NIGHTLY releases only (docs/RELEASE.md, "Nightly signing on GitHub Actions").
+#
+# Same line format as launcher/release_keys.pub: <64 lower-case hex digits of the public key>  <label>. 0 to 4 keys, none of them in
+# release_keys.pub. A signature under one of these keys is valid only for a file whose "version" is a nightly tag
+# (v<x.y.z>-nightly.<n>; a manifest's channel must also be "preview"): a stable manifest or package signed with it is refused by the
+# launcher, the game and every release tool. The private half lives only in the GitHub environment `nightly-signing` (and an offline
+# encrypted backup); the stable key (deck-2026) never enters CI or GitHub. Rotation and revocation: docs/RELEASE.md.
+0b411ae52f9caf7a0f8f03a2ecd95a208c50e022b75d2fbe4627b18ba672df0f  nightly-2026

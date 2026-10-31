@@ -7,12 +7,15 @@
 #include "GameClient/MapCreationHooks.h"
 #include "GameClient/MapHordeSpawn.h"
 #include "GameClient/MapObjectDrawables.h"
+#include "GameClient/MapObjectRuntime.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.h"
 #include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "LuaTestUtil.h"
 #include "ObjectTestUtil.h"
 
 #include <cmath>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -548,6 +551,16 @@ TEST_CASE("mapobj creation: horde members stand on the formation slots, rotated 
 		"    RankInfo = RankNumber:2 UnitType:Soldier Position:X:30 Y:0 Position:X:30 Y:20 Position:X:30 Y:-20\n"
 		"  End\n"
 		"  KindOf = INFANTRY HORDE\nEnd\n"
+		"Object Ram\n  KindOf = MACHINE VEHICLE\nEnd\n"
+		"Object RamHorde\n"
+		"  Behavior = HordeContain ModuleTag_Horde\n"
+		"    InitialPayload = Ram 1\n"
+		"    Slots = 4\n"
+		"    RankInfo = RankNumber:1 UnitType:Soldier Position:X:40 Y:-10 Position:X:40 Y:10\n"
+		"    RankInfo = RankNumber:2 UnitType:Ram Position:X:10 Y:5\n"
+		"    RankInfo = RankNumber:3 UnitType:Soldier Position:X:-20 Y:0\n"
+		"  End\n"
+		"  KindOf = HORDE\nEnd\n"
 		"Object OverfullHorde\n"
 		"  Behavior = HordeContain ModuleTag_Horde\n"
 		"    InitialPayload = Soldier 4\n"
@@ -557,19 +570,21 @@ TEST_CASE("mapobj creation: horde members stand on the formation slots, rotated 
 		"  KindOf = INFANTRY HORDE\nEnd\n").empty());
 	Scene s;
 	// the horde stands at (200, 300) turned by PI/2: the slot offset (ox, oy) maps to (-oy, ox)
-	s.map.chunks.objects = { object("SoldierHorde", 200, 300, 0, (float)(kPi / 2.0)), object("OverfullHorde", 500, 500, 0, 0.0f) };
+	s.map.chunks.objects = { object("SoldierHorde", 200, 300, 0, (float)(kPi / 2.0)), object("OverfullHorde", 500, 500, 0, 0.0f),
+		object("RamHorde", 800, 800, 0, 0.0f) };
 	s.run(w);
-	// 1 horde parent (draws nothing) + 3 members; the second horde: 2 slots for 4 payload members: 2 placed, 2 unplaced
-	REQUIRE(s.out.drawables.size() == 2 + 3 + 2);
-	CHECK(s.out.report.hordes == 2);
-	CHECK(s.out.report.hordeMembers == 5);
-	CHECK(s.out.report.hordePayload == 7);
+	// 1 horde parent (draws nothing) + 3 members; the second horde: 2 slots for 4 payload members: 2 placed, 2 unplaced; the ram horde: its ram
+	REQUIRE(s.out.drawables.size() == 2 + 3 + 2 + 2);
+	CHECK(s.out.report.hordes == 3);
+	CHECK(s.out.report.hordeMembers == 6);
+	CHECK(s.out.report.hordePayload == 8);
 	CHECK(s.out.report.hordeUnplaced == 2);
 	const MapObjectDrawable &parent = s.out.drawables[0];
 	CHECK_FALSE(parent.hordeMember);
 	CHECK(parent.draws[0].model.empty());
-	// members in payload order take the first free slots: rank 1 slots (50,0), (50,20), (50,-20)
-	const float expected[3][2] = { { 200.0f - 0.0f, 300.0f + 50.0f }, { 200.0f - 20.0f, 300.0f + 50.0f }, { 200.0f + 20.0f, 300.0f + 50.0f } };
+	// members in payload order take the first free slots: rank 1 slots (50,0), (50,20), (50,-20) less the table's centre (RW 0x86C4EA: three at X 50 and
+	// three at 30, 40): (10,0), (10,20), (10,-20), turned by the horde's angle
+	const float expected[3][2] = { { 200.0f - 0.0f, 300.0f + 10.0f }, { 200.0f - 20.0f, 300.0f + 10.0f }, { 200.0f + 20.0f, 300.0f + 10.0f } };
 	for (size_t i = 0; i < 3; ++i)
 	{
 		const MapObjectDrawable &m = s.out.drawables[1 + i];
@@ -581,6 +596,56 @@ TEST_CASE("mapobj creation: horde members stand on the formation slots, rotated 
 		CHECK(m.position.z == doctest::Approx(10.0f)); // on the ground (raw 256 = 10)
 		CHECK(m.angle == doctest::Approx((float)(kPi / 2.0)));
 	}
+	// the ram horde's table is centred on its MACHINE rank's first slot (RW 0x86C4EA), not on the mean of its slots (17.5, 1.25): the ram stands on its horde
+	auto infoOf = [](const ThingTemplate &t) -> const ObjectTemplateInfo & {
+		static ObjectTemplateInfo last;
+		last = ObjectTemplateInfoBuilder::build(t);
+		return last;
+	};
+	std::vector<std::string> reported;
+	auto report = [&reported](const std::string &e) { reported.push_back(e); };
+	CHECK(MapHordeSpawn::unitTypeIsMachine(w.things, "Ram", infoOf, report));
+	CHECK_FALSE(MapHordeSpawn::unitTypeIsMachine(w.things, "Soldier", infoOf, report));
+	CHECK(reported.empty());
+	CHECK_FALSE(MapHordeSpawn::unitTypeIsMachine(w.things, "Ghost", infoOf, report)); // no template: no machine, reported
+	REQUIRE(reported.size() == 1u);
+	CHECK(reported[0] == "horde RankInfo UnitType Ghost names no template (no machine rank: RW 0x6D1305 finds none)");
+	const MapObjectDrawable &ram = s.out.drawables.back();
+	CHECK(ram.hordeMember);
+	CHECK(ram.position.x == 800.0f);
+	CHECK(ram.position.y == 800.0f);
+	// a rank naming a template no member has, whose KindOf names an unknown word: the horde's spawn reports it (the map never builds that template's info)
+	MapWorld w2;
+	REQUIRE(w2.load(
+		"Object Soldier\n  KindOf = INFANTRY\nEnd\n"
+		"Object OddRam\n  KindOf = NOSUCHKIND MACHINE\nEnd\n"
+		"Object OddHorde\n"
+		"  Behavior = HordeContain ModuleTag_Horde\n"
+		"    InitialPayload = Soldier 1\n"
+		"    Slots = 2\n"
+		"    RankInfo = RankNumber:1 UnitType:Soldier Position:X:40 Y:0\n"
+		"    RankInfo = RankNumber:2 UnitType:OddRam Position:X:10 Y:0\n"
+		"  End\n"
+		"  KindOf = HORDE\nEnd\n"
+		"Object GhostHorde\n"
+		"  Behavior = HordeContain ModuleTag_Horde\n"
+		"    InitialPayload = Soldier 1\n"
+		"    Slots = 2\n"
+		"    RankInfo = RankNumber:1 UnitType:Soldier Position:X:40 Y:0\n"
+		"    RankInfo = RankNumber:2 UnitType:Ghost Position:X:10 Y:0\n"
+		"  End\n"
+		"  KindOf = HORDE\nEnd\n").empty());
+	Scene s2;
+	s2.map.chunks.objects = { object("OddHorde", 100, 100, 0, 0.0f), object("GhostHorde", 300, 100, 0, 0.0f) };
+	s2.run(w2);
+	bool kindOfReported = false, ghostReported = false;
+	for (const std::string &e : s2.out.report.errors)
+	{
+		kindOfReported = kindOfReported || e.find("template OddRam: ") != std::string::npos;
+		ghostReported = ghostReported || e.find("UnitType Ghost names no template") != std::string::npos;
+	}
+	CHECK(kindOfReported);
+	CHECK(ghostReported); // a rank naming no template is reported too
 	// the unit-type matcher: the same template, an EquivalentTo entry, a reskin
 	CHECK(MapHordeSpawn::unitTypeMatches(w.things, "Soldier", "Soldier"));
 	CHECK_FALSE(MapHordeSpawn::unitTypeMatches(w.things, "Soldier", "SoldierHorde"));
@@ -747,15 +812,15 @@ TEST_CASE("mapobj creation hooks: full objects count the OnCreated handlers thei
 	// permanently hidden sub objects, lower case, each counted once per object: GLOW is named by both handlers of a Ranger
 	CHECK(r.creationHookHides == std::map<std::string, size_t>({ { "firearowtip", 2 }, { "glow", 2 } }));
 	CHECK(r.creationHookShows == std::map<std::string, size_t>({ { "torch", 2 } }));
-	// the tree is a client-only object: no OnCreated is sent; the unknown list and the undefined handler are reported (once per template)
-	bool undefinedHandler = false, unknownList = false;
+	// the tree is a client-only object: no OnCreated is sent; an undefined handler is an inventory error.
+	bool undefinedHandler = false;
 	for (const std::string &e : r.errors)
 	{
 		undefinedHandler = undefinedHandler || e.find("OnCreated handler OnGhostCreated of GhostFunctions is not defined in scripts.lua") != std::string::npos;
-		unknownList = unknownList || e.find("NoSuchFunctions") != std::string::npos;
 	}
 	CHECK(undefinedHandler);
-	CHECK(unknownList);   // a list scriptevents.xml does not define is reported, not skipped
+	CHECK(std::find(r.stops.begin(), r.stops.end(),
+		"[S-127] template Unknown: AILuaEventsList NoSuchFunctions is not an EventList of scriptevents.xml; retail binds no missing list") != r.stops.end());
 
 	Scene unscanned;
 	unscanned.map.chunks.objects = { object("Ranger", 10, 10) };
@@ -773,12 +838,9 @@ TEST_CASE("mapobj creation hooks: full objects count the OnCreated handlers thei
 	CHECK(s110);
 }
 
-// ---- S-115: static draw fields the runtime stores and does not apply ---------------------------------------------------------
-
-#include "GameClient/MapObjectRuntime.h"
-
 namespace
 {
+std::string luaGlobalString(LuaScriptEngine &e, const char *name);
 struct NoFiles : W3DFileSource
 {
 	bool Exists(const std::string &) const override { return false; }
@@ -789,6 +851,44 @@ struct NoFiles : W3DFileSource
 	}
 };
 } // namespace
+
+TEST_CASE("mapobj creation hooks: a mod XML comment can hide an EventList; missing names are reported stops, earlier inherited handlers still run")
+{
+	const char *xml = "<SageLuaScriptSection><EventList Name=\"Base\"><EventHandler EventName=\"OnCreated\" ScriptFunctionName=\"Created\"/></EventList>"
+		"<EventList Name=\"Child\" Inherit=\"Base\"/>"
+		"<EventList Name=\"Before\"/><!-- unterminated comment\n<EventList Name=\"Lost\" Inherit=\"Child\"><!-- next close -->"
+		"</EventList></SageLuaScriptSection>";
+	const char *lua = "function Created(self)\n  Hit = (Hit or 0) + 1\nend\n";
+	const char *objects =
+		"Object Found\n  Behavior = AIUpdateInterface ModuleTag_AI\n    AILuaEventsList = Child\n  End\n  KindOf = INFANTRY\nEnd\n"
+		"Object Missing\n  Behavior = AIUpdateInterface ModuleTag_AI\n    AILuaEventsList = Lost\n  End\n  KindOf = INFANTRY\nEnd\n";
+	MapWorld w;
+	REQUIRE_MESSAGE(w.load(objects).empty(), "template load");
+	Scene s;
+	std::string err;
+	REQUIRE_MESSAGE(MapCreationHooks::scan(xml, lua, s.options.creationScripts, &err), err);
+	CHECK(s.options.creationScripts.rawLoaded);
+	s.map.chunks.objects = { object("Found", 10, 10), object("Missing", 20, 10) };
+	s.run(w);
+	CHECK(s.out.report.errors.empty());
+	CHECK(std::find(s.out.report.stops.begin(), s.out.report.stops.end(),
+		"[S-127] template Missing: AILuaEventsList Lost is not an EventList of scriptevents.xml; retail binds no missing list") != s.out.report.stops.end());
+	NoFiles files;
+	WW3DAssetManager assets(files);
+	MapObjectRuntime runtime(assets);
+	runtime.setCreationScripts(&s.options.creationScripts);
+	runtime.build(s.out);
+	REQUIRE(runtime.scriptEngine());
+	CHECK(runtime.scriptEngine()->findEventList("Child") != nullptr);
+	CHECK(runtime.scriptEngine()->findEventList("Lost") == nullptr);
+	CHECK(runtime.report().creationListObjects == 1);
+	CHECK(luaGlobalString(*runtime.scriptEngine(), "Hit") == "1");
+	CHECK(std::find(runtime.report().stops.begin(), runtime.report().stops.end(),
+		"[S-127] Missing: AILuaEventsList Lost is not an EventList of scriptevents.xml; retail binds a null event list (RW 0x7396E8)") != runtime.report().stops.end());
+	CHECK(runtime.report().errors.empty());
+}
+
+// ---- S-115: static draw fields the runtime stores and does not apply ---------------------------------------------------------
 
 TEST_CASE("mapobj runtime: floor WeatherTexture / ForceToBack / StaticModelLODMode and prop DistanceFog = No are counted as not applied (S-115)")
 {

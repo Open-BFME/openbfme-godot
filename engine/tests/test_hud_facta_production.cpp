@@ -6,6 +6,7 @@
 
 #include "doctest.h"
 #include "FactATestUtil.h"
+#include "ProductionRateTestUtil.h"
 
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/Economy.h"
@@ -86,6 +87,7 @@ void buildUnit(FactRig &r, Object *building, const CommandButton &b, Outcome &ou
 		out.problems.push_back(tag + ": the press was refused");
 		return;
 	}
+	std::vector<float> rates{ prodrate::rateNow(*building) }; // lane PRODUCTION1: the producer's PRODUCTION rate of every frame (RW 0x8A1EBC)
 	r.frames(1);
 	// the charge: the production entry's stored cost (the money is also moved by the farms' income in the same frames)
 	const unsigned cost = BuildAssistant::buildCost(unit);
@@ -99,6 +101,7 @@ void buildUnit(FactRig &r, Object *building, const CommandButton &b, Outcome &ou
 	int waited = 1, complete = -1;
 	for (; waited < expect + 90 && !made; ++waited)
 	{
+		rates.push_back(prodrate::rateNow(*building));
 		r.frames(1);
 		const ProductionUpdateInterface *pu = building->getProductionUpdate();
 		const ProductionEntry *e = pu ? pu->firstProduction() : nullptr;
@@ -133,10 +136,13 @@ void buildUnit(FactRig &r, Object *building, const CommandButton &b, Outcome &ou
 			+ "; new objects" + near + ")");
 		return;
 	}
-	// the build completes after BuildTime (whole seconds, five frames each; one frame of slack for the press frame)
-	if (complete < expect - 1 || complete > expect + 2)
+	// the build completes after BuildTime (whole seconds, five frames each; one frame of slack for the press frame) at rate 1.0; lane PRODUCTION1: a level 2 / 3
+	// building is faster (its BuildSpeedModLvl<n>, RW 0x8A1EBC)
+	const int rated = prodrate::expectedFrames(rates, expect);
+	if (complete < rated - 1 || complete > rated + 2)
 	{
-		out.problems.push_back(tag + ": built in " + std::to_string(complete) + " frames, BuildTime gives " + std::to_string(expect));
+		out.problems.push_back(tag + ": built in " + std::to_string(complete) + " frames, BuildTime gives " + std::to_string(expect) + " (" + std::to_string(rated) +
+			" at the producer's PRODUCTION rate)");
 	}
 	const float dx = made->getPosition()->x - building->getPosition()->x, dy = made->getPosition()->y - building->getPosition()->y;
 	if (dx * dx + dy * dy > 400.0f * 400.0f)
@@ -209,6 +215,7 @@ void buyUpgrade(FactRig &r, Object *building, const CommandButton &b, Outcome &o
 		out.problems.push_back(tag + ": the press was refused");
 		return;
 	}
+	std::vector<float> rates{ prodrate::rateNow(*building) }; // lane PRODUCTION1: the producer's PRODUCTION rate of every frame (RW 0x8A1EBC)
 	r.frames(1);
 	const unsigned charged = chargedFor(building, nullptr, u);
 	if (charged != (unsigned)u->getBuildCost())
@@ -219,16 +226,19 @@ void buyUpgrade(FactRig &r, Object *building, const CommandButton &b, Outcome &o
 	int waited = 1;
 	for (; waited < expect + 30 && !has(); ++waited)
 	{
+		rates.push_back(prodrate::rateNow(*building));
 		r.frames(1);
 	}
+	const int rated = prodrate::expectedFrames(rates, expect);
 	if (!has())
 	{
 		out.problems.push_back(tag + ": not complete after " + std::to_string(waited) + " frames (BuildTime " + std::to_string(expect) + " frames)");
 		return;
 	}
-	if (waited < expect - 1 || waited > expect + 3)
+	if (waited < rated - 1 || waited > rated + 3)
 	{
-		out.problems.push_back(tag + ": complete after " + std::to_string(waited) + " frames, BuildTime gives " + std::to_string(expect));
+		out.problems.push_back(tag + ": complete after " + std::to_string(waited) + " frames, BuildTime gives " + std::to_string(expect) + " (" + std::to_string(rated) +
+			" at the producer's PRODUCTION rate)");
 	}
 	++out.upgrades;
 }

@@ -2,6 +2,7 @@
 // Lane SHIP-1: ships and hover units on a retail water map (the SHIP / HOVER movers and SEA_LEVEL of GameLogic/Object/LocomotorMove.cpp, the transports' water
 // legs, ship combat). The retail cases SKIP without the games (ROTWK_INSTALL / BFME2_INSTALL).
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "StartTestUtil.h"
@@ -141,6 +142,7 @@ struct ShipArena
 		REQUIRE(o != nullptr);
 		Coord3D p{ x, y, logic().getGroundHeight(x, y) + zAbove };
 		o->setPosition(&p);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	void step(int n = 1)
@@ -430,7 +432,7 @@ TEST_CASE("ship1 retail: an Elven battle ship sails into range, its five archers
 	CHECK(otherHits == 0);
 	CHECK(shipHits == 20); // 250 / 12.5: the twentieth arrow sank the ship
 	CHECK(shipTaken == 250.0f);
-	CHECK(pitHits == 489); // measured on this tree: the archers turn to the pit after the sinking and shoot it for the rest of the 300 frames
+	CHECK(pitHits == 484); // measured on this tree: the archers turn to the pit after the sinking and shoot it for the rest of the 300 frames (lane TARGET-1: 487, was 489: the turn to the pit is RotWK's mood scan, on its own cadence; ATTACKPATH-1 alone 488; merge queue q23 with both and FLANK-1's in-flight hits: 484)
 	CHECK(pitTaken == 1500.0f - hp(pitNow));
 	Object *shipNow = logic.findObjectByID(shipId);
 	CHECK((shipNow == nullptr || shipNow->isEffectivelyDead()));

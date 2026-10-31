@@ -1,0 +1,283 @@
+# Lane SIGNKMS-1, RELGH-2, RELGH-3: a release's packages built and SIGNED on GitHub's own runners: a NIGHTLY with the nightly key, unattended
+# (docs/RELEASE.md, "Nightly signing on GitHub Actions"), or a STABLE release with the stable Actions key, only after the owner's review
+# approves the run (docs/RELEASE.md, "Stable signing on GitHub Actions"). The Deck key (deck-2026) never enters CI or GitHub.
+#
+# The release's Deck (tools/release/autorelease.sh with OPENBFME_RELEASE_SIGNER=actions) has synced, audited, built and tested the candidate
+# with the retail files GitHub never sees, and pushed the public commit and its tag. It then dispatches this workflow ON MAIN with the tag,
+# the commit and a one-time request id, as the release account (never a reviewer of stable-signing). This workflow:
+#   plan     checks the inputs (through the environment only, never pasted into a script), that it runs on main of this repository, that
+#            the tag is a nightly's or a stable release's and names the commit, that the commit is on main, and that the newest PUBLISHED
+#            stable release (its manifest signed by a stable key, published 14 days ago or more) trusts the key that will sign (the
+#            transition rule); for a stable release also that the environment stable-signing is exactly tools/release/stable_environment.json
+#            (the owner the one required reviewer, prevent self-review, no administrator bypass, branch main only) and that the run's
+#            triggering actor is no reviewer; its output `kind` (nightly or stable) picks the signing job;
+#   macos / linux-lib / windows-lib / package
+#            builds the packages from a checkout of the tag: the Mac package (package_macos.py, ad-hoc codesign), the Linux and Windows
+#            GDExtensions, then package.sh for the Linux and Windows packages; these jobs have no write access and no secret; they CALL
+#            release-package.yml (MACACT-1's jobs, which the Deck also dispatches on its own), so both paths build with one definition;
+#   sign     (a nightly) in the protected environment `nightly-signing` (deployment branches: main only, no reviewers), the only job that
+#            can read the nightly key (environment secret OPENBFME_NIGHTLY_SIGNING_KEY, handed to ONE step's environment);
+#   sign-stable
+#            (a stable release, RELGH-3) in the protected environment `stable-signing` (deployment branches: main only; the owner's review
+#            is required, the dispatcher cannot approve, administrators cannot bypass), the only job that can read the stable Actions key
+#            (environment secret OPENBFME_STABLE_SIGNING_KEY, handed to ONE step's environment). GitHub starts it, and hands it the secret,
+#            only once the owner pressed Approve; its first steps check the environment and that approval again before the key step.
+#   In both: actions_release.py sign removes the key from its environment, writes it to a mode 0600 file on tmpfs, seals the packages and
+#            signs the manifests with it, verifies every signature against the committed launcher/release_keys.pub +
+#            launcher/nightly_keys.pub (the scope rule), and shreds the file; the next step removes any leftover whatever happened. The job
+#            creates the release as a DRAFT with GitHub's token (write access to the contents, these jobs only). It never publishes: the
+#            Deck reads the draft back, checks it against the candidate it tested, runs the private privacy gate and publishes.
+# No OIDC token, no cloud credential; every action is pinned by its full commit sha; every download is checked against a pinned hash.
+# tools/release/public_workflows.py allows the write permission on contents and the two secrets in this file alone, each in its own job
+# with `environment: nightly-signing` / `environment: stable-signing`.
+name: Release
+
+run-name: Release ${{ inputs.tag }} (request ${{ inputs.request }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: the tag the Deck pushed (a nightly v1.2.3-nightly.261023200 or a stable v1.2.3)
+        required: true
+        type: string
+      commit:
+        description: the public commit the tag names (40 hex)
+        required: true
+        type: string
+      request:
+        description: the Deck's one-time request id (32 hex)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  IN_TAG: ${{ inputs.tag }}
+  IN_COMMIT: ${{ inputs.commit }}
+  IN_REQUEST: ${{ inputs.request }}
+
+jobs:
+  plan:
+    name: Check the request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # read-only: the transition rule reads the published stable release (trusted_by_stable); RELGH-3: actions read lets a stable release's
+    # plan read the environment stable-signing (its reviewers and rules)
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      kind: ${{ steps.plan.outputs.kind }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the inputs, the ref, the tag and the commit
+        id: plan
+        run: python3 tools/release/actions_release.py plan
+
+  # RELSIGN-1: the three builds are release-package.yml's jobs, the same ones the Deck dispatches on a staging branch (MACACT-1): one
+  # definition, the build host's folder layout and ccache rewriting (so the Linux library is the build host's byte for byte and the Windows
+  # DLL but for its CodeView GUID), contents: read inherited from the top level. CRASHACT-1: the macOS call alone passes one secret, the crash
+  # service's client key, which the package carries anyway (tools/release/crash_key.py; tools/release/public_workflows.py pins the lines)
+  macos:
+    name: macOS
+    needs: plan
+    uses: ./.github/workflows/release-package.yml
+    with:
+      platform: macos
+      commit: ${{ inputs.commit }}
+      version: ${{ inputs.tag }}
+      request: ${{ inputs.request }}
+    secrets:
+      CRASH_CLIENT_KEY: ${{ secrets.CRASH_CLIENT_KEY }}
+
+  linux-lib:
+    name: Linux
+    needs: plan
+    uses: ./.github/workflows/release-package.yml
+    with:
+      platform: linux
+      commit: ${{ inputs.commit }}
+      version: ${{ inputs.tag }}
+      request: ${{ inputs.request }}
+
+  windows-lib:
+    name: Windows
+    needs: plan
+    uses: ./.github/workflows/release-package.yml
+    with:
+      platform: windows
+      commit: ${{ inputs.commit }}
+      version: ${{ inputs.tag }}
+      request: ${{ inputs.request }}
+
+  package:
+    name: Linux and Windows packages (package.sh)
+    needs: [linux-lib, windows-lib]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: true
+      - name: The checkout is the tag
+        run: python3 tools/release/actions_release.py checkout-is-tag
+      - name: The release tools' Python packages (pinned hashes, tools/release/actions_requirements.txt)
+        run: python3 -m pip install --user --break-system-packages --no-deps --require-hashes --only-binary=':all:' -r tools/release/actions_requirements.txt
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: openbfme-${{ inputs.tag }}-linux-x64-${{ inputs.request }}
+          path: ${{ runner.temp }}/linux-lib
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: openbfme-${{ inputs.tag }}-windows-x64-${{ inputs.request }}
+          path: ${{ runner.temp }}/windows-lib
+      - name: Download Godot 4.7.2 and its export templates (pinned hashes)
+        # the templates must also be the godot_templates.txt files byte for byte: package.sh and the privacy gate check them by SHA-256
+        run: |
+          T="$RUNNER_TEMP/tools"; mkdir -p "$T"; cd "$T"
+          base=https://github.com/godotengine/godot/releases/download/4.7.2-stable
+          curl -fsSLo godot.zip "$base/Godot_v4.7.2-stable_linux.x86_64.zip"
+          curl -fsSLo templates.tpz "$base/Godot_v4.7.2-stable_export_templates.tpz"
+          sha512sum -c --strict <<'EOF'
+          9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65  godot.zip
+          ca4d71c4d7b81dfc15d1a98baa07534aa95b03fdda78a0075b06672e1648d2e5f40980c9adc28d23e1b92e732ee7bf3461997aa804af74ec2fcd7a93ccb84079  templates.tpz
+          EOF
+          unzip -q godot.zip
+          D="$HOME/.local/share/godot/export_templates/4.7.2.stable"; mkdir -p "$D"
+          unzip -q -j templates.tpz -d "$D"
+          rm godot.zip templates.tpz
+          cd "$D" && awk -F '  ' '!/^#/ && NF {print $1 "  " $2}' "$GITHUB_WORKSPACE/tools/release/godot_templates.txt" | sha256sum -c --strict
+      - name: Build the packages (package.sh)
+        env:
+          CRASH_CLIENT_KEY: ${{ secrets.CRASH_CLIENT_KEY }}
+        run: |
+          mkdir -p godot/bin "$RUNNER_TEMP/out"
+          cp "$RUNNER_TEMP/linux-lib/openbfme.linux.template_debug.x86_64.so" godot/bin/
+          tools/release/package.sh --out "$RUNNER_TEMP/out" --platforms linux,windows \
+            --windows-dll "$RUNNER_TEMP/windows-lib/openbfme.windows.template_debug.x86_64.dll" \
+            --godot "$RUNNER_TEMP/tools/Godot_v4.7.2-stable_linux.x86_64" --repo "$GITHUB_REPOSITORY" \
+            > "$RUNNER_TEMP/package.log" 2>&1 || { tail -80 "$RUNNER_TEMP/package.log"; exit 1; }
+          ls -l "$RUNNER_TEMP/out"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  sign:
+    name: Seal, sign (the nightly key) and draft the release
+    needs: [plan, macos, package]
+    if: needs.plan.outputs.kind == 'nightly'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # deployment branches: main only, no reviewers (the schedule runs unattended); the environment's one secret is the nightly key
+    environment: nightly-signing
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The checkout is the tag, the request is still the plan's
+        run: |
+          python3 tools/release/actions_release.py plan
+          python3 tools/release/actions_release.py checkout-is-tag
+      - name: The release tools' Python packages (pinned hashes, tools/release/actions_requirements.txt)
+        run: python3 -m pip install --user --break-system-packages --no-deps --require-hashes --only-binary=':all:' -r tools/release/actions_requirements.txt
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+          path: ${{ runner.temp }}/in/packages
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: openbfme-${{ inputs.tag }}-macos-arm64-${{ inputs.request }}
+          path: ${{ runner.temp }}/in/macos
+      - name: Seal and sign with the nightly key, verify under launcher/release_keys.pub + launcher/nightly_keys.pub
+        env:
+          NIGHTLY_SIGNING_KEY: ${{ secrets.OPENBFME_NIGHTLY_SIGNING_KEY }}
+        run: python3 tools/release/actions_release.py sign --in "$RUNNER_TEMP/in" --pkg "$RUNNER_TEMP/pkg"
+      - name: Remove any leftover of the key (tmpfs)
+        if: always()
+        run: |
+          for d in /dev/shm/openbfme-nightly-key-*; do
+            [ -e "$d" ] || continue
+            if [ -f "$d/nightly.pem" ]; then shred -u -z "$d/nightly.pem"; fi
+            rm -rf "$d"
+          done
+          if compgen -G '/dev/shm/openbfme-nightly-key-*' >/dev/null; then echo "a key folder is left on /dev/shm"; exit 1; fi
+      - name: Create the draft release (never published here)
+        run: python3 tools/release/actions_release.py draft --pkg "$RUNNER_TEMP/pkg"
+
+  # RELGH-3: a stable release. GitHub queues this job for the review of the environment stable-signing once the builds succeeded; nothing
+  # of the environment (its secret above all) reaches a runner before the owner approves. Its steps before the key step hold no secret.
+  sign-stable:
+    name: Seal, sign (the stable Actions key, after the owner's approval) and draft the release
+    needs: [plan, macos, package]
+    if: needs.plan.outputs.kind == 'stable'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # deployment branches: main only; required reviewer: the owner (prevent self-review, no administrator bypass:
+    # tools/release/stable_environment.json); the environment's one secret is the stable Actions key
+    environment: stable-signing
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The checkout is the tag, the request is still the plan's, the environment is its configuration
+        run: |
+          python3 tools/release/actions_release.py plan
+          python3 tools/release/actions_release.py checkout-is-tag
+      - name: The release tools' Python packages (pinned hashes, tools/release/actions_requirements.txt)
+        run: python3 -m pip install --user --break-system-packages --no-deps --require-hashes --only-binary=':all:' -r tools/release/actions_requirements.txt
+      - name: The owner approved this run (and not the account that started it)
+        run: python3 tools/release/stable_environment.py approval
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+          path: ${{ runner.temp }}/in/packages
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: openbfme-${{ inputs.tag }}-macos-arm64-${{ inputs.request }}
+          path: ${{ runner.temp }}/in/macos
+      - name: Seal and sign with the stable Actions key, verify under launcher/release_keys.pub
+        env:
+          STABLE_SIGNING_KEY: ${{ secrets.OPENBFME_STABLE_SIGNING_KEY }}
+        run: python3 tools/release/actions_release.py sign --in "$RUNNER_TEMP/in" --pkg "$RUNNER_TEMP/pkg"
+      - name: Remove any leftover of the key (tmpfs)
+        if: always()
+        run: |
+          for d in /dev/shm/openbfme-stable-key-*; do
+            [ -e "$d" ] || continue
+            if [ -f "$d/stable.pem" ]; then shred -u -z "$d/stable.pem"; fi
+            rm -rf "$d"
+          done
+          if compgen -G '/dev/shm/openbfme-stable-key-*' >/dev/null; then echo "a key folder is left on /dev/shm"; exit 1; fi
+      - name: Create the draft release (never published here)
+        run: python3 tools/release/actions_release.py draft --pkg "$RUNNER_TEMP/pkg"

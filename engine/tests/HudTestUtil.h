@@ -9,7 +9,9 @@
 #include "Common/ArchiveFileSystem.h"
 #include "Common/PlayerList.h"
 #include "Common/Player.h"
+#include "GameClient/Drawable.h"
 #include "GameClient/DrawableManager.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DScriptedModelDraw.h"
 #include "GameClient/HudInput.h"
 #include "GameClient/LiveGame.h"
 #include "GameClient/MapClassification.h"
@@ -30,6 +32,7 @@
 #include "RetailTestMount.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <memory>
 #include <set>
@@ -438,5 +441,57 @@ inline const Templates &templates(SharedWorld &s)
 		}
 	}
 	return t;
+}
+// lane SELECT-1: the world points inside a drawable's oriented pick box (the first top-LOD W3D_BOX_ATTRIBUTE_ORIENTED box of its drawn model, on its pivot's bind pose):
+// the centre and the centre +- 80 % of each half extent along the box's own axes. Empty when the model has no such box
+inline std::vector<Coord3D> pickBoxPoints(const Drawable &d)
+{
+	std::vector<Coord3D> out;
+	for (const DrawEntry &e : d.entries())
+	{
+		const RenderObjPrototype *proto = e.kind == W3D_DRAWKIND_MODEL && e.draw && !e.moduleHidden && !e.conditionHidden ? e.draw->currentModel() : nullptr;
+		if (!proto)
+		{
+			continue;
+		}
+		for (const RenderSubObject &sub : proto->SubObjects)
+		{
+			if (sub.Type != RenderSubObject::SUB_BOX || !sub.Box || sub.Aggregate || (sub.Box->Attributes & 1u) == 0)
+			{
+				continue;
+			}
+			const HTreeClass *tree = proto->Tree ? proto->Tree : &proto->DefaultTree;
+			HTreePose pose;
+			tree->Base_Pose(Matrix3D(), pose);
+			const Matrix3D pivot = sub.BoneIndex >= 0 && sub.BoneIndex < (int)pose.Transform.size() ? pose.Transform[(size_t)sub.BoneIndex] : Matrix3D();
+			const W3dBoxStruct &b = *sub.Box;
+			const float c[3] = { b.Center.X, b.Center.Y, b.Center.Z }, ex[3] = { b.Extent.X, b.Extent.Y, b.Extent.Z };
+			std::vector<std::array<float, 3>> local{ { c[0], c[1], c[2] } };
+			for (int axis = 0; axis < 3; ++axis)
+			{
+				for (float sign : { -0.8f, 0.8f })
+				{
+					std::array<float, 3> p{ c[0], c[1], c[2] };
+					p[(size_t)axis] += sign * ex[axis];
+					local.push_back(p);
+				}
+			}
+			const float *basis = d.getBasis();
+			const float scale = d.getInstanceScale();
+			const Coord3D at = d.entryPosition(e);
+			for (const std::array<float, 3> &p : local)
+			{
+				float m[3];
+				for (int r = 0; r < 3; ++r)
+				{
+					m[r] = (pivot.Row[r][0] * p[0] + pivot.Row[r][1] * p[1] + pivot.Row[r][2] * p[2] + pivot.Row[r][3]) * scale;
+				}
+				out.push_back(Coord3D{ at.x + basis[0] * m[0] + basis[1] * m[1] + basis[2] * m[2], at.y + basis[3] * m[0] + basis[4] * m[1] + basis[5] * m[2],
+					at.z + basis[6] * m[0] + basis[7] * m[1] + basis[8] * m[2] });
+			}
+			return out; // RW 0x59C680: the first one answers
+		}
+	}
+	return out;
 }
 } // namespace hudtest

@@ -322,7 +322,7 @@ public:
 		std::uint8_t additive[4] = { 0, 0, 0, 0 };
 		float ratio = 0;
 		std::string name;
-		std::int32_t clipDepth = 0;
+		std::int32_t clipDepth = -1;
 		// clip events: (mask, keyCode, codeOffset); flagged when flags has APT_PLACE_HASCLIPACTION
 		struct Ev
 		{

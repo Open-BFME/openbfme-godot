@@ -5,6 +5,7 @@ set(OPENBFME_HUD2_SOURCES
     src/GameClient/PalantirCommandUI.cpp
 )
 set(OPENBFME_HUD2_TESTS
+    tests/test_hudpassive1.cpp
     tests/test_hud2_palantir.cpp
     tests/test_hud2_radar.cpp
     tests/test_hud3_palantir_layout.cpp

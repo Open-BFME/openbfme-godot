@@ -109,6 +109,7 @@ const FieldParse kViewInfoParse[] = { // RW 0xD9EE08
 void parseViewInfo(INI *ini, void *, void *store, const void *) // RW 0x619141
 {
 	ini->initFromINI(store, kViewInfoParse);
+	static_cast<CreateAHeroViewInfo *>(store)->loaded = true;
 }
 
 bool missing(const std::string &s)

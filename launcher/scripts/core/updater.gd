@@ -22,6 +22,7 @@
 extends RefCounted
 
 const Paths := preload("res://scripts/ui/paths.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const Semver := preload("res://scripts/core/semver.gd")
 const Manifest := preload("res://scripts/core/manifest.gd")
@@ -31,6 +32,7 @@ const HttpFetch := preload("res://scripts/net/http_fetch.gd")
 const Log := preload("res://scripts/core/launcher_log.gd")
 const GlibcCheck := preload("res://scripts/core/glibc_check.gd")
 const MacOSUpdate := preload("res://scripts/core/macos_update.gd")
+const ModInstall := preload("res://scripts/core/mod_install.gd")  # lane MODS-3: the active mod's game arguments
 
 const API_BASE := "https://api.github.com"
 const KEEP_VERSIONS := 2
@@ -67,11 +69,8 @@ var translocated := ""  # lane MACPLAY-1: the read-only copy macOS started this 
 ## (App Translocation: <the system's temporary folder>/AppTranslocation/<UUID>/d/OpenBFME Launcher.app). OpenBFME.app is not beside that copy, so
 ## the launcher there finds no game (the v0.4.6 Mac preview showed a dimmed Play with no word why) and cannot update the package. The
 ## launcher says so and tells the player what to do (README-MAC.txt "FIRST OPEN"); it never downloads a second game for a translocated copy.
-const TRANSLOCATED_TEXT := ("macOS started the launcher from a temporary read-only copy (App Translocation), because the apps still " +
-	"carry the download quarantine; that copy cannot see OpenBFME.app. Quit the launcher, move the folder that holds BOTH apps " +
-	"(OpenBFME Launcher.app and OpenBFME.app, the unpacked openbfme-...-macos-arm64 folder) out of Downloads, for example into your " +
-	"home folder, and open the launcher in it again. If it still happens, remove the quarantine as README-MAC.txt describes (Terminal: " +
-	"xattr -dr com.apple.quarantine <that folder>).")
+static func translocated_text() -> String:
+	return L10n.t("launcher.updater.translocated")
 
 
 static func is_translocated(path: String) -> bool:
@@ -117,16 +116,16 @@ func releases_url() -> String:
 
 func macos_preview_notice(release: Dictionary) -> Dictionary:
 	if not macos_preview():
-		return {"ok": false, "error": "not a Mac preview", "message": "", "url": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.not_mac_preview"), "message": "", "url": ""}
 	var verified := release_manifest(release)
 	if not verified.ok:
 		return {"ok": false, "error": verified.error, "message": "", "url": ""}
 	var base := String(info.version).get_slice(" ", 0)
 	if not Semver.is_valid(base):
-		return {"ok": false, "error": "invalid Mac preview base version", "message": "", "url": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.bad_mac_preview_base"), "message": "", "url": ""}
 	var newer := Semver.compare(verified.manifest.version, base) > 0
 	return {"ok": true, "error": "", "newer": newer, "url": releases_url(),
-		"message": "A newer version may be on the releases page" if newer else "Mac preview: updates are manual for now"}
+		"message": L10n.t("launcher.updater.mac_preview_newer") if newer else L10n.t("launcher.updater.mac_preview_manual")}
 
 
 func _init(build_info: RefCounted) -> void:
@@ -214,7 +213,7 @@ func show_online_count() -> bool:
 ## "" or what is wrong with the stored setting (the game reads the same value and treats it the same way)
 func online_count_problem() -> String:
 	var v: Variant = get_state("launcher", "show_online_count", true)
-	return "" if typeof(v) == TYPE_BOOL else "show_online_count in state.cfg is not true or false: the player count is off until it is set again"
+	return "" if typeof(v) == TYPE_BOOL else L10n.t("launcher.updater.online_count_problem")
 
 
 func set_show_online_count(on: bool) -> void:
@@ -272,7 +271,7 @@ func _report(text: String, done := -1, total := -1) -> void:
 func fetch_releases() -> Dictionary:
 	if macos_updates_unsupported() and not macos_preview():
 		Log.line("LAUNCHER macOS automated updates are unsupported; update the complete app bundle manually")
-		return {"ok": false, "error": "macOS automated updates are unsupported; unpack a newer complete bundle manually"}
+		return {"ok": false, "error": L10n.t("launcher.updater.macos_updates_unsupported_bundle")}
 	var cache := data_dir.path_join("cache")
 	DirAccess.make_dir_recursive_absolute(cache)
 	var etag := ""
@@ -282,28 +281,28 @@ func fetch_releases() -> Dictionary:
 	var url := "%s/repos/%s/releases?per_page=30" % [api_base, info.repo]
 	var r := http.get_small(url, MAX_RELEASES_JSON, "application/vnd.github+json", etag)
 	if not r.ok:
-		return {"ok": false, "error": "the release list could not be fetched: " + r.error}
+		return {"ok": false, "error": L10n.t("launcher.updater.list_fetch_failed", {"error": r.error})}
 	var body: PackedByteArray = r.body
 	var from_cache := false
 	if r.code == 304:
 		if cached.is_empty():
-			return {"ok": false, "error": "GitHub answered 304 Not Modified but no release list is cached"}
+			return {"ok": false, "error": L10n.t("launcher.updater.list_304_uncached")}
 		body = cached
 		from_cache = true
 	elif r.code == 403 or r.code == 429:
 		var reset := ""
 		if r.headers.has("x-ratelimit-reset") and str(r.headers["x-ratelimit-reset"]).is_valid_int():
-			reset = " (it resets at %s UTC)" % Time.get_datetime_string_from_unix_time(int(r.headers["x-ratelimit-reset"]), true)
+			reset = Time.get_datetime_string_from_unix_time(int(r.headers["x-ratelimit-reset"]), true)
 		if r.headers.get("x-ratelimit-remaining", "") == "0" or r.code == 429:
-			return {"ok": false, "error": "GitHub's API rate limit for this network is used up%s" % reset}
-		return {"ok": false, "error": "GitHub refused the release list (HTTP %d)" % r.code}
+			return {"ok": false, "error": L10n.t("launcher.updater.rate_limit_reset", {"time": reset}) if reset != "" else L10n.t("launcher.updater.rate_limit")}
+		return {"ok": false, "error": L10n.t("launcher.updater.list_refused", {"code": r.code})}
 	elif r.code == 404:
-		return {"ok": false, "error": "the repository %s has no releases page (HTTP 404)" % info.repo}
+		return {"ok": false, "error": L10n.t("launcher.updater.list_404", {"repo": info.repo})}
 	elif r.code != 200:
-		return {"ok": false, "error": "the release list request failed (HTTP %d)" % r.code}
+		return {"ok": false, "error": L10n.t("launcher.updater.list_failed", {"code": r.code})}
 	var out = parse_releases(body)
 	if typeof(out) != TYPE_ARRAY:
-		return {"ok": false, "error": "the release list is not a JSON array"}
+		return {"ok": false, "error": L10n.t("launcher.updater.list_not_array")}
 	if r.code == 200:
 		_write(cache.path_join("releases.json"), body)
 		var new_etag: String = r.headers.get("etag", "")
@@ -392,8 +391,7 @@ func freeze_warning(manifest: Dictionary) -> String:
 	var age_days := int((Time.get_unix_time_from_system() - signed) / 86400.0)
 	if age_days <= FREEZE_DAYS:
 		return ""
-	return ("the newest %s release the launcher can see (%s) is %d days old (signed %s). If you expected a newer build, the release list " +
-		"you are being served may be out of date.") % [manifest.get("channel", ""), manifest.get("version", ""), age_days, manifest.get("date", "")]
+	return L10n.t("launcher.updater.freeze_warning", {"channel": manifest.get("channel", ""), "version": manifest.get("version", ""), "days": age_days, "date": manifest.get("date", "")})
 
 
 func in_channel(releases: Array, ch: String) -> Array:
@@ -432,7 +430,7 @@ func macos_release_manifest(release: Dictionary) -> Dictionary:
 		var entry_linked := _path_is_link(dir)  # MACPLAY-1 (Sol r2): never read through it; the link alone is removed below
 		var cached := Manifest.read_limited(manifest_path, Manifest.MAX_BYTES) if not entry_linked else PackedByteArray()
 		var cached_sig := Manifest.read_limited(signature_path, 64) if not entry_linked else PackedByteArray()
-		var cv := Manifest.verify(cached, cached_sig, info.release_key, expect, "macos")
+		var cv := Manifest.verify(cached, cached_sig, info.release_keys, expect, "macos", info.nightly_keys)
 		if cv.ok:
 			return {"ok": true, "error": "", "manifest": cv.manifest, "bytes": cached, "sig": cached_sig,
 				"macos_sidecar": true, "no_entry": cv.manifest.assets.game.is_empty()}
@@ -442,24 +440,24 @@ func macos_release_manifest(release: Dictionary) -> Dictionary:
 		remove_tree(dir)
 		DirAccess.remove_absolute(dir)
 	var has_manifest: bool = release.assets.has("manifest-macos.json")
-	var has_signature: bool = release.assets.has("manifest-macos.json.sig")
+	var has_signature: bool = release.assets.has("manifest-macos.json.sig") or release.assets.has("manifest-macos.json.sig2")
 	if has_manifest or has_signature:
 		if not has_manifest or not has_signature:
-			return {"ok": false, "error": "release %s has an incomplete macOS manifest sidecar" % release.tag, "manifest": {}}
+			return {"ok": false, "error": L10n.t("launcher.updater.macos_sidecar_incomplete", {"tag": release.tag}), "manifest": {}}
 		var m := http.get_small(release.assets["manifest-macos.json"].url, Manifest.MAX_BYTES)
 		if not m.ok or m.code != 200:
-			return {"ok": false, "error": "the macOS manifest of %s could not be downloaded: %s" % [release.tag, m.error if not m.ok else "HTTP %d" % m.code], "manifest": {}}
-		var s := http.get_small(release.assets["manifest-macos.json.sig"].url, 64)
-		if not s.ok or s.code != 200:
-			return {"ok": false, "error": "the macOS manifest signature of %s could not be downloaded: %s" % [release.tag, s.error if not s.ok else "HTTP %d" % s.code], "manifest": {}}
-		var v := Manifest.verify(m.body, s.body, info.release_key, expect, "macos")
+			return {"ok": false, "error": L10n.t("launcher.updater.macos_manifest_download", {"tag": release.tag, "why": m.error if not m.ok else L10n.t("launcher.updater.http_code", {"code": m.code})}), "manifest": {}}
+		var s := release_signature(release, "manifest-macos.json", m.body, "macos")
+		if not s.ok:
+			return {"ok": false, "error": L10n.t("launcher.updater.release_rejected", {"tag": release.tag, "why": s.error}), "manifest": {}}
+		var v := Manifest.verify(m.body, s.sig, info.release_keys, expect, "macos", info.nightly_keys)
 		if not v.ok:
-			return {"ok": false, "error": "release %s rejected: %s" % [release.tag, v.error], "manifest": {}}
-		var why := _cache_pair(dir, "manifest-macos.json", m.body, s.body) if linked == "" else ""
+			return {"ok": false, "error": L10n.t("launcher.updater.release_rejected", {"tag": release.tag, "why": v.error}), "manifest": {}}
+		var why := _cache_pair(dir, "manifest-macos.json", m.body, s.sig) if linked == "" else ""
 		if why != "":
 			# the verified sidecar is used for this check; only its cache failed (the next check fetches it again)
 			Log.line("LAUNCHER the verified macOS manifest of %s was not cached: %s" % [release.tag, why])
-		return {"ok": true, "error": "", "manifest": v.manifest, "bytes": m.body, "sig": s.body,
+		return {"ok": true, "error": "", "manifest": v.manifest, "bytes": m.body, "sig": s.sig,
 			"macos_sidecar": true, "no_entry": v.manifest.assets.game.is_empty()}
 	var legacy := _standard_release_manifest(release)
 	if not legacy.ok:
@@ -474,15 +472,15 @@ func macos_release_manifest(release: Dictionary) -> Dictionary:
 func _cache_pair(dir: String, name: String, body: PackedByteArray, sig: PackedByteArray) -> String:
 	var tmp := "%s.tmp-%d-%d" % [dir, OS.get_process_id(), Time.get_ticks_usec()]
 	if DirAccess.make_dir_recursive_absolute(tmp) != OK:
-		return "cannot create %s" % tmp
+		return L10n.t("launcher.updater.cannot_create", {"path": tmp})
 	if not _write(tmp.path_join(name), body) or not _write(tmp.path_join(name + ".sig"), sig):
 		remove_tree(tmp)
-		return "writing failed (is the disk full?)"
+		return L10n.t("launcher.updater.write_failed_disk")
 	test_point("manifest-cache-written")
 	remove_tree(dir)
 	if DirAccess.rename_absolute(tmp, dir) != OK:
 		remove_tree(tmp)
-		return "the folder could not be renamed into place"
+		return L10n.t("launcher.updater.rename_failed")
 	return ""
 
 
@@ -492,25 +490,50 @@ func _standard_release_manifest(release: Dictionary) -> Dictionary:
 	var bytes := Manifest.read_limited(dir.path_join("manifest.json"), Manifest.MAX_BYTES)
 	var sig := Manifest.read_limited(dir.path_join("manifest.json.sig"), 64)
 	if not bytes.is_empty() and sig.size() == 64:
-		var v := Manifest.verify(bytes, sig, info.release_key, expect)
+		var v := Manifest.verify(bytes, sig, info.release_keys, expect, "standard", info.nightly_keys)
 		if v.ok:
 			return {"ok": true, "error": "", "manifest": v.manifest, "bytes": bytes, "sig": sig}
-	for need in ["manifest.json", "manifest.json.sig"]:
-		if not release.assets.has(need):
-			return {"ok": false, "error": "the release %s has no %s (not a launcher release)" % [release.tag, need]}
+	if not release.assets.has("manifest.json"):
+		return {"ok": false, "error": L10n.t("launcher.updater.no_manifest", {"tag": release.tag})}
+	if not release.assets.has("manifest.json.sig") and not release.assets.has("manifest.json.sig2"):
+		return {"ok": false, "error": L10n.t("launcher.updater.no_manifest_sig", {"tag": release.tag})}
 	var m := http.get_small(release.assets["manifest.json"].url, Manifest.MAX_BYTES)
 	if not m.ok or m.code != 200:
-		return {"ok": false, "error": "the manifest of %s could not be downloaded: %s" % [release.tag, m.error if not m.ok else "HTTP %d" % m.code]}
-	var s := http.get_small(release.assets["manifest.json.sig"].url, 64)
-	if not s.ok or s.code != 200:
-		return {"ok": false, "error": "the manifest signature of %s could not be downloaded: %s" % [release.tag, s.error if not s.ok else "HTTP %d" % s.code]}
-	var v := Manifest.verify(m.body, s.body, info.release_key, expect)
+		return {"ok": false, "error": L10n.t("launcher.updater.manifest_download", {"tag": release.tag, "why": m.error if not m.ok else L10n.t("launcher.updater.http_code", {"code": m.code})})}
+	var s := release_signature(release, "manifest.json", m.body, "standard")
+	if not s.ok:
+		return {"ok": false, "error": L10n.t("launcher.updater.release_rejected", {"tag": release.tag, "why": s.error})}
+	var v := Manifest.verify(m.body, s.sig, info.release_keys, expect, "standard", info.nightly_keys)
 	if not v.ok:
-		return {"ok": false, "error": "release %s rejected: %s" % [release.tag, v.error]}
+		return {"ok": false, "error": L10n.t("launcher.updater.release_rejected", {"tag": release.tag, "why": v.error})}
 	DirAccess.make_dir_recursive_absolute(dir)
 	_write(dir.path_join("manifest.json"), m.body)
-	_write(dir.path_join("manifest.json.sig"), s.body)
-	return {"ok": true, "error": "", "manifest": v.manifest, "bytes": m.body, "sig": s.body}
+	_write(dir.path_join("manifest.json.sig"), s.sig)
+	return {"ok": true, "error": "", "manifest": v.manifest, "bytes": m.body, "sig": s.sig}
+
+
+## lane SIGNKMS-1: the signature of the release file `name` (manifest.json / manifest-macos.json, its bytes `body`, checked in
+## `schema_mode`) from the release's two slots: `name`.sig (what every launcher reads) when it is there and valid under the trusted keys,
+## else `name`.sig2 (read by launchers with the key list only: the KMS envelope signature). Each slot is read with the 64-byte limit.
+## Whichever verified is what the caller stores, under the plain `name`.sig (caches, versions/<v>/, the launcher's proof, receipts).
+## {ok, error, sig, slot}; neither valid fails, naming both slots.
+func release_signature(release: Dictionary, name: String, body: PackedByteArray, schema_mode: String) -> Dictionary:
+	var tried := PackedStringArray()
+	for slot in [name + ".sig", name + ".sig2"]:
+		if not release.assets.has(slot):
+			tried.append(L10n.t("launcher.updater.slot_not_in_release", {"slot": slot}))
+			continue
+		var s := http.get_small(release.assets[slot].url, 64)
+		if not s.ok or s.code != 200:
+			tried.append(L10n.t("launcher.updater.slot_download_failed", {"slot": slot, "why": s.error if not s.ok else L10n.t("launcher.updater.http_code", {"code": s.code})}))
+		elif s.body.size() != 64:
+			tried.append(L10n.t("launcher.updater.slot_size", {"slot": slot, "size": s.body.size()}))
+		elif Manifest.signature_ok(body, s.body, info.release_keys, schema_mode, info.nightly_keys):
+			return {"ok": true, "error": "", "sig": s.body, "slot": slot}
+		else:
+			tried.append(L10n.t("launcher.updater.slot_not_valid", {"slot": slot}))
+	var why := Manifest.not_signed_error(info.release_keys) if Manifest.has_keys(info.release_keys) else L10n.t("launcher.updater.no_release_key")
+	return {"ok": false, "error": L10n.t("launcher.updater.signature_failed", {"why": why, "tried": "; ".join(tried)}), "sig": PackedByteArray(), "slot": ""}
 
 
 # ---- installed versions ------------------------------------------------------------------------------------------------------------------
@@ -538,24 +561,27 @@ func installed() -> Array:
 
 ## `full`: every file's size and SHA-256 against the signed manifest, and no other file (before Play); else that every file is there
 func verify_installed(name: String, full := false) -> Dictionary:
+	return _verify_install_at(data_dir.path_join("versions").path_join(name), name, full)
+
+
+func _verify_install_at(dir: String, name: String, full: bool) -> Dictionary:
 	if macos_preview():
-		return {"ok": false, "error": "Mac preview starts only its bundled game; updates are manual"}
+		return {"ok": false, "error": L10n.t("launcher.updater.preview_bundled_only")}
 	if not Semver.is_valid(name):
-		return {"ok": false, "error": "not a version folder"}
-	var dir := data_dir.path_join("versions").path_join(name)
+		return {"ok": false, "error": L10n.t("launcher.updater.not_version_folder")}
 	# MACPLAY-1: a Mac version folder holds the signed manifest-macos.json it was installed from (stored as manifest.json), "macos" schema
 	var v := Manifest.verify(Manifest.read_limited(dir.path_join("manifest.json"), Manifest.MAX_BYTES),
-		Manifest.read_limited(dir.path_join("manifest.json.sig"), 64), info.release_key, {"repo": info.repo},
-		"macos" if mac_platform() else "standard")
+		Manifest.read_limited(dir.path_join("manifest.json.sig"), 64), info.release_keys, {"repo": info.repo},
+		"macos" if mac_platform() else "standard", info.nightly_keys)
 	if not v.ok:
 		return {"ok": false, "error": v.error}
 	if v.manifest.version != name:
-		return {"ok": false, "error": "its manifest is for %s" % v.manifest.version}
+		return {"ok": false, "error": L10n.t("launcher.updater.manifest_is_for", {"version": v.manifest.version})}
 	if not v.manifest.assets.game.has(info.platform()):
-		return {"ok": false, "error": "its signed manifest has no %s package" % info.platform()}
+		return {"ok": false, "error": L10n.t("launcher.updater.manifest_no_package", {"platform": info.platform()})}
 	var files: Dictionary = v.manifest.assets.game[info.platform()].files
 	if not files.has(GAME_EXE[info.platform()]):
-		return {"ok": false, "error": "the package has no %s" % GAME_EXE[info.platform()]}
+		return {"ok": false, "error": L10n.t("launcher.updater.package_no_exe", {"file": GAME_EXE[info.platform()]})}
 	if full:
 		var why := MacOSUpdate.link_error(dir.path_join("game"), files) if mac_platform() else ""
 		if why == "":
@@ -569,7 +595,7 @@ func verify_installed(name: String, full := false) -> Dictionary:
 	# offers a fresh download (a version that silently vanished from the list would hide the change)
 	for rel in files:
 		if not FileAccess.file_exists(dir.path_join("game").path_join(rel)):
-			return {"ok": false, "error": "%s is missing" % rel}
+			return {"ok": false, "error": L10n.t("launcher.updater.file_missing", {"name": rel})}
 	return {"ok": true, "error": "", "manifest": v.manifest}
 
 
@@ -577,12 +603,12 @@ func verify_installed(name: String, full := false) -> Dictionary:
 static func same_files(got: Dictionary, signed: Dictionary) -> String:
 	for rel in signed:
 		if not got.has(rel):
-			return "%s is missing from the package" % rel
+			return L10n.t("launcher.updater.file_missing_from_package", {"name": rel})
 		if int(got[rel].size) != int(signed[rel].size) or got[rel].sha256 != signed[rel].sha256:
-			return "%s does not match the signed manifest" % rel
+			return L10n.t("launcher.updater.file_mismatch", {"name": rel})
 	for rel in got:
 		if not signed.has(rel):
-			return "%s is not in the signed manifest" % rel
+			return L10n.t("launcher.updater.file_not_in_manifest", {"name": rel})
 	return ""
 
 
@@ -610,15 +636,13 @@ func play_version() -> String:
 ## MACPLAY-1: why Play has nothing to start, and what the player can do (shown by Play and --play; never an empty answer)
 func no_game_reason() -> String:
 	if translocated != "":
-		return TRANSLOCATED_TEXT
+		return translocated_text()
 	var problem := bundled_problem()
 	if problem != "":
-		return ("The game beside the launcher is not the signed package (%s), and no verified version is installed. Download the " +
-			"package again from %s, or let the launcher download the game (Check for updates).") % [problem, releases_url()]
+		return L10n.t("launcher.updater.no_game_modified", {"problem": problem, "url": releases_url()})
 	if launcher_dir == "" and info.packaged:
-		return "No verified version is installed. The launcher downloads the newest one when it checks for updates (Check for updates)."
-	return ("No game is installed yet: there is no signed game beside the launcher and no verified version in the launcher's data " +
-		"folder. The launcher downloads the newest release when it checks for updates (Check for updates; it needs an internet connection).")
+		return L10n.t("launcher.updater.no_game_packaged")
+	return L10n.t("launcher.updater.no_game")
 
 
 ## the versions Play can start, newest first: the installed ones and the game beside the launcher ({version, path, bundled: true})
@@ -630,6 +654,36 @@ func playable() -> Array:
 		out.append({"version": b.version, "path": b.path, "bundled": true})
 		out.sort_custom(func(x, y): return Semver.compare(x.version, y.version) > 0)
 	return out
+
+
+func replay_builds() -> Array:
+	var out := []
+	for build in playable():
+		var commit := str(build.get("manifest", {}).get("commit", ""))
+		var version: String = build.version
+		var record := Manifest.read_limited(build.path.path_join("VERSION"), 4096).get_string_from_utf8()
+		for line in record.split("\n"):
+			if line.begins_with("commit "):
+				if build.get("bundled", false):
+					commit = line.substr(7).strip_edges()
+			elif line.begins_with("OpenBFME "):
+				version = line.substr(9)
+		out.append({"version": version, "commit": commit, "installed_version": build.version})
+	return out
+
+
+func open_replay(path: String) -> Dictionary:
+	return open_recording(path)
+
+
+func open_recording(path: String) -> Dictionary:
+	var absolute := path if path.is_absolute_path() else DirAccess.open(".").get_current_dir().path_join(path).simplify_path()
+	var replay := preload("res://scripts/core/replay_open.gd")
+	var builds := replay_builds()
+	var pick: Dictionary = replay.select_build(replay.read_header(absolute), builds)
+	if not pick.ok:
+		return pick
+	return play(pick.version, PackedStringArray(["--", pick.argument, absolute]))
 
 
 # ---- the game beside the launcher (lane ONEZIP-1) ----------------------------------------------------------------------------------------
@@ -673,10 +727,10 @@ func bundled() -> Dictionary:
 	if macos_preview():
 		var version_file := Manifest.read_limited(launcher_dir.path_join("VERSION"), 4096).get_string_from_utf8()
 		if version_file.get_slice("\n", 0).strip_edges() != "OpenBFME " + String(info.version):
-			_bundled_said = "the Mac preview VERSION does not match this launcher"
+			_bundled_said = L10n.t("launcher.updater.preview_version_mismatch")
 			return {}
 		if not FileAccess.file_exists(launcher_dir.path_join("OpenBFME.app/Contents/Resources/OpenBFME.pck")):
-			_bundled_said = "the bundled Mac preview game pack is missing"
+			_bundled_said = L10n.t("launcher.updater.preview_pack_missing")
 			return {}
 		return {"version": info.version, "path": launcher_dir, "files": {}}
 	# sizes first (Sol r2): nothing larger than the limits is read whole
@@ -686,18 +740,18 @@ func bundled() -> Dictionary:
 	var sig: PackedByteArray = sr.bytes
 	var key := bytes.hex_encode() + ":" + sig.hex_encode() + ":%d:%d" % [pr.size, sr.size]
 	if not _bundled_cache.has(key):
-		var v := Manifest.verify_payload(bytes, sig, info.release_key, {"repo": info.repo, "platform": info.platform()})
+		var v := Manifest.verify_payload(bytes, sig, info.release_keys, {"repo": info.repo, "platform": info.platform()}, info.nightly_keys)
 		if pr.size > Manifest.MAX_BYTES:
-			v = {"ok": false, "error": "%s is %d bytes (at most %d)" % [Manifest.PAYLOAD, pr.size, Manifest.MAX_BYTES]}
+			v = {"ok": false, "error": L10n.t("launcher.manifest.payload_too_big", {"file": Manifest.PAYLOAD, "size": pr.size, "limit": Manifest.MAX_BYTES})}
 		elif sr.size > 64:
-			v = {"ok": false, "error": "%s is %d bytes (an Ed25519 signature is 64)" % [Manifest.PAYLOAD_SIG, sr.size]}
+			v = {"ok": false, "error": L10n.t("launcher.manifest.payload_sig_size", {"file": Manifest.PAYLOAD_SIG, "size": sr.size})}
 		var why: String = v.error
 		if v.ok:
 			var first := FileAccess.get_file_as_string(launcher_dir.path_join("VERSION")).get_slice("\n", 0).strip_edges()
 			# the Mac package's VERSION line carries a label after the version ("OpenBFME v0.4.7 Mac Unstable Preview (Apple Silicon)")
 			var named := first.trim_prefix("OpenBFME ").get_slice(" ", 0) if mac_platform() and first.begins_with("OpenBFME ") else first
 			if (mac_platform() and named != String(v.payload.version)) or (not mac_platform() and first != "OpenBFME " + String(v.payload.version)):
-				why = "its VERSION file (%s) is not the signed version %s" % [first.left(60).c_escape(), v.payload.version]
+				why = L10n.t("launcher.updater.version_file_mismatch", {"found": first.left(60).c_escape(), "version": v.payload.version})
 		_bundled_cache = {key: {} if why != "" else {"version": v.payload.version, "path": launcher_dir, "files": v.payload.files}}
 		if why != "" and _bundled_said != why:
 			_bundled_said = why
@@ -724,10 +778,10 @@ func hold_for_start(version: String) -> Dictionary:
 		if glibc != "":
 			return {"ok": false, "error": glibc}
 	if not lock_versions():
-		return {"ok": false, "error": "another launcher holds the versions folder (%s)" % LOCK}
+		return {"ok": false, "error": L10n.t("launcher.updater.lock_held", {"lock": LOCK})}
 	if not verify_installed(version).ok:
 		unlock_versions()
-		return {"ok": false, "error": "it was removed or replaced while it was checked"}
+		return {"ok": false, "error": L10n.t("launcher.updater.removed_while_checked")}
 	return {"ok": true, "error": ""}
 
 
@@ -760,8 +814,8 @@ func check_bundled() -> Dictionary:
 		var error := bundled_problem()
 		if error != "":
 			return {"ok": false, "error": error}
-		return {"ok": false, "error": "there is no signed Mac package beside the launcher" if macos_updates_enabled() else
-			"the bundled Mac preview is missing or its VERSION does not match" if macos_preview() else "there is no signed game beside the launcher"}
+		return {"ok": false, "error": L10n.t("launcher.updater.no_signed_mac_package") if macos_updates_enabled() else
+			L10n.t("launcher.updater.preview_missing") if macos_preview() else L10n.t("launcher.updater.no_signed_game")}
 	if macos_preview():
 		Log.line("LAUNCHER Mac preview: starting the bundled game without signed-manifest verification; updates are manual")
 		return {"ok": true, "error": ""}
@@ -773,7 +827,7 @@ func check_bundled() -> Dictionary:
 			var verified := MacOSUpdate.signed_receipt(self, b.path)
 			return {"ok": verified.ok, "error": verified.error}
 		if macos_transaction or MacOSUpdate.transaction_locked(self):
-			return {"ok": false, "error": "a signed whole-package update is in progress"}
+			return {"ok": false, "error": L10n.t("launcher.updater.whole_update_running")}
 		# MACPLAY-1: every signed file by size and SHA-256 (the apps' code seals, _CodeSignature/CodeResources, are signed files too),
 		# then the seals themselves: codesign refuses a file added to or removed from an app (MACFIX-1: Finder / iCloud extended
 		# attributes are not refused, MacOSUpdate._codesign). Files outside the two apps that are not signed (Finder's .DS_Store) are
@@ -799,20 +853,20 @@ func check_launcher(dir: String, signed: Dictionary) -> String:
 	var exe: String = LAUNCHER_EXE[info.platform()]
 	var path := dir.path_join(exe)
 	if not FileAccess.file_exists(path):
-		return "%s is missing" % exe
+		return L10n.t("launcher.updater.file_missing", {"name": exe})
 	var d := DirAccess.open(dir)
 	if d != null and d.is_link(exe):
-		return "%s is a link, not the signed file" % exe
+		return L10n.t("launcher.updater.file_is_link", {"name": exe})
 	var sha := _sha256_of(path)
 	if not signed.is_empty() and sha == signed.sha256:
 		return ""
 	var v := Manifest.verify(Manifest.read_limited(dir.path_join(PROOF), Manifest.MAX_BYTES), Manifest.read_limited(dir.path_join(PROOF_SIG), 64),
-		info.release_key, {"repo": info.repo})
+		info.release_keys, {"repo": info.repo}, "standard", info.nightly_keys)
 	if v.ok:
 		var src := Manifest.launcher_source(v.manifest, info.platform(), exe)
 		if src.ok and sha == (src.file.sha256 if src.combined else String(src.asset.files.get(exe, {}).get("sha256", ""))):
 			return ""
-	return "%s is neither the package's nor a signed launcher update (%s)" % [exe, v.error if not v.ok else "its SHA-256 is not the signed one"]
+	return L10n.t("launcher.updater.not_package_nor_update", {"name": exe, "why": v.error if not v.ok else L10n.t("launcher.updater.sha_not_signed")})
 
 
 ## a confirmed launcher update in a combined package's folder: the signed manifest of its release beside it (PROOF), so check_launcher
@@ -823,7 +877,7 @@ func write_launcher_proof(dir: String, tag: String) -> bool:
 	var cache := data_dir.path_join("cache/manifests").path_join(tag)
 	var bytes := Manifest.read_limited(cache.path_join("manifest.json"), Manifest.MAX_BYTES)
 	var sig := Manifest.read_limited(cache.path_join("manifest.json.sig"), 64)
-	if not Manifest.verify(bytes, sig, info.release_key, {"repo": info.repo, "tag": tag}).ok:
+	if not Manifest.verify(bytes, sig, info.release_keys, {"repo": info.repo, "tag": tag}, "standard", info.nightly_keys).ok:
 		Log.line("LAUNCHER no verified manifest of %s to prove the launcher beside the game" % tag)
 		return false
 	for item in [[PROOF_SIG, sig], [PROOF, bytes]]:
@@ -847,22 +901,23 @@ static func _sha256_of(path: String) -> String:
 	return hc.finish().hex_encode()
 
 
-func _play_bundled(b: Dictionary, args: PackedStringArray) -> Dictionary:
+func _play_bundled(b: Dictionary, args: PackedStringArray, before_start := Callable()) -> Dictionary:
 	if macos_updates_enabled() and (macos_transaction or MacOSUpdate.transaction_locked(self)):
-		return {"ok": false, "pid": -1, "modified": false, "error": "a signed whole-package update is in progress"}
+		return {"ok": false, "pid": -1, "modified": false, "error": L10n.t("launcher.updater.whole_update_running")}
 	var c := check_bundled()
 	if not c.ok:
-		return {"ok": false, "pid": -1, "modified": true, "change": c.error, "error": ("%s (the game beside the launcher) is not the signed package " +
-			"(%s): it is not started; download it again (--install=%s, or Play to confirm)") % [b.version, c.error, b.version]}
+		return {"ok": false, "pid": -1, "modified": true, "change": c.error, "error": L10n.t("launcher.updater.bundled_not_signed", {"version": b.version, "why": c.error})}
 	var exe: String = String(b.path).path_join(GAME_EXE[info.platform()])
 	if info.os_name() == "Linux":
 		var glibc := GlibcCheck.check(b.path, OS.get_environment("OPENBFME_TEST_SYSTEM_GLIBC") if info.tests_allowed() else "")
 		if glibc != "":
-			return {"ok": false, "error": "%s cannot be started: %s" % [b.version, glibc], "pid": -1}
+			return {"ok": false, "error": L10n.t("launcher.updater.cannot_start", {"version": b.version, "why": glibc}), "pid": -1}
+	if before_start.is_valid() and not before_start.call():
+		return {"ok": false, "error": L10n.t("launcher.updater.launch_canceled"), "pid": -1, "stopped": true}
 	OS.set_environment(STARTED_BY_LAUNCHER, "1")
 	var pid := OS.create_process(exe, args)
 	if pid <= 0:
-		return {"ok": false, "error": "%s could not be started" % exe, "pid": -1}
+		return {"ok": false, "error": L10n.t("launcher.updater.exe_cannot_start", {"exe": exe}), "pid": -1}
 	Log.line("LAUNCHER started %s, the game beside the launcher (pid %d)" % [b.version, pid])
 	return {"ok": true, "error": "", "pid": pid}
 
@@ -874,24 +929,26 @@ func _play_bundled(b: Dictionary, args: PackedStringArray) -> Dictionary:
 func install(release: Dictionary, user_pick: bool) -> Dictionary:
 	# MACPLAY-1: a Mac launcher beside its verified package updates that package as a whole (DEVPORT-6's staged swap of both apps); a
 	# launcher with no verified game beside it (alone, or the package's inventory does not verify) installs the signed Mac package into
-	# versions/<v>/game like the Windows / Linux launchers. A translocated copy installs nothing (TRANSLOCATED_TEXT).
+	# versions/<v>/game like the Windows / Linux launchers. A translocated copy installs nothing (translocated_text).
 	if mac_swap_root():
 		var r := MacOSUpdate.new(self).install(release, user_pick)
 		r.swap = true
 		return r
 	if macos_updates_enabled() and translocated != "":
-		return {"ok": false, "error": TRANSLOCATED_TEXT, "version": ""}
+		return {"ok": false, "error": translocated_text(), "version": ""}
 	if macos_updates_unsupported():
-		return {"ok": false, "error": "macOS automated updates are unsupported; unpack a newer complete app bundle manually", "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.macos_unsupported_app_bundle"), "version": ""}
 	var newest := newest_installed()
 	if not user_pick and newest != "" and Semver.compare(release.tag, newest) <= 0:
-		return {"ok": false, "error": "%s is not newer than the installed %s: an automatic update never installs an older or the same version (pick it yourself to roll back)" % [release.tag, newest], "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.not_newer", {"tag": release.tag, "installed": newest}), "version": ""}
+	test_point("install-checked")
 	var mm := release_manifest(release)
 	if not mm.ok:
 		return {"ok": false, "error": mm.error, "version": ""}
+	test_point("manifest-verified")
 	var m: Dictionary = mm.manifest
 	if mm.get("no_entry", false) or not m.assets.game.has(info.platform()):
-		return {"ok": false, "error": "the release %s has no signed %s package (download a complete package from %s)" % [release.tag, info.platform(), releases_url()], "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.no_signed_package", {"tag": release.tag, "platform": info.platform(), "url": releases_url()}), "version": ""}
 	var asset: Dictionary = m.assets.game[info.platform()]
 	var got := fetch_asset(release, asset)
 	if not got.ok:
@@ -899,21 +956,23 @@ func install(release: Dictionary, user_pick: bool) -> Dictionary:
 	var root := data_dir.path_join("versions")
 	var partial := root.path_join(m.version + ".partial")
 	remove_tree(partial)
-	_report("Unpacking %s" % asset.name)
+	_report(L10n.t("launcher.updater.unpacking", {"name": asset.name}))
+	test_point("install-unpacking")
 	var x := Archive.extract(got.path, "zip" if asset.name.ends_with(".zip") else "tar.gz", Manifest.top_folder(asset.name), partial.path_join("game"))
 	if not x.ok:
 		remove_tree(partial)
-		return {"ok": false, "error": "%s was not installed: %s" % [m.version, x.error], "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.not_installed", {"version": m.version, "why": x.error}), "version": ""}
 	var differ := same_files(x.files, asset.files)
 	if differ == "" and mac_platform():
 		differ = _mac_ready(partial.path_join("game"))
 	if differ != "":
 		remove_tree(partial)
-		return {"ok": false, "error": "%s was not installed: %s" % [m.version, differ], "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.not_installed", {"version": m.version, "why": differ}), "version": ""}
+	test_point("install-extracted")
 	for item in [["manifest.json", mm.bytes], ["manifest.json.sig", mm.sig]]:
 		if not _write(partial.path_join(item[0]), item[1]):
 			remove_tree(partial)
-			return {"ok": false, "error": "%s was not installed: writing %s failed (is the disk full?)" % [m.version, item[0]], "version": ""}
+			return {"ok": false, "error": L10n.t("launcher.updater.not_installed_write", {"version": m.version, "file": item[0]}), "version": ""}
 	test_point("install-unpacked")
 	# replacing an installed folder (Sol r1: the old code deleted it before its replacement was in place): the installed folder is set
 	# aside as <v>.old, the new one renamed into place, and only then the old one removed; recover() completes or undoes this after a
@@ -922,11 +981,11 @@ func install(release: Dictionary, user_pick: bool) -> Dictionary:
 	# version whose game runs is never replaced
 	if not lock_versions():
 		remove_tree(partial)
-		return {"ok": false, "error": "%s was not installed: another launcher holds the versions folder (%s)" % [m.version, LOCK], "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.not_installed_lock", {"version": m.version, "lock": LOCK}), "version": ""}
 	if m.version in running():
 		unlock_versions()
 		remove_tree(partial)
-		return {"ok": false, "error": "%s is being played: close the game, then install it again" % m.version, "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.being_played", {"version": m.version}), "version": ""}
 	var final := root.path_join(m.version)
 	var aside := root.path_join(m.version + ".old")
 	var had := DirAccess.dir_exists_absolute(final)
@@ -934,24 +993,29 @@ func install(release: Dictionary, user_pick: bool) -> Dictionary:
 		if DirAccess.rename_absolute(final, aside) != OK:
 			unlock_versions()
 			remove_tree(partial)
-			return {"ok": false, "error": "%s is installed and could not be replaced (is the game running?)" % m.version, "version": ""}
+			return {"ok": false, "error": L10n.t("launcher.updater.not_replaced", {"version": m.version}), "version": ""}
 		test_point("install-aside")
 	if DirAccess.rename_absolute(partial, final) != OK:
+		var why := L10n.t("launcher.updater.not_moved", {"version": m.version})
 		if had:
-			DirAccess.rename_absolute(aside, final)
+			if DirAccess.rename_absolute(aside, final) != OK:
+				why = L10n.t("launcher.updater.not_moved_kept", {"version": m.version})
 		unlock_versions()
 		remove_tree(partial)
-		return {"ok": false, "error": "%s could not be moved into place" % m.version, "version": ""}
+		return {"ok": false, "error": why, "version": ""}
 	test_point("install-placed")
 	if had:
 		remove_tree(aside)
 	DirAccess.remove_absolute(got.path)
+	test_point("install-committed")
 	Log.line("LAUNCHER installed %s (%s, %d files)" % [m.version, asset.name, x.files.size()])
 	if user_pick:
 		set_selected(m.version)
 	else:
 		set_selected("")  # a new build replaces an earlier rollback pick
+	test_point("install-selected")
 	_prune_locked()
+	test_point("install-pruned")
 	unlock_versions()
 	return {"ok": true, "error": "", "version": m.version}
 
@@ -963,7 +1027,7 @@ func install(release: Dictionary, user_pick: bool) -> Dictionary:
 func _mac_ready(root: String) -> String:
 	var why := MacOSUpdate._verify_apps(root)
 	if why == "" and not MacOSUpdate._clear_tree_quarantine(root):
-		why = "the download quarantine could not be removed from the unpacked package"
+		why = L10n.t("launcher.updater.quarantine_not_removed")
 	if why == "":
 		why = MacOSUpdate._verify_apps(root)
 	return why
@@ -973,7 +1037,7 @@ func _mac_ready(root: String) -> String:
 ## the next attempt starts over (never a half-verified state).
 func fetch_asset(release: Dictionary, asset: Dictionary) -> Dictionary:
 	if not release.assets.has(asset.name):
-		return {"ok": false, "error": "the release %s has no asset %s" % [release.tag, asset.name]}
+		return {"ok": false, "error": L10n.t("launcher.updater.no_asset", {"tag": release.tag, "name": asset.name})}
 	var dl := data_dir.path_join("downloads")
 	DirAccess.make_dir_recursive_absolute(dl)
 	var part := dl.path_join(asset.name + ".part")
@@ -985,20 +1049,22 @@ func fetch_asset(release: Dictionary, asset: Dictionary) -> Dictionary:
 	var started := Time.get_ticks_msec()
 	var r := http.download(release.assets[asset.name].url, part, asset.size, func(done: int, total: int) -> void:
 		var secs := maxf(0.001, (Time.get_ticks_msec() - started) / 1000.0)
-		_report("Downloading %s" % asset.name, done, total)
+		_report(L10n.t("launcher.updater.downloading", {"name": asset.name}), done, total)
+		test_point("asset-downloading")
 		if done == total:
 			Log.line("LAUNCHER downloaded %s: %d bytes in %.1f s" % [asset.name, total, secs]))
 	if r.resumed > 0:
 		Log.line("LAUNCHER resumed %s at %d bytes" % [asset.name, r.resumed])
 	if not r.ok:
-		return {"ok": false, "error": "%s: %s" % [asset.name, r.error]}
-	_report("Checking %s" % asset.name)
+		return {"ok": false, "error": L10n.t("launcher.updater.asset_error", {"name": asset.name, "why": r.error})}
+	test_point("asset-downloaded")
+	_report(L10n.t("launcher.updater.checking", {"name": asset.name}))
 	var f := FileAccess.open(part, FileAccess.READ)
 	if f == null or f.get_length() != asset.size:
 		var got := -1 if f == null else f.get_length()
 		f = null
 		DirAccess.remove_absolute(part)
-		return {"ok": false, "error": "%s has %d bytes, the signed manifest says %d: deleted" % [asset.name, got, asset.size]}
+		return {"ok": false, "error": L10n.t("launcher.updater.asset_wrong_size", {"name": asset.name, "actual": got, "expected": asset.size})}
 	var hc := HashingContext.new()
 	hc.start(HashingContext.HASH_SHA256)
 	while f.get_position() < f.get_length():
@@ -1008,7 +1074,8 @@ func fetch_asset(release: Dictionary, asset: Dictionary) -> Dictionary:
 	if digest != asset.sha256:
 		DirAccess.remove_absolute(part)
 		DirAccess.remove_absolute(meta)
-		return {"ok": false, "error": "%s does not match the signed manifest (SHA-256 %s, expected %s): deleted, nothing was installed" % [asset.name, digest, asset.sha256]}
+		return {"ok": false, "error": L10n.t("launcher.updater.asset_hash_mismatch", {"name": asset.name, "digest": digest, "expected": asset.sha256})}
+	test_point("asset-verified")
 	DirAccess.remove_absolute(meta)
 	return {"ok": true, "error": "", "path": part}
 
@@ -1036,19 +1103,37 @@ func _recover_locked(root: String) -> void:
 			remove_tree(root.path_join(name))
 		elif name.ends_with(".old"):
 			var v := name.trim_suffix(".old")
-			if DirAccess.dir_exists_absolute(root.path_join(v)) and verify_installed(v).ok:
+			var final := root.path_join(v)
+			var aside := root.path_join(name)
+			if DirAccess.dir_exists_absolute(final) and verify_installed(v, true).ok:
 				Log.line("LAUNCHER finished replacing %s (removed the previous copy)" % v)
-				remove_tree(root.path_join(name))
-			elif not DirAccess.dir_exists_absolute(root.path_join(v)):
-				DirAccess.rename_absolute(root.path_join(name), root.path_join(v))
-				Log.line("LAUNCHER restored %s: replacing it was interrupted" % v)
+				remove_tree(aside)
+			elif _verify_install_at(aside, v, true).ok:
+				var partial := root.path_join(v + ".partial")
+				remove_tree(partial)
+				var had := DirAccess.dir_exists_absolute(final) or FileAccess.file_exists(final)
+				if had and DirAccess.rename_absolute(final, partial) != OK:
+					Log.line("LAUNCHER could not restore %s: the replacement could not be set aside (is the folder writable?); the previous copy is kept" % v)
+					continue
+				if DirAccess.rename_absolute(aside, final) == OK:
+					remove_tree(partial)
+					Log.line("LAUNCHER restored %s: replacing it was interrupted" % v)
+				else:
+					if had:
+						DirAccess.rename_absolute(partial, final)
+					Log.line("LAUNCHER could not restore %s (is the folder writable?); the previous copy is kept for the next start" % v)
+			else:
+				Log.line("LAUNCHER cannot recover %s: neither copy verifies against its signed manifest; both are kept" % v)
 
 
 ## Test builds only (BuildInfo.tests_allowed): --test-kill-at=<point> kills this process abruptly at that point, for the crash tests.
 static var kill_at := ""
+static var test_hook := Callable()
 
 
 static func test_point(name: String) -> void:
+	if test_hook.is_valid():
+		test_hook.call(name)
 	if kill_at == name:
 		Log.line("LAUNCHER test kill at " + name)
 		if OS.get_name() == "macOS":
@@ -1089,14 +1174,24 @@ func _prune_locked() -> void:
 ## a fresh download ({modified: true}).
 ## lane ONEZIP-1: `before_start` (optional) is asked right before the process is started, after every check: false stops the start
 ## ({ok: false, stopped: true}; the game that asked for this start went on by itself, main.gd --game-start).
+## Lane MODS-3: with RotWK (not BFME1, which mounts no mods), the mod picked in Mods (user://mods/active.cfg) is passed as --mod-install= /
+## --mod= (scripts/core/mod_install.gd active_args); a picked mod that cannot be started is an error, never a start without it.
 func game_arguments(args: PackedStringArray = PackedStringArray()) -> Dictionary:
 	args = args.duplicate()
-	if get_state("launcher", "game", "bfme2") == "bfme1" and not Array(args).any(func(a): return a.begins_with("--online-")):
+	if get_state("launcher", "game", "bfme2") == "bfme1" and not Array(args).any(func(a): return a.begins_with("--online-") or a == "--replay" or a.begins_with("--replay=")):
 		var folder := Paths.bfme1_folder()
 		if folder.is_empty():
-			return {"ok": false, "error": "BFME1 assets were not found. Download the games from Game files, or set BFME1_INSTALL."}
+			return {"ok": false, "error": L10n.t("launcher.updater.no_bfme1")}
 		if not "--" in args: args.append("--")
 		args.append_array(PackedStringArray(["--game=bfme1", "--bfme1-install=" + folder]))
+	elif get_state("launcher", "game", "bfme2") != "bfme1":
+		var mod := ModInstall.active_args(data_dir.path_join("mods"))
+		if not mod.ok:
+			return {"ok": false, "error": mod.error}
+		if not mod.args.is_empty():
+			if not "--" in args: args.append("--")
+			args.append_array(mod.args)
+			Log.line("LAUNCHER the game starts with the mod %s (%s)" % [mod.name, " ".join(mod.args)])
 	return {"ok": true, "args": args}
 
 
@@ -1105,14 +1200,14 @@ func play(version: String, args: PackedStringArray = PackedStringArray(), before
 	if not launch.ok:
 		return {"ok": false, "pid": -1, "error": launch.error}
 	args = launch.args
-	_report("Checking %s" % version)
+	_report(L10n.t("launcher.updater.checking", {"name": version}))
 	if plays_bundled(version):
-		return _play_bundled(bundled(), args)
+		return _play_bundled(bundled(), args, before_start)
 	var v := verify_installed(version, true)
 	if not v.ok:
-		var why := "%s cannot be started: %s" % [version, v.error]
+		var why := L10n.t("launcher.updater.cannot_start", {"version": version, "why": v.error})
 		if v.get("modified", false):
-			why = "%s was changed after it was installed (%s): it is not started; download it again (--install=%s, or Play to confirm)" % [version, v.error, version]
+			why = L10n.t("launcher.updater.changed_after_install", {"version": version, "why": v.error})
 		return {"ok": false, "error": why, "pid": -1, "modified": v.get("modified", false), "change": v.error}
 	var exe := data_dir.path_join("versions").path_join(version).path_join("game").path_join(GAME_EXE[info.platform()])
 	if info.os_name() == "Linux":
@@ -1121,22 +1216,22 @@ func play(version: String, args: PackedStringArray = PackedStringArray(), before
 		# (OPENBFME_TEST_SYSTEM_GLIBC: the system's version as tools/release/test_launcher.py sets it; test builds only)
 		var glibc := GlibcCheck.check(exe.get_base_dir(), OS.get_environment("OPENBFME_TEST_SYSTEM_GLIBC") if info.tests_allowed() else "")
 		if glibc != "":
-			return {"ok": false, "error": "%s cannot be started: %s" % [version, glibc], "pid": -1}
+			return {"ok": false, "error": L10n.t("launcher.updater.cannot_start", {"version": version, "why": glibc}), "pid": -1}
 	# lane UI-5 (Sol r1): started and recorded under the versions lock, so no install or prune (of this or another launcher) removes or
 	# replaces the version between the check and the record; the full check above stays outside (it reads every file)
 	if not lock_versions():
-		return {"ok": false, "error": "%s was not started: another launcher holds the versions folder (%s)" % [version, LOCK], "pid": -1}
+		return {"ok": false, "error": L10n.t("launcher.updater.not_started_lock", {"version": version, "lock": LOCK}), "pid": -1}
 	if not verify_installed(version).ok:
 		unlock_versions()
-		return {"ok": false, "error": "%s was removed or replaced while it was checked: press Play again" % version, "pid": -1}
+		return {"ok": false, "error": L10n.t("launcher.updater.removed_replaced_press_play", {"version": version}), "pid": -1}
 	if before_start.is_valid() and not before_start.call():
 		unlock_versions()
-		return {"ok": false, "error": "%s was not started: the game that asked for it went on by itself" % version, "pid": -1, "stopped": true}
+		return {"ok": false, "error": L10n.t("launcher.updater.not_started_went_on", {"version": version}), "pid": -1, "stopped": true}
 	OS.set_environment(STARTED_BY_LAUNCHER, "1")
 	var pid := OS.create_process(exe, args)
 	if pid <= 0:
 		unlock_versions()
-		return {"ok": false, "error": "%s could not be started" % exe, "pid": -1}
+		return {"ok": false, "error": L10n.t("launcher.updater.exe_cannot_start", {"exe": exe}), "pid": -1}
 	Log.line("LAUNCHER started %s (pid %d)" % [version, pid])
 	var runs := _live_runs()
 	var pids: Array = runs.get(version, [])
@@ -1270,25 +1365,25 @@ func launcher_update_available(release: Dictionary) -> bool:
 func stage_self_update(release: Dictionary) -> Dictionary:
 	if macos_updates_enabled() and not mac_swap_root():
 		var notice := mac_launcher_notice(release)
-		return {"ok": true, "error": "", "staged": "", "why": notice if notice != "" else "the launcher is up to date (%s)" % release_version()}
+		return {"ok": true, "error": "", "staged": "", "why": notice if notice != "" else L10n.t("launcher.updater.launcher_up_to_date", {"version": release_version()})}
 	if macos_updates_enabled():
 		return MacOSUpdate.new(self).stage_self_update(release)
 	if macos_updates_unsupported():
-		return {"ok": false, "error": "macOS launcher self-update is unsupported; replace both app bundles manually", "staged": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.macos_launcher_unsupported"), "staged": ""}
 	if launcher_dir == "":
-		return {"ok": true, "error": "", "staged": "", "why": "this launcher has no folder of its own (a development run, or one out of an installed version): it does not update itself"}
+		return {"ok": true, "error": "", "staged": "", "why": L10n.t("launcher.updater.no_own_folder")}
 	if not Semver.is_valid(info.version):
-		return {"ok": true, "error": "", "staged": "", "why": "this launcher's version %s is not a release version: it does not update itself" % info.version}
+		return {"ok": true, "error": "", "staged": "", "why": L10n.t("launcher.updater.not_release_version", {"version": info.version})}
 	if Semver.compare(release.tag, info.version) <= 0:
-		return {"ok": true, "error": "", "staged": "", "why": "the launcher is up to date (%s)" % info.version}
+		return {"ok": true, "error": "", "staged": "", "why": L10n.t("launcher.updater.launcher_up_to_date", {"version": info.version})}
 	if release.tag in get_state("launcher", "rejected_launcher", []):
-		return {"ok": true, "error": "", "staged": "", "why": "the launcher %s failed to start before and is not installed again automatically" % release.tag}
+		return {"ok": true, "error": "", "staged": "", "why": L10n.t("launcher.updater.launcher_failed_before", {"tag": release.tag})}
 	var staged := launcher_dir.path_join("update")
 	if FileAccess.get_file_as_string(staged.path_join("VERSION.launcher")).strip_edges() == release.tag:
-		return {"ok": true, "error": "", "staged": release.tag, "why": "already staged"}
+		return {"ok": true, "error": "", "staged": release.tag, "why": L10n.t("launcher.updater.already_staged")}
 	var probe := launcher_dir.path_join("update.partial")
 	if DirAccess.make_dir_recursive_absolute(probe) != OK:
-		return {"ok": false, "error": "the launcher's folder %s is not writable: the launcher cannot update itself there (move it to a folder you can write to); game updates still work" % launcher_dir, "staged": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.folder_not_writable", {"folder": launcher_dir}), "staged": ""}
 	DirAccess.remove_absolute(probe)
 	var mm := release_manifest(release)
 	if not mm.ok:
@@ -1308,19 +1403,21 @@ func stage_self_update(release: Dictionary) -> Dictionary:
 	var x := Archive.extract(got.path, "zip" if asset.name.ends_with(".zip") else "tar.gz", Manifest.top_folder(asset.name), partial)
 	if not x.ok:
 		remove_tree(partial)
-		return {"ok": false, "error": "the launcher %s was not staged: %s" % [release.tag, x.error], "staged": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.launcher_not_staged", {"tag": release.tag, "why": x.error}), "staged": ""}
 	var differ := same_files(x.files, asset.files)
 	for f in launcher_files():
 		if differ == "" and not x.files.has(f):
-			differ = "the package has no %s" % f
+			differ = L10n.t("launcher.updater.package_no_exe", {"file": f})
 	if differ != "":
 		remove_tree(partial)
-		return {"ok": false, "error": "the launcher %s was not staged: %s" % [release.tag, differ], "staged": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.launcher_not_staged", {"tag": release.tag, "why": differ}), "staged": ""}
+	test_point("self-unpacked")
 	if not _write(partial.path_join("VERSION.launcher"), (release.tag + "\n").to_utf8_buffer()) \
 			or DirAccess.rename_absolute(partial, staged) != OK:
 		remove_tree(partial)
-		return {"ok": false, "error": "the launcher %s could not be staged in %s (is the folder writable?)" % [release.tag, launcher_dir], "staged": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.launcher_stage_failed", {"tag": release.tag, "folder": launcher_dir}), "staged": ""}
 	DirAccess.remove_absolute(got.path)
+	test_point("self-staged")
 	Log.line("LAUNCHER staged the launcher %s; it replaces this one on the next start" % release.tag)
 	return {"ok": true, "error": "", "staged": release.tag}
 
@@ -1341,12 +1438,12 @@ func _stage_from_package(release: Dictionary, src: Dictionary) -> Dictionary:
 			return {"ok": false, "error": got.error, "staged": ""}
 		unpacked = data_dir.path_join("downloads").path_join(Manifest.top_folder(asset.name) + ".unpack")
 		remove_tree(unpacked)
-		_report("Unpacking %s" % asset.name)
+		_report(L10n.t("launcher.updater.unpacking", {"name": asset.name}))
 		var x := Archive.extract(got.path, "zip" if asset.name.ends_with(".zip") else "tar.gz", Manifest.top_folder(asset.name), unpacked)
 		var differ: String = x.error if not x.ok else same_files(x.files, asset.files)
 		if differ != "":
 			remove_tree(unpacked)
-			return {"ok": false, "error": "the launcher %s was not staged: %s" % [release.tag, differ], "staged": ""}
+			return {"ok": false, "error": L10n.t("launcher.updater.launcher_not_staged", {"tag": release.tag, "why": differ}), "staged": ""}
 		from = unpacked.path_join(exe)
 		downloaded = got.path
 	var staged := launcher_dir.path_join("update")
@@ -1355,21 +1452,24 @@ func _stage_from_package(release: Dictionary, src: Dictionary) -> Dictionary:
 	remove_tree(staged)
 	var why := ""
 	if DirAccess.make_dir_recursive_absolute(partial) != OK or DirAccess.copy_absolute(from, partial.path_join(exe)) != OK:
-		why = "it could not be copied into %s (is the folder writable, is the disk full?)" % launcher_dir
+		why = L10n.t("launcher.updater.copy_failed", {"folder": launcher_dir})
 	else:
 		why = Manifest.check_files(partial, {exe: src.file})
 	if unpacked != "":
 		remove_tree(unpacked)
 	if why == "" and OS.get_name() != "Windows":
 		FileAccess.set_unix_permissions(partial.path_join(exe), 493)  # rwxr-xr-x
+	if why == "":
+		test_point("self-unpacked")
 	if why == "" and (not _write(partial.path_join("VERSION.launcher"), (release.tag + "\n").to_utf8_buffer()) \
 			or DirAccess.rename_absolute(partial, staged) != OK):
-		why = "it could not be staged in %s (is the folder writable?)" % launcher_dir
+		why = L10n.t("launcher.updater.stage_failed", {"folder": launcher_dir})
 	if why != "":
 		remove_tree(partial)
-		return {"ok": false, "error": "the launcher %s was not staged: %s" % [release.tag, why], "staged": ""}
+		return {"ok": false, "error": L10n.t("launcher.updater.launcher_not_staged", {"tag": release.tag, "why": why}), "staged": ""}
 	if downloaded != "":
 		DirAccess.remove_absolute(downloaded)
+	test_point("self-staged")
 	Log.line("LAUNCHER staged the launcher %s (from the package %s); it replaces this one on the next start" % [release.tag, asset.name])
 	return {"ok": true, "error": "", "staged": release.tag}
 
@@ -1380,8 +1480,7 @@ func _stage_from_package(release: Dictionary, src: Dictionary) -> Dictionary:
 func mac_launcher_notice(release: Dictionary) -> String:
 	if not mac_platform() or not Semver.is_valid(release_version()) or Semver.compare(release.tag, release_version()) <= 0:
 		return ""
-	return ("A new launcher %s is available. This launcher does not replace itself when OpenBFME.app is not beside it: download the Mac " +
-		"package from %s and keep its two apps together.") % [release.tag, releases_url()]
+	return L10n.t("launcher.updater.mac_launcher_notice", {"tag": release.tag, "url": releases_url()})
 
 
 ## the release assets a job downloads for these kinds ("game", "launcher"), for Pause / Cancel (main.gd): a combined package is the
@@ -1405,9 +1504,9 @@ func asset_names(manifest: Dictionary, kinds: Array) -> Array:
 func check_staged(dir: String, tag: String) -> Dictionary:
 	var cache := data_dir.path_join("cache/manifests").path_join(tag)
 	var v := Manifest.verify(Manifest.read_limited(cache.path_join("manifest.json"), Manifest.MAX_BYTES),
-		Manifest.read_limited(cache.path_join("manifest.json.sig"), 64), info.release_key, {"repo": info.repo, "tag": tag})
+		Manifest.read_limited(cache.path_join("manifest.json.sig"), 64), info.release_keys, {"repo": info.repo, "tag": tag}, "standard", info.nightly_keys)
 	if not v.ok:
-		return {"ok": false, "error": "no verified manifest for the staged launcher %s (%s)" % [tag, v.error]}
+		return {"ok": false, "error": L10n.t("launcher.updater.staged_no_manifest", {"tag": tag, "why": v.error})}
 	var exe: String = launcher_files()[0]
 	var src := Manifest.launcher_source(v.manifest, info.platform(), exe)
 	if not src.ok:
@@ -1415,10 +1514,10 @@ func check_staged(dir: String, tag: String) -> Dictionary:
 	# lane ONEZIP-1: a combined package: the one staged file is the package's signed launcher executable
 	var files: Dictionary = {exe: src.file} if src.combined else src.asset.files
 	if not files.has(exe):
-		return {"ok": false, "error": "the signed launcher package %s has no %s" % [tag, exe]}
+		return {"ok": false, "error": L10n.t("launcher.updater.signed_package_no_file", {"tag": tag, "file": exe})}
 	var why := Manifest.check_files(dir.path_join("update"), files, ["VERSION.launcher"])
 	if why != "":
-		return {"ok": false, "error": "the staged launcher %s is not the signed one: %s" % [tag, why]}
+		return {"ok": false, "error": L10n.t("launcher.updater.staged_not_signed", {"tag": tag, "why": why})}
 	return {"ok": true, "error": "", "new_sha256": files[exe].sha256}
 
 
@@ -1435,7 +1534,7 @@ static func _write(path: String, bytes: PackedByteArray) -> bool:
 		return false
 	var ok := f.store_buffer(bytes)
 	f.flush()
-	ok = ok and f.get_error() == OK
+	ok = ok and f.get_error() == OK and f.get_length() == bytes.size()
 	f.close()
 	return ok
 

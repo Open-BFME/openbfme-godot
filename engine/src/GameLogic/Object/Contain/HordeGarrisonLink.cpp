@@ -61,6 +61,18 @@ void HordeContain::releaseMemberForGarrison(Object *member)
 void HordeContain::forgetMemberOnTheWay(ObjectID id)
 {
 	m_garrisonEntering.erase(id);
+	// lane BANNER-1: the banner carrier lost on its way (S-1620 inference, as the slot below: RW 0x87370B calls RW 0x871915)
+	if (id == m_bannerCarrier)
+	{
+		if (const Object *member = getObject()->logic().findObjectByID(id))
+		{
+			bannerCarrierRemoved(*member);
+		}
+		else
+		{
+			m_bannerCarrier = 0;
+		}
+	}
 	if (m_core->slotOf(id) >= 0)
 	{
 		// S-1620 inference: RW 0x87370B's release of the slot (no member template flag: the object may be gone)

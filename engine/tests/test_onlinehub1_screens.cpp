@@ -6,6 +6,7 @@
 // where the movie has one. The tests SKIP LOUDLY where Node.js, Python 3, the retail installs or POSIX processes are missing.
 
 #include "doctest.h"
+#include "OnlineTestWait.h"
 #include "TestChild.h"
 
 #include "Common/MiniJson.h"
@@ -44,6 +45,7 @@
 #include <csignal>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #define HUB_POSIX 1
@@ -86,6 +88,9 @@ Answer http(int port, const std::string &method, const std::string &path, const 
 		a.error = "connection refused";
 		return a;
 	}
+	const timeval timeout{ 60, 0 };
+	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 	std::string req = method + " " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Type: application/json\r\n";
 	if (!token.empty())
 	{
@@ -241,8 +246,10 @@ struct ServiceProcess
 				setenv("LOBBY_DATA", (dir / "data").string().c_str(), 1);
 			}
 			const std::string log = (dir / "service.log").string();
-			freopen(log.c_str(), "w", stdout);
-			freopen(log.c_str(), "a", stderr);
+			if (!freopen(log.c_str(), "w", stdout) || !freopen(log.c_str(), "a", stderr))
+			{
+				_exit(126);
+			}
 			std::vector<char *> cargv;
 			for (std::string &a : argv)
 			{
@@ -252,23 +259,28 @@ struct ServiceProcess
 			execvp(argv[0].c_str(), cargv.data());
 			_exit(127);
 		}
-		for (int i = 0; i < 200; ++i)
+		const bool ready = onlinetest::waitUntil([&] { return http(port, "GET", "/v1/health", "").status == 200; });
+		if (!ready)
 		{
-			if (http(port, "GET", "/v1/health", "").status == 200)
-			{
-				return;
-			}
-			NetSleepMilliseconds(50);
+			stop();
 		}
+		std::ifstream serviceLog(dir / "service.log");
+		const std::string output((std::istreambuf_iterator<char>(serviceLog)), std::istreambuf_iterator<char>());
+		REQUIRE_MESSAGE(ready, "service did not become healthy: ", output);
 	}
-	~ServiceProcess()
+	void stop()
 	{
 		if (pid > 0)
 		{
 			kill(pid, SIGTERM);
 			int st = 0;
 			waitpid(pid, &st, 0);
+			pid = -1;
 		}
+	}
+	~ServiceProcess()
+	{
+		stop();
 		std::error_code ec;
 		std::filesystem::remove_all(dir, ec);
 	}
@@ -618,21 +630,15 @@ struct HubPlayer
 	}
 };
 
-bool runUntil(std::vector<HubPlayer *> ps, const std::function<bool()> &done, int limit = 600)
+bool runUntil(std::vector<HubPlayer *> ps, const std::function<bool()> &done)
 {
-	for (int i = 0; i < limit; ++i)
-	{
+	return onlinetest::waitUntil([&] {
 		for (HubPlayer *p : ps)
 		{
 			p->tick(1);
 		}
-		if (done())
-		{
-			return true;
-		}
-		NetSleepMilliseconds(5);
-	}
-	return false;
+		return done();
+	}, std::chrono::milliseconds(5));
 }
 
 void signIn(HubPlayer &p, const std::u16string &name)
@@ -647,13 +653,13 @@ void signIn(HubPlayer &p, const std::u16string &name)
 			}
 		}
 		return false;
-	}, 300), p.notes());
+	}), p.notes());
 	// lane ONLINEUX-1: typed as a player types it: the page's Login button follows the nickname (RW 0x97A668: enabled only with a printable
 	// character, told by the combo's text change), so a name put in without typing leaves Login as the empty field left it
 	GadgetComboBoxSetText(p.sh->nicknameWindow(), u"");
 	starttest::typeText(p.fx, GadgetComboBoxGetEditBox(p.sh->nicknameWindow()), name);
 	REQUIRE(p.clickWhenShown("Login.LogIn"));
-	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.client.signedIn() && p.sh->currentPage() == "OnlineHome"; }, 300), p.notes());
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.client.signedIn() && p.sh->currentPage() == "OnlineHome"; }), p.notes());
 	p.tick(30);
 }
 
@@ -663,13 +669,13 @@ void nav(HubPlayer &p, const std::string &button, const std::string &page)
 	AptButtonInst *b = starttest::firstButtonIn(p.at("Toggles.ButtonNav." + button));
 	REQUIRE_MESSAGE(b, button);
 	starttest::clickButton(p.fx, *b);
-	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == page; }, 600), p.notes());
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == page; }), p.notes());
 }
 
 void openTournamentPage(HubPlayer &p)
 {
 	nav(p, "QuickMatch", "OnlineQuickMatch");
-	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.hubPage().sideCombo() && p.hubPage().sizeCombo() && p.hubPage().colorCombo(); }, 600), p.notes());
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.hubPage().sideCombo() && p.hubPage().sizeCombo() && p.hubPage().colorCombo(); }), p.notes());
 	p.tick(20);
 }
 
@@ -684,9 +690,21 @@ std::vector<std::string> listColumn(GameWindow *list, int column)
 }
 } // namespace
 
+// lane ONLINEMENU-1 (2026-10-27): a gate host with node and the peer / relay programs sets OPENBFME_REQUIRE_LOBBY_E2E=1:
+// there a missing piece FAILS the case instead of skipping it (the real-lobby cases skipped on every gate for days, unseen)
+bool hubE2eRequired()
+{
+	const char *v = std::getenv("OPENBFME_REQUIRE_LOBBY_E2E");
+	return v && std::string(v) == "1";
+}
+
 #define HUB_REQUIRE_TOOLS()                                                                                                                        \
 	if (!haveTools())                                                                                                                              \
 	{                                                                                                                                              \
+		if (hubE2eRequired())                                                                                                                      \
+		{                                                                                                                                          \
+			FAIL("OPENBFME_REQUIRE_LOBBY_E2E=1 but Node.js, Python 3, the lobby server or fake_server.py is missing here");                     \
+		}                                                                                                                                          \
 		MESSAGE("SKIP LOUDLY: Node.js, Python 3, the lobby server or tools/platform_fake/fake_server.py is missing here, so the TOURNAMENT / STATS page " \
 				"tests did not run");                                                                                                              \
 		return;                                                                                                                                    \
@@ -716,9 +734,9 @@ int tournamentRow(HubPlayer &p, const std::string &name)
 // the player's double click on a tournament: the first reads its detail, then the action
 void selectAndWait(HubPlayer &p, const std::string &name)
 {
-	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return tournamentRow(p, name) >= 0; }, 600), p.notes()); // tolerance: a row index or a count; -1 / 1 is "not shown yet", the exact rows are asserted next
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return tournamentRow(p, name) >= 0; }), p.notes()); // tolerance: a row index or a count; -1 / 1 is "not shown yet", the exact rows are asserted next
 	p.hubPage().chooseTournament(tournamentRow(p, name));
-	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.platform.tournamentKnown() && p.platform.tournament().info.name == name && p.hubPage().detailRows().size() > 1; }, 600), // tolerance: a row index or a count; -1 / 1 is "not shown yet", the exact rows are asserted next
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.platform.tournamentKnown() && p.platform.tournament().info.name == name && p.hubPage().detailRows().size() > 1; }), // tolerance: a row index or a count; -1 / 1 is "not shown yet", the exact rows are asserted next
 		p.notes());
 }
 
@@ -778,7 +796,7 @@ TEST_CASE("onlinehub1 retail: the TOURNAMENT page against the backend's own serv
 	CHECK(h.choices() == "1v1|random|-1");
 
 	// ---- the tournaments panel: the service's list (every state), a tournament's rules and bracket ----
-	REQUIRE_MESSAGE(runUntil({ &host }, [&] { return h.tournamentRows().size() == 3; }, 600), host.notes());
+	REQUIRE_MESSAGE(runUntil({ &host }, [&] { return h.tournamentRows().size() == 3; }), host.notes());
 	std::vector<std::string> rows = h.tournamentRows();
 	std::sort(rows.begin(), rows.end());
 	CHECK(rows == std::vector<std::string>{ "Called Off|Cancelled|0/2", "Spring Cup|Upcoming|5/16", "Weekly 12|Running|2/2" });
@@ -808,12 +826,12 @@ TEST_CASE("onlinehub1 retail: the TOURNAMENT page against the backend's own serv
 	const std::string hostChoices = h.choices();
 	REQUIRE(hostChoices.rfind("1v1|", 0) == 0);
 	REQUIRE(host.clickWhenShown("JoinGame"));
-	REQUIRE_MESSAGE(runUntil({ &host }, [&] { return host.platform.qmState() == PlatformApiClient::QmState::Searching; }, 300), host.notes());
+	REQUIRE_MESSAGE(runUntil({ &host }, [&] { return host.platform.qmState() == PlatformApiClient::QmState::Searching; }), host.notes());
 	CHECK(h.status().rfind("Searching for a 1 vs 1 game (Normal mode) ...", 0) == 0);
 	REQUIRE(join.clickWhenShown("JoinGame"));
 	// matched: the host (the older ticket) creates the private room by the match's code, the joiner joins it, both check nothing (a Quick Match), ready, and
 	// the host starts
-	REQUIRE_MESSAGE(runUntil({ &host, &join }, [&] { return host.starts() == 1 && join.starts() == 1; }, 4000),
+	REQUIRE_MESSAGE(runUntil({ &host, &join }, [&] { return host.starts() == 1 && join.starts() == 1; }),
 		host.notes() << "\n" << join.notes() << "\nhost status: " << h.status() << "\njoiner status: " << join.hubPage().status());
 	CHECK(h.roomHost());
 	CHECK_FALSE(join.hubPage().roomHost());
@@ -882,7 +900,7 @@ TEST_CASE("menufix2 onlinehub retail: leaving the online menu destroys the tourn
 	signIn(p, u"Leaver");
 	openTournamentPage(p);
 	AptOnlineHub &h = p.hubPage();
-	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return h.tournamentList() != nullptr && h.detailList() != nullptr; }, 600), p.notes());
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return h.tournamentList() != nullptr && h.detailList() != nullptr; }), p.notes());
 	GameWindow *list = h.tournamentList();
 	GameWindow *details = h.detailList();
 	GameWindowManager &gwm = p.fx.wm->gadgetLayer()->gadgets();
@@ -902,6 +920,10 @@ TEST_CASE("onlinehub1 retail e2e: a Quick Match's START from both TOURNAMENT pag
 	const std::string peer = envOr("OPENBFME_PEER", kPeerExe), relayExe = envOr("OPENBFME_RELAY", kRelayExe);
 	if (peer.empty() || relayExe.empty() || !std::filesystem::exists(peer) || !std::filesystem::exists(relayExe))
 	{
+		if (hubE2eRequired())
+		{
+			FAIL("OPENBFME_REQUIRE_LOBBY_E2E=1 but no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY)");
+		}
 		MESSAGE("SKIP LOUDLY: no openbfme_peer / openbfme_relay here (OPENBFME_PEER / OPENBFME_RELAY), so the Quick Match's START was not played");
 		return;
 	}
@@ -943,9 +965,9 @@ TEST_CASE("onlinehub1 retail e2e: a Quick Match's START from both TOURNAMENT pag
 	GadgetComboBoxSetSelectedPos(host.hubPage().sideCombo(), 1, false);
 	GadgetComboBoxSetSelectedPos(join.hubPage().sideCombo(), 2, false);
 	REQUIRE(host.clickWhenShown("JoinGame"));
-	REQUIRE(runUntil({ &host }, [&] { return host.platform.qmState() == PlatformApiClient::QmState::Searching; }, 300));
+	REQUIRE(runUntil({ &host }, [&] { return host.platform.qmState() == PlatformApiClient::QmState::Searching; }));
 	REQUIRE(join.clickWhenShown("JoinGame"));
-	REQUIRE_MESSAGE(runUntil({ &host, &join }, [&] { return host.starts() == 1 && join.starts() == 1; }, 4000), host.notes() << "\n" << join.notes());
+	REQUIRE_MESSAGE(runUntil({ &host, &join }, [&] { return host.starts() == 1 && join.starts() == 1; }), host.notes() << "\n" << join.notes());
 	const std::vector<std::string> starts = { host.startJson(), join.startJson() };
 	CHECK(starts[0].find("\"slot\":0") != std::string::npos);
 	CHECK(starts[1].find("\"slot\":1") != std::string::npos);
@@ -1001,12 +1023,12 @@ TEST_CASE("onlinehub1 retail: Quick Match ends with a reason and the page comes 
 		openTournamentPage(p);
 		openTournamentPage(q);
 		REQUIRE(p.clickWhenShown("JoinGame"));
-		REQUIRE(runUntil({ &p }, [&] { return p.platform.qmState() == PlatformApiClient::QmState::Searching; }, 300));
+		REQUIRE(runUntil({ &p }, [&] { return p.platform.qmState() == PlatformApiClient::QmState::Searching; }));
 		const std::string first = p.platform.qmTicket();
 		p.tick(2);
 		CHECK(p.hubPage().tournamentList()->winIsHidden()); // the movie's Searching pop-up has the page's middle: the panel steps aside
 		REQUIRE(p.clickWhenShown("navSearching.Cancel"));
-		REQUIRE_MESSAGE(runUntil({ &p }, [&] { return plat->count("DELETE /v1/qm/tickets/" + first) == 1; }, 300), p.notes());
+		REQUIRE_MESSAGE(runUntil({ &p }, [&] { return plat->count("DELETE /v1/qm/tickets/" + first) == 1; }), p.notes());
 		CHECK(p.platform.qmState() == PlatformApiClient::QmState::Idle);
 		CHECK(p.hubPage().status() == "The search was cancelled.");
 		CHECK(p.sh->boxesShown().empty()); // the player's own cancel needs no box
@@ -1014,10 +1036,10 @@ TEST_CASE("onlinehub1 retail: Quick Match ends with a reason and the page comes 
 		CHECK_FALSE(p.hubPage().tournamentList()->winIsHidden());
 		// at once again: a new ticket (the service made the cancelled one terminal), and the other player's search matches THIS one, not the cancelled
 		REQUIRE(p.clickWhenShown("JoinGame"));
-		REQUIRE(runUntil({ &p }, [&] { return p.platform.qmState() == PlatformApiClient::QmState::Searching; }, 300));
+		REQUIRE(runUntil({ &p }, [&] { return p.platform.qmState() == PlatformApiClient::QmState::Searching; }));
 		CHECK(p.platform.qmTicket() != first);
 		REQUIRE(q.clickWhenShown("JoinGame"));
-		REQUIRE_MESSAGE(runUntil({ &p, &q }, [&] { return p.hubPage().roomPhase() != "none" && q.hubPage().roomPhase() != "none"; }, 4000), p.notes() << "\n" << q.notes());
+		REQUIRE_MESSAGE(runUntil({ &p, &q }, [&] { return p.hubPage().roomPhase() != "none" && q.hubPage().roomPhase() != "none"; }), p.notes() << "\n" << q.notes());
 		CHECK(p.hubPage().matchId() == q.hubPage().matchId());
 		CHECK(plat->bodies("POST /v1/qm/tickets").size() == 3);
 		CHECK(plat->countPrefix("DELETE /v1/qm/tickets/") == 1);
@@ -1029,9 +1051,9 @@ TEST_CASE("onlinehub1 retail: Quick Match ends with a reason and the page comes 
 		signIn(p, u"Waiter");
 		openTournamentPage(p);
 		REQUIRE(p.clickWhenShown("JoinGame"));
-		REQUIRE_MESSAGE(runUntil({ &p }, [&] { return !p.sh->boxesShown().empty(); }, 3000), p.notes());
+		REQUIRE_MESSAGE(runUntil({ &p }, [&] { return !p.sh->boxesShown().empty(); }), p.notes());
 		CHECK(p.sh->boxesShown().back() == "quickmatch|No opponent was found. Try again later, or play an Open Play game.");
-		REQUIRE(runUntil({ &p }, [&] { return plat->countPrefix("DELETE /v1/qm/tickets/") == 1; }, 300));
+		REQUIRE(runUntil({ &p }, [&] { return plat->countPrefix("DELETE /v1/qm/tickets/") == 1; }));
 		CHECK(p.platform.qmState() == PlatformApiClient::QmState::Idle);
 	}
 	SUBCASE("the ticket expires at the service (300 s without a poll counted on the service's clock): the box says so")
@@ -1040,9 +1062,9 @@ TEST_CASE("onlinehub1 retail: Quick Match ends with a reason and the page comes 
 		signIn(p, u"Sleeper");
 		openTournamentPage(p);
 		REQUIRE(p.clickWhenShown("JoinGame"));
-		REQUIRE(runUntil({ &p }, [&] { return p.platform.qmState() == PlatformApiClient::QmState::Searching; }, 300));
+		REQUIRE(runUntil({ &p }, [&] { return p.platform.qmState() == PlatformApiClient::QmState::Searching; }));
 		plat->advance(301);
-		REQUIRE_MESSAGE(runUntil({ &p }, [&] { return !p.sh->boxesShown().empty(); }, 3000), p.notes());
+		REQUIRE_MESSAGE(runUntil({ &p }, [&] { return !p.sh->boxesShown().empty(); }), p.notes());
 		CHECK(p.sh->boxesShown().back() == "quickmatch|The search expired. Try again.");
 	}
 	SUBCASE("the platform cannot be reached: Online services unavailable, nothing waits")
@@ -1051,9 +1073,9 @@ TEST_CASE("onlinehub1 retail: Quick Match ends with a reason and the page comes 
 		signIn(p, u"Offline");
 		openTournamentPage(p);
 		REQUIRE(runUntil({ &p }, [&] { return listColumn(p.hubPage().tournamentList(), 0).size() == 1 &&
-			listColumn(p.hubPage().tournamentList(), 0)[0].rfind("Online services unavailable", 0) == 0; }, 300));
+			listColumn(p.hubPage().tournamentList(), 0)[0].rfind("Online services unavailable", 0) == 0; }));
 		REQUIRE(p.clickWhenShown("JoinGame"));
-		REQUIRE_MESSAGE(runUntil({ &p }, [&] { return !p.sh->boxesShown().empty(); }, 300), p.notes());
+		REQUIRE_MESSAGE(runUntil({ &p }, [&] { return !p.sh->boxesShown().empty(); }), p.notes());
 		CHECK(p.sh->boxesShown().back() == "quickmatch|Online services unavailable: Quick Match is not available: connection refused");
 		CHECK(p.platform.qmState() == PlatformApiClient::QmState::Idle);
 	}
@@ -1064,7 +1086,7 @@ TEST_CASE("onlinehub1 retail: Quick Match ends with a reason and the page comes 
 		openTournamentPage(p);
 		plat->post("/__test/fail", "{\"prefix\":\"/v1/qm\",\"status\":429,\"count\":1}");
 		REQUIRE(p.clickWhenShown("JoinGame"));
-		REQUIRE_MESSAGE(runUntil({ &p }, [&] { return !p.sh->boxesShown().empty(); }, 300), p.notes());
+		REQUIRE_MESSAGE(runUntil({ &p }, [&] { return !p.sh->boxesShown().empty(); }), p.notes());
 		// the injected failure answers {"error":{"code":"injected"}}: a code the client does not know is shown as it came
 		CHECK(p.sh->boxesShown().back() == "quickmatch|Online services unavailable: Quick Match is not available: The online services refused the request (injected).");
 	}
@@ -1086,10 +1108,10 @@ TEST_CASE("onlinehub1 retail: tournaments: register and withdraw through the Yes
 	plat->post("/__test/reset", "{}");
 	openTournamentPage(a);
 	AptOnlineHub &h = a.hubPage();
-	REQUIRE(runUntil({ &a }, [&] { return h.tournamentRows().size() == 1; }, 300));
+	REQUIRE(runUntil({ &a }, [&] { return h.tournamentRows().size() == 1; }));
 	// the first double click reads the tournament, the second asks; No changes nothing, Yes registers
 	h.tournamentAction(0);
-	REQUIRE(runUntil({ &a }, [&] { return h.detailRows().size() == 2; }, 300));
+	REQUIRE(runUntil({ &a }, [&] { return h.detailRows().size() == 2; }));
 	CHECK(h.detailRows()[1] == "Single elimination.");
 	CHECK(h.detailRows()[0].find("you are registered") == std::string::npos);
 	h.tournamentAction(0);
@@ -1098,13 +1120,13 @@ TEST_CASE("onlinehub1 retail: tournaments: register and withdraw through the Yes
 	CHECK(plat->countPrefix("POST /v1/tournaments/" + spring + "/register") == 0);
 	h.tournamentAction(0);
 	a.boxButton("Yes");
-	REQUIRE_MESSAGE(runUntil({ &a }, [&] { return h.tournamentRows()[0] == "Spring Cup|Upcoming|6/16"; }, 300), a.notes());
+	REQUIRE_MESSAGE(runUntil({ &a }, [&] { return h.tournamentRows()[0] == "Spring Cup|Upcoming|6/16"; }), a.notes());
 	const auto registers = plat->bodies("POST /v1/tournaments/" + spring + "/register");
 	REQUIRE(registers.size() == 1);
 	CHECK(registers[0] == "{\"v\":1,\"install\":\"" + kInstallA + "\",\"nick\":\"Hosta\"," + kClientJson + "}");
 	CHECK(h.status() == "You are registered.");
 	CHECK(a.platform.registeredIn(spring));
-	REQUIRE(runUntil({ &a }, [&] { return !h.detailRows().empty() && h.detailRows()[0].find("you are registered") != std::string::npos; }, 300));
+	REQUIRE(runUntil({ &a }, [&] { return !h.detailRows().empty() && h.detailRows()[0].find("you are registered") != std::string::npos; }));
 	// the service holds it: a second registration of the same install and nickname is the same place
 	CHECK(http(plat->port, "POST", "/v1/tournaments/" + spring + "/register", registers[0]).status == 200);
 	CHECK(parseJson(http(plat->port, "GET", "/v1/tournaments", "").body).get("tournaments")->array[0].get("registered")->number == 6);
@@ -1112,7 +1134,7 @@ TEST_CASE("onlinehub1 retail: tournaments: register and withdraw through the Yes
 	h.tournamentAction(0);
 	CHECK(boxText(a) == "You are registered for Spring Cup. Withdraw?");
 	a.boxButton("Yes");
-	REQUIRE(runUntil({ &a }, [&] { return h.tournamentRows()[0] == "Spring Cup|Upcoming|5/16"; }, 300));
+	REQUIRE(runUntil({ &a }, [&] { return h.tournamentRows()[0] == "Spring Cup|Upcoming|5/16"; }));
 	const auto withdraws = plat->bodies("DELETE /v1/tournaments/" + spring + "/register");
 	REQUIRE(withdraws.size() == 1);
 	CHECK(withdraws[0] == "{\"v\":1,\"install\":\"" + kInstallA + "\"," + kClientJson + "}");
@@ -1122,7 +1144,7 @@ TEST_CASE("onlinehub1 retail: tournaments: register and withdraw through the Yes
 	h.tournamentAction(0);
 	CHECK(boxText(a) == "Register for Spring Cup? (If you registered before, Yes keeps your place; No offers to withdraw.)");
 	a.boxButton("Yes");
-	REQUIRE_MESSAGE(runUntil({ &a }, [&] { return a.sh->boxesShown().back().rfind("tournament|The registration was refused", 0) == 0; }, 300), a.notes());
+	REQUIRE_MESSAGE(runUntil({ &a }, [&] { return a.sh->boxesShown().back().rfind("tournament|The registration was refused", 0) == 0; }), a.notes());
 	CHECK(a.sh->boxesShown().back() == "tournament|The registration was refused: Registration for this tournament is closed.");
 	CHECK(h.status() == "The registration was refused: Registration for this tournament is closed.");
 	CHECK_FALSE(a.platform.registeredIn(spring));
@@ -1155,7 +1177,7 @@ TEST_CASE("onlinehub1 retail: tournaments: both players check in from the room s
 			CHECK(boxText(*p) == "Join your round 1 match of Weekly 12 now?");
 			p->boxButton("Yes");
 		}
-		REQUIRE_MESSAGE(runUntil({ &a, &b }, [&] { return a.starts() == 1 && b.starts() == 1; }, 4000), a.notes() << "\n" << b.notes());
+		REQUIRE_MESSAGE(runUntil({ &a, &b }, [&] { return a.starts() == 1 && b.starts() == 1; }), a.notes() << "\n" << b.notes());
 		CHECK(a.hubPage().roomHost());
 		CHECK_FALSE(b.hubPage().roomHost());
 		CHECK(a.hubPage().tournamentId() == tid);
@@ -1190,7 +1212,7 @@ TEST_CASE("onlinehub1 retail: tournaments: both players check in from the room s
 		const int row = tournamentRow(a, "Weekly 12");
 		a.hubPage().tournamentAction(row);
 		a.boxButton("Yes");
-		REQUIRE_MESSAGE(runUntil({ &a }, [&] { return !a.sh->boxesShown().empty() && a.hubPage().roomPhase() == "failed"; }, 3000), a.notes() << a.hubPage().status());
+		REQUIRE_MESSAGE(runUntil({ &a }, [&] { return !a.sh->boxesShown().empty() && a.hubPage().roomPhase() == "failed"; }), a.notes() << a.hubPage().status());
 		CHECK(a.sh->boxesShown().back() == "quickmatch|The match could not start: the check-in was not taken: Check-in for this match is closed.");
 		CHECK_FALSE(a.client.inGame()); // the room was left
 		CHECK(a.starts() == 0);
@@ -1217,7 +1239,7 @@ TEST_CASE("onlinehub1 retail: tournaments: both players check in from the room s
 		runningTournament(*plat, "Normal Cup", "faithful", { { std::string(32, 'd'), "Dora" }, { kInstallB, "Joina" } });
 		plat->post("/__test/reset", "{}");
 		openTournamentPage(u);
-		REQUIRE(runUntil({ &u }, [&] { return tournamentRow(u, "Normal Cup") >= 0; }, 600)); // tolerance: a row index or a count; -1 / 1 is "not shown yet", the exact rows are asserted next
+		REQUIRE(runUntil({ &u }, [&] { return tournamentRow(u, "Normal Cup") >= 0; })); // tolerance: a row index or a count; -1 / 1 is "not shown yet", the exact rows are asserted next
 		selectAndWait(u, "Normal Cup");
 		u.hubPage().tournamentAction(tournamentRow(u, "Normal Cup"));
 		CHECK(boxText(u) == "This tournament is played in Normal mode. Turn Uber performance mode off in Options > Performance, then join your match.");
@@ -1260,7 +1282,7 @@ TEST_CASE("onlinehub1 review 2 retail: tournaments: something changed in between
 		CHECK(a.hubPage().tournamentRows()[(std::size_t)row] == "Weekly 12|Upcoming|2/2");
 		plat->advance(121); // the tournament starts; the page's list is still the one read before
 		a.platform.fetchTournament(tid);
-		REQUIRE_MESSAGE(runUntil({ &a }, [&] { return a.platform.tournament().info.state == "running"; }, 600), a.notes());
+		REQUIRE_MESSAGE(runUntil({ &a }, [&] { return a.platform.tournament().info.state == "running"; }), a.notes());
 		CHECK(a.hubPage().tournamentRows()[(std::size_t)row] == "Weekly 12|Upcoming|2/2");
 		a.hubPage().tournamentAction(row);
 		CHECK(boxText(a) == "Join your round 1 match of Weekly 12 now?");
@@ -1289,7 +1311,7 @@ TEST_CASE("onlinehub1 review 2 retail: tournaments: something changed in between
 		h.tournamentAction(0);
 		a.boxButton("No");
 		a.boxButton("Yes");
-		REQUIRE_MESSAGE(runUntil({ &a }, [&] { return h.tournamentRows()[0] == "Spring Cup|Upcoming|1/16"; }, 600), a.notes());
+		REQUIRE_MESSAGE(runUntil({ &a }, [&] { return h.tournamentRows()[0] == "Spring Cup|Upcoming|1/16"; }), a.notes());
 		const auto withdraws = plat->bodies("DELETE /v1/tournaments/" + spring + "/register");
 		REQUIRE(withdraws.size() == 1);
 		CHECK(withdraws[0] == "{\"v\":1,\"install\":\"" + kInstallA + "\"," + kClientJson + "}");
@@ -1339,7 +1361,7 @@ TEST_CASE("onlinehub1 retail: the STATS page: the cards and Your stats from the 
 	signIn(p, u"Statter");
 	nav(p, "Profile", "Stats");
 	AptStats *st = nullptr;
-	REQUIRE_MESSAGE(runUntil({ &p }, [&] { st = p.hubPage().stats(); return st && st->statsList(); }, 600), p.notes());
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { st = p.hubPage().stats(); return st && st->statsList(); }), p.notes());
 	p.tick(20);
 	auto name = [&](const std::string &templ) {
 		for (const SkirmishFaction &f : p.fx.setup.factions())
@@ -1379,7 +1401,7 @@ TEST_CASE("onlinehub1 retail: the STATS page: the cards and Your stats from the 
 	const std::vector<std::string> community = { "ALL PLAYERS: All modes, Last 30 days||", "Games counted||1", "Picked|1 (50%)|", "Wins|1 (100%)|",
 		"Most picked army||" + name("FactionMen") + " (50%)", "Highest win rate||" + name("FactionMen") + " (100%)", "Average game length||5:00",
 		"Against " + name("FactionMordor") + "|1 of 1 won (100%)|", "POPULAR MAPS||", fordsName + "||1 game", "Games against the computer||0" };
-	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return st->rowLines() == community; }, 600), p.notes());
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return st->rowLines() == community; }), p.notes());
 	CHECK(plat->count("GET /v1/stats/global?mode=&period=30d") == 1);
 	// the cards show everyone's picks and wins, not the player's own 2 games of Men (and Mordor's 1)
 	CHECK(level(0) == "1 pick, 100% won");
@@ -1390,16 +1412,16 @@ TEST_CASE("onlinehub1 retail: the STATS page: the cards and Your stats from the 
 	st->setFilter(2, 0);
 	CHECK(level(0).empty());
 	CHECK(level(4).empty());
-	REQUIRE(runUntil({ &p }, [&] { return plat->count("GET /v1/stats/global?mode=uber&period=7d") == 1; }, 300));
+	REQUIRE(runUntil({ &p }, [&] { return plat->count("GET /v1/stats/global?mode=uber&period=7d") == 1; }));
 	const std::vector<std::string> empty = { "ALL PLAYERS: Uber, Last 7 days||", "Games counted||0", "Picked|0|", "Wins|0|", "Most picked army||-", "Highest win rate||-",
 		"Average game length||-", "Games against the computer||0" };
-	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return st->rowLines() == empty; }, 300), p.notes());
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return st->rowLines() == empty; }), p.notes());
 	CHECK(level(0) == "No games");
 	// the service stops answering: the cards empty, the list says so
 	plat->post("/__test/fail", "{\"prefix\":\"/v1/stats\",\"status\":503,\"count\":1}");
 	st->setFilter(1, 2);
 	const std::vector<std::string> unavailable = { "ALL PLAYERS: Normal, All time||", "Online services unavailable: The online services refused the request (injected).||" };
-	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return st->rowLines() == unavailable; }, 300), p.notes());
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return st->rowLines() == unavailable; }), p.notes());
 	CHECK(level(0).empty());
 	// back to the player's own: their numbers again
 	p.fx.wm->invokeCallback("AptOnline::Stats::CurrentTab", "OpenPlay");
@@ -1500,8 +1522,8 @@ TEST_CASE("onlineux1 retail: the TOURNAMENT page's lettering leaves with the onl
 	openTournamentPage(p);
 	AptGadgetLayer *layer = p.fx.wm->gadgetLayer();
 	REQUIRE(layer);
-	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return layer->hasDecorator(); }, 120), p.notes());
-	CHECK(layer->decoratorOwner() == p.sh->hub());
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return layer->hasDecorator(); }), p.notes());
+	CHECK(layer->decoratorOwner() == static_cast<const void *>(p.sh)); // lane ONLINEMENU-1: the shell owns the layer's one decorator (the hub's page and the FRIENDS page)
 	GadgetDrawList drawn;
 	layer->buildDrawList(drawn);
 	CHECK_FALSE(drawn.commands.empty());

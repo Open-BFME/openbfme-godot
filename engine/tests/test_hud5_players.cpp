@@ -50,8 +50,7 @@ struct PlayersFx
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string error;
-		REQUIRE_MESSAGE(mount.fs.readFile("data/lotr.str", bytes, &error), error);
-		REQUIRE_MESSAGE(text.table.parse(bytes, &error), error);
+		REQUIRE_MESSAGE(text.table.loadRetail(mount.fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 		environment.gameText = &text;
 		registerAptScreenFactories(factories);
 		REQUIRE_MESSAGE(loadGadgetSkinData(mount.fs, skins, &error), error);
@@ -160,8 +159,7 @@ TEST_CASE("hud5 players retail: the Status rows of the owner's game: names, armi
 	REQUIRE_MESSAGE(setup.load(mount.fs, &error), error);
 	GameTextTableSource text;
 	std::vector<std::uint8_t> bytes;
-	REQUIRE_MESSAGE(mount.fs.readFile("data/lotr.str", bytes, &error), error);
-	REQUIRE_MESSAGE(text.table.parse(bytes, &error), error);
+	REQUIRE_MESSAGE(text.table.loadRetail(mount.fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 	const SkirmishGameInfo game = ownersGame(setup);
 	PlayerStatusInput in;
 	in.game = &game;
@@ -265,8 +263,7 @@ TEST_CASE("platformicon1 retail: the players screen's Status page puts each netw
 	REQUIRE_MESSAGE(setup.load(mount.fs, &error), error);
 	GameTextTableSource text;
 	std::vector<std::uint8_t> bytes;
-	REQUIRE_MESSAGE(mount.fs.readFile("data/lotr.str", bytes, &error), error);
-	REQUIRE_MESSAGE(text.table.parse(bytes, &error), error);
+	REQUIRE_MESSAGE(text.table.loadRetail(mount.fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 	// the rows come from the game's slots: slot 0 a Linux human, slot 1 a macOS human, slot 2 a human that told nothing, slot 3 a computer (a platform
 	// handed to a computer's slot is dropped: display data of humans only)
 	SkirmishGameInfo game = ownersGame(setup);

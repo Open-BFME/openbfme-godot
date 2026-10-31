@@ -50,21 +50,81 @@ def test_onezip_mode_options_and_paths(tmp_path, monkeypatch):
     assert onezip_windows_test.resolve_windows_path(spaced, "interop") == r"C:\path with spaces"
 
 
-@pytest.mark.parametrize("official", [True, False, None])
+@pytest.mark.parametrize("official", [True, False, None, "longer"])
 def test_custom_key_labels_trial_without_enabling_test_overrides(tmp_path, official):
+    """build_launcher.sh's build_info.json: local_trial unless the trusted list is exactly the staged launcher's own (SIGNKMS-1: the
+    staged release_keys.pub, or for a source without one its release_key.pub), never test_build; release_keys begins with release_key"""
     key = "12" * 32
-    if official is not None:
-        (tmp_path / "release_key.pub").write_text((key if official else "34" * 32) + "\n")
+    keys = f"{key},{'56' * 32}"
+    official_arg = {True: keys, False: "34" * 32, None: "", "longer": keys + "," + "78" * 32}[official]
     script = (HERE / "build_launcher.sh").read_text()
-    build_info = script.split('"$TEST_BUILD" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]
+    build_info = script.split('"$TEST_BUILD" "$OFFICIAL" "$NIGHTLY" "$OFFICIAL_NIGHTLY" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]
     info_path = tmp_path / "build_info.json"
-    result = run(sys.executable, "-", info_path, "v0.0.0-alpha.9", COMMIT, "2026-10-15", "Test/repo", key, "false",
-                 input=build_info)
+    result = run(sys.executable, "-", info_path, "v0.0.0-alpha.9", COMMIT, "2026-10-15", "Test/repo", key, keys, "false", official_arg,
+                 "[]", "[]", input=build_info)
     assert result.returncode == 0, result.stderr
     info = json.loads(info_path.read_text())
     assert info["local_trial"] is (official is not True)
     assert info["test_build"] is False
     assert info["release_key"] == key
+    assert info["release_keys"] == keys.split(",")
+    assert info["nightly_keys"] == []
+    bad = run(sys.executable, "-", info_path, "v0.0.0-alpha.9", COMMIT, "2026-10-15", "Test/repo", "56" * 32, keys, "false", keys,
+              "[]", "[]", input=build_info)
+    assert bad.returncode != 0 and "release_keys does not begin with release_key" in bad.stderr, bad.stderr
+    # lane RELGH-2: a nightly list other than the staged launcher's own makes a local trial; a nightly key that is a release key is refused
+    n = json.dumps(["9a" * 32])
+    other = run(sys.executable, "-", info_path, "v0.0.0-alpha.9", COMMIT, "2026-10-15", "Test/repo", key, keys, "false", keys, n, "[]",
+                input=build_info)
+    assert other.returncode == 0 and json.loads(info_path.read_text())["local_trial"] is True, other.stderr
+    same = run(sys.executable, "-", info_path, "v0.0.0-alpha.9", COMMIT, "2026-10-15", "Test/repo", key, keys, "false", keys, n, n,
+               input=build_info)
+    assert same.returncode == 0 and json.loads(info_path.read_text())["local_trial"] is False, same.stderr
+    assert json.loads(info_path.read_text())["nightly_keys"] == ["9a" * 32]
+    clash = run(sys.executable, "-", info_path, "v0.0.0-alpha.9", COMMIT, "2026-10-15", "Test/repo", key, keys, "false", keys,
+                json.dumps([key]), "[]", input=build_info)
+    assert clash.returncode != 0 and "nightly_keys holds a release key" in clash.stderr, clash.stderr
+
+
+def test_build_launcher_checks_the_key_list_before_anything_is_built(tmp_path):
+    """SIGNKMS-1: build_launcher.sh --keys-file must begin with --key-file's key and parse (release_keys.py); without --keys-file the
+    committed launcher/release_keys.pub is used when --key-file is its first key, else the --key-file key alone (a test key). The key
+    checks come before the Godot check, so a fake Godot that fails shows how far a run got."""
+    deck = ed25519.public_key(b"\x01" * 32).hex()
+    kms = ed25519.public_key(b"\x02" * 32).hex()
+    key = tmp_path / "key.pub"
+    key.write_text(deck + "\n")
+    fake = tmp_path / "godot"
+    fake.write_text("#!/bin/sh\necho 4.6.0.fake\n")
+    fake.chmod(0o755)
+
+    def build(*extra):
+        return run("bash", HERE / "build_launcher.sh", "--out", tmp_path / "out", "--version", "v0.0.1", "--commit", COMMIT, "--repo",
+                   "Test/repo", "--key-file", key, "--mtime", "1700000000", "--godot", fake, *extra)
+
+    good = tmp_path / "keys.pub"
+    good.write_text(f"# test\n{deck}  deck-test\n{kms}  kms-test\n")
+    r = build("--keys-file", good)
+    assert r.returncode != 0 and "Godot 4.7.2 is required" in r.stderr, r.stderr   # the list passed
+    swapped = tmp_path / "swapped.pub"
+    swapped.write_text(f"{kms}  kms-test\n{deck}  deck-test\n")
+    r = build("--keys-file", swapped)
+    assert r.returncode != 0 and f"the first key of {swapped} is not the key of {key}" in r.stderr, r.stderr
+    broken = tmp_path / "broken.pub"
+    broken.write_text(f"{deck}  deck-test\n{deck}  again\n")
+    r = build("--keys-file", broken)
+    assert r.returncode != 0 and "is not a valid release key list" in r.stderr and "listed twice" in r.stderr, r.stderr
+    r = build("--keys-file", tmp_path / "missing.pub")
+    assert r.returncode != 0 and "does not exist" in r.stderr, r.stderr
+    r = build()   # a test key without --keys-file: a one-key list
+    assert r.returncode != 0 and "Godot 4.7.2 is required" in r.stderr, r.stderr
+
+
+def test_the_committed_key_list_begins_with_the_legacy_key():
+    """SIGNKMS-1: launcher/release_keys.pub parses and its first entry is launcher/release_key.pub (deck-2026)"""
+    import release_keys
+    keys = release_keys.load(HERE.parents[1] / "launcher/release_keys.pub")
+    assert keys[0] == ("deck-2026", bytes.fromhex((HERE.parents[1] / "launcher/release_key.pub").read_text().strip()))
 
 
 def run(*cmd, **kw) -> subprocess.CompletedProcess:
@@ -663,3 +723,31 @@ def test_the_seal_tool_refuses_a_huge_zip_directory_before_allocating_for_it(tmp
             z.writestr(info, b"")
     with pytest.raises(SystemExit, match="the central directory is [0-9]+ bytes \\(at most 2097152\\)"):
         seal_package.read_archive(big)
+
+
+def test_onlinemenu1_the_launcher_account_page_talks_only_to_the_named_lobby():
+    """lane ONLINEMENU-1 (SOCIAL-2b, PR #8): the launcher's account files are allowed their findings by name (net_guard.ALLOWED_LAUNCHER); what
+    makes that safe is pinned here: every lobby request goes to the lobby NetPolicy accepted, with no redirects; the browser opens only an
+    allow-listed Discord authorize URL or that lobby's own e-mail page; the OAuth callback listens on 127.0.0.1; social_identity.gd's MachineGuid read is pinned in net_guard"""
+    import net_guard  # noqa: PLC0415
+    oauth = (REPO / "launcher/scripts/core/oauth_account.gd").read_text()
+    assert oauth.count("_http.request(") == 1 and oauth.count("_http.max_redirects = 0") == 1 and ".max_redirects = " not in oauth.replace("_http.max_redirects = 0", "")
+    assert "_policy.set_lobby(url) != \"\"" in oauth and 'func _url(path: String) -> String:\n\treturn lobby_url.trim_suffix("/") + path' in oauth
+    assert re.findall(r"(?<!func )(?<![\w.])_request\((.*?),", oauth) == ['_url("/v1/auth/oauth/accounts")', '_url("/v1/auth/email/poll")', "_url(path)"]
+    assert oauth.count(".listen(") == 1 and '_server.listen(CALLBACK_PORT, "127.0.0.1")' in oauth
+    assert "OS.shell_open(" not in oauth and oauth.count('.open_url(') == 2
+    first, second = oauth.index('.open_url(value.authorization_url)'), oauth.index('.open_url(value.url)')
+    # each open follows its URL check in the same response branch
+    start, email = oauth.rindex('elif _request_kind == "start":', 0, first), oauth.rindex('elif _request_kind == "email_start":', 0, second)
+    assert "if not _allowed_authorization(value.authorization_url):" in oauth[start:first]
+    assert 'value.get("url") != lobby_url + "/email/" + str(ticket)' in oauth[email:second]
+    assert 'var prefix := "https://discord.com/oauth2/authorize?"' in oauth
+    social = (REPO / "launcher/scripts/net/social_client.gd").read_text()
+    assert social.count(".request(") == 1 and social.count("request.request(url,") == 1 and "request.max_redirects = 0" in social
+    send = social[social.index("func _send_request("):social.index("request.request(url,")]
+    assert "var url := lobby_url + path" in send and "parsed.origin != lobby_url" in send and "TLSOptions.client()" in send
+    # social_identity.gd's one `reg query` is the exact MachineGuid read (net_guard.MACHINE_GUID_QUERY), not an allowance of the file
+    assert "launcher/scripts/core/social_identity.gd" not in net_guard.ALLOWED_LAUNCHER
+    assert "launcher/scripts/core/social_identity.gd" not in net_guard.scan_launcher()
+    assert not net_guard.launcher_finding_allowed("launcher/scripts/core/oauth_account.gd", "line 1: WebSocketPeer")
+    assert not net_guard.launcher_finding_allowed("launcher/scripts/net/social_client.gd", "line 1: TCPServer")

@@ -2,6 +2,8 @@
 // See GameClient/LiveGame.h.
 
 #include "GameClient/LiveGame.h"
+#include "GameClient/LinearCampaign.h"
+#include "GameLogic/Sdk/SdkScriptHost.h"
 
 #include "GameClient/FrameCensus.h"
 #include "Common/GameState.h"
@@ -14,8 +16,12 @@
 #include "GameLogic/BuildAssistantSell.h"
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/HeroSystem.h"
+#include "Common/PlayerScience.h"
+#include "Common/Science.h"
+#include "Common/Upgrade.h"
 
 #include "GameLogic/UpgradeCommands.h"
+#include "GameLogic/BeaconCommands.h"
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
@@ -37,6 +43,8 @@
 #include "GameLogic/VictoryConditions.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/System/PathfinderResourceTerrain.h"
+#include "GameLogic/AI/AIPathfindConfig.h"
+#include "Common/BfmeGame.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
 #include <chrono>
@@ -81,6 +89,7 @@ LiveGame::~LiveGame()
 	{
 		m_scripting->detach(); // while the logic is alive
 	}
+	m_sdkScripts.reset(); // lane SDK-2: its listeners leave the logic first
 	if (m_logic)
 	{
 		m_logic->reset(); // the objects go first (their drawables are dropped through the hooks), then the manager
@@ -90,6 +99,7 @@ LiveGame::~LiveGame()
 	if (m_ai)
 	{
 		m_ai->detach(); // the AI world is destroyed after the logic (members are destroyed in reverse order): it must not touch the logic then
+		m_ai->setWallMeshes(nullptr);
 	}
 }
 
@@ -153,6 +163,28 @@ bool LiveGame::load(const Options &options, std::string *error)
 	{
 		return false;
 	}
+	if (options.start)
+	{
+		MapCacheEntry actual;
+		actual.name = options.start->message.game.mapName;
+		actual.numPlayers = options.start->mapPlayerCount;
+		for (const Waypoint &waypoint : m_terrain.waypoints())
+		{
+			const std::string &name = waypoint.name;
+			if (name.rfind("Player_", 0) != 0 || name.size() < 6 || name.compare(name.size() - 6, 6, "_Start") != 0) continue;
+			int number = 0;
+			for (int i = 1; i <= MAX_SLOTS; ++i)
+			{
+				if (name == "Player_" + std::to_string(i) + "_Start") number = i;
+			}
+			if (!number || !actual.startPositions.emplace(number, waypoint.location).second)
+			{
+				if (error) *error = "invalid or duplicate start waypoint '" + name + "'";
+				return false;
+			}
+		}
+		if (!MapCache::validateStartPositions(actual, error)) return false;
+	}
 	m_report.mapIniErrors = cr.mapIni.errors;
 	m_report.mapObjects = m_classified.report.objects;
 	m_report.classificationErrors = m_classified.report.errors;
@@ -193,15 +225,12 @@ bool LiveGame::load(const Options &options, std::string *error)
 	{
 		// retail: prepareForMP_or_Skirmish + addSidesForSlots + the ReplayObserver side, then PlayerList::newGame (RW 0x73193D, 0x627C1F, 0x626E1F)
 		SkirmishSides::Built built;
-		if (!SkirmishSides::build(m_map.sides, options.start->message.game, options.start->localSlot, settings.multiplayerColors, m_world.playerTemplates(), built, error))
+		if (!SkirmishSides::build(m_map.sides, options.start->message.game, options.start->localSlot, settings.multiplayerColors, m_world.playerTemplates(), built, error, options.start->message.livingWorldBattle.active)) // lane WOTR-2: a battle's allies may share a start
 		{
 			return false;
 		}
 		progress(12); // the sides exist (RW 0x62FBC7)
 		m_players->setSpellGameMode(SpellGameMode{ options.start->message.mode == NewGameMode::Skirmish, false }); // SPELL-1 (GameLogic + 0x110 == 2)
-		m_report.playerNotes = m_players->newGame(built.sides, defaultCash);
-		m_report.startSlotPlayers = built.slotPlayerNames;
-		sidesUsed = built.sides;
 		for (const std::string &n : built.slotPlayerNames)
 		{
 			if (!n.empty())
@@ -209,6 +238,38 @@ bool LiveGame::load(const Options &options, std::string *error)
 				slotSides.insert(n);
 			}
 		}
+		// lane MODS-3: the slot sides' script libraries are read before the players exist: their teams become the side's teams (retail's
+		// Player::initFromDict copies them, RW 0x6B07EF; MapScriptSetup.h). Edain's spieler library hands each player its fortress plot
+		// through its team "Base"
+		if (mapScriptsWanted(options))
+		{
+			if (!buildMapScriptSetup(built.sides, slotSides, error))
+			{
+				return false;
+			}
+			for (const Dict &t : m_scriptSetup->libraryTeams())
+			{
+				built.sides.teams.push_back(t);
+			}
+		}
+		m_report.playerNotes = m_players->newGame(built.sides, defaultCash);
+		m_report.startSlotPlayers = built.slotPlayerNames;
+		if (options.start->message.livingWorldBattle.active)
+		{
+			// WOTR2 milestone 6: Player::initFromDict RW 0x6B07EF tail (RW 0x6B1213): after the side's playerStartMoney each War of the Ring battle player
+			// gets its cash deposited (RW 0x7B18B8, counted by its score keeper, no sound)
+			for (const LivingWorldBattleStart::SlotStart &st : options.start->message.livingWorldBattle.slotStarts)
+			{
+				Player *p = st.slot >= 0 && (size_t)st.slot < built.slotPlayerNames.size() ? m_players->findPlayerWithName(built.slotPlayerNames[(size_t)st.slot]) : nullptr;
+				if (!p)
+				{
+					if (error) *error = "the War of the Ring battle's slot " + std::to_string(st.slot) + " has no player for its starting cash";
+					return false;
+				}
+				p->getMoney()->deposit(st.cash, &p->getScoreKeeper(), false);
+			}
+		}
+		sidesUsed = built.sides;
 		if (options.start->observer)
 		{
 			// lane ONLINE-3: a spectator (no local slot): retail's replay-mode tail of the new game (RW 0x6282F0; BFME2 decomp
@@ -295,11 +356,48 @@ bool LiveGame::load(const Options &options, std::string *error)
 	if (options.start)
 	{
 		m_logic->economy().context().sandbox = options.start->message.game.isSandbox(options.start->localSlot);
+		if (options.start->message.livingWorldBattle.active)
+		{
+			// WOTR2 milestone 7 (step 0): a War of the Ring battle is game kind 0 (GameState RW 0x6DCFDF: kind 0 with the strategic map left is the single
+			// player battle; the strategic logic's launch RW 0x612274 posts the new game message whose argument 1 RW 0x779CB4 stores in GameLogic + 0x114) with
+			// the Living World running (TheLivingWorldLogic + 0xB4). What follows from it is retail's: the command points' solo / AI tables (RW 0x6A7C86), no
+			// lobby army-size scaling, no selling (RW 0x77B2C8), the rank factor on experience, the victory rule 2 (RW 0x808A43) and the War of the Ring
+			// hero list (RW 0x6B16EC). A skirmish stays kind 3 without the flag
+			m_logic->economy().context().gameKind = 0;
+			m_logic->economy().context().livingWorld = true;
+			m_logic->livingWorldTags().clear();
+			m_logic->livingWorldTags().active = true;
+		}
+		// lane SCRIPT-4 r2: more than one human slot is more than one machine (EconomyContext::multiplayerSession)
+		int humanSlots = 0;
+		for (const SkirmishGameSlot &slot : options.start->message.game.slots)
+		{
+			humanSlots += slot.isHuman() ? 1 : 0;
+		}
+		m_logic->economy().context().multiplayerSession = humanSlots > 1;
 	}
 	m_logic->setGameRules(gameRules);
 	m_logic->setLegendaryHeroes(options.start ? options.start->message.game.legendaryHeroes : LegendaryHeroes::kOff);
+	// lane CHEAT-1: the cheat seat (the setup's slot) as the logic player of that slot; a seat without a player is an error, never a game without the seat
+	if (options.start && options.start->message.game.cheatModeOn())
+	{
+		const int slot = options.start->message.game.cheatMode;
+		const std::string side = slot < (int)m_report.startSlotPlayers.size() ? m_report.startSlotPlayers[(size_t)slot] : std::string();
+		const Player *seat = side.empty() ? nullptr : m_players->findPlayerWithName(side);
+		if (!seat)
+		{
+			if (error)
+			{
+				*error = "Cheat Mode: the cheat seat's slot " + std::to_string(slot) + " has no player";
+			}
+			return false;
+		}
+		m_logic->cheatMode().configure(slot, seat->getPlayerIndex());
+	}
 	// lane UBER-1: the game setup's simulation profile (a game without a start message, a map viewer or a tool, is Faithful unless its options say Uber)
 	m_logic->setSimulationProfile(options.start ? options.start->message.game.simulationProfile : options.simulationProfile);
+	// lane BFME2MODE-0: the edition is the mounted data's (BFME2 1.06 alone under OPENBFME_EDITION=bfme2), never an option
+	m_logic->setEdition(isBfme2Data(m_fs) ? GameEdition::BFME2_106 : GameEdition::RotWK201);
 	m_logic->economy().initAllCommandPoints();
 	{
 		PathfinderResourceTerrain resourceTerrain;
@@ -318,6 +416,8 @@ bool LiveGame::load(const Options &options, std::string *error)
 	{
 		return false;
 	}
+	// lane AIDATA-1: the pathfinder reads TheAI's AIData (RW [0xDE4B40] + 0x18) like every other consumer: the map's AIData block (applied above) reaches it too
+	PathfindConfigLoader::applyAIData(m_logic->settings(), aiConfig.pathfind, isBfme1Data(m_fs));
 	m_pathTerrain = std::make_unique<TerrainPathfindSource>(m_terrain, m_map.heightMap, m_map.chunks);
 	m_ai = std::make_unique<AIWorld>(*m_logic, aiConfig, m_world.iniMacros());
 	m_ai->attach();
@@ -332,6 +432,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 	m_buildCommands.registerHandlers(*m_dispatch); // BUILD-1: the construction messages
 	m_logic->sellList().registerHandlers(*m_dispatch); // FACT-A: MSG_SELL (RW 0x77B2C8)
 	VictoryConditions::registerHandlers(*m_dispatch); // END-2: MSG_SELF_DESTRUCT (the quit menu's surrender / exit)
+	StartingBase::registerLivingWorldHandlers(*m_dispatch); // WOTR2 milestone 7: MSG_CALL_IN_REINFORCEMENTS / MSG_SUMMON_REINFORCEMENTS
 	// VIS-1: TheShroudManager (RW 0x62CE75 makes it, RW 0x62CFBB / 0x62CFD1 give it GameData's PartitionCellSize / UnlookPersistDuration; the new game sets its grid
 	// over TheTerrainLogic::getExtent at load progress 0x11, RW 0x62FCB3, and refreshes the local player's client, RW 0x62FCBE)
 	if (!VisionSettings::load(m_fs, m_vision, error))
@@ -389,6 +490,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 		m_shroud->applyNewGameShroud(m_vision.useShroud, revealed, observers);
 	}
 	UpgradeCommands::registerHandlers(*m_dispatch); // UPGRADE-1: MSG_QUEUE_UPGRADE / MSG_CANCEL_UPGRADE
+	BeaconCommands::registerHandlers(*m_dispatch);  // CHAT-1: MSG_PLACE_BEACON (the multiplayer beacon, RW 0x77C634)
 	HordeCommands::registerHandlers(*m_dispatch);   // HORDE-2: the formation swap
 	GarrisonCommands::registerHandlers(*m_dispatch); // GARRISON-1: MSG_ENTER / MSG_EVACUATE / MSG_EXIT
 	CastleCommands::registerHandlers(*m_dispatch);   // BACKLOG2: MSG_CASTLE_UNPACK / MSG_CASTLE_PACK / MSG_CASTLE_UNPACK_EXPLICIT_OBJECT (S-951)
@@ -400,6 +502,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 	HeroAbilityModules::registerHandlers(*m_dispatch); // HERO-2: MSG_DO_AUTO_ABILITY (RW 0x77B9BA)
 	m_spellCommands.registerHandlers(*m_dispatch); // SPELL-1: the spell book messages
 	TributeCommands::registerHandlers(*m_dispatch); // PLAY-1: MSG_GIVE_MONEY, the tribute (RW 0x6264E1)
+	CheatMode::registerHandlers(*m_dispatch);       // CHEAT-1: MSG_OPENBFME_CHEAT (refused unless the game setup has Cheat Mode)
 	SpecialPowerModules::installScienceHooks(*m_logic);
 	m_drawables = std::make_unique<DrawableManager>(m_assets, *m_logic);
 	// SMOOTH-1: the logic talks to its client through ordered events (ClientEvents.h); the render side applies them (DrawableManager::applyEvents)
@@ -414,24 +517,46 @@ bool LiveGame::load(const Options &options, std::string *error)
 	m_launchBones = std::make_unique<DrawableLaunchBones>(*m_launchAssets, m_logic->settings().standardPublicBones);
 	m_launchBones->reset();
 	m_logic->combat().setLaunchOffsets(m_launchBones.get());
+	// WALL-1: a wall piece's footprint routine (RW 0x936B7D -> ClassifyWall) asks its drawable for the WallBoundsMesh / RampMesh surfaces; the same files answer
+	// it from the template data, before the map's objects enter the pathfinder's map
+	m_wallMeshes = std::make_unique<DrawableWallMeshes>(*m_launchAssets);
+	m_ai->setWallMeshes(m_wallMeshes.get());
 	// the script engine and the ONE creation path (LuaScriptEngine::sendObjectCreated through GameLogic::setObjectCreatedProc, world hooks)
 	m_scripting = std::make_unique<LiveScripting>(*m_logic, m_fs, m_world.nameKeys());
 	if (!m_scripting->start(MapClassification::mapDirectory(lowerName), error))
 	{
 		return false;
 	}
+	// lane SDK-2: the -mod folder's sim Luau scripts (GameLogic/Sdk/SdkScriptHost.h); a broken manifest or script stops the start
+	m_sdkScripts = std::make_unique<SdkScriptHost>(*m_logic);
+	std::string sdkError;
+	if (!m_sdkScripts->start(m_fs.modLooseLayer(), sdkError))
+	{
+		if (error)
+		{
+			*error = sdkError;
+		}
+		return false;
+	}
 
 	// lane SCRIPT-1: a campaign mission is a single player game (GameLogic + 0x110); the map script engine gets every side's lists (MapScriptSetup)
 	if (options.campaign)
 	{
-		m_logic->economy().context().gameMode = EconomyContext::MODE_SINGLE_PLAYER;
+		// lane BFME2CAMP1: a tutorial is mode 6 (RW 0x91B825 -> RW 0x7111E5(6))
+		m_logic->economy().context().gameMode = options.tutorial ? EconomyContext::MODE_TUTORIAL : EconomyContext::MODE_SINGLE_PLAYER;
 	}
-	m_mapScripts = options.mapScripts == 1 || (options.mapScripts < 0 && (options.start || options.campaign));
+	m_mapScripts = mapScriptsWanted(options);
 	if (m_mapScripts && !setupMapScripts(options, sidesUsed, slotSides, error))
 	{
 		return false;
 	}
 	progress(14); // the script engine knows the map (RW 0x62FC1A)
+	// lane CAMPUI-1: TheMissionObjectiveTracker takes the map.ini's MissionObjectiveList (RW 0x836497 installs it while the map.ini is read, after the
+	// game's reset RW 0x835E03); a map without one has no list (the objective actions then do nothing)
+	if (m_world.hasMapObjectives())
+	{
+		m_logic->missionObjectives().installList(m_world.mapObjectives());
+	}
 	const auto t0 = std::chrono::steady_clock::now();
 	progress(30); // the map's objects (RW 0x62FE02 ff)
 	m_report.loop = MapObjectLoop::create(*m_logic, m_map, m_classified, [](Object &obj, const MapObjectDrawable &d) { DrawableManager::applyPlacement(obj, d); });
@@ -457,7 +582,15 @@ bool LiveGame::load(const Options &options, std::string *error)
 				m_report.startErrors.push_back("slot " + std::to_string(i) + ": no player or faction to place a base for");
 				continue;
 			}
-			StartingBase::placeForPlayer(*m_logic, i, slot, *player, *pt, placed);
+			if (options.start->message.livingWorldBattle.active)
+			{
+				// lane WOTR-1: a War of the Ring battle (RotWK's game state is not 3: RW 0x62AC17 -> RW 0x629F34)
+				StartingBase::placeLivingWorldBattle(*m_logic, i, slot, *player, *pt, options.start->message.livingWorldBattle, placed);
+			}
+			else
+			{
+				StartingBase::placeForPlayer(*m_logic, i, slot, *player, *pt, placed);
+			}
 			progress(counter++);
 		}
 		m_report.startingObjects = placed.placed;
@@ -471,6 +604,21 @@ bool LiveGame::load(const Options &options, std::string *error)
 		{
 			m_report.startErrors.push_back(e);
 		}
+		m_report.startNotes = placed.notes; // lane WOTR-1
+		if (!m_report.startErrors.empty())
+		{
+			if (error) *error = m_report.startErrors.front();
+			return false;
+		}
+	}
+	// lane BFME2CAMP1: RW 0x6315E8 -> RW 0x626423 (a campaign game, not a save's load) -> RW 0x5EC0C7 -> addCarryoverStuffToMap RW 0x5EBD76: after the
+	// computer players' AI (RW 0x6313A6), before the Create-a-Hero install (RW 0x6315F5)
+	if (options.campaign && options.campaignCarryover)
+	{
+		m_logic->setCampaignCarryover(options.carryover);
+		const CampaignCarryover::SpawnResult carried =
+			CampaignCarryover::addCarryoverStuffToMap(*m_logic, *m_players, *m_logic->campaignCarryover(), options.carryoverDelayed);
+		m_report.carryoverObjects = (int)carried.objects.size();
 	}
 	{
 		// lane HERO-2: RW 0x6315F5 -> 0x61B103 (after the computer players' AI, RW 0x6313A6): the Create-a-Hero of every slot that has one comes from the
@@ -548,6 +696,58 @@ bool LiveGame::load(const Options &options, std::string *error)
 			++m_report.spellBooks;
 		}
 		HeroSystem::initPlayer(*m_logic, *m_players->getNthPlayer(i)); // HERO-1: the hero list (RW 0x6B16EC, from the same game start RW 0x6B183D)
+		if (options.start && options.start->message.livingWorldBattle.active)
+		{
+			// WOTR2 milestone 7: RW 0x6B16EC's kind != 3 branch: the battle player's heroes are its War of the Ring hero list entries (RW 0x6E42DA)
+			const std::vector<std::string> &names = m_report.startSlotPlayers;
+			for (const LivingWorldBattleStart::SlotStart &st : options.start->message.livingWorldBattle.slotStarts)
+			{
+				if (st.slot >= 0 && (size_t)st.slot < names.size() && names[(size_t)st.slot] == m_players->getNthPlayer(i)->getPlayerName())
+				{
+					std::vector<HeroSystem::LivingWorldHero> heroes;
+					for (const LivingWorldBattleStart::SlotStart::Hero &h : st.heroes)
+					{
+						heroes.push_back({ h.templateName, h.spawnId, h.experience, h.dead });
+					}
+					std::vector<std::string> heroErrors;
+					HeroSystem::initLivingWorldPlayer(*m_logic, *m_players->getNthPlayer(i), heroes, st.garrisonArmyId, heroErrors);
+					// RW 0x8125FC (after the skirmish AI's new game, before Create-a-Hero; here with the hero list): with the score off (GameLogic + 0x98), the
+					// war's rank, purchase points and sciences (PlayerScience::loadFromLivingWorld), then its lasting upgrades granted complete (RW 0x6AEE22(u, 2, 0))
+					Player &bp = *m_players->getNthPlayer(i);
+					ScienceVec sciences;
+					for (const std::string &nm : st.sciences)
+					{
+						const ScienceType t = TheScienceStore ? TheScienceStore->getScienceFromInternalName(nm) : SCIENCE_INVALID;
+						if (t == SCIENCE_INVALID)
+						{
+							heroErrors.push_back("the War of the Ring player's science " + nm + " is not a Science");
+							continue;
+						}
+						sciences.push_back(t);
+					}
+					const bool scoring = m_logic->economy().context().scoring;
+					m_logic->economy().context().scoring = false;
+					bp.science().loadFromLivingWorld(st.skillPoints, st.bonusPoints, sciences);
+					for (const std::string &nm : st.upgrades)
+					{
+						const UpgradeTemplate *u = Player::resolveUpgrade(nm, false);
+						if (!u)
+						{
+							heroErrors.push_back("the War of the Ring player's upgrade " + nm + " is not an Upgrade");
+							continue;
+						}
+						bp.addUpgrade(u, Player::UPGRADE_STATUS_COMPLETE, false);
+					}
+					m_logic->economy().context().scoring = scoring;
+					if (!heroErrors.empty())
+					{
+						m_report.startErrors.insert(m_report.startErrors.end(), heroErrors.begin(), heroErrors.end());
+						if (error) *error = heroErrors.front();
+						return false;
+					}
+				}
+			}
+		}
 		m_players->getNthPlayer(i)->getScoreKeeper().setCounting(true); // lane END-1: RW 0x6B197E, the last step of the game start: the score counts from here on
 	}
 	m_logic->runLogicFrame(); // frame 1: every object records its transform (phase 2) so the first render has something to interpolate from
@@ -605,8 +805,9 @@ namespace
 class LiveGameScriptHost : public ScriptEngineHost
 {
 public:
-	LiveGameScriptHost(GameLogic &logic, AIWorld *ai, const AudioIniState &audio, ArchiveFileSystem &fs)
-		: m_logic(logic)
+	LiveGameScriptHost(const LiveGame &game, GameLogic &logic, AIWorld *ai, const AudioIniState &audio, ArchiveFileSystem &fs)
+		: m_game(game)
+		, m_logic(logic)
 		, m_ai(ai)
 		, m_audio(audio)
 		, m_files(ScriptAudioLength::makeProbeCache(fs))
@@ -616,6 +817,16 @@ public:
 	bool audioLengthMs(const std::string &name, std::int32_t &ms, bool &picked) override
 	{
 		return ScriptAudioLength::lengthMs(m_audio, *m_files, name, ms, picked);
+	}
+	// lane BFME2CAMP1: the HUD's view (LiveGame::setScriptLocalView), none in a headless game
+	// (review: the values the main thread published for this frame, LiveGame::publishScriptLocalView; the logic may run on the worker)
+	bool cameraScrollDistance(float &distance) override
+	{
+		return m_game.publishedCameraScroll(distance);
+	}
+	bool objectivesScreenOpen() override
+	{
+		return m_game.publishedObjectivesOpen();
 	}
 	Object *createObject(const ThingTemplate &tt, Team &team, const Coord3D &pos, float angle) override
 	{
@@ -635,6 +846,7 @@ public:
 	}
 
 private:
+	const LiveGame &m_game;
 	GameLogic &m_logic;
 	AIWorld *m_ai;
 	const AudioIniState &m_audio;
@@ -642,7 +854,12 @@ private:
 };
 } // namespace
 
-bool LiveGame::setupMapScripts(const Options &options, const SidesList &sidesUsed, const std::set<std::string> &slotSides, std::string *error)
+bool LiveGame::mapScriptsWanted(const Options &options)
+{
+	return options.mapScripts == 1 || (options.mapScripts < 0 && (options.start || options.campaign));
+}
+
+bool LiveGame::buildMapScriptSetup(const SidesList &sidesUsed, const std::set<std::string> &slotSides, std::string *error)
 {
 	// the playerAIType of every side: a slot side of a started game: a human the Multiplayer_Human library, a computer its faction's
 	// DefaultPlayerAIType (RW 0x627C1F; S-1181); a map side its dict's playerAIType
@@ -667,13 +884,19 @@ bool LiveGame::setupMapScripts(const Options &options, const SidesList &sidesUse
 			aiTypes[i] = d.getAsciiString("playerAIType");
 		}
 	}
-	(void)options;
 	m_scriptSetup = std::make_unique<MapScriptSetup>();
-	if (!m_scriptSetup->build(m_fs, m_world.skirmishAI(), sidesUsed, m_map, slotSides, aiTypes, error))
+	return m_scriptSetup->build(m_fs, m_world.skirmishAI(), sidesUsed, m_map, slotSides, aiTypes, error);
+}
+
+bool LiveGame::setupMapScripts(const Options &options, const SidesList &sidesUsed, const std::set<std::string> &slotSides, std::string *error)
+{
+	(void)options;
+	// a started game built it before its players (its libraries' teams); a campaign mission builds it here
+	if (!m_scriptSetup && !buildMapScriptSetup(sidesUsed, slotSides, error))
 	{
 		return false;
 	}
-	m_scriptHost = std::make_unique<LiveGameScriptHost>(*m_logic, m_ai.get(), m_world.audio(), m_fs);
+	m_scriptHost = std::make_unique<LiveGameScriptHost>(*this, *m_logic, m_ai.get(), m_world.audio(), m_fs);
 	ScriptEngine &engine = m_logic->scriptEngine();
 	engine.setHost(m_scriptHost.get());
 	engine.newGame(m_scriptSetup->sides(), m_map.chunks.hasTriggerAreas ? &m_map.chunks.triggerAreas : nullptr,
@@ -692,6 +915,14 @@ bool LiveGame::setupMapScripts(const Options &options, const SidesList &sidesUse
 		m_report.mapScripts.push_back(n);
 	}
 	return true;
+}
+
+std::vector<CheatMode::LogEntry> LiveGame::takeCheatAnnouncements()
+{
+	std::vector<CheatMode::LogEntry> out;
+	const std::unique_lock<std::mutex> lock = lockPublication("takeCheatAnnouncements");
+	out.swap(m_publishedCheatLines);
+	return out;
 }
 
 std::vector<ScriptClientRequest> LiveGame::takeScriptRequests()
@@ -733,6 +964,12 @@ Object *LiveGame::createObject(const std::string &templateName, int playerIndex,
 		p.z = m_logic->getGroundHeight(p.x, p.y);
 		obj->setPosition(&p);
 		obj->setOrientation(angle);
+		// a horde makes its members where it stands: HordeContain's onBuildComplete (RW 0x8718ED), which RotWK's creators run once they have placed the object
+		// (RW 0x68D252). Only a horde is completed here: the other objects stay as this facade has always made them (the callers complete them when needed)
+		if (obj->getContain() && obj->getContain()->getHordeContainInterface())
+		{
+			obj->friend_onBuildComplete();
+		}
 		// lane PATH-2 (item 2, S-272 follow-up): a placed object registers its own footprint, as every retail creation site does (RW 0x62C93F .. 0x62C98D:
 		// newObject, setOrientation, setPosition, then addObjectToPathfindMap 0x6E85E9 unconditionally; DONOR ZH ScriptActions::doCreateObject). The pathfinder
 		// itself keeps only structures and fences (RW 0x936B7D)
@@ -753,8 +990,39 @@ double LiveGame::alpha() const
 	return m_clock.getAlpha();
 }
 
+bool LiveGame::campaignCarryoverOptions(const LinearCampaign &campaign, int mission, const std::string &carryText, Options &lo, std::string &stop,
+										std::string &error)
+{
+	if (mission < 0 || mission >= (int)campaign.missions.size())
+	{
+		error = "no mission " + std::to_string(mission) + " in the campaign '" + campaign.name + "'";
+		return false;
+	}
+	if (!carryText.empty())
+	{
+		if (!CampaignCarryover::State::parse(carryText, lo.carryover, &error))
+		{
+			return false;
+		}
+		lo.campaignCarryover = true;
+	}
+	else if (mission == 0)
+	{
+		lo.carryover = CampaignCarryover::beginCampaign(campaign.carryoverUnits);
+		lo.campaignCarryover = true;
+	}
+	else
+	{
+		stop = "[S-4904] mission " + std::to_string(mission) + " of " + campaign.name +
+			   " started on its own: no campaign carry-over (the previous missions' units and the player's carried sciences are not there)";
+	}
+	lo.carryoverDelayed = campaign.missions[(size_t)mission].delayCarryover;
+	return true;
+}
+
 int LiveGame::advance(double seconds)
 {
+	publishScriptLocalView(); // lane BFME2CAMP1 (review): the HUD's view for the frames this call requests (main thread)
 	const auto worldContext = m_world.enterContext(); // this world's stores and hooks are the live ones for the whole call (this thread's context)
 	NumericState::normalizeFloatingPointEnvironment(); // simulation thread entry (the host may have changed the environment since the last call)
 	if (!m_loaded)
@@ -890,6 +1158,7 @@ int LiveGame::advance(double seconds)
 
 int LiveGame::advanceWithDriver(int due)
 {
+	publishScriptLocalView(); // lane BFME2CAMP1 (review)
 	// SMOOTH-1 + MP-1 (review r4), on the protocol owner. (1) the completions the simulation published, in frame order (the replay's hash records, the
 	// CRC steps); (2) the local input and the transport: the HUD appends to the command list only at worker-idle points, and the worker installs batches
 	// into the same list, so the input is taken while no batch is queued or running (it then waits in the list for the next idle advance, as it would
@@ -991,6 +1260,7 @@ void LiveGame::drainFrames()
 
 int LiveGame::stepFrame()
 {
+	publishScriptLocalView(); // lane BFME2CAMP1 (review)
 	drainFrames();
 	const bool threaded = logicThread();
 	if (threaded)
@@ -1126,8 +1396,16 @@ std::shared_ptr<const FrameCompletion> LiveGame::captureCompletion(const WorkIte
 	}
 	else if (item.capture.hashEveryFrame || m_options.hashEveryFrame)
 	{
-		c->hash = m_logic->computeStateHash();
-		c->hashed = true;
+		if (!m_options.hashEveryFrame && m_logic->uber() && c->frame % (UnsignedInt)LiveGameFrameDriver::kUberRecordedHashEvery != 0 &&
+			!(item.driver && item.driver->hashWanted(c->frame)))
+		{
+			c->hashSkipped = true; // lane UBER-2C: the Uber recording's cadence
+		}
+		else
+		{
+			c->hash = m_logic->computeStateHash();
+			c->hashed = true;
+		}
 	}
 	std::uint32_t rng = 0x811C9DC5u;
 	for (std::uint32_t w : m_logic->random().seedArray())
@@ -1199,7 +1477,15 @@ void LiveGame::publish(std::shared_ptr<const FrameCompletion> completion)
 	m_recorder->captureObserverFrame();
 	std::vector<ClientEvent> events = m_recorder->take();
 	std::vector<ScriptClientRequest> scriptRequests = m_logic->scriptEngine().takeClientRequests(); // lane SCRIPT-1
+	std::vector<CheatMode::LogEntry> cheatLines = m_logic->cheatMode().takeAnnouncements();        // lane CHEAT-1
 	std::lock_guard<std::mutex> lock(m_pubMutex);
+	for (CheatMode::LogEntry &e : cheatLines)
+	{
+		if (m_publishedCheatLines.size() < CheatMode::kLogCap) // a render side that never takes them keeps a bounded queue
+		{
+			m_publishedCheatLines.push_back(std::move(e));
+		}
+	}
 	m_publishedPrev = m_published;
 	m_published = snap;
 	for (ScriptClientRequest &r : scriptRequests)
@@ -1271,6 +1557,19 @@ LiveGame::Report LiveGame::report() const
 			r.stops.push_back(s);
 		}
 		r.launchBoneProblems = m_launchBones->problems();
+	}
+	if (m_wallMeshes)
+	{
+		// a mesh the INI names that the model lacks is retail data (RotWK's HelmsDeepCulvert names RampMesh1 / 2 = P2 / P3, RBHDDWCulv has neither: retail's
+		// getRamp finds no mesh and makes no ramp); a missing model is an error
+		r.wallMeshProblems = m_wallMeshes->problems();
+		for (const std::string &e : r.wallMeshProblems)
+		{
+			if (e.find(" is not a mesh of ") == std::string::npos)
+			{
+				r.errors.push_back("wall meshes: " + e);
+			}
+		}
 	}
 	for (const std::string &s : r.movementStops)
 	{
@@ -1402,4 +1701,14 @@ bool LiveGame::observeNextPlayer(bool forward)
 	m_shroud->refreshLocalPlayer();
 	m_shroudChanged = true;
 	return true;
+}
+
+std::vector<std::string> LiveGame::takeSdkBanners()
+{
+	return m_sdkScripts ? m_sdkScripts->takeBanners() : std::vector<std::string>();
+}
+
+std::vector<std::string> LiveGame::takeSdkReports()
+{
+	return m_sdkScripts ? m_sdkScripts->takeNewReports() : std::vector<std::string>();
 }

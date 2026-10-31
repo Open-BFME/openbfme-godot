@@ -5,6 +5,7 @@
 #include "HudTestUtil.h"
 
 #include "GameLogic/AI/GarrisonCommands.h"
+#include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/GameLogicDispatch.h"
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Module/AIUpdate.h"
@@ -71,4 +72,76 @@ TEST_CASE("garrison hud: selecting an archer horde and clicking a Gondor battle 
 	REQUIRE(g != nullptr);
 	CHECK(g->pointsLoaded());
 	std::printf("  info: HUD garrison order: inside after %zu frames, garrison points %d / %d / %d\n", frames, g->pointCount(0), g->pointCount(1), g->pointCount(2));
+}
+
+// lane GARRISON-4: the owner's case through the input. A neutral ruined tower (HordeGarrisonContain, AllowNeutralInside): the default mouse's left click on it
+// with the archers selected is MSG_ENTER; inside, the tower is the local player's (RW 0x87C6CE), so selecting it shows his enabled exit
+TEST_CASE("garrison4 hud input: a left click on a neutral ruined tower with an archer horde selected is MSG_ENTER; the archers garrison it and it is the player's")
+{
+	if (!haveWorld("garrison4 hud input"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Rig r(s);
+	float mx = 0, my = 0;
+	REQUIRE(r.logic().terrain() != nullptr);
+	REQUIRE(r.logic().terrain()->getExtent(0, mx, my));
+	const Coord3D c0 = r.freeSpot(mx * 0.5f, my * 0.5f, 300.0f);
+	Player *neutral = r.logic().players().getNeutralPlayer();
+	REQUIRE(neutral != nullptr);
+	Object *tower = r.make("RuinedTower_Open", c0.x, c0.y, neutral);
+	Object *archers = r.make("GondorArcherHorde", c0.x - 160.0f, c0.y);
+	r.lookAt(Coord3D{ c0.x - 80.0f, c0.y, 0.0f }, 420.0f, 520.0f);
+	r.frame(3);
+	REQUIRE(r.local != nullptr);
+	const ICoord2D pa = r.screenOf({ c0.x - 160.0f, c0.y, 6.0f });
+	r.leftClick(pa.x, pa.y);
+	r.frame(1);
+	REQUIRE(r.local->selection().size() == 1);
+	CHECK(r.local->selection()[0] == archers->getID());
+	const ICoord2D pt = r.screenOf({ c0.x, c0.y, 40.0f });
+	r.leftClick(pt.x, pt.y);
+	CHECK(logCountOf(*r.input, "MSG_ENTER") == 1);
+	r.frame(1);
+	size_t frames = 0;
+	HordeContainInterface *h = archers->getContain()->getHordeContainInterface();
+	while (frames < 600 && !(archers->getContainedBy() == tower && h->allMembersEntered()))
+	{
+		r.frame(1);
+		++frames;
+	}
+	CHECK(archers->getContainedBy() == tower);
+	CHECK(tower->getControllingPlayer() == r.local);
+}
+
+TEST_CASE("ring delivery hud: right-clicking a fortress with a selected ring carrier issues enter and delivers the ring")
+{
+	if (!haveWorld("ring delivery hud")) return;
+	Rig r(shared());
+	float mx = 0, my = 0;
+	REQUIRE(r.logic().terrain() != nullptr);
+	REQUIRE(r.logic().terrain()->getExtent(0, mx, my));
+	const Coord3D c = r.freeSpot(mx * 0.5f, my * 0.5f, 300.0f);
+	Object *fortress = r.make("MenFortressCitadel", c.x, c.y);
+	Object *carrier = r.make("GondorArcherHorde", c.x - 200.0f, c.y);
+	r.make("TheDroppedRing", c.x - 200.0f, c.y);
+	r.lookAt(Coord3D{ c.x - 100.0f, c.y, 0.0f }, 420.0f, 600.0f);
+	r.frame(3);
+	REQUIRE(carrier->testStatus((unsigned)CombatNames::status("HOLDING_THE_RING")));
+	const ICoord2D pc = r.screenOf({ c.x - 200.0f, c.y, 6.0f });
+	r.leftClick(pc.x, pc.y);
+	r.frame(1);
+	REQUIRE(r.local->selection().size() == 1);
+	REQUIRE(r.local->selection()[0] == carrier->getID());
+	r.input->commandTranslator().setUseAlternateMouse(true);
+	const ICoord2D pf = r.screenOf({ c.x, c.y, 40.0f });
+	r.move(pf.x, pf.y);
+	CHECK(r.input->ui().cursor() == "DeliverRing");
+	r.rightClick(pf.x, pf.y);
+	CHECK(logCountOf(*r.input, "MSG_ENTER") == 1);
+	CHECK(logCountOf(*r.input, "MSG_DO_MOVETO") == 0);
+	for (int i = 0; i < 600 && !fortress->hasUpgrade("Upgrade_FortressRingHero"); ++i) r.frame(1);
+	CHECK(fortress->hasUpgrade("Upgrade_FortressRingHero"));
+	CHECK_FALSE(carrier->testStatus((unsigned)CombatNames::status("HOLDING_THE_RING")));
 }

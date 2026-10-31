@@ -2,6 +2,7 @@
 // Race or Hero vs Hero mode; what a skirmish / LAN game can be is the battle judged by VictoryConditions rule 3 (base or army: TheGameLogic + 0x114 == 3),
 // the SANDBOX game (one team, GameInfo::isSandbox RW 0x800C8F) and the War of the Ring (lane WOTR-1). The binary facts are read from RW_GAME_DAT (skipped
 // without it); the games run on retail data (skipped without the installs).
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "PeImage.h"
@@ -227,11 +228,16 @@ TEST_CASE("gamemodes1: the start check: one team is a sandbox game (GUI:SandboxM
 	CHECK(c.sandbox);
 	// in the War of the Ring with its enemy flag (+ 0x3A5 & 1) one team is refused: first the two-humans gate (RW 0x8434DE), with two humans GUI:NeedWOTREnemy
 	setup.setStrategicMode(true);
+	// lane WOTR-2: no scenario chosen: the maximum is 0 (RW 0x9758E3) and the start silently does not happen (RW 0x843263: no line)
+	c = setup.checkStart(0x100);
+	CHECK_FALSE(c.ok);
+	CHECK(c.refusalLabel.empty());
+	CHECK(c.lines.empty());
+	setup.setStrategicScenario({ 6, 2, {} }); // the Scenario defaults (RW 0x901DD5: MaxPlayers 6, MinPlayers 2)
 	c = setup.checkStart(0x100);
 	CHECK_FALSE(c.ok);
 	CHECK(c.refusalLabel == "GUI:NeedHumanPlayers");
-	REQUIRE(c.stops.size() == 1);
-	CHECK(c.stops[0].rfind("[S-3610] start check:", 0) == 0);
+	CHECK(c.stops.empty());
 	SkirmishGameInfo two = setup.info();
 	two.slots[1].state = SLOT_PLAYER;
 	two.slots[1].teamNumber = 1;
@@ -285,6 +291,83 @@ TEST_CASE("gamemodes1: the start check: one team is a sandbox game (GUI:SandboxM
 	notReady.mapName = "maps/four/four.map";
 	setup.replaceInfo(notReady);
 	CHECK(setup.checkStart(0x20).refusalLabel == "GUI:NotifiedStartIntent");
+	CHECK(setup.checkStart().ok);
+}
+
+TEST_CASE("wotr2: the War of the Ring start check reads the scenario: MaxPlayers / MinPlayers (RW 0x9758E3 / 0x97597F), DisabledFactions (RW 0x843447 -> GUI:DisabledFaction before GUI:NeedStartSpots)")
+{
+	GmSource src;
+	for (const char *name : { "FactionMen", "FactionAngmar" })
+	{
+		SkirmishFaction f;
+		f.templateName = name;
+		f.side = name;
+		f.playableSide = true;
+		src.factionList.push_back(f);
+	}
+	GmText text;
+	SkirmishGameSetup setup(src, &text);
+	REQUIRE(setup.init(u"P", 7, "maps/four/four.map", nullptr));
+	setup.setStrategicMode(true);
+	SkirmishGameInfo g = setup.info();
+	g.slots[0].state = SLOT_PLAYER;
+	g.slots[0].teamNumber = 0;
+	g.slots[0].playerTemplate = 0; // FactionMen
+	g.slots[0].startPos = 0;
+	g.slots[1].state = SLOT_EASY_AI;
+	g.slots[1].teamNumber = 1;
+	g.slots[1].playerTemplate = 1; // FactionAngmar
+	g.slots[1].startPos = 1;
+	for (int i = 2; i < MAX_SLOTS; ++i)
+	{
+		g.slots[i].state = SLOT_CLOSED;
+	}
+	setup.replaceInfo(g);
+	setup.setStrategicScenario({ 6, 2, {} });
+	CHECK(setup.checkStart().ok);
+	// the map's count (4) no longer limits a strategic game; the scenario's MaxPlayers does (here 1: fewer than the two players)
+	setup.setStrategicScenario({ 1, 1, {} });
+	CHECK(setup.checkStart().refusalLabel == "LAN:TooManyPlayers");
+	// MinPlayers above the players present (WOTRScenario MinPlayers 3)
+	setup.setStrategicScenario({ 6, 3, {} });
+	SkirmishGameSetup::StartCheck c = setup.checkStart();
+	CHECK(c.refusalLabel == "LAN:TooFewPlayers");
+	REQUIRE(c.lines.size() == 1);
+	CHECK(c.lines[0].kind == 1);
+	// a maximum below the minimum: the silent refusal (RW 0x843276)
+	setup.setStrategicScenario({ 2, 3, {} });
+	c = setup.checkStart();
+	CHECK_FALSE(c.ok);
+	CHECK(c.refusalLabel.empty());
+	// DisabledFactions (retail WOTRScenario044: FactionAngmar FactionArnor): the Angmar computer is refused, kinds 1 and 2
+	setup.setStrategicScenario({ 6, 2, { "FactionAngmar", "FactionArnor" } });
+	c = setup.checkStart();
+	CHECK(c.refusalLabel == "GUI:DisabledFaction");
+	REQUIRE(c.lines.size() == 2);
+	CHECK(c.lines[0].kind == 1);
+	CHECK(c.lines[1].kind == 2);
+	// ... before the start spots are tested (RW 0x8435D9 precedes RW 0x8435F9)
+	g.slots[0].startPos = -1;
+	setup.replaceInfo(g);
+	CHECK(setup.checkStart().refusalLabel == "GUI:DisabledFaction");
+	g.slots[0].startPos = 0;
+	// with a non-empty list a random faction is disabled too (+ 0x18 < 0 sets the flag, RW 0x843475)
+	g.slots[1].playerTemplate = PLAYERTEMPLATE_RANDOM;
+	setup.replaceInfo(g);
+	CHECK(setup.checkStart().refusalLabel == "GUI:DisabledFaction");
+	// ... and passes when the scenario disables nothing
+	setup.setStrategicScenario({ 6, 2, {} });
+	CHECK(setup.checkStart().ok);
+	// Men alone in the list: the computer's Angmar passes, the player's Men is refused
+	g.slots[1].playerTemplate = 1;
+	setup.replaceInfo(g);
+	setup.setStrategicScenario({ 6, 2, { "FactionMen" } });
+	CHECK(setup.checkStart().refusalLabel == "GUI:DisabledFaction");
+	setup.setStrategicScenario({ 6, 2, { "FactionMordor" } });
+	CHECK(setup.checkStart().ok);
+	// outside the War of the Ring nothing of the scenario applies (the map's 4 players, no faction test)
+	setup.setStrategicMode(false);
+	setup.setStrategicScenario({ 1, 3, { "FactionMen" } });
 	CHECK(setup.checkStart().ok);
 }
 
@@ -394,6 +477,7 @@ Object *makeArmy(GameLogic &logic, Player &p)
 	Coord3D at = *base->getPosition();
 	at.x = SimMath::addf32(at.x, 300.0f);
 	o->setPosition(&at);
+	testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	return o;
 }
 
@@ -412,7 +496,7 @@ int killAll(GameLogic &logic, const Player &p, bool structures)
 	{
 		if (!o->isEffectivelyDead() && !o->isDestroyed())
 		{
-			o->kill(DEATH_NORMAL);
+			o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 		}
 	}
 	return (int)victims.size();

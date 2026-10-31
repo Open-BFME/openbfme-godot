@@ -59,6 +59,14 @@ Vector3 rotate(const Matrix3D &m, const Vector3 &v) { return m.Rotate_Vector(v);
 
 } // namespace
 
+float Godot_Tangent_Sign(const float n[3], const float t[3], const float b[3])
+{
+	const float cx = n[1] * t[2] - n[2] * t[1];
+	const float cy = n[2] * t[0] - n[0] * t[2];
+	const float cz = n[0] * t[1] - n[1] * t[0];
+	return cx * b[0] + cy * b[1] + cz * b[2] < 0.0f ? -1.0f : 1.0f;
+}
+
 std::uint32_t MeshRenderData::TotalSurfaceTriangles() const
 {
 	std::uint32_t n = 0;

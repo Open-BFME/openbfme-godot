@@ -1,6 +1,7 @@
 // OpenBFME unit tests (lane MODULES-2): the retail game the emotion and area-scan tests share. GPL-3.0.
 #pragma once
 
+#include "HordeCompleteTestUtil.h"
 #include "HudTestUtil.h"
 #include "PathfindTestUtil.h"
 
@@ -60,7 +61,7 @@ struct RetailGame
 		REQUIRE(o);
 		const Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
-		return o;
+		return testutil::completeHorde(o);
 	}
 	void run(int frames)
 	{

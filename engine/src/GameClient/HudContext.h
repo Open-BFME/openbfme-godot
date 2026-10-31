@@ -18,6 +18,7 @@
 class AIWorld;
 class ArchiveFileSystem;
 class CommandStore;
+class FormationAssistant;
 class MessageStream;
 class Object;
 class Player;
@@ -56,5 +57,6 @@ struct HudContext
 	// render objects). Set by the HUD from the live game's drawables; empty: every object picks by its geometry (S-284)
 	std::function<DrawablePick::Result(const Object &, const Coord3D &, const Coord3D &, float *)> pickRay;
 
+	const FormationAssistant *formations = nullptr;
 	Player *localPlayer() const { return logic.players().getLocalPlayer(); }
 };

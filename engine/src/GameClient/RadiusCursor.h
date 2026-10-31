@@ -15,10 +15,10 @@
 //   recolours; else setRadiusCursorNone (vslot 0x144, RW 0x69B0E1 -> RadiusDecal::clear RW 0x7327E5), the template by name (none: nothing), the object the
 //   radius belongs to (for a SPELL_BOOK command, type 0x20, the local player's spell book object RW 0x6AD0D9; else the first selected drawable's), its
 //   controlling player (RW 0x68B678); the radius is the SpecialPower's RadiusCursorRadius (+ 0x54, through RW 0x688D3C's final override), nothing when it is
-//   not above 0; RadiusDecalTemplate::createRadiusDecal (RW 0x732DE7, tier B same-shape: BFME2 decomp RadiusDecalTemplateCreate.cpp:60): nothing without a
+//   not above 0; RadiusDecalTemplate::createRadiusDecal (RW 0x732DE7, tier B same-shape: BFME2 decomp RadiusDecal.cpp:668): nothing without a
 //   player or a Texture or radius <= 0; with OnlyVisibleToOwningPlayer and a player other than the local one the decal exists but is never made (empty);
 //   else Texture / Texture2 in the Style, 2 * radius on both axes, angle 0, the template's Color or (Color 0) the player's colour; then the hint colour:
-//   Shadow::setColor (RW 0x73232B, BFME2 decomp Shadow_setOpacity.cpp) with 0xFFFFFFFF when the hint was valid, 0xFFFF1414 when not
+//   Shadow::setColor (RW 0x73232B, BFME2 decomp Shadow.cpp:Shadow::setColor) with 0xFFFFFFFF when the hint was valid, 0xFFFF1414 when not
 //   ((-(valid) & 0xEBEB) - 0xEBEC): the RGB is kept (& 0xFFFFFF) and, for the alpha styles (0x1420), the opacity is the alpha; the additive styles
 //   (0x10840) scale the RGB by the opacity instead;
 // - InGameUI::createCommandHint (RW 0x6A3B77) for a pending command whose button names a RadiusCursorType: the pointer is set to cursor 0 (None: no
@@ -36,6 +36,7 @@
 //   selection decals are (S-2522: a Godot Decal over the terrain layer, not RotWK's projected terrain mesh).
 
 #pragma once
+#include "GameClient/PlayerMessageLog.h"
 
 #include "Common/INIDataTypes.h"
 
@@ -79,6 +80,7 @@ struct TerrainResourceUiSettings
 class RadiusCursorTemplates
 {
 public:
+	const PlayerMessageSettings &messageUi() const { return m_messageUi; }
 	const TerrainResourceUiSettings &resourceUi() const { return m_resourceUi; } // lane OWNERFIX-2
 	// Data\INI\InGameUI.ini from the mount; false with `error` when it is missing or does not parse
 	bool load(ArchiveFileSystem &fs, std::string *error);
@@ -92,6 +94,7 @@ public:
 private:
 	std::map<std::string, RadiusDecalTemplate> m_templates;
 	TerrainResourceUiSettings m_resourceUi;
+	PlayerMessageSettings m_messageUi;
 };
 
 // the decal the device draws this frame

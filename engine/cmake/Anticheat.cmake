@@ -3,6 +3,7 @@
 set(OPENBFME_ANTICHEAT_SOURCES
     src/GameNetwork/OrdersIntoFog.cpp
     src/GameNetwork/CommandStreamChecks.cpp
+    src/GameNetwork/ViewChecks.cpp
 )
 set(OPENBFME_ANTICHEAT_TESTS
     tests/test_orders_into_fog.cpp

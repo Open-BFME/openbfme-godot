@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generates the MP3 test fixtures (into an ignored build directory) and checks or rewrites their golden numbers.
 
-  python3 tools/audio/gen_mp3_fixtures.py --out DIR [--write-golden] [--cli path/to/audio_decode_cli]
+  python3 tools/audio/gen_mp3_fixtures.py --out DIR [--check-only | --write-golden] [--cli path/to/audio_decode_cli]
 
 Dev/test-time only (needs `lame` and `mpg123`; `ffmpeg` is used for a cross-check when present). Synthetic signals
 (sweeps, clicks, silence; nothing from the game) are encoded with lame into DIR/*.mp3.bin. The streams are NEVER committed
@@ -11,13 +11,17 @@ naming this command, when it is missing.
 The committed golden file engine/tests/data/audio/mp3_golden.tsv (numbers only) records, from the mpg123 float decode rounded
 to 16 bit (its default output): sample rate, channels, frame count, peak, RMS, and every 251st interleaved sample. The unit
 test compares the OpenBFME decoder against those numbers (peak and points within 2 LSB, RMS within 0.5), so it needs no
-external tool. Without --write-golden this script compares the numbers it just derived with the committed golden and exits
-non-zero on a difference (a different lame / mpg123 produced other streams: review, then rerun with --write-golden).
-With --cli the generator also prints the maximum and RMS difference of the OpenBFME decoder against mpg123.
+external tool. Without --write-golden this script compares the numbers it just derived with the committed golden and the
+streams with mp3_fixtures.tsv (sizes and SHA-256). Valid existing streams are reused without invoking any tools.
+--check-only validates existing streams without attempting generation on failure. Generation requires LAME 3.100.
+--write-golden deliberately updates both contracts; it is not a workaround for a non-reference encoder/decoder.
+When generating, --cli also prints the maximum and RMS difference of the OpenBFME decoder against mpg123.
 """
 import argparse
+import hashlib
 import math
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -27,6 +31,7 @@ import wave
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 GOLDEN = os.path.join(ROOT, "engine", "tests", "data", "audio", "mp3_golden.tsv")
+MANIFEST = os.path.join(ROOT, "engine", "tests", "data", "audio", "mp3_fixtures.tsv")
 STRIDE = 251
 
 
@@ -134,27 +139,94 @@ def run(cmd, **kw):
     return subprocess.run(cmd, check=True, **kw)
 
 
+def data_lines(path):
+    with open(path, encoding="utf-8") as f:
+        return [line for line in f.read().splitlines() if line and not line.startswith("#")]
+
+
+def fixture_hashes(out):
+    rows = []
+    for name, *_ in FIXTURES:
+        path = os.path.join(out, name + ".mp3.bin")
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError as e:
+            sys.exit("MP3 fixture missing or unreadable: %s (%s)" % (path, e))
+        rows.append("%s\t%d\t%s" % (name, len(data), hashlib.sha256(data).hexdigest()))
+    return rows
+
+
+def check_fixtures(out):
+    want = data_lines(MANIFEST)
+    names = [name for name, *_ in FIXTURES]
+    if [line.split("\t")[0] for line in want] != names or [line.split("\t")[0] for line in data_lines(GOLDEN)] != names:
+        sys.exit("MP3 fixture names differ between the generator, mp3_fixtures.tsv and mp3_golden.tsv")
+    for expected, got in zip(want, fixture_hashes(out)):
+        if expected != got:
+            sys.exit("MP3 fixture size/SHA-256 mismatch for %s; use the reference fixtures matching mp3_fixtures.tsv" % got.split("\t")[0])
+    print("Verified %d MP3 fixtures (sizes and SHA-256)" % len(names))
+
+
+def lame_version(tool):
+    result = run([tool, "--version"], capture_output=True, text=True)
+    banner = result.stdout + result.stderr
+    match = re.search(r"\bversion\s+(\d+(?:\.\d+)+)\b", banner, re.IGNORECASE)
+    if not match:
+        sys.exit("Cannot determine lame version; fixtures need 3.100")
+    if match[1] != "3.100":
+        sys.exit("lame %s found, fixtures need 3.100" % match[1])
+    return banner.splitlines()[0]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cli", help="audio_decode_cli to compare against mpg123")
     ap.add_argument("--out", required=True, help="directory that receives the *.mp3.bin streams (an ignored build directory)")
-    ap.add_argument("--write-golden", action="store_true", help="rewrite the committed mp3_golden.tsv instead of checking it")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--write-golden", action="store_true", help="rewrite mp3_golden.tsv and mp3_fixtures.tsv instead of checking them")
+    mode.add_argument("--check-only", action="store_true", help="verify existing fixture sizes/hashes without lame or mpg123")
+    ap.add_argument("--lame", default="lame", help="LAME executable (CMake passes its resolved host tool)")
+    ap.add_argument("--mpg123", default="mpg123", help="mpg123 executable (CMake passes its resolved host tool)")
     args = ap.parse_args()
     OUT = os.path.abspath(args.out)
-    if os.path.commonpath([OUT, ROOT]) == ROOT:
+    if args.check_only:
+        check_fixtures(OUT)
+        return
+    if not args.write_golden:
+        try:
+            check_fixtures(OUT)
+        except SystemExit:
+            pass
+        else:
+            return
+    try:
+        inside_source = os.path.commonpath([OUT, ROOT]) == ROOT
+    except ValueError:  # different Windows drives
+        inside_source = False
+    if inside_source:
         probe = os.path.join(OUT, "x.mp3.bin")
         ignored = subprocess.run(["git", "-C", ROOT, "check-ignore", "-q", probe]).returncode == 0
         if not ignored:
             sys.exit("--out %s is inside the source tree and not git-ignored: fixture streams must go to an ignored build directory" % OUT)
-    for tool in ("lame", "mpg123"):
+    for tool in (args.lame, args.mpg123):
         if not shutil.which(tool):
-            sys.exit("%s not found" % tool)
-    os.makedirs(OUT, exist_ok=True)
-    tmp = tempfile.mkdtemp(prefix="obfme_mp3fx_")
+            sys.exit("MP3 fixture tool not found: %s; run this generator outside the CMake sandbox with lame and mpg123 on PATH" % tool)
+        if tool == args.lame:
+            versions = lame_version(tool)
+    with tempfile.TemporaryDirectory(prefix="obfme_mp3fx_") as tmp:
+        generate(args, tmp, versions)
+        # Publish only after both reference contracts have passed.
+        os.makedirs(OUT, exist_ok=True)
+        for name, *_ in FIXTURES:
+            shutil.copyfile(os.path.join(tmp, name + ".mp3.bin"), os.path.join(OUT, name + ".mp3.bin"))
+
+
+def generate(args, tmp, versions):
+    OUT = tmp
     lines = []
     total = 0
-    versions = subprocess.run(["lame", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
-    mpg_version = subprocess.run(["mpg123", "--version"], capture_output=True, text=True).stdout.strip()
+    mpg_version = run([args.mpg123, "--version"], capture_output=True, text=True).stdout.strip()
     lines.append("# generated by tools/audio/gen_mp3_fixtures.py; %s; %s" % (versions, mpg_version))
     lines.append("# name\trate\tchannels\tframes\tpeak\trms\tevery 251st interleaved sample of the mpg123 s16 decode")
     for name, rate, channels, lame_args, builder in FIXTURES:
@@ -162,7 +234,7 @@ def main():
         mp3 = os.path.join(tmp, name + ".mp3")
         chans = builder(rate)
         write_wav(wav, rate, channels)(chans)
-        run(["lame", "--quiet", "--resample", RESAMPLE[rate]] + lame_args + [wav, mp3])
+        run([args.lame, "--quiet", "--resample", RESAMPLE[rate]] + lame_args + [wav, mp3])
         data = open(mp3, "rb").read()
         check_rate(data, rate, name)
         if name == "id3_44k":
@@ -173,7 +245,7 @@ def main():
         total += len(data)
         with open(os.path.join(OUT, name + ".mp3.bin"), "wb") as f:
             f.write(data)
-        raw = subprocess.run(["mpg123", "-q", "-s", mp3], capture_output=True, check=True).stdout
+        raw = run([args.mpg123, "-q", "-s", mp3], capture_output=True).stdout
         samples = struct.unpack("<%dh" % (len(raw) // 2), raw)
         frames = len(samples) // channels
         peak = max(abs(s) for s in samples)
@@ -201,17 +273,20 @@ def main():
     if args.write_golden:
         with open(GOLDEN, "w", newline="\n") as f:
             f.write("\n".join(lines) + "\n")
+        with open(MANIFEST, "w", newline="\n") as f:
+            f.write("# name\tsize\tsha256; reference streams matching mp3_golden.tsv\n")
+            f.write("\n".join(fixture_hashes(OUT)) + "\n")
     else:
-        want = [l for l in open(GOLDEN, newline="").read().split("\n") if l and not l.startswith("#")]
-        got = [l for l in lines if not l.startswith("#")]
+        want = data_lines(GOLDEN)
+        got = [line for line in lines if not line.startswith("#")]
         if want != got:
             for w, g in zip(want, got):
                 if w != g:
                     print("golden mismatch:\n  committed %s\n  derived   %s" % (w[:160], g[:160]), file=sys.stderr)
                     break
-            sys.exit("the fixtures derived here differ from the committed mp3_golden.tsv (lame / mpg123 versions?); rerun with --write-golden after review")
+            sys.exit("the fixtures derived here differ from mp3_golden.tsv (lame / mpg123 versions?); use the reference fixtures, not --write-golden")
+        check_fixtures(OUT)
     print("total %d bytes in %d fixtures" % (total, len(FIXTURES)))
-    shutil.rmtree(tmp)
 
 
 if __name__ == "__main__":

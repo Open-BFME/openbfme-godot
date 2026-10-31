@@ -25,6 +25,7 @@ extends SceneTree
 const MainScene := preload("res://scenes/main.tscn")
 const WidgetsScript := preload("res://scripts/ui/widgets.gd")
 const StyleScript := preload("res://scripts/ui/style.gd")
+const GameList := preload("res://scripts/core/game_list.gd")
 
 ## the windows (pixels): the 720p base, the Deck, 1080p / 1440p, ultra-wide, the window's minimum size (main.gd _fit_window: 960 x 540),
 ## and a tall narrow one; MACPLAY-1: the Mac windows main.gd fit_size makes on Retina screens (a MacBook Air at its default 1470 x 956
@@ -54,13 +55,15 @@ static func _cases() -> Dictionary:
 	var c := {
 		"main": _case("main", "play", ["Up to date", "PLAY", "Check for updates", "In ~/Games/BFME", "What's New"]),
 		"news": _case("news", "news", ["News & patch notes", "PLAY"]),
-		"multiplayer": _case("multiplayer", "multiplayer", ["Multiplayer", "Online play is coming"]),
-		"mods": _case("mods", "mods", ["Edain Mod", "none installed"]),
+		"multiplayer": _case("multiplayer", "multiplayer", ["Multiplayer", "Sign in", "Use a recovery code on this PC", "Host game", "No open games"]),
+		"multiplayer-populated": _case("multiplayer", "multiplayer", ["Multiplayer", "Sign in", "Host game", "Westfold", "N".repeat(48),
+			"A locked game (locked)", "A full game (full)"]),
+		"mods": _case("mods", "mods", ["PLAY WITH", "Example Realms", "Installed: ready", "Refresh", "Realms No Intro 1.0.0 (ready)", "Needs engine features:*"]),
 		"games": _case("games", "games", ["NOT FOUND", "Download"]),
 		"games-bfme1": _case("games-bfme1", "games", ["BATTLE FOR MIDDLE-EARTH I (OPTIONAL)", "Downloaded from BFME Arena (bfmeladder.com)*", "Download"]),
 		"games-downloading": _case("games-downloading", "games", ["Pause", "Cancel", "RotWK: game files 412 of 1 830*"]),
 		"settings": _case("settings", "settings", ["Channel", "Free camera", "Offer to download the games"]),
-		"display": _case("display", "settings", ["Display settings are in the game"]),
+		"display": _case("display", "settings", ["Window mode", "Resolution", "Automatic", "More display settings"]),
 		"about": _case("about", "settings", ["Installed versions", "Play this version", "Install"]),
 		"update": _case("update", "play", ["Update to*", "Check for updates"]),
 		"downloading": _case("downloading", "play", ["Pause", "Cancel", "Updating to*"]),
@@ -121,6 +124,13 @@ func _run() -> void:
 			await process_frame
 			continue
 		main._show_demo(c.state)
+		var nav: Control = main._nav["play"].get_parent()
+		var footer: Label = nav.get_child(nav.get_child_count() - 1).get_child(0)
+		footer.text = main.L10n.t("launcher.main.footer_version", {"version": main.Semver.display("v0.4.12-nightly.261024100")})
+		if c.state == "long":
+			footer.text += "\n" + main.L10n.t("launcher.main.footer_local_trial")
+		if name == "multiplayer-populated":
+			_populate_multiplayer(main)
 		if c.chip != "":
 			main._play_screen.set_players(c.chip.trim_prefix("●  "))   # the real chip (lane ONLINECOUNT-1), at the widest counts
 		await _frames(3)
@@ -156,6 +166,8 @@ func _run() -> void:
 						_fail("%s: the %s layer does not show '%s'" % [where, layer.name, text])
 				if layer.name == "main":
 					_check_window(main, where)
+					if name == "multiplayer-populated":
+						_check_game_rows(main, where)
 			print("LAYOUT case %s %s" % [where, " ".join(counts)])
 		done += 1
 		main.queue_free()
@@ -174,8 +186,57 @@ func _run() -> void:
 	_end()
 
 
+## Real row buttons and nested labels, including the lobby's longest valid fields. No network or demo-only row widgets.
+func _populate_multiplayer(main: Control) -> void:
+	var games := []
+	var fields := [["Westfold", "Ada", "Fords of Isen"], ["N".repeat(48), "H".repeat(24), "M".repeat(200)],
+		["A locked game", "Bea", "Buckland"], ["A full game", "Cy", "Mirkwood"]]
+	for i in fields.size():
+		games.append({"id": "%016x" % i, "name": fields[i][0], "host": fields[i][1], "map": fields[i][2],
+			"players": i + 1, "openSlots": 0 if i == 3 else 1, "state": "open", "password": i == 2})
+	var parsed := GameList.parse(200, JSON.stringify({"v": 1, "games": games}).to_utf8_buffer())
+	if not parsed.ok:
+		_fail("populated multiplayer fixture: " + str(parsed.why))
+		return
+	main._multiplayer.set_games(parsed.games)
+
+
+## The general checker permits vertical overflow inside a scroll area. Each visible game's labels must still fit its own button.
+func _check_game_rows(main: Control, where: String) -> void:
+	var rows: VBoxContainer = main._multiplayer._rows
+	if rows.get_child_count() != 4 or main._multiplayer._empty.visible:
+		_fail("%s: expected four populated game rows" % where)
+		return
+	var scroll: Rect2 = rows.get_parent().get_global_rect()
+	var previous := Rect2()
+	for row in rows.get_children():
+		if not row is Button or row.get_child_count() != 1 or not row.get_child(0) is HBoxContainer:
+			_fail("%s: a game row is missing its button or cell container" % where)
+			continue
+		var rect: Rect2 = row.get_global_rect()
+		if rect.size.y + EPS < 32 or not scroll.grow(EPS).encloses(rect):
+			_record(where, "game row does not fit", "%s is %s in %s" % [_name(row), rect, scroll])
+		if previous.has_area() and previous.end.y > rect.position.y + EPS:
+			_record(where, "game rows overlap", "%s and %s" % [previous, rect])
+		previous = rect
+		var cells: HBoxContainer = row.get_child(0)
+		if cells.get_child_count() != 4:
+			_fail("%s: a game row does not have four cells" % where)
+		for cell in cells.get_children():
+			if not cell is Label:
+				_fail("%s: a game cell is not a label" % where)
+			elif not rect.grow(EPS).encloses(cell.get_global_rect()):
+				_record(where, "game label outside its row", "%s out of %s" % [_name(cell), rect])
+
+
 ## the state's own effects (what _show_demo is meant to have done), beyond the texts each layer must show
 func _check_applied(state: String, main: Control) -> void:
+	var statuses := {
+		"offline": "Could not check for updates. Check your internet connection; retry later.",
+		"paused": "Paused. Resume continues where it stopped.",
+	}
+	if statuses.has(state) and main._status.text != statuses[state]:
+		_fail("%s: unexpected status '%s'" % [state, main._status.text])
 	if state in ["settings", "display", "about"] and main._settings.tab != {"settings": "general", "display": "display", "about": "about"}[state]:
 		_fail("%s: Settings shows the tab '%s'" % [state, main._settings.tab])
 	if state in ["error", "glibc", "ask"] and not main._message.visible:
@@ -401,10 +462,17 @@ func _check_nodes(all: Array, top: Node, bounds: Rect2, where: String, ours := t
 			var edges := []
 			if x_overlap and y_overlap <= EPS and (_region(a, top) == _region(b, top) or minf(ra.size.x, rb.size.x) >= 150.0):
 				edges = [["left", ra.position.x, rb.position.x], ["right", ra.end.x, rb.end.x]]
+				# lane NIGHTLY-2: a wrapping row's line ends where its last item ends, ragged by design, also against a block above or
+				# below it (the Play card's chips over YOUR GAMES: a long version name fills a line to a few px short of the card's edge)
+				if a.get_parent() is FlowContainer or b.get_parent() is FlowContainer:
+					edges = [edges[0]]
 			elif not x_overlap and y_overlap >= 0.5 * minf(ra.size.y, rb.size.y) and a.get_class() == b.get_class() \
 					and _lca(a, b) is HBoxContainer:
 				edges = [["top", ra.position.y, rb.position.y], ["bottom", ra.end.y, rb.end.y]]
 			for edge in edges:
+				# Independent columns with hand-sized cards do not promise equal bottom edges.
+				if edge[0] == "bottom" and a.get_parent() != b.get_parent():
+					continue
 				var d := absf(edge[1] - edge[2])
 				if d > EPS and d <= NEAR:
 					_record(where, "almost lined up (%s edge)" % edge[0], "%s and %s differ by %.1f px" % [_name(a), _name(b), d])
@@ -459,7 +527,8 @@ static func _ink_left(c: Control) -> Variant:
 ## the part of a block that shows: its rectangle, or for a button with no box (a toggle) the inside of its margins
 static func _ink(c: Control) -> Rect2:
 	var r := c.get_global_rect()
-	if c is BaseButton and not c is OptionButton:
+	# Only the button's own text / icon is inset by its style. Nested row cells use their control rectangles.
+	if c is Button and not c is OptionButton and (c.text != "" or c.icon != null):
 		var box := c.get_theme_stylebox("normal")
 		if box is StyleBoxFlat and box.bg_color.a == 0.0 and box.border_width_left == 0:
 			return Rect2(r.position + Vector2(box.get_margin(SIDE_LEFT), box.get_margin(SIDE_TOP)),
@@ -469,8 +538,12 @@ static func _ink(c: Control) -> Rect2:
 
 ## the child of the layer's root that holds `c` (the rail, the screens, the bottom bar)
 static func _region(c: Node, top: Node) -> Node:
+	var boundary := top
+	for child in top.get_children():
+		if child is ScrollContainer and child.get_child_count() == 1 and child.get_child(0).is_ancestor_of(c):
+			boundary = child.get_child(0)
 	var p := c
-	while p.get_parent() != null and p.get_parent() != top:
+	while p.get_parent() != null and p.get_parent() != boundary:
 		p = p.get_parent()
 	return p
 
@@ -602,6 +675,24 @@ func _check_window(main: Control, where: String) -> void:
 		if absf(rbn.position.x - left) > EPS or absf(rbn.end.x - right) > EPS:
 			_record(where, "the banner is off the margins", "%s .. %s, expected %s .. %s" % [rbn.position.x, rbn.end.x, left, right])
 	var rv: Control = main._nav["play"].get_parent()
+	var rail: Rect2 = rv.get_parent().get_parent().get_global_rect()
+	var nav_keys := ["play", "news", "multiplayer", "mods", "games", "settings"]
+	for i in nav_keys.size():
+		var button: Button = main._nav[nav_keys[i]]
+		var rect := button.get_global_rect()
+		if not rail.grow(EPS).encloses(rect):
+			_record(where, "sidebar button exceeds rail", "%s: %s in %s" % [nav_keys[i], rect, rail])
+		if absf(rect.position.x - rail.position.x - 13.0) > EPS or absf(rail.end.x - rect.end.x - 13.0) > EPS:
+			_record(where, "sidebar insets are not 13", "%s: %s in %s" % [nav_keys[i], rect, rail])
+		if absf(button.size.y - 36.0) > EPS or button.focus_mode != Control.FOCUS_ALL:
+			_record(where, "sidebar target is not controller-sized", "%s: height %s, focus %s" % [nav_keys[i], button.size.y, button.focus_mode])
+		if i > 0:
+			var previous: Button = main._nav[nav_keys[i - 1]]
+			var pitch := button.get_global_rect().position.y - previous.get_global_rect().position.y
+			if absf(pitch - 38.0) > EPS:
+				_record(where, "sidebar vertical pitch is not 38", "%s: pitch %s" % [nav_keys[i], pitch])
+			if previous.find_valid_focus_neighbor(SIDE_BOTTOM) != button or button.find_valid_focus_neighbor(SIDE_TOP) != previous:
+				_record(where, "sidebar directional focus skips a button", nav_keys[i])
 	var logo: Control = rv.get_child(0).get_child(0)
 	var foot: Control = rv.get_child(rv.get_child_count() - 1).get_child(0)
 	var icon: float = main._nav["play"].get_global_rect().position.x + main._nav["play"].get_theme_stylebox("normal").get_margin(SIDE_LEFT)

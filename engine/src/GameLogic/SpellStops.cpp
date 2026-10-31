@@ -48,7 +48,7 @@ std::vector<std::string> SpellStops::lines()
 		"CREATE_ABOVE_LOCATION, USE_SECONDARY_OBJECT_LOCATION and UpgradeName (lane SPELL-2); its secondary position, the map edge cases (0, 1, 2, 6) and the army "
 		"spawn points (7) are counted",
 		"[S-531] casting: the ActionManager test (RW 0x82DFB7) keeps only the module / percent-ready / requirements parts (unit cost, range, terrain, shroud and forbidden objects "
-		"are not tested); a multi-member group casts with every member (the HERO preference RW 0x76F7A9 is not ported); the light point test and cost (RW 0x6AA8FB, 0x6AA91D) "
+		"are not tested); a multi-member group's senior-hero choice and member order are ported (lane HEROCAST-1, RW 0x76F5DB / 0x76F774 / 0x77097E); the light point test and cost (RW 0x6AA8FB, 0x6AA91D) "
 		"are skipped; the spell book is made after the starting bases (RW 0x6B183D's place in the game start is not traced)",
 		"[S-532] spell book creation draws logic random numbers as retail does (RW 0x6B18E7 -> 0x6D165E -> 0x693D31 -> 0x628882 -> 0x6D328E: one object-creation "
 		"seed draw, bounds 1 .. 999, per faction's book, after the bases, in player array order) and so moves the stream of a game with lobby slots; the RW 0x6B183D "

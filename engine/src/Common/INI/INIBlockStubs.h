@@ -20,6 +20,13 @@
 //   * Lenient: skip to the next line that starts in column 0 with a registered keyword. This
 //     lets TextFile, the #define pre-pass and the dispatch loop traverse the whole retail tree,
 //     but it swallows anything between two keywords, including unknown blocks.
+//   * LenientAfterEnd: Lenient's column-0 stops, and in addition a registered keyword written as a block header (no '=' after it) at ANY indentation ends the
+//     block when the last significant line before it is an End. Retail's loader reads each block through its own parser up to that block's End and then
+//     recognises the next keyword wherever it is indented (the tokenizer skips leading whitespace); without the field tables a stub can only approximate "its own End"
+//     this way. A nested block that is itself named like a keyword and follows a sibling's End would end the stub early (no retail map.ini has one: the 123 of
+//     them contain no indented keyword header; nor do the data files the single-file readers load: gamedata.ini, aidata.ini, multiplayer.ini, ingameui.ini, language.ini, gamelod.ini).
+//     Used by those readers (a map.ini block, or one known data file). NOT for a load of the whole data tree: 96 of its files hold a nested block named like a keyword after a sibling's End
+//     (an Object's AutoResolveWeapon after AutoResolveArmor's End; an Object inside a LivingWorld block), which LenientAfterEnd would dispatch as a top-level block.
 // Every record says whether the extent ended on an End line.
 // ACCEPTANCE STOP: exact block boundaries need the field tables (port-order steps 8-12).
 
@@ -70,7 +77,8 @@ const std::vector<std::string> &RotwkBlockKeywords();
 enum class StubExtent
 {
 	Strict,
-	Lenient
+	Lenient,
+	LenientAfterEnd
 };
 // `realParsers` false (lane STEALTHFLY1: a second pass over a file that only wants one block, the map.ini's AIData): Locomotor, FXList, FXParticleSystem,
 // Weapon, Armor and DamageFX are recorded like every other keyword instead of being parsed into their global stores

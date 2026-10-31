@@ -30,6 +30,7 @@ extends RefCounted
 const Log := preload("res://scripts/core/launcher_log.gd")
 const Updater := preload("res://scripts/core/updater.gd")
 const Semver := preload("res://scripts/core/semver.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const START_TIMEOUT_MS := 60000
 const MAX_ATTEMPTS := 3
@@ -172,7 +173,7 @@ static func on_start(updater: RefCounted, user_args: PackedStringArray, begin_sw
 			updater.write_launcher_proof(dir, j.tag)
 			Updater.test_point("after-update-confirmed")
 			Log.line("LAUNCHER %s started after the update from %s" % [info.version, j.from])
-			message = "The launcher was updated to %s." % info.version
+			message = L10n.t("launcher.self_update.updated", {"version": info.version})
 			if _arg(user_args, "--after-update=") != "":
 				return {"exit": false, "message": message}  # the helper is still waiting: the rest is done at the next start
 		if j.state == "confirmed" and mine == j.new_sha256:
@@ -215,7 +216,7 @@ static func on_start(updater: RefCounted, user_args: PackedStringArray, begin_sw
 	# file swapped into update/ after staging used to be run unchecked: the helper only compared the file with itself)
 	var signed: Dictionary = updater.check_staged(dir, tag)
 	if signed.ok and (not Semver.is_valid(tag) or not Semver.is_valid(info.version) or Semver.compare(tag, info.version) <= 0):
-		signed = {"ok": false, "error": "the staged launcher %s is not newer than this one (%s)" % [tag, info.version]}
+		signed = {"ok": false, "error": L10n.t("launcher.self_update.not_newer", {"tag": tag, "version": info.version})}
 	if not signed.ok:
 		Log.line("LAUNCHER removed the staged launcher update: %s" % signed.error)
 		updater.remove_tree(staged)
@@ -285,7 +286,7 @@ static func _helper(updater: RefCounted, dir: String, user_args: PackedStringArr
 	Log.line("LAUNCHER replaced %s by %s; started it (pid %d)" % [j.from, j.tag, pid])
 	var swap := {"tag": j.tag, "pid": pid, "start": Time.get_ticks_msec(), "exe": exe, "user_args": user_args}
 	if pid <= 0:
-		return roll_back(updater, swap, "the new launcher %s could not be started" % j.tag)
+		return roll_back(updater, swap, L10n.t("launcher.self_update.cannot_start", {"tag": j.tag}))
 	return {"exit": false, "message": "", "swap": swap}
 
 
@@ -295,9 +296,9 @@ static func poll(swap: Dictionary) -> String:
 	if j.is_empty() or j.get("state") == "confirmed":
 		return "confirmed"
 	if not OS.is_process_running(swap.pid):
-		return "failed: the new launcher %s ended without confirming its start" % swap.tag
+		return "failed: " + L10n.t("launcher.self_update.ended_unconfirmed", {"tag": swap.tag})
 	if Time.get_ticks_msec() - swap.start > START_TIMEOUT_MS:
-		return "failed: the new launcher %s did not confirm its start within %d s" % [swap.tag, START_TIMEOUT_MS / 1000]
+		return "failed: " + L10n.t("launcher.self_update.start_timeout", {"tag": swap.tag, "seconds": START_TIMEOUT_MS / 1000})
 	return "waiting"
 
 

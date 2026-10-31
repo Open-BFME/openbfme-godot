@@ -330,6 +330,7 @@ struct LivePeer
 
 struct LiveGameNet
 {
+	std::uint64_t now = 1000;
 	std::vector<std::unique_ptr<LivePeer>> peers;
 	int frameMs;
 	// `linkFaults` (lane NETLAG-1): the faults of the datagrams peer `from` sends to peer `to` where they differ from `faults` (null: the same everywhere)
@@ -354,6 +355,7 @@ struct LiveGameNet
 				o.impairment.linkSet[(size_t)j] = j != i && linkFaults(i, j, o.impairment.link[(size_t)j]);
 			}
 			p.transport = std::make_unique<Transport>(p.socket, i, o);
+			p.transport->setClock([this] { return now; });
 			NetworkConfig c;
 			c.localSlot = i;
 			for (int j = 0; j < n; ++j)
@@ -371,6 +373,7 @@ struct LiveGameNet
 			c.settings.disconnectTime = disconnectMs;
 			c.settings.playerTimeoutTime = 60000;
 			p.net = std::make_unique<Network>(c, *p.transport);
+			p.net->setClock([this] { return now; });
 		}
 		for (auto &p : peers)
 		{
@@ -380,9 +383,9 @@ struct LiveGameNet
 	// every peer runs to `frames` at one frame per frameMs of its own clock (a frame that is not ready waits: a stall); `hook(t)` runs every loop
 	void run(UnsignedInt frames, std::uint64_t timeoutMs, const std::function<void(LivePeer &, int)> &hook = {})
 	{
-		const std::uint64_t t0 = NetMilliseconds();
+		const std::uint64_t t0 = now;
 		bool all = false;
-		while (!all && NetMilliseconds() - t0 < timeoutMs)
+		while (!all && now - t0 < timeoutMs)
 		{
 			all = true;
 			for (size_t i = 0; i < peers.size(); ++i)
@@ -397,7 +400,6 @@ struct LiveGameNet
 					p.transport->service(); // the last acks
 					continue;
 				}
-				const std::uint64_t now = NetMilliseconds();
 				p.net->update(p.frame, p.pending);
 				p.sawScreen = p.sawScreen || p.net->disconnectManager().screen().visible;
 				if (p.frame >= frames)
@@ -457,7 +459,8 @@ struct LiveGameNet
 				}
 				p.net->update(p.frame, p.pending); // as LockstepDriver::completed: the CRC and the commands go out at once
 			}
-			NetSleepMilliseconds(1);
+			// The sockets remain real; only protocol deadlines and the link-fault schedule use virtual milliseconds.
+			++now;
 		}
 	}
 };
@@ -523,10 +526,10 @@ TEST_CASE("mp3 lockstep under faults: a 3 s blackout of one of 4 peers brings up
 		if (!cut && i == 2 && p.frame >= 80)
 		{
 			cut = true;
-			cutAt = NetMilliseconds();
+			cutAt = g.now;
 			p.transport->impairment().blackout(cutAt, 3000);
 		}
-		if (cut && NetMilliseconds() - cutAt < 3500 && p.net->disconnectManager().screen().visible)
+		if (cut && g.now - cutAt < 3500 && p.net->disconnectManager().screen().visible)
 		{
 			screenDuring[(size_t)i] = true;
 		}

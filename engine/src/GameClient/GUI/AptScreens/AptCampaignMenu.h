@@ -3,7 +3,7 @@
 // CampaignMenu.apt (CodePrefix AptCampaignMenu, lane CAMPSAVE-1): the campaign's screen between missions, pushed by RW 0x927EC6 when the score screen of a
 // campaign game ends (GameClient/LinearCampaign.h has the campaign's side).
 //
-// TARGET FACTS (RotWK game.dat, caveat S-001; the BFME2 decomp has no tier A counterpart of the class, Rva00521206Dtor.cpp only its destructor):
+// TARGET FACTS (RotWK game.dat, caveat S-001; the BFME2 decomp has no tier A counterpart of the class, AptCampaignMenu.cpp only its destructor):
 //   * the constructor (RW 0x927B9F) runs only for the first instance (RW 0xDEA394 is the singleton) and registers, in this order, the commands
 //     AptCampaignMenu::OnBttnMainMenu (RW 0x927A88), OnBttnSaveGame (RW 0x927A93), OnBttnLoadGame (RW 0x927AA4), OnBttnLastMission (RW 0x927AB5),
 //     OnBttnNextMission (RW 0x927ACF) and the extern CampaignMenu:Victorious (RW 0x927A45, string table RW 0xDB6B7C); then it asks the campaign for

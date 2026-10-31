@@ -6,6 +6,7 @@ const W := preload("res://scripts/ui/widgets.gd")
 const Style := preload("res://scripts/ui/style.gd")
 const Paths := preload("res://scripts/ui/paths.gd")
 const ReleaseNotes := preload("res://scripts/core/release_notes.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const SHOWN := 12  # releases shown (the API lists 30)
 
@@ -18,10 +19,10 @@ func _init() -> void:
 	var v := W.vbox(Style.SCREEN_GAP)
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(v)
-	v.add_child(W.h2("News & patch notes"))
+	v.add_child(W.h2(L10n.t("launcher.news_screen.title")))
 	var s := W.scroll(Style.SCREEN_GAP)
 	v.add_child(s.scroll)
-	_empty = W.wrap("The release notes appear here after the first update check.", "Muted")
+	_empty = W.wrap(L10n.t("launcher.news_screen.empty"), "Muted")
 	s.box.add_child(_empty)
 	_grid = GridContainer.new()
 	_grid.columns = 2
@@ -44,7 +45,7 @@ func set_releases(releases: Array) -> void:
 		p.box.add_child(W.parch_label(r.tag + (" · " + when if when != "" else ""), "sub", 15))
 		var parsed := ReleaseNotes.parse(str(r.get("notes", "")))
 		if parsed.sections.is_empty():
-			p.box.add_child(W.parch_label(Paths.scrub(parsed.intro) if parsed.intro != "" else "(no release notes)", "body", 16))
+			p.box.add_child(W.parch_label(Paths.scrub(parsed.intro) if parsed.intro != "" else L10n.t("launcher.news_screen.no_notes"), "body", 16))
 		for sec in parsed.sections:
 			if sec.title != "":
 				var t := W.parch_label(String(sec.title), "title", 14)

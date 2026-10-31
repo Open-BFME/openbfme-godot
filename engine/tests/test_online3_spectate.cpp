@@ -6,6 +6,7 @@
 // observe-next-player (RW 0x6A8D2B) steps the view through the human players and back to "all".
 
 #include "doctest.h"
+#include "OnlineTestWait.h"
 
 #include "StartTestUtil.h"
 
@@ -34,8 +35,6 @@
 
 #include <cstdio>
 #include <algorithm>
-#include <chrono>
-#include <thread>
 #include <filesystem>
 #include <map>
 #include <fstream>
@@ -400,12 +399,12 @@ TEST_CASE("online3 spectators: a real Transport takes the spectator WELCOME (0x8
 	Transport t(client, 0, o);
 	CHECK(t.errors().empty());
 	auto deliver = [&](const std::vector<std::uint8_t> &d) {
-		relaySocket.sendTo(client.localAddress(), d.data(), d.size());
-		for (int i = 0; i < 50; ++i)
-		{
+		const auto received = t.stats().bytesReceived;
+		REQUIRE(relaySocket.sendTo(client.localAddress(), d.data(), d.size()));
+		REQUIRE(onlinetest::waitUntil([&] {
 			t.service();
-			NetSleepMilliseconds(1);
-		}
+			return t.stats().bytesReceived == received + d.size();
+		}));
 	};
 	std::array<std::uint8_t, kSessionTokenBytes> token{};
 	deliver(encodeWelcome(kGame, 0, token)); // slot 0: a player's WELCOME, not this spectator's
@@ -718,12 +717,14 @@ TEST_CASE("online3 r3 (Sol r3: held bytes): a frontier expansion stays under the
 		}
 	}
 	{
-		// a log size limit stops game A's log after the commands that fit (the header and two EVENTs are 39 bytes, a FRAMEINFO record 18), at limits
-		// around those sizes. Round 2 released the stream's counts twice there (heldBytes wrapped to 2^64 - 2688), and game B could log nothing
-		for (std::uint64_t limit : { 56ull, 57ull, 399ull, 400ull, 417ull })
+		// a log size limit stops game A's log after the commands that fit (the header and two EVENTs are 40 bytes, a FRAMEINFO record 18), at limits
+		// around those sizes. Round 2 released the stream's counts twice there (heldBytes wrapped to 2^64 - 2688), and game B could log nothing.
+		// (lane ANTICHEAT-1 with ONLINE16-FIX: v4 for every game, its header one byte longer (the u16 mask; kind-7 INPUT records follow at END): the
+		// limits moved up by one)
+		for (std::uint64_t limit : { 57ull, 58ull, 400ull, 401ull, 418ull })
 		{
 			INFO("log limit " << limit);
-			const std::uint64_t fit = (limit - 39) / 18;
+			const std::uint64_t fit = (limit - 40) / 18;
 			RelayCore::Options o;
 			o.keys = ring();
 			o.logDir = dir.string();
@@ -874,7 +875,7 @@ TEST_CASE("online3 r1 (Sol: log reads): a LOG_REQUEST over its budget is refused
 		auto send = [&](const RelayAddress &from, std::vector<std::uint8_t> d) { return relay.handle(from, d.data(), d.size(), 1000, 1700000000u); };
 		send(at(1), encodeHello(bytesOf(ticket(0))));
 		send(at(2), encodeHello(bytesOf(ticket(1))));
-		CHECK(readLog(relay, at(2), 1000).size() == 39);
+		CHECK(readLog(relay, at(2), 1000).size() == 40); // the header (v4 for every game: the u16 mask) and two EVENTs; kind-7 INPUT comes at END
 		CHECK(relay.openLogHandles() == 2);
 		for (std::uint32_t f = 0; f < 100; ++f)
 		{
@@ -1226,11 +1227,7 @@ TEST_CASE("DEVPORT-5 renderwait: a spectator's Tab and a caster's POV switch ins
 	REQUIRE(game.logicThread());
 	game.advance(0.2);
 	game.advance(0.2); // frames are queued: the worker holds for the client window
-	const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-	while (!game.beginClientWindow() && std::chrono::steady_clock::now() < until)
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
+	REQUIRE(onlinetest::waitUntil([&] { return game.beginClientWindow(); }));
 	REQUIRE(game.logicHeld());
 	REQUIRE_FALSE(game.logicIdle()); // a frame is queued behind the window
 	const UnsignedInt held = game.frame();
@@ -1275,4 +1272,78 @@ TEST_CASE("uberjoin1: OnlineStart sets the game's simulation profile from the id
 		CHECK(player.game.game.simulationProfile == (uber ? SimulationProfile::Uber : SimulationProfile::Faithful));
 		CHECK(player.profile == profile);
 	}
+}
+
+TEST_CASE("ADMINFIX-1 (Sol adminfix1-watch): an admin's silent watch never changes what a public spectator sees of a finished game")
+{
+	// The same game twice: a public spectator with no delay (index 0), and in the second run also an admin spectator 120 s behind (index 14, the lobby's
+	// admin place). After the players leave, every answer the public spectator gets must be byte-identical in both runs: its binding ends at ITS OWN
+	// delay plus the grace, never at the admin's; and the admin still reads on to its own end.
+	using namespace RelayProtocol;
+	auto run = [](bool admin, std::vector<std::vector<std::uint8_t>> &publicAnswers, std::vector<std::uint8_t> &adminAnswer) {
+		const std::filesystem::path dir = tempDir(admin ? "relay-watch-admin" : "relay-watch-plain");
+		RelayCore::Options o;
+		o.keys = ring();
+		o.logDir = dir.string();
+		o.spectatorIdleMs = 1000000; // never idle here: only the deadlines decide
+		o.spectatorGraceMs = 120000;
+		RelayCore relay(o);
+		std::uint64_t now = 1000;
+		auto send = [&](const RelayAddress &from, std::vector<std::uint8_t> d) { return relay.handle(from, d.data(), d.size(), now, 1700000000u); };
+		REQUIRE(send(at(10), encodeHello(bytesOf(ticket(0)))).kind == RelayCore::Action::REPLY);
+		REQUIRE(send(at(11), encodeHello(bytesOf(ticket(1)))).kind == RelayCore::Action::REPLY);
+		REQUIRE(send(at(20), encodeHello(bytesOf(ticket(0, 0x03, true, 0)))).reply[3] == WELCOME);
+		if (admin)
+		{
+			REQUIRE(send(at(40), encodeHello(bytesOf(ticket(14, 0x03, true, 120)))).reply[3] == WELCOME);
+		}
+		std::uint32_t seq0 = 0, seq1 = 0;
+		for (std::uint32_t f = 0; f <= 40; ++f)
+		{
+			send(at(10), encodeData(1, packetOf(0, seq0++, frameInfo(0, f))));
+			send(at(11), encodeData(0, packetOf(1, seq1++, frameInfo(1, f))));
+		}
+		send(at(10), encodeEmpty(BYE));
+		send(at(11), encodeEmpty(BYE));
+		const std::uint64_t closed = now;
+		// the public spectator probes during its grace, at its deadline and after it, with and without the relay's tick in between
+		for (std::uint64_t at_ms : { 60000ull, 119999ull, 120000ull, 121000ull, 200000ull })
+		{
+			now = closed + at_ms;
+			if (at_ms >= 121000)
+			{
+				relay.tick(now, nullptr);
+			}
+			std::vector<std::uint8_t> req = encodeLogRequest(0); // handle() may rewrite the datagram in place (AUTH-1)
+			publicAnswers.push_back(relay.handle(at(20), req.data(), req.size(), now, 1700000000u).reply);
+			publicAnswers.push_back(send(at(20), encodeHello(bytesOf(ticket(0, 0x03, true, 0)))).reply); // a fresh HELLO: the game is over
+		}
+		if (admin)
+		{
+			now = closed + 200000; // past the public spectator's end, before the admin's own (120 s delay + 120 s grace)
+			std::vector<std::uint8_t> req = encodeLogRequest(0);
+			adminAnswer = relay.handle(at(40), req.data(), req.size(), now, 1700000000u).reply;
+			relay.tick(closed + 240000, nullptr);
+			CHECK(relay.openGames() == 0); // and the game goes at the admin's own end
+		}
+		else
+		{
+			CHECK(relay.openGames() == 0);
+		}
+		std::filesystem::remove_all(dir);
+	};
+	std::vector<std::vector<std::uint8_t>> plain, watched;
+	std::vector<std::uint8_t> none, adminAnswer;
+	run(false, plain, none);
+	run(true, watched, adminAnswer);
+	REQUIRE(plain.size() == watched.size());
+	for (size_t i = 0; i < plain.size(); ++i)
+	{
+		CHECK_MESSAGE(plain[i] == watched[i], "public answer ", i, " differs when an admin watches");
+	}
+	CHECK(plain[0][3] == LOG_CHUNK);  // within its grace it reads the finished log
+	CHECK(plain[4][3] == NOT_BOUND);  // at its own deadline it is released (no tick needed)
+	CHECK(plain[1] == encodeRefused(REFUSE_GAME_CLOSED));
+	REQUIRE(adminAnswer.size() > kHeaderBytes + 8); // tolerance: a LOG_CHUNK with log bytes in it; its exact size is the relay's chunk size, not this test's subject
+	CHECK(adminAnswer[3] == LOG_CHUNK); // the admin still reads after the public spectator's end
 }

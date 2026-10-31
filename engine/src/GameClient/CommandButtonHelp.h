@@ -39,6 +39,8 @@
 
 #pragma once
 
+#include "Common/INIDataTypes.h"
+
 #include "GameClient/ControlBar.h"
 #include "GameClient/GUI/GameWindow.h"
 
@@ -70,6 +72,23 @@ struct HelpBoxSettings
 	// a missing file, block or field is an error (no default)
 	static bool load(ArchiveFileSystem &fs, HelpBoxSettings &out, std::string *error);
 	static bool scan(const std::string &inGameUi, const std::string &language, HelpBoxSettings &out, std::string *error);
+};
+
+// lane CAMPUI-1: InGameUI's MilitaryCaption* rows (data\ini\ingameui.ini, field table rows RW 0xC124A0 .. 0xC12530: colour parseRGBAColorInt (the four ints
+// RW 0x69FF85 packs as ARGB), position parseCoord2D (fractions of the screen, RW 0x42F298), centred parseBool, the title and text fonts name / point size /
+// bold, DelayMS parseInt) with Language.ini's MilitaryCaptionTitleFont / MilitaryCaptionFont replacing a font when it names one (ZH InGameUI::init, the
+// same rule as the help box fonts above; the retail captions draw in the serif "Albertus MT" of language.ini, not InGameUI's Arial). SHOW_MILITARY_CAPTION
+// draws with them (RW 0x69FF85 / 0x69CE5F / 0x69B7BE). A missing file, block or row is an error (no default)
+struct MilitaryCaptionSettings
+{
+	bool loaded = false;
+	RGBAColorInt color{ 0, 0, 0, 0 };
+	Coord2D position;
+	bool centered = false;
+	HelpBoxFont title, text; ///< color unused (the caption colour is `color`)
+	int delayMs = 0;
+	static bool load(ArchiveFileSystem &fs, MilitaryCaptionSettings &out, std::string *error);
+	static bool scan(const std::string &inGameUi, const std::string &language, MilitaryCaptionSettings &out, std::string *error);
 };
 
 // One string row of the InGameUI block (data\ini\ingameui.ini, parseAsciiString), e.g. PlaceTerrainResourceClaimantDecal (the farm placement's mapped
@@ -143,6 +162,9 @@ public:
 	static std::vector<UnicodeString> wrap(const UnicodeString &text, const GameFont &font, int width, FontMetricsSource &metrics, int *widest);
 
 private:
+	// RW 0x807A81 itself (compose adds edain-unchained.description-timers' line at its common exit RW 0x8086AB)
+	static Text composeRetail(const ControlBarButton &button, const GameTextSource *text, GameLogic &logic, Player *player, Player *localPlayer, Object *selection,
+	                          const std::string &faction, const std::vector<ObjectID> *selected);
 	struct Measured
 	{
 		std::vector<UnicodeString> lines;

@@ -22,12 +22,22 @@ SPECIAL = {
     "rules1_player.gd": ("_heroes", '"GondorBoromir"', "heroes"),
     "uber1_player.gd": ("_battle", "12", "battle 12"),
 }
+# players whose _scenario_label() is not the file name's (the prefix their own gates read)
+LABELS = {"ping_wheel_player.gd": "PINGWHEEL"}
 FAKE_GAME = """extends Node
 var _hud: Node = self
 var _world: Node = self
 var _shell: Node = self
 var _faction := "synthetic"
 var _warp := 0.0
+class FakePings extends Node3D:
+    var beacon_model := "synthetic"
+    var errors := []
+var _ping_wheel := CanvasLayer.new()
+var _pings := FakePings.new()
+func _init() -> void:
+    add_child(_ping_wheel)
+    add_child(_pings)
 func _step(_frames: int) -> void:
     await get_tree().process_frame
 """
@@ -109,7 +119,7 @@ def test_each_player_fails_closed(godot, tmp_path, player, mode):
         with path.open("a") as f:
             f.write('\nfunc _broken_helper() -> void:\n' + before)
     code, out = run(godot, tmp_path, player, request)
-    prefix = player.removesuffix("_player.gd").upper()
+    prefix = LABELS.get(player, player.removesuffix("_player.gd").upper())
     if mode == "pass":
         assert code == 0, out
         assert f"{prefix} {name}: ok" in out, out

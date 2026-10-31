@@ -186,6 +186,7 @@ TEST_CASE("logic objects: the helper modules are made in the retail order under 
 {
 	Fx f;
 	const std::vector<std::string> all = { "SMCHelper", "RecoveryHelper", "RepulsorHelper", "DefectionHelper", "GuardingHelper", "WeaponStatusHelper", "FiringTrackerHelper" };
+	f.logic->settings().enableRepulsors = true; // retail aidata.ini's EnableRepulsors = Yes (lane AIDATA-1: the AIData constructor's default is 0)
 	CHECK(helperNames(f.make("Repulsable")) == all);
 	CHECK(helperNames(f.make("Plain")) == std::vector<std::string>{ "SMCHelper", "RecoveryHelper", "DefectionHelper", "GuardingHelper" });
 	// no defection helper for SHRUBBERY, ROCK or ROCK_VENDOR
@@ -380,8 +381,11 @@ TEST_CASE("logic settings: a missing key or block is an error naming it, never a
 	CHECK(err.find("no GameData block") != std::string::npos);
 	CHECK_FALSE(GameLogicSettingsLoader::scanGameData(good.substr(0, good.find("DefaultStartingCash")) + "End\n", h, &err));
 	CHECK(err.find("DefaultStartingCash") != std::string::npos);
-	CHECK_FALSE(GameLogicSettingsLoader::scanAIData("AIData\nEnd\n", h, &err));
-	CHECK(err.find("EnableRepulsors") != std::string::npos);
+	// lane AIDATA-1: retail requires no AIData field (the AIData constructor's values stand, RW 0x6FFBEF); a file without the block is still an error
+	CHECK(GameLogicSettingsLoader::scanAIData("AIData\nEnd\n", h, &err));
+	CHECK_FALSE(h.enableRepulsors);
+	CHECK_FALSE(GameLogicSettingsLoader::scanAIData("GameData\nEnd\n", h, &err));
+	CHECK(err.find("no AIData block") != std::string::npos);
 	REQUIRE(GameLogicSettingsLoader::scanAIData("AIData\n  EnableRepulsors = No\n  RepulsedDistance = 120.0\nEnd\n", h, &err));
 	CHECK_FALSE(h.enableRepulsors);
 	CHECK_FALSE(GameLogicSettingsLoader::scanMultiplayer("MultiplayerSettings\n  InitialCreditsLow = 1\nEnd\n", h, &err));

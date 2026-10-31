@@ -22,6 +22,7 @@ const MENU_SECONDS := 300.0
 const ONLINE_SECONDS := 90.0
 const MIN_GAP_SECONDS := 20.0
 const TIMEOUT_SECONDS := 8.0
+const HttpTimed := preload("res://scripts/http_timed.gd") ## a time limit in running frames (a blocking load does not use it up)
 const BODY_LIMIT := 4096
 const MAX_COUNT := 10000000
 const LAUNCHER_STATE := "OpenBFMELauncher/state.cfg" ## under OS.get_data_dir(): the OpenBFME Launcher's settings file (read only)
@@ -54,7 +55,7 @@ var _last_ms := 0
 
 func _ready() -> void:
 	_http = HTTPRequest.new()
-	_http.timeout = timeout_s
+	HttpTimed.set_budget(_http, timeout_s)
 	_http.max_redirects = 0
 	_http.body_size_limit = BODY_LIMIT
 	add_child(_http)

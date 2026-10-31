@@ -287,9 +287,87 @@ TEST_CASE("move3 retail: crossing sweep of hostile infantry hordes with move ord
 	// RotWK's rule as far as it was read (stop S-1830): only the blocked horde (the lower path priority, then the lower id, RW 0x66D16E) patches; the other walks on,
 	// and horde members never collide (RW 0x66E233 returns for a horde member, RW 0x6939DF). Merge of IDLE-1 (MOVE-3 r4: the AI updates in updates[0] and
 	// HordeContain in updates[1], RW 0x851E97 / 0x490AC4, so every member steps before its horde's member pass; the hub leaves a member whose physics motion is
-	// disabled alone, RW 0x874724): 3798 deep pair-frames, 16 head-on runs closer than 60 (3 + 9 + 4). Engine measurements, not retail values
-	CHECK(deep < 3900);
-	CHECK(headOnClose <= 16);
+	// disabled alone, RW 0x874724): 3798 deep pair-frames, 16 head-on runs closer than 60 (3 + 9 + 4). The slot table centred on the horde (RW 0x86C4EA): 3931
+	// and 27 (9 + 9 + 9); the horde objects now stand in the middle of their formations, not behind them, so two that meet head-on are about a formation's
+	// depth nearer each other for the same members. Engine measurements, not retail values
+	CHECK(deep < 4000);       // tolerance: an engine measurement of this scenario (3931), not a retail value
+	// merge queue q26 (#73 / #74 on the archive's OFFMAP-1 start positions, measured once on the merged tree): 35 head-on runs closer than 60
+	// Lane PATHPRIO-1 re-checked the drift 3 -> 16 -> 27 -> 35 (IDLE-1's update order, the slot table centred on the horde, q26's #73 / #74): it is the statistic,
+	// not a lost block. The count is of runs whose horde OBJECTS come within 60, and RotWK's rules as read let them: only the lower-priority horde object is
+	// blocked and patches its path (RW 0x66D16E / 0x6631BF), the members never collide (RW 0x66E233 returns for a member), and since the slot table is centred
+	// on the horde the objects stand mid-formation, so two crossing formations bring them within 60 whenever the members interpenetrate. Every head-on run still
+	// raises the patch (S-1830) and the deep pair-frames stay below 4000. With the crushable level in the path priority (RW 0x663F48) two infantry hordes are both
+	// 0, so the sweep reads 35 and 3842 deep pair-frames on the lane's tree (12 + 12 + 11 head-on)
+	CHECK(headOnClose <= 35); // tolerance: an engine measurement of this scenario (35), not a retail value
+}
+
+namespace
+{
+struct YieldRun
+{
+	int priorityA = 0, priorityB = 0;
+	// frames on which the mover counted blocked frames or kept the other as a blocker (RW 0x66D16E, recordCollider RW 0x66266A)
+	int blockedFramesA = 0, blockedFramesB = 0;
+};
+
+// lane PATHPRIO-1: `ta` (side 0, placed first: the lower id) at (300, 600) and `tb` (side 1) at (900, 600) walk head-on to each other's start
+YieldRun headOnYield(const char *ta, const char *tb)
+{
+	SharedWorld &s = shared();
+	Arena ar(s, "FactionMen", "FactionMordor");
+	const float y = 600.0f;
+	Object *a = ar.place(ta, 0, 300.0f, y);
+	Object *b = ar.place(tb, 1, 900.0f, y);
+	b->setOrientation(3.14159265f);
+	ar.logic.runLogicFrame();
+	ar.logic.runLogicFrame();
+	YieldRun out;
+	out.priorityA = a->getAIUpdateInterface()->pathPriority();
+	out.priorityB = b->getAIUpdateInterface()->pathPriority();
+	a->getAIUpdateInterface()->aiMoveToPosition(Coord3D{ 900.0f, y, 0.0f }, CMD_FROM_SCRIPT);
+	b->getAIUpdateInterface()->aiMoveToPosition(Coord3D{ 300.0f, y, 0.0f }, CMD_FROM_SCRIPT);
+	const ObjectID idA = a->getID(), idB = b->getID();
+	for (int f = 0; f < 200; ++f)
+	{
+		ar.logic.runLogicFrame();
+		a = ar.logic.findObjectByID(idA);
+		b = ar.logic.findObjectByID(idB);
+		if (!a || !b)
+		{
+			break;
+		}
+		const AIMover &ma = a->getAIUpdateInterface()->mover(), &mb = b->getAIUpdateInterface()->mover();
+		out.blockedFramesA += ma.blockedFrames() > 0 || ma.colliderCount() > 0 ? 1 : 0;
+		out.blockedFramesB += mb.blockedFrames() > 0 || mb.colliderCount() > 0 ? 1 : 0;
+	}
+	return out;
+}
+} // namespace
+
+TEST_CASE("pathprio1 retail: the lower path priority gives way head-on, the crushable level counts (RW 0x663F48)")
+{
+	if (!hudtest::haveWorld("pathprio1 retail"))
+	{
+		return;
+	}
+	// RW 0x663F48: (DOZER ? 100 : 0) + 10 * crushable level (RW 0x68D4D0) + (CAVALRY ? 5 : 0). A troll (CrushableLevel 2) is 20, an infantry horde 0, a knight
+	// horde (CrushableLevel 2, CAVALRY) 25, a mumak (no CrushableLevel: the template default 127) 1270. The higher unit is placed first (the lower id), so on equal
+	// priorities (the port before this lane: troll 0, mumak 0, knights 5) the id rule of RW 0x66D16E would block it, not the other
+	struct Case
+	{
+		const char *a, *b;
+		int priorityA, priorityB;
+	};
+	for (const Case &c : { Case{ "MordorMountainTroll", "GondorFighterHorde", 20, 0 }, Case{ "GondorKnightHorde", "MordorFighterHorde", 25, 0 },
+			 Case{ "MordorMumakil", "GondorKnightHorde", 1270, 25 } })
+	{
+		const YieldRun r = headOnYield(c.a, c.b);
+		std::printf("  info: pathprio1 %s (%d) vs %s (%d) head-on: blocked frames %d / %d\n", c.a, r.priorityA, c.b, r.priorityB, r.blockedFramesA, r.blockedFramesB);
+		CHECK(r.priorityA == c.priorityA);
+		CHECK(r.priorityB == c.priorityB);
+		CHECK(r.blockedFramesA == 0); // the higher priority walks on
+		CHECK(r.blockedFramesB > 0);  // tolerance: the lower priority is blocked and keeps the blocker on some frames; the count is the meeting's length, not the property
+	}
 }
 
 TEST_CASE("move3 retail: two allied hordes sent to one point (FB-0006)")
@@ -349,19 +427,38 @@ TEST_CASE("move3 retail: two allied hordes sent to one point (FB-0006)")
 			print(what, st);
 			std::printf("  info:   at the end: allied overlap %.2f (%s)\n", last.allyOverlap, last.worstAllyPair.c_str());
 			const std::string name(t);
-			CHECK(raised(ar.logic.report().stops, "[S-1832] "));
-			if (name == "ElvenLorienArcherHorde" || name == "DwarvenAxeThrowerHorde")
+			// measured in RotWK 2.01 (stop S-1832, closed): the first horde takes the point's cell, the second the cell one formation length on (its
+			// destination search, RW 0x6FE456 / 0x6FA2A4, rejects every cell around the point whose box, RW 0x6F1584, meets the first's member goals at its
+			// centred slots, RW 0x86C4EA); the goal cells, not the members, which settle about them
+			struct Measured
 			{
-				// stop S-1832: every rank of these hordes stands 30 or 50 ahead of the horde object; their goal reservations (RW 0x86EF13) lie outside the 6 x 10 cell
-				// rectangle the second horde's destination check tests (RW 0x6F1584 / 0x6F0195), so RotWK's rules as read let both hordes take the one point
-				CHECK(d < 1.0f);
+				const char *horde;
+				float dx;
+			};
+			static const Measured kRotWK[] = { { "GondorArcherHorde", 60.0f }, { "GondorFighterHorde", 60.0f }, { "ElvenLorienArcherHorde", 50.0f },
+				{ "DwarvenAxeThrowerHorde", 50.0f }, { "ElvenMirkwoodArcherHorde", 40.0f }, { "AngmarDarkRangerHorde", -40.0f } };
+			const Measured *m = nullptr;
+			for (const Measured &k : kRotWK)
+			{
+				m = name == k.horde ? &k : m;
+			}
+			Coord3D g1{}, g2{};
+			REQUIRE(ar.ai->pathfinder().goalPosition(ar.ai->adapterFor(*h1), &g1));
+			REQUIRE(ar.ai->pathfinder().goalPosition(ar.ai->adapterFor(*h2), &g2));
+			std::printf("  info:   goal cells (%.1f,%.1f / %.1f,%.1f)\n", g1.x, g1.y, g2.x, g2.y);
+			if (m)
+			{
+				CHECK(g2.x - g1.x == m->dx);
+				CHECK(g2.y == g1.y);
 			}
 			else if (name != "RohanArcherHorde") // the Rohan archers do not settle on their slots in this run (informative only)
 			{
-				// before lane MOVE-3: each ordered 0 .. 11.8 apart (the second horde's adjustment met no reservation: horde goals are not reserved and the member goals
-				// were not moved to the horde's goal); the ZH group order kept the 200 of the start (RotWK's MSG_DO_MOVETO sends both to the one point)
-				CHECK(d > 50.0f);
-				CHECK(last.allyOverlap < 10.0f); // the Uruk crossbows keep 9.15 at the edge of the two formations (stacked: 12 .. 16)
+				// a RandomOffset (MordorArcherHorde, GoblinArcherHorde, IsengardUrukCrossbowHorde) jitters the slots with the logic's random draws: in RotWK the
+				// second horde's cell is on one side of the first or the other from run to run; the two formations do not stand on one another
+				CHECK(d > 50.0f); // tolerance: the side and the distance depend on the drawn slot offsets (RotWK: 60 .. 99 in the lab's runs)
+				// and their members do not stand on one another: two stacked formations overlap 12 .. 16; measured 2.06 .. 8.14 with the formations centred, 7.85 .. 10.63
+				// once the destination search spirals too (the members of the formations' facing edges)
+				CHECK(last.allyOverlap < 12.0f); // tolerance: below the stacked formations' overlap; the edges' depends on the drawn slot offsets
 			}
 		}
 	}

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "HordeCompleteTestUtil.h"
 #include "Common/Upgrade.h"
 #include "ObjectTestUtil.h"
 
@@ -216,8 +217,10 @@ struct LogicWorld
 	UpgradeCenter upgradeCenter;
 	UpgradeCenter *savedUpgradeCenter = TheUpgradeCenter;
 
-	LogicWorld(RandomAlgorithm rng = RandomAlgorithm::ZH_CarryChain, const char *extraTemplates = nullptr)
+	// bfme1: the objects are BFME1 templates (objtest::World(true): their bfme1Data() answers true)
+	LogicWorld(RandomAlgorithm rng = RandomAlgorithm::ZH_CarryChain, const char *extraTemplates = nullptr, bool bfme1 = false)
 		: hooks(log)
+		, w(bfme1)
 		, templates(w.keys)
 		, players(w.keys, templates, teams)
 	{
@@ -237,6 +240,30 @@ struct LogicWorld
 		players.setupSkirmish(setup);
 		logic = std::make_unique<GameLogic>(w.things, w.modules, players, rng);
 		logic->random().seedRandom(1);
+		retailTargetSearchData(logic->settings());
+	}
+
+	// lane TARGET-1: the AIData rows of the target search as retail data\ini\default\aidata.ini sets them (ForceIdleMSEC 67 -> 1 frame,
+	// AttackPriorityDistanceModifier 80, AttackUsesLineOfSight / AttackIgnoreInsignificantBuildings Yes, ArtilleryMaxFriendlyFire unset) and its
+	// AttackPriority blocks (Default only), so the synthetic worlds search as a retail game does
+	static void retailTargetSearchData(GameLogicSettings &s)
+	{
+		s.forceIdleFrames = 1;
+		s.attackPriorityDistanceModifier = 80.0f;
+		s.attackUsesLineOfSight = true;
+		s.attackIgnoreInsignificantBuildings = true;
+		s.artilleryMaxFriendlyFire = 1.0f;
+		s.attackPriorityDefs.clear();
+		const std::pair<const char *, int> defs[] = { { "DefaultAttackPriority", 35 }, { "AttackPriority_Infantry", 35 }, { "AttackPriority_Archer", 35 },
+			{ "AttackPriority_Spearman", 35 }, { "AttackPriority_Cavalry", 35 }, { "AttackPriorityCavalry", 10 }, { "AttackPriorityMordorFighter", 100 },
+			{ "AttackPriority_FellBeast", 35 }, { "AttackPriority_Eagle", 35 } };
+		for (const auto &d : defs)
+		{
+			GameLogicSettings::AttackPriorityDef def;
+			def.name = d.first;
+			def.defaultPriority = d.second;
+			s.attackPriorityDefs.insert(s.attackPriorityDefs.begin(), def); // RW 0x70153B pushes each new block at the head
+		}
 	}
 
 	// Binds a scripted runtime class over a registered class name (type behavior)
@@ -251,12 +278,21 @@ struct LogicWorld
 		return script;
 	}
 
-	Object *make(const std::string &templateName, Team *team = nullptr, ObjectID id = INVALID_ID)
+	// a horde makes its members in onBuildComplete (RotWK HordeContain RW 0x8718ED), which every game creator runs once it has placed the object (the map loop
+	// RW 0x62DCE4: setOrientation, setPosition, then RW 0x68D252). make completes a horde at once, at the origin, unless the caller places it first and then
+	// calls completeHorde (spawn helpers); a test that moves a complete horde uses Object::teleportTo (its members come along, RW 0x86D881)
+	Object *make(const std::string &templateName, Team *team = nullptr, ObjectID id = INVALID_ID, bool complete = true)
 	{
 		const ThingTemplate *t = w.get(templateName);
 		REQUIRE_MESSAGE(t != nullptr, "template " << templateName);
-		return logic->newObject(t, team, ObjectStatusMaskType{}, id);
+		Object *o = logic->newObject(t, team, ObjectStatusMaskType{}, id);
+		if (complete)
+		{
+			completeHorde(o);
+		}
+		return o;
 	}
+	static void completeHorde(Object *o) { testutil::completeHorde(o); }
 	Team *teamOf(const std::string &player) { return players.findPlayerWithName(player)->getDefaultTeam(); }
 	~LogicWorld() { TheUpgradeCenter = savedUpgradeCenter; }
 	// several worlds alive: the one about to be used selects its center

@@ -165,7 +165,9 @@ bool VictoryConditions::anyUnitMatching(const Player &p, const ObjectFilter &fil
 		{
 			continue;
 		}
-		if (ObjectFilterMatch::allows(m_logic, filter, *o, nullptr))
+		// lane WOTR-1: RW 0x7A089B asks the filter with the team's controlling player (RW 0x79FD6F) as the other side, so a relationship mask such as
+		// VictoryConditionUnitObjectFilter's ANY matches the player's own objects (with no other player the relationship test refused every object)
+		if (ObjectFilterMatch::allows(m_logic, filter, *o, &p))
 		{
 			return true;
 		}
@@ -185,17 +187,10 @@ bool VictoryConditions::defeatedByRule(const Player *player, bool *ruleUnported)
 	{
 		throw std::logic_error("VictoryConditions: GameLogicSettings has no VictoryConditionStructureObjectFilter / VictoryConditionUnitObjectFilter (GameData not loaded)");
 	}
-	// RW 0x809422 .. 0x809451 (lane GAMEMODES-1): in a game of kind other than 3 with the Living World (RW 0xDE4950) its veto RW 0x441E4A may answer "not
-	// defeated" (a War of the Ring battle: not ported, stop S-344; never reached in a skirmish / LAN game, kind 3); the game mode 9 (TheGameLogic + 0x110) answers
-	// "not defeated"
+	// RW 0x809422 .. 0x809451 (lane GAMEMODES-1): in a game of kind other than 3 with the Living World (RW 0xDE4950) its veto RW 0x441E4A answers "not
+	// defeated" only while the strategic map is up (+ 0xB4 && + 0xB5). WOTR2 milestone 7: a War of the Ring battle runs here with + 0xB5 == 0 (the map is
+	// left for the battle, RW 0x6BF133), so the veto never holds in a tactical game; the game mode 9 (TheGameLogic + 0x110) answers "not defeated"
 	const EconomyContext &context = m_logic.economy().context();
-	if (context.gameKind != 3 && context.livingWorld)
-	{
-		if (ruleUnported)
-		{
-			*ruleUnported = true;
-		}
-	}
 	if (context.gameMode == 9)
 	{
 		return false;
@@ -378,15 +373,17 @@ void VictoryConditions::killPlayer(Player *p)
 			victims.push_back(o);
 		}
 	}
+	// RW 0x6ABEFD: Player + 0x754 = 1 BEFORE the kill pass (RW 0x7A4B93 / 0x7A4CAE; lane BFME2CAMP1 review): the dying objects' die modules see a
+	// defeated player (RebuildHoleExposeDie's live-player test RW 0x889AF6 leaves no hole; a RequiresLivePlayer death OCL makes nothing, RW 0x5F0F94)
+	p->setDefeated(true);
 	for (Object *o : victims)
 	{
 		if (!o->isEffectivelyDead() && !o->isDestroyed())
 		{
-			o->kill(DEATH_NORMAL); // RW 0x7A4CAE: push 0 (death type NORMAL), push 8 (damage type UNRESISTABLE) into Object::kill, whose first argument is the damage type (see the header)
+			o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x7A4CAE: push 0 (death type NORMAL), push 8 (damage type UNRESISTABLE) into Object::kill, whose first argument is the damage type (see the header)
 			++m_objectsKilled;
 		}
 	}
-	p->setDefeated(true); // RW 0x6ABEFD: Player + 0x754
 	// lane END-1: RW 0x6ABF3C .. 0x6ABF57: ThePlayerList vslot 0x40 (the team relationship refresh, not ported: S-1062), then every coin the player holds is
 	// withdrawn (Money::withdraw(Player + 0x94, no score keeper, playSound 1), RW 0x7B17EF)
 	p->getMoney()->withdraw(p->getMoney()->countMoney(), nullptr, true);

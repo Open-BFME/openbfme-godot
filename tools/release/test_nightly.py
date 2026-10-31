@@ -1,6 +1,7 @@
 """Lane NIGHTLY-1: the nightly versions (autorelease.py) and the nightly notes (nightly_notes.py)."""
 from __future__ import annotations
 
+import datetime as dt
 import json
 import sys
 from pathlib import Path
@@ -17,22 +18,58 @@ SHB = "b" * 40
 SHC = "c" * 40
 
 
-def test_nightly_version_is_the_next_plain_release_with_the_date():
-    tags = ["refs/tags/v0.4.11", "refs/tags/v0.4.9", "refs/tags/v0.4.0-alpha.5"]
-    assert ar.nightly_version(tags, "20261022") == "v0.4.12-nightly.20261022"
-    # after a nightly the next date moves on; the same date again is refused (one per date), an earlier date too
-    tags.append("refs/tags/v0.4.12-nightly.20261022")
-    assert ar.nightly_version(tags, "20261023") == "v0.4.12-nightly.20261023"
-    for d in ("20261022", "20261021"):
-        with pytest.raises(SystemExit):
-            ar.nightly_version(tags, d)
+def test_nightly_version_is_the_next_plain_release_with_the_half_day():
+    # NIGHTLY-2: <YYMMDD><1 morning | 2 evening>00 from the run's UTC clock YYYYMMDDHH
+    tags = ["refs/tags/v0.4.11", "refs/tags/v0.4.9", "refs/tags/v0.4.0-alpha.5", "refs/tags/v0.4.12-nightly.20261022"]
+    assert ar.nightly_version(tags, "2026102307") == "v0.4.12-nightly.261023100"
+    tags.append("refs/tags/v0.4.12-nightly.261023100")
+    assert ar.nightly_version(tags, "2026102319") == "v0.4.12-nightly.261023200"
+    tags.append("refs/tags/v0.4.12-nightly.261023200")
+    assert ar.nightly_version(tags, "2026102400") == "v0.4.12-nightly.261024100"
+    # the same half day again is refused (one per half day), an earlier one too
+    for c in ("2026102312", "2026102323", "2026102311", "2026102207"):
+        with pytest.raises(SystemExit, match="one nightly per half day"):
+            ar.nightly_version(tags, c)
     # the stable release v0.4.12 is above its nightlies; the next nightly is of v0.4.13
     tags.append("refs/tags/v0.4.12")
-    assert ar.nightly_version(tags, "20261024") == "v0.4.13-nightly.20261024"
+    assert ar.nightly_version(tags, "2026102407") == "v0.4.13-nightly.261024100"
     assert ar.next_version(tags) == "v0.4.13"
-    for bad in ("2026102", "20261322", "20261000", "2026-10-22"):
+    for bad in ("20261023", "2026102324", "2026132307", "2026103207", "2025102307", "2026-10-23T07", "202610230", "20261023077"):
         with pytest.raises(SystemExit):
             ar.nightly_version(tags, bad)
+
+
+def test_nightly_numbers_sort_in_run_order():
+    # every NIGHTLY-2 number is above every NIGHTLY-1 date (the shipped v0.4.12-nightly.20261022 first), and in run order
+    runs = ["v0.4.12-nightly.20261022", "v0.4.12-nightly.20261023", "v0.4.12-nightly.20991231"]
+    day = dt.date(2026, 10, 23)
+    while day.year < 2100:
+        for hour in (7, 19):
+            runs.append(f"v0.4.12-nightly.{ar.nightly_number(day.strftime('%Y%m%d') + f'{hour:02d}')}")
+        day += dt.timedelta(days=3)
+    assert all(ar.TAG.fullmatch(t) for t in runs)
+    assert sorted(runs, key=ar.version_key) == runs and len(set(runs)) == len(runs)
+    assert ar.version_key("v0.4.11") < ar.version_key(runs[0]) and ar.version_key(runs[-1]) < ar.version_key("v0.4.12")
+
+
+def shipped_nightly_text(core: str, n: int) -> str:
+    """semver.gd nightly_text() as NIGHTLY-1 shipped it (v0.4.12-nightly.20261022 and every launcher before NIGHTLY-2)"""
+    y, mo, d = n // 10000, (n // 100) % 100, n % 100
+    if n >= 10000000 and 1 <= mo <= 12 and 1 <= d <= 31:
+        return f"Nightly {core} ({y:04d}-{mo:02d}-{d:02d})"
+    return f"Nightly {core} build {n}"
+
+
+def test_a_shipped_launcher_never_shows_a_wrong_date():
+    # every half day to 2099: an installed NIGHTLY-1 launcher shows "Nightly 0.4.13 build <n>", the new names show the date and the half
+    day = dt.date(2026, 1, 1)
+    while day.year < 2100:
+        for hour, half in ((0, "morning"), (11, "morning"), (12, "evening"), (23, "evening")):
+            n = ar.nightly_number(day.strftime("%Y%m%d") + f"{hour:02d}")
+            assert shipped_nightly_text("0.4.13", int(n)) == f"Nightly 0.4.13 build {n}"
+            assert ar.display_name(f"v0.4.13-nightly.{n}") == f"Nightly 0.4.13 ({day.isoformat()}, {half})"
+        day += dt.timedelta(days=1)
+    assert shipped_nightly_text("0.4.12", 20261022) == "Nightly 0.4.12 (2026-10-22)"
 
 
 def test_nightly_names_lines_and_intents():
@@ -46,14 +83,35 @@ def test_nightly_names_lines_and_intents():
     # a stable release (or a later nightly) tagged meanwhile ends a resumed nightly
     assert not ar.intent_version_ok(v, "", ["refs/tags/v0.4.12"])
     assert not ar.intent_version_ok(v, "", ["refs/tags/v0.4.12-nightly.20261023"])
+    assert not ar.intent_version_ok(v, "", ["refs/tags/v0.4.12-nightly.261023100"])
     with pytest.raises(SystemExit):
         ar.nightly_date("v0.4.12")
+    # NIGHTLY-2's numbers
+    e = "v0.4.12-nightly.261023200"
+    assert ar.display_name(e) == "Nightly 0.4.12 (2026-10-23, evening)"
+    assert ar.release_title("v0.4.12-nightly.261023100") == "OpenBFME Nightly 0.4.12 (2026-10-23, morning)"
+    assert ar.nightly_date(e) == "2026-10-23" and ar.channel_of(e) == "preview" and ar.line_of(e) == "nightly"
+    assert ar.intent_version_ok(e, "", ["refs/tags/v0.4.12-nightly.261023100", f"refs/tags/{e}"])
+    assert not ar.intent_version_ok("v0.4.12-nightly.261023100", "", ["refs/tags/v0.4.12-nightly.261023200"])
+    for bad in ("261023300", "261023000", "261023210", "261023101", "261323100", "261000100", "251023100", "202610231", "2610231"):
+        assert ar.line_of(f"v0.4.12-nightly.{bad}") == "", bad
+        with pytest.raises(SystemExit):
+            ar.display_name(f"v0.4.12-nightly.{bad}")
 
 
-def change(sha, notes=(), tests=(), player=True, community=(), inner=()):
+def test_tester_readme_titles():
+    import readme_testers as rt
+    assert rt.title_of("v0.4.12-nightly.20261022", "Linux") == "OpenBFME Nightly 0.4.12 (2026-10-22) for Linux"
+    assert rt.title_of("v0.4.13-nightly.261023200", "Linux") == "OpenBFME Nightly 0.4.13 (2026-10-23, evening) for Linux"
+    assert rt.title_of("v0.4.13-nightly.261023100", "Windows") == "OpenBFME Nightly 0.4.13 (2026-10-23, morning) for Windows"
+    assert rt.title_of("v0.4.13-nightly.261023300", "Linux") == "OpenBFME v0.4.13-nightly.261023300 - alpha build for Linux"
+
+
+def change(sha, notes=(), tests=(), player=True, community=(), inner=(), note_credits=None):
     return {"sha": sha, "subject": "Merge lane/x: something", "notes": list(notes),
             "hidden": any(not t or t.lower() == "none" for t in notes), "tests": list(tests), "player": player,
-            "files": ["godot/scripts/x.gd"] if player else ["tools/x.py"], "inner": list(inner), "community": list(community)}
+            "files": ["godot/scripts/x.gd"] if player else ["tools/x.py"], "inner": list(inner), "community": list(community),
+            "note_credits": note_credits if note_credits is not None else [[] for _ in notes]}
 
 
 PR = {"pr": 67, "login": "daisyhasacat", "title": "Fix road corners", "subjects": ["Fix road corners"]}
@@ -190,3 +248,188 @@ def test_pulls_of_retries_an_empty_github_answer_and_fails_closed_when_it_persis
         nn.GitHub("gh", "o/r", attempts=3, backoff=0).pulls_of(SHB)
     monkeypatch.setattr(nn.subprocess, "run", lambda cmd, capture_output=True, text=True: R(err="HTTP 422: No commit found", rc=1))
     assert nn.GitHub("gh", "o/r", attempts=3, backoff=0).pulls_of(SHB) == []   # an internal cherry-pick: GitHub does not know it
+
+
+@pytest.mark.parametrize("body", ["", " \n", "{}", "null", "false", "0", '"no PRs"', "["])
+def test_pulls_of_retries_non_array_bodies_and_does_not_cache_failures(monkeypatch, body):
+    good = json.dumps([{"number": 69, "user": {"login": "daisyhasacat"}, "title": "t", "base": {"repo": {"full_name": "o/r"}}}])
+    answers = [body, body, good]
+    calls, sleeps = [], []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return nn.subprocess.CompletedProcess(cmd, 0, answers.pop(0), "")
+
+    monkeypatch.setattr(nn.subprocess, "run", run)
+    monkeypatch.setattr(nn.time, "sleep", sleeps.append)
+    github = nn.GitHub("gh", "o/r", attempts=3, backoff=2)
+    expected = [{"pr": 69, "login": "daisyhasacat", "title": "t"}]
+    assert github.pulls_of(SHA) == expected
+    assert calls == [["gh", "api", f"repos/o/r/commits/{SHA}/pulls"]] * 3
+    assert sleeps == [2, 4]
+    assert github.pulls_of(SHA) == expected and len(calls) == 3
+
+    answers[:] = [body] * 3
+    with pytest.raises(SystemExit, match="fail closed.*JSON array"):
+        github.pulls_of(SHB)
+    assert SHB not in github.cache and len(calls) == 6 and not answers
+    answers[:] = [good]
+    assert github.pulls_of(SHB) == expected and len(calls) == 7
+
+
+@pytest.mark.parametrize("body, rc, err", [("[]", 0, ""), ("", 1, "HTTP 404: Not Found"), ("", 1, "HTTP 422: No commit found")])
+def test_pulls_of_caches_valid_no_pr_answers_without_retry(monkeypatch, body, rc, err):
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return nn.subprocess.CompletedProcess(cmd, rc, body, err)
+
+    monkeypatch.setattr(nn.subprocess, "run", run)
+    monkeypatch.setattr(nn.time, "sleep", lambda seconds: pytest.fail("a valid no-PR answer must not retry"))
+    github = nn.GitHub("gh", "o/r")
+    assert github.pulls_of(SHA) == [] and github.pulls_of(SHA) == []
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("attempts", [0, -2])
+@pytest.mark.parametrize("body", ["[]", "{}"])
+def test_pulls_of_makes_one_attempt_for_nonpositive_attempts(monkeypatch, attempts, body):
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return nn.subprocess.CompletedProcess(cmd, 0, body, "")
+
+    monkeypatch.setattr(nn.subprocess, "run", run)
+    monkeypatch.setattr(nn.time, "sleep", lambda seconds: pytest.fail("a single attempt must not sleep"))
+    github = nn.GitHub("gh", "o/r", attempts=attempts)
+    if body == "[]":
+        assert github.pulls_of(SHA) == []
+    else:
+        with pytest.raises(SystemExit, match="fail closed"):
+            github.pulls_of(SHA)
+    assert len(calls) == 1
+
+
+# ---- RELNOTES-1: each Release-note line credited to its own pull requests only -------------------------------------------------------
+AUTHORS = {133: "daisyhasacat", 137: "Ancalgonn", 140: "daisyhasacat", 141: "Ancalgonn", 144: "Ancalgonn", 156: "NotNBR",
+           159: "NotNBR", 164: "NotNBR", 165: "NotNBR", 166: "NotNBR", 169: "NotNBR"}
+
+
+class FakeGitHub:
+    """GitHub links the cherry-picks of `linked` to their pull requests only (a port's rewritten commits it does not know)"""
+    repo = "Open-BFME/openbfme-godot"
+
+    def __init__(self, linked=()):
+        self.linked = set(linked)
+
+    def pulls_of(self, sha):
+        n = int(sha[:3])
+        return [self.pull(n)] if n in self.linked else []
+
+    def pull(self, n):
+        if n not in AUTHORS:
+            raise SystemExit(f"#{n} is not a pull request")
+        return {"pr": n, "login": AUTHORS[n], "title": f"PR {n}"}
+
+
+def merge(monkeypatch, sha, subject, lines, cherries=()):
+    body = "".join(f"Release-note: {t}\n" for t in lines)
+    monkeypatch.setattr(nn.ar, "first_parent_commits", lambda g, a, b: [{"sha": sha, "subject": subject, "body": body,
+                                                                         "files": ["engine/src/x.cpp"]}])
+    inner = [{"sha": f"{n}".ljust(40, "0"), "subject": f"port of {n}", "body": f"(cherry picked from commit {f'{n}'.ljust(40, 'e')})"}
+             for n in cherries]
+    monkeypatch.setattr(nn, "inner_commits", lambda g, s: inner)
+
+
+PLAIN = ["Terrain textures stay sharp at shallow camera angles.", "Glowing models light up the screen.",
+         "Large battles render faster.", "Clicking and hovering over units on the HUD is faster in large battles."]
+MQ32 = ["The BFME2 campaigns are playable.", "The BFME2 tutorials start from the main menu.", "A destroyed creep lair leaves a hole.",
+        "Melee units whose target died now pick a nearby enemy building again.", "Mods' AI scripts that build upgrades now run.",
+        "Map teams set to run their actions when created now do so.",
+        "Fixed: Computer players' capture squads no longer stand at a flag forever.", "Ramps now join the wall tops only at their ends."]
+
+
+def rendered(ctx):
+    d = good_draft(ctx)
+    return nn.render(ctx, d, "v0.4.12-nightly.261030200", [], "Open-BFME/openbfme-godot", "", "", True, False, False)[0]
+
+
+def test_a_batch_whose_github_links_one_author_credits_each_line_to_its_own_pull_request(monkeypatch):
+    # the 10-30 plain batch: GitHub linked only #141 / #144 (Ancalgonn); #165 and #169 (NotNBR) were credited to Ancalgonn
+    sha = "27b8f5bafd9b81fddd53a4eae007ba8b03cc2c92"
+    subject = "Merge the 10-30 plain batch: terrain, glow, render frame and HUD picking (#141, #144, #165, #169)"
+    merge(monkeypatch, sha, subject, PLAIN, cherries=(141, 144, 165, 169))
+    gh = FakeGitHub(linked=(141, 144))
+    # without per-line credits the merge's four pull requests can't be placed: fail closed, never spread
+    with pytest.raises(SystemExit, match="#141, #144, #165, #169 but none"):
+        nn.build_context(None, "a", "b", gh)
+    # the lines' own endings
+    merge(monkeypatch, sha, subject, [f"{t} (#{n})" for t, n in zip(PLAIN, (141, 144, 165, 169))], cherries=(141, 144, 165, 169))
+    ctx = nn.build_context(None, "a", "b", gh)
+    assert ctx["changes"][0]["notes"] == PLAIN          # the ending is not part of the text
+    text = rendered(ctx)
+    assert "- Large battles render faster. Thanks to @NotNBR (#165)." in text
+    assert "- Clicking and hovering over units on the HUD is faster in large battles. Thanks to @NotNBR (#169)." in text
+    assert "- Terrain textures stay sharp at shallow camera angles. Thanks to @Ancalgonn (#141)." in text
+    thanks = text[text.index("## Thanks to our community"):text.index("## What's new")]
+    assert thanks.splitlines()[2:6] == ["- Thanks to @Ancalgonn (#141): Terrain textures stay sharp at shallow camera angles.",
+                                        "- Thanks to @Ancalgonn (#144): Glowing models light up the screen.",
+                                        "- Thanks to @NotNBR (#165): Large battles render faster.",
+                                        "- Thanks to @NotNBR (#169): Clicking and hovering over units on the HUD is faster in large battles."]
+    # the same merge, as it is in the history (no endings), placed by nightly_credits.json
+    merge(monkeypatch, sha, subject, PLAIN, cherries=(141, 144, 165, 169))
+    ctx2 = nn.build_context(None, "a", "b", gh, {sha: [[141], [144], [165], [169]]})
+    assert rendered(ctx2) == text
+    with pytest.raises(SystemExit, match="lists 3 lines"):
+        nn.build_context(None, "a", "b", gh, {sha: [[141], [144], [165, 169]]})
+
+
+def test_a_merge_queue_credits_its_contributors_line_by_line_and_our_own_lines_not_at_all(monkeypatch):
+    # MERGEQ-32: GitHub linked #137 only; every line read "Thanks to @Ancalgonn (#137)", our mod AI and team lines included
+    sha = "207e9b632d2c5985700be9e21d220f3be9d830a3"
+    merge(monkeypatch, sha, "Merge MERGEQ-32: campaigns, rebuild holes, the capture release, ramps (#137, #140, #156, #159)", MQ32,
+          cherries=(137,))
+    rows = [[137], [137], [137], [140], [], [], [156], [159]]
+    text = rendered(nn.build_context(None, "a", "b", FakeGitHub(linked=(137,)), {sha: rows}))
+    assert "- Mods' AI scripts that build upgrades now run.\n" in text and "- Map teams set to run their actions when created now do so.\n" in text
+    assert "now pick a nearby enemy building again. Thanks to @daisyhasacat (#140)." in text
+    assert "no longer stand at a flag forever. Thanks to @NotNBR (#156)." in text
+    assert "only at their ends. Thanks to @NotNBR (#159)." in text
+    assert text.count("Thanks to @Ancalgonn (#137)") == 3 * 2 + 1   # three lines (community section, What's new), What to test
+    test = text[text.index("## What to test"):]
+    assert "Thanks to @Ancalgonn (#137), @daisyhasacat (#140) and @NotNBR (#156, #159)." in test   # the steps cover the whole merge
+    # MERGEQ-33: GitHub links none of the port's commits; the subject's numbers still credit their lines
+    sha = "cf38c5d40de8423efd24472fbbfb3ddbb6e57933"
+    merge(monkeypatch, sha, "Merge MERGEQ-33: a faster logic frame, straight production exits and the Uber cap (#164, #133, #166)",
+          ["The game logic runs faster.", "Structures change their footprint.", "Soldiers leave on one straight path.",
+           "In Uber mode one long path search can no longer stall a frame."])
+    with pytest.raises(SystemExit, match="#133, #164, #166 but none"):
+        nn.build_context(None, "a", "b", FakeGitHub())
+    text = rendered(nn.build_context(None, "a", "b", FakeGitHub(), {sha: [[164], [], [133], [166]]}))
+    assert "- The game logic runs faster. Thanks to @NotNBR (#164)." in text
+    assert "- Structures change their footprint.\n" in text
+    assert "- Soldiers leave on one straight path. Thanks to @daisyhasacat (#133)." in text
+    # a single line takes every pull request its merge carries; a number that is no pull request fails closed
+    merge(monkeypatch, sha, "Merge #164", ["The game logic runs faster."])
+    assert "- The game logic runs faster. Thanks to @NotNBR (#164)." in rendered(nn.build_context(None, "a", "b", FakeGitHub()))
+    merge(monkeypatch, sha, "Merge the fix of issue #9999", ["The game logic runs faster."])
+    with pytest.raises(SystemExit, match="#9999"):
+        nn.build_context(None, "a", "b", FakeGitHub())
+
+
+def test_note_refs_and_the_stable_notes_drop_the_ending():
+    assert nn.ar.note_refs("Fixed [AI]: Squads take orders. (#156)") == ("Fixed [AI]: Squads take orders.", [156])
+    assert nn.ar.note_refs("Faster. ( #165 , #164 )") == ("Faster.", [164, 165])
+    assert nn.ar.note_refs("Water on the grid (#154, Ancalgonn).") == ("Water on the grid (#154, Ancalgonn).", [])
+    assert nn.ar.parse_note("Fixed [AI]: Squads take orders. (#156)") == ("fixed", "AI", "Squads take orders.")
+
+
+def test_the_credits_file_names_real_merges_line_by_line():
+    merges = nn.load_credits(nn.HERE / "nightly_credits.json")
+    assert merges
+    for sha, lines in merges.items():
+        r = nn.subprocess.run(["git", "-C", str(nn.HERE), "log", "-1", "--format=%b", sha], capture_output=True, text=True)
+        assert not r.returncode, f"{sha[:10]} is not a commit of this repository"
+        assert len(nn.ar.release_note_texts(r.stdout)) == len(lines), sha[:10]

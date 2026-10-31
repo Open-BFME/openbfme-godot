@@ -14,6 +14,8 @@
 #include "GodotDevice/GodotAptPlayer.h"
 
 #include <godot_cpp/classes/rendering_server.hpp>
+#include <godot_cpp/classes/control.hpp>
+#include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/theme_db.hpp>
 #include <godot_cpp/variant/packed_color_array.hpp>
 #include <godot_cpp/variant/packed_vector2_array.hpp>
@@ -111,6 +113,7 @@ Hud6Draw::~Hud6Draw()
 	RenderingServer *rs = RenderingServer::get_singleton();
 	if (rs)
 	{
+		if (m_messageItem.is_valid()) rs->free_rid(m_messageItem);
 		if (m_radialItem.is_valid())
 		{
 			rs->free_rid(m_radialItem);
@@ -409,7 +412,57 @@ Dictionary Hud6Draw::state() const
 		side["calls"] = sc;
 	}
 	out["side_bar"] = side;
+	out["message_top"] = m_messageTop;
 	return out;
+}
+
+void Hud6Draw::drawMessages(RID parent)
+{
+	auto *rs = RenderingServer::get_singleton();
+	if (!rs) return;
+	if (!m_messageItem.is_valid())
+	{
+		m_messageItem = rs->canvas_item_create();
+		rs->canvas_item_set_parent(m_messageItem, parent);
+	}
+	rs->canvas_item_clear(m_messageItem);
+	if (m_hud.menuCoversStage()) return;
+	// BATCH-P4: InGameUI's message lines have one drawer. CHAT-1's HudDevice::drawMessageLines (GameClient/InGameUIMessages.h) draws the same GUI
+	// labels as this log plus the chat lines in their players' colours, at the same Message* position: drawing both put every label on screen twice.
+	// PlayerMessageLog stays the HUD state's player_messages record (its tests read it); unifying the two stores is a follow-up.
+	return;
+	const auto &log = m_hud.playerMessages();
+	const auto &settings = log.settings;
+	const int px = GlobalLanguage::adjustFontSize(settings.pointSize, m_hud.windowWidth());
+	float drawSize = (float)px;
+	Ref<Font> font = m_player ? m_player->font_for(settings.font, drawSize, &drawSize, settings.bold) : Ref<Font>();
+	if (font.is_null()) return; // font_for reports unavailable corpus fonts.
+	font = m_player->font_cell(font, (int)std::lround(drawSize));
+	const int size = (int)std::lround(drawSize);
+	const int x = (int)std::floor(m_hud.windowWidth() * settings.position.x / 1024.0f + .5f);
+	float y = std::floor(m_hud.windowHeight() * settings.position.y / 768.0f + .5f);
+	// RW 0x6A0BC0 (tier A, BFME2 InGameUIPostDraw.cpp) uses the configured origin. Reserve our non-retail watermark's measured bounds.
+	const Array obstacles = m_player->get_tree()->get_nodes_in_group("player_message_obstacles");
+	for (int i = 0; i < obstacles.size(); ++i)
+	{
+		const Control *control = Object::cast_to<Control>(obstacles[i]);
+		if (control && control->is_visible_in_tree() && control->get_viewport() == m_player->get_viewport())
+		{
+			const Rect2 rect = control->get_global_transform_with_canvas().xform(Rect2(Vector2(), control->get_size()).grow(2.0f));
+			y = std::max(y, (float)std::ceil(rect.get_end().y));
+		}
+	}
+	m_messageTop = y;
+	for (auto it = log.entries().rbegin(); it != log.entries().rend(); ++it)
+	{
+		const String text = toGodot(u16ToUtf8(it->text));
+		const float width = font->get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x;
+		const float left = x < 0 ? m_hud.windowWidth() + x - width : x;
+		const Vector2 at(left, y + font->get_ascent(size));
+		font->draw_string(m_messageItem, at + Vector2(1, 1), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, argb(it->color & 0xff000000));
+		font->draw_string(m_messageItem, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, argb(it->color));
+		y += font->get_height(size);
+	}
 }
 
 } // namespace godot

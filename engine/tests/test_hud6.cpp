@@ -6,6 +6,7 @@
 #include "doctest.h"
 
 #include "HudTestUtil.h"
+#include "HudAudioTestUtil.h"
 
 #include "Common/INI.h"
 #include "GameClient/CommandButtonHelp.h"
@@ -239,7 +240,7 @@ namespace
 struct Hud6Rig
 {
 	Rig rig;
-	RecordingShellServices services;
+	hudaudio::RecordingShellServices services;
 	GameTextTableSource text;
 	MappedImageCollection images;
 	INIEnvironment imageEnv;
@@ -248,8 +249,7 @@ struct Hud6Rig
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string error;
-		REQUIRE_MESSAGE(s.mount->fs->readFile("data/lotr.str", bytes, &error), error);
-		REQUIRE_MESSAGE(text.table.parse(bytes, &error), error);
+		REQUIRE_MESSAGE(text.table.loadRetail(*s.mount->fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 		imageEnv.fileSystem = s.mount->fs.get();
 		images.registerBlocks(imageEnv.blocks);
 		INI ini(imageEnv);
@@ -300,6 +300,109 @@ CommandButtonHelp::Text composePrerequisiteHelp(Hud6Rig &h, const std::string &t
 	return CommandButtonHelp::compose(button, &text, h.rig.game->logic(), player, localPlayer, nullptr, "Men");
 }
 } // namespace
+
+TEST_CASE("hud click audio: radial synthetic availability states and command classes")
+{
+	if (!haveWorld("hud click audio radial"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	hudaudio::RetailAudio audio(*s.mount->fs);
+	Hud6Rig h(s, "FactionMen");
+	h.hud->setWindowSize(1024, 768);
+	h.rig.view.setScreen(1024, 768);
+	const Coord3D at = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *source = h.rig.make("GondorBarracks", at.x, at.y);
+	REQUIRE(source);
+	h.rig.lookAt({ at.x, at.y, 0.0f });
+	h.frames(20);
+	auto context = h.hud->enterContext();
+	ControlBar bar(h.hud->input().context());
+	struct Scenario
+	{
+		const char *name;
+		ButtonState state;
+	};
+	const Scenario scenarios[] = {
+		{ "enabled", ButtonState::Enabled },
+		{ "restricted", ButtonState::Restricted },
+		{ "cant-afford", ButtonState::CantAfford },
+		{ "not-ready", ButtonState::NotReady },
+		{ "purchased", ButtonState::Purchased },
+		{ "active", ButtonState::Active },
+	};
+	struct CommandClass
+	{
+		const char *name;
+		int command;
+	};
+	const CommandClass commandClasses[] = {
+		{ "FOUNDATION_CONSTRUCT", GUI_COMMAND_FOUNDATION_CONSTRUCT },
+		{ "CASTLE_UPGRADE", GUI_COMMAND_CASTLE_UPGRADE },
+		{ "UNIT_BUILD", GUI_COMMAND_UNIT_BUILD },
+		{ "OBJECT_UPGRADE", GUI_COMMAND_OBJECT_UPGRADE },
+		{ "SPECIAL_POWER", GUI_COMMAND_SPECIAL_POWER },
+		{ "REVIVE", GUI_COMMAND_REVIVE },
+	};
+	for (const Scenario &scenario : scenarios)
+	{
+		for (const CommandClass &commandClass : commandClasses)
+		{
+			for (const bool left : { true, false })
+			{
+				CommandButton command;
+				command.m_command = commandClass.command;
+				ControlBarButton button;
+				button.slot = 0;
+				button.button = &command;
+				button.state = scenario.state;
+				std::vector<ControlBarButton> buttons{ button };
+				h.hud->radialMenu().update(h.rig.logic(), &h.rig.game->drawables(), h.rig.view, 1024, 768, source->getID(), buttons, true);
+				REQUIRE(h.hud->radialMenu().buttons().size() == 1);
+				const RadialMenuLayout::Rect &rect = h.hud->radialMenu().buttons().front().rect;
+				const int x = rect.x + rect.w / 2;
+				const int y = rect.y + rect.h / 2;
+				audio.manager->takeEventLog();
+				h.hud->radialMenu().mouseButton(left, true, x, y, bar);
+				const std::vector<std::string> down = hudaudio::takeRequests(*audio.manager, "HUD radial press");
+				h.hud->radialMenu().mouseButton(left, false, x, y, bar);
+				const std::vector<std::string> up = hudaudio::takeRequests(*audio.manager, "HUD radial press");
+				const std::vector<std::string> expected = (scenario.state == ButtonState::Enabled || scenario.state == ButtonState::Active)
+					? std::vector<std::string>{ "Gui_PalantirCommandButtonClick" }
+					: std::vector<std::string>{ "Gui_PalantirCommandButtonDisabledClick" };
+				hudaudio::printSequence(std::string("radial synthetic availability ") + scenario.name + " " + commandClass.name + (left ? " left" : " right"),
+					down, up);
+				CHECK(down == expected);
+				CHECK(up.empty());
+				audio.manager->takeEventLog();
+				h.hud->radialMenu().mouseButton(left, true, -20, -20, bar);
+				const std::vector<std::string> outsideDown = hudaudio::takeRequests(*audio.manager, "HUD radial press");
+				h.hud->radialMenu().mouseButton(left, false, -20, -20, bar);
+				const std::vector<std::string> outsideUp = hudaudio::takeRequests(*audio.manager, "HUD radial press");
+				CHECK(outsideDown.empty());
+				CHECK(outsideUp.empty());
+			}
+		}
+	}
+	CommandButton cancelableCommand;
+	cancelableCommand.m_command = GUI_COMMAND_UNIT_BUILD;
+	cancelableCommand.m_options = COMMAND_OPTION_CANCELABLE;
+	ControlBarButton cancelableButton;
+	cancelableButton.slot = 0;
+	cancelableButton.button = &cancelableCommand;
+	cancelableButton.state = ButtonState::Restricted;
+	h.hud->radialMenu().update(h.rig.logic(), &h.rig.game->drawables(), h.rig.view, 1024, 768, source->getID(), { cancelableButton }, true);
+	const RadialMenuLayout::Rect &cancelRect = h.hud->radialMenu().buttons().front().rect;
+	audio.manager->takeEventLog();
+	h.hud->radialMenu().mouseButton(false, true, cancelRect.x + cancelRect.w / 2, cancelRect.y + cancelRect.h / 2, bar);
+	const std::vector<std::string> cancelDown = hudaudio::takeRequests(*audio.manager, "HUD radial press");
+	h.hud->radialMenu().mouseButton(false, false, cancelRect.x + cancelRect.w / 2, cancelRect.y + cancelRect.h / 2, bar);
+	const std::vector<std::string> cancelUp = hudaudio::takeRequests(*audio.manager, "HUD radial press");
+	hudaudio::printSequence("radial synthetic availability restricted right cancelable", cancelDown, cancelUp);
+	CHECK(cancelDown == std::vector<std::string>{ "Gui_PalantirCommandButtonClick" });
+	CHECK(cancelUp.empty());
+}
 
 TEST_CASE("hud6 recovered help guards retail")
 {
@@ -630,6 +733,68 @@ TEST_CASE("hud6 retail: a right press on a bubble cancels only a CANCELABLE butt
 	h.frames(60);
 	CHECK(radial.cancels() == 1);
 	CHECK(pu->getProductionCount() == 0);
+}
+
+TEST_CASE("fbsim1 retail: a right press on a CANCELABLE upgrade bubble cancels the research and refunds it (FB-0037, RW 0x940E77 / 0x940FB3 / 0x8A1140)")
+{
+	if (!haveWorld("fbsim1 upgrade cancel"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Hud6Rig h(s, "FactionMordor");
+	h.frames(10);
+	h.rig.local->getMoney()->deposit(5000, false);
+	const Coord3D c = h.rig.freeSpot(2400, 1400, 300.0f);
+	Object *citadel = h.rig.make("MordorFortressCitadel", c.x, c.y);
+	h.rig.lookAt({ c.x, c.y, 0 });
+	h.frames(10);
+	h.clickSelect(citadel);
+	REQUIRE(h.hud->input().ui().selected() == std::vector<ObjectID>{ citadel->getID() });
+	h.frames(30);
+	const ControlBarRadialMenu &radial = h.hud->radialMenu();
+	auto find = [&](const char *name) {
+		for (const ControlBarRadialMenu::Button &b : radial.buttons())
+		{
+			if (b.source.button && b.source.button->m_name == name)
+			{
+				return b;
+			}
+		}
+		return ControlBarRadialMenu::Button{};
+	};
+	auto press = [&](HudInput::Button which, const ControlBarRadialMenu::Button &b) {
+		const int x = b.rect.x + b.rect.w / 2, y = b.rect.y + b.rect.h / 2;
+		h.hud->mouseMove(x, y, 0);
+		h.hud->mouseButton(which, true, x, y, 0, 1000);
+		h.hud->mouseButton(which, false, x, y, 0, 1040);
+		h.frames(4);
+	};
+	const ControlBarRadialMenu::Button upgrades = find("Command_SelectUpgradesMordorFortress");
+	REQUIRE(upgrades.slot >= 0); // tolerance: found on the ring (-1 = absent); the slot number is the layout's
+	press(HudInput::Button::Left, upgrades); // opens the upgrades ring
+	h.frames(10);
+	const ControlBarRadialMenu::Button moat = find("Command_PurchaseUpgradeMordorFortressLavaMoat");
+	REQUIRE(moat.slot >= 0); // tolerance: found on the ring (-1 = absent)
+	REQUIRE(moat.source.button->hasOption(COMMAND_OPTION_CANCELABLE)); // retail commandbutton.ini: Options = CANCELABLE
+	const UpgradeTemplate *u = TheUpgradeCenter->findUpgrade(moat.source.button->m_upgradeName);
+	REQUIRE(u != nullptr);
+	ProductionUpdateInterface *pu = citadel->getProductionUpdate();
+	REQUIRE(pu != nullptr);
+	const unsigned before = h.rig.local->getMoney()->countMoney();
+	press(HudInput::Button::Left, moat); // MSG_QUEUE_UPGRADE
+	h.frames(30);
+	REQUIRE(pu->isUpgradeInQueue(u));
+	const unsigned paid = before - h.rig.local->getMoney()->countMoney();
+	CHECK(paid > 0); // tolerance: the price is the upgrade's INI cost; the property is the refund of exactly what was paid
+	// the in-progress bubble's right press: MSG_CANCEL_UPGRADE { mask bit }, the logic's cancelUpgrade refunds the stored cost
+	press(HudInput::Button::Right, find("Command_PurchaseUpgradeMordorFortressLavaMoat"));
+	h.frames(30);
+	CHECK(radial.cancels() == 1);
+	CHECK_FALSE(pu->isUpgradeInQueue(u));
+	CHECK(pu->getProductionCount() == 0);
+	CHECK_FALSE(citadel->hasUpgrade(u));
+	CHECK(h.rig.local->getMoney()->countMoney() == before);
 }
 
 TEST_CASE("hud6 retail: the help's upgrade warnings follow RW 0x807D8F .. 0x807EB0: only after a DescriptLabel, queue full first, the local player's money")
@@ -1552,8 +1717,9 @@ TEST_CASE("ownerfix3 retail: the production count on the barracks' bubbles and t
 		return;
 	}
 	SharedWorld &s = shared();
-	Hud6Rig h(s, "FactionMen");
 	FixedMetrics metrics;
+	Hud6Rig h(s, "FactionMen");
+	auto context = h.hud->enterContext();
 	h.hud->setFontMetrics(&metrics);
 	h.frames(10);
 	h.rig.local->getMoney()->deposit(20000, false);

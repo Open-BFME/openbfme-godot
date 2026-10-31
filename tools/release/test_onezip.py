@@ -36,10 +36,10 @@ import seal_package
 from launcher_test_server import COMMIT, TEST_REPO, tiny_package
 import test_launcher
 from test_launcher import GODOT, LAUNCHER, _godot_ok, _remove_tmp_path, data, imported, installed, keys, played, server  # noqa: F401
-from launcher_test_support import (ARCHIVE_SUFFIX, GAME_EXE, LAUNCHER_EXE, PLATFORM, WINDOWS,
+from launcher_test_support import (ARCHIVE_SUFFIX, GAME_EXE, LAUNCHER_EXE, MACOS, MACOS_SKIP, PLATFORM, WINDOWS,
                                    asset_name, deny_write, isolated_environment, native_game, normalized_path)
 
-pytestmark = pytest.mark.skipif(not _godot_ok(), reason="SKIP the one-download launcher tests: Godot 4.7.2 not found (set GODOT)")
+pytestmark = [pytest.mark.skipif(MACOS, reason=MACOS_SKIP), pytest.mark.skipif(not _godot_ok(), reason="SKIP the one-download launcher tests: Godot 4.7.2 not found (set GODOT)")]
 
 LEXE = LAUNCHER_EXE
 VERSION_OPT = "--launcher-version=v0.4.0"   # a development run has no release version, and only a release version updates itself
@@ -809,6 +809,29 @@ def test_the_games_side_of_the_hand_over(tmp_path, keys):
         (d / "payload.json").write_bytes(body)
         (d / "payload.json.sig").write_bytes(ed25519.sign(k, body))
 
+    import release_keys
+
+    def kms_sealed(d, kind="payload.json"):
+        """SIGNKMS-1: the inventory signed the new way (the second trusted key over the envelope of `kind`)"""
+        (d / "payload.json.sig").write_bytes(ed25519.sign(keys["kms"], release_keys.envelope(kind, (d / "payload.json").read_bytes())))
+
+    def kms_proof(d):
+        proof_for(tmp_path, d, "v0.6.0", b"the launcher of v0.6.0", k)
+        body = (d / "launcher-manifest.json").read_bytes()
+        (d / "launcher-manifest.json.sig").write_bytes(ed25519.sign(keys["kms"], release_keys.envelope("manifest.json", body)))
+        (d / LEXE).write_bytes(b"the launcher of v0.6.0")
+
+    nightly_secret = os.urandom(32)   # lane RELGH-2: a key trusted for nightly files only
+
+    def nightly_payload(version, secret=nightly_secret):
+        def change(d):
+            body = json.loads((d / "payload.json").read_bytes())
+            body["version"] = version
+            raw = (json.dumps(body, indent=2, sort_keys=True) + "\n").encode()
+            (d / "payload.json").write_bytes(raw)
+            (d / "payload.json.sig").write_bytes(ed25519.sign(secret, raw))
+        return change
+
     checks = [
         {"name": "the package's launcher", "dir": variant("ok", lambda d: None), "want": ""},
         {"name": "a replaced launcher", "dir": variant("replaced", lambda d: (d / LEXE).write_bytes(
@@ -840,6 +863,17 @@ def test_the_games_side_of_the_hand_over(tmp_path, keys):
          "want": "the package's payload.json: no signature (payload.json.sig is not 64 bytes)"},
         {"name": "a 4 MiB inventory", "dir": variant("huge-payload", lambda d: os.truncate(d / "payload.json", 4 << 20)),
          "want": "the package's payload.json: larger than 65536 bytes"},
+        # SIGNKMS-1: the trusted list (old key, new key); the new key signs the envelope of the file's kind
+        {"name": "an inventory sealed by the new key", "dir": variant("kms-payload", kms_sealed), "want": ""},
+        {"name": "an update proven by the new key", "dir": variant("kms-proof", kms_proof), "want": ""},
+        # RELGH-2: the nightly-only key signs a nightly inventory, never a stable one
+        {"name": "a nightly inventory sealed by the nightly key", "dir": variant("nightly-payload", nightly_payload("v0.5.0-nightly.20261024")), "want": ""},
+        {"name": "a stable inventory sealed by the nightly key", "dir": variant("nightly-key-stable", nightly_payload("v0.5.0")),
+         "want": "the package's payload.json: the signature is not the OpenBFME release's"},
+        {"name": "an inventory sealed by a key in neither list", "dir": variant("nightly-other-key", nightly_payload("v0.5.0-nightly.20261024", os.urandom(32))),
+         "want": "the package's payload.json: the signature is not the OpenBFME release's"},
+        {"name": "an inventory signature of the wrong kind", "dir": variant("kms-wrong-kind", lambda d: kms_sealed(d, "manifest.json")),
+         "want": "the package's payload.json: the signature is not the OpenBFME release's"},
     ])
     # the launcher's data folder with an installed version whose game writes the arguments it got
     ldir = tmp_path / "launcher-data"
@@ -863,7 +897,7 @@ def test_the_games_side_of_the_hand_over(tmp_path, keys):
         (enospc / "request.json.tmp").write_bytes(b"")
     else:
         (enospc / "request.json.tmp").symlink_to("/dev/full")
-    cases = {"enospc_dir": str(enospc), "key": ed25519.public_key(k).hex(), "repo": TEST_REPO, "check": checks, "launcher_dir": str(ldir), "version": "v0.6.0",
+    cases = {"enospc_dir": str(enospc), "key": f"{ed25519.public_key(k).hex()},{ed25519.public_key(keys['kms']).hex()}", "nightly_key": ed25519.public_key(nightly_secret).hex(), "repo": TEST_REPO, "check": checks, "launcher_dir": str(ldir), "version": "v0.6.0",
              "requests": str(tmp_path / "requests"), "unsigned_dir": str(folders["replaced"])}
     (tmp_path / "cases.json").write_text(json.dumps(cases))
     env = isolated_environment(tmp_path, OPENBFME_TEST_ARGS=str(argv), OPENBFME_TEST_MARKER=str(marker))
@@ -890,8 +924,8 @@ def test_the_games_side_of_the_hand_over(tmp_path, keys):
 
 
 def test_the_game_shares_the_launchers_signature_code_byte_for_byte():
-    """one implementation: the game's copy of the Ed25519 / SHA-512 code is the launcher's"""
-    for f in ("ed25519.gd", "sha512.gd"):
+    """one implementation: the game's copy of the Ed25519 / SHA-512 code and of the release signature rule (SIGNKMS-1) is the launcher's"""
+    for f in ("ed25519.gd", "sha512.gd", "release_signature.gd"):
         assert (LAUNCHER.parent / "godot/scripts/crypto" / f).read_bytes() == (LAUNCHER / "scripts/crypto" / f).read_bytes(), f
 
 

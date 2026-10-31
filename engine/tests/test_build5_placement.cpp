@@ -220,7 +220,12 @@ TEST_CASE("build5 scroll cursor: the frame of the directional cursor faces the s
 TEST_CASE("build5 retail cursors: Mouse.ini's Scroll has 8 directions whose files ship and decode; Build and InvalidBuild have no block")
 {
 	const char *install = std::getenv("ROTWK_INSTALL");
-	if (!install || !*install || !haveWorld("build5 retail cursors"))
+	if (!install || !*install)
+	{
+		retailtest::printSkip("build5 retail cursors");
+		return;
+	}
+	if (!haveWorld("build5 retail cursors"))
 	{
 		return;
 	}

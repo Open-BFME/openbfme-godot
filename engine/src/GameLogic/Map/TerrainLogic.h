@@ -44,6 +44,20 @@ struct Waypoint
 	std::vector<int> linksTo; // ids, directed as stored in WaypointsList
 };
 
+// lane LOS-1: the pathfinder's layer answers the line-of-sight walk asks at each cell centre (TheAI's pathfinder, RW 0x6EACB9 / TheTerrainLogic vslot 0x1C)
+class LineOfSightLayers
+{
+public:
+	virtual ~LineOfSightLayers() {}
+	// RW 0x6EACB9 Pathfinder::GetGroundLayer: the layer field (cell + 0xC bits 4 .. 9) of the ground cell at `cellCenter`; LAYER_GROUND (1) without a cell
+	virtual int groundLayer(const Coord3D &cellCenter) const = 0;
+	// the same answer for the walk's cell (i, j) (its centre (i * 10 + 5, j * 10 + 5)), for a host that can index the cell without the round trip
+	// through world coordinates; the default asks groundLayer with the centre the walk computes
+	virtual int groundLayerOfCell(int i, int j) const;
+	// TheTerrainLogic vslot 0x1C getLayerHeight(x, y, layer, 0, 1) for a layer other than the ground
+	virtual float layerHeight(float x, float y, int layer) const = 0;
+};
+
 class TerrainLogic
 {
 public:
@@ -57,6 +71,17 @@ public:
 	float getGroundHeight(float x, float y, Coord3D *normal = nullptr) const;
 	// BFME1/ZH getClipHeight: raw 16-bit height of the clamped cell.
 	std::uint16_t getClipHeight(int x, int y) const;
+
+	// lane LOS-1: W3DTerrainLogic vslot 0x3C (RW 0x46231F, vtable RW 0xBDB810) -> BaseHeightMapRenderObjClass::isClearLineOfSight (RW 0x466289; tier A, the BFME2
+	// decomp's BaseHeightMapIsClearLineOfSight.cpp, byte-matched; read again here from the RotWK disassembly). The terrain line from `pos` to `posOther`: the
+	// Bresenham walk over the bordered height map cells (both ends floor(v * 0.1f) + border; x87 under PC24, the CRT floor, FISTP); numpixels = the larger
+	// delta; per step, while the cell is inside [0, width - 1) x [0, height - 1) (off the map: the walk ends, clear): the cell's height is the largest of its
+	// four corner samples times 0.0390625f (RW 0xBDB8EC, SSE); on a cell whose ground layer (RW 0x6EACB9 at the cell centre (x - border) * 10 + 5, asked only
+	// with `layers`) is not the ground, after a ground cell was seen, the layer height minus 20 (RW 0xBDBC6C) when higher; height > z + 0.5f (RW 0xBD869C)
+	// blocks; z starts at pos.z and steps (posOther.z - pos.z) * (1.0f / numpixels) (SSE). The sample past the last step (posOther's own cell) is never read.
+	// The BaseHeightMap's WorldHeightMap is the map's height data, the same samples this logic reads; RotWK answers false without a terrain render object (a
+	// state of no loaded map, which never meets this query).
+	bool isClearLineOfSight(const Coord3D &pos, const Coord3D &posOther, const LineOfSightLayers *layers) const;
 
 	// Playable area of a boundary: x in [0, b.x*10], y in [0, b.y*10] (W3DTerrainLogic.cpp:200-222).
 	bool getExtent(size_t boundary, float &maxX, float &maxY) const;

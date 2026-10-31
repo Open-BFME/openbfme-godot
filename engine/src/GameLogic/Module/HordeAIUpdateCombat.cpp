@@ -20,6 +20,7 @@
 #include "GameLogic/Module/HordeAIUpdate.h"
 
 #include "Common/GameCommon.h"
+#include "Common/Player.h"
 #include "Common/StateHash.h"
 #include "GameLogic/AI/AIXfer.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -27,6 +28,7 @@
 #include "GameLogic/AI/AIAttackMelee.h"
 #include "GameLogic/AI/AIEmotionStates.h"
 #include "GameLogic/AI/AIApproachMath.h"
+#include "GameLogic/AI/AIClosestEnemy.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
@@ -34,6 +36,7 @@
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/HordeContain.h"
+#include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Module/BloodthirstyUpdate.h"
 #include "GameLogic/Module/SquishCollide.h"
 #include "GameLogic/Object/Contain/HordeContainBehaviorData.h"
@@ -137,8 +140,19 @@ float absF(float a)
 //     SUCCESS; a goal NOT_IN_WORLD (51) or stealthed -> FAILURE; computePath false -> FAILURE; the move update; when the move is over: dead goal -> SUCCESS, a horde that is not
 //     ARMY_OF_DEAD (template + 0x11A bit 7) -> SUCCESS, an ARMY_OF_DEAD horde re-paths through the victim again; every continuing update sets IS_MELEE_ATTACKING = canCrush(horde);
 //   * onExit RW 0x74B1B7: the base onExit, then IS_MELEE_ATTACKING off.
-// INFERENCE (stop S-583): the AI byte +0x3CC, the "machine busy" test (RW 0x8DBDFF), the goal's physics test (RW 0x792973) and the line test of crushPolicy (RW 0x6F5BB0) are not
-// ported (taken as "not set" / "passes"); the stealth test of the goal is RW 0x694C0D (lane STEALTH-1); the dead-goal branch's re-acquisition (RW 0x701443) is not ported.
+// lane FLANK-1 (re-read of RW 0x74F21A / 0x74F31F / 0x742271, BFME2 decomp AIAttackMeleeSquishState): onEnter fails on a destroyed goal (RW 0x8DBDFF
+// StateMachine::isGoalObjectDestroyed: a goal id that no longer resolves or whose object is dead) and on a goal whose PhysicsBehavior answers RW 0x792973 (model condition
+// STUNNED_FLAILING 127 or FREEFALL 72: a flung victim); it zeroes the path frame (+ 0x4C) and destroys the AI's path (RW 0x66276B) before computePath. The update's dead-goal
+// branch (a destroyed goal, a dead goal or one FLEE_OFF_MAP) re-acquires once per success: while the state's byte + 0x64 (1 from the ctor, never reset by onEnter) is set and
+// the unit can crush, the byte clears, AI::findClosestEnemy (RW 0x701443) within AIData MeleeApproachDist (+ 0x94) with flags 2 and the AI's attack info (+ 0x70) picks a
+// next victim; one that passes crushPolicy becomes the machine's goal (vslot 0x38), computePath (false: FAILURE) and the byte is set again. A goal id of 0 fails the update
+// with IS_MELEE_ATTACKING = canCrush. computePath is refused while the AI is blocked (+ 0x16C > 0), forces a re-path when the AI has no path and none pending (+ 0x140,
+// + 0x3B1), keeps the goal point's z (no ground snap) and normalises with RW 0x405553 (1 / len, then products).
+// INFERENCE (stop S-583): the AI byte +0x3CC (its only writer clears it: taken as 0), the state's own pending byte + 0x49 (the port's internal move keeps its own wait), the
+// line test of crushPolicy (RW 0x6F5BB0) is not ported (taken as passing); RW 0x701443 is lane TARGET-1's AI::findClosestEnemy (merge queue q23; FLANK-1 had the
+// TargetFinder stand-in) and a zero-length direction keeps the victim's point (retail's normalise gives NaN); the stealth test of the goal is RW 0x694C0D (lane STEALTH-1).
+// NOT REACHED YET (S-583): RotWK's AIAttackState::update (RW 0x7510EC) keeps running this inner machine when the outer victim is dead (non-ARMY_OF_DEAD), the port's
+// AIAttackState (AIAttack.cpp, ZH donor) ends the attack first, so the re-acquisition only runs in a machine of its own (test_flank1.cpp).
 struct HordeSquishState : AIState
 {
 	explicit HordeSquishState(AIStateMachine &m) : AIState(m, "AIAttackMeleeSquishState") {}
@@ -146,6 +160,19 @@ struct HordeSquishState : AIState
 	Coord3D m_victimPos{ 0.0f, 0.0f, 0.0f };
 	unsigned m_pathFrame = 0;
 	bool m_flagSet = false;
+	bool m_reacquire = true; // + 0x64 (lane FLANK-1): the ctor's 1, cleared and set again only by the update's re-acquisition
+
+	// RW 0x8DBDFF StateMachine::isGoalObjectDestroyed: goal id 0 -> false; an id that no longer resolves -> true; else the object's dead bit (+ 0x458 bit 0)
+	bool goalDestroyed() const
+	{
+		const ObjectID id = machine().goalObjectID();
+		if (id == INVALID_ID)
+		{
+			return false;
+		}
+		const Object *g = ai().getObject()->logic().findObjectByID(id);
+		return !g || g->isEffectivelyDead();
+	}
 
 	static Object *victimHorde(Object &v)
 	{
@@ -173,8 +200,14 @@ struct HordeSquishState : AIState
 		return !weapon || (weapon->getTemplate() && weapon->getTemplate()->m_meleeWeapon);
 	}
 	// RW 0x742271 (true: a path exists or was requested)
-	bool computePath(AIUpdateInterface &h, Object &self, Object &goal, bool force)
+	bool computePath(AIUpdateInterface &h, Object &self, Object &goal, bool forceIn)
 	{
+		if (h.mover().blockedFrames() > 0)
+		{
+			return false; // RW 0x742297: AI + 0x16C > 0
+		}
+		// RW 0x7422B4: no path (+ 0x140) and none pending (+ 0x3B1) forces the re-path (lane FLANK-1); onEnter's destroyed path forces it too
+		const bool force = forceIn || (h.mover().path() == nullptr && !h.mover().isWaitingForPath());
 		if (!force && h.frame() - m_pathFrame < (unsigned)LOGICFRAMES_PER_SECOND)
 		{
 			return true;
@@ -208,16 +241,21 @@ struct HordeSquishState : AIState
 		const float len = (float)SimMath::length3d(dx, dy, dz);
 		if (len != 0.0f)
 		{
-			dx = SimMath::divf32(dx, len);
-			dy = SimMath::divf32(dy, len);
-			dz = SimMath::divf32(dz, len);
+			// RW 0x405553 (lane FLANK-1): inv = 1 / len (divss), x * inv, inv * y, inv * z (mulss)
+			const float inv = SimMath::divf32(1.0f, len);
+			dx = SimMath::mulf32(dx, inv);
+			dy = SimMath::mulf32(inv, dy);
+			dz = SimMath::mulf32(inv, dz);
 		}
 		const float d = SimMath::mulf32(CombatQueries::boundingCircleRadius(self), 2.0f);
+		// RW 0x7422E1 .. 0x742308: the point keeps its z (lane FLANK-1: the port snapped it to the ground)
 		Coord3D g{ SimMath::addf32(SimMath::mulf32(dx, d), m_victimPos.x), SimMath::addf32(m_victimPos.y, SimMath::mulf32(dy, d)), SimMath::addf32(m_victimPos.z, SimMath::mulf32(dz, d)) };
-		g.z = self.logic().getGroundHeight(g.x, g.y);
 		if (!m_move)
 		{
-			m_move = std::make_unique<AIMoveToState>(h.mover(), g, true);
+			// lane IDLEMOTION-1: no destination adjustment. The state is an internal move (its onEnter ends in the move's onEnter, RW 0x74F30E -> 0x74DADA) whose
+			// adjust byte + 0x48 the onEnter clears (RW 0x74F28D), and computePath requests the point itself as not final (RW 0x742425: RW 0x667ED1(point, 0)); the
+			// port adjusted the point and reserved it as a final goal
+			m_move = std::make_unique<AIMoveToState>(h.mover(), g, false);
 		}
 		else
 		{
@@ -238,8 +276,19 @@ struct HordeSquishState : AIState
 		{
 			return STATE_SUCCESS;
 		}
+		if (goalDestroyed())
+		{
+			return STATE_FAILURE; // RW 0x74F259 (lane FLANK-1)
+		}
+		m_pathFrame = 0; // RW 0x74F289: + 0x4C = 0, + 0x48 = 0
 		Object *goal = machine().goalObject();
 		if (!goal)
+		{
+			return STATE_FAILURE;
+		}
+		// RW 0x74F29C .. 0x74F2AD (lane FLANK-1): a goal with a PhysicsBehavior that is STUNNED_FLAILING or in FREEFALL (RW 0x792973)
+		static const int kFlailing = CombatNames::modelCondition("STUNNED_FLAILING"), kFreefall = CombatNames::modelCondition("FREEFALL");
+		if (PhysicsBehavior::find(*goal) && (goal->testModelCondition(kFlailing) || goal->testModelCondition(kFreefall)))
 		{
 			return STATE_FAILURE;
 		}
@@ -247,6 +296,8 @@ struct HordeSquishState : AIState
 		{
 			return STATE_SUCCESS;
 		}
+		m_victimPos = *goal->getPosition(); // RW 0x74F2BE: + 0x50 = the goal's position
+		h.mover().destroyPath();             // RW 0x74F2CD: RW 0x66276B
 		m_move.reset();
 		if (!computePath(h, self, *goal, true))
 		{
@@ -268,45 +319,68 @@ struct HordeSquishState : AIState
 			h.setLocomotorGoalNone();
 			return STATE_SUCCESS;
 		}
-		if (!goal || !CombatQueries::isAlive(*goal) || goal->testStatus((unsigned)CombatNames::status("FLEE_OFF_MAP")))
+		static const unsigned kFleeOffMap = (unsigned)CombatNames::status("FLEE_OFF_MAP");
+		if (!goalDestroyed() && (!goal || (!goal->isEffectivelyDead() && !goal->testStatus(kFleeOffMap))))
 		{
-			h.setPathExtraDistance(0.0f);
-			if (!m_move)
+			if (!goal)
+			{
+				setFlag(self, ObjectCrush::canCrush(self)); // RW 0x74F4CF with FAILURE: a goal id of 0
+				return STATE_FAILURE;
+			}
+			if (!crushPolicy(self, *goal))
 			{
 				return STATE_SUCCESS;
 			}
+			if (goal->testStatus((unsigned)CombatNames::status("NOT_IN_WORLD")) || InvisibilityManager::isStealthedAndUndetected(*goal, self.getControllingPlayer())) // RW 0x74F3F8 (lane STEALTH-1)
+			{
+				return STATE_FAILURE;
+			}
+			h.setCurrentVictim(goal);
+			if (!computePath(h, self, *goal, false) || !m_move)
+			{
+				return STATE_FAILURE;
+			}
 			const StateReturnType code = m_move->update();
-			return code == STATE_CONTINUE ? STATE_CONTINUE : code;
+			if (code != STATE_CONTINUE)
+			{
+				if (goal->isEffectivelyDead() || !self.isKindOfName("ARMY_OF_DEAD"))
+				{
+					return STATE_SUCCESS;
+				}
+				h.mover().destroyPath(); // RW 0x74F47F: RW 0x66276B, then computePath
+				if (!computePath(h, self, *goal, true))
+				{
+					return STATE_SUCCESS;
+				}
+				setFlag(self, true);
+				return m_move->onEnter();
+			}
+			setFlag(self, ObjectCrush::canCrush(self));
+			return code;
 		}
-		if (!crushPolicy(self, *goal))
+		// RW 0x74F37D .. 0x74F3D5: the goal is destroyed, dead or fleeing off the map
+		h.setPathExtraDistance(0.0f);
+		if (m_reacquire && ObjectCrush::canCrush(self))
+		{
+			m_reacquire = false;
+			const float range = h.world().pathfinder().config().meleeApproachDist; // AIData + 0x94
+			Object *next = AI::findClosestEnemy(self, range, AI::CAN_ATTACK, h.attackInfo(), nullptr, 0); // RW 0x701443(self, range, 2, AI + 0x70, 0, 0): lane TARGET-1's port
+			if (next && crushPolicy(self, *next))
+			{
+				machine().setGoalObject(next->getID()); // vslot 0x38
+				if (!computePath(h, self, *next, false))
+				{
+					return STATE_FAILURE;
+				}
+				m_reacquire = true;
+			}
+		}
+		if (!m_move)
 		{
 			return STATE_SUCCESS;
 		}
-		if (goal->testStatus((unsigned)CombatNames::status("NOT_IN_WORLD")) || InvisibilityManager::isStealthedAndUndetected(*goal, self.getControllingPlayer())) // RW 0x74F3F8 (lane STEALTH-1)
-		{
-			return STATE_FAILURE;
-		}
-		h.setCurrentVictim(goal);
-		if (!m_move || !computePath(h, self, *goal, false))
-		{
-			return STATE_FAILURE;
-		}
 		const StateReturnType code = m_move->update();
-		if (code != STATE_CONTINUE)
-		{
-			if (!CombatQueries::isAlive(*goal) || !self.isKindOfName("ARMY_OF_DEAD"))
-			{
-				return STATE_SUCCESS;
-			}
-			if (!computePath(h, self, *goal, true))
-			{
-				return STATE_SUCCESS;
-			}
-			setFlag(self, true);
-			return m_move->onEnter();
-		}
-		setFlag(self, ObjectCrush::canCrush(self));
-		return code;
+		return code == STATE_CONTINUE ? STATE_CONTINUE : code;
 	}
 	void onExit(StateExitType) override
 	{
@@ -333,17 +407,26 @@ struct HordeSquishState : AIState
 		h.addFloat(m_victimPos.z);
 		h.addU32(m_pathFrame);
 		h.addBool(m_flagSet);
+		h.addBool(m_reacquire); // lane FLANK-1
 	}
 	// lane SAVE-4c (obfme:AIWorld): AIAttackMeleeSquishState::xfer RW 0x74243F is (1, 1): the internal move, a position, a cell, a frame and a bool; OpenBFME layout
-	// (S-4220): crc's fields
+	// (S-4220): crc's fields; version 2 (lane FLANK-1) adds the re-acquire byte (+ 0x64; a version 1 save keeps the ctor's 1)
 	void xfer(Xfer &x) override
 	{
-		XferVersion v{ 1, 1 };
+		XferVersion v{ 1, 2 };
 		x.xferVersion(v);
 		xferMove(x, ai().mover(), m_move);
 		AIXfer::coord(x, m_victimPos);
 		x.xferUnsignedInt(&m_pathFrame);
 		x.xferBool(&m_flagSet);
+		if (v.current >= 2)
+		{
+			x.xferBool(&m_reacquire);
+		}
+		else
+		{
+			m_reacquire = true;
+		}
 	}
 };
 
@@ -356,13 +439,13 @@ HordeAIUpdate &hordeAi(AIState &s)
 //   * onEnter RW 0x74EB5C: no goal or a stealthed goal -> FAILURE; a goal that is fleeing (RW 0x7468D5) or not yet ready (HordeContainInterface slot 0x154) is approached:
 //     unless the horde has STAND_GROUND / the AI byte +0x3CC, computePath (vslot 0x44 RW 0x74A594) then the move; a ready, not fleeing goal -> SUCCESS;
 //   * update RW 0x74AA03: no goal -> FAILURE; a fleeing goal (it faces away from the horde and its locomotor is faster than a quarter of its maximum speed, RW 0x5E4CA7):
-//     the desired speed becomes the horde's speed + the gap (edge distance, >= 0) and RUNNING_DOWN_FROM_BEHIND (75) is set while the gap is below the horde's maximum
-//     speed; else the flag is cleared when set; then setMeleeTargetID; a fleeing goal: the run-down (slot 0x158 RW 0x87631F: with RUNNING_DOWN_FROM_BEHIND every member that
-//     is not attacking attacks the goal), else a ready goal -> setLocomotorGoalNone, SUCCESS; a goal out of the world or stealthed -> FAILURE; computePath false -> SUCCESS;
+//     the desired speed becomes the goal's speed + the gap (centre distance less both radii; the sum >= 0, lane AIDATA-1) and RUNNING_DOWN_FROM_BEHIND (75) is set across the horde (RW 0x748650: members, then the
+//     horde) while the gap is below the horde's maximum speed; else the flag is cleared when set; then setMeleeTargetID; a fleeing goal: the run-down (slot 0x158 RW 0x87631F: with RUNNING_DOWN_FROM_BEHIND every member
+//     whose AI state is not active (vslot 0x1BC; lane IDLEMOTION-1) attacks the goal), else a ready goal -> setLocomotorGoalNone, SUCCESS; a goal out of the world or stealthed -> FAILURE; computePath false -> SUCCESS;
 //     the move's end -> SUCCESS;
 //   * computePath RW 0x74A594: the goal (its horde for a member) moved more than 1/10 of its distance (RW 0x741450) or there is no path, at most every
 //     LOGICFRAMES_PER_SECOND frames; path extra distance 100; a fleeing goal is led by its facing * (bounding radius * 2 + 60); else the goal's position;
-//   * onExit RW 0x74AC0C: RUNNING_DOWN_FROM_BEHIND off, desired speed 999999, and a horde within sqrt(12.5) of the goal point snaps onto it.
+//   * onExit RW 0x74AC0C: RUNNING_DOWN_FROM_BEHIND off across the horde (RW 0x74AC39), desired speed 999999, and a horde within sqrt(12.5) of the goal point snaps onto it.
 // Lane PHYS-1 (review r4) ports computePath's non-fleeing chain with inferences (see nonFleeingGoal: the 0.7 * radius pullback, RW 0x6F2F8F / 0x746783 / 0x7463E8 /
 // 0x6FB67A through the port's line test, valid-position steps and destination adjustments, the progress test, the ordinary request RW 0x667ED1).
 // INFERENCE (stop S-590): not ported STAND_GROUND's RW 0x6FF7FA decision, the machine-busy test and the
@@ -398,17 +481,25 @@ struct HordeMeleeApproachState : AIState
 	unsigned m_repathFrame = 0;
 
 	bool m_failed = false; // RW + 0x5C: the last computePath found no progress
+	// lane ATTACKPATH-1: RW + 0x5D, set by the constructor (RW 0x7443F1, vtable RW 0xC28D20), cleared by onEnter for a computer player (RW 0x74EB75) and by
+	// onExit (RW 0x74AC1D). While set, computePath skips the second walk back (RW 0x746783), a refused AdjustHordeMeleeDestination still requests the path to the
+	// unadjusted point and the request's end is reserved first (RW 0x68B3AB)
+	bool m_firstApproach = true;
 	unsigned m_keptRequests = 0; // lane PHYS-1: computePath calls that kept the existing request (RW 0x6FB67A refused)
 
 	// lane PHYS-1: RW 0x74A594's non-fleeing chain. TARGET: the goal point starts at the target's position; d = normalize(target - horde) * (horde bounding circle * 0.7,
-	// RW 0xBDE0A8); on the ground layer the pulled-back point p = goal - d replaces the goal when RW 0x6F2F8F(horde, p, goal) fails; a STRUCTURE target (template + 0x108
-	// bit 0x80) runs RW 0x746783 on it; RW 0x7463E8 must find the point reachable; then the reservation goes (RW 0x68B401), RW 0x746783 again, RW 0x6FB67A adjusts it
-	// (a refusal keeps the old request: computePath true without touching the move, review r5); a point that makes progress (half the 3D span |point - horde| at most the gain of the squared, clamped edge distance RW 0x6CA525, review r5) or with no path is
+	// RW 0xBDE0A8); on the ground layer the pulled-back point p = goal - d replaces the goal when IsLineBlocked RW 0x6F2F8F(horde, surfaces, ground, goal, p) is
+	// false; a STRUCTURE target (template + 0x108 bit 0x80) runs RW 0x746783 on it; RW 0x7463E8 must find the point reachable; then the reservation goes
+	// (RW 0x68B401), RW 0x746783 again, RW 0x6FB67A adjusts it (a refusal keeps the old request: computePath true without touching the move, review r5); a point
+	// that makes progress (half the 3D span |point - horde| at most the gain of the squared, clamped edge distance RW 0x6CA525, review r5) or with no path is
 	// requested ordinarily; else + 0x5C is set and computePath returns false.
-	// INFERENCE (stop S-590, review r4): RW 0x6F2F8F's line test (RW 0x6F2114) is the port's isLinePassable from p to the goal; RW 0x746783's footprint test (RW 0x6F2FFF)
-	// is validMovementPosition along 10-unit steps toward the horde, else adjustToPossibleDestination (RW 0x6F3C87); RW 0x7463E8 is Pathfinder::meleeBackOff (round 6,
-	// its own inferences in S-787); RW 0x6FB67A (its ring over MaxCellsAdjustHordeMeleeDestination)
-	// is adjustDestination; the container slot 0x154 test of the progress branch is not read
+	// Lane ATTACKPATH-1 ported the helpers from the RotWK disassembly (BFME2 decomp byte-matched: AIPathfindHordeMelee.cpp): RW 0x6F2F8F is the port's
+	// isLineBlocked (the port had the reverse line and the reverse answer), RW 0x746783 is Pathfinder::hordeMeleeStepBack (one-point IsHordeMeleeLinePassable
+	// RW 0x6F2FFF tests over |goal - horde| / 20 - 1 steps of 10), RW 0x6FB67A is Pathfinder::adjustHordeMeleeDestination (the port used adjustDestination).
+	// The state's + 0x5D (m_firstApproach: set by the constructor, cleared for a computer player and on exit) skips the second walk back, lets a refused
+	// adjustment request the unadjusted point and reserves the point first.
+	// INFERENCE (stop S-590): RW 0x7463E8 is Pathfinder::meleeBackOff (round 6, its own inferences in S-787); the container slot 0x154 test of the progress
+	// branch is not read
 	enum class Chain
 	{
 		Fail,         // RW + 0x5C, computePath false
@@ -437,13 +528,15 @@ struct HordeMeleeApproachState : AIState
 		dy = SimMath::mulf32(dy, k);
 		dz = SimMath::mulf32(dz, k);
 		const Coord3D p{ SimMath::subf32(m_goal.x, dx), SimMath::subf32(m_goal.y, dy), SimMath::subf32(m_goal.z, dz) };
-		if (!pf.isLinePassable(&obj, info.validSurfaces, obj.getLayer(), p, m_goal, false))
+		// lane ATTACKPATH-1, TARGET RW 0x74A7A4 .. 0x74A7D0: Pathfinder::IsLineBlocked (RW 0x6F2F8F, the port's isLineBlocked) from the goal to p, with the AI's
+		// surfaces (+ 0x1DC) on the ground layer; p replaces the goal when the line is NOT blocked (the port before took p when the reverse line was not passable)
+		if (!pf.isLineBlocked(&obj, info.validSurfaces, LAYER_GROUND, m_goal, p))
 		{
 			m_goal = p;
 		}
 		if (goal.isKindOf((unsigned)CombatNames::kinds().structure))
 		{
-			stepTowardHorde(pf, obj, info, selfPos, m_goal);
+			pf.hordeMeleeStepBack(obj, info, &m_goal); // RW 0x746783 (lane ATTACKPATH-1)
 		}
 		// RW 0x7463E8 (Pathfinder::meleeBackOff, round 6): the open-area test, the 20-unit back-off toward the horde and RW 0x6F3C87
 		{
@@ -454,43 +547,29 @@ struct HordeMeleeApproachState : AIState
 			}
 		}
 		pf.removeGoal(obj); // RW 0x68B401
-		stepTowardHorde(pf, obj, info, selfPos, m_goal);
+		if (!m_firstApproach)
+		{
+			pf.hordeMeleeStepBack(obj, info, &m_goal); // RW 0x746783 (lane ATTACKPATH-1), only with + 0x5D clear
+		}
 		Coord3D q = m_goal;
-		if (ApproachMath::forceContactRefusalForTests() || !pf.adjustDestination(obj, info, &q, nullptr))
+		// RW 0x6FB67A Pathfinder::AdjustHordeMeleeDestination (lane ATTACKPATH-1; the port used adjustDestination); a refusal keeps the request only with + 0x5D
+		// clear, else the unadjusted point goes on (RW 0x74A8F2 .. 0x74A8FE)
+		const bool adjusted = !ApproachMath::forceContactRefusalForTests() && pf.adjustHordeMeleeDestination(obj, info, &q);
+		if (!adjusted && !m_firstApproach)
 		{
 			return Chain::KeepRequest; // RW 0x74A8F2 tests AL, 0x74A63F returns success before the request
 		}
 		m_goal = q;
 		// RW 0x74A918 / 0x74A925: the squared, clamped edge distances to the target (RW 0x6CA525) before and after; the gain against half the 3D span
-		return ApproachMath::progressAllowsRequest(now, CombatQueries::boundingCircleRadius(goal), selfPos, m_goal, h.mover().path() != nullptr) ? Chain::IssueRequest
-																																	: Chain::Fail;
-	}
-
-	// RW 0x746783 (INFERENCE S-590): from the point toward the horde in steps of 10, the first valid movement position; else adjustToPossibleDestination (RW 0x6F3C87)
-	static void stepTowardHorde(Pathfinder &pf, PathfindObject &obj, const PathfindLocomotorInfo &info, const Coord3D &selfPos, Coord3D &point)
-	{
-		float dx = SimMath::subf32(point.x, selfPos.x), dy = SimMath::subf32(point.y, selfPos.y);
-		const float len = SimMath::fstpDword(SimMath::sqrtPC24((double)SimMath::sumSquares3(dx, dy, 0.0f)));
-		const int steps = SimMath::truncToInt32(SimMath::divf32(len, 10.0f));
-		if (len != 0.0f)
+		if (!ApproachMath::progressAllowsRequest(now, CombatQueries::boundingCircleRadius(goal), selfPos, m_goal, h.mover().path() != nullptr))
 		{
-			const float inv = SimMath::divf32(1.0f, len);
-			dx = SimMath::mulf32(SimMath::mulf32(dx, inv), 10.0f);
-			dy = SimMath::mulf32(SimMath::mulf32(dy, inv), 10.0f);
+			return Chain::Fail;
 		}
-		Coord3D c = point;
-		for (int i = 0; i < steps; ++i)
+		if (m_firstApproach)
 		{
-			Coord3D t = c;
-			if (pf.validMovementPosition(&obj, info, obj.getLayer(), &t))
-			{
-				point = c;
-				return;
-			}
-			c.x = SimMath::subf32(c.x, dx);
-			c.y = SimMath::subf32(c.y, dy);
+			pf.updateGoal(obj, &m_goal, LAYER_GROUND); // RW 0x74A9CB .. 0x74A9D5: the reservation RW 0x68B3AB before the request (lane ATTACKPATH-1)
 		}
-		pf.adjustToPossibleDestination(obj, info, &point);
+		return Chain::IssueRequest;
 	}
 
 	// RW 0x74A594 (true: a path exists or was requested)
@@ -522,10 +601,14 @@ struct HordeMeleeApproachState : AIState
 			return false;
 		}
 		m_prev = now;
+		h.mover().ignoreObstacle(PATHFIND_INVALID_ID); // RW 0x74A594 calls RW 0x66831A(0) (ignoreObstacle(0)) before the path extra distance (lane ATTACKPATH-1)
 		h.setPathExtraDistance(100.0f); // RW 0xBD88D8
 		m_goal = now;
 		m_failed = false;
-		if (targetFleeing(self, *goal))
+		// RW 0x74A6C2 .. 0x74A6DF: the lead needs a fleeing target AND a quick path from the horde to it (RW 0x6F5BB0, the port's clientSafeQuickDoesPathExist;
+		// lane ATTACKPATH-1: the port led every fleeing target)
+		if (targetFleeing(self, *goal) &&
+			(h.world().mapReady() && h.world().pathfinder().clientSafeQuickDoesPathExist(h.locomotorInfo(), self.getPosition(), goal->getPosition())))
 		{
 			const float lead = SimMath::addf32(SimMath::mulf32(CombatQueries::boundingCircleRadius(*goal), 2.0f), 60.0f);
 			m_goal.x = SimMath::addf32(m_goal.x, SimMath::mulf32(lead, SimMath::cosDet(goal->getOrientation())));
@@ -568,6 +651,14 @@ struct HordeMeleeApproachState : AIState
 
 	StateReturnType onEnter() override
 	{
+		// RW 0x74EB6A .. 0x74EB75: a computer player's horde clears + 0x5D first (lane ATTACKPATH-1)
+		{
+			const Player *pl = ai().getObject()->getControllingPlayer();
+			if (pl && pl->getPlayerType() == PLAYER_COMPUTER)
+			{
+				m_firstApproach = false;
+			}
+		}
 		Object *victim = machine().goalObject();
 		if (!victim || InvisibilityManager::isStealthedAndUndetected(*victim, ai().getObject()->getControllingPlayer())) // RW 0x74EB95: a stealthed goal fails (lane STEALTH-1)
 		{
@@ -594,7 +685,10 @@ struct HordeMeleeApproachState : AIState
 		}
 		if (!m_move)
 		{
-			return STATE_CONTINUE; // the contact adjustment refused: the unit goes on with the request it had (review r5)
+			// lane ATTACKPATH-1, TARGET RW 0x74EC7F .. 0x74EC85: after a computePath that returned true onEnter always runs the internal move's onEnter (RW 0x74DADA,
+			// + 0x48 cleared) toward the state's goal (+ 0x20): a refused contact adjustment (the request kept) still walks to the pulled-back point. The port
+			// returned with no move and the horde stood (test_exit1_motion's horde at frame 1382)
+			m_move = std::make_unique<AIMoveToState>(h.mover(), m_goal, false);
 		}
 		return m_move->onEnter();
 	}
@@ -611,27 +705,40 @@ struct HordeMeleeApproachState : AIState
 		const bool fleeing = targetFleeing(self, *victim);
 		if (fleeing)
 		{
-			const float e = edgeDistance(self, *victim);
+			// lane AIDATA-1, RW 0x74AA69 .. 0x74AADE: the GOAL's speed (RW 0x68B34C with ECX = the goal: its locomotor's current speed when above 0, else 0; the
+			// port took the horde's own) plus the centre distance (RW 0x66137C x87 wide, CRT sqrt, fstp) less both bounding radii (SSE, not clamped), fadd and fst
+			// under PC24; below 0 -> 0
+			const Coord3D *sp = self.getPosition(), *vp = victim->getPosition();
+			const double dx = SimMath::pc24SubW((double)sp->x, (double)vp->x), dy = SimMath::pc24SubW((double)sp->y, (double)vp->y);
+			const float d = SimMath::fstpDword(SimMath::sqrtPC24(SimMath::pc24AddW(SimMath::pc24MulW(dx, dx), SimMath::pc24MulW(dy, dy))));
+			const float e = SimMath::subf32(d, SimMath::addf32(CombatQueries::boundingCircleRadius(*victim), CombatQueries::boundingCircleRadius(self)));
+			AIUpdateInterface *victimAi = victim->getAIUpdateInterface();
+			const Locomotor *victimLoco = victimAi ? victimAi->curLocomotor() : nullptr;
+			const float victimSpeed = victimLoco && victimLoco->speed() > 0.0f ? victimLoco->speed() : 0.0f;
+			float gap = SimMath::fstpDword(SimMath::pc24AddW((double)victimSpeed, (double)e));
+			gap = 0.0f > gap ? 0.0f : gap;
 			Locomotor *loco = h.curLocomotor();
-			float gap = SimMath::addf32(loco ? loco->speed() : 0.0f, e);
-			gap = gap < 0.0f ? 0.0f : gap;
 			const float maxSpeed = loco ? loco->getMaxSpeedForCondition(h.locomotorHost()) : 999999.0f;
 			h.setDesiredSpeed(gap);
-			self.setStatus((unsigned)runningDown, gap < maxSpeed);
+			// lane AIDATA-1: RW 0x74AB3D calls RW 0x748650(0x4B, flag), RW 0x694569 on the horde: every member, then the horde (the port set the horde's alone, so no
+			// member was ever RUNNING_DOWN_FROM_BEHIND and the run-down range of RW 0x6CC07C, tested on the member, never applied)
+			self.setStatusAcrossHorde((unsigned)runningDown, gap < maxSpeed);
 		}
 		else if (self.testStatus((unsigned)runningDown))
 		{
-			self.setStatus((unsigned)runningDown, false);
+			self.setStatusAcrossHorde((unsigned)runningDown, false); // RW 0x748650(0x4B, 0) (lane AIDATA-1)
 		}
 		if (fleeing)
 		{
-			// RW 0x87631F: the run-down
+			// RW 0x87631F: the run-down. Lane IDLEMOTION-1: a member is ordered when its AI state is not active (RW 0x87636B: AI vslot 0x1BC, RW 0x662B3C, the
+			// current state's slot 0x24), so a BUSY member (AIBusyState vtable RW 0xC274F8 slot 0x24 = RW 0x9188EB, false) is ordered again and one in an attack whose
+			// own machine is idle as well; the port tested "not in an attack state"
 			if (self.testStatus((unsigned)runningDown))
 			{
 				for (Object *m : aliveMembers(self))
 				{
 					AIUpdateInterface *ai = m->getAIUpdateInterface();
-					if (ai && !ai->isAttacking())
+					if (ai && !ai->isStateActive())
 					{
 						ai->aiAttackObject(victim, CMD_FROM_AI);
 					}
@@ -666,6 +773,7 @@ struct HordeMeleeApproachState : AIState
 			m_move->onExit();
 			m_move.reset();
 		}
+		m_firstApproach = false; // RW 0x74AC1D (lane ATTACKPATH-1)
 		if (ai().isDestroying())
 		{
 			return;
@@ -676,8 +784,9 @@ struct HordeMeleeApproachState : AIState
 		{
 			return;
 		}
-		self.setStatus((unsigned)CombatNames::statuses().runningDownFromBehind, false);
+		self.setStatusAcrossHorde((unsigned)CombatNames::statuses().runningDownFromBehind, false); // RW 0x74AC39: RW 0x748650(0x4B, 0) (lane AIDATA-1)
 		h.setDesiredSpeed(999999.0f); // RW 0xC27440
+		h.mover().ignoreObstacle(PATHFIND_INVALID_ID); // RW 0x74AC57: ignoreObstacle(0) (lane ATTACKPATH-1)
 		const float dx = SimMath::subf32(m_goal.x, self.getPosition()->x), dy = SimMath::subf32(m_goal.y, self.getPosition()->y);
 		if (!h.isMoving() && SimMath::addf32(SimMath::mulf32(dy, dy), SimMath::mulf32(dx, dx)) < 12.5f) // RW 0xC2A058
 		{
@@ -709,10 +818,11 @@ struct HordeMeleeApproachState : AIState
 		h.addU32(m_repathFrame);
 		h.addBool(m_failed); // lane PHYS-1
 		h.addU32(m_keptRequests);
+		h.addBool(m_firstApproach); // lane ATTACKPATH-1
 	}
 	void xfer(Xfer &x) override // lane SAVE-4c (obfme:AIWorld, OpenBFME layout: S-4220)
 	{
-		XferVersion v{ 1, 1 };
+		XferVersion v{ 1, 2 }; // lane ATTACKPATH-1: version 2 adds + 0x5D
 		x.xferVersion(v);
 		xferMove(x, ai().mover(), m_move);
 		AIXfer::coord(x, m_prev);
@@ -720,6 +830,14 @@ struct HordeMeleeApproachState : AIState
 		x.xferUnsignedInt(&m_repathFrame);
 		x.xferBool(&m_failed);
 		x.xferUnsignedInt(&m_keptRequests);
+		if (v.current >= 2)
+		{
+			x.xferBool(&m_firstApproach);
+		}
+		else if (x.isLoading())
+		{
+			m_firstApproach = false; // a version 1 save: the port before ATTACKPATH-1 behaved as if + 0x5D were clear
+		}
 	}
 };
 
@@ -964,6 +1082,8 @@ bool HordeAIUpdate::isMeleeTargetReady(Object &targetIn)
 
 static bool aiSlot1B8(Object &m);
 static Object *amoebaReach(Object &m, Object &target);
+static std::vector<Object *> amoebaReachCandidates(Object &target);
+static Object *amoebaReachAmong(Object &m, const std::vector<Object *> &cands);
 static bool amoebaAttack(Object &m, Object &victim);
 
 // RW 0x86D75E (the target changes) + Amoeba onNewTarget (RW 0x99006A)
@@ -1056,13 +1176,34 @@ static Object *amoebaReach(Object &m, Object &target)
 	{
 		return nullptr;
 	}
+	return amoebaReachAmong(m, amoebaReachCandidates(target));
+}
+
+// the reach check's candidates: the target's living members, then the target itself when it is alive and not a horde object
+static std::vector<Object *> amoebaReachCandidates(Object &target)
+{
 	std::vector<Object *> cands = aliveMembers(target);
 	if (CombatQueries::isAlive(target) && !isHordeObject(target))
 	{
 		cands.push_back(&target);
 	}
+	return cands;
+}
+
+static Object *amoebaReachAmong(Object &m, const std::vector<Object *> &cands)
+{
+	ObjectWeapons *w = m.getWeapons();
+	Weapon *weapon = w ? w->currentWeapon() : nullptr;
+	if (!weapon || !weapon->getTemplate() || !weapon->getTemplate()->m_meleeWeapon)
+	{
+		return nullptr;
+	}
 	Object *best = nullptr;
 	float bestD = 0.0f;
+	// lane UBER-3W (Uber only): the distance first, and the weapon range (its bonus, its reach: 2.5% of a one-thread 30,000-troop clash frame, once per member
+	// and candidate) only for a candidate that would beat the best so far; the nearest enemy in range is the same. Uber because the range test leaves the
+	// melee reach it computed in the weapon's range host, which then holds another candidate's value (every reader but a point target's sets it first)
+	const bool rangeLast = m.logic().uber();
 	ObjectID sacrificeTarget = INVALID_ID;
 	if (m.testStatus((unsigned)CombatNames::status("BLOODTHIRSTY")))
 	{
@@ -1078,7 +1219,33 @@ static Object *amoebaReach(Object &m, Object &target)
 	{
 		// RW 0x6F2956: the recorded victim or an object it produced bypasses the relationship veto.
 		const bool sacrifice = sacrificeTarget != INVALID_ID && (e->getID() == sacrificeTarget || e->getProducerID() == sacrificeTarget);
-		if ((!sacrifice && m.getRelationship(*e) != ENEMIES) || !w->isWithinAttackRange(*e))
+		// merge queue q24: RW 0x6F2956 finds its candidates in the pathfinder's cells, so an occupant ENCLOSED in the target (a garrison's or transport's rider,
+		// out of the world: RW 0x865D3D -> 0x68C18F) is never one; the member list stands in for the cell scan of a horde only
+		if (!e->isInWorld())
+		{
+			continue;
+		}
+		if (rangeLast)
+		{
+			if (!CombatQueries::isAlive(*e) || (!sacrifice && m.getRelationship(*e) != ENEMIES))
+			{
+				continue;
+			}
+			const float d2 = CombatQueries::edgeDistanceSquared2D(m, *m.getPosition(), *e, *e->getPosition()); // RW 0x66352C
+			if (best && !(d2 < bestD || (d2 == bestD && e->getID() < best->getID())))
+			{
+				continue;
+			}
+			if (!w->isWithinAttackRange(*e))
+			{
+				continue;
+			}
+			best = e;
+			bestD = d2;
+			continue;
+		}
+		// lane UBER-2B: a candidate of a list built before this member (the Uber tick's) may have died since; a fresh list holds only living ones
+		if (!CombatQueries::isAlive(*e) || (!sacrifice && m.getRelationship(*e) != ENEMIES) || !w->isWithinAttackRange(*e))
 		{
 			continue;
 		}
@@ -1661,17 +1828,18 @@ void HordeAIUpdate::crc(StateHasher &h) const
 const char *HordeAIUpdate::squishStopLine()
 {
 	return "[S-583] horde crush attack: AIAttackMeleeSquishState is the RotWK body (onEnter RW 0x74F21A, update RW 0x74F31F, computePath RW 0x742271, crushPolicy RW 0x69519A, onExit "
-	       "RW 0x74B1B7); NOT ported: the AI byte +0x3CC, the machine-busy test RW 0x8DBDFF, the goal physics test RW 0x792973, crushPolicy's line test RW 0x6F5BB0 (taken as passing), "
-	       "and the re-acquisition of a dead goal (RW 0x701443)";
+	       "RW 0x74B1B7; lane FLANK-1: the destroyed-goal test RW 0x8DBDFF, the flung-goal test RW 0x792973, the re-acquisition of the next victim when the goal dies, the blocked / "
+	       "no-path rules of computePath); NOT ported: the AI byte +0x3CC (taken as 0), crushPolicy's line test RW 0x6F5BB0 (taken as passing), the state's pending byte + 0x49, "
+	       "and RW 0x701443 is lane TARGET-1's AI::findClosestEnemy (merge queue q23); the re-acquisition is not reached in a game until AIAttackState::update follows RW 0x7510EC "
+	       "(retail keeps running the inner machine on a dead victim, the port's ZH-donor state ends the attack first)";
 }
 
 const char *HordeAIUpdate::approachStopLine()
 {
 	return "[S-590] horde melee approach: AIAttackMeleeHordeApproachTargetState is the RotWK body (onEnter RW 0x74EB5C, update RW 0x74AA03, computePath RW 0x74A594, onExit RW 0x74AC0C: "
 	       "the fleeing test RW 0x7468D5, the run-down speed and RUNNING_DOWN_FROM_BEHIND, the run-down attack orders RW 0x87631F, the re-path rule, the lead point of a fleeing goal, "
-	       "the snap within sqrt(12.5), RW 0x7463E8 as Pathfinder::meleeBackOff); NOT ported: the exact helpers of a non-fleeing goal point (RW 0x6F2F8F / 0x6FB67A / 0x746783: line "
-	       "test, ring and footprint stand-ins), STAND_GROUND's RW 0x6FF7FA, "
-	       "the machine-busy test; INFERENCE: the snap condition (AI slot 0x224) is 'not moving'";
+	       "the snap within sqrt(12.5), RW 0x7463E8 as Pathfinder::meleeBackOff, the goal point's helpers RW 0x6F2F8F / 0x746783 / 0x6FB67A since lane ATTACKPATH-1); NOT ported: "
+	       "STAND_GROUND's RW 0x6FF7FA, the machine-busy test; INFERENCE: the snap condition (AI slot 0x224) is 'not moving'";
 }
 
 // RW 0x86BE9A
@@ -1726,13 +1894,21 @@ bool HordeAIUpdate::hasMeleeAttackingMember() const
 // around the member, RW 0x6ED843). INFERENCE (S-588): the touching enemy is the reach check's enemy of the target (RW 0x6F2956 rules); no repositioning.
 void HordeAIUpdate::holdGroundTick(Object &target)
 {
+	// lane UBER-2B (Uber only): the target's candidates once per tick instead of once per member (a list built per member and frame). Uber rule change: the
+	// list is the tick's start (amoebaReachAmong still skips a soldier that died since); a soldier that joined the target during the tick waits for the next
+	const bool uber = getObject()->logic().uber();
+	std::vector<Object *> tickCands;
+	if (uber)
+	{
+		tickCands = amoebaReachCandidates(target);
+	}
 	for (Object *m : membersOf())
 	{
 		if (m->testStatus((unsigned)CombatNames::statuses().isMeleeAttacking))
 		{
 			continue;
 		}
-		if (Object *e = amoebaReach(*m, target))
+		if (Object *e = uber ? amoebaReachAmong(*m, tickCands) : amoebaReach(*m, target))
 		{
 			if (amoebaAttack(*m, *e))
 			{

@@ -33,11 +33,13 @@
 
 #include <vector>
 
+class FormationAssistant;
 class GameLogic;
 
 class AICommands
 {
 public:
+	void setFormationAssistant(const FormationAssistant *assistant) { m_formations = assistant; }
 	// registers one handler per message type this class executes (a type another lane registered first is a logic error)
 	void registerHandlers(GameLogicDispatch &dispatcher);
 
@@ -54,6 +56,7 @@ public:
 	const Stats &stats() const { return m_stats; }
 
 private:
+	const FormationAssistant *m_formations = nullptr;
 	bool move(GameLogic &logic, const GameMessage &m);
 	bool attackObject(GameLogic &logic, const GameMessage &m); // lane COMBAT-1: MSG_DO_ATTACK_OBJECT / MSG_DO_FORCE_ATTACK_OBJECT (ZH AIGroup::groupAttackObject)
 	bool forceAttackGround(GameLogic &logic, const GameMessage &m); // lane PLAY-2: MSG_DO_FORCE_ATTACK_GROUND (RW 0x77AF93)

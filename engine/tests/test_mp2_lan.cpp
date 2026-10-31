@@ -12,6 +12,7 @@
 #include "GameNetwork/Transport.h"
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -47,9 +48,16 @@ struct Lan
 	std::vector<std::unique_ptr<LANAPI>> peers;
 	std::uint64_t clock = 1000;
 	std::vector<std::vector<LANAPI::Event>> events;
-	Lan(const std::vector<std::pair<std::u16string, std::string>> &who)
+	// `resumeCheck` (WOTR2 milestone 8): each peer's answer to a resumed war's save check (absent: this game cannot look for saved wars); with it the
+	// lobby also knows a War of the Ring scenario of 8 regions
+	Lan(const std::vector<std::pair<std::u16string, std::string>> &who, std::function<std::string(const std::string &, std::uint32_t)> resumeCheck = {})
 	{
 		LANAPI::Options o;
+		if (resumeCheck)
+		{
+			o.resumeCheck = resumeCheck;
+			o.warRegionCount = [](const std::string &) { return 8; };
+		}
 		o.playerTemplateCount = 16; // lane MP-2 (review): the ranges the host checks requests against
 		o.colorCount = 10;
 		o.lobbyPortBase = testPortBase();
@@ -185,7 +193,7 @@ TEST_CASE("mp2 lan: discovery identifies a process across addresses, not games b
 			w.wstr(u"Same name");
 			w.u8(0);
 			w.str(profileFor("").digest);
-			NetPacket::writeGameInfo(w, hostedGame());
+			NetPacket::writeGameInfo(w, hostedGame(), true); // WOTR2 milestone 8: LANAPI protocol 5
 		}
 		REQUIRE(socket.sendTo(NetAddress{ 0x7F000001u, observer.lobbyPort() }, w.data().data(), w.data().size()));
 		lan.run(10);
@@ -232,6 +240,333 @@ TEST_CASE("mp2 lan: Windows UDP port-unreachable errors do not hide a queued rep
 	CHECK_FALSE(receiver.receiveFrom(from, received));
 }
 #endif
+
+TEST_CASE("p16 net: LAN slot requests use the advertised map capacity")
+{
+	for (int capacity : { 8, 9, 16 })
+	{
+		CAPTURE(capacity);
+		Lan lan({ { u"Host", "" }, { u"Alice", "" } });
+		LANAPI &host = *lan.peers[0];
+		LANAPI &alice = *lan.peers[1];
+		SkirmishGameInfo game = hostedGame();
+		game.mapName = "p16-generated-capacity";
+		game.mapStartCount = capacity;
+		host.requestGameCreate(game);
+		alice.requestLocations();
+		lan.run(10);
+		REQUIRE(alice.games().size() == 1);
+		CHECK(alice.games()[0].info.mapStartCount == capacity);
+		alice.requestGameJoin(0);
+		lan.run(10);
+		REQUIRE(alice.currentGame());
+		const int lastTeam = capacity > 8 ? 7 : 3;
+		alice.requestSlotOptions(2, 3, lastTeam, capacity - 1);
+		lan.run(10);
+		CHECK(host.currentGame()->info.slots[1].teamNumber == lastTeam);
+		CHECK(host.currentGame()->info.slots[1].startPos == capacity - 1);
+		CHECK(alice.currentGame()->info.slots[1].teamNumber == lastTeam);
+		CHECK(alice.currentGame()->info.slots[1].startPos == capacity - 1);
+		REQUIRE(host.errors().empty());
+		REQUIRE(alice.errors().empty());
+		alice.requestSlotOptions(LANAPI::kKeep, LANAPI::kKeep, lastTeam + 1, LANAPI::kKeep);
+		lan.run(10);
+		CHECK(host.errors().size() == 1);
+		alice.requestSlotOptions(LANAPI::kKeep, LANAPI::kKeep, LANAPI::kKeep, capacity);
+		lan.run(10);
+		CHECK(host.errors().size() == 2);
+		CHECK(host.currentGame()->info.slots[1].teamNumber == lastTeam);
+		CHECK(host.currentGame()->info.slots[1].startPos == capacity - 1);
+	}
+}
+
+TEST_CASE("p16 net: LAN refuses oversized START without entering the running state")
+{
+	for (int capacity : { 8, 16 })
+	{
+		CAPTURE(capacity);
+		Lan lan({ { u"Host", "" } });
+		LANAPI &host = *lan.peers[0];
+		SkirmishGameInfo game;
+		game.mapStartCount = capacity;
+		game.mapName.assign(65500, 'x'); // legal wire string length; the full datagram exceeds IPv4's payload limit
+		host.requestGameCreate(game);
+		REQUIRE(host.currentGame());
+		REQUIRE_FALSE(host.errors().empty());
+		CHECK(host.errors().back().find("IPv4 UDP payload limit") != std::string::npos);
+		std::string reason;
+		CHECK_FALSE(host.hostStartGame(&reason));
+		CHECK(reason.find("IPv4 UDP payload limit") != std::string::npos);
+		CHECK_FALSE(host.currentGame()->inProgress);
+		CHECK_FALSE(host.started());
+		game.mapName = "p16-generated-capacity";
+		REQUIRE(host.hostSetOptions(game));
+		REQUIRE_MESSAGE(host.hostStartGame(&reason), reason);
+		lan.run(2);
+		CHECK(host.started());
+	}
+}
+
+TEST_CASE("wotr2 m8 lan: a resumed war's saved human seat left open refuses the start by the player's name, on the host's log and as a system line")
+{
+	// WOTR2 milestone 8 (step 4): LANAPI::hostStartGame's resume check (OpenBFME: RotWK starts without the absent player). A two-human war's lone host
+	// is refused earlier by the setup's start check (RW 0x8431B8: GUI:NeedHumanPlayers / LAN:TooFewPlayers), so the named seat is pinned here
+	Lan lan({ { u"Host", "" } });
+	LANAPI &host = *lan.peers[0];
+	SkirmishGameInfo game = hostedGame();
+	game.gameMode = 1;
+	game.resumeSave = "0123456789abcdef0123456789abcdef";
+	game.resumeHash = 1234;
+	host.requestGameCreate(game);
+	REQUIRE(host.currentGame());
+	REQUIRE(host.currentGame()->info.resumed());
+	LANAPI::ResumeSeat alice;
+	alice.slot = 1;
+	alice.name = u"Alice";
+	alice.saved.state = SLOT_PLAYER;
+	alice.saved.name = u"Alice";
+	host.hostSetResumeSeats({ alice }, game.rules);
+	std::string reason;
+	CHECK_FALSE(host.hostStartGame(&reason));
+	CHECK(reason == "Alice's seat is open: every player of the saved war must come back to resume it");
+	const std::vector<std::string> &log = host.log();
+	CHECK(std::find(log.begin(), log.end(), "system: " + reason) != log.end());
+	lan.run(2);
+	CHECK_FALSE(host.started());
+	CHECK_FALSE(host.currentGame()->inProgress);
+	const LANAPI::Event *chat = lan.last(0, LANAPI::Event::Chat);
+	REQUIRE(chat);
+	CHECK(chat->flag); // the SYSTEM type
+	CHECK(chat->text == u"Alice's seat is open: every player of the saved war must come back to resume it");
+}
+
+TEST_CASE("wotr2 m8 lan (Sol wotr2m8s4 #4): a resumed war's seat holds its saved player and the saved rules; the START gives the seat its saved faction, "
+	"colour, team and start")
+{
+	Lan lan({ { u"Host", "" }, { u"Bob", "" } });
+	LANAPI &host = *lan.peers[0];
+	LANAPI &bob = *lan.peers[1];
+	SkirmishGameInfo game = hostedGame();
+	host.requestGameCreate(game);
+	REQUIRE(host.currentGame());
+	bob.requestLocations();
+	lan.run(10);
+	REQUIRE(bob.games().size() == 1);
+	bob.requestGameJoin(0);
+	lan.run(10);
+	REQUIRE(bob.currentGame());
+	// the host's setup becomes the resumed war (as GameWorld::lan_host_set_resume sets it), then Bob accepts it
+	game.gameMode = 1;
+	game.scenario = "WOTRScenario001";
+	game.resumeSave = "0123456789abcdef0123456789abcdef";
+	game.resumeHash = 1234;
+	REQUIRE(host.hostSetOptions(game));
+	lan.run(10);
+	REQUIRE(host.currentGame()->info.resumed());
+	bob.requestAccept(true);
+	lan.run(10);
+	REQUIRE(host.currentGame()->accepted[1]);
+	REQUIRE(host.currentGame()->info.slots[1].isHuman());
+	REQUIRE(host.currentGame()->info.slots[1].name == u"Bob");
+	LANAPI::ResumeSeat alice;
+	alice.slot = 1;
+	alice.name = u"Alice";
+	alice.saved.state = SLOT_PLAYER;
+	alice.saved.name = u"Alice";
+	host.hostSetResumeSeats({ alice }, game.rules);
+	std::string reason;
+	CHECK_FALSE(host.hostStartGame(&reason));
+	CHECK(reason == "Bob sits in Alice's seat: every player of the saved war takes their own seat");
+	// Bob's own seat, saved with its faction, colour, team and start; the rules of the save differ from the game's
+	LANAPI::ResumeSeat seatBob = alice;
+	seatBob.name = u"Bob";
+	seatBob.saved.name = u"Bob";
+	seatBob.saved.playerTemplate = 3;
+	seatBob.saved.color = 4;
+	seatBob.saved.teamNumber = 1;
+	seatBob.saved.startPos = 2;
+	GameRules other = game.rules;
+	other[0] = 60;
+	host.hostSetResumeSeats({ seatBob }, other);
+	CHECK_FALSE(host.hostStartGame(&reason));
+	CHECK(reason == "the game's rules are not the saved war's");
+	CHECK_FALSE(host.started());
+}
+
+TEST_CASE("wotr2 m8 lan (Sol wotr2m8s4 follow-up): a resumed war starts with the joiner in its seat; the START gives the seat its saved faction, colour, "
+	"team, start and handicap, not the joiner's lobby choices")
+{
+	const std::string md5 = "0123456789abcdef0123456789abcdef";
+	Lan lan({ { u"Host", "" }, { u"Bob", "" } }, [&](const std::string &save, std::uint32_t hash) {
+		return save == md5 && hash == 1234u ? std::string() : std::string("has no copy of this saved war");
+	});
+	LANAPI &host = *lan.peers[0];
+	LANAPI &bob = *lan.peers[1];
+	SkirmishGameInfo game = hostedGame();
+	host.requestGameCreate(game);
+	REQUIRE(host.currentGame());
+	bob.requestLocations();
+	lan.run(10);
+	REQUIRE(bob.games().size() == 1);
+	bob.requestGameJoin(0);
+	lan.run(10);
+	REQUIRE(bob.currentGame());
+	// Bob's own lobby choices, which the resumed war does not take
+	bob.requestSlotOptions(1, 1, 0, 0, -10);
+	lan.run(10);
+	game = host.currentGame()->info;
+	game.gameMode = 1;
+	game.scenario = "WOTRScenario001";
+	game.resumeSave = md5;
+	game.resumeHash = 1234;
+	REQUIRE(host.hostSetOptions(game));
+	LANAPI::ResumeSeat seat;
+	seat.slot = 1;
+	seat.name = u"Bob";
+	seat.saved.state = SLOT_PLAYER;
+	seat.saved.name = u"Bob";
+	seat.saved.playerTemplate = 3;
+	seat.saved.color = 4;
+	seat.saved.teamNumber = 1;
+	seat.saved.startPos = 2;
+	seat.saved.handicap = -25;
+	host.hostSetResumeSeats({ seat }, game.rules);
+	lan.run(10); // Bob's check of his copy reaches the host
+	CHECK(bob.resumeCheckResult().empty());
+	bob.requestAccept(true);
+	lan.run(10);
+	REQUIRE(host.currentGame()->accepted[1]);
+	std::string reason;
+	REQUIRE_MESSAGE(host.hostStartGame(&reason), reason);
+	lan.run(20);
+	REQUIRE(host.started());
+	REQUIRE(bob.started());
+	for (const LANAPI *peer : { &host, &bob })
+	{
+		const SkirmishGameSlot &s = peer->start().game.game.slots[1];
+		CHECK(s.name == u"Bob");
+		CHECK(s.playerTemplate == 3);
+		CHECK(s.color == 4);
+		CHECK(s.teamNumber == 1);
+		CHECK(s.startPos == 2);
+		CHECK(s.handicap == -25);
+		CHECK(peer->start().game.game.resumeSave == md5);
+	}
+}
+
+TEST_CASE("wotr2 m8 lan (Sol wotr2m8s4 follow-up 2): a joiner's check of another saved war (another MD5) is not counted: the start waits for the check of "
+	"the save the setup resumes")
+{
+	const std::string a = "0123456789abcdef0123456789abcdef", other = "fedcba9876543210fedcba9876543210";
+	Lan lan({ { u"Host", "" }, { u"Bob", "" } }, [](const std::string &, std::uint32_t) { return std::string(); });
+	LANAPI &host = *lan.peers[0];
+	LANAPI &bob = *lan.peers[1];
+	SkirmishGameInfo game = hostedGame();
+	host.requestGameCreate(game);
+	bob.requestLocations();
+	lan.run(10);
+	REQUIRE(bob.games().size() == 1);
+	bob.requestGameJoin(0);
+	lan.run(10);
+	REQUIRE(bob.currentGame());
+	game = host.currentGame()->info;
+	game.gameMode = 1;
+	game.scenario = "WOTRScenario001";
+	game.resumeSave = a;
+	game.resumeHash = 1234;
+	REQUIRE(host.hostSetOptions(game));
+	LANAPI::ResumeSeat seat;
+	seat.slot = 1;
+	seat.name = u"Bob";
+	seat.saved.state = SLOT_PLAYER;
+	seat.saved.name = u"Bob";
+	host.hostSetResumeSeats({ seat }, game.rules);
+	lan.run(10); // Bob checked save A, the host heard it
+	REQUIRE(bob.resumeCheckResult().empty());
+	// the host now resumes another save; Bob does not run, so his only check names A, and his accept reaches the host
+	game.resumeSave = other;
+	REQUIRE(host.hostSetOptions(game));
+	bob.requestAccept(true);
+	lan.run(10, { true, false });
+	REQUIRE(host.currentGame()->accepted[1]);
+	std::string reason;
+	CHECK_FALSE(host.hostStartGame(&reason));
+	CHECK(reason == "Bob has not checked the saved war yet");
+	CHECK_FALSE(host.started());
+}
+
+TEST_CASE("p16 net: sixteen LAN lobby peers receive the same START over real loopback UDP")
+{
+	LANAPI::Options options;
+	options.playerTemplateCount = 16;
+	options.colorCount = 16;
+	options.lobbyPortBase = testPortBase();
+	options.lobbyPorts = 16;
+	options.broadcast = false;
+	options.extraTargets = { 0x7F000001u };
+	std::vector<std::unique_ptr<LANAPI>> peers;
+	std::string error;
+	for (int i = 0; i < 16; ++i)
+	{
+		const std::string name = "Player" + std::to_string(i);
+		peers.push_back(std::make_unique<LANAPI>(profileFor(""), std::u16string(name.begin(), name.end()), options));
+		REQUIRE_MESSAGE(peers.back()->open(&error), error);
+	}
+	std::uint64_t clock = 1000;
+	auto advance = [&]() {
+		for (int tick = 0; tick < 20; ++tick)
+		{
+			clock += 20;
+			for (auto &peer : peers) peer->update(clock);
+			NetSleepMilliseconds(1);
+		}
+	};
+	SkirmishGameInfo game;
+	game.mapName = "p16-generated-capacity";
+	game.mapStartCount = 16;
+	for (auto &slot : game.slots) slot.state = SLOT_OPEN;
+	peers[0]->requestGameCreate(game);
+	advance();
+	for (int i = 1; i < 16; ++i)
+	{
+		REQUIRE(peers[(size_t)i]->games().size() == 1);
+		CHECK(peers[(size_t)i]->games()[0].info.mapStartCount == 16);
+		peers[(size_t)i]->requestGameJoin(0);
+		advance();
+		REQUIRE(peers[(size_t)i]->currentGame());
+		CHECK(peers[(size_t)i]->localSlot() == i);
+	}
+	for (int i = 1; i < 16; ++i)
+	{
+		peers[(size_t)i]->requestSlotOptions(i, i, i % 8, i);
+		advance();
+	}
+	for (int i = 1; i < 16; ++i) peers[(size_t)i]->requestAccept(true);
+	advance();
+	REQUIRE_MESSAGE(peers[0]->hostStartGame(&error), error);
+	advance();
+	NetByteWriter expected;
+	NetPacket::writeNewGameMessage(expected, peers[0]->start().game);
+	for (int i = 0; i < 16; ++i)
+	{
+		CAPTURE(i);
+		const auto &peer = *peers[(size_t)i];
+		CHECK(peer.errors().empty());
+		REQUIRE(peer.started());
+		CHECK(peer.start().localSlot == i);
+		CHECK(peer.start().game.game.mapStartCount == 16);
+		CHECK(peer.start().game.game.slots[15].startPos == 15);
+		CHECK(peer.start().game.game.slots[15].color == 15);
+		CHECK(std::all_of(peer.start().networkSlot.begin(), peer.start().networkSlot.end(), [](bool used) { return used; }));
+		NetByteWriter received;
+		NetPacket::writeNewGameMessage(received, peer.start().game);
+		CHECK(received.data() == expected.data());
+		for (int s = 0; s < 16; ++s)
+		{
+			CHECK(peer.start().addresses[(size_t)s].port == peers[(size_t)s]->gameSocket().localAddress().port);
+		}
+	}
+}
 
 TEST_CASE("mp2 lan: find, join, options through the host, chat, kick and rejoin, accept, start: every player gets the same game")
 {
@@ -549,12 +884,12 @@ TEST_CASE("mp2 lan (review): a flag byte other than 0 / 1 is an error in every m
 	announce.wstr(u"Fake");
 	announce.u8(7); // in progress
 	announce.str(profile.digest);
-	NetPacket::writeGameInfo(announce, g);
+	NetPacket::writeGameInfo(announce, g, true); // WOTR2 milestone 8: LANAPI protocol 5
 	refusedByClient(announce, "announcement in-progress flag 7");
 	CHECK(client.games().empty());
 	// a GameInfo whose slot carries accepted = 7: write it, then patch the byte after slot 0's name
 	NetByteWriter info;
-	NetPacket::writeGameInfo(info, g);
+	NetPacket::writeGameInfo(info, g, true); // WOTR2 milestone 8: LANAPI protocol 5
 	std::vector<std::uint8_t> patched = info.data();
 	const size_t acceptedAt = 4 + 4 + 2 * g.slots[0].name.size(); // i32 state, u32 name length, UTF-16 units (NetByteWriter::wstr)
 	REQUIRE(patched.size() > acceptedAt);
@@ -578,8 +913,8 @@ TEST_CASE("mp2 lan (review): a flag byte other than 0 / 1 is an error in every m
 	NetByteWriter options = header(LANMessageType::GAME_OPTIONS, u"Fake");
 	options.u8(0); // OPT_FULL
 	options.wstr(u"Fake");
-	NetPacket::writeGameInfo(options, g);
-	for (int s = 0; s < MAX_SLOTS; ++s)
+	NetPacket::writeGameInfo(options, g, true); // WOTR2 milestone 8: LANAPI protocol 5
+	for (int s = 0; s < g.serializedSlotCount(); ++s)
 	{
 		options.u32(fakeAddress.ip);
 		options.u16(fakeAddress.port);
@@ -607,7 +942,7 @@ TEST_CASE("mp2 lan (review): a flag byte other than 0 / 1 is an error in every m
 	std::vector<std::uint8_t> bytes = LANLobby::encodeStart(start);
 	LobbyStart out;
 	REQUIRE_MESSAGE(LANLobby::decodeStart(bytes, out, &error), error);
-	bytes[bytes.size() - (size_t)MAX_SLOTS * 7] = 7; // slot 0's network flag (u8 flag, u32 ip, u16 port per slot)
+	bytes[bytes.size() - (size_t)start.game.game.serializedSlotCount() * 7] = 7; // slot 0's network flag (u8 flag, u32 ip, u16 port per slot)
 	CHECK(!LANLobby::decodeStart(bytes, out, &error));
 	CHECK(error.find("not 0 / 1") != std::string::npos);
 }
@@ -725,8 +1060,8 @@ TEST_CASE("mp2 lan (review): every field of a slot request is kKeep, -1 or withi
 	NetByteWriter options = header(LANMessageType::GAME_OPTIONS);
 	options.u8(0); // OPT_FULL
 	options.wstr(u"Mallory");
-	NetPacket::writeGameInfo(options, g);
-	for (int s = 0; s < MAX_SLOTS; ++s)
+	NetPacket::writeGameInfo(options, g, true); // WOTR2 milestone 8: LANAPI protocol 5
+	for (int s = 0; s < g.serializedSlotCount(); ++s)
 	{
 		options.u32(fakeAddress.ip);
 		options.u16(fakeAddress.port);
@@ -1081,14 +1416,14 @@ TEST_CASE("uberjoin1 lan: an announcement without the simulation profile lists a
 	// lane OWNERFIX-2: the slots' handicaps (8 i32) follow the profile; LANAPI protocol 3 always writes them, so an announcement with the profile and without
 	// them is truncated (a peer that predates OWNERFIX-2 speaks protocol 2 and is refused by its header); a peer that predates UBER-1 has neither
 	{
-		std::vector<std::uint8_t> noHandicaps(full.begin(), full.end() - 4 * MAX_SLOTS);
+		std::vector<std::uint8_t> noHandicaps(full.begin(), full.end() - 4 - 4 * LEGACY_MAX_SLOTS); // lane CHEAT-1: the Cheat Mode i32 ends the GameInfo
 		NetByteReader r(noHandicaps);
 		SkirmishGameInfo back;
 		std::string e;
 		CHECK_FALSE(NetPacket::readGameInfo(r, back, &e, true));
 		CHECK(e == "truncated GameInfo");
 	}
-	std::vector<std::uint8_t> absent(full.begin(), full.end() - 4 - 4 * MAX_SLOTS);
+	std::vector<std::uint8_t> absent(full.begin(), full.end() - 4 - 4 - 4 * LEGACY_MAX_SLOTS); // lane CHEAT-1: the profile, the handicaps and the Cheat Mode
 	{
 		NetByteReader r(absent);
 		SkirmishGameInfo back;
@@ -1116,10 +1451,11 @@ TEST_CASE("uberjoin1 lan: an announcement without the simulation profile lists a
 		std::vector<std::uint8_t> b = absent;
 		NetByteWriter tail;
 		tail.i32(bad);
-		for (int i = 0; i < MAX_SLOTS; ++i)
+		for (int i = 0; i < LEGACY_MAX_SLOTS; ++i)
 		{
 			tail.i32(0); // lane OWNERFIX-2: the handicaps follow a present profile
 		}
+		tail.i32(-1); // lane CHEAT-1: then the Cheat Mode (off)
 		b.insert(b.end(), tail.data().begin(), tail.data().end());
 		NetByteReader r(b);
 		SkirmishGameInfo back;
@@ -1413,8 +1749,8 @@ TEST_CASE("ownerfix2 lan: a joiner's handicap reaches the host and every player 
 
 TEST_CASE("ownerfix2 lan: the protocol versions moved with the handicap layouts (LANAPI 3, LANLobby 4); the previous versions and the four-field slot request are refused by name")
 {
-	CHECK(LANAPI::kProtocolVersion == 3);
-	CHECK(LANLobby::kVersion == 4);
+	CHECK(LANAPI::kProtocolVersion == 7); // WOTR2: 7 the save answers' request serial (lobby unchanged); milestone 8 step 4: 6 / 10 the resume fields // lane CHEAT-1: 4 / 6 added the GameInfo's Cheat Mode; WOTR2 milestone 8: 5 / 8 its game mode and scenario
+	CHECK(LANLobby::kVersion == 10); // (5 and 7 were extended STARTs: never a lobby version)
 	// a START of the previous lobby version (3: the GameInfo without the handicaps) is refused by its version byte, before any GameInfo is read
 	LobbyStart start;
 	start.game.game = hostedGame();
@@ -1430,7 +1766,7 @@ TEST_CASE("ownerfix2 lan: the protocol versions moved with the handicap layouts 
 	CHECK(out.game.game.slots[0].handicap == -30);
 	bytes[3] = 3;
 	CHECK_FALSE(LANLobby::decodeStart(bytes, out, &error));
-	CHECK(error == "lobby START version 3 (this build speaks 4)");
+	CHECK(error == "lobby START version 3 (this build speaks 10, 11 for a 16-slot map)");
 	// a lobby message of protocol 2 and a protocol 3 slot request in the four-field layout of protocol 2: refused, the host's setup unchanged
 	LANAPI::Options o;
 	o.playerTemplateCount = 16;
@@ -1470,7 +1806,7 @@ TEST_CASE("ownerfix2 lan: the protocol versions moved with the handicap layouts 
 	size_t errors = host.errors().size();
 	deliver(oldJoin);
 	REQUIRE(host.errors().size() == errors + 1);
-	CHECK(host.errors().back().rfind("a LAN lobby message of version 2 (this build speaks 3) from ", 0) == 0);
+	CHECK(host.errors().back().rfind("a LAN lobby message of version 2 (this build speaks 7) from ", 0) == 0);
 	CHECK_FALSE(host.currentGame()->info.slots[1].isHuman());
 	NetByteWriter join = header(LANAPI::kProtocolVersion, LANMessageType::REQUEST_JOIN);
 	join.str(profile.digest);

@@ -5,12 +5,14 @@
 #pragma once
 
 #include "GameLogic/AI/AIAttack.h"
+#include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "Common/Thing/ThingTemplate.h"
 
+#include <algorithm>
 #include <map>
 #include <sstream>
 #include <string>
@@ -33,6 +35,7 @@ struct TurnProbe
 		unsigned recordDelay = 0;  ///< its delay then
 		bool skippedAfter = false; ///< the member pass skipped the member in the frame after the turn (the lookahead frame)
 		bool skippedLast = false;  ///< the pass skipped the member at the last sample
+		bool hordeMovingAfter = false; ///< lane ATTACKPATH-1: the member's horde was moving in the lookahead frame (its MOVING is the horde's walk)
 	};
 	std::map<ObjectID, Last> last;
 	int turned = 0, turnedMoving = 0;                   ///< member-frames turning on the spot; of those with MOVING at the frame's end
@@ -50,6 +53,17 @@ struct TurnProbe
 	// count, so standing with MOVING 5 frames past the resume still fails. A cowering member exempts nothing. Those are counted apart, not in the two
 	// counts above (held turns, held standing frames with MOVING)
 	int turnedHeldByBackUp = 0, framesHeldByBackUp = 0;
+	// lane ATTACKPATH-1: a member that turned while its horde was still, whose horde got a move order in the next frame (a computer player's move between two
+	// attack orders): its MOVING in that frame is the horde's walk starting (the member walks off a frame later), not a turn kept running; counted apart
+	int turnedThenHordeMoved = 0;
+	// lane IDLEMOTION-1: the run-down and the leash hold a member that fell behind (RotWK rules, read with Ghidra): while its horde runs a fleeing target down
+	// (RUNNING_DOWN_FROM_BEHIND, RW 0x74AA03), the run-down orders every member whose state is not active to attack (RW 0x87631F, AI vslot 0x1BC: a BUSY member
+	// too); the member's crush state destroys its path and requests one (RW 0x74F2CD, RW 0x742271 -> RW 0x667ED1), served by the next phase's queue (RW 0x62E69F),
+	// so it stands that frame; the horde's pass then finds it beyond MeleeAttackLeashDistance of the marching horde and its slot and makes it busy (RW 0x877B4F)
+	// with a walk to its slot (RW 0x8751E9, vslot 0x214) and MOVING (RW 0x87520A: + 0x110 |= 0x20000000), and the next frame's run-down comes before its member update. It stands
+	// with MOVING until the run-down ends. Those frames (the member BUSY at the frame's end, its horde running down and moving, its horde's pass having made a
+	// leash command to that member this frame, HordeContain::leashedInLastPass) are counted apart and restart the streak
+	int framesHeldByRunDown = 0;
 	std::ostringstream samples;
 	int lines = 0, streakLines = 0;
 
@@ -70,6 +84,12 @@ struct TurnProbe
 			const bool hasRecord = rec != records.end();
 			const bool skipped = hasRecord && l.hadRecord && rec->second.delay + 1 == l.recordDelay; // this frame's pass decremented the delay
 			const bool held = skipped || (l.skippedLast && hasRecord); // a skipped frame, or the frame the pass resumes the member's orders
+			const HordeContain *hc = static_cast<const HordeContain *>(c->getContain());
+			const std::vector<ObjectID> &leashed = hc->leashedInLastPass();
+			const bool leashedNow = hc->lastPassFrame() == logic.getFrame() && std::find(leashed.begin(), leashed.end(), x->getID()) != leashed.end();
+			const AIUpdateInterface *hai = c->getAIUpdateInterface();
+			const bool runDownHold = leashedNow && c->testStatus((unsigned)CombatNames::statuses().runningDownFromBehind) && hai && hai->isMoving() &&
+				x->getAIUpdateInterface()->currentStateId() == (unsigned)AI_BUSY;
 			l.skippedLast = skipped;
 			l.hadRecord = hasRecord;
 			l.recordDelay = hasRecord ? rec->second.delay : 0;
@@ -84,6 +104,8 @@ struct TurnProbe
 			{
 				l.movingAfter = l.pendingMoving && mv;
 				l.skippedAfter = skipped;
+				const AIUpdateInterface *hai = c->getAIUpdateInterface();
+				l.hordeMovingAfter = hai && hai->isMoving();
 			}
 			else if (l.pendingTurn && l.pendingAge == 2)
 			{
@@ -91,7 +113,8 @@ struct TurnProbe
 				++turned;
 				turnedMoving += l.pendingMoving ? 1 : 0;
 				const bool outside = l.movingAfter && l.state != (unsigned)AI_ATTACK_OBJECT;
-				turnedMovingOutsideAttack += outside && !l.skippedAfter ? 1 : 0;
+				turnedThenHordeMoved += outside && !l.skippedAfter && l.hordeMovingAfter ? 1 : 0;
+				turnedMovingOutsideAttack += outside && !l.skippedAfter && !l.hordeMovingAfter ? 1 : 0;
 				turnedHeldByBackUp += outside && l.skippedAfter ? 1 : 0;
 				if (l.pendingAttacking)
 				{
@@ -103,7 +126,7 @@ struct TurnProbe
 					++turnedCavalry;
 					turnedCavalryMoving += l.pendingMoving ? 1 : 0;
 				}
-				if (outside && !l.skippedAfter && lines < 6)
+				if (outside && !l.skippedAfter && !l.hordeMovingAfter && lines < 6)
 				{
 					++lines;
 					samples << "  f" << logic.getFrame() - 2 << " " << x->getTemplate()->getName() << " #" << x->getID() << " turned on the spot, MOVING still set the next frame, state " << l.state << "\n";
@@ -119,7 +142,8 @@ struct TurnProbe
 				l.state = x->getAIUpdateInterface()->currentStateId();
 			}
 			framesHeldByBackUp += still && mv && held ? 1 : 0;
-			l.streak = still && mv && !held ? l.streak + 1 : 0;
+			framesHeldByRunDown += still && mv && !held && runDownHold ? 1 : 0;
+			l.streak = still && mv && !held && !runDownHold ? l.streak + 1 : 0;
 			if (l.streak == 5)
 			{
 				++stillMovingStreaks;

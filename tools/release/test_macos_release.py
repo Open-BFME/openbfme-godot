@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import selectors
 import shutil
 import hashlib
 import struct
@@ -239,7 +240,7 @@ def test_arm64_build_arguments_include_reproducibility_inputs(tmp_path: Path):
     extension = tmp_path / "extension path"
     args = package_macos.cmake_configure_args(build, extension, "v1.2.3-preview.1 Mac Unstable Preview (Apple Silicon)")
     assert "-DCMAKE_BUILD_TYPE=Release" in args
-    assert "-DOPENBFME_LAME=OFF" in args
+    assert "-DOPENBFME_BUILD_TESTS=OFF" in args
     assert "-DOPENBFME_BUILD_GODOT=ON" in args
     assert "-DCMAKE_OSX_ARCHITECTURES=arm64" in args
     assert "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0" in args
@@ -330,129 +331,7 @@ def test_generic_audit_rejects_extras_wrong_architecture_and_embedded_paths(tmp_
     assert audit_package.developer_path_problem(b"literal /Users/") == ""
 
 
-# ---- RELCAND-1: build_macos_release.sh's clone on the Mac cannot race a job writing into the host's repo.git ------------------------------
-# v0.4.11 failed at the Mac build with "fatal: hardlink different from source at .../objects/pack/tmp_pack_..." after Linux, Windows and
-# HUD6 had passed: `git clone --no-checkout <host>/repo.git` is a local clone, which hardlinks repo.git's files and checks each link
-# against the file it walked, and another job was writing a pack there. The script now fetches the tag into a fresh repository over
-# git's transport. These tests run the real script against a local "Mac": a stand-in ssh that runs every remote command here, in a
-# throwaway home, with a writer appending to a tmp_pack file of the host's repo.git the whole time.
-FAKE_SSH = r'''#!/bin/bash
-# the Mac stand-in: ssh [-o opt]... host [command]: the command (or stdin's script) runs here, in $FAKE_MAC_HOME, Homebrew paths dropped
-while [ $# -gt 0 ]; do case $1 in -o|-p|-l|-i) shift 2 ;; -*) shift ;; *) break ;; esac; done
-shift   # the host
-cmd="$*"; cmd=${cmd//\/opt\/homebrew\/bin\//}
-cd "$FAKE_MAC_HOME" && HOME="$FAKE_MAC_HOME" exec bash -c "$cmd"
-'''
-STUB_PACKAGER = r'''import argparse, hashlib, os, subprocess, sys
-from pathlib import Path
-ap = argparse.ArgumentParser()
-for o in ("--version", "--godot", "--templates", "--out", "--jobs"):
-    ap.add_argument(o)
-a = ap.parse_args()
-head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-pack_links = sorted({os.stat(p).st_nlink for p in Path(".git/objects").rglob("*") if p.is_file()})
-stem = f"openbfme-{a.version}-macos-arm64"
-out = Path(a.out)
-(out / f"{stem}.zip").write_bytes(f"built {a.version} at {head}\n".encode())
-(out / f"{stem}.zip.sha256").write_text(hashlib.sha256((out / f"{stem}.zip").read_bytes()).hexdigest() + f"  {stem}.zip\n")
-(out / f"{stem}.inventory.txt").write_text(f"head {head}\nobject file links {pack_links}\n")
-(out / "README-MAC.txt").write_text("OpenBFME for Mac\n")
-print(f"MACOS stub package of {a.version} at {head}")
-'''
-APPENDER = r'''import sys, time
-f = open(sys.argv[1], "ab", buffering=0)
-while True:
-    f.write(b"x" * 64)
-'''
-
-
-def _git(cwd: Path, *args: str) -> str:
-    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_COMMITTER_NAME": "t",
-           "GIT_COMMITTER_EMAIL": "t@example.invalid", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
-    return subprocess.run(["git", "-c", "protocol.file.allow=always", *args], cwd=cwd, capture_output=True, text=True, check=True,
-                          env=env).stdout.strip()
-
-
-def _mac_world(tmp_path: Path, script: Path) -> dict:
-    """the release checkout at its tag (a godot-cpp submodule, the stub packager, the script under test) and the Mac host's CI folder"""
-    sub = tmp_path / "godot-cpp-src"
-    sub.mkdir()
-    _git(sub, "init", "-q", "-b", "main")
-    (sub / "a.h").write_text("int a;\n")
-    _git(sub, "add", "a.h")
-    _git(sub, "commit", "-qm", "godot-cpp")
-    home = tmp_path / "machome"
-    ci = home / "ci-root"
-    ci.mkdir(parents=True)
-    _git(ci, "clone", "-q", "--bare", str(sub), "godot-cpp.git")
-    _git(ci, "init", "-q", "--bare", "repo.git")
-    (ci / "env.sh").write_text('C=$HOME/ci-root\n')
-    (ci / "release").mkdir()
-    # the host's repository is a busy one: many loose objects (a long directory walk for a local clone)
-    for i in range(1500):
-        subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=ci / "repo.git", input=f"object {i}\n", text=True, check=True,
-                       capture_output=True)
-    wt = tmp_path / "checkout"
-    wt.mkdir()
-    _git(wt, "init", "-q", "-b", "main")
-    (wt / "tools/release").mkdir(parents=True)
-    (wt / "tools/release/package_macos.py").write_text(STUB_PACKAGER)
-    _git(wt, "submodule", "add", "-q", str(sub), "engine/thirdparty/godot-cpp")
-    _git(wt, "add", "-A")
-    _git(wt, "commit", "-qm", "the release")
-    _git(wt, "tag", "-a", "v0.4.12", "-m", "OpenBFME v0.4.12")
-    ssh = tmp_path / "fake-ssh"
-    ssh.write_text(FAKE_SSH)
-    ssh.chmod(0o755)
-    out = tmp_path / "out"
-    out.mkdir()
-    env = {**os.environ, "PYTHONPATH": str(HERE), "OPENBFME_RELEASE_MAC_SSH": str(ssh), "OPENBFME_RELEASE_MAC_ROOT": "ci-root", "FAKE_MAC_HOME": str(home),
-           "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
-    return {"wt": wt, "ci": ci, "out": out, "env": env, "script": script, "commit": _git(wt, "rev-parse", "HEAD")}
-
-
-def _run_mac_build(w: dict) -> subprocess.CompletedProcess:
-    writer = subprocess.Popen([sys.executable, "-c", APPENDER, str(w["ci"] / "repo.git/objects/pack/tmp_pack_busy")])
-    try:
-        return subprocess.run(["bash", str(w["script"]), str(w["wt"]), "v0.4.12", str(w["out"])], capture_output=True, text=True,
-                              env=w["env"], timeout=300)
-    finally:
-        writer.kill()
-        writer.wait()
-
-
-def test_the_mac_clone_does_not_race_a_pack_being_written(tmp_path):
-    w = _mac_world(tmp_path, HERE / "build_macos_release.sh")
-    r = _run_mac_build(w)
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert "hardlink" not in r.stdout + r.stderr
-    stem = "openbfme-v0.4.12-macos-arm64"
-    assert sorted(p.name for p in w["out"].iterdir()) == sorted([f"{stem}.zip", f"{stem}.zip.sha256", f"{stem}.inventory.txt", "README-MAC.txt"])
-    # built from the tag's commit, in a repository with its own object files (one link each: nothing shared with the host's repo.git)
-    assert (w["out"] / f"{stem}.zip").read_text() == f"built v0.4.12 at {w['commit']}\n"
-    assert (w["out"] / f"{stem}.inventory.txt").read_text() == f"head {w['commit']}\nobject file links [1]\n"
-    # the script's cleanup: the clone and the tag are gone from the host
-    assert not (w["ci"] / "release/v0.4.12").exists()
-    assert subprocess.run(["git", "-C", str(w["ci"] / "repo.git"), "rev-parse", "-q", "--verify", "refs/tags/v0.4.12"],
-                          capture_output=True).returncode != 0
-
-
-def test_the_old_local_clone_fails_under_the_same_writer(tmp_path):
-    """the control: the script with v0.4.11's local clone fails in the same harness with v0.4.11's error (so the test above can fail)"""
-    text = (HERE / "build_macos_release.sh").read_text()
-    new = ('git init -q "\\$R/src"\ncd "\\$R/src"\n'
-           'git fetch -q --no-tags "file://\\$C/repo.git" "refs/tags/$VERSION:refs/tags/$VERSION"\n')
-    old = ('git clone -q --no-checkout "\\$C/repo.git" "\\$R/src"\ncd "\\$R/src"\n'
-           'git fetch -q -f "\\$C/repo.git" "refs/tags/$VERSION:refs/tags/$VERSION"\n')
-    assert text.count(new) == 1
-    script = tmp_path / "build_macos_release_v0411.sh"
-    script.write_text(text.replace(new, old))
-    shutil.copy2(HERE / "package_macos_preview.py", tmp_path / "package_macos_preview.py")   # the script reads its template pin there
-    w = _mac_world(tmp_path, script)
-    r = _run_mac_build(w)
-    assert r.returncode != 0 and "hardlink different from source at" in r.stdout + r.stderr, r.stdout + r.stderr
-
-
+# ---- RELCAND-1 / RELGH-2: the Mac clone tests went with build_macos_release.sh (the Mac host is in no release's path) -------------------
 def test_no_release_script_clones_a_repository_locally():
     """every clone in the release's shell scripts goes over git's transport or is a mirror reference, never a hardlinking local clone"""
     import re  # noqa: PLC0415

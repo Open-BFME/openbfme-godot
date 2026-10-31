@@ -101,6 +101,22 @@ bool rayCylinder(const Coord3D &o, const Coord3D &d, const Coord3D &base, float 
 	tHit = best;
 	return hit;
 }
+
+// the template's KeepSelectableWhenDead, which exempts the object from collisionTypeOf's rubble/death clearing (RW 0x4B599F .. 0x4B59DE)
+bool keepsSelectableWhenDead(const Object &obj)
+{
+	if (const ThingTemplate *tt = static_cast<const ThingTemplate *>(obj.getTemplate()))
+	{
+		if (const FieldValue *v = tt->getFinalOverride()->findField("KeepSelectableWhenDead"))
+		{
+			if (const bool *keep = std::get_if<bool>(v))
+			{
+				return *keep;
+			}
+		}
+	}
+	return false;
+}
 } // namespace
 
 bool isLocallyControlled(const HudContext &ctx, const Object &obj)
@@ -138,7 +154,9 @@ Relationship relationshipToLocal(const HudContext &ctx, const Object &obj)
 
 bool isPickable(const Object &obj)
 {
-	return !obj.isDestroyed();
+	// lane FBSIM-1, INFERENCE: a dozer's phantom structure is out of the world and effectively dead (RW 0x88D0D8): nothing picks it
+	static const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
+	return !obj.isDestroyed() && !(phantom >= 0 && obj.testStatus((unsigned)phantom));
 }
 
 Object *selectionRepresentative(Object &obj)
@@ -190,23 +208,44 @@ unsigned collisionTypeOf(const HudContext &ctx, const Object &obj)
 	// ROCK_VENDOR -> 0x200; a selectable one becomes 0x84 for HERO, MONSTER or DEPLOYED_MINE, | 0x100 when locally controlled (RW 0x68B749), else | 0x10 for an
 	// enemy of the local player (RW 0x6ADBEB) that is not WALK_ON_TOP_OF_WALL; FORCEATTACKABLE -> 0x20; CLICK_THROUGH -> 0; SCRIPT_TARGETABLE -> 0x40.
 	// RW 0x4B599F..0x4B59DE: BRIDGE / BRIDGE_TOWER / KeepSelectableWhenDead exempt rubble/death clearing. Drawable rubble state remains S-1954.
+	// lane HUD-5 (performance): every pick asks this of every object of the world (the hover pick on each mouse move), so the KindOf indices
+	// are looked up once (the name table is fixed; a mod's table only appends names) and the template's KeepSelectableWhenDead is read only for an object the
+	// rubble/death test would clear. The result is unchanged; the owner, script status, death and the template are read live.
+	struct KindIndices
+	{
+		int selectable = ObjectTemplateInfoBuilder::kindOfIndex("SELECTABLE");
+		int walkOnWall = ObjectTemplateInfoBuilder::kindOfIndex("WALK_ON_TOP_OF_WALL");
+		int shrubbery = ObjectTemplateInfoBuilder::kindOfIndex("SHRUBBERY");
+		int rock = ObjectTemplateInfoBuilder::kindOfIndex("ROCK");
+		int rockVendor = ObjectTemplateInfoBuilder::kindOfIndex("ROCK_VENDOR");
+		int hero = ObjectTemplateInfoBuilder::kindOfIndex("HERO");
+		int monster = ObjectTemplateInfoBuilder::kindOfIndex("MONSTER");
+		int deployedMine = ObjectTemplateInfoBuilder::kindOfIndex("DEPLOYED_MINE");
+		int forceAttackable = ObjectTemplateInfoBuilder::kindOfIndex("FORCEATTACKABLE");
+		int clickThrough = ObjectTemplateInfoBuilder::kindOfIndex("CLICK_THROUGH");
+		int bridge = ObjectTemplateInfoBuilder::kindOfIndex("BRIDGE");
+		int bridgeTower = ObjectTemplateInfoBuilder::kindOfIndex("BRIDGE_TOWER");
+		int structure = ObjectTemplateInfoBuilder::kindOfIndex("STRUCTURE");
+	};
+	static const KindIndices kinds;
+	const auto isKind = [&obj](int bit) { return bit >= 0 && obj.isKindOf((unsigned)bit); };
 	unsigned t = 0;
-	if (obj.isKindOfName("SELECTABLE") || obj.isKindOfName("WALK_ON_TOP_OF_WALL"))
+	if (isKind(kinds.selectable) || isKind(kinds.walkOnWall))
 	{
 		t = PICK_TYPE_SELECTABLE;
 	}
-	if (obj.isKindOfName("SHRUBBERY"))
+	if (isKind(kinds.shrubbery))
 	{
 		t = PICK_TYPE_SHRUBBERY;
 	}
-	else if (obj.isKindOfName("ROCK") || obj.isKindOfName("ROCK_VENDOR"))
+	else if (isKind(kinds.rock) || isKind(kinds.rockVendor))
 	{
 		t = PICK_TYPE_ROCK;
 	}
 	if (t & PICK_TYPE_SELECTABLE)
 	{
 		unsigned f = PICK_TYPE_SELECTABLE;
-		if (obj.isKindOfName("HERO") || obj.isKindOfName("MONSTER") || obj.isKindOfName("DEPLOYED_MINE"))
+		if (isKind(kinds.hero) || isKind(kinds.monster) || isKind(kinds.deployedMine))
 		{
 			f = PICK_TYPE_SELECTABLE | PICK_TYPE_HERO;
 		}
@@ -214,17 +253,17 @@ unsigned collisionTypeOf(const HudContext &ctx, const Object &obj)
 		{
 			f |= PICK_TYPE_OWN;
 		}
-		else if (relationshipToLocal(ctx, obj) == ENEMIES && !obj.isKindOfName("WALK_ON_TOP_OF_WALL"))
+		else if (relationshipToLocal(ctx, obj) == ENEMIES && !isKind(kinds.walkOnWall))
 		{
 			f |= PICK_TYPE_ENEMY;
 		}
 		t = f;
 	}
-	if (obj.isKindOfName("FORCEATTACKABLE"))
+	if (isKind(kinds.forceAttackable))
 	{
 		t = PICK_TYPE_FORCEATTACKABLE;
 	}
-	if (obj.isKindOfName("CLICK_THROUGH"))
+	if (isKind(kinds.clickThrough))
 	{
 		t = 0;
 	}
@@ -232,21 +271,10 @@ unsigned collisionTypeOf(const HudContext &ctx, const Object &obj)
 	{
 		t = PICK_TYPE_SCRIPT_TARGETABLE; // RW 0x4B5988: EDI is Drawable +0xFC (the Object), not the Drawable
 	}
-	bool keepWhenDead = false;
-	if (const ThingTemplate *tt = static_cast<const ThingTemplate *>(obj.getTemplate()))
-	{
-		if (const FieldValue *v = tt->getFinalOverride()->findField("KeepSelectableWhenDead"))
-		{
-			if (const bool *keep = std::get_if<bool>(v))
-			{
-				keepWhenDead = *keep;
-			}
-		}
-	}
-	if (!obj.isKindOfName("BRIDGE") && !obj.isKindOfName("BRIDGE_TOWER") && !keepWhenDead)
+	if (!isKind(kinds.bridge) && !isKind(kinds.bridgeTower))
 	{
 		static const int RUBBLE = ModelCondition::indexOf("RUBBLE");
-		if ((obj.isKindOfName("STRUCTURE") && obj.testModelCondition(RUBBLE)) || obj.isEffectivelyDead())
+		if (((isKind(kinds.structure) && obj.testModelCondition(RUBBLE)) || obj.isEffectivelyDead()) && !keepsSelectableWhenDead(obj))
 		{
 			t = 0;
 		}
@@ -356,7 +384,8 @@ std::vector<PickHit> pickHits(const HudContext &ctx, const ICoord2D &pixel, unsi
 	const unsigned castMask = pickTypes | PICK_TYPE_SELECTABLE | PICK_TYPE_ENEMY | PICK_TYPE_HERO | PICK_TYPE_OWN;
 	for (Object *obj = ctx.logic.getFirstObject(); obj; obj = obj->getNextObject())
 	{
-		if (!isPickable(*obj) || InvisibilityManager::clientLook(*obj, ctx.localPlayer()) == 5) // lane STEALTH-1: an enemy's invisible object is not drawn, not picked
+		if (!isPickable(*obj) || InvisibilityManager::clientLook(*obj, ctx.localPlayer()) == 5 // lane STEALTH-1: an enemy's invisible object is not drawn, not picked
+			|| ctx.ui.isClientHidden(obj->getID())) // lane CHAT-1: an enemy's beacon (BeaconClientUpdate::hideBeacon, RW 0x8CDC11: hidden and deselected)
 		{
 			continue;
 		}
@@ -481,24 +510,40 @@ std::vector<Object *> objectsInRegion(const HudContext &ctx, const IRegion2D &re
 		}
 		return out;
 	}
+	static const int unselectable = ObjectTemplateInfoBuilder::objectStatusIndex("UNSELECTABLE");
 	for (Object *obj = ctx.logic.getFirstObject(); obj; obj = obj->getNextObject())
 	{
-		if (!isPickable(*obj) || obj->getContainedBy() || InvisibilityManager::clientLook(*obj, ctx.localPlayer()) == 5) // lane STEALTH-1
+		if (!isPickable(*obj) || InvisibilityManager::clientLook(*obj, ctx.localPlayer()) == 5) // lane STEALTH-1
 		{
 			continue;
 		}
-		if (hiddenFromDrag(ctx, *obj)) // lane VISUAL-2 r2
+		if (hiddenFromDrag(ctx, *obj) || ctx.ui.isClientHidden(obj->getID())) // lane VISUAL-2 r2; lane CHAT-1: an enemy's hidden beacon
 		{
 			continue;
+		}
+		// lane SELECT-1: RotWK addDrawableToList (RW 0x7108F2, the callback of the drag's iterateDrawablesInRegion at RW 0x83C44C) visits the soldiers'
+		// drawables too: a selectable soldier (RW 0x710964: Object RW 0x68DE58) whose producer (Object + 0x78, RW 0x7109CE) is a HORDE (template + 0x115
+		// bit 5) stands for that horde unless the horde is UNSELECTABLE (status 3, RW 0x7109F7: skipped). So a box over any soldier takes the battalion, not
+		// only a box over the horde's centre; any other contained object stays out (an enclosing container hides it: S-288)
+		Object *stand = obj;
+		if (obj->getContainedBy())
+		{
+			Object *producer = isSelectable(*obj) ? ctx.logic.findObjectByID(obj->getProducerID()) : nullptr;
+			if (!producer || !producer->isKindOfName("HORDE") || producer->testStatus(unselectable))
+			{
+				continue;
+			}
+			stand = producer;
 		}
 		ICoord2D px;
 		if (!ctx.view.worldToScreen(*obj->getPosition(), px))
 		{
 			continue;
 		}
-		if (px.x >= region.lo.x && px.x <= region.hi.x && px.y >= region.lo.y && px.y <= region.hi.y)
+		if (px.x >= region.lo.x && px.x <= region.hi.x && px.y >= region.lo.y && px.y <= region.hi.y
+			&& std::find(out.begin(), out.end(), stand) == out.end())
 		{
-			out.push_back(obj);
+			out.push_back(stand);
 		}
 	}
 	return out;

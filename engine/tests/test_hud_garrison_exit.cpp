@@ -5,6 +5,7 @@
 // on any frame of the exit. The positions over the exit frames are printed (MESSAGE) for the report. They share the HUD tests' retail world (the file name sorts
 // with the test_hud_* files) and SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -97,6 +98,7 @@ struct Arena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(angle);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	void run(int frames)
@@ -378,6 +380,16 @@ TEST_CASE("garrison exit: a horde leaving a transport (HordeTransportContain, RW
 		speed[m->getID()] = m->getAIUpdateInterface()->curLocomotorSpeed();
 	}
 	REQUIRE_FALSE(ids.empty());
+	// This fixture never gives the boat a movement destination, and the rider
+	// has no goal: it must not gain a straight path to the map origin.
+	const Coord3D shipGoal = boat->getAIUpdateInterface()->mover().requestedDestination();
+	const Coord3D riderGoal = horde->getAIUpdateInterface()->stateMachine().goalPosition();
+	CHECK(shipGoal.x == 0.0f);
+	CHECK(shipGoal.y == 0.0f);
+	CHECK(shipGoal.z == 0.0f);
+	CHECK(riderGoal.x == 0.0f);
+	CHECK(riderGoal.y == 0.0f);
+	CHECK(riderGoal.z == 0.0f);
 	boat->getContain()->orderAllPassengersToExit((int)CMD_FROM_SCRIPT);
 	std::map<ObjectID, Coord3D> last;
 	bool out = false;

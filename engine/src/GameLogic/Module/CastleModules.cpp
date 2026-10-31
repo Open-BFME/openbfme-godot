@@ -20,6 +20,7 @@
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameClient/MapChunks.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/BuildPlacement.h"
 #include "GameLogic/Combat/CombatNames.h"
@@ -37,8 +38,10 @@
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/ObjectGeometry.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/SimMath.h"
 
+#include <cstdio>
 #include <cstddef>
 #include <stdexcept>
 
@@ -229,6 +232,12 @@ CastleBehavior::CastleBehavior(Thing *thing, const CastleBehaviorModuleData *dat
 	, m_data(data)
 {
 	// asleep until the object is complete (onBuildComplete wakes the module); RW 0x79A901 starts the state at 0
+}
+
+// lane CASTLEAREA-1: RW 0x79AAA7 (the module's destructor) frees the areas (RW 0x79A37D)
+CastleBehavior::~CastleBehavior()
+{
+	freeAreas();
 }
 
 void CastleBehavior::onCapture(Player *oldOwner, Player *newOwner)
@@ -487,6 +496,35 @@ Object *CastleBehavior::preBuild(const ThingTemplate &tt, int index, bool instan
 	return buildOnPad(list[at], tt, instant);
 }
 
+// lane MODCOMPAT-AI: RW 0x7996D3
+bool CastleBehavior::canBuildAtBase(const ThingTemplate *tt) const
+{
+	if (m_state != STATE_UNPACKED)
+	{
+		return false;
+	}
+	GameLogic &logic = getObject()->logic();
+	const std::vector<ObjectID> &list = tt && templateKindOf(logic, *tt, "FS_BASE_DEFENSE") && !m_defenseFoundations.empty() ? m_defenseFoundations : m_foundations;
+	for (ObjectID id : list)
+	{
+		const Object *pad = logic.findObjectByID(id);
+		if (!pad || pad->isKindOf((unsigned)castleNames().wallUpgrade))
+		{
+			continue;
+		}
+		bool foundation = false;
+		for (const std::unique_ptr<BehaviorModule> &m : pad->modules())
+		{
+			foundation = foundation || m->getFoundationAIUpdate() != nullptr; // RW 0x68C3C3
+		}
+		if (foundation && !occupantOf(*pad))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 // RW 0x79A518
 Object *CastleBehavior::buildOnPad(ObjectID padId, const ThingTemplate &tt, bool instant)
 {
@@ -575,6 +613,7 @@ bool CastleBehavior::unpack(bool instant)
 				registerOwnedObject(*made); // RW 0x79B94E
 			}
 		}
+		buildAreas(*layout); // lane CASTLEAREA-1: RW 0x79BF0C -> RW 0x79B881 (the template form only)
 	}
 	// lane CASTLE-1: RW 0x79BF76 .. 0x79BFF7: the unpack frame (+ 0x48, the crew's clock) and every member of the lists learns the keep (member + 0x14, RW 0x7990D9: the port
 	// keeps a pad's occupant in its occupantId, see S-952; lane DECOMP-2: the keep goes to the member's keepId, which Object::updateUpgradeModules reads)
@@ -1032,7 +1071,7 @@ void CastleBehavior::forEachMember(bool kill)
 			Object *victim = o->isKindOf((unsigned)n.baseFoundation) ? occupantOf(*o) : o;
 			if (victim)
 			{
-				victim->kill(DEATH_NORMAL);
+				victim->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x797F40: kill(8, 0)
 			}
 		}
 		else if (o->isKindOf((unsigned)n.baseFoundation))
@@ -1080,7 +1119,7 @@ void CastleBehavior::releaseCrew(bool kill)
 			logic.noteStop("[S-951] castle: the crew's release (RW 0x798344, EntEnragedUpdate / LifetimeUpdate) is not ported");
 			if (kill)
 			{
-				o->kill(DEATH_NORMAL); // RW 0x79A2D9: Object::kill(UNRESISTABLE, NORMAL)
+				o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x79A284: kill(8 = UNRESISTABLE, 0 = NORMAL)
 			}
 		}
 	}
@@ -1195,7 +1234,7 @@ void CastleBehavior::pack()
 	m_defenseFoundations.clear();
 	m_hasWalkOnWall = false;
 	releaseCrew(true); // RW 0x79CDB5: RW 0x79A237(1)
-	// RW 0x79A37D frees the castle's decal objects (+ 0x80, client)
+	freeAreas();       // lane CASTLEAREA-1: RW 0x79A37D, the area triggers of + 0x80
 	if (Object *keep = m_keepId != INVALID_ID ? logic.findObjectByID(m_keepId) : nullptr)
 	{
 		logic.destroyObject(keep);
@@ -1215,6 +1254,142 @@ void CastleBehavior::pack()
 	{
 		ai->addObjectToPathfindMap(*castle); // RW 0x79CE5B: RW 0x6E85E9
 	}
+}
+
+// ---- lane CASTLEAREA-1: the castle's areas (see CastleModules.h) ----
+// RW 0x79B881: the key's areas in order (RW 0x72D76E); the port's key is the layout the unpack read (the same base name, RW 0x799021 -> 0x798F70)
+void CastleBehavior::buildAreas(const CastleTemplate &layout)
+{
+	Object *castle = getObject();
+	for (const CastleTemplateLine &line : layout.lines)
+	{
+		if (line.points.empty())
+		{
+			continue; // RW 0x731010 keeps only a line with points (RW 0x73113F)
+		}
+		// RW 0x79AB88 -> polygon vslot 0x28 (RW 0x73253A -> RW 0x70C9C4): the castle's transform (Object + 8) applied to each point (SSE, z 0)
+		const float *b = castle->getBasis(); // row major: m00 m01 m02 / m10 m11 m12
+		const Coord3D &t = *castle->getPosition();
+		Area area;
+		for (const Point2F &q : line.points)
+		{
+			const float x = SimMath::addf32(SimMath::addf32(SimMath::addf32(SimMath::mulf32(b[1], q.y), SimMath::mulf32(b[0], q.x)), SimMath::mulf32(b[2], 0.0f)), t.x);
+			const float y = SimMath::addf32(SimMath::addf32(SimMath::addf32(SimMath::mulf32(b[3], q.x), SimMath::mulf32(b[4], q.y)), SimMath::mulf32(b[5], 0.0f)), t.y);
+			area.points.push_back(x);
+			area.points.push_back(y);
+		}
+		// RW 0x7982A5 with the list's size after the push_back (RW 0x79ABD0): "Dynamic %s of id %d at index %d"
+		char name[512];
+		std::snprintf(name, sizeof(name), "Dynamic %s of id %d at index %d", castle->getTemplate()->getName().c_str(), (int)castle->getID(), (int)m_areas.size() + 1);
+		area.name = name;
+		registerArea(std::move(area), -1);
+	}
+}
+
+// RW 0x79AB88: the callback RW 0x79A218 with the module as its context (the port: the castle's id, found again at each call), + 0x80, addPolygonTrigger
+void CastleBehavior::registerArea(Area area, int savedIndex)
+{
+	GameLogic &logic = getObject()->logic();
+	const ObjectID castleId = getObject()->getID();
+	TriggerArea trigger;
+	trigger.name = area.name;
+	for (size_t i = 0; i + 1 < area.points.size(); i += 2)
+	{
+		trigger.points.push_back(Point2F{ area.points[i], area.points[i + 1] });
+	}
+	// RW 0x79A218(object, context, entered)
+	auto dispatch = [&logic, castleId](Object &obj, bool entered) {
+		Object *castle = logic.findObjectByID(castleId);
+		CastleBehavior *cb = castle ? dynamic_cast<CastleBehavior *>(castle->findModule("CastleBehavior")) : nullptr;
+		if (!cb)
+		{
+			return;
+		}
+		if (entered)
+		{
+			cb->onTriggerEntered(obj); // RW 0x79A22B
+		}
+		else
+		{
+			cb->onTriggerExited(obj); // RW 0x79A231
+		}
+	};
+	if (savedIndex >= 0)
+	{
+		logic.scriptEngine().addPolygonTriggerAt(savedIndex, trigger, dispatch);
+		area.trigger = savedIndex;
+	}
+	else
+	{
+		area.trigger = logic.scriptEngine().addPolygonTrigger(trigger, dispatch); // RW 0x6E4A99
+	}
+	m_areas.push_back(std::move(area));
+}
+
+// RW 0x79A37D
+void CastleBehavior::freeAreas()
+{
+	if (m_areas.empty())
+	{
+		return;
+	}
+	ScriptEngine &engine = getObject()->logic().scriptEngine();
+	for (const Area &a : m_areas)
+	{
+		engine.removePolygonTrigger(a.trigger); // RW 0x6E4ABE, RW 0x6263AF
+	}
+	m_areas.clear();
+}
+
+// RW 0x799157
+void CastleBehavior::onTriggerEntered(Object &obj)
+{
+	static const int ignoredInGui = ObjectTemplateInfoBuilder::kindOfIndex("IGNORED_IN_GUI"); // template + 0x10D bit 7
+	static const int insideCastle = ObjectTemplateInfoBuilder::objectStatusIndex("INSIDE_CASTLE"); // 0x55
+	GameLogic &logic = obj.logic();
+	if (ignoredInGui < 0 || !obj.isKindOf((unsigned)ignoredInGui))
+	{
+		obj.setStatus((unsigned)insideCastle, true); // RW 0x799339: RW 0x62684D(0x55, 1)
+		m_inside.insert(obj.getID());               // RW 0x799352: set<int>::insert
+		return;
+	}
+	Object *keep = m_keepId != INVALID_ID ? logic.findObjectByID(m_keepId) : nullptr; // RW 0x799186
+	AIUpdateInterface *ai = keep ? obj.getAIUpdateInterface() : nullptr;               // + 0x260
+	if (!ai || !ai->hasAnimalInterface() || !ai->animalAfraidOfCastles())               // vslot 0x180, its slot 0
+	{
+		return;
+	}
+	// RW 0x79923D: d = itself - the keep; RW 0x405553: the length (RW 0x4054F5: x87 (z z + y y) + x x, CRT sqrt, fst dword), inv = 1 / len (divss, no zero
+	// test), x inv, inv y, inv z; dest = its position + d * 150 (mulss, addss)
+	const Coord3D &p = *obj.getPosition(), &k = *keep->getPosition();
+	const float dx = SimMath::subf32(p.x, k.x), dy = SimMath::subf32(p.y, k.y), dz = SimMath::subf32(p.z, k.z);
+	const double sum = NumericState::pc24AddW(NumericState::pc24AddW(NumericState::pc24MulW(dz, dz), NumericState::pc24MulW(dy, dy)), NumericState::pc24MulW(dx, dx));
+	const float len = NumericState::fstpDword(NumericState::sqrtPC24(sum));
+	const float inv = SimMath::divf32(1.0f, len);
+	const float kAway = 150.0f; // RW 0xC041F8
+	Coord3D dest;
+	dest.x = SimMath::addf32(p.x, SimMath::mulf32(SimMath::mulf32(dx, inv), kAway));
+	dest.y = SimMath::addf32(p.y, SimMath::mulf32(SimMath::mulf32(inv, dy), kAway));
+	dest.z = SimMath::addf32(p.z, SimMath::mulf32(SimMath::mulf32(inv, dz), kAway));
+	AIWorld &w = ai->world();
+	if (w.mapReady())
+	{
+		w.pathfinder().removeGoal(ai->adapter()); // RW 0x7992D2: RW 0x68B401
+	}
+	ai->mover().requestPath(dest, true); // RW 0x7992DF: RW 0x667ED1(dest, 1)
+}
+
+// RW 0x79935E
+void CastleBehavior::onTriggerExited(Object &obj)
+{
+	static const int insideCastle = ObjectTemplateInfoBuilder::objectStatusIndex("INSIDE_CASTLE");
+	auto it = m_inside.find(obj.getID());
+	if (it == m_inside.end())
+	{
+		return;
+	}
+	obj.setStatus((unsigned)insideCastle, false); // RW 0x62684D(0x55, 0)
+	m_inside.erase(it);
 }
 
 // RW 0x79B3C4
@@ -1332,8 +1507,8 @@ std::vector<std::string> CastleBehavior::stopLines()
 		"RW 0x625E0A, the camp EVA (RW 0x799440), the button's readiness clock and the client fades / decals; reached at runtime they are noted",
 		"[S-952] castle: inference in the ported states: the capture scan and the push out run on ThePartitionManager (types 0 and 3, S-1020), the "
 		"push out's geometry overlap filter (RW 0x67C5F3 -> RW 0xAD2CE0) and the horde's slot 0x1C8 test (RW 0x79C88F) are not ported, a plot's occupant counts while the object exists (retail clears the "
-		"plot's + 0x28 in the plot's own update RW 0x8584DB), a packed castle's upgrades are not reset (RW 0x68E083); FilterValidOwnedEntries unset is taken as accepting everything; RW 0x683955 and "
-		"RW 0x79B881 of the unpack were not read; retail's member + 0x14 is the keep's id (RW 0x7990D9 / 0x79A09D), the port keeps a pad's occupant there (RW 0x79A518's keep test is not ported)",
+		"plot's + 0x28 in the plot's own update RW 0x8584DB), a packed castle's upgrades are not reset (RW 0x68E083); FilterValidOwnedEntries unset is taken as accepting everything; RW 0x683955 of the "
+		"unpack was not read; retail's member + 0x14 is the keep's id (RW 0x7990D9 / 0x79A09D), the port keeps a pad's occupant there (RW 0x79A518's keep test is not ported)",
 	};
 }
 
@@ -1360,6 +1535,20 @@ void CastleBehavior::crc(StateHasher &h) const
 	{
 		h.addU32((std::uint32_t)list->size());
 		for (ObjectID id : *list)
+		{
+			h.addU32(id);
+		}
+	}
+	if (!m_areas.empty() || !m_inside.empty())
+	{
+		// lane CASTLEAREA-1: hashed once a castle has areas (a castle without them, every skirmish fortress, keeps its hash)
+		h.addU32((std::uint32_t)m_areas.size());
+		for (const Area &a : m_areas)
+		{
+			h.addI32(a.trigger);
+		}
+		h.addU32((std::uint32_t)m_inside.size());
+		for (ObjectID id : m_inside)
 		{
 			h.addU32(id);
 		}
@@ -1445,7 +1634,8 @@ void CastleModules::registerAll(ModuleFactory &modules)
 // ---- lane SAVE-4b: the snapshots (OpenBFME native, S-4190: each class's fields in its crc's order; the last error text is the report's) ----------------
 void CastleBehavior::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 }; // 2: lane CASTLEAREA-1's areas and set
+	x.xferVersion(v);
 	FoundationAIUpdate::xfer(x);
 	SnapshotXfer::enumIn(x, m_state, STATE_IDLE, STATE_ABANDONED, "a castle's state");
 	x.xferBool(&m_needInstantBuild);
@@ -1461,6 +1651,32 @@ void CastleBehavior::xfer(Xfer &x)
 	for (std::vector<ObjectID> *list : { &m_owned, &m_foundations, &m_members, &m_crew, &m_defenseFoundations })
 	{
 		SnapshotXfer::ids(x, *list);
+	}
+	// lane CASTLEAREA-1 (version 2): the areas (+ 0x80: each trigger's index, name and world points; a load puts each back at its index) and the set + 0x8C. A
+	// version 1 snapshot was written before the port made areas: its castles have none
+	if (v.current >= 2)
+	{
+		std::vector<Area> areas = x.isLoading() ? std::vector<Area>() : m_areas;
+		SnapshotXfer::each(x, areas, 4 + 4 + 4, [&](Area &a) {
+			x.xferInt(&a.trigger);
+			SnapshotXfer::checkRange(a.trigger, 0, 0x7FFFFFFF, "a castle area's trigger"); // the script engine's trigger list (addPolygonTriggerAt bounds it)
+			x.xferAsciiString(&a.name);
+			SnapshotXfer::reals(x, a.points);
+			if (x.isLoading() && (a.points.size() < 2 || a.points.size() % 2 != 0))
+			{
+				throw XferException("the snapshot's castle " + std::to_string(getObject()->getID()) + " has an area of " + std::to_string(a.points.size()) + " coordinates");
+			}
+		});
+		SnapshotXfer::ids(x, m_inside);
+		if (x.isLoading())
+		{
+			m_areas.clear();
+			for (Area &a : areas)
+			{
+				const int index = a.trigger;
+				registerArea(std::move(a), index);
+			}
+		}
 	}
 }
 

@@ -8,11 +8,15 @@
 extends RefCounted
 
 const Semver := preload("res://scripts/core/semver.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 
 ## the titles of the Play card's lines, in the order tried: the added lines (both generations of titles), then the fixed ones, then the changed ones
 const PLAY_TITLES := [["What's new", "Added"], ["What's fixed", "Bug fixes"], ["Changed"]]
 const AREA_MAX := 40
+## the text ids of the month names, January first
+const MONTHS := ["launcher.release_notes.month_1", "launcher.release_notes.month_2", "launcher.release_notes.month_3", "launcher.release_notes.month_4",
+	"launcher.release_notes.month_5", "launcher.release_notes.month_6", "launcher.release_notes.month_7", "launcher.release_notes.month_8", "launcher.release_notes.month_9", "launcher.release_notes.month_10", "launcher.release_notes.month_11", "launcher.release_notes.month_12"]
 
 
 ## {intro: String, sections: [{title, items: [String], groups: [{area, items}]}]} (sections in their order; empty ones left out). `items`
@@ -73,8 +77,7 @@ static func date_text(iso: String) -> String:
 	var d := Time.get_datetime_dict_from_datetime_string(iso, false)
 	if iso.length() < 10 or int(d.get("year", 0)) < 2000 or int(d.get("month", 0)) < 1 or int(d.get("month", 0)) > 12:
 		return ""
-	var months := ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
-	return "%d %s %d" % [int(d.day), months[int(d.month) - 1], int(d.year)]
+	return L10n.t("launcher.release_notes.date", {"day": int(d.day), "month": L10n.t(MONTHS[int(d.month) - 1]), "year": int(d.year)})
 
 
 ## "v0.3.0-preview.2" -> "Preview 2 of 0.3.0"; "v0.4.5" -> "Alpha 0.4.5", "v0.4.0-alpha.3" -> "v0.4.0 Alpha 3" and (lane NIGHTLY-1, owner,
@@ -83,4 +86,4 @@ static func title_of(tag: String) -> String:
 	var m := RegEx.create_from_string("^v(\\d+\\.\\d+\\.\\d+)-preview\\.(\\d+)$").search(tag)
 	if m == null:
 		return Semver.display(tag)
-	return "Preview %s of %s" % [m.get_string(2), m.get_string(1)]
+	return L10n.t("launcher.release_notes.preview_of", {"number": m.get_string(2), "version": m.get_string(1)})

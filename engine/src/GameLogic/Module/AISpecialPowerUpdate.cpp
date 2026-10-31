@@ -745,53 +745,23 @@ void AISpecialPowerUpdate::execute(Object &obj)
 
 void AISpecialPowerUpdate::runButton(Object &obj, Object *target, const Coord3D *loc)
 {
-	// RW 0x696FD2 / 0x697890 / 0x6979D9 with source 1 (CMD_FROM_SCRIPT) and no auto flag
+	// RW 0x696FD2 / 0x697890 / 0x6979D9 with source 1 (CMD_FROM_SCRIPT) and no auto flag (lane MODS-3: Object::doCommandButton and its target forms; their
+	// disabled gates and every command type are theirs)
 	const CommandButton *b = m_decision->button;
-	if (!b || obj.getDisabledMask() != 0)
-	{
-		return; // RW 0x9325B4: a disabled object does nothing (Object + 0xA0 bit 6 taken as clear)
-	}
-	if (b->m_command == GUI_COMMAND_SET_STANCE && !target && !loc)
-	{
-		// RW 0x696FD2 case 0x3A: the object's StancesBehavior (RW 0x861E6E / 0x68BDA5) takes the button's first stance (RW 0x75D324(0)); the debug checks aside
-		if (StancesBehavior *s = StancesBehavior::of(obj))
-		{
-			if (!b->m_stances.empty() && b->m_stances[0] >= 0 && b->m_stances[0] < STANCE_COUNT)
-			{
-				s->setStance((StanceType)b->m_stances[0]);
-			}
-		}
-		return;
-	}
-	if (b->m_command == GUI_COMMAND_TOGGLE_WEAPONSET && !target && !loc)
-	{
-		WeaponSetToggle::toggleFromCommandButton(obj); // RW 0x696FD2 case 0x2D (lane AIPOW-1)
-		return;
-	}
-	if (b->m_command != GUI_COMMAND_SPECIAL_POWER && b->m_command != GUI_COMMAND_SPELL_BOOK)
-	{
-		++stats().unportedCommands;
-		obj.logic().noteStop(kStop);
-		return;
-	}
-	const SpecialPowerTemplate *t = TheSpecialPowerStore && !b->m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(b->m_specialPowerName) : nullptr;
-	if (!t)
-	{
-		return; // a button without a power (+ 0x44 null) does nothing
-	}
-	const unsigned options = b->m_options | 0x40000u;
 	if (loc)
 	{
-		SpecialPowerModules::doSpecialPowerAtLocation(obj, t, *loc, options, true); // force: source == 1
+		obj.doCommandButtonAtPosition(b, *loc, CMD_FROM_SCRIPT, false); // RW 0xA01C54
 	}
 	else if (target)
 	{
-		SpecialPowerModules::doSpecialPowerAtObject(obj, t, target, options, true);
+		obj.doCommandButtonAtObject(b, target, CMD_FROM_SCRIPT, false); // RW 0xA02806
 	}
 	else if (m_decision->kind != AISpecialPowerDecision::KIND_OBJECT)
 	{
-		SpecialPowerModules::doSpecialPower(obj, t, options, true);
+		obj.doCommandButton(b, CMD_FROM_SCRIPT, false); // RW 0x993006
 	}
+	// INFERENCE (S-1421, as before): an object decision whose target is gone reaches RW 0x697890 with a null target; the port's power modules are not
+	// handed a null target, so nothing happens
 }
 
 void AISpecialPowerUpdate::crc(StateHasher &h) const

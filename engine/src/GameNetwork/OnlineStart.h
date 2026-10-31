@@ -9,8 +9,12 @@
 //   { "v": 1, "kind": "openbfme-start", "game": "<16 hex digits>", "slot": <this player's slot>, "relay": "a.b.c.d:port", "ticket": "<base64url, 32 bytes>",
 //     "runAhead": <1 .. 25>, "crcInterval": <0 .. 1000>, "profile": "<the profile identity's MD5, every player's: the service compared them>",
 //     "setup": { "map": "<map cache key>", "seed": <u32>, "startingCash": <-1 (lane ONLINE-4: unset, the InitialResources rule) .. 1e9>, "superweaponRestriction": <int>, "rules": null | [10 ints],
-//                "legendaryHeroes": <1 .. 4>, "slots": [ up to 8 x { "state": "open|closed|player|easy|medium|hard|brutal", "name": "<UTF-8>",
-//                "faction": <player template index or -1 random>, "color": <-1 ..>, "startPos": <-1 ..>, "team": <-1 ..>, "cah": "<base64 .cah>" (optional) } ] } }
+//                "legendaryHeroes": <1 .. 4>, "cheatMode": <the cheat seat's slot> (lane CHEAT-1; optional, absent: off), "slots": [ up to 8 x { "state": "open|closed|player|easy|medium|hard|brutal", "name": "<UTF-8>",
+//                "faction": <player template index or -1 random>, "color": <-1 ..>, "startPos": <-1 ..>, "team": <-1 ..>, "handicap": <0, -5 .. -95> (lane ONLINEMENU-1; absent: 0),
+//                "cah": "<base64 .cah>" (optional) } ] } }
+// WOTR2 milestone 9: v2 is a War of the Ring only. Its setup additionally requires gameMode:1, scenario (LivingWorldCampaign name), resumeSave
+// (absent/empty for a new war, else the saved war's lower-case MD5) and resumeHash (required only with a save); startPos is a region index (0 .. 63).
+// A v1 START carrying these fields is refused, rather than silently starting a skirmish. The lobby service must send v2 on every war START.
 // ONLINE-2 r2: the lobby publishes each game's "openbfme-replay-start" (/v1/replays/<id>/start): the same without "slot", "relay" and "ticket".
 // Missing slots are closed. Every field is checked: an unknown version, a missing or mistyped field, a value out of range, a profile other than this
 // client's, or a slot that is not a human player's is an error (never a default).
@@ -39,6 +43,9 @@ enum class Kind
 // false + *error. `ownProfile`: this client's identity (its digest must equal the START's). A player's START is never accepted as a replay START and
 // the reverse (the lobby publishes replay STARTs to anyone: they must not carry the credentials of a running game)
 bool parse(const std::string &json, const ProfileIdentity &ownProfile, const Limits &limits, LobbyStart &out, std::string *error, Kind kind = Kind::Start);
+// WOTR2 milestone 9: parse a separately ticketed phase using the original war START as its immutable seat/profile contract.
+// The phase START has no setup: it may only replace relay credentials and the live-human mask, never the war's game options.
+bool parsePhase(const std::string &json, const LobbyStart &war, std::uint64_t warGameId, int expectedPhase, LobbyStart &out, std::string *error);
 // UTF-8 -> UTF-16 (strict: false on an invalid sequence)
 bool utf8ToUtf16(const std::string &in, std::u16string &out);
 } // namespace OnlineStart

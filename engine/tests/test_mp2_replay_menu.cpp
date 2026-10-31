@@ -13,6 +13,27 @@
 #include <string>
 #include <vector>
 
+namespace
+{
+// every visible button below `c` (a message box's Ok)
+void visibleButtons(AptCharacterInst *c, std::vector<AptButtonInst *> &out)
+{
+	AptSpriteInst *sp = c ? c->asSprite() : nullptr;
+	if (!sp)
+	{
+		return;
+	}
+	for (AptCharacterInst *child : sp->children())
+	{
+		if (child && child->asButton() && child->globallyVisible())
+		{
+			out.push_back(child->asButton());
+		}
+		visibleButtons(child, out);
+	}
+}
+} // namespace
+
 TEST_CASE("mp2 retail: Load Replay shows SaveLoad.apt's replay page: the files in the two lists with RW 0x818D41's columns, Load hands the chosen file to "
 		  "the host")
 {
@@ -136,15 +157,17 @@ TEST_CASE("mp2 retail: Load Replay shows SaveLoad.apt's replay page: the files i
 	REQUIRE(fx.services.countRequests(ShellAction::LoadReplayFile) == 1);
 	CHECK(fx.services.requests.back().argument == path);
 	CHECK(screen->loaded() == path);
-	// The host's profile refusal uses the same modal as a refused saved game, without leaving the replay list (DEVPORT-7; the rows chosen and Load
-	// pressed through the real list and button, as above).
-	starttest::wheelAndClickRow(fx, autos, 0);
-	starttest::wheelAndClickRow(fx, games, 1);
-	fx.tick(10);
-	starttest::clickButton(fx, *load);
-	fx.tick(60);
-	REQUIRE(fx.services.countRequests(ShellAction::LoadReplayFile) == 2);
-	REQUIRE(fx.services.requests.back().argument == "/r/old.replay");
+	// The host answers a Load by starting the replay (the screen goes) or by refusing it with a box: SaveLoad.apt keeps the pressed Load clip on its
+	// press frame until a box's Ok reveals it (the movie's RevealButtonList after showMessageBox; AptSaveLoad::revealButton after OpenBFME's own
+	// boxes), and LoadButtonEnable("1") on a new selection does not (its vLoadButtonedEnabled is still 1), so retail never takes a second Load
+	// without one of the two in between. KNOWN-3: the refusal is the host's answer to the incompatible replay's Load (this case pressed a second Load
+	// right after a load the host had accepted: the movie rightly ignored it).
+	if (path != "/r/old.replay")
+	{
+		return;
+	}
+	// The host's profile refusal uses the same modal as a refused saved game, without leaving the replay list (DEVPORT-7); its Ok reveals Load, and
+	// the next row chosen and Load pressed through the real list and button load that file.
 	screen->loadRefused("old", "Replay profile: Uber. Current profile: Faithful.");
 	CHECK(screen->boxText() == u"Replay profile: Uber.\nCurrent profile: Faithful.");
 	CHECK_FALSE(games->winGetEnabled());
@@ -152,15 +175,25 @@ TEST_CASE("mp2 retail: Load Replay shows SaveLoad.apt's replay page: the files i
 	const int boxLevel = fx.wm->findAptMovieIndex("GuiFX.apt");
 	// tolerance: the refusal modal must have a live movie level to receive its dismissal callback
 	REQUIRE(boxLevel >= 0);
-	fx.wm->fscommand("_level" + std::to_string(boxLevel) + ".MessageBox_OnButtonOk", "");
-	fx.tick(5);
+	// the player's Ok: the box's own button (its press plays the box's exit and sends "_level<n>.MessageBox_OnButtonOk")
+	std::vector<AptButtonInst *> boxButtons;
+	visibleButtons(fx.wm->apt().level(boxLevel), boxButtons);
+	AptButtonInst *ok = nullptr;
+	for (AptButtonInst *b : boxButtons)
+	{
+		ok = !ok && b->targetPath().find("Ok") != std::string::npos ? b : ok;
+	}
+	REQUIRE(ok);
+	starttest::clickButton(fx, *ok);
+	fx.tick(30);
 	CHECK(fx.shell->top() == screen);
 	CHECK(screen->rows() == expected);
 	CHECK(games->winGetEnabled());
+	starttest::wheelAndClickRow(fx, autos, 0);
 	starttest::wheelAndClickRow(fx, games, 0);
 	fx.tick(10);
 	starttest::clickButton(fx, *load);
 	fx.tick(60);
-	CHECK(fx.services.countRequests(ShellAction::LoadReplayFile) == 3);
+	CHECK(fx.services.countRequests(ShellAction::LoadReplayFile) == 2);
 	CHECK(fx.services.requests.back().argument == "/r/duel.replay");
 }

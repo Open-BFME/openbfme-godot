@@ -58,7 +58,7 @@ float clamp01(float v)
 
 // ZH/BFME1 doTheLight (BaseHeightMap.cpp): ambient of the FIRST terrain light only, plus for each light
 // clamp(dot(lightRay, normal), 0, 1) * diffuse; lightRay = -lightPos. See HeightMapMesh.h (S-033).
-void HeightMapMesh::vertexLight(const TimeOfDayLights &lights, VertexColorMode mode, const float normal[3], float rgb[3])
+void HeightMapMesh::vertexLight(const TimeOfDayLights &lights, VertexColorMode mode, const float normal[3], float rgb[3], const float *lightScale)
 {
 	rgb[0] = lights.terrain[0].ambient[0];
 	rgb[1] = lights.terrain[0].ambient[1];
@@ -70,9 +70,11 @@ void HeightMapMesh::vertexLight(const TimeOfDayLights &lights, VertexColorMode m
 		float rx = -L.lightPos[0], ry = -L.lightPos[1], rz = -L.lightPos[2];
 		float shade = rx * normal[0] + rz * normal[2] + ry * normal[1];
 		shade = clamp01(shade);
-		rgb[0] += shade * L.diffuse[0];
-		rgb[1] += shade * L.diffuse[1];
-		rgb[2] += shade * L.diffuse[2];
+		// RW 0x4690C1: the diffuse copy is scaled by GlobalData + 0x944 / 0x948 / 0x94C before the shade multiplies it
+		for (int c = 0; c < 3; ++c)
+		{
+			rgb[c] += shade * (lightScale ? lightScale[c] * L.diffuse[c] : L.diffuse[c]);
+		}
 	}
 	rgb[0] = clamp01(rgb[0]);
 	rgb[1] = clamp01(rgb[1]);
@@ -97,7 +99,8 @@ void HeightMapMesh::gridNormal(const WorldHeightMap &map, int x, int y, float no
 	normal[2] = cz / len;
 }
 
-void HeightMapMesh::staticDiffuseAt(const WorldHeightMap &map, const GlobalLightingData *lighting, VertexColorMode mode, int gx, int gy, std::uint8_t rgb[3])
+void HeightMapMesh::staticDiffuseAt(const WorldHeightMap &map, const GlobalLightingData *lighting, VertexColorMode mode, int gx, int gy, std::uint8_t rgb[3],
+	const float *lightScale)
 {
 	rgb[0] = rgb[1] = rgb[2] = 255;
 	if (!lighting || lighting->timeOfDay < 1 || lighting->timeOfDay > 4)
@@ -108,7 +111,7 @@ void HeightMapMesh::staticDiffuseAt(const WorldHeightMap &map, const GlobalLight
 	gy = std::max(0, std::min(gy, map.m_height - 1));
 	float n[3], c[3];
 	gridNormal(map, gx, gy, n);
-	vertexLight(lighting->tod[lighting->timeOfDay - 1], mode, n, c);
+	vertexLight(lighting->tod[lighting->timeOfDay - 1], mode, n, c, lightScale);
 	for (int i = 0; i < 3; ++i)
 	{
 		rgb[i] = (std::uint8_t)(int)(c[i] * 255.0f);
@@ -157,7 +160,7 @@ bool HeightMapMesh::build(const WorldHeightMap &map, const GlobalLightingData *l
 		for (size_t i = 0; i < (size_t)w * (size_t)h; ++i)
 		{
 			float rgb[3];
-			vertexLight(lighting->tod[tod], options.colorMode, &normals[i * 3], rgb);
+			vertexLight(lighting->tod[tod], options.colorMode, &normals[i * 3], rgb, options.lightScale);
 			for (int c = 0; c < 3; ++c)
 			{
 				colors[i * 3 + (size_t)c] = (std::uint8_t)(int)(rgb[c] * 255.0f); // ZH: (Int)shade*255
@@ -172,6 +175,11 @@ bool HeightMapMesh::build(const WorldHeightMap &map, const GlobalLightingData *l
 		+ (options.colorMode == VERTEX_COLOR_AMBIENT_PLUS_ACCENT_LIGHTS ? "terrain[0] ambient + accent lights terrain[1], terrain[2] (INFERRED; the sun is per pixel)"
 			: "terrain[0] ambient + all three terrain lights (BFME1 doTheLight verbatim)")
 		+ "; water depth fade not applied");
+	if (options.lightScale[0] != 1.0f || options.lightScale[1] != 1.0f || options.lightScale[2] != 1.0f)
+	{
+		stats.assumptions.push_back("S-033 terrain light scale (" + std::to_string(options.lightScale[0]) + ", " + std::to_string(options.lightScale[1]) + ", "
+			+ std::to_string(options.lightScale[2]) + ") multiplies every terrain light's diffuse in the vertex colour (RW 0x4690C1, rendering mode 0)");
+	}
 	stats.assumptions.push_back(std::string("S-030 cliff UV unit = ")
 		+ (options.uv.cliffUnit == CLIFF_UV_ATLAS_2048 ? "2048-px atlas fractions (BFME1/ZH formula, no wrap: a cell past its class reads the neighbouring atlas texels as the donor does)"
 			: "256-px units wrapped per pixel inside the texture class block (INFERRED from the corpus, unverified for BFME2)")

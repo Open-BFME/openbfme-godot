@@ -83,7 +83,7 @@ bool canCrush(const Object &obj);      // RW 0x68D524
 void onCrush(Object &crusher, Object &victim);
 // RW 0x696800: `crusher` touched `victim` too slowly to crush it
 void onBump(Object &crusher, Object &victim);
-// the planar shape test of RW 0xAD2CE0 with `self`'s radii replaced by `selfRadius` (both)
+// RW 0x8BFDE2 .. 0x8BFE4C: RW 0xAD2CE0 (every shape, the heights) of `other` against `self` whose first shape has both radii `selfRadius` (lane FLANK-1)
 bool shapesTouch(const Object &self, float selfRadius, const Object &other);
 // the stop line S-580
 const char *stopLine();
@@ -103,6 +103,7 @@ public:
 	CollideModuleInterface *getCollide() override { return this; }
 	void onCollide(Object *other, const Coord3D *loc, const Coord3D *normal) override; // RW 0x8BFBAE
 	bool wouldLikeToCollideWith(const Object &) const override { return false; }        // collide slot 1: RW 0x7FEAC1 (lane BACKLOG-1)
+	bool pairFactsKnown() const override { return true; } // lane UBER-2B: ObjectCollide::pairIsInert knows its tests
 };
 
 // HordeMemberCollide (lane HORDE-2): physical contact keeps a horde's melee alive. RW onCollide 0x8C0518 (create RW 0x650E45, the shared collide data, no fields):
@@ -125,4 +126,5 @@ public:
 	CollideModuleInterface *getCollide() override { return this; }
 	void onCollide(Object *other, const Coord3D *loc, const Coord3D *normal) override; // RW 0x8C0518
 	bool wouldLikeToCollideWith(const Object &) const override { return false; }        // collide slot 1: RW 0x7FEAC1 (lane BACKLOG-1)
+	bool pairFactsKnown() const override { return true; } // lane UBER-2B: ObjectCollide::pairIsInert knows its tests
 };

@@ -1491,6 +1491,140 @@
    }
    /* not found */
    ts = luaS_newudata(L, 0, udata);
+--- a/lua-4.0.1/src/lib/lstrlib.c
++++ b/lua-4.0.1/src/lib/lstrlib.c
+@@ -1,5 +1,6 @@
+ /*
+ ** $Id: lstrlib.c,v 1.56 2000/10/27 16:15:53 roberto Exp $
++** ALTERED SOURCE VERSION: OpenBFME typed format dispatch; see str_format below.
+ ** Standard library for string operations and pattern-matching
+ ** See Copyright Notice in lua.h
+ */
+@@ -530,6 +531,62 @@
+ /* maximum size of each format specification (such as '%-099.99d') */
+ #define MAX_FORMAT	20
+ 
++
++/* Lua 4.0.1 src/lib/lstrlib.c: retain its formatting language and type checks,
++** but select only literal CRT formats. Width and precision are values, never format bytes. */
++#define FORMAT_SIGNED(conversion, value) \
++  switch (flags & 23) { \
++    case 0: snprintf(buff, sizeof(buff), "%*.*" conversion, width, precision, value); break; \
++    case 1: snprintf(buff, sizeof(buff), "%-*.*" conversion, width, precision, value); break; \
++    case 2: snprintf(buff, sizeof(buff), "%+*.*" conversion, width, precision, value); break; \
++    case 3: snprintf(buff, sizeof(buff), "%-+*.*" conversion, width, precision, value); break; \
++    case 4: snprintf(buff, sizeof(buff), "% *.*" conversion, width, precision, value); break; \
++    case 5: snprintf(buff, sizeof(buff), "%- *.*" conversion, width, precision, value); break; \
++    case 16: if (precision < 0) snprintf(buff, sizeof(buff), "%0*" conversion, width, value); else snprintf(buff, sizeof(buff), "%*.*" conversion, width, precision, value); break; \
++    case 18: if (precision < 0) snprintf(buff, sizeof(buff), "%+0*" conversion, width, value); else snprintf(buff, sizeof(buff), "%+*.*" conversion, width, precision, value); break; \
++    case 20: if (precision < 0) snprintf(buff, sizeof(buff), "% 0*" conversion, width, value); else snprintf(buff, sizeof(buff), "% *.*" conversion, width, precision, value); break; \
++  }
++
++#define FORMAT_UNSIGNED(conversion, value) \
++  switch (flags & 25) { \
++    case 0: snprintf(buff, sizeof(buff), "%*.*" conversion, width, precision, value); break; \
++    case 1: snprintf(buff, sizeof(buff), "%-*.*" conversion, width, precision, value); break; \
++    case 8: snprintf(buff, sizeof(buff), "%#*.*" conversion, width, precision, value); break; \
++    case 9: snprintf(buff, sizeof(buff), "%-#*.*" conversion, width, precision, value); break; \
++    case 16: if (precision < 0) snprintf(buff, sizeof(buff), "%0*" conversion, width, value); else snprintf(buff, sizeof(buff), "%*.*" conversion, width, precision, value); break; \
++    case 24: if (precision < 0) snprintf(buff, sizeof(buff), "%#0*" conversion, width, value); else snprintf(buff, sizeof(buff), "%#*.*" conversion, width, precision, value); break; \
++  }
++
++#define FORMAT_DECIMAL(conversion, value) \
++  switch (flags & 17) { \
++    case 0: snprintf(buff, sizeof(buff), "%*.*" conversion, width, precision, value); break; \
++    case 1: snprintf(buff, sizeof(buff), "%-*.*" conversion, width, precision, value); break; \
++    case 16: if (precision < 0) snprintf(buff, sizeof(buff), "%0*" conversion, width, value); else snprintf(buff, sizeof(buff), "%*.*" conversion, width, precision, value); break; \
++  }
++
++#define FORMAT_FLOAT(conversion, value) \
++  switch (flags & 31) { \
++    case 0: snprintf(buff, sizeof(buff), "%*.*" conversion, width, precision, value); break; \
++    case 1: snprintf(buff, sizeof(buff), "%-*.*" conversion, width, precision, value); break; \
++    case 2: snprintf(buff, sizeof(buff), "%+*.*" conversion, width, precision, value); break; \
++    case 3: snprintf(buff, sizeof(buff), "%-+*.*" conversion, width, precision, value); break; \
++    case 4: snprintf(buff, sizeof(buff), "% *.*" conversion, width, precision, value); break; \
++    case 5: snprintf(buff, sizeof(buff), "%- *.*" conversion, width, precision, value); break; \
++    case 8: snprintf(buff, sizeof(buff), "%#*.*" conversion, width, precision, value); break; \
++    case 9: snprintf(buff, sizeof(buff), "%-#*.*" conversion, width, precision, value); break; \
++    case 10: snprintf(buff, sizeof(buff), "%+#*.*" conversion, width, precision, value); break; \
++    case 11: snprintf(buff, sizeof(buff), "%-+#*.*" conversion, width, precision, value); break; \
++    case 12: snprintf(buff, sizeof(buff), "% #*.*" conversion, width, precision, value); break; \
++    case 13: snprintf(buff, sizeof(buff), "%- #*.*" conversion, width, precision, value); break; \
++    case 16: snprintf(buff, sizeof(buff), "%0*.*" conversion, width, precision, value); break; \
++    case 18: snprintf(buff, sizeof(buff), "%+0*.*" conversion, width, precision, value); break; \
++    case 20: snprintf(buff, sizeof(buff), "% 0*.*" conversion, width, precision, value); break; \
++    case 24: snprintf(buff, sizeof(buff), "%#0*.*" conversion, width, precision, value); break; \
++    case 26: snprintf(buff, sizeof(buff), "%+#0*.*" conversion, width, precision, value); break; \
++    case 28: snprintf(buff, sizeof(buff), "% #0*.*" conversion, width, precision, value); break; \
++  }
++
++
+ static int str_format (lua_State *L) {
+   int arg = 1;
+   const char *strfrmt = luaL_check_string(L, arg);
+@@ -545,6 +602,9 @@
+       char form[MAX_FORMAT];  /* to store the format ('%...') */
+       char buff[MAX_ITEM];  /* to store the formatted item */
+       const char *initf = strfrmt;
++      const char *f;
++      const char *flagchars = "-+ #0";
++      int flags = 0, width = 0, precision = -1;
+       form[0] = '%';
+       if (isdigit((unsigned char)*initf) && *(initf+1) == '$') {
+         arg = *initf - '0';
+@@ -559,16 +619,34 @@
+         lua_error(L, "invalid format (width or precision too long)");
+       strncpy(form+1, initf, strfrmt-initf+1); /* +1 to include conversion */
+       form[strfrmt-initf+2] = 0;
++      f = form + 1;
++      while (*f && strchr(flagchars, *f)) {
++        flags |= 1 << (strchr(flagchars, *f) - flagchars);
++        ++f;
++      }
++      while (isdigit((unsigned char)*f)) width = width * 10 + (*f++ - '0');
++      if (*f == '.') {
++        precision = 0;
++        ++f;
++        while (isdigit((unsigned char)*f)) precision = precision * 10 + (*f++ - '0');
++      }
++      if (flags & 1) flags &= ~16;  /* '-' overrides '0' */
++      if (flags & 2) flags &= ~4;   /* '+' overrides space */
+       switch (*strfrmt++) {
+-        case 'c':  case 'd':  case 'i':
+-          sprintf(buff, form, luaL_check_int(L, arg));
++        case 'c':
++          snprintf(buff, sizeof(buff), "%*c", (flags & 1) ? -width : width, luaL_check_int(L, arg));
+           break;
+-        case 'o':  case 'u':  case 'x':  case 'X':
+-          sprintf(buff, form, (unsigned int)luaL_check_number(L, arg));
+-          break;
+-        case 'e':  case 'E': case 'f': case 'g': case 'G':
+-          sprintf(buff, form, luaL_check_number(L, arg));
+-          break;
++        case 'd': FORMAT_SIGNED("d", luaL_check_int(L, arg)); break;
++        case 'i': FORMAT_SIGNED("i", luaL_check_int(L, arg)); break;
++        case 'o': FORMAT_UNSIGNED("o", (unsigned int)luaL_check_number(L, arg)); break;
++        case 'u': FORMAT_DECIMAL("u", (unsigned int)luaL_check_number(L, arg)); break;
++        case 'x': FORMAT_UNSIGNED("x", (unsigned int)luaL_check_number(L, arg)); break;
++        case 'X': FORMAT_UNSIGNED("X", (unsigned int)luaL_check_number(L, arg)); break;
++        case 'e': FORMAT_FLOAT("e", luaL_check_number(L, arg)); break;
++        case 'E': FORMAT_FLOAT("E", luaL_check_number(L, arg)); break;
++        case 'f': FORMAT_FLOAT("f", luaL_check_number(L, arg)); break;
++        case 'g': FORMAT_FLOAT("g", luaL_check_number(L, arg)); break;
++        case 'G': FORMAT_FLOAT("G", luaL_check_number(L, arg)); break;
+         case 'q':
+           luaI_addquoted(L, &b, arg);
+           continue;  /* skip the "addsize" at the end */
+@@ -583,7 +661,7 @@
+             continue;  /* skip the "addsize" at the end */
+           }
+           else {
+-            sprintf(buff, form, s);
++            snprintf(buff, sizeof(buff), "%*.*s", (flags & 1) ? -width : width, precision, s);
+             break;
+           }
+         }
 --- a/lua-4.0.1/src/ltable.c
 +++ b/lua-4.0.1/src/ltable.c
 @@ -1,3 +1,9 @@

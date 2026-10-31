@@ -1,14 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Lobby, MAX_SIGHTINGS, configFromEnv, route } from '../src/lobby.mjs';
-import { cleanupReportData, readPlayerReport, readPlayerReports, submitPlayerReport } from '../src/reports.mjs';
+import { cleanupReportData, readPlayerReport, readPlayerReports, submitPlayerReport, REPORT_TTL_S } from '../src/reports.mjs';
 import { fileStore, nodeEnv } from '../src/server.mjs';
 import { durableReportTransaction, LobbyObject } from '../src/worker.mjs';
 import { identityStorage } from './identity-storage.mjs';
+import { SqliteIdentityStore } from '../src/identity-store.mjs';
 
 const TICKET_KEY = '01'.repeat(32);
 const ADMIN_KEY = 'a1'.repeat(32);
@@ -32,6 +34,286 @@ const SETUP = {
   ],
 };
 const encoder = new TextEncoder();
+
+test('moderation report list and detail repair legacy report and closed-roster text', async () => {
+  for (const text of ['\ud800x', 'é e\u0301 🌍']) {
+    const reports = memoryReportStore();
+    const env = fakeEnv({ reportTransaction: reports.reportTransaction.bind(reports) });
+    const lobby = new Lobby(env, configFromEnv(ENV));
+    const host = (await guest(lobby, 'Host', 'a'.repeat(32))).body;
+    const other = (await guest(lobby, 'Other', 'b'.repeat(32))).body;
+    const reporter = await lobby.account(`Bearer ${host.token}`);
+    const target = await lobby.account(`Bearer ${other.token}`);
+    const game = '0123456789abcdef';
+    reports.data.set(`roster:${game}`, {
+      game_id: game,
+      participants: [reporter, target].map((account) => ({ account: account.id, install: account.install, nick: text })),
+      active: [], state: 'finished', ended_at: Math.floor(env.now() / 1000),
+    });
+    const submitted = await call(lobby, 'POST', '/v1/reports', {
+      token: host.token,
+      body: { v: 1, game_id: game, target: target.id, reason: 'other: note' },
+      headers: { 'idempotency-key': 'legacy-text-001' },
+    });
+    assert.equal(submitted.status, 201, JSON.stringify(submitted.body));
+    const id = submitted.body.report_id;
+    const source = reports.data.get(`report:${id}`);
+    assert.equal(source.reporter.nick, text.toWellFormed());
+    assert.equal(source.target.nick, text.toWellFormed());
+    source.reporter.nick = text;
+    source.target.nick = text;
+    source.reason = `other: ${text}`;
+    const before = JSON.stringify(source);
+    const expected = { ...source, reporter: { ...source.reporter, nick: text.toWellFormed() },
+      target: { ...source.target, nick: text.toWellFormed() }, reason: `other: ${text.toWellFormed()}` };
+    const detail = await admin(lobby, 'GET', `/v1/admin/mod/reports/${id}`, undefined, env);
+    assert.equal(detail.status, 200);
+    assert.equal(detail.rawBody, JSON.stringify({ v: 1, report: expected }));
+    const list = await admin(lobby, 'GET', '/v1/admin/mod/reports', undefined, env);
+    assert.equal(list.status, 200);
+    assert.equal(list.rawBody, JSON.stringify({ v: 1, items: [expected], next_cursor: null }));
+    assert.equal(JSON.stringify(reports.data.get(`report:${id}`)), before, 'read repair does not mutate storage');
+  }
+});
+
+test('a malformed legacy report is logged and skipped without losing the other reports', async () => {
+  const reports = memoryReportStore();
+  const env = fakeEnv({ reportTransaction: reports.reportTransaction.bind(reports) });
+  const lobby = new Lobby(env, configFromEnv(ENV));
+  const now = Math.floor(env.now() / 1000);
+  const id = `R-${'a'.repeat(24)}`;
+  const source = { id, source: 'player', reporter: { install: 'a'.repeat(32), nick: '\ud800x' },
+    target: { install: 'b'.repeat(32), nick: 'Good 🌍' }, game_id: '0123456789abcdef',
+    reason: 'other: note', received_at: now, expires_at: now + REPORT_TTL_S };
+  reports.data.set(`report:${id}`, source);
+  reports.data.set(`index:${String(now).padStart(16, '0')}:${id}`, { id, expires_at: now + 100 });
+  const broken = `R-${'b'.repeat(24)}`;
+  reports.data.set(`report:${broken}`, { ...source, id: broken, reporter: null });
+  reports.data.set(`index:${String(now).padStart(16, '0')}:${broken}`, { id: broken, expires_at: now + 100 });
+  const warnings = [];
+  const warn = console.warn;
+  console.warn = (message) => warnings.push(message);
+  try {
+    const list = await admin(lobby, 'GET', '/v1/admin/mod/reports', undefined, env);
+    assert.equal(list.status, 200);
+    assert.deepEqual(list.body.items.map((item) => item.reporter.nick), ['�x']);
+    assert.equal((await admin(lobby, 'GET', `/v1/admin/mod/reports/${broken}`, undefined, env)).status, 404);
+    assert.match(warnings.join('\n'), /skipping malformed stored report/);
+  } finally { console.warn = warn; }
+});
+
+function legacySighting(install, text, now) {
+  return { install, nicks: [{ nick: text, first_seen: now, last_seen: now }], first_seen: now, last_seen: now,
+    signins: 1, platform: 'linux', version: text,
+    devices: [{ hash: 'd'.repeat(64), count: 1, first_seen: now, last_seen: now }] };
+}
+
+test('file sightings persist text-only repairs and leave well-formed JSON files byte-identical', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'openbfme-text-'));
+  try {
+    const store = fileStore(dir);
+    const env = fakeEnv(store);
+    const now = Math.floor(env.now() / 1000);
+    for (const [install, text] of [['a'.repeat(32), '\ud800x'], ['b'.repeat(32), 'é e\u0301 🌍']]) {
+      const path = join(dir, 'sightings', `${install}.json`);
+      const raw = JSON.stringify(legacySighting(install, text, now), null, 2) + '\n';
+      writeFileSync(path, raw);
+      const records = store.loadSightings();
+      const lobby = new Lobby(env, configFromEnv(ENV));
+      lobby.load([], [], [], records);
+      const detail = await admin(lobby, 'GET', `/v1/admin/mod/players/${install}`, undefined, env);
+      const list = await admin(lobby, 'GET', '/v1/admin/mod/players', undefined, env);
+      assert.equal(detail.status, 200);
+      assert.equal(list.status, 200);
+      assert.equal(detail.body.nick, text.toWellFormed());
+      assert.equal(detail.body.version, text.toWellFormed());
+      assert.equal(list.body.players.find((player) => player.install === install).nick, text.toWellFormed());
+      if (text.isWellFormed()) assert.equal(readFileSync(path, 'utf8'), raw);
+      else {
+        const repaired = JSON.parse(readFileSync(path, 'utf8'));
+        assert.equal(repaired.platform, 'linux');
+        assert.equal(repaired.version, '�x');
+        assert.equal(repaired.nicks[0].nick, '�x');
+      }
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('completed DO migrations rerun text repair, persist unchanged-platform sightings and rebuild nickname indexes', async () => {
+  const storage = identityStorage();
+  try {
+    const index = new SqliteIdentityStore(storage);
+    const now = Math.floor(Date.now() / 1000);
+    const badInstall = 'a'.repeat(32);
+    const goodInstall = 'b'.repeat(32);
+    const kvInstall = 'c'.repeat(32);
+    index.saveSighting(legacySighting(badInstall, '\ud800x', now));
+    const good = legacySighting(goodInstall, 'é e\u0301 🌍', now);
+    index.saveSighting(good);
+    const before = storage.sql.exec('SELECT payload FROM identity_sightings WHERE install = ?', goodInstall).toArray()[0].payload;
+    await storage.put(`sighting:${kvInstall}`, legacySighting(kvInstall, '\ud800x', now));
+    for (const prefix of ['sighting:', 'enforcement:', 'platform-v1:kv', 'platform-v1:sql']) {
+      storage.sql.exec('INSERT OR REPLACE INTO identity_migration VALUES (?, NULL, 1)', prefix);
+    }
+    const state = { storage, blockConcurrencyWhile(fn) { return fn(); } };
+    const object = new LobbyObject(state, { ...ENV, LOG_STORE: '' });
+    await object.readyPromise;
+    assert.equal(object.ready, true);
+    const persisted = JSON.parse(storage.sql.exec('SELECT payload FROM identity_sightings WHERE install = ?', badInstall).toArray()[0].payload);
+    assert.equal(persisted.platform, 'linux');
+    assert.equal(persisted.version, '�x');
+    assert.equal(persisted.nicks[0].nick, '�x');
+    assert.equal((await storage.get(`sighting:${kvInstall}`)).nicks[0].nick, '�x');
+    assert.equal(storage.sql.exec('SELECT nick FROM identity_nicks WHERE install = ?', badInstall).toArray()[0].nick, '�x');
+    assert.equal(storage.sql.exec('SELECT payload FROM identity_sightings WHERE install = ?', goodInstall).toArray()[0].payload, before);
+    const env = { now: () => Date.now() };
+    const list = await admin(object.lobby, 'GET', `/v1/admin/mod/players?q=${encodeURIComponent('�x')}`, undefined, env);
+    assert.equal(list.status, 200);
+    assert.deepEqual(list.body.players.map((player) => player.install), [badInstall]);
+    const detail = await admin(object.lobby, 'GET', `/v1/admin/mod/players/${badInstall}`, undefined, env);
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.nick, '�x');
+    assert.equal(detail.body.version, '�x');
+    assert.equal(detail.body.linked[0].nick, good.nicks[0].nick);
+  } finally { storage.db.close(); }
+});
+
+for (const source of ['legacy-kv', 'platform-kv', 'platform-sql']) {
+  test(`${source} sighting upgrade keeps international intake names and skips malformed records without blocking readiness`, async () => {
+    const storage = identityStorage();
+    const warnings = [];
+    const warn = console.warn;
+    console.warn = (message) => warnings.push(message);
+    try {
+      const env = fakeEnv();
+      env.now = () => Date.now();
+      const prior = new Lobby(env, configFromEnv(ENV));
+      const index = new SqliteIdentityStore(storage);
+      const names = ['玩家的名字真好听呀', '🧙‍♂️🌍', 'مرحبا بالعالم', '界'.repeat(24), '😀'.repeat(24), 'ا'.repeat(24), 'x'.repeat(24)];
+      const before = new Map();
+      for (const [i, name] of names.entries()) {
+        const install = (i + 1).toString(16).padStart(32, '0');
+        const signedIn = await call(prior, 'POST', '/v1/auth/guest', { body: {
+          name, install, device: 'd'.repeat(64), client: { platform: 'linux', version: 'fixture' },
+        } });
+        assert.equal(signedIn.status, 200, name);
+        const record = env.persisted.sightings.get(install);
+        const payload = JSON.stringify(record, null, 2) + '\n';
+        before.set(install, { name, payload });
+        if (source === 'platform-sql') {
+          index.saveSighting(record);
+          storage.sql.exec('UPDATE identity_sightings SET payload = ? WHERE install = ?', payload, install);
+        } else {
+          storage.sql.exec('INSERT INTO test_kv VALUES (?, ?)', `sighting:${install}`, payload);
+          if (source === 'platform-kv') index.saveSighting(record);
+        }
+      }
+      const repairInstall = 'e'.repeat(32);
+      const repair = { ...legacySighting(repairInstall, '\ud800'.repeat(24), Math.floor(Date.now() / 1000)), version: 'fixture' };
+      if (source !== 'legacy-kv') index.saveSighting(repair);
+      if (source !== 'platform-sql') await storage.put(`sighting:${repairInstall}`, repair);
+      const brokenInstall = 'f'.repeat(32);
+      const broken = legacySighting(brokenInstall, 'Broken', Math.floor(Date.now() / 1000));
+      index.saveSighting(broken);
+      broken.signins = 0;
+      if (source === 'platform-sql') {
+        storage.sql.exec('UPDATE identity_sightings SET payload = ? WHERE install = ?', JSON.stringify(broken), brokenInstall);
+      } else {
+        await storage.put(`sighting:${brokenInstall}`, broken);
+      }
+      if (source !== 'legacy-kv') for (const prefix of ['sighting:', 'enforcement:', 'platform-v1:kv', 'platform-v1:sql']) {
+        storage.sql.exec('INSERT INTO identity_migration VALUES (?, NULL, 1)', prefix);
+      }
+      storage.sql.exec('DROP TABLE identity_migration_skips');
+      const state = { storage, blockConcurrencyWhile: (fn) => fn() };
+      const object = new LobbyObject(state, { ...ENV, LOG_STORE: '' });
+      await object.readyPromise;
+      assert.equal(object.ready, true);
+      assert.equal(object.migrationError, null);
+      assert.equal((await object.fetch(new Request('https://lobby.test/v1/health'))).status, 200);
+      for (const [install, { name, payload }] of before) {
+        assert.deepEqual(Buffer.from(object.identity.getSighting(install).nicks[0].nick), Buffer.from(name));
+        assert.equal(object.identity.players(name.toLocaleLowerCase('en-US'), null, 10, Math.floor(Date.now() / 1000))[0].install, install);
+        const stored = source === 'platform-sql'
+          ? storage.sql.exec('SELECT payload FROM identity_sightings WHERE install = ?', install).toArray()[0].payload
+          : storage.sql.exec('SELECT value FROM test_kv WHERE key = ?', `sighting:${install}`).toArray()[0].value;
+        assert.equal(stored, payload);
+      }
+      assert.equal(object.identity.getSighting(brokenInstall), undefined);
+      assert.equal(object.identity.getSighting(repairInstall).nicks[0].nick, '�'.repeat(24));
+      for (const table of ['identity_nicks', 'identity_devices']) {
+        assert.equal(storage.sql.exec(`SELECT COUNT(*) AS n FROM ${table} WHERE install = ?`, brokenInstall).toArray()[0].n, 0);
+      }
+      const phase = source === 'platform-sql' ? 'text-v2:sql' : source === 'platform-kv' ? 'text-v2:kv' : 'sighting:';
+      assert.equal(storage.sql.exec('SELECT count FROM identity_migration_skips WHERE prefix = ?', phase).toArray()[0].count, 1);
+      assert.match(warnings.join('\n'), /skipping malformed stored sightings/);
+      const counts = storage.sql.exec('SELECT * FROM identity_migration_skips ORDER BY prefix').toArray();
+      const restarted = new LobbyObject(state, { ...ENV, LOG_STORE: '' });
+      await restarted.readyPromise;
+      assert.equal(restarted.ready, true);
+      assert.deepEqual(storage.sql.exec('SELECT * FROM identity_migration_skips ORDER BY prefix').toArray(), counts);
+    } finally { console.warn = warn; storage.db.close(); }
+  });
+}
+
+test('loaded enforcement and moderation game views repair legacy text without altering good values', async () => {
+  for (const text of ['\ud800x', 'é e\u0301 🌍']) {
+    const env = fakeEnv();
+    const lobby = new Lobby(env, configFromEnv(ENV));
+    const install = 'a'.repeat(32);
+    const host = (await guest(lobby, 'Host', install)).body;
+    const game = await createGame(lobby, host.token);
+    const stored = structuredClone(lobby.games.get(game));
+    stored.name = text;
+    stored.slots[0].name = text;
+    const enforcement = { install, ...effective(1, { notice: { id: text, text } }) };
+    const restored = new Lobby(env, configFromEnv(ENV));
+    restored.load([stored], [], [enforcement]);
+    const games = await admin(restored, 'GET', '/v1/admin/mod/games', undefined, env);
+    assert.equal(games.status, 200);
+    assert.equal(games.body.games[0].name, text.toWellFormed());
+    assert.equal(games.body.games[0].slots[0].name, text.toWellFormed());
+    const states = await admin(restored, 'GET', '/v1/admin/mod/enforcement', undefined, env);
+    assert.equal(states.status, 200);
+    assert.equal(states.body.items[0].notice.text, text.toWellFormed());
+    if (text.isWellFormed()) assert.equal(JSON.stringify(restored.games.get(game)), JSON.stringify(stored));
+  }
+});
+
+test('file and DO game loaders persist repaired text and do not rewrite well-formed records', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'openbfme-games-text-'));
+  const storage = identityStorage();
+  try {
+    const files = fileStore(dir);
+    const env = fakeEnv();
+    const lobby = new Lobby(env, configFromEnv(ENV));
+    const host = (await guest(lobby, 'Host', 'a'.repeat(32))).body;
+    const id = await createGame(lobby, host.token);
+    const original = structuredClone(lobby.games.get(id));
+    original.created = original.touched = Date.now();
+    for (const text of ['\ud800x', 'é e\u0301 🌍']) {
+      const raw = { ...original, name: text, slots: original.slots.map((slot) => ({ ...slot, name: text })) };
+      const path = join(dir, 'games', `${id}.json`);
+      const bytes = JSON.stringify(raw, null, 2) + '\n';
+      writeFileSync(path, bytes);
+      const loaded = files.loadGames()[0];
+      assert.equal(loaded.name, text.toWellFormed());
+      if (text.isWellFormed()) assert.equal(readFileSync(path, 'utf8'), bytes);
+      else assert.equal(JSON.parse(readFileSync(path, 'utf8')).name, '�x');
+      await storage.put(`game:${id}`, raw);
+      const object = new LobbyObject({ storage, blockConcurrencyWhile: (fn) => fn() }, { ...ENV, LOG_STORE: '' });
+      await object.readyPromise;
+      assert.equal(object.ready, true);
+      const saved = await storage.get(`game:${id}`);
+      assert.equal(saved.name, text.toWellFormed());
+      if (text.isWellFormed()) assert.equal(JSON.stringify(saved), JSON.stringify(raw));
+      const response = await admin(object.lobby, 'GET', '/v1/admin/mod/games', undefined, { now: () => Date.now() });
+      assert.equal(response.status, 200);
+      assert.equal(response.body.games[0].name, text.toWellFormed());
+      assert.equal(response.body.games[0].slots[0].name, text.toWellFormed());
+    }
+  } finally { storage.db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
 
 function fakeEnv(storeOverrides = {}) {
   let now = 1_700_000_000_000;
@@ -124,6 +406,7 @@ async function call(lobby, method, path, { token, body, headers = {}, ip = '198.
   return {
     status: out.status,
     headers: out.headers,
+    rawBody: out.body,
     body: out.headers['content-type']?.startsWith('application/json') ? JSON.parse(out.body) : out.body,
   };
 }
@@ -435,6 +718,29 @@ test('enforcement blocks current sessions, expires, mutes chat only, and carries
   const nextGame = await createGame(lobby, first.token, 'still allowed');
   env.advance(11);
   assert.equal((await call(lobby, 'POST', `/v1/games/${nextGame}/chat`, { token: first.token, body: { text: 'hello' } })).status, 200);
+});
+
+test('CHAT-1: a player the moderators muted is chat-muted in every START (by slot), and only while the mute lasts', async () => {
+  const env = fakeEnv();
+  const lobby = new Lobby(env, configFromEnv(ENV));
+  const hostInstall = '6'.repeat(32);
+  const mutedInstall = '7'.repeat(32);
+  const host = (await guest(lobby, 'Hal', hostInstall, 'e'.repeat(64))).body;
+  const other = (await guest(lobby, 'Mo', mutedInstall, 'f'.repeat(64))).body;
+  assert.equal((await update(lobby, env, mutedInstall, effective(1, { mute_until: Math.floor(env.now() / 1000) + 600 }))).status, 200);
+  const id = await startedGame(lobby, host, other);
+  const hostView = (await call(lobby, 'GET', `/v1/games/${id}?since=0`, { token: host.token })).body;
+  const otherView = (await call(lobby, 'GET', `/v1/games/${id}?since=0`, { token: other.token })).body;
+  assert.deepEqual(hostView.start.chatMuted.slice(0, 2), [false, true]);
+  assert.deepEqual(otherView.start.chatMuted, hostView.start.chatMuted);
+  assert.equal('chatMuted' in hostView.start.setup, false); // never in the replay's record
+  // after the mute ended, the next game's START mutes nobody
+  env.advance(601);
+  const host2 = (await guest(lobby, 'Hal', hostInstall, 'e'.repeat(64))).body;
+  const other2 = (await guest(lobby, 'Mo', mutedInstall, 'f'.repeat(64))).body;
+  const id2 = await startedGame(lobby, host2, other2);
+  const view2 = (await call(lobby, 'GET', `/v1/games/${id2}?since=0`, { token: host2.token })).body;
+  assert.equal(view2.start.chatMuted.some((m) => m), false);
 });
 
 test('a ban applies to the next request and signed-in failures never become anonymous', async () => {
@@ -825,6 +1131,7 @@ test('stored state validation is explicit; expired sightings hide immediately an
 
 test('file and Durable Object adapters persist sightings and enforcement independently of relay meta', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'openbfme-wpc-'));
+  let sqlite;
   try {
     const store = fileStore(dir);
     const env = nodeEnv(store);
@@ -911,6 +1218,7 @@ test('file and Durable Object adapters persist sightings and enforcement indepen
     assert.deepEqual(await fakeStorage.get(`sighting:${'2'.repeat(32)}`), undefined);
     assert.deepEqual(await fakeStorage.get(`enforcement:${'2'.repeat(32)}`), undefined);
   } finally {
+    sqlite?.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -1089,6 +1397,30 @@ test('50k bounded sightings search is deterministic for ties and returns opaque 
   assert.equal(lobby.adminPlayers('alex', null, 50).players[0].nick, 'Alex');
 });
 
+test('ONLINEMENU-1 (owner 2026-10-20): a ban blocks the hardware hash by default; block_devices: false skips it; a suspension does not', async () => {
+  const env = fakeEnv();
+  const lobby = new Lobby(env, configFromEnv(ENV));
+  const device = '7'.repeat(64);
+  await guest(lobby, 'Cheater', 'a'.repeat(32), device);
+  await guest(lobby, 'Spared', 'b'.repeat(32), '8'.repeat(64));
+  await guest(lobby, 'Suspended', 'c'.repeat(32), '9'.repeat(64));
+  const ban = (version, extra = {}) => ({ v: 1, version, block: { kind: 'ban', until: null, reason: 'cheating' }, mute_until: null, routing: '', notice: null, devices: [], ...extra });
+  assert.equal((await update(lobby, env, 'a'.repeat(32), ban(1))).status, 200);
+  assert.equal(lobby.getEnforcement('a'.repeat(32)).block_devices, true);
+  assert.deepEqual(lobby.getEnforcement('a'.repeat(32)).devices, [device]);
+  // a new install on the same machine is refused
+  assert.equal((await guest(lobby, 'Fresh install', 'd'.repeat(32), device)).status, 403);
+  // the console's checkbox off: the install only
+  assert.equal((await update(lobby, env, 'b'.repeat(32), ban(1, { block_devices: false }))).status, 200);
+  assert.deepEqual(lobby.getEnforcement('b'.repeat(32)).devices, []);
+  assert.equal((await guest(lobby, 'Same machine', 'e'.repeat(32), '8'.repeat(64))).status, 200);
+  // a suspension never blocks devices
+  const suspend = { ...ban(1), block: { kind: 'suspend', until: null, reason: 'cool down' } };
+  assert.equal((await update(lobby, env, 'c'.repeat(32), suspend)).status, 200);
+  assert.equal(lobby.getEnforcement('c'.repeat(32)).block_devices, undefined);
+  assert.equal((await guest(lobby, 'Other install', 'f'.repeat(32), '9'.repeat(64))).status, 200);
+});
+
 test('block_devices snapshots only the target install, stays frozen, and restores from persistence', async () => {
   const env = fakeEnv();
   const lobby = new Lobby(env, configFromEnv(ENV));
@@ -1182,7 +1514,7 @@ test('player report routes require identity, emit exact receipts, and keep moder
   })).status, 200);
   const hostAccount = await lobby.account(`Bearer ${host.token}`);
   const targetAccount = await lobby.account(`Bearer ${target.token}`);
-  const report = { v: 1, game_id: game, target: targetAccount.id, reason: 'A sufficiently detailed report.' };
+  const report = { v: 1, game_id: game, target: targetAccount.id, reason: 'other: A sufficiently detailed report.' };
   const postPath = '/v1/reports';
   const anonymous = await call(lobby, 'POST', postPath, {
     body: report, headers: { 'idempotency-key': 'route-key-001' },
@@ -1325,7 +1657,7 @@ test('player report routes require identity, emit exact receipts, and keep moder
   assert.equal((await update(lobby, env, hostAccount.install,
     effective(1, { block: { kind: 'ban', until: null, reason: 'account restricted' } }))).status, 200);
   const banned = await call(lobby, 'POST', postPath, {
-    token: host.token, body: { ...report, reason: 'after restriction' },
+    token: host.token, body: { ...report, reason: 'other: after restriction' },
     headers: { 'idempotency-key': 'banned-route-key' },
   });
   assert.equal(banned.status, 403);
@@ -1507,7 +1839,7 @@ test('Durable Object report storage survives restart and pages descending with s
     randomBytes,
     account: { ...reporter, },
     rawBody: encoder.encode(JSON.stringify({
-      v: 1, game_id: '0123456789abcdef', target: target.account, reason: 'durable report',
+      v: 1, game_id: '0123456789abcdef', target: target.account, reason: 'other: durable report',
     })),
     idempotencyKey: key,
     getLiveGame: () => null,
@@ -1529,7 +1861,7 @@ test('Durable Object report storage survives restart and pages descending with s
     randomBytes,
     account: { id: 'guest:do-a', install: 'a'.repeat(32), name: 'A' },
     rawBody: encoder.encode(JSON.stringify({
-      v: 1, game_id: '0123456789abcdef', target: participants[1].account, reason: 'durable report',
+      v: 1, game_id: '0123456789abcdef', target: participants[1].account, reason: 'other: durable report',
     })),
     idempotencyKey: 'do-report-a',
     getLiveGame: () => null,
@@ -1589,7 +1921,7 @@ test('closed, idle, and signed-finished games retain departed report targets for
       v: 1,
       game_id: game,
       target: (await lobby.account(`Bearer ${target.token}`)).id,
-      reason: 'The other participant left before the report.',
+      reason: 'other: The other participant left before the report.',
     },
     headers: { 'idempotency-key': key },
   });

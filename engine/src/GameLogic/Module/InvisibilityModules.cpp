@@ -5,6 +5,7 @@
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 #endif
 
+#include "Common/Upgrade.h"
 #include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
@@ -850,7 +851,12 @@ bool StealthUpdate::allowedAt(const Coord3D &own, const Coord3D &hordePos) const
 	{
 		obj->logic().noteStop("[S-1041] StealthUpdate PRIMARY_FORMATION: the horde contain's slot 0xEC (RW 0x7764B9) is not read (taken as false)");
 	}
-	// RW 0x7764C7: the script's stealth switch (Object + 0x457 bit 8) is not ported (S-1040)
+	// RW 0x7764C7: the script's stealth switch off (Object + 0x457 bit 8, SCRIPT_UNSTEALTHED: NAMED_SET_STEALTH_ENABLED false, RW 0x7BC7EC) forbids
+	// stealth (lane BFME2CAMP1)
+	if ((obj->scriptStatus() & 8u) != 0)
+	{
+		return false;
+	}
 	if (flags & StealthUpdateModuleData::AWAY_FROM_TREES)
 	{
 		if (!obj->logic().invisibility().treesNear(own, obj)) // RW 0x7764DE .. 0x776566
@@ -1106,12 +1112,14 @@ void StealthUpdate::crc(StateHasher &h) const
 	h.addBool(m_halfway);
 	h.addBool(m_disguising);
 	h.addBool(m_disguised);
-	for (std::uint32_t w : m_requiredUpgrades.words)
+	for (unsigned i = 0; i < UpgradeMaskType::activeWords(); ++i) // lane MODS-3: retail's 0x24 words unless the data has more upgrades
 	{
+		const std::uint32_t w = m_requiredUpgrades.words[i];
 		h.addU32(w);
 	}
-	for (std::uint32_t w : m_forbiddenUpgrades.words)
+	for (unsigned i = 0; i < UpgradeMaskType::activeWords(); ++i) // lane MODS-3: retail's 0x24 words unless the data has more upgrades
 	{
+		const std::uint32_t w = m_forbiddenUpgrades.words[i];
 		h.addU32(w);
 	}
 	h.addBool(m_active);
@@ -1205,8 +1213,8 @@ void StealthUpdate::xfer(Xfer &x)
 	x.xferBool(&m_halfway);
 	x.xferBool(&m_disguising);
 	x.xferBool(&m_disguised);
-	SnapshotXfer::words(x, m_requiredUpgrades.words);
-	SnapshotXfer::words(x, m_forbiddenUpgrades.words);
+	xferUpgradeMask(x, m_requiredUpgrades, "an invisibility module's required upgrades"); // lane MODS-3: activeWords (retail's 0x24)
+	xferUpgradeMask(x, m_forbiddenUpgrades, "an invisibility module's forbidden upgrades");
 	if (x.isLoading()) // lane SAVE-4e (closed sets): only this game's upgrades
 	{
 		checkLoadedUpgradeMask(m_requiredUpgrades, "a stealth update's required upgrades");

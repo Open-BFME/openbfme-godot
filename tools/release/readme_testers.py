@@ -188,10 +188,15 @@ def title_of(version: str, platform_name: str) -> str:
     m = re.fullmatch(r"v((?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8}))", version)
     if m:
         return f"OpenBFME Alpha {m.group(1)} for {platform_name}"
-    # lane NIGHTLY-1: "OpenBFME Nightly 0.4.12 (2026-10-22) for Linux"
-    n = re.fullmatch(r"v((?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8}))-nightly\.(20\d\d)(\d\d)(\d\d)", version)
+    # lane NIGHTLY-1: "OpenBFME Nightly 0.4.12 (2026-10-22) for Linux"; lane NIGHTLY-2: "OpenBFME Nightly 0.4.13 (2026-10-23, evening) for Linux"
+    core = r"v((?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8}))-nightly\."
+    n = re.fullmatch(core + r"(20\d\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])", version)
     if n:
         return f"OpenBFME Nightly {n.group(1)} ({n.group(2)}-{n.group(3)}-{n.group(4)}) for {platform_name}"
+    n = re.fullmatch(core + r"(2[6-9]|[3-9]\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])([12])00", version)
+    if n:
+        half = {"1": "morning", "2": "evening"}[n.group(5)]
+        return f"OpenBFME Nightly {n.group(1)} (20{n.group(2)}-{n.group(3)}-{n.group(4)}, {half}) for {platform_name}"
     return f"OpenBFME {version} - alpha build for {platform_name}"
 
 

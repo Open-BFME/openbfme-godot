@@ -215,7 +215,7 @@ struct Game
 };
 } // namespace
 
-TEST_CASE("mp2 disconnect: the new net commands survive the encoding; a slot outside 0 .. 7 is refused")
+TEST_CASE("mp2 disconnect: the new net commands survive the encoding; a slot outside 0 .. 15 is refused")
 {
 	NetCommandMsg c;
 	c.type = NETCOMMANDTYPE_DISCONNECTSCREENOFF;
@@ -272,9 +272,37 @@ TEST_CASE("mp2 disconnect: the new net commands survive the encoding; a slot out
 	REQUIRE_MESSAGE(NetPacket::decodeCommand(b, rr, &error), error);
 	CHECK(rr.messages.size() == 2);
 	CHECK(rr.messages[1]->getPlayerIndex() == 12);
+	// a target of slot 9 in the legacy wire form is refused, as an old client refuses it; the slot takes the wide form (NetPacket kFrameResend16)
 	b[6] = 9; // the target slot byte of a DESTROYPLAYER / FRAMERESEND is right after the 6-byte header
 	CHECK(!NetPacket::decodeCommand(b, rr, &error));
 	CHECK(error.find("about slot 9") != std::string::npos);
+	r.targetSlot = 9;
+	b = NetPacket::encodeCommand(r, &error);
+	REQUIRE(!b.empty());
+	CHECK(b[0] == NetPacket::kFrameResend16);
+	REQUIRE_MESSAGE(NetPacket::decodeCommand(b, rr, &error), error);
+	CHECK(rr.type == NETCOMMANDTYPE_FRAMERESEND);
+	CHECK(rr.targetSlot == 9);
+	b[6] = MAX_SLOTS;
+	CHECK(!NetPacket::decodeCommand(b, rr, &error));
+	CHECK(error.find("about slot " + std::to_string(MAX_SLOTS)) != std::string::npos);
+	// the wide forms carry the u16 masks the legacy bytes cannot (DISCONNECTSCREENOFF's released frames, FRAMERESEND's rejoin mask)
+	NetCommandMsg w;
+	w.type = NETCOMMANDTYPE_DISCONNECTSCREENOFF;
+	w.slot = 9;
+	w.frame = 777;
+	w.releasedMask = 0x0305;
+	w.releasedFrames = { 11, 0, 13, 0, 0, 0, 0, 0, 17, 19 };
+	b = NetPacket::encodeCommand(w, &error);
+	REQUIRE(!b.empty());
+	CHECK(b[0] == NetPacket::kDisconnectScreenOff16);
+	NetCommandMsg wd;
+	REQUIRE_MESSAGE(NetPacket::decodeCommand(b, wd, &error), error);
+	CHECK(wd.type == NETCOMMANDTYPE_DISCONNECTSCREENOFF);
+	CHECK(wd.slot == 9);
+	CHECK(wd.releasedMask == 0x0305);
+	CHECK(wd.releasedFrames[8] == 17);
+	CHECK(wd.releasedFrames[9] == 19);
 }
 
 TEST_CASE("mp2 disconnect: a peer that goes silent is dropped after its timeout: the screen, the bars, the automatic vote, the drop at one frame, "

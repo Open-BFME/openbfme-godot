@@ -11,6 +11,7 @@
 #include "GameClient/GUI/GameTextSource.h"
 #include "GameClient/GUI/LoadScreenInfo.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
@@ -58,6 +59,7 @@ AptSpellStore::AptSpellStore(WindowManager &windows, Shell &shell) : AptScreen(w
 			std::string error;
 			this->windows().invokeASAt(this->level(), "", "Close", {}, nullptr, &error);
 			m_closing = true;
+			hideInGameBackground(); // lane INGAMEBG-1: RW 0x8228E6 .. 0x8228F6
 		}
 	});
 	registerCommand("AptSpellStore::OnBttnReset", [this](const std::string &) { reset(); }); // RW 0x823484
@@ -75,9 +77,55 @@ AptSpellStore::AptSpellStore(WindowManager &windows, Shell &shell) : AptScreen(w
 		}
 		return true;
 	});
+	// lane INGAMEBG-1: the constructor ends with the in-game background (RW 0x823AFB .. 0x823B09: + 0x2A3, set to 1 above, -> RW 0x6230B6(2),
+	// ShowInGameBackground, and + 0x2A3 = 0), as the quit menu's and the objectives'
+	windows.setBackground(2);
+	m_backgroundHidden = false;
 }
 
-AptSpellStore::~AptSpellStore() = default;
+AptSpellStore::~AptSpellStore()
+{
+	hideInGameBackground(); // lane INGAMEBG-1: the destructor RW 0x8232ED (RW 0x823383 .. 0x823394), when the close button did not
+}
+
+void AptSpellStore::hideInGameBackground()
+{
+	// RW 0x82289A / 0x8232ED: once, RW 0x622C88(0) (HideInGameBackground "0", its fade) and + 0x2A3 = 1
+	if (!m_backgroundHidden)
+	{
+		windows().hideBackground(false);
+		m_backgroundHidden = true;
+	}
+}
+
+void AptSpellStore::setViewportSize(int width, int height)
+{
+	AptSpriteInst *root = windows().apt().level(level());
+	if (!root || !root->timelineFile || width < 1 || height < 1)
+	{
+		return;
+	}
+	const float stageWidth = (float)root->timelineFile->width;
+	const float stageHeight = (float)root->timelineFile->height;
+	if (stageWidth <= 0.0f || stageHeight <= 0.0f)
+	{
+		return;
+	}
+	const float scale = std::min(1.0f, ((float)height / stageHeight) / ((float)width / stageWidth));
+	root->viewportTransform.a = scale;
+	root->viewportTransform.tx = stageWidth * 0.5f * (1.0f - scale);
+	// Presentation correction: SpellStore.apt's Title.instance1 contains the stage-wide
+	// banner and translucent shade. Keep that backdrop at its authored stage width;
+	// the title plate, text and the View3D power globe keep the proportional mapping.
+	AptCharacterInst *title = root->childByName("Title");
+	AptSpriteInst *titleSprite = title ? title->asSprite() : nullptr;
+	AptCharacterInst *backdrop = titleSprite ? titleSprite->childByName("instance1") : nullptr;
+	if (backdrop)
+	{
+		const AptMatrix parent = root->matrix.concat(title->matrix);
+		backdrop->viewportTransform = parent.inverse(nullptr).concat(root->viewportTransform.inverse(nullptr)).concat(parent);
+	}
+}
 
 bool AptSpellStore::bind(const CommandStore &commands, GameLogic &logic, Player &player, const GameTextSource *gameText, std::string *error)
 {

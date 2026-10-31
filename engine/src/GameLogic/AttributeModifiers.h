@@ -45,6 +45,7 @@ enum AttributeModifierType
 	ATTRIBUTE_DAMAGE_ADD = 2,
 	ATTRIBUTE_DAMAGE_MULT = 3,
 	ATTRIBUTE_EXPERIENCE = 6,
+	ATTRIBUTE_SPEED = 8,
 	ATTRIBUTE_SPELL_DAMAGE = 11,
 	ATTRIBUTE_RECHARGE_TIME = 12,
 	ATTRIBUTE_PRODUCTION = 13,
@@ -53,7 +54,12 @@ enum AttributeModifierType
 	ATTRIBUTE_AUTO_HEAL = 19,
 	ATTRIBUTE_SHROUD_CLEARING = 20,
 	ATTRIBUTE_INVULNERABLE = 27,
-	ATTRIBUTE_TYPE_COUNT = 28
+	ATTRIBUTE_TYPE_COUNT = 28,
+	// lane MODS-3: edain-unchained.production-split's types (parsed only with the feature)
+	ATTRIBUTE_PRODUCTION_MONEY = 28,
+	ATTRIBUTE_PRODUCTION_UNIT = 29,
+	ATTRIBUTE_PRODUCTION_UPGRADE = 30,
+	ATTRIBUTE_PRODUCTION_CONSTRUCTION = 31
 };
 extern const char *const TheAttributeModifierTypeNames[]; ///< RW 0xDA6D28, 28 names
 extern const char *const TheAntiCategoryNames[]; ///< RW 0xD9FA40, the 15 category names (GameLogic/WeaponNames.cpp)
@@ -89,6 +95,10 @@ struct ModifierListTemplate
 	bool m_multiLevelFX = false;                              // +0xD0
 	bool m_replaceInCategoryIfLongest = false;                // +0xD2
 	bool m_ignoreIfAnticategoryActive = false;                // +0xD3
+	// lane HDPERF-1 (performance, no retail field): bit t set when m_modifiers holds a modifier of type t (the parser keeps it), so a pool's sum / product
+	// passes over a list that cannot answer without walking it; value() answers false for those types either way
+	std::uint32_t m_typeMask = 0;
+	bool mayHave(int type) const { return type < 0 || type >= 32 || ((m_typeMask >> type) & 1u) != 0; }
 
 	// RW 0x805268: the value of `type` (first entry); `name` filters on the entry's name list when both are present
 	bool value(int type, const char *name, float &out) const;

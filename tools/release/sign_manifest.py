@@ -4,13 +4,22 @@
     python3 tools/release/sign_manifest.py --key KEY manifest.json          writes manifest.json.sig (64 raw bytes) and checks it
     python3 tools/release/sign_manifest.py --generate-key KEY               a new release key (PKCS#8 PEM, mode 0600); prints the public key
     python3 tools/release/sign_manifest.py --public-key KEY                 prints the public key (64 hex digits) of KEY
-    python3 tools/release/sign_manifest.py --verify PUBLIC manifest.json    checks manifest.json.sig; PUBLIC: 64 hex digits or a file holding them
+    python3 tools/release/sign_manifest.py --verify PUBLIC manifest.json    checks manifest.json.sig; PUBLIC: 64 hex digits or a file holding them,
+                                                                            or a key list (launcher/release_keys.pub, SIGNKMS-1)
+        --sig FILE: another signature file (manifest.json.sig2); --nightly NLIST (RELGH-2): also the nightly-only keys of
+        launcher/nightly_keys.pub, valid for a nightly's file only (release_keys.verify_scoped); --kind: the file's kind (default from its name, release_keys.KIND_OF_NAME)
 
-The private key never enters the repository, CI or GitHub: it lives on the coordinator's offline machine. This tool refuses a key path
+The release (stable) key never enters the repository, CI or GitHub: it lives on the coordinator's offline machine. RELGH-2: the separate
+nightly key (launcher/nightly_keys.pub) lives only in the GitHub environment nightly-signing, whose sign job writes it to a tmpfs file
+for this tool and shreds it. This tool refuses a key path
 inside this repository or inside any git work tree, and (POSIX) a key file other users can read. The key is OpenSSL's format
 (`openssl genpkey -algorithm ed25519`), so `openssl pkeyutl -sign -rawin` makes the same signature (Ed25519 is deterministic) and
 `openssl pkeyutl -verify -rawin -pubin` checks it. The public key goes into launcher/release_key.pub (committed), which package.sh compiles
 into the launcher.
+
+SIGNKMS-1: --verify follows release_keys.py's rule: the signature is valid when it is the raw signature of the file OR the signature of
+its envelope (kind + SHA-512, SIGNKMS-1's scheme v2) under ANY key of PUBLIC. Signing here stays raw
+(the Deck key's scheme).
 """
 from __future__ import annotations
 
@@ -26,6 +35,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
 import ed25519  # noqa: E402
+import release_keys  # noqa: E402
 
 
 def key_location_problem(path: Path) -> str:
@@ -78,6 +88,8 @@ def main(argv: list[str]) -> int:
     g.add_argument("--verify", metavar="PUBLIC")
     ap.add_argument("manifest", type=Path, nargs="?")
     ap.add_argument("--sig", type=Path, help="the signature file (default: <manifest>.sig)")
+    ap.add_argument("--nightly", type=Path, help="--verify: RELGH-2: also the nightly-only keys of this list (a nightly's files only)")
+    ap.add_argument("--kind", choices=release_keys.KINDS, help="--verify: the file's kind (default: from its name)")
     a = ap.parse_args(argv)
     if a.generate_key:
         why = key_location_problem(a.generate_key)
@@ -99,9 +111,20 @@ def main(argv: list[str]) -> int:
     sig_path = a.sig or a.manifest.with_name(a.manifest.name + ".sig")
     data = a.manifest.read_bytes()
     if a.verify:
-        ok = ed25519.verify(read_public(a.verify), data, sig_path.read_bytes())
-        print(f"signature {'ok' if ok else 'INVALID'}: {sig_path.name} for {a.manifest.name}")
-        return 0 if ok else 1
+        kind = a.kind or release_keys.kind_of(a.manifest.name)
+        if kind is None:
+            raise SystemExit(f"sign_manifest: the kind of {a.manifest.name} is not known from its name: pass --kind")
+        try:
+            keys = release_keys.load_any(a.verify)
+            nightly = release_keys.load_nightly(a.nightly, None) if a.nightly else []
+        except release_keys.KeyListError as e:
+            raise SystemExit(f"sign_manifest: {e}")
+        if not sig_path.is_file():
+            print(f"signature INVALID: {sig_path.name} does not exist")
+            return 1
+        got = release_keys.verify_scoped(keys, nightly, kind, data, sig_path.read_bytes())
+        print(f"signature {'ok' if got else 'INVALID'}: {sig_path.name} for {a.manifest.name}" + (f" ({got[0]}, {got[1]})" if got else ""))
+        return 0 if got else 1
     secret = load_secret(a.key)
     sig = ed25519.sign(secret, data)
     if not ed25519.verify(ed25519.public_key(secret), data, sig):

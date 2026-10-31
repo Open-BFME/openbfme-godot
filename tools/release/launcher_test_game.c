@@ -61,6 +61,17 @@ static void detach_stdio(void) {
     SetStdHandle(STD_OUTPUT_HANDLE, INVALID_HANDLE_VALUE);
     SetStdHandle(STD_ERROR_HANDLE, INVALID_HANDLE_VALUE);
 }
+
+static int wait_for_exit(void) {
+    char name[128];
+    snprintf(name, sizeof(name), "Local\\OpenBFME-test-game-%lu", (unsigned long)GetCurrentProcessId());
+    HANDLE event = CreateEventA(NULL, TRUE, FALSE, name);
+    if (!event) return 1;
+    detach_stdio();
+    DWORD result = WaitForSingleObject(event, INFINITE);
+    CloseHandle(event);
+    return result == WAIT_OBJECT_0 ? 0 : 1;
+}
 #endif
 
 static void write_args(FILE *out, int argc, char **argv) {
@@ -88,8 +99,7 @@ int main(int argc, char **argv) {
     if (OPENBFME_TEST_MODE == 2) {
 #ifdef _WIN32
         if (out) fclose(out);
-        detach_stdio();
-        Sleep(600000);
+        return wait_for_exit();
 #else
         return 0;
 #endif
@@ -120,8 +130,7 @@ int main(int argc, char **argv) {
     fclose(out);
     if (sleep_game[0]) {
 #ifdef _WIN32
-        detach_stdio();
-        Sleep(600000);
+        return wait_for_exit();
 #endif
     }
     return 0;

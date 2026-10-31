@@ -42,8 +42,7 @@ SaveLoadInfo::Save save(const std::string &name, int kind, bool loadable, const 
 	return s;
 }
 
-const char *kOtherBuild = "this game was saved by OpenBFME v0.2.9 (engine 111111111111); this is OpenBFME v0.3.0 (engine 222222222222). A save loads only in "
-						  "the build that made it.";
+const char *kOtherBuild = "Made with Nightly 0.4.12 (2026-10-22). Open it with that version from the launcher.";
 
 struct Pages
 {
@@ -138,8 +137,7 @@ TEST_CASE("save2 retail: SaveLoad.apt's Load page lists the saves by type, loads
 	CHECK(p.fx.services.countRequests(ShellAction::LoadGameFile) == 0);
 	CHECK(p.screen->boxTitle() == u"Error loading game 'old build'");
 	// one clause per line in the box (its text field shrinks a long line)
-	CHECK(loadScreenU16ToUtf8(p.screen->boxText()) == "this game was saved by OpenBFME v0.2.9 (engine 111111111111);\nthis is OpenBFME v0.3.0 (engine 222222222222).\nA save "
-														"loads only in the build that made it.");
+	CHECK(loadScreenU16ToUtf8(p.screen->boxText()) == "Made with Nightly 0.4.12 (2026-10-22).\nOpen it with that version from the launcher.");
 	// a retail save: an import entry, refused with the "coming later" note
 	p.select(2);
 	p.command("Load");

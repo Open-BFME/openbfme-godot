@@ -18,4 +18,5 @@ set(OPENBFME_HUD5_TESTS
     tests/test_hud5_icons.cpp
     tests/test_hud5_gatebutton.cpp
     tests/test_hud5_pick.cpp
+    tests/test_campfix_mq.cpp   # lane CAMPFIX-MQ: the horde team change, the quoted geometry names
 )

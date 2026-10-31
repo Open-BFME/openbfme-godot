@@ -14,4 +14,5 @@ set(OPENBFME_TRANSPORT_TESTS
     tests/test_hud_transport_retail.cpp
     tests/test_hud_turret_retail.cpp
     tests/test_hud_tunnel_retail.cpp
+    tests/test_tunnel1_flow.cpp # TUNNEL-1
 )

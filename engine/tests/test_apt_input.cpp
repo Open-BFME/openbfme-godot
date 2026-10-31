@@ -208,6 +208,36 @@ TEST_CASE("input: the hit test follows the placement matrix of the button")
 	CHECK(fx.apt->input().hitTestButtons(99, 105) == nullptr);
 }
 
+TEST_CASE("input: viewport transforms move the drawn button and its hit mesh without changing script placement")
+{
+	ButtonMovie movie;
+	PlayerFx fixture;
+	REQUIRE(fixture.load(0, "A", movie.m));
+	fixture.step();
+	AptCharacterInst *button = fixture.at("b");
+	REQUIRE(button != nullptr);
+	AptSpriteInst *root = fixture.apt->level(0);
+	root->viewportTransform.tx = 40.0f;
+	button->viewportTransform.a = 0.5f;
+	button->viewportTransform.tx = 200.0f;
+	CHECK(button->matrix.a == 1.0f);
+	CHECK(button->matrix.tx == 100.0f);
+	CHECK(button->globalMatrix().a == 0.5f);
+	CHECK(button->globalMatrix().tx == 290.0f);
+	CHECK(fixture.apt->input().hitTestButtons(292, 105) == button);
+	CHECK(fixture.apt->input().hitTestButtons(296, 105) == nullptr);
+	CHECK(fixture.apt->input().hitTestButtons(105, 105) == nullptr);
+	AptRenderList list;
+	fixture.apt->buildRenderList(list);
+	REQUIRE(list.commands.size() == 1);
+	CHECK(list.commands[0].matrix.a == 0.5f);
+	CHECK(list.commands[0].matrix.tx == 290.0f);
+	button->setProperty("_x", AptValue::number(120));
+	CHECK(button->matrix.tx == 120.0f);
+	CHECK(button->globalMatrix().tx == 300.0f);
+	CHECK(fixture.apt->input().hitTestButtons(302, 105) == button);
+}
+
 TEST_CASE("input: a key-only button action is queued with the button's parent as target and runs on the next update")
 {
 	// 0x00AFB429..0x00AFB583: the key code sits in bits 9..15 of the condition word; the program goes to the back of the pool

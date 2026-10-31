@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 
 #include "GodotDevice/GodotGammaComposite.h"
+#include "GodotDevice/GodotGlowEffect.h"
 #include "GodotDevice/GodotW3DInstancer.h"
 
 #include <cstdio>
@@ -16,6 +17,10 @@
 
 #include <cmath>
 
+#include <godot_cpp/classes/rd_texture_format.hpp>
+#include <godot_cpp/classes/rd_texture_view.hpp>
+#include <godot_cpp/classes/rendering_device.hpp>
+#include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/array_mesh.hpp>
 #include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/geometry_instance3d.hpp>
@@ -36,13 +41,21 @@
 #include <cctype>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <mutex>
+#include <vector>
 
 namespace godot
 {
 
 namespace
 {
+
+// lane PERF-HD: every MultiMesh's custom AABB, a box beyond any map. Without one Godot recomputes the AABB over every instance at each set_buffer,
+// and an animated model's buffers are rewritten every frame; one MultiMesh holds a model's instances across the whole battlefield, so its own
+// box culled nothing anyway
+const AABB kMultiMeshBounds(Vector3(-200000.0f, -50000.0f, -200000.0f), Vector3(400000.0f, 100000.0f, 400000.0f));
 
 String toGodot(const std::string &s)
 {
@@ -73,6 +86,287 @@ const char *kindName(RenderSubObject::Kind k)
 
 } // namespace
 
+// RenderingDevice texture calls are only valid on the render thread. The node thread copies texel bytes into a
+// PackedByteArray and appends work here; call_on_render_thread runs that work in order. The callable is a static
+// function bound to this queue (not to W3DInstancer), so NOTIFICATION_PREDELETE can drop the node first.
+struct PaletteRdQueue
+{
+	struct Op
+	{
+		enum Kind
+		{
+			Create,
+			Upload,
+			Release
+		} kind = Upload;
+		int height = 0;
+		int row0 = 0;
+		int rows = 0;
+		bool full = false;
+		PackedByteArray bytes;
+		// lane PERF-HD: a partial upload of several runs: `bytes` holds them one after another (padded to the stage's rows), each run (palette row,
+		// rows) copied to its place; empty: the one run row0 .. row0 + rows
+		std::vector<std::pair<int, int>> runs;
+		PackedByteArray fallback; // whole palette, used only if a partial copy is rejected
+		Ref<Texture2DRD> sampler;
+	};
+
+	std::mutex mu;
+	std::vector<Op> ops;
+	bool scheduled = false;
+	bool retired = false;
+	RID palette;
+	RID stage;
+	int stage_rows = 0;
+	Ref<Texture2DRD> sampler;
+	std::atomic<bool> force_full{ false };
+	std::atomic<bool> create_failed{ false };
+	// lane PERF-CLIENT: the staging byte arrays the render thread is done with, handed out again by take(): an upload of several megabytes a frame
+	// allocated (and the system zeroed) a new array every frame
+	std::vector<PackedByteArray> spare;
+
+	void enqueue(Op op, bool retire);
+	PackedByteArray take(int64_t bytes);
+	void give(PackedByteArray &bytes);
+};
+
+PackedByteArray PaletteRdQueue::take(int64_t bytes)
+{
+	PackedByteArray out;
+	{
+		std::lock_guard<std::mutex> lock(mu);
+		size_t best = spare.size();
+		for (size_t i = 0; i < spare.size(); ++i)
+		{
+			if (spare[i].size() == bytes)
+			{
+				best = i;
+				break;
+			}
+			if (best == spare.size() || spare[i].size() > spare[best].size())
+			{
+				best = i;
+			}
+		}
+		if (best < spare.size())
+		{
+			out = std::move(spare[best]);
+			spare.erase(spare.begin() + (std::ptrdiff_t)best);
+		}
+	}
+	if (out.size() != bytes)
+	{
+		out.resize(bytes);
+	}
+	return out;
+}
+
+void PaletteRdQueue::give(PackedByteArray &bytes)
+{
+	if (bytes.is_empty())
+	{
+		return;
+	}
+	std::lock_guard<std::mutex> lock(mu);
+	if (spare.size() < 4)
+	{
+		spare.push_back(std::move(bytes));
+	}
+	bytes = PackedByteArray();
+}
+
+static void palette_rd_apply(int64_t raw)
+{
+	auto *queue = reinterpret_cast<PaletteRdQueue *>(static_cast<std::intptr_t>(raw));
+	if (!queue)
+	{
+		return;
+	}
+	std::vector<PaletteRdQueue::Op> batch;
+	bool dropping = false;
+	Ref<Texture2DRD> held;
+	{
+		std::lock_guard<std::mutex> lock(queue->mu);
+		batch.swap(queue->ops);
+		queue->scheduled = false;
+		dropping = queue->retired;
+		held = queue->sampler;
+	}
+	RenderingServer *rs = RenderingServer::get_singleton();
+	RenderingDevice *rd = rs ? rs->get_rendering_device() : nullptr;
+	auto free_rid = [&](RID &rid) {
+		if (rd && rid.is_valid())
+		{
+			rd->free_rid(rid);
+		}
+		rid = RID();
+	};
+	for (PaletteRdQueue::Op &op : batch)
+	{
+		if (op.kind == PaletteRdQueue::Op::Create)
+		{
+			if (!rd || op.height <= 0)
+			{
+				queue->create_failed.store(true, std::memory_order_release);
+				continue;
+			}
+			Ref<RDTextureFormat> fmt;
+			fmt.instantiate();
+			fmt->set_width(W3D_PALETTE_WIDTH);
+			fmt->set_height(op.height);
+			fmt->set_format(RenderingDevice::DATA_FORMAT_R32G32B32A32_SFLOAT);
+			fmt->set_usage_bits(RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice::TEXTURE_USAGE_CAN_UPDATE_BIT |
+				RenderingDevice::TEXTURE_USAGE_CAN_COPY_FROM_BIT | RenderingDevice::TEXTURE_USAGE_CAN_COPY_TO_BIT);
+			Ref<RDTextureView> view;
+			view.instantiate();
+			const RID created = rd->texture_create(fmt, view);
+			const RID previous = queue->palette;
+			if (!created.is_valid())
+			{
+				queue->create_failed.store(true, std::memory_order_release);
+				continue;
+			}
+			queue->palette = created;
+			queue->create_failed.store(false, std::memory_order_release);
+			// Skip the sampler when the node is already going away. A later Release in this batch (or the next) frees the RID.
+			if (!dropping && op.sampler.is_valid())
+			{
+				op.sampler->set_texture_rd_rid(created);
+			}
+			if (previous.is_valid())
+			{
+				rd->free_rid(previous);
+			}
+			free_rid(queue->stage);
+			queue->stage_rows = 0;
+		}
+		else if (op.kind == PaletteRdQueue::Op::Upload)
+		{
+			if (!rd || !queue->palette.is_valid() || op.bytes.is_empty())
+			{
+				continue;
+			}
+			if (op.full)
+			{
+				rd->texture_update(queue->palette, 0, op.bytes);
+				continue;
+			}
+			// lane PERF-HD: a runs upload's bytes are padded to its stage's rows (one of a few fixed sizes), so the stage is seldom made again
+			const int stageRows = op.runs.empty() ? op.rows : (int)(op.bytes.size() / ((int64_t)W3D_PALETTE_WIDTH * 16));
+			if (queue->stage_rows != stageRows || !queue->stage.is_valid())
+			{
+				free_rid(queue->stage);
+				Ref<RDTextureFormat> fmt;
+				fmt.instantiate();
+				fmt->set_width(W3D_PALETTE_WIDTH);
+				fmt->set_height(stageRows);
+				fmt->set_format(RenderingDevice::DATA_FORMAT_R32G32B32A32_SFLOAT);
+				fmt->set_usage_bits(RenderingDevice::TEXTURE_USAGE_CAN_UPDATE_BIT | RenderingDevice::TEXTURE_USAGE_CAN_COPY_FROM_BIT);
+				Ref<RDTextureView> view;
+				view.instantiate();
+				queue->stage = rd->texture_create(fmt, view);
+				queue->stage_rows = queue->stage.is_valid() ? stageRows : 0;
+			}
+			bool copied = false;
+			if (queue->stage.is_valid())
+			{
+				rd->texture_update(queue->stage, 0, op.bytes);
+				if (op.runs.empty())
+				{
+					const Error err = rd->texture_copy(queue->stage, queue->palette, Vector3(0, 0, 0), Vector3(0, (real_t)op.row0, 0),
+						Vector3(W3D_PALETTE_WIDTH, (real_t)op.rows, 1), 0, 0, 0, 0);
+					copied = err == OK;
+				}
+				else
+				{
+					copied = true;
+					int packed = 0;
+					for (const std::pair<int, int> &run : op.runs)
+					{
+						const Error err = rd->texture_copy(queue->stage, queue->palette, Vector3(0, (real_t)packed, 0), Vector3(0, (real_t)run.first, 0),
+							Vector3(W3D_PALETTE_WIDTH, (real_t)run.second, 1), 0, 0, 0, 0);
+						copied = copied && err == OK;
+						packed += run.second;
+					}
+				}
+			}
+			if (!copied)
+			{
+				// fallback is empty unless the caller already copied the whole image. Do not read PaletteImage here.
+				if (!op.fallback.is_empty())
+				{
+					rd->texture_update(queue->palette, 0, op.fallback);
+				}
+				queue->force_full.store(true, std::memory_order_release);
+			}
+		}
+		else if (op.kind == PaletteRdQueue::Op::Release)
+		{
+			if (held.is_valid())
+			{
+				held->set_texture_rd_rid(RID());
+				held.unref();
+			}
+			free_rid(queue->palette);
+			free_rid(queue->stage);
+			queue->stage_rows = 0;
+			std::lock_guard<std::mutex> lock(queue->mu);
+			queue->sampler.unref();
+		}
+	}
+	if (!dropping)
+	{
+		for (PaletteRdQueue::Op &op : batch)
+		{
+			if (op.kind == PaletteRdQueue::Op::Upload)
+			{
+				queue->give(op.bytes); // the device copied them (texture_update stages its own copy)
+			}
+		}
+	}
+	bool destroy = false;
+	{
+		std::lock_guard<std::mutex> lock(queue->mu);
+		if (queue->retired && queue->ops.empty() && !queue->scheduled)
+		{
+			destroy = true;
+		}
+	}
+	if (destroy)
+	{
+		delete queue;
+	}
+}
+
+void PaletteRdQueue::enqueue(Op op, bool retire)
+{
+	RenderingServer *rs = RenderingServer::get_singleton();
+	bool schedule = false;
+	{
+		std::lock_guard<std::mutex> lock(mu);
+		if (retire)
+		{
+			retired = true;
+		}
+		if (op.kind == Op::Create && op.sampler.is_valid())
+		{
+			sampler = op.sampler;
+		}
+		ops.push_back(std::move(op));
+		// call_on_render_thread can run the callable before it returns (the render thread is this thread). Do not hold mu across it:
+		// the callable locks mu, and a retired queue deletes itself before the call returns.
+		if (!scheduled && rs)
+		{
+			scheduled = true;
+			schedule = true;
+		}
+	}
+	if (schedule)
+	{
+		rs->call_on_render_thread(callable_mp_static(palette_rd_apply).bind((int64_t)(std::intptr_t)this));
+	}
+}
+
 W3DInstancer::W3DInstancer()
 {
 	Epoch = std::chrono::steady_clock::now();
@@ -80,7 +374,10 @@ W3DInstancer::W3DInstancer()
 	Workers = hw >= 8 ? 4 : (hw >= 4 ? 2 : 1);
 }
 
-W3DInstancer::~W3DInstancer() = default;
+W3DInstancer::~W3DInstancer()
+{
+	release_palette_rd();
+}
 
 void W3DInstancer::_bind_methods()
 {
@@ -88,6 +385,9 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("add_model", "model_name"), &W3DInstancer::add_model);
 	ClassDB::bind_method(D_METHOD("get_model_report", "model"), &W3DInstancer::get_model_report);
 	ClassDB::bind_method(D_METHOD("add_instance", "model", "transform", "clip", "start_time", "speed"), &W3DInstancer::add_instance, DEFVAL(String()), DEFVAL(0.0), DEFVAL(1.0));
+	ClassDB::bind_method(D_METHOD("set_instance_cast_shadow", "instance", "enabled"), &W3DInstancer::set_instance_cast_shadow);
+	ClassDB::bind_method(D_METHOD("set_shadow_receiving", "enabled"), &W3DInstancer::set_shadow_receiving);
+	ClassDB::bind_static_method("W3DInstancer", D_METHOD("set_shadow_maps_enabled", "enabled"), &W3DInstancer::set_shadow_maps_enabled);
 	ClassDB::bind_method(D_METHOD("set_instance_transform", "instance", "transform"), &W3DInstancer::set_instance_transform);
 	ClassDB::bind_method(D_METHOD("remove_instance", "instance"), &W3DInstancer::remove_instance);
 	ClassDB::bind_method(D_METHOD("set_instance_clip", "instance", "clip", "start_time", "speed"), &W3DInstancer::set_instance_clip, DEFVAL(0.0), DEFVAL(1.0));
@@ -121,7 +421,10 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_instance_house_color", "instance", "color"), &W3DInstancer::set_instance_house_color);
 	ClassDB::bind_method(D_METHOD("add_model_colored", "model", "kind", "colors"), &W3DInstancer::add_model_colored); // lane CAH-2
 	ClassDB::bind_method(D_METHOD("set_instance_infantry_light", "instance", "infantry"), &W3DInstancer::set_instance_infantry_light);
+	ClassDB::bind_method(D_METHOD("set_model_glow", "model", "emissive_only"), &W3DInstancer::set_model_glow);
 	ClassDB::bind_method(D_METHOD("set_instance_opacity", "instance", "opacity"), &W3DInstancer::set_instance_opacity);
+	ClassDB::bind_method(D_METHOD("set_instance_occlusion", "instance", "occluder", "slot"), &W3DInstancer::set_instance_occlusion); // lane OCCLUDE-1
+	ClassDB::bind_method(D_METHOD("get_occlusion_pass_counts"), &W3DInstancer::get_occlusion_pass_counts);
 	ClassDB::bind_method(D_METHOD("get_auto_update"), &W3DInstancer::get_auto_update);
 	ClassDB::bind_method(D_METHOD("probe_shaders", "origin"), &W3DInstancer::probe_shaders);
 }
@@ -159,6 +462,35 @@ void W3DInstancer::set_instance_house_color(int64_t instance, const Color &color
 	mark_model(instance);
 }
 
+void W3DInstancer::set_model_glow(int64_t model, bool emissive_only)
+{
+	if (model < 0 || (size_t)model >= Models.size())
+	{
+		warn("set_model_glow: unknown model " + std::to_string(model));
+		return;
+	}
+	for (DrawItem &d : Models[(size_t)model]->Draws)
+	{
+		bool glow = true;
+		if (emissive_only)
+		{
+			// MeshClass::Render: the mesh's first vertex material, emissive above 0.01 in any channel
+			glow = false;
+			for (const MeshDrawSurface &surface : d.Mesh->Data.Surfaces)
+			{
+				if (surface.HasVertexMaterial)
+				{
+					const W3dRGBStruct &e = surface.VertexMaterial.Emissive;
+					glow = e.R / 255.0f > 0.01f || e.G / 255.0f > 0.01f || e.B / 255.0f > 0.01f;
+					break;
+				}
+			}
+		}
+		const uint32_t layers = d.Node->get_layer_mask();
+		d.Node->set_layer_mask(glow ? (layers | GlowPass::kGlowLayer) : (layers & ~GlowPass::kGlowLayer));
+	}
+}
+
 void W3DInstancer::set_instance_infantry_light(int64_t instance, bool infantry)
 {
 	if (instance < 0 || instance >= (int64_t)Instances.size()) return;
@@ -181,6 +513,123 @@ void W3DInstancer::set_instance_fogged(int64_t instance, bool fogged)
 	Instances[(size_t)instance].Fogged = fogged;
 	PoseDirty = true;
 	mark_model(instance);
+}
+
+void W3DInstancer::set_instance_scene_fog(int64_t instance, bool fog)
+{
+	if (instance < 0 || instance >= (int64_t)Instances.size() || Instances[(size_t)instance].NoSceneFog == !fog) return;
+	Instances[(size_t)instance].NoSceneFog = !fog;
+	PoseDirty = true;
+	mark_model(instance);
+}
+
+void W3DInstancer::set_instance_occlusion(int64_t instance, bool occluder, int slot)
+{
+	if (instance < 0 || instance >= (int64_t)Instances.size()) return;
+	if (slot < 0 || slot >= W3D_OCCLUSION_SLOTS)
+	{
+		warn("set_instance_occlusion: slot " + std::to_string(slot) + " is out of 0 .. " + std::to_string(W3D_OCCLUSION_SLOTS - 1) + ": not an occludee");
+		slot = 0;
+	}
+	Instance &inst = Instances[(size_t)instance];
+	if (inst.Occluder == occluder && inst.OcclusionSlot == slot) return;
+	inst.Occluder = occluder;
+	inst.OcclusionSlot = slot;
+	if (occluder || slot != 0)
+	{
+		for (DrawItem &d : Models[(size_t)inst.Model]->Draws)
+		{
+			ensure_occlusion_passes(*d.Mesh, occluder, slot != 0);
+		}
+	}
+	PoseDirty = true;
+	mark_model(instance);
+}
+
+void W3DInstancer::set_instance_cast_shadow(int64_t instance, bool enabled)
+{
+	if (instance < 0 || instance >= (int64_t)Instances.size()) return;
+	Instance &inst = Instances[(size_t)instance];
+	if (inst.Removed || inst.CastShadow == enabled) return;
+	inst.CastShadow = enabled;
+	PoseDirty = true;
+	mark_model(instance);
+}
+
+void W3DInstancer::ensure_occlusion_passes(MeshGpu &gpu, bool mark, bool color)
+{
+	if ((!mark || gpu.HasMark) && (!color || gpu.HasColor)) return;
+	gpu.HasMark = gpu.HasMark || mark;
+	gpu.HasColor = gpu.HasColor || color;
+	gpu.MarkPasses.resize(gpu.Materials.size());
+	gpu.ColorPasses.resize(gpu.Materials.size());
+	for (size_t i = 0; i < gpu.Materials.size() && i < gpu.Keys.size(); ++i)
+	{
+		const W3DShaderKey &base = gpu.Keys[i];
+		// retail renders the whole object into the stencil; here the opaque surfaces (the blended ones draw in the transparent pass, sorted with
+		// the passes, and their alpha mostly leaves no shape)
+		if (base.Blend != W3D_GODOT_BLEND_OPAQUE || base.AlphaOverride || !base.DepthWrite || base.DepthTestDisabled) continue;
+		auto make = [&](int pass, int priority) {
+			W3DShaderKey k = base;
+			k.OcclusionPass = pass;
+			Ref<ShaderMaterial> m = gpu.Materials[i]->duplicate(); // the surface's textures and colours: the passes keep its alpha test
+			m->set_shader(Materials->Get_Shader(k));
+			m->set_render_priority(priority);
+			m->set_next_pass(Ref<Material>());
+			AllMaterials.push_back(m); // the palette binding follows (rebuild_layout)
+			m->set_shader_parameter("w3d_palette", palette_sampler());
+			return m;
+		};
+		if (gpu.HasMark && gpu.MarkPasses[i].is_null()) gpu.MarkPasses[i] = make(W3D_OCCLUSION_PASS_MARK, W3D_OCCLUSION_PRIORITY_MARK);
+		if (gpu.HasColor && gpu.ColorPasses[i].is_null()) gpu.ColorPasses[i] = make(W3D_OCCLUSION_PASS_COLOR, W3D_OCCLUSION_PRIORITY_COLOR);
+		// the chain: surface -> mark -> colour (either may be absent)
+		const Ref<ShaderMaterial> &mk = gpu.MarkPasses[i];
+		const Ref<ShaderMaterial> &co = gpu.ColorPasses[i];
+		if (mk.is_valid())
+		{
+			mk->set_next_pass(co);
+			gpu.Materials[i]->set_next_pass(mk);
+		}
+		else
+		{
+			gpu.Materials[i]->set_next_pass(co);
+		}
+	}
+}
+
+bool W3DInstancer::instance_outside(int64_t instance, const std::vector<Plane> &frustum)
+{
+	if (frustum.empty() || instance < 0 || instance >= (int64_t)Instances.size() || Instances[(size_t)instance].Removed) return false;
+	const Instance &inst = Instances[(size_t)instance];
+	const Transform3D nodeXf = is_inside_tree() ? get_global_transform() : get_transform();
+	const Vector3 centre = nodeXf.xform(inst.Xf.origin);
+	const Vector3 sc = inst.Xf.basis.get_scale_abs();
+	const Vector3 ns = nodeXf.basis.get_scale_abs();
+	const real_t r = cull_radius(*Models[(size_t)inst.Model]) * std::max(sc.x, std::max(sc.y, sc.z)) * std::max(ns.x, std::max(ns.y, ns.z));
+	for (const Plane &pl : frustum)
+	{
+		if (pl.distance_to(centre) > r) return true;
+	}
+	return false;
+}
+
+Dictionary W3DInstancer::get_occlusion_pass_counts() const
+{
+	int marks = 0, colors = 0;
+	std::set<const MeshGpu *> seen;
+	for (const std::unique_ptr<Model> &mp : Models)
+	{
+		for (const DrawItem &d : mp->Draws)
+		{
+			if (!d.Mesh || !seen.insert(d.Mesh.get()).second) continue;
+			for (const Ref<ShaderMaterial> &m : d.Mesh->MarkPasses) marks += m.is_valid() ? 1 : 0;
+			for (const Ref<ShaderMaterial> &m : d.Mesh->ColorPasses) colors += m.is_valid() ? 1 : 0;
+		}
+	}
+	Dictionary r;
+	r["marks"] = marks;
+	r["colors"] = colors;
+	return r;
 }
 
 void W3DInstancer::set_instance_opacity(int64_t instance, double opacity)
@@ -236,9 +685,10 @@ Dictionary W3DInstancer::setup(const Ref<RetailFileSystem> &fs)
 	else
 	{
 		FsRef = fs;
-		Source.reset(new ArchiveW3DFileSource(*fs->archive_fs()));
+		Source = fs->renderW3DSource(); // lane SDK-0: the asset packs in front (render side only)
 		Assets.reset(new WW3DAssetManager(*Source));
 		Materials.reset(new W3DMaterialFactory(*fs->archive_fs()));
+		Materials->Set_Asset_Packs(fs->assetPacks().empty() ? nullptr : &fs->assetPacks());
 		Materials->Set_Alpha_Override(AlphaOverride); // lane BUILD-5 r3
 		// housecolor.ini: the table only names which textures have a house texture; applying it is stop S-022 (reported per surface).
 		// A missing or malformed file is an error, not an empty table.
@@ -299,15 +749,12 @@ std::shared_ptr<W3DInstancer::MeshGpu> W3DInstancer::build_mesh(const MeshModelC
 		tangents.resize(nv * 4);
 		for (int64_t v = 0; v < nv; ++v)
 		{
-			Vector3 n(d.Normal[v * 3], d.Normal[v * 3 + 1], d.Normal[v * 3 + 2]);
-			Vector3 t(d.Tangent[v * 3], d.Tangent[v * 3 + 1], d.Tangent[v * 3 + 2]);
-			Vector3 b(d.Bitangent[v * 3], d.Bitangent[v * 3 + 1], d.Bitangent[v * 3 + 2]);
-			// V is flipped on load (u, 1 - v), so +v' runs along -bitangent; Godot's binormal = cross(normal, tangent) * w
-			float w = n.cross(t).dot(-b) < 0.0f ? -1.0f : 1.0f;
-			tangents.set(v * 4 + 0, t.x);
-			tangents.set(v * 4 + 1, t.y);
-			tangents.set(v * 4 + 2, t.z);
-			tangents.set(v * 4 + 3, w);
+			// Godot's BINORMAL = cross(NORMAL, TANGENT.xyz) * w is made the file's bitangent: retail's vertex buffer holds it raw and
+			// normalmapped.fxo blob 22 negates it (the generated shader's fx = -BINORMAL); S-023
+			tangents.set(v * 4 + 0, d.Tangent[v * 3]);
+			tangents.set(v * 4 + 1, d.Tangent[v * 3 + 1]);
+			tangents.set(v * 4 + 2, d.Tangent[v * 3 + 2]);
+			tangents.set(v * 4 + 3, Godot_Tangent_Sign(&d.Normal[v * 3], &d.Tangent[v * 3], &d.Bitangent[v * 3]));
 		}
 	}
 	PackedFloat32Array custom0, custom1, custom2;
@@ -417,6 +864,7 @@ std::shared_ptr<W3DInstancer::MeshGpu> W3DInstancer::build_mesh(const MeshModelC
 		W3DMaterialResult mat = Materials->Create(d, surf, mesh, hasUv2);
 		gpu->Mesh->surface_set_material(surfaceIndex, mat.Material);
 		gpu->Materials.push_back(mat.Material);
+		gpu->Keys.push_back(mat.Key);
 		for (const W3DMapperBinding &b : mat.Mappers) gpu->Mappers.push_back(b);
 		for (const std::string &n : mat.Notes) gpu->Notes.push_back(n);
 		for (const std::string &e : mat.Errors) gpu->Errors.push_back(e);
@@ -427,8 +875,8 @@ std::shared_ptr<W3DInstancer::MeshGpu> W3DInstancer::build_mesh(const MeshModelC
 			W3DStopHit h;
 			h.Id = "S-119";
 			h.Message = W3D_Stop_Message("S-119", mesh.Get_Name() + (mat.Key.HouseColorBaked
-			 ? ": house texels recoloured before filtering; alpha replacement combine remains inferred (S-022)"
-			 : ": instance colour uses the approximate base * team mask path (S-022)"));
+			 ? ": house texels recoloured before filtering, combined after the light as retail's DefaultW3D.fx / fixed-function rules do; the owner's colour source is inferred (S-119)"
+			 : ": instance colour recolours the filtered house texel as RW 0x531C77 kind 1 (retail recolours before filtering), combined after the light; the owner's colour source is inferred (S-119)"));
 			gpu->Stops.push_back(h);
 		}
 	}
@@ -587,6 +1035,7 @@ int64_t W3DInstancer::build_model(const String &model_name)
 			item.Mesh = gpu;
 			item.MM.instantiate();
 			item.MM->set_transform_format(MultiMesh::TRANSFORM_3D);
+			item.MM->set_custom_aabb(kMultiMeshBounds); // lane PERF-HD: see kMultiMeshBounds
 			item.MM->set_use_custom_data(true);
 			item.MM->set_mesh(gpu->Mesh);
 			item.MM->set_instance_count(0);
@@ -594,6 +1043,7 @@ int64_t W3DInstancer::build_model(const String &model_name)
 			item.Node->set_name(toGodot(name + "_" + sub.Name));
 			item.Node->set_multimesh(item.MM);
 			item.Node->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+			item.Node->set_instance_shader_parameter("w3d_receive_shadows", ShadowReceiving);
 			add_child(item.Node);
 			model->Draws.push_back(std::move(item));
 		}
@@ -711,6 +1161,8 @@ int64_t W3DInstancer::add_instance(int64_t model, const Transform3D &transform, 
 	// lane SMOOTH-1: the pose and the palette block are made here; the layout pass only grows the MultiMesh capacities (it no longer relays out
 	// every instance and recreates the palette texture on each add, a frame-time spike whenever an object was created or changed its model)
 	inst.Pose.Resize(Models[(size_t)model]->Proto->Tree->Num_Pivots());
+	inst.PaletteAnimated = !clip.is_empty();
+	inst.DrawPoseState.resize(Models[(size_t)model]->Draws.size());
 	allocate_palette(inst);
 	Instances.push_back(std::move(inst));
 	const int id = (int)Instances.size() - 1;
@@ -757,11 +1209,13 @@ bool W3DInstancer::remove_instance(int64_t instance)
 		m.BuffersDirty = true;
 		if (inst.PaletteSize > 0)
 		{
-			PaletteFree[inst.PaletteSize].push_back(inst.PaletteOffset);
+			(inst.PaletteAnimated ? PaletteAnimFree : PaletteFree)[inst.PaletteSize].push_back(inst.PaletteOffset);
 		}
 
 		inst.PaletteSize = 0;
+		inst.PaletteAnimated = false;
 		inst.Pose = HTreePose();
+		decltype(inst.DrawPoseState)().swap(inst.DrawPoseState);
 	}
 	PoseDirty = true;
 	return true;
@@ -772,12 +1226,43 @@ void W3DInstancer::mark_model(int64_t instance)
 	Models[(size_t)Instances[(size_t)instance].Model]->BuffersDirty = true;
 }
 
+void W3DInstancer::note_palette_rows(int offset, int texels)
+{
+	if (texels <= 0 || PaletteHeight <= 0)
+	{
+		return;
+	}
+	const int r0 = offset / W3D_PALETTE_WIDTH;
+	const int r1 = (offset + texels - 1) / W3D_PALETTE_WIDTH;
+	// lane PERF-HD: the rows themselves, for an upload of the dirty runs only (culled poses leave most of the span between them unchanged)
+	if (PaletteDirtyMap.size() != (size_t)PaletteHeight)
+	{
+		PaletteDirtyMap.assign((size_t)PaletteHeight, 0);
+	}
+	for (int r = std::max(0, r0); r <= std::min(PaletteHeight - 1, r1); ++r)
+	{
+		PaletteDirtyMap[(size_t)r] = 1;
+	}
+	if (PaletteDirtyRow1 < PaletteDirtyRow0)
+	{
+		PaletteDirtyRow0 = r0;
+		PaletteDirtyRow1 = r1;
+	}
+	else
+	{
+		PaletteDirtyRow0 = std::min(PaletteDirtyRow0, r0);
+		PaletteDirtyRow1 = std::max(PaletteDirtyRow1, r1);
+	}
+	PaletteChanged = true;
+}
+
 void W3DInstancer::allocate_palette(Instance &inst)
 {
 	const int size = inst.Pose.Num_Pivots() * W3D_PALETTE_TEXELS_PER_PIVOT;
 	inst.PaletteSize = size;
-	auto it = PaletteFree.find(size);
-	if (it != PaletteFree.end() && !it->second.empty())
+	std::map<int, std::vector<int>> &freeList = inst.PaletteAnimated ? PaletteAnimFree : PaletteFree;
+	auto it = freeList.find(size);
+	if (it != freeList.end() && !it->second.empty())
 	{
 		inst.PaletteOffset = it->second.back();
 		it->second.pop_back();
@@ -788,6 +1273,49 @@ void W3DInstancer::allocate_palette(Instance &inst)
 	if (PaletteUsed > PaletteHeight * W3D_PALETTE_WIDTH)
 	{
 		grow_palette(PaletteUsed);
+	}
+}
+
+void W3DInstancer::adopt_animated_palette(Instance &inst)
+{
+	if (inst.PaletteAnimated || inst.Removed)
+	{
+		return;
+	}
+	inst.PaletteAnimated = true;
+	if (inst.PaletteSize == 0)
+	{
+		return;
+	}
+	const int size = inst.PaletteSize;
+	const int old = inst.PaletteOffset;
+	PaletteFree[size].push_back(old);
+	int neu = -1;
+	auto it = PaletteAnimFree.find(size);
+	if (it != PaletteAnimFree.end() && !it->second.empty())
+	{
+		neu = it->second.back();
+		it->second.pop_back();
+	}
+	else
+	{
+		neu = PaletteUsed;
+		PaletteUsed += size;
+		if (PaletteUsed > PaletteHeight * W3D_PALETTE_WIDTH)
+		{
+			grow_palette(PaletteUsed);
+		}
+	}
+	inst.PaletteOffset = neu;
+	if (PaletteImage.is_valid() && old != neu)
+	{
+		std::uint8_t *bytes = PaletteImage->ptrw();
+		std::memmove(bytes + (size_t)neu * 16, bytes + (size_t)old * 16, (size_t)size * 16);
+	}
+	note_palette_rows(neu, size);
+	if (inst.Model >= 0 && (size_t)inst.Model < Models.size())
+	{
+		Models[(size_t)inst.Model]->BuffersDirty = true;
 	}
 }
 
@@ -809,10 +1337,217 @@ void W3DInstancer::grow_palette(int texels)
 		}
 		std::memset(dst + oldBytes, 0, bytes - oldBytes);
 	}
-	PaletteTexture = ImageTexture::create_from_image(PaletteImage);
+	bind_palette_gpu();
 	PaletteGrown = true;
+	PaletteFullUpload = true;
 	PaletteChanged = true;
 	LayoutDirty = true; // the materials take the new texture in rebuild_layout
+}
+
+void W3DInstancer::release_palette_rd()
+{
+	// The node may be freed before the render thread runs. RIDs live in PaletteQueue, and the queued callable does not touch this.
+	PaletteOnRd = false;
+	PaletteRdQueue *queue = PaletteQueue;
+	PaletteQueue = nullptr;
+	if (queue)
+	{
+		PaletteRdQueue::Op op;
+		op.kind = PaletteRdQueue::Op::Release;
+		queue->enqueue(std::move(op), true);
+	}
+	PaletteRD.unref();
+}
+
+Ref<Texture2D> W3DInstancer::palette_sampler() const
+{
+	if (PaletteRD.is_valid())
+	{
+		return PaletteRD;
+	}
+	return PaletteTexture;
+}
+
+void W3DInstancer::bind_palette_gpu()
+{
+	RenderingServer *rs = RenderingServer::get_singleton();
+	RenderingDevice *rd = rs ? rs->get_rendering_device() : nullptr;
+	if (rd && PaletteImage.is_valid() && PaletteHeight > 0)
+	{
+		if (PaletteRD.is_null())
+		{
+			PaletteRD.instantiate();
+		}
+		if (!PaletteQueue)
+		{
+			PaletteQueue = new PaletteRdQueue();
+		}
+		PaletteRdQueue::Op op;
+		op.kind = PaletteRdQueue::Op::Create;
+		op.height = PaletteHeight;
+		op.sampler = PaletteRD;
+		PaletteQueue->enqueue(std::move(op), false);
+		PaletteOnRd = true;
+		PaletteTexture.unref();
+		PaletteFullUpload = true;
+		return;
+	}
+	// Compatibility has no RenderingDevice. ImageTexture::update stays on this thread.
+	release_palette_rd();
+	PaletteRD.unref();
+	PaletteTexture = ImageTexture::create_from_image(PaletteImage);
+	PaletteFullUpload = true;
+}
+
+void W3DInstancer::upload_palette()
+{
+	PaletteRowsUploaded = 0;
+	PaletteUploadFull = false;
+	// Check a failed texture create before any no-change return. A static frame has no dirty rows, and
+	// update_now rebuilds materials before this call, so LayoutDirty is what makes them drop PaletteRD.
+	if (PaletteOnRd && PaletteQueue && PaletteQueue->create_failed.load(std::memory_order_acquire))
+	{
+		release_palette_rd();
+		PaletteRD.unref();
+		if (PaletteImage.is_valid())
+		{
+			PaletteTexture = ImageTexture::create_from_image(PaletteImage);
+		}
+		LayoutDirty = true;
+	}
+	// A rejected partial copy is completed here, on the caller thread, even when this frame wrote no new rows.
+	const bool copyRejected = PaletteOnRd && PaletteQueue && PaletteQueue->force_full.load(std::memory_order_acquire);
+	if ((!PaletteChanged && !PaletteFullUpload && !copyRejected) || PaletteImage.is_null() || PaletteHeight <= 0)
+	{
+		PaletteChanged = false;
+		return;
+	}
+	const bool full = PaletteFullUpload || copyRejected || PaletteDirtyRow1 < PaletteDirtyRow0;
+	const int row0 = full ? 0 : std::max(0, PaletteDirtyRow0);
+	const int row1 = full ? PaletteHeight - 1 : std::min(PaletteHeight - 1, PaletteDirtyRow1);
+	const int rows = row1 >= row0 ? row1 - row0 + 1 : 0;
+	PaletteRowsUploaded = rows;
+	PaletteUploadFull = full || rows == PaletteHeight;
+	auto clear = [&]() {
+		PaletteChanged = false;
+		PaletteFullUpload = false;
+		PaletteDirtyRow0 = 0;
+		PaletteDirtyRow1 = -1;
+		std::fill(PaletteDirtyMap.begin(), PaletteDirtyMap.end(), (std::uint8_t)0);
+	};
+	if (rows <= 0)
+	{
+		clear();
+		return;
+	}
+	if (PaletteOnRd && PaletteQueue)
+	{
+		const bool uploadFull = full || (row0 == 0 && rows == PaletteHeight);
+		PaletteRdQueue::Op op;
+		op.kind = PaletteRdQueue::Op::Upload;
+		op.full = uploadFull;
+		op.row0 = row0;
+		op.rows = rows;
+		// lane PERF-HD: a partial upload sends the dirty runs (gaps of up to kRunGap clean rows bridged) packed into a stage of a few fixed sizes
+		constexpr int kRunGap = 4;
+		constexpr int kStageRowStep = 64;
+		const size_t rowBytes = (size_t)W3D_PALETTE_WIDTH * 16;
+		if (!uploadFull && PaletteDirtyMap.size() == (size_t)PaletteHeight)
+		{
+			int total = 0;
+			for (int r = row0; r <= row1;)
+			{
+				if (!PaletteDirtyMap[(size_t)r])
+				{
+					++r;
+					continue;
+				}
+				int last = r, gap = 0;
+				for (int k = r + 1; k <= row1; ++k)
+				{
+					if (PaletteDirtyMap[(size_t)k])
+					{
+						last = k;
+						gap = 0;
+					}
+					else if (++gap > kRunGap)
+					{
+						break;
+					}
+				}
+				op.runs.emplace_back(r, last - r + 1);
+				total += last - r + 1;
+				r = last + 1;
+			}
+			if (!op.runs.empty())
+			{
+				// the stage is sized in steps of a quarter of the next power of two (at least kStageRowStep), so it is seldom made again
+				int pow2 = kStageRowStep;
+				while (pow2 < total)
+				{
+					pow2 *= 2;
+				}
+				const int step = std::max(kStageRowStep, pow2 / 4);
+				const int stageRows = std::min(((total + step - 1) / step) * step, std::max(PaletteHeight, total));
+				op.bytes = PaletteQueue->take((int64_t)stageRows * (int64_t)rowBytes);
+				std::uint8_t *dst = op.bytes.ptrw();
+				for (const std::pair<int, int> &run : op.runs)
+				{
+					std::memcpy(dst, PaletteImage->ptr() + (size_t)run.first * rowBytes, (size_t)run.second * rowBytes);
+					dst += (size_t)run.second * rowBytes;
+				}
+				op.row0 = op.runs.front().first;
+				op.rows = total;
+				PaletteRowsUploaded = total;
+			}
+			else
+			{
+				op.runs.clear();
+			}
+		}
+		if (op.runs.empty())
+		{
+			const int64_t nbytes = uploadFull ? (int64_t)PaletteHeight * W3D_PALETTE_WIDTH * 16 : (int64_t)rows * W3D_PALETTE_WIDTH * 16;
+			const std::uint8_t *src = PaletteImage->ptr() + (uploadFull ? 0 : (size_t)row0 * W3D_PALETTE_WIDTH * 16);
+			op.bytes = PaletteQueue->take(nbytes);
+			std::memcpy(op.bytes.ptrw(), src, (size_t)nbytes);
+		}
+		// A partial copy that can still succeed copies only the dirty rows. The whole image is copied
+		// above when uploadFull is set (the copy will not be attempted, or an earlier copy failed).
+		if (uploadFull)
+		{
+			PaletteQueue->force_full.store(false, std::memory_order_release);
+			PaletteUploadFull = true;
+			PaletteRowsUploaded = PaletteHeight;
+		}
+		PaletteQueue->enqueue(std::move(op), false);
+		if (!uploadFull && PaletteQueue->force_full.load(std::memory_order_acquire))
+		{
+			// This thread ran the copy and it failed. Copy the whole palette now, still off the render thread.
+			PaletteRdQueue::Op fullOp;
+			fullOp.kind = PaletteRdQueue::Op::Upload;
+			fullOp.full = true;
+			fullOp.row0 = 0;
+			fullOp.rows = PaletteHeight;
+			const int64_t all = (int64_t)PaletteHeight * W3D_PALETTE_WIDTH * 16;
+			fullOp.bytes = PaletteQueue->take(all);
+			std::memcpy(fullOp.bytes.ptrw(), PaletteImage->ptr(), (size_t)all);
+			PaletteQueue->force_full.store(false, std::memory_order_release);
+			PaletteQueue->enqueue(std::move(fullOp), false);
+			PaletteUploadFull = true;
+			PaletteRowsUploaded = PaletteHeight;
+		}
+		clear();
+		return;
+	}
+	if (PaletteTexture.is_valid())
+	{
+		// Compatibility has no partial texture update. The image still holds every pose; this copies all of it.
+		PaletteTexture->update(PaletteImage);
+		PaletteUploadFull = true;
+		PaletteRowsUploaded = PaletteHeight;
+	}
+	clear();
 }
 
 const HAnimClass *W3DInstancer::resolve_clip(const Model &m, const std::string &name)
@@ -857,6 +1592,7 @@ bool W3DInstancer::set_instance_clip(int64_t instance, const String &clip, doubl
 	const HAnimClass *anim = resolve_clip_cached(*Models[(size_t)inst.Model], toNative(clip));
 	if (!anim) return false;
 	inst.Anim = anim;
+	adopt_animated_palette(inst);
 	return true;
 }
 
@@ -937,6 +1673,7 @@ bool W3DInstancer::set_instance_pose_keyed(int64_t instance, const std::string &
 	inst.Percentage = pct;
 	inst.PoseStale = true;
 	PoseDirty = true;
+	adopt_animated_palette(inst);
 	return true;
 }
 
@@ -959,7 +1696,20 @@ bool W3DInstancer::set_instance_bone_spins_native(int64_t instance, const std::v
 	inst.BoneSpins = std::move(spins);
 	inst.PoseStale = true;
 	PoseDirty = true;
+	if (!inst.BoneSpins.empty())
+	{
+		adopt_animated_palette(inst);
+	}
 	return true;
+}
+
+void W3DInstancer::set_instance_pose_share(int64_t instance, float maxFrameDelta)
+{
+	if (instance < 0 || instance >= (int64_t)Instances.size())
+	{
+		return;
+	}
+	Instances[(size_t)instance].ShareDelta = maxFrameDelta;
 }
 
 namespace
@@ -1052,13 +1802,13 @@ void W3DInstancer::rebuild_layout()
 	// lane SMOOTH-1: the palette blocks are allocated per instance (allocate_palette); this pass makes sure a palette texture exists for the
 	// materials of new models and grows each draw item's MultiMesh capacity by half when its live instances outgrow it (the visible instance
 	// count draws only the written ones), so a creation does not reallocate every buffer
-	if (PaletteTexture.is_null())
+	if (PaletteImage.is_null() || (PaletteTexture.is_null() && PaletteRD.is_null()))
 	{
 		grow_palette(std::max(PaletteUsed, 1));
 	}
 	for (const Ref<ShaderMaterial> &m : AllMaterials)
 	{
-		m->set_shader_parameter("w3d_palette", PaletteTexture);
+		m->set_shader_parameter("w3d_palette", palette_sampler());
 	}
 	PaletteGrown = false;
 	PaletteTexels = PaletteUsed;
@@ -1178,12 +1928,18 @@ PackedFloat32Array W3DInstancer::get_instance_palette(int64_t instance) const
 	return out;
 }
 
-void W3DInstancer::ensure_pose(const Instance &inst) const
+void W3DInstancer::ensure_pose(int64_t instance) const
 {
+	const Instance &inst = Instances[(size_t)instance];
 	if (PoseCulling && inst.PoseStale && !inst.Removed)
 	{
 		Instance &mut = const_cast<Instance &>(inst); // the pose is a cache of the instance's inputs: evaluating it does not change what the instance is
 		evaluate_pose(mut);
+		if (!mut.QueryPosePending)
+		{
+			Models[(size_t)inst.Model]->QueriedPoseIds.push_back((int)instance);
+			mut.QueryPosePending = true;
+		}
 	}
 }
 
@@ -1227,8 +1983,8 @@ void W3DInstancer::write_buffers()
 		}
 	}
 	const Transform3D nodeXf = is_inside_tree() ? get_global_transform() : Transform3D();
-	// lane SMOOTH-1: a model is rewritten only when one of its instances changed (moved, posed, added, removed, re-tinted, hid a sub object), or,
-	// for a model with back-to-front sorted items, when the camera moved; the others keep last frame's buffers and counts
+	// Instance record changes still rewrite the model. A pose alone only rewrites affected draw items: bone matrices live in the palette,
+	// while visibility/fade enter these records. Sorted draws keep the conservative pose/camera invalidation for animated pivot depths.
 	const bool cameraMoved = !haveCamera || !HaveLastCamera || !(cam == LastCamera) || !(nodeXf == LastNodeXf); // the node's transform enters the depths too
 	LastCamera = cam;
 	LastNodeXf = nodeXf;
@@ -1240,30 +1996,62 @@ void W3DInstancer::write_buffers()
 	for (std::unique_ptr<Model> &mp : Models)
 	{
 		Model &m = *mp;
-		if (!m.BuffersDirty && !(m.HasSorted && cameraMoved))
+		const bool consumeQueries = !m.QueriedPoseIds.empty() && (m.BuffersDirty || m.PoseEvaluated || (m.HasSorted && cameraMoved));
+		if (consumeQueries && !m.BuffersDirty)
 		{
-			dithered += m.Dithered;
-			sortedItems += m.SortedItems;
-			for (const DrawItem &d : m.Draws) visible += (int)d.Order.size();
-			continue;
+			// A query can update a culled Pose outside StaleScratch. The baseline would consume it when ANY pose in this model
+			// evaluates, or its sorted camera changes. Compare only these queued candidates, never all historical instances.
+			for (int id : m.QueriedPoseIds)
+			{
+				const Instance &inst = Instances[(size_t)id];
+				if (inst.Removed) continue;
+				const HTreePose &pose = pose_source(inst).Pose; // lane PERF-HD
+				for (size_t k = 0; k < m.Draws.size(); ++k)
+				{
+					DrawItem &d = m.Draws[k];
+					if (d.PoseDirty || d.Mesh->HasSorted) continue;
+					const size_t bone = (size_t)d.Sub->BoneIndex;
+					if (inst.DrawPoseState[k] != std::make_pair(pose.IsVisible[bone], pose.PivotFade[bone]))
+					{
+						d.PoseDirty = true;
+					}
+				}
+			}
 		}
-		++writes;
-		m.BuffersDirty = false;
+		bool wrote = false;
 		m.Dithered = 0;
 		m.SortedItems = 0;
 		for (DrawItem &d : m.Draws)
 		{
+			if (!m.BuffersDirty && !d.PoseDirty && !(d.Mesh->HasSorted && cameraMoved))
+			{
+				m.Dithered += d.Dithered;
+				m.SortedItems += d.HasBatch ? 1 : 0;
+				visible += (int)d.Order.size();
+				continue;
+			}
+			wrote = true;
+			d.PoseDirty = false;
+			d.Dithered = 0;
 			const int bone = d.Sub->BoneIndex;
+			const size_t drawIndex = (size_t)(&d - m.Draws.data());
 			const bool rigid = !d.Mesh->Data.Skin;
 			std::vector<int> &ids = d.Order;
 			ids.clear();
 			for (int id : m.InstanceIds)
 			{
-				const Instance &inst = Instances[(size_t)id];
+				Instance &inst = Instances[(size_t)id];
 				if (inst.Removed) continue;
+				const HTreePose &pose = pose_source(inst).Pose; // lane PERF-HD: a shared member is drawn with its group's pose
+				inst.DrawnOffset = pose_source(inst).PaletteOffset;
+				// Cache every consumed pose before membership filters, including queried culled/hidden/zero-fade instances.
+				if (!d.Mesh->HasSorted)
+				{
+					inst.DrawPoseState[drawIndex] = std::make_pair(pose.IsVisible[(size_t)bone], pose.PivotFade[(size_t)bone]);
+				}
 				if (!inst.HiddenSubs.empty() && inst.HiddenSubs[(size_t)d.SubIndex]) continue;
-				if (!inst.Pose.IsVisible[(size_t)bone]) continue;
-				if (inst.Pose.PivotFade[(size_t)bone] * inst.Opacity <= 0.0f) continue;
+				if (!pose.IsVisible[(size_t)bone]) continue;
+				if (pose.PivotFade[(size_t)bone] * inst.Opacity <= 0.0f) continue;
 				ids.push_back(id);
 			}
 			// a batch that existed and is now gone (its last sorted instance removed or hidden) changes the S-029 count too (review r1)
@@ -1279,7 +2067,7 @@ void W3DInstancer::write_buffers()
 					for (size_t k = 0; k < ids.size(); ++k)
 					{
 						const Instance &inst = Instances[(size_t)ids[k]];
-						const ::Vector3 t = inst.Pose.Transform[(size_t)bone].Get_Translation();
+						const ::Vector3 t = pose_source(inst).Pose.Transform[(size_t)bone].Get_Translation();
 						const Vector3 world = nodeXf.xform(inst.Xf.xform(Vector3(t.X, t.Z, -t.Y))); // W3D (x, y, z) -> Godot (x, z, -y)
 						depth[k] = (world.x - camPos.X) * camForward.X + (world.y - camPos.Y) * camForward.Y + (world.z - camPos.Z) * camForward.Z;
 					}
@@ -1303,23 +2091,72 @@ void W3DInstancer::write_buffers()
 			for (int id : ids)
 			{
 				const Instance &inst = Instances[(size_t)id];
-				const float fade = inst.Pose.PivotFade[(size_t)bone] * inst.Opacity; // PROJ-2: the drawable's opacity
-				if (d.Mesh->HasOpaque && fade < 0.999f) ++m.Dithered;
+				const Instance &src = pose_source(inst); // lane PERF-HD
+				const float fade = src.Pose.PivotFade[(size_t)bone] * inst.Opacity; // PROJ-2: the drawable's opacity
+				if (d.Mesh->HasOpaque && fade < 0.999f) ++d.Dithered;
 				float *o = buf + (size_t)count * 16;
 				const Basis &b = inst.Xf.basis;
 				o[0] = b.rows[0][0]; o[1] = b.rows[0][1]; o[2] = b.rows[0][2]; o[3] = inst.Xf.origin.x;
 				o[4] = b.rows[1][0]; o[5] = b.rows[1][1]; o[6] = b.rows[1][2]; o[7] = inst.Xf.origin.y;
 				o[8] = b.rows[2][0]; o[9] = b.rows[2][1]; o[10] = b.rows[2][2]; o[11] = inst.Xf.origin.z;
-				o[12] = inst.InfantryLight ? -(float)(inst.PaletteOffset + 1) : (float)inst.PaletteOffset;
+				o[12] = inst.InfantryLight ? -(float)(src.PaletteOffset + 1) : (float)src.PaletteOffset;
 				o[13] = fade;
 				o[14] = inst.HcPacked;
-				o[15] = (float)((rigid ? (int)bone : 0) + 1024 * inst.Sway + (inst.Fogged ? 16384 : 0)); // lane VISUAL-2: the sway type, the fogged light
+				o[15] = (float)((rigid ? (int)bone : 0) + 1024 * inst.Sway + (inst.Fogged ? 16384 : 0) // lane VISUAL-2: the sway type, the fogged light
+					+ (inst.OcclusionSlot << W3D_OCCLUSION_SLOT_SHIFT) + (inst.Occluder ? W3D_OCCLUSION_OCCLUDER_BIT : 0) // lane OCCLUDE-1
+				+ (inst.NoSceneFog ? W3D_NO_SCENE_FOG_BIT : 0)); // lane INGAMEBG-1
 				++count;
 			}
 			d.MM->set_buffer(d.Buffer);
 			d.MM->set_visible_instance_count(count);
+			// Share the actual surface shaders: skinning, vegetation sway and alpha cutouts must match the visible mesh.
+			// Separate batches are necessary because casting is a GeometryInstance property, while eligibility is per drawable.
+			int shadowCount = 0;
+			for (int id : ids)
+				if (Instances[(size_t)id].CastShadow) ++shadowCount;
+			if (shadowCount != 0 && d.ShadowMM.is_null())
+			{
+				d.ShadowMM.instantiate();
+				d.ShadowMM->set_transform_format(MultiMesh::TRANSFORM_3D);
+				d.ShadowMM->set_use_custom_data(true);
+				d.ShadowMM->set_mesh(d.Mesh->Mesh);
+				MultiMeshInstance3D *shadow = memnew(MultiMeshInstance3D);
+				shadow->set_name(String(d.Node->get_name()) + "_shadow");
+				shadow->set_multimesh(d.ShadowMM);
+				shadow->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
+				add_child(shadow);
+			}
+			if (d.ShadowMM.is_valid())
+			{
+				if (d.ShadowMM->get_instance_count() != d.Allocated)
+				{
+					d.ShadowMM->set_instance_count(d.Allocated);
+					d.ShadowBuffer.resize((int64_t)d.Allocated * 16);
+				}
+				float *shadowBuffer = d.ShadowBuffer.ptrw();
+				int out = 0;
+				for (size_t i = 0; i < ids.size(); ++i)
+				{
+					if (Instances[(size_t)ids[i]].CastShadow)
+					{
+						std::memcpy(shadowBuffer + (size_t)out * 16, d.Buffer.ptr() + i * 16, 16 * sizeof(float));
+						++out;
+					}
+				}
+				d.ShadowMM->set_buffer(d.ShadowBuffer);
+				d.ShadowMM->set_visible_instance_count(shadowCount);
+			}
 			visible += count;
+			m.Dithered += d.Dithered;
 		}
+		if (wrote) ++writes;
+		if (consumeQueries)
+		{
+			for (int id : m.QueriedPoseIds) Instances[(size_t)id].QueryPosePending = false;
+			m.QueriedPoseIds.clear();
+		}
+		m.PoseEvaluated = false;
+		m.BuffersDirty = false;
 		dithered += m.Dithered;
 		sortedItems += m.SortedItems;
 	}
@@ -1338,8 +2175,8 @@ void W3DInstancer::write_buffers()
 				if (d.HasBatch) SortBatchScratch.push_back(d.Batch);
 		InterleavedBatchPairs = (int)W3D_Count_Interleaved_Batches(SortBatchScratch);
 	}
-	if (InterleavedBatchPairs > 0) warn(W3D_Batch_Order_Stop((size_t)InterleavedBatchPairs).Message);
-	if (dithered > 0) warn(W3D_Fade_Dither_Stop((size_t)dithered).Message);
+	if (InterleavedBatchPairs > 0) warn_stop(W3D_Batch_Order_Stop((size_t)InterleavedBatchPairs));
+	if (dithered > 0) warn_stop(W3D_Fade_Dither_Stop((size_t)dithered));
 	if (missedCamera)
 	{
 		warn("blended draw items are drawn in insertion order: no sort camera (set_sort_camera) and no current Camera3D");
@@ -1441,15 +2278,15 @@ void W3DInstancer::update_now()
 	for (size_t i = 0; i < Instances.size(); ++i)
 	{
 		Instance &inst = Instances[i];
-		if (!inst.Removed && (inst.PoseStale || (timeMoved && inst.Anim != nullptr && !inst.Explicit)))
+		if (!inst.Removed && (inst.PoseStale || (timeMoved && inst.Anim != nullptr && !inst.Explicit) || inst.ShareLeader >= 0))
 		{
-			if (cull)
+			if (cull && !(inst.CastShadow && ShadowMapsEnabled)) // an off-screen caster still throws an on-screen shadow
 			{
 				// the bounding sphere of the model around the instance's origin, scaled by the larger of the node's and the instance's scale
 				const Vector3 centre = nodeXf.xform(inst.Xf.origin);
 				const Vector3 sc = inst.Xf.basis.get_scale_abs();
 				const Vector3 ns = nodeXf.basis.get_scale_abs();
-				const real_t r = cull_radius(*Models[(size_t)inst.Model]) * std::max(sc.x, std::max(sc.y, sc.z)) * std::max(ns.x, std::max(ns.y, ns.z));
+				real_t r = cull_radius(*Models[(size_t)inst.Model]) * std::max(sc.x, std::max(sc.y, sc.z)) * std::max(ns.x, std::max(ns.y, ns.z));
 				bool outside = false;
 				for (const Plane &pl : frustum)
 				{
@@ -1475,11 +2312,84 @@ void W3DInstancer::update_now()
 				{
 					inst.PoseStale = true; // pending: posed by the first update that sees it (with the inputs of that frame)
 					++PoseCulled;
+					if (inst.ShareLeader >= 0)
+					{
+						inst.ShareLeader = -1; // lane PERF-HD: off screen it is drawn with its own (pending) block again
+						Models[(size_t)inst.Model]->BuffersDirty = true;
+					}
 					continue;
 				}
 			}
 			StaleScratch.push_back(i);
 		}
+	}
+	// lane PERF-HD: retail's horde pose sharing (W3DHordeModelDrawManager::ProcessGroup, PartOfSameGroup: the same model, clip and mode, frames within the
+	// draw's MaxAnimFrameDelta of the group's first). The candidates are sorted by (model, clip, frame), so a group is a run whose frames stay within the delta
+	// of its first; its first is posed and written, the others are drawn with that block and keep their own pose pending (the bone queries evaluate it).
+	// INFERENCE: retail groups the handles in its own list order; sorting by frame makes the groups as large as the delta allows
+	PoseShared = 0;
+	ShareScratch.clear();
+	const bool share = PoseSharing && PoseCulling;
+	for (size_t k = 0; k < StaleScratch.size(); ++k)
+	{
+		Instance &inst = Instances[StaleScratch[k]];
+		const int before = inst.ShareLeader;
+		inst.ShareLeader = -1;
+		if (share && inst.ShareDelta >= 0.0f && inst.Explicit && inst.Anim != nullptr && inst.Anim1 == nullptr && inst.BoneSpins.empty() && inst.PaletteSize > 0)
+		{
+			ShareScratch.push_back(StaleScratch[k]);
+		}
+		if (before >= 0)
+		{
+			inst.PoseStale = true; // it was drawn with another's pose: its own is still pending
+		}
+	}
+	if (ShareScratch.size() > 1)
+	{
+		std::sort(ShareScratch.begin(), ShareScratch.end(), [&](size_t a, size_t b) {
+			const Instance &x = Instances[a], &y = Instances[b];
+			if (x.Model != y.Model) return x.Model < y.Model;
+			if (x.Anim != y.Anim) return std::less<const HAnimClass *>()(x.Anim, y.Anim);
+			if (x.Frame0 != y.Frame0) return x.Frame0 < y.Frame0;
+			return a < b;
+		});
+		for (size_t g = 0; g < ShareScratch.size();)
+		{
+			const Instance &first = Instances[ShareScratch[g]];
+			size_t e = g + 1;
+			while (e < ShareScratch.size())
+			{
+				Instance &x = Instances[ShareScratch[e]];
+				if (x.Model != first.Model || x.Anim != first.Anim || x.Frame0 - first.Frame0 > std::min(first.ShareDelta, x.ShareDelta))
+				{
+					break;
+				}
+				x.ShareLeader = (int)ShareScratch[g];
+				++e;
+			}
+			g = e;
+		}
+	}
+	// the members leave the evaluation list; an instance whose records point at another block than they were written with rewrites its model's records
+	MemberScratch.clear();
+	{
+		size_t kept = 0;
+		for (size_t k = 0; k < StaleScratch.size(); ++k)
+		{
+			Instance &inst = Instances[StaleScratch[k]];
+			if (pose_source(inst).PaletteOffset != inst.DrawnOffset)
+			{
+				Models[(size_t)inst.Model]->BuffersDirty = true;
+			}
+			if (inst.ShareLeader >= 0)
+			{
+				MemberScratch.push_back(StaleScratch[k]);
+				++PoseShared;
+				continue;
+			}
+			StaleScratch[kept++] = StaleScratch[k];
+		}
+		StaleScratch.resize(kept);
 	}
 	PaletteWrite = StaleScratch.empty() || PaletteImage.is_null() ? nullptr : reinterpret_cast<float *>(PaletteImage->ptrw()); // the image's buffer (not shared: no copy)
 	run_parallel(StaleScratch.size(), [&](size_t begin, size_t end) {
@@ -1502,18 +2412,42 @@ void W3DInstancer::update_now()
 			inst.PoseStale = false;
 		}
 	});
+	for (size_t i : MemberScratch)
+	{
+		StaleScratch.push_back(i); // lane PERF-HD: the members' visibility and fades (their group's) are checked below too; their rows are not written
+	}
 	for (size_t i : StaleScratch)
 	{
-		Models[(size_t)Instances[i].Model]->BuffersDirty = true; // the pivot visibility and fade the buffers read may have changed
+		const Instance &inst = Instances[i];
+		const Instance &src = pose_source(inst);
+		if (inst.ShareLeader < 0)
+		{
+			note_palette_rows(inst.PaletteOffset, inst.PaletteSize);
+		}
+		Model &m = *Models[(size_t)inst.Model];
+		m.PoseEvaluated = true;
+		if (m.BuffersDirty) continue; // the full rewrite will consume and cache all poses, including queried culled ones
+		for (size_t k = 0; k < m.Draws.size(); ++k)
+		{
+			DrawItem &d = m.Draws[k];
+			if (d.PoseDirty) continue; // one changed instance already guarantees this draw's full rewrite
+			if (d.Mesh->HasSorted)
+			{
+				d.PoseDirty = true;
+				continue;
+			}
+			const size_t bone = (size_t)d.Sub->BoneIndex;
+			const auto state = std::make_pair(src.Pose.IsVisible[bone], src.Pose.PivotFade[bone]);
+			if (inst.DrawPoseState[k] != state)
+			{
+				d.PoseDirty = true;
+			}
+		}
 	}
-	PoseEvaluations = (int)StaleScratch.size();
+	PoseEvaluations = (int)(StaleScratch.size() - MemberScratch.size());
 	if (PoseCulled > 0)
 	{
 		warn(W3D_Pose_Cull_Stop().Message); // S-1730 (once: warn keeps each message once)
-	}
-	if (!StaleScratch.empty())
-	{
-		PaletteChanged = true;
 	}
 	if (poseErrors.load() > 0)
 	{
@@ -1530,7 +2464,7 @@ void W3DInstancer::update_now()
 	if (inexact > 0)
 	{
 		InexactPoseTotal = inexact;
-		warn(W3D_Pose_Order_Stop((size_t)inexact).Message);
+		warn_stop(W3D_Pose_Order_Stop((size_t)inexact));
 	}
 	else
 	{
@@ -1539,12 +2473,9 @@ void W3DInstancer::update_now()
 
 	t0 = std::chrono::steady_clock::now();
 	write_buffers();
-	if (PaletteChanged)
-	{
-		// lane PERF-3: the poses were written into the image's own buffer: no byte array allocated and copied per frame
-		PaletteTexture->update(PaletteImage);
-		PaletteChanged = false;
-	}
+	// Changed rows only. A static prop stays where it was uploaded; a prop that starts animating has been moved into the animated pool
+	// so its row is inside this span. A missed row would keep the previous pose on the GPU.
+	upload_palette();
 	UploadMs = msSince(t0);
 	PoseDirty = false;
 }
@@ -1553,6 +2484,10 @@ void W3DInstancer::_notification(int what)
 {
 	// lane RENDER-3 (S-831): this node's transparent shaders output gamma-space values; the camera that shows them composites the transparent pass in
 	// gamma space (GodotGammaComposite.h)
+	if (what == NOTIFICATION_PREDELETE)
+	{
+		release_palette_rd();
+	}
 	if (what == NOTIFICATION_READY)
 	{
 		set_process_internal(true);
@@ -1573,7 +2508,7 @@ Vector3 W3DInstancer::get_bone_position(int64_t instance, int bone) const
 {
 	if (instance < 0 || instance >= (int64_t)Instances.size()) return Vector3();
 	const Instance &inst = Instances[(size_t)instance];
-	ensure_pose(inst);
+	ensure_pose(instance);
 	if (bone < 0 || bone >= inst.Pose.Num_Pivots()) return Vector3();
 	::Vector3 t = inst.Pose.Transform[(size_t)bone].Get_Translation();
 	return Vector3(t.X, t.Y, t.Z);
@@ -1605,7 +2540,7 @@ bool W3DInstancer::get_bone_transform_native(int64_t instance, int bone, ::Matri
 		return false;
 	}
 	const Instance &inst = Instances[(size_t)instance];
-	ensure_pose(inst);
+	ensure_pose(instance);
 	if (bone < 0 || bone >= inst.Pose.Num_Pivots())
 	{
 		return false;
@@ -1624,11 +2559,14 @@ Dictionary W3DInstancer::get_stats() const
 	s["draw_items"] = draws;
 	s["palette_texels"] = PaletteTexels;
 	s["palette_rows"] = PaletteHeight;
+	s["palette_rows_uploaded"] = PaletteRowsUploaded;
+	s["palette_upload_full"] = PaletteUploadFull;
 	s["shaders"] = Materials ? (int64_t)Materials->Shader_Count() : 0;
 	s["textures"] = Materials ? (int64_t)Materials->Texture_Count() : 0;
 	s["pose_ms"] = PoseMs;
 	s["upload_ms"] = UploadMs;
 	s["pose_evaluations"] = PoseEvaluations; // SMOOTH-1: instances posed in the last update (only the changed ones)
+	s["pose_shared"] = PoseShared;           // lane PERF-HD: instances drawn with their horde group's pose in the last update
 	s["pose_culled"] = PoseCulled;           // lane PERF-3: instances whose pose the last update left pending (outside the frustum, set_pose_culling)
 	s["buffer_writes"] = BufferWrites;       // SMOOTH-1: models whose MultiMesh buffers were rewritten in the last update
 	s["mapper_ms"] = MapperMs;
@@ -1817,6 +2755,16 @@ PackedStringArray W3DInstancer::get_warnings() const
 	PackedStringArray out;
 	for (const std::string &w : Warnings) out.push_back(toGodot(w));
 	return out;
+}
+
+// lane PERF-HD: a stop whose message carries this frame's count is reported once per instancer (its first count); the counts stay in get_stats. Keyed by
+// the message, every new count printed a line and was kept: about 13 lines a second in a big battle (S-028), each a print on the main thread
+void W3DInstancer::warn_stop(const W3DStopHit &hit)
+{
+	if (WarnedMessages.insert("#stop " + hit.Id).second)
+	{
+		warn(hit.Message);
+	}
 }
 
 void W3DInstancer::warn(const std::string &message)

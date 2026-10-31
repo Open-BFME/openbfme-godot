@@ -80,7 +80,9 @@ also use the existing test helpers. No invulnerability, healing or manually set
 mission counters substitute for surviving citadels. No campaign false-defeat
 red-to-green fix is claimed.
 
-With `ROTWK_INSTALL` and `BFME2_INSTALL` set, the focused selection is:
+On Linux/macOS (POSIX shell), from the repository root with a built native
+`engine/build/openbfme_tests` and `ROTWK_INSTALL` / `BFME2_INSTALL` set to the
+retail installations, the focused selection is:
 
 ```sh
 OPENBFME_TRACE_SCRIPT_CONDITIONS='Check for BN Victory' \
@@ -145,10 +147,12 @@ This confirms the relevant counting outcome, not every intermediate death
 callback's ordering. Recovery retains the supplied-modified-image caveat S-001;
 no new capture from a running clean-retail game is claimed.
 
-To repeat the private-artifact check, with retail mount variables set:
+To repeat the private-artifact check on Linux/macOS (POSIX shell), use the same
+built test runner and retail mount variables. Place the private save at an
+ignored relative path such as `workspace/saves/saved-game-1.obfmesave`:
 
 ```sh
-OPENBFME_FOUNDATION_SAVE=/absolute/path/to/saved-game-1.obfmesave \
+OPENBFME_FOUNDATION_SAVE=workspace/saves/saved-game-1.obfmesave \
 OPENBFME_FOUNDATION_MODE=defended \
   engine/build/openbfme_tests --test-case='campaign owner save:*'
 ```

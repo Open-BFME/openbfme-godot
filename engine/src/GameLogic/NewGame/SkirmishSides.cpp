@@ -4,6 +4,12 @@
 #include "GameLogic/NewGame/SkirmishSides.h"
 
 #include "Common/PlayerTemplate.h"
+#include "Common/ExtendedPlayerColors.h"
+#include "Common/ScoreKeeper.h"
+#include "GameLogic/System/ShroudManager.h"
+#include "GameLogic/VictoryConditions.h"
+
+#include <set>
 
 namespace
 {
@@ -32,7 +38,7 @@ std::int32_t colorInt(std::uint32_t rgb)
 } // namespace
 
 bool SkirmishSides::build(const SidesList &mapSides, const SkirmishGameInfo &info, int localSlot, const std::vector<GameLogicSettings::MultiplayerColorDef> &colors,
-	const PlayerTemplateStore &templates, Built &out, std::string *error)
+	const PlayerTemplateStore &templates, Built &out, std::string *error, bool sharedStarts)
 {
 	out = Built();
 	SidesList &sides = out.sides;
@@ -62,8 +68,10 @@ bool SkirmishSides::build(const SidesList &mapSides, const SkirmishGameInfo &inf
 		}
 	}
 	// the side names
-	out.slotPlayerNames.assign(MAX_SLOTS, std::string());
-	for (int i = 0; i < MAX_SLOTS; ++i)
+	// lane P16: one side name per slot of the game's wire layout (8 legacy / 16 extended): a slot past the map's starts does not exist
+	const int slotCount = info.serializedSlotCount();
+	out.slotPlayerNames.assign(slotCount, std::string());
+	for (int i = 0; i < slotCount; ++i)
 	{
 		const SkirmishGameSlot &slot = info.slots[i];
 		if (!slot.isOccupied())
@@ -73,6 +81,31 @@ bool SkirmishSides::build(const SidesList &mapSides, const SkirmishGameInfo &inf
 		if (slot.playerTemplate >= 0)
 		{
 			out.slotPlayerNames[(size_t)i] = "Player_" + std::to_string(slot.startPos + 1);
+			bool shared = false;
+			for (int j = 0; j < i; ++j)
+			{
+				shared = shared || (info.slots[j].isOccupied() && info.slots[j].playerTemplate >= 0 && info.slots[j].startPos == slot.startPos);
+			}
+			if (shared && sharedStarts)
+			{
+				// lane WOTR-2 [S-1329 inference] (review r3): the side name is the player's identity (scripts, teams), the start position only its place: a
+				// slot sharing an earlier slot's position takes the lowest Player_<n> that no slot's position gives and no earlier sharer took
+				for (int n = 1; n <= MAX_SLOTS; ++n)
+				{
+					const std::string candidate = "Player_" + std::to_string(n);
+					bool used = false;
+					for (int k = 0; k < MAX_SLOTS; ++k)
+					{
+						used = used || (info.slots[k].isOccupied() && info.slots[k].playerTemplate >= 0 && info.slots[k].startPos + 1 == n) ||
+							   (k < i && out.slotPlayerNames[(size_t)k] == candidate);
+					}
+					if (!used)
+					{
+						out.slotPlayerNames[(size_t)i] = candidate;
+						break;
+					}
+				}
+			}
 		}
 		else
 		{
@@ -85,7 +118,7 @@ bool SkirmishSides::build(const SidesList &mapSides, const SkirmishGameInfo &inf
 		anyAI = anyAI || slot.isAI();
 	}
 	std::string allNames;
-	for (int i = 0; i < MAX_SLOTS; ++i)
+	for (int i = 0; i < slotCount; ++i)
 	{
 		if (info.slots[i].isOccupied())
 		{
@@ -93,9 +126,9 @@ bool SkirmishSides::build(const SidesList &mapSides, const SkirmishGameInfo &inf
 		}
 	}
 	// two slots must not share a side name (a start position held twice)
-	for (int i = 0; i < MAX_SLOTS; ++i)
+	for (int i = 0; i < slotCount; ++i)
 	{
-		for (int j = i + 1; j < MAX_SLOTS; ++j)
+		for (int j = i + 1; j < slotCount; ++j)
 		{
 			if (info.slots[i].isOccupied() && info.slots[j].isOccupied() && out.slotPlayerNames[(size_t)i] == out.slotPlayerNames[(size_t)j])
 			{
@@ -104,7 +137,7 @@ bool SkirmishSides::build(const SidesList &mapSides, const SkirmishGameInfo &inf
 		}
 	}
 	// addSidesForSlots
-	for (int i = 0; i < MAX_SLOTS; ++i)
+	for (int i = 0; i < slotCount; ++i)
 	{
 		const SkirmishGameSlot &slot = info.slots[i];
 		if (!slot.isOccupied())
@@ -112,9 +145,10 @@ bool SkirmishSides::build(const SidesList &mapSides, const SkirmishGameInfo &inf
 			continue;
 		}
 		const std::string &name = out.slotPlayerNames[(size_t)i];
-		if (slot.color < 0 || slot.color >= (int)colors.size())
+		const int colorCount = ExtendedPlayerColors::count((int)colors.size(), info.mapStartCount);
+		if (slot.color < 0 || slot.color >= colorCount)
 		{
-			return failWith(error, "slot " + std::to_string(i) + " has the colour " + std::to_string(slot.color) + ": not resolved or outside the " + std::to_string(colors.size()) + " colours");
+			return failWith(error, "slot " + std::to_string(i) + " has the colour " + std::to_string(slot.color) + ": not resolved or outside the " + std::to_string(colorCount) + " colours");
 		}
 		const PlayerTemplate *pt = nullptr;
 		if (slot.playerTemplate >= 0)
@@ -140,7 +174,7 @@ bool SkirmishSides::build(const SidesList &mapSides, const SkirmishGameInfo &inf
 		d.setUnicodeString("playerDisplayName", slot.name);
 		d.setAsciiString("playerFaction", pt->getName());
 		std::string allies, enemies;
-		for (int j = 0; j < MAX_SLOTS; ++j)
+		for (int j = 0; j < slotCount; ++j)
 		{
 			if (j == i || !info.slots[j].isOccupied())
 			{
@@ -161,9 +195,9 @@ bool SkirmishSides::build(const SidesList &mapSides, const SkirmishGameInfo &inf
 		}
 		d.setAsciiString("playerAllies", allies);
 		d.setAsciiString("playerEnemies", enemies);
-		const GameLogicSettings::MultiplayerColorDef &col = colors[(size_t)slot.color];
-		d.setInt("playerColor", colorInt(col.rgb));
-		d.setInt("playerNightColor", colorInt(col.nightRgb));
+		const auto *extra = ExtendedPlayerColors::find(slot.color, (int)colors.size(), info.mapStartCount);
+		d.setInt("playerColor", colorInt(extra ? extra->rgb : colors[(size_t)slot.color].rgb));
+		d.setInt("playerNightColor", colorInt(extra ? extra->rgb : colors[(size_t)slot.color].nightRgb));
 		d.setInt("multiplayerStartIndex", slot.startPos);
 		d.setInt("playerHandicap", slot.handicap); // lane OWNERFIX-2: RW 0x627F8F .. 0x627FA0 (CreateMPPlayers): every occupied slot's + 0x20
 		bool isLocal = false;
@@ -229,6 +263,21 @@ bool SkirmishSides::build(const SidesList &mapSides, const SkirmishGameInfo &inf
 	rteam.setAsciiString("teamOwner", "ReplayObserver");
 	rteam.setBool("teamIsSingleton", true);
 	sides.teams.push_back(rteam);
+	// RW keeps only neutral/civilian/creeps, adds slot sides and ReplayObserver (see header).
+	// Count exactly what PlayerList::newGame will allocate, including implicit neutral player 0.
+	std::set<std::string> playerNames{ "" };
+	for (const SidesInfo &side : sides.sides)
+	{
+		const std::string name = side.dict.getAsciiString("playerName");
+		if (!name.empty() && !playerNames.insert(name).second)
+		{
+			return failWith(error, "duplicate player side '" + name + "'");
+		}
+	}
+	if (playerNames.size() > ShroudManager::kMaxPlayers || playerNames.size() > ScoreKeeper::MAX_PLAYERS || playerNames.size() > VictoryConditions::MAX_PLAYER_COUNT)
+	{
+		return failWith(error, "skirmish players exceed the shroud, score or victory capacity");
+	}
 	return true;
 }
 

@@ -13,6 +13,7 @@
 
 #include "Common/Audio/AudioDecode.h"
 #include "Common/Audio/Mp3Decoder.h"
+#include "Common/PathIO.h"
 
 #include <chrono>
 #include <cmath>
@@ -33,7 +34,7 @@ static int compareRaw(const char *pa, const char *pb)
 	const char *paths[2] = {pa, pb};
 	for (int k = 0; k < 2; ++k)
 	{
-		FILE *f = std::fopen(paths[k], "rb");
+		FILE *f = PathIO::open(paths[k], "rb");
 		if (!f)
 		{
 			std::fprintf(stderr, "cannot open %s\n", paths[k]);
@@ -58,7 +59,14 @@ static int compareRaw(const char *pa, const char *pb)
 	return 0;
 }
 
+static int audioMain(int argc, char **argv);
+
 int main(int argc, char **argv)
+{
+	return PathIO::runMain(argc, argv, audioMain);
+}
+
+static int audioMain(int argc, char **argv)
 {
 	if (argc == 4 && !std::strcmp(argv[1], "--compare")) return compareRaw(argv[2], argv[3]);
 	bool info = false, multiply = false, timing = false;
@@ -82,7 +90,7 @@ int main(int argc, char **argv)
 		std::fprintf(stderr, "usage: audio_decode_cli [--ima-multiply] [--info] [--stream N] [--time] <file>\n");
 		return 2;
 	}
-	FILE *f = std::fopen(path, "rb");
+	FILE *f = PathIO::open(path, "rb");
 	if (!f)
 	{
 		std::fprintf(stderr, "cannot open %s\n", path);

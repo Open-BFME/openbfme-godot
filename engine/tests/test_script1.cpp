@@ -259,7 +259,8 @@ TEST_CASE("script actions: PLAYER_SET_MONEY / GIVE_MONEY, PLAYER_RELATES_PLAYER,
 	g.lists[1].items.push_back(item(script("once", { { cond("CONDITION_TRUE", {}) } },
 		{ act("PLAYER_SET_MONEY", { sp(11, "<This Player>"), ip(0, 1000) }), act("PLAYER_GIVE_MONEY", { sp(11, "<This Player>"), ip(0, -300) }),
 			act("PLAYER_RELATES_PLAYER", { sp(11, "Alice"), sp(11, "Bob"), ip(19, 2) }), act("SHOW_MILITARY_CAPTION", { sp(25, "SCRIPT:X"), rp(3.0f) }),
-			act("VICTORY", {}), act("GATE_OPEN", { sp(14, "nobody") }), act("SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER", { sp(11, "<This Player>"), sp(15, "GondorFighter"), sp(4, "kills") }) },
+			act("VICTORY", {}), act("GATE_OPEN", { sp(14, "nobody") }), act("SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER", { sp(11, "<This Player>"), sp(15, "GondorFighter"), sp(4, "kills") }),
+			act("CHANGE_BURN_RATE_AT_WAYPOINT", { sp(7, "nowhere"), rp(10.0f), ip(0, 300) }) },
 		{}, true)));
 	g.start();
 	g.frame();
@@ -275,11 +276,13 @@ TEST_CASE("script actions: PLAYER_SET_MONEY / GIVE_MONEY, PLAYER_RELATES_PLAYER,
 	REQUIRE(g.engine().endRequests().size() == 1);
 	CHECK(g.engine().endRequests()[0].victory);
 	CHECK(g.engine().stats().unportedActions.count("GATE_OPEN") == 0);
-	CHECK(g.engine().stats().unportedActions.count("SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER") == 1); // lane DEVPORT-7: unported in the archive and in OWNERFIX-1 (S-1363)
+	CHECK(g.engine().stats().unportedActions.count("SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER") == 0); // lane SCRIPT-4 ported it (RW 0x7C38F6)
+	// lane BFME2CAMP1 ported TEAM_ATTACK_TEAM, this test's former example; CHANGE_BURN_RATE_AT_WAYPOINT (RW 0x7BDED5: the fire grid, S-921) is still not
+	CHECK(g.engine().stats().unportedActions.count("CHANGE_BURN_RATE_AT_WAYPOINT") == 1);
 	bool found = false;
 	for (const std::string &s : g.lw.logic->report().stops)
 	{
-		found = found || s.find("[S-1180] script action not ported (did nothing): SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER x1") != std::string::npos;
+		found = found || s.find("[S-1180] script action not ported (did nothing): CHANGE_BURN_RATE_AT_WAYPOINT x1") != std::string::npos;
 	}
 	CHECK(found);
 }
@@ -519,7 +522,78 @@ TEST_CASE("script camera director: MOVE_CAMERA_TO / RESET_CAMERA / ROTATE_CAMERA
 	CHECK(d.captionLabel().empty());
 }
 
-TEST_CASE("script engine: stop lines (S-1180 .. S-1189) reach the logic report once a game's scripts are loaded")
+TEST_CASE("script camera director fade: the type is kept per action and increase 0 runs the first step inside setFade (RW 0x6030C1 ~ BFME2 0x203777)")
+{
+	ScriptCameraDirector d;
+	ScriptClientRequest r;
+	r.frame = 7;
+	r.params = { rp(0.0f), rp(1.0f), ip(0, 5), ip(0, 5), ip(0, 5) };
+	for (const auto &c : { std::pair<const char *, int>{ "CAMERA_FADE_SUBTRACT", ScriptCameraDirector::FADE_SUBTRACT },
+			{ "CAMERA_FADE_ADD", ScriptCameraDirector::FADE_ADD }, { "CAMERA_FADE_SATURATE", ScriptCameraDirector::FADE_SATURATE },
+			{ "CAMERA_FADE_MULTIPLY", ScriptCameraDirector::FADE_MULTIPLY } })
+	{
+		r.action = c.first;
+		d.apply(r, Coord3D{ 0.0f, 0.0f, 0.0f }, 0.0f);
+		CHECK(d.fadeType() == c.second);
+	}
+	// increase 0: retail runs updateFades inside setFade — frame 1 is past the increase, inside the hold: the maximum at once
+	r.action = "CAMERA_FADE_SUBTRACT";
+	r.params = { rp(0.0f), rp(0.8f), ip(0, 0), ip(0, 5), ip(0, 10) };
+	d.apply(r, Coord3D{ 0.0f, 0.0f, 0.0f }, 0.0f);
+	CHECK(d.fadeType() == ScriptCameraDirector::FADE_SUBTRACT);
+	CHECK(d.fadeValue() == 0.8f);
+	// and with no hold either it is FADE_NONE the same frame (RW 0x603016)
+	r.params = { rp(1.0f), rp(0.0f), ip(0, 0), ip(0, 0), ip(0, 0) };
+	d.apply(r, Coord3D{ 0.0f, 0.0f, 0.0f }, 0.0f);
+	CHECK(d.fadeType() == ScriptCameraDirector::FADE_NONE);
+}
+
+TEST_CASE("script camera director fade: CAMERA_FADE_SUBTRACT(0, 1, 15, 5, 10) steps the retail sequence per logic frame (RW 0x603016 ~ BFME2 0x2036CC)")
+{
+	ScriptCameraDirector d;
+	ScriptClientRequest r;
+	r.action = "CAMERA_FADE_SUBTRACT";
+	r.frame = 100;
+	r.params = { rp(0.0f), rp(1.0f), ip(0, 15), ip(0, 5), ip(0, 10) };
+	d.apply(r, Coord3D{ 0.0f, 0.0f, 0.0f }, 0.0f);
+	CHECK(d.fadeType() == ScriptCameraDirector::FADE_SUBTRACT);
+	// RW 0x60CC67: updateFades runs once per logic frame before the frame's actions — setFade's frame shows the minimum, the first
+	// step lands at frame +1. Hand-computed from the decomp's formula (ScriptEngine.cpp:688-712)
+	for (int n = 0; n <= 30; ++n)
+	{
+		d.update(0.0, 100u + (unsigned)n, 1.0);
+		float expected;
+		if (n <= 15)
+		{
+			expected = 0.0f + (float)n / 15 * (1.0f - 0.0f);
+		}
+		else if (n <= 20)
+		{
+			expected = 1.0f;
+		}
+		else
+		{
+			expected = 1.0f + (float)(n - 20) / 11 * (0.0f - 1.0f); // the decrease divisor is decrease + 1
+		}
+		CHECK(d.fadeType() == ScriptCameraDirector::FADE_SUBTRACT);
+		CHECK(d.fadeValue() == expected);
+		CHECK(d.fade() == expected); // alpha 1: the presented intensity is the current step
+	}
+	d.update(0.0, 131, 1.0); // frame 31: 15 up + 5 held + 10 down done -> FADE_NONE (draws nothing)
+	CHECK(d.fadeType() == ScriptCameraDirector::FADE_NONE);
+	// the presented intensity lerps the last two steps by the frame fraction (the draw's latch, RW 0x48E0EE ~ BFME2 0x8E7A4)
+	d.apply(r, Coord3D{ 0.0f, 0.0f, 0.0f }, 0.0f);
+	for (int n = 0; n <= 7; ++n)
+	{
+		d.update(0.0, 100u + (unsigned)n, 0.0);
+	}
+	d.update(0.0, 108, 0.5);
+	const float prev = 0.0f + (float)7 / 15 * (1.0f - 0.0f);
+	const float cur = 0.0f + (float)8 / 15 * (1.0f - 0.0f);
+	CHECK(d.fade() == prev + (cur - prev) * 0.5f);
+}
+
+TEST_CASE("script engine: stop lines (S-1180 .. S-1190) reach the logic report once a game's scripts are loaded")
 {
 	const std::vector<std::string> lines = ScriptEngine::stopLines();
 	std::set<std::string> ids;
@@ -527,7 +601,7 @@ TEST_CASE("script engine: stop lines (S-1180 .. S-1189) reach the logic report o
 	{
 		ids.insert(l.substr(0, 8));
 	}
-	CHECK(ids == std::set<std::string>{ "[S-1180]", "[S-1181]", "[S-1182]", "[S-1183]", "[S-1184]", "[S-1185]", "[S-1186]", "[S-1187]", "[S-1188]", "[S-1189]" });
+	CHECK(ids == std::set<std::string>{ "[S-1180]", "[S-1181]", "[S-1182]", "[S-1183]", "[S-1184]", "[S-1185]", "[S-1186]", "[S-1187]", "[S-1188]", "[S-1189]", "[S-1190]" });
 	ScriptGame g;
 	bool before = false;
 	for (const std::string &s : g.lw.logic->report().stops)
@@ -539,7 +613,7 @@ TEST_CASE("script engine: stop lines (S-1180 .. S-1189) reach the logic report o
 	size_t after = 0;
 	for (const std::string &s : g.lw.logic->report().stops)
 	{
-		after += s.rfind("[S-118", 0) == 0 ? 1 : 0;
+		after += s.rfind("[S-118", 0) == 0 || s.rfind("[S-1190]", 0) == 0 ? 1 : 0;
 	}
 	CHECK(after == lines.size());
 }

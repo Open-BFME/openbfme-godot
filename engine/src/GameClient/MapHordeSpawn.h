@@ -22,8 +22,11 @@
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 
+#include <functional>
 #include <string>
 #include <vector>
+
+struct ObjectTemplateInfo;
 
 struct HordeMemberSpawn
 {
@@ -58,4 +61,11 @@ void spawn(const ThingTemplate &tmpl, const ThingFactory &things, const Coord3D 
 // The binary's template equivalence for a slot's UnitType (RW 0x73D5C2): the same template, a name found in the other's EquivalentTo list,
 // or a reskin relation. `memberName` / `unitType` are template names.
 bool unitTypeMatches(const ThingFactory &things, const std::string &unitType, const std::string &memberName);
+
+// RW 0x86C4EA's machine rank: RW 0x6D1305 finds the UnitType's template, ThingTemplate + 0x109 bit 3 is KindOf MACHINE. The slot table of a
+// horde with such a rank is centred on that rank's first slot (HordeContainCore::setMachineTest), in the game and on the map alike. `infoOf`
+// gives the final-override template's info and reports its KindOf error: the game's GameLogic::templateInfo, the map spawn's own build. A UnitType
+// that names no template is no machine (RW 0x6D1305 finds none) and goes to `report`
+bool unitTypeIsMachine(const ThingFactory &things, const std::string &unitType, const std::function<const ObjectTemplateInfo &(const ThingTemplate &)> &infoOf,
+	const std::function<void(const std::string &)> &report);
 } // namespace MapHordeSpawn

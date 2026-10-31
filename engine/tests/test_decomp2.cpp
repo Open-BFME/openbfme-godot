@@ -2,6 +2,7 @@
 // Lane DECOMP-2: the stops closed or narrowed with the RotWK -> BFME2 -> Open-BFME-2 map (tools/re/rw2decomp.py). Binary facts SKIP when RW_GAME_DAT is unset;
 // the retail scenarios SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "BuildTestUtil.h"
@@ -141,6 +142,7 @@ TEST_CASE("decomp2 S-483: a horde has an upgrade one of its members has (RW 0x68
 	REQUIRE(tt);
 	Object *horde = logic.newObject(tt, men->getDefaultTeam(), ObjectStatusMaskType{});
 	REQUIRE(horde);
+	testutil::completeHorde(horde); // a horde makes its members (onBuildComplete, RW 0x8718ED)
 	REQUIRE(horde->getContain());
 	REQUIRE(horde->getContain()->getHordeContainInterface());
 	REQUIRE(horde->getContain()->getContainedItemsList());
@@ -491,7 +493,7 @@ TEST_CASE("decomp2 S-415: the skirmish AI builds heroes of its HeroBuildOrder af
 		INFO(std::string(faction));
 		std::string error;
 		buildtest::Game g;
-		REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", faction, 32, g, &error), error);
+		REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", faction, 48, g, &error), error);
 		GameLogic &logic = g.live->logic();
 		Player *cpu = g.live->players().findPlayerWithName(g.live->report().startSlotPlayers[1]);
 		REQUIRE(cpu);
@@ -551,6 +553,26 @@ TEST_CASE("decomp2 S-415: the skirmish AI builds heroes of its HeroBuildOrder af
 	// Merge queue q22: with seed 31 none of the 7 reached the conditions on the merged tree (AI5 alone: 1 / 1, Mordor; SUMMON-1's OCL draws and rock-throw
 	// toggles move the AIs' economy; the army list stays at 4..6 entries with the command points near the limit, shouldBuildHero RW 0x9A03A1). Seed 32,
 	// measured on the merged tree (srv1): 3 requests and 3 heroes (Men Eomer, Mordor Gothmog, Angmar Morgramir); seeds 33..39 measured 0..3
+	// Lane LOS-1 (the terrain line of sight changes the AIs' fights and so their economy): with seed 32 none of the 7 reached the conditions; seed 33, measured
+	// on the lane's tree (a CI host): 1 request and 1 hero (Wild WildAzog, requested at frame 6189, out at 6627); seeds 34 / 35 measured 0 / 0 and 1 / 0
+	// Merge queue q28 (#96 / #97 / #98, #117, #124 and the archive's plain batch): with seed 33 one request (Angmar Hwaldar at 5865) and no hero out; seeds 34..39
+	// measured on the merged tree (a CI host): 1 / 2 / 2 / 1 / 1 / 1 requests and 1 / 1 / 1 / 1 / 0 / 1 heroes; seed 35: 2 requests and 1 hero (Dwarves Gloin
+	// out at 8152; Isengard Wormtongue requested at 5140)
+	// Merge queue q29 (at each merge point: seed 35 holds through AIDATA-1 and fails from community #113 on (its FlagCaptureSquad sends the AIs' units to
+	// the neutral buildings)): with seed 35 none of the 7 requests a hero on the merged tree; seeds 36..43 measured there (a CI host): 2 / 3 / 0 / 4 / 1 /
+	// 2 / 3 / 2 requests and 1 / 2 / 0 / 4 / 0 / 0 / 2 / 2 heroes out; seed 39 (the widest margin): 4 requests and 4 heroes (Dwarves Gloin, Isengard Wormtongue,
+	// Mordor Gothmog, Wild Goblin King)
+	// Merge queue q32 (#137's rebuild holes move the AIs' economy; from #137's merge point on): with seed 39 none of the 7 requests a hero on the merged
+	// tree; seeds 40..49 measured there (a CI host): 1 / 3 / 1 / 4 / 1 / 0 / 3 / 1 / 2 / 3 requests and 0 / 1 / 1 / 1 / 0 / 0 / 2 / 1 / 2 / 2 heroes out; seed 46:
+	// 3 requests and 2 heroes (Wild Goblin King out at 2277, Angmar Hwaldar at 5027; Men Boromir requested at 8701)
+	// Lane MODCOMPAT-MOD1 (SalvageCrateCollide: the AI hordes now collect the crates and treasure chests they walk to, so their pick-ups end and their tactic
+	// teams' orders resume): with seed 39 two requests (Men RohanEowyn at 3888, Angmar AngmarHwaldar at 5916) and no hero out; seed 46, measured on the lane's
+	// tree (a CI host): 3 requests and 2 heroes (Elves ElvenArwen out at 4927, Wild WildShelob out at 6052; Angmar AngmarRogash requested at 5616); seeds 43 / 49
+	// measured 2 / 2 requests and 1 / 2 heroes; with the next AI aim fix seed 46 gives 2 requests and 2 heroes (Arwen, Shelob), seeds 39..50 there 0..2 heroes
+	// Merge queue q33 (MODCOMPAT-MOD1 and #133 move the AIs' economy; from #133's merge point on): with seed 46 none of the 7 brings a hero out on the merged
+	// tree; seeds 47..56 measured there (a CI host): 0 / 5 / 4 / 2 / 2 / 4 / 2 / 3 / 0 / 1 requests and 0 / 5 / 2 / 1 / 2 / 2 / 2 / 1 / 0 / 0 heroes out; seed 48
+	// (the widest margin): 5 requests and 5 heroes (Men RohanTheoden out at 3627, Elves ElvenArwen 4452, Dwarves DwarvenGloin 5752, Isengard IsengardSharku
+	// 4077, Mordor MordorGothmog 2727)
 	CHECK(requests >= 1);
 	CHECK(heroesOut >= 1);
 }

@@ -37,7 +37,8 @@ struct SaveLoadInfo
 		std::string mapPathUtf8;   ///< the saved game's map ("maps/map mp evendim/map mp evendim.map"): column 0 is its display name in the map cache
 		std::string mapUtf8;       ///< the map's display label as saved (column 0 when the map cache does not know the map)
 		std::string dateUtf8, timeUtf8; ///< column 3 (date) and column 2 (time)
-		int gameKind = 2;          ///< 1 Campaign, 2 Skirmish (the page it is listed on)
+		int gameKind = 2;          ///< 1 Campaign, 2 Skirmish, 8 War of the Ring (the page it is listed on)
+		int savePoint = 0;         ///< lane WOTR2 milestone 3: SaveGameHeader::savePoint (2: the War of the Ring map, retail's mode 4, listed gold)
 		bool loadable = true;      ///< false: refused (another build, other data, a damaged file); drawn grey, Load shows `refusalUtf8`
 		std::string refusalUtf8;
 		bool retailImport = false; ///< a retail save (.BfME2Skirmish / .BfME2Campaign): listed, never loaded yet (import is SAVE-7)

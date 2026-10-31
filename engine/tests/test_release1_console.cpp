@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <chrono>
 #include <csignal>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <thread>
 #include <vector>
@@ -59,8 +60,8 @@ TEST_CASE("release1: the console filter redacts stdout and stderr, partial lines
 	::close(out);
 	::close(err);
 	const std::string o = readAll(outPath), e = readAll(errPath);
-	CHECK(o.find("mount ~/Games/RotWK ok\n") != std::string::npos);
-	CHECK(o.find("a raw write of ~ without newline") != std::string::npos);
+	CHECK(o.find("mount <user>/Games/RotWK ok\n") != std::string::npos);
+	CHECK(o.find("a raw write of <user> without newline") != std::string::npos);
 	CHECK(e == "ERROR: user=<user> failed\n");
 	CHECK(o.find("tester") == std::string::npos);
 
@@ -87,13 +88,13 @@ TEST_CASE("release1: the console filter redacts stdout and stderr, partial lines
 		rawWrite(2, "tester failed\n");
 		rawWrite(1, "progress 50% bye /srv/players/test");
 		::usleep(200000);
-		CHECK(readAll(outPath) == "home=~/private\npath ~/x user=<user>;\n");
+		CHECK(readAll(outPath) == "home=<user>/private\npath <user>/x user=<user>;\n");
 		rawWrite(1, "er");
 		ConsoleFilter::uninstall(); // the last partial line at exit, scrubbed as a whole
 		::close(o3);
 		::close(e3);
-		CHECK(readAll(outPath) == "home=~/private\npath ~/x user=<user>;\nprogress 50% bye ~");
-		CHECK(readAll(errPath) == "~ failed\n");
+		CHECK(readAll(outPath) == "home=<user>/private\npath <user>/x user=<user>;\nprogress 50% bye <user>");
+		CHECK(readAll(errPath) == "<user> failed\n");
 	}
 
 	// the crash path: the held partial line (scrubbed), then the crash text; nothing written to the pipe after it
@@ -108,10 +109,10 @@ TEST_CASE("release1: the console filter redacts stdout and stderr, partial lines
 		ConsoleFilter::uninstall();
 		::close(o4);
 		::close(e4);
-		CHECK(readAll(errPath) == "user=<user>\nhandle_crash: Program crashed with signal 11 in ~/OpenBFME.x86_64\n");
+		CHECK(readAll(errPath) == "user=<user>\nhandle_crash: Program crashed with signal 11 in <user>/OpenBFME.x86_64\n");
 	}
 
-	// review r4: a line longer than the cap is written in parts, cut where no name can be split; here the cap is 32 bytes and the line
+	// A line longer than the cap is omitted as a whole; even a credential split across reads must never be flushed in chunks. The line
 	// arrives in 7-byte pieces, so cuts fall everywhere around the home folder and the user name
 	{
 		const int o5 = ::open(outPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
@@ -130,7 +131,7 @@ TEST_CASE("release1: the console filter redacts stdout and stderr, partial lines
 		::close(o5);
 		::close(e5);
 		const std::string o = readAll(outPath);
-		CHECK(o == LogPrivacy::redact(line, rules) + "\n");
+		CHECK(o == std::string(LogPrivacy::kOversized) + "\n");
 		CHECK(o.find("/srv/players") == std::string::npos);
 		CHECK(o.find("tester") == std::string::npos);
 	}
@@ -153,9 +154,38 @@ TEST_CASE("onezip1: the console filter ends while a child holds the stream, and 
 	REQUIRE(err >= 0); // tolerance: open() returns any descriptor number, -1 on failure
 	char before[512] = {};
 	const ssize_t beforeLen = ::readlink("/proc/self/fd/1", before, sizeof(before) - 1);
+	// lane MACGATE-1: the descriptors open before the install and the original stdout / stderr, for the close-on-exec check below (macOS
+	// has no /proc, so there the check is on the descriptors the install opened rather than on what an exec'd child holds)
+	struct stat consoleOut = {}, consoleErr = {};
+	REQUIRE(::fstat(1, &consoleOut) == 0);
+	REQUIRE(::fstat(2, &consoleErr) == 0);
+	const int fdLimit = 1024;
+	std::vector<bool> openBefore(fdLimit, false);
+	for (int fd = 0; fd < fdLimit; ++fd)
+		openBefore[fd] = ::fcntl(fd, F_GETFD) != -1;
 	LogPrivacy::Rules rules;
 	std::string error;
 	REQUIRE(ConsoleFilter::install(rules, &error, out, err));
+	// every descriptor the install opened that is the original console (the saved streams) is close-on-exec: no child inherits it
+	{
+		int saved = 0;
+		std::vector<std::string> inheritable;
+		for (int fd = 3; fd < fdLimit; ++fd)
+		{
+			struct stat st = {};
+			if (openBefore[fd] || ::fstat(fd, &st) != 0)
+				continue;
+			const bool console = (st.st_dev == consoleOut.st_dev && st.st_ino == consoleOut.st_ino) ||
+								 (st.st_dev == consoleErr.st_dev && st.st_ino == consoleErr.st_ino);
+			if (!console)
+				continue;
+			++saved;
+			if (!(::fcntl(fd, F_GETFD) & FD_CLOEXEC))
+				inheritable.push_back(std::to_string(fd));
+		}
+		CHECK_MESSAGE(saved >= 1, "the install saved no copy of the original console"); // tolerance: 1 when stdout and stderr are one file, else 2
+		CHECK_MESSAGE(inheritable.empty(), "a saved console descriptor is inheritable: fd " << (inheritable.empty() ? "" : inheritable[0]));
+	}
 	std::printf("before the child\n");
 	std::fflush(stdout);
 
@@ -180,6 +210,8 @@ TEST_CASE("onezip1: the console filter ends while a child holds the stream, and 
 		::_exit(127);
 	}
 	std::this_thread::sleep_for(std::chrono::milliseconds(300)); // the exec has happened
+#ifdef __linux__
+	// Linux: what the exec'd child really holds (/proc/<pid>/fd)
 	std::vector<std::string> leaked;
 	for (const auto &e : fs::directory_iterator("/proc/" + std::to_string((long long)clean) + "/fd"))
 	{
@@ -192,6 +224,9 @@ TEST_CASE("onezip1: the console filter ends while a child holds the stream, and 
 			leaked.push_back(n + " -> " + target);
 	}
 	CHECK_MESSAGE(leaked.empty(), "the child inherited the saved console: " << (leaked.empty() ? "" : leaked[0]));
+#else
+	(void)beforeLen;
+#endif
 
 	const auto t0 = std::chrono::steady_clock::now();
 	ConsoleFilter::uninstall();
@@ -237,6 +272,67 @@ TEST_CASE("onezip1: the console filter ends when its console takes nothing")
 	// tolerance: the shutdown's deadline is 1000 ms; wall time on a loaded machine
 	CHECK_MESSAGE(ms < 1500, "uninstall waited " << ms << " ms for a console that takes nothing");
 	CHECK_FALSE(ConsoleFilter::installed());
+	::close(sink[0]);
+	::close(sink[1]);
+}
+
+TEST_CASE("release1: launcher console output to dev null drains beyond the pipe capacity")
+{
+	std::fflush(stdout);
+	std::fflush(stderr);
+	const pid_t child = ::fork();
+	REQUIRE(child != -1);
+	if (child == 0)
+	{
+		const int nullSink = ::open("/dev/null", O_WRONLY);
+		if (nullSink < 0 || ::dup2(nullSink, STDOUT_FILENO) < 0 || ::dup2(nullSink, STDERR_FILENO) < 0)
+			::_exit(1);
+		if (nullSink > STDERR_FILENO)
+			::close(nullSink);
+		std::string error;
+		if (!ConsoleFilter::install({}, &error))
+			::_exit(2);
+		const std::string line = std::string(1023, 'x') + "\n";
+		for (int index = 0; index < 256; ++index)
+		{
+			if (std::fwrite(line.data(), 1, line.size(), stdout) != line.size() || std::fflush(stdout) != 0 ||
+				std::fwrite(line.data(), 1, line.size(), stderr) != line.size() || std::fflush(stderr) != 0)
+				::_exit(3);
+		}
+		ConsoleFilter::uninstall();
+		::_exit(0);
+	}
+	int status = 0;
+	pid_t finished = 0;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	while ((finished = ::waitpid(child, &status, WNOHANG)) == 0 && std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	if (finished == 0)
+	{
+		::kill(child, SIGKILL);
+		::waitpid(child, &status, 0);
+	}
+	REQUIRE_MESSAGE(finished == child, "console forwarding to /dev/null did not finish within 5 seconds");
+	REQUIRE(WIFEXITED(status));
+	CHECK(WEXITSTATUS(status) == 0);
+}
+
+TEST_CASE("release1: a blocked console cannot hang the crash writer")
+{
+	int sink[2];
+	REQUIRE(::pipe(sink) == 0);
+	::fcntl(sink[1], F_SETFL, ::fcntl(sink[1], F_GETFL) | O_NONBLOCK);
+	const std::string block(4096, 'x');
+	while (::write(sink[1], block.data(), block.size()) > 0) {}
+	::fcntl(sink[1], F_SETFL, ::fcntl(sink[1], F_GETFL) & ~O_NONBLOCK);
+	std::string error;
+	REQUIRE(ConsoleFilter::install({}, &error, sink[1], sink[1]));
+	const auto start = std::chrono::steady_clock::now();
+	ConsoleFilter::crashWrite("Authorization: Bearer synthetic");
+	const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+	ConsoleFilter::uninstall();
+	// tolerance: a 500 ms crash-write deadline plus scheduler jitter, not an indefinitely blocked write.
+	CHECK(ms < 1500);
 	::close(sink[0]);
 	::close(sink[1]);
 }

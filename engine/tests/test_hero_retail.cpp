@@ -9,6 +9,7 @@
 // Independent expectations: the workspace census, committed as tests/data/hero/faction_heroes.json (each faction's BuildableHeroesMP + BuildableRingHeroesMP and
 // its structures).
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "Common/BuildAssistant.h"
@@ -38,6 +39,7 @@
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
+#include "GameLogic/Module/ProjectileModules.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
@@ -221,6 +223,7 @@ struct Game
 		REQUIRE(o);
 		const Coord3D at = { x, y, 0.0f };
 		o->setPosition(&at);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	void select(Object *o)
@@ -2431,6 +2434,93 @@ TEST_CASE("capture flag presentation: authored capture events select one faction
 
 }
 
+TEST_CASE("hero execution retail: Gimli and Rogash ground Leap commands launch their own Bezier behavior and land alive")
+{
+	REQUIRE_RETAIL_WORLD(sh);
+	// landingDamage: the GroundHitWeapon's damage against RohanEowyn's armour (Weapon.ini x Armor.ini). victimX / victimY: the victim's offset from the
+	// landing spot, inside the warhead's radius (Gimli 30, Rogash 50) and off the flight line: a CrushStyle leap that meets an object in flight hits it
+	// there as well (RW 0x85FDB7, lane FLANK-1), so Rogash (radius 16) 20 ahead of the spot took his warhead twice (the contact, then the ground hit)
+	struct Case { const char *hero; const char *faction; const char *power; float landingDamage; float victimX; float victimY; };
+	const Case cases[] = {
+		{ "DwarvenGimli", "FactionDwarves", "SpecialAbilityGimliLeap", 90, 20, 0 },
+		{ "AngmarRogash", "FactionAngmar", "SpecialAbilityRogashLeap", 225, 0, 40 }
+	};
+	for (const Case &c : cases)
+	{
+		CAPTURE(c.hero);
+		Game g(sh, c.faction, "FactionMen", true);
+		g.logic->combat().setAutoAcquireEnabled(false);
+		const ThingTemplate *tt = sh.world->things().findTemplate(c.hero);
+		REQUIRE(tt);
+		Object *hero = g.make(tt, g.me, 1000, 1000);
+		const ObjectID id = hero->getID();
+		const SpecialPowerTemplate *powerTemplate = TheSpecialPowerStore->findSpecialPowerTemplate(c.power);
+		REQUIRE(powerTemplate);
+		unlockByUpgrade(*hero, powerTemplate);
+		for (int i = 0; i < 20; ++i) g.logic->runLogicFrame(); // finish the initial hero spawn animation
+		auto *power = dynamic_cast<SpecialPowerModule *>(SpecialPowerModules::findModule(*hero, powerTemplate));
+		auto *ability = dynamic_cast<WeaponFireSpecialAbilityUpdate *>(SpecialAbilityModules::findUpdate(*hero, powerTemplate));
+		auto *projectile = dynamic_cast<BezierProjectileBehavior *>(hero->findModule("BezierProjectileBehavior"));
+		REQUIRE(power);
+		REQUIRE(ability);
+		REQUIRE(projectile);
+		REQUIRE(power->isReady());
+		REQUIRE(projectile->flightPath().empty());
+		const Coord3D destination{ hero->getPosition()->x + 80, hero->getPosition()->y, 0 };
+		Object *victim = g.make(sh.world->things().findTemplate("RohanEowyn"), g.enemy, destination.x + c.victimX, destination.y + c.victimY);
+		REQUIRE(victim);
+		const ObjectID victimId = victim->getID();
+		for (int i = 0; i < 20; ++i) g.logic->runLogicFrame(); // finish the target's spawn before measuring the landing hit
+		int landingHits = 0;
+		float landingDamage = 0;
+		g.logic->combat().setDamageTrace([&](const Object &hit, unsigned source, float amount, float) {
+			if (hit.getID() == victimId && source == id)
+			{
+				++landingHits;
+				landingDamage += amount;
+			}
+		});
+		GameMessage cast(MSG_DO_SPECIAL_POWER_AT_LOCATION, g.me->getPlayerIndex());
+		cast.appendIntegerArgument((int)powerTemplate->getID());
+		cast.appendLocationArgument(destination);
+		cast.appendObjectIDArgument(INVALID_ID);
+		cast.appendIntegerArgument(0);
+		cast.appendObjectIDArgument(id);
+		g.list.append(cast);
+		for (int i = 0; i < 30 && ability->shotsFired() == 0; ++i) g.logic->runLogicFrame();
+		CHECK(g.spells.casts() == 1);
+		CHECK(ability->shotsFired() == 1);
+		REQUIRE_FALSE(projectile->flightPath().empty());
+		CHECK(projectile->projectileGetLauncherID() == id);
+		CHECK(projectile->flightEnd().x == destination.x);
+		CHECK(projectile->flightEnd().y == destination.y);
+		const Coord3D landing = projectile->flightPath().back();
+		CHECK(hero->testModelCondition(154));
+		CHECK_FALSE(power->isReady());
+		bool airborne = false;
+		for (int i = 0; i < 40; ++i)
+		{
+			airborne = airborne || hero->getPosition()->z > 0; // tolerance: Leap's retail curve must rise above flat ground
+			g.logic->runLogicFrame();
+		}
+		CHECK(airborne);
+		CHECK(g.logic->findObjectByID(id) == hero);
+		CHECK_FALSE(hero->isEffectivelyDead());
+		CHECK(projectile->flightPath().empty());
+		CHECK_FALSE(hero->testModelCondition(154));
+		CHECK_FALSE(hero->testModelCondition(155));
+		CHECK_FALSE(ability->isActive());
+		CHECK(hero->getPosition()->x == landing.x);
+		CHECK(hero->getPosition()->y == landing.y);
+		CHECK(hero->getPosition()->z == 0);
+		CHECK(g.logic->combat().counters().projectilesLanded == 1);
+		CHECK(g.logic->combat().counters().projectilesDetonated == 0);
+		g.logic->combat().setDamageTrace(nullptr);
+		CHECK(landingHits == 1);
+		CHECK(landingDamage == c.landingDamage);
+	}
+}
+
 TEST_CASE("capture flag presentation: callbacks append dirty objects during the same flush")
 {
 	REQUIRE_RETAIL_WORLD(sh);
@@ -2456,4 +2546,257 @@ TEST_CASE("capture flag presentation: callbacks append dirty objects during the 
 		CHECK(flushes == 1);
 	}
 	CHECK(events.take().empty());
+}
+
+// lane HEROCAST-1: a selection casts through AIGroup's groupDoSpecialPower* (RW 0x76F5DB / 0x76F774 / 0x77097E): a group with KindOf HERO members tries only
+// its senior hero (the highest current level rank, the lower ObjectID on a tie) and nobody else when that one cannot; a group without a hero casts with
+// every member at an object or a location, and with its first able member for an untargeted power unless the options carry OK_FOR_MULTI_EXECUTE.
+// The Morgul Blade (_AT_OBJECT) and Screech (untargeted) of two Nazgul: EvilMenBlackRider is KindOf HERO, Mordor's MordorBlackRider is not.
+namespace
+{
+struct HeroCastGroup
+{
+	Game g;
+	const SpecialPowerTemplate *power = nullptr;
+	Object *a = nullptr; // created first: the lower ObjectID
+	Object *b = nullptr;
+	Object *victim = nullptr;
+	HeroCastGroup(Shared &sh, const char *templateName, const char *powerName)
+		: g(sh, "FactionMordor", "FactionMen", true)
+	{
+		HeroAbilityModules::registerHandlers(*g.dispatch);
+		const ThingTemplate *tt = sh.world->things().findTemplate(templateName);
+		const ThingTemplate *victimT = sh.world->things().findTemplate("GondorFighter");
+		REQUIRE(tt);
+		REQUIRE(victimT);
+		power = TheSpecialPowerStore->findSpecialPowerTemplate(powerName);
+		REQUIRE(power);
+		a = g.make(tt, g.me, 1000.0f, 1000.0f);
+		b = g.make(tt, g.me, 1000.0f, 1040.0f);
+		REQUIRE(a->getID() < b->getID()); // tolerance: only the order of the two ids matters (the tie rule)
+		victim = g.make(victimT, g.enemy, 1012.0f, 1020.0f);
+		for (int i = 0; i < 10; ++i)
+		{
+			g.logic->runLogicFrame();
+		}
+	}
+	SpecialPowerModuleInterface &module(Object &o) const
+	{
+		SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(o, power);
+		REQUIRE(sp);
+		return *sp;
+	}
+	void ready(Object &o)
+	{
+		SpecialPowerModule *sp = dynamic_cast<SpecialPowerModule *>(&module(o));
+		REQUIRE(sp);
+		if (sp->pauseCount() != 0)
+		{
+			unlockByUpgrade(o, power);
+		}
+		REQUIRE(sp->pauseCount() == 0);
+		sp->setReadyFrame(g.logic->getFrame());
+		REQUIRE(sp->getPercentReady() == 1.0f);
+	}
+	int rank(Object &o) const
+	{
+		int r = -1;
+		REQUIRE(o.getExperienceTracker());
+		REQUIRE(o.getExperienceTracker()->currentLevelRank(r));
+		return r;
+	}
+	// both selected, the power cast from the selection (source NONE); the casters by their module's recharge
+	std::pair<bool, bool> cast(int msgType, unsigned options)
+	{
+		GameMessage sel(MSG_CREATE_SELECTED_GROUP, g.me->getPlayerIndex());
+		sel.appendBooleanArgument(true);
+		sel.appendObjectIDArgument(a->getID());
+		sel.appendObjectIDArgument(b->getID());
+		g.list.append(sel);
+		g.logic->runLogicFrame();
+		REQUIRE(g.me->selection().size() == 2);
+		GameMessage m(msgType, g.me->getPlayerIndex());
+		m.appendIntegerArgument((int)power->getID());
+		if (msgType == MSG_DO_SPECIAL_POWER_AT_OBJECT)
+		{
+			m.appendObjectIDArgument(victim->getID());
+		}
+		else if (msgType == MSG_DO_SPECIAL_POWER_AT_LOCATION)
+		{
+			m.appendLocationArgument(*victim->getPosition());
+			m.appendObjectIDArgument(INVALID_ID);
+		}
+		m.appendIntegerArgument((int)options);
+		m.appendObjectIDArgument(INVALID_ID);
+		g.list.append(m);
+		g.logic->runLogicFrame();
+		return { started(*a), started(*b) };
+	}
+	// the cast took: the power recharges (an instant one) or its ability update runs (the Morgul Blade walks to its target first; its recharge starts
+	// when the blade fires)
+	bool started(Object &o)
+	{
+		SpecialPowerUpdateInterface *u = SpecialAbilityModules::findUpdate(o, power);
+		return module(o).getPercentReady() < 1.0f || (u && u->isActive());
+	}
+};
+
+#define HEROCAST_RETAIL(sh)                                                       \
+	Shared &sh = shared();                                                        \
+	if (!sh.mount || !sh.mount->fs)                                               \
+	{                                                                             \
+		MESSAGE("SKIP: ROTWK_INSTALL / BFME2_INSTALL not set (retail hero test)"); \
+		return;                                                                   \
+	}                                                                             \
+	REQUIRE_MESSAGE(sh.world, sh.error);                                          \
+	auto contextScope = sh.world->enterContext()
+} // namespace
+
+TEST_CASE("herocast1 retail: two heroes cast a targeted power once, from the higher rank; the other's recharge is untouched")
+{
+	HEROCAST_RETAIL(sh);
+	HeroCastGroup h(sh, "EvilMenBlackRider", "SpecialAbilityBlackRiderMorgulBlade");
+	REQUIRE(h.a->isKindOfName("HERO"));
+	CHECK(ObjectTemplateInfoBuilder::kindOfIndex("HERO") == 90); // RW tests template + 0x113 bit 2
+	h.b->getExperienceTracker()->gainLevels(2, false);
+	h.ready(*h.a);
+	h.ready(*h.b);
+	CHECK(h.rank(*h.a) == 1);
+	CHECK(h.rank(*h.b) == 3);
+	const unsigned long long casts = h.g.spells.casts();
+	const auto who = h.cast(MSG_DO_SPECIAL_POWER_AT_OBJECT, 0);
+	CHECK_FALSE(who.first);
+	CHECK(who.second);
+	CHECK(h.g.spells.casts() == casts + 1);
+}
+
+TEST_CASE("herocast1 retail: heroes of the same rank: the lower ObjectID casts")
+{
+	HEROCAST_RETAIL(sh);
+	HeroCastGroup h(sh, "EvilMenBlackRider", "SpecialAbilityBlackRiderMorgulBlade");
+	h.ready(*h.a);
+	h.ready(*h.b);
+	REQUIRE(h.rank(*h.a) == h.rank(*h.b));
+	const auto who = h.cast(MSG_DO_SPECIAL_POWER_AT_OBJECT, 0);
+	CHECK(who.first);
+	CHECK_FALSE(who.second);
+}
+
+TEST_CASE("herocast1 retail: the senior hero not ready: nobody casts (the group call returns false), the junior's power stays ready")
+{
+	HEROCAST_RETAIL(sh);
+	HeroCastGroup h(sh, "EvilMenBlackRider", "SpecialAbilityBlackRiderMorgulBlade");
+	h.b->getExperienceTracker()->gainLevels(2, false);
+	h.ready(*h.a);
+	h.ready(*h.b);
+	h.module(*h.b).setReadyFrame(h.g.logic->getFrame() + 1000);
+	const unsigned long long casts = h.g.spells.casts();
+	const unsigned long long refused = h.g.spells.refused();
+	h.cast(MSG_DO_SPECIAL_POWER_AT_OBJECT, 0);
+	CHECK_FALSE(h.started(*h.a));
+	CHECK(h.g.spells.casts() == casts);
+	CHECK(h.g.spells.refused() == refused + 1);
+	// only the hero's turn ran: its AI took the command source (AI + 0x48, 0 for _AT_OBJECT); the junior's kept its own
+	CHECK(h.b->getAIUpdateInterface()->lastCommandSource() == CMD_FROM_PLAYER);
+	CHECK(h.a->getAIUpdateInterface()->lastCommandSource() == CMD_FROM_AI);
+}
+
+TEST_CASE("herocast1 retail: Mordor's Nazgul are no heroes: a targeted power casts from every member")
+{
+	HEROCAST_RETAIL(sh);
+	HeroCastGroup h(sh, "MordorBlackRider", "SpecialAbilityBlackRiderMorgulBlade");
+	REQUIRE_FALSE(h.a->isKindOfName("HERO"));
+	h.ready(*h.a);
+	h.ready(*h.b);
+	const unsigned long long casts = h.g.spells.casts();
+	const auto who = h.cast(MSG_DO_SPECIAL_POWER_AT_OBJECT, 0);
+	CHECK(who.first);
+	CHECK(who.second);
+	CHECK(h.g.spells.casts() == casts + 2);
+}
+
+TEST_CASE("herocast1 retail: an untargeted power: the senior hero only; without heroes the first able member, every member with OK_FOR_MULTI_EXECUTE")
+{
+	HEROCAST_RETAIL(sh);
+	{
+		HeroCastGroup h(sh, "EvilMenBlackRider", "SpecialAbilityScreech");
+		h.b->getExperienceTracker()->gainLevels(2, false);
+		h.ready(*h.a);
+		h.ready(*h.b);
+		const auto who = h.cast(MSG_DO_SPECIAL_POWER, 0);
+		CHECK_FALSE(who.first);
+		CHECK(who.second);
+		// the command source of MSG_DO_SPECIAL_POWER's group call is 2 (RW 0x77A4F2)
+		CHECK(h.b->getAIUpdateInterface()->lastCommandSource() == CMD_FROM_AI);
+	}
+	{
+		HeroCastGroup h(sh, "EvilMenBlackRider", "SpecialAbilityScreech");
+		h.b->getExperienceTracker()->gainLevels(2, false);
+		h.ready(*h.a);
+		h.ready(*h.b);
+		const auto who = h.cast(MSG_DO_SPECIAL_POWER, COMMAND_OPTION_OK_FOR_MULTI_EXECUTE); // no hero choice: every member
+		CHECK(who.first);
+		CHECK(who.second);
+	}
+	{
+		HeroCastGroup h(sh, "MordorBlackRider", "SpecialAbilityScreech");
+		h.ready(*h.a);
+		h.ready(*h.b);
+		const auto who = h.cast(MSG_DO_SPECIAL_POWER, 0);
+		CHECK(who.first);
+		CHECK_FALSE(who.second);
+	}
+	{
+		HeroCastGroup h(sh, "MordorBlackRider", "SpecialAbilityScreech");
+		h.ready(*h.a);
+		h.ready(*h.b);
+		const auto who = h.cast(MSG_DO_SPECIAL_POWER, COMMAND_OPTION_OK_FOR_MULTI_EXECUTE);
+		CHECK(who.first);
+		CHECK(who.second);
+	}
+}
+
+TEST_CASE("herocast1 retail: two Gandalfs cast Lightning Sword at a location (the selection, source 0): only the higher rank")
+{
+	HEROCAST_RETAIL(sh);
+	HeroCastGroup h(sh, "GondorGandalf", "SpecialAbilityLightningSword");
+	REQUIRE(h.a->isKindOfName("HERO"));
+	h.a->getExperienceTracker()->gainLevels(4, false);
+	h.b->getExperienceTracker()->gainLevels(1, false);
+	h.ready(*h.a);
+	h.ready(*h.b);
+	REQUIRE(h.rank(*h.a) > h.rank(*h.b)); // tolerance: the order of the two ranks is the property
+	const unsigned long long casts = h.g.spells.casts();
+	const auto who = h.cast(MSG_DO_SPECIAL_POWER_AT_LOCATION, 0);
+	CHECK(who.first);
+	CHECK_FALSE(who.second);
+	CHECK(h.g.spells.casts() == casts + 1);
+}
+
+TEST_CASE("herocast1 retail: a cast naming another player's object as its source is dropped: the AI of that object's running ability is untouched")
+{
+	HEROCAST_RETAIL(sh);
+	HeroCastGroup h(sh, "EvilMenBlackRider", "SpecialAbilityBlackRiderMorgulBlade");
+	h.ready(*h.a);
+	// our Nazgul's blade running (the walk to its target)
+	GameMessage mine(MSG_DO_SPECIAL_POWER_AT_OBJECT, h.g.me->getPlayerIndex());
+	mine.appendIntegerArgument((int)h.power->getID());
+	mine.appendObjectIDArgument(h.victim->getID());
+	mine.appendIntegerArgument(0);
+	mine.appendObjectIDArgument(h.a->getID());
+	h.g.list.append(mine);
+	h.g.logic->runLogicFrame();
+	REQUIRE(h.started(*h.a));
+	const CommandSourceType before = h.a->getAIUpdateInterface()->lastCommandSource();
+	const unsigned long long foreign = h.g.spells.foreignSources();
+	// the enemy names our Nazgul as the source of the same cast
+	GameMessage forged(MSG_DO_SPECIAL_POWER_AT_OBJECT, h.g.enemy->getPlayerIndex());
+	forged.appendIntegerArgument((int)h.power->getID());
+	forged.appendObjectIDArgument(h.victim->getID());
+	forged.appendIntegerArgument(0);
+	forged.appendObjectIDArgument(h.a->getID());
+	h.g.list.append(forged);
+	h.g.logic->runLogicFrame();
+	CHECK(h.g.spells.foreignSources() == foreign + 1);
+	CHECK(h.a->getAIUpdateInterface()->lastCommandSource() == before); // the running ability's AI never saw a player's command (RW 0x854F0B)
 }

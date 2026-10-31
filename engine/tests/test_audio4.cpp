@@ -779,7 +779,7 @@ TEST_CASE("audio4 footsteps retail: a Gondor soldier's death fall plays BodyFall
 	CHECK(steps.stats().updates > 0);
 	CHECK(steps.stats().moduleUpdates > 0);
 	const std::uint64_t before = steps.stats().played;
-	soldier->kill(0);
+	soldier->kill(DAMAGE_UNRESISTABLE, 0);
 	frames(40); // 8 s: every death animation of the template (DIEB .. DIEE, LNDA) has its BodyFallGeneric1 frame well inside
 	CHECK(steps.stats().played > before);
 	bool fall = false;
@@ -932,7 +932,7 @@ TEST_CASE("audio4 footsteps review r1: a drawable made before the audio attached
 	REQUIRE(stepsModule() != nullptr);
 	CHECK(stepsModule()->rangeSquared() > 0.0f);
 	CHECK(stepsModule()->rangeSquared() <= 800.0f * 800.0f);
-	soldier->kill(0);
+	soldier->kill(DAMAGE_UNRESISTABLE, 0);
 	frames(40);
 	CHECK(steps.stats().played > 0);
 	bool fall = false;
@@ -970,6 +970,7 @@ TEST_CASE("audio4 eva retail: a structure set to 1 health for building says noth
 		for (int i = 0; i < n; ++i)
 		{
 			game.logic().runLogicFrame();
+			game.game->refreshClient(1000.0 / 30.0, 0.0); // lane EVADAMAGE-1: the damage notice reaches the drawables (ClientEvent::EVA_DAMAGED)
 			att.update();
 		}
 	};
@@ -986,4 +987,5 @@ TEST_CASE("audio4 eva retail: a structure set to 1 health for building says noth
 	barracks->attemptDamage(hit);
 	frames(1);
 	CHECK(att.stats().evaDamaged == 1);
+	CHECK(game.game->drawables().evaDamageStats().lastEvent.empty()); // no Eva installed: the pick is made, nothing reported
 }

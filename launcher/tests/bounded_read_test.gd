@@ -33,8 +33,9 @@ func _run() -> void:
 		if a.begins_with("--dir="):
 			dir = a.substr(6)
 	var info: RefCounted = BuildInfo.load_info()
-	info.release_key = PackedByteArray()
-	info.release_key.resize(32)
+	var zero_key := PackedByteArray()
+	zero_key.resize(32)
+	info.release_keys = [zero_key]
 	var u := Updater.new(info)
 	u.launcher_dir = dir
 	FileAccess.open(dir.path_join("OpenBFME.x86_64"), FileAccess.WRITE).close()

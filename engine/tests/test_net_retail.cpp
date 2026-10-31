@@ -322,8 +322,11 @@ PeerRun runPeers(const std::string &tag, int frames, const std::string &common, 
 	{
 		r.reports.push_back(readFile(reportFiles[i]));
 		r.hashes.push_back(readFile(hashFiles[i]));
-		std::remove(reportFiles[i].c_str());
-		std::remove(hashFiles[i].c_str());
+		if (!std::getenv("OPENBFME_KEEP_PEER_FILES")) // set: the reports and per-frame hash files stay for a diff
+		{
+			std::remove(reportFiles[i].c_str());
+			std::remove(hashFiles[i].c_str());
+		}
 	}
 	r.hostRc = r.rcs[0];
 	r.hostReport = r.reports[0];
@@ -723,10 +726,60 @@ TEST_CASE("net retail hud5: two peer processes on Helm's Deep, the fortress' gat
 	CHECK(field(r.joinReport, "desyncs") == "0");
 	CHECK(field(r.hostReport, "crc_checks_passed") == field(r.joinReport, "crc_checks_passed"));
 	CHECK(std::atoi(field(r.hostReport, "crc_checks_passed").c_str()) >= 15);
-	CHECK(std::atoi(field(r.hostReport, "gate_messages").c_str()) >= 10); // the fortress' gates, toggled repeatedly
+	// merge queue q27: 8 messages (12 before; measured at each merge point and on the merged tree, twice): the scripted players' spell book casts
+	// (MSG_DO_SPECIAL_POWER_AT_LOCATION) go through HEROCAST-1's group cast (its command source, RW 0x77A4C4 .. 0x77A6DB), which moves the scripted game,
+	// so more of the 60-frame toggle points find a gate still opening or closing
+	CHECK(std::atoi(field(r.hostReport, "gate_messages").c_str()) >= 8); // tolerance: the fortress' gates toggled repeatedly; the count is the scripted game's
 	CHECK(field(r.joinReport, "gate_messages") == "0");                  // start 2 holds no gate
 	CHECK(!field(r.hostReport, "gates").empty());
 	CHECK(field(r.hostReport, "gates") == field(r.joinReport, "gates"));
+	CHECK(field(r.hostReport, "final_hash") == field(r.joinReport, "final_hash"));
+	CHECK(!r.hostHashes.empty());
+	CHECK(r.hostHashes == r.joinHashes); // every frame
+}
+
+// lane CHEAT-1: the open Cheat Mode in a two-peer game: the host (the cheat seat) sends every kind of player command once (resources, command points, power
+// points, the map revealed, two of its first unit spawned, that unit levelled: its first unit, a builder, cannot gain levels, so that one is a refusal every
+// peer makes alike) and the joiner sends a forged one; both peers run, refuse and announce the same, every frame's full state hash agrees
+TEST_CASE("net retail cheat1: two peer processes in a Cheat Mode game run the host's cheat commands and refuse the joiner's, in lockstep with every frame's hash equal")
+{
+	OPENBFME_REQUIRE_START(s);
+	const int kFrames = 400;
+	const std::string common = "--map \"maps/map mp fall back 4p/map mp fall back 4p.map\" --seed 23 --crc-interval 50 --run-ahead 2";
+	const std::string slots = "--slot human,FactionMen,0,0 --slot human,FactionMordor,1,1";
+	PeerRun r = runPair("cheat1", kFrames, common, slots + " --cheat-mode --cheat-at 60", "--cheat-forge-at 80");
+	MESSAGE("host:\n" << r.hostReport);
+	MESSAGE("joiner:\n" << r.joinReport);
+	CHECK(r.hostRc == 0);
+	CHECK(r.joinRc == 0);
+	CHECK(field(r.hostReport, "frames") == std::to_string(kFrames));
+	CHECK(field(r.hostReport, "desyncs") == "0");
+	CHECK(field(r.joinReport, "desyncs") == "0");
+	CHECK(field(r.hostReport, "crc_checks_passed") == field(r.joinReport, "crc_checks_passed"));
+	CHECK(field(r.hostReport, "crc_checks_passed") == "7");
+	auto lines = [](const std::string &report) {
+		std::vector<std::string> out;
+		std::istringstream in(report);
+		for (std::string line; std::getline(in, line);)
+		{
+			if (line.rfind("cheat_line ", 0) == 0)
+			{
+				out.push_back(line.substr(11));
+			}
+		}
+		return out;
+	};
+	const std::vector<std::string> host = lines(r.hostReport), join = lines(r.joinReport);
+	CHECK(host == join); // every peer announced the same lines on the same frames
+	REQUIRE(host.size() == 7);
+	CHECK(field(r.hostReport, "cheat_executed") == "5");
+	CHECK(field(r.hostReport, "cheat_refused") == "2");
+	CHECK(field(r.hostReport, "cheat_executed") == field(r.joinReport, "cheat_executed"));
+	CHECK(field(r.hostReport, "cheat_refused") == field(r.joinReport, "cheat_refused"));
+	CHECK(host[0].find("Cheat Mode: Human0 gave 2000 resources to Human0") != std::string::npos);
+	CHECK(host[4].find("Cheat Mode: Human0 spawned 2 ") != std::string::npos);
+	CHECK(host[5].find("Cheat Mode: Human0 (not done): ") != std::string::npos);
+	CHECK(host[6].find(" Cheat Mode: refused: Joiner1 is not the host") != std::string::npos); // the frame follows the run-ahead and the pacing
 	CHECK(field(r.hostReport, "final_hash") == field(r.joinReport, "final_hash"));
 	CHECK(!r.hostHashes.empty());
 	CHECK(r.hostHashes == r.joinHashes); // every frame
@@ -886,10 +939,15 @@ TEST_CASE("net retail (HERO-2): a LAN game with a Create-a-Hero on the joiner's 
 		f.write((const char *)bytes.data(), (std::streamsize)bytes.size());
 	}
 	const int kFrames = 1200;
-	const std::string common = "--map \"maps/map mp fall back 4p/map mp fall back 4p.map\" --seed 21 --script --crc-interval 100 --run-ahead 2 --cash 10000";
+	// only the host plays the scripted player (lane HERO2FLAKE-1): on the joiner its timing-dependent orders (which frames a catch-up skips) share the
+	// fortress queue and the cash with the recruit, and in about one game in fifteen the hero came out late and died, or not at all, before the last frame
+	const std::string common = "--map \"maps/map mp fall back 4p/map mp fall back 4p.map\" --seed 21 --crc-interval 100 --run-ahead 2 --cash 10000";
 	const std::string slots = "--slot human,FactionMordor,0,0 --slot human,FactionMen,1,1 --slot medium,FactionElves,2,0";
-	PeerRun r = runPair("hero2cah", kFrames, common, slots + " --create-a-hero 1:" + cah, "--recruit-create-a-hero 100");
-	std::remove(cah.c_str());
+	PeerRun r = runPair("hero2cah", kFrames, common, "--script " + slots + " --create-a-hero 1:" + cah, "--recruit-create-a-hero 100");
+	if (!std::getenv("OPENBFME_KEEP_PEER_FILES"))
+	{
+		std::remove(cah.c_str());
+	}
 	MESSAGE("host:\n" << r.hostReport);
 	MESSAGE("joiner:\n" << r.joinReport);
 	CHECK(r.hostRc == 0);
@@ -1075,8 +1133,8 @@ TEST_CASE("net retail r1 (fix 3): peers of different profile identities refuse t
 	const std::string err = readFile("mp1_profile_err.txt");
 	MESSAGE(err);
 	CHECK(other == 1);
-	CHECK(err.find("the replay was recorded by another profile") != std::string::npos);
-	CHECK(err.find("test-feature") != std::string::npos);
+	CHECK(err.find("Open it with") != std::string::npos);
+	CHECK(err.find("from the launcher") != std::string::npos);
 	for (const char *f : { "mp1_profile.replay", "mp1_profile_replay.txt", "mp1_profile_err.txt" })
 	{
 		std::remove(f);

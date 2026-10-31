@@ -7,6 +7,8 @@
 ##   gate          the main gate selected, its Toggle button pressed: it closes, pressed again: it opens (MSG_CLOSE_GATE / MSG_OPEN_GATE)
 ##   construction  a porter starts a building: "Building: n%" over it
 ##   levels        a horde with veterancy marks and a hero with its health bar (selected), damaged
+##   pushout       lane GATEPUSH-1: a Men wall gate in the courtyard is opened, a crowd stands in its doorway, the Toggle button closes it and the push-out
+##                 scan (RW 0x89C759) walks them clear before the leaves shut (hud5-pushout-*.png; record it with --write-movie)
 extends "res://scripts/scenario_player.gd"
 
 var game: Node
@@ -282,4 +284,69 @@ func _scenario_levels() -> String:
 		return "no veterancy marks drawn"
 	if int(ui.get("health_bars", 0)) < 1:
 		return "no health bar over the selected hero"
+	return ""
+
+
+
+func _scenario_pushout() -> String:
+	# a Men wall gate (GateOpenAndCloseBehavior, BOX "Closed" 25 x 95 with the OpenLeft / OpenRight leaves at +-70) stands in Helm's Deep's courtyard, out
+	# of the gatehouse's roof so the camera sees its doorway; the player's own gate, made by the test hook (logged)
+	var main := find_own("RBHelmsDeepGateDoorBig")
+	if main.is_empty():
+		return "no main gate"
+	var me := local_index()
+	var at := Vector2(main.x, main.y + 330.0)
+	var angle := PI / 2.0 # facing north (screen up): its leaves lie across the screen
+	var gid: int = world.create_object("MenWallGate", me, at.x, at.y, angle)
+	print("HUD5 pushout: MenWallGate %d at (%.0f, %.0f), angle %.2f (GAME TEST HOOK)" % [gid, at.x, at.y, angle])
+	if gid <= 0:
+		return "the wall gate was not made"
+	hud.camera_set_height(420.0)
+	await look(at.x, at.y + 60.0)
+	await game._step(30)
+	var gate: Dictionary = world.get_object(gid)
+	if not await select_object(gate) and not hud.select_object(gid):
+		return "the wall gate could not be selected"
+	# open it (OpenByDefault = No), then a crowd walks into its doorway and the front the scan covers (the cylinder 0.66 x radius ahead of the gate)
+	for i in 30:
+		if toggle_state() == 5:
+			break
+		await game._wait_seconds(0.5)
+	if not await press_button("TOGGLE_GATE"):
+		return "no Toggle button (open)"
+	hud.inject_mouse_move(Vector2(1260, 20))
+	hud.select_objects([]) # the gate's buttons off the doorway (GAME TEST HOOK)
+	await game._wait_seconds(4.0)
+	var templates := ["GondorBoromir", "RohanEowyn", "MenPorter", "MenPorter", "MenPorter", "MenPorter", "MenPorter", "MenPorter", "MenPorter", "MenPorter"]
+	var made := 0
+	for i in templates.size():
+		var p := at + Vector2((float(i % 5) - 2.0) * 20.0, float(i / 5) * 28.0 - 6.0)
+		if world.create_object(templates[i], me, p.x, p.y, angle) > 0:
+			made += 1
+	await game._wait_seconds(1.5)
+	shot("pushout-before")
+	hud.select_object(gid) # GAME TEST HOOK: the gate selected again for its Toggle
+	await game._step(6)
+	for i in 30:
+		if toggle_state() == 5:
+			break
+		await game._wait_seconds(0.5)
+	if not await press_button("TOGGLE_GATE"):
+		return "no Toggle button (close)"
+	hud.inject_mouse_move(Vector2(1260, 20))
+	hud.select_objects([])
+	for i in 8:
+		await game._wait_seconds(1.0)
+		if i == 1:
+			shot("pushout-closing")
+	shot("pushout-closed")
+	var inside := 0
+	for o in own():
+		if o.template in ["GondorBoromir", "RohanEowyn", "MenPorter"] and absf(float(o.y) - at.y) < 25.0 and absf(float(o.x) - at.x) < 95.0:
+			inside += 1
+	print("HUD5 pushout: %d units made, %d inside the closed gate's footprint (25 x 95) after the close" % [made, inside])
+	if made != templates.size():
+		return "only %d of %d units were made" % [made, templates.size()]
+	if inside != 0:
+		return "%d units stayed inside the closed gate" % inside
 	return ""

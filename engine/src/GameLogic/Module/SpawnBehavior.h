@@ -50,6 +50,7 @@
 #pragma once
 
 #include "Common/INI.h"
+#include "GameLogic/AI/AICommandSink.h"
 #include "GameLogic/Module/DamageModule.h"
 #include "GameLogic/Module/DieModule.h"
 #include "GameLogic/Module/MoneyEventModules.h"
@@ -72,6 +73,8 @@ public:
 	virtual ~SpawnBehaviorInterface() = default;
 	virtual void onSpawnDeath(ObjectID deadSpawn, const DieModuleInterface::Event *info) = 0; // slot 1
 	virtual bool canAnySlavesAttack() const = 0;                                           // slot 7 (lane DECOMP-3, Object::isAbleToAttack RW 0x691413)
+	// slot 8 (RW 0x863850; lane SCRIPT-4, AIGroup::groupIdle RW 0x771F49): every slave of the list that is in the world and has an AI idles (RW 0x5E821A)
+	virtual void orderSlavesToGoIdle(CommandSourceType source) = 0;
 	virtual void stopSpawning() = 0;                                                       // slot 9
 	virtual bool isSpawnerActive() const = 0;                                              // slot 11
 	// slot 12 (RW 0x86327C; lane BACKLOG4, Object::defect RW 0x699401): every replacement that is due (its frame is before now) takes an orphan when one can
@@ -122,6 +125,7 @@ public:
 	void reclaimDueOrphans() override;                                   // RW 0x86327C
 	bool isSpawnerActive() const override { return m_active; }           // RW 0x86277F
 	bool canAnySlavesAttack() const override;                            // RW 0x862A4E
+	void orderSlavesToGoIdle(CommandSourceType source) override;         // RW 0x863850 (lane SCRIPT-4)
 	void crc(StateHasher &h) const override;
 	static void registerClass(ModuleFactory &modules);
 	static std::vector<std::string> stopLines();

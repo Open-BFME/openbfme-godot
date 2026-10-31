@@ -1,4 +1,5 @@
 // OpenBFME. GPL-3.0. Retail veterancy recovery through combat credit and scheduled updates.
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "CampaignTestUtil.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
@@ -95,7 +96,7 @@ struct RecoveryGame : campaigntest::Mission
 		Object *o = logic().newObject(tt, (player ? player : owner)->getDefaultTeam(), ObjectStatusMaskType{});
 		REQUIRE(o);
 		place(*o, position);
-		return o;
+		return testutil::completeHorde(o);
 	}
 
 	void hit(Object &target, float amount, Object *attacker = nullptr)

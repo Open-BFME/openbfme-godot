@@ -49,12 +49,16 @@
 #include "GameNetwork/NetImpairment.h"
 #include "GameNetwork/Network.h"
 #include "GameNetwork/RelayProtocol.h"
+#include "GameNetwork/RelayAuth.h"
+#include "GameNetwork/RelayBundleChannel.h"
+#include "GameNetwork/RelayCanonicalInput.h"
 
 #include <array>
 #include <cstdint>
 #include <deque>
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -123,6 +127,7 @@ public:
 			bool enabled = false;
 			NetAddress address;               ///< the relay's UDP address (every peer's address in this mode)
 			std::vector<std::uint8_t> ticket; ///< the lobby's ticket for this client's slot (32 bytes; lane ONLINE-3: 34, a rejoin ticket)
+			std::vector<std::uint8_t> macKey; ///< lane AUTH-1: the START's per-slot secret (32 bytes; empty = the legacy unauthenticated envelope)
 			int helloMs = 250;                ///< HELLO again after this while not welcomed
 			int spectatorIndex = -1;          ///< lane ONLINE-3: a spectator ticket's index (WELCOME names 0x80 + it); -1: a player
 		} relay;
@@ -141,6 +146,16 @@ public:
 	const Options &options() const { return m_options; } ///< the effective options (the constructor raises / clamps some)
 	// drops everything queued for / buffered from the slot, sends it one last ack, then forgets it
 	void retire(int slot) override;
+	void retireDropped(int slot, std::uint32_t holdMs) override; // lane MPDROP-3
+	// lane MPDROP-3: the bounds of what a dropped peer can cost. Its backlog (the records it had not acknowledged at the drop: issued between its last
+	// ack and the drop, nothing after) is kept only up to these (beyond: retired as before, an error by name); resends to it go in rounds at most once a
+	// second, each at most kDroppedRoundBytes of datagrams. Its own packets are never filed (no memory), so a peer that sends forever costs at most
+	// kDroppedRoundBytes a second
+	static constexpr size_t kDroppedBacklogRecords = 4096;
+	static constexpr size_t kDroppedBacklogBytes = 128 * 1024;
+	static constexpr size_t kDroppedRoundBytes = 32 * 1024;
+	// the slot's dropped backlog (records, their bytes); 0 when it is not a dropped peer
+	size_t droppedBacklog(int slot, size_t *bytes = nullptr) const;
 	// sends what is due, reads every waiting datagram; call often
 	void service() override;
 	// Test clock, as in Network: set before servicing; monotonic milliseconds, real time by default.
@@ -150,12 +165,16 @@ public:
 	{
 		unsigned long long packetsSent = 0, packetsReceived = 0, commandsSent = 0, recordsSent = 0, commandsResent = 0, commandsDelivered = 0, duplicates = 0;
 		unsigned long long badPackets = 0, unknownSenders = 0, dropped = 0, sendErrors = 0, fragmentedCommands = 0, peersRetired = 0;
+		unsigned long long droppedPeerPackets = 0; ///< lane MPDROP-3: packets from a dropped peer (their acks taken, their records not delivered)
 		// lane ONLINE-1 (the relay's bandwidth budget, docs/ONLINE.md): the transport datagrams' bytes (UDP payload, IP / UDP headers not included) handed to
 		// the socket and read from it, and the datagrams sent that carry no record (an ack or a keep-alive only)
 		unsigned long long bytesSent = 0, bytesReceived = 0, ackOnlyPacketsSent = 0;
 		unsigned long long fastResends = 0; ///< lane MP-3: records resent on ack evidence before their timeout
 		// lane ONLINE-2 (relay mode): HELLOs sent, WELCOMEs and NOT_BOUNDs received, envelope bytes (5 per data datagram) included in bytesSent
 		unsigned long long relayHellos = 0, relayWelcomes = 0, relayNotBound = 0, relaySlotMismatches = 0;
+		unsigned long long relayAuthDropped = 0; ///< lane AUTH-1: relay datagrams dropped on a bad tag / replayed counter
+		unsigned long long relayAuthStale = 0;   ///< ONLINE16-FIX: of those, the ones with a good tag the replay window refused
+		unsigned long long relayLegacyEnvelope = 0; ///< ONLINE16-FIX: a version-3-only relay was met (the client then speaks version 3)
 	};
 	const Stats &stats() const { return m_stats; }
 	// socket send failures and protocol violations of known peers (at most 100 kept), for the reports
@@ -169,9 +188,11 @@ public:
 	static constexpr size_t kRttWindow = 32;      ///< about six seconds of samples (a record goes to every peer each 200 ms frame)
 	static constexpr size_t kRttPlanSamples = 16; ///< about three seconds
 	// the last time anything arrived from the slot (NetMilliseconds), 0 never
-	std::uint64_t lastHeardFrom(int slot) const override { return m_peers[(size_t)slot].lastHeard; }
+	// lane MPDROP-3: a dropped peer counts as unheard, as before it was kept (the disconnect path's silence and rejoin tests see a forgotten peer)
+	std::uint64_t lastHeardFrom(int slot) const override { return m_peers[(size_t)slot].dropped ? 0 : m_peers[(size_t)slot].lastHeard; }
 	// every record sent to the slot is acked (a retired or unknown slot: true)
-	bool allAcked(int slot) const { return m_peers[(size_t)slot].unacked.empty(); }
+	// lane MPDROP-3: a dropped peer's resends are not waited for (a finished game does not stay for a player the others dropped)
+	bool allAcked(int slot) const { return m_peers[(size_t)slot].dropped || m_peers[(size_t)slot].unacked.empty(); }
 	// the records waiting for an ack, every peer
 	size_t unackedRecords() const;
 	bool isPeer(int slot) const { return m_peers[(size_t)slot].known; }
@@ -182,7 +203,15 @@ public:
 	// lane ONLINE-2: relay mode: the relay welcomed this client (its address is bound to the ticket's game and slot); the refusal reason
 	// (RelayProtocol::RefuseReason) of a REFUSED, 0 none
 	bool relayBound() const { return m_relayBound; }
+	// lane NET-SYNC: the canonical mode: queued records (OBRC bytes) drain via takeCanonicalRecord; orders leave via sendCanonicalOrder
+	bool relayCanonical() const override { return m_relayCanonical; }
+	bool sendCanonicalOrder(std::uint64_t id, const std::vector<std::uint8_t> &bytes, std::uint64_t now, std::string &error) override;
+	bool sendCanonicalBeat(std::uint64_t id, std::uint64_t now, std::string &error) override;
+	bool takeCanonicalRecord(std::vector<std::uint8_t> &bytes) override;
+	std::uint64_t canonicalGame() const override;
+	std::uint64_t canonicalEpoch() const override { return m_relayEpoch; }
 	int relayRefusal() const { return m_relayRefusal; }
+	bool relayLegacyEnvelope() const { return m_relayLegacy; } ///< ONLINE16-FIX: speaking the previous release's envelope (version 3)
 
 	// lane ONLINE-3 (relay mode): NetTransport's view of the relay's STATUS and the local link
 	int peerGeneration(int slot) const override { return slot >= 0 && slot < MAX_SLOTS ? m_relayStatus[(size_t)slot].generation : 0; }
@@ -226,6 +255,12 @@ private:
 	{
 		bool known = false;
 		bool retiring = false;          ///< retire(): one last ack, then forgotten
+		// lane MPDROP-3 (retireDropped): no new records and none delivered from it; the unacknowledged ones are resent (at most once a second) while the
+		// drop or the last datagram from it is within holdMs, then nothing until it sends again; forgotten once it acknowledged everything
+		bool dropped = false;
+		std::uint64_t droppedAt = 0;
+		std::uint32_t holdMs = 0;
+		std::uint64_t lastDroppedRound = 0; ///< the last resend round to it (at most one a second)
 		NetAddress address;
 		std::uint64_t issued = 0;       ///< records given to this peer since setPeer (an ack can name at most this many)
 		std::uint64_t acked = 0;        ///< records the peer has acknowledged (monotonic): the unacked records are the ordinals acked .. issued - 1
@@ -245,10 +280,10 @@ private:
 	void flush(int slot, std::uint64_t now);
 	void sendDatagram(int slot, const NetAddress &to, std::vector<std::uint8_t> datagram, std::uint64_t now);
 	void sendNow(const NetAddress &to, const std::vector<std::uint8_t> &datagram);
-	void handleDatagram(const NetAddress &from, const std::vector<std::uint8_t> &d, std::uint64_t now);
+	void handleDatagram(const NetAddress &from, std::vector<std::uint8_t> &d, std::uint64_t now);
 	// envelopeSlot: relay mode, the source slot the relay stamped (-1: peer to peer)
 	void handlePacket(const NetAddress &from, const std::vector<std::uint8_t> &d, std::uint64_t now, int envelopeSlot);
-	void handleRelay(const std::vector<std::uint8_t> &d, std::uint64_t now); ///< lane ONLINE-2
+	void handleRelay(std::vector<std::uint8_t> &d, std::uint64_t now); ///< lane ONLINE-2 (AUTH-1: the tag check rewrites the buffer in place)
 	void sendHello(std::uint64_t now);
 	void deliver(int slot, Incoming &&record);
 	void error(const std::string &e);
@@ -278,10 +313,27 @@ private:
 		bool silent = false;
 	};
 	std::array<RelaySlotStatus, MAX_SLOTS> m_relayStatus{};
+	// lane NET-SYNC: canonical games (the ticket's mode has TICKET_MODE_CANONICAL): the relay keeps the beat. The
+	// WELCOME's epoch tail opens this client's NS channel; orders leave as OBCI messages, committed OBRC records
+	// arrive back. `m_canonicalRecords` is the ordered commit stream Network consumes.
+	bool m_relayCanonical = false;
+	std::uint64_t m_relayEpoch = 0;
+	std::unique_ptr<RelayBundleChannel> m_relayChannel;
+	std::deque<std::vector<std::uint8_t>> m_canonicalRecords;
+	bool emitCanonicalMessage(const RelayCanonicalInput::Message &message, std::uint64_t now, std::string &error);
 	std::uint64_t m_lastFromRelay = 0;
 	unsigned long long m_relayStatuses = 0;
 	std::map<std::uint32_t, std::vector<std::uint8_t>> m_logChunks;
 	std::uint32_t m_logSize = 0;
 	bool m_logRefused = false;
 	unsigned long long m_spectatorRefusals = 0;
+	// lane AUTH-1: the START's macKey derives the direction keys once; c2r seals every outgoing datagram, r2c +
+	// the window verify every incoming one. Empty macKey = the legacy unauthenticated path (an old lobby's START)
+	bool m_auth = false;
+	RelayAuth::Keys m_authKeys;
+	std::uint64_t m_authSent = 0; ///< the c2r counter (HELLO counts too)
+	RelayAuth::Window m_authRecv; ///< the r2c replay window
+	bool m_authVerified = false;  ///< ONLINE16-FIX: a sealed datagram of the relay verified (unsigned refusals stop counting)
+	bool m_relayLegacy = false;   ///< ONLINE16-FIX: the relay speaks only version 3 (never together with m_auth)
+	void sealRelay(std::vector<std::uint8_t> &d); ///< lane AUTH-1: upgrades a built v4 datagram to v5 when authed
 };

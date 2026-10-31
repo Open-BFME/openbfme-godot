@@ -6,6 +6,7 @@
 // The objects themselves are obfme:Objects' (SAVE-4b, not merged): both games keep their own, identical objects. SKIP loudly without ROTWK_INSTALL /
 // BFME2_INSTALL.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "StartTestUtil.h"
@@ -29,10 +30,12 @@
 #include "GameLogic/System/ShroudManager.h"
 #include "Common/PlayerList.h"
 #include "GameLogic/AI/AIGarrisonStates.h"
+#include "GameLogic/AI/AIClosestEnemy.h"
 #include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/AI/AIStateMachine.h"
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
 #include "GameLogic/VictoryConditions.h"
@@ -449,16 +452,19 @@ TEST_CASE("save4c retail T5: each block's version window (RW 0xA1F5B9's two mess
 		late.logic().gameState().saveBlocks({ t }, one);
 		const size_t at = payloadOffset(t);
 		REQUIRE(one.size() > at); // tolerance: an index precondition (the version byte must exist before it is read)
-		// every SAVE-4c block starts with its version: 1, except obfme:SkirmishAI's (2, 2) since lane AI5 (the upgrade builders and the money reserve)
-		const std::uint8_t version = t == "obfme:SkirmishAI" ? 2 : 1;
+		// every SAVE-4c block starts with its version: 1, except obfme:SkirmishAI's: (earliest 2, current 2) since lane AI5 (the upgrade builders and the money
+		// reserve), (3, 3) since community #113 (the capture-flag registration history, which older snapshots cannot recover), (3, 4) since lane AIEXPAND-1 (the
+		// EXPANSION heuristic's frame counter)
+		const bool skirmish = t == "obfme:SkirmishAI";
+		const std::uint8_t version = skirmish ? 4 : 1, earliest = skirmish ? 3 : 1;
 		REQUIRE(one[at] == version);
 		std::vector<std::uint8_t> above = one, below = one;
 		above[at] = (std::uint8_t)(version + 1);
-		below[at] = (std::uint8_t)(version - 1);
+		below[at] = (std::uint8_t)(earliest - 1);
 		CHECK(loadError(late.logic(), { t }, above) == "block '" + t + "': Don't know how to load version " + std::to_string(version + 1) + " (most recent is " +
 			std::to_string(version) + ")");
-		CHECK(loadError(late.logic(), { t }, below) == "block '" + t + "': Found version " + std::to_string(version - 1) + " but the earliest supported is " +
-			std::to_string(version));
+		CHECK(loadError(late.logic(), { t }, below) == "block '" + t + "': Found version " + std::to_string(earliest - 1) + " but the earliest supported is " +
+			std::to_string(earliest));
 	}
 	// another moment of the same game: the AI modules are not the same set
 	std::vector<std::uint8_t> ai;
@@ -707,16 +713,17 @@ TEST_CASE("save4c retail hostile inputs (SAVES.md section 8, rules 3 to 5): for 
 		refused(t, { "shroud" }, withU32(one, records[1], id0), "block '" + t + "': shroud: object " + std::to_string(id0) + " has two records");
 		refused(t, { "shroud" }, badStatus, "block '" + t + "': shroud: a record's status 9 is outside 0 .. 4");
 	}
-	// ---- obfme:SkirmishAI: version, started, the attacked-at ids, the assist timers (count, 8 bytes each), the data flag and hash, the info players ----
+	// ---- obfme:SkirmishAI: version, started, the attacked-at ids, the EXPANSION heuristic's frame counter (version 3), the assist timers (count, 8 bytes
+	// each), the data flag and hash, the info players ----
 	{
 		const std::string t = "obfme:SkirmishAI";
 		std::vector<std::uint8_t> one;
 		logic.gameState().saveBlocks({ t }, one);
-		const size_t p = payloadOffset(t), assist = p + 6;
+		const size_t p = payloadOffset(t), assist = p + 10;
 		const size_t info = assist + 4 + 8 * (size_t)u32At(one, assist) + 5;
 		REQUIRE(u32At(one, info) >= 2u); // tolerance: a precondition (two info players to make one the other's twin)
 		const int players = logic.players().getPlayerCount();
-		refused(t, { "skirmish AI" }, withU32(one, assist, big), "block '" + t + "': " + countError(big, 8, payloadSize(one, t) - 10));
+		refused(t, { "skirmish AI" }, withU32(one, assist, big), "block '" + t + "': " + countError(big, 8, payloadSize(one, t) - 14));
 		refused(t, { "skirmish AI" }, withU32(one, info + 4, 99),
 			"block '" + t + "': skirmish ai: a player info player 99 is outside 0 .. " + std::to_string(players - 1));
 		refused(t, { "skirmish AI" }, withU32(one, info + 8, u32At(one, info + 4)), "block '" + t + "': skirmish ai: a player is twice among the player info players");
@@ -929,7 +936,20 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 		  "saved ones, and both games go on equal")
 {
 	OPENBFME_REQUIRE_START(s);
-	const NewGameMessage m = fourPlayerMessage(*s, 4127);
+	// lane BANNER-1 (the banner carriers refill the AIs' hordes as RotWK does): in seed 4127's game FactionMen (the attacker's and the garrison's player) has
+	// no armed unit left from frame 1500 on (scanned 600 .. 4500), so the scene moves to seed 4132, whose frame 1500 holds the actors (seeds 4128 .. 4132
+	// scanned: 4128 at 1200 only, 4129 .. 4131 none)
+	// merge queue q28 (#117's fortress module in the update schedule moves the AIs' game): seed 4132 has no frame of 1500 .. 3000 holding the actors (the
+	// #96 merge point alone still had them at 1500), so the scene moves to seed 4133 (scene at 1500); seeds 4133 .. 4138 measured on the merged tree: 4133 ..
+	// 4137 hold the actors (1500 / 2100 / 1800 / 2700 / 2700), 4138's rider is no longer in its garrison order at the stepped frame
+	// merge queue q29 (measured at each merge point: seed 4133 holds the actors through IDLEMOTION-1 and none from FBSIM-1 on, whose computer players' phantom
+	// sites move the AIs' game): seed 4133 has no frame of 1500 .. 3000 holding the actors on the merged tree, so the scene moves to seed 4136 (scene at 3000);
+	// seeds 4134 .. 4141 measured on the merged tree: 4136 / 4137 / 4138 / 4140 hold the actors (3000 / 1800 / 2700 / 1800); 4134, 4135, 4139 and 4141 fail
+	// later in the scene (the attacker's order refused, the garrison rider not entering, an actor's order no longer in flight in the saved game)
+	// merge queue q33 (measured on the merged tree: MODCOMPAT-MOD1 refuses the attacker's order at 4136's scene, and #133 leaves FactionMen no unit beside
+	// the actors): seed 4136 fails; seeds 4136 .. 4145 measured there: 4137 / 4138 / 4143 / 4144 hold the actors (scene 3000 each); 4136, 4139 .. 4142 and 4145
+	// fail (no unit beside the actors, no scene, the attacker's order refused, an actor's order no longer in flight), so the scene moves to seed 4137
+	const NewGameMessage m = fourPlayerMessage(*s, 4137);
 	// lane DEVPORT-7: the scene frame is found, not assumed. The test pinned 2700 / 3000, but which units of this 4-AI game live then is the AI's play,
 	// not a retail fact: with BloodthirstyUpdate ported (an update module on every Mordor / Isengard horde, woken at creation and every 2 s + 1 frame as
 	// retail's, RW 0x85123F / BFME2 0x44E0AA; it changes nothing in this game, but its update slots reorder the others', RW 0x62B921) the same seed has
@@ -966,6 +986,11 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 		}
 		return ids;
 	};
+	// lane AIDATA-1: the hunter must have a victim for the hunt's first scan (AIHuntState::findVictim's search, RW 0x701443 with 0x4A over 9999.9; without
+	// one the hunt ends at that scan, RW 0x7481F9)
+	auto hasPrey = [](Object *o) {
+		return AI::findClosestEnemy(*o, 9999.9f, AI::CAN_ATTACK | AI::ATTACK_BUILDINGS | AI::AUTO_ACQUIRE, o->getAIUpdateInterface()->attackInfo(), nullptr, 0) != nullptr;
+	};
 	UnsignedInt scene = 0;
 	{
 		Game c;
@@ -988,9 +1013,15 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 				const Player *p = lc.players().getNthPlayer(kv.first);
 				menUnits += p && p->getPlayerTemplate() && p->getPlayerTemplate()->getName() == "FactionMen" ? (int)kv.second.size() : 0;
 			}
-			// the attacker (first player), the guard (third), the hunter (fourth), and a second unit of FactionMen beside the attacker for the garrison
-			if (any(ids[0], [&](Object *o) { return armed(o) && takes(o, 0xB); }) && any(ids[2], [&](Object *o) { return takes(o, 0); }) &&
-				any(ids[3], [&](Object *o) { return armed(o) && takes(o, 0x12) && GarrisonRules::isMobile(*o); }) && menUnits >= 2)
+			// the attacker (first player), the guard (third), the hunter (fourth, lane AIDATA-1: or any other player, see below), and a second unit of
+			// FactionMen beside the attacker for the garrison
+			bool hunterFound = false;
+			for (int p : ids)
+			{
+				hunterFound = hunterFound || any(p, [&](Object *o) { return armed(o) && takes(o, 0x12) && GarrisonRules::isMobile(*o) && hasPrey(o); });
+			}
+			if (any(ids[0], [&](Object *o) { return armed(o) && takes(o, 0xB); }) && any(ids[2], [&](Object *o) { return takes(o, 0); }) && hunterFound &&
+				menUnits >= 2)
 			{
 				scene = t;
 			}
@@ -998,6 +1029,46 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 	}
 	REQUIRE_MESSAGE(scene != 0, "no frame of 1500 .. 3000 (every 300) has the actors among the objects alive 300 frames before"); // tolerance: 0 is "none found"; the frame itself is the AI's play
 	MESSAGE("save4c units attacking: the scene is at frame " << scene << " (its modules' earlier state from frame " << scene - 300 << ")");
+	// lane AIDATA-1: the hunter must also keep its hunt through the frame the test steps: a unit the skirmish AI is walking somewhere gets its next order from
+	// the AI in that frame (the frame-2400 scene's only candidate of the fourth player, an Isengard pike horde, was back in AI_MOVE_TO). A scratch game of its
+	// own, at the scene, gives every candidate of every player the hunt and steps once; the candidates still hunting are the ones the two games below may
+	// choose, the fourth player's first, else the first of another player that is not an actor yet (the scratch game is gone before they load: one live game
+	// per world, S-3808)
+	std::set<ObjectID> keepsHunt;
+	{
+		Game d;
+		load(*s, m, d);
+		GameLogic &ld = d.logic();
+		runTo(d, scene - 300);
+		const std::set<ObjectID> before = aiIds(ld);
+		runTo(d, scene);
+		std::vector<ObjectID> tried;
+		std::map<int, std::vector<Object *>> by = candidates(ld, before);
+		for (Object *o : [&] {
+				 std::vector<Object *> all;
+				 for (int p : ld.skirmishAI().infoPlayers())
+				 {
+					 all.insert(all.end(), by[p].begin(), by[p].end());
+				 }
+				 return all;
+			 }())
+		{
+			if (armed(o) && takes(o, 0x12) && GarrisonRules::isMobile(*o) && hasPrey(o) && o->getAIUpdateInterface()->aiHunt(CMD_FROM_SCRIPT))
+			{
+				tried.push_back(o->getID());
+			}
+		}
+		step(d);
+		for (ObjectID id : tried)
+		{
+			const Object *o = ld.findObjectByID(id);
+			if (o && o->getAIUpdateInterface() && o->getAIUpdateInterface()->currentStateId() == AI_HUNT)
+			{
+				keepsHunt.insert(id);
+			}
+		}
+	}
+	REQUIRE(!keepsHunt.empty());
 	const UnsignedInt pre = scene - 300;
 	Game a, b;
 	load(*s, m, a);
@@ -1035,6 +1106,29 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 	// structure of the mover's player
 	const std::vector<int> playerIds = la.skirmishAI().infoPlayers(); // the four skirmish players (the map's neutral critters are not actors)
 	REQUIRE(playerIds.size() == 4u);
+	// the hunter is preferably no member of its AI's tactic teams: a member takes that AI's team orders (AITacticalAI's team move: RW 0x8F18AA passes
+	// the player's source), which may replace the hunt in the frame the test steps (measured: with the formations centred on their hordes, RW 0x86C4EA,
+	// and the destination adjustment spiralling around its cell, RW 0x6FA2A4, the fourth player's first crossbow horde was a member and walked on in
+	// AI_MOVE_TO). Only a preference: a player may have every armed unit in a team (the first player has, at the scene's frame), and the other roles
+	// keep the first fit
+	auto inAITeam = [&](const Object *o) {
+		const AISkirmishPlayer *p = la.skirmishAI().findAI(o->getControllingPlayer()->getPlayerIndex());
+		if (!p)
+		{
+			return false;
+		}
+		for (const AITactic &tac : p->brain.tactics)
+		{
+			for (const AITacticTeam &team : tac.teams)
+			{
+				if (std::find(team.members.begin(), team.members.end(), o->getID()) != team.members.end())
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	};
 	auto firstOf = [&](int player, const std::function<bool(Object *)> &ok) -> Object * {
 		for (Object *o : byPlayer[player])
 		{
@@ -1046,9 +1140,32 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 		return nullptr;
 	};
 	Object *attacker = firstOf(playerIds[0], [&](Object *o) { return armed(o) && takes(o, 0xB); });
-	Object *mover = firstOf(playerIds[1], [&](Object *o) { return takes(o, 0); });
+	// the move order (300 east of the unit, as below) must be reachable, or it ends at once; and the unit must be standing without a path: a unit that just
+	// computed one has its new request deferred (AIMover::requestPath's 2-frame rule, 5 frames later) and its old path's end can finish the order at once,
+	// and a blocked unit patches its old path instead of searching (RW 0x6662FD .. 0x6665B5). Lane ATTACKPATH-1: the second player's first unit at frame
+	// 2700 is a porter walking a path, so these rules apply to the first choice too
+	auto reachableMover = [&](Object *o) {
+		AIUpdateInterface *ai = o->getAIUpdateInterface();
+		if (ai->mover().blockedFrames() > 0 || ai->mover().path() != nullptr)
+		{
+			return false;
+		}
+		const Coord3D from = *o->getPosition();
+		Coord3D to = from;
+		to.x += 300.0f;
+		to.z = la.getGroundHeight(to.x, to.y);
+		return ai->world().pathfinder().clientSafeQuickDoesPathExist(ai->locomotorInfo(), &from, &to);
+	};
+	Object *mover = firstOf(playerIds[1], [&](Object *o) { return takes(o, 0) && reachableMover(o); });
 	Object *guard = firstOf(playerIds[2], [&](Object *o) { return takes(o, 0); });
-	Object *hunter = firstOf(playerIds[3], [&](Object *o) { return armed(o) && takes(o, 0x12) && GarrisonRules::isMobile(*o); }); // RW 0x66450F's test
+	auto huntable = [&](Object *o) { return armed(o) && takes(o, 0x12) && GarrisonRules::isMobile(*o) && hasPrey(o) && keepsHunt.count(o->getID()) == 1; }; // RW 0x66450F's test
+	Object *hunter = firstOf(playerIds[3], [&](Object *o) { return huntable(o) && !inAITeam(o); });
+	hunter = hunter ? hunter : firstOf(playerIds[3], huntable);
+	for (int p : playerIds)
+	{
+		Object *c = firstOf(p, [&](Object *o) { return huntable(o) && o != attacker && o != mover && o != guard; });
+		hunter = hunter ? hunter : c;
+	}
 	if (!mover)
 	{
 		// merge queue q16: the second player has only horde members and new units at frame 2700 (nothing older to snapshot): its role goes to the first
@@ -1056,14 +1173,7 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 		for (int p : playerIds)
 		{
 			// the move order (300 east of the unit, as below) must be reachable, or it ends at once
-			Object *c = firstOf(p, [&](Object *o) {
-				AIUpdateInterface *ai = o->getAIUpdateInterface();
-				const Coord3D from = *o->getPosition();
-				Coord3D to = from;
-				to.x += 300.0f;
-				to.z = la.getGroundHeight(to.x, to.y);
-				return takes(o, 0) && o != attacker && o != guard && o != hunter && ai->world().pathfinder().clientSafeQuickDoesPathExist(ai->locomotorInfo(), &from, &to);
-			});
+			Object *c = firstOf(p, [&](Object *o) { return takes(o, 0) && o != attacker && o != guard && o != hunter && reachableMover(o); });
 			mover = mover ? mover : c;
 		}
 	}
@@ -1071,13 +1181,14 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 	REQUIRE(mover != nullptr);
 	REQUIRE(guard != nullptr);
 	REQUIRE(hunter != nullptr);
+	// the victim: the second player's first living structure the attacker's weapons may attack (aiAttackObject's own test, ObjectWeapons::canAttackObject;
+	// review of #161: the AIs' game at frame 3,000 moves with every simulation change, and its first structure was one the attacker could not attack)
 	Object *victim = nullptr;
 	for (Object *o = la.getFirstObject(); o && !victim; o = o->getNextObject())
 	{
-		victim = o->getControllingPlayer() && o->getControllingPlayer()->getPlayerIndex() == playerIds[1] && o->isKindOf((unsigned)structureKind) &&
-		                 !o->isEffectivelyDead()
-		             ? o
-		             : nullptr;
+		const bool candidate = o->getControllingPlayer() && o->getControllingPlayer()->getPlayerIndex() == playerIds[1] && o->isKindOf((unsigned)structureKind) &&
+			!o->isEffectivelyDead();
+		victim = candidate && attacker->getWeapons() && attacker->getWeapons()->canAttackObject(*o, CMD_FROM_SCRIPT, false) ? o : nullptr;
 	}
 	REQUIRE(victim != nullptr);
 	// a garrison: Fall Back's skirmish has no garrisonable building, so both games get the same GondorKeep (the garrison tests' keep) for the Men player,
@@ -1142,6 +1253,7 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 		REQUIRE(k != nullptr);
 		Coord3D p = keepSpot;
 		k->setPosition(&p);
+		testutil::completeHorde(k); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		REQUIRE((keepId == INVALID_ID || keepId == k->getID()));
 		keepId = k->getID();
 	}
@@ -1359,7 +1471,7 @@ TEST_CASE("save4c hostile inputs, nested containers and caps (review r2): an ove
 		const std::string t = "obfme:SkirmishAI";
 		std::vector<std::uint8_t> one;
 		logic.gameState().saveBlocks({ t }, one);
-		const size_t p = payloadOffset(t), assist = p + 6;
+		const size_t p = payloadOffset(t), assist = p + 10;
 		const size_t info = assist + 4 + 8 * (size_t)u32At(one, assist) + 5;
 		const size_t records = info + 4 + 4 * (size_t)u32At(one, info);
 		REQUIRE(u32At(one, records) > 0u); // tolerance: a precondition (the game has player info records)
@@ -1523,6 +1635,7 @@ TEST_CASE("save4c review r3: a live factory of another player in an AI's unit bu
 		REQUIRE(f != nullptr);
 		Coord3D pos{ x, 800.0f, l.getGroundHeight(x, 800.0f) };
 		f->setPosition(&pos);
+		testutil::completeHorde(f); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return f;
 	};
 	SUBCASE("a rival's factory in the snapshot")
@@ -1585,18 +1698,21 @@ TEST_CASE("save4c review r3: a giant bird saved mid-flight: its module (the flig
 	load(*starttest::peerWorld(), m, b); // one live game per world (S-3808): the second game has its own
 	runTo(a, 50);
 	runTo(b, 50);
-	const ThingTemplate *beast = s->world->things().findTemplate("MordorWitchKingOnFellBeast");
-	REQUIRE(beast != nullptr);
 	ObjectID id = INVALID_ID;
 	for (Game *g : { &a, &b })
 	{
 		GameLogic &l = g->logic();
 		AISkirmishPlayer *mordor = aiOfSide(l, "Mordor");
 		REQUIRE(mordor != nullptr);
+		// merge queue q23: each game's bird is made from its own world's template: TARGET-1's AttackPriority tables are keyed by the template (RW 0x603AF6), so a
+		// bird of the other world's template was not found in game B's table and B's creeps chose their targets differently from A's (the games parted at frame 124)
+		const ThingTemplate *beast = l.things().findTemplate("MordorWitchKingOnFellBeast");
+		REQUIRE(beast != nullptr);
 		Object *o = l.newObject(beast, l.players().getNthPlayer(mordor->playerIndex)->getDefaultTeam(), ObjectStatusMaskType{});
 		REQUIRE(o != nullptr);
 		Coord3D pos{ 1500.0f, 800.0f, l.getGroundHeight(1500.0f, 800.0f) };
 		o->setPosition(&pos);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		REQUIRE((id == INVALID_ID || id == o->getID()));
 		id = o->getID();
 	}
@@ -1671,18 +1787,21 @@ TEST_CASE("stealthfly1: a giant bird saved on its queued waypoints (follow path 
 	load(*starttest::peerWorld(), m, b);
 	runTo(a, 50);
 	runTo(b, 50);
-	const ThingTemplate *beast = s->world->things().findTemplate("MordorWitchKingOnFellBeast");
-	REQUIRE(beast != nullptr);
 	ObjectID id = INVALID_ID;
 	for (Game *g : { &a, &b })
 	{
 		GameLogic &l = g->logic();
 		AISkirmishPlayer *mordor = aiOfSide(l, "Mordor");
 		REQUIRE(mordor != nullptr);
+		// merge queue q23: each game's bird is made from its own world's template: TARGET-1's AttackPriority tables are keyed by the template (RW 0x603AF6), so a
+		// bird of the other world's template was not found in game B's table and B's creeps chose their targets differently from A's (the games parted at frame 124)
+		const ThingTemplate *beast = l.things().findTemplate("MordorWitchKingOnFellBeast");
+		REQUIRE(beast != nullptr);
 		Object *o = l.newObject(beast, l.players().getNthPlayer(mordor->playerIndex)->getDefaultTeam(), ObjectStatusMaskType{});
 		REQUIRE(o != nullptr);
 		Coord3D pos{ 1500.0f, 800.0f, l.getGroundHeight(1500.0f, 800.0f) };
 		o->setPosition(&pos);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		REQUIRE((id == INVALID_ID || id == o->getID()));
 		id = o->getID();
 	}
@@ -1816,6 +1935,7 @@ TEST_CASE("save4c review r4: a capture's snapshot loads and the game goes on as 
 		REQUIRE(f != nullptr);
 		Coord3D pos{ 1500.0f, 800.0f, l.getGroundHeight(1500.0f, 800.0f) };
 		f->setPosition(&pos);
+		testutil::completeHorde(f); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return f;
 	};
 	auto listed = [](const AISkirmishPlayer &ai, ObjectID id) {
@@ -1886,6 +2006,10 @@ TEST_CASE("save4c review r4: a capture's snapshot loads and the game goes on as 
 			REQUIRE(u != nullptr);
 			Coord3D pos{ 1500.0f, 800.0f, l.getGroundHeight(1500.0f, 800.0f) };
 			u->setPosition(&pos);
+			testutil::completeHorde(u); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
+			// lane TARGET-1: held by NO_AUTO_ACQUIRE: a computer player's idle unit takes what it sees (RotWK's mood scan, RW 0x66844A), and from this spot the
+			// horde charged what it saw 460 to the east and died there before frame 351; the dispatch (RW 0x9A3040) does not read the status
+			u->setStatusAcrossHorde((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("NO_AUTO_ACQUIRE"), true);
 			men->disabled = true; // the team builder takes the idle unit once its AI runs again (RW 0x9A3040)
 			runTo(g, 351);
 			men = aiOfSide(l, "Men");
@@ -2001,6 +2125,7 @@ TEST_CASE("save4c reviewer round5: round4 factory cleanup and legal dispatched c
 		REQUIRE(o);
 		Coord3D pos{1500.0f, 800.0f, l.getGroundHeight(1500.0f, 800.0f)};
 		o->setPosition(&pos);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	};
 	SUBCASE("captured factory recomputes and cannot spend the rival's money")
@@ -2034,6 +2159,9 @@ TEST_CASE("save4c reviewer round5: round4 factory cleanup and legal dispatched c
 	SUBCASE("a genuinely dispatched unit legally captured saves and loads")
 	{
 		Object *u = make("GondorFighterHorde", old);
+		// lane TARGET-1: held by NO_AUTO_ACQUIRE: a computer player's idle unit takes what it sees (RotWK's mood scan, RW 0x66844A), and from this spot the
+		// horde charged what it saw 460 to the east and died there before frame 351; the dispatch (RW 0x9A3040) does not read the status
+		u->setStatusAcrossHorde((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("NO_AUTO_ACQUIRE"), true);
 		men->disabled = true;
 		runTo(g, 351);
 		men->disabled = false;
@@ -2068,6 +2196,7 @@ TEST_CASE("save4c reviewer round5: recapture registration is synchronous as RW 0
 	REQUIRE(f);
 	Coord3D pos{1500.0f, 800.0f, l.getGroundHeight(1500.0f, 800.0f)};
 	f->setPosition(&pos);
+	testutil::completeHorde(f); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	AIBaseBuilder::update(l, *men);
 	f->getProductionUpdate()->cancelAllProduction();
 	men->build.pending.clear();
@@ -2154,6 +2283,10 @@ TEST_CASE("save4c reviewer round5: audit live dozer factories and owned tactic m
 		REQUIRE(u);
 		Coord3D pos{1500.0f, 800.0f, l.getGroundHeight(1500.0f, 800.0f)};
 		u->setPosition(&pos);
+		testutil::completeHorde(u); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
+		// lane TARGET-1: held by NO_AUTO_ACQUIRE: a computer player's idle unit takes what it sees (RotWK's mood scan, RW 0x66844A), and from this spot the
+		// horde charged what it saw 460 to the east and died there before frame 351; the dispatch (RW 0x9A3040) does not read the status
+		u->setStatusAcrossHorde((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("NO_AUTO_ACQUIRE"), true);
 		men->disabled = true;
 		runTo(g, 351);
 		men->disabled = false;
@@ -2177,6 +2310,7 @@ TEST_CASE("save4c reviewer round5: audit live dozer factories and owned tactic m
 		REQUIRE(hero);
 		pos.x = 1540.0f;
 		hero->setPosition(&pos);
+		testutil::completeHorde(hero); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		auto *power = dynamic_cast<DominateEnemySpecialPower *>(hero->findModule("DominateEnemySpecialPower"));
 		REQUIRE(power);
 		power->initiateIntentToDoSpecialPower(power->abilityData()->m_specialPowerTemplate, u, nullptr, 0, 0);
@@ -2219,6 +2353,7 @@ TEST_CASE("save4c review r7 (archive 593e83cd): the state machine kept across a 
 			REQUIRE(o != nullptr);
 			Coord3D pos{ 1500.0f, 800.0f, l.getGroundHeight(1500.0f, 800.0f) };
 			o->setPosition(&pos);
+			testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 			REQUIRE((id == INVALID_ID || id == o->getID()));
 			id = o->getID();
 			// the order the AI keeps while the object defects, then a new machine's order

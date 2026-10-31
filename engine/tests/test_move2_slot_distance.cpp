@@ -428,12 +428,24 @@ TEST_CASE("move2 retail: horde members stay near their slots on the march, settl
 			{
 				// S-1834 (lane MOVE-3 r3): with RotWK's 3 x 3 line test for a horde (RW 0x6EE12D) the horde's path cuts a corner of the harlindon route; two
 				// uruks fall about 100 behind their slots there and follow at the horde's speed (no catch-up rule found); 62 frames, measured; 65 after the IDLE-1
-				// merge (members step before their horde's member pass, RW 0x851E97 / 0x490AC4)
-				CHECK(r.straggleFrames == 65);
+				// merge (members step before their horde's member pass, RW 0x851E97 / 0x490AC4); 66 with the formations centred on their hordes (RW 0x86C4EA),
+				// 68 with the destination adjustment spiralling around the cell (RW 0x6FA2A4)
+				CHECK(r.straggleFrames == 68);
+			}
+			else if ((std::string(mapName) == "map mp fall back 4p" && run.tracks[i].name == "IsengardFighterHorde") ||
+				(std::string(mapName) == "map mp harlindon" && run.tracks[i].name == "MordorFighterHorde"))
+			{
+				// the block search's block zones (RW 0x9389A6): the corridor no longer runs through the cliffs that cross a block, so the two hordes take shorter
+				// complete routes whose corners bring S-1834's corner effect (above): uruks on fall back 4p 22 frames (12 before), orcs on harlindon 46 (0 before);
+				// on fall back 4p the Dwarven phalanx, which stopped about 450 short before (the corridor's partial path), now marches to its goal. Measured
+				// merge queue q34 (measured once on the merged tree and at each merge point): on the archive's tree with #161 the uruks on fall back 4p straggle 4 frames (#161's 22 was measured on its own base); the orcs keep 46
+				CHECK(r.straggleFrames == (run.tracks[i].name == std::string("IsengardFighterHorde") ? 4 : 46));
 			}
 			else
 			{
-				CHECK(r.straggleFrames <= 10);
+				// the bound catches a member left behind (before MOVE-2 for good: hundreds of frames); with the formations centred on their hordes (RW 0x86C4EA)
+				// a member falls behind for up to 19 frames (measured on the three routes: Goblins, Rohirrim, Uruks)
+				CHECK(r.straggleFrames <= 20); // tolerance: a short lag (up to 19 frames measured), not a member left behind
 			}
 			// every horde that lives to the end comes to rest within the run (lane MOVE-2 r3: since the MOD-4 merge the creep lairs on the fall back 4p route
 			// spawn cave trolls, which may destroy a horde: its "settle" is then -1; r4: since the troll punch keeps its DamageArc cone, RW 0x90DEF0, they

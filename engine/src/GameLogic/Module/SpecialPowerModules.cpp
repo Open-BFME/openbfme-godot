@@ -7,6 +7,7 @@
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 #endif
 
+#include "Common/ModEngineFeatures.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "GameLogic/Module/WeaponChangeSpecialPower.h"
@@ -60,6 +61,8 @@
 
 namespace
 {
+const int kSpecialHarvest = 0x8D; // SPECIAL_HARVEST (RW 0x897EC1: the enum switch's third case)
+
 #include "Common/SpecialPowerNames.inc"
 
 // RW 0x73B22F: the template by name from TheSpecialPowerStore
@@ -107,6 +110,23 @@ void parseFilter(INI *ini, void *instance, void *store, const void *)
 
 #define SP_OFF(member) (int)offsetof(SpecialPowerModuleData, member)
 // RW 0xC64DB0, in the binary's order
+// RW 0xC64FA4: INI::parseAsciiString (retail keeps one token). Lane MODS-3, edain-unchained.trigger-recharge-list (0xEE0000): every remaining
+// token (INI::getNextAsciiString RW 0x42E757 until empty), joined with single spaces, into the same string
+void parseOnTriggerRechargeSpecialPower(INI *ini, void *instance, void *store, const void *userData)
+{
+	if (!ModEngineFeatures::has(ModEngineFeature::EdainUnchainedTriggerRechargeList))
+	{
+		INI::parseAsciiString(ini, instance, store, userData);
+		return;
+	}
+	std::string joined;
+	for (std::string t = ini->getNextAsciiString(); !t.empty(); t = ini->getNextAsciiString())
+	{
+		joined += (joined.empty() ? "" : " ") + t;
+	}
+	*static_cast<std::string *>(store) = joined;
+}
+
 const FieldParse kSpecialPowerModuleFieldParse[] = {
 	{ "SpecialPowerTemplate", parseSpecialPowerTemplate, nullptr, 0 },
 	{ "UpdateModuleStartsAttack", INI::parseBool, nullptr, SP_OFF(m_updateModuleStartsAttack) },
@@ -139,7 +159,7 @@ const FieldParse kSpecialPowerModuleFieldParse[] = {
 	{ "AvailableAtStart", INI::parseBool, nullptr, SP_OFF(m_availableAtStart) },
 	{ "ChangeWeather", parseChangeWeather, nullptr, SP_OFF(m_changeWeather) },
 	{ "AdjustVictim", INI::parseBool, nullptr, SP_OFF(m_adjustVictim) },
-	{ "OnTriggerRechargeSpecialPower", INI::parseAsciiString, nullptr, SP_OFF(m_onTriggerRechargeSpecialPower) },
+	{ "OnTriggerRechargeSpecialPower", parseOnTriggerRechargeSpecialPower, nullptr, SP_OFF(m_onTriggerRechargeSpecialPower) },
 	{ "BurnDecayModifier", INI::parseUnsignedInt, nullptr, SP_OFF(m_burnDecayModifier) },
 	{ "UseDistanceFromCommandCenter", INI::parseBool, nullptr, SP_OFF(m_useDistanceFromCommandCenter) },
 	{ "DistanceFromCommandCenter", INI::parseReal, nullptr, SP_OFF(m_distanceFromCommandCenter) },
@@ -682,7 +702,25 @@ void SpecialPowerModule::triggerSpecialPower(const Coord3D *loc, const Object *)
 		{
 			SpecialPowerModuleInterface *sp = m->getSpecialPower();
 			const SpecialPowerTemplate *other = sp ? sp->getSpecialPowerTemplate() : nullptr;
-			if (other && other->getName() == d->m_onTriggerRechargeSpecialPower)
+			if (!other)
+			{
+				continue;
+			}
+			bool listed = other->getName() == d->m_onTriggerRechargeSpecialPower; // RW 0x897A21: AsciiString compare
+			if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedTriggerRechargeList))
+			{
+				// lane MODS-3 (0xEE0076): the list split on spaces, each token compared exactly (case-sensitive); an empty name never matches
+				listed = false;
+				const std::string &list = d->m_onTriggerRechargeSpecialPower;
+				for (size_t b = 0; b < list.size() && !listed;)
+				{
+					const size_t e = list.find(' ', b);
+					const size_t end = e == std::string::npos ? list.size() : e;
+					listed = end > b && !other->getName().empty() && list.compare(b, end - b, other->getName()) == 0;
+					b = end + 1;
+				}
+			}
+			if (listed)
 			{
 				sp->startPowerRecharge(1.0f);
 			}
@@ -986,6 +1024,19 @@ bool SpecialPowerModule::initiate(Object *target, const Coord3D *loc, unsigned o
 		return false;
 	}
 	++m_initiates;
+	// lane LUMBER1: the enum switch's SPECIAL_HARVEST case (RW 0x897EC6 .. 0x897F07, enum 0x8D: the workers' Harvest button): the object's AI (+ 0x260) and its
+	// player's ResourceGatheringManager (+ 0x304) find a tree (RW 0x8FA834); found: aiHarvest(position, CMD_FROM_AI) (RW 0x771655) and the AI byte + 0x3CC
+	// cleared (not part of the port: S-583). The other cases (0x33 / 0x88) stay S-529's
+	if (const SpecialPowerTemplate *t = getSpecialPowerTemplate(); t && t->getSpecialPowerType() == kSpecialHarvest)
+	{
+		AIUpdateInterface *ai = obj->getAIUpdateInterface();
+		Player *player = obj->getControllingPlayer();
+		Coord3D pos;
+		if (ai && player && player->resourceGatheringManager().findHarvestPosition(obj, pos))
+		{
+			ai->aiHarvest(pos, CMD_FROM_AI);
+		}
+	}
 	bool driven = false;
 	if (SpecialPowerUpdateInterface *u = SpecialAbilityModules::findUpdate(*obj, getSpecialPowerTemplate()))
 	{
@@ -1002,8 +1053,8 @@ bool SpecialPowerModule::initiate(Object *target, const Coord3D *loc, unsigned o
 		}
 	}
 	// RW 0x897F9C / 0x897FEF .. 0x898009: only when an update module drives the power: InitiateFX (data + 0x44) on the object with the target as the second object.
-	// Still open (S-529): the enum switch before the update call (RW 0x897EAB: types 0x33 / 0x88 end each other's module RW 0x8A007F, type 0x8D sends a
-	// harvester back, RW 0x897F0D), the target id kept at + 0x2C, the + 0x28 flag (options bit 0x40000 with the update's slot 2), the radar window
+	// Still open (S-529): the enum switch before the update call (RW 0x897EAB: types 0x33 / 0x88 end each other's module RW 0x8A007F; lane LUMBER1 ported
+	// type 0x8D, the harvester sent back, above), the target id kept at + 0x2C, the + 0x28 flag (options bit 0x40000 with the update's slot 2), the radar window
 	// override (RW 0x897FB2 .. 0x897FD4) and the unit's voice response (RW 0x898009 .. 0x89809A)
 	if (driven)
 	{

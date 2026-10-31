@@ -2,11 +2,14 @@
 // See GameLogic/GameLogic.h for the sources of every rule.
 
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/NewGame/StartingBase.h"
+#include "Common/ModEngineFeatures.h"
 
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/GameState.h" // lane SAVE-4a
 #include "Common/Snapshot.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Module/UpgradeModuleClasses.h"
@@ -68,6 +71,10 @@ GameLogic::GameLogic(ThingFactory &things, ModuleFactory &modules, PlayerList &p
 	, m_scriptEngine(std::make_unique<ScriptEngine>(*this)) // lane SCRIPT-1
 {
 	buildPhaseWorkTable();
+	// lane SPELLFIX-1: the economy's attribute modifier product is the object's own pool query, RW 0x68C82D(type, &out, name 0, innate 1) as the income
+	// sites call it (TerrainResourceBehavior RW 0x88558D, SupplyCenterDockUpdate RW 0x8A4614): Industry, Dwarven Riches, Blight and the levelled farms'
+	// PRODUCTION lists now scale income. BFME2 1.06 the same. The sum seam (COMMAND_POINT_BONUS, BOUNTY_PERCENTAGE) stays uninstalled: S-253
+	m_economy->setAttributeModifierProvider([](const Object &obj, int type, float &product) { return obj.attributeModifierProduct(type, nullptr, true, product); });
 	m_partition = std::make_unique<PartitionManager>(*this);
 	m_emotions = std::make_unique<EmotionWorld>(*this);
 	m_inertBit = ObjectTemplateInfoBuilder::kindOfIndex("INERT");
@@ -203,14 +210,28 @@ void GameLogic::invalidateTemplateInfo()
 {
 	m_templateInfo.clear();
 	m_crushInfo.clear();
+	m_crushById.clear();
 }
 
 const CrushTemplateInfo &GameLogic::crushInfo(const ThingTemplate *finalOverride)
 {
+	const size_t id = finalOverride->getTemplateID();
+	if (id < m_crushById.size() && m_crushById[id].first == finalOverride)
+	{
+		return *m_crushById[id].second;
+	}
 	auto it = m_crushInfo.find(finalOverride);
 	if (it == m_crushInfo.end())
 	{
 		it = m_crushInfo.emplace(finalOverride, std::make_unique<CrushTemplateInfo>(CrushTemplateInfo::of(*finalOverride))).first;
+	}
+	if (id >= m_crushById.size())
+	{
+		m_crushById.resize(id + 1, { nullptr, nullptr });
+	}
+	if (!m_crushById[id].first)
+	{
+		m_crushById[id] = { finalOverride, it->second.get() }; // the first template of the id keeps the slot
 	}
 	return *it->second;
 }
@@ -238,6 +259,26 @@ Object *GameLogic::newObject(const ThingTemplate *tt, Team *team, const ObjectSt
 float GameLogic::getGroundHeight(float x, float y) const
 {
 	return m_terrain ? m_terrain->getGroundHeight(x, y, nullptr) : 0.0f;
+}
+
+float GameLogic::getLayerHeightForDestination(float x, float y, float z) const
+{
+	// lane WALL-2: TheTerrainLogic vslot 0x1C (getLayerHeight) with the layer of RW 0x680A75 (getLayerForDestination) at (x, y, z)
+	if (m_aiWorld && m_aiWorld->mapReady())
+	{
+		const Pathfinder &pf = m_aiWorld->pathfinder();
+		return pf.getLayerHeight(x, y, pf.getLayerAt(x, y, z));
+	}
+	return getGroundHeight(x, y);
+}
+
+float GameLogic::getHighestLayerHeight(float x, float y) const
+{
+	if (m_aiWorld && m_aiWorld->mapReady())
+	{
+		return m_aiWorld->pathfinder().getHighestLayerHeight(x, y);
+	}
+	return getGroundHeight(x, y);
 }
 
 void GameLogic::reportError(const std::string &text)
@@ -585,6 +626,7 @@ void GameLogic::update(int phase)
 	{
 		m_partition->update(); // RW 0x62E93B: ThePartitionManager vslot 0x28 (RW 0xA39020 -> 0xA3B4E0), then the row's collision manager (lane MODULES-2)
 		runRow(ROW_PARTITION_COLLISION);
+		combat().processProjectileContacts(); // lane FLANK-1: the flying projectiles' contacts, the same collision manager row (S-780 inference: after the AI units' pass)
 		// RW 0x62E951 .. 0x62E97E
 		for (Object *o = m_objectHead; o; o = o->getNextObject())
 		{
@@ -613,6 +655,10 @@ void GameLogic::update(int phase)
 		// experience system (lane COMBAT-2 had it in the phase 1 row; RW 0x62E6AF .. 0x62E6DD updates four other subsystems)
 		m_victory->update();
 		m_experience->update(); // RW 0x62EBD9: TheDelayedExperienceLevelGrantSystem vslot 0x28, one of that row's subsystems (lane XP-1)
+		if (m_livingWorldTags.active)
+		{
+			StartingBase::updateLivingWorldReinforcements(*this); // WOTR2 milestone 7: ArmySummarySystem::update RW 0x80F4D3 (from RW 0x62EBEA)
+		}
 		m_skirmishAI->update(); // RW 0x62EBEF: TheSkirmishAIManager vslot 0x28, one of that row's subsystems (after the victory conditions; lane AI-1)
 	}
 	if (phase == 1)
@@ -644,6 +690,15 @@ void GameLogic::update(int phase)
 				m_scriptEngine->updateGenericScripts(*p);
 			}
 			p->getScoreKeeper().recordPerFrameStats(*this, *p, m_frame);
+		}
+		// lane SDK-2: the OpenBFME end-of-frame listeners (mod scripts); a copy, as a listener may remove itself
+		if (!m_endOfFrameHooks.empty())
+		{
+			const std::vector<EndOfFrameEntry> hooks = m_endOfFrameHooks;
+			for (const EndOfFrameEntry &h : hooks)
+			{
+				h.hook(m_frame);
+			}
 		}
 	}
 	m_inUpdate = wasInUpdate;
@@ -859,6 +914,22 @@ void GameLogic::processDestroyList()
 }
 
 // lane BACKLOG3 (S-2452): see GameLogic.h
+void GameLogic::noteBeacon(BeaconNotice::Kind kind, int playerIndex, ObjectID object, const Coord3D &position)
+{
+	if (m_beaconNotices.size() >= kBeaconNotices)
+	{
+		m_beaconNotices.erase(m_beaconNotices.begin());
+	}
+	BeaconNotice n;
+	n.seq = ++m_beaconSeq;
+	n.frame = m_frame;
+	n.kind = kind;
+	n.playerIndex = playerIndex;
+	n.object = object;
+	n.position = position;
+	m_beaconNotices.push_back(n);
+}
+
 void GameLogic::noteRadarEvent(int type, const Coord3D &position, RadarEventNotice::Source source, int playerIndex)
 {
 	if (m_radarEventNotices.size() >= kRadarEventNotices)
@@ -877,6 +948,7 @@ void GameLogic::noteRadarEvent(int type, const Coord3D &position, RadarEventNoti
 
 void GameLogic::reset()
 {
+	m_missionObjectives.reset(); // lane CAMPUI-1: TheMissionObjectiveTracker's reset (RW 0x835E03): a new game has no list until its map.ini's
 	m_radarEventNotices.clear(); // lane BACKLOG3: a new game's radar starts empty (the sequence goes on: a client's cursor stays behind it)
 	// ZH GameLogic::reset: every object goes; the scheduler vectors are cleared with their modules' indices
 	m_current = nullptr;
@@ -906,9 +978,14 @@ void GameLogic::reset()
 	m_objectsById.clear();
 	m_templateInfo.clear();
 	m_crushInfo.clear();
+	m_crushById.clear();
 	m_frame = 0;
 	m_gameDifficulty = 1; // lane CAMP-1H: GameLogic::reset RW 0x62D3EB (+ 0xA4 = 1)
+	m_buildableOverrides.clear(); // lane BFME2CAMP1 (review): a new game starts without the script's overrides (ZH GameLogic::reset clears its map; donor)
+	m_campaignCarryover.reset();  // lane BFME2CAMP1: the mission's start sets it again
+	m_showBehindBuildingMarkers = true; // lane OCCLUDE-1: GameLogic::reset RW 0x62D3D6 (+ 0x99 = 1)
 	m_nextObjectID = 1;
+	m_sharedProductionID = 0;
 	m_objectCount = 0;
 	m_lastPhase = 0;
 	m_depth = 0;
@@ -998,6 +1075,31 @@ std::uint32_t GameLogic::computeStateHash() const
 	return hashState(nullptr, nullptr);
 }
 
+// lane BFME2CAMP1: RW 0x62FEE6 (see GameLogic.h)
+void GameLogic::setBuildableStatusOverride(const ThingTemplate *tt, std::int32_t status)
+{
+	if (tt)
+	{
+		m_buildableOverrides[tt->getName()] = status;
+	}
+}
+
+// RW 0x62EE6D
+bool GameLogic::findBuildableStatusOverride(const ThingTemplate *tt, std::int32_t &status) const
+{
+	if (!tt)
+	{
+		return false;
+	}
+	const auto it = m_buildableOverrides.find(tt->getName());
+	if (it == m_buildableOverrides.end())
+	{
+		return false;
+	}
+	status = it->second;
+	return true;
+}
+
 std::uint32_t GameLogic::computeStateHashBreakdown(std::vector<StateHashSection> &sections, std::vector<ObjectStateHash> *objects) const
 {
 	sections.clear();
@@ -1026,6 +1128,66 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 		x.addU32(m_frame);
 		x.addBool(m_frameAdvance); // RW GameLogic + 0x44: when false the frame counter does not advance
 		x.addI32(m_gameDifficulty); // lane CAMP-1H: RW GameLogic + 0xA4
+		// WOTR2 milestone 7: the War of the Ring battle's army tags, only while they are in use (every other game hashes as before)
+		if (m_livingWorldTags.inUse())
+		{
+			x.addBool(m_livingWorldTags.active);
+			x.addU32((std::uint32_t)m_livingWorldTags.objects.size());
+			for (const auto &kv : m_livingWorldTags.objects)
+			{
+				x.addU32(kv.first);
+				x.addI32(kv.second.armyId);
+				x.addString(kv.second.spawnId);
+				x.addI32(kv.second.buildingId);
+			}
+			x.addU32((std::uint32_t)m_livingWorldTags.heroes.size());
+			for (const auto &kv : m_livingWorldTags.heroes)
+			{
+				x.addI32(kv.first.first);
+				x.addString(kv.first.second);
+				x.addI32(kv.second.armyId);
+				x.addString(kv.second.spawnId);
+				x.addI32(kv.second.buildingId); // review wotr2m7: the same fields as the xfer
+			}
+			x.addU32((std::uint32_t)m_livingWorldTags.destroyedBuildings.size());
+			for (int id : m_livingWorldTags.destroyedBuildings)
+			{
+				x.addI32(id);
+			}
+			x.addU32((std::uint32_t)m_livingWorldTags.reinforcements.size());
+			for (const LivingWorldBattleTags::Reinforcement &r : m_livingWorldTags.reinforcements)
+			{
+				x.addI32(r.armyId);
+				x.addI32(r.playerIndex);
+				x.addI32(r.state);
+				x.addU32(r.arrivalFrame);
+				x.addU32((std::uint32_t)r.members.size());
+				for (const LivingWorldBattleTags::Member &m : r.members)
+				{
+					x.addString(m.thingTemplate);
+					x.addI32(m.memberIndex);
+					x.addI32(m.quantity);
+					x.addFloat(m.experience);
+					x.addU32((std::uint32_t)m.upgrades.size());
+					for (const std::string &u : m.upgrades)
+					{
+						x.addString(u);
+					}
+					x.addString(m.spawnId);
+				}
+				x.addU32((std::uint32_t)r.spawnPoints.size());
+				for (const auto &p : r.spawnPoints)
+				{
+					x.addString(p.first);
+					x.addString(p.second);
+				}
+			}
+			x.addU32((std::uint32_t)m_livingWorldTags.arrivals.size());
+			for (int id : m_livingWorldTags.arrivals)
+			{
+				x.addI32(id);
+			}
+		}
 		// lane RULES-1: the game rules and the Legendary Heroes factor, only when the game has them (a game without keeps its hash)
 		if (!MpGameRules::isNone(m_gameRules))
 		{
@@ -1038,12 +1200,33 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 		{
 			x.addI32(m_legendaryHeroes);
 		}
+		m_cheatMode.crc(x); // lane CHEAT-1: only a Cheat Mode game hashes it (every other game keeps its hash)
 		// lane UBER-1: an Uber game hashes its profile (a Faithful game hashes nothing more: its hashes stay the ones before UBER-1)
 		if (m_simulationProfile != SimulationProfile::Faithful)
 		{
 			x.addI32((std::int32_t)m_simulationProfile);
 		}
+		// lane BFME2CAMP1: the script's buildability overrides, only when there are any (a game without keeps its hash)
+		if (!m_buildableOverrides.empty())
+		{
+			x.addU32((std::uint32_t)m_buildableOverrides.size());
+			for (const auto &e : m_buildableOverrides)
+			{
+				x.addString(e.first);
+				x.addI32(e.second);
+			}
+		}
+		// lane BFME2CAMP1: the campaign's carry-over, only in a campaign game that has it
+		if (m_campaignCarryover)
+		{
+			x.addU32(0xCA4401u);
+			m_campaignCarryover->crc(x);
+		}
 		x.addU32(m_nextObjectID);
+		if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedUniqueProductionId))
+		{
+			x.addU32(m_sharedProductionID); // lane MODS-3 (a retail game hashes nothing more)
+		}
 		x.addU32((std::uint32_t)m_objectCount);
 		for (std::uint32_t w : m_random.seedArray())
 		{
@@ -1079,10 +1262,7 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 			hashObjectsUber(x); // lane UBER-1
 			return;
 		}
-		for (const Object *o = m_objectHead; o; o = o->getNextObject())
-		{
-			o->crc(x);
-		}
+		hashObjectsTaped(x); // lane PERF-HD: every object's crc in list order, its words found on the job pool
 	});
 	if (objects)
 	{
@@ -1147,19 +1327,79 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 	if (m_simulationProfile != SimulationProfile::Uber)
 	{
 		// Faithful: one walk feeds the total and, when asked, the per-section hashes (lane MP-1): a section is hashed into the total and into its own
-		// hasher, so the breakdown can never drift from the hash it explains
-		for (const PendingSection &p : pending)
+		// hasher, so the breakdown can never drift from the hash it explains.
+		// lane PERF-HD: every section's words are recorded on a tape first (the objects section on this thread, which spreads its objects over the
+		// logic job pool itself; the others one job each, as the Uber profile hashes them: each reads only its own subsystem, nothing changes the state
+		// while the hash runs), then the tapes are chained in the list order: the same words in the same order as the one serial walk, so the same
+		// values whatever the thread count (the Faithful pins and every recorded game's hashes are unchanged).
+		std::vector<std::vector<std::uint32_t>> &tapes = m_hashSectionTapes;
+		if (tapes.size() < pending.size())
+		{
+			tapes.resize(pending.size());
+		}
+		// the objects section's words stay on the objects' own tapes, chained straight from there below. Lane UBER-HASH: the objects' tapes and the
+		// other sections' tapes are found in ONE dispatch (the sections first: the pathfinder's and the shroud's walk every cell, so they start at once
+		// instead of after the objects' barrier); every tape is its own slot, so the words are the same
+		size_t objectsTape = pending.size();
+		for (size_t i = 0; i < pending.size(); ++i)
+		{
+			if (pending[i].name == "objects")
+			{
+				objectsTape = i;
+			}
+		}
+		const size_t objectJobs = objectsTape < pending.size() ? listHashObjects() : 0;
+		const std::vector<const Object *> &hashObjects = m_uberHashObjects;
+		std::vector<std::vector<std::uint32_t>> &objectTapes = m_hashObjectTapes;
+		const size_t sectionCount = pending.size();
+		JobSystem::logic().parallelFor(sectionCount + objectJobs, 1,
+			[&pending, &tapes, &hashObjects, &objectTapes, objectsTape, sectionCount](size_t, size_t begin, size_t end) {
+				for (size_t i = begin; i < end; ++i)
+				{
+					if (i >= sectionCount)
+					{
+						const size_t first = (i - sectionCount) * kHashObjectsPerJob;
+						const size_t last = std::min(hashObjects.size(), first + kHashObjectsPerJob);
+						for (size_t o = first; o < last; ++o)
+						{
+							objectTapes[o].clear();
+							StateHasher rec(&objectTapes[o]);
+							hashObjects[o]->crc(rec);
+						}
+					}
+					else if (i != objectsTape)
+					{
+						tapes[i].clear();
+						StateHasher rec(&tapes[i]);
+						pending[i].feed(rec);
+					}
+				}
+			});
+		const size_t objectCount = m_uberHashObjects.size();
+		for (size_t i = 0; i < pending.size(); ++i)
 		{
 			const std::uint32_t before = h.value();
-			p.feed(h);
-			std::uint32_t own = 0;
-			if (sections)
+			StateHasher x;
+			if (i == objectsTape)
 			{
-				StateHasher x;
-				p.feed(x);
-				own = x.value();
+				for (size_t o = 0; o < objectCount; ++o)
+				{
+					h.replay(m_hashObjectTapes[o]);
+					if (sections)
+					{
+						x.replay(m_hashObjectTapes[o]);
+					}
+				}
 			}
-			record(p, own, before);
+			else
+			{
+				h.replay(tapes[i]);
+				if (sections)
+				{
+					x.replay(tapes[i]);
+				}
+			}
+			record(pending[i], sections ? x.value() : 0u, before);
 		}
 		return h.value();
 	}
@@ -1167,6 +1407,8 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 	// objects over the logic job pool itself, and a dispatch from inside a job would run inline), the other sections on the logic job pool one job each
 	// (each reads only its own subsystem; nothing changes the state while the hash runs); then the total chains every section's value in the list order.
 	// The result depends only on the state, never on the thread count; the breakdown's value is the section's, its chain the Uber total's.
+	// Lane UBER-HASH: the objects' own hashes and the other sections in ONE dispatch (the sections first, so the pathfinder's and the shroud's
+	// whole-map walks start at once instead of after the objects' barrier); every value lands in its own slot, so the hash is unchanged.
 	std::vector<std::uint32_t> values(pending.size(), 0u);
 	size_t objectsIndex = pending.size();
 	for (size_t i = 0; i < pending.size(); ++i)
@@ -1174,22 +1416,42 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 		if (pending[i].name == "objects")
 		{
 			objectsIndex = i;
-			StateHasher x;
-			pending[i].feed(x);
-			values[i] = x.value();
 		}
 	}
-	JobSystem::logic().parallelFor(pending.size(), 1, [&pending, &values, objectsIndex](size_t, size_t begin, size_t end) {
-		for (size_t i = begin; i < end; ++i)
-		{
-			if (i != objectsIndex)
+	const size_t objectJobs = objectsIndex < pending.size() ? listHashObjects() : 0;
+	m_uberHashValues.resize(m_uberHashObjects.size());
+	const std::vector<const Object *> &hashObjects = m_uberHashObjects;
+	std::vector<std::uint32_t> &objectValues = m_uberHashValues;
+	const size_t sectionCount = pending.size();
+	JobSystem::logic().parallelFor(sectionCount + objectJobs, 1,
+		[&pending, &values, &hashObjects, &objectValues, objectsIndex, sectionCount](size_t, size_t begin, size_t end) {
+			for (size_t i = begin; i < end; ++i)
 			{
-				StateHasher x;
-				pending[i].feed(x);
-				values[i] = x.value();
+				if (i >= sectionCount)
+				{
+					const size_t first = (i - sectionCount) * kHashObjectsPerJob;
+					const size_t last = std::min(hashObjects.size(), first + kHashObjectsPerJob);
+					for (size_t o = first; o < last; ++o)
+					{
+						StateHasher own;
+						hashObjects[o]->crc(own);
+						objectValues[o] = own.value();
+					}
+				}
+				else if (i != objectsIndex)
+				{
+					StateHasher x;
+					pending[i].feed(x);
+					values[i] = x.value();
+				}
 			}
-		}
-	});
+		});
+	if (objectsIndex < pending.size())
+	{
+		StateHasher x;
+		chainObjectsUber(x);
+		values[objectsIndex] = x.value();
+	}
 	for (size_t i = 0; i < pending.size(); ++i)
 	{
 		const std::uint32_t before = h.value();
@@ -1197,6 +1459,46 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 		record(pending[i], values[i], before);
 	}
 	return h.value();
+}
+
+// lane PERF-HD: the Faithful profile's objects section, every object's crc in object list order as the serial walk feeds it: each object's words are
+// recorded on its own tape on the logic job pool (Object::crc is const: it reads the object and its modules only; the Uber hash runs it there too), then
+// appended in list order. The words and their order are the walk's, so the value is the walk's with any thread count.
+void GameLogic::hashObjectsTaped(StateHasher &x) const
+{
+	gatherObjectTapes();
+	for (size_t i = 0; i < m_uberHashObjects.size(); ++i)
+	{
+		for (std::uint32_t w : m_hashObjectTapes[i])
+		{
+			x.addU32(w);
+		}
+	}
+}
+
+// lane PERF-HD: every object's crc words on its own tape (m_hashObjectTapes, object list order in m_uberHashObjects), on the logic job pool
+void GameLogic::gatherObjectTapes() const
+{
+	constexpr size_t kObjectsPerJob = 64;
+	m_uberHashObjects.clear();
+	for (const Object *o = m_objectHead; o; o = o->getNextObject())
+	{
+		m_uberHashObjects.push_back(o);
+	}
+	const std::vector<const Object *> &objects = m_uberHashObjects;
+	std::vector<std::vector<std::uint32_t>> &tapes = m_hashObjectTapes;
+	if (tapes.size() < objects.size())
+	{
+		tapes.resize(objects.size());
+	}
+	JobSystem::logic().parallelFor(objects.size(), kObjectsPerJob, [&objects, &tapes](size_t, size_t begin, size_t end) {
+		for (size_t i = begin; i < end; ++i)
+		{
+			tapes[i].clear();
+			StateHasher rec(&tapes[i]);
+			objects[i]->crc(rec);
+		}
+	});
 }
 
 // lane UBER-1 (docs/UBER.md), NOT A PORT: the Uber profile's objects section. Retail's CRC step (rotate-add, Common/StateHash.h) chains every word into
@@ -1224,12 +1526,34 @@ void GameLogic::hashObjectsUber(StateHasher &x) const
 			values[i] = own.value();
 		}
 	});
+	chainObjectsUber(x);
+}
+
+// lane UBER-1: the Uber objects section's chain over m_uberHashValues (object list order in m_uberHashObjects)
+void GameLogic::chainObjectsUber(StateHasher &x) const
+{
+	const std::vector<const Object *> &objects = m_uberHashObjects;
 	x.addU32((std::uint32_t)objects.size());
 	for (size_t i = 0; i < objects.size(); ++i)
 	{
 		x.addU32(objects[i]->getID());
-		x.addU32(values[i]);
+		x.addU32(m_uberHashValues[i]);
 	}
+}
+
+// lane UBER-HASH: the object list in m_uberHashObjects (list order); the count of kHashObjectsPerJob runs
+size_t GameLogic::listHashObjects() const
+{
+	m_uberHashObjects.clear();
+	for (const Object *o = m_objectHead; o; o = o->getNextObject())
+	{
+		m_uberHashObjects.push_back(o);
+	}
+	if (m_hashObjectTapes.size() < m_uberHashObjects.size())
+	{
+		m_hashObjectTapes.resize(m_uberHashObjects.size());
+	}
+	return (m_uberHashObjects.size() + kHashObjectsPerJob - 1) / kHashObjectsPerJob;
 }
 
 // ---- reports --------------------------------------------------------------------------------------------------------------
@@ -1295,10 +1619,10 @@ GameLogic::Report GameLogic::report() const
 		helpers += kv.second;
 	}
 	r.stops.push_back("[S-141] helper modules: " + std::to_string(helpers) + " live helper modules (SMC, Recovery, Repulsor, Defection, Guarding, WeaponStatus, FiringTracker) created in the retail order; the Recovery, Repulsor, Defection, Guarding and FiringTracker shells do nothing (the SMCHelper and the WeaponStatusHelper act: lanes PROD-1, PROJ-2)");
-	r.stops.push_back("[S-142] objects: creation steps not ported: the construction-time stamp (RW 0x69A684: + 0x444 = frame + template + 0x564, no reader found), the special power mask and "
+	r.stops.push_back("[S-142] objects: creation steps not ported: the special power mask and "
 		"what else initObject (RW 0x693D0C, tier B edited, no decomp source) does beyond Object::friend_initObject; ported since (lane BACKLOG2 audit): the experience tracker (XP-1, RW 0x69A606), "
 		"partition registration (MODULES-2, the world entry RW 0x69A6C6), the radar step (RW 0x69A66D -> Radar::addObject RW 0x6D9042: RADAR-1 applies its rules to the live objects at "
-		"every draw; the radar lists are client state), initObject's upgrade refresh and command points (RW 0x693D38 / 0x693D51)");
+		"every draw; the radar lists are client state), initObject's upgrade refresh and command points (RW 0x693D38 / 0x693D51), the safe occlusion frame (OCCLUDE-1: RW 0x69A687)");
 	r.stops.push_back("[S-146] players: a Player carries the index, name, faction template, type, colour, money, default team and relationships only; energy, sciences, upgrades, build list, AI, command points and the spell book belong to the lanes that port them");
 	r.stops.push_back("[S-149] ActiveBody / HordeContain: the payload creation site (here: onCreate; RW 0x871B9B, HordeContain vslot 0x70, has no located caller), the members' team and facing are inference; ActiveBody's FX / OCL names are stored unresolved (lane DECOMP-1: GlobalData + 0xB4 / + 0xB8 are UnitDamagedThreshold / UnitReallyDamagedThreshold, GameData table RW 0xBFF580 rows RW 0xBFF980 / 0xBFF990; the DamagePercentToUnits trimming never runs in retail)");
 	for (const std::string &u : unportedPhaseWork())

@@ -32,9 +32,32 @@ notarized. If you trust the source and verified the archive checksum:
 On older macOS, Control-click/right-click the app > Open > Open may suffice.
 If that shortcut is blocked, use System Settings instead. Managed Macs may
 require IT approval. Do not disable Gatekeeper, strip quarantine, or override
-a malware-detected/damaged-app warning. See docs/MACOS.md for more detail.
+a malware-detected/damaged-app warning. See docs/MACOS.md in the source tree
+for more detail; it is not part of the exported package.
 
-The launcher does not send telemetry, account information, or game data.
+Release-update checks do not send account information or game data. The online
+player count also asks the configured lobby for anonymous totals by default;
+turn off "Show how many players are online" in Settings > General to stop it.
+Multiplayer contacts the lobby for sign-in, friends, invitations and game
+sessions, and linked-account sign-in opens its provider in your browser.
+The launcher does not send telemetry.
+
+Replay files
+------------
+Use Play > Open replay..., drop one .replay file onto the window, or use Finder > Open with > OpenBFMELauncher.
+The app declares .replay as a Viewer document type. Finder Get Info > Open with > Change All selects the default;
+the launcher does not force itself over an existing default. It starts only the installed/bundled build whose version
+and commit match the replay. A missing-build message names the required build; replace/install that package manually.
+Formats 5-8 did not record a release version; use the matching game's --replay option directly. New recordings use format 10.
+Settings > General > Open .replay files with OpenBFME can refuse Finder file opens (or use -- --replay-association=off).
+To change the OS default, choose a different application in Finder. The signed Info.plist is never rewritten.
+Explicit Open replay / command-line / window drop still work when disabled; the game needs your own retail files.
+
+Display settings
+----------------
+Settings > Display chooses one window mode and resolution for both games. Automatic preserves the window size in windowed mode and uses the desktop resolution in fullscreen modes.
+Borderless and fullscreen render at the selected resolution and scale to fit, preserving aspect ratio.
+Launcher edits apply on the next launch. Accepted in-game changes appear when you return to the launcher or reopen Display.
 
 Where it stores files
 ---------------------

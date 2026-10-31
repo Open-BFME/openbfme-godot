@@ -108,6 +108,28 @@ public:
 	// lane RULES-1: a change of mode resets the rules to the new mode's defaults (AptSkirmish::InitTheGame RW 0x9288D0 takes the mode's defaults)
 	void setStrategicMode(bool strategic);
 	bool strategicMode() const { return m_strategic; }
+	// WOTR2 milestone 8: the GameInfo's game mode (+ 0x5C: 1 in strategic mode) and scenario (+ 0x58, the LivingWorldCampaign's name; "" in open play), so a
+	// LAN game's options carry them to every player
+	void setWarScenario(const std::string &name)
+	{
+		m_info.gameMode = m_strategic ? 1 : 0;
+		m_info.scenario = m_strategic ? name : std::string();
+	}
+	// lane WOTR-2: the War of the Ring scenario the start check reads (the setup's + 0x68 -> + 0x29C -> + 0x1C, a LivingWorldCampaign's Scenario record):
+	// MaxPlayers (+ 0x10, RW 0x9758E3), MinPlayers (+ 0x14, RW 0x97597F) and DisabledFactions (+ 0x40, RW 0x9012D7 / 0x90182D). Cleared: no scenario
+	// (retail's maximum is then 0: the start silently does not happen)
+	struct StrategicScenario
+	{
+		int maxPlayers = 0;
+		int minPlayers = 0;
+		std::vector<std::string> disabledFactions; ///< PlayerTemplate names
+	};
+	void setStrategicScenario(const StrategicScenario &scenario)
+	{
+		m_scenario = scenario;
+		m_haveScenario = true;
+	}
+	void clearStrategicScenario() { m_haveScenario = false; }
 	// Slot 0's name (the profile name).
 	void setPlayerName(const std::u16string &name);
 
@@ -133,6 +155,9 @@ public:
 		m_simulationProfile = profile;
 		m_info.simulationProfile = profile;
 	}
+	// lane CHEAT-1: OpenBFME's Cheat Mode (GameLogic/CheatMode.h): on puts the cheat seat on this setup's local slot (the host's: only the host's screen calls
+	// it); off clears it. False in strategic mode (the rule is mode 0's) or when the local slot is not a human slot
+	bool setCheatMode(bool on);
 	// the Legendary Heroes combo's entries: Off, 2x, 3x, 4x (item data = the factor; Off carries the " *" default mark like a retail row)
 	std::vector<SkirmishComboEntry> legendaryHeroesEntries() const;
 
@@ -151,7 +176,7 @@ public:
 	bool slotShowsName(int slot) const { return slot == m_localSlot || (m_network && slot >= 0 && slot < MAX_SLOTS && m_info.slots[slot].isHuman()); }
 
 	// ---- start (startPressed, reallyDoStart) -----------------------------------------------------------------------------------------------
-	// lane GAMEMODES-1: RotWK's start check, AptMpGameSetup RW 0x8431B8 (BFME2 0x840BDF, decomp attempt reverse/attempts/0x00440bdf.cpp and
+	// lane GAMEMODES-1: RotWK's start check, AptMpGameSetup RW 0x8431B8 (BFME2 0x840BDF, decomp AptMpGameSetupRva00440BDF.cpp and
 	// GUI/AptMpGameSetupRva00440BDF.cpp: recovered, not byte-matching; RotWK added LAN:TooFewPlayers and GUI:DisabledFaction). The owner's lines go out through
 	// its vslot 0x44 with a kind (0 / 1 / 2); a refusal is RW 0x8406DB's (vslot 0x44 kind 1). In order:
 	//   no map in the cache -> LAN:NoMapSelected; the map's player limits (RW 0x9758E3: MapCache + 0x20 clamped to 8 (RW 0xC53F2C); RW 0x97597F: 0 outside the
@@ -176,7 +201,7 @@ public:
 		std::vector<Line> lines; ///< every vslot 0x44 call in order: GUI:PlayerNoMap (2), GUI:SandboxMode (0), the refusal's (1 and / or 2, or 0)
 		bool sandbox = false;                ///< GUI:SandboxMode was shown: one team (GameInfo::isSandbox decides in the game)
 		int numHumans = 0;                   ///< + 0x3A8 for the countdown
-		std::vector<std::string> stops;      ///< "[S-3610] ..." when the check met what it does not port (a War of the Ring setup)
+		std::vector<std::string> stops;      ///< "[S-3610] ..." when the check met what it does not port
 	};
 	// `flags` is the setup's + 0x3A4 (0x10 needs two humans, 0x20 notifies the start intent, 0x100 the War of the Ring needs an enemy: none of them in a
 	// skirmish); `willTransfer` RW 0x702617 (the map can be sent to a player without it)
@@ -202,6 +227,8 @@ private:
 	SimulationProfile m_simulationProfile = SimulationProfile::Faithful; ///< lane UBER-1
 	std::string m_error;
 	bool m_strategic = false;
+	StrategicScenario m_scenario; // lane WOTR-2
+	bool m_haveScenario = false;
 	bool m_network = false; // lane MP-2
 	int m_localSlot = 0;
 };

@@ -163,8 +163,92 @@ TEST_CASE("radar1 overlay: a command centre is the outline of a circle of its bo
 	// the smallest circle has a radius of 2
 	snap.objects[0].radar.boundingRadius = 1.0f;
 	Radar::renderObjects(snap, 1280.0f, 1280.0f, 0, 0xFFFFFFFFu, t);
-	CHECK(at(t, 100, 32) != 0u);
-	CHECK(at(t, 100, 28) != 0u);
+	expected.clear();
+	for (int x = 99; x <= 101; ++x)
+	{
+		expected.insert({ x, 28 });
+		expected.insert({ x, 32 });
+	}
+	for (int y = 29; y <= 31; ++y)
+	{
+		expected.insert({ 98, y });
+		expected.insert({ 102, y });
+	}
+	CHECK(lit(t) == expected.size());
+	for (const auto &p : expected)
+	{
+		CHECK(at(t, p.first, p.second) == 0xFF00FF00u);
+	}
+}
+
+TEST_CASE("radar1 overlay: command centre circles clip world positions left of and above the map origin without signed-shift UB")
+{
+	struct Position
+	{
+		float wx, wy;
+		int x, y;
+	};
+	const Position positions[] = { { 1000.0f, 300.0f, 100, 30 }, { -10.0f, 300.0f, -1, 30 }, { 1000.0f, -10.0f, 100, -1 },
+	                               { -10.0f, -10.0f, -1, -1 }, { -9.0f, -9.0f, 0, 0 }, { 0.0f, 0.0f, 0, 0 },
+	                               { 1270.0f, 1270.0f, 127, 127 }, { 1280.0f, 1280.0f, 128, 128 }, { -50.0f, -50.0f, -5, -5 } };
+	for (int radius : { 2, 4 })
+	{
+		// Fixed Bresenham row half-widths, from the equator to the pole (RW 0x6E0AE4).
+		const std::vector<int> widths = radius == 2 ? std::vector<int>{ 2, 2, 1 } : std::vector<int>{ 4, 4, 4, 3, 1 };
+		for (const Position &p : positions)
+		{
+			CAPTURE(radius);
+			CAPTURE(p.wx);
+			CAPTURE(p.wy);
+			LogicSnapshot snap;
+			ObjectSnapshot cc = entry(1, p.wx, p.wy, 0xFF00FF00u, Radar::SHAPE_COMMAND_CENTER, Radar::RADAR_PRIORITY_STRUCTURE);
+			cc.radar.boundingRadius = (float)radius * 10.0f;
+			snap.objects.push_back(cc);
+			std::vector<std::uint32_t> actual, expected((size_t)Radar::kCells * Radar::kCells, 0u);
+			auto put = [&](int x, int y) {
+				if (x >= 0 && x < Radar::kCells && y >= 0 && y < Radar::kCells)
+				{
+					expected[(size_t)y * Radar::kCells + (size_t)x] = 0xFF00FF00u;
+				}
+			};
+			for (int y = -radius; y <= radius; ++y)
+			{
+				const int width = widths[(size_t)std::abs(y)];
+				put(p.x - width, p.y + y);
+				put(p.x + width, p.y + y);
+			}
+			for (int x = -1; x <= 1; ++x)
+			{
+				put(p.x + x, p.y - radius);
+				put(p.x + x, p.y + radius);
+			}
+			Radar::renderObjects(snap, 1280.0f, 1280.0f, 0, 0xFFFFFFFFu, actual);
+			CHECK(actual == expected);
+		}
+	}
+}
+
+TEST_CASE("radar1 overlay: dense circle sweep preserves the GCC x86 raster for in-map and off-map centres")
+{
+	LogicSnapshot snap;
+	snap.objects.push_back(entry(1, 0.0f, 0.0f, 0xFF00FF00u, Radar::SHAPE_COMMAND_CENTER, Radar::RADAR_PRIORITY_STRUCTURE));
+	std::vector<std::uint32_t> texels;
+	std::uint64_t hash = 14695981039346656037ull;
+	// GCC 11.4 x86-64 pre-fix raster: every radius 2..128, 384 centres spanning -128..255 on each axis (73 permutes the y coordinates).
+	for (int radius = 2; radius <= 128; ++radius)
+	{
+		snap.objects[0].radar.boundingRadius = (float)radius;
+		for (int i = 0; i < 384; ++i)
+		{
+			snap.objects[0].position = { (float)(i - 128), (float)((i * 73) % 384 - 128), 0.0f };
+			Radar::renderObjects(snap, 128.0f, 128.0f, 0, 0xFFFFFFFFu, texels);
+			for (std::uint32_t pixel : texels)
+			{
+				hash = (hash ^ pixel) * 1099511628211ull;
+			}
+		}
+	}
+	CHECK(hash == 5633838640447269157ull);
 }
 
 TEST_CASE("radar1 overlay: the local list is drawn over the others', each list by priority; hidden, fogged and others' LOCAL_UNIT_ONLY objects are left out")

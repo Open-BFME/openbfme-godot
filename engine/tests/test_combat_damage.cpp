@@ -166,7 +166,7 @@ TEST_CASE("combat damage: Object::kill takes the whole health with an unresistab
 {
 	CombatWorld w;
 	Object *d = w.unit("Dummy", 'B', 400, 300);
-	d->kill(DEATH_NORMAL);
+	d->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	CHECK(d->isEffectivelyDead());
 	CHECK(w.combat().counters().kills == 1);
 }

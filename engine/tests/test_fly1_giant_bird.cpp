@@ -2,6 +2,7 @@
 // Lane FLY-1: the GIANT_BIRD flyers (GameLogic/AI/AerialPathfinder.h, GameLogic/Module/GiantBirdAIUpdate.h, the GIANT_BIRD movers of
 // GameLogic/Object/LocomotorGiantBird.cpp). The retail cases SKIP without the games (ROTWK_INSTALL / BFME2_INSTALL).
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "CampaignTestUtil.h"
@@ -31,6 +32,7 @@
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
+#include "GameLogic/Module/SpawnBehavior.h"
 #include "GameLogic/NewGame/NewGame.h"
 #include "GameLogic/Object/Object.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
@@ -202,6 +204,7 @@ struct FlyArena
 		REQUIRE(o != nullptr);
 		Coord3D p{ x, y, logic().getGroundHeight(x, y) + zAbove };
 		o->setPosition(&p);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	void step(int n = 1)
@@ -523,15 +526,17 @@ TEST_CASE("fly1 retail: Drogoth's breath: his fireball (SpecialAbilityDrogothFir
 	}
 	MESSAGE("the fireball's first damage after " << f << " frames: " << total0 << " -> " << hordeHealth() << ", Drogoth " << arena.above(*drogoth) << " above the ground");
 	// DrogothFireballWarhead on each GondorFighter within DROGOTH_FIREBALL_RADIUS 30: 400 FLAME + 50 MAGIC + 400 MAGIC (DROGOTH_FIREBALL_DAMAGE_SIEGE, its 300 %
-	// only on fell beasts and Gwaihir) at SoldierArmor's 100 % is 850, above GONDOR_SOLDIER_HEALTH 200: the six soldiers the blast covers die, 6 x 200
-	CHECK(total0 - hordeHealth() == 1200.0f);
+	// only on fell beasts and Gwaihir) at SoldierArmor's 100 % is 850, above GONDOR_SOLDIER_HEALTH 200: the soldiers the blast covers die, 200 each. Lane FLANK-1:
+	// DrogothFireballProjectile is not NO_COLLIDE and its warhead's ProjectileCollidesWith has ENEMIES (RW 0x6CC79C), so the ball goes off on the first soldier it
+	// touches, backed off its path (RW 0x85EA5F), not at the aimed soldier at the path's end: nine soldiers are inside the blast there (six before), 9 x 200
+	CHECK(total0 - hordeHealth() == 1800.0f);
 	int killed = 0;
 	for (ObjectID id : members)
 	{
 		Object *m = logic.findObjectByID(id);
 		killed += !m || m->isEffectivelyDead() ? 1 : 0;
 	}
-	CHECK(killed == 6);
+	CHECK(killed == 9);
 }
 
 TEST_CASE("fly1 retail: every template of the retail data with a GiantBirdAIUpdate, by exact name, runs the class and flies to a point")
@@ -635,6 +640,15 @@ TEST_CASE("fly1 retail: a hunting fell beast (AI command 0x12: the hunt state wi
 	OPENBFME_REQUIRE_START(s);
 	FlyArena arena(*s, "FactionMordor", "FactionMen");
 	GameLogic &logic = arena.logic();
+	// Control the hunt candidates: both the first-leg quick path and per-tick goal
+	// publication move the Moria lair's QueueProductionExitUpdate spawns
+	// (RW 0x8A3DD5 -> 0x87C9B8 -> state 7). The fell beast never enters state 7.
+	// Those goblins cannot be an implicit fixture.
+	arena.clearCreeps();
+	Object *lair = arena.make("MoriarGoblinLair", arena.b, 1500.0f, 800.0f);
+	auto *spawner = SpawnBehaviorInterface::of(*lair);
+	REQUIRE(spawner);
+	spawner->stopSpawning();
 	Object *beast = arena.make("KhamulFellBeast", arena.a, 1300.0f, 800.0f);
 	arena.make("GondorBarracks", arena.b, 1800.0f, 820.0f);
 	GiantBirdAIUpdate *ai = birdAI(beast);
@@ -664,7 +678,8 @@ TEST_CASE("fly1 retail: a hunting fell beast (AI command 0x12: the hunt state wi
 							   << (v ? health(v) : 0.0f));
 	REQUIRE(victim != INVALID_ID);
 	REQUIRE(v != nullptr);
-	// the closest enemy is the map's MoriarGoblinLair beside the course (a creep structure, enemy of both players), nearer than the barracks
+	// The controlled lair is nearer than the second eligible target, the barracks.
+	CHECK(victim == lair->getID());
 	CHECK(v->getTemplate()->getName() == "MoriarGoblinLair");
 	CHECK(ai->strikes() == 1);
 	// NazgulPlowAttack on MonsterLair: 500 inner + 250 outer SIEGE x 70 % STRUCTURE x SIEGE 150 % = 525 + 262.5, 100 FLY_INTO x DEFAULT 50 % = 50: 837.5
@@ -889,6 +904,7 @@ TEST_CASE("stealthfly1 retail: a script's waypoint path order (AI commands 6 / 0
 	REQUIRE(beast != nullptr);
 	Coord3D at{ chain[0].x, chain[0].y, logic.getGroundHeight(chain[0].x, chain[0].y) };
 	beast->setPosition(&at);
+	testutil::completeHorde(beast); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	GiantBirdAIUpdate *ai = birdAI(beast);
 	REQUIRE(ai != nullptr);
 	const ObjectID id = beast->getID();

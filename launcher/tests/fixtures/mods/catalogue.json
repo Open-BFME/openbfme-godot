@@ -1,0 +1,742 @@
+{
+ "comment": "Lane MODS-3: a made-up workshop catalogue in the service's JSON shape (no real mod data). A file's bytes are its '<package guid>/<file name>\\n' repeated to its Size (to unknown_size bytes when Size is 0, except the empty file); tools/release/test_mods.py serves them, tests/mod_catalog_test.gd reads the JSON only.",
+ "files_origin": "https://workshop-files.bfmeladder.com",
+ "unknown_size": 3000,
+ "query": {
+  "0": [
+   [
+    {
+     "Guid": "test-patch-99",
+     "Name": "Made-Up Patch 9.9",
+     "Version": "1.0.0",
+     "Description": "Made-up test package.",
+     "Changelog": "",
+     "SocialLinks": [],
+     "Language": "EN",
+     "ArtworkUrl": "",
+     "ScreenshotUrls": [],
+     "Author": "The Test Team",
+     "Owner": "00000000-0000-4000-8000-0000000000bb",
+     "Game": 2,
+     "Type": 0,
+     "CreationTime": 1760000000000,
+     "Size": 7900,
+     "Metadata": {
+      "Downloads": 7,
+      "Versions": [
+       "1.0.0"
+      ]
+     }
+    },
+    {
+     "Guid": "original-RotWK",
+     "Name": "Vanilla (2.01)",
+     "Version": "1.0.0",
+     "Author": "EA",
+     "Owner": "x",
+     "Game": 2,
+     "Type": 0,
+     "Size": 1
+    },
+    {
+     "Guid": "test-realms",
+     "Name": "Example Realms",
+     "Version": "1.2.0",
+     "Description": "Made-up test package.",
+     "Changelog": "",
+     "SocialLinks": [],
+     "Language": "EN",
+     "ArtworkUrl": "",
+     "ScreenshotUrls": [],
+     "Author": "Realm Builders",
+     "Owner": "00000000-0000-4000-8000-0000000000bb",
+     "Game": 2,
+     "Type": 0,
+     "CreationTime": 1760000000000,
+     "Size": 12150,
+     "Metadata": {
+      "Downloads": 7,
+      "Versions": [
+       "1.2.0"
+      ]
+     }
+    }
+   ],
+   [
+    {
+     "Guid": "test-siege",
+     "Name": "Sample Siege",
+     "Version": "0.3",
+     "Description": "Made-up test package.",
+     "Changelog": "",
+     "SocialLinks": [],
+     "Language": "EN",
+     "ArtworkUrl": "",
+     "ScreenshotUrls": [],
+     "Author": "Siege Folk",
+     "Owner": "00000000-0000-4000-8000-0000000000bb",
+     "Game": 2,
+     "Type": 0,
+     "CreationTime": 1760000000000,
+     "Size": 5750,
+     "Metadata": {
+      "Downloads": 7,
+      "Versions": [
+       "0.3"
+      ]
+     }
+    }
+   ],
+   []
+  ],
+  "1": [
+   [
+    {
+     "Guid": "test-tales",
+     "Name": "Tiny Tales",
+     "Version": "2.0.1",
+     "Description": "Made-up test package.",
+     "Changelog": "",
+     "SocialLinks": [],
+     "Language": "EN",
+     "ArtworkUrl": "",
+     "ScreenshotUrls": [],
+     "Author": "A. Storyteller",
+     "Owner": "00000000-0000-4000-8000-0000000000bb",
+     "Game": 2,
+     "Type": 1,
+     "CreationTime": 1760000000000,
+     "Size": 3979,
+     "Metadata": {
+      "Downloads": 7,
+      "Versions": [
+       "2.0.1"
+      ]
+     }
+    },
+    {
+     "Guid": "test-broken",
+     "Name": "Broken Bridge",
+     "Version": "0.1",
+     "Description": "Made-up test package.",
+     "Changelog": "",
+     "SocialLinks": [],
+     "Language": "EN",
+     "ArtworkUrl": "",
+     "ScreenshotUrls": [],
+     "Author": "Nobody",
+     "Owner": "00000000-0000-4000-8000-0000000000bb",
+     "Game": 2,
+     "Type": 1,
+     "CreationTime": 1760000000000,
+     "Size": 100,
+     "Metadata": {
+      "Downloads": 7,
+      "Versions": [
+       "0.1"
+      ]
+     }
+    }
+   ],
+   []
+  ],
+  "2": [
+   [
+    {
+     "Guid": "test-realms-nointro",
+     "Name": "Realms No Intro",
+     "Version": "1.0.0",
+     "Description": "Made-up test package.",
+     "Changelog": "",
+     "SocialLinks": [],
+     "Language": "EN",
+     "ArtworkUrl": "",
+     "ScreenshotUrls": [],
+     "Author": "Realm Builders",
+     "Owner": "00000000-0000-4000-8000-0000000000bb",
+     "Game": 2,
+     "Type": 2,
+     "CreationTime": 1760000000000,
+     "Size": 2400,
+     "Metadata": {
+      "Downloads": 7,
+      "Versions": [
+       "1.0.0"
+      ]
+     }
+    },
+    {
+     "Guid": "test-realms-font",
+     "Name": "Realms Big Font",
+     "Version": "1.0.1",
+     "Description": "Made-up test package.",
+     "Changelog": "",
+     "SocialLinks": [],
+     "Language": "EN",
+     "ArtworkUrl": "",
+     "ScreenshotUrls": [],
+     "Author": "Realm Builders",
+     "Owner": "00000000-0000-4000-8000-0000000000bb",
+     "Game": 2,
+     "Type": 2,
+     "CreationTime": 1760000000000,
+     "Size": 1700,
+     "Metadata": {
+      "Downloads": 7,
+      "Versions": [
+       "1.0.1"
+      ]
+     }
+    },
+    {
+     "Guid": "test-zoom",
+     "Name": "Zoom For The Original",
+     "Version": "1.0.3",
+     "Description": "Made-up test package.",
+     "Changelog": "",
+     "SocialLinks": [],
+     "Language": "EN",
+     "ArtworkUrl": "",
+     "ScreenshotUrls": [],
+     "Author": "Camera Fan",
+     "Owner": "00000000-0000-4000-8000-0000000000bb",
+     "Game": 2,
+     "Type": 2,
+     "CreationTime": 1760000000000,
+     "Size": 900,
+     "Metadata": {
+      "Downloads": 7,
+      "Versions": [
+       "1.0.3"
+      ]
+     }
+    },
+    {
+     "Guid": "test-siege-timer",
+     "Name": "Siege Timer",
+     "Version": "1.0.0",
+     "Description": "Made-up test package.",
+     "Changelog": "",
+     "SocialLinks": [],
+     "Language": "EN",
+     "ArtworkUrl": "",
+     "ScreenshotUrls": [],
+     "Author": "Siege Folk",
+     "Owner": "00000000-0000-4000-8000-0000000000bb",
+     "Game": 2,
+     "Type": 2,
+     "CreationTime": 1760000000000,
+     "Size": 750,
+     "Metadata": {
+      "Downloads": 7,
+      "Versions": [
+       "1.0.0"
+      ]
+     }
+    }
+   ],
+   []
+  ]
+ },
+ "entries": {
+  "test-patch-99": {
+   "Guid": "test-patch-99",
+   "Name": "Made-Up Patch 9.9",
+   "Version": "1.0.0",
+   "Description": "Made-up test package.",
+   "Changelog": "",
+   "SocialLinks": [],
+   "Language": "EN",
+   "ArtworkUrl": "",
+   "ScreenshotUrls": [],
+   "Author": "The Test Team",
+   "Owner": "00000000-0000-4000-8000-0000000000bb",
+   "Game": 2,
+   "Type": 0,
+   "CreationTime": 1760000000000,
+   "Files": [
+    {
+     "Guid": "50580a5f5a3814892b819cd9de2a4c88",
+     "Name": "__mup_patch.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/50580a5f5a3814892b819cd9de2a4c88",
+     "Md5": "50580a5f5a3814892b819cd9de2a4c88",
+     "Language": "ALL",
+     "Size": 4000
+    },
+    {
+     "Guid": "20fc42c833ad49d6df26029f8726dd9c",
+     "Name": "lang\\englishpatch99.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/20fc42c833ad49d6df26029f8726dd9c",
+     "Md5": "20fc42c833ad49d6df26029f8726dd9c",
+     "Language": "EN",
+     "Size": 0
+    },
+    {
+     "Guid": "414af11effa78fb6034ce368a05b1244",
+     "Name": "lang\\germanpatch99.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/414af11effa78fb6034ce368a05b1244",
+     "Md5": "414af11effa78fb6034ce368a05b1244",
+     "Language": "DE",
+     "Size": 1200
+    },
+    {
+     "Guid": "f9cb912729cc74321b85abfc899fba12",
+     "Name": "lotrbfme2ep1.exe",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/f9cb912729cc74321b85abfc899fba12",
+     "Md5": "f9cb912729cc74321b85abfc899fba12",
+     "Language": "ALL",
+     "Size": 900
+    },
+    {
+     "Guid": "8a23384d5577a971f74814147c956d8d",
+     "Name": "game.dat",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/8a23384d5577a971f74814147c956d8d",
+     "Md5": "8a23384d5577a971f74814147c956d8d",
+     "Language": "ALL",
+     "Size": 800
+    },
+    {
+     "Guid": "224fa1ba6978b8df126ab382ccb3cd8a",
+     "Name": "Patcher.exe",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/224fa1ba6978b8df126ab382ccb3cd8a",
+     "Md5": "224fa1ba6978b8df126ab382ccb3cd8a",
+     "Language": "ALL",
+     "Size": 700
+    },
+    {
+     "Guid": "e607e6f52baaf767c555bf4afbe81bf8",
+     "Name": "readme.pdf",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/e607e6f52baaf767c555bf4afbe81bf8",
+     "Md5": "e607e6f52baaf767c555bf4afbe81bf8",
+     "Language": "ALL",
+     "Size": 300
+    }
+   ],
+   "Maps": [],
+   "Factions": [],
+   "Dependencies": [
+    "original-RotWK"
+   ]
+  },
+  "test-realms": {
+   "Guid": "test-realms",
+   "Name": "Example Realms",
+   "Version": "1.2.0",
+   "Description": "Made-up test package.",
+   "Changelog": "",
+   "SocialLinks": [],
+   "Language": "EN",
+   "ArtworkUrl": "",
+   "ScreenshotUrls": [],
+   "Author": "Realm Builders",
+   "Owner": "00000000-0000-4000-8000-0000000000bb",
+   "Game": 2,
+   "Type": 0,
+   "CreationTime": 1760000000000,
+   "Files": [
+    {
+     "Guid": "e0ec7d5d529ecc5c4100528f34f33ca5",
+     "Name": "__realms_data.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/e0ec7d5d529ecc5c4100528f34f33ca5",
+     "Md5": "e0ec7d5d529ecc5c4100528f34f33ca5",
+     "Language": "ALL",
+     "Size": 5000
+    },
+    {
+     "Guid": "9c03d083136e9209317e491d71dc0d16",
+     "Name": "__realms_ini.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/9c03d083136e9209317e491d71dc0d16",
+     "Md5": "9c03d083136e9209317e491d71dc0d16",
+     "Language": "ALL",
+     "Size": 2500
+    },
+    {
+     "Guid": "9d8c8a2e831ed5f42bf42e226503a8f1",
+     "Name": "lang\\English.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/9d8c8a2e831ed5f42bf42e226503a8f1",
+     "Md5": "9d8c8a2e831ed5f42bf42e226503a8f1",
+     "Language": "EN",
+     "Size": 0
+    },
+    {
+     "Guid": "cbbcb8cfb9bde0224a80a7f5bb684684",
+     "Name": "lang\\German.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/cbbcb8cfb9bde0224a80a7f5bb684684",
+     "Md5": "cbbcb8cfb9bde0224a80a7f5bb684684",
+     "Language": "DE",
+     "Size": 1800
+    },
+    {
+     "Guid": "8f22452a96066ad02e3b053798c0ef06",
+     "Name": "Realms_Launcher.exe",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/8f22452a96066ad02e3b053798c0ef06",
+     "Md5": "8f22452a96066ad02e3b053798c0ef06",
+     "Language": "ALL",
+     "Size": 600
+    },
+    {
+     "Guid": "de522a460df74c2f1c6a4b8f50388734",
+     "Name": "mod.txt",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/de522a460df74c2f1c6a4b8f50388734",
+     "Md5": "de522a460df74c2f1c6a4b8f50388734",
+     "Language": "ALL",
+     "Size": 50
+    },
+    {
+     "Guid": "97dd9d6684c51934e7438f7833302a84",
+     "Name": "lang\\englishaudio.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/97dd9d6684c51934e7438f7833302a84",
+     "Md5": "97dd9d6684c51934e7438f7833302a84",
+     "Language": "EN NL NO PL SV TR",
+     "Size": 2200
+    },
+    {
+     "Guid": "d41d8cd98f00b204e9800998ecf8427e",
+     "Name": "worldbuilder_noeula.txt",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/d41d8cd98f00b204e9800998ecf8427e",
+     "Md5": "d41d8cd98f00b204e9800998ecf8427e",
+     "Language": "ALL",
+     "Size": 0
+    }
+   ],
+   "Maps": [],
+   "Factions": [],
+   "Dependencies": [
+    "original-RotWK"
+   ]
+  },
+  "test-siege": {
+   "Guid": "test-siege",
+   "Name": "Sample Siege",
+   "Version": "0.3",
+   "Description": "Made-up test package.",
+   "Changelog": "",
+   "SocialLinks": [],
+   "Language": "EN",
+   "ArtworkUrl": "",
+   "ScreenshotUrls": [],
+   "Author": "Siege Folk",
+   "Owner": "00000000-0000-4000-8000-0000000000bb",
+   "Game": 2,
+   "Type": 0,
+   "CreationTime": 1760000000000,
+   "Files": [
+    {
+     "Guid": "fa1cf14aeb9a74df9fc0550f36ef48b1",
+     "Name": "__siege.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/fa1cf14aeb9a74df9fc0550f36ef48b1",
+     "Md5": "fa1cf14aeb9a74df9fc0550f36ef48b1",
+     "Language": "ALL",
+     "Size": 3300
+    },
+    {
+     "Guid": "341cf5b79d373615c266e65f62325c70",
+     "Name": "data\\ini\\weapon.ini",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/341cf5b79d373615c266e65f62325c70",
+     "Md5": "341cf5b79d373615c266e65f62325c70",
+     "Language": "ALL",
+     "Size": 450
+    },
+    {
+     "Guid": "73965534f473ff7995262a201bd470aa",
+     "Name": "lang\\englishpatch99.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/73965534f473ff7995262a201bd470aa",
+     "Md5": "73965534f473ff7995262a201bd470aa",
+     "Language": "EN",
+     "Size": 1500
+    },
+    {
+     "Guid": "1ab222177c03f67dd67175301542ec21",
+     "Name": "d3d9.dll",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/1ab222177c03f67dd67175301542ec21",
+     "Md5": "1ab222177c03f67dd67175301542ec21",
+     "Language": "ALL",
+     "Size": 500
+    }
+   ],
+   "Maps": [],
+   "Factions": [],
+   "Dependencies": [
+    "test-patch-99:1.0.0",
+    "test-bfme2-patch"
+   ]
+  },
+  "test-tales": {
+   "Guid": "test-tales",
+   "Name": "Tiny Tales",
+   "Version": "2.0.1",
+   "Description": "Made-up test package.",
+   "Changelog": "",
+   "SocialLinks": [],
+   "Language": "EN",
+   "ArtworkUrl": "",
+   "ScreenshotUrls": [],
+   "Author": "A. Storyteller",
+   "Owner": "00000000-0000-4000-8000-0000000000bb",
+   "Game": 2,
+   "Type": 1,
+   "CreationTime": 1760000000000,
+   "Files": [
+    {
+     "Guid": "7301d84fbb4f287fedb7cdcf49af0a25",
+     "Name": "!!tales.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/7301d84fbb4f287fedb7cdcf49af0a25",
+     "Md5": "7301d84fbb4f287fedb7cdcf49af0a25",
+     "Language": "ALL",
+     "Size": 2600
+    },
+    {
+     "Guid": "a941de72c2478e80467b0113f6f3d63b",
+     "Name": "data\\ini\\object\\tale.ini",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/a941de72c2478e80467b0113f6f3d63b",
+     "Md5": "a941de72c2478e80467b0113f6f3d63b",
+     "Language": "ALL",
+     "Size": 380
+    },
+    {
+     "Guid": "084647ed11b4734e81f85305e6c953cf",
+     "Name": "data/ini/object/TALE.ini",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/084647ed11b4734e81f85305e6c953cf",
+     "Md5": "084647ed11b4734e81f85305e6c953cf",
+     "Language": "ALL",
+     "Size": 999
+    }
+   ],
+   "Maps": [],
+   "Factions": [],
+   "Dependencies": [
+    "original-RotWK",
+    "test-maps"
+   ]
+  },
+  "test-broken": {
+   "Guid": "test-broken",
+   "Name": "Broken Bridge",
+   "Version": "0.1",
+   "Description": "Made-up test package.",
+   "Changelog": "",
+   "SocialLinks": [],
+   "Language": "EN",
+   "ArtworkUrl": "",
+   "ScreenshotUrls": [],
+   "Author": "Nobody",
+   "Owner": "00000000-0000-4000-8000-0000000000bb",
+   "Game": 2,
+   "Type": 1,
+   "CreationTime": 1760000000000,
+   "Files": [
+    {
+     "Guid": "55fd1e25ffa9b32ea471b479d2d252f4",
+     "Name": "..\\..\\escape.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/55fd1e25ffa9b32ea471b479d2d252f4",
+     "Md5": "55fd1e25ffa9b32ea471b479d2d252f4",
+     "Language": "ALL",
+     "Size": 100
+    }
+   ],
+   "Maps": [],
+   "Factions": [],
+   "Dependencies": []
+  },
+  "test-realms-nointro": {
+   "Guid": "test-realms-nointro",
+   "Name": "Realms No Intro",
+   "Version": "1.0.0",
+   "Description": "Made-up test package.",
+   "Changelog": "",
+   "SocialLinks": [],
+   "Language": "EN",
+   "ArtworkUrl": "",
+   "ScreenshotUrls": [],
+   "Author": "Realm Builders",
+   "Owner": "00000000-0000-4000-8000-0000000000bb",
+   "Game": 2,
+   "Type": 2,
+   "CreationTime": 1760000000000,
+   "Files": [
+    {
+     "Guid": "b6762d88133f96bfaa5500442aa3c760",
+     "Name": "_____short_intro.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/b6762d88133f96bfaa5500442aa3c760",
+     "Md5": "b6762d88133f96bfaa5500442aa3c760",
+     "Language": "ALL",
+     "Size": 1100
+    },
+    {
+     "Guid": "3ae877e7cbc568335a9f8000093c8d30",
+     "Name": "__realms_ini.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/3ae877e7cbc568335a9f8000093c8d30",
+     "Md5": "3ae877e7cbc568335a9f8000093c8d30",
+     "Language": "ALL",
+     "Size": 1300
+    }
+   ],
+   "Maps": [],
+   "Factions": [],
+   "Dependencies": [
+    "test-realms"
+   ]
+  },
+  "test-realms-font": {
+   "Guid": "test-realms-font",
+   "Name": "Realms Big Font",
+   "Version": "1.0.1",
+   "Description": "Made-up test package.",
+   "Changelog": "",
+   "SocialLinks": [],
+   "Language": "EN",
+   "ArtworkUrl": "",
+   "ScreenshotUrls": [],
+   "Author": "Realm Builders",
+   "Owner": "00000000-0000-4000-8000-0000000000bb",
+   "Game": 2,
+   "Type": 2,
+   "CreationTime": 1760000000000,
+   "Files": [
+    {
+     "Guid": "dd569f9536015db687f7a0b1914b0686",
+     "Name": "lang\\English.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/dd569f9536015db687f7a0b1914b0686",
+     "Md5": "dd569f9536015db687f7a0b1914b0686",
+     "Language": "EN",
+     "Size": 1700
+    }
+   ],
+   "Maps": [],
+   "Factions": [],
+   "Dependencies": [
+    "test-realms:1.2.0"
+   ]
+  },
+  "test-zoom": {
+   "Guid": "test-zoom",
+   "Name": "Zoom For The Original",
+   "Version": "1.0.3",
+   "Description": "Made-up test package.",
+   "Changelog": "",
+   "SocialLinks": [],
+   "Language": "EN",
+   "ArtworkUrl": "",
+   "ScreenshotUrls": [],
+   "Author": "Camera Fan",
+   "Owner": "00000000-0000-4000-8000-0000000000bb",
+   "Game": 2,
+   "Type": 2,
+   "CreationTime": 1760000000000,
+   "Files": [
+    {
+     "Guid": "992918b45e06db803b640ad6beb2cdbb",
+     "Name": "__zoom.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/992918b45e06db803b640ad6beb2cdbb",
+     "Md5": "992918b45e06db803b640ad6beb2cdbb",
+     "Language": "ALL",
+     "Size": 900
+    }
+   ],
+   "Maps": [],
+   "Factions": [],
+   "Dependencies": [
+    "original-RotWK"
+   ]
+  },
+  "test-siege-timer": {
+   "Guid": "test-siege-timer",
+   "Name": "Siege Timer",
+   "Version": "1.0.0",
+   "Description": "Made-up test package.",
+   "Changelog": "",
+   "SocialLinks": [],
+   "Language": "EN",
+   "ArtworkUrl": "",
+   "ScreenshotUrls": [],
+   "Author": "Siege Folk",
+   "Owner": "00000000-0000-4000-8000-0000000000bb",
+   "Game": 2,
+   "Type": 2,
+   "CreationTime": 1760000000000,
+   "Files": [
+    {
+     "Guid": "f515c9b704eac2227e2b93f48b9a3c21",
+     "Name": "timer.asi",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/f515c9b704eac2227e2b93f48b9a3c21",
+     "Md5": "f515c9b704eac2227e2b93f48b9a3c21",
+     "Language": "ALL",
+     "Size": 400
+    },
+    {
+     "Guid": "f4925eedb26f3724c9fdc4a3eb110baf",
+     "Name": "__timer.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/f4925eedb26f3724c9fdc4a3eb110baf",
+     "Md5": "f4925eedb26f3724c9fdc4a3eb110baf",
+     "Language": "ALL",
+     "Size": 350
+    }
+   ],
+   "Maps": [],
+   "Factions": [],
+   "Dependencies": [
+    "test-siege"
+   ]
+  },
+  "test-bfme2-patch": {
+   "Guid": "test-bfme2-patch",
+   "Name": "Made-Up BFME2 Patch",
+   "Version": "3.0",
+   "Description": "Made-up test package.",
+   "Changelog": "",
+   "SocialLinks": [],
+   "Language": "EN",
+   "ArtworkUrl": "",
+   "ScreenshotUrls": [],
+   "Author": "The Test Team",
+   "Owner": "00000000-0000-4000-8000-0000000000bb",
+   "Game": 1,
+   "Type": 0,
+   "CreationTime": 1760000000000,
+   "Files": [
+    {
+     "Guid": "a3e3a83f52553a148e9f5ddf0ab2bef4",
+     "Name": "INI.big",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/a3e3a83f52553a148e9f5ddf0ab2bef4",
+     "Md5": "a3e3a83f52553a148e9f5ddf0ab2bef4",
+     "Language": "ALL",
+     "Size": 1000
+    }
+   ],
+   "Maps": [],
+   "Factions": [],
+   "Dependencies": [
+    "original-BFME2"
+   ]
+  },
+  "test-maps": {
+   "Guid": "test-maps",
+   "Name": "Tale Maps",
+   "Version": "1.0",
+   "Description": "Made-up test package.",
+   "Changelog": "",
+   "SocialLinks": [],
+   "Language": "EN",
+   "ArtworkUrl": "",
+   "ScreenshotUrls": [],
+   "Author": "A. Storyteller",
+   "Owner": "00000000-0000-4000-8000-0000000000bb",
+   "Game": 2,
+   "Type": 3,
+   "CreationTime": 1760000000000,
+   "Files": [
+    {
+     "Guid": "8de71ac7f3d07f263c329ca70877ca79",
+     "Name": "tale\\tale.ini",
+     "Url": "https://workshop-files.bfmeladder.com/00000000-0000-4000-8000-0000000000aa/8de71ac7f3d07f263c329ca70877ca79",
+     "Md5": "8de71ac7f3d07f263c329ca70877ca79",
+     "Language": "ALL",
+     "Size": 260
+    }
+   ],
+   "Maps": [],
+   "Factions": [],
+   "Dependencies": []
+  }
+ }
+}

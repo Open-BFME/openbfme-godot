@@ -16,8 +16,8 @@ extends EditorExportPlugin
 ## the pack once.
 
 ## Godot's filter syntax (String.matchn on the path below res://)
-## (release_key.pub is a CryptoKey resource; the key is compiled into build_info.json)
-const SKIP: PackedStringArray = ["tests/*", "addons/*", "release_key.pub"]
+## (release_key.pub, release_keys.pub and, lane RELGH-2, nightly_keys.pub are CryptoKey resources by their extension; the keys are compiled into build_info.json)
+const SKIP: PackedStringArray = ["tests/*", "addons/*", "release_key.pub", "release_keys.pub", "nightly_keys.pub"]
 ## each must match at least one file of the project
 const ADD: PackedStringArray = ["build_info.json", "fonts/OFL-*.txt"]
 

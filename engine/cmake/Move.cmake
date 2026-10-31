@@ -6,6 +6,7 @@ set(OPENBFME_MOVE_SOURCES
     src/GameLogic/AI/AIGroup.cpp
     src/GameLogic/AI/AICommands.cpp
     src/GameLogic/AI/AIWorld.cpp
+    src/GameLogic/Module/AmbientAIUpdate.cpp
     src/GameLogic/Module/AIUpdate.cpp
     src/GameLogic/Module/HordeAIUpdate.cpp
     src/GameLogic/Object/Contain/HordeMemberPass.cpp
@@ -14,6 +15,7 @@ set(OPENBFME_MOVE_SOURCES
 list(APPEND OPENBFME_SIM_SOURCES ${OPENBFME_MOVE_SOURCES})
 set(OPENBFME_MOVE_TESTS
     tests/test_move_ai.cpp
+    tests/test_move_speed.cpp
     tests/test_move_horde.cpp
     tests/test_move_commands.cpp
     tests/test_move_hash.cpp

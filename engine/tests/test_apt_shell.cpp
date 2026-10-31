@@ -8,6 +8,7 @@
 #include "doctest.h"
 #include "AptPlayerTestUtil.h"
 #include "AptRetail.h"
+#include "IniTestUtil.h"
 
 #include "GameClient/GUI/AptScreen.h"
 #include "GameClient/GUI/AptScreens/AptMainMenu.h"
@@ -533,7 +534,9 @@ TEST_CASE("Shell: the A4 factory table holds MainMenu, Skirmish, LoadScreen, Opt
 		"PlayerTribute.apt", // lane PLAY-1: the Palantir flag's screen
 		"CreateAHero.apt", // lane CAH-1: the Create-a-Hero builder
 		"OnlineShell.apt", // lane ONLINE-4: the online screens
-		"CampaignMenu.apt" }); // lane CAMPSAVE-1: the campaign between missions
+		"CampaignMenu.apt", // lane CAMPSAVE-1: the campaign between missions
+		"Messenger.apt", // SOCIAL-1 (landed by lane ONLINEMENU-1): RotWK's Messenger
+		"Objectives.apt" }); // lane CAMPUI-1: the objectives screen (RW 0x8E8843)
 	CHECK(fx.factories.has("mainmenu.APT"));
 	fx.wm->init();
 	fx.shell->push("AptLevel0.apt");
@@ -920,6 +923,48 @@ TEST_CASE("menustyle: BFME2 campaign commands preserve alignment and difficulty 
 	}
 }
 
+TEST_CASE("bfme1 main menu: returning hides the submenu background without changing BFME2 or RotWK")
+{
+	for (const std::string style : { "bfme1", "bfme2", "rotwk", "no-filesystem" })
+	{
+		CAPTURE(style);
+		initest::FileList files = { { "Data\\INI\\Default\\SubsystemLegend.ini", "; legend" } };
+		if (style == "bfme2")
+		{
+			files.emplace_back("Data\\INI\\AwardSystem.ini", "; awards");
+		}
+		if (style == "rotwk")
+		{
+			files.emplace_back("Data\\INI\\Default\\SubsystemLegendExpansion1.ini", "; expansion");
+		}
+		initest::Fixture data(files);
+		std::vector<std::string> log;
+		ShellFx fx;
+		fx.environment.fileSystem = style == "no-filesystem" ? nullptr : &data.fsys;
+		fx.addMovie("MainMenu", {});
+		fx.addMovie("Background", {});
+		fx.addMovie("Covered", {});
+		registerAptScreenFactories(fx.factories);
+		registerTestScreen(fx.factories, "Covered.apt", &log);
+		fx.wm->init();
+		REQUIRE(fx.wm->loadBackground());
+		fx.shell->push("MainMenu.apt");
+		fx.tick();
+		for (int visit = 0; visit < 2; ++visit)
+		{
+			fx.shell->push("Covered.apt");
+			fx.tick();
+			fx.wm->setBackground(1);
+			CHECK(fx.wm->backgroundMode() == 1);
+			fx.shell->pop();
+			fx.tick();
+			REQUIRE(fx.shell->top() != nullptr);
+			CHECK(fx.shell->top()->filename() == "MainMenu.apt");
+			CHECK(fx.wm->backgroundMode() == (style == "bfme1" ? 0 : 1));
+		}
+	}
+}
+
 TEST_CASE("stops S-175: handlers with no decompiled body report 'unported-command'; every main-menu action is still a request the engine can see")
 {
 	ShellFx fx;
@@ -938,7 +983,8 @@ TEST_CASE("stops S-175: handlers with no decompiled body report 'unported-comman
 	CHECK(fx.services.requests.size() == 16);
 	// lane UI-4: Credits and CreditsExit are ported (the credits roll, S-2520): still requests (the host's music), no longer unported commands; with no
 	// archives in this environment the roll reports that it cannot start
-	CHECK(fx.wm->noteCount("unported-command") == 14);
+	CHECK(fx.wm->noteCount("unported-command") == 13); // lane WOTR-1: War of the Ring is ported (the strategic Skirmish.apt) ...
+	CHECK(fx.wm->noteCount("skirmish-environment-missing") == 1); // ... and says so when the environment has no LivingWorldShellInfo
 	CHECK(fx.wm->noteCount("credits") == 1);
 	CHECK(fx.services.requests[0].action == ShellAction::LoadGame);
 	CHECK(fx.services.requests[0].argument == "arg");

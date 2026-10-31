@@ -1,12 +1,22 @@
 // OpenBFME. GPL-3.0.
 // See GameLogic/Object/Object.h for the creation order and its sources.
 
+#include "Common/Upgrade.h"
+#include "Common/ModEngineFeatures.h"
+#include "GameClient/ControlBarCommands.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ScriptEngine/AttackPriority.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
+#include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/LegendaryHeroesGame.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
+#include "GameLogic/Object/EvaDamageNotice.h"
 #include "GameLogic/Object/ObjectGeometry.h"
+#include "GameLogic/Module/CollideModule.h"
+#include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
@@ -75,6 +85,16 @@ bool kindOfByName(const Object &o, const char *name)
 }
 } // namespace
 
+// lane MODCOMPAT-MOD1: the copies geometryShapes / ownPathfindGeometry answer for an object with its own shape flags (see Object.h)
+struct Object::OwnGeometryCache
+{
+	std::uint32_t shapesVersion = 0xFFFFFFFFu;
+	std::vector<ObjectGeometry::Shape> shapes;
+	std::uint32_t pathfindVersion = 0xFFFFFFFFu;
+	const PathfindGeometry *pathfindFrom = nullptr;
+	PathfindGeometry pathfind;
+};
+
 Object::Object(GameLogic &logic, const ThingTemplate *tt, const ObjectStatusMaskType &status, Team *team, ObjectID id)
 	: Thing(tt ? tt->getFinalOverride() : nullptr)
 	, m_logic(logic)
@@ -121,6 +141,7 @@ Object::Object(GameLogic &logic, const ThingTemplate *tt, const ObjectStatusMask
 	{
 		buildModules();
 		applyTeamAttitude(); // RW 0x69A550
+		applyTeamAttackPriority(); // lane BFME2CAMP1: RW 0x69A575 ..
 		m_experienceTracker = std::make_unique<ExperienceTracker>(this); // RW 0x69A606 (lane XP-1)
 		// RW 0x69A637: onObjectCreated of every module, in array order
 		for (std::unique_ptr<BehaviorModule> &m : m_modules)
@@ -139,8 +160,21 @@ Object::Object(GameLogic &logic, const ThingTemplate *tt, const ObjectStatusMask
 		logic.friend_removeObjectFromLookup(this);
 		throw;
 	}
-	// RW 0x69A684: the construction-time stamp of RW + 0x444 (frame + tt + 0x564) is not ported (S-142)
+	// RW 0x69A67F .. 0x69A690: + 0x444 = the frame + the template's OcclusionDelay (lane OCCLUDE-1: the renderer's occluded-object pass reads it)
+	m_safeOcclusionFrame = logic.getFrame() + occlusionDelayOf(*m_template, logic);
 	m_constructed = true;
+}
+
+UnsignedInt Object::occlusionDelayOf(const ThingTemplate &tt, const GameLogic &logic)
+{
+	if (const FieldValue *v = tt.findField("OcclusionDelay"))
+	{
+		if (const long long *n = std::get_if<long long>(v))
+		{
+			return (UnsignedInt)*n;
+		}
+	}
+	return logic.settings().defaultOcclusionDelay; // RW 0x740178: the constructor's copy of GameData + 0xCC
 }
 
 Object::~Object()
@@ -161,6 +195,7 @@ Object::~Object()
 		m_team->friend_removeMember(this);
 		m_team = nullptr;
 	}
+	m_moduleLookupsCached = false; // a lookup while the modules go scans what is left, as before the caches
 	for (std::unique_ptr<BehaviorModule> &m : m_modules)
 	{
 		m.reset();
@@ -255,10 +290,60 @@ std::unique_ptr<BehaviorModule> Object::friend_replaceModule(BehaviorModule *old
 			{
 				m_contain = m->getContain();
 			}
+			rebuildCollideModules();
 			return out;
 		}
 	}
 	throw std::logic_error("Object::friend_replaceModule: the module is not this object's");
+}
+
+void Object::friend_setContainedBy(Object *container)
+{
+	const bool left = m_containedBy != nullptr && container == nullptr;
+	m_containedBy = container;
+	// lane PERF-HD (Uber only): the emotion tracker of a contained object sleeps for ever (EmotionTrackerUpdate::update); it is woken when the object
+	// leaves its container, for the next frame (friend_awakenUpdateModule ignores a wake of the running module and one for the frame it already has)
+	if (left && m_logic.uber())
+	{
+		for (const std::unique_ptr<BehaviorModule> &m : m_modules)
+		{
+			if (EmotionTrackerUpdate *emotion = dynamic_cast<EmotionTrackerUpdate *>(m.get()))
+			{
+				m_logic.friend_awakenUpdateModule(this, emotion, m_logic.getFrame() + 1);
+				break;
+			}
+		}
+	}
+}
+
+void Object::rebuildCollideModules()
+{
+	m_collideModules.clear();
+	m_collideModulesKnown = true;
+	for (const std::unique_ptr<BehaviorModule> &m : m_modules)
+	{
+		if (CollideModuleInterface *c = m ? m->getCollide() : nullptr)
+		{
+			m_collideModules.push_back(c);
+			m_collideModulesKnown = m_collideModulesKnown && c->pairFactsKnown();
+		}
+	}
+	m_attributePool = findModule("AttributeModifierPoolUpdate"); // lane UBER-3W: attributeModifierPoolModule's answer from here on
+	m_physics = nullptr; // lane PERF-HD: PhysicsBehavior::find's and SlavedUpdateInterface::of's answers from here on (the first module of each)
+	m_slaved = nullptr;
+	for (const std::unique_ptr<BehaviorModule> &m : m_modules)
+	{
+		if (!m_physics)
+		{
+			m_physics = dynamic_cast<PhysicsBehavior *>(m.get());
+		}
+		if (!m_slaved)
+		{
+			m_slaved = dynamic_cast<SlavedUpdateInterface *>(m.get());
+		}
+	}
+	m_moduleCachesBuilt = true;
+	m_moduleLookupsCached = true;
 }
 
 void Object::buildModules()
@@ -317,6 +402,7 @@ void Object::buildModules()
 			m_ai = a;
 		}
 	}
+	rebuildCollideModules();
 	// COMBAT-2: the finished object's body applies its initial damage state once (an INI InitialHealth below the thresholds shows DAMAGED / REALLYDAMAGED / RUBBLE from the start)
 	if (m_body)
 	{
@@ -347,13 +433,32 @@ void Object::reactToTransformChange(const Coord3D *oldPos, float)
 	if (oldPos && (oldPos->x != getPosition()->x || oldPos->y != getPosition()->y || oldPos->z != getPosition()->z))
 	{
 		updateTriggerAreaFlags(); // RW 0x69355D: only when the position changed (RW 0x68B777)
+		updateOffMapStatus();     // lane CAMPUI-1: then the extent test (RW 0x69355D, ZH Object.cpp:1788-1798)
 	}
+}
+
+// lane CAMPUI-1: RW 0x69355D after updateTriggerAreaFlags: TheTerrainLogic vslot 0x20 (RW 0x462637, W3DTerrainLogic::getExtent: lo (0, 0), hi the active
+// boundary * 10) and OFF_MAP (+ 0x458 bit 3) set unless lo < x < hi and lo < y < hi (RW 0x6936B2 sets, RW 0x6936A9 clears). The active boundary is 0
+// (only a script changes it, TerrainLogic::setActiveBoundary RW 0x680E15 with Object::friend_notifyOfNewMapBoundary RW 0x68BCBD: not ported, S-921).
+// A logic without a TerrainLogic (the flat test games) has no map extent: nothing is off the map there
+void Object::updateOffMapStatus()
+{
+	const TerrainLogic *terrain = m_logic.terrain();
+	float hiX = 0.0f, hiY = 0.0f;
+	if (!terrain || !terrain->getExtent(0, hiX, hiY))
+	{
+		m_offMap = false;
+		return;
+	}
+	const Coord3D &p = *getPosition();
+	m_offMap = !(p.x > 0.0f && p.x < hiX && p.y > 0.0f && p.y < hiY);
 }
 
 // lane SCRIPT-2: RW 0x69264D. The exit test uses the PREVIOUS integer position (+ 0x418 is written after the exit loop): an object that leaves a
 // trigger is reported exited at its next integer-cell move outside, as retail does. Not ported here: the Lua OnUnitEntered / OnUnitExited events
 // (RW 0x7379CB, LUA-1's stop) (lane HUD-5: the trigger's callback, RW 0x6E4B21 / 0x6E4B3E, runs), the team's entered flag (RW 0x79FE5A: team + 0x5C and the
-// script engine's + 0x1A260 frame) and the terrain decal call for IMMOBILE-less infantry / cavalry / monsters / machines (RW 0x6858BE)
+// script engine's + 0x1A260 frame). Lane TREES1: the call for IMMOBILE-less infantry / cavalry / monsters / machines is TerrainLogic's unit-moved hook (RW
+// 0x6858BE: a crusher topples the trees under it, TerrainTrees::unitMoved), not a terrain decal call
 void Object::updateTriggerAreaFlags()
 {
 	static const int projectile = ObjectTemplateInfoBuilder::kindOfIndex("PROJECTILE");
@@ -367,6 +472,22 @@ void Object::updateTriggerAreaFlags()
 	if (x == m_triggerCellX && y == m_triggerCellY)
 	{
 		return;
+	}
+	// lane TREES1: RW 0x6926A0 .. 0x6926C9: not IMMOBILE (template + 0x108 bit 2) and INFANTRY, CAVALRY, MONSTER or MACHINE (+ 0x109 bits 0 .. 3)
+	static const int immobile = ObjectTemplateInfoBuilder::kindOfIndex("IMMOBILE");
+	static const int movers[4] = { ObjectTemplateInfoBuilder::kindOfIndex("INFANTRY"), ObjectTemplateInfoBuilder::kindOfIndex("CAVALRY"),
+		ObjectTemplateInfoBuilder::kindOfIndex("MONSTER"), ObjectTemplateInfoBuilder::kindOfIndex("MACHINE") };
+	if (immobile >= 0 && !isKindOf((unsigned)immobile))
+	{
+		bool mover = false;
+		for (int k : movers)
+		{
+			mover = mover || (k >= 0 && isKindOf((unsigned)k));
+		}
+		if (mover)
+		{
+			m_logic.trees().unitMoved(*this); // RW 0x6858BE
+		}
 	}
 	const UnsignedInt frame = m_logic.getFrame();
 	if (m_enteredOrExitedFrame != 0 && m_enteredOrExitedFrame != frame)
@@ -433,10 +554,35 @@ void Object::updateTriggerAreaFlags()
 	}
 }
 
+// lane CASTLEAREA-1: RW 0x68B9E9 then RW 0x68B98E (see Object.h)
+void Object::removeTriggerEntries(int trigger)
+{
+	for (int i = 0; i < m_triggerCount; ++i)
+	{
+		if (m_triggers[i].trigger == trigger)
+		{
+			m_triggers[i] = TriggerEntry();
+		}
+	}
+	int kept = 0;
+	for (int i = 0; i < m_triggerCount; ++i)
+	{
+		if (m_triggers[i].inside)
+		{
+			m_triggers[kept].trigger = m_triggers[i].trigger;
+			m_triggers[kept].entered = false;
+			m_triggers[kept].exited = false;
+			m_triggers[kept].inside = true;
+			++kept;
+		}
+	}
+	m_triggerCount = kept;
+}
+
 // lane HUD-5: RW 0xAD3520 (see Object.h)
 void Object::setGeometryActive(const std::string &name, bool on)
 {
-	const std::vector<ObjectGeometry::Shape> shapes = ObjectGeometry::shapesOf(*getTemplate());
+	const std::vector<ObjectGeometry::Shape> shapes = ObjectGeometry::shapesOf(geometryTemplate());
 	if (m_geometryActive.size() != shapes.size())
 	{
 		m_geometryActive.clear();
@@ -458,6 +604,109 @@ void Object::setGeometryActive(const std::string &name, bool on)
 	{
 		++m_geometryVersion;
 	}
+}
+
+const ThingTemplate &Object::geometryTemplate() const
+{
+	return m_geometrySource ? *m_geometrySource : *static_cast<const ThingTemplate *>(getTemplate());
+}
+
+// lane MODCOMPAT-MOD1: RW 0x699349 (see Object.h)
+void Object::setGeometryInfoFrom(const Object &from)
+{
+	const ThingTemplate *source = &from.geometryTemplate(); // RW 0x463DFC: the shape list (and flags below)
+	m_geometrySource = source == getTemplate() ? nullptr : source;
+	m_geometryActive = from.m_geometryActive;
+	++m_geometryVersion;
+	m_ownGeometry.reset();
+	geometryChanged(false); // RW 0x68B244(0)
+}
+
+const std::vector<ObjectGeometry::Shape> &Object::geometryShapes() const
+{
+	const std::vector<ObjectGeometry::Shape> &shapes = ObjectGeometry::cachedShapesOf(geometryTemplate());
+	if (m_geometryActive.empty())
+	{
+		return shapes; // the copy the constructor made, unchanged
+	}
+	if (m_geometryActive.size() != shapes.size())
+	{
+		throw std::logic_error("Object::geometryShapes: object " + std::to_string(m_id) + " keeps " + std::to_string(m_geometryActive.size()) +
+			" shape flags, its template " + std::to_string(shapes.size()) + " shapes");
+	}
+	if (!m_ownGeometry)
+	{
+		m_ownGeometry = std::make_unique<OwnGeometryCache>();
+	}
+	OwnGeometryCache &c = *m_ownGeometry;
+	if (c.shapesVersion != m_geometryVersion || c.shapes.size() != shapes.size())
+	{
+		c.shapes = shapes;
+		for (size_t i = 0; i < c.shapes.size(); ++i)
+		{
+			c.shapes[i].active = m_geometryActive[i] != 0;
+		}
+		c.shapesVersion = m_geometryVersion;
+	}
+	return c.shapes;
+}
+
+const PathfindGeometry &Object::ownPathfindGeometry(const PathfindGeometry &templateGeometry) const
+{
+	if (m_geometryActive.empty() && !m_geometrySource)
+	{
+		return templateGeometry;
+	}
+	if (!m_ownGeometry)
+	{
+		m_ownGeometry = std::make_unique<OwnGeometryCache>();
+	}
+	OwnGeometryCache &c = *m_ownGeometry;
+	if (c.pathfindVersion != m_geometryVersion || c.pathfindFrom != &templateGeometry)
+	{
+		// lane MODCOMPAT-MOD1: another template's GeometryInfo (setGeometryInfoFrom) is that template's pathfinder form (AIWorld::movementInfo)
+		const PathfindGeometry *base = &templateGeometry;
+		if (m_geometrySource)
+		{
+			AIWorld *ai = m_logic.aiWorld();
+			if (!ai)
+			{
+				throw std::logic_error("Object::ownPathfindGeometry: object " + std::to_string(m_id) + " carries " + m_geometrySource->getName() +
+					"'s geometry and the game has no AI world to build its pathfinder form");
+			}
+			base = &ai->movementInfo(*m_geometrySource->getFinalOverride()).geometry;
+		}
+		c.pathfind = *base;
+		for (size_t i = 0; i < c.pathfind.shapes.size() && i < m_geometryActive.size(); ++i)
+		{
+			c.pathfind.shapes[i].active = m_geometryActive[i] != 0;
+		}
+		c.pathfind.cacheRadii(); // RW 0xAD2860 over the flags just set (lane UBER-2B: see PathfindGeometry::cacheRadii)
+		c.pathfindVersion = m_geometryVersion;
+		c.pathfindFrom = &templateGeometry;
+	}
+	return c.pathfind;
+}
+
+// RW 0x68B244 (see Object.h)
+void Object::geometryChanged(bool pathfind)
+{
+	if (ShroudManager *shroud = m_logic.shroud())
+	{
+		shroud->markDirty(*this, true); // + 0x4E4 -> RW 0xB4E2A0
+	}
+	// + 0x4EC -> RW 0xB6C700: the collision manager's dirty list (no collision manager here, S-363 / S-780)
+	m_logic.partition().markDirty(*this); // + 0x4E8 -> RW 0xA39570
+	// + 0x84 -> RW 0x6713E6: the drawable's draw modules (vslot 0x9C), client
+	if (pathfind)
+	{
+		if (AIWorld *ai = m_logic.aiWorld())
+		{
+			ai->removeObjectFromPathfindMap(*this); // RW 0x6E85FB
+			ai->addObjectToPathfindMap(*this);      // RW 0x6E85E9
+		}
+	}
+	// + 0x4BC >= 0: RW 0x68836C / 0x688354 (not ported, S-142)
 }
 
 void Object::joinTeam(Team *team)
@@ -486,6 +735,7 @@ void Object::joinTeam(Team *team)
 	{
 		m_team->friend_addMember(this);
 		applyTeamAttitude(); // RW 0x697D1A
+		applyTeamAttackPriority(); // lane BFME2CAMP1: RW 0x697D32 .. 0x697D8B
 	}
 }
 
@@ -499,6 +749,24 @@ void Object::applyTeamAttitude()
 		return;
 	}
 	ai->setAttitude(m_team->getPrototype()->getDict().getInt("teamAggressiveness"));
+}
+
+// lane BFME2CAMP1: RW 0x697D32 .. 0x697D8B (the team join) and RW 0x69A575 .. (the constructor, after the modules): with an AI, a team and its prototype, a
+// prototype attack priority set name (+ 0x318, RW 0x691F0C) that is not empty is looked up (RW 0x605938); a set with a name (not the default info) becomes
+// AI + 0x70
+void Object::applyTeamAttackPriority()
+{
+	AIUpdateInterface *ai = getAIUpdateInterface();
+	const TeamPrototype *proto = m_team ? m_team->getPrototype() : nullptr;
+	if (!ai || !proto || proto->attackPriorityName().empty())
+	{
+		return;
+	}
+	const AttackPriorityInfo *info = m_logic.scriptEngine().attackPriorities().getAttackInfo(proto->attackPriorityName());
+	if (info && !info->getName().empty())
+	{
+		ai->setAttackInfo(info);
+	}
 }
 
 // lane BACKLOG4: RW 0x69957E .. 0x6995D2: + 0x320 = the team's prototype's owner name (+ 0x10), '/', the prototype's name (+ 0x14); cleared with no team
@@ -559,6 +827,19 @@ void Object::setTeam(Team *team)
 				m_client->observerEvent(*this, ObserverEvent::Capture);
 			}
 		}
+	}
+	// lane BFME2CAMP1: RW 0x69962F .. 0x699650, for a non-null team: a horde's members join the team too (contain slot 0x7C, then HordeContain interface slot
+	// 0x170, RW 0x870667: its contained members and those on the way into a garrison). Without it a horde a script gives a player (UNIT_SET_TEAM: MAP GOOD
+	// Rivendell's 'First recruit') kept members of its old owner, which stood still while the horde had the new owner's orders
+	if (team && m_contain)
+	{
+		if (HordeContainInterface *horde = m_contain->getHordeContainInterface())
+		{
+			horde->setMembersTeam(team);
+		}
+	}
+	if (m_constructed)
+	{
 		// lane FACT-B (FACT-C's bdf99d54 finding): RW 0x69954A Object::setTeam (tier B, BFME2 decomp ObjectSetTeam.cpp) ends, for a non-null team,
 		// with updateUpgradeModules (RW 0x699658 -> RW 0x6936FE): the upgrade modules run against the new owner's upgrades, so a captured building takes
 		// its new owner's faction command set (CommandSetUpgrade TriggeredBy Upgrade_<Side>Faction). INFERENCE: RW makes the call for any object; an
@@ -657,7 +938,7 @@ void Object::restoreOriginalTeam()
 	const Player *owner = getControllingPlayer();
 	if (owner && owner->isDefeated())
 	{
-		kill(0);
+		kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x69AB83
 	}
 }
 
@@ -689,8 +970,9 @@ void Object::endDefection()
 		{
 			abortAbilitiesInUse(); // RW 0x69AC4E (lane BACKLOG4)
 		}
-		// lane BACKLOG4: RW 0x69AC55 / 0x69AC5C: RW 0x6630D7 (the temporary slot: nothing in this port, AIUpdate.h), then RW 0x663171: the machine kept
+		// lane BACKLOG4: RW 0x69AC55 / 0x69AC5C: RW 0x6630D7 (the temporary machine given back, lane MODCOMPAT-MOD1), then RW 0x663171: the machine kept
 		// at the defection is the AI's machine again (HERO-2 idled the AI here as an inference)
+		getAIUpdateInterface()->endTemporaryStateMachine();
 		getAIUpdateInterface()->endDefectedStateMachine();
 	}
 	setStatus(kStatus52, true); // RW 0x62684D(0x52, 1)
@@ -716,8 +998,9 @@ void Object::defect(Object *newOwner, bool permanent)
 		{
 			abortAbilitiesInUse(); // RW 0x69939D (lane BACKLOG4)
 		}
-		// lane BACKLOG4: RW 0x6993A4 .. 0x6993B0: RW 0x6630D7 (the temporary slot: nothing in this port, AIUpdate.h); a temporary defection keeps the
+		// lane BACKLOG4: RW 0x6993A4 .. 0x6993B0: RW 0x6630D7 (the temporary machine given back, lane MODCOMPAT-MOD1); a temporary defection keeps the
 		// machine and starts a new one (RW 0x663128); a permanent one leaves the AI as it is (HERO-2 idled the AI in both cases as an inference)
+		getAIUpdateInterface()->endTemporaryStateMachine();
 		if (!permanent)
 		{
 			getAIUpdateInterface()->beginDefectedStateMachine();
@@ -890,10 +1173,31 @@ void Object::friend_onBuildComplete()
 	}
 }
 
+void Object::friend_onMapPlacement(const Dict *properties)
+{
+	// lane WALL-2, RW 0x694692 .. 0x6946BF: the +0xC interface's slot 45 of every module
+	for (size_t i = 0; i < m_modules.size(); ++i)
+	{
+		m_modules[i]->onMapPlacement(properties);
+	}
+}
+
 void Object::friend_onDie(const DieModuleInterface::Event &event)
 {
 	// RW 0x698F06 (the dead flag RW + 0x458 bit 0 first: from now on the object is no target and takes no more damage)
 	m_effectivelyDead = true;
+	// WOTR2 milestone 7: RW 0x6991F3: an object with a Living World building id (+ 0x484) destroys that building of the strategic region (RW 0x6B3095 ->
+	// RW 0x60EC74 -> LivingWorldRegion::DestroyBuilding RW 0x7F32F4); the war applies it with the battle's result
+	if (m_logic.livingWorldTags().active)
+	{
+		if (const LivingWorldBattleTags::Tag *t = m_logic.livingWorldTags().object(m_id))
+		{
+			if (t->buildingId != 0)
+			{
+				m_logic.livingWorldTags().destroyedBuildings.push_back(t->buildingId);
+			}
+		}
+	}
 	if (m_client)
 	{
 		m_client->observerEvent(*this, ObserverEvent::Death);
@@ -1091,7 +1395,7 @@ void Object::clearDisabled(unsigned type)
 	checkDisabledStatus(m_logic.getFrame()); // RW 0x69261D
 }
 
-BehaviorModule *Object::findModule(const std::string &className) const
+BehaviorModule *Object::findModule(std::string_view className) const
 {
 	for (const std::unique_ptr<BehaviorModule> &m : m_modules)
 	{
@@ -1113,6 +1417,19 @@ ExitInterface *Object::getObjectExitInterface() const
 		}
 	}
 	return nullptr; // RW 0x68BB37: the contain's exit slot (0x74) is not ported
+}
+
+// RW 0x68C383
+DockUpdateInterface *Object::getDockUpdateInterface() const
+{
+	for (const std::unique_ptr<BehaviorModule> &m : m_modules)
+	{
+		if (DockUpdateInterface *d = m->getDockUpdateInterface())
+		{
+			return d;
+		}
+	}
+	return nullptr;
 }
 
 ProductionUpdateInterface *Object::getProductionUpdate() const
@@ -1733,6 +2050,12 @@ void Object::doAttemptDamage(DamageInfo &info)
 			if (info.m_input.m_shouldPlayUnderAttackEva)
 			{
 				m_radarAttackFrame = m_logic.getFrame();
+				// lane EVADAMAGE-1: RW 0x67B580 .. 0x67B776, the Eva half for the local player's object (RW 0x6AA7B2): the logic's part of the choice and
+				// the scan (EvaDamageNotice.h; reads only), the rest is the client's (ClientEvent::EVA_DAMAGED)
+				if (notifyDrawable && m_client && owner == m_logic.players().getLocalPlayer())
+				{
+					m_client->evaDamaged(*this, EvaDamage::makeNotice(m_logic, *this, info, *owner));
+				}
 			}
 			// RW 0x67B78C: the HERO effect is outside ShouldPlayUnderAttackEva and the radar-list gate.
 			if (notifyDrawable && m_client && owner == m_logic.players().getLocalPlayer() && isKindOfName("HERO"))
@@ -1838,20 +2161,18 @@ size_t Object::pendingDamageCount() const
 	return m_pendingDamage.size();
 }
 
-// ZH Object::kill: UNRESISTABLE damage with kill set
-void Object::kill(int deathType)
+// RW 0x698EC3: DamageInfo ctor (RW 0x66365E), source (+ 0x08) cleared, + 0x10 the damage type, + 0x1C the death type, + 0x20 the body's getMaxHealth (vslot 0x1C),
+// + 0x24 kill = 1, then attemptDamage (RW 0x698E7D: a kill made while this object runs its AI waits a frame like any hit). With no source the body credits no
+// killer (no scoreTheKill, no attacked-by entry) and the die modules see source 0
+void Object::kill(DamageType damageType, int deathType)
 {
 	DamageInfo info;
-	info.m_input.m_damageType = DAMAGE_UNRESISTABLE;
+	info.m_input.m_sourceID = INVALID_ID;
+	info.m_input.m_damageType = damageType;
 	info.m_input.m_deathType = deathType;
-	info.m_input.m_sourceID = getID();
-	info.m_input.m_amount = 0.0f;
+	info.m_input.m_amount = m_body ? m_body->getMaxHealth() : 0.0f;
 	info.m_input.m_kill = true;
-	info.m_input.m_delay = 0.0f;
-	if (!m_effectivelyDead && m_body)
-	{
-		m_body->attemptDamage(info);
-	}
+	attemptDamage(info);
 }
 
 // RW 0x6955BC scoreTheKill (lane XP-1 extends the COMBAT-1 port):
@@ -1992,7 +2313,19 @@ void Object::grantExperienceForKill(Object &victim, bool flag, float scale)
 	{
 		m_experienceFlags |= tracker->hasGainedLevel() ? 1u : 0u;
 		// RW 0x695589 .. 0x69559E: the object's experience listener (RW 0x88305B, lane HERO-2: ShareExperienceBehavior) shares the gain
-		if (ShareExperienceBehavior *share = ShareExperienceBehavior::of(*this))
+		if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedShareExperienceAll))
+		{
+			// lane MODS-3, edain-unchained.share-experience-all (0xEE8000): every module with the listener interface shares, in module order
+			for (const std::unique_ptr<BehaviorModule> &m : modules())
+			{
+				if (ShareExperienceBehavior *each = dynamic_cast<ShareExperienceBehavior *>(m.get()))
+				{
+					++m_logic.experience().counters().listenerCalls;
+					each->share(value);
+				}
+			}
+		}
+		else if (ShareExperienceBehavior *share = ShareExperienceBehavior::of(*this))
 		{
 			++m_logic.experience().counters().listenerCalls;
 			share->share(value);
@@ -2041,18 +2374,22 @@ void Object::setStatusAcrossHorde(unsigned bit, bool set)
 
 Object *Object::getHordeObject(bool alsoProducer) const
 {
-	if (isKindOfName("HORDE"))
+	// lane BIGBATTLE-1: the HORDE bit looked up once (isKindOfName searched the KindOf names on each of up to three tests; the client asks this
+	// for every unit in a big battle). The name table is the engine's, fixed for the process
+	static const int kHorde = ObjectTemplateInfoBuilder::kindOfIndex("HORDE");
+	const auto isHorde = [](const Object &o) { return kHorde >= 0 && o.isKindOf((unsigned)kHorde); };
+	if (isHorde(*this))
 	{
 		return const_cast<Object *>(this);
 	}
-	if (m_containedBy && m_containedBy->isKindOfName("HORDE"))
+	if (m_containedBy && isHorde(*m_containedBy))
 	{
 		return m_containedBy;
 	}
 	if (alsoProducer)
 	{
 		Object *producer = m_logic.findObjectByID(m_producerID);
-		if (producer && producer->isKindOfName("HORDE"))
+		if (producer && isHorde(*producer))
 		{
 			return producer;
 		}
@@ -2075,7 +2412,7 @@ bool Object::addAttributeModifier(const std::string &listName, int duration)
 			return true;
 		}
 	}
-	AttributeModifierPool *pool = static_cast<AttributeModifierPool *>(findModule("AttributeModifierPoolUpdate"));
+	AttributeModifierPool *pool = static_cast<AttributeModifierPool *>(attributeModifierPoolModule());
 	if (!pool)
 	{
 		return false;
@@ -2113,7 +2450,7 @@ void Object::removeAttributeModifier(const std::string &listName)
 			return;
 		}
 	}
-	AttributeModifierPool *pool = static_cast<AttributeModifierPool *>(findModule("AttributeModifierPoolUpdate")); // RW 0x68C4A6
+	AttributeModifierPool *pool = static_cast<AttributeModifierPool *>(attributeModifierPoolModule()); // RW 0x68C4A6
 	if (!pool)
 	{
 		return;
@@ -2134,7 +2471,7 @@ void Object::removeAttributeModifier(const std::string &listName)
 
 bool Object::attributeModifierSum(int type, const char *name, float &out) const
 {
-	const AttributeModifierPool *pool = static_cast<const AttributeModifierPool *>(findModule("AttributeModifierPoolUpdate"));
+	const AttributeModifierPool *pool = static_cast<const AttributeModifierPool *>(attributeModifierPoolModule());
 	if (!pool)
 	{
 		return false;
@@ -2144,7 +2481,7 @@ bool Object::attributeModifierSum(int type, const char *name, float &out) const
 
 bool Object::attributeModifierProduct(int type, const char *name, bool innate, float &out) const
 {
-	const AttributeModifierPool *pool = static_cast<const AttributeModifierPool *>(findModule("AttributeModifierPoolUpdate"));
+	const AttributeModifierPool *pool = static_cast<const AttributeModifierPool *>(attributeModifierPoolModule());
 	if (!pool)
 	{
 		return false;
@@ -2180,9 +2517,23 @@ void Object::crcOmittingModules(StateHasher &h, const std::function<bool(const B
 	{
 		h.addU32(0x5C000000u | m_scriptStatus); // lane SCRIPT-2: hashed only when set (a game without scripts keeps its hash)
 	}
-	if (m_scriptSelectable != isKindOfName("SELECTABLE"))
+	if (m_campaignCarryover)
+	{
+		h.addU32(0x5C100000u); // lane BFME2CAMP1: only when set (a game without a campaign's carry-over keeps its hash)
+	}
+	// lane PERF-HD: the bit's index once (isKindOfName searched the KindOf names for every object in every frame's hash)
+	static const int kSelectable = ObjectTemplateInfoBuilder::kindOfIndex("SELECTABLE");
+	if (m_scriptSelectable != (kSelectable >= 0 && isKindOf((unsigned)kSelectable)))
 	{
 		h.addU32(m_scriptSelectable ? 0x5E1Fu : 0x5E1Eu); // hash a change from the template-derived default, as for the other script fields
+	}
+	if (m_masked)
+	{
+		h.addU32(0x4A5Bu); // lane MODCOMPAT-MOD1: hashed only when set (a game without rebuild holes keeps its hash)
+	}
+	if (m_geometrySource) // lane MODCOMPAT-MOD1: another template's GeometryInfo (setGeometryInfoFrom), hashed when set
+	{
+		h.addU32(0x6E100000u | m_geometrySource->getTemplateID());
 	}
 	if (!m_geometryActive.empty()) // lane HUD-5: the object's own shape flags (a gate's open / closed geometry), hashed once changed
 	{
@@ -2205,8 +2556,9 @@ void Object::crcOmittingModules(StateHasher &h, const std::function<bool(const B
 			h.addU32((e.entered ? 1u : 0u) | (e.exited ? 2u : 0u) | (e.inside ? 4u : 0u));
 		}
 	}
-	for (std::uint32_t w : m_upgradeMask.words) // UPGRADE-1
+	for (unsigned i = 0; i < UpgradeMaskType::activeWords(); ++i) // lane MODS-3: retail's 0x24 words unless the data has more upgrades
 	{
+		const std::uint32_t w = m_upgradeMask.words[i];
 		h.addU32(w);
 	}
 	h.addFloat(m_upgradeCostPaid);
@@ -2393,7 +2745,8 @@ void Object::setScriptStatus(std::uint8_t bits, bool set)
 // (the Objects block's order) and the team links (the TeamFactory's post-process).
 void Object::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion version{ 1, 2 }; // lane BFME2CAMP1: version 2 adds the campaign carry-over bit (Object + 0x458 bit 4)
+	x.xferVersion(version);
 	// a load never reads its destination: the save-side values are built from the members only when saving (SAVES.md, rules for xfer authors)
 	const bool saving = !x.isLoading();
 	ObjectID id = saving ? m_id : (ObjectID)INVALID_ID;
@@ -2484,7 +2837,16 @@ void Object::xfer(Xfer &x)
 	x.xferUnsignedByte(&scriptStatus);
 	SnapshotXfer::checkMask(scriptStatus, 0x1F, "an object's script status", "the five script status bits"); // ZH ObjectScriptStatusBit 1 .. 0x10
 	m_scriptStatus = scriptStatus;
+	if (version.current >= 2)
+	{
+		x.xferBool(&m_campaignCarryover);
+	}
+	else if (x.isLoading())
+	{
+		m_campaignCarryover = false;
+	}
 	x.xferBool(&m_scriptSelectable);
+	x.xferBool(&m_masked); // lane MODCOMPAT-MOD1: RW + 0x459 bit 1
 	x.xferInt(&m_triggerCount);
 	if (m_triggerCount < 0 || m_triggerCount > MAX_TRIGGERS_IN)
 	{
@@ -2501,10 +2863,12 @@ void Object::xfer(Xfer &x)
 	x.xferUnsignedInt(&m_enteredOrExitedFrame);
 	x.xferInt(&m_triggerCellX);
 	x.xferInt(&m_triggerCellY);
+	// lane MODCOMPAT-MOD1: the template whose GeometryInfo the object carries (setGeometryInfoFrom; none: its own)
+	SnapshotXfer::thingTemplate(x, m_logic, m_geometrySource);
 	// the shapes' active flags: none (the template's), or one per shape of the template (setGeometryActive), each 0 or 1
 	std::vector<std::uint8_t> active = saving ? m_geometryActive : std::vector<std::uint8_t>();
 	x.xferVectorSize(active, 1);
-	const size_t templateShapes = x.isLoading() ? ObjectGeometry::shapesOf(*getTemplate()).size() : active.size();
+	const size_t templateShapes = x.isLoading() ? ObjectGeometry::shapesOf(geometryTemplate()).size() : active.size();
 	if (!active.empty() && active.size() != templateShapes)
 	{
 		throw XferException("the snapshot's object " + std::to_string(m_id) + " has " + std::to_string(active.size()) + " shape flags, its template "
@@ -2520,10 +2884,20 @@ void Object::xfer(Xfer &x)
 	}
 	m_geometryActive = active;
 	x.xferUnsignedInt(&m_geometryVersion);
-	SnapshotXfer::maskWords(x, m_upgradeMask.words, TheUpgradeCenter ? TheUpgradeCenter->nextMaskBit() : 0, "an object's upgrades",
-		"the upgrades of this game's data");
+	if (x.isLoading())
+	{
+		m_ownGeometry.reset(); // lane MODCOMPAT-MOD1: the copies are rebuilt from the loaded flags
+	}
+	xferUpgradeMask(x, m_upgradeMask, "an object's upgrades"); // lane MODS-3: the count + words layout of SnapshotXfer::maskWords, activeWords
 	x.xferReal(&m_upgradeCostPaid);
 	x.xferAsciiString(&m_commandSetOverride);
+	if (x.isLoading() && TheCommandStore && ModEngineFeatures::has(ModEngineFeature::EdainUnchainedCommandSetButtons) &&
+		m_commandSetOverride.find('+') != std::string::npos)
+	{
+		// lane MODS-3: a CommandButtons set (edain-unchained.commandset-button-upgrade) is built at run time; a loaded game builds it again from its name
+		// (the same base and lists give the same slots)
+		TheCommandStore->mergedCommandSet(m_commandSetOverride);
+	}
 	SnapshotXfer::maskWords(x, m_modelCondition, SnapshotXfer::nameCount(TheModelConditionNames), "an object's model conditions", "the model conditions");
 	x.xferReal(&m_instanceScale);
 	SnapshotXfer::maskWords(x, m_placementConditions, SnapshotXfer::nameCount(TheModelConditionNames), "an object's placement conditions", "the model conditions");

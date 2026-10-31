@@ -13,8 +13,10 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "Common/ModelState.h"
 #include "GameLogic/Construction.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/GlobalWeatherSystem.h"
+#include "GameLogic/Module/SpecialAbilityModules.h"
 #include "GameLogic/Module/SpellEffectModules.h"
 #include "GameLogic/ObjectFilterMatch.h"
 #include "GameLogic/Armor.h"
@@ -172,7 +174,9 @@ Object *newOwn(FactRig &r, const ThingTemplate *tt, ObjectID before)
 	Object *found = nullptr;
 	for (Object *o = r.logic().getFirstObject(); o; o = o->getNextObject())
 	{
-		if (o->getID() > before && o->getControllingPlayer() == r.local() && !o->isEffectivelyDead()
+		// lane FBSIM-1: a builder's site is RotWK's phantom (effectively dead, RW 0x88D0D8) until the builder places it
+		static const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
+		if (o->getID() > before && o->getControllingPlayer() == r.local() && (!o->isEffectivelyDead() || o->testStatus((unsigned)phantom))
 			&& BuildAssistant::isEquivalentTo(o->getTemplate()->getFinalOverride(), tt->getFinalOverride()))
 		{
 			found = o;
@@ -1010,7 +1014,8 @@ TEST_CASE("FACT-A builders: every construction of the builders (DOZER_CONSTRUCT 
 				}
 				const int guard = 5 * (int)BuildAssistant::buildTime(*what) + 900;
 				const ObjectID mid = made->getID();
-				if (!waitFor(r, guard, [&]() { return !r.logic().findObjectByID(mid) || !made->isUnderConstruction(); }) || !r.logic().findObjectByID(mid))
+				static const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
+				if (!waitFor(r, guard, [&]() { return !r.logic().findObjectByID(mid) || (!made->isUnderConstruction() && !made->testStatus((unsigned)phantom)); }) || !r.logic().findObjectByID(mid))
 				{
 					p.add(tag + ": not completed after " + std::to_string(guard) + " frames");
 				}
@@ -1197,7 +1202,7 @@ TEST_CASE("FACT-A heroes: every hero and the ring hero recruited from the fortre
 						p.add(tag + ": the player keeps Upgrade_RingHero once the ring hero is made");
 					}
 					const ObjectID before = lastId(r);
-					hero->kill(0);
+					hero->kill(DAMAGE_UNRESISTABLE, 0);
 					const ThingTemplate *dropped = r.logic().things().findTemplate("TheDroppedRing");
 					if (!dropped || !waitFor(r, 200, [&]() { return newOwn(r, dropped, before) != nullptr || [&]() {
 							for (Object *o = r.logic().getFirstObject(); o; o = o->getNextObject())
@@ -1222,7 +1227,7 @@ TEST_CASE("FACT-A heroes: every hero and the ring hero recruited from the fortre
 				if (!revive)
 				{
 					// killed: its revive record comes (RW 0x780DD4)
-					hero->kill(0);
+					hero->kill(DAMAGE_UNRESISTABLE, 0);
 					if (!waitFor(r, 200, [&]() { return liveHero(r, h) == nullptr; }))
 					{
 						p.add(tag + ": the hero does not die");
@@ -1232,7 +1237,7 @@ TEST_CASE("FACT-A heroes: every hero and the ring hero recruited from the fortre
 				}
 				else
 				{
-					hero->kill(0); // out of the way of the next one
+					hero->kill(DAMAGE_UNRESISTABLE, 0); // out of the way of the next one
 					r.frames(30);
 				}
 			}
@@ -1402,7 +1407,7 @@ Landed dealt(FactRig &r, Object &unit)
 	{
 		for (Object *b : bodies(*x))
 		{
-			b->kill(0);
+			b->kill(DAMAGE_UNRESISTABLE, 0);
 		}
 	}
 	r.frames(60);
@@ -1759,7 +1764,13 @@ TEST_CASE("FACT-A context commands: a battalion captures a neutral flag's buildi
 		r.clickWorld(FactRig::clickPoint(*flag));
 		r.frames(30);
 		CHECK_MESSAGE(outpost->getControllingPlayer() != r.local(), "the click captured: S-286 can shrink");
-		issue(r, *horde, *flag, "SpecialAbilityCaptureBuilding");
+		// lane HEROCAST-1: the message only when the click started no capture. A second cast while the ability runs is refused (not ready), but the group
+		// first gives the horde's AI the player's command source (AI + 0x48, RW 0x770B3D), and a player command ends a running ability (RW 0x854F0B)
+		SpecialPowerUpdateInterface *capture = SpecialAbilityModules::findUpdate(*horde, TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityCaptureBuilding"));
+		if (!capture || !capture->isActive())
+		{
+			issue(r, *horde, *flag, "SpecialAbilityCaptureBuilding");
+		}
 		const bool captured = waitFor(r, 900, [&]() { return outpost->getControllingPlayer() == r.local(); });
 		CHECK_MESSAGE(captured, f << " " << capturer << ": the outpost is still " << (outpost->getControllingPlayer() ? outpost->getControllingPlayer()->getPlayerName() : std::string("nobody's")));
 		std::printf("facta context %s: %s captured the Outpost through the special power message: %d\n", f.c_str(), capturer.c_str(), (int)captured);
@@ -2193,6 +2204,13 @@ TEST_CASE("FACT-A spell book: every power of the faction's book bought in the st
 			if (wantIt != spellExpected().end() && wantIt->second.letters.find('P') != std::string::npos)
 			{
 				aim = FactRig::clickPoint(*enemy); // the volley's and the boulders' radius (100) is around the click: aimed at the battalion
+				aim.z = 0.0f;
+			}
+			if (wantIt != spellExpected().end() && wantIt->second.letters.find('B') != std::string::npos)
+			{
+				// Rallying Call's AttributeModifierRange (100) is around the click: aimed at the ally battalion, whose members stand around their horde (RW
+				// 0x86C4EA), 150 from the scene's middle
+				aim = FactRig::clickPoint(*ally);
 				aim.z = 0.0f;
 			}
 			if (pname == "SpellBookRebuild" || pname == "SpellBookDwarvenRiches")

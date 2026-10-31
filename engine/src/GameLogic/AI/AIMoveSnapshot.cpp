@@ -12,7 +12,7 @@
 
 void AIMover::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 2 }; // 2: the portal flag (lane WALL-2)
 	x.xferVersion(v);
 	bool hasPath = m_path != nullptr;
 	x.xferBool(&hasPath);
@@ -24,6 +24,7 @@ void AIMover::xfer(Xfer &x)
 		{
 			loaded = std::make_unique<Path>();
 			loaded->xfer(x);
+			loaded->setWaypointSource(&m_pf); // lane WALL-2: its portal nodes name the pathfinder's waypoints (the source a search gives a path)
 		}
 		destroyPath();
 		m_path = loaded.release();
@@ -77,6 +78,10 @@ void AIMover::xfer(Xfer &x)
 		AIXfer::inRange(m_colliderCount, 0, 4, "ai mover: the collider count");
 	}
 	AIXfer::reportStrings(x, m_stops);
+	if (v.current >= 2)
+	{
+		x.xferBool(&m_onPortal); // lane WALL-2: RW AI + 0x3BB, the walk through a portal (doLocomotor's portal branch)
+	}
 }
 
 void AIMoveToState::xfer(Xfer &x, int *budget)

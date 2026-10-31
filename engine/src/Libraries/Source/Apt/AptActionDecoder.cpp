@@ -205,7 +205,10 @@ public:
 			return fail("ActionScript stream at " + std::to_string(start) + " lacks an End instruction");
 		}
 		block->endOffset = pos;
-		indexByOffset[pos] = (std::int32_t)block->instructions.size();
+		if (bounded)
+		{
+			indexByOffset[pos] = (std::int32_t)block->instructions.size();
+		}
 		for (AptInstruction &ins : block->instructions)
 		{
 			if (ins.opcode != APT_OP_BRANCHALWAYS && ins.opcode != APT_OP_BRANCHIFTRUE)
@@ -213,9 +216,17 @@ public:
 				continue;
 			}
 			std::int64_t target = (std::int64_t)ins.nextOffset + ins.intOperand;
-			auto it = target < 0 ? indexByOffset.end() : indexByOffset.find((std::uint32_t)target);
+			auto it = target < 0 || (std::uint64_t)target > UINT32_MAX ? indexByOffset.end() : indexByOffset.find((std::uint32_t)target);
 			if (it == indexByOffset.end())
 			{
+				// RW 0x00B193B0 / 0x00B18F00 branch over bytes; runStream (RW 0x00B14470) stops on opcode zero.
+				// BFME2 donor: AptActionInterpreterConstantHandlers.cpp (tier A / B, branch-handler diff verified).
+				// An unbounded stream may jump to another End beyond its linear End, across inline data.
+				if (!bounded && target >= pos && (std::uint64_t)target < m_data.size() && m_data[(std::size_t)target] == APT_OP_END)
+				{
+					ins.branchTarget = (std::int32_t)block->instructions.size() - 1;
+					continue;
+				}
 				return fail("ActionScript branch at " + std::to_string(ins.offset) + " targets non-instruction offset " + std::to_string(target));
 			}
 			ins.branchTarget = it->second;

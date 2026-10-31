@@ -7,6 +7,8 @@
 #include "HudTestUtil.h"
 
 #include "Common/Player.h"
+#include "GameClient/GUI/ShellServices.h"
+#include "GameClient/InGameHud.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -16,7 +18,10 @@
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 
+#include <algorithm>
 #include <cmath>
+#include <memory>
+#include <set>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -116,7 +121,7 @@ TEST_CASE("tunnel retail: the 2.01 tunnels are TunnelContain (a HordeGarrisonCon
 	CHECK(reported);
 }
 
-TEST_CASE("tunnel retail: a Goblin horde enters one mine shaft and comes out of another; it heals inside; the last tunnel's death lets it out")
+TEST_CASE("tunnel retail: a Goblin horde enters one mine shaft and comes out of another; nobody heals inside (no 2.01 HealObjects); the last tunnel's death lets it out")
 {
 	if (!haveWorld("tunnel retail"))
 	{
@@ -144,7 +149,7 @@ TEST_CASE("tunnel retail: a Goblin horde enters one mine shaft and comes out of 
 		memberIds.push_back(m->getID());
 	}
 	REQUIRE(!members.empty());
-	// hurt the goblins: the network heals them (HealObjects / TimeForFullHeal)
+	// hurt the goblins: the network would heal them only with HealObjects (TimeForFullHeal), which no 2.01 tunnel sets
 	for (Object *m : members)
 	{
 		m->getBodyModule()->setInitialHealth(50);
@@ -167,10 +172,9 @@ TEST_CASE("tunnel retail: a Goblin horde enters one mine shaft and comes out of 
 		healed += m->getBodyModule()->getHealth();
 	}
 	std::printf("  info: goblins' health %.0f -> %.0f of %.0f inside the network; tracker heal hits %llu\n", hurt, healed, full, enemy->tunnelTracker().healHits());
-	if (enemy->tunnelTracker().healHits() > 0)
-	{
-		CHECK(healed > hurt);
-	}
+	// TUNNEL-1: no 2.01 tunnel sets HealObjects (wildmineshaft.ini, wildburrowsexpansion.ini, dwarvenmineshaft.ini): RW 0x8812B0 heals nobody
+	CHECK(enemy->tunnelTracker().healHits() == 0u);
+	CHECK(healed == hurt);
 	// the evacuate order at the other tunnel: the horde comes out there
 	tb->orderAllPassengersToExit((int)CMD_FROM_SCRIPT);
 	int out = -1;
@@ -190,11 +194,11 @@ TEST_CASE("tunnel retail: a Goblin horde enters one mine shaft and comes out of 
 	CHECK(ta->getContainCount() == 0u);
 	// in again by the first; both tunnels die: the last one lets the horde out (RotWK: no cave-in kill)
 	REQUIRE(enter(r, *horde, *a, 400));
-	a->kill(0);
+	a->kill(DAMAGE_UNRESISTABLE, 0);
 	r.frame(5);
 	CHECK(horde->getContainedBy() == b); // b still stands: the horde stays in the network, now as entered by b (RW 0x8FA4E8)
 	CHECK(enemy->tunnelTracker().tunnelCount() >= 1u);
-	b->kill(0);
+	b->kill(DAMAGE_UNRESISTABLE, 0);
 	r.frame(30);
 	size_t alive = 0;
 	for (ObjectID id : memberIds) // a member may be gone: only its id is read
@@ -205,4 +209,112 @@ TEST_CASE("tunnel retail: a Goblin horde enters one mine shaft and comes out of 
 	std::printf("  info: both shafts dead: the horde %s, %zu of %zu goblins alive\n", horde->getContainedBy() ? "still inside" : "out", alive, members.size());
 	CHECK(horde->getContainedBy() == nullptr);
 	CHECK(alive > 0u);
+}
+
+// TUNNEL-1: the player's flow on the HUD. A Goblin player right-clicks a mine shaft with a horde selected (MSG_ENTER), selects the OTHER shaft: its
+// WildMineShaftCommandSet's five Command_ExitGarrison (EXIT_CONTAINER) buttons show the network's rider (RW 0x94251F: the contain's list is the tracker's,
+// RW 0x8810AB), and the press (MSG_EXIT RW 0x940FEF -> RW 0x77AC92, the rider in the pressed tunnel's network: contain slot 0xE8 = RW 0x8811DD) lets the
+// horde out at the shaft whose button was pressed. Before TUNNEL-1 the press did nothing: MSG_EXIT compared the rider's own container with the pressed one.
+TEST_CASE("tunnel retail: a Goblin player right-clicks a horde into one mine shaft and lets it out of another with that shaft's exit button")
+{
+	if (!haveWorld("tunnel retail hud"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Rig r(s, "map mp fall back 4p", "FactionWild");
+	RecordingShellServices services;
+	InGameHud::Config cfg{ *r.game, *s.world, *s.mount->fs, services, r.view, s.mouse, s.meta, nullptr };
+	auto hud = std::make_unique<InGameHud>(cfg);
+	std::string error;
+	REQUIRE_MESSAGE(hud->boot(&error), error);
+	hud->setWindowSize(1024, 768);
+	r.view.setScreen(1024, 768);
+	auto frames = [&](int n) {
+		for (int i = 0; i < n; ++i)
+		{
+			hud->update(0.033);
+			r.game->advance(0.033);
+		}
+	};
+	auto exitButtons = [&]() {
+		std::vector<ControlBarButton> out;
+		std::set<int> seen;
+		for (const auto *v : { &hud->controlBar().palantirButtons(), &hud->controlBar().sideButtons(), &hud->controlBar().offBarButtons() })
+		{
+			for (const ControlBarButton &b : *v)
+			{
+				if (b.button && b.button->m_command == GUI_COMMAND_EXIT_CONTAINER && seen.insert(b.slot).second)
+				{
+					out.push_back(b);
+				}
+			}
+		}
+		std::sort(out.begin(), out.end(), [](const ControlBarButton &a, const ControlBarButton &b) { return a.slot < b.slot; });
+		return out;
+	};
+	const Coord3D c0 = gridSpot(r, 0.35f, 0.5f, 350.0f);
+	const Coord3D c1 = gridSpot(r, 0.65f, 0.5f, 350.0f);
+	Object *a = r.make("WildMineShaft", c0.x, c0.y);
+	Object *b = r.make("WildMineShaft", c1.x, c1.y);
+	Object *horde = r.make("GoblinFighterHorde", c0.x + 220.0f, c0.y);
+	frames(3);
+	a->friend_onBuildComplete(); // finished shafts (the porter's completion is test_tunnel1_flow.cpp's)
+	b->friend_onBuildComplete();
+	REQUIRE(tunnelOf(*a) != nullptr);
+	REQUIRE(tunnelOf(*a)->isRegistered());
+	REQUIRE(tunnelOf(*b)->isRegistered());
+
+	// the player's mouse (the rig's input, as test_hud_combat_input.cpp): a left click on the horde selects it, then with the alternate mouse setup a right
+	// click on the first shaft is MSG_ENTER (CommandXlat: the EnterFriendly order)
+	r.lookAt(Coord3D{ (c0.x + horde->getPosition()->x) * 0.5f, c0.y, 0.0f }, 520.0f, 640.0f);
+	r.frame(1);
+	const ICoord2D ph = r.screenOf({ horde->getPosition()->x, horde->getPosition()->y, 6.0f });
+	r.leftClick(ph.x, ph.y);
+	r.frame(1);
+	REQUIRE(r.local->selection().size() == 1u);
+	REQUIRE(r.local->selection()[0] == horde->getID());
+	r.input->commandTranslator().setUseAlternateMouse(true);
+	const ICoord2D at = r.screenOf({ c0.x, c0.y, 10.0f });
+	r.rightClick(at.x, at.y);
+	HordeContainInterface *hc = horde->getContain()->getHordeContainInterface();
+	REQUIRE(hc != nullptr);
+	int n = 0;
+	while (n < 900 && !(horde->getContainedBy() == a && hc->allMembersEntered()))
+	{
+		frames(1);
+		++n;
+	}
+	REQUIRE_MESSAGE(horde->getContainedBy() == a, "the right-click did not put the horde into the first shaft");
+
+	// the other shaft's control bar: the horde on its first exit button, enabled, with the horde's ButtonImage
+	r.lookAt(*b->getPosition());
+	hud->input().ui().selectObject(b->getID());
+	frames(5);
+	std::vector<ControlBarButton> exits = exitButtons();
+	REQUIRE(exits.size() == 5u); // WildMineShaftCommandSet 1 .. 5
+	CHECK(exits[0].rider == horde->getID());
+	CHECK(exits[0].state == ButtonState::Enabled);
+	for (std::size_t i = 1; i < exits.size(); ++i)
+	{
+		CHECK(exits[i].rider == INVALID_ID);
+	}
+	REQUIRE(hud->controlBar().pressButton(exits[0].slot, exits[0].inPalantir));
+	n = 0;
+	while (n < 900 && horde->getContainedBy())
+	{
+		frames(1);
+		++n;
+	}
+	REQUIRE_MESSAGE(horde->getContainedBy() == nullptr, "the second shaft's exit button did not let the horde out");
+	frames(30);
+	std::printf("  info: the exit button: out after %d frames, %.0f from the pressed shaft, %.0f from the entered one\n", n, dist2D(*horde, *b), dist2D(*horde, *a));
+	CHECK(dist2D(*horde, *b) < dist2D(*horde, *a)); // tolerance: which shaft it left by; the shafts stand ~1700 apart, the horde re-forms a few units after the exit
+	CHECK(horde->isInWorld());
+	frames(3);
+	exits = exitButtons();
+	REQUIRE(exits.size() == 5u);
+	CHECK(exits[0].rider == INVALID_ID);
+	CHECK(exits[0].state == ButtonState::Restricted);
+	hud.reset();
 }

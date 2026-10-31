@@ -6,6 +6,7 @@
 #endif
 
 #include "GameLogic/Module/QueueProductionExitUpdate.h"
+#include "Common/ModEngineFeatures.h"
 #include "GameLogic/SnapshotXfer.h"
 
 #include "GameLogic/Module/ExitMath.h"
@@ -211,6 +212,13 @@ void QueueProductionExitUpdate::exitObjectViaDoor(Object *newObj, ExitDoorType)
 	// (4) horde member hookup
 	Object *host = logic.findObjectByID(m_lastExitId);
 	HordeContainInterface *hci = hordeOf(host);
+	if (hci && ModEngineFeatures::has(ModEngineFeature::EdainUnchainedHordeExitAbsorption) && !hci->hasFreeSlotFor(*newObj))
+	{
+		// lane MODS-3: edain-unchained.horde-exit-absorption (its 0xEE1000 at RW 0x8A4037): the last horde out of the door takes the new object only into
+		// a free slot of its type; else the lookup answers null (no horde: the rally point path below)
+		host = nullptr;
+		hci = nullptr;
+	}
 	if (hci)
 	{
 		newObj->setProducer(host);
@@ -223,7 +231,9 @@ void QueueProductionExitUpdate::exitObjectViaDoor(Object *newObj, ExitDoorType)
 	{
 		std::vector<Coord3D> path;
 		Coord3D tmp{}; // RW [ebp-0x44]: the last point written (the member's slot, the natural rally point or the rally point), the clearing's destination
-		if (hci)
+		// BFME1 QueueProductionExitUpdateExitObjectViaDoor (RVA 0x2D0F00)
+		// gives every member the natural rally point; BFME2 adds a halfway point and its formation slot.
+		if (hci && !producer->getTemplate()->bfme1Data())
 		{
 			Coord3D nrp;
 			getNaturalRallyPoint(&nrp, true);

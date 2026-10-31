@@ -200,7 +200,7 @@ TEST_CASE("rules1: the rules and the Legendary Heroes factor travel in the game 
 	CHECK(back.game.legendaryHeroes == 4);
 	// the factor is the last i32 of the GameInfo: 5 is refused (a peer of another rule set refuses the options instead of desyncing)
 	std::vector<std::uint8_t> bad = w.data();
-	bad[bad.size() - 8 - 4 * MAX_SLOTS] = 5; // lane UBER-1: the simulation profile i32 follows it; lane OWNERFIX-2: then the eight slots' handicaps
+	bad[bad.size() - 12 - 4 * LEGACY_MAX_SLOTS] = 5; // lane UBER-1: the simulation profile i32 follows it; lane OWNERFIX-2: then the eight slots' handicaps; lane CHEAT-1: then the Cheat Mode
 	NetByteReader r2(bad);
 	CHECK_FALSE(NetPacket::readNewGameMessage(r2, back, &error));
 	CHECK(error.find("Legendary Heroes") != std::string::npos);

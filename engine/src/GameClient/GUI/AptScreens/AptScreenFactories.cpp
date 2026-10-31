@@ -4,8 +4,10 @@
 #include "GameClient/GUI/AptScreens/AptScreenFactories.h"
 
 #include "GameClient/GUI/AptScreens/AptMainMenu.h"
+#include "GameClient/GUI/Skirmish/LivingWorldShellInfo.h" // lane WOTR-1
 #include "GameClient/GUI/AptScreens/AptPalantir.h"
 #include "GameClient/GUI/AptScreens/AptQuitMenu.h"
+#include "GameClient/GUI/AptScreens/AptObjectivesMenu.h"
 #include "GameClient/GUI/AptScreens/AptSimpleScreens.h"
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
 #include "GameClient/GUI/AptScreens/AptTimeLine.h"
@@ -14,14 +16,26 @@
 #include "GameClient/GUI/AptScreens/AptCreateAHero.h"
 #include "GameClient/GUI/AptScreens/AptOnlineShell.h"
 #include "GameClient/GUI/AptScreens/AptCampaignMenu.h"
+#include "GameClient/GUI/AptScreens/AptMessenger.h"
 
 void registerAptScreenFactories(AptScreenFactoryTable &table)
 {
+	table.registerFactory("Messenger.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
+		return std::make_unique<AptMessenger>(c.windows, c.shell, c.environment);
+	});
 	table.registerFactory("MainMenu.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
-		return std::make_unique<AptMainMenu>(c.windows, c.shell, c.services, &c.environment);
+		auto m = std::make_unique<AptMainMenu>(c.windows, c.shell, c.services, &c.environment);
+		m->setEnvironment(&c.environment); // lane WOTR-1: War of the Ring's strategic flag
+		return m;
 	});
 	table.registerFactory("Skirmish.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
-		return std::make_unique<AptSkirmish>(c.windows, c.shell, c.environment);
+		// RW 0x6D2E3A: the screen gets the strategic flag RW 0xDB6BF0 (lane WOTR-1)
+		auto s = std::make_unique<AptSkirmish>(c.windows, c.shell, c.environment);
+		if (c.environment.livingWorld && c.environment.livingWorld->strategicRequested)
+		{
+			s->enterStrategicMode(*c.environment.livingWorld);
+		}
+		return s;
 	});
 	table.registerFactory("LoadScreen.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
 		return std::make_unique<AptLoadScreen>(c.windows, c.shell, c.environment);
@@ -55,6 +69,10 @@ void registerAptScreenFactories(AptScreenFactoryTable &table)
 	// lane END-2: the in-game menu (RW 0x6D2D18 makes an AptQuitMenu, RW 0x921B0F pushes QuitMenu.apt)
 	table.registerFactory("QuitMenu.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
 		return std::make_unique<AptQuitMenu>(c.windows, c.shell, c.environment);
+	});
+	// lane CAMPUI-1: the objectives screen of a campaign game (RW 0x8E8843 pushes Objectives.apt)
+	table.registerFactory("Objectives.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
+		return std::make_unique<AptObjectivesMenu>(c.windows, c.shell, c.services, c.environment);
 	});
 	// lane PLAY-1: the Palantir's flag in a skirmish / multiplayer game (RW 0x914EF0 pushes PlayerTribute.apt)
 	table.registerFactory("PlayerTribute.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {

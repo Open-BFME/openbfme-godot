@@ -6,10 +6,8 @@
 ## Here: the GameWorld loads the map (with its terrain); a camera renders it into a SubViewport whose texture the shell draws into the DrawMapComponent clip's
 ## rectangle (lane CAH-2; the window's own 3D is off while the builder is up). Each frame the shell's view state (AptMenuPlayer.get_create_a_hero_view) is read: a new
 ## revision applies the shown record to the preview object (GameWorld.cah_preview_apply, TheCreateAHeroSystem + 0x18C set: cah_builder), the held
-## rotate / zoom buttons turn and zoom the camera.
+## rotate / zoom buttons turn the hero and zoom the camera.
 ## The map locations are RW 0x9C09FC's.
-## The donor named-camera mode-1 transform does not establish RotWK's handling
-## of hero Z and Floor. Keep the previous device framing until that use is decoded.
 extends Node
 
 const MAP := "createahero" # Maps\\CreateAHero\\CreateAHero.map (RW 0xC7CBF0)
@@ -22,9 +20,11 @@ var _cull_cam: Camera3D
 var _root_3d_was_disabled := false
 var _locations: Array = []
 var _revision := -1
+var _camera_revision := -1
 var _record := PackedByteArray()
 var _object := -1
 var _yaw := 0.0
+var _control_time := 0.0 # seconds not yet spent on control steps (one step per 30 Hz client frame, retail FramesPerSecondLimit 30, S-456)
 var _t := -1.0 # the near -> far blend (RW 0x9BF360's t); < 0 until the first hero: NormalCam
 var _hero_sage := Vector3.ZERO
 var _target := Vector3.ZERO
@@ -101,31 +101,90 @@ func tick(delta: float) -> void:
 		_record = view.get("record", PackedByteArray())
 		if _record.size() > 0:
 			_apply(view)
-	if view.get("rotate_left", false):
-		_yaw -= delta * 1.5
-	if view.get("rotate_right", false):
-		_yaw += delta * 1.5
-	if view.get("zoom_in", false):
-		_t = minf(1.0, _t + delta * 0.8)
-	if view.get("zoom_out", false):
-		_t = maxf(0.0, _t - delta * 0.8)
+		else:
+			_info = {}
+			_object = -1
+	if _info.is_empty():
+		return
+	if int(view.camera_revision) != _camera_revision:
+		_camera_revision = int(view.camera_revision)
+		_yaw = 0.0
+		_t = float(_info.normal_cam)
+		_control_time = 0.0
+	# RW 0x919C26 steps once per client frame and retail draws 30 of them a second (S-456): held buttons step at that rate whatever the
+	# render rate; a long frame catches up two steps at most
+	_control_time = minf(_control_time + delta, 2.0 / 30.0)
+	while _control_time >= 1.0 / 30.0:
+		_control_time -= 1.0 / 30.0
+		_advance_controls(view, Input.is_key_pressed(KEY_SHIFT))
+	var orientation: Dictionary = _world.cah_preview_set_orientation(_object, _facing + _yaw)
+	if not orientation.ok:
+		_fail(str(orientation.error))
+		return
 	_place_camera(str(view.get("page", "")))
 
 
+func _advance_controls(view: Dictionary, shifted: bool) -> void:
+	# RW 0x919C26 / 0x9BF019..0x9BF0CD: fixed steps, right/left then in/out.
+	var turn := 0.2 if shifted else 0.1
+	var zoom := 0.1 if shifted else 0.05
+	if view.get("rotate_right", false):
+		_yaw += turn
+	if view.get("rotate_left", false):
+		_yaw -= turn
+	if view.get("zoom_in", false):
+		_t = maxf(0.0, _t - zoom)
+	if view.get("zoom_out", false):
+		_t = minf(1.0, _t + zoom)
+
+
+func _fail(error: String) -> void:
+	if not errors.has(error):
+		errors.append(error)
+		printerr("CAH preview: ", error)
+	_info = {}
+	_object = -1
+
+
+func _validate_info() -> String:
+	for key in ["near", "far", "close_up", "portrait"]:
+		if not _info.has(key) or not _info[key] is Array or _info[key].size() != 5:
+			return "invalid or missing ViewInfo row: " + key
+		for value in _info[key]:
+			if typeof(value) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(value)):
+				return "non-finite or non-numeric ViewInfo row: " + key
+		if float(_info[key][1]) <= 0.0:
+			return "non-positive ViewInfo zoom: " + key
+	for key in ["normal_cam", "camera_angle"]:
+		if not _info.has(key) or typeof(_info[key]) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(_info[key])):
+			return "invalid or missing ViewInfo field: " + key
+	if float(_info.normal_cam) < 0.0 or float(_info.normal_cam) > 1.0:
+		return "NormalCam is outside 0..1"
+	if not _info.has("map_location") or typeof(_info.map_location) != TYPE_INT or int(_info.map_location) < 0:
+		return "invalid or missing MapLocation"
+	if not _info.has("camera_offset") or not _info.camera_offset is Vector3:
+		return "missing map camera offset"
+	var offset: Vector3 = _info.camera_offset
+	if not offset.is_finite() or offset.z <= 0.0:
+		return "invalid map camera offset"
+	return ""
+
+
 func _apply(view: Dictionary) -> void:
-	_info = _world.cah_view_info(int(view.get("class", 0)), int(view.get("subclass", 0)))
+	if not view.has("class") or not view.has("subclass"):
+		_fail("missing hero class or subclass")
+		return
+	_info = _world.cah_view_info(int(view["class"]), int(view.subclass))
 	if not _info.get("ok", false):
-		errors.append(str(_info.get("error", "Create-a-Hero view information is unavailable")))
-		_info = {} # A failed refresh must not feed incomplete data to _place_camera.
+		_fail(str(_info.get("error", "Create-a-Hero view information is unavailable")))
 		return
-	var loc := int(_info.get("map_location", 0))
-	if _locations.is_empty():
+	var error := _validate_info()
+	if not error.is_empty():
+		_fail(error)
 		return
+	var loc := int(_info.map_location)
 	if loc < 0 or loc >= _locations.size() or int(_locations[loc].get("id", 0)) == 0:
-		var e := "map location %d of class %d subclass %d is no object of the map (%d locations)" % [loc, view.get("class", 0), view.get("subclass", 0), _locations.size()]
-		if not errors.has(e):
-			errors.append(e)
-			printerr("CAH preview: ", e)
+		_fail("map location %d of class %d subclass %d is no object of the map (%d locations)" % [loc, view["class"], view.subclass, _locations.size()])
 		return
 	var l: Dictionary = _locations[loc]
 	_object = int(l.id)
@@ -133,57 +192,75 @@ func _apply(view: Dictionary) -> void:
 	_hero_sage = Vector3(l.x, l.y, l.z)
 	_facing = float(l.angle)
 	if _t < 0.0:
-		_t = clampf(float(_info.get("normal_cam", 0.0)), 0.0, 1.0)
+		_t = float(_info.normal_cam)
 	var r: Dictionary = _world.cah_preview_apply(_object, _record)
 	if r.ok:
 		_shell.set_create_a_hero_portrait(str(r.portrait))
 	if not r.ok:
-		errors.append(str(r.get("error", "")))
-		printerr("CAH preview: ", r.get("error", ""))
+		_fail(str(r.error))
 
 
-func _place_camera(page: String) -> void:
-	# lane CAH-2: RW 0x9BFE74. The ViewInfo row (RW 0xD9EE08: [pitch, zoom, floor, dist, shift]) is the near row blended to the far row by t (RW 0x9BF2E1 ..
-	# 0x9BF360 = BFME2 decomp Rva005B01D3Lerp.cpp: a + (b - a) * t, t < 0 -> NormalCam +0x60), or the close-up (+0x30) / portrait (+0x48) row while the
-	# screen's fixed view (+0x178) is on. The angle is the map location's (+4) plus CameraAngle (+0x64); the camera's ground point is the hero's position
-	# plus (cos a * dist - sin a * shift, sin a * dist + cos a * shift), and RW 0x489B77 records it with height Floor, heading a + pi/2 (DAT 0xBD89D0), Pitch,
-	# Zoom and the field of view 0.83 (DAT 0xC2D8F0) for the tactical view (TheTacticalView vslot 0x60).
-	# INFERENCE (S-1405): the eye uses the map camera offset times Zoom in XY, Floor above the hero ground, looking back at Pitch below the
-	# horizon (vslot 0x60's use of the record was not read); the fixed view is taken on the Powers page (close-up); RotateLeft / RotateRight turn the
-	# angle, ZoomIn / ZoomOut move t.
-	if _cam == null or _info.is_empty():
-		return
-	var near: Array = _info.get("near", [0.0, 1.0, 20.0, 40.0, 0.0])
-	var far: Array = _info.get("far", near)
+func camera_pose(page: String) -> Dictionary:
+	var error := _validate_info()
+	if not error.is_empty():
+		return {"error": error}
+	if page not in ["M", "C", "A", "P", "B"]:
+		return {"error": "unknown Create-a-Hero page: " + page}
+	var near: Array = _info.near
+	var far: Array = _info.far
 	var v: Array = []
 	if page == "P":
-		v = _info.get("close_up", near)
+		v = _info.close_up
+	elif page == "M":
+		v = _info.portrait
 	else:
-		var t := clampf(_t, 0.0, 1.0)
+		var t := float(_info.normal_cam) if _t < 0.0 else _t
 		for i in 5:
 			v.append(float(near[i]) + (float(far[i]) - float(near[i])) * t)
-	# S-1405: the device close-up uses the row's negative pitch downward.
-	var pitch: float = -float(v[0]) if page == "P" else float(v[0])
+	# AptMyHero::rva005B1019 (BFME2 RVA 0x5B1019, RW 0x9BFE74, tier B).
+	# Pitch is fxPitch, not an Euler angle; hero rotation does not rotate the camera.
+	var pitch: float = float(v[0])
 	var zoom: float = float(v[1])
 	var floor_h: float = float(v[2])
 	var dist: float = float(v[3])
 	var shift: float = float(v[4])
-	var a: float = _facing + float(_info.get("camera_angle", 0.0)) + _yaw
-	# Donor AptMyHeroRefreshCamera (0x5B0473) supplies a named camera;
-	# W3DCamTransform (0x102F83) scales the map camera offset by Zoom,
-	# uses Pitch and heading. Its named-camera conversion to device eye/target
-	# remains S-1405; do not treat this placement as pixel-exact retail.
+	var a: float = _facing + float(_info.camera_angle)
 	var offset: Vector3 = _info.camera_offset * zoom
-	var heading := a + PI * 0.5
+	var heading := a + 1.5707964
 	var point := _hero_sage + Vector3(cos(a) * dist - sin(a) * shift, sin(a) * dist + cos(a) * shift, 0)
-	# S-1405: device placement of the named camera remains inferred. Floor
-	# positions the eye above the hero's ground; Zoom controls eye distance.
-	var eye_sage := Vector3(offset.x * cos(heading) - offset.y * sin(heading) + point.x,
-		offset.x * sin(heading) + offset.y * cos(heading) + point.y, _hero_sage.z + floor_h)
-	var direction := Vector3(-cos(a) * cos(pitch), -sin(a) * cos(pitch), -sin(pitch))
-	var target_sage := eye_sage + direction
-	_cam.look_at_from_position(Vector3(eye_sage.x, eye_sage.z, -eye_sage.y),
-		Vector3(target_sage.x, target_sage.z, -target_sage.y), Vector3.UP)
+	# W3DView::moveAlongWaypointPath (RW 0x48688A) discards point.z.
+	# W3DCamTransform::rva00102F83 (RW 0x502858, tier A): named mode 1,
+	# non-live/non-realZoom, zero pitch rotation/roll/targetZAdjustment.
+	var factor := 1.0 - floor_h / offset.z
+	var eye := Vector3(offset.x * cos(heading) - offset.y * sin(heading),
+		offset.x * sin(heading) + offset.y * cos(heading), offset.z) * factor
+	eye += Vector3(point.x, point.y, floor_h)
+	var target := Vector3(point.x, point.y, floor_h)
+	if pitch <= 1.0:
+		target.z = eye.z - (eye.z - target.z) * pitch
+	else:
+		eye.x = target.x + (eye.x - target.x) / pitch
+		eye.y = target.y + (eye.y - target.y) / pitch
+	if not eye.is_finite() or not target.is_finite() or eye.is_equal_approx(target):
+		return {"error": "degenerate Create-a-Hero camera transform"}
+	return {"eye": Vector3(eye.x, eye.z, -eye.y), "target": Vector3(target.x, target.z, -target.y), "row": v, "fov": 0.83}
+
+
+func _place_camera(page: String) -> void:
+	if _cam == null or _info.is_empty():
+		return
+	var pose := camera_pose(page)
+	if pose.has("error"):
+		_fail(str(pose.error))
+		return
+	# RW 0x65BE82 DrawMapView -> W3DView::setWidth (RW 0x4874A7,
+	# BFME2 RVA 0x87B81, tier A) replaces the named camera's FOV for drawing.
+	var display_width := get_viewport().get_visible_rect().size.x
+	if display_width <= 0.0 or _view.size.x <= 0:
+		_fail("invalid Create-a-Hero viewport width")
+		return
+	_cam.fov = float(_view.size.x) / display_width * 50.0
+	_cam.look_at_from_position(pose.eye, pose.target, Vector3.UP)
 	_cull_cam.global_transform = _cam.global_transform
 	_cull_cam.fov = _cam.fov
 	_cull_cam.near = _cam.near

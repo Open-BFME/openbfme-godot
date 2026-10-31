@@ -2,6 +2,7 @@
 // See GameClient/UserDataFolder.h (lane CAH-2).
 
 #include "GameClient/UserDataFolder.h"
+#include "Common/PathIO.h"
 
 #include <cctype>
 #include <cstring>
@@ -124,7 +125,7 @@ std::string userDataFolder(const std::string &appData, const std::string &leaf, 
 std::string userDataFolderOfInstall(const std::string &installRoot, const std::string &appData, char separator, std::string *leaf, std::string *error)
 {
 	const std::string path = installRoot + "/gi.dat";
-	std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
+	std::ifstream in(PathIO::native(path), std::ios::binary);
 	if (!in)
 	{
 		if (error)

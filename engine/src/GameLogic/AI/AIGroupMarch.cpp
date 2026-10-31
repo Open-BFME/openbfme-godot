@@ -13,7 +13,7 @@
 //     the size) containing the point (RW 0x65F4A2, inclusive) means a tighten; then a group of more than one unit, no tighten, no waypoint, no target,
 //     a player source, no formation template (-1) and AIData UseFormations (+ 0xBD) go to RW 0x7747DE(pos, player, mode 0, the ignored obstacle, ground 1);
 //     its true ends the move.
-//   * RW 0x7747DE (decomp BfmeConv986.cpp, tier A): RW 0x76FFF0 drops the members that are held (Object + 0x1C8 bit 3), have no AI, no current locomotor or
+//   * RW 0x7747DE (decomp BfmeC986.cpp, tier A): RW 0x76FFF0 drops the members that are held (Object + 0x1C8 bit 3), have no AI, no current locomotor or
 //     are KindOf IMMOBILE (template + 0x108 bit 2), one at a time; a group whose last member would go answers true (nothing moves). Without a member whose
 //     locomotor has a FormationPriority (+ 0x78 != 0), false. Then RW 0x76F426 (every member gives up its pathfinder goal, RW 0x68B401, a horde its members'
 //     goals as well, HordeContain slot 52 RW 0x86F0F1), the ground path (RW 0x76F115; false ends with false), the formation (RW 0x94FCBA), the march
@@ -293,7 +293,7 @@ bool AIGroup::computeGroundPath(const Coord3D &pos)
 		return false;
 	}
 	AIUpdateInterface *cai = centerUnit->getAIUpdateInterface();
-	if (pf.isLineBlocked(&world->adapterFor(*centerUnit), cai->locomotorInfo().validSurfaces, LAYER_GROUND, *centerUnit->getPosition(), center))
+	if (pf.isLineBlocked(&world->adapterFor(*centerUnit), cai->locomotorInfo().validSurfaces, world->adapterFor(*centerUnit).getLayer(), *centerUnit->getPosition(), center)) // lane WALL-1: the unit's layer
 	{
 		center = *centerUnit->getPosition();
 	}
@@ -615,7 +615,7 @@ void AIGroup::moveFormationToPos(const Coord3D &pos, CommandSourceType source, i
 				pf.adjustDestination(adapter, info, &dest, nullptr);
 			}
 		}
-		pf.updateGoal(adapter, &dest, LAYER_GROUND); // RW 0x68B3BD
+		pf.updateGoal(adapter, &dest, pf.getLayerAt(dest.x, dest.y)); // RW 0x68B3BD (lane WALL-1: the destination's layer, as AIMoveToState::onEnter)
 		path.push_back(dest);
 		// mode 1 (the attack march, command 0x25 / RW 0x695C42 0xF) is not ported (S-4463): the port's callers ask for mode 0 only
 		(void)mode;

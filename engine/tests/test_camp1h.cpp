@@ -338,10 +338,25 @@ TEST_CASE("play3 VideoPlayer: retail - the start-up movies resolve without regar
 	stdfs::copy_file(ea.fullPath, scratch / "LANG" / "english" / "data" / "Movies" / "EALOGO.vp6");
 	got = vp.locate("EALogoMovie", scratch.string(), "", "English");
 	CHECK(sameNoCase(got.path, "LANG/english/data/Movies/EALOGO.vp6"));
+	// lane MODCOMPAT-1: an install-folder mod (--mod-install, Edain's layout) has its movies where retail's merged game folder has them: each of the
+	// game directory's folders is looked up in the overlays (highest priority first) before the game directory
+	stdfs::create_directories(scratch / "edain" / "data" / "movies");
+	stdfs::create_directories(scratch / "edain-addon" / "Lang" / "English" / "Data" / "Movies");
+	stdfs::copy_file(ea.fullPath, scratch / "edain" / "data" / "movies" / "ealogo.vp6");
+	const std::vector<std::string> overlays = { (scratch / "edain-addon").string(), (scratch / "edain").string() };
+	got = vp.locate("EALogoMovie", scratch.string(), "", "", overlays); // no language folder: the overlay's Data\Movies beats the game's
+	CHECK(got.fullPath.find("edain") != std::string::npos);
+	got = vp.locate("EALogoMovie", scratch.string(), "", "English", overlays); // the game's localized folder comes before any Data\Movies
+	CHECK(sameNoCase(got.path, "LANG/english/data/Movies/EALOGO.vp6"));
+	CHECK(got.fullPath.find("edain") == std::string::npos);
+	stdfs::copy_file(ea.fullPath, scratch / "edain-addon" / "Lang" / "English" / "Data" / "Movies" / "EALogo.vp6");
+	got = vp.locate("EALogoMovie", scratch.string(), "", "English", overlays); // the add-on's localized movie: the first overlay's, before the game's
+	CHECK(got.fullPath.find("edain-addon") != std::string::npos);
 	stdfs::copy_file(ea.fullPath, scratch / "mod" / "Data" / "MOVIES" / "EALogo.vp6");
-	got = vp.locate("EALogoMovie", scratch.string(), (scratch / "mod").string(), "English");
+	got = vp.locate("EALogoMovie", scratch.string(), (scratch / "mod").string(), "English", overlays); // a -mod's Data\Movies beats everything
 	CHECK(sameNoCase(got.path, "Data/MOVIES/EALogo.vp6"));
 	CHECK(got.fullPath.find("mod") != std::string::npos);
+	CHECK(got.fullPath.find("edain") == std::string::npos);
 	stdfs::remove_all(scratch);
 }
 

@@ -24,9 +24,9 @@
 //   * ToggleMountedSpecialAbilityUpdate (vtable RW 0xC6BDA0, table RW 0xC05A18), HeroModeSpecialAbilityUpdate (vtable RW 0xC64680, table RW
 //     0xC052F0), LevelGrantSpecialPower (vtable RW 0xC735A0, table RW 0xC73550), ModelConditionSpecialAbilityUpdate (vtable RW 0xC63F38, table
 //     RW 0xC05AF8: Aragorn's Elendil).
-// Not ported (stops S-859 .. S-863, see stopLines): the special objects (no retail ability names SpecialObject), the capture / garrison /
-// disguise / grab ability enums of the trigger switch, the face command before triggering (no AI face state: the facing check is the AI idle
-// test), the line of sight test of ApproachRequiresLOS, the approach point of RW 0x851607 (the move goes to the target), sounds and voices
+// Not ported (stops S-859 .. S-863, see stopLines): the special objects (no retail ability names SpecialObject), the laser / charge enums and the
+// tree / vendor grabs of the trigger switch (the object grab runs since lane MODCOMPAT-MOD1), the face command before triggering (no AI face state: the facing check is the AI idle
+// test), the approach point of RW 0x851607 (the move goes to the target), sounds and voices
 // (client), FleeRangeAfterCompletion, the emotion system (Elendil's terror pulse is counted). MountedTemplate's replacement runs since lane HERO-2 (S-861).
 
 #pragma once
@@ -39,6 +39,8 @@
 
 #include <cstdint>
 #include <memory>
+
+class ObjectWeapons;
 #include <string>
 #include <vector>
 
@@ -98,7 +100,7 @@ public:
 	int m_customAnimCondition = -1;
 	unsigned m_customAnimFrames = 0;
 	unsigned m_customAnimTriggerFrames = 0;
-	int m_grabAnimCondition = -1;                               // + 0x24 GrabPassengerAnimAndDuration (the grab enum: S-860)
+	int m_grabAnimCondition = -1;                               // + 0x24 GrabPassengerAnimAndDuration (+ 0x28 AnimTime, + 0x2C TriggerTime: the grab's eat, lane MODCOMPAT-MOD1)
 	unsigned m_grabAnimFrames = 0;
 	unsigned m_grabTriggerFrames = 0;
 	float m_grabPassengerHealGainPercent = 100.0f;              // + 0x30
@@ -259,11 +261,15 @@ protected:
 	bool withinStartAbilityRange();                // RW 0x85207A
 	bool withinAbortRange() const;                 // RW 0x8522E3
 	bool captureTarget(SpecialPowerModule *spm);   // RW 0x8544F2 (lane HERO-2)
+	void grabTrigger(int type);                    // RW 0x8540A1 .. 0x8544C8 (lane MODCOMPAT-MOD1)
+	void grabFinish();                             // RW 0x85321E .. 0x853367 (lane MODCOMPAT-MOD1)
+	unsigned preparationFrames() const;            // RW 0x85241F (lane MODCOMPAT-MOD1)
 	bool conditionsAllow() const;                  // RW 0x851551
 	void endPreparation();                         // RW 0x85260A
 	void setUnpackingVariation();                  // the UnpackingVariation model condition (RW 0x853C64 .. 0x853CDE)
 	void applyCustomAnim();                        // RW 0x851C48
-	UpdateSleepTime calcSleep() const;             // RW 0x85266D
+	UpdateSleepTime calcSleep();                   // RW 0x85266D (an idle capture ability also releases its capture: releaseCapture)
+	void releaseCapture();                         // the capture branch of RW 0x85266D
 	bool needToUnpack() const;                     // RW 0x85133C
 	bool needToPack() const;                       // RW 0x851316
 	bool persistentTrigger() const;                // RW 0x852465
@@ -318,10 +324,15 @@ protected:
 private:
 	int specialWeaponCondition() const;
 	Weapon *specialWeapon();
+	ObjectWeapons *weaponHost(); // the object's ObjectWeapons, else m_ownHost
 	const WeaponFireSpecialAbilityUpdateModuleData *m_wf;
 	std::unique_ptr<Weapon> m_weapon; // + 0x88
 	bool m_weaponMade = false;
 	unsigned m_shots = 0;
+	// lane WALL-1: the weapon host of an object without a weapon set (the deployed mine's Detonate): retail's Object embeds its WeaponSet and the special
+	// weapon's status and fire (RW 0x6CDCE7, RW 0x6CF3D2) are the Weapon's own, so the shot needs no set; the port's shot needs an ObjectWeapons host, made
+	// here once as ObjectWeapons::fireTempWeapon makes one (kept with the module: a delayed delivery refers to it)
+	std::unique_ptr<ObjectWeapons> m_ownHost;
 };
 
 class ToggleMountedSpecialAbilityUpdate : public SpecialAbilityUpdate, public CreateModuleInterface

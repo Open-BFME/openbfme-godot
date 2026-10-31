@@ -120,7 +120,7 @@ public:
 	std::string json(const std::string &gameId, const std::string &crcParity, UnsignedInt frames) const;
 
 	unsigned long long samples() const { return m_samples; }
-	// lane ANTICHEAT-1: the last batch frame whose state showed `object` to `player` (-1 never, or a player not judged)
+	// lane ANTICHEAT-1 (D2, ViewChecks.h): the last batch frame whose state showed `object` to `player` (-1 never, or a player not judged)
 	long long lastVisibleFrame(int player, ObjectID object) const;
 	const Settings &settings() const { return m_settings; }
 	// the argument index of the target object of a judged message type, -1 for a type that is not judged

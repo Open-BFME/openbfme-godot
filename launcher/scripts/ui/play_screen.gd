@@ -9,6 +9,8 @@ var missing_games: Label
 
 signal download_games
 signal show_news
+signal open_replay
+signal open_save
 
 const W := preload("res://scripts/ui/widgets.gd")
 const Style := preload("res://scripts/ui/style.gd")
@@ -16,6 +18,7 @@ const Ornament := preload("res://scripts/ui/ornament.gd")
 const VectorIcon := preload("res://scripts/ui/vector_icon.gd")
 const ReleaseNotes := preload("res://scripts/core/release_notes.gd")
 const Paths := preload("res://scripts/ui/paths.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const NOTES_SHOWN := 6
 const NOTES_W := 360.0   # the What's New card's width
@@ -49,7 +52,7 @@ func _init() -> void:
 	var h1 := W.label("OPENBFME")
 	Style.text(h1, "Cinzel", 700, 58, Style.ACCENT, 3)
 	left.add_child(h1)
-	var sub := W.label("The Rise of the Witch-king, rebuilt")
+	var sub := W.label(L10n.t("launcher.play_screen.subtitle"))
 	Style.text(sub, "CormorantGaramond-Italic", 500, 24, Style.TEXT2)
 	left.add_child(sub)
 	var div := Ornament.make("divider")
@@ -70,7 +73,7 @@ func _init() -> void:
 	version_chip = W.chip("")
 	players_chip = W.chip("")
 	players_chip.visible = false
-	players_chip.tooltip_text = "Players in OpenBFME's online lobbies and games right now. A total from the lobby server, no names."
+	players_chip.tooltip_text = L10n.t("launcher.play_screen.players_tooltip")
 	for c in [state_chip, channel_chip, version_chip, players_chip]:
 		chips.add_child(c)
 	left.add_child(chips)
@@ -84,7 +87,16 @@ func _init() -> void:
 	_games_panel = p.panel
 	p.panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	left.add_child(p.panel)
-	p.box.add_child(W.h3("Your games"))
+	p.box.add_child(W.h3(L10n.t("launcher.play_screen.your_games")))
+	# the open buttons side by side at their own width (stretched across the panel their icons stood apart from the text: the layout check)
+	var open_row := W.hbox(10)
+	var replay := W.button(L10n.t("launcher.play_screen.open_replay"), "folder", L10n.t("launcher.play_screen.open_replay_tip"), 15)
+	replay.pressed.connect(func(): open_replay.emit())
+	open_row.add_child(replay)
+	var save := W.button(L10n.t("launcher.play_screen.open_save"), "folder", L10n.t("launcher.play_screen.open_save_tip"), 15)
+	save.pressed.connect(func(): open_save.emit())
+	open_row.add_child(save)
+	p.box.add_child(open_row)
 	# community PR #36: the game Play starts, in the games row where the names were (a row of its own made the panel's bottom almost meet What's
 	# New's: the layout check); its items name the versions
 	game_picker = OptionButton.new()
@@ -97,15 +109,16 @@ func _init() -> void:
 	games_found = W.vbox(4)
 	games_where = W.trim_label("", "Muted")
 	games_found.add_child(games_where)
+	games_found.add_child(W.wrap(L10n.t("launcher.play_screen.checked_at_start"), "Muted"))
 	p.box.add_child(games_found)
 	games_card = W.vbox(8)
-	missing_games = W.wrap("The Rise of the Witch-king 2.01 and Battle for Middle-earth II 1.06 were not found.", "Muted")
+	missing_games = W.wrap(L10n.t("launcher.play_screen.not_found"), "Muted")
 	games_card.add_child(missing_games)
 	var grow := W.hbox(12)
-	games_button = W.button("Download the games", "download", "GoldButton", 16)
+	games_button = W.button(L10n.t("launcher.play_screen.download_games"), "download", "GoldButton", 16)
 	games_button.pressed.connect(func() -> void: download_games.emit())
 	grow.add_child(games_button)
-	var already := W.wrap("Installed already? The game finds them when it starts.", "Muted")
+	var already := W.wrap(L10n.t("launcher.play_screen.installed_already"), "Muted")
 	already.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	grow.add_child(already)
 	games_card.add_child(grow)
@@ -118,7 +131,7 @@ func _init() -> void:
 	_notes_card.size_flags_vertical = Control.SIZE_SHRINK_BEGIN   # the card's top is the title block's top, its right the screen's margin
 	add_child(_notes_card)
 	resized.connect(func() -> void: _notes_card.custom_minimum_size.y = clampf(size.y * 0.7, 300.0, 470.0))
-	var title := W.parch_label("What's New", "title", 24)
+	var title := W.parch_label(L10n.t("launcher.play_screen.whats_new"), "title", 24)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	parch.box.add_child(title)
 	_notes_sub = W.parch_label("", "sub", 17)
@@ -170,7 +183,7 @@ func _init() -> void:
 	bar.changed.connect(_update_fade)
 	bar.value_changed.connect(func(_v: float) -> void: _update_fade())
 	var more := LinkButton.new()
-	more.text = "All the notes in News  ›"
+	more.text = L10n.t("launcher.play_screen.all_notes")
 	more.underline = LinkButton.UNDERLINE_MODE_ON_HOVER
 	more.add_theme_color_override("font_color", Style.PARCH_MUTED)
 	more.add_theme_color_override("font_hover_color", Style.PARCH_TITLE)
@@ -182,7 +195,7 @@ func _init() -> void:
 	# the left column is at most as wide as the room left of the card (480 px when there is room): at a narrow layout the chips wrap sooner
 	resized.connect(_fit_left)
 	_fit_left()
-	set_notes("", "The notes of your version appear here after the first update check.")
+	set_notes("", L10n.t("launcher.play_screen.notes_placeholder"))
 
 
 func _fit_left() -> void:
@@ -200,7 +213,7 @@ func chip_overlaps() -> PackedStringArray:
 	var card := _notes_card.get_global_rect()
 	for c in [state_chip, channel_chip, version_chip, players_chip, _games_panel]:
 		if c.is_visible_in_tree() and c.get_global_rect().intersects(card):
-			out.append(c.get_child(0).text if c != _games_panel else "Your games")
+			out.append(c.get_child(0).text if c != _games_panel else L10n.t("launcher.play_screen.your_games"))
 	return out
 
 
@@ -212,10 +225,11 @@ func set_players(text: String) -> void:
 
 ## found: the games' state; aio: the download is offered (the setting)
 func set_games(found: bool, aio: bool, where: String) -> void:
-	_games_status.text = "✓ Ready" if found else "Not found"
+	_games_status.text = L10n.t("launcher.play_screen.folders_found") if found else L10n.t("launcher.play_screen.folders_missing")
 	_games_status.add_theme_color_override("font_color", Style.GOOD if found else Style.WARN)
 	games_found.visible = found
 	games_where.text = where
+	games_where.tooltip_text = games_where.text
 	games_card.visible = not found and aio
 
 

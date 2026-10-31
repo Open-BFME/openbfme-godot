@@ -9,6 +9,7 @@
 
 #include "Common/Player.h"
 #include "Common/StateHash.h"
+#include "Common/Team.h"
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/SimMath.h"
 
@@ -211,11 +212,32 @@ TEST_CASE("partition: the range test keeps distance <= radius^2 on the live posi
 	CHECK(hits[1].object == edge);
 	CHECK(hits[1].distSqr == doctest::Approx(47.0f * 47.0f));
 	CHECK(hits[2].object == out);
-	// type 4 needs RW 0xAD2CE0: refused with the stop
-	CHECK_THROWS(f.logic->partition().iterateObjectsInRange(Coord3D{ 500.0f, 500.0f, 0.0f }, 50.0f, FROM_GEOMETRY_OVERLAP, {}, ITER_FASTEST));
 }
 
-TEST_CASE("partition: the range walk's double-precision pre-reject changes no hit, order or distance (points packed on the boundaries, every type)")
+TEST_CASE("partition: distance type 4 (RW 0xA3C7D0) is the object's shapes against a sphere of the query radius (RW 0xAD2CE0): 0 on a hit, FLT_MAX refuses")
+{
+	Fx f;
+	Object *peg = f.at("Peg", 500.0f, 500.0f); // cylinder, radius 3, 10 high
+	Object *big = f.at("Big", 700.0f, 500.0f); // cylinder, radius 50
+	f.logic->runLogicFrame();
+	PartitionManager &pm = f.logic->partition();
+	auto overlap = [&](float x, float y, float z, float r) {
+		return f.ids(pm.iterateObjectsInRange(Coord3D{ x, y, z }, r, FROM_GEOMETRY_OVERLAP, {}, ITER_FASTEST));
+	};
+	// the circles touch at 3 + 2 = 5 (RW 0xAD48F0: dx^2 + dy^2 > (ra + rb)^2 refuses)
+	const std::vector<PartitionHit> hits = pm.iterateObjectsInRange(Coord3D{ 505.0f, 500.0f, 0.0f }, 2.0f, FROM_GEOMETRY_OVERLAP, {}, ITER_FASTEST);
+	REQUIRE(hits.size() == 1);
+	CHECK(hits[0].object == peg);
+	CHECK(hits[0].distSqr == 0.0f);
+	CHECK(overlap(506.0f, 500.0f, 0.0f, 2.0f).empty());
+	// the shape, not the centre: 54 from Big's centre, inside its radius 50 plus the sphere's 6
+	CHECK(overlap(754.0f, 500.0f, 0.0f, 6.0f) == std::vector<ObjectID>{ big->getID() });
+	// the heights: the sphere's bottom (z - its radius) above the cylinder's top (10) misses
+	CHECK(overlap(500.0f, 500.0f, 12.0f, 2.0f) == std::vector<ObjectID>{ peg->getID() });
+	CHECK(overlap(500.0f, 500.0f, 12.5f, 2.0f).empty());
+}
+
+TEST_CASE("partition: the double-precision pre-reject of the range walk and of getClosestObject changes no hit, order, distance or filter call (points packed on the boundaries, every type)")
 {
 	Fx f;
 	PartitionManager &pm = f.logic->partition();
@@ -310,7 +332,68 @@ TEST_CASE("partition: the range walk's double-precision pre-reject changes no hi
 				CHECK(std::memcmp(&on[i].distSqr, &off[i].distSqr, sizeof(float)) == 0);
 			}
 		}
+		// lane UBER-2A: getClosestObject's pre-reject skips only candidates beyond the best distance so far: the same filter calls in the same order (a filter
+		// that refuses most objects keeps the bound wide, one that takes all shrinks it at every winner), the same winner and distance
+		for (int keepEvery : { 1, 7 })
+		{
+			std::vector<ObjectID> asked[2];
+			Object *winner[2] = { nullptr, nullptr };
+			float dist[2] = { 0.0f, 0.0f };
+			for (int on = 0; on < 2; ++on)
+			{
+				PartitionFilterFn record([&](Object &o) {
+					asked[on].push_back(o.getID());
+					return (o.getID() % (ObjectID)keepEvery) == 0;
+				});
+				pm.setPreReject(on == 1);
+				winner[on] = pm.getClosestObject(c, radius, type, { &record }, nullptr, &dist[on]);
+			}
+			pm.setPreReject(true);
+			INFO("type " << (int)type << " keep every " << keepEvery << ": " << asked[0].size() << " filter calls without the pre-reject");
+			CHECK_FALSE(asked[0].empty());
+			CHECK(asked[1] == asked[0]);
+			CHECK(winner[1] == winner[0]);
+			CHECK(std::memcmp(&dist[1], &dist[0], sizeof(float)) == 0);
+		}
 	}
+}
+
+TEST_CASE("partition: Team::enemyLayerMask (lane UBER-2A) holds exactly the player layers whose objects getRelationship sees as ENEMIES; a team override sets every layer")
+{
+	Fx f;
+	Object *a = f.at("Peg", 100.0f, 100.0f, "Alice");
+	Object *b = f.at("Peg", 200.0f, 200.0f, "Bob");
+	f.logic->runLogicFrame();
+	Player *alice = f.players.findPlayerWithName("Alice");
+	Player *bob = f.players.findPlayerWithName("Bob");
+	Team *ta = f.teamOf("Alice");
+	PartitionManager &pm = f.logic->partition();
+	REQUIRE(pm.layerOf(*a) == alice->getPlayerIndex());
+	REQUIRE(pm.layerOf(*b) == bob->getPlayerIndex());
+	// b's layer (Bob's team has no override); a's is Alice's while her team has none
+	const unsigned la = (unsigned)alice->getPlayerIndex(), lb = (unsigned)bob->getPlayerIndex();
+	for (Relationship r : { ENEMIES, NEUTRAL, ALLIES })
+	{
+		alice->setPlayerRelationship(bob, r);
+		const std::uint32_t mask = ta->enemyLayerMask();
+		const std::uint32_t self = a->getRelationship(*a) == ENEMIES ? 1u : 0u;
+		CHECK(((mask >> lb) & 1u) == (a->getRelationship(*b) == ENEMIES ? 1u : 0u));
+		CHECK(((mask >> la) & 1u) == self);
+		// the team's own override for Bob comes first (Team::getRelationship)
+		ta->setPlayerRelationship(bob, ENEMIES);
+		CHECK(a->getRelationship(*b) == ENEMIES);
+		CHECK(ta->enemyLayerMask() == ((1u << lb) | (self << la)));
+		ta->setPlayerRelationship(bob, NEUTRAL);
+		CHECK(a->getRelationship(*b) == NEUTRAL);
+		CHECK(((ta->enemyLayerMask() >> lb) & 1u) == 0u);
+		ta->removeAllRelationshipOverrides();
+	}
+	// a team override (per team id) cannot be told from the layer: every layer
+	ta->setTeamRelationship(f.teamOf("Bob"), ALLIES);
+	CHECK(ta->enemyLayerMask() == 0xFFFFFFFFu);
+	ta->removeAllRelationshipOverrides();
+	alice->setTeamRelationship(f.teamOf("Bob"), ALLIES);
+	CHECK(ta->enemyLayerMask() == 0xFFFFFFFFu);
 }
 
 TEST_CASE("partition: the STLport introsort (RW 0xA3A6B0): up to 16 equal keys keep their order, 17 or more are reversed by the Hoare partition")
@@ -443,7 +526,7 @@ TEST_CASE("partition: the state hash covers the link order; a region change re-i
 	CHECK(f.scan(405.0f, 405.0f, 20.0f) == std::vector<ObjectID>{ b->getID() });
 }
 
-TEST_CASE("partition: stop S-1020 is in the logic report (template geometry, no defector layer, distance type 4 refused, the empty region without a map)")
+TEST_CASE("partition: stop S-1020 is in the logic report (template geometry, no defector layer, distance type 4 on the template shapes, the empty region without a map)")
 {
 	Fx f;
 	const GameLogic::Report r = f.logic->report();

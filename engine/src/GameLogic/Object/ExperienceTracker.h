@@ -87,6 +87,11 @@ public:
 	void setLevelTargetName(const std::string &name) { m_templateName = name; }
 	const std::string &levelTargetName() const { return m_templateName; }
 	int getRank() const { return m_rank; }
+	// lane HEROCAST-1: the rank AIGroup's senior-hero choice reads (RW 0x76F5DB / 0x76F774 / 0x77097E): RW 0x79D12A -> ExperienceLevelStore::FindCurrentLevel
+	// (RW 0x689417: the first entry of the tracker's level list, RW 0x68931C, whose final override has the current level's name), IsValid (RW 0x689024: an
+	// entry was found and the entry itself, not its override, is valid for the game type, RW 0x68867D) and GetLevelRank (RW 0x688EEC: the final override's
+	// Rank). False (no rank) without a level list, a current level or a valid entry
+	bool currentLevelRank(int &rank) const;
 	// lane HUD-5 (the Palantir's rank interface, RW 0x9D2437): the level after the current one (RW 0x6891A4), and whether the game is a multiplayer one for it
 	const ExperienceLevelTemplate *upcomingLevel() const { return nextLevel(); }
 	bool levelsForMultiplayer() const { return multiplayerGame(); }
@@ -94,6 +99,7 @@ public:
 	float getExperienceScalar() const { return m_scalar; }
 	const std::string &getLevelName() const { return m_levelName; }
 	bool hasGainedLevel() const { return m_leveled; }
+	void clearGainedLevel() { m_leveled = false; } ///< RW 0x780172 writes + 0x20 = 0 after carrying an army entry's experience over; lane BFME2CAMP1: the campaign's carry-over object after its recorded experience (RW 0x78020B)
 	ObjectID getExperienceSink() const { return m_sink; }
 	float getRankFactor() const { return m_rankFactor; }
 	int getBaseRank() const { return m_baseRank; }

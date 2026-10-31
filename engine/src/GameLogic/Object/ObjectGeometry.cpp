@@ -9,7 +9,9 @@
 #include "GameLogic/SimMath.h"
 #include "Common/INI/HostRealText.h"
 
+#include <algorithm>
 #include <cctype>
+#include <memory>
 #include <cstdlib>
 #include <stdexcept>
 
@@ -92,7 +94,53 @@ void coordOf(const ThingTemplate &tt, const std::vector<std::string> &tokens, fl
 		}
 	}
 }
+// INI::getNextAsciiString (Common/INI/INI.cpp; ZH INI.cpp) on a row's tokens: a token that starts with a quote loses it; alone, its closing quote goes too;
+// followed by more of the line, getNextTokenOrNull with the quote separators ("\"\n=") takes the rest up to the next quote, joined with one space (the raw
+// tokens no longer hold the line's own spacing: every retail quoted geometry name is one token)
+std::string asciiStringOf(const std::vector<std::string> &tokens)
+{
+	if (tokens.empty())
+	{
+		return std::string();
+	}
+	const std::string &t = tokens[0];
+	if (t.empty() || t[0] != '"')
+	{
+		return t;
+	}
+	std::string buff = t.size() > 1 ? t.substr(1) : std::string();
+	if (tokens.size() == 1)
+	{
+		if (!buff.empty() && buff.back() == '"')
+		{
+			buff.pop_back();
+		}
+		return buff;
+	}
+	std::string rest;
+	for (size_t i = 1; i < tokens.size(); ++i)
+	{
+		rest += (i > 1 ? " " : "") + tokens[i];
+	}
+	const size_t q = rest.find('"');
+	rest = rest.substr(0, q);
+	if (!rest.empty())
+	{
+		buff += " " + rest;
+	}
+	return buff;
+}
 } // namespace
+
+const std::vector<ObjectGeometry::Shape> &ObjectGeometry::cachedShapesOf(const ThingTemplate &tt)
+{
+	std::shared_ptr<const void> &cache = tt.friend_geometryCache();
+	if (!cache)
+	{
+		cache = std::make_shared<const std::vector<Shape>>(shapesOf(tt));
+	}
+	return *static_cast<const std::vector<Shape> *>(cache.get());
+}
 
 std::vector<ObjectGeometry::Shape> ObjectGeometry::shapesOf(const ThingTemplate &tt)
 {
@@ -141,9 +189,11 @@ std::vector<ObjectGeometry::Shape> ObjectGeometry::shapesOf(const ThingTemplate 
 		}
 		else if (e.row == "GeometryName")
 		{
-			// lane HUD-5: RW 0xAD16B0 -> INI::parseAsciiString (the next token; none: the empty string, as getNextAsciiString answers: retail's
-			// AngmarHallofTwilight has `GeometryName =`)
-			shapes.back().name = e.tokens.empty() ? std::string() : e.tokens[0];
+			// lane HUD-5: RW 0xAD16B0 -> INI::parseAsciiString -> getNextAsciiString (none: the empty string: retail's AngmarHallofTwilight has
+			// `GeometryName =`). Lane BFME2CAMP1: getNextAsciiString drops a quoted token's quotes (Common/INI/INI.cpp, ZH INI::getNextAsciiString): the
+			// gates' `GeometryName = "Closed"` / "OpenLeft" / "OpenRight" (RivGate, the castle wall gates, ...) are the names GateOpenAndCloseBehavior
+			// toggles; with the quotes kept no gate ever opened in the pathfinder's map
+			shapes.back().name = asciiStringOf(e.tokens);
 		}
 		else if (e.row == "GeometryActive")
 		{
@@ -174,6 +224,47 @@ float ObjectGeometry::maxHeightAbovePosition(const std::vector<Shape> &shapes)
 		}
 	}
 	return best;
+}
+
+void ObjectGeometry::localBox(const std::vector<Shape> &shapes, float lo[3], float hi[3])
+{
+	// RW 0xAD2040
+	for (int i = 0; i < 3; ++i)
+	{
+		lo[i] = 0.0f;
+		hi[i] = 0.0f;
+	}
+	for (const Shape &s : shapes)
+	{
+		if (!s.active)
+		{
+			continue;
+		}
+		const float yr = s.type == SHAPE_BOX ? s.minorRadius : s.majorRadius;
+		lo[0] = std::min(lo[0], SimMath::subf32(s.offsetX, s.majorRadius));
+		lo[1] = std::min(lo[1], SimMath::subf32(s.offsetY, yr));
+		hi[0] = std::max(hi[0], SimMath::addf32(s.majorRadius, s.offsetX));
+		hi[1] = std::max(hi[1], SimMath::addf32(s.offsetY, yr));
+		if (s.type == SHAPE_SPHERE)
+		{
+			lo[2] = std::min(lo[2], SimMath::subf32(s.offsetZ, s.majorRadius));
+			hi[2] = std::max(hi[2], SimMath::addf32(s.offsetZ, s.majorRadius));
+		}
+		else
+		{
+			lo[2] = std::min(lo[2], s.offsetZ);
+			hi[2] = std::max(hi[2], SimMath::addf32(s.height, s.offsetZ));
+		}
+	}
+}
+
+Coord3D ObjectGeometry::boxCentre(const std::vector<Shape> &shapes)
+{
+	// RW 0xAD28E6 .. 0xAD292B: fld lo; fadd hi; fmul 0.5 (RW 0xBD869C); fstp dword
+	float lo[3], hi[3];
+	localBox(shapes, lo, hi);
+	return Coord3D{ SimMath::pc24Mul(SimMath::pc24Add(lo[0], hi[0]), 0.5f), SimMath::pc24Mul(SimMath::pc24Add(lo[1], hi[1]), 0.5f),
+		SimMath::pc24Mul(SimMath::pc24Add(lo[2], hi[2]), 0.5f) };
 }
 
 std::vector<ObjectGeometry::ContactPoint> ObjectGeometry::contactPointsOf(const ThingTemplate &tt)
@@ -287,7 +378,7 @@ bool ObjectGeometry::worldspaceBestContactPoint(const Object &obj, const Coord3D
 	local.x = addf32(addf32(addf32(mulf32(m[6], callerPos.z), mulf32(m[3], callerPos.y)), mulf32(m[0], callerPos.x)), itx);
 	local.y = addf32(addf32(addf32(mulf32(m[7], callerPos.z), mulf32(m[4], callerPos.y)), mulf32(m[1], callerPos.x)), ity);
 	local.z = addf32(addf32(addf32(mulf32(m[8], callerPos.z), mulf32(m[5], callerPos.y)), mulf32(m[2], callerPos.x)), itz);
-	const std::vector<Shape> shapes = shapesOf(*tt);
+	const std::vector<Shape> &shapes = obj.geometryShapes(); // the object's own GeometryInfo (lane MODCOMPAT-MOD1; the points are the template's)
 	Coord3D p;
 	if (!getBestContactPoint(shapes, contactPointsOf(*tt), local, label, preferred, p))
 	{
@@ -310,7 +401,11 @@ bool ObjectGeometry::worldspaceBestContactPoint(const Object &obj, const Coord3D
 
 void ObjectGeometry::fillPathfindGeometry(const ThingTemplate &tt, PathfindGeometry &out)
 {
-	const std::vector<Shape> shapes = shapesOf(tt);
+	fillPathfindGeometry(shapesOf(tt), out);
+}
+
+void ObjectGeometry::fillPathfindGeometry(const std::vector<Shape> &shapes, PathfindGeometry &out)
+{
 	if (shapes.empty())
 	{
 		return;

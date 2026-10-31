@@ -356,11 +356,11 @@ Bytes property(std::uint32_t type, const char *name, const std::vector<std::uint
 
 TEST_CASE("BFME FX shader materials: header and every property type")
 {
-	// header: u8 number, char[32] type name, u32 reserved  (37 bytes)
+	// Header: version, shader name, technique index and three padding bytes (37 bytes).
 	Bytes header;
 	header.u8(3);
 	header.str("normalmapped.fx", 32);
-	header.u32(0);
+	header.u32(0xAABBCC05); // nonzero padding must not become part of the technique index
 	REQUIRE(header.v.size() == 37);
 
 	Bytes texValue;
@@ -394,6 +394,7 @@ TEST_CASE("BFME FX shader materials: header and every property type")
 	REQUIRE(mesh.ShaderMaterials.size() == 1);
 	const MeshShaderMaterialDef &def = mesh.ShaderMaterials[0];
 	CHECK(def.Number == 3);
+	CHECK(def.Technique == 5);
 	CHECK(def.TypeName == "normalmapped.fx");
 	REQUIRE(def.Properties.size() == 7);
 	CHECK(def.Properties[0].Name == "DiffuseTexture");
@@ -433,6 +434,38 @@ TEST_CASE("BFME FX shader materials: header and every property type")
 	MeshModelClass oddMesh;
 	CHECK_FALSE(loadMesh(oddMesh, meshBytes(oddSpec), error));
 	CHECK(error.find("type 99") != std::string::npos);
+}
+
+TEST_CASE("BFME FX shader materials: truncated numeric properties are rejected")
+{
+	Bytes header;
+	header.u8(0).str("normalmapped.fx", 32).u32(0);
+	const std::pair<std::uint32_t, std::size_t> types[] = {
+		{ W3DSHADERMATERIAL_PROPERTY_INT, 4 },
+		{ W3DSHADERMATERIAL_PROPERTY_FLOAT, 4 },
+		{ W3DSHADERMATERIAL_PROPERTY_VECTOR2, 8 },
+		{ W3DSHADERMATERIAL_PROPERTY_VECTOR3, 12 },
+		{ W3DSHADERMATERIAL_PROPERTY_VECTOR4, 16 }
+	};
+	for (const auto &type : types)
+	{
+		for (std::size_t size = 0; size < type.second; ++size)
+		{
+			CAPTURE(type.first);
+			CAPTURE(size);
+			ChunkWriter material;
+			material.chunk(W3D_CHUNK_SHADER_MATERIAL_HEADER, header.v);
+			material.chunk(W3D_CHUNK_SHADER_MATERIAL_PROPERTY, property(type.first, "X", std::vector<std::uint8_t>(size, 0)).v);
+			ChunkWriter materials;
+			materials.wrapper(W3D_CHUNK_SHADER_MATERIAL, material);
+			MeshSpec spec;
+			spec.ExtraChildren.wrapper(W3D_CHUNK_SHADER_MATERIALS, materials);
+			MeshModelClass mesh;
+			std::string error;
+			CHECK_FALSE(loadMesh(mesh, meshBytes(spec), error));
+			CHECK(error.find("malformed W3D_CHUNK_SHADER_MATERIAL_PROPERTY") != std::string::npos);
+		}
+	}
 }
 
 TEST_CASE("AABTree chunks: header counts must match the polygon index and node arrays")

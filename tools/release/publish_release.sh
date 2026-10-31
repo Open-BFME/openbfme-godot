@@ -2,7 +2,7 @@
 # Lane LAUNCH-1: publish a signed release to GitHub Releases, where the launcher finds it (docs/RELEASE.md, "The launcher").
 #
 #   tools/release/publish_release.sh <package dir> [--repo OWNER/NAME] [--notes-file FILE] [--denylist FILE] [--execute [--confirm-tag TAG] [--id-file FILE] [--resume-id ID]]
-#   (tests, dry run only: --key-file FILE instead of launcher/release_key.pub, --allow-untagged)
+#   (tests, dry run only: --key-file FILE instead of launcher/release_keys.pub, --allow-untagged)
 #
 # A DRY RUN by default: it checks everything and prints the commands it would run. Only --execute runs them, and only after the owner's OK
 # (publishing needs it, docs/RELEASE.md) and typing the tag again at the prompt. --confirm-tag TAG replaces the prompt for a run without a
@@ -23,7 +23,9 @@
 # <package dir>: package.sh's output (the game and launcher archives of both platforms, SHA256SUMS-<v>.txt, BUILDINFO-<v>.txt) plus
 # manifest.json (make_manifest.py) and manifest.json.sig (sign_manifest.py on the offline machine). Checks before anything is uploaded:
 #   * manifest.json is exactly make_manifest.py's manifest of these archives (sizes, SHA-256, the SHA256SUMS file);
-#   * manifest.json.sig verifies under launcher/release_key.pub, the key the launcher is built with;
+#   * manifest.json.sig verifies under launcher/release_keys.pub, the keys the launcher is built with (SIGNKMS-1: the raw signature or the
+#     KMS envelope signature under any trusted key, tools/release/release_keys.py); manifest.json.sig2 (the KMS signature the release
+#     workflow writes) is accepted beside or instead of it: at least one of the two, and each one present must verify;
 #   * the manifest's repository is the target repository, its version a tag on the checked-out commit that the archives were built from;
 #   * no private key file is among the files;
 #   * (PUBLISH-2 r2, Sol r1 P1: signing does not make a release private-safe) the release's one privacy gate, autorelease.py privacy-gate:
@@ -40,11 +42,11 @@
 # per platform the package, the game and the launcher in one archive, and in format 2 the launcher archive the launchers published
 # before ONEZIP-1 update themselves from), SHA256SUMS, manifest.json and manifest.json.sig (the launcher reads the last two by name).
 # MACREL-1: with manifest-macos.json in the folder also the Mac package it names and the sidecar with its signature (checked above;
-# docs/RELEASE.md "The Mac package").
+# docs/RELEASE.md "The Mac package"). SIGNKMS-1: each X.sig2 present is uploaded too (release_assets.py --names).
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 GH=${GH:-gh}
-DENY=${OPENBFME_RELEASE_DENYLIST:-}; DIR=""; TARGET="Open-BFME/openbfme-godot"; NOTES=""; EXECUTE=0; PUB="$REPO/launcher/release_key.pub"; TEST_KEY=0; UNTAGGED=0; CONFIRM=""; IDFILE=""; RESUME_ID=""
+DENY=${OPENBFME_RELEASE_DENYLIST:-}; DIR=""; TARGET="Open-BFME/openbfme-godot"; NOTES=""; EXECUTE=0; PUB="$REPO/launcher/release_keys.pub"; TEST_KEY=0; UNTAGGED=0; CONFIRM=""; IDFILE=""; RESUME_ID=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) TARGET=$2; shift 2 ;;
@@ -72,8 +74,23 @@ exec > >(python3 -u "$REPO/tools/release/autorelease.py" redact --denylist "$DEN
 DIR=$(cd "$DIR" && pwd)
 [ $EXECUTE = 1 ] && { [ $TEST_KEY = 1 ] || [ $UNTAGGED = 1 ]; } && fail "--key-file and --allow-untagged are for dry runs only"
 [ -f "$DIR/manifest.json" ] || fail "no manifest.json in $DIR (tools/release/make_manifest.py)"
-[ -f "$DIR/manifest.json.sig" ] || fail "no manifest.json.sig in $DIR (tools/release/sign_manifest.py on the offline machine)"
-[ -f "$PUB" ] || fail "$PUB does not exist: launcher/release_key.pub is not committed, so the launcher has no release key to check this signature with"
+[ -f "$DIR/manifest.json.sig" ] || [ -f "$DIR/manifest.json.sig2" ] \
+  || fail "no manifest.json.sig or manifest.json.sig2 in $DIR (tools/release/sign_manifest.py on the offline machine or in the release workflow's sign job)"
+[ -f "$PUB" ] || fail "$PUB does not exist: launcher/release_keys.pub is not committed, so the launcher has no release keys to check this signature with"
+# RELGH-2: the nightly-only keys (launcher/nightly_keys.pub) the launcher is built with; a signature under one is valid for a nightly's
+# files only (release_keys.verify_scoped), so a stable release signed by a nightly key fails here as it fails in every launcher
+NIGHTLY_PUB="$REPO/launcher/nightly_keys.pub"
+[ -f "$NIGHTLY_PUB" ] || fail "launcher/nightly_keys.pub is not committed (it may list no key, but it must be there)"
+NIGHTLYOPT=(--nightly "$NIGHTLY_PUB")
+# SIGNKMS-1: every signature slot of $1 in the folder (X.sig, X.sig2) verifies under $PUB (raw or envelope, any trusted key)
+verify_slots() {
+  local f=$1 slot
+  for slot in sig sig2; do
+    [ -e "$DIR/$f.$slot" ] || continue
+    python3 "$REPO/tools/release/sign_manifest.py" --verify "$PUB" "${NIGHTLYOPT[@]}" --sig "$DIR/$f.$slot" "$DIR/$f" \
+      || fail "the signature of $f does not verify under $PUB ($f.$slot)"
+  done
+}
 VERSION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$DIR/manifest.json")
 REPO_IN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repo"])' "$DIR/manifest.json")
 CHANNEL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["channel"])' "$DIR/manifest.json")
@@ -83,16 +100,24 @@ COMMIT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit
   || fail "--confirm-tag is for pre-releases and the alpha-stage releases (v0.4.5 to below v1.0.0) only: $VERSION is a stable release, confirm it at the prompt (the owner's OK)"
 [ "$REPO_IN" = "$TARGET" ] || fail "the manifest is for $REPO_IN, the target is $TARGET"
 python3 "$REPO/tools/release/make_manifest.py" --check "$DIR" --version "$VERSION" || fail "manifest.json is not the manifest of these archives"
-python3 "$REPO/tools/release/sign_manifest.py" --verify "$PUB" "$DIR/manifest.json" || fail "the signature does not verify under $PUB"
+verify_slots manifest.json
 # MACREL-1: the separately signed Mac manifest (the macOS launchers read manifest-macos.json only; the others never see it): both files or
 # neither; signed by the same key; exactly make_macos_manifest.py's manifest of the folder's Mac package (or the no-entry one), the Mac
-# launcher inside it built with launcher/release_key.pub and this repository, the package in the checksum file
-if [ -e "$DIR/manifest-macos.json" ] || [ -e "$DIR/manifest-macos.json.sig" ]; then
-  [ -f "$DIR/manifest-macos.json" ] && [ -f "$DIR/manifest-macos.json.sig" ] || fail "manifest-macos.json and manifest-macos.json.sig come together"
-  python3 "$REPO/tools/release/sign_manifest.py" --verify "$PUB" "$DIR/manifest-macos.json" || fail "the signature of manifest-macos.json does not verify under $PUB"
-  # MACPLAY-1: the package's payload.json is sealed with the manifests' key ($PUB)
-  python3 "$REPO/tools/release/make_macos_manifest.py" --check "$DIR" --release-key-file "$REPO/launcher/release_key.pub" --seal-key-file "$PUB" \
-    || fail "manifest-macos.json is not the manifest of the folder's Mac package"
+# launcher inside it built with launcher/release_keys.pub and this repository, the package in the checksum file
+if [ -e "$DIR/manifest-macos.json" ] || [ -e "$DIR/manifest-macos.json.sig" ] || [ -e "$DIR/manifest-macos.json.sig2" ]; then
+  # SIGNKMS-1: the sidecar carries the same signature slots as manifest.json
+  for slot in sig sig2; do
+    a=0; b=0; [ -e "$DIR/manifest.json.$slot" ] && a=1; [ -e "$DIR/manifest-macos.json.$slot" ] && b=1
+    if [ $a != $b ]; then
+      fail "manifest-macos.json and manifest-macos.json.$slot come together (the same signature slots as manifest.json)"
+    fi
+  done
+  [ -f "$DIR/manifest-macos.json" ] || fail "manifest-macos.json and manifest-macos.json.sig come together"
+  verify_slots manifest-macos.json
+  # MACPLAY-1: the package's payload.json is sealed with a trusted key ($PUB); SIGNKMS-1: the Mac launcher's build_info.json carries
+  # launcher/release_keys.pub (release_keys, release_key its first entry)
+  python3 "$REPO/tools/release/make_macos_manifest.py" --check "$DIR" --release-key-file "$REPO/launcher/release_keys.pub" --seal-key-file "$PUB" \
+    --nightly-key-file "$NIGHTLY_PUB" || fail "manifest-macos.json is not the manifest of the folder's Mac package"
 elif compgen -G "$DIR/openbfme-*-macos-*" >/dev/null; then
   fail "a Mac package is in $DIR without manifest-macos.json"
 fi

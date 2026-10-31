@@ -437,6 +437,7 @@ inline const char *stateName(ButtonState s)
 	case ButtonState::CantAfford: return "cant-afford";
 	case ButtonState::NotReady: return "not-ready";
 	case ButtonState::Active: return "active";
+	case ButtonState::Purchased: return "purchased";
 	}
 	return "?";
 }

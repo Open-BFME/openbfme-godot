@@ -9,6 +9,7 @@
 
 #include "GameClient/GUI/AptMessageBox.h"
 #include "GameClient/GUI/WindowManager.h"
+#include "GameClient/GUI/MenuNavigator.h"
 #include "Libraries/Source/Apt/Apt.h"
 #include "Libraries/Source/Apt/AptCharacterInst.h"
 #include "Libraries/Source/Apt/AptRenderList.h"
@@ -26,7 +27,10 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
+#include <sstream>
 #include <string>
+#include <vector>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -108,6 +112,56 @@ bool pressChatTab(WindowManager &wm, int level)
 }
 } // namespace
 
+TEST_CASE("shellfb1: the LAN browser is not a host and retains preview controls while host setup has the map picker")
+{
+	OPENBFME_REQUIRE_START(s);
+	const ProfileIdentity profile = ProfileIdentity::compute({}, RandomAlgorithm::ZH_CarryChain, {});
+	auto lan = testLan(profile, u"Host", s->world->playerTemplates().getPlayerTemplateCount(), (int)s->settings.multiplayerColors.size());
+	starttest::ShellFx fx(*s, 11);
+	fx.environment.lan = lan.get();
+	fx.shell->push("LanLobby.apt");
+	REQUIRE(fx.shell->errors().empty());
+	auto *screen = dynamic_cast<AptLanLobby *>(fx.shell->top());
+	REQUIRE(screen);
+	auto run = [&](int state) {
+		for (int i = 0; i < 300; ++i)
+		{
+			fx.tick(1);
+			if (screen->state() == state)
+			{
+				fx.tick(60);
+				return true;
+			}
+		}
+		return false;
+	};
+	auto hostMode = [&] {
+		std::string value;
+		CHECK(fx.wm->getExtern("MpGameSetup::HostMode", value) == AptExternResult::Value);
+		return value;
+	};
+	REQUIRE(run(1));
+	CHECK(hostMode() == "0");
+	CHECK(fx.wm->setExtern("MpGameSetup::HostMode", "1"));
+	CHECK(hostMode() == "0");
+	REQUIRE(screen->mapListWindow());
+	CHECK(screen->mapListWindow()->winIsHidden());
+	CHECK(screen->mapInfoWindow() != nullptr);
+	REQUIRE(fx.wm->invokeCallback("AptLanLobby::OnCreateGameBttn", ""));
+	REQUIRE(run(4));
+	CHECK(hostMode() == "1");
+	CHECK(fx.wm->setExtern("MpGameSetup::HostMode", "false"));
+	CHECK(hostMode() == "1");
+	REQUIRE(screen->mapListWindow());
+	CHECK_FALSE(screen->mapListWindow()->winIsHidden());
+	REQUIRE(fx.wm->invokeCallback("AptLanLobby::OnCancelBttn", ""));
+	REQUIRE(run(1));
+	CHECK(hostMode() == "0");
+	REQUIRE(screen->mapListWindow());
+	CHECK(screen->mapListWindow()->winIsHidden());
+	CHECK(screen->mapInfoWindow() != nullptr);
+}
+
 TEST_CASE("mp2 retail: LanLobby.apt hosts and joins a LAN game: the list, Join, a player's own options through the host, chat, Kick and rejoin, Accept, "
 		  "Play Game hands every player the start")
 {
@@ -154,6 +208,48 @@ TEST_CASE("mp2 retail: LanLobby.apt hosts and joins a LAN game: the list, Join, 
 	CHECK(host.wm->invokeCallback("AptLanLobby::OnCreateGameBttn", ""));
 	REQUIRE(run([&] { return hs->state() == 4; }));
 	CHECK(hostLan->amIHost());
+	host.tick(60);
+	MenuNavigator controller(*host.wm);
+	controller.setMenu(hs->level(), hs);
+	REQUIRE(controller.supportsControllerSections());
+	controller.setControllerSections(true);
+	for (int section : { 2, 0, 1 })
+	{
+		controller.switchControllerSection(1);
+		INFO("controller section ", section);
+		CHECK(controller.controllerSection() == section);
+		REQUIRE_FALSE(controller.targets().empty());
+		bool representative = false;
+		for (const auto &target : controller.targets())
+			representative |= target.id.find(section == 2 ? ".MapList" : section == 0 ? ".PlayGame." : ".PlayerList.") != std::string::npos;
+		CHECK(representative);
+	}
+	// RB cycles Map -> Rules -> Chat -> Map; LB wraps back through Chat.
+	const char *activeTabs[] = { "RulesTab", "ChatTab", "MapTab", "ChatTab", "RulesTab", "MapTab" };
+	int tabStep = 0;
+	for (MenuNavKey key : { MenuNavKey::PageNext, MenuNavKey::PageNext, MenuNavKey::PageNext,
+		MenuNavKey::PagePrevious, MenuNavKey::PagePrevious, MenuNavKey::PagePrevious })
+	{
+		REQUIRE(controller.key(key));
+		host.tick(60);
+		CHECK(controller.controllerSection() == 2);
+		for (const char *name : { "MapTab", "RulesTab", "ChatTab" })
+		{
+			bool available = false;
+			for (const auto &target : controller.targets()) available |= target.id.find(std::string(".TabButtons.") + name + ".") != std::string::npos;
+			CHECK(available == (std::string(name) != activeTabs[tabStep]));
+		}
+		++tabStep;
+		if (std::string(activeTabs[tabStep - 1]) == "ChatTab")
+		{
+			REQUIRE(hs->chatEntryWindow());
+			bool chatInSection = false;
+			for (const auto &target : controller.targets()) chatInSection |= target.window == hs->chatEntryWindow();
+			CHECK(chatInSection);
+		}
+	}
+	controller.setControllerSections(false);
+
 	// the joiner's list shows it (columns GameName, Players, Map, Ping, Status)
 	REQUIRE(run([&] { return js->gameRows().size() == 1; }));
 	CHECK(js->gameRows()[0].rfind("Host|1/8|", 0) == 0);
@@ -173,6 +269,11 @@ TEST_CASE("mp2 retail: LanLobby.apt hosts and joins a LAN game: the list, Join, 
 	CHECK(joinLan->localSlot() == 1);
 	REQUIRE(run([&] { return hs->setup()->info().slots[1].name == u"Joiner"; }));
 	CHECK(js->setup()->info().slots[0].name == u"Host");
+	join.tick(60);
+	MenuNavigator guestController(*join.wm);
+	guestController.setMenu(js->level(), js);
+	CHECK(guestController.supportsControllerSections());
+
 	// the joiner's own faction through its combo: a request the host applies and re-broadcasts
 	// (DoJoinGame plays the lobby out and the setup in: its gadgets come up a few frames later)
 	REQUIRE(run([&] {
@@ -470,4 +571,151 @@ TEST_CASE("uberjoin1 retail: the LAN list tags an Uber game; Join from Normal as
 	CHECK(js->boxesShown()[3] == "mode-switch-failed|The performance mode could not be switched: " + refuse);
 	CHECK(!joinLan->currentGame());
 	CHECK(joinLan->profile().simulationProfile() == SimulationProfile::Faithful);
+}
+
+namespace
+{
+void collectButtons(AptCharacterInst *c, std::vector<AptButtonInst *> &out)
+{
+	if (!c)
+	{
+		return;
+	}
+	if (AptButtonInst *b = c->asButton())
+	{
+		if (b->globallyVisible())
+		{
+			out.push_back(b);
+		}
+		return;
+	}
+	if (AptSpriteInst *sp = c->asSprite())
+	{
+		for (AptCharacterInst *k : sp->children())
+		{
+			collectButtons(k, out);
+		}
+	}
+}
+
+// presses the visible button whose path holds `part` when the pointer at its centre reaches it (a player's click); false: none reachable
+bool pressReachable(starttest::ShellFx &fx, AptLanLobby &screen, const std::string &part)
+{
+	std::vector<AptButtonInst *> all;
+	collectButtons(fx.wm->apt().level(screen.level()), all);
+	for (AptButtonInst *b : all)
+	{
+		float x0, y0, x1, y1, x, y;
+		if (b->targetPath().find(part) == std::string::npos || !b->contentBounds(x0, y0, x1, y1))
+		{
+			continue;
+		}
+		b->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, x, y);
+		AptButtonInst *hit = fx.wm->apt().input().hitTestButtons(x, y);
+		const std::string clip = b->targetPath().substr(0, b->targetPath().rfind('.'));
+		if (hit && (hit == b || hit->targetPath().compare(0, clip.size(), clip) == 0))
+		{
+			starttest::clickAt(fx, x, y);
+			return true;
+		}
+	}
+	return false;
+}
+
+// the shown rule rows (the movie's RuleComboBox / RuleCheckBox placeholders) that are not the screen's filed rows or reach into the player list
+std::string lanRulesProblems(starttest::ShellFx &fx, AptLanLobby &screen)
+{
+	std::set<const GameWindow *> filed;
+	for (int i = 0; i < 16; ++i)
+	{
+		filed.insert(screen.ruleComboWindow(i));
+		filed.insert(screen.ruleCheckWindow(i));
+	}
+	GameWindow *firstRow = screen.slotGadget(0, "Player");
+	if (!firstRow)
+	{
+		return "no player list";
+	}
+	int lx = 0, listTop = 0;
+	firstRow->winGetScreenPosition(&lx, &listTop);
+	std::ostringstream out;
+	int shown = 0;
+	for (GameWindow *w : fx.wm->gadgetLayer()->gadgets().allWindows())
+	{
+		const std::string &n = w->aptInstanceName();
+		bool visible = true;
+		for (GameWindow *p = w; p; p = p->winGetParent())
+		{
+			visible = visible && !p->winIsHidden();
+		}
+		if ((n.rfind("RuleComboBox", 0) != 0 && n.rfind("RuleCheckBox", 0) != 0) || !visible)
+		{
+			continue;
+		}
+		++shown;
+		int x = 0, y = 0, ww = 0, hh = 0;
+		w->winGetScreenPosition(&x, &y);
+		w->winGetSize(&ww, &hh);
+		if (!filed.count(w))
+		{
+			out << "an unfiled " << n << " is shown at (" << x << "," << y << "); ";
+		}
+		if (y + hh > listTop)
+		{
+			out << n << " at (" << x << "," << y << ") is over the player list (its top " << listTop << "); ";
+		}
+	}
+	return shown == 0 ? std::string("no rule row is shown") : out.str();
+}
+} // namespace
+
+TEST_CASE("rulesov1 retail: the LAN game's RULES tab shows one set of rule rows, above the player list, after the LAN list's own RULES tab")
+{
+	OPENBFME_REQUIRE_START(s);
+	MountedArchive a;
+	a.install = "rotwk";
+	a.canonicalPath = "test.big";
+	a.size = 1;
+	a.md5 = "0123456789abcdef0123456789abcdef";
+	const ProfileIdentity profile = ProfileIdentity::compute({ a }, RandomAlgorithm::ZH_CarryChain, {});
+	std::unique_ptr<LANAPI> hostLan = testLan(profile, u"Host", s->world->playerTemplates().getPlayerTemplateCount(), (int)s->settings.multiplayerColors.size());
+	starttest::ShellFx host(*s, 21);
+	host.environment.lan = hostLan.get();
+	host.environment.services = &host.services;
+	host.shell->push("LanLobby.apt");
+	REQUIRE(host.shell->errors().empty());
+	AptLanLobby *hs = dynamic_cast<AptLanLobby *>(host.shell->top());
+	REQUIRE(hs);
+	auto run = [&](const std::function<bool()> &done, int limit = 300) {
+		for (int i = 0; i < limit; ++i)
+		{
+			host.tick(1);
+			NetSleepMilliseconds(2);
+			if (done())
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+	REQUIRE(run([&] { return hs->state() == 1; }));
+	// the LAN list's own MAP / RULES panel: its RULES tab when the page has one
+	const bool listRules = run([&] { return pressReachable(host, *hs, "TabButtons.RulesTab"); }, 120);
+	MESSAGE("the LAN list's RULES tab " << (listRules ? "pressed" : "not on the page"));
+	host.tick(120);
+	CHECK(host.wm->invokeCallback("AptLanLobby::OnCreateGameBttn", ""));
+	REQUIRE(run([&] { return hs->state() == 4; }));
+	host.tick(60);
+	REQUIRE(run([&] { return pressReachable(host, *hs, "TabButtons.RulesTab"); }));
+	REQUIRE(run([&] { return hs->rulesPopulated() && hs->slotGadget(0, "Player") != nullptr; }));
+	host.tick(120);
+	CHECK_MESSAGE(lanRulesProblems(host, *hs).empty(), lanRulesProblems(host, *hs));
+	for (const char *tab : { "TabButtons.MapTab", "TabButtons.ChatTab", "TabButtons.RulesTab" })
+	{
+		REQUIRE_MESSAGE(run([&] { return pressReachable(host, *hs, tab); }), tab);
+		host.tick(60);
+	}
+	REQUIRE(run([&] { return hs->rulesPopulated(); }));
+	host.tick(60);
+	CHECK_MESSAGE(lanRulesProblems(host, *hs).empty(), lanRulesProblems(host, *hs));
 }

@@ -36,7 +36,9 @@ const MAX_ANSWER := 4096
 const VERSION_RE := "^v(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})(-(alpha|nightly|preview)\\.(0|[1-9][0-9]{0,8}))?$"
 
 var dir := ""
-var key := PackedByteArray()   # tests give their own key and repository (the packaged game: release_trust.gd)
+var keys: Array = []           # the trusted release keys (lane SIGNKMS-1); tests give their own keys and repository (the packaged game: release_trust.gd)
+var nightly_keys: Array = []   # lane RELGH-2: keys trusted for nightly releases only (release_trust.gd NIGHTLY_KEYS)
+var keys_error := ""           # why a packaged game has no keys (a malformed release_trust.gd), named in begin()
 var repo := ""
 var launcher_dir := ""         # the launcher's data folder (tests: their own)
 var user_args := PackedStringArray()
@@ -46,7 +48,15 @@ var _status_seen := ""
 
 
 func _init() -> void:
-	key = Trust.RELEASE_KEY.hex_decode()
+	var trusted := LauncherCheck.trusted_keys(Trust.RELEASE_KEY, Trust.RELEASE_KEYS)
+	keys = trusted.keys
+	keys_error = trusted.error
+	if keys_error == "":
+		var nightly := LauncherCheck.nightly_keys(Trust.NIGHTLY_KEYS, keys)
+		nightly_keys = nightly.keys
+		if not nightly.ok:
+			keys = []   # lane RELGH-2: a malformed nightly list is an error, never a guess: no keys at all
+			keys_error = nightly.error
 	repo = Trust.REPO
 	launcher_dir = OS.get_data_dir().path_join("OpenBFMELauncher")
 
@@ -86,7 +96,9 @@ static func why_not(scripted: bool) -> String:
 func begin(args: PackedStringArray, folder: String = "") -> String:
 	_start = Time.get_ticks_msec()
 	user_args = args
-	var why := LauncherCheck.check(folder if folder != "" else OS.get_executable_path().get_base_dir(), key, repo)
+	var why := LauncherCheck.check(folder if folder != "" else OS.get_executable_path().get_base_dir(), keys, repo, nightly_keys)
+	if why != "" and keys.is_empty() and keys_error != "":
+		why = keys_error
 	if why != "":
 		_done = true
 		return "the launcher beside the game is not started: " + why

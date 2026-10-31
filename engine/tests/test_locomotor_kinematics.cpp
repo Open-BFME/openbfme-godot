@@ -11,6 +11,7 @@
 #include "GameLogic/Locomotor.h"
 #include "GameLogic/WeaponState.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <set>
@@ -471,6 +472,33 @@ TEST_CASE("rotateTowardsPosition: the turn per frame is capped at 2*pi / TurnTim
 	CHECK(nearly(l2.speed(), 11.0 / 3.0, 1e-4));
 }
 
+TEST_CASE("rotateTowardsPosition: a GIANT_BIRD turns its transform about the pivot, capped at its turn rate (RW 0x5E4FD0)")
+{
+	// lane TAKEOVER-1: the flyers' face turn (GiantBirdAIUpdate goal 2 -> RW 0x5E98D6 -> RW 0x5E6810). Pivot 0.5 x radius 10 = 5 ahead of the bird
+	LocoFixture f("  TurnTime = 2000\n  Appearance = GIANT_BIRD\n  TurnPivotOffset = 0.5\n  TurnThreshold = 10\n");
+	Locomotor loco(f.tmpl());
+	MockHost h;
+	h.boundingRadius = 10.0f;
+	h.place(0, 0, 0);
+	const double rate = 2.0 * kPi / 10.0;
+	loco.locomotorMoveTowardsAngle(h, (float)(kPi / 2.0));
+	CHECK(nearly(h.angle, rate, 2e-4));
+	CHECK(nearly(h.pos.x, 5.0 - 5.0 * std::cos(rate), 1e-4)); // the bird swings about (5, 0)
+	CHECK(nearly(h.pos.y, -5.0 * std::sin(rate), 1e-4));
+	CHECK(loco.turnDirection() == 1);
+	// within 0.1 of the pivot in x and y: nothing turns
+	MockHost h2;
+	h2.boundingRadius = 10.0f;
+	h2.place(0, 0, 0);
+	Locomotor l2(f.tmpl());
+	l2.rotateTowardsWrapper(h2, Coord3D{ 5.05f, 0.05f, 0 }, nullptr);
+	const LocomotorMatrix held = h2.getTransform();
+	for (int r = 0; r < 3; ++r)
+		for (int c = 0; c < 4; ++c)
+			CHECK(l2.matrix().m[r][c] == held.m[r][c]);
+	CHECK(l2.turnDirection() == 0);
+}
+
 TEST_CASE("Legs: HUGE legs slow down while turning (RW 0x5E66E1), TWO_LEGS do not")
 {
 	LocoFixture two(std::string(kHuman) + "  TurnTime = 2000\n");
@@ -714,7 +742,7 @@ TEST_CASE("dispatcher: a stationary-cap frame, status refusals, appearance table
 		CHECK(l3.speed() == 0.0f);
 	}
 	{
-		LocoFixture z(std::string(kHuman) + "  ZAxisBehavior = FIXED_SURFACE_RELATIVE_HEIGHT\n"); // lane SHIP-1 ported SURFACE_RELATIVE_HEIGHT
+		LocoFixture z(std::string(kHuman) + "  ZAxisBehavior = FIXED_RELATIVE_TO_GROUND_AND_BUILDINGS\n");
 		Locomotor loco(z.tmpl());
 		MockHost h;
 		h.place(0, 0, 0);
@@ -822,8 +850,8 @@ TEST_CASE("Locomotor stops S-081 and S-084 are reported and pinned")
 	CHECK(stops[0].find("x87 and SSE") != std::string::npos);
 	CHECK(stops[1].rfind("S-084:", 0) == 0);
 	CHECK(stops[1].find("HOVER") == std::string::npos); // lane SHIP-1: the HOVER and SHIP movers are ported
-	CHECK(stops[1].find("FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT and ABSOLUTE_HEIGHT (the last three: lane SHIP-1;") != std::string::npos);
-	CHECK(stops[1].find("GIANT_BIRD movers are GiantBirdAIUpdate's") != std::string::npos); // lane FLY-1
+	CHECK(stops[1].find("FIXED_SURFACE_RELATIVE_HEIGHT and FIXED_ABSOLUTE_HEIGHT (the last two: RW 0x5E78DB;") != std::string::npos);
+	CHECK(stops[1].find("GIANT_BIRD") == std::string::npos); // lane TAKEOVER-1: rotateTowardsPosition's GIANT_BIRD branch is ported
 	CHECK(stops[1].find("ScalesWalls") != std::string::npos);
 	CHECK(stops[2].rfind("S-1750:", 0) == 0);
 	CHECK(stops[2].find("RW 0x5E7CC7") != std::string::npos);
@@ -1057,6 +1085,46 @@ TEST_CASE("HOVER mover: the OTHER mover, then OVER_WATER follows the water under
 	CHECK((loco.flags() & LOCOMOTOR_FLAG_OVER_WATER) == 0);
 }
 
+TEST_CASE("FIXED_SURFACE_RELATIVE_HEIGHT / FIXED_ABSOLUTE_HEIGHT: snap to preferred height above water or ground, or absolute height (RW 0x5E78DB)")
+{
+	LocoFixture ground("  Surfaces = AIR\n  PreferredHeight = 325\n  PreferredHeightDamping = 0.5\n"
+					   "  ZAxisBehavior = FIXED_SURFACE_RELATIVE_HEIGHT\n  Appearance = WINGS\n");
+	MockHost h;
+	h.place(0, 0, 0);
+	h.groundZ = 12.0f;
+	Locomotor lg(ground.tmpl());
+	lg.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+	CHECK(h.pos.z == 337.0f);
+	CHECK(h.pending.z == 674.0f);
+	CHECK(h.mc.count(mcIndex("CLIMBING")) == 0);
+	MockHost hw;
+	hw.underwater = true;
+	hw.waterZ = 25.0f;
+	hw.groundZ = 12.0f;
+	Locomotor lw(ground.tmpl());
+	lw.locomotorMoveTowardsPosition(hw, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+	CHECK(hw.pos.z == 350.0f);
+	CHECK(hw.pending.z == 700.0f);
+
+	LocoFixture absolute("  Surfaces = AIR\n  PreferredHeight = 325\n  ZAxisBehavior = FIXED_ABSOLUTE_HEIGHT\n  Appearance = WINGS\n");
+	MockHost ha;
+	ha.groundZ = 12.0f;
+	ha.underwater = true;
+	ha.waterZ = 25.0f;
+	ha.pos.z = 50.0f;
+	ha.syncTransform();
+	Locomotor la(absolute.tmpl());
+	la.locomotorMoveTowardsPosition(ha, Coord3D{ 100, 0, 999 }, 100.0f, 11.0f);
+	CHECK(ha.pos.z == 325.0f);
+	CHECK(ha.pending.z == 600.0f); // 2 * 325 - 50, regardless of goal z or water height
+	CHECK(la.unverified() == std::vector<std::string>{ Locomotor::allStops()[0] }); // only existing numeric parity stop, not S-084
+	MockHost idle;
+	Locomotor parked(absolute.tmpl());
+	CHECK(parked.locomotorMaintainCurrentPosition(idle));
+	CHECK(idle.pos.z == 325.0f);
+	CHECK(idle.pending.z == 650.0f);
+}
+
 TEST_CASE("SURFACE_RELATIVE_HEIGHT / ABSOLUTE_HEIGHT: a tenth of the damped way to the preferred height above the surface each frame; CLIMBING above 0.5 (RW 0x5E7AF6)")
 {
 	// CrebainLocomotor's height fields: PreferredHeight 50, PreferredAttackHeight 25 (no CirclingRadius: the attack height never applies), damping 1
@@ -1166,4 +1234,53 @@ TEST_CASE("calcPreferredHeight: the attack-height states 0 -> 1 -> 2 -> 0, and t
 	CHECK(loco.calcPreferredHeight(h, goal, 0.0f) == 50.0f);
 	CHECK(loco.attackHeightState() == 0);
 	CHECK(h.statusCalls == 2);
+}
+
+TEST_CASE("ambient flight: idle wings circle in both directions and climb without moving perched birds")
+{
+	for (int direction : { -1, 1 })
+	{
+		const std::string ini = "  Surfaces = AIR\n  Appearance = WINGS\n  MinSpeed = 50%\n  TurnTime = 1500\n  Acceleration = 1000\n  Braking = 1000\n  PreferredHeight = 81\n  ZAxisBehavior = SURFACE_RELATIVE_HEIGHT\n  CirclingRadius = " + std::to_string(direction * 161) + "\n";
+		LocoFixture f(ini.c_str());
+		Locomotor loco(f.tmpl());
+		MockHost h;
+		h.setSpeed = 150;
+		h.pos.z = 81;
+		h.syncTransform();
+		float swept = 0;
+		float previous = 0;
+		for (int frame = 0; frame < 180; ++frame)
+		{
+			CHECK(loco.locomotorMaintainCurrentPosition(h));
+			const float a = std::atan2(h.pos.y, h.pos.x);
+			if (frame > 10)
+			{
+				float step = a - previous;
+				if (step > kPi) step -= 2 * kPi;
+				if (step < -kPi) step += 2 * kPi;
+				swept += step;
+			}
+			previous = a;
+			CHECK(h.pos.z == 81);
+		}
+		// tolerance: 36 seconds at 75 world units/sec must traverse more than one full orbit of radius 161.
+		CHECK(std::abs(swept) > 2 * kPi);
+		// tolerance: the sign of accumulated angular travel selects the authored circling direction.
+		CHECK((swept < 0) == (direction > 0));
+		CHECK(std::find(loco.unverified().begin(), loco.unverified().end(), Locomotor::allStops()[2]) == loco.unverified().end());
+		MockHost grounded;
+		Locomotor climb(f.tmpl());
+		CHECK(climb.locomotorMaintainCurrentPosition(grounded));
+		CHECK(grounded.pos.x == 0);
+		CHECK(grounded.pos.y == 0);
+		// tolerance: the held-position height worker must start climbing from terrain on its first update.
+		CHECK(grounded.pos.z > 0);
+	}
+	LocoFixture perched("  Surfaces = AIR\n  Appearance = WINGS\n  PreferredHeight = 0\n  ZAxisBehavior = SURFACE_RELATIVE_HEIGHT\n");
+	MockHost h;
+	Locomotor idle(perched.tmpl());
+	for (int frame = 0; frame < 30; ++frame) idle.locomotorMaintainCurrentPosition(h);
+	CHECK(h.pos.x == 0);
+	CHECK(h.pos.y == 0);
+	CHECK(h.pos.z == 0);
 }

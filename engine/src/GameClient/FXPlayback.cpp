@@ -100,7 +100,8 @@ public:
 	void cursorParticles(const std::string &name, unsigned, const GameClientRandomVariable &, const GameClientRandomVariable &, const GameClientRandomVariable &,
 		const GameClientRandomVariable &) override { note("cursorParticles", name, nullptr); }
 	void laser(const std::string &name, const Coord3D *a, const Coord3D *, bool, const FXObject *, const FXObject *) override { note("laser", name, a); }
-	int weather() const override { return 0; }
+	// lane WEATHER-1: the live world's map weather; the flat test world of FX-1 is NORMAL
+	int weather() const override { return m_owner.m_world ? m_owner.m_world->mapWeather() : 0; }
 
 private:
 	void note(const char *kind, const std::string &detail, const Coord3D *pos)

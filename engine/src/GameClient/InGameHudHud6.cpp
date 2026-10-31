@@ -453,6 +453,22 @@ void InGameHud::updateHud6(ObjectID context, const std::string &faction, double 
 	{
 		have = hoveredAptButton(p, hovered);
 	}
+	// lane CAMPUI-1: a stance item of the toggle's radial: its help (RW 0x96F33E) is the toggle's TextLabel / DescriptLabel at the item stance's index in the
+	// toggle's Stances (RW 0x96F2DA), made as a command button help with no cost (RW 0x975070 with empty cost / command point texts); provider kind 5, keyed
+	// by the stance. INFERENCE: its delay is the arc's (the item provider's vslot 2 was not read)
+	AptPalantir::StanceItemHit stanceItem;
+	if (!have && m_wm && m_palantirRef)
+	{
+		AptButtonInst *button = m_wm->apt().input().currentButton();
+		if (button && m_palantirRef->stanceItemAt(button->targetPath(), stanceItem))
+		{
+			p.bar = 5;
+			p.slot = stanceItem.slot;
+			p.button = stanceItem.toggle;
+			p.object = (std::uint32_t)stanceItem.stance;
+			have = true;
+		}
+	}
 	ObjectID unit = INVALID_ID;
 	if (!have)
 	{
@@ -479,6 +495,20 @@ void InGameHud::updateHud6(ObjectID context, const std::string &faction, double 
 				}
 				const UnitHelpSource::Text u = UnitHelpSource::compose(*o, text, logic, local);
 				return std::make_shared<CommandButtonHelp>(CommandButtonHelp::simple(u.title, u.text, u.unported));
+			}
+			if (p.bar == 5)
+			{
+				CommandButtonHelp::Text t;
+				const size_t k = stanceItem.listIndex < 0 ? (size_t)-1 : (size_t)stanceItem.listIndex;
+				const CommandButton &toggle = *stanceItem.toggle;
+				// RW 0x75CE90 / 0x75CEFC: the label of the slot (an index past the lists, or a stance not in them, gives the missing-label text)
+				t.name = fetchOrMissing(text, k < toggle.m_textLabel.size() ? toggle.m_textLabel[k] : std::string());
+				t.description = fetchOrMissing(text, k < toggle.m_descriptLabel.size() ? toggle.m_descriptLabel[k] : std::string());
+				if (k >= toggle.m_textLabel.size() || k >= toggle.m_descriptLabel.size())
+				{
+					t.unported.push_back("stance " + std::to_string(stanceItem.stance) + " has no label slot in " + toggle.m_name);
+				}
+				return std::make_shared<CommandButtonHelp>(t, text, imageSizeOf, (void *)images);
 			}
 			CommandButtonHelp::Text t = CommandButtonHelp::compose(hovered, text, logic, player, local, selection, faction, &selected);
 			return std::make_shared<CommandButtonHelp>(t, text, imageSizeOf, (void *)images);

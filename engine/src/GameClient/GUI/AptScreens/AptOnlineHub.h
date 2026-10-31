@@ -12,7 +12,7 @@
 //     AptOnlineQuickMatch::InitGadgets (BFME2 0x5BA94A): OnlineQuickMatch::Color (the colour list, BFME2 0x5BA803: AptWhiteBox entries tinted by
 //     the multiplayer colours), ::NumOfPlayers, ::Side, ::ConnectionSpeed, ::Ladder (each combo emptied and kept);
 //   * the keyboard (BFME2 0x5BAECA): Escape while searching calls the movie's CallChild("EscapeKeyPressed") and Cancel;
-//   * the peer messages (BFME2 AptOnlineQuickMatchOptions.cpp): a match found calls CallChild("DoOpenFound") then the match handler (BFME2
+//   * the peer messages (BFME2 AptOnlineQuickMatchOptions_OnMatched.cpp): a match found calls CallChild("DoOpenFound") then the match handler (BFME2
 //     0x5BAF35: every player's slot from the matchmaker's answer: colour, faction, team i / players-per-team); a failure CallChild("CloseFoundAndReset");
 //     status lines QM:WORKING / QM:POOLSIZE;
 //   * the movie (OnlineQuickMatch.apt): JOIN GAME opens the Searching panel (DoOpenSearch: components disabled), its Cancel / WidenSearch buttons call
@@ -49,6 +49,9 @@ class AptOnlineShell;
 class AptOnlineHub
 {
 public:
+	// lane ONLINEMENU-1: the shell's decorator draws the TOURNAMENT panel through these (the shell owns the layer's decorator)
+	void drawPanel(GadgetDrawList &out) const { decorate(out); }
+	bool decorating() const { return m_qmUp; } ///< the TOURNAMENT page's panel is up
 	static constexpr std::uint64_t kRoomTimeoutMs = 90 * 1000; ///< a matched room must start within this long
 	static constexpr std::uint64_t kJoinRetryMs = 2000;        ///< a joiner asks for the room again while the host has not made it
 	// the tournaments panel on the page's 1024 x 768 stage (the empty right half of OnlineQuickMatch.swf: its left frame ends at x 528)

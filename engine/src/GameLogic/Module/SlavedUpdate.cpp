@@ -124,6 +124,10 @@ void SlavedUpdateModuleData::buildFieldParse(MultiIniFieldParse &p)
 
 SlavedUpdateInterface *SlavedUpdateInterface::of(Object &obj)
 {
+	if (obj.moduleLookupsCached())
+	{
+		return obj.slavedModule(); // lane PERF-HD: kept by Object::rebuildCollideModules (the same first module)
+	}
 	for (const std::unique_ptr<BehaviorModule> &m : obj.modules())
 	{
 		if (SlavedUpdateInterface *s = dynamic_cast<SlavedUpdateInterface *>(m.get()))
@@ -329,7 +333,7 @@ UpdateSleepTime SlavedUpdate::update()
 		if (!slaver || slaver->isEffectivelyDead())
 		{
 			// the player's RW 0x79F486 (+ 0x3DC) is not identified (S-1426)
-			obj->kill(0); // RW 0x698EC3(8 = UNRESISTABLE, 0 = NORMAL)
+			obj->kill(DAMAGE_UNRESISTABLE, 0); // RW 0x8A5DA6: kill(8 = UNRESISTABLE, 0 = NORMAL)
 			++stats().mastersDeathKills;
 			return UPDATE_SLEEP_FOREVER;
 		}

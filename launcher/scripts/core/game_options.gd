@@ -4,6 +4,7 @@
 ## left as it is.
 ##   OpenBFMEFreeCamera = yes   the free camera: the zoom-out limit is the map's extent instead of retail's (lane PLAY-1, game.gd _free_camera_setting)
 extends RefCounted
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const FREE_CAMERA_KEY := "OpenBFMEFreeCamera"
 
@@ -60,12 +61,16 @@ static func set_value(key: String, value: String, path: String = "") -> String:
 		out.append("%s = %s" % [key, value])
 	var err := DirAccess.make_dir_recursive_absolute(p.get_base_dir())
 	if err != OK and not DirAccess.dir_exists_absolute(p.get_base_dir()):
-		return "cannot create %s (%s)" % [p.get_base_dir(), error_string(err)]
+		return L10n.t("launcher.game_options.cannot_create", {"path": p.get_base_dir(), "reason": error_string(err)})
 	var f := FileAccess.open(p, FileAccess.WRITE)
 	if f == null:
-		return "cannot write %s (%s)" % [p, error_string(FileAccess.get_open_error())]
-	f.store_string("\n".join(out) + "\n")
+		return L10n.t("launcher.game_options.cannot_write", {"path": p, "reason": error_string(FileAccess.get_open_error())})
+	var stored: bool = f.store_string("\n".join(out) + "\n")
+	f.flush()
+	err = f.get_error()
 	f.close()
+	if not stored or err != OK:
+		return L10n.t("launcher.game_options.cannot_write", {"path": p, "reason": error_string(err) if err != OK else L10n.t("launcher.game_options.short_write")})
 	return ""
 
 

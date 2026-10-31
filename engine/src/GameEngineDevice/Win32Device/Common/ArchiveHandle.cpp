@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0. See ArchiveHandle.h.
 
 #include "GameEngineDevice/Win32Device/Common/ArchiveHandle.h"
+#include "Common/PathIO.h"
 
 #include <filesystem>
 #include <vector>
@@ -107,7 +108,7 @@ long long tell64(std::FILE *f)
 
 std::shared_ptr<ArchiveHandle> ArchiveHandle::open(const std::string &path, std::string *error, bool protect)
 {
-	const std::filesystem::path fsPath = std::filesystem::u8path(path);
+	const std::filesystem::path fsPath = PathIO::native(path);
 	std::FILE *f = openRead(fsPath, protect);
 	if (!f)
 	{

@@ -6,6 +6,7 @@ const Style := preload("res://scripts/ui/style.gd")
 const VectorIcon := preload("res://scripts/ui/vector_icon.gd")
 const Textures := preload("res://scripts/ui/textures.gd")
 const Ornament := preload("res://scripts/ui/ornament.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 
 static func label(text: String, variation := "", size := 0) -> Label:
@@ -97,7 +98,7 @@ static func modal(title: String, width: int) -> Dictionary:
 		var head := hbox(8)
 		head.add_child(label(title, "Heading"))
 		head.get_child(0).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var close := icon_button("close", "Close", 18)
+		var close := icon_button("close", L10n.t("common.close"), 18)
 		head.add_child(close)
 		body.add_child(head)
 		out["head"] = head
@@ -246,6 +247,7 @@ static func progress_bar() -> ProgressBar:
 ## a vertical scroll area with the content inside; {scroll, box}
 static func scroll(sep := 14) -> Dictionary:
 	var s := ScrollContainer.new()
+	s.follow_focus = true
 	s.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	s.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var v := vbox(sep)

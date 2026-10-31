@@ -26,17 +26,18 @@ bool TacticalView::screenToTerrain(const ICoord2D &pixel, const GameLogic &logic
 	{
 		return false;
 	}
-	// march along the ray until it passes below the ground, then bisect (ZH W3DView::screenToTerrain intersects the height field the same way)
+	// march along the ray until it passes below the ground, then bisect (ZH W3DView::screenToTerrain intersects the height field the same way). Lane WALL-1:
+	// the surface is the highest walkable layer (a wall top, a ramp), so a click on a wall's top lands on it and not on the terrain behind the wall
 	const float step = 8.0f;
 	auto below = [&](float t) {
 		const float x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t;
-		return z <= logic.getGroundHeight(x, y);
+		return z <= logic.getHighestLayerHeight(x, y);
 	};
 	float lo = 0.0f;
 	if (below(0.0f))
 	{
 		out = o;
-		out.z = logic.getGroundHeight(o.x, o.y);
+		out.z = logic.getHighestLayerHeight(o.x, o.y);
 		return true;
 	}
 	float hi = step;
@@ -57,7 +58,7 @@ bool TacticalView::screenToTerrain(const ICoord2D &pixel, const GameLogic &logic
 	const float t = 0.5f * (lo + hi);
 	out.x = o.x + d.x * t;
 	out.y = o.y + d.y * t;
-	out.z = logic.getGroundHeight(out.x, out.y);
+	out.z = logic.getHighestLayerHeight(out.x, out.y);
 	return true;
 }
 

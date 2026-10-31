@@ -16,7 +16,7 @@
     },
     "apt_driver": {
       "exe": "build/apt_driver.exe",
-      "inputs": ["apt_driver.cpp", "build.bat", "../../engine/src/Common/NumericState.h", "../../engine/src/Common/System/NumericState.cpp", "../../engine/src/Libraries/Source/Apt"]
+      "inputs": ["apt_driver.cpp", "build.bat", "../../engine/src/Common/NumericState.h", "../../engine/src/Common/System/NumericState.cpp", "../../engine/src/Common/FloatFromChars.h", "../../engine/src/Common/System/FloatFromChars.cpp", "../../engine/src/Libraries/Source/Apt", "../../engine/thirdparty/fast_float/include"]
     },
     "refpack_driver": {
       "exe": "build/refpack_driver.exe",
@@ -24,7 +24,7 @@
     },
     "hash_driver": {
       "exe": "build/hash_driver.exe",
-      "inputs": ["hash_driver.cpp", "build.bat", "../../engine/src"]
+      "inputs": ["hash_driver.cpp", "build.bat", "../../engine/src", "../../engine/thirdparty/fast_float/include"]
     }
   }
 }

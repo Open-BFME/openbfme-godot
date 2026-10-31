@@ -614,6 +614,7 @@ std::vector<std::string> SpellBookPowers::stopLines()
 				  "states sent before the movie stepped after SetLayout were lost, retail's client frame is taken to step the movie at each update)");
 	out.push_back(SpellEffectModules::stopLine());
 	out.push_back(TerrainTrees::stopLine()); // lane SPELL-3: S-930
+	out.push_back(TerrainTrees::trees1StopLine()); // lane TREES1: S-5260
 	return out;
 }
 

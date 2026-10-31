@@ -47,6 +47,8 @@ class HordeContainBehaviorData;
 class ModuleFactory;
 
 // the interface other modules ask a horde through (ZH names it HordeContainInterface)
+class Team;
+
 class HordeContainInterface
 {
 public:
@@ -61,6 +63,9 @@ public:
 	virtual int getSlotCapacity() const = 0;
 	// slot 11 (RW 0x873F30): a member made by a factory joins without being placed on its slot; false when it already is a member
 	virtual bool acceptCreatedMember(Object *member) = 0;
+	// lane MODS-3: edain-unchained.horde-exit-absorption (its 0xEE1000): the slot table is built when it is not yet (H + 0x198 == 0: the slot 0x84 call),
+	// then true when a free slot's rank has a UnitType the template matches (RW 0x873F30's search, nothing taken)
+	virtual bool hasFreeSlotFor(const Object &member) = 0;
 	// slot 7 (RW 0x877D89): the world position of the member's slot for the horde's current transform
 	virtual Coord3D getMemberFormationPosition(const Object *member) const = 0;
 	// slot 0xC8 (RW 0x86EF13, lane MOVE-3): called by the pathfinder's updateGoal (RW 0x8E24D3) once the horde's goal changed: unless the horde melees (+ 0x184),
@@ -118,6 +123,9 @@ public:
 	virtual void exitContainer(Object *container, int source) = 0;
 	// the members on the way, in the map's (id) order
 	virtual std::vector<ObjectID> membersEntering() const = 0;
+	// slot 0x170 (RW 0x870667), called by Object::setTeam (RW 0x69954A) with its non-null team: every contained member (the list contain slot 0x118 fills),
+	// then every member on the way into a garrison (the map at interface + 0x54, by id) gets Object::setTeam(team)
+	virtual void setMembersTeam(Team *team) = 0;
 	// ---- lane GARRISON-3 (a horde leaving a garrison through GarrisonContain's exit RW 0x87CA2B; GameLogic/Object/Contain/HordeGarrisonLink.cpp) ----
 	// slot 0x98 (RW 0x86F18F): the horde object moves to the member (on the way, then in the contain list on a valid movement position for `about`) nearest to
 	// the members' centroid; `about` gives the start position and the locomotor of the test (the exit passes the horde object itself)
@@ -187,7 +195,7 @@ public:
 	HordeContainInterface *getHordeContainInterface() override { return this; }
 	// CreateModuleInterface
 	void onCreate() override;
-	void onBuildComplete() override {}
+	void onBuildComplete() override;
 	// HordeContainInterface
 	int getMemberSlot(const Object *member) const override;
 	unsigned getSlotCount() const override;
@@ -220,6 +228,7 @@ public:
 	void exitContainer(Object *container, int source) override;
 	void releaseMembersToward(Object *container, int source) override;
 	std::vector<ObjectID> membersEntering() const override { return std::vector<ObjectID>(m_garrisonEntering.begin(), m_garrisonEntering.end()); }
+	void setMembersTeam(Team *team) override;
 	// lane GARRISON-3 (HordeGarrisonLink.cpp)
 	void recentreOnMembers(Object *about) override;
 	void returnToFormation(bool regroup) override;
@@ -251,6 +260,11 @@ public:
 	// contain slot 0x48 (RW 0x86FA87): the member of this horde an attacker at `pos` aims at (see HordeMemberPass.cpp); `skipTagged`: members with the status
 	// 0x3F are passed over; `attacker`: its current weapon filters the candidates (RW 0x744AAA)
 	Object *pickMemberNear(bool skipTagged, const Coord3D &pos, float range, Object *attacker);
+	// lane TARGET-1: slot 0x48 without a position (RW 0x86FA87 with pos 0, adjustVictim's second call RW 0x68D30E): the first member of the contain list (with
+	// `skipTagged`, the first not TAGGED), else the first member on its way into a garrison (likewise); null when none
+	Object *pickMemberNoPosition(bool skipTagged) const;
+	// lane TARGET-1: slot 0x180(0) (RW 0x8706DF, no filter): the contain count plus the members on their way in (interface + 0x58)
+	unsigned countWithEntering() const { return getContainCount() + (unsigned)m_garrisonEntering.size(); }
 	// contain slot 0x110 (RW 0x87055D): the first member of the contain list, else the first member on its way into a garrison, else null
 	Object *firstMember() const;
 	// RW 0x870C29: the member (the contain list, then the members on the way) nearest to `victim` in the plane, within 1000 (1e6 squared, RW 0xBDCDC0)
@@ -261,9 +275,10 @@ public:
 		unsigned long long orders = 0;           // members ordered to attack (RW 0x66C536)
 		unsigned long long outOfReach = 0;       // members whose pick was out of reach (RW 0x6FF7FA false): the horde is marked dirty
 		unsigned long long meleeMembers = 0;     // members holding a melee weapon (the branch RW 0x875320)
-		unsigned long long losAssumedClear = 0;  // RW 0x744AAA's line-of-sight filter (RW 0x6616AC) consulted: taken as clear (S-859)
+		unsigned long long losTests = 0;         // RW 0x744AAA's line-of-sight filter (RW 0x6616AC) asked (lane LOS-1)
+		unsigned long long losRefused = 0;       // ... and refused the member
 		unsigned long long otherContainer = 0;   // victims held by a container that is not a HordeContain (its slot 0x48 is not ported: the victim stays)
-		unsigned long long positionOrders = 0;   // members a position fire would order (RW 0x6961F1 aiAttackPosition is not executed, S-325)
+		unsigned long long positionOrders = 0;   // members a position fire ordered (RW 0x875550 -> aiAttackPosition RW 0x6961F1)
 	};
 	const AttackStats &attackStats() const { return m_attackStats; }
 	static const char *attackStopLine(); // S-2610
@@ -300,6 +315,10 @@ public:
 		unsigned long long handoffBusy = 0;   // lane MOVE-2: members a horde command made busy (slot 0x14, RW 0x87594C)
 	};
 	const PassStats &passStats() const { return m_stats; }
+	// lane IDLEMOTION-1 (diagnostics, the tests' idle1 probe; not hashed, not saved): the members the last member pass gave the leash command (RW 0x877B4F)
+	// and the logic frame of that pass
+	const std::vector<ObjectID> &leashedInLastPass() const { return m_leashedInLastPass; }
+	unsigned lastPassFrame() const { return m_lastPassFrame; }
 	bool dirty() const { return m_dirty; }
 	// diagnostics (tests, the viewer's report): the largest planar distance of a slotted member from its slot in the world; 0 without members
 	float worstMemberSlotError() const;
@@ -319,6 +338,7 @@ public:
 	// production placed it (the factory's exit) and is not moved by containReactToTransformChange; moving it to its formation position is the
 	// member pass of the horde runtime (MOVE-1 / HORDE-2, stop S-149). false when it already is a member.
 	bool acceptCreatedMember(Object *member) override;
+	bool hasFreeSlotFor(const Object &member) override;
 	// the world position of the member's slot for the horde's current transform (RW 0x877D89); the horde's own position when it has no slot
 	Coord3D getMemberFormationPosition(const Object *member) const override;
 	void reserveMemberGoals() override;
@@ -392,13 +412,15 @@ public:
 	void bannerCheck(bool force);
 	ObjectID bannerCarrier() const { return m_bannerCarrier; }
 	unsigned bannerCountdown() const { return m_bannerCountdown; }
+	// RW 0x871915 (lane BANNER-1): the removed member was the banner carrier: the id goes and the countdown becomes its BannerCarrierUpdate's DiedRespawnTime. Only the
+	// removals RW 0x87370B / 0x87393E call it; a member released toward a garrison (RW 0x86EBF4, keepSlot) stays the carrier
+	void bannerCarrierRemoved(const Object &member);
 	void expediteBannerRespawn() { if (m_bannerCountdown > 1) { m_bannerCountdown = 1; } } // RW 0x89ACC1
 	unsigned payloadCount() const; ///< RW interface slot 0x188: members, including those entering a garrison, without the banner.
 	unsigned lastMemberDamageFrame() const; ///< RW 0x86EB60, interface slot 0x26C.
-	// RW HordeContainInterface slot 0x18C (RW 0x873AE3): a new member of the payload template joins at `pos` (null when the horde is full or has no single payload template)
-	Object *spawnReplacementMember(const Coord3D &pos);
-	// RW slot 0x90 (RW 0x86EE52, inference S-587): a member was damaged or is attacking within the last `frames` frames
-	bool wasInCombatWithin(unsigned frames) const;
+	// RW HordeContainInterface slot 0x18C (RW 0x873AE3): a new member of the payload template joins at `pos` facing `orientation` (the matrix), with the horde's
+	// weapon set flags, experience pool, attribute modifiers and lifetime (null when the horde is full or has no single payload template)
+	Object *spawnReplacementMember(const Coord3D &pos, float orientation);
 	const std::vector<float> &flankHistory() const { return m_flankAngles; }
 
 	friend struct Horde2HashAccess; // the HORDE-2 hash mutation tests (test_horde2_hash.cpp)
@@ -438,10 +460,12 @@ private:
 	float m_scalingReach = 0.0f; ///< H + 0x2EC
 	void crcWallScaling(StateHasher &h) const;
 	bool m_deleting = false;
-	bool m_locomoting = false;
+	bool m_locomoting = false; // saved and set by the locomotor; containReactToTransformChange no longer reads it (RW 0x871536 moves no member)
 	bool m_propagatedMoving = false;
 	unsigned m_formationRefreshFrame = 0;
 	PassStats m_stats;
+	std::vector<ObjectID> m_leashedInLastPass; // lane IDLEMOTION-1: diagnostics (see leashedInLastPass)
+	unsigned m_lastPassFrame = 0;
 	// HORDE-2 flank state: RW H+0x2CC vector<float> of orientations, H+0x2D8 ring index, H+0x2DC map<ObjectID, expiry frame>, H+0x2E8 can-flank byte
 	std::vector<float> m_flankAngles;
 	unsigned m_flankIndex = 0;

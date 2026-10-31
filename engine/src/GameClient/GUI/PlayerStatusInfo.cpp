@@ -3,6 +3,8 @@
 
 #include "GameClient/GUI/PlayerStatusInfo.h"
 
+#include "Common/ExtendedPlayerColors.h"
+
 #include "GameClient/GUI/GameTextSource.h"
 #include "GameClient/GUI/LoadScreenInfo.h"
 #include "GameClient/GUI/Skirmish/SkirmishSetup.h"
@@ -48,6 +50,14 @@ bool colorOf(const PlayerStatusInput &in, const SkirmishSetupSource &setup, int 
 		argb = in.observerColor;
 		return true;
 	}
+	if (in.game)
+	{
+		if (const auto *color = ExtendedPlayerColors::find(which, (int)setup.colors().size(), in.game->mapStartCount))
+		{
+			argb = 0xFF000000u | color->rgb;
+			return true;
+		}
+	}
 	if (which < 0 || which >= (int)setup.colors().size())
 	{
 		return false;
@@ -78,6 +88,10 @@ PlayerStatusInfo makePlayerStatusInfo(const PlayerStatusInput &in, const Skirmis
 		row.slot = i;
 		row.platform = slot.isHuman() ? in.platforms[i] : PlatformKind::None; // lane PLATFORMICON-1
 		row.fields[0] = loadScreenU16ToUtf8(slot.name); // RW 0x915C51: GameSlot + 0x30
+		if (game.cheatMode == row.slot)
+		{
+			row.fields[0] += " (Cheat Mode host)"; // lane CHEAT-1, OpenBFME: every player's Status page names the open Cheat Mode's seat
+		}
 		// RW 0x80147D getApparentPlayerTemplateDisplayName
 		const bool ally = isSlotLocalAlly(game, i, in.localSlot);
 		if (in.showRandomPlayerTemplate && slot.origPlayerTemplate == PLAYERTEMPLATE_RANDOM && !ally)
@@ -102,7 +116,8 @@ PlayerStatusInfo makePlayerStatusInfo(const PlayerStatusInput &in, const Skirmis
 		{
 			team = "Team:AI";
 		}
-		row.fields[2] = text(source, team);
+		row.fields[2] = game.mapStartCount > LEGACY_MAX_SLOTS && slot.teamNumber >= LEGACY_MAX_SLOTS / 2
+			? std::to_string(slot.teamNumber + 1) : text(source, team);
 		// RW 0x915D0B .. 0x915D66
 		const char *status = nullptr;
 		if (!slot.isAI() && in.network && !live.connected)

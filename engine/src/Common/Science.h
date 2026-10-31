@@ -98,7 +98,7 @@ public:
 	bool isScienceGrantable(ScienceType st) const;                // RW 0x5FECBA
 	bool playerHasPrereqsForScience(const ScienceOwner &player, ScienceType st) const;                        // RW 0x5FED05
 	bool playerHasRootPrereqsAndCanPurchase(const ScienceOwner &player, ScienceType st, bool multiplayerCosts) const; // RW 0x5FED5B
-	// lane HOVER-1: RW 0x5FF4D7 (BFME2 decomp ScienceStoreRootPrereqs.cpp, tier A) with its memo walk RW 0x5FF323 (BFME2 0x5FFAA1,
+	// lane HOVER-1: RW 0x5FF4D7 (BFME2 decomp Science.cpp, tier A) with its memo walk RW 0x5FF323 (BFME2 0x5FFAA1,
 	// ScienceStoreFindScienceInfo.cpp, tier A): the player owns the science, or one of its prerequisite groups (none counts) holds only sciences
 	// that pass the same test, recursively. INFERENCE (S-4612): a science met again while its own test runs counts as failing (retail recurses
 	// without a guard; no retail science is its own prerequisite)
@@ -106,6 +106,12 @@ public:
 
 	// RW 0x5FEEC7 (INI::scanScience): the key of a defined science; INIException(3, ...) otherwise
 	ScienceType friend_lookupScience(const char *name) const;
+	// lane MODS-3, edain-unchained.science-prereqs (Edain Unchained's .scipre, 0xEE4404): the PrerequisiteSciences lookup that does not throw;
+	// a name that is not (yet) a science is kept (at most 256, as the patch's list) for validateDeferredPrerequisites
+	ScienceType friend_lookupScienceDeferred(const char *name);
+	// 0xEE4452, run once after TheScienceStore's INI files: the first kept name that is still no science is INIException(3, "Science name %s not
+	// known! ...") (retail's text, deferred). Clears the list.
+	void validateDeferredPrerequisites();
 	// the key of a name WITHOUT creating it (SCIENCE_INVALID when the name has no key or no science): runtime lookups (scripts, tests)
 	ScienceType getScienceFromInternalName(const std::string &name) const;
 	std::string getInternalNameForScience(ScienceType st) const;
@@ -116,6 +122,7 @@ public:
 	std::vector<const ScienceInfo *> sciences() const;
 
 private:
+	std::vector<NameKeyType> m_deferredPrereqs; // lane MODS-3 (.scipre: 0xEE4004 .. 0xEE4403)
 	ScienceInfo *newInfo();
 	NameKeyGenerator &m_keys;
 	std::vector<std::unique_ptr<ScienceInfo>> m_owned; ///< every info ever made (the vector and the override links point into it)

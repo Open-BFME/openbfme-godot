@@ -40,6 +40,9 @@ files, recordings and captures are local inputs, never repository assets.
 
 ## Evidence checklist
 
+Checked items record the original caster qualification in `CASTER.md`
+(2026-10-16), not a fresh gate run for every later revision.
+
 - [x] Vision/POV, recorded selections, transport/rewind and scripted director
       tests; rendered checks at 1080p and 1440p.
 - [x] Overlays, clean mode, PiP and paused-vision red/green regression; rendered
@@ -56,4 +59,6 @@ files, recordings and captures are local inputs, never repository assets.
   not as a clean single-invocation/all-platform gate. Do not merge automatically.
 
 This is an OpenBFME presentation feature. It does not close the existing engine's
-retail-parity stops or the native world-snapshot/save foundation.
+retail-parity stops or use native save snapshots for caster rewind. Native saves
+already have a separate snapshot-load path; caster rewind still rebuilds from
+the recording's start.

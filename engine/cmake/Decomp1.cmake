@@ -8,4 +8,5 @@ list(APPEND OPENBFME_SIM_SOURCES
 set(OPENBFME_DECOMP1_TESTS
     tests/test_hud_decomp1_retail.cpp
     tests/test_hud_nugget1_retail.cpp   # lane NUGGET-1: the weapon nuggets delivered with their retail weapons (S-321)
+    tests/test_hud_radiusheight1_retail.cpp # lane RADIUSHEIGHT-1: radius damage's DamageMaxHeight / DamageMaxHeightAboveTerrain (RW 0x90DEF0)
 )

@@ -12,16 +12,22 @@
 
 namespace
 {
-const float kVelocityBounceLimit = 0.01f;      // ZH VELOCITY_BOUNCE_LIMIT
-const float kVelocityBounceSoundLimit = 0.03f; // ZH VELOCITY_BOUNCE_SOUND_LIMIT
-const float kTreeRadiusApprox = 10.0f;         // ZH TREE_RADIUS_APPROX (W3DTreeBuffer.h)
+const float kVelocityBounceLimit = 0.01f;      // RW 0xBE5600 (ZH VELOCITY_BOUNCE_LIMIT)
+const float kVelocityBounceSoundLimit = 0.03f; // RW 0xBDC540 (ZH VELOCITY_BOUNCE_SOUND_LIMIT)
+const float kBounceFXHeight = 27.0f;           // RW 0xBE4CC4 (lane TREES1: ZH's 3 x TREE_RADIUS_APPROX of the tree's bounds)
 
-// the sink's updates: SinkTime (logic frames) as seconds, in draw updates
+// the sink's updates (RW 0x4EA0D3 .. 0x4EA0F3): SinkTime (logic frames) times the client frames per logic frame (the tree buffer's + 0x5BC, set at RW
+// 0x4E5F94 from RW 0xDE4324 + 0x38 = 30 / 5 = 6), here kSinkFrameSeconds / kUpdateSeconds
 unsigned sinkUpdates(const W3DTreeDrawModuleData &d)
 {
 	const float seconds = (float)d.m_sinkFrames * TreeTopple::kSinkFrameSeconds;
-	const unsigned n = (unsigned)(seconds / TreeTopple::kUpdateSeconds + 0.5f);
-	return n > 0 ? n : 1u;
+	return (unsigned)(seconds / TreeTopple::kUpdateSeconds + 0.5f);
+}
+
+void startSink(TreeTopple::Tree &t)
+{
+	t.sinking = true;
+	t.sinkFramesLeft = t.data ? sinkUpdates(*t.data) : 0u;
 }
 } // namespace
 
@@ -35,6 +41,7 @@ size_t TreeTopple::add(std::uint32_t clientId, const Coord3D &position, const W3
 	return m_trees.size() - 1;
 }
 
+// RW 0x4E9E4E (TheTerrainVisual slot 0x70)
 bool TreeTopple::topple(std::uint32_t clientId, const Coord3D &direction, float speed)
 {
 	bool any = false;
@@ -46,12 +53,13 @@ bool TreeTopple::topple(std::uint32_t clientId, const Coord3D &direction, float 
 			continue;
 		}
 		const W3DTreeDrawModuleData &d = *t.data;
-		speed = std::max(speed, d.m_minimumToppleSpeed);
+		// the logic's topple speed (TerrainLogic + 0x1918) when above 0, else MinimumToppleSpeed (at least 0)
+		const float v = speed > 0.0f ? speed : std::max(0.0f, d.m_minimumToppleSpeed);
 		const float len = std::sqrt(direction.x * direction.x + direction.y * direction.y);
 		t.direction = len > 0.0f ? Coord3D{ direction.x / len, direction.y / len, 0.0f } : Coord3D{ 1.0f, 0.0f, 0.0f };
 		t.angle = t.previousAngle = 0.0f;
-		t.angularVelocity = speed * d.m_initialVelocityPercent;
-		t.angularAcceleration = speed * d.m_initialAccelPercent;
+		t.angularVelocity = v * d.m_initialVelocityPercent;
+		t.angularAcceleration = v * d.m_initialAccelPercent;
 		t.state = FALLING;
 		if (!d.m_toppleFX.empty())
 		{
@@ -63,31 +71,60 @@ bool TreeTopple::topple(std::uint32_t clientId, const Coord3D &direction, float 
 	return any;
 }
 
+// RW 0x4EA068 (slot 0x7C): the lumber is gone, the tree sinks where it is (standing, falling or down)
 void TreeTopple::remove(std::uint32_t clientId)
 {
-	for (Tree &t : m_trees)
+	for (size_t i = 0; i < m_trees.size(); ++i)
 	{
-		if (t.clientId != clientId || t.removed)
+		Tree &t = m_trees[i];
+		if (t.clientId != clientId || t.removed || t.state == GONE)
 		{
 			continue;
 		}
 		t.removed = true;
-		if (t.state == DOWN && !t.sinking && t.data)
-		{
-			t.sinking = true;
-			t.sinkFramesLeft = sinkUpdates(*t.data);
-		}
-		else if (t.state == UPRIGHT)
-		{
-			t.state = GONE; // lumber taken without a fall (no retail path does this for a standing tree; the tree goes)
-		}
+		startSink(t);
+		m_changed.push_back(i);
 	}
 }
 
+// RW 0x4E9C81 (slot 0x58): the tree goes at once
+void TreeTopple::removeNow(std::uint32_t clientId)
+{
+	for (size_t i = 0; i < m_trees.size(); ++i)
+	{
+		Tree &t = m_trees[i];
+		if (t.clientId != clientId || t.state == GONE)
+		{
+			continue;
+		}
+		t.removed = true;
+		t.sinking = false;
+		t.state = GONE;
+		t.previousAngle = t.angle;
+		t.previousSink = t.sink;
+		m_changed.push_back(i);
+	}
+}
+
+// RW 0x4ED508's per-tree step: the sink, then the fall (RW 0x4EA107)
 void TreeTopple::update(Tree &t)
 {
 	t.previousAngle = t.angle;
 	t.previousSink = t.sink;
+	if (t.sinking)
+	{
+		if (t.sinkFramesLeft == 0)
+		{
+			t.state = GONE; // RW 0x4ED5AD: the type -2
+			t.sinking = false;
+			return;
+		}
+		--t.sinkFramesLeft;
+		if (t.data && t.data->m_sinkFrames > 0)
+		{
+			t.sink += t.data->m_sinkDistance / (float)t.data->m_sinkFrames; // z -= SinkDistance / SinkTime (the logic frames, not the updates)
+		}
+	}
 	if (t.state == FALLING && t.data)
 	{
 		const W3DTreeDrawModuleData &d = *t.data;
@@ -104,18 +141,16 @@ void TreeTopple::update(Tree &t)
 			{
 				t.angularVelocity = 0.0f;
 				t.state = DOWN;
-				if (d.m_killWhenToppled || t.removed)
+				if (d.m_killWhenToppled)
 				{
-					t.sinking = true;
-					t.sinkFramesLeft = sinkUpdates(d);
+					startSink(t);
 				}
 			}
 			else if (std::fabs(t.angularVelocity) >= kVelocityBounceSoundLimit && !d.m_bounceFX.empty())
 			{
-				// three tree radii up the fallen trunk
-				const float h = 3.0f * kTreeRadiusApprox;
-				const Coord3D top{ t.position.x + t.direction.x * h * std::sin(t.angle), t.position.y + t.direction.y * h * std::sin(t.angle),
-					t.position.z + h * std::cos(t.angle) };
+				// the fallen trunk's matrix applied to (0, 0, 27)
+				const Coord3D top{ t.position.x + t.direction.x * kBounceFXHeight * std::sin(t.angle), t.position.y + t.direction.y * kBounceFXHeight * std::sin(t.angle),
+					t.position.z - t.sink + kBounceFXHeight * std::cos(t.angle) };
 				m_fx.push_back(FX{ d.m_bounceFX, top });
 			}
 		}
@@ -123,17 +158,6 @@ void TreeTopple::update(Tree &t)
 		{
 			t.angularVelocity += t.angularAcceleration;
 		}
-		return;
-	}
-	if (t.state == DOWN && t.sinking && t.data)
-	{
-		if (t.sinkFramesLeft == 0)
-		{
-			t.state = GONE;
-			return;
-		}
-		--t.sinkFramesLeft;
-		t.sink += t.data->m_sinkDistance / (float)sinkUpdates(*t.data);
 	}
 }
 
@@ -146,7 +170,7 @@ void TreeTopple::advance(double seconds)
 		for (size_t i = 0; i < m_trees.size(); ++i)
 		{
 			Tree &t = m_trees[i];
-			if (t.state == FALLING || (t.state == DOWN && t.sinking))
+			if (t.state == FALLING || t.sinking)
 			{
 				update(t);
 				m_changed.push_back(i);
@@ -233,7 +257,7 @@ size_t TreeTopple::animating() const
 	size_t n = 0;
 	for (const Tree &t : m_trees)
 	{
-		n += (t.state == FALLING || (t.state == DOWN && t.sinking)) ? 1 : 0;
+		n += (t.state == FALLING || t.sinking) ? 1 : 0;
 	}
 	return n;
 }

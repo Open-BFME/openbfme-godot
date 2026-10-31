@@ -1,0 +1,7 @@
+{
+  "build5 retail cursors: Mouse.ini's Scroll has 8 directions whose files ship and decode; Build and InvalidBuild have no block": "test_build5_placement.cpp: ROTWK_INSTALL guard returns before haveWorld and any assertion",
+  "hud cursors: the cursor names the translators choose are Mouse.ini cursors, and their files decode (animations, hot spots)": "test_hud_cursors.cpp: ROTWK_INSTALL guard returns before haveWorld and any assertion",
+  "SpecialPowerModule data: RW 0x89693A / 0x89693D replaces AttributeModifierAffects (+ 0x24) with the NONE filter (RW 0x763D11), re-read from game.dat": "test_hero_core.cpp: PeImage::fromEnvironment returns null without RW_GAME_DAT",
+  "camp1 survey: every Angmar mission's unported script content in its first CAMP1_SURVEY frames (diagnostic; skipped without the variable)": "test_camp1_missions.cpp: opt-in CAMP1_SURVEY diagnostic returns before starting a world",
+  "camp1 probe: CAMP1_PROBE=<map> CAMP1_FRAMES=<n> logs the mission's progress with no player (diagnostic; skipped without the variable)": "test_camp1_missions.cpp: opt-in CAMP1_PROBE diagnostic returns before starting a world"
+}

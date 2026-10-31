@@ -15,6 +15,9 @@
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/ObjectFilter.h"
+#include "Common/AsciiString.h"
+#include "Common/INIException.h"
+#include "GameClient/FXList.h"
 
 #include <cstddef>
 
@@ -122,4 +125,34 @@ void HordeGarrisonContainBehaviorData::buildFieldParse(MultiIniFieldParse &p)
 	p.add(DieMuxContainFieldParse(), (unsigned)offsetof(HordeGarrisonContainBehaviorData, m_dieMux));
 	p.add(GarrisonContainModuleData::getFieldParse(), garrison);
 	p.add(HordeGarrisonContainModuleData::getFieldParse(), base);
+}
+
+namespace
+{
+void parseRingFX(INI *ini, void *, void *store, const void *)
+{
+	const std::string name = ini->getNextToken();
+	if (AsciiStringUtil::compareNoCase(name, "None") == 0) { static_cast<std::string *>(store)->clear(); return; }
+	if (!TheFXListStore) throw INIException(3, "TheFXListStore==NULL");
+	TheFXListStore->parseFXListRef(name);
+	*static_cast<std::string *>(store) = name;
+}
+}
+
+void CitadelSlaughterHordeContainBehaviorData::buildFieldParse(MultiIniFieldParse &p)
+{
+	HordeGarrisonContainBehaviorData::buildFieldParse(p);
+#define CSH_OFF(field) (int)offsetof(CitadelSlaughterHordeContainBehaviorData, field)
+	static const FieldParse rows[] = {
+		{ "CashBackPercent", INI::parsePercentToReal, nullptr, CSH_OFF(cashBackPercent) },
+		{ "CanAlwaysEnter", ParseObjectFilter, nullptr, CSH_OFF(canAlwaysEnter) },
+		{ "StatusRequiredForCanAlwaysEnter", ParseObjectStatusMask, nullptr, CSH_OFF(statusRequired) },
+		{ "StatusForRingEntry", ParseObjectStatusMask, nullptr, CSH_OFF(ringStatus) },
+		{ "UpgradeForRingEntry", INI::parseAsciiStringVector, nullptr, CSH_OFF(ringUpgrades) },
+		{ "ObjectToDestroyForRingEntry", ParseObjectFilter, nullptr, CSH_OFF(objectToDestroy) },
+		{ "FXForRingEntry", parseRingFX, nullptr, CSH_OFF(ringFX) },
+		{ nullptr, nullptr, nullptr, 0 }
+	};
+#undef CSH_OFF
+	p.add(rows, 0);
 }

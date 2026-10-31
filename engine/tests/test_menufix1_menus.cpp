@@ -43,10 +43,10 @@ TEST_CASE("menufix1 version: Version:Format2's %02d keeps its width (RotWK 2.01 
 	OneText text;
 	text.texts["Version:Format2"] = u"Version %d.%02d"; // lotr.str's Version:Format2 (RotWK 2.01)
 	CHECK(AptOptionsScreen::versionText(&text) == u"Version 2.01");
-	text.texts["Version:Format2"] = u"V%d-%3d|%%"; // a width and a literal percent, as vswprintf formats them
-	CHECK(AptOptionsScreen::versionText(&text) == u"V2-  1|%");
-	text.texts["Version:Format2"] = u"%-3d|%d"; // left alignment
-	CHECK(AptOptionsScreen::versionText(&text) == u"2  |1");
+	text.texts["Version:Format2"] = u"V%d-%3d|%%"; // non-retail widths remain literal and do not consume arguments
+	CHECK(AptOptionsScreen::versionText(&text) == u"V2-%3d|%");
+	text.texts["Version:Format2"] = u"%-3d|%d"; // non-retail alignment is literal too
+	CHECK(AptOptionsScreen::versionText(&text) == u"%-3d|2");
 	OneText none;
 	CHECK(AptOptionsScreen::versionText(&none) == u"Version:Format2"); // a missing label shows as the label
 }

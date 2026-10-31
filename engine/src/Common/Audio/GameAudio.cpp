@@ -631,6 +631,11 @@ AudioHandle AudioManager::playSound(const std::string &eventName)
 	return addAudioEvent(AudioEventRTS(eventName));
 }
 
+AudioHandle AudioManager::playUiSound(const std::string &eventName)
+{
+	return addAudioEvent(AudioEventRTS(eventName, VIEW_ANY));
+}
+
 AudioHandle AudioManager::playSoundAt(const std::string &eventName, const Coord3D &position)
 {
 	return addAudioEvent(AudioEventRTS(eventName, position));

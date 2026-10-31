@@ -42,6 +42,7 @@
 #include "GameLogic/Module/UpdateModule.h"
 #include "GameLogic/Object/Contain/TunnelContainRuntime.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "GameLogic/System/DOTManager.h"
 #include "GameLogic/System/InvisibilityManager.h"
@@ -219,6 +220,14 @@ void GameLogic::xferObjects(Xfer &x)
 		deleteObjectForLoad(m_objectHead);
 	}
 	m_objectsToDestroy.clear();
+	// lane CASTLEAREA-1: the run-time polygon triggers (castle areas, AI gates) are their owners': the old objects' are gone with them, each owner's xfer below
+	// puts its own back at its saved index (ScriptEngine::beginRuntimeTriggerLoad)
+	struct RuntimeTriggerLoad
+	{
+		ScriptEngine &engine;
+		~RuntimeTriggerLoad() { engine.endRuntimeTriggerLoad(); }
+	} runtimeTriggerLoad{ *m_scriptEngine };
+	m_scriptEngine->beginRuntimeTriggerLoad();
 	// ---- every object of the snapshot, made with its id, team and status (ThingFactory::newObject without the BuildVariations draw: the saved template is
 	// the variation already) ----
 	for (size_t i = 0; i < toc.size(); ++i)
@@ -254,6 +263,9 @@ void GameLogic::xferObjects(Xfer &x)
 	}
 	m_snapshotTable = nullptr;
 	m_snapshotLinks = nullptr;
+	// the links replace every contain list the creations filled; until they are installed those lists still name the objects a creation made on its
+	// own, so a refused link leaves those objects alive and listed (the refused load is put back by loading the kept snapshot, LiveGame::loadSnapshot)
+	installSnapshotLinks(links);
 	// an object a creation made on its own goes (it is not in the snapshot); the list then holds the snapshot's objects in its order
 	for (Object *p = m_objectHead; p;)
 	{
@@ -264,7 +276,6 @@ void GameLogic::xferObjects(Xfer &x)
 		}
 		p = next;
 	}
-	installSnapshotLinks(links);
 	size_t i = 0;
 	for (const Object *p = m_objectHead; p; p = p->getNextObject(), ++i)
 	{

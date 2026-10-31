@@ -46,16 +46,21 @@
 
 #pragma once
 
+#include "GameLogic/LivingWorld/LivingWorldBattleTags.h"
 #include "Common/ObserverEvent.h"
 
 #include "Common/MpGameRules.h"
 #include "Common/PlayerList.h"
 #include "Common/RandomValue.h"
+#include "Common/GameEdition.h"
 #include "Common/SimulationProfile.h"
 #include "Common/Team.h"
+#include "GameLogic/CampaignCarryover.h"
 #include "GameLogic/AI/AICommandSink.h"
+#include "GameLogic/CheatMode.h"
 #include "GameLogic/FXEvents.h"
 #include "GameLogic/LargeGroupAudioLink.h"
+#include "GameLogic/ScriptEngine/MissionObjectiveTracker.h"
 #include "GameLogic/Map/CastleTemplates.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/ProductionSettings.h"
@@ -65,9 +70,12 @@
 #include <cfloat>
 #include <functional>
 #include <map>
+#include <unordered_map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -101,6 +109,7 @@ class GameState;
 class Xfer;
 struct CrushTemplateInfo;
 struct LuaEventArgs;
+struct EvaDamageNotice;
 
 // ZH GameLogic::sendObjectCreated / Object::~Object's sendObjectDestroyed go to the client; the client layer implements this.
 // Lane SMOOTH-1 (S-810): the simulation never holds or calls a Drawable. Everything it tells the client is a call on these hooks, which the
@@ -132,10 +141,16 @@ public:
 	// lane BUILD-4, RW 0x670AA2 Drawable::fadeIn(frames) called by the simulation (a wall span's tiles, RW 0x7954A8): the object's drawable fades in over
 	// `frames` client frames (0: shown at once)
 	virtual void fadeIn(Object &obj, UnsignedInt frames) { (void)obj; (void)frames; }
+	// lane PORTERFOG-1, RW 0x670A50 Drawable::fadeOut(frames) called by the simulation (a porter starting its work, RW 0x88DDC1): the drawable fades out over
+	// `frames` client frames (0: at once) and is hidden once its opacity * 255 is below 1 (RW 0x675B7E)
+	virtual void fadeOut(Object &obj, UnsignedInt frames) { (void)obj; (void)frames; }
 	// RW 0x67B78C -> 0x6D4789: a qualifying hit on a local hero, independently of the EVA gate.
 	// RW 0x69560B: profile statistics are recorded before the normal kill-score gates.
 	virtual void createAHeroKill(Object &, Object &) {}
 	virtual void heroAttacked(Object &obj) { (void)obj; }
+	// lane EVADAMAGE-1, RW 0x67B4B7's Eva half: a qualifying hit (ShouldPlayUnderAttackEva) on a local object, with the logic's part of the choice
+	// (GameLogic/Object/EvaDamageNotice.h); the client picks the event, keeps the drawable's far frame and reports it to TheEva
+	virtual void evaDamaged(Object &obj, const EvaDamageNotice &notice) { (void)obj; (void)notice; }
 	virtual void flashHeroButton(const std::string &templateName, int frames) { (void)templateName; (void)frames; }
 	// lane CAH-2, RW 0x80AF0B (a Create-a-Hero record's flag 8): the drawable's house colour set (RW 0x80959A: kind 3 and the record's three colours,
 	// RW 0x6727B0 -> every draw module's vslot 0x7C); client only (HouseColor.h)
@@ -149,19 +164,23 @@ struct ObjectFilter;
 
 struct GameLogicSettings
 {
-	bool enableRepulsors = true;                     ///< AIData EnableRepulsors (RW 0xDE4B40 + 0x18 + 0x64): the RepulsorHelper condition
+	// lane AIDATA-1: every AIData default below is the AIData constructor's (RW 0x6FFBEF; BFME2 decomp AIConstructor_Unresolved.cpp TAiData::TAiData), so a mod
+	// aidata.ini that leaves a field out gets retail's value; no AIData field is required (retail's parser RW 0x7017AA requires none)
+	bool enableRepulsors = false;                    ///< AIData EnableRepulsors (RW 0xDE4B40 + 0x18 + 0x64, ctor 0): the RepulsorHelper condition
 	float repulsedDistance = 0.0f;                   ///< AIData RepulsedDistance (+ 0x60, lane MODULES-3): the safe path radius beyond the vision range
 	bool useFormations = true;                       ///< AIData UseFormations (+ 0xBD, row RW 0xC1CE90 parseBool; the constructor RW 0x6FFDE5 stores 1; lane BACKLOG6): AIGroup RW 0x774897's formation gate
 	float minDistanceForGroup = 100.0f;              ///< AIData MinDistanceForGroup (+ 0x6C, row RW 0xC1D390 parseReal; the constructor stores RW 0xBD88D8 = 100.0f at RW 0x6FFD56; lane BACKLOG6): RW 0x76F115's group move distance
 	// lane PLAY-4: the guard machine's AIData rows (table RW 0xC1CC00 ..: GuardChaseUnitsDuration + 0x3C, GuardEnemyScanRate + 0x40, GuardEnemyReturnScanRate
-	// + 0x44 through parseDurationUnsignedInt RW 0x73A429 (frames); AlertRangeModifier + 0x4C, AggressiveRangeModifier + 0x50 through parseReal RW 0x42ED00);
-	// guardRulesLoaded is true when the loader read the three durations (the guard machine reports their absence)
+	// + 0x44 through parseDurationUnsignedInt RW 0x73A429 (frames); AlertRangeModifier + 0x4C, AggressiveRangeModifier + 0x50 through parseReal RW 0x42ED00).
+	// lane AIDATA-1: the constructor's defaults (RW 0x6FFBEF: + 0x3C = 0, + 0x40 = LOGICFRAMES_PER_SECOND / 2 = [RW 0xD9F608] / 2, + 0x44 = [RW 0xD9F608],
+	// + 0x4C = + 0x50 = 0.0). guardRulesLoaded only records that the loader read the three durations (a diagnostic: the guard machine uses the values either way;
+	// still hashed, so the settings hash of a game with retail data is unchanged)
 	bool guardRulesLoaded = false;
 	unsigned guardChaseUnitsFrames = 0;
-	unsigned guardEnemyScanRate = 0;
-	unsigned guardEnemyReturnScanRate = 0;
-	float alertRangeModifier = 1.0f;
-	float aggressiveRangeModifier = 1.0f;
+	unsigned guardEnemyScanRate = 5 / 2;
+	unsigned guardEnemyReturnScanRate = 5;
+	float alertRangeModifier = 0.0f;
+	float aggressiveRangeModifier = 0.0f;
 	// lane BACKLOG-8: AIGroup::createFormation's AIData rows (table RW 0xC1CDF0 ..: FormationColumnWidth + 0xA0, FormationRowDepth + 0xA4, FormationSquadSpacing
 	// + 0xA8 through parseReal RW 0x42ED00, FormationColumns + 0xB4 through parseInt RW 0x42EC5E); the defaults are the AIData constructor's (RW 0x6FFCAD ..
 	// 0x6FFD87: 65.0 RW 0xC1D710 twice, 30.0 RW 0xBDAE54, 2)
@@ -179,6 +198,42 @@ struct GameLogicSettings
 	// height's floor (RW 0x777ED7). No retail aidata.ini sets it; a map's map.ini AIData block does (map wor dol guldur 76, map evil rivendell 300)
 	float minFlightHeight = FLT_MAX;
 	float groupMoveClickToGatherAreaFactor = 1.0f;
+	// lane TARGET-1: the target search's AIData rows (table RW 0xC1CB20 .., parser RW 0x7017AA; defaults the AIData constructor's, RW 0x6FFBEF):
+	// ForceIdleMSEC + 0x14 (parseDurationUnsignedInt RW 0x73A429: frames), AttackPriorityDistanceModifier + 0x54 (parseReal RW 0x42ED00, ctor 0.0),
+	// AttackUsesLineOfSight + 0x67 (parseBool RW 0x42E558, ctor 1), AttackIgnoreInsignificantBuildings + 0x68 (ctor 0), ArtilleryMaxFriendlyFire + 0xF0
+	// (parsePercentToReal RW 0x42EEFA, ctor 1.0); the AttackPriority blocks (+ 0xFC, RW 0x70153B: see AttackPriorityDef)
+	unsigned forceIdleFrames = 1; // lane AIDATA-1: the constructor's 1 (RW 0x6FFBEF: + 0x14)
+	float attackPriorityDistanceModifier = 0.0f;
+	bool attackUsesLineOfSight = true;
+	bool attackIgnoreInsignificantBuildings = false;
+	float artilleryMaxFriendlyFire = 1.0f;
+	// lane AIDATA-1: ChaseFromBehindLimit + 0xD0 (row RW 0xC1CEF0, parseReal RW 0x42ED00; ctor 50.0 = RW 0xBD88C4): a melee unit that is
+	// RUNNING_DOWN_FROM_BEHIND (status 0x4B) is in range of its victim within this distance (isWithinAttackRange RW 0x6CC07C). SkirmishGroupFudgeDistance
+	// + 0x58 (row RW 0xC1CC30, parseReal, ctor 0.0): a skirmish AI team on a waypoint path counts a waypoint reached when the team centre is within members x this of the goal
+	// (AIFollowWaypointPathState::update RW 0x755A20, asm RW 0x755B77 .. 0x755C08)
+	float chaseFromBehindLimit = 50.0f;
+	float skirmishGroupFudgeDistance = 0.0f;
+	// lane AIDATA-1: the pathfinder's AIData rows (before: PathfindConfigLoader's own text scan; now the shared table, so a map.ini / solo.ini AIData block
+	// reaches the pathfinder too: PathfindConfigLoader::applyAIData). Rows and constructor values (RW 0x6FFBEF): WadeWaterDepth + 0x98 (row RW 0xC1CDD0, 5.0 RW
+	// 0xBDAE58), DeepWaterDepth + 0x9C (RW 0xC1CDE0, 50.0 RW 0xBD88C4), MeleeApproachTolerance + 0x90 (RW 0xC1CDB0, 20.0 RW 0xBDBC6C), MeleeApproachDist + 0x94
+	// (RW 0xC1CDC0, 60.0 RW 0xBDC1F8), CastleSiegeStandBackDistance + 0xD4 (RW 0xC1CF00, 100.0 RW 0xBD88D8), all parseReal; HordesWaitForHordes + 0xB9 (RW
+	// 0xC1CE40, parseBool, 1); AttackUsesLineOfSight is above
+	float wadeWaterDepth = 5.0f;
+	float deepWaterDepth = 50.0f;
+	float meleeApproachTolerance = 20.0f;
+	float meleeApproachDist = 60.0f;
+	float castleSiegeStandBackDistance = 100.0f;
+	bool hordesWaitForHordes = true;
+	// RW 0x70153B: an `AttackPriority <name>` block of AIData (def 0x14 bytes, ctor RW 0x701323: Default 1). A repeated name re-parses the same def (its
+	// targets cleared, Default kept unless the block sets it); a new one is pushed at the list head. `Target = <template> <int>` (RW 0x7013C2) lines in
+	// file order (RW inserts each at the front of its list: TARGET 0x7004B4; the store applies them back to front)
+	struct AttackPriorityDef
+	{
+		std::string name;
+		int defaultPriority = 1;
+		std::vector<std::pair<std::string, int>> targets;
+	};
+	std::vector<AttackPriorityDef> attackPriorityDefs; ///< the AIData list (+ 0xFC) head first
 	bool forceModelsToFollowTimeOfDay = false;       ///< GameData ForceModelsToFollowTimeOfDay (a new drawable gets NIGHT)
 	bool forceModelsToFollowWeather = false;         ///< GameData ForceModelsToFollowWeather (SNOW)
 	bool bodyThresholdsLoaded = false;               ///< the two thresholds below were read from GameData (an ActiveBody that needs them throws when not)
@@ -195,6 +250,11 @@ struct GameLogicSettings
 	// lane BUILD-3 (GameData, RW GlobalData + 0x11E4): BuilderMoveFromNewStructureDistance, the walk of a porter out of the structure it built (RW 0x88D6AE); loaded when a block read it
 	bool builderMoveLoaded = false;
 	float builderMoveFromNewStructureDistance = 0.0f;
+	// lane PORTERFOG-1 (GameData BuilderFadeOutTime / BuilderFadeInTime, RW GlobalData + 0x11DC / + 0x11E0, parseDurationUnsignedInt): the frames of the porter's drawable
+	// fades (RW 0x88DDC1 -> 0x670A50, RW 0x88D6CE -> 0x670AA2); client values (the drawable's fade), not part of the settings hash
+	bool builderFadeLoaded = false;
+	unsigned builderFadeOutFrames = 0;
+	unsigned builderFadeInFrames = 0;
 	// RW GlobalData +0xA88, parseUnsignedInt (seconds).
 	bool repairDamageDelayLoaded = false;
 	unsigned timeAfterDamageUntilRepairAllowed = 0;
@@ -264,6 +324,9 @@ struct GameLogicSettings
 	float invisibilityOpacityMin = 0.0f;
 	float invisibilityOpacityMax = 0.0f;
 	unsigned invisibilityOpacityCycleFrames = 0;
+	// lane LOS-1: ClampedLOSHeightForCastleStructures (GameData row RW 0xC01060, parseReal RW 0x42ED00, + 0x11C4; the GlobalData constructor's 40.0f, RW 0x64395E):
+	// the aim height of an INSIDE_CASTLE structure in the weapon's terrain line (RW 0x6CB944). Retail 2.01 gamedata.ini does not set it
+	float clampedLOSHeightForCastleStructures = 40.0f;
 	// lane GARRISON-1 (GameData rows RW 0xC011D0 GarrisonedRangeMultiplier + 0x1224 parseReal RW 0x42ED00, RW 0xC011F0 MaxNumMembersToForceToImmediatelyEnter
 	// + 0x1230 and RW 0xC01200 WaitToForceMemberToEnterDelay + 0x1234, parseUnsignedInt RW 0x42ECB2): optional rows; the defaults are the GlobalData constructor's
 	// (RW 0x6439DE / 0x643A48: -1.0 = no range change; RW 0x643A5D: 1; RW 0x6439B7 / 0x643A67: 5 frames). Retail 2.01 gamedata.ini sets only the multiplier (1.25)
@@ -273,7 +336,18 @@ struct GameLogicSettings
 	// lane GARRISON-2: MaxTunnelCapacity (GameData row RW 0xC00360, parseInt RW 0x42EC5E, + 0xA98; the GlobalData constructor's 0, RW 0x642FB5): the riders a
 	// player's tunnel network holds (TunnelTracker RW 0x8FA152)
 	int maxTunnelCapacity = 0;
+	// lane OCCLUDE-1: the behind-building marker's GameData rows: UseBehindBuildingMarker (row RW 0xBFF830, parseBool RW 0x42E558, + 0x68),
+	// DefaultOcclusionDelay (row RW 0xBFF9E0, parseDurationUnsignedInt RW 0x73A429, + 0xCC), OccludedColorLuminanceScale (row RW 0xBFFFE0, parseReal RW 0x42ED00,
+	// + 0x984). Defaults: the GlobalData constructor's (RW 0x642A63: 1; RW 0x642B5F: LOGICFRAMES_PER_SECOND (RW 0xD9F608 = 5) * 3 = 15 frames; RW 0x642D18:
+	// 0.5f, RW 0xBD869C). Retail 2.01 gamedata.ini sets Yes / 3000 ms / 0.5. Read by the renderer's occluded-object pass (GameClient/RTS3DSceneOcclusion.h) and
+	// the objects' safe occlusion frame (Object + 0x444); presentation only: not in the settings hash
+	bool useBehindBuildingMarker = true;
+	unsigned defaultOcclusionDelay = 15;
+	float occludedColorLuminanceScale = 0.5f;
 	unsigned initialCredits[5] = { 0, 0, 0, 0, 0 };  ///< MultiplayerSettings InitialCreditsVeryLow .. VeryHigh: the lobby's money choices
+	// lane CHAT-1: MultiplayerSettings MaxBeaconsPerPlayer (+ 0x18): a player's beacons at most (retail multiplayer.ini: 3). INFERENCE: the default is ZH's
+	// MultiplayerSettings constructor value (RotWK's constructor was not read). Not hashed (crc below): data every peer of a game reads alike (the profile)
+	int maxBeaconsPerPlayer = 3;
 	// MultiplayerSettings colours (`MultiplayerColor <Name>` blocks of data\\ini\\multiplayer.ini, lane START-1): the lobby's colour list, in file order; the index is the
 	// slot's colour. ZH MultiplayerColorDefinition: RGBColor and RGBNightColor are the day and night player colours (0xRRGGBB here; Player::setPlayerColor
 	// takes 0xFF000000 | rgb), TooltipName a game text label, AvailableInWotR whether the strategic (War of the Ring) lobby offers it.
@@ -299,10 +373,13 @@ class ArchiveFileSystem;
 namespace GameLogicSettingsLoader
 {
 // Reads data\ini\gamedata.ini (GameData: ForceModelsToFollowTimeOfDay, ForceModelsToFollowWeather, UnitDamagedThreshold, UnitReallyDamagedThreshold,
-// DefaultStartingCash), data\ini\default\aidata.ini (AIData: EnableRepulsors) and data\ini\multiplayer.ini (InitialCredits*) through the shared INI
-// pipeline (macros, retail field parsers, later blocks override). A missing file, a missing key or a malformed value is an error (*error), never a
-// default (PLAN rule 10). The scan* forms read one block's text (tests, tools).
+// DefaultStartingCash), data\ini\default\aidata.ini then data\ini\aidata.ini (TheAI's two InitFiles in SubsystemLegendExpansion1.ini; AIData: no field is
+// required, a field left out keeps the AIData constructor's value) and data\ini\multiplayer.ini (InitialCredits*) through the shared INI pipeline (macros,
+// retail field parsers, later blocks override). A missing file, a missing required key or a malformed value is an error (*error), never a default (PLAN
+// rule 10). The scan* forms read one block's text (tests, tools).
 bool load(ArchiveFileSystem &fs, GameLogicSettings &out, std::string *error);
+// lane AIDATA-1: only the AIData files (default\aidata.ini, then aidata.ini): the pathfinder's configuration without the rest of the settings
+bool loadAIData(ArchiveFileSystem &fs, GameLogicSettings &out, std::string *error);
 bool scanGameData(const std::string &text, GameLogicSettings &out, std::string *error);
 bool scanAIData(const std::string &text, GameLogicSettings &out, std::string *error);
 bool scanMultiplayer(const std::string &text, GameLogicSettings &out, std::string *error);
@@ -333,6 +410,9 @@ public:
 	CombatState &combat() { return *m_combat; }
 	// lane COMBAT-2: the skirmish win / lose rules (init() after the players and their bases exist; update() runs in the logic frame's first phase)
 	VictoryConditions &victory() { return *m_victory; }
+	// WOTR2 milestone 7: a War of the Ring battle's army tags (GameLogic/LivingWorld/LivingWorldBattleTags.h; hashed while in use, obfme:GameLogic version 4)
+	LivingWorldBattleTags &livingWorldTags() { return m_livingWorldTags; }
+	const LivingWorldBattleTags &livingWorldTags() const { return m_livingWorldTags; }
 	BuildAssistantSell &sellList() { return *m_sell; } // lane FACT-A: TheBuildAssistant's sell list (RW 0x7966BB / 0x79468B)
 	const VictoryConditions &victory() const { return *m_victory; }
 	// lane AI-1: TheSkirmishAIManager (newGame after the starting bases; update() runs in phase 5 after the destroy list)
@@ -369,6 +449,9 @@ public:
 	ObjectClientHooks *clientHooks() const { return m_clientHooks; }
 	// lane AUDIO-4: TheLargeGroupAudio's face to the logic (the gate the LargeGroupAudioUpdate modules read, their calls forwarded to the client's sink;
 	// GameLogic/LargeGroupAudioLink.h). The gate is set once at the new game (RW 0x62FD90); the events are not hashed
+	// lane CAMPUI-1: TheMissionObjectiveTracker (RW 0xDE8C94; ScriptEngine/MissionObjectiveTracker.h): the map's objectives, reset with the game (RW 0x835E03)
+	MissionObjectiveTracker &missionObjectives() { return m_missionObjectives; }
+	const MissionObjectiveTracker &missionObjectives() const { return m_missionObjectives; }
 	LargeGroupAudioLink &largeGroupAudio() { return m_largeGroupAudio; }
 	const LargeGroupAudioLink &largeGroupAudio() const { return m_largeGroupAudio; }
 
@@ -395,15 +478,34 @@ public:
 		return id;
 	}
 	float getGroundHeight(float x, float y) const;
+	// lane WALL-1: ZH TerrainLogic::getHighestLayerForDestination + getLayerHeight: the highest walkable surface at (x, y), a wall top or a ramp over the
+	// terrain (the pathfinder's ground-grid layers); the terrain without an AI world
+	// lane WALL-2: the height of the layer a point at (x, y, z) stands on (TheTerrainLogic vslot 0x1C with RW 0x680A75's layer): a wall top's, a ramp's or a
+	// walkway's, the terrain elsewhere
+	float getLayerHeightForDestination(float x, float y, float z) const;
+	float getHighestLayerHeight(float x, float y) const;
 	// problems nothing explains; each distinct text is kept once and reaches report().errors
 	void reportError(const std::string &text);
 	// lane BUILD-1: a rule met at runtime that is registered as a stop but not ported (a castle's PreBuiltList ...): each distinct text reaches report().stops once
-	void noteStop(const std::string &text)
+	// (a view: the hot callers pass literals, and a noted text is found without building a std::string)
+	void noteStop(std::string_view text)
 	{
-		m_notedStops.insert(text);
-		++m_notedStopHits[text]; // lane QA-1: how often a game meets each stop (diagnostics, not simulation state)
+		if (m_notedStops.find(text) == m_notedStops.end())
+		{
+			m_notedStops.emplace(text);
+		}
+		// lane QA-1: how often a game meets each stop (diagnostics, not simulation state)
+		const auto hit = m_notedStopHits.find(text);
+		if (hit != m_notedStopHits.end())
+		{
+			++hit->second;
+		}
+		else
+		{
+			m_notedStopHits.emplace(std::string(text), 1u);
+		}
 	}
-	const std::map<std::string, unsigned> &notedStopHits() const { return m_notedStopHits; }
+	const std::map<std::string, unsigned, std::less<>> &notedStopHits() const { return m_notedStopHits; }
 
 	// lane BACKLOG3 (S-2452): a radar event the logic's code makes for the client's radar. Retail calls TheRadar->createEvent (RW 0x6D98FA) from inside the
 	// logic frame (the scripts' radar actions RW 0x7BC221 / 0x7BC250 / 0x7C0B61, the dozer's finished building RW 0x88E125); here the logic records the event
@@ -424,6 +526,26 @@ public:
 		int playerIndex = -1;  ///< CONSTRUCTION: the dozer's controlling player
 	};
 	static constexpr size_t kRadarEventNotices = 64;
+	// lane CHAT-1: what MSG_PLACE_BEACON did (RW 0x77C634), for the clients' presentation of it (the message lines, the sounds, the radar event, the EVA,
+	// an enemy's hidden beacon): the logic decides the object, each client what its local player sees. Never hashed, never saved (presentation only)
+	struct BeaconNotice
+	{
+		enum Kind : std::uint8_t
+		{
+			PLACED = 0,   ///< the beacon object was made
+			TOO_MANY = 1, ///< the player already has MaxBeaconsPerPlayer beacons (the placer's client says so)
+			FAILED = 2    ///< no beacon template, or the player is defeated (every client says so)
+		};
+		std::uint32_t seq = 0;
+		UnsignedInt frame = 0;
+		Kind kind = PLACED;
+		int playerIndex = -1;
+		ObjectID object = INVALID_ID;
+		Coord3D position{ 0.0f, 0.0f, 0.0f };
+	};
+	static constexpr size_t kBeaconNotices = 64;
+	void noteBeacon(BeaconNotice::Kind kind, int playerIndex, ObjectID object, const Coord3D &position);
+	const std::vector<BeaconNotice> &beaconNotices() const { return m_beaconNotices; }
 	void noteRadarEvent(int type, const Coord3D &position, RadarEventNotice::Source source, int playerIndex);
 	const std::vector<RadarEventNotice> &radarEventNotices() const { return m_radarEventNotices; }
 
@@ -432,16 +554,45 @@ public:
 	// player's objects outside a multiplayer game (Player::applyDifficultyBonusesForObject RW 0x6AC3E3) and the mission restart (RW 0x9221B6). Hashed.
 	void setGameDifficulty(int d) { m_gameDifficulty = d; }
 	int getGameDifficulty() const { return m_gameDifficulty; }
+	// lane OCCLUDE-1: TheGameLogic + 0x99, the behind-building markers' switch: script action 298 OPTIONS_SET_OCCLUSION_MODE writes it (RW 0x7CE207 ->
+	// RW 0x7BD549), GameLogic::init / reset / startNewGame set it (RW 0x62D1D2 / 0x62D3D6 / 0x62A22F); the renderer draws the occluded colours only while it
+	// and GameData UseBehindBuildingMarker are set (RW 0x47074D). Not hashed and not saved (no GameLogic xfer reads it): presentation only
+	void setShowBehindBuildingMarkers(bool on) { m_showBehindBuildingMarkers = on; }
+	bool getShowBehindBuildingMarkers() const { return m_showBehindBuildingMarkers; }
 	// lane RULES-1: the game setup's rules (RotWK TheGameInfo RW 0xDE892C + 0x60; all -1 when the game has no rule block, Common/MpGameRules.h) and
 	// OpenBFME's Legendary Heroes factor (1 = off). Both are part of the state hash only when set, so a game without them keeps its hashes
 	void setGameRules(const GameRules &rules) { m_gameRules = rules; }
 	const GameRules &gameRules() const { return m_gameRules; }
 	void setLegendaryHeroes(int factor) { m_legendaryHeroes = factor; }
 	int legendaryHeroes() const { return m_legendaryHeroes; }
+	// lane BFME2CAMP1: the script's buildability overrides (TECHTREE_MODIFY_BUILDABILITY_OBJECT, RW 0x7BCF6C). TARGET FACTS: GameLogic + 0x10 is a hash map
+	// keyed by the template's name (template + 0x64) to a Buildable value (0 Yes, 1 Ignore_Prerequisites, 2 No, 3 Only_By_AI); RW 0x62FEE6 sets the
+	// entry (made when absent: RW 0x62F051), RW 0x62EE6D finds it, and ThingTemplate::getBuildable (RW 0x73BFE8) answers the entry when there is one,
+	// else the template's own byte + 0x602. A null template sets / finds nothing. Nothing removes an entry within a game. The map is only looked up,
+	// so its order is no state (kept sorted here for the save and the hash)
+	void setBuildableStatusOverride(const ThingTemplate *tt, std::int32_t status);
+	bool findBuildableStatusOverride(const ThingTemplate *tt, std::int32_t &status) const;
+	const std::map<std::string, std::int32_t> &buildableStatusOverrides() const { return m_buildableOverrides; }
+	// lane BFME2CAMP1: the current campaign's carry-over (TheLinearCampaignManager + 0x10's LinearCampaign, GameLogic/CampaignCarryover.h) while this game
+	// is a mission of one: set by the mission's start (before addCarryoverStuffToMap), read and changed by the VICTORY / QUICKVICTORY actions
+	// (onCurrentMissionWon RW 0x5EBAEE) and the delayed carry-over script action / condition; the campaign's progress takes it after the game. Retail keeps
+	// it outside the logic (the campaign manager); here it lives with the game so its save and hash hold it. None: not a campaign game (or a campaign
+	// without the carry-over)
+	void setCampaignCarryover(std::optional<CampaignCarryover::State> s) { m_campaignCarryover = std::move(s); }
+	CampaignCarryover::State *campaignCarryover() { return m_campaignCarryover ? &*m_campaignCarryover : nullptr; }
+	const CampaignCarryover::State *campaignCarryover() const { return m_campaignCarryover ? &*m_campaignCarryover : nullptr; }
+	// lane CHEAT-1, OpenBFME: the game's Cheat Mode (GameLogic/CheatMode.h): off unless LiveGame::load configures the cheat seat from the game setup
+	CheatMode::State &cheatMode() { return m_cheatMode; }
+	const CheatMode::State &cheatMode() const { return m_cheatMode; }
 	// lane UBER-1: the simulation profile (Common/SimulationProfile.h; set before the first frame). Hashed only when Uber, so a Faithful game keeps its hash
 	void setSimulationProfile(SimulationProfile p) { m_simulationProfile = p; }
 	SimulationProfile simulationProfile() const { return m_simulationProfile; }
 	bool uber() const { return m_simulationProfile == SimulationProfile::Uber; }
+	// lane BFME2MODE-0 (AGENTS.md, docs/EDITIONS.md): the game edition, decided by the mounted data (Common/GameEdition.h isBfme2Data) when the game loads.
+	// The one accessor every edition variant reads (per system, e.g. SkirmishAI/SkirmishAIEditionRules.h); not hashed in Phase 0 (the data identity already
+	// differs between the editions)
+	void setEdition(GameEdition e) { m_edition = e; }
+	GameEdition edition() const { return m_edition; }
 
 	// ---- frame ------------------------------------------------------------------------------------------------------------
 	UnsignedInt getFrame() const { return m_frame; }
@@ -463,6 +614,8 @@ public:
 	size_t getObjectCount() const { return m_objectCount; }
 	ObjectID getNextObjectID() const { return m_nextObjectID; }
 	ObjectID allocateObjectID() { return m_nextObjectID++; }
+	// lane MODS-3: edain-unchained.unique-production-id's one counter (pre-increment: the first id is 1)
+	unsigned nextSharedProductionID() { return ++m_sharedProductionID; }
 	// an object made with an explicit id keeps later allocations above it
 	void noteExplicitObjectID(ObjectID id)
 	{
@@ -633,6 +786,27 @@ public:
 	// objects created without the OnCreated dispatch (no ObjectCreatedProc installed): counted and reported (S-147)
 	unsigned long long creationsWithoutDispatch() const { return m_creationsWithoutDispatch; }
 
+	// lane SDK-2: listeners run at the very end of each logic frame (the end of phase 6, after the players' per-frame work), in the order added;
+	// an OpenBFME seam (no retail counterpart: the mod scripts' frame events, GameLogic/Sdk/SdkScriptHost.h). None by default.
+	typedef std::function<void(UnsignedInt frame)> EndOfFrameHook;
+	int addEndOfFrameHook(EndOfFrameHook hook)
+	{
+		const int token = ++m_nextListenerToken;
+		m_endOfFrameHooks.push_back(EndOfFrameEntry{ token, std::move(hook) });
+		return token;
+	}
+	void removeEndOfFrameHook(int token)
+	{
+		for (size_t i = 0; i < m_endOfFrameHooks.size(); ++i)
+		{
+			if (m_endOfFrameHooks[i].token == token)
+			{
+				m_endOfFrameHooks.erase(m_endOfFrameHooks.begin() + (long)i);
+				return;
+			}
+		}
+	}
+
 	// ---- state hash and reports -------------------------------------------------------------------------------------------
 	// MOVE-1: logic state that lives outside the objects (the pathfinder's queues) joins the hash through a contributor; they run after the players, in the order added
 	typedef std::function<void(StateHasher &)> StateHashContributor;
@@ -785,7 +959,10 @@ private:
 	std::unique_ptr<CombatState> m_combat;
 	FXEventLog m_fxEvents; // lane FX-2 (not hashed)
 	LargeGroupAudioLink m_largeGroupAudio; // lane AUDIO-4
+	MissionObjectiveTracker m_missionObjectives; // lane CAMPUI-1
 	std::unique_ptr<VictoryConditions> m_victory;
+	LivingWorldBattleTags m_livingWorldTags;
+	void xferLivingWorldTags(Xfer &x); // WOTR2 milestone 7 (GameLogicSnapshot.cpp)
 	std::unique_ptr<BuildAssistantSell> m_sell; // lane FACT-A
 	std::unique_ptr<SkirmishAIManager> m_skirmishAI;
 	std::unique_ptr<ExperienceWorld> m_experience; // lane XP-1
@@ -796,9 +973,11 @@ private:
 	std::unique_ptr<TerrainTrees> m_trees;               // lane SPELL-3
 	std::unique_ptr<ScriptEngine> m_scriptEngine;        // lane SCRIPT-1
 	CastleTemplateStore m_castleTemplates;
-	std::set<std::string> m_notedStops;
-	std::map<std::string, unsigned> m_notedStopHits;
+	std::set<std::string, std::less<>> m_notedStops;
+	std::map<std::string, unsigned, std::less<>> m_notedStopHits;
 	std::vector<RadarEventNotice> m_radarEventNotices; ///< lane BACKLOG3: oldest first, at most kRadarEventNotices
+	std::vector<BeaconNotice> m_beaconNotices; ///< lane CHAT-1: oldest first, at most kBeaconNotices
+	std::uint32_t m_beaconSeq = 0;
 	std::uint32_t m_radarEventSeq = 0;
 	ObjectClientHooks *m_clientHooks = nullptr;
 	ObjectCreatedProc m_objectCreatedProc;
@@ -819,8 +998,16 @@ private:
 	std::uint32_t hashState(std::vector<StateHashSection> *sections, std::vector<ObjectStateHash> *objects) const; // lane MP-1
 	// lane UBER-1: the Uber profile's "objects" section: every object's own hash on the logic job pool, then (count, id, hash) in list order
 	void hashObjectsUber(StateHasher &x) const;
+	void chainObjectsUber(StateHasher &x) const;
+	size_t listHashObjects() const;
+	static constexpr size_t kHashObjectsPerJob = 64;
 	mutable std::vector<const Object *> m_uberHashObjects;  ///< scratch of hashObjectsUber (the logic owner thread only)
 	mutable std::vector<std::uint32_t> m_uberHashValues;
+	// lane PERF-HD: the Faithful hash's tapes (StateHasher recording): one per section, one per object (kept between frames for their capacity)
+	void hashObjectsTaped(StateHasher &x) const;
+	void gatherObjectTapes() const;
+	mutable std::vector<std::vector<std::uint32_t>> m_hashSectionTapes;
+	mutable std::vector<std::vector<std::uint32_t>> m_hashObjectTapes;
 	struct HashContributor
 	{
 		int token;
@@ -829,6 +1016,12 @@ private:
 	};
 	std::vector<ExtraHooks> m_extraWorldHooks;
 	std::vector<HashContributor> m_hashContributors;
+	struct EndOfFrameEntry
+	{
+		int token;
+		EndOfFrameHook hook;
+	};
+	std::vector<EndOfFrameEntry> m_endOfFrameHooks; // lane SDK-2
 	std::unique_ptr<GameState> m_gameState; // lane SAVE-4a (it owns the core blocks' adapters)
 	void registerSnapshotBlocks();
 	void registerObjectSnapshotBlocks(); // lane SAVE-4b
@@ -854,9 +1047,14 @@ private:
 
 	UnsignedInt m_frame = 0;
 	int m_gameDifficulty = 1;     ///< lane CAMP-1H: RW GameLogic + 0xA4
+	bool m_showBehindBuildingMarkers = true; ///< lane OCCLUDE-1: RW GameLogic + 0x99
 	GameRules m_gameRules = MpGameRules::none(); ///< lane RULES-1
 	int m_legendaryHeroes = LegendaryHeroes::kOff; ///< lane RULES-1 (OpenBFME)
+	std::map<std::string, std::int32_t> m_buildableOverrides; ///< lane BFME2CAMP1: RW GameLogic + 0x10 (template name -> Buildable)
+	std::optional<CampaignCarryover::State> m_campaignCarryover; ///< lane BFME2CAMP1 (OpenBFME: retail's campaign manager)
+	CheatMode::State m_cheatMode;                  ///< lane CHEAT-1 (OpenBFME)
 	SimulationProfile m_simulationProfile = SimulationProfile::Faithful; ///< lane UBER-1 (OpenBFME)
+	GameEdition m_edition = GameEdition::RotWK201;                         ///< lane BFME2MODE-0 (OpenBFME)
 	bool m_frameAdvance = true;   ///< RW GameLogic + 0x44
 	bool m_inUpdate = false;      ///< RW + 0x70
 	int m_lastPhase = 0;          ///< RW + 0x17C
@@ -866,6 +1064,7 @@ private:
 	size_t m_objectCount = 0;
 	unsigned m_containWorldTransitions = 0;
 	ObjectID m_nextObjectID = 1;
+	unsigned m_sharedProductionID = 0; ///< lane MODS-3: edain-unchained.unique-production-id (saved and hashed only with the feature)
 	std::vector<Object *> m_objectsById; ///< index = id; null for a free or destroyed id
 
 	std::vector<UpdateModule *> m_updates[PHASE_COUNT];
@@ -877,7 +1076,10 @@ private:
 
 	std::vector<PhaseWork> m_phaseWork;
 	std::map<const ThingTemplate *, ObjectTemplateInfo> m_templateInfo; ///< looked up only, never iterated
-	std::map<const ThingTemplate *, std::unique_ptr<CrushTemplateInfo>> m_crushInfo; ///< looked up only, never iterated
+	std::unordered_map<const ThingTemplate *, std::unique_ptr<CrushTemplateInfo>> m_crushInfo; ///< looked up only, never iterated
+	// lane HDPERF-1 (performance: a lookup per colliding pair): the infos by template id, each slot with the template it holds (an override shares its
+	// base's id: a slot taken by another template sends the lookup to m_crushInfo); filled only where m_crushInfo is (on the logic thread)
+	std::vector<std::pair<const ThingTemplate *, const CrushTemplateInfo *>> m_crushById;
 	std::vector<std::string> m_errors;
 	const TerrainLogic *m_terrain = nullptr;
 	AICommandSink m_aiCommands;

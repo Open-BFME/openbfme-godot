@@ -36,6 +36,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct ObjectFilter;
@@ -73,6 +74,9 @@ public:
 	std::map<std::string, int> m_productionVeterancyLevels;     ///< ProductionVeterancyLevel: template name -> level (0 REGULAR .. 3 HEROIC)
 	std::vector<std::string> m_intrinsicSciences, m_intrinsicSciencesMP;
 	std::string m_purchaseScienceCommandSet, m_purchaseScienceCommandSetMP;
+	// lane MODS-3: edain-unchained.spell-store-upgrade's PurchaseScienceCommandSetUpgrade lines of this block (upgrade, command set), in order; the store
+	// moves them into its game-wide list at the end of the block (its table 0xED3010 is global, not per template)
+	std::vector<std::pair<std::string, std::string>> m_purchaseScienceSetUpgradeLines;
 	std::string m_specialPowerShortcutCommandSet, m_specialPowerShortcutWinName;
 	int m_specialPowerShortcutButtonCount = 0;
 	bool m_isObserver = false;
@@ -130,10 +134,22 @@ public:
 	// they keep their addresses
 	void assignFrom(const PlayerTemplateStore &other);
 
+	// lane MODS-3, edain-unchained.spell-store-upgrade (its lookup 0xED38ED, called by the store fill RW 0x822AD0 in place of RW 0x71F933): the
+	// spell store's command set of this player: the set of the first PurchaseScienceCommandSetUpgrade (game-wide, in INI order) whose upgrade the
+	// player has completed and whose set exists, else the template's PurchaseScienceCommandSetMP (skirmish / multiplayer) or PurchaseScienceCommandSet.
+	// The purchasable-science indicator (RW 0x71F97B) still calls the stock RW 0x71F933 under that game.dat: stockOnly = true.
+	std::string purchaseScienceCommandSetFor(const class Player &player, const class CommandStore *commands, bool stockOnly = false) const;
+	// the game-wide list (at most 128 entries: a line beyond is dropped, named in droppedScienceSetUpgrades)
+	const std::vector<std::pair<std::string, std::string>> &purchaseScienceSetUpgrades() const { return m_scienceSetUpgrades; }
+	const std::vector<std::string> &droppedScienceSetUpgrades() const { return m_droppedScienceSetUpgrades; }
+
 private:
 	NameKeyGenerator &m_keys;
 	std::vector<PlayerTemplate> m_templates; ///< RW store + 0xC, in definition order
 	std::map<NameKeyType, size_t> m_byKey;
 	std::vector<int> m_playableSides;
 	bool m_storedLabels = false, m_storedSciences = false, m_storedSounds = false;
+	void takeScienceSetUpgrades(PlayerTemplate &pt);
+	std::vector<std::pair<std::string, std::string>> m_scienceSetUpgrades; ///< lane MODS-3: its 0xED3000 count + 0xED3010 entries
+	std::vector<std::string> m_droppedScienceSetUpgrades;
 };

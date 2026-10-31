@@ -85,4 +85,9 @@ SOURCE VERSIONS PLAINLY MARKED. Every altered file begins with the "ALTERED SOUR
 
 * An executed retail oracle for every opcode (only the ORACLE-1 recordings above); no x86 emulator exists on the Linux machine.
 * `lua_State` and `Hash` are 64 bit layouts (the pointers are 8 bytes); `gcinfo()` therefore differs from retail's number.
-* `string.format("%e")` and friends use the host `sprintf` (retail: MSVCR71, 3 digit exponents); only `tostring` and `tonumber` are made exact (S-123).
+* `string.format("%e")` and friends use typed, literal `snprintf` dispatch with the parsed width and precision as values (retail: MSVCR71, 3 digit exponents);
+  only `tostring` and `tonumber` are made exact (S-123). The Lua 4.0 format language and argument checks are unchanged; localized UI text uses
+  `GameClient/LocalizedText.h`'s smaller substitution language instead.
+  Donor reference: `Code/Libraries/Source/Lua/lstrlib.c::str_format`, BFME2 RVA `0x749DD0`. The 2026-10-23 map groups it under
+  RotWK `0xB5DED0` (tier B, BFME2 RVA `0x749C80`, beginning at `luaI_addquoted`); the exact RotWK formatter boundary and
+  tier-B differences remain UNVERIFIED without the RotWK executable. Literal dispatch is an intentional security departure from the donor's `sprintf`.

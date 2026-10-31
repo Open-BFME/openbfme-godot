@@ -140,11 +140,16 @@ no fixture-skip messages; doctest's 3,222 filtered-out cases are not skips.
 
 ## Remaining S-2521 blockers
 
-The Create-a-Hero portrait remains blocked: `0x73D0BA -> 0x619562` looks up a
+The exact Create-a-Hero runtime-image getter remains unported:
+`0x73D0BA -> 0x619562` looks up a
 record by OBJECT ID and returns the non-null runtime record's `+0x140` image,
-otherwise falling back to the template path at `0x73CFEF`. `CreateAHeroHero`
-currently has no generated image/renderer resource (S-1405). This portrait
-resource remains separate from recruitment button icons: RW 0x7810BC uses the
+otherwise falling back to the template path at `0x73CFEF`. The current
+`InGameHeroSelect::buttonImage` instead resolves the object's model-state
+`ButtonImageName` for a custom hero, then falls back to the template's
+`ButtonImage`. `PalantirCommandUI::objectPortrait` likewise resolves
+model-state `PortraitImageName` for the Palantir. Neither path implements that
+runtime record's `+0x140` image cache. These images remain separate from
+recruitment button icons: RW 0x7810BC uses the
 selected subclass ButtonImage, falling back to BuildingNoArt when absent.
 
 Idle-builder rollover help is ported by S-2703. Full hero-object help
@@ -158,12 +163,13 @@ The supplied modified-image caveat applies to this recovery too. The portrait
 getter RW 0x73D0BA is understood, but the provider is not available in the port:
 `CreateAHeroGame::heroOfObject` returns the serialized-style hero record,
 which has no runtime Image corresponding to +0x140. The Create-a-Hero screen's
-`OnTakePicture` handler only reports S-1405 and invokes `OnGameTookPicture`;
-it neither captures the configured portrait view nor creates/persists the
-image resource. Its class-icon display is already labeled an inference and
-cannot serve as proof of the requested in-game portrait. The portrait capture,
-resource lifetime/loading and HUD delivery must be implemented together before
-the getter can be wired without substituting different behavior.
+`OnTakePicture` now arms a window screenshot after the guard clip has drawn
+twice. `AptMenuPlayer::takeCreateAHeroPicture` saves that frame as PNG in the
+system pictures directory plus the localized `APPDATA:PictureFolder` subfolder;
+it reports capture/write errors and completes the movie callback. This is a
+saved screenshot, not a generated hero portrait resource. The model-state
+images described above are already delivered to the HUD; the exact runtime
+image cache and its lifetime/loading contract remain a separate gap.
 
 Full hero help is also not a command-button tooltip. RW 0x92BF34 selects the
 object-help provider, whose RW 0x8EBC61 produces two strings for the separate

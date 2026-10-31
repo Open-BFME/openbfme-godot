@@ -58,6 +58,9 @@ def summary(player: dict, detector: str = DETECTOR) -> str:
                  ("slot_mismatch", "speaking for another slot"), ("malformed", "malformed"), ("malformed_records", "with a malformed record")]
         parts = ", ".join(f"{player.get(k, 0)} {w}" for k, w in kinds if player.get(k, 0))
         total = sum(player.get(k, 0) for k, _ in kinds)
+        if player.get("anomaly"):  # online batch r4: authenticated players under a version-2 relay log (RelayLog::packetIntegrityReport)
+            return (f"Automated check D7: {player['anomaly']}; the relay refused {_plural(total, 'datagram')} sent as this slot; its input was "
+                    f"{player.get('input')} ({player.get('signed_datagrams')} signed, {player.get('plain_datagrams')} plain datagrams)")
         return (f"Automated check D7: the relay refused {_plural(total, 'datagram')} sent as this slot ({parts}); its input was "
                 f"{player.get('input')} ({player.get('signed_datagrams')} signed, {player.get('plain_datagrams')} plain datagrams)")
     reasons: dict[str, int] = {}

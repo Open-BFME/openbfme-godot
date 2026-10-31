@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <utility>
 
 namespace
 {
@@ -17,6 +18,7 @@ constexpr std::uint8_t kVersion = LANAPI::kProtocolVersion;
 constexpr std::uint32_t kBroadcast = 0xFFFFFFFFu;
 constexpr std::uint32_t kLoopback = 0x7F000001u;
 constexpr std::uint64_t kStartGiveUpMs = 10000; // OpenBFME: a host stops resending GAME_START after this (reported)
+constexpr size_t kMaxDatagramBytes = 65507; // IPv4's 65535 bytes minus its 20-byte header and UDP's 8-byte header
 
 NetAddress discoveryAddress(const NetAddress &previous, const NetAddress &incoming)
 {
@@ -30,8 +32,90 @@ enum : std::uint8_t
 	OPT_FULL = 0,
 	OPT_SLOT_REQUEST = 1,
 	OPT_HELLO = 2,
-	OPT_SLOT_CREATE_A_HERO = 3 ///< lane HERO-2: a player's Create-a-Hero for its own slot (u8 flag, then the record's .cah bytes)
+	OPT_SLOT_CREATE_A_HERO = 3, ///< lane HERO-2: a player's Create-a-Hero for its own slot (u8 flag, then the record's .cah bytes)
+	OPT_SAVE_AVAILABILITY = 4   ///< WOTR2 milestone 8 (step 4): a player's answer to a resumed war: str save identity, u8 ok, str reason (LAN API 6)
 };
+
+// UTF-16 to UTF-8 (the refusal lines name the players)
+std::string utf8Of(const std::u16string &in)
+{
+	std::string out;
+	for (size_t i = 0; i < in.size(); ++i)
+	{
+		std::uint32_t c = in[i];
+		if (c >= 0xD800 && c <= 0xDBFF && i + 1 < in.size() && in[i + 1] >= 0xDC00 && in[i + 1] <= 0xDFFF)
+		{
+			c = 0x10000 + ((c - 0xD800) << 10) + (in[i + 1] - 0xDC00);
+			++i;
+		}
+		if (c < 0x80)
+		{
+			out.push_back((char)c);
+		}
+		else if (c < 0x800)
+		{
+			out.push_back((char)(0xC0 | (c >> 6)));
+			out.push_back((char)(0x80 | (c & 0x3F)));
+		}
+		else if (c < 0x10000)
+		{
+			out.push_back((char)(0xE0 | (c >> 12)));
+			out.push_back((char)(0x80 | ((c >> 6) & 0x3F)));
+			out.push_back((char)(0x80 | (c & 0x3F)));
+		}
+		else
+		{
+			out.push_back((char)(0xF0 | (c >> 18)));
+			out.push_back((char)(0x80 | ((c >> 12) & 0x3F)));
+			out.push_back((char)(0x80 | ((c >> 6) & 0x3F)));
+			out.push_back((char)(0x80 | (c & 0x3F)));
+		}
+	}
+	return out;
+}
+
+// UTF-8 to UTF-16 (the system chat line); a malformed byte becomes U+FFFD
+std::u16string u16Of(const std::string &in)
+{
+	std::u16string out;
+	for (size_t i = 0; i < in.size();)
+	{
+		const std::uint8_t b = (std::uint8_t)in[i];
+		std::uint32_t c = 0xFFFD;
+		size_t n = 1;
+		if (b < 0x80)
+		{
+			c = b;
+		}
+		else if ((b & 0xE0) == 0xC0 && i + 1 < in.size())
+		{
+			c = ((b & 0x1Fu) << 6) | ((std::uint8_t)in[i + 1] & 0x3Fu);
+			n = 2;
+		}
+		else if ((b & 0xF0) == 0xE0 && i + 2 < in.size())
+		{
+			c = ((b & 0x0Fu) << 12) | (((std::uint8_t)in[i + 1] & 0x3Fu) << 6) | ((std::uint8_t)in[i + 2] & 0x3Fu);
+			n = 3;
+		}
+		else if ((b & 0xF8) == 0xF0 && i + 3 < in.size())
+		{
+			c = ((b & 0x07u) << 18) | (((std::uint8_t)in[i + 1] & 0x3Fu) << 12) | (((std::uint8_t)in[i + 2] & 0x3Fu) << 6) | ((std::uint8_t)in[i + 3] & 0x3Fu);
+			n = 4;
+		}
+		i += n;
+		if (c >= 0x10000)
+		{
+			c -= 0x10000;
+			out.push_back((char16_t)(0xD800 + (c >> 10)));
+			out.push_back((char16_t)(0xDC00 + (c & 0x3FF)));
+		}
+		else
+		{
+			out.push_back((char16_t)c);
+		}
+	}
+	return out;
+}
 
 void writeAddress(NetByteWriter &w, const NetAddress &a)
 {
@@ -83,8 +167,13 @@ void LANAPI::applySlotRequest(SkirmishGameInfo &info, int slot, int playerTempla
 	}
 }
 
-bool LANAPI::slotRequestValid(int playerTemplate, int color, int team, int startPos, int handicap, std::string *why) const
+bool LANAPI::slotRequestValid(const SkirmishGameInfo &info, int playerTemplate, int color, int team, int startPos, int handicap, std::string *why) const
 {
+	if (info.mapStartCount < LEGACY_MAX_SLOTS || info.mapStartCount > MAX_SLOTS)
+	{
+		if (why) *why = "invalid map capacity " + std::to_string(info.mapStartCount);
+		return false;
+	}
 	auto check = [&](const char *name, int v, int count) {
 		if (v == kKeep || (v >= -1 && v < count))
 		{
@@ -96,8 +185,22 @@ bool LANAPI::slotRequestValid(int playerTemplate, int color, int team, int start
 		}
 		return false;
 	};
-	if (!(check("faction", playerTemplate, m_options.playerTemplateCount) && check("colour", color, m_options.colorCount) && check("team", team, MAX_SLOTS / 2)
-			&& check("start position", startPos, MAX_SLOTS)))
+	// lane P16: team bounds track the game's own slot count and start positions the map's advertised
+	// capacity — see SkirmishGameSetup::teamEntries for the same rule
+	const int slotCount = info.serializedSlotCount();
+	int starts = info.mapStartCount;
+	if (info.warOfTheRing())
+	{
+		// WOTR2 milestone 8: a region index of the scenario's region campaign (RW 0x9759BB / 0x975D3F)
+		starts = m_options.warRegionCount ? m_options.warRegionCount(info.scenario) : -1;
+		if (starts < 0)
+		{
+			if (why) *why = "the War of the Ring scenario '" + info.scenario + "' is not known here";
+			return false;
+		}
+	}
+	if (!(check("faction", playerTemplate, m_options.playerTemplateCount) && check("colour", color, m_options.colorCount) && check("team", team, slotCount / 2)
+			&& check("start position", startPos, starts)))
 	{
 		return false;
 	}
@@ -130,7 +233,8 @@ bool LANAPI::gameInfoValid(const SkirmishGameInfo &info, std::string *why) const
 	{
 		const SkirmishGameSlot &s = info.slots[i];
 		std::string w;
-		if (!slotRequestValid(s.playerTemplate, s.color, s.teamNumber, s.startPos, s.handicap, &w) || s.playerTemplate == kKeep || s.color == kKeep || s.teamNumber == kKeep
+		if (!slotRequestValid(info, s.playerTemplate, s.color, s.teamNumber, s.startPos, s.handicap, &w) || s.playerTemplate == kKeep || s.color == kKeep
+			|| s.teamNumber == kKeep
 			|| s.startPos == kKeep)
 		{
 			if (why)
@@ -267,7 +371,14 @@ void LANAPI::sendTo(const NetAddress &to, const std::vector<std::uint8_t> &bytes
 {
 	if (m_lobbySocket && to.port != 0)
 	{
-		m_lobbySocket->sendTo(to, bytes.data(), bytes.size());
+		if (bytes.size() > kMaxDatagramBytes)
+		{
+			m_errors.push_back("LAN datagram of " + std::to_string(bytes.size()) + " bytes exceeds the IPv4 UDP payload limit: not sent to " + to.text());
+		}
+		else if (!m_lobbySocket->sendTo(to, bytes.data(), bytes.size()))
+		{
+			m_errors.push_back("failed to send LAN datagram of " + std::to_string(bytes.size()) + " bytes to " + to.text());
+		}
 	}
 }
 
@@ -317,7 +428,7 @@ std::vector<std::uint8_t> LANAPI::gameAnnounce() const
 	w.wstr(m_current.name);
 	w.u8(m_current.inProgress ? 1 : 0);
 	w.str(m_profile.digest);
-	NetPacket::writeGameInfo(w, m_current.info);
+	NetPacket::writeGameInfo(w, m_current.info, true); // WOTR2 milestone 8: protocol 5 carries the game mode
 	std::vector<std::uint8_t> b = w.take();
 	h.insert(h.end(), b.begin(), b.end());
 	return h;
@@ -334,8 +445,9 @@ void LANAPI::broadcastOptions()
 	NetByteWriter w;
 	w.u8(OPT_FULL);
 	w.wstr(m_current.name);
-	NetPacket::writeGameInfo(w, m_current.info);
-	for (int s = 0; s < MAX_SLOTS; ++s)
+	NetPacket::writeGameInfo(w, m_current.info, true); // WOTR2 milestone 8: protocol 5 carries the game mode
+	// lane P16: the trailing per-slot entries follow the record's wire layout: 8 for a legacy (<=8 start) map, 16 for an extended one
+	for (int s = 0; s < m_current.info.serializedSlotCount(); ++s)
 	{
 		writeAddress(w, m_current.lobby[(size_t)s]);
 		writeAddress(w, m_current.game[(size_t)s]);
@@ -684,24 +796,119 @@ bool LANAPI::hostStartGame(std::string *reason)
 			return false;
 		}
 	}
-	// the start every peer begins from (GameNetwork/LANLobby.h LobbyStart)
-	m_start = LobbyStart();
-	m_start.game.mode = NewGameMode::Skirmish;
-	m_start.game.game = m_current.info;
-	m_start.game.game.inProgress = true;
-	if (m_start.game.game.seed == 0)
+	if (m_current.info.resumed())
 	{
-		m_start.game.game.seed = (std::uint32_t)(m_now * 2654435761u) | 1u; // the host's choice (retail: GetTickCount)
+		// WOTR2 milestone 8 (step 4): a resumed war starts only with every saved human back and every joiner's copy of the save, loaded with the saved
+		// state hash (OpenBFME: RotWK ignores a joiner without the file, RW 0x81869B, which then starts a war of its own). The refusal names the player
+		// and goes to every PC as a system line
+		std::string why;
+		for (const ResumeSeat &seat : m_resumeSeats)
+		{
+			if (seat.slot < 1 || seat.slot >= MAX_SLOTS)
+			{
+				why = "the saved war's seat " + std::to_string(seat.slot) + " is not a joiner's slot";
+				break;
+			}
+			const SkirmishGameSlot &slot = m_current.info.slots[(size_t)seat.slot];
+			if (why.empty() && !slot.isHuman())
+			{
+				why = utf8Of(seat.name) + "'s seat is open: every player of the saved war must come back to resume it";
+			}
+			else if (why.empty() && slot.name != seat.name)
+			{
+				// (Sol wotr2m8s4 #4) a joiner takes the first open slot: the seat must hold the saved player
+				why = utf8Of(slot.name) + " sits in " + utf8Of(seat.name) + "'s seat: every player of the saved war takes their own seat";
+			}
+		}
+		for (int s = 1; s < MAX_SLOTS && why.empty(); ++s)
+		{
+			const SkirmishGameSlot &slot = m_current.info.slots[(size_t)s];
+			const bool seat = std::any_of(m_resumeSeats.begin(), m_resumeSeats.end(), [&](const ResumeSeat &r) { return r.slot == s; });
+			if (slot.isHuman() && !seat)
+			{
+				why = utf8Of(slot.name) + " sits in a slot that is no player's seat in the saved war";
+			}
+		}
+		if (why.empty() && m_current.info.rules != m_resumeRules)
+		{
+			why = "the game's rules are not the saved war's";
+		}
+		for (int s = 1; s < MAX_SLOTS && why.empty(); ++s)
+		{
+			const SkirmishGameSlot &slot = m_current.info.slots[s];
+			const SaveCheck &c = m_saveChecks[(size_t)s];
+			if (!slot.isHuman())
+			{
+				continue;
+			}
+			if (!c.heard || c.save != m_current.info.resumeSave || c.player != slot.name)
+			{
+				why = utf8Of(slot.name) + " has not checked the saved war yet";
+			}
+			else if (!c.ok)
+			{
+				why = utf8Of(slot.name) + " cannot resume the saved war: " + c.why;
+			}
+		}
+		if (!why.empty())
+		{
+			note("system: " + why);
+			requestChat(u16Of(why), true);
+			if (reason)
+			{
+				*reason = why;
+			}
+			return false;
+		}
 	}
-	m_start.runAhead = m_options.runAhead;
-	m_start.crcInterval = m_options.crcInterval;
-	m_start.profile = m_profile;
+	// the start every peer begins from (GameNetwork/LANLobby.h LobbyStart)
+	LobbyStart start;
+	start.game.mode = NewGameMode::Skirmish;
+	start.game.game = m_current.info;
+	if (m_current.info.resumed())
+	{
+		// (Sol wotr2m8s4 #4) each saved human's seat as it was saved: its faction, colour, team, start and handicap (the joiner's lobby choices do not change
+		// the resumed war)
+		for (const ResumeSeat &seat : m_resumeSeats)
+		{
+			SkirmishGameSlot &s = start.game.game.slots[(size_t)seat.slot];
+			s.playerTemplate = seat.saved.playerTemplate;
+			s.color = seat.saved.color;
+			s.teamNumber = seat.saved.teamNumber;
+			s.startPos = seat.saved.startPos;
+			s.handicap = seat.saved.handicap;
+			s.origPlayerTemplate = seat.saved.origPlayerTemplate;
+			s.origColor = seat.saved.origColor;
+			s.origStartPos = seat.saved.origStartPos;
+		}
+	}
+	start.game.game.inProgress = true;
+	if (start.game.game.seed == 0)
+	{
+		start.game.game.seed = (std::uint32_t)(m_now * 2654435761u) | 1u; // the host's choice (retail: GetTickCount)
+	}
+	start.runAhead = m_options.runAhead;
+	start.crcInterval = m_options.crcInterval;
+	start.profile = m_profile;
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
-		m_start.networkSlot[(size_t)s] = m_current.info.slots[s].isHuman();
-		m_start.addresses[(size_t)s] = m_current.game[(size_t)s]; // the host's own ip is 0: a player takes the address it heard the host from
+		start.networkSlot[(size_t)s] = m_current.info.slots[s].isHuman();
+		start.addresses[(size_t)s] = m_current.game[(size_t)s]; // the host's own ip is 0: a player takes the address it heard the host from
 	}
-	m_start.localSlot = 0;
+	NetByteWriter body;
+	body.u8(0); // the receiver's slot
+	body.bytes(LANLobby::encodeStart(start));
+	const size_t bytes = header(LANMessageType::GAME_START).size() + body.data().size();
+	if (bytes > kMaxDatagramBytes)
+	{
+		if (reason)
+		{
+			*reason = "LAN START of " + std::to_string(bytes) + " bytes exceeds the IPv4 UDP payload limit (" + std::to_string(kMaxDatagramBytes) + ")";
+		}
+		return false;
+	}
+	start.localSlot = 0;
+	m_start = std::move(start);
 	m_current.inProgress = true;
 	m_starting = true;
 	m_startAcked.fill(false);
@@ -1194,6 +1401,10 @@ void LANAPI::handle(const NetAddress &from, const std::vector<std::uint8_t> &byt
 		if (m_inGame && slotOf(from) >= 0)
 		{
 			event(Event{ Event::Chat, RET_OK, slotOf(from), system, sender, text });
+			if (system)
+			{
+				note("system: " + utf8Of(text)); // WOTR2 milestone 8 (step 4): the host's refusals of a resumed war, in every player's log
+			}
 		}
 		return;
 	}
@@ -1260,7 +1471,7 @@ bool LANAPI::handleGameAnnounce(NetByteReader &r, std::uint32_t nonce, const Net
 	g.inProgress = r.flag();
 	g.profileDigest = r.str();
 	std::string error;
-	if (!NetPacket::readGameInfo(r, g.info, &error, true) || r.failed() || !r.atEnd()) // lane UBERJOIN-1: an announcement without the profile is Faithful
+	if (!NetPacket::readGameInfo(r, g.info, &error, true, true, true, true) || r.failed() || !r.atEnd()) // lane UBERJOIN-1: an announcement without the profile is Faithful
 	{
 		m_errors.push_back("a malformed game announcement from " + from.text() + ": " + (error.empty() ? std::string("truncated or trailing bytes") : error));
 		return false;
@@ -1384,6 +1595,10 @@ bool LANAPI::handleGameOptions(NetByteReader &r, const NetAddress &from, std::ui
 	{
 		return handleSlotCreateAHero(r, from);
 	}
+	if (kind == OPT_SAVE_AVAILABILITY)
+	{
+		return handleSaveAvailability(r, from);
+	}
 	if (kind != OPT_FULL)
 	{
 		m_errors.push_back("game options of the unknown kind " + std::to_string(kind) + " from " + from.text());
@@ -1392,12 +1607,12 @@ bool LANAPI::handleGameOptions(NetByteReader &r, const NetAddress &from, std::ui
 	LANGame g;
 	g.name = r.wstr();
 	std::string error;
-	if (!NetPacket::readGameInfo(r, g.info, &error))
+	if (!NetPacket::readGameInfo(r, g.info, &error, false, true, true, true)) // WOTR2 milestone 8: protocol 5
 	{
 		m_errors.push_back("malformed game options: " + error);
 		return false;
 	}
-	for (int s = 0; s < MAX_SLOTS; ++s)
+	for (int s = 0; s < g.info.serializedSlotCount(); ++s)
 	{
 		g.lobby[(size_t)s] = readAddress(r);
 		g.game[(size_t)s] = readAddress(r);
@@ -1434,7 +1649,65 @@ bool LANAPI::handleGameOptions(NetByteReader &r, const NetAddress &from, std::ui
 	}
 	m_current = g;
 	event(Event{ Event::GameOptions });
+	if (g.info.resumed())
+	{
+		sendSaveAvailability(); // WOTR2 milestone 8 (step 4): answered with every copy of the options (the datagrams may be lost)
+	}
 	return true;
+}
+
+// WOTR2 milestone 8 (step 4): a joiner's answer to a resumed war: its copy of the save (by the identity) and that copy's loaded state hash
+void LANAPI::sendSaveAvailability()
+{
+	const SkirmishGameInfo &info = m_current.info;
+	// a refused check is made again with the next options (the player may have copied the save in meanwhile)
+	if (!m_checkedDone || !m_checkedWhy.empty() || m_checkedSave != info.resumeSave || m_checkedHash != info.resumeHash)
+	{
+		m_checkedSave = info.resumeSave;
+		m_checkedHash = info.resumeHash;
+		m_checkedWhy = m_options.resumeCheck ? m_options.resumeCheck(info.resumeSave, info.resumeHash) : std::string("this game cannot look for saved wars");
+		m_checkedDone = true;
+		note(m_checkedWhy.empty() ? "has the resumed war's save" : "cannot resume the war: " + m_checkedWhy);
+	}
+	std::vector<std::uint8_t> h = header(LANMessageType::GAME_OPTIONS);
+	NetByteWriter w;
+	w.u8(OPT_SAVE_AVAILABILITY);
+	w.str(m_checkedSave);
+	w.u8(m_checkedWhy.empty() ? 1 : 0);
+	w.str(m_checkedWhy);
+	std::vector<std::uint8_t> b = w.take();
+	h.insert(h.end(), b.begin(), b.end());
+	sendTo(m_current.lobby[0], h);
+}
+
+bool LANAPI::handleSaveAvailability(NetByteReader &r, const NetAddress &from)
+{
+	const std::string save = r.str();
+	const std::uint8_t ok = r.u8();
+	const std::string why = r.str();
+	if (r.failed() || !r.atEnd() || ok > 1 || save.size() > 64 || why.size() > 512)
+	{
+		m_errors.push_back("a malformed save availability from " + from.text());
+		return false;
+	}
+	const int s = slotOf(from);
+	if (!m_host || s <= 0 || !m_current.info.slots[s].isHuman())
+	{
+		return true;
+	}
+	SaveCheck &c = m_saveChecks[(size_t)s];
+	c.heard = true;
+	c.ok = ok == 1 && why.empty();
+	c.save = save;
+	c.why = why;
+	c.player = m_current.info.slots[s].name;
+	return true;
+}
+
+void LANAPI::hostSetResumeSeats(const std::vector<ResumeSeat> &seats, const GameRules &rules)
+{
+	m_resumeSeats = seats;
+	m_resumeRules = rules;
 }
 
 bool LANAPI::handleSlotRequest(NetByteReader &r, const NetAddress &from)
@@ -1451,7 +1724,7 @@ bool LANAPI::handleSlotRequest(NetByteReader &r, const NetAddress &from)
 		return false;
 	}
 	std::string why;
-	if (!slotRequestValid(playerTemplate, color, team, startPos, handicap, &why))
+	if (!slotRequestValid(m_current.info, playerTemplate, color, team, startPos, handicap, &why))
 	{
 		m_errors.push_back("a slot request from " + from.text() + " with the " + why + ": refused");
 		return false;

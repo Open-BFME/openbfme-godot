@@ -18,6 +18,10 @@ namespace KindOfTokens
 {
 // the index of a KindOf name (case insensitive) in RW 0xDA0E68, -1 when unknown
 int indexOf(std::string_view name);
+// lane MODS-3: the KindOf name table in force, NULL-terminated: retail's (TheKindOfNames RW 0xDA0E68, 222 names), or with the mod engine
+// feature edain-unchained.herobar-kindof the table Edain Unchained's game.dat moved to 0xED7000 with HEROBAR (bit 222) and HEROBAR_GROUP (bit
+// 223) appended (its name count 0xDE -> 0xE0; the KindOf mask already has 224 bits). Every name lookup uses this table.
+const char *const *names();
 // Mirror of the bit-string loop of RW 0x65621C / 0x655B0B for a token list: sets `error` for what retail's INI load would have thrown on
 void parse(const RawTokens &raw, std::array<std::uint32_t, 7> &mask, std::string &error);
 // lane BUILD-3: the template's KindOf set: its KindOf rows applied in order to one set (ThingTemplate::kindOfRows: a copied template's rows first, so `+X` / `-X`

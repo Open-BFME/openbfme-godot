@@ -72,7 +72,7 @@ public:
 	bool resetUpgrade(const UpgradeMaskType &mask);                                 // slot 3
 	void forceRefreshUpgrade();                                                     // slot 5
 	virtual void postUpgradeCheck() {}                                              // slot 6
-	bool isPermanent() const { return muxData()->m_permanent; }                     // slot 7
+	virtual bool isPermanent() const { return muxData()->m_permanent; }             // slot 7 (lane MODS-3: virtual, FireWeaponWhenDamagedBehavior's RW 0x9188EB answers false)
 	void setUpgradeExecuted(bool executed) { m_upgradeExecuted = executed; }        // slot 9
 	// RW 0x8D2688: the removal unless Permanent, then not executed
 	void removeUpgrade();

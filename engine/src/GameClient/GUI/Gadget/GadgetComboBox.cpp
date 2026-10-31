@@ -324,7 +324,10 @@ WindowMsgHandledType GadgetComboBoxSystem(GameWindow *window, std::uint32_t msg,
 			break;
 		}
 		case GWM_DESTROY:
-			mgr.winSetLoneWindow(nullptr);
+			if (mgr.winGetLoneWindow() == window)
+			{
+				mgr.winSetLoneWindow(nullptr);
+			}
 			delete comboData;
 			window->winSetUserData(nullptr);
 			break;

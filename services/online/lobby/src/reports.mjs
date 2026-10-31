@@ -1,3 +1,5 @@
+import { repairStoredText } from './stored-text.mjs';
+
 const VERSION = 1;
 export const REPORT_TTL_S = 90 * 24 * 60 * 60;
 export const REPORT_WINDOW_S = 24 * 60 * 60;
@@ -10,8 +12,28 @@ const REPORT_ID = /^R-[0-9a-f]{24}$/;
 const GAME_ID = /^[0-9a-f]{16}$/;
 const INSTALL_ID = /^[0-9a-f]{32}$/;
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,64}$/;
+const REPORT_CATEGORIES = new Set(['cheating', 'harassment', 'griefing', 'other']);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
+
+function validReportReason(reason) {
+  if (typeof reason !== 'string' || /[\u0000-\u001f\u007f]/u.test(reason) || !isWellFormedUnicode(reason)) return false;
+  const separator = reason.indexOf(':');
+  const category = separator < 0 ? reason : reason.slice(0, separator);
+  return REPORT_CATEGORIES.has(category) &&
+    (separator < 0 || (reason.startsWith(`${category}: `) && !!reason.slice(separator + 2).trim()));
+}
+
+function isWellFormedUnicode(value) {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(++i);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+    } else if (code >= 0xdc00 && code <= 0xdfff) return false;
+  }
+  return true;
+}
 
 export class ReportError extends Error {
   constructor(status, code, message, details = {}) {
@@ -46,7 +68,7 @@ function validateParticipant(value) {
   exactFields(value, ['account', 'install', 'nick'], 'stored report participant');
   if (typeof value.account !== 'string' || !value.account.length || codePoints(value.account) > 128) throw new Error('stored report participant account is invalid');
   if (value.install !== null && (typeof value.install !== 'string' || !INSTALL_ID.test(value.install))) throw new Error('stored report participant install is invalid');
-  if (typeof value.nick !== 'string' || !value.nick.length || encoder.encode(value.nick).length > 24) throw new Error('stored report participant nick is invalid');
+  if (typeof value.nick !== 'string' || !value.nick.length || codePoints(value.nick) > 24 || !isWellFormedUnicode(value.nick)) throw new Error('stored report participant nick is invalid');
   return { account: value.account, install: value.install, nick: value.nick };
 }
 
@@ -64,6 +86,7 @@ export function reportRosterFromGame(game, endedAt = game.reportEndedAt ?? null)
 }
 
 export function normalizeRoster(value, expectedGameId = null) {
+  value = repairStoredText(value);
   exactFields(value, ['game_id', 'participants', 'active', 'state', 'ended_at'], 'stored report roster');
   if (typeof value.game_id !== 'string' || !GAME_ID.test(value.game_id) || (expectedGameId && value.game_id !== expectedGameId)) {
     throw new Error('stored report roster game id is invalid');
@@ -112,7 +135,8 @@ export function mergeReportRosters(previous, incoming) {
   };
 }
 
-function validateReportBody(raw) {
+// LOBBYSEC-1 (as the live lobby line): intake = new requests must be well-formed Unicode; stored receipts written before that rule still replay
+function validateReportBody(raw, { intake = true, legacyReceipt = false } = {}) {
   let value;
   try {
     value = JSON.parse(decoder.decode(raw));
@@ -122,11 +146,14 @@ function validateReportBody(raw) {
   exactFields(value, ['v', 'game_id', 'target', 'reason'], 'report');
   if (value.v !== VERSION) throw fail(400, 'bad_version', `v must be ${VERSION}`);
   if (typeof value.game_id !== 'string' || !GAME_ID.test(value.game_id)) throw fail(400, 'bad_field', 'game_id must be 16 lowercase hexadecimal digits');
-  if (typeof value.target !== 'string' || codePoints(value.target) < 1 || codePoints(value.target) > 128) {
+  if (typeof value.target !== 'string' || codePoints(value.target) < 1 || codePoints(value.target) > 128 || (intake && !value.target.isWellFormed())) {
     throw fail(400, 'bad_field', 'target must be a 1 .. 128 character player id');
   }
-  if (typeof value.reason !== 'string' || codePoints(value.reason) < 1 || codePoints(value.reason) > 1000) {
+  if (typeof value.reason !== 'string' || codePoints(value.reason) < 1 || codePoints(value.reason) > 1000 || (intake && !value.reason.isWellFormed())) {
     throw fail(400, 'bad_field', 'reason must be 1 .. 1000 Unicode characters');
+  }
+  if (!legacyReceipt && !validReportReason(value.reason)) {
+    throw fail(400, 'bad_reason', 'reason must use cheating, harassment, griefing, or other, optionally followed by a note');
   }
   const body = { v: VERSION, game_id: value.game_id, target: value.target, reason: value.reason };
   return { ...body, canonical: JSON.stringify(body) };
@@ -140,12 +167,13 @@ export function validReceipt(value) {
       !Number.isSafeInteger(value.expires_at) || value.expires_at !== value.received_at + REPORT_WINDOW_S) {
     throw new Error('stored report receipt is malformed');
   }
-  const body = validateReportBody(new TextEncoder().encode(value.canonical));
+  const body = validateReportBody(new TextEncoder().encode(value.canonical), { intake: false, legacyReceipt: true });
   if (body.canonical !== value.canonical) throw new Error('stored report receipt is malformed');
   return value;
 }
 
 export function validateReportSource(value, expectedId = null) {
+  value = repairStoredText(value);
   exactFields(value, ['id', 'source', 'reporter', 'target', 'game_id', 'reason', 'received_at', 'expires_at'], 'stored report');
   if (typeof value.id !== 'string' || !REPORT_ID.test(value.id) || (expectedId && value.id !== expectedId) || value.source !== 'player') {
     throw new Error('stored report identity is invalid');
@@ -153,7 +181,7 @@ export function validateReportSource(value, expectedId = null) {
   for (const who of ['reporter', 'target']) {
     exactFields(value[who], ['install', 'nick'], `stored report ${who}`);
     if (typeof value[who].install !== 'string' || !INSTALL_ID.test(value[who].install) ||
-        typeof value[who].nick !== 'string' || encoder.encode(value[who].nick).length > 24) {
+        typeof value[who].nick !== 'string' || codePoints(value[who].nick) > 24 || !isWellFormedUnicode(value[who].nick)) {
       throw new Error(`stored report ${who} is invalid`);
     }
   }
@@ -229,7 +257,8 @@ export async function submitPlayerReport({ store, now, randomBytes, account, raw
   let body = null;
   let bodyError = null;
   try {
-    body = validateReportBody(rawBody);
+    body = validateReportBody(rawBody, { legacyReceipt: true });
+    if (!validReportReason(body.reason)) throw fail(400, 'bad_reason', 'reason must use cheating, harassment, griefing, or other, optionally followed by a note');
   } catch (error) {
     bodyError = requestFailure(error);
   }
@@ -287,6 +316,7 @@ export async function submitPlayerReport({ store, now, randomBytes, account, raw
       const target = roster.participants.find((participant) => participant.account === body.target);
       if (!target || !target.install) return charge(fail(404, 'no_player', 'the target is not a reportable participant in this game'));
       if (target.install === account.install) return charge(fail(403, 'self_report', 'players cannot report themselves'));
+      const reporter = roster.participants.find((participant) => participant.install === account.install);
 
       const duplicateKey = `duplicate:${account.install}:${body.game_id}:${target.install}`;
       const duplicate = await tx.get(duplicateKey);
@@ -317,17 +347,28 @@ export async function submitPlayerReport({ store, now, randomBytes, account, raw
       const source = {
         id: reportId,
         source: 'player',
-        reporter: { install: account.install, nick: account.name },
+        reporter: { install: account.install, nick: reporter.nick },
         target: { install: target.install, nick: target.nick },
         game_id: body.game_id,
         reason: body.reason,
         received_at: receivedAt,
         expires_at: expiresAt,
       };
+      const participants = new Map([[reporter.account, reporter], [target.account, target]]);
+      const evidence = (live?.chat ?? []).filter((line) => participants.has(line.account)).slice(-50).map((line) => {
+        const participant = participants.get(line.account);
+        return {
+          game_id: body.game_id,
+          nick: participant.nick,
+          text: line.text,
+          at: Number.isSafeInteger(line.at) && line.at >= 0 ? Math.floor(line.at / 1000) : null,
+        };
+      });
       const receipt = { canonical: body.canonical, report_id: reportId, received_at: receivedAt, expires_at: receiptExpiresAt };
       const indexKey = `index:${String(receivedAt).padStart(16, '0')}:${reportId}`;
       await tx.put(attemptsKey, status.recent);
       await tx.put(`report:${reportId}`, source);
+      if (evidence.length) await tx.put(`evidence:${reportId}`, { expires_at: expiresAt, lines: evidence });
       await tx.put(indexKey, { id: reportId, expires_at: expiresAt });
       await tx.put(key, receipt);
       await tx.put(duplicateKey, { expires_at: receiptExpiresAt });
@@ -411,12 +452,19 @@ export async function readPlayerReports({ store, now, hmac, modKey, after = null
     for (const [key, value] of rows) {
       const match = INDEX_KEY.exec(key);
       if (!match || !value || typeof value !== 'object' || value.id !== match[2] || !Number.isSafeInteger(value.expires_at)) {
-        throw new Error('stored report index is malformed');
+        console.warn('lobby: skipping malformed stored report index');
+        continue;
       }
       if (value.expires_at <= nowSeconds) continue;
       const report = await tx.get(`report:${value.id}`);
       if (!report) continue;
-      const source = validateReportSource(report, value.id);
+      let source;
+      try {
+        source = validateReportSource(report, value.id);
+      } catch {
+        console.warn(`lobby: skipping malformed stored report ${value.id}`);
+        continue;
+      }
       if (source.expires_at > nowSeconds) items.push(source);
     }
     const lastKey = rows.size === pageSize ? [...rows.keys()].at(-1) : null;
@@ -431,7 +479,13 @@ export async function readPlayerReport({ store, now, reportId }) {
   return store.reportTransaction(async (tx) => {
     const value = await tx.get(`report:${reportId}`);
     if (!value) throw fail(404, 'no_report', 'no such report');
-    const source = validateReportSource(value, reportId);
+    let source;
+    try {
+      source = validateReportSource(value, reportId);
+    } catch {
+      console.warn(`lobby: skipping malformed stored report ${reportId}`);
+      throw fail(404, 'no_report', 'no such report');
+    }
     if (source.expires_at <= nowSeconds) throw fail(404, 'no_report', 'no such report');
     return { v: VERSION, report: source };
   });
@@ -468,13 +522,16 @@ export async function cleanupReportData(store, nowSeconds, cursorState = { index
           reportId = value.id;
         }
       }
-      const deleteCount = expired ? (reportId ? 2 : 1) : 0;
+      const deleteCount = expired ? (reportId ? 3 : 1) : 0;
       if (deleted + deleteCount > MAX_CLEANUP_KEYS) break;
       last = key;
       visited += 1;
       if (expired) {
         await tx.delete(key);
-        if (reportId) await tx.delete(`report:${reportId}`);
+        if (reportId) {
+          await tx.delete(`report:${reportId}`);
+          await tx.delete(`evidence:${reportId}`);
+        }
         deleted += deleteCount;
       }
     }

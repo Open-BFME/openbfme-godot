@@ -33,6 +33,7 @@
 
 #pragma once
 
+#include "Common/Upgrade.h"
 #include "Common/INI.h"
 #include "GameLogic/Module/UpdateModule.h"
 #include "GameLogic/ObjectFilter.h"
@@ -57,6 +58,12 @@ public:
 	float m_rubOffRadius = 0.0f;          ///< + 0x1C
 	std::vector<std::string> m_flagSubObjectNames; ///< + 0x20
 	std::string m_attributeModifier;      ///< + 0x2C
+	// lane MODS-3, edain-unchained.large-group-bonus (Edain Unchained's .lgbupd: the module data grows 0x30 -> 0x158; all zero = retail)
+	UpgradeMaskType m_triggeredBy;        ///< + 0x30 TriggeredBy
+	UpgradeMaskType m_conflictsWith;      ///< + 0xC0 ConflictsWith
+	bool m_requiresAllTriggers = false;   ///< + 0x150
+	bool m_requiresAllConflictingTriggers = false; ///< + 0x151
+	bool m_countLooseObjects = false;     ///< + 0x152
 	static void buildFieldParse(MultiIniFieldParse &p);
 };
 

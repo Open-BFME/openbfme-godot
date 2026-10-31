@@ -4,6 +4,7 @@ const Manifest := preload("res://scripts/core/manifest.gd")
 const Log := preload("res://scripts/core/launcher_log.gd")
 const Semver := preload("res://scripts/core/semver.gd")
 const Archive := preload("res://scripts/core/archive.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const ROOT_FILES := ["LICENSE", "NOTICE", "README-MAC.txt", "VERSION"]
 const SWAP_REL := "OpenBFME Launcher.app/Contents/MacOS/openbfme-bundle-swap"
@@ -102,9 +103,9 @@ static func _record_rejected(updater: RefCounted, journal: Dictionary) -> bool:
 
 static func _finish_rollback(updater: RefCounted, journal: Dictionary) -> String:
 	if not _journal_state(updater, journal, "rolled-back"):
-		return "the rolled-back state could not be durably recorded"
+		return L10n.t("launcher.macos_update.rolled_back_state_could_not")
 	if not _record_rejected(updater, journal):
-		return "the rejected update attempt could not be durably recorded"
+		return L10n.t("launcher.macos_update.rejected_update_attempt_could_not")
 	return _cleanup_transaction(updater, journal, false)
 
 
@@ -127,16 +128,16 @@ static func _read_transaction() -> Dictionary:
 	if not FileAccess.file_exists(path):
 		return {"exists": false, "ok": true, "journal": {}, "error": ""}
 	if _is_link(path):
-		return {"exists": true, "ok": false, "journal": {}, "error": "the existing Mac update journal is a symbolic link"}
+		return {"exists": true, "ok": false, "journal": {}, "error": L10n.t("launcher.macos_update.existing_mac_update_journal_symbolic")}
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null or file.get_length() > Manifest.MAX_BYTES * 3:
 		if file != null:
 			file.close()
-		return {"exists": true, "ok": false, "journal": {}, "error": "the existing Mac update journal cannot be read safely"}
+		return {"exists": true, "ok": false, "journal": {}, "error": L10n.t("launcher.macos_update.existing_mac_update_journal_cannot")}
 	var value = JSON.parse_string(file.get_as_text())
 	file.close()
 	if typeof(value) != TYPE_DICTIONARY:
-		return {"exists": true, "ok": false, "journal": {}, "error": "the existing Mac update journal is corrupt"}
+		return {"exists": true, "ok": false, "journal": {}, "error": L10n.t("launcher.macos_update.existing_mac_update_journal_corrupt")}
 	var error := _validate_journal(value)
 	return {"exists": true, "ok": error == "", "journal": value, "error": error}
 
@@ -169,7 +170,7 @@ static func _validate_journal(journal: Dictionary) -> String:
 	keys.sort()
 	wanted.sort()
 	if keys != wanted:
-		return "the existing Mac update journal has an invalid field set"
+		return L10n.t("launcher.macos_update.existing_mac_update_journal_has")
 	if not _json_int(journal.schema) or int(journal.schema) != JOURNAL_SCHEMA or \
 			typeof(journal.state) != TYPE_STRING or not journal.state in JOURNAL_STATES or \
 			typeof(journal.root) != TYPE_STRING or typeof(journal.candidate) != TYPE_STRING or \
@@ -184,7 +185,7 @@ static func _validate_journal(journal: Dictionary) -> String:
 			RegEx.create_from_string("^[0-9a-f]{64}$").search(journal.asset_sha256) == null or \
 			RegEx.create_from_string("^[0-9a-f]{128}$").search(journal.signature) == null or \
 			RegEx.create_from_string("^[A-Za-z0-9._-]{1,80}$").search(journal.txid) == null:
-		return "the existing Mac update journal has invalid values"
+		return L10n.t("launcher.macos_update.existing_mac_update_journal_has_invalid")
 	var root := String(journal.root)
 	var candidate := String(journal.candidate)
 	var txid := String(journal.txid)
@@ -192,7 +193,7 @@ static func _validate_journal(journal: Dictionary) -> String:
 			candidate != root.get_base_dir().path_join(".openbfme-update-" + txid) or \
 			String(journal.helper) != _helper_swap(txid) or \
 			String(journal.helper_launcher) != _helper_launcher(txid):
-		return "the existing Mac update journal is not bound to this install and helper"
+		return L10n.t("launcher.macos_update.existing_mac_update_journal_not")
 	return ""
 
 
@@ -289,7 +290,7 @@ static func play_blocker(updater: RefCounted) -> String:
 	var journal: Dictionary = transaction.journal
 	var root: String = String(updater.launcher_dir).simplify_path()
 	if journal.root != root:
-		return "the existing signed Mac update belongs to another package root"
+		return L10n.t("launcher.macos_update.existing_signed_mac_update_belongs")
 	var trust_error := _transaction_trust_error(updater, journal)
 	if trust_error != "":
 		return trust_error
@@ -301,7 +302,7 @@ static func play_blocker(updater: RefCounted) -> String:
 	if old_error == "" and journal.state in ["staged", "swapping", "deferred", "failed", "rolled-back",
 			"cleaning-rolled-back", "retiring-rolled-back", "rollback-failed", "retiring-damaged"]:
 		return ""
-	return "the installed package does not match either trusted transaction inventory"
+	return L10n.t("launcher.macos_update.installed_package_does_not_match")
 
 
 static func _acquire_lock(updater: RefCounted, token: String) -> bool:
@@ -381,12 +382,12 @@ static func _sha256(path: String) -> String:
 static func _same_files(actual: Dictionary, expected: Dictionary) -> String:
 	for path in expected:
 		if not actual.has(path):
-			return "%s is missing from the archive" % path
+			return L10n.t("launcher.macos_update.missing_from_archive", {"path": path})
 		if int(actual[path].size) != int(expected[path].size) or actual[path].sha256 != expected[path].sha256:
-			return "%s does not match its signed inventory" % path
+			return L10n.t("launcher.macos_update.does_not_match_signed_inventory", {"path": path})
 	for path in actual:
 		if not expected.has(path):
-			return "%s is not in the signed inventory" % path
+			return L10n.t("launcher.macos_update.not_in_signed_inventory", {"path": path})
 	return ""
 
 
@@ -403,14 +404,14 @@ static func _capture_inventory(root: String) -> Dictionary:
 		var size := FileAccess.get_file_as_bytes(path).size()
 		var digest := _sha256(path)
 		if digest == "":
-			return {"ok": false, "error": "%s could not be hashed" % relative, "files": {}}
+			return {"ok": false, "error": L10n.t("launcher.macos_update.could_not_hashed", {"path": relative}), "files": {}}
 		inventory[relative] = {"size": size, "sha256": digest}
 	return {"ok": true, "error": "", "files": inventory}
 
 
 static func _verify_inventory(root: String, version: String, files: Dictionary, updater: RefCounted) -> String:
 	if not Semver.is_valid(version) or _version_for_root(root) != version:
-		return "the package VERSION does not match its recorded inventory version"
+		return L10n.t("launcher.macos_update.package_version_does_not_match")
 	var error := validate_tree(root, files, updater)
 	if error == "":
 		error = _verify_apps(root)
@@ -419,11 +420,11 @@ static func _verify_inventory(root: String, version: String, files: Dictionary, 
 
 static func _validate_inventory_subset(root: String, files: Dictionary, updater: RefCounted) -> String:
 	if _is_link(root) or FileAccess.file_exists(root):
-		return "the inactive package path is not a real directory"
+		return L10n.t("launcher.macos_update.inactive_package_path_not_real")
 	if not DirAccess.dir_exists_absolute(root):
 		return ""
 	if not _canonical_directory(root, updater):
-		return "the inactive package path is not a canonical real directory"
+		return L10n.t("launcher.macos_update.inactive_package_path_not_canonical")
 	var actual_files: Array = []
 	var actual_dirs: Array = []
 	var error := _scan(root, "", actual_files, actual_dirs)
@@ -432,11 +433,11 @@ static func _validate_inventory_subset(root: String, files: Dictionary, updater:
 	var expected_dirs := _expected_directories(files)
 	for path in actual_dirs:
 		if not path in expected_dirs:
-			return "%s is an unexpected directory in the inactive package" % path
+			return L10n.t("launcher.macos_update.unexpected_directory_in_inactive_package", {"path": path})
 	var subset := {}
 	for path in actual_files:
 		if not files.has(path):
-			return "%s is not in the recorded inactive package inventory" % path
+			return L10n.t("launcher.macos_update.not_in_recorded_inactive_package", {"path": path})
 		subset[path] = files[path]
 	return Manifest.check_files(root, subset, [], false, true)  # MACFIX-1: Finder's own files, as _scan
 
@@ -445,17 +446,17 @@ static func _scan(root: String, relative: String, files: Array, directories: Arr
 	var path := root.path_join(relative) if relative != "" else root
 	var dir := DirAccess.open(path)
 	if dir == null:
-		return "cannot read package directory %s" % relative
+		return L10n.t("launcher.macos_update.cannot_read_package_directory", {"path": relative})
 	dir.include_hidden = true
 	for name in dir.get_files():
 		if dir.is_link(name):
-			return "%s is a symbolic link" % (relative.path_join(name) if relative != "" else name)
+			return L10n.t("launcher.macos_update.symbolic_link", {"path": relative.path_join(name) if relative != "" else name})
 		if Manifest.finder_metadata(name):
 			continue   # MACFIX-1 (issue #47): Finder's own files are no part of a package (Manifest.finder_metadata)
 		files.append(relative.path_join(name) if relative != "" else name)
 	for name in dir.get_directories():
 		if dir.is_link(name):
-			return "%s is a symbolic link" % (relative.path_join(name) if relative != "" else name)
+			return L10n.t("launcher.macos_update.symbolic_link", {"path": relative.path_join(name) if relative != "" else name})
 		var child := relative.path_join(name) if relative != "" else name
 		directories.append(child)
 		var error := _scan(root, child, files, directories)
@@ -469,7 +470,7 @@ static func _scan(root: String, relative: String, files: Array, directories: Arr
 static func link_error(root: String, files: Dictionary) -> String:
 	for app in ["OpenBFME.app", "OpenBFME Launcher.app"]:
 		if _is_link(root.path_join(app)):
-			return "%s is a symbolic link" % app
+			return L10n.t("launcher.macos_update.symbolic_link", {"path": app})
 		if DirAccess.dir_exists_absolute(root.path_join(app)):
 			var found: Array = []
 			var directories: Array = []
@@ -481,7 +482,7 @@ static func link_error(root: String, files: Dictionary) -> String:
 		for part in String(rel).split("/"):
 			path = path.path_join(part)
 			if _is_link(path):
-				return "%s is a symbolic link" % rel
+				return L10n.t("launcher.macos_update.symbolic_link", {"path": rel})
 	return ""
 
 
@@ -499,7 +500,7 @@ static func _expected_directories(files: Dictionary) -> Array:
 
 static func _validate_files_tree(root: String, files: Dictionary, updater: RefCounted = null) -> String:
 	if not _canonical_directory(root, updater):
-		return "package root is not a canonical real directory"
+		return L10n.t("launcher.macos_update.package_root_not_canonical_real")
 	var actual_files: Array = []
 	var actual_dirs: Array = []
 	var error := _scan(root, "", actual_files, actual_dirs)
@@ -512,19 +513,19 @@ static func _validate_files_tree(root: String, files: Dictionary, updater: RefCo
 	if actual_files != expected_files:
 		for name in expected_files:
 			if not name in actual_files:
-				return "%s is missing" % name
+				return L10n.t("launcher.macos_update.missing", {"path": name})
 		for name in actual_files:
 			if not files.has(name):
-				return "%s is not in the signed package" % name
-		return "package files do not match the signed inventory"
+				return L10n.t("launcher.macos_update.not_in_signed_package", {"path": name})
+		return L10n.t("launcher.macos_update.package_files_do_not_match")
 	var expected_dirs := _expected_directories(files)
 	if actual_dirs != expected_dirs:
 		for name in expected_dirs:
 			if not name in actual_dirs:
-				return "%s is a missing app directory" % name
+				return L10n.t("launcher.macos_update.missing_app_directory", {"path": name})
 		for name in actual_dirs:
 			if not name in expected_dirs:
-				return "%s is an unexpected directory" % name
+				return L10n.t("launcher.macos_update.unexpected_directory", {"path": name})
 	return Manifest.check_files(root, files, [], false, true)  # MACFIX-1: Finder's own files, as _scan
 
 
@@ -534,22 +535,22 @@ static func validate_tree(root: String, files: Dictionary, updater: RefCounted =
 		return error
 	for name in ROOT_FILES:
 		if not files.has(name):
-			return "the package is missing %s" % name
+			return L10n.t("launcher.macos_update.package_missing", {"path": name})
 	if not files.has("OpenBFME.app/Contents/MacOS/OpenBFME") or not files.has(LAUNCHER_REL) or not files.has(SWAP_REL):
-		return "the package is missing a required app executable or bundle swap helper"
+		return L10n.t("launcher.macos_update.package_missing_required_app_executable")
 	return ""
 
 
 static func validate_installed_root(root: String, updater: RefCounted = null) -> String:
 	if not _canonical_directory(root, updater):
-		return "the install root is not a canonical real directory"
+		return L10n.t("launcher.macos_update.install_root_not_canonical_real")
 	if root.get_file().ends_with(".app") or root in ["/", "/Applications", "/System", "/Library", "/Users", "/Volumes"]:
-		return "the install root is not a standalone package directory"
+		return L10n.t("launcher.macos_update.install_root_not_standalone_package")
 	if not root.get_file().begins_with("openbfme-") or not root.get_file().ends_with("-macos-arm64"):
-		return "the install root is not a generic Apple Silicon package directory"
+		return L10n.t("launcher.macos_update.install_root_not_generic_apple")
 	for component in root.split("/", false):
 		if component.ends_with(".app"):
-			return "the install root is inside an app bundle"
+			return L10n.t("launcher.macos_update.install_root_inside_app_bundle")
 	var files: Array = []
 	var directories: Array = []
 	var error := _scan(root, "", files, directories)
@@ -565,13 +566,13 @@ static func validate_installed_root(root: String, updater: RefCounted = null) ->
 	expected.sort()
 	sealed.sort()
 	if actual != expected and actual != sealed:
-		return "the install root is not a complete standalone OpenBFME package"
+		return L10n.t("launcher.macos_update.install_root_not_complete_standalone")
 	for path in ROOT_FILES:
 		if not FileAccess.file_exists(root.path_join(path)):
-			return "the install root is missing %s" % path
+			return L10n.t("launcher.macos_update.install_root_missing", {"path": path})
 	if not FileAccess.file_exists(root.path_join("OpenBFME.app/Contents/MacOS/OpenBFME")) or \
 			not FileAccess.file_exists(root.path_join(LAUNCHER_REL)) or not FileAccess.file_exists(root.path_join(SWAP_REL)):
-		return "the install root is missing a required app executable or bundle swap helper"
+		return L10n.t("launcher.macos_update.install_root_missing_required_app")
 	return _verify_apps(root)
 
 
@@ -579,33 +580,33 @@ static func _candidate_path_error(
 	root: String, candidate: String, updater: RefCounted = null, txid := "", allow_missing := false
 ) -> String:
 	if not _canonical_directory(root, updater):
-		return "the install root is not a canonical real directory"
+		return L10n.t("launcher.macos_update.install_root_not_canonical_real")
 	if not candidate.is_absolute_path() or candidate != candidate.simplify_path() or \
 			candidate.get_base_dir() != root.get_base_dir() or \
 			not candidate.get_file().begins_with(".openbfme-update-") or \
 			(txid != "" and candidate.get_file() != ".openbfme-update-" + txid):
-		return "the staged package is not a real sibling of the install root"
+		return L10n.t("launcher.macos_update.staged_package_not_real_sibling")
 	if _is_link(candidate) or FileAccess.file_exists(candidate):
-		return "the staged package is not a real sibling of the install root"
+		return L10n.t("launcher.macos_update.staged_package_not_real_sibling")
 	if not DirAccess.dir_exists_absolute(candidate):
-		return "" if allow_missing else "the staged package is not a real sibling of the install root"
+		return "" if allow_missing else L10n.t("launcher.macos_update.staged_package_not_real_sibling")
 	if not _canonical_directory(candidate, updater):
-		return "the staged package is not a real sibling of the install root"
+		return L10n.t("launcher.macos_update.staged_package_not_real_sibling")
 	return ""
 
 
 static func _verified_journal_manifest(updater: RefCounted, journal: Dictionary) -> Dictionary:
 	var bytes := Marshalls.base64_to_raw(String(journal.get("manifest", "")))
 	var sig := String(journal.get("signature", "")).hex_decode()
-	var verified := Manifest.verify(bytes, sig, updater.info.release_key,
-		{"repo": updater.info.repo, "tag": journal.get("version", "")}, "macos")
+	var verified := Manifest.verify(bytes, sig, updater.info.release_keys,
+		{"repo": updater.info.repo, "tag": journal.get("version", "")}, "macos", updater.info.nightly_keys)
 	if not verified.ok or verified.manifest.assets.game.is_empty():
-		return {"ok": false, "error": "the signed Mac update journal manifest is invalid"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.signed_mac_update_journal_manifest")}
 	var asset: Dictionary = verified.manifest.assets.game["macos-arm64"]
 	var recorded_files: Dictionary = journal.get("new_files", {})
 	if asset.sha256 != journal.get("asset_sha256", "") or _same_files(asset.files, recorded_files) != "" or \
 			verified.manifest.version != journal.get("version", ""):
-		return {"ok": false, "error": "the signed Mac update journal has a mismatched package digest"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.signed_mac_update_journal_has")}
 	return {"ok": true, "error": "", "manifest": verified.manifest, "asset": asset}
 
 
@@ -620,9 +621,9 @@ static func _verify_external_helper(updater: RefCounted, journal: Dictionary) ->
 	var helper_launcher := _helper_launcher(txid)
 	if journal.get("helper", "") != helper or journal.get("helper_launcher", "") != helper_launcher or \
 			_is_link(helper_dir) or _is_link(helper_app) or _is_link(helper):
-		return "the signed external update helper path does not match this installation"
+		return L10n.t("launcher.macos_update.signed_external_update_helper_path")
 	if not _canonical_directory(helper_dir, updater) or not _canonical_directory(helper_app, updater):
-		return "the external launcher helper is not a canonical real directory"
+		return L10n.t("launcher.macos_update.external_launcher_helper_not_canonical")
 	var transaction_files := _signed_helper_files(verified.asset.files)
 	var error := _validate_files_tree(helper_dir, transaction_files, updater)
 	if error == "":
@@ -671,7 +672,7 @@ static func _transaction_trust_error(updater: RefCounted, journal: Dictionary) -
 static func _codesign(app: String) -> String:
 	var output: Array = []
 	var code := OS.execute("codesign", ["--verify", "--deep", "--strict=symlinks", app], output, true)
-	return "" if code == 0 else "codesign verification failed for %s: %s" % [app.get_file(), "\n".join(output).strip_edges()]
+	return "" if code == 0 else L10n.t("launcher.macos_update.codesign_verification_failed_for", {"app": app.get_file(), "output": "\n".join(output).strip_edges()})
 
 
 static func _verify_apps(root: String) -> String:
@@ -713,32 +714,32 @@ static func _copy_launcher_helper(candidate: String, files: Dictionary, updater:
 	var target := _helper_app(txid)
 	var support := OS.get_user_data_dir().path_join("macos-update")
 	if _is_link(support) or _is_link(helper_root) or _is_link(target_dir):
-		return {"ok": false, "error": "the external helper directory contains a symbolic link"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.external_helper_directory_contains_symbolic")}
 	if not DirAccess.dir_exists_absolute(support) and DirAccess.make_dir_absolute(support) != OK:
-		return {"ok": false, "error": "cannot create the external helper directory"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.cannot_create_external_helper_directory")}
 	if not DirAccess.dir_exists_absolute(helper_root) and DirAccess.make_dir_absolute(helper_root) != OK:
-		return {"ok": false, "error": "cannot create the external helper directory"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.cannot_create_external_helper_directory")}
 	if FileAccess.file_exists(target_dir) or DirAccess.dir_exists_absolute(target_dir):
-		return {"ok": false, "error": "this transaction's external helper path already exists and was left untouched"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.transaction_s_external_helper_path")}
 	if DirAccess.make_dir_absolute(target_dir) != OK:
-		return {"ok": false, "error": "cannot create the external helper directory"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.cannot_create_external_helper_directory")}
 	if _is_link(target):
-		return {"ok": false, "error": "the external helper app path is a symbolic link"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.external_helper_app_path_symbolic")}
 	var output: Array = []
 	if OS.execute("ditto", ["--rsrc", source, target], output, true) != 0:
-		return {"ok": false, "error": "cannot copy the signed launcher helper outside the install root: %s" % "\n".join(output).strip_edges()}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.cannot_copy_signed_launcher_helper", {"output": "\n".join(output).strip_edges()})}
 	var subset := {}
 	for path in files:
 		if String(path).begins_with("OpenBFME Launcher.app/"):
 			subset[String(path).trim_prefix("OpenBFME Launcher.app/")] = files[path]
 	var why := _validate_files_tree(target, subset, updater)
 	if why != "":
-		return {"ok": false, "error": "the external launcher helper copy failed signed-inventory verification: " + why}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.external_launcher_helper_copy_failed", {"why": why})}
 	why = _codesign(target)
 	if why != "":
 		return {"ok": false, "error": why}
 	if not _clear_tree_quarantine(target) or _codesign(target) != "":
-		return {"ok": false, "error": "the verified external launcher helper could not be prepared"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.verified_external_launcher_helper_could")}
 	return {"ok": true, "path": target.path_join("Contents/MacOS/OpenBFME Launcher"),
 		"swap": target.path_join("Contents/MacOS/openbfme-bundle-swap")}
 
@@ -746,7 +747,7 @@ static func _copy_launcher_helper(candidate: String, files: Dictionary, updater:
 func install(release: Dictionary, user_pick: bool) -> Dictionary:
 	var txid := "%d-%d-%08x" % [OS.get_process_id(), Time.get_ticks_usec(), randi()]
 	if not _acquire_lock(updater, txid):
-		return {"ok": false, "error": "another launcher is installing or applying a signed Mac package", "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.another_launcher_installing_or_applying"), "version": ""}
 	updater.macos_transaction = true
 	var result := _install(release, user_pick, txid)
 	updater.macos_transaction = false
@@ -756,59 +757,59 @@ func install(release: Dictionary, user_pick: bool) -> Dictionary:
 
 func _install(release: Dictionary, user_pick: bool, txid: String) -> Dictionary:
 	if updater.launcher_dir == "":
-		return {"ok": false, "error": "this launcher has no package root to update", "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.launcher_has_no_package_root"), "version": ""}
 	var existing := _read_transaction()
 	if existing.exists:
-		return {"ok": false, "error": "a previous signed Mac update transaction needs recovery before another update", "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.previous_signed_mac_update_transaction"), "version": ""}
 	var mm: Dictionary = updater.release_manifest(release)
 	if not mm.ok:
 		return {"ok": false, "error": mm.error, "version": ""}
 	if not mm.get("macos_sidecar", false):
-		return {"ok": false, "error": "this verified release has no signed Mac payload; install a complete Mac package from the releases page", "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.verified_release_has_no_signed"), "version": ""}
 	if mm.get("no_entry", false):
-		return {"ok": false, "error": "this release has no macOS package", "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.release_has_no_macos_package"), "version": ""}
 	var manifest: Dictionary = mm.manifest
 	var asset: Dictionary = manifest.assets.game["macos-arm64"]
 	var current: String = updater.release_version()
 	if not user_pick and Semver.is_valid(current) and Semver.compare(manifest.version, current) <= 0:
-		return {"ok": false, "error": "%s is not newer than this package (%s)" % [manifest.version, current], "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.not_newer_than_package", {"version": manifest.version, "current": current}), "version": ""}
 	var root: String = updater.launcher_dir.simplify_path()
 	if not _canonical_directory(root, updater):
-		return {"ok": false, "error": "the installed Mac package or one of its parent directories is a symbolic link", "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.installed_mac_package_or_one"), "version": ""}
 	if signed_required(updater, root):
 		var receipt := signed_receipt(updater, root)
 		if not receipt.ok:
-			return {"ok": false, "error": "the installed signed Mac package cannot be updated: " + receipt.error, "version": ""}
+			return {"ok": false, "error": L10n.t("launcher.macos_update.installed_signed_mac_package_cannot", {"why": receipt.error}), "version": ""}
 	var root_error := validate_installed_root(root, updater)
 	if root_error != "":
-		return {"ok": false, "error": "the installed Mac package cannot be updated: " + root_error, "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.installed_mac_package_cannot_updated", {"why": root_error}), "version": ""}
 	var attempts := _rejected_attempts(root, manifest.version)
 	if not user_pick and attempts >= MAX_ATTEMPTS:
-		return {"ok": false, "error": "automatic update of %s was stopped after repeated rollback; choose it explicitly to retry" % manifest.version, "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.automatic_update_stopped_after_repeated", {"version": manifest.version}), "version": ""}
 	var got: Dictionary = updater.fetch_asset(release, asset)
 	if not got.ok:
 		return {"ok": false, "error": got.error, "version": ""}
 	var old_version := _version_for_root(root)
 	if old_version != current:
-		return {"ok": false, "error": "the installed package VERSION does not match this launcher", "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.installed_package_version_does_not"), "version": ""}
 	var old_inventory := _capture_inventory(root)
 	if not old_inventory.ok:
-		return {"ok": false, "error": "the installed package inventory could not be captured: " + old_inventory.error, "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.installed_package_inventory_could_not", {"why": old_inventory.error}), "version": ""}
 	# MACPLAY-1 (Sol r1, P1): the inventory a rollback restores is the one signed data names, checked now and again before any rollback
 	var old_trust := _old_trust_error(updater, {"root": root, "old_version": old_version, "old_files": old_inventory.files}, root)
 	if old_trust != "":
-		return {"ok": false, "error": "the installed Mac package cannot be updated: " + old_trust, "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.installed_mac_package_cannot_updated", {"why": old_trust}), "version": ""}
 	var parent: String = root.get_base_dir()
 	var candidate: String = parent.path_join(".openbfme-update-" + txid)
 	if FileAccess.file_exists(candidate) or DirAccess.dir_exists_absolute(candidate) or _is_link(candidate):
-		return {"ok": false, "error": "the expected Mac update staging path already exists; it was left untouched", "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.expected_mac_update_staging_path"), "version": ""}
 	var extracted := Archive.extract(got.path, "zip", Manifest.top_folder(asset.name), candidate)
 	if not extracted.ok:
 		Log.line("LAUNCHER signed Mac staging failed; inspect %s: %s" % [candidate, extracted.error])
-		return {"ok": false, "error": "the Mac package was not staged; the old package was left unchanged: " + extracted.error, "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.mac_package_not_staged_old", {"why": extracted.error}), "version": ""}
 	var differ := _same_files(extracted.files, asset.files)
 	if differ == "" and _version_for_root(candidate) != manifest.version:
-		differ = "the candidate VERSION does not match the signed manifest version"
+		differ = L10n.t("launcher.macos_update.candidate_version_does_not_match")
 	if differ == "":
 		differ = validate_tree(candidate, asset.files, updater)
 	if differ == "":
@@ -819,13 +820,13 @@ func _install(release: Dictionary, user_pick: bool, txid: String) -> Dictionary:
 		if not helper_copy.ok:
 			differ = helper_copy.error
 	if differ == "" and not _clear_tree_quarantine(candidate):
-		differ = "quarantine could not be cleared on the verified candidate"
+		differ = L10n.t("launcher.macos_update.quarantine_could_not_cleared_on")
 	if differ == "":
 		differ = _verify_apps(candidate)
 	if differ != "":
 		Log.line("LAUNCHER signed Mac update candidate was refused and preserved for diagnosis: " + differ)
 		DirAccess.remove_absolute(got.path)
-		return {"ok": false, "error": "the Mac package was not installed; the old package was left unchanged: " + differ, "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.mac_package_not_installed_old", {"why": differ}), "version": ""}
 	var journal := {
 		"schema": JOURNAL_SCHEMA,
 		"state": "staged",
@@ -853,7 +854,7 @@ func _install(release: Dictionary, user_pick: bool, txid: String) -> Dictionary:
 	if not _write_json(journal_path(), journal, updater, journal):
 		Log.line("LAUNCHER signed Mac update journal persistence is uncertain; candidate preserved at " + candidate)
 		DirAccess.remove_absolute(got.path)
-		return {"ok": false, "error": "the durable Mac update journal could not be confirmed; the old package was left unchanged", "version": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.durable_mac_update_journal_could"), "version": ""}
 	DirAccess.remove_absolute(got.path)
 	Log.line("LAUNCHER staged signed macOS package %s (%d files); restart the launcher to exchange both apps" % [manifest.version, asset.files.size()])
 	return {"ok": true, "error": "", "version": manifest.version}
@@ -862,9 +863,9 @@ func _install(release: Dictionary, user_pick: bool, txid: String) -> Dictionary:
 func stage_self_update(release: Dictionary) -> Dictionary:
 	var journal := _read_json(journal_path())
 	if journal.is_empty() or journal.get("root", "") != updater.launcher_dir.simplify_path():
-		return {"ok": true, "error": "", "staged": "", "why": "the signed Mac package is already current"}
+		return {"ok": true, "error": "", "staged": "", "why": L10n.t("launcher.macos_update.signed_mac_package_already_current")}
 	if journal.get("version", "") != release.tag:
-		return {"ok": false, "error": "the staged Mac package does not match the selected release", "staged": ""}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.staged_mac_package_does_not"), "staged": ""}
 	return {"ok": true, "error": "", "staged": release.tag}
 
 
@@ -873,25 +874,25 @@ static func signed_receipt(updater: RefCounted, root: String, package_version :=
 	if version == "":
 		version = updater.release_version() if root.simplify_path() == updater.launcher_dir.simplify_path() else _version_for_root(root)
 	if not Semver.is_valid(version):
-		return {"ok": false, "error": "the installed Mac package VERSION is invalid"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.installed_mac_package_version_invalid")}
 	if not _canonical_directory(root.simplify_path(), updater) or _version_for_root(root) != version:
-		return {"ok": false, "error": "the installed Mac package path or VERSION is invalid"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.installed_mac_package_path_or")}
 	var receipt := _read_json(receipt_path(root, version))
 	if receipt.is_empty() or receipt.keys().size() != 5:
-		return {"ok": false, "error": "the signed macOS update receipt is missing or corrupt"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.signed_macos_update_receipt_missing")}
 	if receipt.get("root", "") != root.simplify_path():
-		return {"ok": false, "error": "the signed macOS update receipt belongs to a different package root"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.signed_macos_update_receipt_belongs_different")}
 	if receipt.get("version", "") != version:
-		return {"ok": false, "error": "the signed macOS update receipt belongs to a different package version"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.signed_macos_update_receipt_belongs")}
 	var bytes := Marshalls.base64_to_raw(String(receipt.get("manifest", "")))
 	var sig := String(receipt.get("signature", "")).hex_decode()
-	var v := Manifest.verify(bytes, sig, updater.info.release_key,
-		{"repo": updater.info.repo, "tag": receipt.get("version", "")}, "macos")
+	var v := Manifest.verify(bytes, sig, updater.info.release_keys,
+		{"repo": updater.info.repo, "tag": receipt.get("version", "")}, "macos", updater.info.nightly_keys)
 	if not v.ok or v.manifest.assets.game.is_empty():
-		return {"ok": false, "error": "the signed macOS update receipt is invalid: " + (v.error if not v.ok else "no Mac asset")}
+		return {"ok": false, "error": (L10n.t("launcher.macos_update.signed_macos_update_receipt_invalid", {"why": v.error}) if not v.ok else L10n.t("launcher.macos_update.signed_macos_update_receipt_invalid_no"))}
 	var asset: Dictionary = v.manifest.assets.game["macos-arm64"]
 	if asset.sha256 != receipt.get("asset_sha256", ""):
-		return {"ok": false, "error": "the signed macOS update receipt has a mismatched package digest"}
+		return {"ok": false, "error": L10n.t("launcher.macos_update.signed_macos_update_receipt_has")}
 	var error := validate_tree(root, asset.files, updater)
 	if error == "":
 		error = _verify_apps(root)
@@ -918,20 +919,20 @@ static func _write_receipt(updater: RefCounted, journal: Dictionary) -> String:
 	var root: String = String(journal.root).simplify_path()
 	if updater.info.error != "" or updater.release_version() != String(journal.version) or \
 			_version_for_root(root) != String(journal.version):
-		return "the newly launched launcher version or startup information does not match the staged Mac update"
+		return L10n.t("launcher.macos_update.newly_launched_launcher_version_or")
 	if root != updater.launcher_dir.simplify_path():
-		return "the confirmation launcher is not running from the installed package root"
+		return L10n.t("launcher.macos_update.confirmation_launcher_not_running_from")
 	var bytes := Marshalls.base64_to_raw(String(journal.manifest))
 	var sig := String(journal.signature).hex_decode()
-	var v := Manifest.verify(bytes, sig, updater.info.release_key, {"repo": updater.info.repo, "tag": journal.version}, "macos")
+	var v := Manifest.verify(bytes, sig, updater.info.release_keys, {"repo": updater.info.repo, "tag": journal.version}, "macos", updater.info.nightly_keys)
 	if not v.ok or v.manifest.assets.game.is_empty():
-		return "the signed Mac manifest could not be revalidated during confirmation"
+		return L10n.t("launcher.macos_update.signed_mac_manifest_could_not")
 	var files: Dictionary = v.manifest.assets.game["macos-arm64"].files
 	var recorded_files: Dictionary = journal.get("new_files", {})
 	if v.manifest.assets.game["macos-arm64"].sha256 != journal.get("asset_sha256", ""):
-		return "the signed Mac package digest does not match the transaction journal"
+		return L10n.t("launcher.macos_update.signed_mac_package_digest_does")
 	if _same_files(files, recorded_files) != "":
-		return "the signed Mac confirmation inventory does not match the transaction journal"
+		return L10n.t("launcher.macos_update.signed_mac_confirmation_inventory_does")
 	var error := validate_tree(root, files, updater)
 	if error == "":
 		error = _verify_apps(root)
@@ -942,10 +943,10 @@ static func _write_receipt(updater: RefCounted, journal: Dictionary) -> String:
 		"signature": journal.signature, "asset_sha256": journal.asset_sha256,
 	}
 	if not _write_json(receipt_path(root, journal.version), receipt, updater, journal):
-		return "the root-bound signed macOS receipt could not be persisted"
+		return L10n.t("launcher.macos_update.root_bound_signed_macos_receipt")
 	if not _write_json(required_state_path(root, journal.version),
 			{"root": root, "version": journal.version, "required": true}, updater, journal):
-		return "the root-bound signed-required state could not be persisted"
+		return L10n.t("launcher.macos_update.root_bound_signed_required_state")
 	return ""
 
 
@@ -1031,7 +1032,7 @@ static func _start_apply(updater: RefCounted, journal: Dictionary, old_pid: int,
 
 static func _apply(updater: RefCounted, journal: Dictionary, args: PackedStringArray) -> Dictionary:
 	if not _acquire_lock(updater, String(journal.txid)):
-		return {"exit": true, "message": "A signed Mac update is already in progress."}
+		return {"exit": true, "message": L10n.t("launcher.macos_update.signed_mac_update_already_in")}
 	var result := _apply_locked(updater, journal, args)
 	_release_lock(String(journal.txid))
 	return result
@@ -1041,7 +1042,7 @@ static func _pair_error(updater: RefCounted, journal: Dictionary, root_is_new: b
 	var root := String(journal.root)
 	var candidate := String(journal.candidate)
 	if _candidate_path_error(root, candidate, updater, String(journal.txid)) != "":
-		return "transaction paths are not canonical expected siblings"
+		return L10n.t("launcher.macos_update.transaction_paths_are_not_canonical")
 	var error := _tree_error(updater, journal, root, root_is_new)
 	if error == "":
 		error = _tree_error(updater, journal, candidate, not root_is_new)
@@ -1074,19 +1075,19 @@ static func _old_trust_error(updater: RefCounted, journal: Dictionary, tree: Str
 		var receipt := _read_json(receipt_file)
 		var bytes := Marshalls.base64_to_raw(String(receipt.get("manifest", "")))
 		var sig := String(receipt.get("signature", "")).hex_decode()
-		var v := Manifest.verify(bytes, sig, updater.info.release_key, {"repo": updater.info.repo, "tag": version}, "macos")
+		var v := Manifest.verify(bytes, sig, updater.info.release_keys, {"repo": updater.info.repo, "tag": version}, "macos", updater.info.nightly_keys)
 		if not v.ok or v.manifest.assets.game.is_empty() or receipt.get("root", "") != String(journal.root):
-			return "the previous package's signed receipt does not verify"
+			return L10n.t("launcher.macos_update.previous_package_s_signed_receipt")
 		if _same_files(files, v.manifest.assets.game["macos-arm64"].files) != "":
-			return "the previous package's recorded inventory is not the one its signed receipt names"
+			return L10n.t("launcher.macos_update.previous_package_s_recorded_inventory_not")
 		return ""
 	var p := Manifest.read_bounded(tree.path_join(Manifest.PAYLOAD), Manifest.MAX_BYTES)
 	var s := Manifest.read_bounded(tree.path_join(Manifest.PAYLOAD_SIG), 64)
-	var v := Manifest.verify_payload(p.bytes, s.bytes, updater.info.release_key, {"repo": updater.info.repo, "platform": "macos-arm64"})
+	var v := Manifest.verify_payload(p.bytes, s.bytes, updater.info.release_keys, {"repo": updater.info.repo, "platform": "macos-arm64"}, updater.info.nightly_keys)
 	if not v.ok:
-		return "the previous package has no signed inventory (%s)" % v.error
+		return L10n.t("launcher.macos_update.previous_package_has_no_signed", {"why": v.error})
 	if v.payload.version != version:
-		return "the previous package's signed inventory is for %s, not %s" % [v.payload.version, version]
+		return L10n.t("launcher.macos_update.previous_package_s_signed_inventory", {"found": v.payload.version, "wanted": version})
 	var want: Dictionary = v.payload.files.duplicate(true)
 	for item in [[Manifest.PAYLOAD, p.bytes], [Manifest.PAYLOAD_SIG, s.bytes]]:
 		var hc := HashingContext.new()
@@ -1094,7 +1095,7 @@ static func _old_trust_error(updater: RefCounted, journal: Dictionary, tree: Str
 		hc.update(item[1])
 		want[item[0]] = {"size": item[1].size(), "sha256": hc.finish().hex_encode()}
 	if _same_files(files, want) != "":
-		return "the previous package's recorded inventory is not the one its signed inventory names"
+		return L10n.t("launcher.macos_update.previous_package_s_recorded_inventory")
 	return ""
 
 
@@ -1145,11 +1146,11 @@ static func _retire_transaction(updater: RefCounted, journal: Dictionary) -> Str
 	test_pause(updater, "before-helper-retirement")
 	var helper_dir := _helper_transaction_dir(String(journal.txid))
 	if FileAccess.file_exists(helper_dir) or _is_link(helper_dir):
-		return "the recorded external helper path is not a real transaction directory"
+		return L10n.t("launcher.macos_update.recorded_external_helper_path_not")
 	if DirAccess.dir_exists_absolute(helper_dir):
 		var helper_error := _verify_external_helper(updater, journal)
 		if helper_error != "" and not _retiring_state(String(journal.state)):
-			return "the recorded external helper was retained because it no longer matches its signed inventory: " + helper_error
+			return L10n.t("launcher.macos_update.recorded_external_helper_retained_because", {"why": helper_error})
 		if helper_error != "":
 			var verified := _verified_journal_manifest(updater, journal)
 			if not verified.ok:
@@ -1158,27 +1159,27 @@ static func _retire_transaction(updater: RefCounted, journal: Dictionary) -> Str
 				helper_dir, _signed_helper_files(verified.asset.files), updater,
 			)
 			if helper_error != "":
-				return "the recorded external helper was retained because its remaining files are unexpected: " + helper_error
+				return L10n.t("launcher.macos_update.recorded_external_helper_retained_because_remaining", {"why": helper_error})
 		var process := _helper_process_status(journal)
 		if not process.known:
-			return "the completed update helper process state could not be established safely"
+			return L10n.t("launcher.macos_update.completed_update_helper_process_state")
 		if process.active:
-			return "the completed update helper is still exiting; cleanup will resume on the next launcher start"
+			return L10n.t("launcher.macos_update.completed_update_helper_still_exiting")
 		_remove_tree(helper_dir)
 		var local_helper := _local_swap_helper()
 		if DirAccess.dir_exists_absolute(helper_dir) or FileAccess.file_exists(helper_dir) or _is_link(helper_dir) or \
 				not FileAccess.file_exists(local_helper) or _is_link(local_helper) or \
 				not _sync_parent(helper_dir, local_helper):
-			return "the verified completed update helper could not be durably removed"
+			return L10n.t("launcher.macos_update.verified_completed_update_helper_could")
 	var path := journal_path()
 	if _is_link(path):
-		return "the completed Mac update journal became a symbolic link and was retained"
+		return L10n.t("launcher.macos_update.completed_mac_update_journal_became")
 	if FileAccess.file_exists(path) and DirAccess.remove_absolute(path) != OK:
-		return "the completed Mac update journal could not be removed"
+		return L10n.t("launcher.macos_update.completed_mac_update_journal_could_not")
 	var local_helper := _local_swap_helper()
 	if FileAccess.file_exists(path) or not FileAccess.file_exists(local_helper) or _is_link(local_helper) or \
 			not _sync_parent(path, local_helper):
-		return "the completed Mac update journal could not be durably retired"
+		return L10n.t("launcher.macos_update.completed_mac_update_journal_could")
 	return ""
 
 
@@ -1196,7 +1197,7 @@ static func _cleanup_transaction(updater: RefCounted, journal: Dictionary, root_
 		if error != "":
 			return error
 		if not _journal_state(updater, journal, cleaning_state):
-			return "the durable Mac update cleanup phase could not be recorded"
+			return L10n.t("launcher.macos_update.durable_mac_update_cleanup_phase")
 	elif journal.state == retiring_state:
 		var helper_dir := _helper_transaction_dir(String(journal.txid))
 		if not DirAccess.dir_exists_absolute(helper_dir) and not FileAccess.file_exists(helper_dir) and not _is_link(helper_dir):
@@ -1207,17 +1208,17 @@ static func _cleanup_transaction(updater: RefCounted, journal: Dictionary, root_
 	var candidate := String(journal.candidate)
 	error = _validate_inventory_subset(candidate, inactive_files, updater)
 	if error != "":
-		return "the inactive package was retained because its remaining files are unexpected: " + error
+		return L10n.t("launcher.macos_update.inactive_package_retained_because_remaining", {"why": error})
 	if DirAccess.dir_exists_absolute(candidate):
 		_remove_tree(candidate)
 	var sync_helper := String(journal.helper) if FileAccess.file_exists(String(journal.helper)) else _local_swap_helper()
 	if DirAccess.dir_exists_absolute(candidate) or FileAccess.file_exists(candidate) or _is_link(candidate) or \
 			not _sync_parent(candidate, sync_helper):
-		return "the verified inactive package could not be durably removed"
+		return L10n.t("launcher.macos_update.verified_inactive_package_could_not")
 	if journal.state == cleaning_state:
 		test_point(updater, "after-candidate-removal")
 		if not _journal_state(updater, journal, retiring_state):
-			return "the durable Mac update helper-retirement phase could not be recorded"
+			return L10n.t("launcher.macos_update.durable_mac_update_helper_retirement")
 	return _retire_transaction(updater, journal)
 
 
@@ -1228,8 +1229,7 @@ static func _relaunch_old(updater: RefCounted, journal: Dictionary) -> void:
 	var root := String(journal.root)
 	var why := _tree_error(updater, journal, root, false)
 	if why != "":
-		var message := ("The previous OpenBFME Launcher was not started again: its package no longer matches its signed inventory (%s). " +
-			"Download the Mac package again from the releases page.") % why
+		var message := L10n.t("launcher.macos_update.previous_openbfme_launcher_not_started", {"why": why})
 		Log.line("LAUNCHER " + message)
 		updater.set_state("launcher", "unseen_error", message)
 		return
@@ -1250,8 +1250,7 @@ static func _restore_previous(updater: RefCounted, journal: Dictionary) -> Dicti
 	var old_aside := not old_at_root and DirAccess.dir_exists_absolute(candidate) and not _is_link(candidate) and \
 		_tree_error(updater, journal, candidate, false) == ""
 	if not old_at_root and not old_aside:
-		var refused := ("The Mac update to %s was interrupted, and neither the new nor the previous package matches its signed " +
-			"inventory: no files were changed. Download the Mac package again from the releases page.") % journal.version
+		var refused := L10n.t("launcher.macos_update.mac_update_interrupted_neither_new", {"version": journal.version})
 		updater.set_state("launcher", "unseen_error", refused)
 		return {"restored": false, "message": refused}
 	if old_aside:
@@ -1260,8 +1259,7 @@ static func _restore_previous(updater: RefCounted, journal: Dictionary) -> Dicti
 		var code := OS.execute(helper, ["--restore-if-idle", root, candidate, str(OS.get_process_id())], output, true)
 		if code != 0 or _tree_error(updater, journal, root, false) != "":
 			Log.line("LAUNCHER the previous Mac package could not be put back: %s" % "\n".join(output).strip_edges())
-			var blocked := ("The Mac update to %s did not complete; the previous version %s could not be put back yet%s. Close the " +
-				"game and start the launcher again.") % [journal.version, journal.old_version, " (a game is running)" if code == 3 else ""]
+			var blocked := L10n.t("launcher.macos_update.put_back_game_running", {"version": journal.version, "old_version": journal.old_version}) if code == 3 else L10n.t("launcher.macos_update.put_back_blocked", {"version": journal.version, "old_version": journal.old_version})
 			return {"restored": false, "message": blocked}
 		test_point(updater, "after-restore")
 	if journal.state != "retiring-damaged" and DirAccess.dir_exists_absolute(candidate) and not _is_link(candidate) and \
@@ -1283,23 +1281,20 @@ static func _retire_damaged(updater: RefCounted, journal: Dictionary) -> Diction
 	var candidate := String(journal.candidate)
 	var why := _tree_error(updater, journal, root, false)
 	if why != "":
-		var refused := ("The Mac update to %s was interrupted and the previous package no longer matches its signed inventory (%s): " +
-			"no files were changed. Download the Mac package again from the releases page.") % [journal.version, why]
+		var refused := L10n.t("launcher.macos_update.mac_update_interrupted_previous_package", {"version": journal.version, "why": why})
 		updater.set_state("launcher", "unseen_error", refused)
 		return {"restored": false, "message": refused}
-	var restored := ("The Mac update to %s did not complete and its files are damaged. The previous version %s was restored and " +
-		"starts as before.") % [journal.version, journal.old_version]
 	if journal.state != "retiring-damaged":
 		_record_rejected(updater, journal)
 		if not _journal_state(updater, journal, "retiring-damaged"):
-			var pending := restored + " Removing the damaged update could not be recorded; it resumes when the launcher starts again."
+			var pending := L10n.t("launcher.macos_update.damaged_record_pending", {"version": journal.version, "old_version": journal.old_version})
 			Log.line("LAUNCHER " + pending)
 			updater.set_state("launcher", "unseen_error", pending)
 			return {"restored": true, "message": pending}
 		test_point(updater, "damaged-recorded")
 	var aside := ""
 	if _is_link(candidate) or FileAccess.file_exists(candidate):
-		var kept := restored + " The staged update path is not a folder and was left in place."
+		var kept := L10n.t("launcher.macos_update.damaged_path_not_folder", {"version": journal.version, "old_version": journal.old_version})
 		updater.set_state("launcher", "unseen_error", kept)
 		return {"restored": true, "message": kept}
 	if DirAccess.dir_exists_absolute(candidate):
@@ -1309,13 +1304,12 @@ static func _retire_damaged(updater: RefCounted, journal: Dictionary) -> Diction
 			n += 1
 			aside = "%s-damaged-%d" % [candidate, n]
 		if DirAccess.rename_absolute(candidate, aside) != OK or not _sync_parent(candidate, _local_swap_helper()):
-			var pending := restored + " The damaged copy could not be moved aside yet; this resumes when the launcher starts again."
+			var pending := L10n.t("launcher.macos_update.damaged_aside_pending", {"version": journal.version, "old_version": journal.old_version})
 			Log.line("LAUNCHER " + pending)
 			updater.set_state("launcher", "unseen_error", pending)
 			return {"restored": true, "message": pending}
 		test_point(updater, "damaged-aside")
-	var message := restored + (" The damaged copy was kept aside for diagnosis at %s; you may delete it." % aside if aside != "" else
-		" The damaged copy was kept aside for diagnosis next to the package folder (%s-damaged-<n>); you may delete it." % candidate.get_file())
+	var message := L10n.t("launcher.macos_update.damaged_kept_aside_at", {"version": journal.version, "old_version": journal.old_version, "path": aside}) if aside != "" else L10n.t("launcher.macos_update.damaged_kept_aside_next_to", {"version": journal.version, "old_version": journal.old_version, "name": candidate.get_file()})
 	Log.line("LAUNCHER " + message)
 	updater.set_state("launcher", "unseen_error", message)
 	var retire_error := _retire_transaction(updater, journal)
@@ -1350,11 +1344,11 @@ static func _apply_locked(updater: RefCounted, journal: Dictionary, args: Packed
 	if journal_error != "" or _candidate_path_error(root, candidate, updater, String(journal.txid)) != "" or helper.get_base_dir() != \
 			_helper_app(String(journal.txid)).path_join("Contents/MacOS"):
 		Log.line("LAUNCHER signed Mac update journal is invalid; no package paths were changed")
-		return {"exit": true, "message": "The signed Mac update journal is invalid; the installed package was not changed."}
+		return {"exit": true, "message": L10n.t("launcher.macos_update.signed_mac_update_journal_invalid")}
 	var trust_error := _transaction_trust_error(updater, journal)
 	if trust_error != "":
 		Log.line("LAUNCHER the signed update transaction failed verification: " + trust_error)
-		return {"exit": true, "message": "The signed Mac update helper failed verification; the installed package was not changed."}
+		return {"exit": true, "message": L10n.t("launcher.macos_update.signed_mac_update_helper_failed")}
 	var old_pair_error := _pair_error(updater, journal, false)
 	var new_pair_error := _pair_error(updater, journal, true)
 	var root_is_new := old_pair_error != "" and new_pair_error == ""
@@ -1502,45 +1496,45 @@ static func on_start(updater: RefCounted, args: PackedStringArray, begin_swap :=
 		return {"exit": false, "message": ""}
 	var lock := _lock_status(updater)
 	if lock.locked:
-		return {"exit": false, "message": "A signed Mac package update is in progress; Play is disabled until it finishes."}
+		return {"exit": false, "message": L10n.t("launcher.macos_update.signed_mac_package_update_in")}
 	if not lock.known:
-		return {"exit": false, "message": "The signed Mac update lock cannot be read safely; no recovery was attempted."}
+		return {"exit": false, "message": L10n.t("launcher.macos_update.signed_mac_update_lock_cannot")}
 	var transaction := _read_transaction()
 	if not transaction.ok:
 		Log.line("LAUNCHER " + transaction.error)
-		return {"exit": false, "message": "The signed Mac update journal is invalid; no files were changed."}
+		return {"exit": false, "message": L10n.t("launcher.macos_update.signed_mac_update_journal_invalid_no")}
 	if not transaction.exists:
 		var token := "%d-%d-%08x" % [OS.get_process_id(), Time.get_ticks_usec(), randi()]
 		if not _acquire_lock(updater, token):
-			return {"exit": false, "message": "A signed Mac package update is in progress; Play is disabled until it finishes."}
+			return {"exit": false, "message": L10n.t("launcher.macos_update.signed_mac_package_update_in")}
 		var receipt_message := ""
 		if signed_required(updater, updater.launcher_dir):
 			var receipt := signed_receipt(updater, updater.launcher_dir)
 			if not receipt.ok:
 				Log.line("LAUNCHER signed Mac receipt verification failed: " + receipt.error)
-				receipt_message = "The signed Mac package receipt could not be verified; Play is disabled."
+				receipt_message = L10n.t("launcher.macos_update.signed_mac_package_receipt_could")
 		_release_lock(token)
 		return {"exit": false, "message": receipt_message}
 	var journal: Dictionary = transaction.journal
 	if journal.root != updater.launcher_dir.simplify_path():
-		return {"exit": false, "message": "A signed Mac package update belongs to another install root; no files were changed."}
+		return {"exit": false, "message": L10n.t("launcher.macos_update.signed_mac_package_update_belongs")}
 	var cleanup_state: bool = journal.state in ["cleaning-confirmed", "cleaning-rolled-back",
 		"retiring-confirmed", "retiring-rolled-back", "retiring-damaged"]
 	var path_error := _candidate_path_error(String(journal.root), String(journal.candidate), updater,
 		String(journal.txid), cleanup_state)
 	if path_error != "":
 		Log.line("LAUNCHER signed Mac update journal has unsafe paths: " + path_error)
-		return {"exit": false, "message": "The signed Mac update paths are unsafe; no files were changed."}
+		return {"exit": false, "message": L10n.t("launcher.macos_update.signed_mac_update_paths_are")}
 	var trust_error := _transaction_trust_error(updater, journal)
 	if trust_error != "":
 		Log.line("LAUNCHER signed Mac update transaction is untrusted: " + trust_error)
-		return {"exit": false, "message": "The signed Mac update transaction could not be authenticated; Play is disabled."}
+		return {"exit": false, "message": L10n.t("launcher.macos_update.signed_mac_update_transaction_could")}
 	if journal.state == "failed":
 		Log.line("LAUNCHER signed Mac update is retained for diagnosis in state %s" % journal.state)
-		return {"exit": false, "message": "A previous signed Mac update failed. The installed package was left in place; see the launcher log."}
+		return {"exit": false, "message": L10n.t("launcher.macos_update.previous_signed_mac_update_failed")}
 	var token := String(journal.txid)
 	if not _acquire_lock(updater, token):
-		return {"exit": false, "message": "A signed Mac package update is in progress; Play is disabled until it finishes."}
+		return {"exit": false, "message": L10n.t("launcher.macos_update.signed_mac_package_update_in")}
 	var message := ""
 	var exit_app := false
 	if journal.state in ["cleaning-confirmed", "retiring-confirmed"]:
@@ -1569,13 +1563,13 @@ static func on_start(updater: RefCounted, args: PackedStringArray, begin_swap :=
 			var receipt := signed_receipt(updater, updater.launcher_dir, String(journal.version))
 			message = _cleanup_transaction(updater, journal, true) if receipt.ok else receipt.error
 		else:
-			message = "The confirmed Mac package no longer matches its signed inventory; no files were removed."
+			message = L10n.t("launcher.macos_update.confirmed_mac_package_no_longer")
 	elif journal.state == "rolled-back":
 		if old_pair_error == "":
 			if _record_rejected(updater, journal):
 				message = _cleanup_transaction(updater, journal, false)
 			else:
-				message = "The rejected Mac update attempt could not be saved; the journal and package were retained."
+				message = L10n.t("launcher.macos_update.rejected_mac_update_attempt_could")
 		else:
 			message = String(_restore_previous(updater, journal).message)  # MACPLAY-1 (Sol r2): e.g. the staged copy changed since
 	elif old_pair_error != "" and new_pair_error != "":
@@ -1589,35 +1583,35 @@ static func on_start(updater: RefCounted, args: PackedStringArray, begin_swap :=
 				var receipt := signed_receipt(updater, updater.launcher_dir, String(journal.version))
 				message = _cleanup_transaction(updater, journal, true) if receipt.ok else receipt.error
 			else:
-				message = receipt_error if receipt_error != "" else "Mac update confirmation could not be durably recorded."
+				message = receipt_error if receipt_error != "" else L10n.t("launcher.macos_update.mac_update_confirmation_could_not")
 				Log.line("LAUNCHER signed Mac update recovery could not confirm: " + message)
 		elif begin_swap:
 			_release_lock(token)
 			if not _start_apply(updater, journal, OS.get_process_id(), true):
-				message = "The staged Mac update failed startup validation and rollback could not be started."
+				message = L10n.t("launcher.macos_update.staged_mac_update_failed_startup")
 				return {"exit": false, "message": message}
 			return {"exit": true, "message": ""}
 	else:
 		if journal.state == "deferred":
 			var output: Array = []
 			if OS.execute(String(journal.helper), ["--game-running", String(journal.root), str(OS.get_process_id())], output, true) == 3:
-				message = "The signed Mac update is waiting for the game to close."
+				message = L10n.t("launcher.macos_update.signed_mac_update_waiting_for")
 			elif not begin_swap:
-				message = "The signed Mac update is staged and will apply when the launcher restarts."
+				message = L10n.t("launcher.macos_update.signed_mac_update_staged_will")
 			else:
 				_release_lock(token)
 				if not _start_apply(updater, journal, OS.get_process_id()):
-					message = "The signed Mac update is staged but its helper could not be started."
+					message = L10n.t("launcher.macos_update.signed_mac_update_staged_but")
 					return {"exit": false, "message": message}
 				return {"exit": true, "message": ""}
 		elif journal.state in ["staged", "swapping"] and begin_swap:
 			_release_lock(token)
 			if not _start_apply(updater, journal, OS.get_process_id()):
-				message = "The signed Mac update is staged but its helper could not be started."
+				message = L10n.t("launcher.macos_update.signed_mac_update_staged_but")
 				return {"exit": false, "message": message}
 			return {"exit": true, "message": ""}
 		else:
-			message = "The signed Mac update is staged and will apply when the launcher restarts."
+			message = L10n.t("launcher.macos_update.signed_mac_update_staged_will")
 	_release_lock(token)
 	if message != "":
 		Log.line("LAUNCHER Mac update recovery: " + message)

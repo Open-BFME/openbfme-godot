@@ -11,6 +11,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <fstream>
 
 namespace
 {
@@ -143,7 +144,8 @@ TEST_CASE("shader text: instance lighting and colour share one flat interpolatio
 			// the normal-mapped permutation overflowed the Forward+ budget with three.
 			CHECK(flatSlots == 1);
 			CHECK(has(code, "varying flat vec3 v_instance;"));
-			CHECK(has(code, "v_instance.x = px < 0.0 ? 1.0 : 0.0;"));
+			// lane INGAMEBG-1: x also carries the instance's fogless scene (+ 2, W3D_NO_SCENE_FOG_BIT), in the same slot
+			CHECK(has(code, "v_instance.x = (px < 0.0 ? 1.0 : 0.0) + ((wi & " + std::to_string(W3D_NO_SCENE_FOG_BIT) + ") != 0 ? 2.0 : 0.0);"));
 			CHECK(has(code, "v_instance.y = (wi & 16384) != 0 ? w3d_fogged_frac : 1.0;"));
 			CHECK(has(code, "v_instance.z = INSTANCE_CUSTOM.z;") == house);
 		}
@@ -165,7 +167,13 @@ TEST_CASE("shader text: the normal-mapped building permutation fits Intel Arc's 
 	{
 		if (line.find("varying ") == 0) ++varyings;
 	}
-	CHECK(varyings == 14);
+	std::ifstream shadowInclude(std::string(OPENBFME_DOCS_DIR) + "/../godot/shaders/object_shadow.gdshaderinc");
+	REQUIRE(shadowInclude.good());
+	while (std::getline(shadowInclude, line))
+	{
+		if (line.find("varying ") == 0) ++varyings;
+	}
+	CHECK(varyings == 14); // includes the fragment-to-light shadow colour; unused v_col was removed
 	// the two UV sets share one interpolator, and the world position is a vertex() local
 	CHECK(has(code, "varying vec4 v_uv;"));
 	CHECK(has(code, "v_uv = vec4(UV, UV2);"));

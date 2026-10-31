@@ -217,6 +217,7 @@ void Path::optimize(Pathfinder &pathfinder, const PathfindObject *obj, unsigned 
 		m_isOptimized = true;
 		return;
 	}
+	Pathfinder::LineMemoScope lineMemo(pathfinder); // lane PATHPERF-2: the line cells' verdicts are asked once per optimize
 	if (dir == nullptr)
 	{
 		const bool tflag = obj && obj->isKindOf(PK_MACHINE); // template KindOf bit 11 (MACHINE): RW tmpl+0x108 >> 11 & 1
@@ -426,7 +427,7 @@ inline float length2D(float dx, float dy)
 
 LocomotorPathPoint Path::computePointAhead(float distance)
 {
-	// RW 0x765F31 (waypoint types 1 and 3 of the nodes ahead are not modelled: no node carries a waypoint, S-165)
+	// RW 0x765F31 (lane WALL-2: with the waypoint types 1 and 3 of the nodes ahead)
 	LocomotorPathPoint out;
 	float rem = distance > 0.1f ? distance : 0.1f;
 	if (!m_path)
@@ -446,7 +447,35 @@ LocomotorPathPoint Path::computePointAhead(float distance)
 		{
 			seg = 0.01f; // RW 0x765819: PathNode::getNextOptimized reports max(length, 0.01)
 		}
-		const float sf = 1.0f;
+		float sf = 1.0f;
+		// lane WALL-2, RW 0x765FBC .. 0x766082: the next node's waypoint (TheTerrainLogic vslot 0x8C): type 1 never stops inside the segment (its length becomes
+		// rem / (1 - t) - 0.1); type 3 (Climb) slows the walk by seg / (|dz| + 1), at most 1, times 0.85 below 0.5
+		if (nx->m_waypointID != PathNode::NO_WAYPOINT && m_waypoints)
+		{
+			if (const PathfindWaypoint *w = m_waypoints->findWaypoint(nx->m_waypointID))
+			{
+				if (w->type == PWAYPOINT_TYPE1)
+				{
+					const float left = SimMath::subf32(1.0f, t);
+					if (SimMath::mulf32(left, seg) >= rem)
+					{
+						seg = SimMath::subf32(SimMath::divf32(rem, left), 0.1f);
+					}
+				}
+				else if (w->type == PWAYPOINT_CLIMB)
+				{
+					sf = SimMath::divf32(seg, SimMath::addf32((float)SimMath::absD(SimMath::subf32(nx->m_pos.z, cur->m_pos.z)), 1.0f));
+					if (sf > 1.0f)
+					{
+						sf = 1.0f;
+					}
+					else if (0.5f > sf)
+					{
+						sf = SimMath::mulf32(sf, 0.85f);
+					}
+				}
+			}
+		}
 		if (SimMath::mulf32((SimMath::subf32(1.0f, t)), seg) >= SimMath::mulf32(sf, rem))
 		{
 			const float f = SimMath::addf32(t, SimMath::divf32(SimMath::mulf32(sf, rem), seg));
@@ -664,6 +693,93 @@ float Path::remainingDistanceFrom(const LocomotorPathPoint &point) const
 {
 	// the locomotor passes the point computePointAhead returned: its node is the one stored with it
 	return remainingFrom(m_lastAheadNode, point.position);
+}
+
+int Path::nextPortalID() const
+{
+	// RW 0x765710: no head or no current node -> none; else the first node from the current one along the optimised chain (+ 8) with an id
+	if (!m_path || !m_closest)
+	{
+		return PathNode::NO_WAYPOINT;
+	}
+	const PathNode *n = m_closest;
+	while (n && n->m_waypointID == PathNode::NO_WAYPOINT)
+	{
+		n = n->m_nextOpti;
+	}
+	return n ? n->m_waypointID : PathNode::NO_WAYPOINT;
+}
+
+void Path::advancePastPortal(int portal)
+{
+	// BFME2 WB 0xf1d2b0 Path::AdvancePastPortal (the asserts !m_pathHead, !m_curNode, portal != INVALID_WAYPOINT_ID return early)
+	if (!m_path || !m_closest || portal == PathNode::NO_WAYPOINT)
+	{
+		return;
+	}
+	while (m_closest && m_closest->m_waypointID != portal)
+	{
+		m_closest = m_closest->m_nextOpti;
+	}
+	while (m_closest && m_closest->m_waypointID != PathNode::NO_WAYPOINT &&
+		(m_closest->m_nextOpti == nullptr || m_closest->m_nextOpti->m_waypointID != PathNode::NO_WAYPOINT))
+	{
+		m_closest = m_closest->m_nextOpti; // (WB FUN_00f26240 on the passed node: a debug draw, no state)
+	}
+	if (!m_closest)
+	{
+		m_closest = m_pathTail;
+	}
+	m_t = 0.0f;
+}
+
+bool Path::hasWaypointNodes() const
+{
+	// RW 0x765522: a path with a current node (+ 0x10); the optimised chain (+ 8) from the head: a node whose + 0x20 is not 0x7FFFFFFF
+	if (!m_path || !m_closest)
+	{
+		return false;
+	}
+	for (const PathNode *n = m_path; n; n = n->m_nextOpti)
+	{
+		if (n->m_waypointID != PathNode::NO_WAYPOINT)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool Path::hasInvalidPortals() const
+{
+	// RW 0x76573F: no node with an id (RW 0x765522, cached at + 0x24) -> false; else from the current node (or the head) along the raw chain (+ 0): a node
+	// whose id names no portal waypoint (TheTerrainLogic vslot 0x8C, RW 0x6E82FD) -> true
+	if (!m_path || !m_closest)
+	{
+		return false;
+	}
+	bool any = false;
+	for (const PathNode *n = m_path; n && !any; n = n->m_nextOpti) // RW 0x765543: the optimised chain (+ 8) from the head
+	{
+		any = n->m_waypointID != PathNode::NO_WAYPOINT;
+	}
+	if (!any)
+	{
+		return false;
+	}
+	for (const PathNode *n = m_closest; n; n = n->m_next)
+	{
+		if (n->m_waypointID == PathNode::NO_WAYPOINT)
+		{
+			continue;
+		}
+		const PathfindWaypoint *w = m_waypoints ? m_waypoints->findWaypoint(n->m_waypointID) : nullptr;
+		if (!w || !Pathfinder::isPortalWaypoint(*w))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 int Path::currentSpecialNodeType() const

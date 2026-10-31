@@ -114,7 +114,7 @@ func _run() -> int:
 	# a START of the other mode's identity is a refusal by name, not a game of the wrong profile
 	world.set_simulation_profile("uber")
 	r = world.net_online(_start_json(normal_digest))
-	_check(not r.ok and str(r.get("error", "")).contains("profile identity"), "a normal START for an uber player is refused by name: %s" % str(r.get("error", "")).left(120))
+	_check(not r.ok and str(r.get("error", "")).contains("different OpenBFME version or different game files"), "a normal START for an uber player is refused by name: %s" % str(r.get("error", "")).left(120))
 	# ---- a restarted game (a crash) is at the player's setting: the switch was never written ----
 	world.set_simulation_profile("faithful")
 	world.switch_simulation_profile_for_game("uber")

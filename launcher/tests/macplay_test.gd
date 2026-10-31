@@ -20,7 +20,8 @@ class MacInfo:
 	var repo := "Test/repo"
 	var packaged := false
 	var commit := ""
-	var release_key := PackedByteArray()
+	var release_keys: Array = []   # lane SIGNKMS-1: the trusted key list
+	var nightly_keys: Array = []   # lane RELGH-2: the nightly-only keys (none here)
 	var error := ""
 	var macos_updates := true
 	var test_build := true
@@ -61,9 +62,11 @@ func _init() -> void:
 	var u := Updater.new(MacInfo.new())
 	u.set_launcher_dir(Updater.package_root(moved, "macos-arm64"))
 	_check(u.translocated != "" and u.launcher_dir == "", "a translocated launcher has no package folder")
-	_eq(u.no_game_reason(), Updater.TRANSLOCATED_TEXT, "Play says what to do about the translocation")
-	_check(Updater.TRANSLOCATED_TEXT.contains("holds BOTH apps") and Updater.TRANSLOCATED_TEXT.contains("xattr -dr com.apple.quarantine"),
-		"the translocation text names both remedies of README-MAC.txt")
+	_eq(u.no_game_reason(), Updater.translocated_text(), "Play says what to do about the translocation")
+	_eq(Updater.translocated_text(), "macOS opened a temporary copy of the launcher, so it cannot find the game. " +
+		"Quit, then use Finder to move the folder containing both apps out of Downloads and reopen the launcher. " +
+		"If macOS blocks it, verify the download, then use System Settings > Privacy & Security > Open Anyway. " +
+		"Do not override malware or damaged-app warnings.", "the translocation text gives safe Finder and first-open steps")
 	u.set_launcher_dir("/Volumes/Games b/My Games/Open BFME (1)")
 	_check(u.translocated == "" and u.launcher_dir == "/Volumes/Games b/My Games/Open BFME (1)", "a normal folder is the package folder")
 	_check(u.no_game_reason().begins_with("No game is installed yet"), "no game: the reason is never empty")
@@ -89,14 +92,14 @@ func _payload() -> void:
 	var bytes := FileAccess.get_file_as_bytes(a.payload)
 	var sig := FileAccess.get_file_as_bytes(a.sig)
 	var key: PackedByteArray = String(a.key).hex_decode()
-	var v := Manifest.verify_payload(bytes, sig, key, {"repo": "Test/repo", "platform": "macos-arm64"})
+	var v := Manifest.verify_payload(bytes, sig, [key], {"repo": "Test/repo", "platform": "macos-arm64"})
 	_check(v.ok and v.payload.files.has("OpenBFME Launcher.app/Contents/MacOS/OpenBFME Launcher"),
 		"the macos-arm64 payload inventory verifies (%s)" % v.error)
-	_check(not Manifest.verify_payload(bytes, sig, key, {"repo": "Test/repo", "platform": "linux-x64"}).ok,
+	_check(not Manifest.verify_payload(bytes, sig, [key], {"repo": "Test/repo", "platform": "linux-x64"}).ok,
 		"a macos-arm64 inventory is not a Linux one")
 	var other := key.duplicate()
 	other[0] ^= 1
-	_check(not Manifest.verify_payload(bytes, sig, other, {"repo": "Test/repo", "platform": "macos-arm64"}).ok,
+	_check(not Manifest.verify_payload(bytes, sig, [other], {"repo": "Test/repo", "platform": "macos-arm64"}).ok,
 		"another key's inventory is refused")
 
 

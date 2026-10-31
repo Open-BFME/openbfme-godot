@@ -797,6 +797,24 @@ int64_t FXPlayer::preload_textures(double budget_ms)
 Ref<Texture2D> FXPlayer::decodeTexture(const std::string &name, std::string &missing)
 {
 	Ref<Texture2D> out;
+	// lane SDK-1: an asset pack's replacement of the particle texture first (GameClient/AssetPacks.h); a broken one is a miss, reported
+	std::string packError;
+	Ref<Image> packImage = Load_Asset_Pack_Image(m_fs->assetPacks().empty() ? nullptr : &m_fs->assetPacks(), name, packError);
+	if (packImage.is_valid())
+	{
+		if (!packImage->has_mipmaps() && !packImage->is_compressed())
+		{
+			packImage->generate_mipmaps();
+		}
+		return ImageTexture::create_from_image(packImage);
+	}
+	if (!packError.empty())
+	{
+		missing = name + " (" + packError + ")";
+		Ref<Image> white = Image::create(1, 1, false, Image::FORMAT_RGBA8);
+		white->fill(Color(1, 1, 1, 1));
+		return ImageTexture::create_from_image(white);
+	}
 	ArchiveFileSystem &fs = *m_fs->archive();
 	const ParticleTextureResolution res = ResolveParticleTexture(name, [&](const std::string &p) { return fs.doesFileExist(p); });
 	if (!res.Found)
@@ -1405,6 +1423,15 @@ Array FXPlayer::get_events() const
 		}
 	}
 	return out;
+}
+
+void FXPlayer::clearTextureCache()
+{
+	m_textures.clear();
+	m_preloaded.clear();
+	m_preloadQueue.clear();
+	m_preloadNext = 0;
+	m_preloadQueued = false;
 }
 
 } // namespace godot

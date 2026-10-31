@@ -37,7 +37,12 @@ public:
 	String display_line() const; // lane VERSION-1: "OpenBFME Alpha 0.4.5 (<date>)" (BuildVersion::displayLine)
 	String engine_id() const;    // GameNetwork/ProfileIdentity::buildId
 	String build_record() const; // BuildVersion::kBuildRecord (the provenance package.sh checks)
+	Dictionary inspect_replay(const String &path) const;
 	String redact(const String &text) const;
+	// lane JOINVER-1: a join refused for a different build in plain words (JoinBuild::refusalText) and its DETAILS text (JoinBuild::detailsText);
+	// a build is {version, date, official, platform} (the lobby's `build`; an empty one is unknown)
+	String join_refusal_text(const Dictionary &mine, const Dictionary &host) const;
+	String join_details_text(const Dictionary &mine, const String &mine_profile, const Dictionary &host, const String &host_profile) const;
 	// Is a process with this id running (any process, not only a child: OS.is_process_running only knows children)? The crash marker of
 	// scripts/release/release.gd tells a live second instance (two windows of a LAN test) from a crashed run with it.
 	bool process_alive(int64_t pid) const;
@@ -85,6 +90,7 @@ private:
 	String m_path;
 	String m_error;
 	LogPrivacy::Rules m_rules;
+	LogPrivacy::Budget m_budget;
 	bool m_crashed = false;
 };
 

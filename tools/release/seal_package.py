@@ -2,7 +2,7 @@
 """Lane ONEZIP-1 r2: the signed payload inventory of a combined package (the game and the launcher in one archive).
 
     python3 tools/release/seal_package.py seal <package dir> --key KEY --repo OWNER/NAME
-    python3 tools/release/seal_package.py check <package dir> --public PUBLIC --repo OWNER/NAME
+    python3 tools/release/seal_package.py check <package dir> --public PUBLIC [--nightly NLIST] --repo OWNER/NAME
     python3 tools/release/seal_package.py unseal <archive> <out archive>
 
 A player starts the unpacked package before any update check has answered, so its files must be checkable against signed data that
@@ -19,6 +19,11 @@ or whose folder has no VERSION naming the version.
 check: every combined archive is sealed, its signature verifies under PUBLIC, the payload names exactly the archive's other files with
 their sizes and digests, its version / platform / repository are the archive's. Exit 1 with one line per problem.
 unseal: the archive without the two files, written the way package.sh writes it (package.sh --verify compares that with its rebuild).
+
+SIGNKMS-1: check's PUBLIC may be a key list (launcher/release_keys.pub): payload.json.sig is valid under any of its keys, raw or envelope.
+RELGH-2: sealing signs with a key file (FileKeySigner: the raw Ed25519 signature): the release key on the Deck, or the nightly key in the
+release workflow's sign job (the AWS KMS signer of SIGNKMS-1 is gone: the AWS organisation refuses OIDC and KMS). check --nightly NLIST
+also accepts a payload.json.sig under a nightly-only key of NLIST (launcher/nightly_keys.pub), for a nightly package only.
 """
 from __future__ import annotations
 
@@ -38,6 +43,7 @@ sys.path.insert(0, str(HERE))
 
 import ed25519  # noqa: E402
 import make_archive  # noqa: E402
+import release_keys  # noqa: E402
 
 PAYLOAD, PAYLOAD_SIG = "payload.json", "payload.json.sig"
 # MACPLAY-1: the Apple Silicon package (openbfme-<v>-macos-arm64.zip, built on the Mac build host) carries the same signed inventory, so its
@@ -227,11 +233,35 @@ def write_archive(out: Path, top: str, files: dict[str, bytes], modes: dict[str,
         tmp.replace(out)
 
 
+class FileKeySigner:
+    """the release key file's raw Ed25519 signature (the scheme every launcher reads)"""
+
+    def __init__(self, secret: bytes):
+        self.secret = secret
+        self.public = ed25519.public_key(secret)
+
+    def sign(self, kind: str, data: bytes) -> bytes:
+        return ed25519.sign(self.secret, data)
+
+    def trusted(self) -> list[tuple[str, bytes]]:
+        return [("key", self.public)]
+
+
+def as_signer(signer):
+    """a 32-byte secret (the callers before SIGNKMS-1) or an object with sign(kind, data) -> 64 bytes"""
+    return FileKeySigner(signer) if isinstance(signer, (bytes, bytearray)) else signer
+
+
+def as_keys(public) -> list[tuple[str, bytes]]:
+    """a 32-byte public key (the callers before SIGNKMS-1) or a key list [(label, key)]"""
+    return [("key", bytes(public))] if isinstance(public, (bytes, bytearray)) else list(public)
+
+
 def combined_archives(d: Path) -> list[Path]:
     return sorted(p for p in d.iterdir() if NAME.match(p.name))
 
 
-def seal_archive(path: Path, secret: bytes, repo: str) -> None:
+def seal_archive(path: Path, secret, repo: str) -> None:
     """adds the signed payload inventory to one combined archive (rewritten in place)"""
     m = NAME.match(path.name)
     if not m:
@@ -247,21 +277,21 @@ def seal_archive(path: Path, secret: bytes, repo: str) -> None:
         raise SystemExit(f"seal_package: {path.name}: its VERSION does not name {version}")
     body = payload_bytes(files, version, platform, repo)
     files[PAYLOAD] = body
-    files[PAYLOAD_SIG] = ed25519.sign(secret, body)
+    files[PAYLOAD_SIG] = as_signer(secret).sign(PAYLOAD, body)
     modes[PAYLOAD] = modes[PAYLOAD_SIG] = 0o644
     write_archive(path, path.name.removesuffix(".tar.gz").removesuffix(".zip"), files, modes, mtime)
 
 
-def seal_folder(folder: Path, secret: bytes, repo: str, version: str, platform: str) -> None:
+def seal_folder(folder: Path, secret, repo: str, version: str, platform: str) -> None:
     """the inventory of an unpacked package folder, written into it (tests that change a package's files and seal it again)"""
     files = {p.relative_to(folder).as_posix(): p.read_bytes() for p in sorted(folder.rglob("*"))
              if p.is_file() and p.relative_to(folder).as_posix() not in (PAYLOAD, PAYLOAD_SIG)}
     body = payload_bytes(files, version, platform, repo)
     (folder / PAYLOAD).write_bytes(body)
-    (folder / PAYLOAD_SIG).write_bytes(ed25519.sign(secret, body))
+    (folder / PAYLOAD_SIG).write_bytes(as_signer(secret).sign(PAYLOAD, body))
 
 
-def seal(d: Path, secret: bytes, repo: str) -> list[str]:
+def seal(d: Path, secret, repo: str) -> list[str]:
     sealed = []
     for path in combined_archives(d):
         seal_archive(path, secret, repo)
@@ -283,7 +313,10 @@ def rewrite_sums(d: Path) -> None:
     sums[0].write_text("".join(ln + "\n" for ln in lines), encoding="utf-8")
 
 
-def check(d: Path, public: bytes, repo: str) -> list[str]:
+def check(d: Path, public, repo: str, nightly=()) -> list[str]:
+    """public: one key (32 bytes) or a key list: payload.json.sig must be valid under one of them (release_keys.verify); RELGH-2: or
+    under a nightly-only key of `nightly` when the payload is a nightly's (release_keys.verify_scoped)"""
+    keys = as_keys(public)
     problems = []
     archives = combined_archives(d)
     if not archives:
@@ -295,8 +328,9 @@ def check(d: Path, public: bytes, repo: str) -> list[str]:
         if body is None or sig is None:
             problems.append(f"{path.name}: not sealed (no {PAYLOAD} / {PAYLOAD_SIG})")
             continue
-        if not ed25519.verify(public, body, sig):
-            problems.append(f"{path.name}: the signature of {PAYLOAD} does not verify under the release key")
+        if release_keys.verify_scoped(keys, list(nightly), PAYLOAD, body, sig) is None:
+            problems.append(f"{path.name}: the signature of {PAYLOAD} does not verify under the release key"
+                            + (" (a nightly key signs nightly packages only)" if nightly else ""))
             continue
         if body != payload_bytes(files, version, platform, repo):
             problems.append(f"{path.name}: {PAYLOAD} is not the inventory of the archive's files ({version}, {platform}, {repo})")
@@ -315,11 +349,12 @@ def main(argv: list[str]) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("seal")
     s.add_argument("dir", type=Path)
-    s.add_argument("--key", type=Path, required=True)
+    s.add_argument("--key", type=Path, required=True, help="the key file (raw signatures): the release key, or the nightly key on Actions")
     s.add_argument("--repo", required=True)
     c = sub.add_parser("check")
     c.add_argument("dir", type=Path)
     c.add_argument("--public", required=True)
+    c.add_argument("--nightly", default=None, help="RELGH-2: the nightly-only key list (launcher/nightly_keys.pub): nightly packages only")
     c.add_argument("--repo", required=True)
     u = sub.add_parser("unseal")
     u.add_argument("archive", type=Path)
@@ -332,12 +367,18 @@ def main(argv: list[str]) -> int:
         raise SystemExit(f"seal_package: '{a.repo}' is not <owner>/<name>")
     if a.cmd == "seal":
         from sign_manifest import load_secret  # the release key's own rules (outside every repository, mode 0600)
-        for n in seal(a.dir, load_secret(a.key), a.repo):
+        signer = FileKeySigner(load_secret(a.key))
+        sealed = seal(a.dir, signer, a.repo)
+        for n in sealed:
             print(f"SEALED {n}")
-        problems = check(a.dir, ed25519.public_key(load_secret(a.key)), a.repo)
+        problems = check(a.dir, signer.trusted(), a.repo)
     else:
-        from sign_manifest import read_public
-        problems = check(a.dir, read_public(a.public), a.repo)
+        try:
+            keys = release_keys.load_any(a.public)
+            nightly = release_keys.load_nightly(a.nightly, None) if a.nightly else []
+        except release_keys.KeyListError as e:
+            raise SystemExit(f"seal_package: {e}")
+        problems = check(a.dir, keys, a.repo, nightly)
     for p in problems:
         print(f"SEAL CHECK: {p}")
     if not problems:

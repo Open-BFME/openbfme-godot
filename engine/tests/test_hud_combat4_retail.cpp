@@ -2,6 +2,7 @@
 // shockwave handler (RW 0x6968BC), a troll's club swing throws the soldiers in its arc, and the measurements of a cavalry charge. They share the HUD tests' retail
 // world (the file name sorts with the test_hud_* files, see test_hud_combat_retail.cpp) and SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -100,7 +101,7 @@ struct Arena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(angle);
-		return o;
+		return testutil::completeHorde(o);
 	}
 	std::vector<ObjectID> memberIds(Object *horde)
 	{
@@ -356,7 +357,7 @@ TEST_CASE("combat4 retail: a killed ranger lies for SinkDelay, then sinks at Sin
 	a.logic.random().enableCallLog(true);
 	a.logic.random().clearCallLog();
 	const unsigned killFrame = a.logic.getFrame();
-	r->kill(DEATH_NORMAL);
+	r->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	REQUIRE(r->isEffectivelyDead());
 	// the roulette draws at SlowDeathBehavior.cpp:0x32F, then the sink, destruction and midpoint draws at 0x1A5 / 0x1A6 / 0x1AB
 	std::vector<int> lines;
@@ -648,4 +649,89 @@ TEST_CASE("combat4 retail: S-1791 (DependencySharedModelFlags) and S-1792 (W3DTr
 	CHECK(s1791 == 1);
 	CHECK(s1792 == 1);
 	a.logic.setClientHooks(nullptr);
+}
+
+// lane AIDATA-1: RW 0x6CC07C (isWithinAttackRange, melee): a source that is RUNNING_DOWN_FROM_BEHIND (status 0x4B) is in range of its victim within AIData
+// ChaseFromBehindLimit (+ 0xD0, retail 50.0) before the footprint test. The horde's approach state (RW 0x74AA03) sets the status on every member (RW 0x748650,
+// across the horde) while the goal flees and goal speed + (centre distance - both radii) is below the horde's maximum speed, and orders the members to attack
+// (RW 0x87631F). Before the lane the limit was hard-wired to 0, the status reached the horde object only and the gap used the horde's own speed: the riders
+// never hit a fleeing target before it stopped. Knights of Dol Amroth (CrusherLevel 1) chase a fleeing mountain troll (CrushableLevel 2: no crush, so the
+// horde runs the approach state, not the squish): with retail's limit the first hit lands at frame 28 while the riders run it down; with 0 only at frame 62,
+// after the troll stopped at its goal. Against a troll that stands still (no run-down status) the limit changes nothing. Merge queue q28 (on the archive with
+// MERGEQ-27's terrain line of sight, gate push and radius heights; measured at its first merge point and on the merged tree): the run-down hit stays at
+// frame 28; with 0 it lands at 60 (was 62) and the standing troll is hit at 32 (was 28) either way. Engine pins, not retail values. Merge queue q29 (with
+// KILLSRC-1 and PATHPRIO-1 already in: the path priority's crushable level and onCollide's attack-target exits change how the riders close in; measured at
+// AIDATA-1's merge point and on the merged tree): the run-down hit lands at frame 40 (still while the riders run the troll down, before 60 with a limit of 0),
+// the standing troll is hit at 30 either way
+// Lane MODCOMPAT-MOD1 (measured at AutoPickUpUpdate's commit, a CI host): AutoPickUpUpdate (the mountain troll's scan countdown starts at a logic random
+// value, RW 0x8994BF, and its update, RW 0x89958F, joins the sleepy update vectors: the riders close in on other frames; the run-down still hits first, the
+// standing troll is still hit at the same frame either way): retail 40 -> 28, none 60 -> 64, standRetail 30 -> 32. Engine pins, not retail values.
+// Lane MODCOMPAT-MOD1 (measured at BoredUpdate's commit, a CI host): BoredUpdate (the idle mountain troll's scan countdown, a logic random value at its
+// creation, RW 0x899F1F, and its scans every ScanDelayTime while not ATTACKING or MOVING, RW 0x899F9D: the standing troll is hit later; the run-down still
+// hits first, the standing troll still at the same frame either way): none 64 -> 62, standRetail 32 -> 50. Engine pins, not retail values.
+// Lane MODCOMPAT-MOD1 (measured at the run-down aim fix's commit, a CI host): the run-down's aim state ends at once (AIAttackAimAtTargetState RW 0x753426 /
+// 0x7524B5), so the first rider strikes a frame earlier; with a limit of 0 and against the standing troll nothing changes: retail 28 -> 27. Engine pins, not
+// retail values.
+TEST_CASE("aidata1 retail: knights running down a fleeing troll hit within ChaseFromBehindLimit; a troll standing still is hit at the same frame either way")
+{
+	if (!haveWorld())
+	{
+		return;
+	}
+	struct Hit
+	{
+		int frame = -1;
+		bool runningDown = false; // a knight was RUNNING_DOWN_FROM_BEHIND on the frame of the first hit
+	};
+	const auto firstHit = [](bool flee, float limit) {
+		Arena a(shared(), "FactionMen", "FactionMordor");
+		a.logic.settings().chaseFromBehindLimit = limit;
+		Object *troll = a.place("MordorMountainTroll", 1, 500.0f, 600.0f, 0.0f);
+		a.frames(2);
+		if (flee)
+		{
+			troll->getAIUpdateInterface()->aiMoveToPosition(Coord3D{ 1100.0f, 600.0f, 0.0f }, CMD_FROM_PLAYER);
+		}
+		else
+		{
+			troll->getAIUpdateInterface()->aiIdle(CMD_FROM_AI);
+		}
+		Object *knights = a.place("GondorKnightsofDolHorde", 0, 250.0f, 600.0f, 0.0f);
+		a.frames(2);
+		const ObjectID victim = troll->getID();
+		const std::vector<ObjectID> riders = a.memberIds(knights);
+		REQUIRE(knights->getAIUpdateInterface()->aiAttackObject(troll, CMD_FROM_PLAYER));
+		const unsigned runDown = (unsigned)CombatNames::statuses().runningDownFromBehind;
+		Hit h;
+		for (int f = 0; f < 300 && h.frame < 0; ++f)
+		{
+			a.logic.runLogicFrame();
+			const Object *o = a.logic.findObjectByID(victim);
+			if (o && o->getBodyModule()->getHealth() >= o->getBodyModule()->getMaxHealth())
+			{
+				continue;
+			}
+			h.frame = f;
+			for (ObjectID r : riders)
+			{
+				const Object *k = a.logic.findObjectByID(r);
+				h.runningDown = h.runningDown || (k && k->testStatus(runDown));
+			}
+		}
+		return h;
+	};
+	const Hit retail = firstHit(true, 50.0f);
+	CHECK(retail.frame == 27);
+	CHECK(retail.runningDown);
+	const Hit none = firstHit(true, 0.0f);
+	// #160 (a horde's move or turn no longer carries its members, they walk to their slots, RW 0x871536) measured 60 -> 74 on its own base; on the archive's
+	// tree with #160 it stays 62 (merge queue q34)
+	CHECK(none.frame == 62);
+	CHECK_FALSE(none.runningDown);
+	const Hit standRetail = firstHit(false, 50.0f);
+	const Hit standNone = firstHit(false, 0.0f);
+	// merge queue q34 (measured once on the merged tree and at each merge point): 50 -> 52 from #160's merge point on (the members walk to their slots, RW 0x871536)
+	CHECK(standRetail.frame == 52);
+	CHECK_FALSE(standRetail.runningDown);
+	CHECK(standNone.frame == standRetail.frame);
 }

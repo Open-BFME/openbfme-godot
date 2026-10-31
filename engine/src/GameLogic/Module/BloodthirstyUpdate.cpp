@@ -1,4 +1,6 @@
 // OpenBFME. GPL-3.0.
+// BFME1 fields follow Open-BFME-1's field table VA 0x010BC738 and BloodthirstyUpdateModuleDataConstructor.cpp;
+// Update/Rva00287290Update.cpp awards XP on each accepted sacrifice, not at a NumToSacrifice quota.
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
@@ -39,6 +41,13 @@ const FieldParse kBloodthirstyUpdate[] = {
 	{ "InitiateVoice", INI::parseAsciiString, nullptr, (int)offsetof(BloodthirstyUpdateModuleData, m_initiateVoice) },
 	{ nullptr, nullptr, nullptr, 0 }
 };
+
+const FieldParse kBfme1BloodthirstyUpdate[] = {
+	{ "NumToSacrifice", INI::parseUnsignedInt, nullptr, (int)offsetof(BloodthirstyUpdateModuleData, m_numToSacrifice) },
+	{ "InitiateVoice2", INI::parseAsciiString, nullptr, (int)offsetof(BloodthirstyUpdateModuleData, m_initiateVoice2) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+const Bfme1FieldRowsRegistration kBfme1BloodthirstyRegistration(kBloodthirstyUpdate, kBfme1BloodthirstyUpdate);
 
 unsigned statusIndex(const char *name)
 {
@@ -244,6 +253,11 @@ UpdateSleepTime BloodthirstyUpdate::update()
 const std::string &BloodthirstyUpdate::initiateVoice() const
 {
 	return m_data->m_initiateVoice;
+}
+
+const std::string &BloodthirstyUpdate::initiateVoice2() const
+{
+	return m_data->m_initiateVoice2;
 }
 
 void BloodthirstyUpdate::crc(StateHasher &hasher) const

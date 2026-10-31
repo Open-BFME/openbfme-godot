@@ -60,7 +60,18 @@ ALLOWED_LAUNCHER = {"launcher/scripts/net/http_fetch.gd": {"HTTPClient"},
                     # lane mac-release-1: the authenticated external helper syncs durable update receipts and journals
                     "launcher/scripts/core/macos_update.gd": {"OS.execute", "OS.create_process"},
                     # lane ONLINE-2: `reg add` under HKCU (Windows) / xdg-mime + update-desktop-database (Linux), only on --register-url-handler
-                    "launcher/scripts/core/url_handler.gd": {"OS.execute"}}
+                    "launcher/scripts/core/url_handler.gd": {"OS.execute"},
+                    # replay-open: `reg` under HKCU (Windows) / xdg-mime + update-mime-database + update-desktop-database (Linux): the per-user
+                    # .replay / save file association, only when the player keeps it enabled in Settings
+                    "launcher/scripts/core/replay_association.gd": {"OS.execute"},
+                    # lane ONLINEMENU-1 (SOCIAL-2b, PR #8): the launcher's account page (recovery code, e-mail and Discord / Google linking) talks
+                    # to the lobby the player named (NetPolicy.set_lobby; social_client: each request's origin is that lobby, /v1/, TLS; no
+                    # redirects, one request call each), opens the system browser only on an allow-listed Discord authorize URL or that lobby's
+                    # own e-mail page, and takes the OAuth callback on a 127.0.0.1 listener: test_launcher_tools pins each of these
+                    "launcher/scripts/core/oauth_account.gd": {"HTTPRequest", "HTTPClient", "TCPServer", "StreamPeerTCP"},
+                    "launcher/scripts/net/social_client.gd": {"HTTPRequest", "HTTPClient"},
+                    # lane CRASHACT-1: the launcher's crash reports (the game's crash client, the same file): crash_client_problems
+                    "launcher/scripts/net/crash_client.gd": {"HTTPRequest", "HTTPClient"}}
 # lane ONLINE-2: game file -> the findings it may have: the online lobby client (its requests: online_lobby_problems)
 # lane ONLINE-4: the online screens' transport (scripts/online_http.gd: the requests OnlineShell.apt's lobby client queues), the same rule
 # lane ONEZIP-1: a game started directly runs the OpenBFME Launcher beside it once (the one updater; the game itself still opens no
@@ -68,8 +79,13 @@ ALLOWED_LAUNCHER = {"launcher/scripts/net/http_fetch.gd": {"HTTPClient"},
 # lane ONLINECOUNT-1: the menus' "N players online" (scripts/online_stats.gd): one GET of the lobby's /v1/stats, the same request rule
 ALLOWED_GAME = {"godot/scripts/online_lobby.gd": {"HTTPRequest", "HTTPClient"}, "godot/scripts/online_http.gd": {"HTTPRequest", "HTTPClient"},
                 "godot/scripts/online_stats.gd": {"HTTPRequest"},
-                "godot/scripts/release/update_handover.gd": {"OS.create_process"}}
+                "godot/scripts/release/update_handover.gd": {"OS.create_process"},
+                # lane CRASHACT-1: crash reports to the crash service (the player's Options toggle, on by default): crash_client_problems
+                "godot/scripts/crash/crash_client.gd": {"HTTPRequest", "HTTPClient"}}
 ONLINE_LOBBY = "godot/scripts/online_lobby.gd"
+CRASH_CLIENT_FILES = ("godot/scripts/crash/crash_client.gd", "launcher/scripts/net/crash_client.gd")
+CRASH_ENDPOINT = 'const ENDPOINT := "https://api.openbfme.com/v1/reports"'
+CRASH_TEST_ENDPOINT = '"^http://127\\\\.0\\\\.0\\\\.1:([1-9][0-9]{0,4})/v1/reports$"'
 ONLINE_LOBBY_FILES = ("godot/scripts/online_lobby.gd", "godot/scripts/online_http.gd", "godot/scripts/online_stats.gd")
 
 GODOT_NET = re.compile(r"(HTTPRequest|HTTPClient|WebSocketPeer|WebSocketMultiplayerPeer|StreamPeerTCP|StreamPeerTLS|TCPServer|PacketPeerUDP|"
@@ -323,19 +339,22 @@ def lex_gd(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
 # the developer profiler (lane PERF-3, --perf-stat): Linux `perf stat` on the game's own process and `kill -INT` of that perf: allowed only as
 # the token sequence OS . create_process|execute ( "perf"|"kill" , (by tokens: no comment or whitespace changes what is matched)
 PROFILER_COMMANDS = {"create_process": {"perf"}, "execute": {"kill"}}
-# lane WINCRASH-1 r4: the file manager is opened by exactly one function of the game, release.gd's _show_in_file_manager(path), which
-# accepts only a path inside OS.get_user_data_dir() after normalising; its callers open_user_folder(kind) (a fixed set of folder kinds,
-# their user:// paths built inside it) and open_log_file(name) (a validated session log file name) build the path. Any other reference to
-# these OS methods, anywhere (another file, another function, a string naming one for call() / Callable()), is a finding.
+# External effects belong only to the shared helper; callers retain their URL/path policy.
 FILE_MANAGER_METHODS = {"shell_open", "shell_show_in_file_manager"}
-# lane UI-3: the launcher's "Show folder" / "Open log folder" likewise go through one function, paths.gd show_in_file_manager(path), which
-# opens only an existing local folder that is the launcher's data folder (or inside it) or one of the game folders it found
-FILE_MANAGER_OWNERS = {("godot/scripts/release/release.gd", "_show_in_file_manager"), ("launcher/scripts/ui/paths.gd", "show_in_file_manager")}
+FILE_MANAGER_OWNERS = {(path, function) for path in ("godot/scripts/external_open.gd", "launcher/scripts/core/external_open.gd")
+                       for function in ("open_url", "show_in_file_manager")}
 
 # Windows launcher lock: only the system executable and this literal read-only argument list, in its owning function.
 EXCLUDED_PORT_QUERY = [(kind, value) for kind, value, _, _ in lex_gd_stream(
     'OS.execute(OS.get_environment("SystemRoot").path_join("System32/netsh.exe"), '
     '["int", "ipv4", "show", "excludedportrange", "protocol=tcp"], output, true)')]
+
+# lane ONLINEMENU-1 (owner 2026-10-20: a hardware id for bans only): Windows' MachineGuid (Godot's OS.get_unique_id reads the hardware
+# profile's GUID there instead), read-only, by the system's reg.exe and this literal argument list, in the two identity files' machine_id()
+MACHINE_GUID_QUERY = [(kind, value) for kind, value, _, _ in lex_gd_stream(
+    'OS.execute(OS.get_environment("SystemRoot").path_join("System32/reg.exe"), '
+    '["query", "HKLM\\\\SOFTWARE\\\\Microsoft\\\\Cryptography", "/v", "MachineGuid"], out, true)')]
+MACHINE_GUID_OWNERS = {("godot/scripts/online_identity.gd", "machine_id"), ("launcher/scripts/core/social_identity.gd", "machine_id")}
 
 
 def gdscript_findings(text: str, path: str | None = None) -> list[str]:
@@ -359,6 +378,9 @@ def gdscript_findings(text: str, path: str | None = None) -> list[str]:
         if value in GODOT_OS_CALLS and k >= 2 and stream[k - 1][1] == "." and stream[k - 2][1] == "OS":
             if (path == "launcher/scripts/core/instance_lock.gd" and function == "_windows_exclusions"
                     and [(t[0], t[1]) for t in stream[k - 2:k - 2 + len(EXCLUDED_PORT_QUERY)]] == EXCLUDED_PORT_QUERY):
+                continue
+            if ((path, function) in MACHINE_GUID_OWNERS
+                    and [(t[0], t[1]) for t in stream[k - 2:k - 2 + len(MACHINE_GUID_QUERY)]] == MACHINE_GUID_QUERY):
                 continue
             if value in FILE_MANAGER_METHODS and (path, function) in FILE_MANAGER_OWNERS:
                 continue
@@ -431,6 +453,25 @@ def online_lobby_problems(text: str) -> list[str]:
     return []
 
 
+def crash_client_problems(text: str) -> list[str]:
+    """lane CRASHACT-1: a crash report goes to the crash service and nowhere else: one `.request_raw(` call (no `.request(`), whose URL is
+    CrashClient.target()'s: the ENDPOINT constant (the service), or a test's loopback URL (127.0.0.1 only); redirects off"""
+    tokens = [(t, line) for t, line in lex_gd(text)[0]]
+    names = [t for t, _ in tokens]
+    raw = [k for k in range(1, len(names) - 1) if names[k] == "request_raw" and names[k - 1] == "." and names[k + 1] == "("]
+    plain = [k for k in range(1, len(names) - 1) if names[k] == "request" and names[k - 1] == "." and names[k + 1] == "("]
+    out = []
+    if len(raw) != 1 or plain:
+        out.append(f"{len(raw)} .request_raw( and {len(plain)} .request( calls (exactly one .request_raw( is allowed)")
+    if CRASH_ENDPOINT not in text:
+        out.append("the ENDPOINT constant is not the crash service's https://api.openbfme.com/v1/reports")
+    if CRASH_TEST_ENDPOINT not in text:
+        out.append("the test endpoint is not limited to http://127.0.0.1:<port>/v1/reports")
+    if not any(names[i:i + 3] == ["max_redirects", "=", "0"] for i in range(len(names) - 2)):
+        out.append("the HTTPRequest does not set max_redirects = 0")
+    return out
+
+
 def main() -> int:
     bad = 0
     for path, findings in scan().items():
@@ -442,6 +483,10 @@ def main() -> int:
         for p in online_lobby_problems((REPO / lobby_file).read_text(encoding="utf-8")):
             bad += 1
             print(f"FINDING {lobby_file}: {p}")
+    for crash_file in CRASH_CLIENT_FILES:
+        for p in crash_client_problems((REPO / crash_file).read_text(encoding="utf-8")):
+            bad += 1
+            print(f"FINDING {crash_file}: {p}")
     for path, findings in scan_launcher().items():
         for f in findings:
             allowed = launcher_finding_allowed(path, f)

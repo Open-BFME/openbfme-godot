@@ -49,7 +49,9 @@ struct OpenBFMEPageRow
 		Check,   // checkbox.wnd: `value` 0 / 1
 		Slider,  // horzslider.wnd: `minValue` .. `maxValue`, `value` = the position; `valueText` is drawn right of it
 		Text,    // a read-only value: `valueText`
-		Entry    // lane OPTS-5: textentry.wnd: `valueText` the text, at most `maxValue` characters; `value` = the text's number (0 when empty)
+		Entry,   // lane OPTS-5: textentry.wnd: `valueText` the text, at most `maxValue` characters; `value` = the text's number (0 when empty)
+		Button   // lane CHEAT-1: a button of the menus' own look (the FRIENDS button's frame and lettering; no retail skin is a push button): `valueText` its
+		         // text; a click is a Press event with the row's key
 	};
 	Kind kind = Kind::Text;
 	std::string key;
@@ -76,6 +78,11 @@ struct OpenBFMEPageSpec
 	// a two-column list (listbox.wnd) in place of rows: the hot keys
 	std::vector<std::pair<UnicodeString, UnicodeString>> list;
 	bool hasList = false;
+	// lane ONLINEMENU-1 (the friends page): the list below the first `listFromRow` rows (-1: the list fills the panel, as the hot keys), as tall as its
+	// lines and one more (at least three); its rows can be chosen (ListSelect) and double-clicked (ListActivate)
+	int listFromRow = -1;
+	bool listActivates = false;
+	bool backdrop = false; // lane ONLINEMENU-1: the page's band is filled dark first (a page over an online screen's own panels, not Options.apt's)
 };
 
 struct OpenBFMEPageEvent
@@ -88,11 +95,16 @@ struct OpenBFMEPageEvent
 		Reset,  // RESET TO DEFAULTS
 		Accept, // ACCEPT
 		Entry,  // the OPENBFME button of the basic page; lane OPTS-5: the menu opened (`value` the tab to show first: 0, or 1 for the detail settings)
-		Release // lane OPTS-5: a slider row's thumb let go or its track click done (RotWK's 0x4010, GSM_SLIDER_CLICKED): `key`
+		Release, // lane OPTS-5: a slider row's thumb let go or its track click done (RotWK's 0x4010, GSM_SLIDER_CLICKED): `key`
+		Submit,  // lane ONLINEMENU-1: Enter in an Entry row (GEM_EDIT_DONE): `key`, `text`
+		ListSelect,  // lane ONLINEMENU-1: a list row chosen (GLM_SELECTED): `value` the row
+		ListActivate, // lane ONLINEMENU-1: a list row double-clicked (GLM_DOUBLE_CLICKED): `value` the row
+		Press         // lane CHEAT-1: a Button row clicked (press and release on it): `key`
 	};
 	Kind kind = Kind::Value;
 	std::string key;
 	int value = 0;
+	UnicodeString text; // lane ONLINEMENU-1: an Entry row's text (Value, Submit)
 };
 
 class OpenBFMEOptionsPage
@@ -121,6 +133,8 @@ public:
 	static constexpr int kColumnGadgetInset = 160;
 	static constexpr int kColumnRightInset = 12;
 	static constexpr int kEntryWidth = 110;
+	static constexpr int kButtonWidth = 170; // lane CHEAT-1: a Button row's box
+	static constexpr int kShortEntryLength = 20; // lane ONLINEMENU-1: an entry for more characters is as wide as the panel's gadgets
 	static constexpr int kCheckSize = 30; // checkbox.wnd draws its box (height - 6) square: 24, the size of Options.apt's Show All Health Bars box
 	static constexpr int kCheckBoxMargin = 3; // lane OPTS-6: the stated hit margin above and below a check box's drawn box (its window's inset)
 	static constexpr int kHelpTop = kBottom - 70;
@@ -182,6 +196,7 @@ public:
 	int hoveredRow() const { return m_hoverRow; }
 	// the help line drawn now
 	UnicodeString helpText() const;
+	int helpTop() const { return m_helpTop; }
 
 private:
 	struct Built
@@ -219,6 +234,10 @@ private:
 	bool m_shown = false;
 	bool m_syncing = false; // set while the page itself moves a gadget (no events)
 	int m_hoverRow = -1;
+	int m_helpTop = kHelpTop;
 	int m_hoverTab = -1;
 	int m_pressTab = -1;
+	int m_hoverButton = -1; // lane CHEAT-1: the Button row under the pointer / pressed
+	int m_pressButton = -1;
+	int buttonAt(float x, float y) const;
 };

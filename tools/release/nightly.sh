@@ -3,12 +3,12 @@
 #
 #   tools/release/nightly.sh [--dry-run] [--repo-dir DIR] [--archive-branch NAME] [--work DIR] [--repo OWNER/NAME] [--remote NAME]
 #
-# Run by the operator's timer every night. It takes the head of the archive branch of the repository DIR (default: this checkout), puts
-# a detached checkout of exactly that commit at <work>/src (default work: $OPENBFME_RELEASE_WORK/nightly-src's parent,
+# Run by the operator's timer twice a day (lane NIGHTLY-2, owner 2026-10-23: 07:00 and 19:00 UTC). It takes the head of the archive
+# branch of the repository DIR (default: this checkout), puts a detached checkout of exactly that commit at <work>/src (default work: $OPENBFME_RELEASE_WORK/nightly-src's parent,
 # ~/.cache/openbfme-release), and runs THAT checkout's tools/release/autorelease.sh <head> --nightly (autorelease.sh requires the
-# release tools it runs to be the released commit's own). autorelease.sh decides the rest: it skips the night when nothing a release is
+# release tools it runs to be the released commit's own). autorelease.sh decides the rest: it skips the run when nothing a release is
 # made of changed since the last nightly (exit 0, "AUTORELEASE SKIP"), builds and tests the candidate (the nightly gate subset on the
-# build host), publishes it as the pre-release v<next>-nightly.<UTC date> with notes for players, and keeps the newest 7 nightlies.
+# build host), publishes it as the pre-release v<next>-nightly.<YYMMDD><1 morning | 2 evening, UTC>00 with notes for players, and keeps the newest 7 nightlies.
 # A failure publishes nothing that was not already public and exits non-zero; the operator's wrapper reports it.
 # The environment is the operator's release environment (autorelease.sh's OPENBFME_RELEASE_*; OPENBFME_RELEASE_BUILDER the nightly
 # builder, which must take AR_NIGHTLY=1) plus OPENBFME_NIGHTLY_LLM (tools/release/nightly_notes.py: the model command for the notes).

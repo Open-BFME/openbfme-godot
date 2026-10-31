@@ -9,11 +9,17 @@
 #include "GameLogic/SnapshotXfer.h"
 
 #include "GameLogic/Module/ExitMath.h"
+#include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/SupplyTruckAIUpdate.h"
 
 #include "Common/StateHash.h"
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/Combat/CombatState.h"
+#include "GameLogic/Combat/WeaponDelivery.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/SimMath.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/Object.h"
 #include "Libraries/WWVegas/WWMath/quat.h"
@@ -185,7 +191,14 @@ void SupplyCenterProductionExitUpdate::exitObjectViaDoor(Object *newObj, ExitDoo
 		}
 		c.target = producer->getID();
 		logic.aiCommands().issue(*newObj, std::move(c));
-		// RW 0x8A9E70: a supply truck AI is told setForceWantingState(true): the supply truck AI is not ported (S-209)
+		// RW 0x8A9FC4 (lane LUMBER1): the new object's supply interface (AI vslot 0x17C) is told setForceWantingState(true): a worker made here goes harvesting
+		if (AIUpdateInterface *ai = newObj->getAIUpdateInterface())
+		{
+			if (SupplyTruckAIInterface *sup = ai->getSupplyTruckAIInterface())
+			{
+				sup->setForceWantingState(true);
+			}
+		}
 	}
 }
 
@@ -216,16 +229,53 @@ void SpawnPointProductionExitUpdate::registerClass(ModuleFactory &modules)
 	registerExit<SpawnPointProductionExitUpdate, SpawnPointProductionExitUpdateModuleData>(modules, "SpawnPointProductionExitUpdate");
 }
 
-// RW 0x8A7363: the bones come from the drawable's pristine bone positions (RW 0x672A73); no drawable bone data exists in the logic layer (S-209), so the
-// module stays uninitialised exactly as retail's does for an object without a drawable
+// RW 0x8A7363 (lane PRODUCTION1; BFME2 SpawnPointInitializeBonePositions.cpp, matched): the drawable's pristine bones `SpawnPointBoneName`01, 02, ... (RW 0x672A73
+// (name, start index 1, no positions, the transforms, 10, 0) on the drawable, so with its model condition flags), each made a world transform by the object's
+// (RW 0x70BCE7 convertBonePosToWorldPos(null, t, null, t): SSE, row r column c = ((T[r][2] * B[2][c] + T[r][1] * B[1][c]) + T[r][0] * B[0][c]), plus T[r][3] for
+// the translation); the spawn point is that translation and its angle Get_Z_Rotation (RW 0xB261F0: fpatan(m[1][0], m[0][0]), stored as a float). The bones come
+// from the logic's bone provider (RENDER-2's DrawableLaunchBones: the same pristine pose from template data and logic state, no drawable needed). Retail returns
+// without marking the module initialised when the object has no drawable; here the module stays uninitialised (and reports once) when no provider is installed
+// (a logic without W3D assets). A model without such bones gives no spawn point: initialised with none, no door, as in retail
 void SpawnPointProductionExitUpdate::initializeBonePositions()
 {
-	if (!m_reported)
+	Object *obj = getObject();
+	ProjectileLaunchOffsets *provider = obj->logic().combat().launchOffsets();
+	if (!provider)
 	{
-		m_reported = true;
-		getObject()->logic().reportError("SpawnPointProductionExitUpdate of " + getObject()->getTemplate()->getName() + ": the drawable's pristine bones '" + m_data->m_spawnPointBoneName +
-			"' are not available to the logic layer (S-209): no unit can leave this producer");
+		if (!m_reported)
+		{
+			m_reported = true;
+			obj->logic().reportError("SpawnPointProductionExitUpdate of " + obj->getTemplate()->getName() + ": no bone provider is installed (no W3D assets), so the bones '" +
+				m_data->m_spawnPointBoneName + "' cannot be found: no unit can leave this producer");
+		}
+		return;
 	}
+	float bones[MAX_SPAWN_POINTS][12];
+	int count = provider->multiLogicalBones(*obj, m_data->m_spawnPointBoneName, obj->getModelConditionBits(), MAX_SPAWN_POINTS, bones);
+	if (count < 0)
+	{
+		count = 0;
+	}
+	const float *t = obj->getBasis();
+	const Coord3D &p = *obj->getPosition();
+	const float tt[3] = { p.x, p.y, p.z };
+	m_spawnPointCount = count;
+	for (int i = 0; i < count; ++i)
+	{
+		const float *b = bones[i];
+		float w[3];
+		for (int r = 0; r < 3; ++r)
+		{
+			const float v = SimMath::addf32(SimMath::mulf32(t[r * 3 + 2], b[11]), SimMath::mulf32(t[r * 3 + 1], b[7]));
+			w[r] = SimMath::addf32(SimMath::addf32(v, SimMath::mulf32(t[r * 3 + 0], b[3])), tt[r]);
+		}
+		// the first column of the world rotation: rows 0 and 1
+		const float m00 = SimMath::addf32(SimMath::addf32(SimMath::mulf32(t[2], b[8]), SimMath::mulf32(t[1], b[4])), SimMath::mulf32(t[0], b[0]));
+		const float m10 = SimMath::addf32(SimMath::addf32(SimMath::mulf32(t[5], b[8]), SimMath::mulf32(t[4], b[4])), SimMath::mulf32(t[3], b[0]));
+		m_worldCoordSpawnPoints[i] = Coord3D{ w[0], w[1], w[2] };
+		m_worldAngleSpawnPoints[i] = (float)SimMath::atan2d(m10, m00);
+	}
+	m_bonesInitialized = true;
 }
 
 // RW 0x8A757D
@@ -284,8 +334,14 @@ void SpawnPointProductionExitUpdate::exitObjectViaDoor(Object *newObj, ExitDoorT
 		return;
 	}
 	m_spawnPointOccupier[i] = newObj->getID();
-	newObj->setPosition(&m_worldCoordSpawnPoints[i]);
-	newObj->setOrientation(m_worldAngleSpawnPoints[i]);
+	newObj->setPosition(&m_worldCoordSpawnPoints[i]); // RW 0x70C201
+	newObj->setOrientation(m_worldAngleSpawnPoints[i]); // RW 0x70C31E
+	// RW 0x8A7550 .. 0x8A755A: the producer's layer goes to the new object (RW 0x68BBE0 / 0x68BB9D: the ground layer only in the port, S-362); lane PRODUCTION1:
+	// RW 0x8A7568: TheAI's pathfinder addObjectToPathfindMap(newObj) (RW 0x6E85E9)
+	if (AIWorld *world = getObject()->logic().aiWorld())
+	{
+		world->addObjectToPathfindMap(*newObj);
+	}
 	newObj->setDisabled(3, (UnsignedInt)UPDATE_SLEEP_FOREVER); // DISABLED_HELD (RW 0x692432: no end frame)
 }
 

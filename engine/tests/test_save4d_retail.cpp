@@ -23,6 +23,7 @@
 #include "GameLogic/LargeGroupAudioLink.h"
 #include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/NewGame/NewGame.h"
+#include "GameLogic/Module/TerrainResourceBehavior.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/System/TerrainResourceManager.h"
@@ -172,7 +173,18 @@ TEST_CASE("save4d retail: a 4-player skirmish at frame 3,000: the SAVE-4d blocks
 		CHECK_MESSAGE(sectionsA.count(name) == 1u, name);
 	}
 	CHECK(sectionsA.count("create-a-hero") == 0u);
-	CHECK(sectionsA.count("terrain trees") == 0u);
+	// lane TREES1: the AIs' crushers (RW 0x6858BE) and the structures their workers place (RW 0x684BCA) change trees in play: the section is there exactly
+	// when a tree changed, the same in both games
+	const bool playChanged = la.trees().anyChanged();
+	size_t playToppled = 0, playCleared = 0;
+	for (const TerrainTrees::Record &r : la.trees().records())
+	{
+		playToppled += r.changed && r.toppled ? 1u : 0u;
+		playCleared += r.changed && r.clientId == 0 ? 1u : 0u;
+	}
+	MESSAGE("SAVE-4d: trees changed in play by frame 3000: " << playToppled << " toppled, " << playCleared << " cleared");
+	CHECK(sectionsA.count("terrain trees") == (playChanged ? 1u : 0u));
+	CHECK(lb.trees().anyChanged() == playChanged);
 	REQUIRE(la.scriptEngine().loaded());
 	REQUIRE(la.economy().resources().claimants().size() > 0u); // tolerance: a precondition (the AIs' farms and buildings claim ground), the exact list is compared below
 
@@ -204,10 +216,26 @@ TEST_CASE("save4d retail: a 4-player skirmish at frame 3,000: the SAVE-4d blocks
 	lb.scriptEngine().flag("Probe") = true;
 	lb.victory().setScriptFlag91(true);
 	lb.weather().setWeather(2, 0, 50);
+	// merge queue q23: a claimant's release (RW 0x75BB8F) also zeroes its TerrainResourceBehavior share and re-applies its neighbours' claims (RW 0x75B923):
+	// object state outside these blocks (at frame 3,000 the list's first is now a finished IsengardUrukPit with a share). The test puts the shares back
+	// through the module so that B differs from A in these blocks alone (checked below: B's objects section is A's)
+	std::map<ObjectID, float> shares;
+	for (Object *o = lb.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (const TerrainResourceBehavior *mod = dynamic_cast<const TerrainResourceBehavior *>(o->findModule("TerrainResourceBehavior")))
+		{
+			shares[o->getID()] = mod->claimShare();
+		}
+	}
 	const TerrainResourceManager::Claimant firstClaim = lb.economy().resources().claimants().front();
 	lb.economy().resources().unclaim(*lb.findObjectByID(firstClaim.id), firstClaim.radius); // RW 0x75BE1C: as when the object dies
+	for (const auto &kv : shares)
+	{
+		dynamic_cast<TerrainResourceBehavior *>(lb.findObjectByID(kv.first)->findModule("TerrainResourceBehavior"))->setClaimShare(kv.second);
+	}
 	lb.largeGroupAudio().enable(1);
 	const std::map<std::string, std::uint32_t> changedB = sectionValues(lb);
+	CHECK(changedB.at("objects") == sectionsA.at("objects")); // merge queue q23: the unclaim's share changes were put back
 	for (const char *name : { "script engine", "victory", "weather", "economy", "large group audio" })
 	{
 		CHECK_MESSAGE(changedB.at(name) != sectionsA.at(name), name);
@@ -263,7 +291,7 @@ TEST_CASE("save4d retail: a 4-player skirmish at frame 3,000: the SAVE-4d blocks
 	REQUIRE(sectionValues(la).count("terrain trees") == 1u);
 	std::vector<std::uint8_t> trees;
 	la.gameState().saveBlocks({ "obfme:TerrainTrees" }, trees);
-	REQUIRE(sectionValues(lb).count("terrain trees") == 0u);
+	REQUIRE(sectionValues(lb).count("terrain trees") == (playChanged ? 1u : 0u));
 	lb.gameState().loadBlocks({ "obfme:TerrainTrees" }, trees);
 	CHECK(sectionValues(lb).at("terrain trees") == sectionValues(la).at("terrain trees"));
 	const TerrainTrees::Record &tb = lb.trees().records()[toppled];

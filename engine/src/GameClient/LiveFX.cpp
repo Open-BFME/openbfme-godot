@@ -171,7 +171,7 @@ LiveFXObject eventPrimary(GameLogic &logic, Object *obj, const FXEvent &e)
 }
 } // namespace
 
-LiveFX::LiveFX(LiveGame &game, FXPlayback &playback) : m_game(game), m_playback(playback)
+LiveFX::LiveFX(LiveGame &game, FXPlayback &playback) : m_game(game), m_mapWeather(game.logic().settings().snowy ? 1 : 0), m_playback(playback)
 {
 	m_playback.setWorld(this);
 	m_game.logic().fxEvents().setSink(this);
@@ -397,7 +397,7 @@ int LiveFX::shroudStatusAt(const Coord3D &pos)
 }
 
 // RW 0x5E2282 (FXList::doFXObj's test): the object's status for the local player (RW 0x68D8F7) above PARTIAL_CLEAR; an object without partition data
-// (Object + 0x4E4 == 0: a contained object) asks its position's cell, not CLEAR: skipped (RW 0x5E22C4 .. 0x5E22F9). INFERENCE (S-4971): the status is the
+// (Object + 0x4E4 == 0) asks its position's cell, not CLEAR: skipped (RW 0x5E22C4 .. 0x5E22F9). INFERENCE (S-4971): the status is the
 // presented record's (ObjectSnapshot::shroudRecord stands for the partition data); an object the presented snapshot does not hold yet (created this
 // frame) asks its position's cell
 bool LiveFX::objectShroudedForLocalPlayer(const FXObject &obj)
@@ -1153,6 +1153,8 @@ void LiveFX::updateAttachedSystems()
 	// lane PERF-3: the drawables are visited in id order and both maps are in key order: their entries are found by walking them along (no search per
 	// drawable and entry); the calls and their order are those of the lookups by key
 	std::vector<const void *> &states = m_states;
+	const std::shared_ptr<const LogicSnapshot> presented = m_game.presentedSnapshot();
+	const bool shroudShown = displayedShroud(presented.get()) != nullptr;
 	FrameEventMap::iterator events = m_frameEvents.begin();
 	auto attached = m_attached.begin();
 	for (DrawableID id = 1; id < (DrawableID)dm.slotCount(); ++id)
@@ -1172,11 +1174,17 @@ void LiveFX::updateAttachedSystems()
 				states.push_back(e.draw->currentAnimationState());
 			}
 		}
-		for (size_t k = 0; k < d->entries().size(); ++k)
+		// lane FOGFX-1 (FB-0056): the animation's FXEvents fire from W3DModelDraw::doDrawModule (RW 0x4C72BE -> 0x4BCE68), which a drawable that is
+		// not drawn never reaches: BFME2's RTS3DScene::Visibility_Check (retail 0x00071245) drops a drawable with the fully obscured byte (+0x440) from
+		// the render list (donor ZH Drawable::draw: return when hidden or fully obscured by the shroud). Their keys stay (the walk below passes them).
+		if (!d->shroudLook().fullyObscured && !d->presentedLook(presented.get(), shroudShown).hidden)
 		{
-			if (d->entries()[k].draw)
+			for (size_t k = 0; k < d->entries().size(); ++k)
 			{
-				frameEvents(*d, k, d->entries()[k], events);
+				if (d->entries()[k].draw)
+				{
+					frameEvents(*d, k, d->entries()[k], events);
+				}
 			}
 		}
 		while (attached != m_attached.end() && attached->first < id)

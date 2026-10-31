@@ -99,7 +99,7 @@ SkirmishGameInfo hostedGame()
 std::string platforms(const LANAPI &lan)
 {
 	std::string out;
-	for (int s = 0; s < MAX_SLOTS; ++s)
+	for (int s = 0; s < MAX_SLOTS; ++s) // P16: the current game's slots are the 16-slot table (the helper ran on the legacy 8)
 	{
 		out += std::to_string((int)lan.currentGame()->info.slots[s].platform);
 	}
@@ -156,16 +156,16 @@ TEST_CASE("platformicon1 lan: each player sees the others' systems, an old peer 
 	REQUIRE(alice.currentGame());
 	REQUIRE(bob.currentGame());
 	// slots: 0 host (linux = 2), 1 Alice (windows = 1), 2 Bob (an old peer: 0), 3 the AI (0)
-	CHECK(platforms(host) == "21000000");
-	CHECK(platforms(alice) == "21000000");
-	CHECK(platforms(bob) == "21000000");
+	CHECK(platforms(host) == "2100000000000000");
+	CHECK(platforms(alice) == "2100000000000000");
+	CHECK(platforms(bob) == "2100000000000000");
 	// the host's own setup change does not drop them
 	SkirmishGameInfo info = host.currentGame()->info;
 	info.slots[3].state = SLOT_HARD_AI;
 	REQUIRE(host.hostSetOptions(info));
 	lan.run(10);
-	CHECK(platforms(host) == "21000000");
-	CHECK(platforms(alice) == "21000000");
+	CHECK(platforms(host) == "2100000000000000");
+	CHECK(platforms(alice) == "2100000000000000");
 	CHECK(host.currentGame()->info.slots[3].state == SLOT_HARD_AI);
 	// it is not part of the slot's equality (display data): the same slots with and without are equal
 	SkirmishGameSlot a, b;
@@ -174,20 +174,20 @@ TEST_CASE("platformicon1 lan: each player sees the others' systems, an old peer 
 	// Bob leaves, Cara (macOS) takes the slot: the others show macOS there, not Bob's none / a stale value
 	bob.requestGameLeave();
 	lan.run(10);
-	CHECK(platforms(host) == "21000000");
+	CHECK(platforms(host) == "2100000000000000");
 	cara.requestLocations();
 	lan.run(10);
 	cara.requestGameJoin(0);
 	lan.run(40);
 	REQUIRE(cara.currentGame());
 	CHECK(cara.localSlot() == 2);
-	CHECK(platforms(host) == "21300000");
-	CHECK(platforms(alice) == "21300000");
-	CHECK(platforms(cara) == "21300000");
+	CHECK(platforms(host) == "2130000000000000");
+	CHECK(platforms(alice) == "2130000000000000");
+	CHECK(platforms(cara) == "2130000000000000");
 	// Alice leaves; the host's row of the open slot shows none, and nothing was reported as an error
 	alice.requestGameLeave();
 	lan.run(20);
-	CHECK(platforms(host) == "20300000");
+	CHECK(platforms(host) == "2030000000000000");
 	for (auto &peer : lan.p)
 	{
 		CHECK_MESSAGE(peer->errors().empty(), (peer->errors().empty() ? "" : peer->errors()[0]));
@@ -204,7 +204,7 @@ TEST_CASE("platformicon1 lan: a malformed platform message (a value outside 0 ..
 	alice.requestGameJoin(0);
 	lan.run(30);
 	REQUIRE(host.currentGame());
-	REQUIRE(platforms(host) == "21000000");
+	REQUIRE(platforms(host) == "2100000000000000");
 	// the attacker is a player of the game (slot 2) that sends bad platform messages
 	UDP attacker;
 	std::string error;
@@ -228,14 +228,14 @@ TEST_CASE("platformicon1 lan: a malformed platform message (a value outside 0 ..
 	join.u16(attacker.localAddress().port);
 	pump(join);
 	REQUIRE(host.currentGame()->info.slots[2].isHuman());
-	CHECK(platforms(host) == "21000000"); // a joiner that told nothing yet
+	CHECK(platforms(host) == "2100000000000000"); // a joiner that told nothing yet
 	size_t errors = host.errors().size();
 	NetByteWriter bad = header(LANMessageType::PLATFORM_INFO);
 	bad.u8(9);
 	pump(bad);
 	CHECK(host.errors().size() == errors + 1);
 	CHECK(host.errors().back().find("platform 9 (0 .. 3 are known)") != std::string::npos);
-	CHECK(platforms(host) == "21000000");
+	CHECK(platforms(host) == "2100000000000000");
 	NetByteWriter cut = header(LANMessageType::PLATFORM_INFO);
 	pump(cut);
 	CHECK(host.errors().size() == errors + 2);
@@ -245,14 +245,14 @@ TEST_CASE("platformicon1 lan: a malformed platform message (a value outside 0 ..
 	extra.u8(2);
 	pump(extra);
 	CHECK(host.errors().size() == errors + 3);
-	CHECK(platforms(host) == "21000000");
+	CHECK(platforms(host) == "2100000000000000");
 	// the good one is applied, to the sender's slot only (no field of the setup shifted)
 	const SkirmishGameInfo before = host.currentGame()->info;
 	NetByteWriter good = header(LANMessageType::PLATFORM_INFO);
 	good.u8(3);
 	pump(good);
 	CHECK(host.errors().size() == errors + 3);
-	CHECK(platforms(host) == "21300000");
+	CHECK(platforms(host) == "2130000000000000");
 	CHECK(host.currentGame()->info == before);
 	// a stranger (not in the game) cannot set anyone's: its message is ignored
 	UDP stranger;
@@ -261,7 +261,7 @@ TEST_CASE("platformicon1 lan: a malformed platform message (a value outside 0 ..
 	fromStranger.u8(1);
 	stranger.sendTo(dst, fromStranger.data().data(), fromStranger.data().size());
 	lan.run(8);
-	CHECK(platforms(host) == "21300000");
+	CHECK(platforms(host) == "2130000000000000");
 	CHECK(host.errors().size() == errors + 3);
 }
 
@@ -274,7 +274,7 @@ TEST_CASE("platformicon1 lan: a player that leaves takes its system with it: the
 	lan.run(10);
 	alice.requestGameJoin(0);
 	lan.run(30);
-	REQUIRE(platforms(host) == "21000000");
+	REQUIRE(platforms(host) == "2100000000000000");
 	UDP guest; // one endpoint for both visits
 	std::string error;
 	REQUIRE_MESSAGE(guest.bind(0, 0, &error), error);
@@ -302,17 +302,17 @@ TEST_CASE("platformicon1 lan: a player that leaves takes its system with it: the
 	NetByteWriter told = header(LANMessageType::PLATFORM_INFO);
 	told.u8(3);
 	send(told);
-	CHECK(platforms(host) == "21300000"); // the host shows macOS in slot 2 (the guest told the host only: Alice shows none)
-	CHECK(platforms(alice) == "21000000");
+	CHECK(platforms(host) == "2130000000000000"); // the host shows macOS in slot 2 (the guest told the host only: Alice shows none)
+	CHECK(platforms(alice) == "2100000000000000");
 	NetByteWriter leave = header(LANMessageType::REQUEST_GAME_LEAVE);
 	leave.u8(0);
 	send(leave);
-	CHECK(platforms(host) == "21000000");
-	CHECK(platforms(alice) == "21000000");
+	CHECK(platforms(host) == "2100000000000000");
+	CHECK(platforms(alice) == "2100000000000000");
 	join(); // the same endpoint, and this time it tells nothing (an older build)
 	REQUIRE(host.currentGame()->info.slots[2].isHuman());
-	CHECK(platforms(host) == "21000000");
-	CHECK(platforms(alice) == "21000000");
+	CHECK(platforms(host) == "2100000000000000");
+	CHECK(platforms(alice) == "2100000000000000");
 	CHECK(host.errors().empty());
 }
 
@@ -354,7 +354,7 @@ TEST_CASE("platformicon1 online client: the create / join body carries platform 
 				"\",\"name\":\"p" + std::to_string(i) + "\",\"faction\":-1,\"color\":-1,\"startPos\":-1,\"team\":-1,\"ready\":false,\"you\":" +
 				(i == 1 ? "true" : "false") + (perSlot[(size_t)i].empty() ? "" : ",\"platform\":" + perSlot[(size_t)i]) + "}";
 		}
-		return "{\"v\":1,\"slot\":1,\"game\":{\"id\":\"0123456789abcdef\",\"name\":\"g\",\"state\":\"open\",\"hostSlot\":0,\"profile\":\"x\",\"setup\":{\"map\":\"m\","
+		return "{\"v\":1,\"slot\":1,\"game\":{\"id\":\"0123456789abcdef\",\"name\":\"g\",\"state\":\"open\",\"private\":false,\"hostSlot\":0,\"profile\":\"x\",\"setup\":{\"map\":\"m\","
 			   "\"startingCash\":1500,\"superweaponRestriction\":0,\"legendaryHeroes\":1,\"rules\":null},\"slots\":[" + slots + "],\"seq\":3}}";
 	};
 	auto joined = [&](const std::vector<std::string> &perSlot) {

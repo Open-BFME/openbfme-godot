@@ -33,6 +33,29 @@ def arg(k):
     return a[a.index(k) + 1] if k in a else None
 if "--relay-log" in a:
     open(arg("--record"), "wb").write(b"OBFMEREP fake")
+    side = arg("--relay-log") + ".input"
+    if arg("--packet-check") and open(arg("--relay-log"), "rb").read().startswith(b"OBFMERLG"):
+        # online batch r6: a version-2 log reads its INPUT sidecar next to it (RelayLogFile::load), else D7 abstains saying so
+        had = os.path.exists(side)
+        open(os.environ["FAKE_SIDECAR"], "w").write(open(side, "rb").read().hex() if had else "none")
+        anomaly = "a version-2 (previous-release) relay log, yet 2 authenticated player HELLO(s)"
+        open(arg("--packet-check"), "w").write(json.dumps({"v": 1, "detector": "D7-packet-integrity", "detector_version": 1,
+            "game_id": arg("--game-id"), "status": "ok" if had else "abstained",
+            "abstain_reason": None if had else "the relay log (version 2) has no INPUT records and no INPUT sidecar",
+            "anomaly": anomaly if had else None, "frames": 900, "crc_parity": "match", "settings": {}, "players": [
+                {"player_index": 3, "slot": 0, "name": "", "band": "review" if had else "abstained", "score": 1.0 if had else 0.0,
+                 "encounters": 1 if had else 0, "input": "signed", "signed_datagrams": 900, "plain_datagrams": 0, "bad_tag": 0, "replayed": 0,
+                 "unsigned_refused": 0, "slot_mismatch": 0, "malformed": 0, "malformed_records": 0, "anomaly": anomaly if had else None,
+                 "events": []}]}))
+    elif arg("--packet-check"):
+        open(arg("--packet-check"), "w").write(json.dumps({"v": 1, "detector": "D7-packet-integrity", "detector_version": 1, "game_id": arg("--game-id"),
+            "status": "ok", "abstain_reason": None, "frames": 900, "crc_parity": "match", "settings": {}, "players": [
+                {"player_index": 3, "slot": 0, "name": "", "band": "review", "score": 1.0, "encounters": 1, "input": "signed", "signed_datagrams": 900,
+                 "plain_datagrams": 0, "bad_tag": 3, "replayed": 1, "unsigned_refused": 0, "slot_mismatch": 0, "malformed": 0, "malformed_records": 0,
+                 "events": []},
+                {"player_index": 4, "slot": 1, "name": "", "band": "none", "score": 0.0, "encounters": 0, "input": "plain", "signed_datagrams": 0,
+                 "plain_datagrams": 800, "bad_tag": 0, "replayed": 0, "unsigned_refused": 0, "slot_mismatch": 0, "malformed": 0, "malformed_records": 0,
+                 "events": []}]}))
     sys.exit(0)
 d1 = json.loads(os.environ["FAKE_D1"])
 gid = arg("--game-id")
@@ -47,7 +70,9 @@ d5 = other("D5-input-rate", [{"player_index": p["player_index"], "slot": p["slot
                                           "encounter": 1}]}])
 d6 = other("D6-command-integrity", [{"player_index": p["player_index"], "slot": p["slot"], "name": p["name"], "band": "none", "score": 0.0, "encounters": 0,
                                      "commands_total": 400, "events": []}])
-for flag, rep in (("--fog-check", d1), ("--input-rate-check", d5), ("--command-check", d6)):
+d2 = other("D2-view-focus", [{"player_index": p["player_index"], "slot": p["slot"], "name": p["name"], "band": "none", "score": 0.0, "encounters": 0,
+                              "views": 600, "events": []}])
+for flag, rep in (("--fog-check", d1), ("--view-check", d2), ("--input-rate-check", d5), ("--command-check", d6)):
     if arg(flag):
         open(arg(flag), "w").write(json.dumps(rep))
 open(arg("--report"), "w").write("fake\n")
@@ -91,23 +116,28 @@ class GameTest(Base):
                                "--out-dir", str(out), "--no-render"])
         self.assertEqual(rc, 0)
         self.assertTrue((out / "game.replay").read_bytes().startswith(b"OBFMEREP"))
-        for name in ("d1.json", "d5.json", "d6.json", "summary.json", "summary.txt"):
+        for name in ("d1.json", "d2.json", "d5.json", "d6.json", "d7.json", "summary.json", "summary.txt"):
             self.assertTrue((out / name).exists(), name)
         calls = self.args.read_text().splitlines()
         self.assertEqual(len(calls), 2)  # assemble, then ONE re-simulation for the three checks
-        for flag in ("--fog-check", "--input-rate-check", "--command-check", "--game-id 0123456789abcdef"):
+        for flag in ("--fog-check", "--view-check", "--input-rate-check", "--command-check", "--game-id 0123456789abcdef"):
             self.assertIn(flag, calls[1])
         s = json.loads((out / "summary.json").read_text())
         self.assertEqual(s["replay"], "game.replay")
         bands = {det: [p["band"] for p in ps] for det, ps in s["detectors"].items()}
-        self.assertEqual(bands, {"D1-orders-into-fog": ["alert"], "D5-input-rate": ["review"], "D6-command-integrity": ["none"]})
+        self.assertEqual(bands, {"D1-orders-into-fog": ["alert"], "D2-view-focus": ["none"], "D5-input-rate": ["review"], "D6-command-integrity": ["none"],
+                                 "D7-packet-integrity": ["review", "none"]})
+        self.assertIn("--packet-check", calls[0])
+        self.assertIn("Automated check D7: the relay refused 4 datagrams sent as this slot (3 with a wrong signature, 1 sent again); its input was "
+                      "signed (900 signed, 0 plain datagrams)", text)
         self.assertIn("could not see", text)
         self.assertIn("macros are allowed", text)
 
 
 class WatchTest(Base):
-    def serve(self, key: bytes, games: list[str]):
+    def serve(self, key: bytes, games: list[str], log: bytes = b"log", has_input: bool | None = None, input_answer: tuple[int, bytes] = (404, b"")):
         got = []
+        fetched = []
 
         class H(BaseHTTPRequestHandler):
             def check(self, body: bytes) -> bool:
@@ -130,15 +160,20 @@ class WatchTest(Base):
                     # the lobby's shape (b8e395a05): two pages, the second the last (next_cursor null); a game without its START is skipped
                     after = dict(p.split("=", 1) for p in self.path.partition("?")[2].split("&") if "=" in p).get("after")
                     if after is None:
-                        return self.reply(200, json.dumps({"v": 1, "items": [{"game_id": games[0], "log_stored_at": 1, "log_bytes": 3, "ended_at": 1,
-                                                                              "has_start": True}], "next_cursor": "1000:" + games[0],
+                        item = {"game_id": games[0], "log_stored_at": 1, "log_bytes": 3, "ended_at": 1, "has_start": True}
+                        if has_input is not None:
+                            item["has_input"] = has_input  # ADMINFIX-1 (d1ac8fc63): the listing says whether the lobby holds the INPUT sidecar
+                        return self.reply(200, json.dumps({"v": 1, "items": [item], "next_cursor": "1000:" + games[0],
                                                            "resume_cursor": "1000:" + games[0]}).encode())
                     # f27dd93a3: resume_cursor on every non-empty page (the last one's is where the next run starts)
                     return self.reply(200, json.dumps({"v": 1, "items": [{"game_id": "00000000000000ee", "log_stored_at": 2, "log_bytes": 3,
                                                                           "ended_at": None, "has_start": False}], "next_cursor": None,
                                                        "resume_cursor": "2000:00000000000000ee"}).encode())
+                fetched.append(path)
                 if path.endswith("/log"):
-                    return self.reply(200, b"log")
+                    return self.reply(200, log)
+                if path.endswith("/input"):
+                    return self.reply(*input_answer)
                 if path.endswith("/start"):
                     return self.reply(200, b"{}")
                 return self.reply(404)
@@ -156,6 +191,7 @@ class WatchTest(Base):
         srv = HTTPServer(("127.0.0.1", 0), H)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         self.addCleanup(srv.shutdown)
+        self.fetched = fetched
         return f"http://127.0.0.1:{srv.server_port}", got
 
     def test_watch_a_log_directory_once_checks_every_new_game_and_remembers(self):
@@ -189,6 +225,81 @@ class WatchTest(Base):
         state = json.loads((root / "state.json").read_text())
         self.assertEqual((state["done"], state["cursor"]), (["00000000000000b1"], "2000:00000000000000ee"))
 
+    # ---- online batch r6: a version-2 log's INPUT sidecar (ADMINFIX-1's GET /v1/internal/integrity/games/<id>/input) -------------------------
+    V2_LOG = b"OBFMERLG\x02\x00\x00\x00" + bytes(13)
+    SIDECAR = b"OBFMERLI\x01\x00\x00\x00 the INPUT records"
+
+    def watch_lobby(self, **serve):
+        key = bytes(range(32))
+        lobby, got = self.serve(key, ["00000000000000c1"], log=self.V2_LOG, **serve)
+        kf = self.dir / "k"
+        kf.write_text(key.hex())
+        root = self.dir / "root"
+        self.sidecar = self.dir / "sidecar.txt"
+        os.environ["FAKE_SIDECAR"] = str(self.sidecar)
+        self.addCleanup(os.environ.pop, "FAKE_SIDECAR", None)
+        with redirect_stderr(io.StringIO()) as err:
+            rc, _ = self.quiet(["watch", "--once", "--peer", str(self.peer), "--root", str(root), "--lobby", lobby, "--read-key-file", str(kf),
+                                "--no-render"])
+        return rc, json.loads((root / "state.json").read_text()), root / "00000000000000c1", err.getvalue()
+
+    def test_watch_fetches_the_input_sidecar_next_to_the_log_and_d7_reads_it(self):
+        rc, state, out, _ = self.watch_lobby(has_input=True, input_answer=(200, self.SIDECAR))
+        self.assertEqual(rc, 0)
+        self.assertIn("/v1/internal/integrity/games/00000000000000c1/input", self.fetched)
+        self.assertEqual(self.sidecar.read_text(), self.SIDECAR.hex())  # the peer found it as <log>.input, byte for byte
+        d7 = json.loads((out / "d7.json").read_text())
+        self.assertEqual((d7["status"], d7["players"][0]["band"]), ("ok", "review"))
+        self.assertIn("authenticated", d7["anomaly"])
+        self.assertEqual(state["done"], ["00000000000000c1"])
+
+    def test_watch_a_listed_sidecar_that_does_not_fetch_is_retried_not_done(self):
+        for answer in ((404, b'{"v":1,"error":"no_input"}'), (500, b"")):
+            rc, state, _, err = self.watch_lobby(has_input=True, input_answer=answer)
+            self.assertEqual(rc, 1, answer)
+            self.assertEqual(state["done"], [], answer)
+            self.assertEqual(state["pending"]["00000000000000c1"]["stage"], "check", answer)
+            self.assertIn("INPUT sidecar", state["pending"]["00000000000000c1"]["error"], answer)
+            self.assertFalse(self.sidecar.exists(), answer)  # never checked without it
+            (self.dir / "root" / "state.json").unlink()
+
+    def age_input_wait(self, seconds: int):
+        state_path = self.dir / "root" / "state.json"
+        state = json.loads(state_path.read_text())
+        state["input_wait"] = {g: t - seconds for g, t in state["input_wait"].items()}
+        state_path.write_text(json.dumps(state))
+
+    def test_watch_a_version_2_log_without_a_sidecar_waits_an_hour_then_abstains_saying_so(self):
+        for listed in (False, None):  # the listing says no, or an older lobby without has_input (its 404 for the route)
+            rc, state, out, _ = self.watch_lobby(has_input=listed, input_answer=(404, b'{"v":1,"error":"no_input"}'))
+            self.assertEqual(rc, 0, listed)  # waiting is not a failure
+            self.assertEqual((state["done"], list(state["input_wait"])), ([], ["00000000000000c1"]), listed)
+            self.assertFalse(self.sidecar.exists(), listed)  # not checked yet
+            self.age_input_wait(ic.INPUT_GRACE_SECONDS - 60)
+            rc, state, out, _ = self.watch_lobby(has_input=listed, input_answer=(404, b'{"v":1,"error":"no_input"}'))
+            self.assertEqual((rc, state["done"]), (0, []), listed)  # still within the hour: asked again, not listed again
+            self.assertFalse(self.sidecar.exists(), listed)
+            self.age_input_wait(61)
+            rc, state, out, _ = self.watch_lobby(has_input=listed, input_answer=(404, b'{"v":1,"error":"no_input"}'))
+            self.assertEqual(rc, 0, listed)
+            self.assertEqual(self.sidecar.read_text(), "none", listed)
+            d7 = json.loads((out / "d7.json").read_text())
+            self.assertEqual(d7["status"], "abstained", listed)
+            self.assertIn("no INPUT sidecar", d7["abstain_reason"], listed)
+            self.assertEqual((state["done"], state["input_wait"]), (["00000000000000c1"], {}), listed)
+            (self.dir / "root" / "state.json").unlink()
+            self.sidecar.unlink()
+
+    def test_watch_a_sidecar_uploaded_after_the_listing_is_used_on_a_later_run(self):
+        # ADMINFIX-1 (Sol's follow-up): the relay uploads the sidecar after the log; the listing (its cursor past the game) never lists it again
+        rc, state, _, _ = self.watch_lobby(has_input=False, input_answer=(404, b'{"v":1,"error":"no_input"}'))
+        self.assertEqual((rc, state["done"], list(state["input_wait"])), (0, [], ["00000000000000c1"]))
+        rc, state, out, _ = self.watch_lobby(has_input=False, input_answer=(200, self.SIDECAR))
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.fetched.count("/v1/internal/integrity/games/00000000000000c1/input"), 1)
+        self.assertEqual(self.sidecar.read_text(), self.SIDECAR.hex())
+        self.assertEqual(json.loads((out / "d7.json").read_text())["status"], "ok")
+        self.assertEqual((state["done"], state["input_wait"]), (["00000000000000c1"], {}))
 
 PROFILE_A, PROFILE_B = "a" * 32, "b" * 32
 
@@ -246,16 +357,19 @@ class CheckerTest(Base):
     def test_an_older_releases_checker_runs_only_the_detectors_it_has(self):
         peers, root = self.dir / "peers", self.dir / "root"
         old = FAKE_PEER.replace(', ("--input-rate-check", d5), ("--command-check", d6)', ",")
+        old = old.replace('arg("--packet-check")', 'arg("--no-such-check")')  # nor D7 (the relay's INPUT records came later)
         self.assertNotIn("--command-check", old)
+        self.assertNotIn("--packet-check", old)
         self.install(peers, PROFILE_A, old)
         inc = self.incoming({"00000000000000d4": PROFILE_A})
         rc, _ = self.quiet(["watch", "--once", "--peers", str(peers), "--root", str(root), "--incoming", str(inc), "--no-render"])
         self.assertEqual(rc, 0)
         out = root / "00000000000000d4"
         self.assertTrue((out / "d1.json").exists())
-        self.assertFalse((out / "d5.json").exists() or (out / "d6.json").exists())
+        self.assertFalse((out / "d5.json").exists() or (out / "d6.json").exists() or (out / "d7.json").exists())
         self.assertNotIn("--input-rate-check", self.args.read_text())
-        self.assertEqual(list(json.loads((out / "summary.json").read_text())["detectors"]), ["D1-orders-into-fog"])
+        self.assertNotIn("--packet-check", self.args.read_text())
+        self.assertEqual(list(json.loads((out / "summary.json").read_text())["detectors"]), ["D1-orders-into-fog", "D2-view-focus"])
 
     def test_watch_needs_exactly_one_of_peer_and_peers(self):
         root = self.dir / "root"
@@ -301,12 +415,12 @@ class RetryTest(Base):
         rc, _ = self.quiet(["game", "--peer", str(self.peer), "--replay", str(self.peer), "--game-id", "0123456789abcdef", "--out-dir", str(out),
                             "--no-render"])
         self.assertEqual(rc, 0)
-        (out / "d6.json").write_text('{"v":1,"players":[{"x":nan}]')  # broken
+        (out / "d2.json").write_text('{"v":1,"players":[{"x":nan}]')  # broken
         sent = []
         original = ic.fc.post
         ic.fc.post = lambda url, body, key, **kw: sent.append(json.loads(body)) or ""
         try:
-            failed = ic.post_dir(out, "http://lobby.invalid/x", b"k" * 32, ["D1-orders-into-fog", "D6-command-integrity"])
+            failed = ic.post_dir(out, "http://lobby.invalid/x", b"k" * 32, ["D1-orders-into-fog", "D2-view-focus"])
         finally:
             ic.fc.post = original
         self.assertEqual(failed, 1)                                          # the broken one is reported

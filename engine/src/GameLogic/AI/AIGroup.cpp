@@ -120,8 +120,8 @@ const char *AIGroup::formationStopLine()
 // terrain tests, in RW's order: the members' centre and extent (RW 0x76D14F: held members and members without an AI do not count), the squared distance of
 // the nearest member to the point (starting at (MinDistanceForGroup * 4)^2), the member nearest the centre (none: refused), the extent replacing the
 // distance when it is longer than that start, the refusal when the distance is below MinDistanceForGroup^2, and the member whose AI finds the ground path
-// (INFANTRY, MONSTER, CAVALRY / MACHINE, never AIRCRAFT; none: refused). NOT ported, so never a refusal here: the terrain tests RW 0x680A75 (the layer; only
-// the ground exists, S-161) and W3DTerrainLogic slot 0xC8 (RW 0x4627C1: a height map bit plane at the point and at every path node), the nearby enemy test
+// (INFANTRY, MONSTER, CAVALRY / MACHINE, never AIRCRAFT; none: refused). NOT ported, so never a refusal here: the terrain tests RW 0x680A75 (the layer; lane
+// WALL-2 makes the layers exist, the test was not read) and W3DTerrainLogic slot 0xC8 (RW 0x4627C1: a height map bit plane at the point and at every path node), the nearby enemy test
 // (AI::findClosestEnemy within GroupEnemyScanRange with qualifiers 0xE4) and Pathfinder::FindGroundPath itself (a missing path refuses the group in RW)
 bool AIGroup::groupGroundPathAccepts(const Coord3D &pos) const
 {
@@ -187,7 +187,7 @@ AIGroup::FormationVerdict AIGroup::formationManager(const Coord3D &pos, bool add
 	{
 		return FORMATION_NOT_OFFERED;
 	}
-	// RW 0x7747DE (decomp Common/BfmeConv986.cpp privateGatherAndMoveInFormationToPosition, tier A). First RW 0x76FFF0 (decomp Common/Rva0036E346Count.cpp
+	// RW 0x7747DE (decomp Common/BfmeC986.cpp privateGatherAndMoveInFormationToPosition, tier A). First RW 0x76FFF0 (decomp GameLogic/AI/AIGroup.cpp
 	// AIGroup::rva0036E357, tier B same-shape): a member that is held (object + 0x1C8 bit 3), has no AI or no current locomotor (AI + 0x1F0) or is IMMOBILE
 	// (template + 0x108 bit 2) leaves the group, and the walk starts again; the last member in the group that would leave stops it (the manager then returns 1
 	// and nothing moves)
@@ -369,7 +369,15 @@ void AIGroup::groupMoveToPosition(const Coord3D &posIn, bool addWaypoint, Comman
 		{
 			if (haveFinalAngle)
 			{
-				ai->aiMoveToPositionAndOrientate(dest, finalAngle, source);
+				Coord3D taken;
+				if (ai->aiMoveToPositionAndOrientate(dest, finalAngle, source, &taken) && attackMove)
+				{
+					// RW 0x94E72B's per-object step sends an attack-move (RW 0x770CA5, range 0x7FFFFFFF) when the formation order's attack flag is set
+					// (BFME2 MoveToFormationGroupOrder::rva00547E5C, RVA 0x547E5C: aiAttackMoveToPositionAndFaceDirection instead of the plain move). The port runs it as
+					// the accepted oriented move plus its attack-move toward the installed (clipped) goal; a refused member keeps its earlier intent.
+					// The native attack-move-and-face state and the formation attack-team routing (S-4463) are not ported
+					ai->armAttackMove(taken, source);
+				}
 			}
 			else
 			{
@@ -420,7 +428,8 @@ void AIGroup::planningMoveToPosition(const Coord3D &pos, bool attackMove, Comman
 		{
 			Pathfinder &pf = world->pathfinder();
 			PathfindObject &adapter = world->adapterFor(*o);
-			Coord3D p{ pos.x, pos.y, m_logic.getGroundHeight(pos.x, pos.y) }; // RW TerrainLogic vslot 0x1C at the point's layer (only the ground exists, S-161)
+			// RW TerrainLogic vslot 0x1C at the point's layer (RW 0x680A75; lane WALL-2: a wall top's, a ramp's or a walkway's height, the terrain elsewhere)
+			Coord3D p{ pos.x, pos.y, pf.getLayerHeight(pos.x, pos.y, pf.getLayerAt(pos.x, pos.y, pos.z)) };
 			if (!pf.adjustDestination(adapter, ai->locomotorInfo(), &p, &pos))
 			{
 				p = pos;

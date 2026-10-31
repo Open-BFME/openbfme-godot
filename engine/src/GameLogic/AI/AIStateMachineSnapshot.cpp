@@ -22,7 +22,9 @@ void AIState::xferNoFields(Xfer &x)
 
 void AIStateMachine::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	// version 2 (lane BFME2CAMP1): the goal squad (RW AIStateMachine::xfer RW 0x755174 saves it as a "has squad" bool, then the squad); written only by a
+	// machine that has one, so other saves keep version 1
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || m_goalSquad ? 2 : 1) };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	auto xferStatePtr = [&](AIState *&state, const char *what) {
@@ -55,6 +57,27 @@ void AIStateMachine::xfer(Xfer &x)
 	AIXfer::coords(x, m_goalPath);
 	AIXfer::coord(x, m_savedGoalPosition);
 	AIXfer::objectId(x, m_savedGoalObjectID, "ai machine: the object id savedGoalObjectID");
+	if (v.current >= 2)
+	{
+		bool has = m_goalSquad != nullptr;
+		x.xferBool(&has);
+		if (loading)
+		{
+			m_goalSquad = has ? std::make_unique<AISquad>() : nullptr;
+		}
+		if (has)
+		{
+			x.xferVectorSize(m_goalSquad->objectIDs, 4);
+			for (ObjectID &id : m_goalSquad->objectIDs)
+			{
+				AIXfer::objectId(x, id, "ai machine: a goal squad member id");
+			}
+		}
+	}
+	else if (loading)
+	{
+		m_goalSquad.reset();
+	}
 	std::uint32_t n = (std::uint32_t)m_states.size();
 	x.xferUnsignedInt(&n);
 	if (!loading)

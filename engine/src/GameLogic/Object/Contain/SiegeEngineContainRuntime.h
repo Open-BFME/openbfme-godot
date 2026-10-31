@@ -22,8 +22,10 @@
 //   * the exit RW 0x87F7B4 / 0x880B9C -> 0x8807CA: a crew member steps 50 away from the engine (the exit path, CMD_FROM_AI); a rider of a deployed engine
 //     (SiegeDeploySpecialPower) goes onto the wall: the ladder's bone "Ladder04" or the tower's front (the geometry's major radius, 20 further, the walk 40 on, the
 //     wall layer 0x11); otherwise OpenContain's (HordeTransportContain's) exit.
-// NOT PORTED (stop S-1105): SiegeDeploySpecialPower / SiegeAIUpdate / DynamicPortalBehaviour (the docking: the deployed branch of the exit is not reached), the wall
-// layer (S-164), the selection transfer (TransferSelection, client side), the crew's team change on capture (contain slots 0x108 / 0x10C / 0x110).
+// Lane SIEGE-1: the deployed branch of the exit (a rider of a deployed ladder / tower onto the wall: RW 0x87F87C .. / 0x880868 ..) is ported (exitOntoWall,
+// GameLogic/Module/SiegeModules.h for SiegeDeploySpecialPower; S-4943 for its inference).
+// NOT PORTED (stop S-1105): DynamicPortalBehaviour (lane WALL-2, S-4940), the selection transfer (TransferSelection, client side), the crew's team change on capture
+// (contain slots 0x108 / 0x10C / 0x110).
 
 #pragma once
 
@@ -65,6 +67,8 @@ protected:
 	void onRemoving(Object *obj) override;
 	// RW 0x87F7B4's / 0x8807CA's body for one object
 	void exitOne(Object *obj, int door);
+	// lane SIEGE-1: RW 0x87F87C .. / 0x880868 ..: a rider of a deployed engine (SiegeDeploySpecialPower) goes onto the wall
+	void exitOntoWall(Object *obj);
 
 	const SiegeEngineContainModuleData *m_siege;
 	ContainModuleInterface::ContainedItemsList m_crew; // RW + 0x11C (+ 0x128)
@@ -81,3 +85,6 @@ namespace SiegeEngineContainRegistry
 void registerClasses(ModuleFactory &modules);
 std::vector<std::string> stopLines();
 } // namespace SiegeEngineContainRegistry
+
+// lane SIEGE-1: [S-4943], noted when a deployed engine's rider goes onto the wall without the bone provider (no client) or on the port's wall layers
+const char *siegeExitStopLine();

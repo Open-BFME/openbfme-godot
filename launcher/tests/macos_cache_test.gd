@@ -17,7 +17,8 @@ class CacheInfo:
 	var repo := "Test/repo"
 	var packaged := false
 	var commit := ""
-	var release_key := PackedByteArray()
+	var release_keys: Array = []   # lane SIGNKMS-1: the trusted key list
+	var nightly_keys: Array = []   # lane RELGH-2: the nightly-only keys (none here)
 	var error := ""
 	var macos_updates := true
 	var test_build := true
@@ -46,7 +47,7 @@ func _init() -> void:
 		quit(2)
 		return
 	var info := CacheInfo.new()
-	info.release_key = String(a.key).hex_decode()
+	info.release_keys = [String(a.key).hex_decode()]
 	var u := Updater.new(info)
 	var why := u.set_test_api_base(a.origin)
 	if why != "":

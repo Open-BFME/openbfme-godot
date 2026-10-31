@@ -10,6 +10,8 @@
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/AptScreen.h"
 #include "GameClient/GUI/AptScreens/AptScreenFactories.h"
+#include "GameClient/GUI/AptScreens/OpenBFMEOptionsPage.h"
+#include "GameClient/AptCanvas.h"
 #include "GameClient/GUI/Gadgets.h"
 #include "GameClient/GUI/GameWindowManagerScript.h"
 #include "GameClient/GUI/Shell/Shell.h"
@@ -18,6 +20,7 @@
 #include "GameClient/GUI/WindowManager.h"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <set>
 
@@ -734,9 +737,16 @@ TEST_CASE("ListBox: the scroll bar (up, down, slider) exists, takes its skin fro
 	CHECK(up->winGetEnabledImage(0) == "UpEnabled");   // LISTBOXENABLEDUPBUTTONDRAWDATA reached the button
 	CHECK(down->winGetEnabledImage(0) == "DownEnabled");
 	CHECK(up->winGetOwner() == lb);
+	SliderData *sd = static_cast<SliderData *>(slider->winGetUserData());
 	for (int i = 0; i < 20; ++i)
 	{
 		GadgetListBoxAddEntryText(lb, u("row"), 0, -1, 0);
+		if (i == 0)
+		{
+			CHECK(sd->maxVal == 0);
+			CHECK(sd->numTicks == 0.0f);
+			CHECK(GadgetSliderGetPosition(slider) == 0);
+		}
 	}
 	ListboxData *list = static_cast<ListboxData *>(lb->winGetUserData());
 	const int top = list->displayPos;
@@ -746,8 +756,14 @@ TEST_CASE("ListBox: the scroll bar (up, down, slider) exists, takes its skin fro
 	fx.gwm.winSendSystemMsg(lb, GBM_SELECTED, msgData(up), 0);
 	CHECK(list->displayPos == top);
 	// the slider's range follows the content
-	SliderData *sd = static_cast<SliderData *>(slider->winGetUserData());
 	CHECK(sd->maxVal > 0);
+	GadgetListBoxReset(lb);
+	CHECK(sd->maxVal == 0);
+	CHECK(sd->numTicks == 0.0f);
+	int thumbX, thumbY;
+	GadgetSliderGetThumb(slider)->winGetPosition(&thumbX, &thumbY);
+	CHECK(thumbX == 0);
+	CHECK(thumbY == 0);
 }
 
 TEST_CASE("ComboBox: entries, opening the list by a click, picking an entry sends GCM_SELECTED and shows the text")
@@ -926,6 +942,93 @@ TEST_CASE("TextEntry: typed characters (IME chars) fill the text up to MAXLEN (R
 	CHECK_FALSE(BitTest(n->winGetInstanceData()->getState(), WIN_STATE_SELECTED));
 }
 
+TEST_CASE("onlinemenufix3 text entries: translated fields keep text, caret and hit rectangle inside their frame")
+{
+	// RW 0x49FD32 / 0x49F7BC -> BFME2 W3DTextEntry.cpp RVAs 0xA03BF / 0x9FE49 (tier A): five-pixel body inset plus two for text.
+	for (bool combo : { false, true })
+	{
+		for (bool fromStart : { false, true })
+		{
+			GadgetFx fx;
+			GameWindow *frame = fx.load(combo ? comboWnd(340, 27, true) : entryWnd(283, 27), 660, 223);
+			GameWindow *entry = combo ? GadgetComboBoxGetEditBox(frame) : frame;
+			REQUIRE(entry);
+			static_cast<EntryData *>(entry->winGetUserData())->drawTextFromStart = fromStart;
+			GadgetTextEntrySetText(entry, u"Test");
+			int x, y, w, h;
+			entry->winGetScreenPosition(&x, &y);
+			entry->winGetSize(&w, &h);
+			int frameX, frameY, frameW, frameH;
+			frame->winGetScreenPosition(&frameX, &frameY);
+			frame->winGetSize(&frameW, &frameH);
+			// tolerance: the entry's clickable rectangle must remain within its owning field, including a combo's arrow allocation.
+			CHECK(x >= frameX);
+			CHECK(y >= frameY); // tolerance: any contained origin is valid.
+			CHECK(x + w <= frameX + frameW); // tolerance: the child may use any width within the parent.
+			CHECK(y + h <= frameY + frameH); // tolerance: the child may use any height within the parent.
+			REQUIRE(fx.click(x + w - 4, y + h / 2));
+			fx.gwm.winSetFocus(entry);
+			fx.gwm.setTimeMs(266); // caret's visible phase
+			GadgetDrawList list;
+			fx.gwm.winRepaint(list);
+			const GadgetDrawCommand *text = nullptr, *caret = nullptr, *clip = nullptr;
+			for (const auto &command : list.commands)
+			{
+				if (command.kind == GadgetDrawCommand::Kind::Text && command.text == u"Test") text = &command;
+				if (command.kind == GadgetDrawCommand::Kind::FillRect && command.x1 - command.x0 == 2) caret = &command;
+				if (command.kind == GadgetDrawCommand::Kind::ClipBegin) clip = &command;
+			}
+			REQUIRE(text);
+			REQUIRE(caret);
+			REQUIRE(clip);
+			CHECK(text->x0 == x + 5 + 2);
+			CHECK(text->y0 == y + 5);
+			CHECK(caret->x0 == text->x0 + fx.gwm.winTextWidth(entry->winGetFont(), u"Test"));
+			// tolerance: clipping may be inset from the hit rectangle, but must never extend outside it.
+			CHECK(clip->x0 >= x);
+			CHECK(clip->x1 <= x + w); // tolerance: the clip may be inset but must not overflow.
+			for (const auto &size : { std::pair<int, int>{ 1024, 768 }, { 1920, 1080 }, { 1920, 1200 }, { 2520, 1080 }, { 2000, 1125 }, { 2560, 1440 } })
+			{
+				for (float contentScale : { 1.0f, 1.25f, 1.5f })
+				{
+					CAPTURE(size.first);
+					CAPTURE(size.second);
+					CAPTURE(contentScale);
+					AptStageMapping mapping;
+					// The device maps into the logical viewport; Godot applies content scale to the whole canvas, including the frame.
+					mapping.windowW = size.first / contentScale;
+					mapping.windowH = size.second / contentScale;
+					float left, top, right, bottom;
+					mapping.stageToWindow((float)x, (float)y, left, top);
+					mapping.stageToWindow((float)(x + w), (float)(y + h), right, bottom);
+					for (const auto &point : { std::pair<int, int>{ text->x0, text->y0 }, { caret->x0, caret->y0 }, { caret->x1, caret->y1 } })
+					{
+						float px, py;
+						mapping.stageToWindow((float)point.first, (float)point.second, px, py);
+						// tolerance: containment in the field's mapped hit rectangle, not a font-dependent pixel pin.
+						CHECK(px >= left);
+						CHECK(px <= right); // tolerance: a mapped point may be anywhere inside the field.
+						CHECK(py >= top); // tolerance: a mapped point may be anywhere inside the field.
+						CHECK(py <= bottom); // tolerance: a mapped point may be anywhere inside the field.
+					}
+					float textX, textY;
+					mapping.stageToWindow((float)text->x0, (float)text->y0, textX, textY);
+					// tolerance: float32 viewport mapping, less than a hundredth of a physical pixel.
+					CHECK((textX - left) * contentScale == doctest::Approx(7.0f * size.first / mapping.stageW).epsilon(0.0001));
+					for (float clickX : { left + 2 * mapping.scaleX(), right - 2 * mapping.scaleX() })
+					{
+						float stageX, stageY;
+						mapping.windowToStage(clickX, (top + bottom) / 2, stageX, stageY);
+						fx.gwm.winSetFocus(nullptr);
+						REQUIRE(fx.click((int)std::lround(stageX), (int)std::lround(stageY)));
+						CHECK(fx.gwm.winGetFocus() == entry);
+					}
+				}
+			}
+		}
+	}
+}
+
 TEST_CASE("TextEntry: secret text draws stars; the draw commands carry the text, the image slices and a clip region")
 {
 	GadgetFx fx;
@@ -1004,6 +1107,38 @@ TEST_CASE("HorzSlider: the position follows GSM_SET_SLIDER, a click moves the th
 	CHECK(fill > 0);
 	CHECK(empty > 0);
 	CHECK(fill + empty > 10);
+}
+
+TEST_CASE("gadget slider: zero-range track clicks and drags leave the value unchanged")
+{
+	for (bool vertical : { false, true })
+	{
+		GadgetFx fx;
+		std::string script = sliderWnd(vertical ? 24 : 232, vertical ? 232 : 24);
+		if (vertical)
+		{
+			for (std::size_t at = script.find("HORZSLIDER"); at != std::string::npos; at = script.find("HORZSLIDER", at))
+			{
+				script.replace(at, 10, "VERTSLIDER");
+			}
+		}
+		GameWindow *s = fx.load(script, 100, 100);
+		fx.gwm.winSendSystemMsg(s, GSM_SET_MIN_MAX, 7, 7);
+		CHECK(GadgetSliderGetPosition(s) == 7);
+		const SliderData *data = static_cast<SliderData *>(s->winGetUserData());
+		CHECK(data->numTicks == 0.0f);
+		for (int offset : { 40, 110, 200 })
+		{
+			CHECK(fx.click(vertical ? 110 : 100 + offset, vertical ? 100 + offset : 110));
+			CHECK(GadgetSliderGetPosition(s) == 7);
+		}
+		const ICoord2D point{ 110, 110 };
+		fx.gwm.winSendSystemMsg(s, GGM_LEFT_DRAG, 0, (WindowMsgData)((point.y << 16) | point.x));
+		CHECK(GadgetSliderGetPosition(s) == 7);
+		fx.gwm.winSendSystemMsg(s, GSM_SET_MIN_MAX, 0, 100);
+		GadgetSliderSetPosition(s, 60);
+		CHECK(GadgetSliderGetPosition(s) == 60);
+	}
 }
 
 TEST_CASE("draw contract: an image the collection does not know is reported in the list, not drawn as a placeholder; clipping pairs up")
@@ -1092,6 +1227,57 @@ struct LayerFx
 		}
 	}
 };
+
+TEST_CASE("onlinemenufix3 options: eleven rows stay above the footer at every supported aspect ratio")
+{
+	LayerFx fx;
+	OpenBFMEOptionsPage page(*fx.layer, nullptr);
+	OpenBFMEPageSpec spec;
+	spec.note = u"The original game's network settings, and what OpenBFME's online services receive.";
+	for (int i = 0; i < 11; ++i)
+	{
+		OpenBFMEPageRow row;
+		row.key = "online" + std::to_string(i);
+		row.kind = OpenBFMEPageRow::Kind::Choice;
+		row.label = u"Online setting";
+		row.items.push_back({ u"Visible", true });
+		spec.rows.push_back(row);
+	}
+	std::string error;
+	REQUIRE_MESSAGE(page.show(spec, &error), error);
+	GadgetDrawList list;
+	page.decorate(list);
+	const GadgetDrawCommand *footer = nullptr;
+	for (const auto &command : list.commands)
+	{
+		if (command.kind == GadgetDrawCommand::Kind::Line) footer = &command;
+	}
+	REQUIRE(footer);
+	for (const auto &size : { std::pair<int, int>{ 1024, 768 }, { 1920, 1080 }, { 1920, 1200 }, { 2520, 1080 } })
+	{
+		CAPTURE(size.first);
+		CAPTURE(size.second);
+		AptStageMapping mapping;
+		mapping.windowW = size.first;
+		mapping.windowH = size.second;
+		float footerX, footerY;
+		mapping.stageToWindow(footer->x0, footer->y0, footerX, footerY);
+		for (const auto &row : spec.rows)
+		{
+			std::array<int, 4> rect{}, label{};
+			REQUIRE(page.rect(row.key, rect));
+			REQUIRE(page.labelBox(row.key, label));
+			float x, y;
+			mapping.stageToWindow(rect[2], std::max(rect[3], label[3]), x, y);
+			CHECK(y < footerY); // tolerance: strict separation of the row and footer is the layout contract.
+		}
+	}
+	// Reject a future overflowing expansion instead of drawing controls over the footer.
+	spec.rows.push_back(spec.rows.back());
+	spec.rows.back().key = "overflow";
+	CHECK_FALSE(page.show(spec, &error));
+	CHECK(error == "the OpenBFME page has too many rows for its footer");
+}
 
 // Lib exports the three gadget symbols as sprites with one rectangle of the given size; User places them.
 struct GadgetMovies

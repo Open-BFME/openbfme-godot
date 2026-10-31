@@ -31,8 +31,8 @@
 //      container: the ground; else not below it); the locomotor's speed takes the distance moved, at most a step (RW 0x5E4C40). 1 frame.
 // Before this port a busy member (made busy by the hub, RW 0x87479C) was moved by the ordinary doLocomotor: its locomotor turned and accelerated it, and a
 // type 4 goal kept a path that ended short of the goal for good (QA-2 rank 1's companion: produced members stranded behind their formation).
-// NOT PORTED (S-1751): the layer of the target (RW 0x680A75 / 0x68BBF4) and the pathfinder's layer update RW 0x6F0741 (2.01 maps have the ground layer only,
-// S-161); the in-machine-update byte AI + 0x3E0; the wall-scaling exclusion (AI + 0x3CE, SCALING_WALL: wall scaling is S-084).
+// NOT PORTED (S-1751): the layer of the target (RW 0x680A75 / 0x68BBF4) and the pathfinder's layer update RW 0x6F0741 (the wall tops, ramps and walkways
+// of lanes WALL-1 / WALL-2 exist; the member keeps its layer through step 9); the in-machine-update byte AI + 0x3E0; the wall-scaling exclusion (AI + 0x3CE, SCALING_WALL: wall scaling is S-084).
 
 #include "GameLogic/Module/AIUpdate.h"
 
@@ -78,7 +78,7 @@ const unsigned kMemberSleep = 5; // RW 0xD9F608 (LOGICFRAMES_PER_SECOND)
 const char *const kStopMemberUpdate =
 	"S-1751 the horde member update (RW 0x66C748, lane EXIT-1) is ported without the layer of its target (RW 0x680A75 / 0x68BBF4), the pathfinder's layer update (RW "
 	"0x6F0741) and the wall-scaling exclusion of RW 0x66E58F (AI + 0x3CE); obj + 0x458 bit 0 is taken as the effectively dead flag (inference) and a waypoint node of a "
-	"type 4 path (never made by the port, S-161) takes the ordinary doLocomotor";
+	"type 4 path (a portal's, lane WALL-2) takes the ordinary doLocomotor and then the layer of the path's last node (RW 0x66CD39)";
 
 void clearCondition(Object &o, int bit)
 {
@@ -267,6 +267,10 @@ unsigned AIUpdateInterface::hordeMemberUpdate()
 	{
 		step = obj->testModelCondition(b.backingUp) ? backingUpSpeed(*m_curLocomotor, m_locomotorSetSpeed) : m_curLocomotor->getMaxSpeedForCondition(locomotorHost());
 	}
+	if (m_world->mapReady())
+	{
+		m_mover->refreshLayer(); // lane WALL-1: the member's layer (a wall top, a ramp) before its step is tested
+	}
 	const Coord3D start = *obj->getPosition();
 	Coord3D target = start;
 	if (!(goal == AIGOAL_EXPLICIT_WITH_PATH && m_mover->path()))
@@ -323,10 +327,19 @@ unsigned AIUpdateInterface::hordeMemberUpdate()
 		const LocomotorPathPoint ahead = path->computePointAhead(m_curLocomotor ? m_curLocomotor->speed() : 40.0f); // RW 0x766173 (RW 0x5E36F7, else 40)
 		if (path->hasExplicitZ())
 		{
-			// RW 0x66CD25: a waypoint node (never made by the port, S-161): doLocomotor with the path goal
+			// RW 0x66CD25: a waypoint node (a portal, lane WALL-2): doLocomotor with the path goal, then (RW 0x66CD39 .. 0x66CD5F) with a path left the member
+			// takes the layer of the path's last node (RW 0x680A75 on path + 8, the tail; Object::setLayer RW 0x68BBF4)
 			m_mover->setGoalTypeRaw(AIGOAL_ON_PATH);
 			m_mover->doLocomotor();
 			m_mover->setGoalTypeRaw(AIGOAL_EXPLICIT_WITH_PATH);
+			if (Path *left = m_mover->path())
+			{
+				if (const PathNode *tail = left->getLastNode())
+				{
+					const Coord3D &tp = *tail->getPosition();
+					setLayer(m_world->pathfinder().getLayerAt(tp.x, tp.y, tp.z));
+				}
+			}
 		}
 		else if (m_curLocomotor)
 		{
@@ -376,12 +389,14 @@ unsigned AIUpdateInterface::hordeMemberUpdate()
 	if (!(goal == AIGOAL_EXPLICIT_WITH_PATH && m_mover->path()) && m_world->mapReady() &&
 		m_world->pathfinder().validMovementPosition(&adapter(), locomotorInfo(), adapter().getLayer(), &target))
 	{
-		const float ground = logic.getGroundHeight(target.x, target.y);
+		// RW 0x66D0B5: TheTerrainLogic's height at the member's layer (lane WALL-1: a wall top's or a ramp's, Pathfinder::getLayerHeight; the terrain on the ground)
+		const float ground = layerHeightAt(target.x, target.y);
 		if (ground > target.z)
 		{
 			target.z = ground;
 		}
-		// RW 0x66D0B5: a ground-layer member (layer 1) of a ground-layer container stands on the ground (the port's layers are the ground: S-161)
+		// RW 0x66D0B5: a member of a container stands on its layer's surface (RW: a ground-layer member of a ground-layer container; the layer's height since lanes
+		// WALL-1 / WALL-2)
 		if (container)
 		{
 			target.z = ground;
@@ -390,6 +405,7 @@ unsigned AIUpdateInterface::hordeMemberUpdate()
 	// RW 0x66D100 (RW 0x70BA76): the identity rotated by the facing about z (exact: the products with 0 and 1), the target as translation
 	const float basis[9] = { c, -s, 0.0f, s, c, 0.0f, 0.0f, 0.0f, 1.0f };
 	obj->setTransform(&target, basis);
+	settleOnLayer(); // lane WALL-1: a member put on its goal (no path reached it) on a wall top stands on the wall
 	if (m_curLocomotor)
 	{
 		const float mx = SimMath::subf32(target.x, start.x), my = SimMath::subf32(target.y, start.y), mz = SimMath::subf32(target.z, start.z);

@@ -5,6 +5,11 @@
 #include "doctest.h"
 #include "ProdTestUtil.h"
 
+#include "Common/PlayerHeroList.h"
+#include "GameClient/CommandButtonHelp.h"
+#include "GameClient/ControlBar.h"
+#include "GameClient/GUI/GameTextSource.h"
+#include "GameClient/MessageStream/MessageStream.h"
 #include "GameLogic/GameLogicDispatch.h"
 #include "GameLogic/Module/ExitInterface.h"
 
@@ -93,7 +98,141 @@ struct BarracksFx : ProdWorld
 	}
 };
 Coord3D BarracksFx::kPos = { 1000.0f, 2000.0f, 0.0f };
+
+struct ProductionBarFx : ProdWorld
+{
+	Object *barracks = nullptr;
+	PinholeView view;
+	InGameUI ui;
+	MessageStream stream;
+	HudContext ctx{ *logic, nullptr, view, ui, stream, &commands, {} };
+	ControlBar bar{ ctx };
+	struct CostText : GameTextSource
+	{
+		bool fetch(const std::string &label, std::u16string &out) const override
+		{
+			if (label != "TOOLTIP:Cost") return false;
+			out = u"Cost: %s";
+			return true;
+		}
+	} text;
+
+	ProductionBarFx()
+	{
+		load(kBarracksObjects);
+		load("Object Hero\n  BuildCost = 1200\n  BuildTime = 30\n  CommandPoints = 10\n  KindOf = SELECTABLE INFANTRY HERO\nEnd\n"
+		     "PlayerTemplate FactionA\n  BuildableHeroesMP = Hero\nEnd\n"
+		     "CommandButton Command_BuildSoldier\n  Command = UNIT_BUILD\n  Object = Soldier\n  InPalantir = Yes\n  Options = CANCELABLE\nEnd\n"
+		     "CommandButton Command_BuildSoldierHidden\n  Command = UNIT_BUILD\n  Object = Soldier\n  InPalantir = Yes\n  Options = CANCELABLE HIDE_WHILE_DISABLED\nEnd\n"
+		     "CommandButton Command_ReviveHero\n  Command = REVIVE\n  InPalantir = Yes\n  Options = CANCELABLE HIDE_WHILE_DISABLED\nEnd\n"
+		     "CommandSet BarracksSet\n  1 = Command_BuildSoldier\n  2 = Command_BuildSoldierHidden\n  3 = Command_ReviveHero\nEnd\n");
+		barracks = make("Barracks", teamOf("Alice"));
+		REQUIRE(barracks != nullptr);
+		alice()->heroes().addPurchase(*w.get("Hero"));
+		ui.selectObject(barracks->getID());
+		bar.update();
+	}
+	const ControlBarButton *button(const std::string &name) const
+	{
+		for (const ControlBarButton &b : bar.palantirButtons())
+		{
+			if (b.button && b.button->m_name == name) return &b;
+		}
+		return nullptr;
+	}
+	CommandButtonHelp::Text help(const ControlBarButton &b)
+	{
+		return CommandButtonHelp::compose(b, &text, *logic, alice(), alice(), barracks, "Alpha");
+	}
+};
 } // namespace
+
+TEST_CASE("control bar production: command-point-short unit buttons keep their cost and reject presses silently until points free up")
+{
+	ProductionBarFx f;
+	Player &player = *f.alice();
+	player.commandPoints().setFromScript(100, 100);
+	setUsage(player, 100);
+	REQUIRE(BuildAssistant::canMakeUnit(*f.barracks, f.w.get("Soldier"), -1) == CANMAKE_UNKNOWN_7);
+	f.bar.update();
+	const std::uint32_t money = player.getMoney()->countMoney();
+	for (const char *name : { "Command_BuildSoldier", "Command_BuildSoldierHidden" })
+	{
+		INFO(name);
+		const ControlBarButton *b = f.button(name);
+		REQUIRE(b != nullptr);
+		CHECK(b->state == ButtonState::CantAfford);
+		CHECK(b->commandPointsShort);
+		CHECK(b->cost == 100);
+		CHECK(f.help(*b).cost == u"Cost: 100");
+		CHECK_FALSE(f.bar.pressButton(b->slot, true));
+	}
+	CHECK(f.ui.messages().empty());
+	CHECK(f.stream.pending() == 0);
+	CHECK(f.pu(f.barracks)->getProductionCount() == 0);
+	CHECK(player.getMoney()->countMoney() == money);
+
+	setUsage(player, 96); // exactly enough room for one four-point soldier
+	REQUIRE(BuildAssistant::canMakeUnit(*f.barracks, f.w.get("Soldier"), -1) == CANMAKE_OK);
+	f.bar.update();
+	for (const char *name : { "Command_BuildSoldier", "Command_BuildSoldierHidden" })
+	{
+		const ControlBarButton *b = f.button(name);
+		REQUIRE(b != nullptr);
+		CHECK(b->state == ButtonState::Enabled);
+		CHECK_FALSE(b->commandPointsShort);
+		CHECK(f.help(*b).cost == u"Cost: 100");
+	}
+	const ControlBarButton *b = f.button("Command_BuildSoldier");
+	REQUIRE(b != nullptr);
+	CHECK(f.bar.pressButton(b->slot, true));
+	CHECK(f.stream.pending() == 1);
+	f.stream.propagate();
+
+	player.getMoney()->withdraw(money, false);
+	f.bar.update();
+	b = f.button("Command_BuildSoldier");
+	REQUIRE(b != nullptr);
+	CHECK(b->state == ButtonState::CantAfford);
+	CHECK_FALSE(b->commandPointsShort);
+	CHECK_FALSE(f.bar.pressButton(b->slot, true));
+	CHECK(f.ui.messages() == std::vector<std::string>{ "GUI:NotEnoughMoneyToBuild" });
+	CHECK(f.stream.pending() == 0);
+}
+
+TEST_CASE("control bar production: synthetic hero purchases retain command-point-short affordability and recover")
+{
+	ProductionBarFx f;
+	Player &player = *f.alice();
+	player.commandPoints().setFromScript(100, 100);
+	setUsage(player, 100);
+	REQUIRE(BuildAssistant::canMakeUnit(*f.barracks, nullptr, 0) == CANMAKE_UNKNOWN_7);
+	f.bar.update();
+	const ControlBarButton *b = f.button("Command_ReviveHero");
+	REQUIRE(b != nullptr);
+	CHECK(b->state == ButtonState::CantAfford);
+	CHECK(b->commandPointsShort);
+	CHECK(b->cost == 1200);
+	CHECK(f.help(*b).cost == u"Cost: 1200");
+	const std::uint32_t money = player.getMoney()->countMoney();
+	CHECK_FALSE(f.bar.pressButton(b->slot, true));
+	CHECK(f.ui.messages().empty());
+	CHECK(f.stream.pending() == 0);
+	CHECK(f.pu(f.barracks)->getProductionCount() == 0);
+	CHECK(player.heroes().at(0)->startFrame == -1);
+	CHECK(player.getMoney()->countMoney() == money);
+
+	setUsage(player, 90);
+	REQUIRE(BuildAssistant::canMakeUnit(*f.barracks, nullptr, 0) == CANMAKE_OK);
+	f.bar.update();
+	b = f.button("Command_ReviveHero");
+	REQUIRE(b != nullptr);
+	CHECK(b->state == ButtonState::Enabled);
+	CHECK_FALSE(b->commandPointsShort);
+	CHECK(f.help(*b).cost == u"Cost: 1200");
+	CHECK(f.bar.pressButton(b->slot, true));
+	CHECK(f.stream.pending() == 1);
+}
 
 TEST_CASE("production: a queued soldier is paid at once, built in five frames per whole second and exits at the create point")
 {

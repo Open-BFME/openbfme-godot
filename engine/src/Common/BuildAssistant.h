@@ -46,7 +46,10 @@ namespace BuildAssistant
 unsigned buildCost(const ThingTemplate &tt);        ///< BuildCost (u16)
 float buildTime(const ThingTemplate &tt);           ///< BuildTime (seconds)
 int commandPoints(const ThingTemplate &tt);         ///< CommandPoints
-int buildable(const ThingTemplate &tt);             ///< Buildable: 0 Yes, 1 Ignore_Prerequisites, 2 No (RW +0x602)
+int buildable(const ThingTemplate &tt);             ///< the INI's Buildable: 0 Yes, 1 Ignore_Prerequisites, 2 No, 3 Only_By_AI (RW +0x602)
+// ThingTemplate::getBuildable RW 0x73BFE8: the game's script override (GameLogic::findBuildableStatusOverride, RW 0x62EE6D) when there is one, else
+// buildable(tt) (lane BFME2CAMP1)
+int buildable(const ThingTemplate &tt, const GameLogic &logic);
 int buildCompletion(const ThingTemplate &tt);       ///< BuildCompletion: 0 INVALID, 1 APPEARS_AT_RALLY_POINT, 2 PLACED_BY_PLAYER
 int maxSimultaneousOfType(const ThingTemplate &tt); ///< MaxSimultaneousOfType (u16)
 
@@ -76,8 +79,10 @@ bool isInProducersCommandSet(Object &builder, const ThingTemplate *what, int bui
 // template both carry KindOf WALL_HUB (template + 0x118 & 0x10000000, i.e. + 0x11B bit 4); a null `what` or builder is no line build
 bool isLineBuildTemplate(GameLogic &logic, const ThingTemplate *what, const Object *builder);
 
-// ZH BuildAssistant::canMakeUnit, RW vtable + 0x64 (RW 0x793ECB)
-CanMakeType canMakeUnit(Object &builder, const ThingTemplate *what, int buildIndex);
+// ZH BuildAssistant::canMakeUnit, RW vtable + 0x64 (RW 0x793ECB). `ignoreCommandPoints` (lane MODS-3, mod engine feature edain-unchained.queue-ignore-cp:
+// Edain Unchained's hook at RW 0x79402B continues at RW 0x794033 when its global is set) skips only the command point refusal (CANMAKE_UNKNOWN_7 at RW
+// 0x794026); retail never sets it. Only ProductionUpdate::queueCreateUnit's doCommandButton path passes true (Object::doCommandButton, QueueIgnoreCP)
+CanMakeType canMakeUnit(Object &builder, const ThingTemplate *what, int buildIndex, bool ignoreCommandPoints = false);
 } // namespace BuildAssistant
 
 // the name the dispatcher and the tests use for ZH's `ThingTemplate::isEquivalentTo`

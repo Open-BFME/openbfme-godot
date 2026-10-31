@@ -12,6 +12,7 @@
 #include "doctest.h"
 #include "FactbInventory.h"
 #include "FactbRig.h"
+#include "ProductionRateTestUtil.h"
 
 #include "Common/BuildAssistant.h"
 #include "GameLogic/BuildPlacement.h"
@@ -365,6 +366,7 @@ Outcome trainOne(factb::HudGame &g, Object *bld, const CommandButton *cb, Result
 		res.fail(item, "the press sent nothing");
 		return Outcome::Done;
 	}
+	std::vector<float> rates{ prodrate::rateNow(*bld) }; // lane PRODUCTION1: the producer's PRODUCTION rate of every frame (RW 0x8A1EBC)
 	g.step(1);
 	if (!(bld = g.logic().findObjectByID(bldId)))
 	{
@@ -377,9 +379,14 @@ Outcome trainOne(factb::HudGame &g, Object *bld, const CommandButton *cb, Result
 	Object *unit = nullptr;
 	for (int f = 0; f < expect + 200 && !unit; ++f)
 	{
+		if (Object *p = g.logic().findObjectByID(bldId))
+		{
+			rates.push_back(prodrate::rateNow(*p));
+		}
 		g.step(1);
 		unit = g.newestOf(utt->getName(), before);
 	}
+	const int rated = prodrate::expectedFrames(rates, expect); // `expect` at rate 1; a level 2 / 3 building is faster (its BuildSpeedModLvl<n>)
 	if (!unit)
 	{
 		res.fail(item, str("nothing came after %d frames (calcTimeToBuild %d)", expect + 200, expect));
@@ -391,9 +398,9 @@ Outcome trainOne(factb::HudGame &g, Object *bld, const CommandButton *cb, Result
 	{
 		res.fail(item, str("paid %u, calcCostToBuild %d", paid, cost));
 	}
-	if (took < expect || took > expect + 30)
+	if (took < rated || took > rated + 30)
 	{
-		res.fail(item, str("came after %d frames, calcTimeToBuild %d", took, expect));
+		res.fail(item, str("came after %d frames, calcTimeToBuild %d (%d at the producer's PRODUCTION rate)", took, expect, rated));
 	}
 	if (!(bld = g.logic().findObjectByID(bldId)))
 	{
@@ -516,6 +523,20 @@ Outcome researchOne(factb::HudGame &g, Object *bld, const CommandButton *cb, Res
 		pending = str("%s not enabled (state %d)%s%s", cb->m_name.c_str(), (int)b.state, need.empty() ? "" : ", needs", need.c_str());
 		return Outcome::NotEnabled;
 	}
+	if (cb->hasOption(COMMAND_OPTION_NONPRESSABLE))
+	{
+		// the Hall of Twilight's technologies (_patch201 commandbutton.ini Options = NONPRESSABLE): retail draws them _static (RW 0x9D2BFA) and buys them
+		// itself through its DoCommandUpgrade modules; the bar refuses their press (ControlBar::pressButton, INFERENCE)
+		if (g.press(b))
+		{
+			res.fail(item, "a NONPRESSABLE button's press sent a message (" + cb->m_name + ")");
+		}
+		else
+		{
+			res.pass(item, "NONPRESSABLE: the press is refused (" + cb->m_name + ")");
+		}
+		return Outcome::Done;
+	}
 	const ObjectID bldId = bld->getID();
 	waitProductionIdle(g, bld);
 	if (!(bld = g.logic().findObjectByID(bldId)))
@@ -531,12 +552,17 @@ Outcome researchOne(factb::HudGame &g, Object *bld, const CommandButton *cb, Res
 		res.fail(item, "the press sent nothing");
 		return Outcome::Done;
 	}
+	std::vector<float> rates{ prodrate::rateNow(*bld) }; // lane PRODUCTION1: the producer's PRODUCTION rate of every frame (RW 0x8A1EBC)
 	g.step(1);
 	const unsigned paid = g.spent() - spentBefore;
 	const int expect = (int)std::ceil(u->getBuildTimeSeconds() * 5.0f);
 	bool got = false;
 	for (int f = 0; f < expect + 100 && !got && bld; ++f)
 	{
+		if (Object *p = g.logic().findObjectByID(bldId))
+		{
+			rates.push_back(prodrate::rateNow(*p));
+		}
 		g.step(1);
 		bld = g.logic().findObjectByID(bldId);
 		got = isPlayer ? g.rig.local->hasUpgradeComplete(u) : bld && bld->hasUpgrade(u);
@@ -561,9 +587,10 @@ Outcome researchOne(factb::HudGame &g, Object *bld, const CommandButton *cb, Res
 	{
 		res.fail(item, str("paid %u, calcCostToBuild %d", paid, cost));
 	}
-	if (took < expect || took > expect + 5)
+	const int rated = prodrate::expectedFrames(rates, expect); // a level 2 building researching its level 3 runs at its BuildSpeedModLvl2
+	if (took < rated || took > rated + 5)
 	{
-		res.fail(item, str("took %d frames, BuildTime * 5 = %d", took, expect));
+		res.fail(item, str("took %d frames, BuildTime * 5 = %d (%d at the producer's PRODUCTION rate)", took, expect, rated));
 	}
 	// the structure's own modules triggered by it alone ran (a level shows its model and command set, a fortress improvement its weapon / power)
 	g.step(3);
@@ -854,10 +881,9 @@ TEST_CASE("factb structures: every Mordor unit and structure upgrade from the st
 	Results r;
 	operateEveryStructure("FactionMordor", r);
 	r.print("structures FactionMordor");
-	// the catapult leaves the siege works but barely moves when ordered away (19 of 300 in 120 frames; placed in the open it walks and fights):
-	// the exit from a production building is MOVE-3's (reported, not fixed here)
-	r.check({ { "train MordorCatapult at MordorSiegeWorks", "MOVE-3: the catapult stuck at the siege works' door" },
-		{ "research Upgrade_MordorFortressGorgorothSpire at MordorFortressCitadel", "the castle path: factb fortress (a citadel made outside a castle has no castle to hand Iron Plating / Morgul Sorcery over)" } });
+	// the catapult leaves the siege works and walks away when ordered: it passes since STANCE-1's follow-path exit clears IS_LEAVING_FACTORY (RW 0x74B77D),
+	// which before stayed set (it delays the Battle stance and refuses requests to move aside); before, it barely moved, 19 of 300 in 120 frames
+	r.check({ { "research Upgrade_MordorFortressGorgorothSpire at MordorFortressCitadel", "the castle path: factb fortress (a citadel made outside a castle has no castle to hand Iron Plating / Morgul Sorcery over)" } });
 }
 
 TEST_CASE("factb found: every Isengard castle expansion from its pad's buttons")

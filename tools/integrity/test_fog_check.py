@@ -54,6 +54,13 @@ class FindingsTest(unittest.TestCase):
         for word in ("cheat", "hack", "guilty", "banned"):
             self.assertNotIn(word, s.lower())
 
+    def test_d7_anomaly_summary(self):
+        # online batch r4: a version-2 relay log with authenticated players: the slot whose HELLO opened the game is the finding
+        p = {"slot": 0, "band": "review", "encounters": 1, "input": "signed", "signed_datagrams": 1, "plain_datagrams": 0, "bad_tag": 0,
+             "anomaly": "a version-2 (previous-release) relay log, yet 2 authenticated player HELLO(s)", "events": []}
+        self.assertEqual(fc.summary(p, fc.PACKET_INTEGRITY), "Automated check D7: a version-2 (previous-release) relay log, yet 2 authenticated player "
+                         "HELLO(s); the relay refused 0 datagrams sent as this slot; its input was signed (1 signed, 0 plain datagrams)")
+
     def test_abstained_or_unmatched_games_give_no_finding(self):
         self.assertEqual(fc.findings(report(status="abstained", abstain_reason="crc")), [])
         self.assertEqual(fc.findings(report(crc_parity="mismatch")), [])
@@ -282,6 +289,28 @@ class RenderTest(unittest.TestCase):
             self.assertFalse(marker.exists())
             self.assertEqual(rev.safe_text("a'b;c[d]e"), "a_b_c_d_e")
 
+
+
+class FfmpegVersionTest(unittest.TestCase):
+    """-filter_script is gone in ffmpeg 9 ("Option not found"); 7+ takes -/filter:v FILE. An unread version is an error, never a guess."""
+
+    def fake(self, d: str, out: str, rc: int = 0) -> str:
+        f = Path(d) / "ffmpeg"
+        f.write_text(f"#!/bin/sh\nprintf '%s\\n' {json.dumps(out)}\nexit {rc}\n")
+        f.chmod(0o755)
+        return str(f)
+
+    def test_the_major_version_picks_the_option(self):
+        with tempfile.TemporaryDirectory() as d:
+            for text, major in (("ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023", 6), ("ffmpeg version n7.1 Copyright", 7),
+                                ("ffmpeg version 9.0 Copyright (c) 2000-2026", 9)):
+                self.assertEqual(rev.ffmpeg_major(self.fake(d, text)), major)
+            for text, rc in (("ffmpeg version N-118000-gabcdef Copyright", 0), ("ffmpeg version 6.1.1", 1), ("", 0)):
+                with self.assertRaises(RuntimeError):
+                    rev.ffmpeg_major(self.fake(d, text, rc))
+        self.assertEqual(rev.filter_script_args(6, Path("f.txt")), ["-filter_script:v", "f.txt"])
+        self.assertEqual(rev.filter_script_args(7, Path("f.txt")), ["-/filter:v", "f.txt"])
+        self.assertEqual(rev.filter_script_args(9, Path("f.txt")), ["-/filter:v", "f.txt"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,8 +6,17 @@ unmodified, and can eventually play against retail clients. `docs/PLAN.md` holds
 the standing rules and gates; `docs/STOPS.md` holds every open evidence gap.
 This file orders the work.
 
-Status as of 2026-10-10 (the first automatic preview, v0.3.0-preview.1). Lane
-names in brackets are merged (M) or running (R).
+The layer table, summary and undated milestone states below are a **historical
+2026-10-10 snapshot** (the first automatic preview, v0.3.0-preview.1), not a
+current feature inventory. Later additions have their own dates; gates and
+unchecked work are targets, not promises of implemented support. Lane names
+in brackets record merged (M) or running (R) at that snapshot.
+
+Since that snapshot, source includes online lobby/relay play, rejoin and
+spectating, Quick Match/tournaments, statistics and friends, native snapshot
+saves, campaign-menu saves and Create-a-Hero's builder. The historical
+"not started" / "not there yet" entries below do not describe those features
+today. See [PLAYING.md](PLAYING.md) for player-facing use and limits.
 
 ## What "done" means
 
@@ -29,7 +38,7 @@ A milestone is done only when its gates pass, not when the code exists.
 6. **Zero unexplained stops:** every stop in `docs/STOPS.md` is either
    resolved or explicitly accepted as a profile difference.
 
-## Where we are
+## Where we were (2026-10-10)
 
 | Layer | State |
 |---|---|
@@ -59,8 +68,7 @@ skirmish AI or over LAN between Windows and Linux. The QA lanes played 71
 scripted games through the real input paths with no crash or stall, and every
 replay matched bit for bit. The campaign plays mission by mission with its
 movies and narration. Not there yet: save / load, War of the Ring, the
-Create-a-Hero builder, online play and mods; team colours are drawn with an
-inferred blend (S-119). The README's
+Create-a-Hero builder, online play and mods. The README's
 status table is the player-facing summary of this one.
 
 ## Milestones
@@ -139,8 +147,9 @@ Gate: a human-controlled base builds, earns and upgrades exactly as retail
 
 State: done. A skirmish starts from the real menu and is played with the real
 HUD to the score screen (QA-1, QA-2, PLAY-1, INPUT-1); HUD-5 is running.
-Team colours are drawn with an inferred blend (S-119); the retail combine
-is not recovered (S-022).
+Team colours are drawn with retail's combine wherever an instancer enables them
+(S-022 now reports only the ones that do not); the owner's colour source for a
+map that names none is still inferred (S-119).
 
 Gate: start a skirmish from the real menu, play it with the real HUD, and win
 or lose.
@@ -154,7 +163,7 @@ or lose.
 - SHELL-2: View3D shell map behind the menus, BinkMovie (intro and menu
   movies), loading screen (LoadScreen.apt), score screen, options, profiles.
 - RENDER-1: shadows, decals, terrain post effects (S-031), exact water/river,
-  weather, time-of-day, house colour combine (S-119), LOD rules.
+  weather, time-of-day, house colour owner source (S-119), LOD rules.
 
 ### M5 - Full skirmish 1:1, all base-game factions
 
@@ -323,8 +332,10 @@ Windows run), not just at U5.
 
 ### M9 - Campaigns, War of the Ring and the rest
 
-State: the campaign plays mission by mission (SCRIPT-1..3, CAMP-1H, CAMP-2:
-scripts, narration, VP6 movies); missions save and load, but there is no campaign-progress saving as in the original and no campaign menu (S-1360).
+State (later additions): the campaign plays mission by mission (SCRIPT-1..3,
+CAMP-1H, CAMP-2: scripts, narration, VP6 movies); missions save and load.
+The campaign menu selects missions, and a campaign-menu save point preserves
+the next mission between games; this is separate from a mission snapshot.
 Create-a-Hero works (HERO-2, CAH-1: the builder screen, colours, saving).
 War of the Ring not started.
 
@@ -344,8 +355,8 @@ the Ring and Create-a-Hero work.
 
 ### M10 - Mods (designed in from the start)
 
-State: MOD-5 started (user maps in the map builders); the other lanes not
-started; every lane follows PLAN rule 6.
+State: lane MODS-1 (2026-10-20) ported MOD-1 (`-mod`, docs/MODS.md, stop S-5300) and the MOD-2 harness (OPENBFME_MOD_CORPUS, no corpus on
+the hosts yet); MOD-5 started (user maps in the map builders); every lane follows PLAN rule 6.
 
 Gate: Edain runs unmodified with its own assets; then further mods.
 
@@ -458,7 +469,7 @@ Phases: relay MVP (lobby + relay + log) after the closed playtest, then the
 verifier and snapshots, then the browser, accounts and spectators, then the retail
 gateway.
 
-### Hot join (not built; owner decision needed)
+### Hot join (new player slots not built; owner decision needed)
 
 **Hot join** lets a NEW player join a match that is already running. It is
 not a rejoin: a rejoin brings back a player who had a slot from the start,
@@ -484,5 +495,7 @@ no player at the START.
 - Does the host have to allow it per game (a lobby option), and are ranked or
   tournament games excluded?
 - Long games: the catch-up of an hour-long game takes about two minutes on a
-  fast PC (docs/ONLINE.md, phase O3). Hot join into long games would want the
-  snapshots of phase O4.
+  fast PC in the recorded phase O3 benchmark, not a timing guarantee
+  ([ONLINE.md](ONLINE.md), phase O3). Native saves now have snapshots, but
+  the online rejoin/spectator catch-up still replays the relay log; a hot-join
+  snapshot handoff remains planned work.

@@ -14,6 +14,7 @@
 #include "Libraries/Source/Apt/AptRenderList.h"
 
 #include <cmath>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -120,6 +121,45 @@ TEST_CASE("hudredraw1: the redraw plan keeps the segments that draw the same, ma
 	CHECK(planText(now, drawn) == "full"); // level 2 starts no segment of its own now
 	now.ops.push_back(opAt(2));
 	CHECK(planText(now, drawn) == "new 1=");
+}
+
+TEST_CASE("hudredraw1: removed decorative segments and equal-count replacements invalidate only their level")
+{
+	using K = AptCanvasOp::Kind;
+	AptCanvasList drawn;
+	drawn.ops = { opAt(1), opAt(3), opAt(3, K::MaskBegin), opAt(3, K::MaskContent), opAt(3, K::MaskEnd), opAt(3, K::Placeholder), opAt(4) };
+	drawn.ops[1].path = "CommandButtons.Command1.content.ring";
+	drawn.ops[3].path = "CommandButtons.Command1.content.AutoAbilityOverlay";
+	drawn.ops[5].path = "CommandButtons.Command1.content.TimerOverlay";
+	AptCanvasList now;
+	now.ops = { opAt(1), opAt(3), opAt(4) };
+	now.ops[1].path = "CommandButtons.Command1._static";
+	const AptCanvasRedrawPlan removed = AptCanvasPlanRedraw(now, AptCanvasSegments(now), drawn, AptCanvasSegments(drawn));
+	REQUIRE_FALSE(removed.full);
+	REQUIRE(removed.old.size() == 3);
+	CHECK(removed.same[0]);
+	CHECK(removed.old[1] == -1);
+	CHECK_FALSE(removed.same[1]);
+	CHECK(removed.old[2] == 4);
+	CHECK(removed.same[2]);
+
+	AptCanvasList replacement = drawn;
+	replacement.ops[1].path = "CommandButtons.Command1.content";
+	const AptCanvasRedrawPlan replaced = AptCanvasPlanRedraw(replacement, AptCanvasSegments(replacement), drawn, AptCanvasSegments(drawn));
+	REQUIRE_FALSE(replaced.full);
+	REQUIRE(replaced.old.size() == 5);
+	CHECK(replaced.same[0]);
+	CHECK(replaced.old[1] == 1);
+	CHECK_FALSE(replaced.same[1]);
+	CHECK(replaced.same[2]);
+	CHECK(replaced.same[3]);
+	CHECK(replaced.same[4]);
+
+	const std::vector<AptCanvasSegment> emptySegments = AptCanvasSegments(now);
+	const AptCanvasRedrawPlan stable = AptCanvasPlanRedraw(now, emptySegments, now, emptySegments);
+	REQUIRE_FALSE(stable.full);
+	CHECK(stable.old == std::vector<std::ptrdiff_t>{ 0, 1, 2 });
+	CHECK(stable.same == std::vector<bool>{ true, true, true });
 }
 
 TEST_CASE("hudredraw1: two op ranges draw the same only when every op is the same, bit for bit")

@@ -74,6 +74,10 @@ bool Drawable::isKindOfName(const char *name) const
 
 void Drawable::reactToTransformChange(const Coord3D *oldPos, float oldAngle)
 {
+	if (m_reactionMuted)
+	{
+		return;
+	}
 	for (std::unique_ptr<DrawableModule> &m : m_clientModules)
 	{
 		m->reactToTransformChange(oldPos, oldAngle); // lane AUDIO-4
@@ -94,6 +98,8 @@ void Drawable::addEntry(DrawServices &services, const ThingTemplate::Nugget &nug
 	e.className = nugget.name;
 	e.tag = nugget.tag;
 	e.data = nugget.data.get();
+	// lane STEALTHLOOK-1 (RW 0x679AE8): +0x3AB, a draw module's ModuleData fails its +0x78 query (the model draws' AffectedByStealth)
+	m_cannotHideByStealth = m_cannotHideByStealth || !StealthLook::moduleDataAffectedByStealth(e.data);
 	const W3DDrawClassInfo *ci = W3DDrawModules::find(nugget.name);
 	if (!ci)
 	{
@@ -224,19 +230,14 @@ void Drawable::setModelConditionFlags(const ModelConditionFlags &flags)
 
 ModelConditionFlags Drawable::dependencySharedModelFlags() const
 {
+	// the union of the draws' sets, a word at a time (lane BIGBATTLE-1: the bit loop ran for every contained drawable every render frame;
+	// MODELCONDITION_COUNT is the type's width and its unused high bits are zero, so the words give the same set)
 	ModelConditionFlags out;
 	for (const DrawEntry &e : m_entries)
 	{
 		if (e.draw)
 		{
-			const ModelConditionFlags &f = e.draw->dependencySharedModelFlags();
-			for (int b = 0; b < MODELCONDITION_COUNT; ++b)
-			{
-				if (f.test(b))
-				{
-					out.set(b);
-				}
-			}
+			out.set(e.draw->dependencySharedModelFlags());
 		}
 	}
 	return out;
@@ -244,19 +245,15 @@ ModelConditionFlags Drawable::dependencySharedModelFlags() const
 
 bool Drawable::applyDependencyFlags(const ModelConditionFlags &shared, const ModelConditionFlags &containerFlags)
 {
+	// the shared bits take the container's values, the others keep this drawable's (a word at a time, as dependencySharedModelFlags)
 	ModelConditionFlags next = m_flags;
-	for (int b = 0; b < MODELCONDITION_COUNT; ++b)
+	std::uint32_t *n = next.words();
+	const std::uint32_t *s = shared.words(), *c = containerFlags.words();
+	for (int w = 0; w < ModelConditionFlags::NUM_WORDS; ++w)
 	{
-		if (shared.test(b))
-		{
-			next.set(b, containerFlags.test(b));
-		}
+		n[w] = (n[w] & ~s[w]) | (c[w] & s[w]);
 	}
-	bool changed = false;
-	for (int b = 0; b < MODELCONDITION_COUNT && !changed; ++b)
-	{
-		changed = next.test(b) != m_flags.test(b);
-	}
+	const bool changed = next != m_flags;
 	if (changed)
 	{
 		setModelConditionFlags(next);
@@ -367,6 +364,33 @@ void Drawable::flushModelConditions(bool hasWeaponTiming, int weaponTimingFrames
 	setModelConditionFlags(m_flags);
 }
 
+bool Drawable::advanceIsLocal() const
+{
+	for (const DrawEntry &e : m_entries)
+	{
+		if (e.draw && e.animated && !e.draw->advanceIsLocal())
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+void Drawable::advanceAnimationLocal(double elapsedMs)
+{
+	for (DrawEntry &e : m_entries)
+	{
+		if (e.draw && e.animated)
+		{
+			e.draw->advance(elapsedMs);
+		}
+		if (e.isTruck || !e.truckChecked || e.truckData != e.data)
+		{
+			advanceTires(e, elapsedMs);
+		}
+	}
+}
+
 void Drawable::advanceAnimation(double elapsedMs)
 {
 	m_services.host.setChunkName(m_template->getName());
@@ -376,7 +400,10 @@ void Drawable::advanceAnimation(double elapsedMs)
 		{
 			e.draw->advance(elapsedMs);
 		}
-		advanceTires(e, elapsedMs);
+		if (e.isTruck || !e.truckChecked || e.truckData != e.data) // lane PERF-HD: the call only for a truck (or an entry not looked at yet)
+		{
+			advanceTires(e, elapsedMs);
+		}
 	}
 }
 
@@ -389,11 +416,17 @@ void Drawable::advanceAnimation(double elapsedMs)
 // is not kept, so the tires only spin; the speed gate RW 0x46E918 is not read; the cab / trailer bones and the dust / dirt / powerslide effects are not run.
 void Drawable::advanceTires(DrawEntry &e, double elapsedMs)
 {
-	const W3DTruckDrawModuleData *truck = e.draw ? dynamic_cast<const W3DTruckDrawModuleData *>(e.data) : nullptr;
-	if (!truck)
+	if (e.truckData != e.data || !e.truckChecked)
+	{
+		e.truckData = e.data;
+		e.truckChecked = true;
+		e.isTruck = e.draw && dynamic_cast<const W3DTruckDrawModuleData *>(e.data) != nullptr;
+	}
+	if (!e.isTruck)
 	{
 		return;
 	}
+	const W3DTruckDrawModuleData *truck = static_cast<const W3DTruckDrawModuleData *>(e.data);
 	if (e.frontTireBones.empty() && e.rearTireBones.empty())
 	{
 		for (const std::string *b : { &truck->m_leftFrontTireBone, &truck->m_rightFrontTireBone, &truck->m_leftFrontTireBone2, &truck->m_rightFrontTireBone2,
@@ -477,6 +510,7 @@ void Drawable::syncFromSnapshot(const ObjectSnapshot &rec, UnsignedInt snapshotF
 	}
 	m_zBasisCached = false; // the next prepareSync recomputes its trigonometry
 	updateConstruction(rec, snapshotFrame, alpha); // RENDER-2 (DrawableConstruction.cpp)
+	updatePhantomLook(rec);                        // lane FBSIM-1
 	m_moveSpeed = rec.moveSpeed;                   // lane SMOOTH-3: the walk / run cycle's speed source (RW 0x4B67D4)
 	m_scriptTarget = rec.scriptTarget;             // lane FX-3
 }
@@ -514,8 +548,59 @@ void Drawable::prepareSync(const ObjectSnapshot &rec, UnsignedInt snapshotFrame,
 	}
 	// the transform does not enter these (the construction look reads the record and the flags): done here, before commitSync sets it
 	updateConstruction(rec, snapshotFrame, alpha); // RENDER-2 (DrawableConstruction.cpp)
+	updatePhantomLook(rec);                        // lane FBSIM-1
 	m_moveSpeed = rec.moveSpeed;                   // lane SMOOTH-3: the walk / run cycle's speed source (RW 0x4B67D4)
 	m_scriptTarget = rec.scriptTarget;             // lane FX-3
+}
+
+void Drawable::updatePhantomLook(const ObjectSnapshot &rec)
+{
+	// lane FBSIM-1: a dozer's phantom structure is drawn at 0.4 opacity (RW 0x88D3E5: Drawable + 0xB0 = RW 0xBE0DE4) until the placement sets 1.0 (RW 0x88D683, RW 0xBD1908)
+	if (rec.phantomStructure != m_phantomLook)
+	{
+		m_phantomLook = rec.phantomStructure;
+		setDrawableOpacity(m_phantomLook ? 0.4f : 1.0f);
+	}
+}
+
+void Drawable::syncStealthLook(const ObjectSnapshot &rec)
+{
+	// lane STEALTHLOOK-1: a member of a HORDE imitates (RW 0x673114's parent branch), the setter never runs for it; every other object takes the
+	// setter when the snapshot's look changed (RW 0x6760F9; the phase is drawn only then, retail draws it inside the setter on a pulse look)
+	m_stealthParentId = rec.stealthParent;
+	if (m_stealthParentId != INVALID_ID)
+	{
+		return;
+	}
+	if (rec.stealthLook == m_stealth.look)
+	{
+		return;
+	}
+	const float phaseDraw = (rec.stealthLook == StealthLook::LOOK_VISIBLE_FRIENDLY || rec.stealthLook == StealthLook::LOOK_VISIBLE_FRIENDLY_DETECTED)
+		? m_services.random.real(0.0f, StealthLook::kPi)
+		: 0.0f;
+	if (StealthLook::setLook(m_stealth, rec.stealthLook, rec.stealthOpacityMin, rec.stealthOpacityMax, rec.stealthCycleSeconds, phaseDraw, m_cannotHideByStealth))
+	{
+		++m_changeCount;
+	}
+}
+
+void Drawable::updateStealthLook(const Drawable *parent)
+{
+	// RW 0x673114, once per client frame (updateDrawable RW 0x675996 via GameClient::update RW 0x64849E)
+	if (m_stealthParentId != INVALID_ID)
+	{
+		if (!parent)
+		{
+			return; // the parent object has no drawable: the call ends early
+		}
+		if (StealthLook::imitate(m_stealth, parent->stealth()))
+		{
+			++m_changeCount;
+		}
+		return;
+	}
+	StealthLook::update(m_stealth);
 }
 
 void Drawable::commitSync(const SyncPrep &prep)
@@ -557,11 +642,15 @@ Drawable::PresentedLook Drawable::presentedLook(const LogicSnapshot *presented, 
 		look.hidden = synced ? m_shroudLook.hidden : (rec && rec->shroudedForLocal);
 		look.fogLook = synced && m_shroudLook.fullyObscured;
 	}
-	// lane STEALTH-1 (RW 0x81AA03 -> RW 0x6760F9, GameClient/StealthLook): an invisible object an enemy looks at is not drawn
-	// lane GARRISON-1: the drawable's hidden flag the logic sets (RW 0x6718FB: a rider of an ENCLOSED container, a horde member gone into a garrison)
-	if (rec && (StealthLook::hidden(*rec) || rec->drawableHidden))
+	// lane STEALTHLOOK-1 (RW 0x81AA03 -> RW 0x6760F9, GameClient/StealthLook): the drawable's own hidden-by-stealth flag (+0x43E; a member's is the
+	// imitated parent's, RW 0x673114) decides what an enemy sees - a look-5 drawable whose modules are not all affected stays drawn
+	if (m_stealth.hidden || (rec && rec->drawableHidden))
 	{
 		look.hidden = true;
+	}
+	if (m_clientHidden)
+	{
+		look.hidden = true; // lane CHAT-1: BeaconClientUpdate::hideBeacon on an enemy's screen
 	}
 	look.fogLook = look.fogLook && !look.hidden;
 	return look;

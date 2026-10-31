@@ -2,6 +2,7 @@
 // See GameClient/DrawableIconUI.h for the target facts and the addresses. Client only (excluded from the simulation audit): plain float arithmetic.
 
 #include "GameClient/DrawableIconUI.h"
+#include "GameClient/LocalizedText.h"
 
 #include "Common/INI/HostRealText.h"
 #include "Common/Player.h"
@@ -301,6 +302,11 @@ const DrawableIconUI::TemplateBox &DrawableIconUI::boxOf(const ThingTemplate &tt
 	return m_boxes.emplace(&tt, b).first->second;
 }
 
+std::string DrawableIconUI::constructionText(const GameTextSource *text, double percent)
+{
+	return loadScreenU16ToUtf8(LocalizedText::format(fetchOrMissing(text, "CONTROLBAR:UnderConstructionDesc"), { percent }));
+}
+
 void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, const TacticalView &view, const IconUISettings &s, const std::set<ObjectID> &selected,
 	ObjectID mousedOver, std::vector<IconUIOp> &out)
 {
@@ -325,7 +331,7 @@ void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, c
 		}
 		// RW 0x4853EB: only a drawn drawable queues its icons (not hidden, RW 0x67055A; the shroud of the object for the local player at most 2, RW 0x68D8F7):
 		// an enemy's invisible object is not drawn (InvisibilityManager::clientLook 5, the drawable's hidden state RW 0x6760F9) and shows no bar, text or mark.
-		if (InvisibilityManager::clientLook(*obj, logic.players().getLocalPlayer()) == 5)
+		if (d->stealthHidden()) // lane STEALTHLOOK-1: the drawable's +0x43E (look 5 on a drawable that can hide, RW 0x6760F9)
 		{
 			continue;
 		}
@@ -419,23 +425,13 @@ void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, c
 				out.push_back(a);
 			}
 		}
-		// RW 0x677CF9: the construction text
-		if (obj.isUnderConstruction() && !obj.testStatus(19)) // status 0x13 SOLD (TheObjectStatusNames RW 0xD8AFF0)
+		// RW 0x677CF9 / 0x679AE8: a fresh drawable's cached percent is -1, leaving its construction caption empty during unit exit.
+		if (obj.isUnderConstruction() && !obj.testStatus(19) && obj.getConstructionPercent() != -1.0f) // status 0x13 SOLD (TheObjectStatusNames RW 0xD8AFF0)
 		{
 			std::string text;
 			if (!kindOf(obj, WALL_SEGMENT) && !kindOf(obj, DEFENSIVE_WALL))
 			{
-				std::u16string fmt;
-				if (s.text && s.text->fetch("CONTROLBAR:UnderConstructionDesc", fmt))
-				{
-					char buf[256];
-					std::snprintf(buf, sizeof(buf), loadScreenU16ToUtf8(fmt).c_str(), (double)obj.getConstructionPercent()); // "Building: %.0f%%"
-					text = buf;
-				}
-				else
-				{
-					text = loadScreenU16ToUtf8(fetchOrMissing(s.text, "CONTROLBAR:UnderConstructionDesc"));
-				}
+				text = constructionText(s.text, (double)obj.getConstructionPercent());
 			}
 			const TemplateBox &box = boxOf(*obj.getTemplate());
 			Coord3D pos = iconAnchor(logic, drawables, *q.d, obj, box.heightOffset, box.maxHeight);

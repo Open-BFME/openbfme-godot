@@ -2,6 +2,7 @@
 // Lane UPGRADE-1 on the retail data (SKIPs when ROTWK_INSTALL / BFME2_INSTALL are unset): the UpgradeCenter of the real INI load, the unit upgrades of
 // the seven factions (armour, blades, arrows) on live objects, a building level upgrade, the CostModifierUpgrade factor of the build cost, determinism.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "Common/BuildAssistant.h"
@@ -121,7 +122,7 @@ struct Game
 		REQUIRE_MESSAGE(tt, name);
 		Object *o = logic->newObject(tt, player->getDefaultTeam(), ObjectStatusMaskType{});
 		REQUIRE(o);
-		return o;
+		return testutil::completeHorde(o);
 	}
 	std::uint32_t hash() const
 	{

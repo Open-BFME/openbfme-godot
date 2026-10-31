@@ -82,11 +82,14 @@ TEST_CASE("smooth1 retail: the posed meshes of fighting horde members against th
 			sel.appendObjectIDArgument(id);
 		}
 		game.commands().append(sel);
-		GameMessage mv(MSG_DO_MOVETO, player);
+		// lane LOS-1: with the terrain line of sight the two sides crossing Fall Back's plateau edge no longer see each other once they have passed
+		GameMessage mv(MSG_DO_ATTACKMOVETO, player); // an attack move fights what it meets (a move does not stop for enemies)
 		mv.appendLocationArgument(to);
 		game.commands().append(mv);
 	};
-	order(p0, ours, Coord3D{ centre.x + 200.0f, centre.y + 75.0f, 0.0f }); // through each other's place: they meet and fight
+	// through each other's place: they meet and fight. With move orders the hordes walked through each other and stood 400 apart once the destination
+	// adjustment spiralled around the cell (RW 0x6FA2A4): they had fought only where their goals jammed them together
+	order(p0, ours, Coord3D{ centre.x + 200.0f, centre.y + 75.0f, 0.0f });
 	order(p1, theirs, Coord3D{ centre.x - 200.0f, centre.y + 75.0f, 0.0f });
 	std::map<const MeshModelClass *, MeshRenderData> meshes;
 	std::map<std::string, Reach> byTemplate;

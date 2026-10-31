@@ -29,12 +29,23 @@ const DisplaySettings := preload("res://scripts/display_settings.gd")
 const TABS := ["Display", "Graphics", "Audio", "Camera", "Interface", "Online", "Performance", "Controls"]
 ## lane OPTS-5: the tab the menu shows first when the main menu's CUSTOM SETTINGS opened it
 const DETAIL_TAB := "Graphics"
+const SOCIAL_CHOICES := {
+	"invites": ["friends_or_room", "friends"],
+	"challenges": ["friends_or_room", "friends"],
+	"requests": ["anyone", "nobody"],
+	"presence": ["friends", "nobody"],
+}
+var _social_original: Dictionary = {}
+var _social_pending: Dictionary = {}
+var _social_save_error := ""
+var _social_unsupported := false ## ONLINEMENU-1: the lobby the player is signed in to has no social service
+const UNSUPPORTED_HELP := "Online privacy is not available on this server yet."
 ## lane OPTS-5: the help lines of OpenBFME's own rows and the tabs' notes (NOT RETAIL; one table: the original game's rows take theirs from the game's
 ## string file, AptOptionsScreen::retailRowTable in the engine). Key: the row's key, or "note:<tab>".
 const HELP := {
 	"window_mode": "Windowed, a borderless window over the whole screen, or exclusive full screen (Alt+Enter).",
 	"resolution_windowed": "The window's size (in a window). The menus and the game scale with it.",
-	"resolution_screen": "The window's size. Full screen and the borderless window use the monitor's own resolution; lower the render scale for fewer pixels.",
+	"resolution_screen": "The game's rendering resolution, scaled to fit the screen. Different aspect ratios have black bars. Render scale further adjusts 3D quality.",
 	"vsync": "Waits for the monitor's refresh: no tearing, a little more input delay.",
 	"max_fps": "The most frames drawn a second. The game itself always runs at its own pace.",
 	"show_fps": "The frame counter in the top left corner.",
@@ -58,6 +69,8 @@ const HELP := {
 	"OpenBFMEHealthBars": "Original: on the units you select or point at. Always: every unit's and building's bar, yours and the other players'.",
 	"AlternateMouseSetup": "The original game's option (Options.ini AlternateMouseSetup; its own screen has no box for it): the left button gives orders.",
 	"OpenBFMEGameClock": "The game's own time, in the top right corner.",
+	"OpenBFMEPingWheel": "Hold the ping key over the map, point at a sector and let go: a ping on the ground and the minimap. Skirmish only for now.",
+	"OpenBFMEPingKey": "The key that opens the ping wheel while held. G: hold it for the wheel; a quick tap is still the game's G (Hold Ground, a button).",
 	"OpenBFMEMasterVolume": "Scales every sound of the game.",
 	"OpenBFMEMuteUnfocused": "No sound while another window has the focus.",
 	"OpenBFMEAudioDevice": "The speakers or headphones the game plays through.",
@@ -66,6 +79,8 @@ const HELP := {
 	"note:Audio": "Moving a volume plays a sample of it. The master volume scales them all.",
 	"note:Camera": "None of these changes the game itself: the camera and the mouse only.",
 	"note:Interface": "\"Selected and damaged\" and \"Always\" health bars are this rebuild's.",
+	"OpenBFMEShowPing": "The top left corner of the online menus shows your ping to the game server. In a game room, the Players list and the CONNECTIONS button show everyone's ping.",
+	"OpenBFMECrashReports": "When OpenBFME crashes, a report goes to the OpenBFME team by itself at the next start: the version, the system, the crash and the end of the log, without names, folders or addresses. Off: the crash message offers Send report instead.",
 	"OpenBFMEShareResults": "After each LAN or online game: your install id, nickname and the game's summary (map, armies, teams, winner) go to the OpenBFME statistics service. Off: nothing is sent.",
 	"note:Online": "The original game's network settings, and what OpenBFME's online services receive.",
 	"note:Performance": "Uber performance mode changes how the game itself runs: read its warning.",
@@ -91,6 +106,7 @@ const ZOOM_ITEMS := [["no", "Off"], ["yes", "On: up to the map's size"]]
 const MAX_ZOOM_ITEMS := [["1", "Original (1x)"], ["1.5", "1.5x"], ["2", "2x"], ["2.5", "2.5x"], ["3", "3x"]]
 ## lane UI-6: the Widescreen view (OpenBFMEWidescreen)
 const WIDESCREEN_ITEMS := [["original", "Original"], ["wider", "Wider"]]
+const PING_KEY_ITEMS := [["g", "G (hold)"], ["altg", "Alt+G"], ["j", "J"], ["mouse4", "Mouse back button"], ["mouse5", "Mouse forward button"]]
 const BARS_ITEMS := [["retail", "Selected (original)"], ["damaged", "Selected and damaged"], ["always", "Always (all players)"]]
 
 var shell: Node2D                  # the AptMenuPlayer
@@ -108,6 +124,7 @@ var _original: RefCounted          # the settings when the page opened (CANCEL)
 var _runtime := {}                 # what the game ran with when the page opened (DisplaySettings.snapshot: CLI caps, the window's mode and place)
 var _pending: RefCounted           # what the page shows and has applied
 var _applied: RefCounted
+var _opening_values := {}          # the effective values on entry; only subsequent edits belong to ACCEPT
 var _tab := "Display"
 var _extras_original := {}         # lane OPTS-2: Options.ini's values when the page opened (CANCEL)
 var _extras := {}                  # what the extra tabs show and have applied
@@ -186,12 +203,18 @@ func open(first_tab := 0) -> void:
 		printerr("GAME DISPLAY the OpenBFME page cannot open: ", r.get("error", "?"))
 		return
 	_open = true
+	var social: Dictionary = shell.online_social_status() if shell.has_method("online_social_status") else {}
+	_social_original = social.get("me", {}).duplicate(true) if social.get("available", false) and not str(social.get("me", {}).get("pid", "")).is_empty() else {}
+	_social_unsupported = bool(social.get("unsupported", false)) # ONLINEMENU-1: the lobby has no social service
+	_social_pending = _social_original.duplicate(true)
+	_social_save_error = ""
 	var root := get_tree().root
 	_original = settings.copy()
 	_runtime = DisplaySettings.snapshot(root)
 	# the page shows what is in effect (a --max-fps cap, a window the player maximised or Alt+Enter made full screen), not only the file
 	_pending = DisplaySettings.effective(settings, root, overlay.shown() if overlay != null else settings.show_fps)
 	_applied = _pending.copy()
+	_opening_values = _pending.to_dict()
 	if game_options != null:
 		_extras_original = game_options.current()
 		_extras = _extras_original.duplicate()
@@ -202,15 +225,25 @@ func open(first_tab := 0) -> void:
 	print("GAME DISPLAY options screen open%s: %s" % [" (the Options menu)" if _menu else "", JSON.stringify(_pending.to_dict())])
 
 
-## ACCEPT (keep = true): the settings shown become the ones in effect and are written; otherwise the ones of the opening are applied again.
+## ACCEPT (keep = true): keep the settings shown and merge only the edited keys into the latest file; otherwise restore the opening state.
 func close(keep: bool) -> void:
 	if not _open:
 		return
 	if game_options != null:
 		game_options.hold_gamma = false # the saved brightness is back in effect from here (ACCEPT: the shell's Save; CANCEL: its Cancel)
 	if keep:
-		settings.from_dict(_pending.to_dict())
-		if not settings_path.is_empty() and not settings.save_file(settings_path):
+		if not _social_pending.is_empty():
+			if _social_pending.get("privacy") != _social_original.get("privacy"):
+				if not _save_social({"action": "set_privacy", "privacy": _social_pending.privacy}): return
+			if _social_pending.get("hidden") != _social_original.get("hidden"):
+				if not _save_social({"action": "set_presence", "state": "online", "hidden": _social_pending.hidden}): return
+		var values: Dictionary = _pending.to_dict()
+		var changed: Array = []
+		for key in values:
+			if values[key] != _opening_values[key]:
+				changed.append(key)
+		settings.from_dict(values)
+		if not changed.is_empty() and not settings_path.is_empty() and not settings.save_keys(settings_path, changed):
 			printerr("GAME DISPLAY ", settings.errors[-1])
 		print("GAME DISPLAY accepted and saved: ", JSON.stringify(settings.to_dict()))
 		if game_options != null:
@@ -266,6 +299,9 @@ func set_value(key: String, value) -> void:
 func reset_defaults() -> void:
 	if not _open:
 		return
+	if not _social_pending.is_empty():
+		_social_pending.privacy = {"invites": "friends_or_room", "challenges": "friends_or_room", "requests": "anyone", "presence": "friends"}
+		_social_pending.hidden = false
 	_pending = DisplaySettings.new()
 	_apply_pending()
 	if game_options != null:
@@ -370,6 +406,15 @@ func _sync() -> void:
 		shell.openbfme_page_set_row(r)
 
 
+func _save_social(action: Dictionary) -> bool:
+	var result: Dictionary = shell.online_social_apply(action)
+	if result.get("ok", false): return true
+	_social_save_error = "Online privacy was not saved: " + str(result.get("error", "social_unavailable"))
+	if game_options != null: game_options.hold_gamma = _menu
+	_show_tab("Online")
+	return false
+
+
 func _spec() -> Dictionary:
 	var rows: Array
 	var note: String = HELP.get("note:" + _tab, "")
@@ -390,6 +435,7 @@ func _spec() -> Dictionary:
 			rows = _audio_rows()
 		"Online":
 			rows = _online_rows()
+			if not _social_save_error.is_empty(): note = _social_save_error
 		"Performance":
 			rows = _performance_rows()
 		"Controls":
@@ -464,7 +510,7 @@ func _display_rows() -> Array:
 	var res := _resolution_choices()
 	var current: Vector2i = p.resolution if p.resolution != Vector2i.ZERO else get_tree().root.size
 	rows.append(_choice("resolution", "Resolution", res.map(func(r): return "%d x %d" % [r.x, r.y]), res.find(current),
-		HELP.resolution_screen if p.window_mode != "windowed" else HELP.resolution_windowed, p.window_mode == "windowed"))
+		HELP.resolution_screen if p.window_mode != "windowed" else HELP.resolution_windowed))
 	var vsync := VSYNC_ITEMS.map(func(v): return v[1])
 	if p.vsync == "mailbox":
 		vsync.append("Mailbox")
@@ -552,6 +598,10 @@ func _interface_rows() -> Array:
 		_extra_check("AlternateMouseSetup", "Alternate mouse setup", HELP.AlternateMouseSetup),
 		_extra_check("OpenBFMEGameClock", "Show the game clock", HELP.OpenBFMEGameClock),
 		_extra_choice("OpenBFMEUIScale", "Interface scale", UI_SCALE_ITEMS, HELP.OpenBFMEUIScale),
+		_extra_check("OpenBFMEPingWheel", "Ping wheel", HELP.OpenBFMEPingWheel),
+		_extra_choice("OpenBFMEPingKey", "Ping key", PING_KEY_ITEMS, HELP.OpenBFMEPingKey),
+		# lane CRASHACT-1: here, not on Online (that tab's rows already fill the page above its footer)
+		_extra_check("OpenBFMECrashReports", "Send crash reports automatically", HELP.OpenBFMECrashReports),
 	])
 
 
@@ -578,13 +628,24 @@ func _audio_rows() -> Array:
 
 
 func _online_rows() -> Array:
-	return _present([
+	var rows := _present([
 		_retail_row("Retail.OnlineIp"),
 		_retail_row("Retail.OnlinePortNum"),
 		_retail_row("Retail.SendDelay"),
 		_retail_row("Retail.RefreshNat"),
 		_extra_check("OpenBFMEShareResults", "Share my game results for statistics", HELP.OpenBFMEShareResults), # lane ONLINEHUB-1
+		_extra_check("OpenBFMEShowPing", "Show my ping in the online menus", HELP.OpenBFMEShowPing), # lane ONLINEMENU-1
 	])
+	var available := not _social_pending.is_empty()
+	var privacy: Dictionary = _social_pending.get("privacy", {})
+	var labels := {"invites": "Game invitations", "challenges": "Challenges", "requests": "Player friend requests", "presence": "Show my status"}
+	var items := {"invites": ["Friends and room players", "Friends only"], "challenges": ["Friends and room players", "Friends only"], "requests": ["Anyone", "Nobody"], "presence": ["Friends", "Nobody"]}
+	for key in SOCIAL_CHOICES:
+		rows.append(_choice("Social." + key, labels[key], items[key], SOCIAL_CHOICES[key].find(privacy.get(key, "")),
+			"Saved to your online identity when you select ACCEPT." if available else (UNSUPPORTED_HELP if _social_unsupported else "Sign in to change online privacy."), available))
+	rows.append(_choice("Social.hidden", "Online visibility", ["Visible", "Appear offline"], 1 if _social_pending.get("hidden", false) else 0,
+		"Appearing offline hides your status from friends." if available else (UNSUPPORTED_HELP if _social_unsupported else "Sign in to change online visibility."), available))
+	return rows
 
 
 const UBER_KEY := "OpenBFMEUberPerformance"
@@ -653,6 +714,16 @@ func _master_preview(value: int) -> void:
 
 func _on_value(key: String, value: int) -> void:
 	if not _open:
+		return
+	if key.begins_with("Social."):
+		if _social_pending.is_empty():
+			return
+		var field := key.trim_prefix("Social.")
+		if field == "hidden" and value in [0, 1]:
+			_social_pending.hidden = value == 1
+		elif SOCIAL_CHOICES.has(field) and value >= 0 and value < SOCIAL_CHOICES[field].size():
+			_social_pending.privacy[field] = SOCIAL_CHOICES[field][value]
+		_sync()
 		return
 	match key:
 		"window_mode":

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "GameNetwork/GameInfo.h"
 #include "GameClient/GUI/AptScreen.h"
 #include "GameClient/GUI/AptScreens/OpenBFMEOptionsPage.h"
 #include "GameClient/GUI/MenuNavigator.h"
@@ -104,6 +105,8 @@ public:
 	// lane HUD-5: the Status page (null until the movie loaded it) and the rows shown
 	bool statusPageLoaded() const { return m_status != nullptr; }
 	int statusRowsShown() const;
+	GameWindow *statusRange() const { return m_statusViewport.range; }
+	GameWindow *tributeRange() const { return m_tributeViewport.range; }
 
 	// RW 0x81560E: the value of `key` in an Apt command's "a=1&b=2" parameters; false when absent
 	static bool commandParam(const std::string &params, const std::string &key, std::string &value);
@@ -128,6 +131,16 @@ protected:
 	WindowMsgHandledType gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2) override;
 
 private:
+	struct RowViewport
+	{
+		GameWindow *range = nullptr;
+		AptCharacterInst *parent = nullptr;
+		float firstY = 0, step = 0;
+		int first = 0;
+	};
+	void updateRowViewport(RowViewport &viewport, const std::string &path, int count, int visibleCount);
+	void destroyRowViewport(RowViewport &viewport);
+	RowViewport m_statusViewport, m_tributeViewport;
 	struct StatusPage
 	{
 		std::string path;                ///< the page's path without the level prefix
@@ -191,6 +204,10 @@ class AptLoadScreen : public AptScreen
 {
 public:
 	AptLoadScreen(WindowManager &windows, Shell &shell, ShellEnvironment &environment);
+	~AptLoadScreen() override;
+	void frameUpdate() override;
+	WindowMsgHandledType gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2) override;
+	GameWindow *cardRange() const { return m_cardRange; }
 	// processProgress(slot, percent): SetBarTo(card, percent) on the movie (arguments as decimal strings); false when the movie is not loaded yet (the call is kept
 	// and made by the next update) or the call failed (reported through the window manager's notes)
 	bool setProgress(int card, int percent);
@@ -205,12 +222,17 @@ private:
 	void populate();
 	void flush();
 	bool callBar(int card, int percent);
+	bool barsReady();
 
 	ShellEnvironment &m_env;
 	std::vector<std::pair<int, int>> m_calls;
 	std::vector<std::pair<int, int>> m_pending;
 	int m_cards = 0;
+	int m_cardRows = 0;
 	bool m_zeroed = false;
+	GameWindow *m_cardRange = nullptr;
+	int m_firstCard = 0;
+	std::array<std::array<float, LEGACY_MAX_SLOTS>, 7> m_cardY{};
 };
 
 // lane UI-2: Options.apt's Save / Cancel close the screen as RotWK's do (RW 0x91FC9C / 0x91EC52 end in RW 0x91EA39 -> 0x62215B, the window manager's
@@ -313,7 +335,7 @@ public:
 	// The page's events and the button's (Entry), oldest first.
 	std::vector<OpenBFMEPageEvent> takeExtensionEvents();
 	// Esc while the page is up: the page's CANCEL (the movie never sees the key)
-	void extensionCancel() { m_extensionEvents.push_back({ OpenBFMEPageEvent::Kind::Cancel, std::string(), 0 }); }
+	void extensionCancel() { addExtensionEvent({ OpenBFMEPageEvent::Kind::Cancel, std::string(), 0 }); }
 
 	// ---- lane OPTS-5: one Options menu, the OpenBFME one (owner, 2026-10-14: "scrap the original settings options and rework the menu to be our
 	// menu for now, but put the settings ... from the original game in places that make sense for it in the new menu"). NOT RETAIL LAYOUT. ----------
@@ -405,6 +427,11 @@ private:
 	bool m_extensionAvailable = false;
 	bool m_entryPressed = false;
 	int m_barPressed = -1; // the bottom bar button a press on the page went to (0 Cancel, 1 Reset, 2 Accept)
+	// lane MENUSND-1: a bar click (its page event) waits until the movie's input has drained the press (the queue drains once per movie step), so a click
+	// that closes the menu cannot unload the movie before its button played the press's sound. Every event after a waiting one waits behind it, so the
+	// events stay in the order they happened (a RESET then an ACCEPT within one movie step): { event, the input serial it waits for (0: none) }
+	std::vector<std::pair<OpenBFMEPageEvent, std::uint64_t>> m_deferredEvents;
+	void addExtensionEvent(const OpenBFMEPageEvent &e, std::uint64_t inputSerial = 0);
 	std::unique_ptr<OpenBFMEOptionsPage> m_page;
 	std::vector<OpenBFMEPageEvent> m_extensionEvents;
 	struct SavedField

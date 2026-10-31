@@ -1,0 +1,4 @@
+# Lane RELGH-3: the Python packages the release workflow's package and signing jobs need beyond the runner's own Python
+# (.github/workflows/release.yml): pefile for app_icon.py (the launcher's Windows icon) and audit_package.py. The build hosts' version, the
+# wheel's SHA-256 from PyPI; installed with --require-hashes --only-binary :all: (a changed or other file fails the job).
+pefile==2024.8.26 --hash=sha256:76f8b485dcd3b1bb8166f1128d395fa3d87af26360c2358fb75b80019b957c6f

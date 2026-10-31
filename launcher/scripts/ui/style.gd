@@ -38,6 +38,8 @@ const EDGE := LINE
 
 const RADIUS := 10
 const NAV_PAD := 12   # lane LAUNCHERUI-1: a rail entry's side padding: its icon, and the logo and footer above / below it, start here
+const NAV_HEIGHT := 36
+const NAV_GAP := 2
 const SCREEN_GAP := 14  # the gap between a screen's heading, tabs and cards (every screen's root column; the layout test measures it)
 
 static var _files := {}
@@ -141,11 +143,11 @@ static func make_theme() -> Theme:
 	t.add_type("NavButton")
 	t.set_type_variation("NavButton", "Button")
 	for st in ["normal", "disabled"]:
-		t.set_stylebox(st, "NavButton", box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 8, Vector2(NAV_PAD, 9)))
-	t.set_stylebox("hover", "NavButton", box(HOVER, Color(0, 0, 0, 0), 0, 8, Vector2(NAV_PAD, 9)))
-	t.set_stylebox("pressed", "NavButton", box(SELECTED, Color(0, 0, 0, 0), 0, 8, Vector2(NAV_PAD, 9)))
-	t.set_stylebox("hover_pressed", "NavButton", box(SELECTED, Color(0, 0, 0, 0), 0, 8, Vector2(NAV_PAD, 9)))
-	t.set_stylebox("focus", "NavButton", box(Color(0, 0, 0, 0), Color(ACCENT2, 0.6), 1, 8, Vector2(NAV_PAD, 9)))
+		t.set_stylebox(st, "NavButton", box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 8, Vector2(NAV_PAD, 6)))
+	t.set_stylebox("hover", "NavButton", box(HOVER, Color(0, 0, 0, 0), 0, 8, Vector2(NAV_PAD, 6)))
+	t.set_stylebox("pressed", "NavButton", box(SELECTED, Color(0, 0, 0, 0), 0, 8, Vector2(NAV_PAD, 6)))
+	t.set_stylebox("hover_pressed", "NavButton", box(SELECTED, Color(0, 0, 0, 0), 0, 8, Vector2(NAV_PAD, 6)))
+	t.set_stylebox("focus", "NavButton", box(Color(0, 0, 0, 0), Color(ACCENT2, 0.6), 1, 8, Vector2(NAV_PAD, 6)))
 	t.set_color("font_color", "NavButton", TEXT2)
 	t.set_color("font_pressed_color", "NavButton", TEXT)
 	t.set_color("font_hover_pressed_color", "NavButton", TEXT)

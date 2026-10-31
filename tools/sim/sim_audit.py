@@ -24,6 +24,7 @@ Run it where the compiler of the build runs (the include paths are probed from t
 flatpak SDK that built the project:
     flatpak run --filesystem=home --env=PYTHONPATH=<dir with the 'clang' package> --command=python3 org.freedesktop.Sdk//25.08 tools/sim/sim_audit.py --build <build dir>
 Linux libclang: `pip install libclang==18.1.1`. Windows requires LLVM >= 19 and compatible Python clang bindings; see tools/sim/README.md.
+macOS uses the libclang.dylib of the build's toolchain (xcrun --find clang, ../lib), with the Python bindings of the libclang wheel.
 OPENBFME_LIBCLANG_PYTHONPATH adds a directory holding the 'clang' package; OPENBFME_LIBCLANG_LIBRARY selects a libclang shared library.
 Without it the AST part cannot run: the default is an error (--ast=require); --ast=skip prints a loud notice and exits 3.
 """
@@ -45,8 +46,8 @@ BASELINE_PATH = os.path.join(REPO, "tools", "sim", "sim_baseline.json")
 
 # The acceptance stops of this tool (docs/STOPS.md), printed with every run.
 STOPS = {
-    "S-230": "the AST check needs libclang Python bindings and runs where the build's compiler runs (Linux: libclang==18.1.1; Windows: LLVM >= 19, "
-             "see tools/sim/README.md); implicit "
+    "S-230": "the AST check needs libclang Python bindings and runs where the build's compiler runs (Linux: libclang==18.1.1; Windows: LLVM >= 19; "
+             "macOS: the toolchain's libclang.dylib, see tools/sim/README.md); implicit "
              "conversions are recognised through libclang's UNEXPOSED_EXPR nodes, template bodies only when no operand is a concrete integer, and the "
              "staged Lua C sources (lvm.c: the VM arithmetic is the PC24 emulation by design) are not scanned",
     "S-231": "existing simulation code of other lanes (PATH-1, HORDE-1, LOGIC-1, the terrain and the shared WWMath headers) still contains bare floating "
@@ -316,6 +317,28 @@ def windows_libclang():
     raise RuntimeError("libclang.dll not found (OPENBFME_LIBCLANG_LIBRARY, Program Files/LLVM/bin, or beside clang.exe on PATH). " + WINDOWS_LLVM_HELP)
 
 
+MACOS_LIBCLANG_HELP = ("macOS AST audit uses the libclang of the build's toolchain (Xcode or the Command Line Tools: xcode-select --install); the "
+                       "libclang==18.1.1 wheel cannot parse the macOS SDK's libc++ headers; see tools/sim/README.md")
+
+
+def macos_libclang():
+    """An explicit library wins; otherwise the libclang.dylib of the active developer toolchain (xcrun), never the bundled libclang 18 wheel:
+    the SDK's libc++ uses builtins of the SDK's own compiler (clang 18 fails on __builtin_clzg in <__bit/countl.h>)."""
+    explicit = os.environ.get("OPENBFME_LIBCLANG_LIBRARY")
+    if explicit:
+        if not os.path.isfile(explicit):
+            raise RuntimeError("OPENBFME_LIBCLANG_LIBRARY does not name an existing libclang.dylib: %s. %s" % (explicit, MACOS_LIBCLANG_HELP))
+        return explicit
+    try:
+        clang = subprocess.run(["xcrun", "--find", "clang"], capture_output=True, text=True, timeout=60).stdout.strip()
+    except OSError as ex:
+        raise RuntimeError("cannot run xcrun to find the toolchain's libclang: %s. %s" % (ex, MACOS_LIBCLANG_HELP))
+    path = os.path.join(os.path.dirname(os.path.dirname(clang)), "lib", "libclang.dylib") if clang else ""
+    if not os.path.isfile(path):
+        raise RuntimeError("libclang.dylib not found beside the toolchain's clang (%s). %s" % (clang or "xcrun --find clang printed nothing", MACOS_LIBCLANG_HELP))
+    return path
+
+
 def require_windows_llvm(version, library):
     match = re.search(r"clang version (\d+)", version)
     if not match or int(match.group(1)) < 19:
@@ -351,7 +374,7 @@ def import_clang():
         if os.name == "nt":
             raise RuntimeError("Python clang.cindex bindings not found: %s. %s" % (ex, WINDOWS_LLVM_HELP)) from ex
         return None
-    lib = windows_libclang() if os.name == "nt" else os.environ.get("OPENBFME_LIBCLANG_LIBRARY")
+    lib = windows_libclang() if os.name == "nt" else macos_libclang() if sys.platform == "darwin" else os.environ.get("OPENBFME_LIBCLANG_LIBRARY")
     if lib and not cindex.Config.loaded:
         cindex.Config.set_library_file(lib)
     try:

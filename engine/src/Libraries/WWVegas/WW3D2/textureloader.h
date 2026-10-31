@@ -37,6 +37,10 @@ struct TextureResolution
 // flatLayout (community PR #36): the files are BFME1 data (isBfme1Data of the file system `exists` asks): art\textures\<stem>.dds / .<ext> / .jpg / .png
 TextureResolution Resolve_W3D_Texture(const std::string &name, const std::function<bool(const std::string &)> &exists, bool flatLayout = false);
 
+// Complete loader lookup: after DDS/TGA, try the packed JPEG colour stream
+// (RW 0x530D29). A companion PNG is decoded by the device, not a colour fallback.
+TextureResolution Resolve_Packed_W3D_Texture(const std::string &name, const std::function<bool(const std::string &)> &exists, bool flatLayout = false);
+
 // What retail draws for a texture whose file is missing or does not decode (lane UI-1).  TARGET FACT: the texture load RW 0x53193E (reached
 // through RW 0x532847 -> 0x531BF9), when it holds no file bytes (+0x14 null; INFERENCE: a file that is not found leaves it null, the reader that fills it was not
 // traced) or no D3D texture came out of them (+0x8 null), creates a 1 x 1

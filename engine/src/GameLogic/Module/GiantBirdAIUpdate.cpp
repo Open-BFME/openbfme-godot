@@ -13,6 +13,8 @@
 #include "Common/RandomValue.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/RawModuleData.h"
+#include "GameLogic/AI/AIEmotionStates.h"
+#include "GameLogic/AI/AIGarrisonStates.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/Combat/CombatNames.h"
@@ -1178,7 +1180,7 @@ private:
 		{
 			return true;
 		}
-		const float top = ObjectGeometry::maxHeightAbovePosition(ObjectGeometry::shapesOf(*near->getTemplate()));
+		const float top = ObjectGeometry::maxHeightAbovePosition(near->geometryShapes());
 		return SimMath::addf32(top, ground) <= height;
 	}
 
@@ -1246,16 +1248,9 @@ public:
 		}
 		if (subIdle())
 		{
-			// no crates in RotWK (RW 0x66810B answers none: S-4040); the mood scan (RW 0x66844A(!force, 0)) at the MoodAttackCheckRate interval unless forced
-			// (RW 0x662E01's clock, INFERENCE)
-			const unsigned now = o.logic().getFrame();
-			Object *target = nullptr;
-			if (force || now >= m_nextMoodCheck)
-			{
-				const unsigned interval = ai.moodCheckInterval();
-				m_nextMoodCheck = now + (interval ? interval : 1u);
-				target = ai.nextMoodTarget();
-			}
+			// no crates in RotWK (RW 0x66810B answers none: S-4040); the mood scan RW 0x66844A(!force, 0): its own cadence (AI + 0x21C) when called by the AI
+			// (lane TARGET-1; m_nextMoodCheck, the earlier stand-in clock, is kept in the snapshot but no longer read)
+			Object *target = ai.getNextMoodTarget(!force, false);
 			if (target)
 			{
 				ai.mover().endingMove(); // RW 0x6627CB
@@ -1700,6 +1695,8 @@ std::unique_ptr<AIStateMachine> GiantBirdAIUpdate::makeStateMachine()
 	m->defineState(STATE_FOLLOW_WAYPOINTS, std::make_unique<GiantBirdFollowWaypointPathState>(*m, false), STATE_GOING_IDLE, STATE_GOING_IDLE);
 	m->defineState(STATE_FOLLOW_WAYPOINTS_TEAM, std::make_unique<GiantBirdFollowWaypointPathState>(*m, true), STATE_GOING_IDLE, STATE_GOING_IDLE);
 	m->defineState(STATE_ATTACK_MOVE, std::make_unique<GiantBirdAttackMoveToState>(*m), STATE_GOING_IDLE, STATE_GOING_IDLE);
+	m->defineState(STATE_FACE_POSITION, std::make_unique<GiantBirdNormalFlightState>(*m, false, true), AI_IDLE, AI_IDLE); // RW 0x7695C2: 0x3FC
+	m->defineState(STATE_FACE_OBJECT, std::make_unique<GiantBirdNormalFlightState>(*m, false, true), AI_IDLE, AI_IDLE);   // RW 0x7695C2: 0x3FF
 	return m;
 }
 
@@ -1885,7 +1882,7 @@ bool GiantBirdAIUpdate::deferWhileAttacking(const RoutedCommand &c)
 	return true;
 }
 
-// AI vslot 0x78 (RW 0x76B491; BFME2 decomp Rva003697F9.cpp, tier B edited): mobile, else nothing; the machine cleared; the goal position the path's last point
+// AI vslot 0x78 (RW 0x76B491; BFME2 decomp GiantBirdAIUpdate_privateFollowPath.cpp, tier B edited): mobile, else nothing; the machine cleared; the goal position the path's last point
 // (RW 0x8DB810 as above); the goal path; the source; the ignored obstacle (RW 0x66831A); state 0x3F6; goal type 1. The production exit flag is not read
 void GiantBirdAIUpdate::privateFollowPath(const std::vector<Coord3D> &path, Object *ignoreObject, CommandSourceType source, bool exitProduction)
 {
@@ -1912,6 +1909,45 @@ void GiantBirdAIUpdate::privateFollowPath(const std::vector<Coord3D> &path, Obje
 	stateMachine().setGoalPath(path);
 	mover().ignoreObstacle(ignoreObject ? ignoreObject->getID() : PATHFIND_INVALID_ID);
 	startCommand(STATE_FOLLOW_PATH, source);
+}
+
+// AI vslots 0x114 / 0x118: RW 0x76B543 passes the target's position (Object + 0x38) and 1, RW 0x76B559 the position and 0. The base aiDoCommand does not route
+// the face commands (0x26 / 0x27), so RW 0x76DACD clears flag 0 first when not attacking (as routeCommand's unrouted path)
+void GiantBirdAIUpdate::privateFaceObject(Object *target, CommandSourceType source)
+{
+	if (!target)
+	{
+		return; // INFERENCE: RW 0x76B543 reads the target's position without a test (every ported caller passes one)
+	}
+	faceTowards(*target->getPosition(), source, true);
+}
+
+void GiantBirdAIUpdate::privateFacePosition(const Coord3D &pos, CommandSourceType source)
+{
+	faceTowards(pos, source, false);
+}
+
+void GiantBirdAIUpdate::faceTowards(const Coord3D &pos, CommandSourceType source, bool objectTarget)
+{
+	if (!m_attacking)
+	{
+		m_flight.flags &= ~1u; // RW 0x76DACD
+	}
+	Object &o = *getObject();
+	if (!GarrisonRules::isMobile(o)) // RW 0x690E97 (IMMOBILE, disabled, stoned), as the base face commands
+	{
+		return;
+	}
+	m_goalAngle = SimMath::addf32(emotionRelAngle(o, pos), o.getOrientation()); // + 0x5F0: RW 0x4B3D8D + Object + 0x44
+	stateMachine().clear();                                                    // machine vslot 0x14
+	if (!stateMachine().isLocked())
+	{
+		stateMachine().setGoalPosition(*o.getPosition()); // RW 0x661EFE -> RW 0x8DB810: the bird's own position, unless the machine is locked
+	}
+	setLastCommandSource(source); // RW 0x6E8498
+	stateMachine().setState(objectTarget ? STATE_FACE_OBJECT : STATE_FACE_POSITION); // machine vslot 0x20
+	m_goalType = 2;                                                                   // + 0x5EC
+	wakeUpNow(); // INFERENCE: RW 0x76AB4E does not wake the AI; the port's commands do (startCommand)
 }
 
 // AI vslot 0x84 (RW 0x76D659; BFME2 decomp GiantBirdAIUpdatePrivateFollowPathAppend.cpp, tier B edited): the loop flag cleared; following a path (0x3F6) with
@@ -2190,10 +2226,19 @@ unsigned GiantBirdAIUpdate::doLocomotor()
 		break;
 	}
 	case 2:
-		// RW 0x5E98D6 for the face states 0x3FC / 0x3FF, which are not ported (S-4040): never set here
-		world().noteStop(birdStop());
-		aiIdle(lastCommandSource());
-		return 1;
+	{
+		// RW 0x76D2E2 .. 0x76D34A: the face states 0x3FC / 0x3FF turn toward + 0x5F0 (Locomotor RW 0x5E98D6); within 0.1 (RW 0xBD83D4, both angles through
+		// RW 0x644FD0) the AI idles with its last command's source (AI vslot 0x23C, RW 0x5E821A) and the AIRBORNE_TARGET update is skipped
+		loco->locomotorMoveTowardsAngle(*m_host, m_goalAngle);
+		const float facing = normalizeAngle(o.getOrientation());
+		const float goal = normalizeAngle(m_goalAngle);
+		if (SimMath::absD((double)SimMath::subf32(facing, goal)) < (double)0.1f)
+		{
+			aiIdle(lastCommandSource());
+			return 1;
+		}
+		break;
+	}
 	case 3:
 		separationNudge();
 		loco->giantBirdHover(*m_host);
@@ -2534,9 +2579,15 @@ void GiantBirdAIUpdate::crc(StateHasher &h) const
 
 std::vector<std::string> GiantBirdAIUpdate::stopLines()
 {
-	return { "S-4040: GiantBirdAIUpdate (lanes FLY-1, STEALTHFLY1) is ported without the states 0x3FC .. 0x3FF and their commands 0x23 / 0x41 (no ported caller), "
+	return { "S-4040: GiantBirdAIUpdate (lanes FLY-1, STEALTHFLY1) is ported without the states 0x3FD / 0x3FE and their commands 0x23 / 0x41 (no ported caller), "
 		     "vtable slot 0x68 (RW 0x76D778), the guard machine and command, the MACHINE victim's CreateObjectDie carry, the collision push of onCollide, a "
 		     "deferred command other than the routed ones and the follow paths, the weapon's PreferredTargetBone aim (the "
 		     "contact point is used) and Object::adjustVictim's member choice (the nearest living member, INFERENCE); the attack-move's mood re-check clock (RW 0x662E01) "
 		     "is the MoodAttackCheckRate interval (INFERENCE)" };
+}
+
+// lane MODCOMPAT-MOD1: AI vslot 0x164 (RW 0x76D3B1), run when a temporary state machine ends (RW 0x66311F): not ported (S-4040)
+void GiantBirdAIUpdate::onTemporaryStateMachineEnded()
+{
+	world().noteStop("[S-4040] GiantBirdAIUpdate: vslot 0x164 (RW 0x76D3B1), run when the AI's temporary state machine ends (RW 0x6630D7), is not ported");
 }

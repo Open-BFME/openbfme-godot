@@ -15,7 +15,7 @@ What a tester gets, and how to make it. Lane RELEASE-1.
   then checks every md5. The choice is kept in `install-paths.cfg` in the user data
   folder; delete it to choose again. The environment variables still win (developers,
   tests).
-- **Version.** `git describe --tags --match "v[0-9]*"` (the legacy `v0.2.0-playtest.*`
+- **Version.** `git describe --tags --match "v[0-9]*" --exclude "*-playtest.*" --always --dirty --abbrev=10` (the legacy `v0.2.0-playtest.*`
   tags are ignored) plus the build day, regenerated on every build
   (`engine/cmake/BuildVersion.cmake`). It is the first line of every log and stands in
   the top right corner of the menus.
@@ -26,12 +26,17 @@ What a tester gets, and how to make it. Lane RELEASE-1.
   at any character that cannot continue a name, so `home=<home>;` is caught; the user
   name goes wherever it is a whole token, whatever its length: conservative, a one-letter
   name also replaces that word). The console (stdout / stderr, where the crash handler
-  also dumps) goes through the same filter on Linux (`Common/ConsoleFilter.h`), strictly
+  also dumps) goes through the same filter on Linux and macOS (`Common/ConsoleFilter.h`), strictly
   line-buffered: nothing reaches the console before its line is complete and scrubbed;
   a partial line is written, scrubbed, only at exit or on a crash (a name that never
   completed becomes `…`), and a line over 8 MiB is written in parts cut where no name can
   be split (`LogPrivacy::safeCut`). Godot's own file log is
-  off. Windows has no console filter: the testers' README asks for the log file, not a
+  off. macOS can report `POLLNVAL` for a valid `/dev/null` console sink, as used by the
+  launcher. The filter writes directly to a verified null-device or regular-file sink
+  in that case; an invalid or unsupported sink is not retried indefinitely. This avoids
+  filling the filter's input pipe and freezing gameplay while printing diagnostics.
+  Redaction still precedes every write, and pipe/socket shutdown deadlines are unchanged.
+  Windows has no console filter: the testers' README asks for the log file, not a
   copy of the console. The log folder is one click away (lane WINCRASH-1): a "Logs" link
   under the version in the menus, an "Open log folder" button in the crash and error
   messages (the file manager opens with that log selected), and `--open-logs` on the
@@ -40,9 +45,10 @@ What a tester gets, and how to make it. Lane RELEASE-1.
   and Program Files is not writable.
 - **Crashes and fatal errors.** Packages use Godot's debug export template: the release
   template writes no native backtrace on a crash, the debug one does, into the session
-  log. Godot's Windows handler symbolizes its own executable only (an extension frame is
-  "openbfme.windows.template_debug.x86_64.dll+<offset>") and covers the main thread only (a
-  crash on another thread writes no dump): stop S-1923, named in every Windows log. The debug
+  log. Windows additionally installs OpenBFME's local minidump handler, including worker-thread
+  faults and termination (`Common/System/WindowsCrashDump.cpp`): dumps go under
+  `user://logs/minidumps`. Extension frames still need the build's private symbols for mapping
+  (stop S-1923, named in every Windows log). Dumps stay local: they are never uploaded. The debug
   template titles the window "OpenBFME (DEBUG)"; the `Release` autoload sets it back to the
   project's name, "OpenBFME", once the engine has started (lane UI-4). Every
   Windows build writes the DLL's PDB (CodeView line tables, build paths remapped, the home
@@ -60,12 +66,14 @@ What a tester gets, and how to make it. Lane RELEASE-1.
   than none. A run that ends without quitting leaves a marker; the next start names
   that run's log in a message box with "Open log folder" and OK. An error the game cannot
   continue from shows a message box with the error, the version and the log file (and
-  "Open log folder"), then quits when it is closed. `--crash-test` (debug builds) crashes
-  on purpose two seconds after the start, in native code, for the release checks.
-- **Network.** Only the LAN transport (`GameNetwork/Transport.cpp`, UDP) opens sockets;
+  "Open log folder"), then quits when it is closed. `--crash-test` and `--crash-test-worker`
+  (debug builds) deliberately crash native code on the main or a worker thread after the menus start, for the release checks.
+- **Network.** The native transport (`GameNetwork/Transport.cpp`, UDP) carries LAN and online relay traffic.
+  The game's online lobby transport and online-count script also make HTTP requests to the configured lobby;
+  `online_http.gd` additionally transports platform-service requests. Direct game starts can launch the verified adjacent updater.
   `tools/release/net_guard.py` (run by `tools/release/test_release_tools.py`) lexes every
-  engine source and shipped script, comments and strings aware, and fails on any other
-  reference to a socket / resolver / HTTP API, string naming one, or network header.
+  engine source and shipped script, comments and strings aware, and checks network APIs against
+  its per-file allowlists and request rules. It is not a claim that the game makes LAN-only connections.
 
 ## Threat model
 
@@ -127,6 +135,13 @@ Not reproduced by `package.sh`, recorded instead:
   differently, so a verification runs with the same tools.
 
 ## Making a package
+
+Run these commands from the repository root on Linux, with Bash, Python 3.11 or newer, CMake/Ninja, Git,
+Godot 4.7.2 and its matching export templates; first build the native library for the tagged commit.
+Windows exports here use the same-commit cross-built DLL, not a native Windows shell. Export tests
+also need `ROTWK_INSTALL` and `BFME2_INSTALL` pointing at validated installations and the Godot editor
+on PATH (or `GODOT`). Release signing/publishing prerequisites are described below; those steps are operator-only.
+The release privacy scanner imports Python's possessive-repeat regex constants; Python 3.10 cannot run it.
 
 1. Tag the commit (owner): `git tag v0.3.0-preview.1` (any `v<digits>...` tag).
 2. Build at that commit with a clean tree (`cmake --build <dir>`). The library carries one
@@ -248,7 +263,7 @@ The repository is a build-time setting (`package.sh --repo`, default `Open-BFME/
    stable as *Alpha* (the plain releases, "Alpha 0.4.5"; `--channel=alpha` is stable) and the pre-release channel as *Preview*
    (RELNAME-1 had shown it as *Alpha*). NIGHTLY-1 (owner, 2026-10-21): the two channels are shown as *Stable* and *Nightly*
    (`--channel=nightly` is the pre-release channel), the plain releases keep their "Alpha 0.4.12" name (the game is in alpha), and
-   the nightly builds `v<x>.<y>.<z>-nightly.<YYYYMMDD>` (*Nightly builds* below) are on the pre-release channel. The ids never
+   the nightly builds `v<x>.<y>.<z>-nightly.<n>` (*Nightly builds* below) are on the pre-release channel. The ids never
    changed, so a player's remembered pick and every launcher's default keep working: both channels offer the plain releases. The two newest installed versions are kept, plus the user's pick.
    *Freeze warning:* when the newest manifest the launcher can get is signed with a date more than 60
    days ago, it shows a plain warning (an old list may be being served). It is not a block: a quiet
@@ -303,20 +318,38 @@ The repository is a build-time setting (`package.sh --repo`, default `Open-BFME/
    Limit: a helper killed while it waits for a new launcher that crashes at every start leaves that
    launcher in place. Restore `<exe>.old` by hand (the README says so).
 7. **Network and privacy** (`launcher/scripts/net/`).
-   - Only HTTPS to `api.github.com`, `github.com` and `<label>.githubusercontent.com`, with Godot's CA
+   - Release downloads use HTTPS to `api.github.com`, `github.com` and `<label>.githubusercontent.com`, with Godot's CA
      list and host name check (`TLSOptions.client()`).
    - Every redirect is checked again (at most 5). These are refused: user info, explicit ports, IP
      literals and fragments.
-   - The only header about the client is the User-Agent `OpenBFME-Launcher/<version>`. There is no
-     telemetry, no account and no cookie.
-   - `tools/release/net_guard.py` allows `HTTPClient` only in `http_fetch.gd`, and `OS.create_process`
-     only for the game and the self-update. `test_launcher_tools.py` checks that the policy runs before
-     every connection.
+   - Release downloads use User-Agent `OpenBFME-Launcher/<version>` and no account or cookie. Optional Multiplayer sign-in is separate:
+     the social client sends install/device/client metadata and an in-memory bearer token to the configured lobby;
+     Discord and e-mail linking/restoration use the account flows in `LAUNCHER-SOCIAL.md` and `IDENTITY.md`.
+   - `tools/release/net_guard.py` has per-file allowances for release downloads, social/account requests,
+     the loopback instance lock and OAuth callback, game/self-update processes and macOS update helpers.
+     `test_launcher_tools.py` checks the release-download policy; social/account tests check their separate origin and redirect rules.
    - Lane ONLINECOUNT-1: with "Show how many players are online" on (the default), the lobby's host (`https://play.openbfme.com`,
      or the one `--lobby=` remembered) is allowed for ONE path, `GET /v1/stats` (`NetPolicy.set_lobby`). It answers three counts
      (players online, open games, running games) and nothing else: no sign-in, no token, no cookie, no name. The launcher asks when it opens
-     and every 5 minutes while the Play screen is in view, on a thread of its own. Off (`state.cfg`: `[launcher] show_online_count=false`,
-     or `--online-count=off`) it never contacts the lobby. The game's menus read the same file (`godot/scripts/online_stats.gd`).
+     and every 5 minutes while the Play screen is in view, on a thread of its own. While socially signed in, the launcher uses inbox stats instead.
+     Off (`state.cfg`: `[launcher] show_online_count=false`, or `--online-count=off`) disables anonymous count requests, not explicit social sign-in
+     or play. The game's menus read the same file (`godot/scripts/online_stats.gd`).
+   - Lane CRASHACT-1: crash reports. A packaged launcher or game whose last run did not end normally (or that stopped on a fatal error)
+     queues that run's report (`user://crash-queue`, at most 8 reports / 1 MiB, none older than 30 days, the oldest dropped first, each drop
+     logged) and sends the queue in the background at each start: `POST https://api.openbfme.com/v1/reports`, the crash service's signed,
+     gzip-compressed JSON (`services/crash/README.md`), at most 2 a start, no redirects, 15 s each; a 201 removes a report, a 400 / 413 drops
+     it by name, anything else keeps it for the next start. The report holds the version, the build and simulation profile, the OS / CPU / GPU
+     names, the context (map, mode, factions), the window size and vsync, the crash's backtrace lines and the last 200 lines of that run's log,
+     every string through the session log's privacy filter, then the crash client's (e-mails, URLs, paths, host names, IP addresses, keys,
+     chat), then the service's own rules (a line it would refuse is withheld whole). A random crash install id (`user://crash-install-id`)
+     goes in a header. Minidumps are never sent. Options > Interface "Send crash reports automatically" (`Options.ini` `OpenBFMECrashReports`,
+     default yes; the launcher reads the game's) turns it off: the crash message then offers "Send report" for that one crash.
+     `godot/scripts/crash/crash_client.gd` (byte for byte `launcher/scripts/net/crash_client.gd`) is the one network user; net_guard allows
+     it one `request_raw` to that endpoint or a test's 127.0.0.1 one. Tests: `tools/release/test_crash_upload.py` (a fake service).
+     The service's client key is put in at package time only (`tools/release/crash_key.py`, from `CRASH_CLIENT_KEY`: release.env on the
+     Deck, the Actions secret of the same name for the package step and the macOS call); a package without it sends nothing
+     (`crash.no_client_key`). Both builders of one release must have the same key: `package.sh --verify` compares them byte for byte.
+     `OPENBFME_CRASH_UPLOAD=0` (every CI host's env.sh, test_export.sh) turns sending off entirely.
    - Lane AIO-1 (`docs/AIO.md`): only while the player's opt-in download of
      the game files runs, `bfmeladder.com` and `workshop-files.bfmeladder.com` (HTTPS, no port) are
      allowed as well (`NetPolicy.extra_hosts`). The requests to them are the file lists of the two
@@ -342,8 +375,9 @@ releases"):
 1. Done (96075fb6, the coordinator's key). Once, on the offline machine: run
    `python3 tools/release/sign_manifest.py --generate-key <path outside every repository>`. It prints
    the public key; commit it as `launcher/release_key.pub` (64 hex digits).
-   - The private key never enters the repository, CI or GitHub. `sign_manifest.py` refuses a key
-     inside this repository or any git work tree, or one other users can read.
+   - The (stable) release key never enters the repository, CI or GitHub. `sign_manifest.py` refuses a key
+     inside this repository or any git work tree, or one other users can read. RELGH-2: a separate nightly-only key lives in the
+     GitHub environment `nightly-signing` ("Nightly signing on GitHub Actions" below).
    - The format is OpenSSL's PKCS#8, so `openssl pkeyutl -verify -rawin -pubin` checks signatures
      independently.
 2. `tools/release/package.sh --out <dir> --platforms linux,windows --windows-dll <dll>`. This also
@@ -915,14 +949,32 @@ Owner, 2026-10-21: "build the pulled in PRs every night with patch notes and wha
 the game is still in alpha". Players pick **Stable** (the numbered releases, "Alpha 0.4.12", made by hand with the owner's OK as before)
 or **Nightly** (everything merged, built every night) in the launcher's Settings.
 
-- **When.** The operator's user timer `openbfme-nightly.timer` on the coordinator's machine, 03:00 US Eastern (`America/New_York`, so
-  daylight saving time is followed), runs the private wrapper, which loads the release environment and runs `tools/release/nightly.sh`.
-  That takes the archive branch's head, makes a clean detached checkout of it and runs ITS `autorelease.sh <head> --nightly`. A night
-  with nothing new under the release paths since the last nightly is skipped (`AUTORELEASE SKIP`, exit 0).
-- **Version.** `v<next plain>-nightly.<UTC YYYYMMDD>` (`autorelease.py nightly-version`): after Alpha 0.4.11 the nightlies are
-  v0.4.12-nightly.20261022, .20261023, ..., all below v0.4.12, which replaces them on both channels. One per date; a nightly is never
-  below an existing release tag. Shown as "Nightly 0.4.12 (2026-10-22)". Launchers from before NIGHTLY-1 do not parse the word
-  `nightly` and skip those releases (they stay on the plain releases until they update themselves).
+- **When.** The operator's user timer `openbfme-nightly.timer` on the coordinator's machine runs the private wrapper, which loads the
+  release environment and runs `tools/release/nightly.sh`. NIGHTLY-1 ran it at 03:00 US Eastern; since NIGHTLY-2 (owner, 2026-10-23: "i
+  would like the nightly to run twice a day on actions") it runs at **07:00 and 19:00 UTC**. That takes the archive branch's head, makes
+  a clean detached checkout of it and runs ITS `autorelease.sh <head> --nightly`. A run with nothing new under the release paths since
+  the last nightly (the morning's or the evening's) is skipped (`AUTORELEASE SKIP`, exit 0).
+- **Builders (NIGHTLY-2).** The wrapper sets `OPENBFME_RELEASE_{MAC,LINUX,WINDOWS}_BUILDER=actions` for the nightly only (switch-over step
+  (a) below; the stable releases stay on the build hosts): macOS is built on `macos-15`, Linux and Windows on GitHub and on the build
+  host, whose libraries must match GitHub's. The nightly gate subset and the package tests stay on the build host (they need the game
+  files). The signer is the Deck (`deck`) until the RELGH-2 switch-over ("Nightly signing on GitHub Actions"); then the release workflow
+  signs the nightly with the nightly key and the Deck signs nothing.
+- **Version.** `v<next plain>-nightly.<n>` (`autorelease.py nightly-version`). NIGHTLY-1 made one a UTC date, n = `YYYYMMDD`
+  (v0.4.12-nightly.20261022). Since NIGHTLY-2, n = `<YYMMDD><s>00`, 9 digits (the launcher's limit), s = `1` for the **morning** build
+  (a run started 00:00-11:59 UTC) and `2` for the **evening** one (12:00-23:59 UTC); one nightly per half day, and a nightly is never
+  below an existing release tag. Any 9-digit number is above every 8-digit date, so the order is run order:
+
+  | tag | new launcher (and the GitHub title, "OpenBFME ...") | a launcher shipped before NIGHTLY-2 |
+  | --- | --- | --- |
+  | v0.4.12-nightly.20261022 | Nightly 0.4.12 (2026-10-22) | Nightly 0.4.12 (2026-10-22) |
+  | v0.4.12-nightly.261023100 | Nightly 0.4.12 (2026-10-23, morning) | Nightly 0.4.12 build 261023100 |
+  | v0.4.12-nightly.261023200 | Nightly 0.4.12 (2026-10-23, evening) | Nightly 0.4.12 build 261023200 |
+
+  The final `00` is on purpose: NIGHTLY-1's `semver.gd` reads the last two digits of a nightly number as the day, and day 00 is no
+  date, so a launcher already installed shows a build number, never a wrong date (checked for every date to 2099 in
+  `launcher/tests/unit_test.gd` and `test_nightly.py`). All nightlies are below the next plain release, which replaces them on both
+  channels. Launchers from before NIGHTLY-1 do not parse the word `nightly` and skip those releases (they stay on the plain releases until
+  they update themselves).
 - **On GitHub.** Each nightly is its own pre-release; after publishing only the newest 7 nightly releases are kept
   (`nightly_notes.py prune`; the tags all stay, GH013). This is required: every launcher reads one page of 30 releases, so piled-up
   nightlies would push the stable releases off it. A nightly also moves the public main (its candidate commit, as a release does) and
@@ -938,17 +990,23 @@ or **Nightly** (everything merged, built every night) in the launcher's Settings
 - **State.** `$OPENBFME_RELEASE_STATE/nightly/` holds the nightly's intent, `last-released` and `releases.log`, so a stable release's
   version, notes baseline and intent are untouched; the lock and the community pull request lists are shared. The first nightly's notes
   start at the last stable release.
-- **Notes** (`tools/release/nightly_notes.py`): the first-parent changes since the last nightly, and for each the community pull requests
-  it carries (a `(cherry picked from commit X)` line whose X GitHub links to a pull request of the repository: its number and author).
+- **Notes** (`tools/release/nightly_notes.py`): the first-parent changes since the last nightly (`nightly/last-released`: the previous
+  run that published, morning or evening, not the previous day), and for each the community pull requests
+  it carries (a `(cherry picked from commit X)` line whose X GitHub links to a pull request of the repository, or a `#n` in the merge's
+  subject: its number and author). Each `Release-note:` line is credited to the pull requests it came from, and only those (RELNOTES-1):
+  end the line with them, `Release-note: Clicking units on the HUD is faster in large battles. (#169)` (`(#12, #13)` for two; the
+  ending is not printed); a line without one is our own work, and a merge's single line takes every pull request it carries. A merge
+  that carries a pull request none of its lines names fails the notes (fail closed). For merges already in the history,
+  `tools/release/nightly_credits.json` lists the pull requests of each line (one list per line, in order; the coordinator keeps it).
   A change with `Release-note:` lines is described by exactly those (`none` hides it), and its `Test:` lines are its test steps. For the
   rest, the operator's model command (`OPENBFME_NIGHTLY_LLM`) writes one plain sentence and 1 to 6 concrete test steps per change, and
   per community pull request. Each text is checked (the patch notes' jargon rule, no markup, mentions, references or links, the length
   limits); a draft that fails is sent back once with the problems, then the run fails. The page: the build, how to get it, the download
-  table, **Thanks to our community** (each pull request: "Thanks to @login (#n): ..."), What's new / Changed / What's fixed (community
+  table, **Thanks to our community** (each credited line: "Thanks to @login (#n): ..."), What's new / Changed / What's fixed (community
   first, credited), **What to test** (numbered, community first), how to report a problem, the known issues. The logins and numbers come
   from GitHub's record; they are the only mentions and references on the page. The whole page passes `audit-text` with the private
   denylist like every published text.
-- **On a failure** the wrapper leaves `logs/nightly-<date>.done` with the exit code and the coordinator's unseen list shows
+- **On a failure** the wrapper leaves `logs/nightly-<date>-<HH>.done` (`HH` the run's UTC hour; `logs/nightly-<date>.done` before NIGHTLY-2) with the exit code and the coordinator's unseen list shows
   `NIGHTLY FAILED`. A dry run (`nightly.sh --dry-run`) builds and checks everything and publishes nothing.
 
 ### The Mac package (MACREL-1)
@@ -958,24 +1016,21 @@ launcher as two ad-hoc signed apps, macOS 13 or later, an unstable preview (owne
 themselves from it: the launcher's macOS mode (mac-release-1, `launcher/scripts/core/macos_update.gd`) reads `manifest-macos.json`, never
 `manifest.json`. The other launchers never read the sidecar.
 
-- **Before anything is pushed** (step 1), `tools/release/build_macos_release.sh --check` asks the Mac build host (`mac`, the owner's M5;
-  `OPENBFME_RELEASE_MAC_HOST`) over ssh whether it has its CI environment, the build tools, Python 3.10+, Godot 4.7.2 and the pinned
-  export templates. If it does not answer (asleep, lid closed, off the network) or lacks something, the run stops at `mac-check`. That
-  is a named failure, and nothing has been pushed or published yet.
+- **The build** (RELGH-2, owner 2026-10-24: "the mac is online but I want it to compile on github actions"): every release, stable
+  and nightly, builds the Mac package on GitHub's hosted Apple Silicon runner `macos-15` (`release-package.yml`, MACACT-1's flow below:
+  `tools/release/package_macos.py`, a fresh arm64 build, the Godot export, ad-hoc signing and the strict audit), free for this public
+  repository. The owner's Mac is in no release's path any more (`build_macos_release.sh` and its readiness check are gone; the Mac
+  stays a test host only). `OPENBFME_RELEASE_MAC_BUILDER` is `actions` (the default) or the run stops; `host` is refused.
   `OPENBFME_RELEASE_SKIP_MAC=1`, set explicitly, releases without the Mac package. The log and the summary say so, and the release
   then carries a signed `manifest-macos.json` that names no Mac package: the Mac launchers see no update instead of guessing. Any other
-  value is refused.
-- **The build** (step 4m) runs after the Windows / Linux one: the tag is pushed to the host's private CI repository and cloned there at
-  the tag; `tools/release/package_macos.py` makes a fresh arm64 build, the Godot export, ad-hoc signing and the strict audit in the
-  host's slot 0; the package folder comes back (the zip, its `.sha256`, its inventory and `README-MAC.txt`). The clone and the tag are
-  removed from the host. Nothing is signed there: the release key never leaves the Deck.
+  value is refused. Nothing is signed on the runner: the package comes back unsigned (but for its ad-hoc code seals).
 - **The Deck checks it** (step 5) with the trusted checkout's `make_macos_manifest.py --verify-package`:
   - exactly the package folder;
   - the strict `macos-arm64` allowlist;
   - its checksum;
   - `VERSION` naming the tag and the public commit;
   - the Mac launcher's `build_info.json` trusting `launcher/release_key.pub` and updating from the target repository. A Mac launcher
-    with another key or repository would refuse every update.
+    with another key or repository would refuse every update. RELGH-2: its `nightly_keys` must be exactly `launcher/nightly_keys.pub`.
 - **The seal** (step 6, MACPLAY-1). The zip joins the package folder before `seal_package.py` runs, so it is sealed like the Windows /
   Linux packages: `payload.json` (every file of the package with its size and SHA-256, platform `macos-arm64`) and its signature under
   the release key are added inside the zip, beside the two apps (their code seals are unchanged). The Mac launcher starts the game
@@ -998,14 +1053,108 @@ themselves from it: the launcher's macOS mode (mac-release-1, `launcher/scripts/
 - **Tests.** `test_autorelease.py` covers:
   - the Mac assets and the separate signature;
   - `manifest.json` unchanged;
-  - an unreachable or unready host, which stops before anything is pushed;
   - `OPENBFME_RELEASE_SKIP_MAC=1` said in the log and the summary;
   - every Mac package fault the Deck refuses;
   - every tampered sidecar `publish_release.sh` refuses;
   - the dry run signing the sidecar with the throwaway key.
 
-  The stand-in build (`OPENBFME_RELEASE_STANDIN/build-mac`) returns a package that passes the strict audit, and
-  `OPENBFME_RELEASE_MAC_SSH` (stand-in mode only) replaces ssh for the readiness check.
+  The GitHub stand-in (`gh_stand_in.py`) builds the Mac package through the same Actions path and returns one that passes the strict
+  audit.
+
+### Release builds on GitHub Actions (MACACT-1)
+
+Since MACACT-1 a release can have its platforms built on GitHub's own runners instead of (macOS) or beside (Linux, Windows) the build
+hosts, so a release no longer needs the owner's MacBook awake on a known address (a nightly shipped without macOS on 10-21/22 for that).
+Each platform has its own switch; **the default is `host` for Linux and Windows** until the owner switches, and since RELGH-2 macOS is
+always `actions`:
+
+| variable | `host` (default) | `actions` |
+| --- | --- | --- |
+| `OPENBFME_RELEASE_MAC_BUILDER` | refused since RELGH-2 (it was the owner's Mac) | the default and the only value: the package is built on `macos-15` (arm64) by `package_macos.py` |
+| `OPENBFME_RELEASE_LINUX_BUILDER` | the build host's GDExtension | GitHub builds it too (`build_linux.sh`, ubuntu-24.04) and the build host's, inside the returned package, must be byte for byte GitHub's |
+| `OPENBFME_RELEASE_WINDOWS_BUILDER` | the build host's GDExtension | the same with `build_windows.sh --no-export` (ubuntu-24.04, the pinned llvm-mingw) |
+
+The Windows DLL is built on `ubuntu-24.04`, not on a `windows-2022` runner: `build_windows.sh` is a Linux-hosted cross build with a pinned
+llvm-mingw (`...-ubuntu-22.04-x86_64`), and only the same toolchain binary gives bytes the release can compare with the build host's; a
+Windows-hosted llvm-mingw is another compiler binary with other paths.
+
+Switch by setting the variable in the operator's release environment (`release.env`), e.g.
+`export OPENBFME_RELEASE_LINUX_BUILDER=actions`; any value but `host` / `actions` stops the run before anything happens (for macOS any
+value but `actions`).
+`OPENBFME_RELEASE_SKIP_MAC=1` stays the one way to ship without macOS (it wins over the Mac builder).
+`OPENBFME_RELEASE_ACTIONS_TIMEOUT` (default 7200 s) bounds one GitHub build.
+
+**The flow** (`autorelease.sh`, `tools/release/actions_build.py`, `.github/workflows/release-package.yml`):
+
+1. `actions-check` (with the other step 1 checks, before anything is pushed): GitHub knows the workflow and it is active. GitHub dispatches
+   only a workflow it has seen: one that was on `main` once, or registered by a push (MACACT-1 registered it once from a probe branch on
+   2026-10-22; the first release after this lane carries it to `main` for good).
+2. `actions-dispatch` (step 4a, after the candidate's tag is made locally and the trusted checkout is checked): the candidate's public
+   commit, whose tree passed the privacy audit (step 2), the `.github` policy and the pre-push guard, is pushed to
+   `refs/heads/staging/<version>` of the public repository (a leftover from a killed run is replaced; both pushes carry a lease, so a
+   concurrent push is never overwritten). Only the commit goes: the tag stays on the Deck until step P. GitHub can only build what it
+   has, so this push is the release's second write to GitHub before the candidate passed (after the GHPR-1 merges); it makes public a
+   commit that will be public anyway, and a dry run pushes it too (and deletes it). Then one `workflow_dispatch` per platform, with the
+   commit, the version and a fresh 32-hex request id, through the REST API with `return_run_details`: GitHub answers with the id of the
+   run this very dispatch created, recorded in `$WORK/actions.json`. Nothing is looked up by name or time.
+3. The runs build while the build host builds (step 4). `actions_build.py collect` then waits for each recorded run (step 4m for macOS,
+   step 5x for Linux / Windows) and accepts it only when: it is the recorded run; event `workflow_dispatch`; the workflow file
+   `release-package.yml`; on `staging/<version>` at the candidate commit (`head_sha`); actor and triggering actor the release account
+   (`gh api user`); attempt 1 (a re-run could upload other files); the title naming platform, version and request; concluded
+   `success`; only the platform's job ran. It must have exactly one artifact, named `<stem>-<request>`, made by that run at that commit,
+   not expired; the downloaded ZIP's SHA-256 and size must be GitHub's recorded digest and size; the ZIP must hold exactly the platform's
+   files, plain names, no folders. A failed, refused or timed-out run (cancelled at the timeout) **fails the release**: no fallback to a
+   host (CLAUDE.md, "no fallbacks").
+4. The Deck then checks the result like a host build. macOS: the exact package set, the strict audit, the checksum, `VERSION` naming the
+   tag and the public commit, the launcher's key and repository (`make_macos_manifest.py --verify-package`). Linux / Windows
+   (`actions-compare`): the library inside the build host's returned package must be byte for byte GitHub's, else the release fails
+   ("a GitHub build can't silently differ from ours"; it also catches a build host that differs from GitHub). The packages, `test_export.sh`
+   and the native Windows start stay on the build hosts: they need the game files, which never go to GitHub.
+5. `actions-unstage`: the staging branch is deleted (lease on the candidate commit: a branch someone moved is left and named, and the
+   release fails). On any failure the cleanup cancels unfinished runs, best effort (a dispatch whose answer was lost is found by the request id it
+   recorded first) and deletes the branch too. The staging push never carries a tag (`--no-follow-tags`, whatever `push.followTags` says).
+6. Only then the seal, the manifests and the signatures, all on the Deck (step 6), the pre-flight (7c) and the push of `main` and the tag
+   (P). Nothing is published, and nothing is signed, before every GitHub build was verified.
+
+**The security model.** What runs on GitHub: the public workflow on the public commit (exactly the tree that is published), on GitHub-hosted
+runners, with `permissions: contents: read`, no secrets, no caches (a fresh build; no cache another workflow could have written), actions
+pinned by commit sha, every download (Godot 4.7.2, its templates, ninja, the Godot Linux SDK, llvm-mingw) checked against a pinned hash, the
+inputs reaching the shell only through the environment and checked first. It produces unsigned build outputs, kept 7 days as run
+artifacts (public, like the code they come from; the Windows PDB, private, is never uploaded). What never leaves the Deck: the release key
+and everything signed with it (`payload.json` signatures, `manifest.json`, `manifest-macos.json` and their `.sig`), the private denylist,
+the release state. The Deck's `gh` token needs `repo` and `workflow` (pushing a commit that carries `.github/workflows`, dispatching,
+reading runs and artifacts); the runners get only their own read-only `GITHUB_TOKEN`. Who can tamper: someone with write access to the
+public repository can dispatch runs or push to `staging/*`; the Deck accepts only its own run at its own commit, so either fails the
+release, never changes what is published. A compromised GitHub runner image could build a different binary: for Linux and Windows the
+byte comparison with the build host catches it; for macOS the Deck's checks cover the package's structure, version, commit, key and
+repository, not the compiled code (as with the Mac build host before). Suggested for the owner: a ruleset that limits creating
+`refs/heads/staging/*` to the release account.
+
+**Reproducibility across the two builds** (measured 2026-10-22: probes on one CI host, then the dry run below on the nightly builder's host).
+`build_linux.sh` and `build_windows.sh` set `SOURCE_DATE_EPOCH` to the commit's time (the build date the library records was the build
+day). The libraries record source paths relative to the build folder, so the workflow uses the release builder's layout (the checkout in
+`src/`, the build folders beside it as `src.linux` / `src.win`), and builds the DLL through ccache with `CCACHE_BASEDIR` above both, as
+the build hosts do: ccache's base_dir rewriting is what makes the DLL's `__FILE__` strings `..\..\src\engine\...` (without it the first
+probe differed in 800 bytes of paths and in size). The runner's checkout drops the git-lfs filter: `.gitattributes` marks `*.png` as LFS
+while the public tree holds the four PNGs as plain blobs, and a git-lfs clean filter makes such a checkout read as dirty (`git describe
+--dirty`; the build hosts have no git-lfs; where a system gitconfig has it, the release scripts run with `GIT_CONFIG_NOSYSTEM=1`).
+
+| platform | GitHub Actions vs the build host, same commit | why |
+| --- | --- | --- |
+| Linux `.so` | byte for byte identical (two build hosts) | the same pinned Godot SDK; prefix maps; commit-dated build record |
+| Windows `.dll` | identical but for the 16-byte CodeView GUID (`pdb_tools.py same-build`) | lld derives the GUID from the PDB, which holds the build folder's absolute path (`/home/<user>/...` vs the runner's); the GUID only pairs the DLL with its private PDB for crash symbols |
+| macOS zip | not byte-identical (compared by hand, not a release step): same file set; identical `VERSION`, both `.pck`s, `Info.plist`s, icons, licences, README; the two app executables identical up to their code signature (only `__LINKEDIT` / `LC_CODE_SIGNATURE` sizes and the signature blob differ); the GDExtension dylib and the swap helper differ, and so do the two `CodeResources` | the compilers differ: the Mac build host has Apple clang 21 / macOS SDK 26.4 (Command Line Tools on macOS 26.6), `macos-15` has Xcode 16.4, Apple clang 17 / SDK 15.5; the ad-hoc signatures come from different `codesign` versions (different sizes); `CodeResources` hashes the differing files |
+
+So the comparison is a release step for Linux and Windows (`actions-compare`), and not for macOS: two Mac builds of one commit do not
+match today, and the Mac host would have to be awake to compare, which is what this lane removes.
+
+**The proof** (2026-10-22, lane head `185e35641`, a stable dry run with all three builders on `actions`, on the nightly builder's
+hosts, notes since `afedb8cf9`): staging/v0.4.12 at the candidate `a3455cb23d`, runs
+[macOS 39806291285](https://github.com/Open-BFME/openbfme-godot/actions/runs/39806291285),
+[Linux 39806296840](https://github.com/Open-BFME/openbfme-godot/actions/runs/39806296840),
+[Windows 39806302508](https://github.com/Open-BFME/openbfme-godot/actions/runs/39806302508); the Mac package passed the Deck's checks, the
+Linux library was the build host's byte for byte, the DLL the build host's but for the GUID, the staging branch was deleted, `AUTORELEASE DRY RUN OK`; no tag,
+no release, `main` unchanged.
 
 ### The updater's threat model
 
@@ -1037,15 +1186,336 @@ covered by the listed defence:
   once.
 - **A crash while a game version is replaced.** The old folder is kept until the new one is in place.
   `recover()` finishes or undoes the replacement at the next start.
-- **The private key.** It is offline, never in the repository or CI, and stored with mode 600.
-  - If it is lost: no new releases can be installed by existing launchers. Testers download a new
+- **The keys.** Three since RELGH-3 ("Nightly signing on GitHub Actions" and "Stable signing on GitHub Actions" below have their threat
+  models): the Deck key (`deck-2026`, `launcher/release_key.pub`, the first entry of `launcher/release_keys.pub`), trusted for everything,
+  offline on the Deck and in an encrypted offline backup, never in CI or GitHub, stored with mode 600; the stable Actions key
+  (`stable-2026`, the second entry), trusted for everything, held by the GitHub environment `stable-signing`, which signs only after
+  the owner's approval; and the nightly key (`nightly-2026`, `launcher/nightly_keys.pub`), trusted for nightly releases only, held by the
+  GitHub environment `nightly-signing`.
+  - If the stable key is lost: no new stable releases can be installed by existing launchers. Testers download a new
     launcher by hand.
-  - If it leaks: an attacker with the key and the GitHub account can ship code. The response is a new
+  - If the stable key leaks: an attacker with the key and the GitHub account can ship code. The response is a new
     key, delivered in a launcher update signed with the old key (the self-update path), and the old key
     removed.
-  - There is no revocation list.
+  - If the nightly key leaks: an attacker with it and the GitHub account can ship a nightly, so code to the players on the Nightly
+    channel only; Stable launchers refuse it. Revocation is below.
+  - There is no revocation list: a key is revoked by a stable launcher release that no longer lists it.
 - **Out of scope.** Anyone who can write the launcher's or the user data folder can already replace the
   launcher. Code-signing of the executables (Authenticode) does not exist yet.
+
+### Nightly signing on GitHub Actions (RELGH-2)
+
+Owner, 2026-10-24: "I want signing on github for nightly". The Deck stops being the NIGHTLY signer; stable releases are still signed with
+the release key on the Deck. SIGNKMS-1 had planned an AWS KMS key for both, but the AWS organisation refuses OIDC and KMS (2026-10-22), so
+its KMS path is removed (`kms_sign.py`, the CloudFormation template, `signing_policy.json`, the co-signature). In its place a separate,
+nightly-only Ed25519 key lives in a protected GitHub environment.
+
+**The keys.**
+
+| label | list | where the private half lives | trusted for |
+|---|---|---|---|
+| `deck-2026` | `launcher/release_keys.pub` (first entry; also `launcher/release_key.pub`, which every launcher before SIGNKMS-1 trusts) | the Deck (mode 600) and the encrypted offline backup; never in CI or GitHub | every release, stable and nightly |
+| `nightly-2026` | `launcher/nightly_keys.pub` (0 to 4 keys, none of them in `release_keys.pub`) | the secret `OPENBFME_NIGHTLY_SIGNING_KEY` of the GitHub environment `nightly-signing`, and the same encrypted offline backup (generated on the Deck with `sign_manifest.py --generate-key`, never printed) | nightly releases only |
+
+The packagers compile both lists in: the launcher's `build_info.json` gets `release_keys` and `nightly_keys`, the game's
+`release_trust.gd` gets `RELEASE_KEYS` and `NIGHTLY_KEYS` (`package.sh`, `build_launcher.sh`, `package_macos.py`).
+
+**The scope rule** (one rule in `tools/release/release_keys.py` `verify_scoped` and `launcher/scripts/crypto/release_signature.gd`
+`valid_scoped`, which the game has byte for byte). A signature of a release file (`manifest.json`, `manifest-macos.json`, `payload.json`;
+the launcher's proof `launcher-manifest.json` is a `manifest.json`) is valid when:
+- it verifies under a key of `release_keys.pub` (raw, or SIGNKMS-1's envelope, scheme v2), or
+- it verifies under a key of `nightly_keys.pub` AND the signed file is a JSON object whose `version` is a nightly tag
+  (`v<x.y.z>-nightly.<8 or 9 digits>`) and, for a manifest, whose `channel` is `preview`.
+
+So a nightly-key signature on a stable manifest, a stable launcher proof or a stable package's `payload.json` is refused by the launcher,
+the game, `sign_manifest.py --verify --nightly`, `seal_package.py check --nightly`, `make_macos_manifest.py --check`, `publish_release.sh`
+and `check_draft.py`. A list with no nightly key trusts nothing for nightlies but the stable key. Both lists are code: a change to them
+gets the owner's review and never takes the community pull request fast track.
+
+**Signature slots.** The nightly key signs raw, into `manifest.json.sig` and `manifest-macos.json.sig` (and each package's
+`payload.json.sig`), like the Deck key. Launchers since SIGNKMS-1 still read a `.sig2` slot and the v2 envelope under the stable list;
+nothing makes them any more, and a nightly-key signature is never valid there unless the scope rule holds.
+
+**The flow** (`OPENBFME_RELEASE_SIGNER=actions` with `--nightly`; RELGH-3: a stable run with it is "Stable signing on GitHub Actions" below):
+
+1. Before anything is pushed (step 1), `actions_release.py trust-check`: the candidate's `launcher/nightly_keys.pub` lists a key, and
+   every key of it is trusted by the newest published stable release on GitHub, authenticated by the stable key and published 14 days
+   ago or more (the transition rule below); and GitHub knows `release.yml` and it is active. Then the run builds, tests and checks the candidate on our hosts as always (seal and signatures with a
+   throwaway key, for the pre-flight only), and pushes `main` and the tag (step P). No `OPENBFME_RELEASE_KEY` is needed or read.
+2. Step 8 dispatches `.github/workflows/release.yml` on `main` with the tag, the commit and a fresh request id. `plan` checks the inputs,
+   the ref, the tag (a nightly's, naming the commit) and the commit (on main), and the transition rule again from the runner's own clone.
+   `macos`, `linux-lib`, `windows-lib` (calls of `release-package.yml`) and `package` build from the tag, with no secret and read-only
+   contents.
+3. `sign` runs in the environment `nightly-signing`. Its one keyed step gets the secret as `NIGHTLY_SIGNING_KEY`;
+   `actions_release.py sign` removes it from its own environment at once (no child process inherits it), checks that its public half is in
+   the commit's `nightly_keys.pub` and trusted by the newest published stable release (the transition rule), writes it to a new mode 0700 folder on tmpfs (`/dev/shm`, refused if
+   it is not a tmpfs), seals the packages (`seal_package.py --key`) and signs both manifests (`sign_manifest.py --key`), verifies every
+   signature under the committed lists by the scope rule, and shreds the file in a `finally`. The step after it, `if: always()`, shreds and
+   removes any leftover and fails the job if one remains. The job then creates the draft release with its `GITHUB_TOKEN` (contents: write,
+   this job only) and reads it back; it never publishes.
+4. The Deck waits for the run (`actions_release.py wait`, `OPENBFME_RELEASE_SIGN_TIMEOUT`), downloads and checks the draft
+   (`check_draft.py`: the workflow's own draft naming the request, the nightly key's signatures by the scope rule, no `.sig2`, the
+   manifests, the seals, the Mac sidecar, the assets, the tag's commit on main), compares its archives with the tested candidate
+   (`actions_release.py compare`), and publishes it (`publish_release.sh --resume-id`, with its privacy gate). It adds no signature.
+
+**Hardening of the workflow** (checked by `tools/release/public_workflows.py` on every pull request and every sync):
+- `workflow_dispatch` only, top-level `contents: read` (`plan` and `sign` use the run's read-only token to read the published releases); no `pull_request`, `push`, `workflow_run` or `schedule` trigger, so no fork's code
+  and no pull request's workflow ever runs with the environment. The environment's deployment branch rule is `main`, so even a workflow
+  dispatched on another branch cannot enter it; `plan` refuses any ref but `refs/heads/main` of this repository.
+- Exactly one job in the environment `nightly-signing` (literal, no input), with exactly `{contents: write}` (RELGH-3: and exactly one in
+  `stable-signing`, with `{contents: write, actions: read}`; any other job may ask for `contents: read` / `actions: read` at most);
+  `id-token` is refused everywhere; the secret appears in exactly one line, one step's `env:` (`NIGHTLY_SIGNING_KEY`), never at job level;
+  no other use of the secrets context (`secrets.X`, `secrets[...]`, `toJSON(secrets)` in any expression or `if:`) and no `secrets:` key in
+  any workflow; no job of any workflow but those two names a deployment `environment:`.
+- Every action pinned by its full commit sha; every download checked against a pinned hash; inputs reach scripts only through the
+  environment and are checked first.
+- No reviewers on the environment (the schedule must run unattended); the Deck's own checks before publishing stand in for them.
+
+**Threat model.**
+- *Who can make the nightly key sign:* a run of `release.yml` from `main`, i.e. anyone who can dispatch workflows (write access) and get
+  a nightly tag onto a commit of main. Signing authority equals the authority to put code on main and push `v*` tags (keep the rulesets:
+  only the owner and the release account push main and create `v*` tags). The signed bytes are a fresh build of a commit on main.
+- *What a leaked nightly key gives:* together with the ability to publish a release on the repository, a nightly that the launchers on
+  the Nightly channel install. The Stable channel, stable releases and the Deck key are untouched: a stable launcher never installs a
+  nightly, and the scope rule refuses the nightly key on every stable file. (A nightly carries a launcher, so a malicious nightly can do
+  what any code a Nightly player runs can do; that is the price of the channel.)
+- *Exfiltration on the runner:* only `release.yml`'s sign step sees the secret, and only code from the tag's commit on main runs there.
+  GitHub masks the secret in logs. The key file is on tmpfs only and shredded.
+- *Downgrade through the stable key:* unchanged; the Deck key signs everything, so it stays offline.
+
+**The transition** (the order; launchers already installed know only the stable key):
+1. This lane lands; nightlies keep signing on the Deck (`OPENBFME_RELEASE_SIGNER` unset = `deck`). From the first nightly that carries it,
+   every Deck-signed nightly and stable release ships launchers and games whose `nightly_keys.pub` lists `nightly-2026`, and every
+   launcher, on either channel, updates itself to one of them at its next start (they are signed with the key it already trusts).
+2. The next stable release (signed by the Deck key as always) is the transition release.
+3. The switch (`OPENBFME_RELEASE_SIGNER=actions` for the nightly) is possible only once the transition release has been published for
+   14 days (`TRUST_DAYS` in `actions_release.py`, committed). `trust-check` on the Deck and `plan` / `sign` on the runner read the newest
+   PUBLISHED stable release on GitHub (not a draft, not a pre-release; a tag alone counts for nothing), verify its `manifest.json.sig`
+   under the stable key list, check that its manifest names its tag, the stable channel and the repository, and read
+   `launcher/nightly_keys.pub` at the manifest's commit: it must list the key, and the release must be 14 days old or more. So the order
+   cannot be skipped by mistake, and a stable release that was tagged but never published does not count.
+4. A Nightly launcher that was not started at all in that window (it never updated past the last launcher from before this lane)
+   refuses the first Actions-signed nightly ("the manifest's signature is not valid") and keeps playing its installed version. It does
+   not fall back to the stable release by itself (the launchers from before this lane stop at the newest release of their channel). The
+   way out that such a launcher can authenticate: in its Settings, switch the channel to **Stable** once; it then updates itself to the
+   stable transition release (Deck-signed), and can be switched back to Nightly, which it now accepts. A manual download of the current
+   package works too. The transition release's notes and the first Actions-signed nightly's notes say so.
+
+**Commands for step 3** (prepared, run by the coordinator on the owner's go; `NIGHTLY_KEY_FILE` is the key's path from the private release
+environment; the key is read from its file by `gh` on stdin, never on a command line or in a log):
+
+    gh api -X PUT repos/Open-BFME/openbfme-godot/environments/nightly-signing \
+      -F 'deployment_branch_policy[protected_branches]=false' -F 'deployment_branch_policy[custom_branch_policies]=true'
+    gh api -X POST repos/Open-BFME/openbfme-godot/environments/nightly-signing/deployment-branch-policies -f name=main -f type=branch
+    gh secret set OPENBFME_NIGHTLY_SIGNING_KEY --env nightly-signing --repo Open-BFME/openbfme-godot < "$NIGHTLY_KEY_FILE"
+    gh api repos/Open-BFME/openbfme-godot/environments/nightly-signing --jq '{name, deployment_branch_policy}'
+    gh api repos/Open-BFME/openbfme-godot/environments/nightly-signing/deployment-branch-policies --jq '.branch_policies[] | {name, type}'
+    gh secret list --env nightly-signing --repo Open-BFME/openbfme-godot
+
+Then, in the nightly wrapper's environment: `export OPENBFME_RELEASE_SIGNER=actions`. The Deck keeps its copy of the nightly key only
+as the offline backup (the private release runbook: the key backup); it is not used by the Deck.
+
+**Rotation** (a planned new nightly key):
+1. Generate it on the Deck (`sign_manifest.py --generate-key`), add it to the offline backup, and add its line (`nightly-2027`) to
+   `launcher/nightly_keys.pub` beside the old one (at most 4 keys).
+2. Ship a stable release (Deck-signed): its launchers trust both nightly keys.
+3. `gh secret set OPENBFME_NIGHTLY_SIGNING_KEY ...` with the new key. The sign job refuses a key that the newest stable release does not
+   list, so doing this before step 2 fails closed.
+4. A later stable release drops the old line.
+
+**Revocation** (the nightly key leaked or might have):
+1. At once: `gh secret delete OPENBFME_NIGHTLY_SIGNING_KEY --env nightly-signing --repo Open-BFME/openbfme-godot`, and in the nightly
+   wrapper set `OPENBFME_RELEASE_SIGNER=deck` (nightlies are signed by the Deck key again, valid for every launcher) or pause the nightly
+   timer. Check the releases page for nightlies you did not make and delete them.
+2. Ship a stable release (Deck-signed) whose `launcher/nightly_keys.pub` no longer lists the key (an empty list is valid). Launchers that
+   update to it refuse anything the old key signs; until a launcher has updated, it still trusts the key for nightlies (there is no
+   revocation list), so say so in the release notes.
+3. Rotate (above) before switching the signer back to `actions`.
+
+**The stable key** (`deck-2026`) never enters CI or GitHub. Until RELGH-3's switch a stable release is built (Linux and Windows on the build
+hosts, macOS on `macos-15`), sealed, signed and published by the Deck; after it, stable releases are signed on Actions with a separate key,
+`stable-2026`, after the owner's approval ("Stable signing on GitHub Actions" below). If the Deck key is lost, see "The updater's threat model".
+
+### Stable signing on GitHub Actions (RELGH-3)
+
+Owner, 2026-10-25: stable releases build (macOS, Linux, Windows) and sign entirely on GitHub Actions, and the owner's one **Approve**
+click releases the key; no machine of ours signs or holds the key in the release's path. Nightlies stay fully automatic with the
+nightly key (above). Until the switch below, stable releases are still signed by the Deck key on the Deck.
+
+**The keys** (three since RELGH-3):
+
+| label | list | where the private half lives | trusted for |
+|---|---|---|---|
+| `deck-2026` | `launcher/release_keys.pub`, first entry (also `launcher/release_key.pub`) | the Deck (mode 600) and the encrypted offline backup; **never in CI or GitHub** | every release |
+| `stable-2026` | `launcher/release_keys.pub`, second entry | the secret `OPENBFME_STABLE_SIGNING_KEY` of the GitHub environment `stable-signing`, and the encrypted offline backup (generated on the Deck with `sign_manifest.py --generate-key`, never printed; the Deck's plaintext copy is shredded once the secret is set) | every release (it signs stable releases) |
+| `nightly-2026` | `launcher/nightly_keys.pub` | the environment `nightly-signing` (above) | nightly releases only |
+
+A new key, not the Deck key moved to GitHub: `deck-2026` stays offline as the recovery key. If `stable-2026` leaks, a release signed by
+`deck-2026` (on the Deck, as today) ships launchers whose list no longer has it. `actions_release.py` refuses to sign on Actions with the
+list's first entry, and `check_draft.py` refuses a stable draft that is not signed by `stable-2026`.
+
+**The environment, as code.** `tools/release/stable_environment.json` is the configuration; `tools/release/stable_environment.py` applies and
+checks it:
+- `environment` `stable-signing`, `secret` `OPENBFME_STABLE_SIGNING_KEY`, `key_label` `stable-2026` (its key in `launcher/release_keys.pub`);
+- `reviewers` `["Ancalgonn"]`: the owner, the one required reviewer;
+- `prevent_self_review` true: whoever started the run cannot approve it;
+- `can_admins_bypass` false: no administrator can deploy without the review;
+- `deployment_branches` `["main"]`: a run on any other branch cannot enter it.
+
+The tool refuses a configuration that weakens any of these. `stable_environment.py check` holds GitHub's record of the environment to
+the configuration exactly: the reviewers (users only), both flags, "Selected branches and tags" with the one branch `main`, and no protection
+rule it does not know (a wait timer is allowed). `apply --execute` (an admin's login) creates or updates the environment to it; the secret is
+never set by the tool. A GitHub environment cannot be limited to one workflow file, so the code does it: `public_workflows.py` lets
+only `release.yml`'s `sign-stable` job name `stable-signing`, and `plan` refuses any workflow but
+`Open-BFME/openbfme-godot/.github/workflows/release.yml@refs/heads/main`.
+
+**Who dispatches, who approves (the self-approval loophole).** The release account dispatches; the owner approves. They must be two
+GitHub accounts: anyone holding a token of a required reviewer can approve a run through the API, so a reviewer's token on a release host
+would turn the approval into one more automated step. Today the release hosts' `gh` is logged in as the owner's own account. With
+`prevent_self_review`, GitHub refuses the owner's approval of a run his own token started, so such a release could never be approved.
+So the code refuses to proceed while it would be:
+- `autorelease.sh` (`trust-check --kind stable`, before anything is pushed): this machine's `gh` account must not be a reviewer;
+- `plan` and `sign-stable`: the run's `GITHUB_TRIGGERING_ACTOR` must not be a reviewer;
+- `sign-stable`, before the key step (`stable_environment.py approval`, and again inside `actions_release.py sign`): the run's deployment
+  review is an approval of `stable-signing` by a configured reviewer who is not the triggering actor, with no rejection.
+
+The owner's own token must leave the release hosts (switch-over step 2). The code cannot see a token that sits unused on a host.
+
+**The flow** (`OPENBFME_RELEASE_SIGNER=actions` on a stable run of `autorelease.sh`):
+1. Before anything is pushed, `actions_release.py trust-check --kind stable` checks four things:
+   - `stable_environment.json` of the candidate;
+   - its `stable-2026` key in the candidate's `launcher/release_keys.pub`, not the first entry;
+   - the transition rule: the newest published stable release lists that key in its own `release_keys.pub` and is 14 days old;
+   - the environment and the dispatcher (above).
+   The run then builds, tests and checks the candidate on our hosts as always (the retail files never reach GitHub), with a throwaway key
+   for the pre-flight, and pushes `main` and the tag.
+2. Step 8 dispatches `release.yml` on `main`. `plan` checks the inputs, the ref, the workflow, the tag (a plain `v<x.y.z>`, naming a commit
+   on main), the transition rule, the environment and the triggering actor, and outputs `kind=stable`. The four build jobs run with no
+   secret and read-only contents.
+3. `sign-stable` (`if: kind == 'stable'`, `environment: stable-signing`) is queued for review once the builds succeeded. GitHub notifies
+   the owner ("Review pending deployments"). Nothing of the environment, its secret above all, reaches a runner before he approves.
+   After **Approve and deploy** the job:
+   - runs `plan` and `checkout-is-tag` again, then `stable_environment.py approval`;
+   - hands the secret to its one keyed step as `STABLE_SIGNING_KEY`. `actions_release.py sign` checks that the key is exactly
+     `stable-2026` of the commit (the Deck key by name is refused), the transition rule, the environment and the approval again;
+   - seals and signs on tmpfs as for nightlies (`/dev/shm/openbfme-stable-key-*`, shredded; an `if: always()` step removes any leftover);
+   - verifies every signature under the committed lists, then creates the draft (not a pre-release).
+4. The release host waits (`OPENBFME_RELEASE_SIGN_TIMEOUT`, default 4 h; on a timeout the intent stays open and the next run waits again,
+   so the owner may approve later). Then it checks the draft with `check_draft.py` (signed by `stable-2026`, raw, a full release), compares
+   it byte for byte with the tested candidate, and publishes it with the privacy gate. It adds no signature.
+   If the owner rejects the run, it ends `failure`. The release stops with the tag pushed and the intent open. Delete
+   `$STATE/intent.request` to dispatch again, or sign that version on the Deck (`OPENBFME_RELEASE_SIGNER=deck`).
+
+The two parts that stay on our hosts are the tests with the retail files and the private privacy gate. Neither can run on GitHub, and
+neither needs a key or can sign.
+
+**Threat model.**
+- *Who can make the stable key sign:* a run of `release.yml` from `main` that the owner approved, and only after the builds of the tag's
+  commit succeeded. A stolen release-account token can push a tag (within the rulesets) and dispatch, but cannot approve. A stolen owner
+  token on a release host could approve; that is why step 2 removes it. An administrator cannot bypass the review.
+- *What a leaked `stable-2026` gives:* with the ability to publish on the repository, a release every launcher installs (like the Deck key
+  today). The response is a Deck-signed stable release without it (revocation below). The Deck key stays offline, so recovery never
+  depends on GitHub.
+- *Exfiltration on the runner:* only the keyed step of `sign-stable` sees the secret, and only code of the tag's commit on main runs there.
+  The key exists only as a tmpfs file during that step. `public_workflows.py` gates every change to the workflows on every pull request and
+  sync: the stable secret in one line, in one step of one job, never in the nightly job or any other.
+- *What the approval shows the owner:* the run's page names the tag and the request, and links the commit. Approve only a run you
+  expected: one the release host started for the version it announced.
+
+**The switch-over, in order** (the owner's steps; nothing switches until the owner says so):
+1. **The trust update (the transition).** Merge this lane. The next nightly and the next stable release, signed as today, ship launchers
+   and games whose `release_keys.pub` lists `stable-2026`. Every launcher updates itself to one at its next start, because they are signed
+   with a key it already trusts. The stable one is the transition release.
+2. **The release account** (a second GitHub account; the owner's clicks):
+   1. In a private browser window, github.com, Sign up: a new account (for example `openbfme-release`) with an e-mail address you control;
+      then Settings, Password and authentication, Enable two-factor authentication.
+   2. As Ancalgonn: github.com/orgs/Open-BFME/people, Invite member: the new account. In the repository: Settings, Collaborators and
+      teams, Add people, the new account, role **Write**. Give it the push rights the release automation needs. In Settings, Rules,
+      Rulesets, open each ruleset whose bypass list the automation uses today (`main` and the `v*` tags) and add the new account's team
+      to the bypass list (a team that holds only that account).
+   3. As the new account: Settings, Developer settings, Personal access tokens, Fine-grained tokens, Generate new token:
+      - resource owner Open-BFME, only the repository openbfme-godot;
+      - repository permissions Contents read and write, Actions read and write, Workflows read and write, Pull requests read and write
+        (Metadata read is added by itself);
+      - expiry one year.
+      If the organisation asks for it, approve the token as Ancalgonn: organisation Settings, Personal access tokens, Pending requests.
+   4. The coordinator, on your go: steps 3 and 4 first (they need an admin login). Then on each release host:
+      `gh auth login --with-token < <the token file>` for the new account and `gh auth logout -u Ancalgonn`, and remove any stored
+      credential of the owner's account. Then `gh api user --jq .login` must print the new account.
+3. **The environment** (the owner's clicks; or `python3 tools/release/stable_environment.py apply --execute` with an admin login):
+   repository Settings, Environments, New environment, name `stable-signing`, Configure environment:
+   - tick **Required reviewers** and add **Ancalgonn**; tick **Prevent self-review**;
+   - leave Wait timer off;
+   - untick **Allow administrators to bypass configured protection rules**;
+   - Deployment branches and tags: **Selected branches and tags**, then Add deployment branch or tag rule: Ref type **Branch**, Name
+     pattern `main`, Add rule;
+   - **Save protection rules**.
+4. **The secret** (on your go, from the Deck, where the key file is; `STABLE_KEY_FILE` is its path from the private release environment; it
+   is read by `gh` on stdin, never shown):
+
+       gh secret set OPENBFME_STABLE_SIGNING_KEY --env stable-signing --repo Open-BFME/openbfme-godot < "$STABLE_KEY_FILE"
+       gh secret list --env stable-signing --repo Open-BFME/openbfme-godot
+       shred -u "$STABLE_KEY_FILE"      # the encrypted offline backup stays (the private key backup runbook)
+
+   Do not paste the key in a browser: it would sit in that machine's clipboard. Steps 3 and 4 must come before step 2.4 (only an admin
+   sets environment secrets).
+5. **Check:** `python3 tools/release/stable_environment.py check --dispatcher-is-gh-user` on the release host prints `ENVIRONMENT ok`.
+6. **The switch** (possible only 14 days after the transition release was published: `trust-check` and `plan` refuse before then):
+   `export OPENBFME_RELEASE_SIGNER=actions` for the stable runs. On the first one the owner gets the review request: open the run (the
+   e-mail, the Actions tab or the GitHub app on the phone), **Review deployments**, tick `stable-signing`, **Approve and deploy**. If it
+   fails, unset the variable (the Deck signs again) and look at the run.
+7. Optional: delete the unused environments `stable`, `release-signing` and `production-release` (left from earlier plans; no workflow
+   names them, and `public_workflows.py` refuses any that would).
+
+A Stable launcher that was not started at all between the transition release and the first Actions-signed release refuses the latter and
+keeps its version. A manual download of the current package (or any later Deck-signed release) brings it back, as for the nightly key.
+
+**Rotation** (a planned new stable Actions key, for example `stable-2027`):
+1. Generate it on the Deck, back it up, and add its line to `launcher/release_keys.pub`.
+2. Ship a stable release; its launchers trust both.
+3. 14 days after it was published, change `key_label` in `stable_environment.json` (a reviewed change) and set the secret to the new key.
+   `sign` refuses a key that is not the commit's `key_label`, and the transition rule refuses one the published release does not list.
+4. A later release drops the old line.
+
+**Revocation** (`stable-2026` leaked or might have):
+1. At once: `gh secret delete OPENBFME_STABLE_SIGNING_KEY --env stable-signing --repo Open-BFME/openbfme-godot`, and set
+   `OPENBFME_RELEASE_SIGNER=deck` for stable runs. Check the releases page for releases you did not make, and delete them.
+2. Sign a stable release with `deck-2026` on the Deck whose `launcher/release_keys.pub` no longer lists `stable-2026`. Launchers that update
+   to it refuse anything the old key signs. Until a launcher has updated, it still trusts the key (there is no revocation list), so say so
+   in the release notes.
+3. Rotate (above) before switching back to `actions`.
+
+### Moving releases to GitHub Actions (RELSIGN-1, RELGH-2)
+
+- **Builds.** `.github/workflows/release-package.yml` holds the three build jobs (macOS package, Linux library, Windows library) with the
+  build host's folder layout, ccache's path rewriting and the commit-dated build record, so the Linux library is the build host's byte
+  for byte and the Windows DLL the build host's but for its CodeView GUID (MACACT-1's table). It runs two ways:
+  - **dispatched by the Deck** on `staging/<version>` at the candidate commit, one platform per run: always for macOS (RELGH-2), and for
+    Linux / Windows with `OPENBFME_RELEASE_*_BUILDER=actions`; the Deck collects and compares the artifacts;
+  - **called by `.github/workflows/release.yml`** (`workflow_call`, a nightly with `OPENBFME_RELEASE_SIGNER=actions`): its jobs `macos`,
+    `linux-lib` and `windows-lib` call that file (the definition on `main`), each checks out and builds the tag's commit; then `package`
+    and `sign` as above.
+  Each build job's first step tells the two apart by `GITHUB_WORKFLOW_REF`: a dispatch must run release-package.yml from
+  `staging/<version>` with the ref's head at the commit; a call must come from `release.yml` on `refs/heads/main`. Anything else fails.
+- **The policy** (`public_workflows.py`) allows `workflow_call` in `release-package.yml` alone (beside `workflow_dispatch`, declaring
+  inputs only), a job that calls a workflow in `release.yml` alone (exactly `./.github/workflows/release-package.yml`, no `permissions`
+  or `secrets` of its own), and refuses a `secrets:` key everywhere. The build jobs have no secret and no write access on either path.
+- **The comparison on the signer's path.** `actions_release.py compare` holds the draft's archives to the tested candidate: byte for byte
+  without the seal, except the game's Windows ZIP, which may differ in its DLL's CodeView GUID and nothing else. The Mac package is
+  compared byte for byte too; both Mac builds come from the same runner image (if two `macos-15` builds of one commit still differ, the
+  release fails closed and `OPENBFME_RELEASE_ACTIONS_COMPARE=report` is the owner's call).
+
+**The switch-over, in order** (each step is the owner's call):
+
+1. **(a) Builds on Actions.** macOS: done by this lane for every release (no setting). Linux / Windows for the nightly (NIGHTLY-2 sets
+   them in the nightly wrapper): `export OPENBFME_RELEASE_LINUX_BUILDER=actions OPENBFME_RELEASE_WINDOWS_BUILDER=actions`. The packages
+   and their tests stay on the build host (game files).
+2. **(b) The transition release:** the next stable release carries `launcher/nightly_keys.pub` (above, "The transition" step 2).
+3. **(c) The nightly signer on Actions:** the environment, its secret and `OPENBFME_RELEASE_SIGNER=actions` for the nightly (step 3 above).
+   The first such nightly is the proof; if it fails, unset the variable (the Deck signs again) and look at the run.
+4. **(d) The stable signer on Actions (RELGH-3):** the release account, the environment `stable-signing`, its secret and
+   `OPENBFME_RELEASE_SIGNER=actions` for stable runs ("Stable signing on GitHub Actions", the switch-over). Each stable release then waits
+   for the owner's Approve on its run.
 
 ## Community pull requests (GHPR-1)
 
@@ -1113,7 +1583,7 @@ runners only, with `permissions: contents: read`, pinned action shas, no secrets
 | `gate` | ubuntu-24.04 | the commit gate on the pull request's changes, `pr_audit.py` (built-in privacy rules + the `.github` policy; no private denylist), `pr_pytest.py` |
 | `linux` | ubuntu-24.04 | engine core + `openbfme_tests` build (ccache), the unit tests that need no game files |
 | `windows` | ubuntu-24.04 | `tools/release/build_windows.sh --no-export`: the release's llvm-mingw cross build (tests, peer, GDExtension, PDB scrub, DLL audit), compile only |
-| `macos` | macos-15 | the GDExtension with the Mac package's configuration (arm64, macOS 13), compile only |
+| `macos` | macos-15 | the GDExtension and unit test executable (arm64, macOS 13), then the console filter tests including the real `/dev/null` regression |
 | `CI` | ubuntu-24.04 | needs all of the above, runs even when one failed, and passes only when every one succeeded |
 
 Measured on `ci/publicci1` (2026-10-19, the tree of the next sync): with warm compiler caches the whole check took 7.5 minutes
@@ -1160,8 +1630,12 @@ annotated tag's text; more than 10 new commits (a branch of the private history)
 private dev repository, the backup) pass untouched. Install it once in the operator's checkout, after the archive branch holds the file
 (a checkout without it refuses every public push, which is the safe failure):
 
-    printf '#!/bin/sh\n# public push guard (docs/RELEASE.md): never bypass\nexec python3 "$(git rev-parse --show-toplevel)/tools/release/public_push_guard.py" "$@"\n' > .git/hooks/pre-push
-    chmod +x .git/hooks/pre-push
+From the repository root in a POSIX shell (Linux/macOS), with Git and Python 3.11+ available as `python3` and the existing hook preserved if it has other duties:
+
+```sh
+printf '#!/bin/sh\n# public push guard (docs/RELEASE.md): never bypass\nexec python3 "$(git rev-parse --show-toplevel)/tools/release/public_push_guard.py" "$@"\n' > .git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+```
 
 Never push with `--no-verify`. The tests (`tools/release/test_public_push_guard.py`) push through the real hook into local bare
 repositories: a push elsewhere, no / a broken denylist, a clean commit, a deletion, each privacy hit (file, path, message, author,
@@ -1183,7 +1657,7 @@ package goes to testers, check on a real Windows 10 / 11 machine (and note the r
 1. **Registry, WOW64 view.** With RotWK and BFME2 installed by the EA installers or the
    All-in-One launcher, the first-run screen offers both folders, sourced from
    `HKLM\SOFTWARE\WOW6432Node\Electronic Arts\Electronic Arts\...\InstallPath` and
-   `...\App Paths\lotrbfme2.exe` `Path` (`RegGetValueW` with `RRF_SUBKEY_WOW6432KEY` from
+   `...\App Paths\lotrbfme2.exe` `Path` (`RegOpenKeyExW` with `KEY_WOW64_32KEY`, then `RegQueryValueExW`, from
    the 64-bit game). Also an install recorded only under HKCU.
 2. **Unicode paths.** Install folders, the user profile and the user name with non-ASCII
    characters (e.g. `C:\Spiele\Mittelerde`, a user `Zoë`): discovery, Browse, the check,
