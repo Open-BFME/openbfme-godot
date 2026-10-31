@@ -1490,26 +1490,47 @@ void AIWorld::processCollisions()
 			}
 		});
 	}
-	const auto factsOf = [&](int i) -> std::uint8_t { return m_collisionFactState[(size_t)i]; };
+	// performance (the same decisions): the facts are the pass start's, so the pairs the Uber filter skips are found on the job pool; the serial loop below
+	// meets the others in their order (all of them without the filter). The allied-pair test (it only reads, for a diagnostic stop) is taken there too,
+	// with the teams of the pass start
+	jobs.parallelFor(chunkCount, 1, [this, &units, filter](size_t, size_t begin, size_t end) {
+		for (size_t chunk = begin; chunk < end; ++chunk)
+		{
+			CollisionChunk &c = m_collisionChunks[chunk];
+			c.live.clear();
+			c.allied = false;
+			for (const std::pair<int, int> &pair : c.pairs)
+			{
+				const CollisionUnit &a = units[(size_t)pair.first], &b = units[(size_t)pair.second];
+				c.allied = c.allied || a.ai->adapter().getRelationship(b.ai->adapter()) != PATHFIND_ENEMIES;
+				if (filter)
+				{
+					const bool aContained = m_collisionFactState[(size_t)pair.first] == 2, bContained = m_collisionFactState[(size_t)pair.second] == 2;
+					const ObjectCollide::PairFacts &fa = m_collisionFacts[(size_t)pair.first], &fb = m_collisionFacts[(size_t)pair.second];
+					const bool moverInert = (aContained || fb.container != nullptr) && (bContained || fa.container != nullptr);
+					if (moverInert && ObjectCollide::pairIsInert(fa, fb))
+					{
+						continue;
+					}
+				}
+				if (filter)
+				{
+					c.live.push_back(pair);
+				}
+			}
+		}
+	});
 	bool alliedPair = false;
 	for (size_t chunk = 0; chunk < chunkCount; ++chunk)
 	{
-		for (const std::pair<int, int> &pair : m_collisionChunks[chunk].pairs)
+		const CollisionChunk &c = m_collisionChunks[chunk];
+		m_collisionPairs += c.pairs.size();
+		const std::vector<std::pair<int, int>> &live = filter ? c.live : c.pairs;
+		m_collisionPairsSkipped += c.pairs.size() - live.size();
+		alliedPair = alliedPair || c.allied;
+		for (const std::pair<int, int> &pair : live)
 		{
 			const CollisionUnit &a = units[(size_t)pair.first], &b = units[(size_t)pair.second];
-			++m_collisionPairs;
-			alliedPair = alliedPair || a.ai->adapter().getRelationship(b.ai->adapter()) != PATHFIND_ENEMIES;
-			if (filter)
-			{
-				const bool aContained = factsOf(pair.first) == 2, bContained = factsOf(pair.second) == 2;
-				const ObjectCollide::PairFacts &fa = m_collisionFacts[(size_t)pair.first], &fb = m_collisionFacts[(size_t)pair.second];
-				const bool moverInert = (aContained || fb.container != nullptr) && (bContained || fa.container != nullptr);
-				if (moverInert && ObjectCollide::pairIsInert(fa, fb))
-				{
-					++m_collisionPairsSkipped;
-					continue;
-				}
-			}
 			a.ai->onCollide(b.ai->adapter());
 			b.ai->onCollide(a.ai->adapter());
 			// lane HORDE-2: the collide modules of both objects (ZH Object::onCollide: SquishCollide, HordeMemberCollide, ...), the lower id first (inference, S-581)

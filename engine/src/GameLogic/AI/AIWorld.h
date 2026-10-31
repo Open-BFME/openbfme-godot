@@ -325,6 +325,8 @@ private:
 	{
 		std::vector<int> candidates;
 		std::vector<std::pair<int, int>> pairs; ///< (lower unit index, higher unit index), in the order the serial pass met them
+		std::vector<std::pair<int, int>> live;  ///< with the Uber filter: the pairs it does not skip, in the same order (found on the job pool)
+		bool allied = false;                    ///< a pair of units that are not enemies (the allied stack stop)
 	};
 	std::vector<CollisionChunk> m_collisionChunks;
 	// lane UBER-2B: the Uber pass's per-unit collide facts (ObjectCollide::PairFacts), taken at a unit's first pair
