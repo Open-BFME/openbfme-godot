@@ -1385,9 +1385,29 @@ private:
 		mutable ReachMemo reach; // lane PATHPERF-2
 		const PathfindObject *o = nullptr;
 		PathfindRelationship rel = PATHFIND_ENEMIES; // obj's relationship to o
-		bool parked = false, hasAI = false, hasLocomotor = false, infantry = false, largeRect = false, throughEachOther = false;
-		int aiPriority = 0;
+		bool hasAI = false, hasLocomotor = false, infantry = false, largeRect = false, throughEachOther = false;
 		const PathfindObject *container = nullptr;
+		// performance (the same answers): the two costly facts are asked when a test first reads them (most occupants are decided before)
+		bool parked() const
+		{
+			if (parkedState < 0)
+			{
+				parkedState = o->isParked() ? 1 : 0;
+			}
+			return parkedState != 0;
+		}
+		int aiPriority() const
+		{
+			if (!priorityKnown)
+			{
+				priorityValue = o->aiPriority();
+				priorityKnown = true;
+			}
+			return priorityValue;
+		}
+		mutable std::int8_t parkedState = -1;
+		mutable bool priorityKnown = false;
+		mutable int priorityValue = 0;
 	};
 	struct SearcherFacts
 	{

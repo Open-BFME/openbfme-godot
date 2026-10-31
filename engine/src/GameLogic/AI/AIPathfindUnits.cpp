@@ -315,13 +315,13 @@ const Pathfinder::OccupantFacts *Pathfinder::occupantFacts(const PathfindObject 
 	}
 	const PathfindObject &o = *f->o;
 	f->rel = obj->getRelationship(o);
-	f->parked = o.isParked();
+	f->parkedState = -1;
+	f->priorityKnown = false;
 	f->hasAI = o.hasAI();
 	f->hasLocomotor = o.hasLocomotor();
 	f->infantry = o.isKindOf(PK_INFANTRY);
 	f->largeRect = o.isKindOf(PK_LARGE_RECTANGLE_PATHFIND);
 	f->throughEachOther = o.pathsThroughEachOther();
-	f->aiPriority = o.aiPriority();
 	f->container = o.getContainer();
 	return f;
 }
@@ -439,7 +439,7 @@ bool Pathfinder::checkForMovement(const PathfindObject *obj, PathfindCheckMoveme
 				{
 					info.allyPresent = true;
 				}
-				const bool check = (info.transient && ally) || f->parked || (!ally && (info.flags & 0x10));
+				const bool check = (info.transient && ally) || (!ally && (info.flags & 0x10)) || f->parked();
 				if (!check)
 				{
 					continue;
@@ -593,7 +593,7 @@ Pathfinder::CellMoveFacts Pathfinder::cellMoveFacts(const PathfindObject *obj, c
 		{
 			allyPresent = true;
 		}
-		const bool check = (info.transient && ally) || of->parked || (!ally && (info.flags & 0x10));
+		const bool check = (info.transient && ally) || (!ally && (info.flags & 0x10)) || of->parked();
 		if (!check)
 		{
 			continue;
@@ -787,11 +787,11 @@ void Pathfinder::cellCostFacts(const PathfindObject *obj, const PathfindCell *c,
 		{
 			continue;
 		}
-		if (self.aiPriority > f->aiPriority)
+		if (self.aiPriority > f->aiPriority())
 		{
 			continue;
 		}
-		if (f->parked || !self.hasLocomotor || !f->hasLocomotor)
+		if (!self.hasLocomotor || !f->hasLocomotor || f->parked())
 		{
 			++fixed8;
 			continue;
