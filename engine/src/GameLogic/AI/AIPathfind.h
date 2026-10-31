@@ -1118,6 +1118,20 @@ public:
 	static bool isPortalWaypoint(const PathfindWaypoint &w);
 	// RW 0x6F5547: a chain of portals the unit may take leads from zone `from` to zone `to` (the effective zones, terrain variant, of the portals' cells)
 	bool portalPathExists(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to) const;
+	// performance (the same answers): while a scope lives on this thread, portalPathExists for `obj` remembers each zone pair's answer. Nothing the answer
+	// reads (the portal waypoints, their zones and links, what the unit may cross) changes while one search runs (AI::findClosestEnemy opens one)
+	bool portalPathExistsUncached(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to) const;
+	class PortalMemoScope
+	{
+	public:
+		explicit PortalMemoScope(const PathfindObject *obj);
+		~PortalMemoScope();
+		PortalMemoScope(const PortalMemoScope &) = delete;
+		PortalMemoScope &operator=(const PortalMemoScope &) = delete;
+
+	private:
+		bool m_outer;
+	};
 	// RW 0x6F6286 Pathfinder::CheckChangeLayers: the cell's other layer and the cells its portal links to join the open list at the cell's costs
 	void checkChangeLayers(PathfindCell *cell, const PathfindObject *obj);
 	// RW 0x6F1F0D: the A* estimate from `cell` to `goal` through the corridor's remaining portal hops (+ 1400 each), 10 * max + 4 * min a leg
