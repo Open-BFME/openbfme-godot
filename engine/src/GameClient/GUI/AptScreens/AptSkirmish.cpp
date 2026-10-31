@@ -3346,7 +3346,7 @@ void AptSkirmish::refreshBfme1ProfileDisplay()
 		const bool exists = std::filesystem::exists(PathIO::native(path), status);
 		std::string error;
 		if (status || (exists && !m_bfme1Honors.load(path, &error)))
-			windows().note("skirmish-profile-stats", path + ": " + (status ? status.message() : error));
+			windows().note("skirmish-profile-stats", Bfme1SkirmishProfiles::statsDiagnostic(path, status ? "cannot inspect: " + status.message() : error));
 	}
 	const std::u16string dash = fetchOrMissing(m_env.gameText, "APT:DashDash");
 	auto set = [&](const char *name, const std::u16string &value) { windows().setAptText(name, u16ToUtf8(value)); };
