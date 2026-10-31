@@ -19,7 +19,7 @@
 // - TBuff (constructor RW 0x4D12FA): state 0 (fade in), opacity 0, visible = the drawable's + 0x441, position = the drawable's interpolated
 //   position (RW 0x676711), scale = the drawable's instance scale (+ 0x200); W3DBuffBuffer::addBuff refuses a 1001st TBuff of a type;
 // - TBuff::UpdateFade (RW 0x4D1417, decomp TBuff.cpp), once per drawn frame after the TBuff is filled: state 0 adds 1/12 (0.083333336) up to
-//   1 (then state 1), state 2 subtracts 1/12 down to 0 (then state 3); the fill (RW 0x4D1ACD, decomp W3DBuffBufferFill.cpp) draws the buff model's
+//   1 (then state 1), state 2 subtracts 1/12 down to 0 (then state 3); the fill (RW 0x4D1ACD, decomp W3DBuffBuffer.cpp) draws the buff model's
 //   meshes at the TBuff's position + the mesh's translation, the vertices times the scale, the colour emissive * vertex colour * opacity.
 // INFERENCE (stop S-4642): the expiry test (an active instance turned off when the logic frame reaches its expiry) and the TBuff's position following
 //   the drawable every frame are taken from the fields the code keeps (+ 0x14, the drawable pointer), the updater was not read; a TBuff in state 3 is

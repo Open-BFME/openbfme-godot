@@ -429,7 +429,7 @@ Source: `edition_census.json` `bfme2_only`, subsystem "War of the Ring / LivingW
 | 0x3F7023 | 340 | `LivingWorldBattle::DoXfer` | LivingWorldBattleDoXfer.cpp | battle save/load | not found (the window has RW 0x7F87B2, an AI helper; low confidence) |
 | 0x3F7177 | 93 | `Rva003F7177Callback` ctor | LivingWorldPathFinder.cpp | path-finder callback (player, region) | same window, low confidence |
 | 0x4FA83E | 247 | `LivingWorldBuildingNuggetSpawnArmy::canQueueUnit` | ...CanQueueUnit.cpp | queue limit, producible, logic check, **world CP check** (B2 0x2E1155) | RW 0x8FF50E (319 B; treasury check instead) |
-| 0x4FBF8E | 206 | `RegionAwardDispute::rva004FBF8E` | RegionAwardDisputeRva004FBF8E.cpp | creates the disputed region's beacon | RW 0x900F10 / 0x900F84 |
+| 0x4FBF8E | 206 | `RegionAwardDispute::rva004FBF8E` | RegionAwardDispute.cpp | creates the disputed region's beacon | RW 0x900F10 / 0x900F84 |
 | 0x4FC33E | 158 | `Rva003F1C56Plot::rva004FC33E` | LivingWorldBuildPlot.cpp | build plot constructs a building (id) | RW 0x902B96 (209 B) |
 | 0x4FD0DA | 226 | `Rva004FD1BC` ctor | Rva004FD0DACtor.cpp | `LivingWorldScenario::Scenario` constructor (0xB0 B) | RW 0x901DD5 / 0x901E84 / 0x901FA7 (RotWK's scenario object is bigger: new keys) |
 | 0x4FD1BC | 451 | `~Rva004FD1BC` | LivingWorldScenarioDtor.cpp | its destructor (condition lists) | same window |

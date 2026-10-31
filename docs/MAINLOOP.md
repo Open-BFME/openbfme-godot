@@ -671,7 +671,7 @@ cache.translation = D3DXVec3CatmullRom(V0, V1, V2, V3, f)
 
 ### 6.3 Drawable lifetime and `updateDrawable`
 
-**Create** (`GameLogic/System/GameLogicRva0023FABE.cpp:63-75`), C:
+**Create** (`GameLogic/System/GameLogic.cpp:3755-3775`), C:
 1. `Object::initObject` calls **`GetGameLogicRandomValue(1,999)`**. Drawable
    creation consumes the synchronised logic RNG.
 2. `ThingFactory::newDrawable` creates the drawable. It spins `Sleep(0)` while assets

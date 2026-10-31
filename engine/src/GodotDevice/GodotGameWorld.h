@@ -575,6 +575,9 @@ public:
 	// lane ONLINE-2: an online game: the START JSON the lobby service sent (GameNetwork/OnlineStart.h); {ok, slot, relay | error}; then net_poll / net_begin as
 	// for a LAN game. net_profile_digest: this install's profile identity MD5 (the lobby compares the players')
 	Dictionary net_online(const String &start_json);
+	Dictionary online_war_phase(const String &start_json, int64_t phase); // validate the new relay ticket before parking the current phase
+	Dictionary online_war_map_begin(); // return from a battle only with a validated, fresh map ticket
+	bool net_is_online() const { return m_netStarted && m_netStart.online; }
 	String net_profile_digest() const;
 	Dictionary net_begin(const Dictionary &options);
 	// WOTR2 milestone 8 (step 2b): a LAN War of the Ring (lan_begin's start of a game mode 1): the strategic map's lockstep on the game socket, attached
@@ -830,6 +833,10 @@ private:
 	std::unique_ptr<LANLobbyClient> m_netClient;
 	LobbyStart m_netStart;
 	LobbyStart m_warStart;  ///< WOTR2 milestone 8: the war's START while one of its battles runs (m_netStart is the battle's)
+	LobbyStart m_onlineNextPhase;
+	std::uint64_t m_onlineWarRootId = 0;
+	int m_onlineWarPhase = 0;
+	bool m_onlineNextReady = false;
 	bool m_warBattle = false; ///< a LAN war's battle runs: clear_game_data keeps the socket and the war's START
 	bool m_warLeftBeforeEnd = false; ///< net_finish of a war battle: the local leave came before T_end (clear_game_data's war_left_before_end)
 	bool m_warOtherDepartedBeforeEnd = false; ///< net_finish of a war battle: another player's departure came before T_end (war_other_departed_before_end)

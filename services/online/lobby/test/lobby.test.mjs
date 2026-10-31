@@ -270,6 +270,212 @@ test('a game from sign-in to START: the profile check, ready flags, chat, one ti
   assert.ok(!JSON.stringify(replayStart).includes(sa.ticket) && !JSON.stringify(replayStart).includes(polled.start.ticket));
 });
 
+test('WOTR-9: a War of the Ring game carries its mode, scenario, regions and save through the room, the list and the START; a resumed war starts only after every other player checked its save', async () => {
+  const lobby = new Lobby(fakeEnv(), configFromEnv(ENV));
+  const a = (await call(lobby, 'POST', '/v1/auth/guest', { body: { name: 'Ann' } })).body;
+  const b = (await call(lobby, 'POST', '/v1/auth/guest', { body: { name: 'Bea' } })).body;
+  const create = (extra) => call(lobby, 'POST', '/v1/games', { token: a.token, body: { name: 'war', profile: PROFILE, setup: { ...setup, ...extra } } });
+  // refused: a war without a scenario, a bad scenario, a save that is not an MD5, a hash without a save, war fields on a skirmish
+  for (const [extra, field] of [[{ gameMode: 1 }, 'setup.scenario'], [{ gameMode: 1, scenario: 'bad name' }, 'setup.scenario'], [{ gameMode: 2, scenario: 'S' }, 'setup.gameMode'],
+    [{ gameMode: 1, scenario: 'WOTRScenario001', resumeSave: 'ABCDEF0123456789abcdef0123456789' }, 'setup.resumeSave'],
+    [{ gameMode: 1, scenario: 'WOTRScenario001', resumeHash: 5 }, 'setup.resumeHash'], [{ scenario: 'WOTRScenario001' }, 'setup.scenario']]) {
+    const guest = (await call(lobby, 'POST', '/v1/auth/guest', { body: { name: 'Val' } })).body; // its own account: the refusals use no rate of Ann's
+    const r = await call(lobby, 'POST', '/v1/games', { token: guest.token, body: { name: 'war', profile: PROFILE, setup: { ...setup, ...extra } } });
+    assert.equal(r.status, 400, JSON.stringify(extra));
+    assert.match(r.body.message, new RegExp(field.replace('.', '\\.')), JSON.stringify(r.body));
+  }
+  // a skirmish keeps its old shape: no war fields in the list row, the room or the START
+  {
+    const made = await create({});
+    assert.equal(made.status, 200, JSON.stringify(made.body));
+    const g = made.body;
+    const row = (await call(lobby, 'GET', '/v1/games', { token: a.token })).body.games.find((x) => x.id === g.id);
+    assert.equal(row.gameMode, undefined);
+    assert.equal(g.game.setup.gameMode, undefined);
+    assert.equal(g.game.setup.scenario, undefined);
+    assert.equal((await call(lobby, 'POST', `/v1/games/${g.id}/slot`, { token: a.token, body: { startPos: 40 } })).status, 400); // a map start, not a region
+    assert.equal((await call(lobby, 'POST', `/v1/games/${g.id}/leave`, { token: a.token })).status, 200);
+  }
+  // a resumed war: the list says so; region 40 is a start position; the joiner's check reaches the room without unreadying anyone
+  const save = '0123456789abcdef0123456789abcdef';
+  const created = await create({ gameMode: 1, scenario: 'WOTRScenario001', resumeSave: save, resumeHash: 4294967295 });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const id = created.body.id;
+  assert.deepEqual([created.body.game.setup.gameMode, created.body.game.setup.scenario, created.body.game.setup.resumeSave, created.body.game.setup.resumeHash], [1, 'WOTRScenario001', save, 4294967295]);
+  const row = (await call(lobby, 'GET', '/v1/games', { token: b.token })).body.games.find((x) => x.id === id);
+  assert.deepEqual([row.gameMode, row.scenario, row.resume], [1, 'WOTRScenario001', true]);
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/slot`, { token: a.token, body: { startPos: 40 } })).status, 200);
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/slot`, { token: a.token, body: { startPos: 64 } })).status, 400);
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/join`, { token: b.token, body: { profile: PROFILE } })).status, 200);
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/ready`, { token: b.token, body: { ready: true } })).status, 200);
+  // the joiner has not checked: START refused by name
+  let refused = await call(lobby, 'POST', `/v1/games/${id}/start`, { token: a.token });
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.error, 'resume_check');
+  assert.match(refused.body.message, /Bea/);
+  // a bad report: refused field values; a report for another save or a failed check does not count
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/slot`, { token: b.token, body: { resumeCheck: { save: 'x', ok: true } } })).status, 400);
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/slot`, { token: b.token, body: { resumeCheck: { save, ok: true, why: '', extra: 1 } } })).status, 400);
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/slot`, { token: a.token, body: { slot: 1, resumeCheck: { save, ok: true } } })).status, 403); // another player's slot: a player reports for itself
+  const failed = await call(lobby, 'POST', `/v1/games/${id}/slot`, { token: b.token, body: { resumeCheck: { save, ok: false, why: 'the save is not in my Saves folder' } } });
+  assert.equal(failed.status, 200, JSON.stringify(failed.body));
+  assert.deepEqual(failed.body.game.slots[1].resumeCheck, { save, ok: false, why: 'the save is not in my Saves folder' });
+  assert.equal(failed.body.game.slots[1].ready, true); // a report alone unreadies no one
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/start`, { token: a.token })).body.error, 'resume_check');
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/slot`, { token: b.token, body: { resumeCheck: { save: 'f'.repeat(32), ok: true } } })).status, 200);
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/start`, { token: a.token })).body.error, 'resume_check');
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/slot`, { token: b.token, body: { resumeCheck: { save, ok: true } } })).status, 200);
+  // the START carries the war
+  const started = await call(lobby, 'POST', `/v1/games/${id}/start`, { token: a.token });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  assert.equal(started.body.v, 1, 'the lobby REST API did not change');
+  assert.equal(started.body.start.v, 2, 'older START readers must not mistake a war for Open Play');
+  assert.equal(JSON.parse(new TextDecoder().decode(await lobby.env.store.getBlob(`starts/${id}.json`))).v, 2,
+    'the published replay START needs the same strategic version');
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/spectate`, { token: b.token })).body.error, 'player',
+    'a player may not spectate its own war');
+  const outsider = (await call(lobby, 'POST', '/v1/auth/guest', { body: { name: 'Watcher' } })).body;
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/spectate`, { token: outsider.token })).body.error, 'not_available',
+    'the service must not issue a tactical spectator ticket for a strategic relay log');
+  const st = started.body.start.setup;
+  assert.deepEqual([st.gameMode, st.scenario, st.resumeSave, st.resumeHash, st.slots[0].startPos], [1, 'WOTRScenario001', save, 4294967295, 40]);
+  // the host's options: another scenario starts the regions over; another save voids the checks; back to a skirmish drops every war field
+  {
+    const g = (await create({ gameMode: 1, scenario: 'WOTRScenario001', resumeSave: save, resumeHash: 7 })).body;
+    assert.equal((await call(lobby, 'POST', `/v1/games/${g.id}/slot`, { token: a.token, body: { startPos: 12 } })).status, 200);
+    let up = await call(lobby, 'POST', `/v1/games/${g.id}/setup`, { token: a.token, body: { scenario: 'WOTRScenario002' } });
+    assert.equal(up.status, 200, JSON.stringify(up.body));
+    assert.equal(up.body.game.slots[0].startPos, -1);
+    up = await call(lobby, 'POST', `/v1/games/${g.id}/setup`, { token: a.token, body: { resumeSave: '' } });
+    assert.equal(up.status, 200, JSON.stringify(up.body));
+    assert.equal(up.body.game.setup.resumeHash, undefined);
+    up = await call(lobby, 'POST', `/v1/games/${g.id}/setup`, { token: a.token, body: { gameMode: 0 } });
+    assert.equal(up.status, 200, JSON.stringify(up.body));
+    assert.equal(up.body.game.setup.gameMode, undefined);
+    assert.equal(up.body.game.setup.scenario, undefined);
+  }
+});
+
+test('WOTR-9 phases: a joiner cannot advance or exclude the host without agreement from both current players', async () => {
+  const env = fakeEnv();
+  const lobby = new Lobby(env, configFromEnv(ENV));
+  const guest = async (name) => (await call(lobby, 'POST', '/v1/auth/guest', { body: { name } })).body;
+  const host = await guest('Host'), joiner = await guest('Joiner');
+  const war = { ...setup, gameMode: 1, scenario: 'WOTRScenario001',
+    slots: [{ state: 'player', faction: 0, color: 0, startPos: 0, team: 0 }, { state: 'open' }] };
+  const id = (await call(lobby, 'POST', '/v1/games', { token: host.token, body: { name: 'war', profile: PROFILE, setup: war } })).body.id;
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/join`, { token: joiner.token, body: { profile: PROFILE } })).status, 200);
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/ready`, { token: joiner.token, body: { ready: true } })).status, 200);
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/start`, { token: host.token })).status, 200);
+  const phase = (who, n, slots) => call(lobby, 'POST', `/v1/games/${id}/phase`,
+    { token: who.token, body: { phase: n, kind: n % 2 ? 'battle' : 'map', slots } });
+
+  assert.equal((await phase(joiner, 1, [1])).body.error, 'phase_wait');
+  assert.equal(lobby.games.get(id).phases.length, 0);
+  assert.equal((await phase(host, 1, [0, 1])).body.error, 'phase_wait');
+  assert.equal(lobby.games.get(id).phases.length, 0);
+  const battle = await phase(joiner, 1, [0, 1]);
+  assert.equal(battle.status, 200, JSON.stringify(battle.body));
+  const hostBattle = await phase(host, 1, [0, 1]);
+  assert.equal(hostBattle.body.start.game, battle.body.start.game);
+  assert.deepEqual([battle.body.start.slot, hostBattle.body.start.slot], [1, 0]);
+
+  assert.equal((await phase(joiner, 2, [1])).body.error, 'phase_wait');
+  assert.equal(lobby.games.get(id).phases.length, 1);
+  assert.equal((await phase(host, 2, [0, 1])).body.error, 'phase_wait');
+  assert.equal(lobby.games.get(id).phases.length, 1);
+  const map = await phase(joiner, 2, [0, 1]);
+  assert.equal(map.status, 200, JSON.stringify(map.body));
+  assert.equal((await phase(host, 2, [0, 1])).body.start.game, map.body.start.game);
+  assert.equal(lobby.games.get(id).phases.length, 2);
+});
+
+test('WOTR-9 phases (Option A): each battle and each return to the map is a fresh relay game for the war\'s players, linked to the war; only the next phase is made; rejoin, logs and replays follow the phases', async () => {
+  const env = fakeEnv();
+  const lobby = new Lobby(env, configFromEnv(ENV));
+  const guest = async (name) => (await call(lobby, 'POST', '/v1/auth/guest', { body: { name } })).body;
+  const a = await guest('Ann'), b = await guest('Bea'), c = await guest('Cid'), x = await guest('Xan');
+  const war = { ...setup, gameMode: 1, scenario: 'WOTRScenario001', slots: [{ state: 'player', faction: 0, color: 0, startPos: 0, team: 0 }, { state: 'open' }, { state: 'open' }] };
+  const id = (await call(lobby, 'POST', '/v1/games', { token: a.token, body: { name: 'war', profile: PROFILE, setup: war } })).body.id;
+  for (const p of [b, c]) assert.equal((await call(lobby, 'POST', `/v1/games/${id}/join`, { token: p.token, body: { profile: PROFILE } })).status, 200);
+  for (const p of [b, c]) assert.equal((await call(lobby, 'POST', `/v1/games/${id}/ready`, { token: p.token, body: { ready: true } })).status, 200);
+  const phase = (who, body) => call(lobby, 'POST', `/v1/games/${id}/phase`, { token: who.token, body });
+  assert.equal((await phase(a, { phase: 1, kind: 'battle' })).body.error, 'not_started');
+  { const st = await call(lobby, 'POST', `/v1/games/${id}/start`, { token: a.token }); assert.equal(st.status, 200, JSON.stringify(st.body)); }
+  // refused: a skirmish, a stranger, skipping a phase, the wrong kind, unknown fields, slots without the caller or outside the war
+  {
+    const sk = (await call(lobby, 'POST', '/v1/games', { token: x.token, body: { name: 'sk', profile: PROFILE, setup } })).body.id;
+    const solo = await call(lobby, 'POST', `/v1/games/${sk}/start`, { token: x.token });
+    assert.equal(solo.status, 200, JSON.stringify(solo.body));
+    assert.equal((await call(lobby, 'POST', `/v1/games/${sk}/phase`, { token: x.token, body: { phase: 1, kind: 'battle' } })).body.error, 'not_a_war');
+  }
+  assert.equal((await phase(x, { phase: 1, kind: 'battle' })).status, 403);
+  assert.equal((await phase(a, { phase: 2, kind: 'map' })).body.error, 'phase_order');
+  assert.equal((await phase(a, { phase: 1, kind: 'map' })).status, 400);
+  assert.equal((await phase(a, { phase: 1, kind: 'battle', extra: 1 })).status, 400);
+  assert.equal((await phase(a, { phase: 1, kind: 'battle', slots: [1, 2] })).status, 400);
+  assert.equal((await phase(a, { phase: 1, kind: 'battle', slots: [0, 3] })).status, 400);
+  // Phase 1 is not made until every current player names the same seats; the earlier voters then retrieve their own tickets.
+  const [wa, wb] = await Promise.all([phase(a, { phase: 1, kind: 'battle' }), phase(b, { phase: 1, kind: 'battle' })]);
+  assert.deepEqual([wa.body.error, wb.body.error], ['phase_wait', 'phase_wait']);
+  const pc = await phase(c, { phase: 1, kind: 'battle' });
+  assert.equal(pc.status, 200, JSON.stringify(pc.body));
+  const [pa, pb] = await Promise.all([phase(a, { phase: 1, kind: 'battle' }), phase(b, { phase: 1, kind: 'battle' })]);
+  assert.equal(pa.status, 200, JSON.stringify(pa.body));
+  assert.equal(pb.status, 200, JSON.stringify(pb.body));
+  const p1 = pa.body.start;
+  assert.deepEqual([pa.body.war, pa.body.phase, p1.v, p1.kind, p1.war, p1.phase, p1.phaseKind, p1.slot, p1.slots], [id, 1, 2, 'openbfme-phase-start', id, 1, 'battle', 0, [0, 1, 2]]);
+  assert.equal(pb.body.start.game, p1.game);
+  assert.equal(pb.body.start.slot, 1);
+  assert.notEqual(p1.game, id);
+  assert.match(p1.game, /^[0-9a-f]{16}$/);
+  const t1 = base64UrlDecode(p1.ticket);
+  assert.equal(Buffer.from(t1.slice(2, 10)).reverse().toString('hex'), p1.game); // the ticket's game is the phase's relay game
+  assert.equal(t1[11], 0b111);
+  assert.notEqual(p1.ticket, pb.body.start.ticket);
+  // asking again is the same phase; other slots for it are refused
+  assert.equal((await phase(c, { phase: 1, kind: 'battle' })).body.start.game, p1.game);
+  assert.equal((await phase(c, { phase: 1, kind: 'battle', slots: [0, 2] })).body.error, 'phase_slots');
+  // the war's own log (phase 0) comes in at the battle: the war is not over
+  const upload = (game) => { const log = relayLog(64, 7, game); return lobby.uploadLog(game, log, uploadSig(log)); };
+  assert.equal((await upload(id)).war, id);
+  assert.notEqual(lobby.games.get(id).finished, true);
+  // a crash in the battle: the rejoin START is the battle's relay game, generation 1
+  const rj = await call(lobby, 'POST', `/v1/games/${id}/rejoin`, { token: b.token });
+  assert.equal(rj.status, 200, JSON.stringify(rj.body));
+  assert.deepEqual([rj.body.start.game, rj.body.start.phase, rj.body.start.rejoin], [p1.game, 1, 1]);
+  // Cid explicitly leaves; neither of the remaining players can make the map phase without the other.
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/leave`, { token: c.token })).status, 200);
+  assert.equal((await phase(b, { phase: 2, kind: 'map', slots: [0, 1] })).body.error, 'phase_wait');
+  const p2 = await phase(a, { phase: 2, kind: 'map', slots: [0, 1] });
+  assert.equal(p2.status, 200, JSON.stringify(p2.body));
+  assert.deepEqual(p2.body.start.slots, [0, 1]);
+  assert.equal(base64UrlDecode(p2.body.start.ticket)[11], 0b011);
+  assert.equal((await phase(c, { phase: 2, kind: 'map' })).body.error, 'left');
+  assert.equal((await call(lobby, 'POST', `/v1/games/${id}/rejoin`, { token: c.token })).body.error, 'left');
+  // the battle's log comes in after the map phase was made: still not over; the latest phase's log ends the war
+  await upload(p1.game);
+  assert.notEqual(lobby.games.get(id).finished, true);
+  await upload(p2.body.start.game);
+  assert.equal(lobby.games.get(id).finished, true);
+  assert.equal((await phase(a, { phase: 3, kind: 'battle' })).body.error, 'finished');
+  // replays: the war's phases for its players; each phase's record names its war
+  const ph = await call(lobby, 'GET', `/v1/replays/${id}/phases`, { token: c.token });
+  assert.equal(ph.status, 200, JSON.stringify(ph.body));
+  assert.deepEqual(ph.body.phases.map((q) => [q.phase, q.kind, q.game]), [[1, 'battle', p1.game], [2, 'map', p2.body.start.game]]);
+  assert.equal((await call(lobby, 'GET', `/v1/replays/${id}/phases`, { token: x.token })).status, 403);
+  const rec = JSON.parse(new TextDecoder().decode((await rawCall(lobby, 'GET', `/v1/replays/${p1.game}/start`, a.token)).body));
+  assert.deepEqual([rec.kind, rec.war, rec.phase, rec.phaseKind], ['openbfme-replay-phase', id, 1, 'battle']);
+  assert.equal(JSON.stringify(rec).includes(p1.ticket), false); // no credentials in the replay record
+  assert.equal((await rawCall(lobby, 'GET', `/v1/replays/${p2.body.start.game}/start`, c.token)).status, 403); // Cid was not in phase 2
+  // a restarted lobby (the game kept as JSON) knows the phases and their link to the war: a retried upload of the battle's log is the war's
+  const again = new Lobby(env, configFromEnv(ENV));
+  again.load([JSON.parse(JSON.stringify(lobby.games.get(id)))]);
+  assert.equal(again.phaseWar.get(p1.game), id);
+  const retry = relayLog(64, 7, p1.game);
+  assert.deepEqual([(await again.uploadLog(p1.game, retry, uploadSig(retry))).war], [id]);
+});
+
 test('SOLO-1: a custom game starts with one human, with AI slots or none; a private room keeps the two-human minimum', async () => {
   // the setup fixture is one player slot, one open slot and a hard AI: the host alone is a single human against the AI
   const solo = async (body) => {

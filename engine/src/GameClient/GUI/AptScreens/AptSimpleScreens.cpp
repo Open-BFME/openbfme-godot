@@ -1761,7 +1761,7 @@ void AptOptionsScreen::applyVolume(int type, int value)
 	m_services.applyOption(kVolumeKeys[type], buf);
 }
 
-// Lane OPTS-4: RotWK's gadget messages of the volume sliders, RW 0x91F90D (identical to BFME2 0x00919167, decomp AptOptionsRva00519167.cpp).
+// Lane OPTS-4: RotWK's gadget messages of the volume sliders, RW 0x91F90D (identical to BFME2 0x00919167, decomp AptOptions.cpp).
 // TARGET FACTS: the track message (RotWK's 0x400C) of a volume slider with a position other than -1 sets that type's volume at once (TheAudio vslot
 // 0xE8(type, position / 100)); a sample of another type than the last one (the screen keeps the previewed type, 5 = none) is removed first (removeAudioEvent);
 // then, unless the kept handle still sounds (isCurrentlyPlaying), the type's MiscAudio sample is added (addAudioEvent) and its handle kept, except the
@@ -1845,7 +1845,7 @@ WindowMsgHandledType AptOptionsScreen::gadgetMessage(GameWindow *from, std::uint
 	GameWindow *detail = gadget("Detail");
 	if (msg == GCM_SELECTED && detail && !m_detailRefreshing && reinterpret_cast<GameWindow *>(data1) == detail)
 	{
-		// lane PLAY-2, RotWK's twin of BFME2 0x519167 (decomp AptOptionsRva00519167.cpp): Custom (item data 5) opens the advanced page through the
+		// lane PLAY-2, RotWK's twin of BFME2 0x519167 (decomp AptOptions.cpp): Custom (item data 5) opens the advanced page through the
 		// movie's ShowAdvancedSettings; another level becomes + 0x310 (its warning, RW 0x91F790, is not ported: S-2481) and the page refreshes (RW 0x91EBD1)
 		int index = -1;
 		GadgetComboBoxGetSelectedPos(detail, &index);

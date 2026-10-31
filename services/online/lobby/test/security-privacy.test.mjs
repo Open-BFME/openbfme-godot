@@ -14,6 +14,18 @@ const ENV = { TICKET_KEYS: `1:${'01'.repeat(32)}\n`, SESSION_KEY: '02'.repeat(32
 const INSTALL = 'a'.repeat(32);
 const RAW_IP = '198.51.100.27';
 
+test('WOTR-9 Node file store creates and exports the war phase index', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lobby-war-'));
+  try {
+    const store = fileStore(dir);
+    const key = 'wars/0123456789abcdef.json';
+    const record = new TextEncoder().encode('{"v":2,"phases":[]}');
+    store.putBlob(key, record);
+    assert.deepEqual(store.getBlob(key), record);
+    assert.deepEqual(store.listBlobs('', 10).map((entry) => entry.key), [key]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 async function call(lobby, method, path, body, token) {
   const result = await route(lobby, { method, path, query: new URLSearchParams(),
     headers: token ? { authorization: `Bearer ${token}` } : {}, ip: RAW_IP,

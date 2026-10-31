@@ -1870,7 +1870,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		}
 		return compare(param(c, 2).intValue, total, limit);
 	}
-	case COMPARE_NUM_PLAYERS_IN_GAME: // RW 0x7E5FA5 (BFME2 ScriptConditions_evaluateNumPlayersInGame.cpp, tier A) -> RW 0x6A8630(0)
+	case COMPARE_NUM_PLAYERS_IN_GAME: // RW 0x7E5FA5 (BFME2 ScriptConditions.cpp, tier A) -> RW 0x6A8630(0)
 	{
 		// the players with a template of a playable side (+ 0x151) that are not defeated (+ 0x754 / + 0x35A)
 		std::int32_t n = 0;

@@ -187,6 +187,8 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/online_social_node.gd` | `godot/tests/online_social_node.tscn` | Scene helper; tools/net/test_online_social_node.py drives this scene. |
 | `godot/tests/online_social_test.gd` | `tools/net/test_online_social_ui.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/online_stats_test.gd` | `tools/net/test_online_stats.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
+| `godot/tests/online_war_phase_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: asset-free battle seat selection keeps AI tactical participants out of relay tickets; headless, 20 s timeout. |
+| `godot/tests/online_war_walk.gd` | `godot/scripts/game.gd` | Two-peer relay war fixture; `tools/net/online_war_test.sh` supplies the local lobby, relay and game data. Not a generic pytest game test. |
 | `godot/tests/http_timed_test.gd` | `tools/net/test_http_timed.py` | Argument-aware fixture runner (a fake server that answers late or never); needs Godot. |
 | `godot/tests/opts1_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. Checks both RotWK and BFME2 presentation sources in menus and a live game. |
 | `godot/tests/opts2_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
@@ -251,6 +253,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/map_weather_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `weather.ini` over a retail map. |
 
 | `godot/tests/fortress_exit_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
+| `godot/tests/edainfactions1_test.gd` | Manual only; no generic pytest runner | Needs the Edain 4.8.5.3 install (OPENBFME_EDAIN_INSTALL, OPENBFME_EDAIN_ASSETS_INSTALL); without them it only parses. Runs the Dwarven clan choices and the Dwarven AI in real skirmishes. |
 
 ## OAuth readiness regression
 

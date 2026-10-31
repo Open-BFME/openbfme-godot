@@ -7,6 +7,7 @@
 #include "GameClient/MapCreationHooks.h"
 #include "GameClient/MapHordeSpawn.h"
 #include "GameClient/MapObjectDrawables.h"
+#include "GameClient/MapObjectRuntime.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -14,6 +15,7 @@
 #include "ObjectTestUtil.h"
 
 #include <cmath>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -810,15 +812,15 @@ TEST_CASE("mapobj creation hooks: full objects count the OnCreated handlers thei
 	// permanently hidden sub objects, lower case, each counted once per object: GLOW is named by both handlers of a Ranger
 	CHECK(r.creationHookHides == std::map<std::string, size_t>({ { "firearowtip", 2 }, { "glow", 2 } }));
 	CHECK(r.creationHookShows == std::map<std::string, size_t>({ { "torch", 2 } }));
-	// the tree is a client-only object: no OnCreated is sent; the unknown list and the undefined handler are reported (once per template)
-	bool undefinedHandler = false, unknownList = false;
+	// the tree is a client-only object: no OnCreated is sent; an undefined handler is an inventory error.
+	bool undefinedHandler = false;
 	for (const std::string &e : r.errors)
 	{
 		undefinedHandler = undefinedHandler || e.find("OnCreated handler OnGhostCreated of GhostFunctions is not defined in scripts.lua") != std::string::npos;
-		unknownList = unknownList || e.find("NoSuchFunctions") != std::string::npos;
 	}
 	CHECK(undefinedHandler);
-	CHECK(unknownList);   // a list scriptevents.xml does not define is reported, not skipped
+	CHECK(std::find(r.stops.begin(), r.stops.end(),
+		"[S-127] template Unknown: AILuaEventsList NoSuchFunctions is not an EventList of scriptevents.xml; retail binds no missing list") != r.stops.end());
 
 	Scene unscanned;
 	unscanned.map.chunks.objects = { object("Ranger", 10, 10) };
@@ -836,12 +838,9 @@ TEST_CASE("mapobj creation hooks: full objects count the OnCreated handlers thei
 	CHECK(s110);
 }
 
-// ---- S-115: static draw fields the runtime stores and does not apply ---------------------------------------------------------
-
-#include "GameClient/MapObjectRuntime.h"
-
 namespace
 {
+std::string luaGlobalString(LuaScriptEngine &e, const char *name);
 struct NoFiles : W3DFileSource
 {
 	bool Exists(const std::string &) const override { return false; }
@@ -852,6 +851,44 @@ struct NoFiles : W3DFileSource
 	}
 };
 } // namespace
+
+TEST_CASE("mapobj creation hooks: a mod XML comment can hide an EventList; missing names are reported stops, earlier inherited handlers still run")
+{
+	const char *xml = "<SageLuaScriptSection><EventList Name=\"Base\"><EventHandler EventName=\"OnCreated\" ScriptFunctionName=\"Created\"/></EventList>"
+		"<EventList Name=\"Child\" Inherit=\"Base\"/>"
+		"<EventList Name=\"Before\"/><!-- unterminated comment\n<EventList Name=\"Lost\" Inherit=\"Child\"><!-- next close -->"
+		"</EventList></SageLuaScriptSection>";
+	const char *lua = "function Created(self)\n  Hit = (Hit or 0) + 1\nend\n";
+	const char *objects =
+		"Object Found\n  Behavior = AIUpdateInterface ModuleTag_AI\n    AILuaEventsList = Child\n  End\n  KindOf = INFANTRY\nEnd\n"
+		"Object Missing\n  Behavior = AIUpdateInterface ModuleTag_AI\n    AILuaEventsList = Lost\n  End\n  KindOf = INFANTRY\nEnd\n";
+	MapWorld w;
+	REQUIRE_MESSAGE(w.load(objects).empty(), "template load");
+	Scene s;
+	std::string err;
+	REQUIRE_MESSAGE(MapCreationHooks::scan(xml, lua, s.options.creationScripts, &err), err);
+	CHECK(s.options.creationScripts.rawLoaded);
+	s.map.chunks.objects = { object("Found", 10, 10), object("Missing", 20, 10) };
+	s.run(w);
+	CHECK(s.out.report.errors.empty());
+	CHECK(std::find(s.out.report.stops.begin(), s.out.report.stops.end(),
+		"[S-127] template Missing: AILuaEventsList Lost is not an EventList of scriptevents.xml; retail binds no missing list") != s.out.report.stops.end());
+	NoFiles files;
+	WW3DAssetManager assets(files);
+	MapObjectRuntime runtime(assets);
+	runtime.setCreationScripts(&s.options.creationScripts);
+	runtime.build(s.out);
+	REQUIRE(runtime.scriptEngine());
+	CHECK(runtime.scriptEngine()->findEventList("Child") != nullptr);
+	CHECK(runtime.scriptEngine()->findEventList("Lost") == nullptr);
+	CHECK(runtime.report().creationListObjects == 1);
+	CHECK(luaGlobalString(*runtime.scriptEngine(), "Hit") == "1");
+	CHECK(std::find(runtime.report().stops.begin(), runtime.report().stops.end(),
+		"[S-127] Missing: AILuaEventsList Lost is not an EventList of scriptevents.xml; retail binds a null event list (RW 0x7396E8)") != runtime.report().stops.end());
+	CHECK(runtime.report().errors.empty());
+}
+
+// ---- S-115: static draw fields the runtime stores and does not apply ---------------------------------------------------------
 
 TEST_CASE("mapobj runtime: floor WeatherTexture / ForceToBack / StaticModelLODMode and prop DistanceFog = No are counted as not applied (S-115)")
 {
