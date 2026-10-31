@@ -229,7 +229,14 @@ its original particle budget is not reproduced. One shipped unresolved mounted
 Faramir voice reference (`UnitSpecificSounds` `VoiceGarrison = FaramirKnightVoiceGarrison`, which no AudioEvent defines) loads as BFME1 loads
 it: BFME1's `UnitSpecificSounds` lines store the event name without looking it up (Open-BFME-1 `ThingTemplate_parseArbitrarySoundsIntoMap.cpp`).
 
-The Living World Good/Evil campaigns and their saves are not implemented. Their
+The Living World Good/Evil campaigns and their saves are not implemented.
+`LivingWorldStores` selects the BFME1 loading mode once from the mounted data.
+Its campaign blocks retain recording handlers instead of using BFME2/RotWK
+War of the Ring field tables. The object-world report explicitly names this
+under S-5017: campaign field validation and exact nested block boundaries are
+unverified. This preserves menu/skirmish startup without claiming campaign support.
+BFME2/RotWK keep their typed parsers and S-1321 errors for unported fields. Their
+schemas are not widened to accept BFME1 campaign rows. BFME1 campaign
 menu requests display the existing unavailable-screen message instead of trying
 to start a BFME2 linear campaign. BFME1 currently uses the English language view.
 

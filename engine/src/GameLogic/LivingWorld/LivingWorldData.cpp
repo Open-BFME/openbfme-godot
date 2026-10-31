@@ -1032,8 +1032,10 @@ const FieldParse kArmySummaryDescriptionFields[] = {
 };
 } // namespace
 
-const std::vector<std::string> &LivingWorldStores::blockKeywords()
+const std::vector<std::string> &LivingWorldStores::blockKeywords() const
 {
+	static const std::vector<std::string> unported;
+	if (m_bfme1Data) return unported;
 	static const std::vector<std::string> k = { "LivingWorldPlayerTemplate", "LivingWorldAITemplate", "LivingWorldBuilding", "LivingWorldPlayerArmy",
 		"LivingWorldRegionCampaign", "LivingWorldCampaign", "LivingWorldMapInfo", "LivingWorldRegionEffects", "LivingWorldArmyIcon", "LivingWorldBuildingIcon",
 		"LivingWorldBuildPlotIcon", "AutoResolveWeapon", "AutoResolveArmor", "AutoResolveBody", "AutoResolveCombatChain", "AutoResolveLeadership",
@@ -1044,8 +1046,19 @@ const std::vector<std::string> &LivingWorldStores::blockKeywords()
 	return k;
 }
 
+std::vector<std::string> LivingWorldStores::acceptanceStops() const
+{
+	if (!m_bfme1Data) return {};
+	return { "[S-5017] BFME1 Living World campaigns and saves are unavailable: campaign blocks use recording stubs, not the BFME2/RotWK War of the Ring parsers; field validation and exact nested block boundaries are unverified" };
+}
+
 void LivingWorldStores::registerBlocks(INIBlockRegistry &registry)
 {
+	// BFME1 INILivingWorldCampaign.cpp (Open-BFME-1 GameLogic/LivingWorld,
+	// campaign missions indexed by LivingWorldCampaign.cpp RVA 0x003A73C0)
+	// is a different subsystem from the scenario parser RW 0x902874. Do not
+	// replace BFME1's explicitly unported recording handlers with that schema.
+	if (m_bfme1Data) return;
 	registry.registerBlock("LivingWorldPlayerTemplate", [this](INI *ini) { parsePlayerTemplate(ini); });
 	registry.registerBlock("LivingWorldAITemplate", [this](INI *ini) { parseAITemplate(ini); });
 	registry.registerBlock("LivingWorldBuilding", [this](INI *ini) { parseBuilding(ini); });

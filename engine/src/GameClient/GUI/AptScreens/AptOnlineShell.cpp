@@ -3,6 +3,7 @@
 // See GameClient/GUI/AptScreens/AptOnlineShell.h (lane ONLINE-4).
 
 #include "GameClient/GUI/AptScreens/AptOnlineShell.h"
+#include "GameClient/GUI/AptScreens/AptLanLobby.h" // lane STABLEQA-1: kStrategicStable
 
 #include "GameClient/GUI/AptScreens/AptOnlineHub.h"
 #include "GameClient/GUI/PlatformIcons.h"
@@ -89,8 +90,8 @@ const std::vector<std::string> &AptOnlineShell::stopLines()
 		"settings or user-map icons, no lobby rooms; the sort order "
 		"(a second press reverses) is OpenBFME's (RotWK's sorter RW 0x988BB5 not read)",
 		"[S-4074] online staging room: the states between the retail facts (the update's moves, the GameSpy NAT negotiation, the countdown) are OpenBFME's: "
-		"the host's Play Game asks the lobby for the START (no relay: refused, told to the player); loading a saved online game is not available",
-		"[S-4075] online pages not ported: Strategic (War of the Ring online)",
+		"the host's Play Game asks the lobby for the START (no relay: refused, told to the player); loading a saved skirmish is not available",
+		"[S-4075] online War of the Ring: strategic play, relay battles and saved-war resume work; rejoining a dropped strategic map and playing its phase replay are not ported",
 		"[S-4870] Quick Match (the TOURNAMENT page): the platform's matchmaker (same mode and size, oldest first): Ladder = the size, Army, Color; "
 		"ConnectionSpeed disabled, Widen Search says the search is as wide as it gets",
 		"[S-4871] Quick Match room: the match's host makes a private lobby room by the match's room code on an official map for that many players "
@@ -360,9 +361,10 @@ void AptOnlineShell::callPage(const std::string &function, const std::vector<std
 {
 	// the custom match screen calls its page's functions at its own Apt path (vslot 0x28 composes it: RW 0x9AFAA4 .. 0x9AFAB6 for OnStartLobby)
 	std::string err;
-	if (level() < 0 || !windows().invokeASAt(level(), "OnlineOpenPlay", function, args, nullptr, &err))
+	const std::string page = m_currentName == "OnlineStrategic" ? "OnlineStrategic" : "OnlineOpenPlay";
+	if (level() < 0 || !windows().invokeASAt(level(), page, function, args, nullptr, &err))
 	{
-		windows().note("movie-function-missing", "OnlineOpenPlay." + function + ": " + err);
+		windows().note("movie-function-missing", page + "." + function + ": " + err);
 	}
 }
 
@@ -414,10 +416,37 @@ void AptOnlineShell::loadPage(const std::string &name)
 		m_pages[name];
 		registerHome();
 	}
-	else if (name == "OnlineOpenPlay")
+	else if (name == "OnlineOpenPlay" || name == "OnlineStrategic")
 	{
+		const std::string other = name == "OnlineStrategic" ? "OnlineOpenPlay" : "OnlineStrategic";
+		if (m_pages.count(other))
+		{
+			unloadPage(other); // the movie has one custom-match page active; its callbacks have the same names
+		}
+		if (name == "OnlineStrategic")
+		{
+			if (environment().warOfTheRingOffered && environment().livingWorld && !environment().livingWorld->scenarios.empty())
+			{
+				enterStrategicMode(*environment().livingWorld); // RW 0x8445C9; BFME2 AptOnlineCustomMatchCtor.cpp: strategic flag 1
+			}
+			else
+			{
+				// lane STABLEQA-1 (the online page, 10-31): a Stable build offers no War of the Ring yet: the box says so as the LAN page's does
+				notAvailable(name, "[S-4075]", environment().warOfTheRingOffered ? unavailablePageText(name) : std::u16string(AptLanLobby::kStrategicStable));
+				if (!m_currentName.empty() && m_currentName != name)
+				{
+					loadChildScreen(m_currentName);
+					navTo(m_currentName);
+					return;
+				}
+			}
+		}
+		else
+		{
+			leaveStrategicMode();
+		}
 		m_pages[name];
-		registerOpenPlay();
+		registerOpenPlay(name);
 	}
 	else if (AptOnlineHub::isHubPage(name))
 	{
@@ -427,7 +456,7 @@ void AptOnlineShell::loadPage(const std::string &name)
 	}
 	else
 	{
-		// OnlineStrategic: not ported [S-4075]. Lane MENUWORK-1: the box says why in the player's words, and the page the
+		// Lane MENUWORK-1: the box says why in the player's words, and the page the
 		// player came from is loaded again (the movie's LoadScreen) instead of leaving them on an empty page
 		// An unavailable page has no callbacks to retain. Caching it as loaded would make
 		// the next visit skip this notice and replace the player's current/resume page.
@@ -537,7 +566,7 @@ void AptOnlineShell::unloadPage(const std::string &name)
 	{
 		m_motd = nullptr;
 	}
-	else if (name == "OnlineOpenPlay")
+	else if (name == "OnlineOpenPlay" || name == "OnlineStrategic")
 	{
 		m_gameList = m_lobbies = m_gameInfo = m_gameName = m_gamePassword = nullptr;
 		if (m_client && m_client->inGame())
@@ -944,9 +973,8 @@ void AptOnlineShell::fillMotd()
 
 // ---- OnlineOpenPlay (AptOnlineCustomMatch) ----------------------------------------------------------------------------------------------------------------
 
-void AptOnlineShell::registerOpenPlay()
+void AptOnlineShell::registerOpenPlay(const std::string &page)
 {
-	const std::string page = "OnlineOpenPlay";
 	m_state = 0;
 	m_listDirty = true;
 	pageCommand(page, "AptOnline::CustomMatch::CancelPopUpJoin", [this](const std::string &) {
@@ -979,7 +1007,17 @@ void AptOnlineShell::registerOpenPlay()
 			m_state = 9;
 		}
 	});
-	pageCommand(page, "AptOnline::CustomMatch::LoadGame", [this](const std::string &) { notAvailable("Loading a saved online game", "[S-4074]"); });
+	pageCommand(page, "AptOnline::CustomMatch::LoadGame", [this](const std::string &) {
+		// BFME2 0x59ECC1: Load Game on the strategic page selects kind 16.
+		if (m_currentName == "OnlineStrategic" && environment().services)
+		{
+			environment().services->request(ShellRequest{ ShellAction::OnlineLoadWar, "16" });
+		}
+		else
+		{
+			notAvailable("Loading a saved online game", m_currentName == "OnlineStrategic" ? "[S-1064]" : "[S-4074]");
+		}
+	});
 	pageCommand(page, "AptOnline::CustomMatch::AcceptJoinGame", [this](const std::string &) {
 		// RW 0x9AEE9C (BFME2 AptOnlineCustomMatchAcceptJoinGame.cpp)
 		if (m_state != 10)
@@ -1405,7 +1443,7 @@ void AptOnlineShell::fillGamesList()
 	std::vector<OnlineLobbyClient::Listing> games;
 	for (const OnlineLobbyClient::Listing &g : m_client->mine())
 	{
-		if (!gameLeft(g.id))
+		if (!gameLeft(g.id) && g.gameMode == (m_currentName == "OnlineStrategic" ? 1 : 0))
 		{
 			games.push_back(g);
 			games.back().state = "rejoin";
@@ -1413,7 +1451,8 @@ void AptOnlineShell::fillGamesList()
 	}
 	for (const OnlineLobbyClient::Listing &g : m_client->games())
 	{
-		if (!gameLeft(g.id) && std::none_of(games.begin(), games.end(), [&](const OnlineLobbyClient::Listing &m) { return m.id == g.id; }))
+		if (!gameLeft(g.id) && g.gameMode == (m_currentName == "OnlineStrategic" ? 1 : 0)
+			&& std::none_of(games.begin(), games.end(), [&](const OnlineLobbyClient::Listing &m) { return m.id == g.id; }))
 		{
 			games.push_back(g);
 			games.back().state = g.state == "started" ? "watch" : "join";
@@ -1422,9 +1461,10 @@ void AptOnlineShell::fillGamesList()
 	std::map<std::string, std::u16string> titles;
 	for (const OnlineLobbyClient::Listing &g : games)
 	{
-		if (!titles.count(g.map))
+		const std::string key = g.gameMode == 1 ? g.scenario : g.map;
+		if (!titles.count(key))
 		{
-			titles[g.map] = mapTitle(g.map);
+			titles[key] = g.gameMode == 1 ? wide(g.scenario) : mapTitle(g.map);
 		}
 	}
 	if (m_sortColumn >= 0)
@@ -1436,7 +1476,13 @@ void AptOnlineShell::fillGamesList()
 			switch (col)
 			{
 			case 0: c = a.name < b.name ? -1 : (b.name < a.name ? 1 : 0); break;
-			case 1: c = titles.at(a.map) < titles.at(b.map) ? -1 : (titles.at(b.map) < titles.at(a.map) ? 1 : 0); break;
+			case 1:
+			{
+				const auto &am = titles.at(a.gameMode == 1 ? a.scenario : a.map);
+				const auto &bm = titles.at(b.gameMode == 1 ? b.scenario : b.map);
+				c = am < bm ? -1 : (bm < am ? 1 : 0);
+				break;
+			}
 			case 2: c = a.players - b.players; break;
 			case 4: c = (int)a.password - (int)b.password; break;
 			default: c = 0; break; // the lobby gives no ping [S-4073]
@@ -1487,12 +1533,13 @@ void AptOnlineShell::fillGamesList()
 		{
 			GadgetListBoxAddEntryImage(m_gameList, "AptLock", row, 2, 20, 20, true); // BFME2 0x59F496: the lock of a locked game
 		}
-		const std::u16string &map = titles.at(g.map);
+		const std::u16string &map = titles.at(g.gameMode == 1 ? g.scenario : g.map);
 		const std::string players = std::to_string(g.players) + "/" + std::to_string(g.players + g.openSlots);
 		GadgetListBoxAddEntryText(m_gameList, map, c, row, 4);
 		GadgetListBoxAddEntryText(m_gameList, wide(players), c, row, 5);
 		GadgetListBoxAddEntryText(m_gameList, UnicodeString(), c, row, 6);
 		m_gameRows.push_back(narrow(g.name) + "|" + narrow(map) + "|" + players + "|" + (g.password ? "lock" : "") + (g.state == "join" ? "" : "|" + g.state) +
+			(g.gameMode == 1 ? "|war" : "") + (g.resume ? "|resume" : "") +
 			(g.mode == SimulationProfile::Uber ? "|uber" : "") + (g.cheatMode ? "|cheat" : "") + (other ? "|other-version" : ""));
 		m_rowOtherBuild.push_back(other);
 		m_rowIds.push_back(g.id);
@@ -1552,7 +1599,7 @@ void AptOnlineShell::startFailed(const std::string &why)
 		m_client->dropStart(); // no leave: the player keeps the slot (a running game is offered for a rejoin)
 	}
 	const std::u16string body = u"The online game could not start: " + std::u16string(safe.begin(), safe.end());
-	if (m_pages.count("OnlineOpenPlay"))
+	if (m_pages.count("OnlineOpenPlay") || m_pages.count("OnlineStrategic"))
 	{
 		backToList();
 	}
@@ -1656,7 +1703,7 @@ void AptOnlineShell::startRunning(const std::string &id, bool rejoin)
 		m_client->spectateGame(id);
 	}
 	m_rejoinPending = true;
-	if (m_pages.count("OnlineOpenPlay"))
+	if (m_pages.count("OnlineOpenPlay") || m_pages.count("OnlineStrategic"))
 	{
 		m_state = 13; // OpenBFME's (S-4077): waiting for the running game's START
 		m_connecting = true;
@@ -1825,6 +1872,11 @@ void AptOnlineShell::syncModel()
 	}
 	model->setNetwork(m_client->localSlot());
 	model->replaceInfo(m_client->gameInfo());
+	if (model->info().warOfTheRing() && model->info().scenario != selectedScenario() &&
+		!selectScenario(model->info().scenario, false))
+	{
+		windows().note("online-wotr-scenario", "the room named an unknown War of the Ring scenario: " + model->info().scenario);
+	}
 	m_syncedSeq = m_client->viewSeq();
 	refreshLobby();
 }
@@ -1908,6 +1960,59 @@ void AptOnlineShell::systemChat(const std::u16string &line)
 	m_chat.push_back(narrow(line));
 }
 
+bool AptOnlineShell::stageSavedWar(const SkirmishGameInfo &saved, const std::vector<std::pair<int, std::u16string>> &seats,
+	const std::string &md5, std::uint32_t hash, std::string *why)
+{
+	auto refuse = [&](const std::string &reason) {
+		if (why) *why = reason;
+		return false;
+	};
+	if (!m_client || !m_client->amIHost() || m_currentName != "OnlineStrategic" || m_state != 6)
+		return refuse("the saved war needs an online strategic staging room hosted by this player");
+	if (!saved.warOfTheRing() || !saved.slots[0].isHuman() || saved.scenario.empty() || saved.mapStartCount != m_client->gameInfo().mapStartCount)
+		return refuse("the save's strategic lobby and this room do not match");
+	if (md5.size() != 32 || md5.find_first_not_of("0123456789abcdef") != std::string::npos)
+		return refuse("the saved war has no valid MD5");
+	for (int s = 1; s < MAX_SLOTS; ++s)
+	{
+		auto it = std::find_if(seats.begin(), seats.end(), [&](const auto &seat) { return seat.first == s; });
+		if (saved.slots[s].isHuman() != (it != seats.end()) || (it != seats.end() && it->second != saved.slots[s].name))
+			return refuse("the saved war's players do not match its lobby seats (slot " + std::to_string(s) + ")");
+	}
+	for (size_t i = 0; i < seats.size(); ++i)
+		if (seats[i].first < 1 || seats[i].first >= MAX_SLOTS ||
+			std::any_of(seats.begin(), seats.begin() + i, [&](const auto &seat) { return seat.first == seats[i].first; }))
+			return refuse("the saved war has a duplicated or invalid human seat");
+	SkirmishGameInfo info = saved;
+	for (auto &slot : info.slots)
+		if (slot.state == SLOT_OPEN) slot.state = SLOT_CLOSED; // no player of the saved war held an open seat
+	info.inProgress = false;
+	info.seed = 0;
+	info.resumeSave = md5;
+	info.resumeHash = hash;
+	m_savedRoom = m_client->gameId();
+	m_savedMd5 = md5;
+	m_savedHash = hash;
+	m_savedInfo = info;
+	m_savedSeats = seats;
+	m_client->setSetup(info);
+	const auto &host = info.slots[0];
+	m_client->setOwnSlot(host.playerTemplate, host.color, host.startPos, host.teamNumber, host.handicap);
+	for (int s = 1; s < info.serializedSlotCount(); ++s)
+	{
+		const auto &slot = info.slots[s];
+		if (slot.isHuman())
+		{
+			// A scenario that originally allowed only the host can leave this seat closed. A saved player must be able to reclaim it.
+			m_client->setOtherSlot(s, SLOT_OPEN, slot.playerTemplate, slot.color, slot.startPos, slot.teamNumber, slot.handicap, u"");
+		}
+		else
+			m_client->setOtherSlot(s, slot.state == SLOT_OPEN ? SLOT_CLOSED : slot.state,
+				slot.playerTemplate, slot.color, slot.startPos, slot.teamNumber, slot.handicap, slot.name);
+	}
+	return true;
+}
+
 void AptOnlineShell::startPressed()
 {
 	// state 7 (PlayGame): the host checks the setup as the LAN lobby does (RW 0x8431B8) and asks the lobby for the START; a joiner's Play Game is its ready
@@ -1920,8 +2025,50 @@ void AptOnlineShell::startPressed()
 		onReadyPress("PlayGame");
 		return;
 	}
+	if (m_client->gameInfo().resumed())
+	{
+		// RW 0x81869B: LANAPI's saved seats, rules and save-availability checks also guard the online room.
+		const auto &info = m_client->gameInfo();
+		std::string refusal;
+		if (m_savedRoom != m_client->gameId() || m_savedMd5 != info.resumeSave || m_savedHash != info.resumeHash)
+			refusal = "the saved war's seat contract has not been loaded by this host";
+		else if (info.scenario != m_savedInfo.scenario || info.rules != m_savedInfo.rules)
+			refusal = "the game's scenario or rules are not the saved war's";
+		for (int s = 0; s < info.serializedSlotCount() && refusal.empty(); ++s)
+		{
+			const auto &slot = info.slots[s];
+			const auto &saved = m_savedInfo.slots[s];
+			const auto seat = std::find_if(m_savedSeats.begin(), m_savedSeats.end(), [s](const auto &x) { return x.first == s; });
+			if (s > 0 && saved.isHuman() && !slot.isHuman())
+				refusal = narrow(saved.name) + "'s seat is open: every player of the saved war must come back";
+			else if (s > 0 && slot.isHuman() && (seat == m_savedSeats.end() || slot.name != seat->second))
+				refusal = narrow(slot.name) + " is not in their saved war seat";
+			else if (slot.state != saved.state && !(s > 0 && saved.isHuman() && slot.isHuman()))
+				refusal = "slot " + std::to_string(s) + " differs from the saved war";
+			else if (slot.isOccupied() && (slot.playerTemplate != saved.playerTemplate || slot.color != saved.color ||
+				slot.startPos != saved.startPos || slot.teamNumber != saved.teamNumber || slot.handicap != saved.handicap))
+				refusal = narrow(slot.name) + "'s faction, colour, region, team or handicap differs from the saved war";
+			else if (s > 0 && slot.isHuman())
+			{
+				const auto &check = m_client->slotViews()[(size_t)s].resumeCheck;
+				if (!check.known || check.save != info.resumeSave)
+					refusal = narrow(slot.name) + " has not checked the saved war yet";
+				else if (!check.ok)
+					refusal = narrow(slot.name) + " cannot resume the saved war: " + check.why;
+			}
+		}
+		if (!refusal.empty())
+		{
+			systemChat(wide(refusal));
+			m_startRefusals.push_back("online saved-war checks");
+			windows().note("online-start-refused", refusal);
+			callPage("EnableButtonPlayGame");
+			return;
+		}
+	}
 	if (SkirmishGameSetup *model = setupModel())
 	{
+		applyScenarioLimits(); // RW 0x843245 .. 0x843575: the strategic check needs its scenario's player bounds, as the LAN and skirmish starts do
 		// lane ONLINE-5: with the screen's own flags (0x20: a player who is not ready refuses the start with GUI:NotifiedStartIntent, RW 0x8431B8's
 		// last test). The owner's vslot 0x44 (BFME2 0x59F043 MpOwnerPrintMessage): kind 2 is a line every player of the room gets, the others are local
 		// RW 0x8431B8: BFME2 AptMpGameSetup::OnHostStartGame, RVA 0x440BDF, tier B (RotWK differences unverified).
@@ -2342,7 +2489,7 @@ void AptOnlineShell::update()
 	}
 	updateNetworkPage(); // lane ONLINEMENU-1 (it closes when the screen, the room or the page goes)
 	updateRelayLink();   // lane ONLINEMENU-1
-	if (!m_pages.count("OnlineOpenPlay"))
+	if (!m_pages.count("OnlineOpenPlay") && !m_pages.count("OnlineStrategic"))
 	{
 		return;
 	}
@@ -2487,8 +2634,10 @@ void AptOnlineShell::lobbyChanged()
 	}
 	const SkirmishGameInfo &now = model->info();
 	const SkirmishGameInfo &was = m_client->gameInfo();
-	if (m_client->amIHost() && (now.mapName != was.mapName || now.startingCash != was.startingCash || now.superweaponRestriction != was.superweaponRestriction ||
-								   now.legendaryHeroes != was.legendaryHeroes || now.rules != was.rules || now.cheatModeOn() != was.cheatModeOn()))
+	if (m_client->amIHost() && (now.mapName != was.mapName || now.gameMode != was.gameMode || now.scenario != was.scenario ||
+								   now.resumeSave != was.resumeSave || now.resumeHash != was.resumeHash || now.startingCash != was.startingCash ||
+								   now.superweaponRestriction != was.superweaponRestriction || now.legendaryHeroes != was.legendaryHeroes ||
+								   now.rules != was.rules || now.cheatModeOn() != was.cheatModeOn()))
 	{
 		m_client->setSetup(now);
 	}

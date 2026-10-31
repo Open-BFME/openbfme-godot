@@ -47,6 +47,9 @@
 ##     --hud7=<a,b,...>      (lane HUD-7, with --auto) scripts/hud7_player.gd: radar (the view box and a radar click), deselect (a left click on empty
 ##                           ground), sell (a structure's Sell button), upgrade (the fortress's upgrade bubble in progress), herocancel (a hero recruited, then
 ##                           cancelled by a right click); hud7-<name>.png in --screens
+##     --edain-choice=Erebor|IronHills|EredLuin|AI  (with --auto --faction=FactionDwarves, two AIs and Edain mounted) test the
+##                           keep's clan choice through the HUD, or the Dwarven AI's choice at frame 3000; Fall Back 4P is the test map,
+##                           with Dwarves / Men as opponents; screenshots of the clicked selector in --screens
 ##     --pingwheel=<a,b,...> (with --auto) scripts/ping_wheel_player.gd: the ping wheel (not retail) driven by input events: wheel, kinds, space, menus,
 ##                           options, hash (PINGWHEEL_HASH=quiet|pings), video (frames in --screens); pingwheel-<name>.png in --screens
 ##     --autocast1=<a,...>   (lane AUTOCAST-1, with --auto) scripts/autocast1_player.gd: witchking (a right click on the Witch-king's Morgul Blade
@@ -446,6 +449,9 @@ var _online_players := 2
 var _online: Node = null
 # lane ONLINE-4
 var _online_http: Node = null
+var _online_checked_room := ""
+var _online_checked_save := ""
+var _online_checked_ms := 0
 var _online_reports: Node = null
 var _online_social: Node = null
 var _online_walk := ""
@@ -875,6 +881,9 @@ func _ready() -> void:
 				_zoom_out_error = "--widescreen=%s: not a Widescreen view value (original or wider)" % _widescreen_flag
 		elif arg.begins_with("--play1="):
 			_play1 = arg.substr(8).split(",", false)
+		elif arg.begins_with("--edain-choice="):
+			_play1 = PackedStringArray([arg.substr(15)])
+			_play_script = "res://scripts/edainfactions1_player.gd"
 		elif arg.begins_with("--zoom1="):
 			_zoom1 = arg.substr(8).split(",", false)
 		elif arg.begins_with("--uber1="):
@@ -1692,6 +1701,8 @@ func _process(delta: float) -> void:
 		if _online_http != null:
 			_online_reports.set_context(_shell.online_status())
 		_online_reports.set_available((_state == State.SCORE and _last_game_online) or (_state == State.MENU and _shell.shell_stack().has("OnlineShell.apt")))
+	if _state == State.MENU and _online_http != null and _frames % 30 == 0:
+		_online_resume_tick()
 	if _state == State.MENU:
 		if _menu_style == "bfme2" and _frames % 5 == 0 and _shell.shell_stack().size() > 0 and _shell.shell_stack()[-1] == "MainMenu.apt":
 			_hide_bfme2_campaign_buttons() # lane DEVPORT-8: only while BFME2_CAMPAIGNS is off (lane BFME2CAMP1 turned it on)
@@ -1867,6 +1878,8 @@ func _on_shell_request(action: String, argument: String) -> void:
 		_open_lan_lobby()
 	elif action == "LanLoadWar":
 		_save_flow.open_menu(2, 16, false) # WOTR2 milestone 8 (step 4): RW 0x849299: the LAN war saves, the one picked is hosted resumed (_lan_load_war)
+	elif action == "OnlineLoadWar":
+		_save_flow.open_menu(2, 16, false) # BFME2 0x59ECC1: the strategic online page's Load Game, resumed from its staging room
 	elif action == "LanGameStart":
 		_lan_game_start()
 	elif action == "Online":
@@ -3776,6 +3789,25 @@ func _auto_lobby_and_start() -> bool:
 		slots.append({"slot": i, "state": _ai})
 	for i in range(mini(_teams.size(), slots.size())): # lane QA-1: --teams
 		slots[i]["team"] = int(_teams[i])
+	if _play_script == "res://scripts/edainfactions1_player.gd":
+		if slots.size() != 3:
+			_fail("Edain selector test needs exactly two AI opponents")
+			return false
+		slots[1]["faction"] = "FactionDwarves"
+		slots[2]["faction"] = "FactionMen"
+		var available: Dictionary = _shell.lobby_state()
+		var keys: PackedStringArray = available.get("map_keys", PackedStringArray())
+		var counts: PackedInt32Array = available.get("map_players", PackedInt32Array())
+		var choice_map := "maps/map mp fall back 4p/map mp fall back 4p.map"
+		if _map_key != DEFAULT_MAP and _map_key != choice_map:
+			_fail("Edain selector test requires Fall Back 4P, not " + _map_key)
+			return false
+		var row: int = keys.find(choice_map)
+		if counts.size() != keys.size() or row < 0 or counts[row] < 3:
+			_fail("Edain selector test: the lobby does not offer Fall Back 4P for three players")
+			return false
+		_map_key = choice_map
+		print("EDAINFACTIONS1 selected lobby map: ", _map_key)
 	var spec := {
 		"map": _map_key,
 		"slots": slots,
@@ -4043,7 +4075,10 @@ func _net_score_flow() -> void:
 		_exit_to_score_screen()
 		await _wait_seconds(3.0)
 	await _wait_seconds(4.0)
-	print("GAME NET score shot %s (forfeit ok %s, score screen %s) -> %s" % [_net_score_shot, str(ok), str(_state == State.SCORE), error_string(get_viewport().get_texture().get_image().save_png(_net_score_shot))])
+	# lane SOLO-3: without a display (--headless) the viewport has no image: the score screen is still reported, the picture is not saved
+	var image := get_viewport().get_texture().get_image()
+	var saved := error_string(image.save_png(_net_score_shot)) if image != null else "not saved (no display)"
+	print("GAME NET score shot %s (forfeit ok %s, score screen %s) -> %s" % [_net_score_shot, str(ok), str(_state == State.SCORE), saved])
 	_net_score_shot = ""
 
 
@@ -4496,6 +4531,12 @@ func _exit_to_score_screen() -> void:
 	_state = State.SCORE
 	if _wotr != null and _wotr.in_battle():
 		_wotr.before_battle_left() # lane WOTR-2: a War of the Ring battle's result is counted while its objects still exist
+		if _wotr.net_online and bool(_wotr.battle_result.get("collected", false)) and int(_world.get_end_game_state().get("end_timer", -1)) == 0:
+			# The phase-2 relay game must exist before net_finish closes phase 1's tactical stream (RW 0x625FC2 restarts the network session).
+			var phase_error: String = await _wotr.request_online_phase([])
+			if not phase_error.is_empty():
+				_fail("War of the Ring (online): back on the map: " + phase_error)
+				return
 	if _cheat_game:
 		_show_rules_summary("Cheat Mode (OpenBFME) game: not counted in any statistics") # lane CHEAT-1: the score screen says so
 	if _quit_open:
@@ -5974,25 +6015,28 @@ func _online_walk_run() -> void:
 	_online_shot("main-menu")
 	print("GAME ONLINE WALK: the main menu's Online")
 	_shell.shell_fscommand("AptMainMenu::OnlineButtonPressed", "")
-	if not await _online_wait("the sign-in page", func(st): return st.get("page", "") == "OnlineLogin", 240):
+	# A second session with the kept lobby credential opens straight on Home; only a fresh session needs the Login movie.
+	if not await _online_wait("the sign-in page or the kept session", func(st):
+			return st.get("page", "") == "OnlineLogin" or (st.get("page", "") == "OnlineHome" and st.get("signed_in", false)), 240):
 		return _online_walk_end(false)
-	if not await _online_wait("the nickname field", func(_st):
-		for gadget in _shell.list_gadgets():
-			if gadget.get("name", "") == "OnlineLogin::Nickname" and not gadget.get("hidden", true):
-				return true
-		return false, 30.0):
-		return _online_walk_end(false)
-	_online_shot("login")
-	# lane ONLINEMENU-1: the nickname field is made by the page's own InitGadgets some frames after the page shows: retried until it exists (10 s)
-	var nick := _online_name if not _online_name.is_empty() else ("Host" if _online_walk == "host" else "Joiner")
-	var nick_until := Time.get_ticks_msec() + 10000
-	while true:
-		var r: Dictionary = _shell.online_apply({"nickname": nick})
-		if r.ok or Time.get_ticks_msec() > nick_until:
-			print("GAME ONLINE WALK {\"nickname\":\"%s\"} -> %s" % [nick, "ok" if r.ok else str(r.errors)])
-			break
-		await _wait_seconds(0.25)
-	_online_apply({"command": "AptOnline::Login::Login"})
+	if _shell.online_status().get("page", "") == "OnlineLogin":
+		if not await _online_wait("the nickname field", func(_st):
+			for gadget in _shell.list_gadgets():
+				if gadget.get("name", "") == "OnlineLogin::Nickname" and not gadget.get("hidden", true):
+					return true
+			return false, 30.0):
+			return _online_walk_end(false)
+		_online_shot("login")
+		# lane ONLINEMENU-1: the nickname field is made by the page's own InitGadgets some frames after the page shows: retried until it exists (10 s)
+		var nick := _online_name if not _online_name.is_empty() else ("Host" if _online_walk == "host" else "Joiner")
+		var nick_until := Time.get_ticks_msec() + 10000
+		while true:
+			var r: Dictionary = _shell.online_apply({"nickname": nick})
+			if r.ok or Time.get_ticks_msec() > nick_until:
+				print("GAME ONLINE WALK {\"nickname\":\"%s\"} -> %s" % [nick, "ok" if r.ok else str(r.errors)])
+				break
+			await _wait_seconds(0.25)
+		_online_apply({"command": "AptOnline::Login::Login"})
 	if not await _online_wait("the home page", func(st): return st.get("signed_in", false) and st.get("page", "") == "OnlineHome", 240):
 		return _online_walk_end(false)
 	await _online_wait("the message of the day", func(st): return not st.get("motd", []).is_empty() and st.motd[0] != "...", 80)
@@ -6009,6 +6053,12 @@ func _online_walk_run() -> void:
 		return _online_walk_rejoin()
 	if _online_walk == "hub":
 		await _online_walk_hub()
+		return
+	if _online_walk in ["warhost", "warjoin"]:
+		print("GAME ONLINE WAR entering strategic page")
+		var walked: bool = await load("res://tests/online_war_walk.gd").new().run(self, _online_walk == "warhost")
+		if not walked:
+			_online_walk_end(false)
 		return
 	if _online_walk == "qm":
 		await _online_walk_qm()
@@ -6392,6 +6442,14 @@ func _net_poll_lobby() -> void:
 	elif p.state == "started":
 		_net_state = "loading"
 		print("GAME NET lobby started: local slot %d, run-ahead %d, CRC interval %d" % [p.local_slot, p.run_ahead, p.crc_interval])
+		if int(p.message.get("game_mode", 0)) == 1:
+			# RW 0x648CF1 (BFME2 decomp AptOnlineCustomMatchMessageHandler.cpp): the strategic START opens the same war as a LAN START.
+			var message: Dictionary = p.message
+			message["living_world_campaign"] = str(message.get("scenario", ""))
+			_net_state = "playing"
+			if _wotr.begin_campaign(message, true) and _online_walk != "":
+				_run_lan_wotr()
+			return
 		_begin_game(p.message)
 
 
@@ -7241,7 +7299,7 @@ func _run_lan_wotr() -> void:
 			if not battle_seen:
 				battle_seen = true
 				print("GAME WOTR NET in a real-time battle")
-				if _lan_wotr_rts and _lan_mode == "host":
+				if _lan_wotr_rts and (_lan_mode == "host" or _online_walk == "warhost"):
 					await _wait_seconds(20.0)
 					await _press_escape()
 					await _wait_seconds(3.0)
@@ -7263,7 +7321,7 @@ func _run_lan_wotr() -> void:
 		await _wotr_dismiss_dialogs()
 		if bool(me.defeated):
 			pass # a defeated player's peer only watches (the lockstep runs on)
-		elif int(_wotr.state.phase) == 0 and ended_turn != turn and turn == _lan_wotr_save_turn and _lan_mode == "host" and not _lan_wotr_save_asked:
+		elif int(_wotr.state.phase) == 0 and ended_turn != turn and turn == _lan_wotr_save_turn and (_lan_mode == "host" or _online_walk == "warhost") and not _lan_wotr_save_asked:
 			# WOTR2 milestone 8 (step 4): the quit menu's Save on the map asks the others (the scripted ones say Yes, then everyone votes to leave for now)
 			_lan_wotr_save_asked = true
 			_wotr.ask_lan_save("lanwar")
@@ -7313,13 +7371,24 @@ func _run_lan_wotr() -> void:
 		var saves: Array = _wotr.net_saves
 		var ok_save: bool = saves.size() >= 1 and not _wotr.net_war_ended.is_empty()
 		print("GAME WOTR NET SAVE RESULT %s: saves %s, war ended: %s" % ["ok" if ok_save or not _lan_wotr_resume.is_empty() else "FAILED", JSON.stringify(saves), _wotr.net_war_ended])
+		if _online_walk != "" and _lan_wotr_save_turn >= 0 and _state == State.SCORE:
+			# The player presses Continue after agreeing to save. It marks the old relay game left before a later session hosts the saved war.
+			await _score_continue()
+			if not await _online_wait("the online staging room after saving", func(st):
+					return not st.get("in_game", false) and not st.get("busy", false) and st.get("page", "") == "OnlineStrategic", 45):
+				get_tree().quit(1)
+				return
 		get_tree().quit(0 if ok_save or not _lan_wotr_resume.is_empty() else 1)
 		return
 	if not _wotr.net_war_ended.is_empty():
-		# Sol review wotr2m8s3: a player left a battle: the war ended for every peer (no result applied); Continue shows the LAN lobby again
-		var lobby_again: bool = _start_stack.has("LanLobby.apt")
+		# Sol review wotr2m8s3: a player left a battle: the war ended for every peer (no result applied); Continue shows the original lobby again.
+		var lobby_again: bool = _start_stack.has("LanLobby.apt") or _start_stack.has("OnlineShell.apt")
 		var detached: bool = not bool(_wotr.lw.net_status().get("network", true))
 		var war_ok: bool = lobby_again and detached and _net_state.is_empty()
+		if _online_walk != "" and war_ok:
+			await _score_continue()
+			war_ok = await _online_wait("the online strategic page after the battle ended", func(st):
+				return not st.get("in_game", false) and not st.get("busy", false) and st.get("page", "") == "OnlineStrategic", 45)
 		print("GAME WOTR NET WAR END RESULT %s: %s, detached %s, Continue shows %s" % ["ok" if war_ok else "FAILED", _wotr.net_war_ended, str(detached), str(_start_stack)])
 		get_tree().quit(0 if war_ok else 1)
 		return
@@ -7561,6 +7630,92 @@ func _lan_set_resume() -> void:
 	var why := _lan_resume_from(_save_flow.save_dir().path_join(_lan_wotr_resume + ".obfmesave"))
 	if not why.is_empty():
 		_fail("LAN script: the resume was refused: " + why)
+
+## BFME2 0x59ECC1 -> RW 0x8182CF: online Load Game hosts the saved lobby; the same session and save checker as the LAN page are used.
+func _online_load_war(path: String) -> String:
+	var save: Dictionary = _world.read_wotr_save(path)
+	var session = bytes_to_var(save.get("session", PackedByteArray())) if save.get("ok", false) else null
+	var damaged: String = _wotr.lan_session_error(session) if save.get("ok", false) else "is no saved network War of the Ring"
+	if not damaged.is_empty():
+		var why := "%s %s" % [path.get_file().get_basename(), damaged]
+		_shell.save_load_refused(path.get_file().get_basename(), why)
+		return why
+	var md5 := str(session.lan.md5)
+	var own_check: String = _wotr.resume_check(md5, int(save.state_hash))
+	if not own_check.is_empty():
+		_shell.save_load_refused(path.get_file().get_basename(), own_check)
+		return own_check
+	var created: Dictionary = _shell.online_apply({"command": "AptOnline::CustomMatch::CreateGame"})
+	if not created.get("ok", false):
+		return "the strategic page could not create a room for the saved war: " + str(created.get("errors", []))
+	for i in 600:
+		await get_tree().process_frame
+		var status: Dictionary = _shell.online_status()
+		if status.get("in_game", false) and status.get("host", false) and int(status.get("state", -1)) == 6:
+			break
+	var st: Dictionary = _shell.online_status()
+	if not st.get("host", false) or not st.get("in_game", false) or int(st.get("state", -1)) != 6:
+		return "the online room for the saved war could not be created"
+	var seats := []
+	var players: Array = session.lan.get("players", [])
+	for i in range(players.size()):
+		var slot: int = int(session.slots[i])
+		if bool(players[i].get("human", false)) and slot > 0:
+			seats.append([slot, str(players[i].get("name", ""))])
+	var staged: Dictionary = _shell.online_stage_saved_war(session.lobby, md5, int(save.state_hash), seats)
+	print("GAME ONLINE resume %s (md5 %s, hash %d, seats %s): %s" % [path.get_file(), md5, int(save.state_hash), JSON.stringify(seats), JSON.stringify(staged)])
+	var why := "" if staged.get("ok", false) else str(staged.get("error", "the saved war was refused"))
+	if not why.is_empty():
+		_shell.save_load_refused(path.get_file().get_basename(), why)
+	return why
+
+## RW 0x81869B: each member tells the lobby whether its own copy passes the LAN state/hash check. Retrying a refusal lets a newly copied save be found.
+func _online_resume_tick() -> void:
+	var st: Dictionary = _shell.online_status()
+	var md5 := str(st.get("resume_save", ""))
+	if not st.get("in_game", false) or int(st.get("game_mode", 0)) != 1 or md5.is_empty():
+		_online_checked_room = ""
+		_online_checked_save = ""
+		return
+	var room := str(st.get("game_id", ""))
+	var now := Time.get_ticks_msec()
+	if room == _online_checked_room and md5 == _online_checked_save and (now - _online_checked_ms < 5000 or
+			(st.get("resume_check_save", "") == md5 and st.get("resume_check_ok", false))):
+		return
+	var why: String = _wotr.resume_check(md5, int(st.get("resume_hash", 0)))
+	if why.is_empty() and not st.get("host", false):
+		var found: Dictionary = _wotr.find_lan_save(md5)
+		var session: Dictionary = found.get("session", {})
+		var own_slot := int(st.get("slot", -1))
+		var players: Array = session.get("lan", {}).get("players", [])
+		var saved_slot := -1
+		for i in range(players.size()):
+			if bool(players[i].get("human", false)) and str(players[i].get("name", "")) == str(st.get("name", "")):
+				saved_slot = int(session.slots[i])
+				break
+		if saved_slot != own_slot or saved_slot < 1:
+			why = "%s is not in their saved war seat" % str(st.get("name", "the joiner"))
+		else:
+			var original: Dictionary = session.lobby.slots[saved_slot]
+			var spec := {"slot": own_slot, "team": int(original.get("team", -1)), "color": int(original.get("color", -1)),
+				"handicap": int(original.get("handicap", 0))}
+			var pt := int(original.get("player_template", -1))
+			var names: PackedStringArray = _wotr.data.get("faction_names", PackedStringArray())
+			if pt >= 0 and pt < names.size():
+				spec["faction"] = names[pt]
+			if int(original.get("start_pos", -1)) >= 0:
+				spec["start_region"] = int(original.start_pos)
+			var applied: Dictionary = _shell.lobby_apply({"slots": [spec]})
+			if not applied.get("ok", false):
+				why = "the saved seat's choices could not be set: " + str(applied.get("errors", []))
+	var result: Dictionary = _shell.online_resume_check(md5, why)
+	if not result.get("ok", false):
+		printerr("GAME ONLINE saved-war check was refused: ", result.get("error", ""))
+		return
+	_online_checked_room = room
+	_online_checked_save = md5
+	_online_checked_ms = now
+	print("GAME ONLINE saved-war check: %s" % ("copy matches" if why.is_empty() else why))
 
 
 ## WOTR2 milestone 8 (step 4): the LAN lobby's Load Game on the War of the Ring page (RW 0x849299 -> RW 0x8182CF -> RW 0x840F3F): the save picked is

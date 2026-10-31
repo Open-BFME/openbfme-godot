@@ -190,9 +190,8 @@ bool Radar::loadArt(ArchiveFileSystem &fs, const std::string &mapFile, std::stri
 bool Radar::decodeArt(const std::vector<std::uint8_t> &bytes, int &w, int &h, std::vector<std::uint8_t> &rgba, std::string *error)
 {
 	TGAImage img;
-	// INFERENCE: retail loads the file through the texture manager, which takes any TGA; the core reader takes the uncompressed true-colour form every
-	// retail art file has (2 / 32-bit) and refuses the others with an error, never a silent default
-	if (!TGAFile::decode(bytes.data(), bytes.size(), img, error, 4096) || img.width <= 0 || img.height <= 0 || bytes.size() < 18)
+	// RW 0x44F3AB routes map art through the texture manager; ZH TARGA.CPP DecodeImage (also used by the menu texture path) reads RLE type 10.
+	if (!TGAFile::decode(bytes.data(), bytes.size(), img, error, 4096, true) || img.width <= 0 || img.height <= 0 || bytes.size() < 18)
 	{
 		return false;
 	}
@@ -738,7 +737,7 @@ void Radar::captureObject(GameLogic &logic, const Object &o, const Player *local
 
 std::uint32_t Radar::saturateColor(std::uint32_t argb)
 {
-	// RW 0x6D8C53 (BFME2 decomp Rva002D7FAEFind.cpp rva002D7BFD, tier A): the float channels (RW 0x6D3AD5), WW3D RGB_To_HSV, S * 1.6 at most 1, HSV_To_RGB,
+	// RW 0x6D8C53 (BFME2 decomp Radar.cpp rva002D7BFD, tier A): the float channels (RW 0x6D3AD5), WW3D RGB_To_HSV, S * 1.6 at most 1, HSV_To_RGB,
 	// each channel (unsigned char)(c * 255.0f) (x87 truncation)
 	const float a = (float)(argb >> 24) * (1.0f / 255.0f);
 	const float r = (float)((argb >> 16) & 0xFF) * (1.0f / 255.0f), g = (float)((argb >> 8) & 0xFF) * (1.0f / 255.0f), b = (float)(argb & 0xFF) * (1.0f / 255.0f);
@@ -808,7 +807,7 @@ std::uint32_t Radar::modulateColor(std::uint32_t c1, std::uint32_t c2)
 
 std::uint32_t Radar::blendColor(std::uint32_t dst, std::uint32_t src, std::uint8_t factor)
 {
-	// RW 0x44D717 (BFME2 W3DRadarColorBlend.cpp, checked against the disassembly)
+	// RW 0x44D717 (BFME2 W3DRadar.cpp:Rva0004DE72Blend, checked against the disassembly)
 	unsigned a1, r1, g1, b1, a2, r2, g2, b2;
 	components(dst, a1, r1, g1, b1);
 	components(src, a2, r2, g2, b2);

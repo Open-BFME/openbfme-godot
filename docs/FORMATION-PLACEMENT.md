@@ -19,14 +19,15 @@ head/body/base facing arrows use their configured artwork and dimensions.
 After release, the preview remains for 45 client ticks and fades over 15 ticks.
 Textures remain in the player's installed game files, never in this repository.
 
-Recovered sources in Open-BFME-2, under `Code/GameEngine/Source`:
+Recovered sources in Open-BFME-2 (`GameClient/` and `Common/` under
+`Code/GameEngine/Source/`, `Libraries/` under `Code/`):
 
 - `GameClient/FormationTranslatorRva00431C9D.cpp`, `FormationTranslatorRva00432038.cpp`:
   gesture start, first-press anchor and pending-command checks.
 - `Common/GapBodiesS3E_Rva003F9CD2.cpp`, `Common/INI/FormationTemplate.cpp`,
   `GameLogic/System/FormationAssistantParseFormation.cpp`,
   `Common/INI/FormationSelectionCriteriaRva00424185.cpp`: INI fields and rows.
-- `Common/Rva004233F5Lookup.cpp`, `Common/System/FormationBuild.cpp`,
+- `Common/Rva004233F5Lookup.cpp`, `Libraries/Source/WWVegas/WWLib/LightSubPoint.cpp` (FormationAssistant::rva00424E77),
   `FormationBuildRow.cpp`, `FormationAssistant.cpp`: selection and placement.
 - `GameClient/InGameUIUpdateFormationPreview.cpp`, `FormationPreviewPoolLookup.cpp`,
   `Rva0029B1C2.cpp`, `Common/Rva0029E159Audio.cpp`: textures, figures, arrows and fade.

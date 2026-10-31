@@ -31,6 +31,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -3427,7 +3429,7 @@ struct Bfme1ProfileFixture
 	Shell shell;
 	AptSkirmish *screen = nullptr;
 
-	explicit Bfme1ProfileFixture(bool bfme1 = true, bool existing = true, const std::string &templates = {})
+	explicit Bfme1ProfileFixture(bool bfme1 = true, bool existing = true, const std::string &templates = {}, bool rotwk = false)
 		: windows(source, services), layer(windows, source, skins), shell(windows, factories, services, environment)
 	{
 		std::filesystem::create_directories(folder);
@@ -3442,6 +3444,7 @@ struct Bfme1ProfileFixture
 			"maps\\fords\\fords.map_5 = 1\nmaps\\hard\\hard.map_4 = 1\nmaps\\medium\\medium.map_3 = 1\nmaps\\easy\\easy.map_2 = 1\n";
 		fs.setDerivedFile("Data/INI/Default/SubsystemLegend.ini", {}, "test", {});
 		if (!bfme1) fs.setDerivedFile("Data/INI/AwardSystem.ini", {}, "test", {});
+		if (rotwk) fs.setDerivedFile("Data/INI/Default/SubsystemLegendExpansion1.ini", {}, "test", {});
 		setup.fac = { FakeSetup::faction("FactionGondor", "Gondor", true, "Castle"), FakeSetup::faction("FactionRohan", "Rohan", true, "Castle") };
 		if (!templates.empty())
 		{
@@ -3608,6 +3611,139 @@ TEST_CASE("bfme1 skirmish profile: real honors, faction artwork and rank follow 
 	CHECK(*fixture.windows.aptImage("CreateComponents/ImageLevelIconMain") == "AptRankIcon0");
 }
 
+TEST_CASE("bfme1 skirmish profile: diagnostics retain filenames and causes without nested directory paths")
+{
+	const std::string filename = "EowynSkirmishStats.ini";
+	const std::string temporary = std::filesystem::temp_directory_path().u8string();
+	for (const std::string &directory : { temporary + "/" + "home/private-profile/", std::string("C:\\") + "Users\\private-profile\\" })
+	{
+		const std::string path = directory + filename;
+		for (const std::string &cause : { std::string("cannot read "), std::string("cannot write "), std::string("write failed: ") })
+		{
+			const std::string diagnostic = Bfme1SkirmishProfiles::statsDiagnostic(path, cause + path);
+			CHECK(diagnostic == cause + filename);
+			CHECK(diagnostic.find(directory) == std::string::npos);
+			CHECK(diagnostic.find(temporary) == std::string::npos);
+			CHECK(diagnostic.find("private-profile") == std::string::npos);
+		}
+		const std::string nested = Bfme1SkirmishProfiles::statsDiagnostic(path, path + ": cannot read " + path);
+		CHECK(nested == filename + ": cannot read " + filename);
+		CHECK(Bfme1SkirmishProfiles::statsDiagnostic(path, "cannot inspect: Permission denied") == filename + ": cannot inspect: Permission denied");
+	}
+	CHECK(Bfme1SkirmishProfiles::statsDiagnostic(filename, "cannot read " + filename) == "cannot read " + filename);
+}
+
+TEST_CASE("bfme1 skirmish profile: creation write failures stay visible without directory paths")
+{
+	Bfme1ProfileFixture fixture;
+	std::filesystem::remove(fixture.folder / "AliceSkirmishStats.ini");
+	std::filesystem::create_directory(fixture.folder / "AliceSkirmishStats.ini");
+	std::string error;
+	CHECK_FALSE(Bfme1SkirmishProfiles::create(*fixture.profiles, std::time(nullptr), &error));
+	CHECK(error == "cannot write AliceSkirmishStats.ini");
+	CHECK(error.find(fixture.folder.u8string()) == std::string::npos);
+	std::filesystem::create_directory(fixture.folder / "CharlieSkirmishStats.ini");
+	fixture.choose(fixture.screen->profileComboWindow(), 2);
+	REQUIRE(fixture.screen->profileEntryWindow());
+	GadgetTextEntrySetText(fixture.screen->profileEntryWindow(), u"Charlie");
+	REQUIRE(fixture.windows.invokeCallback("AptSkirmish::OnAddProfileAccept", ""));
+	bool reported = false;
+	for (const auto &note : fixture.windows.notes())
+	{
+		if (note.kind != "skirmish-profile-stats") continue;
+		CHECK(note.detail.find(fixture.folder.u8string()) == std::string::npos);
+		if (note.detail == "cannot write CharlieSkirmishStats.ini") reported = true;
+	}
+	CHECK(reported);
+}
+
+#ifndef _WIN32
+// POSIX permissions let these tests exercise real status, open-for-read and open-for-write failures without I/O mocks.
+TEST_CASE("bfme1 skirmish profile: status, read and recording write failures expose no private directories")
+{
+	Bfme1ProfileFixture fixture;
+	const std::filesystem::path path = fixture.folder / "AliceSkirmishStats.ini";
+	GameRecord record;
+	record.id = "bfme1-profile-io-error";
+	record.kind = "skirmish";
+	record.players = { { 0, "Alice", "FactionGondor", 0, true }, { 1, "AI", "FactionRohan", 1, false } };
+	record.meSlot = 0;
+	record.winnerTeam = 0;
+	std::filesystem::path restricted;
+	std::filesystem::perms permissions{};
+	std::string expected;
+	bool refresh = true;
+	SUBCASE("file status failure")
+	{
+		restricted = fixture.folder;
+		permissions = std::filesystem::perms::none;
+		expected = "AliceSkirmishStats.ini: cannot inspect: " + std::make_error_code(std::errc::permission_denied).message();
+	}
+	SUBCASE("read failure")
+	{
+		restricted = path;
+		permissions = std::filesystem::perms::none;
+		expected = "cannot read AliceSkirmishStats.ini";
+	}
+	SUBCASE("recording write failure")
+	{
+		restricted = path;
+		permissions = std::filesystem::perms::owner_read;
+		expected = "cannot write AliceSkirmishStats.ini";
+		refresh = false;
+	}
+	struct RestorePermissions
+	{
+		std::filesystem::path path;
+		std::filesystem::perms original;
+		~RestorePermissions()
+		{
+			std::error_code ignored;
+			std::filesystem::permissions(path, original, ignored);
+		}
+	} restore{ restricted, std::filesystem::status(restricted).permissions() };
+	std::filesystem::permissions(restricted, permissions);
+	// Root/capabilities or filesystem ACLs may bypass mode bits. Verify the denial before testing its diagnostic.
+	bool bypassesPermissions = false;
+	if (restricted == fixture.folder)
+	{
+		std::error_code status;
+		bypassesPermissions = std::filesystem::exists(path, status) && !status;
+	}
+	else if (refresh)
+	{
+		bypassesPermissions = (bool)std::ifstream(path, std::ios::binary);
+	}
+	else
+	{
+		// Append mode probes write access without truncating the existing statistics.
+		bypassesPermissions = (bool)std::ofstream(path, std::ios::binary | std::ios::app);
+	}
+	if (bypassesPermissions)
+	{
+		std::printf("SKIP: BFME1 statistics permission-denial subcase: this process can bypass the denied filesystem permissions\n");
+		return; // RestorePermissions still restores the fixture for cleanup.
+	}
+	std::string error;
+	CHECK_FALSE(Bfme1SkirmishProfiles::recordGame(*fixture.profiles, fixture.setup, record, &error));
+	CHECK(error == expected);
+	CHECK(error.find(fixture.folder.u8string()) == std::string::npos);
+	CHECK(error.find(std::filesystem::temp_directory_path().u8string()) == std::string::npos);
+	if (const char *home = std::getenv("HOME")) CHECK(error.find(home) == std::string::npos);
+	if (refresh)
+	{
+		fixture.screen->recordsChanged();
+		REQUIRE_FALSE(fixture.windows.notes().empty());
+		const auto &note = fixture.windows.notes().back();
+		CHECK(note.kind == "skirmish-profile-stats");
+		CHECK(note.detail == expected);
+		CHECK(note.detail.find(fixture.folder.u8string()) == std::string::npos);
+		CHECK(note.detail.find(std::filesystem::temp_directory_path().u8string()) == std::string::npos);
+		if (const char *home = std::getenv("HOME")) CHECK(note.detail.find(home) == std::string::npos);
+	}
+}
+#endif
+
 TEST_CASE("bfme1 skirmish profile: loaded faction indices, renamed sides and mounted rank images drive presentation")
 {
 	const std::string templates =
@@ -3657,6 +3793,49 @@ TEST_CASE("bfme1 skirmish profile: loaded faction indices, renamed sides and mou
 	CHECK(fixture.movieValue("profileMovie") == "0");
 }
 
+TEST_CASE("bfme1 skirmish profile: faction name prefers CAPS then the loaded DisplayName and reports missing labels")
+{
+	bool hasCaps = false;
+	bool hasDisplayName = true;
+	bool hasDisplayText = true;
+	std::string expected = "Northern Haven";
+	SUBCASE("CAPS takes precedence over a different DisplayName")
+	{
+		hasCaps = true;
+		expected = "NORTHERN HAVEN";
+	}
+	SUBCASE("a renamed mod side without CAPS uses its configured DisplayName") {}
+	SUBCASE("CAPS does not require a resolved DisplayName")
+	{
+		hasCaps = true;
+		hasDisplayText = false;
+		expected = "NORTHERN HAVEN";
+	}
+	SUBCASE("an unresolved DisplayName retains its missing-label diagnostic")
+	{
+		hasDisplayText = false;
+		expected = "MISSING: 'INI:FactionNorthRealm'";
+	}
+	SUBCASE("an absent DisplayName retains the missing CAPS diagnostic")
+	{
+		hasDisplayName = false;
+		expected = "MISSING: 'APT:HavenCaps'";
+	}
+	const std::string templates =
+		"PlayerTemplate FactionHidden\nSide = Hidden\nPlayableSide = No\nEnd\n"
+		"PlayerTemplate FactionNorthRealm\nSide = Haven\nPlayableSide = Yes\n" +
+		std::string(hasDisplayName ? "DisplayName = INI:FactionNorthRealm\n" : "") + "StartingBuilding = Castle\nEnd\n";
+	Bfme1ProfileFixture fixture(true, true, templates);
+	if (hasDisplayText) fixture.text.set("INI:FactionNorthRealm", "Northern Haven");
+	if (hasCaps) fixture.text.set("APT:HavenCaps", "NORTHERN HAVEN");
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 1);
+	CHECK(fixture.screen->setup()->info().slots[0].playerTemplate == 1);
+	CHECK(fixture.value("APT:CurFactionNameStr") == expected);
+	CHECK(fixture.movieValue("profileMovie") == "1");
+	REQUIRE(fixture.windows.aptImage("CreateComponents/ImageLevelIconMain"));
+	CHECK(*fixture.windows.aptImage("CreateComponents/ImageLevelIconMain") == "AptRankIcon1");
+}
+
 TEST_CASE("bfme1 skirmish profile: profile and map type combos replace retail placeholder entries")
 {
 	Bfme1ProfileFixture fixture;
@@ -3690,9 +3869,15 @@ TEST_CASE("bfme1 skirmish profile: absent profiles show dashes without inventing
 	CHECK(fixture.value("APT:CurrentLevelFormat") == "Level --");
 }
 
-TEST_CASE("bfme1 skirmish profile: BFME2 data does not receive BFME1 profile records or dropdowns")
+TEST_CASE("bfme1 skirmish profile: BFME2 and RotWK data do not receive BFME1 profile records or dropdowns")
 {
-	Bfme1ProfileFixture fixture(false);
+	bool rotwk = false;
+	SUBCASE("BFME2 data") {}
+	SUBCASE("RotWK data") { rotwk = true; }
+	Bfme1ProfileFixture fixture(false, true, {}, rotwk);
+	fixture.text.labels.erase("APT:GondorCaps");
+	fixture.text.set("INI:FactionGondor", "Custom Gondor");
+	CHECK(fixture.value("APT:CurFactionNameStr") == "<unset>");
 	CHECK(fixture.value("APT:PlayerNameNum") == "<unset>");
 	CHECK(fixture.screen->profileComboWindow() == nullptr);
 	CHECK(fixture.screen->mapTypeWindow() == nullptr);
@@ -3700,6 +3885,7 @@ TEST_CASE("bfme1 skirmish profile: BFME2 data does not receive BFME1 profile rec
 	const auto images = fixture.screen->mapListImages();
 	fixture.screen->recordsChanged();
 	CHECK(fixture.screen->mapListImages() == images);
+	CHECK(fixture.value("APT:CurFactionNameStr") == "<unset>");
 	CHECK(fixture.value("APT:PlayerNameNum") == "<unset>");
 	REQUIRE(fixture.screen->profileEntryWindow());
 	GadgetTextEntrySetText(fixture.screen->profileEntryWindow(), u"BFME2New");

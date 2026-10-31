@@ -293,6 +293,10 @@ public:
 	Array online_take_requests();
 	void online_deliver(int64_t id, int64_t status, const String &body, const String &error);
 	Dictionary online_status();
+	Dictionary online_phase_request(int64_t phase, const Array &slots);
+	Dictionary online_phase_status() const;
+	Dictionary online_stage_saved_war(const Dictionary &lobby, const String &save, int64_t hash, const Array &seats);
+	Dictionary online_resume_check(const String &save, const String &why);
 	Dictionary online_apply(const Dictionary &spec);
 	Dictionary online_social_status() const;
 	Array online_social_events();
