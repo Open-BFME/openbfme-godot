@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -3701,6 +3702,27 @@ TEST_CASE("bfme1 skirmish profile: status, read and recording write failures exp
 		}
 	} restore{ restricted, std::filesystem::status(restricted).permissions() };
 	std::filesystem::permissions(restricted, permissions);
+	// Root/capabilities or filesystem ACLs may bypass mode bits. Verify the denial before testing its diagnostic.
+	bool bypassesPermissions = false;
+	if (restricted == fixture.folder)
+	{
+		std::error_code status;
+		bypassesPermissions = std::filesystem::exists(path, status) && !status;
+	}
+	else if (refresh)
+	{
+		bypassesPermissions = (bool)std::ifstream(path, std::ios::binary);
+	}
+	else
+	{
+		// Append mode probes write access without truncating the existing statistics.
+		bypassesPermissions = (bool)std::ofstream(path, std::ios::binary | std::ios::app);
+	}
+	if (bypassesPermissions)
+	{
+		std::printf("SKIP: BFME1 statistics permission-denial subcase: this process can bypass the denied filesystem permissions\n");
+		return; // RestorePermissions still restores the fixture for cleanup.
+	}
 	std::string error;
 	CHECK_FALSE(Bfme1SkirmishProfiles::recordGame(*fixture.profiles, fixture.setup, record, &error));
 	CHECK(error == expected);
