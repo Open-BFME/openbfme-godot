@@ -3399,7 +3399,11 @@ void AptSkirmish::refreshBfme1ProfileDisplay()
 			const double seconds = std::strtod(m_bfme1Honors.get(side + "TimePlayed").c_str(), nullptr);
 			const long long hours = std::isfinite(seconds) && seconds > 0 ? (long long)(std::min(seconds, 2147483647.0) / 3600) : 0;
 			set("APT:TotalTimePlayedNum", format("Apt:TimePlayed", { number(hours / 24), number(hours % 24) }));
-			set("APT:CurFactionNameStr", fetchOrMissing(m_env.gameText, "APT:" + side + "Caps"));
+			bool hasCaps = false;
+			std::u16string factionName = fetchOrMissing(m_env.gameText, "APT:" + side + "Caps", &hasCaps);
+			// Mod sides may provide only their PlayerTemplate DisplayName label.
+			if (!hasCaps && !entry.displayLabel.empty()) factionName = fetchOrMissing(m_env.gameText, entry.displayLabel);
+			set("APT:CurFactionNameStr", factionName);
 			movie = faction;
 			static const int thresholds[] = { 0, 5, 10, 30, 50, 150, 300, 500, 800, 1500 };
 			const int points = count("Points");

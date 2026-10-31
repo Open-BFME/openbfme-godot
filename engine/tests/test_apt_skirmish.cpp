@@ -3657,6 +3657,49 @@ TEST_CASE("bfme1 skirmish profile: loaded faction indices, renamed sides and mou
 	CHECK(fixture.movieValue("profileMovie") == "0");
 }
 
+TEST_CASE("bfme1 skirmish profile: faction name prefers CAPS then the loaded DisplayName and reports missing labels")
+{
+	bool hasCaps = false;
+	bool hasDisplayName = true;
+	bool hasDisplayText = true;
+	std::string expected = "Northern Haven";
+	SUBCASE("CAPS takes precedence over a different DisplayName")
+	{
+		hasCaps = true;
+		expected = "NORTHERN HAVEN";
+	}
+	SUBCASE("a renamed mod side without CAPS uses its configured DisplayName") {}
+	SUBCASE("CAPS does not require a resolved DisplayName")
+	{
+		hasCaps = true;
+		hasDisplayText = false;
+		expected = "NORTHERN HAVEN";
+	}
+	SUBCASE("an unresolved DisplayName retains its missing-label diagnostic")
+	{
+		hasDisplayText = false;
+		expected = "MISSING: 'INI:FactionNorthRealm'";
+	}
+	SUBCASE("an absent DisplayName retains the missing CAPS diagnostic")
+	{
+		hasDisplayName = false;
+		expected = "MISSING: 'APT:HavenCaps'";
+	}
+	const std::string templates =
+		"PlayerTemplate FactionHidden\nSide = Hidden\nPlayableSide = No\nEnd\n"
+		"PlayerTemplate FactionNorthRealm\nSide = Haven\nPlayableSide = Yes\n" +
+		std::string(hasDisplayName ? "DisplayName = INI:FactionNorthRealm\n" : "") + "StartingBuilding = Castle\nEnd\n";
+	Bfme1ProfileFixture fixture(true, true, templates);
+	if (hasDisplayText) fixture.text.set("INI:FactionNorthRealm", "Northern Haven");
+	if (hasCaps) fixture.text.set("APT:HavenCaps", "NORTHERN HAVEN");
+	fixture.choose(fixture.screen->slotGadget(0, "PlayerTemplate"), 1);
+	CHECK(fixture.screen->setup()->info().slots[0].playerTemplate == 1);
+	CHECK(fixture.value("APT:CurFactionNameStr") == expected);
+	CHECK(fixture.movieValue("profileMovie") == "1");
+	REQUIRE(fixture.windows.aptImage("CreateComponents/ImageLevelIconMain"));
+	CHECK(*fixture.windows.aptImage("CreateComponents/ImageLevelIconMain") == "AptRankIcon1");
+}
+
 TEST_CASE("bfme1 skirmish profile: profile and map type combos replace retail placeholder entries")
 {
 	Bfme1ProfileFixture fixture;
@@ -3690,9 +3733,14 @@ TEST_CASE("bfme1 skirmish profile: absent profiles show dashes without inventing
 	CHECK(fixture.value("APT:CurrentLevelFormat") == "Level --");
 }
 
-TEST_CASE("bfme1 skirmish profile: BFME2 data does not receive BFME1 profile records or dropdowns")
+TEST_CASE("bfme1 skirmish profile: BFME2 and RotWK data do not receive BFME1 profile records or dropdowns")
 {
 	Bfme1ProfileFixture fixture(false);
+	SUBCASE("BFME2 data") {}
+	SUBCASE("RotWK data") { fixture.fs.setDerivedFile("Data/INI/Default/SubsystemLegendExpansion1.ini", {}, "test", {}); }
+	fixture.text.labels.erase("APT:GondorCaps");
+	fixture.text.set("INI:FactionGondor", "Custom Gondor");
+	CHECK(fixture.value("APT:CurFactionNameStr") == "<unset>");
 	CHECK(fixture.value("APT:PlayerNameNum") == "<unset>");
 	CHECK(fixture.screen->profileComboWindow() == nullptr);
 	CHECK(fixture.screen->mapTypeWindow() == nullptr);
@@ -3700,6 +3748,7 @@ TEST_CASE("bfme1 skirmish profile: BFME2 data does not receive BFME1 profile rec
 	const auto images = fixture.screen->mapListImages();
 	fixture.screen->recordsChanged();
 	CHECK(fixture.screen->mapListImages() == images);
+	CHECK(fixture.value("APT:CurFactionNameStr") == "<unset>");
 	CHECK(fixture.value("APT:PlayerNameNum") == "<unset>");
 	REQUIRE(fixture.screen->profileEntryWindow());
 	GadgetTextEntrySetText(fixture.screen->profileEntryWindow(), u"BFME2New");
