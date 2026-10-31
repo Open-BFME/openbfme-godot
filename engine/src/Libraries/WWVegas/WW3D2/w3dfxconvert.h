@@ -3,7 +3,7 @@
 // Retail's legacy material -> DefaultW3D.fx conversion, as far as the draw side needs it: which classic W3D surfaces the engine replaces with the effect
 // (and so lights with defaultw3d.fxo's pixel shaders) and which stay on the fixed-function pipeline.
 //
-// Sources. Donor (BFME2 decomp): MeshModelClass_Register_For_Rendering.cpp:82 (MeshModelClass::Register_For_Rendering calls the conversion when LODMeshCacheSetting is set or
+// Sources. Donor (BFME2 decomp): meshmdl.cpp:434 (MeshModelClass::Register_For_Rendering calls the conversion when LODMeshCacheSetting is set or
 // the mesh has flag 4) and MeshMatDescFXShaderConversion.cpp (rva00199FFB, BFME2 0x00199FFB: every refusal below, in its order; the parameters it hands
 // DefaultW3D.fx). Target (RotWK game.dat, caveat S-001): the strings of the refusals are at RW 0x7EB978 .. 0x7EC736. The setting behind the flag is
 // gamelod.ini's ShaderMaterialReplacement, Yes only at the High and UltraHigh static levels (retail gamelod.ini; GameLODManager.h), which are also the

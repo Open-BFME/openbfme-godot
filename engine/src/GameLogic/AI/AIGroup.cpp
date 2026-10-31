@@ -187,7 +187,7 @@ AIGroup::FormationVerdict AIGroup::formationManager(const Coord3D &pos, bool add
 	{
 		return FORMATION_NOT_OFFERED;
 	}
-	// RW 0x7747DE (decomp Common/BfmeConv986.cpp privateGatherAndMoveInFormationToPosition, tier A). First RW 0x76FFF0 (decomp Common/Rva0036E346Count.cpp
+	// RW 0x7747DE (decomp Common/BfmeC986.cpp privateGatherAndMoveInFormationToPosition, tier A). First RW 0x76FFF0 (decomp GameLogic/AI/AIGroup.cpp
 	// AIGroup::rva0036E357, tier B same-shape): a member that is held (object + 0x1C8 bit 3), has no AI or no current locomotor (AI + 0x1F0) or is IMMOBILE
 	// (template + 0x108 bit 2) leaves the group, and the walk starts again; the last member in the group that would leave stops it (the manager then returns 1
 	// and nothing moves)

@@ -161,7 +161,7 @@ UpdateSleepTime TerrainResourceBehavior::update()
 			amount = 1;
 		}
 		owner->depositMoney((std::uint32_t)amount, true); // RW 0x8856B6: Money::deposit(amount, &owner + 0x3DC, 1)
-		// the floating text and the debug overlay (RW 0x8856BD .. 0x885737): above the geometry's top (BFME2 decomp TerrainResourceBehaviorUpdate.cpp:
+		// the floating text and the debug overlay (RW 0x8856BD .. 0x885737): above the geometry's top (BFME2 decomp TerrainResourceBehavior.cpp:
 		// getMaxHeightAbovePosition, worked out by the client)
 		economy.noteIncome(*obj, *owner, amount, Economy::IncomeEvent::TEXT_GEOMETRY_TOP);
 	}
