@@ -917,7 +917,22 @@ public:
 	bool isHordeMeleeLinePassable(const PathfindObject *obj, unsigned surfaces, PathfindLayerEnum layer, const Coord3D &from, const Coord3D &to);
 	bool hordeMeleeStepBack(PathfindObject &obj, const PathfindLocomotorInfo &loco, Coord3D *goal);
 	bool adjustHordeMeleeDestination(PathfindObject &obj, const PathfindLocomotorInfo &loco, Coord3D *dest);
-	bool hordeMeleeFootprint(const PathfindObject &obj, int x, int y, PathfindLayerEnum layer, int radius, bool centred, int *count);
+	// performance (every profile, the same answers): adjustHordeMeleeDestination's candidates' footprints overlap and nothing they read changes during its
+	// search, so each footprint cell's part (refused, or its occupancy count) is worked out once per search (AIPathfindHordeMelee.cpp)
+	struct FootprintMemo
+	{
+		static constexpr int kUnknown = -2;
+		int x0 = 0, y0 = 0, side = 0;
+		std::vector<int> parts; // kUnknown, -1 (the cell refuses the footprint) or the cell's occupancy count
+		int *slot(int x, int y)
+		{
+			const int i = x - x0, j = y - y0;
+			return i >= 0 && j >= 0 && i < side && j < side ? &parts[(size_t)j * (size_t)side + (size_t)i] : nullptr;
+		}
+	};
+	bool hordeMeleeFootprint(const PathfindObject &obj, int x, int y, PathfindLayerEnum layer, int radius, bool centred, int *count, FootprintMemo *memo = nullptr);
+	// one footprint cell's part of RW 0x6EB2EF: -1 when the cell refuses the footprint, else the occupancy count it adds
+	int hordeMeleeCellPart(const PathfindObject &obj, const PathfindCell *cell, PathfindObjectID ignoreId, PathfindObjectID selfId, bool isHuman);
 	// lane ATTACKPATH-1: RW 0x6F4557 (BFME2 decomp PathfinderAttackView.cpp, AIPathfindAttackView.cpp): the attacker at `attackerPos` cannot see `victim` past the
 	// pathfinder's obstacles (AIData AttackUsesLineOfSight, an ATTACK_NEEDS_LINE_OF_SIGHT or CAN_SHOOT_OVER_WALLS attacker) or, with a current weapon, past the
 	// terrain (the weapon's terrain line RW 0x6CC6DD, lane LOS-1: PathfindObject::isClearGoalFiringLineOfSightTerrain)
