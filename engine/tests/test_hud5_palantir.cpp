@@ -24,6 +24,7 @@
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/Object.h"
 #include "GameClient/SpellBookUI.h"
+#include "Libraries/Source/Apt/AptCharacterInst.h"
 
 #include <algorithm>
 #include <string>
@@ -125,6 +126,55 @@ TEST_CASE("hud5 power points retail: the Palantir badge (APT:PlayerRank) and the
 	b.frames(15);
 	CHECK(b.logicPoints() == 1);
 	CHECK(b.badge() == "1");
+}
+
+TEST_CASE("hud5 power points retail: spending the last points clears the movie's highlight for good and evil factions")
+{
+	if (!haveWorld("hud5 power highlight"))
+	{
+		return;
+	}
+	const char *faction = "FactionMen";
+	SUBCASE("Evenstar") { faction = "FactionMen"; }
+	SUBCASE("Ring") { faction = "FactionMordor"; }
+	PointsRig b(shared(), faction);
+	b.frames(30);
+	REQUIRE(b.logicPoints() == 5);
+	auto highlighted = [&]() {
+		AptCharacterInst *magic = b.hud->apt().resolvePath(b.hud->apt().level(b.hud->palantir()->level()), "PalantirButtons.Buttons.PlayerMagic");
+		REQUIRE(magic);
+		AptValue state;
+		REQUIRE(magic->getMember("highlighted", state));
+		return state.toBoolean(7); // Palantir.apt's HighlightOverlay branches directly on this member
+	};
+	CHECK(highlighted());
+	std::string error;
+	REQUIRE_MESSAGE(b.hud->openSpellStore(&error), error);
+	b.frames(40);
+	CHECK_FALSE(highlighted());
+	AptSpellStore *store = b.hud->spellStore();
+	REQUIRE(store);
+	int purchase = -1;
+	for (const SpellStoreModel::Button &button : store->model().buttons())
+	{
+		if (button.state == SpellStoreModel::STATE_AVAILABLE && button.cost == 5)
+		{
+			purchase = button.index;
+			break;
+		}
+	}
+	REQUIRE(store->click(purchase));
+	b.hud->closeSpellStore();
+	b.frames(30);
+	CHECK(b.logicPoints() == 0);
+	CHECK(b.badge() == "0");
+	CHECK_FALSE(highlighted());
+	CHECK(b.statsCalled("HighlightPlayerMagicButton(0)"));
+	// Earning enough for another power must light the badge again.
+	b.rig.local->science().addSciencePurchasePoints(5);
+	b.frames(2);
+	CHECK(highlighted());
+	CHECK(b.hud->palantir()->callErrors().empty());
 }
 
 TEST_CASE("hud5 power points retail: the progress ring into the next rank and the level-up effect (RW 0x6D5C76 .. 0x6D5CB2, RW 0x8002BD)")
