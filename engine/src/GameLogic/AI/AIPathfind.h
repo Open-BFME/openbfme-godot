@@ -137,7 +137,8 @@ public:
 class Path : public LocomotorPath
 {
 public:
-	Path();
+	// lane UBER-PATH: `laterLegOnTie` is the Uber pathfinder's follower rule (updateClosestSegment); Faithful paths keep RW's tie
+	explicit Path(bool laterLegOnTie = false);
 	~Path() override;
 	Path(const Path &) = delete;
 	Path &operator=(const Path &) = delete;
@@ -206,6 +207,7 @@ private:
 	PathNode *m_path;
 	PathNode *m_pathTail;
 	bool m_isOptimized;
+	bool m_laterLegOnTie; // lane UBER-PATH (see the constructor)
 	bool m_blockedByAlly;
 	PathNode *m_closest;           // RW Path +0x10: the closest segment's start node
 	float m_t;                     // RW Path +0x14: 0..1 along the current segment
