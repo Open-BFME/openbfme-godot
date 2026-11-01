@@ -50,6 +50,7 @@
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 
+#include <cstdlib>
 #include <map>
 #include <set>
 #include <memory>
@@ -782,12 +783,22 @@ private:
 		bool haveXf = false;
 		bool fogHidden = false; ///< VIS-1: the local player cannot see the object (RW 0xB4E890 SHROUDED)
 		std::vector<EntryView> entries;
+		// lane OCCLUDE-1: this frame's entries for the occlusion lists, noted by refresh_view and listed by refresh_views in drawable order
+		std::vector<std::uint32_t> occlusionCalls;
+		const ObjectSnapshot *occlusionRec = nullptr;
+		std::uint8_t occlusionEligible = 0;
 	};
 
 	Array m_commandErrors;
 	void clear_scene();
 	void build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &report, Array &errors, Array &stops);
 	void refresh_views(double deltaMs);
+	// lane PERF-CLIENT: refresh_views' parts (one drawable's view; whether it may run on the job pool; the prefetch of the drawables ahead)
+	void refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *presented, W3DDrawPoseView &f, size_t &animated);
+	bool view_is_local(size_t id, const W3DInstancer &dyn, const LogicSnapshot *presented, W3DDrawPoseView &f) const;
+	void prefetch_view(size_t id, size_t viewSlots) const;
+	std::vector<std::uint8_t> m_viewSerial; ///< per slot: refreshed by the serial pass (view_is_local said no)
+	bool m_parallelViews = std::getenv("OPENBFME_SERIAL_VIEWS") == nullptr; ///< OPENBFME_SERIAL_VIEWS set (any value): the job pool pass is off (A/B)
 	// VIS-1: the local player's shroud as a cell texture on the terrain materials (S-567)
 	void refresh_shroud(bool force, double dtMs = 0.0);
 	void loadWeather(const String &map_name, Dictionary &report); // lane WEATHER-1: errors under report["weather_errors"]
