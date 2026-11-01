@@ -257,7 +257,11 @@ TEST_CASE("turret retail: Rohirrim in bow mode attack warg riders, then ride on:
 	// their turrets do not update while busy (RW 0x6658D3), and afterwards the turrets find targets with their own idle scan (RW 0x8DCBA6); the turret is
 	// off the horse's axis at its shots. Lane TARGET-1: the turrets' idle targets are RotWK's search (RW 0x8DCBA6 -> 0x66844A -> 0x7006D7: the combat chain's
 	// priorities, the partition order), which picks wargs nearer the horse's axis: the largest angle at a shot is 0.27 rad (was above 0.3 with the nearest enemy)
-	CHECK(maxOffAxis > 0.25f); // tolerance: "off the axis" (the aim takes the turret); 0.27 rad measured
+	// lane MODCOMPAT-MOD1 (BoredUpdate, measured at its commit: the trolls' logic random draw at their creation, RW 0x899F1F, moves the scene's draws and the
+	// wargs the turrets pick): the largest angle at a shot is 0.16 rad (was 0.27); the shots still leave off the horse's axis
+	// merge queue q31 (#68's ambient wanderers draw from the game's random numbers and move which warg each turret picks; measured at each merge point):
+	// the largest angle at a shot is 0.22 rad
+	CHECK(maxOffAxis > 0.15f); // tolerance: "off the axis" (the aim takes the turret); 0.16 rad measured
 	CHECK(after < before);
 }
 

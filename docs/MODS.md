@@ -63,8 +63,22 @@ objects.
 
 - The game files must still be clean 2.01. A loose file in the RotWK install folder that would override a game archive while a mod is
   loaded is refused: move it into the mod folder.
-- The mod is fingerprinted when it is loaded: every archive and every loose file, by name, size and MD5. Lobbies and replays compare that
-  fingerprint, so everyone in a game has the same mod. Editing a mod file while the game runs is an error; restart instead.
+- The mod is fingerprinted when it is loaded: every archive and every loose file, by name, size and MD5. Editing a mod file while the game
+  runs is an error; restart instead.
+- **What has to match to play together (profile 3, lane PROFILE-3).** Lobbies, replays and saves compare what the simulation reads: every
+  file under `data\ini\`, `data\scripts\`, `bases\` (the AI's base layouts) and `libraries\` (the AI's script libraries), every
+  file in a map's folder except its pictures and strings (the map, `map.ini`, `scripts.lua` ...), and every model under `art\w3d\`, as
+  the game resolves them with the mod loaded. A test traces every file a retail game and a mod game read and fails on any file outside
+  that list. On top of that they compare the mod's sim scripts (`sdk sim`, below) and its engine
+  features. The mod's name, its folder and its other files (textures, sounds, music, videos, strings, the menus' and HUD's art: Apt
+  files) don't count. Command buttons and command sets are in `data\ini\` and do count.
+  - Two players with differently named copies of the same mod play together.
+  - A player with a mod that changes only textures, sounds, music, videos, strings or the menus' and HUD's art plays with a player without it.
+  - A mod that changes a model (`art\w3d\*.w3d`) has to match, even if it only changes how the model looks: the simulation reads models
+    (a projectile's launch bone, a wall's footprint). Such a player plays only with players who have the same model files. Asset packs
+    (below) are the way to change how a model looks without this.
+  When the game data differ, the refusal names both players' mods and the archives that differ. The mod's name and fingerprint still travel in the LAN
+  START, the replay and the checker's report.
 
 ## One-click mods in the launcher (lane MODS-3)
 
@@ -135,7 +149,9 @@ names them.
 - **Age of the Ring** and other programs OpenBFME does not know yet stop with a message naming the file.
 - The mod corpus test (`OPENBFME_MOD_CORPUS`) mounts every package laid out by `tools/mod/aio_package.py`, turns on the features of its
   programs and loads its objects through the retail parsers. Most remaining messages are the mods' own data errors, which retail also
-  meets (logs/mods1-report.md lists them per mod).
+  meets (logs/mods1-report.md lists them per mod). It also loads every Apt movie of every package (the menus and the in-game screens,
+  MODUI-1), and `tools/mod/test_modui1_shell_screens.py` walks the menus of each package that ships its own Apt movies (Skirmish with its
+  lobby, Options, LAN, Online, Replays, Load, Create-a-Hero) and fails on any screen 2.01 shows but the mod's does not.
 
 ## Asset packs: drag-and-drop HD models and textures
 
@@ -160,8 +176,9 @@ button. `--asset-packs`, `--asset-pack-on=<name>` and `--asset-pack-off=<name>` 
   packs stay in lockstep. There is no allowlist and no review: the only files left out are the ones that would break the game itself, a
   model that does not fit the skeleton (above) and a file that cannot be read, and the start log and the launcher's card name them
   ("26 models not used ...", with the reasons behind Details; written to `asset-packs/report.json` at every start). The honest limit:
-  a pack can change what one player sees and another does not. The pack lines the game's record will carry (SDK-1c's next step: the
-  START, the replay, a tag in the room) keep honest players honest; they don't catch a renderer cheat. A modified client can draw whatever it likes, and the replay checker sees what a client plays (the game
+  a pack can change what one player sees and another does not. Since profile 3 the game's record carries one line per pack in use
+  (`pack <name> <files> <sha256>`, in the LAN START and the replay; the replay checker reports packs that differ). These lines never
+  refuse a game. They keep honest players honest; they don't catch a renderer cheat. A modified client can draw whatever it likes, and the replay checker sees what a client plays (the game
   state), not what it draws. A pack may hold only models, textures and its own text (`.txt`, `.md`, `README`, `LICENSE`); any other file
   refuses the whole pack. Only drawing reads the packs, and the game logic keeps reading the original files.
 - **From a mod's HD archive.** `python3 tools/mod/asset_pack_from_big.py <archive.big> <new folder>` copies the models and textures of

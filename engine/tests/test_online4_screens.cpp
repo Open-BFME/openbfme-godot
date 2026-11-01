@@ -19,6 +19,8 @@
 #include "GameClient/CreateAHeroHeroList.h"
 #include "GameClient/GUI/AptScreens/AptCreateAHero.h"
 #include "GameClient/GUI/AptScreens/AptOnlineShell.h"
+#include "GameClient/GUI/AptScreens/AptLanLobby.h"
+#include "GameClient/GUI/Skirmish/LivingWorldShellInfo.h"
 #include "GameClient/GUI/Gadgets.h"
 #include "GameClient/GUI/GameWindow.h"
 #include "GameClient/GUI/MenuNavigator.h"
@@ -43,6 +45,7 @@
 #include <memory>
 #include <random>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <atomic>
@@ -1885,6 +1888,176 @@ void signInAndOpenPlay(OnlinePlayer &p, const std::u16string &name)
 }
 } // namespace
 
+TEST_CASE("stableqa1 online: a Stable build refuses the online War of the Ring page with the Stable notice and stays on Open Play")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	NodeLobby lobby("", "");
+	OnlinePlayer p(*s, lobby.port, 22, u"");
+	LivingWorldShellInfo war; // the scenarios are there: only the build's channel refuses the page
+	LivingWorldScenarioEntry scenario;
+	scenario.name = "WarScenario";
+	war.scenarios.push_back(scenario);
+	p.fx.environment.livingWorld = &war;
+	p.fx.environment.warOfTheRingOffered = false; // a Stable build (GodotAptPlayer: BuildVersion::isStableChannel)
+	signInAndOpenPlay(p, u"StableHost");
+	p.tick(30);
+	AptButtonInst *button = starttest::firstButtonIn(p.at("Toggles.ButtonNav.Strategic"));
+	REQUIRE(button);
+	starttest::clickButton(p.fx, *button);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->messageBox() != nullptr; }), p.notes());
+	CHECK(p.sh->messageBox()->text() == AptLanLobby::kStrategicStable);
+	CHECK(p.sh->boxesShown().back() == "GUI:GSErrorTitle|not available: OnlineStrategic");
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == "OnlineOpenPlay"; }), p.notes());
+	CHECK_FALSE(p.sh->strategicMode());
+	CHECK(p.sh->setup()->info().gameMode == 0);
+}
+
+TEST_CASE("wotr9 online strategic: the retail custom-match page opens with the strategic setup and returns to Open Play")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	NodeLobby lobby("", "");
+	OnlinePlayer p(*s, lobby.port, 21, u"");
+	LivingWorldShellInfo war;
+	LivingWorldScenarioEntry scenario;
+	scenario.name = "WarScenario";
+	war.scenarios.push_back(scenario);
+	p.fx.environment.livingWorld = &war;
+	p.fx.environment.warOfTheRingOffered = true;
+	signInAndOpenPlay(p, u"WarHost");
+	p.tick(30);
+	AptButtonInst *button = starttest::firstButtonIn(p.at("Toggles.ButtonNav.Strategic"));
+	REQUIRE(button);
+	starttest::clickButton(p.fx, *button);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == "OnlineStrategic" && p.sh->openPlayState() == 2 && p.sh->gameList(); }),
+		p.notes());
+	CHECK(p.sh->strategicMode());
+	CHECK(p.sh->selectedScenario() == "WarScenario");
+	CHECK(p.sh->setup()->info().gameMode == 1);
+	CHECK_FALSE(p.hasNote("register-duplicate"));
+	button = starttest::firstButtonIn(p.at("Toggles.ButtonNav.OpenPlay"));
+	REQUIRE(button);
+	starttest::clickButton(p.fx, *button);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == "OnlineOpenPlay" && p.sh->openPlayState() == 2; }), p.notes());
+	CHECK_FALSE(p.sh->strategicMode());
+	CHECK(p.sh->setup()->info().gameMode == 0);
+	CHECK_FALSE(p.hasNote("register-duplicate"));
+}
+
+TEST_CASE("wotr9 online strategic: a scenario changed in the staging room reaches the local lobby")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	NodeLobby lobby("", "");
+	OnlinePlayer p(*s, lobby.port, 22, u"");
+	LivingWorldShellInfo war;
+	LivingWorldScenarioEntry first;
+	first.name = "WarScenario";
+	war.scenarios.push_back(first);
+	first.name = "WarScenarioTwo";
+	war.scenarios.push_back(first);
+	p.fx.environment.livingWorld = &war;
+	p.fx.environment.warOfTheRingOffered = true;
+	signInAndOpenPlay(p, u"WarHost");
+	p.tick(30);
+	AptButtonInst *button = starttest::firstButtonIn(p.at("Toggles.ButtonNav.Strategic"));
+	REQUIRE(button);
+	starttest::clickButton(p.fx, *button);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == "OnlineStrategic" && p.sh->openPlayState() == 2; }), p.notes());
+	REQUIRE(p.clickWhenShown("Controls.CreateGame"));
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->openPlayState() == 3 && p.sh->gameNameWindow(); }), p.notes());
+	REQUIRE(p.clickWhenShown("CreateGamePopup.Accept"));
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.client.inGame() && p.sh->openPlayState() == 6; }), p.notes());
+	REQUIRE(p.client.gameInfo().warOfTheRing());
+	CHECK(p.client.gameInfo().scenario == "WarScenario");
+	REQUIRE(p.sh->selectScenario("WarScenarioTwo"));
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.client.gameInfo().scenario == "WarScenarioTwo"; }), p.notes());
+	CHECK(p.client.gameInfo().warOfTheRing());
+}
+
+TEST_CASE("wotr9 online strategic: a joiner's region preview follows the host's scenario")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	NodeLobby lobby("", "");
+	OnlinePlayer host(*s, lobby.port, 24, u""), join(*s, lobby.port, 25, u"");
+	LivingWorldShellInfo war;
+	LivingWorldScenarioEntry sc;
+	sc.name = "WarScenario";
+	war.scenarios.push_back(sc);
+	sc.name = "WarScenarioTwo";
+	war.scenarios.push_back(sc);
+	for (OnlinePlayer *p : { &host, &join })
+	{
+		p->fx.environment.livingWorld = &war;
+		p->fx.environment.warOfTheRingOffered = true;
+	}
+	const std::vector<OnlinePlayer *> all{ &host, &join };
+	signInAndOpenPlay(host, u"Host");
+	REQUIRE(starttest::firstButtonIn(host.at("Toggles.ButtonNav.Strategic")));
+	starttest::clickButton(host.fx, *starttest::firstButtonIn(host.at("Toggles.ButtonNav.Strategic")));
+	REQUIRE(runUntil(all, [&] { return host.sh->currentPage() == "OnlineStrategic" && host.sh->openPlayState() == 2; }));
+	REQUIRE(host.clickWhenShown("Controls.CreateGame"));
+	REQUIRE(runUntil(all, [&] { return host.sh->openPlayState() == 3 && host.sh->gameNameWindow(); }));
+	REQUIRE(host.clickWhenShown("CreateGamePopup.Accept"));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.client.inGame() && host.sh->openPlayState() == 6; }), host.notes());
+	signInAndOpenPlay(join, u"Joiner");
+	REQUIRE(starttest::firstButtonIn(join.at("Toggles.ButtonNav.Strategic")));
+	starttest::clickButton(join.fx, *starttest::firstButtonIn(join.at("Toggles.ButtonNav.Strategic")));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return join.sh->currentPage() == "OnlineStrategic" && join.sh->gameRows().size() == 1; }), join.notes());
+	GadgetListBoxSetSelected(join.sh->gameList(), 0);
+	REQUIRE(join.clickWhenShown("Main.Controls.JoinGame"));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return join.client.inGame() && join.sh->openPlayState() == 12; }), join.notes());
+	CHECK(join.sh->selectedScenario() == "WarScenario");
+	REQUIRE(host.sh->selectScenario("WarScenarioTwo"));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return join.client.gameInfo().scenario == "WarScenarioTwo" && join.sh->selectedScenario() == "WarScenarioTwo"; }),
+		join.notes());
+	CHECK(join.sh->setup()->info().scenario == "WarScenarioTwo");
+}
+
+TEST_CASE("wotr9 online strategic: saved-war staging sends its identity and refuses an open saved seat")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	NodeLobby lobby("", "");
+	OnlinePlayer p(*s, lobby.port, 23, u"");
+	LivingWorldShellInfo war;
+	LivingWorldScenarioEntry scenario;
+	scenario.name = "WarScenario";
+	war.scenarios.push_back(scenario);
+	p.fx.environment.livingWorld = &war;
+	p.fx.environment.warOfTheRingOffered = true;
+	signInAndOpenPlay(p, u"WarHost");
+	p.tick(30);
+	AptButtonInst *button = starttest::firstButtonIn(p.at("Toggles.ButtonNav.Strategic"));
+	REQUIRE(button);
+	starttest::clickButton(p.fx, *button);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == "OnlineStrategic" && p.sh->openPlayState() == 2; }), p.notes());
+	REQUIRE(p.clickWhenShown("Controls.CreateGame"));
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->openPlayState() == 3 && p.sh->gameNameWindow(); }), p.notes());
+	REQUIRE(p.clickWhenShown("CreateGamePopup.Accept"));
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.client.inGame() && p.sh->openPlayState() == 6; }), p.notes());
+	const std::string md5 = "0123456789abcdef0123456789abcdef";
+	SkirmishGameInfo saved = p.client.gameInfo();
+	saved.slots[1].state = SLOT_PLAYER;
+	saved.slots[1].name = u"WarJoiner";
+	std::string why;
+	CHECK_FALSE(p.sh->stageSavedWar(saved, { { 2, u"WarJoiner" } }, md5, 123, &why));
+	CHECK(why.find("seat") != std::string::npos);
+	REQUIRE(p.sh->stageSavedWar(saved, { { 1, u"WarJoiner" } }, md5, 123, &why));
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.client.gameInfo().resumeSave == md5; }), p.notes());
+	CHECK(p.client.gameInfo().resumeHash == 123);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.client.gameInfo().slots[1].state == SLOT_OPEN; }), p.notes());
+	REQUIRE(p.fx.wm->invokeCallback("AptOnline::CustomMatch::PlayGame", ""));
+	p.tick(10);
+	CHECK_FALSE(p.sh->startRefusals().empty());
+	CHECK_MESSAGE(std::any_of(p.sh->chatLines().begin(), p.sh->chatLines().end(),
+		[](const std::string &line) { return line.find("WarJoiner") != std::string::npos; }),
+		p.sh->chatLines().front() << " / " << p.sh->chatLines().back());
+	CHECK(p.client.inGame());
+}
+
 TEST_CASE("onlinemenufix3 retail: an online sixteen-slot room scrolls to the last player and returns to eight retail rows")
 {
 	ONLINE4_REQUIRE_NODE();
@@ -2352,6 +2525,9 @@ TEST_CASE("online4 retail: OnlineShell.apt on a local lobby: guest sign-in, the 
 	CHECK(GadgetListBoxGetText(host.sh->chatListWindow(), GadgetListBoxGetNumEntries(host.sh->chatListWindow()) - 1, 0) == u"[Joiner] hello host");
 	// ---- ready: the joiner's press of its own box in the Ready column (lane ONLINE-5: RW 0x84211D gives the boxes their states), seen by the host ----
 	REQUIRE(runUntil({ &host, &join }, [&] { return join.sh->readyIcon(1) == "_enabledUnchecked"; }));
+	// the password pop-up closes with its own animation (ClosePassword: frames 25 .. 38, then frame 0) and its full-screen button (instance1) holds the
+	// room's clicks until it is done, as for a player; a fast join left the press inside that animation (the gate's "covered by popupPassword")
+	REQUIRE_MESSAGE(runUntil({ &host, &join }, [&] { return join.reachable("~1.Ready") != nullptr; }), "the Ready box stays covered: " << join.notes());
 	REQUIRE(join.click("~1.Ready"));
 	REQUIRE(runUntil({ &host, &join }, [&] { return host.client.slotViews()[1].ready && host.sh->setup()->info().slots[1].accepted; }));
 	// ---- Play Game without a relay: the lobby refuses (no_relay) and the player is told plainly ----
@@ -3370,6 +3546,254 @@ TEST_CASE("online5 retail: the staging room's rows and buttons: the chat's Playe
 	REQUIRE(runUntil(all, [&] { return !a.client.inGame(); }));
 	REQUIRE(host.clickWhenShown("TabButtons.ChatTab"));
 	REQUIRE_MESSAGE(runUntil(all, [&] { return players(host) == "Host;"; }), players(host));
+}
+#endif
+
+#ifdef ONLINE4_POSIX
+namespace
+{
+// a window and every parent shown
+bool shownOnScreen(GameWindow *w)
+{
+	for (; w; w = w->winGetParent())
+	{
+		if (w->winIsHidden())
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+// the RULES tab as the player sees it: every shown rule row (the movie's "RuleComboBox" / "RuleCheckBox" placeholders) is a row the screen filed
+// and lies above the player list (the panel's rectangle ends where the slot rows begin), and every filed row shows the game's value; the
+// problems in words (empty: none)
+std::string rulesTabProblems(OnlinePlayer &p)
+{
+	std::ostringstream out;
+	AptOnlineShell &sh = *p.sh;
+	std::set<const GameWindow *> filed;
+	for (int i = 0; i < 16; ++i)
+	{
+		for (GameWindow *w : { sh.ruleComboWindow(i), sh.ruleCheckWindow(i) })
+		{
+			if (w)
+			{
+				filed.insert(w);
+			}
+		}
+	}
+	GameWindow *firstRow = sh.slotGadget(0, "Player");
+	if (!firstRow)
+	{
+		return "no player list";
+	}
+	int listX = 0, listTop = 0;
+	firstRow->winGetScreenPosition(&listX, &listTop);
+	int shown = 0;
+	for (GameWindow *w : p.fx.wm->gadgetLayer()->gadgets().allWindows())
+	{
+		const std::string &n = w->aptInstanceName();
+		if ((n.rfind("RuleComboBox", 0) != 0 && n.rfind("RuleCheckBox", 0) != 0) || !shownOnScreen(w))
+		{
+			continue;
+		}
+		++shown;
+		int x = 0, y = 0, ww = 0, hh = 0;
+		w->winGetScreenPosition(&x, &y);
+		w->winGetSize(&ww, &hh);
+		if (!filed.count(w))
+		{
+			out << "an unfiled " << n << " is shown at (" << x << "," << y << "); ";
+		}
+		if (y + hh > listTop)
+		{
+			out << n << " at (" << x << "," << y << ") is over the player list (its top " << listTop << "); ";
+		}
+	}
+	if (shown == 0)
+	{
+		out << "no rule row is shown; the rule windows:";
+		for (GameWindow *w : p.fx.wm->gadgetLayer()->gadgets().allWindows())
+		{
+			const std::string &n = w->aptInstanceName();
+			if (n.rfind("RuleComboBox", 0) == 0 || n.rfind("RuleCheckBox", 0) == 0)
+			{
+				int x = 0, y = 0;
+				w->winGetScreenPosition(&x, &y);
+				out << " " << n << "(" << x << "," << y << (filed.count(w) ? " filed" : "") << (w->winIsHidden() ? " hidden" : "")
+					<< (w->winClipRemoved() ? " clip-removed" : "") << (shownOnScreen(w) ? "" : " parent-hidden") << ")";
+			}
+		}
+		std::vector<AptButtonInst *> bs;
+		p.buttons(p.fx.wm->apt().level(sh.level()), bs);
+		out << "; the buttons:";
+		for (AptButtonInst *b : bs)
+		{
+			out << " " << b->targetPath();
+		}
+		return out.str();
+	}
+	const SkirmishGameInfo &g = sh.setup()->info();
+	for (int rule = 0; rule < NUM_GAME_RULES; ++rule)
+	{
+		GameWindow *w = sh.ruleWindow(rule);
+		if (!w)
+		{
+			continue;
+		}
+		int value = -9999;
+		if ((w->winGetStyle() & GWS_CHECK_BOX) != 0)
+		{
+			value = GadgetCheckBoxIsChecked(w) ? 1 : 0;
+			if ((g.rules[(size_t)rule] != 0 ? 1 : 0) != value)
+			{
+				out << "rule " << rule << " shows " << value << ", the game has " << g.rules[(size_t)rule] << "; ";
+			}
+			continue;
+		}
+		int pos = -1;
+		GadgetComboBoxGetSelectedPos(w, &pos);
+		value = pos < 0 ? -9999 : (int)reinterpret_cast<std::intptr_t>(GadgetComboBoxGetItemData(w, pos));
+		if (value != g.rules[(size_t)rule])
+		{
+			out << "rule " << rule << " shows " << value << ", the game has " << g.rules[(size_t)rule] << "; ";
+		}
+	}
+	if (GameWindow *w = sh.legendaryHeroesWindow())
+	{
+		int pos = -1;
+		GadgetComboBoxGetSelectedPos(w, &pos);
+		const int value = pos < 0 ? -9999 : (int)reinterpret_cast<std::intptr_t>(GadgetComboBoxGetItemData(w, pos));
+		if (value != g.legendaryHeroes)
+		{
+			out << "Legendary Heroes shows " << value << ", the game has " << g.legendaryHeroes << "; ";
+		}
+	}
+	return out.str();
+}
+} // namespace
+
+// selects a tab of the staging room (TabButtons.<tab>): the selected tab has no button; pressed again while the movie drops a press as it plays in
+bool selectTab(OnlinePlayer &p, const std::vector<OnlinePlayer *> &all, const std::string &tab)
+{
+	int frame = 0;
+	std::string seen;
+	const bool ok = runUntil(all, [&] {
+		std::vector<AptButtonInst *> bs;
+		p.buttons(p.fx.wm->apt().level(p.sh->level()), bs);
+		bool listed = false, other = false;
+		for (AptButtonInst *b : bs)
+		{
+			listed = listed || b->targetPath().find("TabButtons." + tab) != std::string::npos;
+			other = other || b->targetPath().find("TabButtons.") != std::string::npos;
+		}
+		if (other && !listed)
+		{
+			return true;
+		}
+		if (frame++ % 60 == 0) // a press, then the tab's clip plays in
+		{
+			std::string why;
+			p.pressReachable("TabButtons." + tab, &why);
+			seen = why;
+			for (AptButtonInst *b : bs)
+			{
+				seen += " " + b->targetPath();
+			}
+		}
+		return false;
+	});
+	if (!ok)
+	{
+		MESSAGE("the tab " << tab << " was not selected: " << seen);
+	}
+	return ok;
+}
+
+TEST_CASE("rulesov1 retail: the online staging room's RULES tab shows one set of rule rows, inside the panel, with the game's values, on the host and "
+		  "the joiner, across tab changes (the owner's 2026-10-29 screenshot: a second set over the player list showed 1X / Off while the panel said 8X / 2x)")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	NodeLobby lobby("", "");
+	OnlinePlayer host(*s, lobby.port, 81, u""), a(*s, lobby.port, 82, u"");
+	const std::vector<OnlinePlayer *> all{ &host, &a };
+	signInAndOpenPlay(host, u"Host");
+	// the server browser's own MAP / RULES panel first (MpGameSetup's, read only outside a room)
+	REQUIRE(selectTab(host, { &host }, "RulesTab"));
+	host.tick(120);
+	REQUIRE(host.clickWhenShown("Controls.CreateGame"));
+	REQUIRE(runUntil({ &host }, [&] { return host.sh->gameNameWindow() != nullptr && host.sh->openPlayState() == 3; }));
+	REQUIRE(host.clickWhenShown("CreateGamePopup.Accept"));
+	REQUIRE_MESSAGE(runUntil({ &host }, [&] { return host.client.inGame() && host.sh->openPlayState() == 6; }), host.notes());
+	joinListed(a, all, u"JoinerA");
+	REQUIRE(selectTab(host, all, "RulesTab"));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.sh->rulesPopulated() && host.sh->ruleWindow(RULE_COMMAND_POINT_FACTOR) != nullptr; }), host.notes());
+	host.tick(60); // the tab's clip has played in
+	CHECK_MESSAGE(rulesTabProblems(host).empty(), rulesTabProblems(host));
+	// the owner's values: Command Point Factor 8X, Legendary Heroes 2x; the host's tab and the joiner's model follow
+	GameWindow *cp = host.sh->ruleWindow(RULE_COMMAND_POINT_FACTOR);
+	for (int i = 0; i < GadgetComboBoxGetLength(cp); ++i)
+	{
+		if ((int)reinterpret_cast<std::intptr_t>(GadgetComboBoxGetItemData(cp, i)) == 800)
+		{
+			GadgetComboBoxSetSelectedPos(cp, i, false);
+		}
+	}
+	REQUIRE(host.sh->legendaryHeroesWindow());
+	GadgetComboBoxSetSelectedPos(host.sh->legendaryHeroesWindow(), 1, false);
+	REQUIRE(host.sh->setup()->info().rules[RULE_COMMAND_POINT_FACTOR] == 800);
+	// above 1X the game warns in a box (RW 0x8421E0 kind 3's notice, the Rules tab's own box): its OK closes it
+	host.tick(30);
+	REQUIRE(host.sh->messageBox());
+	host.dismissBox();
+	host.tick(30);
+	REQUIRE(host.sh->setup()->info().legendaryHeroes == 2);
+	REQUIRE_MESSAGE(runUntil(all, [&] { return a.sh->setup()->info().rules == host.sh->setup()->info().rules &&
+		a.sh->setup()->info().legendaryHeroes == 2; }), "the joiner's rules did not follow the host's");
+	// tab changes on both screens: MAP, CHAT, back to RULES
+	for (OnlinePlayer *p : all)
+	{
+		for (const char *tab : { "MapTab", "ChatTab", "RulesTab" })
+		{
+			REQUIRE_MESSAGE(selectTab(*p, all, tab), tab);
+			for (OnlinePlayer *q : all)
+			{
+				q->tick(30);
+			}
+		}
+		REQUIRE_MESSAGE(runUntil(all, [&] { return p->sh->rulesPopulated(); }), p->notes());
+		p->tick(60);
+		CHECK_MESSAGE(rulesTabProblems(*p).empty(), (p == &host ? "host: " : "joiner: ") << rulesTabProblems(*p));
+	}
+	CHECK(a.sh->setup()->info().rules == host.sh->setup()->info().rules);
+	CHECK(a.sh->setup()->info().legendaryHeroes == host.sh->setup()->info().legendaryHeroes);
+	// the joiner leaves: the server browser's own RULES tab shows its rows again (filed anew), each one filed, none left over from the room
+	REQUIRE(a.clickWhenShown("LowerButtons_Join.CancelJoin"));
+	REQUIRE(runUntil(all, [&] { return !a.client.inGame(); }));
+	REQUIRE(selectTab(a, all, "RulesTab"));
+	for (OnlinePlayer *q : all)
+	{
+		q->tick(120);
+	}
+	std::set<const GameWindow *> filed;
+	for (int i = 0; i < 16; ++i)
+	{
+		filed.insert(a.sh->ruleComboWindow(i));
+		filed.insert(a.sh->ruleCheckWindow(i));
+	}
+	int shownRows = 0;
+	for (GameWindow *w : a.fx.wm->gadgetLayer()->gadgets().allWindows())
+	{
+		const std::string &n = w->aptInstanceName();
+		if ((n.rfind("RuleComboBox", 0) == 0 || n.rfind("RuleCheckBox", 0) == 0) && shownOnScreen(w))
+		{
+			++shownRows;
+			CHECK_MESSAGE(filed.count(w), "an unfiled " << n << " is shown in the browser");
+		}
+	}
+	CHECK(shownRows == 7); // Initial Resources, Command Point Factor, Legendary Heroes; Allow Custom Heroes, Allow Ring Heroes, Clan Game, Cheat Mode
 }
 #endif
 

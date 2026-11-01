@@ -264,9 +264,9 @@ func page_check() -> void:
 			if not lone_texts("closed").is_empty():
 				await click_stage(Vector2(30, 200)) # beside every gadget
 			check("%s / %s: its list closes without a choice" % [tab, key], lone_texts("closed").is_empty() and int(page().rows[key].value) == int(row.value), "")
-	# lane OPTS-5: Display 6, Graphics 7 (the level, the three custom settings OpenBFME draws, anti-aliasing, anisotropic, look), Audio 1, Camera 4,
-	# Interface 3, Online 1 (Social.hidden); the Online tab's address list is greyed from the main menu
-	check("every drop-down of the menu (22 on its tabs) was opened", opened == 22, str(opened))
+	# lane OPTS-5: Display 6, Graphics 8 (the level, the four custom settings OpenBFME draws, ShadowLOD's included, anti-aliasing, anisotropic,
+	# look), Audio 1, Camera 4, Interface 3, Online 1 (Social.hidden); the Online tab's address list is greyed from the main menu
+	check("every drop-down of the menu (23 on its tabs) was opened", opened == 23, str(opened))
 	# the owner's case: "Look" open over the row below (Soft particles); its second entry, at a point inside the row below, is chosen
 	await click_tab("Graphics")
 	var rows: Dictionary = page().get("rows", {})

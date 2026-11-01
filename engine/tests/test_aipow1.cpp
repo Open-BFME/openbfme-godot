@@ -493,11 +493,12 @@ TEST_CASE("AIPOW-1: TOGGLE_SIEGE (RW 0x9EA2E1 / 0x9EA201 / 0x9EA280) and DOMINAT
 TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the computer's sciences [S-1875] are reported, S-1421 names what stays unported")
 {
 	const std::vector<std::string> am = ActionManager::stopLines();
-	REQUIRE(am.size() == 4);
+	REQUIRE(am.size() == 5);
 	CHECK(am[0].rfind("[S-1871]", 0) == 0);
 	CHECK(am[1].rfind("[S-1872]", 0) == 0);
 	CHECK(am[2].rfind("[S-1873]", 0) == 0);
 	CHECK(am[3].rfind("[S-1874]", 0) == 0);
+	CHECK(am[4].rfind("[S-7140]", 0) == 0); // MODCOMPAT-MOD1: RW 0x82D925's unported per-type object tests
 	const std::vector<std::string> ai = AISpecialPowerUpdate::stopLines();
 	REQUIRE(ai.size() == 2);
 	CHECK(ai[0].rfind("[S-1421]", 0) == 0);
@@ -644,7 +645,8 @@ TEST_CASE("SUMMONLOC-1: end to end: a Hard computer's Dain summons his Royal Gua
 	// lane FBSIM-1 (the scene's computer players build through their dozers, whose sites are now RotWK's phantoms until placed, RW 0x88D272 / 0x88D44F: the shared random stream and the AIs' play move), measured on the lane's tree (a CI host): 22 -> 24
 	// merge queue q29 (measured once on the merged tree and at each merge point): 23; community #113 moves it 22 -> 23 (its FlagCaptureSquad's draws, RW 0x9BC1A0,
 	// shift the shared random stream) and FBSIM-1 on that tree keeps 23
-	CHECK(frame == 23);
+	// merge queue q33 (measured at each merge point): #133's straight production exits move the scene's units and the shared random stream: 23 -> 22
+	CHECK(frame == 22);
 	CHECK(AISpecialPowerUpdate::stats().executedByType[11] == 1);
 }
 

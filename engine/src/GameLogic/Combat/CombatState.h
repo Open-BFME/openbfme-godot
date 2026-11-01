@@ -154,5 +154,4 @@ private:
 	std::vector<std::uint32_t> m_flying;  ///< lane FLANK-1: flying projectile ids, ascending (derived state: not hashed, not saved)
 	bool m_flyingValid = true;            ///< false after a load: the next pass rebuilds m_flying from the objects
 	std::vector<std::uint32_t> m_flyingScratch, m_contactScratch; ///< the candidates of one projectile (kept between frames: no allocation per frame)
-	std::vector<ObjectGeometry::Shape> m_projShapesScratch, m_otherShapesScratch; ///< lane SIEGE-1: the projectile's and the other object's own active flags over their templates' shapes
 };

@@ -50,7 +50,7 @@ HeroRecord *PlayerHeroList::findByProductionID(std::uint32_t id)
 
 // RW 0x781801 -> RW 0x780713: a purchase record of the template (+ 0x0C from RW 0x73CE2A, see the header; INFERENCE: 1, because no create module class
 // that answers RW 0x73CE2A's vslot 0x24 is ported (S-852))
-void PlayerHeroList::addPurchase(const ThingTemplate &tt)
+HeroRecord PlayerHeroList::recordFromTemplate(const ThingTemplate &tt)
 {
 	HeroRecord r;
 	r.cost = BuildAssistant::buildCost(tt);                                // RW 0x780742: (u16) template + 0x5EA
@@ -58,7 +58,12 @@ void PlayerHeroList::addPurchase(const ThingTemplate &tt)
 	r.rank = 1;
 	r.productionID = 0;                                                    // RW 0x780780: + 0xB4 = 0
 	r.templateName = tt.getName();
-	m_records.push_back(r);
+	return r;
+}
+
+void PlayerHeroList::addPurchase(const ThingTemplate &tt)
+{
+	m_records.push_back(recordFromTemplate(tt));
 }
 
 int PlayerHeroList::addRecord(const HeroRecord &r)

@@ -195,7 +195,7 @@ public:
 	HordeContainInterface *getHordeContainInterface() override { return this; }
 	// CreateModuleInterface
 	void onCreate() override;
-	void onBuildComplete() override {}
+	void onBuildComplete() override;
 	// HordeContainInterface
 	int getMemberSlot(const Object *member) const override;
 	unsigned getSlotCount() const override;
@@ -460,7 +460,7 @@ private:
 	float m_scalingReach = 0.0f; ///< H + 0x2EC
 	void crcWallScaling(StateHasher &h) const;
 	bool m_deleting = false;
-	bool m_locomoting = false;
+	bool m_locomoting = false; // saved and set by the locomotor; containReactToTransformChange no longer reads it (RW 0x871536 moves no member)
 	bool m_propagatedMoving = false;
 	unsigned m_formationRefreshFrame = 0;
 	PassStats m_stats;

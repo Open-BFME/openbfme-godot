@@ -167,7 +167,7 @@ TEST_CASE("camp1 CampaignProgress: the difficulty character (RW 0x91C108), the n
 	CHECK(error.find("campaign progress") == 0);
 }
 
-TEST_CASE("camp1 retail: RotWK's TheLinearCampaignManager holds the expansion legend's three campaigns; ANGMAR_CAMPAIGN is the eight Angmar missions")
+TEST_CASE("camp1 retail: RotWK's TheLinearCampaignManager holds the expansion legend's three campaigns first; ANGMAR_CAMPAIGN is the eight Angmar missions")
 {
 	OPENBFME_REQUIRE_START(s);
 	const LinearCampaignManager &m = s->world->linearCampaigns();
@@ -176,8 +176,9 @@ TEST_CASE("camp1 retail: RotWK's TheLinearCampaignManager holds the expansion le
 	{
 		names.push_back(c.name);
 	}
-	// subsystemlegendexpansion1.ini: LinearCampaignManager InitFile = Data\INI\LinearCampaignExpansion1.ini (BFME2's GOOD / EVIL_CAMPAIGN are not loaded)
-	CHECK(names == std::vector<std::string>{ "ANGMAR_CAMPAIGN", "ANGMAR_CAMPAIGN_DEMO", "ANGMAR_BONUS_CAMPAIGN" });
+	// subsystemlegendexpansion1.ini: LinearCampaignManager InitFile = Data\INI\LinearCampaignExpansion1.ini; lane BFME2CAMP1 (OpenBFME addition):
+	// BFME2's legend's LinearCampaign.ini (GOOD / EVIL_CAMPAIGN) is loaded after them, so RotWK's three keep their positions
+	CHECK(names == std::vector<std::string>{ "ANGMAR_CAMPAIGN", "ANGMAR_CAMPAIGN_DEMO", "ANGMAR_BONUS_CAMPAIGN", "GOOD_CAMPAIGN", "EVIL_CAMPAIGN" });
 	const LinearCampaign *a = m.find("ANGMAR_CAMPAIGN");
 	REQUIRE(a != nullptr);
 	std::vector<std::string> maps;
@@ -197,7 +198,7 @@ TEST_CASE("camp1 retail: RotWK's TheLinearCampaignManager holds the expansion le
 	CHECK(bonus->missions[0].map == "MAP ANG Bonus");
 }
 
-TEST_CASE("camp1 stops: the lane's stops are reported with their ids (S-1360 .. S-1366, CAMPSAVE-1's S-4900 .. S-4903)")
+TEST_CASE("camp1 stops: the lane's stops are reported with their ids (S-1360 .. S-1366, CAMPSAVE-1's S-4900 .. S-4903, BFME2CAMP1's S-4904)")
 {
 	std::vector<std::string> lines = LinearCampaignManager::stopLines();
 	for (const std::string &l : AttachUpdate::stopLines())
@@ -208,31 +209,32 @@ TEST_CASE("camp1 stops: the lane's stops are reported with their ids (S-1360 .. 
 	{
 		lines.push_back(l);
 	}
-	REQUIRE(lines.size() == 11);
+	REQUIRE(lines.size() == 12); // lane BFME2CAMP1: S-4904
 	// lane CAMP-1H: S-1362 (ENEMY_SIGHTED's sight filter) is ported (Object::canSee RW 0x68FA3D); S-1711 and S-1712 joined; lane CAMPSAVE-1: S-4900 .. S-4903;
 	// lane DEVPORT-7: S-1366 (GATE_OPEN / GATE_CLOSE) is closed
-	const char *ids[] = { "[S-1360]", "[S-1364]", "[S-4900]", "[S-4901]", "[S-4902]", "[S-4903]", "[S-1711]", "[S-1361]", "[S-1363]", "[S-1365]", "[S-1712]" };
-	for (size_t i = 0; i < 11; ++i)
+	const char *ids[] = { "[S-1360]", "[S-1364]", "[S-4900]", "[S-4901]", "[S-4902]", "[S-4903]", "[S-4904]", "[S-1711]", "[S-1361]", "[S-1363]", "[S-1365]", "[S-1712]" };
+	for (size_t i = 0; i < 12; ++i)
 	{
 		CHECK(lines[i].rfind(ids[i], 0) == 0);
 	}
 	CHECK(lines[0].find("campaign menu save point") != std::string::npos); // lane CAMPSAVE-1: the auto-save and the menu's saves are OpenBFME saves
 	CHECK(lines[1].find("S-2340") != std::string::npos); // lane CAMP-2: the movies show their VP6 picture (S-1710 no longer lists it)
-	CHECK(lines[6].find("RW 0x69B7BE's + 0x28 string") != std::string::npos); // lane CAMPUI-1: the caption is typed; its incoming character's slide is not
-	CHECK(lines[7].find("HordeContain + 0x54") != std::string::npos);
-	CHECK(lines[8].find("SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER") != std::string::npos); // lane OWNERFIX-1: PLAYER_SET_MAX_SPELLPOINTS is ported
-	CHECK(lines[9].find("RW 0x7A208C") != std::string::npos);
-	CHECK(lines[10].find("RW 0x6AD2B5") != std::string::npos);
+	CHECK(lines[7].find("RW 0x69B7BE's + 0x28 string") != std::string::npos); // lane CAMPUI-1: the caption is typed; its incoming character's slide is not
+	CHECK(lines[8].find("HordeContain + 0x54") != std::string::npos);
+	CHECK(lines[9].find("SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER") != std::string::npos); // lane OWNERFIX-1: PLAYER_SET_MAX_SPELLPOINTS is ported
+	CHECK(lines[10].find("RW 0x7A208C") != std::string::npos);
+	CHECK(lines[11].find("RW 0x6AD2B5") != std::string::npos);
 	// lane CAMP-1H: the movies' stop (GameWorld.get_movie's report)
 	REQUIRE(VideoPlayer::stopLines().size() == 1);
 	CHECK(VideoPlayer::stopLines()[0].rfind("[S-1710]", 0) == 0);
 }
 
-TEST_CASE("camp1 fade: a finished CAMERA_FADE_* applies no fade any more (ZH ScriptEngine::updateFades -> FADE_NONE), even when its minimum is 1")
+TEST_CASE("camp1 fade: a finished CAMERA_FADE_* applies no fade any more (ScriptEngine::updateFades -> FADE_NONE, RW 0x603016), even when its minimum is 1")
 {
 	ScriptCameraDirector d;
 	ScriptClientRequest r;
 	r.action = "CAMERA_FADE_SUBTRACT";
+	r.frame = 100;
 	for (int i = 0; i < 5; ++i)
 	{
 		ScriptParameter p;
@@ -240,18 +242,22 @@ TEST_CASE("camp1 fade: a finished CAMERA_FADE_* applies no fade any more (ZH Scr
 		p.realValue = i == 0 ? 1.0f : 0.0f;
 		r.params.push_back(p);
 	}
-	d.apply(r, Coord3D{ 0.0f, 0.0f, 0.0f }, 0.0f); // MAP ANG Amon Sul's intro: (1, 0, 0, 0, 0)
-	d.update(200.0);
+	// MAP ANG Amon Sul's intro: (1, 0, 0, 0, 0); an increase of 0 runs the first updateFades step inside setFade (RW 0x6030C1): FADE_NONE at once
+	d.apply(r, Coord3D{ 0.0f, 0.0f, 0.0f }, 0.0f);
+	CHECK(d.fadeType() == ScriptCameraDirector::FADE_NONE);
+	d.update(200.0, 100, 1.0);
 	CHECK(d.fade() == 0.0f);
-	// a fade in progress: (0, 1, 5 frames up, 5 held, 5 down; 30 Hz client frames) is full while held, gone at the end
+	// a fade in progress: (0, 1, 5 frames up, 5 held, 5 down; LOGIC frames, RW 0x603016) is full while held, gone at the end
 	r.params[0].realValue = 0.0f;
 	r.params[1].realValue = 1.0f;
 	r.params[2].intValue = 5;
 	r.params[3].intValue = 5;
 	r.params[4].intValue = 5;
 	d.apply(r, Coord3D{ 0.0f, 0.0f, 0.0f }, 0.0f);
-	d.update(250.0); // 7.5 frames: held
+	d.update(0.0, 108, 1.0); // fade frame 8 of 15: held
+	CHECK(d.fadeValue() == 1.0f);
 	CHECK(d.fade() == 1.0f);
-	d.update(400.0);
+	d.update(0.0, 116, 1.0); // 5 up + 5 held + 5 down done: FADE_NONE
+	CHECK(d.fadeType() == ScriptCameraDirector::FADE_NONE);
 	CHECK(d.fade() == 0.0f);
 }

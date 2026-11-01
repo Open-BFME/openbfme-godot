@@ -303,8 +303,7 @@ void GateOpenAndCloseBehavior::pushOut()
 	});
 	PartitionFilterFn status([](Object &o) { return !o.testStatus((unsigned)hordeMember); }); // RW 0x76A28D
 	PartitionFilterFn wouldCollide([&](Object &o) { // RW 0x67C5F3 (vtable RW 0xC112C8 -> 0x66139C): the overlap equals the filter's flag (true)
-		const ThingTemplate *ot = static_cast<const ThingTemplate *>(o.getTemplate())->getFinalOverride();
-		return NotifyCrushModules::geometriesOverlap(shapes, pos, angle, ObjectGeometry::cachedShapesOf(*ot), *o.getPosition(), o.getOrientation());
+		return NotifyCrushModules::geometriesOverlap(shapes, pos, angle, o.geometryShapes(), *o.getPosition(), o.getOrientation());
 	});
 	const PartitionHits hits = logic.partition().iterateObjectsInRange(pos, range, FROM_BOUNDINGSPHERE_3D, { &alive, &hasAI, &kinds, &status, &wouldCollide }, ITER_FASTEST);
 	for (const PartitionHit &h : hits)
@@ -379,9 +378,10 @@ void GateOpenAndCloseBehavior::setGeometry(bool openGeometry, bool scan)
 	{
 		obj->setGeometryActive(n, !openGeometry);
 	}
+	obj->geometryChanged(true); // RW 0x68B244(1) (closed RW 0x89CA6A, the open twin in RW 0x89CA84) (shroud and partition dirty, pathfinder map out / in; lane MODCOMPAT-MOD1)
 	if (ai)
 	{
-		ai->addObjectToPathfindMap(*obj); // RW 0x68B244(1), RW 0x6E85E9
+		ai->addObjectToPathfindMap(*obj); // RW 0x6E85E9 (after the refresh, as retail: a second insert)
 	}
 }
 
@@ -508,8 +508,8 @@ AIGateUpdate::AIGateUpdate(Thing *thing, const AIGateUpdateModuleData *data)
 {
 }
 
-// RW 0x8B4BB7 (the corners RW 0x8B4B31)
-void AIGateUpdate::loadTrigger()
+// RW 0x8B4BB7 (the corners RW 0x8B4B31). lane CASTLEAREA-1: savedIndex >= 0 is a snapshot load's (the trigger goes back at the index it had)
+void AIGateUpdate::loadTrigger(int savedIndex)
 {
 	const float zero = 0.0f;
 	if (m_data->m_triggerWidthX > zero && m_data->m_triggerWidthY > zero)
@@ -534,14 +534,26 @@ void AIGateUpdate::loadTrigger()
 		}
 		GameLogic &logic = obj->logic();
 		const ObjectID gateId = obj->getID();
-		m_trigger = logic.scriptEngine().addPolygonTrigger(area, [&logic, gateId](Object &other, bool entered) {
+		auto callback = [&logic, gateId](Object &other, bool entered) {
 			Object *gate = logic.findObjectByID(gateId);
 			AIGateUpdate *u = gate ? dynamic_cast<AIGateUpdate *>(gate->findModule("AIGateUpdate")) : nullptr;
 			if (u)
 			{
 				u->onTrigger(other, entered);
 			}
-		});
+		};
+		if (savedIndex >= 0)
+		{
+			logic.scriptEngine().addPolygonTriggerAt(savedIndex, area, callback);
+		}
+		else
+		{
+			m_trigger = logic.scriptEngine().addPolygonTrigger(area, callback);
+		}
+	}
+	else if (savedIndex >= 0)
+	{
+		throw XferException("the snapshot's AI gate " + std::to_string(getObject()->getID()) + " has a trigger, its data makes none");
 	}
 	m_loaded = true;
 }
@@ -687,4 +699,8 @@ void AIGateUpdate::xfer(Xfer &x)
 	x.xferInt(&m_enemies);
 	x.xferBool(&m_loaded);
 	x.xferBool(&m_enabled);
+	if (x.isLoading() && m_loaded && m_trigger >= 0)
+	{
+		loadTrigger(m_trigger); // lane CASTLEAREA-1: the trigger back in the script engine's list (the transform is loaded before the modules)
+	}
 }

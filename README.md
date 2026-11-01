@@ -133,7 +133,7 @@ the original are still missing.
 not reinvent it. Where the evidence runs out and the team has to make an
 educated guess, that guess is not hidden: it is recorded as an *acceptance
 stop* in [docs/STOPS.md](docs/STOPS.md), reported by the game at runtime and
-pinned by a test. There are **793 open stops** today. Some are big
+pinned by a test. There are **832 open stops** today. Some are big
 (retail save files), most are small details waiting for better evidence. The plan to
 get to a 1:1 game is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -152,6 +152,16 @@ history is in [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 The full plan, with what is done and what is next, is in
 [docs/ROADMAP.md](docs/ROADMAP.md).
+
+### Game editions
+
+The engine is growing two editions, each with its own rules: **The Battle
+for Middle-earth II 1.06** and **The Rise of the Witch-king 2.01**. BFME2 is
+the base: its rules come from the clean BFME2 1.06 program (`game.dat`), with
+the Open-BFME-2 decompilation as the reading aid. RotWK is BFME2 plus its
+changes. Today every game still runs RotWK's rules; the BFME2 edition is
+being built behind a developer switch (see [docs/EDITIONS.md](docs/EDITIONS.md)).
+Mods will declare which edition they are for. BFME1 comes later.
 
 ## Build from source
 

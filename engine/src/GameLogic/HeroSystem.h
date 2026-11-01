@@ -37,6 +37,16 @@ struct Coord3D;
 namespace HeroSystem
 {
 void initPlayer(GameLogic &logic, Player &player);                                         ///< RW 0x6B16EC
+// WOTR2 milestone 7: RW 0x6B16EC's kind != 3 branch: the War of the Ring player's hero list entries the battle took (RW 0x6E42DA) become this player's records
+// (production id 0, not in production; a dead one gets its RespawnUpdate rule's cost and time, RW 0x6E2D92); each record's army is `garrisonArmyId`
+struct LivingWorldHero
+{
+	std::string templateName;
+	std::string spawnId;
+	float experience = 0.0f;
+	bool dead = false;
+};
+void initLivingWorldPlayer(GameLogic &logic, Player &player, const std::vector<LivingWorldHero> &heroes, int garrisonArmyId, std::vector<std::string> &errors);
 int addDeadHero(Player &player, Object &obj, const RespawnUpdate &respawn, bool autoSpawn);  ///< RW 0x781792
 Object *produce(GameLogic &logic, Player &player, std::uint32_t productionID, const Coord3D &pos); ///< RW 0x78142F
 std::vector<std::string> stopLines();

@@ -1,6 +1,6 @@
 """More BFME2 1.06 Apt handlers run on fake AptValue objects (the value layout is in apt_oracle.py).
 
-Handlers (VAs in the clean BFME2 1.06 image), all `cdecl(stack*)` with the operand stack at {+0 count, +8 array of value*},
+Handlers (VAs in the clean BFME2 1.06 image, preferred base 0x400000), all `cdecl(stack*)` with the operand stack at {+0 count, +8 array of value*},
 top = last:
     Equals2 0xB031E0   Add2 0xB02B60   Subtract 0xB00880   Multiply 0xB009E0   Divide 0xB00B40   Modulo 0xB02600
     Less2 0xB02F20     Greater 0xB04710   Increment 0xB03F40   Decrement 0xB04020
@@ -17,10 +17,16 @@ Every type dispatch, string conversion and x87 operation before that is the reta
 Strings are type-1 values: +8 holds a pointer to the string data {u16 refcount, u16 length, u16 capacity, u16 hash,
 then the NUL-terminated text}, read from 0xADCE50 (value+8 is the EAStringC), 0xA20090 (text = data+8) and 0xAD3750
 (length = word at data+2). Objects are not built (docs/STOPS.md S-042).
+
+The VAs above hold only for an image whose code and data layout they were read from. identify_image() decides that from the file
+BEFORE anything is patched: it accepts exactly the images in KNOWN_IMAGES (preferred base, SizeOfImage and the SHA-256 of the
+.text bytes) and raises UnsupportedImage, with the reason, for anything else.
 """
 from __future__ import annotations
 
+import hashlib
 import struct
+from dataclasses import dataclass
 
 from oracle import Oracle
 
@@ -33,13 +39,80 @@ PROFILE = dict(
     to_number=0xADD460, to_integer=0xADD360, boolean=0xAFF850,
     global_stack=0xE182E0,
 )
+
+# Pool allocator fault (docs/STOPS.md S-016), clean 1.06 VA: the first load of its never built global.
+POOL_FAULT_VA = 0xADB177
+CLEAN_BASE = 0x400000
+
+
+class UnsupportedImage(RuntimeError):
+    """The BFME2 game.dat is not an image these fixtures have a verified address profile for. Raised before any patching."""
+
+
+@dataclass(frozen=True)
+class KnownImage:
+    name: str
+    base: int  # PE ImageBase: the oracle host maps the image there, so every profile VA must lie inside base + size
+    size: int  # PE SizeOfImage
+    text_sha256: str  # SHA-256 of the first VirtualSize bytes of .text (a digest only; no retail bytes are kept)
+    profile: dict
+
+
+KNOWN_IMAGES = (
+    KnownImage("BFME2 1.06 clean (base 0x400000)", CLEAN_BASE, 0xADA000,
+               "86ee7235ec01068a26bc3d78ad0f92788f57051efea3b30fabfbf0ee0454ce55", PROFILE),
+)
+
+
+def pe_summary(data: bytes) -> dict:
+    """ImageBase, SizeOfImage and the .text digest of a PE32 file; UnsupportedImage when it is not one."""
+    try:
+        if data[:2] != b"MZ":
+            raise ValueError("no MZ header")
+        pe = struct.unpack_from("<I", data, 0x3C)[0]
+        if data[pe:pe + 4] != b"PE\0\0":
+            raise ValueError("no PE signature")
+        nsec, opt_size = struct.unpack_from("<H", data, pe + 6)[0], struct.unpack_from("<H", data, pe + 20)[0]
+        opt = pe + 24
+        if struct.unpack_from("<H", data, opt)[0] != 0x10B:
+            raise ValueError("not a 32-bit PE")
+        base, size = struct.unpack_from("<I", data, opt + 28)[0], struct.unpack_from("<I", data, opt + 56)[0]
+        for i in range(nsec):
+            name, vsize, _va, rsize, rptr = struct.unpack_from("<8sIIII", data, opt + opt_size + 40 * i)
+            if name.rstrip(b"\0") == b".text":
+                raw = data[rptr:rptr + min(vsize, rsize)]
+                if len(raw) != min(vsize, rsize):
+                    raise ValueError(".text lies beyond the end of the file")
+                return dict(base=base, size=size, text_sha256=hashlib.sha256(raw).hexdigest())
+        raise ValueError("no .text section")
+    except (ValueError, struct.error) as e:
+        raise UnsupportedImage(f"not a readable PE32 image: {e}") from e
+
+
+def identify_image(data: bytes) -> KnownImage:
+    """The verified image that `data` (the BFME2 game.dat bytes) is, else UnsupportedImage saying why. Call before patching."""
+    got = pe_summary(data)
+    for known in KNOWN_IMAGES:
+        if (known.base, known.size, known.text_sha256) == (got["base"], got["size"], got["text_sha256"]):
+            return known
+    known_list = "; ".join(f"{k.name}: size {k.size:#x}, .text sha256 {k.text_sha256[:16]}" for k in KNOWN_IMAGES)
+    raise UnsupportedImage(
+        f"BFME2 game.dat has no verified Apt address profile (base {got['base']:#x}, size {got['size']:#x}, .text sha256 "
+        f"{got['text_sha256'][:16]}). These fixtures patch fixed BFME2 1.06 VAs, which would hit unmapped or unrelated memory in "
+        f"another image. Known: {known_list}. Point BFME2_INSTALL at a folder holding the clean BFME2 1.06 game.dat.")
 T_STRING, T_BOOL, T_FLOAT, T_INT, T_UNDEF = 1, 5, 6, 7, 0x13
 
 
 class AptHandlers:
-    def __init__(self, o: Oracle):
+    def __init__(self, o: Oracle, image: KnownImage):
+        """`image` is identify_image() of the file `o` loaded; the host's own view of that file is cross-checked first."""
+        if int(o.fields["base"], 16) != image.base or int(o.fields["size"], 16) != image.size:
+            raise UnsupportedImage(f"the oracle host mapped base {o.fields['base']} size {o.fields['size']}, not {image.name} "
+                                   f"(base {image.base:#x}, size {image.size:#x}): a different file than the one identified")
         self.o = o
-        self.p = PROFILE
+        self.image = image
+        self.p = image.profile
+        self.pool_fault = "eip=%08x" % (POOL_FAULT_VA + image.base - CLEAN_BASE)
         self.rec = o.alloc(32)
         self.dummy = o.alloc(64)
         self.vt = o.alloc(64)

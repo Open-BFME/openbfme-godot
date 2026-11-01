@@ -4,6 +4,7 @@
 // start 0, a Medium computer at start 1, starts 3 and 4 empty. The expectations follow the RW functions (the gate's order, the one draw at line 0x3F, the
 // waypoint walk and the occupied test), recomputed here from the map's waypoints and objects, never read back from the port.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "StartTestUtil.h"
@@ -148,6 +149,7 @@ Object *placeAt(GameLogic &logic, const char *name, Team *team, const Coord3D &a
 	REQUIRE_MESSAGE(o != nullptr, name);
 	Coord3D pos{ at.x, at.y, logic.getGroundHeight(at.x, at.y) };
 	o->setPosition(&pos);
+	testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	return o;
 }
 

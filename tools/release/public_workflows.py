@@ -40,6 +40,11 @@ the build jobs have one definition. That file alone may add the trigger `workflo
 declares no `secrets`; a job that calls a workflow (`jobs.<id>.uses`) is allowed in release.yml alone, must call exactly
 ./.github/workflows/release-package.yml and has no `permissions` or `secrets` of its own (it runs with the top-level contents: read). A
 `secrets:` key is refused in every workflow (`secrets: inherit` would hand a called workflow every secret without a `secrets.` reference).
+Lane CRASHACT-1: ONE more secret, CRASH_CLIENT_KEY (the crash service's client key, which every package carries anyway: it is the signing
+key of an extractable client, tools/release/crash_key.py), and only by these exact lines (crash_key_problems): in release.yml the step
+"Build the packages (package.sh)" of job `package` (its step env exactly {CRASH_CLIENT_KEY}) and the macOS call (job `macos`: `secrets:`
+exactly {CRASH_CLIENT_KEY}); in release-package.yml `on.workflow_call.secrets` exactly {CRASH_CLIENT_KEY: {required: false}} and the step
+"Build the package (package_macos.py)" of job `macos` (step env exactly {CRASH_CLIENT_KEY}). No other job, step, call or workflow.
 
     python3 tools/release/public_workflows.py [--git-dir DIR] --tree TREE    (exit 1 and PUBLIC WORKFLOWS lines on a problem)
 """
@@ -73,6 +78,84 @@ SIGN_ENVIRONMENTS = set(SIGN_JOBS)
 SIGN_RUN = 'python3 tools/release/actions_release.py sign --in "$RUNNER_TEMP/in" --pkg "$RUNNER_TEMP/pkg"'
 APPROVAL_RUN = "python3 tools/release/stable_environment.py approval"
 READ_PERMISSIONS = {"contents": "read", "actions": "read"}   # the most any other job of the release workflow may ask for
+CRASH_SECRET = "${{ secrets.CRASH_CLIENT_KEY }}"   # lane CRASHACT-1
+CRASH_ENV = {"CRASH_CLIENT_KEY": CRASH_SECRET}
+# path -> (job, step name) whose step env is exactly CRASH_ENV
+CRASH_STEPS = {RELEASE_WORKFLOW: ("package", "Build the packages (package.sh)"),
+               REUSABLE_WORKFLOW: ("macos", "Build the package (package_macos.py)")}
+CRASH_CALL_JOB = "macos"   # release.yml's job that calls REUSABLE_WORKFLOW with `secrets:` exactly CRASH_ENV
+CRASH_CALL_SECRETS = {"CRASH_CLIENT_KEY": {"required": False}}   # REUSABLE_WORKFLOW's on.workflow_call.secrets
+
+
+def _job_block(lines: list[str], job: str) -> tuple[int, int] | None:
+    """the line range (0-based, end exclusive) of `  <job>:` under jobs, written as a block at two spaces"""
+    start = next((i for i, line in enumerate(lines) if line == f"  {job}:"), None)
+    if start is None:
+        return None
+    end = start + 1
+    while end < len(lines) and not (lines[end].strip() and not lines[end].startswith("    ")):
+        end += 1
+    return start, end
+
+
+def crash_key_problems(path: str, text: str) -> tuple[list[str], set[int]]:
+    """CRASHACT-1: the crash key's allowed shapes in the release workflow and its reusable workflow (see the module's doc); the 1-based line
+    numbers of its allowed secret and `secrets:` lines. Every other file gets no exception."""
+    if path not in CRASH_STEPS:
+        return [], set()
+    try:
+        import yaml
+        doc = yaml.safe_load(text)
+    except Exception:  # noqa: BLE001 (yaml_problems names the parse failure)
+        return [], set()
+    if not isinstance(doc, dict):
+        return [], set()
+    probs: list[str] = []
+    lines = text.splitlines()
+    # Sol r3: every place the PARSED workflow holds the secret, YAML aliases expanded (an anchored env reused by another step reads the
+    # secret there while its text line appears once): exactly the approved recipients (release.yml: the step and the call; the reusable
+    # workflow: its step)
+    def holders(node, seen=0):
+        if isinstance(node, dict):
+            return sum(holders(v) for v in node.values())
+        if isinstance(node, list):
+            return sum(holders(v) for v in node)
+        return 1 if isinstance(node, str) and "secrets.crash_client_key" in node.lower().replace(" ", "") else 0
+    want_count = 2 if path == RELEASE_WORKFLOW else 1
+    if holders(doc) != want_count:
+        probs.append(f"{path}: the crash key is read {holders(doc)} times in the parsed workflow, not exactly {want_count}")
+    jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
+    job_name, step_name = CRASH_STEPS[path]
+    job = jobs.get(job_name) if isinstance(jobs.get(job_name), dict) else {}
+    steps = job.get("steps") if isinstance(job.get("steps"), list) else []
+    named = [st for st in steps if isinstance(st, dict) and st.get("name") == step_name]
+    if len(named) != 1 or named[0].get("env") != CRASH_ENV:
+        probs.append(f"{path}: job {job_name}'s step {step_name!r} must hand exactly {{CRASH_CLIENT_KEY}} to its env, once")
+    allowed: set[int] = set()
+    want = [(job_name, "          CRASH_CLIENT_KEY: " + CRASH_SECRET)]
+    if path == RELEASE_WORKFLOW:
+        call = jobs.get(CRASH_CALL_JOB) if isinstance(jobs.get(CRASH_CALL_JOB), dict) else {}
+        if call.get("secrets") != CRASH_ENV or (call.get("with") or {}).get("platform") != "macos":
+            probs.append(f"{path}: job {CRASH_CALL_JOB} must call the macOS build with `secrets:` exactly {{CRASH_CLIENT_KEY}}")
+        want += [(CRASH_CALL_JOB, "    secrets:"), (CRASH_CALL_JOB, "      CRASH_CLIENT_KEY: " + CRASH_SECRET)]
+    else:
+        on = doc.get("on", doc.get(True))
+        call = on.get("workflow_call") if isinstance(on, dict) else None
+        if not isinstance(call, dict) or call.get("secrets") != CRASH_CALL_SECRETS:
+            probs.append(f"{path}: workflow_call must declare exactly the secret CRASH_CLIENT_KEY (required: false)")
+        on_line = next((i for i, line in enumerate(lines) if re.match(r"^(?:on|\"on\"|'on'):", line)), None)
+        hits = [i for i in range(on_line + 1 if on_line is not None else 0, len(lines)) if lines[i] == "    secrets:"
+                and i > 0 and lines[i - 1].rstrip() == "  workflow_call:"]
+        if len(hits) != 1:
+            probs.append(f"{path}: `secrets:` is not written right under `  workflow_call:`")
+        allowed.update(i + 1 for i in hits)
+    for job_id, line_text in want:
+        block = _job_block(lines, job_id)
+        found = [i for i in range(*block) if lines[i].split("#", 1)[0].rstrip() == line_text] if block else []
+        if len(found) != 1:
+            probs.append(f"{path}: job {job_id} does not hold the line {line_text.strip()!r} exactly once")
+        allowed.update(i + 1 for i in found)
+    return probs, (set() if probs else allowed)
 
 
 def yaml_problems(path: str, text: str) -> list[str]:
@@ -122,9 +205,10 @@ def release_workflow_problems(path: str, text: str) -> tuple[list[str], set[int]
             perms = job.get("permissions")
             if perms is not None and (not isinstance(perms, dict) or any(READ_PERMISSIONS.get(k) != v for k, v in perms.items())):
                 probs.append(f"{path}: job {name} asks for {perms!r}: only a signing job writes (others read contents / actions at most)")
-            if "secrets" in str(job.get("env") or "").lower() or any(
-                    isinstance(st, dict) and "secrets" in str(st.get("env") or "").lower() for st in job.get("steps") or []):
-                probs.append(f"{path}: job {name} reads a secret outside a signing job")
+            keyed = [st for st in job.get("steps") or [] if isinstance(st, dict) and "secrets" in str(st.get("env") or "").lower()]
+            crash = (name, keyed[0].get("name") if len(keyed) == 1 else None) == CRASH_STEPS[RELEASE_WORKFLOW] and keyed[0].get("env") == CRASH_ENV
+            if "secrets" in str(job.get("env") or "").lower() or (keyed and not crash):
+                probs.append(f"{path}: job {name} reads a secret outside a signing job (CRASHACT-1: only the package step's crash key)")
             continue
         if env not in SIGN_JOBS:
             probs.append(f"{path}: job {name} signs outside the signing environments (environment: {env!r})")
@@ -208,8 +292,9 @@ def reusable_problems(path: str, text: str) -> list[str]:
         elif set(on) != {"workflow_dispatch", "workflow_call"}:
             probs.append(f"{path}: {REUSABLE_WORKFLOW} runs on workflow_dispatch and workflow_call alone")
         call = on.get("workflow_call")
-        if call is not None and (not isinstance(call, dict) or set(call) - {"inputs"}):
-            probs.append(f"{path}: workflow_call declares more than inputs (no secrets, no outputs)")
+        if call is not None and (not isinstance(call, dict) or set(call) - {"inputs", "secrets"}
+                                 or call.get("secrets", CRASH_CALL_SECRETS) != CRASH_CALL_SECRETS):
+            probs.append(f"{path}: workflow_call declares more than inputs and the crash key (no other secret, no outputs)")
     jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
     for name, job in jobs.items():
         if not isinstance(job, dict) or "uses" not in job:
@@ -218,8 +303,9 @@ def reusable_problems(path: str, text: str) -> list[str]:
             probs.append(f"{path}: job {name} calls a workflow (only the release workflow may)")
         if job.get("uses") != f"./{REUSABLE_WORKFLOW}":
             probs.append(f"{path}: job {name} calls {job.get('uses')!r}, not ./{REUSABLE_WORKFLOW}")
-        if "permissions" in job or "secrets" in job:
-            probs.append(f"{path}: job {name} calls a workflow with its own permissions or secrets")
+        crash = name == CRASH_CALL_JOB and job.get("secrets") == CRASH_ENV and (job.get("with") or {}).get("platform") == "macos"
+        if "permissions" in job or ("secrets" in job and not crash):
+            probs.append(f"{path}: job {name} calls a workflow with its own permissions or secrets (CRASHACT-1: the macOS call's crash key alone)")
     return probs
 
 
@@ -230,6 +316,8 @@ def workflow_problems(path: str, text: str) -> list[str]:
     if path == RELEASE_WORKFLOW:
         more, allowed = release_workflow_problems(path, text)
         probs += more
+    crash_probs, crash_lines = crash_key_problems(path, text)   # CRASHACT-1
+    probs += crash_probs
     for n, line in enumerate(lines, 1):
         code = line   # comments included: a refused word in a comment fails too (stricter than YAML, never looser)
         low = code.lower()
@@ -238,12 +326,13 @@ def workflow_problems(path: str, text: str) -> list[str]:
                 probs.append(f"{path}:{n}: the trigger {t} (it runs with the base repository's token and secrets)")
         # RELGH-2 (Sol r1): any use of the secrets context (secrets.X, secrets[...], toJSON(secrets), ...), comments included
         exprs = " ".join(re.findall(r"\$\{\{(.*?)\}\}", low)) + (" " + low if re.match(r"^\s*(?:-\s+)?if\s*:", low) else "")
-        if ("secrets." in low or "secrets[" in low or re.search(r"(?<![a-z0-9_-])secrets(?![a-z0-9_-])", exprs)) and -n not in allowed:
+        if ("secrets." in low or "secrets[" in low or re.search(r"(?<![a-z0-9_-])secrets(?![a-z0-9_-])", exprs)) and -n not in allowed \
+                and n not in crash_lines:
             probs.append(f"{path}:{n}: a secrets reference")
         # RELGH-2 (Sol r1): a job may enter a deployment environment only as the release workflow's signing job
         if re.match(r"^\s*(?:-\s+)?[\"']?environment[\"']?\s*:", code) and -(10**6 + n) not in allowed:
             probs.append(f"{path}:{n}: a deployment environment outside the release workflow's signing job")
-        if SECRETS_KEY.match(code):
+        if SECRETS_KEY.match(code) and n not in crash_lines:
             probs.append(f"{path}:{n}: a secrets key (secrets: inherit or a declared secret)")
         if "id-token" in low and n not in allowed:
             probs.append(f"{path}:{n}: an id-token permission")

@@ -9,12 +9,40 @@
 
 #include "GameLogic/ArmorSet.h"
 #include "GameLogic/WeaponSet.h"
+#include "GameClient/ObjectShadow.h"
 
 #include <algorithm>
 #include <map>
 #include <set>
 
 using namespace objtest;
+
+TEST_CASE("object shadows: template, state override and force-disable eligibility")
+{
+	World w;
+	REQUIRE(w.load("Object Volume\n Shadow = SHADOW_VOLUME\nEnd\nObject Decal\n Shadow = SHADOW_DECAL\nEnd\nObject Absent\nEnd\n").empty());
+	CHECK(ObjectShadow::castsMap(w.get("Volume"), nullptr, nullptr));
+	CHECK_FALSE(ObjectShadow::castsMap(w.get("Decal"), nullptr, nullptr)); // a blob decal in retail, not a silhouette (S-3304)
+	CHECK_FALSE(ObjectShadow::castsMap(w.get("Absent"), nullptr, nullptr));
+	CHECK_FALSE(ObjectShadow::castsMap(nullptr, nullptr, nullptr));
+	ModelConditionInfo state;
+	state.hasShadow = true;
+	state.shadow.type = 1; // the state's SHADOW_DECAL overrides the template's volume
+	CHECK_FALSE(ObjectShadow::castsMap(w.get("Volume"), nullptr, &state));
+	state.shadow.type = 1 << 14; // SHADOW_VOLUME_OR_DECAL
+	CHECK(ObjectShadow::castsMap(w.get("Decal"), nullptr, &state));
+	state.shadow.type = 1 << 5; // alpha decal is an effect, not a geometry shadow
+	CHECK_FALSE(ObjectShadow::castsMap(w.get("Volume"), nullptr, &state));
+	state.shadow.type = 1 << 6; // additive aura must not become a caster
+	CHECK_FALSE(ObjectShadow::castsMap(w.get("Volume"), nullptr, &state));
+	state.shadow.type = 2; // the state's SHADOW_VOLUME overrides the template's decal
+	CHECK(ObjectShadow::castsMap(w.get("Decal"), nullptr, &state));
+	W3DModelDrawModuleData module;
+	module.m_shadowForceDisable = true;
+	CHECK_FALSE(ObjectShadow::castsMap(w.get("Volume"), &module, &state));
+	state.shadow.type = 0;
+	CHECK_FALSE(ObjectShadow::castsMap(w.get("Volume"), nullptr, &state));
+}
 
 namespace
 {

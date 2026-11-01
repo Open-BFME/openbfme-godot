@@ -117,6 +117,7 @@ struct W3DDrawPoseView
 	const std::set<int> *hiddenSubObjects = nullptr; ///< indices into model->SubObjects (frame() names them; empty without a model)
 	std::uint32_t hiddenGeneration = 0;             ///< changes whenever the module's hidden set may have changed (with the same model: the same set)
 	const std::vector<std::pair<std::string, std::string>> *textureSwaps = nullptr; ///< the state's `Texture = A B` pairs (stop S-5015); never null after poseView
+	int glow = 0;                                    ///< lane GLOW-1: the module's GlowEnabled / GlowEmissive (module data + 0x128 / + 0x129): 0 none, 1 glows, 2 glows emissive only
 };
 
 struct W3DScriptedModelDrawOptions
@@ -170,6 +171,23 @@ public:
 	// Advances the animations by `elapsedMs` of render time (RW 0x4BF560). Call it once per render frame; logic frames (5 per second)
 	// only change the flags.
 	void advance(double elapsedMs);
+	// lane PERF-HD: advance() will only step this draw's own tracks, fade and speed (no state selection, no script): a looping track 0 alone, nothing
+	// pending. Such a draw may advance on the client job pool
+	// lane PERF-HD: how far (in frames) this draw's pose may stray from its horde group's to be drawn with it (W3DHordeModelDraw: its LodOptions
+	// MaxAnimFrameDelta, RW W3DHordeModelDrawHandle::PartOfSameGroup); negative: never drawn with another's pose
+	virtual float poseShareDelta() const { return -1.0f; }
+	// lane PERF-HD: one track as frame() copies it (and the count frame() reports: the tracks up to the last with an animation), without the copy
+	const W3DDrawTrack &track(int i) const { return m_tracks[i]; }
+	int trackCount() const { return m_tracks[2].anim ? 3 : m_tracks[1].anim ? 2 : m_tracks[0].anim ? 1 : 0; }
+	bool advanceIsLocal() const
+	{
+		if (!m_model || !m_curAnimState)
+		{
+			return true; // advance returns at once
+		}
+		const int mode = m_tracks[0].mode;
+		return m_tracks[0].anim && !m_tracks[1].anim && !m_pending && (mode == 0 || mode == 1 || mode == 3 || mode == 5);
+	}
 
 	W3DDrawFrame frame() const;
 	// lane PERF-1: the same frame written into `f`, reusing its strings' and vector's storage (the render side asks for every animated drawable's frame
@@ -348,6 +366,7 @@ public:
 	W3DHordeModelDraw(const W3DHordeModelDrawModuleData &data, int lodLevel, W3DDrawAssets &assets, W3DDrawRandom &random,
 		W3DDrawScriptHost *scripts = nullptr, const Options &options = Options());
 	int lodLevel() const { return m_lodLevel; }
+	float poseShareDelta() const override { return m_lod.maxAnimFrameDelta; } // lane PERF-HD
 
 protected:
 	int maxRandomAnimations() const override { return m_lod.maxRandomAnimations; }

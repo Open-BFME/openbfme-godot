@@ -7,12 +7,16 @@
 #include "Common/Player.h"
 #include "Common/ResourceGatheringManager.h"
 #include "Common/StateHash.h"
+#include "Common/Team.h"
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/RawModuleData.h"
 #include "Common/Xfer.h"
 #include "GameLogic/AI/AIDock.h"
 #include "GameLogic/AI/AIHarvest.h"
 #include "GameLogic/AI/AIXfer.h"
+#include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/Construction.h"
+#include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/FindPositionAround.h"
@@ -543,6 +547,52 @@ UpdateSleepTime WorkerAIUpdate::update()
 	return UPDATE_SLEEP_NONE;
 }
 
+// RW 0x8AD6A4 with its sixth argument 1 (see WorkerAIUpdate.h)
+Object *WorkerAIUpdate::constructForRebuild(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner)
+{
+	m_rebuildConstruct581 = true; // + 0x581
+	createMachines();             // RW 0x8AD5CA
+	Object *self = getObject();
+	GameLogic &logic = self->logic();
+	Team *team = owner.getDefaultTeam(); // RW 0x8AD756: the owner's + 0x30C
+	if (!team)
+	{
+		logic.reportError("WorkerAIUpdate construct: player '" + owner.getPlayerName() + "' has no default team");
+		return nullptr;
+	}
+	static const int reconstructing = ObjectTemplateInfoBuilder::objectStatusIndex("RECONSTRUCTING");
+	ObjectStatusMaskType status{};
+	MaskSet(status, OBJECT_STATUS_UNDER_CONSTRUCTION, true); // RW 0x6267C7(0, 2)
+	MaskSet(status, (unsigned)reconstructing, true);         // the rebuild byte: | 0x20 in the mask's third byte (status 21)
+	Object *obj = logic.newObject(&what, team, status);      // RW 0x6D165E
+	if (!obj)
+	{
+		return nullptr;
+	}
+	obj->setProducer(self); // RW 0x68B6A1
+	obj->setBuilder(self);  // RW 0x68B6B6
+	exitingSupplyTruckState(); // the worker interface's slot 0 (RW 0x8AE461)
+	obj->setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, true); // RW 0x62684D(2, 1)
+	obj->setPosition(&pos);    // RW 0x70C201
+	obj->setOrientation(angle); // RW 0x70C31E
+	Coord3D ground = pos;
+	ground.z = logic.getGroundHeight(pos.x, pos.y); // TheTerrainLogic vslot 0x18 (RW 0x8AD7E2)
+	obj->setPosition(&ground);
+	if (AIWorld *ai = logic.aiWorld())
+	{
+		ai->addObjectToPathfindMap(*obj); // RW 0x6E85E9
+	}
+	Construction::onStructureCreated(owner, self, *obj); // RW 0x6AAF3B
+	obj->setConstructionPercent(0.0f);                   // + 0x288
+	if (ActiveBody *body = dynamic_cast<ActiveBody *>(obj->getBodyModule()))
+	{
+		body->internalChangeHealth(SimMath::fstpDword(SimMath::pc24SubW(1.0, (double)body->getHealth()))); // body vslots 0x10 / 0x84: (float)(1.0 - health)
+	}
+	Construction::setModelConditions(*obj, { "AWAITING_CONSTRUCTION" }, { "PARTIALLY_CONSTRUCTED", "ACTIVELY_BEING_CONSTRUCTED" }); // RW 0x68D607
+	newTask(DOZER_TASK_BUILD, *obj); // the dozer interface's slot 0x30
+	return obj;
+}
+
 // RW 0x8AE461
 void WorkerAIUpdate::exitingSupplyTruckState()
 {
@@ -692,7 +742,7 @@ void WorkerAIUpdate::crc(StateHasher &h) const
 	DozerAIUpdate::crc(h);
 	// the supply half is hashed once it is engaged (a box, a force flag, a preferred dock, a harvest position or tree, the supply-truck mode): a builder that
 	// never harvests (GettingBuiltBehavior's workers) keeps the hash it had before lane LUMBER1
-	const bool engaged = m_numberBoxes != 0 || m_forceWanting || m_forceBusy || m_unknown581 || m_preferredDock != INVALID_ID || m_hasHarvestPosition ||
+	const bool engaged = m_numberBoxes != 0 || m_forceWanting || m_forceBusy || m_rebuildConstruct581 || m_preferredDock != INVALID_ID || m_hasHarvestPosition ||
 	                     m_currentTree != 0 || (m_workerMachine && m_workerMachine->currentStateId() != (unsigned)AS_DOZER);
 	if (!engaged)
 	{
@@ -707,7 +757,7 @@ void WorkerAIUpdate::crc(StateHasher &h) const
 	h.addBool(m_hasHarvestPosition);
 	h.addI32(m_currentTree);
 	h.addBool(m_forceWanting);
-	h.addBool(m_unknown581);
+	h.addBool(m_rebuildConstruct581);
 	h.addBool(m_forceBusy);
 	h.addBool(m_workerMachine != nullptr);
 	if (m_workerMachine)
@@ -754,7 +804,7 @@ void WorkerAIUpdate::xferSupplyBody(Xfer &x)
 	x.xferInt(&m_numberBoxes);
 	x.xferBool(&m_forceWanting);
 	x.xferBool(&m_forceBusy);
-	x.xferBool(&m_unknown581);
+	x.xferBool(&m_rebuildConstruct581);
 	if (hasMachines)
 	{
 		if (loading)

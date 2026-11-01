@@ -220,7 +220,7 @@ bool Pathfinder::adjustGroundPathPosition(const Coord3D &from, Coord3D *pos)
 
 void Pathfinder::optimizeGroundPath(Path &path, int diameter)
 {
-	// RW 0x765BF6 (BFME2 decomp PathRva00363FA4.cpp, tier A). Only the ground layer exists (S-161): the layer-change limit of the first loop never applies
+	// RW 0x765BF6 (BFME2 decomp Path_optimizeGroundPath.cpp, tier A). Only the ground layer exists (S-161): the layer-change limit of the first loop never applies
 	PathNode *anchor = path.getFirstNode();
 	while (anchor && anchor != path.getLastNode())
 	{

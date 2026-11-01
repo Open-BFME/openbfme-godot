@@ -23,6 +23,8 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/ScriptEngine/AttackPriority.h"
+#include "GameLogic/ScriptEngine/ScriptConditions.h"
+#include "GameClient/MapChunks.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/System/InvisibilityManager.h"
@@ -172,7 +174,7 @@ public:
 class RejectBuildingsFilter : public PartitionFilter
 {
 public:
-	explicit RejectBuildingsFilter(Object &me)
+	explicit RejectBuildingsFilter(const Object &me)
 		: m_me(me)
 	{
 		const Player *p = me.getControllingPlayer();
@@ -205,7 +207,7 @@ public:
 	}
 
 private:
-	Object &m_me;
+	const Object &m_me;
 	bool m_meComputer = false;
 };
 
@@ -575,6 +577,102 @@ Object *adjustVictim(Object &victim, Object *attacker, bool attackRange, int arg
 		member = horde->pickMemberNoPosition(false); // slot 0x48(0, 0, 0, 0, arg)
 	}
 	return member;
+}
+
+Object *findClosestEnemyInArea(const TriggerArea &area, Object &me, const AttackPriorityInfo *info)
+{
+	if (!me.isAbleToAttack()) // RW 0x700F68: RW 0x691269
+	{
+		return nullptr;
+	}
+	GameLogic &logic = me.logic();
+	EnemiesFilter enemies(me);
+	PossibleToAttackFilter possible(me);
+	RejectBuildingsFilter rejectBuildings(me);
+	StealthFilter stealth(me);
+	FleeOffMapFilter fleeOffMap;
+	AliveFilter alive;
+	// vtable 0xC1D654, allow RW 0x66103C: (int)x, (int)y of the candidate in the polygon (RW 0x6E4DC7)
+	PartitionFilterFn inArea([&area](Object &o) {
+		const Coord3D *p = o.getPosition();
+		return ScriptConditions::pointInTrigger(area, (float)SimMath::truncToInt32(p->x), (float)SimMath::truncToInt32(p->y));
+	});
+	PartitionFilter *links[8] = { &enemies, &possible, &rejectBuildings, &stealth, &fleeOffMap, &alive };
+	size_t count = 6;
+	// the CONTESTING_BUILDING branch (RW 0x701054 .. 0x7010EE) has no setter of the status in the port
+	// RW 0x6E4D2C: the polygon's float bounds (RW 0x47D9FF), floor / ceil to integers, then back to floats (RW 0x701101 .. 0x70112A)
+	PartitionRegion region;
+	if (!area.points.empty())
+	{
+		float loX = area.points[0].x, loY = area.points[0].y, hiX = loX, hiY = loY;
+		for (const Point2F &q : area.points)
+		{
+			loX = q.x < loX ? q.x : loX;
+			loY = q.y < loY ? q.y : loY;
+			hiX = q.x > hiX ? q.x : hiX;
+			hiY = q.y > hiY ? q.y : hiY;
+		}
+		region.loX = (float)SimMath::floorToInt(loX);
+		region.loY = (float)SimMath::floorToInt(loY);
+		region.hiX = (float)SimMath::ceilToInt(hiX);
+		region.hiY = (float)SimMath::ceilToInt(hiY);
+	}
+	if (!info)
+	{
+		links[count++] = &inArea; // RW 0x701138
+		Object *found = logic.partition().getClosestObject(*me.getPosition(), 9999.9f, FROM_CENTER_3D, PartitionFilterList(links, count), &region); // RW 0xA390F0
+		return found ? adjustVictim(*found, &me, true, 0) : nullptr; // RW 0x70116D
+	}
+	const PartitionHits hits = logic.partition().iterateObjectsInRegion(region, PartitionFilterList(links, count), ITER_FASTEST); // RW 0xA393C0
+	const float modifier = logic.settings().attackPriorityDistanceModifier; // TheAI + 0x18 -> + 0x54
+	Object *best = nullptr;
+	float bestScore = 0.0f, bestP = 0.0f;
+	for (const PartitionHit &h : hits)
+	{
+		Object &hit = *h.object;
+		float p = info->getPriority(me, hit, true); // RW 0x7011C8, fstp dword
+		if (p == 0.0f)                              // RW 0x7011D5: fucompi with 0 (equal skips, unordered goes on)
+		{
+			continue;
+		}
+		if (hit.getContain())
+		{
+			const float c = containedPriority(*info, me, hit, p); // RW 0x70120D: vslot 0x110 with RW 0x6FF29B
+			if (c > p)                                          // comiss; jbe
+			{
+				p = c;
+			}
+		}
+		const float d2 = CombatQueries::edgeDistanceSquared2D(me, *me.getPosition(), hit, *hit.getPosition()); // RW 0x66352C -> RW 0x6634BF
+		const double q = NumericState::pc24DivW(NumericState::sqrtPC24((double)d2), (double)modifier);         // fstp qword, RW 0xA3CF96, fdiv dword
+		const std::int32_t n = (std::int32_t)NumericState::ftol2Low32(q);                                     // RW 0xA3CFA4
+		std::int32_t score = NumericState::cvttss2si(SimMath::sseSub(p, (float)n));                             // cvtsi2ss; subss; cvttss2si
+		if (score < 1)
+		{
+			score = 1; // RW 0x70125B
+		}
+		const float s = (float)score;
+		const bool better = s > bestScore || (s == bestScore && p > bestP); // RW 0x701267 .. 0x701280
+		if (better && inArea.allow(hit))                                     // RW 0x701286: the polygon filter alone
+		{
+			bestScore = s;
+			bestP = p;
+			best = &hit;
+		}
+	}
+	return best ? adjustVictim(*best, &me, true, 0) : nullptr; // RW 0x7012C3
+}
+
+bool allowsBuildingTarget(const Object &seeker, Object &target)
+{
+	RejectBuildingsFilter filter(seeker);
+	return filter.allow(target);
+}
+
+bool isSignificantBuildingTarget(Object &target)
+{
+	InsignificantBuildingsFilter filter;
+	return filter.allow(target);
 }
 
 Object *findClosestEnemy(Object &me, float range, unsigned qualifiers, const AttackPriorityInfo *info, PartitionFilter *optionalFilter, int arg)

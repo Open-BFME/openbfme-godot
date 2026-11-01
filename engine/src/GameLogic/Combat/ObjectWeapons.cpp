@@ -846,8 +846,7 @@ const char *ObjectWeapons::choiceStopLine()
 	return "[S-1582] weapon choice: RW 0x6C8A4E is ported (lane DECOMP-1: criteria 0 .. 5, ReadyStatusSharedWithinSet, the victimless pick, the 1 / 0 score of canDamage RW 0x6CDBF3 "
 	       "through each nugget's isApplicable, the range error, OnlyAgainst / PreferredAgainst / OnlyInCondition, the turret aim gate RW 0x662398 on GARRISON-2's TurretAI); "
 	       "NOT ported: calcPitches RW 0xAD2620 for a pitch-limited weapon (taken as within; no retail weapon limits its pitch), CannotTargetCastleVictims' test (no retail weapon "
-	       "sets it), SlaveAttackNugget's isApplicable (RW 0x910DCF asks the unported SlaveWatcherBehavior: "
-	       "the base test RW 0x90D77C stands in), DamageContainedNugget's contain slot 0x1C (taken as false); INFERENCE: HordeAttackNugget's member (RW 0x9119CB, horde slots 0x50 / 0x114) is the first living one";
+	       "sets it), DamageContainedNugget's contain slot 0x1C (taken as false); INFERENCE: HordeAttackNugget's member (RW 0x9119CB, horde slots 0x50 / 0x114) is the first living one";
 }
 
 // RW 0x6CDBF3 Weapon::canDamage (lane DECOMP-1, tier A): no template, or OUT_OF_AMMO with AutoReloadsClip set: false; CannotTargetCastleVictims (+ 0x168: a victim
@@ -870,7 +869,7 @@ bool ObjectWeapons::canDamage(const Weapon &w, Object &victim) const
 	return WeaponTemplateAnyNuggetApplicable(m_owner->logic(), *t, m_owner->getID(), &victim);
 }
 
-// RW 0x6C8A4E WeaponSet::chooseBestWeaponForTarget (lane DECOMP-1; BFME2 decomp reverse/attempts/0x002c7d03.cpp, tier B same-shape: the RotWK body is BFME2's with the AI
+// RW 0x6C8A4E WeaponSet::chooseBestWeaponForTarget (lane DECOMP-1; BFME2 decomp WeaponSetSetWeaponLock.cpp (was an attempt, matched since), tier B same-shape: the RotWK body is BFME2's with the AI
 // at Object + 0x260; every step below was read from RotWK). Criteria 5 takes the set's DefaultWeaponChoiceCritera (+ 0x360). A locked weapon stays. With
 // ReadyStatusSharedWithinSet (+ 0x364) any weapon not READY_TO_FIRE keeps the current one. No victim: the first slot (0 .. 5) whose weapon is not OUT_OF_AMMO with
 // AutoReloadsClip, is not a MeleeWeapon (+ 0x125) and has NoVictimNeeded (+ 0x16B), else PRIMARY and false. Else slots 5 .. 0: the slot's auto-choose test

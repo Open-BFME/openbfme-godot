@@ -6,6 +6,7 @@
 #include "GameClient/MapChunks.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -16,7 +17,7 @@ bool acceptedLight(const GlobalLight &l)
 	return !(l.diffuse[0] < 0.05f && l.diffuse[1] < 0.05f && l.diffuse[2] < 0.05f);
 }
 
-void fillSet(const GlobalLight (&lights)[3], float scale, W3DLightSet &out)
+void fillSet(const GlobalLight (&lights)[3], float scale, const float *lightScale, W3DLightSet &out)
 {
 	out = W3DLightSet();
 	// ZH: the scene ambient is light 0's ambient (the global lights themselves carry none); Pre_Render_Update clamps it.
@@ -26,15 +27,22 @@ void fillSet(const GlobalLight (&lights)[3], float scale, W3DLightSet &out)
 	}
 	for (int i = 0; i < 3; ++i)
 	{
-		if (!acceptedLight(lights[i]))
+		// RTS3DScene::updateFixedLightEnvironments (RW 0x46E009): the light's diffuse is set to diffuse * the map's light scale BEFORE
+		// Add_Light, so the 0.05 test sees the scaled colour
+		GlobalLight l = lights[i];
+		for (int c = 0; c < 3; ++c)
+		{
+			l.diffuse[c] = lightScale ? lightScale[c] * lights[i].diffuse[c] : lights[i].diffuse[c];
+		}
+		if (!acceptedLight(l))
 		{
 			continue;
 		}
 		W3DLightSet &s = out;
 		for (int c = 0; c < 3; ++c)
 		{
-			s.color[s.count][c] = lights[i].diffuse[c] * scale;
-			s.toLight[s.count][c] = -lights[i].lightPos[c]; // ZH Init_From_Directional_Light: Direction = -transform Z = -lightPos
+			s.color[s.count][c] = l.diffuse[c] * scale;
+			s.toLight[s.count][c] = -l.lightPos[c]; // ZH Init_From_Directional_Light: Direction = -transform Z = -lightPos
 		}
 		++s.count;
 	}
@@ -50,7 +58,7 @@ float effectColorScale(const GlobalLightingData &lighting)
 	return lighting.version >= 5 && lighting.terrainLightingMultiplier > 1.0f ? 2.0f : 1.0f;
 }
 
-bool fromMap(const GlobalLightingData &lighting, W3DObjectLighting &out, std::string *error)
+bool fromMap(const GlobalLightingData &lighting, W3DObjectLighting &out, std::string *error, const float *lightScale)
 {
 	if (lighting.timeOfDay < 1 || lighting.timeOfDay > 4)
 	{
@@ -65,9 +73,38 @@ bool fromMap(const GlobalLightingData &lighting, W3DObjectLighting &out, std::st
 	// RW 0x4AC97F: version >= 5 and multiplier > 1.0 sets the byte RW 0xD9B03C; the SAS callbacks then scale by 2.0 (RW 0xBD889C).
 	out.colorScale = effectColorScale(lighting);
 	const TimeOfDayLights &tod = lighting.tod[lighting.timeOfDay - 1];
-	fillSet(tod.objects, out.colorScale, out.objects);
-	fillSet(tod.infantry, out.colorScale, out.infantry);
+	fillSet(tod.objects, out.colorScale, lightScale, out.objects);
+	fillSet(tod.infantry, out.colorScale, lightScale, out.infantry);
 	return true;
+}
+
+void fromLivingWorldMap(const float ambient[3], const float rgb[3][3], const float dirDegrees[3][2], W3DObjectLighting &out)
+{
+	out = W3DObjectLighting();
+	out.colorScale = 2.0f;
+	W3DLightSet &set = out.objects;
+	for (int c = 0; c < 3; ++c)
+	{
+		set.ambient[c] = std::clamp(ambient[c], 0.0f, 1.0f) * out.colorScale;
+	}
+	const float degToRad = 3.14159265358979f / 180.0f;
+	for (int i = 0; i < 3; ++i)
+	{
+		if (rgb[i][0] < 0.05f && rgb[i][1] < 0.05f && rgb[i][2] < 0.05f)
+		{
+			continue;
+		}
+		const float el = dirDegrees[i][0] * degToRad;
+		const float az = dirDegrees[i][1] * degToRad;
+		const float toLight[3] = { std::cos(el) * std::cos(az), std::cos(el) * std::sin(az), std::sin(el) };
+		for (int c = 0; c < 3; ++c)
+		{
+			set.color[set.count][c] = rgb[i][c] * out.colorScale;
+			set.toLight[set.count][c] = toLight[c];
+		}
+		++set.count;
+	}
+	out.infantry = set;
 }
 
 std::vector<std::string> stopLines()

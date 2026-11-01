@@ -62,6 +62,99 @@ Dictionary newGameToDictionary(const NewGameMessage &m)
 	d["map_mask"] = m.game.mapMask;
 	d["seed"] = (int64_t)m.game.seed;
 	d["starting_cash"] = m.game.startingCash;
+	d["living_world_campaign"] = String::utf8(m.livingWorldCampaign.c_str()); // lane WOTR-1
+	if (m.livingWorldBattle.active)
+	{
+		Dictionary b;
+		b["owner_slot"] = m.livingWorldBattle.ownerSlot;
+		Array buildings;
+		for (const std::string &t : m.livingWorldBattle.ownerBuildings)
+		{
+			buildings.push_back(String::utf8(t.c_str()));
+		}
+		b["owner_buildings"] = buildings;
+		Array buildingIds; // WOTR2 milestone 7
+		for (int id : m.livingWorldBattle.ownerBuildingIds)
+		{
+			buildingIds.push_back(id);
+		}
+		b["owner_building_ids"] = buildingIds;
+		Array members;
+		for (const LivingWorldBattleStart::Member &mm : m.livingWorldBattle.members)
+		{
+			Dictionary md;
+			md["slot"] = mm.slot;
+			md["army"] = mm.armyId;
+			md["member"] = mm.memberIndex;
+			md["template"] = String::utf8(mm.thingTemplate.c_str());
+			md["quantity"] = mm.quantity;
+			md["experience"] = mm.experience;
+			Array up;
+			for (const std::string &u : mm.upgrades)
+			{
+				up.push_back(String::utf8(u.c_str()));
+			}
+			md["upgrades"] = up;
+			md["spawn_id"] = String::utf8(mm.spawnId.c_str());
+			members.push_back(md);
+		}
+		b["members"] = members;
+		Array starts; // WOTR2 milestone 6
+		for (const LivingWorldBattleStart::SlotStart &st : m.livingWorldBattle.slotStarts)
+		{
+			Dictionary sd;
+			sd["slot"] = st.slot;
+			sd["cash"] = (int64_t)st.cash;
+			sd["garrison"] = st.garrisonArmyId;
+			Array units;
+			for (const std::string &u : st.bonusUnits)
+			{
+				units.push_back(String::utf8(u.c_str()));
+			}
+			sd["bonus_units"] = units;
+			Array heroes;
+			for (const LivingWorldBattleStart::SlotStart::Hero &h : st.heroes)
+			{
+				Dictionary hd;
+				hd["template"] = String::utf8(h.templateName.c_str());
+				hd["spawn_id"] = String::utf8(h.spawnId.c_str());
+				hd["experience"] = h.experience;
+				hd["dead"] = h.dead;
+				heroes.push_back(hd);
+			}
+			sd["heroes"] = heroes;
+			sd["skill_points"] = st.skillPoints;
+			sd["bonus_points"] = st.bonusPoints;
+			Array sci, upg;
+			for (const std::string &x : st.sciences) sci.push_back(String::utf8(x.c_str()));
+			for (const std::string &x : st.upgrades) upg.push_back(String::utf8(x.c_str()));
+			sd["sciences"] = sci;
+			sd["upgrades"] = upg;
+			starts.push_back(sd);
+		}
+		b["slot_starts"] = starts;
+		Array armies; // WOTR2 milestone 7 (step 5)
+		for (const LivingWorldBattleStart::ArmyStart &a : m.livingWorldBattle.armies)
+		{
+			Dictionary ad;
+			ad["slot"] = a.slot;
+			ad["army"] = a.armyId;
+			ad["state"] = a.state;
+			ad["arrival_frame"] = a.arrivalFrame;
+			Array points;
+			for (const auto &p : a.spawnPoints)
+			{
+				Array pair;
+				pair.push_back(String::utf8(p.first.c_str()));
+				pair.push_back(String::utf8(p.second.c_str()));
+				points.push_back(pair);
+			}
+			ad["spawn_points"] = points;
+			armies.push_back(ad);
+		}
+		b["armies"] = armies;
+		d["living_world_battle"] = b;
+	}
 	d["superweapon_restriction"] = m.game.superweaponRestriction;
 	d["in_progress"] = m.game.inProgress;
 	// lane RULES-1: the ten game rules (GameInfo + 0x60; all -1 = no rule block) and OpenBFME's Legendary Heroes factor
@@ -73,6 +166,10 @@ Dictionary newGameToDictionary(const NewGameMessage &m)
 	d["rules"] = rules;
 	d["legendary_heroes"] = m.game.legendaryHeroes;
 	d["cheat_mode"] = m.game.cheatMode; // lane CHEAT-1: -1 off, else the cheat seat's slot
+	d["game_mode"] = m.game.gameMode;                          // WOTR2 milestone 8: GT (+ 0x5C)
+	d["scenario"] = String::utf8(m.game.scenario.c_str()); // WOTR2 milestone 8: SI (+ 0x58)
+	d["resume_save"] = String::utf8(m.game.resumeSave.c_str()); // WOTR2 milestone 8 (step 4): a resumed LAN war's save identity ("" a new war)
+	d["resume_hash"] = (int64_t)m.game.resumeHash;
 	d["simulation_profile"] = (int)m.game.simulationProfile; // lane UBER-1: 0 Faithful, 1 Uber (Common/SimulationProfile.h)
 	// lane P16: the wire's extended GameInfo tag (NetPacket kExtendedGameInfoTag): a legacy game's dictionary stays exactly as it was
 	// (eight slots, no capacity key); an extended map's carries map_start_count (9..16) and all 16 slot entries
@@ -172,6 +269,10 @@ bool newGameFromDictionary(const Dictionary &d, NewGameMessage &out, std::string
 	}
 	// lane CHEAT-1: "cheat_mode" (absent: -1, off); the seat must be a human slot (checked once the slots are read, below)
 	m.game.cheatMode = (int)(int64_t)d.get("cheat_mode", (int64_t)-1);
+	m.game.gameMode = (int)(int64_t)d.get("game_mode", (int64_t)0); // WOTR2 milestone 8 (absent: open play)
+	m.game.scenario = toNativeUtf8(d.get("scenario", String()));
+	m.game.resumeSave = toNativeUtf8(d.get("resume_save", String())); // WOTR2 milestone 8 (step 4)
+	m.game.resumeHash = (std::uint32_t)(int64_t)d.get("resume_hash", (int64_t)0);
 	// lane UBER-1: the simulation profile (absent: Faithful, the setups before UBER-1); a value this build does not know is refused
 	const int64_t profile = (int64_t)d.get("simulation_profile", (int64_t)SimulationProfile::Faithful);
 	if (!simulationProfileValid((std::int32_t)profile))
@@ -179,6 +280,94 @@ bool newGameFromDictionary(const Dictionary &d, NewGameMessage &out, std::string
 		return fail("simulation_profile " + std::to_string((long long)profile) + " (0 faithful, 1 uber)");
 	}
 	m.game.simulationProfile = (SimulationProfile)profile;
+	m.livingWorldCampaign = toNativeUtf8(d.get("living_world_campaign", String())); // lane WOTR-1
+	if (d.has("living_world_battle"))
+	{
+		const Dictionary b = d["living_world_battle"];
+		m.livingWorldBattle.active = true;
+		m.livingWorldBattle.ownerSlot = (int)(int64_t)b.get("owner_slot", (int64_t)-1);
+		const Array buildings = b.get("owner_buildings", Array());
+		for (int64_t i = 0; i < buildings.size(); ++i)
+		{
+			m.livingWorldBattle.ownerBuildings.push_back(toNativeUtf8(buildings[i]));
+		}
+		const Array buildingIds = b.get("owner_building_ids", Array());
+		for (int64_t i = 0; i < buildingIds.size(); ++i)
+		{
+			m.livingWorldBattle.ownerBuildingIds.push_back((int)(int64_t)buildingIds[i]);
+		}
+		const Array members = b.get("members", Array());
+		for (int64_t i = 0; i < members.size(); ++i)
+		{
+			const Dictionary md = members[i];
+			LivingWorldBattleStart::Member mm;
+			mm.slot = (int)(int64_t)md.get("slot", (int64_t)-1);
+			mm.armyId = (int)(int64_t)md.get("army", (int64_t)0);
+			mm.memberIndex = (int)(int64_t)md.get("member", (int64_t)0);
+			mm.thingTemplate = toNativeUtf8(md.get("template", String()));
+			mm.quantity = (int)(int64_t)md.get("quantity", (int64_t)0);
+			mm.experience = (float)(double)md.get("experience", 0.0);
+			const Array up = md.get("upgrades", Array());
+			for (int64_t u = 0; u < up.size(); ++u)
+			{
+				mm.upgrades.push_back(toNativeUtf8(up[u]));
+			}
+			mm.spawnId = toNativeUtf8(md.get("spawn_id", String()));
+			m.livingWorldBattle.members.push_back(mm);
+		}
+		const Array armyStarts = b.get("armies", Array()); // WOTR2 milestone 7 (step 5)
+		for (int64_t i = 0; i < armyStarts.size(); ++i)
+		{
+			const Dictionary ad = armyStarts[i];
+			LivingWorldBattleStart::ArmyStart a;
+			a.slot = (int)(int64_t)ad.get("slot", (int64_t)-1);
+			a.armyId = (int)(int64_t)ad.get("army", (int64_t)0);
+			a.state = (int)(int64_t)ad.get("state", (int64_t)4);
+			a.arrivalFrame = (int)(int64_t)ad.get("arrival_frame", (int64_t)0);
+			const Array points = ad.get("spawn_points", Array());
+			for (int64_t k = 0; k < points.size(); ++k)
+			{
+				const Array pair = points[k];
+				if (pair.size() == 2)
+				{
+					a.spawnPoints.emplace_back(toNativeUtf8(pair[0]), toNativeUtf8(pair[1]));
+				}
+			}
+			m.livingWorldBattle.armies.push_back(a);
+		}
+		const Array starts = b.get("slot_starts", Array()); // WOTR2 milestone 6
+		for (int64_t i = 0; i < starts.size(); ++i)
+		{
+			const Dictionary sd = starts[i];
+			LivingWorldBattleStart::SlotStart st;
+			st.slot = (int)(int64_t)sd.get("slot", (int64_t)-1);
+			st.cash = (std::uint32_t)(int64_t)sd.get("cash", (int64_t)0);
+			st.garrisonArmyId = (int)(int64_t)sd.get("garrison", (int64_t)0);
+			const Array units = sd.get("bonus_units", Array());
+			for (int64_t u = 0; u < units.size(); ++u)
+			{
+				st.bonusUnits.push_back(toNativeUtf8(units[u]));
+			}
+			const Array heroes = sd.get("heroes", Array());
+			for (int64_t h = 0; h < heroes.size(); ++h)
+			{
+				const Dictionary hd = heroes[h];
+				LivingWorldBattleStart::SlotStart::Hero hero;
+				hero.templateName = toNativeUtf8(hd.get("template", String()));
+				hero.spawnId = toNativeUtf8(hd.get("spawn_id", String()));
+				hero.experience = (float)(double)hd.get("experience", 0.0);
+				hero.dead = (bool)hd.get("dead", false);
+				st.heroes.push_back(hero);
+			}
+			st.skillPoints = (float)(double)sd.get("skill_points", 0.0);
+			st.bonusPoints = (int)(int64_t)sd.get("bonus_points", (int64_t)0);
+			const Array sci = sd.get("sciences", Array());
+			for (int64_t k = 0; k < sci.size(); ++k) st.sciences.push_back(toNativeUtf8(sci[k]));
+			const Array upg = sd.get("upgrades", Array());
+			for (int64_t k = 0; k < upg.size(); ++k) st.upgrades.push_back(toNativeUtf8(upg[k]));
+			m.livingWorldBattle.slotStarts.push_back(st);
+		}
+	}
 	// lane P16: an absent "map_start_count" is a legacy 8-slot message (the form every build before the extension produced); present, it is
 	// the extended tag's capacity, 9 .. MAX_SLOTS, and the message carries all 16 slot entries, those beyond the capacity closed (the wire's rule)
 	if (d.has("map_start_count") && d["map_start_count"].get_type() != Variant::INT)

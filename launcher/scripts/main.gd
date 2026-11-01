@@ -86,6 +86,7 @@ const Semver := preload("res://scripts/core/semver.gd")
 const Log := preload("res://scripts/core/launcher_log.gd")
 const GlibcCheck := preload("res://scripts/core/glibc_check.gd")
 const GameOptions := preload("res://scripts/core/game_options.gd")
+const GameDisplay := preload("res://scripts/core/game_display.gd")
 const AioInstall := preload("res://scripts/core/aio_install.gd")
 const GameFiles := preload("res://scripts/core/game_files.gd")
 const VerifyFilesPanel := preload("res://scripts/ui/verify_files_panel.gd")
@@ -109,9 +110,12 @@ const SettingsScreen := preload("res://scripts/ui/settings_screen.gd")
 const MessagePanel := preload("res://scripts/ui/message_panel.gd")
 const PlayerMessages := preload("res://scripts/ui/player_messages.gd")
 const InstanceLock := preload("res://scripts/core/instance_lock.gd")
+const LauncherCrash := preload("res://scripts/core/launcher_crash.gd")
 const GameStart := preload("res://scripts/core/game_start.gd")
 const OnlineCount := preload("res://scripts/core/online_count.gd")  # lane ONLINECOUNT-1
+const GameList := preload("res://scripts/core/game_list.gd")
 const HttpFetch := preload("res://scripts/net/http_fetch.gd")
+const NetPolicy := preload("res://scripts/net/net_policy.gd")
 const SocialClient := preload("res://scripts/net/social_client.gd")
 const OAuthAccount := preload("res://scripts/core/oauth_account.gd")
 const SocialLaunch := preload("res://scripts/core/social_launch.gd")
@@ -132,6 +136,7 @@ const RECHECK_SECONDS := 3600.0  # lane UI-5: while the launcher stays open, it 
 var info: RefCounted
 var updater: Updater
 var _instance: InstanceLock  # lane UI-5 (Sol r2): one launcher at a time
+var _crash_marker := false   # lane CRASHACT-1: this launcher wrote user://launcher.running (removed when it ends normally)
 var aio: AioInstall
 var game_files: GameFiles
 var _verify_panel: VerifyFilesPanel
@@ -141,6 +146,9 @@ var _thread: Thread
 var _count_thread: Thread     # lane ONLINECOUNT-1
 var _count_http: HttpFetch    # its request (MACPLAY-1: cancelled and joined when the window closes)
 var _count_timer: Timer
+var _games_thread: Thread     # GET /v1/games for the Multiplayer screen
+var _games_http: HttpFetch
+var _games_asked_ms := 0
 var _count_asked_ms := 0
 var _count_text := ""         # the chip's text and when it arrived (it expires: OnlineCount.EXPIRY_SECONDS)
 var _count_got_ms := 0
@@ -382,6 +390,7 @@ func _ready() -> void:
 	_problem = problem
 	_build_ui()
 	_init_social()
+	_crash_start()
 	if start.message != "":
 		_set_status(start.message)
 	_refresh_installed()
@@ -414,6 +423,30 @@ func _ready() -> void:
 	for a in args:
 		if a.begins_with("--screenshot="):
 			_screenshot(a.substr(13))
+
+
+## lane CRASHACT-1 (scripts/core/launcher_crash.gd): the last launcher's crash reported (queued, or offered when automatic reports are off), this
+## launcher's marker written, the queue sent in the background. Only a packaged launcher (or a test's loopback crash service), holding the lock.
+func _crash_start() -> void:
+	if not LauncherCrash.eligible(info.packaged) or _demo != "" or _instance == null:
+		return
+	var previous := LauncherCrash.take_previous()
+	LauncherCrash.write_marker(info.version)
+	_crash_marker = true
+	var automatic := LauncherCrash.automatic()
+	if not previous.is_empty():
+		var r: Dictionary = LauncherCrash.report(previous)
+		if not r.ok:
+			Log.line("LAUNCHER CRASH the last launcher did not end normally; not reported: " + str(r.error))
+		elif automatic:
+			LauncherCrash.enqueue(r.wire)
+		else:
+			Log.line("LAUNCHER CRASH the last launcher did not end normally; automatic reports are off: Send report offered")
+			_message.ask(L10n.t("launcher.crash.title"), L10n.t("launcher.crash.offer"), L10n.t("launcher.crash.send"), func() -> void:
+				if LauncherCrash.enqueue(r.wire).is_empty():
+					LauncherCrash.upload(self))
+	if automatic:
+		LauncherCrash.upload(self)
 
 
 ## tests (MACPLAY-1): press the real PLAY button `times` times, each once no job runs (its pressed signal: the player's click, _on_play),
@@ -1162,6 +1195,9 @@ func _build_ui() -> void:
 	var mp := MultiplayerScreen.new()
 	_multiplayer = mp
 	mp.build(info.repo)
+	_multiplayer.host_pressed.connect(_on_host_game)
+	_multiplayer.join_pressed.connect(_on_join_game)
+	_multiplayer.refresh_pressed.connect(_refresh_game_list)
 	_mods = ModsScreen.new()
 	_mods.refresh.connect(func(force: bool) -> void: _start_job(_job_mods_list.bind(force), "mods-list"))
 	_mods.install.connect(_on_mod_install)
@@ -1190,6 +1226,9 @@ func _build_ui() -> void:
 	_settings = SettingsScreen.new(updater.macos_preview())
 	_settings.channel_picked.connect(_on_channel)
 	_settings.free_camera_toggled.connect(_on_free_camera)
+	_settings.display_changed.connect(_on_display_changed)
+	_settings.display_refresh_requested.connect(_refresh_display)
+	get_window().focus_entered.connect(_refresh_display)
 	_settings.auto_update_toggled.connect(_on_auto_update)
 	_settings.aio_toggled.connect(_on_aio_toggled)
 	_settings.show_online_count_toggled.connect(_on_online_count_toggled)
@@ -1347,9 +1386,12 @@ func _show_screen(key: String) -> void:
 		if OnlineCount.stale(_count_text, float(Time.get_ticks_msec() - _count_got_ms) / 1000.0):
 			_refresh_count()
 	if key == "settings":
+		_refresh_display()
 		_settings.set_options(GameOptions.free_camera(), updater.auto_update(), aio.enabled(), _about())
 		_settings.set_online_count(updater.show_online_count())
 		_settings.set_replay_association(bool(updater.get_state("launcher", "replay_association", true)))
+	if key == "multiplayer":
+		_refresh_game_list()
 
 
 func _show_channel() -> void:
@@ -1419,6 +1461,19 @@ func _update_label(version: String) -> String:
 	return L10n.t("launcher.main.update_to" if _pv != "" else "launcher.main.install_version", {"version": version})
 
 
+func _refresh_display() -> void:
+	if _settings != null:
+		var screen_size := DisplayServer.screen_get_size(get_window().current_screen)
+		_settings.set_display(GameDisplay.read(screen_size))
+
+
+func _on_display_changed(key: String, value: String) -> void:
+	var why := GameDisplay.save(key, value)
+	_refresh_display()
+	if why != "":
+		_show_error(L10n.t("launcher.main.setting_not_saved"), why)
+
+
 func _on_free_camera(on: bool) -> void:
 	var why := GameOptions.set_free_camera(on)
 	if why != "":
@@ -1479,7 +1534,8 @@ func _refresh_count() -> void:
 	if Time.get_ticks_msec() - _count_asked_ms < int(OnlineCount.MIN_GAP_SECONDS * 1000.0) and _count_asked_ms != 0:
 		return
 	var url := updater.lobby_url()
-	var why := updater.policy.set_lobby(url)
+	var policy: NetPolicy = updater.policy.copy()  # this request's own lobby policy: updater.policy is shared with running threads
+	var why: String = policy.set_lobby(url)
 	if why != "":
 		Log.line("LAUNCHER online player count not asked: " + why)
 		_play_screen.set_players("")
@@ -1487,7 +1543,7 @@ func _refresh_count() -> void:
 	if _count_thread != null:
 		_count_thread.wait_to_finish()
 	_count_asked_ms = maxi(Time.get_ticks_msec(), 1)
-	var http := HttpFetch.new(updater.policy, info.version)
+	var http := HttpFetch.new(policy, info.version)
 	_count_http = http
 	_count_thread = Thread.new()
 	_count_thread.start(func() -> void: _on_count.call_deferred(OnlineCount.fetch(http, url)))
@@ -1763,6 +1819,8 @@ func _set_buttons() -> void:
 	_update.visible = _update_state == "update" and not downloading  # LAUNCHERUI-1: no room beside Pause and Cancel, and it is disabled meanwhile
 	_update.disabled = busy or _latest.is_empty()
 	_play.disabled = _play_blocked()  # MACPLAY-1: never a dimmed Play with no word why: _on_play says what is missing
+	if _multiplayer != null:
+		_multiplayer.set_ready(not _play_blocked() and updater.play_version() != "")
 	_play_screen.games_button.disabled = busy or _paused != ""
 	_settings.set_busy(busy)
 	var aio_running := busy and _job_kind == "aio"
@@ -2372,15 +2430,76 @@ func _set_replay_association(on: bool) -> bool:
 	return true
 
 
+
+## the public list on the Multiplayer screen. One request at a time, a few seconds apart, only while that screen is showing.
+## --ui-demo and --offline never ask. The lobby is updater.lobby_url() (the release default unless the player set another).
+func _refresh_game_list() -> void:
+	if _demo != "" or "--offline" in OS.get_cmdline_user_args() or _screen != "multiplayer":
+		return
+	if _games_thread != null and _games_thread.is_alive():
+		return
+	if _games_asked_ms != 0 and Time.get_ticks_msec() - _games_asked_ms < int(GameList.MIN_GAP_SECONDS * 1000.0):
+		return
+	var url := updater.lobby_url()
+	var policy: NetPolicy = updater.policy.copy()  # this request's own lobby policy: updater.policy is shared with running threads
+	var why: String = policy.set_lobby(url)
+	if why != "":
+		_multiplayer.set_games([])
+		_multiplayer.set_games_status(why)
+		return
+	if _games_thread != null:
+		_games_thread.wait_to_finish()
+	_games_asked_ms = maxi(Time.get_ticks_msec(), 1)
+	var http := HttpFetch.new(policy, info.version)
+	_games_http = http
+	_games_thread = Thread.new()
+	_games_thread.start(func() -> void: _on_game_list.call_deferred(GameList.fetch(http, url)))
+
+
+func _on_game_list(r: Dictionary) -> void:
+	if _screen != "multiplayer":
+		return
+	if r.ok:
+		_multiplayer.set_games(r.games)
+		_multiplayer.set_games_status("")
+		Log.line("LAUNCHER game list: %d" % r.games.size())
+	else:
+		_multiplayer.set_games([])
+		_multiplayer.set_games_status(str(r.why))
+		Log.line("LAUNCHER game list not shown (%s)" % r.why)
+
+
+func _on_host_game() -> void:
+	var lobby := updater.lobby_url()
+	var why: String = updater.policy.copy().set_lobby(lobby)  # only checks the lobby; updater.policy stays as it is
+	if why != "":
+		_show_error(L10n.t("launcher.main.game_did_not_start"), why)
+		return
+	_start_version(PackedStringArray(["--", "--online-host", "--online-lobby=" + lobby]))
+
+
+func _on_join_game(game_id: String) -> void:
+	var lobby := updater.lobby_url()
+	var why: String = updater.policy.copy().set_lobby(lobby)  # only checks the lobby; updater.policy stays as it is
+	if why != "":
+		_show_error(L10n.t("launcher.main.game_did_not_start"), why)
+		return
+	_start_version(UrlHandler.game_args({"game": game_id}, lobby))
+
+
 ## Play: while an update downloads in the background, the game starts anyway; the new version is used from the next Play on.
 func _on_play() -> void:
+	_start_version(PackedStringArray())
+
+
+func _start_version(args: PackedStringArray) -> void:
 	var v := updater.play_version()
 	if _play_blocked():
 		return
 	if v == "":
 		_no_game()
 		return
-	var p := updater.play(v)
+	var p := updater.play(v, args)
 	if p.ok:
 		# The worker may have ended while play() checked the game; its deferred completion still has to show any failure.
 		if _thread != null:
@@ -2504,6 +2623,11 @@ func _exit_tree() -> void:
 			_count_http.cancelled = true
 		_count_thread.wait_to_finish()
 		_count_thread = null
+	if _games_thread != null:
+		if _games_http != null:
+			_games_http.cancelled = true
+		_games_thread.wait_to_finish()
+		_games_thread = null
 	if _thread != null:
 		if _job_kind == "aio":
 			aio.request_stop("pause")
@@ -2511,5 +2635,7 @@ func _exit_tree() -> void:
 			mods.request_stop("pause")
 		updater.http.cancelled = true
 		_thread.wait_to_finish()
+	if _crash_marker:
+		LauncherCrash.remove_marker()
 	if _instance != null:
 		_instance.release()

@@ -5,6 +5,7 @@
 
 #include "Common/INI.h"
 #include "Common/BfmeGame.h"
+#include "Common/GameEdition.h"
 #include "Common/JobSystem.h"
 
 #include "Common/AsciiString.h"
@@ -563,6 +564,23 @@ Bfme1RowRegistry &bfme1RowRegistry()
 	static Bfme1RowRegistry registry;
 	return registry;
 }
+Bfme1RowRegistry &bfme2RowRegistry() // lane BFME2MODE-0: the same registry type, BFME2 1.06's rows
+{
+	static Bfme1RowRegistry registry;
+	return registry;
+}
+
+const FieldParse *findExtraRow(const FieldParse *extra, const char *token)
+{
+	for (; extra && extra->token; ++extra)
+	{
+		if (std::strcmp(extra->token, token) == 0)
+		{
+			return extra;
+		}
+	}
+	return nullptr;
+}
 
 // ZH INI.cpp:324-346, B1 ini_parsers.cpp findFieldParse. community PR #36: `bfme1` (the environment reads BFME1 data) also looks in the table's
 // registered BFME1 rows, after its own rows and before its catch-all row
@@ -576,6 +594,16 @@ INIFieldParseProc findFieldParse(const FieldParse *parseTable, const char *token
 			offset = parse->offset;
 			userData = parse->userData;
 			return parse->parse;
+		}
+	}
+	// lane BFME2MODE-0: BFME2 1.06's archives alone also look in the table's BFME2 rows (cached; RotWK data never does)
+	if (env.bfme2Data())
+	{
+		if (const FieldParse *extra = findExtraRow(Bfme2FieldRows(parseTable), token))
+		{
+			offset = extra->offset;
+			userData = extra->userData;
+			return extra->parse;
 		}
 	}
 	// the environment's game first (cached): RotWK / BFME2 data never look in the registry (Sol review r1)
@@ -618,6 +646,30 @@ const FieldParse *Bfme1FieldRows(const FieldParse *table)
 	std::lock_guard<std::mutex> hold(r.lock);
 	auto it = r.rows.find(table);
 	return it == r.rows.end() ? nullptr : it->second;
+}
+
+void RegisterBfme2FieldRows(const FieldParse *table, const FieldParse *bfme2Rows)
+{
+	Bfme1RowRegistry &r = bfme2RowRegistry();
+	std::lock_guard<std::mutex> hold(r.lock);
+	r.rows[table] = bfme2Rows;
+}
+
+const FieldParse *Bfme2FieldRows(const FieldParse *table)
+{
+	Bfme1RowRegistry &r = bfme2RowRegistry();
+	std::lock_guard<std::mutex> hold(r.lock);
+	auto it = r.rows.find(table);
+	return it == r.rows.end() ? nullptr : it->second;
+}
+
+bool INIEnvironment::bfme2Data()
+{
+	if (m_bfme2 < 0)
+	{
+		m_bfme2 = fileSystem && isBfme2Data(*fileSystem) ? 1 : 0;
+	}
+	return m_bfme2 == 1;
 }
 
 bool INIEnvironment::bfme1Data()

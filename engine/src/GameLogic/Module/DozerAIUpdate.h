@@ -103,6 +103,9 @@ public:
 
 	DozerAIUpdate(Thing *thing, const ModuleData *data);
 	~DozerAIUpdate() override; // RW 0x88D1AC: finishBuildingSound (RW 0x88BFA9) first
+	// lane BFME2CAMP1 (review): RW 0x88D1AC's tail: a dozer that still has an unplaced phantom (+ 0x568) removes it (RW 0x88CFFE: the price back, the phantom
+	// destroyed). The port runs it when the dozer is destroyed in the game (Module::onDelete), not in the destructor, which also runs at the logic's teardown
+	void onDelete() override;
 	// RW 0x88E44F (DozerAIUpdate::aiDoCommand): a PLAYER command other than repair (0x13), resume construction (0x14) and move away (0x34) cancels the current task
 	// before it runs (dozer interface slot 0x34) and resets the primary machine
 	void commandAccepted(CommandSourceType source, int command, Object *target) override;
@@ -117,8 +120,10 @@ public:
 	// plus the RotWK bits 0x80 and 0x400 whose meaning is not read, S-301): a nonzero result rejects the order. The dispatcher asks it before it changes the builder's state
 	static constexpr unsigned kConstructLegalFlags = 0x49F;
 	bool siteIsLegal(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
-	// RW vslot 0x1F8 (RW 0x88C217): makes the foundation of `what` at `pos` and starts the build task; null when refused (illegal site, no money)
-	Object *construct(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
+	// RW vslot 0x1F8 (RW 0x88C217): makes the foundation of `what` at `pos` and starts the build task; null when refused (illegal site, no money). The 5th
+	// argument (lane BFME2CAMP1) is the rebuild flag, kept in + 0x4D0 (m_isRebuild) by every call: a rebuild (RebuildHoleBehavior) skips the can-make and
+	// legality tests (RW 0x88C23D), pays nothing (RW 0x88D2F9) and is placed without the legality test, RECONSTRUCTING (RW 0x88D44F)
+	Object *construct(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool isRebuild = false);
 	// MSG_RESUME_CONSTRUCTION: RW 0x8ACEA9 (vslot 0xB4): the ActionManager's test, then newTask(BUILD, structure); the command path first idles a dozer without a task
 	bool resumeConstruction(Object &structure);
 	// lane BUILD-2: RW 0x88BD8D (vslot 0xB0, MSG_DO_REPAIR, a worker spawned to repair): the ActionManager's test and a free sole benefactor, then newTask(REPAIR)
@@ -214,6 +219,7 @@ protected:
 	int m_currentTask = DOZER_TASK_INVALID;
 	int m_buildSubTask = DOZER_SELECT_BUILD_DOCK_LOCATION;
 	ObjectID m_unplacedStructure = INVALID_ID;
+	bool m_isRebuild = false; ///< + 0x4D0 (lane BFME2CAMP1): the last construct's rebuild flag (RW 0x88C217)
 	// primary machine
 	int m_primaryState = -1;          ///< -1 until the machine is made (RW 0x88C1C1)
 	UnsignedInt m_idleTimestamp = 0;  ///< IDLE + 0x20

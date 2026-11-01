@@ -717,12 +717,14 @@ TEST_CASE("save4a: the container carries the snapshot part like the others: read
 	std::string error;
 	REQUIRE_MESSAGE(SaveGameFile::parse(good, back, &error), error);
 	CHECK(back.snapshot == s.snapshot);
+	// lane WOTR2 milestone 3 (container version 2): the empty War of the Ring part's 40-byte head follows the snapshot
+	const size_t lwldHead = 40;
 	std::vector<std::uint8_t> bad = good;
-	bad.back() ^= 1;
+	bad[good.size() - lwldHead - 1] ^= 1; // the snapshot's last byte
 	CHECK_FALSE(SaveGameFile::parse(bad, back, &error));
 	CHECK(error == "the save is damaged (the snapshot part's SHA-256 does not match its content)");
 	// a declared size above the limit is refused before anything is read (a sparse file holds the bytes: the limit refuses it, not the file's size)
-	const size_t snapAt = good.size() - s.snapshot.size() - 40;
+	const size_t snapAt = good.size() - lwldHead - s.snapshot.size() - 40;
 	std::vector<std::uint8_t> head(good.begin(), good.begin() + (std::ptrdiff_t)(snapAt + 40));
 	const std::uint32_t declared = (std::uint32_t)SaveGameFile::kMaxSnapshotBytes + 1;
 	std::memcpy(head.data() + snapAt + 4, &declared, 4);

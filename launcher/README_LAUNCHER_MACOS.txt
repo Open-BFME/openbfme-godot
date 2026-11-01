@@ -53,6 +53,12 @@ Settings > General > Open .replay files with OpenBFME can refuse Finder file ope
 To change the OS default, choose a different application in Finder. The signed Info.plist is never rewritten.
 Explicit Open replay / command-line / window drop still work when disabled; the game needs your own retail files.
 
+Display settings
+----------------
+Settings > Display chooses one window mode and resolution for both games. Automatic preserves the window size in windowed mode and uses the desktop resolution in fullscreen modes.
+Borderless and fullscreen render at the selected resolution and scale to fit, preserving aspect ratio.
+Launcher edits apply on the next launch. Accepted in-game changes appear when you return to the launcher or reopen Display.
+
 Where it stores files
 ---------------------
 The launcher stores its settings and logs in its macOS application-support

@@ -1,5 +1,6 @@
 // OpenBFME retail tests (lane FACT-B): the Bloodthirsty sacrifice command through the real HUD.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "FactbRig.h"
 
@@ -109,6 +110,7 @@ TEST_CASE("STOPS-B1 S-1991 retail: the Isengard Bloodthirsty button selects an a
 	REQUIRE(acceptedMember);
 	const Coord3D acceptedPosition = *source->getPosition();
 	acceptedMember->setPosition(&acceptedPosition);
+	testutil::completeHorde(acceptedMember); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	REQUIRE(sourceContain->acceptCreatedMember(acceptedMember));
 	CHECK(acceptedMember->getProducerID() == sourceID);
 	CHECK(acceptedMember->getContainedBy() == source);

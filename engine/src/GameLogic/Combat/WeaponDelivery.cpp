@@ -3,6 +3,7 @@
 
 #include "GameLogic/Combat/WeaponDelivery.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/Module/SlaveWatcherBehavior.h"
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/LegendaryHeroesGame.h"
 
@@ -374,7 +375,7 @@ void radiusDamage(GameLogic &logic, ObjectID sourceId, const DamageNugget &nugge
 		{
 			continue;
 		}
-		// lane RADIUSHEIGHT-1: RW 0x90E1AC .. 0x90E20C (BFME2 decomp Made002CC5E1Ctor.cpp DamageNugget::doEffectPosition, the m_140 / m_144 blocks; tier B same-shape,
+		// lane RADIUSHEIGHT-1: RW 0x90E1AC .. 0x90E20C (BFME2 decomp DamageNugget.cpp DamageNugget::doEffectPosition, the m_140 / m_144 blocks; tier B same-shape,
 		// the fields at +0x160 / +0x164 in RotWK), after slot 1 and before MinRadius. A cap of -1 (ucomiss against RW 0xBD19DC) skips its test.
 		// DamageMaxHeight: SSE subss of the source object's position z (+0x40) from the victim's, comiss > cap skips the victim (not the passed position's z).
 		// Retail reads the source with no null test (RW 0x90E1C8); here slot 1 (damageApplicable) already refused a victim when the owner is gone.
@@ -1007,7 +1008,7 @@ namespace
 {
 // ---- lane NUGGET-1: the nuggets whose effect had no port (S-321). Every slot's first argument in RW is the firing Weapon; its + 8 (the owner's id) is all a slot
 // reads of it: `sourceId` below. The dispatch is fireWeaponTemplate's (RW 0x6CCECC .. 0x6CCF17, slot 12 false for all of these): a victim takes slot 1 then slot 5,
-// no victim slot 2 then slot 6. SlaveAttackNugget (SlaveWatcherBehavior, S-1995) and FireLogicNugget (TheFireLogicSystem, S-191) stay counted ----
+// no victim slot 2 then slot 6. FireLogicNugget (TheFireLogicSystem, S-191) stays counted (SlaveAttackNugget: lane MODCOMPAT-MOD1, SlaveAttack below) ----
 namespace NuggetEffects
 {
 const int kEnemiesBit = 1, kNeutralBit = 2, kAlliesBit = 4; // PartitionFilterRelationship (RW 0xC11DC0): 1 << Relationship
@@ -1073,7 +1074,7 @@ std::vector<ObjectID> idsInRange(GameLogic &logic, const Coord3D &pos, float rad
 	return ids;
 }
 
-// ---- StealMoneyNugget (vtable RW 0xC7BC30: slot 1 RW 0x90D77C, slot 2 false, slot 5 RW 0x9118B1). BFME2 decomp Made002CCB67StealMoney.cpp (0x0050B62B) is the
+// ---- StealMoneyNugget (vtable RW 0xC7BC30: slot 1 RW 0x90D77C, slot 2 false, slot 5 RW 0x9118B1). BFME2 decomp Made002CCB67.cpp (0x0050B62B) is the
 // same body. RW 0x9118B1: the source object, its controlling player and the victim's; the victim's Money (Player + 0x90) withdraws _ftol2(AmountStolenPerAttack)
 // (RW 0x7B17EF, its score keeper Player + 0x3DC, sound on), the source's deposits what was taken (fild unsigned, _ftol2: RW 0x7B18B8, sound on) ----
 void stealMoney(GameLogic &logic, const StealMoneyNugget &n, ObjectID sourceId, Object &victim)
@@ -1137,7 +1138,7 @@ void openGateTo(GameLogic &logic, const OpenGateNugget &n, const WeaponTemplate 
 }
 
 // ---- EmotionWeaponNugget (vtable RW 0xC7BBC0: slot 1 RW 0x90D77C, slot 2 RW 0x90D8F0 = the upgrade test, slot 5 RW 0x911770, slot 6 RW 0x9117A7). BFME2 decomp
-// Made002CCB04Rva0050B479.cpp (0x0050B479) is the apply ----
+// Made002CCB04.cpp (0x0050B479) is the apply ----
 // RW 0x911707 (source, victim): slot 1; the source is the object of RW global 0xDE4A18 (the producer of the projectile whose detonation is delivering, RW 0x85F1CB;
 // 0 otherwise), else the weapon's owner. INFERENCE: both name the same object here (the detonation's temporary weapon is owned by that producer, RW 0x85F23A ..
 // 0x85F255), so the owner stands for both. Then RW 0x68F3BF -> 0x68F3CB: the first emotion tracker up the victim's container chain is forced to EmotionType
@@ -1565,14 +1566,86 @@ bool WeaponNuggetUpgradeAllows(const WeaponNugget &n, const Object *source)
 }
 
 
+// ---- lane MODCOMPAT-MOD1: SlaveAttackNugget (vtable RW 0xC7B9B0: slot 1 RW 0x910DCF, slot 2 RW 0x911BFD = the upgrade test, slot 5 RW 0x910EA1, slot 6
+// RW 0x910F78). The castle expansions' weapons: the expansion's SlaveWatcherBehavior's slave (its catapult / giant) takes the shot ----
+namespace SlaveAttack
+{
+// the weapon owner's slave (RW 0x68BDA5 by name key "SlaveWatcherBehavior", RW 0xA0605D, RW 0x449681); null without a watcher or a slave
+Object *slaveOf(GameLogic &logic, const Object *owner)
+{
+	const SlaveWatcherBehavior *watcher = owner ? SlaveWatcherBehavior::of(*owner) : nullptr;
+	return watcher ? logic.findObjectByID(watcher->getSlaveID()) : nullptr;
+}
+
+// slot 1 RW 0x910DCF: the base test (RW 0x90D77C); then, with an owner whose watcher has a slave with a current weapon (RW 0x68B58C(0)), that weapon's
+// canDamage of the victim (RW 0x6CDBF3); else true. INFERENCE: canDamage runs on the slave's own weapon host (RW passes the expansion as its status object)
+bool applicable(GameLogic &logic, const WeaponNugget &n, const WeaponTemplate &t, const Object *owner, Object &victim)
+{
+	if (!shouldDeliver(n, t, owner, victim, logic))
+	{
+		return false;
+	}
+	Object *slave = slaveOf(logic, owner);
+	const ObjectWeapons *weapons = slave ? slave->getWeapons() : nullptr;
+	const Weapon *current = weapons ? weapons->currentWeapon() : nullptr;
+	if (!current)
+	{
+		return true;
+	}
+	return weapons->canDamage(*current, victim);
+}
+
+// slots 5 (RW 0x910EA1) / 6 (RW 0x910F78): the owner, its watcher, the owner's AI (+ 0x260) and the slave's AI; slot 5 also the OWNER's current victim
+// (RW 0x668303: AI + 0x40, not the nugget's victim) and a slave whose AI state is not active (vslot 0x1BC, RW 0x662B3C); then the slave's primary weapon
+// locked temporarily (RW 0x69121A(0, 1)) and one shot ordered: aiAttackObject(victim, 1, CMD_FROM_AI) (RW 0x66C536) / aiAttackPosition(pos, 1, CMD_FROM_AI)
+// (RW 0x6961F1)
+void deliver(GameLogic &logic, ObjectID ownerId, bool atVictim, const Coord3D &pos)
+{
+	Object *owner = ownerId != INVALID_ID ? logic.findObjectByID(ownerId) : nullptr;
+	if (!owner || !SlaveWatcherBehavior::of(*owner) || !owner->getAIUpdateInterface())
+	{
+		return;
+	}
+	Object *victim = nullptr;
+	if (atVictim)
+	{
+		victim = owner->getAIUpdateInterface()->currentVictim();
+		if (!victim)
+		{
+			return;
+		}
+	}
+	Object *slave = slaveOf(logic, owner);
+	AIUpdateInterface *ai = slave ? slave->getAIUpdateInterface() : nullptr;
+	if (!ai)
+	{
+		return;
+	}
+	if (atVictim)
+	{
+		if (ai->isStateActive())
+		{
+			return;
+		}
+		ObjectWeapons::setObjectWeaponLock(*slave, PRIMARY_WEAPON, LOCKED_TEMPORARILY);
+		ai->aiAttackObject(victim, CMD_FROM_AI, 1);
+	}
+	else
+	{
+		ObjectWeapons::setObjectWeaponLock(*slave, PRIMARY_WEAPON, LOCKED_TEMPORARILY);
+		ai->aiAttackPosition(pos, 1, CMD_FROM_AI);
+	}
+}
+} // namespace SlaveAttack
+
 // RW 0x6CB779 (lane DECOMP-1): any nugget of the template whose slot 1 (isApplicable(weapon, victim)) answers true; false without a victim. The slot 1 bodies
 // (RotWK vtables, read with capstone): DamageNugget / DOTNugget RW 0x90E855 (damageApplicable); ProjectileNugget RW 0x90F954 (the base test RW 0x90D77C, a
 // warhead (+ 0x148) and RW 0x6CB779 on the warhead); MetaImpactNugget RW 0x910070; AttributeModifier / WeaponOCL / OpenGate / SpecialModelCondition RW 0x9114B4
 // and EmotionWeapon / StealMoney RW 0x90D77C (the base test); LuaEventNugget RW 0x8470FA (true); FireLogicNugget RW 0x8F8014 (false); HordeAttackNugget
 // RW 0x9119CB (the base test, then with an owner that has a horde interface: a member's current weapon RW 0x6CDBF3 against the victim, else true; the member the
 // interface slots 0x50 / 0x114(0xA4) pick is INFERENCE: the first living member); Paralyze RW 0x90F0E8, DamageField RW 0x90F501, Grab RW 0x910C27, DamageContained
-// RW 0x911086 and SpawnAndFade RW 0x911BCF are ported (lane DECOMP-1 r2). SlaveAttack RW 0x910DCF asks the owner's SlaveWatcherBehavior for its master's current
-// weapon (RW 0x6CDBF3): that module is not ported, so the base test stands in (S-1582)
+// RW 0x911086 and SpawnAndFade RW 0x911BCF are ported (lane DECOMP-1 r2). SlaveAttack RW 0x910DCF asks the owner's SlaveWatcherBehavior for its slave's current
+// weapon (RW 0x6CDBF3; lane MODCOMPAT-MOD1: SlaveAttack::applicable)
 bool WeaponTemplateAnyNuggetApplicable(GameLogic &logic, const WeaponTemplate &t, ObjectID ownerId, Object *victim, int depth)
 {
 	if (!victim || depth > 4)
@@ -1628,6 +1701,9 @@ bool WeaponTemplateAnyNuggetApplicable(GameLogic &logic, const WeaponTemplate &t
 			break;
 		case NUGGET_FIRE_LOGIC:
 			ok = false;
+			break;
+		case NUGGET_SLAVE_ATTACK:
+			ok = SlaveAttack::applicable(logic, n, t, owner, *victim); // RW 0x910DCF (lane MODCOMPAT-MOD1)
 			break;
 		case NUGGET_HORDE_ATTACK:
 		{
@@ -1703,6 +1779,16 @@ unsigned DeliverNuggets(GameLogic &logic, ObjectID sourceId, const WeaponTemplat
 			if (ocl && upgradeTest(n, source) && (victim || pos))
 			{
 				ocl->create(logic, source, victim ? *victim->getPosition() : *pos);
+			}
+			continue;
+		}
+		if (n.kind() == NUGGET_SLAVE_ATTACK)
+		{
+			// lane MODCOMPAT-MOD1: the warhead path dispatches it as fireWeaponTemplate does (slot 1 / 5 with a victim, slot 2 / 6 at the position)
+			const Coord3D at = victim ? *victim->getPosition() : (pos ? *pos : Coord3D{ 0.0f, 0.0f, 0.0f });
+			if (victim ? SlaveAttack::applicable(logic, n, weapon, source, *victim) : upgradeTest(n, source))
+			{
+				SlaveAttack::deliver(logic, sourceId, victim != nullptr, at);
 			}
 			continue;
 		}
@@ -1984,10 +2070,17 @@ void ObjectWeaponDelivery::fireWeaponTemplate(const WeaponBonus &bonus, int curB
 			}
 			break;
 		}
+		case NUGGET_SLAVE_ATTACK:
+			// lane MODCOMPAT-MOD1: a victim takes slot 1 (RW 0x910DCF) then slot 5 (RW 0x910EA1), no victim slot 2 (the upgrade test) then slot 6 (RW 0x910F78)
+			if (victim ? SlaveAttack::applicable(logic, n, t, m_source, *victim) : upgradeTest(n, m_source))
+			{
+				SlaveAttack::deliver(logic, m_source->getID(), victim != nullptr, pos);
+			}
+			break;
 		default:
 			if (!NuggetEffects::deliver(logic, n, t, m_source->getID(), victim, pos)) // lane NUGGET-1
 			{
-				++logic.combat().counters().unportedNuggets; // SlaveAttackNugget (S-1995), FireLogicNugget (S-191)
+				++logic.combat().counters().unportedNuggets; // FireLogicNugget (S-191)
 			}
 			break;
 		}

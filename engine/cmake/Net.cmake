@@ -19,7 +19,9 @@ set(OPENBFME_NET_TESTS
     tests/test_net_core.cpp
     tests/test_p16_net_soak.cpp
     tests/test_net_retail.cpp
-    tests/test_profile2.cpp)
+    tests/test_profile2.cpp
+    tests/test_profile3.cpp
+    tests/test_profile3_retail.cpp)
 
 # called once openbfme_core and openbfme_tests exist: the host sources, the headless peer and the tests' path to it
 # The engine line of the profile identity (GameNetwork/ProfileIdentity.h): cmake/EngineId.cmake hashes the simulation sources and configuration (or honours

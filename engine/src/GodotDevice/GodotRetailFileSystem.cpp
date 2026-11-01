@@ -3,6 +3,8 @@
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "Common/PathIO.h"
 #include "Common/BfmeGame.h"
+#include "Common/GameEdition.h"
+#include <cstdlib>
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
 #include "Common/RetailArchivePolicy.h"
@@ -105,6 +107,7 @@ Dictionary RetailFileSystem::set_asset_packs(const PackedStringArray &folders)
 	if (errors.empty())
 	{
 		m_packs = std::move(packs); // all or nothing: a pack with an error changes nothing
+		m_packLinesRead = false; // lane PROFILE-3
 	}
 	for (const std::string &s : m_packs.packs())
 	{
@@ -163,6 +166,25 @@ std::vector<std::string> RetailFileSystem::modIdentity() const
 	std::vector<std::string> lines = m_installModReport.identity; // the install-folder mod first: it is mounted first
 	lines.insert(lines.end(), m_modReport.identity.begin(), m_modReport.identity.end());
 	return lines;
+}
+
+std::vector<std::string> RetailFileSystem::packIdentity() const
+{
+	if (m_packs.empty())
+	{
+		return {}; // none loaded, or suspended for this game (GameWorld::set_asset_packs_used)
+	}
+	if (!m_packLinesRead)
+	{
+		std::string why;
+		if (!m_packs.identityLines(m_packLines, why))
+		{
+			UtilityFunctions::push_error(String("profile identity: the asset packs' lines: ") + why.c_str());
+			m_packLines = { "pack-error" };
+		}
+		m_packLinesRead = true;
+	}
+	return m_packLines;
 }
 
 std::string RetailFileSystem::simulationData(std::string *error) const
@@ -250,6 +272,16 @@ PackedStringArray RetailFileSystem::get_file_sources(const String &path) const
 	return out;
 }
 
+namespace
+{
+// lane BFME2MODE-0: the developer switch's value (OPENBFME_EDITION; empty = rotwk)
+std::string envEdition()
+{
+	const char *v = std::getenv("OPENBFME_EDITION");
+	return v ? std::string(v) : std::string();
+}
+} // namespace
+
 Dictionary RetailFileSystem::mount_retail()
 {
 	if (m_shellSource)
@@ -267,7 +299,13 @@ Dictionary RetailFileSystem::mount_retail()
 	std::string rotwkRoot;
 	std::string bfme2Root;
 	std::string error;
-	if (!ResolveInstallPath("ROTWK_INSTALL", config, rotwkRoot, &error))
+	// lane BFME2MODE-0: OPENBFME_EDITION=bfme2 (developer switch, docs/EDITIONS.md) mounts BFME2 1.06 alone: no RotWK install is needed
+	GameEdition edition = GameEdition::RotWK201;
+	if (!parseGameEdition(envEdition(), edition, &error))
+	{
+		errors.push_back(toGodot(error));
+	}
+	if (edition == GameEdition::RotWK201 && !ResolveInstallPath("ROTWK_INSTALL", config, rotwkRoot, &error))
 	{
 		errors.push_back(toGodot(error));
 	}
@@ -500,19 +538,31 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 		}
 	}
 
-	std::vector<RetailInstall> installs(2);
-	installs[0].label = "rotwk";
-	installs[0].root = rotwkRoot;
-	installs[1].label = "bfme2";
-	installs[1].root = bfme2Root;
-	if (!RetailArchivePolicy::loadBuiltin("rotwk-201", installs[0].policy, &error))
+	// lane BFME2MODE-0: the developer switch OPENBFME_EDITION=bfme2 mounts BFME2 1.06's archives alone (docs/EDITIONS.md); anything but rotwk / bfme2 is an
+	// error. The rules stay RotWK's in Phase 0; the data decides the edition (Common/GameEdition.h isBfme2Data)
+	GameEdition edition = GameEdition::RotWK201;
+	if (!parseGameEdition(envEdition(), edition, &error))
 	{
 		errors.push_back(toGodot(error));
 	}
-	if (!RetailArchivePolicy::loadBuiltin("bfme2-106", installs[1].policy, &error))
+	std::vector<RetailInstall> installs(edition == GameEdition::BFME2_106 ? 1 : 2);
+	RetailInstall &bfme2Install = installs.back();
+	if (edition == GameEdition::RotWK201)
+	{
+		installs[0].label = "rotwk";
+		installs[0].root = rotwkRoot;
+		if (!RetailArchivePolicy::loadBuiltin("rotwk-201", installs[0].policy, &error))
+		{
+			errors.push_back(toGodot(error));
+		}
+	}
+	bfme2Install.label = "bfme2";
+	bfme2Install.root = bfme2Root;
+	if (!RetailArchivePolicy::loadBuiltin("bfme2-106", bfme2Install.policy, &error))
 	{
 		errors.push_back(toGodot(error));
 	}
+	result["edition"] = gameEditionName(edition);
 
 	result["rotwk_install"] = toGodot(rotwkRoot);
 	result["bfme2_install"] = toGodot(bfme2Root);
@@ -629,7 +679,13 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 			// PLAN rule 7 / stop S-039: loose map files in the install folders are contamination; they are
 			// reported by the mount and by every map build, never read.
 			std::string scanError;
-			if (!LooseFileScan::scanInstalls({ { "rotwk", rotwkRoot }, { "bfme2", bfme2Root } }, m_loose, &scanError))
+			// lane BFME2MODE-0: the mounted installs only (BFME2 1.06 alone under OPENBFME_EDITION=bfme2)
+			std::vector<std::pair<std::string, std::string>> scanned = { { "rotwk", rotwkRoot }, { "bfme2", bfme2Root } };
+			if (edition == GameEdition::BFME2_106)
+			{
+				scanned.erase(scanned.begin());
+			}
+			if (!LooseFileScan::scanInstalls(scanned, m_loose, &scanError))
 			{
 				errors.push_back(toGodot("loose file scan: " + scanError));
 				m_fs.reset();
@@ -642,7 +698,7 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 			// lane MOD-5: the user maps folder, the one folder the archive file system reads from disk (RW 0xA149A2's local step)
 			if (m_fs)
 			{
-				m_userMapFolder = userMapFolderOf(rotwkRoot, m_userMapError);
+				m_userMapFolder = userMapFolderOf(edition == GameEdition::BFME2_106 ? bfme2Root : rotwkRoot, m_userMapError); // BFME2MODE-0: that game's maps folder
 				m_fs->setLocalFolder(m_userMapFolder);
 				if (!m_userMapError.empty())
 				{
@@ -662,6 +718,7 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 			ArchiveW3DFileSource mounted(*m_fs);
 			std::vector<std::string> packErrors;
 			const bool modelsOk = m_packs.checkModels(mounted, packErrors);
+			m_packLinesRead = false; // lane PROFILE-3: the misfits are left out now
 			if (!modelsOk)
 			{
 				for (const std::string &e : packErrors)
@@ -994,6 +1051,15 @@ Dictionary RetailFileSystem::get_asset_pack_report() const
 		packs.push_back(p);
 	}
 	out["packs"] = packs;
+	return out;
+}
+
+std::vector<std::string> RetailFileSystem::installOverlayFolders() const
+{
+	std::vector<std::string> out;
+	if (m_mounted)
+		for (int64_t i = 0; i < m_installModArgs.size(); ++i)
+			out.push_back(toNative(m_installModArgs[i]));
 	return out;
 }
 

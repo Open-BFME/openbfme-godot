@@ -1,6 +1,6 @@
 // OpenBFME. GPL-3.0.
 // Retail Messenger.apt bindings. Donors: BFME2 AptMessengerConstructor.cpp,
-// AptMessengerCallbacks.cpp and AptMessengerOnlineConstructor.cpp. Network state
+// AptMessengerCallbacks.cpp and AptMessengerOnline.cpp. Network state
 // is supplied separately; a row's id is a public player id, never an install id.
 #pragma once
 

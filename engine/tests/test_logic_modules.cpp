@@ -216,7 +216,7 @@ TEST_CASE("HordeContain: a horde creates its InitialPayload members, each in its
 	CHECK(hc->unplacedMembers() == 0);
 	const std::vector<Object *> m = f.membersOf(horde);
 	REQUIRE(m.size() == 6);
-	CHECK(horde->getID() == 1);                        // the horde is registered before onCreate makes its members
+	CHECK(horde->getID() == 1);                        // the horde is registered before onBuildComplete makes its members
 	for (size_t i = 0; i < m.size(); ++i)
 	{
 		CHECK(m[i]->getID() == 2 + i);
@@ -229,14 +229,15 @@ TEST_CASE("HordeContain: a horde creates its InitialPayload members, each in its
 	CHECK(f.logic->getObjectCount() == 7);
 	CHECK(horde->getContain()->getContainCount() == 6);
 	CHECK(horde->getContain()->getHordeContainInterface() != nullptr);
-	// the members were each made with their own client hook call, the horde's after them (its initObject runs after onCreate)
-	CHECK(f.log.indexOf("client:created#2") < f.log.indexOf("client:created#1"));
+	// the members were each made with their own client hook call, after the horde's: newObject finishes the horde (its initObject) and onBuildComplete then
+	// makes the payload (RotWK HordeContain create slot 1, RW 0x8718ED)
+	CHECK(f.log.indexOf("client:created#1") < f.log.indexOf("client:created#2")); // tolerance: an order in the log, whose other lines sit between the two
 	// the horde sleeps (its member pass is not ported, S-149): its update module is in the sleeping vector
 	CHECK(hc->friend_getPhaseInLogic() == -1);
 	CHECK(hc->friend_getNextCallFrame() == (UnsignedInt)UPDATE_SLEEP_FOREVER);
 }
 
-// lane DECOMP-1 (S-149 narrowed): RW 0x871B9B (BFME2 decomp HordeContainRva0046E8EE.cpp, tier B) destroys (int)((100 - H) * 0.01 * count) members of an unproduced
+// lane DECOMP-1 (S-149 narrowed): RW 0x871B9B (BFME2 decomp HordeContain_createPayload.cpp, tier B) destroys (int)((100 - H) * 0.01 * count) members of an unproduced
 // horde, H the int at HordeContain + 0x2A8; its only writer is the constructor (RW 0x872972: 100), so nothing is ever destroyed: DamagePercentToUnits (an OpenContain
 // data field) does not reach it. The port reported a template that sets it as an error
 TEST_CASE("HordeContain: DamagePercentToUnits does not trim the payload (the runtime percentage of RW 0x871B9B is always 100) and is no error")
@@ -247,31 +248,45 @@ TEST_CASE("HordeContain: DamagePercentToUnits does not trim the payload (the run
 	CHECK(f.logic->report().errors.empty());
 }
 
-TEST_CASE("HordeContain: members stand at the slot offset rotated by the horde's angle and follow it when it moves (RW 0x875847)")
+TEST_CASE("HordeContain: members are made on the slot offset rotated by the horde's angle (RW 0x875847); a move or turn of the horde leaves them, a teleport "
+		  "brings them (RW 0x871536 / 0x86D881)")
 {
 	Fx f;
-	Object *horde = f.make("FighterHorde");
-	const std::vector<Object *> m = f.membersOf(horde);
+	// the map loop's order (RW 0x62DCE4): the horde is turned and placed, then completed (onBuildComplete makes the members around it, RW 0x8718ED / 0x872D0A)
+	Object *horde = f.make("FighterHorde", nullptr, INVALID_ID, false);
 	Coord3D p{ 100.0f, 200.0f, 0.0f };
 	horde->setOrientation(0.0f);
 	horde->setPosition(&p);
+	Fx::completeHorde(horde);
+	const std::vector<Object *> m = f.membersOf(horde);
+	REQUIRE(m.size() == 6);
 	// the slots less the table's centre (RW 0x86C4EA: three at X 50 and three at 30, 40): slot 0 is (10, 0), slot 1 (10, 20), slot 2 (10, -20), slot 3
 	// (-10, 0); angle 0 is the identity rotation
 	CHECK(m[0]->getPosition()->x == 110.0f);
-	CHECK(m[0]->getPosition()->y == doctest::Approx(200.0f));
-	CHECK(m[1]->getPosition()->y == doctest::Approx(220.0f));
-	CHECK(m[2]->getPosition()->y == doctest::Approx(180.0f));
+	CHECK(m[0]->getPosition()->y == doctest::Approx(200.0f)); // tolerance: the slot through sin / cos of 0, not exact
+	CHECK(m[1]->getPosition()->y == doctest::Approx(220.0f)); // tolerance: as above
+	CHECK(m[2]->getPosition()->y == doctest::Approx(180.0f)); // tolerance: as above
 	CHECK(m[3]->getPosition()->x == 90.0f);
+	// a turn or a move of the horde moves no member: RotWK's contain slot 0xC (RW 0x871536) only marks them; they walk to their slots in the member pass
 	const float halfPi = 1.57079632679f;
-	horde->setOrientation(halfPi); // +x offsets point along +y
-	CHECK(m[0]->getPosition()->x == doctest::Approx(100.0f).epsilon(1e-4));
-	CHECK(m[0]->getPosition()->y == doctest::Approx(210.0f)); // tolerance: the slot turned by the horde's angle through sin / cos, not exact
-	// (10, 20) rotated: x' = -20, y' = 10
-	CHECK(m[1]->getPosition()->x == doctest::Approx(80.0f)); // tolerance: the slot turned by the horde's angle through sin / cos, not exact
-	CHECK(m[0]->getOrientation() == doctest::Approx(halfPi));
+	horde->setOrientation(halfPi);
+	CHECK(m[0]->getPosition()->x == 110.0f);
+	CHECK(m[0]->getOrientation() == 0.0f);
 	Coord3D q{ 0.0f, 0.0f, 7.0f };
 	horde->setPosition(&q);
-	CHECK(m[0]->getPosition()->y == doctest::Approx(10.0f)); // tolerance: the slot turned by the horde's angle through sin / cos, not exact
+	CHECK(m[0]->getPosition()->x == 110.0f);
+	// a teleport takes them along (Object::teleportTo -> contain slot 0x1B8, RW 0x86D881): each member to its formation position around the horde's new place,
+	// facing the horde's angle
+	horde->teleportTo(&q, false);
+	HordeContain *hc = f.hordeOf(horde);
+	for (Object *o : m)
+	{
+		const Coord3D want = hc->getMemberFormationPosition(o);
+		CHECK(o->getPosition()->x == want.x);
+		CHECK(o->getPosition()->y == want.y);
+		CHECK(o->getOrientation() == horde->getOrientation());
+		CHECK(std::fabs(o->getPosition()->x) + std::fabs(o->getPosition()->y) <= 30.0f); // tolerance: within the slot table's extent of the horde at (0, 0)
+	}
 	// the z of a member is the ground height under it: 0 here (no terrain installed)
 	CHECK_FALSE(f.logic->hasTerrain());
 	CHECK(m[0]->getPosition()->z == 0.0f);
@@ -280,7 +295,10 @@ TEST_CASE("HordeContain: members stand at the slot offset rotated by the horde's
 TEST_CASE("HordeContain: a payload that does not fit the slots keeps its extra members in the contain list without a slot")
 {
 	Fx f;
-	Object *horde = f.make("OverfullHorde");
+	Object *horde = f.make("OverfullHorde", nullptr, INVALID_ID, false);
+	Coord3D p{ 10.0f, 20.0f, 0.0f };
+	horde->setPosition(&p);
+	Fx::completeHorde(horde);
 	HordeContain *hc = f.hordeOf(horde);
 	CHECK(hc->getSlotCount() == 2);
 	CHECK(horde->getContain()->getContainCount() == 4);
@@ -289,9 +307,7 @@ TEST_CASE("HordeContain: a payload that does not fit the slots keeps its extra m
 	CHECK(hc->getMemberSlot(m[0]) == 0);
 	CHECK(hc->getMemberSlot(m[1]) == 1);
 	CHECK(hc->getMemberSlot(m[2]) == -1);
-	Coord3D p{ 10.0f, 20.0f, 0.0f };
-	horde->setPosition(&p);
-	CHECK(m[3]->getPosition()->x == 10.0f); // an unplaced member stands at the horde's position
+	CHECK(m[3]->getPosition()->x == 10.0f); // an unplaced member is made at the horde's position
 }
 
 TEST_CASE("HordeContain: an unknown payload template is reported, never skipped silently")

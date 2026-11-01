@@ -178,7 +178,7 @@ void HordeContain::prepareMembersForCommand(Object *target)
 
 // ---- lane ARCHER-1: the HordeAttackNugget's fire -------------------------------------------------------------------------------------------------------------------
 // TARGET FACTS (RotWK game.dat, caveat S-001; read with Ghidra and capstone). The nugget (RW ctor 0x911B39) fires through its slots 5 / 6 (RW 0x911A58 at an object,
-// RW 0x911AC9 at a position: tier B same-shape to the BFME2 decomp's Made002CCBCASlots.cpp): the source's contain (Object + 0x258) gives its horde interface (slot 0x7C);
+// RW 0x911AC9 at a position: tier B same-shape to the BFME2 decomp's Made002CCBCA.cpp): the source's contain (Object + 0x258) gives its horde interface (slot 0x7C);
 // unless LockWeaponSlot is 5 (unlocked) the source's slot is locked temporarily (RW 0x69121A), then the interface's slot 4 (RW 0x875221) gets (victim, ClosestMemberOnly)
 // or its slot 0 (RW 0x875550) the position. RW 0x875221 is BFME1's HordeContain::attackTargetNow (Open-BFME-1 Rva00241F10MemberAttackTarget.cpp, the donor) with
 // RotWK's changes: the ClosestMemberOnly argument, the member walking test, the melee-weapon branch and a pick that is no longer the plain nearest member.

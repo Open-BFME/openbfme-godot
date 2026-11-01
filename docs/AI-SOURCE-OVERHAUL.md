@@ -4,6 +4,9 @@ This branch ports the source-based AI work from the personal fork onto upstream
 `87579746eb`. It carries no enhanced counter-production, retreat micro, siege
 planner, capture planner, accelerated recruitment, or reinforcement-wave policy.
 The current upstream expansion and capture-history implementations are retained.
+The merge of main at `0669a3a013` also retains its edition-aware farm-squad
+priority (BFME2 30, RotWK 500, `SkirmishAIEditionRules.h`); this is integration
+with main’s existing rule, not a resolution of the pending broader AI scope review.
 
 ## Source evidence and difficulty
 
@@ -36,6 +39,9 @@ future decisions. Older layouts read the fields they contain and default later a
 upstream prototype index 8; SimpleDefense uses 9. Capture history and expansion
 requests/counters retain their upstream representations. AIStatCollector version 3
 and TerrainTrees version 2 retain complete spatial and tree-selection state.
+Map-owned wall-entry polygons retain their indices and callbacks when the objects
+block replaces object-owned castle/gate polygons; the AI block restores the counters
+without adding duplicate polygons. This requires no new snapshot layout.
 Native tree snapshots preserve cached groups, whereas retail rebuilds them; this
 existing format difference is reported by S-4252.
 
@@ -204,7 +210,7 @@ production `0x5AD243`, farms `0x5AD404`, and update `0x5AD5DD`.
 - The constructor draws d100 at line 53 and admits rolls <20 (19/100).
 - Native named counters are AIFarmKillSquad_IsRunning / AIFarmKillSquad_FrameNextRun.
   Cleanup draws 150..600 frames at line 337, rather than the RotWK 50..300.
-- One team has priority 30, HERO/ARCHER/MACHINE forbidden, minimum one in Rush
+- One team uses main’s edition priority (BFME2 30 / RotWK 500), HERO/ARCHER/MACHINE forbidden, minimum one in Rush
   and two later, and a maximum drawn through three at line 371.
 - With an enemy fortress, reachable tracked buildings are ranked by perpendicular
   distance from the infinite 3D line through the team center and first fortress.

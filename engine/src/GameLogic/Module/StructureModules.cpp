@@ -275,7 +275,7 @@ float StructureCollapseUpdate::getCollapseHeight() const
 	{
 		return m_data->m_collapseHeight;
 	}
-	const float geometryHeight = ObjectGeometry::maxHeightAbovePosition(ObjectGeometry::shapesOf(*getObject()->getTemplate()));
+	const float geometryHeight = ObjectGeometry::maxHeightAbovePosition(getObject()->geometryShapes()); // the object's own GeometryInfo (lane MODCOMPAT-MOD1)
 	return m_data->m_collapseHeight <= geometryHeight ? geometryHeight : m_data->m_collapseHeight;
 }
 

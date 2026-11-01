@@ -510,3 +510,65 @@ TEST_CASE("RotWK subsystem init order: recovered from GameEngine::init (RW 0x63A
 	// no duplicates
 	CHECK(std::set<std::string>(names.begin(), names.end()).size() == names.size());
 }
+
+// lane BFME2CAMP1 (an OpenBFME addition, SubsystemLegend.h): BFME2's own legend gives TheLinearCampaignManager LinearCampaign.ini; RotWK's names only
+// LinearCampaignExpansion1.ini. The BFME2 entry's files RotWK's does not name are loaded after the whole RotWK load, and the legend keeps RotWK's entries
+TEST_CASE("bfme2camp1 LoadBfme2CampaignsFromLegend: the BFME2 legend's TheLinearCampaignManager files that RotWK's legend lacks, after RotWK's load")
+{
+	const std::string body = "Armor X\nEnd\n";
+	FileList files = hardcodedFiles(body);
+	files.push_back({ "Data\\INI\\Default\\SubsystemLegendExpansion1.ini",
+		"LoadSubsystem TheLinearCampaignManager\n InitFile = Data\\INI\\LinearCampaignExpansion1.ini\nEnd\n" });
+	// BFME2's legend: the same manager with BFME2's file, the expansion's file again (in another case: not loaded twice) and an entry RotWK
+	// never asks for (its file must not load)
+	files.push_back({ "Data\\INI\\Default\\SubsystemLegend.ini",
+		"LoadSubsystem TheLinearCampaignManager\n InitFile = Data\\INI\\LinearCampaign.ini\n InitFile = data\\ini\\linearcampaignexpansion1.ini\nEnd\n"
+		"LoadSubsystem TheScienceStore\n InitFile = Data\\INI\\Science.ini\nEnd\n" });
+	files.push_back({ "Data\\INI\\LinearCampaignExpansion1.ini", body });
+	files.push_back({ "Data\\INI\\LinearCampaign.ini", body });
+	files.push_back({ "Data\\INI\\Science.ini", body });
+	LegendFixture fx(files);
+	INIBlockRecorder rec;
+	SubsystemLegend sl;
+	RegisterRecordingBlockStubs(fx.env.blocks, rec, { "LoadSubsystem" });
+	sl.registerBlock(fx.env.blocks);
+	INI ini(fx.env);
+	SubsystemLoadOptions options;
+	options.collectErrors = true;
+	SubsystemLoadReport report;
+	RunSubsystemIniLoad(sl, ini, options, report);
+	const Strs before = ini.loadedFiles();
+	REQUIRE(std::find(before.begin(), before.end(), "Data\\INI\\LinearCampaignExpansion1.ini") != before.end());
+	LoadBfme2CampaignsFromLegend(sl, ini, options, report);
+	CHECK(report.errors.empty());
+	Strs expected = before;
+	expected.push_back("Data\\INI\\Default\\SubsystemLegend.ini");
+	expected.push_back("Data\\INI\\LinearCampaign.ini");
+	CHECK(ini.loadedFiles() == expected);
+	CHECK(report.subsystemsLoaded.back() == "TheLinearCampaignManager [BFME2 legend, OpenBFME]");
+	// RotWK's entries are back: one entry, the expansion's file
+	REQUIRE(sl.entries().size() == 1);
+	CHECK(sl.entries()[0].initFile == Strs{ "Data\\INI\\LinearCampaignExpansion1.ini" });
+}
+
+TEST_CASE("bfme2camp1 LoadBfme2CampaignsFromLegend: no BFME2 legend in the mount, nothing loads")
+{
+	const std::string body = "Armor X\nEnd\n";
+	FileList files = hardcodedFiles(body);
+	files.push_back({ "Data\\INI\\Default\\SubsystemLegendExpansion1.ini", "LoadSubsystem TheScienceStore\n InitFile = Data\\INI\\Science.ini\nEnd\n" });
+	files.push_back({ "Data\\INI\\Science.ini", body });
+	LegendFixture fx(files);
+	INIBlockRecorder rec;
+	SubsystemLegend sl;
+	RegisterRecordingBlockStubs(fx.env.blocks, rec, { "LoadSubsystem" });
+	sl.registerBlock(fx.env.blocks);
+	INI ini(fx.env);
+	SubsystemLoadOptions options;
+	options.collectErrors = true;
+	SubsystemLoadReport report;
+	RunSubsystemIniLoad(sl, ini, options, report);
+	const Strs before = ini.loadedFiles();
+	LoadBfme2CampaignsFromLegend(sl, ini, options, report);
+	CHECK(ini.loadedFiles() == before);
+	CHECK(sl.entries().size() == 1);
+}

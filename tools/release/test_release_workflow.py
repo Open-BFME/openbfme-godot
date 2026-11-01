@@ -248,7 +248,18 @@ def test_only_the_sign_jobs_can_write_or_read_the_key():
             assert "NIGHTLY_SIGNING_KEY" not in json.dumps(job)
         else:
             assert "environment" not in job
-            assert "vars." not in json.dumps(job) and "secrets." not in json.dumps(job)
+            # CRASHACT-1: the one other secret, the crash service's client key, in the package step and the macOS call alone
+            crash = {"package": ("steps", "Build the packages (package.sh)"), "macos": ("secrets", None)}.get(name)
+            text = json.dumps(job)
+            if crash:
+                assert text.count("secrets.") == 1 and "${{ secrets.CRASH_CLIENT_KEY }}" in text, name
+                if crash[0] == "steps":
+                    keyed = [st for st in job["steps"] if "secrets." in json.dumps(st)]
+                    assert [(st["name"], st["env"]) for st in keyed] == [(crash[1], {"CRASH_CLIENT_KEY": "${{ secrets.CRASH_CLIENT_KEY }}"})]
+                else:
+                    assert job["secrets"] == {"CRASH_CLIENT_KEY": "${{ secrets.CRASH_CLIENT_KEY }}"}
+                text = text.replace("${{ secrets.CRASH_CLIENT_KEY }}", "")
+            assert "vars." not in text and "secrets." not in text
             # the plan job reads the published stable release (the transition rule) and (RELGH-3) the environment stable-signing: a
             # read-only token, nothing else
             assert ("github.token" in json.dumps(job)) == (name == "plan")
@@ -257,7 +268,8 @@ def test_only_the_sign_jobs_can_write_or_read_the_key():
     assert doc["jobs"]["plan"]["env"] == {"GH_TOKEN": "${{ github.token }}"}
     assert doc["jobs"]["plan"]["outputs"] == {"kind": "${{ steps.plan.outputs.kind }}"}
     assert doc["permissions"] == {"contents": "read"}
-    assert TEXT.count("secrets.") == 2 and TEXT.count(SECRET) == 1 and TEXT.count("${{ secrets.OPENBFME_STABLE_SIGNING_KEY }}") == 1
+    # CRASHACT-1: + the crash service's client key, twice (the package step, the macOS call)
+    assert TEXT.count("secrets.") == 4 and TEXT.count("${{ secrets.CRASH_CLIENT_KEY }}") == 2 and TEXT.count(SECRET) == 1 and TEXT.count("${{ secrets.OPENBFME_STABLE_SIGNING_KEY }}") == 1
     assert "cache" not in TEXT.lower().replace("ccache", "")   # no cache another workflow could have written
 
 
@@ -282,15 +294,20 @@ def test_the_release_builds_call_the_package_workflow():
         assert j["uses"] == "./.github/workflows/release-package.yml" and j["needs"] == "plan"
         assert j["with"] == {"platform": platform, "commit": "${{ inputs.commit }}", "version": "${{ inputs.tag }}",
                              "request": "${{ inputs.request }}"}
-        assert set(j) == {"name", "needs", "uses", "with"}   # no secrets, no permissions: contents: read from the top level
+        # no permissions (contents: read from the top level); CRASHACT-1: the macOS call alone passes the crash service's client key
+        assert set(j) == {"name", "needs", "uses", "with"} | ({"secrets"} if job == "macos" else set())
+        assert j.get("secrets", {}) == ({"CRASH_CLIENT_KEY": "${{ secrets.CRASH_CLIENT_KEY }}"} if job == "macos" else {})
     # the downloads name release-package.yml's artifacts (the version and the request in the name)
     for stem in ("linux-x64", "windows-x64", "macos-arm64"):
         assert f"name: openbfme-${{{{ inputs.tag }}}}-{stem}-${{{{ inputs.request }}}}" in TEXT
     pkg = yaml.safe_load(PKG_TEXT)
     on = pkg.get("on", pkg.get(True))
-    assert set(on) == {"workflow_dispatch", "workflow_call"} and set(on["workflow_call"]) == {"inputs"}
+    assert set(on) == {"workflow_dispatch", "workflow_call"} and set(on["workflow_call"]) == {"inputs", "secrets"}
+    assert on["workflow_call"]["secrets"] == {"CRASH_CLIENT_KEY": {"required": False}}   # CRASHACT-1: the crash key alone
     assert set(on["workflow_call"]["inputs"]) == set(on["workflow_dispatch"]["inputs"]) == {"platform", "commit", "version", "request"}
-    assert pkg["permissions"] == {"contents": "read"} and "secrets." not in PKG_TEXT and "secrets:" not in PKG_TEXT
+    # CRASHACT-1: the crash service's client key is its one secret: declared once (workflow_call) and read once (the macOS package step)
+    assert pkg["permissions"] == {"contents": "read"} and PKG_TEXT.count("secrets.") == 1 and PKG_TEXT.count("secrets:") == 1
+    assert PKG_TEXT.count("${{ secrets.CRASH_CLIENT_KEY }}") == 1
     for name, job in pkg["jobs"].items():
         assert "permissions" not in job and "environment" not in job
         checkout = next(s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout@"))
@@ -702,12 +719,12 @@ def test_plan_refuses_a_transition_release_younger_than_the_window(repo, capsys)
 
 def test_checkout_is_tag(repo, capsys, monkeypatch):
     git(repo["dir"], "checkout", "-q", "--detach", repo["c1"])
-    named = git(repo["dir"], "describe", "--tags")     # two tags on c1: git describe names one; the other is refused
-    other = "v0.4.14-nightly.20261023" if named == "v0.4.13" else "v0.4.13"
-    if other == "v0.4.13":
-        git(repo["dir"], "tag", "-d", "v0.4.13")
-        git(repo["dir"], "tag", "-a", "-m", "x", "v0.4.14-nightly.20261022", repo["c1"])
-        other = "v0.4.14-nightly.20261022" if named != "v0.4.14-nightly.20261022" else "v0.4.14-nightly.20261023"
+    # two tags on c1: git describe names one; the other is refused. FLAKEFIX-2: which one depends on the tag dates (a second boundary
+    # between the two), so the test takes the one describe did not name instead of predicting it
+    tags = git(repo["dir"], "tag", "--points-at", repo["c1"]).split()
+    assert sorted(tags) == ["v0.4.13", "v0.4.14-nightly.20261023"], tags
+    named = git(repo["dir"], "describe", "--tags")
+    other = next(t for t in tags if t != named)
     monkeypatch.setenv("IN_TAG", other)
     assert actions_release.main(["checkout-is-tag"]) == 1
     assert "describes as" in capsys.readouterr().err

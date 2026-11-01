@@ -119,6 +119,7 @@ public:
 	void set_free_camera(bool on);
 	void hold_input(bool on);        ///< lane BACKLOG3 (QA): queue _input's events as while the logic worker runs
 	void set_input_enabled(bool on); ///< lane BACKLOG3 (QA): InGameUI's input flag (the scripts' DISABLE_INPUT / ENABLE_INPUT)
+	bool input_enabled() const; ///< lane BFME2CAMP1: InGameUI + 0x16 (setInputEnabled RW 0x69B5DA), the tutorial's objectives screen Return gate
 	void script_input(bool enable);  ///< lane OWNERFIX-1: a map script's DISABLE_INPUT / ENABLE_INPUT as retail runs them (InGameHud::scriptInput)
 	void set_broadcast_clean(bool on);
 	// lane OPTS-2: the OpenBFME screen's camera / interface settings, live: { scroll_factor_option (Options.ini ScrollFactor text or null), edge_scroll_mode
@@ -133,6 +134,11 @@ public:
 	// RW 0x443C81: TheTacticalView slot 0x1C setZoomLimited(!enable)) on the HUD's own camera, so a cinematic moves the camera the player then keeps
 	void camera_reset(const Vector2 &sage_xy);
 	void camera_set_zoom_limited(bool on);
+	// lane CAMANIM-1: a map script's camera request in the client's order for the view's camera animation (MOVE_CAMERA_BY_ANIMATION starts the map's
+	// animation of that name, the mode-writing camera actions end it: GameClient/CameraAnimation.h); true when the playback changed
+	bool camera_animation_request(const String &action, const String &name);
+	Dictionary camera_animation_state() const; ///< { active, name, time (client frames), animations (the map's count) }
+	void camera_set_clip_depth_multiplier(double m); // lane MODCOMPAT-AI: SET_CAMERA_CLIP_DEPTH_MULTIPLIER (GlobalData + 0x950)
 	// lane CAMPUI-1: the objectives screen's state for the Palantir's flag and a script's FLASH_*_BUTTON (slot 0 spell store, 1 objectives, 2 planning mode)
 	void set_objectives_screen_open(bool open);
 	void flash_palantir_button(int slot, int seconds);

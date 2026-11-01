@@ -1,7 +1,8 @@
 // OpenBFME retail tests for lane RADIUSHEIGHT-1: radius damage honours DamageNugget's DamageMaxHeight (+0x160) and DamageMaxHeightAboveTerrain (+0x164), RW 0x90DEF0
-// (BFME2 decomp Made002CC5E1Ctor.cpp DamageNugget::doEffectPosition, the m_140 / m_144 blocks). They share the HUD tests' retail world (see
+// (BFME2 decomp DamageNugget.cpp DamageNugget::doEffectPosition, the m_140 / m_144 blocks). They share the HUD tests' retail world (see
 // test_hud_combat_retail.cpp) and SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -87,6 +88,7 @@ struct Arena
 		REQUIRE_MESSAGE(o != nullptr, templateName);
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	void frames(int n)

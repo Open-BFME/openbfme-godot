@@ -91,6 +91,13 @@ public:
 	bool isEnabled() const { return m_enabled; }
 	// contain slot 0x70 (OpenContain RW 0x86584C: the data's ContainMax; TransportContain RW 0x869F86: Slots)
 	virtual int getContainMax() const;
+	// lane MODCOMPAT-MOD1: contain slot 0x170 (RW 0x865A5C): the data's ManualPickUpFilter (+ 0x44, RW 0x7640C1) allows `obj` for the container's player
+	bool manualPickUpAllows(const Object &obj) const;
+	// lane MODCOMPAT-MOD1: contain slot 0xAC (RW 0x865853, the grab's eat): `victim` (interface + 0xC4) is eaten in max(frames, 1) frames (+ 0xCC), credited
+	// to `eater` (+ 0xC8); the update's RW 0x8669B1 counts it down
+	void eatPassengerAfter(const Object &victim, int frames, const Object &eater);
+	ObjectID eatVictim() const { return m_eatVictim; }
+	int eatFramesLeft() const { return m_eatFrames; }
 	void containReactToTransformChange() override { redeployOccupants(); } // ZH OpenContain::containReactToTransformChange
 	// the PassengerBonePrefix bone a rider stands on (RW 0x868A70's map at + 0x3C), "" without one
 	std::string riderBone(ObjectID id) const;
@@ -187,6 +194,9 @@ protected:
 	std::map<ObjectID, std::string> m_riderBoneName;   // RW + 0x3C (RW 0x8689EC)
 	std::array<std::uint32_t, 19> m_watchedConditions{}; // RW + 0x84 (19 words, zero at construction: RW 0x867FF3 memset)
 	unsigned m_doorOpenFrames = 0;            // RW module + 0x70 (DoorOpenTime countdown, RW 0x8682F8 / 0x86702D)
+	ObjectID m_eatVictim = INVALID_ID;        // RW interface + 0xC4 (lane MODCOMPAT-MOD1: the grab's eat, RW 0x865853)
+	ObjectID m_eatKiller = INVALID_ID;        // RW interface + 0xC8
+	int m_eatFrames = 0;                      // RW interface + 0xCC
 	unsigned long long m_turretBonesUnported = 0;
 	bool m_deleting = false;                  // RW + 0xDF (onDelete)
 	Coord3D m_rallyPoint{ 0.0f, 0.0f, 0.0f }; // RW exit interface + 0xA0 (lane BACKLOG-1)

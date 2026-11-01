@@ -7,6 +7,7 @@
 #include "W3dSynth.h"
 
 #include "Common/ArchiveFile.h"
+#include "Common/Sha256.h"
 #include "GameClient/AssetPacks.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 
@@ -350,4 +351,39 @@ TEST_CASE("SDK-1b (a): suspended packs answer nothing (the game's own files are 
 	CHECK(readSource(render, "art\\w3d\\gu\\gumaarms.w3d") == "retail"); // a source made before also stops answering with the pack
 	packs.setSuspended(false);
 	CHECK(packs.texture("GUMaArms.tga") != nullptr);
+}
+
+TEST_CASE("SDK-1c: a pack's presentation line names the files the game uses by their bytes, in mount order (profile 3, agreed with Anti-cheat)")
+{
+	Win32BIGFileSystem fsys;
+	mount(fsys, "W3D.big", { { "art\\w3d\\gu\\gumaarms_skl.w3d", str(skeleton()) }, { "art\\w3d\\gu\\gumaarms.w3d", str(model()) } }, false);
+	ArchiveW3DFileSource mounted(fsys);
+	TempDir tmp;
+	const std::string arms = str(model("gumaarms_skl", "GUMaArms.BODY_HD"));
+	writeFile(tmp.path / "HD Units" / "w3d" / "gumaarms.w3d", arms);              // fits: used
+	writeFile(tmp.path / "HD Units" / "w3d" / "gumaarms_skl.w3d", str(skeleton("B_TORSO"))); // a misfit: not used, not in the line
+	writeFile(tmp.path / "HD Units" / "GUMaArms.DDS", "DDS old");                  // the later pack wins this name
+	writeFile(tmp.path / "HD Units" / "GUMaHelm.dds", "DDS helm");
+	writeFile(tmp.path / "Later" / "gumaarms.png", "PNG new");
+	writeFile(tmp.path / "Empty" / "gumaarms.tga", "TGA lost");                    // every file taken by the later pack: no line
+	AssetPacks packs;
+	std::vector<std::string> errors;
+	REQUIRE(packs.addPack((tmp.path / "HD Units").u8string(), errors));
+	REQUIRE(packs.addPack((tmp.path / "Empty").u8string(), errors));
+	REQUIRE(packs.addPack((tmp.path / "Later").u8string(), errors));
+	REQUIRE_MESSAGE(packs.checkModels(mounted, errors), joined(errors));
+	auto sha = [](const std::string &s) {
+		const auto d = Sha256::hash(s.data(), s.size());
+		return HexBytes(d.data(), d.size());
+	};
+	const std::string hdText = "model gumaarms.w3d " + sha(arms) + "\n" + "texture gumahelm " + sha("DDS helm") + "\n";
+	const std::string laterText = "texture gumaarms " + sha("PNG new") + "\n";
+	std::vector<std::string> lines;
+	std::string error;
+	REQUIRE_MESSAGE(packs.identityLines(lines, error), error);
+	CHECK(lines == std::vector<std::string>{ "pack HD Units 2 " + sha(hdText), "pack Later 1 " + sha(laterText) });
+	// a file changed after the load is a read error naming it, never a silent line
+	writeFile(tmp.path / "Later" / "gumaarms.png", "PNG changed, longer");
+	CHECK_FALSE(packs.identityLines(lines, error));
+	CHECK(error.find("Later/gumaarms.png") != std::string::npos);
 }

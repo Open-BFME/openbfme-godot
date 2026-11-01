@@ -1,6 +1,7 @@
-## Headless test of the stealth look of static draws (lane STEALTH-1, review r1 fix 2): a stealth postern gate (AngmarWallPosternGateSmall: an InvisibilityUpdate
-## CAMOUFLAGE nugget and a W3DFloorDraw) is not drawn for an enemy while camouflaged, pulses for its owner, and its draws return to full opacity and are drawn
-## for the enemy once a detector reveals it.
+## Headless test of the stealth look of static draws (lane STEALTH-1, review r1 fix 2; lane STEALTHLOOK-1 corrected the enemy expectation):
+## a stealth postern gate (AngmarWallPosternGateSmall: an InvisibilityUpdate CAMOUFLAGE nugget and, in ModuleTag_DrawWall,
+## AffectedByStealth = No) takes look 5 for an enemy but stays drawn - its +0x3AB keeps the drawable shown as the secret door looks like
+## wall (RW 0x6760F9); it pulses for its owner, and its draws blend back to full opacity once a detector reveals it.
 ##
 ##   godot --headless --path godot --script res://tests/stealth_gate_test.gd
 ##
@@ -79,9 +80,12 @@ func _run() -> int:
 		if inv.get("type", 2) == 1:
 			break
 	world.advance(0.2)
-	_check(inv.get("type", 2) == 1 and inv.get("look", 0) == 5, "the gate is camouflaged and an enemy's view hides it: %s" % [inv])
+	_check(inv.get("type", 2) == 1 and inv.get("look", 0) == 5, "the gate is camouflaged and an enemy's view gives it look 5: %s" % [inv])
+	# lane STEALTHLOOK-1 (RW 0x6760F9): the gate's ModuleTag_DrawWall has AffectedByStealth = No, so the Drawable's +0x3AB is set and +0x43E
+	# stays 0 - retail keeps a postern gate drawn: a secret door hides by looking like a wall, not by vanishing (it leaves a hole otherwise)
 	var g: Dictionary = world.get_object(gate)
-	_check(g.instances == 0, "no draw of the gate is shown to the enemy, its floor draw included (%d instances)" % g.instances)
+	_check(not inv.get("draw_hidden", true) and inv.get("cannot_hide", false) and g.instances > 0,
+		"a postern gate stays drawn for the enemy (+0x3AB: its wall module is not affected by stealth): %s instances, %s" % [g.instances, inv])
 	# the owner's view: the draws are shown and pulse (InvisibilityOpacityMin 0.4)
 	world.set_local_player(angmar)
 	var lowest := 1.0
@@ -111,11 +115,17 @@ func _run() -> int:
 		if inv.get("look", -1) == 0:
 			break
 	_check(inv.get("look", -1) == 0 and inv.get("type", 2) == 2, "the gate is visible with the normal look for its owner: %s" % [inv])
-	world.advance(0.05)
-	g = world.get_object(gate)
-	var all_full: bool = not g.instance_opacities.is_empty()
-	for op in g.instance_opacities:
-		all_full = all_full and is_equal_approx(op, 1.0)
+	# lane STEALTHLOOK-1 (RW 0x673114): the look change back blends the latched opacity to 1.0 over 30 * cycle client frames (retail's
+	# +0xD4), not instantly - advance until the blend completes (the camo cycle is a few seconds), then every draw must be full opacity
+	var all_full := false
+	for k in 900:
+		world.advance(0.05)
+		g = world.get_object(gate)
+		all_full = not g.instance_opacities.is_empty()
+		for op in g.instance_opacities:
+			all_full = all_full and is_equal_approx(op, 1.0)
+		if all_full:
+			break
 	_check(all_full, "the owner's view returns every draw to full opacity %s" % [g.instance_opacities])
 	world.set_local_player(men)
 	world.advance(0.2)

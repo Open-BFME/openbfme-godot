@@ -23,6 +23,26 @@
 
 namespace
 {
+// msvcr71 _strcmpi on the ASCII names Apt compares (RW 0xAE76B0)
+bool asciiLowerEquals(const std::string &a, const std::string &b)
+{
+	if (a.size() != b.size())
+	{
+		return false;
+	}
+	for (size_t i = 0; i < a.size(); ++i)
+	{
+		char x = a[i], y = b[i];
+		x = (x >= 'A' && x <= 'Z') ? (char)(x - 'A' + 'a') : x;
+		y = (y >= 'A' && y <= 'Z') ? (char)(y - 'A' + 'a') : y;
+		if (x != y)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 
 // The Key object: reading one of its key constants is an assumption (S-108: Flash key codes; EA's ids are not decoded) and is
 // reported at the read.
@@ -267,7 +287,7 @@ void Apt::installNatives()
 		return i ? AptValue::integer(Apt::scriptDepthOf(i->depth())) : AptValue();
 	});
 	vm.defineNative(mc, "attachMovie", [self](AptCallInfo &c) -> AptValue {
-		self->note("movieclip-native-unread", "attachMovie"); // UNVERIFIED (S-104 / S-108): the body of this native was not read
+		self->note("movieclip-native-unread", "attachMovie"); // S-104: the symbol lookup is RW 0xB016D0's (below); the rest of RW 0xB017C0 is the Flash 7 API
 		AptCharacterInst *i = thisInst(c);
 		AptSpriteInst *s = i ? i->asSprite() : nullptr;
 		if (!s || c.args.size() < 3)
@@ -276,13 +296,43 @@ void Apt::installNatives()
 			return AptValue();
 		}
 		std::string linkage = c.args[0].toString();
-		// the exports of the movie that owns the clip's timeline (UNVERIFIED S-104: which movie, and the compare)
-		std::shared_ptr<const AptFile> file = s->timelineFile;
+		// the symbol (RW 0xB016D0, called by the native RW 0xB017C0 with the clip itself): the exports of the clip's own movie (+ 0x4C), then, for
+		// the clip only, that movie's imports; then the same exports of each parent (+ 0x48) up to the root, imports no longer searched; every name
+		// compared with _strcmpi (RW 0xAE76B0 -> msvcr71 _strcmpi), the first match taken. None: "Trying to attachMovie: '%s' could not be found."
+		// (RW 0xB01869) and nothing attached
+		std::shared_ptr<const AptFile> file;
 		AptCharRef ref;
 		std::string error;
-		std::uint32_t id;
-		bool ambiguous = false;
-		if (!file || !file->findExport(linkage, id, &ambiguous))
+		std::uint32_t id = 0;
+		bool first = true;
+		for (AptCharacterInst *at = s; at && !file; at = at->parent(), first = false)
+		{
+			AptSpriteInst *sp = at->asSprite();
+			std::shared_ptr<const AptFile> movie = sp ? sp->timelineFile : nullptr;
+			if (!movie)
+			{
+				continue;
+			}
+			bool ambiguous = false;
+			if (movie->findExport(linkage, id, &ambiguous))
+			{
+				file = movie;
+				break;
+			}
+			if (first)
+			{
+				for (const AptImport &imp : movie->imports)
+				{
+					if (asciiLowerEquals(imp.name, linkage))
+					{
+						id = imp.characterId;
+						file = movie;
+						break;
+					}
+				}
+			}
+		}
+		if (!file)
 		{
 			c.vm.reportError("attachMovie: no export named '" + linkage + "'");
 			return AptValue();

@@ -48,7 +48,7 @@ What a tester gets, and how to make it. Lane RELEASE-1.
   log. Windows additionally installs OpenBFME's local minidump handler, including worker-thread
   faults and termination (`Common/System/WindowsCrashDump.cpp`): dumps go under
   `user://logs/minidumps`. Extension frames still need the build's private symbols for mapping
-  (stop S-1923, named in every Windows log). Dumps stay local, not uploaded automatically. The debug
+  (stop S-1923, named in every Windows log). Dumps stay local: they are never uploaded. The debug
   template titles the window "OpenBFME (DEBUG)"; the `Release` autoload sets it back to the
   project's name, "OpenBFME", once the engine has started (lane UI-4). Every
   Windows build writes the DLL's PDB (CodeView line tables, build paths remapped, the home
@@ -334,6 +334,22 @@ The repository is a build-time setting (`package.sh --repo`, default `Open-BFME/
      and every 5 minutes while the Play screen is in view, on a thread of its own. While socially signed in, the launcher uses inbox stats instead.
      Off (`state.cfg`: `[launcher] show_online_count=false`, or `--online-count=off`) disables anonymous count requests, not explicit social sign-in
      or play. The game's menus read the same file (`godot/scripts/online_stats.gd`).
+   - Lane CRASHACT-1: crash reports. A packaged launcher or game whose last run did not end normally (or that stopped on a fatal error)
+     queues that run's report (`user://crash-queue`, at most 8 reports / 1 MiB, none older than 30 days, the oldest dropped first, each drop
+     logged) and sends the queue in the background at each start: `POST https://api.openbfme.com/v1/reports`, the crash service's signed,
+     gzip-compressed JSON (`services/crash/README.md`), at most 2 a start, no redirects, 15 s each; a 201 removes a report, a 400 / 413 drops
+     it by name, anything else keeps it for the next start. The report holds the version, the build and simulation profile, the OS / CPU / GPU
+     names, the context (map, mode, factions), the window size and vsync, the crash's backtrace lines and the last 200 lines of that run's log,
+     every string through the session log's privacy filter, then the crash client's (e-mails, URLs, paths, host names, IP addresses, keys,
+     chat), then the service's own rules (a line it would refuse is withheld whole). A random crash install id (`user://crash-install-id`)
+     goes in a header. Minidumps are never sent. Options > Interface "Send crash reports automatically" (`Options.ini` `OpenBFMECrashReports`,
+     default yes; the launcher reads the game's) turns it off: the crash message then offers "Send report" for that one crash.
+     `godot/scripts/crash/crash_client.gd` (byte for byte `launcher/scripts/net/crash_client.gd`) is the one network user; net_guard allows
+     it one `request_raw` to that endpoint or a test's 127.0.0.1 one. Tests: `tools/release/test_crash_upload.py` (a fake service).
+     The service's client key is put in at package time only (`tools/release/crash_key.py`, from `CRASH_CLIENT_KEY`: release.env on the
+     Deck, the Actions secret of the same name for the package step and the macOS call); a package without it sends nothing
+     (`crash.no_client_key`). Both builders of one release must have the same key: `package.sh --verify` compares them byte for byte.
+     `OPENBFME_CRASH_UPLOAD=0` (every CI host's env.sh, test_export.sh) turns sending off entirely.
    - Lane AIO-1 (`docs/AIO.md`): only while the player's opt-in download of
      the game files runs, `bfmeladder.com` and `workshop-files.bfmeladder.com` (HTTPS, no port) are
      allowed as well (`NetPolicy.extra_hosts`). The requests to them are the file lists of the two
@@ -976,12 +992,17 @@ or **Nightly** (everything merged, built every night) in the launcher's Settings
   start at the last stable release.
 - **Notes** (`tools/release/nightly_notes.py`): the first-parent changes since the last nightly (`nightly/last-released`: the previous
   run that published, morning or evening, not the previous day), and for each the community pull requests
-  it carries (a `(cherry picked from commit X)` line whose X GitHub links to a pull request of the repository: its number and author).
+  it carries (a `(cherry picked from commit X)` line whose X GitHub links to a pull request of the repository, or a `#n` in the merge's
+  subject: its number and author). Each `Release-note:` line is credited to the pull requests it came from, and only those (RELNOTES-1):
+  end the line with them, `Release-note: Clicking units on the HUD is faster in large battles. (#169)` (`(#12, #13)` for two; the
+  ending is not printed); a line without one is our own work, and a merge's single line takes every pull request it carries. A merge
+  that carries a pull request none of its lines names fails the notes (fail closed). For merges already in the history,
+  `tools/release/nightly_credits.json` lists the pull requests of each line (one list per line, in order; the coordinator keeps it).
   A change with `Release-note:` lines is described by exactly those (`none` hides it), and its `Test:` lines are its test steps. For the
   rest, the operator's model command (`OPENBFME_NIGHTLY_LLM`) writes one plain sentence and 1 to 6 concrete test steps per change, and
   per community pull request. Each text is checked (the patch notes' jargon rule, no markup, mentions, references or links, the length
   limits); a draft that fails is sent back once with the problems, then the run fails. The page: the build, how to get it, the download
-  table, **Thanks to our community** (each pull request: "Thanks to @login (#n): ..."), What's new / Changed / What's fixed (community
+  table, **Thanks to our community** (each credited line: "Thanks to @login (#n): ..."), What's new / Changed / What's fixed (community
   first, credited), **What to test** (numbered, community first), how to report a problem, the known issues. The logins and numbers come
   from GitHub's record; they are the only mentions and references on the page. The whole page passes `audit-text` with the private
   denylist like every published text.

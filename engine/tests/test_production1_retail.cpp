@@ -9,6 +9,7 @@
 //   * SpawnPointProductionExitUpdate (RW 0x8A7363 / 0x8A74B7): the Mordor barricade's archers stand on its ARCHER_ bones, held.
 // Without the port the producer's experience stays 0, the counter grows by 1.0 a frame, the mumak has the pen's default level and the barricade stays empty.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "BuildTestUtil.h"
@@ -42,6 +43,7 @@ Object *make(GameLogic &logic, const char *name, Player &owner, const Coord3D &a
 	Object *o = logic.newObject(tt, owner.getDefaultTeam(), ObjectStatusMaskType{});
 	REQUIRE_MESSAGE(o, name);
 	o->setPosition(&at);
+	testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	return o;
 }
 

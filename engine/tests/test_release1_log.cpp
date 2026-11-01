@@ -249,6 +249,18 @@ TEST_CASE("release1: the version line")
 	MESSAGE("version line: " << line << ", commit " << std::string(BuildVersion::kCommit));
 }
 
+// lane STABLEQA-1 (owner, 2026-10-30): only a plain release tag is a Stable channel build (tools/release/make_manifest.py channel_of "stable");
+// a Stable build offers no War of the Ring yet (ShellEnvironment::warOfTheRingOffered)
+TEST_CASE("stableqa1: a Stable channel build is a plain release tag")
+{
+	using BuildVersion::isStableChannel;
+	for (const char *stable : { "v0.4.12", "v0.5.0", "v10.20.300" })
+		CHECK_MESSAGE(isStableChannel(stable), stable);
+	for (const char *other : { "v0.4.13-nightly.20261031", "v0.4.0-alpha.3", "v0.3.0-preview.6", "v0.4.11-123-g0123456789", "v0.4.12-dirty",
+							   "0af8b6b84c-dirty", "0af8b6b84c", "untracked", "", "v0.4", "V0.4.12", "v0.4.12 ", "v0.04.12" })
+		CHECK_MESSAGE(!isStableChannel(other), other);
+}
+
 TEST_CASE("version1: the version players read")
 {
 	using BuildVersion::displayVersion;

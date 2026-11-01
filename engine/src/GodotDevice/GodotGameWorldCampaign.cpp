@@ -18,6 +18,7 @@
 #include "GameClient/VideoPlayer.h"
 #include "GameClient/GUI/Shell/Shell.h"
 #include "GameClient/LiveGame.h"
+#include "GameClient/TutorialSettings.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
@@ -83,6 +84,7 @@ void GameWorld::bindCampaignMethods()
 {
 	ClassDB::bind_method(D_METHOD("get_campaigns"), &GameWorld::get_campaigns);
 	ClassDB::bind_method(D_METHOD("start_campaign_mission", "options"), &GameWorld::start_campaign_mission);
+	ClassDB::bind_method(D_METHOD("start_tutorial", "options"), &GameWorld::start_tutorial); // lane BFME2CAMP1
 	ClassDB::bind_method(D_METHOD("campaign_status"), &GameWorld::campaign_status);
 	ClassDB::bind_method(D_METHOD("campaign_progress_load", "path"), &GameWorld::campaign_progress_load);
 	ClassDB::bind_method(D_METHOD("campaign_progress_step", "progress", "step"), &GameWorld::campaign_progress_step); // lane CAMPSAVE-1
@@ -115,6 +117,35 @@ Array GameWorld::get_campaigns() const
 	return out;
 }
 
+Dictionary GameWorld::campaignHudStart() const
+{
+	// the HUD's start: the local player and where the camera looks first (the campaign maps' InitialCameraPosition waypoint, which their "Camera Setup"
+	// scripts also use; else the first player start)
+	Dictionary start;
+	const ::Player *local = m_game->players().getLocalPlayer();
+	start["local_player"] = local ? g(local->getPlayerName()) : String();
+	start["local_player_index"] = local ? local->getPlayerIndex() : -1;
+	start["slot_players"] = PackedStringArray();
+	start["starting_objects"] = Array();
+	Vector3 cam(50.0f, 0.0f, -50.0f);
+	bool haveWaypoint = false;
+	if (const TerrainLogic *t = m_game->logic().terrain())
+	{
+		for (const char *wp : { "InitialCameraPosition", "Player_1_Start" })
+		{
+			if (const Waypoint *w = t->findWaypointByName(wp))
+			{
+				cam = Vector3(w->location.x, w->location.z, -w->location.y);
+				haveWaypoint = true;
+				break;
+			}
+		}
+	}
+	start["camera_start"] = cam;
+	start["camera_start_is_waypoint"] = haveWaypoint;
+	return start;
+}
+
 Dictionary GameWorld::start_campaign_mission(const Dictionary &options)
 {
 	Dictionary report;
@@ -141,6 +172,20 @@ Dictionary GameWorld::start_campaign_mission(const Dictionary &options)
 	lo.mapName = mission->map;
 	lo.campaign = true; // a single player game with the map's own sides and scripts
 	lo.difficulty = progress.difficulty;
+	// lane BFME2CAMP1: the campaign's carry-over at the mission's start (addCarryoverStuffToMap RW 0x5EBD76): "carryover" is the campaign's state text
+	// (campaign_progress_step's "carryover": the previous mission's won state, or a replayed one's restored records); without one the first mission
+	// begins the campaign (beginCampaign RW 0x5EC4EC). A later mission started without one (a direct start: no game reaches it) has no carry-over step
+	const std::string carryText = n(String(options.get("carryover", String())));
+	std::string carryStop;
+	if (const LinearCampaign *campaign = m_world->linearCampaigns().find(progress.campaign))
+	{
+		std::string why;
+		if (!LiveGame::campaignCarryoverOptions(*campaign, progress.mission, carryText, lo, carryStop, why)) // the rule openbfme_peer shares
+		{
+			errors.push_back(g(why));
+			return report;
+		}
+	}
 	lo.maxFramesPerAdvance = (int)intOpt(options, "max_frames_per_advance", 10);
 	lo.logicThread = boolOpt(options, "logic_thread", m_logicThreadDefault);
 	lo.presentationDelaySeconds = options.has("presentation_delay") ? (double)options["presentation_delay"] : (lo.logicThread ? 0.03 : 0.0);
@@ -160,31 +205,7 @@ Dictionary GameWorld::start_campaign_mission(const Dictionary &options)
 	{
 		return report;
 	}
-	// the HUD's start: the local player and where the camera looks first (the campaign maps' InitialCameraPosition waypoint, which their "Camera Setup"
-	// scripts also use; else the first player start)
-	Dictionary start;
-	const ::Player *local = m_game->players().getLocalPlayer();
-	start["local_player"] = local ? g(local->getPlayerName()) : String();
-	start["local_player_index"] = local ? local->getPlayerIndex() : -1;
-	start["slot_players"] = PackedStringArray();
-	start["starting_objects"] = Array();
-	Vector3 cam(50.0f, 0.0f, -50.0f);
-	bool haveWaypoint = false;
-	if (const TerrainLogic *t = m_game->logic().terrain())
-	{
-		for (const char *wp : { "InitialCameraPosition", "Player_1_Start" })
-		{
-			if (const Waypoint *w = t->findWaypointByName(wp))
-			{
-				cam = Vector3(w->location.x, w->location.z, -w->location.y);
-				haveWaypoint = true;
-				break;
-			}
-		}
-	}
-	start["camera_start"] = cam;
-	start["camera_start_is_waypoint"] = haveWaypoint;
-	report["start"] = start;
+	report["start"] = campaignHudStart();
 	Array stops = report.get("stops", Array()); // the lane's stops reach the load report
 	for (const std::vector<std::string> &lines : { LinearCampaignManager::stopLines(), AttachUpdate::stopLines(), ScriptActions::campaignStopLines() })
 	{
@@ -193,8 +214,14 @@ Dictionary GameWorld::start_campaign_mission(const Dictionary &options)
 			stops.push_back(g(l));
 		}
 	}
+	if (!carryStop.empty())
+	{
+		stops.push_back(g(carryStop));
+	}
 	report["stops"] = stops;
+	report["carryover"] = lo.campaignCarryover;
 	m_campaignStart.campaign = progress.campaign; // lane SAVE-2: what a save of this mission starts again
+	m_campaignStart.carryover = lo.campaignCarryover ? lo.carryover.serialize() : std::string(); // lane BFME2CAMP1
 	m_campaignStart.map = mission->map;
 	m_campaignStart.mission = progress.mission;
 	m_campaignStart.difficulty = progress.difficulty;
@@ -227,6 +254,82 @@ Dictionary GameWorld::start_campaign_mission(const Dictionary &options)
 		}
 	}
 	startEndGame(); // lane END-1: the end sequence (its script side takes the map scripts' VICTORY / DEFEAT, EndGameView)
+	return report;
+}
+
+
+// lane BFME2CAMP1: AptMainMenu::OnTutorial (RW 0x91B825): "Basic" / "Advanced" pick GameData's tutorial record (GameClient/TutorialSettings.h); its Map
+// starts as a new single player game of mode 6 with the map's own sides and scripts. "Strategic" (the War of the Ring tutorial) and an empty Map: refused
+Dictionary GameWorld::start_tutorial(const Dictionary &options)
+{
+	Dictionary report;
+	Array errors;
+	report["ok"] = false;
+	report["errors"] = errors;
+	if (!m_world || !m_fs.is_valid() || !m_fs->archive_fs())
+	{
+		errors.push_back("GameWorld.setup has not run");
+		return report;
+	}
+	TutorialSettings settings;
+	std::string error;
+	if (!TutorialSettings::load(*m_fs->archive_fs(), settings, &error))
+	{
+		errors.push_back(g(error));
+		return report;
+	}
+	const std::string which = n(String(options.get("tutorial", String())));
+	const TutorialRecord *record = settings.record(which);
+	if (!record || record->map.empty())
+	{
+		errors.push_back(g("no tutorial '" + which + "' in GameData (OnTutorial takes Basic or Advanced)"));
+		return report;
+	}
+	// the record's Map is a path (Maps\MAP Beginner Tutorial\MAP Beginner Tutorial.map); the game takes the map's name (its file's stem)
+	std::string map = record->map;
+	const size_t slash = map.find_last_of("\\/");
+	if (slash != std::string::npos)
+	{
+		map = map.substr(slash + 1);
+	}
+	if (map.size() > 4 && AsciiStringUtil::compareNoCase(map.substr(map.size() - 4), ".map") == 0)
+	{
+		map = map.substr(0, map.size() - 4);
+	}
+	Dictionary rec;
+	rec["map"] = g(map);
+	rec["load_screen_image"] = g(record->loadScreenStillImage);
+	rec["load_screen_music"] = g(record->loadScreenMusicTrack);
+	rec["load_movie"] = g(record->loadMovie);
+	rec["fade_up_frames"] = (int64_t)record->fadeUpFrames;
+	if (boolOpt(options, "describe_only", false))
+	{
+		report["ok"] = true; // the record only (the load screen comes up before the load)
+		report["tutorial"] = rec;
+		return report;
+	}
+	m_start.reset();
+	LiveGame::Options lo;
+	lo.mapName = map;
+	lo.campaign = true; // the map's own sides and scripts
+	lo.tutorial = true; // mode 6
+	lo.maxFramesPerAdvance = (int)intOpt(options, "max_frames_per_advance", 10);
+	lo.logicThread = boolOpt(options, "logic_thread", m_logicThreadDefault);
+	lo.presentationDelaySeconds = options.has("presentation_delay") ? (double)options["presentation_delay"] : (lo.logicThread ? 0.03 : 0.0);
+	lo.hashEveryFrame = boolOpt(options, "hash_every_frame", false);
+	Callable cb;
+	if (options.has("progress"))
+	{
+		cb = options["progress"];
+	}
+	m_testHooks = boolOpt(options, "test_hooks", false);
+	report = load_internal(lo, g(map), options, cb, true);
+	report["tutorial"] = rec;
+	if (!(bool)report.get("ok", false) || !m_game)
+	{
+		return report;
+	}
+	report["start"] = campaignHudStart();
 	return report;
 }
 
@@ -315,6 +418,32 @@ Dictionary GameWorld::campaign_progress_step(const Dictionary &progress, const S
 		d["error"] = g("no campaign '" + p.campaign + "'");
 		return d;
 	}
+	// lane BFME2CAMP1: the campaign's carry-over (CampaignCarryover::State text, "" none). While this campaign's mission is the running game its state is
+	// the game's (GameLogic::campaignCarryover: the mission start's and the VICTORY actions' changes, RW 0x5EBD76 / 0x5EBAEE), so every step takes it
+	std::string carryText = n(String(progress.get("carryover", String())));
+	if (m_game && m_campaignStart.campaign == p.campaign)
+	{
+		// lane RENDERWAIT-1: campaign_flow.gd's tick reaches a step, so the live logic is read only where it is held. Not held: the progress's own text,
+		// which the flow keeps from its last step: "won" follows campaign_status's held end, the quit menu's restart runs in a paused (idle) game, and
+		// nothing changes the carry-over between the won mission's end and its "game_over"
+		if (m_game->logicHeld())
+		{
+			if (const CampaignCarryover::State *live = m_game->logic().campaignCarryover())
+			{
+				carryText = live->serialize();
+			}
+		}
+	}
+	CampaignCarryover::State carry;
+	if (!carryText.empty())
+	{
+		std::string why;
+		if (!CampaignCarryover::State::parse(carryText, carry, &why))
+		{
+			d["error"] = g(why);
+			return d;
+		}
+	}
 	const std::string what = n(step);
 	if (what == "started")
 	{
@@ -342,7 +471,13 @@ Dictionary GameWorld::campaign_progress_step(const Dictionary &progress, const S
 	else if (what == "last_mission")
 	{
 		bool intro = false;
+		const bool replay = !(p.victorious || p.advanced);
 		p.lastMission(&intro);
+		if (replay && !carryText.empty())
+		{
+			CampaignCarryover::restartMission(carry); // RW 0x5EC5D1: the used records back after the left ones
+			carryText = carry.serialize();
+		}
 		d["start"] = true;
 		d["intro_movie"] = intro;
 	}
@@ -367,6 +502,7 @@ Dictionary GameWorld::campaign_progress_step(const Dictionary &progress, const S
 	out["victorious"] = p.victorious;
 	out["ready"] = p.ready;
 	out["advanced"] = p.advanced;
+	out["carryover"] = g(carryText);
 	d["progress"] = out;
 	d["mission_exists"] = p.current(m) != nullptr;
 	d["ok"] = true;
@@ -456,7 +592,9 @@ Dictionary GameWorld::get_movie(const String &title)
 	// (RetailArchivePolicy.h "Languages"; none: "", that directory is then not searched)
 	const std::string language = DetectRetailLanguageOfInstall(root);
 	const AudioIniState &audio = m_world->audio();
-	const VideoStreamInfo info = m_videos->open(n(title), root, m_fs.is_valid() ? m_fs->modFolder() : std::string(), language, [&audio](const std::string &e) { return audio.infos.find(e) != nullptr; });
+	const VideoStreamInfo info = m_videos->open(n(title), root, m_fs.is_valid() ? m_fs->modFolder() : std::string(), language,
+		[&audio](const std::string &e) { return audio.infos.find(e) != nullptr; },
+		m_fs.is_valid() ? m_fs->installOverlayFolders() : std::vector<std::string>()); // lane MODCOMPAT-1: install-folder mods' movies
 	d["ok"] = info.ok;
 	d["error"] = g(info.error);
 	d["path"] = g(info.path);

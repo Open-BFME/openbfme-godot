@@ -4,6 +4,7 @@
 // (HEALTH +20, DAMAGE_ADD +10), an armour bonus (MordorAttackTroll rank 5: ARMOR +20%), a hero's level progression (Aragorn), the skill points through a stub
 // ExperienceAwardSink, two-run determinism and hash mutation.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "Common/PlayerList.h"
@@ -121,7 +122,7 @@ struct Game
 		REQUIRE_MESSAGE(tt, name);
 		Object *o = logic->newObject(tt, owner->getDefaultTeam(), ObjectStatusMaskType{});
 		REQUIRE(o);
-		return o;
+		return testutil::completeHorde(o);
 	}
 	void frame() { logic->runLogicFrame(); }
 	// a killing UNRESISTABLE hit from `killer` (the ActiveBody path: kill credit, experience, skill points)

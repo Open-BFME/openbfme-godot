@@ -9,6 +9,11 @@
 #include "GameLogic/HeroSystem.h"
 #include "GameLogic/Module/AISpecialPowerUpdate.h"
 #include "GameLogic/Module/Mod4Stops.h"
+#include "GameLogic/Module/GeometryUpgrade.h"
+#include "GameLogic/Module/RebuildHoleModules.h"
+#include "GameLogic/Module/PickupStuffUpdate.h"
+#include "GameLogic/Module/AutoPickUpUpdate.h"
+#include "GameLogic/Module/BoredUpdate.h"
 #include "GameLogic/ActionManager.h"
 #include "GameLogic/Module/SlavedUpdate.h"
 #include "GameLogic/Module/SpawnBehavior.h"
@@ -24,6 +29,7 @@
 #include "GameLogic/ProductionStops.h"
 
 #include "Common/BfmeGame.h"
+#include "Common/GameEdition.h"
 
 #include <chrono>
 #include <stdexcept>
@@ -37,7 +43,6 @@ const RwBinaryData &bfme1Grammar()
 		constexpr unsigned line = 0xbf100001;
 		result.functions[line] = RwFunction();
 		const std::map<std::string, std::vector<std::string>> fields = {
-			{"AutoPickUpUpdate", {"PickUpKindOf", "PickUpKindOf2", "Bored", "BoredFilter"}},
 			{"DynamicPortalBehaviour", {"AllowKindOf", "RejectKindOf", "AllowEnemies"}},
 			{"BloodthirstyUpdate", {"NumToSacrifice", "InitiateVoice2"}},
 			{"SlaughterHordeContain", {"MaxHordeCapacity"}},
@@ -90,6 +95,7 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	m_spellStores = std::make_unique<SpellStores>(m_keys);
 	m_audio = std::make_unique<AudioIniState>();
 	m_skirmishAI = std::make_unique<SkirmishAIStore>(m_keys);
+	m_livingWorld = std::make_shared<LivingWorld::LivingWorldStores>(isBfme1Data(m_fs));
 	m_env.fileSystem = &m_fs;
 	m_legend.registerBlock(m_env.blocks);
 	m_things->registerBlocks(m_env.blocks);
@@ -101,7 +107,8 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 		"EmotionNugget", // MODULES-2: TheEmotionSystem (RW 0x8E0D59)
 		"CreateAHeroSystem", "AwardSystem", // HERO-2: TheCreateAHeroSystem (its own file, RW 0x61A10F)
 		"LinearCampaign", // CAMP-1: TheLinearCampaignManager (RW 0x5ECCB9)
-		"MissionObjectiveList" }; // CAMPUI-1: TheMissionObjectiveTracker's block (RW 0x836497)
+		"MissionObjectiveList", // CAMPUI-1: TheMissionObjectiveTracker's block (RW 0x836497)
+		"GlowEffect" }; // GLOW-1: RW 0x70B734 (GlowEffectStore)
 	// AUDIO-1: the audio blocks (AudioEvent, DialogEvent, MusicTrack, ..., EvaEvent, AudioSettings, MiscAudio) are parsed for real
 	skip.insert(skip.end(), AudioIniState::blockKeywords().begin(), AudioIniState::blockKeywords().end());
 	// AI-1: the skirmish AI blocks are parsed for real (GameLogic/SkirmishAI/SkirmishAIData.h)
@@ -110,9 +117,13 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	{
 		skip.push_back(*k); // SPELL-1: Science, Rank, SpecialPower
 	}
+	// Only replace recording handlers for the selected Living World data mode.
+	// BFME1 campaigns remain explicitly unavailable (S-5017).
+	skip.insert(skip.end(), m_livingWorld->blockKeywords().begin(), m_livingWorld->blockKeywords().end());
 	RegisterRecordingBlockStubs(m_env.blocks, m_recorder, skip, StubExtent::Lenient);
 	m_audio->registerBlocks(m_env.blocks);
 	m_skirmishAI->registerBlocks(m_env.blocks);
+	m_livingWorld->registerBlocks(m_env.blocks); // WOTR-1
 	// PROD-1: the control bar's two block parsers (RW 0x5DA711 / 0x7205B9) replace their recording stubs
 	m_env.blocks.registerBlock("CommandButton", [](INI *ini) { CommandStore::parseCommandButtonDefinitionGlobal(ini); });
 	m_env.blocks.registerBlock("CommandSet", [](INI *ini) { CommandStore::parseCommandSetDefinitionGlobal(ini); });
@@ -132,6 +143,7 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	m_stances.registerBlock(m_env.blocks); // INTEG-1: TheStanceTemplateStore (RW 0xDE8C80; StanceTemplate RW 0x835967)
 	m_emotions.registerBlock(m_env.blocks); // MODULES-2: TheEmotionSystem (RW 0xDE8C88; EmotionNugget RW 0x8E0D59)
 	m_createAHero.registerBlock(m_env.blocks); // HERO-2: TheCreateAHeroSystem (RW 0xDE3D84)
+	m_glow.registerBlock(m_env.blocks);        // GLOW-1: the GlowEffect block (RW 0x70B734)
 	SpellStores::registerBlocks(m_env.blocks); // SPELL-1
 	m_linearCampaigns.registerBlock(m_env.blocks); // CAMP-1
 	m_env.blocks.registerBlock("MissionObjectiveList", [this](INI *ini) { MissionObjectiveTracker::parseList(ini, m_mapObjectives, m_mapObjectivesParsed); });
@@ -140,6 +152,11 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 const AudioIniState &RetailObjectWorld::audio() const
 {
 	return *m_s->m_audio;
+}
+
+bool RetailObjectWorld::audioEventExists(const std::string &name) const
+{
+	return !name.empty() && m_s->m_audio->infos.contains(name);
 }
 
 namespace
@@ -393,11 +410,17 @@ bool RetailObjectWorld::loadState(std::string *error)
 	SubsystemLoadOptions options;
 	options.collectErrors = true;
 	options.bfme1 = isBfme1Data(m_fs);
+	options.bfme2 = isBfme2Data(m_fs); // lane BFME2MODE-0 (Common/GameEdition.h)
 	options.cinematics = true; // the census counts the Cinematic folder (338 templates), like the object-model retail test
 	const auto t0 = std::chrono::steady_clock::now();
 	try
 	{
 		RunSubsystemIniLoad(m_s->m_legend, ini, options, m_s->m_report);
+		// lane BFME2CAMP1 (OpenBFME addition, SubsystemLegend.h): BFME2's GOOD / EVIL_CAMPAIGN from BFME2's own legend, after RotWK's campaigns
+		if (!options.bfme1)
+		{
+			LoadBfme2CampaignsFromLegend(m_s->m_legend, ini, options, m_s->m_report);
+		}
 	}
 	catch (const std::exception &e)
 	{
@@ -594,6 +617,10 @@ RetailObjectWorld::MapIniResult RetailObjectWorld::applyMapIni(const std::string
 std::vector<std::string> RetailObjectWorld::acceptanceStops() const
 {
 	std::vector<std::string> out = m_s->m_things->acceptanceStops();
+	for (const std::string &line : m_s->m_livingWorld->acceptanceStops())
+	{
+		out.push_back(line);
+	}
 	for (const std::string &u : m_s->m_playerTemplates->unverified())
 	{
 		out.push_back(u);
@@ -631,6 +658,26 @@ std::vector<std::string> RetailObjectWorld::acceptanceStops() const
 		out.push_back(l);
 	}
 	for (const std::string &l : Mod4Stops::lines()) // MOD-4
+	{
+		out.push_back(l);
+	}
+	for (const std::string &l : GeometryUpgrade::stopLines()) // MODCOMPAT-MOD1 (S-1423)
+	{
+		out.push_back(l);
+	}
+	for (const std::string &l : RebuildHoleBehavior::acceptanceStops()) // MODCOMPAT-MOD1
+	{
+		out.push_back(l);
+	}
+	for (const std::string &l : PickupStuffUpdate::stopLines()) // MODCOMPAT-MOD1 (S-1422)
+	{
+		out.push_back(l);
+	}
+	for (const std::string &l : AutoPickUpUpdate::stopLines()) // MODCOMPAT-MOD1 (S-7160)
+	{
+		out.push_back(l);
+	}
+	for (const std::string &l : BoredUpdate::stopLines()) // MODCOMPAT-MOD1 (S-7161)
 	{
 		out.push_back(l);
 	}

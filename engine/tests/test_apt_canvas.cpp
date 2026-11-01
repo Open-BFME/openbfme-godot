@@ -192,9 +192,24 @@ TEST_CASE("FontSubstitution: the examples of the file's own comment (9 -> 10 Ari
 	CHECK(f.resolve("Bold", 8).bold == 1);
 	CHECK(f.resolve("Bold", 9).bold == -1);
 	FontSubstitution broken;
-	CHECK_FALSE(broken.parse("FontSubstitution X\n Size ten = 10 Arial\nEnd\n", &error));
-	CHECK(error.find("line 2") != std::string::npos);
+	// the line number is TextFile's CR count (RW 0xA15D29), as in retail's own CRLF files
+	CHECK_FALSE(broken.parse("FontSubstitution X\r\n Size ten = 10 Arial\r\nEnd\r\n", &error));
+	CHECK_MESSAGE(error.find("line 2") != std::string::npos, error);
 	CHECK_FALSE(broken.parse("FontSubstitution X\n Size 10 = 10 Arial\n", &error));
+}
+
+TEST_CASE("FontSubstitution: the lines are TextFile's, so a \"//\" comment is a comment, as in Patch 2.02's file (MODUI-1)")
+{
+	FontSubstitution f;
+	std::string error;
+	REQUIRE_MESSAGE(f.parse("FontSubstitution \"SachaWynter\"\r\n    Size 8 = 12 \"Omnia LT Std\"\r\nEnd\r\n\r\n"
+							"// New font size interpolation for 5.0.0 ;,;\r\n\r\n"
+							"FontSubstitution \"Albertus MT\" // after a block name\r\n    Size 8 = 8 \"Albertus MT\"\r\nEnd\r\n",
+					  &error),
+		error);
+	CHECK(f.blockCount() == 2);
+	CHECK(f.resolve("Albertus MT", 8).name == "Albertus MT");
+	CHECK(f.resolve("SachaWynter", 8).size == 12.0f);
 }
 
 TEST_CASE("retail fontsubstitution.ini: SachaWynter is drawn as Omnia LT Std (8 -> 12, 40 -> 70)")
@@ -334,6 +349,37 @@ TEST_CASE("canvas: a solid fill is window-space triangles with the fill colour t
 	CHECK(op.colors[3] == doctest::Approx(128.0f / 255.0f));
 	CHECK(op.uvs.empty());
 	CHECK(list.unverified == std::vector<std::string>{ "stage-mapping" });
+}
+
+TEST_CASE("canvas: packed gadget textures use BFME1's flat layout without changing BFME2 or RotWK")
+{
+	MemorySource source;
+	AptTextureStore textures(source);
+	CHECK(textures.packedTextureStem("AptComponents_001.tga") == "art/compiledtextures/ap/aptcomponents_001");
+	source.files["data/ini/default/subsystemlegend.ini"] = bytesOf("legend");
+	CHECK(textures.packedTextureStem("AptComponents_001.tga") == "art/textures/aptcomponents_001");
+	CHECK(textures.packedTextureStem("ScrollShroud.tga") == "art/textures/scrollshroud");
+	source.files["data/ini/awardsystem.ini"] = bytesOf("awards");
+	CHECK(textures.packedTextureStem("AptComponents_001.tga") == "art/compiledtextures/ap/aptcomponents_001");
+	source.files.erase("data/ini/awardsystem.ini");
+	source.files["data/ini/default/subsystemlegendexpansion1.ini"] = bytesOf("expansion");
+	CHECK(textures.packedTextureStem("AptComponents_001.tga") == "art/compiledtextures/ap/aptcomponents_001");
+}
+
+TEST_CASE("canvas: BFME1 gadget atlases decode TGA bytes packed under DDS names only for BFME1 data")
+{
+	MemorySource source;
+	source.files["data/ini/default/subsystemlegend.ini"] = bytesOf("legend");
+	source.files["art/textures/aptcomponents_004.dds"] = makeTga(1, 1, { { 3, 2, 1, 255 } });
+	AptTextureStore textures(source);
+	const auto &atlas = textures.get("AptComponents_004.tga");
+	REQUIRE_MESSAGE(atlas.ok, atlas.error);
+	CHECK(atlas.width == 1);
+	CHECK(atlas.height == 1);
+	CHECK(atlas.rgba == std::vector<std::uint8_t>{ 1, 2, 3, 255 });
+	source.files["data/ini/awardsystem.ini"] = bytesOf("awards");
+	AptTextureStore bfme2(source);
+	CHECK_FALSE(bfme2.get("AptComponents_004.tga").ok);
 }
 
 TEST_CASE("canvas: a textured fill takes UV = tc matrix * vertex / texture size, with rows flipped so v counts from the top; a missing texture is an error and draws nothing")

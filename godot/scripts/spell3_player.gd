@@ -865,6 +865,9 @@ func _scenario_sequence() -> String:
 			fails.append("%s: not in the spell book" % power)
 			continue
 		var aim := base.lerp(enemy, 0.12)
+		# lane SPELLAUDIT-1: SPELLAUDIT1_AIM_FRAC=<f> aims that far toward the enemy base instead (a reveal power cast into the fog)
+		if OS.get_environment("SPELLAUDIT1_AIM_FRAC") != "":
+			aim = base.lerp(enemy, float(OS.get_environment("SPELLAUDIT1_AIM_FRAC")))
 		if power.contains("Devastation"):
 			aim = grove(base)
 		# lane SPELL-4 (the proof clip, SPELL4_SEQ_CLIP=1): the probes stand at the aim (own wounded soldiers to heal / lift), the cursor glides over them
@@ -888,7 +891,35 @@ func _scenario_sequence() -> String:
 			await move_to(to_pixel(aim.x, aim.y))
 			await game._step(4)
 			shot("seq-%s-cursor" % power)
+			if OS.get_environment("SPELLAUDIT1_HOLD") != "":
+				# lane SPELLAUDIT-1: the first spot of a grid between the bases that the game's own cursor shows valid (white)
+				var rc: Dictionary = hud.get_spellbook_state().get("radius_cursor", {})
+				if rc.has("valid") and not bool(rc.valid):
+					var side := (enemy - base).normalized().orthogonal()
+					var found := false
+					for f in [0.12, 0.2, 0.28, 0.36, 0.45, 0.55]:
+						for off in [0.0, -350.0, 350.0, -700.0, 700.0]:
+							var c: Vector2 = base.lerp(enemy, f) + side * off
+							hud.camera_look_at(c)
+							await game._step(3)
+							await move_to(to_pixel(c.x, c.y))
+							await game._step(3)
+							if bool(hud.get_spellbook_state().get("radius_cursor", {}).get("valid", false)):
+								aim = c
+								found = true
+								break
+						if found:
+							break
+				print("SPELLAUDIT1 aim %s at %s: radius cursor %s" % [power, aim, JSON.stringify(hud.get_spellbook_state().get("radius_cursor", {}))])
 			await click(to_pixel(aim.x, aim.y))
+		# lane SPELLAUDIT-1 (the audit clips): SPELLAUDIT1_HOLD=<s> keeps the camera on the target that long after the cast; the movie frame of the
+		# click is printed so the clip can be cut around it
+		var hold := float(OS.get_environment("SPELLAUDIT1_HOLD")) if OS.get_environment("SPELLAUDIT1_HOLD") != "" else 0.0
+		if hold > 0.0:
+			print("SPELLAUDIT1 cast %s at movie frame %d" % [power, Engine.get_frames_drawn()])
+			await game._wait_seconds(hold)
+			print("SPELLAUDIT1 held %s until movie frame %d; slot %d now %s" % [power, Engine.get_frames_drawn(), k + 1, hud.get_spellbook_state().slots[k]])
+			continue
 		if clip:
 			for n in 40:
 				await game._wait_seconds(0.1)

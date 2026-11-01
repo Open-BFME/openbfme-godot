@@ -101,6 +101,15 @@ public:
 	const std::vector<Refusal> &misfits() const { return m_misfits; }
 	const std::map<std::string, AssetPackFile> &textures() const { return m_textures; }
 	const std::map<std::string, AssetPackFile> &models() const { return m_models; }
+	// lane SDK-1c (agreed with Anti-cheat for profile 3): one presentation line per pack, in mount order, for the profile text (the LAN START,
+	// replays, the checker; never in the identity's digest, so players with other packs or none play together):
+	//     pack <name> <files> <sha256>
+	// <files>: how many of the pack's files the game uses (a later pack winning a name takes it; a model that does not fit is not used);
+	// <sha256>: 64 lower-case hex of those files' lines, sorted, each "model <file name> <sha256 of its bytes>" or "texture <stem> <sha256 of
+	// its bytes>" followed by '\n'. The name is the pack folder's, any character below 0x20 or 0x7F written as '?'; it is everything between
+	// "pack " and the last two fields. A pack whose files the game uses none of has no line. Reads every used file; false + error (naming the
+	// file) when one cannot be read. Call it after checkModels (the misfits are left out by then).
+	bool identityLines(std::vector<std::string> &out, std::string &error) const;
 
 private:
 	std::vector<std::string> m_packs;

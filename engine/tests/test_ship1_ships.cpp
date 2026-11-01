@@ -2,6 +2,7 @@
 // Lane SHIP-1: ships and hover units on a retail water map (the SHIP / HOVER movers and SEA_LEVEL of GameLogic/Object/LocomotorMove.cpp, the transports' water
 // legs, ship combat). The retail cases SKIP without the games (ROTWK_INSTALL / BFME2_INSTALL).
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "StartTestUtil.h"
@@ -141,6 +142,7 @@ struct ShipArena
 		REQUIRE(o != nullptr);
 		Coord3D p{ x, y, logic().getGroundHeight(x, y) + zAbove };
 		o->setPosition(&p);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	void step(int n = 1)

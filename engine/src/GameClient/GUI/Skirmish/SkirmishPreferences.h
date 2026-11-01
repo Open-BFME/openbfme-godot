@@ -26,8 +26,22 @@
 #include "GameClient/GUI/Skirmish/SkirmishSetup.h"
 #include "GameClient/OptionPreferences.h"
 
+#include <ctime>
 #include <string>
 #include <vector>
+
+struct GameRecord;
+struct SkirmishHonorsGame;
+
+namespace Bfme1SkirmishProfiles
+{
+// Keep the filename and cause, replacing every occurrence of the stats path, including in nested I/O errors.
+std::string statsDiagnostic(const std::string &path, const std::string &cause);
+// Failures from create/recordGame are safe for skirmish-profile-stats notes (no statistics directory paths).
+bool create(SkirmishProfileStore &profiles, std::time_t created, std::string *error);
+bool recordGame(const SkirmishProfileStore &profiles, const SkirmishSetupSource &source, const GameRecord &record, std::string *error,
+	const SkirmishHonorsGame *game = nullptr);
+}
 
 class SkirmishPreferences : public SkirmishProfileStore
 {

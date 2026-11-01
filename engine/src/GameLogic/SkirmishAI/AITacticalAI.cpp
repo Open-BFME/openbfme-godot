@@ -16,6 +16,7 @@
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
+#include "GameLogic/SkirmishAI/SkirmishAIEditionRules.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
@@ -2763,7 +2764,7 @@ void startTargetless(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac)
 		{
 			// BFME2 initializeTeamTemplate: HERO/ARCHER/MACHINE forbidden, priority 30, 1 (Rush) or 2 minimum; maximum draw at line 371.
 			team.forbiddenKinds = { kindBit("HERO"), kindBit("ARCHER"), kindBit("MACHINE") };
-			team.priority = 30;
+			team.priority = SkirmishAIEditionRules::farmKillPriority(logic.edition());
 			team.minimum = ai.build.phase == 0 ? 1 : 2;
 			team.maximum = logic.random().getValue(team.minimum, 3, kFarmKillFile, 371);
 			ai.brain.namedCounters[kFarmKillRunning] = 1;

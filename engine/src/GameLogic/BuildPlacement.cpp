@@ -218,6 +218,29 @@ bool BuildPlacement::footprintsOf(GameLogic &logic, const ThingTemplate &tt, con
 	return true;
 }
 
+bool BuildPlacement::footprintsOf(GameLogic &logic, const Object &obj, std::vector<Footprint> &out)
+{
+	out.clear();
+	AIWorld *ai = logic.aiWorld();
+	if (!ai)
+	{
+		return false;
+	}
+	const ObjectMovementInfo &info = ai->movementInfo(*static_cast<const ThingTemplate *>(obj.getTemplate())->getFinalOverride());
+	if (!info.hasGeometry)
+	{
+		return false;
+	}
+	const PathfindGeometry &g = obj.ownPathfindGeometry(info.geometry); // lane MODCOMPAT-MOD1: the object's own GeometryInfo
+	std::vector<PathfindShape> shapes;
+	for (size_t i = 0; i < g.shapeCount(); ++i)
+	{
+		shapes.push_back(g.shape(i));
+	}
+	footprintsOfShapes(shapes, *obj.getPosition(), obj.getOrientation(), out);
+	return true;
+}
+
 bool BuildPlacement::isLocationClearOfObjects(GameLogic &logic, const Coord3D &pos, const ThingTemplate &build, float angle, Object *builder, unsigned options)
 {
 	std::vector<Footprint> mine, other;
@@ -241,7 +264,7 @@ bool BuildPlacement::isLocationClearOfObjects(GameLogic &logic, const Coord3D &p
 		{
 			continue;
 		}
-		if (!footprintsOf(logic, *them->getTemplate(), *them->getPosition(), them->getOrientation(), other))
+		if (!footprintsOf(logic, *them, other))
 		{
 			continue; // an object without a geometry (props, markers) takes no ground
 		}
@@ -394,7 +417,7 @@ LegalBuildCode BuildPlacement::isLocationLegalToBuild(GameLogic &logic, const Co
 bool BuildPlacement::getPortTransform(GameLogic &logic, const Coord3D &pos, const ThingTemplate &build, float angle, float &outAngle, Coord3D &outPos)
 {
 	// lane BUILD-5: RotWK BuildAssistant::getPortTransform (RW 0x794C63, tier A with BFME2 0x792802; the decomp's recovered, not yet byte-matching attempt
-	// reverse/attempts/0x00392802.cpp): the footprint sampled at MAP_XY_FACTOR (RW 0x794CFB -> RW 0x793A6E with checkSampleBuildLocation RW 0x794A2B); no answer
+	// BuildAssistantGetPortTransform.cpp, matched since; was reverse/attempts/0x00392802.cpp): the footprint sampled at MAP_XY_FACTOR (RW 0x794CFB -> RW 0x793A6E with checkSampleBuildLocation RW 0x794A2B); no answer
 	// when a sample is restricted or either kind is missing; else the land samples' centre walks towards the water samples' centre in steps of 5 (RW 0xBDAE58)
 	// until it is under water, steps back 10 (the direction normalized, times RW 0xBD83D8) and takes the ground height there; the angle is atan2 of that
 	// direction (RW 0x441BD2) plus pi / 2 (RW 0xDA599C)

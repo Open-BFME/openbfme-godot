@@ -246,15 +246,27 @@ void AIFollowWaypointPathState::crc(StateHasher &h) const
 }
 
 // lane SAVE-4c (obfme:AIWorld): OpenBFME layout (retail's AIFollowWaypointPathExactState::xfer RW 0x742AC5 is (1, 1): the internal move and a u32; stop
-// S-4220): the goal waypoint the command set, the current and previous waypoints and the move
+// S-4220): the goal waypoint the command set, the current and previous waypoints and the move. Version 2 (lane STABLEQA-1): the group offset
+// (+ 0x4C / + 0x50, set from the formation offset by RW 0x750790 .. 0x7507A2 and added to every later waypoint's goal by startMove), hashed since
+// BACKLOG-8 but not saved before: a loaded team-path unit lost it, walked other goals, and the save's own hash check refused the game (Evil Erebor's
+// porters); a version 1 snapshot loads with no offset, as before
 void AIFollowWaypointPathState::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 2 };
 	x.xferVersion(v);
 	x.xferInt(&m_goalWaypoint);
 	x.xferInt(&m_current);
 	x.xferInt(&m_previous);
 	xferMove(x, ai().mover(), m_move);
+	if (v.current >= 2)
+	{
+		x.xferReal(&m_groupOffset.x);
+		x.xferReal(&m_groupOffset.y);
+	}
+	else
+	{
+		m_groupOffset = Coord2D{};
+	}
 }
 
 // AI commands 6 / 7 / 0x32 / 0x33 (RW 0x66B907 / 0x66BA11 / vslots 0x70 / 0x74)

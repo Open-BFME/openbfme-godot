@@ -109,3 +109,7 @@ workspace/agents/
 *.replay
 # the one recording kept as a test fixture (NETLAG-1: a replay of the previous build, tools/release/public_binaries.txt)
 !/engine/tests/data/netlag1/*.replay
+
+# lane CRASHACT-1: the crash service key script tools/release/crash_key.py writes into a package stage (never committed)
+godot/scripts/crash_client_key.gd
+launcher/scripts/crash_client_key.gd

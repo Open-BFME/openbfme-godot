@@ -77,7 +77,7 @@ struct ProductionEntry
 	bool flag34 = false;                            ///< +0x34 (set when a horde entry became its member entry)
 	ObjectID hordeTarget = INVALID_ID;              ///< +0x3C
 	std::string name;                               ///< +0x40
-	bool flag44 = false;                            ///< +0x44
+	bool flag44 = false;                            ///< +0x44 (the new object goes to the producer's SlaveWatcherBehavior, RW 0x8A26BD)
 	int quantityRemaining() const { return quantityTotal - quantityProduced; }
 };
 

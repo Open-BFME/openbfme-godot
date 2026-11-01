@@ -318,7 +318,7 @@ void AnimationSoundClientBehavior::frameWindows(const W3DDrawTrack &t, int numFr
 	}
 }
 
-void AnimationSoundClientBehavior::update(AnimationSoundModuleManager &manager)
+void AnimationSoundClientBehavior::update(AnimationSoundModuleManager &manager, AudioManager *audio, const Coord3D &mic)
 {
 	Drawable *d = getDrawable();
 	if (!d)
@@ -326,7 +326,6 @@ void AnimationSoundClientBehavior::update(AnimationSoundModuleManager &manager)
 		return;
 	}
 	// the drawable's audible flag (+ 0x44A) is cleared only by INAUDIBLE objects (RW 0x674727), never in the port (S-1463)
-	AudioManager *audio = manager.audio ? manager.audio() : nullptr;
 	if (!audio)
 	{
 		return;
@@ -335,7 +334,7 @@ void AnimationSoundClientBehavior::update(AnimationSoundModuleManager &manager)
 	{
 		computeRange(audio); // before the range test (review r1: a drawable made before the audio attached kept range 0 and was culled)
 	}
-	const Coord3D mic = audio->getListenerPosition(); // TheAudio vslot 0x120
+	// mic: TheAudio vslot 0x120, asked by the manager's update
 	const Coord3D &p = *d->getPosition();
 	const float dx = mic.x - p.x, dy = mic.y - p.y, dz = mic.z - p.z;
 	const float d2 = dz * dz + dy * dy + dx * dx;
@@ -356,27 +355,33 @@ void AnimationSoundClientBehavior::update(AnimationSoundModuleManager &manager)
 		return;
 	}
 	const std::vector<AnimationSoundEntry> &entries = m_data->m_entries;
-	W3DDrawFrame frame;
+	// lane PERF-HD: the draw's tracks are read in place (frame() copied the whole frame, its names and every track's strings, per audible drawable per
+	// render frame); a track whose windows are both empty crosses nothing, so its name is not looked at
+	static thread_local std::vector<const AnimationSoundEntry *> hits;
 	for (const DrawEntry &e : d->entries())
 	{
 		if (!e.draw)
 		{
 			continue; // not a model draw: no animation interface (slot 0xA4)
 		}
-		e.draw->frame(frame);
-		for (int i = 0; i < frame.trackCount && i < 3; ++i)
+		const int trackCount = e.draw->trackCount();
+		for (int i = 0; i < trackCount && i < 3; ++i)
 		{
-			const W3DDrawTrack &t = frame.tracks[i];
+			const W3DDrawTrack &t = e.draw->track(i);
 			if (!t.anim)
 			{
 				break; // RW 0x4C0B29: the leading tracks with an animation
 			}
 			Window w[2];
 			frameWindows(t, t.anim->Get_Num_Frames(), w[0], w[1]);
-			const std::string anim = upper(t.anim->Get_Name());
+			if (w[0].a == w[0].b && w[1].a == w[1].b)
+			{
+				continue; // entriesCrossed returns at once for an empty window
+			}
+			const std::string &anim = upperName(t.anim, t.anim->Get_Name());
 			for (const Window &win : w)
 			{
-				std::vector<const AnimationSoundEntry *> hits;
+				hits.clear();
 				entriesCrossed(entries, anim, win, d->getModelConditionFlags(), hits);
 				for (const AnimationSoundEntry *hit : hits)
 				{
@@ -393,6 +398,22 @@ void AnimationSoundClientBehavior::update(AnimationSoundModuleManager &manager)
 			}
 		}
 	}
+}
+
+const std::string &AnimationSoundClientBehavior::upperName(const void *anim, const std::string &raw)
+{
+	for (const AnimName &n : m_animNames)
+	{
+		if (n.anim == anim && n.raw == raw)
+		{
+			return n.upper;
+		}
+	}
+	AnimName &slot = m_animNames[m_animNameNext++ % 3];
+	slot.anim = anim;
+	slot.raw = raw;
+	slot.upper = upper(raw);
+	return slot.upper;
 }
 
 void AnimationSoundClientBehavior::entriesCrossed(const std::vector<AnimationSoundEntry> &entries, const std::string &animation, const Window &win,
@@ -595,7 +616,7 @@ void AnimationSoundModuleManager::update()
 	{
 		AnimationSoundClientBehavior *next = m->m_next; // RW 0x83F3D8: read before the update
 		++m_stats.moduleUpdates;
-		m->update(*this);
+		m->update(*this, a, mic);
 		m = next;
 	}
 }

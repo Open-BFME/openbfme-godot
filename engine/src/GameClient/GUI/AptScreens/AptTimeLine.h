@@ -29,7 +29,9 @@
 //     entry's line is drawn twice (width 3 with alpha, width 1 opaque: RW 0x924DD1), then its result icon at its last sample (+ 0x298[result]:
 //     AptTimelineVictorious, Defeated, Disconnected; none for 3 / 4) and its fortress marks (AptTimelineFortress).
 // NOT PORTED (stop S-1063): the device drawing of RenderGraph and of the faction icons is the presentation layer's (it reads lines() / axis() and the
-// image records); Save Replay, the Create-a-Hero awards and the War of the Ring modes.
+// image records); Save Replay, the Create-a-Hero awards, the War of the Ring's multiplayer type 7 and its profile statistics (StatsReporter RW 0x9CF16C).
+// WOTR2 milestone 5 ports type 6 (ScoreScreenData's war samples, the turn axis, the 27 strategic statistics, TimeLine:StrategicEnd and the win / loss
+// page's APT:StrategicWinLossTitle / StrategicScenarioName / StrategicWinLossConditionDescription and image StrategicWinLossImage).
 
 #pragma once
 

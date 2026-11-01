@@ -240,6 +240,78 @@ TEST_CASE("attackpath1 findAttackPath: no corridor, no endpoint: no path and no 
 	delete p;
 }
 
+// lane PERF-HD (Uber only, review of #166): a request the queue serves counts each search's cells against a cap (the budget the call has left, at least
+// kUberSearchFloor). A target in a zone the unit cannot reach makes findAttackPath's block search scan every block and spend the cap; the cell search gets
+// the cap of its own, as findPath's does, and still ends at its closest cell: the unit approaches (before, it stopped at its first cell: no path)
+TEST_CASE("attackpath1 findAttackPath, Uber queue: a block search that spends the cap leaves the cell search its own, and the unit approaches")
+{
+	SyntheticTerrain terrain(192, 192);
+	// an island the unit cannot reach: a cliff ring round cells 170 .. 186
+	for (int i = 170; i <= 186; ++i)
+	{
+		for (int j : { 170, 186 })
+		{
+			terrain.cliff.insert({ i, j });
+			terrain.cliff.insert({ j, i });
+		}
+	}
+	TestWorld world;
+	TestObject unit;
+	unit.id = 3;
+	unit.pos = Coord3D{ 55.0f, 55.0f, 0.0f };
+	unit.mobile = true;
+	world.objects[unit.id] = &unit;
+	PathfindConfig cfg = testConfig();
+	cfg.cellsPerFrame = 1000; // the cap is kUberSearchFloor
+	const Coord3D target{ 1785.0f, 1785.0f, 0.0f };
+	// the block search alone closes more cells than the cap (cleanOpenAndClosedLists counts what it closed)
+	{
+		Pathfinder pf(cfg, &world);
+		pf.newMap(terrain);
+		Coord3D adjusted = target;
+		REQUIRE(pf.findClosestHierarchicalPath(&unit, groundLoco(), false, &unit.pos, &target, &adjusted));
+		// tolerance: the case only needs a block search that spends the cap (it closes 4,309 cells here); its exact count is pathperf1's to pin
+		CHECK(pf.cumulativeCellsAllocated() > (int)Pathfinder::kUberSearchFloor);
+	}
+	struct Handler : PathfindRequestHandler
+	{
+		Pathfinder *pf = nullptr;
+		TestObject *unit = nullptr;
+		Coord3D target{};
+		Path *path = nullptr;
+		bool fallback = false;
+		void doPathfind(PathfindObjectID id) override
+		{
+			(void)id;
+			path = pf->findAttackPath(unit, groundLoco(), &unit->pos, nullptr, &target, 0.0f, FixedRange(target, 0.0f), false, &fallback);
+		}
+	};
+	for (bool uber : { false, true })
+	{
+		CAPTURE(uber);
+		Pathfinder pf(cfg, &world);
+		pf.newMap(terrain);
+		pf.setUberLimits(uber);
+		Handler h;
+		h.pf = &pf;
+		h.unit = &unit;
+		h.target = target;
+		REQUIRE(pf.queueForPath(unit.id));
+		pf.processPathfindQueue(h);
+		REQUIRE(h.path != nullptr);
+		CHECK(h.fallback); // no cell reaches the island: the corridor's closest cell
+		// both profiles end at the cell beside the island's ring. The call's cells (cleanOpenAndClosedLists): Faithful's whole block search (4,309) and
+		// its cell search; Uber's block search ended at the cap, its cell search counted from zero
+		const Coord3D end = *h.path->getLastNode()->getPosition();
+		CHECK(end.x == 1785.0f);
+		CHECK(end.y == 1685.0f);
+		// merge queue q34 (measured once on the merged tree and at each merge point): 7004 -> 6785 (Faithful) and 2633 -> 2594 (Uber) from #161's merge point on: the block search's block zones (RW 0x9389A6) and raised branch
+		// (RW 0x9389CE) open fewer blocks
+		CHECK(pf.cumulativeCellsAllocated() == (uber ? 2594 : 6785));
+		delete h.path;
+	}
+}
+
 // RW 0x746783: from the goal toward the unit in steps of 10, |goal - unit| / 20 - 1 points (RW 0xC29938: -0.05, _ftol), the first whose one-point line
 // RW 0x6F2FFF passes; none -> adjustToPossibleDestination and false. A building covering cells x 23 .. 27: the goal (255, 155) and (245 / 235, 155) are in it,
 // (225, 155) (cell 22) is the first free point

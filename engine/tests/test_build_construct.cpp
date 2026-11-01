@@ -3,6 +3,7 @@
 // frame of work, RW 0x88DE43), the finished building counts
 // its command points and produces a unit (MSG_QUEUE_UNIT_CREATE).  Two runs of the same commands agree on every frame hash.  GPL-3.0.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "BuildTestUtil.h"
@@ -529,6 +530,7 @@ TEST_CASE("pathfinder footprints: an ordinary foundation is an obstacle at once;
 		Object *o = logic.newObject(f.barracks, team, mask);
 		Coord3D q = p;
 		o->setPosition(&q);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		f.g.live->ai().addObjectToPathfindMap(*o);
 		return o;
 	};

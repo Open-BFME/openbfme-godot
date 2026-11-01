@@ -70,9 +70,10 @@ struct Rig : logictest::LogicWorld
 	}
 	Object *place(const char *name, int x, int y, const char *owner = "Alice")
 	{
-		Object *o = make(name, teamOf(owner));
+		Object *o = make(name, teamOf(owner), INVALID_ID, false);
 		const Coord3D p{ (float)x, (float)y, 0 };
 		o->setPosition(&p);
+		completeHorde(o); // placed, then completed (LogicWorld::make)
 		return o;
 	}
 	void move(int x, int y) { input->mouseMove(x, y, modifiers); input->update(); }

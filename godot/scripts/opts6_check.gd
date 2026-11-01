@@ -34,7 +34,7 @@ const REQUIRED_ROWS := {
 		"Retail.MovieVolume", "Retail.MusicVolume", "Retail.SoundFxVolume", "Retail.VoiceVolume"],
 	"Camera": ["OpenBFMEConfineMouse", "OpenBFMEEdgeScroll", "OpenBFMEFreeCamera", "OpenBFMEInvertDragScroll", "OpenBFMEMaxZoomOut", "OpenBFMERotateSpeed",
 		"Retail.ScrollSpeed"],
-	"Interface": ["AlternateMouseSetup", "OpenBFMEGameClock", "OpenBFMEHealthBars", "OpenBFMEMainMenuStyle", "OpenBFMEPingKey", "OpenBFMEPingWheel", "OpenBFMEUIScale", "Retail.HealthBars"],
+	"Interface": ["AlternateMouseSetup", "OpenBFMECrashReports", "OpenBFMEGameClock", "OpenBFMEHealthBars", "OpenBFMEMainMenuStyle", "OpenBFMEPingKey", "OpenBFMEPingWheel", "OpenBFMEUIScale", "Retail.HealthBars"],
 	"Online": ["OpenBFMEShareResults", "OpenBFMEShowPing", "Retail.OnlineIp", "Retail.OnlinePortNum", "Retail.RefreshNat", "Retail.SendDelay",
 		"Social.challenges", "Social.hidden", "Social.invites", "Social.presence", "Social.requests"], # ONLINEMENU-1: who may ask, invite, challenge, see you
 	"Performance": ["OpenBFMEUberPerformance"],
@@ -43,7 +43,8 @@ const REQUIRED_ROWS := {
 const REQUIRED_BAR := ["accept", "cancel", "reset"]
 const REQUIRED_MAIN := ["MultiPlayNav", "MyHeroes", "OptionsNav", "QuitMainMenu", "SoloPlayNav", "corner"] # the corner button (a 194 x 105 box) has no name
 const REQUIRED_SUB := {
-	"SoloPlayNav": ["BonusCampaign", "Expansion1Campaign", "LoadGame", "Skirmish", "WarOfTheRing"],
+	# lane BFME2CAMP1 (owner): RotWK's list also has BFME2's Evil / Good Campaign rows (an OpenBFME addition, AptMainMenu.h ExtraRows)
+	"SoloPlayNav": ["BonusCampaign", "EvilCampaign", "Expansion1Campaign", "GoodCampaign", "LoadGame", "Skirmish", "WarOfTheRing"],
 	"MultiPlayNav": ["LocalNetwork", "Online", "Replay"],
 	"OptionsNav": ["AdvancedSettings", "Credits", "Settings"],
 }

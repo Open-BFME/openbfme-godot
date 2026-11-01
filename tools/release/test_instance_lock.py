@@ -21,8 +21,8 @@ REPO = Path(__file__).resolve().parents[2]
 LAUNCHER = REPO / "launcher"
 SCRIPT = "res://tests/instance_lock_test.gd"
 PARSER_SCRIPT = "res://tests/instance_lock_parser_test.gd"
-FIRST_PORT = 49200
-PORTS = 16000
+FIRST_PORT = 17000
+PORTS = 15000
 JSON_PREFIX = "INSTANCE_LOCK_JSON "
 DEFAULT_GODOT = Path.home() / "Godot-4.7.2" / "Godot_v4.7.2-stable_win64_console.exe"
 _ACTIVE_PROCESSES = set()
@@ -332,6 +332,9 @@ def _run_native_suite_inner(evidence: Path, executable: Path) -> dict:
         "baseline": baseline_ref or {"status": "skipped", "reason": "OPENBFME_INSTANCE_LOCK_BASELINE not set"},
     }, indent=2) + "\n", encoding="utf-8")
     ranges, netsh_text = _netsh_ranges(evidence)
+    if not any(first <= FIRST_PORT + PORTS - 1 and last >= FIRST_PORT for first, last in ranges):
+        # FLAKEFIX-2: the lock range left the dynamic range, where Windows' own exclusions usually lie
+        pytest.skip(f"no Windows-excluded TCP port in the launcher lock range {FIRST_PORT}..{FIRST_PORT + PORTS - 1} on this machine")
     appdata, user_data, env, profile = _find_excluded_profile(evidence, ranges, executable)
     first = int(profile["base_port"])
     if not _excluded(first, ranges):

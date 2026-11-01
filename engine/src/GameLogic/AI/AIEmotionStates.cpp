@@ -129,9 +129,8 @@ StateReturnType AIPanicState::onEnter()
 	if (m_cower)
 	{
 		// the object's height above the source at most the source's geometry height (RW 0xAD1920)
-		const ThingTemplate *tt = static_cast<const ThingTemplate *>(src->getTemplate())->getFinalOverride();
 		const float above = SimMath::subf32(obj.getPosition()->z, src->getPosition()->z);
-		if (!(above <= ObjectGeometry::maxHeightAbovePosition(ObjectGeometry::shapesOf(*tt))))
+		if (!(above <= ObjectGeometry::maxHeightAbovePosition(src->geometryShapes())))
 		{
 			return STATE_FAILURE;
 		}

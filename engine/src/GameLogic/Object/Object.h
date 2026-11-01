@@ -77,6 +77,11 @@ class StateHasher;
 class Xfer;
 class ThingTemplate;
 class CommandButton;
+struct PathfindGeometry;
+namespace ObjectGeometry
+{
+struct Shape;
+}
 
 class Object : public Thing
 {
@@ -100,6 +105,7 @@ public:
 	void setTeam(Team *team);
 	// lane SCRIPT-3: RW 0x69A550 / 0x697D1A: the AI's attitude from the team prototype's teamAggressiveness
 	void applyTeamAttitude();
+	void applyTeamAttackPriority(); // lane BFME2CAMP1: the team prototype's attack priority set (RW 0x697D32 / 0x69A575)
 	Player *getControllingPlayer() const;
 	// ---- lane HERO-2: defection (Wormtongue / Saruman / Sharku / Rogash's Dominate, a TemporarilyDefectUpdate) ----------------------------------------
 	// RW 0x699368 Object::defect(newOwner, permanent): see Object.cpp
@@ -200,7 +206,7 @@ public:
 	UnsignedInt soleHealingBenefactorExpiry() const { return m_soleHealingBenefactorExpiry; }
 	// lane DECOMP-1: RW 0x68C234 setShroudClearingRange: Object + 0x1B4 (the template's ShroudClearingRange until set) takes the value when it differs and the
 	// shroud record is marked dirty, forced (RW 0x68C213 -> 0xB4E2A0); RW 0x68C7E9 updateShroudNow: the record leaves the dirty list and is processed at once
-	// (RW 0xB4F410 -> 0xB4EF50). BFME2 decomp ObjectSetShroudClearingRange.cpp / Object_bfmeRefreshPartitionCells.cpp, tier A for both
+	// (RW 0xB4F410 -> 0xB4EF50). BFME2 decomp ObjectSetShroudClearingRange.cpp / Object_updateShroudNow.cpp, tier A for both
 	void setShroudClearingRange(float range);
 	void updateShroudNow();
 	bool hasShroudClearingRange() const { return m_hasShroudClearingRange; }
@@ -234,6 +240,10 @@ public:
 	bool hasBeenScored() const { return m_scored; }
 	// the death has begun (the die modules ran): the object is no longer a target, its AI is dead and it left the pathfinder (RW 0x698F06)
 	bool isEffectivelyDead() const { return m_effectivelyDead; }
+	// lane BFME2CAMP1: Object + 0x458 bit 4 (0x10), a campaign carry-over object (set by addCarryoverStuffToMap RW 0x5EBD76 / the delayed spawn RW
+	// 0x5EBF92, setter RW 0x5EA625; read by onCurrentMissionWon RW 0x5EBAEE, not ported: S-4903)
+	bool isCampaignCarryover() const { return m_campaignCarryover; }
+	void setCampaignCarryover(bool on) { m_campaignCarryover = on; }
 	// lane CAMPUI-1: RW 0x660AA3 (inlined in retail; ZH Object::isOffMap): the object stands outside the map's active boundary (set by the position change,
 	// RW 0x69355D). Not hashed and not saved: it follows from the position and the boundary
 	bool isOffMap() const { return m_offMap; }
@@ -291,6 +301,12 @@ public:
 	// lane SCRIPT-2: RW Object + 0x454 (set by RW 0x68BE3C, the script's "Selectable" panel flag); the client's isSelectable also needs it
 	void setScriptSelectable(bool on) { m_scriptSelectable = on; }
 	bool isScriptSelectable() const { return m_scriptSelectable; }
+	// lane MODCOMPAT-MOD1: RW Object::maskObject (RW 0x68BEB1): Object + 0x459 bit 1 (masking also deselects the object for every player but its own,
+	// RW 0x625759: the selection is the client's). Writers: RebuildHoleBehavior (RW 0x886630 / 0x886B51), SpawnBehavior's AggregateHealth (RW 0x86321B, not
+	// ported: S-1425) and RW 0x8A7754. Its readers (RW 0x6C91EB, 0x81E691, 0x83BDAF) are not ported: the masked hole is also UNSELECTABLE and UNATTACKABLE
+	// (stop S-1427)
+	void maskObject(bool on) { m_masked = on; }
+	bool isMasked() const { return m_masked; }
 
 	// lane SCRIPT-2: the trigger areas the object is in (RW 0x69264D, from reactToTransformChange when the position changed). Entries at + 0x3DC
 	// (trigger, + 4 entered, + 5 exited, + 6 inside; the count + 0x45A, at most 7: "***WARNING: Too many nested triggers"), the last change frame
@@ -305,6 +321,9 @@ public:
 	};
 	static constexpr int MAX_TRIGGERS_IN = 7;
 	void updateTriggerAreaFlags();
+	// lane CASTLEAREA-1: RW 0x68B9E9 (from PolygonTrigger removal, RW 0x6263AF): every entry of `trigger` is cleared (no exit is reported), then RW 0x68B98E keeps
+	// the entries still inside with their entered / exited flags cleared
+	void removeTriggerEntries(int trigger);
 	void updateOffMapStatus(); ///< lane CAMPUI-1: RW 0x69355D's extent test (RW 0x6936A9 / 0x6936B2)
 	// lane HUD-5: GeometryInfo::setActive(name, flag) on the object's own geometry (Object + 0xA8, RW 0xAD3520): every shape of the template's list whose name
 	// equals `name` exactly takes `on` as its active flag; the pathfinder's view of the object (ObjectPathfindAdapter::getGeometry) uses the object's flags from
@@ -312,6 +331,26 @@ public:
 	void setGeometryActive(const std::string &name, bool on);
 	const std::vector<std::uint8_t> &geometryActive() const { return m_geometryActive; }
 	std::uint32_t geometryVersion() const { return m_geometryVersion; }
+	// lane MODCOMPAT-MOD1 (GeometryUpgrade): the object's own GeometryInfo (Object + 0xA8, the template's copied by the Object constructor; only its shapes'
+	// active flags change at run time, through setGeometryActive / RW 0xAD3520). The readers retail points at the object's GeometryInfo (the pathfinder's
+	// footprint, the combat bounding circle / sphere Object + 0xB8 / + 0xBC, the partition cells, the overlap tests RW 0xAD2CE0 with ECX = object + 0xA8,
+	// getMaxHeightAbovePosition RW 0xAD1920) ask these. While no flag was ever set they ARE the template's (no copy is kept: the same values, and an object
+	// without a geometry change hashes as before); after that, a copy with the object's flags, rebuilt when geometryVersion moves.
+	const std::vector<ObjectGeometry::Shape> &geometryShapes() const;
+	// the same for the pathfinder's form: `templateGeometry` (the template's, AIWorld::movementInfo) itself while no flag changed, else its copy with the
+	// object's flags and their radii (RW 0xAD3520 ends with RW 0xAD2860: GeometryInfo + 0x10 / + 0x14 recomputed over the active shapes)
+	const PathfindGeometry &ownPathfindGeometry(const PathfindGeometry &templateGeometry) const;
+	// RW 0x68B244 (the object's geometry changed): its shroud record marked dirty, forced (Object + 0x4E4 -> RW 0xB4E2A0); its collision manager entry
+	// (+ 0x4EC -> RW 0xB6C700: no collision manager here, S-363 / S-780); its partition entry marked dirty (+ 0x4E8 -> RW 0xA39570); its drawable's draw
+	// modules (+ 0x84 -> RW 0x6713E6, vslot 0x9C: client); with `pathfind`, out of and into the pathfinder's map (RW 0x6E85FB, 0x6E85E9); then, with
+	// cells recorded (+ 0x4BC >= 0), RW 0x68836C / 0x688354 cover the cells again (not ported, S-142)
+	void geometryChanged(bool pathfind);
+	// lane MODCOMPAT-MOD1: RW 0x699349 setGeometryInfo(other's GeometryInfo): the whole GeometryInfo (Object + 0xA8; RW 0x463DFC, its operator=, copies
+	// + 0x4 .. + 0x28, the two shape vectors + 0x2C / + 0x38 (RW 0x463C74 / 0x463D42) and + 0x44 .. + 0x58) becomes `from`'s, then geometryChanged(false)
+	// (RW 0x68B244(0)); RebuildHoleExposeDie gives the dead structure's to its hole. The object then carries another template's shapes: geometryTemplate()
+	// names it (its own template otherwise)
+	void setGeometryInfoFrom(const Object &from);
+	const ThingTemplate &geometryTemplate() const;
 	int triggerCount() const { return m_triggerCount; }
 	const TriggerEntry &triggerEntry(int i) const { return m_triggers[i]; }
 	UnsignedInt enteredOrExitedFrame() const { return m_enteredOrExitedFrame; }
@@ -383,6 +422,13 @@ public:
 	// lane UBER-3W: findModule("AttributeModifierPoolUpdate") (RW 0x68C4A6), kept with the collide list once the modules are built (the attribute queries of
 	// crush levels, vision and armour searched the module list by name on every call: 2.6% of a 30,000-troop clash frame); the same module either way
 	BehaviorModule *attributeModifierPoolModule() const { return m_moduleCachesBuilt ? m_attributePool : findModule("AttributeModifierPoolUpdate"); }
+	// lane PERF-HD: PhysicsBehavior::find and SlavedUpdateInterface::of (a dynamic_cast of every module per call) kept with the collide list too: the
+	// contact pairs ask both of both objects (the Helm's Deep battle: 14% and 4% of the logic frame); the same module either way. Valid while
+	// moduleLookupsCached(): from buildModules until ~Object deletes the modules (a lookup from a module's destructor scans what is left).
+	bool moduleCachesBuilt() const { return m_moduleCachesBuilt; }
+	bool moduleLookupsCached() const { return m_moduleLookupsCached; }
+	class PhysicsBehavior *physicsModule() const { return m_physics; }
+	class SlavedUpdateInterface *slavedModule() const { return m_slaved; }
 	// RW 0x68BB14: the first module with an exit interface (array order); lane PROD-1
 	ExitInterface *getObjectExitInterface() const;
 	// lane LUMBER1: RW 0x68C383, the first behavior module's dock interface (null for none)
@@ -396,10 +442,14 @@ public:
 
 	// ---- container (HordeContain members, passengers) ---------------------------------------------------------------------
 	Object *getContainedBy() const { return m_containedBy; }
-	void friend_setContainedBy(Object *container) { m_containedBy = container; }
+	void friend_setContainedBy(Object *container); // lane PERF-HD (Uber): leaving a container wakes the emotion tracker (EmotionTrackerUpdate::update)
 	// lane GARRISON-1: RW + 0x474, the object is in the world (RW 0x68E31F sets it, RW 0x68C18F clears it; a contain takes a rider out of the world and puts it back)
 	bool isInWorld() const { return m_inWorld; }
 	void friend_setInWorld(bool on) { m_inWorld = on; }
+	// lane MODCOMPAT-MOD1: the object's record left TheCollisionManager (RW 0xB6C480; CritterEmitterUpdate RW 0x8CD1F6 removes and re-adds it): the contact
+	// passes (AIWorld::processCollisions, CombatState::processProjectileContacts) leave it out. Saved and hashed by the module that sets it
+	bool isOutOfCollisionManager() const { return m_outOfCollisionManager; }
+	void friend_setOutOfCollisionManager(bool out) { m_outOfCollisionManager = out; }
 	// lane GARRISON-1: RW + 0x284, the frame the object was put in its container (RW 0x6901AE; 0 when not contained, RW 0x69024C)
 	UnsignedInt getContainedFrame() const { return m_containedFrame; }
 	void friend_setContainedFrame(UnsignedInt frame) { m_containedFrame = frame; }
@@ -419,6 +469,8 @@ public:
 
 	// ---- the map's name for the object (the dict key objectName) -----------------------------------------------------------
 	const std::string &getName() const { return m_name; }
+	// lane BFME2CAMP1: the name without the script engine's cache (ScriptEngine::transferObjectName keeps the cache itself, RW 0x759467)
+	void friend_setNameUncached(const std::string &name) { m_name = name; }
 	// lane SCRIPT-1: the script engine's named object cache learns every name (ZH ScriptEngine::addObjectToCache; RotWK names objects through it, RW 0x759467)
 	void setName(const std::string &name);
 
@@ -462,7 +514,7 @@ public:
 	void doCommandButtonAtPosition(const CommandButton *button, const Coord3D &pos, CommandSourceType cmdSource, bool fromAutoAbility);
 
 	// ---- the teleport forms (lane BACKLOG4, S-813) --------------------------------------------------------------------------
-	// TARGET RW 0x696E63 Object::teleportTo(pos, keepAI) (BFME2 decomp ObjectRva0029660C.cpp Object::teleportTo is the donor, tier B: RotWK adds the
+	// TARGET RW 0x696E63 Object::teleportTo(pos, keepAI) (BFME2 decomp Object_teleportTo.cpp Object::teleportTo is the donor, tier B: RotWK adds the
 	// status test): Thing::setPosition (RW 0x70C201); recordTransform(TheGameLogic + 0x40) TWICE (RW 0x6260E1: the previous, the recorded and the current
 	// pose are then alike); the drawable's gather RW 0x674B1F(1) (teleportGather below); setPosition again; updateShroudNow (RW 0x68C7E9); a horde contain
 	// (contain slot 0x7C) re-places its members (interface slot 0x1B8, RW 0x86D881); unless `keepAI`, the AI idles (RW 0x5E821A, from source 2 when the
@@ -550,10 +602,14 @@ private:
 	std::string m_name;
 	std::uint8_t m_scriptStatus = 0; ///< lane SCRIPT-2: RW + 0x457 (hashed when not zero)
 	bool m_scriptSelectable = false; ///< RW +0x454: ctor initializes from SELECTABLE; hash only deviations from the template-derived default
+	bool m_masked = false;           ///< RW + 0x459 bit 1 (maskObject; hashed when set)
 	TriggerEntry m_triggers[MAX_TRIGGERS_IN];  ///< lane SCRIPT-2: RW + 0x3DC
 	int m_triggerCount = 0;                      ///< RW + 0x45A
 	std::vector<std::uint8_t> m_geometryActive; ///< lane HUD-5: the shapes' active flags of the object's own GeometryInfo (+ 0xA8), empty: the template's
 	std::uint32_t m_geometryVersion = 0;
+	const ThingTemplate *m_geometrySource = nullptr; ///< lane MODCOMPAT-MOD1: the template whose GeometryInfo the object carries (null: its own; setGeometryInfoFrom)
+	struct OwnGeometryCache; ///< lane MODCOMPAT-MOD1: geometryShapes / ownPathfindGeometry of an object with its own flags (not state: rebuilt from them)
+	mutable std::unique_ptr<OwnGeometryCache> m_ownGeometry;
 	UnsignedInt m_enteredOrExitedFrame = 0;      ///< RW + 0x414
 	std::int32_t m_triggerCellX = 0, m_triggerCellY = 0; ///< RW + 0x418 / + 0x41C (the integer position of the last check)
 
@@ -561,7 +617,10 @@ private:
 	std::vector<CollideModuleInterface *> m_collideModules; ///< lane UBER-2B: m_modules' collide interfaces, in order (rebuilt by buildModules / friend_replaceModule)
 	bool m_collideModulesKnown = true;
 	BehaviorModule *m_attributePool = nullptr; ///< lane UBER-3W: findModule("AttributeModifierPoolUpdate"), valid once m_moduleCachesBuilt
+	class PhysicsBehavior *m_physics = nullptr;      ///< lane PERF-HD: the first PhysicsBehavior module, valid while m_moduleLookupsCached
+	class SlavedUpdateInterface *m_slaved = nullptr; ///< lane PERF-HD: the first SlavedUpdateInterface module, valid while m_moduleLookupsCached
 	bool m_moduleCachesBuilt = false;
+	bool m_moduleLookupsCached = false; ///< m_moduleCachesBuilt until ~Object starts deleting the modules
 	void rebuildCollideModules();
 	size_t m_helperCount = 0;
 	BodyModuleInterface *m_body = nullptr;
@@ -575,6 +634,7 @@ private:
 	struct PendingDamage;
 	std::vector<PendingDamage> m_pendingDamage;             ///< RW + 0x460
 	bool m_effectivelyDead = false;                         ///< RW + 0x458 bit 0
+	bool m_campaignCarryover = false;                       ///< RW + 0x458 bit 4 (lane BFME2CAMP1)
 	bool m_offMap = false; ///< lane CAMPUI-1: RW + 0x458 bit 3 (OFF_MAP; in the padding before m_armorSetFlags: sizeof(Object) unchanged)
 	ArmorSetFlags m_armorSetFlags = 0;
 	std::uint32_t m_weaponBonusMask = 0;
@@ -594,6 +654,7 @@ private:
 
 	Object *m_containedBy = nullptr;
 	bool m_inWorld = false;           ///< RW + 0x474 (lane GARRISON-1)
+	bool m_outOfCollisionManager = false; ///< lane MODCOMPAT-MOD1 (in the padding after m_inWorld: sizeof(Object) unchanged)
 	UnsignedInt m_containedFrame = 0;  ///< RW + 0x284 (lane GARRISON-1)
 	bool m_drawableHidden = false;     ///< the drawable's hidden flag the contains set (lane GARRISON-1)
 	ObjectID m_producerID = INVALID_ID;

@@ -309,6 +309,8 @@ for p in ${PLATFORMS//,/ }; do
   fi
 done
 git -C "$REPO" archive --format=tar HEAD godot LICENSE NOTICE | tar -x -C "$STAGE"
+# lane CRASHACT-1: the crash service key (CRASH_CLIENT_KEY) into the staged project, or nothing (the game then sends no crash report)
+python3 "$REPO/tools/release/crash_key.py" "$STAGE/godot" || fail "the crash service key (tools/release/crash_key.py)"
 # lane ONEZIP-1 r2: what the packaged game trusts when it checks the launcher beside it (godot/scripts/release/launcher_check.gd): the
 # release key and the repository the launcher is built with (the source tree's file is empty: a development run asks no launcher);
 # lane SIGNKMS-1: and the trusted key list (RELEASE_KEYS, comma-separated, RELEASE_KEY first)

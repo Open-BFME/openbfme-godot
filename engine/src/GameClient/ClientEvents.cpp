@@ -66,7 +66,9 @@ void ClientEventRecorder::objectCreated(Object &obj)
 		if (p->hasTeamColor())
 		{
 			e.hasHouseColor = true;
-			e.houseColor = p->getPlayerColor();
+			// lane WEATHER-1: Drawable::friend_bindToObject (RW 0x674566) colours the drawable with Object::getNightIndicatorColor (RW 0x68B71F: the
+			// player's + 0x2A4) when TheGlobalData's time of day is NIGHT (+ 0x134 == 4), else getIndicatorColor (RW 0x68B6F5, + 0x2A0)
+			e.houseColor = settings.night ? p->getPlayerNightColor() : p->getPlayerColor();
 		}
 	}
 	// the client modules of the drawable, resolved here on the logic owner in the drawable's creation order (review r2: the render side must not

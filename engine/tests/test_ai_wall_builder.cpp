@@ -327,6 +327,13 @@ TEST_CASE("BFME2 AI wall triggers: native save restores counters without registe
  XferSave saved; saved.beginBlock(); manager.xfer(saved); saved.endBlock();
  scripts.triggerCallback(0,*unit,true);
  StateHasher changed; manager.crc(changed); CHECK_FALSE(changed.value()==before.value());
+ // The objects block replaces object-owned polygons before the AI block loads.
+ // Map-owned wall callbacks and their indices must survive that phase.
+ const int objectTrigger=scripts.addPolygonTrigger(scripts.triggerAreaAt(0), [](Object &, bool) {});
+ scripts.beginRuntimeTriggerLoad(); scripts.endRuntimeTriggerLoad();
+ CHECK(scripts.triggerAreaCount()==triggerCount);
+ scripts.triggerCallback(objectTrigger,*unit,true); // retired object-owned slot is no longer callable
+ CHECK_FALSE(scripts.triggerAreaAt(0).points.empty());
  XferLoad load(saved.data()); load.beginBlock(); manager.xfer(load); load.endBlock();
  CHECK(scripts.triggerAreaCount()==triggerCount); CHECK(manager.wallEntryCounts()[0][0].count==1);
  StateHasher restored; manager.crc(restored); CHECK(restored.value()==before.value());

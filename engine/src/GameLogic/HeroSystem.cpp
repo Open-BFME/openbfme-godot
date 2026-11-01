@@ -57,6 +57,53 @@ void HeroSystem::initPlayer(GameLogic &logic, Player &player)
 	}
 }
 
+// WOTR2 milestone 7: RW 0x6B16EC (kind != 3, the player's Living World id) -> RW 0x6E42DA: each entry of the War of the Ring player's list no queue holds
+// leaves that list and joins this one (RW 0x781861 -> push RW 0x6E40A6): the entry's fields (RW 0x6E267E), start frame -1, production id 0, UI factor 1,
+// army id (+ 0xB8) the player's garrison in the battle region; a dead entry's cost / seconds are its RespawnUpdate rule's of its rank (RW 0x6E2D92 ->
+// RW 0x8B3637 / 0x8B36B2). [S-1329 inference: the strategic list keeps only the experience, so the rank is 1 and the rule is level 1's]
+void HeroSystem::initLivingWorldPlayer(GameLogic &logic, Player &player, const std::vector<LivingWorldHero> &heroes, int garrisonArmyId, std::vector<std::string> &errors)
+{
+	for (const LivingWorldHero &h : heroes)
+	{
+		const ThingTemplate *tt = logic.things().findTemplate(h.templateName);
+		if (!tt)
+		{
+			errors.push_back("the War of the Ring hero " + h.templateName + " has no ThingTemplate");
+			continue;
+		}
+		// the War of the Ring entry is a purchase record (InitBuildableHeroes builds it as RW 0x780713 does: the template's BuildCost (u16 + 0x5EA) and
+		// BuildTime, rank 1; review wotr2m7 (Sol): without them the hero was free and instant), its experience and dead flag the war's
+		HeroRecord r;
+		r.cost = BuildAssistant::buildCost(*tt);
+		r.seconds = SimMath::truncToInt32(BuildAssistant::buildTime(*tt));
+		r.rank = 1;
+		r.experience = h.experience;
+		r.startFrame = -1;
+		r.productionID = 0;
+		r.dead = h.dead;
+		r.templateName = h.templateName;
+		if (h.dead)
+		{
+			const RespawnUpdateModuleData *data = nullptr;
+			for (const ThingTemplate::Nugget &n : tt->behaviorModules().nuggets())
+			{
+				data = data ? data : dynamic_cast<const RespawnUpdateModuleData *>(n.data.get());
+			}
+			if (data)
+			{
+				const RespawnRule *rule = data->ruleFor((unsigned)r.rank);
+				r.cost = rule ? rule->cost : 1000u;
+				r.seconds = rule ? rule->timeMs / 1000 : SimMath::truncToInt32(SimMath::mulf32(0.005f, 30000.0f));
+			}
+		}
+		player.heroes().addRecord(r);
+		LivingWorldBattleTags::Tag tag;
+		tag.armyId = garrisonArmyId;
+		tag.spawnId = h.spawnId;
+		logic.livingWorldTags().heroes[{ player.getPlayerIndex(), h.templateName }] = tag;
+	}
+}
+
 // RW 0x781792 -> RW 0x780DD4
 int HeroSystem::addDeadHero(Player &player, Object &obj, const RespawnUpdate &respawn, bool autoSpawn)
 {
@@ -70,6 +117,7 @@ int HeroSystem::addDeadHero(Player &player, Object &obj, const RespawnUpdate &re
 	r.upgradeMask = obj.getUpgradeMask();  // RW 0x780E2B: Object + 0x28C
 	r.startFrame = -1;
 	r.dead = true;
+	r.objectFlag = obj.isCampaignCarryover(); // RW 0x780E3F: + 0xB1 = Object + 0x458 bit 4 (lane BFME2CAMP1: the campaign carry-over flag)
 	r.productionID = 0;                    // RW 0x780E4F: + 0xB4 = 0
 	r.objectName = obj.getName();          // + 0xE0 from Object + 0x88
 	r.cost = respawn.ruleCost();           // RW 0x780E99
@@ -89,6 +137,15 @@ int HeroSystem::addDeadHero(Player &player, Object &obj, const RespawnUpdate &re
 	if (autoSpawn)
 	{
 		r.cost = 0; // RW 0x7817BA
+	}
+	// WOTR2 milestone 7: the record keeps the dead object's army and spawn ids (RW 0x780DD4: record + 0xB8 / + 0xBC from Object + 0x47C / + 0x480)
+	LivingWorldBattleTags &tags = obj.logic().livingWorldTags();
+	if (tags.active)
+	{
+		if (const LivingWorldBattleTags::Tag *t = tags.object(obj.getID()))
+		{
+			tags.heroes[{ player.getPlayerIndex(), r.templateName }] = *t;
+		}
 	}
 	return player.heroes().addRecord(r);
 }
@@ -116,12 +173,26 @@ Object *HeroSystem::produce(GameLogic &logic, Player &player, std::uint32_t prod
 	}
 	Coord3D at = pos;
 	obj->teleportTo(&at, false); // RW 0x7814CF: RW 0x696E63(pos, 0)
-	// RW 0x7814D9 / 0x7814E1 / 0x7814F1: Object + 0x47C / + 0x480 / + 0x488 from the record: not identified (S-852)
+	// RW 0x7814D9 / 0x7814E1: Object + 0x47C / + 0x480 from the record's + 0xB8 / + 0xBC (WOTR2 milestone 7: the War of the Ring army id and spawn id, kept
+	// in the battle's tags); + 0x488 from the record: not identified (S-852)
+	LivingWorldBattleTags &tags = logic.livingWorldTags();
+	if (tags.active)
+	{
+		if (const LivingWorldBattleTags::Tag *t = tags.hero(player.getPlayerIndex(), r.templateName))
+		{
+			tags.objects[obj->getID()] = *t;
+		}
+	}
 	if (!r.objectName.empty())
 	{
 		obj->setName(r.objectName); // RW 0x759467 (TheScriptEngine names the object)
 	}
-	// RW 0x781506: the record's + 0xB1 sets Object + 0x458 bit 4 (not identified, S-852); RW 0x781514: RW 0x68C7E9 (not identified, S-852)
+	// RW 0x781506: the record's + 0xB1 sets Object + 0x458 bit 4 (lane BFME2CAMP1: the campaign carry-over flag, so a revived carried hero is kept by
+	// the won mission, RW 0x5EBAEE); RW 0x781514: RW 0x68C7E9 (not identified, S-852)
+	if (r.objectFlag)
+	{
+		obj->setCampaignCarryover(true);
+	}
 	if (r.dead || r.experience > 1.0f)
 	{
 		if (ExperienceTracker *t = obj->getExperienceTracker())

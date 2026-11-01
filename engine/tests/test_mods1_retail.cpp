@@ -12,6 +12,8 @@
 #include "Common/MiniJson.h"
 #include "Common/ModEngineFeatures.h"
 #include "Common/ModMount.h"
+#include "Libraries/Source/Apt/AptFile.h"
+#include "Libraries/Source/Apt/AptLoad.h"
 #include "Common/RetailArchivePolicy.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
@@ -104,6 +106,120 @@ std::string joined(const std::vector<std::string> &v)
 	return out;
 }
 
+// lane MODUI-1: one corpus entry mounted over a fresh 2.01 mount as the launcher mounts it (shared by the MODS-1 object world and the
+// MODUI-1 Apt checks); skip = a dependency laid out for another package
+struct CorpusMount
+{
+	bool skip = false;
+	bool aio = false;
+	bool installMod = false;
+	fs::path modPart;
+	std::string engineEdits;
+	std::vector<std::string> engineMd5s;
+	ModMountReport report;
+	std::unique_ptr<Win32BIGFileSystem> fsys;
+};
+
+CorpusMount mountCorpusEntry(const fs::path &p)
+{
+	CorpusMount c;
+	std::string error;
+	RetailMountReport retail;
+	c.fsys = freshRetailMount(&error, &retail);
+	REQUIRE_MESSAGE(c.fsys, error);
+	ModMountOptions options;
+	options.rotwkInstallRoot = env("ROTWK_INSTALL");
+	options.md5CachePath = (fs::temp_directory_path() / "openbfme-mods1-corpus-md5.tsv").u8string();
+	// an All In One package laid out by tools/mod/aio_package.py (openbfme-aio.json schema 2): the install/ folders of its stack in priority
+	// order are one install-folder mod (lane MODS-2), the stack's mod/ folder a -mod operand; any other folder or .big is a -mod operand
+	c.aio = fs::exists(p / "openbfme-aio.json");
+	std::vector<std::string> installs;
+	c.modPart = p;
+	if (c.aio)
+	{
+		std::ifstream manifest(p / "openbfme-aio.json", std::ios::binary);
+		const std::string text((std::istreambuf_iterator<char>(manifest)), std::istreambuf_iterator<char>());
+		JsonValue root;
+		REQUIRE_MESSAGE(JsonValue::parse(text, root, &error), error);
+		const JsonValue *stack = root.get("stack");
+		if (!stack || !stack->isArray())
+		{
+			c.skip = true; // a dependency laid out for another package (dependency_only)
+			return c;
+		}
+		c.modPart.clear();
+		for (const JsonValue &member : stack->array)
+		{
+			const fs::path folder = p.parent_path() / fs::u8path(member.get("folder")->string);
+			if (fs::is_directory(folder / "install"))
+			{
+				installs.push_back((folder / "install").u8string());
+			}
+			if (c.modPart.empty() && fs::is_directory(folder / "mod"))
+			{
+				c.modPart = folder / "mod";
+			}
+		}
+		if (const JsonValue *edits = root.get("engine_edits"))
+		{
+			for (const JsonValue &e : edits->array)
+			{
+				c.engineEdits += (c.engineEdits.empty() ? "" : "; ") + e.string;
+				const size_t at = e.string.rfind(" md5 "); // "<package>: <file> md5 <hex>" (tools/mod/aio_package.py)
+				if (at != std::string::npos)
+				{
+					c.engineMd5s.push_back(e.string.substr(at + 5));
+				}
+			}
+		}
+	}
+	c.installMod = !installs.empty();
+	c.report.ok = true;
+	if (c.installMod)
+	{
+		auto merged = std::make_unique<Win32BIGFileSystem>();
+		c.report = MountInstallOverlay(*merged, retail, installs, options);
+		if (c.report.ok)
+		{
+			c.fsys = std::move(merged);
+		}
+	}
+	if (c.report.ok && !c.modPart.empty())
+	{
+		ModOperand op;
+		REQUIRE_MESSAGE(ParseModArgument(c.modPart.u8string(), std::string(), op, &error), error);
+		const ModMountReport modReport = MountRetailMod(*c.fsys, op, options);
+		if (!c.installMod)
+		{
+			c.report = modReport;
+		}
+		else if (!modReport.ok)
+		{
+			c.report.ok = false;
+			c.report.errors = modReport.errors;
+		}
+	}
+	return c;
+}
+
+// the mods of OPENBFME_MOD_CORPUS (a folder of mod folders and mod archives), sorted
+std::vector<fs::path> corpusEntries(const std::string &corpus)
+{
+	std::vector<fs::path> mods;
+	std::error_code ec;
+	for (fs::directory_iterator it(fs::u8path(corpus), ec), end; !ec && it != end; it.increment(ec))
+	{
+		if (it->is_directory() || AsciiStringUtil::lowered(it->path().extension().u8string()) == ".big")
+		{
+			mods.push_back(it->path());
+		}
+	}
+	REQUIRE_MESSAGE(!ec, "cannot list " << corpus << ": " << ec.message());
+	REQUIRE_MESSAGE(!mods.empty(), "OPENBFME_MOD_CORPUS holds no mod folder or .big: " << corpus);
+	std::sort(mods.begin(), mods.end());
+	return mods;
+}
+
 } // namespace
 
 TEST_CASE("MODS-1 retail: a generated data-only mod over the 2.01 archives: a replaced INI file, a loose and an archived new object")
@@ -170,99 +286,22 @@ TEST_CASE("MODS-1 mod corpus: every mod in OPENBFME_MOD_CORPUS mounts over 2.01 
 		retailtest::printSkip("MODS-1 mod corpus (OPENBFME_MOD_CORPUS unset)");
 		return;
 	}
-	std::vector<fs::path> mods;
-	std::error_code ec;
-	for (fs::directory_iterator it(fs::u8path(corpus), ec), end; !ec && it != end; it.increment(ec))
-	{
-		if (it->is_directory() || AsciiStringUtil::lowered(it->path().extension().u8string()) == ".big")
-		{
-			mods.push_back(it->path());
-		}
-	}
-	REQUIRE_MESSAGE(!ec, "cannot list " << corpus << ": " << ec.message());
-	REQUIRE_MESSAGE(!mods.empty(), "OPENBFME_MOD_CORPUS holds no mod folder or .big: " << corpus);
-	std::sort(mods.begin(), mods.end());
+	const std::vector<fs::path> mods = corpusEntries(corpus);
 	for (const fs::path &p : mods)
 	{
 		CAPTURE(p.u8string());
 		std::string error;
-		RetailMountReport retail;
-		std::unique_ptr<Win32BIGFileSystem> fsys = freshRetailMount(&error, &retail);
-		REQUIRE_MESSAGE(fsys, error);
-		ModMountOptions options;
-		options.rotwkInstallRoot = env("ROTWK_INSTALL");
-		options.md5CachePath = (fs::temp_directory_path() / "openbfme-mods1-corpus-md5.tsv").u8string();
-		// an All In One package laid out by tools/mod/aio_package.py (openbfme-aio.json schema 2): the install/ folders of its stack in priority
-		// order are one install-folder mod (lane MODS-2), the stack's mod/ folder a -mod operand; any other folder or .big is a -mod operand
-		const bool aio = fs::exists(p / "openbfme-aio.json");
-		std::vector<std::string> installs;
-		fs::path modPart = p;
-		std::string engineEdits;
-		std::vector<std::string> engineMd5s;
-		if (aio)
+		CorpusMount c = mountCorpusEntry(p);
+		if (c.skip)
 		{
-			std::ifstream manifest(p / "openbfme-aio.json", std::ios::binary);
-			const std::string text((std::istreambuf_iterator<char>(manifest)), std::istreambuf_iterator<char>());
-			JsonValue root;
-			REQUIRE_MESSAGE(JsonValue::parse(text, root, &error), error);
-			const JsonValue *stack = root.get("stack");
-			if (!stack || !stack->isArray())
-			{
-				continue; // a dependency laid out for another package (dependency_only)
-			}
-			modPart.clear();
-			for (const JsonValue &member : stack->array)
-			{
-				const fs::path folder = p.parent_path() / fs::u8path(member.get("folder")->string);
-				if (fs::is_directory(folder / "install"))
-				{
-					installs.push_back((folder / "install").u8string());
-				}
-				if (modPart.empty() && fs::is_directory(folder / "mod"))
-				{
-					modPart = folder / "mod";
-				}
-			}
-			if (const JsonValue *edits = root.get("engine_edits"))
-			{
-				for (const JsonValue &e : edits->array)
-				{
-					engineEdits += (engineEdits.empty() ? "" : "; ") + e.string;
-					const size_t at = e.string.rfind(" md5 "); // "<package>: <file> md5 <hex>" (tools/mod/aio_package.py)
-					if (at != std::string::npos)
-					{
-						engineMd5s.push_back(e.string.substr(at + 5));
-					}
-				}
-			}
+			continue;
 		}
-		const bool installMod = !installs.empty();
-		ModMountReport report;
-		report.ok = true;
-		if (installMod)
-		{
-			auto merged = std::make_unique<Win32BIGFileSystem>();
-			report = MountInstallOverlay(*merged, retail, installs, options);
-			if (report.ok)
-			{
-				fsys = std::move(merged);
-			}
-		}
-		if (report.ok && !modPart.empty())
-		{
-			ModOperand op;
-			REQUIRE_MESSAGE(ParseModArgument(modPart.u8string(), std::string(), op, &error), error);
-			const ModMountReport modReport = MountRetailMod(*fsys, op, options);
-			if (!installMod)
-			{
-				report = modReport;
-			}
-			else if (!modReport.ok)
-			{
-				report.ok = false;
-				report.errors = modReport.errors;
-			}
-		}
+		std::unique_ptr<Win32BIGFileSystem> &fsys = c.fsys;
+		const bool aio = c.aio, installMod = c.installMod;
+		const fs::path &modPart = c.modPart;
+		const std::string &engineEdits = c.engineEdits;
+		const std::vector<std::string> &engineMd5s = c.engineMd5s;
+		const ModMountReport &report = c.report;
 		if (aio)
 		{
 			MESSAGE("MODCORPUS " << p.filename().u8string() << " engine edits (not loaded): " << (engineEdits.empty() ? "none" : engineEdits));
@@ -319,4 +358,68 @@ TEST_CASE("MODS-2 retail: the pinned 2.01 mount reports S-5302 (the BFME2 apt ar
 	RetailMountReport report;
 	REQUIRE_MESSAGE(freshRetailMount(&error, &report), error);
 	CHECK(report.stops == std::vector<std::string>{ RetailBaseAptStopLine() });
+}
+
+namespace
+{
+
+// lane MODUI-1: every Apt movie the mounted tree holds at the archive root (the shell screens, their sub-movies, the HUD) loads with its
+// .const and resolves its imports; the failures as "<movie>: <why>" (empty = all load)
+std::vector<std::string> aptLoadFailures(Win32BIGFileSystem &fsys, size_t *movies)
+{
+	AptArchiveFileSource source(fsys);
+	AptLoader loader(source);
+	std::vector<std::string> failures;
+	const std::vector<std::string> names = source.listMovies();
+	*movies = names.size();
+	for (const std::string &name : names)
+	{
+		std::string error;
+		std::shared_ptr<const AptFile> movie = loader.loadMovie(name, &error);
+		if (!movie)
+		{
+			failures.push_back(name + ": " + error);
+			continue;
+		}
+		std::vector<AptResolvedImport> imports;
+		if (!loader.resolveImports(*movie, imports, &error))
+		{
+			failures.push_back(name + ": " + error);
+		}
+	}
+	return failures;
+}
+
+} // namespace
+
+TEST_CASE("MODUI-1 mod corpus: every Apt movie of every mod in OPENBFME_MOD_CORPUS loads and resolves its imports, as on 2.01")
+{
+	const std::string corpus = env("OPENBFME_MOD_CORPUS");
+	if (env("ROTWK_INSTALL").empty() || env("BFME2_INSTALL").empty() || corpus.empty())
+	{
+		retailtest::printSkip("MODUI-1 mod corpus Apt movies (OPENBFME_MOD_CORPUS unset)");
+		return;
+	}
+	{
+		std::string error;
+		std::unique_ptr<Win32BIGFileSystem> retail = freshRetailMount(&error);
+		REQUIRE_MESSAGE(retail, error);
+		size_t movies = 0;
+		const std::vector<std::string> failures = aptLoadFailures(*retail, &movies);
+		MESSAGE("MODUI1 retail 2.01: " << movies << " Apt movies, " << failures.size() << " failed");
+		CHECK_MESSAGE(failures.empty(), joined(failures));
+	}
+	for (const fs::path &p : corpusEntries(corpus))
+	{
+		CAPTURE(p.u8string());
+		CorpusMount c = mountCorpusEntry(p);
+		if (c.skip || !c.report.ok)
+		{
+			continue; // a mount failure is the MODS-1 corpus case's
+		}
+		size_t movies = 0;
+		const std::vector<std::string> failures = aptLoadFailures(*c.fsys, &movies);
+		MESSAGE("MODUI1 " << p.filename().u8string() << ": " << movies << " Apt movies, " << failures.size() << " failed");
+		CHECK_MESSAGE(failures.empty(), p.filename().u8string() << ":\n" << joined(failures));
+	}
 }

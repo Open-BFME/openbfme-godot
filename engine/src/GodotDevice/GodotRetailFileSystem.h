@@ -72,7 +72,7 @@ public:
 	// lane SDK-0 (GameClient/AssetPacks.h): the cosmetic asset packs, in order (the last wins a name). Replaces the packs of this file system;
 	// {ok, errors, packs, textures, models, notes, not_covered}. Takes effect for asset managers and material factories made afterwards.
 	Dictionary set_asset_packs(const PackedStringArray &folders);
-	// lane SDK-1b (b): per pack, the models left out (they do not fit) and the files used offline only, each with its reason (the launcher's card)
+	// lane SDK-1b (b): per pack, the models left out (they do not fit), each with its reason (the launcher's card)
 	Dictionary get_asset_pack_report() const;
 
 	bool is_mounted() const { return m_mounted; }
@@ -108,7 +108,13 @@ public:
 	// lane PROFILE-2: SimulationData::digest of this mount (the profile identity's simdata line, GameNetwork/ProfileIdentity.h), computed once per
 	// mounted archive list and mod; "" + *error when nothing is mounted or a listed file cannot be read
 	std::string simulationData(std::string *error) const;
+	// lane PROFILE-3: the profile identity's pack lines (AssetPacks::identityLines) of the packs this game uses: none while they are suspended or none
+	// is loaded. Read once per set of packs (every used file is hashed); a file that cannot be read gives the one line "pack-error" (the reason goes
+	// to the log): presentation only, it never refuses a game, but a checker sees the packs were in use
+	std::vector<std::string> packIdentity() const;
 	const std::string &modFolder() const { return m_modReport.loose.root; }
+	// lane MODCOMPAT-1: the install-folder mods' folders (--mod-install), highest priority first: their loose files (movies) sit in the game folder in retail
+	std::vector<std::string> installOverlayFolders() const;
 	// lane SDK-0: the packs (empty without any) and the W3D source of the RENDER side: the mounted files with the packs in front. Never for
 	// the simulation's asset manager (LiveGame's m_simAssetSource reads the archive file system directly).
 	const AssetPacks &assetPacks() const { return m_packs; }
@@ -141,6 +147,8 @@ private:
 	ModMountReport m_installModReport;
 	AssetPacks m_packs;             // lane SDK-0
 	mutable std::string m_simDataKey, m_simData; // lane PROFILE-2: simulationData's cache (the archive lines and mod lines it was computed for)
+	mutable bool m_packLinesRead = false;         // lane PROFILE-3: packIdentity's cache (cleared when the packs or their checked models change)
+	mutable std::vector<std::string> m_packLines;
 };
 
 } // namespace godot

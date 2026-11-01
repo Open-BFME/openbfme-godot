@@ -215,6 +215,24 @@ bool Shell::readShellMapOn(const std::string &text, bool &on, std::string *error
 	return found;
 }
 
+bool Shell::readShellMapOnForData(const std::string &text, bool bfme2Data, bool &on, std::string *error)
+{
+	if (!bfme2Data)
+	{
+		return readShellMapOn(text, on, error);
+	}
+	bool found = false;
+	if (!readGameDataBool(text, "ShellMapOn", on, found, error))
+	{
+		return false;
+	}
+	if (!found)
+	{
+		on = true; // BFME2 0x6369FD
+	}
+	return true;
+}
+
 bool Shell::readGameDataBool(const std::string &text, const std::string &field, bool &value, bool &found, std::string *error)
 {
 	// the GameData block's "<field> = Yes|No" (INI::parseBool: yes / no, case-insensitive); the last one in the block wins

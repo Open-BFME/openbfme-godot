@@ -15,122 +15,54 @@
 namespace
 {
 
-float cross(const Point2F &o, const Point2F &a, const Point2F &b)
+// RW 0x70E911 (RenderableStandingWaterArea::AllocateAndFillBuffers' cell test, RW 0x482A16). The donor matched
+// in Open-BFME-2 is rva0030B7C2 / rva0030B5AF (GameLogic/Map/Rva0030B7C2PointQuery.cpp). Target facts, read from RW:
+// a bounds precheck (lo.x > x, lo.y > y, x > hi.x, y > hi.y reject), then crossing parity over every
+// vertex i against its predecessor (the last for i 0): skip a horizontal edge, skip when x is right of both
+// ends, order the edge by y, skip unless a.y < y <= b.y, then toggle when (y - a.y) * (b.x - a.x) >=
+// (x - a.x) * (b.y - a.y) (single-precision products). A polygon that revisits a vertex, as the pinched river
+// outline of Adorn River does, needs no special case: parity counts every edge.
+bool standingWaterContains(const std::vector<Point2F> &points, const Point2F &lo, const Point2F &hi, const Point2F &p)
 {
-	return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-}
-
-bool pointInTriangle(const Point2F &p, const Point2F &a, const Point2F &b, const Point2F &c)
-{
-	float d1 = cross(a, b, p), d2 = cross(b, c, p), d3 = cross(c, a, p);
-	bool neg = d1 < 0 || d2 < 0 || d3 < 0;
-	bool pos = d1 > 0 || d2 > 0 || d3 > 0;
-	return !(neg && pos);
+	if (lo.x > p.x || lo.y > p.y || p.x > hi.x || p.y > hi.y)
+	{
+		return false;
+	}
+	bool inside = false;
+	const size_t n = points.size();
+	for (size_t i = 0; i < n; ++i)
+	{
+		Point2F a = points[i];
+		Point2F b = points[i > 0 ? i - 1 : n - 1];
+		if (a.y == b.y)
+		{
+			continue;
+		}
+		if (p.x > a.x && p.x > b.x)
+		{
+			continue;
+		}
+		if (a.y > b.y)
+		{
+			std::swap(a, b);
+		}
+		if (p.y > b.y || a.y >= p.y)
+		{
+			continue;
+		}
+		const float dy = b.y - a.y;
+		const float lhs = (p.y - a.y) * (b.x - a.x);
+		const float rhs = (p.x - a.x) * dy;
+		if (lhs >= rhs)
+		{
+			inside = !inside;
+		}
+	}
+	return inside;
 }
 
 } // namespace
 
-float WaterGeometry::signedArea(const std::vector<Point2F> &p)
-{
-	double a = 0;
-	for (size_t i = 0, j = p.size() - 1; i < p.size(); j = i++)
-	{
-		a += (double)p[j].x * p[i].y - (double)p[i].x * p[j].y;
-	}
-	return (float)(a * 0.5);
-}
-
-bool WaterGeometry::triangulate(const std::vector<Point2F> &polygon, std::vector<std::uint32_t> &indices)
-{
-	indices.clear();
-	const size_t n = polygon.size();
-	if (n < 3)
-	{
-		return false;
-	}
-	float area = signedArea(polygon);
-	if (std::fabs(area) < 1e-6f)
-	{
-		return false;
-	}
-	std::vector<std::uint32_t> v(n);
-	for (size_t i = 0; i < n; ++i)
-	{
-		v[i] = (std::uint32_t)(area > 0 ? i : n - 1 - i); // counter-clockwise order
-	}
-	size_t guard = 0;
-	while (v.size() > 3 && guard++ < n * n + 8)
-	{
-		bool clipped = false;
-		for (size_t i = 0; i < v.size(); ++i)
-		{
-			const Point2F &a = polygon[v[(i + v.size() - 1) % v.size()]];
-			const Point2F &b = polygon[v[i]];
-			const Point2F &c = polygon[v[(i + 1) % v.size()]];
-			if (cross(a, b, c) <= 0)
-			{
-				continue; // reflex or collinear
-			}
-			bool ear = true;
-			for (size_t k = 0; k < v.size() && ear; ++k)
-			{
-				const std::uint32_t id = v[k];
-				if (id == v[(i + v.size() - 1) % v.size()] || id == v[i] || id == v[(i + 1) % v.size()])
-				{
-					continue;
-				}
-				const Point2F &p = polygon[id];
-				if ((p.x == a.x && p.y == a.y) || (p.x == b.x && p.y == b.y) || (p.x == c.x && p.y == c.y))
-				{
-					continue; // duplicated vertex positions do not block
-				}
-				if (pointInTriangle(p, a, b, c))
-				{
-					ear = false;
-				}
-			}
-			if (!ear)
-			{
-				continue;
-			}
-			indices.push_back(v[(i + v.size() - 1) % v.size()]);
-			indices.push_back(v[i]);
-			indices.push_back(v[(i + 1) % v.size()]);
-			v.erase(v.begin() + (long)i);
-			clipped = true;
-			break;
-		}
-		if (!clipped)
-		{
-			// no ear found (self-intersecting or collinear leftovers): drop collinear vertices once, else give up
-			bool removed = false;
-			for (size_t i = 0; i < v.size(); ++i)
-			{
-				const Point2F &a = polygon[v[(i + v.size() - 1) % v.size()]];
-				const Point2F &b = polygon[v[i]];
-				const Point2F &c = polygon[v[(i + 1) % v.size()]];
-				if (std::fabs(cross(a, b, c)) < 1e-6f)
-				{
-					v.erase(v.begin() + (long)i);
-					removed = true;
-					break;
-				}
-			}
-			if (!removed)
-			{
-				indices.clear();
-				return false;
-			}
-		}
-	}
-	if (v.size() == 3)
-	{
-		indices.push_back(v[0]);
-		indices.push_back(v[1]);
-		indices.push_back(v[2]);
-	}
-	return !indices.empty();
-}
 
 bool WaterGeometry::buildRiverStrip(const RiverArea &river, RiverStrip &out)
 {
@@ -268,7 +200,7 @@ bool WaterGeometry::readStandingMaterial(const MeshShaderMaterialDef &source, St
 
 // BFME2 donor: GameEngine/Source/GameLogic/Map/StandingWaterAreaLoadPCA.cpp
 // RVA 0x3093F6. Samplers: GameEngineDevice/Source/W3DDevice/GameClient/
-// Rva003093F6BasesSamplers.cpp, RVAs 0x30822F/0x308325/0x308417/0x308509.
+// StandingWaterArea.cpp, RVAs 0x30822F/0x308325/0x308417/0x308509.
 // Target data validates the layout; RotWK caller/clock equivalence is S-035.
 // Malformed inputs are rejected explicitly; donor malformed-text parity is unverified.
 bool WaterGeometry::readPcaBasis(const std::string &text, PcaBasis &out, std::string *error)
@@ -371,8 +303,15 @@ bool WaterGeometry::readEffectTechniques(const std::vector<std::uint8_t> &bytes,
 	catch (const std::runtime_error &e) { names.clear(); if (error) *error = e.what(); return false; }
 }
 
-// Donor BFME2 matched allocation/query; Godot's terrain sampler and high-detail
-// selection are presentation bridges, not verified RotWK LOD/height parity.
+// RotWK RenderableStandingWaterArea::AllocateAndFillBuffers, RW 0x482A16 (donor: Open-BFME-2 W3DWater.cpp,
+// native 0x0008304A). This is the only way retail turns a standing-water polygon into triangles: a grid of
+// `spacing` cells over the polygon's bounds, each cell kept when its centre is inside the polygon
+// (standingWaterContains), two triangles per kept cell. Target facts, read from RW 0x482A16: the
+// cell counts and the origin scale the coordinates by the reciprocal 1.0f / spacing (single-precision divide,
+// then multiply, then truncate); the cell centre is float(x) * spacing + (origin + spacing * 0.5f); the cell
+// limit is 60000 (30000 with 40.0f spacing when the LOD manager's level is <= 2, which Godot has no
+// equivalent for); the spacing doubles until the cell count fits. Godot's terrain sampler and the high-detail
+// choice are presentation bridges, not verified RotWK LOD/height parity (S-035).
 bool WaterGeometry::buildStandingGrid(const StandingWaterArea &area, const std::vector<StandingWaveArea> &waves,
 	const std::function<float(float,float)> &ground, StandingGrid &out)
 {
@@ -381,24 +320,29 @@ bool WaterGeometry::buildStandingGrid(const StandingWaterArea &area, const std::
 	float lx=area.points[0].x, hx=lx, ly=area.points[0].y, hy=ly;
 	for (const auto &p : area.points)
 	{
-		// The donor converts coordinates / 20 to int before reducing detail.
+		// Retail converts coordinates * (1 / 20) to int before reducing detail.
 		// Reject unrepresentable mod data instead of invoking undefined C++ casts.
 		const double maxCell = std::numeric_limits<int>::max();
+		const float firstInverse = 1.0f / out.spacing;
 		if (!std::isfinite(p.x) || !std::isfinite(p.y)
-			|| std::abs(double(p.x / out.spacing)) >= maxCell
-			|| std::abs(double(p.y / out.spacing)) >= maxCell) return false;
+			|| std::abs(double(p.x * firstInverse)) >= maxCell
+			|| std::abs(double(p.y * firstInverse)) >= maxCell) return false;
 		lx = std::min(lx, p.x); hx = std::max(hx, p.x);
 		ly = std::min(ly, p.y); hy = std::max(hy, p.y);
 	}
 	if (!std::isfinite(lx+hx+ly+hy) || hx-lx > 1e8f || hy-ly > 1e8f) return false;
+	const Point2F boundsLo = { lx, ly }, boundsHi = { hx, hy }; // the polygon's own bounds, for the cell test
 	int nx,ny;
 	do {
-		nx=int(hx/out.spacing)-int(lx/out.spacing)+1;
-		ny=int(hy/out.spacing)-int(ly/out.spacing)+1;
+		const float inverse = 1.0f / out.spacing;
+		nx=int(hx*inverse)-int(lx*inverse)+1;
+		ny=int(hy*inverse)-int(ly*inverse)+1;
 		if (int64_t(nx)*ny <= 60000) break;
 		out.spacing *= 2;
 	} while (true);
-	lx=int(lx/out.spacing)*out.spacing; ly=int(ly/out.spacing)*out.spacing;
+	const float inverse = 1.0f / out.spacing;
+	lx=float(int(lx*inverse))*out.spacing; ly=float(int(ly*inverse))*out.spacing;
+	const float centreX = lx + out.spacing * 0.5f, centreY = ly + out.spacing * 0.5f;
 	std::vector<int> cache(size_t(nx+1)*(ny+1),-1);
 	auto vertex=[&](int x,int y) {
 		int &index=cache[size_t(y)*(nx+1)+x];
@@ -420,12 +364,8 @@ bool WaterGeometry::buildStandingGrid(const StandingWaterArea &area, const std::
 		index=int(out.vertices.size()); out.vertices.push_back(v); return uint32_t(index);
 	};
 	for(int y=0;y<ny;++y) for(int x=0;x<nx;++x) {
-		Point2F c={lx+(x+.5f)*out.spacing,ly+(y+.5f)*out.spacing}; bool inside=false;
-		for(size_t i=0,j=area.points.size()-1;i<area.points.size();j=i++) {
-			auto a=area.points[i],b=area.points[j];
-			if ((a.y>c.y)!=(b.y>c.y) && c.x<(b.x-a.x)*(c.y-a.y)/(b.y-a.y)+a.x) inside=!inside;
-		}
-		if(!inside) continue;
+		const Point2F c={float(x)*out.spacing+centreX,float(y)*out.spacing+centreY};
+		if(!standingWaterContains(area.points,boundsLo,boundsHi,c)) continue;
 		auto a=vertex(x,y),b=vertex(x+1,y),c0=vertex(x,y+1),d=vertex(x+1,y+1);
 		out.indices.insert(out.indices.end(),{a,d,c0,a,b,d});
 	}

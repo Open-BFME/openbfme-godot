@@ -26,7 +26,6 @@ int intParam(const ScriptClientRequest &r, size_t i)
 }
 
 constexpr float kPi = 3.14159265358979f;
-constexpr double kFrameMs = 1000.0 / 30.0; ///< the CAMERA_FADE frame counts (ZH TheW3DFrameLengthInMsec, the 30 Hz client frame)
 } // namespace
 
 // ZH ParabolicEase.cpp:52 / :75
@@ -149,20 +148,53 @@ void ScriptCameraDirector::apply(const ScriptClientRequest &r, const Coord3D &ca
 	}
 	if (a == "CAMERA_FADE_ADD" || a == "CAMERA_FADE_SUBTRACT" || a == "CAMERA_FADE_SATURATE" || a == "CAMERA_FADE_MULTIPLY")
 	{
-		// (min, max, frames to increase, frames to hold, frames to decrease)
-		m_fadeState.active = true;
-		m_fadeState.minV = realParam(r, 0);
-		m_fadeState.maxV = realParam(r, 1);
-		m_fadeState.inMs = intParam(r, 2) * kFrameMs;
-		m_fadeState.holdMs = intParam(r, 3) * kFrameMs;
-		m_fadeState.outMs = intParam(r, 4) * kFrameMs;
-		m_fadeState.elapsed = 0.0;
+		// ScriptEngine::setFade (RW 0x6030C1 ~ BFME2 0x203777, Open-BFME-2 ScriptEngine.cpp:660-711): (min, max, frames to increase,
+		// frames to hold, frames to decrease), the counts in LOGIC frames; an increase of 0 runs the first updateFades step here
+		Fade &f = m_fadeState;
+		if (a == "CAMERA_FADE_ADD")
+		{
+			f.type = FADE_ADD;
+		}
+		else if (a == "CAMERA_FADE_SUBTRACT")
+		{
+			f.type = FADE_SUBTRACT;
+		}
+		else if (a == "CAMERA_FADE_SATURATE")
+		{
+			f.type = FADE_SATURATE;
+		}
+		else if (a == "CAMERA_FADE_MULTIPLY")
+		{
+			f.type = FADE_MULTIPLY;
+		}
+		else
+		{
+			f.type = FADE_NONE; // retail's switch default: unreachable, the action dispatch only sends these four
+			return;
+		}
+		f.curFrame = 0;
+		f.minV = realParam(r, 0);
+		f.maxV = realParam(r, 1);
+		f.increase = intParam(r, 2);
+		f.hold = intParam(r, 3);
+		f.decrease = intParam(r, 4);
+		f.curValue = f.minV;
+		f.startFrame = r.frame;
+		if (f.increase == 0)
+		{
+			updateFades();
+		}
+		f.active = true;
 		return;
 	}
 	if (a == "CAMERA_FOLLOW_NAMED") // (unit, snap, ?): RW 0x7BB4B0 -> the view's follow (slot 0x184) of the object
 	{
 		m_followId = r.objectId;
 		return;
+	}
+	if (a == "MOVE_CAMERA_BY_ANIMATION")
+	{
+		return; // lane CAMANIM-1: the tactical view plays it (GameClient/CameraAnimation.h: CameraAnimationPlayback), not the script camera
 	}
 	if (a == "CAMERA_STOP_FOLLOW") // RW 0x7BCCE1
 	{
@@ -230,6 +262,10 @@ void ScriptCameraDirector::apply(const ScriptClientRequest &r, const Coord3D &ca
 		}
 		return;
 	}
+	if (a == "SET_CAMERA_CLIP_DEPTH_MULTIPLIER")
+	{
+		return; // lane MODCOMPAT-AI: the HUD camera's far plane (scripts/campaign_cine.gd -> InGameHud camera_set_clip_depth_multiplier)
+	}
 	m_unhandled.push_back(a);
 }
 
@@ -264,7 +300,42 @@ void ScriptCameraDirector::Scalar::update(double dt)
 	}
 }
 
-void ScriptCameraDirector::update(double ms)
+// ScriptEngine::updateFades (RW 0x603016 ~ BFME2 0x2036CC, Open-BFME-2 ScriptEngine.cpp:688-712): ++frame, then the increase ramp,
+// the hold at the maximum, the decrease ramp (its divisor is decrease + 1), and past the last frame FADE_NONE — the fade is gone
+// and draws nothing, not its last value (lane CAMP-1's rule: the Amon Sul intro's (1, 0, 0, 0, 0) ends the same frame it starts)
+void ScriptCameraDirector::updateFades()
+{
+	Fade &f = m_fadeState;
+	++f.curFrame;
+	const int increase = f.increase; // retail reads the member through a volatile view after the bump; the value is the same
+	int frame = f.curFrame;
+	f.active = false;
+	if (frame <= increase)
+	{
+		f.curValue = f.minV + (float)frame / increase * (f.maxV - f.minV);
+		return;
+	}
+	frame -= increase;
+	if (frame <= f.hold)
+	{
+		f.curValue = f.maxV;
+		return;
+	}
+	frame -= f.hold;
+	if (frame <= f.decrease)
+	{
+		int divisor = f.decrease + 1;
+		if (divisor == 0)
+		{
+			divisor = 1;
+		}
+		f.curValue = f.maxV + (float)frame / divisor * (f.minV - f.maxV);
+		return;
+	}
+	f.type = FADE_NONE;
+}
+
+void ScriptCameraDirector::update(double ms, std::uint32_t presentedFrame, double alpha)
 {
 	if (m_move.active)
 	{
@@ -311,30 +382,28 @@ void ScriptCameraDirector::update(double ms)
 			m_captionLabel.clear();
 		}
 	}
-	if (m_fadeState.active)
 	{
 		Fade &f = m_fadeState;
-		f.elapsed += ms;
-		float v;
-		if (f.elapsed < f.inMs)
+		// ScriptEngine::update (RW 0x60CC67 ~ BFME2 0x20D065) runs updateFades once per logic frame, before the frame's actions — so
+		// a fade set on frame F steps first at F + 1, plus the step run inside setFade when increase is 0. A FADE_NONE steps no more.
+		const int due = (int)(presentedFrame >= f.startFrame ? presentedFrame - f.startFrame : 0) + (f.increase == 0 ? 1 : 0);
+		while (f.type != FADE_NONE && f.curFrame < due)
 		{
-			v = f.minV + (f.maxV - f.minV) * (float)(f.elapsed / f.inMs);
+			updateFades();
 		}
-		else if (f.elapsed < f.inMs + f.holdMs)
+		// W3DStatusCircle::Render's tail (RW 0x48E0EE ~ BFME2 0x8E7A4): latched once per logic frame, previous := current, current :=
+		// the step value (0 once the type is gone); a fade set since (retail's m_fadeActive) snaps previous to current. Then the draw
+		// lerps previous -> current by the frame fraction; FADE_NONE draws nothing (fadeType() gates the quad)
+		if (presentedFrame != m_fadePresent || f.active)
 		{
-			v = f.maxV;
+			m_fadePrev = m_fadeCur;
+			m_fadeCur = f.type == FADE_NONE ? 0.0f : f.curValue;
+			if (f.active)
+			{
+				m_fadePrev = m_fadeCur;
+			}
+			m_fadePresent = presentedFrame;
 		}
-		else if (f.elapsed < f.inMs + f.holdMs + f.outMs)
-		{
-			v = f.maxV - (f.maxV - f.minV) * (float)((f.elapsed - f.inMs - f.holdMs) / f.outMs);
-		}
-		else
-		{
-			// lane CAMP-1: ZH ScriptEngine::updateFades ends a fade with FADE_NONE: no fade is applied any more (not the last value: the Amon Sul intro's
-			// CAMERA_FADE_SUBTRACT(1, 0, 0, 0, 0) left the view black)
-			v = 0.0f;
-			f.active = false;
-		}
-		m_fade = clamp01(v);
+		m_fade = m_fadePrev < 0.0f ? m_fadeCur : m_fadePrev + (m_fadeCur - m_fadePrev) * (float)alpha;
 	}
 }

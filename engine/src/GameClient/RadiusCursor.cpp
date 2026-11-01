@@ -175,7 +175,7 @@ bool run(ArchiveFileSystem *fs, const std::string &path, const std::string *memo
 	state.resourceUi = &ui;
 	messages = PlayerMessageSettings();
 	state.messages = &messages;
-	RegisterRecordingBlockStubs(env.blocks, recorder, { "InGameUI" }, StubExtent::Lenient);
+	RegisterRecordingBlockStubs(env.blocks, recorder, { "InGameUI" }, StubExtent::LenientAfterEnd);
 	env.blocks.registerBlock("InGameUI", [&state](INI *ini) {
 		state.inGameUi = true;
 		ini->initFromINI(&state, kInGameUiFields);

@@ -945,10 +945,10 @@ TEST_CASE("GlobalLighting: light order within a time of day, shadow colour after
 		CHECK(g.flagDBD == 1);
 		CHECK(g.vecC[2] == 0.5f);
 		CHECK(g.shadowColor == 0x7FA0A0A0u);
-		CHECK(g.hasV8Extra == (version == 8));
+		CHECK(g.hasTerrainLightScale == (version == 8));
 		if (version == 8)
 		{
-			CHECK(g.v8Extra[1] == 0.75f);
+			CHECK(g.terrainLightScale[1] == 0.75f);
 		}
 	}
 	// an unlisted version is refused rather than guessed
@@ -1002,17 +1002,18 @@ TEST_CASE("EnvironmentData v2/v3, NamedCameras, CameraAnimationList (free + look
 	CHECK(fa.startOffset == 5);
 	REQUIRE(fa.keys.size() == 1);
 	CHECK(fa.keys[0].frame == 7);
-	CHECK(fa.keys[0].interp == "catm");
+	CHECK(fa.keys[0].interp == CAMERA_INTERP_CATM);
 	CHECK(fa.keys[0].quat[3] == 1.0f);
-	CHECK(fa.keys[0].fovLike == 55.0f);
+	CHECK(fa.keys[0].fov == 55.0f);
 	const CameraAnimation &la = m.chunks.cameraAnimations[1];
 	CHECK(la.type == "look");
 	REQUIRE(la.keys.size() == 1);
 	CHECK(la.keys[0].roll == 0.5f);
-	CHECK(la.keys[0].fovLike == 45.0f);
+	CHECK(la.keys[0].interp == CAMERA_INTERP_LINE);
+	CHECK(la.keys[0].fov == 45.0f);
 	REQUIRE(la.lookAtKeys.size() == 1);
 	CHECK(la.lookAtKeys[0].frame == 9);
-	CHECK(la.lookAtKeys[0].interp == "line");
+	CHECK(la.lookAtKeys[0].interp == CAMERA_INTERP_LINE);
 	CHECK(la.lookAtKeys[0].lookAt[2] == 9.0f);
 	REQUIRE(m.chunks.waypointLinks.size() == 2);
 	CHECK(m.chunks.waypointLinks[0].from == 1);

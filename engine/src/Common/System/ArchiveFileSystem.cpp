@@ -9,9 +9,11 @@
 #include "Common/AsciiString.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <mutex>
 
 using AsciiStringUtil::nextToken;
 
@@ -240,6 +242,10 @@ std::string ArchiveFileSystem::getArchiveFilenameForFile(const std::string &file
 
 bool ArchiveFileSystem::doesFileExist(const std::string &filename) const
 {
+	if (m_readTrace)
+	{
+		trace("exists", filename); // lane PROFILE-3
+	}
 	// RW 0xA14AEB: archives, then the local file system; with the flag the mod folder answers too (the order does not matter for a yes / no)
 	if ((m_preferLocalFiles && m_modLoose.find(filename)) || derived(filename))
 	{
@@ -314,8 +320,24 @@ std::string ArchiveFileSystem::findLocalFile(const std::string &filename) const
 	return fs::is_regular_file(at, ec) ? at.u8string() : std::string();
 }
 
+void ArchiveFileSystem::trace(const char *what, const std::string &path) const
+{
+	std::string key = std::string(what) + " ";
+	for (char c : path)
+	{
+		key += c == '/' ? '\\' : (char)std::tolower((unsigned char)c);
+	}
+	static std::mutex lock; // the peer's logic worker may read beside the main thread
+	const std::lock_guard<std::mutex> hold(lock);
+	m_readTrace->insert(key);
+}
+
 bool ArchiveFileSystem::readFile(const std::string &filename, std::vector<std::uint8_t> &out, std::string *error)
 {
+	if (m_readTrace)
+	{
+		trace("read", filename); // lane PROFILE-3
+	}
 	if (const DerivedFile *d = derived(filename))
 	{
 		out = d->bytes;
@@ -403,6 +425,10 @@ bool ArchiveFileSystem::readFile(const std::string &filename, std::vector<std::u
 void ArchiveFileSystem::getFileListInDirectory(const std::string &currentDirectory, const std::string &originalDirectory,
 	const std::string &searchName, FilenameList &filenameList, bool searchSubdirectories) const
 {
+	if (m_readTrace)
+	{
+		trace("list", originalDirectory + searchName); // lane PROFILE-3
+	}
 	// RW 0xA14D2B: with the flag, the mod folder's files below the directory join the union first (the set keeps the first spelling of a name)
 	if (m_preferLocalFiles && !m_modLoose.files.empty())
 	{

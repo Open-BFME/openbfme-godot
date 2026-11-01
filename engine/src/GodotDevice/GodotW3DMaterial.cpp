@@ -11,7 +11,9 @@
 #include "Common/AsciiString.h"
 #include "GameEngineDevice/W3DDevice/GameClient/W3DObjectLighting.h"
 #include "GameEngineDevice/W3DDevice/GameClient/W3DHardwareFog.h"
+#include "Libraries/WWVegas/WW3D2/assetmgr.h"
 #include "Libraries/WWVegas/WW3D2/shader.h"
+#include "Libraries/WWVegas/WW3D2/w3dfxconvert.h"
 #include "Libraries/WWVegas/WW3D2/textureloader.h"
 
 #include <godot_cpp/classes/image.hpp>
@@ -174,6 +176,7 @@ void W3D_Ensure_Light_Globals()
 		return;
 	}
 	registered = true;
+	rs->global_shader_parameter_add(StringName("w3d_shadow"), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4(1.0f, 1.0f, 1.0f, 0.0f));
 	if (samplerPolicy() == W3DSamplerPolicy::Metal16)
 	{
 		UtilityFunctions::print("W3D [MAC-10 Metal16 limitation]: repeating mipmapped textures use linear-mipmap filtering instead of anisotropy (Godot 4.7.2 binds anisotropic-repeat at Metal slot 17; limit 15). Clamped textures retain anisotropy; simulation unchanged.");
@@ -240,14 +243,26 @@ void W3D_Set_Occlusion(bool on, const Ref<Texture2D> &colors)
 	}
 }
 
+namespace
+{
+float s_swayScale = 1.0f; // lane WEATHERFX-1: W3D_Set_Sway_Scale
+}
+
+void W3D_Set_Sway_Scale(double scale)
+{
+	s_swayScale = (float)scale;
+}
+
 void W3D_Set_Sway_Offsets(const float offsets[10][3])
 {
 	W3D_Ensure_Light_Globals();
 	if (RenderingServer *rs = RenderingServer::get_singleton())
 	{
+		const float k = s_swayScale;
 		for (int i = 0; i < 10; ++i)
 		{
-			rs->global_shader_parameter_set(StringName(String("w3d_sway") + String::num_int64(i + 1)), Vector4(offsets[i][0], offsets[i][1], offsets[i][2], 0.0f));
+			rs->global_shader_parameter_set(StringName(String("w3d_sway") + String::num_int64(i + 1)),
+				k == 1.0f ? Vector4(offsets[i][0], offsets[i][1], offsets[i][2], 0.0f) : Vector4(offsets[i][0] * k, offsets[i][1] * k, offsets[i][2] * k, 0.0f));
 		}
 	}
 }
@@ -326,6 +341,21 @@ int W3DMaterialFactory::Get_Texture_Reduction()
 	return g_textureReduction;
 }
 
+namespace
+{
+bool g_shaderMaterialReplacement = true; // see Set_Shader_Material_Replacement
+}
+
+void W3DMaterialFactory::Set_Shader_Material_Replacement(bool on)
+{
+	g_shaderMaterialReplacement = on;
+}
+
+bool W3DMaterialFactory::Get_Shader_Material_Replacement()
+{
+	return g_shaderMaterialReplacement;
+}
+
 bool W3DMaterialFactory::Reduce_Image(Ref<Image> &image, int reduction)
 {
 	if (image.is_null() || reduction <= 0 || !image->has_mipmaps())
@@ -396,6 +426,22 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 		}
 	}
 	TextureResolution res = Resolve_Packed_W3D_Texture(name, [&](const std::string &p) { return Fs.doesFileExist(p); }, isBfme1Data(Fs)); // community PR #36: the archives' layout
+	bool isPng = false;
+	if (!res.Found && !isBfme1Data(Fs) && name.size() > 4)
+	{
+		// lane WOTR-2 [inference, as the W3DModelBuilder's WOTR-1 fallback]: a few retail textures exist only as .png in the compiled folder
+		// (LivingMap's LM_MinasTirith); the compiled-only .jpg ones (LM_Smoke, EXLavaSeq) resolve through Resolve_Packed_W3D_Texture above
+		const std::string dds = W3D_Compiled_Texture_Path(name);
+		const std::string png = dds.size() > 4 ? dds.substr(0, dds.size() - 4) + ".png" : std::string();
+		res.Tried.push_back(png);
+		if (!png.empty() && Fs.doesFileExist(png))
+		{
+			res.Found = true;
+			res.Path = png;
+			res.IsDDS = false;
+			isPng = true;
+		}
+	}
 	if (!res.Found)
 	{
 		if (!quietWhenMissing)
@@ -430,7 +476,9 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	Ref<Image> image;
 	image.instantiate();
 	Error err;
-	if (res.Path.size() >= 4 && res.Path.substr(res.Path.size() - 4) == ".jpg")
+	if (isPng)
+		err = image->load_png_from_buffer(buffer);
+	else if (res.Path.size() >= 4 && res.Path.substr(res.Path.size() - 4) == ".jpg")
 	{
 		AptArchiveFileSource source(Fs);
 		bool paired = false;
@@ -584,6 +632,7 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 	bool hasInfo[2] = { false, false };
 	std::string normalMapName;
 	std::shared_ptr<TextureMapperClass> simpleUv; // RENDER-2: simple.fxo's TexCoordTransform_0 as the stage 0 matrix
+	W3DFxConversionSurface conv; // classic surfaces: how retail's conversion and house colour recolour see the mesh
 
 	if (surf.Kind == MATERIAL_CLASSIC)
 	{
@@ -600,6 +649,34 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 		key.DetailColor = st.DetailColorFunc;
 		key.DetailAlpha = st.DetailAlphaFunc;
 		key.Unshaded = st.PriGradient == W3D_GRADIENT_DISABLE;
+		key.SecGradient = st.SecGradient;
+		// the mesh's pass-0 surface as retail's conversion and its house colour recolour judge it (w3dfxconvert.h)
+		conv.Shader = &surf.Shader;
+		conv.HasVertexMaterial = surf.HasVertexMaterial;
+		conv.PassCount = 0;
+		conv.Pass0Surfaces = 0; // one draw surface per (pass, shader, vertex material, textures): a second one in pass 0 is a material / shader / texture array
+		const MeshDrawSurface *first = nullptr;
+		for (const MeshDrawSurface &other : mesh.Surfaces)
+		{
+			conv.PassCount = std::max(conv.PassCount, other.Pass + 1);
+			if (other.Pass != 0) continue;
+			++conv.Pass0Surfaces;
+			if (!first) first = &other;
+			else if (other.Stage[0].TextureName != first->Stage[0].TextureName) conv.Pass0TexturesDiffer = true;
+		}
+		for (int s = 0; s < 2; ++s)
+		{
+			conv.StageTexture[s] = surf.Stage[s].HasTexture;
+			conv.MapperType[s] = surf.Stage[s].MapperType;
+			conv.MapperArgs[s] = surf.Stage[s].MapperArgs;
+		}
+		if (g_shaderMaterialReplacement)
+		{
+			// RW 0x516A30 / MeshModelClass::Register_For_Rendering: the conversion to DefaultW3D.fx
+			key.ConvertedFx = W3D_Fx_Conversion_Refusal(conv).empty();
+			const std::string stop = W3D_Fx_Conversion_Stop(conv); // S-6020
+			if (!stop.empty()) out.Notes.push_back(stop);
+		}
 		alphaRef = st.AlphaRef / 255.0f - 0.5f / 255.0f; // GREATEREQUAL on an 8 bit value
 		if (st.PriGradient == W3D_GRADIENT_ADD) out.Notes.push_back("primary gradient ADD drawn as a modulated colour");
 		if (st.NeverDraws) out.Notes.push_back("depth function NEVER: nothing passes the depth test");
@@ -611,6 +688,17 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 			emissive = Color(vm.Emissive.R / 255.0f, vm.Emissive.G / 255.0f, vm.Emissive.B / 255.0f, 1.0f);
 			specColor = Color(vm.Specular.R / 255.0f, vm.Specular.G / 255.0f, vm.Specular.B / 255.0f, 1.0f);
 			shininess = vm.Shininess;
+		}
+		if (key.ConvertedFx && st.PriGradient == W3D_GRADIENT_DISABLE)
+		{
+			// MeshMatDescFXShaderConversion.cpp:286-327 / RW 0x599865-0x599a62: useMaterialColors = Get_Lighting() && primary gradient != 0, so an unlit surface
+			// hands DefaultW3D.fx ColorAmbient / ColorDiffuse / ColorSpecular as the record's zero vector (the record constructor RW 0x550B8C clears it), ColorEmissive
+			// 1, 1, 1 and Opacity 1.0; the vertex shader then outputs v0 = 0.5 * vertex colour (alpha: vertex colour alpha) and v1 = 0 (W3DShaderKey: the secondary
+			// texture code reads v_lit0 / v_lit1)
+			diffuse = Color(0, 0, 0, 1);
+			ambientMat = Color(0, 0, 0, 1);
+			emissive = Color(1, 1, 1, 1);
+			specColor = Color(0, 0, 0, 1);
 		}
 		for (int s = 0; s < 2; ++s)
 		{
@@ -656,6 +744,26 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 			{
 				simpleUv.reset(new SimpleFxUvMapper(uvTransform));
 			}
+		}
+		else if (AsciiStringUtil::lowered(fx.TypeName) == "watershader.fx")
+		{
+			// WOTR-2 [S-035 approximation]: a WaterShader.FX mesh (LivingMap's WATER) draws its MaterialColorDiffuse (rgb, alpha) lit like an untextured
+			// classic material and alpha blended without depth writes; the bump, environment, wave and PCA textures and the specular are not drawn.
+			// Before this the effect fell to the normalmapped path with no texture: a white (on the strategic map, pink-lit) sheet.
+			key.Fx = false;
+			key.Texturing = false;
+			key.PriGradient = W3D_GRADIENT_MODULATE;
+			key.Blend = W3D_GODOT_BLEND_MIX;
+			key.DepthWrite = false;
+			for (const MeshShaderMaterialProperty &p : fx.Properties)
+			{
+				if (AsciiStringUtil::lowered(p.Name) == "materialcolordiffuse")
+				{
+					diffuse = Color(p.Float[0], p.Float[1], p.Float[2], p.Float[3]);
+					ambientMat = Color(p.Float[0], p.Float[1], p.Float[2], 1.0f);
+				}
+			}
+			out.Notes.push_back("WaterShader.FX drawn as its MaterialColorDiffuse (S-035)");
 		}
 		else
 		{
@@ -746,8 +854,12 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 			out.Errors.insert(out.Errors.end(), hcErrors.begin(), hcErrors.end());
 			if (hcTex.is_valid())
 			{
+				const std::string houseStop = W3D_House_Color_Stop(conv, key.ConvertedFx); // S-6022
+				if (!houseStop.empty()) out.Notes.push_back(houseStop);
+				const std::string specStop = W3D_FixedFunction_House_Color_Stop(key.ConvertedFx, key.PriGradient != W3D_GRADIENT_DISABLE, key.SecGradient); // S-6023
+				if (!specStop.empty()) out.Notes.push_back(specStop);
 				key.HouseColor = true;
-				out.Notes.push_back("house colour texture " + *hc + " masks the team colour (hypothesis S-119)");
+				out.Notes.push_back("house colour texture " + *hc + ": the recoloured texel is combined with the lit base by its alpha (" + std::string(key.ConvertedFx ? "DefaultW3D.fx HouseColorEnable" : "fixed-function BLENDTEXTUREALPHA") + ", S-022)");
 			}
 			else
 			{

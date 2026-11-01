@@ -4,7 +4,7 @@
 // hover area (Options' "tooltip2DShadows", Skirmish's columns, the main menu's buttons through AptButtonTooltipMap.ini), drawn by GuiFX.apt's ToolTip clip.
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; the BFME2 decomp is the donor at the addresses marked tier A / B):
-//   * the hover (AptPlayer::HandleOverButtons RW 0x624C68, BFME2 decomp reverse/attempts/0x00224f6c.cpp, tier A): the hovered button's target path below its
+//   * the hover (AptPlayer::HandleOverButtons RW 0x624C68, BFME2 decomp AptPlayer.cpp, tier A): the hovered button's target path below its
 //     level ("SoloPlayNav/Skirmish/bttn"; an unnamed button gives an empty last name, so the path ends with '/') goes first to the level's over-button
 //     handlers, then "<movie without its extension>/<path>" to the global ones (the hero bar, the spell book: InGameHud); a name that does not end with '/'
 //     goes to the tooltip function (RW 0x6235E2, decomp attempt 0x002238e6.cpp): the name is replaced by its ButtonMap entry when it has one (the map at

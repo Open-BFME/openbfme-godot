@@ -106,6 +106,11 @@ const FieldParse kBezierParse[] = {
 	{ "PostLandingEmotionRadius", INI::parseReal, nullptr, BP_OFF(m_postLandingEmotionRadius) },
 	{ nullptr, nullptr, nullptr, 0 }
 };
+// lane BFME2MODE-0: BFME2 1.06's row that RotWK's table 0xC58368 dropped (BFME2 table 0xC41B58, after PreLandingEmotionRadius), found only in BFME2 1.06 data
+const FieldParse kBezierBfme2Rows[] = {
+	{ "PreLandingEmotionAffectsAllies", INI::parseBool, nullptr, BP_OFF(m_preLandingEmotionAffectsAllies) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
 #undef BP_OFF
 
 // RW 0x6CA03E getMinimumAttackRange: the template's MinimumAttackRange less 2.5, never below 0
@@ -218,7 +223,20 @@ float ProjectileInvSqrt(float value)
 
 void BezierProjectileBehaviorModuleData::buildFieldParse(MultiIniFieldParse &p)
 {
+	static const Bfme2FieldRowsRegistration bfme2Rows(kBezierParse, kBezierBfme2Rows); // lane BFME2MODE-0
 	p.add(kBezierParse);
+}
+
+// lane BFME2MODE-0 (AGENTS.md): the pre-landing scare's relationship mask, the projectile behaviour's edition variant. RotWK passes the constant 7 (allies, enemies,
+// neutral; RW 0x85F31A .. 0x85F3F0); BFME2 1.06 builds it from PreLandingEmotionAffectsAllies (BFME2 0x85C2B8 .. 0x85C2D4 in update 0x85C226, Rva 0x45C226,
+// BezierProjectileBehaviorUpdate.cpp:132: 2 (neutral), 6 (neutral | allies) when the field is set, then | 1 (enemies))
+int BezierProjectileBehaviorModuleData::preLandingRelationshipMask(GameEdition edition) const
+{
+	if (edition == GameEdition::BFME2_106)
+	{
+		return (m_preLandingEmotionAffectsAllies ? 6 : 2) | 1;
+	}
+	return 7;
 }
 
 void ProjectileModules::registerAll(ModuleFactory &modules)
@@ -560,9 +578,10 @@ UpdateSleepTime BezierProjectileBehavior::update()
 			PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); });
 			const PartitionHits hits =
 				logic.partition().iterateObjectsInRange(m_flightPathEnd, d->m_preLandingEmotionRadius, FROM_CENTER_3D, { &alive }, ITER_SORTED_NEAR_TO_FAR);
+			const int relationships = d->preLandingRelationshipMask(logic.edition()); // lane BFME2MODE-0: 7 in RotWK (every object)
 			for (const PartitionHit &hit : hits)
 			{
-				if (hit.object != obj)
+				if (hit.object != obj && (relationships & (1 << (int)obj->getRelationship(*hit.object))) != 0)
 				{
 					EmotionTrackerUpdate::requestEmotion(*hit.object, d->m_preLandingEmotion, obj, 1);
 					++logic.combat().counters().projectilePreLandingEmotions;
@@ -826,8 +845,8 @@ void BezierProjectileBehavior::backOff(const Object &other)
 	delta.y = SimMath::mulf32(delta.y, 0.1f);
 	delta.z = SimMath::mulf32(delta.z, 0.1f);
 	const float angle = obj->getOrientation();
-	const std::vector<ObjectGeometry::Shape> &own = ObjectGeometry::cachedShapesOf(*obj->getTemplate());
-	const std::vector<ObjectGeometry::Shape> &theirs = ObjectGeometry::cachedShapesOf(*other.getTemplate());
+	const std::vector<ObjectGeometry::Shape> &own = obj->geometryShapes(); // lane MODCOMPAT-MOD1: the objects' own GeometryInfo (Object + 0xA8)
+	const std::vector<ObjectGeometry::Shape> &theirs = other.geometryShapes();
 	int i = 0;
 	bool collision = true;
 	while (collision && i++ <= 12)

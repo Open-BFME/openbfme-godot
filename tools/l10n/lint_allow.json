@@ -127,5 +127,12 @@
   },
   "launcher/scripts/core/asset_packs.gd": {
     "# asset packs the game leaves out (one folder name per line; the launcher's Mods page writes this file)\\n": "content of asset-packs/disabled.txt, the file the game reads"
+  },
+  "launcher/scripts/core/launcher_crash.gd": {
+    "OpenBFME crash report: the launcher, %s, build %s": "the crash report's header line for the OpenBFME team (sent to the crash service, never shown)",
+    "its last lines of launcher.log follow": "the crash report's header line for the OpenBFME team (sent to the crash service, never shown)"
+  },
+  "launcher/scripts/net/crash_client.gd": {
+    "*": "the game's crash client byte for byte (tools/release/test_crash_upload.py): log lines, protocol text and error codes, never shown to the player"
   }
 }

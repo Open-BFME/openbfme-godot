@@ -150,14 +150,14 @@ TEST_CASE("profile2 simdata cache: a mount's digest is computed once per key, th
 	std::remove(cache.c_str());
 }
 
-TEST_CASE("profile2 identity: version 2 matches on everything but the archive lines")
+TEST_CASE("profile2 identity: a product identity (version 3 since PROFILE-3) matches on everything but the archive lines")
 {
 	const auto disc = archivesNamed({ "INI.big", "_patch201.big", "Textures0.big" });
 	const auto aio = archivesNamed({ "INI.big", "Textures0.big", "Textures_aio.big" });
 	const ProfileIdentity a = ProfileIdentity::compute(disc, RandomAlgorithm::ZH_CarryChain, {}, SimulationProfile::Faithful, {}, "0123456789abcdef0123456789abcdef");
 	const ProfileIdentity b = ProfileIdentity::compute(aio, RandomAlgorithm::ZH_CarryChain, {}, SimulationProfile::Faithful, {}, "0123456789abcdef0123456789abcdef");
-	CHECK(a.version() == 2);
-	CHECK(a.text.rfind("openbfme-profile 2\n", 0) == 0);
+	CHECK(a.version() == 3); // lane PROFILE-3
+	CHECK(a.text.rfind("openbfme-profile 3\n", 0) == 0);
 	CHECK(a.text.find("\nsimdata 0123456789abcdef0123456789abcdef\narchive 0 rotwk:INI.big ") != std::string::npos); // (A): the archive lines stay
 	CHECK(a.digest == b.digest);
 	CHECK(a == b);
@@ -175,8 +175,11 @@ TEST_CASE("profile2 identity: version 2 matches on everything but the archive li
 	// every other line still counts
 	const ProfileIdentity uber = ProfileIdentity::compute(disc, RandomAlgorithm::ZH_CarryChain, {}, SimulationProfile::Uber, {}, "0123456789abcdef0123456789abcdef");
 	CHECK(uber != a);
-	const ProfileIdentity mod = ProfileIdentity::compute(disc, RandomAlgorithm::ZH_CarryChain, {}, SimulationProfile::Faithful, { "mod BigMod 00" }, "0123456789abcdef0123456789abcdef");
-	CHECK(mod != a);
+	// lane PROFILE-3: a mod's name no longer counts (its data is in the simdata line); in the version 2 format it still does
+	const ProfileIdentity mod = ProfileIdentity::compute(disc, RandomAlgorithm::ZH_CarryChain, {}, SimulationProfile::Faithful, { "mod folder BigMod" }, "0123456789abcdef0123456789abcdef");
+	CHECK(mod == a);
+	auto asV2 = [](const ProfileIdentity &p) { return ProfileIdentity::fromText("openbfme-profile 2" + p.text.substr(p.text.find('\n'))); };
+	CHECK(asV2(mod) != asV2(a));
 }
 
 TEST_CASE("profile2 identity: version 1 texts keep their digest; a version 2 identity reads as the version 1 text it extends")
@@ -190,7 +193,7 @@ TEST_CASE("profile2 identity: version 1 texts keep their digest; a version 2 ide
 	// "openbfme-profile 2" without a simdata line is not version 2: the whole text counts
 	CHECK(ProfileIdentity::fromText("openbfme-profile 2\narchive 0 x\n").version() == 1);
 
-	const ProfileIdentity v2 = ProfileIdentity::compute(disc, RandomAlgorithm::ZH_CarryChain, {}, SimulationProfile::Faithful, {}, "0123456789abcdef0123456789abcdef");
+	const ProfileIdentity v2 = ProfileIdentity::compute(disc, RandomAlgorithm::ZH_CarryChain, {}, SimulationProfile::Faithful, {}, "0123456789abcdef0123456789abcdef"); // version 3 since PROFILE-3
 	CHECK(ProfileIdentity::inFormatOf(v2, v1).text == v1.text);
 	CHECK(ProfileIdentity::inFormatOf(v2, v1) == v1);
 	CHECK(ProfileIdentity::inFormatOf(v2, v2).text == v2.text);
@@ -245,12 +248,13 @@ TEST_CASE("profile2 retail: the pure 2.01 mount's simulation data digest (the fi
 	const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 	std::printf("profile2 retail: simdata %s over %zu files in %.0f ms\n", digest.c_str(), files, ms);
 	CHECK(digest.size() == 32);
-	CHECK(files == 15521); // the pure 2.01 mount: data\ini\, data\scripts\, the maps' .map / .ini and art\w3d\'s models
+	CHECK(files == 15780); // the pure 2.01 mount: data\ini\, data\scripts\, bases\, libraries\, the maps' files but pictures / strings and art\w3d\'s
+	                       // models (15521 before PROFILE-3 added bases\, libraries\ and the maps' other files)
 	std::string again;
 	REQUIRE(SimulationData::digest(*m->fs, again, &error));
 	CHECK(again == digest);
 	const ProfileIdentity p = ProfileIdentity::compute(m->identityArchives, RandomAlgorithm::ZH_CarryChain, {}, SimulationProfile::Faithful, {}, digest);
-	CHECK(p.version() == 2);
+	CHECK(p.version() == 3); // lane PROFILE-3
 }
 
 namespace

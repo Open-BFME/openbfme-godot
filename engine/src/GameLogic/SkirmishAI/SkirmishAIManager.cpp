@@ -38,7 +38,7 @@ void SkirmishAIManager::loadWallLibrary(const std::vector<MapObject> &objects)
 {
 	for (int id : m_wallTriggerIds)
 	{
-		m_logic.scriptEngine().disablePolygonTrigger(id);
+		m_logic.scriptEngine().removePolygonTrigger(id);
 	}
 	m_wallTriggerIds.clear();
 	m_wallLibrary = AIWallBuilder::loadWallLibrary(objects);
@@ -53,7 +53,7 @@ void SkirmishAIManager::loadWallLibrary(const std::vector<MapObject> &objects)
 				const Player *owner = object.getControllingPlayer();
 				if (!owner) { throw std::logic_error("AIWall: trigger object has no controlling player"); }
 				AIWallBuilder::recordEntry(m_wallEntryCounts.at(index), owner->getPlayerIndex(), entered);
-			}));
+			}, true));
 		}
 	}
 }
@@ -571,7 +571,7 @@ void SkirmishAIManager::reset()
 	m_groups.clear();
 	m_infoPlayers.clear();
 	m_captureFlags.clear();
-	for (int id : m_wallTriggerIds) { m_logic.scriptEngine().disablePolygonTrigger(id); }
+	for (int id : m_wallTriggerIds) { m_logic.scriptEngine().removePolygonTrigger(id); }
 	m_wallTriggerIds.clear();
 	m_wallEntryCounts.clear();
 	m_wallLibrary.clear();

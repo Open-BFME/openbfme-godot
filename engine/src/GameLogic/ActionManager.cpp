@@ -10,7 +10,11 @@
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Object/Contain/HordeContainRuntime.h"
+#include "GameLogic/Object/Contain/OpenContainRuntime.h"
 #include "GameLogic/Module/CastleModules.h"
+#include "GameLogic/Module/ProductionUpdate.h"
+#include "Common/Upgrade.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
@@ -28,9 +32,8 @@
 namespace
 {
 const char *const kStopUpgrade =
-	"[S-1871] ActionManager::canDoSpecialPowerAtLocation (RW 0x75CF21): a button with an Upgrade whose command is not FIRE_WEAPON (the production queue "
-	"test RW 0x68C327 and RW 0x694914 / 0x691421) and a FIRE_WEAPON button (RW 0x75CC3E: Object + 0x478, unidentified) are not ported: the AI's location "
-	"run answers no";
+	"[S-1871] ActionManager::canDoSpecialPowerAtLocation (RW 0x75CF21): a FIRE_WEAPON button (RW 0x75CC3E: Object + 0x478, unidentified) is not ported: "
+	"it answers no (lane MODCOMPAT-AI ported the upgrade buttons: the production queue test RW 0x68C327 and RW 0x694914 / 0x691421)";
 const char *const kStopLayer =
 	"[S-1872] ActionManager RW 0x82C366 (an AI moving along its path, AIUpdate + 0x1FC in {1, 4} with a path whose node + 0x20 is set, on a pathfinder cell "
 	"whose bits 4 .. 9 exceed 0x10 refuses every power) is ported (lane WALL-2: walls, portals); the path's waypoint test (RW 0x765522) is not cached at + 0x24";
@@ -42,6 +45,12 @@ const char *const kStopTypeTest =
 	"(RW 0x76A247), 0x41 (RW 0x82E252), 0x49 (RW 0x680A75 layer) and 0x57 (the rebuild scan RW 0x82E93C) are not ported, and the summons' spot test (0x55, 0x56, "
 	"0x5B, 0x5D .. 0x5F, 0x73, 0x76, 0x78, 0x7B, 0x7C, 0x7E, 0x96, 0x9A: RW 0x82E586) is ported (lane SUMMONLOC-1: the partition's geometry overlap, distance "
 	"type 4, on the template's shapes, S-1020): the unported types answer no (counted per type)";
+
+const char *const kStopObjectTypeTest =
+	"[S-7140] ActionManager::canDoSpecialPowerAtObject (RW 0x82D925, lane MODCOMPAT-MOD1): the per-power-type object tests of the capture types (0x1D "
+	"and the capture branch of 0x1A / 0x1D: RW 0x82D0A1), 0x33 (RW 0x82D780), 0x8A (a STRUCTURE's canRepairObject RW 0x82D7F2) and the grab types' fake "
+	"tree target (an object id 0x5F5E0FC .. 0x5F5E0FF: the GrabPassengerSpecialPower's AllowTree and the template's byte + 0x5FB, RW 0x82DB01 .. 0x82DB5D) are "
+	"not ported: they answer no (counted per type); the grab types' object test (RW 0x82DB6A .. 0x82DC80) is ported";
 
 int kindBit(const char *name)
 {
@@ -171,8 +180,9 @@ int shroudAt(Object &obj, const Coord3D &loc)
 	return (int)logic.shroud()->getStatusAt(p->getPlayerIndex(), loc.x, loc.y);
 }
 
-// RW 0x897E01 with a location: the module's requirements (RW 0x8969E5), UseDistanceFromCommandCenter, RW 0x896DB4, the special power update modules
-bool moduleAllows(Object &obj, SpecialPowerModuleInterface &m, const SpecialPowerTemplate &t, const Coord3D &loc)
+// RW 0x897E01 (slot 0x48): the module's requirements (RW 0x8969E5), UseDistanceFromCommandCenter (only with a location: the object form RW 0x82DAAB passes
+// none), RW 0x896DB4, the special power update modules
+bool moduleAllows(Object &obj, SpecialPowerModuleInterface &m, const SpecialPowerTemplate &t, const Coord3D *locOrNull)
 {
 	GameLogic &logic = obj.logic();
 	if (!m.requirementsMet())
@@ -180,8 +190,9 @@ bool moduleAllows(Object &obj, SpecialPowerModuleInterface &m, const SpecialPowe
 		return false;
 	}
 	const SpecialPowerModule *spm = dynamic_cast<const SpecialPowerModule *>(&m);
-	if (spm && spm->spData()->m_useDistanceFromCommandCenter)
+	if (locOrNull && spm && spm->spData()->m_useDistanceFromCommandCenter)
 	{
+		const Coord3D &loc = *locOrNull;
 		// RW 0x897D2D: no controlling player -> passes; else the player's COMMANDCENTER objects (RW 0x6B00F3: template + 0x10A bit 1) in the player's object
 		// walk; one whose position is within DistanceFromCommandCenter (Coord3D::length RW 0x403111 of loc - position) -> passes
 		const Player *player = obj.getControllingPlayer();
@@ -407,6 +418,110 @@ bool unportedTypeTest(GameLogic &logic, int type)
 	logic.noteStop(kStopTypeTest);
 	return false;
 }
+// RW 0x82D925's unported per-type tests (S-7140): no, counted
+bool unportedObjectTypeTest(GameLogic &logic, int type, bool *unported)
+{
+	ActionManager::Stats &s = ActionManager::stats();
+	++s.objectTypeTests;
+	if (type >= 0 && type < (int)s.unportedObjectTypeTests.size())
+	{
+		++s.unportedObjectTypeTests[(size_t)type];
+	}
+	if (unported)
+	{
+		*unported = true;
+	}
+	logic.noteStop(kStopObjectTypeTest);
+	return false;
+}
+
+// RW 0x68DF46 (Object + 0x3C0, RW 0x68CEFE: bit `type` of the object's special power bits). INFERENCE (ZH Object::Object fills m_specialPowerBits
+// from each module's getSpecialPower()->getSpecialPowerTemplate()->getSpecialPowerType()): some module of the object has a special power of that type
+// lane MODCOMPAT-MOD1: RW 0x82DAF0 .. 0x82DC80, the grab types' object test (SPECIAL_GRAB_PASSENGER 0x27 / SPECIAL_GRAB_CHUNK 0x28). A fake tree id (0x5F5E0FC ..
+// 0x5F5E0FF) is the tree branch (S-7140, counted). Else: a WONT_RIDE_WITH_YOU target (status 0x63) is refused; with options bits 0 and 1 both set and the
+// object not a HORDE_MEMBER (status 0x26) the object's contain must allow it by its ManualPickUpFilter (contain slot 0x170, RW 0x865A5C); the object needs a
+// contain; a target inside a container needs that container's horde interface (contain slot 0x7C); a HORDE target gives its first member (horde interface
+// slot 0x48(0, 0, 0.0, 0, 0)), none refuses; another target must not be TAGGED (status 0x3F). A CHUNK_VENDOR (template + 0x118 bit 4) answers only 0x28, a
+// ROCK_VENDOR (+ 0x119 bit 0) only 0x27; then the contain's isValidContainerFor(target, 1, 0) (slot 0x98) decides
+bool grabObjectTest(Object &obj, Object &target, int type, unsigned options, bool *unported)
+{
+	GameLogic &logic = obj.logic();
+	const ObjectID id = target.getID();
+	if ((int)id >= 0x5F5E0FC && (int)id <= 0x5F5E0FF) // RW 0x82DAF3 / 0x82DAFA
+	{
+		return unportedObjectTypeTest(logic, type, unported);
+	}
+	static const int kWontRide = ObjectTemplateInfoBuilder::objectStatusIndex("WONT_RIDE_WITH_YOU"); // 0x63
+	static const int kHordeMember = ObjectTemplateInfoBuilder::objectStatusIndex("HORDE_MEMBER");    // 0x26
+	static const int kTagged = ObjectTemplateInfoBuilder::objectStatusIndex("TAGGED");               // 0x3F
+	if (kWontRide < 0 || kHordeMember < 0 || kTagged < 0)
+	{
+		throw std::logic_error("ActionManager RW 0x82DB6A: an object status of the grab test is unknown");
+	}
+	if (target.testStatus((unsigned)kWontRide))
+	{
+		return false;
+	}
+	ContainModuleInterface *contain = obj.getContain(); // Object + 0x258
+	if ((options & 2u) && (options & 1u) && !obj.testStatus((unsigned)kHordeMember))
+	{
+		const OpenContain *open = dynamic_cast<const OpenContain *>(contain); // slot 0x170 (RW 0x865A5C, OpenContain's)
+		if (!open || !open->manualPickUpAllows(target))
+		{
+			return false; // RW calls slot 0x170 on the contain unchecked; no OpenContain answers no here
+		}
+	}
+	if (!contain)
+	{
+		return false;
+	}
+	if (Object *holder = target.getContainedBy()) // Object + 0x27C
+	{
+		ContainModuleInterface *hc = holder->getContain();
+		if (!hc || !hc->getHordeContainInterface())
+		{
+			return false;
+		}
+	}
+	Object *grabbed = &target;
+	static const int kHorde = kindBit("HORDE"); // template + 0x115 bit 5
+	if (kHorde >= 0 && target.isKindOf((unsigned)kHorde))
+	{
+		ContainModuleInterface *tc = target.getContain();
+		HordeContain *horde = tc && tc->getHordeContainInterface() ? dynamic_cast<HordeContain *>(tc) : nullptr;
+		grabbed = horde ? horde->pickMemberNoPosition(false) : nullptr; // slot 0x48(0, 0, 0.0, 0, 0)
+		if (!grabbed)
+		{
+			return false;
+		}
+	}
+	else if (target.testStatus((unsigned)kTagged))
+	{
+		return false;
+	}
+	static const int kChunkVendor = kindBit("CHUNK_VENDOR"); // template + 0x118 bit 4
+	static const int kRockVendor = kindBit("ROCK_VENDOR");   // template + 0x119 bit 0
+	if ((kChunkVendor >= 0 && grabbed->isKindOf((unsigned)kChunkVendor) && type != 0x28) || (kRockVendor >= 0 && grabbed->isKindOf((unsigned)kRockVendor) && type != 0x27))
+	{
+		return false;
+	}
+	return contain->isValidContainerFor(*grabbed, true, false); // slot 0x98(target, 1, 0)
+}
+
+bool hasSpecialPowerOfType(const Object &obj, int type)
+{
+	for (const std::unique_ptr<BehaviorModule> &m : obj.modules())
+	{
+		const SpecialPowerModuleInterface *sp = m->getSpecialPower();
+		const SpecialPowerTemplate *t = sp ? sp->getSpecialPowerTemplate() : nullptr;
+		if (t && t->getSpecialPowerType() == type)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 // lane SPELL-4: an unported per-type test answers no as before and, for a caller that asks, says so
 bool unportedAnswer(bool *unported, GameLogic &logic, int type)
 {
@@ -426,15 +541,39 @@ Stats &stats()
 	return s;
 }
 
+// lane MODCOMPAT-AI: RW 0x75CF21's first branch: a button whose Upgrade (+ 0x24, the resolved template: an unknown name leaves it null) is set and whose
+// command is not FIRE_WEAPON (+ 0x14 == 0x17) is about buying that upgrade: the object's ProductionUpdate (RW 0x68C327(0); none: no) must hold no upgrade
+// entry (its entries by vslots 0x54 / 0x58: type 2 with an upgrade, + 4 / + 0xC: no), then the object must be affected by the upgrade (RW 0x694914) and
+// not have it (RW 0x691421)
+bool upgradeButtonUsable(Object &obj, const UpgradeTemplate &upgrade)
+{
+	const ProductionUpdateInterface *pu = obj.getProductionUpdate();
+	if (!pu)
+	{
+		return false;
+	}
+	for (const ProductionEntry *e = pu->firstProduction(); e; e = pu->nextProduction(e))
+	{
+		if (e->type == PRODUCTION_UPGRADE && e->upgradeToResearch)
+		{
+			return false;
+		}
+	}
+	return obj.affectedByUpgrade(&upgrade) && !obj.hasUpgrade(&upgrade);
+}
+
+const UpgradeTemplate *buttonUpgrade(const CommandButton &button)
+{
+	return button.m_upgradeName.empty() ? nullptr : Player::resolveUpgrade(button.m_upgradeName, false);
+}
+
 bool canDoSpecialPowerAtLocation(Object &obj, const CommandButton &button, const Coord3D &loc)
 {
 	// RW 0x75CF21(this = button, obj, target 0, loc, source 0)
 	GameLogic &logic = obj.logic();
-	if (!button.m_upgradeName.empty() && button.m_command != GUI_COMMAND_FIRE_WEAPON)
+	if (const UpgradeTemplate *upgrade = buttonUpgrade(button); upgrade && button.m_command != GUI_COMMAND_FIRE_WEAPON)
 	{
-		++stats().upgradeButtons;
-		logic.noteStop(kStopUpgrade);
-		return false;
+		return upgradeButtonUsable(obj, *upgrade);
 	}
 	const std::uint32_t options = button.m_options;
 	if (options & 7u)
@@ -444,6 +583,29 @@ bool canDoSpecialPowerAtLocation(Object &obj, const CommandButton &button, const
 	if (options & COMMAND_OPTION_NEED_TARGET_POS)
 	{
 		return canDoSpecialPowerAtLocation(obj, loc, powerOf(button), options);
+	}
+	if (button.m_command == GUI_COMMAND_FIRE_WEAPON)
+	{
+		++stats().fireWeaponButtons;
+		logic.noteStop(kStopUpgrade);
+		return false;
+	}
+	return canDoSpecialPower(obj, powerOf(button));
+}
+
+bool canUseCommandButton(Object &obj, const CommandButton &button)
+{
+	// lane MODCOMPAT-AI: RW 0x75CF21(this = button, obj, target 0, loc 0, source): the source only reaches RW 0x82D5DA's third argument, which it does not
+	// read; so every source gives this answer
+	GameLogic &logic = obj.logic();
+	if (const UpgradeTemplate *upgrade = buttonUpgrade(button); upgrade && button.m_command != GUI_COMMAND_FIRE_WEAPON)
+	{
+		return upgradeButtonUsable(obj, *upgrade);
+	}
+	const std::uint32_t options = button.m_options;
+	if ((options & 7u) || (options & COMMAND_OPTION_NEED_TARGET_POS))
+	{
+		return false; // a target object or a location is needed and there is none (RW 0x75CF48 .. 0x75CF5A)
 	}
 	if (button.m_command == GUI_COMMAND_FIRE_WEAPON)
 	{
@@ -510,7 +672,7 @@ bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialP
 		return false;
 	}
 	SpecialPowerModuleInterface *m = SpecialPowerModules::findModule(obj, power); // RW 0x68C26D
-	if (!m || !moduleAllows(obj, *m, t, loc))                                  // slot 0x48 (RW 0x897E01)
+	if (!m || !moduleAllows(obj, *m, t, &loc))                                 // slot 0x48 (RW 0x897E01)
 	{
 		return false;
 	}
@@ -691,8 +853,109 @@ bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialP
 	}
 }
 
+bool canDoSpecialPowerAtObject(Object &obj, Object *target, CommandSourceType source, const SpecialPowerTemplate *power, unsigned options,
+                               bool checkSourceRequirements, bool *unported)
+{
+	// RW 0x82D925(obj, target, source, power, options, checkSourceRequirements)
+	if (unported)
+	{
+		*unported = false;
+	}
+	if (!power)
+	{
+		return false;
+	}
+	GameLogic &logic = obj.logic();
+	const SpecialPowerTemplate &t = *power->getFinalOverride(); // RW 0x688D3C
+	const int type = t.getSpecialPowerType();                   // + 0x1C
+	if (checkSourceRequirements && !hasSpecialPowerOfType(obj, type)) // RW 0x68DF46
+	{
+		return false;
+	}
+	SpecialPowerModuleInterface *m = SpecialPowerModules::findModule(obj, power); // RW 0x68C26D
+	const bool isCapture = type == 0x1D || type == 0x1A;
+	const bool filterSet = ObjectFilterMatch::isValid(t.m_objectFilter.get()); // power + 0x60, RW 0x762977
+	if (filterSet && target && !ObjectFilterMatch::allows(logic, *t.m_objectFilter, *target, obj.getControllingPlayer())) // RW 0x7640C1(target, player)
+	{
+		return false;
+	}
+	bool captureOfDead = false;
+	if (isCapture)
+	{
+		if (filterSet)
+		{
+			captureOfDead = true;
+		}
+		else if (target)
+		{
+			// RW 0x82D0A1 (the capture test) decides whether a dead target may be captured: S-7140
+			captureOfDead = unportedObjectTypeTest(logic, type, unported);
+		}
+	}
+	if (!target || (target->isEffectivelyDead() && !captureOfDead)) // Object + 0x458 bit 0
+	{
+		return false;
+	}
+	if (!unitCostMet(obj, t) || movingOnUpperLayer(obj)) // power + 0x80 against slot 0x188; RW 0x82C366
+	{
+		return false;
+	}
+	const Relationship rel = obj.getRelationship(*target); // RW 0x68D7AB
+	if (!m)
+	{
+		return false;
+	}
+	if (checkSourceRequirements && (m->getPercentReady() < 1.0f || !moduleAllows(obj, *m, t, nullptr))) // vslot 8 (fld1; fcomip; ja), vslot 0x48(0)
+	{
+		return false;
+	}
+	// RW 0x82C167(source): the fake tree ids are exempt; scripts are exempt; a human owner's FOGGED / SHROUDED target is refused (S-565)
+	const ObjectID id = target->getID();
+	const bool treeId = (int)id >= 0x5F5E0FC && (int)id <= 99999999;
+	if (!treeId && source != CMD_FROM_SCRIPT && ShroudManager::isShroudedForAction(obj, *target))
+	{
+		return false;
+	}
+	switch (type) // RW 0x82DAE9
+	{
+	case 0x20: case 0x2A: case 0x2D: case 0x31: case 0x3B: case 0x40: case 0x47: case 0x81: case 0x84: case 0x93: case 0x97:
+		return true;
+	case 0x39: case 0x44: case 0x45: case 0x90:
+	{
+		static const int kAirborneTarget = ObjectTemplateInfoBuilder::objectStatusIndex("AIRBORNE_TARGET"); // Object + 0x94 bit 6
+		return !(kAirborneTarget >= 0 && target->testStatus((unsigned)kAirborneTarget));
+	}
+	case 0x82:
+	{
+		if (rel == ENEMIES)
+		{
+			return true;
+		}
+		static const int kDeployedMine = kindBit("DEPLOYED_MINE"); // template + 0x11D bit 4
+		return (rel == ALLIES || rel == NEUTRAL) && kDeployedMine >= 0 && target->isKindOf((unsigned)kDeployedMine);
+	}
+	case 0x27: // RW 0x82DAF0 .. 0x82DC80 (lane MODCOMPAT-MOD1)
+	case 0x28:
+		return grabObjectTest(obj, *target, type, options, unported);
+	case 0x1D: // RW 0x82D0A1
+	case 0x33: // RW 0x82D780
+		return unportedObjectTypeTest(logic, type, unported);
+	case 0x8A:
+	{
+		static const int kStructure = kindBit("STRUCTURE"); // template + 0x108 bit 7
+		if (kStructure < 0 || !target->isKindOf((unsigned)kStructure))
+		{
+			return false;
+		}
+		return unportedObjectTypeTest(logic, type, unported); // RW 0x82D7F2 (canRepairObject, S-1282)
+	}
+	default:
+		return false;
+	}
+}
+
 std::vector<std::string> stopLines()
 {
-	return { kStopUpgrade, kStopLayer, kStopRequirements, kStopTypeTest };
+	return { kStopUpgrade, kStopLayer, kStopRequirements, kStopTypeTest, kStopObjectTypeTest };
 }
 } // namespace ActionManager

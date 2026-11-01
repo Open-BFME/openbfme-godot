@@ -4,6 +4,7 @@
 #include "GameClient/AssetPacks.h"
 
 #include "Common/AsciiString.h"
+#include "Common/Sha256.h"
 
 #include <cstdio>
 #include <memory>
@@ -321,6 +322,48 @@ bool AssetPacks::read(const AssetPackFile &file, std::vector<std::uint8_t> &out,
 			*error = "cannot read asset pack file " + file.pack + "/" + file.relative;
 		}
 		return false;
+	}
+	return true;
+}
+
+// ---- lane SDK-1c: the packs' presentation lines (profile 3, agreed with Anti-cheat) --------------------------------------------------------
+
+bool AssetPacks::identityLines(std::vector<std::string> &out, std::string &error) const
+{
+	out.clear();
+	std::map<std::string, std::vector<std::string>> byPack; // pack name -> its used files' lines
+	auto add = [&](const char *kind, const std::map<std::string, AssetPackFile> &files) {
+		for (const auto &kv : files)
+		{
+			std::vector<std::uint8_t> bytes;
+			if (!read(kv.second, bytes, &error))
+				return false;
+			const auto d = Sha256::hash(bytes.data(), bytes.size());
+			byPack[kv.second.pack].push_back(std::string(kind) + " " + kv.first + " " + HexBytes(d.data(), d.size()));
+		}
+		return true;
+	};
+	if (!add("model", m_models) || !add("texture", m_textures))
+		return false;
+	for (const std::string &name : m_packs)
+	{
+		auto it = byPack.find(name);
+		if (it == byPack.end())
+			continue;
+		std::vector<std::string> &lines = it->second;
+		std::sort(lines.begin(), lines.end());
+		Sha256 h;
+		for (const std::string &l : lines)
+		{
+			h.update(l.data(), l.size());
+			h.update("\n", 1);
+		}
+		const auto d = h.finish();
+		std::string shown = name;
+		for (char &c : shown)
+			if ((unsigned char)c < 0x20 || c == 0x7F)
+				c = '?';
+		out.push_back("pack " + shown + " " + std::to_string(lines.size()) + " " + HexBytes(d.data(), d.size()));
 	}
 	return true;
 }

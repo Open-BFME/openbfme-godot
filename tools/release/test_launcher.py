@@ -647,7 +647,7 @@ def _layout_run(project: Path, tmp_path: Path, *args: str) -> subprocess.Complet
                           env=env, capture_output=True, text=True, timeout=900, stdin=subprocess.DEVNULL)
 
 
-LAYOUT_STATES = ["main", "news", "multiplayer", "mods", "games", "games-bfme1", "games-downloading", "settings", "display", "about", "update", "downloading",
+LAYOUT_STATES = ["main", "news", "multiplayer", "multiplayer-populated", "mods", "games", "games-bfme1", "games-downloading", "settings", "display", "about", "update", "downloading",
                  "error", "glibc", "first-run", "offline", "verifying", "paused", "update-launcher", "warning", "ask", "playing", "long",
                  "picker", "update-launcher+123", "update-launcher+10000000", "long+123", "long+10000000"]
 LAYOUT_SIZES = ["1280x720", "1280x800", "1920x1080", "2560x1440", "3440x1440", "960x540", "960x1000", "2704x1521", "3146x1769"]
@@ -2011,7 +2011,96 @@ def test_two_launchers_started_at_the_same_moment_get_one_lock(tmp_path, keys):
 def _lock_port(tmp: Path) -> int:
     """the port of the one-launcher lock of tmp's data folder (instance_lock.gd: md5 of the data folder)"""
     d = normalized_path(data(tmp).resolve())
+    return 17000 + int(hashlib.md5(d.encode()).hexdigest()[:8], 16) % 15000
+
+
+def _legacy_lock_port(tmp: Path) -> int:
+    """the port launchers before FLAKEFIX-2 used: 49200..65199, inside the operating systems' ephemeral port ranges"""
+    d = normalized_path(data(tmp).resolve())
     return 49200 + int(hashlib.md5(d.encode()).hexdigest()[:8], 16) % 16000
+
+
+# Linux 32768..60999, Windows 49152..65535 (and 1025..5000 before Vista), macOS 49152..65535
+EPHEMERAL_RANGES = ((1025, 5000), (32768, 60999), (49152, 65535))
+
+
+@pytest.mark.parametrize("holder", ["outgoing", "listening"])
+def test_a_program_on_the_old_lock_port_does_not_stop_the_launcher(tmp_path, keys, holder):
+    """FLAKEFIX-2: the lock port lay inside every OS's ephemeral range, so any program's outgoing connection could hold it and the launcher
+    refused to start ("in use by another program"). The lock port now lies outside them; the old port only matters when an older launcher
+    answers on it"""
+    import socket
+    import threading
+    port = _lock_port(tmp_path)
+    assert not any(first <= port <= last for first, last in EPHEMERAL_RANGES), port
+    old = _legacy_lock_port(tmp_path)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", old))
+    stop = threading.Event()
+    t = None
+    if holder == "listening":  # a silent program listening there
+        sock.listen(4)
+
+        def serve() -> None:
+            sock.settimeout(0.2)
+            while not stop.is_set():
+                try:
+                    c, _ = sock.accept()
+                except OSError:
+                    continue
+                c.settimeout(5)
+                try:
+                    c.recv(1)
+                except OSError:
+                    pass
+                c.close()
+        t = threading.Thread(target=serve, daemon=True)
+        t.start()
+    try:
+        r = launch(tmp_path, None, keys["release"], "--list")
+        assert r.code == 0 and not r.has("in use by another program") and not r.has("already open"), r
+    finally:
+        stop.set()
+        if t is not None:
+            t.join()
+        sock.close()
+
+
+def test_an_older_launcher_on_the_old_lock_port_is_still_seen(tmp_path, keys):
+    """an older launcher (it answers its hello on the old port) still keeps a new one from starting with the same data folder"""
+    import socket
+    import threading
+    old = _legacy_lock_port(tmp_path)
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", old))
+    srv.listen(4)
+    stop = threading.Event()
+
+    def serve() -> None:
+        srv.settimeout(0.2)
+        while not stop.is_set():
+            try:
+                c, _ = srv.accept()
+            except OSError:
+                continue
+            c.sendall(b"OPENBFME-LAUNCHER v0.4.9\n")
+            c.settimeout(5)
+            try:
+                c.recv(1)
+            except OSError:
+                pass
+            c.close()
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    try:
+        r = launch(tmp_path, None, keys["release"], "--list")
+        assert r.code == 1 and r.has("Another OpenBFME Launcher (v0.4.9) is already open"), r
+    finally:
+        stop.set()
+        t.join()
+        srv.close()
+    r = launch(tmp_path, None, keys["release"], "--list")
+    assert r.code == 0, r
 
 
 @pytest.mark.parametrize("answer", [b"", b"HTTP/1.0 200 OK\r\n\r\nnot a launcher\n"])
@@ -2124,9 +2213,25 @@ def test_an_offline_start_asks_nothing(tmp_path, server, keys):
 
 
 def test_the_policy_allows_only_the_lobbys_stats_path():
-    """NetPolicy: the lobby host, over https without a port, for GET /v1/stats alone; any other path or host stays refused"""
+    """NetPolicy: the lobby host, over https without a port, for GET /v1/stats and GET /v1/games only; any other path stays off the list"""
     text = (LAUNCHER / "scripts/net/net_policy.gd").read_text()
-    assert 'const LOBBY_STATS_PATH := "/v1/stats"' in text and "u.path == LOBBY_STATS_PATH" in text
+    assert 'const LOBBY_PATHS := ["/v1/stats", "/v1/games"]' in text
+    assert 'lobby_host != "" and host == lobby_host and u.path in LOBBY_PATHS' in text
+    # the allow-list is those two paths and nothing else the lobby publishes
+    listed = text.split('const LOBBY_PATHS := [', 1)[1].split("]", 1)[0]
+    assert listed.count('"/v1/') == 2 and '"/v1/stats"' in listed and '"/v1/games"' in listed
+
+
+def test_lobby_requests_never_change_the_shared_policy():
+    """PR #93 follow-up (Greptile main.gd:2194): the player count / game list / Host / Join set their lobby on a copy of updater.policy, never on the
+    shared one, which download and fetch threads read while they run (set_lobby clears lobby_host before it parses)"""
+    main = (LAUNCHER / "scripts/main.gd").read_text()
+    assert "updater.policy.set_lobby(" not in main and "updater.policy.lobby_host" not in main
+    assert main.count("var policy: NetPolicy = updater.policy.copy()") == 2 and main.count("HttpFetch.new(policy, info.version)") == 2
+    assert "HttpFetch.new(updater.policy" not in main.split("func _refresh_count()", 1)[1].split("\nfunc _on_count(", 1)[0]
+    assert "HttpFetch.new(updater.policy" not in main.split("func _refresh_game_list()", 1)[1].split("\nfunc _on_game_list(", 1)[0]
+    policy = (LAUNCHER / "scripts/net/net_policy.gd").read_text()
+    assert "p.extra_hosts = extra_hosts.duplicate()" in policy
 
 
 @pytest.mark.parametrize("size", ["1280x720", "1024x768", "1920x1080", "1600x900"])

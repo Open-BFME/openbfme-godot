@@ -558,10 +558,12 @@ TEST_CASE("BFME2 tech opportunity: missing linked object, inclusive radius and r
  }
 }
 
-TEST_CASE("BFME2 farm raid: constructor roll and native team template")
+TEST_CASE("BFME2 farm raid: constructor roll and edition-aware native team template")
 {
+ for (GameEdition edition : {GameEdition::BFME2_106, GameEdition::RotWK201})
  for (int phase : {0,1,2}) {
   Scenario s;
+  s.w.logic->setEdition(edition);
   s.bot.build.phase = phase;
   auto &random = s.w.logic->random();
   random.seedRandom(51027);
@@ -576,7 +578,8 @@ TEST_CASE("BFME2 farm raid: constructor roll and native team template")
   AITacticalAI::startFarmKillForTest(*s.w.logic, s.bot, tactic);
   REQUIRE(tactic.teams.size() == 1);
   const auto &team = tactic.teams[0];
-  CHECK(team.priority == 30);
+  // Retain main’s edition variant: BFME2 0x9AD00B = 30, RW 0x9BB49D = 500.
+  CHECK(team.priority == (edition == GameEdition::BFME2_106 ? 30 : 500));
   CHECK(team.minimum == (phase == 0 ? 1 : 2));
   CHECK(team.maximum == random.callLog()[1].result);
   CHECK(team.forbiddenKinds == std::vector<int>{ObjectTemplateInfoBuilder::kindOfIndex("HERO"),ObjectTemplateInfoBuilder::kindOfIndex("ARCHER"),ObjectTemplateInfoBuilder::kindOfIndex("MACHINE")});

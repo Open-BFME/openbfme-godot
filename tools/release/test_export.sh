@@ -19,6 +19,7 @@
 # writing the rest of the output dies of SIGPIPE, so the pipeline reports failure; reproduced 6 times in 50 with ten lines after the marker,
 # more under load). test_release_tools.py checks that no pipefail script under tools/ greps -q a pipe again.
 set -uo pipefail
+export OPENBFME_CRASH_UPLOAD=0   # lane CRASHACT-1: a test of a package never sends a crash report (godot/scripts/crash/crash_client.gd)
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 ARCHIVE=${1:?usage: test_export.sh <package.tar.gz> [--godot BIN]}
 GODOT_BIN="${GODOT:-godot}"

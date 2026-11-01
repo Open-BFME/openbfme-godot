@@ -82,3 +82,26 @@ void buildStrips(const std::vector<MapObject> &objects, const RoadTypeIndex &typ
 // ZH getMaxCellHeight: the maximum of the four corner heights of the cell containing (x,y), in world units.
 float getMaxCellHeight(const WorldHeightMap &map, float x, float y);
 } // namespace TerrainRoads
+
+// How retail shades a road (lane ROADS-1). BFME2 W3DRoadBufferDrawRoads.cpp:349-365 (RotWK RW 0x4d73c4 .. 0x4d7458) draws each road type through the
+// terrain's rendering method, terrain.fxo technique "Default", with Terrain.RenderingMode = 2 (setRenderingMode(2), RW 0x4d73cc), the road texture
+// as BaseTexture and the road's _nrm companion as NormalTexture. The pixel shader is PSDefault_Array[min(RenderingMode, 4) + 5 * min(NumShadows, 1) +
+// 10 * IsResourceTextureEnabled] (index preshader at terrain.fxo 0x1c4bc): element 2 (ps_2_0 blob 37 @0xc160) without shadows. The vertex
+// shader is the effect's single vs_1_1 blob (blob 60 @0x1c780). godot/shaders/road.gdshader ports both.
+namespace RoadShading
+{
+constexpr int RENDERING_MODE = 2;
+// The road vertex normal in SAGE space: loadFloat4PtSection writes (0, 0, 1.0f) (BFME2 W3DRoadBuffer.cpp:948, RW 0x4d7d32 .. 0x4d7d3c: nx = ny =
+// 0.0f, nz = the float 1.0 at RW 0xBD1908), so a road's tangent frame is world-aligned whatever its direction.
+constexpr float VERTEX_NORMAL[3] = { 0.0f, 0.0f, 1.0f };
+// The normal texture of a road type with no _nrm companion: W3DRoadBuffer::allocateRoadBuffers (RW 0x4d7132 .. 0x4d7176; the holder at
+// W3DRoadBuffer + 0x18) creates a 1x1 texture of format 0x15 (D3DFMT_A8R8G8B8) and SurfaceClass::DrawPixel (RW 0x5165e0 stores the dword) paints
+// it 0x007F7FFF: R = G = 127, B = 255, A = 0. The alpha is the specular mask of element 2, so a road without a normal map has no specular.
+constexpr std::uint32_t FALLBACK_NORMAL_ARGB = 0x007F7FFFu;
+constexpr std::uint8_t FALLBACK_NORMAL_RGBA[4] = { 0x7F, 0x7F, 0xFF, 0x00 };
+
+// PSDefault_Array's element for the effect parameters (the preshader at terrain.fxo 0x1c4bc).
+int pixelShaderElement(int renderingMode, int numShadows, bool resourceTextureEnabled);
+// RoadType::loadTexture (BFME2 W3DRoadBuffer.cpp:294-309, makeNrmTextureName): "X.tga" -> "X_nrm.tga".
+std::string normalTextureName(const std::string &roadTexture);
+} // namespace RoadShading

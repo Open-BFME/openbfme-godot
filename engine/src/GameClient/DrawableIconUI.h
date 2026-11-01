@@ -5,7 +5,7 @@
 // drawables, never changes them.
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; BFME2 decomp map: tier A / B, decomp sources DrawableConstructPercentRva002779CE.cpp, DrawableDrawVeterancy.cpp,
-// Rva0027900BFinish.cpp, DrawableIconAnchorPosition.cpp, reverse/attempts/0x0027601b.cpp and 0x00270e48.cpp as donors):
+// Rva0027900BFinish.cpp, DrawableIconAnchorPosition.cpp, DrawableHealthBarGate.cpp and DrawableRegionBandColors_Rva00270ca6.cpp as donors):
 //   * the queue (RW 0x679129, per drawable and frame): only while drawing icons is on and no script letterbox; a drawable with an object: its icon anchor
 //     (RW 0x6778F4: the drawable's position, z + the template's HealthBoxHeightOffset (+0x548, default 10.0 RW 0xBD83D8) + the geometry's max height above the
 //     position (RW 0xAD1990); a HORDE's is its contain's slot 0x22C, RW 0x87127D: the mean drawable position of its members and of H+0x170, not raised) and its health box (RW 0x68DF5B: none for KindOf IGNORED_IN_GUI; width = 2 * clamp(the

@@ -22,9 +22,12 @@ name: Release package
 run-name: Release package ${{ inputs.platform }} ${{ inputs.version }} (request ${{ inputs.request }})
 
 on:
-  # RELSIGN-1: the release workflow (release.yml) calls these same jobs for its builds (one platform per call; no secrets are passed and
-  # none are declared, the caller's job has contents: read only)
+  # RELSIGN-1: the release workflow (release.yml) calls these same jobs for its builds (one platform per call; the caller's job has
+  # contents: read only). CRASHACT-1: one secret is declared, the crash service's client key, for the macOS package step alone
   workflow_call:
+    secrets:
+      CRASH_CLIENT_KEY:
+        required: false
     inputs:
       platform:
         required: true
@@ -136,6 +139,8 @@ jobs:
           echo "$T/bin" >> "$GITHUB_PATH"
           "$T/Godot.app/Contents/MacOS/Godot" --headless --version
       - name: Build the package (package_macos.py)
+        env:
+          CRASH_CLIENT_KEY: ${{ secrets.CRASH_CLIENT_KEY }}
         run: |
           mkdir -p "$RUNNER_TEMP/out"
           python3 tools/release/package_macos.py --version "$IN_VERSION" --godot "$RUNNER_TEMP/tools/Godot.app/Contents/MacOS/Godot" \

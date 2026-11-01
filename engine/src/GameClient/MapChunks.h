@@ -10,7 +10,7 @@
 //   MPPositionList/Info    TARGET Open-BFME-2 GameClient/GUI/MapMetaData_MPPositionWriters.cpp:40-75
 //   ObjectsList/Object v3  TARGET Open-BFME-2 GameClient/MapObjectWriteObjectsDataChunk.cpp:69-84
 //   PolygonTriggers v4/v5  DONOR ZH PolygonTrigger.cpp:135-230; v5 CORPUS+OS
-//   TriggerAreas v1        TARGET Open-BFME-2 Common/Rva002E37E5Write.cpp:53-64, Rva0030B2B6Write.cpp:27-54
+//   TriggerAreas v1        TARGET Open-BFME-2 GameLogic/Map/PolygonTrigger.cpp:399, Common/AreaPolygonBase.cpp (rva0030B2B6)
 //   StandingWaterAreas v2  CORPUS+OS (Map/StandingWaterArea.cs layout)
 //   RiverAreas v1/v2       CORPUS+OS (Map/RiverArea.cs layout)
 //   StandingWaveAreas v1/2 CORPUS+OS (Map/StandingWaveArea.cs layout)
@@ -20,7 +20,7 @@
 //                          order and shadow-colour position are wrong for BFME2/RotWK (spec 1.7.17).
 //   EnvironmentData v2/v3  TARGET Open-BFME-1 BaseHeightMapWriteEnvironmentData.cpp (v3)
 //   NamedCameras v2        TARGET Open-BFME-1 Rva00747E80WriteNamedCameras.cpp
-//   CameraAnimationList    CORPUS+OS
+//   CameraAnimationList    TARGET (lane CAMANIM-1) RW 0x948CFD / 0x94622C / 0x9D65B1, BFME2 decomp Rva00540E82Init.cpp:254-294
 //   WaypointsList v1       DONOR ZH TerrainLogic.cpp:1280; TARGET Open-BFME-2 TerrainLogic_parseWaypointData.cpp
 //   SkyboxSettings v1      TARGET Open-BFME-1 Water/WaterRenderObjReadSkyBoxSettings.cpp
 
@@ -161,8 +161,12 @@ struct GlobalLightingData
 	std::int32_t flagDBD = 0;         // corpus 0; drives the BFME "highlight" screen filter (meaning not fully known)
 	float vecA[3] = {}, vecB[3] = {}, vecC[3] = {}; // corpus 0.5 each; meaning UNKNOWN
 	std::uint32_t shadowColor = 0;    // ARGB
-	float v8Extra[3] = { 1, 1, 1 };   // v8 only; OpenSAGE calls it NoCloudFactor (UNKNOWN)
-	bool hasV8Extra = false;
+	// The "low LOD light scale" (BFME2 decomp name m_lowLODLightScale, GlobalData + 0x944 / 0x948 / 0x94C): version >= 8 reads three floats
+	// after the shadow colour (RW 0x4ACA92 .. 0x4ACACF), older chunks store 1.0f (RW 0x4ACAD1 .. 0x4ACAF8). A colour scale that retail
+	// applies to the terrain / object / scorch lights only at the low detail tiers; see TerrainLightScale.h (S-033). OpenSAGE's name for it,
+	// NoCloudFactor, is wrong: nothing in RotWK reads it as a cloud factor.
+	float terrainLightScale[3] = { 1, 1, 1 };
+	bool hasTerrainLightScale = false; // version >= 8 stored it
 };
 
 struct EnvironmentData
@@ -180,20 +184,32 @@ struct NamedCamera
 	float values[6] = {}; // the B1 writer emits m_values[2],[3],[1],[4],[5],[0]; semantics INFERRED (pitch,roll,yaw,zoom,fov,?)
 };
 
+// lane CAMANIM-1: the CameraAnimationList records as RotWK reads them (animation base RW 0x94622C: name, frame count, from version 3 the start
+// offset; the look animation RW 0x948CFD; key readers RW 0x9464A8 (free: tag + 8 floats), RW 0x947527 (look camera: tag + 5), RW 0x9475CF (look-at:
+// tag + 3), the tag RW 0x9D65B1; BFME2 decomp Rva0053F915Read.cpp, Rva00540E82Init.cpp:254-294, Rva00540C0ARead.cpp,
+// Rva0053FB91Read.cpp, Rva00540CB2Read.cpp, Rva005C702DRead.cpp). The records stay in file order here; GameClient/CameraAnimation builds the
+// sorted tracks (a repeated key replaces the earlier one, a negative key is dropped) the way retail inserts them.
+enum CameraAnimationInterp
+{
+	CAMERA_INTERP_STEP = 0, ///< 'step' (0x73746570)
+	CAMERA_INTERP_LINE = 1, ///< 'line' (0x6C696E65)
+	CAMERA_INTERP_CATM = 2, ///< 'catm' (0x6361746D): Catmull-Rom; also the default (chunk version < 2, or an unknown code: RW 0x9D65B1)
+};
+
 struct CameraAnimationFrame
 {
-	std::uint32_t frame = 0;
-	std::string interp; // 'catm' | 'line' (the 4 file bytes reversed)
+	std::int32_t frame = 0;
+	int interp = CAMERA_INTERP_CATM; // the key's interpolation (RW 0x9D65B1: read only from chunk version 2)
 	float pos[3] = {};
-	float quat[4] = {}; // free only
-	float fovLike = 0.0f;
-	float roll = 0.0f; // look only
+	float quat[4] = {}; // free only: the camera's orientation (x, y, z, w)
+	float fov = 0.0f;   // the horizontal field of view in radians (the view's hfov while the animation plays, RW 0x48B934)
+	float roll = 0.0f;  // look only
 };
 
 struct CameraLookAtKey
 {
-	std::uint32_t frame = 0;
-	std::string interp;
+	std::int32_t frame = 0;
+	int interp = CAMERA_INTERP_CATM;
 	float lookAt[3] = {};
 };
 
@@ -201,7 +217,8 @@ struct CameraAnimation
 {
 	std::string type; // "free" or "look"
 	std::string name;
-	std::uint32_t numFrames = 0, startOffset = 0;
+	std::int32_t numFrames = 0;   // the animation's length in client frames (+ 0x1C: the player stops past it, RW 0x710B64)
+	std::int32_t startOffset = 0; // + 0x20: read from chunk version 3, else 0 (RW 0x94622C); playback does not read it
 	std::vector<CameraAnimationFrame> keys;
 	std::vector<CameraLookAtKey> lookAtKeys;
 	int version = 0;

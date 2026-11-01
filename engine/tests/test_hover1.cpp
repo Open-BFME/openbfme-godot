@@ -4,6 +4,7 @@
 // The retail cases hover with a scripted pointer through the HUD (InGameHud::mouseMove) and compare what the help box holds with the string file's text
 // (data/lotr.str of the install) for the button's labels, the numbers taken from the logic's own cost functions; they SKIP loudly without the installs.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "HudTestUtil.h"
@@ -776,6 +777,7 @@ TEST_CASE("hover1 retail: every spell book power of every faction shows its stri
 		REQUIRE(c);
 		Coord3D at{ 600.0f, 600.0f, 0.0f };
 		c->setPosition(&at);
+		testutil::completeHorde(c); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		c->friend_onBuildComplete();
 		h.frames(40);
 		REQUIRE(h.hud->palantir());
