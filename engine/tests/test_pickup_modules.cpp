@@ -4,6 +4,8 @@
 // retail's rules (each check names its address), never this engine's frame-exact output.
 
 #include "doctest.h"
+#include "GameLogic/Object/ExperienceTracker.h"
+#include "GameLogic/Module/VeterancyCrateCollide.h"
 
 #include "BuildTestUtil.h"
 #include "PeImage.h"
@@ -413,4 +415,32 @@ TEST_CASE("pickup1: the module's fields (RW 0x8955A4) and the AI's kept machine 
 	truncated.pop_back();
 	XferLoad lt(truncated);
 	CHECK_THROWS_AS(p.module->xfer(lt), XferException);
+}
+
+TEST_CASE("pickup1 veterancy: the AI horde scans, walks to and consumes an experience shield through the shared crate runtime")
+{
+ OPENBFME_REQUIRE_START(s);
+ PickupGame p;
+ startWithHorde(*s, p, 5101, false);
+ GameLogic &logic = p.g.live->logic();
+ REQUIRE(p.horde->getExperienceTracker());
+ const int rankBefore = p.horde->getExperienceTracker()->getRank();
+ std::string error;
+ Object *shield = p.g.live->createObject("TreasureChestLevelUpMedium", logic.players().getNeutralPlayer()->getPlayerIndex(),
+  nearObject(*p.horde, 120.0f, 0.0f), 0.0f, &error);
+ REQUIRE_MESSAGE(shield, error);
+ const ObjectID id = shield->getID();
+ REQUIRE(PickupStuffUpdate::crateCollideRuns(*shield));
+ REQUIRE(CrateCollide::isCrate(*shield));
+ for (int frame = 0; frame < 3000 && logic.findObjectByID(id) && !logic.findObjectByID(id)->isDestroyed(); ++frame)
+  p.g.live->stepFrame();
+ const Object *remaining = logic.findObjectByID(id);
+ CHECK((!remaining || remaining->isDestroyed()));
+ // Native contacts promote the touching member; the invisible HORDE is not a collision record.
+ int promoted = 0;
+ for (Object *member = logic.getFirstObject(); member; member = member->getNextObject())
+  if (member->getContainedBy() == p.horde && member->getExperienceTracker() && member->getExperienceTracker()->getRank() == rankBefore + 1) ++promoted;
+ CHECK(promoted == 1);
+ CHECK(p.module->pickups() == 1);
+ CHECK(p.module->blocked() == 0);
 }

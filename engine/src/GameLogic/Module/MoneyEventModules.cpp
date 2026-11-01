@@ -72,9 +72,9 @@ void parseScience(INI *ini, void *, void *store, const void *)
 	*static_cast<int *>(store) = TheScienceStore->friend_lookupScience(token);
 }
 
-#define SC_OFF(member) (int)offsetof(SalvageCrateCollideModuleData, member)
-// RW 0xC71390 (CrateCollide) then RW 0xC05F80 (SalvageCrateCollide)
-const FieldParse kSalvageCrateFieldParse[] = {
+#define SC_OFF(member) (int)offsetof(CrateCollideModuleData, member)
+// RW 0xC71390 (CrateCollide); SalvageCrateCollide's own rows (RW 0xC05F80) follow in kSalvageCrateFieldParse
+const FieldParse kCrateFieldParse[] = {
 	{ "RequiredKindOf", ParseKindOfMask, nullptr, SC_OFF(m_requiredKindOf) },
 	{ "ForbiddenKindOf", ParseKindOfMask, nullptr, SC_OFF(m_forbiddenKindOf) },
 	{ "ForbidOwnerPlayer", INI::parseBool, nullptr, SC_OFF(m_forbidOwnerPlayer) },
@@ -86,6 +86,12 @@ const FieldParse kSalvageCrateFieldParse[] = {
 	{ "ExecuteAnimationTime", INI::parseReal, nullptr, SC_OFF(m_executeAnimationTime) },
 	{ "ExecuteAnimationZRise", INI::parseReal, nullptr, SC_OFF(m_executeAnimationZRise) },
 	{ "ExecuteAnimationFades", INI::parseBool, nullptr, SC_OFF(m_executeAnimationFades) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+#undef SC_OFF
+#define SC_OFF(member) (int)offsetof(SalvageCrateCollideModuleData, member)
+// RW 0xC05F80 (SalvageCrateCollide)
+const FieldParse kSalvageCrateFieldParse[] = {
 	{ "PorterChance", INI::parsePercentToReal, nullptr, SC_OFF(m_porterChance) },
 	{ "BannerChance", INI::parsePercentToReal, nullptr, SC_OFF(m_bannerChance) },
 	{ "LevelUpChance", INI::parsePercentToReal, nullptr, SC_OFF(m_levelUpChance) },
@@ -123,8 +129,14 @@ void PillageModuleData::buildFieldParse(MultiIniFieldParse &p)
 	p.add(kPillageFieldParse);
 }
 
+void CrateCollideModuleData::buildFieldParse(MultiIniFieldParse &p)
+{
+	p.add(kCrateFieldParse);
+}
+
 void SalvageCrateCollideModuleData::buildFieldParse(MultiIniFieldParse &p)
 {
+	CrateCollideModuleData::buildFieldParse(p);
 	p.add(kSalvageCrateFieldParse);
 }
 

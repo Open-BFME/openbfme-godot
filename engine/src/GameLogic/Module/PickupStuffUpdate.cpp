@@ -34,10 +34,8 @@ typedef PickupStuffUpdateModuleData Data;
 const char *const kStop =
 	"[S-1422] PickupStuffUpdate (lane MODCOMPAT-MOD1, ported: RW 0x8957B7 / 0x895741 / 0x895632 / 0x895572 with the AI's temporary state machine RW 0x6630A9 "
 	"/ 0x6630D7): NOT ported: SpecialAbilityUpdate's use of the same temporary machine (its initiate RW 0x852FB1 begins one, its finish RW 0x853105 gives it "
-	"back: S-859), so a skirmish AI's hero ability neither starts nor ends a pick-up's machine; and while the stuff found is a crate whose crate collide has no "
-	"runtime (a crate collide class other than SalvageCrateCollide: the 2.01 VeterancyCrateCollide of TreasureChestLevelUpMedium / Moria, not ported), no pick-up begins: retail's "
-	"horde collects the crate on arrival (CrateCollide::onCollide RW 0x8C06B6 destroys it, RW 0x62BBAB), here it could not, and the horde would walk back to it "
-	"every ScanIntervalSeconds for the rest of the game";
+	"back: S-859), so a skirmish AI's hero ability neither starts nor ends a pick-up's machine. SalvageCrateCollide and VeterancyCrateCollide run; "
+	"crateCollideRuns refuses only crate modules without a collide runtime, and pilot veterancy collection remains refused under S-5901";
 
 void parseFilter(INI *ini, void *instance, void *store, const void *)
 {
@@ -178,7 +176,7 @@ void PickupStuffUpdate::scanStep()
 		{
 			// lane MODCOMPAT-MOD1 (S-1422): retail's horde collects the crate when it arrives: CrateCollide::onCollide RW 0x8C06B6 runs isValidToExecute
 			// (vslot 0x34) and executeCrateBehavior (vslot 0x30), then plays ExecuteFX (RW 0x4B1B5A), sets the ever-executed byte (+ 0x14) and destroys the
-			// crate (TheGameLogic RW 0x62BBAB), so the scans after that find nothing. SalvageCrateCollide (every 2.01 crate) runs (SalvageCrateCollide.h); a
+			// crate (TheGameLogic RW 0x62BBAB), so the scans after that find nothing. SalvageCrateCollide and VeterancyCrateCollide run; a
 			// crate of another crate collide class has no runtime here: it would stay and the horde would walk back to it every ScanIntervalSeconds for
 			// the rest of the game. No pick-up begins for such a crate; the scan's frame is stamped as retail's (RW 0x8957A9)
 			++m_blocked;
@@ -223,7 +221,7 @@ Object *PickupStuffUpdate::findStuff()
 }
 
 // lane MODCOMPAT-MOD1: false when the stuff's template lists a crate collide (a behavior module whose class is a CrateCollide: <Name>CrateCollide)
-// that this object does not run as a collide (no module, or one without the collide interface: the crate collide classes other than SalvageCrateCollide);
+// that this object does not run as a collide (no module, or one without the collide interface: only genuinely unported crate classes);
 // an object without a crate collide is left to retail's scan
 bool PickupStuffUpdate::crateCollideRuns(const Object &stuff)
 {

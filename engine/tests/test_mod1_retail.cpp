@@ -6,6 +6,12 @@
 
 #include "HordeCompleteTestUtil.h"
 #include "doctest.h"
+#include "PeImage.h"
+#include "Common/XferSave.h"
+#include "Common/XferLoad.h"
+#include "GameLogic/Module/VeterancyCrateCollide.h"
+#include "GameLogic/AI/AIWorld.h"
+#include "PathfindTestUtil.h"
 #include "GameLogic/System/ShroudManager.h"
 
 #include "Common/Player.h"
@@ -130,6 +136,25 @@ struct Game
 	}
 	std::uint32_t hash() const { return logic->computeStateHash(); }
 };
+
+// Terrain is required for treasure formation placement as well as pickup collisions.
+struct CrateGame : Game
+{
+	pathtest::SyntheticTerrain terrain{100, 100};
+	AIWorldConfig config;
+	std::unique_ptr<AIWorld> ai;
+	CrateGame(RetailObjectWorld &world, retailtest::Mount &mount) : Game(world, mount)
+	{
+		std::string error;
+		REQUIRE_MESSAGE(AIWorldConfigLoader::load(*mount.fs, config, &error), error);
+		ai = std::make_unique<AIWorld>(*logic, config, world.iniMacros());
+		ai->attach();
+		ai->newMap(terrain);
+	}
+	~CrateGame() { logic->reset(); ai.reset(); }
+};
+
+
 
 // the first template (registry order, defaults and cinematic copies skipped) one of whose behaviour modules of class `cls` has data of type D for which `accept` holds
 template <class D>
@@ -718,4 +743,136 @@ TEST_CASE("shroud retail: Ivory Tower vision ping clears the map for its owner")
 	CHECK(shroud.getCellStatus(owner, 0, 0) == CELLSHROUD_CLEAR);
 	CHECK(shroud.getCellStatus(owner, 49, 49) == CELLSHROUD_CLEAR);
 	CHECK(shroud.getCellStatus(enemy, 49, 49) == CELLSHROUD_SHROUDED);
+}
+
+TEST_CASE("crate pickups retail: shield promotes its collector once; ground contact is required")
+{
+	REQUIRE_RETAIL_WORLD(sh);
+	CrateGame g(*sh.world, *sh.mount);
+	Object *shield = g.make(sh.world->things().findTemplate("TreasureChestLevelUpMedium"), g.players.getNeutralPlayer());
+	Object *unit = g.make(sh.world->things().findTemplate("GondorFighter"));
+	auto *crate = moduleOf<VeterancyCrateCollide>(shield);
+	REQUIRE(crate);
+	REQUIRE(unit->getExperienceTracker());
+	CHECK(unit->getExperienceTracker()->getRank() == 1);
+	Coord3D above{ 500.0f, 500.0f, 100.0f };
+	unit->setPosition(&above);
+	crate->onCollide(unit, nullptr, nullptr);
+	CHECK(shield->isDestroyed() == false);
+	CHECK(unit->getExperienceTracker()->getRank() == 1);
+	Coord3D ground{ 500.0f, 500.0f, 0.0f };
+	unit->setPosition(&ground);
+	g.logic->partition().update();
+	g.ai->processCollisions();
+	g.ai->processCrateContacts();
+	CHECK(shield->isDestroyed() == true);
+	CHECK(unit->getExperienceTracker()->getRank() == 2);
+	crate->onCollide(unit, nullptr, nullptr);
+	CHECK(unit->getExperienceTracker()->getRank() == 2);
+}
+
+
+TEST_CASE("crate pickups retail: lair treasure allows AI collection and capped shields stay available")
+{
+	REQUIRE_RETAIL_WORLD(sh);
+	CrateGame g(*sh.world, *sh.mount);
+	Object *chest = g.make(sh.world->things().findTemplate("TreasureChest1"), g.players.getNeutralPlayer());
+	Object *unit = g.make(sh.world->things().findTemplate("GondorFighter"), g.enemy);
+	auto *gold = moduleOf<SalvageCrateCollide>(chest);
+	REQUIRE(gold);
+	const auto before = g.enemy->getMoney()->countMoney();
+	g.logic->random().enableCallLog(true);
+	gold->onCollide(unit, nullptr, nullptr);
+	REQUIRE(chest->isDestroyed());
+	CHECK(g.logic->random().callLog().size() == 2);
+	// tolerance: retail TreasureChest1 draws an inclusive random reward of 50..100.
+	CHECK(g.enemy->getMoney()->countMoney() >= before + 50);
+	// tolerance: the random reward must remain within the retail INI range.
+	CHECK(g.enemy->getMoney()->countMoney() <= before + 100);
+	Object *shield = g.make(sh.world->things().findTemplate("TreasureChestLevelUpMoria"), g.players.getNeutralPlayer());
+	auto *xpCrate = moduleOf<VeterancyCrateCollide>(shield);
+	REQUIRE(xpCrate);
+	unit->getExperienceTracker()->gainExpForLevel(2, true, false);
+	REQUIRE(unit->getExperienceTracker()->getRank() == 3);
+	xpCrate->onCollide(unit, nullptr, nullptr);
+	CHECK(shield->isDestroyed() == false);
+	Object *fresh = g.make(sh.world->things().findTemplate("GondorFighter"));
+	xpCrate->onCollide(fresh, nullptr, nullptr);
+	CHECK(shield->isDestroyed() == true);
+	CHECK(fresh->getExperienceTracker()->getRank() == 2);
+}
+
+
+
+TEST_CASE("crate pickups retail: a battalion collects gold and shields")
+{
+	REQUIRE_RETAIL_WORLD(sh);
+	CrateGame g(*sh.world, *sh.mount);
+	Object *unit = g.make(sh.world->things().findTemplate("GondorFighterHorde"));
+	Object *chest = g.make(sh.world->things().findTemplate("TreasureChest100"), g.players.getNeutralPlayer());
+	Object *shield = g.make(sh.world->things().findTemplate("TreasureChestLevelUpMedium"), g.players.getNeutralPlayer());
+	REQUIRE(CrateCollide::isCrate(*chest));
+	REQUIRE(CrateCollide::isCrate(*shield));
+	const auto before = g.player->getMoney()->countMoney();
+	g.logic->partition().update();
+	g.ai->processCollisions();
+	g.ai->processCrateContacts();
+	CHECK(chest->isDestroyed() == true);
+	CHECK(shield->isDestroyed() == true);
+	CHECK(g.player->getMoney()->countMoney() == before + 100);
+	REQUIRE(unit->getExperienceTracker());
+	// RW 0x68E31F excludes the HORDE collision record. The shield's other
+	// at RW 0x8C1120 is the individual member that touched it, not the horde.
+	int promoted = 0;
+	for (Object *member = g.logic->getFirstObject(); member; member = member->getNextObject())
+		if (member->getContainedBy() == unit && member->getExperienceTracker() && member->getExperienceTracker()->getRank() == 2) ++promoted;
+	CHECK(promoted == 1);
+}
+
+TEST_CASE("veterancy crates: target registry and validity/execute slots match the RotWK binary")
+{
+ const auto *pe = retailtest::PeImage::fromEnvironment();
+ if (!pe) { MESSAGE("SKIP: set RW_GAME_DAT for target binary facts"); return; }
+ CHECK(pe->u32At(0xC71554 + 12 * 4) == 0x8C10DB);
+ CHECK(pe->u32At(0xC71554 + 13 * 4) == 0x8C1039);
+ CHECK(pe->cstring(pe->u32At(0xC05EB8)) == "EffectRange");
+}
+TEST_CASE("veterancy crates retail: specialized refusal reports a stop and snapshot retains once-only state")
+{
+ REQUIRE_RETAIL_WORLD(sh);
+ CrateGame g(*sh.world, *sh.mount);
+ Object *shield = g.make(sh.world->things().findTemplate("TreasureChestLevelUpMedium"), g.players.getNeutralPlayer());
+ Object *unit = g.make(sh.world->things().findTemplate("GondorFighter"));
+ auto *crate = moduleOf<VeterancyCrateCollide>(shield);
+ REQUIRE(crate);
+ const auto *data = dynamic_cast<const VeterancyCrateCollideModuleData *>(crate->getModuleData());
+ REQUIRE(data);
+ auto *mutableData = const_cast<VeterancyCrateCollideModuleData *>(data);
+ const bool originalPilot = data->m_isPilot, originalOwner = data->m_addsOwnerVeterancy;
+ mutableData->m_isPilot = true;
+ CHECK_FALSE(crate->isValidToExecute(unit));
+ CHECK(reportHas(g, VeterancyCrateCollide::limitationsStop()));
+ mutableData->m_isPilot = false;
+ mutableData->m_addsOwnerVeterancy = true;
+ CHECK_FALSE(crate->isValidToExecute(unit)); // RW 0x8C1025 returns zero, so validity refuses it.
+ mutableData->m_addsOwnerVeterancy = originalOwner;
+ mutableData->m_isPilot = originalPilot;
+ crate->onCollide(unit, nullptr, nullptr);
+ REQUIRE(crate->everExecuted());
+ XferSave saved; crate->xfer(saved);
+ Object *replacement = g.make(sh.world->things().findTemplate("TreasureChestLevelUpMedium"), g.players.getNeutralPlayer());
+ auto *loaded = moduleOf<VeterancyCrateCollide>(replacement);
+ REQUIRE(loaded);
+ XferLoad reader(saved.data()); loaded->xfer(reader);
+ CHECK(reader.atEnd());
+ CHECK(loaded->everExecuted());
+ const int rank = unit->getExperienceTracker()->getRank();
+ loaded->onCollide(unit, nullptr, nullptr);
+ CHECK_FALSE(replacement->isDestroyed());
+ CHECK(unit->getExperienceTracker()->getRank() == rank);
+}
+
+TEST_CASE("veterancy crates: remaining limitations are explicitly reported")
+{
+ CHECK(std::string(VeterancyCrateCollide::limitationsStop()) == "[S-5901] veterancy crates do not reproduce the significant-height tolerance, GUI rank label, ExecuteAnimation or pilot script-name transfer; pilot crates are refused");
 }
