@@ -546,6 +546,61 @@ closed 200,000+ cells, plus up to 25,000 of the shortcut walk.
   132 -> 92 ms, 20k 204 -> 133 ms, 40k 345 -> 217 ms; ticks over the 200 ms
   clock at 20k: 23-30 -> 0-1 of 50, at 40k: 49-50 -> 25-29.
 
+### UBER-PATH: the attacker's target in the path search, the follower's tie (done)
+
+Nearly every horde attack search toward its victim failed: the victim's own
+members refused the attacker's goal cell and its way in, so the search flooded
+to its limit and gave the closest free cell or no path, and the horde asked
+again next frame. Retail's movement check (checkForMovement, RW 0x6EBAA0, the
+enemy branch) lets an enemy pass when it is the searcher's target; the port
+left the rule out (stop S-164, `ObjectPathfindAdapter::ignoresAsTarget`).
+
+- **Uber rule change:** the Uber pathfinder applies retail's target rule: an
+  enemy does not refuse a cell when it is the searcher's goal object
+  (RW 0x8DBACE) or current victim (RW 0x668303), contained in one (a horde's
+  member), or the target's own container and its members; every other enemy
+  still refuses. Faithful keeps S-164 for now: on its own the rule brings the
+  Rivendell campaign's starting horde (bfme2camp1) onto a path whose patch
+  doubles back along one line, where retail's follower tie stalls it (next
+  bullet). The relation is the same code in both profiles;
+  test_path_target_rule.cpp pins it (a horde's target horde and its members
+  pass, another enemy horde's members do not, nothing passes without a target;
+  a lone unit's victim, its horde and the horde's other members; the goal
+  object alone and the current victim alone each suffice).
+- **Uber rule change:** a path the Uber pathfinder makes (`Path(true)`) takes a
+  later segment the unit stands exactly on over an earlier one it stands
+  exactly on with t < 1; a unit on a node two consecutive segments share keeps
+  the earlier segment, as RW does. Faithful paths keep retail's tie in every
+  case (`Path::updateClosestSegment`, RW 0x765598: a later leg must be strictly
+  closer). Why: a blocked unit's patch is spliced into its path (RW 0x767A66)
+  and can double back along one line, down to the patch's end and back up to
+  the raw next node; on that line both legs are at distance 0, the earlier one
+  wins, the point ahead runs back down to the tip, and a HORDE reforms 180
+  degrees every frame and never leaves. test_pathfind_path.cpp pins both rules
+  on a stylised path and on the legs captured from the stuck Rivendell horde
+  (fractions bit for bit).
+- What is known of retail here: run through tools/retail_oracle on the
+  captured legs and positions (test_path_follower_oracle.py), RW 0x765598
+  keeps the earlier leg at both positions the horde flipped between, with the
+  engine's own fractions bit for bit. That shows retail's follower choice on
+  the port's path, not that retail builds this path: upstream's review of
+  PR #182 found that RotWK frees a finished path's raw node chain
+  (RW 0x767B0E) while the port keeps it (AIPathfindSearch.cpp, the search's
+  end; AIPathfindPatch.cpp), so a later blocked-unit detour can be offered raw
+  nodes retail no longer has. Porting that is the likely Faithful fix for both
+  stops and is not in this lane; once it is in, the target rule should move to
+  Faithful and the follower tie can go.
+- The Uber pin vector was regenerated; the Faithful pins (perf1, perf2, the
+  retail-data tests) are unchanged. What a player can notice: attacking hordes
+  reach their victims instead of milling at the edge; a unit on a doubled-back
+  patch walks on instead of flipping.
+- Cost (the uber bench, map mp fall back 8p, 30,000 troops, 16 threads,
+  Windows MSVC, measured on the previous base): the searches that now reach
+  their targets cover more cells. Over the first 25 frames, where the cell
+  budget is 100 times larger, a frame took 322 ms instead of 221 ms (2.7 times
+  the cells a search, fewer searches); from frame 25 on, 148 ms instead of
+  140 ms. Retail runs the same rule.
+
 ### U2: parallel queries and paths, GPU animation (next)
 
 - **Snapshot queries.** Before each module phase, the queries a module will

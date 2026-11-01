@@ -16,7 +16,7 @@
 //   * adjustDestination RW 0x6FE456 with the ring search 0x6FA2A4 and the per-cell test 0x6F66D9 / 0x6F83EB;
 //   * the request queue and processPathfindQueue RW 0x6F2364, 0x6ED0FB.
 // DONOR (ZH AIPathfind.cpp:4924-5650, 5648-5965, 9694-10112): the shape of the above where RW was not read. See docs/STOPS.md S-163 and
-// S-164 for what is not ported (kind-1 slot, rotated-rectangle fill, the AI target rules of checkForMovement, the partition grid).
+// S-164 for what is not ported (kind-1 slot, rotated-rectangle fill, the partition grid).
 
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/SimMath.h"
@@ -494,7 +494,7 @@ bool Pathfinder::checkForMovement(const PathfindObject *obj, PathfindCheckMoveme
 				{
 					return false;
 				}
-				if (obj->ignoresAsTarget(*o))
+				if (m_uberLimits && obj->ignoresAsTarget(*o)) // lane UBER-PATH: Faithful keeps S-164
 				{
 					continue;
 				}
@@ -646,7 +646,7 @@ Pathfinder::CellMoveFacts Pathfinder::cellMoveFacts(const PathfindObject *obj, c
 			fail = true;
 			break;
 		}
-		if (obj->ignoresAsTarget(*o))
+		if (m_uberLimits && obj->ignoresAsTarget(*o)) // lane UBER-PATH: Faithful keeps S-164
 		{
 			continue;
 		}
