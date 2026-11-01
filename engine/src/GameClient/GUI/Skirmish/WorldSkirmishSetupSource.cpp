@@ -5,6 +5,7 @@
 
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameLogic/GameLogic.h"
+#include "Common/BfmeGame.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
 
@@ -12,7 +13,9 @@
 
 bool WorldSkirmishSetupSource::load(RetailObjectWorld &world, const GameLogicSettings &settings, ArchiveFileSystem &fs, std::string *error)
 {
+	const bool bfme1 = isBfme1Data(fs);
 	m_fs = &fs;
+	m_bfme1 = bfme1;
 	m_factions.clear();
 	m_colors.clear();
 	m_cashChoices.clear();
@@ -55,7 +58,16 @@ bool WorldSkirmishSetupSource::load(RetailObjectWorld &world, const GameLogicSet
 	}
 	std::sort(m_cashChoices.begin(), m_cashChoices.end());
 	m_defaultStartingCash = (int)settings.defaultStartingCash;
-	return IniSkirmishSetupSource::loadMapCache(fs, m_maps, error);
+	if (bfme1)
+	{
+		// Original retail maps only (OpenBFME catalog policy). A patch's isOfficial
+		// also includes added maps, so read the original catalog without unmounting patches.
+		std::vector<std::uint8_t> bytes;
+		if (!fs.readFileFromArchive("Maps.big", "maps/mapcache.ini", bytes, error) ||
+			!MapCache::parse(std::string(bytes.begin(), bytes.end()), m_maps, error, true)) return false;
+	}
+	else if (!IniSkirmishSetupSource::loadMapCache(fs, m_maps, error)) return false;
+	return true;
 }
 
 int WorldSkirmishSetupSource::mapContentsMask(const MapCacheEntry &map) const

@@ -121,6 +121,23 @@ CI_GATES = scripts("""
 # Denylist part 2: manual dedicated invocations only, not pytest skips. Having
 # retail paths, a GPU or an opt-in environment variable must not schedule these.
 DENYLIST = {
+    "bfme1_audio_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_building_floor_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_live_plot_zoom_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_live_tooltip_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_music_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_options_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_plot_zoom_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_resource_farm_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_save_folder_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_score_screen_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_script_ai_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_skirmish_menu_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_starting_armies_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_startup_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_wall_upgrade_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_weather_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+
     "fortress_exit_test.gd": "manual: requires private retail assets and a live skirmish",
     "water_normal_test.gd": "manual: requires GPU rendering for fixed-input water normals",
     "standing_water_test.gd": "manual: requires private retail assets and GPU water rendering",

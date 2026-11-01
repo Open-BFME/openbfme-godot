@@ -260,3 +260,20 @@ runner is claimed. All paths below are relative to the repository root.
 Friend seeding can trigger `SocialClient`'s inbox-driven friends refresh. Creating a recovery code while that action owns the client emits `action_done("recovery", false)` and does not emit `recovery_ready`. The old integration ignored the rejection and waited for a code until timeout; no OAuth callback had run yet.
 
 The test now waits for a signed-in, populated, idle social client, connects both terminal signals before issuing the request, and checks successful completion and a nonempty code. A controlled busy-client probe holds readiness until explicitly released, proves no request was sent while busy, and then proves exactly one successful request. There is no fixed sleep or larger timeout. The real Node/SQLite integration still exercises both Discord rounds and all callback, restore, unlink and offline-provider assertions.
+
+| `godot/tests/bfme1_audio_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_building_floor_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_live_plot_zoom_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_live_tooltip_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_music_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_options_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_plot_zoom_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_resource_farm_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_save_folder_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_score_screen_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_script_ai_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_skirmish_menu_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_starting_armies_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_startup_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_wall_upgrade_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_weather_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |

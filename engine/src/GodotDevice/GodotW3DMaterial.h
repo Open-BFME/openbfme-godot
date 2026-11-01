@@ -89,6 +89,8 @@ public:
 	// stop S-5015: the texture swaps of the model being built (W3DInstancer::Set_Build_Texture_Swaps, a ModelConditionState's `Texture = A B` pairs):
 	// a surface texture named A (any case; A = "*": every texture) is loaded as B. Empty by default.
 	void Set_Texture_Swaps(const std::vector<std::pair<std::string, std::string>> &swaps) { TextureSwaps = swaps; }
+	// S-5017: keep BFME1 translucent floor markings visible under minification.
+	void Set_Floor_Sampling(bool enabled) { FloorSampling = enabled; }
 	// lane SDK-0 (GameClient/AssetPacks.h): cosmetic asset packs in front of the texture lookup; their files decode by their own bytes (DDS, PNG,
 	// JPEG, else TGA). nullptr (the default) = retail textures only. The packs must outlive the factory.
 	void Set_Asset_Packs(const AssetPacks *packs) { Packs = packs; }
@@ -128,7 +130,7 @@ public:
 	static bool Get_Shader_Material_Replacement();
 
 private:
-	Ref<Texture2D> Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing = false, std::vector<std::string> *notes = nullptr);
+	Ref<Texture2D> Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing = false, std::vector<std::string> *notes = nullptr, int alphaCoverage = 0);
 	static Ref<Texture2D> Placeholder_Texture(bool flatNormal);
 
 	ArchiveFileSystem &Fs;
@@ -138,6 +140,7 @@ private:
 	std::vector<std::pair<std::string, std::string>> TextureSwaps; // stop S-5015
 	bool AlphaOverride = false;
 	std::map<std::string, Ref<Shader>> Shaders;
+	bool FloorSampling = false;
 	std::map<std::string, Ref<Texture2D>> Textures; // by virtual path
 	std::map<std::string, std::string> PackedHouseTextureNotes; // retain S-1482 on cache hits
 	std::map<std::string, std::string> PackedTextureNotes; // retain S-1482 on cache hits

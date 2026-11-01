@@ -36,7 +36,18 @@ Ref<godot::Image> loadPackedTexture(AptFileSource &source, const std::string &st
 	image.instantiate();
 	if (read(stem + ".dds", data))
 	{
-		return image->load_dds_from_buffer(data) == OK ? image : Ref<godot::Image>();
+		// BFME1 also ships TGA bytes under DDS filenames (PalantirA).
+		static const unsigned char pngSignature[] = {137,80,78,71,13,10,26,10};
+		Error error;
+		if (data.size() >= 8 && std::memcmp(data.ptr(), pngSignature, 8) == 0)
+			error = image->load_png_from_buffer(data);
+		else if (data.size() >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff)
+			error = image->load_jpg_from_buffer(data);
+		else if (data.size() >= 4 && std::memcmp(data.ptr(), "DDS ", 4) == 0)
+			error = image->load_dds_from_buffer(data);
+		else
+			error = image->load_tga_from_buffer(data);
+		return error == OK ? image : Ref<godot::Image>();
 	}
 	if (!read(stem + ".jpg", data) || image->load_jpg_from_buffer(data) != OK)
 	{

@@ -52,6 +52,7 @@
 // choice, face-object) -> S-1186 (docs/STOPS.md); the noted stand-ins below each report themselves.
 
 #include "GameLogic/ScriptEngine/ScriptActions.h"
+#include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/ScriptEngine/AttackPriority.h"
 
 #include "Common/Player.h"
@@ -340,15 +341,13 @@ std::int32_t counterMath(std::int32_t lhs, int op, std::int32_t rhs, ScriptEngin
 // the transport (+ 0x22C) and its loading, the auto-transport (+ 0x234), the origin waypoint (+ 0x230: the units start at the waypoint here, so
 // no group move follows), a horde's own upgrade / level slots (RW 0x68C866 0xB4 / 0xB8,
 // 0x694BF8 0xC4: the object's own paths run)
-void createReinforcements(ScriptEngine &engine, const std::string &teamName, const std::string &waypointName)
+void createReinforcements(ScriptEngine &engine, const std::string &teamName, const Coord3D &spawn, bool clearSpawn = false)
 {
 	GameLogic &logic = engine.logic();
-	const TerrainLogic *terrain = logic.terrain();
-	const Waypoint *w = terrain ? terrain->findWaypointByName(waypointName) : nullptr;
 	const std::pair<std::string, std::string> q = engine.qualify(teamName);
 	TeamFactory &teams = logic.players().teams();
 	TeamPrototype *proto = teams.findTeamPrototype(q.first, q.second);
-	if (!w || !proto)
+	if (!proto)
 	{
 		return;
 	}
@@ -363,7 +362,7 @@ void createReinforcements(ScriptEngine &engine, const std::string &teamName, con
 	{
 		engine.note("[S-1186] CREATE_REINFORCEMENT_TEAM: a team with a transport (the units start on the ground)");
 	}
-	const Coord3D spawn = w->location;
+	if (clearSpawn) engine.note("[S-1186] BFME1 unit-position reinforcements resolve spawn footprints with adjustDestination (OpenBFME correction; native placement unverified)");
 	float rowY = spawn.y;
 	for (int i = 1; i <= 7; ++i)
 	{
@@ -394,6 +393,24 @@ void createReinforcements(ScriptEngine &engine, const std::string &teamName, con
 			if (!obj)
 			{
 				continue;
+			}
+			if (clearSpawn)
+			{
+				// BFME1's unit-position reinforcement action currently uses the base
+				// center as its origin. OpenBFME correction (S-1186): resolve each
+				// mobile unit's full pathfinding footprint before building its horde,
+				// so the first battalion cannot start inside the capital. The exact
+				// BFME1 action placement algorithm has not been located.
+				if (AIUpdateInterface *ai = obj->getAIUpdateInterface())
+				{
+					if (!logic.aiWorld()->pathfinder().adjustDestination(logic.aiWorld()->adapterFor(*obj), ai->locomotorInfo(), &pos))
+					{
+						engine.note("[S-1186] BFME1 reinforcement has no clear spawn footprint");
+						logic.destroyObject(obj);
+						continue;
+					}
+					obj->setPosition(&pos);
+				}
 			}
 			obj->friend_onBuildComplete();
 			size_t at = 0;
@@ -499,6 +516,82 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 {
 	GameLogic &logic = engine.logic();
 	const TerrainLogic *terrain = logic.terrain();
+	if (logic.things().bfme1Data() && name == "TEAM_RECRUIT_UNITS")
+	{
+		// DONOR BFME1 ScriptActionsTeamRecruit.cpp (0x2F5BE0): create team,
+		// resolve template/object list, recruit count; empty teams use map-wide range.
+		// S-5017: the helper's candidate ranking is not recovered. Restrict this
+		// first slice to default-team units and stable object order; populated
+		// teams keep the explicit stop instead of inventing MaxRecruitDistance.
+		Team *target = ScriptConditions::team(engine, param(a, 0).stringValue, true);
+		Player *owner = target ? target->getControllingPlayer() : nullptr;
+		if (!target || !owner) return true;
+		if (target->getMemberCount() != 0)
+		{
+			engine.noteUnportedAction(name);
+			return true;
+		}
+		const auto types = ScriptConditions::typeNames(engine, param(a, 2).stringValue);
+		int remaining = param(a, 1).intValue;
+		for (Object *o = logic.getFirstObject(); o && remaining > 0; o = o->getNextObject())
+		{
+			if (o->getTeam() != owner->getDefaultTeam() || o->isEffectivelyDead() || o->isUnderConstruction()) continue;
+			bool matches = false;
+			for (const auto &type : types) matches = matches || ScriptConditions::equivalentTemplates(o->getTemplate(), logic.things().findTemplate(type));
+			if (!matches) continue;
+			engine.note("[S-5017] BFME1 empty-team recruitment uses default-team candidates in object order; native ranking is unverified");
+			o->setTeam(target);
+			--remaining;
+		}
+		target->setActive();
+		return true;
+	}
+
+	if (logic.things().bfme1Data() && name == "TEAM_MOVE_TO_NEAREST_OBJECT_OF_KINDOF")
+	{
+		// DONOR BFME1 ScriptActions_doTeamMoveToNearestObjectOfKindof.cpp:
+		// all players, closest object to team center, ordinary script move.
+		Team *team = ScriptConditions::team(engine, param(a, 0).stringValue);
+		if (!team) return true;
+		const auto members = ScriptConditions::members(*team);
+		if (members.empty()) return true;
+		Coord3D center{};
+		for (Object *o : members)
+		{
+			center.x = SimMath::addf32(center.x, o->getPosition()->x);
+			center.y = SimMath::addf32(center.y, o->getPosition()->y);
+			center.z = SimMath::addf32(center.z, o->getPosition()->z);
+		}
+		center.x = SimMath::divf32(center.x, (float)members.size());
+		center.y = SimMath::divf32(center.y, (float)members.size());
+		center.z = SimMath::divf32(center.z, (float)members.size());
+		const bool typed = name == "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER";
+		// DONOR sibling ScriptActions_doTeamMoveToNearestObjectOfTypeOwnedByPlayer.cpp.
+		const auto owners = typed ? ScriptConditions::players(engine, param(a, 2).stringValue) : std::vector<Player *>();
+		const auto types = typed ? ScriptConditions::typeNames(engine, param(a, 1).stringValue) : std::vector<std::string>();
+		const int kind = ObjectTemplateInfoBuilder::kindOfIndex(param(a, 1).stringValue.c_str());
+		Object *closest = nullptr;
+		float best = 0.0f;
+		for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+		{
+			if (o->isDestroyed()) continue;
+			if (typed)
+			{
+				if (std::find(owners.begin(), owners.end(), o->getControllingPlayer()) == owners.end()) continue;
+				bool matches = false;
+				for (const auto &type : types) matches = matches || ScriptConditions::equivalentTemplates(o->getTemplate(), logic.things().findTemplate(type));
+				if (!matches) continue;
+			}
+			else if (kind < 0 || !o->isKindOf((unsigned)kind)) continue;
+			const float dx = SimMath::subf32(o->getPosition()->x, center.x), dy = SimMath::subf32(o->getPosition()->y, center.y), dz = SimMath::subf32(o->getPosition()->z, center.z);
+			const float distance = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy)), SimMath::mulf32(dz, dz));
+			if (!closest || distance < best) { closest = o; best = distance; }
+		}
+		if (closest)
+			for (Object *o : members) if (auto *ai = o->getAIUpdateInterface()) ai->aiMoveToPosition(*closest->getPosition(), CMD_FROM_SCRIPT);
+		return true;
+	}
+
 	if (name == "UNIT_AFFECT_OBJECT_PANEL_FLAGS" || name == "TEAM_AFFECT_OBJECT_PANEL_FLAGS")
 	{
 		const bool value = param(a, 2).intValue != 0;
@@ -982,9 +1075,19 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 		}
 		return true;
 	}
+	if (name == "CREATE_REINFORCEMENT_TEAM_AT_UNIT_POSITION")
+	{
+		// BFME1's Multiplayer_Start_Teams scripts use the named base as the
+		// spawn origin; the team payload/upgrade/activation path is shared with
+		// CREATE_REINFORCEMENT_TEAM. Layout around that origin retains S-1186.
+		if (Object *object = engine.getUnitNamed(param(a, 1).stringValue))
+			createReinforcements(engine, param(a, 0).stringValue, *object->getPosition(), object->getTemplate()->bfme1Data());
+		return true;
+	}
 	if (name == "CREATE_REINFORCEMENT_TEAM")
 	{
-		createReinforcements(engine, param(a, 0).stringValue, param(a, 1).stringValue);
+		const Waypoint *waypoint = terrain ? terrain->findWaypointByName(param(a, 1).stringValue) : nullptr;
+		if (waypoint) createReinforcements(engine, param(a, 0).stringValue, waypoint->location);
 		return true;
 	}
 	if (name == "NAMED_BUILD_STRUCTURE_AT_WAYPOINT")

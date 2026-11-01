@@ -307,6 +307,7 @@ public:
 	bool cannotHideByStealth() const { return m_cannotHideByStealth; }
 
 private:
+	void applyBuildingWindowVisibility();
 	void addEntry(DrawServices &services, const ThingTemplate::Nugget &nugget, std::vector<std::string> &problems);
 
 	DrawServices &m_services;

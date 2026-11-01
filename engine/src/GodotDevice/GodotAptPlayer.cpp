@@ -1428,6 +1428,7 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("shell_font", "name", "size"), &AptMenuPlayer::shell_font);
 	ClassDB::bind_method(D_METHOD("take_load_progress_calls"), &AptMenuPlayer::take_load_progress_calls);
 	ClassDB::bind_method(D_METHOD("lobby_apply", "spec"), &AptMenuPlayer::lobby_apply);
+	ClassDB::bind_method(D_METHOD("lobby_map_catalog"), &AptMenuPlayer::lobby_map_catalog);
 	ClassDB::bind_method(D_METHOD("lobby_state"), &AptMenuPlayer::lobby_state); // lane UI-6
 	ClassDB::bind_method(D_METHOD("lobby_gadget_rect", "name"), &AptMenuPlayer::lobby_gadget_rect);
 	ClassDB::bind_method(D_METHOD("strategic_setup", "request"), &AptMenuPlayer::strategic_setup); // lane WOTR-2
@@ -3350,6 +3351,26 @@ Dictionary AptMenuPlayer::lobby_gadget_rect(const String &name)
 	out["y"] = y;
 	out["w"] = ww;
 	out["h"] = hh;
+	return out;
+}
+
+Array AptMenuPlayer::lobby_map_catalog()
+{
+	Array out;
+	if (!m->shell || !m->shell->shell) return out;
+	auto *screen = dynamic_cast<AptSkirmish *>(m->shell->shell->findScreenByFilename("Skirmish.apt"));
+	if (!screen || !screen->setup()) return out;
+	const auto &setup = *screen->setup();
+	for (int index : setup.listedMaps())
+	{
+		const auto &entry = setup.source().maps()[index];
+		Dictionary map;
+		map["key"] = toGodot(entry.name);
+		map["name"] = toGodot(u16ToUtf8(setup.mapBaseDisplayName(entry)));
+		map["players"] = entry.numPlayers;
+		map["official"] = entry.isOfficial;
+		out.push_back(map);
+	}
 	return out;
 }
 

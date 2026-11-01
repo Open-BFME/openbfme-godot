@@ -2044,6 +2044,7 @@ void GameWorld::refresh_views(double deltaMs)
 					ev.staticKeyColored = m_houseColors && ev.staticKeyPalette.kind > 0;
 					ev.staticKeySwaps = e.kind == W3D_DRAWKIND_FLOOR ? floorWeatherSwaps(e.data, m_streakWeather) : std::vector<std::pair<std::string, std::string>>();
 					ev.staticKey = AsciiStringUtil::lowered(e.staticModel) + W3DInstancer::Texture_Swap_Suffix(ev.staticKeySwaps);
+					if (m_fs->is_bfme1() && e.kind == W3D_DRAWKIND_FLOOR) ev.staticKey += "#floor-sampling";
 					ev.staticGlow = staticGlowOf(e.data); // lane GLOW-1 (S-5231): a glowing module's model is a copy of its own, as on the animated path
 					if (ev.staticGlow != 0)
 					{
@@ -2078,6 +2079,7 @@ void GameWorld::refresh_views(double deltaMs)
 					{
 						const double tm = nowMs();
 						dyn->Set_Build_Texture_Swaps(swaps);
+						dyn->Set_Build_Floor_Sampling(m_fs->is_bfme1() && e.kind == W3D_DRAWKIND_FLOOR);
 						if(colored) {
 						 PackedInt64Array colors;for(auto color:palette.colors) colors.push_back((int64_t)color);
 						 mid=dyn->add_model_colored(toGodot(e.staticModel),palette.kind,colors);

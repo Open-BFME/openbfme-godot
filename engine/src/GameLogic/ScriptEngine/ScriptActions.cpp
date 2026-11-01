@@ -6,6 +6,9 @@
 #include "GameLogic/SelfDestruct.h"
 
 #include "Common/Player.h"
+#include "Common/BuildAssistant.h"
+#include "GameLogic/Module/CastleModules.h"
+#include "GameLogic/Module/ConstructionModules.h"
 #include "Common/PlayerList.h"
 #include "Common/PlayerTemplate.h"
 #include "Common/Science.h"
@@ -401,6 +404,64 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 	}
 	GameLogic &logic = engine.logic();
 	const std::string &name = t->name;
+
+	if (logic.things().bfme1Data() && (name == "NAMED_BASE_UNPACK" || name == "NAMED_BASE_UNPACK_FREE"))
+	{
+		// DONOR BFME1 ScriptActions_doNamedBaseUnpack.cpp.
+		Object *base = engine.getUnitNamed(param(a, 0).stringValue);
+		Player *owner = base ? base->getControllingPlayer() : nullptr;
+		auto *castle = base ? dynamic_cast<CastleBehavior *>(base->findModule("CastleBehavior")) : nullptr;
+		const bool free = name == "NAMED_BASE_UNPACK_FREE";
+		if (castle && owner == engine.currentPlayer() && castle->canUnpack(true) &&
+			castle->isPlayerAllowedToPackOrUnpack(owner) && (free || castle->canAffordUnpack(owner)))
+		{
+			castle->initiateUnpack(free, nullptr);
+			if (!param(a, 1).stringValue.empty())
+			{
+				engine.setReference(param(a, 1).stringValue, *base);
+			}
+		}
+		return;
+	}
+	if (logic.things().bfme1Data() && (name == "BUILD_BASE_BUILDING" || name == "BUILD_BASE_BUILDING_IN_SLOT" ||
+		name == "BUILD_BASE_BUILDING_PER_TACTICAL_MARKER" || name == "BUILD_BUILDING_ON_FOUNDATION"))
+	{
+		// DONOR BFME1 ScriptActionsBuildBase.cpp: current owner, affordability,
+		// construction through the foundation interface, then bind the reference.
+		const bool slot = name == "BUILD_BASE_BUILDING_IN_SLOT";
+		const bool marker = name == "BUILD_BASE_BUILDING_PER_TACTICAL_MARKER";
+		const size_t baseIndex = marker ? 3 : slot ? 2 : 1;
+		Object *base = engine.getUnitNamed(param(a, baseIndex).stringValue);
+		// S-5017: a keep reference uses its owning castle; a direct pad keeps its own interface.
+		if (base && name != "BUILD_BUILDING_ON_FOUNDATION" && base->getTemplate()->bfme1Data())
+			if (auto *member = dynamic_cast<CastleMemberBehavior *>(base->findModule("CastleMemberBehavior")))
+				if (!base->findModule("CastleBehavior")) base = logic.findObjectByID(member->castleId());
+		Player *owner = base ? base->getControllingPlayer() : nullptr;
+		const ThingTemplate *tt = logic.things().findTemplate(param(a, 0).stringValue);
+		if (!base || !owner || owner != engine.currentPlayer() || !tt) return;
+		const int cost = BuildAssistant::calcCostToBuild(*tt, owner, nullptr, -1);
+		if (owner->getMoney()->countMoney() < (unsigned)cost) return;
+		Object *made = nullptr;
+		if (name == "BUILD_BUILDING_ON_FOUNDATION")
+		{
+			for (const auto &module : base->modules())
+				if (auto *foundation = module->getFoundationAIUpdate())
+				{ made = foundation->createOnSite(*tt, *base->getPosition(), 0.0f, *owner, false); break; }
+		}
+		else if (auto *castle = dynamic_cast<CastleBehavior *>(base->findModule("CastleBehavior")))
+		{
+			if (!castle->hasFreeBuildSlot(tt)) return;
+			if (marker) engine.note("[S-5017] BFME1 tactical-marker construction uses first free castle pad; native proximity selection is unported");
+			made = castle->buildInSlot(*tt, slot ? param(a, 1).intValue : -2);
+		}
+		const size_t reference = marker ? 4 : slot ? 3 : 2;
+		if (made && name != "BUILD_BUILDING_ON_FOUNDATION" && !param(a, reference).stringValue.empty())
+		{
+			engine.setReference(param(a, reference).stringValue, *made);
+		}
+		return;
+	}
+
 	if (name == "VICTORY" || name == "QUICKVICTORY")
 	{
 		engine.addEndRequest(true, name); // RW 0x7C45E0 / 0x7BE0A2 (the client's end screen)

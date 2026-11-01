@@ -223,3 +223,28 @@ TEST_CASE("archive file list and wildcard search match ZH SearchStringMatches")
 	CHECK(list.count("data\\ini\\a.ini") == 1);
 	CHECK(list.count("data\\ini\\object\\b.ini") == 1);
 }
+
+TEST_CASE("BIG: original catalog reads bypass patches without changing virtual file precedence")
+{
+	Win32BIGFileSystem fs;
+	std::string error;
+	auto original = openMem(fs, makeBig("BIGF", { { "maps/mapcache.ini", "original" } }), &error);
+	auto patch = openMem(fs, makeBig("BIGF", { { "maps/mapcache.ini", "patch" } }), &error);
+	REQUIRE(original);
+	REQUIRE(patch);
+	fs.mountArchive(std::move(patch), "install/_patch222maps.big", false);
+	fs.mountArchive(std::move(original), "install/Maps.big", false);
+	std::vector<std::uint8_t> bytes;
+	REQUIRE(fs.readFileFromArchive("MAPS.BIG", "maps/mapcache.ini", bytes, &error));
+	CHECK(std::string(bytes.begin(), bytes.end()) == "original");
+	REQUIRE(fs.readFile("maps/mapcache.ini", bytes, &error));
+	CHECK(std::string(bytes.begin(), bytes.end()) == "patch");
+	CHECK_FALSE(fs.readFileFromArchive("absent.big", "maps/mapcache.ini", bytes, &error));
+	CHECK(error == "missing mounted archive: absent.big");
+	CHECK_FALSE(fs.readFileFromArchive("Maps.big", "missing.ini", bytes, &error));
+	auto duplicate = openMem(fs, makeBig("BIGF", { { "maps/mapcache.ini", "other" } }), &error);
+	REQUIRE(duplicate);
+	fs.mountArchive(std::move(duplicate), "other/maps.big", false);
+	CHECK_FALSE(fs.readFileFromArchive("Maps.big", "maps/mapcache.ini", bytes, &error));
+	CHECK(error == "ambiguous mounted archive: Maps.big");
+}

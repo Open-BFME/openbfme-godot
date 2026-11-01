@@ -31,7 +31,10 @@ public:
 	bool fileExists(const std::string &path) const override;
 	bool hasFileSystem() const override { return m_fs != nullptr; }
 
+	bool bfme1Data() const override { return m_bfme1; }
+
 private:
+	bool m_bfme1 = false;
 	ArchiveFileSystem *m_fs = nullptr;
 	std::vector<SkirmishFaction> m_factions;
 	std::vector<SkirmishColor> m_colors;

@@ -9,6 +9,7 @@
 #include "GameLogic/Module/BloodthirstyUpdate.h"
 
 #include "Common/Audio/AudioRequests.h"
+#include "Common/BfmeGame.h"
 #include "Common/GameCommon.h"
 #include "Common/Player.h"
 #include "Common/StateHash.h"

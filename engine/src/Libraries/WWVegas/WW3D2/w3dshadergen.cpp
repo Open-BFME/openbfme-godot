@@ -124,6 +124,7 @@ std::string W3DShaderKey::Id() const
 	if (ConvertedFx) id += "_cfx1"; // retail's DefaultW3D.fx replacement of a classic material (w3dfxconvert.h)
 	if (SecGradient && HouseColor) id += "_sg" + std::to_string(SecGradient); // D3DRS_SPECULARENABLE: only the house colour combine reads it
 	if (Fog) id += "_fog" + std::to_string(Fog); // lane RENDER-4
+	if (FloorOverlay) id += "_floor";
 	if (AlphaOverride) id += "_ao"; // lane BUILD-5 r3
 	if (OcclusionPass) id += "_occl" + std::to_string(OcclusionPass); // lane OCCLUDE-1
 	return id;
@@ -389,6 +390,13 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		}
 	}
 	line("\tVERTEX = w3d_to_godot(p);");
+	if (k.FloorOverlay)
+	{
+		// S-5017 presentation policy: bib vertices can lie below the castle's
+		// raised surface. Lift one world unit without moving the object or
+		// disabling occlusion by buildings/units; compensate for instance scale.
+		line("\tVERTEX += inverse(mat3(MODEL_MATRIX)) * vec3(0.0, 1.0, 0.0);");
+	}
 	if (!k.Skin && k.Camera == 0)
 	{
 		// lane VISUAL-2: vegetation.fxo's vertex shader (blob 5): position += (position.z - the tree's base z) * SwayOffsets[type], in world space (W3D Z up

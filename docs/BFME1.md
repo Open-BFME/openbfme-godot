@@ -167,8 +167,35 @@ These are the places where BFME1's data or menus differ from RotWK's. Each one i
   the normal unpack price. The retail trigger (the caller of `CastleBehavior::initiateUnpack`) isn't in Open-BFME-1.
 - **Castle layouts:** BFME1's new castle system places its authored layout without per-piece overlap checks;
   adjacent wall and gate geometry deliberately overlaps. Applying the RotWK placement check drops those pieces.
+- **Resource-plot construction:** non-instant BFME1 layout entries marked `NEED_BASE_FOUNDATION` use the
+  foundation creation interface, so farms and other economy structures rise through their authored build-up
+  states instead of appearing complete as castle walls/props do. Starting castles still use instant layouts.
+  Source: BFME1 `CastleBehaviorCreateOwnedObject.cpp` (creation interface with initial state 0), the mounted
+  economy layouts and their structure templates. `bfme1_resource_farm_test.gd` captures a real resource plot,
+  builds through the HUD command, checks the initial one-health foundation, progress, completion and level 2.
+- **Building windows:** BFME1 `BuildingBehavior` name groups now control client subobjects: healthy daytime
+  buildings hide night/fire/glow meshes, night shows night windows, and AFLAME shows the fire/glow groups
+  (FireName only at night). This removes the fire-window mesh from healthy level-2 Gondor farms, including
+  farms created with no model-condition changes. Source: BFME1 `BuildingBehavior.cpp` and
+  `BuildingBehaviorApplyNames.cpp`. The client uses mirrored `NIGHT`/`AFLAME` flags instead of the donor's
+  global time and object-status reads; that mapping remains an inference under S-5017.
 - **Occupied plots:** starting construction hides and deselects a regular build plot, closing its commands. The plot returns when its occupant is removed.
 - **Ground texture alpha:** JPEG ground textures take priority over paired PNG alpha masks and load their alpha through the same packed-texture merge used by the UI.
+- **Distant build plots:** translucent, non-depth-writing `W3DFloorDraw` markings use base-level linear sampling.
+  Their alpha-blended source textures otherwise blur under minification; the earlier alpha-test coverage correction
+  does not apply to these materials. The overlays also render at transparent priority 32, after the depth-writing
+  castle floor. Sharing its default priority allowed the floor to cover every plot at some start positions,
+  including the second castle on Fords of Isen. Depth testing stays enabled, and opaque castle floors retain mipmaps. This is an OpenBFME presentation policy
+  (S-5017), not a verified retail sampler setting; very distant thin lines can alias.
+- **Building floor bibs:** the same translucent, non-depth-writing floor surfaces receive a one-world-unit
+  shader lift. The installed Gondor stable and archery-range bib vertices top out near 0.377, below the castle
+  floor at 0.4; draw priority alone cannot pass that depth test. The lift compensates for instance scale, leaves
+  object positions unchanged, and keeps depth testing enabled. This is OpenBFME presentation policy under
+  S-5017, not a recovered retail floor-buffer implementation. `bfme1_building_floor_test.gd` checks that both
+  bibs contribute rendered pixels with the castle floor present (requires a graphical renderer).
+- **Create-a-Hero and saves:** BFME1 does not initialize or open the BFME2/RotWK hero builder, or switch to their menu
+  presentation. OpenBFME saves use `user://bfme1/Save` (unless `--save-dir` overrides it), without consulting RotWK's
+  `gi.dat` or hero folder. This separate namespace is OpenBFME policy; retail BFME1 save import is still unavailable.
 - **Build-plot picking:** plot surfaces use `W3DFloorDraw`, so mouse picking tests their visible floor triangles
   as well as scripted model draws. Hidden floors remain unpickable.
 - **Skirmish maps:** the lobby lists the mapcache's multiplayer maps, as for RotWK (Sol review r1: no file-name filter; in BFME1 1.03 every
@@ -181,7 +208,13 @@ These are the places where BFME1's data or menus differ from RotWK's. Each one i
   BFME1 `Rva0046F910RankDisplay.cpp`: use the mounted `AptRankIcon<Side><Rank>` image when present, otherwise the native generic `AptRankIcon<Rank>`.
 - **Texture replacements:** PNG/JPEG files are accepted by BFME1 texture lookup (including `GBCampFloor`), and image signatures are recognized even when replacements retain `.dds` filenames.
 - **Palantir commands:** BFME1 uses six fixed `CommandButtons.Command1` … `Command6` slots and `SetCommandButtonState`, rather than BFME2's dynamic content frames. Slot state updates only run when content changes, so show animations can finish.
-- **Command tooltips:** BFME1's legacy cursor blocks are skipped to their `End` when loading help fonts. A native help panel displays the existing command-help text because BFME1 has no BFME2 `OnHelpBoxLoaded` content-frame callback.
+- **Command tooltips:** BFME1's legacy cursor blocks are skipped to their `End` when loading help fonts. BFME1 has no `OnHelpBoxLoaded`:
+  the tooltip is `Palantir.apt`'s own bordered `HelpBox` clip in the movie-authored center position.
+  The separate bottom-right device panel is removed; both frame and text use the native clip.
+  A live attached HUD waits for Palantir's `OnInitialized` before sampling width, since BFME1 has no load handshake. The RotWK help box state machine drives it through the root's
+  `SampleHelpBoxTextWidth` / `HideHelpBox` / `ShowHelpBox(height, "%g")`, and the text is drawn into the clip typed `HelpBoxText`
+  (Open-BFME-1 VA 0x00593E60, 0x005649A0, 0x00592640). INFERENCE: the width sample waits for the `Text` clip's shape, which is
+  empty on the first frame after the call.
 - **Pause menu:** BFME1 uses type-8 `PushData` constants to reference the active constant pool. Resolving these initializes each button's own text and callback, including the Restart/Exit confirmations.
 - **Keys and voices:** only `Data\INI\CommandMap.ini` exists (there's no root `CommandMap.ini`), and there's no
   `CrowdResponse.ini`, because BFME1 has no crowd responses.
@@ -279,3 +312,182 @@ BFME1_INSTALL="$PWD/games/BFME1" godot --headless --path godot -- --game=bfme1 -
 ```
 
 `godot/tests/bfme1_quit_test.gd` checks the camp-floor material and all six pause-menu buttons with real movie clicks, including confirmations.
+
+## Skirmish menu
+
+Profile career totals include every unique playable side in the mounted faction
+data. The native movie's faction captions determine the matching row order;
+remaining sides follow mounted-data order. Its four expanded rows and rank
+providers share that mapping, while totals also include additional mod sides.
+
+BFME1 offers Official Maps and Player-made Maps, with the native two-column
+map list (honors, name with player count). The built-in catalog comes from the
+original mounted `Maps.big` rather than a patch's `mapcache.ini`: only original
+retail multiplayer maps are offered, even when a 2.22 pack marks additional
+maps official. Map contents retain mounted patch precedence. The Player-made filter lists
+non-official multiplayer entries available in the catalog; campaign and scenario
+maps are excluded. Importing external user-map folders is outside this change. A missing or ambiguous original archive is a reported boot error.
+
+The profile dropdown supports selection, New Profile and Delete Profile.
+The main and expanded profile panels read BFME1's `<profile>SkirmishStats.ini`,
+including per-faction results, streaks and rank progress. Creating a profile
+starts a fresh stats record, even when reusing a deleted profile name; old
+wins, losses, streaks and rank points are not inherited. A Random army shows
+retail's dash fields. S-3504 covers remaining statistics recording and platform
+date differences. Source evidence: BFME1 MpGameSetupComboPopulation,
+MpGameSetupOnInitGadget (0x525AB0), Rva00453480MapPointerCollector,
+SkirmishScreenRefreshProfile, SkirmishProfileMessage0057E9A0,
+BfmeAptScreenSkirmish::_bfme_updateProfileDisplay (0x57A470),
+Rva005674F0Profile, and RankProgress00579990.
+
+Validation: `godot/tests/bfme1_skirmish_menu_test.gd` with `BFME1_INSTALL`
+checks the retail catalog, translated names, filtering, scrolling and profile
+actions against the user's installed assets. `test_big_archive.cpp` pins
+archive-specific catalog reads without changing patch precedence;
+`test_apt_skirmish.cpp` pins BFME1 statistics and rank providers.
+
+## Replacement settings menu
+
+BFME1 uses the shared OpenBFME settings menu used by BFME2/RotWK. Its original
+Options movie needs `assignOpen("normal")` (or `"online"`) after frame-zero
+initialization completes (BFME1 BfmeConv1072, 0x55DC00). The replacement waits
+for its animated controls to initialize, hides the two BFME1 settings clips
+and their separate borders and tooltip regions, and handles the BFME1
+Cancel/Reset/Save buttons through the shared replacement menu events.
+`godot/tests/bfme1_options_test.gd` verifies that the replacement opens,
+original controls stay hidden, its bottom bar is available and it reopens.
+
+## Opening armies, Q and distant markings
+
+The original multiplayer starting-team library also requires
+`COMPARE_NUM_PLAYERS_IN_GAME`; the 2.22 replacement library does not expose the
+same missing-condition failure. The BFME1-only handler follows
+Open-BFME-1 `ScriptConditionsCompare.cpp` (`0x00324390`): compare the
+non-observer participant count with the authored integer using operators 0–5.
+Mapping participants to human/skirmish players in this engine remains an
+inference under S-5017; neutral map sides do not count. Validation must include
+the original libraries as well as the mounted 2.22 libraries.
+
+BFME1's opening battalions come from the mounted `Multiplayer_Start_Teams`
+script library, not the commented-out PlayerTemplate StartingUnit rows.
+The library's team definitions are now instantiated for each receiving player;
+`SET_UNIT_REFERENCE` binds the base reference and
+`CREATE_REINFORCEMENT_TEAM_AT_UNIT_POSITION` creates its configured team at
+that base. References use the receiving side's named cache, whose IDs already
+participate in CRC and save/load. Spawn layout retains the existing S-1186
+reinforcement-placement inference. Evidence: BFME1 ScriptActionsReferences
+(0x2F5A10), the shipped library scripts and SidesList's library-team merge.
+The asset-based test checks all four factions; the tested installed library
+configures two battalions for Gondor/Rohan/Mordor and one for Isengard.
+
+The shipped BFME1 CommandMap.ini contains no bindings. Q now has the requested
+select-army default when no explicit SELECT_ALL binding or other Q binding
+exists. Both the live input map and the settings listing use this default.
+
+Particle lookup uses BFME1's flat texture layout, with DDS signature detection
+for DDS streams stored under TGA names. Missing textures remain reported.
+As an OpenBFME rendering fix, alpha-tested BFME1 textures retain alpha coverage
+in their mip levels. The foundation textures' smallest authored mip levels
+fall below the alpha cutoff and otherwise disappear at distant zoom. Only
+mip alpha changes; base-level pixels, colours and simulation state stay intact.
+The same processing applies to live texture replacements and precedes texture
+quality reduction. RotWK/BFME2 keep their existing rendering path.
+
+Validation: `bfme1_starting_armies_test.gd` checks the mounted opening armies
+and live Q selection, and loads fire/smoke particle textures. `test_input1.cpp` pins binding precedence;
+`test_fx_review.cpp` checks flat particle lookup and shrinking alpha cutouts.
+
+`godot/tests/bfme1_plot_zoom_test.gd` checks Gondor/Isengard live plot shaders and renders camera heights
+500, 800, 1200 and 1600. Run with a graphical renderer and `BFME1_INSTALL`; set `BFME1_PLOT_SCREENSHOTS`
+to an output directory for visual inspection. `godot/tests/bfme1_save_folder_test.gd` checks the mode-specific
+save namespace, explicit override, disabled CAH entry and ignored BFME2/RotWK style requests without retail data.
+
+`godot/tests/bfme1_live_plot_zoom_test.gd` starts the normal game scene, clicks through the lobby with `--auto`,
+and keeps the simulation, HUD, shroud and tactical camera active. It checks 1x, 1.5x, 2x, 2.5x and 3x zoom:
+hiding only the floor-overlay nodes must change pixels at a local empty plot. This catches an overlay that is
+instantiated but covered by the castle floor. Run with the graphical renderer:
+
+```sh
+godot --path godot --script res://tests/bfme1_live_plot_zoom_test.gd -- --game=bfme1 --auto --advance=600 \
+  "--map=maps/map mp fords of isen/map mp fords of isen.map" --faction=FactionGondor --start-spot=1
+```
+
+Use `--bfme1-install` to select an installation, `--faction=FactionIsengard` for Isengard, and
+`BFME1_PLOT_SCREENSHOTS` to save the live views. The second start is essential: the first castle did not
+reproduce the draw-order failure in the original regression.
+
+`bfme1_hud_test.gd` checks the fixed `HelpBoxText` render callback and the native
+`SampleHelpBoxTextWidth`, `HideHelpBox` and `ShowHelpBox` calls as well as visible tooltip text.
+
+`bfme1_live_tooltip_test.gd` uses the normal game scene, opens Skirmish through its host command, starts
+through the lobby, selects a live plot and hovers a radial build command. It verifies the native callback,
+show calls and rendered text after the shell-to-game transition. Use the live plot test command above with
+this script; `BFME1_TOOLTIP_SCREENSHOT` optionally saves the full live frame to a PNG path.
+
+BFME1 unit-position reinforcements now resolve each mobile unit's spawn through the existing
+`Pathfinder::adjustDestination` before its build-complete callback populates the horde. Starting directly
+at the named base origin put the first battalion inside the capital. This is an OpenBFME correction,
+reported under S-1186; the original BFME1 action's placement algorithm is still unverified. A failed
+search reports the missing clear footprint and removes that spawn instead of leaving it embedded.
+Waypoint reinforcement placement and BFME2/RotWK behavior are unchanged. The opening-army regression
+checks the actual soldiers against both rotated Gondor keep footprints, as well as all four factions'
+starting counts; a live match on Fords of Isen start 2 confirms both battalions stand outside the keep.
+
+BFME1 PalantirA stores TGA bytes under a DDS filename. The BFME1 material
+loader identifies the payload before decoding, so the Palantir sphere uses its
+authored texture rather than the pink error material. The HUD regression loads
+the Palantir model and requires an empty texture-error report.
+
+In the Uber profile, an incomplete battalion coarse-corridor path is retried once with the existing
+cell search without corridor ordering. Castle rear walls can otherwise leave the battalion
+at a partial endpoint despite an open gate providing a longer route. This is an OpenBFME
+pathfinding correction, not a verified retail algorithm; Faithful keeps the native single search. Both searches retain their
+cell limits, and a retry replaces the original result only when it reaches the destination.
+The regression issues one move behind Gondor's castle on Fords of Isen and Rohan's castle
+on Anorien and checks arrival of the battalion and each soldier.
+
+Castle wall trebuchet platforms and towers use `GeometryUpgrade` to set their permanent
+`UPGRADE_TREBUCHET` / `UPGRADE_GARRISON` animation conditions and switch the plot's
+collision shapes. This module now runs through the shared upgrade mux; previously only
+the separate trebuchet spawn ran, leaving it floating over an invisible platform.
+The port uses main’s shared GeometryUpgrade runtime (RW 0x8BADC0 / 0x8BAC96), including its native UpgradeMux removal behavior; see S-1423 and `test_geometry_upgrade.cpp`.
+WallBoundsMesh / RampMesh and WallUpgradeUpdate navigation mesh hooks remain S-1423.
+The retail regression purchases both upgrades and requires the corresponding rendered
+structure plus exactly one spawned wall trebuchet.
+
+## Script-driven AI: first construction slice
+
+BFME1 uses its original `AI_Initialize`, faction, economy and execution map libraries,
+not RotWK's `ArmyDefinition` base builder. Those libraries already loaded, but their
+base construction actions and unpackability checks were missing. Computer players
+now use those authored scripts to build on castle and camp foundations, with the
+normal prices and timed construction. No faction build order is hard-coded.
+
+Source: Open-BFME-1 `game/GameEngine/Source/GameLogic/ScriptEngine/`:
+`ScriptActionsBuildBase.cpp`, `ScriptConditionsCanBuildAtBase.cpp`,
+`ScriptActions_doNamedBaseUnpack.cpp`, `ScriptConditionsNamedBaseUnpackableForPlayer.cpp`,
+`ScriptActionsCounters.cpp`, `ScriptActionsTeamRecruit.cpp`,
+`ScriptActions_doTeamMoveToNearestObjectOfKindof.cpp`, and
+`ScriptActions_doTeamMoveToNearestObjectOfTypeOwnedByPlayer.cpp`.
+The free-slot query follows `Common/Gen00371340StructureCompletionScan.cpp`.
+Unnamed object creation and command-button lookup follow `ScriptActions.cpp`.
+
+`godot/tests/bfme1_script_ai_test.gd` runs Gondor with 2000 starting cash on
+Fords of Isen (castle) and Rhun (camp). The authored AI builds a farm, forge and
+marketplace. C++ tests cover free-pad occupancy, recruitment and a scout's move
+toward the nearest capturable plot.
+
+This is an initial slice, not a complete retail AI port. S-5017 records these
+explicit approximations: tactical-marker builds choose the first free pad;
+base references naming the keep resolve through its CastleMember link; empty-team
+recruitment takes matching default-team units in object order. Recruitment into
+populated teams still reports an unported action. Rank predicates, named references,
+economy counters and GeometryUpgrade now use main’s shared implementations,
+consistent with BFME1 mode running RotWK rules on BFME1 data (S-5017).
+
+Autonomous external resource expansion is **not accepted yet**: its scripts still
+hit `UNIT_THREAT_LEVEL`, `TEAM_THREAT_LEVEL`, `SET_COUNTER_TO_TEAM_THREAT` and
+army-management stops. The movement and castle-unpack operations are now available,
+but the engine does not invent safe-threat answers to force expansion. The next
+slice needs the donor's cached threat helper and team recruitment/army ownership
+rules, followed by a recorded unit journey, capture and timed farm construction.

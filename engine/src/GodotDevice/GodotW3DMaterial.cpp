@@ -51,6 +51,9 @@ Error decodeTexture(const Ref<Image> &image, const PackedByteArray &buffer, bool
 		{
 			return image->load_jpg_from_buffer(buffer);
 		}
+		// BFME1 PalantirA also stores TGA bytes under a DDS filename.
+		if (dds && (buffer.size() < 4 || std::memcmp(buffer.ptr(), "DDS ", 4) != 0))
+			return image->load_tga_from_buffer(buffer);
 	}
 	return dds ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
 }
@@ -391,7 +394,27 @@ bool W3DMaterialFactory::Reduce_Image(Ref<Image> &image, int reduction)
 	return true;
 }
 
-Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing, std::vector<std::string> *notes)
+namespace
+{
+void preserveAlphaCoverage(Ref<Image> &image, int alphaCoverage)
+{
+	if (alphaCoverage <= 0) return;
+
+	// User-requested BFME1 plot visibility fix: its foundation DDS mips
+	// eventually have no alpha above the material's cutoff. Preserve coverage
+	// before texture reduction so zoom/detail changes cannot erase the plot.
+	if (image->is_compressed()) image->decompress();
+	image->convert(Image::FORMAT_RGBA8);
+	PackedByteArray data = image->get_data();
+	std::vector<unsigned char> rgba(data.ptr(), data.ptr() + data.size());
+	W3D_Preserve_Mip_Alpha_Coverage(rgba, image->get_width(), image->get_height(), alphaCoverage);
+	if (!rgba.empty()) std::memcpy(data.ptrw(), rgba.data(), rgba.size());
+	image = Image::create_from_data(image->get_width(), image->get_height(), image->has_mipmaps(), Image::FORMAT_RGBA8, data);
+
+}
+} // namespace
+
+Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing, std::vector<std::string> *notes, int alphaCoverage)
 {
 	found = false;
 	if (Packs)
@@ -453,7 +476,8 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 		return Ref<Texture2D>();
 	}
 	const int reduction = g_textureReduction;
-	const std::string cacheKey = reduction > 0 ? res.Path + "#reduction" + std::to_string(reduction) : res.Path;
+	const std::string coverageKey = alphaCoverage > 0 ? res.Path + "#coverage" + std::to_string(alphaCoverage) : res.Path;
+	const std::string cacheKey = reduction > 0 ? coverageKey + "#reduction" + std::to_string(reduction) : coverageKey;
 	auto it = Textures.find(cacheKey);
 	if (it != Textures.end())
 	{
@@ -503,6 +527,7 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	{
 		image->generate_mipmaps();
 	}
+	preserveAlphaCoverage(image, alphaCoverage);
 	Reduce_Image(image, reduction); // lane OPTS-2
 	Ref<ImageTexture> tex = ImageTexture::create_from_image(image);
 	Textures[cacheKey] = tex;
@@ -818,12 +843,22 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 	{
 		if (tex[s].empty()) continue;
 		key.Tex[s] = true;
-		textures[s] = loadTextures ? Load_Texture(tex[s], out.Errors, found[s], false, &out.Notes) : Placeholder_Texture(false);
+		textures[s] = loadTextures ? Load_Texture(tex[s], out.Errors, found[s], false, &out.Notes, isBfme1Data(Fs) && key.AlphaTest && !key.AlphaTestLessEqual ? (int)std::ceil(alphaRef * 255.0f) : 0) : Placeholder_Texture(false);
 		if (hasInfo[s])
 		{
 			key.ClampU[s] = (info[s].Attributes & 0x08) != 0; // W3DTEXTURE_CLAMP_U
 			key.ClampV[s] = (info[s].Attributes & 0x10) != 0; // W3DTEXTURE_CLAMP_V
 			key.NoLod[s] = (info[s].Attributes & 0x04) != 0;  // W3DTEXTURE_NO_LOD
+		}
+		// BFME1 plot floors are alpha blended, not alpha tested. Their authored
+		// mips average the sparse marking into near-transparent pixels. Keep the
+		// original marking when shrinking. OpenBFME presentation policy (S-5017),
+		// not a retail sampler claim; opaque castle floors keep their mipmaps.
+		if (FloorSampling && key.Blend == W3D_GODOT_BLEND_MIX && !key.DepthWrite)
+		{
+			key.FloorOverlay = true;
+			key.NoLod[s] = true;
+			if (s == 0) out.Notes.push_back("[S-5017] BFME1 translucent floor markings use base-level linear sampling, a one-world-unit lift and render after the castle floor to retain visibility (OpenBFME policy)");
 		}
 	}
 	if (!normalMapName.empty())
@@ -938,7 +973,10 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 	if (key.NormalMap) mat->set_shader_parameter("w3d_normal", normalTex);
 	if (key.HouseColor) mat->set_shader_parameter("w3d_hc_tex", hcTex);
 	const int priority = std::clamp(surf.Pass - std::min(surf.SortLevel, 31) * 4, -128, 127);
-	mat->set_render_priority(priority);
+	// S-5017: blended floor overlays must follow the depth-writing castle floor,
+	// whose batch order otherwise changes with camera position. Keep depth testing
+	// so buildings and units still occlude them. OpenBFME presentation policy.
+	mat->set_render_priority(FloorSampling && key.Blend == W3D_GODOT_BLEND_MIX && !key.DepthWrite ? 32 : priority);
 
 	for (int s = 0; s < 2; ++s)
 	{
