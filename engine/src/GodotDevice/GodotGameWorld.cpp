@@ -352,6 +352,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("build2_repair", "dozers", "target"), &GameWorld::build2_repair);
 	ClassDB::bind_method(D_METHOD("get_stats"), &GameWorld::get_stats);
 	ClassDB::bind_method(D_METHOD("get_frame_timings"), &GameWorld::get_frame_timings);
+	ClassDB::bind_method(D_METHOD("set_parallel_views", "enabled"), &GameWorld::set_parallel_views); // lane PERF-CLIENT: the A/B switch (tests)
 	ClassDB::bind_method(D_METHOD("get_logic_wait_sites"), &GameWorld::get_logic_wait_sites);
 	ClassDB::bind_method(D_METHOD("is_logic_held"), &GameWorld::is_logic_held);
 	ClassDB::bind_method(D_METHOD("get_client_window_stats"), &GameWorld::get_client_window_stats);
@@ -2146,6 +2147,7 @@ void GameWorld::refresh_views(double deltaMs)
 	W3DInstancer *dyn = instancerOf(m_dynamicId);
 	if (!m_game || !dyn)
 	{
+		m_lastViewsLocal = m_lastViewsSerial = 0;
 		return;
 	}
 	DrawableManager &dm = m_game->drawables();
@@ -2200,13 +2202,13 @@ void GameWorld::refresh_views(double deltaMs)
 	{
 		m_viewSerial.resize(viewSlots + viewSlots / 2);
 	}
-	std::atomic<size_t> animatedLocal{ 0 };
+	std::atomic<size_t> animatedLocal{ 0 }, refreshedLocal{ 0 };
 	const bool parallel = m_parallelViews && viewSlots >= 512;
 	if (parallel)
 	{
 		JobSystem::client().parallelFor(viewSlots, 64, [&](size_t, size_t begin, size_t end) {
 			W3DDrawPoseView f;
-			size_t anim = 0;
+			size_t anim = 0, refreshed = 0;
 			for (size_t id = std::max<size_t>(begin, 1); id < end; ++id)
 			{
 				prefetch_view(id, viewSlots);
@@ -2214,13 +2216,17 @@ void GameWorld::refresh_views(double deltaMs)
 				m_viewSerial[id] = local ? 0 : 1;
 				if (local)
 				{
+					refreshed += m_views[id].valid ? 1 : 0;
 					refresh_view(id, dyn, presentedRaw, f, anim);
 				}
 			}
 			animatedLocal.fetch_add(anim, std::memory_order_relaxed);
+			refreshedLocal.fetch_add(refreshed, std::memory_order_relaxed);
 		});
 	}
 	animated += animatedLocal; // the jobs are done (parallelFor returns after the last)
+	m_lastViewsLocal = refreshedLocal;
+	m_lastViewsSerial = 0;
 	for (size_t id = 1; id < viewSlots; ++id)
 	{
 		if (!parallel)
@@ -2229,6 +2235,7 @@ void GameWorld::refresh_views(double deltaMs)
 		}
 		if (!parallel || m_viewSerial[id])
 		{
+			m_lastViewsSerial += m_views[id].valid ? 1 : 0;
 			refresh_view(id, dyn, presentedRaw, m_viewPose, animated);
 		}
 	}
@@ -4084,6 +4091,8 @@ Dictionary GameWorld::get_frame_timings() const
 	t["advance_ms"] = m_lastAdvanceMs;
 	t["shroud_ms"] = m_lastShroudMs; // lane PERF-1: the parts of sync_ms and the first-use work of the frame
 	t["views_ms"] = m_lastViewsMs;
+	t["views_local"] = (int64_t)m_lastViewsLocal;   // lane PERF-CLIENT: the drawables the last refresh_views refreshed on the client job pool
+	t["views_serial"] = (int64_t)m_lastViewsSerial; // and on the main thread
 	t["fx_ms"] = m_lastFxMs;
 	t["new_models"] = (int64_t)m_lastNewModels;
 	t["new_model_ms"] = m_lastNewModelMs;

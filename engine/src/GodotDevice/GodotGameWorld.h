@@ -501,6 +501,8 @@ public:
 	// lane SMOOTH-1: the cheap per-frame numbers of the frame-time benchmark (no state hash, unlike get_stats): { logic_ms, sync_ms, streak_ms, advance_ms,
 	// logic_frames (run by the last advance), alpha, dyn_pose_ms, dyn_upload_ms, dyn_mapper_ms, static_mapper_ms }
 	Dictionary get_frame_timings() const;
+	// lane PERF-CLIENT: refresh_views' job pool pass on or off at run time (OPENBFME_SERIAL_VIEWS sets it at start); a test compares the two passes' results
+	void set_parallel_views(bool enabled) { m_parallelViews = enabled; }
 	// lane RENDERWAIT-1: the wait log of this game (LiveGame::logicWaitSites): [{site, count, total_ms, worst_ms}], worst total first; and its reset
 	Array get_logic_wait_sites() const;
 	void reset_logic_wait_sites();
@@ -799,6 +801,7 @@ private:
 	void prefetch_view(size_t id, size_t viewSlots) const;
 	std::vector<std::uint8_t> m_viewSerial; ///< per slot: refreshed by the serial pass (view_is_local said no)
 	bool m_parallelViews = std::getenv("OPENBFME_SERIAL_VIEWS") == nullptr; ///< OPENBFME_SERIAL_VIEWS set (any value): the job pool pass is off (A/B)
+	size_t m_lastViewsLocal = 0, m_lastViewsSerial = 0; ///< the last refresh_views' drawables refreshed by the job pool pass and by the serial pass
 	// VIS-1: the local player's shroud as a cell texture on the terrain materials (S-567)
 	void refresh_shroud(bool force, double dtMs = 0.0);
 	void loadWeather(const String &map_name, Dictionary &report); // lane WEATHER-1: errors under report["weather_errors"]
