@@ -7,6 +7,7 @@
 
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
+#include "GameLogic/Combat/WeaponDelivery.h"
 #include "GameLogic/Module/ProjectileModules.h"
 #include "GameLogic/Weapon.h"
 
@@ -381,4 +382,51 @@ TEST_CASE("proj flight: inFlight() drops when an arrow is jammed or destroyed di
 		CHECK(r.w.combat().counters().projectilesLaunched == launched);
 		CHECK(r.w.combat().counters().projectilesDetonated == (how == 2 ? detonated + 1 : detonated));
 	}
+}
+
+// lane SIMSMALL-1: a ProjectileLaunchOffsets that answers the PreferredTargetBone query for every object (the victim "has" the
+// bone); the bone's translation is (7, 8, 9) model space, so with an identity basis the aim is the victim's position + (7, 8, 9)
+namespace
+{
+class TargetBoneOffsets : public ProjectileLaunchOffsets
+{
+public:
+	bool launchOffset(const Object &, int, int, float[12]) override { return false; }
+	bool singleLogicalBone(const Object &, const std::string &bone, float out[12]) override
+	{
+		if (bone != "TARGETBONE")
+		{
+			return false;
+		}
+		for (int i = 0; i < 12; ++i)
+		{
+			out[i] = (i == 0 || i == 5 || i == 10) ? 1.0f : 0.0f;
+		}
+		out[3] = 7.0f;
+		out[7] = 8.0f;
+		out[11] = 9.0f;
+		return true;
+	}
+};
+} // namespace
+
+TEST_CASE("proj flight: a PreferredTargetBone the victim has answers the aim query with no logic draw (RW 0x6CB85A flag 1)")
+{
+	TargetBoneOffsets bones;
+	Range r("BoneBowman", "BoneBow", 100.0f);
+	r.w.combat().setLaunchOffsets(&bones);
+	r.w.logic->random().enableCallLog(true);
+	r.fire(r.b);
+	Object *arrowObj = r.projectile();
+	REQUIRE(arrowObj != nullptr);
+	BezierProjectileBehavior *arrow = bezierOf(arrowObj);
+	// the launch's aim query (RW 0x85EBEE -> 0x6CB85A) and the two updates the launch runs at once all take the bone; the fire
+	// FX block's query took it already: not one Weapon.cpp:1749 draw in the whole shot
+	CHECK(countLine(r.w.logic->random().callLog(), 1749) == 0);
+	const Coord3D &vp = *r.b->getPosition();
+	CHECK(arrow->flightEnd().x == vp.x + 7.0f);
+	CHECK(arrow->flightEnd().y == vp.y + 8.0f);
+	CHECK(arrow->flightEnd().z == vp.z + 9.0f);
+	r.w.frames(2);
+	CHECK(countLine(r.w.logic->random().callLog(), 1749) == 0); // the following updates take the bone too (or a detonation's, which draws none either)
 }

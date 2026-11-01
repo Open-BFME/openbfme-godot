@@ -235,10 +235,11 @@ TEST_CASE("siege1 gate: Mordor's catapult and Gondor's trebuchet in front of Min
 TEST_CASE("siege1 gate: the rams, Grond and the mumak in front of the gates (no projectile: unchanged by the pair rule)")
 {
 	OPENBFME_REQUIRE_START(s);
-	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 99);
-	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenDemolisher", 250.0f, 600).deathFrame == 102); // lane MODCOMPAT-MOD1: 101 -> 102 (GeometryUpgrade's own GeometryInfo per object, RW 0x68B244)
+	// merge queue q35 (#132's ground-structure melee reach, measured once on the merged tree and at each merge point; SIMSMALL-1, #178 and #179 keep the archive's values): the rams 99 -> 134, 102 -> 145 at Helm's Deep, 57 -> 90 at Minas Tirith
+	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 134);
+	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenDemolisher", 250.0f, 600).deathFrame == 145); // lane MODCOMPAT-MOD1: 101 -> 102 (GeometryUpgrade's own GeometryInfo per object, RW 0x68B244)
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorGrond", 250.0f, 600).deathFrame == 128);
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorMumakil", 250.0f, 600).deathFrame == 247); // merge queue q27: 246 -> 247, LOS-1
-	CHECK(pinnedRun(*s, kMinasTirith, "Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 57);
+	CHECK(pinnedRun(*s, kMinasTirith, "Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 90);
 	CHECK(pinnedRun(*s, kMinasTirith, "Gate", "MordorGrond", 250.0f, 600).deathFrame == 83);
 }

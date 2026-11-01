@@ -865,6 +865,17 @@ public:
 	// lane PHYS-1: RW 0x6F1C90, the Amoeba's test of a one-cell step to `dest` (AIPathfindCrowd.cpp): the step must be valid (RW 0x6F1B3E) and the cells the unit would
 	// stand on must hold fewer other units' goal reservations than the cells it stands on, none of them blocked
 	bool crowdingAllowsStep(const PathfindObject &obj, const PathfindLocomotorInfo &loco, const Coord3D &dest);
+	// the unit's half of crowdingAllowsStep (its movement, its cell, its footprint and the other units' goal reservations around it): the same for each of the
+	// Amoeba's eight candidates (nothing reserves between them), so it is computed once per member (performance, the same answers)
+	struct CrowdStepContext
+	{
+		PathfindMovement mv;
+		ICoord2D here{ 0, 0 };
+		int below = 0, above = 0, current = 0;
+		PathfindObjectID self = PATHFIND_INVALID_ID;
+	};
+	CrowdStepContext crowdStepContext(const PathfindObject &obj, const PathfindLocomotorInfo &loco);
+	bool crowdingAllowsStep(const CrowdStepContext &ctx, const PathfindObject &obj, const Coord3D &dest);
 	// lane PHYS-1: RW 0x6EEBC1 (AIPathfindMelee.cpp): the melee approach destination check. True with `dest` unchanged when its cell is in the unit's zone and its footprint
 	// passes RW 0x6EBE89; else the first cell of an outward spiral (budget MaxCellsAdjustToMeleeDestination) that is in the zone, strictly closer to the unit than `dest`
 	// and passes RW 0x6EBE89 (`dest` becomes its coordinate); false when none
@@ -908,7 +919,22 @@ public:
 	bool isHordeMeleeLinePassable(const PathfindObject *obj, unsigned surfaces, PathfindLayerEnum layer, const Coord3D &from, const Coord3D &to);
 	bool hordeMeleeStepBack(PathfindObject &obj, const PathfindLocomotorInfo &loco, Coord3D *goal);
 	bool adjustHordeMeleeDestination(PathfindObject &obj, const PathfindLocomotorInfo &loco, Coord3D *dest);
-	bool hordeMeleeFootprint(const PathfindObject &obj, int x, int y, PathfindLayerEnum layer, int radius, bool centred, int *count);
+	// performance (every profile, the same answers): adjustHordeMeleeDestination's candidates' footprints overlap and nothing they read changes during its
+	// search, so each footprint cell's part (refused, or its occupancy count) is worked out once per search (AIPathfindHordeMelee.cpp)
+	struct FootprintMemo
+	{
+		static constexpr int kUnknown = -2;
+		int x0 = 0, y0 = 0, side = 0;
+		std::vector<int> parts; // kUnknown, -1 (the cell refuses the footprint) or the cell's occupancy count
+		int *slot(int x, int y)
+		{
+			const int i = x - x0, j = y - y0;
+			return i >= 0 && j >= 0 && i < side && j < side ? &parts[(size_t)j * (size_t)side + (size_t)i] : nullptr;
+		}
+	};
+	bool hordeMeleeFootprint(const PathfindObject &obj, int x, int y, PathfindLayerEnum layer, int radius, bool centred, int *count, FootprintMemo *memo = nullptr);
+	// one footprint cell's part of RW 0x6EB2EF: -1 when the cell refuses the footprint, else the occupancy count it adds
+	int hordeMeleeCellPart(const PathfindObject &obj, const PathfindCell *cell, PathfindObjectID ignoreId, PathfindObjectID selfId, bool isHuman);
 	// lane ATTACKPATH-1: RW 0x6F4557 (BFME2 decomp PathfinderAttackView.cpp, AIPathfindAttackView.cpp): the attacker at `attackerPos` cannot see `victim` past the
 	// pathfinder's obstacles (AIData AttackUsesLineOfSight, an ATTACK_NEEDS_LINE_OF_SIGHT or CAN_SHOOT_OVER_WALLS attacker) or, with a current weapon, past the
 	// terrain (the weapon's terrain line RW 0x6CC6DD, lane LOS-1: PathfindObject::isClearGoalFiringLineOfSightTerrain)
@@ -1094,6 +1120,20 @@ public:
 	static bool isPortalWaypoint(const PathfindWaypoint &w);
 	// RW 0x6F5547: a chain of portals the unit may take leads from zone `from` to zone `to` (the effective zones, terrain variant, of the portals' cells)
 	bool portalPathExists(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to) const;
+	// performance (the same answers): while a scope lives on this thread, portalPathExists for `obj` remembers each zone pair's answer. Nothing the answer
+	// reads (the portal waypoints, their zones and links, what the unit may cross) changes while one search runs (AI::findClosestEnemy opens one)
+	bool portalPathExistsUncached(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to) const;
+	class PortalMemoScope
+	{
+	public:
+		explicit PortalMemoScope(const PathfindObject *obj);
+		~PortalMemoScope();
+		PortalMemoScope(const PortalMemoScope &) = delete;
+		PortalMemoScope &operator=(const PortalMemoScope &) = delete;
+
+	private:
+		bool m_outer;
+	};
 	// RW 0x6F6286 Pathfinder::CheckChangeLayers: the cell's other layer and the cells its portal links to join the open list at the cell's costs
 	void checkChangeLayers(PathfindCell *cell, const PathfindObject *obj);
 	// RW 0x6F1F0D: the A* estimate from `cell` to `goal` through the corridor's remaining portal hops (+ 1400 each), 10 * max + 4 * min a leg
@@ -1347,9 +1387,29 @@ private:
 		mutable ReachMemo reach; // lane PATHPERF-2
 		const PathfindObject *o = nullptr;
 		PathfindRelationship rel = PATHFIND_ENEMIES; // obj's relationship to o
-		bool parked = false, hasAI = false, hasLocomotor = false, infantry = false, largeRect = false, throughEachOther = false;
-		int aiPriority = 0;
+		bool hasAI = false, hasLocomotor = false, infantry = false, largeRect = false, throughEachOther = false;
 		const PathfindObject *container = nullptr;
+		// performance (the same answers): the two costly facts are asked when a test first reads them (most occupants are decided before)
+		bool parked() const
+		{
+			if (parkedState < 0)
+			{
+				parkedState = o->isParked() ? 1 : 0;
+			}
+			return parkedState != 0;
+		}
+		int aiPriority() const
+		{
+			if (!priorityKnown)
+			{
+				priorityValue = o->aiPriority();
+				priorityKnown = true;
+			}
+			return priorityValue;
+		}
+		mutable std::int8_t parkedState = -1;
+		mutable bool priorityKnown = false;
+		mutable int priorityValue = 0;
 	};
 	struct SearcherFacts
 	{
@@ -1443,6 +1503,8 @@ private:
 	PathfindRequestRing m_queue2; // blocked repaths (AI vtable +0x234)
 	std::map<PathfindObjectID, UnitRecord> m_units;
 	std::vector<UnitRecord *> m_unitIndex; // lane PATHPERF-1: m_units by id (see findUnit)
+	// the indexed record of a unit, or null (not indexed: an id at or above kUnitIndexMax, or no record yet)
+	UnitRecord *indexedUnit(PathfindObjectID id) const { return id < (PathfindObjectID)m_unitIndex.size() ? m_unitIndex[id] : nullptr; }
 	// lane PATHPERF-1: the search memo (occupantFacts): active for m_memoObj during internalFindPath; entries are valid when their gen is m_memoGen
 	std::vector<OccupantFacts> m_memo;
 	OccupantFacts m_memoScratch;

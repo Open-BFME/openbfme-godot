@@ -72,7 +72,8 @@ TEST_CASE("wall1 battle retail: the mine carrier drops its charge at Helm's Deep
 	CHECK_FALSE(c0->isEffectivelyDead());
 	CHECK(c0->pendingDamageCount() == 1);
 	CHECK(charge->getTeam() == berserker->getTeam());
-	CHECK(dropped == 61);
+	// merge queue q35 (#132's ground-structure melee reach, measured once on the merged tree and at each merge point; SIMSMALL-1, #178 and #179 keep the archive's values): the carrier drops its charge at frame 61 -> 73
+	CHECK(dropped == 73);
 	// the scenario's scripts: the charge named (as SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER names it), the berserker's torch lit
 	// (NAMED_USE_COMMANDBUTTON_ABILITY Command_SpecialAbilityLightTorch: SPECIAL_POWER SpecialAbilityBerserkerLightTorch -> WEAPONSET_TOGGLE_1), then the
 	// charge's own Detonate button (Command_IsengardMineDetonate: SpecialAbilityDetonate, IsegardDetonateMine's SUICIDE BURNED damage)

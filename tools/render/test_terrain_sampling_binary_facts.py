@@ -118,3 +118,4 @@ def test_shroud_pixel_function_packs_a_4444_texel(img):
     assert "4726e7 cmp byte ptr [ebp + 8], cl" in lines  # level == 255 (cl = 0xff)
     assert "4726fb mov ecx, 0xf0" in lines
     assert "472702 shl eax, 4" in lines and "472712 shl eax, 4" in lines and "472709 shr ebx, 4" in lines and "47270f and ebx, 0xf" in lines
+

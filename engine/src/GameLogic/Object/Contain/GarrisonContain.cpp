@@ -1074,7 +1074,7 @@ UpdateSleepTime GarrisonContain::update()
 }
 
 
-// RW 0x87B3EC GarrisonContain::validateRallyPoint (BFME2 decomp GarrisonContainValidateRallyPoint.cpp, tier A): a valid rally point (+ 0x9DE == 1) is kept when
+// RW 0x87B3EC GarrisonContain::validateRallyPoint (BFME2 decomp GarrisonContain.cpp, tier A): a valid rally point (+ 0x9DE == 1) is kept when
 // findPositionAround finds a spot at it (radius 0, FPF_IGNORE_ALLY_OR_NEUTRAL_UNITS, the container ignored and the relationship object; the spot found is not
 // kept), else it is no longer valid; an invalid one is searched around the container from its bounding circle radius (+ 0xB8) to 1.8 times it (RW 0xBE9B44,
 // SSE) straight into + 0x9D0, valid when found. Both searches take the random start angle (the FindPositionOptions constructor's -99999.9: a logic random draw

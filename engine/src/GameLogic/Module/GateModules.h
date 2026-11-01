@@ -23,7 +23,7 @@
 //     finished sound once elapsed > TimeBeforePlayingClosedSound, unsettled, DOOR_1_CLOSING on; open (1): 100 %, settled, DOOR_1_OPENING on / DOOR_1_CLOSING
 //     off, the OPEN geometry; opening (0): the percent, at >= 100 open, above PercentOpenForPathing the OPEN geometry, the open sound after
 //     TimeBeforePlayingOpenSound, unsettled, DOOR_1_OPENING on. Under construction again at the end: unsettled.
-//   * the push-out scan (RW 0x89C759, BFME2 0x898FAA tier A, GateOpenAndCloseBehaviorPushOut.cpp): a GeometryInfo (RW 0x450429: CYLINDER, not small, height 30,
+//   * the push-out scan (RW 0x89C759, BFME2 0x898FAA tier A, GateOpenAndCloseBehavior.cpp): a GeometryInfo (RW 0x450429: CYLINDER, not small, height 30,
 //     both radii the template's bounding circle radius, template + 0xB0); its centre the gate's position moved along the gate's unit direction (RW 0x70BA23: cos /
 //     sin of the angle) by offset = circle (+0x10) * 0.66 (double RW 0xBDE9C8, x87 fmul, fstp dword; the direction products and sums SSE floats; z unchanged);
 //     ThePartitionManager's range query (RW 0xA39340) around it, radius sphere (+0x14) * 1.1f (RW 0xBE4398, mulss), distance type 3 (FROM_BOUNDINGSPHERE_3D),

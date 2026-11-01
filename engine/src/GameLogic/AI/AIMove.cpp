@@ -772,9 +772,11 @@ bool AIMover::stepValid(const Coord3D &from, const Coord3D &to)
 	m_pf.setIgnoreObstacleID(m_ignoreObstacleId); // a unit leaving its factory ignores the footprint it stands in
 	// lane HORDE-2: RW 0x6F1B3E first asks RW 0x6EF865(unit, new position, goal): a step that ends in the GOAL's cell is valid (the path is then deleted,
 	// RW 0x669B14) whatever the cell holds; without it a member whose slot cell is occupied kept its fallback path for good (S-532)
+	// performance (every profile, the same answers): the three tests only read, so their OR is asked cheapest first; the line walk (the costly one, it reads
+	// every unit on the line's footprints) only runs for a step whose end cell the terrain refuses (RW asks the goal cell, the line, then the terrain)
 	Coord3D at = to;
-	const bool valid = stepEndsInGoalCell(at) || m_pf.isLinePassable(&obj, info.validSurfaces, obj.getLayer(), from, at, false, true) ||
-		m_pf.validMovementPosition(&obj, info, obj.getLayer(), &at);
+	const bool valid = stepEndsInGoalCell(at) || m_pf.validMovementPosition(&obj, info, obj.getLayer(), &at) ||
+		m_pf.isLinePassable(&obj, info.validSurfaces, obj.getLayer(), from, at, false, true);
 	m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
 	return valid;
 }

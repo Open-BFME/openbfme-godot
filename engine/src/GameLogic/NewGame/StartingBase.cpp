@@ -29,10 +29,12 @@ namespace
 // RW 0x629DD9 (ZH placeObjectAtPosition): the parts this layer has; the rest is S-272
 Object *placeObjectAtPosition(GameLogic &logic, Player &player, const std::string &name, const Coord3D &pos, StartingBase::Result &result)
 {
+	// RW 0x629DD9 -> 0x6D1305: no template of that name returns no object, without an error (Edain's map.ini StartingBuilding / StartingUnit0
+	// = None on Moria, Eregion, Arena; NoStartingBuilding on Der Einsame Berg): reported as a note
 	const ThingTemplate *tt = logic.things().findTemplate(name);
 	if (!tt)
 	{
-		result.errors.push_back("placeObjectAtPosition: no template '" + name + "'");
+		result.notes.push_back("placeObjectAtPosition: no template '" + name + "' (retail places nothing)");
 		return nullptr;
 	}
 	if (!player.getDefaultTeam())
@@ -135,10 +137,18 @@ void StartingBase::placeForPlayer(GameLogic &logic, int slotNum, const SkirmishG
 	// RW 0x62AD24: `cmp [waypoint + 0x60], 0; jne` skips the structure: the start waypoints of the fortress maps (waypointType 5 on Player_1_Start of every
 	// "map wor" fortress map and of Amon Sul Fortress) get none, the map's own fortress (owned by the side Player_<start>, SkirmishSides) is the base; the starting
 	// units are placed around the start waypoint (RW 0x62AE37: the base point is the waypoint's location when no structure was made)
-	if (!pt.m_startingBuilding.empty() && pt.hasStartingBuilding() && wp->type == 0)
+	// RW 0x62AD14 / 0x62AD1E: only an empty StartingBuilding skips the structure; "None" is looked up like any name (and finds nothing, below)
+	if (!pt.m_startingBuilding.empty() && wp->type == 0)
 	{
 		conYard = placeObjectAtPosition(logic, player, pt.m_startingBuilding, pos, result);
-		if (conYard)
+		if (!conYard)
+		{
+			// RW 0x62AD51: `jz 0x62B165` past the starting-unit loop to the end: a starting building that was not made gives no starting units either
+			// (BFME2 placeNetworkBuildingsForPlayer `if(!object)return;`, open-bfme-2 GameLogic.cpp)
+			result.notes.push_back("slot " + std::to_string(slotNum) + " (" + player.getPlayerName() + "): no starting building '" + pt.m_startingBuilding +
+				"', so no starting units (RW 0x62AC17)");
+			return;
+		}
 		{
 			conYard->setName("BASE_FLAG_" + std::to_string(slot.startPos + 1));
 			Placed pl;

@@ -509,6 +509,7 @@ public:
 	// ---- getters (per-frame units) ----
 	float getMaxSpeedForCondition(const LocomotorHost &host) const; // RW 0x5E3F49
 	float getMaxAcceleration(const LocomotorHost &host) const;      // RW 0x5E40AD
+	float getMaxAccelerationForSpeed(float maxSpeed) const;       // getMaxAcceleration with getMaxSpeedForCondition(host) given (a caller needing both)
 	float getBraking(const LocomotorHost &host) const;              // RW 0x5E40F2
 	float getMaxTurnRate(const LocomotorHost &host) const;          // RW 0x5E372D
 	bool isCharging(const LocomotorHost &host) const;               // RW 0x5E3EF7

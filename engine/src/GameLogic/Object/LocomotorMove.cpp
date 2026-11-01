@@ -271,7 +271,11 @@ float Locomotor::getMaxSpeedForCondition(const LocomotorHost &host) const
 // RW 0x5E40AD: maxSpeed / AccelerationFrames, capped.
 float Locomotor::getMaxAcceleration(const LocomotorHost &host) const
 {
-	const float maxSpeed = getMaxSpeedForCondition(host);
+	return getMaxAccelerationForSpeed(getMaxSpeedForCondition(host));
+}
+
+float Locomotor::getMaxAccelerationForSpeed(float maxSpeed) const
+{
 	const float a = NumericState::pc24DivD((double)maxSpeed, unsignedToWide(m_template->m_acceleration));
 	return a > m_accelerationCap ? m_accelerationCap : a;
 }

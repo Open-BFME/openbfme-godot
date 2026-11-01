@@ -201,6 +201,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/packed_model_texture_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/pathperf1_render_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/perf3_cull_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/perfclient_views_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup; `godot --headless --path godot --script res://tests/perfclient_views_test.gd` (the parallel and the serial view refresh leave identical instancers). |
 | `godot/tests/pose_buffer_cull_query_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
 | `godot/tests/pose_buffer_query_trigger_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
 | `godot/tests/pose_buffer_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
@@ -246,7 +247,6 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/update_handover_test.gd` | `tools/release/test_onezip.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/weatherfx_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: the Enhanced weather's effects against a stub GameWorld and synthetic images (lane WEATHERFX-2: no weather outside a live game, the menus' Original / Enhanced check; lane INGAMEBG-1: the in-game panels' backdrop check); headless, 20 s timeout. |
 | `godot/tests/windows_crash_test.gd` | Manual only; no generic pytest runner | Denied here: destructive Windows debug crash/minidump probe; explicit opt-in required. |
-| `godot/tests/harlindon_creep_combat_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
 | `godot/tests/water_normal_test.gd` | Manual only; no generic pytest runner | GPU rendering; synthetic textures, no retail assets. |
 | `godot/tests/standing_water_test.gd` | Manual only; no generic pytest runner | Private retail assets and GPU water rendering. |
 | `godot/tests/ini_error_in_extension_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod object INI over a retail map. |
@@ -255,6 +255,8 @@ runner is claimed. All paths below are relative to the repository root.
 
 | `godot/tests/fortress_exit_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
 | `godot/tests/edainfactions1_test.gd` | Manual only; no generic pytest runner | Needs the Edain 4.8.5.3 install (OPENBFME_EDAIN_INSTALL, OPENBFME_EDAIN_ASSETS_INSTALL); without them it only parses. Runs the Dwarven clan choices and the Dwarven AI in real skirmishes. |
+
+| `godot/tests/harlindon_creep_combat_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
 
 ## OAuth readiness regression
 
