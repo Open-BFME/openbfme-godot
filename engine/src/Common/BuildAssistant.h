@@ -46,7 +46,10 @@ namespace BuildAssistant
 unsigned buildCost(const ThingTemplate &tt);        ///< BuildCost (u16)
 float buildTime(const ThingTemplate &tt);           ///< BuildTime (seconds)
 int commandPoints(const ThingTemplate &tt);         ///< CommandPoints
-int buildable(const ThingTemplate &tt);             ///< Buildable: 0 Yes, 1 Ignore_Prerequisites, 2 No (RW +0x602)
+int buildable(const ThingTemplate &tt);             ///< the INI's Buildable: 0 Yes, 1 Ignore_Prerequisites, 2 No, 3 Only_By_AI (RW +0x602)
+// ThingTemplate::getBuildable RW 0x73BFE8: the game's script override (GameLogic::findBuildableStatusOverride, RW 0x62EE6D) when there is one, else
+// buildable(tt) (lane BFME2CAMP1)
+int buildable(const ThingTemplate &tt, const GameLogic &logic);
 int buildCompletion(const ThingTemplate &tt);       ///< BuildCompletion: 0 INVALID, 1 APPEARS_AT_RALLY_POINT, 2 PLACED_BY_PLAYER
 int maxSimultaneousOfType(const ThingTemplate &tt); ///< MaxSimultaneousOfType (u16)
 

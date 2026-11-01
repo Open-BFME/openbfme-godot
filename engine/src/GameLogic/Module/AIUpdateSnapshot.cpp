@@ -18,12 +18,14 @@
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/AI/AIXfer.h"
 #include "Common/PlayerList.h"
+#include "Common/Team.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/AI/TurretAI.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/Module/HordeAIUpdate.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
 
 #include <limits>
 
@@ -67,7 +69,12 @@ void AIUpdateInterface::xferAIStateBody(Xfer &x)
 {
 	// version 2 (lane TARGET-1 + lane ATTACKPATH-1 + lane FLANK-1, merged in q23 before any shipped): the mood scan's random-offset flag (AI + 0x3BC) and
 	// ordered melee target (AI + 0x1A4); lane BACKLOG-8's formation slot and march fields (hashed but not saved before, found by save2 retail T1), last
-	XferVersion v{ 1, 2 };
+	// version 3 (lane BFME2CAMP1): the area to guard (AI + 0x6C, its trigger index) and a script's / the team's attack priority set (AI + 0x70, by name),
+	// written only by an AI that has either, so every other snapshot is version 2's
+	// version 4 (lane BFME2CAMP1, M4): the team to guard (AI + 0x68), written only by an AI that has one
+	// version 5 (lane MODCOMPAT-MOD1): the machine kept while a temporary machine runs (RW AI + 0x34, beginTemporaryStateMachine), last, written only
+	// by an AI that keeps one
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || m_temporaryKeptMachine ? 5 : (m_guardTeam != 0 ? 4 : (m_areaToGuard != -1 || m_attackInfoOverride ? 3 : 2))) };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	for (std::uint32_t &w : m_luaConditionSnapshot)
@@ -115,6 +122,44 @@ void AIUpdateInterface::xferAIStateBody(Xfer &x)
 	{
 		AIXfer::inRange(m_guardMode, 0, 2, "ai: the guard mode");          // GuardMode
 		AIXfer::inRange(m_guardTargetType, 0, 3, "ai: the guard target type"); // GuardTargetType
+	}
+	if (v.current >= 3)
+	{
+		x.xferInt(&m_areaToGuard);
+		if (loading)
+		{
+			const std::int32_t count = (std::int32_t)getObject()->logic().scriptEngine().triggerAreaCount();
+			AIXfer::inRange(m_areaToGuard, -1, count - 1, "ai: the area to guard");
+		}
+		x.xferBool(&m_attackInfoOverride);
+		x.xferAsciiString(&m_attackInfoName);
+		if (loading && !m_attackInfoOverride && !m_attackInfoName.empty())
+		{
+			throw XferException("ai: an attack priority set name without the override");
+		}
+	}
+	else if (loading)
+	{
+		m_areaToGuard = -1; // a version 2 snapshot predates the fields
+		m_attackInfoOverride = false;
+		m_attackInfoName.clear();
+	}
+	if (v.current >= 4)
+	{
+		x.xferUnsignedInt(&m_guardTeam);
+		// a team id the game issued (the teams load before the objects); the team itself may be gone, as retail's id stays after it
+		if (loading && m_guardTeam >= getObject()->logic().players().teams().nextTeamID())
+		{
+			throw XferException("ai: the team to guard " + std::to_string(m_guardTeam) + " is not a team id the game has issued");
+		}
+	}
+	else if (loading)
+	{
+		m_guardTeam = 0; // a version 2 or 3 snapshot predates it
+	}
+	if (loading)
+	{
+		m_attackInfoGeneration = 0xFFFFFFFFu; // looked up again (the table may be the snapshot's)
 	}
 	x.xferBool(&m_pendingValid);
 	AIXfer::coord(x, m_pendingPosition);
@@ -259,6 +304,31 @@ void AIUpdateInterface::xferAIStateBody(Xfer &x)
 		m_teamPathAngle = 0.0f;
 		m_currentGoalPathIndex = -1;
 	}
+	// lane MODCOMPAT-MOD1: the machine kept while a temporary machine runs (RW AI + 0x34; hashed), saved whole like the defected one above
+	bool temporary = m_temporaryKeptMachine != nullptr;
+	if (v.current >= 5)
+	{
+		x.xferBool(&temporary);
+	}
+	else if (loading)
+	{
+		temporary = false; // a version 2 .. 4 snapshot predates the slot: nothing kept
+	}
+	if (loading)
+	{
+		AIStateMachine::LoadGuard guard;
+		std::unique_ptr<AIStateMachine> kept;
+		if (temporary)
+		{
+			kept = makeStateMachine();
+			kept->xfer(x);
+		}
+		m_temporaryKeptMachine = std::move(kept); // the replaced one drops its states without their exits (the guard)
+	}
+	else if (m_temporaryKeptMachine)
+	{
+		m_temporaryKeptMachine->xfer(x);
+	}
 }
 
 void HordeAIUpdate::xferAIStateBody(Xfer &x)
@@ -300,7 +370,7 @@ void HordeAIUpdate::xferAIStateBody(Xfer &x)
 void DozerAIUpdate::xferAIStateBody(Xfer &x)
 {
 	AIUpdateInterface::xferAIStateBody(x);
-	XferVersion v{ 1, 2 }; // lane LUMBER1: version 2 ends with the supply half (WorkerAIUpdate; nothing for a dozer)
+	XferVersion v{ 1, 3 }; // lane LUMBER1: version 2 ends with the supply half (WorkerAIUpdate; nothing for a dozer); lane BFME2CAMP1: version 3 the rebuild flag
 	x.xferVersion(v);
 	for (int t = 0; t < DOZER_NUM_TASKS; ++t)
 	{
@@ -315,6 +385,14 @@ void DozerAIUpdate::xferAIStateBody(Xfer &x)
 	x.xferInt(&m_currentTask);
 	x.xferInt(&m_buildSubTask);
 	AIXfer::objectId(x, m_unplacedStructure, "dozer ai: the object id unplacedStructure");
+	if (v.current >= 3)
+	{
+		x.xferBool(&m_isRebuild); // + 0x4D0
+	}
+	else
+	{
+		m_isRebuild = false;
+	}
 	x.xferInt(&m_primaryState);
 	if (x.isLoading())
 	{

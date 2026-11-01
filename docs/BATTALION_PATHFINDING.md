@@ -7,7 +7,11 @@ Faithful profile keeps RotWK 2.01's `findPath` (RW 0x6FE7CB), which returns the
 corridor search's result with no second search.
 
 The coarse corridor can leave a battalion at a partial endpoint behind a castle
-wall even when an open gate provides a longer route. If the hierarchical search
+wall even when an open gate provides a longer route. Since the block search
+compares block zones as RotWK does (RW 0x9389A6: a wall or cliff that crosses a
+16 x 16 block splits it into two zones), such a wall no longer leaves the
+corridor running through it, and both profiles find the gate in one search; the
+retry remains for corridors that still end short. If the hierarchical search
 fails or returns a partial path, retry once with the existing cell search without
 corridor ordering. Each search retains its configured cell limit. Replace the
 original result only if the retry completes; otherwise retain the original
@@ -16,9 +20,10 @@ its partial-result status. Individual units keep their existing search behavior.
 The shared pathfinder uses the existing `PK_HORDE` kind without consulting the game data.
 
 `test_pathperf1_hier.cpp` runs a longer route around an open-ended wall under
-both profiles (Faithful keeps the partial route, cell count and pathfinder hash
-of a build without the retry; Uber arrives), preserves individual-unit behavior,
-and keeps Uber paths on the starting side of a sealed wall.
+both profiles (one complete search in each, with the same cell count and
+pathfinder hash, so the retry is not reached), preserves individual-unit
+behavior, and keeps Uber paths on the starting side of a sealed wall, where the
+retry runs and its incomplete result is kept.
 `godot/tests/bfme1_castle_path_test.gd` issues one move behind Gondor's castle on
 Fords of Isen and Rohan's castle on Anorien in an Uber game and checks the battalion and soldiers:
 

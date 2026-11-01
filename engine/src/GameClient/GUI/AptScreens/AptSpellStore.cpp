@@ -59,6 +59,7 @@ AptSpellStore::AptSpellStore(WindowManager &windows, Shell &shell) : AptScreen(w
 			std::string error;
 			this->windows().invokeASAt(this->level(), "", "Close", {}, nullptr, &error);
 			m_closing = true;
+			hideInGameBackground(); // lane INGAMEBG-1: RW 0x8228E6 .. 0x8228F6
 		}
 	});
 	registerCommand("AptSpellStore::OnBttnReset", [this](const std::string &) { reset(); }); // RW 0x823484
@@ -76,9 +77,26 @@ AptSpellStore::AptSpellStore(WindowManager &windows, Shell &shell) : AptScreen(w
 		}
 		return true;
 	});
+	// lane INGAMEBG-1: the constructor ends with the in-game background (RW 0x823AFB .. 0x823B09: + 0x2A3, set to 1 above, -> RW 0x6230B6(2),
+	// ShowInGameBackground, and + 0x2A3 = 0), as the quit menu's and the objectives'
+	windows.setBackground(2);
+	m_backgroundHidden = false;
 }
 
-AptSpellStore::~AptSpellStore() = default;
+AptSpellStore::~AptSpellStore()
+{
+	hideInGameBackground(); // lane INGAMEBG-1: the destructor RW 0x8232ED (RW 0x823383 .. 0x823394), when the close button did not
+}
+
+void AptSpellStore::hideInGameBackground()
+{
+	// RW 0x82289A / 0x8232ED: once, RW 0x622C88(0) (HideInGameBackground "0", its fade) and + 0x2A3 = 1
+	if (!m_backgroundHidden)
+	{
+		windows().hideBackground(false);
+		m_backgroundHidden = true;
+	}
+}
 
 void AptSpellStore::setViewportSize(int width, int height)
 {

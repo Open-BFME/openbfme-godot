@@ -129,6 +129,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/cah_camera_retail_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/cah_camera_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: camera geometry against synthetic bounds; headless, 20 s timeout. |
 | `godot/tests/camp2_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/bfme2camp1_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/campsave1_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/caster_director_test.gd` | `tools/caster/test_caster_godot.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/caster_director_walk.gd` | `godot/scripts/game.gd` | Support/opt-in walk, not an independently scheduled test. |
@@ -151,6 +152,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/friends_walk.gd` | `godot/scripts/game.gd` | Support/opt-in walk, not an independently scheduled test. |
 | `godot/tests/fx_render_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/gamma_composite_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
+| `godot/tests/glow_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/hero_radius_cursor_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/hud_image_mode_pixel_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/hudredraw_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
@@ -185,6 +187,8 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/online_social_node.gd` | `godot/tests/online_social_node.tscn` | Scene helper; tools/net/test_online_social_node.py drives this scene. |
 | `godot/tests/online_social_test.gd` | `tools/net/test_online_social_ui.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/online_stats_test.gd` | `tools/net/test_online_stats.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
+| `godot/tests/online_war_phase_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: asset-free battle seat selection keeps AI tactical participants out of relay tickets; headless, 20 s timeout. |
+| `godot/tests/online_war_walk.gd` | `godot/scripts/game.gd` | Two-peer relay war fixture; `tools/net/online_war_test.sh` supplies the local lobby, relay and game data. Not a generic pytest game test. |
 | `godot/tests/http_timed_test.gd` | `tools/net/test_http_timed.py` | Argument-aware fixture runner (a fake server that answers late or never); needs Godot. |
 | `godot/tests/opts1_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. Checks both RotWK and BFME2 presentation sources in menus and a live game. |
 | `godot/tests/opts2_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
@@ -240,11 +244,17 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/uberjoin1_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/ui4_resize_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/update_handover_test.gd` | `tools/release/test_onezip.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
-| `godot/tests/weatherfx_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: the Enhanced weather's effects against a stub GameWorld and synthetic images; headless, 20 s timeout. |
+| `godot/tests/weatherfx_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: the Enhanced weather's effects against a stub GameWorld and synthetic images (lane WEATHERFX-2: no weather outside a live game, the menus' Original / Enhanced check; lane INGAMEBG-1: the in-game panels' backdrop check); headless, 20 s timeout. |
 | `godot/tests/windows_crash_test.gd` | Manual only; no generic pytest runner | Denied here: destructive Windows debug crash/minidump probe; explicit opt-in required. |
 | `godot/tests/harlindon_creep_combat_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
 | `godot/tests/water_normal_test.gd` | Manual only; no generic pytest runner | GPU rendering; synthetic textures, no retail assets. |
 | `godot/tests/standing_water_test.gd` | Manual only; no generic pytest runner | Private retail assets and GPU water rendering. |
+| `godot/tests/ini_error_in_extension_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod object INI over a retail map. |
+| `godot/tests/map_water_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `water.ini` over a retail map. |
+| `godot/tests/map_weather_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `weather.ini` over a retail map. |
+
+| `godot/tests/fortress_exit_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
+| `godot/tests/edainfactions1_test.gd` | Manual only; no generic pytest runner | Needs the Edain 4.8.5.3 install (OPENBFME_EDAIN_INSTALL, OPENBFME_EDAIN_ASSETS_INSTALL); without them it only parses. Runs the Dwarven clan choices and the Dwarven AI in real skirmishes. |
 
 ## OAuth readiness regression
 

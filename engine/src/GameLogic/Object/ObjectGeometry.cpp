@@ -378,7 +378,7 @@ bool ObjectGeometry::worldspaceBestContactPoint(const Object &obj, const Coord3D
 	local.x = addf32(addf32(addf32(mulf32(m[6], callerPos.z), mulf32(m[3], callerPos.y)), mulf32(m[0], callerPos.x)), itx);
 	local.y = addf32(addf32(addf32(mulf32(m[7], callerPos.z), mulf32(m[4], callerPos.y)), mulf32(m[1], callerPos.x)), ity);
 	local.z = addf32(addf32(addf32(mulf32(m[8], callerPos.z), mulf32(m[5], callerPos.y)), mulf32(m[2], callerPos.x)), itz);
-	const std::vector<Shape> shapes = shapesOf(*tt);
+	const std::vector<Shape> &shapes = obj.geometryShapes(); // the object's own GeometryInfo (lane MODCOMPAT-MOD1; the points are the template's)
 	Coord3D p;
 	if (!getBestContactPoint(shapes, contactPointsOf(*tt), local, label, preferred, p))
 	{
@@ -401,7 +401,11 @@ bool ObjectGeometry::worldspaceBestContactPoint(const Object &obj, const Coord3D
 
 void ObjectGeometry::fillPathfindGeometry(const ThingTemplate &tt, PathfindGeometry &out)
 {
-	const std::vector<Shape> shapes = shapesOf(tt);
+	fillPathfindGeometry(shapesOf(tt), out);
+}
+
+void ObjectGeometry::fillPathfindGeometry(const std::vector<Shape> &shapes, PathfindGeometry &out)
+{
 	if (shapes.empty())
 	{
 		return;

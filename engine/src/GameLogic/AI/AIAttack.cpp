@@ -37,6 +37,13 @@ ObjectWeapons *weaponsOf(const AIStateMachine &m)
 	return m.owner().getObject()->getWeapons();
 }
 
+// RW 0x44DDEC(0x4B) on the owner
+bool isRunningDown(const Object &o)
+{
+	const int bit = CombatNames::statuses().runningDownFromBehind;
+	return bit >= 0 && o.testStatus((unsigned)bit);
+}
+
 void setStatusBit(Object &o, int bit, bool on)
 {
 	o.setStatus((unsigned)bit, on);
@@ -550,6 +557,13 @@ StateReturnType AIAttackAimState::onEnter()
 	m_setLocomotor = false;
 	// lane GARRISON-2: RW 0x753295 aims the turret first
 	aimTurret(a, *m_att, victimOf(machine()), machine().goalPosition());
+	// lane MODCOMPAT-MOD1 (a pre-existing gap): RW 0x753426 .. 0x753433: an owner with RUNNING_DOWN_FROM_BEHIND (status 0x4B, RW 0x44DDEC) is done aiming at
+	// once (STATE_SUCCESS), before IS_AIMING_WEAPON (0x19, RW 0x62684D) is set and the first turn (RW 0x75232F(1)) is made: a unit running a fleeing target
+	// down strikes without turning to it
+	if (isRunningDown(owner()))
+	{
+		return STATE_SUCCESS;
+	}
 	setStatusBit(owner(), CombatNames::statuses().isAimingWeapon, true);
 	return STATE_CONTINUE;
 }
@@ -580,6 +594,14 @@ StateReturnType AIAttackAimState::update()
 	if (aimTurret(a, *m_att, victim, machine().goalPosition()) && a.turretTurnRate() != 0.0f)
 	{
 		return STATE_CONTINUE;
+	}
+	// lane MODCOMPAT-MOD1 (a pre-existing gap): RW 0x7524B5 .. 0x7524C1, after the turret and the aim tolerance and before the turn (vslot 0x21C / 0x210):
+	// an owner with RUNNING_DOWN_FROM_BEHIND (status 0x4B) succeeds without turning. The port turned it every frame: a horde member running a fleeing target
+	// down (the run-down RW 0x87631F orders it to attack) took an angle goal each frame, which replaced the walk its horde's pass gave it (RW 0x877B69: a
+	// running-down member of a moving horde is driven to its slot), so it stood with MOVING beside its marching horde until the leash took it (RW 0x877B4F)
+	if (isRunningDown(owner()))
+	{
+		return STATE_SUCCESS;
 	}
 	const Coord3D target = victim ? *victim->getPosition() : machine().goalPosition();
 	const float relAngle = a.relativeAngleTo(target);

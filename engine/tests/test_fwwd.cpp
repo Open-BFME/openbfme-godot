@@ -2,6 +2,7 @@
 // (ModEngineFeature::EdainUnchainedFireAtAttacker). The synthetic cases need no retail files; the retail case SKIPs when ROTWK_INSTALL / BFME2_INSTALL
 // are unset. GPL-3.0.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "CombatTestUtil.h"
@@ -396,6 +397,7 @@ TEST_CASE("fwwd retail: no 2.01 template uses the module; a probe with a retail 
 			REQUIRE(o);
 			const Coord3D pos{ x, 300.0f, 0.0f };
 			o->setPosition(&pos);
+			testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 			return o;
 		};
 		Object *p = make("FwwdRetailProbe", tester, 300.0f);

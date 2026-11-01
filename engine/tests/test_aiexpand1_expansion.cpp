@@ -4,6 +4,7 @@
 // start 0, a Medium computer at start 1, starts 3 and 4 empty. The expectations follow the RW functions (the gate's order, the one draw at line 0x3F, the
 // waypoint walk and the occupied test), recomputed here from the map's waypoints and objects, never read back from the port.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "StartTestUtil.h"
@@ -148,6 +149,7 @@ Object *placeAt(GameLogic &logic, const char *name, Team *team, const Coord3D &a
 	REQUIRE_MESSAGE(o != nullptr, name);
 	Coord3D pos{ at.x, at.y, logic.getGroundHeight(at.x, at.y) };
 	o->setPosition(&pos);
+	testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	return o;
 }
 
@@ -608,12 +610,23 @@ TEST_CASE("aiexpand1 expansion in a game: the Medium Men computer kept above 300
 	// merge queue q29 (AIEXPAND-1 joins after nine simulation items; measured on the merged tree, a CI host, not split per item): the other items move this
 	// AI game, so the heuristic's gate first passes later: the same start is chosen at 2425 (was 1519), its request at 2428 (1964), in progress at 2429 (1965),
 	// complete with the second base at 3169 (2736)
-	CHECK(chosenFrame == 2425);
-	CHECK(tacticFrame == 2425);
-	CHECK(requestFrame == 2428);
-	CHECK(inProgressFrame == 2429);
-	CHECK(doneFrame == 3169);
-	CHECK(baseFrame == 3169);
+	// lane MODCOMPAT-MOD1 (measured at GeometryUpgrade's commit, a CI host): GeometryUpgrade (the structures' own level footprints, RW 0x68B244, move this AI
+	// game: the heuristic's gate passes earlier, the same start is chosen): chosenFrame 2425 -> 1519, tacticFrame 2425 -> 1519, requestFrame 2428 -> 2104,
+	// inProgressFrame 2429 -> 2105, doneFrame 3169 -> 2844, baseFrame 3169 -> 2844
+	// lane MODCOMPAT-MOD1 (measured at PickupStuffUpdate's commit, a CI host): PickupStuffUpdate (the AI hordes' scans every ScanIntervalSeconds, RW 0x895741,
+	// and every horde's update in the sleepy update vectors, RW 0x62E982, move this AI game; the same start is chosen at the same frame): requestFrame 2104 ->
+	// 1841, inProgressFrame 2105 -> 1842, doneFrame 2844 -> 2611, baseFrame 2844 -> 2611
+	// merge queue q31 (#112's battalion exit paths move this AI game; measured once on the merged tree and at each merge point): the same start is chosen at
+	// 1821, its request at 1824, in progress at 1825, complete with the second base at 2593
+	// merge queue q33 (measured once on the merged tree and at each merge point): MODCOMPAT-MOD1's own values hold at its merge point; #133's straight
+	// production exits move this AI game: the same start is still chosen at 1519, its request at 2196 (1841), in progress at 2197 (1842), complete with the
+	// second base at 2937 (2611)
+	CHECK(chosenFrame == 1519);
+	CHECK(tacticFrame == 1519);
+	CHECK(requestFrame == 2196);
+	CHECK(inProgressFrame == 2197);
+	CHECK(doneFrame == 2937);
+	CHECK(baseFrame == 2937);
 	MESSAGE("EXPANSION target on frame " << chosenFrame << " at (" << chosenAt.x << ", " << chosenAt.y << "); SimpleExpansion on frame " << tacticFrame
 		<< ", its request on " << requestFrame << " (last state " << lastState << ", in progress on " << inProgressFrame << ", complete on " << doneFrame
 		<< "), the second base on " << baseFrame << "; bases " << aiPtr->build.bases.size() << ", tactics started " << aiPtr->brain.tacticsStarted

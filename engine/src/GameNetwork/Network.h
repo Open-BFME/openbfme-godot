@@ -190,6 +190,8 @@ struct NetworkConfig
 	// retail's MSG_SELF_DESTRUCT) once the rejoin window has passed, or takes the player back (REJOIN) when its restarted game asks (REJOINREQUEST)
 	bool holdForRejoin = false;
 	std::uint32_t rejoinWindowMs = 300000; ///< OpenBFME's choice (S-3900): five minutes
+	// WOTR2 milestone 8 (step 2): the messages the game's commands carry (NetPacket::MessageFamily): Strategic for a War of the Ring's strategic map
+	NetPacket::MessageFamily messages = NetPacket::MessageFamily::Logic;
 };
 
 // The breakdown of one peer's state hash for one frame (GameLogic::computeStateHashBreakdown), as exchanged after a mismatch

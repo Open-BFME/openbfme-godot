@@ -10,6 +10,7 @@
 //
 // Usage:
 //   openbfme_peer --rotwk DIR --bfme2 DIR (or ROTWK_INSTALL / BFME2_INSTALL) [--mod PATH ...] (lane MODS-1: RotWK -mod, Common/ModMount.h)
+//   lane BFME2MODE-0: --edition=bfme2 (or OPENBFME_EDITION=bfme2) mounts BFME2 1.06's archives alone, no --rotwk (docs/EDITIONS.md; developer switch)
 //     --host PORT [--bind IP] --map KEY --seed N --slot "human|easy|medium|hard|brutal,FactionName,startPos,team[,handicap]" (repeated, in slot order;
 //       lane OWNERFIX-2: the handicap 0, -5 .. -95, default 0; the report lists each playable player's `player_handicap`)
 //     | --join IP:PORT --name NAME
@@ -102,6 +103,7 @@
 // Exit code: 0 ok, 1 usage / load error / another profile's replay, 2 desync (or replay mismatch / an incomplete replay), 3 network failure (stall /
 // timeout, refused by the lobby: another profile), 4 network or recording errors (a command that could not be sent or recorded).
 
+#include "Common/GameEdition.h"
 #include "Common/JobSystem.h"
 #include "Common/PathIO.h"
 #include "Common/PlayerTemplate.h"
@@ -117,6 +119,7 @@
 #include "Common/PlayerList.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameClient/GUI/Skirmish/WorldSkirmishSetupSource.h"
+#include "GameClient/LinearCampaign.h"
 #include "GameClient/LiveGame.h"
 #include "GameClient/MapCreationHooks.h"
 #include "GameClient/MapObjectDrawables.h"
@@ -125,6 +128,8 @@
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Module/GateModules.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "Common/Thing/ThingFactory.h"
+#include "Common/Thing/ModuleFactory.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/NewGame/NewGame.h"
 #include "GameLogic/Object/Object.h"
@@ -164,11 +169,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <fstream>
 #include <set>
 #include <iterator>
 #include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -178,6 +185,7 @@ namespace
 struct Args
 {
 	std::string rotwk, bfme2;
+	GameEdition edition = GameEdition::RotWK201; ///< lane BFME2MODE-0: --edition=bfme2 / OPENBFME_EDITION=bfme2 mounts BFME2 1.06 alone
 	int hostPort = -1;
 	std::string bind = "127.0.0.1";
 	std::string join, name = "Player";
@@ -268,6 +276,10 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 {
 	a.rotwk = envOr("ROTWK_INSTALL");
 	a.bfme2 = envOr("BFME2_INSTALL");
+	if (!parseGameEdition(envOr("OPENBFME_EDITION"), a.edition, &error))
+	{
+		return false;
+	}
 	for (int i = 1; i < argc; ++i)
 	{
 		const std::string k = argv[i];
@@ -281,7 +293,14 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 			return true;
 		};
 		std::string v;
-		if (k == "--rotwk" && next(a.rotwk)) {}
+		if (k.rfind("--edition=", 0) == 0)
+		{
+			if (!parseGameEdition(k.substr(10), a.edition, &error))
+			{
+				return false;
+			}
+		}
+		else if (k == "--rotwk" && next(a.rotwk)) {}
 		else if (k == "--mod" && next(v)) { a.mods.push_back(v); }
 		else if (k == "--mod-install" && next(v)) { a.installMods.push_back(v); }
 		else if (k == "--mod-engine" && next(v)) { a.modEngines.push_back(v); }
@@ -425,9 +444,10 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 			return false;
 		}
 	}
-	if (a.rotwk.empty() || a.bfme2.empty())
+	if (a.edition == GameEdition::BFME2_106 ? a.bfme2.empty() : (a.rotwk.empty() || a.bfme2.empty()))
 	{
-		error = "the RotWK and BFME2 installs are required (--rotwk / --bfme2 or ROTWK_INSTALL / BFME2_INSTALL)";
+		error = a.edition == GameEdition::BFME2_106 ? "--edition=bfme2 needs the BFME2 install (--bfme2 or BFME2_INSTALL)"
+													: "the RotWK and BFME2 installs are required (--rotwk / --bfme2 or ROTWK_INSTALL / BFME2_INSTALL)";
 		return false;
 	}
 	if (a.lanHost && a.lanJoin)
@@ -463,7 +483,12 @@ struct World
 bool loadWorld(const Args &a, World &w, std::string &error)
 {
 	std::vector<RetailInstall> installs;
-	for (const auto &want : { std::make_pair(std::string("rotwk"), a.rotwk), std::make_pair(std::string("bfme2"), a.bfme2) })
+	std::vector<std::pair<std::string, std::string>> wanted = { { "rotwk", a.rotwk }, { "bfme2", a.bfme2 } };
+	if (a.edition == GameEdition::BFME2_106)
+	{
+		wanted.erase(wanted.begin()); // lane BFME2MODE-0: BFME2 1.06's archives alone (docs/EDITIONS.md); RotWK's rules in Phase 0
+	}
+	for (const auto &want : wanted)
 	{
 		RetailInstall inst;
 		inst.label = want.first;
@@ -847,6 +872,14 @@ int runReplay(const Args &a, World &w)
 		o.mapName = replay.header.game.game.mapName; // the mission's map directory ("map ang angmar")
 		o.campaign = true;
 		o.difficulty = save.header.campaignDifficulty;
+		// lane BFME2CAMP1 (review): the carry-over a real load restores (GameWorld::start_campaign_mission from the save's header: LiveGame::campaignCarryoverOptions)
+		const LinearCampaign *campaign = w.world->linearCampaigns().find(save.header.campaign);
+		std::string stop;
+		if (!campaign || !LiveGame::campaignCarryoverOptions(*campaign, save.header.campaignMission, save.header.campaignCarryover, o, stop, error))
+		{
+			std::fprintf(stderr, "openbfme_peer: the save's campaign start: %s\n", campaign ? error.c_str() : ("no campaign '" + save.header.campaign + "'").c_str());
+			return 2;
+		}
 	}
 	else
 	{
@@ -1372,7 +1405,18 @@ static int peerMain(int argc, char **argv);
 
 int main(int argc, char **argv)
 {
-	const int rc = PathIO::runMain(argc, argv, peerMain);
+	// lane MODCOMPAT-1: a data error the loaders throw (a mod's faction naming a science it does not define) is the peer's named error and
+	// exit 1, as a parse error is, not an abort (tools/mod/gap_census.py lists it for the package)
+	int rc = 1;
+	try
+	{
+		rc = PathIO::runMain(argc, argv, peerMain);
+	}
+	catch (const std::exception &e)
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", e.what());
+		rc = 1;
+	}
 	if (!g_readTracePath.empty())
 	{
 		std::ofstream out(PathIO::native(g_readTracePath), std::ios::binary | std::ios::trunc);
@@ -2670,6 +2714,37 @@ static int peerMain(int argc, char **argv)
 		for (const auto &kv : game.logic().scriptEngine().stats().unportedConditions)
 		{
 			r << "unported_condition " << kv.first << " " << kv.second << "\n";
+		}
+		// the static side (sizes the module ports beyond what one game reached): every object template (its final override) whose behavior
+		// modules name an unported class, by class. A ported class whose runtime falls back to an UnportedModule for some data is not
+		// counted here (only the live count sees it).
+		{
+			ModuleFactory &modules = game.logic().things().moduleFactory();
+			std::map<std::string, size_t> templatesUsing;
+			for (const ThingTemplate *t : game.logic().things().templates())
+			{
+				while (t->getNextOverride())
+				{
+					t = t->getNextOverride();
+				}
+				std::set<std::string> classes;
+				for (const ThingTemplate::Nugget &n : t->behaviorModules().nuggets())
+				{
+					const ModuleFactory::ModuleTemplate *mt = modules.findModuleTemplate(n.name, MODULETYPE_BEHAVIOR);
+					if (!mt || !mt->portedModule)
+					{
+						classes.insert(n.name);
+					}
+				}
+				for (const std::string &c : classes)
+				{
+					++templatesUsing[c];
+				}
+			}
+			for (const auto &kv : templatesUsing)
+			{
+				r << "unported_template_module " << kv.first << " " << kv.second << "\n";
+			}
 		}
 		for (int sl = 0; sl < MAX_SLOTS && (size_t)sl < lr.startSlotPlayers.size(); ++sl)
 		{

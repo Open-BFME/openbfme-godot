@@ -4,6 +4,7 @@
 // is measured (a heal for the good factions, the summoned object for the evil ones), the recharge follows the SpecialPower ReloadTime, a second cast
 // before it is refused, and two identical runs hash alike while a different target does not.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "SpellTestAI.h"
 #include "StartTestUtil.h"
@@ -102,6 +103,7 @@ struct CastGame
 		REQUIRE(o);
 		Coord3D pos{ x, y, 0.0f };
 		o->setPosition(&pos);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	void purchase(int i, ScienceType st)

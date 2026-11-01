@@ -9,7 +9,8 @@ Unchained's `game.dat`, Age of the Ring) is the exception: its program's changes
 ## How progress is measured
 
 1. **The gap census** (`tools/mod/gap_census.py`, `logs/mod-gap-census.md`): one headless skirmish per All In One package; the unported
-   modules, script actions and conditions each game ran into, ranked by how many packages hit them. The porting lanes take it top-down.
+   modules, script actions and conditions each game ran into, ranked by how many packages hit them, and (the static side, which sizes a
+   module port) every object template of the mod whose behavior modules name an unported class. The porting lanes take it top-down.
 2. **The per-mod checklist** below, against retail RotWK 2.01 running the same mod on a Windows machine (the reference captures). A mod is
    compatible when every row passes.
 

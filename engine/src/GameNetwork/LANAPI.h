@@ -94,8 +94,11 @@ class LANAPI
 {
 public:
 	// the lobby messages' version (a message of another version is refused by name): 2 (lane HERO-2): the GameInfo slots' Create-a-Hero records,
-	// OPT_SLOT_CREATE_A_HERO; 3 (lane OWNERFIX-2): the GameInfo slots' handicaps and the slot request's handicap; 4 (lane CHEAT-1): the GameInfo's Cheat Mode
-	static constexpr std::uint8_t kProtocolVersion = 4;
+	// OPT_SLOT_CREATE_A_HERO; 3 (lane OWNERFIX-2): the GameInfo slots' handicaps and the slot request's handicap; 4 (lane CHEAT-1): the GameInfo's Cheat Mode;
+	// 5 (WOTR2 milestone 8): the GameInfo's game mode and scenario (a War of the Ring's LanStrategic game; RotWK sends it as type 14, MSG_GAME_START + 1);
+	// 6 (step 4): a resumed war's save identity and state hash (the list's resume icon, Continue); 7 (Sol wotr2m8s4 follow-up 1): a LAN war's save answer
+	// and leave vote name their save request (MSG_LW_OPENBFME_SAVE / MSG_LW_REQUEST_ENDGAME): a build without it is kept out of the lobby
+	static constexpr std::uint8_t kProtocolVersion = 7;
 	enum ReturnType // ZH LANAPIInterface::ReturnType
 	{
 		RET_OK,
@@ -130,6 +133,13 @@ public:
 		// lane HERO-2: a slot's Create-a-Hero record is checked with this before it is applied (a request, the host's options, a player's copy of them):
 		// CreateAHeroSystem::validateHero of the world. A lobby without one refuses every record
 		std::function<bool(const CreateAHeroHero &, std::string *)> validateCreateAHero;
+		// WOTR2 milestone 8: a War of the Ring's start positions are region indices (RW 0x9759BB): the scenario's region count (-1: no such scenario).
+		// A lobby without it refuses every War of the Ring game
+		std::function<int(const std::string &scenario)> warRegionCount;
+		// WOTR2 milestone 8 (step 4): a resumed LAN war (GameInfo::resumeSave): "" when this player has the save of that identity and it loads with that
+		// state hash (RotWK's joiners look their copy up by the MD5, RW 0x81869B), else why not (without the player's name: the host adds it). A lobby
+		// without it answers every resumed war "this game cannot look for saved wars"
+		std::function<std::string(const std::string &save, std::uint32_t stateHash)> resumeCheck;
 	};
 	// what happened, for the screens (ZH LANAPI's On* callbacks)
 	struct Event
@@ -196,6 +206,20 @@ public:
 	bool hostKick(int slot);
 	// host only: every human slot accepted: GAME_START to everyone (repeated until answered); false + reason otherwise
 	bool hostStartGame(std::string *reason);
+	// WOTR2 milestone 8 (step 4): host only: the saved war's human seats other than the host's (slot, the saved player's name), reopened for the joiners
+	// (RotWK RW 0x840F3F); the start is refused while one is open or a joiner's copy of the save is missing or differs (every PC sees the line)
+	// (Sol wotr2m8s4 #4) each saved human's seat: its slot, its name and its saved slot (the START gives the seat its saved faction, colour, team, start and
+	// handicap back; the seat's player must be the saved one)
+	struct ResumeSeat
+	{
+		int slot = -1;
+		std::u16string name;
+		SkirmishGameSlot saved;
+	};
+	// `rules` the saved war's rules: the start is refused while the setup's differ (the joiners checked their copies under them)
+	void hostSetResumeSeats(const std::vector<ResumeSeat> &seats, const GameRules &rules);
+	// the check this player sent for the resumed war ("" ok, else the reason; for the screens and the tests)
+	const std::string &resumeCheckResult() const { return m_checkedWhy; }
 
 	// ---- state ----
 	const std::vector<LANGame> &games() const { return m_games; }
@@ -285,6 +309,24 @@ private:
 	bool m_started = false;
 	LobbyStart m_start;
 	std::array<bool, MAX_SLOTS> m_startAcked{};
+	// WOTR2 milestone 8 (step 4): the joiners' answers to the resumed war's save (host) and this player's own check (joiner)
+	struct SaveCheck
+	{
+		bool heard = false;
+		bool ok = false;
+		std::string save;
+		std::string why;
+		std::u16string player;
+	};
+	std::array<SaveCheck, MAX_SLOTS> m_saveChecks{};
+	std::vector<ResumeSeat> m_resumeSeats;
+	GameRules m_resumeRules = MpGameRules::none();
+	std::string m_checkedSave;
+	std::uint32_t m_checkedHash = 0;
+	bool m_checkedDone = false;
+	std::string m_checkedWhy;
+	void sendSaveAvailability();
+	bool handleSaveAvailability(NetByteReader &r, const NetAddress &from);
 	bool m_starting = false;
 	std::vector<Event> m_events;
 	std::vector<std::string> m_errors, m_log;

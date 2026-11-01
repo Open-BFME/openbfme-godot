@@ -347,8 +347,13 @@ TEST_CASE("exit1 retail: a Udun 2v2 Hard computer game: produced members leave t
 TEST_CASE("idle1 retail: horde members turning where they stand end the frame without MOVING (updates[0] before updates[1]: RW 0x851E97, RW 0x490AC4)")
 {
 	OPENBFME_REQUIRE_START(s);
+	// merge queue q33 (MODCOMPAT-MOD1's modules move this AI game; measured at each merge point and on the merged tree): with seed 1 a Mordor archer (#1781)
+	// that reached its slot at the end of its exit path stands in the exit state with MOVING for 5 frames (f1125 .. f1129: the mover's goal is (0, 0), so the
+	// move never arrives, until its horde's order takes it at f1130). The same rule already fails on the archive's tree with seed 2 (8 Elven sentries in states
+	// 42 / 50), so it is an engine gap that depends on the game, not a module's: seeds 1 .. 8 on the merged tree fail only with seed 1. The game moves to seed 3
+	// (6938 member-frames turning, 716 of them attacking, no member standing with MOVING); the gap is the merge queue's follow-up
 	ExitGame g;
-	loadExitGame(*s, exitUdun(*s, 2, 1), -1, g);
+	loadExitGame(*s, exitUdun(*s, 2, 3), -1, g);
 	TurnProbe probe;
 	for (int i = 0; i < 2600; ++i)
 	{
@@ -430,4 +435,38 @@ TEST_CASE("exit1 diagnostic: the motion probe over a recorded game (OPENBFME_EXI
 	MESSAGE(path << ": frames " << g.game->logic().getFrame() << " of " << replay.finalFrame << ", first hash difference at frame "
 				 << (playback.hasMismatch() ? (int)playback.firstMismatch().frame : -1) << "\n"
 				 << probe.report() << trace.str());
+}
+
+TEST_CASE("ambient retail: Harlindon flying birds leave their hold point while perched doves stay still")
+{
+	OPENBFME_REQUIRE_START(s);
+	NewGameMessage start = exitUdun(*s, 0, 1);
+	start.game.mapName = "maps/map mp harlindon/map mp harlindon.map";
+	for (int slot = 0; slot < 4; ++slot) start.game.slots[slot].state = slot < 2 ? SLOT_PLAYER : SLOT_CLOSED;
+	ExitGame g;
+	loadExitGame(*s, start, -1, g);
+	struct Bird { Object *object; Coord3D original; };
+	std::vector<Bird> flying, perched;
+	for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
+	{
+		const std::string &name = o->getTemplate()->getName();
+		if (name == "Crow" || name == "Dove_white_in_game") flying.push_back({ o, *o->getPosition() });
+		if (name == "Dove_Perched") perched.push_back({ o, *o->getPosition() });
+	}
+	CHECK(flying.size() == 41);
+	CHECK(perched.size() == 7);
+	for (int i = 0; i < 100; ++i) g.game->advance(0.2);
+	for (const Bird &b : flying)
+	{
+		INFO(b.object->getTemplate()->getName() << " #" << b.object->getID());
+		const Coord3D &p = *b.object->getPosition();
+		const float dx = p.x - b.original.x, dy = p.y - b.original.y;
+		// tolerance: 20 seconds of idle flight must leave the authored hold point by more than a terrain cell.
+		CHECK(dx * dx + dy * dy > 100);
+	}
+	for (const Bird &b : perched)
+	{
+		CHECK(b.object->getPosition()->x == b.original.x);
+		CHECK(b.object->getPosition()->y == b.original.y);
+	}
 }

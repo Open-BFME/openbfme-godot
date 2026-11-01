@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // Gloin Slam uses a cone at the caster's position: the ability must finish its
 // retail face-object command before unpacking and firing in the target's direction.
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "CombatTestUtil.h"
 #include "Common/SpecialPower.h"
@@ -380,12 +381,14 @@ TEST_CASE("hero facing retail: Gloin Slam hits in-range targets in front, behind
 		REQUIRE(victim);
 		const Coord3D away{ 1500, 1000, 0 };
 		victim->setPosition(&away);
+		testutil::completeHorde(victim); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		hero->giveUpgrade("Upgrade_EnableDwarvenGloinSlam");
 		for (int i = 0; i < 20; ++i) logic.runLogicFrame();
 		const float gap = CombatQueries::boundingCircleRadius(*hero) + CombatQueries::boundingCircleRadius(*victim) + 5;
 		const Coord3D start{ 1000, 1000, 0 }, target{ 1000 + (scenario == 0 ? gap : -gap), 1000, 0 };
 		hero->setPosition(&start);
 		hero->setOrientation(0);
+		testutil::completeHorde(hero); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		victim->setPosition(&target);
 		CHECK(victim->getBodyModule()->getHealth() == 1600);
 		const SpecialPowerTemplate *power = TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityDwarvenGloinSlam");

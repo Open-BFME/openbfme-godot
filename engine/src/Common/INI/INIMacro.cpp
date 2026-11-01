@@ -9,8 +9,8 @@
 //   B1T attempts/0x00853610.cpp:209-277 (the define pass shape, partial)
 //   B2 0x42D3CB-0x42D5C7 (define pre-pass), 0x42D0A9 (preprocessMacro),
 //   B2 0x42E46A real / 0x42E0C9 int / 0x42E299 unsigned (math evaluators),
-//   B2src Common/System/INI_scanReal.cpp, INI_scanInt.cpp, INI_scanUnsignedInt.cpp,
-//   INI_scanBool.cpp (messages, call shape).
+//   B2src Common/INI/INI.cpp scanReal, scanInt, scanUnsignedInt,
+//   scanBool (messages, call shape).
 
 #include "Common/INI.h"
 
@@ -181,8 +181,8 @@ const char *INI::preprocessMacro(const char *token)
 }
 
 // ---------------------------------------------------------------------------------------------
-// Scanners. B2src Common/System/INI_scanInt.cpp, INI_scanUnsignedInt.cpp, INI_scanReal.cpp,
-// INI_scanBool.cpp; spec 1.8. sscanf reads only a prefix of the text: "1.0," scans as 1.0,
+// Scanners. B2src Common/INI/INI.cpp scanInt, scanUnsignedInt, scanReal,
+// scanBool; spec 1.8. sscanf reads only a prefix of the text: "1.0," scans as 1.0,
 // "110%" as 110.
 // ---------------------------------------------------------------------------------------------
 int INI::scanInt(const char *token)
@@ -230,7 +230,7 @@ float INI::scanReal(const char *token)
 	return value;
 }
 
-// The error reports the ORIGINAL token, not the substituted text (B2src INI_scanBool.cpp).
+// The error reports the ORIGINAL token, not the substituted text (B2src INI.cpp scanBool).
 bool INI::scanBool(const char *token)
 {
 	const char *text = preprocessMacro(token);

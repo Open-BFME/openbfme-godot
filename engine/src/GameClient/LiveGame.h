@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include "GameLogic/CampaignCarryover.h"
 #include "Common/GameCommon.h"
 #include "Common/LogicFrameClock.h"
 #include "Common/PlayerList.h"
@@ -67,11 +68,44 @@ class ArchiveFileSystem;
 class SdkScriptHost;
 class ArchiveW3DFileSource;
 class WW3DAssetManager;
+struct LinearCampaign; // lane BFME2CAMP1: campaignCarryoverOptions
 
 
 class LiveGame
 {
 public:
+	// lane BFME2CAMP1: the HUD that answers the script engine's client-view conditions (CAMERA_SCROLL_DISTANCE, OBJECTIVES_SCREEN_IS_OPEN); null: none
+	// (main thread). The logic, which may run on the worker, never reads the view itself: publishScriptLocalView copies its answers into atomics at
+	// every frame request (advance / advanceWithDriver / stepFrame, the main thread), and the script host reads only those (lane BFME2CAMP1 review)
+	void setScriptLocalView(const ScriptLocalView *view)
+	{
+		m_scriptLocalView = view;
+		publishScriptLocalView();
+	}
+	const ScriptLocalView *scriptLocalView() const { return m_scriptLocalView; }
+	struct Options;
+	// lane BFME2CAMP1: a campaign mission start's carry-over options, the one rule GameWorld::start_campaign_mission and openbfme_peer's campaign save check
+	// share. `carryText` is the campaign's carry-over state text (a save header's campaignCarryover, campaign_progress_step's "carryover"): parsed;
+	// without one the first mission begins the campaign (beginCampaign RW 0x5EC4EC); a later mission without one gets no carry-over step and `stop` its
+	// [S-4904] line. The mission's DelayCarryoverSpawningOf list is always set. false (with `error`) for a text that does not parse or a mission the
+	// campaign does not have
+	static bool campaignCarryoverOptions(const LinearCampaign &campaign, int mission, const std::string &carryText, Options &lo, std::string &stop,
+										 std::string &error);
+	void publishScriptLocalView()
+	{
+		const ScriptLocalView *v = m_scriptLocalView;
+		m_viewScroll.store(v ? v->cameraScrollDistance() : 0.0f, std::memory_order_relaxed);
+		m_viewObjectivesOpen.store(v && v->objectivesScreenOpen(), std::memory_order_relaxed);
+		m_viewPresent.store(v != nullptr, std::memory_order_release);
+	}
+	// the published answers (any thread)
+	bool publishedCameraScroll(float &distance) const
+	{
+		const bool present = m_viewPresent.load(std::memory_order_acquire);
+		distance = present ? m_viewScroll.load(std::memory_order_relaxed) : 0.0f;
+		return present;
+	}
+	bool publishedObjectivesOpen() const { return m_viewPresent.load(std::memory_order_acquire) && m_viewObjectivesOpen.load(std::memory_order_relaxed); }
 	struct Options
 	{
 		std::string heroStatsProfile; // client profile only, supplied by the hero manager
@@ -109,9 +143,17 @@ public:
 		// map load (viewers, object tests); 0 never; 1 always. A campaign mission is a single player game (GameLogic + 0x110 = 0) with the map's own sides.
 		int mapScripts = -1;
 		bool campaign = false;
+		// lane BFME2CAMP1: a tutorial map (AptMainMenu::OnTutorial Basic / Advanced, RW 0x91B825): a campaign-style single player game of mode 6 (GameLogic + 0x110)
+		bool tutorial = false;
 		// lane CAMP-1: the campaign's difficulty (0 easy, 1 normal, 2 hard: the main menu command's first character, RW 0x91C108): lane CAMP-1H: the
 		// new game message's difficulty, TheGameLogic + 0xA4 (prepareNewGame RW 0x77948E; the script engine's stays 1); -1 leaves GameLogic's reset value (1)
 		int difficulty = -1;
+		// lane BFME2CAMP1: the campaign's carry-over at this mission's start (GameLogic/CampaignCarryover.h, addCarryoverStuffToMap RW 0x5EBD76 from
+		// startNewGame RW 0x6315E8): the campaign's state (beginCampaign RW 0x5EC4EC for its first mission, the previous mission's won state after) and the
+		// mission's DelayCarryoverSpawningOf. The game keeps the state (GameLogic::campaignCarryover) and changes it; off: no carry-over step
+		bool campaignCarryover = false;
+		CampaignCarryover::State carryover;
+		std::vector<std::string> carryoverDelayed;
 		// lane UBER-1: the simulation profile of a game without a start message (a started game takes its setup's, SkirmishGameInfo::simulationProfile)
 		SimulationProfile simulationProfile = SimulationProfile::Faithful;
 	};
@@ -152,7 +194,7 @@ public:
 	AIWorld &ai(const char *file = __builtin_FILE(), int line = __builtin_LINE()) { holdLogic(file, line); return *m_ai; }
 	// VIS-1: TheShroudManager (attached to the logic) and the GameData / MultiplayerSettings values it was made from
 	ShroudManager &shroud(const char *file = __builtin_FILE(), int line = __builtin_LINE()) { holdLogic(file, line); return *m_shroud; }
-	// lane ONLINE-3 (retail PlayerList::observeNextPlayer, RW 0x6A8D2B; BFME2 decomp reverse/attempts/0x002a8306.cpp, tier B same-shape): when the local
+	// lane ONLINE-3 (retail PlayerList::observeNextPlayer, RW 0x6A8D2B; BFME2 decomp PlayerList_getNthPlayer.cpp, tier B same-shape): when the local
 	// player is not active (an observer, a spectator's ReplayObserver side, or defeated: RW 0x6A87F5 with isPlayerActive RW 0x6AAC52), the view steps
 	// from the observed player (TheControlBar + 0x218, RW 0x6A8839; none: the local player) to the next / prior human player (Player + 0x5C == 0, read
 	// as PLAYER_HUMAN: inference, S-3902) that is active, or to the observer itself ("all"), wrapping; the observed player becomes the shroud's view
@@ -330,8 +372,10 @@ public:
 		std::vector<std::string> startSlotPlayers;           ///< per slot: the player name ("" for an unoccupied slot)
 		std::vector<StartingBase::Placed> startingObjects;   ///< the starting structures and units, in placement order
 		int createAHeroes = 0;                               ///< lane HERO-2: the slots whose Create-a-Hero the game start installed
+		int carryoverObjects = 0;                            ///< lane BFME2CAMP1: the campaign's carry-over objects the mission start made
 		size_t spellBooks = 0;                               ///< SPELL-1: the players' spell book objects made at the game start (RW 0x6B183D)
 		std::vector<std::string> startErrors;                ///< problems of the start (a slot without waypoint, a template that does not exist ...)
+		std::vector<std::string> startNotes;                 ///< lane WOTR-1: what the start skipped as retail does (reported, not an error)
 		std::vector<int> progressCalls;                      ///< the percentages reported
 		GameLogic::Report logic;
 		DrawableManager::Report drawables;
@@ -371,6 +415,10 @@ private:
 	std::unique_ptr<SdkScriptHost> m_sdkScripts; // lane SDK-2: the mod's sim Luau scripts (before the logic: they listen to it)
 	std::unique_ptr<class MapScriptSetup> m_scriptSetup; // lane SCRIPT-1: the libraries the script engine's lists point into (outlive the logic)
 	std::unique_ptr<ScriptEngineHost> m_scriptHost;      // lane SCRIPT-1
+	const ScriptLocalView *m_scriptLocalView = nullptr; // lane BFME2CAMP1 (the HUD's; it unregisters itself; main thread only)
+	std::atomic<bool> m_viewPresent{ false };            // lane BFME2CAMP1 (review): the view's answers as published for the logic
+	std::atomic<bool> m_viewObjectivesOpen{ false };
+	std::atomic<float> m_viewScroll{ 0.0f };
 	bool m_mapScripts = false;
 	BuildCommands m_buildCommands;                // BUILD-1: the construction messages
 	AICommands m_aiCommands;                      // MOVE-1: before the logic; its handlers are registered on m_dispatch

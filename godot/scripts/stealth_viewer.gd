@@ -9,6 +9,7 @@
 ##   --prefix=<name>   the screenshot prefix (default stealth1)
 ##   --speed=<f>       the logic speed (default 1.0)
 ##   --gap=<d>         the archers' distance from the rangers (default 250)
+##   --horde=<name>    the stealthed horde's template (default GondorRangerHorde; lane STEALTHLOOK-1: ElvenMirkwoodArcherHorde)
 extends Node3D
 
 var _map_name := "map mp fall back 4p"
@@ -16,6 +17,7 @@ var _shots := ""
 var _prefix := "stealth1"
 var _speed := 1.0
 var _gap := 250.0
+var _horde := "GondorRangerHorde"
 var _world: Node3D
 var _camera: Camera3D
 var _label: Label
@@ -35,6 +37,8 @@ func _ready() -> void:
 			_speed = float(arg.substr(8))
 		elif arg.begins_with("--gap="):
 			_gap = float(arg.substr(6))
+		elif arg.begins_with("--horde="):
+			_horde = arg.substr(8)
 	var fs: RefCounted = ClassDB.instantiate("RetailFileSystem")
 	var mount: Dictionary = fs.mount_retail()
 	if not mount.ok:
@@ -156,7 +160,7 @@ func _run() -> void:
 		return
 	var at := Vector2(tree.x + 35.0, tree.y - 10.0) # on the open side of the tree, within its 50 (RW 0xBD88C4)
 	print("STEALTHVIEW tree at (%.0f, %.0f, %.0f); the rangers at (%.0f, %.0f)" % [tree.x, tree.y, tree.z, at.x, at.y])
-	var rangers: int = _world.create_object("GondorRangerHorde", _local, at.x, at.y, 0.0)
+	var rangers: int = _world.create_object(_horde, _local, at.x, at.y, 0.0)
 	if rangers <= 0:
 		_fail("could not create the rangers")
 		return
@@ -170,7 +174,7 @@ func _run() -> void:
 	for k in 400:
 		await get_tree().process_frame
 		inv = _world.get_invisibility(rangers, _enemy)
-		_label.text = "Gondor Rangers among the trees, seen by their owner  (frame %d)" % _world.get_frame()
+		_label.text = "%s among the trees, seen by its owner  (frame %d)" % [_horde, _world.get_frame()]
 		if inv.get("type", 2) == 1:
 			break
 	print("STEALTHVIEW camouflaged at frame %d: %s" % [_world.get_frame(), JSON.stringify(inv)])
@@ -179,7 +183,7 @@ func _run() -> void:
 	for k in 240:
 		await get_tree().process_frame
 		inv = _world.get_invisibility(rangers, _enemy)
-		_label.text = "Gondor Rangers camouflaged among the trees, seen by their owner: translucent  (opacity %.2f)" % inv.get("draw_opacity", 1.0)
+		_label.text = "%s camouflaged among the trees, seen by its owner: translucent  (opacity %.2f)" % [_horde, inv.get("draw_opacity", 1.0)]
 		if inv.get("draw_opacity", 1.0) < 0.5:
 			break
 	print("STEALTHVIEW own view opacity %.2f" % inv.get("draw_opacity", 1.0))
@@ -190,13 +194,13 @@ func _run() -> void:
 	print("STEALTHVIEW archers %d at %.0f" % [archers, _gap])
 	_aim(focus, Vector2(focus.x - 30.0, focus.y - 300.0), 130.0)
 	await _wait(30)
-	_label.text = "Rangers as the enemy sees them (camouflaged)"
+	_label.text = "%s as the enemy sees them (camouflaged)" % _horde
 	await _wait(60)
 	_world.set_local_player(_enemy)
 	for k in 150:
 		await get_tree().process_frame
 		inv = _world.get_invisibility(rangers, _enemy)
-		_label.text = "The enemy's view: the camouflaged rangers are not drawn  (frame %d)" % _world.get_frame()
+		_label.text = "The enemy's view: the camouflaged %s is not drawn  (frame %d)" % [_horde, _world.get_frame()]
 	print("STEALTHVIEW enemy view at frame %d: %s; archers %s" % [_world.get_frame(), JSON.stringify(inv), JSON.stringify(_world.get_object(archers)).substr(0, 300)])
 	_save("enemy-invisible")
 	# 3. a skull totem (StealthDetectorUpdate, range 400) of the enemy reveals them; the archers attack

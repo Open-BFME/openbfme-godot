@@ -1,6 +1,7 @@
 // OpenBFME unit tests (lane BACKLOG2) on a retail skirmish (Evendim, Men against Mordor): what retail does to the ground before a structure appears there
 // (GameLogic/ConstructionSite.h). SKIP loudly when ROTWK_INSTALL / BFME2_INSTALL are unset.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "BuildTestUtil.h"
@@ -46,6 +47,7 @@ Object *spawn(GameLogic &logic, const char *name, Player &owner, const Coord3D &
 	REQUIRE_MESSAGE(o != nullptr, name);
 	Coord3D p = at;
 	o->setPosition(&p);
+	testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	return o;
 }
 
@@ -243,8 +245,10 @@ TEST_CASE("BACKLOG2 S-653: a dead structure that starts its rebuild sends the al
 	// pinned (measured, Linux / GCC): he walks 10 frames and stops on the cell the move state adjusted the ordered spot to. Lane TARGET-1: was 7 frames to
 	// (1144594432, 1167152128): the mood scans' one-off random offsets (RW 0x6686F0) draw from the logic generator before the rebuild's two draws, so the
 	// ordered spot moved
-	CHECK(walked == 10);
-	CHECK(bitsOf(boromir->getPosition()->x) == 1143611392u);
+	// merge queue q33 (measured at each merge point): #133's straight production exits move the scene's draws before the rebuild's two: he walks 8 frames and
+	// stops at x 1144266752 (10 / 1143611392), y unchanged
+	CHECK(walked == 8);
+	CHECK(bitsOf(boromir->getPosition()->x) == 1144266752u);
 	CHECK(bitsOf(boromir->getPosition()->y) == 1167193088u);
 	CHECK(bitsOf(start.x) == 1144391642u);
 }
@@ -700,7 +704,26 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// heuristic's frame counter in the AI's hash)
 	// merge queue q30 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0xCE63EAC9 -> 0x3B3C3468: PORTERFOG-1 (an
 	// object out of the world keeps its shroud record, RW 0x68C18F / 0x68E31F: the porters at their sites keep their hashed shroud state); #130 keeps it
-	CHECK(a.hashes.back() == 0x3B3C3468U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// lane MODCOMPAT-MOD1 (measured at GeometryUpgrade's commit; goals and positions unchanged): 0x3B3C3468 -> 0x493B97BD: GeometryUpgrade (each structure's own
+	// GeometryInfo, RW 0x68B244: the build site's footprint and the object hash)
+	// lane MODCOMPAT-MOD1 (measured at RebuildHoleExposeDie's commit; goals and positions unchanged): 0x493B97BD -> 0x7ECC7609: RebuildHoleExposeDie /
+	// RebuildHoleBehavior (the mask bit Object + 0x459 and the dozer's rebuild byte AI + 0x4D0 in the hash)
+	// lane MODCOMPAT-MOD1 (measured at GrabPassengerSpecialPower's commit; goals and positions unchanged): 0x7ECC7609 -> 0x1A7C7AB5: GrabPassengerSpecialPower
+	// (the special power module's state, RW 0x8C942D, in the object hash)
+	// lane MODCOMPAT-MOD1 (measured at AudioLoopUpgrade's commit; goals and positions unchanged): 0x1A7C7AB5 -> 0x4DAD6087: AudioLoopUpgrade (the walls' and
+	// castles' update module and upgrade mux in the object hash)
+	// lane MODCOMPAT-AI (measured on a CI host; goals and positions unchanged): 0x3B3C3468 -> 0xB19675C2: the retail skirmish AI's SET_UNIT_REFERENCE writes
+	// the side's reference map (RW 0x7C2AF6 -> RW 0x608397), which is hashed, and completed upgrades enter the script engine's lists (RW 0x759A1C)
+	// merge queue q33 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0xB19675C2 (the archive's) -> 0x767A9CCB at
+	// MODCOMPAT-MOD1's merge point (its modules' state in the object hash, its lane's 0x4DAD6087 was measured on its older base) -> 0x445ADD14 at #133's (the
+	// straight production exits move the scene's units); #164 and #166 keep it
+	// lane SPELLFIX-1 (measured on the lane's tree, a CI host; goals and positions unchanged): 0x3B3C3468 -> 0x08C39084: an omitted ShroudClearingRange
+	// clears the template's VisionRange in RotWK too (RW 0x73FB7A / 0x69990F), so objects on the map without the row now look and their hashed shroud state
+	// differs (switching that one change off restores 0x3B3C3468)
+	// merge queue q34 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x445ADD14 -> 0x1D2B9A1D at SPELLFIX-1's merge
+	// point (an omitted ShroudClearingRange clears the VisionRange, RW 0x73FB7A / 0x69990F: the hashed shroud state), #160 keeps it, -> 0x24ADB575 at #161's
+	// (the block search's block flags, RW 0x6F49BC, and the corridors)
+	CHECK(a.hashes.back() == 0x24ADB575U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);

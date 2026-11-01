@@ -1,4 +1,22 @@
 extends SceneTree
+## GDScript assert() only logs a SCRIPT ERROR and the run carries on, so a failed one still ended in PASS / exit 0. Every check goes through
+## _check: a failure is recorded and printed as FAIL, and _finish quits 1 when any failed.
+var _failures: Array[String] = []
+
+func _check(ok: bool, reason := "") -> bool:
+	if not ok:
+		_failures.append(reason)
+		var stack := get_stack()
+		printerr("FAIL: ", reason, " (line ", stack[1].line if stack.size() > 1 else 0, ")")
+	return ok
+
+func _finish(pass_message: String) -> void:
+	if _failures.is_empty():
+		print(pass_message)
+		quit()
+		return
+	printerr(_failures.size(), " check(s) failed")
+	quit(1)
 
 class PreviewWorld extends Node3D:
 	var info: Dictionary
@@ -43,96 +61,95 @@ func _run() -> void:
 	view._world.info = info
 	view._locations = [{"id": 1, "x": 100.0, "y": 200.0, "z": 999.0, "angle": 0.0}]
 	view.tick(1.0 / 60.0)
-	assert(view.errors.is_empty())
-	assert(view._t == 0.5)
-	assert(view._yaw == 0.0)
-	assert(is_equal_approx(view.camera_pose("A").fov, 0.83))
-	assert(is_equal_approx(view._cam.fov, 50.0))
+	_check(view.errors.is_empty())
+	_check(view._t == 0.5)
+	_check(view._yaw == 0.0)
+	_check(is_equal_approx(view.camera_pose("A").fov, 0.83))
+	_check(is_equal_approx(view._cam.fov, 50.0))
 	view._view.size.x /= 2
 	view._place_camera("A")
-	assert(is_equal_approx(view._cam.fov, 25.0))
-	assert(is_equal_approx(view._cull_cam.fov, 25.0))
+	_check(is_equal_approx(view._cam.fov, 25.0))
+	_check(is_equal_approx(view._cull_cam.fov, 25.0))
 	view._view.size.x *= 2
 	view._place_camera("A")
-	assert(view._cull_cam.global_transform.is_equal_approx(view._cam.global_transform))
+	_check(view._cull_cam.global_transform.is_equal_approx(view._cam.global_transform))
 	# Tolerance: Vector3/transform components are float32; pi/2 is retail's rounded float.
-	assert(view._cam.position.is_equal_approx(Vector3(220, 90, -215)))
-	assert(view.camera_pose("A").target.is_equal_approx(Vector3(160, 67.5, -215)))
+	_check(view._cam.position.is_equal_approx(Vector3(220, 90, -215)))
+	_check(view.camera_pose("A").target.is_equal_approx(Vector3(160, 67.5, -215)))
 	for fixture in [
 		[0.0, Vector3(180, 60, -210), Vector3(140, 52.5, -210)],
 		[1.0, Vector3(260, 120, -220), Vector3(180, 75, -220)]]:
 		view._t = fixture[0]
 		for page in ["C", "A"]:
 			var pose: Dictionary = view.camera_pose(page)
-			assert(pose.eye.is_equal_approx(fixture[1]))
-			assert(pose.target.is_equal_approx(fixture[2]))
-		assert(view.camera_pose("P").eye.is_equal_approx(Vector3(143.333333, 60, -195)))
-		assert(view.camera_pose("P").target.is_equal_approx(Vector3(130, 62, -195)))
-		assert(view.camera_pose("M").eye.is_equal_approx(Vector3(200, 90, -210)))
-		assert(view.camera_pose("M").target.is_equal_approx(Vector3(160, 30, -210)))
+			_check(pose.eye.is_equal_approx(fixture[1]))
+			_check(pose.target.is_equal_approx(fixture[2]))
+		_check(view.camera_pose("P").eye.is_equal_approx(Vector3(143.333333, 60, -195)))
+		_check(view.camera_pose("P").target.is_equal_approx(Vector3(130, 62, -195)))
+		_check(view.camera_pose("M").eye.is_equal_approx(Vector3(200, 90, -210)))
+		_check(view.camera_pose("M").target.is_equal_approx(Vector3(160, 30, -210)))
 	view._t = -1.0
 	var expected := [0.5, 0.3, 45.0, 60.0, 15.0]
-	for i in 5: assert(is_equal_approx(view.camera_pose("A").row[i], expected[i]))
+	for i in 5: _check(is_equal_approx(view.camera_pose("A").row[i], expected[i]))
 	view._t = 0.5
 	var unchanged: Dictionary = view.camera_pose("A")
 	view._advance_controls({"rotate_right": true}, false)
-	assert(is_equal_approx(view._yaw, 0.1))
+	_check(is_equal_approx(view._yaw, 0.1))
 	view._advance_controls({"rotate_left": true}, true)
-	assert(is_equal_approx(view._yaw, -0.1))
-	assert(view.camera_pose("A") == unchanged)
+	_check(is_equal_approx(view._yaw, -0.1))
+	_check(view.camera_pose("A") == unchanged)
 	view._advance_controls({"zoom_in": true}, false)
-	assert(is_equal_approx(view._t, 0.45))
+	_check(is_equal_approx(view._t, 0.45))
 	view._advance_controls({"zoom_out": true}, true)
-	assert(is_equal_approx(view._t, 0.55))
+	_check(is_equal_approx(view._t, 0.55))
 	for i in 40: view._advance_controls({"zoom_in": true}, false)
-	assert(view._t == 0.0)
+	_check(view._t == 0.0)
 	view._advance_controls({"zoom_in": true, "zoom_out": true}, false)
-	assert(view._t == 0.05) # RW 0x919C26 applies in before out.
+	_check(view._t == 0.05) # RW 0x919C26 applies in before out.
 	for i in 40: view._advance_controls({"zoom_out": true}, true)
-	assert(view._t == 1.0)
+	_check(view._t == 1.0)
 	view._shell.state.camera_revision += 1
 	view._shell.state.rotate_right = true
 	view._shell.state.zoom_in = true
 	view.tick(0.001)
-	assert(is_equal_approx(view._t, 0.5)) # less than one 30 Hz client frame: no step yet (S-456)
+	_check(is_equal_approx(view._t, 0.5)) # less than one 30 Hz client frame: no step yet (S-456)
 	view.tick(1.0 / 30.0)
-	assert(is_equal_approx(view._t, 0.45))
-	assert(is_equal_approx(view._world.angle, 0.1))
+	_check(is_equal_approx(view._t, 0.45))
+	_check(is_equal_approx(view._world.angle, 0.1))
 	for i in 5: view.tick(1.0 / 150.0) # 150 fps: five render frames are one client frame, one step
-	assert(is_equal_approx(view._t, 0.4))
-	assert(is_equal_approx(view._world.angle, 0.2))
+	_check(is_equal_approx(view._t, 0.4))
+	_check(is_equal_approx(view._world.angle, 0.2))
 	view.tick(1.0) # a long frame catches up two steps, not 30
-	assert(is_equal_approx(view._t, 0.3))
-	assert(is_equal_approx(view._world.angle, 0.4))
+	_check(is_equal_approx(view._t, 0.3))
+	_check(is_equal_approx(view._world.angle, 0.4))
 	view._shell.state.rotate_right = false
 	view._shell.state.zoom_in = false
 	view._shell.state.revision += 1 # Cosmetic changes do not reset controls.
 	view.tick(0.03)
-	assert(is_equal_approx(view._t, 0.3))
+	_check(is_equal_approx(view._t, 0.3))
 	view._shell.state.camera_revision += 1
 	view._shell.state.page = "P"
 	view.tick(0.03)
-	assert(view._t == 0.5)
-	assert(view._world.angle == 0.0)
+	_check(view._t == 0.5)
+	_check(view._world.angle == 0.0)
 	for key in info:
 		if key == "ok": continue
 		view._info = info.duplicate(true)
 		view._info.erase(key)
-		assert(view.camera_pose("A").has("error"))
+		_check(view.camera_pose("A").has("error"))
 	for bad_row in [[], [1, 2], [0, 0, 0, 0, 0], [NAN, 1, 2, 3, 4], ["0", 1, 2, 3, 4]]:
 		view._info = info.duplicate(true)
 		view._info.near = bad_row
-		assert(view.camera_pose("A").has("error"))
+		_check(view.camera_pose("A").has("error"))
 	view._info = info.duplicate(true)
 	view._info.camera_offset = Vector3.ZERO
-	assert(view.camera_pose("A").has("error"))
+	_check(view.camera_pose("A").has("error"))
 	view._locations = []
 	view._apply({"class": 0, "subclass": 0})
-	assert(view._info.is_empty())
-	assert(view.errors.size() == 1)
+	_check(view._info.is_empty())
+	_check(view.errors.size() == 1)
 	view._world.info = {"ok": false, "error": "missing camera settings"}
 	view._apply({"class": 0, "subclass": 0})
-	assert(view._info.is_empty())
-	assert(view.errors.back() == "missing camera settings")
-	print("CAH CAMERA PASS")
-	quit()
+	_check(view._info.is_empty())
+	_check(view.errors.back() == "missing camera settings")
+	_finish("CAH CAMERA PASS")

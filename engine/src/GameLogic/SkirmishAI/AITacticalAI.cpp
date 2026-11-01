@@ -15,6 +15,7 @@
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
+#include "GameLogic/SkirmishAI/SkirmishAIEditionRules.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
@@ -2441,9 +2442,9 @@ void startTargetless(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac)
 		{
 			// RW 0x9BB479: RW 0x8F121F (no draw for a TARGETLESS team); the forbidden KindOf mask (RW 0x9BB491 .. 0x9BB499: + 0x307 |= 4, + 0x30C |= 0x20,
 			// + 0x2FD |= 0x48), + 0x21C = 500, the minimum 1 in the Rush phase else 2, the maximum GetGameLogicRandomValue(minimum, 3) (AIFarmKillSquad.cpp line
-			// 0x267), the squad marked running
+			// 0x267), the squad marked running. Lane BFME2MODE-0: the priority is the edition's (SkirmishAIEditionRules.h: RW 0x9BB49D 500, BFME2 0x9AD00B 30)
 			team.forbiddenKinds = { kindBit("HERO"), kindBit("ARCHER"), kindBit("MACHINE"), kindBit("DOZER") };
-			team.priority = 500;
+			team.priority = SkirmishAIEditionRules::farmKillPriority(logic.edition());
 			team.minimum = ai.build.phase == 0 ? 1 : 2;
 			team.maximum = logic.random().getValue(team.minimum, 3, kFarmKillFile, 0x267);
 			ai.brain.namedCounters[kFarmKillRunning] = 1;

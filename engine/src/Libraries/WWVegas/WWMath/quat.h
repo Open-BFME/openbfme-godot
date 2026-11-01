@@ -137,7 +137,7 @@ inline float BFME2_Inverse_Sqrt(float x)
 	return BFME2_Mul24(y0bd, e);
 }
 
-// BFME2 retail 0x00717550 (Open-BFME-2 Code/Libraries/Source/WWVegas/WWMath/bfme2_quaternion_nlerp.cpp, FUN_00b17550): shortest-path
+// BFME2 retail 0x00717550 (Open-BFME-2 Code/Libraries/Source/WWVegas/WWMath/quat.cpp, BFME2_Nlerp): shortest-path
 // linear blend in single precision (SSE), then normalise with BFME2_Inverse_Sqrt. The dot product is summed X, Z, Y, W as in the binary,
 // the squared length X, Y, Z, W. The blend is taken when the dot product is >= 0 or unordered (comiss / jbe).
 inline void BFME2_Nlerp(Quaternion &res, const Quaternion &p, const Quaternion &q, float alpha)

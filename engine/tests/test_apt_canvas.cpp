@@ -192,9 +192,24 @@ TEST_CASE("FontSubstitution: the examples of the file's own comment (9 -> 10 Ari
 	CHECK(f.resolve("Bold", 8).bold == 1);
 	CHECK(f.resolve("Bold", 9).bold == -1);
 	FontSubstitution broken;
-	CHECK_FALSE(broken.parse("FontSubstitution X\n Size ten = 10 Arial\nEnd\n", &error));
-	CHECK(error.find("line 2") != std::string::npos);
+	// the line number is TextFile's CR count (RW 0xA15D29), as in retail's own CRLF files
+	CHECK_FALSE(broken.parse("FontSubstitution X\r\n Size ten = 10 Arial\r\nEnd\r\n", &error));
+	CHECK_MESSAGE(error.find("line 2") != std::string::npos, error);
 	CHECK_FALSE(broken.parse("FontSubstitution X\n Size 10 = 10 Arial\n", &error));
+}
+
+TEST_CASE("FontSubstitution: the lines are TextFile's, so a \"//\" comment is a comment, as in Patch 2.02's file (MODUI-1)")
+{
+	FontSubstitution f;
+	std::string error;
+	REQUIRE_MESSAGE(f.parse("FontSubstitution \"SachaWynter\"\r\n    Size 8 = 12 \"Omnia LT Std\"\r\nEnd\r\n\r\n"
+							"// New font size interpolation for 5.0.0 ;,;\r\n\r\n"
+							"FontSubstitution \"Albertus MT\" // after a block name\r\n    Size 8 = 8 \"Albertus MT\"\r\nEnd\r\n",
+					  &error),
+		error);
+	CHECK(f.blockCount() == 2);
+	CHECK(f.resolve("Albertus MT", 8).name == "Albertus MT");
+	CHECK(f.resolve("SachaWynter", 8).size == 12.0f);
 }
 
 TEST_CASE("retail fontsubstitution.ini: SachaWynter is drawn as Omnia LT Std (8 -> 12, 40 -> 70)")

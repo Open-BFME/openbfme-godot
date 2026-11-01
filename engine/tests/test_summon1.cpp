@@ -2,6 +2,7 @@
 // and DoCommandUpgrade (RW 0x8B8DAF, table RW 0xC6E7B4): first in a synthetic world (CombatTestUtil's CombatWorld), then with the retail AngmarThrallMaster.
 // Expected values are read from the RotWK binary (each check names the address). GPL-3.0.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "CombatTestUtil.h"
 #include "SpellTestAI.h"
@@ -323,6 +324,7 @@ struct ThrallGame
 		REQUIRE(o);
 		Coord3D pos{ x, y, 0.0f };
 		o->setPosition(&pos);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		o->friend_onBuildComplete();
 		return o;
 	}

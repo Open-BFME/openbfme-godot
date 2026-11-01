@@ -7,13 +7,13 @@
 // TARGET FACTS (RotWK game.dat, caveat S-001):
 // - GlobalLanguage::init (RW 0x5E9D3C) loads "language.ini" (RW 0xBF510C; the English archive's file sits at the archive root) with INI_LOAD_OVERWRITE
 //   (RW 0x5E9D61 .. 0x5E9D7D); the block keyword "Language" runs initFromINI over the field table RW 0xBF4C20 (BFME2 decomp
-//   GlobalLanguageAdjustFontSize.cpp INI::parseLanguageDefinition, tier A for the BFME2 twin);
+//   GlobalLanguage.cpp INI::parseLanguageDefinition, tier A for the BFME2 twin);
 // - the table's 31 rows, in order: DecimalSeparator, ThousandSeparator, TimeMinuteToSecondSeparator, UnicodeFontName (parseAsciiString RW 0x42EE5E,
 //   + 0x0C .. + 0x18), LocalFontFile (RW 0x5EA54B: getNextAsciiString pushed to the front of the list at + 0x138), MilitaryCaptionSpeed (parseInt
 //   RW 0x42EC5E, + 0x28), UseHardWordWrap (parseBool RW 0x42E558, + 0x24), ResolutionFontAdjustment (parseReal RW 0x42ED00, + 0x134), AudioLanguage
 //   (parseAsciiString, + 0x20), then 22 fonts through parseFontDesc RW 0x778C93 (+ 0x2C .. + 0x128, 12 bytes each);
 // - parseFontDesc (RW 0x778C93, BFME2 decomp GlobalLanguageParseFontDesc.cpp, tier A): getNextQuotedAsciiString, scanInt, scanBool;
-// - adjustFontSize (RW 0x5E9BEF, BFME2 decomp GlobalLanguageAdjustFontSize.cpp, tier A): floor(size * xResolution / 1024).
+// - adjustFontSize (RW 0x5E9BEF, BFME2 decomp GlobalLanguage.cpp, tier A): floor(size * xResolution / 1024).
 // DONOR (ZH GlobalLanguage.cpp): the constructor's defaults (empty strings and fonts, ResolutionFontAdjustment 0.7). The font files of LocalFontFile
 // are recorded, not registered with the device (the device draws with the corpus fonts, S-176).
 

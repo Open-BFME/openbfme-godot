@@ -34,6 +34,10 @@ void AIWorld::xferBody(Xfer &x)
 	XferVersion v{ 1, 2 };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
+	if (loading)
+	{
+		m_cratesValid = false; // lane MODCOMPAT-MOD1: the crate contact list is derived; rebuilt from the loaded objects by the next crate pass
+	}
 	AIXfer::StringTableScope strings; // the units' stop lines once each (AIXfer::reportString)
 	bool ready = m_mapReady;
 	x.xferBool(&ready);

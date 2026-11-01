@@ -1,4 +1,22 @@
 extends SceneTree
+## GDScript assert() only logs a SCRIPT ERROR and the run carries on, so a failed one still ended in PASS / exit 0. Every check goes through
+## _check: a failure is recorded and printed as FAIL, and _finish quits 1 when any failed.
+var _failures: Array[String] = []
+
+func _check(ok: bool, reason := "") -> bool:
+	if not ok:
+		_failures.append(reason)
+		var stack := get_stack()
+		printerr("FAIL: ", reason, " (line ", stack[1].line if stack.size() > 1 else 0, ")")
+	return ok
+
+func _finish(pass_message: String) -> void:
+	if _failures.is_empty():
+		print(pass_message)
+		quit()
+		return
+	printerr(_failures.size(), " check(s) failed")
+	quit(1)
 
 const Lobby := preload("res://scripts/online_lobby.gd")
 const INVITE := "1111111111111111"
@@ -36,10 +54,9 @@ func _run() -> void:
 			client.failed.connect(func(message): errors.append(message))
 			root.add_child(client)
 			client.begin()
-			assert(errors.size() == 1, "invalid invite launch did not fail locally: %s" % values)
+			_check(errors.size() == 1, "invalid invite launch did not fail locally: %s" % values)
 			client.queue_free()
-		print("INVITE local validation PASS")
-		quit(0)
+		_finish("INVITE local validation PASS")
 		return
 	var client: Node = Lobby.new()
 	client.lobby_url = url

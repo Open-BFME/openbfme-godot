@@ -401,10 +401,10 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				CHECK_FALSE(own.noted3804);
 				CHECK_FALSE(ord.noted3804);
 				const bool drogoth = hero == "Drogoth";
-				// merge queue q28 (measured once on the merged tree and at each merge point): on his own Drogoth now strikes the horde once (975 health, 13 of 20
-				// killed); the fell beasts still strike nothing
-				// merge queue q29 (measured once on the merged tree and at each merge point): on his own Drogoth strikes nothing again, like the fell beasts
-				// (DEVPORT-SIM: one strike, 825 health, 11 killed; none from community #113 on, whose capture squads move the scene's computer opponent)
+				// Engine-scene pin, not a retail oracle. Both the first-leg quick path and
+				// per-tick goal publication move QueueProductionExitUpdate's Moria goblin
+				// spawns (RW 0x8A3DD5 -> 0x87C9B8 -> state 7); the flying heroes themselves
+				// never enter state 7. Upstream q29 also leaves Drogoth passive here.
 				CHECK(own.shots == 0u);
 				CHECK(own.lost == 0.0f);
 				CHECK(own.membersKilled == 0u);
@@ -419,6 +419,10 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// mood checks back (RW 0x662DD9), so the scene's world plays differently; the damage and kills are unchanged
 				// lane OFFMAP-1: 3 strikes (2 before): RotWK's idle state (RW 0x745A64) no longer snaps the scene's units onto cell centres at frame <= 1
 				// (ZH's cheat move), so the fight starts from the positions they were made at; the damage and the kills are the same
+				// horde contain (RW 0x871536 / 0x8718ED): 3 strikes (4 before): the scene's horde makes its members where it stands and a move no longer
+				// puts them on their slots, so they stand elsewhere when the bird arrives; the damage and the kills are the same
+				// merge queue q34 (measured at each merge point): 4 strikes (3 before) from #160's merge point on (the scene's horde members walk to their slots,
+				// RW 0x871536); the damage and the kills are the same
 				CHECK(ord.shots == (drogoth ? 4u : 0u));
 				CHECK(ord.lost == (drogoth ? 1500.0f : 450.0f));
 				CHECK(ord.membersKilled == (drogoth ? 20u : 5u));
@@ -438,9 +442,13 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 			// the horde); every other hero fights the horde
 			// Merge queue q29 (measured once on the merged tree and at each merge point): Haldir fights the horde again from DEVPORT-SIM on (a hero leaving the
 			// fortress drops IS_LEAVING_FACTORY, RW 0x74B77D, and takes its Battle stance's guard), all 20 killed (1500 health) on the merged tree
+			// Merge queue q33 (measured at each merge point): #133's straight production exits move the scene's creeps and computer opponent: Haldir still
+			// fights the horde, 13 of 20 killed (975 health)
+			// Merge queue q34 (measured at each merge point): Haldir still fights the horde: 2 of 20 killed (150 health) with #160 (the members walk to their
+			// slots, RW 0x871536), 7 of 20 (525 health) with #161 (the block search's block zones move the scene's creeps and computer opponent)
 			if (hero == "ElvenHaldir")
 			{
-				CHECK(own.lost == 1500.0f);
+				CHECK(own.lost == 525.0f);
 			}
 			else
 			{
@@ -585,8 +593,17 @@ TEST_CASE("attack1 heroes retail: the mounted Witch-king and Mouth of Sauron, or
 	// computer opponent builds phantom sites): the Witch-king 4 shots, all swings of his mace (the first took 450, 1200 outside the run, nothing in a crush run),
 	// 16 killed, nearest 29.9244, with CRUSHER_LEVEL -1 4 swings taking 1200 from 29.5534; the Mouth of Sauron 6 shots, 6 killed (300 in the crush run), 2
 	// swings (75 / 150), nearest 1.00478, with CRUSHER_LEVEL -1 5 swings taking 375 from 59.6801. The duels are unchanged. Engine pins, not retail values.
-	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 4u, 16u, 0.0f, { 800.0f, 112.0f }, 4u, 450.0f, 1200.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 4u, 1200.0f, 29.5534f, 29.9244f },
-			 Case{ "FactionMordor", "MordorMouthOfSauron", 6u, 6u, 300.0f, { 640.0f, 320.0f }, 2u, 75.0f, 150.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 5u, 375.0f, 59.6801f, 1.00478f } })
+	// Merge queue q33 (measured once on the merged tree and at each merge point): #133's straight production exits move the scene's computer opponent; the
+	// Witch-king 4 shots, all swings of his mace (the first took 525, 1350 outside the run, nothing in a crush run), 18 killed, nearest 16.2647, with
+	// CRUSHER_LEVEL -1 4 swings taking 1350 from 15.5158; the Mouth of Sauron 7 shots, 7 killed (75 in the crush run), 5 swings (75 / 375), nearest 5.0722,
+	// with CRUSHER_LEVEL -1 4 swings taking 300 from 55.722. The duels and the blocking are unchanged. Engine pins, not retail values.
+	// Merge queue q34 (measured once on the merged tree and at each merge point): #161's block search (block zones RW 0x9389A6, raised branch RW 0x9389CE)
+	// moves the scene's computer opponent; #160 alone keeps q33's values. The Witch-king 4 shots, all swings of his mace (the first took 525, 1350 outside the
+	// run, nothing in a crush run), 18 killed, nearest 14.5005, with CRUSHER_LEVEL -1 4 swings taking 1350 from 14.5279; the Mouth of Sauron 5 shots, 5 killed
+	// (150 in the crush run), 3 swings (75 / 225), nearest 0.825811, with CRUSHER_LEVEL -1 4 swings taking 300 from 60.3109. The duels and the blocking are
+	// unchanged. Engine pins, not retail values.
+	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 4u, 18u, 0.0f, { 800.0f, 112.0f }, 4u, 525.0f, 1350.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 4u, 1350.0f, 14.5279f, 14.5005f },
+			 Case{ "FactionMordor", "MordorMouthOfSauron", 5u, 5u, 150.0f, { 640.0f, 320.0f }, 3u, 75.0f, 225.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 4u, 300.0f, 60.3109f, 0.825811f } })
 	{
 		INFO(std::string(c.hero));
 		const ThingTemplate *tt = s->world->things().findTemplate(c.hero);

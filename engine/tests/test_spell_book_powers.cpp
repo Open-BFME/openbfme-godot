@@ -6,6 +6,7 @@
 // defection. Tier 1 / 2 powers and the tier-4 summons must show their effect; the others are reported. Then determinism, the weather hash
 // mutations and the stop lines.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "SpellTestAI.h"
 #include "StartTestUtil.h"
@@ -112,6 +113,7 @@ struct BookGame
 		REQUIRE(o);
 		Coord3D pos{ x, y, 0.0f };
 		o->setPosition(&pos);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	bool purchase(int i, ScienceType st)

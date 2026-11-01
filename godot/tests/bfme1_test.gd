@@ -1,4 +1,23 @@
 extends SceneTree
+## GDScript assert() only logs a SCRIPT ERROR and the run carries on, so a failed one still ended in PASS / exit 0. Every check goes through
+## _check: a failure is recorded and printed as FAIL, and _finish quits 1 when any failed.
+var _failures: Array[String] = []
+
+func _check(ok: bool, reason := "") -> bool:
+	if not ok:
+		_failures.append(reason)
+		var stack := get_stack()
+		printerr("FAIL: ", reason, " (line ", stack[1].line if stack.size() > 1 else 0, ")")
+	return ok
+
+func _finish(pass_message: String) -> void:
+	if _failures.is_empty():
+		print(pass_message)
+		quit()
+		return
+	printerr(_failures.size(), " check(s) failed")
+	quit(1)
+
 func _initialize() -> void: call_deferred("_run")
 func _run() -> void:
 	var install := OS.get_environment("BFME1_INSTALL")
@@ -10,7 +29,7 @@ func _run() -> void:
 	var mounted: Dictionary = fs.mount_bfme1_path(install)
 	print("BFME1 MOUNT ", mounted)
 	if not mounted.ok: quit(1); return
-	assert(fs.install_root() == install, "BFME1 loose resources must use the BFME1 install")
+	_check(fs.install_root() == install, "BFME1 loose resources must use the BFME1 install")
 	var world = ClassDB.instantiate("GameWorld")
 	root.add_child(world)
 	var setup: Dictionary = world.setup(fs)
@@ -23,10 +42,12 @@ func _run() -> void:
 	print("BFME1 SHELL ", boot)
 	if not boot.ok: quit(1); return
 	var cursor: Dictionary = shell.get_cursor_image()
-	assert(cursor.get("name", "") == "Arrow")
-	assert(cursor.get("texture") != null, "BFME1 must load its native cursor image")
-	assert(not cursor.get("hidden", true))
-	assert(shell.get_report().get("cursor_errors", []).is_empty())
+	_check(cursor.get("name", "") == "Arrow")
+	if not _check(cursor.get("texture") != null, "BFME1 must load its native cursor image"):
+		_finish("")
+		return
+	_check(not cursor.get("hidden", true))
+	_check(shell.get_report().get("cursor_errors", []).is_empty())
 	if not shell.shell_push("MainMenu.apt"): print(shell.get_shell_report()); quit(1); return
 	for i in 90: shell.tick(0.033)
 	print("BFME1 MENU ", shell.get_shell_report())
@@ -39,11 +60,11 @@ func _run() -> void:
 	print("BFME1 LOBBY ", lobby)
 	if not lobby.get("found", false): quit(1); return
 	var keys: PackedStringArray = lobby.get("map_keys", PackedStringArray())
-	assert(not keys.is_empty())
+	_check(not keys.is_empty())
 	for key in keys:
-		assert(key.begins_with("maps/map mp "), key)
-		assert(not key.begins_with("maps/map mp test/"), key)
-		assert(not key.begins_with("maps/map mp nctest/"), key)
+		_check(key.begins_with("maps/map mp "), key)
+		_check(not key.begins_with("maps/map mp test/"), key)
+		_check(not key.begins_with("maps/map mp nctest/"), key)
 	# Exercise real skirmish startup: load_map alone never unpacks start castles.
 	for faction in [3, 4]: # BFME1 store: Rohan, Gondor
 		var slots: Array = []
@@ -51,9 +72,9 @@ func _run() -> void:
 			slots.append({"state":1,"name":"Closed","accepted":true,"color":-1,"start_pos":-1,"player_template":-1,"team":-1})
 		slots[0] = {"state":6,"name":"Test","accepted":true,"color":0,"start_pos":0,"player_template":faction,"team":0}
 		var prepared: Dictionary = world.prepare_new_game({"mode":"skirmish","difficulty":1,"rank_points":0,"map_crc":0,"map_size":0,"map_mask":0,"map":"maps/map mp fords of isen/map mp fords of isen.map","seed":9001,"starting_cash":2000,"slots":slots})
-		assert(prepared.ok, str(prepared))
+		_check(prepared.ok, str(prepared))
 		var loaded: Dictionary = world.start_new_game({"logic_thread":false})
-		assert(loaded.ok, str(loaded.get("errors")))
+		_check(loaded.ok, str(loaded.get("errors")))
 		world.set_shroud_drawn(true)
 		for i in 10: world.advance(0.2)
 		var prefix := "Rohan" if faction == 3 else "Gondor"
@@ -69,10 +90,10 @@ func _run() -> void:
 			elif name == prefix + "CastleBaseKeep": keeps += 1
 			elif name == ("RBCastleFloor" if faction == 3 else "GBCastleFloor"): pass
 			else: continue
-			assert(object.get("instances", 0) > 0, str(object))  # tolerance: the object was drawn (instance count depends on its LOD and pieces)
-		assert(walls >= 8, "%s: only %d walls" % [prefix, walls])  # tolerance: a castle stands: its wall count varies with the faction's layout (port note, community PR #36)
-		assert(gates == 2, "%s: only %d gate leaves" % [prefix, gates])
-		assert(keeps == 1, "%s: missing keep" % prefix)
+			_check(object.get("instances", 0) > 0, str(object))  # tolerance: the object was drawn (instance count depends on its LOD and pieces)
+		_check(walls >= 8, "%s: only %d walls" % [prefix, walls])  # tolerance: a castle stands: its wall count varies with the faction's layout (port note, community PR #36)
+		_check(gates == 2, "%s: only %d gate leaves" % [prefix, gates])
+		_check(keeps == 1, "%s: missing keep" % prefix)
 		print("BFME1 CASTLE ", prefix, ": ", walls, " walls, ", gates, " gate leaves, keep rendered")
 	# Regression: Enedwaith's Gondor outposts load a base with PolyGonTriggers.
 	var outpost_slots: Array = []
@@ -81,10 +102,13 @@ func _run() -> void:
 	outpost_slots[0] = {"state":6,"name":"Test","accepted":true,"color":8,"start_pos":7,"player_template":4,"team":-1}
 	outpost_slots[1] = {"state":2,"name":"AI","accepted":true,"color":15,"start_pos":0,"player_template":4,"team":-1}
 	var outpost_prepared: Dictionary = world.prepare_new_game({"mode":"skirmish","difficulty":1,"rank_points":0,"map_crc":0,"map_size":0,"map_mask":0,"map":"maps/map mp enedwaith/map mp enedwaith.map","seed":1911,"starting_cash":-1,"slots":outpost_slots})
-	assert(outpost_prepared.ok, str(outpost_prepared))
+	if not _check(outpost_prepared.ok, str(outpost_prepared)):
+		_finish("")
+		return
 	var outpost_loaded: Dictionary = world.start_new_game({"logic_thread":false})
-	assert(outpost_loaded.ok, str(outpost_loaded.get("errors")))
+	if not _check(outpost_loaded.ok, str(outpost_loaded.get("errors"))):
+		_finish("")
+		return
 	for i in 10: world.advance(0.2)
 	print("BFME1 ENEDWAITH outposts loaded")
-	print("BFME1 PASS")
-	quit()
+	_finish("BFME1 PASS")

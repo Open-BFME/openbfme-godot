@@ -350,7 +350,7 @@ std::string AptOnlineHub::choices() const
 
 void AptOnlineHub::callChild(const std::string &function)
 {
-	// the page's own entry point HandleGameCall (BFME2 AptOnlineQuickMatchOptions.cpp: CallChild("DoOpenFound") / "CloseFoundAndReset")
+	// the page's own entry point HandleGameCall (BFME2 AptOnlineQuickMatchOptions_OnMatched.cpp: CallChild("DoOpenFound") / "CloseFoundAndReset")
 	std::string err;
 	if (m_shell.level() < 0 || !m_shell.windows().invokeASAt(m_shell.level(), "OnlineQuickMatch", "HandleGameCall", { function }, nullptr, &err))
 	{

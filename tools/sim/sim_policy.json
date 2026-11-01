@@ -19,6 +19,7 @@
  ],
  "excluded": [
   {"glob": "src/GameClient/CreateAHeroStats.cpp", "reason": "Create-a-Hero client profile statistics file IO; never simulation state"},
+  {"glob": "src/GameClient/TutorialSettings.cpp", "reason": "lane BFME2CAMP1: GameData's Basic / Advanced tutorial records the main menu's OnTutorial reads (the map to start, its load screen and music); no logic state, the logic gets only the map name and the tutorial game mode"},
   {
    "glob": "src/Common/System/FloatFromChars.cpp",
    "reason": "the vendored fast_float parser behind Common/FloatFromChars.h (decimal text to float / double, correctly rounded; no simulation arithmetic of ours); it is compiled with the simulation flags, and tools/sim/compare_float_chars.cpp checks it against the C++ library; libclang 18 cannot parse its SSE2 header (the reason it is the only file that includes the vendored headers)"
@@ -208,6 +209,10 @@
    "reason": "lane END-1: the client half of the end of a game (the local player's end screen, messages and Eva, the human player's win / loss script library run over the logic snapshot, the score screen data copied when the game is left): reads the logic, never writes simulation state"
   },
   {
+   "glob": "src/GameClient/LivingWorldScoreScreen.cpp",
+   "reason": "WOTR2 milestone 5: the War of the Ring score screen's data (TimeLine type 6) copied from the strategic logic's score keepers when the war is left: reads the logic, never writes simulation state"
+  },
+  {
    "glob": "src/GameClient/RTS3DSceneOcclusion.cpp",
    "reason": "lane OCCLUDE-1: the behind-building markers' choice of drawables and their colours (RW 0x470B83 / 0x470176): reads objects while the logic snapshot is built and the snapshot in the renderer, writes only the snapshot and draw state, never simulation state"
   },
@@ -392,6 +397,10 @@
    "reason": "MENU-1 Skirmish.ini: the player's profile names read and written by the Skirmish screen, client-side user interface; nothing reaches the logic"
   },
   {
+   "glob": "src/GameClient/GUI/Skirmish/LivingWorldSetupText.cpp",
+   "reason": "lane WOTR-2: the War of the Ring setup's territory and scenario description texts (game text labels formatted for the screen): client-side user interface, nothing reaches the logic"
+  },
+  {
    "glob": "src/GameClient/GUI/Skirmish/SkirmishGameRecord.cpp",
    "reason": "lane UI-6: the lobby's kept game in Skirmish.ini (RotWK's GameInfoToAsciiString / ParseAsciiStringToGameInfo text): menu preferences, never simulation state"
   },
@@ -494,6 +503,10 @@
   {
    "glob": "src/GodotDevice/GodotPostEffects.cpp",
    "reason": "the map's colour grade on the 3D colour buffer (LookupTablePostEffect, RENDER-4 / S-1650): rendering only"
+  },
+  {
+   "glob": "src/GodotDevice/GodotGlowEffect.cpp",
+   "reason": "retail's glow pass on the 3D colour buffer and the effects-LOD gate on the post chain (GLOW-1 / S-5231): rendering only"
   },
   {
    "glob": "src/GodotDevice/GodotFXPlayer.cpp",

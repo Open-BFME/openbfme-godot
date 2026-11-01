@@ -50,6 +50,12 @@ int truncToInt(float f)
 unsigned BuildAssistant::buildCost(const ThingTemplate &tt) { return (unsigned)(integerField(tt, "BuildCost") & 0xFFFF); }
 int BuildAssistant::commandPoints(const ThingTemplate &tt) { return (int)integerField(tt, "CommandPoints"); }
 int BuildAssistant::buildable(const ThingTemplate &tt) { return (int)integerField(tt, "Buildable"); }
+// RW 0x73BFE8 (lane BFME2CAMP1)
+int BuildAssistant::buildable(const ThingTemplate &tt, const GameLogic &logic)
+{
+	std::int32_t status = 0;
+	return logic.findBuildableStatusOverride(&tt, status) ? (int)status : buildable(tt);
+}
 int BuildAssistant::buildCompletion(const ThingTemplate &tt) { return (int)integerField(tt, "BuildCompletion"); }
 
 float BuildAssistant::buildTime(const ThingTemplate &tt)
@@ -266,7 +272,7 @@ bool BuildAssistant::playerCanBuild(const Player &player, const ThingTemplate *t
 	{
 		return false;
 	}
-	const int b = buildable(*tt);
+	const int b = buildable(*tt, logic);
 	if (b == 2)
 	{
 		return false;

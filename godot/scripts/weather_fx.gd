@@ -18,6 +18,8 @@
 ## Readability first (the owner 2026-10-29): no effect may wash out the playfield; weatherfx1_player.gd's readability check measures it.
 ##   wind       trees sway harder in the rain and storm (the drawn vegetation sway, GameWorld.set_weather_fx_sway)
 ## While it snows (with snow or snowcover on) the tone mapping gets a snow grade (_apply_grade): readability on a bright snowy map.
+## Only in a live game's 3D view (live(), lane WEATHERFX-2): never over a menu, the score screen or a loading screen; game.gd frees the node when the
+## game is left, which turns every global and the grade off (_exit_tree).
 ## The detail level scales it: Low draws none, Medium half the drops / flakes and no mist, High and above everything.
 extends Node3D
 
@@ -191,6 +193,14 @@ func report() -> Dictionary:
 		"bolt": _bolt.visible}}
 
 
+## lane WEATHERFX-2 (the owner 2026-10-29: "a washout on the menus with the snow"): the weather belongs to a live game's 3D view only: the game's
+## camera draws the window (game.gd makes it current when a game starts and gives it up when the game is left: the score screen, the menus, a
+## Restart or a load) and the world is shown (game.gd hides it behind the loading screen). Anything else (a menu, the score screen, a loading
+## screen, the black bars around the menu art) gets no weather particles, snow cover, mist or snow grade; the next frame of a live game brings them back
+func live() -> bool:
+	return _camera.current and _camera.is_inside_tree() and _world.is_visible_in_tree()
+
+
 func _on(e: String) -> bool:
 	return effects.get(e, false) and detail > 0.0
 
@@ -198,7 +208,7 @@ func _on(e: String) -> bool:
 func _process(delta: float) -> void:
 	if not is_instance_valid(_world) or not is_instance_valid(_camera):
 		return
-	var st: Dictionary = _world.get_weather_fx_state() if look_enhanced else {}
+	var st: Dictionary = _world.get_weather_fx_state() if look_enhanced and live() else {}
 	if not st.get("loaded", false) or detail <= 0.0:
 		if _active:
 			_deactivate()

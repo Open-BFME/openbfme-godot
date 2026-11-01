@@ -318,8 +318,10 @@ int GameWindow::winHide(bool hide)
 		BitSet(m_status, WIN_STATUS_HIDDEN);
 		m_manager.windowHiding(this);
 	}
-	else
+	else if (!m_clipRemoved)
 	{
+		// OpenBFME: a window whose clip was removed stays hidden (componentInstanceDestroyed: retail does not draw a gadget whose clip is off the
+		// display list), whatever screen still holds it.
 		BitClear(m_status, WIN_STATUS_HIDDEN);
 	}
 	return WIN_ERR_OK;

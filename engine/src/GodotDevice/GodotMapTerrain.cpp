@@ -757,7 +757,10 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 		std::string werr;
 		if (!MapWeatherScan::load(*arch, mapDir, weather, &werr))
 		{
-			errors.push_back(toGodot("weather: " + werr));
+			// retail: an INIException from weather.ini / map.ini (RW 0x62710d, no try block) unwinds out of the map start to GameEngine::update's
+			// catch (RW 0x639f4c); the map is not built, so there is no fog or cloud setting to invent
+			memdelete(root);
+			return fail("weather: " + werr);
 		}
 		if (!optBool(options, "fog", true))
 		{
@@ -1033,12 +1036,15 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				errors.push_back(toGodot(lightError));
 			for (const StandingWaterArea &a : map.chunks.standingWaterAreas)
 			{
-				std::vector<std::uint32_t> tri;
-				if (a.points.size() < 3 || !WaterGeometry::triangulate(a.points, tri))
-				{
-					++failed;
-					continue;
+				// RotWK draws every standing water area as the grid that AllocateAndFillBuffers (RW 0x482A16)
+				// fills from its polygon, whatever the shader technique; there is no polygon triangulation.
+				// An area the grid cannot fill is reported, never drawn some other way.
+				WaterGeometry::StandingGrid grid;
+				if (!WaterGeometry::buildStandingGrid(a, map.chunks.standingWaveAreas,
+					[&](float x,float y) { return terrain.getGroundHeight(x,y); }, grid)) {
+					errors.push_back(toGodot("water grid has no cells: " + a.name)); ++failed; continue;
 				}
+				const std::vector<std::uint32_t> &tri = grid.indices;
 				WaterGeometry::StandingMaterial params;
 				bool authored = false;
 				if (!a.fxShader.empty())
@@ -1174,22 +1180,20 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				PackedVector2Array uv;
 				PackedInt32Array idx;
 
-				WaterGeometry::StandingGrid grid;
 				bool geometry = pcaMode && !pcaBasis.frames.empty();
 				PackedFloat32Array shore, direction;
+				vtx.resize(grid.vertices.size()); uv.resize(grid.vertices.size());
+				for (size_t i=0;i<grid.vertices.size();++i) {
+					const auto &v=grid.vertices[i];
+					vtx.set(i,toG(v.point.x,v.point.y,float(a.waterHeight)));
+					uv.set(i,Vector2(v.point.x/100,v.point.y/100));
+				}
+				materialInfo["grid_spacing"] = grid.spacing;
 				if (geometry) {
-					if (!WaterGeometry::buildStandingGrid(a, map.chunks.standingWaveAreas,
-						[&](float x,float y) { return terrain.getGroundHeight(x,y); }, grid)) {
-						errors.push_back(toGodot("water grid has no cells: " + a.name)); ++failed; continue;
-					}
-					tri = grid.indices;
-					vtx.resize(grid.vertices.size()); uv.resize(grid.vertices.size());
 					shore.resize(grid.vertices.size()*4); direction.resize(grid.vertices.size()*4);
 					int64_t active = 0;
 					for (size_t i=0;i<grid.vertices.size();++i) {
 						const auto &v=grid.vertices[i];
-						vtx.set(i,toG(v.point.x,v.point.y,float(a.waterHeight)));
-						uv.set(i,Vector2(v.point.x/100,v.point.y/100));
 						shore.set(i*4,v.nearest.x); shore.set(i*4+1,v.nearest.y);
 						shore.set(i*4+2,v.ground); shore.set(i*4+3,v.halfLength);
 						direction.set(i*4,v.direction.x); direction.set(i*4+1,v.direction.y);
@@ -1198,13 +1202,6 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 							std::hypot(v.point.x-v.nearest.x,v.point.y-v.nearest.y)<v.halfLength) ++active;
 					}
 					materialInfo["wave_vertices"] = active;
-					materialInfo["grid_spacing"] = grid.spacing;
-				} else {
-					vtx.resize(a.points.size()); uv.resize(a.points.size());
-					for (size_t i=0;i<a.points.size();++i) {
-						vtx.set(i,toG(a.points[i].x,a.points[i].y,float(a.waterHeight)));
-						uv.set(i,Vector2(a.points[i].x/100,a.points[i].y/100));
-					}
 				}
 				materialInfo["vertices"] = vtx.size();
 				waterMaterials[waterMaterials.size()-1] = materialInfo;
@@ -1252,7 +1249,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 		w["material_stops"] = materialStops;
 		w["areas"] = areas;
 		w["triangles"] = tris;
-		w["triangulation_failed"] = failed;
+		w["grid_failed"] = failed;
 		w["areas_in_map"] = (int64_t)map.chunks.standingWaterAreas.size();
 		w["pca_wave_areas"] = (int64_t)std::count_if(map.chunks.standingWaveAreas.begin(), map.chunks.standingWaveAreas.end(), [](const StandingWaveArea &a) { return a.enablePcaWave != 0; });
 		w["wave_areas_not_rendered"] = (int64_t)std::count(renderedWaves.begin(), renderedWaves.end(), false);
@@ -1283,9 +1280,12 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 				}
 			}
 			int64_t additiveRendered = 0;
-			float waterDiffuse[4];
+			// the rivers are lit with the time of day's WaterSet DiffuseColor: a water.ini / map.ini the INI parse rejects is reported and no river is built
+			// from a colour that was never read (no fallback colour)
+			float waterDiffuse[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 			std::string waterError;
-			if (!WaterSetScan::load(*arch, name, lighting ? lighting->timeOfDay : 2, waterDiffuse, &waterError))
+			const bool waterSetRead = WaterSetScan::load(*arch, mapDir, lighting ? lighting->timeOfDay : 2, waterDiffuse, &waterError);
+			if (!waterSetRead)
 			{
 				errors.push_back(toGodot("water.ini: " + waterError));
 			}
@@ -1296,7 +1296,7 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 			for (const RiverArea &r : map.chunks.riverAreas)
 			{
 				WaterGeometry::RiverStrip strip;
-				if (!WaterGeometry::buildRiverStrip(r, strip) || sh.is_null())
+				if (!waterSetRead || !WaterGeometry::buildRiverStrip(r, strip) || sh.is_null())
 				{
 					continue;
 				}

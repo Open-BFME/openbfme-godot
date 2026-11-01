@@ -3,7 +3,7 @@
 //
 // Lane PHYS-1, completed by lane ATTACKPATH-1: Pathfinder::findAttackPath, the search for a cell from which the attacker's weapon reaches its victim (ZH AIPathfind.cpp
 // findAttackPath; RotWK body RW 0x6FC18E, pathfinder vtable 0xC1B8D8 slot +8, tier B to BFME2 0x6FAD13 whose decomp source is the near-matching draft
-// reverse/attempts/0x002fad13.cpp (2117 / 2117 bytes, not yet byte-matched): every step below was read from the RotWK disassembly, the draft supplied the names.
+// pathfinder.cpp Pathfinder::FindAttackPath (2117 bytes; byte-matched since, then reverse/attempts/0x002fad13.cpp): every step below was read from the RotWK disassembly, the draft supplied the names.
 // The ship variant RW 0x6FDE38 (slot +0xC, decomp PathfinderSidewaysAttack.cpp) is not ported: ships are not modelled by the pathfinder.)
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; lane PHYS-1 review r2 / r3, lane ATTACKPATH-1):
@@ -65,6 +65,7 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 	{
 		return nullptr;
 	}
+	SearchMemoScope memo(*this, obj); // lane PATHPERF-1's memo for this search too
 	if (fallback)
 	{
 		*fallback = false;
@@ -151,6 +152,10 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 	{
 		m_zoneManager.setAllPassable();
 	}
+	// lane PERF-HD (Uber only): the cell search gets the queue's cap of its own, as in findPath; the block search may have spent it (a target in another
+	// zone scans the whole block map), and a spent cap ends the cell search at its first cell, before it chose an acceptable or closest cell: no path, so the
+	// unit never approaches. Also without a corridor: a unit off the ground keeps its closest cell then (S-4858, rankByDistance below)
+	m_uberSearchAllocs = 0;
 	// 4. the start and the goal cell
 	const int attackDistance = SimMath::truncToInt32(range.attackDistance()) + 30;
 	Coord3D start = pos;
@@ -200,8 +205,8 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 	}
 	const bool checkView = victim == nullptr || !victim->isSignificantlyAboveTerrain();
 	// lane WALL-2 with ATTACKPATH-1 (S-4858, OpenBFME's own): RotWK keeps the closest-cell fallback only with a corridor (the RW 0x93AD93 ranking below runs
-	// only when RW 0x6F9829 found one). The port's corridor runs on the ground grid only (S-162; its raised branch RW 0x9389CE is S-4856), so a unit on a wall
-	// top, a raised walkway or a ramp often gets none, and the search would then end with no path at all: the unit would wait in its approach for good (Grond
+	// only when RW 0x6F9829 found one). A unit off the ground layer whose start the block search cannot leave gets none, and the search would then end with
+	// no path at all: the unit would wait in its approach for good (Grond
 	// put on a Minas Tirith wall top, every wall cell blocking it: CanPathThroughGates = No). Such a search keeps the cell closest to the goal cell by its
 	// squared cell distance instead, as the attack search did before the corridor was ported
 	const bool rankByDistance = !hierarchical && obj->getLayer() != LAYER_GROUND;
@@ -223,6 +228,11 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 		PathfindCell *c = m_open.pop();
 		if (m_uberLimits)
 		{
+			if (m_uberSearchAllocs > m_uberSearchCap)
+			{
+				markClosed(c); // lane PERF-HD: the Uber queue's cap; the result below is the exhausted search's (the acceptable or closest cell)
+				break;
+			}
 			const int sx = (int)goalCell->getXIndex() - (int)c->getXIndex(), sy = (int)goalCell->getYIndex() - (int)c->getYIndex();
 			const int d2 = sx * sx + sy * sy;
 			if (d2 < stallD2)

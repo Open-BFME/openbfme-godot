@@ -84,6 +84,42 @@ Stances/Create-a-Hero initialization. Language files under `lang/english` are
 exposed at the root, as expected by existing menu readers. Both the shell and
 in-game text consumers understand CSF.
 
+## Skirmish profile rank thresholds
+
+The profile table `{0,5,10,30,50,150,300,500,800,1500}` comes from BFME1
+1.03's engine constants. The reading aid is
+[Open-BFME-1 at `f633d0e97a953289405438821be0c09b28527bbb`](https://github.com/Open-BFME/Open-BFME-1/tree/f633d0e97a953289405438821be0c09b28527bbb/game/GameEngine/Source/Common),
+with the following source files relative to `game/GameEngine/Source/Common/`.
+All addresses here are **RVAs**; the inspected image base is `0x00400000`.
+
+- `Rva004D8EE0Ctor.cpp`, RVA `0x004D8EE0` (VA `0x008D8EE0`), writes those ten
+  integers in order at offsets `+0x00` through `+0x24`.
+- `SkirmishBattleHonorsConstructor.cpp`, RVA `0x0009E130`, passes `this+0x14`
+  to that initializer through the jump thunk at RVA `0x00010807`. This ties
+  the table to the skirmish honors object, beyond the address-based name.
+- `SkirmishBattleHonors_rankHelpers.cpp`, `getRank` at RVA `0x0009D2F0`,
+  scans the nine promotion thresholds starting at `this+0x18` (the value 5),
+  advances while `points >= threshold`, and returns a rank from 1 to 10.
+- `SkirmishBattleHonors_getPointsToNextRank.cpp`, RVA `0x0009D390`, subtracts
+  points from the next threshold; `SkirmishBattleHonors_getRankWidth.cpp`,
+  RVA `0x0009D4E0`, subtracts the current threshold from the next. Both
+  return zero for rank 10.
+
+The instructions were inspected in the donor's `bfme1.retail-1.03-unpacked`
+baseline, `inputs/baselines/bfme1/retail-1.03-unpacked/files/lotrbfme.exe`,
+SHA-256 `1fbdc0ced8f283732c094c4f0804ce8dc1e3e3675b720bcab066c94fed964e75`.
+Its manifest describes a SafeDisc-unpacked image with crack patches reverted,
+and records remaining repairs/unknown regions. None of its `reverted_patches`
+or `no_ground_truth` ranges overlaps the constructors, thunk or rank helpers
+cited above. This is static evidence from that identified baseline, rather
+than independent certification of a pristine retail image or a new byte-exact
+recovery claim.
+
+The profile display preserves its existing boundaries: reaching a threshold
+promotes immediately. Below rank 10, progress resets to zero at the start of
+the new interval; rank 10 keeps zero points remaining and 100 percent progress.
+These constants and this documentation apply only to the BFME1 profile display.
+
 ## Isolation
 
 BFME1 support never changes RotWK / BFME2 behaviour (community PR #36 review). `Common/BfmeGame.h`:
@@ -158,6 +194,15 @@ These are the places where BFME1's data or menus differ from RotWK's. Each one i
   `DynamicPortalBehaviourRva001F96E0.cpp` and `Map/Waypoint_method001ABBB0.cpp`.
   The default allows all defined kinds and rejects none. Rejecting `CAVALRY` also rejects units with the
   `MOUNTED` model condition, even without the cavalry kind. This does not establish full BFME1 waypoint parity.
+- **Automatic pickup:** BFME1 selects its own typed `AutoPickUpUpdate` data and runtime variant. Its
+  `PickUpKindOf` mask admits any matching kind, retains `+`/`-` edits and clears with `NONE`.
+  `Bored` and `BoredFilter` run the integrated allied-target boredom scan after eating and before ordinary
+  pickup, using the same scan/button gate. Sources: BFME1 field table VA `0x010BB9D0` and Open-BFME-1
+  `GameLogic/Object/Update/AutoPickUpUpdateUpdate.cpp`, RVA `0x00281F40`. The port maps the boredom power's
+  name to the shared enum ordinal; BFME1's binary ordinal differs. BFME2/RotWK retain `PickUpFilter`
+  (RW `0xC65B60`) and their separate `BoredUpdate`; they reject the BFME1-only fields. `PickUpKindOf2`
+  is absent from BFME1's verified table and is rejected. The shared tree-point/automatic-throw limitations
+  remain reported by S-7160; BFME1's broader simulation compatibility remains S-5017.
   `BloodthirstyUpdate` also reads BFME1's `NumToSacrifice` (default 1) and `InitiateVoice2` without widening
   BFME2/RotWK's field tables. The second initiation voice plays alongside the first, independently of crowd responses
   (`MessageStream/CommandXlatVoice.cpp`, case `0x7E9` and its two-slot playback tail). Voice voting groups the ordered
@@ -184,7 +229,14 @@ its original particle budget is not reproduced. One shipped unresolved mounted
 Faramir voice reference (`UnitSpecificSounds` `VoiceGarrison = FaramirKnightVoiceGarrison`, which no AudioEvent defines) loads as BFME1 loads
 it: BFME1's `UnitSpecificSounds` lines store the event name without looking it up (Open-BFME-1 `ThingTemplate_parseArbitrarySoundsIntoMap.cpp`).
 
-The Living World Good/Evil campaigns and their saves are not implemented. Their
+The Living World Good/Evil campaigns and their saves are not implemented.
+`LivingWorldStores` selects the BFME1 loading mode once from the mounted data.
+Its campaign blocks retain recording handlers instead of using BFME2/RotWK
+War of the Ring field tables. The object-world report explicitly names this
+under S-5017: campaign field validation and exact nested block boundaries are
+unverified. This preserves menu/skirmish startup without claiming campaign support.
+BFME2/RotWK keep their typed parsers and S-1321 errors for unported fields. Their
+schemas are not widened to accept BFME1 campaign rows. BFME1 campaign
 menu requests display the existing unavailable-screen message instead of trying
 to start a BFME2 linear campaign. BFME1 currently uses the English language view.
 

@@ -118,6 +118,37 @@ TEST_CASE("logic settings: fields no row reads and nested blocks are consumed an
 	// an unterminated nested block is an error
 	GameLogicSettings h;
 	CHECK_FALSE(L::scanAIData("AIData\n  EnableRepulsors = Yes\n  SideInfo Rohan\n    A = 1\n", h, &err));
+
+	// lane MODCOMPAT-1: indentation means nothing (Ennorath's aidata.ini): a SkirmishBuildList at column 0 whose Structures and own End are
+	// indented deeper, a SideInfo with a SkillSet sub block, an End in any case: each sub block ends at its own End, and the fields after them
+	// are still read
+	GameLogicSettings e;
+	const std::string ennorath =
+		"AIData\n"
+		"   SideInfo Evilmen\n"
+		"    ResourceGatherersEasy = 0\n"
+		"    SkillSet1\n"
+		"      Science = SCIENCE_X\n"
+		"    End\n"
+		"  End\n"
+		"SkirmishBuildList Rohan\n"
+		"   Structure RohanKaserne\n"
+		"      Location = X:1 Y:2\n"
+		"    END \n"
+		"     Structure RohanFarm\n"
+		"      Rebuilds = 0\n"
+		"    end\n"
+		"  END ;SkirmishBuildList FactionRohan  END\n"
+		"  EnableRepulsors = Yes\n"
+		"End\n";
+	REQUIRE_MESSAGE(L::scanAIData(ennorath, e, &err), err);
+	CHECK(e.enableRepulsors); // read after the nested blocks (the default is No): the AIData block did not end early
+	CHECK(e.unappliedFields.count("AIData.SideInfo") == 1);
+	CHECK(e.unappliedFields.count("AIData.SkirmishBuildList") == 1);
+	// a Structure's End is not the build list's: a build list that never ends is still the named error, not a silent skip
+	GameLogicSettings broken;
+	CHECK_FALSE(L::scanAIData("AIData\n  SkirmishBuildList Rohan\n    Structure RohanFarm\n    END\n", broken, &err));
+	CHECK(err.find("Missing 'END' token") != std::string::npos);
 }
 
 // lane AIDATA-1: the AIData constructor's values (RW 0x6FFBEF; BFME2 decomp TAiData::TAiData) for every field a mod's aidata.ini leaves out; retail's parser
@@ -224,6 +255,53 @@ TEST_CASE("aidata1 settings: a map.ini AttackUsesLineOfSight / DeepWaterDepth ov
 	PathfindConfig bfme1;
 	PathfindConfigLoader::applyAIData(g, bfme1, true);
 	CHECK(bfme1.deepWaterDepth == FLT_MAX); // BFME1 has no DeepWaterDepth row: no deep water class
+	fs.setLocalFolder(std::string());
+	std::error_code ec;
+	stdfs::remove_all(dir, ec);
+}
+
+// retail's tokenizer skips leading whitespace and each block ends at its own End, so a block that starts indented after a skipped block's End is read. The stubs
+// that skip the other blocks of the file must stop at it (StubExtent::LenientAfterEnd, INIBlockStubs.h); plain Lenient swallowed it and the parse still succeeded
+namespace
+{
+const char kIndentedAIData[] =
+	"Object Foo\n"
+	"  Draw = Bar\n"
+	"End\n"
+	"; a comment and a blank line between the End and the next block\n"
+	"\n"
+	"  AIData\n"
+	"    DeepWaterDepth = 9.0\n"
+	"    ChaseFromBehindLimit = 20.0\n"
+	"  End\n";
+}
+
+TEST_CASE("logic settings: an AIData block indented after a skipped block's End is read in aidata.ini")
+{
+	GameLogicSettings g;
+	std::string err;
+	REQUIRE_MESSAGE(L::scanAIData(kIndentedAIData, g, &err), err); // before: "no AIData block"
+	CHECK(g.deepWaterDepth == 9.0f);
+	CHECK(g.chaseFromBehindLimit == 20.0f);
+}
+
+TEST_CASE("logic settings: an AIData block indented after a skipped block's End is read in a map.ini")
+{
+	namespace stdfs = std::filesystem;
+	const stdfs::path dir = stdfs::temp_directory_path() / ("openbfme-indent-aidata-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+	stdfs::create_directories(dir);
+	{
+		std::ofstream out(dir / "map.ini", std::ios::binary);
+		out << kIndentedAIData;
+	}
+	Win32BIGFileSystem fs; // no archives: the map folder is read by the local step
+	fs.setLocalFolder(dir.u8string());
+	GameLogicSettings m;
+	std::vector<std::string> errors;
+	CHECK(L::applyMapAIData(fs, dir.u8string(), m, errors));
+	CHECK(errors.empty());
+	CHECK(m.deepWaterDepth == 9.0f); // before: the constructor's 50
+	CHECK(m.chaseFromBehindLimit == 20.0f);
 	fs.setLocalFolder(std::string());
 	std::error_code ec;
 	stdfs::remove_all(dir, ec);

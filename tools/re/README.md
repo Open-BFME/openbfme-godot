@@ -88,5 +88,9 @@ GhidraMCP server with the named program loaded.
 4. Stops: `python tools/re/stops_xmap.py --out X/stops_xmap.md` ranks the open `docs/STOPS.md`
    rows whose cited code is tier A (or B) with byte-matched decomp source.
 
+`edition_census.py` (lane BFME2MODE-0) classifies every `RW 0x...` cite in `engine/src/GameLogic` and `engine/src/Common`:
+same behaviour / real divergence / RotWK-only, plus the BFME2-only GameLogic functions. It writes the generated section of
+`docs/EDITIONS.md`, which describes the method and its limits.
+
 `text_patches.py` lists `.text` references into the community-added sections of the installed
 RotWK `game.dat` (stop S-001).

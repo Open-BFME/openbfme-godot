@@ -5,7 +5,10 @@
 ##   * a strike brightens the game's sun for a moment (the models' flash) and always gives it back its energy;
 ##   * it only reads the world (get_weather_fx_state, get_weather_fx_ground: neither waits for the logic worker) and sets the drawn sway: no other GameWorld call (the simulation is untouched);
 ##   * the snow grade (more tone-mapping contrast while it snows) only under Enhanced snow, undone when the look goes back to Original;
-##   * the readability measures (scripts/weather_readability.gd) pass an unchanged frame and fail a washed-out one.
+##   * the readability measures (scripts/weather_readability.gd) pass an unchanged frame and fail a washed-out one;
+##   * lane WEATHERFX-2: no weather with no game running: the game's camera given up (the score screen, the menus) or the world hidden (the loading
+##     screen) turns everything off, the node freed (the game left) too, and the camera back brings it back; screens_match (the menus' check) passes
+##     the same screen and an animated one and fails specks, a grey veil and lit black bars.
 ##   godot --headless --path godot --script res://tests/weatherfx_test.gd
 extends SceneTree
 
@@ -79,6 +82,7 @@ func run(kind: String, enhanced: bool, only: PackedStringArray = PackedStringArr
 	root.add_child(world)
 	var cam := Camera3D.new()
 	root.add_child(cam)
+	cam.current = true # the game's camera draws the window (game.gd _enter_game): a live game (weather_fx.gd live())
 	cam.global_position = Vector3(500, 420, 500)
 	cam.look_at(Vector3(500, 10, 0))
 	WeatherFX.look_enhanced = enhanced
@@ -198,6 +202,83 @@ func _run_all() -> void:
 		back[0]._process(0.1)
 		all_off(back[0], back[1], kind + " after switching back to Original")
 		done(back)
+	# lane WEATHERFX-2: nothing outside a live game's 3D view, whatever the weather of the game that was played
+	for kind in ["snow", "rain", "darkness"]:
+		var left := run(kind, true)
+		check(left[0].report().active, kind + ": active in the game")
+		left[2].current = false # game.gd gives the camera up when the game is left (the score screen, then the menus)
+		left[0]._process(0.1)
+		all_off(left[0], left[1], kind + " with the game's camera given up (a menu)")
+		left[2].current = true
+		left[1].hide() # game.gd hides the world behind the loading screen
+		left[0]._process(0.1)
+		all_off(left[0], left[1], kind + " behind the loading screen (the world hidden)")
+		left[1].show()
+		for i in 30:
+			left[0]._process(0.1)
+		check(left[0].report().active, kind + ": back in the game it draws again")
+		done(left)
+	var gone := run("snow", true)
+	check(env.tonemap_agx_contrast > WeatherFX.AGX_CONTRAST, "snow: the grade is on in the game")
+	root.remove_child(gone[0])
+	gone[0].free() # game.gd _remove_weather_fx: the game is left
+	check(is_equal_approx(env.tonemap_agx_contrast, WeatherFX.AGX_CONTRAST) and is_equal_approx(env.tonemap_agx_white, WeatherFX.AGX_WHITE),
+		"snow: the grade is off once the node is freed")
+	for name in WeatherFX.GLOBALS:
+		var v = RenderingServer.global_shader_parameter_get(name)
+		check(v == null or (v is float and v == 0.0) or (v is Vector2 and v == Vector2.ZERO), "snow: %s is 0 once the node is freed (%s)" % [name, v])
+	done([gone[1], gone[2], gone[3]])
+	# the menus' check: the same screen passes, an animated one (b equals the later Original frame) passes, specks / a veil / lit bars fail
+	var menu := Image.create(320, 180, false, Image.FORMAT_RGB8)
+	for y in 180:
+		for x in 320:
+			var v := 0.0 if x < 40 or x >= 280 else 0.2 + 0.4 * float((x / 9 + y / 7) % 2)
+			menu.set_pixel(x, y, Color(v, v * 0.95, v * 0.9))
+	check(Readability.screens_match(menu, menu.duplicate(), menu).ok, "menus: the same screen passes")
+	var later := menu.duplicate()
+	for x in range(100, 140):
+		later.set_pixel(x, 50, Color(1, 1, 1))
+	check(Readability.screens_match(menu, later.duplicate(), later).ok, "menus: an animated pixel the later Original frame shows too passes")
+	var specks := menu.duplicate()
+	for i in 400:
+		specks.set_pixel((i * 37) % 320, (i * 53) % 180, Color(1, 1, 1))
+	var sm: Dictionary = Readability.screens_match(menu, specks, menu)
+	check(not sm.ok and sm.why.contains("specks"), "menus: white specks over the screen fail (%s)" % sm.why)
+	var bars := menu.duplicate()
+	for y in 180:
+		for x in 40:
+			bars.set_pixel(x, y, Color(0.08, 0.08, 0.08))
+	var bm: Dictionary = Readability.screens_match(menu, bars, menu)
+	check(not bm.ok and bm.why.contains("black pixels"), "menus: lit black bars fail (%s)" % bm.why)
+	var grey := menu.duplicate()
+	for y in 180:
+		for x in 320:
+			grey.set_pixel(x, y, grey.get_pixel(x, y).lerp(Color(0.6, 0.6, 0.6), 0.2))
+	check(not Readability.screens_match(menu, grey, menu).ok, "menus: a grey veil over the menu fails")
+	# lane INGAMEBG-1: an in-game panel's backdrop: the dark in-game background (the battlefield dimmed) passes, a cream veil and a pale globe fail
+	var field := Image.create(320, 180, false, Image.FORMAT_RGB8)
+	for y in 180:
+		for x in 320:
+			var v := 0.2 + 0.3 * float((x / 6 + y / 5) % 2)
+			field.set_pixel(x, y, Color(v, v * 0.85, v * 0.6))
+	var dimmed := field.duplicate()
+	var veiled := field.duplicate()
+	for y in 180:
+		for x in 320:
+			var c := field.get_pixel(x, y)
+			dimmed.set_pixel(x, y, c * 0.25 + Color(0.02, 0.03, 0.03))
+			veiled.set_pixel(x, y, c.lerp(Color(0.96, 0.86, 0.75), 0.8))
+	check(Readability.panel_backdrop(field, dimmed, "pause").ok, "panels: the battlefield dimmed behind the pause menu passes (%s)" % Readability.panel_backdrop(field, dimmed, "pause").why)
+	var pv: Dictionary = Readability.panel_backdrop(field, veiled, "pause")
+	check(not pv.ok and pv.why.contains("veil"), "panels: a cream veil behind the pause menu fails (%s)" % pv.why)
+	check(not Readability.panel_backdrop(field, field.duplicate(), "pause").ok, "panels: no backdrop at all (the battlefield as it is) fails")
+	check(Readability.panel_backdrop(field, dimmed, "powers").ok, "panels: a dark globe on the dimmed battlefield passes")
+	var pale := dimmed.duplicate()
+	for y in range(108, 128):
+		for x in range(138, 182):
+			pale.set_pixel(x, y, Color(0.9, 0.88, 0.8))
+	var pg: Dictionary = Readability.panel_backdrop(field, pale, "powers")
+	check(not pg.ok and pg.why.contains("globe"), "panels: a pale globe fails (%s)" % pg.why)
 	# the readability measures: the same frame passes, a washed-out one (a grey veil over the playfield) fails
 	var img := Image.create(320, 180, false, Image.FORMAT_RGB8)
 	for y in 180:

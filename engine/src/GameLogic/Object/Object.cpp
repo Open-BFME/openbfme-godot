@@ -5,7 +5,8 @@
 #include "Common/ModEngineFeatures.h"
 #include "GameClient/ControlBarCommands.h"
 #include "GameLogic/Object/Object.h"
-
+#include "GameLogic/ScriptEngine/AttackPriority.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/LegendaryHeroesGame.h"
@@ -15,6 +16,7 @@
 #include "GameLogic/Object/EvaDamageNotice.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Module/CollideModule.h"
+#include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
@@ -83,6 +85,16 @@ bool kindOfByName(const Object &o, const char *name)
 }
 } // namespace
 
+// lane MODCOMPAT-MOD1: the copies geometryShapes / ownPathfindGeometry answer for an object with its own shape flags (see Object.h)
+struct Object::OwnGeometryCache
+{
+	std::uint32_t shapesVersion = 0xFFFFFFFFu;
+	std::vector<ObjectGeometry::Shape> shapes;
+	std::uint32_t pathfindVersion = 0xFFFFFFFFu;
+	const PathfindGeometry *pathfindFrom = nullptr;
+	PathfindGeometry pathfind;
+};
+
 Object::Object(GameLogic &logic, const ThingTemplate *tt, const ObjectStatusMaskType &status, Team *team, ObjectID id)
 	: Thing(tt ? tt->getFinalOverride() : nullptr)
 	, m_logic(logic)
@@ -129,6 +141,7 @@ Object::Object(GameLogic &logic, const ThingTemplate *tt, const ObjectStatusMask
 	{
 		buildModules();
 		applyTeamAttitude(); // RW 0x69A550
+		applyTeamAttackPriority(); // lane BFME2CAMP1: RW 0x69A575 ..
 		m_experienceTracker = std::make_unique<ExperienceTracker>(this); // RW 0x69A606 (lane XP-1)
 		// RW 0x69A637: onObjectCreated of every module, in array order
 		for (std::unique_ptr<BehaviorModule> &m : m_modules)
@@ -182,6 +195,7 @@ Object::~Object()
 		m_team->friend_removeMember(this);
 		m_team = nullptr;
 	}
+	m_moduleLookupsCached = false; // a lookup while the modules go scans what is left, as before the caches
 	for (std::unique_ptr<BehaviorModule> &m : m_modules)
 	{
 		m.reset();
@@ -283,6 +297,25 @@ std::unique_ptr<BehaviorModule> Object::friend_replaceModule(BehaviorModule *old
 	throw std::logic_error("Object::friend_replaceModule: the module is not this object's");
 }
 
+void Object::friend_setContainedBy(Object *container)
+{
+	const bool left = m_containedBy != nullptr && container == nullptr;
+	m_containedBy = container;
+	// lane PERF-HD (Uber only): the emotion tracker of a contained object sleeps for ever (EmotionTrackerUpdate::update); it is woken when the object
+	// leaves its container, for the next frame (friend_awakenUpdateModule ignores a wake of the running module and one for the frame it already has)
+	if (left && m_logic.uber())
+	{
+		for (const std::unique_ptr<BehaviorModule> &m : m_modules)
+		{
+			if (EmotionTrackerUpdate *emotion = dynamic_cast<EmotionTrackerUpdate *>(m.get()))
+			{
+				m_logic.friend_awakenUpdateModule(this, emotion, m_logic.getFrame() + 1);
+				break;
+			}
+		}
+	}
+}
+
 void Object::rebuildCollideModules()
 {
 	m_collideModules.clear();
@@ -296,7 +329,21 @@ void Object::rebuildCollideModules()
 		}
 	}
 	m_attributePool = findModule("AttributeModifierPoolUpdate"); // lane UBER-3W: attributeModifierPoolModule's answer from here on
+	m_physics = nullptr; // lane PERF-HD: PhysicsBehavior::find's and SlavedUpdateInterface::of's answers from here on (the first module of each)
+	m_slaved = nullptr;
+	for (const std::unique_ptr<BehaviorModule> &m : m_modules)
+	{
+		if (!m_physics)
+		{
+			m_physics = dynamic_cast<PhysicsBehavior *>(m.get());
+		}
+		if (!m_slaved)
+		{
+			m_slaved = dynamic_cast<SlavedUpdateInterface *>(m.get());
+		}
+	}
 	m_moduleCachesBuilt = true;
+	m_moduleLookupsCached = true;
 }
 
 void Object::buildModules()
@@ -507,10 +554,35 @@ void Object::updateTriggerAreaFlags()
 	}
 }
 
+// lane CASTLEAREA-1: RW 0x68B9E9 then RW 0x68B98E (see Object.h)
+void Object::removeTriggerEntries(int trigger)
+{
+	for (int i = 0; i < m_triggerCount; ++i)
+	{
+		if (m_triggers[i].trigger == trigger)
+		{
+			m_triggers[i] = TriggerEntry();
+		}
+	}
+	int kept = 0;
+	for (int i = 0; i < m_triggerCount; ++i)
+	{
+		if (m_triggers[i].inside)
+		{
+			m_triggers[kept].trigger = m_triggers[i].trigger;
+			m_triggers[kept].entered = false;
+			m_triggers[kept].exited = false;
+			m_triggers[kept].inside = true;
+			++kept;
+		}
+	}
+	m_triggerCount = kept;
+}
+
 // lane HUD-5: RW 0xAD3520 (see Object.h)
 void Object::setGeometryActive(const std::string &name, bool on)
 {
-	const std::vector<ObjectGeometry::Shape> shapes = ObjectGeometry::shapesOf(*getTemplate());
+	const std::vector<ObjectGeometry::Shape> shapes = ObjectGeometry::shapesOf(geometryTemplate());
 	if (m_geometryActive.size() != shapes.size())
 	{
 		m_geometryActive.clear();
@@ -532,6 +604,109 @@ void Object::setGeometryActive(const std::string &name, bool on)
 	{
 		++m_geometryVersion;
 	}
+}
+
+const ThingTemplate &Object::geometryTemplate() const
+{
+	return m_geometrySource ? *m_geometrySource : *static_cast<const ThingTemplate *>(getTemplate());
+}
+
+// lane MODCOMPAT-MOD1: RW 0x699349 (see Object.h)
+void Object::setGeometryInfoFrom(const Object &from)
+{
+	const ThingTemplate *source = &from.geometryTemplate(); // RW 0x463DFC: the shape list (and flags below)
+	m_geometrySource = source == getTemplate() ? nullptr : source;
+	m_geometryActive = from.m_geometryActive;
+	++m_geometryVersion;
+	m_ownGeometry.reset();
+	geometryChanged(false); // RW 0x68B244(0)
+}
+
+const std::vector<ObjectGeometry::Shape> &Object::geometryShapes() const
+{
+	const std::vector<ObjectGeometry::Shape> &shapes = ObjectGeometry::cachedShapesOf(geometryTemplate());
+	if (m_geometryActive.empty())
+	{
+		return shapes; // the copy the constructor made, unchanged
+	}
+	if (m_geometryActive.size() != shapes.size())
+	{
+		throw std::logic_error("Object::geometryShapes: object " + std::to_string(m_id) + " keeps " + std::to_string(m_geometryActive.size()) +
+			" shape flags, its template " + std::to_string(shapes.size()) + " shapes");
+	}
+	if (!m_ownGeometry)
+	{
+		m_ownGeometry = std::make_unique<OwnGeometryCache>();
+	}
+	OwnGeometryCache &c = *m_ownGeometry;
+	if (c.shapesVersion != m_geometryVersion || c.shapes.size() != shapes.size())
+	{
+		c.shapes = shapes;
+		for (size_t i = 0; i < c.shapes.size(); ++i)
+		{
+			c.shapes[i].active = m_geometryActive[i] != 0;
+		}
+		c.shapesVersion = m_geometryVersion;
+	}
+	return c.shapes;
+}
+
+const PathfindGeometry &Object::ownPathfindGeometry(const PathfindGeometry &templateGeometry) const
+{
+	if (m_geometryActive.empty() && !m_geometrySource)
+	{
+		return templateGeometry;
+	}
+	if (!m_ownGeometry)
+	{
+		m_ownGeometry = std::make_unique<OwnGeometryCache>();
+	}
+	OwnGeometryCache &c = *m_ownGeometry;
+	if (c.pathfindVersion != m_geometryVersion || c.pathfindFrom != &templateGeometry)
+	{
+		// lane MODCOMPAT-MOD1: another template's GeometryInfo (setGeometryInfoFrom) is that template's pathfinder form (AIWorld::movementInfo)
+		const PathfindGeometry *base = &templateGeometry;
+		if (m_geometrySource)
+		{
+			AIWorld *ai = m_logic.aiWorld();
+			if (!ai)
+			{
+				throw std::logic_error("Object::ownPathfindGeometry: object " + std::to_string(m_id) + " carries " + m_geometrySource->getName() +
+					"'s geometry and the game has no AI world to build its pathfinder form");
+			}
+			base = &ai->movementInfo(*m_geometrySource->getFinalOverride()).geometry;
+		}
+		c.pathfind = *base;
+		for (size_t i = 0; i < c.pathfind.shapes.size() && i < m_geometryActive.size(); ++i)
+		{
+			c.pathfind.shapes[i].active = m_geometryActive[i] != 0;
+		}
+		c.pathfind.cacheRadii(); // RW 0xAD2860 over the flags just set (lane UBER-2B: see PathfindGeometry::cacheRadii)
+		c.pathfindVersion = m_geometryVersion;
+		c.pathfindFrom = &templateGeometry;
+	}
+	return c.pathfind;
+}
+
+// RW 0x68B244 (see Object.h)
+void Object::geometryChanged(bool pathfind)
+{
+	if (ShroudManager *shroud = m_logic.shroud())
+	{
+		shroud->markDirty(*this, true); // + 0x4E4 -> RW 0xB4E2A0
+	}
+	// + 0x4EC -> RW 0xB6C700: the collision manager's dirty list (no collision manager here, S-363 / S-780)
+	m_logic.partition().markDirty(*this); // + 0x4E8 -> RW 0xA39570
+	// + 0x84 -> RW 0x6713E6: the drawable's draw modules (vslot 0x9C), client
+	if (pathfind)
+	{
+		if (AIWorld *ai = m_logic.aiWorld())
+		{
+			ai->removeObjectFromPathfindMap(*this); // RW 0x6E85FB
+			ai->addObjectToPathfindMap(*this);      // RW 0x6E85E9
+		}
+	}
+	// + 0x4BC >= 0: RW 0x68836C / 0x688354 (not ported, S-142)
 }
 
 void Object::joinTeam(Team *team)
@@ -560,6 +735,7 @@ void Object::joinTeam(Team *team)
 	{
 		m_team->friend_addMember(this);
 		applyTeamAttitude(); // RW 0x697D1A
+		applyTeamAttackPriority(); // lane BFME2CAMP1: RW 0x697D32 .. 0x697D8B
 	}
 }
 
@@ -573,6 +749,24 @@ void Object::applyTeamAttitude()
 		return;
 	}
 	ai->setAttitude(m_team->getPrototype()->getDict().getInt("teamAggressiveness"));
+}
+
+// lane BFME2CAMP1: RW 0x697D32 .. 0x697D8B (the team join) and RW 0x69A575 .. (the constructor, after the modules): with an AI, a team and its prototype, a
+// prototype attack priority set name (+ 0x318, RW 0x691F0C) that is not empty is looked up (RW 0x605938); a set with a name (not the default info) becomes
+// AI + 0x70
+void Object::applyTeamAttackPriority()
+{
+	AIUpdateInterface *ai = getAIUpdateInterface();
+	const TeamPrototype *proto = m_team ? m_team->getPrototype() : nullptr;
+	if (!ai || !proto || proto->attackPriorityName().empty())
+	{
+		return;
+	}
+	const AttackPriorityInfo *info = m_logic.scriptEngine().attackPriorities().getAttackInfo(proto->attackPriorityName());
+	if (info && !info->getName().empty())
+	{
+		ai->setAttackInfo(info);
+	}
 }
 
 // lane BACKLOG4: RW 0x69957E .. 0x6995D2: + 0x320 = the team's prototype's owner name (+ 0x10), '/', the prototype's name (+ 0x14); cleared with no team
@@ -776,8 +970,9 @@ void Object::endDefection()
 		{
 			abortAbilitiesInUse(); // RW 0x69AC4E (lane BACKLOG4)
 		}
-		// lane BACKLOG4: RW 0x69AC55 / 0x69AC5C: RW 0x6630D7 (the temporary slot: nothing in this port, AIUpdate.h), then RW 0x663171: the machine kept
+		// lane BACKLOG4: RW 0x69AC55 / 0x69AC5C: RW 0x6630D7 (the temporary machine given back, lane MODCOMPAT-MOD1), then RW 0x663171: the machine kept
 		// at the defection is the AI's machine again (HERO-2 idled the AI here as an inference)
+		getAIUpdateInterface()->endTemporaryStateMachine();
 		getAIUpdateInterface()->endDefectedStateMachine();
 	}
 	setStatus(kStatus52, true); // RW 0x62684D(0x52, 1)
@@ -803,8 +998,9 @@ void Object::defect(Object *newOwner, bool permanent)
 		{
 			abortAbilitiesInUse(); // RW 0x69939D (lane BACKLOG4)
 		}
-		// lane BACKLOG4: RW 0x6993A4 .. 0x6993B0: RW 0x6630D7 (the temporary slot: nothing in this port, AIUpdate.h); a temporary defection keeps the
+		// lane BACKLOG4: RW 0x6993A4 .. 0x6993B0: RW 0x6630D7 (the temporary machine given back, lane MODCOMPAT-MOD1); a temporary defection keeps the
 		// machine and starts a new one (RW 0x663128); a permanent one leaves the AI as it is (HERO-2 idled the AI in both cases as an inference)
+		getAIUpdateInterface()->endTemporaryStateMachine();
 		if (!permanent)
 		{
 			getAIUpdateInterface()->beginDefectedStateMachine();
@@ -990,6 +1186,18 @@ void Object::friend_onDie(const DieModuleInterface::Event &event)
 {
 	// RW 0x698F06 (the dead flag RW + 0x458 bit 0 first: from now on the object is no target and takes no more damage)
 	m_effectivelyDead = true;
+	// WOTR2 milestone 7: RW 0x6991F3: an object with a Living World building id (+ 0x484) destroys that building of the strategic region (RW 0x6B3095 ->
+	// RW 0x60EC74 -> LivingWorldRegion::DestroyBuilding RW 0x7F32F4); the war applies it with the battle's result
+	if (m_logic.livingWorldTags().active)
+	{
+		if (const LivingWorldBattleTags::Tag *t = m_logic.livingWorldTags().object(m_id))
+		{
+			if (t->buildingId != 0)
+			{
+				m_logic.livingWorldTags().destroyedBuildings.push_back(t->buildingId);
+			}
+		}
+	}
 	if (m_client)
 	{
 		m_client->observerEvent(*this, ObserverEvent::Death);
@@ -2309,9 +2517,23 @@ void Object::crcOmittingModules(StateHasher &h, const std::function<bool(const B
 	{
 		h.addU32(0x5C000000u | m_scriptStatus); // lane SCRIPT-2: hashed only when set (a game without scripts keeps its hash)
 	}
-	if (m_scriptSelectable != isKindOfName("SELECTABLE"))
+	if (m_campaignCarryover)
+	{
+		h.addU32(0x5C100000u); // lane BFME2CAMP1: only when set (a game without a campaign's carry-over keeps its hash)
+	}
+	// lane PERF-HD: the bit's index once (isKindOfName searched the KindOf names for every object in every frame's hash)
+	static const int kSelectable = ObjectTemplateInfoBuilder::kindOfIndex("SELECTABLE");
+	if (m_scriptSelectable != (kSelectable >= 0 && isKindOf((unsigned)kSelectable)))
 	{
 		h.addU32(m_scriptSelectable ? 0x5E1Fu : 0x5E1Eu); // hash a change from the template-derived default, as for the other script fields
+	}
+	if (m_masked)
+	{
+		h.addU32(0x4A5Bu); // lane MODCOMPAT-MOD1: hashed only when set (a game without rebuild holes keeps its hash)
+	}
+	if (m_geometrySource) // lane MODCOMPAT-MOD1: another template's GeometryInfo (setGeometryInfoFrom), hashed when set
+	{
+		h.addU32(0x6E100000u | m_geometrySource->getTemplateID());
 	}
 	if (!m_geometryActive.empty()) // lane HUD-5: the object's own shape flags (a gate's open / closed geometry), hashed once changed
 	{
@@ -2523,7 +2745,8 @@ void Object::setScriptStatus(std::uint8_t bits, bool set)
 // (the Objects block's order) and the team links (the TeamFactory's post-process).
 void Object::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion version{ 1, 2 }; // lane BFME2CAMP1: version 2 adds the campaign carry-over bit (Object + 0x458 bit 4)
+	x.xferVersion(version);
 	// a load never reads its destination: the save-side values are built from the members only when saving (SAVES.md, rules for xfer authors)
 	const bool saving = !x.isLoading();
 	ObjectID id = saving ? m_id : (ObjectID)INVALID_ID;
@@ -2614,7 +2837,16 @@ void Object::xfer(Xfer &x)
 	x.xferUnsignedByte(&scriptStatus);
 	SnapshotXfer::checkMask(scriptStatus, 0x1F, "an object's script status", "the five script status bits"); // ZH ObjectScriptStatusBit 1 .. 0x10
 	m_scriptStatus = scriptStatus;
+	if (version.current >= 2)
+	{
+		x.xferBool(&m_campaignCarryover);
+	}
+	else if (x.isLoading())
+	{
+		m_campaignCarryover = false;
+	}
 	x.xferBool(&m_scriptSelectable);
+	x.xferBool(&m_masked); // lane MODCOMPAT-MOD1: RW + 0x459 bit 1
 	x.xferInt(&m_triggerCount);
 	if (m_triggerCount < 0 || m_triggerCount > MAX_TRIGGERS_IN)
 	{
@@ -2631,10 +2863,12 @@ void Object::xfer(Xfer &x)
 	x.xferUnsignedInt(&m_enteredOrExitedFrame);
 	x.xferInt(&m_triggerCellX);
 	x.xferInt(&m_triggerCellY);
+	// lane MODCOMPAT-MOD1: the template whose GeometryInfo the object carries (setGeometryInfoFrom; none: its own)
+	SnapshotXfer::thingTemplate(x, m_logic, m_geometrySource);
 	// the shapes' active flags: none (the template's), or one per shape of the template (setGeometryActive), each 0 or 1
 	std::vector<std::uint8_t> active = saving ? m_geometryActive : std::vector<std::uint8_t>();
 	x.xferVectorSize(active, 1);
-	const size_t templateShapes = x.isLoading() ? ObjectGeometry::shapesOf(*getTemplate()).size() : active.size();
+	const size_t templateShapes = x.isLoading() ? ObjectGeometry::shapesOf(geometryTemplate()).size() : active.size();
 	if (!active.empty() && active.size() != templateShapes)
 	{
 		throw XferException("the snapshot's object " + std::to_string(m_id) + " has " + std::to_string(active.size()) + " shape flags, its template "
@@ -2650,6 +2884,10 @@ void Object::xfer(Xfer &x)
 	}
 	m_geometryActive = active;
 	x.xferUnsignedInt(&m_geometryVersion);
+	if (x.isLoading())
+	{
+		m_ownGeometry.reset(); // lane MODCOMPAT-MOD1: the copies are rebuilt from the loaded flags
+	}
 	xferUpgradeMask(x, m_upgradeMask, "an object's upgrades"); // lane MODS-3: the count + words layout of SnapshotXfer::maskWords, activeWords
 	x.xferReal(&m_upgradeCostPaid);
 	x.xferAsciiString(&m_commandSetOverride);

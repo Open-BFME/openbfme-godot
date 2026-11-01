@@ -170,7 +170,8 @@ AptTimeLine::AptTimeLine(WindowManager &windows, Shell &shell, ShellEnvironment 
 					value = d->localIsObserver ? "1" : "0";
 					break;
 				case 5:
-					value = "0"; // only the War of the Ring types 6 / 7 answer more
+					// RW 0x925148 .. 0x925186: the War of the Ring types, not an observer, the local row won or lost (WOTR2 milestone 5)
+					value = ((d->type == 6 || d->type == 7) && !d->localIsObserver && d->strategicEnd) ? "1" : "0";
 					break;
 			}
 			return true;
@@ -369,6 +370,15 @@ void AptTimeLine::populate()
 		}
 		windows().setAptImage("TimeLine:PlayerFactionIcon:" + std::to_string(i), "AptIcon" + d->entries[i].side); // RW 0x92632E (lane END-2)
 	}
+	if ((d->type == 6 || d->type == 7) && d->strategicEnd)
+	{
+		// CollectPlayerData RW 0x92723E for the local row (WOTR2 milestone 5): the win / loss page's texts and image
+		auto fetch = [this](const std::string &label) { return label.empty() ? std::string() : loadScreenU16ToUtf8(fetchOrMissing(m_env.gameText, label)); };
+		windows().setAptText("APT:StrategicWinLossTitle", fetch(d->winLossTitleLabel));
+		windows().setAptText("APT:StrategicScenarioName", fetch(d->scenarioNameLabel));
+		windows().setAptText("APT:StrategicWinLossConditionDescription", fetch(d->conditionLabel));
+		windows().setAptImage("StrategicWinLossImage", d->winLossImage);
+	}
 	graph(4);
 	recordHonors();
 	// lane END-2: the statistics rows (RW 0x9CDEC1 per entry), formatted with the game text
@@ -489,7 +499,8 @@ const ScoreScreenData::Axis &AptTimeLine::graph(int mode)
 	}
 	if (m_axis.samples != m_lastSamples) // + 0x2B4
 	{
-		windows().setAptText("Timeline:XAxisDescription", loadScreenU16ToUtf8(fetchOrMissing(m_env.gameText, ScoreScreenData::kTimeDescriptionLabels[m_axis.timeFormat])));
+		windows().setAptText("Timeline:XAxisDescription", m_axis.timeFormat < 0 ? std::string(" ") // the war's turn axis (RW 0xBD16E4)
+		                                                      : loadScreenU16ToUtf8(fetchOrMissing(m_env.gameText, ScoreScreenData::kTimeDescriptionLabels[m_axis.timeFormat])));
 		for (int i = 0; i <= 10; ++i)
 		{
 			windows().setAptText("Timeline:XAxis:" + std::to_string(i), m_axis.xLabels[(size_t)i]);

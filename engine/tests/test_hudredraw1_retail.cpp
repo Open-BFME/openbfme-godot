@@ -6,6 +6,7 @@
 // Palantir's other segments kept), and with the store open only the store's three `_active` buttons are drawn again besides it; and neither the Apt notes
 // nor the window manager notes grow over 300 frames, open or closed. SKIPs without ROTWK_INSTALL / BFME2_INSTALL.
 
+#include "HordeCompleteTestUtil.h"
 #include "HudTestUtil.h"
 
 #include "Common/PlayerScience.h"
@@ -119,6 +120,7 @@ TEST_CASE("hudredraw1 retail: 300 frames closed and open, the Palantir draws aga
 		REQUIRE(c);
 		Coord3D at{ 600.0f, 600.0f, 0.0f };
 		c->setPosition(&at);
+		testutil::completeHorde(c); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		c->friend_onBuildComplete();
 		r.rig.local->science().addSciencePurchasePoints(40); // every tier-1 power buyable: `_active`
 	}

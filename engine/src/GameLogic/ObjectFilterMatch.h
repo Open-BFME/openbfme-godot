@@ -27,6 +27,7 @@
 #pragma once
 
 #include "Common/StateHash.h"
+#include "GameLogic/BitFlags.h"
 
 #include <memory>
 #include <string>
@@ -57,6 +58,10 @@ bool isEquivalentTo(const ThingTemplate *a, const ThingTemplate *b);
 bool allows(GameLogic &logic, const ObjectFilter &filter, const ThingTemplate *tmpl, const Player *objectPlayer, const Player *otherPlayer);
 // RW 0x7640C1: the object's template and controlling player
 bool allows(GameLogic &logic, const ObjectFilter &filter, const Object &obj, const Player *otherPlayer);
+// lane MODCOMPAT-MOD1: RW 0x76379C(mask, 0, 0), the filter asked about a KindOf mask with no template and no players (AutoPickUpUpdate's tree test RW
+// 0x899871): a side (+ 0x90) reads the null player in retail (throws here); relationships (+ 0x84) -> false; no name step; then steps 5 and 6 of allow
+// with the mask as the KindOf (an exclude bit shared -> false; NONE: the include mask non-empty and a subset of the mask; ANY: sharing a bit; ALL or 0 -> true)
+bool allowsKindOf(const ObjectFilter &filter, const KindOfMaskType &kindOf);
 
 // names of the include / exclude lists that no template in `things` carries (retail: an INI error at the resolve pass)
 std::vector<std::string> unresolvedNames(const ThingFactory &things, const ObjectFilter &filter);

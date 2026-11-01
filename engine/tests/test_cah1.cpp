@@ -24,6 +24,10 @@
 #include "GameLogic/CreateAHeroSystem.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
 #include "GameLogic/Object/Object.h"
+#include "Common/Player.h"
+#include "Common/PlayerList.h"
+#include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/VictoryConditions.h"
 #include "GameClient/LiveGame.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
@@ -1461,4 +1465,126 @@ TEST_CASE("cahpic1 retail shell: TAKE PICTURE arms after two guard draws, names 
 	// a picture the device could not save is said plainly, and the movie still reopens its panels
 	scr->pictureTaken(u"", "the folder cannot be written");
 	CHECK(scr->lastMessage() == "OpenBFME: The picture could not be saved: the folder cannot be written");
+}
+
+// lane STABLEQA-1 (the stable candidate's unit sweep made bare Create-a-Hero records and saw none attack): every class's hero, built as the builder
+// builds it (the recommended attributes, an appearance, the powers it can take) and chosen in the lobby, is made at its player's base in the started
+// skirmish and ordered to attack an enemy Mordor fighter beside it; the fighter must take damage
+TEST_CASE("stableqa1 cah retail: a builder-made Create-a-Hero of every class attacks an enemy beside it and damages it")
+{
+	OPENBFME_REQUIRE_START(s);
+	const size_t classes = s->world->createAHeroSystem().classes().size();
+	REQUIRE(classes > 0u); // tolerance: a precondition (the system holds classes; each is tested below)
+	std::string error;
+	static std::vector<MapCacheEntry> cache;
+	if (cache.empty())
+	{
+		REQUIRE_MESSAGE(IniSkirmishSetupSource::loadMapCache(*s->mount->fs, cache, &error), error);
+	}
+	for (size_t cls = 0; cls < classes; ++cls)
+	{
+		CAPTURE(cls);
+		// the world's CreateAHeroSystem, read again for each game: a game's end reloads the world (lane MAPRESET-1, S-3808)
+		const CreateAHeroSystem &sys = s->world->createAHeroSystem();
+		TempDir dir;
+		CreateAHeroHeroList heroes;
+		heroes.load(s->mount->fs.get(), dir.path, nullptr);
+		AptMyHero my(sys, nullptr, nullptr);
+		CreateAHeroHero h;
+		h.classIndex = (int)cls;
+		h.subClassIndex = 0;
+		my.edit(h, true);
+		my.setDefaults(AptMyHero::KIND_ATTRIBUTE);
+		my.step(AptMyHero::KIND_APPEARANCE, 0, 1);
+		my.setName(u"Sweep");
+		CahPowers powers;
+		powers.build(my.hero(), sys);
+		for (int k = 0; k < 10; ++k)
+		{
+			CahPowers::Cell *pick = nullptr;
+			for (int r = 0; r < powers.rowCount() && !pick; ++r)
+			{
+				for (int c = 0; c < CahPowers::NUM_COLUMNS && !pick; ++c)
+				{
+					CahPowers::Cell *cell = powers.cell(r, c);
+					pick = cell && cell->state == CahPowers::STATE_AVAILABLE ? cell : nullptr;
+				}
+			}
+			if (!pick || !powers.select(pick, my.hero()))
+			{
+				break;
+			}
+		}
+		REQUIRE(heroes.save(my.hero(), &error));
+		const CreateAHeroHero &saved = heroes.at(heroes.findByUniqueID(my.hero().uniqueID))->hero;
+		std::string why;
+		REQUIRE_MESSAGE(sys.validateHero(saved, *TheCommandStore, &why), why);
+		NewGameMessage message;
+		{
+			starttest::ShellFx fx(*s, 99u);
+			CreateAHeroScreenContext ctx;
+			ctx.system = &sys;
+			ctx.heroes = &heroes;
+			fx.environment.createAHero = &ctx;
+			SkirmishGameSetup setup(fx.setup, &fx.text);
+			REQUIRE_MESSAGE(setup.init(u"Gimli", 99u, "maps/map mp evendim/map mp evendim.map", &error), error);
+			int men = -1;
+			for (int i = 0; i < (int)fx.setup.factions().size(); ++i)
+			{
+				men = fx.setup.factions()[(size_t)i].templateName == "FactionMen" ? i : men;
+			}
+			REQUIRE(setup.setSlotTemplate(0, men));
+			REQUIRE(setup.setSlotCreateAHero(0, &saved, &error));
+			message = setup.makeNewGameMessage();
+		}
+		NewGameStart start(RandomAlgorithm::ZH_CarryChain);
+		REQUIRE_MESSAGE(NewGame::prepareNewGame(message, s->world->playerTemplates(), s->settings, cache, RandomAlgorithm::ZH_CarryChain, start, &error), error);
+		ArchiveW3DFileSource source(*s->mount->fs);
+		WW3DAssetManager assets(source);
+		LiveGame game(*s->world, *s->mount->fs, assets, s->options);
+		LiveGame::Options o;
+		o.start = &start;
+		REQUIRE_MESSAGE(game.load(o, &error), error);
+		GameLogic &logic = game.logic();
+		REQUIRE(logic.createAHeroes().heroes().size() == 1u);
+		const int heroPlayer = logic.createAHeroes().heroes().begin()->first;
+		Player *mine = logic.players().getNthPlayer(heroPlayer);
+		REQUIRE(mine);
+		// the player's base: its first object
+		const Object *base = nullptr;
+		for (Object *x = logic.getFirstObject(); x && !base; x = x->getNextObject())
+		{
+			base = x->getControllingPlayer() == mine ? x : nullptr;
+		}
+		REQUIRE(base);
+		int enemyPlayer = -1;
+		for (int i = 0; i < logic.players().getPlayerCount() && enemyPlayer < 0; ++i)
+		{
+			Player *p = logic.players().getNthPlayer(i);
+			enemyPlayer = p && p != mine && mine->getRelationship(p) == ENEMIES ? i : -1;
+		}
+		REQUIRE(enemyPlayer >= 0); // tolerance: a precondition (an enemy player exists)
+		const Coord3D at{ base->getPosition()->x + 220.0f, base->getPosition()->y + 220.0f, 0.0f };
+		Object *hero = game.createObject("CreateAHero", heroPlayer, at, 0.0f, &error);
+		REQUIRE_MESSAGE(hero, error);
+		const ObjectID heroId = hero->getID();
+		Object *enemy = game.createObject("MordorFighter", enemyPlayer, Coord3D{ at.x + 40.0f, at.y, 0.0f }, 0.0f, &error);
+		REQUIRE_MESSAGE(enemy, error);
+		const ObjectID enemyId = enemy->getID();
+		REQUIRE(enemy->getBodyModule());
+		const float hp0 = enemy->getBodyModule()->getHealth();
+		game.advance(0.2);
+		hero = logic.findObjectByID(heroId);
+		REQUIRE(hero);
+		REQUIRE(hero->getAIUpdateInterface());
+		CHECK(hero->getAIUpdateInterface()->aiAttackObject(logic.findObjectByID(enemyId), CMD_FROM_PLAYER));
+		bool hurt = false;
+		for (int f = 0; f < 600 && !hurt; ++f)
+		{
+			game.advance(0.2);
+			const Object *e = logic.findObjectByID(enemyId);
+			hurt = !e || e->isEffectivelyDead() || (e->getBodyModule() && e->getBodyModule()->getHealth() < hp0);
+		}
+		CHECK_MESSAGE(hurt, "class " << cls << " (" << sys.classes()[cls].nameTag << "): the hero did no damage in 600 frames");
+	}
 }

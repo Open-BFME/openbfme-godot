@@ -51,6 +51,9 @@ public:
 	virtual ~LineOfSightLayers() {}
 	// RW 0x6EACB9 Pathfinder::GetGroundLayer: the layer field (cell + 0xC bits 4 .. 9) of the ground cell at `cellCenter`; LAYER_GROUND (1) without a cell
 	virtual int groundLayer(const Coord3D &cellCenter) const = 0;
+	// the same answer for the walk's cell (i, j) (its centre (i * 10 + 5, j * 10 + 5)), for a host that can index the cell without the round trip
+	// through world coordinates; the default asks groundLayer with the centre the walk computes
+	virtual int groundLayerOfCell(int i, int j) const;
 	// TheTerrainLogic vslot 0x1C getLayerHeight(x, y, layer, 0, 1) for a layer other than the ground
 	virtual float layerHeight(float x, float y, int layer) const = 0;
 };

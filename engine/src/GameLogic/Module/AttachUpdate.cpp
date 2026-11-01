@@ -156,7 +156,7 @@ Coord3D AttachUpdate::anchorOf(const Object &parent) const
 	if (m_data->m_anchorToTopOfGeometry)
 	{
 		// RW 0xAD1920: the parent's geometry height (x87 sum, stored as float)
-		p.z = SimMath::pc24Add(p.z, ObjectGeometry::maxHeightAbovePosition(ObjectGeometry::shapesOf(*parent.getTemplate())));
+		p.z = SimMath::pc24Add(p.z, ObjectGeometry::maxHeightAbovePosition(parent.geometryShapes()));
 	}
 	return p;
 }

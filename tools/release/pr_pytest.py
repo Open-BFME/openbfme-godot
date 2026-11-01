@@ -63,6 +63,7 @@ SUBSET = [
     "tools/release/test_wine_suite.py",
     "tools/render/test_d3d9_disasm.py",
     "tools/render/test_sharpness.py",
+    "tools/render/test_standing_water_grid_oracle.py",
     "tools/replay/test_rotwk_replay.py",
     "tools/retail_oracle/test_helpers.py",
     "tools/rw_object_model/test_module_coverage.py",

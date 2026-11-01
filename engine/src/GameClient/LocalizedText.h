@@ -1,7 +1,7 @@
 // OpenBFME. GPL-3.0.
 // Text-only replacement for the localized UnicodeString::format calls cited at the callers.
 // RW 0x92FACB / 0x6446A1 / 0x9F09FC: tier A donors Rva0052906BUpdate.cpp,
-// VersionUnicode.cpp and Rva005DD772Ctor.cpp pass fetched text to varargs formatting.
+// version.cpp and Rva005DD772Ctor.cpp pass fetched text to varargs formatting.
 // Deliberate security departure: only the substitutions below are interpreted.
 
 #pragma once

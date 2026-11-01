@@ -58,6 +58,7 @@ InGameHud::InGameHud(Config config)
 	: m_config(config)
 	, m_source(config.fs)
 {
+	m_config.game.setScriptLocalView(this); // lane BFME2CAMP1
 	if (m_config.windows && m_config.shell)
 	{
 		m_wm = m_config.windows;
@@ -109,7 +110,7 @@ InGameHud::InGameHud(Config config)
 			{
 				// a FOGGED object is retail's ghost: W3DGhostObject draws a snapshot of the render object without the drawable's user data, so the pick
 				// meets no drawable there (ZH W3DGhostObject; the ghosts themselves are S-561). The device here still draws the real drawable.
-				if (rec->shroudedForLocal || rec->objectShroud >= (int)OBJECTSHROUD_FOGGED || rec->drawableHidden || StealthLook::hidden(*rec))
+				if (rec->shroudedForLocal || rec->objectShroud >= (int)OBJECTSHROUD_FOGGED || rec->drawableHidden || d->stealthHidden())
 				{
 					return DrawablePick::Result::NotDrawn;
 				}
@@ -159,8 +160,18 @@ InGameHud::InGameHud(Config config)
 	}, this);
 }
 
+float InGameHud::cameraScrollDistance() const
+{
+	const TacticalCamera *cam = m_input ? m_input->camera() : nullptr;
+	return cam ? cam->scrollDistance() : 0.0f;
+}
+
 InGameHud::~InGameHud()
 {
+	if (m_config.game.scriptLocalView() == this)
+	{
+		m_config.game.setScriptLocalView(nullptr); // lane BFME2CAMP1
+	}
 	m_config.game.drawables().destroyClientDrawable(m_rallyPointDrawable);
 	// lane SPELL-2 (review r2): an open spell store is a screen of the window manager below: it goes first, without sending its pending purchases
 	m_store.reset();
@@ -615,7 +626,7 @@ void InGameHud::update(double seconds)
 		local.skillPointsNext = sc.getSkillPointsLevelUp();
 		local.skillPointsThis = sc.getSkillPointsLevelDown();
 		local.storeOpen = m_store != nullptr;
-		// ControlBar RW 0x71FA12 (BFME2 decomp ControlBarPurchaseScienceStatus.cpp, tier A): button i of the player's purchase set has a science the player does not
+		// ControlBar RW 0x71FA12 (BFME2 decomp ControlBar.cpp, tier A): button i of the player's purchase set has a science the player does not
 		// own, has the prerequisites of and can pay for (RW 0x5FED5B). INFERENCE (S-923): the set is the template's PurchaseScienceCommandSet(MP), as the store's
 		const CommandSet *set = (pt && TheCommandStore)
 			? TheCommandStore->findCommandSet(sc.mode().skirmishOrMultiplayer ? pt->m_purchaseScienceCommandSetMP : pt->m_purchaseScienceCommandSet)
@@ -845,7 +856,7 @@ void InGameHud::updateFloatingText(const TacticalView &view, bool shroudDrawn)
 				continue;
 			}
 			Coord3D pos = e.textPos;
-			// BFME2 AutoDepositUpdateUpdate.cpp: "add a little z to make it show up above the unit".
+			// BFME2 AutoDepositUpdate.cpp: "add a little z to make it show up above the unit".
 			// Presentation offset: the income log keeps the simulation position unchanged.
 			if (e.textAnchor == Economy::IncomeEvent::TEXT_RAISED_10) pos.z += 10.0f;
 			if (e.textAnchor == Economy::IncomeEvent::TEXT_GEOMETRY_TOP)

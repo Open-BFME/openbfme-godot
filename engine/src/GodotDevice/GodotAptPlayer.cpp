@@ -2,7 +2,9 @@
 // See GodotAptPlayer.h.
 
 #include "GodotDevice/GodotAptPlayer.h"
+#include "Common/BuildVersion.h"
 #include "Common/PathIO.h"
+#include "Common/GameEdition.h"
 #include <godot_cpp/classes/input.hpp>
 #include "GodotDevice/GodotVideoStream.h"
 #include "GameClient/GUI/PlatformIcons.h"
@@ -42,6 +44,9 @@
 #include "GameClient/GUI/MenuNavigator.h"
 #include "GameClient/GUI/AptScreens/AptCampaignMenu.h"
 #include "Common/AsciiString.h"
+#include "GameClient/GUI/AptScreens/AptStrategicConflictResults.h"
+#include "GameClient/GUI/AptScreens/AptBannerUI.h"
+#include "GameClient/GUI/AptScreens/AptStrategicHUD.h"
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
 #include "GameClient/GUI/Gadget.h"
 #include "GameClient/GUI/Gadgets.h"
@@ -60,6 +65,7 @@
 #include "GameClient/GUI/Skirmish/SkirmishPreferences.h"
 #include "GameClient/GUI/Skirmish/RealTimeStats.h"
 #include "GameClient/GUI/Skirmish/WorldSkirmishSetupSource.h"
+#include "GameClient/GUI/Skirmish/LivingWorldShellInfo.h" // lane WOTR-1
 #include "GameClient/GUI/WindowManager.h"
 #include "GameClient/GameText.h"
 #include "GameClient/VideoPlayer.h"
@@ -71,6 +77,8 @@
 #include "GodotDevice/GodotGameStart.h"
 #include "GodotDevice/GodotGameWorld.h"
 #include "GodotDevice/GodotMouse.h"
+#include "GodotDevice/GodotLivingWorld.h"
+#include "GameClient/LivingWorldScoreScreen.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "Common/RetailArchivePolicy.h"
 #include "Common/ArchiveFileSystem.h"
@@ -103,6 +111,7 @@
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
+#include <godot_cpp/classes/input.hpp>
 #include <godot_cpp/classes/input_event_key.hpp>
 #include <godot_cpp/classes/input_event_mouse_button.hpp>
 #include <godot_cpp/classes/input_event_mouse_motion.hpp>
@@ -597,6 +606,8 @@ const char *shellActionName(ShellAction a)
 		case ShellAction::ObjectivesReturnToGame: return "ObjectivesReturnToGame"; // lane CAMPUI-1
 		case ShellAction::CreateAHeroExit: return "CreateAHeroExit";
 		case ShellAction::OnlineGameStart: return "OnlineGameStart"; // lane ONLINE-4
+		case ShellAction::OnlineLoadWar: return "OnlineLoadWar";
+		case ShellAction::LanLoadWar: return "LanLoadWar";
 		case ShellAction::SaveGameFile: return "SaveGameFile"; // lane SAVE-2
 		case ShellAction::LoadGameFile: return "LoadGameFile";
 		case ShellAction::DeleteGameFile: return "DeleteGameFile";
@@ -696,11 +707,15 @@ struct ShellMode
 	Array disconnectActions;                         // lane MP-2: the buttons pressed, for take_disconnect_actions
 	InGameChat chatModel;                            // lane CHAT-1: the chat window's draft between opens
 	std::unique_ptr<AptInGameChat> chat;             // lane CHAT-1: InGameChat.apt while the chat window is up
+	std::unique_ptr<AptBannerUI> banner;             // WOTR2 milestone 7: BannerUI.apt in a War of the Ring battle with reinforcements
 	Array chatSends;                                 // lane CHAT-1: the lines Send took, for ingame_chat_update
 	SaveLoadInfo saveLoad;                           // lane MP-2: what SaveLoad.apt lists
+	LivingWorldShellInfo livingWorld;   // lane WOTR-1: the War of the Ring scenarios and the strategic flag (RW 0xDB6BF0)
 	QuitMenuContext quitMenuContext;    // lane END-2: the game QuitMenu.apt is opened over
 	CampaignMenuContext campaignMenu;   // lane CAMPSAVE-1: what CampaignMenu.apt shows
 	std::unique_ptr<AptQuitMenu> quitMenu; // lane END-2: QuitMenu.apt, an in-game overlay (RW 0x75E3B7), not on the shell stack
+	std::unique_ptr<AptStrategicHUD> strategicHud; // lane WOTR-2: StrategicHUD.apt over the strategic map (loaded by RW 0x839B32, not on the shell stack)
+	std::unique_ptr<AptStrategicConflictResults> conflictResults; // WOTR2 milestone 5: the battle statistics after an autoresolve (while active)
 	std::unique_ptr<InGameNotificationBoxMovieClip> notificationBox; // lane CAMPUI-1: InGameNotificationBox.apt (InGameUI + 0x9CC), a game's level
 	NotificationBoxSettings notificationSettings;                     // lane CAMPUI-1: Data\INI\InGameNotificationBox.ini
 	bool notificationSettingsLoaded = false;
@@ -722,6 +737,11 @@ struct ShellMode
 	std::string lastTop;
 	std::vector<NewGameMessage> pendingNewGames;
 	std::set<std::string> gadgetErrors; // textures a gadget image needed and could not load, unresolved image names
+	// lane MODUI-1: with a mod mounted, an image name the mod's own mapped images no longer define (Arnor Gondor Rohan comments LogoWithShadow
+	// out, Edain Unchained's heroui_edainmod.ini drops CPDarkNumenor) is the mod's data: retail's lookup finds nothing and draws nothing; the
+	// shell report lists them (mod_data_notes) as the S-5306 rule does for INI errors. Without a mod it stays an error (retail data has none).
+	bool modded = false;
+	std::set<std::string> modDataNotes;
 	std::set<std::string> deviceUnverified; // lane UI-2: inferences of the device the report lists (S-1482)
 	CreateAHeroHeroList cahHeroes;      // lane CAH-1: the builder's and the lobby's heroes
 	CreateAHeroScreenContext cahContext;
@@ -750,6 +770,7 @@ struct ShellMode
 		quitMenu.reset();
 		notificationBox.reset(); // lane CAMPUI-1
 		cursorTooltip.reset();
+		strategicHud.reset();
 		guiFX.reset();
 		shell.reset();
 		layer.reset();
@@ -1302,6 +1323,7 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_tribute_world", "world"), &AptMenuPlayer::set_tribute_world);
 	ClassDB::bind_method(D_METHOD("set_player_status", "state"), &AptMenuPlayer::set_player_status); // lane HUD-5
 	ClassDB::bind_method(D_METHOD("set_objectives_screen", "state"), &AptMenuPlayer::set_objectives_screen); // lane CAMPUI-1
+	ClassDB::bind_method(D_METHOD("set_objectives_tutorial_input", "on"), &AptMenuPlayer::set_objectives_tutorial_input); // lane BFME2CAMP1
 	ClassDB::bind_method(D_METHOD("notification_box", "request"), &AptMenuPlayer::notification_box); // lane CAMPUI-1
 	ClassDB::bind_method(D_METHOD("shell_top_level"), &AptMenuPlayer::shell_top_level);
 	ClassDB::bind_method(D_METHOD("shell_invoke", "level", "function", "args"), &AptMenuPlayer::shell_invoke, DEFVAL(PackedStringArray()));
@@ -1312,6 +1334,7 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("end_game_screen", "request"), &AptMenuPlayer::end_game_screen); // lane END-1
 	ClassDB::bind_method(D_METHOD("disconnect_screen", "state"), &AptMenuPlayer::disconnect_screen); // lane MP-2
 	ClassDB::bind_method(D_METHOD("take_disconnect_actions"), &AptMenuPlayer::take_disconnect_actions);
+	ClassDB::bind_method(D_METHOD("banner_ui", "request"), &AptMenuPlayer::banner_ui); // WOTR2 milestone 7
 	ClassDB::bind_method(D_METHOD("ingame_chat_open", "mode", "receivers"), &AptMenuPlayer::ingame_chat_open); // lane CHAT-1
 	ClassDB::bind_method(D_METHOD("ingame_chat_update"), &AptMenuPlayer::ingame_chat_update);
 	ClassDB::bind_method(D_METHOD("ingame_chat_close"), &AptMenuPlayer::ingame_chat_close);
@@ -1324,15 +1347,22 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_campaign_menu", "content"), &AptMenuPlayer::set_campaign_menu); // lane CAMPSAVE-1
 	ClassDB::bind_method(D_METHOD("unlock_bonus_campaign"), &AptMenuPlayer::unlock_bonus_campaign);
 	ClassDB::bind_method(D_METHOD("is_bonus_campaign_unlocked"), &AptMenuPlayer::is_bonus_campaign_unlocked);
+	ClassDB::bind_method(D_METHOD("is_war_of_the_ring_offered"), &AptMenuPlayer::is_war_of_the_ring_offered);
 	ClassDB::bind_method(D_METHOD("set_save_folder", "folder"), &AptMenuPlayer::set_save_folder);
 	ClassDB::bind_method(D_METHOD("save_load_saved", "ok", "error"), &AptMenuPlayer::save_load_saved); // lane SAVE-2
 	ClassDB::bind_method(D_METHOD("save_load_refused", "name", "error"), &AptMenuPlayer::save_load_refused);
 	ClassDB::bind_method(D_METHOD("set_score_screen_from_world", "world"), &AptMenuPlayer::set_score_screen_from_world);
+	ClassDB::bind_method(D_METHOD("set_score_screen_from_living_world", "living_world", "world", "local_player", "strategic_seconds"),
+		&AptMenuPlayer::set_score_screen_from_living_world);
 	ClassDB::bind_method(D_METHOD("set_lan", "world"), &AptMenuPlayer::set_lan); // lane MP-2
 	ClassDB::bind_method(D_METHOD("set_online", "world", "options"), &AptMenuPlayer::set_online); // lane ONLINE-4
 	ClassDB::bind_method(D_METHOD("online_take_requests"), &AptMenuPlayer::online_take_requests);
 	ClassDB::bind_method(D_METHOD("online_deliver", "id", "status", "body", "error"), &AptMenuPlayer::online_deliver);
 	ClassDB::bind_method(D_METHOD("online_status"), &AptMenuPlayer::online_status);
+	ClassDB::bind_method(D_METHOD("online_phase_request", "phase", "slots"), &AptMenuPlayer::online_phase_request);
+	ClassDB::bind_method(D_METHOD("online_phase_status"), &AptMenuPlayer::online_phase_status);
+	ClassDB::bind_method(D_METHOD("online_stage_saved_war", "lobby", "save", "hash", "seats"), &AptMenuPlayer::online_stage_saved_war);
+	ClassDB::bind_method(D_METHOD("online_resume_check", "save", "why"), &AptMenuPlayer::online_resume_check);
 	ClassDB::bind_method(D_METHOD("online_apply", "spec"), &AptMenuPlayer::online_apply);
 	ClassDB::bind_method(D_METHOD("online_social_status"), &AptMenuPlayer::online_social_status);
 	ClassDB::bind_method(D_METHOD("online_social_events"), &AptMenuPlayer::online_social_events);
@@ -1377,6 +1407,7 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_timeline_stats"), &AptMenuPlayer::get_timeline_stats); // lane END-2
 	ClassDB::bind_method(D_METHOD("quit_menu", "request"), &AptMenuPlayer::quit_menu);
 	ClassDB::bind_method(D_METHOD("get_cursor_tooltip"), &AptMenuPlayer::get_cursor_tooltip); // lane HOVER-1
+	ClassDB::bind_method(D_METHOD("strategic_hud", "request"), &AptMenuPlayer::strategic_hud); // lane WOTR-2
 	ClassDB::bind_method(D_METHOD("list_buttons", "level"), &AptMenuPlayer::list_buttons);
 	ClassDB::bind_method(D_METHOD("menu_controller_section", "delta"), &AptMenuPlayer::menu_controller_section);
 	ClassDB::bind_method(D_METHOD("menu_input", "event"), &AptMenuPlayer::menu_input); // lane OPTS-6
@@ -1399,6 +1430,7 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("lobby_apply", "spec"), &AptMenuPlayer::lobby_apply);
 	ClassDB::bind_method(D_METHOD("lobby_state"), &AptMenuPlayer::lobby_state); // lane UI-6
 	ClassDB::bind_method(D_METHOD("lobby_gadget_rect", "name"), &AptMenuPlayer::lobby_gadget_rect);
+	ClassDB::bind_method(D_METHOD("strategic_setup", "request"), &AptMenuPlayer::strategic_setup); // lane WOTR-2
 	ClassDB::bind_method(D_METHOD("get_shell_report"), &AptMenuPlayer::get_shell_report);
 	ClassDB::bind_method(D_METHOD("shell_drawn_sources"), &AptMenuPlayer::shell_drawn_sources); // lane SHELLFIX-1
 	ADD_SIGNAL(MethodInfo("shell_service", PropertyInfo(Variant::STRING, "kind"), PropertyInfo(Variant::STRING, "a"), PropertyInfo(Variant::STRING, "b")));
@@ -1811,6 +1843,7 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 	{
 		errors.push_back(toGodot("gadget skins: " + error));
 	}
+	sm->modded = !fs->modIdentity().empty();
 	if (presentationFs->archive_fs() != fs->archive_fs() && !loadGadgetSkinData(*presentationFs->archive_fs(), sm->skins, &error))
 	{
 		errors.push_back(toGodot("presentation gadget skins: " + error));
@@ -1862,6 +1895,9 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 	// _strcmpi (a missing key: false)
 	sm->environment.bonusCampaignUnlocked = sm->options.has("BCU") && AsciiStringUtil::compareNoCase(sm->options.get("BCU"), "true") == 0;
 	sm->environment.campaignMenu = &sm->campaignMenu;
+	// lane STABLEQA-1: a Stable channel build offers no War of the Ring yet; "stable_channel" (game.gd --stable-channel, the tests) hides it in any
+	// build, nothing shows it in a Stable one
+	sm->environment.warOfTheRingOffered = !BuildVersion::isStableChannel(BuildVersion::kVersion) && !(config.has("stable_channel") && bool(config["stable_channel"]));
 	// lane OPTS-4: the saved volumes are in effect from the start, as ZH's AudioManager::init takes them from OptionPreferences (DONOR; RotWK's reader
 	// is RW 0x6E5FB3, its caller at start was not read: INFERENCE, S-4510). Before, the AudioSettings defaults played until the Options screen's
 	// ACCEPT or CANCEL, and CANCEL changed the volume. Without an installed audio manager (a shell viewer) nothing is applied, and the report says so
@@ -1888,7 +1924,7 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 		INIEnvironment env;
 		env.fileSystem = fs->archive_fs();
 		INIBlockRecorder recorder;
-		RegisterRecordingBlockStubs(env.blocks, recorder, { "StaticGameLOD" }, StubExtent::Lenient);
+		RegisterRecordingBlockStubs(env.blocks, recorder, { "StaticGameLOD" }, StubExtent::LenientAfterEnd);
 		sm->gameLOD.registerBlocks(env.blocks);
 		try
 		{
@@ -1930,6 +1966,8 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 			errors.push_back(toGodot(std::string(GlobalLanguage::fileName()) + ": " + e.what()));
 		}
 	}
+	sm->livingWorld = LivingWorldShellInfo::fromStores(world->object_world()->livingWorld()); // lane WOTR-1
+	sm->environment.livingWorld = &sm->livingWorld;
 	registerAptScreenFactories(sm->factories);
 	Impl *impl = m.get();
 	sm->metrics = std::make_unique<ShellFontMetrics>([impl](const std::string &name, float size, bool bold, float *drawSize) {
@@ -2000,7 +2038,7 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 			{
 				errors.push_back(toGodot("boot_shell: data\\ini\\gamedata.ini: " + readError));
 			}
-			else if (!fs->is_bfme1() && !Shell::readShellMapOn(std::string(bytes.begin(), bytes.end()), on, &parseError))
+			else if (!fs->is_bfme1() && !Shell::readShellMapOnForData(std::string(bytes.begin(), bytes.end()), isBfme2Data(*fs->archive_fs()), on, &parseError))
 			{
 				errors.push_back(toGodot("boot_shell: " + parseError));
 			}
@@ -3013,6 +3051,14 @@ Dictionary AptMenuPlayer::notification_box(const Dictionary &request)
 	return out;
 }
 
+void AptMenuPlayer::set_objectives_tutorial_input(bool on)
+{
+	if (m->shell)
+	{
+		m->shell->objectivesScreen.tutorialInput = on;
+	}
+}
+
 Dictionary AptMenuPlayer::set_objectives_screen(const Dictionary &state)
 {
 	Dictionary r;
@@ -3307,6 +3353,95 @@ Dictionary AptMenuPlayer::lobby_gadget_rect(const String &name)
 	return out;
 }
 
+Dictionary AptMenuPlayer::strategic_setup(const Dictionary &request)
+{
+	// lane WOTR-2: the War of the Ring setup's map preview (AptSkirmish's LivingWorld gadget). request.kind: "state" (default), "hover" {region} (-1: none),
+	// "click" {region, right}. Answers {found, visible, rect {x, y, w, h} (viewport pixels), region_campaign, holders: [{region, slot, color}],
+	// next_slot, next_color, hover, selectable [bool per region], taken (a click), territory (the description's text)}
+	Dictionary out;
+	out["found"] = false;
+	if (!m->shell || !m->shell->shell)
+	{
+		return out;
+	}
+	AptSkirmish *screen = dynamic_cast<AptSkirmish *>(m->shell->shell->findScreenByFilename("Skirmish.apt"));
+	if (!screen)
+	{
+		screen = dynamic_cast<AptLanLobby *>(m->shell->shell->findScreenByFilename("LanLobby.apt")); // WOTR2 milestone 8: the LanStrategic page
+	}
+	if (!screen)
+	{
+		screen = dynamic_cast<AptOnlineShell *>(m->shell->shell->findScreenByFilename("OnlineShell.apt")); // BFME2 AptOnlineCustomMatchCtor.cpp: strategic flag 1
+	}
+	if (!screen || !screen->strategicMode() || !screen->setup())
+	{
+		return out;
+	}
+	const std::string kind = toNative(String(request.get("kind", "state")));
+	if (kind == "hover")
+	{
+		screen->hoverRegion((int)(int64_t)request.get("region", (int64_t)-1));
+	}
+	else if (kind == "click")
+	{
+		out["taken"] = screen->clickRegion((int)(int64_t)request.get("region", (int64_t)-1), !(bool)request.get("right", false));
+	}
+	const LivingWorldSetupCampaign *c = screen->strategicCampaign();
+	GameWindow *w = screen->livingWorldWindow();
+	out["found"] = w != nullptr && c != nullptr;
+	if (w)
+	{
+		int x = 0, y = 0, ww = 0, hh = 0;
+		w->winGetScreenPosition(&x, &y);
+		w->winGetSize(&ww, &hh);
+		Dictionary rect;
+		rect["x"] = x;
+		rect["y"] = y;
+		rect["w"] = ww;
+		rect["h"] = hh;
+		out["rect"] = rect;
+		bool visible = true;
+		for (GameWindow *p = w; p; p = p->winGetParent())
+		{
+			visible = visible && !p->winIsHidden();
+		}
+		out["visible"] = visible;
+	}
+	out["region_campaign"] = c ? toGodot(c->name) : String();
+	// the slot's MultiplayerColor index (-1: random): the device fills the region with that colour's LivingWorldColor (RW 0x975E04 -> RW 0x78385B)
+	auto colorOf = [&](int slot) -> int64_t { return slot >= 0 && slot < MAX_SLOTS ? (int64_t)screen->setup()->info().slots[slot].color : (int64_t)-1; };
+	Array holders;
+	for (const auto &h : screen->regionHolders())
+	{
+		Dictionary d;
+		d["region"] = h.first;
+		d["slot"] = h.second;
+		d["color"] = colorOf(h.second);
+		holders.push_back(d);
+	}
+	out["holders"] = holders;
+	const int next = screen->nextStartSlot();
+	out["next_slot"] = next;
+	out["next_color"] = colorOf(next);
+	out["hover"] = screen->hoveredRegion();
+	Array selectable;
+	for (int r = 0; c && r < (int)c->regions.size(); ++r)
+	{
+		selectable.push_back(screen->regionSelectable(r));
+	}
+	out["selectable"] = selectable;
+	if (GameWindow *t = screen->territoryDescriptionWindow())
+	{
+		std::u16string text;
+		for (int i = 0; i < GadgetListBoxGetNumEntries(t); ++i)
+		{
+			text += GadgetListBoxGetText(t, i);
+		}
+		out["territory"] = toGodot(u16ToUtf8(text));
+	}
+	return out;
+}
+
 Dictionary AptMenuPlayer::lobby_state()
 {
 	Dictionary out;
@@ -3326,6 +3461,9 @@ Dictionary AptMenuPlayer::lobby_state()
 	PackedStringArray mapKeys;
 	for (const auto &key : screen->mapListKeys()) mapKeys.push_back(toGodot(key));
 	out["map_keys"] = mapKeys;
+	PackedInt32Array mapPlayers; // lane MODUI-1: the player count of each map_keys row
+	for (int n : screen->mapListPlayers()) mapPlayers.push_back(n);
+	out["map_players"] = mapPlayers;
 	Array rules;
 	for (std::int32_t r : g.rules)
 	{
@@ -3483,6 +3621,15 @@ Dictionary AptMenuPlayer::lobby_apply(const Dictionary &spec)
 			GadgetComboBoxSetSelectedPos(combo, row, false);
 		}
 	}
+	if (spec.has("scenario"))
+	{
+		// lane WOTR-1: the strategic setup's StrategicScenarioType combo
+		const std::string name = toNative(String(spec["scenario"]));
+		if (!screen->strategicMode() || !screen->scenarioCombo() || !screen->selectScenario(name))
+		{
+			errors.push_back(toGodot("the strategic setup does not offer the scenario " + name));
+		}
+	}
 	if (spec.has("map"))
 	{
 		const std::string key = toNative(String(spec["map"]));
@@ -3584,6 +3731,14 @@ Dictionary AptMenuPlayer::lobby_apply(const Dictionary &spec)
 			else
 			{
 				GadgetComboBoxSetSelectedPos(combo, row, false);
+			}
+		}
+		if (sd.has("start_region"))
+		{
+			// WOTR2 milestone 8 (tests): a War of the Ring slot's start region (its index in the scenario's region campaign)
+			if (!screen->strategicMode() || !screen->pickStartRegion(slot, (int)(int64_t)sd["start_region"]))
+			{
+				errors.push_back(toGodot("slot " + std::to_string(slot) + ": the start region " + std::to_string((int)(int64_t)sd["start_region"]) + " cannot be picked"));
 			}
 		}
 		if (sd.has("hero"))
@@ -3725,6 +3880,12 @@ Dictionary AptMenuPlayer::get_shell_report() const
 		}
 	}
 	r["errors"] = errors;
+	PackedStringArray modNotes; // lane MODUI-1
+	for (const std::string &e : sm.modDataNotes)
+	{
+		modNotes.push_back(toGodot("mod data: " + e + " (drawn as nothing, as retail)"));
+	}
+	r["mod_data_notes"] = modNotes;
 	PackedStringArray traces; // the movies' ActionTrace output, the last 60 lines (diagnostics)
 	const std::vector<std::string> &all = sm.wm->traces();
 	for (size_t i = all.size() > 60 ? all.size() - 60 : 0; i < all.size(); ++i)
@@ -4774,6 +4935,15 @@ void AptMenuPlayer::drawSegment(const AptCanvasList &list, size_t segment, const
 					// lane UI-2: an engine render callback named by the clip's tag (AptMapPreview::Picture, RW 0x9757C0) draws its picture over the clip's
 					// rectangle in opaque white (RW 0x44CF58 with 0xFFFFFFFF): a mapped image, or an image the engine made from a texture file (UV 0..1)
 					const WindowManager::RenderPicture *picture = m->shell->wm->renderPicture(op.symbolName);
+					// lane WOTR-2: an image record "file:<path>" names a texture file (the strategic territory page's map picture), drawn as a render
+					// picture over the clip (UV 0..1)
+					WindowManager::RenderPicture filePicture;
+					if (record && record->rfind("file:", 0) == 0)
+					{
+						filePicture.file = record->substr(5);
+						picture = &filePicture;
+						record = nullptr;
+					}
 					if (picture && !picture->mappedImage.empty())
 					{
 						record = &picture->mappedImage;
@@ -4822,7 +4992,7 @@ void AptMenuPlayer::drawSegment(const AptCanvasList &list, size_t segment, const
 					const ::Image *img = record ? m->shell->skins.images.findImageByName(*record) : nullptr;
 					if (record && !img)
 					{
-						m->shell->gadgetErrors.insert("image record '" + *record + "' names no mapped image");
+						(m->shell->modded ? m->shell->modDataNotes : m->shell->gadgetErrors).insert("image record '" + *record + "' names no mapped image");
 					}
 					Ref<ImageTexture> tex;
 					if (img)
@@ -6960,6 +7130,7 @@ void AptMenuPlayer::set_save_load(const Dictionary &info)
 		s.refusalUtf8 = toNative(String(d.get("refusal", "")));
 		s.retailImport = (bool)d.get("retail_import", false);
 		s.autoSave = (bool)d.get("auto_save", false); // lane CAMPSAVE-1
+		s.savePoint = (int)(int64_t)d.get("save_point", (int64_t)0); // lane WOTR2 milestone 3
 		sl.saves.push_back(s);
 	}
 	sl.lastReplayNameUtf8 = toNative(String(info.get("last_replay", "")));
@@ -7021,6 +7192,11 @@ bool AptMenuPlayer::is_bonus_campaign_unlocked() const
 	return m->shell && m->shell->environment.bonusCampaignUnlocked;
 }
 
+bool AptMenuPlayer::is_war_of_the_ring_offered() const
+{
+	return m->shell && m->shell->environment.warOfTheRingOffered;
+}
+
 void AptMenuPlayer::set_save_folder(const String &folder)
 {
 	if (m->shell)
@@ -7049,6 +7225,73 @@ bool AptMenuPlayer::save_load_refused(const String &name, const String &error)
 	}
 	screen->loadRefused(toNative(name), toNative(error));
 	return true;
+}
+
+// WOTR2 milestone 7 (step 5): BannerUI.apt (AptBannerUI). request.kind: "open" {banners: [{army, flag, glow}]} loads the window (BannerUI::init; the movie's
+// OnInitialized makes the banners); "sync" {rows: [{slot, state, progress, remaining}]} runs the update (RW 0x6164D7); "close" drops it. Returns { open,
+// initialized, level, call_ins: [army ids the banners asked for] }
+Dictionary AptMenuPlayer::banner_ui(const Dictionary &request)
+{
+	Dictionary out;
+	out["open"] = false;
+	if (!m->shell || !m->shell->shell || !m->shell->wm)
+	{
+		return out;
+	}
+	ShellMode &sm = *m->shell;
+	const String kind = request.get("kind", "");
+	if (kind == "open" && !sm.banner)
+	{
+		std::vector<AptBannerUI::Banner> banners;
+		const Array list = request.get("banners", Array());
+		for (int i = 0; i < list.size(); ++i)
+		{
+			const Dictionary d = list[i];
+			AptBannerUI::Banner b;
+			b.armyId = (int)d.get("army", 0);
+			b.flagObj = toNative(d.get("flag", ""));
+			b.glowObj = toNative(d.get("glow", ""));
+			banners.push_back(b);
+		}
+		sm.banner = std::make_unique<AptBannerUI>(*sm.wm, *sm.shell, std::move(banners));
+		if (sm.banner->level() < 0)
+		{
+			sm.banner.reset();
+			out["error"] = "BannerUI.apt did not load";
+			return out;
+		}
+		m->dirty = true;
+	}
+	else if (kind == "close")
+	{
+		sm.banner.reset();
+		m->dirty = true;
+		return out;
+	}
+	if (!sm.banner)
+	{
+		return out;
+	}
+	if (kind == "sync")
+	{
+		const Array rows = request.get("rows", Array());
+		for (int i = 0; i < rows.size(); ++i)
+		{
+			const Dictionary d = rows[i];
+			sm.banner->update((int)d.get("slot", -1), (int)d.get("state", 4), (float)(double)d.get("progress", 1.0), (unsigned)(int64_t)d.get("remaining", (int64_t)0));
+		}
+		m->dirty = true;
+	}
+	out["open"] = true;
+	out["initialized"] = sm.banner->initialized();
+	out["level"] = sm.banner->level();
+	Array callIns;
+	for (int id : sm.banner->takeCallIns())
+	{
+		callIns.push_back(id);
+	}
+	out["call_ins"] = callIns;
+	return out;
 }
 
 bool AptMenuPlayer::ingame_chat_open(int64_t mode, const String &receivers)
@@ -7241,6 +7484,40 @@ bool AptMenuPlayer::set_score_screen_from_world(Object *worldObject)
 		return false;
 	}
 	m->shell->scoreScreen = world->scoreScreenData();
+	return m->shell->scoreScreen.valid;
+}
+
+bool AptMenuPlayer::set_score_screen_from_living_world(Object *livingWorld, Object *worldObject, int64_t localPlayer, int64_t strategicSeconds)
+{
+	LivingWorldGame *lw = Object::cast_to<LivingWorldGame>(livingWorld);
+	GameWorld *world = Object::cast_to<GameWorld>(worldObject);
+	const LivingWorld::LivingWorldLogic *logic = lw ? lw->logic() : nullptr;
+	RetailObjectWorld *objects = world ? world->object_world() : nullptr;
+	if (!logic || !objects || !m->shell)
+	{
+		return false;
+	}
+	WarScoreScreenInput in;
+	in.localPlayer = (int)localPlayer;
+	in.strategicSeconds = (std::uint32_t)strategicSeconds;
+	const GameLogicSettings &settings = world->logic_settings();
+	in.multipliers[0] = settings.score.unitsBuilt;
+	in.multipliers[1] = settings.score.structuresBuilt;
+	in.multipliers[2] = settings.score.regionResources;
+	for (const LivingWorld::PlayerState &ps : logic->players())
+	{
+		const bool colorOk = ps.color >= 0 && ps.color < (int)settings.multiplayerColors.size();
+		in.colors.push_back(colorOk ? settings.multiplayerColors[(size_t)ps.color].rgb : 0u);
+		const ::PlayerTemplate *pt = nullptr; // the tactical PlayerTemplate the Living World template's Faction names
+		for (int i = 0; i < objects->playerTemplates().getPlayerTemplateCount(); ++i)
+		{
+			const ::PlayerTemplate *t = objects->playerTemplates().getNthPlayerTemplate(i);
+			pt = t->getName() == ps.faction ? t : pt;
+		}
+		in.sides.push_back(pt ? pt->m_side : std::string());
+		in.evil.push_back(pt && pt->m_evil);
+	}
+	m->shell->scoreScreen = buildWarScoreScreen(*logic, in);
 	return m->shell->scoreScreen.valid;
 }
 
@@ -7707,6 +7984,15 @@ Dictionary AptMenuPlayer::online_status()
 	r["room_mode"] = toGodot(std::string(OnlineLobbyClient::modeName(c.gameMode())));
 	r["slot"] = (int64_t)c.localSlot();
 	r["game_id"] = toGodot(c.gameId());
+	r["game_mode"] = (int64_t)c.gameInfo().gameMode;
+	r["resume_save"] = toGodot(c.gameInfo().resumeSave);
+	r["resume_hash"] = (int64_t)c.gameInfo().resumeHash;
+	if (c.localSlot() >= 0 && c.localSlot() < MAX_SLOTS)
+	{
+		const auto &check = c.slotViews()[(size_t)c.localSlot()].resumeCheck;
+		r["resume_check_save"] = toGodot(check.save);
+		r["resume_check_ok"] = check.known && check.ok;
+	}
 	r["busy"] = c.busy();
 	Array ready;
 	for (int i = 0; i < c.gameInfo().serializedSlotCount(); ++i)
@@ -7763,6 +8049,99 @@ Dictionary AptMenuPlayer::online_status()
 		r["start_spots"] = spots;
 	}
 	return r;
+}
+
+Dictionary AptMenuPlayer::online_phase_request(int64_t phase, const Array &slots)
+{
+	Dictionary r;
+	r["ok"] = false;
+	if (!m->shell || !m->shell->online || phase < 1 || phase > 1000)
+	{
+		r["error"] = "an online War of the Ring game and phase 1 .. 1000 are required";
+		return r;
+	}
+	std::vector<int> seats;
+	for (int64_t i = 0; i < slots.size(); ++i)
+	{
+		if (slots[i].get_type() != Variant::INT || (int64_t)slots[i] < 0 || (int64_t)slots[i] >= MAX_SLOTS)
+		{
+			r["error"] = "a phase's seats must be original human slot numbers";
+			return r;
+		}
+		seats.push_back((int)(int64_t)slots[i]);
+	}
+	if (!m->shell->online->requestPhase((int)phase, seats))
+	{
+		r["error"] = "the phase request is not for this war's live seats or another phase is pending";
+		return r;
+	}
+	r["ok"] = true;
+	return r;
+}
+
+Dictionary AptMenuPlayer::online_phase_status() const
+{
+	Dictionary r;
+	if (!m->shell || !m->shell->online)
+	{
+		r["error"] = "the online lobby is no longer available";
+		return r;
+	}
+	const OnlineLobbyClient &c = *m->shell->online;
+	r["phase"] = c.phaseNumber();
+	r["pending"] = c.phasePending();
+	r["waiting"] = c.phaseWaiting();
+	r["start"] = toGodot(c.phaseStartJson());
+	r["error"] = toGodot(c.phaseError());
+	return r;
+}
+
+Dictionary AptMenuPlayer::online_stage_saved_war(const Dictionary &lobby, const String &save, int64_t hash, const Array &seats)
+{
+	Dictionary result;
+	result["ok"] = false;
+	auto refuse = [&](const std::string &why) {
+		result["error"] = toGodot(why);
+		return result;
+	};
+	if (!m->shell || !m->shell->online || hash < 0 || hash > 0xFFFFFFFFll)
+		return refuse("the online saved war needs an active lobby and a 32-bit state hash");
+	AptOnlineShell *screen = dynamic_cast<AptOnlineShell *>(m->shell->shell->findScreenByFilename("OnlineShell.apt"));
+	if (!screen)
+		return refuse("the online strategic screen is not open");
+	NewGameMessage saved;
+	std::string why;
+	if (!newGameFromDictionary(lobby, saved, &why))
+		return refuse("the save's lobby is damaged: " + why);
+	std::vector<std::pair<int, std::u16string>> expected;
+	for (int64_t i = 0; i < seats.size(); ++i)
+	{
+		if (seats[i].get_type() != Variant::ARRAY)
+			return refuse("the save's human seat is not a slot and name");
+		const Array seat = seats[i];
+		if (seat.size() != 2 || seat[0].get_type() != Variant::INT || seat[1].get_type() != Variant::STRING)
+			return refuse("the save's human seat is not a slot and name");
+		expected.emplace_back((int)(int64_t)seat[0], utf8ToU16(toNative(String(seat[1]))));
+	}
+	if (!screen->stageSavedWar(saved.game, expected, toNative(save), (std::uint32_t)hash, &why))
+		return refuse(why);
+	result["ok"] = true;
+	return result;
+}
+
+Dictionary AptMenuPlayer::online_resume_check(const String &save, const String &why)
+{
+	Dictionary result;
+	result["ok"] = false;
+	if (!m->shell || !m->shell->online || !m->shell->online->inGame() || !m->shell->online->gameInfo().resumed() ||
+		toNative(save) != m->shell->online->gameInfo().resumeSave || toNative(why).size() > 512)
+	{
+		result["error"] = "the room has no matching saved war, or the save check is too long";
+		return result;
+	}
+	m->shell->online->setResumeCheck(toNative(save), why.is_empty(), toNative(why));
+	result["ok"] = true;
+	return result;
 }
 
 Dictionary AptMenuPlayer::online_social_status() const
@@ -8580,18 +8959,25 @@ Dictionary AptMenuPlayer::get_timeline_graph(const String &modeName, const Strin
 		ld["local"] = e.local;
 		ld["name"] = String::utf8(e.name.c_str());
 		ld["focus"] = screen->graphFocus((int)i);
-		PackedVector2Array pts, marks;
-		for (size_t f = 0; f < e.perFrame.size(); ++f)
+		PackedVector2Array pts, marks, territoryMarks;
+		// WOTR2 milestone 5: the war's points sit at x = (i + 1) / N (RW 0x924C14), the skirmish's at i / (N - 1)
+		const bool war = d.type == 6 || d.type == 7;
+		auto xOf = [&](int i) { return war ? (axis.samples > 0 ? (float)(i + 1) / (float)axis.samples : 0.0f) : (float)i * sx; };
+		for (int f = 0; f < d.sampleCount(e); ++f)
 		{
-			pts.push_back(Vector2((float)f * sx, ScoreScreenData::graphValue(e.perFrame[f], mode) / axis.top));
+			pts.push_back(Vector2(xOf(f), d.value(e, f, mode) / axis.top));
 		}
 		for (int mark : e.fortressMarks)
 		{
-			const float v = mark >= 0 && (size_t)mark < e.perFrame.size() ? ScoreScreenData::graphValue(e.perFrame[(size_t)mark], mode) : 0.0f;
-			marks.push_back(Vector2((float)mark * sx, v / axis.top));
+			marks.push_back(Vector2(xOf(mark), d.value(e, mark, mode) / axis.top));
+		}
+		for (int mark : e.territoryMarks) // AptTimelineTakeTerritory (RW 0x924F24)
+		{
+			territoryMarks.push_back(Vector2(xOf(mark), d.value(e, mark, mode) / axis.top));
 		}
 		ld["points"] = pts;
 		ld["marks"] = marks;
+		ld["territory_marks"] = territoryMarks;
 		lines.push_back(ld);
 	}
 	out["lines"] = lines;
@@ -8707,6 +9093,613 @@ Dictionary AptMenuPlayer::get_cursor_tooltip() const
 	return out;
 }
 
+namespace
+{
+// WOTR2 milestone 4: the strategic help box's font measure (the shell's fonts at their point size: the help box is laid out in stage units and the
+// shell's render callback scales the texts, AptMenuPlayer::drawRenderCallback)
+class StrategicHelpMetrics : public FontMetricsSource
+{
+public:
+	explicit StrategicHelpMetrics(AptMenuPlayer *player) : m_player(player) {}
+	Ref<Font> font(const GameFont &f, float &size)
+	{
+		size = (float)f.pointSize;
+		Ref<Font> r = m_player ? m_player->font_for(f.name, (float)f.pointSize, &size, f.bold) : Ref<Font>();
+		if (r.is_valid())
+		{
+			r = m_player->font_cell(r, std::max(1, (int)std::lround(size)));
+		}
+		return r.is_valid() ? r : ThemeDB::get_singleton()->get_fallback_font();
+	}
+	int fontHeight(const GameFont &f) override
+	{
+		float size = 0;
+		Ref<Font> r = font(f, size);
+		return (int)std::ceil(r->get_height(std::max(1, (int)std::lround(size))));
+	}
+	int textWidth(const GameFont &f, const UnicodeString &text) override
+	{
+		float size = 0;
+		Ref<Font> r = font(f, size);
+		return (int)std::ceil(r->get_string_size(toGodot(u16ToUtf8(text)), HORIZONTAL_ALIGNMENT_LEFT, -1, std::max(1, (int)std::lround(size))).x);
+	}
+	int wrappedHeight(const GameFont &f, const UnicodeString &text, int wrapWidth) override
+	{
+		float size = 0;
+		Ref<Font> r = font(f, size);
+		if (wrapWidth <= 0)
+		{
+			return fontHeight(f);
+		}
+		return (int)std::ceil(
+			r->get_multiline_string_size(toGodot(u16ToUtf8(text)), HORIZONTAL_ALIGNMENT_LEFT, (float)wrapWidth, std::max(1, (int)std::lround(size))).y);
+	}
+
+private:
+	AptMenuPlayer *m_player;
+};
+} // namespace
+
+namespace
+{
+// lane WOTR-2: LivingWorldGame.army_panel's dictionary as the HUD's army panel
+AptStrategicHUD::ArmyPanel armyPanelOf(const Dictionary &ap)
+{
+	auto member = [&](const Dictionary &d) {
+		AptStrategicHUD::ArmyPanel::Member m;
+		m.portrait = toNative(String(d.get("portrait", "")));
+		m.unitType = (int)(int64_t)d.get("unit_type", -1);
+		m.quantity = (int)(int64_t)d.get("quantity", 0);
+		m.rank = (int)(int64_t)d.get("rank", 0);
+		m.progress = (float)(double)d.get("progress", -1.0);
+		m.name = toNative(String(d.get("name", "")));
+		m.commandPoints = (int)(int64_t)d.get("cp", 0);
+		m.hero = (bool)d.get("hero", false);
+		return m;
+	};
+	AptStrategicHUD::ArmyPanel panel;
+	panel.heroArmy = (bool)ap.get("hero_army", false);
+	if (ap.has("leader"))
+	{
+		panel.leader = member(ap["leader"]);
+	}
+	const Array members = ap.get("members", Array());
+	for (int i = 0; i < members.size(); ++i)
+	{
+		panel.members.push_back(member(members[i]));
+	}
+	return panel;
+}
+
+// WOTR2 milestone 5: a unit swapper slot {army, region_name, army_name, cp, max_cp, panel (army_panel's dictionary), selected: [keys]}
+AptStrategicHUD::SwapperSlot swapperSlotOf(const Dictionary &d)
+{
+	AptStrategicHUD::SwapperSlot s;
+	s.armyId = (int)(int64_t)d.get("army", 0);
+	s.regionName = toNative(String(d.get("region_name", "")));
+	s.armyName = toNative(String(d.get("army_name", "")));
+	s.cp = (int)(int64_t)d.get("cp", 0);
+	s.maxCp = (int)(int64_t)d.get("max_cp", 0);
+	const Dictionary panel = d.get("panel", Dictionary());
+	s.panel = armyPanelOf(panel);
+	const Array members = panel.get("members", Array());
+	for (int i = 0; i < members.size(); ++i)
+	{
+		s.keys.push_back((int)(int64_t)Dictionary(members[i]).get("key", 0));
+	}
+	const Array sel = d.get("selected", Array());
+	for (int i = 0; i < sel.size(); ++i)
+	{
+		s.selectedKeys.push_back((int)(int64_t)sel[i]);
+	}
+	return s;
+}
+} // namespace
+
+Dictionary AptMenuPlayer::strategic_hud(const Dictionary &request)
+{
+	// lane WOTR-2: request {kind: "open" | "close" | "sync" | "state", stats: {treasury, income, resource_multiplier, power_points, bonus: [3]}}
+	Dictionary out;
+	out["ok"] = false;
+	if (!m->shell || !m->shell->shell)
+	{
+		out["error"] = "not in shell mode";
+		return out;
+	}
+	ShellMode &sm = *m->shell;
+	const std::string kind = toNative(String(request.get("kind", "state")));
+	if (kind == "open" && !sm.strategicHud)
+	{
+		sm.strategicHud = std::make_unique<AptStrategicHUD>(*sm.wm, *sm.shell, sm.environment);
+		sm.strategicHud->setCtrlProvider([]() { return Input::get_singleton() && Input::get_singleton()->is_key_pressed(KEY_CTRL); });
+		static thread_local std::unique_ptr<StrategicHelpMetrics> helpMetrics;
+		helpMetrics = std::make_unique<StrategicHelpMetrics>(this);
+		sm.strategicHud->setHelpMetrics(helpMetrics.get());
+		if (sm.strategicHud->level() < 0)
+		{
+			sm.strategicHud.reset();
+			out["error"] = "StrategicHUD.apt could not be loaded";
+			return out;
+		}
+		for (int i = 0; i < 30 && !sm.wm->isAptWindowLoaded(sm.strategicHud->level()); ++i)
+		{
+			tick(1.0 / 30.0); // the window manager loads a movie over its first updates
+		}
+	}
+	else if (kind == "close")
+	{
+		sm.conflictResults.reset();
+		sm.strategicHud.reset();
+	}
+	if (sm.strategicHud && request.has("stats"))
+	{
+		const Dictionary st = request["stats"];
+		StrategicHudStats s;
+		s.treasury = (int)(int64_t)st.get("treasury", 0);
+		s.income = (int)(int64_t)st.get("income", 0);
+		s.resourceMultiplier = (float)(double)st.get("resource_multiplier", 1.0);
+		s.powerPoints = (int)(int64_t)st.get("power_points", 0);
+		const Array bonus = st.get("bonus", Array());
+		for (int i = 0; i < 3 && i < bonus.size(); ++i)
+		{
+			s.bonus[i] = (int)(int64_t)bonus[i];
+		}
+		sm.strategicHud->setStats(s);
+	}
+	if (sm.strategicHud && request.has("battle_prompt"))
+	{
+		const Dictionary bp = request["battle_prompt"];
+		if (bp.is_empty())
+		{
+			sm.strategicHud->closeBattlePrompt();
+		}
+		else
+		{
+			sm.strategicHud->openBattlePrompt(toNative(String(bp.get("region", ""))), (bool)bp.get("auto_resolve", true), (bool)bp.get("real_time", true),
+				(bool)bp.get("retreat", false), toNative(String(bp.get("ally", ""))), toNative(String(bp.get("enemy", ""))),
+				toNative(String(bp.get("real_time_reason", "")))); // WOTR2 milestone 8
+		}
+	}
+	// WOTR2 milestone 8: a network war's phase timer (seconds, -1 none) and the "waiting for other players" message
+	if (sm.strategicHud && request.has("time_remaining"))
+	{
+		sm.strategicHud->setTimeRemaining((int)(int64_t)request["time_remaining"]);
+	}
+	if (sm.strategicHud && request.has("wait_message"))
+	{
+		sm.strategicHud->setWaitMessage((bool)request["wait_message"]);
+	}
+	if (sm.strategicHud && request.has("region_panel"))
+	{
+		// lane WOTR-2: the region details panel in the selection details tray: {} hides it; else {map, bonus: [7], owned, page}
+		const Dictionary rp = request["region_panel"];
+		if (rp.is_empty())
+		{
+			sm.strategicHud->hideRegionPanel();
+		}
+		else
+		{
+			AptStrategicHUD::RegionPanel panel;
+			panel.mapName = toNative(String(rp.get("map", "")));
+			const Array bonus = rp.get("bonus", Array());
+			for (int i = 0; i < 7 && i < bonus.size(); ++i)
+			{
+				panel.bonus[i] = (int)(int64_t)bonus[i];
+			}
+			panel.owned = (bool)rp.get("owned", false);
+			panel.firstPage = (int)(int64_t)rp.get("page", 0);
+			panel.selectedArmy = (int)(int64_t)rp.get("selected_army", -1);
+			const Array armies = rp.get("armies", Array());
+			for (int i = 0; i < armies.size(); ++i)
+			{
+				const Dictionary a = armies[i];
+				AptStrategicHUD::RegionPanel::Army army;
+				army.id = (int)(int64_t)a.get("id", -1);
+				army.portrait = toNative(String(a.get("portrait", "")));
+				army.typeImage = toNative(String(a.get("type_image", "")));
+				army.name = toNative(String(a.get("name", "")));
+				army.commandPoints = (int)(int64_t)a.get("cp", 0);
+				army.maxCommandPoints = (int)(int64_t)a.get("max_cp", 0);
+				panel.armies.push_back(army);
+			}
+			const Array plots = rp.get("plots", Array());
+			for (int i = 0; i < plots.size(); ++i)
+			{
+				const Dictionary pd = plots[i];
+				AptStrategicHUD::RegionPanel::Plot plot;
+				plot.built = (bool)pd.get("built", false);
+				plot.portrait = toNative(String(pd.get("portrait", "")));
+				plot.type = (int)(int64_t)pd.get("type", 0);
+				plot.turnsLeft = (int)(int64_t)pd.get("turns_left", 0);
+				panel.plots.push_back(plot);
+			}
+			panel.fortress = (bool)rp.get("fortress", false);
+			panel.fortressPortrait = toNative(String(rp.get("fortress_portrait", "")));
+			panel.selectedPlot = (int)(int64_t)rp.get("selected_plot", -1);
+			panel.selectedPlotName = toNative(String(rp.get("selected_plot_name", "")));
+			sm.strategicHud->showRegionPanel(panel);
+		}
+	}
+	if (sm.strategicHud && request.has("radial"))
+	{
+		// lane WOTR-2: the strategic radial menu: {} hides it; else {center: window pixels, buttons: [{image, enabled}]}. The layout runs in stage units
+		// (the ring's sizes are fractions of the display: the same proportions as retail's display-pixel layout)
+		const Dictionary rd = request["radial"];
+		if (rd.is_empty())
+		{
+			sm.strategicHud->hideRadialMenu();
+		}
+		else
+		{
+			const Vector2 center = window_to_stage((Vector2)rd.get("center", Vector2()));
+			const Vector2 stage = get_stage_size();
+			std::vector<AptStrategicHUD::RadialButton> buttons;
+			const Array ba = rd.get("buttons", Array());
+			for (int i = 0; i < ba.size(); ++i)
+			{
+				const Dictionary bd = ba[i];
+				AptStrategicHUD::RadialButton b;
+				b.image = toNative(String(bd.get("image", "")));
+				b.enabled = (bool)bd.get("enabled", true);
+				b.productionCount = (int)(int64_t)bd.get("count", 0);
+				buttons.push_back(b);
+			}
+			// {update: true}: the shown ring's buttons change in place (a queued unit's count), no new ring
+			if ((bool)rd.get("update", false) && sm.strategicHud->radialMenuShown())
+			{
+				sm.strategicHud->updateRadialButtons(buttons);
+			}
+			else
+			{
+				sm.strategicHud->showRadialMenu(center.x, center.y, (int)stage.x, (int)stage.y, 1.0f, 1.0f, buttons);
+			}
+		}
+	}
+	if (sm.strategicHud && request.has("army_panel"))
+	{
+		// lane WOTR-2: the army details panel in the selection details tray: {} hides it; else LivingWorldGame.army_panel's dictionary
+		const Dictionary ap = request["army_panel"];
+		if (ap.is_empty())
+		{
+			sm.strategicHud->hideArmyPanel();
+		}
+		else
+		{
+			sm.strategicHud->showArmyPanel(armyPanelOf(ap));
+		}
+	}
+	if (sm.strategicHud && request.has("build_queue"))
+	{
+		// lane WOTR-2: the build queue panel in the selection details tray: {} hides it; else {building, queue: [{portrait, unit_type, quantity, turns,
+		// name, cp}]} (index 0 the unit in production)
+		const Dictionary bq = request["build_queue"];
+		if (bq.is_empty())
+		{
+			sm.strategicHud->hideBuildQueuePanel();
+		}
+		else
+		{
+			AptStrategicHUD::BuildQueuePanel panel;
+			panel.buildingName = toNative(String(bq.get("building", "")));
+			const Array q = bq.get("queue", Array());
+			for (int i = 0; i < q.size(); ++i)
+			{
+				const Dictionary e = q[i];
+				AptStrategicHUD::BuildQueuePanel::Entry entry;
+				entry.portrait = toNative(String(e.get("portrait", "")));
+				entry.unitType = (int)(int64_t)e.get("unit_type", -1);
+				entry.quantity = (int)(int64_t)e.get("quantity", 0);
+				entry.turns = (int)(int64_t)e.get("turns", 0);
+				entry.name = toNative(String(e.get("name", "")));
+				entry.commandPoints = (int)(int64_t)e.get("cp", 0);
+				panel.queue.push_back(entry);
+			}
+			sm.strategicHud->showBuildQueuePanel(panel);
+		}
+	}
+	if (sm.strategicHud && request.has("command_buttons"))
+	{
+		// WOTR2 milestone 4: the palantir's slots 1..5: [{id, image, title, help, enabled}] ({} / missing id: an empty slot)
+		std::vector<AptStrategicHUD::CommandButton> slots;
+		const Array cb = request["command_buttons"];
+		for (int i = 0; i < cb.size() && i < 5; ++i)
+		{
+			const Dictionary d = cb[i];
+			AptStrategicHUD::CommandButton b;
+			b.id = toNative(String(d.get("id", "")));
+			b.image = toNative(String(d.get("image", "")));
+			b.title = toNative(String(d.get("title", "")));
+			b.help = toNative(String(d.get("help", "")));
+			b.enabled = (bool)d.get("enabled", true);
+			slots.push_back(b);
+		}
+		sm.strategicHud->setCommandButtons(slots);
+	}
+	if (sm.strategicHud && request.has("region_stats"))
+	{
+		// WOTR2 milestone 5: the palantir's region stats tray: {} hides it, else {build_plots: [a, b], armory_points: [a, b], command_points: [a, b]}
+		const Dictionary rs = request["region_stats"];
+		AptStrategicHUD::RegionStats st;
+		st.shown = !rs.is_empty();
+		const char *const keys[3] = { "build_plots", "armory_points", "command_points" };
+		for (int i = 0; i < 3; ++i)
+		{
+			const Array v = rs.get(keys[i], Array());
+			st.values[i][0] = v.size() > 0 ? (int)(int64_t)v[0] : 0;
+			st.values[i][1] = v.size() > 1 ? (int)(int64_t)v[1] : 0;
+		}
+		sm.strategicHud->setRegionStats(st);
+	}
+	if (sm.strategicHud && request.has("notice"))
+	{
+		// WOTR2 milestone 5: a strategic notice {title, text: labels, args: [{label} | {text}], items: [{label, args}]} (the client's queue pumps them)
+		const Dictionary nd = request["notice"];
+		if (nd.has("raw_text"))
+		{
+			// WOTR2 milestone 8: an OpenBFME notice (no game text label)
+			sm.strategicHud->showNoticeText(utf8ToU16(toNative(String(nd.get("raw_title", "")))), utf8ToU16(toNative(String(nd["raw_text"]))));
+		}
+		else
+		{
+		auto argsOf = [&](const Array &in) {
+			std::vector<AptStrategicHUD::NoticeArg> out;
+			for (int i = 0; i < in.size(); ++i)
+			{
+				const Dictionary a = in[i];
+				AptStrategicHUD::NoticeArg arg;
+				arg.label = a.has("label");
+				arg.value = toNative(String(a.get(arg.label ? "label" : "text", "")));
+				out.push_back(arg);
+			}
+			return out;
+		};
+		std::vector<AptStrategicHUD::NoticeItem> items;
+		const Array it = nd.get("items", Array());
+		for (int i = 0; i < it.size(); ++i)
+		{
+			const Dictionary d = it[i];
+			items.push_back({ toNative(String(d.get("label", ""))), argsOf(d.get("args", Array())) });
+		}
+		sm.strategicHud->showNotice(toNative(String(nd.get("title", ""))), toNative(String(nd.get("text", ""))), argsOf(nd.get("args", Array())), items,
+			(bool)nd.get("question", false));
+		}
+	}
+	if (sm.strategicHud && request.has("map_help"))
+	{
+		// WOTR2 milestone 5: the map rollover help: {} releases it, else {kind: "region" | "army" | "building", region_campaign, region, title, heroes: [labels],
+		// lines: [{label, count}], text, farm}
+		const Dictionary mh = request["map_help"];
+		if (mh.is_empty())
+		{
+			sm.strategicHud->hideMapHelp();
+		}
+		else
+		{
+			AptStrategicHUD::MapHelp h;
+			const std::string kind = toNative(String(mh.get("kind", "")));
+			h.kind = kind == "region" ? AptStrategicHUD::MapHelp::REGION : kind == "army" ? AptStrategicHUD::MapHelp::ARMY
+				: kind == "building" ? AptStrategicHUD::MapHelp::BUILDING : AptStrategicHUD::MapHelp::NONE;
+			h.regionCampaign = toNative(String(mh.get("region_campaign", "")));
+			h.region = (int)(int64_t)mh.get("region", -1);
+			h.titleLabel = toNative(String(mh.get("title", "")));
+			h.textLabel = toNative(String(mh.get("text", "")));
+			h.farmTreasury = (int)(int64_t)mh.get("farm", -1);
+			const Array heroes = mh.get("heroes", Array());
+			for (int i = 0; i < heroes.size(); ++i)
+			{
+				h.heroLabels.push_back(toNative(String(heroes[i])));
+			}
+			const Array lines = mh.get("lines", Array());
+			for (int i = 0; i < lines.size(); ++i)
+			{
+				const Dictionary l = lines[i];
+				h.lines.push_back(std::make_pair(toNative(String(l.get("label", ""))), (int)(int64_t)l.get("count", 0)));
+			}
+			sm.strategicHud->showMapHelp(h);
+		}
+	}
+	if (sm.strategicHud && request.has("conflict_results") && !sm.conflictResults)
+	{
+		// WOTR2 milestone 5: {num_winners, rows: [{name, destroyed, heroes_lost, lost, veterancy, faction_image, color}]} in row order (RW 0x9FEB0E)
+		const Dictionary cr = request["conflict_results"];
+		ConflictResultsData data;
+		data.numWinners = (int)(int64_t)cr.get("num_winners", 0);
+		const Array rows = cr.get("rows", Array());
+		for (int i = 0; i < rows.size(); ++i)
+		{
+			const Dictionary r = rows[i];
+			ConflictResultsData::Row row;
+			row.name = toNative(String(r.get("name", "")));
+			row.destroyed = (int)(int64_t)r.get("destroyed", 0);
+			row.heroesLost = (int)(int64_t)r.get("heroes_lost", 0);
+			row.lost = (int)(int64_t)r.get("lost", 0);
+			row.veterancy = (int)(int64_t)r.get("veterancy", 0);
+			row.factionImage = toNative(String(r.get("faction_image", "")));
+			row.color = (std::uint32_t)(int64_t)r.get("color", 0);
+			data.rows.push_back(row);
+		}
+		sm.conflictResults = std::make_unique<AptStrategicConflictResults>(*sm.wm, *sm.shell, data);
+		if (sm.conflictResults->level() < 0)
+		{
+			sm.conflictResults.reset();
+			out["error"] = "StrategicConflictResults.apt could not be loaded";
+		}
+	}
+	if (sm.conflictResults)
+	{
+		sm.conflictResults->update();
+		if (!sm.conflictResults->active())
+		{
+			sm.conflictResults.reset(); // HideLevel (RW 0x622463)
+		}
+	}
+	if (sm.strategicHud && request.has("unit_swapper"))
+	{
+		// WOTR2 milestone 5: {open: {top, bottom}} | {update: {top, bottom}} | {buttons: [move down, move up, swap]} | {close: true}
+		const Dictionary us = request["unit_swapper"];
+		if (us.has("open"))
+		{
+			const Dictionary o = us["open"];
+			out["swapper_opened"] = sm.strategicHud->openUnitSwapper(swapperSlotOf(o.get("top", Dictionary())), swapperSlotOf(o.get("bottom", Dictionary())));
+		}
+		if (us.has("update"))
+		{
+			const Dictionary o = us["update"];
+			sm.strategicHud->updateUnitSwapper(swapperSlotOf(o.get("top", Dictionary())), swapperSlotOf(o.get("bottom", Dictionary())));
+		}
+		if (us.has("buttons"))
+		{
+			const Array b = us["buttons"];
+			sm.strategicHud->setSwapperButtons(b.size() > 0 && (bool)b[0], b.size() > 1 && (bool)b[1], b.size() > 2 && (bool)b[2]);
+		}
+		if (us.has("close"))
+		{
+			sm.strategicHud->closeUnitSwapper();
+		}
+	}
+	if (sm.strategicHud && request.has("checklist"))
+	{
+		// WOTR2 milestone 6: the checklist's rows [{key, label, args: [{label} | {text}], importance, checked}] (the client's list, by key)
+		const Array rows = request["checklist"];
+		std::vector<AptStrategicHUD::ChecklistItem> items;
+		for (int i = 0; i < rows.size(); ++i)
+		{
+			const Dictionary d = rows[i];
+			AptStrategicHUD::ChecklistItem it;
+			it.key = toNative(String(d.get("key", "")));
+			it.label = toNative(String(d.get("label", "")));
+			const Array args = d.get("args", Array());
+			for (int k = 0; k < args.size(); ++k)
+			{
+				const Dictionary a = args[k];
+				AptStrategicHUD::NoticeArg arg;
+				arg.label = a.has("label");
+				arg.value = toNative(String(a.get(arg.label ? "label" : "text", "")));
+				it.args.push_back(arg);
+			}
+			it.importance = (int)(int64_t)d.get("importance", 1);
+			it.checked = (bool)d.get("checked", false);
+			items.push_back(it);
+		}
+		sm.strategicHud->setChecklistItems(items);
+	}
+	if (sm.strategicHud && request.has("checklist_flag"))
+	{
+		Array flagged; // END PHASE refused (RW 0x9DCEBB): the rows that flashed
+		for (const std::string &k : sm.strategicHud->flagIncompleteChecklistItems())
+		{
+			flagged.push_back(toGodot(k));
+		}
+		out["checklist_flagged"] = flagged;
+	}
+	if (sm.strategicHud && request.has("notice_clear"))
+	{
+		sm.strategicHud->clearNotice();
+	}
+	if (sm.strategicHud && sm.strategicHud->noticeBox())
+	{
+		sm.strategicHud->noticeBox()->update(); // RW 0x782C56: the box's pending show / hide once the movie is ready
+	}
+	if (sm.strategicHud)
+	{
+		sm.strategicHud->helpUpdate(); // the help box's state machine (RW 0x92E462) once per HUD sync
+		sm.strategicHud->checklistUpdate(); // WOTR2 milestone 6: the checklist rows (RW 0x985531)
+	}
+	if (sm.strategicHud && request.has("turn"))
+	{
+		sm.strategicHud->setTurn((int)(int64_t)request["turn"], (int)(int64_t)request.get("phase", 0));
+	}
+	out["ok"] = true;
+	out["open"] = sm.strategicHud != nullptr;
+	if (sm.strategicHud)
+	{
+		AptStrategicHUD &h = *sm.strategicHud;
+		out["level"] = h.level();
+		out["initialized"] = h.initialized();
+		out["battle_prompt_open"] = h.battlePromptOpen();
+		out["battle_prompt_loaded"] = h.battlePromptLoaded();
+		out["details_tray_state"] = h.detailsTrayState(); // lane WOTR-2: 0 closed, 1 opening, 2 open, 3 closing, -1 not loaded
+		out["build_queue_loaded"] = h.buildQueuePanelLoaded();
+		out["army_panel_loaded"] = h.armyPanelLoaded();
+		out["army_slots_ready"] = h.armySlotsReady();
+		Array armySelected; // WOTR2 milestone 4: the army details panel's member selection (index order of the panel's members) and the leader icon flag
+		for (int i = 0; h.armyPanelLoaded() && armySelected.size() < 4096; ++i)
+		{
+			if (!h.armyMemberIndexValid(i))
+			{
+				break;
+			}
+			armySelected.push_back(h.armyMemberSelected(i));
+		}
+		out["army_selected"] = armySelected;
+		out["army_leader_selected"] = h.armyLeaderSelected();
+		Dictionary help;
+		help["loaded"] = h.helpBox().isLoaded();
+		help["state"] = h.helpBox().state();
+		help["shown"] = h.helpBox().isShown();
+		help["title"] = h.helpBox().help() ? toGodot(u16ToUtf8(h.helpBox().help()->name())) : String();
+		out["help"] = help;
+		out["notice_shown"] = h.noticeShown();
+		out["notice_answer"] = h.noticeAnswer(); // WOTR2 milestone 8 (step 4): 1 Yes, 0 No, -1 none
+		out["notice_level"] = h.noticeBox() ? h.noticeBox()->level() : -1;
+		out["conflict_results_level"] = sm.conflictResults ? sm.conflictResults->level() : -1;
+		out["map_help_shown"] = h.mapHelpShown();
+		out["conflict_results_active"] = sm.conflictResults != nullptr;
+		out["swapper_open"] = h.unitSwapperOpen();
+		Array swapSel;
+		for (int i = 0; i < 2; ++i)
+		{
+			Array keys;
+			for (int k : h.swapperSelectedKeys(i))
+			{
+				keys.push_back(k);
+			}
+			swapSel.push_back(keys);
+		}
+		out["swapper_selected"] = swapSel;
+		Array slotsOut;
+		for (int i = 1; i <= 5; ++i)
+		{
+			Dictionary d;
+			d["id"] = toGodot(h.commandButtonId(i));
+			d["shown"] = h.commandButtonShown(i);
+			d["enabled"] = h.commandButtonEnabled(i);
+			slotsOut.push_back(d);
+		}
+		out["command_slots"] = slotsOut;
+		out["build_queue_selected"] = h.buildQueueSelected();
+		out["region_panel_loaded"] = h.regionPanelLoaded();
+		out["region_panel_page"] = h.regionPanelPage();
+		out["radial_shown"] = h.radialMenuShown();
+		out["radial_ready"] = h.radialButtonsReady();
+		Dictionary parts;
+		for (const auto &p : h.loadedParts())
+		{
+			parts[toGodot(p.first)] = toGodot(p.second);
+		}
+		out["parts"] = parts;
+		Array requests;
+		for (const std::string &r : h.takeRequests())
+		{
+			requests.push_back(toGodot(r));
+		}
+		out["requests"] = requests;
+		Dictionary records;
+		for (const auto &r : h.statRecords())
+		{
+			records[toGodot(r.first)] = toGodot(r.second);
+		}
+		out["stat_records"] = records;
+		Array log;
+		for (const std::string &l : h.commandLog())
+		{
+			log.push_back(toGodot(l));
+		}
+		out["log"] = log;
+	}
+	return out;
+}
+
 Dictionary AptMenuPlayer::quit_menu(const Dictionary &request)
 {
 	Dictionary out;
@@ -8734,6 +9727,8 @@ Dictionary AptMenuPlayer::quit_menu(const Dictionary &request)
 		q.replay = (bool)c.get("replay", false);
 		q.localPlayerDefeated = (bool)c.get("local_defeated", false);
 		q.alliedVictory = (bool)c.get("allied_victory", false);
+		q.strategicMap = (bool)c.get("strategic_map", false); // lane WOTR2 milestone 3
+		q.warPlayersGone = (bool)c.get("war_players_gone", false); // WOTR2 milestone 8 (step 4)
 		sm.environment.quitMenu = &q;
 		sm.quitMenu = std::make_unique<AptQuitMenu>(*sm.wm, *sm.shell, sm.environment);
 		if (sm.quitMenu->level() < 0)

@@ -173,6 +173,7 @@ void PathfindCell::reset(PathfindCellInfoPool *pool)
 	m_bit21 = 0;
 	m_bit22 = 0;
 	m_bit23 = 0;
+	m_occMask = 0;
 	if (pool == nullptr)
 	{
 		m_info = nullptr;
@@ -229,7 +230,7 @@ bool PathfindCell::allocateInfo(PathfindCellInfoPool &pool, const ICoord2D &pos)
 
 bool PathfindCell::hasAnyOccupant() const
 {
-	if (!m_info) return false;
+	if (!m_info || !m_occMask) return false;
 	for (int k = 0; k < OCC_KIND_COUNT; ++k)
 	{
 		if (m_info->m_occupants[k]) return true;
@@ -274,6 +275,7 @@ void PathfindCell::addOccupant(PathfindCellInfoPool &pool, PathfindOccupantKind 
 	o->owner = owner;
 	o->next = m_info->m_occupants[(int)kind];
 	m_info->m_occupants[(int)kind] = o;
+	m_occMask |= 1u << (unsigned)kind;
 }
 
 bool PathfindCell::removeOccupant(PathfindCellInfoPool &pool, PathfindOccupantKind kind, PathfindObjectID owner)
@@ -290,6 +292,10 @@ bool PathfindCell::removeOccupant(PathfindCellInfoPool &pool, PathfindOccupantKi
 			PathfindOccupant *dead = *link;
 			*link = dead->next;
 			pool.freeOccupant(dead);
+			if (!m_info->m_occupants[(int)kind])
+			{
+				m_occMask &= ~(1u << (unsigned)kind);
+			}
 			releaseInfo(pool);
 			return true;
 		}

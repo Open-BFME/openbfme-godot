@@ -176,6 +176,10 @@ public:
 	// LOGICFRAMES_PER_SECOND (RW 0xD9F608 = 5) * 5)
 	static constexpr int kEndGameTimerFrames = 25;
 	int endGameTimer() const { return m_endGameTimer; } ///< -1 not started, > 0 counting, 0 ran out (the game is being left)
+	// WOTR2 milestone 8: a network game's end boundary T_end, the victory EVENT's logic frame (VictoryConditions' first ALLIANCE_VICTORY) +
+	// kEndGameTimerFrames, -1 before the victory. The same on every peer: the client starts its own timer on the frame whose snapshot showed it the victory
+	// (startEndGameTimer, RW 0x602FFE), which a skipped or late snapshot moves on one peer and not on another
+	static long long victoryTimerEndFrame(const std::vector<VictoryConditions::Event> &events);
 	// the stops of the client end of a game (S-1060 end sequence, S-1063 score screen, S-1064 leaving the game)
 	static std::vector<std::string> stopLines();
 	// the predefined Eva event `index` (EvaEventStore::predefinedNames, RW 0xBF2168) by name ("" outside the table), and its report to TheEva (AudioApi::reportEva)
@@ -229,6 +233,13 @@ struct ScoreScreenData
 		std::uint32_t moneyReceived = 0, moneyGiven = 0; ///< + 0xC / + 0x10
 		int spentStructures = 0, spentUnits = 0, spentHeroes = 0; ///< + 0x18 / + 0x14 / + 0x1C
 		int heroesBuilt = 0, heroesLost = 0;
+		// WOTR2 milestone 5 (type 6, the War of the Ring): the LivingWorldScoreKeeper's per-turn samples {territories, units, structures} (row + 0x20; the
+		// fortress turns go to fortressMarks, row + 0x2C), the turns a ConcurrentRegionBonus became held (row + 0x38) and the statistics page's inputs
+		// (AptTimeLineStats::CollectPlayerData RW 0x9CD79A, kWarStatLabels order: rows 0 / 1 are seconds; the ratio rows 14 / 20 are made from rows
+		// 13, 16, 17 and 18, 19)
+		std::vector<std::array<int, 3>> warTurns;
+		std::vector<int> territoryMarks;
+		std::array<std::int32_t, 27> warStats{};
 	};
 	int type = 2;                    ///< the screen's game type (+ 0x284): 2 skirmish, 3 LAN, 4 Internet
 	bool localIsObserver = false;    ///< + 0x294
@@ -237,6 +248,20 @@ struct ScoreScreenData
 	bool valid = false;
 	unsigned frames = 0;             ///< the logic frames the game ran
 	std::vector<Entry> entries;
+	// WOTR2 milestone 5 (type 6): GlobalData's ScoreKeeper_UnitsBuiltMultiplier / StructuresBuiltMultiplier / RegionResourcesMultiplier (the FinalScore
+	// graph, RW 0x9252C4) and the local player's win / loss page (CollectPlayerData RW 0x92723E: set for status 0 / 1 only, TimeLine:StrategicEnd)
+	float warMultipliers[3] = { 1.0f, 1.0f, 1.0f };
+	bool strategicEnd = false;
+	std::string winLossTitleLabel;    ///< APT:EndVictorious / APT:EndDefeat
+	std::string scenarioNameLabel;    ///< the scenario's DisplayName
+	std::string conditionLabel;       ///< DisplayVictoriousText / DisplayDefeatedText (RW 0x901502 / 0x901568)
+	std::string winLossImage;         ///< StrategicEndGame{Good|Evil}{Win|Lose}
+	static constexpr int kWarStatRows = 27;
+	static const char *const kWarStatLabels[kWarStatRows];
+	// the samples of an entry and the graph's value of sample i (the War of the Ring source RW 0x925014 / 0x9252C4 for type 6: 0 outside 0 .. n - 1;
+	// the skirmish's otherwise)
+	int sampleCount(const Entry &e) const;
+	float value(const Entry &e, int i, int mode) const;
 
 	// RW 0x9275EC for a game started from game slots: the players in slot order (the local player first, RW 0x9270AD); `slotPlayerIndices` lists the player
 	// index of every occupied slot in slot order (-1: no player), `disconnected` the indices whose slot says so (RW 0x90313E)

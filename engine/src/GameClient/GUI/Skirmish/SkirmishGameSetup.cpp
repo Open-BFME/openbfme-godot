@@ -595,7 +595,10 @@ bool SkirmishGameSetup::setSlotCreateAHero(int slot, const CreateAHeroHero *hero
 bool SkirmishGameSetup::setSlotStartPos(int slot, int position)
 {
 	const MapCacheEntry *map = findMap(m_info.mapName);
-	if (slot < 0 || slot >= MAX_SLOTS || slot >= m_info.mapStartCount || position < -1 || !map || position >= map->numPlayers)
+	// lane WOTR-2: the strategic lobby's position is a region index of the scenario's region campaign (the screen checks it against the map preview's
+	// regions, RW 0x97572C), not a spot of the lobby's map
+	const bool spotOk = m_strategic || (map && position < map->numPlayers);
+	if (slot < 0 || slot >= MAX_SLOTS || slot >= m_info.mapStartCount || position < -1 || !spotOk)
 	{
 		return false;
 	}
@@ -633,6 +636,8 @@ void SkirmishGameSetup::setStrategicMode(bool strategic)
 		return;
 	}
 	m_strategic = strategic;
+	m_info.gameMode = strategic ? 1 : 0; // WOTR2 milestone 8: GT (+ 0x5C); the scenario follows (setWarScenario)
+	m_info.scenario.clear();
 	m_info.rules = MpGameRules::defaults(rulesMode());
 	m_info.cheatMode = -1; // lane CHEAT-1: Cheat Mode is a mode 0 rule
 }
@@ -737,19 +742,14 @@ SkirmishGameSetup::StartCheck SkirmishGameSetup::checkStart(int flags, bool will
 	};
 	const bool wotr = m_strategic; // MpGameSetup + 0x7C == 1
 	const MapCacheEntry *md = findMap(m_info.mapName);
-	// RW 0x843245 .. 0x843276: the maximum (RW 0x9758E3: the map's player count, 0 without the map; above 8 the constant 8 at RW 0xC53F2C) and the minimum
-	// (RW 0x97597F: 0 outside the War of the Ring; its scenario's minimum is not ported, stop S-3610)
-	int maxPlayers = md ? (int)md->numPlayers : 0;
+	// RW 0x843245 .. 0x843276: the maximum (RW 0x9758E3: in the War of the Ring the scenario's MaxPlayers (+ 0x10), else the map's player count; 0
+	// without either; above 8 the constant 8 at RW 0xC53F2C) and the minimum (RW 0x97597F: the scenario's MinPlayers (+ 0x14), 0 outside the War of the Ring)
+	int maxPlayers = wotr ? (m_haveScenario ? m_scenario.maxPlayers : 0) : (md ? (int)md->numPlayers : 0);
 	if (maxPlayers > MAX_SLOTS)
 	{
 		maxPlayers = MAX_SLOTS;
 	}
-	const int minPlayers = 0;
-	if (wotr)
-	{
-		r.stops.push_back("[S-3610] start check: the War of the Ring scenario's player limits (RW 0x9758E3 / 0x97597F) and faction test (GUI:DisabledFaction, RW 0x843447) are not "
-						  "ported: the map's player count stands in and every faction passes");
-	}
+	const int minPlayers = wotr && m_haveScenario ? m_scenario.minPlayers : 0;
 	if (maxPlayers < 1 || maxPlayers < minPlayers)
 	{
 		return refuse("", std::u16string(), {}); // RW 0x843263: no text, the start simply does not happen
@@ -758,7 +758,7 @@ SkirmishGameSetup::StartCheck SkirmishGameSetup::checkStart(int flags, bool will
 	{
 		return refuse("LAN:NoMapSelected", label("LAN:NoMapSelected"), { 1 }); // RW 0x8438D3 (unreachable: no map gives no maximum)
 	}
-	bool allHaveMap = true, allAccepted = true, allSpots = true;
+	bool allHaveMap = true, allAccepted = true, allSpots = true, disabledFaction = false;
 	int numUsers = 0, numHumans = 0, numRandom = 0, numMissingClan = 0;
 	std::set<int> teams;
 	for (int i = 0; i < MAX_SLOTS; ++i)
@@ -808,7 +808,20 @@ SkirmishGameSetup::StartCheck SkirmishGameSetup::checkStart(int flags, bool will
 			{
 				teams.insert(slot.teamNumber);
 			}
-			// RW 0x843447 .. 0x843495: the War of the Ring scenario's faction test (GUI:DisabledFaction) is not ported (S-3610)
+			// RW 0x843447 .. 0x843495 (lane WOTR-2): the War of the Ring scenario's faction test, when the scenario lists DisabledFactions (RW 0x9012D7): a
+			// random faction (+ 0x18 < 0) is disabled, a chosen one when its PlayerTemplate name is in the list (RW 0x90182D: StringBase::compare, exact)
+			if (wotr && m_haveScenario && !m_scenario.disabledFactions.empty())
+			{
+				if (slot.playerTemplate < 0)
+				{
+					disabledFaction = true;
+				}
+				else
+				{
+					const SkirmishFaction *f = faction(slot.playerTemplate);
+					disabledFaction |= f && std::find(m_scenario.disabledFactions.begin(), m_scenario.disabledFactions.end(), f->templateName) != m_scenario.disabledFactions.end();
+				}
+			}
 			if (slot.startPos == -1)
 			{
 				allSpots = false;
@@ -838,9 +851,13 @@ SkirmishGameSetup::StartCheck SkirmishGameSetup::checkStart(int flags, bool will
 	{
 		return refuse("GUI:NeedHumanPlayers", label("GUI:NeedHumanPlayers"), { 1 });
 	}
+	if (wotr && disabledFaction)
+	{
+		return refuse("GUI:DisabledFaction", label("GUI:DisabledFaction"), { 1, 2 }); // RW 0x8435D9 (lane WOTR-2)
+	}
 	if (wotr && !allSpots)
 	{
-		return refuse("GUI:NeedStartSpots", label("GUI:NeedStartSpots"), { 1, 2 }); // RW 0x8435F9 (GUI:DisabledFaction before it, RW 0x8435D9: S-3610)
+		return refuse("GUI:NeedStartSpots", label("GUI:NeedStartSpots"), { 1, 2 }); // RW 0x8435F9
 	}
 	if (numUsers < globalMinPlayers)
 	{

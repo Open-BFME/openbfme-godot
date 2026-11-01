@@ -64,7 +64,7 @@
 //     client's; the FX play through the logic's FX events;
 //   * the reveal's waking of idle enemy AIs uses the AI's VisionRange (2D centre distance) for RW 0x68FA3D's vision test;
 //   * TAKING_DAMAGE reads the body's last damaging hit frame (the engine body does not keep the last hit's amount and type);
-//   * the script's stealth switch (Object + 0x457 bit 8) is not ported: never set (StealthUpdate's disguise, RW 0x81B995 / 0x694C86: lane STEALTH-2);
+//   * the script's stealth switch (Object + 0x457 bit 8, NAMED_SET_STEALTH_ENABLED RW 0x7BC7EC) refuses a STEALTH copy (RW 0x81BAC3, lane BFME2CAMP1);
 //   * RW 0x694C0D's draw module slot 0xF0 is read as the model draw data's AffectedByStealth (RW +0x15E; the slot's body is not identified).
 
 #pragma once
@@ -179,8 +179,9 @@ public:
 	// (RW 0x6AAC52 false: everything is seen as a friend)
 	static int clientLook(const Object &obj, const Player *local);
 	// the friend's opacity pulse of the object: GameData InvisibilityOpacityMin / Max / CycleFrames for an invisible object, its StealthUpdate's FriendlyOpacityMin /
-	// Max / PulseFrequency for a STEALTHED one (both RW 0x6760F9 inputs)
-	void clientOpacityRange(const Object &obj, float *lo, float *hi, unsigned *cycleFrames) const;
+	// Max / PulseFrequency for a STEALTHED one (both RW 0x6760F9 inputs); `cycleSeconds` is the setter's cycle argument (RW 0x81AA85: frames / 5;
+	// RW 0x777AF7: frequency * 0.2f)
+	void clientOpacityRange(const Object &obj, float *lo, float *hi, float *cycleSeconds) const;
 
 	// ---- reports / tests ----
 	void crc(StateHasher &hasher) const;

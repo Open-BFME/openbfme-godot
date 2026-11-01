@@ -315,7 +315,7 @@ Object *Construction::constructOnPlot(Object &plot, const ThingTemplate &what, c
 	return obj;
 }
 
-Object *Construction::constructByDozer(Object &dozer, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner)
+Object *Construction::constructByDozer(Object &dozer, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool isRebuild)
 {
 	// lane FBSIM-1 (FB-0039), TARGET FACTS (DozerAIUpdate slot 0x64 RW 0x88D272, caveat S-001): the structure is made as a phantom: ThingFactory::newObject with only
 	// PENDING_CONSTRUCTION and PHANTOM_STRUCTURE (0x57 / 0x58, RW 0x88D29B .. 0x88D2C9; not UNDER_CONSTRUCTION: the placement sets it), the PHANTOM_STRUCTURE model
@@ -338,10 +338,13 @@ Object *Construction::constructByDozer(Object &dozer, const ThingTemplate &what,
 	setModelConditions(*obj, {}, { "PHANTOM_STRUCTURE" });
 	obj->setProducer(&dozer);
 	obj->setBuilder(&dozer); // RW 0x88D307
-	const int cost = BuildAssistant::calcCostToBuild(what, &owner, &dozer, -1);
-	owner.withdrawMoney((std::uint32_t)cost, true);
-	owner.getScoreKeeper().addMoneySpentByKind(logic, &what, cost); // RW 0x88D34A (lane END-2)
-	obj->setBuildCostPaid((float)cost);
+	if (!isRebuild) // RW 0x88D2F9: the dozer's + 0x4D0 (lane BFME2CAMP1)
+	{
+		const int cost = BuildAssistant::calcCostToBuild(what, &owner, &dozer, -1);
+		owner.withdrawMoney((std::uint32_t)cost, true);
+		owner.getScoreKeeper().addMoneySpentByKind(logic, &what, cost); // RW 0x88D34A (lane END-2)
+		obj->setBuildCostPaid((float)cost);
+	}
 	Coord3D p = pos;
 	p.z = logic.getGroundHeight(p.x, p.y);
 	obj->setPosition(&p);
@@ -364,7 +367,7 @@ Object *Construction::constructByDozer(Object &dozer, const ThingTemplate &what,
 	return obj;
 }
 
-bool Construction::placePhantomStructure(Object &dozer, Object &obj)
+bool Construction::placePhantomStructure(Object &dozer, Object &obj, bool isRebuild)
 {
 	// lane FBSIM-1 (FB-0039), TARGET FACTS (DozerAIUpdate slot 0x68 RW 0x88D44F, caveat S-001). The site must still be legal (BuildAssistant::isLocationLegalToBuild
 	// flags 0x15 with the dozer as builder, RW 0x88D4C9; skipped for a computer player (+ 0x5C == 1) no skirmish AI runs, RW 0x88D4A4 .. 0x88D4B4), else false: the
@@ -372,13 +375,13 @@ bool Construction::placePhantomStructure(Object &dozer, Object &obj)
 	// dead; unless the template is NO_COLLIDE or DO_NOT_CLASSIFY the site is cleared (clearRemovableForConstruction RW 0x796576, moveObjectsForConstruction RW
 	// 0x797465); the PHANTOM_STRUCTURE condition cleared, the health set to 1 (body vslots 0x10 / 0x84), the position put on the ground, UNDER_CONSTRUCTION set,
 	// PENDING_CONSTRUCTION and PHANTOM_STRUCTURE cleared (RW 0x88D61B .. 0x88D63A), the pathfinder footprint registered (RW 0x6E85E9). Not ported: RW 0x684CBA
-	// (TerrainLogic work over the footprint, not identified: S-304; RW 0x684BCA is lane TREES1's removeTreesForConstruction, run above), the dozer interface's + 0x28 byte (it skips the legality test and the price and adds
-	// status 21; not identified, taken as clear)
+	// (TerrainLogic work over the footprint, not identified: S-304; RW 0x684BCA is lane TREES1's removeTreesForConstruction, run above). The dozer interface's + 0x28 byte
+	// is the rebuild flag (DozerAIUpdate + 0x4D0, set by construct RW 0x88C217; lane BFME2CAMP1): it skips the legality test and adds RECONSTRUCTING (status 21)
 	GameLogic &logic = dozer.logic();
 	const ThingTemplate &what = *static_cast<const ThingTemplate *>(obj.getTemplate());
 	Player *owner = dozer.getControllingPlayer();
 	const bool scriptComputer = owner && owner->getPlayerType() == PLAYER_COMPUTER && !logic.skirmishAI().findAI(owner->getPlayerIndex());
-	if (!scriptComputer &&
+	if (!isRebuild && !scriptComputer && // RW 0x88D47C: the rebuild flag skips the test
 		BuildPlacement::isLocationLegalToBuild(logic, *obj.getPosition(), *what.getFinalOverride(), obj.getOrientation(), 0x15u, &dozer, nullptr) != LBC_OK)
 	{
 		return false;
@@ -407,6 +410,11 @@ bool Construction::placePhantomStructure(Object &dozer, Object &obj)
 	static const int pending = ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION");
 	static const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
 	obj.setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, true);
+	if (isRebuild)
+	{
+		static const int reconstructing = ObjectTemplateInfoBuilder::objectStatusIndex("RECONSTRUCTING");
+		obj.setStatus((unsigned)reconstructing, true); // RW 0x88D5F0 .. 0x88D601: mask bit 0x200000 with UNDER_CONSTRUCTION
+	}
 	obj.setStatus((unsigned)pending, false);
 	obj.setStatus((unsigned)phantom, false);
 	if (AIWorld *ai = logic.aiWorld())

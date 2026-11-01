@@ -3,6 +3,7 @@
 // OpenBFME retail tests for combat (lane COMBAT-1). They run only when ROTWK_INSTALL and BFME2_INSTALL are set (otherwise SKIP): pure RotWK 2.01 + BFME2 1.06, the object
 // world loaded once, hordes of the real templates fight each other on a flat arena.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -98,6 +99,7 @@ struct Arena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(side == 0 ? 0.0f : 3.14159265f);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	size_t members(Object *horde) { return horde->getContain() ? horde->getContain()->getContainCount() : 0; }

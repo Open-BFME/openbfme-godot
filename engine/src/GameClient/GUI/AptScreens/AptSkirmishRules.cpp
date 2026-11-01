@@ -3,8 +3,8 @@
 // lane RULES-1: the Rules tab of the lobby movie (MpGameSetup.apt's rule rows): RotWK's AptMpGameRules, the panel at AptMpGameSetup + 0xD0.
 //
 // TARGET FACTS (rotwk201_game.exe, caveat S-001; every function below is tier A of its BFME2 1.06 twin unless marked, donor open-bfme-2
-// GUI/GUICallbacks/Apt/AptMpGameRulesCallbacks.cpp and AptMpGameRulesRefreshWidgets.cpp, byte-matched; the two Populate functions are the decomp's
-// recovered (not yet byte-matching) reverse/attempts/0x0057e7a1.cpp and 0x0057eaad.cpp):
+// GUI/GUICallbacks/Apt/AptMpGameRules.cpp, byte-matched; the two Populate functions are the decomp's
+// byte-matched since: AptMpGameRules.cpp):
 //   * the registration RW 0x987106 (tier B of BFME2 0x97F0AA: RotWK appends a tail, no change to the bindings): every "APT:RuleComboBox_<n>" and
 //     "APT:RuleCheckBox_<n>" text (n < 10) becomes " ", the rules get the mode's defaults (RW 0x960A74), the widgets are filed again, then the bindings
 //     MpGameRules::NumCheckBoxes / NumComboBoxes (RW 0x9865C9 queries 1 / 0), AptMpGameRules::Reset and the screen reference
@@ -155,6 +155,14 @@ void AptSkirmish::initRuleGadget(const std::string &name, GameWindow *window)
 	if (widgets->size() <= (std::size_t)position)
 	{
 		widgets->resize((std::size_t)position + 1, nullptr);
+	}
+	// OpenBFME: the row's earlier window (another placement of the rows: the server browser's MAP / RULES panel before the staging room's) is
+	// hidden with the filing: only the filed rows are the tab's. The owner's online Rules tab of 2026-10-29 drew the browser panel's rows, shown
+	// by a populate before the room's rows were all filed and never hidden after, over the room's player list with their old values
+	GameWindow *earlier = (*widgets)[(std::size_t)position];
+	if (earlier && earlier != window)
+	{
+		earlier->winHide(true);
 	}
 	(*widgets)[(std::size_t)position] = window;
 	window->winHide(true);

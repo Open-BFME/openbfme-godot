@@ -693,6 +693,10 @@ std::vector<std::string> Economy::report() const
 	{
 		lines.push_back("[S-253] no AttributeModifier provider is installed: no PRODUCTION / COMMAND_POINT_BONUS / BOUNTY_PERCENTAGE modifier can be active");
 	}
+	if (!m_attributeSums)
+	{
+		lines.push_back("[S-253] no AttributeModifier sum provider is installed: no COMMAND_POINT_BONUS / BOUNTY_PERCENTAGE modifier can be active");
+	}
 	if (m_droppedExperience != 0)
 	{
 		lines.push_back("[S-256] " + std::to_string(m_droppedExperience) + " experience grants of resource buildings were dropped (no ExperienceTracker hook installed)");

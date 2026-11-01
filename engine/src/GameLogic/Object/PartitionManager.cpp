@@ -41,17 +41,22 @@ struct PartitionManager::Entry
 	std::uint32_t mask = 0; ///< + 0x24
 	std::uint32_t x = 0;    ///< + 0x28
 	std::uint32_t y = 0;    ///< + 0x2C
-	// the port's cache of geometryOf(object) (performance): valid while the object's final-override template is geomKey
+	// the port's cache of geometryOf(object) (performance): valid while the final override of the object's geometry source is geomKey
 	mutable const ThingTemplate *geomKey = nullptr;
 	mutable const Geometry *geom = nullptr;
+	// lane MODCOMPAT-MOD1: an object with its own shape flags (Object::geometryShapes): its own values, valid for ownVersion (Object::geometryVersion)
+	mutable bool ownValid = false;
+	mutable std::uint32_t ownVersion = 0;
+	mutable Geometry own;
 };
 
 namespace
 {
 const char *const kStopPartition =
 	"[S-1020] partition: ThePartitionManager is RotWK's 21 loose quadtrees (RW 0xA3BD20 .. 0xA3C7D0, ported: registration, dirty update, range / region / "
-	"closest queries, the STLport introsort of the hits); inference: the geometry is the template's (RW keeps it per object and RW 0x68B2CB marks a change), "
-	"the undetected defector bit (Object + 0x458 bit 1) is never set (no defection, S-141), distance type 4 (RW 0xA3C7D0 -> RW 0xAD2CE0) tests the template's shapes, "
+	"closest queries, the STLport introsort of the hits; the geometry is the object's own GeometryInfo, its template's until a shape flag changes, lane "
+	"MODCOMPAT-MOD1, and RW 0x68B244 marks the change); inference: "
+	"the undetected defector bit (Object + 0x458 bit 1) is never set (no defection, S-141), distance type 4 (RW 0xA3C7D0 -> RW 0xAD2CE0) tests the object's shapes, "
 	"a game without a map keeps the constructor's empty region (every object in cell 0, 0; getClosestObject's range clamps to 0: only a coincident or overlapping candidate can still be returned)";
 } // namespace
 
@@ -74,6 +79,7 @@ void PartitionManager::reset()
 		e->geom = nullptr;
 	}
 	m_geometry.clear();
+	m_ownGeometry.clear();
 }
 
 PartitionHits::~PartitionHits()
@@ -104,13 +110,74 @@ void PartitionManager::recycle(std::vector<PartitionHit> &&hits) const
 	}
 }
 
+namespace
+{
+// GeometryInfo + 0x10 / + 0x14 / + 0x20 of a geometry (RW 0xAD2860)
+PartitionManager::Geometry geometryFrom(const PathfindGeometry &pg)
+{
+	PartitionManager::Geometry g;
+	g.circle = pg.boundingCircleRadius();          // GeometryInfo + 0x10 (RW 0xAD2860)
+	g.sphere = pg.boundingSphereRadius();          // + 0x14
+	// RW 0xAD2040 (the z extent of the active shapes, starting at 0 .. 0) and RW 0xAD2860: + 0x20 = (lo.z + hi.z) * 0.5
+	float zlo = 0.0f, zhi = 0.0f;
+	for (size_t i = 0; i < pg.shapeCount(); ++i)
+	{
+		const PathfindShape s = pg.shape(i);
+		if (!s.active)
+		{
+			continue;
+		}
+		float lo, hi;
+		if (s.type == PATHFIND_GEOMETRY_SPHERE)
+		{
+			lo = SimMath::pc24Sub(s.offsetZ, s.majorRadius);
+			hi = SimMath::pc24Add(s.offsetZ, s.majorRadius);
+		}
+		else
+		{
+			lo = s.offsetZ;
+			hi = SimMath::pc24Add(s.height, s.offsetZ);
+		}
+		if (lo <= zlo)
+		{
+			zlo = lo;
+		}
+		if (zhi <= hi)
+		{
+			zhi = hi;
+		}
+	}
+	g.centerZ = SimMath::pc24Mul(SimMath::pc24Add(zlo, zhi), 0.5f);
+	return g;
+}
+// the final override of the template whose GeometryInfo the object carries (Object::geometryTemplate; null for an object without a template)
+const ThingTemplate *geometrySourceOf(const Object &obj)
+{
+	return obj.getTemplate() ? obj.geometryTemplate().getFinalOverride() : nullptr;
+}
+} // namespace
+
 const PartitionManager::Geometry &PartitionManager::entryGeometry(const Entry &e) const
 {
-	const ThingTemplate *tt = static_cast<const ThingTemplate *>(e.object->getTemplate());
-	const ThingTemplate *key = tt ? tt->getFinalOverride() : nullptr;
+	if (!e.object->geometryActive().empty())
+	{
+		// lane MODCOMPAT-MOD1: RW reads the object's own GeometryInfo (Object + 0xB8 / + 0xBC / + 0xC8); a change marks the entry dirty (RW 0x68B244 -> 0xA39570)
+		if (!e.ownValid || e.ownVersion != e.object->geometryVersion())
+		{
+			PathfindGeometry pg;
+			ObjectGeometry::fillPathfindGeometry(e.object->geometryShapes(), pg);
+			e.own = geometryFrom(pg);
+			e.ownVersion = e.object->geometryVersion();
+			e.ownValid = true;
+		}
+		return e.own;
+	}
+	// Sol review of MODCOMPAT-MOD1: the geometry's source (Object::geometryTemplate): a rebuild hole that took an unchanged building's GeometryInfo (RW
+	// 0x699349, no flags of its own) carries the building's shapes, not its own template's
+	const ThingTemplate *key = geometrySourceOf(*e.object);
 	if (!e.geom || e.geomKey != key)
 	{
-		e.geom = &geometryOf(*e.object);
+		e.geom = &templateGeometryOf(key);
 		e.geomKey = key;
 	}
 	return *e.geom;
@@ -156,8 +223,30 @@ std::uint32_t PartitionManager::cellY(float y) const
 
 const PartitionManager::Geometry &PartitionManager::geometryOf(const Object &obj) const
 {
-	const ThingTemplate *tt = static_cast<const ThingTemplate *>(obj.getTemplate());
-	const ThingTemplate *key = tt ? tt->getFinalOverride() : nullptr;
+	if (!obj.geometryActive().empty())
+	{
+		// lane MODCOMPAT-MOD1: the object's own GeometryInfo (Object::geometryShapes)
+		const ObjectID id = obj.getID();
+		if (id < m_byId.size() && m_byId[id] && m_byId[id]->object == &obj)
+		{
+			return entryGeometry(*m_byId[id]);
+		}
+		OwnGeometry &o = m_ownGeometry[id]; // an object out of the partition (looked up only, never iterated)
+		if (o.object != &obj || o.version != obj.geometryVersion())
+		{
+			PathfindGeometry pg;
+			ObjectGeometry::fillPathfindGeometry(obj.geometryShapes(), pg);
+			o.g = geometryFrom(pg);
+			o.object = &obj;
+			o.version = obj.geometryVersion();
+		}
+		return o.g;
+	}
+	return templateGeometryOf(geometrySourceOf(obj)); // the geometry's source (entryGeometry)
+}
+
+const PartitionManager::Geometry &PartitionManager::templateGeometryOf(const ThingTemplate *key) const
+{
 	auto it = m_geometry.find(key);
 	if (it != m_geometry.end())
 	{
@@ -168,38 +257,7 @@ const PartitionManager::Geometry &PartitionManager::geometryOf(const Object &obj
 	{
 		PathfindGeometry pg;
 		ObjectGeometry::fillPathfindGeometry(*key, pg); // throws on a row retail rejects
-		g.circle = pg.boundingCircleRadius();          // GeometryInfo + 0x10 (RW 0xAD2860)
-		g.sphere = pg.boundingSphereRadius();          // + 0x14
-		// RW 0xAD2040 (the z extent of the active shapes, starting at 0 .. 0) and RW 0xAD2860: + 0x20 = (lo.z + hi.z) * 0.5
-		float zlo = 0.0f, zhi = 0.0f;
-		for (size_t i = 0; i < pg.shapeCount(); ++i)
-		{
-			const PathfindShape s = pg.shape(i);
-			if (!s.active)
-			{
-				continue;
-			}
-			float lo, hi;
-			if (s.type == PATHFIND_GEOMETRY_SPHERE)
-			{
-				lo = SimMath::pc24Sub(s.offsetZ, s.majorRadius);
-				hi = SimMath::pc24Add(s.offsetZ, s.majorRadius);
-			}
-			else
-			{
-				lo = s.offsetZ;
-				hi = SimMath::pc24Add(s.height, s.offsetZ);
-			}
-			if (lo <= zlo)
-			{
-				zlo = lo;
-			}
-			if (zhi <= hi)
-			{
-				zhi = hi;
-			}
-		}
-		g.centerZ = SimMath::pc24Mul(SimMath::pc24Add(zlo, zhi), 0.5f);
+		g = geometryFrom(pg);
 	}
 	return m_geometry.emplace(key, g).first->second;
 }
@@ -615,12 +673,11 @@ double PartitionManager::distance(DistanceCalculationType type, const Coord3D &c
 			sphere.majorRadius = SimMath::fstpDword(SimMath::sqrtPC24((double)radiusSqr));
 			sphere.minorRadius = 2.0f;
 			const std::vector<ObjectGeometry::Shape> query = { sphere };
-			const ThingTemplate *tt = static_cast<const ThingTemplate *>(e.object->getTemplate());
-			if (!tt)
+			if (!e.object->getTemplate())
 			{
 				throw std::logic_error("partition: distance type 4 (RW 0xA3C7D0) on an object without a template");
 			}
-			const bool hit = NotifyCrushModules::geometriesOverlap(ObjectGeometry::cachedShapesOf(*tt->getFinalOverride()), *p, e.object->getOrientation(),
+			const bool hit = NotifyCrushModules::geometriesOverlap(e.object->geometryShapes(), *p, e.object->getOrientation(),
 			                                                       query, c, 0.0f);
 			return hit ? 0.0 : (double)FLT_MAX;
 		}
