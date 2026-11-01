@@ -212,9 +212,19 @@ std::string AptPalantir::levelPrefix() const
 
 bool AptPalantir::call(const std::string &path, const std::string &fn, const std::vector<std::string> &args)
 {
+	std::vector<AptValue> values;
+	for (const std::string &arg : args)
+	{
+		values.push_back(AptValue::string(arg));
+	}
+	return callValues(path, fn, values);
+}
+
+bool AptPalantir::callValues(const std::string &path, const std::string &fn, const std::vector<AptValue> &args)
+{
 	++m_calls;
 	std::string error;
-	if (!windows().invokeASAt(level(), path, fn, args, nullptr, &error))
+	if (!windows().invokeASAtValues(level(), path, fn, args, &error))
 	{
 		if (m_callErrors.size() < 200)
 		{
@@ -775,13 +785,13 @@ void AptPalantir::syncRank()
 	}
 }
 
-void AptPalantir::statsCall(const std::string &fn, const std::vector<std::string> &args)
+void AptPalantir::statsCall(const std::string &fn, const std::vector<AptValue> &args)
 {
-	call("", fn, args);
+	callValues("", fn, args);
 	std::string line = fn + "(";
 	for (size_t i = 0; i < args.size(); ++i)
 	{
-		line += (i ? "," : "") + args[i];
+		line += (i ? "," : "") + (args[i].isBoolean() ? (args[i].asBool() ? "1" : "0") : args[i].toString());
 	}
 	m_statsCalls.push_back(line + ")");
 	if (m_statsCalls.size() > 64)
@@ -832,7 +842,7 @@ void AptPalantir::syncPlayerStats()
 	}
 	if (percent != m_lastProgress)
 	{
-		statsCall("SetPlayerMagicProgress", { std::to_string(percent) });
+		statsCall("SetPlayerMagicProgress", { AptValue::string(std::to_string(percent)) });
 		m_lastProgress = percent;
 	}
 	const bool magicEnabled = true; // RW 0x822D6C (see syncLocal)
@@ -862,7 +872,10 @@ void AptPalantir::syncPlayerStats()
 	std::copy(m_local.purchasable, m_local.purchasable + 20, m_previousPurchasable);
 	if (m_magicHighlightedSent != m_highlighted)
 	{
-		statsCall("HighlightPlayerMagicButton", { m_highlighted ? "1" : "0" });
+		// Both editions' Palantir.apt assign this argument directly to PlayerMagic.highlighted, then branch on it in the
+		// ButtonClip's frame action. Host adaptation: a boolean preserves the intended off state in our SWF-7 execution;
+		// the non-empty string "0" remains truthy. Availability/latching stays RW 0x6D5C0F / BFME2 0x6D4BDB above.
+		statsCall("HighlightPlayerMagicButton", { AptValue::boolean(m_highlighted) });
 		m_magicHighlightedSent = m_highlighted;
 	}
 }
