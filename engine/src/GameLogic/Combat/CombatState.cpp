@@ -92,7 +92,7 @@ void CombatState::noteFlyingProjectile(std::uint32_t objectId)
 // lane FLANK-1 (S-363 / S-780). Retail: RW 0x68E31F registers an object without KindOf NO_COLLIDE (bit 30) with the collision manager (RW 0xB6C470); the manager's
 // update (row RW 0x62E93B .. 0x62E94E, after ThePartitionManager's) finds the overlapping pairs (broad phase RW 0xB6D8A0, the test vslot 0x20) and calls onCollide
 // both ways (RW 0xB6D060). A BezierProjectileBehavior's collide interface (RW vtable 0xC585C8, slot 0 RW 0x85E52B) asks canCollideWith (RW 0x85EF6A) and hands an
-// accepted contact to handleCollision (RW 0x85FDB7; BFME2 decomp BezierProjectileBehaviorSlots.cpp rva0045B4C0 / rva0045BF06, Collide.cpp rva0045CD6E).
+// accepted contact to handleCollision (RW 0x85FDB7; BFME2 decomp BezierProjectileBehavior.cpp rva0045B4C0 / rva0045BF06 / rva0045CD6E).
 // INFERENCE (stop S-780): the pairs of a flying projectile are the objects ThePartitionManager returns within its bounding sphere (distance type 3) whose shapes
 // overlap (RW 0xAD2CE0, NotifyCrushModules::geometriesOverlap), met in id order; retail's broad phase and its contact table order were not ported. Lane SIEGE-1 read
 // the contact test (vslot 0x20 = RW 0x68C7B2): it runs from the pair's lower ObjectID's side with each object's own GeometryInfo (see the test below). Only the

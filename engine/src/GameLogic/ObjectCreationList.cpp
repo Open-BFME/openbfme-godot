@@ -20,6 +20,7 @@
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/BitFlags.h"
+#include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/ConstructionSite.h"
 #include "GameLogic/FindPositionAround.h"
 #include "GameLogic/GameLogic.h"
@@ -776,7 +777,12 @@ std::vector<Object *> ObjectCreationList::createCore(GameLogic &logic, const OCL
 			}
 		}
 		o->setProducer(source); // RW 0x5F1656: RW 0x68B6A1
-		// RW 0x5F1661: a STRUCTURE (template + 0x108 bit 7) is added to the pathfinder's map (RW 0x6E85E9): the port's newObject registers its footprint
+		// RW 0x5F1661: a STRUCTURE (template + 0x108 bit 7) enters the pathfinder map (RW 0x6E85E9).
+		// newObject only allocates the object; register after its final placement and orientation.
+		if (o->isKindOf((unsigned)CombatNames::kinds().structure))
+		{
+			if (AIWorld *ai = logic.aiWorld()) ai->addObjectToPathfindMap(*o);
+		}
 		// RW 0x5F1678 .. 0x5F17B7: FadeIn / FadeOut (the FadeSound and the drawable fade), the drawable refresh: client
 	}
 	return made;

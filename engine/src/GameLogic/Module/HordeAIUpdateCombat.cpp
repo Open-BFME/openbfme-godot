@@ -1878,10 +1878,11 @@ bool HordeAIUpdate::isInCurrentMelee(Object *t)
 	}
 	// RW 0x8701C5 .. 0x8701D4: RW 0x66352C(t, horde) = RW 0x6634BF, the squared nonnegative footprint edge distance (max(0, d - rA - rB))^2, compared with the float at
 	// RW 0xBDE8B8, which is 10000.0f: close means an edge gap below 100 units (review r1 asked for 100.0f, i.e. 10 units; the constant in the binary is 10000)
-	const bool close = CombatQueries::edgeDistanceSquared2D(*t, *t->getPosition(), *getObject(), *getObject()->getPosition()) < 10000.0f;
 	// RW 0x8701E0 .. 0x8701F4 (lane DECOMP-1; BFME2 decomp Rva0046CE9DFinish.cpp, tier A): both sides resolve to their horde (RW 0x693A1A(0), null outside a
-	// horde) and the same answer, two nulls included, is true
-	return t->getHordeObject(false) == target->getHordeObject(false) || close;
+	// horde) and the same answer, two nulls included, is true. Performance (every profile, the same answer): both tests only read, so the horde test goes
+	// first and the distance is measured only when it fails (HordeMemberCollide asks with t the target itself)
+	return t->getHordeObject(false) == target->getHordeObject(false) ||
+		CombatQueries::edgeDistanceSquared2D(*t, *t->getPosition(), *getObject(), *getObject()->getPosition()) < 10000.0f;
 }
 
 // RW 0x86D614

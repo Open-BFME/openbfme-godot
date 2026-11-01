@@ -2,6 +2,7 @@
 #include "doctest.h"
 
 #include "GameClient/GUI/Skirmish/SkirmishGameRecord.h"
+#include "GameClient/MapCache.h"
 #include "GameLogic/NewGame/SkirmishRandom.h"
 #include "GameLogic/ProductionSettings.h"
 #include "Common/BuildVersion.h"
@@ -99,6 +100,29 @@ TEST_CASE("p16 core: startup rejects incomplete unknown and nonfinite starts")
 	map.startPositions[16].x = 1600;
 	map.numPlayers = 17;
 	CHECK_FALSE(MapCache::validateStartPositions(map, &error));
+}
+
+TEST_CASE("map start waypoints: only Player_1..numPlayers_Start are read, other names are skipped, a used start twice is an error")
+{
+	// Edain's Anomaly: mapcache.ini lists one player, the map also has Player_2_Start; Deserted South Road has a "Player_y_Start"
+	MapCacheEntry map;
+	map.name = "maps\\anomaly\\anomaly.map";
+	map.numPlayers = 1;
+	std::string error;
+	CHECK(MapCache::addStartWaypoint(map, "Player_2_Start", Coord3D{ 200, 100, 0 }, &error));
+	CHECK(MapCache::addStartWaypoint(map, "Player_y_Start", Coord3D{ 300, 100, 0 }, &error));
+	CHECK(MapCache::addStartWaypoint(map, "Player_1_Start_Rally", Coord3D{ 300, 100, 0 }, &error));
+	CHECK(map.startPositions.empty());
+	REQUIRE_FALSE(MapCache::validateStartPositions(map, &error)); // the one used start is still required
+	CHECK(error.find("missing Player_1_Start") != std::string::npos);
+	CHECK(MapCache::addStartWaypoint(map, "Player_1_Start", Coord3D{ 100, 100, 0 }, &error));
+	REQUIRE(map.startPositions.size() == 1);
+	CHECK(map.startPositions.at(1).x == 100);
+	CHECK(MapCache::validateStartPositions(map, &error));
+	error.clear();
+	CHECK_FALSE(MapCache::addStartWaypoint(map, "Player_1_Start", Coord3D{ 150, 100, 0 }, &error));
+	CHECK(error == "duplicate start waypoint 'Player_1_Start'");
+	CHECK(map.startPositions.at(1).x == 100);
 }
 
 TEST_CASE("p16 core: replay network indices preserve legacy width and extended high slots")
