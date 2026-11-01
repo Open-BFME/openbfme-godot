@@ -67,8 +67,9 @@ enum class ShellAction
 	CampaignMenuLoad,        // OnBttnLoadGame (RW 0x927AA4 -> RW 0x816655(2, 1, 0))
 	CampaignMenuLastMission, // OnBttnLastMission (RW 0x927AB5 -> RW 0x5EC5D1)
 	CampaignMenuNextMission, // OnBttnNextMission (RW 0x927ACF: message 0x21 -> RW 0x5EAE37)
-	LanLoadWar               // WOTR2 milestone 8 (step 4): AptLanLobby::OnLoadGameBttn on the War of the Ring page (RW 0x849299): the save page in load mode
+	LanLoadWar,              // WOTR2 milestone 8 (step 4): AptLanLobby::OnLoadGameBttn on the War of the Ring page (RW 0x849299): the save page in load mode
 	                         // for the LAN war saves; the one picked is hosted, resumed
+	OnlineLoadWar            // BFME2 0x59ECC1: OnlineStrategic's Load Game selects kind 16; the chosen war is hosted in an online staging room
 };
 
 struct ShellRequest

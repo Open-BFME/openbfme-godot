@@ -364,6 +364,22 @@ std::string SkirmishPreferences::folder() const
 	return out;
 }
 
+std::string Bfme1SkirmishProfiles::statsDiagnostic(const std::string &path, const std::string &cause)
+{
+	const std::string filename = path.substr(path.find_last_of("/\\") + 1);
+	std::string detail = cause;
+	std::size_t at = 0;
+	bool replaced = false;
+	// OptionPreferences includes the supplied path in its read/write errors. Removing only a diagnostic prefix still leaks it.
+	while (!path.empty() && (at = detail.find(path, at)) != std::string::npos)
+	{
+		detail.replace(at, path.size(), filename);
+		at += filename.size();
+		replaced = true;
+	}
+	return replaced ? detail : filename + ": " + detail;
+}
+
 namespace
 {
 bool loadBfme1Stats(const std::string &path, OptionPreferences &stats, std::string *error)
@@ -372,10 +388,21 @@ bool loadBfme1Stats(const std::string &path, OptionPreferences &stats, std::stri
 	const bool exists = std::filesystem::exists(PathIO::native(path), status);
 	if (status)
 	{
-		if (error) *error = path + ": " + status.message();
+		if (error) *error = Bfme1SkirmishProfiles::statsDiagnostic(path, "cannot inspect: " + status.message());
 		return false;
 	}
-	return !exists || stats.load(path, error);
+	std::string cause;
+	if (!exists || stats.load(path, &cause)) return true;
+	if (error) *error = Bfme1SkirmishProfiles::statsDiagnostic(path, cause);
+	return false;
+}
+
+bool saveBfme1Stats(const std::string &path, const OptionPreferences &stats, std::string *error)
+{
+	std::string cause;
+	if (stats.save(path, &cause)) return true;
+	if (error) *error = Bfme1SkirmishProfiles::statsDiagnostic(path, cause);
+	return false;
 }
 }
 
@@ -404,7 +431,7 @@ bool Bfme1SkirmishProfiles::create(SkirmishProfileStore &profiles, std::time_t c
 	const std::string path = profiles.folder() + OnlineLobbyClient::utf16ToUtf8(profiles.current()) + "SkirmishStats.ini";
 	OptionPreferences stats;
 	stats.set("ProfileCreatedDate", date);
-	return stats.save(path, error);
+	return saveBfme1Stats(path, stats, error);
 }
 
 bool Bfme1SkirmishProfiles::recordGame(const SkirmishProfileStore &profiles, const SkirmishSetupSource &source, const GameRecord &record, std::string *error,
@@ -490,5 +517,5 @@ bool Bfme1SkirmishProfiles::recordGame(const SkirmishProfileStore &profiles, con
 	const double seconds = (std::isfinite(previous) ? std::max(0.0, previous) : 0.0) + std::max<std::int64_t>(0, record.durationS);
 	stats.set(side + "TimePlayed", std::to_string(seconds));
 	stats.set(recorded, "1");
-	return stats.save(path, error);
+	return saveBfme1Stats(path, stats, error);
 }

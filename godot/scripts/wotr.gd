@@ -93,6 +93,8 @@ var banner_armies: Array = []     # the army of each banner slot
 var banner_arrivals_seen := 0
 var logic_after_results := false # the logic waits for the battle statistics to close (the resolver's ConflictResultsState, RW 0x9DF550)
 var net := false                  # WOTR2 milestone 8 (step 2b): a LAN war: the orders go to the lockstep, the logic runs on its frames (lw.net_tick)
+var net_online := false
+var net_phase := 0
 var net_resolved := {}
 var net_start_stack := PackedStringArray()
 var capture_armed := false # WOTR2 milestone 8 (step 3): this battle's BattleResultCapture is armed (an Exit waits for it only then)
@@ -210,6 +212,8 @@ func begin_campaign(message: Dictionary, network := false) -> bool:
 	if local_player < 0:
 		local_player = 0
 	net = network
+	net_online = network and game._world.net_is_online()
+	net_phase = 0
 	net_resolved = {}
 	net_start_stack = game._shell.shell_stack() if network else PackedStringArray()
 	if network:
@@ -675,6 +679,8 @@ func _in_battle(b: Dictionary) -> bool:
 ## lockstep auto-resolved shows its statistics to its players (without holding the logic: the other peers run on), a dropped or quitting network ends
 ## the war for this client
 func _net_tick() -> void:
+	if battle_stage == "loading":
+		return # both peers have left strategic orders; wait for the new relay ticket before parking the map
 	var t: Dictionary = lw.net_tick()
 	for e in t.get("executed", []):
 		if int(e.sender) == local_player and not bool(e.ok):
@@ -2416,6 +2422,47 @@ func choose_battle(fight: bool) -> void:
 
 # ---- the real-time battle ----------------------------------------------------------------------------------------------------------------
 
+## WOTR2 milestone 9: the lobby issues a fresh relay game for each real-time battle and map return. Fetch and check it before releasing the current
+## transport; no LAN fallback and no change to StrategicSession's command or save formats (RW 0x6B95BB, BFME2 AptOnlineCustomMatchCtor.cpp).
+func request_online_phase(slots: Array) -> String:
+	if not net_online or game._online_http == null:
+		return "the online war has no active lobby transport"
+	var phase := net_phase + 1
+	var requested: Dictionary = game._shell.online_phase_request(phase, slots)
+	if not requested.get("ok", false):
+		return str(requested.get("error", "the lobby refused the phase request"))
+	var deadline := Time.get_ticks_msec() + 30000
+	while Time.get_ticks_msec() < deadline:
+		await game.get_tree().process_frame
+		var status: Dictionary = game._shell.online_phase_status()
+		if int(status.get("phase", -1)) != phase or bool(status.get("pending", false)):
+			continue
+		if bool(status.get("waiting", false)):
+			await game.get_tree().create_timer(2.0).timeout
+			requested = game._shell.online_phase_request(phase, slots)
+			if not requested.get("ok", false):
+				return str(requested.get("error", "the lobby refused the phase vote retry"))
+			continue
+		var error := str(status.get("error", ""))
+		if not error.is_empty():
+			return "the lobby refused phase %d: %s" % [phase, error]
+		var start := str(status.get("start", ""))
+		if start.is_empty():
+			return "the lobby returned no phase %d START" % phase
+		var staged: Dictionary = game._world.online_war_phase(start, phase)
+		return "" if staged.get("ok", false) else str(staged.get("error", "the phase START was refused"))
+	return "the lobby did not agree on phase %d within 30 seconds" % phase
+
+
+func online_battle_phase_seats(players: Array) -> Array:
+	var seats: Array = []
+	for player in players:
+		var p: int = int(player)
+		if bool(state.players[p].human):
+			seats.append(int(slot_of_player[p]))
+	return seats
+
+
 func _map_key(map_name: String) -> String:
 	var lower := map_name.to_lower()
 	return "maps/%s/%s.map" % [lower, lower]
@@ -2501,11 +2548,18 @@ func _launch_battle(setup: Dictionary) -> void:
 		var lobby_slots: Array = []
 		for i in range(players.size()):
 			lobby_slots.append(int(slot_of_player[int(players[i])]))
+		if net_online:
+			var phase_error: String = await request_online_phase(online_battle_phase_seats(players))
+			if not phase_error.is_empty():
+				game._fail("War of the Ring (online) battle: " + phase_error)
+				return
 		lw.net_park()
 		var lb: Dictionary = game._world.lan_war_battle(msg, lobby_slots)
 		if not lb.get("ok", false):
-			game._fail("War of the Ring (LAN) battle: " + str(lb.get("error", "")))
+			game._fail("War of the Ring battle: " + str(lb.get("error", "")))
 			return
+		if net_online:
+			net_phase += 1
 		game._net_state = "loading"
 		print("GAME WOTR NET battle %d: local battle slot %d, players %s" % [int(setup.battle), int(lb.local_slot), str(players)])
 	game._begin_game(msg)
@@ -2726,7 +2780,14 @@ func on_battle_left(report: Dictionary) -> void:
 	if net:
 		# WOTR2 milestone 8 (step 3): back on the map: the war's START again and a new strategic session (its load barrier is retail's 0x6BB); the
 		# frame numbering starts again (RW 0x625FC2's new network session), the war's clock goes on
-		game._world.lan_war_battle_end()
+		if net_online:
+			var map_phase: Dictionary = game._world.online_war_map_begin()
+			if not map_phase.get("ok", false):
+				game._fail("War of the Ring (online): back on the map: " + str(map_phase.get("error", "")))
+				return
+			net_phase += 1
+		else:
+			game._world.lan_war_battle_end()
 		var nb: Dictionary = game._world.lan_strategic_begin(lw, slot_of_player, game._wotr_net_options())
 		if not nb.get("ok", false):
 			game._fail("War of the Ring (LAN): back on the map: " + str(nb.get("error", "")))

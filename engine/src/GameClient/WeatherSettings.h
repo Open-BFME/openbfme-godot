@@ -1,7 +1,7 @@
 // OpenBFME. GPL-3.0.
 //
 // The objects the INI "Weather" and "WaterSet" blocks read into: BFME2's WeatherSetting (the 0xB4-byte object) and WaterSetting (0x7C bytes), with the values
-// their constructors give (WeatherSettingCtor.cpp, BFME2 0x201618; WaterSettingCtor.cpp, BFME2 0x309CF8). The offsets in the comments are retail's; the structs
+// their constructors give (WeatherSettingCtor.cpp, BFME2 0x201618; Water.cpp:WaterSetting::WaterSetting, BFME2 0x309CF8). The offsets in the comments are retail's; the structs
 // are this port's own layout (the field tables in MapWeather.cpp use offsetof). MapWeather.h reads them from the files; the renderer keeps only what it draws
 // (MapWeather, WaterSetScan::diffuseOf) and the tests look at every member.
 

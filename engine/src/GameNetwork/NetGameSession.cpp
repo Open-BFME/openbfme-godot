@@ -18,7 +18,7 @@ std::vector<int> NetGameSession::disconnectedPlayerIndices() const
 	{
 		const int player = m_config.slotPlayerIndex[(size_t)slot];
 		const bool dropped = m_network ? m_network->isDisconnected(slot) : (playbackDrops & (1u << slot)) != 0;
-		if (player >= 0 && m_start.game.game.slots[slot].disconnected(dropped))
+		if (player >= 0 && m_start.game.game.slots[m_start.gameSlot(slot)].disconnected(dropped))
 		{
 			players.push_back(player);
 		}
@@ -70,7 +70,7 @@ bool NetGameSession::setUp(LiveGame &game, std::string *error)
 	m_config.rejoinWindowMs = m_options.rejoinWindowMs;
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
-		m_config.slotNames[(size_t)s] = m_start.game.game.slots[s].name;
+		m_config.slotNames[(size_t)s] = m_start.game.game.slots[m_start.gameSlot(s)].name;
 	}
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
@@ -78,7 +78,8 @@ bool NetGameSession::setUp(LiveGame &game, std::string *error)
 		{
 			continue;
 		}
-		const Player *p = (size_t)s < r.startSlotPlayers.size() ? game.players().findPlayerWithName(r.startSlotPlayers[(size_t)s]) : nullptr;
+		const int gameSlot = m_start.gameSlot(s);
+		const Player *p = (size_t)gameSlot < r.startSlotPlayers.size() ? game.players().findPlayerWithName(r.startSlotPlayers[(size_t)gameSlot]) : nullptr;
 		if (!p)
 		{
 			if (error)

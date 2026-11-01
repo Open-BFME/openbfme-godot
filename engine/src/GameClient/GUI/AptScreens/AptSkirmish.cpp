@@ -3346,7 +3346,7 @@ void AptSkirmish::refreshBfme1ProfileDisplay()
 		const bool exists = std::filesystem::exists(PathIO::native(path), status);
 		std::string error;
 		if (status || (exists && !m_bfme1Honors.load(path, &error)))
-			windows().note("skirmish-profile-stats", path + ": " + (status ? status.message() : error));
+			windows().note("skirmish-profile-stats", Bfme1SkirmishProfiles::statsDiagnostic(path, status ? "cannot inspect: " + status.message() : error));
 	}
 	const std::u16string dash = fetchOrMissing(m_env.gameText, "APT:DashDash");
 	auto set = [&](const char *name, const std::u16string &value) { windows().setAptText(name, u16ToUtf8(value)); };
@@ -3399,8 +3399,15 @@ void AptSkirmish::refreshBfme1ProfileDisplay()
 			const double seconds = std::strtod(m_bfme1Honors.get(side + "TimePlayed").c_str(), nullptr);
 			const long long hours = std::isfinite(seconds) && seconds > 0 ? (long long)(std::min(seconds, 2147483647.0) / 3600) : 0;
 			set("APT:TotalTimePlayedNum", format("Apt:TimePlayed", { number(hours / 24), number(hours % 24) }));
-			set("APT:CurFactionNameStr", fetchOrMissing(m_env.gameText, "APT:" + side + "Caps"));
+			bool hasCaps = false;
+			std::u16string factionName = fetchOrMissing(m_env.gameText, "APT:" + side + "Caps", &hasCaps);
+			// Mod sides may provide only their PlayerTemplate DisplayName label.
+			if (!hasCaps && !entry.displayLabel.empty()) factionName = fetchOrMissing(m_env.gameText, entry.displayLabel);
+			set("APT:CurFactionNameStr", factionName);
 			movie = faction;
+			// BFME1 1.03: Rva004D8EE0Ctor.cpp (RVA 0x004D8EE0) initializes these constants;
+			// SkirmishBattleHonors::getRank (RVA 0x0009D2F0) promotes on >=. Binary identity,
+			// constructor call path and delta/width helpers: docs/BFME1.md#skirmish-profile-rank-thresholds.
 			static const int thresholds[] = { 0, 5, 10, 30, 50, 150, 300, 500, 800, 1500 };
 			const int points = count("Points");
 			int rank = 1;
