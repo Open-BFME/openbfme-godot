@@ -107,6 +107,7 @@ ALLOWLIST = {
     "online_list_client_test.gd": "the native list client against synthetic responses",
     "online_war_phase_test.gd": "battle relay tickets name only human original seats while tactical seats retain AI",
     "timeline_markers_test.gd": "score timeline markers against a stub shell",
+    "save_failure_menu_test.gd": "late save refusals resume the shell and replace the loading canvas; synthetic world and shell",
     "weatherfx_test.gd": "the Enhanced weather's effects against a stub GameWorld and synthetic images",
 }
 SCRIPT_TIMEOUT = 20
