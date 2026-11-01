@@ -146,9 +146,10 @@ TEST_CASE("siege1 attack retail: a mumak and the Dwarven demolisher break Helm's
 	// merge queue q32 (#159's ramp cells (RW 0x93527F: Helm's Deep's ramps meet the ground and the wall tops only at their two ends) move the AI defender and the random stream; measured once on the merged tree, the change appears at #159's merge point): first damage 317 -> 313, death 383 -> 379
 	// merge queue q34 (#161's block search, block zones RW 0x9389A6 and raised branch RW 0x9389CE, gives the siege engine and the AI defender other routes at Helm's Deep;
 	// measured once on the merged tree and at each merge point, SPELLFIX-1 and #160 keep the archive's values): first damage 313 -> 209, death 379 -> 275
-	CHECK(d.firstHit == 209);
+	// merge queue q35 (#132's ground-structure melee reach, measured once on the merged tree and at each merge point; SIMSMALL-1, #178 and #179 keep the archive's values): first damage 209 -> 216, death 275 -> 283
+	CHECK(d.firstHit == 216);
 	CHECK(d.healthAfterFirst == 3000.0f);
-	CHECK(d.deathFrame == 275);
+	CHECK(d.deathFrame == 283);
 	const AttackResult c = siegeAttack(*s, kHelmsDeep, "Main Gate", "MordorCatapult", false, 500.0f, 600, true);
 	print("MordorCatapult", c);
 	// on the archive (SIEGE-1, test_siege1_gate.cpp): from 500 toward Player_2_Start the catapult's stones meet HelmsDeepGatehouseRight in their line of fire,

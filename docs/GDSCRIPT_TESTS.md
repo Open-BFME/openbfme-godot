@@ -201,6 +201,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/packed_model_texture_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/pathperf1_render_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/perf3_cull_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/perfclient_views_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup; `godot --headless --path godot --script res://tests/perfclient_views_test.gd` (the parallel and the serial view refresh leave identical instancers). |
 | `godot/tests/pose_buffer_cull_query_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
 | `godot/tests/pose_buffer_query_trigger_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
 | `godot/tests/pose_buffer_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
@@ -254,6 +255,8 @@ runner is claimed. All paths below are relative to the repository root.
 
 | `godot/tests/fortress_exit_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
 | `godot/tests/edainfactions1_test.gd` | Manual only; no generic pytest runner | Needs the Edain 4.8.5.3 install (OPENBFME_EDAIN_INSTALL, OPENBFME_EDAIN_ASSETS_INSTALL); without them it only parses. Runs the Dwarven clan choices and the Dwarven AI in real skirmishes. |
+
+| `godot/tests/harlindon_creep_combat_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
 
 ## OAuth readiness regression
 

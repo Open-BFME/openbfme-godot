@@ -557,6 +557,12 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // ShroudClearingRange clears the VisionRange, RW 0x73FB7A / 0x69990F; the economy's PRODUCTION product) moves the battle, the skirmish and the allied blob;
 // #160 (members made where their horde stands, RW 0x8718ED, and left where they are by a move, RW 0x871536) moves the battle and the allied blob, not the
 // skirmish; #161 (the block search's block zones RW 0x9389A6 and raised branch RW 0x9389CE) moves all three.
+// Lane SIMSMALL-1 re-measured the skirmish (OPENBFME_PERF1_REGEN=1, a CI host): the rubble ExperienceTracker reset (RW 0x8C1BB7), the dead-but-kept heals
+// (RW 0x8C2FC1) and the PreferredTargetBone aim (RW 0x6CB85A) move the skirmish from frame 795; the battle does not move.
+// Merge queue q35 re-measured the skirmish once on the merged tree (OPENBFME_PERF1_REGEN=1, a CI host), compared at each merge point: SIMSMALL-1 moves it
+// from frame 766 on the archive's tree; #178 and #179 keep all four vectors byte-identical (and pass with the logic job pool at 1, 4 and 16 threads); #132
+// (ground-structure melee reach from the footprint's obstacle ring, OCL structures in the pathfinder map) moves it from frame 588. The battle, the allied
+// blob and the Uber battle do not move.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,

@@ -140,7 +140,7 @@ enum ConditionType
 	NAMED_TOTALLY_DEAD = 57,                          // lane CAMP-1
 	IS_SEIGE_ATTACHED_TO_WALL = 109,                  // lane SIEGE-1
 	GATE_IS_OPEN = 135,
-	// lane SCRIPT-4 (BFME2 decomp ScriptConditions_evaluateConditionHelper.cpp's cases, each checked against the RotWK body)
+	// lane SCRIPT-4 (BFME2 decomp ScriptConditions.cpp's cases, each checked against the RotWK body)
 	NAMED_ATTACKED_BY_OBJECTTYPE = 19,
 	BUILT_BY_PLAYER = 23,
 	NAMED_SELECTED = 37,
@@ -1118,7 +1118,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		}
 		return false;
 	}
-	case UNIT_HAS_GAINED_LEVEL: // lane BFME2CAMP1, RW 0x7E5A47 (BFME2 decomp ScriptConditions_Rva003E4E6A.cpp, tier B)
+	case UNIT_HAS_GAINED_LEVEL: // lane BFME2CAMP1, RW 0x7E5A47 (BFME2 decomp ScriptConditions.cpp, tier B)
 	{
 		// the unit (RW 0x75A3D8) and its experience tracker (Object + 0x26C): its rank (+ 0x24) above the rank scalar helper's base rank (RW 0x79D102: + 0x2C,
 		// then + 0x0C). No unit or no tracker: false
@@ -1752,7 +1752,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		}
 		return false;
 	}
-	case TYPE_SIGHTED: // RW 0x7EB1C9 (BFME2 ScriptConditions_evaluateTypeSighted.cpp:162, tier A; ZH evaluateTypeSighted)
+	case TYPE_SIGHTED: // RW 0x7EB1C9 (BFME2 ScriptConditions.cpp, tier A; ZH evaluateTypeSighted)
 	{
 		// per player of the mask, ThePartitionManager's objects around the unit within its vision range (RW 0x68E43B, FROM_CENTER_2D) that the unit can
 		// see (RW 0x6612AC at the vision range), not stealthed from it (RW 0x660D2C), alive, controlled by the player, of the type set. Unlike
@@ -1778,13 +1778,13 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		}
 		return false;
 	}
-	case NAMED_BUILDING_IS_EMPTY: // RW 0x7E4C56 (BFME2 ScriptConditions_evaluateIsBuildingEmpty.cpp:111, tier B): a contain holding nothing (vslot 0x114)
+	case NAMED_BUILDING_IS_EMPTY: // RW 0x7E4C56 (BFME2 ScriptConditions.cpp, tier B): a contain holding nothing (vslot 0x114)
 	{
 		const Object *o = engine.getUnitNamed(param(c, 0).stringValue);
 		const ContainModuleInterface *ct = o ? o->getContain() : nullptr;
 		return ct && ct->getContainCount() == 0;
 	}
-	case PLAYER_HAS_SCIENCEPURCHASEPOINTS: // RW 0x7E50AE (BFME2 ScriptConditions_evaluatePlayerMaskTests.cpp:47, tier A): any player with at least the points
+	case PLAYER_HAS_SCIENCEPURCHASEPOINTS: // RW 0x7E50AE (BFME2 ScriptConditions.cpp, tier A): any player with at least the points
 		for (Player *p : players(engine, param(c, 0).stringValue))
 		{
 			if (p->science().getSciencePurchasePoints() >= param(c, 1).intValue)
@@ -1838,7 +1838,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		});
 		return hit;
 	}
-	case PLAYER_HAS_NUMBER_OBJECTS_WITH_MODELCONDITION: // RW 0x7E6B50 (BFME2 ScriptConditions_evaluatePlayerHasNumberObjectsWithModelCondition.cpp, tier A)
+	case PLAYER_HAS_NUMBER_OBJECTS_WITH_MODELCONDITION: // RW 0x7E6B50 (BFME2 ScriptConditions.cpp, tier A)
 	{
 		// the bit by name (RW 0x4B3B5B: _strcmpi over the 591 names, -1 unknown); per player of the mask RW 0x6AC74F(bit, limit): its team members (dead
 		// ones too) with the model condition bit, each count stopping at limit + 1, the walk over the players stopping once the total passes the limit.

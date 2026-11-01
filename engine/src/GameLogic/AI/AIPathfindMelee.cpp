@@ -71,6 +71,40 @@ bool Pathfinder::meleeFootprintFree(const PathfindObject &obj, int x, int y, Pat
 	return true;
 }
 
+// RotWK 0x6ED937..0x6EDA52: scan successive perimeter rings outside the attacker's
+// footprint, accepting only cells whose obstacle identity is the target. The range
+// includes ring zero. Wall-top / bridge-layer exceptions remain S-3806 (ground only).
+bool Pathfinder::meleeStructureReach(const PathfindObject &unit, const Coord3D &from, const PathfindObject &target, int rangeCells)
+{
+	int size = footprintSize(&unit);
+	Coord3D p = from;
+	ICoord2D lo;
+	worldToCell(&p, (size & 1) != 0, &lo);
+	lo.x += size / -2;
+	lo.y += size / -2;
+	auto targetAt = [&](int x, int y) {
+		const PathfindCell *cell = getCell(unit.getLayer(), x, y);
+		return cell && cell->isObstaclePresent(target.getID());
+	};
+	for (int ring = 0; ring <= rangeCells; ++ring)
+	{
+		for (int i = 0; i <= size; ++i)
+		{
+			if (targetAt(lo.x + size - i, lo.y - 1) ||
+				targetAt(lo.x + size, lo.y + size - i) ||
+				targetAt(lo.x - 1 + i, lo.y + size) ||
+				targetAt(lo.x - 1, lo.y - 1 + i))
+			{
+				return true;
+			}
+		}
+		size += 2;
+		--lo.x;
+		--lo.y;
+	}
+	return false;
+}
+
 bool Pathfinder::meleeReachCells(const PathfindObject &unit, const Coord3D &from, const PathfindObject &target, int rangeCells)
 {
 	auto box = [&](const PathfindObject &o, const Coord3D &at, ICoord2D &lo) {

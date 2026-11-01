@@ -170,18 +170,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 		actual.numPlayers = options.start->mapPlayerCount;
 		for (const Waypoint &waypoint : m_terrain.waypoints())
 		{
-			const std::string &name = waypoint.name;
-			if (name.rfind("Player_", 0) != 0 || name.size() < 6 || name.compare(name.size() - 6, 6, "_Start") != 0) continue;
-			int number = 0;
-			for (int i = 1; i <= MAX_SLOTS; ++i)
-			{
-				if (name == "Player_" + std::to_string(i) + "_Start") number = i;
-			}
-			if (!number || !actual.startPositions.emplace(number, waypoint.location).second)
-			{
-				if (error) *error = "invalid or duplicate start waypoint '" + name + "'";
-				return false;
-			}
+			if (!MapCache::addStartWaypoint(actual, waypoint.name, waypoint.location, error)) return false;
 		}
 		if (!MapCache::validateStartPositions(actual, error)) return false;
 	}
