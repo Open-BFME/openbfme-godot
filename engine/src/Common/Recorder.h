@@ -14,19 +14,22 @@
 // Format version 5 (little-endian, NetPacket's byte writer; 3: lane HERO-2's slot Create-a-Heroes in the GameInfo; 4: lane RULES-1's game rules and Legendary Heroes factor;
 // 5: lane UBER-1's simulation profile): "OBFMEREP" (8 bytes), u32 version 3, str profile identity (GameNetwork/ProfileIdentity.h: the
 // text; playback refuses a replay of another identity before loading the game), the NewGameMessage (NetPacket::writeNewGameMessage), i32 recording slot,
-// u32 RNG algorithm, 8 x i32 slot -> player index of the network players, i32 run-ahead, i32 CRC interval; then records:
+// u32 RNG algorithm, 8 x i32 slot -> player index of the network players (16 for a tagged extended GameInfo), i32 run-ahead, i32 CRC interval; then records:
 //   u8 1  frame:  u32 frame, u32 n, n x GameMessage (NetPacket::writeGameMessage, format 2: u32 argument counts)   (only frames with commands)
 //   u8 2  hash:   u32 frame (the logic frame after the frame ran), u32 state hash
 //   u8 3  end:    u32 final frame, u32 final state hash
 //   u8 4  lost:   u32 frame, u32 index, str reason   (a command of the frame that could not be encoded: the recording is incomplete and playback says so)
+//   u8 6  view:   (version 8, lane ANTICHEAT-1) u32 frame, u8 slot, f32 camera x, y, f32 cursor x, y, u8 flags: a player's reported view
 //   u8 5  profile: u32 frame, u32 SimulationProfile   (version 6, lane SAVE-2: the batch of `frame` and the later ones ran under that execution profile: a
 //                 save of the other profile loaded, UBER-1; playback switches there too)
 // Version 6 (lane SAVE-2) also refuses a second command or hash record of one frame; a version 5 replay still reads (it has no profile record).
+// Version 8 (lane CHEAT-1): the GameInfo ends with its Cheat Mode (i32); a version 5 .. 7 replay reads as a game without it.
 // Version 1 (u8 argument counts, a free profile string) is refused.
 
 #pragma once
 
 #include "Common/RandomValue.h"
+#include "Common/RecordingBuild.h"
 #include "Common/SimulationProfile.h"
 #include "GameClient/LiveGameFrameDriver.h"
 #include "GameNetwork/ProfileIdentity.h"
@@ -43,6 +46,9 @@
 
 struct ReplayHeader
 {
+	std::string buildVersion; ///< format 9: provenance for choosing an installation, never simulation identity
+	std::string buildCommit;
+	std::string buildDate; ///< format 10: UTC build day; empty in earlier recordings
 	ProfileIdentity profile; ///< the recording build's (GameNetwork/ProfileIdentity.h)
 	NewGameMessage game;
 	int recordingSlot = 0;
@@ -63,6 +69,7 @@ struct ReplayHeader
 
 struct ReplayFile
 {
+	static constexpr std::size_t kMaxBytes = 256u << 20;
 	ReplayHeader header;
 	std::map<UnsignedInt, std::vector<GameMessage>> frames; ///< frame -> its command list
 	std::map<UnsignedInt, std::uint32_t> hashes;            ///< logic frame after the frame ran -> state hash
@@ -71,6 +78,17 @@ struct ReplayFile
 	bool complete = false; ///< the end record was read
 	std::vector<std::string> lost; ///< commands the recording could not encode ("frame F command I: reason"): the replay is incomplete
 	std::vector<std::pair<UnsignedInt, SimulationProfile>> profileSwitches; ///< lane SAVE-2: the execution profile from that frame on, in frame order
+	// lane ANTICHEAT-1 (version 8): the players' views as their clients reported them (the relay log's VIEW commands): the camera's look-at point and the
+	// world point under the cursor (flags bit 0: the cursor was over the world), the logic frame the client showed. Not simulation input: forgeable by
+	// a modified client, so supporting evidence only (tools/integrity D2)
+	struct View
+	{
+		UnsignedInt frame = 0;
+		std::uint8_t slot = 0;
+		float cameraX = 0.0f, cameraY = 0.0f, cursorX = 0.0f, cursorY = 0.0f;
+		std::uint8_t flags = 0;
+	};
+	std::vector<View> views;
 	// "" when the replay was recorded by this profile, else why not (PLAN: different identifiers refuse to play)
 	// (lane UBER-1: the game's simulation profile must be the running identity's too, whatever the identity text says)
 	std::string profileMismatch(const ProfileIdentity &running) const
@@ -89,7 +107,12 @@ struct ReplayFile
 		return why;
 	}
 	unsigned long long commandCount() const;
-	// false + *error on a bad magic, version, record or truncation (a missing end record is not an error: `complete` says it)
+	std::string loadRefusal(const ProfileIdentity &running) const
+	{
+		return profileMismatch(running).empty() ? "" : RecordingBuild::openWith(header.buildVersion, header.buildDate);
+	}
+	// Relay replays and interrupted recordings may end on a record boundary without an end record (`complete` says it).
+	// Failed reads leave out unchanged and return false + *error.
 	static bool load(const std::string &path, ReplayFile &out, std::string *error);
 	static bool parse(const std::vector<std::uint8_t> &bytes, ReplayFile &out, std::string *error);
 };
@@ -114,6 +137,9 @@ public:
 	bool logUpTo(UnsignedInt frame, std::uint32_t hash, std::vector<std::uint8_t> &out, std::string *error) const;
 	void recordFrame(UnsignedInt frame, const CommandList &commands);
 	void recordHash(UnsignedInt frameAfter, std::uint32_t hash);
+	void recordView(const ReplayFile::View &v); ///< lane ANTICHEAT-1: a VIEW record (version 8)
+	// lane UBER-2C: the last hash recorded is that of `frame` (an Uber recording holds every 5th frame's)
+	bool hasHashOf(UnsignedInt frame) const { return m_anyHash && m_lastHashFrame == frame; }
 	// lane SAVE-2: the game goes on under `profile` from the batch of `frame` on (a loaded save of the other execution profile)
 	void recordProfileSwitch(UnsignedInt frame, SimulationProfile profile);
 	void close(UnsignedInt finalFrame, std::uint32_t finalHash);
@@ -143,6 +169,7 @@ public:
 	explicit ReplayPlayback(const ReplayFile &replay) : m_replay(replay) {}
 	// SMOOTH-1 (review r4): the protocol owner half takes the recorded batches and compares the completions' hashes (captured on the simulation owner)
 	Capture capture() const override;
+	bool hashWanted(UnsignedInt frame) const override { return m_replay.hashes.count(frame) != 0; } // lane UBER-2C: every recorded hash is compared
 	void pump(UnsignedInt protocolFrame, CommandList &pending) override;
 	bool acquire(UnsignedInt frame, FrameBatch &out) override;
 	void completed(const FrameCompletion &c) override;

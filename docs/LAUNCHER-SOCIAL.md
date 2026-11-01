@@ -21,9 +21,11 @@ No `identity_key.txt` is created or read. Success adopts the returned social
 token and reloads the existing friends/inbox; invite Join still uses the same
 game-owned handoff, never an OAuth credential or token on argv.
 
-The system browser uses the fixed loopback callback
+Discord sign-in uses the fixed loopback callback
 `http://127.0.0.1:43827/oauth/callback`. Port conflicts fail closed. Cancel,
 sign-out and origin changes close the listener and clear pending secrets.
+E-mail sign-in instead opens the lobby's `/email/<ticket>` page and polls
+`/v1/auth/email/poll` with an in-memory secret; it needs no loopback listener.
 Provider errors are neutral; no provider response or secret is shown/logged.
 Owner-provisioned confidential apps and Worker secrets remain necessary:
 Discord scope `identify` (Google dropped, 2026-10-20), and
@@ -46,9 +48,11 @@ a code on a different, unbound install; it cannot merge existing accounts.
 The identity is `GameOptions.game_user_dir()/install_id.txt`, the game's file,
 not the launcher's `user://` directory. `OPENBFME_GAME_USER_DIR` retains the
 existing portable/test override. Invalid files fail closed without regeneration.
-The game and launcher both acquire the game-directory `.install_id.lock`
-directory before reading or creating the file. Contention reports a retryable
-failure; neither process overwrites an existing valid identity.
+The launcher acquires the game-directory `.install_id.lock` directory before
+reading or creating the file; contention reports a retryable failure. The game
+no longer uses that lock: it writes a temporary file, renames it into place and
+reads the resulting `install_id.txt`. Both reuse an existing valid file. The
+launcher's lock does not serialize creation by a concurrently starting game.
 
 The same in-memory lobby token is inherited by the verified installed game via
 `OPENBFME_LOBBY_TOKEN`; it is never an argument, saved preference, URL or log
@@ -64,8 +68,8 @@ profile or accepts/reserves a room itself. Game-side acceptance failures are
 reported by the game. A successful process spawn is not proof of a successful
 room join. The launcher stops its authenticated polling after handing off.
 
-This requires a game build containing S-B/C's invite bridge and shared identity
-lock. The original WP-C game does not understand the pending-invite argument.
+This requires a game build containing S-B/C's invite bridge and the shared
+`install_id.txt` identity. The original WP-C game does not understand the pending-invite argument.
 Room-code routes from ONLINEHUB-1 are not assumed: the frozen contract uses
 existing password rooms and recipient-bound invitation grants.
 

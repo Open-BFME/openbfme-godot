@@ -105,6 +105,31 @@ std::string leafOf(const std::string &path)
 	return dot == std::string::npos ? path : path.substr(dot + 1);
 }
 
+int sectionOf(const MenuNavTarget &target)
+{
+	const std::string leaf = leafOf(target.id);
+	if (leaf == "Chat" || leaf == "ChatPlayers" || leaf == "ChatEntry") return 2;
+	if (target.id.find(".MpMapAndSettings.") != std::string::npos ||
+		target.id.find(".MpMapSettings.") != std::string::npos ||
+		target.id.find(".TabButtons.") != std::string::npos ||
+		target.id.find(".TabMap.") != std::string::npos ||
+		target.id.find(".MapsTabSelected.") != std::string::npos ||
+		target.id.find(".RulesTabSelected.") != std::string::npos ||
+		target.id.find(".ChatTabSelected.") != std::string::npos ||
+		target.id.find(".TabChat.") != std::string::npos) return 2;
+	if (target.id.find(".lobby.") != std::string::npos || target.id.find(".MainButtons.") != std::string::npos || target.id.find(".ProfileNav.") != std::string::npos ||
+		target.id.find(".LowerButtons_") != std::string::npos || target.id.find(".MessengerButton.") != std::string::npos) return 0;
+	return 1;
+}
+
+bool isImageCombo(GameWindow *w)
+{
+	using Input = WindowMsgHandledType (*)(GameWindow *, std::uint32_t, WindowMsgData, WindowMsgData);
+	const auto input = w->winGetInputFunc();
+	const auto *fn = input.target<Input>();
+	return fn && *fn == GadgetImageComboBoxInput;
+}
+
 bool isTextEntry(GameWindow *w)
 {
 	return w && BitTest(w->winGetStyle(), GWS_ENTRY_FIELD);
@@ -130,8 +155,66 @@ void MenuNavigator::setMenu(int level, const void *screen)
 		m_level = level;
 		m_screen = screen;
 		m_focusId.clear();
+		m_resultPage.clear();
+		m_controllerResults = false;
 		m_frameShown = false;
+		m_controllerSections = false;
+		m_section = 1;
 	}
+}
+
+bool MenuNavigator::supportsControllerSections() const
+{
+	// All three lobby screens host MpGameSetup. Detect its visible controls,
+	// so browsing games, signing in, and profile pages keep normal navigation.
+	std::vector<MenuNavTarget> list;
+	collect(list, nullptr, false);
+	bool players = false;
+	for (const auto &target : list)
+	{
+		players |= target.id.find(".PlayerList.") != std::string::npos;
+	}
+	return players;
+}
+
+void MenuNavigator::setControllerSections(bool enabled)
+{
+	if (m_controllerSections == enabled) return;
+	m_controllerSections = enabled;
+	clearFocus();
+}
+
+void MenuNavigator::setControllerResults(bool enabled)
+{
+	m_controllerResults = enabled;
+	if (!enabled) { m_resultPage.clear(); return; }
+	const auto list = targets();
+	// Prefer the preview's Skip, then More, then the statistics' Continue.
+	// Only transfer focus on a page change; the player can still browse tabs.
+	for (const char *name : { "Skip", "More", "Continue" })
+	{
+		const std::string path = std::string(".MainButtons.") + name;
+		for (const auto &target : list)
+		{
+			if (target.id.find(path) == std::string::npos) continue;
+			if (m_resultPage != name)
+			{
+				m_resultPage = name;
+				focus(target);
+			}
+			return;
+		}
+	}
+}
+
+void MenuNavigator::switchControllerSection(int delta)
+{
+	if (!m_controllerSections || m_windows.componentInputBlocked()) return;
+	if (auto *layer = m_windows.gadgetLayer()) layer->gadgets().winSetLoneWindow(nullptr);
+	m_section = (m_section + (delta < 0 ? 2 : 1)) % 3;
+	clearFocus();
+	const auto list = targets();
+	if (!list.empty()) focus(list.front());
 }
 
 void MenuNavigator::clearFocus()
@@ -140,7 +223,7 @@ void MenuNavigator::clearFocus()
 	m_frameShown = false;
 }
 
-void MenuNavigator::collect(std::vector<MenuNavTarget> &out, std::vector<MenuNavTarget> *catchers) const
+void MenuNavigator::collect(std::vector<MenuNavTarget> &out, std::vector<MenuNavTarget> *catchers, bool section) const
 {
 	out.clear();
 	if (catchers)
@@ -158,26 +241,14 @@ void MenuNavigator::collect(std::vector<MenuNavTarget> &out, std::vector<MenuNav
 	const float stageW = 1024.0f, stageH = 768.0f; // the menus' stage (AptStageMapping)
 	for (AptButtonInst *b : buttons)
 	{
-		float bx0, by0, bx1, by1;
-		if (!b->contentBounds(bx0, by0, bx1, by1))
-		{
-			continue;
-		}
-		const AptMatrix g = b->globalMatrix();
-		const float xs[4] = { bx0, bx1, bx0, bx1 }, ys[4] = { by0, by0, by1, by1 };
+		// Use the authored hit area, not the current state's artwork bounds.
+		// Hover animations/dropdowns can replace that artwork after focus moves.
+		float box[4];
+		if (!b->hitBounds(box)) continue;
 		MenuNavTarget t;
 		t.kind = MenuNavTarget::Kind::Button;
-		t.x0 = t.y0 = 1e30f;
-		t.x1 = t.y1 = -1e30f;
-		for (int i = 0; i < 4; ++i)
-		{
-			float x, y;
-			g.apply(xs[i], ys[i], x, y);
-			t.x0 = std::min(t.x0, x);
-			t.y0 = std::min(t.y0, y);
-			t.x1 = std::max(t.x1, x);
-			t.y1 = std::max(t.y1, y);
-		}
+		t.x0 = box[0]; t.y0 = box[1];
+		t.x1 = box[2]; t.y1 = box[3];
 		if (t.x1 - t.x0 >= 0.9f * stageW && t.y1 - t.y0 >= 0.9f * stageH)
 		{
 			if (catchers && b->enabled)
@@ -211,7 +282,7 @@ void MenuNavigator::collect(std::vector<MenuNavTarget> &out, std::vector<MenuNav
 				continue;
 			}
 			const std::uint32_t style = w->winGetStyle();
-			if (!(style & (GWS_PUSH_BUTTON | GWS_CHECK_BOX | GWS_HORZ_SLIDER | GWS_SCROLL_LISTBOX | GWS_ENTRY_FIELD | GWS_COMBO_BOX)))
+			if (!isImageCombo(w) && !(style & (GWS_PUSH_BUTTON | GWS_CHECK_BOX | GWS_HORZ_SLIDER | GWS_SCROLL_LISTBOX | GWS_ENTRY_FIELD | GWS_COMBO_BOX)))
 			{
 				continue;
 			}
@@ -241,6 +312,28 @@ void MenuNavigator::collect(std::vector<MenuNavTarget> &out, std::vector<MenuNav
 	{
 		source->navTargets(out);
 	}
+	// Player rows laid out below the bottom toolbar are not visible controls.
+	// Do not let LOCAL16's extra rows extend the controller region behind it.
+	if (section && m_controllerSections && m_section == 1)
+	{
+		float toolbarTop = stageH;
+		for (const auto &t : out)
+			if (sectionOf(t) == 0 && t.id.find(".MessengerButton.") == std::string::npos && t.id.find(".ProfileNav.") == std::string::npos)
+				toolbarTop = std::min(toolbarTop, t.y0);
+		out.erase(std::remove_if(out.begin(), out.end(), [toolbarTop](const MenuNavTarget &t) {
+			return sectionOf(t) == 1 && t.y1 >= toolbarTop;
+		}), out.end());
+	}
+	if (section && m_controllerSections && m_section == 0 &&
+		std::any_of(out.begin(), out.end(), [](const MenuNavTarget &t) { return t.id.find(".ProfileNav.ChangeProfile.") != std::string::npos; }))
+	{
+		// DisableComponents blocks the native gadgets, but they still exist
+		// geometrically behind the movie dropdown. They are not its choices.
+		out.erase(std::remove_if(out.begin(), out.end(), [](const MenuNavTarget &t) { return t.id.find(".ProfileNav.") == std::string::npos; }), out.end());
+	}
+	const bool popup = std::any_of(out.begin(), out.end(), [](const MenuNavTarget &t) { return t.id.find(".ProfilePopup.") != std::string::npos; });
+	if (section && m_controllerSections && !popup && !m_windows.componentInputBlocked())
+		out.erase(std::remove_if(out.begin(), out.end(), [this](const MenuNavTarget &t) { return sectionOf(t) != m_section; }), out.end());
 	std::stable_sort(out.begin(), out.end(), readingBefore);
 }
 
@@ -292,6 +385,60 @@ bool MenuNavigator::focusBox(float out[4]) const
 
 void MenuNavigator::appendFocusFrame(GadgetDrawList &out) const
 {
+	if (!m_frameShown && !m_controllerSections) return;
+	// Authored movie buttons already show their Over artwork or rollover
+	// animation through focus()'s pointer move. Do not cover it with a box.
+	const auto list = targets();
+	if (m_controllerSections && !list.empty() && !m_windows.componentInputBlocked())
+	{
+		float x0 = 1024, y0 = 768, x1 = 0, y1 = 0;
+		for (const auto &t : list) { x0 = std::min(x0, t.x0); y0 = std::min(y0, t.y0); x1 = std::max(x1, t.x1); y1 = std::max(y1, t.y1); }
+		// Quiet corner accents in the native menu's slate/pale-blue palette.
+		// Leave the authored panel borders and headings visible.
+		const int left = (int)x0 - 5, top = (int)y0 - 5;
+		const int right = (int)x1 + 5, bottom = (int)y1 + 5;
+		for (int corner = 0; corner < 4; ++corner)
+		{
+			const int x = (corner & 1) ? right : left;
+			const int y = (corner & 2) ? bottom : top;
+			const int dx = (corner & 1) ? -14 : 14;
+			const int dy = (corner & 2) ? -14 : 14;
+			for (int edge = 0; edge < 2; ++edge)
+			{
+				GadgetDrawCommand accent;
+				accent.kind = GadgetDrawCommand::Kind::Line;
+				accent.window = "ControllerSection";
+				accent.x0 = x; accent.y0 = y;
+				accent.x1 = x + (edge ? 0 : dx);
+				accent.y1 = y + (edge ? dy : 0);
+				accent.color = edge ? 0xFF738090u : 0xFFBFEDFFu;
+				accent.lineWidth = 1;
+				out.commands.push_back(accent);
+			}
+		}
+	}
+	if (const auto *target = find(list, m_focusId); target && target->kind == MenuNavTarget::Kind::Button)
+	{
+		const auto *button = m_windows.apt().input().hitTestButtons(target->cx(), target->cy());
+		if (button && button->info())
+		{
+			for (const auto &record : button->info()->records)
+				if (bool(record.stateMask & 1) != bool(record.stateMask & 2)) return;
+			for (const auto &action : button->info()->actions)
+				if (action.transitionMask & 3) return; // rollover / rollout actions
+		}
+	}
+	if (const auto *target = find(list, m_focusId); target && target->window &&
+		(target->window->winGetStyle() & (GWS_PUSH_BUTTON | GWS_CHECK_BOX)))
+	{
+		GameWindow *w = target->window;
+		for (int i = 0; i < MAX_DRAW_DATA; ++i)
+		{
+			if (!w->winGetHiliteImage(i).empty() && w->winGetHiliteImage(i) != w->winGetEnabledImage(i)) return;
+			if ((w->winGetHiliteColor(i) >> 24) && w->winGetHiliteColor(i) != w->winGetEnabledColor(i)) return;
+		}
+		if ((w->winGetHiliteTextColor() >> 24) && w->winGetHiliteTextColor() != w->winGetEnabledTextColor()) return;
+	}
 	float box[4];
 	if (!m_frameShown || !focusBox(box))
 	{
@@ -367,6 +514,10 @@ int MenuNavigator::nearest(const std::vector<MenuNavTarget> &list, int from, Men
 			continue;
 		}
 		const MenuNavTarget &b = list[i];
+		// Horizontal navigation stays in the current row. Adjacent player
+		// rows can touch/overlap, so edge distance alone admits diagonals.
+		if (!(m_controllerSections && m_section == 0) && (dir == MenuNavKey::Left || dir == MenuNavKey::Right) &&
+			std::fabs(a.cy() - b.cy()) > 0.5f * std::min(a.y1 - a.y0, b.y1 - b.y0)) continue;
 		float along = 0, across = 0; // the distance the way the key goes (positive) and beside it
 		switch (dir)
 		{
@@ -382,7 +533,8 @@ int MenuNavigator::nearest(const std::vector<MenuNavTarget> &list, int from, Men
 		{
 			continue;
 		}
-		const float score = std::max(along, 0.0f) + 2.0f * across;
+		const float score = m_controllerSections && m_section == 0 && (dir == MenuNavKey::Left || dir == MenuNavKey::Right)
+			? centre : std::max(along, 0.0f) + 4.0f * across;
 		if (best < 0 || score < bestScore)
 		{
 			best = (int)i;
@@ -463,35 +615,48 @@ bool MenuNavigator::leave(const std::vector<MenuNavTarget> &catchers, const std:
 bool MenuNavigator::dropDownKey(MenuNavKey key, GameWindow *combo)
 {
 	GameWindowManager &gwm = m_windows.gadgetLayer()->gadgets();
-	if (!BitTest(combo->winGetStyle(), GWS_COMBO_BOX))
-	{
-		return false; // an image combo box's open list: the pointer's (its keys are not ported)
-	}
+	const bool image = isImageCombo(combo);
+	GameWindow *list = image ? GadgetImageComboBoxGetListBox(combo) : GadgetComboBoxGetListBox(combo);
+	if (!list) return false;
+	auto *data = static_cast<ListboxData *>(list->winGetUserData());
+	if (!data) return false;
 	switch (key)
 	{
 		case MenuNavKey::Up:
 		case MenuNavKey::Down:
 		{
-			int index = -1;
-			GadgetComboBoxGetSelectedPos(combo, &index);
-			const int count = GadgetComboBoxGetLength(combo);
-			const int next = std::clamp(index + (key == MenuNavKey::Up ? -1 : 1), 0, std::max(count - 1, 0));
-			if (count > 0 && next != index)
+			// Preview through the list's native hover highlight; selection and
+			// GCM_SELECTED stay untouched until the second A press.
+			const int count = image ? GadgetImageComboBoxGetLength(combo) : GadgetComboBoxGetLength(combo);
+			int index = data->hoverActive ? data->hoverPos : data->selectPos;
+			if (count > 0)
 			{
-				GadgetComboBoxSetSelectedPos(combo, next, true); // the list stays open
-				gwm.winSendSystemMsg(combo->winGetOwner(), GCM_SELECTED, reinterpret_cast<WindowMsgData>(combo), 0);
-				m_log.push_back("choice " + m_focusId + " " + std::to_string(next));
+				index = std::clamp(index + (key == MenuNavKey::Up ? -1 : 1), 0, count - 1);
+				data->trackHover = data->hoverActive = true;
+				data->hoverPos = index;
+				if (index < GadgetListBoxGetTopVisibleEntry(list)) GadgetListBoxSetTopVisibleEntry(list, index);
+				if (index > GadgetListBoxGetBottomVisibleEntry(list)) GadgetListBoxSetBottomVisibleEntry(list, index);
 			}
 			return true;
 		}
 		case MenuNavKey::Activate:
+		{
+			const int index = data->hoverActive ? data->hoverPos : data->selectPos;
+			if (index >= 0)
+			{
+				data->selectPos = index;
+				gwm.winSendSystemMsg(combo, GLM_SELECTED, reinterpret_cast<WindowMsgData>(list), (WindowMsgData)index);
+			}
+			gwm.winSetLoneWindow(nullptr);
+			return true;
+		}
 		case MenuNavKey::Back:
-			gwm.winSetLoneWindow(nullptr); // as a click away from it closes it (GGM_CLOSE, and the combo box is no longer the lone window)
-			m_log.push_back("close-list " + m_focusId);
+			gwm.winSetLoneWindow(nullptr); // cancel the preview
 			return true;
 		default:
-			return true; // the open list keeps the focus
+			return true;
 	}
+
 }
 
 bool MenuNavigator::gadgetKey(MenuNavKey key, const MenuNavTarget &t)
@@ -524,28 +689,10 @@ bool MenuNavigator::gadgetKey(MenuNavKey key, const MenuNavTarget &t)
 		}
 		return true;
 	}
-	if (style & GWS_COMBO_BOX)
+	if ((style & GWS_COMBO_BOX) || isImageCombo(w))
 	{
-		if (key != MenuNavKey::Left && key != MenuNavKey::Right)
-		{
-			return false;
-		}
-		int index = -1;
-		GadgetComboBoxGetSelectedPos(w, &index);
-		const int count = GadgetComboBoxGetLength(w);
-		// the next choice the owner keeps (the OpenBFME page refuses a greyed one and puts the shown choice back: the one after it is tried)
-		for (int i = index + (key == MenuNavKey::Left ? -1 : 1); i >= 0 && i < count; i += key == MenuNavKey::Left ? -1 : 1)
-		{
-			GadgetComboBoxSetSelectedPos(w, i);
-			gwm.winSendSystemMsg(w->winGetOwner(), GCM_SELECTED, reinterpret_cast<WindowMsgData>(w), 0);
-			int now = -1;
-			GadgetComboBoxGetSelectedPos(w, &now);
-			if (now == i)
-			{
-				m_log.push_back("choice " + t.id + " " + std::to_string(i));
-				break;
-			}
-		}
+		if (key != MenuNavKey::Activate) return false; // closed choices are navigation targets
+		gwm.winSendInputMsg(w, GWM_LEFT_UP, 0, 0);
 		return true;
 	}
 	if (style & GWS_SCROLL_LISTBOX)
@@ -602,7 +749,11 @@ bool MenuNavigator::key(MenuNavKey key)
 	{
 		if (const GameWindow *drop = layer->openDropDown())
 		{
-			return dropDownKey(key, const_cast<GameWindow *>(drop));
+			if (key == MenuNavKey::PageNext || key == MenuNavKey::PagePrevious)
+			{
+				layer->gadgets().winSetLoneWindow(nullptr); // shoulder changes cancel an unconfirmed choice
+			}
+			else return dropDownKey(key, const_cast<GameWindow *>(drop));
 		}
 	}
 	// a text entry with the keyboard focus edits with these itself
@@ -611,8 +762,38 @@ bool MenuNavigator::key(MenuNavKey key)
 		return false;
 	}
 	std::vector<MenuNavTarget> list, catchers;
-	collect(list, &catchers);
+	collect(list, &catchers, key != MenuNavKey::PageNext && key != MenuNavKey::PagePrevious);
 	const MenuNavTarget *current = find(list, m_focusId);
+	if (m_controllerResults && (key == MenuNavKey::Back || (key == MenuNavKey::Activate && m_resultPage == "Skip")))
+	{
+		const std::string path = key == MenuNavKey::Back ? ".MainButtons.Back" : ".MainButtons.Skip";
+		for (const auto &target : list)
+		{
+			if (target.id.find(path) != std::string::npos)
+			{
+				focus(target);
+				press(target);
+				return true;
+			}
+		}
+	}
+
+	// PROFILE is a movie-driven rollover menu, not a native combo box. Its
+	// heading remains a separate toggle while its entries animate in. Transfer
+	// focus into those entries; clicking the heading again closes the menu.
+	if (m_controllerSections && m_section == 0 &&
+		m_focusId.find(".ProfileNav.bttn") != std::string::npos &&
+		m_focusId.find(".ProfileNav.") != std::string::npos &&
+		(key == MenuNavKey::Activate || key == MenuNavKey::Up || key == MenuNavKey::Down))
+	{
+		const MenuNavTarget *entry = nullptr;
+		for (const auto &target : list)
+			if (target.id.find(".ProfileNav.") != std::string::npos &&
+				(target.id.find(".ChangeProfile.") != std::string::npos || target.id.find(".NewProfile.") != std::string::npos || target.id.find(".DeleteProfile.") != std::string::npos))
+				if (!entry || target.cy() > entry->cy()) entry = &target;
+		if (entry) { focus(*entry); return true; }
+	}
+
 	MenuNavigationSource *source = m_windows.navigationSource();
 	if (source && source->navKey(key, m_frameShown ? current : nullptr))
 	{
@@ -623,12 +804,39 @@ bool MenuNavigator::key(MenuNavKey key)
 	{
 		if (!leave(catchers, list))
 		{
-			back(list);
+			if (m_controllerSections)
+			{
+				std::vector<MenuNavTarget> all;
+				collect(all, nullptr, false);
+				back(all);
+			}
+			else back(list);
 		}
 		return true;
 	}
 	if (key == MenuNavKey::PageNext || key == MenuNavKey::PagePrevious)
 	{
+		// Active tabs have no button. The remaining buttons identify the current
+		// page and whether this movie offers Chat as its third page.
+		const char *names[] = { ".TabButtons.MapTab.", ".TabButtons.RulesTab.", ".TabButtons.ChatTab." };
+		const MenuNavTarget *tabs[3] = {};
+		int found = 0;
+		for (const auto &target : list)
+			if (target.kind == MenuNavTarget::Kind::Button)
+				for (int i = 0; i < 3; ++i)
+					if (target.id.find(names[i]) != std::string::npos && !tabs[i]) { tabs[i] = &target; ++found; }
+		const int count = found == 2 || tabs[2] ? 3 : 2;
+		for (int active = 0; active < count; ++active)
+		{
+			if (tabs[active]) continue;
+			const int next = (active + (key == MenuNavKey::PageNext ? 1 : count - 1)) % count;
+			if (!tabs[next]) continue;
+			if (m_controllerSections) m_section = 2;
+			focus(*tabs[next]);
+			press(*tabs[next]);
+			clearFocus();
+			return true;
+		}
 		return false; // a screen without pages
 	}
 	if (list.empty())
@@ -724,7 +932,7 @@ bool MenuNavigator::key(MenuNavKey key)
 			{
 				focus(list[(std::size_t)next]);
 			}
-			else if (!leave(catchers, list))
+			else if (m_controllerSections || !leave(catchers, list))
 			{
 				m_frameShown = true; // the edge: the focus stays
 			}

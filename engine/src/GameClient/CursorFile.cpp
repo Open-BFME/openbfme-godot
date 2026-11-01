@@ -2,6 +2,7 @@
 // See CursorFile.h.
 
 #include "GameClient/CursorFile.h"
+#include "Common/PathIO.h"
 
 #include <algorithm>
 #include <cmath>
@@ -45,16 +46,32 @@ bool decodeCur(const std::uint8_t *d, size_t n, CursorImage &out, std::string *e
 	{
 		return fail("unsupported bitmap header (compressed or sizes disagree)");
 	}
+	if (bits != 1 && bits != 4 && bits != 8 && bits != 24 && bits != 32)
+	{
+		return fail("unsupported bit depth");
+	}
 	size_t colors = rd32(b + 32);
 	if (bits <= 8 && colors == 0)
 	{
 		colors = (size_t)1 << bits;
 	}
+	const size_t imageAt = (size_t)offset;
+	if (hdr > n - imageAt || (bits <= 8 && colors > (n - imageAt - hdr) / 4))
+	{
+		return fail("the bitmap header or palette lies outside the file");
+	}
+	const size_t paletteBytes = bits <= 8 ? colors * 4 : 0;
 	const std::uint8_t *pal = b + hdr;
-	const std::uint8_t *xorBits = pal + (bits <= 8 ? colors * 4 : 0);
+	const std::uint8_t *xorBits = pal + paletteBytes;
 	const size_t xorStride = (((size_t)w * (size_t)bits + 31) / 32) * 4, andStride = (((size_t)w + 31) / 32) * 4;
+	const size_t xorAt = (size_t)(xorBits - d);
+	if (xorStride * (size_t)h > n - xorAt)
+	{
+		return fail("the bitmap is truncated");
+	}
 	const std::uint8_t *andBits = xorBits + xorStride * (size_t)h;
-	if ((size_t)(andBits - d) + andStride * (size_t)h > n && bits != 32)
+	const bool haveAndMask = andStride * (size_t)h <= n - (size_t)(andBits - d);
+	if (!haveAndMask && bits != 32)
 	{
 		return fail("the bitmap is truncated");
 	}
@@ -100,7 +117,10 @@ bool decodeCur(const std::uint8_t *d, size_t n, CursorImage &out, std::string *e
 				{
 					return fail("unsupported bit depth");
 				}
-				idx = std::min(idx, colors ? colors - 1 : (size_t)0);
+				if (idx >= colors)
+				{
+					return fail("the bitmap palette index is out of range");
+				}
 				o[0] = pal[idx * 4 + 2];
 				o[1] = pal[idx * 4 + 1];
 				o[2] = pal[idx * 4];
@@ -110,6 +130,10 @@ bool decodeCur(const std::uint8_t *d, size_t n, CursorImage &out, std::string *e
 	}
 	if (!anyAlpha)
 	{
+		if (!haveAndMask)
+		{
+			return fail("the bitmap's transparency mask is truncated");
+		}
 		for (int y = 0; y < h; ++y)
 		{
 			const std::uint8_t *row = andBits + andStride * (size_t)(h - 1 - y);
@@ -323,11 +347,11 @@ std::string FindFileNoCase(const std::string &dir, const std::string &name)
 	};
 	const std::string want = lower(name);
 	std::error_code ec;
-	for (const std::filesystem::directory_entry &e : std::filesystem::directory_iterator(dir, ec))
+	for (const std::filesystem::directory_entry &e : std::filesystem::directory_iterator(PathIO::native(dir), ec))
 	{
-		if (lower(e.path().filename().string()) == want)
+		if (lower(e.path().filename().u8string()) == want)
 		{
-			return e.path().string();
+			return e.path().u8string();
 		}
 	}
 	return std::string();

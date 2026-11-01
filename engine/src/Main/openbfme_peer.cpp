@@ -9,7 +9,8 @@
 // local player's units, through the same lockstep command path as the HUD. The AI players are the logic's own skirmish AI.
 //
 // Usage:
-//   openbfme_peer --rotwk DIR --bfme2 DIR (or ROTWK_INSTALL / BFME2_INSTALL)
+//   openbfme_peer --rotwk DIR --bfme2 DIR (or ROTWK_INSTALL / BFME2_INSTALL) [--mod PATH ...] (lane MODS-1: RotWK -mod, Common/ModMount.h)
+//   lane BFME2MODE-0: --edition=bfme2 (or OPENBFME_EDITION=bfme2) mounts BFME2 1.06's archives alone, no --rotwk (docs/EDITIONS.md; developer switch)
 //     --host PORT [--bind IP] --map KEY --seed N --slot "human|easy|medium|hard|brutal,FactionName,startPos,team[,handicap]" (repeated, in slot order;
 //       lane OWNERFIX-2: the handicap 0, -5 .. -95, default 0; the report lists each playable player's `player_handicap`)
 //     | --join IP:PORT --name NAME
@@ -45,7 +46,7 @@
 //     the run-ahead's frame (NetworkConfig::earlyOrders off); the report's early_orders line counts the orders that ran a frame sooner
 //     lane HERO-2: [--create-a-hero SLOT:FILE.cah] (host, repeated) the slot's Create-a-Hero, read at the setup and carried by the START to every peer;
 //     with --lan-join [--create-a-hero FILE.cah] the own slot's, sent to the lobby's host (LANAPI::requestSlotCreateAHero); [--recruit-create-a-hero FRAME]
-//     with --script: from that frame the local player recruits its Create-a-Hero at its fortress until it exists
+//     from that frame the local player recruits its Create-a-Hero at its fortress until it exists (with or without --script)
 //     lane ONLINE-2 (online play through the relay, docs/ONLINE.md phase O1): --online-start FILE.json instead of --host / --join / --lan-join: plays the
 //     game of the START the lobby service built (GameNetwork/OnlineStart.h), every peer behind the relay (Transport relay mode; the socket binds --bind,
 //     0.0.0.0 by default here, any port); the report gets a relay line
@@ -60,7 +61,10 @@
 //     recorded hashes, starts from a save or the re-simulation does not reproduce them (crc_parity); without an end record (a relay log's replay) the
 //     orders up to the last recorded hash are judged;
 //     [--input-rate-check OUT2.json] D5 (GameNetwork/CommandStreamChecks.h: more than 100 commands in 5 s of game time, informational),
-//     [--command-check OUT3.json] D6 (commands a clean client never sends), in the same pass and under the same abstain rules;
+//     [--packet-check OUT.json --game-id ID] with --relay-log (lane ANTICHEAT-1) D7: each slot's input as the relay received it (the log's INPUT
+//     records, version 4: verified under AUTH-1 or plain, and what the relay refused for the slot);
+//     [--command-check OUT3.json] D6 (commands a clean client never sends), [--view-check OUT4.json] D2 (GameNetwork/ViewChecks.h: the pointer resting
+//     over a hidden enemy, from the replay's VIEW records), in the same pass and under the same abstain rules;
 //     [--fog-check-dump DIR --fog-check-view PLAYER --fog-check-around F1,F2 [--fog-check-before 50] [--fog-check-after 15]] the evidence view: for every
 //     state from `before` frames ahead of each listed frame to `after` frames past it, DIR/frame_NNNNNN.txt holds PLAYER's shroud cells (c / f / s) and
 //     every player object (own / ally / neutral / enemy, seen or not by PLAYER), DIR/terrain.txt the grid's ground heights (tools/integrity/render_evidence.py)
@@ -72,6 +76,10 @@
 //     snapshot, snapshot_bytes, load_ms), [--verify-log] catches it up from its log instead and compares the snapshot; --profile-text FILE
 //     writes this build's profile identity text to FILE (what a test records
 //     the game under, so the save is this build's) and exits
+//   lane PROFILE-3: [--read-trace FILE] (any mode) writes every path the game asked the mounted files for after the profile identity was
+//     computed ("read" / "exists" / "list" lines, sorted): the simdata coverage test (tests/test_profile3_retail.cpp) checks each is covered
+//   lane PROFILE-2: openbfme_peer --rotwk DIR --bfme2 DIR --print-profile-text   prints this build's whole profile identity text (its simdata and
+//     archive lines: an integrity checker names the archives a game's players had that it lacks) and exits
 //   lane ONLINE-2: openbfme_peer --rotwk DIR --bfme2 DIR --print-profile   prints this build's profile identity MD5 (what the lobby compares),
 //     then "faction INDEX NAME" lines (the START's faction numbers); lane STATS-1: [--print-ids] also "thing ID NAME", "upgrade BIT NAME",
 //     "science KEY NAME" and "power ID NAME" lines: the names behind the ids a GameMessage carries (they follow this build's INI load order), for
@@ -88,21 +96,30 @@
 //     replay START, /v1/replays/<id>/start, or a player's START)
 //     the relay's command log of that game (services/online/relay) assembled into a replay (GameNetwork/RelayLog.h); exit 0, or 2 when the players' CRCs
 //     disagree in the log, 4 when the log is incomplete or the replay differs from the game (S-3710). `--replay OUT` then checks CRC parity
+//   lane CHEAT-1: --cheat-mode (host: the game setup's Cheat Mode, the host's slot is the cheat seat); --cheat-at FRAME (the local player sends the Cheat Mode
+//     commands of the two-peer test once: resources, command points, power points, the map revealed, two of its first unit spawned, that unit levelled);
+//     --cheat-forge-at FRAME (the same resources command from a player that is not the seat: every peer refuses it). Report: cheat_executed N, cheat_refused N
+//     and one cheat_line per announced line
 // Exit code: 0 ok, 1 usage / load error / another profile's replay, 2 desync (or replay mismatch / an incomplete replay), 3 network failure (stall /
 // timeout, refused by the lobby: another profile), 4 network or recording errors (a command that could not be sent or recorded).
 
+#include "Common/GameEdition.h"
 #include "Common/JobSystem.h"
+#include "Common/PathIO.h"
 #include "Common/PlayerTemplate.h"
 #include "Common/BuildVersion.h"
 #include "Common/Recorder.h"
 #include "Common/System/SaveGame/SaveGameFile.h"
 #include "GameClient/CommandLogLoad.h"
 #include "Common/Sha256.h"
+#include "Common/ModEngineFeatures.h"
+#include "Common/ModMount.h"
 #include "Common/RetailArchivePolicy.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameClient/GUI/Skirmish/WorldSkirmishSetupSource.h"
+#include "GameClient/LinearCampaign.h"
 #include "GameClient/LiveGame.h"
 #include "GameClient/MapCreationHooks.h"
 #include "GameClient/MapObjectDrawables.h"
@@ -111,6 +128,8 @@
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Module/GateModules.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "Common/Thing/ThingFactory.h"
+#include "Common/Thing/ModuleFactory.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/NewGame/NewGame.h"
 #include "GameLogic/Object/Object.h"
@@ -127,6 +146,8 @@
 #include "GameNetwork/RelayProtocol.h"
 #include "Common/Crc32.h"
 #include "GameLogic/SelfDestruct.h"
+#include "GameLogic/CheatMode.h"
+#include "GameLogic/SimMath.h"
 #include "GameNetwork/ScriptedPlayer.h"
 #include "GameLogic/System/InvisibilityManager.h"
 #include "GameLogic/System/ShroudManager.h"
@@ -148,10 +169,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <fstream>
+#include <set>
 #include <iterator>
 #include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -161,6 +185,7 @@ namespace
 struct Args
 {
 	std::string rotwk, bfme2;
+	GameEdition edition = GameEdition::RotWK201; ///< lane BFME2MODE-0: --edition=bfme2 / OPENBFME_EDITION=bfme2 mounts BFME2 1.06 alone
 	int hostPort = -1;
 	std::string bind = "127.0.0.1";
 	std::string join, name = "Player";
@@ -178,6 +203,8 @@ struct Args
 	std::string record, hashes, report, replay;
 	std::string fogCheck, gameId; // lane ANTICHEAT-1
 	std::string inputRateCheck, commandCheck; // lane ANTICHEAT-1 (owner 2026-10-21): D5, D6
+	std::string packetCheck; // lane ANTICHEAT-1: D7, with --relay-log
+	std::string viewCheck;   // lane ANTICHEAT-1: D2, with --replay
 	std::string fogDump; int fogView = -1; std::vector<UnsignedInt> fogAt; int fogBefore = 50, fogAfter = 15; // the evidence view's frames
 	std::string loadSave; ///< lane SAVE-2: --load-save FILE (with --replay)
 	bool verifyLog = false; ///< lane SAVE-4e: --verify-log (a snapshot save is caught up from its log and its snapshot compared)
@@ -212,14 +239,20 @@ struct Args
 	int lanPortBase = -1;
 	std::string platform; ///< lane PLATFORMICON-1: --platform windows|linux|macos (--lan-join: the PLATFORM_INFO this peer sends; none: it tells nothing, like an older build)
 	bool uber = false;             ///< lane UBER-1: --uber
+	std::vector<std::string> mods; ///< lane MODS-1: --mod PATH (RotWK's -mod; absolute: this tool has no user data folder)
+	std::vector<std::string> modEngines;  ///< lane MODS-3: --mod-engine MD5 (a modified game binary of the mod: Common/ModEngineFeatures.h)
+	std::vector<std::string> installMods; ///< lane MODS-2: --mod-install FOLDER, repeated highest priority first (Common/ModMount.h MountInstallOverlay)
 	int logicThreads = 0;          ///< PERF-2: --logic-threads N, the logic job pool's threads (0: OPENBFME_LOGIC_THREADS or the hardware's)
 	int toggleGates = 0;                ///< lane HUD-5: --toggle-gates N (every N frames the local player toggles each settled gate it controls)
+	bool cheatMode = false;             ///< lane CHEAT-1: --cheat-mode
+	long long cheatAt = -1, cheatForgeAt = -1; ///< lane CHEAT-1: --cheat-at FRAME, --cheat-forge-at FRAME
 	long long recruitCreateAHeroAt = -1; ///< lane HERO-2: --recruit-create-a-hero FRAME (the local player recruits its Create-a-Hero from then on until made)
 	std::vector<std::string> createAHeroes; ///< lane HERO-2: --create-a-hero SLOT:FILE.cah (host) / --create-a-hero FILE.cah (--lan-join: the own slot)
 	std::string onlineStart, relayLog;      ///< lane ONLINE-2: --online-start FILE.json, --relay-log LOG
 	bool bindGiven = false;
 	bool printProfile = false;              ///< lane ONLINE-2: --print-profile (the lobby compares the profile identity's MD5)
 	bool printIds = false;                  ///< lane STATS-1: --print-ids (with --print-profile: the id -> name tables)
+	bool printProfileText = false;          ///< lane PROFILE-2: --print-profile-text (the whole identity text: what a checker compares a game's archives with)
 	long long netPauseAt = -1;              ///< lane ONLINE-3: --net-pause-at FRAME
 	long long netResumeMs = -1;             ///< lane ONLINE-3: --net-resume-ms MS
 	long long rejoinWindowMs = -1;          ///< lane ONLINE-3: --rejoin-window-ms N
@@ -227,18 +260,26 @@ struct Args
 	bool spectateForge = false;             ///< lane ONLINE-3: --spectate-forge (a spectator sends one forged command: the relay must refuse it)
 	int spectateObserveEvery = 0;           ///< lane ONLINE-3: --spectate-observe N (every N frames the spectator's view steps to the next player)
 	bool frameTimes = false;                ///< lane ONLINE-3: --frame-times (the report's frame_ms lines: when every 100th frame ran)
+	std::string readTrace;                  ///< lane PROFILE-3: --read-trace FILE (every path the game asks the mounted files for)
 };
+
+// lane PROFILE-3: --read-trace's set (ArchiveFileSystem::setReadTrace), written to Args::readTrace when the process ends
+std::set<std::string> g_readTrace;
+std::string g_readTracePath;
 
 std::string envOr(const char *name)
 {
-	const char *v = std::getenv(name);
-	return v ? v : "";
+	return PathIO::environment(name);
 }
 
 bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 {
 	a.rotwk = envOr("ROTWK_INSTALL");
 	a.bfme2 = envOr("BFME2_INSTALL");
+	if (!parseGameEdition(envOr("OPENBFME_EDITION"), a.edition, &error))
+	{
+		return false;
+	}
 	for (int i = 1; i < argc; ++i)
 	{
 		const std::string k = argv[i];
@@ -252,7 +293,17 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 			return true;
 		};
 		std::string v;
-		if (k == "--rotwk" && next(a.rotwk)) {}
+		if (k.rfind("--edition=", 0) == 0)
+		{
+			if (!parseGameEdition(k.substr(10), a.edition, &error))
+			{
+				return false;
+			}
+		}
+		else if (k == "--rotwk" && next(a.rotwk)) {}
+		else if (k == "--mod" && next(v)) { a.mods.push_back(v); }
+		else if (k == "--mod-install" && next(v)) { a.installMods.push_back(v); }
+		else if (k == "--mod-engine" && next(v)) { a.modEngines.push_back(v); }
 		else if (k == "--bfme2" && next(a.bfme2)) {}
 		else if (k == "--host" && next(v)) a.hostPort = std::atoi(v.c_str());
 		else if (k == "--bind" && next(a.bind)) a.bindGiven = true;
@@ -260,6 +311,8 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 		else if (k == "--relay-log" && next(a.relayLog)) {}
 		else if (k == "--print-profile") a.printProfile = true;
 		else if (k == "--print-ids") a.printProfile = a.printIds = true;
+		else if (k == "--print-profile-text") a.printProfileText = true;
+		else if (k == "--read-trace" && next(a.readTrace)) {}
 		else if (k == "--net-pause-at" && next(v)) a.netPauseAt = std::atoll(v.c_str());
 		else if (k == "--net-resume-ms" && next(v)) a.netResumeMs = std::atoll(v.c_str());
 		else if (k == "--rejoin-window-ms" && next(v)) a.rejoinWindowMs = std::atoll(v.c_str());
@@ -289,6 +342,8 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 		else if (k == "--game-id" && next(a.gameId)) {}
 		else if (k == "--input-rate-check" && next(a.inputRateCheck)) {}
 		else if (k == "--command-check" && next(a.commandCheck)) {}
+		else if (k == "--packet-check" && next(a.packetCheck)) {}
+		else if (k == "--view-check" && next(a.viewCheck)) {}
 		else if (k == "--fog-check-dump" && next(a.fogDump)) {}
 		else if (k == "--fog-check-view" && next(v)) a.fogView = std::atoi(v.c_str());
 		else if (k == "--fog-check-around" && next(v))
@@ -365,6 +420,9 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 		else if (k == "--create-a-hero" && next(v)) a.createAHeroes.push_back(v);
 		else if (k == "--recruit-create-a-hero" && next(v)) a.recruitCreateAHeroAt = std::atoll(v.c_str());
 		else if (k == "--toggle-gates" && next(v)) a.toggleGates = std::max(1, std::atoi(v.c_str()));
+		else if (k == "--cheat-mode") a.cheatMode = true; // lane CHEAT-1
+		else if (k == "--cheat-at" && next(v)) a.cheatAt = std::atoll(v.c_str());
+		else if (k == "--cheat-forge-at" && next(v)) a.cheatForgeAt = std::atoll(v.c_str());
 		else if (k == "--lan-faction" && next(a.lanFaction)) {}
 		else if (k == "--lan-targets" && next(a.lanTargets)) {}
 		else if (k == "--lan-port-base" && next(v)) a.lanPortBase = std::atoi(v.c_str());
@@ -386,9 +444,10 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 			return false;
 		}
 	}
-	if (a.rotwk.empty() || a.bfme2.empty())
+	if (a.edition == GameEdition::BFME2_106 ? a.bfme2.empty() : (a.rotwk.empty() || a.bfme2.empty()))
 	{
-		error = "the RotWK and BFME2 installs are required (--rotwk / --bfme2 or ROTWK_INSTALL / BFME2_INSTALL)";
+		error = a.edition == GameEdition::BFME2_106 ? "--edition=bfme2 needs the BFME2 install (--bfme2 or BFME2_INSTALL)"
+													: "the RotWK and BFME2 installs are required (--rotwk / --bfme2 or ROTWK_INSTALL / BFME2_INSTALL)";
 		return false;
 	}
 	if (a.lanHost && a.lanJoin)
@@ -424,7 +483,12 @@ struct World
 bool loadWorld(const Args &a, World &w, std::string &error)
 {
 	std::vector<RetailInstall> installs;
-	for (const auto &want : { std::make_pair(std::string("rotwk"), a.rotwk), std::make_pair(std::string("bfme2"), a.bfme2) })
+	std::vector<std::pair<std::string, std::string>> wanted = { { "rotwk", a.rotwk }, { "bfme2", a.bfme2 } };
+	if (a.edition == GameEdition::BFME2_106)
+	{
+		wanted.erase(wanted.begin()); // lane BFME2MODE-0: BFME2 1.06's archives alone (docs/EDITIONS.md); RotWK's rules in Phase 0
+	}
+	for (const auto &want : wanted)
 	{
 		RetailInstall inst;
 		inst.label = want.first;
@@ -447,7 +511,85 @@ bool loadWorld(const Args &a, World &w, std::string &error)
 		error = "the retail mount failed (a headless peer needs every archive a rendering peer reads, the W3D archives included):\n" + error;
 		return false;
 	}
-	w.profile = ProfileIdentity::compute(mr.mounted, RandomAlgorithm::ZH_CarryChain, a.features, a.uber ? SimulationProfile::Uber : SimulationProfile::Faithful);
+	std::vector<std::string> modLines;
+	std::vector<MountedArchive> mountedArchives = mr.mounted;
+	if (!ModEngineFeatures::activate(a.modEngines, &error)) // lane MODS-3, before anything is parsed
+	{
+		return false;
+	}
+	std::vector<std::string> features = a.features;
+	for (const std::string &f : ModEngineFeatures::identityFeatures())
+	{
+		features.push_back(f);
+	}
+	if (!a.installMods.empty())
+	{
+		// lane MODS-2: an install-folder mod: the file system of the merged game folder replaces the retail one
+		auto merged = std::make_unique<Win32BIGFileSystem>();
+		const ModMountReport im = MountInstallOverlay(*merged, mr, a.installMods, ModMountOptions());
+		if (!im.ok)
+		{
+			for (const std::string &e : im.errors)
+			{
+				error += e + "\n";
+			}
+			error = "the install-folder mod failed:\n" + error;
+			return false;
+		}
+		w.fs = std::move(merged);
+		modLines = im.identity;
+		mountedArchives = im.merged;
+	}
+	// lane MODS-1: the -mod operands over the verified retail set (RotWK RW 0x7BAA44, Common/ModMount.h)
+	if (!a.mods.empty())
+	{
+		ModOperand operand;
+		for (const std::string &m : a.mods)
+		{
+			if (!ParseModArgument(m, std::string(), operand, &error))
+			{
+				return false;
+			}
+		}
+		ModMountOptions modOptions;
+		modOptions.rotwkInstallRoot = a.rotwk;
+		const ModMountReport modReport = MountRetailMod(*w.fs, operand, modOptions);
+		if (!modReport.ok)
+		{
+			for (const std::string &e : modReport.errors)
+			{
+				error += e + "\n";
+			}
+			error = "the -mod mount failed:\n" + error;
+			return false;
+		}
+		modLines.insert(modLines.end(), modReport.identity.begin(), modReport.identity.end());
+	}
+	std::string simData, cacheKey, warning; // lane PROFILE-2: the identity's simdata line, through the cache (SimulationData::defaultCachePath)
+	for (const MountedArchive &m : mountedArchives)
+	{
+		cacheKey += m.install + ":" + m.canonicalPath + " " + m.md5 + " " + std::to_string(m.size) + "\n";
+	}
+	for (const std::string &l : modLines)
+	{
+		cacheKey += l + "\n";
+	}
+	if (!SimulationData::cachedDigest(*w.fs, cacheKey, SimulationData::defaultCachePath(), simData, &error, &warning))
+	{
+		return false;
+	}
+	if (!warning.empty())
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", warning.c_str());
+	}
+	w.profile = ProfileIdentity::compute(mountedArchives, RandomAlgorithm::ZH_CarryChain, features, a.uber ? SimulationProfile::Uber : SimulationProfile::Faithful,
+		modLines, simData);
+	if (!a.readTrace.empty())
+	{
+		// lane PROFILE-3: from here on (the digest's own reads above are not the game's): the object world, the map, the AI, every frame
+		g_readTracePath = a.readTrace;
+		w.fs->setReadTrace(&g_readTrace);
+	}
 	w.world = std::make_unique<RetailObjectWorld>(*w.fs);
 	if (!w.world->load(&error) || !MapObjectGameData::load(*w.fs, w.options, &error) || !MapObjectGameData::loadPlayerTemplates(*w.fs, w.options, &error)
 		|| !MapCreationHooks::load(*w.fs, w.options.creationScripts, &error) || !GameLogicSettingsLoader::load(*w.fs, w.settings, &error)
@@ -473,7 +615,7 @@ int templateIndex(const PlayerTemplateStore &store, const std::string &name)
 // lane HERO-2: a .cah file into a slot at the setup (the only place a peer reads one; the game takes the record from the setup)
 bool readCreateAHero(const std::string &path, const World &w, SkirmishGameSlot &slot, std::string &error)
 {
-	std::ifstream f(path, std::ios::binary);
+	std::ifstream f(PathIO::native(path), std::ios::binary);
 	if (!f)
 	{
 		error = "cannot read the Create-a-Hero file " + path;
@@ -527,7 +669,12 @@ bool buildGame(const Args &a, const World &w, NewGameMessage &m, std::string &er
 		s.playerTemplate = templateIndex(w.world->setupPlayerTemplates(), f[1]);
 		if (s.playerTemplate < 0)
 		{
-			error = "unknown faction " + f[1];
+			// lane MODCOMPAT-1: name the playable factions (a mod renames them: Edain has FactionRohan / FactionGondor; tools/mod/gap_census.py reads them)
+			const PlayerTemplateStore &store = w.world->setupPlayerTemplates();
+			std::string playable;
+			for (int i : store.playableSideIndices())
+				playable += (playable.empty() ? "" : " ") + store.getNthPlayerTemplate(i)->getName();
+			error = "unknown faction " + f[1] + " (playable: " + playable + ")";
 			return false;
 		}
 		s.startPos = std::atoi(f[2].c_str());
@@ -537,6 +684,19 @@ bool buildGame(const Args &a, const World &w, NewGameMessage &m, std::string &er
 		if (!SkirmishGameSlot::handicapValid(s.handicap) || (f.size() == 5 && std::to_string(s.handicap) != f[4]))
 		{
 			error = "--slot handicap " + (f.size() == 5 ? f[4] : std::string("0")) + " (0, -5 .. -95)";
+			return false;
+		}
+	}
+	if (a.cheatMode)
+	{
+		// lane CHEAT-1: the host's slot (the first human one, as the LAN host below takes it) is the cheat seat
+		for (int i = 0; i < MAX_SLOTS && m.game.cheatMode < 0; ++i)
+		{
+			m.game.cheatMode = m.game.slots[i].isHuman() ? i : -1;
+		}
+		if (m.game.cheatMode < 0)
+		{
+			error = "--cheat-mode needs a human slot";
 			return false;
 		}
 	}
@@ -601,7 +761,7 @@ void writeReport(const std::string &path, const std::string &text)
 		std::fputs(text.c_str(), stdout);
 		return;
 	}
-	std::ofstream o(path, std::ios::binary | std::ios::trunc); // LF lines on every OS: reports and hash files compare byte for byte (lane WIN-1)
+	std::ofstream o(PathIO::native(path), std::ios::binary | std::ios::trunc); // LF lines on every OS: reports and hash files compare byte for byte (lane WIN-1)
 	o << text;
 }
 
@@ -616,9 +776,9 @@ void dumpFogState(const Args &a, GameLogic &logic, UnsignedInt next)
 	}
 	const int W = shroud->cellCountX(), H = shroud->cellCountY();
 	const std::string terrain = a.fogDump + "/terrain.txt";
-	if (!std::ifstream(terrain))
+	if (!std::ifstream(PathIO::native(terrain)))
 	{
-		std::ofstream t(terrain, std::ios::binary | std::ios::trunc);
+		std::ofstream t(PathIO::native(terrain), std::ios::binary | std::ios::trunc);
 		t << "grid " << W << " " << H << " cell " << shroud->cellSize() << " origin " << shroud->originX() << " " << shroud->originY() << "\n";
 		for (int y = 0; y < H; ++y)
 		{
@@ -642,7 +802,7 @@ void dumpFogState(const Args &a, GameLogic &logic, UnsignedInt next)
 	}
 	char name[64];
 	std::snprintf(name, sizeof(name), "/frame_%06u.txt", next);
-	std::ofstream o(a.fogDump + name, std::ios::binary | std::ios::trunc);
+	std::ofstream o(PathIO::native(a.fogDump + name), std::ios::binary | std::ios::trunc);
 	o << "frame " << next << " view " << a.fogView << "\n";
 	for (int y = 0; y < H; ++y)
 	{
@@ -663,9 +823,9 @@ void dumpFogState(const Args &a, GameLogic &logic, UnsignedInt next)
 		const Relationship r = viewer->getRelationship(owner);
 		const char *rel = owner == viewer ? "own" : r == ENEMIES ? "enemy" : r == ALLIES ? "ally" : "neutral";
 		const ObjectShroudStatus st = shroud->clientObjectStatus(*obj, a.fogView);
-		// what the client draws (Sol r2): not hidden by the shroud, not stealthed and undetected for the viewer; a contained object (no record) is
-		// drawn by its container, not here
-		const bool seen = shroud->hasRecord(*obj) && st != OBJECTSHROUD_SHROUDED && !InvisibilityManager::isStealthedAndUndetected(*obj, viewer);
+		// what the client draws (Sol r2): not hidden by the shroud, not stealthed and undetected for the viewer; an object out of the world (contained, or a
+		// porter in its site) is drawn by its container or not at all, not here
+		const bool seen = obj->isInWorld() && st != OBJECTSHROUD_SHROUDED && !InvisibilityManager::isStealthedAndUndetected(*obj, viewer);
 		o << "o " << obj->getID() << " " << rel << " " << obj->getPosition()->x << " " << obj->getPosition()->y << " " << (seen ? 1 : 0) << " "
 		  << (obj->isKindOfName("STRUCTURE") ? "s" : "u") << "\n";
 	}
@@ -681,10 +841,10 @@ int runReplay(const Args &a, World &w)
 		return 1;
 	}
 	// PLAN: a replay of another profile identity is refused before the game is loaded
-	const std::string mismatch = replay.profileMismatch(w.profile);
+	const std::string mismatch = replay.loadRefusal(w.profile);
 	if (!mismatch.empty())
 	{
-		std::fprintf(stderr, "openbfme_peer: the replay was recorded by another profile: %s\n", mismatch.c_str());
+		std::fprintf(stderr, "openbfme_peer: %s\n", mismatch.c_str());
 		return 1;
 	}
 	// lane SAVE-2: a campaign mission's save names its campaign start (the mission's map directory, the difficulty): the mission is started from that,
@@ -712,6 +872,14 @@ int runReplay(const Args &a, World &w)
 		o.mapName = replay.header.game.game.mapName; // the mission's map directory ("map ang angmar")
 		o.campaign = true;
 		o.difficulty = save.header.campaignDifficulty;
+		// lane BFME2CAMP1 (review): the carry-over a real load restores (GameWorld::start_campaign_mission from the save's header: LiveGame::campaignCarryoverOptions)
+		const LinearCampaign *campaign = w.world->linearCampaigns().find(save.header.campaign);
+		std::string stop;
+		if (!campaign || !LiveGame::campaignCarryoverOptions(*campaign, save.header.campaignMission, save.header.campaignCarryover, o, stop, error))
+		{
+			std::fprintf(stderr, "openbfme_peer: the save's campaign start: %s\n", campaign ? error.c_str() : ("no campaign '" + save.header.campaign + "'").c_str());
+			return 2;
+		}
 	}
 	else
 	{
@@ -723,6 +891,9 @@ int runReplay(const Args &a, World &w)
 		return 1;
 	}
 	std::ostringstream r;
+	// lane PROFILE-3: what the recording's player had that never refuses a game (asset packs, a mod's names, the archive list), against this checker
+	const std::string presentation = ProfileIdentity::presentationDifference(w.profile, replay.header.profile);
+	r << "profile_presentation " << (presentation.empty() ? std::string("same") : presentation) << "\n";
 	if (!a.loadSave.empty())
 	{
 		// lane SAVE-2: the game is brought to the save's frame from the save's own log (a fresh process: nothing of the recording run is shared), then the
@@ -773,8 +944,9 @@ int runReplay(const Args &a, World &w)
 	std::unique_ptr<OrdersIntoFog> fogCheck;
 	std::unique_ptr<InputRateCheck> rateCheck;
 	std::unique_ptr<CommandIntegrityCheck> commandCheck;
+	std::unique_ptr<ViewCheck> viewCheck;
 	std::unique_ptr<FogCheckDriver> fogDriver;
-	const bool checks = !a.fogCheck.empty() || !a.inputRateCheck.empty() || !a.commandCheck.empty();
+	const bool checks = !a.fogCheck.empty() || !a.inputRateCheck.empty() || !a.commandCheck.empty() || !a.viewCheck.empty();
 	if (checks)
 	{
 		std::vector<int> humans;
@@ -798,9 +970,12 @@ int runReplay(const Args &a, World &w)
 				commandCheck->setSlot(p, (int)slot);
 			}
 		}
+		viewCheck = std::make_unique<ViewCheck>(game.logic(), replay.views,
+			std::vector<int>(replay.header.network.slotPlayerIndex.begin(), replay.header.network.slotPlayerIndex.end()), *fogCheck);
 		fogDriver = std::make_unique<FogCheckDriver>(playback, replay, *fogCheck);
 		fogDriver->inputRate = rateCheck.get();
 		fogDriver->commands = commandCheck.get();
+		fogDriver->views = viewCheck.get();
 		if (!a.fogDump.empty())
 		{
 			fogDriver->onState = [&a](GameLogic &logic, UnsignedInt next) { dumpFogState(a, logic, next); };
@@ -857,16 +1032,18 @@ int runReplay(const Args &a, World &w)
 			fogCheck->abstain(why);
 			rateCheck->abstain(why);
 			commandCheck->abstain(why);
+			viewCheck->abstain(why);
 		}
-		const std::pair<const std::string *, std::string> outputs[3] = { { &a.fogCheck, fogCheck->json(a.gameId, parity, game.frame()) },
-			{ &a.inputRateCheck, rateCheck->json(a.gameId, parity, game.frame()) }, { &a.commandCheck, commandCheck->json(a.gameId, parity, game.frame()) } };
+		const std::pair<const std::string *, std::string> outputs[4] = { { &a.fogCheck, fogCheck->json(a.gameId, parity, game.frame()) },
+			{ &a.inputRateCheck, rateCheck->json(a.gameId, parity, game.frame()) }, { &a.commandCheck, commandCheck->json(a.gameId, parity, game.frame()) },
+			{ &a.viewCheck, viewCheck->json(a.gameId, parity, game.frame()) } };
 		for (const auto &o : outputs)
 		{
 			if (o.first->empty())
 			{
 				continue;
 			}
-			std::ofstream fo(*o.first, std::ios::binary | std::ios::trunc);
+			std::ofstream fo(PathIO::native(*o.first), std::ios::binary | std::ios::trunc);
 			fo << o.second << "\n";
 			if (!fo)
 			{
@@ -913,7 +1090,7 @@ int runReplay(const Args &a, World &w)
 			writeReport(a.report, r.str());
 			return 2;
 		}
-		std::ofstream so(a.snapshotOut, std::ios::binary | std::ios::trunc);
+		std::ofstream so(PathIO::native(a.snapshotOut), std::ios::binary | std::ios::trunc);
 		so.write(reinterpret_cast<const char *>(snap.data()), (std::streamsize)snap.size());
 		if (!so)
 		{
@@ -937,7 +1114,7 @@ int runReplay(const Args &a, World &w)
 // lane ONLINE-2: the START file the lobby service built, as the LobbyStart a LAN lobby would give
 bool readOnlineStart(const Args &a, const World &w, LobbyStart &out, std::string &error, OnlineStart::Kind kind = OnlineStart::Kind::Start)
 {
-	std::ifstream f(a.onlineStart, std::ios::binary);
+	std::ifstream f(PathIO::native(a.onlineStart), std::ios::binary);
 	if (!f)
 	{
 		error = "cannot read the online START " + a.onlineStart;
@@ -1087,6 +1264,18 @@ int runRelayLog(const Args &a, World &w)
 	{
 		r << "relay_log_problem " << p << "\n";
 	}
+	if (!a.packetCheck.empty())
+	{
+		// lane ANTICHEAT-1: D7, packet integrity (the same report shape as D1 / D5 / D6: tools/integrity/README.md); online batch r4: in the core
+		const std::string j = RelayLog::packetIntegrityReport(log, config, assembled, a.gameId);
+		std::ofstream fo(a.packetCheck, std::ios::binary | std::ios::trunc);
+		fo << j;
+		if (!fo)
+		{
+			std::fprintf(stderr, "openbfme_peer: cannot write %s\n", a.packetCheck.c_str());
+			return 1;
+		}
+	}
 	r << "replay " << a.record << "\n";
 	for (const std::string &st : RelayLog::stopLines())
 	{
@@ -1212,7 +1401,39 @@ int runSpectator(const Args &a, World &w, UDP &socket, const LobbyStart &lobby)
 }
 } // namespace
 
+static int peerMain(int argc, char **argv);
+
 int main(int argc, char **argv)
+{
+	// lane MODCOMPAT-1: a data error the loaders throw (a mod's faction naming a science it does not define) is the peer's named error and
+	// exit 1, as a parse error is, not an abort (tools/mod/gap_census.py lists it for the package)
+	int rc = 1;
+	try
+	{
+		rc = PathIO::runMain(argc, argv, peerMain);
+	}
+	catch (const std::exception &e)
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", e.what());
+		rc = 1;
+	}
+	if (!g_readTracePath.empty())
+	{
+		std::ofstream out(PathIO::native(g_readTracePath), std::ios::binary | std::ios::trunc);
+		for (const std::string &l : g_readTrace)
+		{
+			out << l << "\n";
+		}
+		if (!out)
+		{
+			std::fprintf(stderr, "openbfme_peer: cannot write the read trace %s\n", g_readTracePath.c_str());
+			return rc ? rc : 1;
+		}
+	}
+	return rc;
+}
+
+static int peerMain(int argc, char **argv)
 {
 	Args a;
 	std::string error;
@@ -1230,6 +1451,11 @@ int main(int argc, char **argv)
 	{
 		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
 		return 1;
+	}
+	if (a.printProfileText)
+	{
+		std::fwrite(w.profile.text.data(), 1, w.profile.text.size(), stdout); // lane PROFILE-2
+		return 0;
 	}
 	if (a.printProfile)
 	{
@@ -1596,7 +1822,10 @@ int main(int argc, char **argv)
 		{
 			if (!client.error().empty() || NetMilliseconds() - lobbyStart > (std::uint64_t)a.lobbyTimeoutSeconds * 1000u)
 			{
-				std::fprintf(stderr, "openbfme_peer: %s\n", client.error().empty() ? "no START in 120 s" : client.error().c_str());
+				if (client.error().empty())
+					std::fprintf(stderr, "openbfme_peer: no START in %d s (--lobby-timeout)\n", a.lobbyTimeoutSeconds);
+				else
+					std::fprintf(stderr, "openbfme_peer: %s\n", client.error().c_str());
 				return 3;
 			}
 			NetSleepMilliseconds(2);
@@ -1733,6 +1962,16 @@ int main(int argc, char **argv)
 		const std::uint64_t loadWait = NetMilliseconds();
 		while (!session.pollLoaded())
 		{
+			if (lobby.online && session.transport().relayRefusal() != 0)
+			{
+				// ONLINE16-FIX: a refused binding never loads: say why at once (the transport's error names it, e.g. a relay too old to authenticate)
+				for (const std::string &e : session.transport().errors())
+				{
+					std::fprintf(stderr, "openbfme_peer: %s\n", e.c_str());
+				}
+				std::fprintf(stderr, "openbfme_peer: the relay refused this player: %s\n", RelayProtocol::refuseReasonName(session.transport().relayRefusal()));
+				return 3;
+			}
 			if (NetMilliseconds() - loadWait > 180000)
 			{
 				std::fprintf(stderr, "openbfme_peer: the other peers did not load in 180 s\n");
@@ -1808,16 +2047,22 @@ int main(int argc, char **argv)
 	const int myPlayer = session.config().slotPlayerIndex[(size_t)lobby.localSlot];
 	const int myStart = start.message.game.slots[lobby.localSlot].startPos;
 	unsigned long long scripted = 0;
+	unsigned long long viewsSent = 0; // lane ANTICHEAT-1
 	std::map<std::string, unsigned long long> scriptedTypes; // the scripted commands by type
 	UnsignedInt lastScripted = 0xFFFFFFFFu;
+	UnsignedInt lastRecruitFrame = 0xFFFFFFFFu; // lane HERO-2: the last frame the Create-a-Hero was recruited on (--recruit-create-a-hero)
 	UnsignedInt scriptFrame = 0xFFFFFFFFu; // lane NETLAG-2: the frame seen last and when its scripted orders are due (--script-phase)
 	std::uint64_t scriptDueMs = 0;
 	std::uint32_t phaseRng = 0x9E3779B9u ^ (std::uint32_t)(lobby.localSlot * 7919 + 1); // presentation-side only: never the simulation's random
 	std::map<int, unsigned long long> runAheadFrames; // lane NETLAG-2: the run-ahead in effect at each frame this peer ran
 	UnsignedInt lastGateFrame = 0xFFFFFFFFu; // lane HUD-5: --toggle-gates
+	bool cheatSent = false, cheatForged = false; // lane CHEAT-1
+	std::vector<std::string> cheatLines;
 	unsigned long long gateMessages = 0;
 	const std::uint64_t runStart = NetMilliseconds();
 	std::uint64_t lastProgress = runStart;
+	std::uint64_t lastLoop = runStart; // lane MPDROP-3: a loop gap (the process was stopped, SIGSTOP) is no wait for a frame
+	std::uint64_t resumedAt = 0;       // lane MPDROP-3: the end of the last loop gap over a second; the report's quit_after_resume_ms
 	int exitCode = 0;
 	// SMOOTH-1: no batch beyond --frames (the worker may run ahead of presentation). lane NETLAG-2: --vanish-at stops the process exactly at its frame
 	// (a frame that waited and the next can now run in one advance: LiveGame's owed frame). KNOWN-3: --quit-at and a pending --blackout-at hold the
@@ -1839,6 +2084,7 @@ int main(int argc, char **argv)
 	// lane MP-2: a frame may wait for the disconnect path (the screen after NetworkDisconnectTime, the drop after NetworkPlayerTimeoutTime)
 	const std::uint64_t noProgressMs = 30000u + (std::uint64_t)so.network.disconnectTime + (std::uint64_t)so.network.playerTimeoutTime;
 	std::string disconnectQuit;
+	long long quitAfterResumeMs = -1; // lane MPDROP-3
 	std::vector<std::string> blackoutLog; // lane MP-3
 	std::vector<std::string> pauseLog;    // lane ONLINE-3
 	std::uint64_t pausedSince = 0, pausedMs = 0;
@@ -1862,7 +2108,7 @@ int main(int argc, char **argv)
 			game.drainFrames(); // the frames already handed to the worker: their hashes are this peer's last ones
 			if (!a.hashes.empty())
 			{
-				std::ofstream h(a.hashes, std::ios::binary | std::ios::trunc);
+				std::ofstream h(PathIO::native(a.hashes), std::ios::binary | std::ios::trunc);
 				char hb[96];
 				for (const FrameHash &fh : hashes)
 				{
@@ -1920,6 +2166,7 @@ int main(int argc, char **argv)
 		if (session.quitRequested())
 		{
 			disconnectQuit = session.quitReason(); // lane MP-2: dropped by the others, the last one left, or the local connection failed
+			quitAfterResumeMs = resumedAt != 0 ? (long long)(NetMilliseconds() - resumedAt) : -1;
 			exitCode = 3;
 			break;
 		}
@@ -1952,18 +2199,43 @@ int main(int argc, char **argv)
 			lastScripted = game.frame();
 			const size_t before = game.commands().messages().size();
 			scripted += ScriptedPlayer::issue(game, myPlayer, myStart, game.commands());
-			// lane HERO-2: the Create-a-Hero is recruited at the fortress (every 25 frames from the given one until the hero exists)
-			const CreateAHeroHero *own = a.recruitCreateAHeroAt >= 0 && game.frame() >= (UnsignedInt)a.recruitCreateAHeroAt && game.frame() % 25 == 0
-				? game.logic().createAHeroes().heroOf(*game.logic().players().getNthPlayer(myPlayer))
-				: nullptr;
-			const Object *made = own && own->objectID ? game.logic().findObjectByID(own->objectID) : nullptr; // a file's ID names no object of this game
-			if (own && !(made && made->getTemplate() && made->getTemplate()->getName() == "CreateAHero"))
+			// lane ANTICHEAT-1: a scripted player reports its view like the game's HUD (Network::submitView: the relay's log only; LAN keeps none):
+			// camera and pointer on its first unit, every third frame
+			if (game.frame() % 3 == 0)
 			{
-				scripted += ScriptedPlayer::recruitCreateAHero(game, myPlayer, game.commands());
+				for (const Object *o = game.logic().getFirstObject(); o; o = o->getNextObject())
+				{
+					const Player *owner = o->getControllingPlayer();
+					if (owner && owner->getPlayerIndex() == myPlayer && !o->isEffectivelyDead() && !o->isKindOfName("STRUCTURE"))
+					{
+						viewsSent += session.network().submitView(game.frame(), o->getPosition()->x, o->getPosition()->y, o->getPosition()->x,
+							o->getPosition()->y, true) ? 1 : 0;
+						break;
+					}
+				}
 			}
 			for (size_t i = before; i < game.commands().messages().size(); ++i)
 			{
 				++scriptedTypes[GameMessageTypeName(game.commands().messages()[i].getType())];
+			}
+		}
+		// lane HERO-2: the Create-a-Hero is recruited at the fortress from the given frame until the hero exists, again 25 frames after each try (a frame
+		// count, not a frame number: a catch-up runs several frames in one loop and would skip a multiple of 25); apart from --script (lane HERO2FLAKE-1:
+		// the scripted player's own queue and spending decide when a recruit there comes out, run to run)
+		if (a.recruitCreateAHeroAt >= 0 && game.frame() >= (UnsignedInt)a.recruitCreateAHeroAt &&
+			(lastRecruitFrame == 0xFFFFFFFFu || game.frame() >= lastRecruitFrame + 25))
+		{
+			const CreateAHeroHero *own = game.logic().createAHeroes().heroOf(*game.logic().players().getNthPlayer(myPlayer));
+			const Object *made = own && own->objectID ? game.logic().findObjectByID(own->objectID) : nullptr; // a file's ID names no object of this game
+			if (own && !(made && made->getTemplate() && made->getTemplate()->getName() == "CreateAHero"))
+			{
+				lastRecruitFrame = game.frame();
+				const size_t before = game.commands().messages().size();
+				scripted += ScriptedPlayer::recruitCreateAHero(game, myPlayer, game.commands());
+				for (size_t i = before; i < game.commands().messages().size(); ++i)
+				{
+					++scriptedTypes[GameMessageTypeName(game.commands().messages()[i].getType())];
+				}
 			}
 		}
 		if (a.toggleGates > 0 && game.frame() != lastGateFrame && game.frame() % (UnsignedInt)a.toggleGates == 0)
@@ -1982,6 +2254,38 @@ int main(int argc, char **argv)
 					++gateMessages;
 				}
 			}
+		}
+		// lane CHEAT-1: the Cheat Mode commands through the lockstep command list (once each)
+		if (a.cheatAt >= 0 && !cheatSent && game.frame() >= (UnsignedInt)a.cheatAt)
+		{
+			cheatSent = true;
+			using CheatMode::Command;
+			auto &cmds = game.commands();
+			cmds.append(CheatMode::makeMessage(myPlayer, Command::AddResources, myPlayer, 2000));
+			cmds.append(CheatMode::makeMessage(myPlayer, Command::AddCommandPoints, myPlayer, 100));
+			cmds.append(CheatMode::makeMessage(myPlayer, Command::AddPowerPoints, myPlayer, 5));
+			cmds.append(CheatMode::makeMessage(myPlayer, Command::RevealMap, myPlayer, 1));
+			Player *me = game.logic().players().getNthPlayer(myPlayer);
+			for (Object *o = game.logic().getFirstObject(); o && me; o = o->getNextObject())
+			{
+				if (o->getControllingPlayer() == me && !o->isKindOfName("STRUCTURE") && !o->isEffectivelyDead())
+				{
+					Coord3D at = *o->getPosition();
+					at.x = SimMath::addf32(at.x, 40.0f);
+					cmds.append(CheatMode::makeMessage(myPlayer, Command::Spawn, myPlayer, 2, (int)game.logic().things().findTemplate(o->getTemplate()->getName())->getTemplateID(), &at));
+					cmds.append(CheatMode::makeMessage(myPlayer, Command::LevelUp, myPlayer, 1, (int)o->getID()));
+					break;
+				}
+			}
+		}
+		if (a.cheatForgeAt >= 0 && !cheatForged && game.frame() >= (UnsignedInt)a.cheatForgeAt)
+		{
+			cheatForged = true;
+			game.commands().append(CheatMode::makeMessage(myPlayer, CheatMode::Command::AddResources, myPlayer, 50000));
+		}
+		for (const CheatMode::LogEntry &e : game.takeCheatAnnouncements())
+		{
+			cheatLines.push_back(std::to_string(e.frame) + " " + e.text);
 		}
 		const UnsignedInt pf = game.protocolFrame();
 		for (auto &bo : a.blackouts)
@@ -2037,6 +2341,12 @@ int main(int argc, char **argv)
 			lastAdvance = t;
 		}
 		const int ran = game.advance(step);
+		if (NetMilliseconds() - lastLoop > 1000)
+		{
+			// lane MPDROP-3: the process did not run for a while (stopped, starved, a hitch): the wait for a frame starts again, its network decides first
+			lastProgress = NetMilliseconds();
+			resumedAt = lastProgress;
+		}
 		if (a.paced)
 		{
 			NetSleepMilliseconds(5);
@@ -2059,10 +2369,12 @@ int main(int argc, char **argv)
 				break;
 			}
 		}
+		lastLoop = NetMilliseconds();
 	}
 	session.finish(game);
 	const std::uint64_t drain = NetMilliseconds();
-	while (!session.allAcked() && NetMilliseconds() - drain < 5000)
+	// lane MPDROP-3: a player the others dropped is acknowledged by nobody: no wait
+	while (disconnectQuit.rfind("dropped by the other players", 0) != 0 && !session.allAcked() && NetMilliseconds() - drain < 5000)
 	{
 		session.service();
 		session.network().update(game.protocolFrame(), game.commands());
@@ -2082,7 +2394,7 @@ int main(int argc, char **argv)
 	if (!a.census.empty())
 	{
 		// lane MP-3: the census CSV (frame = the logic frame after the batch ran)
-		std::ofstream c(a.census, std::ios::binary | std::ios::trunc);
+		std::ofstream c(PathIO::native(a.census), std::ios::binary | std::ios::trunc);
 		c << "frame,sim_us,battalions,troops,objects\n";
 		for (const LockstepDriver::CensusRow &row : session.driver().censusLog())
 		{
@@ -2107,7 +2419,18 @@ int main(int argc, char **argv)
 	r << "desyncs " << net.desyncs().size() << "\n";
 	r << "commands_relayed " << net.commandsRelayed() << "\n";
 	r << "scripted_commands " << scripted << "\n";
+	r << "views_sent " << viewsSent << "\n"; // lane ANTICHEAT-1
 	r << "gate_messages " << gateMessages << "\n";
+	r << "cheat_executed " << game.logic().cheatMode().executedCount() << "\n"; // lane CHEAT-1
+	r << "cheat_refused " << game.logic().cheatMode().refusedCount() << "\n";
+	for (const CheatMode::LogEntry &e : game.takeCheatAnnouncements())
+	{
+		cheatLines.push_back(std::to_string(e.frame) + " " + e.text);
+	}
+	for (const std::string &line : cheatLines)
+	{
+		r << "cheat_line " << line << "\n";
+	}
 	{
 		// lane HUD-5: every gate's state at the end (id:state, GateOpenAndCloseBehavior's 0 opening, 1 open, 2 closing, 3 closed)
 		r << "gates";
@@ -2185,6 +2508,9 @@ int main(int argc, char **argv)
 		r << "relay " << lobby.relay.text() << " bound " << (session.transport().relayBound() ? 1 : 0) << " refusal " << session.transport().relayRefusal()
 		  << " hellos " << ts.relayHellos << " welcomes " << ts.relayWelcomes << " not_bound " << ts.relayNotBound << " slot_mismatches "
 		  << ts.relaySlotMismatches << " unknown_senders " << ts.unknownSenders << "\n";
+		// ONLINE16-FIX: AUTH-1 (the START's macKey: every datagram sealed) and the previous release's envelope (a version-3-only relay)
+		r << "relay_auth authenticated " << (lobby.macKey.empty() ? 0 : 1) << " dropped " << ts.relayAuthDropped << " legacy_envelope "
+		  << (session.transport().relayLegacyEnvelope() ? 1 : 0) << "\n";
 	}
 	{
 		// lane MP-3: the harness's faults and what they did; the smoothness (wall clock, protocol owner)
@@ -2323,6 +2649,7 @@ int main(int argc, char **argv)
 		// lane MP-2: the disconnect path
 		const DisconnectManager &dm = net.disconnectManager();
 		r << "disconnect_quit " << (disconnectQuit.empty() ? "none" : disconnectQuit) << "\n";
+	r << "quit_after_resume_ms " << quitAfterResumeMs << "\n"; // lane MPDROP-3: -1 no quit after a loop gap
 		std::string dropped;
 		for (int s : dm.dropped())
 		{
@@ -2365,6 +2692,60 @@ int main(int argc, char **argv)
 		}
 		// every game slot's player: its live objects (a leaver's go to its ally or die) and whether it is defeated
 		const LiveGame::Report lr = game.report();
+		// lane MODS-3: which script lists and libraries every side runs, the library teams added, and the player / team setup notes
+		for (const std::string &l : lr.mapScripts)
+		{
+			r << "map_scripts " << l << "\n";
+		}
+		for (const std::string &l : lr.playerNotes)
+		{
+			r << "player_note " << l << "\n";
+		}
+		// lane MODCOMPAT-1 (the mod gap census, tools/mod/gap_census.py): what this game ran into that is not ported yet: the live objects carrying
+		// an UnportedModule (by class, S-140) and the script actions / conditions that did nothing / evaluated false (by name, S-1180)
+		for (const auto &kv : lr.logic.unportedModules)
+		{
+			r << "unported_module " << kv.first << " " << kv.second.objects << "\n";
+		}
+		for (const auto &kv : game.logic().scriptEngine().stats().unportedActions)
+		{
+			r << "unported_action " << kv.first << " " << kv.second << "\n";
+		}
+		for (const auto &kv : game.logic().scriptEngine().stats().unportedConditions)
+		{
+			r << "unported_condition " << kv.first << " " << kv.second << "\n";
+		}
+		// the static side (sizes the module ports beyond what one game reached): every object template (its final override) whose behavior
+		// modules name an unported class, by class. A ported class whose runtime falls back to an UnportedModule for some data is not
+		// counted here (only the live count sees it).
+		{
+			ModuleFactory &modules = game.logic().things().moduleFactory();
+			std::map<std::string, size_t> templatesUsing;
+			for (const ThingTemplate *t : game.logic().things().templates())
+			{
+				while (t->getNextOverride())
+				{
+					t = t->getNextOverride();
+				}
+				std::set<std::string> classes;
+				for (const ThingTemplate::Nugget &n : t->behaviorModules().nuggets())
+				{
+					const ModuleFactory::ModuleTemplate *mt = modules.findModuleTemplate(n.name, MODULETYPE_BEHAVIOR);
+					if (!mt || !mt->portedModule)
+					{
+						classes.insert(n.name);
+					}
+				}
+				for (const std::string &c : classes)
+				{
+					++templatesUsing[c];
+				}
+			}
+			for (const auto &kv : templatesUsing)
+			{
+				r << "unported_template_module " << kv.first << " " << kv.second << "\n";
+			}
+		}
 		for (int sl = 0; sl < MAX_SLOTS && (size_t)sl < lr.startSlotPlayers.size(); ++sl)
 		{
 			const Player *p = game.logic().players().findPlayerWithName(lr.startSlotPlayers[(size_t)sl]);
@@ -2421,7 +2802,7 @@ int main(int argc, char **argv)
 	writeReport(a.report, r.str());
 	if (!a.hashes.empty())
 	{
-		std::ofstream h(a.hashes, std::ios::binary | std::ios::trunc);
+		std::ofstream h(PathIO::native(a.hashes), std::ios::binary | std::ios::trunc);
 		for (size_t i = 0; i < hashes.size(); ++i)
 		{
 			std::snprintf(b, sizeof(b), "%u 0x%08X 0x%08X\n", hashes[i].frame, hashes[i].hash, hashes[i].rng);

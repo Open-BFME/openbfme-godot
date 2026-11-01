@@ -9,6 +9,7 @@ import {
   endReportRoster,
   readPlayerReport,
   readPlayerReports,
+  REPORT_TTL_S,
   submitPlayerReport,
 } from '../src/reports.mjs';
 import { createNodeReportStore } from '../src/report-store-node.mjs';
@@ -18,6 +19,38 @@ const installB = 'b'.repeat(32);
 const gameId = '0123456789abcdef';
 const account = { id: 'guest:a', name: 'Alice', install: installA };
 const now = 1_700_000_000_000;
+
+test('Node journal replay repairs legacy report, roster and evidence strings before storage validation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'openbfme-reports-text-'));
+  try {
+    const path = join(directory, 'journal.ndjson');
+    const id = `R-${'a'.repeat(24)}`;
+    const seconds = Math.floor(now / 1000);
+    for (const text of ['\ud800x', 'é e\u0301 🌍']) {
+      const report = { id, source: 'player', reporter: { install: installA, nick: text },
+        target: { install: installB, nick: text }, game_id: gameId, reason: `other: ${text}`,
+        received_at: seconds, expires_at: seconds + REPORT_TTL_S };
+      const roster = { game_id: gameId, participants: [{ account: account.id, install: installA, nick: text }],
+        active: [], state: 'finished', ended_at: seconds };
+      const evidence = { expires_at: report.expires_at, lines: [{ game_id: gameId, nick: text, text, at: seconds }] };
+      const journal = JSON.stringify({ v: 1, kind: 'snapshot', compacted_at: Date.now(), entries: [
+        [`report:${id}`, report], [`roster:${gameId}`, roster], [`evidence:${id}`, evidence],
+      ] }) + '\n';
+      await writeFile(path, journal);
+      const store = createNodeReportStore(directory);
+      const response = await readPlayerReport({ store, now: () => now, reportId: id });
+      assert.equal(response.report.reporter.nick, text.toWellFormed());
+      assert.equal(response.report.target.nick, text.toWellFormed());
+      assert.equal(response.report.reason, `other: ${text.toWellFormed()}`);
+      assert.equal((await store.reportTransaction((tx) => tx.get(`roster:${gameId}`))).participants[0].nick, text.toWellFormed());
+      const storedEvidence = await store.reportTransaction((tx) => tx.get(`evidence:${id}`));
+      assert.equal(storedEvidence.lines[0].nick, text.toWellFormed());
+      assert.equal(storedEvidence.lines[0].text, text.toWellFormed());
+      if (text.isWellFormed()) assert.equal(JSON.stringify(response), JSON.stringify({ v: 1, report }));
+      assert.equal(await readFile(path, 'utf8'), journal, 'read repair leaves the journal bytes alone');
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 const roster = {
   id: gameId,
   slots: [

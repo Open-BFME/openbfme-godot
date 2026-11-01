@@ -10,6 +10,7 @@
 
 #include "GameLogic/Combat/TargetFinder.h"
 #include "GameLogic/Combat/WeaponDelivery.h"
+#include "GameLogic/Object/ObjectGeometry.h"
 
 #include <memory>
 #include <string>

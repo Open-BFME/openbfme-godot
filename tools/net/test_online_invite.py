@@ -72,7 +72,11 @@ def test_invite_accept_uses_local_profile_and_same_session_before_ordinary_join(
     body = json.loads(seen[0][3])
     identity = {"profile": PROFILE, "mode": simulation_mode, "platform": "linux"}
     assert body == {"v": 1, **identity}
-    assert json.loads(seen[1][3]) == identity
+    joined = json.loads(seen[1][3])
+    # lane JOINVER-1: the ordinary join tells this build too (online_lobby.gd own_build); the invite's accept does not (an older lobby refuses it)
+    build = joined.pop("build", None)
+    assert joined == identity
+    assert isinstance(build, dict) and set(build) <= {"version", "date", "official", "platform"} and build.get("platform") == "linux", build
     assert not any(path == "/v1/auth/guest" for path in paths)
 
 

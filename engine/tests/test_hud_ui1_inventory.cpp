@@ -5,10 +5,13 @@
 
 #include "HudTestUtil.h"
 
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/InGameHud.h"
 #include "GameLogic/AI/AICommandSink.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Object/Contain/GarrisonContainRuntime.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 
 #include <set>
@@ -178,4 +181,136 @@ TEST_CASE("ui1 hud: a siege tower's Command_EvacuateSiegeTower is restricted whi
 	REQUIRE(evac.size() == 1);
 	CHECK(evac[0].state == ButtonState::Restricted);
 	CHECK_FALSE(h.hud->controlBar().pressButton(evac[0].slot, evac[0].inPalantir));
+}
+
+namespace
+{
+// lane GARRISON-4: walk `unit` into `building` (a script order, AI command 0x1E) until it is inside with every member
+void enterFully(InventoryHudRig &h, Object *unit, Object *building)
+{
+	AIUpdateInterface *ai = unit->getAIUpdateInterface();
+	REQUIRE(ai != nullptr);
+	REQUIRE(ai->aiEnter(building, CMD_FROM_SCRIPT));
+	HordeContainInterface *hc = unit->getContain() ? unit->getContain()->getHordeContainInterface() : nullptr;
+	int frames = 0;
+	while (frames < 900 && !(unit->getContainedBy() == building && (!hc || hc->allMembersEntered())))
+	{
+		h.frames(1);
+		++frames;
+	}
+	REQUIRE(unit->getContainedBy() == building);
+	h.frames(5);
+}
+} // namespace
+
+// The owner's report (2026-10-22 nightly): units put into a neutral stone tower could not be taken out, its exit button greyed. Retail's
+// GarrisonContain::recalcApparentControllingPlayer (RW 0x87C6CE; BFME2 0x00479432, GarrisonContainRecalcApparentControllingPlayer.cpp) gives the building
+// its first rider's controlling player's default team (Player + 0x30C, Object::setTeam RW 0x69954A) and the original team (its id at contain + 0xDC) back
+// once empty: the garrisoned tower is the local player's, so the control bar is no foreign view (RW 0x94397F) and its riders' exit buttons are enabled.
+TEST_CASE("garrison4 hud: archers in a neutral ruined tower take it over; its exit button is enabled, lets them out, and the tower turns neutral again")
+{
+	if (!haveWorld("garrison4 hud ruined tower"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	InventoryHudRig h(s);
+	Player *neutral = h.rig.logic().players().getNeutralPlayer();
+	REQUIRE(neutral != nullptr);
+	float mx = 0, my = 0;
+	REQUIRE(h.rig.logic().terrain()->getExtent(0, mx, my));
+	const Coord3D c0 = h.rig.freeSpot(mx * 0.5f, my * 0.5f, 300.0f);
+	Object *tower = h.rig.make("RuinedTower_Open", c0.x, c0.y, neutral);
+	Object *archers = h.rig.make("GondorArcherHorde", c0.x - 160.0f, c0.y);
+	REQUIRE(tower->getControllingPlayer() == neutral);
+	h.frames(3);
+	enterFully(h, archers, tower);
+	CHECK(tower->getControllingPlayer() == h.rig.local); // RW 0x87C7B8: the rider's controlling player's default team
+	CHECK(tower->getTeam() == h.rig.local->getDefaultTeam());
+	// a save made while the tower is held keeps the original team (snapshot version 2): the module's bytes load back and save again unchanged
+	GarrisonContain *gc = dynamic_cast<GarrisonContain *>(tower->getContain());
+	REQUIRE(gc != nullptr);
+	XferSave saved;
+	gc->xfer(saved);
+	REQUIRE_FALSE(saved.data().empty());
+	CHECK(saved.data()[0] == 2); // the version
+	XferLoad load(saved.data());
+	gc->xfer(load);
+	REQUIRE(load.atEnd());
+	XferSave again;
+	gc->xfer(again);
+	CHECK(again.data() == saved.data());
+	h.select(tower);
+	REQUIRE(h.hud->input().ui().selected() == std::vector<ObjectID>{ tower->getID() });
+	std::vector<ControlBarButton> exits = h.buttons(GUI_COMMAND_EXIT_CONTAINER);
+	REQUIRE(exits.size() == 1); // NeutralBattleTowerCommandSet: 1 = Command_ExitGarrison
+	CHECK(exits[0].rider == archers->getID());
+	CHECK(exits[0].state == ButtonState::Enabled);
+	REQUIRE(h.hud->controlBar().pressButton(exits[0].slot, exits[0].inPalantir));
+	int frames = 0;
+	while (frames < 900 && archers->getContainedBy() == tower)
+	{
+		h.frames(1);
+		++frames;
+	}
+	CHECK(archers->getContainedBy() == nullptr);
+	CHECK(tower->getContain()->getContainCount() == 0u);
+	CHECK(tower->getControllingPlayer() == neutral); // RW 0x87C7CB .. 0x87C7D8: the original team (TeamFactory::findTeamByID RW 0x7A1EEE) back
+	// the tower is neutral again: the local player's horde may enter it a second time and takes it over again
+	enterFully(h, archers, tower);
+	CHECK(tower->getControllingPlayer() == h.rig.local);
+}
+
+TEST_CASE("garrison4 hud: a neutral Erebor tower holding archers and a hero: one enabled exit per rider, each press lets that rider out, the last turns it neutral")
+{
+	if (!haveWorld("garrison4 hud mixed"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	InventoryHudRig h(s);
+	Player *neutral = h.rig.logic().players().getNeutralPlayer();
+	REQUIRE(neutral != nullptr);
+	float mx = 0, my = 0;
+	REQUIRE(h.rig.logic().terrain()->getExtent(0, mx, my));
+	const Coord3D c0 = h.rig.freeSpot(mx * 0.5f, my * 0.5f, 300.0f);
+	Object *tower = h.rig.make("EBGarrisonableTower", c0.x, c0.y, neutral); // HordeGarrisonContain ContainMax 3, DormitoryCommandSet: three Command_ExitGarrison
+	Object *archers = h.rig.make("GondorArcherHorde", c0.x - 160.0f, c0.y);
+	Object *hero = h.rig.make("GondorBoromir", c0.x, c0.y - 160.0f);
+	h.frames(3);
+	enterFully(h, archers, tower);
+	CHECK(tower->getControllingPlayer() == h.rig.local);
+	enterFully(h, hero, tower); // AllowEnemiesInside = No: the tower is the hero's own player's now
+	CHECK(tower->getContain()->getContainCount() == 2u);
+	h.select(tower);
+	std::vector<ControlBarButton> exits = h.buttons(GUI_COMMAND_EXIT_CONTAINER);
+	REQUIRE(exits.size() == 3);
+	CHECK(exits[0].rider == archers->getID());
+	CHECK(exits[0].state == ButtonState::Enabled);
+	CHECK(exits[1].rider == hero->getID());
+	CHECK(exits[1].state == ButtonState::Enabled);
+	CHECK(exits[2].state == ButtonState::Restricted);
+	// the hero leaves first; the archers still hold the tower for the local player
+	REQUIRE(h.hud->controlBar().pressButton(exits[1].slot, exits[1].inPalantir));
+	int frames = 0;
+	while (frames < 900 && hero->getContainedBy() == tower)
+	{
+		h.frames(1);
+		++frames;
+	}
+	CHECK(hero->getContainedBy() == nullptr);
+	CHECK(tower->getControllingPlayer() == h.rig.local);
+	exits = h.buttons(GUI_COMMAND_EXIT_CONTAINER);
+	REQUIRE(exits.size() == 3);
+	CHECK(exits[0].rider == archers->getID());
+	CHECK(exits[0].state == ButtonState::Enabled);
+	REQUIRE(h.hud->controlBar().pressButton(exits[0].slot, exits[0].inPalantir));
+	frames = 0;
+	while (frames < 900 && archers->getContainedBy() == tower)
+	{
+		h.frames(1);
+		++frames;
+	}
+	CHECK(archers->getContainedBy() == nullptr);
+	CHECK(tower->getControllingPlayer() == neutral);
 }

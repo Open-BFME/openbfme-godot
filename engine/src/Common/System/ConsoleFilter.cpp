@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -51,18 +52,19 @@ struct Stream
 	std::thread reader;
 	std::mutex pendingLock; // the reader's partial line; the crash path takes it too
 	std::string pending;
+	bool dropping = false;
 
 	void reset()
 	{
 		fd = original = target = readEnd = writeEnd = stopRead = stopWrite = -1;
 		done = false;
 		pending.clear();
+		dropping = false;
 	}
 };
 
-// a line longer than this without a newline is written in part (a stream that never ends its line must not grow without bound): up to
-// LogPrivacy::safeCut, scrubbed, the rest kept (review r4: the whole buffer was flushed, cutting through a split path)
-size_t g_maxLine = 8u << 20;
+// An overlong line is discarded until its newline. Splitting it could expose an unlabelled credential suffix.
+size_t g_maxLine = LogPrivacy::kMaxFieldBytes;
 
 std::mutex g_lock; // install / uninstall
 Stream g_streams[2];
@@ -82,15 +84,16 @@ long long nowMs()
 // Writes `text` to `fd`. With `stopFd` (the reader's stop pipe) a write never blocks past the shutdown's deadline: each piece of at most
 // PIPE_BUF bytes is written only once poll() says the sink takes it, and once the stop came, poll() waits no longer than the deadline
 // (Sol r2: a blocked console kept uninstall from returning). What is left at the deadline is dropped.
-void writeAll(int fd, const std::string &text, int stopFd = -1)
+void writeAll(int fd, const std::string &text, int stopFd = -1, long long localDeadline = 0)
 {
 	size_t done = 0;
 	bool stopped = false;
 	while (done < text.size())
 	{
-		if (stopFd >= 0)
+		if (stopFd >= 0 || localDeadline != 0)
 		{
-			const long long deadline = g_deadlineMs.load();
+			const long long shutdown = g_deadlineMs.load();
+			const long long deadline = localDeadline == 0 ? shutdown : (shutdown == 0 ? localDeadline : std::min(localDeadline, shutdown));
 			int timeout = -1;
 			if (deadline != 0)
 			{
@@ -100,17 +103,25 @@ void writeAll(int fd, const std::string &text, int stopFd = -1)
 				timeout = (int)left;
 			}
 			pollfd fds[2] = { { fd, POLLOUT, 0 }, { stopFd, POLLIN, 0 } };
-			const int r = ::poll(fds, stopped ? 1 : 2, timeout);
+			const int r = ::poll(fds, stopped || stopFd < 0 ? 1 : 2, timeout);
 			if (r < 0 && errno == EINTR)
 				continue;
 			if (r <= 0)
 				return; // an error, or the deadline: the rest is dropped
-			if (!stopped && (fds[1].revents & (POLLIN | POLLHUP)) != 0)
+			if (stopFd >= 0 && !stopped && (fds[1].revents & (POLLIN | POLLHUP)) != 0)
 				stopped = true; // from now on bounded by the deadline (uninstall sets it before the stop)
-			if ((fds[0].revents & (POLLOUT | POLLERR | POLLHUP)) == 0)
+			if ((fds[0].revents & POLLNVAL) != 0)
+			{
+				struct stat sink = {}, nullSink = {};
+				if (::fstat(fd, &sink) != 0 ||
+					(!S_ISREG(sink.st_mode) &&
+						!(S_ISCHR(sink.st_mode) && ::stat("/dev/null", &nullSink) == 0 && sink.st_rdev == nullSink.st_rdev)))
+					return;
+			}
+			else if ((fds[0].revents & (POLLOUT | POLLERR | POLLHUP)) == 0)
 				continue;
 		}
-		const size_t piece = stopFd >= 0 ? std::min<size_t>(text.size() - done, PIPE_BUF) : text.size() - done;
+		const size_t piece = stopFd >= 0 || localDeadline != 0 ? std::min<size_t>(text.size() - done, PIPE_BUF) : text.size() - done;
 		const ssize_t n = ::write(fd, text.data() + done, piece);
 		if (n < 0 && errno == EINTR)
 			continue;
@@ -156,21 +167,25 @@ void readLoop(Stream *s)
 		std::lock_guard<std::mutex> lock(s->pendingLock);
 		if (g_crashed.load())
 			continue; // the crash path writes directly
-		s->pending.append(buffer, (size_t)n);
-		const size_t lastNewline = s->pending.rfind('\n');
-		if (lastNewline != std::string::npos)
+		for (ssize_t i = 0; i < n; ++i)
 		{
-			writeAll(s->target, LogPrivacy::redact(s->pending.substr(0, lastNewline + 1), g_rules), s->stopRead);
-			s->pending.erase(0, lastNewline + 1);
-		}
-		else if (s->pending.size() > g_maxLine)
-		{
-			size_t cut = LogPrivacy::safeCut(s->pending, g_rules);
-			if (cut == 0)
-				cut = s->pending.size() / 2; // cannot happen with names shorter than half a line; never an endless hold
-			cut = LogPrivacy::safeCut(s->pending.substr(0, cut), g_rules);
-			writeAll(s->target, LogPrivacy::redact(s->pending.substr(0, cut), g_rules), s->stopRead);
-			s->pending.erase(0, cut);
+			if (buffer[i] == '\n')
+			{
+				if (!s->dropping)
+					writeAll(s->target, LogPrivacy::redact(s->pending, g_rules) + "\n", s->stopRead);
+				s->pending.clear();
+				s->dropping = false;
+			}
+			else if (!s->dropping)
+			{
+				s->pending += buffer[i];
+				if (s->pending.size() > g_maxLine)
+				{
+					s->pending.clear();
+					s->dropping = true;
+					writeAll(s->target, std::string(LogPrivacy::kOversized) + "\n", s->stopRead);
+				}
+			}
 		}
 	}
 	std::lock_guard<std::mutex> lock(s->pendingLock);
@@ -214,7 +229,7 @@ bool install(const LogPrivacy::Rules &rules, std::string *error, int outFd, int 
 	if (g_installed.load())
 		return true;
 	g_rules = rules;
-	g_maxLine = maxLine;
+	g_maxLine = std::min(maxLine, LogPrivacy::kMaxFieldBytes);
 	g_crashed = false;
 	std::fflush(stdout);
 	std::fflush(stderr);
@@ -323,6 +338,7 @@ void crashWrite(const std::string &text)
 	if (!g_installed.load())
 		return;
 	g_crashed = true;
+	const long long deadline = nowMs() + 500;
 	// the partial lines the readers still hold, scrubbed, then the crash text; a reader that holds its lock (it may be the crashed thread)
 	// is waited for at most 100 ms
 	for (Stream &s : g_streams)
@@ -332,14 +348,14 @@ void crashWrite(const std::string &text)
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		if (lock.owns_lock() && !s.pending.empty())
 		{
-			writeAll(s.target, LogPrivacy::redactFinal(s.pending, g_rules) + "\n");
+			writeAll(s.target, LogPrivacy::redactFinal(s.pending, g_rules) + "\n", -1, deadline);
 			s.pending.clear();
 		}
 	}
 	std::string line = LogPrivacy::redact(text, g_rules);
 	if (line.empty() || line.back() != '\n')
 		line += '\n';
-	writeAll(g_streams[1].target, line);
+	writeAll(g_streams[1].target, line, -1, deadline);
 }
 
 #endif

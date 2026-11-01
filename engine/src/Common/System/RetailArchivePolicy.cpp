@@ -1,9 +1,11 @@
 // OpenBFME. GPL-3.0.
 
 #include "Common/RetailArchivePolicy.h"
+#include "Common/PathIO.h"
 #include "Common/ArchiveFile.h"
 #include "Common/AsciiString.h"
 #include "Common/JobSystem.h"
+#include "Common/Md5Cache.h"
 #include "Common/MD5.h"
 #include "Common/MiniJson.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
@@ -11,6 +13,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -49,98 +52,6 @@ std::uint32_t readBE32(const std::uint8_t *p)
 {
 	return ((std::uint32_t)p[0] << 24) | ((std::uint32_t)p[1] << 16) | ((std::uint32_t)p[2] << 8) | (std::uint32_t)p[3];
 }
-
-// Threat model: the md5 check (and this cache) detects wrong or modified game files, such as a
-// mod, a patch or a damaged copy. A cache hit trusts "same absolute path + size + last-write time",
-// so it does not stop deliberate tampering by someone who edits a file and then restores its
-// timestamp (or who edits the cache). That is accepted: cross-play integrity comes from the
-// retail INI/logic CRCs exchanged between players, not from this cache.
-struct Md5Cache
-{
-	std::map<std::string, std::string> entries; // "size\tmtime\tpath" -> md5
-	std::string path;
-	bool dirty = false;
-
-	static std::string key(const std::string &file, std::uint64_t size, long long mtime)
-	{
-		return std::to_string(size) + "\t" + std::to_string(mtime) + "\t" + file;
-	}
-
-	static bool isMd5Hex(const std::string &s)
-	{
-		if (s.size() != 32)
-		{
-			return false;
-		}
-		for (char c : s)
-		{
-			if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
-			{
-				return false;
-			}
-		}
-		return true;
-	}
-
-	// A missing or damaged cache is only a lost speed-up (every key mismatch rehashes), so lines
-	// that do not parse are dropped here; they never reach a verification decision.
-	void load()
-	{
-		if (path.empty())
-		{
-			return;
-		}
-		std::ifstream in(fs::u8path(path));
-		std::string line;
-		while (std::getline(in, line))
-		{
-			if (!line.empty() && line.back() == '\r')
-			{
-				line.pop_back();
-			}
-			size_t tab = line.find('\t');
-			if (tab == std::string::npos || !isMd5Hex(line.substr(0, tab)))
-			{
-				continue;
-			}
-			entries[line.substr(tab + 1)] = line.substr(0, tab);
-		}
-	}
-
-	// Writes to a sibling temp file and renames over the cache, so a crash or a second process
-	// never leaves a half-written cache. Returns an empty string or a warning text.
-	std::string save()
-	{
-		if (path.empty() || !dirty)
-		{
-			return std::string();
-		}
-		std::error_code ec;
-		fs::path target = fs::u8path(path);
-		fs::create_directories(target.parent_path(), ec);
-		fs::path temp = target;
-		temp += ".tmp";
-		{
-			std::ofstream out(temp, std::ios::trunc);
-			for (const auto &e : entries)
-			{
-				out << e.second << '\t' << e.first << '\n';
-			}
-			out.flush();
-			if (!out)
-			{
-				return "could not write the md5 cache " + temp.u8string() + "; every mount will rehash";
-			}
-		}
-		fs::rename(temp, target, ec);
-		if (ec)
-		{
-			fs::remove(temp, ec);
-			return "could not replace the md5 cache " + path + ": " + ec.message() + "; every mount will rehash";
-		}
-		return std::string();
-	}
-};
 
 } // namespace
 
@@ -191,6 +102,13 @@ bool RetailArchivePolicy::parse(const std::string &policyJson, const std::string
 		entry.path = p->string;
 		entry.md5 = AsciiStringUtil::lowered(m->string);
 		entry.size = (std::uint64_t)s->number;
+		if (const JsonValue *l = a.get("language"))
+		{
+			if (l->isString())
+			{
+				entry.language = l->string;
+			}
+		}
 		out.archives.push_back(entry);
 	}
 
@@ -418,20 +336,324 @@ bool RetailArchivePolicy::loadBuiltin(const std::string &id, RetailArchivePolicy
 	return parse(policy, exclusions, out, error);
 }
 
-std::vector<RetailArchiveEntry> RetailArchiveLoadOrder(const std::vector<RetailArchiveEntry> &archives)
+namespace
 {
-	std::vector<std::string> names;
-	std::map<std::string, RetailArchiveEntry> byName;
+
+// "lang/<stem>.big" (a key: lower case, '/') -> "<stem>", else ""
+std::string languageStemOf(const std::string &key)
+{
+	if (key.size() <= 9 || key.compare(0, 5, "lang/") != 0 || key.compare(key.size() - 4, 4, ".big") != 0)
+	{
+		return std::string();
+	}
+	const std::string stem = key.substr(5, key.size() - 9);
+	return stem.find('/') == std::string::npos ? stem : std::string();
+}
+
+// a language's own archive: lang/<language>.big (not <language>audio.big or <language>patchNNN.big)
+bool isBaseLanguageStem(const std::string &stem)
+{
+	return !stem.empty() && stem.find("patch") == std::string::npos && (stem.size() < 5 || stem.compare(stem.size() - 5, 5, "audio") != 0);
+}
+
+// a policy archive that belongs to the English language (lang/English*.big, its "language" not ALL)
+bool isLanguageArchive(const RetailArchiveEntry &a)
+{
+	return !a.language.empty() && a.language != "ALL" && normalizedKey(a.path).compare(0, 12, "lang/english") == 0;
+}
+
+// engine/data/retail-archives/language-archives.json: "game|patch|language" (language lower case) -> its archives
+const std::map<std::string, std::vector<RetailArchiveEntry>> &knownLanguageArchives()
+{
+	static const std::map<std::string, std::vector<RetailArchiveEntry>> known = [] {
+		std::map<std::string, std::vector<RetailArchiveEntry>> out;
+		std::string text;
+		JsonValue root;
+		std::string error;
+		if (!GetEmbeddedDataFile("language-archives.json", text) || !JsonValue::parse(text, root, &error))
+		{
+			return out;
+		}
+		const JsonValue *languages = root.get("languages");
+		if (!languages || !languages->isArray())
+		{
+			return out;
+		}
+		for (const JsonValue &l : languages->array)
+		{
+			const JsonValue *game = l.get("game");
+			const JsonValue *patch = l.get("patch");
+			const JsonValue *language = l.get("language");
+			const JsonValue *archives = l.get("archives");
+			if (!game || !game->isString() || !patch || !patch->isString() || !language || !language->isString() || !archives || !archives->isArray())
+			{
+				continue;
+			}
+			std::vector<RetailArchiveEntry> &list = out[game->string + "|" + patch->string + "|" + AsciiStringUtil::lowered(language->string)];
+			for (const JsonValue &a : archives->array)
+			{
+				const JsonValue *p = a.get("path");
+				const JsonValue *m = a.get("md5");
+				const JsonValue *s = a.get("size");
+				if (p && p->isString() && m && m->isString() && Md5Cache::isMd5Hex(AsciiStringUtil::lowered(m->string)) && s && s->isNumber() && s->number >= 0)
+				{
+					RetailArchiveEntry e;
+					e.path = p->string;
+					e.md5 = AsciiStringUtil::lowered(m->string);
+					e.size = (std::uint64_t)s->number;
+					e.sizeKnown = e.size != 0; // the service lists some files with size 0: their md5 is still pinned
+					e.language = language->string;
+					list.push_back(e);
+				}
+			}
+		}
+		return out;
+	}();
+	return known;
+}
+
+} // namespace
+
+namespace
+{
+
+// "German" from "german": the retail style of a language's name
+std::string languageName(std::string stem)
+{
+	if (!stem.empty())
+	{
+		stem[0] = (char)std::toupper((unsigned char)stem[0]);
+	}
+	return stem;
+}
+
+// the stems of lang/<x>.big (`audio` false) or of lang/<x>audio.big (`audio` true)
+std::vector<std::string> languageStems(const std::map<std::string, std::uint64_t> &onDiskSizes, bool audio)
+{
+	std::vector<std::string> stems;
+	for (const auto &d : onDiskSizes)
+	{
+		const std::string stem = languageStemOf(normalizedKey(d.first));
+		if (!audio && isBaseLanguageStem(stem))
+		{
+			stems.push_back(stem);
+		}
+		else if (audio && stem.size() > 5 && stem.find("patch") == std::string::npos && stem.compare(stem.size() - 5, 5, "audio") == 0)
+		{
+			stems.push_back(stem.substr(0, stem.size() - 5));
+		}
+	}
+	return stems;
+}
+
+// English wins (any other language's archive is then an unknown archive of the English policy), else the single stem, else ""
+std::string chooseStem(const std::vector<std::string> &stems)
+{
+	if (std::find(stems.begin(), stems.end(), "english") != stems.end())
+	{
+		return "english";
+	}
+	return stems.size() == 1 ? stems.front() : std::string();
+}
+
+} // namespace
+
+std::string DetectRetailLanguage(const std::map<std::string, std::uint64_t> &onDiskSizes)
+{
+	return languageName(chooseStem(languageStems(onDiskSizes, false)));
+}
+
+std::string DetectRetailVoiceLanguage(const std::map<std::string, std::uint64_t> &onDiskSizes)
+{
+	return languageName(chooseStem(languageStems(onDiskSizes, true)));
+}
+
+namespace
+{
+
+std::map<std::string, std::uint64_t> languageKeysOfInstall(const std::string &installRoot)
+{
+	std::map<std::string, std::uint64_t> keys;
+	std::error_code ec;
+	for (fs::directory_iterator it(PathIO::native(installRoot), ec), end; !ec && it != end; it.increment(ec)) // native wide paths, as the mount
+	{
+		std::error_code dirError;
+		if (!it->is_directory(dirError) || AsciiStringUtil::lowered(it->path().filename().u8string()) != "lang")
+		{
+			continue;
+		}
+		std::error_code langError;
+		for (fs::directory_iterator f(it->path(), langError), fend; !langError && f != fend; f.increment(langError))
+		{
+			keys[normalizedKey("lang/" + f->path().filename().u8string())] = 0;
+		}
+	}
+	return keys;
+}
+
+} // namespace
+
+std::string DetectRetailLanguageOfInstall(const std::string &installRoot)
+{
+	return DetectRetailLanguage(languageKeysOfInstall(installRoot));
+}
+
+std::string DetectRetailVoiceLanguageOfInstall(const std::string &installRoot)
+{
+	return DetectRetailVoiceLanguage(languageKeysOfInstall(installRoot));
+}
+
+bool RetailStrictLanguage()
+{
+	const char *v = std::getenv("OPENBFME_STRICT_LANGUAGE");
+	return v && *v && std::string(v) != "0";
+}
+
+RetailArchivePolicy LocalizeRetailPolicy(const RetailArchivePolicy &policy, const std::map<std::string, std::uint64_t> &onDiskSizes,
+	RetailLanguageChoice *choice)
+{
+	RetailLanguageChoice local;
+	RetailLanguageChoice &c = choice ? *choice : local;
+	c = RetailLanguageChoice();
+	c.language = DetectRetailLanguage(onDiskSizes);
+	c.voice = DetectRetailVoiceLanguage(onDiskSizes);
+	const std::string text = AsciiStringUtil::lowered(c.language);
+	const std::string voice = AsciiStringUtil::lowered(c.voice);
+	if ((text.empty() || text == "english") && (voice.empty() || voice == "english"))
+	{
+		return policy; // the English path: the policy as it is
+	}
+	c.english = false;
+	const auto &table = knownLanguageArchives();
+	// "lang/English.big" -> "lang/German.big", "lang/EnglishAudio.big" -> "lang/GermanAudio.big", "lang/englishpatch201.big" ->
+	// "lang/germanpatch201.big": the English entry's case style, so BFMEArchiveLoadOrder sorts them as it sorts the English ones
+	auto localized = [](const std::string &path, const std::string &stem) {
+		const bool capital = path.size() > 5 && path[5] == 'E';
+		return path.substr(0, 5) + (capital ? languageName(stem) : stem) + path.substr(5 + 7); // after "lang/english"
+	};
+	RetailArchivePolicy out = policy;
+	for (RetailArchiveEntry &a : out.archives)
+	{
+		if (!isLanguageArchive(a))
+		{
+			continue;
+		}
+		const bool audio = AsciiStringUtil::lowered(a.path).find("audio") != std::string::npos;
+		// the speech archive follows the voice language (its own lang/<x>audio.big; none: the text language's), the others the text language
+		const std::string stem = audio && !voice.empty() ? voice : text;
+		if (stem.empty() || stem == "english")
+		{
+			continue; // English text (or voice) in a non-English folder: the policy's pinned English archive
+		}
+		RetailArchiveEntry l;
+		l.path = localized(a.path, stem);
+		l.language = languageName(stem);
+		if (audio && voice.empty() && a.language.find(' ') != std::string::npos && onDiskSizes.count(normalizedKey(a.path)))
+		{
+			continue; // an archive several languages share (EnglishAudio.big: "EN NL NO PL SV TR"): this language uses the English one, pinned
+		}
+		const RetailArchiveEntry *pin = nullptr;
+		const auto known = table.find(policy.game + "|" + policy.patch + "|" + stem);
+		if (known != table.end())
+		{
+			for (const RetailArchiveEntry &k : known->second)
+			{
+				if (normalizedKey(k.path) == normalizedKey(l.path))
+				{
+					pin = &k;
+				}
+			}
+		}
+		if (pin)
+		{
+			l.md5 = pin->md5;
+			l.size = pin->size;
+			l.sizeKnown = pin->sizeKnown;
+		}
+		else
+		{
+			l.pinned = false;
+			l.sizeKnown = false;
+			c.unpinned.push_back(l.path);
+		}
+		a = l;
+	}
+	const size_t excluded = out.excluded.size();
+	for (size_t i = 0; i < excluded; ++i)
+	{
+		if (!text.empty() && text != "english" && normalizedKey(out.excluded[i]).compare(0, 12, "lang/english") == 0)
+		{
+			out.excluded.push_back(localized(out.excluded[i], text)); // e.g. 2.02's lang/<language>patch202.big
+		}
+	}
+	return out;
+}
+
+std::string RetailBaseAptStopLine()
+{
+	return "S-5302: the BFME2 install's apt\\*.big archives are mounted last although retail RotWK never mounts them (RW 0xA14419): they add "
+		   "file names retail does not have and shadow none";
+}
+
+std::vector<RetailArchiveEntry> RetailArchiveLoadOrder(const std::vector<RetailArchiveEntry> &archives, bool gameInstall)
+{
+	// lane MODS-2: RotWK's startup mount, read from the binary (RW 0xA1766D for the game's own folder, RW 0xA14419 for the BFME2 install named
+	// by RW 0x638D22), as a first-wins sequence:
+	//  * the game folder: loadBigFilesFromDirectory("lang\\", "English*.big", 1) - overwrite 1, so the LAST of them wins: here in descending
+	//    order -, then ("", "*.big", 0), then ("apt\\", "*.big", 0);
+	//  * the BFME2 install: (bfme2 + "lang\\", "English*.big", 0), then (bfme2, "*.big", 0); its apt\ is never mounted (stop S-5302: the port
+	//    keeps those archives last, so they only add files retail does not have).
+	// loadBigFilesFromDirectory RW 0xA17FB0 lists one folder (searchSubdirectories 0) into a FilenameList ordered by AsciiString::compareNoCase
+	// (RW 0x42C33B -> msvcr71 _memicmp, a shorter name first on a tie) and mounts it in that order; with overwrite 0 the first archive mounted keeps
+	// a name (RW 0xA1829C). Before lane MODS-2 the port used BFME1's descending strcmp over the whole install (Win32BIGFileSystem.h): on the
+	// pinned 2.01 / 1.06 archives every one of the 44,882 file names resolves to the same archive either way; the orders differ for mods.
+	auto lowerName = [](const std::string &path) { return AsciiStringUtil::lowered(path); };
+	auto folderOf = [&lowerName](const std::string &path) {
+		const std::string l = lowerName(path);
+		const size_t slash = l.find('/');
+		return slash == std::string::npos ? std::string() : l.substr(0, slash);
+	};
+	std::vector<RetailArchiveEntry> lang, root, apt, other;
 	for (const RetailArchiveEntry &a : archives)
 	{
-		std::string name = slashesToBackslashes(a.path);
-		names.push_back(name);
-		byName[name] = a;
+		const std::string folder = folderOf(a.path);
+		if (folder.empty())
+		{
+			root.push_back(a);
+		}
+		// issue #49: another language's archives (LocalizeRetailPolicy swaps lang/English*.big for lang/<Language>*.big, their `language` not
+		// ALL) take the English ones' place: retail's pattern is lang\<Language>*.big, the language from the registry (RW 0x6416AC)
+		else if (folder == "lang" && a.path.find('/', 5) == std::string::npos &&
+			(lowerName(a.path).compare(5, 7, "english") == 0 || (!a.language.empty() && a.language != "ALL")))
+		{
+			lang.push_back(a);
+		}
+		else if (folder == "apt" && a.path.find('/', 4) == std::string::npos)
+		{
+			apt.push_back(a);
+		}
+		else
+		{
+			other.push_back(a); // no retail load reads it (not in a pinned 2.01 / 1.06 policy); kept last so it can only add files
+		}
+	}
+	auto ascending = [](std::vector<RetailArchiveEntry> &v) {
+		std::stable_sort(v.begin(), v.end(), [](const RetailArchiveEntry &x, const RetailArchiveEntry &y) {
+			return AsciiStringUtil::compareNoCase(x.path, y.path) < 0;
+		});
+	};
+	ascending(lang);
+	ascending(root);
+	ascending(apt);
+	ascending(other);
+	if (gameInstall)
+	{
+		std::reverse(lang.begin(), lang.end()); // overwrite 1: the last one loaded wins
 	}
 	std::vector<RetailArchiveEntry> ordered;
-	for (const std::string &name : BFMEArchiveLoadOrder(names))
+	for (std::vector<RetailArchiveEntry> *group : { &lang, &root, &apt, &other })
 	{
-		ordered.push_back(byName[name]);
+		ordered.insert(ordered.end(), group->begin(), group->end());
 	}
 	return ordered;
 }
@@ -756,11 +978,18 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 	{
 		report.errors.push_back("no installs given");
 	}
+	std::deque<RetailArchivePolicy> localizedPolicies; // one per install, its language's (stable addresses)
 
 	for (const RetailInstall &install : installs)
 	{
+		std::string pathError;
+		if (!PathIO::checkInstallPath(install.root, pathError))
+		{
+			stepError(install.label + ": " + pathError);
+			continue;
+		}
 		std::error_code ec;
-		fs::path root = fs::u8path(install.root);
+		fs::path root = PathIO::native(install.root);
 		if (install.root.empty() || !fs::is_directory(root, ec))
 		{
 			stepError(install.label + ": install directory does not exist: '" + install.root + "'");
@@ -794,12 +1023,23 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 			continue;
 		}
 
+		// the install's language (RetailArchivePolicy.h "Languages"): an English folder keeps the policy as it is
+		RetailLanguageChoice language;
+		// kept until the replay: the pending checks point into it (entryCheck)
+		const RetailArchivePolicy &policy = localizedPolicies.emplace_back(LocalizeRetailPolicy(install.policy, onDiskSizes, &language));
+		if (!language.language.empty())
+		{
+			report.languages.push_back(install.label + ":" + language.language +
+				(!language.voice.empty() && language.voice != language.language ? " (voice " + language.voice + ")" : std::string()));
+		}
+		const bool strictLanguage = RetailStrictLanguage();
+
 		std::map<std::string, bool> known;
-		for (const RetailArchiveEntry &entry : install.policy.archives)
+		for (const RetailArchiveEntry &entry : policy.archives)
 		{
 			known[normalizedKey(entry.path)] = true;
 		}
-		for (const std::string &ex : install.policy.excluded)
+		for (const std::string &ex : policy.excluded)
 		{
 			std::string key = normalizedKey(ex);
 			if (onDisk.count(key))
@@ -813,24 +1053,24 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 			if (!known.count(disk.first))
 			{
 				stepError(install.label + ": unknown archive '" + disk.first +
-					"' is not part of " + install.policy.game + " " + install.policy.patch + " and not a known exclusion");
+					"' is not part of " + policy.game + " " + policy.patch + " and not a known exclusion");
 			}
 		}
 
 		// lane CONTRIB-1: which known layout the folder holds (RetailArchivePolicy.h "Layouts"); none: the error names what the folder has, and the
 		// archives every layout shares are still checked so their own problems show too
-		const RetailLayoutChoice layout = ChooseRetailLayout(install.policy, install.label, onDiskSizes);
+		const RetailLayoutChoice layout = ChooseRetailLayout(policy, install.label, onDiskSizes);
 		if (!layout.ok)
 		{
 			stepError(layout.error);
 		}
-		else if (!install.policy.layouts.empty())
+		else if (!policy.layouts.empty())
 		{
 			report.layouts.push_back(install.label + ":" + layout.layoutId);
 		}
 		const std::string layoutWords = layout.layoutName.empty() ? std::string() : " (" + layout.layoutName + ")";
-		const std::string advice = install.policy.advice.empty() ? std::string() : " " + install.policy.advice;
-		for (const RetailArchiveEntry &entry : RetailArchiveLoadOrder(layout.archives))
+		const std::string advice = policy.advice.empty() ? std::string() : " " + policy.advice;
+		for (const RetailArchiveEntry &entry : RetailArchiveLoadOrder(layout.archives, &install == &installs.front()))
 		{
 			auto found = onDisk.find(normalizedKey(entry.path));
 			if (found == onDisk.end())
@@ -838,9 +1078,15 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 				stepError(install.label + ": missing archive " + entry.path + layoutWords);
 				continue;
 			}
-			const RetailEntryCheckedArchive *entryCheck = install.policy.entryCheckOf(entry.path);
+			if (!entry.pinned && strictLanguage)
+			{
+				stepError(install.label + ": " + entry.path + " is a " + language.language + " language archive with no known md5 in this build, and " +
+					"OPENBFME_STRICT_LANGUAGE is set: unset it to mount it unverified");
+				continue;
+			}
+			const RetailEntryCheckedArchive *entryCheck = policy.entryCheckOf(entry.path);
 			std::uint64_t size = (std::uint64_t)fs::file_size(found->second, ec);
-			if (ec || (entryCheck == nullptr && size != entry.size))
+			if (ec || (entryCheck == nullptr && entry.pinned && entry.sizeKnown && size != entry.size))
 			{
 				stepError(install.label + ": size mismatch for " + entry.path + ": expected " +
 					std::to_string(entry.size) + ", found " + (ec ? ec.message() : std::to_string(size)) + layoutWords +
@@ -871,6 +1117,10 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 			p.entryCheck = entryCheck;
 			p.layoutName = layoutWords;
 			p.advice = advice;
+			if (!entry.pinned || !entry.sizeKnown)
+			{
+				p.entry.size = size; // the file's own size (no pin)
+			}
 			if (entryCheck)
 			{
 				// read and checked entry by entry in the replay below (a small archive: Data1.big is under 1 MB)
@@ -884,7 +1134,8 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 			if (!hashOfKey.count(p.key))
 			{
 				auto cached = cache.entries.find(p.key);
-				if (cached == cache.entries.end() || cached->second != entry.md5)
+				// an unpinned language archive: any cached md5 of the same path + size + modification time is its md5
+				if (cached == cache.entries.end() || (entry.pinned && cached->second != entry.md5))
 				{
 					hashOfKey[p.key] = hashes.size();
 					hashes.push_back(KeyHash{ disk, std::string(), std::string() });
@@ -922,7 +1173,7 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 				continue;
 			}
 			std::vector<std::uint8_t> bytes((size_t)p.entry.size);
-			std::ifstream in(fs::u8path(p.diskPath), std::ios::binary);
+			std::ifstream in(PathIO::native(p.diskPath), std::ios::binary);
 			if (!in || !in.read(reinterpret_cast<char *>(bytes.data()), (std::streamsize)bytes.size()) || in.peek() != std::char_traits<char>::eof())
 			{
 				report.errors.push_back(p.install + ": could not read " + p.entry.path + " (" + p.diskPath + ")");
@@ -943,7 +1194,7 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 		std::string md5;
 		bool fromCache = false;
 		auto cached = cache.entries.find(p.key);
-		if (cached != cache.entries.end() && cached->second == p.entry.md5)
+		if (cached != cache.entries.end() && (cached->second == p.entry.md5 || !p.entry.pinned))
 		{
 			md5 = cached->second;
 			fromCache = true;
@@ -963,6 +1214,21 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 				cache.entries[p.key] = md5;
 				cache.dirty = true;
 			}
+		}
+		if (!p.entry.pinned)
+		{
+			// a language archive this build has no md5 for: present, opened as a valid BIG below (the transactional open), mounted with its own md5
+			RetailArchiveEntry unpinned = p.entry;
+			unpinned.md5 = md5;
+			report.warnings.push_back(p.install + ": " + RetailPrintableText(p.entry.path) + " (" + RetailPrintableText(p.entry.language) +
+				") has no known md5 in this build; it is mounted unverified (md5 " + md5 + ", " + std::to_string(p.entry.size) +
+				" bytes). Set OPENBFME_STRICT_LANGUAGE=1 to refuse it.");
+			if (fromCache)
+			{
+				++report.md5CacheHits;
+			}
+			plan.push_back({ p.install, unpinned, p.diskPath });
+			continue;
 		}
 		if (md5 != p.entry.md5)
 		{
@@ -1011,22 +1277,112 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 	{
 		fileSystem.mountArchive(std::move(opened[i]), plan[i].diskPath, false);
 		report.mounted.push_back({ plan[i].install, plan[i].entry.path, plan[i].diskPath, plan[i].entry.size, plan[i].entry.md5 });
+		if (!plan[i].entry.pinned)
+		{
+			report.unverifiedLanguage.push_back({ plan[i].install, plan[i].entry.path, plan[i].entry.language, plan[i].entry.md5, plan[i].entry.size });
+		}
+		// lane MODS-2: a base install's (not the first install's) apt\ archive: retail never mounts it (stop S-5302)
+		if (report.stops.empty() && !installs.empty() && plan[i].install != installs.front().label &&
+			AsciiStringUtil::lowered(plan[i].entry.path).compare(0, 4, "apt/") == 0)
+		{
+			report.stops.push_back(RetailBaseAptStopLine());
+		}
 	}
 	report.ok = true;
 	return report;
 }
 
+std::string RetailPrintableText(const std::string &text)
+{
+	std::string out = text;
+	for (char &c : out)
+	{
+		const unsigned char u = (unsigned char)c;
+		if (u < 0x20 || u == 0x7F)
+		{
+			c = '?';
+		}
+	}
+	return out;
+}
+
+namespace
+{
+
+// "Klingon", "Klingon and Elvish", "Klingon, Elvish and Entish": each language once, in the archives' order
+std::string unverifiedLanguageNames(const std::vector<UnverifiedLanguageArchive> &archives)
+{
+	std::vector<std::string> names;
+	for (const UnverifiedLanguageArchive &a : archives)
+	{
+		const std::string name = RetailPrintableText(a.language);
+		if (std::find(names.begin(), names.end(), name) == names.end())
+		{
+			names.push_back(name);
+		}
+	}
+	std::string out;
+	for (size_t i = 0; i < names.size(); ++i)
+	{
+		out += (i == 0 ? std::string() : (i + 1 == names.size() ? std::string(" and ") : std::string(", "))) + names[i];
+	}
+	return out;
+}
+
+std::string unverifiedArchiveLine(const UnverifiedLanguageArchive &a)
+{
+	return a.install + " " + RetailPrintableText(a.path) + " " + std::to_string(a.size) + " bytes md5 " + a.md5;
+}
+
+} // namespace
+
+std::string RetailLanguageWarningText(const std::vector<UnverifiedLanguageArchive> &archives)
+{
+	// plain concatenation: the language names come from file names on disk
+	return "OpenBFME recognised your copies of The Rise of the Witch-king 2.01 and The Battle for Middle-earth II 1.06, but they are in a "
+		   "language we have not checked yet: " + unverifiedLanguageNames(archives) + ".\n\n"
+		   "The game starts as usual. Because these language files have not been checked:\n"
+		   "  - some text may look wrong or be missing;\n"
+		   "  - in rare cases the game can crash.\n\n"
+		   "Online and LAN games: you can still play with players who have exactly the same language files. Players whose files differ (an "
+		   "English install, for example) cannot join your games and you cannot join theirs; the game tells you so when you try. Replays and "
+		   "saved games work the same way.\n\n"
+		   "You can help us check your language: press \"Copy details\" and post them in the OpenBFME Discord, channel #feedback, or in a new "
+		   "issue at https://github.com/Open-BFME/openbfme-godot/issues. The details hold only the language, the file names, their sizes and "
+		   "checksums.";
+}
+
+std::string RetailLanguageWarningDetails(const std::vector<UnverifiedLanguageArchive> &archives, const std::string &versionLine)
+{
+	std::string out = "OpenBFME language report\n" + RetailPrintableText(versionLine) + "\nlanguage not checked: " + unverifiedLanguageNames(archives) + "\n";
+	for (const UnverifiedLanguageArchive &a : archives)
+	{
+		out += unverifiedArchiveLine(a) + "\n";
+	}
+	return out;
+}
+
+std::string RetailLanguageWarningSignature(const std::vector<UnverifiedLanguageArchive> &archives)
+{
+	std::string lines;
+	for (const UnverifiedLanguageArchive &a : archives)
+	{
+		lines += unverifiedArchiveLine(a) + "\n";
+	}
+	return MD5::ofBytes(lines.data(), lines.size());
+}
+
 bool ResolveInstallPath(const std::string &key, const std::string &configPath, std::string &out, std::string *error)
 {
-	const char *env = std::getenv(key.c_str());
-	if (env != nullptr && env[0] != 0)
+	const std::string env = PathIO::environment(key.c_str());
+	if (!env.empty())
 	{
 		out = env;
 		return true;
 	}
 	if (!configPath.empty())
 	{
-		std::ifstream in(fs::u8path(configPath));
+		std::ifstream in(PathIO::native(configPath));
 		std::string line;
 		while (std::getline(in, line))
 		{
@@ -1041,13 +1397,11 @@ bool ResolveInstallPath(const std::string &key, const std::string &configPath, s
 			}
 			std::string k = line.substr(0, eq);
 			std::string v = line.substr(eq + 1);
+			const auto first = v.find_first_not_of(" \t");
+			v = first == std::string::npos ? std::string() : v.substr(first);
 			while (!k.empty() && (k.back() == ' ' || k.back() == '\t'))
 			{
 				k.pop_back();
-			}
-			while (!v.empty() && (v.front() == ' ' || v.front() == '\t'))
-			{
-				v.erase(v.begin());
 			}
 			if (k == key && !v.empty())
 			{

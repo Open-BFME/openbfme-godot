@@ -24,6 +24,8 @@
 #                                                 launcher/release_keys.pub), whose first key must be --release-key's; without
 #                                                 --keys-file a --release-key that is not the committed list's first key (a test or
 #                                                 local-trial key) is a one-key list
+#                                                 Lane RELGH-2: --nightly-keys-file (default launcher/nightly_keys.pub; none when absent) lists the
+#                                                 keys trusted for nightly releases only (release_trust.gd NIGHTLY_KEYS, the launcher's build_info)
 #   <out>/SHA256SUMS-<version>.txt
 # <version> = git describe (the build's version, engine/cmake/BuildVersion.cmake). Default <out>: workspace/release (git-ignored).
 #
@@ -54,6 +56,7 @@ SELF_VERIFY=1
 TARGET_REPO="Open-BFME/openbfme-godot"
 RELEASE_KEY="$REPO/launcher/release_key.pub"
 KEYS_FILE=""
+NIGHTLY_KEYS_FILE=""   # lane RELGH-2
 LAUNCHER=1
 LEGACY=1
 while [ $# -gt 0 ]; do
@@ -70,9 +73,10 @@ while [ $# -gt 0 ]; do
     --repo) TARGET_REPO=$2; shift 2 ;;
     --release-key) RELEASE_KEY=$2; shift 2 ;;
     --keys-file) KEYS_FILE=$2; shift 2 ;;
+    --nightly-keys-file) NIGHTLY_KEYS_FILE=$2; shift 2 ;;
     --no-launcher) LAUNCHER=0; shift ;;
     --no-legacy-launchers) LEGACY=0; shift ;;
-    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,41p' "$0"; exit 0 ;;
     *) echo "package.sh: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -93,9 +97,18 @@ trusted_keys() {
     TRUST_KEYS=$TRUST_KEY
     KEYS_PUBLIC=$RELEASE_KEY
   fi
+  # lane RELGH-2: the keys trusted for nightly releases only (NIGHTLY_KEYS, comma-separated; empty when the list is empty or absent)
+  local nlist=${NIGHTLY_KEYS_FILE:-$REPO/launcher/nightly_keys.pub}
+  NIGHTLY_TRUST_KEYS=""
+  if [ -f "$nlist" ]; then
+    NIGHTLY_TRUST_KEYS=$(python3 "$REPO/tools/release/release_keys.py" --hex-nightly "$nlist" --format csv) || fail "$nlist is not a valid nightly key list"
+  else
+    [ -z "$NIGHTLY_KEYS_FILE" ] || fail "the nightly key list $NIGHTLY_KEYS_FILE does not exist"
+  fi
 }
 KEYS_OPT=()
 [ -z "$KEYS_FILE" ] || KEYS_OPT=(--keys-file "$KEYS_FILE")
+[ -z "$NIGHTLY_KEYS_FILE" ] || KEYS_OPT+=(--nightly-keys-file "$NIGHTLY_KEYS_FILE")   # lane RELGH-2
 sha256_sum() {
   if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi
 }
@@ -296,23 +309,29 @@ for p in ${PLATFORMS//,/ }; do
   fi
 done
 git -C "$REPO" archive --format=tar HEAD godot LICENSE NOTICE | tar -x -C "$STAGE"
+# lane CRASHACT-1: the crash service key (CRASH_CLIENT_KEY) into the staged project, or nothing (the game then sends no crash report)
+python3 "$REPO/tools/release/crash_key.py" "$STAGE/godot" || fail "the crash service key (tools/release/crash_key.py)"
 # lane ONEZIP-1 r2: what the packaged game trusts when it checks the launcher beside it (godot/scripts/release/launcher_check.gd): the
 # release key and the repository the launcher is built with (the source tree's file is empty: a development run asks no launcher);
 # lane SIGNKMS-1: and the trusted key list (RELEASE_KEYS, comma-separated, RELEASE_KEY first)
 if [ $LAUNCHER = 1 ]; then
   trusted_keys
   [[ "$TARGET_REPO" =~ ^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$ ]] || fail "--repo $TARGET_REPO is not <owner>/<name>"
-  python3 - "$STAGE/godot/scripts/release/release_trust.gd" "$TRUST_KEY" "$TRUST_KEYS" "$TARGET_REPO" <<'PY'
+  python3 - "$STAGE/godot/scripts/release/release_trust.gd" "$TRUST_KEY" "$TRUST_KEYS" "$TARGET_REPO" "$NIGHTLY_TRUST_KEYS" <<'PY'
 import re, sys
-path, key, keys, repo = sys.argv[1:]
+path, key, keys, repo, nightly = sys.argv[1:]
 if keys.split(",")[0] != key or not all(re.fullmatch(r"[0-9a-f]{64}", k) for k in keys.split(",")):
     sys.exit("release_trust.gd: the key list does not begin with the release key")
 text = open(path, encoding="utf-8").read()
 text, n1 = re.subn(r'^const RELEASE_KEY := ""$', f'const RELEASE_KEY := "{key}"', text, flags=re.M)
 text, n3 = re.subn(r'^const RELEASE_KEYS := ""$', f'const RELEASE_KEYS := "{keys}"', text, flags=re.M)
 text, n2 = re.subn(r'^const REPO := ""$', f'const REPO := "{repo}"', text, flags=re.M)
-if (n1, n2, n3) != (1, 1, 1):
-    sys.exit("release_trust.gd: the empty RELEASE_KEY / RELEASE_KEYS / REPO lines are not there")
+# lane RELGH-2: NIGHTLY_KEYS (keys trusted for nightly releases only; may stay empty)
+if nightly and not all(re.fullmatch(r"[0-9a-f]{64}", k) for k in nightly.split(",")):
+    sys.exit("release_trust.gd: the nightly key list is malformed")
+text, n4 = re.subn(r'^const NIGHTLY_KEYS := ""$', f'const NIGHTLY_KEYS := "{nightly}"', text, flags=re.M)
+if (n1, n2, n3, n4) != (1, 1, 1, 1):
+    sys.exit("release_trust.gd: the empty RELEASE_KEY / RELEASE_KEYS / NIGHTLY_KEYS / REPO lines are not there")
 open(path, "w", encoding="utf-8").write(text)
 PY
 fi

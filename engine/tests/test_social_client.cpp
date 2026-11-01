@@ -20,6 +20,8 @@ OnlineLobbyClient::Options socialOptions()
 	return options;
 }
 
+// lane JOINVER-1: the build a join body tells (socialOptions: version "test" on Linux, no build day or official flag)
+const std::string kTestBuild = R"("build":{"version":"test","platform":"linux"})";
 const std::string me = R"({"v":1,"pid":"1111111111111111","code":"ABCD-EFGH-JK","nick":"Self","privacy":{"invites":"friends_or_room","challenges":"friends_or_room","requests":"anyone","presence":"friends"},"hidden":false})";
 const std::string friendPlayer = R"({"pid":"2222222222222222","code":"BCDE-FGHJ-KM","nick":"Peer"})";
 const std::string presence = R"({"pid":"2222222222222222","state":"online","game":null,"joinable":false,"since":0,"map":null,"mode":null})";
@@ -27,7 +29,7 @@ const std::string emptyInbox = R"({"v":1,"seq":"aaaaaaaaaaaaaaaa:1","reset":fals
 
 OnlineLobbyClient::HttpRequest findChannel(const std::vector<OnlineLobbyClient::HttpRequest> &requests, OnlineLobbyClient::HttpRequest::Channel channel);
 
-const std::string socialHealth = R"({"v":1,"ok":true,"games":0,"relays":[],"features":["social"]})";
+const std::string socialHealth = R"({"v":1,"ok":true,"games":0,"relays":[],"features":["social","build"]})"; // JOINVER-1: a lobby that takes `build` on an invite accept
 
 // ONLINEMENU-1: a guest sign-in asks the lobby's features first (GET /v1/health); `health` answers it
 void answerFeatures(OnlineLobbyClient &client, const std::string &health = socialHealth)
@@ -61,7 +63,7 @@ void loadInitialSocialViews(OnlineLobbyClient &client)
 std::string sourceGameView(const std::string &id, const std::string &mode = "normal")
 {
 	std::string slots = "[";
-	for (int slot = 0; slot < MAX_SLOTS; ++slot)
+	for (int slot = 0; slot < LEGACY_MAX_SLOTS; ++slot) // an eight-start room: the lobby sends eight records (ONLINE16-FIX: sixteen only with mapStartCount 9 .. 16)
 	{
 		if (slot) slots += ",";
 		const bool you = slot == 0;
@@ -73,7 +75,7 @@ std::string sourceGameView(const std::string &id, const std::string &mode = "nor
 	slots += "]";
 	return "{\"id\":" + OnlineLobbyClient::jsonQuote(id) +
 		",\"mode\":" + OnlineLobbyClient::jsonQuote(mode) +
-		",\"name\":\"Source room\",\"state\":\"open\",\"hostSlot\":0,\"seq\":1,"
+		",\"name\":\"Source room\",\"state\":\"open\",\"private\":false,\"hostSlot\":0,\"seq\":1,"
 		"\"setup\":{\"map\":\"map\",\"startingCash\":1000,\"superweaponRestriction\":0,\"legendaryHeroes\":1,\"rules\":null},"
 		"\"slots\":" + slots + "}";
 }
@@ -302,7 +304,7 @@ TEST_CASE("SOCIAL writes use contract routes and typed paging responses")
 	answer("POST", "/v1/chat/2222222222222222/read", R"({"v":1,"through":0})", R"({"v":1,"read_id":0})");
 	REQUIRE(client.acceptInvite("3333333333333333"));
 	request = next("POST", "/v1/invites/3333333333333333/accept");
-	CHECK(request.body == "{\"v\":1,\"profile\":\"" + socialOptions().profileDigest + "\",\"mode\":\"normal\",\"platform\":\"linux\"}");
+	CHECK(request.body == "{\"v\":1,\"profile\":\"" + socialOptions().profileDigest + "\",\"mode\":\"normal\",\"platform\":\"linux\"," + kTestBuild + "}");
 	client.deliver(request.id, 400, R"({"v":1,"error":"unavailable","message":"safe refusal"})", "");
 	const auto events = client.takeSocialEvents();
 	REQUIRE_FALSE(events.empty());
@@ -557,7 +559,7 @@ TEST_CASE("SOCIAL accept after leave waits for a successful leave acknowledgemen
 	requests = successful.takeRequests();
 	REQUIRE(requests.size() == 1);
 	CHECK(requests[0].path == "/v1/invites/5555555555555555/accept");
-	CHECK(requests[0].body == "{\"v\":1,\"profile\":\"" + socialOptions().profileDigest + "\",\"mode\":\"normal\",\"platform\":\"linux\"}");
+	CHECK(requests[0].body == "{\"v\":1,\"profile\":\"" + socialOptions().profileDigest + "\",\"mode\":\"normal\",\"platform\":\"linux\"," + kTestBuild + "}");
 
 	auto rejectedLeaveDoesNotAccept = [&](int status, const std::string &body, const std::string &transportError) {
 		OnlineLobbyClient client(socialOptions());
@@ -586,7 +588,7 @@ TEST_CASE("SOCIAL successful typed invite acceptance preserves the joined game v
 	auto requests = client.takeRequests();
 	REQUIRE(requests.size() == 1);
 	CHECK(requests[0].path == "/v1/invites/" + inviteId + "/accept");
-	CHECK(requests[0].body == "{\"v\":1,\"profile\":\"" + socialOptions().profileDigest + "\",\"mode\":\"normal\",\"platform\":\"linux\"}");
+	CHECK(requests[0].body == "{\"v\":1,\"profile\":\"" + socialOptions().profileDigest + "\",\"mode\":\"normal\",\"platform\":\"linux\"," + kTestBuild + "}");
 	client.deliver(requests[0].id, 200,
 		"{\"v\":1,\"id\":\"" + gameId + "\",\"slot\":0,\"game\":" + sourceGameView(gameId) + "}", "");
 
@@ -612,7 +614,9 @@ TEST_CASE("SOCIAL invite acceptance and ordinary join use the recipient's own mo
 		OnlineLobbyClient client(options);
 		loadInitialSocialViews(client);
 		const std::string mode = profile == SimulationProfile::Uber ? "uber" : "normal";
-		const std::string fields = "\"profile\":\"" + options.profileDigest + "\",\"mode\":\"" + mode + "\",\"platform\":\"macos\"";
+		// lane JOINVER-1: the join identity tells the client's build too
+		const std::string fields = "\"profile\":\"" + options.profileDigest + "\",\"mode\":\"" + mode + "\",\"platform\":\"macos\"," +
+			"\"build\":{\"version\":\"test\",\"platform\":\"macos\"}";
 		const std::string gameId = "6666666666666666";
 		REQUIRE(client.acceptInvite("5555555555555555"));
 		auto requests = client.takeRequests();

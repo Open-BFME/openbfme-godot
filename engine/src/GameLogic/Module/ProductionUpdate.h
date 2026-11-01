@@ -77,7 +77,7 @@ struct ProductionEntry
 	bool flag34 = false;                            ///< +0x34 (set when a horde entry became its member entry)
 	ObjectID hordeTarget = INVALID_ID;              ///< +0x3C
 	std::string name;                               ///< +0x40
-	bool flag44 = false;                            ///< +0x44
+	bool flag44 = false;                            ///< +0x44 (the new object goes to the producer's SlaveWatcherBehavior, RW 0x8A26BD)
 	int quantityRemaining() const { return quantityTotal - quantityProduced; }
 };
 
@@ -130,7 +130,15 @@ public:
 	virtual int canQueueCreateUnit() const = 0;                          // slot 0, RW 0x8A0711: 3 factory disabled, 4 queue full, else 0
 	virtual ProductionID requestUniqueUnitID() = 0;                      // slot 2, RW 0x8A18FA
 	// slot 8, RW 0x8A11D2
-	virtual bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44) = 0;
+	bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44)
+	{
+		return queueCreateUnit(unitType, buildIndex, productionID, value30, batch, name, flag44, false);
+	}
+	// lane MODS-3 (mod engine feature edain-unchained.queue-ignore-cp): the same call; `ignoreCommandPoints` reaches BuildAssistant::canMakeUnit, which then
+	// skips only its command point refusal (code 7). Edain Unchained's game.dat sets a global around the slot 8 call of Object::doCommandButton (hooks at
+	// RW 0x697403 / 0x697800, read at RW 0x79402B); the port passes it as this argument. Retail (every other caller) passes false
+	virtual bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44,
+								 bool ignoreCommandPoints) = 0;
 	virtual void cancelUnitCreate(ProductionID productionID) = 0;        // slot 10, RW 0x8A13EE
 	virtual void cancelUnitCreateByType(const ThingTemplate *type, bool all) = 0; // slot 5, RW 0x8A0428
 	virtual int countUnitTypeInQueue(const ThingTemplate *type) const = 0; // slot 7, RW 0x8A056C (type 1 entries only)
@@ -171,8 +179,13 @@ public:
 
 	// ProductionUpdateInterface
 	int canQueueCreateUnit() const override;
-	ProductionID requestUniqueUnitID() override { return m_uniqueID++; }
-	bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44) override;
+	// RW 0x8A18FA: the module's post-increment. Lane MODS-3: edain-unchained.unique-production-id (its 0x8A18FA rewrite, .prodid) takes the id from one
+	// pre-incremented counter for every building, so two buildings never mint the same id for the hero records (RW 0x78131E); here the counter is the
+	// game's (reset with it, saved and hashed), not the process's
+	ProductionID requestUniqueUnitID() override;
+	using ProductionUpdateInterface::queueCreateUnit;
+	bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44,
+						 bool ignoreCommandPoints) override;
 	void cancelUnitCreate(ProductionID productionID) override;
 	void cancelUnitCreateByType(const ThingTemplate *type, bool all) override;
 	int countUnitTypeInQueue(const ThingTemplate *type) const override;

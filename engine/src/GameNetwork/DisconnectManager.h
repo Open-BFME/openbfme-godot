@@ -125,6 +125,8 @@ public:
 	bool disconnectFrameReceived(int slot) const { return slot >= 0 && slot < MAX_SLOTS && m_disconnectFramesReceived[(size_t)slot]; }
 	bool loadScreenUp() const { return m_loadScreenUp; }
 	State state() const { return m_state; }
+	// lane CHEAT-1: heard (RW 0x8D335D) for the network's resend check (Network.cpp: a relayed Cheat Mode command of an owner still in the game)
+	bool slotHeard(Network &net, int slot, std::uint64_t now, std::uint32_t logicFrame) const { return heard(net, slot, now, logicFrame); }
 	bool anySilent() const { return m_anySilent; }
 	int silentEpisodes(int slot) const { return m_silentEpisodes[(size_t)slot]; }
 	int countVotesForPlayer(Network &net, int slot, std::uint64_t now) const;
@@ -199,7 +201,7 @@ private:
 	{
 		int sender = -1, target = -1;
 		std::uint32_t frame = 0;
-		std::uint8_t gone = 0;
+		std::uint16_t gone = 0;
 		std::uint64_t arrived = 0; ///< lane MP-DROP-1: when it arrived (a claim not confirmed within NetworkPlayerTimeoutTime is refused)
 	};
 	std::vector<PendingDrop> m_pendingDrops;

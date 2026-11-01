@@ -2,6 +2,7 @@
 // object world's context (the same fixture as test_hud_combat_retail.cpp's Arena, which lives in that file's anonymous namespace).
 #pragma once
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -84,7 +85,7 @@ struct Arena
 		{
 			ai->addObjectToPathfindMap(*o);
 		}
-		return o;
+		return testutil::completeHorde(o);
 	}
 	size_t members(Object *horde) { return horde->getContain() ? horde->getContain()->getContainCount() : 0; }
 	// the pathfinder holds an obstacle at world (x, y)
@@ -92,6 +93,12 @@ struct Arena
 	{
 		PathfindCell *c = ai->pathfinder().getCell(LAYER_GROUND, (int)(x / 10.0f), (int)(y / 10.0f));
 		return c && c->getType() == PathfindCell::CELL_OBSTACLE;
+	}
+	// the object whose footprint holds the pathfinder cell at world (x, y) (0: none)
+	ObjectID obstacleIdAt(float x, float y)
+	{
+		PathfindCell *c = ai->pathfinder().getCell(LAYER_GROUND, (int)(x / 10.0f), (int)(y / 10.0f));
+		return c ? (ObjectID)c->getObstacleID() : (ObjectID)0;
 	}
 };
 } // namespace structtest

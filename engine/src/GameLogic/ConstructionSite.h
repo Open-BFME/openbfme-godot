@@ -10,7 +10,7 @@
 //   * BuildAssistant::isRemovableForConstruction RW 0x7940A6 (BFME2 decomp BuildAssistant.cpp, tier B same-shape): never INERT (89) or TAINT (152); SHRUBBERY (6) or
 //     CLEARED_BY_BUILD (51): yes; else whether the object is effectively dead (+ 0x458 bit 0). FoundationAIUpdate's RW 0x8582A5 is the same without the TAINT test.
 //   * clearRemovableForConstruction RW 0x796576 (tier A, BFME2 decomp BuildAssistant.cpp:clearRemovableForConstruction) and FoundationAIUpdate RW 0x858C41
-//     (tier A, BFME2 decomp FoundationAIUpdateSlots.cpp:rva00455BDD): ThePartitionManager within the template's bounding sphere radius (GeometryInfo + 0x14) * 1.1f
+//     (tier A, BFME2 decomp FoundationAIUpdate.cpp:rva00455BDD): ThePartitionManager within the template's bounding sphere radius (GeometryInfo + 0x14) * 1.1f
 //     (SSE, RW 0xBE4398), distance type 3, unsorted, with the geometry filter (the template's geometry at the site, the build angle, flag 1); every hit that is
 //     removable (the function's own test) and not ALWAYS_SELECTABLE (58, template + 0x10F bit 2) is destroyed (RW 0x62BBAB).
 //   * moveObjectsForConstruction RW 0x797465 (tier B same-shape, BFME2 decomp BuildAssistant.cpp:moveObjectsForConstruction):
@@ -32,7 +32,7 @@
 //   * the horde test (RW 0x694BF8 -> HordeContainInterface vslot 0x1C8 RW 0x86D830, tier B, BFME2 decomp HordeContainIface11CSlots.cpp:rva0046A6C1): the object's
 //     horde (itself, or what contains it, when KindOf HORDE: RW 0x693A1A) has a member whose AI path has a current node (Path + 0x10) and a node with a waypoint id
 //     (node + 0x20 != 0x7FFFFFFF; RW 0x765522, tier A, BFME2 decomp Rva003638BAMethod.cpp).
-//   * FoundationAIUpdate RW 0x858CFC (tier B same-shape, BFME2 decomp FoundationAIUpdateSlots.cpp:rva00455C98): gi = BOX(height 50, major = the template's
+//   * FoundationAIUpdate RW 0x858CFC (tier B same-shape, BFME2 decomp FoundationAIUpdate.cpp:rva00455C98): gi = BOX(height 50, major = the template's
 //     + 0x24 * 1.5f, minor = + 0x28 * 1.5f) (SSE); radius = gi's circle * 1.5f; ThePartitionManager within gi's sphere * 1.5f, type 3, the geometry filter only;
 //     each hit is replaced by what contains it (Object + 0x27C); INERT, BASE_FOUNDATION, WALK_ON_TOP_OF_WALL, MOVE_ONLY, ALWAYS_SELECTABLE or removable (RW 0x8582A5)
 //     hits are skipped; an owner the player is not ENEMIES with and an AI: variedRadius = random(0.5, 1.5) * radius (line 0x2AB); a template that is not

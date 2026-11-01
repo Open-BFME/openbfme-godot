@@ -41,7 +41,9 @@ struct Built
 };
 // `localSlot` is GameInfo::getLocalSlotNum (the slot whose display name decides multiplayerIsLocal for every human slot). False + *error for a slot whose template
 // or colour is not resolved or out of range (never a substitution).
+// lane WOTR-2: `sharedStarts` (a War of the Ring battle, whose allies may share a start position: NewGame::prepareNewGame) names a slot that shares an
+// earlier slot's position Player_<n> with the lowest n no start position gives; otherwise two slots on one position are refused
 bool build(const SidesList &mapSides, const SkirmishGameInfo &info, int localSlot, const std::vector<GameLogicSettings::MultiplayerColorDef> &colors,
-	const PlayerTemplateStore &templates, Built &out, std::string *error);
+	const PlayerTemplateStore &templates, Built &out, std::string *error, bool sharedStarts = false);
 std::vector<std::string> stopLines();
 } // namespace SkirmishSides

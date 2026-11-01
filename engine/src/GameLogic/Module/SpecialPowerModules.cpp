@@ -7,6 +7,7 @@
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 #endif
 
+#include "Common/ModEngineFeatures.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "GameLogic/Module/WeaponChangeSpecialPower.h"
@@ -109,6 +110,23 @@ void parseFilter(INI *ini, void *instance, void *store, const void *)
 
 #define SP_OFF(member) (int)offsetof(SpecialPowerModuleData, member)
 // RW 0xC64DB0, in the binary's order
+// RW 0xC64FA4: INI::parseAsciiString (retail keeps one token). Lane MODS-3, edain-unchained.trigger-recharge-list (0xEE0000): every remaining
+// token (INI::getNextAsciiString RW 0x42E757 until empty), joined with single spaces, into the same string
+void parseOnTriggerRechargeSpecialPower(INI *ini, void *instance, void *store, const void *userData)
+{
+	if (!ModEngineFeatures::has(ModEngineFeature::EdainUnchainedTriggerRechargeList))
+	{
+		INI::parseAsciiString(ini, instance, store, userData);
+		return;
+	}
+	std::string joined;
+	for (std::string t = ini->getNextAsciiString(); !t.empty(); t = ini->getNextAsciiString())
+	{
+		joined += (joined.empty() ? "" : " ") + t;
+	}
+	*static_cast<std::string *>(store) = joined;
+}
+
 const FieldParse kSpecialPowerModuleFieldParse[] = {
 	{ "SpecialPowerTemplate", parseSpecialPowerTemplate, nullptr, 0 },
 	{ "UpdateModuleStartsAttack", INI::parseBool, nullptr, SP_OFF(m_updateModuleStartsAttack) },
@@ -141,7 +159,7 @@ const FieldParse kSpecialPowerModuleFieldParse[] = {
 	{ "AvailableAtStart", INI::parseBool, nullptr, SP_OFF(m_availableAtStart) },
 	{ "ChangeWeather", parseChangeWeather, nullptr, SP_OFF(m_changeWeather) },
 	{ "AdjustVictim", INI::parseBool, nullptr, SP_OFF(m_adjustVictim) },
-	{ "OnTriggerRechargeSpecialPower", INI::parseAsciiString, nullptr, SP_OFF(m_onTriggerRechargeSpecialPower) },
+	{ "OnTriggerRechargeSpecialPower", parseOnTriggerRechargeSpecialPower, nullptr, SP_OFF(m_onTriggerRechargeSpecialPower) },
 	{ "BurnDecayModifier", INI::parseUnsignedInt, nullptr, SP_OFF(m_burnDecayModifier) },
 	{ "UseDistanceFromCommandCenter", INI::parseBool, nullptr, SP_OFF(m_useDistanceFromCommandCenter) },
 	{ "DistanceFromCommandCenter", INI::parseReal, nullptr, SP_OFF(m_distanceFromCommandCenter) },
@@ -684,7 +702,25 @@ void SpecialPowerModule::triggerSpecialPower(const Coord3D *loc, const Object *)
 		{
 			SpecialPowerModuleInterface *sp = m->getSpecialPower();
 			const SpecialPowerTemplate *other = sp ? sp->getSpecialPowerTemplate() : nullptr;
-			if (other && other->getName() == d->m_onTriggerRechargeSpecialPower)
+			if (!other)
+			{
+				continue;
+			}
+			bool listed = other->getName() == d->m_onTriggerRechargeSpecialPower; // RW 0x897A21: AsciiString compare
+			if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedTriggerRechargeList))
+			{
+				// lane MODS-3 (0xEE0076): the list split on spaces, each token compared exactly (case-sensitive); an empty name never matches
+				listed = false;
+				const std::string &list = d->m_onTriggerRechargeSpecialPower;
+				for (size_t b = 0; b < list.size() && !listed;)
+				{
+					const size_t e = list.find(' ', b);
+					const size_t end = e == std::string::npos ? list.size() : e;
+					listed = end > b && !other->getName().empty() && list.compare(b, end - b, other->getName()) == 0;
+					b = end + 1;
+				}
+			}
+			if (listed)
 			{
 				sp->startPowerRecharge(1.0f);
 			}

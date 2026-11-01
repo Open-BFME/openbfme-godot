@@ -25,6 +25,7 @@ class LANAPI;
 class OptionPreferences;
 class GameLODManager;
 struct PlayerStatusInfo;
+struct ObjectivesScreenInfo;
 struct CreateAHeroScreenContext;
 class ArchiveFileSystem;
 class GlobalLanguage;
@@ -33,16 +34,20 @@ struct OnlineHubContext;
 struct ProfileSwitch;
 struct CampaignMenuContext;
 struct SkirmishHonorsGame;
+struct LivingWorldShellInfo; // lane WOTR-1
 
 // lane END-2: what QuitMenu.apt asks of the game it is opened over (TheGameLogic + 0x110 / + 0x114, the recorder, the local player)
 struct QuitMenuContext
 {
 	bool inGame = false;              ///< TheGameLogic exists (a live game)
 	int gameMode = 2;                 ///< + 0x110: 1 LAN, 2 skirmish, 5 Internet
-	int gameKind = 3;                 ///< + 0x114 (3: a skirmish, RW 0x779F20; 1 LAN / 2 Internet, RW 0x779CB4)
+	int gameKind = 3;                 ///< + 0x114 (3: a skirmish, RW 0x779F20; 1 LAN / 2 Internet, RW 0x779CB4; 0: a single player War of the Ring game,
+	                                  ///< the strategic map and its battles: RW 0x6DCFDF's modes 4 / 3, the quit menu's save type 8 RW 0x92179F)
 	bool replay = false;              ///< TheRecorder plays back (RW 0x7B0F25 == 1)
 	bool localPlayerDefeated = false; ///< ThePlayerList's local player + 0x754 (RW 0x6AAC4B)
 	bool alliedVictory = false;       ///< TheVictoryConditions vslot 0x48 (RW 0x921891)
+	bool strategicMap = false;        ///< lane WOTR2 milestone 3: TheLivingWorldLogic's isSelectionLocked (the War of the Ring map is up, no battle runs)
+	bool warPlayersGone = false;      ///< WOTR2 milestone 8 (step 4): a human of the network war has left (RW 0x6B5E3E(1) > RW 0x6B5E3E(0)): no Save
 	bool isMultiplayer() const { return gameMode == 1 || gameMode == 5; } // RW 0x441B7C
 };
 
@@ -83,6 +88,7 @@ struct ShellEnvironment
 	bool openbfmeOptionsMenu = false;
 	bool shellMapOn = false;                  // lane FB7-1: GameData ShellMapOn (GlobalData + 0xAF0; Shell::showShellMap)
 	PlayerStatusInfo *playerStatus = nullptr; // lane HUD-5: the players screen's Status rows (GUI/PlayerStatusInfo.h); null: the page shows no rows and says so
+	ObjectivesScreenInfo *objectivesScreen = nullptr; // lane CAMPUI-1: what Objectives.apt lists (GUI/AptScreens/AptObjectivesMenu.h); null: no rows, said so
 	CreateAHeroScreenContext *createAHero = nullptr; // lane CAH-1: what CreateAHero.apt edits (GUI/AptScreens/AptCreateAHero.h); null: it says so
 	ArchiveFileSystem *fileSystem = nullptr;  // lane UI-4: the mounted archives (the credits roll reads Data\INI\Credits.ini); null: the credits say so
 	ProfileSwitch *profileSwitch = nullptr;   // lane UBERJOIN-1: switches the performance mode for one game (GUI/ProfileSwitch.h); null: a game of the other mode says it cannot be joined
@@ -96,4 +102,9 @@ struct ShellEnvironment
 	// lane CAMPSAVE-1: the Save folder (RW 0x6DD85E's folder) MainMenuContinueCampaign looks for "00000000.sav" in (RW 0x91BBBB); "" none
 	std::string saveFolder;
 	const GlobalLanguage *language = nullptr; // lane UI-4: language.ini's Language block (the credits' fonts, GameClient/GlobalLanguage.h); null: likewise
+	LivingWorldShellInfo *livingWorld = nullptr; // lane WOTR-1: the War of the Ring scenarios and the strategic flag (GUI/Skirmish/LivingWorldShellInfo.h)
+	// lane STABLEQA-1 (owner, 2026-10-30: Stable must not show War of the Ring yet; Nightly does). False in a Stable channel build
+	// (BuildVersion::isStableChannel): the main menu's War of the Ring row is hidden and refused, the LAN lobby's War of the Ring page says it is a
+	// Nightly feature and creates no game. Not retail: an OpenBFME release switch
+	bool warOfTheRingOffered = true;
 };

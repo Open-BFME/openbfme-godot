@@ -1,5 +1,6 @@
 // OpenBFME. GPL-3.0.
 #include "Common/WindowsCrashDump.h"
+#include "Common/PathIO.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -147,11 +148,11 @@ bool install(const std::string &directory, std::string &error)
 		return true;
 	}
 	std::error_code ec;
-	const auto path = std::filesystem::u8path(directory);
+	const auto path = PathIO::native(directory);
 	std::filesystem::create_directories(path, ec);
 	if (ec)
 	{
-		error = "cannot create local dump directory: " + ec.message();
+		error = "cannot create local dump directory " + directory + ": " + ec.message();
 		return false;
 	}
 	FILETIME now;

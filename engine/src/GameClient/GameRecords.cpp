@@ -305,6 +305,15 @@ bool parse(const JsonValue &root, GameRecord &out, std::string *error)
 		}
 	}
 	r.winnerTeam = (int)winner;
+	// lane CHEAT-1: "cheat_mode" (optional, absent: false; anything but true / false is refused)
+	if (const JsonValue *cheat = root.get("cheat_mode"); cheat && cheat->type != JsonValue::NUL)
+	{
+		if (cheat->type != JsonValue::BOOL)
+		{
+			return fail(error, "cheat_mode is not true / false");
+		}
+		r.cheatMode = cheat->boolean;
+	}
 	std::sort(r.players.begin(), r.players.end(), [](const GameRecord::Player &a, const GameRecord::Player &b) { return a.slot < b.slot; });
 	out = std::move(r);
 	return true;
@@ -326,6 +335,10 @@ std::string toJson(const GameRecord &r)
 	if (!r.replayHash.empty())
 	{
 		out += ",\"replay_hash\":" + q(r.replayHash);
+	}
+	if (r.cheatMode)
+	{
+		out += ",\"cheat_mode\":true"; // lane CHEAT-1 (a record without it reads as it did before)
 	}
 	return out + "}";
 }
@@ -392,7 +405,7 @@ PlayerStats summarise(const std::vector<GameRecord> &records, const std::string 
 	std::vector<const GameRecord *> games;
 	for (const GameRecord &r : records)
 	{
-		if (kind.empty() || r.kind == kind)
+		if ((kind.empty() || r.kind == kind) && !r.cheatMode) // lane CHEAT-1: a Cheat Mode game never counts
 		{
 			games.push_back(&r);
 		}
@@ -480,9 +493,26 @@ std::string resultBody(const GameRecord &r, const std::string &install, const st
 		fail(error, "a " + r.kind + " game is not reported (single player)");
 		return std::string();
 	}
+	if (r.cheatMode)
+	{
+		fail(error, "a Cheat Mode game is not reported (it never counts)"); // lane CHEAT-1
+		return std::string();
+	}
 	if (r.players.size() < 2)
 	{
 		fail(error, "a game with fewer than two players is not reported (the service takes 2 .. 8)");
+		return std::string();
+	}
+	// lane SOLO-1: an online game with a single human is never reported, with AI slots or none (a custom game may start solo; a
+	// LAN game's one human still reports, its "vs_ai" bucket)
+	int humans = 0;
+	for (const GameRecord::Player &p : r.players)
+	{
+		humans += p.human ? 1 : 0;
+	}
+	if (r.kind == "online" && humans < 2)
+	{
+		fail(error, "an online game with a single human is not reported (a custom game may start solo)");
 		return std::string();
 	}
 	if (!PlatformApiClient::validInstall(install))

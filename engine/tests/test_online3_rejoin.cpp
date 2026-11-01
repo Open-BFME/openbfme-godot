@@ -7,6 +7,7 @@
 #include "doctest.h"
 
 #include "StartTestUtil.h"
+#include "OnlineTestWait.h"
 
 #include "Common/Crc32.h"
 #include "Common/Player.h"
@@ -663,7 +664,7 @@ TEST_CASE("online3: the relay reports silent slots (STATUS), binds a newer rejoi
 	RelayLogFile log;
 	std::string error;
 	REQUIRE_MESSAGE(RelayLogFile::load(relay.closedLogs().front(), log, &error), error);
-	CHECK(log.version == 2);
+	CHECK(log.version == 4); // lane ANTICHEAT-1 with ONLINE16-FIX: v4 for every game (u16 mask), kind-7 INPUT records before END (RelayCore.h)
 	REQUIRE(log.rejoins.size() == 1);
 	CHECK(log.rejoins[0].slot == 2);
 	CHECK(log.rejoins[0].generation == 1);
@@ -814,12 +815,12 @@ TEST_CASE("online3: a real Transport keeps the relay's STATUS, its ping test fol
 	t.setPeer(2, NetAddress{});
 	CHECK_FALSE(t.localLinkAlive(1000)); // nothing from the relay yet: the ping test fails
 	auto deliver = [&](const std::vector<std::uint8_t> &d) {
-		relaySocket.sendTo(client.localAddress(), d.data(), d.size());
-		for (int i = 0; i < 50; ++i)
-		{
+		const auto received = t.stats().bytesReceived;
+		REQUIRE(relaySocket.sendTo(client.localAddress(), d.data(), d.size()));
+		REQUIRE(onlinetest::waitUntil([&] {
 			t.service();
-			NetSleepMilliseconds(1);
-		}
+			return t.stats().bytesReceived == received + d.size();
+		}));
 	};
 	std::array<std::uint8_t, kSessionTokenBytes> token{};
 	deliver(encodeWelcome(kGame, 0, token));
@@ -851,10 +852,8 @@ TEST_CASE("online3: a real Transport keeps the relay's STATUS, its ping test fol
 		while (relaySocket.receiveFrom(from, d))
 		{
 		}
-		const std::uint64_t start = NetMilliseconds();
 		bool seen = false;
-		while (!seen && NetMilliseconds() - start < 2000)
-		{
+		REQUIRE(onlinetest::waitUntil([&] {
 			t.service();
 			while (relaySocket.receiveFrom(from, d))
 			{
@@ -867,8 +866,8 @@ TEST_CASE("online3: a real Transport keeps the relay's STATUS, its ping test fol
 					seen = true;
 				}
 			}
-			NetSleepMilliseconds(2);
-		}
+			return seen;
+		}));
 		CHECK(seen);
 	}
 	// the log-only stream: a record to the client's own slot (slot 0) goes out as DATA naming slot 0; the relay's ack (DATA_FROM 0) clears it
@@ -880,17 +879,15 @@ TEST_CASE("online3: a real Transport keeps the relay's STATUS, its ping test fol
 		while (relaySocket.receiveFrom(from, d))
 		{
 		}
-		const std::uint64_t start = NetMilliseconds();
 		bool seen = false;
-		while (!seen && NetMilliseconds() - start < 2000)
-		{
+		REQUIRE(onlinetest::waitUntil([&] {
 			t.service();
 			while (relaySocket.receiveFrom(from, d))
 			{
 				seen = seen || (d.size() >= 5 + 14 + 12 && d[3] == DATA && d[4] == 0 && d[5 + 7] == 0 && d[5 + 12] == 1 && d.back() == 7);
 			}
-			NetSleepMilliseconds(2);
-		}
+			return seen;
+		}));
 		CHECK(seen);
 		std::vector<std::uint8_t> ack(4, 0);
 		for (std::uint8_t b : { (std::uint8_t)0x42, (std::uint8_t)0x46, (std::uint8_t)2, (std::uint8_t)0, (std::uint8_t)1, (std::uint8_t)0, (std::uint8_t)0, (std::uint8_t)0, (std::uint8_t)0, (std::uint8_t)0 })
@@ -1542,6 +1539,173 @@ void runRejoinGame(int n, bool oldAlive = false, std::vector<int> restarts = {})
 	g_game = nullptr;
 }
 } // namespace
+
+TEST_CASE("solo2: the only network player logs one self-rejoin and resumes from the assembled join frame")
+{
+	struct Sink : NetTransport
+	{
+		std::vector<std::vector<std::uint8_t>> records;
+		bool sendTo(int, const std::vector<std::uint8_t> &, std::string *) override { return true; }
+		bool receive(int &, std::vector<std::uint8_t> &) override { return false; }
+		bool sendToLog(const std::vector<std::uint8_t> &bytes) override
+		{
+			records.push_back(bytes);
+			return true;
+		}
+	} sink;
+	NetworkConfig config;
+	config.localSlot = 0;
+	config.slotPlayerIndex[0] = 10;
+	config.disconnectPath = false;
+	config.adaptiveRunAhead = false;
+	config.earlyOrders = false;
+	config.runAhead = 2;
+	Network net(config, sink);
+	std::uint64_t clock = 1000;
+	net.setClock([&] { return clock; });
+	net.setRejoining(1);
+	CommandList pending;
+	net.update(5, pending);
+	CHECK(sink.records.empty());
+	net.setRejoinReady();
+	net.update(5, pending);
+	clock += 1000;
+	net.update(5, pending);
+	REQUIRE(sink.records.size() == 1);
+	NetCommandMsg rejoin;
+	std::string error;
+	REQUIRE_MESSAGE(NetPacket::decodeCommand(sink.records[0], rejoin, &error), error);
+	CHECK(rejoin.type == NETCOMMANDTYPE_REJOIN);
+	CHECK(rejoin.slot == 0);
+	CHECK(rejoin.targetSlot == 0);
+	CHECK(rejoin.executionFrame == 7);
+
+	RelayLogFile log;
+	log.slotMask = 1;
+	for (UnsignedInt frame = 0; frame < 5; ++frame)
+	{
+		NetCommandMsg info;
+		info.type = NETCOMMANDTYPE_FRAMEINFO;
+		info.executionFrame = frame;
+		info.commandCount = 0;
+		log.commands.push_back({ 0, 0, info });
+	}
+	log.rejoins.push_back({ 0, 1, log.commands.size() });
+	RelayLog::Assembled assembled;
+	REQUIRE_MESSAGE(RelayLog::assemble(log, config, assembled, &error, true), error);
+	CHECK(assembled.lastCompleteFrame == 4);
+	CHECK(assembled.joinFrame[0] == 0xFFFFFFFFu);
+	CHECK(assembled.problems.empty());
+	log.commands.push_back({ 0, 0, rejoin });
+	REQUIRE_MESSAGE(RelayLog::assemble(log, config, assembled, &error, true), error);
+	CHECK(assembled.lastCompleteFrame == 7);
+	CHECK(assembled.joinFrame[0] == 8);
+	CHECK(assembled.problems.empty());
+	REQUIRE(assembled.membership.size() == 1);
+	CHECK(assembled.membership[0].kind == Network::MembershipEvent::REJOIN);
+	CHECK(assembled.membership[0].generation == 1);
+	Network::LiveStart live;
+	live.frame = assembled.joinFrame[0];
+	live.runAhead = config.runAhead;
+	live.membership = assembled.membership;
+	net.beginLive(live);
+	net.update(live.frame, pending);
+	CHECK(net.isFrameReady(live.frame));
+	CHECK(net.errors().empty());
+	for (UnsignedInt frame = 8; frame < 11; ++frame)
+	{
+		NetCommandMsg info;
+		info.type = NETCOMMANDTYPE_FRAMEINFO;
+		info.executionFrame = frame;
+		info.commandCount = 0;
+		log.commands.push_back({ 0, 0, info });
+	}
+	log.rejoins.push_back({ 0, 2, log.commands.size() });
+	rejoin.executionFrame = 13;
+	log.commands.push_back({ 0, 0, rejoin });
+	REQUIRE_MESSAGE(RelayLog::assemble(log, config, assembled, &error, true), error);
+	CHECK(assembled.lastCompleteFrame == 13);
+	CHECK(assembled.joinFrame[0] == 14);
+	CHECK(assembled.problems.empty());
+	REQUIRE(assembled.membership.size() == 2);
+	CHECK(assembled.membership[0].frame == 7);
+	CHECK(assembled.membership[0].generation == 1);
+	CHECK(assembled.membership[1].frame == 13);
+	CHECK(assembled.membership[1].generation == 2);
+
+	Sink multiplayerSink;
+	config.slotPlayerIndex[1] = 11;
+	Network multiplayer(config, multiplayerSink);
+	multiplayer.setRejoining(1);
+	multiplayer.setRejoinReady();
+	multiplayer.update(5, pending);
+	CHECK(multiplayerSink.records.empty());
+}
+
+TEST_CASE("solo2: solo CRCs continue across rejoin; multiplayer still requires a first-incarnation CRC anchor")
+{
+	NetworkConfig config;
+	config.slotPlayerIndex[0] = 10;
+	config.crcInterval = 5;
+	RelayLogFile log;
+	log.slotMask = 1;
+	auto info = [&](int slot, UnsignedInt frame, int count) {
+		NetCommandMsg msg;
+		msg.type = NETCOMMANDTYPE_FRAMEINFO;
+		msg.executionFrame = frame;
+		msg.commandCount = count;
+		log.commands.push_back({ slot, 0, msg });
+	};
+	auto crc = [&](UnsignedInt frame, int value) {
+		NetCommandMsg msg;
+		msg.type = NETCOMMANDTYPE_GAMECOMMAND;
+		msg.executionFrame = frame;
+		msg.message = std::make_shared<GameMessage>(MSG_LOGIC_CRC, 10);
+		msg.message->appendIntegerArgument(value);
+		log.commands.push_back({ 0, 0, msg });
+	};
+	for (UnsignedInt frame = 0; frame < 5; ++frame)
+	{
+		info(0, frame, frame == 4 ? 1 : 0);
+	}
+	crc(4, 100);
+	log.rejoins.push_back({ 0, 1, log.commands.size() });
+	NetCommandMsg rejoin;
+	rejoin.type = NETCOMMANDTYPE_REJOIN;
+	rejoin.targetSlot = 0;
+	rejoin.executionFrame = 7;
+	log.commands.push_back({ 0, 0, rejoin });
+	for (UnsignedInt frame = 8; frame <= 10; ++frame)
+	{
+		info(0, frame, frame == 10 ? 1 : 0);
+	}
+	crc(10, 200);
+	RelayLog::Assembled assembled;
+	std::string error;
+	REQUIRE_MESSAGE(RelayLog::assemble(log, config, assembled, &error, true), error);
+	CHECK(assembled.problems.empty());
+	REQUIRE(assembled.hashes.size() == 2);
+	CHECK(assembled.hashes.at(5) == 100);
+	CHECK(assembled.hashes.at(10) == 200);
+
+	log.slotMask = 3;
+	config.slotPlayerIndex[1] = 11;
+	for (UnsignedInt frame = 0; frame <= 10; ++frame)
+	{
+		info(1, frame, frame == 7 ? 1 : 0);
+	}
+	// a multiplayer game logs the decider's DROP of the restarted slot (a classic room's old incarnation is not ended by its successor, lane NETDIAG-1)
+	NetCommandMsg drop;
+	drop.type = NETCOMMANDTYPE_DISCONNECTPLAYER;
+	drop.targetSlot = 0;
+	drop.frame = 5;
+	log.commands.push_back({ 1, 0, drop });
+	log.commands.push_back({ 1, 0, rejoin });
+	REQUIRE_MESSAGE(RelayLog::assemble(log, config, assembled, &error, true), error);
+	REQUIRE(assembled.problems.size() == 1);
+	CHECK(assembled.problems[0].find("has no CRC of a first incarnation beside it") != std::string::npos);
+	CHECK(assembled.hashes.count(10) == 0);
+}
 
 TEST_CASE("online3: rejoin: a restarted slot is dropped and held, its new incarnation reads the relay's log, asks, is taken back by the packet router at "
 		  "one frame, and its CRCs complete the exchange; the log replays the whole game")

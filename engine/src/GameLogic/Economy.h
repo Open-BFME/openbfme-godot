@@ -15,7 +15,7 @@
 //
 // Seams (everything the economy reads that another lane owns; each is reported by report(), none is a silent default):
 //   * attribute modifiers (the AttributeModifierPoolUpdate every object carries: RW 0x68C82D): `attributeModifierProduct(object, type)` is 1.0 times the product of
-//     the active modifiers of that type; with no provider installed no modifier is active (nothing in this build applies one): stop S-253;
+//     the active modifiers of that type (GameLogic installs the object's pool query, lane SPELLFIX-1); the sum form has no provider yet: stop S-253;
 //   * the object's experience tracker (RW 0x79D833): a hook; without one the experience a resource building earns is dropped and counted: stop S-256;
 //   * floating text and the debug overlay: IncomeEvents (a bounded log and an optional listener), not simulation state, never hashed.
 
@@ -125,6 +125,9 @@ public:
 	bool hasAttributeModifierProvider() const { return (bool)m_attributeModifiers; }
 	// RW 0x68C82D with the out value starting at 1.0 (RW 0x805007)
 	float attributeModifierProduct(const Object &obj, int type) const;
+	// the income / deposit factor: the PRODUCTION product (RW 0x68C82D(0xD)); lane MODS-3: times PRODUCTION_MONEY's under
+	// edain-unchained.production-split (its 0xED90D8 at RW 0x88559F / 0x89DC45 / 0x883C4E / 0x8A4623)
+	float productionMoneyProduct(const Object &obj) const;
 	// RW 0x68C818 style: the sum form for COMMAND_POINT_BONUS (RW 0x6A7C01 starts it at 0.0)
 	typedef std::function<bool(const Object &obj, int type, float &sum)> AttributeModifierSumProvider;
 	void setAttributeModifierSumProvider(AttributeModifierSumProvider p) { m_attributeSums = std::move(p); }

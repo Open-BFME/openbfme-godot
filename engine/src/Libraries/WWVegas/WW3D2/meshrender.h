@@ -126,6 +126,14 @@ struct MeshRenderData
 // the triangle / vertex count, a stage texture without texture coordinates, or a mapper whose arguments are rejected.
 bool Build_Mesh_Render_Data(const MeshModelClass &mesh, MeshRenderData &out, std::string *error);
 
+// The TANGENT.w of a Godot mesh vertex whose BINORMAL (Godot: cross(NORMAL, TANGENT.xyz) * TANGENT.w, measured on Godot 4.7.2 in
+// godot/tests/tangent_convention_test.gd, vertex and fragment stage, with and without ARRAY_FLAG_COMPRESS_ATTRIBUTES) is the file's
+// bitangent. Retail reads the file's tangent and bitangent raw into the vertex buffer (FXShaderGeometry.cpp:557-558, Rva0016AFD0Finish.cpp:74-80,
+// FXShaderGeometry::Init RVA 0x18C84E..0x18D16B) and normalmapped.fxo's vertex shader (blob 22) uses the frame (-World*binormal, -World*tangent,
+// World*normal): the generated shader reads BINORMAL as the file's bitangent and negates it itself. The sign is per vertex: mirrored UV islands
+// give the file's bitangent either handedness against cross(normal, tangent) (S-023).
+float Godot_Tangent_Sign(const float normal[3], const float tangent[3], const float bitangent[3]);
+
 // CPU reference of the skinning the vertex shader performs: M[b0] p0 w0 + M[b1] p1 w1 (rigid meshes: M[bone] p).
 // pose.Transform holds the world matrices of the hierarchy's pivots.
 // Skins use their own bone indices; a rigid mesh uses rigidBone, the pivot of the HLOD sub-object that carries it.

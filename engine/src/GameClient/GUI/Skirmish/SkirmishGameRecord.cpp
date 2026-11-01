@@ -164,8 +164,12 @@ std::string SkirmishGameInfoToString(const SkirmishGameInfo &info, int gameMode)
 		out += format("%d ", (int)info.rules[(std::size_t)i]); // RW 0x960B4F
 	}
 	out += ";";
+	if (info.mapStartCount > LEGACY_MAX_SLOTS)
+	{
+		out += "SC=" + std::to_string(info.mapStartCount) + ";";
+	}
 	out += "S=";
-	for (int i = 0; i < MAX_SLOTS; ++i)
+	for (int i = 0; i < info.serializedSlotCount(); ++i)
 	{
 		const SkirmishGameSlot &slot = info.slots[i];
 		if (slot.isHuman())
@@ -204,7 +208,7 @@ bool ParseSkirmishGameInfo(const std::string &text, const SkirmishGameRecordLimi
 	};
 	SkirmishGameSlot newSlot[MAX_SLOTS];
 	std::string mapName;
-	int mapContentsMask = 0, gt = 0;
+	int mapContentsMask = 0, gt = 0, mapStartCount = LEGACY_MAX_SLOTS, recordCount = 0;
 	unsigned int mapCRC = 0, mapSize = 0;
 	int seed = 0;
 	GameRules rules = MpGameRules::none();
@@ -279,17 +283,33 @@ bool ParseSkirmishGameInfo(const std::string &text, const SkirmishGameRecordLimi
 			atoiRetail(val.c_str());
 			sawSI = true;
 		}
+		else if (key == "SC")
+		{
+			if (val != "9" && val != "10" && val != "11" && val != "12" && val != "13" && val != "14" && val != "15" && val != "16")
+			{
+				return fail("invalid extended map start count '" + val + "'");
+			}
+			mapStartCount = atoiRetail(val.c_str());
+		}
 		else if (key == "S")
 		{
 			sawSlotlist = true;
 			std::size_t sp = 0;
-			for (int i = 0; i < MAX_SLOTS; ++i)
+			std::vector<std::string> records;
+			std::string record;
+			while (nextToken(val, sp, ":", record))
 			{
-				std::string raw;
-				if (!nextToken(val, sp, ":", raw))
-				{
-					return fail("the slot list has " + std::to_string(i) + " slots");
-				}
+				records.push_back(record);
+			}
+			const int slotCount = (int)records.size();
+			recordCount = slotCount;
+			if (slotCount != LEGACY_MAX_SLOTS && slotCount != MAX_SLOTS)
+			{
+				return fail("the slot list has " + std::to_string(slotCount) + " slots (8 or 16 required)");
+			}
+			for (int i = 0; i < slotCount; ++i)
+			{
+				const std::string &raw = records[(std::size_t)i];
 				SkirmishGameSlot &slot = newSlot[i];
 				std::size_t fp = 0;
 				std::vector<std::string> f;
@@ -379,6 +399,23 @@ bool ParseSkirmishGameInfo(const std::string &text, const SkirmishGameRecordLimi
 	{
 		return fail("a key is missing");
 	}
+	if (recordCount != (mapStartCount > LEGACY_MAX_SLOTS ? MAX_SLOTS : LEGACY_MAX_SLOTS))
+	{
+		return fail("the slot list disagrees with the map start count");
+	}
+	const int teamCount = (mapStartCount > LEGACY_MAX_SLOTS ? MAX_SLOTS : LEGACY_MAX_SLOTS) / 2;
+	for (int i = 0; i < recordCount; ++i)
+	{
+		if (i >= mapStartCount && newSlot[i].state != SLOT_CLOSED)
+		{
+			return fail("slot " + std::to_string(i + 1) + ": outside the map capacity");
+		}
+		if (newSlot[i].isOccupied() && newSlot[i].teamNumber >= teamCount)
+		{
+			return fail("slot " + std::to_string(i) + ": the team is outside the map capacity");
+		}
+	}
+	out.mapStartCount = mapStartCount;
 	for (int i = 0; i < MAX_SLOTS; ++i)
 	{
 		out.slots[i] = newSlot[i];
@@ -400,7 +437,7 @@ std::string SkirmishHeroIndexesString()
 {
 	// RW 0x821D55: ":" then "%d:" for the eight slots (S-3701: no hero index is kept, -1 each)
 	std::string out = ":";
-	for (int i = 0; i < MAX_SLOTS; ++i)
+	for (int i = 0; i < LEGACY_MAX_SLOTS; ++i)
 	{
 		out += "-1:";
 	}

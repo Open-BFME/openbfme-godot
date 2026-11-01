@@ -339,12 +339,13 @@ void SlowDeathBehavior::onDie(const DieModuleInterface::Event &event)
 	}
 }
 
-// RW 0x70B8AE Object::getHeightAboveTerrain: the position's z over the terrain (S-161: the ground)
+// RW 0x70B8AE Object::getHeightAboveTerrain: the position's z over its layer's surface (lane WALL-2, INFERENCE: ZH Thing::calculateHeightAboveTerrain takes the
+// object's layer; the port's layer of the position, a wall top's or a walkway's height there)
 float SlowDeathBehavior::heightAboveTerrain() const
 {
 	const Object *obj = getObject();
 	const Coord3D &p = *obj->getPosition();
-	return SimMath::subf32(p.z, obj->logic().getGroundHeight(p.x, p.y));
+	return SimMath::subf32(p.z, obj->logic().getLayerHeightForDestination(p.x, p.y, p.z));
 }
 
 // RW 0x860E93 beginSlowDeath (SlowDeathBehaviorInterface slot 0). TARGET FACTS:
@@ -631,7 +632,7 @@ UpdateSleepTime SlowDeathBehavior::update()
 		obj->setStatus((unsigned)kSinking, true); // RW 0x62684D(0x38, 1)
 		Coord3D p = *obj->getPosition();
 		float z = SimMath::fstpDword(SimMath::pc24SubW((double)p.z, SimMath::pc24DivW((double)d->m_sinkRate, 1.0))); // fld SinkRate; fdiv scale; fsubr z
-		if (z > logic.getGroundHeight(p.x, p.y)) // TheTerrainLogic slot 0x1C with the layer (S-161: the ground)
+		if (z > logic.getLayerHeightForDestination(p.x, p.y, p.z)) // TheTerrainLogic slot 0x1C with the layer (lane WALL-2)
 		{
 			z = SimMath::subf32(z, 5.69999981f);
 		}

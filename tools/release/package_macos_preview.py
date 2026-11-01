@@ -23,6 +23,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
 import audit_package  # noqa: E402
+import crash_key  # noqa: E402
 import lib_provenance  # noqa: E402
 import make_archive  # noqa: E402
 import release_keys  # noqa: E402
@@ -210,7 +211,8 @@ def write_launcher_build_info(
     """`test_key` (MACPLAY-1, tests only): a test package that trusts that key, accepts the test options and says LOCAL TRIAL
     (make_macos_manifest.py --verify-package refuses such a launcher, so a release never carries one).
     Lane SIGNKMS-1: release_keys, the trusted key list, from `keys_file` (default: the staged launcher's release_keys.pub; with
-    `test_key` and no `keys_file`: that key alone); its first key must be release_key (the legacy key: release_key.pub or `test_key`)."""
+    `test_key` and no `keys_file`: that key alone); its first key must be release_key (the legacy key: release_key.pub or `test_key`). Lane RELGH-2: nightly_keys, from the staged
+    launcher's nightly_keys.pub (none without one)."""
     key = test_key if test_key is not None else (project / "release_key.pub").read_text(encoding="ascii").strip()
     if not re.fullmatch(r"[0-9a-f]{64}", key):
         fail("the committed launcher/release_key.pub is not a 32-byte Ed25519 public key")
@@ -224,6 +226,16 @@ def write_launcher_build_info(
             fail(f"the release key list is not valid: {e}")
         if keys[0] != key:
             fail(f"the first key of {list_file.name} is not the launcher's release_key")
+    # lane RELGH-2: the nightly-only keys of the staged launcher's nightly_keys.pub (none for a source without it); none may be a release key
+    nightly_file = project / "nightly_keys.pub"
+    nightly: list[str] = []
+    if nightly_file.is_file():
+        try:
+            nightly = [k.hex() for _, k in release_keys.load_nightly(nightly_file, None)]
+        except release_keys.KeyListError as e:
+            fail(f"the nightly key list is not valid: {e}")
+        if set(nightly) & set(keys):
+            fail(f"{nightly_file.name} lists a release key")
     info = {
         "version": version.split(" ", 1)[0] if macos_updates else version,
         "display_version": version,
@@ -232,6 +244,7 @@ def write_launcher_build_info(
         "repo": repo,
         "release_key": key,
         "release_keys": keys,
+        "nightly_keys": nightly,
         "test_build": test_key is not None,
         "local_trial": test_key is not None,
         "macos_preview": not macos_updates,
@@ -665,6 +678,9 @@ def package(
         stage = work / "stage"
         extract_git_archive(["godot", "launcher", "LICENSE", "NOTICE", "tools/release/README-MAC.txt"], stage)
         project = stage / "godot"
+        # lane CRASHACT-1: the crash service key (CRASH_CLIENT_KEY) into both staged projects, or nothing (no crash report is sent)
+        for staged in (project, stage / "launcher"):
+            print(crash_key.write(staged))
         manifest = project / "openbfme.gdextension"
         manifest.write_text(arm64_manifest_text(manifest.read_text(encoding="utf-8")), encoding="utf-8")
         trust = (project / "scripts/release/release_trust.gd").read_text(encoding="utf-8")

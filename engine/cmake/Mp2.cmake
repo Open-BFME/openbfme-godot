@@ -18,6 +18,7 @@ set(OPENBFME_MP2_CLIENT_SOURCES
     src/GameClient/GUI/AptScreens/AptLanLobby.cpp
 )
 set(OPENBFME_MP2_TESTS
+    tests/test_replay_open.cpp
     tests/test_mp2_disconnect.cpp
     tests/test_mp2_net_retail.cpp
     tests/test_mp2_disconnect_screen.cpp

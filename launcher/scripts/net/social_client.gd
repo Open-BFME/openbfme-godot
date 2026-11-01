@@ -1,6 +1,7 @@
 extends Node
 
 const NetPolicy := preload("res://scripts/net/net_policy.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 const SocialIdentity := preload("res://scripts/core/social_identity.gd")
 const LobbyJSON := preload("res://scripts/net/lobby_json.gd")
 
@@ -31,6 +32,35 @@ const DEVICE_PATTERN := "^[0-9a-f]{64}\\z"
 const CODE_PATTERN := "^[0-9A-HJKMNP-TV-Z]{10}\\z"
 const CODE_DISPLAY_PATTERN := "^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{2}\\z"
 const RECOVERY_PATTERN := "^[0-9A-HJKMNP-TV-Z]{16}\\z"
+## the error code -> text id tables; ERROR_MESSAGES / HTTP_ERROR_MESSAGES give the same tables with the texts in the current language
+const ERROR_MESSAGE_IDS := {
+	"signed_out": "launcher.social_client.your_social_session_expired_sign_in",
+	"session_revoked": "launcher.social_client.your_social_session_was_revoked_sign",
+	"bad_recovery": "launcher.social_client.the_recovery_code_was_not_accepted",
+	"install_required": "launcher.social_client.start_the_game_once_to_create",
+	"banned": "launcher.social_client.this_social_account_is_unavailable",
+	"suspended": "launcher.social_client.this_social_account_is_temporarily_unavailable",
+	"rate_limited": "launcher.social_client.too_many_social_requests_try_again",
+	"already_friends": "launcher.social_client.you_are_already_friends",
+	"already_requested": "launcher.social_client.that_friend_request_is_already_pending",
+	"unavailable": "launcher.social_client.that_social_item_is_no_longer",
+	"not_found": "launcher.social_client.that_social_item_was_not_found",
+	"chat_muted": "launcher.social_client.chat_is_unavailable_for_this_account",
+	"social_unavailable": "launcher.social_client.the_social_service_is_unavailable",
+	"social_store_full": "launcher.social_client.the_social_service_cannot_save_more",
+}
+const HTTP_ERROR_MESSAGE_IDS := {
+	429: "launcher.social_client.too_many_social_requests_try_again",
+	401: "launcher.social_client.the_social_session_is_no_longer",
+	403: "launcher.social_client.the_social_session_is_no_longer",
+	404: "launcher.social_client.that_social_item_is_unavailable",
+}
+static var ERROR_MESSAGES: Dictionary:
+	get:
+		return _translated(ERROR_MESSAGE_IDS)
+static var HTTP_ERROR_MESSAGES: Dictionary:
+	get:
+		return _translated(HTTP_ERROR_MESSAGE_IDS)
 const TOKEN_PATTERN := "^[A-Za-z0-9._~-]{1,4096}\\z"
 
 var me: Dictionary = {}
@@ -47,7 +77,9 @@ var last_error := ""
 ## ONLINEMENU-1 (BATCH-P3 live-lobby check): the lobby's /v1/health names no "social" feature (the deployed lobby before the social routes):
 ## sign-in is not offered against it; the screen says so
 var unsupported := false
-const UNSUPPORTED_TEXT := "Online accounts are not available on this server yet."
+static var UNSUPPORTED_TEXT: String:
+	get:
+		return L10n.t("launcher.social_client.online_accounts_are_not_available")
 
 var _policy: NetPolicy
 var _version := ""
@@ -89,23 +121,23 @@ func configure(origin: String, version: String, test_origin: String = "", game_d
 	_game_dir = ""
 	_identity.clear()
 	if version.is_empty() or version.length() > 64 or version.strip_edges() != version:
-		return "The launcher version is invalid."
+		return L10n.t("launcher.social_client.the_launcher_version_is_invalid")
 	for c in version:
 		var code := c.unicode_at(0)
 		if code < 0x20 or code == 0x7f:
-			return "The launcher version is invalid."
+			return L10n.t("launcher.social_client.the_launcher_version_is_invalid")
 	var policy := NetPolicy.new()
 	if test_origin != "":
 		var test_error := NetPolicy.check_test_origin(test_origin)
 		if test_error != "":
-			return "The test lobby address is invalid."
+			return L10n.t("launcher.social_client.the_test_lobby_address_is_invalid")
 		policy.test_origin = test_origin
 	var lobby_error := policy.set_lobby(origin)
 	if lobby_error != "":
-		return "The lobby address is invalid."
+		return L10n.t("launcher.social_client.the_lobby_address_is_invalid")
 	var parsed := NetPolicy.parse_url(origin.trim_suffix("/"))
 	if not parsed.ok:
-		return "The lobby address is invalid."
+		return L10n.t("launcher.social_client.the_lobby_address_is_invalid")
 	_policy = policy
 	lobby_url = str(parsed.origin)
 	_version = version
@@ -124,19 +156,19 @@ func is_signed_in() -> bool:
 
 func sign_in(name: String, recover: String = "") -> void:
 	if not _configured:
-		_problem("The social lobby is not configured.")
+		_problem(L10n.t("launcher.social_client.the_social_lobby_is_not_configured"))
 		return
 	if busy:
-		_problem("Another social action is in progress.")
+		_problem(L10n.t("launcher.social_client.another_social_action_is_in_progress"))
 		return
 	if _rate_limit_remaining() > 0.0:
-		_problem("The social lobby asked you to wait before trying again.")
+		_problem(L10n.t("launcher.social_client.the_social_lobby_asked_you_to"))
 		return
 	if not _valid_text(name, 24, 128):
-		_problem("Choose a valid player name.")
+		_problem(L10n.t("launcher.social_client.choose_a_valid_player_name"))
 		return
 	if recover != "" and not _valid_recovery(recover):
-		_problem("The recovery code is invalid.")
+		_problem(L10n.t("launcher.social_client.the_recovery_code_is_invalid"))
 		return
 	var identity_epoch := _epoch
 	_set_busy(true)
@@ -156,7 +188,7 @@ func sign_in(name: String, recover: String = "") -> void:
 	if not _valid_install(str(_identity.get("install", ""))) \
 			or (_identity.has("device") and not _valid_device(str(_identity.device))):
 		_set_busy(false)
-		_problem("The game install identity is invalid.")
+		_problem(L10n.t("launcher.social_client.the_game_install_identity_is_invalid"))
 		return
 	var body: Dictionary = _identity.duplicate(true)
 	body["v"] = 1
@@ -176,7 +208,7 @@ func oauth_session() -> Dictionary:
 
 func oauth_restore_identity(name: String) -> Dictionary:
 	if not _configured or busy or token != "" or not _valid_text(name, 24, 128):
-		_problem("Choose a valid player name before restoring a linked player.")
+		_problem(L10n.t("launcher.social_client.choose_a_valid_player_name_before"))
 		return {}
 	var identity_epoch := _epoch
 	_set_busy(true)
@@ -191,7 +223,7 @@ func oauth_restore_identity(name: String) -> Dictionary:
 	_set_busy(false)
 	if identity.has("error") or not _valid_install(identity.get("install", "")) \
 			or (identity.has("device") and not _valid_device(identity.device)):
-		_problem("The shared game install identity is unavailable.")
+		_problem(L10n.t("launcher.social_client.the_shared_game_install_identity_is"))
 		return {}
 	identity["name"] = name
 	return identity
@@ -199,7 +231,7 @@ func oauth_restore_identity(name: String) -> Dictionary:
 
 func adopt_oauth_session(data: Dictionary) -> bool:
 	if not _configured or data.get("v") != 1 or _contains_private_identity(data) or not _valid_auth(data):
-		_problem("The lobby returned an invalid OAuth session.")
+		_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_oauth"))
 		return false
 	sign_out()
 	# ONLINEMENU-1: this PC's install (the session was issued to it): the proof a recovery code, a link or an unlink needs
@@ -238,14 +270,14 @@ func sign_out() -> void:
 
 func request_friend(code: String) -> void:
 	if not _valid_friend_code(code):
-		_action_problem("friend_request", "The friend code is invalid.")
+		_action_problem("friend_request", L10n.t("launcher.social_client.the_friend_code_is_invalid"))
 		return
 	_begin_action("friend_request", HTTPClient.METHOD_POST, "/v1/friends/requests", {"v": 1, "code": code})
 
 
 func respond_request(id: String, accept: bool) -> void:
 	if not _valid_id(id):
-		_action_problem("request_accept" if accept else "request_decline", "The friend request is invalid.")
+		_action_problem("request_accept" if accept else "request_decline", L10n.t("launcher.social_client.the_friend_request_is_invalid"))
 		return
 	_begin_action("request_accept" if accept else "request_decline", HTTPClient.METHOD_POST,
 		"/v1/friends/requests/%s/%s" % [id, "accept" if accept else "decline"], {"v": 1})
@@ -253,14 +285,14 @@ func respond_request(id: String, accept: bool) -> void:
 
 func remove_friend(pid: String) -> void:
 	if not _valid_id(pid):
-		_action_problem("remove_friend", "The friend is invalid.")
+		_action_problem("remove_friend", L10n.t("launcher.social_client.the_friend_is_invalid"))
 		return
 	_begin_action("remove_friend", HTTPClient.METHOD_DELETE, "/v1/friends/%s" % pid, {})
 
 
 func decline_invite(id: String, busy_reply: bool = false) -> void:
 	if not _valid_id(id):
-		_action_problem("invite_decline", "The invitation is invalid.")
+		_action_problem("invite_decline", L10n.t("launcher.social_client.the_invitation_is_invalid"))
 		return
 	var body := {"v": 1}
 	if busy_reply:
@@ -272,10 +304,10 @@ func create_recovery(current: String = "") -> void:
 	# ONLINEMENU-1 (PR #8 review, finding 2): the install the session was issued to is the lobby's proof for a recovery code; once an account is
 	# linked, the current code is needed too (Sol r2), or a confirmation with the linked account (OAuthAccount mode "confirm")
 	if not _valid_install(str(_identity.get("install", ""))):
-		_problem("Sign in again on this PC before creating a recovery code.")
+		_problem(L10n.t("launcher.social_client.sign_in_again_on_this_pc"))
 		return
 	if current != "" and not _valid_recovery(current):
-		_problem("The recovery code is 16 letters and digits.")
+		_problem(L10n.t("launcher.social_client.the_recovery_code_is_16_letters"))
 		return
 	var body := {"v": 1, "install": _identity.install}
 	if current != "":
@@ -285,7 +317,7 @@ func create_recovery(current: String = "") -> void:
 
 func set_status(state: String, hidden: bool) -> void:
 	if not ["online", "away", "matching"].has(state):
-		_action_problem("status", "The presence state is invalid.")
+		_action_problem("status", L10n.t("launcher.social_client.the_presence_state_is_invalid"))
 		return
 	_begin_action("status", HTTPClient.METHOD_POST, "/v1/me/status",
 		{"v": 1, "state": state, "hidden": hidden}, {"hidden": hidden})
@@ -293,21 +325,21 @@ func set_status(state: String, hidden: bool) -> void:
 
 func get_chat(pid: String, after: int = 0) -> void:
 	if not _valid_id(pid) or after < 0:
-		_action_problem("chat_get", "The chat request is invalid.")
+		_action_problem("chat_get", L10n.t("launcher.social_client.the_chat_request_is_invalid"))
 		return
 	_begin_action("chat_get", HTTPClient.METHOD_GET, "/v1/chat/%s/messages?after=%d&limit=50" % [pid, after], {}, {"pid": pid, "after": after})
 
 
 func send_chat(pid: String, text: String) -> void:
 	if not _valid_id(pid) or not _valid_text(text, 1000, 4000):
-		_action_problem("chat_send", "The chat message is invalid.")
+		_action_problem("chat_send", L10n.t("launcher.social_client.the_chat_message_is_invalid"))
 		return
 	var key := _chat_key(pid, text)
 	var client_id: String = _chat_retries.get(key, "")
 	if client_id.is_empty():
 		var random := Crypto.new().generate_random_bytes(16)
 		if random.size() != 16:
-			_action_problem("chat_send", "The chat message could not be prepared.")
+			_action_problem("chat_send", L10n.t("launcher.social_client.the_chat_message_could_not_be"))
 			return
 		client_id = random.hex_encode()
 		_chat_retries[key] = client_id
@@ -320,20 +352,20 @@ func send_chat(pid: String, text: String) -> void:
 
 func mark_chat_read(pid: String, through: int) -> void:
 	if not _valid_id(pid) or through < 0:
-		_action_problem("chat_read", "The chat position is invalid.")
+		_action_problem("chat_read", L10n.t("launcher.social_client.the_chat_position_is_invalid"))
 		return
 	_begin_action("chat_read", HTTPClient.METHOD_POST, "/v1/chat/%s/read" % pid, {"v": 1, "through": through})
 
 
 func _begin_action(kind: String, method: int, path: String, body: Dictionary, meta: Dictionary = {}) -> void:
 	if not is_signed_in():
-		_action_problem(kind, "Sign in before using social features.")
+		_action_problem(kind, L10n.t("launcher.social_client.sign_in_before_using_social_features"))
 		return
 	if busy:
-		_action_problem(kind, "Another social action is in progress.")
+		_action_problem(kind, L10n.t("launcher.social_client.another_social_action_is_in_progress"))
 		return
 	if _rate_limit_remaining() > 0.0:
-		_action_problem(kind, "The social lobby asked you to wait before trying again.")
+		_action_problem(kind, L10n.t("launcher.social_client.the_social_lobby_asked_you_to"))
 		return
 	_set_busy(true)
 	if _send_request(kind, method, path, JSON.stringify(body) if not body.is_empty() else "", true, meta) < 0:
@@ -349,19 +381,19 @@ func _send_request(kind: String, method: int, path: String, body: String, authen
 	if not _configured:
 		if kind != "poll":
 			_set_busy(false)
-		_problem("The social lobby is not configured.")
+		_problem(L10n.t("launcher.social_client.the_social_lobby_is_not_configured"))
 		return -1
 	var url := lobby_url + path
 	var parsed := NetPolicy.parse_url(url)
 	if not parsed.ok or parsed.origin != lobby_url or not str(parsed.path).begins_with("/v1/"):
 		if kind != "poll":
 			_set_busy(false)
-		_problem("The social request address is invalid.")
+		_problem(L10n.t("launcher.social_client.the_social_request_address_is_invalid"))
 		return -1
 	if body.to_utf8_buffer().size() > REQUEST_LIMIT:
 		if kind != "poll":
 			_set_busy(false)
-		_problem("The social request is too large.")
+		_problem(L10n.t("launcher.social_client.the_social_request_is_too_large"))
 		return -1
 	var request := HTTPRequest.new()
 	request.timeout = HELD_POLL_TIMEOUT if kind == "poll" else REQUEST_TIMEOUT
@@ -387,7 +419,7 @@ func _send_request(kind: String, method: int, path: String, body: String, authen
 			_schedule_reconnect()
 		else:
 			_set_busy(false)
-			_problem("The lobby could not be reached.")
+			_problem(L10n.t("launcher.social_client.the_lobby_could_not_be_reached"))
 		return -1
 	if kind == "poll":
 		_poll_id = request_id
@@ -421,7 +453,7 @@ func _process_response(result: int, code: int, headers: PackedStringArray, body:
 		var features: Variant = parsed.get("data", {}).get("features", []) if parsed.get("ok", false) else []
 		if result != HTTPRequest.RESULT_SUCCESS:
 			_drop_session()
-			_problem("The lobby could not be reached.")
+			_problem(L10n.t("launcher.social_client.the_lobby_could_not_be_reached"))
 			return false
 		if not features is Array or not "social" in features:
 			_drop_session()
@@ -436,48 +468,48 @@ func _process_response(result: int, code: int, headers: PackedStringArray, body:
 		return true
 	if result != HTTPRequest.RESULT_SUCCESS:
 		if kind == "poll":
-			_problem("The inbox connection failed.")
+			_problem(L10n.t("launcher.social_client.the_inbox_connection_failed"))
 			_schedule_reconnect()
 		elif kind == "friends_refresh":
 			_set_busy(false)
-			_problem("The friends list could not be refreshed.")
+			_problem(L10n.t("launcher.social_client.the_friends_list_could_not_be"))
 			_schedule_reconnect()
 		elif _is_signin_kind(kind):
 			_drop_session()
-			_problem("The lobby could not be reached.")
+			_problem(L10n.t("launcher.social_client.the_lobby_could_not_be_reached"))
 		else:
 			_set_busy(false)
-			_problem("The lobby could not be reached.")
+			_problem(L10n.t("launcher.social_client.the_lobby_could_not_be_reached"))
 		return false
 	if code >= 300 and code < 400:
 		if kind == "poll":
-			_problem("The inbox redirect was not followed.")
+			_problem(L10n.t("launcher.social_client.the_inbox_redirect_was_not_followed"))
 			_schedule_reconnect()
 		elif kind == "friends_refresh":
 			_set_busy(false)
-			_problem("The lobby returned a redirect that was not followed.")
+			_problem(L10n.t("launcher.social_client.the_lobby_returned_a_redirect_that"))
 			_schedule_reconnect()
 		elif _is_signin_kind(kind):
 			_drop_session()
-			_problem("The lobby returned a redirect that was not followed.")
+			_problem(L10n.t("launcher.social_client.the_lobby_returned_a_redirect_that"))
 		else:
 			_set_busy(false)
-			_problem("The lobby returned a redirect that was not followed.")
+			_problem(L10n.t("launcher.social_client.the_lobby_returned_a_redirect_that"))
 		return false
 	if body.size() > BODY_LIMIT:
 		if kind == "poll":
-			_problem("The inbox response was too large.")
+			_problem(L10n.t("launcher.social_client.the_inbox_response_was_too_large"))
 			_schedule_reconnect()
 		elif kind == "friends_refresh":
 			_set_busy(false)
-			_problem("The friends response was too large.")
+			_problem(L10n.t("launcher.social_client.the_friends_response_was_too_large"))
 			_schedule_reconnect()
 		elif _is_signin_kind(kind):
 			_drop_session()
-			_problem("The lobby response was too large.")
+			_problem(L10n.t("launcher.social_client.the_lobby_response_was_too_large"))
 		else:
 			_set_busy(false)
-			_problem("The lobby response was too large.")
+			_problem(L10n.t("launcher.social_client.the_lobby_response_was_too_large"))
 		return false
 	var list_reply := code == 200 and kind in ["friends", "friends_refresh", "poll", "chat_get"]
 	var parsed := _parse_json(body, list_reply)
@@ -514,18 +546,18 @@ func _process_response(result: int, code: int, headers: PackedStringArray, body:
 		return false
 	if not parsed.ok or not _valid_int(parsed.data.get("v"), 1, 1):
 		if kind == "poll":
-			_problem("The lobby returned an invalid social response.")
+			_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_social"))
 			_schedule_reconnect()
 		elif kind == "friends_refresh":
 			_set_busy(false)
-			_problem("The lobby returned an invalid friends response.")
+			_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_friends"))
 			_schedule_reconnect()
 		elif _is_signin_kind(kind):
 			_drop_session()
-			_problem("The lobby returned an invalid social response.")
+			_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_social"))
 		else:
 			_set_busy(false)
-			_problem("The lobby returned an invalid social response.")
+			_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_social"))
 		return false
 	last_error = ""
 	if kind == "poll":
@@ -542,13 +574,13 @@ func _handle_action(kind: String, data: Dictionary, meta: Dictionary) -> bool:
 			_set_busy(false)
 			if kind == "friends_refresh":
 				_schedule_reconnect()
-		_problem("The lobby returned an invalid social response.")
+		_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_social"))
 		return false
 	match kind:
 		"auth":
 			if not _valid_auth(data):
 				_drop_session()
-				_problem("The lobby returned an invalid sign-in response.")
+				_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_sign"))
 				return false
 			token = data.token
 			_expected_pid = data.account.pid
@@ -564,7 +596,7 @@ func _handle_action(kind: String, data: Dictionary, meta: Dictionary) -> bool:
 		"me":
 			if not _valid_me(data) or data.get("pid", "") != _expected_pid:
 				_drop_session()
-				_problem("The lobby returned an invalid profile response.")
+				_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_profile"))
 				return false
 			me = data.duplicate(true)
 			_request_next("friends", HTTPClient.METHOD_GET, "/v1/friends")
@@ -577,7 +609,7 @@ func _handle_action(kind: String, data: Dictionary, meta: Dictionary) -> bool:
 					_drop_session()
 				else:
 					_schedule_reconnect()
-				_problem("The lobby returned an invalid friends response.")
+				_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_friends"))
 				return false
 			friends = parsed_friends.friends
 			if kind == "friends":
@@ -595,7 +627,7 @@ func _handle_action(kind: String, data: Dictionary, meta: Dictionary) -> bool:
 		"friend_request":
 			if not _validate_request(data.get("request", {})):
 				_set_busy(false)
-				_problem("The lobby returned an invalid action response.")
+				_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_action"))
 				return false
 			_set_busy(false)
 			changed.emit()
@@ -603,7 +635,7 @@ func _handle_action(kind: String, data: Dictionary, meta: Dictionary) -> bool:
 		"request_accept", "request_decline", "remove_friend", "invite_decline", "status":
 			if not _valid_ok(data):
 				_set_busy(false)
-				_problem("The lobby returned an invalid action response.")
+				_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_action"))
 				return false
 			if kind == "status":
 				me["hidden"] = meta.get("hidden", me.get("hidden", false))
@@ -613,7 +645,7 @@ func _handle_action(kind: String, data: Dictionary, meta: Dictionary) -> bool:
 		"chat_read":
 			if not _valid_int(data.get("read_id", -1), 0):
 				_set_busy(false)
-				_problem("The lobby returned an invalid chat response.")
+				_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_chat"))
 				return false
 			_set_busy(false)
 			changed.emit()
@@ -622,7 +654,7 @@ func _handle_action(kind: String, data: Dictionary, meta: Dictionary) -> bool:
 			var code: Variant = data.get("code", "")
 			if not _valid_recovery(code):
 				_set_busy(false)
-				_problem("The lobby returned an invalid recovery response.")
+				_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_recovery"))
 				return false
 			_set_busy(false)
 			recovery_ready.emit(code)
@@ -632,7 +664,7 @@ func _handle_action(kind: String, data: Dictionary, meta: Dictionary) -> bool:
 			var chat := _validate_chat(data, int(meta.get("after", 0)), str(meta.get("pid", "")))
 			if not chat.ok:
 				_set_busy(false)
-				_problem("The lobby returned an invalid chat response.")
+				_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_chat"))
 				return false
 			_set_busy(false)
 			chat_ready.emit(str(meta.pid), chat.result)
@@ -644,13 +676,13 @@ func _handle_action(kind: String, data: Dictionary, meta: Dictionary) -> bool:
 					or message.value.text != meta.get("text", "") or message.value.from != me.get("pid", "") \
 					or message.value.to != meta.get("pid", ""):
 				_set_busy(false)
-				_problem("The lobby returned an invalid chat response.")
+				_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_chat"))
 				return false
 			_chat_retries.erase(str(meta.chat_key))
 			_set_busy(false)
 			changed.emit()
 			return true
-	_problem("The lobby returned an invalid social response.")
+	_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_social"))
 	_set_busy(false)
 	return false
 
@@ -663,12 +695,12 @@ func _request_next(kind: String, method: int, path: String) -> void:
 
 func _handle_poll(data: Dictionary) -> void:
 	if _contains_private_identity(data):
-		_problem("The lobby returned an invalid inbox response.")
+		_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_inbox"))
 		_schedule_reconnect()
 		return
 	var validated := _validate_snapshot(data)
 	if not validated.ok:
-		_problem("The lobby returned an invalid inbox response.")
+		_problem(L10n.t("launcher.social_client.the_lobby_returned_an_invalid_inbox"))
 		_schedule_reconnect()
 		return
 	var old_pids := {}
@@ -819,32 +851,19 @@ func _retry_after(headers: Dictionary, data: Dictionary) -> float:
 	return float(value if value > 0 else 10)
 
 
+static func _translated(ids: Dictionary) -> Dictionary:
+	var texts := {}
+	for key in ids:
+		texts[key] = L10n.t(ids[key])
+	return texts
+
+
 func _safe_error(code: int, error_code: String) -> String:
-	var safe := {
-		"signed_out": "Your social session expired. Sign in again.",
-		"session_revoked": "Your social session was revoked. Sign in again.",
-		"bad_recovery": "The recovery code was not accepted.",
-		"install_required": "Start the game once to create your shared identity.",
-		"banned": "This social account is unavailable.",
-		"suspended": "This social account is temporarily unavailable.",
-		"rate_limited": "Too many social requests. Try again later.",
-		"already_friends": "You are already friends.",
-		"already_requested": "That friend request is already pending.",
-		"unavailable": "That social item is no longer available.",
-		"not_found": "That social item was not found.",
-		"chat_muted": "Chat is unavailable for this account.",
-		"social_unavailable": "The social service is unavailable.",
-		"social_store_full": "The social service cannot save more data right now.",
-	}
-	if safe.has(error_code):
-		return safe[error_code]
-	if code == 429:
-		return "Too many social requests. Try again later."
-	if code == 401 or code == 403:
-		return "The social session is no longer accepted. Sign in again."
-	if code == 404:
-		return "That social item is unavailable."
-	return "The social lobby did not accept the request."
+	if ERROR_MESSAGE_IDS.has(error_code):
+		return L10n.t(ERROR_MESSAGE_IDS[error_code])
+	if HTTP_ERROR_MESSAGE_IDS.has(code):
+		return L10n.t(HTTP_ERROR_MESSAGE_IDS[code])
+	return L10n.t("launcher.social_client.the_social_lobby_did_not_accept")
 
 
 func _is_signin_kind(kind: String) -> bool:

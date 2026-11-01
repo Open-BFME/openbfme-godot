@@ -26,9 +26,10 @@
 //     and there is no victim, or the victim is on the ground layer too and (the attacker is not CAN_SHOOT_OVER_WALLS, or the cell corner (x * 10, y * 10) is
 //     not farther from the victim than from the attacker: (vy^2 + vx^2) <= (ay^2 + ay^2), SSE); else go on;
 //     any other obstacle: blocked unless the attacker is CAN_SHOOT_OVER_WALLS and not ATTACK_NEEDS_LINE_OF_SIGHT.
-// INFERENCE / NOT PORTED (stop S-784, named in computeAttackPath's report line): the weapon's terrain line RW 0x6CC6DD is not ported (no terrain line-of-sight query exists in the port; the
-// target finder's line-of-sight filter, S-859, needs the same TerrainLogic::isClearLineOfSight): it is taken as clear, so only the obstacle walk can block.
-// Only the ground layer exists (S-161): the raised-layer branch and the skip of 3 cannot fire.
+// Lane LOS-1: the weapon's terrain line RW 0x6CC6DD is ported (GameLogic/Combat/CombatLineOfSight.cpp, reached through PathfindObject::
+// isClearGoalFiringLineOfSightTerrain), and so is RW 0x6EFD35 (adjustToWallTopPoint below), the line-of-sight point of a WALK_ON_TOP_OF_WALL victim.
+// Only the ground layer exists (S-161): the raised-layer branch and the skip of 3 cannot fire, and every ground cell's layer field is the ground, so
+// adjustToWallTopPoint stops at the victim's own cell (retail walks on to the wall's edge).
 
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/SimMath.h"
@@ -149,7 +150,11 @@ bool Pathfinder::isAttackViewBlockedByObstacle(const PathfindObject &attacker, c
 	{
 		return false;
 	}
-	// RW 0x6CC6DD, the current weapon's terrain line (an IMMOBILE attacker has none): not ported, taken as clear (S-784: computeAttackPath's report line names it)
+	// RW 0x6F4596 .. 0x6F45D3: the current weapon (RW 0x68B58C(0); an IMMOBILE attacker has none) and its terrain line RW 0x6CC6DD from attackerPos: not clear -> blocked
+	if (!attacker.isKindOf(PK_IMMOBILE) && attacker.hasCurrentWeapon() && !attacker.isClearGoalFiringLineOfSightTerrain(attackerPos, *victim))
+	{
+		return true;
+	}
 	// the raised-layer test (RW 0x6F45F5 .. 0x6F4683) and the skip of RW 0x6F46B1 need a layer other than the ground (S-161): none exists
 	AttackViewWalk w;
 	w.attacker = &attacker;
@@ -219,6 +224,74 @@ bool Pathfinder::isAttackViewBlockedByObstacle(const PathfindObject &attacker, c
 		}
 		if (attackViewCellBlocks(m_world, w, skip, *cell, x, y) != 0)
 		{
+			return true;
+		}
+		std::int32_t stepX = sx, stepY = sy, inc = incNE;
+		if (d < 0)
+		{
+			stepX = sxMinor;
+			stepY = syMinor;
+			inc = incE;
+		}
+		d = wrapAdd(d, wrapAdd(inc, inc));
+		x = wrapAdd(x, stepX);
+		y = wrapAdd(y, stepY);
+	}
+	return false;
+}
+
+bool Pathfinder::adjustToWallTopPoint(Coord3D &point, const Coord3D &toward)
+{
+	// TARGET RW 0x6EFD35 -> RW 0x6ECAC7(point, toward, layer 1, &out): both ends to cells (RW 0x6E8CE6, centred), then RW 0x6E9E66's walk from point's cell
+	const std::int32_t x0 = cellIndexCentred(point.x), y0 = cellIndexCentred(point.y);
+	const std::int32_t x1 = cellIndexCentred(toward.x), y1 = cellIndexCentred(toward.y);
+	auto wrapSub = [](std::int32_t a, std::int32_t b) { return (std::int32_t)((std::uint32_t)a - (std::uint32_t)b); };
+	auto wrapAbs = [](std::int32_t a) { return a < 0 ? (std::int32_t)(0u - (std::uint32_t)a) : a; };
+	auto wrapAdd = [](std::int32_t a, std::int32_t b) { return (std::int32_t)((std::uint32_t)a + (std::uint32_t)b); };
+	const std::int32_t ax = wrapAbs(wrapSub(x1, x0));
+	const std::int32_t ay = wrapAbs(wrapSub(y1, y0));
+	const bool yMajor = ax < ay;
+	std::int32_t d, incNE, count, incE;
+	if (yMajor)
+	{
+		d = wrapSub(wrapAdd(ax, ax), ay);
+		incNE = wrapSub(ax, ay);
+		count = ay;
+		incE = ax;
+	}
+	else
+	{
+		incNE = wrapSub(ay, ax);
+		d = wrapSub(wrapAdd(ay, ay), ax);
+		count = ax;
+		incE = ay;
+	}
+	std::int32_t sxMinor = yMajor ? 0 : 1, syMinor = yMajor ? 1 : 0;
+	std::int32_t sx = 1, sy = 1;
+	if (x0 > x1)
+	{
+		sxMinor = -sxMinor;
+		sx = -1;
+	}
+	if (y0 > y1)
+	{
+		syMinor = -syMinor;
+		sy = -1;
+	}
+	std::int32_t x = x0, y = y0;
+	for (std::int32_t k = 0; k < wrapAdd(count, 1); ++k)
+	{
+		const PathfindCell *cell = getCell(LAYER_GROUND, x, y); // RW 0x5E2E9C(1, x, y)
+		if (cell == nullptr)
+		{
+			return false;
+		}
+		// RW 0x6E9356: the cell's layer field not a wall layer (RW 0x6E82B3: 0x10 < layer < 0x41) -> its centre (RW 0x6E8E19 centred: (i + 0.5) * 10)
+		const int layer = (int)cell->getLayer();
+		if (!(layer > 0x10 && layer < 0x41))
+		{
+			point.x = SimMath::mulf32(SimMath::addf32(SimMath::sseFromInt32(x), 0.5f), 10.0f);
+			point.y = SimMath::mulf32(SimMath::addf32(SimMath::sseFromInt32(y), 0.5f), 10.0f);
 			return true;
 		}
 		std::int32_t stepX = sx, stepY = sy, inc = incNE;

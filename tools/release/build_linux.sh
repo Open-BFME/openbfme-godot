@@ -62,7 +62,7 @@ B=$(cd "$B" && pwd)
 SO="$ROOT/godot/bin/openbfme.linux.template_debug.x86_64.so"
 rm -f "$SO"
 ( cd "$ROOT" && export PATH="$SDK/bin:$PATH" &&
-  cmake -S engine -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENBFME_LAME=OFF \
+  cmake -S engine -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENBFME_BUILD_TESTS=OFF \
     -DCMAKE_C_COMPILER="$SDK/bin/x86_64-godot-linux-gnu-gcc" -DCMAKE_CXX_COMPILER="$SDK/bin/x86_64-godot-linux-gnu-g++" &&
   cmake --build "$B" -j"$JOBS" --target openbfme ) || fail "the build failed"
 [ -f "$SO" ] || fail "the build wrote no $SO"

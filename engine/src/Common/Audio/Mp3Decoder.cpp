@@ -793,10 +793,15 @@ void Mp3Decoder::State::stereo(const Mp3FrameHeader &h, const GranuleChannel gc[
 	};
 	if (!gR.shortBlocks())
 	{
+		// nz[1] now includes the left extent; even its original decoded extent can include zero-valued
+		// count1 quadruples. ISO's intensity boundary follows the last non-zero *right* sample instead.
+		int lastRight = 0;
+		for (int i = 0; i < nzMax; ++i)
+			if (r[i] != 0.0f) lastRight = i + 1;
 		int firstBand = 22;
 		for (int s = 0; s < 22; ++s)
 		{
-			if (sfbL[s] >= nz[1])
+			if (sfbL[s] >= lastRight)
 			{
 				firstBand = s;
 				break;

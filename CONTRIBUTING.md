@@ -24,6 +24,13 @@ ln -s ../../tools/precommit.py .git/hooks/pre-commit      # Windows: copy it the
 
 Please also keep personal data out: no paths of your own machine, no e-mail addresses in files, no logs of your install.
 
+The gate also refuses conflict-marker lines in the **staged blob**, not the working tree, reporting the file and 1-based line number.
+It checks every changed text file (including pure renames): lines starting with seven `<` or seven `>`, and lines consisting of exactly
+seven `=` (LF or CRLF). NUL-containing binary blobs are skipped by this check only; the byte-format checks still apply. Markdown and
+AsciiDoc underlines of other lengths, such as `=====`, are allowed. The current tree has no matching documentation underlines or
+literal test fixtures, so there is **no allowlist and no path exemption**; tests should generate marker lines at runtime. Reads use one
+`git cat-file --batch` process, one blob at a time, to keep large commits fast without buffering all their contents.
+
 ## Opening a pull request
 
 1. Fork the repository and branch from `main`.
@@ -60,7 +67,8 @@ Every pull request runs `.github/workflows/pr.yml` on GitHub's own runners, with
   no secrets, actions pinned by commit, GitHub's runners only);
 - actionlint and zizmor on the workflows;
 - a Linux build of the engine and its unit tests without game files;
-- a Windows build (the release's llvm-mingw cross build) and a macOS arm64 build of the game library, compile only;
+- a Windows build (the release's llvm-mingw cross build), compile only;
+- a macOS arm64 build of the game library and unit test executable, followed by the console filter regression tests;
 - the Python tests that need no game files.
 
 A maintainer then reviews the change. We may ask for changes, or for a test that shows the behaviour against the original game.

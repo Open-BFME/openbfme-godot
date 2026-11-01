@@ -448,9 +448,11 @@ TEST_CASE("flank1 projectile: PreLandingEmotion reaches every live object of any
 {
 	FlankWorld w;
 	Object *shooter = w.unit("FlankShooter", 'A', 300, 300);
+	// merge queue q24: the three dummies (GeometryMajorRadius 8) stand apart: since OFFMAP-1 (RotWK's idle state RW 0x745A64 has no ZH frame <= 1 snap onto
+	// cell centres) the old line 510 / 518 / 525 left them overlapping, and the collisions pushed the first two out of the radius before the stone landed
 	w.unit("Dummy", 'B', 510, 300); // 10 from the landing point
-	w.unit("Dummy", 'A', 518, 300); // 18: an ally of the stone counts too
-	w.unit("Dummy", 'B', 525, 300); // 25: outside the radius 20
+	w.unit("Dummy", 'A', 482, 300); // 18: an ally of the stone counts too
+	w.unit("Dummy", 'B', 500, 325); // 25: outside the radius 20
 	w.frames(2);
 	const Coord3D target{ 500.0f, 300.0f, 0.0f };
 	ObjectWeapons::createAndFireTempWeapon(w.weapon("FlankScare"), shooter, target);
@@ -556,7 +558,7 @@ TEST_CASE("flank1 crush: the charge state takes the next crushable enemy as its 
 	m.defineState(MELEE_SQUISH, makeMeleeSquishState(m), MACHINE_DONE_SUCCESS, MACHINE_DONE_FAILURE);
 	m.setGoalObject(first->getID());
 	REQUIRE(m.setState(MELEE_SQUISH) == STATE_CONTINUE);
-	first->kill(DEATH_NORMAL);
+	first->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	REQUIRE(first->isEffectivelyDead());
 	REQUIRE(ObjectCrush::canCrush(*rider));
 	m.updateStateMachine();

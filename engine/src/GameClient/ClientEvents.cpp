@@ -66,7 +66,9 @@ void ClientEventRecorder::objectCreated(Object &obj)
 		if (p->hasTeamColor())
 		{
 			e.hasHouseColor = true;
-			e.houseColor = p->getPlayerColor();
+			// lane WEATHER-1: Drawable::friend_bindToObject (RW 0x674566) colours the drawable with Object::getNightIndicatorColor (RW 0x68B71F: the
+			// player's + 0x2A4) when TheGlobalData's time of day is NIGHT (+ 0x134 == 4), else getIndicatorColor (RW 0x68B6F5, + 0x2A0)
+			e.houseColor = settings.night ? p->getPlayerNightColor() : p->getPlayerColor();
 		}
 	}
 	// the client modules of the drawable, resolved here on the logic owner in the drawable's creation order (review r2: the render side must not
@@ -95,17 +97,7 @@ void ClientEventRecorder::objectDestroyed(Object &obj)
 	{
 		return; // never bound (the object died before it was announced)
 	}
-	if (m_dirtySet.erase(obj.getID()) != 0) // lane ANIM-1: a drawable that goes needs no flush
-	{
-		for (size_t i = 0; i < m_dirty.size(); ++i)
-		{
-			if (m_dirty[i] == obj.getID())
-			{
-				m_dirty.erase(m_dirty.begin() + (std::ptrdiff_t)i);
-				break;
-			}
-		}
-	}
+	undirty(obj.getID()); // lane ANIM-1: a drawable that goes needs no flush
 	push(ClientEvent::DESTROYED, obj);
 }
 
@@ -113,6 +105,12 @@ void ClientEventRecorder::objectDestroyed(Object &obj)
 void ClientEventRecorder::fadeIn(Object &obj, UnsignedInt frames)
 {
 	ClientEvent &e = push(ClientEvent::FADE_IN, obj);
+	e.fadeFrames = frames;
+}
+
+void ClientEventRecorder::fadeOut(Object &obj, UnsignedInt frames)
+{
+	ClientEvent &e = push(ClientEvent::FADE_OUT, obj);
 	e.fadeFrames = frames;
 }
 
@@ -128,6 +126,14 @@ void ClientEventRecorder::setCustomColors(Object &obj, int kind, std::uint32_t c
 void ClientEventRecorder::heroAttacked(Object &obj)
 {
 	push(ClientEvent::HERO_ATTACKED, obj);
+}
+
+// lane EVADAMAGE-1: RW 0x67B4B7's Eva half, the logic's part (EvaDamageNotice.h); the report goes to TheEva at the object's position (+ 0x38)
+void ClientEventRecorder::evaDamaged(Object &obj, const EvaDamageNotice &notice)
+{
+	ClientEvent &e = push(ClientEvent::EVA_DAMAGED, obj);
+	e.position = *obj.getPosition();
+	e.eva = notice;
 }
 
 void ClientEventRecorder::flashHeroButton(const std::string &templateName, int frames)
@@ -179,26 +185,29 @@ void ClientEventRecorder::modelConditionChanged(Object &obj, int bit, bool on)
 	ClientEvent &e = push(ClientEvent::MODEL_CONDITION, obj);
 	e.bit = bit;
 	e.on = on;
-	if (m_dirtySet.insert(obj.getID()).second) // lane ANIM-1: RW 0x679612 .. 0x67961F, the drawable is dirty until its flags are flushed
+	if (m_dirtyMark.try_emplace(obj.getID(), m_nextDirtyMark).second) // lane ANIM-1: RW 0x679612 .. 0x67961F, the drawable is dirty until its flags are flushed
 	{
-		m_dirty.push_back(obj.getID());
+		m_dirty.push_back({ obj.getID(), m_nextDirtyMark++ });
 	}
+}
+
+bool ClientEventRecorder::undirty(ObjectID id)
+{
+	const auto it = m_dirtyMark.find(id);
+	if (it == m_dirtyMark.end())
+	{
+		return false;
+	}
+	m_dirtyMark.erase(it); // its m_dirty entry is stale from here
+	return true;
 }
 
 // lane ANIM-1: the flush of one drawable (RW 0x67449C with force 0: nothing when it is not dirty)
 void ClientEventRecorder::flushModelConditions(Object &obj)
 {
-	if (m_dirtySet.erase(obj.getID()) == 0)
+	if (!undirty(obj.getID()))
 	{
 		return;
-	}
-	for (size_t i = 0; i < m_dirty.size(); ++i)
-	{
-		if (m_dirty[i] == obj.getID())
-		{
-			m_dirty.erase(m_dirty.begin() + (std::ptrdiff_t)i);
-			break;
-		}
 	}
 	pushFlush(obj);
 }
@@ -217,17 +226,7 @@ void ClientEventRecorder::loadedObject(Object &obj)
 			e.flags.set(bit);
 		}
 	}
-	if (m_dirtySet.erase(obj.getID()) != 0) // the flush below covers the changes recorded before
-	{
-		for (size_t i = 0; i < m_dirty.size(); ++i)
-		{
-			if (m_dirty[i] == obj.getID())
-			{
-				m_dirty.erase(m_dirty.begin() + (std::ptrdiff_t)i);
-				break;
-			}
-		}
-	}
+	undirty(obj.getID()); // the flush below covers the changes recorded before (the O(1) dirty marks, lane BIGBATTLE-1)
 	pushFlush(obj);
 }
 
@@ -313,17 +312,23 @@ std::vector<ClientEvent> ClientEventRecorder::take(bool endOfFrame)
 	// lane ANIM-1: the end of the logic frame, RW 0x6759C4: every dirty drawable's flags reach its draw modules once
 	if (endOfFrame)
 	{
-		// Lua callbacks can append dirty objects; never retain vector iterators.
+		// Lua callbacks can append dirty objects; never retain vector iterators (an entry is copied: an append may move the vector)
 		for (size_t i = 0; i < m_dirty.size(); ++i)
 		{
-			const ObjectID id = m_dirty[i];
-			if (Object *o = m_logic.findObjectByID(id))
+			const DirtyEntry d = m_dirty[i];
+			const auto live = m_dirtyMark.find(d.id);
+			if (live == m_dirtyMark.end() || live->second != d.mark)
+			{
+				continue; // flushed or destroyed since (a later entry, if any, is its live one)
+			}
+			if (Object *o = m_logic.findObjectByID(d.id))
 			{
 				pushFlush(*o);
 			}
 		}
 		m_dirty.clear();
-		m_dirtySet.clear();
+		m_dirtyMark.clear();
+		m_nextDirtyMark = 0;
 	}
 	std::vector<ClientEvent> out;
 	out.swap(m_events);

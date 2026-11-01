@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GameLogic/System/InvisibilityManager.h for the target facts, the call sites and what is inference.
 
+#include "Common/Upgrade.h"
 #include "GameLogic/System/InvisibilityManager.h"
 
 #include "GameLogic/Map/TerrainTrees.h"
@@ -194,8 +195,9 @@ void InvisibilityNugget::crc(StateHasher &h) const
 	}
 	h.addFloat(detectionRange);
 	h.addI32(invisibilityType);
-	for (std::uint32_t w : ignoreTreeCheckUpgrades.words)
+	for (unsigned i = 0; i < UpgradeMaskType::activeWords(); ++i) // lane MODS-3: retail's 0x24 words unless the data has more upgrades
 	{
+		const std::uint32_t w = ignoreTreeCheckUpgrades.words[i];
 		h.addU32(w);
 	}
 	h.addU32(options);
@@ -351,24 +353,6 @@ int InvisibilityManager::clientLook(const Object &obj, const Player *local)
 		return friendView ? 4 : 3;
 	}
 	return friendView ? 1 : 5;
-}
-
-void InvisibilityManager::clientOpacityRange(const Object &obj, float *lo, float *hi, unsigned *cycleFrames) const
-{
-	if (!isInvisible(obj))
-	{
-		if (const StealthUpdate *st = StealthUpdate::of(obj)) // RW 0x777AAF .. 0x777AF7: FriendlyOpacityMin / Max, PulseFrequency * 0.2f
-		{
-			*lo = st->data()->m_friendlyOpacityMin;
-			*hi = st->data()->m_friendlyOpacityMax;
-			*cycleFrames = st->data()->m_pulseFrequency;
-			return;
-		}
-	}
-	const GameLogicSettings &s = m_logic.settings(); // RW 0x81AAC0 .. 0x81AAFF
-	*lo = s.invisibilityOpacityMin;
-	*hi = s.invisibilityOpacityMax;
-	*cycleFrames = s.invisibilityOpacityCycleFrames;
 }
 
 // ---- the manager --------------------------------------------------------------------------------------------------------------------
@@ -688,7 +672,12 @@ bool InvisibilityManager::allowed(Object *obj, const InvisibilityNugget &n, cons
 	{
 		return false;
 	}
-	// RW 0x81BAC3: a STEALTH copy and the script's stealth switch (Object + 0x457 bit 8, RW 0x7BC7EC) -- not ported, never set (S-1040)
+	// RW 0x81BAB9 .. 0x81BACA: a STEALTH copy (+ 0x18 == 0) is refused while the script's stealth switch is off (Object + 0x457 bit 8,
+	// SCRIPT_UNSTEALTHED: NAMED_SET_STEALTH_ENABLED false, RW 0x7BC7EC; lane BFME2CAMP1)
+	if (n.invisibilityType == InvisibilityNugget::STEALTH && (obj->scriptStatus() & 8u) != 0)
+	{
+		return false;
+	}
 	if (n.invisibilityType == InvisibilityNugget::CAMOUFLAGE && camouflageDetected(*obj, n, found))
 	{
 		return false;
@@ -958,8 +947,10 @@ std::vector<std::string> InvisibilityManager::stopLines()
 		"opacity pulse (RW 0x81AA85) are the client's, TAKING_DAMAGE reads the "
 		"last damaging hit frame only, the script's stealth switch (Object + 0x457 bit 8) is absent, and RW "
 		"0x694C0D's draw module slot 0xF0 is read as AffectedByStealth",
-		"[S-1042] stealth look (lane STEALTH-1, client): an enemy's invisible object is not drawn or picked; a friend's pulses between GameData InvisibilityOpacityMin "
-		"and Max in client time with an id-based phase (RW 0x6760F9's client random phase and per-frame step are not read); the detected look is drawn as normal" };
+		"[S-1042] stealth look (lanes STEALTH-1 / STEALTHLOOK-1, client): the drawable's look runs RW 0x6760F9 / 0x673114 (the pulse, the blend, the horde "
+		"imitation and the +0x3AB hidden gate) on the presented snapshot; not ported: the heat-vision second material pass of looks 3 / 4 (renderOneObject "
+		"RW 0x46F48E draws a detected enemy as silhouette / a friend with a heat pass - our renderer has no material passes) and the +0x43E / +0x358 change "
+		"report to the draw modules (RW 0x671841)" };
 }
 
 std::vector<std::string> InvisibilityManager::report() const
@@ -987,7 +978,7 @@ void InvisibilityNugget::xfer(Xfer &x)
 	SnapshotXfer::maskWords(x, forbiddenWeaponConditions, SnapshotXfer::weaponConditionCount(), "an invisibility nugget's forbidden weapon conditions", "the weapon set conditions");
 	x.xferReal(&detectionRange);
 	SnapshotXfer::enumIn(x, invisibilityType, STEALTH, NONE, "an invisibility nugget's type");
-	SnapshotXfer::words(x, ignoreTreeCheckUpgrades.words);
+	xferUpgradeMask(x, ignoreTreeCheckUpgrades, "an invisibility entry's IgnoreTreeCheckUpgrades"); // lane MODS-3
 	if (x.isLoading())
 	{
 		checkLoadedUpgradeMask(ignoreTreeCheckUpgrades, "an invisibility nugget's tree check upgrades");

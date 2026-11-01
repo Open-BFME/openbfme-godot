@@ -13,6 +13,8 @@ extends RefCounted
 const EXIT_PASS := 0
 const EXIT_FAIL := 1
 const EXIT_SKIP := 77
+## issue #49: the install's languages (mount_retail's "languages"); the English captions and counts are checked on an English install only
+var _english := true
 
 const UNIT_INI := "data\\ini\\object\\goodfaction\\units\\men\\gondorfighter.ini"
 const UNIT_OBJECT := "GondorFighter"
@@ -59,6 +61,9 @@ func _run() -> int:
 	if not mount.ok:
 		print("FAIL: mount_retail: ", "\n  ".join(mount.errors))
 		return EXIT_FAIL
+	var languages: PackedStringArray = mount.get("languages", PackedStringArray())
+	_english = Array(languages).all(func(l): return String(l).ends_with(":English"))
+	print("  info the install's languages: %s" % [", ".join(languages)])
 	print("  info mount_retail %d ms: %d archives hashed, %d md5 cache hits" % [mount_ms, mount.archives_hashed, mount.md5_cache_hits])
 	_check(mount.archives_hashed + mount.md5_cache_hits == mount.mounted.size(), "every mounted archive was md5-verified (%d hashed + %d cached = %d)" % [mount.archives_hashed, mount.md5_cache_hits, mount.mounted.size()])
 	var mounted: Array = mount.mounted
@@ -191,6 +196,7 @@ func _run() -> int:
 	_map_objects(fs)
 	await _menu_player(fs)
 	_game_world(fs)
+	_asset_packs_switch(fs) # lane SDK-1b (a), SDK-1c
 	await _fx_player(fs)
 	_game_world_orders(fs)
 
@@ -543,7 +549,7 @@ func _map_terrain(fs: RefCounted) -> void:
 	# water, rivers, post effects: survey counts
 	var water: Dictionary = report.water
 	_check(water.areas_in_map == (want.standingWater as Array).size(), "%d standing water areas (survey %d)" % [water.areas_in_map, (want.standingWater as Array).size()])
-	_check(water.areas + water.triangulation_failed == water.areas_in_map and water.areas > 0, "every water area is rendered or counted as failed (%d + %d)" % [water.areas, water.triangulation_failed])
+	_check(water.areas + water.grid_failed == water.areas_in_map and water.areas > 0, "every water area is rendered or counted as failed (%d + %d)" % [water.areas, water.grid_failed])
 	var rivers: Dictionary = report.rivers
 	_check(rivers.areas_in_map == (want.rivers as Array).size(), "%d river areas (survey %d)" % [rivers.areas_in_map, (want.rivers as Array).size()])
 	_check(rivers.rendered > 0 and rivers.rendered <= rivers.areas_in_map, "%d rivers rendered" % rivers.rendered)
@@ -576,6 +582,12 @@ func _map_terrain(fs: RefCounted) -> void:
 		_check((mi as MeshInstance3D).mesh.get_surface_count() == 1, "%s is a single surface (one composite pass)" % mi.name)
 		break
 	_check(terrain_mat != null and not terrain_mat.shader.code.contains("blend_mix") and not terrain_mat.shader.code.contains("depth_draw_never"), "the terrain shader is opaque (no alpha blend, writes depth)")
+	# lane TERRAIN-SAMPLING: terrain.fxo's Base / Normal samplers are MinFilter ANISOTROPIC, MagFilter / MipFilter LINEAR, MaxAnisotropy 8 (pinned from the binary in
+	# tools/render/test_terrain_sampling_binary_facts.py); the atlases carry the anisotropic hint and the footprint is sampled with explicit gradients (textureGrad)
+	var common: ShaderInclude = load("res://shaders/terrain_common.gdshaderinc")
+	_check(common != null and common.code.contains("uniform sampler2D base_atlas : filter_linear_mipmap_anisotropic,") and common.code.contains("uniform sampler2D normal_atlas : filter_linear_mipmap_anisotropic,"), "the terrain atlases are sampled with the anisotropic filter hint")
+	_check(common != null and common.code.contains("textureGrad(base_atlas,") and common.code.contains("textureGrad(normal_atlas,") and not common.code.contains("textureLod(base_atlas") and not common.code.contains("textureLod(normal_atlas"), "the atlases are sampled with explicit gradients, not a fixed LOD")
+	_check(common != null and common.code.contains("uniform float max_anisotropy = 8.0;"), "the footprint's ratio is capped at the effect's MaxAnisotropy of 8")
 	for group in ["StandingWater", "Rivers"]:
 		var node := root.get_node_or_null(group)
 		_check(node != null, "the scene has a %s node" % group)
@@ -758,7 +770,10 @@ func _menu_player(fs: RefCounted) -> void:
 	if not boot.ok:
 		player.free()
 		return
-	_check(boot.strings > 10000 and boot.duplicate_labels == 36, "the string table has %d strings, 36 repeated labels (S-131): %d" % [boot.strings, boot.duplicate_labels])
+	if _english:
+		_check(boot.strings > 10000 and boot.duplicate_labels == 36, "the string table has %d strings, 36 repeated labels (S-131): %d" % [boot.strings, boot.duplicate_labels])
+	else:
+		_check(boot.strings > 10000, "the string table has %d strings (%d repeated labels; English's 36 are not checked in another language)" % [boot.strings, boot.duplicate_labels])
 	var font_names := " ".join(boot.fonts)
 	_check(font_names.contains("= Albertus MT") and font_names.contains("= Omnia LT Std"), "the corpus fonts loaded: %s" % [boot.fonts])
 	# lane UI-4 (Sol r1): a bold GameFont (language.ini's CreditsMinorTitleFont "Albertus MT" 16 Yes) is measured and drawn bold: RotWK's GDI synthesises
@@ -787,7 +802,11 @@ func _menu_player(fs: RefCounted) -> void:
 		if line.begins_with("text "):
 			texts.append(line.get_slice("'", 1))
 	texts.sort()
-	_check(texts == PackedStringArray(["MULTIPLAYER", "MY HEROES", "OPTIONS", "QUIT", "SOLO PLAY"]), "the five main menu captions come from the string table: %s" % [texts])
+	if _english:
+		_check(texts == PackedStringArray(["MULTIPLAYER", "MY HEROES", "OPTIONS", "QUIT", "SOLO PLAY"]), "the five main menu captions come from the string table: %s" % [texts])
+	else:
+		# another language: five captions from its string table, none a missing label
+		_check(texts.size() == 5 and not Array(texts).any(func(t): return String(t).contains("MISSING") or String(t).begins_with("$")), "the five main menu captions come from the string table: %s" % [texts])
 	var report: Dictionary = player.get_report()
 	_check(report.placeholders == PackedStringArray(["_type=RenderImage @ _level1.Image"]), "the main menu's Image clip is reported as a native placeholder (S-136): %s" % [report.placeholders])
 	_check(report.errors.is_empty() and report.missing_labels.is_empty() and report.font_fallbacks.is_empty(), "no render errors, missing labels or font fallbacks %s %s %s" % [report.errors, report.missing_labels, report.font_fallbacks])
@@ -967,6 +986,7 @@ func _game_world(fs: RefCounted) -> void:
 	_check(not fxids.has("S-685"), "resolved FX stop S-685 is not reported")
 	# lane FX-3: S-684 is retired (retail never loads ParticleSystem.ini); names retail resolves to NULL are listed, not played
 	_check(not fxids.has("S-684") and fxr.has("unresolved_particle_systems"), "S-684 is retired and the unresolved ParticleSysBone names are listed")
+	_weather_report(world, "map good celduin", false)
 	_tree.root.add_child(world)
 	RenderingServer.force_draw(false)
 	# destruction: a member dies, then its horde (ZH OpenContain::onDelete destroys the members)
@@ -1017,12 +1037,93 @@ func _game_world(fs: RefCounted) -> void:
 	for p in sk.players:
 		found = found or String(p).contains("'Player_1' FactionMen")
 	_check(found and String(sk.players[10]).ends_with("$1500"), "the lobby slot gave Player_1 the Men and GameData's default starting cash: %s" % [sk.players.slice(10, 12)])
+	_shroud_texels(fs, skirm)
 	_production(other, third, skirm, sk)
 	_heroes(other, skirm) # lane HERO-1
+	# lane WEATHER-1: a snowy map (map.ini IsSnowing = Yes, EXSnowFlake2.tga) draws its snow
+	var snowy: Dictionary = third.load_map("map mp withered heath", {"seed": 5})
+	_check(snowy.ok, "map mp withered heath loads as a live game %s" % [snowy.get("errors", [])])
+	if snowy.ok:
+		for k in 6:
+			third.advance(0.1)
+		_weather_report(third, "map mp withered heath", true)
 	print("  info game world: celduin in %d ms, %d objects, %d drawables, logic frame %.1f ms, sync %.1f ms" % [ms, l.objects, d.live, world.get_stats().last_logic_ms, world.get_stats().last_sync_ms])
 	other.queue_free()
 	third.queue_free()
 	world.queue_free()
+
+## Lane WEATHER-1: the live game's weather (GameWorld.get_weather_report): the retail weather files, the snow manager (the snow drawn only on a map whose
+## map.ini says IsSnowing), the cloud effect idle (TheGlobalWeatherSystem starts at NONE), no weather sound, the stops S-4890 .. S-4892.
+func _weather_report(world: Node3D, map: String, snowing: bool) -> void:
+	var wr: Dictionary = world.get_weather_report()
+	_check(wr.get("loaded", false) and (wr.errors as Array).is_empty(), "%s: the weather is loaded %s" % [map, wr.get("errors", [])])
+	if not wr.get("loaded", false):
+		return
+	var files: Array = wr.files
+	# tolerance: four startup files, then the map's map.ini / solo.ini when it has them
+	_check(files.size() >= 4 and String(files[1]) == "Data\\INI\\Weather.ini" and String(files[3]) == "Data\\INI\\Environment.ini", "%s: the weather files %s" % [map, files])
+	_check(wr.snow.enabled and wr.snow.snowing == snowing and wr.snow.phase == 0, "%s: snow enabled, snowing %s, no spell ramp" % [map, snowing])
+	if snowing:
+		# tolerance: the particle count follows the map size and the spacing; the frames drawn follow the advances
+		_check(wr.snow.particles > 0 and wr.snow.frames_drawn > 0 and String(wr.snow.texture) == "EXSnowFlake2.tga",
+			"%s: %d snow particles drawn (%s)" % [map, wr.snow.particles, wr.snow.texture])
+	else:
+		_check(wr.snow.particles == 0, "%s: no snow drawn" % map)
+	_check(wr.cloud.phase == 0 and wr.sound.weather == 0 and wr.client_frame > 0, # tolerance: the client frames of the advances so far (30 per second of game time)
+		"%s: the cloud effect idle, no weather sound, client frame %d (%d terrain materials)" % [map, wr.client_frame, wr.terrain_materials])
+	var wids := {}
+	for line in wr.stops:
+		wids[String(line).substr(1, 6)] = true
+	for id in ["S-4890", "S-4891", "S-4892", "S-4893"]:
+		_check(wids.has(id), "weather stop %s is reported" % id)
+	var weather_node: Node = world.get_node_or_null("Weather")
+	_check(weather_node != null and weather_node.get_node_or_null("Snow") != null, "%s: the Weather node holds the snow layer" % map)
+
+
+## Lane TERRAIN-SAMPLING (stop S-567): the shroud texture the terrain, water and roads read holds W3DShroud's 4-bit level (RW 0x47266B): every texel is a nibble times 17
+## (FogAlpha 127 would be nibble 7 = 119, ClearAlpha 255 is 255, ShroudAlpha 0 is 0; a fresh skirmish has no fogged cell). The packing itself is pinned for every level by engine/tests/test_fogfx1_shroud_fade.cpp.
+func _shroud_texels(fs: RefCounted, skirm: Dictionary) -> void:
+	var world: Node3D = ClassDB.instantiate("GameWorld") # its own world: the local player and the clock of the worlds compared above stay as they were
+	_tree.root.add_child(world)
+	world.setup(fs)
+	var with_terrain: Dictionary = skirm.duplicate()
+	with_terrain["terrain"] = true
+	var loaded: Dictionary = world.load_map("map mp fall back 4p", with_terrain)
+	var player := -1
+	for i in loaded.players.size():
+		if String(loaded.players[i]).contains("'Player_1' FactionMen"):
+			player = i
+	world.set_shroud_fade(false) # the texels snap to their levels
+	world.set_local_player(player)
+	world.set_shroud_drawn(true)
+	world.advance(0.2)
+	var mat: ShaderMaterial = null
+	var terrain: Node = world.find_child("Terrain", true, false)
+	_check(terrain != null, "the live game's map has a Terrain node")
+	if terrain == null:
+		world.queue_free()
+		return
+	for mi in terrain.find_children("*", "MeshInstance3D", true, false):
+		mat = (mi as MeshInstance3D).mesh.surface_get_material(0)
+		break
+	var tex: Texture2D = mat.get_shader_parameter("shroud_tex") if mat != null else null
+	var img: Image = tex.get_image() if tex != null else null
+	_check(img != null and img.get_format() == Image.FORMAT_L8, "the terrain material has the shroud texture (L8)")
+	if img == null:
+		world.queue_free()
+		return
+	var seen := {}
+	for b in img.get_data():
+		seen[b] = true
+	var off_grid := []
+	for b in seen:
+		if b % 17 != 0:
+			off_grid.append(b)
+	_check(off_grid.is_empty(), "every shroud texel is a 4-bit level times 17 (levels seen %s)" % [seen.keys()])
+	_check(seen.has(0) and seen.has(255), "the border / shrouded cells read 0 and the cleared cells 255 (levels seen %s)" % [seen.keys()])
+	_check(not seen.has(127), "no texel holds the unquantised FogAlpha 127 (a fogged cell is 119 = 7 / 15: pinned in test_fogfx1_shroud_fade.cpp)")
+	world.queue_free()
+
 
 ## FX-1: the retail FX data and the FXPlayer. Truth for the counts is a GDScript line scan of the two INI files (independent of the C++
 ## parsers): the number of distinct `FXParticleSystem <name>` / `FXList <name>` definitions.
@@ -1275,3 +1376,30 @@ func _game_world_orders(fs: RefCounted) -> void:
 			break
 	a.queue_free()
 	b.queue_free()
+
+
+## lane SDK-1b (a): GameWorld.set_asset_packs_used switches a loaded pack off and rebuilds what drew with it; switching back on (game.gd does
+## before every game, lane SDK-1c: LAN and online too) uses it again; a world loads a map either way
+func _asset_packs_switch(fs: RefCounted) -> void:
+	var dir := ProjectSettings.globalize_path("user://smoke-asset-pack/SmokePack")
+	DirAccess.make_dir_recursive_absolute(dir)
+	var f := FileAccess.open(dir.path_join("gumaarms.png"), FileAccess.WRITE)
+	f.store_buffer(PackedByteArray([137, 80, 78, 71, 13, 10, 26, 10])) # never decoded here: only its name matters
+	f.close()
+	var packs: Dictionary = fs.set_asset_packs(PackedStringArray([dir]))
+	_check(packs.ok and packs.textures == 1, "a synthetic asset pack loads (%s)" % str(packs.errors))
+	var world: Node3D = ClassDB.instantiate("GameWorld")
+	world.setup(fs)
+	var off: Dictionary = world.set_asset_packs_used(false)
+	_check(off.loaded and not off.used and off.changed, "the packs switch off: %s" % str(off))
+	var again: Dictionary = world.set_asset_packs_used(false)
+	_check(again.loaded and not again.used and not again.changed, "switching them off again changes nothing: %s" % str(again))
+	_check(world.load_map("map good celduin", {"seed": 5}).ok, "a map loads with the packs off")
+	var on: Dictionary = world.set_asset_packs_used(true)
+	_check(on.loaded and on.used and on.changed, "and back on (every game, LAN and online too, lane SDK-1c): %s" % str(on))
+	_check(world.load_map("map good celduin", {"seed": 5}).ok, "a map loads with the packs on")
+	var rep: Dictionary = fs.get_asset_pack_report()
+	_check(rep.packs.size() == 1 and rep.packs[0].name == "SmokePack" and rep.packs[0].misfits.is_empty(), "the pack report: %s" % str(rep))
+	world.free()
+	fs.set_asset_packs(PackedStringArray()) # the rest of the smoke run draws without packs
+	DirAccess.remove_absolute(dir.path_join("gumaarms.png"))

@@ -9,6 +9,8 @@
 #include "GameLogic/Map/SidesList.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 
+#include <algorithm>
+
 MapScriptSetup::MapScriptSetup() = default;
 MapScriptSetup::~MapScriptSetup() = default;
 
@@ -68,6 +70,17 @@ bool MapScriptSetup::loadLibrary(ArchiveFileSystem &fs, const std::string &path,
 	}
 	if (!lib)
 	{
+		if (!fs.doesFileExist(path))
+		{
+			// lane MODS-3: RW 0x730E1C opens the library's file (RW 0x70983C); a file that does not open answers NULL (RW 0x730E75) and the caller skips
+			// the library (RW 0x731433). Edain 4.8.5.3's maps name Libraries\Bauplatz\Bauplatz.map, which it does not ship
+			const std::string note = "script library " + path + " does not exist: skipped (retail: RW 0x730E1C answers NULL, RW 0x731433)";
+			if (std::find(m_notes.begin(), m_notes.end(), note) == m_notes.end())
+			{
+				m_notes.push_back(note);
+			}
+			return true;
+		}
 		std::vector<std::uint8_t> bytes;
 		if (!fs.readFile(path, bytes, error))
 		{
@@ -111,19 +124,30 @@ bool MapScriptSetup::loadLibrary(ArchiveFileSystem &fs, const std::string &path,
 	side.libraries.push_back(path);
 	if (lib->sides.hasTeams && !lib->sides.teams.empty())
 	{
-		if (isBfme1Data(fs))
+		if (!m_teamSides.count(side.sideName))
 		{
-			// BFME1's multiplayer_start_teams library supplies the opening army.
-			// SidesList library loading adds its teams under the receiving player
-			// (donor/target shared path documented above, RW 0x72D943).
-			for (const Dict &source : lib->sides.teams)
-			{
-				Dict team = source;
-				team.setAsciiString("teamOwner", side.sideName);
-				m_libraryTeams.push_back(std::move(team));
-			}
+			m_notes.push_back("[S-1181] script library " + path + " of side '" + side.sideName + "': its " + std::to_string(lib->sides.teams.size()) +
+				" teams are not added to the game");
 		}
-		else m_notes.push_back("[S-1181] script library " + path + ": its " + std::to_string(lib->sides.teams.size()) + " teams are not added to the game");
+		else
+		{
+			// RW 0x7314C2 ff: a team with an owner, not its owner's default team ("team" + owner, RW 0x72D943), copied owned by the side
+			int added = 0;
+			for (const Dict &team : lib->sides.teams)
+			{
+				const std::string owner = team.getAsciiString("teamOwner");
+				if (owner.empty() || team.getAsciiString("teamName") == "team" + owner)
+				{
+					continue;
+				}
+				Dict copy = team;
+				copy.setAsciiString("teamOwner", side.sideName);
+				m_libraryTeams.push_back(copy);
+				++added;
+			}
+			m_notes.push_back("script library " + path + " of side '" + side.sideName + "': " + std::to_string(added) + " of its " +
+				std::to_string(lib->sides.teams.size()) + " teams added, owned by the side (RW 0x7313B3)");
+		}
 	}
 	return true;
 }
@@ -133,6 +157,7 @@ bool MapScriptSetup::build(ArchiveFileSystem &fs, const SkirmishAIStore &aiStore
 {
 	m_sides.clear();
 	m_libraryTeams.clear();
+	m_teamSides = droppedMapSides;
 	m_sides.resize(sides.sides.size());
 	for (size_t i = 0; i < sides.sides.size(); ++i)
 	{

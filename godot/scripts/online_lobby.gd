@@ -15,9 +15,12 @@
 extends Node
 
 const OnlineList := preload("res://scripts/online_list.gd")
+const HttpTimed := preload("res://scripts/http_timed.gd") ## a time limit in running frames (a blocking load does not use it up)
 
 signal started(start_json: String)
 signal failed(message: String)
+## lane JOINVER-1: a join refused for a different build: the plain words and the DETAILS text (both builds' tags and profile ids)
+signal build_refused(message: String, details: String)
 signal notice(message: String)
 signal report_context(context: Dictionary)
 signal oneshot_done(result: int, code: int, body: PackedByteArray) ## NETGUARD-1: the answer of a post_oneshot request
@@ -73,7 +76,7 @@ func _make_http() -> void:
 	if _http != null:
 		return
 	_http = HTTPRequest.new()
-	_http.timeout = 20.0
+	HttpTimed.set_budget(_http, 20.0)
 	_http.max_redirects = 0 # ONLINE-2 r2: never follow a redirect (Godot would send the bearer token to the new origin)
 	_http.body_size_limit = BODY_LIMIT # Sol r1 (ONLINE-4): a hostile lobby's answer is not read beyond the bound
 	add_child(_http)
@@ -154,13 +157,28 @@ func _join_identity() -> Dictionary:
 	var identity := {"profile": profile, "mode": mode}
 	if platform in ["windows", "linux", "macos"]:
 		identity["platform"] = platform
+	var build := own_build()
+	if RegEx.create_from_string("^[0-9A-Za-z._+-]{1,64}$").search(str(build.get("version", ""))) != null:
+		identity["build"] = build # lane JOINVER-1: lobby.mjs checkBuild (an odd version is not told: the join never fails on it)
 	return identity
+
+
+## lane JOINVER-1: this build as the lobby is told it (online_identity.gd build_info: the build day, an official release or not)
+func own_build() -> Dictionary:
+	if not ClassDB.class_exists("ReleaseInfo"):
+		return {}
+	var build: Dictionary = {"version": str(ClassDB.instantiate("ReleaseInfo").version())}
+	build.merge(load("res://scripts/online_identity.gd").build_info())
+	if platform in ["windows", "linux", "macos"]:
+		build["platform"] = platform
+	return build
 
 
 func _after_signin() -> void:
 	if not invite_id.is_empty():
 		_step = "invite"
 		var identity := _join_identity()
+		identity.erase("build") # lane JOINVER-1 (Sol): an invite's accept is checked field by field (social.mjs exact): an older lobby refuses it
 		identity["v"] = 1
 		_send(HTTPClient.METHOD_POST, "/v1/invites/%s/accept" % invite_id, identity)
 		return
@@ -217,6 +235,18 @@ func _on_response(result: int, code: int, _headers: PackedStringArray, body: Pac
 			print("GAME ONLINE game %s has not started: waiting to spectate" % join_id)
 		_step = "spectate_wait" # lane ONLINE-3: asked again once a second until the host starts it
 		_poll_at = Time.get_ticks_msec() + 1000
+		return
+	if code == 409 and data.get("error", "") == "profile" and ClassDB.class_exists("ReleaseInfo"):
+		# lane JOINVER-1 (the owner, 2026-10-23: "it says the build is different and gives me a hash"): both builds in plain words; the profile ids
+		# only in the DETAILS (an older lobby names no host build: its side is unknown)
+		var info: RefCounted = ClassDB.instantiate("ReleaseInfo")
+		var host: Variant = data.get("host_build")
+		var host_build: Dictionary = host if host is Dictionary else {}
+		var words: String = info.join_refusal_text(own_build(), host_build)
+		var details: String = info.join_details_text(own_build(), profile, host_build, str(data.get("host_profile", "")) if data.get("host_profile") is String else "")
+		_step = "failed"
+		printerr("GAME ONLINE join refused for a different build: ", details.replace("\n", "; "))
+		build_refused.emit(words, details)
 		return
 	if code != 200:
 		_fail("%s (%s)" % [data.get("message", "HTTP %d" % code), data.get("error", "")])

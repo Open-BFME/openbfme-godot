@@ -34,6 +34,10 @@ void AIWorld::xferBody(Xfer &x)
 	XferVersion v{ 1, 2 };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
+	if (loading)
+	{
+		m_cratesValid = false; // lane MODCOMPAT-MOD1: the crate contact list is derived; rebuilt from the loaded objects by the next crate pass
+	}
 	AIXfer::StringTableScope strings; // the units' stop lines once each (AIXfer::reportString)
 	bool ready = m_mapReady;
 	x.xferBool(&ready);
@@ -60,7 +64,7 @@ void AIWorld::xferBody(Xfer &x)
 	}
 	m_pathfinder->xfer(x);
 	// the pathfinder views' layers (a view exists from the object's first pathfinder use; a view the snapshot does not name is on the ground): read and
-	// checked (an object of the game, named once, a layer 0 .. 15) before any layer changes
+	// checked (an object of the game, named once, a layer 0 .. LAYER_LAST: the wall layers reach 0x40, lane WALL-1) before any layer changes
 	std::vector<std::pair<ObjectID, PathfindLayerEnum>> views;
 	if (!loading)
 	{
@@ -147,6 +151,18 @@ void AIWorld::xferBody(Xfer &x)
 		{
 			throw XferException("ai world: the next formation id " + std::to_string(nextFormation) + " (ids start at 1)");
 		}
+		if (loading)
+		{
+			// review of #74 (r2): every AI's formation id (loaded above) is 0 or one issued below the next id
+			for (auto &kv : m_ais)
+			{
+				if (kv.second->formationId() >= nextFormation)
+				{
+					throw XferException("ai world: the AI of object " + std::to_string(kv.first) + " has formation id " + std::to_string(kv.second->formationId()) +
+										", not one issued below the next formation id " + std::to_string(nextFormation));
+				}
+			}
+		}
 	}
 	else if (loading)
 	{
@@ -155,7 +171,7 @@ void AIWorld::xferBody(Xfer &x)
 	AIXfer::blockReadToEnd(x, "ai world"); // inside the transaction: a block with bytes after its state is refused before anything stays changed
 	if (loading)
 	{
-		m_noted = std::set<std::string>(noted.begin(), noted.end());
+		m_noted = decltype(m_noted)(noted.begin(), noted.end());
 		m_nextFormationId = nextFormation; // lane FLANK-1 (version 2)
 	}
 }

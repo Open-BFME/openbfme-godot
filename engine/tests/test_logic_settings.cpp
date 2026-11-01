@@ -6,7 +6,13 @@
 
 #include "doctest.h"
 
+#include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
+#include "GameLogic/AI/AIPathfindConfig.h"
 #include "GameLogic/GameLogic.h"
+
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 
 namespace L = GameLogicSettingsLoader;
 
@@ -112,4 +118,191 @@ TEST_CASE("logic settings: fields no row reads and nested blocks are consumed an
 	// an unterminated nested block is an error
 	GameLogicSettings h;
 	CHECK_FALSE(L::scanAIData("AIData\n  EnableRepulsors = Yes\n  SideInfo Rohan\n    A = 1\n", h, &err));
+
+	// lane MODCOMPAT-1: indentation means nothing (Ennorath's aidata.ini): a SkirmishBuildList at column 0 whose Structures and own End are
+	// indented deeper, a SideInfo with a SkillSet sub block, an End in any case: each sub block ends at its own End, and the fields after them
+	// are still read
+	GameLogicSettings e;
+	const std::string ennorath =
+		"AIData\n"
+		"   SideInfo Evilmen\n"
+		"    ResourceGatherersEasy = 0\n"
+		"    SkillSet1\n"
+		"      Science = SCIENCE_X\n"
+		"    End\n"
+		"  End\n"
+		"SkirmishBuildList Rohan\n"
+		"   Structure RohanKaserne\n"
+		"      Location = X:1 Y:2\n"
+		"    END \n"
+		"     Structure RohanFarm\n"
+		"      Rebuilds = 0\n"
+		"    end\n"
+		"  END ;SkirmishBuildList FactionRohan  END\n"
+		"  EnableRepulsors = Yes\n"
+		"End\n";
+	REQUIRE_MESSAGE(L::scanAIData(ennorath, e, &err), err);
+	CHECK(e.enableRepulsors); // read after the nested blocks (the default is No): the AIData block did not end early
+	CHECK(e.unappliedFields.count("AIData.SideInfo") == 1);
+	CHECK(e.unappliedFields.count("AIData.SkirmishBuildList") == 1);
+	// a Structure's End is not the build list's: a build list that never ends is still the named error, not a silent skip
+	GameLogicSettings broken;
+	CHECK_FALSE(L::scanAIData("AIData\n  SkirmishBuildList Rohan\n    Structure RohanFarm\n    END\n", broken, &err));
+	CHECK(err.find("Missing 'END' token") != std::string::npos);
+}
+
+// lane AIDATA-1: the AIData constructor's values (RW 0x6FFBEF; BFME2 decomp TAiData::TAiData) for every field a mod's aidata.ini leaves out; retail's parser
+// requires no AIData field (before: EnableRepulsors and RepulsedDistance were required, six defaults differed)
+TEST_CASE("aidata1 settings: an AIData block that names no field loads and keeps the AIData constructor's values")
+{
+	GameLogicSettings g;
+	std::string err;
+	REQUIRE_MESSAGE(L::scanAIData("AIData\n  Wealthy = 7000\nEnd\n", g, &err), err);
+	CHECK(g.forceIdleFrames == 1u);
+	CHECK(g.guardChaseUnitsFrames == 0u);
+	CHECK(g.guardEnemyScanRate == 2u);       // LOGICFRAMES_PER_SECOND / 2
+	CHECK(g.guardEnemyReturnScanRate == 5u); // LOGICFRAMES_PER_SECOND
+	CHECK_FALSE(g.guardRulesLoaded);
+	CHECK(g.alertRangeModifier == 0.0f);
+	CHECK(g.aggressiveRangeModifier == 0.0f);
+	CHECK_FALSE(g.enableRepulsors);
+	CHECK(g.repulsedDistance == 0.0f);
+	CHECK(g.attackUsesLineOfSight);
+	CHECK(g.chaseFromBehindLimit == 50.0f);
+	CHECK(g.skirmishGroupFudgeDistance == 0.0f);
+	CHECK(g.wadeWaterDepth == 5.0f);
+	CHECK(g.deepWaterDepth == 50.0f);
+	CHECK(g.meleeApproachTolerance == 20.0f);
+	CHECK(g.meleeApproachDist == 60.0f);
+	CHECK(g.castleSiegeStandBackDistance == 100.0f);
+	CHECK(g.hordesWaitForHordes);
+	// no AIData block at all is still an error (the file is TheAI's InitFile)
+	GameLogicSettings h;
+	CHECK_FALSE(L::scanAIData("GameData\nEnd\n", h, &err));
+	CHECK(err.find("no AIData block") != std::string::npos);
+}
+
+TEST_CASE("aidata1 settings: ChaseFromBehindLimit, SkirmishGroupFudgeDistance and the pathfinder's rows are read after nested blocks, with macros")
+{
+	GameLogicSettings g;
+	std::string err;
+	const std::string text =
+		"#define DEEP 7.5\n"
+		"AIData\n"
+		"  SideInfo Rohan\n"
+		"    ResourceGatherersEasy = 0\n"
+		"  End\n"
+		"  ChaseFromBehindLimit = 35.0\n"
+		"  SkirmishGroupFudgeDistance = 4.0\n"
+		"  WadeWaterDepth = 3.0\n"
+		"  DeepWaterDepth = DEEP\n"
+		"  MeleeApproachTolerance = 21.0\n"
+		"  MeleeApproachDist = 48.0\n"
+		"  CastleSiegeStandBackDistance = 500.0\n"
+		"  HordesWaitForHordes = No\n"
+		"  AttackUsesLineOfSight = No\n"
+		"End\n";
+	REQUIRE_MESSAGE(L::scanAIData(text, g, &err), err);
+	CHECK(g.chaseFromBehindLimit == 35.0f);
+	CHECK(g.skirmishGroupFudgeDistance == 4.0f);
+	CHECK(g.wadeWaterDepth == 3.0f);
+	CHECK(g.deepWaterDepth == 7.5f);
+	CHECK(g.meleeApproachTolerance == 21.0f);
+	CHECK(g.meleeApproachDist == 48.0f);
+	CHECK(g.castleSiegeStandBackDistance == 500.0f);
+	CHECK_FALSE(g.hordesWaitForHordes);
+	CHECK_FALSE(g.attackUsesLineOfSight);
+	for (const char *f : { "ChaseFromBehindLimit", "SkirmishGroupFudgeDistance", "WadeWaterDepth", "DeepWaterDepth", "HordesWaitForHordes" })
+	{
+		CHECK(g.unappliedFields.count(std::string("AIData.") + f) == 0);
+	}
+	// the retail parser's errors: a malformed real names the field
+	GameLogicSettings h;
+	CHECK_FALSE(L::scanAIData("AIData\n  ChaseFromBehindLimit = far\nEnd\n", h, &err));
+	CHECK(err.find("ChaseFromBehindLimit") != std::string::npos);
+}
+
+// lane AIDATA-1: a map's map.ini AIData block (RW 0x627224) writes TheAI's one AIData, which the target search and the attack-path pathfinder both read; before,
+// the pathfinder kept its own copy from PathfindConfigLoader's scan and never saw the map's block
+TEST_CASE("aidata1 settings: a map.ini AttackUsesLineOfSight / DeepWaterDepth override reaches the settings and the pathfinder's configuration")
+{
+	namespace stdfs = std::filesystem;
+	const stdfs::path dir = stdfs::temp_directory_path() / ("openbfme-aidata1-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+	stdfs::create_directories(dir);
+	{
+		std::ofstream out(dir / "map.ini", std::ios::binary);
+		out << "AIData\n  AttackUsesLineOfSight = No\n  DeepWaterDepth = 9.0\n  ChaseFromBehindLimit = 20.0\nEnd\n";
+	}
+	Win32BIGFileSystem fs; // no archives: the map folder is read by the local step
+	fs.setLocalFolder(dir.u8string());
+	GameLogicSettings g;
+	std::string err;
+	REQUIRE_MESSAGE(L::scanAIData("AIData\n  AttackUsesLineOfSight = Yes\n  DeepWaterDepth = 6.0\nEnd\n", g, &err), err);
+	PathfindConfig before;
+	PathfindConfigLoader::applyAIData(g, before, false);
+	CHECK(before.attackUsesLineOfSight);
+	CHECK(before.deepWaterDepth == 6.0f);
+	std::vector<std::string> errors;
+	CHECK(GameLogicSettingsLoader::applyMapAIData(fs, dir.u8string(), g, errors));
+	CHECK(errors.empty());
+	CHECK_FALSE(g.attackUsesLineOfSight); // the target search's copy (AIUpdateCombat / AIGuard)
+	CHECK(g.chaseFromBehindLimit == 20.0f);
+	PathfindConfig c;
+	PathfindConfigLoader::applyAIData(g, c, false);
+	CHECK_FALSE(c.attackUsesLineOfSight); // the attack-path pathfinder's (AIPathfindAttackView)
+	CHECK(c.deepWaterDepth == 9.0f);
+	CHECK(c.wadeWaterDepth == 5.0f); // not named anywhere: the constructor's
+	PathfindConfig bfme1;
+	PathfindConfigLoader::applyAIData(g, bfme1, true);
+	CHECK(bfme1.deepWaterDepth == FLT_MAX); // BFME1 has no DeepWaterDepth row: no deep water class
+	fs.setLocalFolder(std::string());
+	std::error_code ec;
+	stdfs::remove_all(dir, ec);
+}
+
+// retail's tokenizer skips leading whitespace and each block ends at its own End, so a block that starts indented after a skipped block's End is read. The stubs
+// that skip the other blocks of the file must stop at it (StubExtent::LenientAfterEnd, INIBlockStubs.h); plain Lenient swallowed it and the parse still succeeded
+namespace
+{
+const char kIndentedAIData[] =
+	"Object Foo\n"
+	"  Draw = Bar\n"
+	"End\n"
+	"; a comment and a blank line between the End and the next block\n"
+	"\n"
+	"  AIData\n"
+	"    DeepWaterDepth = 9.0\n"
+	"    ChaseFromBehindLimit = 20.0\n"
+	"  End\n";
+}
+
+TEST_CASE("logic settings: an AIData block indented after a skipped block's End is read in aidata.ini")
+{
+	GameLogicSettings g;
+	std::string err;
+	REQUIRE_MESSAGE(L::scanAIData(kIndentedAIData, g, &err), err); // before: "no AIData block"
+	CHECK(g.deepWaterDepth == 9.0f);
+	CHECK(g.chaseFromBehindLimit == 20.0f);
+}
+
+TEST_CASE("logic settings: an AIData block indented after a skipped block's End is read in a map.ini")
+{
+	namespace stdfs = std::filesystem;
+	const stdfs::path dir = stdfs::temp_directory_path() / ("openbfme-indent-aidata-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+	stdfs::create_directories(dir);
+	{
+		std::ofstream out(dir / "map.ini", std::ios::binary);
+		out << kIndentedAIData;
+	}
+	Win32BIGFileSystem fs; // no archives: the map folder is read by the local step
+	fs.setLocalFolder(dir.u8string());
+	GameLogicSettings m;
+	std::vector<std::string> errors;
+	CHECK(L::applyMapAIData(fs, dir.u8string(), m, errors));
+	CHECK(errors.empty());
+	CHECK(m.deepWaterDepth == 9.0f); // before: the constructor's 50
+	CHECK(m.chaseFromBehindLimit == 20.0f);
+	fs.setLocalFolder(std::string());
+	std::error_code ec;
+	stdfs::remove_all(dir, ec);
 }

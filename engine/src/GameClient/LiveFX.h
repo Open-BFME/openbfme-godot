@@ -92,6 +92,7 @@ public:
 	// lane VISUAL-2: the shroud as the presented snapshot shows it to the local player (the view the drawn shroud is made of)
 	int shroudStatusAt(const Coord3D &pos) override;
 	bool objectShroudedForLocalPlayer(const FXObject &obj) override;
+	int mapWeather() const override { return m_mapWeather; } // lane WEATHER-1
 	FXParticleSystem::ParticleAttachInfo attachedDrawable(std::uint32_t drawableId, const std::string &boneName) override;
 	FXParticleSystem::ParticleAttachInfo attachedObject(std::uint32_t objectId, const std::string &boneName, int localPlayerIndex) override;
 	bool boneWorldMatrix(const FXObject &obj, const std::string &boneName, Matrix3D &out) override;
@@ -177,6 +178,7 @@ private:
 	void fireFrameEvent(Drawable &d, const FXEventInfo &ev, const RenderObjPrototype *model);
 
 	LiveGame &m_game;
+	int m_mapWeather = 0; ///< lane WEATHER-1: the map's WorldInfo weather (GameLogicSettings::snowy), read at construction (the logic is idle then)
 	FXPlayback &m_playback;
 	ClientBuffs m_buffs;                 // lane SPELL-4
 	std::vector<ViewShake> m_viewShakes; // lane FX-4

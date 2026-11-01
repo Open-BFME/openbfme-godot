@@ -7,6 +7,7 @@
 
 #include "Common/Recorder.h"
 #include "Common/Sha256.h"
+#include "Common/RecordingBuild.h"
 #include "Common/System/SaveGame/SaveGameFile.h"
 #include "GameClient/CommandLogLoad.h"
 
@@ -119,12 +120,13 @@ TEST_CASE("save2: the container writes its header, log and empty snapshot and re
 {
 	const SaveGameFile f = sample();
 	const std::vector<std::uint8_t> bytes = f.encode();
-	REQUIRE(bytes.size() > 12); // tolerance: a guard before the parts' tags are read (the exact layout is checked below, partOffset(bytes, 3) == size)
+	REQUIRE(bytes.size() > 12); // tolerance: a guard before the parts' tags are read (the exact layout is checked below, partOffset(bytes, 4) == size)
 	CHECK(std::string((const char *)bytes.data(), 8) == "OBFMESAV");
 	CHECK(std::string((const char *)bytes.data() + partOffset(bytes, 0), 4) == "HEAD");
 	CHECK(std::string((const char *)bytes.data() + partOffset(bytes, 1), 4) == "LOG ");
 	CHECK(std::string((const char *)bytes.data() + partOffset(bytes, 2), 4) == "SNAP");
-	CHECK(partOffset(bytes, 3) == bytes.size()); // the empty snapshot is the last part
+	CHECK(std::string((const char *)bytes.data() + partOffset(bytes, 3), 4) == "LWLD"); // lane WOTR2 milestone 3: container version 2
+	CHECK(partOffset(bytes, 4) == bytes.size()); // the empty War of the Ring part is the last part
 	SaveGameFile back;
 	std::string error;
 	REQUIRE_MESSAGE(SaveGameFile::parse(bytes, back, &error), error);
@@ -218,8 +220,8 @@ TEST_CASE("save2 T5: a damaged, truncated or foreign file is refused with its na
 	SUBCASE("another container version")
 	{
 		std::vector<std::uint8_t> b = good;
-		b[8] = 2;
-		CHECK(parseError(b) == "save container version 2 (this build reads version 1)");
+		b[8] = 3;
+		CHECK(parseError(b) == "save container version 3 (this build reads versions 1 and 2)");
 	}
 	SUBCASE("a part out of order, bytes after the end")
 	{
@@ -248,7 +250,7 @@ TEST_CASE("save2 T5: a damaged, truncated or foreign file is refused with its na
 		CHECK_FALSE(snapLoad.hasSnapshot());
 		SaveGameFile k = sample();
 		k.header.gameKind = 4;
-		CHECK(parseError(k.encode()) == "the save's game kind 4 is not one this build saves (1 Campaign, 2 Skirmish)");
+		CHECK(parseError(k.encode()) == "the save's game kind 4 is not one this build saves (1 Campaign, 2 Skirmish, 8 War of the Ring, 16 a LAN War of the Ring)");
 		SaveGameFile c = sample();
 		c.header.gameKind = 1;
 		CHECK(parseError(c.encode()) == "the save is a campaign mission without its campaign");
@@ -257,10 +259,10 @@ TEST_CASE("save2 T5: a damaged, truncated or foreign file is refused with its na
 		CHECK(parseError(sk.encode()) == "the save is a skirmish that names a campaign");
 		std::vector<std::uint8_t> v = good;
 		const size_t head = partOffset(good, 0);
-		v[head + 40] = 3; // the header version word (its digest recomputed below so only the version is wrong; lane CAMPSAVE-1: 1 and 2 load)
+		v[head + 40] = 5; // the header version word (its digest recomputed below so only the version is wrong; lane CAMPSAVE-1: 1 and 2 load; build date: 3; lane BFME2CAMP1: 4)
 		const std::array<std::uint8_t, 32> d = Sha256::hash(v.data() + head + 40, (size_t)(partOffset(good, 1) - head - 40));
 		std::memcpy(v.data() + head + 8, d.data(), 32);
-		CHECK(parseError(v) == "save header version 3 (this build reads versions 1 and 2)");
+		CHECK(parseError(v) == "save header version 5 (this build reads versions 1 to 4)");
 	}
 	SUBCASE("a missing file")
 	{
@@ -322,6 +324,244 @@ TEST_CASE("save2 T5: no part is allocated before its declared size is checked: a
 	std::remove(path.c_str());
 }
 
+TEST_CASE("save reader: malformed part boundaries, tags, sizes, versions and foreign identities are refused by name")
+{
+	const std::vector<std::uint8_t> good = sample().encode();
+	const size_t head = partOffset(good, 0), log = partOffset(good, 1), snap = partOffset(good, 2);
+	REQUIRE(parseError(good) == "(parsed)");
+	for (size_t cut : { size_t(0), size_t(8), size_t(12), head + 4, head + 8, head + 40, log - 1, log, log + 4, log + 8,
+		log + 40, snap - 1, snap, snap + 4, snap + 8, snap + 40, good.size() - 1 })
+	{
+		if (cut == good.size())
+		{
+			continue; // the synthetic save has an empty SNAP part
+		}
+		const std::string error = parseError(std::vector<std::uint8_t>(good.begin(), good.begin() + (std::ptrdiff_t)cut));
+		CHECK_MESSAGE((!error.empty() && error != "(parsed)"), "truncation at byte ", cut);
+	}
+	for (const auto &change : { std::pair<size_t, char>{ log, 'X' }, { log, 'H' }, { snap, 'H' } })
+	{
+		auto bad = good;
+		bad[change.first] = (std::uint8_t)change.second;
+		CHECK(parseError(bad).find("expected the ") != std::string::npos);
+	}
+	for (const auto &part : { std::pair<size_t, size_t>{ head, log }, { log, snap }, { snap, good.size() } })
+	{
+		auto missing = good;
+		missing.erase(missing.begin() + (std::ptrdiff_t)part.first, missing.begin() + (std::ptrdiff_t)part.second);
+		CHECK(parseError(missing) != "(parsed)");
+		auto duplicate = good;
+		duplicate.insert(duplicate.begin() + (std::ptrdiff_t)part.first, good.begin() + (std::ptrdiff_t)part.first,
+			good.begin() + (std::ptrdiff_t)part.second);
+		CHECK(parseError(duplicate) != "(parsed)");
+	}
+	for (size_t offset : { head, log, snap })
+	{
+		auto bad = good;
+		const std::uint32_t huge = 1u << 31;
+		std::memcpy(bad.data() + offset + 4, &huge, 4);
+		CHECK(parseError(bad).find("declares 2147483648 bytes") != std::string::npos);
+		CHECK(parseError(bad, true).find(offset == head ? "declares 2147483648 bytes" : "of its 2147483648 bytes") != std::string::npos);
+		bad = good;
+		std::fill_n(bad.begin() + (std::ptrdiff_t)offset + 4, 4, offset == snap ? 1 : 0);
+		CHECK(parseError(bad) != "(parsed)");
+	}
+	auto version = good;
+	version[head + 40] = 99;
+	const auto digest = Sha256::hash(version.data() + head + 40, log - head - 40);
+	std::memcpy(version.data() + head + 8, digest.data(), digest.size());
+	CHECK(parseError(version).find("save header version 99") != std::string::npos);
+	SaveGameFile foreign = sample();
+	foreign.header.engineId = "another-engine-identity";
+	SaveGameFile read;
+	std::string error;
+	REQUIRE_MESSAGE(SaveGameFile::parse(foreign.encode(), read, &error), error);
+	const SaveGameCompatibility compatible = SaveGameCompatibility::check(read.header, identity("enhanced"), ProfileIdentity::buildId(), "v0.3.0-test", false);
+	CHECK_FALSE(compatible.loadable);
+	CHECK(compatible.refusal == RecordingBuild::openWith(read.header.buildVersion, read.header.buildDate)); // another build: named by its release, not its engine id
+	CHECK_FALSE(parseError({}).empty());
+	read.header.description = "unchanged";
+	auto damaged = good;
+	damaged[log] = 'X';
+	CHECK_FALSE(SaveGameFile::parse(damaged, read, &error));
+	CHECK(read.header.description == "unchanged");
+	const std::string path = "save2_damaged.obfmesave";
+	{
+		std::ofstream file(path, std::ios::binary);
+		file.write((const char *)damaged.data(), (std::streamsize)damaged.size());
+		REQUIRE(file.good());
+	}
+	CHECK_FALSE(SaveGameFile::load(path, read, &error));
+	CHECK_FALSE(error.empty());
+	CHECK(read.header.description == "unchanged");
+	std::remove(path.c_str());
+}
+
+TEST_CASE("save reader: sparse large and maximum replay frame numbers have bounded coverage checks")
+{
+	for (const UnsignedInt frame : { 1u << 31, 0xFFFFFFFFu })
+	{
+		SaveGameFile save = sample();
+		save.header.frame = frame;
+		save.header.stateHash = 0x1BADB002u;
+		ReplayHeader h;
+		h.game = smallGame();
+		h.profile = save.header.profile;
+		ReplayWriter writer;
+		writer.setKeepCopy(true);
+		std::string error;
+		REQUIRE_MESSAGE(writer.open("", h, &error), error);
+		writer.recordHash(1, save.header.stateHash);
+		REQUIRE_MESSAGE(writer.logUpTo(1, save.header.stateHash, save.log, &error), error);
+		std::memcpy(save.log.data() + save.log.size() - 8, &frame, 4);
+		CommandLogLoad load;
+		CHECK_FALSE(load.prepare(save, &error));
+		CHECK(error == "the save's command log has no state hash of frame 2");
+	}
+	SaveGameFile save = sample();
+	save.header.frame = 0xFFFFFFFFu;
+	save.header.stateHash = 0x1BADB002u;
+	ReplayHeader h;
+	h.game = smallGame();
+	h.profile = save.header.profile;
+	ReplayWriter writer;
+	writer.setKeepCopy(true);
+	std::string error;
+	REQUIRE_MESSAGE(writer.open("", h, &error), error);
+	writer.recordHash(save.header.frame, save.header.stateHash);
+	REQUIRE_MESSAGE(writer.logUpTo(save.header.frame, save.header.stateHash, save.log, &error), error);
+	CommandLogLoad load;
+	CHECK_MESSAGE(load.prepare(save, &error), error);
+}
+
+// WOTR2 milestone 6: replay format 12 carries a War of the Ring battle's start (NewGameMessage::livingWorldBattle); any other recording stays format 11
+TEST_CASE("replay wotr: a War of the Ring battle's start round-trips in format 12; other recordings stay format 11; a damaged battle block is refused")
+{
+	auto record = [](const ReplayHeader &h) {
+		ReplayWriter writer;
+		writer.setKeepCopy(true);
+		std::string error;
+		REQUIRE_MESSAGE(writer.open("", h, &error), error);
+		writer.recordHash(3, 77);
+		std::vector<std::uint8_t> bytes;
+		REQUIRE_MESSAGE(writer.logUpTo(3, 77, bytes, &error), error);
+		return bytes;
+	};
+	auto formatOf = [](const std::vector<std::uint8_t> &b) { return (std::uint32_t)b[8] | ((std::uint32_t)b[9] << 8) | ((std::uint32_t)b[10] << 16) | ((std::uint32_t)b[11] << 24); };
+	ReplayHeader plain;
+	plain.game = smallGame();
+	plain.profile = sample().header.profile;
+	CHECK(formatOf(record(plain)) == 11);
+	ReplayHeader h = plain;
+	LivingWorldBattleStart &b = h.game.livingWorldBattle;
+	b.active = true;
+	b.ownerSlot = 0;
+	b.ownerBuildings = { "MordorFortress", "" };
+	b.members.push_back({ 1, 7, 0, "GondorAragornMP", 1, 900.5f, { "Upgrade_A" } });
+	b.members.push_back({ 0, 9, 2, "MordorFighterHorde", 3 });
+	b.slotStarts.push_back({ 0, 2500, 9, {} });
+	b.slotStarts.push_back({ 1, 7600, 12, { "MenPorter", "MenInn" } });
+	const std::vector<std::uint8_t> bytes = record(h);
+	CHECK(formatOf(bytes) == 12);
+	ReplayFile back;
+	std::string error;
+	REQUIRE_MESSAGE(ReplayFile::parse(bytes, back, &error), error);
+	const LivingWorldBattleStart &r = back.header.game.livingWorldBattle;
+	CHECK(r.active);
+	CHECK(r.ownerSlot == 0);
+	CHECK(r.ownerBuildings == b.ownerBuildings);
+	REQUIRE(r.members.size() == 2);
+	CHECK(r.members[0].thingTemplate == "GondorAragornMP");
+	CHECK(r.members[0].experience == 900.5f);
+	CHECK(r.members[0].upgrades == std::vector<std::string>{ "Upgrade_A" });
+	CHECK(r.members[1].memberIndex == 2);
+	CHECK(r.members[1].quantity == 3);
+	REQUIRE(r.slotStarts.size() == 2);
+	CHECK(r.slotStarts[1].cash == 7600);
+	CHECK(r.slotStarts[1].garrisonArmyId == 12);
+	CHECK(r.slotStarts[1].bonusUnits == std::vector<std::string>{ "MenPorter", "MenInn" });
+	CHECK(back.hashes.at(3) == 77);
+	// a member on slot 40 is refused by name
+	ReplayHeader bad = h;
+	bad.game.livingWorldBattle.members[0].slot = 40;
+	ReplayFile refused;
+	CHECK_FALSE(ReplayFile::parse(record(bad), refused, &error));
+	CHECK(error == "the War of the Ring battle's army member 0 is damaged");
+}
+
+TEST_CASE("replay reader: disk truncations, unknown records, oversized fields and foreign profiles have named errors")
+{
+	ReplayHeader h;
+	h.game = smallGame();
+	h.profile = identity("enhanced");
+	ReplayWriter writer;
+	writer.setKeepCopy(true);
+	std::string error;
+	REQUIRE_MESSAGE(writer.open("", h, &error), error);
+	writer.recordHash(1, 0xABCDu);
+	std::vector<std::uint8_t> good;
+	REQUIRE_MESSAGE(writer.logUpTo(1, 0xABCDu, good, &error), error);
+	const size_t end = good.size() - 9;
+	const std::string path = "save_reader_robustness.replay";
+	ReplayFile out;
+	for (size_t cut = 0; cut < good.size(); ++cut)
+	{
+		std::ofstream file(path, std::ios::binary | std::ios::trunc);
+		file.write((const char *)good.data(), (std::streamsize)cut);
+		file.close();
+		out.finalFrame = 123;
+		if (cut == end || cut == end - 9)
+		{
+			REQUIRE_MESSAGE(ReplayFile::load(path, out, &error), error);
+			CHECK_FALSE(out.complete); // supported relay/interrupted recordings end between intact records
+			continue;
+		}
+		CHECK_MESSAGE((!ReplayFile::load(path, out, &error) && !error.empty()), "replay truncated at byte ", cut);
+		CHECK(out.finalFrame == 123);
+	}
+	std::filesystem::resize_file(path, ReplayFile::kMaxBytes + 1);
+	out.finalFrame = 123;
+	CHECK_FALSE(ReplayFile::load(path, out, &error));
+	CHECK(error == "the replay exceeds the size limit of 268435456 bytes");
+	CHECK(out.finalFrame == 123);
+	std::remove(path.c_str());
+	REQUIRE_MESSAGE(ReplayFile::parse(good, out, &error), error);
+	CHECK(out.complete);
+	for (std::vector<std::uint8_t> bad : {
+		std::vector<std::uint8_t>(good.begin(), good.begin() + 12),
+		std::vector<std::uint8_t>(good.begin(), good.end() - 1),
+		std::vector<std::uint8_t>(good.begin(), good.end()) })
+	{
+		bad[8] = 255;
+		CHECK_FALSE(ReplayFile::parse(bad, out, &error));
+		CHECK_FALSE(error.empty());
+	}
+	auto unknown = good;
+	unknown[end] = 255;
+	CHECK_FALSE(ReplayFile::parse(unknown, out, &error));
+	CHECK(error == "unknown replay record 255");
+	auto count = good;
+	count.insert(count.begin() + (std::ptrdiff_t)end, { 1, 0, 0, 0, 0, 0, 0, 0, 0x80 });
+	CHECK_FALSE(ReplayFile::parse(count, out, &error));
+	CHECK(error.find("command count 2147483648 exceeds the record's bytes") != std::string::npos);
+	auto length = good;
+	length.insert(length.begin() + (std::ptrdiff_t)end, { 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80 });
+	CHECK_FALSE(ReplayFile::parse(length, out, &error));
+	CHECK(error == "truncated replay record");
+	CHECK(out.complete); // a failed parse must not replace the previous valid result
+	ReplayHeader foreign = h;
+	foreign.profile = identity("uber");
+	foreign.game.game.simulationProfile = SimulationProfile::Uber;
+	ReplayWriter other;
+	other.setKeepCopy(true);
+	REQUIRE_MESSAGE(other.open("", foreign, &error), error);
+	other.recordHash(1, 0xABCDu);
+	std::vector<std::uint8_t> otherBytes;
+	REQUIRE_MESSAGE(other.logUpTo(1, 0xABCDu, otherBytes, &error), error);
+	REQUIRE_MESSAGE(ReplayFile::parse(otherBytes, out, &error), error);
+	CHECK_FALSE(out.profileMismatch(h.profile).empty());
+}
+
 TEST_CASE("save2: a save loads only in the build that made it (refused by name), with the same data; the other execution profile loads in single player")
 {
 	const ProfileIdentity running = identity("enhanced");
@@ -340,16 +580,14 @@ TEST_CASE("save2: a save loads only in the build that made it (refused by name),
 		const std::string ours = ProfileIdentity::buildId();
 		const SaveGameCompatibility c = SaveGameCompatibility::check(h, running, ours, "v0.3.0-test", false);
 		CHECK_FALSE(c.loadable);
-		CHECK(c.refusal == "this game was saved by OpenBFME v0.2.9-preview.3 (engine 111111111111); this is OpenBFME v0.3.0-test (engine " + ours.substr(0, 12)
-			+ "). A save loads only in the build that made it.");
+		CHECK(c.refusal == "Made with v0.2.9-preview.3 (build date unavailable). Open it with that version from the launcher.");
 	}
 	SUBCASE("other game data")
 	{
 		h.profile = identity("enhanced", "ffffffffffffffffffffffffffffffff");
 		const SaveGameCompatibility c = SaveGameCompatibility::check(h, running, ProfileIdentity::buildId(), "v0.3.0-test", false);
 		CHECK_FALSE(c.loadable);
-		CHECK(c.refusal.rfind("this game was saved with other game data or rules: ", 0) == 0);
-		CHECK(c.refusal.find("ffffffffffffffffffffffffffffffff") != std::string::npos);
+		CHECK(c.refusal == "Made with an unknown build. Open it with the build that made it from the launcher. The game data or rules differ from this build.");
 	}
 	SUBCASE("Uber save, Faithful build, and the reverse: single player only")
 	{
@@ -610,3 +848,133 @@ TEST_CASE("save2: the replay records an execution profile switch, refuses a bad 
 	CHECK(error == "replay profile switches out of order (frame 2)");
 }
 
+
+// lane WOTR2 milestone 3: container version 2's War of the Ring part and save point 2 (the strategic map); version 1 containers still load
+TEST_CASE("save2 wotr: a War of the Ring map save round-trips; its rules are refused by name; a version 1 container still loads")
+{
+	SaveGameFile w = sample();
+	w.header.gameKind = 8;
+	w.header.savePoint = 2;
+	w.header.frame = 0;
+	w.header.commands = 0;
+	w.header.campaign = "WOTRScenario001";
+	w.header.mapPath.clear();
+	w.log.clear();
+	w.livingWorld = { 9, 8, 7, 6 };
+	w.livingWorldSession = { 5, 4 };
+	SaveGameFile back;
+	std::string error;
+	REQUIRE_MESSAGE(SaveGameFile::parse(w.encode(), back, &error), error);
+	CHECK(back.header.gameKind == 8);
+	CHECK(back.header.savePoint == 2);
+	CHECK(back.header.campaign == "WOTRScenario001");
+	CHECK(back.livingWorld == w.livingWorld);
+	CHECK(back.livingWorldSession == w.livingWorldSession);
+	CHECK(back.log.empty());
+
+	SaveGameFile x = w;
+	x.livingWorld.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save carries no strategic game"); // a session alone is no game
+	x.livingWorldSession.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save carries no strategic game");
+	CHECK(parseError(x.encode(), true) == "(parsed)"); // the listing reads the header only
+	x = w;
+	x.header.campaign.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save names no scenario");
+	x = w;
+	x.header.savePoint = 0;
+	CHECK(parseError(x.encode()) == "the War of the Ring save is neither at the strategic map nor inside a battle");
+	x = w;
+	x.log = { 1 };
+	CHECK(parseError(x.encode()) == "the War of the Ring map save carries an RTS game (a frame, commands, a log or a snapshot)");
+	x = w;
+	x.header.frame = 5;
+	CHECK(parseError(x.encode()) == "the War of the Ring map save carries an RTS game (a frame, commands, a log or a snapshot)");
+	x = sample();
+	x.livingWorld = { 1 };
+	CHECK(parseError(x.encode()) == "the save carries a War of the Ring game it is not");
+	x = sample();
+	x.header.savePoint = 2;
+	CHECK(parseError(x.encode()) == "the save is at the War of the Ring map without its strategic game");
+	x = w;
+	x.header.autoSave = true;
+	CHECK(parseError(x.encode()) == "the save is a game at its frame with the campaign menu's flags");
+	x = w;
+	x.header.savePoint = 3; // WOTR2 milestone 6: a battle's save needs its RTS game
+	CHECK(parseError(x.encode()) == "the War of the Ring battle save carries no RTS game (a frame, a log and a snapshot)");
+	x = w;
+	x.header.savePoint = 4;
+	CHECK(parseError(x.encode()) == "the save's save point 4 is not one this build saves (0 a game, 1 the campaign menu, 2 the War of the Ring map, 3 a War of the Ring battle)");
+	x = sample();
+	x.header.gameKind = 4;
+	CHECK(parseError(x.encode()) == "the save's game kind 4 is not one this build saves (1 Campaign, 2 Skirmish, 8 War of the Ring, 16 a LAN War of the Ring)");
+	// WOTR2 milestone 8 (step 4, Sol wotr2m8s4 #1): 16, a LAN war's map save (the LAN lobby's Load Game page): as 8 at the map, never inside a battle
+	x = w;
+	x.header.gameKind = 16;
+	REQUIRE_MESSAGE(SaveGameFile::parse(x.encode(), back, &error), error);
+	CHECK(back.header.gameKind == 16);
+	CHECK(back.livingWorld == w.livingWorld);
+	x.header.campaign.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save names no scenario");
+	x = w;
+	x.header.gameKind = 16;
+	x.livingWorld.clear();
+	x.livingWorldSession.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save carries no strategic game");
+	x = w;
+	x.header.gameKind = 16;
+	x.header.savePoint = 3;
+	CHECK(parseError(x.encode()) == "the LAN War of the Ring save is not at the strategic map");
+
+	// WOTR2 milestone 6 (spec Q 3): save point 3, a War of the Ring battle: the four parts round-trip; each missing RTS part is refused by name
+	SaveGameFile b = sample();
+	b.header.gameKind = 8;
+	b.header.savePoint = 3;
+	b.header.campaign = "WOTRScenario001";
+	b.snapshot = { 3, 1, 4 };
+	b.livingWorld = { 9, 8, 7, 6 };
+	b.livingWorldSession = { 5, 4 };
+	REQUIRE(b.header.frame == 321);
+	REQUIRE_FALSE(b.log.empty());
+	REQUIRE_MESSAGE(SaveGameFile::parse(b.encode(), back, &error), error);
+	CHECK(back.header.savePoint == 3);
+	CHECK(back.header.frame == b.header.frame);
+	CHECK(back.log == b.log);
+	CHECK(back.snapshot == b.snapshot);
+	CHECK(back.livingWorld == b.livingWorld);
+	CHECK(back.livingWorldSession == b.livingWorldSession);
+	CHECK(back.encode() == b.encode());
+	x = b;
+	x.snapshot.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring battle save carries no RTS game (a frame, a log and a snapshot)");
+	x = b;
+	x.log.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring battle save carries no RTS game (a frame, a log and a snapshot)");
+	x = b;
+	x.header.frame = 0;
+	CHECK(parseError(x.encode()) == "the War of the Ring battle save carries no RTS game (a frame, a log and a snapshot)");
+	x = b;
+	x.livingWorld.clear();
+	x.livingWorldSession.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save carries no strategic game");
+	x = b;
+	x.header.campaign.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save names no scenario");
+	x = sample();
+	x.header.savePoint = 3;
+	CHECK(parseError(x.encode()) == "the save is inside a War of the Ring battle without its strategic game");
+
+	// a version 1 container: three parts (no LWLD); it loads as before
+	std::vector<std::uint8_t> v1 = sample().encode();
+	REQUIRE(partOffset(v1, 4) == v1.size());
+	v1.resize(partOffset(v1, 3));
+	v1[8] = 1;
+	REQUIRE_MESSAGE(SaveGameFile::parse(v1, back, &error), error);
+	CHECK(back.header.frame == 321);
+	CHECK(back.livingWorld.empty());
+	// and a version 1 container cannot hold a War of the Ring game
+	std::vector<std::uint8_t> v1w = w.encode();
+	v1w.resize(partOffset(v1w, 3));
+	v1w[8] = 1;
+	CHECK(parseError(v1w) == "the War of the Ring save carries no strategic game");
+}

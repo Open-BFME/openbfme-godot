@@ -11,13 +11,16 @@
 // probes and the share that got no answer; no answer at all is a failed link (rttMs -1, loss 100).
 //
 // Not simulation code (sim_policy.json): display data for the menus.
+// A receive worker timestamps with NetMilliseconds (monotonic); update only publishes the completed batch to the menu thread.
 #pragma once
 
 #include "GameNetwork/Transport.h"
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 class RelayProbe
@@ -37,9 +40,10 @@ public:
 
 	RelayProbe();
 	explicit RelayProbe(const Options &options);
+	~RelayProbe();
 	// starts a measurement of `relay` ("a.b.c.d:port"); false + *error when the address does not parse or no socket can be opened (nothing runs then)
-	bool start(const std::string &relay, std::uint64_t nowMs, std::string *error);
-	void update(std::uint64_t nowMs);
+	bool start(const std::string &relay, std::string *error);
+	void update();
 	bool running() const { return m_running; }
 	bool hasResult() const { return m_hasResult; }
 	const Result &result() const { return m_result; }
@@ -47,15 +51,15 @@ public:
 	void stop();
 
 private:
-	void finish();
-	void sendProbe(std::uint64_t nowMs);
+	void measure();
 
 	Options m_options;
 	std::unique_ptr<UDP> m_socket;
 	NetAddress m_relay;
 	std::string m_relayText;
-	bool m_running = false, m_hasResult = false, m_waiting = false;
-	std::uint64_t m_sentAt = 0;
-	std::vector<int> m_rtts;
+	bool m_running = false, m_hasResult = false;
+	std::thread m_receiver;
+	std::atomic<bool> m_stop{ false }, m_done{ false };
+	Result m_completed;
 	Result m_result;
 };

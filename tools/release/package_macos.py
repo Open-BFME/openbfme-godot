@@ -103,7 +103,8 @@ def validate_preview_sources(repo: Path) -> None:
             "_set_macos_releases_link" not in launcher or not macos_update.is_file() or not helper.is_file()):
         fail("HEAD lacks the signed macOS manifest, package updater, or atomic swap helper sources")
     trust = (repo / "godot/scripts/release/release_trust.gd").read_text(encoding="utf-8")
-    if trust.count('const RELEASE_KEY := ""') != 1 or trust.count('const RELEASE_KEYS := ""') != 1:
+    if trust.count('const RELEASE_KEY := ""') != 1 or trust.count('const RELEASE_KEYS := ""') != 1 \
+            or trust.count('const NIGHTLY_KEYS := ""') != 1:
         fail("release_trust must remain empty for the unsigned-payload Mac preview")
 
 
@@ -130,7 +131,7 @@ def ensure_empty_output(path: Path) -> None:
 def cmake_configure_args(build: Path, extension_dir: Path, version: str) -> list[str]:
     return [
         "cmake", "-S", str(REPO / "engine"), "-B", str(build), "-G", "Ninja",
-        "-DCMAKE_BUILD_TYPE=Release", "-DOPENBFME_LAME=OFF", "-DOPENBFME_BUILD_GODOT=ON",
+        "-DCMAKE_BUILD_TYPE=Release", "-DOPENBFME_BUILD_TESTS=OFF", "-DOPENBFME_BUILD_GODOT=ON",
         "-DCMAKE_OSX_ARCHITECTURES=arm64", "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0",
         f"-DOPENBFME_VERSION_OVERRIDE={version}", f"-DOPENBFME_GODOT_BIN={extension_dir}",
     ]
@@ -181,7 +182,7 @@ def make_plan(
     extension = "<fresh temporary build directory>/godot-bin"
     configure = [
         "cmake", "-S", str(REPO / "engine"), "-B", build, "-G", "Ninja",
-        "-DCMAKE_BUILD_TYPE=Release", "-DOPENBFME_LAME=OFF", "-DOPENBFME_BUILD_GODOT=ON",
+        "-DCMAKE_BUILD_TYPE=Release", "-DOPENBFME_BUILD_TESTS=OFF", "-DOPENBFME_BUILD_GODOT=ON",
         "-DCMAKE_OSX_ARCHITECTURES=arm64", "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0",
         f"-DOPENBFME_VERSION_OVERRIDE={display_version}", f"-DOPENBFME_GODOT_BIN={extension}",
     ]

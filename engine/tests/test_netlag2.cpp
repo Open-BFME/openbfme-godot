@@ -6,6 +6,7 @@
 // round trip below is exact.
 
 #include "doctest.h"
+#include "OnlineTestWait.h"
 
 #include "GameNetwork/NetImpairment.h"
 #include "GameNetwork/Network.h"
@@ -21,17 +22,10 @@ namespace
 {
 bool serviceUntil(Transport &transport, const std::function<bool()> &ready)
 {
-	const std::uint64_t deadline = NetMilliseconds() + 5000;
-	do
-	{
+	return onlinetest::waitUntil([&] {
 		transport.service();
-		if (ready())
-		{
-			return true;
-		}
-		NetSleepMilliseconds(1);
-	} while (NetMilliseconds() < deadline);
-	return false;
+		return ready();
+	});
 }
 
 struct Link

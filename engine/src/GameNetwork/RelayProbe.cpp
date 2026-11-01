@@ -4,6 +4,7 @@
 #include "GameNetwork/RelayProtocol.h"
 
 #include <algorithm>
+#include <chrono>
 
 RelayProbe::RelayProbe() : m_options(Options())
 {
@@ -13,7 +14,12 @@ RelayProbe::RelayProbe(const Options &options) : m_options(options)
 {
 }
 
-bool RelayProbe::start(const std::string &relay, std::uint64_t nowMs, std::string *error)
+RelayProbe::~RelayProbe()
+{
+	stop();
+}
+
+bool RelayProbe::start(const std::string &relay, std::string *error)
 {
 	stop();
 	NetAddress address;
@@ -34,92 +40,88 @@ bool RelayProbe::start(const std::string &relay, std::uint64_t nowMs, std::strin
 	m_socket = std::move(socket);
 	m_relay = address;
 	m_relayText = relay;
-	m_rtts.clear();
 	m_result = Result();
+	m_hasResult = false;
 	m_running = true;
-	m_waiting = false;
-	sendProbe(nowMs);
+	m_stop = false;
+	m_done = false;
+	m_receiver = std::thread([this] { measure(); });
 	return true;
 }
 
 void RelayProbe::stop()
 {
+	m_stop = true;
+	if (m_receiver.joinable())
+	{
+		m_receiver.join();
+	}
 	m_running = false;
-	m_waiting = false;
 	m_socket.reset();
 }
 
-void RelayProbe::sendProbe(std::uint64_t nowMs)
+void RelayProbe::update()
 {
-	// every probe after the first goes from a socket of its own (a fresh port): NOT_BOUND carries nothing to tell probes apart, so a late answer to a
-	// probe that already timed out must not reach the socket waiting for the next one
-	if (m_result.sent > 0)
+	if (m_running && m_done)
 	{
-		auto socket = std::make_unique<UDP>();
-		std::string error;
-		if (!socket->bind(0, 0, &error))
-		{
-			++m_result.sent; // a probe that could not even be sent is lost
-			m_sentAt = nowMs - m_options.timeoutMs;
-			m_waiting = true;
-			return;
-		}
-		m_socket = std::move(socket);
-	}
-	const std::vector<std::uint8_t> probe = RelayProtocol::encodeLogRequest(0);
-	++m_result.sent;
-	m_sentAt = nowMs;
-	m_waiting = true;
-	if (!m_socket->sendTo(m_relay, probe.data(), probe.size()))
-	{
-		m_sentAt = nowMs - m_options.timeoutMs; // a send that failed is a lost probe (it times out now)
+		m_receiver.join();
+		m_result = m_completed;
+		m_hasResult = true;
+		m_running = false;
+		m_socket.reset();
 	}
 }
 
-void RelayProbe::update(std::uint64_t nowMs)
+void RelayProbe::measure()
 {
-	if (!m_running || !m_socket)
+	Result result;
+	std::vector<int> rtts;
+	const auto probe = RelayProtocol::encodeLogRequest(0);
+	for (int i = 0; i < m_options.probes && !m_stop; ++i)
 	{
-		return;
-	}
-	NetAddress from;
-	std::vector<std::uint8_t> d;
-	while (m_waiting && m_socket->receiveFrom(from, d))
-	{
-		// only the relay's own NOT_BOUND answers a probe (anything else, or from anyone else, is ignored)
-		if (from == m_relay && d.size() == RelayProtocol::kHeaderBytes && RelayProtocol::isRelayDatagram(d) && d[3] == RelayProtocol::NOT_BOUND)
+		++result.sent;
+		// NOT_BOUND has no probe ID: each attempt needs a fresh socket to exclude late answers.
+		if (i > 0)
 		{
-			m_rtts.push_back((int)std::min<std::uint64_t>(nowMs - m_sentAt, 10000));
-			m_waiting = false;
+			auto socket = std::make_unique<UDP>();
+			std::string error;
+			if (!socket->bind(0, 0, &error))
+			{
+				continue;
+			}
+			m_socket = std::move(socket);
+		}
+		const auto sentAt = NetMilliseconds();
+		if (!m_socket->sendTo(m_relay, probe.data(), probe.size()))
+		{
+			continue;
+		}
+		while (!m_stop)
+		{
+			NetAddress from;
+			std::vector<std::uint8_t> d;
+			const bool received = m_socket->receiveFrom(from, d);
+			const auto elapsed = NetMilliseconds() - sentAt;
+			if (elapsed >= m_options.timeoutMs)
+			{
+				break;
+			}
+			if (received && from == m_relay && d.size() == RelayProtocol::kHeaderBytes && RelayProtocol::isRelayDatagram(d) &&
+				d[3] == RelayProtocol::NOT_BOUND)
+			{
+				rtts.push_back((int)std::min<std::uint64_t>(elapsed, 10000));
+				break;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 	}
-	if (m_waiting && nowMs - m_sentAt >= m_options.timeoutMs)
+	result.answered = (int)rtts.size();
+	result.lossPct = result.sent ? (result.sent - result.answered) * 100 / result.sent : 100;
+	if (!rtts.empty())
 	{
-		m_waiting = false; // lost
+		std::sort(rtts.begin(), rtts.end());
+		result.rttMs = std::max(1, rtts[rtts.size() / 2]);
 	}
-	if (!m_waiting)
-	{
-		if (m_result.sent >= m_options.probes)
-		{
-			finish();
-		}
-		else
-		{
-			sendProbe(nowMs);
-		}
-	}
-}
-
-void RelayProbe::finish()
-{
-	m_result.answered = (int)m_rtts.size();
-	m_result.lossPct = m_result.sent ? (m_result.sent - m_result.answered) * 100 / m_result.sent : 100;
-	if (!m_rtts.empty())
-	{
-		std::vector<int> sorted = m_rtts;
-		std::sort(sorted.begin(), sorted.end());
-		m_result.rttMs = std::max(1, sorted[sorted.size() / 2]);
-	}
-	m_hasResult = true;
-	stop();
+	m_completed = result;
+	m_done = true;
 }

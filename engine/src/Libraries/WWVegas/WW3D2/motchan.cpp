@@ -3,7 +3,7 @@
 //
 // Port of ZH Libraries/Source/WWVegas/WW3D2/motchan.cpp (see motchan.h for the deliberate
 // differences) plus the BFME2 motion channel (Open-BFME-2 BFME2MotionChannelFactory.cpp, and the
-// FindIndex / Evaluate attempts in reverse/attempts/0x001b2efc.cpp, 0x001b2fef.cpp, 0x001b3313.cpp).
+// FindIndex / Evaluate (attempts then, matched since: BFME2Encoding0MotionChannel.cpp for 0x001b2efc)).
 
 #include "Libraries/WWVegas/WW3D2/motchan.h"
 #include "GameLogic/Object/PristinePose.h"

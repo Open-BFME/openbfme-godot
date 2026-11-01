@@ -60,8 +60,10 @@ def test_a_replay_end_is_not_the_recorders_end_screen_and_is_reported(tmp_path):
     out = _script(tmp_path, "caster_end_fixture.gd", "CASTER END", "CASTER END")
     m = re.search(r"^CASTER END fixture replay: (.+)$", out, re.M)
     assert m, out[-4000:]
-    replay = m.group(1).strip()  # the game's logs print the home directory as ~
-    replay = str(tmp_path) + replay[1:] if replay.startswith("~/") else replay
+    replay = m.group(1).strip()  # the game's logs print the home directory as ~ (or, through the session-log privacy filter, <user>)
+    for home in ("~/", "<user>/"):
+        if replay.startswith(home):
+            replay = str(tmp_path) + "/" + replay[len(home):]
     assert Path(replay).is_file(), replay
     code, game = _godot(tmp_path, "--", f"--replay={replay}", "--replay-check", "--no-record")
     assert code == 0, f"game.gd --replay-check exited {code}\n{game[-6000:]}"

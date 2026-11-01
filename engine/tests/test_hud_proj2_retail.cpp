@@ -5,6 +5,7 @@
 // W3D hierarchy and animation files at the attack state's FrameForPristineBonePositions, the arc from the Bezier control points of RW 0x85E658 in double precision.
 // They run only when ROTWK_INSTALL and BFME2_INSTALL are set (otherwise SKIP).
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 #include "PeImage.h"
@@ -204,6 +205,7 @@ struct SiegeArena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(side == 0 ? 0.0f : 3.14159265f);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 };

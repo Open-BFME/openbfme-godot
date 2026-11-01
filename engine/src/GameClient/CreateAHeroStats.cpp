@@ -1,5 +1,6 @@
 // OpenBFME. GPL-3.0.
 #include "GameClient/CreateAHeroStats.h"
+#include "Common/PathIO.h"
 #include <filesystem>
 #include <fstream>
 #ifdef _WIN32
@@ -31,7 +32,7 @@ std::uint32_t CreateAHeroStats::get(const std::string &name) const
 bool CreateAHeroStats::load(const std::string &dir, const std::string &id, std::string *error)
 {
 	if (dir.empty() || !safeID(id)) return fail(error, "Create-a-Hero statistics: invalid profile folder or hero id");
-	const auto path = std::filesystem::u8path(dir) / std::filesystem::u8path(id);
+	const auto path = PathIO::native(dir) / std::filesystem::u8path(id);
 	std::error_code ec;
 	const bool exists = std::filesystem::exists(path, ec);
 	if (ec) return fail(error, "Create-a-Hero statistics: " + ec.message());
@@ -68,7 +69,7 @@ bool CreateAHeroStats::load(const std::string &dir, const std::string &id, std::
 bool CreateAHeroStats::save(const std::string &dir, const std::string &id, std::string *error) const
 {
 	if (dir.empty() || !safeID(id)) return fail(error, "Create-a-Hero statistics: invalid profile folder or hero id");
-	const auto folder = std::filesystem::u8path(dir);
+	const auto folder = PathIO::native(dir);
 	std::error_code ec;
 	std::filesystem::create_directories(folder, ec);
 	if (ec) return fail(error, "Cannot create hero statistics folder: " + ec.message());

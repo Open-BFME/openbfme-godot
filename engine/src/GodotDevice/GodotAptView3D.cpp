@@ -176,6 +176,9 @@ bool AptView3DViewers::create(Slot &slot, const AptCanvasOp &op)
 		m_errors.insert("View3D " + op.renderObject + ": the W3D model did not load");
 		return false;
 	}
+	// lane INGAMEBG-1: the viewer's scene is its own (RW 0xB5442B news one; its constructor RW 0x5424E0 sets FogEnabled (+ 0x1C) false and nothing turns it
+	// on), so the map's hardware fog of a running game does not reach the model (it turned the quit menu's in-game background SFE_MenuOverlay cream)
+	slot.inst->set_instance_scene_fog(slot.instance, false);
 	slot.cameraBone = slot.inst->get_bone_index_native(slot.model, "CAMERA");
 	if (slot.cameraBone < 0)
 	{

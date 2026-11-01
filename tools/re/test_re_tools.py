@@ -88,3 +88,94 @@ def test_stop_impact_uses_area_keywords():
     assert stops_xmap.impact("W3D animation", "") == 2
     assert stops_xmap.impact("Disconnect path (MP-2)", "") == 1
     assert stops_xmap.impact("INI block bodies", "") == 2
+
+
+def test_equal_shape_siblings_follow_link_order():
+    # three same-shape siblings that differ only in a constant (no tier A): each RotWK copy pairs
+    # with the BFME2 sibling at the same link-order offset, not with the first free one
+    R = [feat(0x1000, b"u1"), feat(0x1040, b"r1"), feat(0x1080, b"r2"), feat(0x10C0, b"r3"), feat(0x1200, b"u2")]
+    T = [feat(0x2000, b"u1"), feat(0x2040, b"t1"), feat(0x2080, b"t2"), feat(0x20C0, b"t3"), feat(0x2200, b"u2")]
+    for i in (1, 2, 3):
+        R[i]["shash"] = T[i]["shash"] = b"same"
+    m =match_rotwk.Matcher(R, T).run(log=lambda s: None)
+    assert [m[i][0] for i in (1, 2, 3)] == [1, 2, 3]
+    assert all(m[i][1] == "B" for i in (1, 2, 3))
+
+
+def _tie_case(t2_shape_edit):
+    # RotWK r (0x1040) calls c; BFME2 t1 sits at the predicted 0x2040 but calls d, t2 (0x2080) calls c's pair
+    R = [feat(0x1000, b"u1"), feat(0x1040, b"r"), feat(0x1100, b"c"), feat(0x1140, b"d"), feat(0x1200, b"u2")]
+    T = [feat(0x2000, b"u1"), feat(0x2040, b"t1"), feat(0x2080, b"t2"), feat(0x2100, b"c"), feat(0x2140, b"d"),
+         feat(0x2200, b"u2")]
+    for f in (R[1], T[1], T[2]):
+        f["shape"] = ["op"] * 16
+    if t2_shape_edit:
+        T[2]["shape"] = ["op"] * 15 + ["other"]  # similarity 0.9375: still tier B, below t1's 1.0
+    R[1]["callees"], T[1]["callees"], T[2]["callees"] = [0x1100], [0x2140], [0x2100]
+    return match_rotwk.Matcher(R, T).run(log=lambda s: None)
+
+
+def test_equal_score_tie_prefers_matched_callees_over_link_order():
+    assert _tie_case(False)[1][0] == 2
+
+
+def test_higher_score_beats_matched_callees():
+    assert _tie_case(True)[1][0] == 1
+
+
+def _ledger(tmp_path, rows):
+    p = tmp_path / "ledger.csv"
+    p.write_text("name,target_rva,target_size,source,lane\n"
+                 + "".join(f"{n},{rva:#010x},{size},{src},{lane}\n" for n, rva, size, src, lane in rows))
+    return match_rotwk.Ledger(p, 0x1000, 0x2000)
+
+
+def test_ledger_reads_every_source_lane_of_the_clone(tmp_path):
+    # Open-BFME-2's tools/progress.py SOURCE_LANES; an unknown lane must stay an error, not a default
+    lanes = ("authored", "vendored", "generated", "library", "data", "assembly", "dump")
+    assert set(lanes) == set(match_rotwk.LANE_RANK)
+    led = _ledger(tmp_path,
+                  [(f"f{i}", 0x1000 + 0x40 * i, 0x40, f"src{i}.x", lane) for i, lane in enumerate(lanes)])
+    for i, lane in enumerate(lanes):
+        st, src, cpp = led.status(0x1000 + 0x40 * i, 0x40)
+        assert st == lane and src == (f"src{i}.x", f"f{i}")
+        assert cpp == (1.0 if lane in match_rotwk.CPP_LANES else 0.0)
+
+
+def test_assembly_is_not_counted_as_cpp_and_cpp_wins_overlaps(tmp_path):
+    led = _ledger(tmp_path, [("asm", 0x1000, 0x100, "a.asm", "assembly"),
+                             ("cpp", 0x1080, 0x80, "c.cpp", "authored")])
+    # the assembly row starts the extent and names it; the C++ row painted over its tail is the C++ part
+    st, src, cpp = led.status(0x1000, 0x100)
+    assert (st, src, cpp) == ("assembly", ("a.asm", "asm"), 0.5)
+    try:
+        _ledger(tmp_path, [("x", 0x1000, 4, "x.bin", "mystery")])
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("an unknown ledger lane must fail")
+
+
+def test_attempts_may_be_empty_only_in_a_real_clone(tmp_path):
+    (tmp_path / "reverse").mkdir()
+    try:
+        match_rotwk.load_attempts(tmp_path)
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("a folder without the decomp ledger is not a clone")
+    (tmp_path / "reverse" / "functions.csv").write_text("name\n")
+    assert match_rotwk.load_attempts(tmp_path) == {}
+    (tmp_path / "reverse" / "attempts").mkdir()
+    (tmp_path / "reverse" / "attempts" / "0x00401000.cpp").write_text("// Foo::bar\n// score=0.9731\n")
+    assert match_rotwk.load_attempts(tmp_path) == {0x401000: ("reverse/attempts/0x00401000.cpp", "Foo::bar", "0.973")}
+
+
+def test_dominant_and_partial_lanes_count_every_rank(tmp_path):
+    led = _ledger(tmp_path, [("asm", 0x1000, 0x40, "a.asm", "assembly"),
+                             ("cpp", 0x1040, 0x60, "c.cpp", "authored")])
+    # starts inside the assembly row: 0x30 assembly + 0x60 authored, all covered, under 95% C++ -> dominant lane
+    assert led.status(0x1010, 0x90)[0] == "authored"
+    # half outside every row -> partial, still naming the top rank as dominant
+    assert led.status(0x1080, 0x40)[0] == "partial-authored"
+    assert led.status(0x1020, 0x10)[0] == "assembly"

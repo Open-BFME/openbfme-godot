@@ -344,7 +344,14 @@ public:
 	// 1 left button down, 2 up, stage coordinates. A button event the filter returns true for reaches neither the gadgets nor the movie (a move
 	// always goes on). Empty: none.
 	using MouseFilterFn = std::function<bool(int kind, float x, float y)>;
-	void setMouseFilter(MouseFilterFn filter) { m_mouseFilter = std::move(filter); }
+	void setMouseFilter(MouseFilterFn filter)
+	{
+		m_mouseFilter = std::move(filter);
+		m_mouseFilterOverBox = false; // lane JOINVER-1 (Sol): the over-box hearing is the installing filter's owner's, never inherited
+	}
+	// lane JOINVER-1: the filter also hears the pointer while a message box blocks the components (a button of OpenBFME's drawn beside the box: the
+	// online shell's DETAILS); off by default, so no screen under a box hears anything
+	void setMouseFilterOverBox(bool on) { m_mouseFilterOverBox = on; }
 	// lane OPTS-5: a screen that covers the whole stage takes every press (Options.apt over a game: its page's tabs and gadgets are not Apt buttons,
 	// so the in-game HUD's "over the GUI" test, InGameHud::isOverGui, asks this too; the world under it must not see the press)
 	// lane OPTS-6 (NOT RETAIL, the owner's "the entire menu has to be its own thing"): with the screen's level, the levels under it take no pointer
@@ -449,6 +456,7 @@ private:
 	Shell *m_shell = nullptr;
 	std::unique_ptr<Apt> m_apt;
 	MouseFilterFn m_mouseFilter; // lane OPTS-3
+	bool m_mouseFilterOverBox = false; // lane JOINVER-1
 	bool m_capturesMouse = false; // lane OPTS-5
 	MenuNavigationSource *m_navigationSource = nullptr; // lane OPTS-6
 	std::vector<int> m_captureHidden;                   // lane OPTS-6: the levels setCapturesMouse hid

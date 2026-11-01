@@ -207,8 +207,18 @@ class Run:
         return f"exit {self.code}\n" + "\n".join(self.lines) + ("\n" + self.out[-2000:] if not self.lines else "")
 
 
+def launcher_data(tmp: Path) -> Path:
+    """the launcher's user:// (custom_user_dir_name OpenBFMELauncher) of a launch(): $XDG_DATA_HOME/OpenBFMELauncher; lane MACGATE-1: Godot on
+    macOS ignores XDG_*, there it is $HOME/Library/Application Support/OpenBFMELauncher, so launch() gives the run a HOME of its own"""
+    if sys.platform == "darwin":
+        return tmp / "home" / "Library" / "Application Support" / "OpenBFMELauncher"
+    return tmp / "data" / "OpenBFMELauncher"
+
+
 def launch(tmp: Path, service: Service, *args: str) -> Run:
     env = dict(os.environ, XDG_DATA_HOME=str(tmp / "data"), OPENBFME_GAME_USER_DIR=str(tmp / "game-user"))
+    if sys.platform == "darwin":
+        env["HOME"] = str(tmp / "home")
     cmd = [GODOT, "--headless", "--path", str(LAUNCHER), "--", f"--aio-base={service.server.origin}", f"--aio-pins={service.pins_file}", *args]
     r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL)
     return Run(r.returncode, r.stdout + r.stderr)
@@ -272,7 +282,7 @@ def test_aio_installs_both_games_and_checks_every_file(tmp_path, service):
             if english:
                 assert path.read_bytes() == f["data"], path
     assert not list(target(tmp_path).rglob("*.part"))
-    record = json.loads((tmp_path / "data" / "OpenBFMELauncher" / "aio-install.json").read_text())
+    record = json.loads((launcher_data(tmp_path) / "aio-install.json").read_text())
     assert record["folders"] == {"rotwk": str(target(tmp_path) / "RotWK"), "bfme2": str(target(tmp_path) / "BFME2")}
     # the first-run handoff (InstallLocator::readDownloaded)
     marker = (tmp_path / "game-user" / "downloaded-installs.cfg").read_text().splitlines()
@@ -311,7 +321,7 @@ def test_aio_a_pinned_archive_with_another_md5_downloads_nothing(tmp_path, servi
     (lambda m, o: m.update(Owner="someone-else"), "moved its files (owner 'someone-else'"),
     (lambda m, o: m["Files"][4].update(Name="..\\..\\escaped.dat"), "not a plain relative path"),
     (lambda m, o: m["Files"][4].update(Name="C:\\Windows\\x.dat"), "not a plain relative path"),
-    (lambda m, o: m["Files"][4].update(Url="https://example.com/" + m["Files"][4]["Md5"]), "not at the pinned http://127.0.0.1"),
+    (lambda m, o: m["Files"][4].update(Url="https://example.com/" + m["Files"][4]["Md5"]), "not at the pinned http://<address>"),  # the launcher log writes addresses as <address>
     (lambda m, o: m["Files"][1].update(Size=123), "lists lang/English.big with 123 bytes"),
     (lambda m, o: m["Files"][5].update(Md5="0" * 32, Url=f"{o}/{OWNER}/" + "0" * 32), "lists game.dat with MD5 00000000"),
     (lambda m, o: m["Files"].append({**m["Files"][5], "Name": "extra.txt"}), "lists extra.txt, which OpenBFME's list of RotWK test does not have"),
@@ -451,7 +461,7 @@ def test_aio_a_stop_after_the_last_check_hands_nothing_off(tmp_path, service, ho
     r = install(tmp_path, service, f"--aio-stop-after=BFME2/lotrbfme2.exe:{how}")
     assert r.code == 2 and r.has("cancelled" if how == "cancel" else "paused"), r
     assert not (tmp_path / "game-user" / "downloaded-installs.cfg").exists()
-    assert not (tmp_path / "data" / "OpenBFMELauncher" / "aio-install.json").exists()
+    assert not (launcher_data(tmp_path) / "aio-install.json").exists()
     r = install(tmp_path, service)
     assert r.code == 0 and r.has("0 files downloaded, 7 already there"), r
     assert (tmp_path / "game-user" / "downloaded-installs.cfg").exists()
@@ -517,7 +527,7 @@ def test_aio_bfme1_installs_only_bfme1_with_its_own_handoff(tmp_path, service):
     assert marker.read_text() == before and "BFME1" not in before
     handoff = (tmp_path / "game-user" / "downloaded-bfme1.cfg").read_text().splitlines()
     assert handoff[1:] == ["SOURCE=All In One BFME Launcher service: original-BFME1", f"BFME1_INSTALL={target(tmp_path) / 'BFME1'}"], handoff
-    data = tmp_path / "data" / "OpenBFMELauncher"
+    data = launcher_data(tmp_path)
     assert json.loads((data / "aio-install-bfme1.json").read_text())["folders"] == {"bfme1": str(target(tmp_path) / "BFME1")}
     assert json.loads((data / "aio-install.json").read_text())["folders"].keys() == {"rotwk", "bfme2"}
     # a second run checks what is there and downloads nothing
@@ -654,3 +664,201 @@ def test_aio_progress_keeps_moving_in_the_window_during_a_large_download(tmp_pat
         assert not list(target(tmp_path).rglob("*.part"))
     finally:
         server.stop()
+
+
+# ---- issue #49: the download's text and voice languages ---------------------------------------------------------------------------------
+
+LANG_NAMES = {"FR": "French", "DE": "German", "IT": "Italian"}
+
+
+def language_packages() -> list[dict]:
+    """the two base packages with an English, a French and a German version (French and German with their own speech archives; the
+    English one is shared like the Dutch version shares it, which the "drop" lists model)"""
+    r = os.urandom
+    pkgs = packages()
+    pkgs[0]["files"] = [
+        _file("_patch201.big", r(150000), pinned=True),
+        _file("lang\\English.big", r(40000), "EN", pinned=True),
+        _file("lang\\EnglishAudio.big", r(30000), "EN NL", pinned=True),
+        _file("lang\\French.big", r(20000), "FR"),
+        _file("lang\\FrenchAudio.big", r(21000), "FR"),
+        _file("lang\\German.big", r(22000), "DE"),
+        _file("lang\\GermanAudio.big", r(23000), "DE"),
+        _file("lang\\Italian.big", r(9000), "IT"),  # pinned, but BFME2 has no Italian version here: never offered
+    ]
+    pkgs[1]["files"] = [
+        _file("INI.big", r(60000), pinned=True),
+        _file("lang\\english.big", r(10000), "EN"),
+        _file("lang\\French.big", r(11000), "FR"),
+        _file("lang\\German.big", r(12000), "DE"),
+    ]
+    return pkgs
+
+
+def language_pins(pkgs: list[dict]) -> list[dict]:
+    """pins() plus each base package's "languages" (aio_pins.gd's form, as tools/release/aio_languages.py captures it)"""
+    out = pins(pkgs)
+    for p, pin in zip(pkgs, out):
+        if p["key"] == "bfme1":
+            continue
+        langs = {}
+        for code in ("FR", "DE", "IT"):
+            add = [[f["name"].replace("\\", "/"), hashlib.md5(f["data"]).hexdigest(), len(f["data"])] for f in p["files"] if f["language"] == code]
+            if not add:
+                continue
+            drop = [f["name"].replace("\\", "/") for f in p["files"]
+                    if f["language"] != "ALL" and "EN" in f["language"].split() and code not in f["language"].split()]
+            langs[code] = {"name": LANG_NAMES[code], "drop": drop, "add": add}
+        pin["languages"] = langs
+    return out
+
+
+@pytest.fixture
+def lang_service(tmp_path):
+    s = ReleaseServer()
+    svc = Service(s, tmp_path, language_packages())
+    svc.pins_file.write_text(json.dumps(language_pins(svc.pkgs)))
+    yield svc
+    s.stop()
+
+
+def _have(tmp: Path, folder: str) -> set[str]:
+    base = target(tmp) / folder
+    return {str(p.relative_to(base)).replace("\\", "/") for p in base.rglob("*") if p.is_file()}
+
+
+@needs_godot
+def test_aio_language_takes_that_versions_files(tmp_path, lang_service):
+    r = install(tmp_path, lang_service, "--aio-language=FR")
+    assert r.code == 0 and r.has("LAUNCHER AIO language French"), r
+    assert r.has("original-RotWK: the download takes 3 of the package's 8 files (French; every one is pinned and matches)"), r
+    assert _have(tmp_path, "RotWK") == {"_patch201.big", "lang/French.big", "lang/FrenchAudio.big"}
+    assert _have(tmp_path, "BFME2") == {"INI.big", "lang/French.big"}
+    assert (target(tmp_path) / "RotWK" / "lang" / "French.big").read_bytes() == lang_service.data("lang\\French.big")
+    # the choice is remembered: the next start (no option) takes the same version and finds it all there
+    r = launch(tmp_path, lang_service, f"--aio-install={target(tmp_path)}", "--aio-consent")
+    assert r.code == 0 and r.has("0 files downloaded, 5 already there"), r
+
+
+@needs_godot
+def test_aio_voice_language_takes_another_versions_speech(tmp_path, lang_service):
+    r = install(tmp_path, lang_service, "--aio-language=FR", "--aio-voice=DE")
+    assert r.code == 0 and r.has("LAUNCHER AIO language French text, German voices"), r
+    assert _have(tmp_path, "RotWK") == {"_patch201.big", "lang/French.big", "lang/GermanAudio.big"}
+    other = tmp_path / "en"
+    r = install(other, lang_service, "--aio-language=DE", "--aio-voice=EN")
+    assert r.code == 0, r
+    assert _have(other, "RotWK") == {"_patch201.big", "lang/German.big", "lang/EnglishAudio.big"}
+
+
+@needs_godot
+def test_aio_refuses_a_folder_that_holds_another_language(tmp_path, lang_service):
+    """PR #77 review: a second language in one folder would make the game pick English and refuse the other as an unknown archive, so the
+    download stops before it requests anything; the same language again is the normal resume"""
+    r = install(tmp_path, lang_service, "--aio-language=FR")
+    assert r.code == 0, r
+    before = len(lang_service.file_requests())
+    for args in (("--aio-language=DE",), ("--aio-language=FR", "--aio-voice=DE"), ("--aio-language=FR", "--aio-voice=EN")):
+        r = install(tmp_path, lang_service, *args)
+        assert r.code == 1 and r.has("already holds") and r.has("another language"), (args, r)
+    assert r.has("lang/FrenchAudio.big") or r.has("lang/French.big"), r
+    assert len(lang_service.file_requests()) == before
+    assert _have(tmp_path, "RotWK") == {"_patch201.big", "lang/French.big", "lang/FrenchAudio.big"}
+    # (the last refused choice is the saved one, so the voice is named again)
+    r = install(tmp_path, lang_service, "--aio-language=FR", "--aio-voice=FR")
+    assert r.code == 0 and r.has("0 files downloaded, 5 already there"), r
+
+
+@needs_godot
+def test_aio_language_refuses_what_it_does_not_offer(tmp_path, lang_service):
+    for arg in ("--aio-language=IT", "--aio-language=XX", "--aio-voice=IT"):
+        r = install(tmp_path, lang_service, arg)
+        assert r.code == 1 and r.has("--aio-language / --aio-voice: the download offers no"), (arg, r)
+    assert lang_service.file_requests() == []
+
+
+def _add_unpinned(svc: Service, name: str, language: str) -> None:
+    data = os.urandom(5000)
+    md5 = hashlib.md5(data).hexdigest()
+    svc.manifests["original-RotWK"]["Files"].append({"Guid": md5, "Name": name, "Url": f"{svc.server.origin}/{OWNER}/{md5}",
+                                                     "Md5": md5, "Language": language, "Size": 5000})
+    svc.publish()
+
+
+@needs_godot
+def test_aio_a_language_file_it_has_no_pin_for_is_a_changed_package(tmp_path, lang_service):
+    """a file tagged with a language the pinned table knows, but not pinned: the package changed"""
+    _add_unpinned(lang_service, "lang\\Frenchextra.big", "FR")
+    r = install(tmp_path, lang_service, "--aio-language=FR")
+    assert r.code == 3 and r.has("lists lang/Frenchextra.big, which OpenBFME's list of"), r
+    assert lang_service.file_requests() == []
+
+
+@needs_godot
+def test_aio_a_file_of_a_language_the_table_does_not_know_is_skipped(tmp_path, lang_service):
+    """PR #77 review: a new language on the service must not stop every download (English included), as before the PR"""
+    _add_unpinned(lang_service, "lang\\Klingon.big", "KL")
+    for sub, args in (("fr", ("--aio-language=FR",)), ("en", ())):
+        home = tmp_path / sub
+        r = install(home, lang_service, *args)
+        assert r.code == 0, (sub, r)
+        assert not on_disk(home, "RotWK", "lang/Klingon.big").exists()
+
+
+def test_aio_language_tables_agree_with_the_engine():
+    """issue #49: the launcher's language files (tools/release/aio_language_files.json, rendered into aio_pins.gd) and the engine's
+    language-archives.json are one table; every English file a language drops is an English pin, none it adds is"""
+    import aio_languages
+    files, engine = aio_languages.load()
+    assert aio_languages.check(files, engine) == []
+    english = aio_pins.load_files()
+    for guid, per in files.items():
+        names = {str(f[0]).lower() for f in english[guid]}
+        for code, d in per.items():
+            for n in d["drop"]:
+                assert n.lower() in names, (guid, code, n)
+            assert not any(r[0].lower() in names for r in d["add"]), (guid, code)
+    # the German archives are the ones a retail German install has (sizes and MD5s measured on that install)
+    de = {(l["game"], a["path"].lower()): (a["md5"], a["size"]) for l in engine["languages"] if l["code"] == "DE" for a in l["archives"]}
+    assert de[("rotwk", "lang/german.big")] == ("dc848c78316743147da8c4faefa13813", 4851405)
+    assert de[("bfme2", "lang/germanpatch105.big")] == ("9d952b46a9ea61fd013b95ae1c49923c", 1434693)
+
+
+def test_aio_language_table_check_refuses_empty_duplicate_and_extra_entries(tmp_path):
+    """PR #77 security review: check() must not pass an empty launcher table, an empty engine table, two engine entries of one language (they
+    collapsed into one before), an engine language the launcher table lacks, or a JSON file with a key given twice"""
+    import copy
+    import aio_languages
+    files, engine = aio_languages.load()
+    assert aio_languages.check(files, engine) == []
+    assert aio_languages.check({}, engine) != []
+    assert aio_languages.check(files, {}) != []
+    assert aio_languages.check(files, {"languages": []}) != []
+    one_package = {k: v for k, v in files.items() if k != "original-BFME2"}
+    assert any("original-BFME2" in e for e in aio_languages.check(one_package, engine))
+    # a second entry of a language: the same archives (it collapsed silently) and other archives (it shadowed the first)
+    for archives in ("same", "other"):
+        twice = copy.deepcopy(engine)
+        extra = copy.deepcopy(next(l for l in twice["languages"] if l["game"] == "rotwk" and l["code"] == "DE"))
+        if archives == "other":
+            extra["archives"][0]["md5"] = "0" * 32
+        twice["languages"].append(extra)
+        assert any("listed twice" in e for e in aio_languages.check(files, twice)), archives
+    # the same language name under another code (the engine keys its table by name)
+    renamed = copy.deepcopy(engine)
+    entry = next(l for l in renamed["languages"] if l["game"] == "rotwk" and l["code"] == "FR")
+    entry["language"] = "German"
+    assert aio_languages.check(files, renamed) != []
+    # an engine language the launcher table does not have
+    extra_lang = copy.deepcopy(engine)
+    extra_lang["languages"].append({"game": "rotwk", "patch": "2.01", "code": "XX", "language": "Klingon", "archives": []})
+    assert aio_languages.check(files, extra_lang) != []
+    # a duplicate archive path inside one entry
+    dup_path = copy.deepcopy(engine)
+    de = next(l for l in dup_path["languages"] if l["game"] == "rotwk" and l["code"] == "DE")
+    de["archives"].append(dict(de["archives"][0]))
+    assert any("listed twice" in e for e in aio_languages.check(files, dup_path))
+    # a key given twice in a JSON file is refused when loading (json.loads alone keeps the last one)
+    with pytest.raises(ValueError):
+        import json
+        json.loads('{"a": 1, "a": 2}', object_pairs_hook=aio_languages._no_duplicate_keys)

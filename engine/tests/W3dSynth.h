@@ -210,8 +210,18 @@ struct SynthSub
 	std::uint32_t Bone;
 };
 
+inline std::vector<std::uint8_t> hlodLodsChunk(const char *name, const char *hierarchy, const std::vector<std::vector<SynthSub>> &lods,
+	const std::vector<SynthSub> &aggregates = {});
+
 inline std::vector<std::uint8_t> hlodChunk(const char *name, const char *hierarchy, const std::vector<SynthSub> &lod,
 	const std::vector<SynthSub> &aggregates = {})
+{
+	return hlodLodsChunk(name, hierarchy, { lod }, aggregates);
+}
+
+// an HLOD with several LOD arrays (lowest first, as in the file: the renderer draws the last)
+inline std::vector<std::uint8_t> hlodLodsChunk(const char *name, const char *hierarchy, const std::vector<std::vector<SynthSub>> &lods,
+	const std::vector<SynthSub> &aggregates)
 {
 	auto array = [](std::uint32_t id, const std::vector<SynthSub> &subs) {
 		ChunkWriter a;
@@ -233,12 +243,15 @@ inline std::vector<std::uint8_t> hlodChunk(const char *name, const char *hierarc
 	ChunkWriter h;
 	W3dHLodHeaderStruct hh = {};
 	hh.Version = W3D_MAKE_VERSION(1, 0);
-	hh.LodCount = 1;
+	hh.LodCount = (std::uint32_t)lods.size();
 	setName(hh.Name, sizeof(hh.Name), name);
 	setName(hh.HierarchyName, sizeof(hh.HierarchyName), hierarchy);
 	h.chunk(W3D_CHUNK_HLOD_HEADER, ChunkWriter::of(hh));
-	std::vector<std::uint8_t> l = array(W3D_CHUNK_HLOD_LOD_ARRAY, lod);
-	h.bytes.insert(h.bytes.end(), l.begin(), l.end());
+	for (const std::vector<SynthSub> &lod : lods)
+	{
+		std::vector<std::uint8_t> l = array(W3D_CHUNK_HLOD_LOD_ARRAY, lod);
+		h.bytes.insert(h.bytes.end(), l.begin(), l.end());
+	}
 	if (!aggregates.empty())
 	{
 		std::vector<std::uint8_t> a = array(W3D_CHUNK_HLOD_AGGREGATE_ARRAY, aggregates);

@@ -62,21 +62,37 @@ scheduling/ownership decision; it is never automatically promoted to execution.
 | `launcher/tests/bfme1_offer_test.gd` | `tools/release/test_aio.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
 | `launcher/tests/bounded_read_test.gd` | `tools/release/test_onezip.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
 | `launcher/tests/crypto_test.gd` | `tools/release/test_launcher.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/external_open_test.gd` | `tools/release/test_external_open.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/first_run_test.gd` | `launcher/tests/test_first_run.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/install_paths_test.gd` | `tools/release/test_install_paths.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
 | `launcher/tests/instance_lock_parser_test.gd` | `tools/release/test_instance_lock.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
 | `launcher/tests/instance_lock_test.gd` | `tools/release/test_instance_lock.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
 | `launcher/tests/layout_test.gd` | `tools/release/test_launcher.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/l10n_test.gd` | `tools/l10n/test_l10n.py` | The text catalog's runtime on the generated catalog and synthetic patterns; no game files. |
 | `launcher/tests/lobby_list_test.gd` | `tools/release/test_launcher.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/crash_upload_test.gd` | `tools/release/test_crash_upload.py` | Lane CRASHACT-1: the launcher's crash reports; the runner supplies a fake loopback crash service and the game's Options.ini folder. |
+| `launcher/tests/log_privacy_test.gd` | `tools/release/test_launcher.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
 | `launcher/tests/macos_cache_test.gd` | `tools/release/test_macplay.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
 | `launcher/tests/macos_helper_probe_test.gd` | `tools/release/test_macplay.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
 | `launcher/tests/macos_platform_test.gd` | `tools/release/test_macos_platform.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
 | `launcher/tests/macos_preview_test.gd` | `tools/release/test_launcher.py` | Portable checks run; native macOS-only phase is an explicit skip elsewhere. |
 | `launcher/tests/macplay_test.gd` | `tools/release/test_macplay.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/mod_catalog_test.gd` | `tools/release/test_mods.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/mods_window_test.gd` | `tools/release/test_mods.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
 | `launcher/tests/oauth_integration_test.gd` | `tools/release/test_launcher.py` | Delegates to test_launcher_oauth.py; loopback provider/SQLite fixtures; loud skip without Node. |
 | `launcher/tests/oauth_test.gd` | `tools/release/test_launcher.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/replay_association_test.gd` | `tools/release/test_replay_open.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/replay_open_test.gd` | `tools/release/test_replay_open.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
 | `launcher/tests/social_client_test.gd` | `tools/release/test_launcher.py` | Delegates to test_launcher_social.py; loopback social fixture. |
 | `launcher/tests/social_launch_test.gd` | `tools/release/test_launcher.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
 | `launcher/tests/social_ui_test.gd` | `tools/release/test_launcher.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
 | `launcher/tests/unit_test.gd` | `tools/release/test_launcher.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/update_fault_test.gd` | `tools/release/test_launcher_updates.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/update_status_test.gd` | `tools/release/test_launcher.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/verifyfiles_test.gd` | `tools/test_verifyfiles.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/verifyfiles_window_test.gd` | `tools/test_verifyfiles_window.py` | Existing launcher fixture/arguments and platform prerequisites retained. |
+| `launcher/tests/write_failure_test.gd` | `tools/release/test_launcher.py` | Linux RLIMIT_FSIZE=4096 subprocess, ignored SIGXFSZ, --write-limited; both assertions must pass. |
+| `launcher/tests/display_test.gd` | `tools/release/test_launcher_display.py` | Isolated launcher UI signals, shared game display reader, safe edits, refresh, fullscreen viewport sizing and Cancel. No retail assets. |
 
 The OAuth integration's missing-Node reason starts with **SKIP LOUDLY: launcher
 OAuth integration needs Node.js with node:sqlite support**, and explains how to
@@ -104,11 +120,16 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/bfme1_map_memory_test.gd` | Manual only; no generic pytest runner | Denied here: needs a private BFME1 installation. |
 | `godot/tests/bfme1_plot_test.gd` | Manual only; no generic pytest runner | Denied here: needs a private BFME1 installation. |
 | `godot/tests/bfme1_quit_test.gd` | Manual only; no generic pytest runner | Denied here: needs a private BFME1 installation. |
+| `godot/tests/bfme1_skirmish_ui_test.gd` | Manual only; no generic pytest runner | Denied here: needs private BFME1 assets; GPU run captures the retail skirmish and dropdowns. |
 | `godot/tests/bfme1_test.gd` | Manual only; no generic pytest runner | Denied here: needs a private BFME1 installation. |
+| `godot/tests/bfme1_menu_backdrop_test.gd` | Manual only; no generic pytest runner | Denied here: needs `BFME1_INSTALL` and GPU rendering; checks JPEG/PNG textures, the looping alpha movie, logo composition at four resolutions, repeated Skirmish/Options returns, and gameplay/menu transitions. |
 | `godot/tests/building_render_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
+| `godot/tests/buildperf_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/cah_awards_display_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/cah_camera_retail_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/cah_camera_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: camera geometry against synthetic bounds; headless, 20 s timeout. |
 | `godot/tests/camp2_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/bfme2camp1_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/campsave1_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/caster_director_test.gd` | `tools/caster/test_caster_godot.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/caster_director_walk.gd` | `godot/scripts/game.gd` | Support/opt-in walk, not an independently scheduled test. |
@@ -119,18 +140,30 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/caster_pip_walk.gd` | `godot/scripts/game.gd` | Support/opt-in walk, not an independently scheduled test. |
 | `godot/tests/caster_transport_walk.gd` | `godot/scripts/game.gd` | Support/opt-in walk, not an independently scheduled test. |
 | `godot/tests/caster_vision_test.gd` | `tools/caster/test_caster_godot.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
+| `godot/tests/controller_main_menu_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/controller_menu_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: controller menu mapping against a stub shell; headless, 20 s timeout. |
+| `godot/tests/controller_routing_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: controller input routing and scaled, letterboxed pointer motion/clicks; headless, 20 s timeout. |
+| `godot/tests/crash_upload_test.gd` | `tools/release/test_crash_upload.py` | Lane CRASHACT-1: crash report filtering, queue, toggle and upload; the runner supplies `--stage`, `--options-file` and a fake loopback crash service. |
+| `godot/tests/crash_log_test.gd` | `tools/release/test_launcher.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/end_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
+| `godot/tests/external_open_test.gd` | `tools/release/test_external_open.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/floating_money_text_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/formation_placement_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/friends_walk.gd` | `godot/scripts/game.gd` | Support/opt-in walk, not an independently scheduled test. |
 | `godot/tests/fx_render_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/gamma_composite_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
+| `godot/tests/glow_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/hero_radius_cursor_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/hud_image_mode_pixel_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/hudredraw_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/install_paths_test.gd` | `tools/release/test_install_paths.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
+| `godot/tests/language_warning_test.gd` | `tools/release/test_language_warning.py` | The unchecked-language warning box (#77): text, Copy details, the per-install dismissal and hostile `%` sequences; headless. |
+| `godot/tests/menu_backdrop_resize_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and GPU/window/render readback; run both `BACKDROP_TEST_STYLE=rotwk` and `BACKDROP_TEST_STYLE=bfme2` explicitly. |
 | `godot/tests/menufix2_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
 | `godot/tests/menustyle_native_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/menustyle_settings_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: temporary Options.ini and shell/game spies; headless, 20 s timeout. |
 | `godot/tests/menustyle_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/mixed_formation_placement_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/net_end_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
 | `godot/tests/net_score_continue_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: score transitions against shell/audio stubs; headless, 20 s timeout. |
 | `godot/tests/net_uber_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
@@ -138,6 +171,11 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/new_game_loading_art_host.gd` | `godot/tests/new_game_loading_art_test.gd` | CI gate's helper/child; not scheduled separately by pytest. |
 | `godot/tests/new_game_loading_art_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
 | `godot/tests/object_corpus_sweep.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/object_shadow_building_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
+| `godot/tests/object_shadow_instances_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
+| `godot/tests/object_shadow_render_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
+| `godot/tests/occlude1_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets (a retail model in W3DInstancer); `godot --headless --path godot --script res://tests/occlude1_test.gd`. |
+| `godot/tests/online16_fix_bridge_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/online_branding_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/online_hostile_test.gd` | `tools/net/test_online_hostile.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/online_identity_test.gd` | `tools/net/test_online_identity.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
@@ -149,62 +187,93 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/online_social_node.gd` | `godot/tests/online_social_node.tscn` | Scene helper; tools/net/test_online_social_node.py drives this scene. |
 | `godot/tests/online_social_test.gd` | `tools/net/test_online_social_ui.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/online_stats_test.gd` | `tools/net/test_online_stats.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
+| `godot/tests/online_war_phase_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: asset-free battle seat selection keeps AI tactical participants out of relay tickets; headless, 20 s timeout. |
+| `godot/tests/online_war_walk.gd` | `godot/scripts/game.gd` | Two-peer relay war fixture; `tools/net/online_war_test.sh` supplies the local lobby, relay and game data. Not a generic pytest game test. |
+| `godot/tests/http_timed_test.gd` | `tools/net/test_http_timed.py` | Argument-aware fixture runner (a fake server that answers late or never); needs Godot. |
 | `godot/tests/opts1_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. Checks both RotWK and BFME2 presentation sources in menus and a live game. |
 | `godot/tests/opts2_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
 | `godot/tests/opts4_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/opts5_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/opts6_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
+| `godot/tests/opts6_wait_test.gd` | `tools/release/test_external_open.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
+| `godot/tests/p16_ui_dictionary_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/p16_ui_legacy_shape_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/packed_model_texture_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/pathperf1_render_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/perf3_cull_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/pose_buffer_cull_query_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
+| `godot/tests/pose_buffer_query_trigger_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
+| `godot/tests/pose_buffer_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
 | `godot/tests/pingwheel_test.gd` | Manual only; no generic pytest runner | Denied here: mixed UI/timer checks and retail skirmish/hash runs; not wholly asset-free. |
 | `godot/tests/platformicon1_test.gd` | `tools/platformicon/test_make_icons.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/play3_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/player_house_color_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/player_message_log_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/pro_camera_bokeh_test.gd` | Manual only; no generic pytest runner | Denied here: generated bokeh scene requires a GPU, window and render readback. |
 | `godot/tests/pro_camera_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/radial_background_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/rejoin_watch_test.gd` | `tools/net/test_rejoin_watchdog.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
+| `godot/tests/release_message_test.gd` | `tools/release/test_release_tools.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/render4_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/renderwait1_teardown_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/replay_args_test.gd` | `tools/release/test_replay_open.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/replay_refusal_test.gd` | Manual only; no generic pytest runner | Denied here: mixed stub checks and retail replay subprocess; not wholly asset-free. |
+| `godot/tests/road_shader_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
+| `godot/tests/road_shading_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/save4e_flow_test.gd` | `tools/save/test_save_flow.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
+| `godot/tests/save_route_game.gd` | `godot/tests/save_route_test.gd` | Fixture of its runner; not scheduled separately by pytest. |
+| `godot/tests/save_route_test.gd` | `tools/release/test_replay_open.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/saveui1_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
 | `godot/tests/selperf_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/shader_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
+| `godot/tests/shellfb1_cursor_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/shellfb1_spell_store_escape_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/shellfix1_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/smoke_checks.gd` | `godot/tests/smoke_test.gd` | CI gate's helper/child; not scheduled separately by pytest. |
 | `godot/tests/smoke_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
 | `godot/tests/social_privacy_walk.gd` | `godot/tests/social_walk.gd` | Support/opt-in walk, not an independently scheduled test. |
 | `godot/tests/social_walk.gd` | `godot/scripts/game.gd` | Support/opt-in walk, not an independently scheduled test. |
 | `godot/tests/spellbook_reload_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/spellbook_rightclick_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/start_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
 | `godot/tests/stealth_gate_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
+| `godot/tests/tangent_convention_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/terrain_lighting_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/timeline_markers_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: score timeline markers against a stub shell; headless, 20 s timeout. |
 | `godot/tests/uberjoin1_lan_test.gd` | `godot/tests/start_test.gd` | CI gate's helper/child; not scheduled separately by pytest. |
 | `godot/tests/uberjoin1_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/ui4_resize_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/update_handover_test.gd` | `tools/release/test_onezip.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
+| `godot/tests/weatherfx_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: the Enhanced weather's effects against a stub GameWorld and synthetic images (lane WEATHERFX-2: no weather outside a live game, the menus' Original / Enhanced check; lane INGAMEBG-1: the in-game panels' backdrop check); headless, 20 s timeout. |
 | `godot/tests/windows_crash_test.gd` | Manual only; no generic pytest runner | Denied here: destructive Windows debug crash/minidump probe; explicit opt-in required. |
-| `godot/tests/bfme1_audio_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_building_floor_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_live_plot_zoom_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_live_tooltip_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_music_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_options_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_plot_zoom_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_resource_farm_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_save_folder_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_score_screen_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_script_ai_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_skirmish_menu_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_starting_armies_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_startup_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_wall_upgrade_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
-| `godot/tests/bfme1_weather_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and live gameplay/rendering. |
+| `godot/tests/water_normal_test.gd` | Manual only; no generic pytest runner | GPU rendering; synthetic textures, no retail assets. |
+| `godot/tests/standing_water_test.gd` | Manual only; no generic pytest runner | Private retail assets and GPU water rendering. |
+| `godot/tests/ini_error_in_extension_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod object INI over a retail map. |
+| `godot/tests/map_water_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `water.ini` over a retail map. |
+| `godot/tests/map_weather_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `weather.ini` over a retail map. |
 
+| `godot/tests/fortress_exit_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
+| `godot/tests/edainfactions1_test.gd` | Manual only; no generic pytest runner | Needs the Edain 4.8.5.3 install (OPENBFME_EDAIN_INSTALL, OPENBFME_EDAIN_ASSETS_INSTALL); without them it only parses. Runs the Dwarven clan choices and the Dwarven AI in real skirmishes. |
 
 ## OAuth readiness regression
 
 Friend seeding can trigger `SocialClient`'s inbox-driven friends refresh. Creating a recovery code while that action owns the client emits `action_done("recovery", false)` and does not emit `recovery_ready`. The old integration ignored the rejection and waited for a code until timeout; no OAuth callback had run yet.
 
 The test now waits for a signed-in, populated, idle social client, connects both terminal signals before issuing the request, and checks successful completion and a nonempty code. A controlled busy-client probe holds readiness until explicitly released, proves no request was sent while busy, and then proves exactly one successful request. There is no fixed sleep or larger timeout. The real Node/SQLite integration still exercises both Discord rounds and all callback, restore, unlink and offline-provider assertions.
+
+| `godot/tests/bfme1_audio_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_building_floor_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_live_plot_zoom_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_live_tooltip_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_music_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_options_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_plot_zoom_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_resource_farm_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_save_folder_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_score_screen_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_script_ai_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_skirmish_menu_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_starting_armies_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_startup_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_wall_upgrade_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |
+| `godot/tests/bfme1_weather_test.gd` | Manual only; no generic pytest runner | Denied here: requires private BFME1 assets and a live game or GPU rendering. |

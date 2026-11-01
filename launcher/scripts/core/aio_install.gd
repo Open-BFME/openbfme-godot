@@ -30,7 +30,14 @@
 ##     with a message naming the file and what the player can do (REMEDY); never a guess, never a silent fallback;
 ##   * every file is downloaded to <name>.part (resumed with Range: pause / resume), its MD5 checked, then renamed; a failed file is
 ##     deleted; nothing is deleted that this launcher did not write, no registry key is written, no AIO program is run;
-##   * only the English tables exist, so only the English files are installed.
+##   * issue #49: the language. The English files are pinned from a verified download; every other language of the two base packages is
+##     pinned from the service's manifest (scripts/core/aio_pins.gd "languages", tools/release/aio_languages.py: the files a language adds,
+##     the English ones it drops). The player picks the game's text language and, separately, its voice language (set_languages; saved in
+##     the launcher's state, "aio" "language" / "voice"): the download takes the ALL files, the text language's files but its speech
+##     archive, and the voice language's speech archive (lang/<Language>Audio.big, or the English one the Dutch, Norwegian, Polish and
+##     Swedish versions share). A language is offered only when the service knows the size of every file it adds (offered_languages:
+##     not Turkish, whose sizes it lists as 0, nor Russian, whose BFME2 speech archive it lists as 0). The game reads the language from
+##     the files on disk (engine Common/RetailArchivePolicy.h "Languages").
 ## Afterwards the folders go to the game: <game user dir>/downloaded-installs.cfg (InstallLocator::kDownloadedMarkerName), which the
 ## first-run screen offers as found installs; the player still confirms them and the mount checks every archive (PLAN rule 10).
 extends RefCounted
@@ -39,6 +46,7 @@ const NetPolicy := preload("res://scripts/net/net_policy.gd")
 const Pins := preload("res://scripts/core/aio_pins.gd")
 const Log := preload("res://scripts/core/launcher_log.gd")
 const GameOptions := preload("res://scripts/core/game_options.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 ## The one switch: on since round 3 (the owner wants the download offered; nothing downloads without the player's consent and click).
 ## The player's setting overrides it either way.
@@ -48,8 +56,6 @@ const SERVICE := "https://bfmeladder.com"                      # WorkshopKit Bfm
 const FILES := "https://workshop-files.bfmeladder.com"         # WorkshopKit BfmeWorkshopManager.WorkshopFilesHost
 const HOSTS := ["bfmeladder.com", "workshop-files.bfmeladder.com"]
 const PAGE := "https://bfmeladder.com/download"                 # the project's download page (shown in the consent)
-const PROJECT := "the All In One BFME Launcher (the BFME Foundation Project and the Patch 2.22 team)"
-const REMEDY := "Try again later. Or install the games with the All In One BFME Launcher yourself (%s) and pick their folders when OpenBFME asks." % PAGE
 const MAX_MANIFEST := 4 * 1024 * 1024
 const RECORD := "aio-install.json"
 const MARKER := "downloaded-installs.cfg"   # InstallLocator::kDownloadedMarkerName
@@ -71,12 +77,136 @@ var files_origin := FILES
 var packages: Array = Pins.PACKAGES
 var bfme1_packages: Array = Pins.BFME1_PACKAGES
 var choice := GAMES  # what install() downloads: GAMES or BFME1 (choose)
+var text_language := "EN"  # issue #49: the base download's text language (a code of offered_languages)
+var voice_language := ""   # its voice language ("" = the text language's own speech)
 var stop_request := ""  # "pause" or "cancel", set from the UI thread (with updater.http.cancelled)
 var test_stop_after := ""  # tests: "<folder>/<file>:<pause|cancel>" asks for a stop right after that file was checked and kept
 
 
 func _init(u) -> void:
 	updater = u
+	var t = updater.get_state("aio", "language", "EN")
+	var v = updater.get_state("aio", "voice", "")
+	if typeof(t) == TYPE_STRING and typeof(v) == TYPE_STRING and _languages_ok(t, v) == "":
+		text_language = t
+		voice_language = v
+
+
+## issue #49: the languages the base download offers, [{code, name}] with English first: a language every base package knows, the
+## size of every file it adds known (the download takes the pinned size, no more and no less).
+func offered_languages() -> Array:
+	var out := [{"code": "EN", "name": L10n.t("launcher.aio_install.language_english")}]
+	if packages.is_empty():
+		return out
+	var first: Dictionary = packages[0].get("languages", {})
+	var codes: Array = first.keys()
+	codes.sort()
+	for code in codes:
+		var ok := true
+		for pkg in packages:
+			var l = pkg.get("languages", {}).get(code)
+			if typeof(l) != TYPE_DICTIONARY or l.add.any(func(r): return int(r[2]) <= 0):
+				ok = false
+		if ok:
+			out.append({"code": code, "name": first[code].name})
+	return out
+
+
+func _languages_ok(text: String, voice: String) -> String:
+	var codes: Array = offered_languages().map(func(l): return l.code)
+	if not text in codes:
+		return L10n.t("launcher.aio_install.no_text_language", {"code": text, "codes": ", ".join(PackedStringArray(codes))})
+	if voice != "" and not voice in codes:
+		return L10n.t("launcher.aio_install.no_voice_language", {"code": voice, "codes": ", ".join(PackedStringArray(codes))})
+	return ""
+
+
+## issue #49: the base download's text and voice languages (codes of offered_languages; voice "" = the text language's), saved for the
+## next start. "" or why not.
+func set_languages(text: String, voice := "") -> String:
+	if voice == text:
+		voice = ""
+	var why := _languages_ok(text, voice)
+	if why != "":
+		return why
+	text_language = text
+	voice_language = voice
+	updater.set_state("aio", "language", text)
+	updater.set_state("aio", "voice", voice)
+	return ""
+
+
+## issue #49: the code of the language a game folder holds (its single lang/<Language>.big, as the game detects it; English wins), or ""
+func detect_language(folder: String) -> String:
+	var lang := ""
+	var d := DirAccess.open(folder)
+	if d == null:
+		return ""
+	for sub in d.get_directories():
+		if sub.to_lower() == "lang":
+			lang = folder.path_join(sub)
+	if lang == "":
+		return ""
+	var stems := PackedStringArray()
+	for f in DirAccess.get_files_at(lang):
+		var n := f.to_lower()
+		if n.ends_with(".big") and not "patch" in n and not n.ends_with("audio.big"):
+			stems.append(n.trim_suffix(".big"))
+	var stem: String = "english" if "english" in stems else (stems[0] if stems.size() == 1 else "")
+	for l in offered_languages():
+		if String(l.name).to_lower() == stem:
+			return l.code
+	return ""
+
+
+## The language the download starts with: the saved choice, else the language of the games already found (`rotwk_folder`), else English
+func default_languages(rotwk_folder: String) -> void:
+	var saved = updater.get_state("aio", "language", "")
+	if typeof(saved) == TYPE_STRING and saved != "":
+		return
+	var code: String = detect_language(rotwk_folder) if rotwk_folder != "" else ""
+	if code != "":
+		text_language = code
+		voice_language = ""
+
+
+## the player words of the chosen languages ("German", "German text, English voices")
+func language_text() -> String:
+	var names := {}
+	for l in offered_languages():
+		names[l.code] = l.name
+	if voice_language == "":
+		return names.get(text_language, text_language)
+	return L10n.t("launcher.aio_install.text_and_voices", {"text": names.get(text_language, text_language), "voices": names.get(voice_language, voice_language)})
+
+
+static func _is_audio(name: String) -> bool:
+	var n := name.to_lower().replace("\\", "/")
+	return n.begins_with("lang/") and n.ends_with("audio.big")
+
+
+## the files of `language`'s version of the package: the English pins, less what that language drops, plus what it adds ([name, md5, size])
+static func _language_rows(pkg: Dictionary, language: String) -> Array:
+	if language == "EN":
+		return pkg.files.duplicate()
+	var l: Dictionary = pkg.get("languages", {}).get(language, {})
+	var drop := {}
+	for n in l.get("drop", []):
+		drop[String(n).to_lower()] = true
+	var rows: Array = pkg.files.filter(func(r): return not drop.has(String(r[0]).to_lower().replace("\\", "/")))
+	return rows + l.get("add", [])
+
+
+## issue #49: every file this download takes of `pkg` with the chosen languages, pinned ([name, md5, size]): the text language's files,
+## its speech archive replaced by the voice language's
+func package_files(pkg: Dictionary) -> Array:
+	if not pkg.has("languages"):
+		return pkg.files  # the optional BFME1 package (and test tables): its own pins
+	var rows: Array = _language_rows(pkg, text_language)
+	if voice_language == "" or voice_language == text_language:
+		return rows
+	var speech: Array = _language_rows(pkg, voice_language).filter(func(r): return _is_audio(r[0]))
+	return rows.filter(func(r): return not _is_audio(r[0])) + speech
 
 
 func enabled() -> bool:
@@ -103,7 +233,7 @@ func set_test_origin(origin: String) -> String:
 func set_test_pins(path: String) -> String:
 	var d = JSON.parse_string(FileAccess.get_file_as_string(path))
 	if typeof(d) != TYPE_ARRAY or d.is_empty():
-		return "the test pins %s are not a JSON array of packages" % path
+		return L10n.t("launcher.aio_install.bad_test_pins", {"path": path})
 	packages = d.filter(func(p): return typeof(p) == TYPE_DICTIONARY and p.get("key") != BFME1)
 	bfme1_packages = d.filter(func(p): return typeof(p) == TYPE_DICTIONARY and p.get("key") == BFME1)
 	return ""
@@ -112,7 +242,7 @@ func set_test_pins(path: String) -> String:
 ## Which download install() runs: GAMES (the base, the default) or BFME1 (community PR #36: optional). "" or why not.
 func choose(which: String) -> String:
 	if which not in [GAMES, BFME1]:
-		return "no download '%s' (%s or %s)" % [which, GAMES, BFME1]
+		return L10n.t("launcher.aio_install.no_download", {"which": which, "games": GAMES, "bfme1": BFME1})
 	choice = which
 	return ""
 
@@ -130,7 +260,11 @@ func bfme1_chosen() -> bool:
 func total_size() -> int:
 	var n := 0
 	for p in chosen():
-		n += int(p.get("bytes", 0))
+		if p.has("languages"):
+			for r in package_files(p):
+				n += int(r[2])
+		else:
+			n += int(p.get("bytes", 0))
 	return n
 
 
@@ -140,12 +274,13 @@ func total_size() -> int:
 func consent_text() -> String:
 	var lines := PackedStringArray()
 	if choice == BFME1:
-		lines.append("Optional: Battle for Middle-earth I is downloaded from %s, a third-party service. OpenBFME does not host or distribute it." % ARENA)
-	lines.append("The game files are downloaded from the servers of %s, %s and %s. They do not come from EA or from OpenBFME." % [PROJECT, SERVICE.trim_prefix("https://"), FILES.trim_prefix("https://")])
+		lines.append(L10n.t("launcher.aio_install.consent_arena", {"arena": ARENA}))
+	lines.append(L10n.t("launcher.aio_install.consent_servers", {"project": project(), "service": SERVICE.trim_prefix("https://"), "files": FILES.trim_prefix("https://")}))
 	for p in chosen():
-		lines.append("  %s: their package \"%s\" (%s)" % [p.label, p.name, p.guid])
-	lines.append("About %.1f GB. Every archive is checked against OpenBFME's own list before it is kept. OpenBFME sends those servers only " % (total_size() / 1e9) +
-		"its name and version; their privacy policy (bfmeladder.com/privacy) applies to their servers.")
+		lines.append(L10n.t("launcher.aio_install.consent_package", {"label": p.label, "name": p.name, "guid": p.guid}))
+	if choice == GAMES:
+		lines.append(L10n.t("launcher.aio_install.consent_language", {"language": language_text()}))
+	lines.append(L10n.t("launcher.aio_install.consent_size", {"gb": total_size() / 1e9}))
 	return "\n".join(lines)
 
 
@@ -159,13 +294,21 @@ static func _log_file(show: String, how: String, done: int, total: int) -> void:
 	Log.line("LAUNCHER AIO %s %s (%.2f of %.2f GB, %d%%)" % [show, how, done / 1e9, total / 1e9, int(done * 100.0 / maxi(total, 1))])
 
 
+static func project() -> String:
+	return L10n.t("launcher.aio_install.project")
+
+
+static func remedy() -> String:
+	return L10n.t("launcher.aio_install.remedy", {"page": PAGE})
+
+
 static func _fail(kind: String, error: String) -> Dictionary:
 	return {"ok": false, "kind": kind, "error": error}
 
 
 ## a failure the player can do something about: the message, then what to do
 static func _broken(kind: String, error: String) -> Dictionary:
-	return _fail(kind, "%s %s" % [error, REMEDY])
+	return _fail(kind, L10n.t("launcher.aio_install.with_remedy", {"error": error, "remedy": remedy()}))
 
 
 ## The plain relative path of a manifest file name ("lang\\English.big" -> "lang/English.big"), or "" when it is not one (absolute,
@@ -192,56 +335,71 @@ static func _whole(v) -> bool:
 ## Checks one package's manifest (the service's JSON) against its pinned table: every file the install takes must be pinned (name, MD5,
 ## size; Sol r1: the files outside the archive tables trusted the manifest) and every pinned file must be listed. {ok, kind, error, files:
 ## [{rel, md5, size, url}] sorted by path, all: the manifest's file count}. Nothing here touches the network or the disk.
-func check_manifest(pkg: Dictionary, body: PackedByteArray) -> Dictionary:
-	var what := "The service's package %s" % pkg.guid
+## pins: the files to take (default: package_files, the chosen languages'); Verify game files passes the English pins it checked against
+func check_manifest(pkg: Dictionary, body: PackedByteArray, pins: Array = []) -> Dictionary:
 	var m = JSON.parse_string(body.get_string_from_utf8())
 	if typeof(m) != TYPE_DICTIONARY:
-		return _broken(REJECTED, "%s is not the file list OpenBFME knows (not a JSON object)." % what)
+		return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_not_object", {"guid": pkg.guid}))
 	if m.get("Guid") != pkg.guid:
-		return _broken(REJECTED, "%s answered with the package '%s'." % [what, str(m.get("Guid")).left(80)])
+		return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_wrong_package", {"guid": pkg.guid, "other": str(m.get("Guid")).left(80)}))
 	if not _whole(m.get("Game")) or int(m.Game) != int(pkg.game) or not _whole(m.get("Type")) or int(m.Type) != 0:
-		return _broken(REJECTED, "%s is no longer the base game package (Game %s, Type %s)." % [what, JSON.stringify(m.get("Game")), JSON.stringify(m.get("Type"))])
+		return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_not_base", {"guid": pkg.guid, "game": JSON.stringify(m.get("Game")), "type": JSON.stringify(m.get("Type"))}))
 	var owner = m.get("Owner")
 	if typeof(owner) != TYPE_STRING or owner != pkg.owner:
-		return _broken(REJECTED, "%s moved its files (owner '%s', pinned '%s')." % [what, str(owner).left(80), pkg.owner])
+		return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_moved", {"guid": pkg.guid, "owner": str(owner).left(80), "pinned": pkg.owner}))
 	if typeof(m.get("Files")) != TYPE_ARRAY:
-		return _broken(REJECTED, "%s has no file list." % what)
+		return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_no_files", {"guid": pkg.guid}))
 	var hex := RegEx.create_from_string("^[0-9a-f]{32}$")
 	var pinned := {}
+	for a in (pins if not pins.is_empty() else package_files(pkg)):
+		pinned[str(a[0]).to_lower().replace("\\", "/")] = a
+	# issue #49: every other language's own files are pinned too (a file of the package's other languages is skipped, not refused)
+	var other := {}
+	for code in pkg.get("languages", {}):
+		for a in pkg.languages[code].get("add", []):
+			other[str(a[0]).to_lower().replace("\\", "/")] = true
 	for a in pkg.files:
-		pinned[str(a[0]).to_lower()] = a
+		other[str(a[0]).to_lower().replace("\\", "/")] = true
 	var chosen := {}
 	for f in m.Files:
 		if typeof(f) != TYPE_DICTIONARY or typeof(f.get("Name")) != TYPE_STRING or typeof(f.get("Md5")) != TYPE_STRING \
 				or typeof(f.get("Url")) != TYPE_STRING or typeof(f.get("Language")) != TYPE_STRING:
-			return _broken(REJECTED, "%s has a file entry OpenBFME does not recognise." % what)
+			return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_bad_entry", {"guid": pkg.guid}))
 		if not _whole(f.get("Size")) or f.Size < 0:
-			return _broken(REJECTED, "%s lists %s with the size %s." % [what, f.Name.left(120).c_escape(), JSON.stringify(f.get("Size"))])
-		var langs: PackedStringArray = f.Language.split(" ", false)
-		if not (f.Language == "" or f.Language == "ALL" or pkg.language in langs):
-			continue
+			return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_bad_size", {"guid": pkg.guid, "file": f.Name.left(120).c_escape(), "size": JSON.stringify(f.get("Size"))}))
 		var rel := safe_relative(f.Name)
+		var tagged: bool = not (f.Language == "" or f.Language == "ALL")
+		if tagged and not pkg.has("languages"):
+			# the optional BFME1 package (and test tables): its own language's files, by the manifest's tag
+			if not pkg.language in f.Language.split(" ", false):
+				continue
+		elif tagged and (rel == "" or not pinned.has(rel.to_lower())):
+			# issue #49: a file of a language this download does not take. One OpenBFME has no pin for is a changed package, unless every
+			# language it is tagged with is one the pinned table does not know (a new language on the service): skipped, as before the PR
+			if rel != "" and not other.has(rel.to_lower()) and _knows_a_language(pkg, f.Language):
+				return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_not_pinned", {"guid": pkg.guid, "file": rel, "label": pkg.label}))
+			continue
 		if rel == "":
-			return _broken(REJECTED, "%s lists a file name that is not a plain relative path: '%s'." % [what, f.Name.left(120).c_escape()])
+			return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_bad_name", {"guid": pkg.guid, "file": f.Name.left(120).c_escape()}))
 		if hex.search(f.Md5) == null:
-			return _broken(REJECTED, "%s lists %s with a malformed MD5." % [what, rel])
+			return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_bad_md5", {"guid": pkg.guid, "file": rel}))
 		if f.Url != "%s/%s/%s" % [files_origin, pkg.owner, f.Md5]:
-			return _broken(REJECTED, "%s lists %s at '%s', not at the pinned %s/%s/<md5>." % [what, rel, f.Url.left(160), files_origin, pkg.owner])
+			return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_bad_url", {"guid": pkg.guid, "file": rel, "url": f.Url.left(160), "origin": files_origin, "owner": pkg.owner}))
 		var key := rel.to_lower()
 		if chosen.has(key):
-			return _broken(REJECTED, "%s lists %s twice." % [what, rel])
+			return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_twice", {"guid": pkg.guid, "file": rel}))
 		if not pinned.has(key):
-			return _broken(REJECTED, "%s lists %s, which OpenBFME's list of %s does not have: the package changed. Nothing was downloaded." % [what, rel, pkg.label])
+			return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_not_pinned", {"guid": pkg.guid, "file": rel, "label": pkg.label}))
 		var pin: Array = pinned[key]
 		if f.Md5 != pin[1]:
-			return _broken(REJECTED, "%s lists %s with MD5 %s; %s has %s. Nothing was downloaded." % [what, rel, f.Md5, pkg.label, pin[1]])
+			return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_other_md5", {"guid": pkg.guid, "file": rel, "md5": f.Md5, "label": pkg.label, "pinned": pin[1]}))
 		if int(f.Size) != 0 and int(f.Size) != int(pin[2]):
-			return _broken(REJECTED, "%s lists %s with %d bytes; %s has %d. Nothing was downloaded." % [what, rel, int(f.Size), pkg.label, int(pin[2])])
+			return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_other_size", {"guid": pkg.guid, "file": rel, "size": int(f.Size), "label": pkg.label, "pinned": int(pin[2])}))
 		# the pinned size always (the service lists some files with Size 0); the download takes no more and no less, then the MD5
 		chosen[key] = {"rel": rel, "md5": pin[1], "size": int(pin[2]), "url": f.Url}
 	for key in pinned:
 		if not chosen.has(key):
-			return _broken(REJECTED, "%s no longer lists %s, a file of %s. Nothing was downloaded." % [what, pinned[key][0], pkg.label])
+			return _broken(REJECTED, L10n.t("launcher.aio_install.manifest_missing", {"guid": pkg.guid, "file": pinned[key][0], "label": pkg.label}))
 	var files := chosen.values()
 	files.sort_custom(func(a, b): return a.rel < b.rel)
 	return {"ok": true, "kind": "", "error": "", "files": files, "all": m.Files.size()}
@@ -262,18 +420,18 @@ static func md5_of(path: String) -> String:
 ## it on its worker thread; pause / cancel through request_stop). {ok, kind, error, folders: {key: path}, downloaded, kept}
 func install(target: String, consented: bool) -> Dictionary:
 	if not enabled():
-		return _fail(REFUSED, "the setting \"Offer to download the games\" (--aio) is off")
+		return _fail(REFUSED, L10n.t("launcher.aio_install.refused_off"))
 	if not consented:
-		return _fail(REFUSED, "the player has not agreed to download the game files from %s" % PROJECT)
+		return _fail(REFUSED, L10n.t("launcher.aio_install.refused_no_consent", {"project": project()}))
 	if choice == BFME1 and not bfme1_chosen():
-		return _fail(REFUSED, "the optional Battle for Middle-earth I download is offered only when Battle for Middle-earth I is the chosen game")
+		return _fail(REFUSED, L10n.t("launcher.aio_install.refused_bfme1"))
 	if chosen().is_empty():
-		return _fail(REFUSED, "there is no pinned package for the download '%s'" % choice)
+		return _fail(REFUSED, L10n.t("launcher.aio_install.refused_no_pins", {"choice": choice}))
 	if target == "" or not target.is_absolute_path():
-		return _fail(REFUSED, "the target folder must be an absolute path (got '%s')" % target)
+		return _fail(REFUSED, L10n.t("launcher.aio_install.refused_relative", {"path": target}))
 	var err := DirAccess.make_dir_recursive_absolute(target)
 	if err != OK and not DirAccess.dir_exists_absolute(target):
-		return _fail(REFUSED, "cannot create %s (%s)" % [target, error_string(err)])
+		return _fail(REFUSED, L10n.t("launcher.aio_install.cannot_create", {"path": target, "reason": error_string(err)}))
 	Log.line("LAUNCHER AIO consent given: " + consent_text().replace("\n", " "))
 	stop_request = ""
 	updater.http.cancelled = false
@@ -294,29 +452,61 @@ func _stopped(part: String) -> Dictionary:
 	if stop_request == "cancel":
 		if part != "":
 			DirAccess.remove_absolute(part)
-		return _fail(STOPPED, "cancelled; the files already checked are kept, the one in progress was removed")
-	return _fail(STOPPED, "paused; it resumes where it stopped")
+		return _fail(STOPPED, L10n.t("launcher.aio_install.cancelled"))
+	return _fail(STOPPED, L10n.t("launcher.aio_install.paused"))
+
+
+## true when one of the manifest tag's language codes ("EN NL") is English or a language of the package's pinned table
+static func _knows_a_language(pkg: Dictionary, tag: String) -> bool:
+	for code in tag.split(" ", false):
+		if code == "EN" or pkg.get("languages", {}).has(code):
+			return true
+	return false
+
+
+## The language archives (lang/*.big, speech included) already in `dir` that this download does not take ("lang/French.big"): another
+## language's files. Only the base packages (the ones with "languages") are checked; the folder names are matched without case.
+static func _other_language_files(dir: String, files: Array, pkg: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	if not pkg.has("languages"):
+		return out
+	var taken := {}
+	for f in files:
+		taken[String(f.rel).to_lower()] = true
+	for sub in DirAccess.get_directories_at(dir):
+		if sub.to_lower() != "lang":
+			continue
+		for name in DirAccess.get_files_at(dir.path_join(sub)):
+			if name.to_lower().ends_with(".big") and not taken.has("lang/" + name.to_lower()):
+				out.append("%s/%s" % [sub, name])
+	out.sort()
+	return out
 
 
 func _install(target: String) -> Dictionary:
 	var plans := []
 	for pkg in chosen():
 		var url := "%s/api/workshop/download?guid=%s" % [service, String(pkg.guid).uri_encode()]
-		_report("Asking %s for the files of %s" % [service.trim_prefix("https://"), pkg.guid])
+		_report(L10n.t("launcher.aio_install.asking", {"host": service.trim_prefix("https://"), "guid": pkg.guid}))
 		var m: Dictionary = updater.http.get_small(url, MAX_MANIFEST, "application/json", "",
 			PackedStringArray(["AuthAccountUuid: unauthenticated", "AuthAccountPassword: "]))
 		if not m.ok and stop_request != "":
 			return _stopped("")
 		if not m.ok:
-			return _broken(NETWORK, "The file list of %s could not be fetched: %s." % [pkg.guid, m.error])
+			return _broken(NETWORK, L10n.t("launcher.aio_install.list_failed", {"guid": pkg.guid, "error": m.error}))
 		if m.code != 200:
-			return _broken(REJECTED if m.code < 500 and m.code != 429 else NETWORK, "The service answered HTTP %d for the file list of %s." % [m.code, pkg.guid])
+			return _broken(REJECTED if m.code < 500 and m.code != 429 else NETWORK, L10n.t("launcher.aio_install.list_http", {"code": m.code, "guid": pkg.guid}))
 		var c := check_manifest(pkg, m.body)
 		if not c.ok:
 			return c
 		plans.append({"pkg": pkg, "dir": target.path_join(pkg.folder), "files": c.files})
 		# MACFIX-1 (issue #46): what this download takes from the package (the others are other languages), not what is on disk yet
-		Log.line("LAUNCHER AIO %s: the download takes %d of the package's %d files (%s; every one is pinned and matches)" % [pkg.guid, c.files.size(), c.all, pkg.language])
+		Log.line("LAUNCHER AIO %s: the download takes %d of the package's %d files (%s; every one is pinned and matches)" % [pkg.guid, c.files.size(), c.all, language_text() if pkg.has("languages") else pkg.language])
+	# issue #49 (PR #77 review): a folder never holds two languages; the game would pick English and refuse the other as an unknown archive
+	for p in plans:
+		var clash := _other_language_files(p.dir, p.files, p.pkg)
+		if not clash.is_empty():
+			return _fail(REFUSED, L10n.t("launcher.aio_install.other_language_files", {"dir": p.dir, "files": ", ".join(clash), "language": language_text()}))
 	var total := 0
 	var need := 0
 	var count := 0
@@ -330,9 +520,9 @@ func _install(target: String) -> Dictionary:
 			need += f.size - (FileAccess.open(part, FileAccess.READ).get_length() if FileAccess.file_exists(part) else 0)
 	var space := DirAccess.open(target).get_space_left() if DirAccess.open(target) != null else 0
 	if space <= 0:
-		return _fail(REFUSED, "the free space of %s cannot be read: pick another folder" % target)
+		return _fail(REFUSED, L10n.t("launcher.aio_install.no_space_info", {"path": target}))
 	if need > space:
-		return _fail(REFUSED, "%s has %.1f GB free; the game files need %.1f GB more" % [target, space / 1e9, need / 1e9])
+		return _fail(REFUSED, L10n.t("launcher.aio_install.no_space", {"path": target, "free": space / 1e9, "need": need / 1e9}))
 	Log.line("LAUNCHER AIO %d files, %.2f GB in all, %.2f GB to download, %.1f GB free" % [count, total / 1e9, need / 1e9, space / 1e9])
 	var done := 0
 	var downloaded := 0
@@ -345,15 +535,15 @@ func _install(target: String) -> Dictionary:
 			index += 1
 			var dest: String = p.dir.path_join(f.rel)
 			var base := done
-			var show := "File %d of %d, %s/%s" % [index, count, p.pkg.folder, f.rel]
+			var show := L10n.t("launcher.aio_install.file_of", {"index": index, "count": count, "folder": p.pkg.folder, "file": f.rel})
 			if FileAccess.file_exists(dest):
-				_report("Checking " + show, done, total)
+				_report(L10n.t("launcher.aio_install.checking", {"file": show}), done, total)
 				var length := FileAccess.open(dest, FileAccess.READ).get_length() if FileAccess.open(dest, FileAccess.READ) != null else -1
 				if length != f.size:
-					return _fail(REJECTED, "%s already exists and is not %s's file (%d bytes, expected %d): move it away or pick another folder" % [dest, p.pkg.guid, length, f.size])
+					return _fail(REJECTED, L10n.t("launcher.aio_install.exists_size", {"path": dest, "guid": p.pkg.guid, "size": length, "expected": f.size}))
 				var have := md5_of(dest)
 				if have != f.md5:
-					return _fail(REJECTED, "%s already exists and is not %s's file (MD5 %s, expected %s): move it away or pick another folder" % [dest, p.pkg.guid, have, f.md5])
+					return _fail(REJECTED, L10n.t("launcher.aio_install.exists_md5", {"path": dest, "guid": p.pkg.guid, "md5": have, "expected": f.md5}))
 				kept += 1
 				done += f.size
 				_log_file(show, "already there and checked", done, total)
@@ -361,7 +551,7 @@ func _install(target: String) -> Dictionary:
 			DirAccess.make_dir_recursive_absolute(dest.get_base_dir())
 			var part := dest + ".part"
 			var size: int = f.size
-			var each := func(n: int, _s: int) -> void: _report("%s: %d%%" % [show, int(n * 100.0 / maxi(size, 1))], base + n, total)
+			var each := func(n: int, _s: int) -> void: _report(L10n.t("launcher.aio_install.progress", {"file": show, "percent": int(n * 100.0 / maxi(size, 1))}), base + n, total)
 			var d: Dictionary = updater.http.download(f.url, part, size, each)
 			if d.resumed > 0:
 				Log.line("LAUNCHER AIO resumed %s at %d bytes" % [f.rel, d.resumed])
@@ -369,17 +559,17 @@ func _install(target: String) -> Dictionary:
 				return _stopped(part)
 			if not d.ok:
 				if "HTTP 404" in d.error or "HTTP 410" in d.error:
-					return _broken(REJECTED, "The service no longer has %s/%s (%s)." % [p.pkg.folder, f.rel, d.error])
+					return _broken(REJECTED, L10n.t("launcher.aio_install.service_gone", {"folder": p.pkg.folder, "file": f.rel, "error": d.error}))
 				if "HTTP" in d.error or "more than" in d.error or "wrong place" in d.error:
-					return _broken(REJECTED, "%s/%s: the service answered something OpenBFME does not recognise (%s)." % [p.pkg.folder, f.rel, d.error])
-				return _broken(NETWORK, "%s/%s: %s." % [p.pkg.folder, f.rel, d.error])
-			_report("Checking " + show, base + size, total)
+					return _broken(REJECTED, L10n.t("launcher.aio_install.service_unknown", {"folder": p.pkg.folder, "file": f.rel, "error": d.error}))
+				return _broken(NETWORK, L10n.t("launcher.aio_install.download_failed", {"folder": p.pkg.folder, "file": f.rel, "error": d.error}))
+			_report(L10n.t("launcher.aio_install.checking", {"file": show}), base + size, total)
 			var got := md5_of(part)
 			if got != f.md5:
 				DirAccess.remove_absolute(part)
-				return _broken(REJECTED, "%s/%s from the service has MD5 %s, expected %s: it was deleted." % [p.pkg.folder, f.rel, got, f.md5])
+				return _broken(REJECTED, L10n.t("launcher.aio_install.wrong_md5", {"folder": p.pkg.folder, "file": f.rel, "md5": got, "expected": f.md5}))
 			if DirAccess.rename_absolute(part, dest) != OK:
-				return _fail(REFUSED, "cannot rename %s to %s" % [part, dest])
+				return _fail(REFUSED, L10n.t("launcher.aio_install.cannot_rename", {"from": part, "to": dest}))
 			downloaded += 1
 			done += size
 			_log_file(show, "downloaded and checked", done, total)
@@ -400,7 +590,7 @@ func _install(target: String) -> Dictionary:
 		f.close()
 	var why := write_bfme1_marker(folders.get(BFME1, "")) if choice == BFME1 else write_marker(folders)
 	if why != "":
-		return _fail(REFUSED, "the files are installed and checked, but the game could not be told where: %s. Pick %s when OpenBFME asks." % [why, ", ".join(folders.values())])
+		return _fail(REFUSED, L10n.t("launcher.aio_install.handoff_failed", {"why": why, "folders": ", ".join(folders.values())}))
 	for p in plans:
 		Log.line("LAUNCHER AIO installed %s (%s) in %s" % [p.pkg.label, p.pkg.guid, p.dir])
 	return {"ok": true, "kind": "", "error": "", "folders": folders, "downloaded": downloaded, "kept": kept}
@@ -412,7 +602,7 @@ func write_marker(folders: Dictionary) -> String:
 	var dir := GameOptions.game_user_dir()
 	var err := DirAccess.make_dir_recursive_absolute(dir)
 	if err != OK and not DirAccess.dir_exists_absolute(dir):
-		return "cannot create %s (%s)" % [dir, error_string(err)]
+		return L10n.t("launcher.aio_install.cannot_create", {"path": dir, "reason": error_string(err)})
 	var guids := PackedStringArray()
 	for p in packages:
 		guids.append(p.guid)
@@ -423,11 +613,11 @@ func write_marker(folders: Dictionary) -> String:
 	var path := dir.path_join(MARKER)
 	var f := FileAccess.open(path + ".tmp", FileAccess.WRITE)
 	if f == null:
-		return "cannot write %s (%s)" % [path, error_string(FileAccess.get_open_error())]
+		return L10n.t("launcher.aio_install.cannot_write", {"path": path, "reason": error_string(FileAccess.get_open_error())})
 	f.store_string("\n".join(lines) + "\n")
 	f.close()
 	if DirAccess.rename_absolute(path + ".tmp", path) != OK:
-		return "cannot replace %s" % path
+		return L10n.t("launcher.aio_install.cannot_replace", {"path": path})
 	Log.line("LAUNCHER AIO the game will offer these folders on its first start (%s)" % path)
 	return ""
 
@@ -436,11 +626,11 @@ func write_marker(folders: Dictionary) -> String:
 ## atomically; never MARKER (InstallLocator::readDownloaded refuses keys other than SOURCE / ROTWK_INSTALL / BFME2_INSTALL). "" or why not.
 func write_bfme1_marker(folder: String) -> String:
 	if folder == "":
-		return "no BFME1 folder"
+		return L10n.t("launcher.aio_install.no_bfme1_folder")
 	var dir := GameOptions.game_user_dir()
 	var err := DirAccess.make_dir_recursive_absolute(dir)
 	if err != OK and not DirAccess.dir_exists_absolute(dir):
-		return "cannot create %s (%s)" % [dir, error_string(err)]
+		return L10n.t("launcher.aio_install.cannot_create", {"path": dir, "reason": error_string(err)})
 	var guids := PackedStringArray()
 	for p in bfme1_packages:
 		guids.append(p.guid)
@@ -449,11 +639,11 @@ func write_bfme1_marker(folder: String) -> String:
 	var path := dir.path_join(BFME1_MARKER)
 	var f := FileAccess.open(path + ".tmp", FileAccess.WRITE)
 	if f == null:
-		return "cannot write %s (%s)" % [path, error_string(FileAccess.get_open_error())]
+		return L10n.t("launcher.aio_install.cannot_write", {"path": path, "reason": error_string(FileAccess.get_open_error())})
 	f.store_string("\n".join(lines) + "\n")
 	f.close()
 	if DirAccess.rename_absolute(path + ".tmp", path) != OK:
-		return "cannot replace %s" % path
+		return L10n.t("launcher.aio_install.cannot_replace", {"path": path})
 	Log.line("LAUNCHER AIO Battle for Middle-earth I is found there from now on (%s)" % path)
 	return ""
 
@@ -463,8 +653,8 @@ func write_bfme1_marker(folder: String) -> String:
 func remove_partials(target: String) -> int:
 	var n := 0
 	for p in chosen():
-		for f in p.files:
-			var part := target.path_join(p.folder).path_join(str(f[0])) + ".part"
+		for f in package_files(p):
+			var part := target.path_join(p.folder).path_join(str(f[0]).replace("\\", "/")) + ".part"
 			if FileAccess.file_exists(part) and DirAccess.remove_absolute(part) == OK:
 				n += 1
 	return n

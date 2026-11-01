@@ -3,6 +3,7 @@
 // 0xB50100 (hand-traced below), the looker counts of RW 0xB52E10 / 0xB52EC0, the unlook queue of RW 0xB526A0 / 0xB51690 and the retail data (PartitionCellSize
 // 40, UnlookPersistDuration 1 frame, UseShroud No), never this engine's own output.
 
+#include "HordeCompleteTestUtil.h"
 #include "CreepTestUtil.h"
 #include "doctest.h"
 
@@ -296,6 +297,62 @@ TEST_CASE("shroud objects: the status of an object for a player (RW 0xB4E890) an
 	CHECK(f.shroud.getCellStatus(alice, 2, 2) == CELLSHROUD_FOGGED);
 }
 
+TEST_CASE("shroud objects (PORTERFOG-1): a contain's world exit keeps the record and only stops the look (RW 0x68C18F -> 0xB4E2A0, RW 0x694A45); the "
+		  "entry keeps it (RW 0x68E31F); the destructor frees it out of the world (RW 0x69A8BC -> 0xB4F510); no record answers CLEAR (RW 0x68D8F7)")
+{
+	Fx f;
+	const int alice = f.idx("Alice"), bob = f.idx("Bob");
+	Object *scout = f.place("Scout", "Alice", 420.0f, 420.0f);
+	Object *porter = f.place("Scout", "Bob", 500.0f, 420.0f); // cell (12, 10): inside the scout's look; its own look clears (12 +- 3, 10) for Bob
+	f.shroud.update();
+	const size_t records = f.shroud.recordCount();
+	CHECK(f.shroud.getCellStatus(bob, 15, 10) == CELLSHROUD_CLEAR);
+	CHECK(f.shroud.getObjectStatus(*porter, alice) == OBJECTSHROUD_CLEAR);
+	// the porter hides in its site (DozerAIUpdate::hideInStructure RW 0x88C51B -> RW 0x68C18F): the record stays, dirty and forced
+	f.logic->friend_containLeaveWorld(*porter);
+	CHECK_FALSE(porter->isInWorld());
+	CHECK(f.shroud.hasRecord(*porter));
+	CHECK(f.shroud.recordCount() == records);
+	CHECK(f.shroud.dirtyCount() == 1);
+	// the forced re-look asks RW 0x694A45, which answers radii -1 out of the world: the last look is queued off and Bob's cells fog after the unlook delay
+	for (int i = 0; i < 3; ++i)
+	{
+		f.shroud.update();
+	}
+	CHECK(f.shroud.getCellStatus(bob, 15, 10) == CELLSHROUD_FOGGED);
+	CHECK(f.shroud.pendingUnlooks() == 0);
+	// it still covers its cells: Alice sees it while she sees them, and a mobile enemy in her fog is hidden (RW 0x68EDD0)
+	CHECK(f.shroud.getObjectStatus(*porter, alice) == OBJECTSHROUD_CLEAR);
+	Coord3D away{ 100.0f, 100.0f, 0.0f };
+	scout->setPosition(&away);
+	for (int i = 0; i < 3; ++i)
+	{
+		f.shroud.update();
+	}
+	CHECK(f.shroud.getCellStatus(alice, 12, 10) == CELLSHROUD_FOGGED);
+	CHECK(f.shroud.getObjectStatus(*porter, alice) == OBJECTSHROUD_SHROUDED);
+	CHECK(f.shroud.clientObjectStatus(*porter, alice) == OBJECTSHROUD_SHROUDED);
+	// back in the world (RW 0x88D6AE -> RW 0x68E31F): the same record, the look returns
+	f.logic->friend_containEnterWorld(*porter);
+	CHECK(f.shroud.recordCount() == records);
+	f.shroud.update();
+	CHECK(f.shroud.getCellStatus(bob, 15, 10) == CELLSHROUD_CLEAR);
+	// out of the world again, then destroyed there: the destructor frees the record (no leak)
+	f.logic->friend_containLeaveWorld(*porter);
+	f.shroud.update();
+	f.logic->destroyObject(porter);
+	f.logic->processDestroyList();
+	CHECK(f.shroud.recordCount() == records - 1);
+	CHECK(f.shroud.dirtyCount() == 0);
+	// an object without a record (here: the manager detached before it was made) presents CLEAR, not 0
+	f.shroud.detach();
+	Object *late = f.place("Blind", "Bob", 700.0f, 420.0f);
+	f.shroud.attach();
+	CHECK_FALSE(f.shroud.hasRecord(*late));
+	CHECK(f.shroud.getObjectStatus(*late, alice) == OBJECTSHROUD_CLEAR);
+	CHECK(f.shroud.clientObjectStatus(*late, alice) == OBJECTSHROUD_CLEAR);
+}
+
 TEST_CASE("shroud hash: two identical runs agree, one extra look moves the hash, the logic's state hash includes the shroud")
 {
 	auto run = [](bool extra) {
@@ -524,10 +581,12 @@ void runRetail(starttest::Shared &s, RetailRun &out, bool checks)
 	REQUIRE(et != nullptr);
 	Object *fighter = logic.newObject(ft, human->getDefaultTeam(), ObjectStatusMaskType{});
 	fighter->setPosition(walker->getPosition());
+	testutil::completeHorde(fighter); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	target = logic.newObject(et, enemy->getDefaultTeam(), ObjectStatusMaskType{});
 	Coord3D fog{ walker->getPosition()->x, walker->getPosition()->y, 0.0f };
 	fog.y = fog.y > maxY * 0.5f ? fog.y - 900.0f : fog.y + 900.0f;
 	target->setPosition(&fog);
+	testutil::completeHorde(target); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	game.advance(0.2);
 	walker = fighter;
 	if (target)
@@ -722,10 +781,12 @@ TEST_CASE("shroud stops: S-560 .. S-567 are the exact stop lines and reach GameL
 		"0x82C167, the action helper: human and not script, as ZH ActionManager isObjectShroudedForAction); its other callers and the other action types were not read",
 		"[S-566] stealth and detection: RotWK's invisibility (InvisibilityUpdate, StealthDetectorUpdate, the InvisibilityManager, the INVISIBLE_STEALTH / CAMOUFLAGE "
 		"conditions and the INVISIBLE_DETECTED statuses) is lane STEALTH-1's (S-1040 .. S-1042); the shroud does not change for a stealthed object",
-		"[S-567] shroud drawing: one texel per cell with bilinear filtering multiplies the terrain, the water, rivers and roads by ShroudColor * level / 255 "
-		"(ClearAlpha / FogAlpha / ShroudAlpha) inside W3DShroud's one-texel border at ShroudAlpha (RW 0x472480 / 0x472EF4 / 0x472792, lane ZOOM-1); objects the "
-		"local player cannot see are not drawn, fogged ones are lit by the fogged light (S-4970); the roads' shroud is inferred (ZH's road buffer has no shroud pass); the radar "
-		"picture is multiplied per pixel; W3DShroud's filter and 4444 texel and W3DRadar's own texture were not read",
+		"[S-567] shroud drawing: one texel per cell with bilinear filtering (terrain.fxo's ShroudSampler: linear, clamp) multiplies the terrain, the water, rivers and roads by the "
+		"4-bit red nibble of W3DShroud's A4R4G4B4 texel of the cell's level (ClearAlpha / FogAlpha / ShroudAlpha) times ShroudColor (RW 0x47266B: FogAlpha 127 reads 7/15, not 127 / 255; "
+		"lane TERRAIN-SAMPLING) inside W3DShroud's one-texel border at ShroudAlpha (RW 0x472480 / 0x472EF4 / 0x472792, lane ZOOM-1); objects the "
+		"local player cannot see are not drawn, fogged ones are lit by the fogged light (S-4970); the water, rivers' and roads' shroud passes are inferred (ZH's road buffer has no shroud "
+		"pass; they read the red nibble like the terrain, where ZH's fixed-function passes would use the texel's green and blue too); the radar "
+		"picture is multiplied per pixel by level / 255; W3DRadar's own texture and W3DShroud's filter switch (the fogged ShroudSampler is plain linear) were not read",
 	};
 	CHECK(ShroudManager::stopLines() == expected);
 	Fx f;
@@ -736,13 +797,17 @@ TEST_CASE("shroud stops: S-560 .. S-567 are the exact stop lines and reach GameL
 	}
 }
 
-TEST_CASE("shroud objects: an omitted clearing range defaults to VisionRange in BFME1 data only (community PR #36); RotWK keeps 0, an explicit 0 stays blind")
+// lane SPELLFIX-1: the rule is every edition's: the ThingTemplate ctor's ShroudClearingRange -1 (RW 0x73FB7A, the constant RW 0xBD19DC) and the Object ctor's
+// fallback to VisionRange (RW 0x69990F: RW 0x699DE2 .. 0x699DF9); BFME2 decomp ObjectConstructor.cpp:549-551; BFME1 Object::initObject (community PR #36)
+TEST_CASE("shroud objects: an omitted clearing range defaults to VisionRange in every edition (RW 0x73FB7A / 0x69990F); an explicit 0 stays blind")
 {
 	const char *objects = "Object Keep\n KindOf = STRUCTURE IMMOBILE\n VisionRange = 100\n Geometry = CYLINDER\n GeometryMajorRadius = 9\nEnd\n"
-		"Object BlindKeep\n KindOf = STRUCTURE IMMOBILE\n VisionRange = 100\n ShroudClearingRange = 0\n Geometry = CYLINDER\n GeometryMajorRadius = 9\nEnd\n";
+		"Object BlindKeep\n KindOf = STRUCTURE IMMOBILE\n VisionRange = 100\n ShroudClearingRange = 0\n Geometry = CYLINDER\n GeometryMajorRadius = 9\nEnd\n"
+		"Object DefaultKeep\n VisionRange = 150\n ShroudClearingRange = -1\nEnd\n";
 	objtest::World rotwk;
 	REQUIRE(rotwk.load(objects).empty());
-	CHECK(ShroudManager::templateVision(*rotwk.get("Keep")).shroudClearingRange == 0.0f);
+	CHECK(ShroudManager::templateVision(*rotwk.get("Keep")).shroudClearingRange == 100.0f);
+	CHECK(ShroudManager::templateVision(*rotwk.get("DefaultKeep")).shroudClearingRange == 150.0f);
 	CHECK(ShroudManager::templateVision(*rotwk.get("BlindKeep")).shroudClearingRange == 0.0f);
 	objtest::World bfme1(true);
 	REQUIRE(bfme1.load(objects).empty());

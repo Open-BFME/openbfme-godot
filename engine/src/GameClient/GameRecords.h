@@ -39,6 +39,7 @@ struct GameRecord
 	int meSlot = 0;              ///< the local player's slot (one of players)
 	int winnerTeam = -1;         ///< the team that won; -1: none (a draw, an abandoned game, the player left before the end)
 	std::string replayHash;      ///< optional (64 hex digits)
+	bool cheatMode = false;      ///< lane CHEAT-1: a Cheat Mode game ("cheat_mode": true; absent false): kept in the file, never counted in the statistics nor reported
 
 	const Player *me() const;
 	bool won() const;            ///< the local player's team won

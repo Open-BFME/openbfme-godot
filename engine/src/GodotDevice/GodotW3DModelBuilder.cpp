@@ -3,6 +3,9 @@
 #include "Common/BfmeGame.h"
 #include "GodotDevice/GodotW3DModelBuilder.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
+#include "GodotDevice/GodotW3DMaterial.h"
+#include "GodotDevice/GodotPackedTexture.h"
+#include "Libraries/Source/Apt/AptLoad.h"
 
 #include "Common/AsciiString.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
@@ -79,6 +82,7 @@ Ref<Texture2D> W3DModelBuilder::load_texture(const Ref<RetailFileSystem> &fs, co
 	}
 	Dictionary info;
 	Ref<Texture2D> t = loadTexture(*fs.ptr(), toNative(texture_name), info);
+	m_report["texture"] = info;
 	if (t.is_null() && ((Array)m_report["errors"]).is_empty())
 	{
 		((Array)m_report["errors"]).push_back(toGodot("load_texture: no texture " + toNative(texture_name)));
@@ -95,13 +99,38 @@ Ref<Texture2D> W3DModelBuilder::loadTexture(RetailFileSystem &fs, const std::str
 	if (cached != m_textureCache.end())
 	{
 		meshInfo["texture_path"] = cached->second->get_meta("retail_path");
+		if (cached->second->has_meta("packed_texture_stop")) meshInfo["packed_texture_stop"] = cached->second->get_meta("packed_texture_stop");
 		return cached->second;
+	}
+
+	// lane SDK-1: an asset pack's replacement first (the bibs and the placement shadow decals load here; GameClient/AssetPacks.h)
+	std::string packError;
+	Ref<Image> packImage = Load_Asset_Pack_Image(fs.assetPacks().empty() ? nullptr : &fs.assetPacks(), name, packError);
+	if (!packError.empty())
+	{
+		((Array)m_report["errors"]).push_back(toGodot("texture " + name + ": " + packError));
+		return Ref<Texture2D>();
+	}
+	if (packImage.is_valid())
+	{
+		Ref<ImageTexture> packed = ImageTexture::create_from_image(packImage);
+		packed->set_meta("retail_path", packImage->get_meta("retail_path"));
+		meshInfo["texture_path"] = packImage->get_meta("retail_path");
+		m_textureCache[key] = packed;
+		return packed;
 	}
 
 	// Use the mounted game's texture layout, as the material factory does.
 	const bool flatLayout = fs.archive_fs() && isBfme1Data(*fs.archive_fs());
-	const TextureResolution resolved = Resolve_W3D_Texture(name, [&](const std::string &path) { return fs.existsNative(path); }, flatLayout);
-	const std::vector<std::string> &candidates = resolved.Tried;
+	const TextureResolution resolved = Resolve_Packed_W3D_Texture(name, [&](const std::string &path) { return fs.existsNative(path); }, flatLayout);
+	std::vector<std::string> candidates = resolved.Tried;
+	// lane WOTR-1 [inference]: a few retail textures exist only as .png in the compiled folder (LivingMap's LM_MinasTirith; the compiled-only .jpg
+	// ones, LM_Smoke and EXLavaSeq, are Resolve_Packed_W3D_Texture's); the retail loader's order for them was not read
+	if (!flatLayout)
+	{
+		const std::string dds = W3D_Compiled_Texture_Path(name);
+		candidates.push_back(dds.substr(0, dds.size() - 4) + ".png");
+	}
 	Ref<Texture2D> texture;
 	for (const std::string &path : candidates)
 	{
@@ -125,15 +154,23 @@ Ref<Texture2D> W3DModelBuilder::loadTexture(RetailFileSystem &fs, const std::str
 		Error err = ERR_FILE_UNRECOGNIZED;
 		if (ext == ".dds") err = image->load_dds_from_buffer(buffer);
 		else if (ext == ".png") err = image->load_png_from_buffer(buffer);
-		else if (ext == ".jpg") err = image->load_jpg_from_buffer(buffer);
+		else if (ext == ".jpg" && fs.archive_fs())
+		{
+			AptArchiveFileSource source(*fs.archive_fs());
+			bool paired = false;
+			image = loadPackedTexture(source, path.substr(0, path.size() - 4), &paired);
+			err = image.is_valid() ? OK : ERR_FILE_CORRUPT;
+			if (paired) meshInfo["packed_texture_stop"] = "[S-1482] packed PNG colour multiplication and alpha replacement are inferred; the loader merge was not read";
+		}
 		else err = image->load_tga_from_buffer(buffer);
-		if (err != OK || image->is_empty())
+		if (err != OK || image.is_null() || image->is_empty())
 		{
 			((Array)m_report["errors"]).push_back(toGodot("could not decode texture " + path));
 			break;
 		}
 		texture = ImageTexture::create_from_image(image);
 		texture->set_meta("retail_path", toGodot(path));
+		if (meshInfo.has("packed_texture_stop")) texture->set_meta("packed_texture_stop", meshInfo["packed_texture_stop"]);
 		meshInfo["texture_path"] = toGodot(path);
 		break;
 	}

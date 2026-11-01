@@ -11,8 +11,8 @@
 //   3. over the footprint around the candidate's cell: a cell with info must be a valid movement cell, each goal reservation of another unit counts, and the step is
 //      refused as soon as that count reaches the current one, or when the reserving unit (or its container, RW 0x693A1A(1)) has an AI whose + 0x16C is above 0.
 // TARGET (review r2): RW 0x6ED0A0 calls RW 0x6EAF79 (the footprint size N) and returns below = N / 2, above = N - N / 2; RW 0x666F74 zeroes AI + 0x16C after a new
-// path, as computePath zeroes the blocked-frame counter (PathfindObject::aiBlockedFrames). INFERENCE (stop S-783): only the ground layer exists (S-161), so the second layer of RW 0x76550F / terrain vslot 0xB0 and the
-// neighbour-layer test of a cell with info byte + 0xE bit 0 (RW 0xDA2420 / 0xDA2430) never apply.
+// path, as computePath zeroes the blocked-frame counter (PathfindObject::aiBlockedFrames). INFERENCE (stop S-783): the second layer of RW 0x76550F / terrain vslot 0xB0 (a raised walkway, lane WALL-2) and the
+// neighbour-layer test of a cell with info byte + 0xE bit 0 (RW 0xDA2420 / 0xDA2430) are not applied: the footprint is read on the ground grid.
 
 #include "GameLogic/AI/AIPathfind.h"
 

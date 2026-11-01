@@ -15,6 +15,7 @@
 ## What the retail detail level drives here (each with its source; the rest is stop S-3402, docs/OPTIONS.md):
 ##   max_particle_count, min_particle_priority, min_particle_skip_priority -> the live FX player (FXPlayer.set_particle_lod: GlobalData + 0xAC8 and the
 ##     manager's + 0x17A0 / + 0x17A4, read by ParticleSystem::createParticle RW 0x5FA2CE);
+##   effects_lod -> GameWorld.set_effects_lod (EffectsLOD VeryLow / Low draw neither the map's colour grade nor the GlowEffect pass, RW 0x48789F; lane GLOW-1);
 ##   texture_reduction -> GameWorld.set_texture_reduction (W3D textures lose mip levels; models loaded afterwards: the next game);
 ##   all_health_bars -> the HUD's decorations (DecalLOD Off forces them, RW 0x601CD3).
 ## Brightness: RW 0x641E8B's gamma drawn as DX8Wrapper::Set_Gamma's ramp (DONOR ZH: out = pow(i / 256, 1 / gamma)) by a full-window pass over everything;
@@ -22,6 +23,7 @@
 extends Node
 
 const DisplaySettings := preload("res://scripts/display_settings.gd") # lane OWNERFIX-1: TAA through its scaler
+const WeatherFX := preload("res://scripts/weather_fx.gd") # lane WEATHERFX-1
 const PREFIX := "OpenBFME"
 const MENU_STYLE_KEY := "OpenBFMEMainMenuStyle"
 const MENU_STYLES := [["rotwk", "Rise of the Witch-king"], ["bfme2", "Battle for Middle-earth II"]]
@@ -53,6 +55,7 @@ const EXTRAS := {
 	# lane UBER-1: the Uber performance mode (docs/UBER.md): the next lobby and game run the Uber simulation profile; never compatible with the original game
 	"OpenBFMEUberPerformance": {"default": "no", "choices": ["yes", "no"]},
 	"OpenBFMEShareResults": {"default": "yes", "choices": ["yes", "no"]}, # lane ONLINEHUB-1: the platform's game results (docs/PLATFORM_API.md)
+	"OpenBFMECrashReports": {"default": "yes", "choices": ["yes", "no"]}, # lane CRASHACT-1: crash reports sent automatically (scripts/release/release.gd)
 	"OpenBFMEShowPing": {"default": "yes", "choices": ["yes", "no"]}, # lane ONLINEMENU-1: the online menus' corner shows the player's ping
 	"OpenBFMEMasterVolume": {"default": "100", "range": [0, 100]},
 	"OpenBFMEMuteUnfocused": {"default": "no", "choices": ["yes", "no"]},
@@ -284,6 +287,7 @@ func apply_global(values: Dictionary) -> PackedStringArray:
 ## "original": the renderer's look as it was (linear tone mapping, no glow); "enhanced": AgX tone mapping and glow on what is brighter than white (the
 ## additive effects' overbright)
 func apply_look(look: String) -> void:
+	WeatherFX.look_enhanced = look == "enhanced" # lane WEATHERFX-1: the Enhanced look's weather (scripts/weather_fx.gd), from its next frame
 	var env: Environment = _environment()
 	if env == null:
 		return
@@ -296,6 +300,12 @@ func apply_look(look: String) -> void:
 	else:
 		env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
 		env.glow_enabled = false
+
+
+## lane WEATHERFX-1: the Enhanced weather's share of the static detail level: VeryLow / Low none, Medium half, High / UltraHigh / Custom all
+func weather_fx_detail() -> float:
+	var level := int(_detail.get("level", 3))
+	return 0.0 if level <= 1 else (0.5 if level == 2 else 1.0)
 
 
 func _environment() -> Environment:
@@ -333,10 +343,18 @@ func apply_detail() -> Dictionary:
 		problems.append("detail: " + str(_detail.get("error", "no level")))
 		return _detail
 	ClassDB.class_call_static("GameWorld", "set_texture_reduction", _detail.texture_reduction)
+	if game != null and game.has_method("set_shadow_lod"):
+		game.set_shadow_lod(_detail.shadow_lod)
 	if _world != null and _world.has_method("get_fx_player"):
 		var fx = _world.get_fx_player()
 		if fx != null:
 			fx.set_particle_lod(_detail.max_particle_count, _detail.min_particle_priority, _detail.min_particle_skip_priority)
+	var wfx = game.get("_weather_fx") if game != null else null
+	if wfx != null and is_instance_valid(wfx):
+		wfx.detail = weather_fx_detail() # lane WEATHERFX-1
+	# lane GLOW-1 (S-5231): EffectsLOD VeryLow / Low draw neither the map's colour grade nor the glow (RW 0x48789F)
+	if _world != null and _world.has_method("set_effects_lod"):
+		_world.set_effects_lod(int(_detail.effects_lod))
 	return _detail
 
 

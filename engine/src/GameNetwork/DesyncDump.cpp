@@ -2,6 +2,7 @@
 // See GameNetwork/DesyncDump.h.
 
 #include "GameNetwork/DesyncDump.h"
+#include "Common/PathIO.h"
 
 #include <cstdio>
 #include <fstream>
@@ -28,7 +29,7 @@ std::string DesyncDump::fileName(const std::string &directory, UnsignedInt frame
 
 bool DesyncDump::write(const std::string &path, const DesyncReport &report, int localSlot, const std::string &replayPath, std::string *error)
 {
-	std::ofstream o(path, std::ios::binary | std::ios::trunc); // LF lines on every OS, so a Windows peer's dump compares with a Linux peer's (lane WIN-1)
+	std::ofstream o(PathIO::native(path), std::ios::binary | std::ios::trunc); // LF lines on every OS, so a Windows peer's dump compares with a Linux peer's (lane WIN-1)
 	if (!o)
 	{
 		if (error)
@@ -67,8 +68,8 @@ bool DesyncDump::write(const std::string &path, const DesyncReport &report, int 
 	else
 	{
 		const std::string copy = path.substr(0, path.size() >= 4 ? path.size() - 4 : path.size()) + ".replay";
-		std::ifstream in(replayPath, std::ios::binary);
-		std::ofstream out(copy, std::ios::binary | std::ios::trunc);
+		std::ifstream in(PathIO::native(replayPath), std::ios::binary);
+		std::ofstream out(PathIO::native(copy), std::ios::binary | std::ios::trunc);
 		if (in && out)
 		{
 			out << in.rdbuf();

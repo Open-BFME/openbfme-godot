@@ -76,7 +76,7 @@ void W3D_Collect_Surface_Stops(const MeshRenderData &mesh, const MeshDrawSurface
 		{
 			if (const std::string *house = houseColors->Find(t))
 			{
-				add(out, "S-022", mesh.Name + ": texture " + t + " has house colour texture " + *house + " in housecolor.ini; the team colour is NOT applied (combine unrecovered)");
+				add(out, "S-022", mesh.Name + ": texture " + t + " has house colour texture " + *house + " in housecolor.ini; the team colour is NOT applied (house colours are off in this instancer)");
 			}
 		}
 	}

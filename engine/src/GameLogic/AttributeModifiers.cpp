@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GameLogic/AttributeModifiers.h.
 
+#include "Common/ModEngineFeatures.h"
 #include "GameLogic/AttributeModifiers.h"
 
 #include "Common/AsciiString.h"
@@ -23,6 +24,14 @@ const char *const TheAttributeModifierTypeNames[] = { "ATTRIBUTE_NONE", "ARMOR",
 	"BOUNTY_PERCENTAGE", "MINIMUM_CRUSH_VELOCITY", "AUTO_HEAL", "SHROUD_CLEARING", "RATE_OF_FIRE", "DAMAGE_STRUCTURE_BOUNTY_ADD", "CRUSHER_LEVEL",
 	"COMMAND_POINT_BONUS", "CRUSHABLE_LEVEL", "CRUSHED_DECELERATE", "INVULNERABLE", nullptr }; // RW 0xDA6D28
 
+// lane MODS-3: edain-unchained.production-split's table (its 0xED9008, at RW 0x804CB3 / 0x804CBA): the 28 names, then PRODUCTION_MONEY (28),
+// PRODUCTION_UNIT (29), PRODUCTION_UPGRADE (30), PRODUCTION_CONSTRUCTION (31)
+const char *const kProductionSplitTypeNames[] = { "ATTRIBUTE_NONE", "ARMOR", "DAMAGE_ADD", "DAMAGE_MULT", "RESIST_FEAR", "RESIST_TERROR", "EXPERIENCE",
+	"RANGE", "SPEED", "CRUSH_DECELERATE", "RESIST_KNOCKBACK", "SPELL_DAMAGE", "RECHARGE_TIME", "PRODUCTION", "HEALTH", "HEALTH_MULT", "VISION",
+	"BOUNTY_PERCENTAGE", "MINIMUM_CRUSH_VELOCITY", "AUTO_HEAL", "SHROUD_CLEARING", "RATE_OF_FIRE", "DAMAGE_STRUCTURE_BOUNTY_ADD", "CRUSHER_LEVEL",
+	"COMMAND_POINT_BONUS", "CRUSHABLE_LEVEL", "CRUSHED_DECELERATE", "INVULNERABLE", "PRODUCTION_MONEY", "PRODUCTION_UNIT", "PRODUCTION_UPGRADE",
+	"PRODUCTION_CONSTRUCTION", nullptr };
+
 namespace
 {
 // RW 0x806264
@@ -31,9 +40,10 @@ void parseModifier(INI *ini, void *instance, void *, const void *)
 	ModifierListTemplate *list = static_cast<ModifierListTemplate *>(instance);
 	const char *typeName = ini->getNextToken();
 	int type = 0;
-	for (int i = 0; TheAttributeModifierTypeNames[i]; ++i) // RW 0x804CAD: strcmp; ATTRIBUTE_NONE answers 0 like "not found"
+	const char *const *typeNames = ModEngineFeatures::has(ModEngineFeature::EdainUnchainedProductionSplit) ? kProductionSplitTypeNames : TheAttributeModifierTypeNames;
+	for (int i = 0; typeNames[i]; ++i) // RW 0x804CAD: strcmp; ATTRIBUTE_NONE answers 0 like "not found"
 	{
-		if (std::strcmp(TheAttributeModifierTypeNames[i], typeName) == 0)
+		if (std::strcmp(typeNames[i], typeName) == 0)
 		{
 			type = i;
 			break;
@@ -67,6 +77,10 @@ void parseModifier(INI *ini, void *instance, void *, const void *)
 	m.value = value;
 	m.names = names;
 	list->m_modifiers.push_back(m);
+	if (type >= 0 && type < 32)
+	{
+		list->m_typeMask |= 1u << type; // lane HDPERF-1: ModifierListTemplate::mayHave
+	}
 }
 
 // RW 0x804DEA

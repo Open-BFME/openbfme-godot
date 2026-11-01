@@ -179,8 +179,10 @@ func _ready() -> void:
 	LensEffect.attach(camera, lens)          # call again each frame on a camera OpenBFME draws, to keep its place
 ```
 
-For a video at a steady frame rate, whatever the machine renders, Godot's movie writer records it: `godot --write-movie
-shot.avi --fixed-fps 30 ...` (the window's size is the movie's).
+For a video at a steady frame rate, whatever the machine renders, add
+`--write-movie shot.avi --fixed-fps 30` to the chosen scene's Godot launch command
+(desktop Linux/macOS/Windows, Godot 4.7 and a configured project/scene; game scenes also need
+the built extension and retail mount variables). The window's size is the movie's.
 
 In a game, use a `Camera3D` of your own and make it current, then make the game's camera current again to give the view
 back. The HUD (`InGameHudNode`) writes the game's camera every frame from the tactical camera, so it would undo a pose
@@ -194,7 +196,7 @@ viewport's current camera, so it follows this one.
 An eye and a turn, in Godot world coordinates:
 
 - `heading`, degrees: 0 looks along -Z, which is OpenBFME's map north; 90 along +X, east.
-- `pitch`, degrees above the horizon, -89.9 to 89.9.
+- `pitch`, degrees above the horizon: `turn()` clamps it to -89.9 to 89.9; direct assignment is not clamped.
 - `roll`, degrees about the view, clockwise as seen from behind the camera (the picture turns the other way).
 
 `forward()` and `right()` give the view's direction and its level right. `sage()` turns a map point (SAGE axes) into
@@ -233,7 +235,11 @@ A full-frame camera, a 36 x 24 mm sensor:
    a sample behind the pixel counts with at most twice the pixel's own circle, so a sharp foreground keeps its edge.
    Light keeps its energy, so a bright point out of focus spreads into a bright disc. The disc's sample pattern turns
    per pixel, which trades the repeated copies a fixed pattern gives in large blur for fine grain.
-4. The exposure.
+4. A 5 x 5 binomial resolve of the gathered colour, guided by depth and blur radius. It fades in between blur radii of
+   1 and 3 pixels, leaving focused pixels alone; neighbours on different surfaces or with different blur radii are
+   rejected. Colour and depth gathers keep their original nearest sampling; smoothing is confined to the resolve.
+   This reduces sampling grain without raising `taps` or accumulating previous frames.
+5. The exposure.
 
 On a camera OpenBFME draws, `attach()` keeps the effect right after the gamma composite's decode (the last
 `GammaCompositeEffect`, lane RENDER-3), where the colour is linear again; the map's colour grade
@@ -244,7 +250,9 @@ plain camera it is the only effect.
 `taps` (128) sets the blur's samples per pixel: more is smoother and slower; 256 suits a still. `max_blur` (0.06) caps
 every blur circle at that share of the picture's width, and with it how far each pixel looks around: a larger cap lets a
 strong blur grow larger and is slower, a smaller one is faster and clips the largest circles. Both are on the camera
-too, which hands them to the effect. Without an aperture, an exposure or log output the effect does no work. It also
+too, which hands them to the effect. With depth of field enabled, the resolve adds one compute pass and one full-size
+RGBA16F intermediate (8 bytes per internal-resolution pixel); exposure and log output alone skip the gather and resolve
+filter. Without an aperture, an exposure, log output or pending distance requests the effect does no work. It also
 reads the distance along the view at a pixel, to focus on whatever is drawn there: `ask_distance(pixel)` (a pixel of
 the viewport) returns a request number, and once `answered` reaches it, `distance_of(number)` is the answer, along the
 view like `focus` (below 0 where nothing is drawn: the sky, or a pixel outside the picture; NAN before it is answered).
@@ -282,9 +290,11 @@ original game's range, so log output gives room in the shadows and mid-tones rat
 
 ## Tests
 
-`godot/tests/pro_camera_test.gd` needs no game files:
+`godot/tests/pro_camera_test.gd` needs no game files. From the repository root,
+with Godot 4.7 available as `godot` on PATH (Linux/macOS POSIX shell, or Windows
+PowerShell/cmd with that executable name):
 
-```
+```sh
 godot --path godot --script res://tests/pro_camera_test.gd
 ```
 
@@ -305,3 +315,16 @@ godot --path godot --script res://tests/pro_camera_test.gd
 
 It prints `LENS <check>: ok` or `FAIL` and `LENS RESULT`, and exits 0 when everything passed, 1 when a check failed, and
 77 when phase 1 passed and phase 2 was skipped, as OpenBFME's other GPU tests do.
+
+### Grain regression and local comparison
+
+`godot --path godot --script res://tests/pro_camera_bokeh_test.gd` generates a fine checkerboard, isolated lights and a
+focused foreground from code. It checks the default 128-tap result against a dense 2,048-tap reference, focused detail
+and silhouette against stopped-down output at matching exposure, and that blur actually changes the defocused
+background. After viewport resizing it compares the reused effect with a fresh effect and verifies that blur remains
+visible. It exits 77 without a GPU.
+The reference uses the same resolve, so this measures sampling stability rather than optical ground truth.
+
+Optional user arguments after `--`: `--out=<directory>` saves PNGs; `--before=<previous pro_lens_effect.gd>` also renders
+that local baseline with the same scene and lens at 128 taps. Keep review captures outside tracked source. The baseline
+must be a trusted local script. These generated captures contain no game assets.

@@ -262,9 +262,12 @@ func _run() -> void:
 	_check(remake != null, "a linked player's new recovery code asks for the current code")
 	if remake != null:
 		(remake.find_child("RecoveryCode", true, false) as LineEdit).text = "ABCDEFGHJKMNPQRS"
+		# ConfirmationDialog hides before confirmed; emitting the signal alone does not.
+		remake.hide()
 		remake.confirmed.emit()
 		_check(client.recovery_calls.back() == "ABCDEFGHJKMNPQRS", "the current code goes with the request")
 	await _frames()
+	_screen._secret_dialog.hide()
 	_screen._confirm_recovery()
 	remake = _recovery_dialog()
 	if remake != null:

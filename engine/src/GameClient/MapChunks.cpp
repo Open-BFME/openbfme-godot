@@ -358,8 +358,8 @@ bool parseGlobalLighting(DataChunkInput &file, DataChunkInfo *info, void *ud)
 	g.shadowColor = file.readUnsignedInt();
 	if (info->version >= 8)
 	{
-		g.hasV8Extra = true;
-		for (float &f : g.v8Extra) f = file.readReal();
+		g.hasTerrainLightScale = true;
+		for (float &f : g.terrainLightScale) f = file.readReal();
 	}
 	return true;
 }
@@ -399,6 +399,28 @@ bool parseNamedCameras(DataChunkInput &file, DataChunkInfo *, void *ud)
 	return true;
 }
 
+// lane CAMANIM-1: RotWK's reader (MapChunks.h: RW 0x94622C, 0x948CFD, 0x9464A8 / 0x947527 / 0x9475CF, the tag RW 0x9D65B1). Each record: the type
+// word ('free' / 'look', the list's visitor tags), the name, the frame count, the start offset from version 3; then one key list (free) or the camera
+// keys and the look-at keys (look); each key: its frame (int), the interpolation tag from version 2, the floats.
+int readInterpolationTag(DataChunkInput &file, const DataChunkInfo *info)
+{
+	// RW 0x9D65B1: catm unless version >= 2 holds one of the three codes (an unknown code keeps catm)
+	if (info->version < 2)
+	{
+		return CAMERA_INTERP_CATM;
+	}
+	const std::int32_t code = file.readInt();
+	static const std::pair<int, std::int32_t> table[3] = { { CAMERA_INTERP_STEP, 0x73746570 }, { CAMERA_INTERP_LINE, 0x6C696E65 }, { CAMERA_INTERP_CATM, 0x6361746D } };
+	for (const auto &kv : table)
+	{
+		if (kv.second == code)
+		{
+			return kv.first;
+		}
+	}
+	return CAMERA_INTERP_CATM;
+}
+
 bool parseCameraAnimationList(DataChunkInput &file, DataChunkInfo *info, void *ud)
 {
 	MapChunks *m = (MapChunks *)ud;
@@ -410,41 +432,41 @@ bool parseCameraAnimationList(DataChunkInput &file, DataChunkInfo *info, void *u
 		a.version = info->version;
 		a.type = reversed4(file);
 		a.name = file.readAsciiString();
-		a.numFrames = file.readUnsignedInt();
-		a.startOffset = file.readUnsignedInt();
+		a.numFrames = file.readInt();
+		a.startOffset = info->version >= 3 ? file.readInt() : 0;
 		if (a.type == "free")
 		{
-			std::uint32_t k = file.readUnsignedInt();
-			for (std::uint32_t j = 0; j < k; ++j)
+			std::int32_t k = readCount(file, "free camera keys");
+			for (std::int32_t j = 0; j < k; ++j)
 			{
 				CameraAnimationFrame f;
-				f.frame = file.readUnsignedInt();
-				f.interp = reversed4(file);
+				f.frame = file.readInt();
+				f.interp = readInterpolationTag(file, info);
 				for (float &v : f.pos) v = file.readReal();
 				for (float &v : f.quat) v = file.readReal();
-				f.fovLike = file.readReal();
+				f.fov = file.readReal();
 				a.keys.push_back(std::move(f));
 			}
 		}
 		else if (a.type == "look")
 		{
-			std::uint32_t k = file.readUnsignedInt();
-			for (std::uint32_t j = 0; j < k; ++j)
+			std::int32_t k = readCount(file, "look camera keys");
+			for (std::int32_t j = 0; j < k; ++j)
 			{
 				CameraAnimationFrame f;
-				f.frame = file.readUnsignedInt();
-				f.interp = reversed4(file);
+				f.frame = file.readInt();
+				f.interp = readInterpolationTag(file, info);
 				for (float &v : f.pos) v = file.readReal();
 				f.roll = file.readReal();
-				f.fovLike = file.readReal();
+				f.fov = file.readReal();
 				a.keys.push_back(std::move(f));
 			}
-			std::uint32_t mm = file.readUnsignedInt();
-			for (std::uint32_t j = 0; j < mm; ++j)
+			std::int32_t mm = readCount(file, "look-at keys");
+			for (std::int32_t j = 0; j < mm; ++j)
 			{
 				CameraLookAtKey f;
-				f.frame = file.readUnsignedInt();
-				f.interp = reversed4(file);
+				f.frame = file.readInt();
+				f.interp = readInterpolationTag(file, info);
 				for (float &v : f.lookAt) v = file.readReal();
 				a.lookAtKeys.push_back(std::move(f));
 			}

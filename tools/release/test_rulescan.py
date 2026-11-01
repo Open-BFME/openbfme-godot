@@ -293,8 +293,12 @@ def test_binary_hits_are_the_reference_in_every_encoding_and_alignment():
 def test_binary_hits_are_the_reference_on_a_real_binary():
     """this Python's own executable (machine code, string tables, UTF-16 resources on Windows) with the planted values spread inside"""
     import sysconfig  # noqa: PLC0415
-    lib = Path(sysconfig.get_config_var("LIBDIR") or "", sysconfig.get_config_var("LDLIBRARY") or "")
-    exe = (lib if lib.is_file() and lib.stat().st_size > 1 << 19 else Path(sys.executable).resolve()).read_bytes()[:1 << 19]
+    ldlibrary = sysconfig.get_config_var("LDLIBRARY") or ""
+    # lane MACGATE-1: a macOS framework build's executable is a 34 KB stub; its machine code is the framework's library
+    # (PYTHONFRAMEWORKPREFIX/LDLIBRARY, e.g. Python.framework/Versions/3.12/Python)
+    candidates = [Path(sysconfig.get_config_var(var) or "", ldlibrary) for var in ("LIBDIR", "PYTHONFRAMEWORKPREFIX") if sysconfig.get_config_var(var)]
+    lib = next((c for c in candidates if c.is_file() and c.stat().st_size > 1 << 19), Path(sys.executable).resolve())
+    exe = lib.read_bytes()[:1 << 19]
     assert len(exe) == 1 << 19
     rng = random.Random(3)
     for k in range(3):
@@ -380,18 +384,27 @@ def _assets(tmp_path: Path) -> list[Path]:
     return [a, b]
 
 
+@pytest.fixture(scope="module")
+def assets(tmp_path_factory):
+    return _assets(tmp_path_factory.mktemp("rulescan-assets"))
+
+
+@pytest.fixture(scope="module")
+def reference_assets(assets):
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(autorelease, "denylist_hits", reference_hits)
+        return autorelease.asset_problems(assets, autorelease.BUILTIN + PRIVATE, {})
+
+
 @pytest.mark.parametrize("split", [False, True])
-def test_parallel_gate_is_the_sequential_reference(tmp_path, monkeypatch, split):
+def test_parallel_gate_is_the_sequential_reference(assets, reference_assets, monkeypatch, split):
     """asset_problems in 3 workers (deduplicated, large members off-process, split: the large library's decodings in BINARY_GROUPS on
     several workers) gives the reference's lines in the reference's order: the reference is the pre-PRIVSPEED-1 denylist_hits patched
     into the same walk"""
-    assets = _assets(tmp_path)
     if split:
         monkeypatch.setattr(autorelease._Scans, "SPLIT", 1 << 20)
     rules = autorelease.BUILTIN + PRIVATE
-    with monkeypatch.context() as m:
-        m.setattr(autorelease, "denylist_hits", reference_hits)
-        want = autorelease.asset_problems(assets, rules, {})
+    want = reference_assets
     assert want and not _leaks("\n".join(autorelease.sanitize(p, rules) for p in want))
     assert autorelease.asset_problems(assets, rules, {}) == want
     calls = []
@@ -418,9 +431,8 @@ def test_parallel_gate_is_the_sequential_reference(tmp_path, monkeypatch, split)
         assert f"denylisted (accounts) in openbfme-v0.4.9-{copy} (utf-16-be" in text, copy   # each copy reported, by its own name
 
 
-def test_duplicates_are_scanned_once(tmp_path, monkeypatch):
+def test_duplicates_are_scanned_once(assets, monkeypatch):
     """the library in three places is scanned once inside parallel_scans (and three times outside it, as before)"""
-    assets = _assets(tmp_path)
     size = (3 << 19) + len(f"x {USER}@relay x".encode("utf-16-be"))
     calls = []
     real = autorelease.binary_rule_hits
@@ -432,10 +444,9 @@ def test_duplicates_are_scanned_once(tmp_path, monkeypatch):
     assert autorelease.asset_problems(assets, RULES, {}) == inside and calls.count(size) == 3
 
 
-def test_the_memory_budget_holds_tasks_back_and_changes_nothing(tmp_path, monkeypatch):
+def test_the_memory_budget_holds_tasks_back_and_changes_nothing(assets, monkeypatch):
     """a budget below one task runs the tasks one at a time (one always runs: no deadlock), the lines are the same; within a budget
     several run together; never more than the job count"""
-    assets = _assets(tmp_path)
     want = autorelease.asset_problems(assets, RULES, {})
     monkeypatch.setattr(autorelease._Scans, "SPLIT", 1 << 20)
     seen = []
@@ -474,10 +485,9 @@ def test_the_memory_budget_setting(monkeypatch):
             autorelease.scan_jobs()
 
 
-def test_a_failed_worker_fails_the_gate_and_quotes_nothing(tmp_path, monkeypatch, capsys):
+def test_a_failed_worker_fails_the_gate_and_quotes_nothing(assets, monkeypatch, capsys):
     """a worker that raises (here: a rule it cannot compile, whose pattern holds a private value) fails the gate with the error's type
     only; an unresolved line is never printable"""
-    assets = _assets(tmp_path)
     real = autorelease._rule_spec
     monkeypatch.setattr(autorelease, "_rule_spec", lambda rules: real(rules) + (("x", f"({USER}@{HOST}", 0, False),))
     with pytest.raises(SystemExit) as e:
@@ -493,12 +503,11 @@ def test_a_failed_worker_fails_the_gate_and_quotes_nothing(tmp_path, monkeypatch
         f"{p}"
 
 
-def test_the_gate_command_is_the_same_in_every_job_count(tmp_path):
+def test_the_gate_command_is_the_same_in_every_job_count(tmp_path, assets):
     """privacy-gate --jobs 1 / 4 / OPENBFME_PRIVACY_JOBS: the same lines and exit code; a bad job count is refused"""
     import json
     import subprocess
     from test_autorelease import TEST_DENYLIST
-    assets = _assets(tmp_path)
     deny = tmp_path / "deny.json"
     deny.write_text(json.dumps(TEST_DENYLIST))
     notes = tmp_path / "notes.md"

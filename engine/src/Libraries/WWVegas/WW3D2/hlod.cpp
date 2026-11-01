@@ -99,6 +99,15 @@ bool HLodDefClass::Load_W3D(ChunkLoadClass &cload, std::string *error)
 
 	Name = fixedName(header.Name, W3D_NAME_LEN);
 	HierarchyName = fixedName(header.HierarchyName, W3D_NAME_LEN);
+	// Each LOD array is at least a chunk header, so the count cannot exceed what the HLod chunk holds.
+	if (cload.Cur_Chunk_Depth() < 1 || header.LodCount > cload.Cur_Chunk_Length() / sizeof(ChunkHeader))
+	{
+		if (error)
+		{
+			*error = "HLod " + Name + ": LodCount " + std::to_string(header.LodCount) + " exceeds the HLod chunk";
+		}
+		return false;
+	}
 	Lod.resize(header.LodCount);
 
 	for (uint32 iLOD = 0; iLOD < header.LodCount; iLOD++)

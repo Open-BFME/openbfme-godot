@@ -9,7 +9,8 @@
 //   JOIN       u8 lobby version (kVersion), wstr name, str profile identity   (player -> host, repeated until ACCEPT / REFUSE)
 //   ACCEPT     i32 slot                                     (host -> player)
 //   REFUSE     str reason                                   (host -> player: the game is full or already started, another lobby version, another profile)
-//   START      u8 lobby version (kVersion), str profile identity, NewGameMessage, i32 run-ahead, i32 CRC interval, 8 x (u8 used, u32 ip, u16 port)
+//   START      u8 version (kVersion: legacy, 9: extended), str profile identity, NewGameMessage, i32 run-ahead, i32 CRC interval,
+//              8 or 16 x (u8 used, u32 ip, u16 port), selected by the map's capacity
 //                                                           (host -> every player, repeated until START_ACK)
 //   START_ACK  i32 slot
 // The START's address of the host's own slot is 0:0; a player uses the address it joined.
@@ -37,25 +38,34 @@ struct LobbyStart
 	int crcInterval = 100;
 	std::array<NetAddress, MAX_SLOTS> addresses{}; ///< per slot, the network players' addresses (the local one is its own socket's)
 	std::array<bool, MAX_SLOTS> networkSlot{};     ///< the human slots of the game
+	// WOTR2 milestone 9: the online battle keeps the war's relay seat while its tactical game uses compact player slots (RW 0x6B5E3E).
+	bool battleUsesWarSlots = false;
+	std::array<int, MAX_SLOTS> battleSlotOfWarSlot{};
+	int gameSlot(int networkSlot) const { return battleUsesWarSlots ? battleSlotOfWarSlot[(size_t)networkSlot] : networkSlot; }
 	ProfileIdentity profile;                       ///< the host's (equal to every player's: checked)
 	// lane ONLINE-2: an online game (GameNetwork/OnlineStart.h: the START the lobby service built): every peer is behind the relay (Transport relay mode),
 	// `addresses` are unused
 	bool online = false;
 	NetAddress relay;
 	std::vector<std::uint8_t> ticket;
+	std::vector<std::uint8_t> macKey;    ///< lane AUTH-1: the START's "session_key" (ONLINE16-FIX: one scheme with ANTICHEAT-1), the per-slot k (32 bytes; empty = unauthenticated)
 	std::uint64_t onlineGameId = 0;
 	// lane ONLINE-3: a rejoin START (the lobby's fresh ticket for a player whose game restarted, ticket version 2): the ticket's generation (0: a first START)
 	int rejoinGeneration = 0;
 	// lane ONLINE-3: a spectator's START (OnlineStart::Kind::Spectate): its index at the relay (-1: a player) and the delay the relay holds its log back
 	int spectatorIndex = -1;
 	int spectatorDelay = 0;
+	// lane CHAT-1: the slots the lobby's moderators muted (the START's "chatMuted", bit per slot): their in-game chat lines are dropped (Network)
+	std::uint32_t chatMutedMask = 0;
 };
 
 namespace LANLobby
 {
 // the JOIN / START version: 2: JOIN / START carry the lobby version and the profile identity; 3 (lane HERO-2): the slots' Create-a-Hero records;
-// 4 (lane OWNERFIX-2): the GameInfo slots' handicaps
-constexpr std::uint8_t kVersion = 4;
+// 4 (lane OWNERFIX-2): the GameInfo slots' handicaps (lane P16: 5 is the same START on an extended, 16-slot record); 6 (lane CHEAT-1): the GameInfo's
+// Cheat Mode (7: on an extended record); 8 (WOTR2 milestone 8): the GameInfo's game mode and scenario (9: on an extended record; 7 is skipped, the
+// legacy START shares the extended START's numbers); 10 (step 4): a resumed war's save identity and state hash (11: on an extended record; 9 is skipped)
+constexpr std::uint8_t kVersion = 10;
 // the encoded datagrams (exposed for the tests)
 std::vector<std::uint8_t> encodeStart(const LobbyStart &s);
 bool decodeStart(const std::vector<std::uint8_t> &d, LobbyStart &out, std::string *error);

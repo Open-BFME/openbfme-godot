@@ -1,7 +1,7 @@
 """Tests of tools/sim/sim_audit.py: the compile-flag audit, the manifest classification, the type-aware AST check on fixture sources, and a real
 configure of engine/ whose generated compile_commands.json is audited against the manifest (the coverage check the CI runs: configure first, then audit).
 
-The AST tests need libclang (Linux: pip install libclang==18.1.1; Windows: LLVM >= 19, see tools/sim/README.md) and skip LOUDLY without it on Linux
+The AST tests need libclang (Linux: pip install libclang==18.1.1; Windows: LLVM >= 19; macOS: the toolchain's libclang.dylib, see tools/sim/README.md) and skip LOUDLY without it on Linux
 (stop S-190). The configure tests need cmake and skip loudly without it."""
 import json
 import os
@@ -68,6 +68,28 @@ def test_windows_llvm_discovery_and_missing_explicit_dll(monkeypatch, tmp_path):
     monkeypatch.setattr(sim_audit.shutil, "which", lambda name: None)
     with pytest.raises(RuntimeError, match=r"libclang.dll not found.*LLVM >= 19"):
         sim_audit.windows_libclang()
+
+
+def test_macos_libclang_is_the_toolchains_and_an_explicit_library_wins(monkeypatch, tmp_path):
+    """lane MACGATE-1: on macOS the AST pass loads the build toolchain's libclang.dylib (the wheel's libclang 18 cannot parse the SDK's libc++)."""
+    lib = tmp_path / "usr" / "lib" / "libclang.dylib"
+    lib.parent.mkdir(parents=True)
+    lib.touch()
+    clang = tmp_path / "usr" / "bin" / "clang"
+    found = {"stdout": str(clang) + "\n"}
+    monkeypatch.setattr(sim_audit.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=found["stdout"], stderr=""))
+    monkeypatch.delenv("OPENBFME_LIBCLANG_LIBRARY", raising=False)
+    assert sim_audit.macos_libclang() == str(lib)
+    monkeypatch.setenv("OPENBFME_LIBCLANG_LIBRARY", str(tmp_path / "missing.dylib"))
+    with pytest.raises(RuntimeError, match="OPENBFME_LIBCLANG_LIBRARY does not name an existing libclang.dylib"):
+        sim_audit.macos_libclang()  # an explicit bad path must not fall back to the toolchain's library
+    monkeypatch.delenv("OPENBFME_LIBCLANG_LIBRARY")
+    lib.unlink()
+    with pytest.raises(RuntimeError, match=r"libclang.dylib not found beside the toolchain's clang"):
+        sim_audit.macos_libclang()  # no toolchain library: an error, never the wheel's libclang 18
+    found["stdout"] = ""
+    with pytest.raises(RuntimeError, match=r"xcrun --find clang printed nothing"):
+        sim_audit.macos_libclang()
 
 
 def test_msvc_ast_retains_build_include_paths():
@@ -341,7 +363,8 @@ def test_the_policy_is_the_reviewed_list():
         assert item["reason"].strip(), item
     # adding a registered facade implementation (an exemption from the AST check) is a reviewed change of THIS list
     assert policy["facade_files"] == ["src/Common/System/NumericState.cpp", "src/Common/NumericState.h",
-                                      "src/Common/System/DeterministicLibm.cpp"]  # DEP-2: the deterministic libm (Lua math)
+                                      "src/Common/System/DeterministicLibm.cpp",  # DEP-2: the deterministic libm (Lua math)
+                                      "src/GameLogic/Sdk/LuauSimMath.cpp"]  # SDK-2: a sim Luau script's math (on DetLibm)
     assert policy["facade_functions"] == ["SimMath::sqrtd", "SimMath::sinCosDet", "SimMath::atan2d", "SimMath::cosd", "SimMath::sind", "SimMath::cosf32",
                                           "SimMath::sinf32", "SimMath::atanDetUnit", "SimMath::acosDet"]
     # GodotDevice: no blanket exclusion, every file is classified on its own; the game world (game-start inputs, object creation, commands) is audited
@@ -351,8 +374,8 @@ def test_the_policy_is_the_reviewed_list():
                  "GodotW3DInstancer", "GodotW3DMaterial", "GodotW3DModelBuilder", "register_types"):
         assert any(i["glob"] == "src/GodotDevice/%s.cpp" % name for i in policy["excluded"]), name
     on_disk = sorted(n for n in os.listdir(os.path.join(sim_audit.ENGINE, "src", "GodotDevice")) if n.endswith(".cpp"))
-    for n in on_disk:  # every .cpp of the directory is classified: excluded by name, or a manifested simulation-input file (the game world, its hero commands (HERO-1), its garrison commands (GARRISON-1), the Create-a-Hero builder's map mode (CAH-1), the new-game message marshalling)
-        assert n in ("GodotGameWorld.cpp", "GodotGameWorldHeroes.cpp", "GodotGameWorldStealth.cpp", "GodotGameWorldGarrison.cpp", "GodotGameWorldCah.cpp", "GodotGameStart.cpp") or any(i["glob"] == "src/GodotDevice/" + n for i in policy["excluded"]), n
+    for n in on_disk:  # every .cpp of the directory is classified: excluded by name, or a manifested simulation-input file (the game world, its hero commands (HERO-1), its garrison commands (GARRISON-1), the Create-a-Hero builder's map mode (CAH-1), the new-game message marshalling, the War of the Ring orders (WOTR-1))
+        assert n in ("GodotGameWorld.cpp", "GodotGameWorldHeroes.cpp", "GodotGameWorldStealth.cpp", "GodotGameWorldGarrison.cpp", "GodotGameWorldCah.cpp", "GodotGameStart.cpp", "GodotLivingWorld.cpp") or any(i["glob"] == "src/GodotDevice/" + n for i in policy["excluded"]), n
     # the simulation data loaders are simulation, not excluded
     for src in ("src/Common/INI/INI.cpp", "src/Common/Thing/ThingTemplate.cpp", "src/GameLogic/Object/Weapon.cpp"):
         assert not any(fnmatch_(src, i["glob"]) for i in policy["excluded"]), src

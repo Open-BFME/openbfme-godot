@@ -23,6 +23,10 @@
 #           signs in as a guest and asks for a spectator START (/v1/games/<id>/spectate: a version 3 ticket, a fresh index each call); with --wait it
 #           asks again while the game has not started
 #   fixture  [--spectator INDEX:DELAY] (repeated) also writes spectate-<index>.json with a version 3 spectator ticket
+#   lane ONLINE16-FIX: fixture [--auth] gives every START the lobby's per-slot "session_key" (OBFME-SESSION-1: HMAC-SHA256(key, "OBFME-SESSION-1" || the ticket)[0..16), base64url);
+#           --mode 4 signs the tag-required bit (TICKET_MODE_AUTH) into the player tickets (a version-7 ticket);
+#           host / join [--max-slots 8|16] send X-OpenBFME-Max-Slots (absent: an older client); host [--require-auth] asks the lobby for a game that
+#           requires authenticated relay traffic (setup.requireAuth)
 import argparse
 import base64
 import hashlib
@@ -42,6 +46,12 @@ def ticket(key: bytes, key_id: int, game_hex: str, slot: int, mask: int, expires
     return base64.urlsafe_b64encode(body + hmac.new(key, body, hashlib.sha256).digest()[:16]).rstrip(b"=").decode()
 
 
+def mode_ticket(key: bytes, key_id: int, game_hex: str, slot: int, mask: int, expires: int, mode: int, frame_ms: int) -> str:
+    """ROUTER-1: a version-7 player START ticket (version 4's u16 slot mask, + u8 mode bits, + u16 frame period ms; RelayProtocol.cpp sign)."""
+    body = struct.pack("<BBQBHBIH", 7, key_id, int(game_hex, 16), slot, mask, mode, expires, frame_ms)
+    return base64.urlsafe_b64encode(body + hmac.new(key, body, hashlib.sha256).digest()[:16]).rstrip(b"=").decode()
+
+
 def rejoin_ticket(key: bytes, key_id: int, game_hex: str, slot: int, mask: int, expires: int, generation: int) -> str:
     # lane ONLINE-3: RelayProtocol.h version 2: the same fields, u16 generation, HMAC over the 18 bytes
     body = struct.pack("<BBQBBIH", 2, key_id, int(game_hex, 16), slot, mask, expires, generation)
@@ -52,6 +62,13 @@ def spectator_ticket(key: bytes, key_id: int, game_hex: str, index: int, mask: i
     # lane ONLINE-3: RelayProtocol.h version 3: the spectator index in the slot byte, u16 the spectator delay in seconds, HMAC over the 18 bytes
     body = struct.pack("<BBQBBIH", 3, key_id, int(game_hex, 16), index, mask, expires, delay)
     return base64.urlsafe_b64encode(body + hmac.new(key, body, hashlib.sha256).digest()[:16]).rstrip(b"=").decode()
+
+
+def session_key(key: bytes, ticket_b64: str) -> str:
+    """ONLINE16-FIX (one scheme with ANTICHEAT-1; RelayAuth::sessionKey): the START's session_key, base64url of the first 16 bytes of
+    HMAC-SHA256(ticket key, "OBFME-SESSION-1" || the exact ticket bytes)."""
+    raw = base64.urlsafe_b64decode(ticket_b64 + "=" * (-len(ticket_b64) % 4))
+    return base64.urlsafe_b64encode(hmac.new(key, b"OBFME-SESSION-1" + raw, hashlib.sha256).digest()[:16]).rstrip(b"=").decode()
 
 
 def parse_slot(text: str) -> dict:
@@ -66,9 +83,10 @@ def parse_slot(text: str) -> dict:
 
 
 class Lobby:
-    def __init__(self, url: str):
+    def __init__(self, url: str, max_slots=None):
         self.url = url.rstrip("/")
         self.token = None
+        self.max_slots = max_slots  # ONLINE16-FIX: X-OpenBFME-Max-Slots (None: not sent, an older client)
 
     def call(self, method: str, path: str, body=None, allow=()):
         data = None if body is None else json.dumps(body).encode()
@@ -76,6 +94,8 @@ class Lobby:
         headers = {"content-type": "application/json", "user-agent": "openbfme-online-client/1"}
         if self.token:
             headers["authorization"] = f"Bearer {self.token}"
+        if self.max_slots is not None:
+            headers["x-openbfme-max-slots"] = str(self.max_slots)
         req = urllib.request.Request(self.url + path, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
@@ -116,10 +136,15 @@ def write_start(path: str, start: dict):
 
 
 def cmd_host(a) -> int:
-    lb = Lobby(a.lobby)
+    lb = Lobby(a.lobby, a.max_slots)
     lb.guest(a.name, a.token_file)
     slots = [parse_slot(s) for s in a.slot]
-    r = lb.call("POST", "/v1/games", {"name": a.game_name or f"{a.name}'s game", "profile": a.profile, "setup": {"map": a.map, "startingCash": a.cash, "slots": slots, "spectatorDelay": a.spectator_delay}})
+    setup = {"map": a.map, "startingCash": a.cash, "slots": slots, "spectatorDelay": a.spectator_delay}
+    if a.require_auth:
+        setup["requireAuth"] = True
+    if a.map_start_count:
+        setup["mapStartCount"] = a.map_start_count
+    r = lb.call("POST", "/v1/games", {"name": a.game_name or f"{a.name}'s game", "profile": a.profile, "setup": setup})
     gid = r["id"]
     print(f"online_client: hosting game {gid}", flush=True)
     if a.id_file:
@@ -137,7 +162,7 @@ def cmd_host(a) -> int:
 
 
 def cmd_join(a) -> int:
-    lb = Lobby(a.lobby)
+    lb = Lobby(a.lobby, a.max_slots)
     lb.guest(a.name, a.token_file)
     gid = a.game
     deadline = time.time() + a.timeout
@@ -201,23 +226,29 @@ def cmd_fixture(a) -> int:
     setup = {"map": a.map, "seed": a.seed, "startingCash": a.cash, "superweaponRestriction": 0, "rules": None, "legendaryHeroes": 1, "slots": slots}
     out = Path(a.out_dir)
     out.mkdir(parents=True, exist_ok=True)
+
+    def start(**fields):  # ONLINE16-FIX: --auth adds the ticket's session_key, as the lobby does
+        if a.auth:
+            fields["session_key"] = session_key(key, fields["ticket"])
+        return fields
+
     for i, s in enumerate(slots):
         if s["state"] == "player":
-            write_start(str(out / f"start-{i}.json"), {
-                "v": 1, "kind": "openbfme-start", "game": a.game, "slot": i, "relay": a.relay, "ticket": ticket(key, 1, a.game, i, mask, a.expires),
-                "runAhead": a.run_ahead, "crcInterval": a.crc_interval, "profile": a.profile, "setup": setup})
+            write_start(str(out / f"start-{i}.json"), start(
+                v=1, kind="openbfme-start", game=a.game, slot=i, relay=a.relay, ticket=(mode_ticket(key, 1, a.game, i, mask, a.expires, a.mode, a.frame_ms) if a.mode else ticket(key, 1, a.game, i, mask, a.expires)),
+                runAhead=a.run_ahead, crcInterval=a.crc_interval, profile=a.profile, setup=setup))
     for r in a.rejoin or []:
         slot, generation = (int(x) for x in r.split(":"))
-        write_start(str(out / f"start-{slot}-rejoin{generation}.json"), {
-            "v": 1, "kind": "openbfme-start", "game": a.game, "slot": slot, "relay": a.relay,
-            "ticket": rejoin_ticket(key, 1, a.game, slot, mask, a.expires, generation), "rejoin": generation,
-            "runAhead": a.run_ahead, "crcInterval": a.crc_interval, "profile": a.profile, "setup": setup})
+        write_start(str(out / f"start-{slot}-rejoin{generation}.json"), start(
+            v=1, kind="openbfme-start", game=a.game, slot=slot, relay=a.relay,
+            ticket=rejoin_ticket(key, 1, a.game, slot, mask, a.expires, generation), rejoin=generation,
+            runAhead=a.run_ahead, crcInterval=a.crc_interval, profile=a.profile, setup=setup))
     for r in a.spectator or []:
         index, delay = (int(x) for x in r.split(":"))
-        write_start(str(out / f"spectate-{index}.json"), {
-            "v": 1, "kind": "openbfme-spectate", "game": a.game, "spectator": index, "relay": a.relay,
-            "ticket": spectator_ticket(key, 1, a.game, index, mask, a.expires, delay), "delay": delay,
-            "runAhead": a.run_ahead, "crcInterval": a.crc_interval, "profile": a.profile, "setup": setup})
+        write_start(str(out / f"spectate-{index}.json"), start(
+            v=1, kind="openbfme-spectate", game=a.game, spectator=index, relay=a.relay,
+            ticket=spectator_ticket(key, 1, a.game, index, mask, a.expires, delay), delay=delay,
+            runAhead=a.run_ahead, crcInterval=a.crc_interval, profile=a.profile, setup=setup))
     return 0
 
 
@@ -272,7 +303,10 @@ def main() -> int:
         p.add_argument("--out", required=True)
         p.add_argument("--timeout", type=float, default=300)
         p.add_argument("--token-file")
+        p.add_argument("--max-slots", type=int, choices=(8, 16))  # ONLINE16-FIX: X-OpenBFME-Max-Slots (absent: an older client)
     h = sub.choices["host"]
+    h.add_argument("--require-auth", action="store_true")  # ONLINE16-FIX: setup.requireAuth (the AUTH-1 cut-over, per game)
+    h.add_argument("--map-start-count", type=int)  # ONLINE16-FIX: an extended map's starts (9 .. 16)
     h.add_argument("--map", required=True)
     h.add_argument("--slot", action="append", required=True)
     h.add_argument("--players", type=int, default=2)
@@ -308,7 +342,10 @@ def main() -> int:
     f.add_argument("--seed", type=int, default=1234)
     f.add_argument("--cash", type=int, default=1500)
     f.add_argument("--run-ahead", type=int, default=1)
+    f.add_argument("--mode", type=int, default=0)        # ROUTER-1: TicketMode bits (1 = the relay keeps the beat); 0 = a legacy ticket
+    f.add_argument("--frame-ms", type=int, default=0)    # ROUTER-1: the frame period in a mode ticket (0 = the 200 ms default)
     f.add_argument("--crc-interval", type=int, default=100)
+    f.add_argument("--auth", action="store_true")  # ONLINE16-FIX: every START carries its ticket's session_key (authenticated datagrams)
     f.add_argument("--expires", type=int, default=int(time.time()) + 86400)
     sm = sub.add_parser("smoke")
     sm.add_argument("--lobby", required=True)

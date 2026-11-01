@@ -12,7 +12,7 @@
 //
 // Scope limits (reported by get_model_report): no model condition states of its own (the draw module runtime,
 // GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DScriptedModelDraw.h, chooses model and clips and hands a clip pair to
-// set_instance_pose), no turrets / captured bones, no house colour, no shadows, no emitters. See GodotW3DMaterial.h for the shading divergences.
+// set_instance_pose), no turrets / captured bones, no projected/decal shadows, no emitters. See GodotW3DMaterial.h for the shading divergences.
 
 #pragma once
 
@@ -28,6 +28,8 @@
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/classes/image_texture.hpp>
+#include <godot_cpp/classes/texture2drd.hpp>
+#include <godot_cpp/variant/rid.hpp>
 #include <godot_cpp/classes/multi_mesh.hpp>
 #include <godot_cpp/classes/multi_mesh_instance3d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
@@ -53,6 +55,8 @@ namespace godot
 {
 
 class RetailFileSystem;
+
+struct PaletteRdQueue;
 
 class W3DInstancer : public Node3D
 {
@@ -91,14 +95,19 @@ public:
 	// lane COMBAT-4 (C++ only): bones turned about their own Y axis after the pose (W3D Control_Bone with Rotate_Y, what W3DTruckDraw does to its tires, RW 0x4CBFFB);
 	// a bone the hierarchy lacks is skipped. An unchanged list is not evaluated again
 	bool set_instance_bone_spins_native(int64_t instance, const std::vector<std::string> &bones, const std::vector<float> &angles);
+	// lane PERF-HD (C++ only): retail's horde pose sharing (W3DHordeModelDrawManager::ProcessGroup / PartOfSameGroup, openbfme2): instances of one model playing
+	// one clip whose frames lie within `maxFrameDelta` of the group's first (the draw's LodOptions MaxAnimFrameDelta) are posed once, with the group's first
+	// instance's pose. A negative delta never shares. Only with pose culling (set_pose_culling): the bone queries still answer the instance's own pose
+	void set_instance_pose_share(int64_t instance, float maxFrameDelta);
+	void set_pose_sharing(bool enabled) { PoseSharing = enabled; }
 	// Hides sub objects of ONE instance by name (case-insensitive; the names the draw module runtime reports in W3DDrawFrame::hiddenSubObjects,
 	// i.e. what the retail BeginScript bodies hide): a hidden sub object is not written to its MultiMesh for that instance. An empty list shows
 	// everything again. Unknown names are an error (returns false, recorded). (Added by lane MAPOBJ-1.)
 	bool set_instance_hidden_subobjects(int64_t instance, const PackedStringArray &names);
 	int64_t get_instance_count() const { return (int64_t)Instances.size(); }
 	// Stop S-119 (lane MAPOBJ-1): team colours. After setup() and BEFORE the first add_model, enable them and every classic surface whose stage
-	// 0 texture has a housecolor.ini texture gets the HouseColor shader permutation (W3DShaderKey::HouseColor: base = mix(base, base * team,
-	// house texture alpha), a HYPOTHESIS: the combine is unrecovered, S-022); the per-surface S-022 reports are replaced by one S-119 report
+	// 0 texture has a housecolor.ini texture gets the HouseColor shader permutation (W3DShaderKey::HouseColor: the texture recoloured with the instance's
+	// colour, combined after the light as retail does, S-022); the per-surface S-022 reports are replaced by one S-119 report
 	// per mesh. set_instance_house_color then tints one instance (alpha < 0.5: none).
 	void set_house_colors_enabled(bool enabled);
 	bool get_house_colors_enabled() const { return HouseColorEnabled; }
@@ -121,10 +130,32 @@ public:
 	// RENDER-1 (stop S-390): the instance is lit by the map's infantry light set (KINDOF_INFANTRY drawables) instead of the objects set;
 	// the buffer stores the palette base as -(base + 1) for it.
 	void set_instance_infantry_light(int64_t instance, bool infantry);
+	// lane GLOW-1 (stop S-5231): the model's draws are also drawn by the glow pass's camera (GodotGlowEffect.h kGlowLayer), as retail's glow-flagged render objects
+	// are in pass mode 3 (RW 0x46FE84): every instance of this model glows, so the caller keys glowing and plain draws of one W3D model apart. With
+	// emissive_only (GlowEmissive, RW 0xDD1E18) a mesh glows only when its first vertex material's emissive is above 0.01 (MeshClass::Render).
+	void set_model_glow(int64_t model, bool emissive_only);
 	// lane VISUAL-2: the tree's vegetation sway type (0 none, 1 .. 10: W3DVegetationSway, RW 0x4EC93A), written to INSTANCE_CUSTOM.w as bone + 1024 * type
 	void set_instance_sway(int64_t instance, int type);
 	// lane VISUAL-2: the instance is lit by the fogged light (a last-seen object in the fog: lights and ambient times w3d_fogged_frac), INSTANCE_CUSTOM.w += 16384
 	void set_instance_fogged(int64_t instance, bool fogged);
+	// lane INGAMEBG-1: false for an instance of a scene without fog (the Apt View3D's own scene, RW 0x5424E0: SceneClass's FogEnabled false): the map's
+	// hardware fog (S-1651) is not applied to it (INSTANCE_CUSTOM.w += W3D_NO_SCENE_FOG_BIT)
+	void set_instance_scene_fog(int64_t instance, bool fog);
+	// lane OCCLUDE-1: the instance's behind-building role (GameClient/RTS3DSceneOcclusion.h): an occluder marks the stencil where it is in front, an
+	// occludee (colour slot 1 .. 31 of the global w3d_occl_colors) is drawn in its colour where a mark covers it. The model's opaque surfaces get the
+	// occlusion passes (W3DShaderKey::OcclusionPass) chained the first time one of its instances asks for them. INSTANCE_CUSTOM.w carries the bits
+	void set_instance_occlusion(int64_t instance, bool occluder, int slot);
+	// lane OCCLUDE-1: the instance's bounding sphere (the pose culling's, S-1730) lies outside one of `frustum`'s planes (outward normals, Camera3D::get_frustum);
+	// false for an empty frustum or an unknown instance
+	bool instance_outside(int64_t instance, const std::vector<Plane> &frustum);
+	// the occlusion pass materials made so far (for tests): { marks, colours }
+	Dictionary get_occlusion_pass_counts() const;
+	// Presentation only. Shadow-only batches share the posed mesh and palette, but contain only eligible instances.
+	void set_instance_cast_shadow(int64_t instance, bool enabled);
+	// Set before adding models. UI / standalone model viewers default to no shadow reception.
+	void set_shadow_receiving(bool enabled) { ShadowReceiving = enabled; }
+	// Engine-wide, set with the w3d_shadow global (object_shadows.gd): while no shadow map is drawn, casters are pose-culled like any instance.
+	static void set_shadow_maps_enabled(bool enabled) { ShadowMapsEnabled = enabled; }
 	// lane PROJ-2: the drawable's opacity (RW Drawable +0xB0, the fade of DrawableFade): multiplies every pivot's fade of the instance; 0 draws nothing
 	void set_instance_opacity(int64_t instance, double opacity);
 	// A scene that needs no per-frame work (every instance static) turns the automatic update off and calls update_now() itself after
@@ -208,6 +239,9 @@ private:
 		std::set<int> SortPriorities;    // render priorities of the sorted blended surfaces
 		bool HasSorted = false;          // a surface with MeshDrawSurface::Sorted that blends: instances need back to front order
 		bool HasOpaque = false;          // an opaque surface: the pivot fade is drawn with a dither (S-029)
+		std::vector<W3DShaderKey> Keys;  // lane OCCLUDE-1: the surfaces' keys, in Materials' order
+		std::vector<Ref<ShaderMaterial>> MarkPasses, ColorPasses; // lane OCCLUDE-1: by surface; null where none (yet, or a blended surface)
+		bool HasMark = false, HasColor = false;
 	};
 	struct DrawItem
 	{
@@ -217,10 +251,14 @@ private:
 		MultiMeshInstance3D *Node = nullptr;
 		Ref<MultiMesh> MM;
 		PackedFloat32Array Buffer;
+		Ref<MultiMesh> ShadowMM;
+		PackedFloat32Array ShadowBuffer;
 		int Allocated = 0;
 		std::vector<int> Order;          // instance ids as written by the last write_buffers
 		W3DSortBatch Batch;              // SMOOTH-1: the depths of the last write (sorted items), kept for the S-029 check of frames that skip this model
 		bool HasBatch = false;
+		bool PoseDirty = false;         // pivot visibility/fade changed, or sorted animated depth may have changed
+		int Dithered = 0;               // retained when this draw keeps its buffer
 	};
 	struct Model
 	{
@@ -231,8 +269,10 @@ private:
 		Dictionary Report;
 		// lane SMOOTH-1: per-frame work only where something changed
 		std::unordered_map<std::string, const HAnimClass *> Clips; // clip name as asked -> resolved clip (resolve_clip once per name)
-		bool BuffersDirty = true;        // an instance moved / was posed / added / removed / re-tinted: its MultiMesh buffers are rewritten
-		bool HasSorted = false;          // a draw item sorts back to front: rewritten whenever the camera moves
+		bool BuffersDirty = true;        // instance records / palette bases / membership changed: all this model's draw buffers are rewritten
+		bool PoseEvaluated = false;      // this update evaluated a pose: the baseline would consume every live instance's cached Pose
+		bool HasSorted = false;          // a camera/node change was also a whole-model rewrite trigger in the baseline
+		std::vector<int> QueriedPoseIds; // deduplicated poses evaluated by bone queries, retained until a baseline model rewrite trigger
 		int Dithered = 0;                // S-029 counts of the last write of this model
 		int SortedItems = 0;
 		float CullRadius = -1.0f;        // lane PERF-3: cull_radius, computed on first use
@@ -251,16 +291,28 @@ private:
 		double Speed = 1.0;
 		int PaletteOffset = 0; // first texel
 		HTreePose Pose;
+		// Visibility/fade consumed by each unsorted DrawItem's last rewrite, independent of Pose (which a culled bone query can change).
+		// Evaluating a pose compares with this state; only write_buffers refreshes it, before membership filtering.
+		std::vector<std::pair<std::uint8_t, float>> DrawPoseState;
 		float HcPacked = 0.0f;                // W3D_Pack_House_Color or 0 (INSTANCE_CUSTOM.z)
 		bool InfantryLight = false;           // set_instance_infantry_light (INSTANCE_CUSTOM.x < 0)
 		int Sway = 0;                         // lane VISUAL-2: set_instance_sway (INSTANCE_CUSTOM.w += 1024 * Sway)
 		bool Fogged = false;                  // lane VISUAL-2: set_instance_fogged (INSTANCE_CUSTOM.w += 16384)
+		bool NoSceneFog = false;              // lane INGAMEBG-1: set_instance_scene_fog(false) (INSTANCE_CUSTOM.w += W3D_NO_SCENE_FOG_BIT)
+		bool Occluder = false;                // lane OCCLUDE-1: set_instance_occlusion (INSTANCE_CUSTOM.w += W3D_OCCLUSION_OCCLUDER_BIT)
+		int OcclusionSlot = 0;                // lane OCCLUDE-1: (INSTANCE_CUSTOM.w += slot << W3D_OCCLUSION_SLOT_SHIFT)
+		bool CastShadow = false;
 		std::vector<std::uint8_t> HiddenSubs; // by sub object index; empty = none hidden (set_instance_hidden_subobjects)
 		bool Removed = false;                 // remove_instance: skipped by the pose and buffer passes
 		float Opacity = 1.0f;                 // set_instance_opacity (lane PROJ-2)
 		bool PoseStale = true;                // SMOOTH-1: the pose inputs changed since the last evaluation (clip-driven instances follow GlobalTime)
+		bool QueryPosePending = false;        // deduplicates bone-query evaluations until a baseline model consumption trigger
+		float ShareDelta = -1.0f;             // lane PERF-HD: set_instance_pose_share (< 0: never shares)
+		int ShareLeader = -1;                 // lane PERF-HD: the instance whose pose and palette block this one is drawn with this frame (-1: its own)
+		int DrawnOffset = -1;                 // lane PERF-HD: the palette offset its records were last written with (write_buffers)
 		bool Inexact = false;                 // SMOOTH-1: the last evaluation used an arm whose summation order is not retail's (S-028)
 		int PaletteSize = 0;                  // SMOOTH-1: texels of the palette block (pivots * W3D_PALETTE_TEXELS_PER_PIVOT); 0 = none yet
+		bool PaletteAnimated = false;         // the block lives in the animated pool (moved there when a clip, pose, or bone spin starts)
 		// lane PERF-3: the clip names of the last set_instance_pose_native and what they resolved to (a drawable asks for the same clips frame after frame)
 		std::string MemoClip[2];
 		const HAnimClass *MemoAnim[2] = { nullptr, nullptr };
@@ -269,9 +321,11 @@ private:
 	};
 	// lane PERF-3: the radius around an instance's origin, in model units, that holds every vertex of the model in any pose (pose culling)
 	float cull_radius(Model &m) const;
-	void ensure_pose(const Instance &inst) const; // the bone queries: a pose that culling left pending is evaluated now
+	void ensure_pose(int64_t instance) const; // the bone queries: a pose that culling left pending is evaluated now
 
+	void warn_stop(const W3DStopHit &hit); // lane PERF-HD: once per stop id
 	void warn(const std::string &message);
+	void ensure_occlusion_passes(MeshGpu &gpu, bool mark, bool color); // lane OCCLUDE-1
 	const HAnimClass *resolve_clip(const Model &m, const std::string &name); // nullptr (and an error recorded) when the clip is not registered
 	std::shared_ptr<MeshGpu> build_mesh(const MeshModelClass &mesh, std::vector<std::string> &errors);
 	int64_t build_model(const String &model_name); // add_model without the pending texture swaps' set-up
@@ -283,6 +337,12 @@ private:
 	const HAnimClass *resolve_clip_cached(Model &m, const std::string &name);
 	void allocate_palette(Instance &inst);   // SMOOTH-1: a block of the palette for one instance (a free block of the size, else the end)
 	void grow_palette(int texels);           // SMOOTH-1: a larger palette image / texture (capacity grows by half), the data kept
+	void adopt_animated_palette(Instance &inst); // move a static block into the animated pool when the prop starts animating
+	void note_palette_rows(int offset, int texels);
+	void bind_palette_gpu();
+	void upload_palette();
+	void release_palette_rd();
+	Ref<Texture2D> palette_sampler() const;
 	void mark_model(int64_t instance);       // SMOOTH-1: the instance's model rewrites its buffers
 	void run_parallel(size_t count, const std::function<void(size_t, size_t)> &fn);
 
@@ -297,6 +357,8 @@ private:
 	std::vector<std::pair<std::string, std::string>> PendingSwaps; // stop S-4832: Set_Build_Texture_Swaps, taken by the next add_model
 	std::vector<std::unique_ptr<Model>> Models;
 	std::vector<Instance> Instances;
+	bool ShadowReceiving = false;
+	static inline bool ShadowMapsEnabled = false;
 	std::vector<Ref<ShaderMaterial>> AllMaterials;
 	std::vector<W3DMapperBinding> Mappers;
 
@@ -305,14 +367,26 @@ private:
 	int PaletteTexels = 0;
 	int PaletteHeight = 0;
 	Ref<ImageTexture> PaletteTexture;
+	Ref<Texture2DRD> PaletteRD;              // Forward+/Mobile: the sampled texture, so a frame can copy only dirty rows
+	// Owns the RenderingDevice palette and staging RIDs. Create, upload, copy, and free run on the render thread, in queue order.
+	// The node does not free those RIDs, and PREDELETE does not queue a method on this (the queue outlives the node).
+	PaletteRdQueue *PaletteQueue = nullptr;
+	bool PaletteOnRd = false;
 	Ref<Image> PaletteImage;
 	bool LayoutDirty = true;
 	bool PoseDirty = true;
 	// lane SMOOTH-1: the palette is allocated per instance (removed instances' blocks are reused by size) instead of relaid out on every add
 	int PaletteUsed = 0;                         // texels up to the high-water mark
-	std::map<int, std::vector<int>> PaletteFree; // block size -> free block offsets
+	std::map<int, std::vector<int>> PaletteFree; // static block size -> free offsets (a prop that starts animating returns its block here)
+	std::map<int, std::vector<int>> PaletteAnimFree; // animated block size -> free offsets
 	bool PaletteGrown = false;                   // the texture was recreated: set on every material, full upload
+	bool PaletteFullUpload = true;               // the GPU texture is new or the partial copy path cannot be used
 	bool PaletteChanged = true;                  // some instance's palette block changed: upload
+	int PaletteDirtyRow0 = 0;
+	int PaletteDirtyRow1 = -1;                   // inclusive; empty when row1 < row0
+	int PaletteRowsUploaded = 0;
+	std::vector<std::uint8_t> PaletteDirtyMap;   // lane PERF-HD: per palette row, changed since the last upload
+	bool PaletteUploadFull = false;
 	double PosedTime = -1.0;                     // GlobalTime of the last evaluation of clip-driven instances
 	bool HaveLastCamera = false;
 	Transform3D LastCamera;                      // the camera of the last write (sorted draw items are rewritten when it moves)
@@ -354,6 +428,12 @@ private:
 	bool PoseCulling = false;                    // lane PERF-3: set_pose_culling
 	std::vector<Plane> ExtraPoseFrustum;
 	int PoseCulled = 0;                          // instances whose pose the last update left pending (outside the frustum)
+	bool PoseSharing = true;                     // lane PERF-HD: set_pose_sharing
+	int PoseShared = 0;                          // lane PERF-HD: instances drawn with another's pose in the last update
+	std::vector<size_t> ShareScratch;            // lane PERF-HD: per-frame scratch of the sharing candidates
+	std::vector<size_t> MemberScratch;           // lane PERF-HD: the instances drawn with another's pose this frame
+	// lane PERF-HD: the instance whose pose (and palette block) `inst` is drawn with
+	const Instance &pose_source(const Instance &inst) const { return inst.ShareLeader >= 0 ? Instances[(size_t)inst.ShareLeader] : inst; }
 };
 
 } // namespace godot

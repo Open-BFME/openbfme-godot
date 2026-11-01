@@ -8,6 +8,7 @@
 
 #include "Common/INIException.h"
 #include "Common/NameKeyGenerator.h"
+#include "Common/ModEngineFeatures.h"
 #include "Common/Science.h"
 #include "Common/SpecialPower.h"
 #include "GameLogic/RankInfo.h"
@@ -305,4 +306,33 @@ TEST_CASE("SPELL-1 SpecialPower Flags: names past bit 31 wrap like the retail sh
 	CHECK(s.findSpecialPowerTemplate("F2")->getFlags() == 4u);                       // + 34 -> bit 2
 	CHECK(s.findSpecialPowerTemplate("F3")->getFlags() == 6u);                       // bits 0 1 2, then - 32 clears bit 0
 	CHECK(s.findSpecialPowerTemplate("F4")->getFlags() == 2u);
+}
+
+TEST_CASE("MODS-3 edain-unchained.science-prereqs: a forward PrerequisiteSciences name is accepted, then checked after the Science load")
+{
+	struct Retail
+	{
+		~Retail() { ModEngineFeatures::reset(); }
+	} guard;
+	{
+		SpellWorld w; // retail: the first forward reference throws (RW 0x73A386)
+		CHECK(contains(w.load("Science P\n  PrerequisiteSciences = Later\nEnd\nScience Later\nEnd\n"), "Science name Later not known!"));
+	}
+	std::string error;
+	REQUIRE(ModEngineFeatures::activate({ "5c31f5036cacb7690a6161b104a3efdb" }, &error)); // Edain Unchained's game.dat
+	{
+		SpellWorld w; // the lenient lookup (0xEE4404) keeps the name; the hook after the load (0xEE4452) finds it defined
+		REQUIRE(w.load("Science P\n  PrerequisiteSciences = Later OR A\nEnd\nScience Later\nEnd\nScience A\nEnd\n") == "");
+		CHECK_NOTHROW(w.stores.sciences().validateDeferredPrerequisites());
+		const ScienceInfo *p = w.stores.sciences().findScienceInfo(w.sci("P"));
+		REQUIRE(p != nullptr);
+		REQUIRE(p->m_prereqSciences.size() == 2);
+		CHECK(p->m_prereqSciences[0][0] == w.sci("Later"));
+	}
+	{
+		SpellWorld w; // a name never defined: the same retail message, after the load
+		REQUIRE(w.load("Science Q\n  PrerequisiteSciences = Nowhere\nEnd\n") == "");
+		CHECK_THROWS_WITH_AS(w.stores.sciences().validateDeferredPrerequisites(), "Science name Nowhere not known! (Did you define it in Science.ini?)",
+			INIException);
+	}
 }

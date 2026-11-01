@@ -8,10 +8,16 @@
 #include "Common/PlayerTemplate.h"
 
 #include "Common/AsciiString.h"
+#include "Common/ModEngineFeatures.h"
+#include "Common/Player.h"
+#include "Common/Upgrade.h"
+#include "GameClient/ControlBarCommands.h"
 
 #include "GameLogic/ObjectFilter.h"
 
+#include <algorithm>
 #include <cstddef>
+#include <stdexcept>
 
 PlayerTemplate::PlayerTemplate() = default;
 PlayerTemplate::~PlayerTemplate() = default;
@@ -180,6 +186,28 @@ const FieldParse kPlayerTemplateFieldParse[] = {
 	{ "MaxLevelSP", INI::parseInt, nullptr, PT_OFF(m_maxLevelSP) },
 	{ nullptr, nullptr, nullptr, 0 }
 };
+// lane MODS-3: edain-unchained.spell-store-upgrade's parser (its 0xED3824): an upgrade name and a CommandSet name; a line missing either is ignored
+void parsePurchaseScienceSetUpgrade(INI *ini, void *instance, void *, const void *)
+{
+	const char *upgrade = ini->getNextTokenOrNull();
+	const char *set = upgrade ? ini->getNextTokenOrNull() : nullptr;
+	if (upgrade && set && *upgrade && *set)
+	{
+		static_cast<PlayerTemplate *>(instance)->m_purchaseScienceSetUpgradeLines.emplace_back(upgrade, set);
+	}
+}
+const FieldParse kEdainPlayerTemplateFieldParse[] = { // its table 0xED3410: the retail rows (above) and this one
+	{ "PurchaseScienceCommandSetUpgrade", parsePurchaseScienceSetUpgrade, nullptr, 0 },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+void addPlayerTemplateFields(MultiIniFieldParse &multi)
+{
+	multi.add(kPlayerTemplateFieldParse);
+	if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedPurchaseScienceSet))
+	{
+		multi.add(kEdainPlayerTemplateFieldParse);
+	}
+}
 #undef PT_OFF
 } // namespace
 
@@ -202,6 +230,57 @@ void PlayerTemplateStore::assignFrom(const PlayerTemplateStore &other)
 	m_storedLabels = other.m_storedLabels;
 	m_storedSciences = other.m_storedSciences;
 	m_storedSounds = other.m_storedSounds;
+	m_scienceSetUpgrades = other.m_scienceSetUpgrades;
+	m_droppedScienceSetUpgrades = other.m_droppedScienceSetUpgrades;
+}
+
+// its parser 0xED3824: an upgrade already in the list gets the new set; else appended while the count is below 128 (beyond: Edain drops it silently,
+// here it is named)
+void PlayerTemplateStore::takeScienceSetUpgrades(PlayerTemplate &pt)
+{
+	for (auto &line : pt.m_purchaseScienceSetUpgradeLines)
+	{
+		auto it = std::find_if(m_scienceSetUpgrades.begin(), m_scienceSetUpgrades.end(), [&](const auto &e) { return e.first == line.first; });
+		if (it != m_scienceSetUpgrades.end())
+		{
+			it->second = line.second;
+		}
+		else if (m_scienceSetUpgrades.size() < 128)
+		{
+			m_scienceSetUpgrades.push_back(line);
+		}
+		else
+		{
+			m_droppedScienceSetUpgrades.push_back("PlayerTemplate " + pt.getName() + ": PurchaseScienceCommandSetUpgrade = " + line.first + " " + line.second +
+				" is past Edain Unchained's 128 entries: dropped, as its game.dat drops it");
+		}
+	}
+	pt.m_purchaseScienceSetUpgradeLines.clear();
+}
+
+std::string PlayerTemplateStore::purchaseScienceCommandSetFor(const Player &player, const CommandStore *commands, bool stockOnly) const
+{
+	const PlayerTemplate *pt = player.getPlayerTemplate();
+	if (!pt)
+	{
+		return std::string();
+	}
+	if (!stockOnly && ModEngineFeatures::has(ModEngineFeature::EdainUnchainedPurchaseScienceSet))
+	{
+		if (!TheUpgradeCenter)
+		{
+			throw std::logic_error("purchaseScienceCommandSetFor: no UpgradeCenter (TheUpgradeCenter) is installed");
+		}
+		for (const auto &e : m_scienceSetUpgrades)
+		{
+			const UpgradeTemplate *u = TheUpgradeCenter->findUpgrade(e.first); // RW 0x66F5E5
+			if (u && player.hasUpgradeComplete(u) && commands && commands->findCommandSet(e.second))
+			{
+				return e.second;
+			}
+		}
+	}
+	return player.science().mode().skirmishOrMultiplayer ? pt->m_purchaseScienceCommandSetMP : pt->m_purchaseScienceCommandSet; // RW 0x71F933 (S-923)
 }
 
 void PlayerTemplateStore::clear()
@@ -239,23 +318,26 @@ void PlayerTemplateStore::parseBlock(INI *ini)
 			// replaced: the override chain itself is not modelled, stop S-144)
 			PlayerTemplate copy = existing;
 			MultiIniFieldParse multi;
-			multi.add(kPlayerTemplateFieldParse);
+			addPlayerTemplateFields(multi);
 			ini->initFromINIMulti(&copy, multi);
+			takeScienceSetUpgrades(copy);
 			existing = copy;
 		}
 		else
 		{
 			MultiIniFieldParse multi;
-			multi.add(kPlayerTemplateFieldParse);
+			addPlayerTemplateFields(multi);
 			ini->initFromINIMulti(&existing, multi);
+			takeScienceSetUpgrades(existing);
 		}
 		return;
 	}
 	PlayerTemplate pt;
 	pt.friend_setName(name, key);
 	MultiIniFieldParse multi;
-	multi.add(kPlayerTemplateFieldParse);
+	addPlayerTemplateFields(multi);
 	ini->initFromINIMulti(&pt, multi);
+	takeScienceSetUpgrades(pt);
 	m_templates.push_back(pt);
 	const size_t index = m_templates.size() - 1;
 	m_byKey[key] = index;

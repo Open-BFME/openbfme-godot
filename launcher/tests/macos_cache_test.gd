@@ -18,6 +18,7 @@ class CacheInfo:
 	var packaged := false
 	var commit := ""
 	var release_keys: Array = []   # lane SIGNKMS-1: the trusted key list
+	var nightly_keys: Array = []   # lane RELGH-2: the nightly-only keys (none here)
 	var error := ""
 	var macos_updates := true
 	var test_build := true

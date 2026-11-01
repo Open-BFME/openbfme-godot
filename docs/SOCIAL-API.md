@@ -13,8 +13,10 @@ player-facing privacy prose is introduced by this backend work.
 
 ## Common wire rules
 
-- HTTPS in production; local HTTP is test-only. All social routes require
-  `Authorization: Bearer <lobby token>`. Caller identity comes from the token.
+- HTTPS in production; local HTTP is test-only. Authenticated social routes require
+  `Authorization: Bearer <lobby token>`; caller identity comes from it. Guest sign-in,
+  OAuth restore start/finish and e-mail restore/page/poll routes use their separate
+  proofs described below and in `IDENTITY.md`, not an existing lobby token.
 - Session tokens (ONLINEMENU-1, PR #8 review finding 2) never show the install
   id, the credential that signs in as a player: they carry it sealed (`ix`) with
   a public tag (`ih`, lobby.mjs `installTag`) and the issue time `iat`. A token
@@ -366,7 +368,7 @@ exactly `discord` (ONLINEMENU-1: Google dropped by the owner, 2026-10-20); provi
 
 ### Start (`startOAuth`)
 
-`POST /v1/auth/oauth/start` has two mutually exclusive shapes:
+`POST /v1/auth/oauth/start` has three mutually exclusive shapes:
 
 - **Link:** existing S-A bearer required; body
   `{v:1,provider,mode:"link",state,code_challenge,install,recovery?}`. `install`
@@ -480,9 +482,10 @@ bound provider calls and Free-plan storage writes.
 
 Storage (Sol r2: the Free plan's 100,000 row writes a day are shared with every
 lobby operation): every narrow budget (address, /48, install, player; Sol r3)
-is kept in memory, so a refused or malformed request writes nothing, and only a
-request admitted by the global budgets writes; each global bucket has a daily cap
-(start and finish: link 600, restore 400; unlink 200 per UTC day), which keeps
+is kept in memory; only requests admitted by the global budgets write. A refusal
+after admission can still charge a durable budget or consume a transaction.
+Each global bucket has a daily cap (start and finish each: link 600, restore 400;
+unlink 200 per UTC day), which keeps
 OAuth near 25,000 row writes a day at worst.
 
 Existing S-A storage/enforcement/session errors remain authoritative. Additional

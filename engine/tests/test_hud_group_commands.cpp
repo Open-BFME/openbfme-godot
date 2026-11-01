@@ -156,7 +156,9 @@ TEST_CASE("group command retail: stances and weapon toggles retain their group d
 	CHECK(on(a));
 	CHECK(on(b));
 	CHECK_FALSE(on(single));
-	g.press(GUI_COMMAND_TOGGLE_STANCE);
+	// lane CAMPUI-1: the stance toggle's own press sends no stance in retail (RW 0x96FAC6 opens the Palantir's radial, test_campui1_stance.cpp); the group
+	// dispatch of a stance is a SET_STANCE press (the same MSG_CHANGE_STANCE, RW 0x96F53C)
+	g.press(GUI_COMMAND_SET_STANCE);
 	g.rig.frame();
 	const auto expected = stanceB->getStance();
 	CHECK(stanceA->getStance() == expected);

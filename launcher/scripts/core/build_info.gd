@@ -4,6 +4,8 @@
 ## its first entry must be release_key; a build_info.json without it, made before SIGNKMS-1, trusts [release_key]; a malformed list is
 ## an error, never a guess), "test_build" (true only for the test packages of tools/release/test_launcher.py), "local_trial" (a
 ## non-release key list; labels only, no test overrides)}. Signatures are checked under the whole list (scripts/crypto/release_signature.gd).
+## Lane RELGH-2: "nightly_keys" (optional: an array of 0 to 4 distinct keys, none in release_keys; absent: none): keys trusted for nightly
+## releases only (release_signature.gd valid_scoped); a malformed list is an error, never a guess.
 ## A packaged launcher without it is an error (no update without a key and a repository).
 ## A development run (the Godot editor binary on launcher/) has no build_info.json: version v0.0.0-dev, the default repository, no key
 ## unless --trust-key=<hex>[,<hex>...] is given; development runs and test builds accept the test options (tests_allowed).
@@ -11,6 +13,7 @@ extends RefCounted
 
 const DEFAULT_REPO := "Open-BFME/openbfme-godot"
 const Semver := preload("res://scripts/core/semver.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 const ReleaseSignature := preload("res://scripts/crypto/release_signature.gd")
 
 var version := "v0.0.0-dev"
@@ -19,6 +22,7 @@ var commit := ""
 var date := ""
 var repo := DEFAULT_REPO
 var release_keys: Array = []   # the trusted release keys, each a 32-byte PackedByteArray (empty: no key, no update)
+var nightly_keys: Array = []   # lane RELGH-2: keys trusted for nightly documents only, each a 32-byte PackedByteArray (empty: none)
 var test_build := false
 var local_trial := false
 var macos_preview := false
@@ -32,7 +36,7 @@ static func load_info() -> RefCounted:
 	info.packaged = OS.has_feature("template")
 	if not FileAccess.file_exists("res://build_info.json"):
 		if info.packaged:
-			info.error = "this launcher package has no build information (res://build_info.json): it was not made by tools/release/package.sh"
+			info.error = L10n.t("launcher.build_info.missing")
 		return info
 	return from_text(info, FileAccess.get_file_as_string("res://build_info.json"))
 
@@ -42,7 +46,7 @@ static func from_text(info: RefCounted, text: String) -> RefCounted:
 	var d = JSON.parse_string(text)
 	if typeof(d) != TYPE_DICTIONARY or typeof(d.get("version")) != TYPE_STRING or typeof(d.get("repo")) != TYPE_STRING \
 			or typeof(d.get("release_key")) != TYPE_STRING or typeof(d.get("test_build")) != TYPE_BOOL:
-		info.error = "res://build_info.json is malformed"
+		info.error = L10n.t("launcher.build_info.malformed")
 		return info
 	info.version = d.version
 	info.display_version = str(d.get("display_version", d.version))
@@ -51,26 +55,31 @@ static func from_text(info: RefCounted, text: String) -> RefCounted:
 	info.repo = d.repo
 	info.test_build = d.test_build
 	if typeof(d.get("local_trial", false)) != TYPE_BOOL:
-		info.error = "res://build_info.json has an invalid local_trial flag"
+		info.error = L10n.t("launcher.build_info.bad_local_trial")
 		return info
 	info.local_trial = d.get("local_trial", false)
 	if typeof(d.get("macos_preview", false)) != TYPE_BOOL:
-		info.error = "res://build_info.json has an invalid macos_preview flag"
+		info.error = L10n.t("launcher.build_info.bad_macos_preview")
 		return info
 	info.macos_preview = d.get("macos_preview", false)
 	if typeof(d.get("macos_updates", false)) != TYPE_BOOL:
-		info.error = "res://build_info.json has an invalid macos_updates flag"
+		info.error = L10n.t("launcher.build_info.bad_macos_updates")
 		return info
 	info.macos_updates = d.get("macos_updates", false)
 	var key: String = d.release_key
 	if not ReleaseSignature.parse_hex_list(key).ok or key.contains(","):
-		info.error = "res://build_info.json has no valid release key"
+		info.error = L10n.t("launcher.build_info.bad_release_key")
 		return info
 	var keys := parse_release_keys(d)
 	if not keys.ok:
-		info.error = "res://build_info.json: " + keys.error
+		info.error = L10n.t("launcher.build_info.with_reason", {"why": keys.error})
 		return info
 	info.release_keys = keys.keys
+	var nightly := parse_nightly_keys(d, keys.keys)
+	if not nightly.ok:
+		info.error = L10n.t("launcher.build_info.with_reason", {"why": nightly.error})
+		return info
+	info.nightly_keys = nightly.keys
 	return info
 
 
@@ -82,15 +91,35 @@ static func parse_release_keys(d: Dictionary) -> Dictionary:
 		return {"ok": true, "error": "", "keys": [String(d.release_key).hex_decode()]}
 	var list = d.release_keys
 	if typeof(list) != TYPE_ARRAY or list.is_empty():
-		return {"ok": false, "error": "release_keys is not a list of keys", "keys": []}
+		return {"ok": false, "error": L10n.t("launcher.build_info.keys_not_list"), "keys": []}
 	for k in list:
 		if typeof(k) != TYPE_STRING or k.contains(","):
-			return {"ok": false, "error": "release_keys holds an entry that is not a key", "keys": []}
+			return {"ok": false, "error": L10n.t("launcher.build_info.keys_bad_entry"), "keys": []}
 	var parsed := ReleaseSignature.parse_hex_list(",".join(PackedStringArray(list)))
 	if not parsed.ok:
-		return {"ok": false, "error": "release_keys: " + parsed.error, "keys": []}
+		return {"ok": false, "error": L10n.t("launcher.build_info.keys_with_reason", {"why": parsed.error}), "keys": []}
 	if list[0] != d.release_key:
-		return {"ok": false, "error": "release_keys does not begin with release_key", "keys": []}
+		return {"ok": false, "error": L10n.t("launcher.build_info.keys_first_mismatch"), "keys": []}
+	return parsed
+
+
+## lane RELGH-2: the nightly-only key list of a parsed build_info.json `d` ("nightly_keys": 0 to 4 distinct 64-hex keys, none of the
+## release keys `release_keys`; absent: none). {ok, error, keys}
+static func parse_nightly_keys(d: Dictionary, release_keys: Array) -> Dictionary:
+	if not d.has("nightly_keys"):
+		return {"ok": true, "error": "", "keys": []}
+	var list = d.nightly_keys
+	if typeof(list) != TYPE_ARRAY:
+		return {"ok": false, "error": L10n.t("launcher.build_info.nightly_not_list"), "keys": []}
+	for k in list:
+		if typeof(k) != TYPE_STRING or k.contains(",") or k.strip_edges() == "":
+			return {"ok": false, "error": L10n.t("launcher.build_info.nightly_bad_entry"), "keys": []}
+	var parsed := ReleaseSignature.parse_nightly_list(",".join(PackedStringArray(list)))
+	if not parsed.ok:
+		return {"ok": false, "error": L10n.t("launcher.build_info.nightly_with_reason", {"why": parsed.error}), "keys": []}
+	for k in parsed.keys:
+		if k in release_keys:
+			return {"ok": false, "error": L10n.t("launcher.build_info.nightly_release_key"), "keys": []}
 	return parsed
 
 

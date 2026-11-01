@@ -50,6 +50,7 @@ enum class ShellAction
 	// lane PLAY-1: the Palantir's flag button AptPalantir::OnBttnObjectives (RW 0x6D40C9): in a skirmish or multiplayer game (RW 0x625456) RW 0x914EF0 pushes
 	// PlayerTribute.apt over the game, otherwise RW 0x8E8843 opens the objectives screen; the host decides by the game's mode
 	PalantirObjectives,
+	ObjectivesReturnToGame, // lane CAMPUI-1: AptObjectivesMenu::ReturnToGame (RW 0x8E873E -> RW 0x8E86A5: the screen closes, TheShell pops it, the game goes on)
 	TributeReturnToGame, // lane PLAY-1: PlayerTribute.apt's "<path>_ReturnToGame" (RW 0x914E89 -> RW 0x914C51: the screen closes, TheShell pops it)
 	CreateAHeroExit,     // lane CAH-1: AptCreateAHero::Class::Exit (the builder is left; the device ends the map mode)
 	OnlineGameStart,     // lane ONLINE-4: OnlineShell.apt's staging room has the lobby's START (the argument: its JSON, GameNetwork/OnlineStart.h)
@@ -65,7 +66,10 @@ enum class ShellAction
 	CampaignMenuSave,        // OnBttnSaveGame (RW 0x927A93 -> RW 0x816655(3, 1, 0))
 	CampaignMenuLoad,        // OnBttnLoadGame (RW 0x927AA4 -> RW 0x816655(2, 1, 0))
 	CampaignMenuLastMission, // OnBttnLastMission (RW 0x927AB5 -> RW 0x5EC5D1)
-	CampaignMenuNextMission  // OnBttnNextMission (RW 0x927ACF: message 0x21 -> RW 0x5EAE37)
+	CampaignMenuNextMission, // OnBttnNextMission (RW 0x927ACF: message 0x21 -> RW 0x5EAE37)
+	LanLoadWar,              // WOTR2 milestone 8 (step 4): AptLanLobby::OnLoadGameBttn on the War of the Ring page (RW 0x849299): the save page in load mode
+	                         // for the LAN war saves; the one picked is hosted, resumed
+	OnlineLoadWar            // BFME2 0x59ECC1: OnlineStrategic's Load Game selects kind 16; the chosen war is hosted in an online staging room
 };
 
 struct ShellRequest

@@ -111,7 +111,7 @@ TEST_CASE("FACT-A stops: S-1980 .. S-1986 are reported where they apply")
 		CHECK(reported(r.logic(), "[S-1983]"));
 		CHECK(treb->testStatus((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("NO_AUTO_ACQUIRE")));
 
-		// S-1984: the Demolisher's deploy modules are counted unported (S-140's census reaches the report)
+		// S-1984: the Demolisher's deploy modules are ported since lane SIEGE-1 (their remaining stop S-4945 reaches the report)
 	}
 	// (the Men rig has ended)
 	{
@@ -119,8 +119,10 @@ TEST_CASE("FACT-A stops: S-1980 .. S-1986 are reported where they apply")
 		Object *demo = d.make("DwarvenDemolisher", d.spot(2000.0f, 1300.0f, 300.0f));
 		d.frames(2);
 		const std::vector<std::string> unp = unportedModules(*demo);
-		CHECK(std::find(unp.begin(), unp.end(), "ToggleDeploySpecialAbilityUpdate") != unp.end());
-		CHECK(d.logic().report().unportedModules.count("ToggleDeploySpecialAbilityUpdate") == 1);
+		CHECK(std::find(unp.begin(), unp.end(), "ToggleDeploySpecialAbilityUpdate") == unp.end());
+		CHECK(std::find(unp.begin(), unp.end(), "DeployStyleAIUpdate") == unp.end());
+		CHECK(d.logic().report().unportedModules.count("ToggleDeploySpecialAbilityUpdate") == 0);
+		CHECK(reported(d.logic(), "[S-4945]"));
 
 	}
 	// ObjectCreationUpgrade runs (the Elven citadel's Crystal Moat appears one frame after its Delay of 0, RW 0x8B8464); since merge q2 the module is

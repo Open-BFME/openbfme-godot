@@ -5,6 +5,7 @@
 #include "doctest.h"
 
 #include "ProdTestUtil.h"
+#include "RetailTestMount.h"
 
 #include "Common/PlayerHeroList.h"
 #include "Common/StateHash.h"
@@ -817,7 +818,8 @@ TEST_CASE("SpecialPowerModule data: RW 0x89693A / 0x89693D replaces AttributeMod
 	const retailtest::PeImage *pe = retailtest::PeImage::fromEnvironment();
 	if (!pe)
 	{
-		return; // set RW_GAME_DAT
+		retailtest::printSkip("SpecialPowerModule data: RW 0x89693A / 0x89693D (RW_GAME_DAT unset)");
+		return;
 	}
 	std::vector<std::uint8_t> b;
 	REQUIRE(pe->read(0x89693A, 8, &b));

@@ -9,6 +9,8 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 
+#include <stdexcept>
+
 void HordeAIUpdate::updateBeforeBase()
 {
 	Object *horde = getObject();
@@ -25,6 +27,30 @@ void HordeAIUpdate::updateBeforeBase()
 		const unsigned last = hc->formationRefreshFrame();
 		if (frame > (unsigned)LOGICFRAMES_PER_SECOND && last < frame - (unsigned)LOGICFRAMES_PER_SECOND)
 		{
+			// RW 0x89E38A..0x89E3B4, BFME2 HordeAIUpdate::update RVA 0x49AB10: do not release an empty horde or one whose members are still exiting.
+			if (!hc->isGarrisoned() && horde->testStatus(0x5A))
+			{
+				const auto *members = contain->getContainedItemsList();
+				if (!members)
+				{
+					throw std::logic_error("HordeAIUpdate: horde has no contained-items list");
+				}
+				bool any = false;
+				bool leaving = false;
+				// RW 0x86FA01, BFME2 RVA 0x46C71E: the contained list only; the donor's second loop has begin() as both bounds.
+				for (const Object *member : *members)
+				{
+					if (member)
+					{
+						any = true;
+						leaving = leaving || member->testStatus(0x5A);
+					}
+				}
+				if (any && !leaving)
+				{
+					horde->setStatus(0x5A, false);
+				}
+			}
 			hc->updateFormation();
 		}
 	}

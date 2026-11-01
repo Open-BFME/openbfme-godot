@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0. See GodotGameAudio.h.
 
 #include "GodotDevice/GodotGameAudio.h"
+#include "Common/PathIO.h"
 
 #include "GameClient/Eva.h"
 #include "GameClient/LiveGameAudio.h"
@@ -538,9 +539,9 @@ Dictionary GameAudio::boot(const Ref<RetailFileSystem> &fs, const Dictionary &co
 	// lane OPTS-4: the request log from the first menu on (AUDIO-3's log began with the game: the Options screen's samples and volumes were not in it)
 	m_logPath.clear();
 	if (!m_shellOnly)
-	if (const char *logPath = std::getenv("OPENBFME_AUDIO_LOG"); logPath && *logPath)
+	if (const std::string logPath = PathIO::environment("OPENBFME_AUDIO_LOG"); !logPath.empty())
 	{
-		if (std::FILE *f = std::fopen(logPath, "w"))
+		if (std::FILE *f = PathIO::open(logPath, "w"))
 		{
 			std::fprintf(f, "%s\n", LiveGameAudio::eventLogHeader());
 			std::fclose(f);
@@ -663,7 +664,7 @@ void GameAudio::flushLog()
 	{
 		return;
 	}
-	std::FILE *f = std::fopen(m_logPath.c_str(), "a");
+	std::FILE *f = PathIO::open(m_logPath, "a");
 	if (!f)
 	{
 		UtilityFunctions::push_error("GameAudio: cannot append to the audio log ", toGodot(m_logPath));
@@ -799,7 +800,9 @@ int64_t GameAudio::play_misc(const String &field)
 
 int64_t GameAudio::play_shell_sound(const String &n)
 {
-	return play_sound(n);
+	// lane MENUSND-1: the menus' FSCommand PlaySound, as RotWK adds it (AudioManager::playUiSound, RW 0x815772)
+	REQUIRE_BOOTED(AHSV_Error)
+	return (int64_t)m_manager->playUiSound(toNative(n));
 }
 
 int64_t GameAudio::play_shell_music(bool shell_map)

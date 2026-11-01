@@ -29,12 +29,15 @@
 //     entry's line is drawn twice (width 3 with alpha, width 1 opaque: RW 0x924DD1), then its result icon at its last sample (+ 0x298[result]:
 //     AptTimelineVictorious, Defeated, Disconnected; none for 3 / 4) and its fortress marks (AptTimelineFortress).
 // NOT PORTED (stop S-1063): the device drawing of RenderGraph and of the faction icons is the presentation layer's (it reads lines() / axis() and the
-// image records); Save Replay, the Create-a-Hero awards and the War of the Ring modes.
+// image records); Save Replay, the Create-a-Hero awards, the War of the Ring's multiplayer type 7 and its profile statistics (StatsReporter RW 0x9CF16C).
+// WOTR2 milestone 5 ports type 6 (ScoreScreenData's war samples, the turn axis, the 27 strategic statistics, TimeLine:StrategicEnd and the win / loss
+// page's APT:StrategicWinLossTitle / StrategicScenarioName / StrategicWinLossConditionDescription and image StrategicWinLossImage).
 
 #pragma once
 
 #include "GameClient/EndGame.h"
 #include "GameClient/GUI/AptScreen.h"
+#include "GameNetwork/GameInfo.h"
 
 #include <array>
 #include <string>
@@ -46,13 +49,16 @@ class AptTimeLine : public AptScreen
 {
 public:
 	AptTimeLine(WindowManager &windows, Shell &shell, ShellEnvironment &environment);
+	~AptTimeLine() override;
 
 	void runInit() override;
+	void frameUpdate() override;
+	GameWindow *playerRange() const { return m_playerRange; }
 
 	// the graph the RenderGraph component shows for `mode` (ScoreScreenData::graphMode): sets the axis texts when they changed, returns the axis
 	const ScoreScreenData::Axis &graph(int mode);
 	int graphMode() const { return m_mode; }
-	float graphFocus(int entry) const { return entry >= 0 && entry < 8 ? m_focus[(size_t)entry] : 0.0f; }
+	float graphFocus(int entry) const { return entry >= 0 && entry < MAX_SLOTS ? m_focus[(size_t)entry] : 0.0f; }
 	bool renderComponentRequested() const { return m_componentRequests > 0; }
 	int continuePressed() const { return m_continue; }
 	const ScoreScreenData *data() const;
@@ -61,6 +67,9 @@ public:
 	const std::array<int, 3> &shownColumns() const { return m_shown; }
 	GameWindow *statsList();
 	int statsListFills() const { return m_fills; }
+
+protected:
+	WindowMsgHandledType gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2) override;
 
 private:
 	void populate();
@@ -72,11 +81,14 @@ private:
 	int m_mode = -1;
 	float m_lastTop = -1.0f; // + 0x2B0
 	int m_lastSamples = -1;  // + 0x2B4
-	std::array<float, 8> m_focus{};
+	std::array<float, MAX_SLOTS> m_focus{};
 	int m_componentRequests = 0;
 	int m_continue = 0;
 	GameWindow *m_statsList = nullptr;
 	std::array<int, 3> m_shown{ 0, 0, 0 };
 	std::vector<ScoreScreenData::StatRow> m_rows;
 	int m_fills = 0;
+	GameWindow *m_playerRange = nullptr;
+	int m_firstPlayer = 0;
+	float m_firstPlayerY = 0, m_playerStep = 0;
 };

@@ -1,11 +1,13 @@
-"""Lane SIGNKMS-1: the trusted key list, the signature envelope and the verification rule (release_keys.py), the KMS signer (kms_sign.py
-with the stand-in aws, aws_stand_in.py), sealing through KMS, sign_manifest.py --verify and publish_release.sh with a key list and
-.sig2 files, and the Deck co-signer (cosign_release.py with the stand-in gh). Never the real AWS, key or GitHub."""
+"""Lane RELGH-2 (was SIGNNIGHTLY-1's): the trusted key list, the signature envelope and the verification rule (release_keys.py), the nightly-only
+key list and its scope rule (a nightly key signs a nightly's files only: release_keys.verify_scoped, sign_manifest.py --verify --nightly,
+seal_package.py check --nightly, publish_release.sh), and the Deck's check of the release workflow's draft (check_draft.py with the stand-in
+gh). Never the real key or GitHub."""
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,9 +24,10 @@ import release_keys  # noqa: E402
 import seal_package  # noqa: E402
 
 DECK_SECRET = bytes(range(1, 33))
-KMS_SECRET = bytes(range(33, 65))
+NIGHTLY_SECRET = bytes(range(33, 65))
 OTHER_SECRET = bytes(range(65, 97))
-DECK, KMS, OTHER = (ed25519.public_key(s) for s in (DECK_SECRET, KMS_SECRET, OTHER_SECRET))
+STABLE_SECRET = bytes(range(97, 129))     # RELGH-3: the stable Actions key (stable-2026) of the tests
+DECK, NIGHTLY, OTHER, STABLE = (ed25519.public_key(s) for s in (DECK_SECRET, NIGHTLY_SECRET, OTHER_SECRET, STABLE_SECRET))
 TARGET = "Test/repo"
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_COMMITTER_NAME": "t",
            "GIT_COMMITTER_EMAIL": "t@example.invalid", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
@@ -40,27 +43,18 @@ def key_list(path: Path, *entries: tuple[bytes, str]) -> Path:
     return path
 
 
-def kms_env_sign(kind: str, data: bytes, secret: bytes = KMS_SECRET) -> bytes:
+def env_sign(kind: str, data: bytes, secret: bytes = NIGHTLY_SECRET) -> bytes:
+    """the envelope scheme (release_keys.envelope) with a local key"""
     return ed25519.sign(secret, release_keys.envelope(kind, data))
-
-
-class EnvelopeSigner:
-    """the KMS key's scheme with a local key (what kms_sign.KmsSigner gets back from KMS)"""
-
-    def __init__(self, secret: bytes = KMS_SECRET):
-        self.secret = secret
-
-    def sign(self, kind: str, data: bytes) -> bytes:
-        return kms_env_sign(kind, data, self.secret)
 
 
 # ---- the key list ---------------------------------------------------------------------------------------------------------------------------
 def test_the_list_parses_with_comments_and_blank_lines(tmp_path):
-    text = f"# the release keys\n\n{DECK.hex()}  deck-2026\n   \n# the KMS key\n{KMS.hex()}\tkms-2026\r\n"
-    assert release_keys.parse(text) == [("deck-2026", DECK), ("kms-2026", KMS)]
+    text = f"# the release keys\n\n{DECK.hex()}  deck-2026\n   \n# the NIGHTLY key\n{NIGHTLY.hex()}\tnightly-2026\r\n"
+    assert release_keys.parse(text) == [("deck-2026", DECK), ("nightly-2026", NIGHTLY)]
     p = tmp_path / "keys.pub"
     p.write_text(text)
-    assert release_keys.load(p) == [("deck-2026", DECK), ("kms-2026", KMS)]
+    assert release_keys.load(p) == [("deck-2026", DECK), ("nightly-2026", NIGHTLY)]
 
 
 @pytest.mark.parametrize("text,why", [
@@ -75,7 +69,7 @@ def test_the_list_parses_with_comments_and_blank_lines(tmp_path):
     (f"{DECK.hex()}  deck_2026\n", "is not [a-z0-9-]"),
     (f"{DECK.hex()}  {'a' * 33}\n", "is not [a-z0-9-]"),
     (f"{DECK.hex()}  deck-2026\n{DECK.hex()}  deck-copy\n", "listed twice"),
-    (f"{DECK.hex()}  deck-2026\n{KMS.hex()}  deck-2026\n", "used twice"),
+    (f"{DECK.hex()}  deck-2026\n{NIGHTLY.hex()}  deck-2026\n", "used twice"),
     ("".join(f"{ed25519.public_key(bytes([i]) * 32).hex()}  k{i}\n" for i in range(1, 10)), "more than 8 keys"),
     (f"{'00' * 31}80  zero\n", "not a usable Ed25519 public key"),            # small order (the identity's sign flip)
     (f"{'01' + '00' * 31}  identity\n", "not a usable Ed25519 public key"),     # the neutral element
@@ -93,14 +87,14 @@ def test_eight_keys_and_a_32_character_label_are_allowed():
 def test_the_first_entry_is_release_key_pub(tmp_path):
     d = tmp_path / "launcher"
     d.mkdir()
-    lst = key_list(d / "release_keys.pub", (DECK, "deck-2026"), (KMS, "kms-2026"))
+    lst = key_list(d / "release_keys.pub", (DECK, "deck-2026"), (NIGHTLY, "nightly-2026"))
     (d / "release_key.pub").write_text(DECK.hex() + "\n")
-    assert [lb for lb, _ in release_keys.load(lst)] == ["deck-2026", "kms-2026"]
-    (d / "release_key.pub").write_text(KMS.hex() + "\n")
+    assert [lb for lb, _ in release_keys.load(lst)] == ["deck-2026", "nightly-2026"]
+    (d / "release_key.pub").write_text(NIGHTLY.hex() + "\n")
     with pytest.raises(release_keys.KeyListError, match="first entry"):
         release_keys.load(lst)
     assert release_keys.load(lst, legacy=False)[0] == ("deck-2026", DECK)
-    alone = key_list(tmp_path / "elsewhere.pub", (KMS, "kms-2026"), (DECK, "deck-2026"))
+    alone = key_list(tmp_path / "elsewhere.pub", (NIGHTLY, "nightly-2026"), (DECK, "deck-2026"))
     with pytest.raises(release_keys.KeyListError, match="cannot be read"):
         release_keys.load(alone, legacy=tmp_path / "legacy.pub")   # a legacy file named but missing fails
     (tmp_path / "legacy.pub").write_text(DECK.hex() + "\n")
@@ -114,31 +108,30 @@ def test_the_committed_list_if_present_starts_with_release_key_pub():
         pytest.skip("launcher/release_keys.pub is not committed yet")
     keys = release_keys.load(lst)
     assert keys[0][1].hex() == (lst.parent / "release_key.pub").read_text().strip()
-    policy = release_keys.load_policy()
-    assert keys[0][0] == policy["legacy_label"]
+    assert keys[0][0] == "deck-2026"
 
 
 def test_load_any_reads_a_list_a_one_key_file_a_pem_or_hex(tmp_path):
-    lst = key_list(tmp_path / "keys.pub", (DECK, "deck-2026"), (KMS, "kms-2026"))
-    assert release_keys.load_any(lst) == [("deck-2026", DECK), ("kms-2026", KMS)]
+    lst = key_list(tmp_path / "keys.pub", (DECK, "deck-2026"), (NIGHTLY, "nightly-2026"))
+    assert release_keys.load_any(lst) == [("deck-2026", DECK), ("nightly-2026", NIGHTLY)]
     one = tmp_path / "release_key.pub"
     one.write_text(DECK.hex() + "\n")
     assert release_keys.load_any(one) == [("key", DECK)]
     pem = tmp_path / "k.pem"
-    pem.write_text(ed25519.public_key_pem(KMS))
-    assert release_keys.load_any(pem) == [("key", KMS)]
+    pem.write_text(ed25519.public_key_pem(NIGHTLY))
+    assert release_keys.load_any(pem) == [("key", NIGHTLY)]
     assert release_keys.load_any(OTHER.hex()) == [("key", OTHER)]
     with pytest.raises(release_keys.KeyListError):
         release_keys.load_any("not a key")
 
 
 def test_spki_to_hex(tmp_path):
-    der = release_keys.SPKI_PREFIX + KMS
-    (tmp_path / "kms.der").write_bytes(der)
-    (tmp_path / "kms.pem").write_text(ed25519.public_key_pem(KMS))
-    for f in ("kms.der", "kms.pem"):
+    der = release_keys.SPKI_PREFIX + NIGHTLY
+    (tmp_path / "second.der").write_bytes(der)
+    (tmp_path / "second.pem").write_text(ed25519.public_key_pem(NIGHTLY))
+    for f in ("second.der", "second.pem"):
         r = run(sys.executable, HERE / "release_keys.py", "--spki-to-hex", tmp_path / f)
-        assert r.returncode == 0 and r.stdout.strip() == KMS.hex(), r.stderr
+        assert r.returncode == 0 and r.stdout.strip() == NIGHTLY.hex(), r.stderr
     # a P-256 key (another KeySpec) and a truncated file are refused
     (tmp_path / "p256.der").write_bytes(bytes.fromhex("3059301306072a8648ce3d020106082a8648ce3d030107034200") + b"\x04" + bytes(64))
     (tmp_path / "short.der").write_bytes(der[:-1])
@@ -171,243 +164,195 @@ def test_envelope_known_answer():
 def test_verify_the_rule():
     data = b'{"version": "v1.0.0"}\n'
     raw_deck = ed25519.sign(DECK_SECRET, data)
-    env_kms = kms_env_sign("manifest.json", data)
-    old, new, both = [("deck-2026", DECK)], [("kms-2026", KMS)], [("deck-2026", DECK), ("kms-2026", KMS)]
+    env_sig = env_sign("manifest.json", data)
+    old, new, both = [("deck-2026", DECK)], [("nightly-2026", NIGHTLY)], [("deck-2026", DECK), ("nightly-2026", NIGHTLY)]
     assert release_keys.verify(old, "manifest.json", data, raw_deck) == "deck-2026"
-    assert release_keys.verify(new, "manifest.json", data, env_kms) == "kms-2026"
+    assert release_keys.verify(new, "manifest.json", data, env_sig) == "nightly-2026"
     assert release_keys.verify(both, "manifest.json", data, raw_deck) == "deck-2026"
-    assert release_keys.verify(both, "manifest.json", data, env_kms) == "kms-2026"
-    assert release_keys.verify_detail(both, "manifest.json", data, env_kms) == ("kms-2026", "envelope")
+    assert release_keys.verify(both, "manifest.json", data, env_sig) == "nightly-2026"
+    assert release_keys.verify_detail(both, "manifest.json", data, env_sig) == ("nightly-2026", "envelope")
     assert release_keys.verify_detail(both, "manifest.json", data, raw_deck) == ("deck-2026", "raw")
-    # the envelope scheme works for any key (the Deck key could sign envelopes too), the raw scheme for the KMS key's raw signature
-    assert release_keys.verify(both, "manifest.json", data, kms_env_sign("manifest.json", data, DECK_SECRET)) == "deck-2026"
-    assert release_keys.verify(old, "manifest.json", data, env_kms) is None, "the KMS key is not in the old list"
+    # the envelope scheme works for any key (the Deck key could sign envelopes too), the raw scheme for the NIGHTLY key's raw signature
+    assert release_keys.verify(both, "manifest.json", data, env_sign("manifest.json", data, DECK_SECRET)) == "deck-2026"
+    assert release_keys.verify(old, "manifest.json", data, env_sig) is None, "the NIGHTLY key is not in the old list"
     assert release_keys.verify(new, "manifest.json", data, raw_deck) is None
     assert release_keys.verify(both, "manifest.json", data, ed25519.sign(OTHER_SECRET, data)) is None, "an unknown key"
-    assert release_keys.verify(both, "manifest.json", data, kms_env_sign("manifest.json", data, OTHER_SECRET)) is None
+    assert release_keys.verify(both, "manifest.json", data, env_sign("manifest.json", data, OTHER_SECRET)) is None
     assert release_keys.verify(both, "manifest.json", data + b" ", raw_deck) is None, "changed data (raw)"
-    assert release_keys.verify(both, "manifest.json", data + b" ", env_kms) is None, "changed data (envelope)"
-    assert release_keys.verify(both, "manifest-macos.json", data, env_kms) is None, "the wrong kind"
-    assert release_keys.verify(both, "payload.json", data, env_kms) is None
+    assert release_keys.verify(both, "manifest.json", data + b" ", env_sig) is None, "changed data (envelope)"
+    assert release_keys.verify(both, "manifest-macos.json", data, env_sig) is None, "the wrong kind"
+    assert release_keys.verify(both, "payload.json", data, env_sig) is None
     assert release_keys.verify(both, "manifest-macos.json", data, raw_deck) == "deck-2026", "a raw signature has no kind"
     assert release_keys.verify(both, "nonsense", data, raw_deck) is None, "an unknown kind fails closed"
-    for bad in (env_kms[:63], env_kms + b"\0", b"", bytes(64)):
+    for bad in (env_sig[:63], env_sig + b"\0", b"", bytes(64)):
         assert release_keys.verify(both, "manifest.json", data, bad) is None, len(bad)
     assert release_keys.verify([], "manifest.json", data, raw_deck) is None, "an empty list fails"
     # the envelope itself, signed raw, is not a signature of the data, nor of another kind's envelope
-    assert release_keys.verify(both, "manifest.json", release_keys.envelope("manifest.json", data), env_kms) == "kms-2026"
-    assert release_keys.verify(both, "payload.json", release_keys.envelope("manifest.json", data), env_kms) == "kms-2026"
-    assert release_keys.verify(both, "manifest.json", data, kms_env_sign("payload.json", data)) is None
+    assert release_keys.verify(both, "manifest.json", release_keys.envelope("manifest.json", data), env_sig) == "nightly-2026"
+    assert release_keys.verify(both, "payload.json", release_keys.envelope("manifest.json", data), env_sig) == "nightly-2026"
+    assert release_keys.verify(both, "manifest.json", data, env_sign("payload.json", data)) is None
 
 
 def test_the_cli_verify(tmp_path):
-    lst = key_list(tmp_path / "keys.pub", (DECK, "deck-2026"), (KMS, "kms-2026"))
+    lst = key_list(tmp_path / "keys.pub", (DECK, "deck-2026"), (NIGHTLY, "nightly-2026"))
     m = tmp_path / "manifest.json"
     m.write_bytes(b"{}\n")
-    (tmp_path / "s").write_bytes(kms_env_sign("manifest.json", m.read_bytes()))
+    (tmp_path / "s").write_bytes(env_sign("manifest.json", m.read_bytes()))
     r = run(sys.executable, HERE / "release_keys.py", "--verify", lst, "manifest.json", m, tmp_path / "s")
-    assert r.returncode == 0 and "kms-2026, envelope" in r.stdout, r.stdout + r.stderr
+    assert r.returncode == 0 and "nightly-2026, envelope" in r.stdout, r.stdout + r.stderr
     r = run(sys.executable, HERE / "release_keys.py", "--verify", DECK.hex(), "manifest.json", m, tmp_path / "s")
     assert r.returncode == 1 and "INVALID" in r.stdout
     r = run(sys.executable, HERE / "release_keys.py", "--verify", lst, "manifest-macos.json", m, tmp_path / "s")
     assert r.returncode == 1
     r = run(sys.executable, HERE / "release_keys.py", "--hex", lst, "--format", "csv")
-    assert r.stdout.strip() == f"{DECK.hex()},{KMS.hex()}"
+    assert r.stdout.strip() == f"{DECK.hex()},{NIGHTLY.hex()}"
 
 
-# ---- the signing policy -------------------------------------------------------------------------------------------------------------------
-def test_the_committed_policy():
-    assert release_keys.load_policy() == {"phase": "transition", "kms_label": "kms-2026", "legacy_label": "deck-2026"}
+# ---- RELGH-2: the nightly-only key list ------------------------------------------------------------------------------------------------
+STABLE_LIST = [("deck-2026", DECK)]
+NIGHTLY_LIST = [("nightly-2026", NIGHTLY)]
+NV = "v0.4.13-nightly.261023100"   # a nightly's tag (NIGHTLY-2); the NIGHTLY-1 form is v0.4.13-nightly.20261023
 
 
-@pytest.mark.parametrize("policy,why", [
-    ({"phase": "later", "kms_label": "kms-2026", "legacy_label": "deck-2026"}, "phase"),
-    ({"phase": "kms", "kms_label": "kms-2026"}, "exactly"),
-    ({"phase": "kms", "kms_label": "kms-2026", "legacy_label": "deck-2026", "extra": 1}, "exactly"),
-    ({"phase": "kms", "kms_label": "KMS", "legacy_label": "deck-2026"}, "not a key label"),
-    ({"phase": "kms", "kms_label": 5, "legacy_label": "deck-2026"}, "not a key label"),
-    ({"phase": "kms", "kms_label": "same", "legacy_label": "same"}, "the same"),
-    ([], "exactly"),
+def doc(version: str, channel: str | None = "preview", **extra) -> bytes:
+    d = {"version": version, **({"channel": channel} if channel else {}), **extra}
+    return json.dumps(d, indent=2).encode() + b"\n"
+
+
+def test_load_nightly_rules(tmp_path):
+    stable = key_list(tmp_path / "release_keys.pub", (DECK, "deck-2026"))
+    assert release_keys.load_nightly(key_list(tmp_path / "n1.pub", (NIGHTLY, "nightly-2026")), stable) == NIGHTLY_LIST
+    assert release_keys.load_nightly(tmp_path / "n1.pub", None) == NIGHTLY_LIST
+    # an empty list (only comments) is allowed: no nightly can then be signed on GitHub, but every tool still works
+    (tmp_path / "empty.pub").write_text("# the nightly-only keys: none\n")
+    assert release_keys.load_nightly(tmp_path / "empty.pub", stable) == []
+    # up to 4 keys
+    four = [(ed25519.public_key(bytes([i]) * 32), f"n{i}") for i in range(1, 5)]
+    assert len(release_keys.load_nightly(key_list(tmp_path / "four.pub", *four), stable)) == 4
+    five = four + [(ed25519.public_key(bytes([5]) * 32), "n5")]
+    with pytest.raises(release_keys.KeyListError, match="more than 4 keys"):
+        release_keys.load_nightly(key_list(tmp_path / "five.pub", *five), stable)
+    # a stable key in the nightly list: refused (a nightly key is never a stable key), with the stable list given only
+    with pytest.raises(release_keys.KeyListError, match="also in release_keys.pub"):
+        release_keys.load_nightly(key_list(tmp_path / "overlap.pub", (NIGHTLY, "nightly-2026"), (DECK, "deck-copy")), stable)
+    assert len(release_keys.load_nightly(tmp_path / "overlap.pub", None)) == 2, "(None: the overlap is not looked for)"
+    # malformed lines are refused as in the stable list
+    for text, why in ((f"{NIGHTLY.hex().upper()}  nightly-2026\n", "64 lower-case hex"), (f"{NIGHTLY.hex()}\n", "not '<64 hex>"),
+                      (f"{NIGHTLY.hex()}  Nightly\n", "is not [a-z0-9-]"), (f"{NIGHTLY.hex()}  a\n{NIGHTLY.hex()}  b\n", "listed twice"),
+                      (f"{'00' * 31}80  zero\n", "not a usable Ed25519 public key")):
+        (tmp_path / "bad.pub").write_text(text)
+        with pytest.raises(release_keys.KeyListError, match=re.escape(why)):
+            release_keys.load_nightly(tmp_path / "bad.pub", stable)
+    with pytest.raises(release_keys.KeyListError, match="cannot be read"):
+        release_keys.load_nightly(tmp_path / "missing.pub", stable)
+
+
+def test_the_committed_nightly_list():
+    lst = HERE.parents[1] / "launcher" / "nightly_keys.pub"
+    keys = release_keys.load_nightly(lst, release_keys.DEFAULT_LIST)     # also: none of them in release_keys.pub
+    assert [lb for lb, _ in keys] == ["nightly-2026"]
+    assert release_keys.NIGHTLY_LIST == lst
+
+
+def test_the_nightly_cli(tmp_path):
+    stable = key_list(tmp_path / "keys.pub", (DECK, "deck-2026"))
+    one = key_list(tmp_path / "n.pub", (NIGHTLY, "nightly-2026"))
+    (tmp_path / "none.pub").write_text("# none\n")
+    tool = HERE / "release_keys.py"
+    r = run(sys.executable, tool, "--check-nightly", one, "--stable", stable)
+    assert r.returncode == 0 and "nightly key list ok: nightly-2026" in r.stdout, r.stderr
+    r = run(sys.executable, tool, "--check-nightly", tmp_path / "none.pub", "--stable", stable)
+    assert r.returncode == 0 and "no key" in r.stdout
+    r = run(sys.executable, tool, "--hex-nightly", one, "--stable", stable, "--format", "csv")
+    assert r.returncode == 0 and r.stdout.strip() == NIGHTLY.hex()
+    assert run(sys.executable, tool, "--hex-nightly", one, "--stable", stable, "--format", "json").stdout.strip() == json.dumps([NIGHTLY.hex()])
+    r = run(sys.executable, tool, "--hex-nightly", tmp_path / "none.pub", "--stable", stable, "--format", "json")
+    assert r.stdout.strip() == "[]"
+    assert run(sys.executable, tool, "--hex-nightly", tmp_path / "none.pub", "--stable", stable, "--format", "csv").stdout.strip() == ""
+    overlap = key_list(tmp_path / "o.pub", (DECK, "deck-copy"))
+    r = run(sys.executable, tool, "--check-nightly", overlap, "--stable", stable)
+    assert r.returncode == 2 and "also in" in r.stderr and not r.stdout
+
+
+# ---- the scope rule ---------------------------------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("scheme", ["raw", "envelope"])
+@pytest.mark.parametrize("kind", ["manifest.json", "manifest-macos.json", "payload.json"])
+def test_a_nightly_key_signs_a_nightly_document(kind, scheme):
+    data = doc(NV)
+    sig = ed25519.sign(NIGHTLY_SECRET, data) if scheme == "raw" else env_sign(kind, data)
+    assert release_keys.verify_scoped(STABLE_LIST, NIGHTLY_LIST, kind, data, sig) == ("nightly-2026", scheme)
+    assert release_keys.is_nightly_document(kind, data)
+    # the NIGHTLY-1 form of the number (<YYYYMMDD>) too
+    old = doc("v0.4.13-nightly.20261023")
+    assert release_keys.verify_scoped(STABLE_LIST, NIGHTLY_LIST, kind, old, ed25519.sign(NIGHTLY_SECRET, old)) is not None
+    # without the nightly list the same signature is nothing; under the stable list alone it never was valid
+    assert release_keys.verify_scoped(STABLE_LIST, [], kind, data, sig) is None
+    assert release_keys.verify_detail(STABLE_LIST, kind, data, sig) is None
+
+
+@pytest.mark.parametrize("kind,data", [
+    ("manifest.json", doc("v0.4.13", "stable")),                         # a stable manifest
+    ("manifest-macos.json", doc("v0.4.13", "stable")),
+    ("manifest.json", doc(NV, "stable")),                                 # a nightly's version on the stable channel
+    ("manifest-macos.json", doc(NV, "stable")),
+    ("manifest.json", doc("v0.4.13", "preview")),                         # the preview channel of a stable version
+    ("manifest.json", doc(NV, None)),                                     # no channel
+    ("manifest.json", doc("v0.4.13-alpha.1", "preview")),
+    ("payload.json", doc("v0.4.13", None)),                               # the payload of a stable package
+    ("payload.json", doc("v0.4.13-alpha.1", None)),
+    ("payload.json", doc("v0.4.13-nightly.123", None)),                   # not a nightly number (8 or 9 digits)
+    ("payload.json", doc("v0.4.13-nightly.2610231000", None)),
+    ("payload.json", doc("xv0.4.13-nightly.261023100", None)),
+    ("payload.json", doc("v0.4.13-nightly.261023100\n", None)),
+    ("payload.json", doc("v01.4.13-nightly.261023100", None)),
+    ("payload.json", b"[1]\n"), ("payload.json", b"not json"), ("payload.json", b"\xff\xfe"), ("payload.json", b'{"version": 7}\n'),
+    ("manifest.json", b'{"channel": "preview"}\n'),
 ])
-def test_a_malformed_policy_is_refused(tmp_path, policy, why):
-    p = tmp_path / "policy.json"
-    p.write_text(json.dumps(policy))
-    with pytest.raises(release_keys.KeyListError, match=why):
-        release_keys.load_policy(p)
-    p.write_text("{not json")
-    with pytest.raises(release_keys.KeyListError):
-        release_keys.load_policy(p)
+def test_a_nightly_key_never_signs_anything_else(kind, data):
+    for sig in (ed25519.sign(NIGHTLY_SECRET, data), env_sign(kind, data)):
+        assert release_keys.verify_scoped(STABLE_LIST, NIGHTLY_LIST, kind, data, sig) is None, data
+        assert not release_keys.is_nightly_document(kind, data) or kind == "payload.json" and doc(NV, None) == data
+    # the stable key still signs all of it
+    assert release_keys.verify_scoped(STABLE_LIST, NIGHTLY_LIST, kind, data, ed25519.sign(DECK_SECRET, data)) == ("deck-2026", "raw")
 
 
-def test_policy_keys():
-    policy = release_keys.load_policy()
-    keys = [("deck-2026", DECK), ("kms-2026", KMS)]
-    assert release_keys.policy_key(keys, policy, "kms_label") == KMS
-    assert release_keys.policy_key(keys, policy, "legacy_label") == DECK
-    with pytest.raises(release_keys.KeyListError, match="no key labelled kms-2026"):
-        release_keys.policy_key(keys[:1], policy, "kms_label")
-    with pytest.raises(release_keys.KeyListError, match="first entry"):
-        release_keys.policy_key(keys[::-1], policy, "legacy_label")
+def test_the_stable_list_wins_and_an_unknown_key_is_nothing():
+    data = doc(NV)
+    assert release_keys.verify_scoped(STABLE_LIST, NIGHTLY_LIST, "manifest.json", data, ed25519.sign(DECK_SECRET, data)) == ("deck-2026", "raw")
+    assert release_keys.verify_scoped(STABLE_LIST, NIGHTLY_LIST, "manifest.json", data, ed25519.sign(OTHER_SECRET, data)) is None
+    assert release_keys.verify_scoped(STABLE_LIST, NIGHTLY_LIST, "manifest.json", data + b" ", ed25519.sign(NIGHTLY_SECRET, data)) is None
+    assert release_keys.verify_scoped(STABLE_LIST, NIGHTLY_LIST, "manifest.json", data, bytes(64)) is None
+    assert release_keys.verify_scoped(STABLE_LIST, NIGHTLY_LIST, "nonsense", data, ed25519.sign(NIGHTLY_SECRET, data)) is None
+    assert release_keys.verify_scoped(STABLE_LIST, NIGHTLY_LIST, "manifest-macos.json", data, env_sign("manifest.json", data)) is None
 
 
-# ---- kms_sign.py with the stand-in aws ------------------------------------------------------------------------------------------------------
-@pytest.fixture
-def kms(tmp_path):
-    """a stand-in aws on its own, the trusted list (Deck + KMS) and the committed policy"""
-    aws = tmp_path / "bin" / "aws"
-    aws.parent.mkdir()
-    aws.write_text(f"#!/bin/bash\nexec {sys.executable} {HERE / 'aws_stand_in.py'} \"$@\"\n")
-    aws.chmod(0o755)
-    lst = key_list(tmp_path / "keys.pub", (DECK, "deck-2026"), (KMS, "kms-2026"))
-    log = tmp_path / "aws.log"
-
-    class K:
-        keys, aws_log = lst, log
-        policy = release_keys.POLICY_FILE
-
-        def env(self, fault: str = "", **extra) -> dict:
-            return {"AWS": str(aws), "STANDIN_AWS_SECRET": KMS_SECRET.hex(), "STANDIN_AWS_FAULT": fault, "STANDIN_AWS_LOG": str(log),
-                    "AWS_REGION": "us-east-1", **extra}
-
-        def sign(self, *args, fault: str = "", keys: Path | None = None, policy: Path | None = None) -> subprocess.CompletedProcess:
-            return run(sys.executable, HERE / "kms_sign.py", *args, "--keys", keys or lst, "--policy", policy or release_keys.POLICY_FILE,
-                       env=self.env(fault))
-    return K()
-
-
-def manifests(tmp_path) -> tuple[Path, Path]:
-    d = tmp_path / "pkg"
-    d.mkdir(exist_ok=True)
-    (d / "manifest.json").write_bytes(b'{"version": "v1.0.0", "x": "' + b"m" * 9000 + b'"}\n')   # larger than KMS's 4096-byte limit
-    (d / "manifest-macos.json").write_bytes(b'{"version": "v1.0.0", "mac": true}\n')
-    return d / "manifest.json", d / "manifest-macos.json"
-
-
-def test_kms_sign_happy_path(kms, tmp_path):
-    m, mac = manifests(tmp_path)
-    r = kms.sign("--slot", "sig2", m, mac)   # the lead's form: no sub-command
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert "SIGNED manifest.json.sig2 (kms-2026, envelope)" in r.stdout
-    keys = release_keys.load(kms.keys)
-    for f in (m, mac):
-        sig = (f.parent / (f.name + ".sig2")).read_bytes()
-        assert len(sig) == 64 and release_keys.verify_detail(keys, f.name, f.read_bytes(), sig) == ("kms-2026", "envelope")
-        assert not (f.parent / (f.name + ".sig")).exists(), "the transition phase never writes X.sig"
-    calls = kms.aws_log.read_text().splitlines()
-    assert calls[0].startswith("kms get-public-key --key-id alias/openbfme-release")
-    assert all("--message-type RAW --signing-algorithm ED25519_SHA_512 --message fileb://" in c for c in calls[1:]) and len(calls) == 3
-    assert all("--region us-east-1" in c for c in calls)
-    # the default slot follows the policy's phase: transition sig2, kms both (the same signature)
-    for f in (m, mac):
-        (f.parent / (f.name + ".sig2")).unlink()
-    assert kms.sign("sign", m).returncode == 0 and (m.parent / "manifest.json.sig2").exists() and not (m.parent / "manifest.json.sig").exists()
-    policy = tmp_path / "policy-kms.json"
-    policy.write_text(json.dumps({"phase": "kms", "kms_label": "kms-2026", "legacy_label": "deck-2026"}))
-    assert kms.sign("sign", mac, policy=policy).returncode == 0
-    assert (mac.parent / "manifest-macos.json.sig").read_bytes() == (mac.parent / "manifest-macos.json.sig2").read_bytes()
-    r = kms.sign("public-key")
-    assert r.returncode == 0 and r.stdout.strip() == KMS.hex()
-
-
-def no_signatures(*files: Path) -> bool:
-    return not any((f.parent / (f.name + e)).exists() for f in files for e in (".sig", ".sig2", ".sig.tmp", ".sig2.tmp"))
-
-
-@pytest.mark.parametrize("fault,why", [
-    ("wrong-key", "is not the trusted list's kms-2026 key (it is not in the list)"),
-    ("wrong-spec", "KeySpec is 'ECC_NIST_P256'"),
-    ("wrong-usage", "KeyUsage is 'ENCRYPT_DECRYPT'"),
-    ("no-ed25519", "does not offer ED25519_SHA_512"),
-    ("bad-der", "not an Ed25519 SubjectPublicKeyInfo"),
-    ("bad-signature", "does not verify under the trusted list's kms-2026 key"),
-    ("sign-other-key", "does not verify under the trusted list's kms-2026 key"),
-    ("short-signature", "63-byte signature"),
-    ("sign-error", "aws kms sign failed (exit 254)"),
-    ("error", "aws kms get-public-key failed (exit 254)"),
-])
-def test_kms_sign_refuses_and_writes_nothing(kms, tmp_path, fault, why):
-    m, mac = manifests(tmp_path)
-    r = kms.sign("--slot", "both", m, mac, fault=fault)
-    assert r.returncode != 0 and why in r.stdout + r.stderr, r.stdout + r.stderr
-    assert no_signatures(m, mac)
-    # never a credential (the stand-in's error carries a fake access key id and session token)
-    assert "IOSFODNN7EXAMPLE" not in r.stdout + r.stderr and "FwoGZXIvYXdz" not in r.stdout + r.stderr
-
-
-def test_kms_sign_refuses_a_key_under_another_label_or_a_list_without_it(kms, tmp_path):
-    m, _ = manifests(tmp_path)
-    other_label = key_list(tmp_path / "other.pub", (DECK, "deck-2026"), (KMS, "spare-1"))
-    r = kms.sign("sign", m, keys=other_label)
-    assert r.returncode != 0 and "no key labelled kms-2026" in r.stdout + r.stderr
-    swapped = key_list(tmp_path / "swapped.pub", (DECK, "deck-2026"), (OTHER, "kms-2026"), (KMS, "spare-1"))
-    r = kms.sign("sign", m, keys=swapped)
-    assert r.returncode != 0 and "is not the trusted list's kms-2026 key (it is listed as spare-1)" in r.stdout + r.stderr
-    r = kms.sign("sign", m, keys=key_list(tmp_path / "deck.pub", (DECK, "deck-2026")))
-    assert r.returncode != 0 and no_signatures(m)
-
-
-def test_kms_sign_writes_nothing_when_one_file_fails(kms, tmp_path):
-    m, _ = manifests(tmp_path)
-    notes = tmp_path / "pkg" / "notes.md"
-    notes.write_text("x\n")
-    r = kms.sign("sign", m, notes)
-    assert r.returncode != 0 and "the kind of notes.md is not known" in r.stderr and no_signatures(m, notes)
-    r = kms.sign("sign", m, tmp_path / "pkg" / "missing.json")
-    assert r.returncode != 0 and no_signatures(m)
-
-
-def test_the_stand_in_answers_sts(kms):
-    r = run(kms.env()["AWS"], "sts", "assume-role-with-web-identity", "--role-arn", "r", "--role-session-name", "s", "--web-identity-token",
-            "t", "--duration-seconds", "900", "--output", "json", env=kms.env())
-    c = json.loads(r.stdout)["Credentials"]
-    assert r.returncode == 0 and set(c) == {"AccessKeyId", "SecretAccessKey", "SessionToken", "Expiration"}
-    assert run(kms.env()["AWS"], "sts", "assume-role-with-web-identity", "--output", "json", env=kms.env("sts-error")).returncode == 254
-
-
-# ---- sealing through KMS ------------------------------------------------------------------------------------------------------------------
-def package_dir(d: Path, version: str) -> Path:
-    from test_autorelease import package_dir as make
-    return make(d, version)
-
-
-def test_seal_through_kms_then_check(kms, tmp_path):
-    d = package_dir(tmp_path / "pkg", "v1.0.0")
-    before = {p.name: p.read_bytes() for p in d.iterdir()}
-    r = run(sys.executable, HERE / "seal_package.py", "seal", d, "--kms", "--repo", TARGET, "--keys", kms.keys, env=kms.env("error"))
-    assert r.returncode != 0 and "get-public-key failed" in r.stdout + r.stderr
-    assert {p.name: p.read_bytes() for p in d.iterdir()} == before, "a failed KMS seal changes nothing"
-    r = run(sys.executable, HERE / "seal_package.py", "seal", d, "--kms", "--repo", TARGET, "--keys", kms.keys, env=kms.env())
-    assert r.returncode == 0 and "seal ok" in r.stdout, r.stdout + r.stderr
-    assert run(sys.executable, HERE / "seal_package.py", "check", d, "--public", kms.keys, "--repo", TARGET).returncode == 0
-    r = run(sys.executable, HERE / "seal_package.py", "check", d, "--public", DECK.hex(), "--repo", TARGET)
-    assert r.returncode == 1 and "does not verify" in r.stdout, "the Deck key alone does not trust a KMS seal"
-    assert seal_package.check(d, [("kms-2026", KMS)], TARGET) == []
-    files, _, _ = seal_package.read_archive(next(iter(seal_package.combined_archives(d))))
-    assert release_keys.verify_detail([("kms-2026", KMS)], "payload.json", files["payload.json"], files["payload.json.sig"]) == \
-        ("kms-2026", "envelope")
-    # kms_sign.py's own seal helper does the same
-    d2 = package_dir(tmp_path / "pkg2", "v1.0.0")
-    r = run(sys.executable, HERE / "kms_sign.py", "seal", d2, "--repo", TARGET, "--keys", kms.keys, env=kms.env())
-    assert r.returncode == 0 and "SEALED" in r.stdout, r.stdout + r.stderr
-    assert seal_package.check(d2, release_keys.load(kms.keys), TARGET) == []
-    # the old single-key callers still work: a file key seals raw
-    d3 = package_dir(tmp_path / "pkg3", "v1.0.0")
-    seal_package.seal(d3, DECK_SECRET, TARGET)
-    assert seal_package.check(d3, DECK, TARGET) == [] and seal_package.check(d3, release_keys.load(kms.keys), TARGET) == []
+def test_the_cli_verify_with_a_nightly_list(tmp_path):
+    stable = key_list(tmp_path / "keys.pub", (DECK, "deck-2026"))
+    nl = key_list(tmp_path / "n.pub", (NIGHTLY, "nightly-2026"))
+    tool = HERE / "release_keys.py"
+    for name, data, ok in (("manifest.json", doc(NV), True), ("manifest.json", doc("v0.4.13", "stable"), False)):
+        f = tmp_path / name
+        f.write_bytes(data)
+        (tmp_path / "s").write_bytes(ed25519.sign(NIGHTLY_SECRET, data))
+        r = run(sys.executable, tool, "--verify", stable, name if False else "manifest.json", f, tmp_path / "s", "--nightly", nl)
+        assert (r.returncode == 0) is ok, r.stdout + r.stderr
+        if ok:
+            assert "(nightly-2026, raw)" in r.stdout
+        assert run(sys.executable, tool, "--verify", stable, "manifest.json", f, tmp_path / "s").returncode == 1, "no --nightly: invalid"
 
 
 # ---- sign_manifest.py --verify with a list ------------------------------------------------------------------------------------------------
 def test_sign_manifest_verify_with_a_list(tmp_path):
-    lst = key_list(tmp_path / "keys.pub", (DECK, "deck-2026"), (KMS, "kms-2026"))
+    lst = key_list(tmp_path / "keys.pub", (DECK, "deck-2026"), (OTHER, "second-2026"))
     m = tmp_path / "manifest.json"
     m.write_bytes(b'{"a": 1}\n')
     (tmp_path / "manifest.json.sig").write_bytes(ed25519.sign(DECK_SECRET, m.read_bytes()))
-    (tmp_path / "manifest.json.sig2").write_bytes(kms_env_sign("manifest.json", m.read_bytes()))
+    (tmp_path / "manifest.json.sig2").write_bytes(env_sign("manifest.json", m.read_bytes(), OTHER_SECRET))
     tool = HERE / "sign_manifest.py"
     r = run(sys.executable, tool, "--verify", lst, m)
     assert r.returncode == 0 and "(deck-2026, raw)" in r.stdout, r.stdout + r.stderr
     r = run(sys.executable, tool, "--verify", lst, m, "--sig", tmp_path / "manifest.json.sig2")
-    assert r.returncode == 0 and "(kms-2026, envelope)" in r.stdout
+    assert r.returncode == 0 and "(second-2026, envelope)" in r.stdout
     assert run(sys.executable, tool, "--verify", DECK.hex(), m).returncode == 0, "the old single-key form"
     assert run(sys.executable, tool, "--verify", DECK.hex(), m, "--sig", tmp_path / "manifest.json.sig2").returncode == 1
     assert run(sys.executable, tool, "--verify", lst, m, "--sig", tmp_path / "manifest.json.sig2", "--kind", "payload.json").returncode == 1
@@ -424,6 +369,88 @@ def test_sign_manifest_verify_with_a_list(tmp_path):
     (tmp_path / "manifest.json.sig").unlink()
     r = run(sys.executable, tool, "--verify", lst, m)
     assert r.returncode == 1 and "does not exist" in r.stdout
+
+
+def signed_manifest(d: Path, name: str, data: bytes, secret: bytes = NIGHTLY_SECRET) -> Path:
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_bytes(data)
+    (d / (name + ".sig")).write_bytes(ed25519.sign(secret, data))
+    return d / name
+
+
+def test_sign_manifest_verify_scopes_a_nightly_key(tmp_path):
+    stable = key_list(tmp_path / "keys.pub", (DECK, "deck-2026"))
+    nl = key_list(tmp_path / "n.pub", (NIGHTLY, "nightly-2026"))
+    tool = HERE / "sign_manifest.py"
+    for name in ("manifest.json", "manifest-macos.json"):
+        good = signed_manifest(tmp_path / "nightly", name, doc(NV))
+        r = run(sys.executable, tool, "--verify", stable, good, "--nightly", nl)
+        assert r.returncode == 0 and "(nightly-2026, raw)" in r.stdout, r.stdout + r.stderr
+        assert run(sys.executable, tool, "--verify", stable, good).returncode == 1, "the nightly list is not given: invalid"
+        for bad in (doc("v0.4.13", "stable"), doc(NV, "stable"), doc("v0.4.13", "preview")):
+            f = signed_manifest(tmp_path / f"bad-{hash(bad) & 0xffff}", name, bad)
+            r = run(sys.executable, tool, "--verify", stable, f, "--nightly", nl)
+            assert r.returncode == 1 and "INVALID" in r.stdout, bad
+    # the stable key under both lists: still valid for a stable manifest
+    f = signed_manifest(tmp_path / "stable", "manifest.json", doc("v0.4.13", "stable"), DECK_SECRET)
+    assert run(sys.executable, tool, "--verify", stable, f, "--nightly", nl).returncode == 0
+    # the nightly list must itself be a valid one
+    (tmp_path / "bad.pub").write_text("zz\n")
+    r = run(sys.executable, tool, "--verify", stable, f, "--nightly", tmp_path / "bad.pub")
+    assert r.returncode != 0 and "sign_manifest" in r.stderr
+
+
+# ---- seal_package.py with the nightly list -------------------------------------------------------------------------------------------------
+def package_dir(d: Path, version: str) -> Path:
+    from test_autorelease import package_dir as make
+    return make(d, version)
+
+
+def test_seal_check_scopes_a_nightly_key(tmp_path):
+    nl = key_list(tmp_path / "n.pub", (NIGHTLY, "nightly-2026"))
+    tool = HERE / "seal_package.py"
+    d = package_dir(tmp_path / "nightly", NV)
+    seal_package.seal(d, NIGHTLY_SECRET, TARGET)
+    assert seal_package.check(d, STABLE_LIST, TARGET) != [], "a nightly key is no stable key"
+    assert seal_package.check(d, STABLE_LIST, TARGET, NIGHTLY_LIST) == []
+    r = run(sys.executable, tool, "check", d, "--public", DECK.hex(), "--repo", TARGET)
+    assert r.returncode == 1 and "does not verify" in r.stdout
+    r = run(sys.executable, tool, "check", d, "--public", DECK.hex(), "--nightly", nl, "--repo", TARGET)
+    assert r.returncode == 0 and "seal ok" in r.stdout, r.stdout + r.stderr
+    # the same key on a STABLE version's package: refused whatever the lists say
+    s = package_dir(tmp_path / "stable", "v0.4.13")
+    seal_package.seal(s, NIGHTLY_SECRET, TARGET)
+    problems = seal_package.check(s, STABLE_LIST, TARGET, NIGHTLY_LIST)
+    assert problems and all("does not verify" in p and "nightly key signs nightly packages only" in p for p in problems)
+    r = run(sys.executable, tool, "check", s, "--public", DECK.hex(), "--nightly", nl, "--repo", TARGET)
+    assert r.returncode == 1 and "nightly packages only" in r.stdout
+    # the Deck's key still seals a stable package
+    t = package_dir(tmp_path / "deck", "v0.4.13")
+    seal_package.seal(t, DECK_SECRET, TARGET)
+    assert seal_package.check(t, STABLE_LIST, TARGET, NIGHTLY_LIST) == []
+    # a malformed nightly list stops the check
+    (tmp_path / "bad.pub").write_text("zz\n")
+    r = run(sys.executable, tool, "check", d, "--public", DECK.hex(), "--nightly", tmp_path / "bad.pub", "--repo", TARGET)
+    assert r.returncode != 0 and "seal_package" in r.stderr
+
+
+def test_seal_with_a_key_file_and_no_kms(tmp_path):
+    d = package_dir(tmp_path / "pkg", NV)
+    key = tmp_path / "keys" / "nightly.pem"
+    key.parent.mkdir()
+    key.write_text(ed25519.private_key_pem(NIGHTLY_SECRET))
+    key.chmod(0o600)
+    r = run(sys.executable, HERE / "seal_package.py", "seal", d, "--key", key, "--repo", TARGET)
+    assert r.returncode == 0 and "seal ok" in r.stdout, r.stdout + r.stderr
+    assert seal_package.check(d, STABLE_LIST, TARGET, NIGHTLY_LIST) == []
+    files, _, _ = seal_package.read_archive(next(iter(seal_package.combined_archives(d))))
+    assert release_keys.verify_detail(NIGHTLY_LIST, "payload.json", files["payload.json"], files["payload.json.sig"]) == ("nightly-2026", "raw")
+    r = run(sys.executable, HERE / "seal_package.py", "seal", package_dir(tmp_path / "p2", NV), "--kms", "--repo", TARGET)
+    assert r.returncode == 2 and "required: --key" in r.stderr, "the KMS signer is gone"
+    # the old single-key callers still work
+    d3 = package_dir(tmp_path / "pkg3", "v1.0.0")
+    seal_package.seal(d3, DECK_SECRET, TARGET)
+    assert seal_package.check(d3, DECK, TARGET) == [] and seal_package.check(d3, STABLE_LIST, TARGET) == []
 
 
 # ---- publish_release.sh with .sig and .sig2 ----------------------------------------------------------------------------------------------
@@ -450,44 +477,81 @@ def test_release_assets_name_the_sig2_slots(tmp_path):
     assert names()[-3:] == ["manifest.json", "manifest.json.sig", "manifest.json.sig2"]
 
 
-def test_publish_dry_run_with_sig_and_sig2(tmp_path, denylist):
-    d = package_dir(tmp_path / "pkg", "v1.0.0")
-    assert run(sys.executable, HERE / "make_manifest.py", d, "--repo", TARGET, "--commit", COMMIT, "--date", "2026-10-22",
-               "--allow-untagged").returncode == 0
+@pytest.fixture
+def publisher(tmp_path, denylist):
+    """a copy of the release scripts with its own launcher/ lists (publish_release.sh reads launcher/nightly_keys.pub beside its tools/)"""
+    repo = tmp_path / "repo"
+    shutil.copytree(HERE, repo / "tools/release", ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
+    shutil.copy2(HERE.parents[1] / "tools/precommit.py", repo / "tools/precommit.py")
+    (repo / "launcher").mkdir()
+    key_list(repo / "launcher/release_keys.pub", (DECK, "deck-2026"))
+    (repo / "launcher/release_key.pub").write_text(DECK.hex() + "\n")
+    key_list(repo / "launcher/nightly_keys.pub", (NIGHTLY, "nightly-2026"))
+
+    class P:
+        root = repo
+
+        def package(self, version: str) -> Path:
+            d = package_dir(tmp_path / f"pkg-{version}", version)
+            assert run(sys.executable, HERE / "make_manifest.py", d, "--repo", TARGET, "--commit", COMMIT, "--date", "2026-10-22",
+                       "--allow-untagged").returncode == 0
+            return d
+
+        def publish(self, d: Path):
+            return run("bash", repo / "tools/release/publish_release.sh", d, "--repo", TARGET, "--key-file", repo / "launcher/release_keys.pub",
+                       "--allow-untagged", env={"OPENBFME_RELEASE_DENYLIST": str(denylist)})
+    return P()
+
+
+def test_publish_dry_run_with_sig_and_sig2(publisher):
+    d = publisher.package("v1.0.0")
     data = (d / "manifest.json").read_bytes()
-    lst = key_list(tmp_path / "keys.pub", (DECK, "deck-2026"), (KMS, "kms-2026"))
-    env = {"OPENBFME_RELEASE_DENYLIST": str(denylist)}
-
-    def publish():
-        return run("bash", HERE / "publish_release.sh", d, "--repo", TARGET, "--key-file", lst, "--allow-untagged", env=env)
-
+    publish = lambda: publisher.publish(d)  # noqa: E731
     (d / "manifest.json.sig").write_bytes(ed25519.sign(DECK_SECRET, data))
-    (d / "manifest.json.sig2").write_bytes(kms_env_sign("manifest.json", data))
+    (d / "manifest.json.sig2").write_bytes(env_sign("manifest.json", data, DECK_SECRET))
     r = publish()
     assert r.returncode == 0 and "DRY RUN" in r.stdout, r.stdout + r.stderr
     upload = next(ln for ln in r.stdout.splitlines() if " release upload " in ln)
     assert upload.rstrip().endswith("manifest.json.sig") is False and "manifest.json.sig2" in upload and "manifest.json.sig " in upload
-    # the transition phase's Actions folder: .sig2 alone
     (d / "manifest.json.sig").unlink()
     r = publish()
     assert r.returncode == 0, r.stdout + r.stderr
     upload = next(ln for ln in r.stdout.splitlines() if " release upload " in ln)
     assert upload.rstrip().endswith("manifest.json.sig2") and "manifest.json.sig " not in upload
     # a .sig2 by an unknown key, or a .sig that does not verify beside a good .sig2, stops it
-    (d / "manifest.json.sig2").write_bytes(kms_env_sign("manifest.json", data, OTHER_SECRET))
+    (d / "manifest.json.sig2").write_bytes(env_sign("manifest.json", data, OTHER_SECRET))
     r = publish()
     assert r.returncode != 0 and "does not verify" in r.stderr, r.stdout + r.stderr
-    (d / "manifest.json.sig2").write_bytes(kms_env_sign("manifest.json", data))
+    (d / "manifest.json.sig2").write_bytes(env_sign("manifest.json", data, DECK_SECRET))
     (d / "manifest.json.sig").write_bytes(ed25519.sign(OTHER_SECRET, data))
     r = publish()
     assert r.returncode != 0 and "manifest.json.sig)" in r.stderr, r.stdout + r.stderr
     # the wrong kind (a payload envelope) is refused
     (d / "manifest.json.sig").unlink()
-    (d / "manifest.json.sig2").write_bytes(kms_env_sign("payload.json", data))
+    (d / "manifest.json.sig2").write_bytes(env_sign("payload.json", data, DECK_SECRET))
     assert publish().returncode != 0
     (d / "manifest.json.sig2").unlink()
     r = publish()
     assert r.returncode != 0 and "no manifest.json.sig or manifest.json.sig2" in r.stderr
+
+
+def test_publish_accepts_a_nightly_key_for_a_nightly_alone(publisher):
+    nightly = publisher.package(NV)
+    (nightly / "manifest.json.sig").write_bytes(ed25519.sign(NIGHTLY_SECRET, (nightly / "manifest.json").read_bytes()))
+    r = publisher.publish(nightly)
+    assert r.returncode == 0 and "DRY RUN" in r.stdout, r.stdout + r.stderr
+    # the same key on a STABLE manifest: refused (the nightly list does not make a stable release valid)
+    stable = publisher.package("v0.4.13")
+    (stable / "manifest.json.sig").write_bytes(ed25519.sign(NIGHTLY_SECRET, (stable / "manifest.json").read_bytes()))
+    r = publisher.publish(stable)
+    assert r.returncode != 0 and "does not verify" in r.stderr, r.stdout + r.stderr
+    assert "DRY RUN" not in r.stdout
+    (stable / "manifest.json.sig").write_bytes(ed25519.sign(DECK_SECRET, (stable / "manifest.json").read_bytes()))
+    assert publisher.publish(stable).returncode == 0, "the stable key still publishes it"
+    # and the nightly list has to be there
+    (publisher.root / "launcher/nightly_keys.pub").unlink()
+    r = publisher.publish(nightly)
+    assert r.returncode != 0 and "launcher/nightly_keys.pub is not committed" in r.stderr
 
 
 def test_the_privacy_gate_takes_sig2_for_a_signature():
@@ -497,7 +561,7 @@ def test_the_privacy_gate_takes_sig2_for_a_signature():
     assert not autorelease.is_detached_signature("manifest.json.sig3", bytes(64), 0)
 
 
-# ---- cosign_release.py with the stand-in gh -------------------------------------------------------------------------------------------------
+# ---- check_draft.py with the stand-in gh -----------------------------------------------------------------------------------------------------
 REQUEST = "0123456789abcdef0123456789abcdef"
 
 
@@ -509,11 +573,13 @@ def git(repo: Path, *args: str) -> str:
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    """one release folder per channel, made like the release workflow makes it (actions_release.py cmd_sign): the packages, the Mac
-    package, KMS-sealed, the manifests and their KMS .sig2; a public remote with main and the tags"""
+    """one release folder per tag, made like the release workflow makes it (actions_release.py sign): the packages and the Mac package sealed
+    with the NIGHTLY key, the manifests and their raw X.sig by it; a public remote with main and the tags. v0.4.13 is a STABLE version signed
+    the same way (what a stolen nightly key would make). RELGH-3: the stable list holds the stable Actions key stable-2026 after the Deck
+    key; v0.4.16 is a stable release made by the workflow with it, v0.4.17 one signed by the Deck key (which never signs on GitHub)"""
     import make_macos_manifest
     from test_autorelease import mac_package_dir
-    base = tmp_path_factory.mktemp("cosign")
+    base = tmp_path_factory.mktemp("draft")
     remote = base / "public.git"
     seed = base / "seed"
     run("git", "init", "-q", "--bare", "-b", "main", remote)
@@ -535,17 +601,20 @@ def built(tmp_path_factory):
     checkout = base / "checkout"
     (checkout / "launcher").mkdir(parents=True)
     (checkout / "launcher/release_key.pub").write_text(DECK.hex() + "\n")
-    key_list(checkout / "launcher/release_keys.pub", (DECK, "deck-2026"), (KMS, "kms-2026"))
+    key_list(checkout / "launcher/release_keys.pub", (DECK, "deck-2026"), (STABLE, "stable-2026"))
+    key_list(checkout / "launcher/nightly_keys.pub", (NIGHTLY, "nightly-2026"))
     folders = {}
+    signer = {"v0.4.16": STABLE_SECRET, "v0.4.17": DECK_SECRET}
     for version, commit in (("v0.4.13-nightly.20261022", c1), ("v0.4.13", c1), ("v0.4.14-nightly.20261023", side),
-                            ("v0.4.15-nightly.20261024", c1)):
+                            ("v0.4.15-nightly.20261024", c1), ("v0.4.16", c1), ("v0.4.17", c1)):
+        secret = signer.get(version, NIGHTLY_SECRET)
         git(seed, "tag", version, c2 if version.startswith("v0.4.15") else commit)   # v0.4.15: the tag is not the manifest's commit
         d = package_dir(base / f"pkg-{version}", version)
         mac = mac_package_dir(checkout, version, base / f"mac-{version}", commit=commit)
         shutil.copy2(mac, d / mac.name)
         with open(d / f"SHA256SUMS-{version}.txt", "a") as f:
             f.write(f"{hashlib.sha256(mac.read_bytes()).hexdigest()}  {mac.name}\n")
-        seal_package.seal(d, EnvelopeSigner(), TARGET)
+        seal_package.seal(d, secret, TARGET)
         assert run(sys.executable, HERE / "make_manifest.py", d, "--repo", TARGET, "--commit", commit, "--date", "2026-10-22",
                    "--allow-untagged").returncode == 0
         sealed = base / f"{mac.name}.sealed.sha256"
@@ -553,14 +622,14 @@ def built(tmp_path_factory):
         (d / "manifest-macos.json").write_bytes(make_macos_manifest.dumps(make_macos_manifest.build(
             version, TARGET, commit, "2026-10-22", archive=d / mac.name, checksum=sealed)))
         for m in ("manifest.json", "manifest-macos.json"):
-            (d / f"{m}.sig2").write_bytes(kms_env_sign(m, (d / m).read_bytes()))
+            (d / f"{m}.sig").write_bytes(ed25519.sign(secret, (d / m).read_bytes()))
         (d / f"BUILDINFO-{version}.txt").unlink()
         folders[version] = d
     git(seed, "push", "-q", str(remote), "--tags")
     return {"remote": remote, "folders": folders, "checkout": checkout, "main": c2, "side": side}
 
 
-class Cosign:
+class Drafter:
     def __init__(self, tmp: Path, built: dict):
         self.tmp, self.built = tmp, built
         self.state = tmp / "gh.json"
@@ -569,15 +638,12 @@ class Cosign:
         self.gh.parent.mkdir()
         self.gh.write_text(f"#!/bin/bash\nexec {sys.executable} {HERE / 'gh_stand_in.py'} \"$@\"\n")
         self.gh.chmod(0o755)
-        self.key = tmp / "keys" / "deck.pem"
-        self.key.parent.mkdir()
-        self.key.write_text(ed25519.private_key_pem(DECK_SECRET))
-        self.key.chmod(0o600)
         self.keys = built["checkout"] / "launcher/release_keys.pub"
+        self.nightly = built["checkout"] / "launcher/nightly_keys.pub"
         self.runs = 0
 
     def draft(self, version: str, author: str = "github-actions[bot]", request: str = REQUEST, change=None, extra: dict | None = None,
-              created: str = "2026-10-22T01:00:00Z") -> int:
+              created: str = "2026-10-22T01:00:00Z", prerelease: bool | None = None) -> int:
         """a draft of `version` with the folder's files as its assets (change(dict name -> bytes) may tamper with them first)"""
         s = json.loads(self.state.read_text()) if self.state.exists() else {"prs": {}, "releases": [], "next": 100}
         files = {p.name: p.read_bytes() for p in sorted(self.built["folders"][version].iterdir())}
@@ -588,7 +654,8 @@ class Cosign:
         store.mkdir(exist_ok=True)
         rid = s["next"]
         s["next"] += 1
-        rel = {"id": rid, "tag_name": version, "name": f"OpenBFME {version}", "draft": True, "prerelease": "-" in version,
+        rel = {"id": rid, "tag_name": version, "name": f"OpenBFME {version}", "draft": True,
+               "prerelease": "-" in version if prerelease is None else prerelease,
                "body": f"OpenBFME {version}: signed on GitHub Actions (run 7).\n\nopenbfme-release-request: {request}\n",
                "assets": [], "author": {"login": author}, "created_at": created}
         for name, data in files.items():
@@ -604,70 +671,41 @@ class Cosign:
     def release(self, rid: int) -> dict:
         return next(r for r in json.loads(self.state.read_text())["releases"] if r["id"] == rid)
 
-    def run(self, version: str, rid: int, *extra, request: str = REQUEST, fault: str = "", policy: Path | None = None):
+    def run(self, version: str, rid: int, *extra, request: str = REQUEST, fault: str = "", keys: Path | None = None,
+            nightly: Path | None = None):
         self.runs += 1
         out = self.tmp / f"out-{self.runs}"
-        r = run(sys.executable, HERE / "cosign_release.py", "--repo", TARGET, "--tag", version, "--release-id", rid, "--request", request,
-                "--out", out, "--key", self.key, "--keys", self.keys, "--policy", policy or release_keys.POLICY_FILE, *extra,
+        r = run(sys.executable, HERE / "check_draft.py", "--repo", TARGET, "--tag", version, "--release-id", rid, "--request", request,
+                "--out", out, "--keys", keys or self.keys, "--nightly-keys", nightly or self.nightly, *extra,
                 env={"GH": str(self.gh), "FAKE_GH_STATE": str(self.state), "FAKE_GH_REMOTE": str(self.built["remote"]),
                      "FAKE_GH_LOG": str(self.log), "FAKE_GH_FAULT": fault})
         return r, out
 
 
 @pytest.fixture
-def cosign(tmp_path, built):
-    return Cosign(tmp_path, built)
+def drafts(tmp_path, built):
+    return Drafter(tmp_path, built)
 
 
-def sig_assets(rel: dict) -> list[str]:
-    return sorted(a["name"] for a in rel["assets"] if a["name"].endswith(".sig"))
+NIGHTLY_TAG = "v0.4.13-nightly.20261022"
 
 
-@pytest.mark.parametrize("version", ["v0.4.13-nightly.20261022", "v0.4.13"])
-def test_cosign_adds_the_deck_signature_and_is_idempotent(cosign, version):
-    rid = cosign.draft(version)
-    before = cosign.release(rid)
-    r, out = cosign.run(version, rid)
-    assert r.returncode == 0 and f"COSIGN {version}: co-signed manifest.json.sig, manifest-macos.json.sig" in r.stdout, r.stdout + r.stderr
-    rel = cosign.release(rid)
-    assert sig_assets(rel) == ["manifest-macos.json.sig", "manifest.json.sig"]
-    assert rel["draft"] is True and rel["body"] == before["body"], "never published, the body untouched (the caller publishes)"
-    store = Path(str(cosign.state) + ".d")
-    for m in ("manifest.json", "manifest-macos.json"):
-        sig = (store / str(next(a["id"] for a in rel["assets"] if a["name"] == f"{m}.sig"))).read_bytes()
-        data = (out / m).read_bytes()
-        assert ed25519.verify(DECK, data, sig), "the Deck key's raw signature: what every launcher before SIGNKMS-1 reads"
-        assert (out / f"{m}.sig").read_bytes() == sig
+def test_check_draft_passes_a_nightly_draft_and_changes_nothing(drafts):
+    rid = drafts.draft(NIGHTLY_TAG)
+    before = drafts.release(rid)
+    r, out = drafts.run(NIGHTLY_TAG, rid)
+    assert r.returncode == 0 and f"DRAFT CHECK {NIGHTLY_TAG}: checks passed (signed by the nightly key; nothing added)" in r.stdout, \
+        r.stdout + r.stderr
+    rel = drafts.release(rid)
+    assert rel == before and rel["draft"] is True, "never published, nothing added or changed"
     assert sorted(p.name for p in out.iterdir()) == sorted(a["name"] for a in rel["assets"]), "the kept folder is exactly the release"
-    assert "uploads.github.com" in cosign.log.read_text() and "--method PATCH" not in cosign.log.read_text()
-    # the second run signs nothing, uploads nothing
-    cosign.log.unlink()
-    r, _ = cosign.run(version, rid)
-    assert r.returncode == 0 and "already co-signed (nothing signed)" in r.stdout, r.stdout + r.stderr
-    assert len(cosign.release(rid)["assets"]) == len(rel["assets"]) and "uploads.github.com" not in cosign.log.read_text()
-
-
-def test_cosign_check_only_and_the_kms_phase(cosign, tmp_path):
-    version = "v0.4.13-nightly.20261022"
-    rid = cosign.draft(version)
-    r, _ = cosign.run(version, rid, "--check-only")
-    assert r.returncode == 0 and "checks passed (manifest.json, manifest-macos.json to co-sign)" in r.stdout, r.stdout + r.stderr
-    assert sig_assets(cosign.release(rid)) == []
-    policy = tmp_path / "kms-policy.json"
-    policy.write_text(json.dumps({"phase": "kms", "kms_label": "kms-2026", "legacy_label": "deck-2026"}))
-    r, _ = cosign.run(version, rid, policy=policy)
-    assert r.returncode == 1 and "manifest.json has no manifest.json.sig (the KMS signature)" in r.stdout, r.stdout
-    folder = cosign.built["folders"][version]
-    kms_sigs = {f"{m}.sig": (folder / f"{m}.sig2").read_bytes() for m in ("manifest.json", "manifest-macos.json")}
-    rid2 = cosign.draft(version, extra=kms_sigs, created="2026-10-22T02:00:00Z")
-    r, _ = cosign.run(version, rid2, policy=policy)
-    assert r.returncode == 0 and "phase kms: nothing added" in r.stdout, r.stdout + r.stderr
-    assert len(cosign.release(rid2)["assets"]) == len(list(folder.iterdir())) + 2
-    # in the kms phase a Deck-signed .sig is not the KMS signature
-    deck = {f"{m}.sig": ed25519.sign(DECK_SECRET, (folder / m).read_bytes()) for m in ("manifest.json", "manifest-macos.json")}
-    rid3 = cosign.draft(version, extra=deck, created="2026-10-22T03:00:00Z")
-    r, _ = cosign.run(version, rid3, policy=policy)
-    assert r.returncode == 1 and "manifest.json.sig is not the kms-2026 key's envelope signature" in r.stdout
+    assert not any(p.name.endswith(".sig2") for p in out.iterdir())
+    log = drafts.log.read_text()
+    assert "uploads.github.com" not in log and "--method PATCH" not in log and "--method POST" not in log and "--method DELETE" not in log
+    for m in ("manifest.json", "manifest-macos.json"):
+        got = release_keys.verify_scoped(release_keys.load(drafts.keys), release_keys.load_nightly(drafts.nightly, None), m,
+                                         (out / m).read_bytes(), (out / f"{m}.sig").read_bytes())
+        assert got == ("nightly-2026", "raw")
 
 
 def tamper_archive(files: dict) -> None:
@@ -675,16 +713,24 @@ def tamper_archive(files: dict) -> None:
     files[name] = files[name] + b"\0"
 
 
-def unknown_sig2(files: dict) -> None:
-    files["manifest.json.sig2"] = kms_env_sign("manifest.json", files["manifest.json"], OTHER_SECRET)
+def sig2_present(files: dict) -> None:
+    files["manifest.json.sig2"] = env_sign("manifest.json", files["manifest.json"])
 
 
-def deck_sig2(files: dict) -> None:
-    files["manifest.json.sig2"] = ed25519.sign(DECK_SECRET, files["manifest.json"])   # a trusted key, but not the KMS envelope
+def deck_sig(files: dict) -> None:
+    files["manifest.json.sig"] = ed25519.sign(DECK_SECRET, files["manifest.json"])    # a trusted key, but not a nightly key's
 
 
-def bad_sig(files: dict) -> None:
+def unknown_sig(files: dict) -> None:
     files["manifest.json.sig"] = ed25519.sign(OTHER_SECRET, files["manifest.json"])
+
+
+def envelope_sig(files: dict) -> None:
+    files["manifest.json.sig"] = env_sign("manifest.json", files["manifest.json"])    # the nightly key, the wrong scheme
+
+
+def no_sig(files: dict) -> None:
+    del files["manifest-macos.json.sig"]
 
 
 def extra_asset(files: dict) -> None:
@@ -697,63 +743,119 @@ def changed_mac(files: dict) -> None:
 
 
 @pytest.mark.parametrize("version,kw,why", [
-    ("v0.4.13-nightly.20261022", {"change": tamper_archive}, "make_manifest.py --check"),
-    ("v0.4.13-nightly.20261022", {"change": changed_mac}, "make_macos_manifest.py --check"),
-    ("v0.4.13-nightly.20261022", {"change": unknown_sig2}, "manifest.json.sig2 is not the kms-2026 key's envelope signature"),
-    ("v0.4.13-nightly.20261022", {"change": deck_sig2}, "manifest.json.sig2 is not the kms-2026 key's envelope signature"),
-    ("v0.4.13-nightly.20261022", {"change": bad_sig}, "manifest.json.sig exists but does NOT verify"),
-    ("v0.4.13-nightly.20261022", {"change": extra_asset}, "extra ['notes.txt']"),
-    ("v0.4.13-nightly.20261022", {"author": "someone"}, "not created by the release workflow"),
-    ("v0.4.13-nightly.20261022", {"request": "f" * 32}, "does not carry the line"),
+    (NIGHTLY_TAG, {"change": tamper_archive}, "make_manifest.py --check"),
+    (NIGHTLY_TAG, {"change": changed_mac}, "make_macos_manifest.py --check"),
+    (NIGHTLY_TAG, {"change": sig2_present}, "manifest.json.sig2 exists"),
+    (NIGHTLY_TAG, {"change": deck_sig}, "manifest.json.sig is not a nightly key's signature"),
+    (NIGHTLY_TAG, {"change": unknown_sig}, "manifest.json.sig is not a nightly key's signature"),
+    (NIGHTLY_TAG, {"change": envelope_sig}, "manifest.json.sig is not a nightly key's signature"),
+    (NIGHTLY_TAG, {"change": no_sig}, "manifest-macos.json has no manifest-macos.json.sig"),
+    (NIGHTLY_TAG, {"change": extra_asset}, "extra ['notes.txt']"),
+    (NIGHTLY_TAG, {"author": "someone"}, "not created by the release workflow"),
+    (NIGHTLY_TAG, {"request": "f" * 32}, "does not carry the line"),
+    (NIGHTLY_TAG, {"prerelease": False}, "pre-release flag"),
     ("v0.4.14-nightly.20261023", {}, "is not on the public main"),
     ("v0.4.15-nightly.20261024", {}, "not the manifest's commit"),
+    # a STABLE version signed by the nightly key (a stolen key): the scope rule refuses its signatures
+    ("v0.4.13", {}, "manifest.json.sig is not the stable Actions key stable-2026's signature"),
+    ("v0.4.13", {"prerelease": True}, "pre-release flag"),
+    # RELGH-3: a stable draft signed by the Deck key (it never signs on GitHub) or by an unknown key; flagged as a pre-release
+    ("v0.4.17", {}, "manifest.json.sig is not the stable Actions key stable-2026's signature"),
+    ("v0.4.16", {"change": unknown_sig}, "manifest.json.sig is not the stable Actions key stable-2026's signature"),
+    ("v0.4.16", {"change": envelope_sig}, "manifest.json.sig is not the stable Actions key stable-2026's signature"),
+    ("v0.4.16", {"prerelease": True}, "pre-release flag"),
+    ("v0.4.16", {"author": "someone"}, "not created by the release workflow"),
+    ("v0.4.16", {"change": tamper_archive}, "make_manifest.py --check"),
+    ("v0.4.16-alpha.1", {}, "neither a nightly nor a stable release"),
 ])
-def test_cosign_refuses(cosign, version, kw, why):
-    rid = cosign.draft(version, **kw)
-    before = cosign.release(rid)
-    r, _ = cosign.run(version, rid)
-    assert r.returncode == 1 and why in r.stdout and "(nothing signed)" in r.stdout, r.stdout + r.stderr
-    assert cosign.release(rid) == before, "nothing uploaded, nothing changed"
-    assert "uploads.github.com" not in cosign.log.read_text()
+def test_check_draft_refuses(drafts, version, kw, why):
+    rid = drafts.draft(version if version in drafts.built["folders"] else "v0.4.16", **kw)
+    if version not in drafts.built["folders"]:
+        s = json.loads(drafts.state.read_text())
+        s["releases"][-1]["tag_name"] = version
+        drafts.state.write_text(json.dumps(s))
+    before = drafts.release(rid)
+    r, _ = drafts.run(version, rid)
+    assert r.returncode == 1 and why in r.stdout and "DRAFT CHECK FAIL" in r.stdout, r.stdout + r.stderr
+    assert drafts.release(rid) == before, "nothing uploaded, nothing changed"
+    assert "uploads.github.com" not in drafts.log.read_text()
 
 
-def test_cosign_refuses_a_stale_draft_another_tag_or_a_published_release(cosign):
-    version = "v0.4.13"
-    old = cosign.draft(version, created="2026-10-22T01:00:00Z")
-    cosign.draft(version, created="2026-10-22T02:00:00Z")
-    r, _ = cosign.run(version, old)
-    assert r.returncode == 1 and "is not the newest draft of v0.4.13" in r.stdout, r.stdout
-    r, _ = cosign.run("v0.4.13-nightly.20261022", old)
-    assert r.returncode == 1 and "the release's tag is 'v0.4.13'" in r.stdout
-    s = json.loads(cosign.state.read_text())
+def test_check_draft_refuses_a_stable_manifest_under_the_nightly_key_whatever_the_tag(drafts, built):
+    """the nightly key signs a manifest of a stable version: the scope rule alone (not the tag check) refuses that signature"""
+    keys, nightly = release_keys.load(drafts.keys), release_keys.load_nightly(drafts.nightly, None)
+    folder = built["folders"]["v0.4.13"]
+    for m in ("manifest.json", "manifest-macos.json"):
+        assert release_keys.verify_scoped(keys, nightly, m, (folder / m).read_bytes(), (folder / f"{m}.sig").read_bytes()) is None
+    # and its sealed payloads
+    assert seal_package.check(folder, keys, TARGET, nightly) != []
+    # RELGH-3: a stable tag needs the stable Actions key's label among the stable keys after the Deck key
+    import check_draft
+    for label in (None, "deck-2026", "nightly-2026"):
+        c = check_draft.DraftChecker(TARGET, keys, nightly, "main", say=lambda *_: None, stable_label=label)
+        rel = {"tag_name": "v0.4.13", "draft": True}
+        with pytest.raises(check_draft.Refused, match="is not a key of launcher/release_keys.pub after its first entry"):
+            c.check_release(rel, "v0.4.13", REQUEST, drafts.tmp / "x", drafts.keys, drafts.nightly)
+
+
+def test_check_draft_passes_a_stable_draft_signed_by_the_stable_actions_key(drafts):
+    """RELGH-3: the workflow's stable draft (the owner approved the run): signed by stable-2026, a full release, nothing added"""
+    rid = drafts.draft("v0.4.16")
+    before = drafts.release(rid)
+    r, out = drafts.run("v0.4.16", rid)
+    assert r.returncode == 0 and "DRAFT CHECK v0.4.16: checks passed (signed by the stable Actions key stable-2026; nothing added)" in r.stdout, \
+        r.stdout + r.stderr
+    assert drafts.release(rid) == before and before["prerelease"] is False
+    for m in ("manifest.json", "manifest-macos.json"):
+        assert release_keys.verify_detail(release_keys.load(drafts.keys), m, (out / m).read_bytes(), (out / f"{m}.sig").read_bytes()) \
+            == ("stable-2026", "raw")
+    # another configuration's key label (the label check follows stable_environment.json)
+    cfg = json.loads((HERE / "stable_environment.json").read_text())
+    cfg["key_label"] = "stable-2027"
+    other = drafts.tmp / "env.json"
+    other.write_text(json.dumps(cfg))
+    r, _ = drafts.run("v0.4.16", rid, "--environment-config", other)
+    assert r.returncode == 1 and "'stable-2027' is not a key of launcher/release_keys.pub" in r.stdout, r.stdout + r.stderr
+
+
+def test_check_draft_refuses_a_stale_draft_another_tag_or_a_published_release(drafts):
+    old = drafts.draft(NIGHTLY_TAG, created="2026-10-22T01:00:00Z")
+    drafts.draft(NIGHTLY_TAG, created="2026-10-22T02:00:00Z")
+    r, _ = drafts.run(NIGHTLY_TAG, old)
+    assert r.returncode == 1 and f"is not the newest draft of {NIGHTLY_TAG}" in r.stdout, r.stdout
+    r, _ = drafts.run("v0.4.15-nightly.20261024", old)
+    assert r.returncode == 1 and f"the release's tag is '{NIGHTLY_TAG}'" in r.stdout
+    s = json.loads(drafts.state.read_text())
     for rel in s["releases"]:
         rel["draft"] = False
-    cosign.state.write_text(json.dumps(s))
-    r, _ = cosign.run(version, old)
+    drafts.state.write_text(json.dumps(s))
+    r, _ = drafts.run(NIGHTLY_TAG, old)
     assert r.returncode == 1 and "is not a draft" in r.stdout
-    r, _ = cosign.run(version, 99999)
+    r, _ = drafts.run(NIGHTLY_TAG, 99999)
     assert r.returncode == 1 and "Not Found" in r.stdout
 
 
-def test_cosign_refuses_a_key_that_is_not_the_deck_key_or_lies_in_a_repository(cosign, tmp_path):
-    version = "v0.4.13-nightly.20261022"
-    rid = cosign.draft(version)
-    cosign.key.write_text(ed25519.private_key_pem(OTHER_SECRET))
-    r, _ = cosign.run(version, rid)
-    assert r.returncode != 0 and "is not the trusted list's deck-2026 key" in r.stdout + r.stderr
-    cosign.key.write_text(ed25519.private_key_pem(DECK_SECRET))
-    cosign.key.chmod(0o644)
-    r, _ = cosign.run(version, rid)
-    assert r.returncode != 0 and "other users" in r.stdout + r.stderr
-    assert sig_assets(cosign.release(rid)) == []
+def test_check_draft_needs_a_usable_nightly_list(drafts, tmp_path):
+    rid = drafts.draft(NIGHTLY_TAG)
+    empty = tmp_path / "empty.pub"
+    empty.write_text("# none\n")
+    r, _ = drafts.run(NIGHTLY_TAG, rid, nightly=empty)
+    assert r.returncode != 0 and "lists no key" in r.stdout + r.stderr
+    overlap = key_list(tmp_path / "overlap.pub", (DECK, "deck-copy"))
+    r, _ = drafts.run(NIGHTLY_TAG, rid, nightly=overlap)
+    assert r.returncode != 0 and "also in" in r.stdout + r.stderr
+    # another nightly key: the draft's signature is no longer a listed key's
+    other = key_list(tmp_path / "other.pub", (OTHER, "other-2026"))
+    r, _ = drafts.run(NIGHTLY_TAG, rid, nightly=other)
+    assert r.returncode == 1 and "not a nightly key's signature" in r.stdout
+    assert drafts.release(rid)["draft"] is True
 
 
-def test_cosign_reads_back_after_a_lost_upload_answer(cosign):
-    version = "v0.4.13-nightly.20261022"
-    rid = cosign.draft(version)
-    r, _ = cosign.run(version, rid, fault="cosign-upload-lost")
-    assert r.returncode == 0 and "its answer was lost: reading the release back" in r.stdout, r.stdout + r.stderr
-    assert sig_assets(cosign.release(rid)) == ["manifest-macos.json.sig", "manifest.json.sig"]
-    rid2 = cosign.draft(version, created="2026-10-22T05:00:00Z")
-    r, _ = cosign.run(version, rid2, fault="upload-fail")
-    assert r.returncode == 1 and "asset missing: manifest.json.sig" in r.stdout and "left as it is" in r.stdout, r.stdout
+def test_check_draft_argument_checks(drafts):
+    rid = drafts.draft(NIGHTLY_TAG)
+    r, out = drafts.run(NIGHTLY_TAG, rid, request="short")
+    assert r.returncode != 0 and "32 lower-case hex" in r.stderr
+    out.mkdir()
+    r = run(sys.executable, HERE / "check_draft.py", "--repo", TARGET, "--tag", NIGHTLY_TAG, "--release-id", rid, "--request", REQUEST,
+            "--out", out, env={"GH": str(drafts.gh), "FAKE_GH_STATE": str(drafts.state), "FAKE_GH_REMOTE": str(drafts.built["remote"])})
+    assert r.returncode != 0 and "exists" in r.stderr

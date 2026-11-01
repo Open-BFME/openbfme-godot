@@ -8,6 +8,7 @@
 #endif
 
 #include "Common/Science.h"
+#include "Common/ModEngineFeatures.h"
 
 #include "Common/AsciiString.h"
 #include "Common/INIException.h"
@@ -283,6 +284,29 @@ ScienceType ScienceStore::friend_lookupScience(const char *name) const
 	return st;
 }
 
+ScienceType ScienceStore::friend_lookupScienceDeferred(const char *name)
+{
+	const ScienceType st = m_keys.nameToKey(name);
+	if (!isValidScience(st) && m_deferredPrereqs.size() < 256) // a 257th forward reference is not recorded (the patch's fixed list)
+	{
+		m_deferredPrereqs.push_back(st);
+	}
+	return st;
+}
+
+void ScienceStore::validateDeferredPrerequisites()
+{
+	std::vector<NameKeyType> pending;
+	pending.swap(m_deferredPrereqs);
+	for (NameKeyType key : pending)
+	{
+		if (!isValidScience(key))
+		{
+			throw INIException(3, "Science name %s not known! (Did you define it in Science.ini?)", m_keys.keyToName(key).c_str());
+		}
+	}
+}
+
 ScienceType ScienceStore::getScienceFromInternalName(const std::string &name) const
 {
 	const NameKeyType key = m_keys.findKey(name);
@@ -359,7 +383,15 @@ void parsePrerequisiteSciences(INI *ini, void *, void *store, const void *)
 			groups->push_back(ScienceVec());
 			continue;
 		}
-		groups->back().push_back(scanScience(token));
+		// lane MODS-3: with edain-unchained.science-prereqs the call at RW 0x73BD45 goes to the lenient lookup (0xEE4404); retail throws here
+		if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedSciencePrereqs) && TheScienceStore)
+		{
+			groups->back().push_back(TheScienceStore->friend_lookupScienceDeferred(token));
+		}
+		else
+		{
+			groups->back().push_back(scanScience(token));
+		}
 	}
 	if (groups->back().empty()) // RW 0x73BD7B
 	{

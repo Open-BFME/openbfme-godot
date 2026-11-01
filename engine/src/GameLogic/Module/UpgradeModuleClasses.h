@@ -94,30 +94,6 @@ private:
 	const ModelConditionUpgradeModuleData *m_data;
 };
 
-// GeometryUpgrade: BFME2 GeometryUpgrade.cpp (upgradeImplementation / removal); the shared mux owns CustomAnimAndDuration.
-class GeometryUpgradeModuleData : public UpgradeModuleData
-{
-public:
-	std::vector<std::string> m_showGeometry, m_hideGeometry;
-	std::string m_wallBoundsMesh, m_rampMesh1, m_rampMesh2;
-	static void buildFieldParse(MultiIniFieldParse &p);
-};
-
-class GeometryUpgrade : public UpgradeModule
-{
-public:
-	OBFME_MODULE_XFER(GeometryUpgrade)
-	GeometryUpgrade(Thing *thing, const GeometryUpgradeModuleData *data) : UpgradeModule(thing, data), m_data(data) {}
-	void crc(StateHasher &h) const override;
-protected:
-	void upgradeImplementation() override;
-	void processUpgradeRemoval() override;
-private:
-	void changeGeometry(bool upgraded);
-	const GeometryUpgradeModuleData *m_data;
-	std::string m_originalGeometry;
-};
-
 class ArmorUpgradeModuleData : public UpgradeModuleData
 {
 public:
@@ -169,6 +145,7 @@ class CommandSetUpgradeModuleData : public UpgradeModuleData
 {
 public:
 	std::string m_commandSet;
+	std::string m_commandButtons; ///< lane MODS-3: edain-unchained.commandset-button-upgrade's +0x13C (the rest of the line, ' '-joined)
 	static void buildFieldParse(MultiIniFieldParse &p);
 };
 
@@ -184,6 +161,9 @@ protected:
 	void processUpgradeRemoval() override;
 
 private:
+	// lane MODS-3: edain-unchained.commandset-button-upgrade's rebuild (0xEDB169) of the object's command set override from its CommandSetUpgrade
+	// modules; selfActive is this module's state (the others': their executed flag)
+	void rebuildCommandButtons(bool selfActive);
 	const CommandSetUpgradeModuleData *m_data;
 };
 
@@ -192,7 +172,7 @@ private:
 // (+ 0x13C), both RW 0x42EE5E strings. The implementation (mux slot 10, RW 0x8B8E2E) finds the Get button by name (TheControlBar RW 0x71D6EA) and, when it
 // exists, runs it on the object as a player command (Object::doCommandButton RW 0x696FD2(button, 0, 0)); the removal (slot 8, RW 0x8B8DFC) does the same with
 // the Remove button. Retail data: the Thrall Master's four summons (SPECIAL_POWER), the rock-throw toggles (TOGGLE_WEAPONSET) and the Hall of Twilight's
-// technologies (PLAYER_UPGRADE: not ported, S-5145).
+// technologies (PLAYER_UPGRADE: through Object::doCommandButton since lane MODS-3).
 class DoCommandUpgradeModuleData : public UpgradeModuleData
 {
 public:
@@ -288,6 +268,35 @@ private:
 	const RemoveUpgradeUpgradeModuleData *m_data;
 };
 
+// lane MODS-3: ObjectImageUpgrade, edain-unchained.object-image-upgrade (registered by its 0xEF3128 next to TooltipUpgrade; a TooltipUpgrade with its own
+// upgrade vtable 0xEF3000): the upgrade mux fields, SelectPortrait (+0x138) and ButtonImage (+0x13C), names. Implementation 0xEF320F: the object's
+// portrait / button image become these (the newest applied module with a non-empty name wins, per field); removal 0xEF3330 is `ret` (the image stays).
+// Its sidecar keeps at most 0x800 entries a session and is never saved; here the applied frame is the module's state (saved), with no cap. Only a
+// presentation read: no logic reads the images
+class ObjectImageUpgradeModuleData : public UpgradeModuleData
+{
+public:
+	std::string m_selectPortrait, m_buttonImage;
+	static void buildFieldParse(MultiIniFieldParse &p);
+};
+
+class ObjectImageUpgrade : public UpgradeModule
+{
+public:
+	OBFME_MODULE_XFER(ObjectImageUpgrade)
+	ObjectImageUpgrade(Thing *thing, const ObjectImageUpgradeModuleData *data) : UpgradeModule(thing, data), m_data(data) {}
+	// the object's override (its 0xEF3331 portrait / 0xEF3392 button image lookups), empty when no applied module names one: the retail path then
+	static std::string imageOf(const Object &obj, bool portrait);
+
+protected:
+	void upgradeImplementation() override;
+	void processUpgradeRemoval() override {}
+
+private:
+	const ObjectImageUpgradeModuleData *m_data;
+	unsigned m_appliedFrame = 0; ///< the logic frame + 1 of the last implementation; 0: never applied
+};
+
 // GrantUpgradeCreate (create RW 0x6508A3, table RW 0xC70158): UpgradeToGrant (+8, a name looked up when it is granted: RW 0x66F5E5, an unknown name grants
 // nothing), ExemptStatus (+0xC, RW 0x7B1E5C, empty by default), GiveOnBuildComplete (+0x1C). onCreate RW 0x8BD15E: without GiveOnBuildComplete, when
 // ExemptStatus holds UNDER_CONSTRUCTION and the object is not under construction, the upgrade is granted; onBuildComplete RW 0x8BD1D4: once (the create
@@ -321,7 +330,7 @@ private:
 namespace UpgradeModuleClasses
 {
 // binds the typed data and the runtime class of every class above (the economy's two are bound by EconomyModules)
-void registerAll(ModuleFactory &modules, bool bfme1Data = false);
+void registerAll(ModuleFactory &modules);
 // the counts of what the runtime could not apply (stop S-484: fades, texture swaps, house recolours), reset by resetStats
 struct Stats
 {

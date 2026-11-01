@@ -185,7 +185,7 @@ TEST_CASE("hud5 command button states retail: the retail buttons with NONPRESSAB
 
 // lane HUD-5 (Sol's review): the owner's click on the door. HelmsDeepGatehouseCenter (STRUCTURE, WALK_ON_TOP_OF_WALL, not SELECTABLE) stands around the door at
 // its position; the pick (RW 0x48AB28) takes the nearest hit, so where the door's face is in front the click selects the gate
-TEST_CASE("hud5 gate pick retail: a click on Helm's Deep's main gate selects the gate, not the gatehouse around it (RW 0x4B583C, RW 0x48AB28)")
+TEST_CASE("hud5 gate pick retail: a click on Helm's Deep's main gate (its pick box) selects the gate, not the gatehouse around it (RW 0x4B583C, RW 0x48AB28, RW 0x59C680)")
 {
 	if (!haveWorld("hud5 gate pick"))
 	{
@@ -205,7 +205,13 @@ TEST_CASE("hud5 gate pick retail: a click on Helm's Deep's main gate selects the
 	CHECK(house->isKindOfName("WALK_ON_TOP_OF_WALL")); // RW 0x4B583C gives it the selectable type all the same: the pick can meet it, the selection refuses it
 	CHECK(HudObjects::collisionTypeOf(g.hud->input().context(), *house) == (HudObjects::PICK_TYPE_SELECTABLE | HudObjects::PICK_TYPE_OWN));
 	CHECK(HudObjects::collisionTypeOf(g.hud->input().context(), *gate) == (HudObjects::PICK_TYPE_SELECTABLE | HudObjects::PICK_TYPE_OWN));
-	const Coord3D p = *gate->getPosition();
+	// lane SELECT-1: RotWK's pick meets the gate by its model's oriented box (HLodClass::Cast_Ray RW 0x59C680), RBHDGATDR.OB on bone 10 over the winch,
+	// not by the door panels' triangles: the click goes to the box's centre
+	const Drawable *gd = g.rig.game->drawables().findByObject(gate->getID());
+	REQUIRE(gd != nullptr);
+	const std::vector<Coord3D> box = pickBoxPoints(*gd);
+	REQUIRE(box.size() == 7);
+	const Coord3D p = box[0];
 	g.rig.lookAt(p, 420.0f, 520.0f);
 	g.frames(3);
 	const ICoord2D px = g.rig.screenOf(p);

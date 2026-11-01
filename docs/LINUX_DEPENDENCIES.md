@@ -94,8 +94,9 @@ re-implementing that for systems older than 2013; Godot itself needs 2.28.
   - under QEMU as AArch64 (Cortex-A72, a standalone build of the same test file without the Lua case);
   - natively on Windows (llvm-mingw / UCRT build; the Lua case included, and 899,999 FMAs equal to the instruction).
 - **The host libraries differ:** Windows' libm differs from the port on 39,218 of 780,000 results, AArch64 glibc's on 25,096 of 780,000.
-- **macOS: not run.** This tree has no macOS build script and no macOS runner (no `mac` host). AArch64 Linux under QEMU is the closest
-  check made; no claim is made for macOS itself (Apple's clang, its libc++ and its Godot template are untested).
+- **macOS: not run in the DEP-2 measurements above.** AArch64 Linux under QEMU was the closest check in that evidence set; it did not
+  validate Apple's clang, libc++ or Godot template. The current Apple Silicon build/package path is documented in [MACOS.md](MACOS.md);
+  its existence does not add a macOS result to these historical measurements.
 
 The CI hosts' own toolchain (Ubuntu 24.04 headers) still produces an extension that needs GLIBC 2.38 (`__isoc23_*` and others). That build is
 for tests, not for players.

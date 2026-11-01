@@ -11,6 +11,8 @@
 ##   rohirrim  G8: Rohirrim shoot standing, then while riding past (missing fire animations, arrows out of the bodies)
 ##   charge    G4: Knights of Dol Amroth charge an orc horde (knock-back, slow-down)
 ##   garrison  G6: a Gondor archer horde garrisons a keep through a click and leaves through the Evacuate button (the common exit)
+##   garrison4 GARRISON-4 (the owner's 2026-10-22 report): a Gondor archer horde garrisons a NEUTRAL ruined tower through a click; the tower becomes
+##             the player's (RW 0x87C6CE), its exit button is enabled and lets them out, and the tower turns neutral again
 ##   grond     G7 / FB-0002: Grond moves once its crew is drawn (the trolls push, the wheels turn)
 ##   wall      F7: a wall hub's Begin Wall Span button and a click (the span rises along its length)
 ##   produce   QA-2's treadmill finding: a barracks trains three soldier hordes through its buttons; every member's AI state is counted for 60 s
@@ -160,6 +162,8 @@ func scene(name: String) -> Dictionary:
 			await _scene_charge()
 		"garrison":
 			await _scene_garrison()
+		"garrison4":
+			await _scene_garrison4()
 		"grond":
 			await _scene_grond()
 		"wall":
@@ -434,6 +438,84 @@ func _scene_garrison() -> void:
 		print("QA scene garrison exit t+%.1f s: %s" % [1.5 * (i + 1), _state_line(archers)])
 	_rec_stop()
 	_shot("garrison-end")
+
+
+## lane GARRISON-4: the neutral player is index 0 of the player list (PlayerList::getNeutralPlayer)
+func _scene_garrison4() -> void:
+	var ang := _dir.angle()
+	# 160 apart, as the C++ input test: the archers' vision lifts the shroud over the tower (canEnterObject refuses a shrouded container, RW 0x82CBD5)
+	var tower := _hook_create("RuinedTower_Open", 0, _spot + _dir * 40.0, 0.0)
+	var archers := _hook_create("GondorArcherHorde", _local_index(), _spot - _dir * 120.0, ang)
+	await _wait_game(3.0)
+	await _zoom_in(_spot)
+	_shot("garrison4-start")
+	await _record("garrison4", 1.0)
+	print("QA scene garrison4 movie frame start %d" % Engine.get_frames_drawn()) # where a --write-movie capture of the run is cut
+	if not await _select_id(archers):
+		issue("scene_select_failed", "garrison4", "the archers could not be selected")
+		return
+	await _wait_game(1.0) # a second click soon after the selecting one would be a double click
+	var before: int = _hud.get_message_log().size()
+	var tp: Dictionary = _world.get_object(tower)
+	_hud.inject_mouse_move(_hud.world_to_pixel(Vector2(tp.get("x", 0.0), tp.get("y", 0.0))))
+	await _frames(4)
+	print("QA scene garrison4 before the click: selection %s, tower shroud status %d, cursor %s" % [str(_hud.get_selection()),
+		_world.get_object_shroud_status(tower), JSON.stringify(_hud.get_state().get("cursor"))])
+	await _click_object(tower)
+	await _frames(3)
+	var sent := _order_log_since(before)
+	if not str(sent).contains("MSG_ENTER"):
+		# RotWK's default mouse is the alternate setup (GlobalData m_useAlternateMouse, RW 0x642A4B): the left click selected the tower, the right click orders
+		await _deselect()
+		if not await _select_id(archers):
+			issue("scene_select_failed", "garrison4", "the archers could not be selected again")
+			return
+		await _wait_game(1.0)
+		before = _hud.get_message_log().size()
+		var tq: Dictionary = _world.get_object(tower)
+		await _click_world(Vector2(tq.get("x", 0.0), tq.get("y", 0.0)), 2)
+		await _frames(3)
+		sent = _order_log_since(before)
+	print("QA scene garrison4 order: %s" % str(sent))
+	var inside := false
+	for i in 60:
+		await _wait_game(0.5)
+		var g: Dictionary = _world.get_garrison(tower)
+		# the ruined tower shows its archers on its points (members_hidden stays 0): the horde is in once it is garrisoned and nobody is on the way
+		if g.get("count", 0) >= 1 and g.get("entering", 1) == 0 and g.get("horde_garrisoned", false):
+			inside = true
+			break
+	print("QA scene garrison4: inside %s, %s" % [str(inside), JSON.stringify(_world.get_garrison(tower))])
+	if not inside:
+		issue("scene_order", "garrison4", "a click on the neutral tower with the archers selected did not garrison them in 30 s")
+		return
+	await _deselect()
+	if not await _select_id(tower):
+		issue("scene_select_failed", "garrison4", "the tower could not be selected")
+		return
+	await _wait_game(1.5)
+	var exit := {}
+	var buttons: Array = _hud.get_command_buttons()
+	print("QA scene garrison4 tower buttons: %s" % str(buttons.map(func(x): return "%s %s state %d" % [x.name, x.command, x.state])))
+	for b in buttons:
+		if (b.command == "EVACUATE" or b.command == "EXIT_CONTAINER") and exit.is_empty():
+			exit = b
+	if exit.is_empty():
+		issue("scene_order", "garrison4", "the selected tower shows no exit button")
+		return
+	if exit.state != 1: # ButtonState::Enabled
+		issue("scene_order", "garrison4", "the tower's exit button is not enabled (state %d): the owner's report" % exit.state)
+	_shot("garrison4-selected")
+	before = _hud.get_message_log().size()
+	await _press(exit)
+	await _frames(3)
+	print("QA scene garrison4 exit: %s" % str(_order_log_since(before)))
+	for i in 6:
+		await _wait_game(1.5)
+		print("QA scene garrison4 exit t+%.1f s: %s; tower %s" % [1.5 * (i + 1), _state_line(archers), JSON.stringify(_world.get_garrison(tower))])
+	_rec_stop()
+	print("QA scene garrison4 movie frame end %d" % Engine.get_frames_drawn())
+	_shot("garrison4-end")
 
 
 func _scene_grond() -> void:

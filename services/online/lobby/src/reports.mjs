@@ -1,3 +1,5 @@
+import { repairStoredText } from './stored-text.mjs';
+
 const VERSION = 1;
 export const REPORT_TTL_S = 90 * 24 * 60 * 60;
 export const REPORT_WINDOW_S = 24 * 60 * 60;
@@ -84,6 +86,7 @@ export function reportRosterFromGame(game, endedAt = game.reportEndedAt ?? null)
 }
 
 export function normalizeRoster(value, expectedGameId = null) {
+  value = repairStoredText(value);
   exactFields(value, ['game_id', 'participants', 'active', 'state', 'ended_at'], 'stored report roster');
   if (typeof value.game_id !== 'string' || !GAME_ID.test(value.game_id) || (expectedGameId && value.game_id !== expectedGameId)) {
     throw new Error('stored report roster game id is invalid');
@@ -170,6 +173,7 @@ export function validReceipt(value) {
 }
 
 export function validateReportSource(value, expectedId = null) {
+  value = repairStoredText(value);
   exactFields(value, ['id', 'source', 'reporter', 'target', 'game_id', 'reason', 'received_at', 'expires_at'], 'stored report');
   if (typeof value.id !== 'string' || !REPORT_ID.test(value.id) || (expectedId && value.id !== expectedId) || value.source !== 'player') {
     throw new Error('stored report identity is invalid');
@@ -448,12 +452,19 @@ export async function readPlayerReports({ store, now, hmac, modKey, after = null
     for (const [key, value] of rows) {
       const match = INDEX_KEY.exec(key);
       if (!match || !value || typeof value !== 'object' || value.id !== match[2] || !Number.isSafeInteger(value.expires_at)) {
-        throw new Error('stored report index is malformed');
+        console.warn('lobby: skipping malformed stored report index');
+        continue;
       }
       if (value.expires_at <= nowSeconds) continue;
       const report = await tx.get(`report:${value.id}`);
       if (!report) continue;
-      const source = validateReportSource(report, value.id);
+      let source;
+      try {
+        source = validateReportSource(report, value.id);
+      } catch {
+        console.warn(`lobby: skipping malformed stored report ${value.id}`);
+        continue;
+      }
       if (source.expires_at > nowSeconds) items.push(source);
     }
     const lastKey = rows.size === pageSize ? [...rows.keys()].at(-1) : null;
@@ -468,7 +479,13 @@ export async function readPlayerReport({ store, now, reportId }) {
   return store.reportTransaction(async (tx) => {
     const value = await tx.get(`report:${reportId}`);
     if (!value) throw fail(404, 'no_report', 'no such report');
-    const source = validateReportSource(value, reportId);
+    let source;
+    try {
+      source = validateReportSource(value, reportId);
+    } catch {
+      console.warn(`lobby: skipping malformed stored report ${reportId}`);
+      throw fail(404, 'no_report', 'no such report');
+    }
     if (source.expires_at <= nowSeconds) throw fail(404, 'no_report', 'no such report');
     return { v: VERSION, report: source };
   });

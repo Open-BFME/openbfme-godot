@@ -12,6 +12,7 @@
 #include "Common/Audio/GameAudio.h"
 #include "Common/Audio/SimulatedAudioDevice.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <set>
@@ -764,4 +765,47 @@ TEST_CASE("audio manager: unverified stops S-240 .. S-249, S-1930 and S-1931 are
 	}
 	CHECK(ids.count("S-1930") == 1); // lane AUDIO-5: the Miles provider / stereo image
 	CHECK(ids.count("S-1931") == 1);
+}
+
+// lane MENUSND-1: the menus' FSCommand PlaySound builds its event with view type 2 (RW 0x815772 -> RW 0x6DA95E(&event, 2)); the view gate of
+// getEffectiveVolume (RW 0x4591DF) mutes only a tactical event outside the tactical view and a Living World one outside that view. So a menu's click
+// sounds over the Living World map as over a battle, where a tactical event of the same INI is silent
+TEST_CASE("audio manager: playUiSound (the menus' PlaySound) is heard in either view; a tactical event of the same INI is muted outside the tactical view")
+{
+	Rig r("AudioEvent ClickUi\n  Sounds = a\n  Type = ui player\n  Limit = 0\nEnd\nAudioEvent ClickTactical\n  Sounds = a\n  Type = ui player\n  Limit = 0\nEnd\n",
+		{ { snd("a"), 500.0 } });
+	r.mgr->setIdleWorldQueries(AudioWorldQueries::noGamePlayerList());
+	r.mgr->setCurrentView(VIEW_LIVING_WORLD);
+	CHECK(r.mgr->playUiSound("ClickUi") == AHSV_FirstHandle);
+	CHECK(r.mgr->playSound("ClickTactical") == AHSV_FirstHandle + 1);
+	r.run(50.0);
+	auto loudest = [&](const char *event) {
+		float v = -1.0f;
+		for (const auto &e : r.device->voices())
+		{
+			if (e.second.start.eventName == event && !e.second.stopped)
+			{
+				v = std::max(v, e.second.params.volume);
+			}
+		}
+		return v;
+	};
+	// the volume either event has where its view is the current one: the same INI, so the same value
+	AudioEventRTS reference("ClickTactical");
+	reference.setAudioEventInfo(r.ini.infos.find("ClickTactical"));
+	r.mgr->setCurrentView(VIEW_TACTICAL);
+	const float heard = r.mgr->getEffectiveVolume(reference);
+	r.mgr->setCurrentView(VIEW_LIVING_WORLD);
+	REQUIRE(heard == 1.0f); // kBase's sliders are full and the INI's Volume is the default 100
+	CHECK(loudest("ClickUi") == heard);
+	CHECK(loudest("ClickTactical") == 0.0f); // the view gate
+	// and in the tactical view both are heard (the two 500 ms sounds end first: the fixture has two 2D sample channels, kBase SampleCount2D)
+	r.run(600.0);
+	CHECK(r.mgr->playingCount(VoiceKind::Sample2D) == 0);
+	r.mgr->setCurrentView(VIEW_TACTICAL);
+	CHECK(r.mgr->playUiSound("ClickUi") == AHSV_FirstHandle + 2);
+	CHECK(r.mgr->playSound("ClickTactical") == AHSV_FirstHandle + 3);
+	r.run(50.0);
+	CHECK(loudest("ClickUi") == heard);
+	CHECK(loudest("ClickTactical") == heard);
 }

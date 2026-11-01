@@ -58,19 +58,32 @@ def test_custom_key_labels_trial_without_enabling_test_overrides(tmp_path, offic
     keys = f"{key},{'56' * 32}"
     official_arg = {True: keys, False: "34" * 32, None: "", "longer": keys + "," + "78" * 32}[official]
     script = (HERE / "build_launcher.sh").read_text()
-    build_info = script.split('"$TEST_BUILD" "$OFFICIAL" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]
+    build_info = script.split('"$TEST_BUILD" "$OFFICIAL" "$NIGHTLY" "$OFFICIAL_NIGHTLY" <<\'EOF\'\n', 1)[1].split("\nEOF", 1)[0]
     info_path = tmp_path / "build_info.json"
     result = run(sys.executable, "-", info_path, "v0.0.0-alpha.9", COMMIT, "2026-10-15", "Test/repo", key, keys, "false", official_arg,
-                 input=build_info)
+                 "[]", "[]", input=build_info)
     assert result.returncode == 0, result.stderr
     info = json.loads(info_path.read_text())
     assert info["local_trial"] is (official is not True)
     assert info["test_build"] is False
     assert info["release_key"] == key
     assert info["release_keys"] == keys.split(",")
+    assert info["nightly_keys"] == []
     bad = run(sys.executable, "-", info_path, "v0.0.0-alpha.9", COMMIT, "2026-10-15", "Test/repo", "56" * 32, keys, "false", keys,
-              input=build_info)
+              "[]", "[]", input=build_info)
     assert bad.returncode != 0 and "release_keys does not begin with release_key" in bad.stderr, bad.stderr
+    # lane RELGH-2: a nightly list other than the staged launcher's own makes a local trial; a nightly key that is a release key is refused
+    n = json.dumps(["9a" * 32])
+    other = run(sys.executable, "-", info_path, "v0.0.0-alpha.9", COMMIT, "2026-10-15", "Test/repo", key, keys, "false", keys, n, "[]",
+                input=build_info)
+    assert other.returncode == 0 and json.loads(info_path.read_text())["local_trial"] is True, other.stderr
+    same = run(sys.executable, "-", info_path, "v0.0.0-alpha.9", COMMIT, "2026-10-15", "Test/repo", key, keys, "false", keys, n, n,
+               input=build_info)
+    assert same.returncode == 0 and json.loads(info_path.read_text())["local_trial"] is False, same.stderr
+    assert json.loads(info_path.read_text())["nightly_keys"] == ["9a" * 32]
+    clash = run(sys.executable, "-", info_path, "v0.0.0-alpha.9", COMMIT, "2026-10-15", "Test/repo", key, keys, "false", keys,
+                json.dumps([key]), "[]", input=build_info)
+    assert clash.returncode != 0 and "nightly_keys holds a release key" in clash.stderr, clash.stderr
 
 
 def test_build_launcher_checks_the_key_list_before_anything_is_built(tmp_path):
@@ -722,8 +735,8 @@ def test_onlinemenu1_the_launcher_account_page_talks_only_to_the_named_lobby():
     assert "_policy.set_lobby(url) != \"\"" in oauth and 'func _url(path: String) -> String:\n\treturn lobby_url.trim_suffix("/") + path' in oauth
     assert re.findall(r"(?<!func )(?<![\w.])_request\((.*?),", oauth) == ['_url("/v1/auth/oauth/accounts")', '_url("/v1/auth/email/poll")', "_url(path)"]
     assert oauth.count(".listen(") == 1 and '_server.listen(CALLBACK_PORT, "127.0.0.1")' in oauth
-    assert oauth.count("OS.shell_open(") == 2
-    first, second = oauth.index("OS.shell_open(value.authorization_url)"), oauth.index("OS.shell_open(value.url)")
+    assert "OS.shell_open(" not in oauth and oauth.count('.open_url(') == 2
+    first, second = oauth.index('.open_url(value.authorization_url)'), oauth.index('.open_url(value.url)')
     # each open follows its URL check in the same response branch
     start, email = oauth.rindex('elif _request_kind == "start":', 0, first), oauth.rindex('elif _request_kind == "email_start":', 0, second)
     assert "if not _allowed_authorization(value.authorization_url):" in oauth[start:first]

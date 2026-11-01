@@ -4,6 +4,7 @@
 #include "Common/Thing/KindOfTokens.h"
 
 #include "Common/AsciiString.h"
+#include "Common/ModEngineFeatures.h"
 
 #include <algorithm>
 #include <string>
@@ -42,25 +43,50 @@ int compareFolded(std::string_view a, const std::string &folded)
 	return a.size() == folded.size() ? 0 : (a.size() < folded.size() ? -1 : 1);
 }
 
-const std::vector<FoldedName> &foldedNames()
+std::vector<FoldedName> buildFolded(const char *const *names)
 {
-	static const std::vector<FoldedName> table = [] {
-		std::vector<FoldedName> t;
+	std::vector<FoldedName> t;
+	for (int i = 0; names[i]; ++i)
+	{
+		std::string f = names[i];
+		for (char &c : f)
+		{
+			c = lowerAscii(c);
+		}
+		t.push_back(FoldedName{ std::move(f), i });
+	}
+	std::stable_sort(t.begin(), t.end(), [](const FoldedName &a, const FoldedName &b) { return a.folded < b.folded; }); // equal names stay in index order
+	return t;
+}
+
+const char *const *extendedNames()
+{
+	static const std::vector<const char *> table = [] {
+		std::vector<const char *> t;
 		for (int i = 0; TheKindOfNames[i]; ++i)
 		{
-			std::string f = TheKindOfNames[i];
-			for (char &c : f)
-			{
-				c = lowerAscii(c);
-			}
-			t.push_back(FoldedName{ std::move(f), i });
+			t.push_back(TheKindOfNames[i]);
 		}
-		std::stable_sort(t.begin(), t.end(), [](const FoldedName &a, const FoldedName &b) { return a.folded < b.folded; }); // equal names stay in index order
+		t.push_back("HEROBAR");       // bit 222 (Edain Unchained .hbar)
+		t.push_back("HEROBAR_GROUP"); // bit 223
+		t.push_back(nullptr);
 		return t;
 	}();
-	return table;
+	return table.data();
+}
+
+const std::vector<FoldedName> &foldedNames()
+{
+	static const std::vector<FoldedName> retail = buildFolded(TheKindOfNames);
+	static const std::vector<FoldedName> extended = buildFolded(extendedNames());
+	return ModEngineFeatures::has(ModEngineFeature::EdainUnchainedHerobarKindOf) ? extended : retail;
 }
 } // namespace
+
+const char *const *KindOfTokens::names()
+{
+	return ModEngineFeatures::has(ModEngineFeature::EdainUnchainedHerobarKindOf) ? extendedNames() : TheKindOfNames;
+}
 
 int KindOfTokens::indexOf(std::string_view name)
 {

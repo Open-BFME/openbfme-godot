@@ -39,7 +39,15 @@ public:
 	bool run(const std::string &script, W3DDrawScriptApi &api, std::string *returned, std::string *error) override;
 
 	// the chunk name of the next runs (retail: the drawable's object template name; "" when it has none)
-	void setChunkName(const std::string &name) { m_chunkName = name; }
+	// The same template name is installed for every client frame of a drawable. Skip the std::string assign when it is already there.
+	void setChunkName(const std::string &name)
+	{
+		if (m_chunkName == name)
+		{
+			return;
+		}
+		m_chunkName = name;
+	}
 
 	LuaReportSink &reports() { return m_sink; }
 	const LuaReportSink &reports() const { return m_sink; }

@@ -4,7 +4,7 @@ Two ways to build the Windows x64 game:
 
 | | Reference: MSVC | Cross-compile from Linux: llvm-mingw |
 |---|---|---|
-| Host | Windows 10 / 11 with Visual Studio 2022 (C++ x64 tools), CMake, Ninja | any x86-64 Linux with cmake, ninja, python3, curl |
+| Host | Windows 10 / 11 with Visual Studio 2022 (C++ x64/x86 tools), CMake, Ninja | x86-64 Linux with CMake >= 3.17, Ninja, Python 3, Git, curl, tar, xz, unzip, sha256sum, sha512sum; Godot 4.7.2 for export |
 | Command | `build.bat` (then `run_tests.bat`) | `tools/release/build_windows.sh` |
 | Compiler / runtime | cl `/fp:strict`, static MSVC CRT | Clang 23 + lld + libc++ against the UCRT (llvm-mingw 20261006, static C++ runtime) |
 | Output | `godot/bin/openbfme.windows.template_*.dll`, `engine/build/openbfme_tests.exe` | the same DLL, `build/windows/build/openbfme_tests.exe` / `openbfme_peer.exe`, and the exported game in `build/windows/export/` |
@@ -12,19 +12,21 @@ Two ways to build the Windows x64 game:
 ## What `build.bat` and `run_tests.bat` need (GitHub #23)
 
 - Visual Studio 2022 or newer (or its Build Tools) with the C++ x64 and x86 tools; `build.bat` and `run_tests.bat` find them through
-  `vswhere` and set up the developer environment themselves (no developer prompt needed). CMake and Ninja on `PATH` (Visual Studio's own work).
+  `vswhere` and set up the compiler environment themselves. The full `run_tests.bat` gate still needs an x64 Native Tools Developer Command
+  Prompt for the audit's `INCLUDE` paths. CMake and Ninja must be on `PATH` (Visual Studio's own work).
 - Git (the godot-cpp submodule, the build's version string).
-- Python 3 from python.org (`py -3`; the `python3` in a stock Windows is the Microsoft Store stub) for the simulation audit and the MP3
-  fixtures; the audit also needs the `libclang` package (`py -3 -m pip install libclang==18.1.1`, stop S-230).
-- **lame and mpg123 on `PATH`**: the five MP3 decode cases read synthetic MP3 streams the build generates with them
+- Python 3 from python.org, with `python` on `PATH` (`run_tests.bat` invokes it directly), for the simulation audit and the MP3
+  fixtures. The audit needs x64 LLVM 19 or newer and matching Python `clang` bindings; follow [the Windows AST setup](../tools/sim/README.md#windows-msvc).
+- **LAME 3.100 and mpg123 on `PATH`**, only for generation: the five MP3 decode cases read synthetic MP3 streams the build generates with them
   (`tools/audio/gen_mp3_fixtures.py`, never committed). Windows builds: LAME from RareWares (the "LAME Bundle"), mpg123 from mpg123.de
-  (`download/win64`). Without them those five cases fail loudly, by design; `build.bat` ends with the warning and `run_tests.bat` names it
-  before the unit tests.
+  (`download/win64`). Without tools **and** valid pre-generated fixtures, configure warns once and builds successfully; the five MP3 cases fail at test time with the tool/version reason and exact generation command. To use reference fixtures generated outside a
+  sandbox, see the [MP3 test README](../engine/tests/data/audio/README.md). Verified pre-generated files need no tools or extra flag.
+  Only LAME 3.100 may generate fixtures; `build.bat` and `build.bat Release` need no MP3 fixtures/tools to build.
 - `GODOT` = the Godot 4.7 console executable for the smoke and shader tests.
 
-Known limit: libclang 18.1.1 cannot parse the MSVC 14.50 (VS 2026) STL (`STL1000: Unexpected compiler version, expected Clang 19.0.0 or
-newer`), so the audit's AST step fails there; `set SIM_AUDIT_ARGS=--ast=skip` before `run_tests.bat` runs the other audit steps and reports the AST step
-as skipped. A newer libclang needs its AST result compared with Linux before it is trusted.
+The Windows audit rejects LLVM < 19. Do not install the Linux `libclang==18.1.1` wheel there or install `clang` and `libclang` together.
+For diagnostics only, `set SIM_AUDIT_ARGS=--ast=skip` runs the other audit steps and the audit exits 3. `run_tests.bat` prints a warning and
+continues, so it may still finish with 0; that is not an AST pass or an acceptance workaround. The default `--ast=require` must pass.
 
 ## Why llvm-mingw for the cross build
 
@@ -177,7 +179,7 @@ Known Wine-only differences: the random `shlwapi` oracle in `test_win32path.cpp`
 From a VS 2022 x64 Native Tools Developer Command Prompt, with the official Godot
 4.7.2 Windows export template installed, set the console executable path and run:
 
-```
+```bat
 set GODOT=C:\path\to\Godot_v4.7.2-stable_win64_console.exe
 python tools/release/run_launcher_tests.py
 ```

@@ -27,6 +27,71 @@ const SETUP = {
   ],
 };
 
+test('social JSON reads repair legacy profiles, messages, receipts, recent players and block notes', async () => {
+  for (const text of ['\ud800x', 'é e\u0301 🌍']) {
+    const { lobby, store, env } = setup();
+    const alice = (await guest(lobby, 'Alice', 'a'.repeat(32))).body;
+    const bob = (await guest(lobby, 'Bob', 'b'.repeat(32))).body;
+    await befriend(lobby, alice, bob);
+    const clientId = 'c'.repeat(32);
+    const path = `/v1/chat/${bob.account.pid}/messages`;
+    const sent = await jsonCall(lobby, 'POST', path, {
+      token: alice.token, body: { v: 1, client_id: clientId, text: 'original' },
+    });
+    assert.equal(sent.status, 200);
+    const [first, second] = [alice.account.pid, bob.account.pid].sort();
+    const messageKey = `message:${first}:${second}:0000000000000001`;
+    const receiptKey = `receipt:${alice.account.pid}:${first}:${second}:${clientId}`;
+    store.data.get(`player:${bob.account.pid}`).nick = text;
+    store.data.get(messageKey).text = text;
+    store.data.get(receiptKey).text = text;
+    store.data.get(receiptKey).message.text = text;
+    const now = Math.floor(env.now() / 1000);
+    const game = '0123456789abcdef';
+    const recent = { at: now, game, players: [{ pid: bob.account.pid,
+      code: store.data.get(`player:${bob.account.pid}`).code, nick: text, target: text }] };
+    store.data.set(`recent:${alice.account.pid}:${String(now).padStart(16, '0')}:${game}`, recent);
+    const stored = JSON.stringify([...store.data]);
+    lobby.social.resetCaches();
+    const me = await call(lobby, 'GET', '/v1/me', { token: bob.token });
+    assert.equal(me.status, 200);
+    assert.equal(JSON.parse(me.body).nick, text.toWellFormed());
+    const player = store.data.get(`player:${bob.account.pid}`);
+    assert.equal(me.body, JSON.stringify({ v: 1, pid: player.pid, code: player.code, nick: text.toWellFormed(),
+      privacy: player.privacy, hidden: player.hidden }));
+    const friends = await call(lobby, 'GET', '/v1/friends', { token: alice.token });
+    assert.equal(friends.status, 200);
+    assert.equal(JSON.parse(friends.body).friends[0].nick, text.toWellFormed());
+    const history = await call(lobby, 'GET', path, { token: alice.token });
+    assert.equal(history.status, 200);
+    assert.equal(JSON.parse(history.body).messages[0].text, text.toWellFormed());
+    assert.equal(history.body, JSON.stringify({ v: 1, messages: [{ ...store.data.get(messageKey), text: text.toWellFormed() }],
+      next: null, last_id: 1, read_id: 0 }));
+    const games = await call(lobby, 'GET', '/v1/recent', { token: alice.token });
+    assert.equal(games.status, 200);
+    assert.equal(JSON.parse(games.body).games[0].players[0].nick, text.toWellFormed());
+    assert.equal(JSON.parse(games.body).games[0].players[0].target, text.toWellFormed());
+    assert.equal(JSON.stringify([...store.data]), stored, 'read repair does not rewrite social records');
+    if (text.isWellFormed()) {
+      assert.equal(games.body, JSON.stringify({ v: 1, games: [recent] }));
+    }
+    const replay = await jsonCall(lobby, 'POST', path, {
+      token: alice.token, body: { v: 1, client_id: clientId, text: text.toWellFormed() },
+    });
+    assert.equal(replay.status, 200, JSON.stringify(replay.body));
+    assert.equal(replay.body.message.text, text.toWellFormed());
+    const blocked = await jsonCall(lobby, 'POST', '/v1/blocks', {
+      token: alice.token, body: { v: 1, pid: bob.account.pid, note: 'original' },
+    });
+    assert.equal(blocked.status, 200);
+    store.data.get(`block:${alice.account.pid}:${bob.account.pid}`).note = text;
+    const blocks = await call(lobby, 'GET', '/v1/blocks', { token: alice.token });
+    assert.equal(blocks.status, 200);
+    assert.equal(JSON.parse(blocks.body).blocks[0].note, text.toWellFormed());
+    assert.equal(JSON.parse(blocks.body).blocks[0].nick, text.toWellFormed());
+  }
+});
+
 test('budget: recipient invite cap frees space at five-minute expiry', async () => {
   const { lobby, env } = setup();
   const alice = (await guest(lobby, 'Alice', 'a'.repeat(32))).body;

@@ -6,8 +6,9 @@
 // ONLINE-2 r2 (Sol r1): a Durable Object runs another request whenever one awaits (storage, crypto, R2), so the object queues the requests itself: one
 // request through the lobby at a time, as the self-hosted server does.
 
-import { Lobby, LobbyError, route, configFromEnv, MAX_JSON_BYTES, validateEnforcementRecord, validateSighting, withoutGameIp } from './lobby.mjs';
+import { Lobby, LobbyError, route, configFromEnv, bodyLimitFor, MAX_JSON_BYTES, validateEnforcementRecord, validateSighting, withoutGameIp } from './lobby.mjs';
 import { SqliteIdentityStore } from './identity-store.mjs';
+import { repairStoredText } from './stored-text.mjs';
 import { SocialStorageError, socialSqlTransaction, socialStorageError } from './social-store.mjs';
 
 const subtle = crypto.subtle;
@@ -317,8 +318,9 @@ export class LobbyObject {
             throw new Error('stored game key does not match its id');
           }
           lastKey = key;
-          const clean = withoutGameIp(game);
-          if (Object.hasOwn(game, 'ip')) await this.state.storage.put(key, clean);
+          const repaired = repairStoredText(game);
+          const clean = withoutGameIp(repaired);
+          if (repaired !== game || Object.hasOwn(game, 'ip')) await this.state.storage.put(key, clean);
           page.push(clean);
         }
         this.lobby.loadGames(page);
@@ -389,7 +391,7 @@ export class LobbyObject {
     if (isLog) this.reading.logs += 1;
     let out;
     try {
-      const body = await readBodyLimited(request, isLog ? this.lobby.maxLogBytes() : MAX_JSON_BYTES, this.bodyTimeoutMs);
+      const body = await readBodyLimited(request, isLog ? this.lobby.maxLogBytes() : bodyLimitFor(path), this.bodyTimeoutMs); // lane PROFILE-2
       const reportPost = request.method === 'POST' && path === '/v1/reports';
       if (body.status && !(reportPost && body.status === 413)) return refuse(body.status, body.code, body.error);
       const run = this.queue.then(() => this.handle(request, body.bytes ?? new Uint8Array(), body.status && reportPost
@@ -424,7 +426,7 @@ export class LobbyObject {
 }
 
 // ONLINECOUNT-1: GET /v1/stats without a token (the main menu's and the launcher's line) is answered from the data centre's Cache API for STATS_CACHE_S
-// seconds, so those requests do not reach the Durable Object (its own 100,000-a-day free allowance); they still count as Worker requests (the Worker runs
+// seconds, so those requests do not reach the Durable Object (Paid includes 1 M requests/month); they still count as Worker requests (Paid includes 10 M/month; the Worker runs
 // before any cache). A request with a token (the online menu's, which marks the player present) always goes to the object.
 // ONLINECOUNT-1 r2 (Sol: a cache hit skipped the limiter, 100 x 200 from one address): the order is admission -> cache -> the object (whose lobby limiter
 // is the second line). Admission is a token bucket per address kept per Worker isolate ( separate or recycled isolates and the eviction of old buckets reset it, so it is no aggregate cap and no protection for the Worker

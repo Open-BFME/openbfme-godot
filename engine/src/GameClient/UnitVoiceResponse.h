@@ -196,6 +196,7 @@ private:
 	struct Choice
 	{
 		Voice voice;
+		Voice secondary;
 		Voice crowd;                          ///< RW choice + 8: the crowd response's voice
 		const CrowdThreshold *crowdEntry = nullptr; ///< RW choice + 0x18
 		bool charge = false; ///< RW choice + 0x20
@@ -203,6 +204,7 @@ private:
 	struct Collected
 	{
 		Voice voice;
+		Voice secondary;
 		Voice crowd;
 		Object *object = nullptr;
 		int count = 0;

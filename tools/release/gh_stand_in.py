@@ -33,15 +33,24 @@ run never finishes), actions-wrong-sha (the run built another commit), actions-w
 actions-two-artifacts, actions-wrong-artifact-name, actions-digest-mismatch (the downloaded bytes are not the recorded digest's),
 actions-partial (a file is missing), actions-extra-file (one more file), actions-folder-entry (a sub-folder entry), actions-job-extra (another
 job ran too). The runs are in $FAKE_GH_STATE's "runs", the artifacts in "artifacts" (bytes beside it in <state>.d/artifact-<id>.zip).
-SIGNKMS-1 (tools/release/cosign_release.py): releases carry "author" ({"login": $FAKE_GH_AUTHOR, default tester}) and "created_at"
+SIGNKMS-1 (tools/release/check_draft.py): releases carry "author" ({"login": $FAKE_GH_AUTHOR, default tester}) and "created_at"
 (a counter-based time stamp); `api repos/R/compare/<base>...<head>` answers GitHub's status / merge_base_commit / base_commit from the
 remote's history; `api --method POST https://uploads.github.com/repos/R/releases/<id>/assets?name=N --input FILE` uploads one asset to
 exactly that release (an existing name is refused like GitHub's 422; the upload-* faults apply). Fault cosign-upload-lost: the asset is
 stored but the call fails.
+RELGH-2: a release that is published (created or patched non-draft) gets "published_at" (now, or $FAKE_GH_PUBLISHED_AT).
+RELGH-2: `api repos/R/actions/workflows/release.yml` answers {path, state: active}; faults release-workflow-missing (404) and
+release-workflow-disabled (state disabled_manually).
 SIGNKMS-1 (tools/release/actions_release.py dispatch / wait): `workflow run <file> --repo R --ref <ref> -f k=v ...` records the dispatch
 and, with $FAKE_GH_WORKFLOW set, runs that program as the workflow (synchronously; IN_KIND / IN_TAG / IN_COMMIT / IN_REQUEST, GH_REF and
 FAKE_GH_STATE in its environment: it adds its run to the state's "release_runs" and may create a draft); `api repos/R/actions/workflows/release.yml/runs`
 answers {"workflow_runs": the state's "release_runs", newest first} (RELSIGN-1: apart from MACACT-1's "runs" of release-package.yml).
+RELGH-3 (tools/release/stable_environment.py): deployment environments in the state's "environments" ({name: {"record": GitHub's GET
+record, "branch_policies": [{id, name, type}]}}): `api repos/R/environments/<name>` (GET; PUT --input - with GitHub's body: reviewers by
+id, prevent_self_review, can_admins_bypass, deployment_branch_policy), `.../deployment-branch-policies` (GET, POST -f name -f type,
+DELETE .../<id>); `api users/<login>` ({login, id}: ids from the state's "users", else a stable number); `api user` is $FAKE_GH_USER
+(default tester); `api repos/R/actions/runs/<id>/approvals` answers the state's "approvals"[<id>] (default []). Fault env-read-fail: reading
+an environment fails.
 Commands: api (user, repos/R GET / PATCH (homepage), repos/R/commits/<ref>, repos/R/compare/<a>...<b>, repos/R/releases[?..], repos/R/releases/<id> GET / PATCH / DELETE, repos/R/releases/tags/<tag>,
 repos/R/releases/assets/<id>), pr create / merge / view, release upload. --jq supports the expressions these scripts use.
 """
@@ -69,6 +78,12 @@ def load() -> dict:
 
 def save(s: dict) -> None:
     STATE.write_text(json.dumps(s, indent=1))
+
+
+def stamp() -> str:
+    """RELGH-2: a release's published_at (GitHub's UTC form); $FAKE_GH_PUBLISHED_AT fixes it (tests of the transition rule's age window)"""
+    import time
+    return os.environ.get("FAKE_GH_PUBLISHED_AT") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def remote_git(*args: str) -> str:
@@ -144,8 +159,25 @@ def api(args: list[str]) -> int:
         out(jq({"status": status, "base_commit": {"sha": base}, "merge_base_commit": {"sha": mb}}, expr)); return 0
     if re.fullmatch(r"repos/[^/]+/[^/]+/actions/workflows/release\.yml/runs", path):
         out(jq({"workflow_runs": s.get("release_runs", [])[::-1]}, expr)); return 0
+    if re.fullmatch(r"repos/[^/]+/[^/]+/actions/workflows/release\.yml", path) and method == "GET":
+        # RELGH-2: autorelease.sh (signer actions) asks that GitHub knows the release workflow and that it is active
+        if "release-workflow-missing" in FAULTS:
+            print("gh: Not Found (HTTP 404)", file=sys.stderr); return 1
+        state = "disabled_manually" if "release-workflow-disabled" in FAULTS else "active"
+        out(jq({"path": ".github/workflows/release.yml", "state": state}, expr)); return 0
     if path == "user":
-        out(jq({"login": "tester", "id": 42}, expr)); return 0
+        out(jq({"login": os.environ.get("FAKE_GH_USER", "tester"), "id": 42}, expr)); return 0
+    m = re.fullmatch(r"users/([A-Za-z0-9-]+)", path)
+    if m and method == "GET":
+        users = s.get("users", {})
+        uid = users.get(m.group(1), 1000 + int(hashlib.sha256(m.group(1).lower().encode()).hexdigest()[:6], 16))
+        out(jq({"login": m.group(1), "id": uid, "type": "User"}, expr)); return 0
+    m = re.fullmatch(r"repos/[^/]+/[^/]+/environments/([a-z0-9-]+)(/deployment-branch-policies(?:/(\d+))?)?", path)
+    if m:
+        return environments(s, method, m.group(1), m.group(2), m.group(3), fields, infile, expr)
+    m = re.fullmatch(r"repos/[^/]+/[^/]+/actions/runs/(\d+)/approvals", path)
+    if m and method == "GET":
+        out(jq(s.get("approvals", {}).get(m.group(1), []), expr)); return 0
     if "/actions/" in path:
         return actions(s, method, path, fields, expr)
     m = re.fullmatch(r"(repos/[^/]+/[^/]+)/pulls/(\d+)", path)
@@ -178,6 +210,8 @@ def api(args: list[str]) -> int:
                "prerelease": bool(fields.get("prerelease")), "body": fields.get("body", ""), "assets": [],
                "author": {"login": os.environ.get("FAKE_GH_AUTHOR", "tester")}, "created_at": f"2026-10-22T00:00:{s['next'] % 60:02d}Z"}
         s["next"] += 1
+        if not rel["draft"]:
+            rel["published_at"] = stamp()
         s["releases"].append(rel); save(s)
         if "create-lost" in FAULTS:
             print("gh: connection reset", file=sys.stderr); return 1
@@ -205,11 +239,14 @@ def api(args: list[str]) -> int:
             s["releases"].remove(rel); save(s); return 0
         if method == "GET" and rel["draft"] and "publish-after-read" in FAULTS:
             out(jq(rel, expr))
-            rel["draft"] = False; save(s); return 0
+            rel["draft"] = False; rel.setdefault("published_at", stamp()); save(s); return 0
         if method == "PATCH":
             if "publish-fail" in FAULTS:
                 print("gh: HTTP 502", file=sys.stderr); return 1
-            rel.update({k: v for k, v in fields.items()}); save(s)
+            rel.update({k: v for k, v in fields.items()})
+            if not rel["draft"]:
+                rel.setdefault("published_at", stamp())
+            save(s)
             if "publish-lost" in FAULTS:
                 print("gh: connection reset", file=sys.stderr); return 1
         out(jq(rel, expr)); return 0
@@ -265,6 +302,48 @@ def actions(s: dict, method: str, path: str, fields: dict, expr: str | None) -> 
     return 2
 
 
+def environments(s: dict, method: str, name: str, sub: str | None, pid: str | None, fields: dict, infile: str | None, expr) -> int:
+    """RELGH-3: a deployment environment, its record and branch policies"""
+    envs = s.setdefault("environments", {})
+    if "env-read-fail" in FAULTS and method == "GET":
+        print("gh: HTTP 502", file=sys.stderr); return 1
+    e = envs.get(name)
+    if sub is None and method == "PUT":
+        body = json.loads(sys.stdin.read() if infile in (None, "-") else Path(infile).read_text())
+        ids = {v: k for k, v in s.get("users", {}).items()}
+        def login(i):
+            return ids.get(i) or next((u for u in ("Ancalgonn", "tester", "release-bot")
+                                       if 1000 + int(hashlib.sha256(u.lower().encode()).hexdigest()[:6], 16) == i), f"user{i}")
+        rules = []
+        if body.get("reviewers"):
+            rules.append({"type": "required_reviewers", "prevent_self_review": bool(body.get("prevent_self_review")),
+                          "reviewers": [{"type": r["type"], "reviewer": {"login": login(r["id"]), "id": r["id"]}} for r in body["reviewers"]]})
+        if body.get("wait_timer"):
+            rules.append({"type": "wait_timer", "wait_timer": body["wait_timer"]})
+        dbp = body.get("deployment_branch_policy")
+        if dbp:
+            rules.append({"type": "branch_policy"})
+        rec = {"name": name, "can_admins_bypass": body.get("can_admins_bypass", True), "deployment_branch_policy": dbp,
+               "protection_rules": rules}
+        envs[name] = {"record": rec, "branch_policies": (e or {}).get("branch_policies", [])}
+        save(s); out(jq(rec, expr)); return 0
+    if e is None:
+        print("gh: Not Found (HTTP 404)", file=sys.stderr); return 1
+    if sub is None:
+        out(jq(e["record"], expr)); return 0
+    bps = e.setdefault("branch_policies", [])
+    if pid is None and method == "GET":
+        out(jq({"total_count": len(bps), "branch_policies": bps}, expr)); return 0
+    if pid is None and method == "POST":
+        bp = {"id": 500 + len(bps) + sum(len(x.get("branch_policies", [])) for x in envs.values()), "name": fields.get("name"),
+              "type": fields.get("type", "branch")}
+        bps.append(bp); save(s); out(jq(bp, expr)); return 0
+    if pid is not None and method == "DELETE":
+        e["branch_policies"] = [b for b in bps if str(b.get("id")) != pid]; save(s); return 0
+    print(f"gh stand-in: unknown environment call {method} {name}{sub}", file=sys.stderr)
+    return 2
+
+
 def dispatch_run(s: dict, repo: str, fields: dict, expr: str | None) -> int:
     import zipfile
     ref = fields["ref"]
@@ -274,7 +353,7 @@ def dispatch_run(s: dict, repo: str, fields: dict, expr: str | None) -> int:
     rid = s["next"]; s["next"] += 1
     run = {"id": rid, "event": "workflow_dispatch", "path": WORKFLOW, "head_branch": ref,
            "head_sha": "0" * 40 if "actions-wrong-sha" in FAULTS else head,
-           "actor": {"login": "mallory" if "actions-wrong-actor" in FAULTS else "tester"}, "triggering_actor": {"login": "tester"},
+           "actor": {"login": "mallory" if "actions-wrong-actor" in FAULTS else os.environ.get("FAKE_GH_USER", "tester")}, "triggering_actor": {"login": os.environ.get("FAKE_GH_USER", "tester")},
            "run_attempt": 2 if "actions-rerun" in FAULTS else 1,
            "display_title": f"Release package {platform} {version} (request {'0' * 32 if 'actions-wrong-title' in FAULTS else request})",
            "status": "in_progress", "conclusion": None, "_platform": platform, "_inputs": inputs,

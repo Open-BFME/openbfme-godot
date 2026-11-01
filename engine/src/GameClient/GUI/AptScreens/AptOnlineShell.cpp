@@ -3,6 +3,7 @@
 // See GameClient/GUI/AptScreens/AptOnlineShell.h (lane ONLINE-4).
 
 #include "GameClient/GUI/AptScreens/AptOnlineShell.h"
+#include "GameClient/GUI/AptScreens/AptLanLobby.h" // lane STABLEQA-1: kStrategicStable
 
 #include "GameClient/GUI/AptScreens/AptOnlineHub.h"
 #include "GameClient/GUI/PlatformIcons.h"
@@ -89,8 +90,8 @@ const std::vector<std::string> &AptOnlineShell::stopLines()
 		"settings or user-map icons, no lobby rooms; the sort order "
 		"(a second press reverses) is OpenBFME's (RotWK's sorter RW 0x988BB5 not read)",
 		"[S-4074] online staging room: the states between the retail facts (the update's moves, the GameSpy NAT negotiation, the countdown) are OpenBFME's: "
-		"the host's Play Game asks the lobby for the START (no relay: refused, told to the player); loading a saved online game is not available",
-		"[S-4075] online pages not ported: Strategic (War of the Ring online)",
+		"the host's Play Game asks the lobby for the START (no relay: refused, told to the player); loading a saved skirmish is not available",
+		"[S-4075] online War of the Ring: strategic play, relay battles and saved-war resume work; rejoining a dropped strategic map and playing its phase replay are not ported",
 		"[S-4870] Quick Match (the TOURNAMENT page): the platform's matchmaker (same mode and size, oldest first): Ladder = the size, Army, Color; "
 		"ConnectionSpeed disabled, Widen Search says the search is as wide as it gets",
 		"[S-4871] Quick Match room: the match's host makes a private lobby room by the match's room code on an official map for that many players "
@@ -106,7 +107,8 @@ const std::vector<std::string> &AptOnlineShell::stopLines()
 		"to the relay (each client probes it; the cell banded by the summed round trip at GameSpy's default 300 / 600 ms cut-offs); the grid's per-row Kick "
 		"buttons stay in the movie's own unpressable state there (the room's per-slot Kick removes a player); an OpenBFME page covers the grid and says it "
 		"in words (the lobby's response time, the player's ping to the relay and its loss, each other player's ping to the player), and the chat's Players "
-		"list shows each player's ping (the owner, 2026-10-20)",
+		"list shows each player's ping (the owner, 2026-10-20); the grid is retail's eight by eight: in a room of more than eight players, those of "
+		"slots 9 to 16 are on the page only",
 		"[S-4551] online staging room chat: the Players list names the room's players (retail's fill, the chat's recipients, was not read) and every "
 		"line goes to everyone (no private lines)",
 		"[S-4552] online staging room rows: Hero and Handicap work as in the LAN room (lane ONLINEMENU-1: the lobby carries a player's Create-a-Hero record "
@@ -138,25 +140,21 @@ const std::vector<std::string> &AptOnlineShell::stopLines()
 
 AptOnlineShell::~AptOnlineShell()
 {
-	// lane ONLINEMENU-1: the friends page's gadgets and the shell's decorator / mouse filter go with the shell (the layer outlives every screen)
+	// lane ONLINEMENU-1: the network page's gadgets and the shell's decorator / mouse filter go with the shell (the layer outlives every screen)
 	if (AptGadgetLayer *layer = windows().gadgetLayer())
 	{
 		layer->clearDecorator(this);
 	}
 	else
 	{
-		if (m_friendsPage)
-		{
-			m_friendsPage->abandon();
-		}
 		if (m_networkPage)
 		{
 			m_networkPage->abandon();
 		}
 	}
-	m_friendsPage.reset();
 	m_networkPage.reset();
 	windows().setMouseFilter(nullptr);
+	windows().setMouseFilterOverBox(false); // lane JOINVER-1
 	for (auto &p : m_pages)
 	{
 		for (const std::string &n : p.second.commands)
@@ -300,6 +298,27 @@ void AptOnlineShell::showBox(const std::u16string &title, const std::u16string &
 	box().show(AptMessageBox::TYPE_OK, title, body);
 }
 
+bool AptOnlineShell::buildDetailsUp() const
+{
+	return m_box && m_box->type() != AptMessageBox::TYPE_NONE;
+}
+
+bool AptOnlineShell::otherBuild(const std::string &state, const std::string &profile, SimulationProfile mode) const
+{
+	// a game of the other performance mode is the mode question's (UBERJOIN-1): its profile differs by the mode's own line, whatever the build
+	return m_client && state != "rejoin" && !profile.empty() && mode == m_client->profile() && profile != m_client->profileDigest();
+}
+
+void AptOnlineShell::showBuildRefusal(const JoinBuild::Build &host, const std::string &hostProfile)
+{
+	const JoinBuild::Build mine = m_client ? m_client->ownBuild() : JoinBuild::Build{};
+	const std::string mineProfile = m_client ? m_client->profileDigest() : std::string();
+	const std::string words = JoinBuild::refusalText(mine, host);
+	showBox(text("GUI:JoinFailedDefault"), wrapLines(wide(words), kWrap), "profile|" + words);
+	m_joinDetails = JoinBuild::detailsText(mine, mineProfile, host, hostProfile);
+	m_detailsShown = m_detailsHot = m_detailsPressed = false;
+}
+
 void AptOnlineShell::showError(const std::string &titleLabel, const std::string &textLabel)
 {
 	// GSMessageBoxOk(TheGameText->fetch(title), TheGameText->fetch(text)) (BFME2 0x5A57BA, 0x570D36 ...)
@@ -342,9 +361,10 @@ void AptOnlineShell::callPage(const std::string &function, const std::vector<std
 {
 	// the custom match screen calls its page's functions at its own Apt path (vslot 0x28 composes it: RW 0x9AFAA4 .. 0x9AFAB6 for OnStartLobby)
 	std::string err;
-	if (level() < 0 || !windows().invokeASAt(level(), "OnlineOpenPlay", function, args, nullptr, &err))
+	const std::string page = m_currentName == "OnlineStrategic" ? "OnlineStrategic" : "OnlineOpenPlay";
+	if (level() < 0 || !windows().invokeASAt(level(), page, function, args, nullptr, &err))
 	{
-		windows().note("movie-function-missing", "OnlineOpenPlay." + function + ": " + err);
+		windows().note("movie-function-missing", page + "." + function + ": " + err);
 	}
 }
 
@@ -396,10 +416,37 @@ void AptOnlineShell::loadPage(const std::string &name)
 		m_pages[name];
 		registerHome();
 	}
-	else if (name == "OnlineOpenPlay")
+	else if (name == "OnlineOpenPlay" || name == "OnlineStrategic")
 	{
+		const std::string other = name == "OnlineStrategic" ? "OnlineOpenPlay" : "OnlineStrategic";
+		if (m_pages.count(other))
+		{
+			unloadPage(other); // the movie has one custom-match page active; its callbacks have the same names
+		}
+		if (name == "OnlineStrategic")
+		{
+			if (environment().warOfTheRingOffered && environment().livingWorld && !environment().livingWorld->scenarios.empty())
+			{
+				enterStrategicMode(*environment().livingWorld); // RW 0x8445C9; BFME2 AptOnlineCustomMatchCtor.cpp: strategic flag 1
+			}
+			else
+			{
+				// lane STABLEQA-1 (the online page, 10-31): a Stable build offers no War of the Ring yet: the box says so as the LAN page's does
+				notAvailable(name, "[S-4075]", environment().warOfTheRingOffered ? unavailablePageText(name) : std::u16string(AptLanLobby::kStrategicStable));
+				if (!m_currentName.empty() && m_currentName != name)
+				{
+					loadChildScreen(m_currentName);
+					navTo(m_currentName);
+					return;
+				}
+			}
+		}
+		else
+		{
+			leaveStrategicMode();
+		}
 		m_pages[name];
-		registerOpenPlay();
+		registerOpenPlay(name);
 	}
 	else if (AptOnlineHub::isHubPage(name))
 	{
@@ -409,9 +456,10 @@ void AptOnlineShell::loadPage(const std::string &name)
 	}
 	else
 	{
-		// OnlineStrategic: not ported [S-4075]. Lane MENUWORK-1: the box says why in the player's words, and the page the
+		// Lane MENUWORK-1: the box says why in the player's words, and the page the
 		// player came from is loaded again (the movie's LoadScreen) instead of leaving them on an empty page
-		m_pages[name];
+		// An unavailable page has no callbacks to retain. Caching it as loaded would make
+		// the next visit skip this notice and replace the player's current/resume page.
 		notAvailable(name, "[S-4075]", unavailablePageText(name));
 		if (!m_currentName.empty() && m_currentName != name)
 		{
@@ -480,7 +528,7 @@ void AptOnlineShell::runInit()
 		m_barDue = true;
 	}
 	// lane ONLINEMENU-1: the mouse filter is the shell's while it is on top (the Options screen opened over it takes and clears its own)
-	windows().setMouseFilter([this](int kind, float x, float y) { return friendsMouse(kind, x, y); });
+	windows().setMouseFilter([this](int kind, float x, float y) { return networkMouse(kind, x, y); });
 }
 
 void AptOnlineShell::unloadPage(const std::string &name)
@@ -518,7 +566,7 @@ void AptOnlineShell::unloadPage(const std::string &name)
 	{
 		m_motd = nullptr;
 	}
-	else if (name == "OnlineOpenPlay")
+	else if (name == "OnlineOpenPlay" || name == "OnlineStrategic")
 	{
 		m_gameList = m_lobbies = m_gameInfo = m_gameName = m_gamePassword = nullptr;
 		if (m_client && m_client->inGame())
@@ -925,9 +973,8 @@ void AptOnlineShell::fillMotd()
 
 // ---- OnlineOpenPlay (AptOnlineCustomMatch) ----------------------------------------------------------------------------------------------------------------
 
-void AptOnlineShell::registerOpenPlay()
+void AptOnlineShell::registerOpenPlay(const std::string &page)
 {
-	const std::string page = "OnlineOpenPlay";
 	m_state = 0;
 	m_listDirty = true;
 	pageCommand(page, "AptOnline::CustomMatch::CancelPopUpJoin", [this](const std::string &) {
@@ -960,7 +1007,17 @@ void AptOnlineShell::registerOpenPlay()
 			m_state = 9;
 		}
 	});
-	pageCommand(page, "AptOnline::CustomMatch::LoadGame", [this](const std::string &) { notAvailable("Loading a saved online game", "[S-4074]"); });
+	pageCommand(page, "AptOnline::CustomMatch::LoadGame", [this](const std::string &) {
+		// BFME2 0x59ECC1: Load Game on the strategic page selects kind 16.
+		if (m_currentName == "OnlineStrategic" && environment().services)
+		{
+			environment().services->request(ShellRequest{ ShellAction::OnlineLoadWar, "16" });
+		}
+		else
+		{
+			notAvailable("Loading a saved online game", m_currentName == "OnlineStrategic" ? "[S-1064]" : "[S-4074]");
+		}
+	});
 	pageCommand(page, "AptOnline::CustomMatch::AcceptJoinGame", [this](const std::string &) {
 		// RW 0x9AEE9C (BFME2 AptOnlineCustomMatchAcceptJoinGame.cpp)
 		if (m_state != 10)
@@ -1386,7 +1443,7 @@ void AptOnlineShell::fillGamesList()
 	std::vector<OnlineLobbyClient::Listing> games;
 	for (const OnlineLobbyClient::Listing &g : m_client->mine())
 	{
-		if (!gameLeft(g.id))
+		if (!gameLeft(g.id) && g.gameMode == (m_currentName == "OnlineStrategic" ? 1 : 0))
 		{
 			games.push_back(g);
 			games.back().state = "rejoin";
@@ -1394,7 +1451,8 @@ void AptOnlineShell::fillGamesList()
 	}
 	for (const OnlineLobbyClient::Listing &g : m_client->games())
 	{
-		if (!gameLeft(g.id) && std::none_of(games.begin(), games.end(), [&](const OnlineLobbyClient::Listing &m) { return m.id == g.id; }))
+		if (!gameLeft(g.id) && g.gameMode == (m_currentName == "OnlineStrategic" ? 1 : 0)
+			&& std::none_of(games.begin(), games.end(), [&](const OnlineLobbyClient::Listing &m) { return m.id == g.id; }))
 		{
 			games.push_back(g);
 			games.back().state = g.state == "started" ? "watch" : "join";
@@ -1403,9 +1461,10 @@ void AptOnlineShell::fillGamesList()
 	std::map<std::string, std::u16string> titles;
 	for (const OnlineLobbyClient::Listing &g : games)
 	{
-		if (!titles.count(g.map))
+		const std::string key = g.gameMode == 1 ? g.scenario : g.map;
+		if (!titles.count(key))
 		{
-			titles[g.map] = mapTitle(g.map);
+			titles[key] = g.gameMode == 1 ? wide(g.scenario) : mapTitle(g.map);
 		}
 	}
 	if (m_sortColumn >= 0)
@@ -1417,7 +1476,13 @@ void AptOnlineShell::fillGamesList()
 			switch (col)
 			{
 			case 0: c = a.name < b.name ? -1 : (b.name < a.name ? 1 : 0); break;
-			case 1: c = titles.at(a.map) < titles.at(b.map) ? -1 : (titles.at(b.map) < titles.at(a.map) ? 1 : 0); break;
+			case 1:
+			{
+				const auto &am = titles.at(a.gameMode == 1 ? a.scenario : a.map);
+				const auto &bm = titles.at(b.gameMode == 1 ? b.scenario : b.map);
+				c = am < bm ? -1 : (bm < am ? 1 : 0);
+				break;
+			}
 			case 2: c = a.players - b.players; break;
 			case 4: c = (int)a.password - (int)b.password; break;
 			default: c = 0; break; // the lobby gives no ping [S-4073]
@@ -1435,13 +1500,25 @@ void AptOnlineShell::fillGamesList()
 	m_rowIds.clear();
 	m_rowKinds.clear();
 	m_rowModes.clear();
+	m_rowOtherBuild.clear();
 	for (const OnlineLobbyClient::Listing &g : games)
 	{
-		const Color c = g.state == "join" ? 0xFFFFFFFFu : 0xFFFFD27Fu; // a running game's row in the gold of the movie's highlighted text
+		const bool other = otherBuild(g.state, g.profile, g.mode);
+		// a running game's row in the gold of the movie's highlighted text; lane JOINVER-1: a game of another build grey (the save list's
+		// kIncompatible), tagged in the style of the REJOIN / WATCH tags
+		const Color c = other ? 0xFF808080u : g.state == "join" ? 0xFFFFFFFFu : 0xFFFFD27Fu;
 		std::u16string label = g.state == "rejoin" ? g.name + u"  - REJOIN" : g.state == "watch" ? g.name + u"  - WATCH" : g.name;
 		if (g.mode == SimulationProfile::Uber)
 		{
 			label += u"  - UBER"; // lane UBERJOIN-1: the game's performance mode, in the style of the REJOIN / WATCH tags (a Normal game has no tag)
+		}
+		if (g.cheatMode)
+		{
+			label += u"  - CHEAT MODE"; // lane CHEAT-1: every player sees it before joining
+		}
+		if (other)
+		{
+			label += u"  - OTHER VERSION";
 		}
 		const int row = GadgetListBoxAddEntryText(m_gameList, label, c, -1, 3);
 		if (g.hostPlatform != PlatformKind::None) // lane PLATFORMICON-1: the host's system before the game's name
@@ -1456,13 +1533,15 @@ void AptOnlineShell::fillGamesList()
 		{
 			GadgetListBoxAddEntryImage(m_gameList, "AptLock", row, 2, 20, 20, true); // BFME2 0x59F496: the lock of a locked game
 		}
-		const std::u16string &map = titles.at(g.map);
+		const std::u16string &map = titles.at(g.gameMode == 1 ? g.scenario : g.map);
 		const std::string players = std::to_string(g.players) + "/" + std::to_string(g.players + g.openSlots);
 		GadgetListBoxAddEntryText(m_gameList, map, c, row, 4);
 		GadgetListBoxAddEntryText(m_gameList, wide(players), c, row, 5);
 		GadgetListBoxAddEntryText(m_gameList, UnicodeString(), c, row, 6);
 		m_gameRows.push_back(narrow(g.name) + "|" + narrow(map) + "|" + players + "|" + (g.password ? "lock" : "") + (g.state == "join" ? "" : "|" + g.state) +
-			(g.mode == SimulationProfile::Uber ? "|uber" : ""));
+			(g.gameMode == 1 ? "|war" : "") + (g.resume ? "|resume" : "") +
+			(g.mode == SimulationProfile::Uber ? "|uber" : "") + (g.cheatMode ? "|cheat" : "") + (other ? "|other-version" : ""));
+		m_rowOtherBuild.push_back(other);
 		m_rowIds.push_back(g.id);
 		m_rowKinds.push_back(g.state);
 		m_rowModes.push_back(g.mode);
@@ -1520,7 +1599,7 @@ void AptOnlineShell::startFailed(const std::string &why)
 		m_client->dropStart(); // no leave: the player keeps the slot (a running game is offered for a rejoin)
 	}
 	const std::u16string body = u"The online game could not start: " + std::u16string(safe.begin(), safe.end());
-	if (m_pages.count("OnlineOpenPlay"))
+	if (m_pages.count("OnlineOpenPlay") || m_pages.count("OnlineStrategic"))
 	{
 		backToList();
 	}
@@ -1549,6 +1628,17 @@ void AptOnlineShell::joinSelected()
 	if (selected < (int)m_rowModes.size() && !modeAllows(m_rowModes[(size_t)selected], [this]() { joinSelected(); }))
 	{
 		return;
+	}
+	// lane JOINVER-1: a game of another build (greyed in the list) is refused here, in the words the lobby's refusal gets, with nothing sent
+	if (selected < (int)m_rowOtherBuild.size() && m_rowOtherBuild[(size_t)selected])
+	{
+		const auto &listed = m_client->games();
+		const auto other = std::find_if(listed.begin(), listed.end(), [&](const OnlineLobbyClient::Listing &g) { return g.id == id; });
+		if (other != listed.end())
+		{
+			showBuildRefusal(other->build, other->profile);
+			return;
+		}
 	}
 	if (kind == "rejoin" || kind == "watch")
 	{
@@ -1613,7 +1703,7 @@ void AptOnlineShell::startRunning(const std::string &id, bool rejoin)
 		m_client->spectateGame(id);
 	}
 	m_rejoinPending = true;
-	if (m_pages.count("OnlineOpenPlay"))
+	if (m_pages.count("OnlineOpenPlay") || m_pages.count("OnlineStrategic"))
 	{
 		m_state = 13; // OpenBFME's (S-4077): waiting for the running game's START
 		m_connecting = true;
@@ -1730,10 +1820,11 @@ bool AptOnlineShell::askYesNo(const std::string &key, const std::u16string &titl
 	m_askTitle = title;
 	m_askText = text;
 	box().show(AptMessageBox::TYPE_YES_NO, title, text, [this, key](int button) {
-		if (m_askKey == key)
+		if (m_askKey != key)
 		{
-			m_askKey.clear();
+			return;
 		}
+		m_askKey.clear();
 		if (m_answers.size() < 64)
 		{
 			m_answers.push_back(key + (button == AptMessageBox::BUTTON_YES ? "|yes" : "|no"));
@@ -1755,6 +1846,15 @@ std::vector<std::string> AptOnlineShell::takeAnswers()
 	return out;
 }
 
+void AptOnlineShell::cancelAsk(const std::string &key)
+{
+	if (asking(key))
+	{
+		m_askKey.clear();
+		box().hide();
+	}
+}
+
 void AptOnlineShell::requestJoin(const std::string &id, const std::string &password)
 {
 	// BFME2 0x5A2C77 RequestJoinGame: the request, state 11
@@ -1772,6 +1872,11 @@ void AptOnlineShell::syncModel()
 	}
 	model->setNetwork(m_client->localSlot());
 	model->replaceInfo(m_client->gameInfo());
+	if (model->info().warOfTheRing() && model->info().scenario != selectedScenario() &&
+		!selectScenario(model->info().scenario, false))
+	{
+		windows().note("online-wotr-scenario", "the room named an unknown War of the Ring scenario: " + model->info().scenario);
+	}
 	m_syncedSeq = m_client->viewSeq();
 	refreshLobby();
 }
@@ -1828,6 +1933,7 @@ void AptOnlineShell::backToList()
 		m_client->leaveGame();
 	}
 	restoreMode(); // lane UBERJOIN-1
+	setHostModeText("0");
 	callPage("ClosePassword");
 	callPage("GotoAndPlay", { "_lobby" });
 	callPage("EnableButtonCreateGame");
@@ -1841,7 +1947,6 @@ void AptOnlineShell::backToList()
 		callPage("PopUpConnectingClose");
 		m_connecting = false;
 	}
-	setHostModeText("1");
 	m_listDirty = true;
 	if (m_client)
 	{
@@ -1853,6 +1958,59 @@ void AptOnlineShell::systemChat(const std::u16string &line)
 {
 	addChatLine(line, 0xFFFFFFFFu);
 	m_chat.push_back(narrow(line));
+}
+
+bool AptOnlineShell::stageSavedWar(const SkirmishGameInfo &saved, const std::vector<std::pair<int, std::u16string>> &seats,
+	const std::string &md5, std::uint32_t hash, std::string *why)
+{
+	auto refuse = [&](const std::string &reason) {
+		if (why) *why = reason;
+		return false;
+	};
+	if (!m_client || !m_client->amIHost() || m_currentName != "OnlineStrategic" || m_state != 6)
+		return refuse("the saved war needs an online strategic staging room hosted by this player");
+	if (!saved.warOfTheRing() || !saved.slots[0].isHuman() || saved.scenario.empty() || saved.mapStartCount != m_client->gameInfo().mapStartCount)
+		return refuse("the save's strategic lobby and this room do not match");
+	if (md5.size() != 32 || md5.find_first_not_of("0123456789abcdef") != std::string::npos)
+		return refuse("the saved war has no valid MD5");
+	for (int s = 1; s < MAX_SLOTS; ++s)
+	{
+		auto it = std::find_if(seats.begin(), seats.end(), [&](const auto &seat) { return seat.first == s; });
+		if (saved.slots[s].isHuman() != (it != seats.end()) || (it != seats.end() && it->second != saved.slots[s].name))
+			return refuse("the saved war's players do not match its lobby seats (slot " + std::to_string(s) + ")");
+	}
+	for (size_t i = 0; i < seats.size(); ++i)
+		if (seats[i].first < 1 || seats[i].first >= MAX_SLOTS ||
+			std::any_of(seats.begin(), seats.begin() + i, [&](const auto &seat) { return seat.first == seats[i].first; }))
+			return refuse("the saved war has a duplicated or invalid human seat");
+	SkirmishGameInfo info = saved;
+	for (auto &slot : info.slots)
+		if (slot.state == SLOT_OPEN) slot.state = SLOT_CLOSED; // no player of the saved war held an open seat
+	info.inProgress = false;
+	info.seed = 0;
+	info.resumeSave = md5;
+	info.resumeHash = hash;
+	m_savedRoom = m_client->gameId();
+	m_savedMd5 = md5;
+	m_savedHash = hash;
+	m_savedInfo = info;
+	m_savedSeats = seats;
+	m_client->setSetup(info);
+	const auto &host = info.slots[0];
+	m_client->setOwnSlot(host.playerTemplate, host.color, host.startPos, host.teamNumber, host.handicap);
+	for (int s = 1; s < info.serializedSlotCount(); ++s)
+	{
+		const auto &slot = info.slots[s];
+		if (slot.isHuman())
+		{
+			// A scenario that originally allowed only the host can leave this seat closed. A saved player must be able to reclaim it.
+			m_client->setOtherSlot(s, SLOT_OPEN, slot.playerTemplate, slot.color, slot.startPos, slot.teamNumber, slot.handicap, u"");
+		}
+		else
+			m_client->setOtherSlot(s, slot.state == SLOT_OPEN ? SLOT_CLOSED : slot.state,
+				slot.playerTemplate, slot.color, slot.startPos, slot.teamNumber, slot.handicap, slot.name);
+	}
+	return true;
 }
 
 void AptOnlineShell::startPressed()
@@ -1867,11 +2025,57 @@ void AptOnlineShell::startPressed()
 		onReadyPress("PlayGame");
 		return;
 	}
+	if (m_client->gameInfo().resumed())
+	{
+		// RW 0x81869B: LANAPI's saved seats, rules and save-availability checks also guard the online room.
+		const auto &info = m_client->gameInfo();
+		std::string refusal;
+		if (m_savedRoom != m_client->gameId() || m_savedMd5 != info.resumeSave || m_savedHash != info.resumeHash)
+			refusal = "the saved war's seat contract has not been loaded by this host";
+		else if (info.scenario != m_savedInfo.scenario || info.rules != m_savedInfo.rules)
+			refusal = "the game's scenario or rules are not the saved war's";
+		for (int s = 0; s < info.serializedSlotCount() && refusal.empty(); ++s)
+		{
+			const auto &slot = info.slots[s];
+			const auto &saved = m_savedInfo.slots[s];
+			const auto seat = std::find_if(m_savedSeats.begin(), m_savedSeats.end(), [s](const auto &x) { return x.first == s; });
+			if (s > 0 && saved.isHuman() && !slot.isHuman())
+				refusal = narrow(saved.name) + "'s seat is open: every player of the saved war must come back";
+			else if (s > 0 && slot.isHuman() && (seat == m_savedSeats.end() || slot.name != seat->second))
+				refusal = narrow(slot.name) + " is not in their saved war seat";
+			else if (slot.state != saved.state && !(s > 0 && saved.isHuman() && slot.isHuman()))
+				refusal = "slot " + std::to_string(s) + " differs from the saved war";
+			else if (slot.isOccupied() && (slot.playerTemplate != saved.playerTemplate || slot.color != saved.color ||
+				slot.startPos != saved.startPos || slot.teamNumber != saved.teamNumber || slot.handicap != saved.handicap))
+				refusal = narrow(slot.name) + "'s faction, colour, region, team or handicap differs from the saved war";
+			else if (s > 0 && slot.isHuman())
+			{
+				const auto &check = m_client->slotViews()[(size_t)s].resumeCheck;
+				if (!check.known || check.save != info.resumeSave)
+					refusal = narrow(slot.name) + " has not checked the saved war yet";
+				else if (!check.ok)
+					refusal = narrow(slot.name) + " cannot resume the saved war: " + check.why;
+			}
+		}
+		if (!refusal.empty())
+		{
+			systemChat(wide(refusal));
+			m_startRefusals.push_back("online saved-war checks");
+			windows().note("online-start-refused", refusal);
+			callPage("EnableButtonPlayGame");
+			return;
+		}
+	}
 	if (SkirmishGameSetup *model = setupModel())
 	{
+		applyScenarioLimits(); // RW 0x843245 .. 0x843575: the strategic check needs its scenario's player bounds, as the LAN and skirmish starts do
 		// lane ONLINE-5: with the screen's own flags (0x20: a player who is not ready refuses the start with GUI:NotifiedStartIntent, RW 0x8431B8's
 		// last test). The owner's vslot 0x44 (BFME2 0x59F043 MpOwnerPrintMessage): kind 2 is a line every player of the room gets, the others are local
-		const SkirmishGameSetup::StartCheck check = model->checkStart(setupFlags());
+		// RW 0x8431B8: BFME2 AptMpGameSetup::OnHostStartGame, RVA 0x440BDF, tier B (RotWK differences unverified).
+		// SOLO-2 policy, not a retail port: the 0x10 two-human check stays only for the platform's private rooms (a Quick Match
+		// or tournament room, ONLINEHUB-1); a custom game may start with one human, with AI slots or none (lobby.mjs start() the same)
+		const int startFlags = m_client->privateRoom() ? setupFlags() : (setupFlags() & ~0x10);
+		const SkirmishGameSetup::StartCheck check = model->checkStart(startFlags);
 		for (const SkirmishGameSetup::StartCheck::Line &line : check.lines)
 		{
 			if (line.kind == 2)
@@ -2041,7 +2245,6 @@ void AptOnlineShell::pumpClient()
 				environment().services->request(ShellRequest{ ShellAction::OnlineGameStart, m_client->startJson() });
 			}
 			m_box.reset(); // the box goes with the shell (its GuiFX.apt level is the game's, as the LAN lobby's start)
-			closeFriendsPage(); // lane ONLINEMENU-1: the page's gadgets are the shell's window's (never over the loading screen)
 			break;
 		}
 		case OnlineLobbyClient::Event::Refused:
@@ -2119,7 +2322,26 @@ void AptOnlineShell::pumpClient()
 				m_state = 1;
 				m_popUp = false;
 				restoreMode(); // lane UBERJOIN-1
-				showBox(text("GUI:JoinFailedDefault"), wrapLines(playerMessage(e.request, e.code, e.text), kWrap), "GUI:JoinFailedDefault|" + narrow(e.text));
+				if (e.code == "profile")
+				{
+					// lane JOINVER-1: both builds in plain words (the lobby's fields; an older lobby names none: the listed game's, else unknown)
+					const OnlineLobbyClient::ProfileRefusal &r = m_client->profileRefusal();
+					JoinBuild::Build host = r.valid ? r.host : JoinBuild::Build{};
+					std::string hostProfile = r.valid ? r.hostProfile : std::string();
+					for (const OnlineLobbyClient::Listing &g : m_client->games())
+					{
+						if (g.id == m_joinId && !r.valid)
+						{
+							host = g.build;
+							hostProfile = g.profile;
+						}
+					}
+					showBuildRefusal(host, hostProfile);
+				}
+				else
+				{
+					showBox(text("GUI:JoinFailedDefault"), wrapLines(playerMessage(e.request, e.code, e.text), kWrap), "GUI:JoinFailedDefault|" + narrow(e.text));
+				}
 			}
 			else if (e.request == "start")
 			{
@@ -2171,20 +2393,35 @@ void AptOnlineShell::update()
 	if (m_messenger && m_messenger->closing()) m_messenger.reset();
 	prune();
 	pumpClient();
-	// lane ONLINEMENU-1: the FRIENDS button and page draw through the shell's decorator, taken back every frame as the TOURNAMENT panel's (a covering
-	// screen hands the layer's decorator to nobody when it closes)
-	if ((!m_friendsLabel.empty() || friendsPageOpen() || networkPageOpen()) && shell().top() == this && !isHidden())
+	updateExtendedRows();
+	if (!m_joinDetails.empty() && !buildDetailsUp())
+	{
+		m_joinDetails.clear(); // the build refusal's box went: its DETAILS button with it
+		m_detailsShown = m_detailsHot = m_detailsPressed = false;
+	}
+	if (!m_joinDetails.empty() && shell().top() == this && !isHidden())
+	{
+		windows().setMouseFilterOverBox(true); // DETAILS is pressed while its box holds the input (only while the shell is on top: Sol)
+	}
+	else if (shell().top() == this)
+	{
+		windows().setMouseFilterOverBox(false);
+	}
+	// OpenBFME-only controls: OnlineOpenPlay's Ready column ends at x=943; the free strip beside its tabs is x=520..944, y=168..192.
+	// Do not reuse the offline screen's scrollbar/selector positions over the online Ready boxes, Chat tab and footer ornament.
+	auto place = [](GameWindow *window, int x, int y, int width, int height) {
+		if (!window) return;
+		window->winSetPosition(x, y);
+		int w, h;
+		window->winGetSize(&w, &h);
+		if (w != width || h != height) window->winSetSize(width, height);
+	};
+	place(slotScrollWindow(), 948, 422, 18, 216);
+	place(mapCapacityFilterWindow(), 520, 168, 220, 24);
+	place(slotRangeWindow(), 746, 168, 198, 24);
+	if ((networkPageOpen() || !m_joinDetails.empty()) && shell().top() == this && !isHidden())
 	{
 		takeDecorator();
-	}
-	else if (friendsPageOpen() && (shell().top() != this || isHidden()))
-	{
-		// a screen over the shell (Options): the page's gadgets would show through it; the page closes and the host is told (a Cancel event)
-		closeFriendsPage();
-		OpenBFMEPageEvent e;
-		e.kind = OpenBFMEPageEvent::Kind::Cancel;
-		e.key = "covered";
-		m_friendsEvents.push_back(e);
 	}
 	retryNav(); // DEVINPR-1
 	if (level() >= 0 && !isHidden())
@@ -2252,7 +2489,7 @@ void AptOnlineShell::update()
 	}
 	updateNetworkPage(); // lane ONLINEMENU-1 (it closes when the screen, the room or the page goes)
 	updateRelayLink();   // lane ONLINEMENU-1
-	if (!m_pages.count("OnlineOpenPlay"))
+	if (!m_pages.count("OnlineOpenPlay") && !m_pages.count("OnlineStrategic"))
 	{
 		return;
 	}
@@ -2325,7 +2562,8 @@ void AptOnlineShell::update()
 		for (int s = 1; s < MAX_SLOTS; ++s)
 		{
 			info.slots[s] = SkirmishGameSlot();
-			info.slots[s].state = !m_challengeTarget.empty() && s > 1 ? SLOT_CLOSED : SLOT_OPEN;
+			// ONLINE16-FIX: the map's start count closes the rest; ONLINEMENU-1: a challenge room is the two players' own
+			info.slots[s].state = s >= info.mapStartCount || (!m_challengeTarget.empty() && s > 1) ? SLOT_CLOSED : SLOT_OPEN;
 		}
 		m_client->createGame(name, password, info, 0);
 		m_state = 5;
@@ -2348,10 +2586,6 @@ void AptOnlineShell::update()
 WindowMsgHandledType AptOnlineShell::gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2)
 {
 	prune();
-	if (m_friendsPage && m_friendsPage->message(msg, data1, data2))
-	{
-		return MSG_HANDLED; // lane ONLINEMENU-1: one of the FRIENDS page's gadgets
-	}
 	GameWindow *gadget = reinterpret_cast<GameWindow *>(data1);
 	if (m_hub && m_hub->gadgetMessage(gadget, msg, data1, data2))
 	{
@@ -2385,6 +2619,11 @@ WindowMsgHandledType AptOnlineShell::gadgetMessage(GameWindow *from, std::uint32
 	return AptSkirmish::gadgetMessage(from, msg, data1, data2);
 }
 
+bool AptOnlineShell::cheatModeOffered() const
+{
+	return !m_client || !m_client->privateRoom();
+}
+
 void AptOnlineShell::lobbyChanged()
 {
 	// the gadgets changed the model: the differences go to the lobby (the host's setup and the slots that are not players', a player's own slot)
@@ -2395,8 +2634,10 @@ void AptOnlineShell::lobbyChanged()
 	}
 	const SkirmishGameInfo &now = model->info();
 	const SkirmishGameInfo &was = m_client->gameInfo();
-	if (m_client->amIHost() && (now.mapName != was.mapName || now.startingCash != was.startingCash || now.superweaponRestriction != was.superweaponRestriction ||
-								   now.legendaryHeroes != was.legendaryHeroes || now.rules != was.rules))
+	if (m_client->amIHost() && (now.mapName != was.mapName || now.gameMode != was.gameMode || now.scenario != was.scenario ||
+								   now.resumeSave != was.resumeSave || now.resumeHash != was.resumeHash || now.startingCash != was.startingCash ||
+								   now.superweaponRestriction != was.superweaponRestriction || now.legendaryHeroes != was.legendaryHeroes ||
+								   now.rules != was.rules || now.cheatModeOn() != was.cheatModeOn()))
 	{
 		m_client->setSetup(now);
 	}
@@ -2464,9 +2705,10 @@ void AptOnlineShell::onReadyPress(const std::string &argument)
 	{
 		char *end = nullptr;
 		const long v = std::strtol(argument.c_str(), &end, 10);
-		if (end == argument.c_str() || *end != '\0' || v <= 0 || v >= MAX_SLOTS)
+		const int capacity = m_client->gameInfo().mapStartCount;
+		if (end == argument.c_str() || *end != '\0' || v <= 0 || v >= capacity)
 		{
-			windows().note("online-ready-refused", "MpGameSetup::OnReadyPress(" + argument + "): not a player slot (1 .. 7)");
+			windows().note("online-ready-refused", "MpGameSetup::OnReadyPress(" + argument + "): not a player slot (1 .. " + std::to_string(capacity - 1) + ")");
 			return;
 		}
 		index = (int)v;
@@ -2499,7 +2741,7 @@ bool AptOnlineShell::applySlotHero(int slot, const CreateAHeroHero *hero)
 	return true;
 }
 
-// ---- lane ONLINEMENU-1: the FRIENDS page (NOT RETAIL; see AptOnlineShell.h) ---------------------------------------------------------------------------
+// ---- the online network page ---------------------------------------------------------------------------
 
 void AptOnlineShell::takeDecorator()
 {
@@ -2523,101 +2765,63 @@ void AptOnlineShell::decorateAll(GadgetDrawList &out)
 	{
 		m_networkPage->decorate(out);
 	}
-	if (friendsPageOpen())
+	if (!m_joinDetails.empty())
 	{
-		m_friendsPage->decorate(out);
-	}
-	if (!m_friendsLabel.empty())
-	{
-		// a button of the menus' own look (OpenBFME's: the frame and lettering of Options.apt's page, OpenBFMEOptionsPage::frame / text), the pointed
-		// one brighter, beside the frame's MESSENGER
+		// lane JOINVER-1: the build refusal's DETAILS, of the menus' own look (the FRIENDS button's), under the box's OK
 		GadgetDrawCommand c;
 		c.kind = GadgetDrawCommand::Kind::FillRect;
-		c.window = "OpenBFMEFriends";
-		c.x0 = kFriendsButtonLeft;
-		c.y0 = kFriendsButtonTop;
-		c.x1 = kFriendsButtonRight;
-		c.y1 = kFriendsButtonBottom;
-		c.color = m_friendsPressed ? 0xF0182028u : 0xE0050607u;
+		c.window = "OpenBFMEJoinDetails";
+		c.x0 = kDetailsLeft;
+		c.y0 = kDetailsTop;
+		c.x1 = kDetailsRight;
+		c.y1 = kDetailsBottom;
+		c.color = m_detailsPressed ? 0xF0182028u : 0xE0050607u;
 		out.commands.push_back(c);
-		OpenBFMEOptionsPage::frame(out, kFriendsButtonLeft, kFriendsButtonTop, kFriendsButtonRight, kFriendsButtonBottom, UnicodeString());
-		OpenBFMEOptionsPage::text(out, m_friendsLabel, kFriendsButtonLeft, kFriendsButtonTop + 9, 14,
-			m_friendsHot || friendsPageOpen() ? OpenBFMEOptionsPage::kTabHotColor : OpenBFMEOptionsPage::kTabColor, kFriendsButtonRight - kFriendsButtonLeft, true);
+		OpenBFMEOptionsPage::frame(out, kDetailsLeft, kDetailsTop, kDetailsRight, kDetailsBottom, UnicodeString());
+		OpenBFMEOptionsPage::text(out, m_detailsShown ? UnicodeString(u"COPIED") : UnicodeString(u"DETAILS"), kDetailsLeft, kDetailsTop + 7, 14,
+			m_detailsHot ? OpenBFMEOptionsPage::kTabHotColor : OpenBFMEOptionsPage::kTabColor, kDetailsRight - kDetailsLeft, true);
 	}
 }
 
-bool AptOnlineShell::openFriendsPage(const OpenBFMEPageSpec &spec, std::string *error)
-{
-	AptGadgetLayer *layer = windows().gadgetLayer();
-	if (!layer || !ownerWindow())
-	{
-		if (error)
-		{
-			*error = "no gadget layer";
-		}
-		return false;
-	}
-	if (!m_friendsPage)
-	{
-		m_friendsPage = std::make_unique<OpenBFMEOptionsPage>(*layer, ownerWindow());
-		m_friendsPage->setSink([this](const OpenBFMEPageEvent &e) {
-			if (m_friendsEvents.size() < 256)
-			{
-				m_friendsEvents.push_back(e);
-			}
-		});
-	}
-	OpenBFMEPageSpec s = spec;
-	s.backdrop = true;
-	if (!m_friendsPage->show(s, error))
-	{
-		return false;
-	}
-	takeDecorator();
-	return true;
-}
-
-void AptOnlineShell::closeFriendsPage()
-{
-	if (m_friendsPage)
-	{
-		m_friendsPage->hide();
-	}
-}
-
-std::vector<OpenBFMEPageEvent> AptOnlineShell::takeFriendsEvents()
-{
-	std::vector<OpenBFMEPageEvent> out;
-	out.swap(m_friendsEvents);
-	return out;
-}
-
-bool AptOnlineShell::friendsMouse(int kind, float x, float y)
+bool AptOnlineShell::networkMouse(int kind, float x, float y)
 {
 	if (isHidden() || shell().top() != this)
 	{
 		return false;
 	}
-	if (friendsPageOpen())
+	if (!m_joinDetails.empty())
 	{
-		if (m_friendsPage->mouse(kind, x, y))
+		// lane JOINVER-1: the build refusal's DETAILS: shows the builds' tags and profile ids in the box and copies them (once pressed: COPIED)
+		const bool inside = x >= kDetailsLeft && x <= kDetailsRight && y >= kDetailsTop && y <= kDetailsBottom;
+		if (kind == 0)
 		{
+			m_detailsHot = inside;
+		}
+		else if (kind == 1 && inside)
+		{
+			m_detailsPressed = true;
 			return true;
 		}
-		// the page's band is the page's: a press there never reaches the online page under it. ONLINEMENU-1 (the friends video, 2026-10-20): its own
-		// gadgets (the friend-code entry, the lists) still take it, from the gadget layer here; returning true kept it from them as well, so a
-		// player could not click into the entry or a list
-		if (kind != 0 && x >= OpenBFMEOptionsPage::kTabsLeft - 8 && x <= OpenBFMEOptionsPage::kPanelRight + 8 && y >= OpenBFMEOptionsPage::kTop - 8 &&
-			y <= OpenBFMEOptionsPage::kBottom + 8)
+		else if (kind == 2 && m_detailsPressed)
 		{
-			if (AptGadgetLayer *layer = windows().gadgetLayer())
+			m_detailsPressed = false;
+			if (inside)
 			{
-				layer->mouseButton(kind == 1);
+				const std::string details = m_joinDetails;
+				m_clipboard = details;
+				showBox(text("GUI:JoinFailedDefault"), wrapLines(wide(details) + u"\n\nCopied to the clipboard.", kWrap), "profile-details|" + details);
+				m_joinDetails = details; // the box's new text is still the refusal's
+				m_detailsShown = true;
+				windows().note("online-join-details", details);
 			}
 			return true;
 		}
 	}
-	else if (networkPageOpen())
+	if (windows().componentInputBlocked())
+	{
+		return false; // under a box only DETAILS is the shell's (WindowManager::setMouseFilterOverBox)
+	}
+	if (networkPageOpen())
 	{
 		if (m_networkPage->mouse(kind, x, y))
 		{
@@ -2630,38 +2834,8 @@ bool AptOnlineShell::friendsMouse(int kind, float x, float y)
 			return true;
 		}
 	}
-	if (m_friendsLabel.empty())
-	{
-		m_friendsHot = m_friendsPressed = false;
-		return false;
-	}
-	const bool inside = x >= kFriendsButtonLeft && x <= kFriendsButtonRight && y >= kFriendsButtonTop && y <= kFriendsButtonBottom;
-	if (kind == 0)
-	{
-		m_friendsHot = inside;
-		return false;
-	}
-	if (kind == 1 && inside)
-	{
-		m_friendsPressed = true;
-		return true;
-	}
-	if (kind == 2 && m_friendsPressed)
-	{
-		m_friendsPressed = false;
-		if (inside)
-		{
-			OpenBFMEPageEvent e;
-			e.kind = OpenBFMEPageEvent::Kind::Entry;
-			e.key = "friends_button";
-			m_friendsEvents.push_back(e);
-		}
-		return true;
-	}
 	return false;
 }
-
-// ---- lane ONLINEMENU-1: the Connections screen on the relay ---------------------------------------------------------------------------------------------
 
 namespace
 {
@@ -2693,6 +2867,10 @@ std::string AptOnlineShell::connectionFrame(int row, int column) const
 	{
 		return "_empty";
 	}
+	if (!m_client->roomRelayTold())
+	{
+		return "_empty"; // lane JOINVER-1: an older lobby tells no relay and no links: nothing to show (the line under the grid says so)
+	}
 	if (m_client->roomRelay().empty())
 	{
 		return "_failed"; // no relay: online games cannot start (no_relay), and nobody reaches anybody
@@ -2714,15 +2892,19 @@ void AptOnlineShell::drawConnectionGrid()
 	{
 		return; // the grid is drawn once the movie asked for it (Connection::RedrawGrid names its clip), then whenever a cell changes
 	}
+	// BFME2 0x005DB647 RedrawGrid (decomp GUICallbacks/Apt/AptConnectionScreen.cpp) draws rows and columns 0..7 and 0x005DB630 the eight
+	// players' names: the movie's grid is eight by eight (Main.Grid.<row>.<column>, no cell 8). OpenBFME's 16-player rooms (MAX_SLOTS) keep that
+	// grid; the players of slots 9 to 16 are on the page in words only (S-4550). Before: the loops ran to MAX_SLOTS, and the first missing cell
+	// (0, 8) stopped the draw, so every row after the first stayed undrawn and the screen noted a missing movie function
 	std::string signature;
-	for (int row = 0; row < MAX_SLOTS; ++row)
+	for (int row = 0; row < kConnectionGrid; ++row)
 	{
-		for (int column = 0; column < MAX_SLOTS; ++column)
+		for (int column = 0; column < kConnectionGrid; ++column)
 		{
 			signature += connectionFrame(row, column) + ",";
 		}
 	}
-	for (int i = 0; i < MAX_SLOTS; ++i)
+	for (int i = 0; i < kConnectionGrid; ++i)
 	{
 		signature += narrow(m_client->gameInfo().slots[i].name) + ";";
 	}
@@ -2732,7 +2914,7 @@ void AptOnlineShell::drawConnectionGrid()
 	}
 	m_gridDrawn = signature;
 	// BFME2 0x005DB3B3 UpdateSlotName: a human slot's name and its number (idx + 1), nothing for the others
-	for (int i = 0; i < MAX_SLOTS; ++i)
+	for (int i = 0; i < kConnectionGrid; ++i)
 	{
 		const SkirmishGameSlot &s = m_client->gameInfo().slots[i];
 		const bool human = m_client->slotViews()[(size_t)i].state == "player";
@@ -2740,9 +2922,9 @@ void AptOnlineShell::drawConnectionGrid()
 		windows().setAptText("APT:ConnectionPlayerNum_" + std::to_string(i), human ? std::to_string(i + 1) : std::string());
 	}
 	// the cells: the movie's UpdateConnection_<row>_<column>(frame) (retail invokes it in the grid's level)
-	for (int row = 0; row < MAX_SLOTS; ++row)
+	for (int row = 0; row < kConnectionGrid; ++row)
 	{
-		for (int column = 0; column < MAX_SLOTS; ++column)
+		for (int column = 0; column < kConnectionGrid; ++column)
 		{
 			const std::string fn = "UpdateConnection_" + std::to_string(row) + "_" + std::to_string(column);
 			const std::string frame = connectionFrame(row, column);
@@ -2758,7 +2940,7 @@ void AptOnlineShell::drawConnectionGrid()
 				m_gridDrawn.clear();
 				return;
 			}
-			m_gridFrames[(size_t)(row * MAX_SLOTS + column)] = frame;
+			m_gridFrames[(size_t)(row * kConnectionGrid + column)] = frame;
 		}
 	}
 }
@@ -2818,7 +3000,7 @@ void AptOnlineShell::updateRelayLink()
 	if (!m_probe->running() && now >= m_probeDueMs)
 	{
 		std::string error;
-		if (!m_probe->start(target, now, &error))
+		if (!m_probe->start(target, &error))
 		{
 			windows().note("online-connections", "the relay could not be probed: " + error);
 			m_probeDueMs = now + 60000;
@@ -2826,7 +3008,7 @@ void AptOnlineShell::updateRelayLink()
 		}
 	}
 	const bool wasRunning = m_probe->running();
-	m_probe->update(now);
+	m_probe->update();
 	if (wasRunning && !m_probe->running() && m_probe->hasResult())
 	{
 		const RelayProbe::Result &r = m_probe->result();
@@ -2954,7 +3136,11 @@ OpenBFMEPageSpec AptOnlineShell::networkSpec() const
 		u"part of a game.");
 	UnicodeString relay, loss = u"-", when = u"-";
 	const bool measured = m_hasLastLink && m_probeDoneMs != 0;
-	if (!m_client || m_client->roomRelay().empty())
+	if (m_client && !m_client->roomRelayTold())
+	{
+		relay = u"not available on this server yet"; // lane JOINVER-1: an older lobby (its rooms name no relay and keep no links)
+	}
+	else if (!m_client || m_client->roomRelay().empty())
 	{
 		relay = u"none: this lobby cannot start games";
 	}

@@ -1,0 +1,9 @@
+{
+ "_comment": "Lane RELNOTES-1: which community pull requests each Release-note line of a merge came from, for merges already in the history whose lines do not end with their own (#12) (nightly_notes.py note_credits; docs/RELEASE.md, Nightly builds). Key: the merge's full commit id; value: one list of pull request numbers per Release-note line of that merge, in order ([] = our own work). A row wins over the lines' own endings. New merges need no row: end each credited Release-note line with (#12) or (#12, #13).",
+ "merges": {
+  "27b8f5bafd9b81fddd53a4eae007ba8b03cc2c92": [[141], [144], [165], [169]],
+  "207e9b632d2c5985700be9e21d220f3be9d830a3": [[137], [137], [137], [140], [], [], [156], [159]],
+  "cf38c5d40de8423efd24472fbbfb3ddbb6e57933": [[164], [], [], [], [], [], [133], [166]],
+  "c57fbb1ccad4f09c9b695c0996c2c1f8ae47462e": [[171], [], [], [160], [161], []]
+ }
+}

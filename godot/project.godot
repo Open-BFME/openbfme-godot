@@ -37,6 +37,50 @@ textures/vram_compression/import_etc2_astc=true
 
 rendering/soft_particles=true
 
+[shader_globals]
+
+; lane WEATHERFX-1: the Enhanced look's weather (scripts/weather_fx.gd, shaders/weather_fx.gdshaderinc); 0 = off, the Original look
+wfx_enabled={
+"type": "float",
+"value": 0.0
+}
+wfx_time={
+"type": "float",
+"value": 0.0
+}
+wfx_wet={
+"type": "float",
+"value": 0.0
+}
+wfx_ripples={
+"type": "float",
+"value": 0.0
+}
+wfx_snow={
+"type": "float",
+"value": 0.0
+}
+wfx_clouds={
+"type": "float",
+"value": 0.0
+}
+wfx_cloud_offset={
+"type": "vec2",
+"value": Vector2(0, 0)
+}
+wfx_flash={
+"type": "float",
+"value": 0.0
+}
+wfx_gloom={
+"type": "float",
+"value": 0.0
+}
+wfx_noise_tex={
+"type": "sampler2D",
+"value": ""
+}
+
 [editor]
 
 ; lane RELEASE-1: scenes are exported as their committed text (.tscn); the binary conversion gives every export new random ids, which

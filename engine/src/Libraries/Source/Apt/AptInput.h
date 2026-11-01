@@ -53,7 +53,8 @@ public:
 		MouseMove,
 		MouseButton, // button 0: `down` says pressed or released
 		MouseWheel,
-		Key
+		Key,
+		CancelPress // NOT RETAIL: postCancelPress
 	};
 
 	struct Event
@@ -71,6 +72,13 @@ public:
 	void postMouseButton(bool down);
 	void postMouseWheel(int delta);
 	void postKey(int keyCode, bool down);
+	// NOT RETAIL (OpenBFME's Options page owns the bottom bar's click, AptOptionsScreen::mouseFilter): the press posted before ends without a release. Queued
+	// in order with the other events, so a press and its cancel posted between two updates still drain as press, then cancel: the pressed button goes back
+	// to Over and the pressed clip is dropped, and no Release / ReleaseOutside or button release transition runs. Returns the event's serial (see processed)
+	std::uint64_t postCancelPress();
+	// the count of events posted so far (the serial of the last one) and of events drained (the queue drains once per movie step, not per host frame)
+	std::uint64_t posted() const { return m_posted; }
+	std::uint64_t processed() const { return m_processed; }
 	std::size_t queued() const { return m_queue.size(); }
 
 	// Drain the queue (AptUpdate calls this once per step).
@@ -119,6 +127,7 @@ private:
 
 	Apt &m_apt;
 	std::vector<Event> m_queue;
+	std::uint64_t m_posted = 0, m_processed = 0; // NOT RETAIL: the port's serials (posted / processed)
 	bool m_pressed = false;                    // gApt+0x70
 	AptButtonInst *m_currentButton = nullptr;  // gApt+0x6C
 	AptCharacterInst *m_pressedClip = nullptr; // gApt+0x60

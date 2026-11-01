@@ -108,11 +108,12 @@ public:
 	static StancesBehavior *of(Object &obj); ///< RW 0x861E6E / 0x68BDA5: the module by its class name
 
 	UpdateSleepTime update() override; ///< RW 0x8622E9
-	bool setStance(StanceType stance);  ///< RW 0x8620DD
-	void onMoveStart();                 ///< RW 0x862275
+	bool setStance(StanceType stance, const char *site = "direct"); ///< RW 0x8620DD; site is diagnostic only
+	void onMoveStart(const char *site = "onMoveStart"); ///< RW 0x862275
 	void onMoveEnd();                   ///< RW 0x86228E
 	bool applyMeleeBehavior(StanceType stance); ///< RW 0x861E17
 	StanceType getStance() const { return m_stance; }
+	void traceQueuedStance(int stance, const char *site) const { traceStance(m_stance, stance, site, "enqueue"); }
 	static int stanceClass(StanceType stance); ///< RW 0x861D8E
 	void crc(StateHasher &hasher) const override;
 
@@ -126,6 +127,7 @@ public:
 	static std::vector<std::string> stopLines();
 
 private:
+	void traceStance(int oldStance, int newStance, const char *site, const char *event) const;
 	const StancesBehaviorModuleData *m_data;
 	StanceType m_stance = STANCE_UNINITIALIZED; ///< +0x30
 };

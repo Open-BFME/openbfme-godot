@@ -13,7 +13,7 @@
 //     every object in the object list order (RW 0x97338F, next at Object + 0x8C);
 //   * clear (RW 0x71A04F): apply(obj, true) to every object, then kind = 0, name = "", anti = 0, mask = 0, frames = 0;
 //   * setWeather (RW 0x71A024, weather, burn decay, frames): only when the weather differs: + 0x10 = weather, + 0x28 = frames, RW 0xDE46A8 + 0x98
-//     = burn decay (an unidentified subsystem's field, kept here), then RW 0x719DEE (the client's weather change, an FX event here: S-922);
+//     = burn decay (an unidentified subsystem's field, kept here), then RW 0x719DEE (lane WEATHER-1: the weather sound: TheAudio removes +0x14 and adds the new weather's WeatherSound; the client's WeatherClient plays it from the presented weather, S-4892);
 //   * update (RW 0x71A09E, vtable slot 0x28; GameLogic::update phase 1 calls it at RW 0x62E8BE): --(+0x2C), reaching 0 from 1 clears; --(+0x28),
 //     reaching 0 from 1 sets the weather NONE with burn decay 0 and 0 frames. Both count down as unsigned 32-bit values (a 0 stays 0 after the
 //     wrap only through the `was != 0` test);
@@ -22,7 +22,9 @@
 //     0x6A85B6; none when the mask is 0); then the list is added (RW 0x68F1A8, the list's own duration) or removed (RW 0x68F259), and with a non-empty
 //     anti mask the object's AttributeModifierPool disables those categories until 999999999 (add) or 0 (remove) (RW 0x804FCC);
 //   * Object::initObject (RW 0x693D0C) calls apply(obj, false) for every new object (RW 0x694073).
-// INFERENCE: the weather at game start is NONE (0); the map's weather setting is not traced (S-922).
+// TARGET FACT (lane WEATHER-1): the weather at game start is NONE: the ctor (RW 0x719EBE) and reset (RW 0x719FDB) store 0 at + 0x10 and setWeather's only
+// callers are the special power trigger (RW 0x897987) and the update (RW 0x71A09E); the map's WorldInfo weather is a different setting
+// (TheWritableGlobalData + 0x138, NORMAL / SNOWY). The five WeatherData records (+0x30) are parsed by the client's WeatherSettingStore (WEATHER-1).
 
 #pragma once
 
@@ -90,5 +92,5 @@ private:
 	unsigned m_modifierFrames = 0;                ///< + 0x2C
 	unsigned m_antiMask = 0;                      ///< + 0x58
 	unsigned m_burnDecay = 0;                     ///< RW 0xDE46A8 + 0x98
-	unsigned long long m_weatherChanges = 0;      ///< RW 0x719DEE calls (the client's weather change)
+	unsigned long long m_weatherChanges = 0;      ///< RW 0x719DEE calls (the weather sound, played by the client: WeatherClient)
 };

@@ -130,6 +130,7 @@ private:
 	std::unique_ptr<AIStateMachine> makeGenericAttackMachine();
 	int m_machineMade = MADE_NONE;
 	std::unique_ptr<AIStateMachine> m_attackMachine;
+	KeptSubMachines<AIStateMachine> m_keptMachines; // review of #64: the attack machine dropped during its own update (see KeptSubMachines)
 	bool m_follow, m_isAttackingObject, m_isForceAttacking;
 	Coord3D m_originalVictimPos{ 0.0f, 0.0f, 0.0f };
 	ObjectID m_victimTeam = 0;

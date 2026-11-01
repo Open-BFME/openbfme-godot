@@ -50,7 +50,7 @@ TEST_CASE("combat ai: an attack order on an ally, on a dead object or by a unit 
 	CHECK(a->getAIUpdateInterface()->aiForceAttackObject(ally, CMD_FROM_PLAYER));       // unless the player forces it
 	a->getAIUpdateInterface()->aiIdle(CMD_FROM_PLAYER);
 	CHECK_FALSE(unarmed->getAIUpdateInterface()->aiAttackObject(enemy, CMD_FROM_PLAYER)); // no weapon
-	enemy->kill(DEATH_NORMAL);
+	enemy->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	CHECK_FALSE(a->getAIUpdateInterface()->aiAttackObject(enemy, CMD_FROM_PLAYER));       // already dead
 	CHECK(a->getAIUpdateInterface()->isIdle());
 }
@@ -76,18 +76,21 @@ TEST_CASE("combat ai: the idle scan - an enemy in the vision range is attacked o
 	CHECK(w.health(ally) == 100.0f);
 }
 
-TEST_CASE("combat ai: the nearest enemy is chosen, a tie goes to the lower object id")
+// merge queue q24: since OFFMAP-1 (RotWK's idle state RW 0x745A64 has no ZH frame <= 1 snap) the swordsman starts at exactly (300, 300), so the two dummies tie
+// for real; the snap had moved it nearer the eastern one. TARGET-1's AI::findClosestEnemy (RW 0x701443) keeps the first of equal scores (a strict '>')
+// in the partition's iteration order, which meets the western dummy (the higher id) first. "The lower id" was ZH's PartitionManager tie rule.
+TEST_CASE("combat ai: the nearest enemy is chosen, a tie goes to the first the partition's iteration meets")
 {
 	CombatWorld w;
 	Object *a = w.unit("Swordsman", 'A', 300, 300);
 	Object *first = w.unit("Dummy", 'B', 380, 300);   // 80 east
-	Object *second = w.unit("Dummy", 'B', 220, 300);  // 80 west: the same distance, the higher id
+	Object *second = w.unit("Dummy", 'B', 220, 300);  // 80 west: the same distance, the higher id, met first
 	Object *nearer = nullptr;
 	w.frames(4);
-	CHECK(a->getAIUpdateInterface()->currentVictimId() == first->getID());
+	CHECK(a->getAIUpdateInterface()->currentVictimId() == second->getID());
 	nearer = w.unit("Dummy", 'B', 300, 340);          // closer than both, but the current attack goes on
 	w.frames(3);
-	CHECK(a->getAIUpdateInterface()->currentVictimId() == first->getID());
+	CHECK(a->getAIUpdateInterface()->currentVictimId() == second->getID());
 	CHECK(nearer != nullptr);
 	CHECK(second != nullptr);
 }
@@ -197,7 +200,7 @@ TEST_CASE("combat ai: when the victim is killed by somebody else the attacker go
 	w.frames(2);
 	a->getAIUpdateInterface()->aiAttackObject(v, CMD_FROM_PLAYER);
 	w.frames(3);
-	v->kill(DEATH_NORMAL);
+	v->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	w.frames(3);
 	CHECK(a->getAIUpdateInterface()->isIdle());
 	CHECK(a->getAIUpdateInterface()->currentVictimId() == INVALID_ID);
@@ -213,7 +216,7 @@ TEST_CASE("combat ai: a dead unit's AI stops, it takes no orders and its footpri
 	CHECK(w.inPathfinder(id));
 	a->getAIUpdateInterface()->aiMoveToPosition(Coord3D{ 500.0f, 300.0f, 0.0f }, CMD_FROM_PLAYER);
 	w.frames(3);
-	a->kill(DEATH_NORMAL);
+	a->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	REQUIRE(a->isEffectivelyDead());
 	CHECK(a->getAIUpdateInterface()->isAiInDeadState());
 	CHECK_FALSE(w.inPathfinder(id));

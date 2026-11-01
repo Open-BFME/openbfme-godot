@@ -35,8 +35,10 @@ A ban (moderation's enforcement record of an install) covers:
    player, or a new recovery code.
 
 ## Storage budget (Cloudflare Free: 100,000 row writes a day)
-Refused or malformed requests write nothing (narrow budgets counted in memory); only admitted flows write, and each has a daily cap
-(OAuth start / finish: link 600, restore 400; unlink 200; e-mail sends 300, also 3 per page and 3 an hour per address).
+Narrow budgets are counted in memory; admitted flows have daily caps. OAuth start / finish each allow link 600 and restore 400
+in separate buckets. Unlink allows 200; e-mail sends share 300 across modes, also 3 per page and 3 an hour per
+address. These are admission limits, not a guarantee that every refused flow writes nothing: a failure after admission can still
+charge a durable budget or consume a transaction.
 
 ## Mail function (owner's choice: no static AWS keys)
 `services/online/mailer/`: an AWS Lambda (Python, boto3) with a function URL, accepting only requests signed with `MAILER_KEY`

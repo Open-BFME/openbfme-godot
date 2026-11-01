@@ -13,6 +13,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { normalizeRoster, validReceipt, validateReportSource } from './reports.mjs';
+import { repairStoredText } from './stored-text.mjs';
 
 const COMPACT_AFTER_MS = 24 * 60 * 60 * 1000;
 const KEY_PATTERNS = [
@@ -190,7 +191,7 @@ export class NodeReportStore {
       if (!line) throw new Error(`report journal: empty record at line ${index + 1}`);
       let record;
       try {
-        record = JSON.parse(line);
+        record = repairStoredText(JSON.parse(line));
       } catch {
         throw new Error(`report journal: invalid JSON at line ${index + 1}`);
       }

@@ -307,6 +307,7 @@ void LookAtTranslator::tick(unsigned nowMs)
 	// RW 0x83B471
 	++m_frame;
 	m_nowMs = nowMs;
+	if (m_ctx.ui.formationActive) { cancelPointer(); m_ctx.ui.setScrollAmount(0,0); return; }
 	const CameraSettings &gd = m_camera.gameData();
 	float offX = 0.0f, offY = 0.0f;
 	if (m_scrolling && (!m_ctx.ui.isScrolling() || !m_ctx.ui.getInputEnabled()))

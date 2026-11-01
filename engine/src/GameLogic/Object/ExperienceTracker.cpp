@@ -129,6 +129,30 @@ const ExperienceLevelTemplate *ExperienceTracker::nextLevel() const
 	return TheExperienceLevelSystem->nextLevel(m_templateName, m_levelName, multiplayerGame());
 }
 
+// lane HEROCAST-1 (the header)
+bool ExperienceTracker::currentLevelRank(int &rank) const
+{
+	const std::vector<const ExperienceLevelTemplate *> *list = TheExperienceLevelSystem ? TheExperienceLevelSystem->levelsFor(m_templateName) : nullptr;
+	if (!list)
+	{
+		return false;
+	}
+	for (const ExperienceLevelTemplate *entry : *list)
+	{
+		if (entry->getFinal()->m_name == m_levelName)
+		{
+			const bool mp = multiplayerGame();
+			if (mp ? entry->m_singlePlayerOnly : entry->m_multiPlayerOnly)
+			{
+				return false;
+			}
+			rank = entry->getFinal()->m_rank;
+			return true;
+		}
+	}
+	return false;
+}
+
 int ExperienceTracker::checkLevels(bool feedback)
 {
 	if (!TheExperienceLevelSystem || !TheExperienceLevelSystem->levelsFor(m_templateName))

@@ -134,6 +134,9 @@ struct InstallCheck
 	int present = 0;                    // policy archives found with the right size
 	int expected = 0;
 	std::string layout;                 // lane CONTRIB-1: the known layout the folder holds (RetailArchivePolicy.h "Layouts"); "" = none
+	std::string language;               // the folder's language ("English", "German"; RetailArchivePolicy.h "Languages"); "" = none found
+	std::string voice;                  // its voice language (the stem of lang/<language>audio.big); "" = none found
+	std::vector<std::string> unpinnedLanguageArchives; // its language archives with no known md5 (mounted with a warning)
 };
 
 // Is `root` the folder of `game` described by `policy`? Fast: presence and size of every policy archive

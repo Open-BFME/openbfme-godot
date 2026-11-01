@@ -92,15 +92,38 @@ jobs:
         # test_autorelease.py and test_community_prs.py
         run: python3 tools/release/pr_pytest.py -n 4 --durations=15
 
+  fixtures:
+    name: Reference MP3 fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the reference audio tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends lame mpg123
+      - name: Generate and verify the reference streams
+        run: python3 tools/audio/gen_mp3_fixtures.py --out workspace/audio_fixtures
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mp3-reference-fixtures
+          path: workspace/audio_fixtures/*.mp3.bin
+          if-no-files-found: error
+          retention-days: 1
+
   linux:
     name: Linux engine build and unit tests
     runs-on: ubuntu-24.04
+    needs: fixtures
     # a cold compiler cache took 24 minutes (PUBLICCI-1, 2026-10-19); a warm one about 3
     timeout-minutes: 40
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 2G
       CCACHE_NOHASHDIR: "1"
+      OPENBFME_AUDIO_FIXTURES: ${{ github.workspace }}/workspace/audio_fixtures
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -109,6 +132,10 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends ninja-build ccache
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: mp3-reference-fixtures
+          path: workspace/audio_fixtures
       - name: Restore the compiler cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -132,17 +159,15 @@ jobs:
           path: .ccache
           key: ccache-linux-${{ github.sha }}
       - name: Unit tests (the tests that need the game skip)
-        # the five MP3 decoder tests read synthetic streams that lame encodes at build time and compare them with numbers mpg123 1.33
-        # derived (engine/tests/data/audio/mp3_golden.tsv); this runner has neither tool in that version, so they run in the project's
-        # full test run only
         run: |
-          engine/build/openbfme_tests --test-case-exclude="audio decode: MP3 *,audio decode: corrupted MP3 fixtures*"
+          engine/build/openbfme_tests
 
   windows:
     name: Windows cross build (llvm-mingw, compile only)
     # the release's own recipe (tools/release/build_windows.sh: the pinned llvm-mingw, the tests, the peer and the GDExtension, the DLL's
     # PDB scrub and package audit) without the Godot export
     runs-on: ubuntu-24.04
+    needs: fixtures
     timeout-minutes: 40
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -151,6 +176,7 @@ jobs:
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       JOBS: "4"
+      OPENBFME_AUDIO_FIXTURES: ${{ github.workspace }}/workspace/audio_fixtures
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -159,6 +185,10 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends ninja-build ccache
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: mp3-reference-fixtures
+          path: workspace/audio_fixtures
       - name: Restore the compiler cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -179,14 +209,16 @@ jobs:
           key: ccache-windows-${{ github.sha }}
 
   macos:
-    name: macOS arm64 build (compile only)
+    name: macOS arm64 build and console tests
     # the configuration of the Mac package (tools/release/package_macos.py cmake_configure_args) without the export
     runs-on: macos-15
+    needs: fixtures
     timeout-minutes: 40
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 2G
       CCACHE_NOHASHDIR: "1"
+      OPENBFME_AUDIO_FIXTURES: ${{ github.workspace }}/workspace/audio_fixtures
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -194,6 +226,10 @@ jobs:
           submodules: true
       - name: Install the build tools
         run: brew install ninja ccache
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: mp3-reference-fixtures
+          path: workspace/audio_fixtures
       - name: Restore the compiler cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -202,13 +238,13 @@ jobs:
           restore-keys: ccache-macos-
       - name: Configure
         run: >-
-          cmake -S engine -B engine/build-macos -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENBFME_LAME=OFF -DOPENBFME_BUILD_GODOT=ON
+          cmake -S engine -B engine/build-macos -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENBFME_BUILD_TESTS=ON -DOPENBFME_BUILD_GODOT=ON
           -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-      - name: Build the GDExtension
+      - name: Build the GDExtension and unit test executable
         run: |
           ccache -z
-          cmake --build engine/build-macos --target openbfme
+          cmake --build engine/build-macos --target openbfme openbfme_tests
           ccache -s
       - name: Save the compiler cache (pushes only)
         # a push to main saves the cache pull requests restore; a ci/** branch's cache is visible to that branch only
@@ -217,12 +253,15 @@ jobs:
         with:
           path: .ccache
           key: ccache-macos-${{ github.sha }}
+      - name: Console filter regression tests
+        # Exercise the real macOS /dev/null sink as well as privacy filtering and bounded shutdown.
+        run: engine/build-macos/openbfme_tests --test-case="release1:*console*,onezip1:*console*"
 
   ci:
     name: CI
     # the one required check: it runs even when a job it needs failed or was cancelled, and passes only when every one succeeded
     if: always()
-    needs: [lint, gate, linux, windows, macos]
+    needs: [lint, gate, fixtures, linux, windows, macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -233,7 +272,7 @@ jobs:
           python3 - <<'EOF'
           import json, os, sys
           needs = json.loads(os.environ["RESULTS"])
-          want = {"lint", "gate", "linux", "windows", "macos"}
+          want = {"lint", "gate", "fixtures", "linux", "windows", "macos"}
           bad = sorted(f"{k}: {v['result']}" for k, v in needs.items() if v["result"] != "success")
           if set(needs) != want:
               bad.append(f"the jobs are {sorted(needs)}, not {sorted(want)}")

@@ -51,6 +51,7 @@ enum AIEmotionStateType
 {
 	AI_PANIC = 20,
 	AI_PANIC_COWER = 21,
+	AI_FACE_OBJECT = 36, // its position mode 37 is SiegeModules.h AI_FACE_POSITION (lane SIEGE-1)
 	AI_BACK_AWAY = 48,
 	AI_QUARREL = 58,
 	AI_FACE_OBJECT_IDLE = 59
@@ -58,6 +59,23 @@ enum AIEmotionStateType
 
 // RW 0x4B3D8D: the signed angle from the object's facing to `p`, 0 when `p` is the object's position
 float emotionRelAngle(const Object &obj, const Coord3D &p);
+
+// The same retail face state as mode 2 below, with modes 1 (object) and 0
+// (position): RW constructor 0x753755 registers ids 36 / 37 at 0x7542E8.
+// These modes are not idle and return CONTINUE until the locomotor has turned.
+class AIFaceState : public AIState
+{
+public:
+	AIFaceState(AIStateMachine &m, bool objectTarget) : AIState(m, "AIFaceState"), m_objectTarget(objectTarget) {}
+	StateReturnType onEnter() override;
+	StateReturnType update() override;
+	void crc(class StateHasher &h) const override;
+	void xfer(class Xfer &x) override;
+
+private:
+	const bool m_objectTarget;
+	bool m_canTurn = false;
+};
 
 // state 20 (`cower` false) and state 21 (`cower` true)
 class AIPanicState : public AIState
@@ -70,6 +88,7 @@ public:
 	void crc(class StateHasher &hasher) const override;
 	void crcPersistent(class StateHasher &hasher) const override;
 	void xfer(class Xfer &x) override; // lane SAVE-4c (AIEmotionStates.cpp)
+	bool hasPersistentCrc() const override { return true; } // lane UBER-2C
 	void onTemporaryStateEnded() override; // RW 0x740C97 (vtables 0xC28BE0 / 0xC28C28 slot 0x1C)
 
 private:

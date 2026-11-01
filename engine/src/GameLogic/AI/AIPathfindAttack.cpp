@@ -3,7 +3,7 @@
 //
 // Lane PHYS-1, completed by lane ATTACKPATH-1: Pathfinder::findAttackPath, the search for a cell from which the attacker's weapon reaches its victim (ZH AIPathfind.cpp
 // findAttackPath; RotWK body RW 0x6FC18E, pathfinder vtable 0xC1B8D8 slot +8, tier B to BFME2 0x6FAD13 whose decomp source is the near-matching draft
-// reverse/attempts/0x002fad13.cpp (2117 / 2117 bytes, not yet byte-matched): every step below was read from the RotWK disassembly, the draft supplied the names.
+// pathfinder.cpp Pathfinder::FindAttackPath (2117 bytes; byte-matched since, then reverse/attempts/0x002fad13.cpp): every step below was read from the RotWK disassembly, the draft supplied the names.
 // The ship variant RW 0x6FDE38 (slot +0xC, decomp PathfinderSidewaysAttack.cpp) is not ported: ships are not modelled by the pathfinder.)
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; lane PHYS-1 review r2 / r3, lane ATTACKPATH-1):
@@ -40,6 +40,8 @@
 #include "GameLogic/AI/AIPathfindStops.h"
 #include "GameLogic/SimMath.h"
 
+#include <limits>
+
 namespace
 {
 // RW 0x6E8CE6 with the centring flag 1 (no clamp)
@@ -49,6 +51,13 @@ inline int cellIndexCentred(float v)
 }
 } // namespace
 
+namespace
+{
+// lane UBER-3P (Uber profile only): a search with no endpoint ends once its closest cell held for this many examined cells (internalFindPath's
+// kUberStallCells)
+constexpr int kUberAttackStallCells = 256;
+} // namespace
+
 Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const PathfindObject *victim, const Coord3D *victimPos,
 	float victimRadius, const PathfindAttackRange &range, bool pathThrough, bool *fallback)
 {
@@ -56,6 +65,7 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 	{
 		return nullptr;
 	}
+	SearchMemoScope memo(*this, obj); // lane PATHPERF-1's memo for this search too
 	if (fallback)
 	{
 		*fallback = false;
@@ -134,6 +144,7 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 		goal.x = SimMath::addf32(SimMath::mulf32(k, ux), goal.x);
 	}
 	// 3. the corridor (lane ATTACKPATH-1: RW 0x6FC4B1 .. 0x6FC4F9; closes the feature map's perf trap "findAttackPath's own corridor", S-162)
+	m_portalHops.clear(); // lane WALL-2: only this search's corridor leaves hops (review #64: a previous search's hops steered costToGoal; INFERENCE as findPath, RW 0x6FE7CB)
 	m_zoneManager.clearPassableFlags();
 	Coord3D adjustedGoal = goal;
 	const bool hierarchical = findClosestHierarchicalPath(const_cast<PathfindObject *>(obj), loco, isHuman, from, &goal, &adjustedGoal);
@@ -141,6 +152,10 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 	{
 		m_zoneManager.setAllPassable();
 	}
+	// lane PERF-HD (Uber only): the cell search gets the queue's cap of its own, as in findPath; the block search may have spent it (a target in another
+	// zone scans the whole block map), and a spent cap ends the cell search at its first cell, before it chose an acceptable or closest cell: no path, so the
+	// unit never approaches. Also without a corridor: a unit off the ground keeps its closest cell then (S-4858, rankByDistance below)
+	m_uberSearchAllocs = 0;
 	// 4. the start and the goal cell
 	const int attackDistance = SimMath::truncToInt32(range.attackDistance()) + 30;
 	Coord3D start = pos;
@@ -189,17 +204,56 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 		closestDistance = SimMath::mulf32(SimMath::sseFromInt32(dy * dy + dx * dx), 0.9f);
 	}
 	const bool checkView = victim == nullptr || !victim->isSignificantlyAboveTerrain();
+	// lane WALL-2 with ATTACKPATH-1 (S-4858, OpenBFME's own): RotWK keeps the closest-cell fallback only with a corridor (the RW 0x93AD93 ranking below runs
+	// only when RW 0x6F9829 found one). A unit off the ground layer whose start the block search cannot leave gets none, and the search would then end with
+	// no path at all: the unit would wait in its approach for good (Grond
+	// put on a Minas Tirith wall top, every wall cell blocking it: CanPathThroughGates = No). Such a search keeps the cell closest to the goal cell by its
+	// squared cell distance instead, as the attack search did before the corridor was ported
+	const bool rankByDistance = !hierarchical && obj->getLayer() != LAYER_GROUND;
+	if (rankByDistance)
+	{
+		note(pathstops::kAttackRaisedFallback);
+	}
+	int closestD2 = std::numeric_limits<int>::max();
 	m_shortcutCounter = 0;
 	unsigned examined = 0;
+	// lane UBER-3P (Uber profile only): the cell nearest the goal (squared cell distance) and the examined count when it last changed
+	int stallD2 = std::numeric_limits<int>::max();
+	unsigned stallAt = 0;
 	Path *result = nullptr;
 	bool done = false;
 	// 6. the search
 	while (!m_open.empty())
 	{
 		PathfindCell *c = m_open.pop();
+		if (m_uberLimits)
+		{
+			if (m_uberSearchAllocs > m_uberSearchCap)
+			{
+				markClosed(c); // lane PERF-HD: the Uber queue's cap; the result below is the exhausted search's (the acceptable or closest cell)
+				break;
+			}
+			const int sx = (int)goalCell->getXIndex() - (int)c->getXIndex(), sy = (int)goalCell->getYIndex() - (int)c->getYIndex();
+			const int d2 = sx * sx + sy * sy;
+			if (d2 < stallD2)
+			{
+				stallD2 = d2;
+				stallAt = examined;
+			}
+		}
 		Coord3D centre;
 		adjustCoordToCell(c->getXIndex(), c->getYIndex(), center, centre, c->getLayer());
-		if (hierarchical)
+		if (rankByDistance)
+		{
+			const int gx = (int)goalCell->getXIndex() - (int)c->getXIndex(), gy = (int)goalCell->getYIndex() - (int)c->getYIndex();
+			const int d2 = gx * gx + gy * gy;
+			if (d2 < closestD2)
+			{
+				closestD2 = d2;
+				closest = c;
+			}
+		}
+		else if (hierarchical)
 		{
 			const int order = hierarchicalPositionOf(c->getXIndex(), c->getYIndex());
 			const int gx = (int)goalCell->getXIndex() - (int)c->getXIndex(), gy = (int)goalCell->getYIndex() - (int)c->getYIndex();
@@ -240,6 +294,13 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 			}
 		}
 		markClosed(c);
+		// lane UBER-3P (Uber profile only, docs/UBER.md): with no endpoint yet and the cell nearest the goal unchanged for kUberAttackStallCells examined cells,
+		// the search ends with the fallback the exhausted search gives (the path to the fallback cell). In the 30,000-troop clash 126 of 200 attack
+		// searches found no endpoint and spent 75% of their cells after such a pause; no endpoint of the other 74 came after one
+		if (m_uberLimits && acceptable == nullptr && examined - stallAt >= (unsigned)kUberAttackStallCells)
+		{
+			break;
+		}
 		if (examined < (unsigned)m_config.findAttackPathLimit)
 		{
 			if (!pathThrough)

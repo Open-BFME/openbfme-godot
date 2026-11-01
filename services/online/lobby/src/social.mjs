@@ -1,4 +1,5 @@
 import { SocialStorageError } from './social-store.mjs';
+import { repairStoredText } from './stored-text.mjs';
 import {
   authorizationUrl,
   exchangeProvider,
@@ -208,7 +209,7 @@ function oauthVerifier(value) {
   return value;
 }
 
-function validOAuthName(value) {
+export function validPlayerName(value) {
   return typeof value === 'string' && Array.from(value).length >= 1 && Array.from(value).length <= 24 &&
     !/[\u0000-\u001f\u007f]/u.test(value) && value === value.trim() && value.isWellFormed();
 }
@@ -228,7 +229,7 @@ function oauthClient(value) {
 }
 
 function oauthName(value) {
-  if (!validOAuthName(value)) invalid('name must be 1 to 24 Unicode characters without controls or surrounding whitespace');
+  if (!validPlayerName(value)) invalid('name must be 1 to 24 Unicode characters without controls or surrounding whitespace');
   return value;
 }
 
@@ -326,7 +327,7 @@ function oauthPending(value, clock) {
     const expectedWithClient = 'challenge,client,device,expires,install,mode,name,pid,provider,state,transaction,v,watermark';
     if ((keys !== expected && keys !== expectedWithClient) || value.pid !== null ||
         !Number.isSafeInteger(value.watermark) || value.watermark < 0 || value.watermark > clock ||
-        !validOAuthName(value.name) || (Object.hasOwn(value, 'client') && !validOAuthClient(value.client))) {
+        !validPlayerName(value.name) || (Object.hasOwn(value, 'client') && !validOAuthClient(value.client))) {
       throw new SocialStorageError('unavailable');
     }
   }
@@ -643,8 +644,8 @@ export class SocialService {
     try {
       const result = await this.lobby.env.store.socialTransaction((tx) => {
         const observed = {
-          get: (key) => tx.get(key),
-          list: (prefix, options) => tx.list(prefix, options),
+          get: (key) => repairStoredText(tx.get(key)),
+          list: (prefix, options) => new Map([...tx.list(prefix, options)].map(([key, value]) => [key, repairStoredText(value)])),
           put: (key, value) => {
             const previous = needsPrevious(key) ? tx.get(key) : null;
             observe(key, previous, value);
@@ -2334,7 +2335,7 @@ export class SocialService {
   async acceptInvite(account, id, body) {
     const self = await this.current(account);
     if (!INVITE_ID.test(id)) invalid('invite id must be 16 lowercase hexadecimal characters');
-    exact(body, ['v', 'profile'], ['mode', 'platform']);
+    exact(body, ['v', 'profile'], ['mode', 'platform', 'build']); // lane JOINVER-1: the joiner's build (lobby.mjs checkBuild)
     if (typeof body.profile !== 'string' || !PROFILE.test(body.profile)) invalid('profile must be 32 lowercase hexadecimal characters');
     const mode = body.mode === undefined ? 'normal' : body.mode;
     const invite = this.pendingInvites.get(id);
@@ -2356,12 +2357,12 @@ export class SocialService {
     if (invite.kind === 'challenge' && (game.slots[game.hostSlot]?.pid !== invite.from || (!game.password && !game.roomCode))) {
       fail(404, 'unavailable', 'the invite is unavailable');
     }
-    if (game.profile !== body.profile) fail(409, 'profile', 'the game profile is incompatible');
+    if (game.profile !== body.profile) throw this.lobby.profileRefusal(game, account, body); // lane JOINVER-1: both builds in plain words
     if ([...this.lobby.games.values()].some((other) => other.id !== game.id && other.state === 'open' && this.lobby.slotOf(other, account) >= 0)) {
       fail(409, 'in_game', 'leave the other open room before accepting an invite');
     }
     const grant = { [JOIN_GRANT]: true, pid: self.pid, game: game.id, expires: invite.expires, used: false };
-    const joined = await this.lobby.join(account, game.id, { profile: body.profile, mode, platform: body.platform }, false, grant);
+    const joined = await this.lobby.join(account, game.id, { profile: body.profile, mode, platform: body.platform, build: body.build }, false, grant);
     this.pendingInvites.delete(id);
     this.wakeInbox(invite.from);
     return { v: VERSION, id: game.id, slot: joined.slot, game: joined.game };

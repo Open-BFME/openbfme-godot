@@ -5,7 +5,7 @@
 // RenderCredits component draws it.
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; every function below is tier A in tools/re/rw2decomp.py with byte-matched BFME2 decomp source,
-// Credits.cpp / Rva005B77F1Dtor.cpp / BfmeSinkBOEDoBOE.cpp, so the decomp describes RotWK's code):
+// Credits.cpp / Credits.cpp / Credits.cpp, so the decomp describes RotWK's code):
 // - the object (0x48 bytes, vtable RW 0xC8B8A8): the line list + 0x0C, its iterator + 0x10, the shown lines + 0x14, ScrollRate + 0x18,
 //   ScrollRateEveryFrames + 0x1C, ScrollDown + 0x20, the title / minor title / normal colours + 0x24 / 0x28 / 0x2C, the current style + 0x30,
 //   finished + 0x34, frames since the start + 0x38, the normal font's height + 0x3C, the display width / height + 0x40 / + 0x44;

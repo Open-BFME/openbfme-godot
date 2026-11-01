@@ -63,11 +63,11 @@ private:
 
 struct Fx : logictest::LogicWorld
 {
-	explicit Fx(const char *objects, const char *templates = nullptr, bool bfme1 = false)
-		: LogicWorld(RandomAlgorithm::ZH_CarryChain, templates, bfme1)
+	explicit Fx(const char *objects, const char *templates = nullptr)
+		: LogicWorld(RandomAlgorithm::ZH_CarryChain, templates)
 	{
 		REQUIRE_MESSAGE(loadError.empty(), loadError);
-		LogicModules::registerAll(w.modules, bfme1);
+		LogicModules::registerAll(w.modules);
 		const std::string err = w.load(objects);
 		REQUIRE_MESSAGE(err.empty(), err);
 		logic->settings().bodyThresholdsLoaded = true;
@@ -81,9 +81,10 @@ struct Fx : logictest::LogicWorld
 	Player *player(const char *name) { return players.findPlayerWithName(name); }
 	Object *makeAt(const char *templateName, const char *owner, float x, float y)
 	{
-		Object *o = make(templateName, teamOf(owner));
+		Object *o = make(templateName, teamOf(owner), INVALID_ID, false);
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
+		completeHorde(o); // placed, then completed (LogicWorld::make)
 		return o;
 	}
 	std::uint32_t hash() const { return logic->computeStateHash(); }

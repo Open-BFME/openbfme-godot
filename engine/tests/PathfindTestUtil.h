@@ -77,9 +77,7 @@ public:
 	float height = 0.0f;
 	std::set<PathfindObjectID> crushable;
 	bool stationary = true;
-	bool bfme1 = false;
-	mutable unsigned bfme1Queries = 0;
-	bool bfme1Data() const override { ++bfme1Queries; return bfme1; }
+	bool moveAwaySearch = false; // lane WALL-2: RW AI + 0x3CF
 
 	PathfindObjectID getID() const override { return id; }
 	const Coord3D &getPosition() const override { return pos; }
@@ -107,6 +105,7 @@ public:
 	bool isDoingGroundMovement() const override { return !kinds.count(PK_AIRCRAFT); }
 	bool hasAI() const override { return mobile; }
 	bool isStationary() const override { return stationary; }
+	bool inMoveAwaySearch() const override { return moveAwaySearch; }
 };
 
 class TestWorld : public PathfindWorld

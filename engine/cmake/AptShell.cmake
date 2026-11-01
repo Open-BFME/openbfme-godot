@@ -37,7 +37,15 @@ list(APPEND OPENBFME_APT_TESTS
     tests/test_apt_shell.cpp
     tests/test_apt_gadgets.cpp
     tests/test_apt_skirmish.cpp
+    tests/test_p16_ui.cpp
+    tests/test_p16_ui_preview.cpp
+    tests/test_p16_ui_legacy.cpp
+    tests/test_p16_ui_players.cpp
     tests/test_apt_shell_walk.cpp
     tests/test_menu1_layering.cpp
     tests/test_menu1_profiles.cpp
     tests/test_menu1_loadscreen.cpp)
+
+# lane MENUSND-1: the menus' hover and click sounds (the inventory of RotWK's PlaySound per control)
+list(APPEND OPENBFME_APT_TESTS
+    tests/test_menusnd1_click_sounds.cpp)

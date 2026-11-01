@@ -1,13 +1,17 @@
 """Lane RELEASE-1: the package audit, the testers' README and the privacy rule "no network calls besides LAN play"."""
 from __future__ import annotations
 
+import configparser
+import fnmatch
 import hashlib
 import io
 import json
 import os
 import re
+import shutil
 import stat
 import struct
+import subprocess
 import sys
 import tarfile
 import zipfile
@@ -28,6 +32,17 @@ import seal_package  # noqa: E402
 BIG = b"BIGF" + b"\x00" * 60
 DDS = b"DDS " + b"\x00" * 60
 WAV = b"RIFF\x00\x00\x00\x00WAVEfmt " + b"\x00" * 40
+
+
+def test_release_report_messages(tmp_path):
+    godot = os.environ.get("GODOT") or shutil.which("godot")
+    if not godot:
+        pytest.skip("Godot is not available for the release message test")
+    env = dict(os.environ, HOME=str(tmp_path), XDG_DATA_HOME=str(tmp_path / "data"), XDG_CONFIG_HOME=str(tmp_path / "config"))
+    r = subprocess.run([godot, "--headless", "--path", str(REPO / "godot"), "--script", "res://tests/release_message_test.gd"],
+                       env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and "RELEASE MESSAGES OK" in r.stdout, r.stdout + r.stderr
+    assert "SCRIPT ERROR" not in r.stderr, r.stderr
 
 
 def pck(entries: list[tuple[str, bytes]], fmt: int = 4) -> bytes:
@@ -1003,21 +1018,179 @@ def test_a_tampered_package_is_not_the_rebuild(tmp_path, capsys):
     assert make_archive.diff(good, good) == 0
 
 
+def tracked_project_files(project: Path) -> list[str]:
+    output = subprocess.run(["git", "-C", str(project), "ls-files", "-z", "."], capture_output=True, text=True, check=True).stdout
+    files = [f for f in output.split("\0") if f]
+    assert files, f"git ls-files lists the {project.name} project"
+    ignored = {Path(f).parent.as_posix() for f in files if Path(f).name == ".gdignore"}
+    return [f for f in files if not any(p.startswith(".") for p in Path(f).parts)
+            and not any(d == "." or f.startswith(d + "/") for d in ignored)]
+
+
+def export_matches(path: str, patterns: list[str]) -> bool:
+    # Godot's String.matchn is case insensitive and * spans folders.
+    return any(fnmatch.fnmatchcase(path.lower(), p.removeprefix("res://").lower()) for p in patterns)
+
+
+def exported_resource_paths(project: Path, path: str, binary: bool) -> list[str]:
+    """Pack names, not resource bytes: no editor, import cache or game assets needed."""
+    suffix = Path(path).suffix.lower()
+    if path == "project.godot":
+        return ["project.binary"]
+    if binary and suffix in (".tscn", ".tres"):
+        # Godot generates the preset id and export hash; the rules check their shape, not their value.
+        ext = ".scn" if suffix == ".tscn" else ".res"
+        return [path + ".remap", f".godot/exported/0/export-{'0' * 32}-{Path(path).stem}{ext}"]
+    metadata = project / (path + ".import")
+    if metadata.is_file():
+        text = metadata.read_text(encoding="utf-8")
+        if 'importer="keep"' in text:
+            return [path]
+        targets = re.findall(r'^path(?:\.\w+)?="res://([^"]+)"$', text, re.M)
+        assert targets, f"{metadata}: model this importer's exported paths"
+        return [path + ".import", *targets]
+    imported = {".png": "ctex", ".jpg": "ctex", ".jpeg": "ctex", ".svg": "ctex", ".webp": "ctex", ".bmp": "ctex", ".tga": "ctex",
+                ".ttf": "fontdata", ".otf": "fontdata", ".woff": "fontdata", ".woff2": "fontdata"}
+    if suffix in imported:
+        digest = hashlib.md5(("res://" + path).encode()).hexdigest()
+        return [path + ".import", f".godot/imported/{Path(path).name}-{digest}.{imported[suffix]}"]
+    return [path]
+
+
+def assert_export_rules_cover_project(project: Path, rules: list) -> None:
+    files = tracked_project_files(project)
+    config = configparser.ConfigParser(interpolation=None)
+    config.read_string((project / "export_presets.cfg").read_text(encoding="utf-8"))
+    presets = [config[s] for s in config.sections() if re.fullmatch(r"preset\.\d+", s)]
+    assert presets, f"{project}: export presets are present"
+    settings = (project / "project.godot").read_text(encoding="utf-8")
+    conversion = re.search(r'^export/convert_text_resources_to_binary=(true|false)$', settings, re.M)
+    assert conversion, f"{project}: explicitly configure text resource conversion"
+    skip: list[str] = []
+    add: list[str] = []
+    if project.name == "launcher":
+        assert 'enabled=PackedStringArray("res://addons/pack_files/plugin.cfg")' in settings
+        plugin = (project / "addons/pack_files/export_plugin.gd").read_text(encoding="utf-8")
+        for key, patterns in (("SKIP", skip), ("ADD", add)):
+            match = re.search(rf'^const {key}: PackedStringArray = \[(.*?)\]$', plugin, re.M)
+            assert match, f"{project}: model the pack_files plugin's {key} patterns"
+            patterns.extend(re.findall(r'"([^"]+)"', match[1]))
+    # ResourceLoader/importer extensions, not an allowlist of shipping paths: a resource in tests/ must be checked too.
+    resources = set("gd gdshader gdshaderinc gdextension tscn tres scn res png jpg jpeg svg webp bmp tga "
+                    "ttf otf woff woff2 fnt font wav ogg mp3 gltf glb blend fbx obj dae mesh animation "
+                    "json pub crt translation po mo csv pvr ktx hdr exr mp4 ogv".split())
+    problems = set()
+    for preset in presets:
+        assert preset["export_filter"] == '"all_resources"', f"{project}: model the new export_filter"
+        assert preset["script_export_mode"] == "0", f"{project}: model the new script export mode"
+        include = [p.strip() for p in preset["include_filter"].strip('"').split(",") if p.strip()] + ["*.ico", "*.icns"]
+        exclude = [p.strip() for p in preset["exclude_filter"].strip('"').split(",") if p.strip()]
+        for path in files:
+            resource = Path(path).suffix.lower().lstrip(".") in resources or path == "project.godot" or path + ".import" in files
+            included = export_matches(path, include + add)
+            if not (resource or included) or export_matches(path, exclude + skip):
+                continue
+            paths = exported_resource_paths(project, path, conversion[1] == "true") if resource else [path]
+            for packed in paths:
+                if not any(rx.match(packed) for rx, _ in rules):
+                    problems.add(f"{project.name}/{path} -> {packed} ({preset['name']})")
+    assert not problems, ("Exported files have no package audit rule; add a rule to PCK_RULES / LAUNCHER_PCK_RULES "
+                          "or keep the file out of the export:\n" + "\n".join(sorted(problems)))
+
+
+@pytest.mark.parametrize("project,rules", [
+    ("godot", audit_package.PCK_RULES), ("launcher", audit_package.LAUNCHER_PCK_RULES),
+], ids=["game", "launcher"])
+def test_exported_files_have_pck_rules(project, rules):
+    assert_export_rules_cover_project(REPO / project, rules)
+
+
+def synthetic_export_project(tmp_path: Path, name: str, files: dict[str, str]) -> Path:
+    project = tmp_path / name
+    configs = ["export_presets.cfg", "project.godot"]
+    if name == "launcher":
+        configs.append("addons/pack_files/export_plugin.gd")
+    for path in configs:
+        files[path] = (REPO / name / path).read_text(encoding="utf-8")
+    for path, content in files.items():
+        target = project / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", name], check=True)
+    return project
+
+
+@pytest.mark.parametrize("name,path,rules", [
+    ("godot", "tests/x.tres", audit_package.PCK_RULES),
+    ("godot", "tests/x.png", audit_package.PCK_RULES),
+    ("launcher", "scenes/x.tres", audit_package.LAUNCHER_PCK_RULES),
+    ("launcher", "x.gd", audit_package.LAUNCHER_PCK_RULES),
+    ("launcher", "fonts/New.ttf", audit_package.LAUNCHER_PCK_RULES),
+])
+def test_export_rules_reject_a_tracked_bogus_resource(tmp_path, name, path, rules):
+    project = synthetic_export_project(tmp_path, name, {path: "synthetic resource\n"})
+    with pytest.raises(AssertionError) as error:
+        assert_export_rules_cover_project(project, rules)
+    assert f"{name}/{path} ->" in str(error.value)
+    assert "add a rule" in str(error.value) and "keep the file out of the export" in str(error.value)
+
+
+@pytest.mark.parametrize("name,rules", [("godot", audit_package.PCK_RULES), ("launcher", audit_package.LAUNCHER_PCK_RULES)])
+def test_export_rules_respect_ignored_folders_and_non_resources(tmp_path, name, rules):
+    project = synthetic_export_project(tmp_path, name, {
+        "ignored/.gdignore": "", "ignored/nested/x.tres": "synthetic\n", ".hidden/x.tres": "synthetic\n",
+        "README.txt": "not included\n", "scripts/x.gd.uid": "uid://synthetic\n", "scripts/x.gd": "extends Node\n",
+        "scenes/x.tscn": '[gd_scene format=3]\n[node name="Test" type="Node"]\n',
+        **({"tests/x.tres": "skipped by the launcher plugin\n", "fonts/OFL-Test.txt": "synthetic licence\n"}
+           if name == "launcher" else {"tests/x.txt": "included by the preset\n"}),
+    })
+    (project / "untracked.tres").write_text("not part of the tracked export\n", encoding="utf-8")
+    assert_export_rules_cover_project(project, rules)
+
+
+def test_export_resource_paths_model_imports_remaps_and_binary_scenes(tmp_path):
+    assert exported_resource_paths(REPO / "godot", "assets/brand/poweredby_openbfme.png", False) == [
+        "assets/brand/poweredby_openbfme.png.import",
+        ".godot/imported/poweredby_openbfme.png-8e49593c1d11f096cae531ecedee93ce.ctex",
+    ]
+    assert exported_resource_paths(REPO / "launcher", "fonts/Inter.ttf", False) == ["fonts/Inter.ttf"]
+    assert exported_resource_paths(tmp_path, "scenes/x.tscn", True) == [
+        "scenes/x.tscn.remap", f".godot/exported/0/export-{'0' * 32}-x.scn",
+    ]
+    for path in exported_resource_paths(tmp_path, "scenes/x.tscn", True):
+        assert any(rx.match(path) for rx, _ in audit_package.PCK_RULES), path
+    assert exported_resource_paths(tmp_path, "scenes/x.tscn", False) == ["scenes/x.tscn"]
+
+
+def test_export_rules_apply_case_insensitive_preset_filters(tmp_path):
+    project = synthetic_export_project(tmp_path, "godot", {"other/nested/X.BIN": "synthetic\n"})
+    presets = project / "export_presets.cfg"
+    text = presets.read_text(encoding="utf-8").replace('include_filter="tests/*.txt"', 'include_filter="other/*.bin"')
+    presets.write_text(text, encoding="utf-8")
+    with pytest.raises(AssertionError, match="other/nested/X.BIN"):
+        assert_export_rules_cover_project(project, audit_package.PCK_RULES)
+    presets.write_text(text.replace('exclude_filter=""', 'exclude_filter="other/*.BIN"'), encoding="utf-8")
+    assert_export_rules_cover_project(project, audit_package.PCK_RULES)
+
+
+def test_game_test_scenes_still_need_valid_scene_text():
+    path = "tests/online_social_node.tscn"
+    assert audit_package.pck_release_problems("pack", pck([(path, b'[gd_scene format=3]\n')])) == []
+    assert audit_package.pck_release_problems("pack", pck([(path, b'not a scene\n')])) == [
+        f"pack:{path}: not a text scene ([gd_scene ...] header)",
+    ]
+
+
 def test_the_game_presets_filters_cannot_reorder_the_pack():
     """REPRO-1: Godot 4.7.2 applies a preset's include_filter / exclude_filter in the file system's directory order (ext4: a hash seeded per
     file system), on the set of paths whose order is the pack's. One included file and no exclusions keep godot/'s packages the same on
     every host; a second match (another tests/*.txt) or an exclusion would make them differ the way v0.3.0-preview.5's launchers did:
     pick such files in an export plugin in sorted order instead (launcher/addons/pack_files/export_plugin.gd)."""
-    import fnmatch  # noqa: PLC0415
-    import subprocess  # noqa: PLC0415
     text = (REPO / "godot" / "export_presets.cfg").read_text(encoding="utf-8")
-    files = subprocess.run(["git", "-C", str(REPO / "godot"), "ls-files", "-z", "."], capture_output=True, text=True, check=True).stdout
-    files = [f for f in files.split("\0") if f]
-    assert files, "git ls-files lists the game project"
     # lane OWNERFIX-3: Godot's filter walk skips a folder that holds a .gdignore (assets/app_icon: the icons the Windows / macOS export reads by
     # path stay out of the pack); a launcher export with that folder stored no icon file
-    ignored = {f.rsplit("/", 1)[0] + "/" for f in files if f.endswith("/.gdignore")}
-    files = [f for f in files if not any(f.startswith(d) for d in ignored)]
+    files = tracked_project_files(REPO / "godot")
     for value in re.findall(r'^exclude_filter="(.*)"$', text, re.M):
         assert value == "", f"exclude_filter={value!r}: its erases follow the directory order"
     includes = re.findall(r'^include_filter="(.*)"$', text, re.M)

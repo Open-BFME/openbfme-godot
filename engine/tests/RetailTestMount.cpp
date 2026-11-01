@@ -58,6 +58,7 @@ std::unique_ptr<Mount> build(const std::vector<std::pair<std::string, std::strin
 	{
 		m->archives.push_back(a.install + ":" + a.canonicalPath);
 	}
+	m->identityArchives = report.mounted;
 	return m;
 }
 
@@ -79,6 +80,17 @@ Mount *pureMount()
 		mount = build({ { "rotwk", rotwk }, { "bfme2", bfme2 } });
 	}
 	return mount.get();
+}
+
+std::unique_ptr<Mount> freshPureMount()
+{
+	std::string rotwk = envOrEmpty("ROTWK_INSTALL");
+	std::string bfme2 = envOrEmpty("BFME2_INSTALL");
+	if (rotwk.empty() || bfme2.empty())
+	{
+		return nullptr;
+	}
+	return build({ { "rotwk", rotwk }, { "bfme2", bfme2 } });
 }
 
 Mount *bfme2Mount()
@@ -120,6 +132,30 @@ bool readLocalFile(const std::string &path, std::vector<unsigned char> &out, std
 		return false;
 	}
 	out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+	return true;
+}
+
+std::string installLanguage()
+{
+	const std::string rotwk = envOrEmpty("ROTWK_INSTALL");
+	return rotwk.empty() ? std::string() : DetectRetailLanguageOfInstall(rotwk);
+}
+
+bool skipUnlessEnglish(const char *what)
+{
+	std::string language = installLanguage();
+	const std::string rotwk = envOrEmpty("ROTWK_INSTALL");
+	const std::string voice = rotwk.empty() ? std::string() : DetectRetailVoiceLanguageOfInstall(rotwk);
+	if (language == "English" && (voice.empty() || voice == "English"))
+	{
+		return false;
+	}
+	if (!voice.empty() && voice != language)
+	{
+		language += " with " + voice + " voices";
+	}
+	std::printf("SKIP: %s is pinned to the English retail data; the install is %s: not run\n", what, language.empty() ? "of no known language" : language.c_str());
+	std::fflush(stdout);
 	return true;
 }
 

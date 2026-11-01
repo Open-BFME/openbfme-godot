@@ -1,0 +1,3 @@
+{
+  "engine/src/Main/openbfme_peer.cpp": "Standalone gameplay/replay runner: main unconditionally calls loadWorld and RetailArchiveMount before every successful operation, including print-profile/profile-text. No game/peer scenario runs without the retail archives. CLI argument rejection is possible without retail but is not the unit-testable player-facing surface ranked here."
+}

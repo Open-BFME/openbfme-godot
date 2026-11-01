@@ -178,10 +178,11 @@ float TerrainResourceClaimView::claimableFraction(const GameLogic &logic, float 
 	return total == 0 ? 0.0f : (float)claimed / (float)total;
 }
 
-std::uint32_t TerrainResourceClaimView::vertexColor(const GameLogic &logic, std::uint32_t color, int x, int y, int player)
+namespace
 {
-	// RW 0x75C1A9 (BFME2 decomp TerrainResourceManagerOverlayAlpha.cpp rva0035A61F): isCellClaimable(cell, 0, 0, false, player) around the vertex
-	auto ok = [&](int cx, int cy) { return claimable(logic, cx, cy, 0u, INVALID_ID, false, player); };
+// RW 0x75C1A9's weighting of the cells around vertex (x, y); `ok(cx, cy)`: RW 0x75C02D's isCellClaimable(cell, 0, 0, false, player)
+template <class Ok> std::uint32_t weightedVertexColor(std::uint32_t color, int x, int y, Ok &&ok)
+{
 	if (!ok(x / 2, y / 2))
 	{
 		return 0u;
@@ -209,6 +210,13 @@ std::uint32_t TerrainResourceClaimView::vertexColor(const GameLogic &logic, std:
 		return (color & 0x00FFFFFFu) | ((std::uint32_t)(int)(alpha * (weight / 12.0f)) << 24);
 	}
 	return color;
+}
+} // namespace
+
+std::uint32_t TerrainResourceClaimView::vertexColor(const GameLogic &logic, std::uint32_t color, int x, int y, int player)
+{
+	// RW 0x75C1A9 (BFME2 decomp TerrainResourceManager.cpp rva0035A61F): isCellClaimable(cell, 0, 0, false, player) around the vertex
+	return weightedVertexColor(color, x, y, [&](int cx, int cy) { return claimable(logic, cx, cy, 0u, INVALID_ID, false, player); });
 }
 
 const TerrainResourceBehaviorModuleData *TerrainResourceClaimView::resourceDataOf(const ThingTemplate &tt)
@@ -337,11 +345,25 @@ void TerrainResourceFeedback::updatePlacement(const GameLogic &logic, int localP
 	f.maskH = vy1 - f.maskVy0 + 1;
 	f.maskAlpha.resize((size_t)f.maskW * (size_t)f.maskH);
 	const std::uint32_t base = ((std::uint32_t)f.decalOpacity << 24) | (f.color & 0xFFFFFFu);
+	// lane FOGFX-1 (FB-0055): every vertex asks 13 cells around it and neighbouring vertices share them (a farm's decal: about 1000 vertices, 13000
+	// asks of RW 0x75C02D on every render frame); each cell is asked once here and its answer reused (the same arguments give the same answer within
+	// this update: the values are retail's). The cells of vertex v are (v - 2) / 2 .. (v + 2) / 2 (truncating division, monotonic in v)
+	const int cx0 = (f.maskVx0 - 2) / 2, cy0 = (f.maskVy0 - 2) / 2;
+	const int cw = (vx1 + 2) / 2 - cx0 + 1, ch = (vy1 + 2) / 2 - cy0 + 1;
+	m_claimMemo.assign((size_t)cw * (size_t)ch, -1);
+	auto ok = [&](int cx, int cy) {
+		std::int8_t &m = m_claimMemo[(size_t)(cy - cy0) * (size_t)cw + (size_t)(cx - cx0)];
+		if (m < 0)
+		{
+			m = TerrainResourceClaimView::claimable(logic, cx, cy, 0u, INVALID_ID, false, localPlayer) ? 1 : 0;
+		}
+		return m == 1;
+	};
 	for (int j = 0; j < f.maskH; ++j)
 	{
 		for (int i = 0; i < f.maskW; ++i)
 		{
-			f.maskAlpha[(size_t)j * (size_t)f.maskW + (size_t)i] = (std::uint8_t)(TerrainResourceClaimView::vertexColor(logic, base, f.maskVx0 + i, f.maskVy0 + j, localPlayer) >> 24);
+			f.maskAlpha[(size_t)j * (size_t)f.maskW + (size_t)i] = (std::uint8_t)(weightedVertexColor(base, f.maskVx0 + i, f.maskVy0 + j, ok) >> 24);
 		}
 	}
 	const bool changed = !m_placement.active || f.color != m_placement.color || f.maskVx0 != m_placement.maskVx0 || f.maskVy0 != m_placement.maskVy0

@@ -21,6 +21,8 @@
 ##   ghosts    (lane PLAY-3) the builder is selected by a click; for every DOZER_CONSTRUCT button of its command set (every structure it builds freely) the
 ##             button is clicked, the pointer moves over the ground around the citadel: the placement ghost (the HUD's PlacementGhostRenderer, RotWK RW 0x69C5E6 /
 ##             RW 0x6A2AE5) shows that structure under the pointer; a right click ends the placement. Run per faction with --faction
+##   buildperf (lane FOGFX-1, FB-0055) the main thread's CPU time of the frames that start a building placement (first and second selection of the
+##             builder's first structures) against the idle frames before; see _scenario_buildperf
 ##   selperf   (lane SELPERF-1, the owner's "select a bunch of troops, fps drops to 25-12"; a tester: "only while they move") 150 hordes of the local
 ##             player in a block; for 1, 10, 50 and 150 selected, pairs of 1 s windows with nothing and with n selected (alternating which goes first,
 ##             --selperf-reps=5 pairs) in each phase: idle, pan (the camera circles), march (before every window Q selects the army and a right click
@@ -67,8 +69,10 @@ func _vp() -> Viewport:
 
 
 func move_to(p: Vector2) -> void:
-	# the window's real pointer goes there too: on a desktop the system pointer's own motion events would otherwise land between the injected ones
-	Input.warp_mouse(p)
+	# the window's real pointer goes there too: on a desktop the system pointer's own motion events would otherwise land between the injected ones.
+	# PLAY1_NO_WARP=1 (lane SPELLRC-1: a recording window on a workspace nobody shows): no warp, the injected events are the only pointer
+	if OS.get_environment("PLAY1_NO_WARP") != "1":
+		Input.warp_mouse(p)
 	var m := InputEventMouseMotion.new()
 	m.position = p
 	m.global_position = p
@@ -614,6 +618,210 @@ func _scenario_ghosts() -> String:
 			await click(window_size() * 0.5, MOUSE_BUTTON_RIGHT)
 	print("PLAY3 ghosts: %s: %d of %d structures showed their ghost" % [game._faction, shown, buttons.size()])
 	return "" if fails.is_empty() else "; ".join(fails)
+
+
+## lane FBSIM-1 (FB-0039): the builder's site is RotWK's phantom until the builder arrives (drawn at 0.4 for its owner, RW 0x88D272), then a
+## construction site (RW 0x88D44F): a farm placed a few hundred away, screenshots while the builder walks and after it arrived
+func _scenario_phantom() -> String:
+	await _headless_window()
+	var base := Vector2()
+	for o in own_objects():
+		if o.commandcenter:
+			base = Vector2(o.x, o.y)
+	var builder: Dictionary = {}
+	var button: Dictionary = {}
+	for o in own_objects():
+		if o.structure:
+			continue
+		await look_by_radar(Vector2(o.x, o.y))
+		if not await select_object(o):
+			continue
+		await game._step(4)
+		for b in hud.get_command_buttons():
+			if b.command == "DOZER_CONSTRUCT" and str(b.template).contains("Farm"):
+				button = b
+		if not button.is_empty():
+			builder = o
+			break
+	if builder.is_empty():
+		return "no own builder offers a farm"
+	await look_by_radar(base)
+	await click(palantir_button(button.frame))
+	await game._step(6)
+	var placed := false
+	for k in 16:
+		var a := TAU * float(k) / 16.0 + 0.3
+		var p := base + Vector2(cos(a), sin(a)) * 330.0
+		var px := to_pixel(p.x, p.y)
+		if not on_screen(px):
+			continue
+		await move_to(px)
+		await game._step(3)
+		var pl: Dictionary = hud.get_placement()
+		if pl.get("has_ghost", false) and int(pl.legal) == 0:
+			await click(px)
+			placed = true
+			print("PLAY1 phantom: %s ordered at (%.0f, %.0f)" % [button.template, p.x, p.y])
+			break
+	if not placed:
+		return "no legal farm site on the screen"
+	await game._step(2)
+	# a placed order already ends the placement mode; a right click on the ground then would be a move order that cancels the phantom (Sol review of FBSIM-1)
+	if hud.get_placement().get("has_ghost", false):
+		await click(window_size() * 0.5, MOUSE_BUTTON_RIGHT) # leave the placement mode
+	await game._step(4)
+	for i in 14:
+		await game._step(10)
+		shot("phantom-%02d" % i)
+	return ""
+
+
+## lane FOGFX-1 (FB-0055, "a brief 30-40% FPS drop when selecting a building for the builder to construct"): the frames around starting a placement.
+## The builder is selected; for each of its first --buildperf-count DOZER_CONSTRUCT buttons (default 4): an idle window (30 frames), the button
+## clicked and the pointer moved over the ground beside the citadel (20 frames: the frames that make the ghost), a right click ends it, and the same
+## button again (the second selection). Per frame the main thread's CPU time (GameWorld main_cpu_ms, not inflated by other processes) and the wall time.
+## BUILDPERF lines per structure and selection: the idle median, the placement's median and worst frame, the parts, the ghost renderer's counters.
+## FAIL (the pins): a selection's worst frame more than --buildperf-budget ms of CPU over the idle median (default 50); its median frame above
+## --buildperf-ratio x the idle one (default 1.75; before the fix a farm read x2.0 - 2.1); the Palantir part above --buildperf-palantir ms a frame (default
+## 2.5; the farm's claim feedback read 6.3 before); a second selection that makes instancers or loads models again; more than 2 bib materials.
+func _scenario_buildperf() -> String:
+	var fails: Array = []
+	await _headless_window()
+	var budget := float(_selperf_arg("buildperf-budget", "50"))
+	var count := int(_selperf_arg("buildperf-count", "4"))
+	var local_index := -1
+	var idx := 0
+	for pl in world.get_report().get("players", []):
+		if local_index < 0 and str(pl).contains(game._local_name):
+			local_index = idx
+		idx += 1
+	if local_index >= 0:
+		world.give_money(local_index, 50000)
+	var base := Vector2()
+	for o in own_objects():
+		if o.commandcenter:
+			base = Vector2(o.x, o.y)
+	var builder: Dictionary = {}
+	var buttons: Array = []
+	for o in own_objects():
+		if o.structure:
+			continue
+		await look_by_radar(Vector2(o.x, o.y))
+		if not await select_object(o):
+			continue
+		await game._step(4)
+		buttons = hud.get_command_buttons().filter(func(b): return b.command == "DOZER_CONSTRUCT" and not str(b.template).is_empty())
+		if not buttons.is_empty():
+			builder = o
+			break
+	if builder.is_empty():
+		return "no own unit offers a DOZER_CONSTRUCT button"
+	var worst_all := 0.0
+	var ratio_budget := float(_selperf_arg("buildperf-ratio", "1.75"))
+	var palantir_budget := float(_selperf_arg("buildperf-palantir", "2.5"))
+	for b in buttons.slice(0, count):
+		var made_first := {}
+		for pass_name in ["first", "again"]:
+			await look_by_radar(base)
+			if not hud.get_selection().has(builder.id):
+				await look_by_radar(Vector2(world.get_object(builder.id).x, world.get_object(builder.id).y))
+				await select_object(builder)
+				await look_by_radar(base)
+			# the same pointer circle without a placement (the builder selected), then with it
+			var idle: Dictionary = await _buildperf_window(base, 30, "")
+			var bp := palantir_button(b.frame)
+			if bp.x < 0:
+				fails.append("%s: its button %s is not on the screen" % [b.template, b.frame])
+				break
+			await click(bp)
+			var placing: Dictionary = await _buildperf_window(base, 30, b.template)
+			var idle_med := float(idle.cpu_p50)
+			var worst := float(placing.cpu_max)
+			worst_all = maxf(worst_all, worst - idle_med)
+			print("BUILDPERF %s %s: ghost %s, pointer moving: idle cpu p50 %.2f ms, placing cpu p50 %.2f ms (x%.2f), worst %.2f ms (+%.2f) wall %.2f ms" % [b.template,
+				pass_name, placing.ghost, idle_med, float(placing.cpu_p50), float(placing.cpu_p50) / maxf(idle_med, 0.01), worst, worst - idle_med, float(placing.wall_max)])
+			print("BUILDPERF %s %s: mean parts idle %s" % [b.template, pass_name, JSON.stringify(idle.parts)])
+			print("BUILDPERF %s %s: mean parts placing %s" % [b.template, pass_name, JSON.stringify(placing.parts)])
+			print("BUILDPERF %s %s: cpu per frame %s" % [b.template, pass_name, str(placing.cpu.map(func(x): return snappedf(x, 0.1)))])
+			var gs: Dictionary = ghost_state()
+			print("BUILDPERF %s %s: ghost renderer: %d instancers made, %d models built, %d templates parked, %d bib materials" % [b.template, pass_name,
+				int(gs.get("instancers_made", -1)), int(gs.get("models_built", -1)), int(gs.get("parked", -1)), int(gs.get("bib_materials", -1))])
+			# the pins (lane FOGFX-1): a structure placed again takes its kept instancers (no model loads again); the bib materials are shared (one per
+			# texture); the placement's median frame against the idle one; the farm's claim feedback (Palantir part) stays cheap
+			if not (gs.has("instancers_made") and gs.has("models_built") and gs.has("bib_materials")):
+				fails.append("%s %s: the ghost renderer reports no instancer / model / bib material counters" % [b.template, pass_name])
+			elif pass_name == "first":
+				made_first = {"instancers": int(gs.get("instancers_made", -1)), "models": int(gs.get("models_built", -1))}
+			elif int(gs.get("instancers_made", -1)) != made_first.instancers or int(gs.get("models_built", -1)) != made_first.models:
+				fails.append("%s again: the ghost made instancers / models again (%s -> %d / %d)" % [b.template, str(made_first), int(gs.get("instancers_made", -1)), int(gs.get("models_built", -1))])
+			if int(gs.get("bib_materials", -1)) > 2:
+				fails.append("%s %s: %d bib materials (one per texture expected)" % [b.template, pass_name, int(gs.get("bib_materials", -1))])
+			var ratio := float(placing.cpu_p50) / maxf(idle_med, 0.01)
+			if ratio > ratio_budget:
+				fails.append("%s %s: the placement's median frame is x%.2f the idle one (budget x%.2f)" % [b.template, pass_name, ratio, ratio_budget])
+			var palantir := float(placing.parts.get("hud_palantir_ms", 0.0))
+			if palantir > palantir_budget:
+				fails.append("%s %s: the Palantir part costs %.2f ms a frame while placing (budget %.1f)" % [b.template, pass_name, palantir, palantir_budget])
+			if not placing.ghost:
+				fails.append("%s %s: no ghost under the pointer" % [b.template, pass_name])
+			if worst - idle_med > budget:
+				fails.append("%s %s: a placement frame cost %.1f ms of CPU over the idle median (budget %.0f)" % [b.template, pass_name, worst - idle_med, budget])
+			await click(window_size() * 0.5, MOUSE_BUTTON_RIGHT)
+			await game._step(4)
+			if hud.get_placement().get("placing", false):
+				await click(window_size() * 0.5, MOUSE_BUTTON_RIGHT)
+				await game._step(4)
+	print("BUILDPERF worst excess %.2f ms (budget %.0f)" % [worst_all, budget])
+	return "" if fails.is_empty() else "; ".join(fails)
+
+
+## buildperf's window: `frames` render frames with the pointer on a circle of 110 px around `base` on the screen, one step a frame; per frame the main thread's CPU
+## time and the C++ timing parts (their means over the window); `template`: the ghost expected under the pointer ("" none)
+func _buildperf_window(base: Vector2, frames: int, template: String) -> Dictionary:
+	var cpu: Array = []
+	var wall := 0.0
+	var sums := {}
+	var per_frame: Array = []
+	var ghost := false
+	var prev := Time.get_ticks_usec()
+	for k in frames:
+		# a circle of 110 px around the screen point of `base` (the camera looks at it): always over the ground, never over the Palantir
+		var a := TAU * float(k) / float(frames)
+		var px := to_pixel(base.x, base.y) + Vector2(cos(a), sin(a)) * 110.0
+		if on_screen(px):
+			# as move_to, without its two-frame wait (every frame here is measured)
+			if OS.get_environment("PLAY1_NO_WARP") != "1":
+				Input.warp_mouse(px)
+			var mm := InputEventMouseMotion.new()
+			mm.position = px
+			mm.global_position = px
+			_vp().push_input(mm)
+		await game.get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		wall = maxf(wall, (now - prev) / 1000.0)
+		prev = now
+		var w: Dictionary = world.get_frame_timings()
+		cpu.append(float(w.get("main_cpu_ms", 0.0)))
+		var fp := {}
+		for src in [w, hud.get_frame_timings()]:
+			for key in src.keys():
+				if str(key).ends_with("_ms") and not str(key).begins_with("logic_wait") and not str(key).begins_with("worker"):
+					sums[key] = float(sums.get(key, 0.0)) + float(src[key])
+					if float(src[key]) >= 0.4:
+						fp[key] = snappedf(float(src[key]), 0.1)
+		per_frame.append(fp)
+		if not template.is_empty():
+			ghost = ghost or (hud.get_placement().get("has_ghost", false) and ghost_template() == template)
+	if _selperf_arg("buildperf-frames", "0") == "1" and not template.is_empty():
+		for k in per_frame.size():
+			print("BUILDPERF frame %d: %s" % [k, JSON.stringify(per_frame[k])])
+	var parts := {}
+	for key in sums.keys():
+		if float(sums[key]) / frames >= 0.1:
+			parts[key] = snappedf(float(sums[key]) / frames, 0.01)
+	var v := cpu.duplicate()
+	v.sort()
+	return {"cpu": cpu, "cpu_p50": float(v[int(0.5 * (v.size() - 1))]), "cpu_max": float(v.back()), "wall_max": wall, "parts": parts, "ghost": ghost}
 
 
 func _scenario_dragbox() -> String:

@@ -18,7 +18,7 @@
 //   * lane UI-6: a profile's own entries are ":<mode>:<the quoted-printable current name>:<name>" (RW 0x821AB4 formats ":%d:%s:%s", RW 0x821B89 with the
 //     current name); the lobby keeps its game in "Map" (RW 0x821E55), "GameInfo" and "HeroIndexes" (RW 0x821D55, through RW 0x821EBD) and reads them back
 //     (RW 0x821C29); removing a profile erases every entry of it for both modes (BFME2 0x43C2EB: RW 0x8220A3 with modes 0 and 1).
-// INFERENCE (stop S-3504): career statistics are not recorded; BFME1 creation dates use ISO local format; isalnum is the ASCII test (retail's CRT call on a byte above 0x7F was not read); the
+// INFERENCE (stop S-3504): the two stats files are not written; isalnum is the ASCII test (retail's CRT call on a byte above 0x7F was not read); the
 // folder is the one Options.ini is in (S-1484).
 
 #pragma once
@@ -26,8 +26,22 @@
 #include "GameClient/GUI/Skirmish/SkirmishSetup.h"
 #include "GameClient/OptionPreferences.h"
 
+#include <ctime>
 #include <string>
 #include <vector>
+
+struct GameRecord;
+struct SkirmishHonorsGame;
+
+namespace Bfme1SkirmishProfiles
+{
+// Keep the filename and cause, replacing every occurrence of the stats path, including in nested I/O errors.
+std::string statsDiagnostic(const std::string &path, const std::string &cause);
+// Failures from create/recordGame are safe for skirmish-profile-stats notes (no statistics directory paths).
+bool create(SkirmishProfileStore &profiles, std::time_t created, std::string *error);
+bool recordGame(const SkirmishProfileStore &profiles, const SkirmishSetupSource &source, const GameRecord &record, std::string *error,
+	const SkirmishHonorsGame *game = nullptr);
+}
 
 class SkirmishPreferences : public SkirmishProfileStore
 {
@@ -55,7 +69,7 @@ public:
 	// what the port infers (reported in the shell report's unverified_device)
 	static const char *unverified()
 	{
-		return "[S-3504] Skirmish.ini: career statistics are not recorded; BFME1 creation dates use ISO local format and highest rank progress is 100; isalnum is the ASCII test; "
+		return "[S-3504] Skirmish.ini: the stats files are not written; isalnum is the ASCII test; "
 			   "the file is beside Options.ini";
 	}
 	static std::string unicodeToQuotedPrintable(const std::u16string &text);

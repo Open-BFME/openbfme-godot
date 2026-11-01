@@ -7,7 +7,7 @@
 // formation was last refreshed more than 5 frames ago (BFME1 hard-codes 5; RotWK reads LOGICFRAMES_PER_SECOND), the contain's updateFormation(1) runs, which
 // stamps the frame and sends the member pass round again: members that have been displaced walk back to their slots. The base AIUpdateInterface::update
 // runs last.
-// NOT PORTED (S-222): the IS_LEAVING_FACTORY reform (production, lane PROD-1), the "ready" notification of idle hordes (iface 0x98) and the per-frame horde tick
+// STANCE-1: the IS_LEAVING_FACTORY retirement (RW 0x89E38A..0x89E3B4) is ported. NOT PORTED (S-222): the saved rally/reform branch, the "ready" notification of idle hordes (iface 0x98) and the per-frame horde tick
 // (iface 0xDC: the melee tick of M2).
 
 #pragma once

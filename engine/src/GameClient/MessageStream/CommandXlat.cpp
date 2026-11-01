@@ -2,10 +2,14 @@
 // See CommandXlat.h.
 
 #include "GameClient/MessageStream/CommandXlat.h"
+#include "GameLogic/Module/StancesBehavior.h"
 
 #include "Common/Team.h"
 #include "GameClient/Radar.h"
 #include "GameLogic/AI/AIGarrisonStates.h"
+#include "GameLogic/ActionManager.h"
+#include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Object/Contain/GarrisonContainRuntime.h"
 
 #include "Common/BuildAssistant.h"
 #include "Common/SpecialPower.h"
@@ -14,10 +18,16 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/HudObjects.h"
 #include "GameLogic/GameMessage.h"
+#include "GameLogic/BeaconCommands.h"
+#include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Module/BloodthirstyUpdate.h"
+#include "GameLogic/Module/SiegeModules.h"
+#include "GameLogic/AI/AIPathfind.h"
+#include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
 
@@ -88,6 +98,14 @@ bool isSystemMessage(const ClientMessage &m)
 const char *metaNameOf(int type)
 {
 	return ClientMessageMetaName(type);
+}
+
+// TARGET FACTS: every attacker path of Object::getAbleToAttackSpecificObject (RW 0x68D6A6, the object itself or a rider) ends in
+// WeaponSet::getAbleToAttackSpecificObject (RW 0x6C9147), which answers ATTACKRESULT_NOT_POSSIBLE (RW 0x6C9496) for a victim with KindOf UNATTACKABLE
+// (template + 0x10E & 0x40, KindOf 54, RW 0x6C91FA) or the status UNATTACKABLE (0x3C, RW 0x6C9207), whoever attacks
+bool isUnattackableTarget(const Object &obj)
+{
+	return obj.isKindOf((unsigned)CombatNames::kinds().unattackable) || obj.testStatus((unsigned)CombatNames::statuses().unattackable);
 }
 } // namespace
 
@@ -179,6 +197,23 @@ void CommandTranslator::hint(const char *cursor)
 			m_ctx.ui.hintCursor(MouseCursorName::InvalidBuild);
 		}
 		return;
+	}
+	// BFME2 InGameUI::createCommandHint (0x002A3273, InGameUICreateCommandHint.cpp, matched), the GUI command mode (case 2): a waiting command that is no
+	// context command, SPECIAL_POWER (0x18), SPELL_BOOK (0x26), SPECIAL_POWER_FROM_COMMAND_CENTER (0x20) or PLACE_BEACON (0x1F) and has no RadiusCursorType
+	// shows its CursorName whatever the hint (Mouse::getCursorIndex; an empty name has no index: cursor 4, Target), e.g. ATTACK_MOVE's AttackMove. The context
+	// branch keeps the cursor its evaluation chose (the port names it at the hint). Not ported here (S-283): a non-context command's radius cursor
+	// (BFME2: cursor None plus the radius decal)
+	if (m_ctx.ui.mouseMode() == 2)
+	{
+		const CommandButton *pending = m_ctx.ui.getGUICommand();
+		const int type = pending->m_command;
+		const bool contextBranch = pending->hasOption(COMMAND_OPTION_CONTEXTMODE_COMMAND) || type == GUI_COMMAND_SPECIAL_POWER || type == GUI_COMMAND_SPELL_BOOK
+			|| type == GUI_COMMAND_SPECIAL_POWER_FROM_COMMAND_CENTER || type == GUI_COMMAND_PLACE_BEACON;
+		if (!contextBranch && pending->m_radiusCursor.empty())
+		{
+			m_ctx.ui.hintCursor(pending->m_cursorName.empty() ? std::string(MouseCursorName::Target) : pending->m_cursorName);
+			return;
+		}
 	}
 	m_ctx.ui.hintCursor(c);
 }
@@ -342,6 +377,14 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 			return evaluateGUISpecialPower(*command, obj, pos, type);
 		}
 	}
+	// lane SIEGE-1: RotWK's siege branch comes before the enter, attack and capture tests (RW 0x81E7A5 after the GUI command and the force-move tests)
+	if (obj)
+	{
+		if (const int siegeType = evaluateSiegeDeploy(obj, type))
+		{
+			return siegeType;
+		}
+	}
 	// lane GARRISON-1 (ZH evaluateContextCommand's ACTIONTYPE_ENTER_OBJECT): a click on a container some selected object may enter (ActionManager::canEnterObject,
 	// RW 0x82CBD5, mode 0) is MSG_ENTER (argument 0 the first selected object, argument 1 the container: the logic case RW 0x77AC26 reads argument 1); the cursor
 	// is EnterFriendly. INFERENCE (S-286): RotWK's order of the context checks is not read; the enter check comes before the attack check here (an enemy
@@ -369,12 +412,16 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 			}
 			else if (type == EvaluateType::DoHint)
 			{
-				hint(MouseCursorName::EnterFriendly);
+				// Retail Mouse.ini supplies the animated OneRing asset for this action.
+				hint(dynamic_cast<CitadelSlaughterHordeContain *>(obj->getContain()) &&
+					enterer->testStatus((unsigned)CombatNames::status("HOLDING_THE_RING"))
+					? MouseCursorName::DeliverRing : MouseCursorName::EnterFriendly);
 			}
 			return msgType;
 		}
 	}
-	if (obj && !m_ctx.ui.isInForceAttackMode() && HudObjects::relationshipToLocal(m_ctx, *obj) == ENEMIES && selectionCanAttack())
+	// an UNATTACKABLE enemy fails the attack test and reaches the capture test below: a capture flag an enemy took is recaptured, not attacked
+	if (obj && !m_ctx.ui.isInForceAttackMode() && HudObjects::relationshipToLocal(m_ctx, *obj) == ENEMIES && !isUnattackableTarget(*obj) && selectionCanAttack())
 	{
 		msgType = MSG_DO_ATTACK_OBJECT;
 		if (type == EvaluateType::DoCommand)
@@ -447,8 +494,7 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 		}
 		return msgType;
 	}
-	// everything else: move to the location (ZH's final else branch, CommandXlat.cpp:2252). A click on an object of ours that has nothing more specific to do is
-	// no command (it is a selection): only a location click moves.
+	// No more specific context action: move to the clicked location, including when scenery was picked.
 	if (pos)
 	{
 		if (type == EvaluateType::DoHint)
@@ -459,9 +505,11 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 				hint(msgType == MSG_DO_ATTACKMOVETO ? MouseCursorName::AttackMove : MouseCursorName::Move);
 			}
 		}
-		else if (!obj)
+		else
 		{
-			msgType = issueMove(obj, pos, type);
+			// RW 0x81E60B -> 0x81DB0C: a drawable does not veto the final location order. Only BASE_FOUNDATION drops the drawable.
+			// BFME2 CommandXlat.cpp, RVA 0x429E11 (tier B, operand-only differences); issueMove RVA 0x4292F6 (tier A).
+			msgType = issueMove(obj && obj->isKindOfName("BASE_FOUNDATION") ? nullptr : obj, pos, type);
 		}
 	}
 	return msgType;
@@ -599,6 +647,14 @@ void CommandTranslator::selectHero()
 
 void CommandTranslator::changeStance(int stance)
 {
+	for (ObjectID id : m_ctx.ui.selected())
+	{
+		Object *obj = m_ctx.logic.findObjectByID(id);
+		if (StancesBehavior *sb = obj ? StancesBehavior::of(*obj) : nullptr)
+		{
+			sb->traceQueuedStance(stance, "CommandTranslator:stance-hotkey");
+		}
+	}
 	ClientMessage &m = m_ctx.stream.append(MSG_CHANGE_STANCE); // the logic case RW 0x77BC59 (StancesBehavior::registerHandlers)
 	m.appendInteger(stance);
 }
@@ -744,16 +800,42 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 				viewHomeBase();
 				return MessageDisposition::Destroy;
 			// lane INPUT-1: cases RotWK's handler executes whose effect is not ported (stop S-287): counted, never dropped silently. CHAT_BUDDIES
-			// RW 0x81FF84, CHAT_ALLIES / CHAT_EVERYONE RW 0x81FEE0 / 0x81FF34 (the chat box), TOGGLE_CONTROL_BAR
-			// RW 0x82001B (hides the Palantir), ALL_CHEER RW 0x820128 (MSG_DO_CHEER 1080 and its text), PLACE_BEACON RW 0x820298, ORDER_SYNCHRONIZE RW
+			// RW 0x81FF84 (the online Messenger overlay), TOGGLE_CONTROL_BAR
+			// RW 0x82001B (hides the Palantir), ALL_CHEER RW 0x820128 (MSG_DO_CHEER 1080 and its text), ORDER_SYNCHRONIZE RW
 			// 0x82028E (MSG_ORDER_SYNCHRONIZE 1136), TOGGLE_PLANNING_MODE RW 0x82065C (the War of the Ring planning), TOGGLE_FAST_FORWARD_MODE RW 0x820542
 			// (replays only), the camera key flags BEGIN_ / END_CAMERA_* RW 0x8200C0 .. 0x820455 (InGameUI + 0x8BB .. 0x8C2; no retail binding)
-			case CMSG_META_CHAT_BUDDIES:
+			// lane CHAT-1: CHAT_ALLIES / CHAT_EVERYONE (RW 0x81FEE0 / 0x81FF34): the chat window opens (mode 0, or 1 / 4 for EVERYONE); the gates (a network
+			// game, not a replay, the local player active) and the window are the HUD's (GameClient/InGameChat.h); the meta is destroyed either way
 			case CMSG_META_CHAT_ALLIES:
+				m_ctx.ui.requestChat(false);
+				return MessageDisposition::Destroy;
 			case CMSG_META_CHAT_EVERYONE:
+				m_ctx.ui.requestChat(true);
+				return MessageDisposition::Destroy;
+			// lane CHAT-1: PLACE_BEACON (Ctrl+B, RW 0x81F8D8 case 0x90): in a network game (RW 0x441B7C) that is not a replay, for an active local player
+			// (RW 0x6AAC52) with fewer beacons than MaxBeaconsPerPlayer (RW 0x6ABAF7 against MultiplayerSettings + 0x18), the GUI command becomes
+			// Command_PlaceBeacon (TheControlBar->findCommandButton RW 0x71D6EA, InGameUI vslot 0xBC): the next left click on the ground sends MSG_PLACE_BEACON
+			// (GUICommandTranslator). At the limit the key does nothing. The meta is destroyed either way (it falls into DELETE_BEACON's case)
+			case CMSG_META_PLACE_BEACON:
+			{
+				Player *local = m_ctx.localPlayer();
+				if (m_ctx.ui.networkGame() && local && !local->isObserver() && !local->isDefeated() && m_ctx.commands)
+				{
+					const ThingTemplate *beacon = BeaconCommands::beaconTemplate(m_ctx.logic, *local);
+					const int count = beacon ? BeaconCommands::countBeacons(m_ctx.logic, *local, *beacon) : 0;
+					if (count < m_ctx.logic.settings().maxBeaconsPerPlayer)
+					{
+						if (const CommandButton *b = m_ctx.commands->findCommandButton("Command_PlaceBeacon"))
+						{
+							m_ctx.ui.setGUICommand(b);
+						}
+					}
+				}
+				return MessageDisposition::Destroy;
+			}
+			case CMSG_META_CHAT_BUDDIES:
 			case CMSG_META_TOGGLE_CONTROL_BAR:
 			case CMSG_META_ALL_CHEER:
-			case CMSG_META_PLACE_BEACON:
 			case CMSG_META_ORDER_SYNCHRONIZE:
 			case CMSG_META_TOGGLE_PLANNING_MODE:
 			case CMSG_META_TOGGLE_FAST_FORWARD_MODE:
@@ -852,13 +934,17 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 			m_rightUp = msg.arg(2).integer;
 			break;
 		case CMSG_MOUSE_LEFT_DOUBLE_CLICK:
-			doubleClick(msg); // RW 0x81FBE4: independent of the order-click / alternate-mouse path
-			break;
+			if (!m_ctx.ui.getGUICommand() || m_ctx.ui.getGUICommand()->m_command != GUI_COMMAND_SPECIAL_POWER)
+			{
+				doubleClick(msg); // RW 0x81FBE4: selection expansion outside special-power targeting
+				break;
+			}
+			[[fallthrough]]; // the pending power owns the target, including a double click
 		case CMSG_MOUSE_RIGHT_DOUBLE_CLICK:
 		case CMSG_MOUSE_RIGHT_CLICK:
 		case CMSG_MOUSE_LEFT_CLICK:
 		{
-			const bool left = t == CMSG_MOUSE_LEFT_CLICK;
+			const bool left = t == CMSG_MOUSE_LEFT_CLICK || t == CMSG_MOUSE_LEFT_DOUBLE_CLICK;
 			// the standard setup orders with the left click, the alternate setup with the right one (CommandXlat.cpp:3678, 3741). lane FACT-C: RotWK's two
 			// cases read TheInGameUI's GUI command first (RW 0x81FAE2 / 0x81FC57): while one other than ATTACK_MOVE (0xA) waits for its target, the right click
 			// orders nothing (RW 0x81FAFE) and the left click carries it out in either setup (RW 0x81FC73 skips the alternate-mouse test); a special power's target
@@ -894,7 +980,8 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 			}
 			if (isPoint && areSelectedObjectsControllable())
 			{
-				Object *draw = HudObjects::pickObject(m_ctx, region.lo);
+				Object *draw = pending && pending->m_command == GUI_COMMAND_SPECIAL_POWER
+					? HudObjects::pickForGuiCommand(m_ctx, region.lo, *pending) : HudObjects::pickObject(m_ctx, region.lo);
 				int issued = 0;
 				if (m_ctx.ui.isInForceAttackMode())
 				{
@@ -925,9 +1012,9 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 // MSG_DO_SPECIAL_POWER_AT_LOCATION (0x411) { id, location, target or NONE, options, source NONE } and one more 0x411 for every button the command's chained
 // list names (CommandTrigger, +0x188) that is a SPECIAL_POWER with a template; else MSG_DO_SPECIAL_POWER (0x410) { id, options, NONE, NONE }. Source NONE: the
 // logic casts with the issuer's selection.
-// NOT PORTED (stop S-2000): the action check RW 0x6A4260 (ActionManager's special power target rules: range, KindOf, the module's own target filter) and the
-// kind-of / option 0x10 / 0x200000 target drops before it; here a click is valid when the option's target kind is there (an object of an allowed
-// relationship, or a ground point for NEED_TARGET_POS). The radius cursor, the unit voice and the selection flash are client presentation, not ported.
+// Location action checks use ActionManager's ported rules, matching the radius cursor; explicitly unported type tests retain its reported pass.
+// NOT PORTED (stop S-2000): object action checks (KindOf / module target filters) and the kind-of / option 0x10 / 0x200000 target drops before them.
+// An object of an allowed relationship passes those unported checks. The unit voice and selection flash are not ported here.
 int CommandTranslator::issueSpecialPower(const CommandButton &command, Object *target, const Coord3D *pos, EvaluateType type)
 {
 	const SpecialPowerTemplate *t = TheSpecialPowerStore && !command.m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(command.m_specialPowerName) : nullptr;
@@ -1002,7 +1089,32 @@ int CommandTranslator::evaluateGUISpecialPower(const CommandButton &command, Obj
 			obj = nullptr;
 		}
 	}
-	const bool valid = ((command.m_options & 7) && obj) || ((command.m_options & COMMAND_OPTION_NEED_TARGET_POS) && pos);
+	bool valid = (command.m_options & 7) && obj;
+	const bool locationTarget = command.hasOption(COMMAND_OPTION_NEED_TARGET_POS);
+	const bool contextOnly = command.hasOption(COMMAND_OPTION_CONTEXTMODE_COMMAND) && !(command.m_options & (7u | COMMAND_OPTION_NEED_TARGET_POS));
+	// RW 0x81E147's final branch issues a targetless power for context-only
+	// commands. Context mode chooses when to issue, not a missing target kind.
+	if (!valid && (locationTarget || contextOnly) && pos)
+	{
+		// RW 0x81E60B's action check precedes the issue and mode clear. Use the
+		// same ported location rules as the radius cursor: red means no cast,
+		// while an explicitly unported per-type test retains its existing pass.
+		// In particular, do not impose the weapon's firing range here: Leap's
+		// PATHABLE_ONLY allows its update module to approach a distant target.
+		const SpecialPowerTemplate *power = TheSpecialPowerStore ? TheSpecialPowerStore->findSpecialPowerTemplate(command.m_specialPowerName) : nullptr;
+		for (ObjectID id : m_ctx.ui.selected())
+		{
+			Object *source = m_ctx.logic.findObjectByID(id);
+			bool unported = false;
+			const bool allowed = source && (contextOnly ? ActionManager::canDoSpecialPower(*source, power)
+				: ActionManager::canDoSpecialPowerAtLocation(*source, *pos, power, command.m_options, &unported));
+			if (allowed || unported)
+			{
+				valid = true;
+				break;
+			}
+		}
+	}
 	if (!valid)
 	{
 		if (type == EvaluateType::DoHint)
@@ -1016,7 +1128,7 @@ int CommandTranslator::evaluateGUISpecialPower(const CommandButton &command, Obj
 	{
 		hint(command.m_cursorName.c_str());
 	}
-	if (type == EvaluateType::DoCommand)
+	if (msgType && type == EvaluateType::DoCommand)
 	{
 		m_ctx.ui.setGUICommand(nullptr);
 	}
@@ -1128,4 +1240,108 @@ int CommandTranslator::evaluateCapture(Object *obj, const Coord3D *pos, Evaluate
 		}
 	}
 	return 0;
+}
+
+// Lane SIEGE-1. TARGET FACTS (RotWK game.dat, caveat S-001): InGameUI's siege test RW 0x69D674 (BFME2 0x69CC19, decomp InGameUISiegeDeployTarget.cpp): a target
+// that is WALK_ON_TOP_OF_WALL (template + 0x10F bit 4, KindOf 60) with a selection; for every selected drawable's object that is not contained (+ 0x27C): the
+// button Command_SpecialAbilitySiegeLadderDeploy for a SIEGE_LADDER (+ 0x119 bit 3), else Command_SpecialAbilitySiegeDeploy (RW 0x71D6EA); the object must be
+// a SIEGE_TOWER (+ 0x113 bit 5) without status DEPLOYED (0x3B, RW 0x44DDEC), able to use the button (RW 0x692A75: its power's module, the button in its
+// command set) and the button ready for it (RW 0x75CC3E: the power's module fully ready); then an object without an AI answers yes, and so does one whose
+// target has a SiegeDockingBehavior that gives it no approach point (dock interface slot 1, RW 0x85CA8A) or an approach point its AI reaches by a quick path
+// (RW 0x66403D -> RW 0x6F5BB0 clientSafeQuickDoesPathExist from the object's position with its locomotor set). evaluateContextCommand (RW 0x81E60B, after the
+// GUI command and the force-move tests, before the enter and attack tests): a hint is the attack hint (0xB1, the AttackObj cursor); a command is
+// MSG_DO_SPECIAL_POWER_AT_OBJECT (0x412) with Command_SpecialAbilitySiegeDeploy's power { the template id, the target, the button's options, no source, the
+// target's position } (the unit voice of the button, RW 0x8DD5FF, is the client's audio: not played).
+// INFERENCE (S-4944): the TheInGameUI byte + 0x8B0 the branch requires clear is not identified (taken as clear); the selection is the port's selected object ids.
+bool CommandTranslator::canSiegeDeploy(const Object &target)
+{
+	if (!target.isKindOfName("WALK_ON_TOP_OF_WALL") || m_ctx.ui.selected().empty())
+	{
+		return false;
+	}
+	static const int kDeployed = ObjectTemplateInfoBuilder::objectStatusIndex("DEPLOYED");
+	for (ObjectID id : m_ctx.ui.selected())
+	{
+		Object *o = m_ctx.logic.findObjectByID(id);
+		if (!o || o->getContainedBy())
+		{
+			continue;
+		}
+		const CommandButton *button = TheCommandStore ? TheCommandStore->findCommandButton(o->isKindOfName("SIEGE_LADDER") ? "Command_SpecialAbilitySiegeLadderDeploy"
+		                                                                                                                  : "Command_SpecialAbilitySiegeDeploy")
+		                                              : nullptr;
+		if (!button || !o->isKindOfName("SIEGE_TOWER") || (kDeployed >= 0 && o->testStatus((unsigned)kDeployed)))
+		{
+			continue;
+		}
+		const SpecialPowerTemplate *t = TheSpecialPowerStore && !button->m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(button->m_specialPowerName) : nullptr;
+		SpecialPowerModuleInterface *sp = t ? SpecialPowerModules::findModule(*o, t) : nullptr;
+		const CommandSet *set = TheCommandStore->findCommandSet(o->getCommandSetName());
+		bool inSet = false;
+		for (int i = 0; set && i < CommandSet::MAX_BUTTONS; ++i)
+		{
+			inSet = inSet || set->getCommandButton(i) == button;
+		}
+		if ((t && !sp) || !inSet) // RW 0x692A75
+		{
+			continue;
+		}
+		if (!sp || sp->getPercentReadyForDisplay() != 1.0f) // RW 0x75CC3E
+		{
+			continue;
+		}
+		AIUpdateInterface *ai = o->getAIUpdateInterface();
+		if (!ai)
+		{
+			return true;
+		}
+		SiegeDockingBehavior *dock = SiegeDockingBehavior::of(target);
+		if (dock)
+		{
+			Coord3D approach{};
+			if (!dock->approachPointFor(o->getID(), approach))
+			{
+				return true;
+			}
+			AIWorld *world = m_ctx.logic.aiWorld();
+			if (world && world->mapReady())
+			{
+				const PathfindLocomotorInfo loco = ai->locomotorInfo();
+				if (world->pathfinder().clientSafeQuickDoesPathExist(loco, o->getPosition(), &approach)) // RW 0x66403D -> RW 0x6F5BB0
+				{
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+int CommandTranslator::evaluateSiegeDeploy(Object *obj, EvaluateType type)
+{
+	if (!canSiegeDeploy(*obj))
+	{
+		return 0;
+	}
+	if (type == EvaluateType::DoHint)
+	{
+		hint(MouseCursorName::AttackObj); // hint 0xB1
+		return MSG_DO_SPECIAL_POWER_AT_OBJECT;
+	}
+	const CommandButton *button = TheCommandStore ? TheCommandStore->findCommandButton("Command_SpecialAbilitySiegeDeploy") : nullptr;
+	if (!button)
+	{
+		return MSG_DO_SPECIAL_POWER_AT_OBJECT; // RW 0x81E80A: no button, the type alone
+	}
+	const SpecialPowerTemplate *t = TheSpecialPowerStore && !button->m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(button->m_specialPowerName) : nullptr;
+	if (type == EvaluateType::DoCommand && t)
+	{
+		ClientMessage &m = m_ctx.stream.append(MSG_DO_SPECIAL_POWER_AT_OBJECT);
+		m.appendInteger((int)t->getID());
+		m.appendObjectID(obj->getID());
+		m.appendInteger((int)button->m_options);
+		m.appendObjectID(INVALID_ID);
+		m.appendLocation(*obj->getPosition());
+	}
+	return MSG_DO_SPECIAL_POWER_AT_OBJECT;
 }

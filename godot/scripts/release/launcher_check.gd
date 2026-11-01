@@ -7,6 +7,8 @@
 ## launcher's copies (tools/release/test_onezip.py checks that): one implementation, not a second one. Lane SIGNKMS-1: a signature is
 ## valid under ANY key of the trusted list (release_trust.gd RELEASE_KEYS), raw or over the signature envelope of its kind
 ## ("payload.json"; the proof launcher-manifest.json is a release's manifest.json: "manifest.json").
+## Lane RELGH-2: the nightly-only keys (release_trust.gd NIGHTLY_KEYS) are also trusted, for a nightly payload / manifest only
+## (ReleaseSignature.valid_scoped).
 extends RefCounted
 
 const ReleaseSignature := preload("res://scripts/crypto/release_signature.gd")
@@ -36,9 +38,21 @@ static func trusted_keys(release_key: String, release_keys: String) -> Dictionar
 	return parsed
 
 
+## lane RELGH-2: the nightly-only keys of release_trust.gd's NIGHTLY_KEYS text: empty text is none; malformed (or one of `release_keys`)
+## is an error, so the game has no keys at all (fail closed). {ok, error, keys}
+static func nightly_keys(text: String, release_keys: Array = []) -> Dictionary:
+	var parsed := ReleaseSignature.parse_nightly_list(text)
+	if not parsed.ok:
+		return {"ok": false, "error": "this game's nightly key list is malformed: " + parsed.error, "keys": []}
+	for k in parsed.keys:
+		if k in release_keys:
+			return {"ok": false, "error": "this game's nightly key list holds a release key", "keys": []}
+	return parsed
+
+
 ## "" when `dir`'s launcher may be started; else why not, for the player. `keys`: the trusted release keys (an Array of 32-byte
 ## PackedByteArray), `repo`: <owner>/<name>.
-static func check(dir: String, keys: Array, repo: String) -> String:
+static func check(dir: String, keys: Array, repo: String, nightly: Array = []) -> String:
 	if keys.is_empty() or repo == "":
 		return "this game has no release key"
 	for k in keys:
@@ -50,7 +64,7 @@ static func check(dir: String, keys: Array, repo: String) -> String:
 		return "there is no %s beside the game" % exe
 	if d.is_link(exe):
 		return "%s is a link, not the signed launcher" % exe
-	var payload := _signed_json(dir.path_join(PAYLOAD), keys, "payload.json")
+	var payload := _signed_json(dir.path_join(PAYLOAD), keys, "payload.json", nightly)
 	if payload.has("error"):
 		return "the package's %s: %s" % [PAYLOAD, payload.error]
 	var p: Dictionary = payload.data
@@ -61,7 +75,7 @@ static func check(dir: String, keys: Array, repo: String) -> String:
 	if typeof(signed) == TYPE_DICTIONARY and _is(signed.get("sha256"), sha):
 		return ""
 	# a launcher update: the signed manifest of its release, beside it
-	var proof := _signed_json(dir.path_join(PROOF), keys, "manifest.json")
+	var proof := _signed_json(dir.path_join(PROOF), keys, "manifest.json", nightly)
 	if proof.has("error"):
 		return "%s is not the package's launcher, and there is no signed proof of an update (%s: %s)" % [exe, PROOF, proof.error]
 	var m: Dictionary = proof.data
@@ -84,7 +98,7 @@ static func _is(v: Variant, text: String) -> bool:
 
 ## {data} of a JSON object whose detached signature (<path>.sig, 64 bytes) verifies under one of `keys` (raw, or the envelope of `kind`),
 ## else {error}
-static func _signed_json(path: String, keys: Array, kind: String) -> Dictionary:
+static func _signed_json(path: String, keys: Array, kind: String, nightly: Array = []) -> Dictionary:
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
 		return {"error": "missing"}
@@ -97,7 +111,7 @@ static func _signed_json(path: String, keys: Array, kind: String) -> Dictionary:
 		return {"error": "no signature (%s.sig is not 64 bytes)" % path.get_file()}
 	var sig := s.get_buffer(64)
 	s.close()
-	if not ReleaseSignature.valid(keys, kind, bytes, sig):
+	if not ReleaseSignature.valid_scoped(keys, nightly, kind, bytes, sig):
 		return {"error": "the signature is not the OpenBFME release's"}
 	var data: Variant = JSON.parse_string(bytes.get_string_from_utf8())
 	if not data is Dictionary:

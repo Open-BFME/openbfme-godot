@@ -4,8 +4,9 @@
 #
 #   integrity_check.py game --peer PATH (--replay FILE | --relay-log LOG --online-start START.json) [--game-id ID] --out-dir DIR [--no-render]
 #       one finished game: DIR/game.replay (the whole game, watchable: assembled from the relay log when given one), DIR/d1.json (orders and
-#       selections on objects the player could not see), DIR/d5.json (input rate: more than 100 commands in 5 s of game time), DIR/d6.json (commands an
-#       unmodified client does not send), DIR/summary.json + DIR/summary.txt, and for every player D1 flags DIR/evidence/d1-slot<N>.png / .mp4 (what
+#       selections on objects the player could not see), DIR/d2.json (the pointer resting over hidden enemies, from the client-reported views), DIR/d5.json (input rate: more than 100 commands in 5 s of game time), DIR/d6.json (commands an
+#       unmodified client does not send), for a relay game DIR/d7.json (each slot's input at the relay: signed or plain, and the datagrams the
+#       relay refused for it), DIR/summary.json + DIR/summary.txt, and for every player D1 flags DIR/evidence/d1-slot<N>.png / .mp4 (what
 #       the player could see beside what the game held, around the first flagged order). One deterministic re-simulation for the three checks (plus
 #       one more for the evidence frames when D1 found something).
 #   integrity_check.py post DIR --url URL --key-file FILE [--detectors D1-orders-into-fog,...]
@@ -19,6 +20,12 @@
 #       --incoming: <game id>.obfmerlog + <game id>.start.json files (a relay host's log directory, or a copy of it); --lobby: the lobby's worker read
 #       routes (GET /v1/internal/integrity/games?after=..., /games/<id>/log, /games/<id>/start; the Orthanc lobby's, signed like the intake).
 #       Run it from a timer (tools/integrity/openbfme-integrity.timer) within the lobby's 24 h roster window.
+#       Online batch r6: a version-2 relay log (a game a previous-release HELLO opened) keeps its INPUT records in a sidecar; from the lobby it is
+#       fetched (/games/<id>/input) next to the log as <log>.input when the listing says has_input or the log is version 2; a sidecar the listing
+#       names that does not fetch is retried, never checked without; a version-2 log listed without one is asked for it again on every run for an hour
+#       (the relay uploads it after the log, and the listing never lists the game again: state.json "input_wait"), then checked without it: D7
+#       abstains saying so.
+#       --incoming reads a <log>.input beside the log as it is.
 #
 # Nothing here acts on a player. The wording is neutral; abstained games (the re-simulation does not reproduce the players' own hashes, a desynced or
 # incomplete relay log, ...) give no findings.
@@ -40,9 +47,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fog_check as fc  # noqa: E402
 
-REPORTS = (("d1.json", fc.DETECTOR, "--fog-check"), ("d5.json", fc.INPUT_RATE, "--input-rate-check"), ("d6.json", fc.COMMAND_INTEGRITY, "--command-check"))
+REPORTS = (("d1.json", fc.DETECTOR, "--fog-check"), ("d2.json", fc.VIEW_FOCUS, "--view-check"), ("d5.json", fc.INPUT_RATE, "--input-rate-check"),
+           ("d6.json", fc.COMMAND_INTEGRITY, "--command-check"))
 GAME_ID = re.compile(r"^[0-9a-f]{16}$")
 ROSTER_SECONDS = 24 * 3600  # the lobby keeps a game's roster this long after its end: a finding posted later is refused (unknown_game)
+INPUT_GRACE_SECONDS = 3600  # ADMINFIX-1 (Sol's follow-up): the relay uploads a version-2 log's INPUT sidecar AFTER its log, so a game can be
+                            # listed before its sidecar exists, and the listing never lists it again: wait this long for it before D7 abstains
 _FLAGS: dict[tuple[str, int, int], set[str]] = {}
 
 
@@ -53,7 +63,7 @@ def peer_flags(peer: str) -> set[str]:
     key = (str(Path(peer).resolve()), st.st_mtime_ns, st.st_size)
     if key not in _FLAGS:
         data = Path(peer).read_bytes()
-        _FLAGS[key] = {flag for _, _, flag in REPORTS if flag.encode() + b"\0" in data or flag.encode() + b'"' in data}
+        _FLAGS[key] = {flag for flag in [f for _, _, f in REPORTS] + ["--packet-check"] if flag.encode() + b"\0" in data or flag.encode() + b'"' in data}
     return _FLAGS[key]
 
 
@@ -85,18 +95,20 @@ def check_game(a: argparse.Namespace, out: Path, replay: str | None, relay_log: 
                render: bool) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     abstain = None
+    flags = peer_flags(a.peer)
+    if "--fog-check" not in flags:
+        raise RuntimeError(f"{a.peer} has no D1 (--fog-check): not a checker")
     if relay_log:
         replay = str(out / "game.replay")
+        (out / "d7.json").unlink(missing_ok=True)
+        packet = ["--packet-check", str(out / "d7.json")] + (["--game-id", game_id] if game_id else []) if "--packet-check" in flags else []
         rc = subprocess.call(peer_base(a) + ["--relay-log", relay_log, "--online-start", online_start, "--record", replay, "--report",
-                                             str(out / "assemble.txt")])
+                                             str(out / "assemble.txt")] + packet)
         if rc not in (0, *fc.ASSEMBLY_ABSTAIN) or not Path(replay).exists():
             raise RuntimeError(f"assembling the relay log failed (exit {rc})")
         abstain = fc.ASSEMBLY_ABSTAIN.get(rc)
     elif replay and Path(replay).resolve() != (out / "game.replay").resolve():
         (out / "game.replay").write_bytes(Path(replay).read_bytes())
-    flags = peer_flags(a.peer)
-    if "--fog-check" not in flags:
-        raise RuntimeError(f"{a.peer} has no D1 (--fog-check): not a checker")
     cmd = peer_base(a) + ["--replay", str(out / "game.replay"), "--report", str(out / "replay.txt")]
     for name, _, flag in REPORTS:
         if flag in flags:
@@ -116,9 +128,9 @@ def check_game(a: argparse.Namespace, out: Path, replay: str | None, relay_log: 
             fc.mark_abstained(str(out / name), abstain)
     # Sol r3: each report on its own: one that does not read (a bug, or a client-reported value that slipped through) never hides the others
     reports, unreadable = {}, []
-    for name, det, _ in REPORTS:
+    for name, det in [(n, d) for n, d, _ in REPORTS] + [("d7.json", fc.PACKET_INTEGRITY)]:
         if not (out / name).exists():
-            continue
+            continue  # d7.json: a relay game only
         try:
             reports[det] = json.loads((out / name).read_text())
         except (ValueError, OSError) as e:
@@ -177,7 +189,7 @@ def summary_text(s: dict) -> str:
 
 def post_dir(directory: Path, url: str, key: bytes, detectors: list[str]) -> int:
     failed = 0
-    for name, det, _ in REPORTS:
+    for name, det in [(n, d) for n, d, _ in REPORTS] + [("d7.json", fc.PACKET_INTEGRITY)]:
         if det not in detectors or not (directory / name).exists():
             continue
         try:
@@ -214,22 +226,42 @@ def lobby_get(lobby: str, path: str, key: bytes) -> bytes:
         return r.read()
 
 
-def lobby_games(lobby: str, key: bytes, after: str | None) -> tuple[list[str], str | None]:
+def lobby_games(lobby: str, key: bytes, after: str | None, has_input: set[str] | None = None) -> tuple[list[str], str | None]:
     """Every finished game with a stored relay log after `after` (the lobby's cursor "<stored_at ms>:<game id>"), oldest first, page by page; the
     cursor to resume from next run: the lobby's resume_cursor of the last non-empty page (ADMINFIX-1, f27dd93a3: "store it and resume from it"),
-    else the last next_cursor."""
+    else the last next_cursor. `has_input` collects the games whose listing says the lobby holds an INPUT sidecar (ADMINFIX-1, d1ac8fc63)."""
     ids: list[str] = []
     cursor, resume = after, after
     while True:
         # the lobby verifies the signature over its own serialization of the query (":" as %3A): send it in that form (a raw ":" gets a 401)
         q = "?limit=100" + ("" if not cursor else "&after=" + urllib.parse.quote(cursor, safe=""))
         page = json.loads(lobby_get(lobby, "/v1/internal/integrity/games" + q, key))
-        ids += [g["game_id"] for g in page.get("items", []) if g.get("has_start", True) and GAME_ID.match(str(g.get("game_id")))]
+        items = [g for g in page.get("items", []) if g.get("has_start", True) and GAME_ID.match(str(g.get("game_id")))]
+        ids += [g["game_id"] for g in items]
+        if has_input is not None:
+            has_input.update(g["game_id"] for g in items if g.get("has_input"))
         nxt = page.get("next_cursor")
         resume = page.get("resume_cursor") or nxt or resume
         if not nxt or nxt == cursor:
             return ids, resume
         cursor = nxt
+
+
+def log_version(log: bytes) -> int | None:
+    """The relay log's version (RelayCore.h "Log format"), None when it is not one."""
+    return int.from_bytes(log[8:12], "little") if len(log) >= 12 and log[:8] == b"OBFMERLG" else None
+
+
+def fetch_input_sidecar(lobby: str, gid: str, key: bytes, listed: bool) -> bytes | None:
+    """Online batch r6: a version-2 log's INPUT sidecar (RelayCore.h "INPUT sidecar"), or None when the lobby holds none. A sidecar the listing
+    names (has_input) that does not fetch is an error (the game is retried, never checked without it); without has_input a 404 is "none" (a game
+    of a relay before the sidecar, or a lobby without the route)."""
+    try:
+        return lobby_get(lobby, f"/v1/internal/integrity/games/{gid}/input", key)
+    except urllib.error.HTTPError as e:
+        if e.code == 404 and not listed:
+            return None
+        raise OSError(f"the INPUT sidecar{' the listing names' if listed else ''}: HTTP {e.code}") from e
 
 
 MAX_ATTEMPTS = 12  # a game whose check or delivery keeps failing is tried on 12 runs (an hour on the 5-minute timer), then left for a person
@@ -246,6 +278,7 @@ def watch_once(a: argparse.Namespace) -> int:
     state.setdefault("given_up", [])
     state.setdefault("unsupported", {})  # game id -> {"profile": p, "since": unix s}: no checker for its build yet; not a failure
     state.setdefault("expired", [])      # unsupported past the lobby's roster window: never checked
+    state.setdefault("input_wait", {})   # game id -> unix s first seen: a version-2 log listed without its INPUT sidecar (yet); not a failure
     done = set(state["done"]) | set(state["given_up"]) | set(state["expired"])
     now = time.time()
     for gid, u in list(state["unsupported"].items()):
@@ -268,8 +301,10 @@ def watch_once(a: argparse.Namespace) -> int:
         work = [w for w in incoming_games(Path(a.incoming)) if w[0] not in done]
     else:
         read_key = bytes.fromhex(Path(a.read_key_file).read_text().strip())
-        ids, cursor = lobby_games(a.lobby, read_key, state.get("cursor"))
+        listed_input: set[str] = set()
+        ids, cursor = lobby_games(a.lobby, read_key, state.get("cursor"), listed_input)
         ids += [g for g in state["pending"] if g not in ids]
+        ids += [g for g in state["input_wait"] if g not in ids]  # listed once, before their sidecar: asked again every run until the grace ends
         # an unsupported game is fetched again only once a checker for its profile is installed
         ids += [g for g, u in state["unsupported"].items() if g not in ids and a.peers and
                 (Path(a.peers) / str(u.get("profile")) / "openbfme_peer").is_file()]
@@ -280,11 +315,28 @@ def watch_once(a: argparse.Namespace) -> int:
                 work.append((gid, None, None))  # checked: only the delivery is due
                 continue
             log, start = Path(tmp.name) / f"{gid}.obfmerlog", Path(tmp.name) / f"{gid}.start.json"
+            listed = gid in listed_input or state["pending"].get(gid, {}).get("has_input", False)
             try:
-                log.write_bytes(lobby_get(a.lobby, f"/v1/internal/integrity/games/{gid}/log", read_key))
+                log_bytes = lobby_get(a.lobby, f"/v1/internal/integrity/games/{gid}/log", read_key)
+                log.write_bytes(log_bytes)
                 start.write_bytes(lobby_get(a.lobby, f"/v1/internal/integrity/games/{gid}/start", read_key))
+                version = log_version(log_bytes)
+                if listed or (version is not None and version < 4):
+                    # online batch r6: next to the log, as <log>.input: openbfme_peer --relay-log reads it (RelayLogFile::load) for D7
+                    side = fetch_input_sidecar(a.lobby, gid, read_key, listed)
+                    if side is not None:
+                        log.with_name(log.name + ".input").write_bytes(side)
+                    elif version == 2:  # the relay writes a sidecar for a version-2 log only (RelayCore.h "INPUT sidecar")
+                        since = state["input_wait"].setdefault(gid, int(now))
+                        if now - since < INPUT_GRACE_SECONDS:
+                            if since == int(now):
+                                print(f"integrity_check: {gid}: a version-2 log without its INPUT sidecar yet: asked again on later runs for "
+                                      f"{INPUT_GRACE_SECONDS // 60} min before D7 abstains")
+                            continue
+                        print(f"integrity_check: {gid}: no INPUT sidecar after {INPUT_GRACE_SECONDS // 60} min: checked without it (D7 abstains)")
+                    state["input_wait"].pop(gid, None)
             except (urllib.error.URLError, OSError) as e:
-                fetch_failed.append((gid, f"fetch: {e}"))  # Sol r4: counted like any other failure (attempts, give-up, the exit code)
+                fetch_failed.append((gid, f"fetch: {e}", listed))  # Sol r4: counted like any other failure (attempts, give-up, the exit code)
                 continue
             work.append((gid, log, start))
         state["cursor"] = cursor or state.get("cursor")
@@ -301,9 +353,9 @@ def watch_once(a: argparse.Namespace) -> int:
         else:
             state["pending"][gid] = p
 
-    for gid, why in fetch_failed:
+    for gid, why, listed in fetch_failed:
         failures += 1
-        failed(gid, state["pending"].get(gid, {"stage": "check", "attempts": 0}), why)
+        failed(gid, {**state["pending"].get(gid, {"stage": "check", "attempts": 0}), **({"has_input": True} if listed else {})}, why)
     for gid, log, start in work:
         out = root / gid
         p = state["pending"].get(gid, {"stage": "check", "attempts": 0})

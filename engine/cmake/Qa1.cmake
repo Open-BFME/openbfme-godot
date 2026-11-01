@@ -6,5 +6,6 @@ set(OPENBFME_QA1_SOURCES
 )
 set(OPENBFME_QA1_TESTS
     tests/test_qa1_pick.cpp
+    tests/test_select1_pick.cpp  # lane SELECT-1: the soldier's oriented pick box (RotWK RW 0x59C680)
 )
 # DrawablePick is the HUD's pick (client input interpretation): excluded from the simulation audit in tools/sim/sim_policy.json with its reason.

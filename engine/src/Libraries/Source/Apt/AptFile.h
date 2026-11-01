@@ -156,7 +156,7 @@ struct AptPlaceObject
 	std::uint8_t additive[4] = { 0, 0, 0, 0 };
 	float ratio = 0;
 	std::string name; // meaningful when APT_PLACE_HASNAME
-	std::int32_t clipDepth = 0;
+	std::int32_t clipDepth = -1;
 	bool clipActionsFlagged = false; // flag 0x80 set
 	bool clipActionsNull = false;    // flagged but the pointer is null: "no events" (spec 2.3)
 	std::vector<AptClipEvent> clipEvents;

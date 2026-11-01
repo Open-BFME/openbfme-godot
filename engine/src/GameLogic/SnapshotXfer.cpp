@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GameLogic/SnapshotXfer.h (lane SAVE-4b).
 
+#include "Common/Thing/KindOfTokens.h"
 #include "GameLogic/SnapshotXfer.h"
 
 #include <cstdio>
@@ -391,7 +392,7 @@ std::string hex32(std::uint64_t v)
 int modelConditionCount() { return nameCount(TheModelConditionNames); }
 int objectStatusCount() { return nameCount(TheObjectStatusNames); }
 int weaponConditionCount() { return nameCount(TheWeaponConditionNames); }
-int kindOfCount() { return nameCount(TheKindOfNames); }
+int kindOfCount() { return nameCount(KindOfTokens::names()); } // lane MODS-3: the table in force
 
 int nameCount(const char *const *names)
 {

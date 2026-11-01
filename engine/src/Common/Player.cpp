@@ -125,7 +125,7 @@ void Player::init(const PlayerTemplate *pt, std::uint32_t defaultStartingCash)
 			m_money = Money(defaultStartingCash);
 			m_money.setPlayerIndex(m_index);
 		}
-		// lane FACT-B: RW 0x6B0738 -> RW 0x6AFC92 Player::initPlayerUpgrades (tier A, BFME2 decomp PlayerRva002AF19B.cpp): every InitialUpgrades name
+		// lane FACT-B: RW 0x6B0738 -> RW 0x6AFC92 Player::initPlayerUpgrades (tier A, BFME2 decomp Player_initPlayerUpgrades.cpp): every InitialUpgrades name
 		// (template + 0x180, in order) that TheUpgradeCenter knows (RW 0x66F5E5; an unknown name is skipped) is added COMPLETE, not silent
 		// (RW 0x6AEE22(upgrade, 2, 0)). Upgrade_IsengardFaction / Upgrade_MordorFaction / ... and the dual economy choices are what modules such
 		// as the ring hero's RemoveUpgradeUpgrade are triggered by. addUpgrade's steps are taken here without its object pass (RW 0x6AE483 visits the
@@ -211,12 +211,14 @@ void Player::crc(StateHasher &h) const
 		h.addI32(r.upgrade ? r.upgrade->getMaskBit() : -1);
 		h.addI32(r.status);
 	}
-	for (std::uint32_t w : m_upgradesInProgress.words)
+	for (unsigned i = 0; i < UpgradeMaskType::activeWords(); ++i) // lane MODS-3: retail's 0x24 words unless the data has more upgrades
 	{
+		const std::uint32_t w = m_upgradesInProgress.words[i];
 		h.addU32(w);
 	}
-	for (std::uint32_t w : m_upgradesCompleted.words)
+	for (unsigned i = 0; i < UpgradeMaskType::activeWords(); ++i) // lane MODS-3: retail's 0x24 words unless the data has more upgrades
 	{
+		const std::uint32_t w = m_upgradesCompleted.words[i];
 		h.addU32(w);
 	}
 	h.addU32((std::uint32_t)m_costModifiers.size());

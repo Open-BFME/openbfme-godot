@@ -7,7 +7,7 @@
 //
 //   S-020 skin vertices whose two weights are both 0 are given weight 100 (OpenSAGE's reading)
 //   S-021 BFME dual-bone blend formula is the spec's reading of the file
-//   S-022 house colour is not applied (combine unrecovered) although housecolor.ini names a house texture for the base texture
+//   S-022 house colour is not applied (the instancer has house colours off) although housecolor.ini names a house texture for the base texture
 //   S-023 BFME2 FX material drawn with an approximation
 //   S-025 stage with a texture and no texture coordinates at all (zeros assumed)
 //   S-026 blend / depth / gradient combinations Godot cannot express (drawn with the nearest state)

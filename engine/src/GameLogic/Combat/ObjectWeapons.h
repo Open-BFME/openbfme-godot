@@ -182,6 +182,11 @@ public:
 	int extraWeaponStatus(Weapon &w);
 	// lane SPELL-2: an extra weapon's immediate load (RW 0x6CEE0F)
 	void loadExtraWeapon(Weapon &w) { w.loadAmmoNow(host()); }
+	// lane MODS-3: an extra weapon's reload (RW 0x6CEE4C Weapon::reloadAmmo; FireWeaponWhenDamagedBehavior's constructor RW 0x885A6F)
+	void reloadExtraWeapon(Weapon &w) { w.reloadAmmo(host()); }
+	// lane MODS-3: RW 0x6CF3AE (source, victim): privateFireWeapon RW 0x6CEF6D at the victim with argument 6 (ignore the ranges) = 1 and argument 7 (a projectile
+	// detonation, RW 0x6CB7BD: the nuggets delivered at the victim at once) = 1; no lock, no tracker (Edain Unchained's FireAtAttacker shot)
+	void fireExtraWeaponDetonationAt(Weapon &w, Object &victim);
 	// lane HERO-1: RW 0x691014 Object::hasWeaponSetFor(bit): the template has a weapon set naming the condition (RW 0x73F6B9; INFERENCE: any set with the bit)
 	bool hasWeaponSetFor(int bit) const;
 	// the status of the current weapon (RW 0x6CD142), WEAPON_OUT_OF_AMMO when there is none

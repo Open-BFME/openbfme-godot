@@ -69,7 +69,7 @@ float healthOfMembers(Object &horde)
 
 void kill(Object &o)
 {
-	o.kill(0); // RW 0x698EC3: UNRESISTABLE damage of the maximum health
+	o.kill(DAMAGE_UNRESISTABLE, 0); // RW 0x698EC3: UNRESISTABLE damage of the maximum health
 }
 
 bool reportHas(GameLogic &logic, const char *id)
@@ -469,7 +469,11 @@ TEST_CASE("siege retail: Grond's crew speed is 50% per troll (SpeedPercentPerCre
 	REQUIRE(st->crewList()->size() == 2u);
 	Object *troll = st->crewList()->front();
 	CHECK(troll->testStatus((unsigned)CombatNames::status("UNATTACKABLE"))); // ObjectStatusOfCrew
+	REQUIRE(troll->getAIUpdateInterface() != nullptr);
+	CHECK(troll->getAIUpdateInterface()->attitude() == 0);
 	st->exitObjectViaDoor(troll, 0);
+	// lane GATEPUSH-1: MordorSiegeTower's GoAggressiveOnExit = Yes: the rider leaves aggressive (TransportContain::onRemoving RW 0x86AD06 -> RW 0x66E12A(2))
+	CHECK(troll->getAIUpdateInterface()->attitude() == 2);
 	CHECK(troll->getContainedBy() == nullptr);
 	CHECK(st->crewCount() == 1);
 	CHECK_FALSE(troll->testStatus((unsigned)CombatNames::status("UNATTACKABLE")));

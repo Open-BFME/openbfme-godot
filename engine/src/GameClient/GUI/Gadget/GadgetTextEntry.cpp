@@ -360,7 +360,8 @@ static void drawTextEntryText(GameWindow *window, WinInstanceData *instData, Col
 		clipRegion.lo.y = origin.y;
 		clipRegion.hi.y = origin.y + size.y;
 		mgr.setClipRegion(clipRegion);
-		x += 5;
+		// RW 0x49F7BC -> BFME2 W3DTextEntry.cpp RVA 0x9FE49 (tier A): two pixels beyond the body's five-pixel inset, even at scroll position zero.
+		x += 2;
 		mgr.winDrawText(text, font, x, y, textColor, textDropColor);
 		cursorPos = textWidth + x;
 	}

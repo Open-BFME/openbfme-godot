@@ -27,6 +27,7 @@ public:
 	virtual ~TributeSource() = default;
 	virtual bool localActive() const = 0;                   ///< the "_TributeEnabled" extern (RW 0x914C08 -> RW 0x6AAC52 on the local player)
 	virtual bool transferAllowed() const = 0;               ///< RW 0x626087: NumMinutesBeforePlayersCanTransferMoney have passed (the page's "_enabled")
+	virtual int rowLimit() const { return 7; } ///< RW 0x914B54; extended maps override the retail limit.
 	virtual std::vector<TributePlayerRow> tributePlayers() = 0;
 	// the screen's Send (RW 0x914DD6): MSG_GIVE_MONEY(from, to, amount) through the command path the HUD's orders take (lockstep in a network game)
 	virtual void send(int fromIndex, int toIndex, std::uint32_t amount) = 0;

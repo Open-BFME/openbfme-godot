@@ -11,6 +11,7 @@
 ## taken in the isolated mode isolated_url() checks: the user arguments are exactly --open-url and one strict link (a development / test build also
 ## allows its test options before them), else nothing at all runs. A link anywhere else on the command line is refused the same way.
 extends RefCounted
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const SCHEME := "openbfme"
 const DESKTOP_FILE := "openbfme-url.desktop"
@@ -22,7 +23,7 @@ static func parse(link: String) -> Dictionary:
 	var re := RegEx.create_from_string("^openbfme://join/([0-9a-f]{16})/?$")
 	var m := re.search(link)
 	if m == null or m.get_string() != link: # the whole text ("$" alone would let a trailing newline through)
-		return {"ok": false, "error": "not an openbfme://join/<16 lower-case hex digits> link"}
+		return {"ok": false, "error": L10n.t("launcher.url_handler.not_a_join_link")}
 	return {"ok": true, "action": "join", "game": m.get_string(1)}
 
 
@@ -43,7 +44,7 @@ static func isolated_url(args: PackedStringArray, allow_test_options: bool, test
 			leading = false
 			rest.append(a)
 	if rest.size() != 2 or rest[0] != "--open-url":
-		return {"mode": true, "ok": false, "error": "a link must come alone, as exactly --open-url <link> (got %d arguments)" % rest.size()}
+		return {"mode": true, "ok": false, "error": L10n.t("launcher.url_handler.link_alone", {"count": rest.size()})}
 	var p := parse(rest[1])
 	if not p.ok:
 		return {"mode": true, "ok": false, "error": p.error}
@@ -75,7 +76,7 @@ static func register(exe: String) -> Dictionary:
 		for cmd in windows_reg_commands(exe):
 			var out := []
 			if OS.execute("reg", cmd, out, true) != 0:
-				return {"ok": false, "error": "reg %s failed: %s" % [" ".join(cmd), "".join(out).strip_edges()]}
+				return {"ok": false, "error": L10n.t("launcher.url_handler.reg_failed", {"command": " ".join(cmd), "output": "".join(out).strip_edges()})}
 		return {"ok": true, "error": "", "where": "HKCU\\Software\\Classes\\" + SCHEME}
 	if OS.get_name() in ["Linux", "FreeBSD", "NetBSD", "OpenBSD", "BSD"]:
 		var home := OS.get_environment("XDG_DATA_HOME")
@@ -86,12 +87,12 @@ static func register(exe: String) -> Dictionary:
 		var path := dir.path_join(DESKTOP_FILE)
 		var f := FileAccess.open(path, FileAccess.WRITE)
 		if f == null:
-			return {"ok": false, "error": "cannot write %s: %s" % [path, error_string(FileAccess.get_open_error())]}
+			return {"ok": false, "error": L10n.t("launcher.url_handler.cannot_write", {"path": path, "reason": error_string(FileAccess.get_open_error())})}
 		f.store_string(linux_desktop_entry(exe))
 		f.close()
 		var out := []
 		if OS.execute("xdg-mime", ["default", DESKTOP_FILE, "x-scheme-handler/" + SCHEME], out, true) != 0:
-			return {"ok": false, "error": "xdg-mime default failed (is xdg-utils installed?): " + "".join(out).strip_edges()}
+			return {"ok": false, "error": L10n.t("launcher.url_handler.xdg_mime_failed", {"output": "".join(out).strip_edges()})}
 		OS.execute("update-desktop-database", [dir], [], true) # optional: some desktops read the cache
 		return {"ok": true, "error": "", "where": path}
-	return {"ok": false, "error": "openbfme:// links are not supported on %s" % OS.get_name()}
+	return {"ok": false, "error": L10n.t("launcher.url_handler.unsupported_os", {"os": OS.get_name()})}

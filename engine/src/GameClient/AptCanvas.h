@@ -65,6 +65,7 @@ struct AptStageMapping
 	float offsetX() const;
 	float offsetY() const;
 	float uniformScale() const; // min(scaleX, scaleY): the font scale
+	AptStageMapping fitImage(float imageWidth, float imageHeight) const;
 	void stageToWindow(float x, float y, float &wx, float &wy) const;
 	void windowToStage(float wx, float wy, float &x, float &y) const;
 };
@@ -87,6 +88,7 @@ public:
 
 	// Load (once) `art/textures/<name>`.  The returned entry is never null; check `ok`.
 	const Entry &get(const std::string &name);
+	std::string packedTextureStem(const std::string &name) const;
 	// lane UI-2: load (once) the TGA at exactly `path` in the mounted archives ('\\' or '/'), e.g. a map's `<map>_pic.tga` (an Image the engine makes
 	// from a file, RW 0x975F23). Its pixels stay (a map picture is 128 x 128).
 	const Entry &getFile(const std::string &path);

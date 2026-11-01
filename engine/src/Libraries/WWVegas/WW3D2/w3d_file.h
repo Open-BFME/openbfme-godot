@@ -387,7 +387,8 @@ struct W3dTextureInfoStruct
 };
 
 // BFME2 FX shader material header (W3D_CHUNK_SHADER_MATERIAL_HEADER, 37 bytes, OpenSAGE
-// W3dShaderMaterialHeader.cs): u8 number; char TypeName[32]; u32 reserved. Packed: no padding.
+// W3dShaderMaterialHeader.cs): u8 version/number; char TypeName[32]; technique u8 + 3 padding bytes.
+// BFME2 FXShaderSetup::Load_W3D RVA 0x152E4D uses the low byte of the final word. Packed: no padding.
 #pragma pack(push, 1)
 struct W3dShaderMaterialHeaderStruct
 {

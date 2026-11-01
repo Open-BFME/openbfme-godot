@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Common/Recorder.h"
+#include "GameClient/CommandLogLoad.h"
 #include "GameClient/LiveGame.h"
 
 #include <chrono>
@@ -46,7 +47,7 @@ struct ReplaySeek
 		}
 		while (result.reached < target)
 		{
-			if (!log.hashes.count(result.reached + 1))
+			if (!log.hashes.count(result.reached + 1) && CommandLogLoad::hashRecordedFor(log, result.reached + 1)) // lane UBER-2C: an Uber frame off the cadence has none
 			{
 				result.error = "Replay has no recorded hash for frame " + std::to_string(result.reached + 1);
 				break;

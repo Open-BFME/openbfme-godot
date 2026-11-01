@@ -145,6 +145,35 @@ TEST_CASE("pathfind cell: the cost fields are 16 bit like the retail struct")
 	CHECK(c.getTotalCost() == 65535);
 }
 
+TEST_CASE("pathperf4 review of #62: the cell info pool grows in the Uber profile only; a Faithful pool keeps its size and fails when full")
+{
+	Pathfinder pf(pathtest::testConfig(), nullptr);
+	CHECK(pf.pool().growthLimit() == 0); // Faithful: the configured pool, as on main
+	pf.setUberLimits(true);
+	CHECK(pf.pool().growthLimit() == (int)Pathfinder::kCellInfoPoolMax);
+	pf.setUberLimits(false);
+	CHECK(pf.pool().growthLimit() == 0);
+	// a fixed pool refuses the record past its size; a pool with a growth limit adds a block of 4096 (the least block, below the limit)
+	PathfindCellInfoPool fixed, growing;
+	fixed.allocate(2);
+	growing.setGrowthLimit(5000);
+	growing.allocate(2);
+	std::vector<PathfindCell> a(3), b(3);
+	ICoord2D p;
+	for (int i = 0; i < 2; ++i)
+	{
+		REQUIRE(a[(size_t)i].allocateInfo(fixed, p));
+		REQUIRE(b[(size_t)i].allocateInfo(growing, p));
+	}
+	CHECK(!a[2].allocateInfo(fixed, p));
+	CHECK(fixed.exhaustedOnce());
+	CHECK(fixed.capacity() == 2);
+	CHECK(b[2].allocateInfo(growing, p));
+	CHECK(!growing.exhaustedOnce());
+	CHECK(growing.capacity() == 4098);
+	CHECK(growing.growths() == 1);
+}
+
 TEST_CASE("pathfind cell: info pool hands out and takes back records, reports exhaustion")
 {
 	PathfindCellInfoPool pool;

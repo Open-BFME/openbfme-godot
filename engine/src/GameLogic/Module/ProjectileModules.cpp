@@ -106,6 +106,11 @@ const FieldParse kBezierParse[] = {
 	{ "PostLandingEmotionRadius", INI::parseReal, nullptr, BP_OFF(m_postLandingEmotionRadius) },
 	{ nullptr, nullptr, nullptr, 0 }
 };
+// lane BFME2MODE-0: BFME2 1.06's row that RotWK's table 0xC58368 dropped (BFME2 table 0xC41B58, after PreLandingEmotionRadius), found only in BFME2 1.06 data
+const FieldParse kBezierBfme2Rows[] = {
+	{ "PreLandingEmotionAffectsAllies", INI::parseBool, nullptr, BP_OFF(m_preLandingEmotionAffectsAllies) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
 #undef BP_OFF
 
 // RW 0x6CA03E getMinimumAttackRange: the template's MinimumAttackRange less 2.5, never below 0
@@ -218,7 +223,20 @@ float ProjectileInvSqrt(float value)
 
 void BezierProjectileBehaviorModuleData::buildFieldParse(MultiIniFieldParse &p)
 {
+	static const Bfme2FieldRowsRegistration bfme2Rows(kBezierParse, kBezierBfme2Rows); // lane BFME2MODE-0
 	p.add(kBezierParse);
+}
+
+// lane BFME2MODE-0 (AGENTS.md): the pre-landing scare's relationship mask, the projectile behaviour's edition variant. RotWK passes the constant 7 (allies, enemies,
+// neutral; RW 0x85F31A .. 0x85F3F0); BFME2 1.06 builds it from PreLandingEmotionAffectsAllies (BFME2 0x85C2B8 .. 0x85C2D4 in update 0x85C226, Rva 0x45C226,
+// BezierProjectileBehaviorUpdate.cpp:132: 2 (neutral), 6 (neutral | allies) when the field is set, then | 1 (enemies))
+int BezierProjectileBehaviorModuleData::preLandingRelationshipMask(GameEdition edition) const
+{
+	if (edition == GameEdition::BFME2_106)
+	{
+		return (m_preLandingEmotionAffectsAllies ? 6 : 2) | 1;
+	}
+	return 7;
 }
 
 void ProjectileModules::registerAll(ModuleFactory &modules)
@@ -259,7 +277,14 @@ void BezierProjectileBehavior::projectileLaunchAtObjectOrPosition(const Object *
 	m_weapon = weapon;
 	m_warhead = warhead;
 	m_altCurve = 0;
-	positionForLaunch(launcher, wslot, barrel);
+	// TARGET RW 0x90FDB6 .. 0x90FE2E passes the source's current transform for
+	// a position-targeted ProjectileSelf shot; RW 0x85E9F2 uses that transform
+	// instead of positioning at a weapon bone. Object-targeted shots still use
+	// calcProjectileLaunchPosition (RW 0x90FAD7), as do newly created projectiles.
+	if (obj != launcher || victim)
+	{
+		positionForLaunch(launcher, wslot, barrel);
+	}
 	m_originPos = launcher ? *launcher->getPosition() : *obj->getPosition();
 	projectileFireAtObjectOrPosition(victim, victimPos);
 	obj->setModelConditionState(kModelConditionThrownProjectile, true);
@@ -553,9 +578,10 @@ UpdateSleepTime BezierProjectileBehavior::update()
 			PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); });
 			const PartitionHits hits =
 				logic.partition().iterateObjectsInRange(m_flightPathEnd, d->m_preLandingEmotionRadius, FROM_CENTER_3D, { &alive }, ITER_SORTED_NEAR_TO_FAR);
+			const int relationships = d->preLandingRelationshipMask(logic.edition()); // lane BFME2MODE-0: 7 in RotWK (every object)
 			for (const PartitionHit &hit : hits)
 			{
-				if (hit.object != obj)
+				if (hit.object != obj && (relationships & (1 << (int)obj->getRelationship(*hit.object))) != 0)
 				{
 					EmotionTrackerUpdate::requestEmotion(*hit.object, d->m_preLandingEmotion, obj, 1);
 					++logic.combat().counters().projectilePreLandingEmotions;
@@ -819,8 +845,8 @@ void BezierProjectileBehavior::backOff(const Object &other)
 	delta.y = SimMath::mulf32(delta.y, 0.1f);
 	delta.z = SimMath::mulf32(delta.z, 0.1f);
 	const float angle = obj->getOrientation();
-	const std::vector<ObjectGeometry::Shape> &own = ObjectGeometry::cachedShapesOf(*obj->getTemplate());
-	const std::vector<ObjectGeometry::Shape> &theirs = ObjectGeometry::cachedShapesOf(*other.getTemplate());
+	const std::vector<ObjectGeometry::Shape> &own = obj->geometryShapes(); // lane MODCOMPAT-MOD1: the objects' own GeometryInfo (Object + 0xA8)
+	const std::vector<ObjectGeometry::Shape> &theirs = other.geometryShapes();
 	int i = 0;
 	bool collision = true;
 	while (collision && i++ <= 12)
@@ -973,7 +999,7 @@ void BezierProjectileBehavior::landed()
 	if (d->m_dieOnImpact)
 	{
 		obj->setModelConditionState(kModelConditionSplatted, true);
-		obj->kill(DEATH_NORMAL);
+		obj->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x85FA95: kill(8, 0)
 	}
 	obj->setStatus((unsigned)CombatNames::statuses().noAttack, false);
 	++logic.combat().counters().projectilesLanded;
@@ -1025,7 +1051,7 @@ void BezierProjectileBehavior::detonate()
 		}
 		if (m_data && m_data->m_detonateCallsKill)
 		{
-			obj->kill(DEATH_DETONATED);
+			obj->kill(DAMAGE_UNRESISTABLE, DEATH_DETONATED); // RW 0x85F227: kill(8, DETONATED)
 		}
 		else
 		{
@@ -1034,7 +1060,7 @@ void BezierProjectileBehavior::detonate()
 	}
 	else
 	{
-		obj->kill(DEATH_DETONATED);
+		obj->kill(DAMAGE_UNRESISTABLE, DEATH_DETONATED); // RW 0x85F249: kill(8, DETONATED)
 	}
 	m_hasDetonated = true;
 	obj->setStatus(OBJECT_STATUS_NO_COLLISIONS, true);
@@ -1064,7 +1090,7 @@ ProjectileUpdateInterface::ClientInfo BezierProjectileBehavior::projectileClient
 // RW 0x85E54D (slot 5): kill, damage type 8 (UNRESISTABLE), death 0
 void BezierProjectileBehavior::projectileNowJammed()
 {
-	getObject()->kill(DEATH_NORMAL);
+	getObject()->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x85E554: kill(8, 0)
 }
 
 void BezierProjectileBehavior::crc(StateHasher &h) const
@@ -1124,7 +1150,7 @@ std::vector<std::string> ProjectileModules::stops()
 		"estimateTerrainExtremesAlongLine; RW's own routine, slot 0x40 of the terrain object RW 0xDE4690, was not read); only the ground layer exists (no bridges)",
 		"[S-363] projectile behaviour: the victim proximity test of RW 0x85F737 is ported as the binary has it (the length of the victim's WORLD position against radius + speed: it only fires near the map "
 		"origin); lane FLANK-1: a flying projectile without KindOf NO_COLLIDE meets the objects its shapes overlap (CombatState::processProjectileContacts, the collision manager row; INFERENCE S-780: "
-		"the candidates are ThePartitionManager's within its bounding sphere, tested with RW 0xAD2CE0, in id order, the projectile's side only) through canCollideWith RW 0x85EF6A with the warhead's "
+		"the candidates are ThePartitionManager's within its bounding sphere, tested with RW 0xAD2CE0 from the pair's lower ObjectID's side with each object's own shapes (lane SIEGE-1: RW 0xB6D730 / 0xB6D060), in id order, the projectile's collide interface only) through canCollideWith RW 0x85EF6A with the warhead's "
 		"ProjectileCollidesWith RW 0x6CC79C (no sneaky targeting offset, the ground layer only, a BURNED object's nugget walk of RW 0x6CB6EA not ported), the back-off RW 0x85EA5F and the CrushStyle hit "
 		"RW 0x85F85B with the projectile as the source; PreLandingEmotion runs (RW 0x85F31A -> RW 0x68F383); GarrisonHitKill (no 2.01 data), the PostLanding emotion (no 2.01 data) and TumbleRandomly "
 		"(the physics orientation) are parsed and counted, not executed (InvisibleFrames / FadeInTime and the drawable look-ahead point: lane PROJ-2, S-1001); "

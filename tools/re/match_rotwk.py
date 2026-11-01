@@ -56,7 +56,9 @@ def similarity(a, b):
     return 1.0 if n == 0 else 2.0 * lcs_len(a, b) / n
 
 
-LANE_RANK = {"dump": 1, "library": 2, "generated": 3, "vendored": 4, "authored": 5}
+# the clone's tools/progress.py SOURCE_LANES; "data" (verified data in .text) and "assembly"
+# (reviewed reconstructed assembly) are source but not C++, so they rank below the C++ lanes
+LANE_RANK = {"dump": 1, "library": 2, "data": 3, "assembly": 4, "generated": 5, "vendored": 6, "authored": 7}
 RANK_LANE = {v: k for k, v in LANE_RANK.items()}
 CPP_LANES = ("authored", "vendored", "generated")
 
@@ -231,7 +233,11 @@ class Matcher:
                 scored.append((s, r, t, "sim"))
             elif tier == "B" and self._callee_pattern(r, t):
                 scored.append((max(s, 0.0), r, t, "callee-pattern"))
-        scored.sort(key=lambda x: (-x[0], x[1]))
+        # equal scores (siblings that differ only in a constant or a callee, e.g. the AIGroup
+        # guard / attack-team wrappers): the pair whose callees are already matched pairwise
+        # first, then the target nearest the link-order prediction
+        scored.sort(key=lambda x: (-x[0], x[3] != "callee-pattern" and not self._callee_pattern(x[1], x[2]),
+                                   abs(self.T[x[2]]["rva"] - self.predict(self.R[x[1]]["rva"])[0]), x[1]))
         added = 0
         for s, r, t, why in scored:
             if r in self.match or t in self.t_taken:
@@ -328,7 +334,7 @@ class Ledger:
         if a >= b:
             return "none", None, 0.0
         lanes = self.lane[a:b]
-        counts = [lanes.count(k) for k in range(6)]
+        counts = [lanes.count(k) for k in range(len(LANE_RANK) + 1)]
         total = b - a
         cpp = sum(counts[LANE_RANK[k]] for k in CPP_LANES) / total
         covered = (total - counts[0]) / total
@@ -340,7 +346,7 @@ class Ledger:
         ids = collections.Counter(x for x in self.src[a:b] if x >= 0)
         sid = ids.most_common(1)[0][0] if ids else None
         source = self.sources[sid] if sid is not None else None
-        dom = RANK_LANE.get(max(range(1, 6), key=lambda k: counts[k]), "none") if covered else "none"
+        dom = RANK_LANE.get(max(range(1, len(LANE_RANK) + 1), key=lambda k: counts[k]), "none") if covered else "none"
         if cpp >= 0.95:
             best = max(CPP_LANES, key=lambda k: counts[LANE_RANK[k]])
             return best, source, cpp
@@ -455,7 +461,11 @@ def load_attempts(clone):
     out = {}
     d = Path(clone) / "reverse" / "attempts"
     if not d.is_dir():
-        raise SystemExit(f"no attempts directory: {d}")
+        # git keeps no empty directory: once every banked attempt is matched the folder is gone
+        # (Open-BFME-2, 2026-10-23). Only a real decomp clone may have no attempts.
+        if not (Path(clone) / "reverse" / "functions.csv").is_file():
+            raise SystemExit(f"not a decomp clone (no reverse/functions.csv): {clone}")
+        return out
     for p in d.glob("0x*.cpp"):
         first = p.read_text(encoding="utf-8", errors="replace").splitlines()[:2]
         name = first[0][3:].strip() if first and first[0].startswith("// ") else ""
@@ -651,6 +661,7 @@ def main():
                 ("any_matched_cpp", lambda r: r["tier"] != "-" and r["decomp_status"] in CPP_LANES),
                 ("any_attempt", lambda r: r["tier"] != "-" and r["decomp_status"] == "attempt"),
                 ("any_partial", lambda r: r["tier"] != "-" and r["decomp_status"].startswith("partial")),
+                ("any_asm_or_data", lambda r: r["tier"] != "-" and r["decomp_status"] in ("assembly", "data")),
                 ("any_dump_or_lib", lambda r: r["tier"] != "-" and r["decomp_status"] in ("dump", "library")),
                 ("any_tu_only", lambda r: r["tier"] != "-" and r["decomp_status"] == "tu-only"),
                 ("any_nothing", lambda r: r["tier"] != "-" and r["decomp_status"] == "none")):

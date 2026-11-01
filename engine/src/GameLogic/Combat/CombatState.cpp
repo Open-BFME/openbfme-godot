@@ -77,6 +77,7 @@ BezierProjectileBehavior *flyingBezier(Object &o)
 	}
 	return nullptr;
 }
+
 } // namespace
 
 void CombatState::noteFlyingProjectile(std::uint32_t objectId)
@@ -93,8 +94,9 @@ void CombatState::noteFlyingProjectile(std::uint32_t objectId)
 // both ways (RW 0xB6D060). A BezierProjectileBehavior's collide interface (RW vtable 0xC585C8, slot 0 RW 0x85E52B) asks canCollideWith (RW 0x85EF6A) and hands an
 // accepted contact to handleCollision (RW 0x85FDB7; BFME2 decomp BezierProjectileBehaviorSlots.cpp rva0045B4C0 / rva0045BF06, Collide.cpp rva0045CD6E).
 // INFERENCE (stop S-780): the pairs of a flying projectile are the objects ThePartitionManager returns within its bounding sphere (distance type 3) whose shapes
-// overlap its own (RW 0xAD2CE0, NotifyCrushModules::geometriesOverlap), met in id order; retail's broad phase, its contact test (vslot 0x20) and its pair order were
-// not read. Only the projectile's side of a contact is dispatched here: a flying unit (a thrown or leaping infantry template) already meets the AI units through
+// overlap (RW 0xAD2CE0, NotifyCrushModules::geometriesOverlap), met in id order; retail's broad phase and its contact table order were not ported. Lane SIEGE-1 read
+// the contact test (vslot 0x20 = RW 0x68C7B2): it runs from the pair's lower ObjectID's side with each object's own GeometryInfo (see the test below). Only the
+// projectile's side of a contact is dispatched here: a flying unit (a thrown or leaping infantry template) already meets the AI units through
 // AIWorld's pass, and the other object's collide modules are not called for a projectile (a ported module reacting to one: none that changes a 2.01 fight is known).
 // HORDE objects (KindOf 109) are not candidates: retail's manager leaves them out and canCollideWith refuses them. The geometry is the pathfinder's (an AIWorld).
 void CombatState::processProjectileContacts()
@@ -137,13 +139,14 @@ void CombatState::processProjectileContacts()
 		{
 			continue;
 		}
-		const std::vector<ObjectGeometry::Shape> &own = ObjectGeometry::cachedShapesOf(*p->getTemplate());
+		const std::vector<ObjectGeometry::Shape> &own = p->geometryShapes(); // lane MODCOMPAT-MOD1: the object's own GeometryInfo
 		if (own.empty())
 		{
 			continue; // no shape overlaps anything (RW 0xAD2CE0 walks the shapes)
 		}
 		PartitionFilterFn candidate([&](Object &o) {
-			return &o != p && !o.isDestroyed() && o.isInWorld() && !o.isKindOf(kNoCollide) && !o.isKindOf(kHorde) && !o.testStatus(kNoCollisions);
+			return &o != p && !o.isDestroyed() && o.isInWorld() && !o.isKindOf(kNoCollide) && !o.isKindOf(kHorde) && !o.testStatus(kNoCollisions) &&
+				!o.isOutOfCollisionManager(); // lane MODCOMPAT-MOD1: RW 0xB6C480 removed its record
 		});
 		const PartitionHits hits =
 			m_logic.partition().iterateObjectsInRange(*p->getPosition(), CombatQueries::boundingSphereRadius(*p), FROM_BOUNDINGSPHERE_3D, { &candidate }, ITER_FASTEST);
@@ -164,8 +167,17 @@ void CombatState::processProjectileContacts()
 			{
 				continue;
 			}
-			if (!NotifyCrushModules::geometriesOverlap(own, *p->getPosition(), p->getOrientation(), ObjectGeometry::cachedShapesOf(*o->getTemplate()), *o->getPosition(),
-				    o->getOrientation()))
+			// lane SIEGE-1: the pair's narrow test runs from its lower ObjectID's side, each object with its own GeometryInfo (RW 0xB6D060: first->test(second's
+			// object), the test RW 0x68C7B2 -> 0x68BA2A = RW 0xAD2CE0(first's geometry Object + 0xA8, position, orientation, second's ...); RW 0xB6D730 orders a
+			// pair by the id window slot 4 returns, RW 0x670216 = Object + 0x74). RW 0xAD2CE0's height rules are not symmetric (the own shape's centre against
+			// the other's top, the own top against the other's base z): a structure made before the stone tests its own shapes against the stone, so the
+			// lintel of Helm's Deep's gate arch (offset z 110) does not reach down onto a stone falling on the gate
+			const std::vector<ObjectGeometry::Shape> &projShapes = p->geometryShapes(); // the objects' own GeometryInfo (Object + 0xA8, Object::geometryShapes)
+			const std::vector<ObjectGeometry::Shape> &otherShapes = o->geometryShapes();
+			const bool overlap = p->getID() < o->getID()
+				? NotifyCrushModules::geometriesOverlap(projShapes, *p->getPosition(), p->getOrientation(), otherShapes, *o->getPosition(), o->getOrientation())
+				: NotifyCrushModules::geometriesOverlap(otherShapes, *o->getPosition(), o->getOrientation(), projShapes, *p->getPosition(), p->getOrientation());
+			if (!overlap)
 			{
 				continue;
 			}
@@ -259,7 +271,7 @@ std::vector<std::string> CombatState::stops()
 		"target pitch test and the FiringTrackerHelper shell (the tracker runs from the AI update; the WeaponStatusHelper is ported, lane PROJ-2) are not available; a weapon that needs them answers as "
 		"if they were neutral",
 		"[S-321] delivery: DamageNugget is delivered (radius damage scans the object list in list order, RW's partition order is implementation defined); a weapon with a ProjectileNugget launches a projectile "
-		"object through ProjectileLauncher (lane PROJ-1, stops S-360..S-364); MetaImpactNugget throws through the shockwave handler (lane COMBAT-4, S-1600 / S-1790); DOTNugget hits and registers its damage over time with the DOTManager (lane DECOMP-1, S-1959); AttributeModifierNugget adds its ModifierList, disables its AntiCategories and plays its AntiFX (lane DECOMP-1: RW 0x90EAF9, the arc's fcos is S-167's cosd); ParalyzeNugget disables its victims (lane DECOMP-1: RW 0x90F177); WeaponOCLNugget runs its ObjectCreationList (lane FACT-A: RW 0x90F858 / 0x90F887); lane NUGGET-1 delivers StealMoney (RW 0x9118B1), OpenGate (RW 0x9115BB / 0x91161F; a GateProxyBehavior victim is not opened: S-1940), EmotionWeapon (RW 0x911770 / 0x9117A7), LuaEvent (RW 0x911EDC, through the live game's script engine; none attached: counted, S-1220), SpawnAndFade (RW 0x911C46), SpecialModelCondition (RW 0x90EF46), Grab (RW 0x910C8A; the passenger's fling is S-863), DamageField (RW 0x90F5F3; the victim form needs the weapon's PreferredTargetBone, retail reads a null source otherwise: reported) and DamageContained (RW 0x91117C); SlaveAttack (SlaveWatcherBehavior has no runtime, S-1995), FireLogic (TheFireLogicSystem is not ported, S-191) and the passenger hit roll are counted and not executed",
+		"object through ProjectileLauncher (lane PROJ-1, stops S-360..S-364); MetaImpactNugget throws through the shockwave handler (lane COMBAT-4, S-1600 / S-1790); DOTNugget hits and registers its damage over time with the DOTManager (lane DECOMP-1, S-1959); AttributeModifierNugget adds its ModifierList, disables its AntiCategories and plays its AntiFX (lane DECOMP-1: RW 0x90EAF9, the arc's fcos is S-167's cosd); ParalyzeNugget disables its victims (lane DECOMP-1: RW 0x90F177); WeaponOCLNugget runs its ObjectCreationList (lane FACT-A: RW 0x90F858 / 0x90F887); lane NUGGET-1 delivers StealMoney (RW 0x9118B1), OpenGate (RW 0x9115BB / 0x91161F; a GateProxyBehavior victim is not opened: S-1940), EmotionWeapon (RW 0x911770 / 0x9117A7), LuaEvent (RW 0x911EDC, through the live game's script engine; none attached: counted, S-1220), SpawnAndFade (RW 0x911C46), SpecialModelCondition (RW 0x90EF46), Grab (RW 0x910C8A; the passenger's fling is S-863), DamageField (RW 0x90F5F3; the victim form needs the weapon's PreferredTargetBone, retail reads a null source otherwise: reported) and DamageContained (RW 0x91117C); SlaveAttack orders the expansion's slave to shoot (lane MODCOMPAT-MOD1: RW 0x910DCF / 0x910EA1 / 0x910F78); FireLogic (TheFireLogicSystem is not ported, S-191) and the passenger hit roll are counted and not executed",
 		"[S-322] ActiveBody: armour is the ArmorSet of the object's armor flags looked up per hit (RW 0x5D893C; the flank test RW 0x68FB63 is lane HORDE-2's, S-582); the ARMOR / INVULNERABLE attribute modifiers, the burning death "
 		"fire cap, doDamageFX and the damage modules' onDamage are not ported (the damage state model conditions are COMBAT-2's, S-342); ImmortalBody / HighlanderBody / ActiveBody share the data table 0xC71D68, "
 		"StructureBody (an extra EMPTY table 0xC84858), InactiveBody, RespawnBody, DelayedDeathBody and SymbioticStructuresBody run since COMBAT-2 (S-340, S-343)",
@@ -270,8 +282,8 @@ std::vector<std::string> CombatState::stops()
 		"; lane SPELL-3 (review r3): the Aim and Fire states of an attack on an object carry RotWK's cannotPossiblyAttackObject (RW 0x741798, the B1 condition lists): an owner Object::isAbleToAttack refuses (NO_ATTACK, the condition 0x81, UNDER_CONSTRUCTION, SOLD) leaves the machine with failure, an ordered attack included; its getAbleToAttackSpecificObject half (RW 0x68D6A6 with the AI's last command source) and the B1 conditions to Pursue are not ported, and the horde and melee machines have no conditions",
 		"[S-326] acquisition (lane TARGET-1): RotWK's mood scan getNextMoodTarget (RW 0x66844A) with its cadence (AI + 0x21C, the one-off random offset AI + 0x3BC, "
 		"resetNextMoodCheckTime RW 0x662DD9 on idle entry) and the target search AI::findClosestEnemy (RW 0x7006D7: the partition filters, the AttackPriority table "
-		"score with the combat chain, pathability, the horde adjustment RW 0x68D30E) run for the idle, attack-move, guard, hunt, turret and giant bird scans; "
-		"not ported: the line of sight filter (taken as clear, S-859), the friendly-fire crowd query (distance type 4, S-1020), the player's stop flag AI + 0x3CC "
+		"score with the combat chain, pathability, the horde adjustment RW 0x68D30E, the line of sight filter RW 0x6616AC: lane LOS-1) run for the idle, attack-move, guard, "
+		"hunt, turret and giant bird scans; not ported: the friendly-fire crowd query (distance type 4, S-1020), the player's stop flag AI + 0x3CC "
 		"and its retaliation branch, the firing tracker's take-once target (Object + 0x248 + 0x38), the contained structure's apparent player, the attack-moving "
 		"skirmish AI filter (state 0x21, S-328), the script attack priority actions and the team prototype's priority override (S-1180); the melee re-acquire (state 0xE5) still uses the port's TargetFinder",
 		"[S-327] horde combat: the horde object runs the melee approach and wait states (B1 ids 0xC8..0xCC) and its members attack through their own attack machine; HordeMeleeAmoeba's cell search is "

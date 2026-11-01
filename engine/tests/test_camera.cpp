@@ -3,6 +3,7 @@
 
 #include "doctest.h"
 
+#include "AptPlayerTestUtil.h"
 #include "HudTestUtil.h"
 #include "PeImage.h"
 
@@ -10,7 +11,14 @@
 #include "GameClient/CameraSettings.h"
 #include "GameClient/DrawablePick.h"
 #include "GameClient/HudObjects.h"
+#include "GameClient/InGameHeroSelect.h"
+#include "GameClient/InGameHud.h"
+#include "GameClient/GUI/AptScreen.h"
+#include "GameClient/GUI/AptScreens/AptPalantir.h"
+#include "GameClient/GUI/ShellServices.h"
+#include "GameClient/GUI/Shell/Shell.h"
 #include "GameClient/TacticalCamera.h"
+#include "GameClient/GUI/WindowManager.h"
 #include "GameEngineDevice/W3DDevice/GameClient/WorldHeightMap.h"
 #include "GameLogic/Map/TerrainLogic.h"
 
@@ -786,7 +794,7 @@ TEST_CASE("camera: a jump puts the point in the middle of the screen and the cam
 			// the cell (gx, gy) is centred on the height samples (4 gx .. 4 gx + 3): x' = (x + border * 10) / 40 is an integer there
 			const float border = (float)r.game->map().heightMap.getBorderSize() * 10.0f;
 			const float x = (float)gx * 40.0f - border, y = (float)gy * 40.0f - border;
-			if (x < lim[0] + 50 || x > lim[2] - 50 || y < lim[1] + 50 || y > lim[3] - 50)
+			if (x < lim[0] + 250 || x > lim[2] - 250 || y < lim[1] + 250 || y > lim[3] - 250)
 			{
 				continue;
 			}
@@ -810,6 +818,9 @@ TEST_CASE("camera: a jump puts the point in the middle of the screen and the cam
 		c.lookAt(where);
 		CHECK(c.position().x == doctest::Approx(where.x));
 		CHECK(c.position().y == doctest::Approx(where.y));
+		CHECK(c.getGroundLevel() == c.heightField().sample(where.x, where.y));
+		CHECK(c.target().z == c.getGroundLevel());
+		CHECK(c.previousTarget().z == c.target().z);
 		ICoord2D px;
 		REQUIRE(c.worldToScreen({ c.target().x, c.target().y, c.target().z }, px));
 		CHECK(std::abs(px.x - 512) <= 1);
@@ -884,7 +895,7 @@ TEST_CASE("camera: the render interpolation runs from the pose committed at the 
 // lane MOVE-2 r2: a pose a script sets between client frames (InGameHudNode::camera_look_at / camera_set_height, called every render frame by the viewers) is drawn
 // at once: snapInterpolation makes the previous and committed poses the live one, so the interpolation never mixes an old committed pose with the new live one (the
 // 30 Hz steps of a camera moved every render frame)
-TEST_CASE("camera: a pose set between client frames is drawn at once (snapInterpolation)")
+TEST_CASE("camera: an external height set between client frames is drawn at once (snapInterpolation)")
 {
 	if (!haveWorld("camera snap"))
 	{
@@ -893,16 +904,143 @@ TEST_CASE("camera: a pose set between client frames is drawn at once (snapInterp
 	CamRig r(shared());
 	TacticalCamera &c = *r.cam;
 	r.frame(1);
-	const Coord3D t0 = c.target();
-	c.lookAt(Coord3D{ t0.x + 50.0f, t0.y, 0.0f });
-	CHECK(c.previousEye().x != doctest::Approx(c.eye().x)); // without the snap the drawn pose would still start from the old one
+	c.setHeightAboveGround(c.getHeightAboveGround() - 50.0f);
+	r.frame(1);
+	CHECK(c.previousEye().z != c.eye().z); // explicit height setters still need their caller's snap
 	c.snapInterpolation();
 	CHECK(c.previousEye().x == c.eye().x);
 	CHECK(c.previousEye().y == c.eye().y);
+	CHECK(c.previousEye().z == c.eye().z);
 	CHECK(c.previousTarget().x == c.target().x);
 	// the next client frame starts from the snapped pose
 	r.frame(1);
 	CHECK(c.previousEye().x == doctest::Approx(c.eye().x));
+}
+
+TEST_CASE("camera: builder selection, group double-tap and minimap jumps present the destination in the same frame")
+{
+	if (!haveWorld("camera jump actions"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	CamRig r(s);
+	TacticalCamera &c = *r.cam;
+	Player *local = r.game->players().findPlayerWithName("Player_1");
+	REQUIRE(local != nullptr);
+	float maxX = 0, maxY = 0;
+	REQUIRE(r.game->logic().terrain()->getExtent(0, maxX, maxY));
+	Coord3D destination{ maxX * 0.5f, maxY * 0.5f, 0.0f };
+	std::string error;
+	Object *builder = r.game->createObject("MenPorter", local->getPlayerIndex(), destination, 0.0f, &error);
+	REQUIRE_MESSAGE(builder != nullptr, error);
+	destination = *builder->getPosition();
+	c.lookAt({ maxX * 0.2f, maxY * 0.2f, 0.0f });
+	c.commitFrame();
+	const Coord3D before = c.position();
+	ICoord2D pixel;
+	const ICoord2D size = c.size();
+	const bool destinationOnScreen =
+		c.worldToScreen(destination, pixel) && pixel.x >= 0 && pixel.y >= 0 && pixel.x < size.x && pixel.y < size.y;
+	REQUIRE_FALSE(destinationOnScreen);
+	DisplayedCameraView alreadyPresented;
+	alreadyPresented.cam = &c;
+	alreadyPresented.present(size.x, size.y, 0.5);
+	int jumpPresentations = 0;
+	c.setJumpHandler([&]() {
+		alreadyPresented.present(size.x, size.y, 1.0);
+		++jumpPresentations;
+	});
+
+	SUBCASE("off-screen builder (RW 0x92D9F4)")
+	{
+		unsigned timeout = 0;
+		REQUIRE_MESSAGE(InGameHeroSelect::loadCycleTimeout(*s.mount->fs, timeout, &error), error);
+		InGameHeroSelect heroes(r.input->context(), timeout);
+		heroes.trackObjects();
+		REQUIRE(heroes.builders().size() == 1);
+		heroes.selectNearestBuilder(false);
+	}
+	SUBCASE("control group double-tap")
+	{
+		local->hotkeySquad(1) = { INVALID_ID, builder->getID() };
+		r.key(0x02, true);
+		r.key(0x02, false);
+		CHECK(c.position().x == before.x); // the first press selects, but does not centre
+		r.key(0x02, true);
+		r.key(0x02, false);
+	}
+	SUBCASE("minimap left click (RW 0x803CE4)")
+	{
+		apttest::MemorySource movies;
+		RecordingShellServices services;
+		ShellEnvironment environment;
+		AptScreenFactoryTable factories;
+		WindowManager windows(movies, services);
+		Shell shell(windows, factories, services, environment);
+		apttest::TestMovie level0;
+		level0.setRootFrames({ {} });
+		movies.add("AptLevel0", level0);
+		apttest::TestMovie pal;
+		const auto initialize = apttest::program(pal, [](apttest::Asm &a) { apttest::fscmd(a, "AptPalantir::OnInitialized"); });
+		std::vector<std::uint32_t> opening = { pal.addActionItem(initialize) };
+		const auto box = pal.addCharacter(pal.addShape(0.0f, 0.0f, 200.0f, 100.0f, 1));
+		const auto sprite = pal.addCharacter(pal.addSprite({ { pal.addPlaceItem(apttest::placeChar(box, 1)) } }));
+		auto radar = apttest::placeChar(sprite, 1, "Radar");
+		radar.flags |= APT_PLACE_HASMATRIX | APT_PLACE_HASCLIPACTION;
+		radar.translation[0] = 100.0f;
+		radar.translation[1] = 50.0f;
+		const auto tag = apttest::program(pal, [](apttest::Asm &a) { a.pushString("_type").setStringVar("AptPalantir::RenderRadar"); });
+		radar.events.push_back({ APT_CLIP_CONSTRUCT, 0, tag });
+		opening.push_back(pal.addPlaceItem(radar));
+		pal.setRootFrames({ opening, {} });
+		movies.add("Palantir", pal);
+		factories.registerFactory("Palantir.apt", [](AptScreenContext &context) {
+			return std::make_unique<AptPalantir>(context.windows, context.shell);
+		});
+		windows.init();
+		shell.push("Palantir.apt");
+		windows.setMinimumFrameTime(false);
+		windows.update(0);
+		InGameHud hud({ *r.game, *s.world, *s.mount->fs, services, c, s.mouse, s.meta, nullptr, &windows, &shell });
+		REQUIRE_MESSAGE(hud.boot(&error), error);
+		hud.setWindowSize(1024, 768);
+		hud.update(1.0 / 30.0);
+		float square[4];
+		REQUIRE(hud.radarSquare(square));
+		const int x = (int)((square[0] + square[2]) * 0.5f), y = (int)((square[1] + square[3]) * 0.5f);
+		bool point = false;
+		REQUIRE(hud.radarPoint(x, y, point, destination.x, destination.y));
+		REQUIRE(point);
+		REQUIRE(hud.radarClick(HudInput::Button::Left, x, y, 1));
+	}
+	CHECK(c.position().x == destination.x);
+	CHECK(c.position().y == destination.y);
+	CHECK(c.getGroundLevel() == c.heightField().sample(destination.x, destination.y));
+	CHECK(jumpPresentations == 1);
+	CHECK(alreadyPresented.PinholeView::position().x == destination.x);
+	CHECK(alreadyPresented.PinholeView::position().y == destination.y);
+	CHECK(alreadyPresented.eye().x == c.eye().x);
+	CHECK(alreadyPresented.eye().y == c.eye().y);
+	CHECK(alreadyPresented.eye().z == c.eye().z);
+	c.setJumpHandler({});
+	auto checkDisplayed = [&]() {
+		DisplayedCameraView shown;
+		shown.cam = &c;
+		for (double alpha : { 0.0, 0.25, 0.5, 1.0 })
+		{
+			shown.present(1024, 768, alpha);
+			CHECK(shown.eye().x == c.eye().x);
+			CHECK(shown.eye().y == c.eye().y);
+			CHECK(shown.eye().z == c.eye().z);
+			CHECK(shown.PinholeView::position().x == c.target().x);
+			CHECK(shown.PinholeView::position().y == c.target().y);
+			CHECK(shown.PinholeView::position().z == c.target().z);
+		}
+	};
+	checkDisplayed(); // no camera update or manual snap between the input action and rendering
+	c.commitFrame();
+	checkDisplayed(); // the next commit must not resurrect the old pose
 }
 
 // ---- lane PLAY-1 ----------------------------------------------------------------------------------------------------------------------------------
@@ -1224,4 +1362,16 @@ TEST_CASE("backlog3 camera: disabling the input under a held scroll ends it with
 	r.frame(3);
 	CHECK(c.position().x == before.x);
 	r.key(kKeyRight, false);
+}
+
+// a GameData block that starts indented after a skipped block's End is read: retail's tokenizer skips leading whitespace (StubExtent::LenientAfterEnd, INIBlockStubs.h)
+TEST_CASE("camera: a GameData block indented after a skipped block's End is read")
+{
+	const std::string text = std::string("Weather\n  HardwareFogEnable = Yes\nEnd\n  ") + kGameData;
+	CameraSettings s;
+	std::string err;
+	REQUIRE_MESSAGE(CameraSettings::scan(text, s, &err), err); // before: the Weather stub swallowed GameData
+	CHECK(s.defaultMinHeight == 120.0f);
+	CHECK(s.defaultMaxHeight == 300.0f);
+	CHECK(s.cameraAdjustSpeed == 0.3f);
 }

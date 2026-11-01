@@ -34,7 +34,7 @@ from launcher_test_server import ReleaseServer  # noqa: E402
 
 VERSION = "v1.3.0-preview.1"
 REPO = "Test/repo"
-TRANSLOCATION_WORDS = "App Translocation"
+TRANSLOCATION_WORDS = "macOS opened a temporary copy of the launcher"
 
 
 # ---- the seal of the Mac package (any system) -----------------------------------------------------------------------------------------
@@ -345,7 +345,10 @@ def test_translocated_launcher_says_what_to_do_and_downloads_nothing(mac, tmp_pa
         assert played == ""
         assert "runs from a macOS App Translocation copy" in log, log
         dialog = [line for line in log.splitlines() if "LAUNCHER ui dialog: " in line][-1]
-        assert TRANSLOCATION_WORDS in dialog and "holds BOTH apps" in dialog and "xattr -dr com.apple.quarantine" in dialog, dialog
+        for text in (TRANSLOCATION_WORDS, "Finder", "containing both apps", "Privacy & Security > Open Anyway",
+                     "Do not override malware or damaged-app warnings."):
+            assert text in dialog, dialog
+        assert "xattr" not in dialog and "quarantine" not in dialog, dialog
         assert not [p for p, _ in server.requests if p.endswith(".zip")], server.requests
         assert not (mu._app_data(home) / "versions" / VERSION).exists()
     finally:

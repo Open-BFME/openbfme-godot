@@ -70,7 +70,8 @@ public:
 	struct Provider
 	{
 		int bar = -1;  ///< 0 the Palantir arc, 1 the side bar, 2 the radial ring (the "kind" of RW 0x8075A3); lane HOVER-1: 3 a command button without a window
-		               ///< (RW 0x807A00(0, button): the spell book, the hero bar's builder / select-all), 4 a unit's help (the hero bar's portraits)
+		               ///< (RW 0x807A00(0, button): the spell book, the hero bar's builder / select-all), 4 a unit's help (the hero bar's portraits);
+		               ///< lane CAMPUI-1: 5 a stance item of the stance toggle's radial (RW 0x96F33E; `object` holds the stance)
 		int slot = -1; ///< the command set slot (the window)
 		const CommandButton *button = nullptr;
 		std::uint32_t object = 0; ///< lane HOVER-1: bar 4's object (a UnitHelpSource, RW 0xC130E8, compares its object id)

@@ -35,6 +35,7 @@ def main() -> int:
     ap.add_argument("--window", action="store_true",
                     help="lay out as a window of that size under the project's stretch (--screenshot-window) instead of exactly WxH pixels")
     ap.add_argument("--releases", type=Path, help="a GitHub release list (JSON) for the notes cards")
+    ap.add_argument("--language", default="", help="lane L10N-1: show the launcher's own text in this catalog language (tools/l10n/catalog/)")
     args = ap.parse_args()
     if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
         print("launcher_screens: no display (set DISPLAY): Godot's headless mode renders nothing", file=sys.stderr)
@@ -57,9 +58,10 @@ def main() -> int:
     option = "--screenshot-window" if args.window else "--screenshot-size"
     for screen in args.screens.split(","):
         for w, h in sizes:
-            out = (args.out / f"launcher-{screen}-{w}x{h}.png").resolve()
+            lang = f"-{args.language}" if args.language else ""
+            out = (args.out / f"launcher-{screen}-{w}x{h}{lang}.png").resolve()
             r = subprocess.run([godot, "--path", str(args.project), "--", f"--ui-demo={screen}", f"{option}={w}x{h}",
-                                f"--screenshot={out}"], env=env, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
+                                f"--screenshot={out}", *([f"--language={args.language}"] if args.language else [])], env=env, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
             ok = r.returncode == 0 and out.is_file()
             failed += not ok
             print(f"{'wrote' if ok else 'FAILED'} {out}" + ("" if ok else "\n" + r.stdout[-2000:] + r.stderr[-2000:]))

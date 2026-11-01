@@ -57,6 +57,7 @@ public:
 	bool addToContain(Object *obj) override;    // RW 0x8674C2
 	void removeFromContain(Object *obj) override; // RW 0x8665BE
 	bool isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const override; // RW 0x86603B
+	std::uint32_t getPlayerWhoEntered() const override { return m_playerEnteredMask; } // RW 0x5F2DC6, slot 0x144 (lane SCRIPT-4)
 	const ObjectStatusMaskType *getObjectStatusOfContained() const override;
 	const ObjectStatusMaskType *getObjectStatusOfContainedFor(const Object *rider) const override { return &statusMaskFor(rider); } // slot 0xB0
 	bool isPassengerAllowedToFire() const override;                                    // RW 0x865A7E (lane DECOMP-3)
@@ -90,6 +91,13 @@ public:
 	bool isEnabled() const { return m_enabled; }
 	// contain slot 0x70 (OpenContain RW 0x86584C: the data's ContainMax; TransportContain RW 0x869F86: Slots)
 	virtual int getContainMax() const;
+	// lane MODCOMPAT-MOD1: contain slot 0x170 (RW 0x865A5C): the data's ManualPickUpFilter (+ 0x44, RW 0x7640C1) allows `obj` for the container's player
+	bool manualPickUpAllows(const Object &obj) const;
+	// lane MODCOMPAT-MOD1: contain slot 0xAC (RW 0x865853, the grab's eat): `victim` (interface + 0xC4) is eaten in max(frames, 1) frames (+ 0xCC), credited
+	// to `eater` (+ 0xC8); the update's RW 0x8669B1 counts it down
+	void eatPassengerAfter(const Object &victim, int frames, const Object &eater);
+	ObjectID eatVictim() const { return m_eatVictim; }
+	int eatFramesLeft() const { return m_eatFrames; }
 	void containReactToTransformChange() override { redeployOccupants(); } // ZH OpenContain::containReactToTransformChange
 	// the PassengerBonePrefix bone a rider stands on (RW 0x868A70's map at + 0x3C), "" without one
 	std::string riderBone(ObjectID id) const;
@@ -156,8 +164,11 @@ protected:
 	virtual void recalcApparentControllingPlayer() {}         // main slots 0x50 / 0x54 / 0x58 (the apparent controller is the owner, S-1100)
 	virtual void addToContainList(Object *obj);               // contain slot 0xA0 (RW 0x866987)
 	virtual void removeFromContainList(Object *obj);          // main slot 0x34 (RW 0x865E78: the list erase)
-	// contain slot 0xE8 (OpenContain RW 0x8662D0): `obj` is one of this contain's (SiegeEngineContain RW 0x87FEDA: its crew too)
+public:
+	// contain slot 0xE8 (OpenContain RW 0x8662D0): `obj` is one of this contain's (SiegeEngineContain RW 0x87FEDA: its crew too; TunnelContain RW 0x8811DD:
+	// one of its player's network). Public for MSG_EXIT (RW 0x77ACF3, TUNNEL-1); declared in its old place so the virtual order stays the same
 	virtual bool isContainedHere(const Object &obj) const;
+protected:
 	// contain slot 0xB0(obj) (OpenContain RW 0x865C15: the data's ObjectStatusOfContained; SiegeEngineContain RW 0x87ED55: a crew member's ObjectStatusOfCrew)
 	virtual const ObjectStatusMaskType &statusMaskFor(const Object *obj) const;
 	// RW 0x8674C2's body (main slot 0x74 of the horde contains calls it directly)
@@ -183,6 +194,9 @@ protected:
 	std::map<ObjectID, std::string> m_riderBoneName;   // RW + 0x3C (RW 0x8689EC)
 	std::array<std::uint32_t, 19> m_watchedConditions{}; // RW + 0x84 (19 words, zero at construction: RW 0x867FF3 memset)
 	unsigned m_doorOpenFrames = 0;            // RW module + 0x70 (DoorOpenTime countdown, RW 0x8682F8 / 0x86702D)
+	ObjectID m_eatVictim = INVALID_ID;        // RW interface + 0xC4 (lane MODCOMPAT-MOD1: the grab's eat, RW 0x865853)
+	ObjectID m_eatKiller = INVALID_ID;        // RW interface + 0xC8
+	int m_eatFrames = 0;                      // RW interface + 0xCC
 	unsigned long long m_turretBonesUnported = 0;
 	bool m_deleting = false;                  // RW + 0xDF (onDelete)
 	Coord3D m_rallyPoint{ 0.0f, 0.0f, 0.0f }; // RW exit interface + 0xA0 (lane BACKLOG-1)

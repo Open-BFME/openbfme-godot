@@ -1,4 +1,6 @@
 // OpenBFME. GPL-3.0.
+// BFME1 fields follow Open-BFME-1's field table VA 0x010BC738 and BloodthirstyUpdateModuleDataConstructor.cpp;
+// Update/Rva00287290Update.cpp awards XP on each accepted sacrifice, not at a NumToSacrifice quota.
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
@@ -41,11 +43,9 @@ const FieldParse kBloodthirstyUpdate[] = {
 	{ nullptr, nullptr, nullptr, 0 }
 };
 
-// BFME1 grammar (RetailObjectWorld::bfme1Grammar) has two additional rows.
-// Store them without extending the RotWK table; their runtime semantics remain S-5017.
 const FieldParse kBfme1BloodthirstyUpdate[] = {
-	{ "NumToSacrifice", INI::parseInt, nullptr, (int)offsetof(BloodthirstyUpdateModuleData, m_bfme1NumToSacrifice) },
-	{ "InitiateVoice2", INI::parseAsciiString, nullptr, (int)offsetof(BloodthirstyUpdateModuleData, m_bfme1InitiateVoice2) },
+	{ "NumToSacrifice", INI::parseUnsignedInt, nullptr, (int)offsetof(BloodthirstyUpdateModuleData, m_numToSacrifice) },
+	{ "InitiateVoice2", INI::parseAsciiString, nullptr, (int)offsetof(BloodthirstyUpdateModuleData, m_initiateVoice2) },
 	{ nullptr, nullptr, nullptr, 0 }
 };
 const Bfme1FieldRowsRegistration kBfme1BloodthirstyRegistration(kBloodthirstyUpdate, kBfme1BloodthirstyUpdate);
@@ -254,6 +254,11 @@ UpdateSleepTime BloodthirstyUpdate::update()
 const std::string &BloodthirstyUpdate::initiateVoice() const
 {
 	return m_data->m_initiateVoice;
+}
+
+const std::string &BloodthirstyUpdate::initiateVoice2() const
+{
+	return m_data->m_initiateVoice2;
 }
 
 void BloodthirstyUpdate::crc(StateHasher &hasher) const

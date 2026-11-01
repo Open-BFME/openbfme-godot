@@ -9,6 +9,13 @@
 ##          (W3DVegetationSway: zero when nothing sways). FAIL: the globals do not move
 ##   ghost  a structure of another player (neutral) that is FOGGED and drawn (RW 0x68EDD0: a neutral IMMOBILE object is not hidden in the fog): the
 ##          camera on it, lit by the fogged light (RW 0x46F48E: visual2-ghost-fogged.png). FAIL: no such structure
+##   reveal (lane FOGFX-1, FB-0061) a cavalry unit of the local player made at its base's sight rides toward the nearest enemy structure, the
+##          camera raised and following it, for 14 s (420 frames: a Movie Maker clip's frames): the shroud texture fades as RotWK's W3DShroud does (RW 0x472CF2); shots
+##          visual2-reveal-<n>.png. reveal_snap: the same with the fade off (GameWorld.set_shroud_fade(false): each 40 ft cell lands at once, the "before")
+##   dust   (lane FOGFX-1, FB-0056) a building rises on a fortress pad of an enemy in the fog (build2_construct_on_plot; its worker walks over first,
+##          up to 900 logic frames): the camera on it 5 s (nothing
+##          drawn, no dust: RW 0x5FA2CE), then a unit of the local player made beside it reveals it: the building and its construction dust 6 s;
+##          shots visual2-dust-fog.png / visual2-dust-seen.png. FAIL: particles near it while fogged, none once seen
 ##   look   the local base and the map's middle at the default camera (visual2-look-base / -middle.png) for the colour comparison
 extends "res://scripts/scenario_player.gd"
 
@@ -231,4 +238,130 @@ func _scenario_ghost() -> String:
 		return "the fogged structure #%d draws no instance: nothing measured" % pick.id
 	if int(pose_now.get("fog_lit_instances", 0)) != int(pose_now.get("instances", 0)):
 		return "the fogged structure #%d: %d of %d instances have the fogged light" % [pick.id, int(pose_now.get("fog_lit_instances", 0)), int(pose_now.get("instances", 0))]
+	return ""
+
+
+## lane FOGFX-1: a unit of the local player at `at` (the first template of the list the game makes); -1 when none
+func _make_local_unit(at: Vector2, templates := ["GondorFighterHorde", "MordorFighterHorde", "IsengardFighterHorde", "MordorMumakil"]) -> int:
+	var me := -1
+	var i := 0
+	for p in world.get_report().get("players", []): # the player indices create_object takes (play1_player.gd's ghosts)
+		if me < 0 and str(p).contains(game._local_name):
+			me = i
+		i += 1
+	for t in templates:
+		var id: int = world.create_object(t, me, at.x, at.y, 0.0)
+		if id >= 0:
+			return id
+	return -1
+
+
+func _scenario_reveal() -> String:
+	return await _reveal(true)
+
+
+func _scenario_reveal_snap() -> String:
+	return await _reveal(false)
+
+
+func _reveal(fade: bool) -> String:
+	world.set_shroud_fade(fade)
+	var base := _local_base()
+	var shroud: Dictionary = world.get_shroud_report()
+	var mid := Vector2(float(shroud.get("cells_x", 0)), float(shroud.get("cells_y", 0))) * float(shroud.get("cell_size", 0.0)) * 0.5
+	# toward the nearest enemy structure (a land path: the map's middle can be water)
+	var goal := mid
+	for n in _enemy_names():
+		for o in world.get_player_objects(n):
+			if o.get("structure", false) and (goal == mid or Vector2(o.x, o.y).distance_to(base) < goal.distance_to(base)):
+				goal = Vector2(o.x, o.y)
+	var dir := (goal - base).normalized()
+	# cavalry, past the base's sight (its own look is the only one around it)
+	var from := base + dir * 600.0
+	var id := _make_local_unit(from, ["RohanRohirrimHorde", "GondorKnightHorde", "MordorHaradrimRiderHorde", "IsengardWargRiderHorde"])
+	if id < 0:
+		return "no unit template made for the local player"
+	# the horde makes its members over its first logic frames: the order after them
+	var made_at: int = world.get_frame()
+	while world.get_frame() < made_at + 5:
+		await game.get_tree().process_frame
+	var to := goal
+	var ordered: Variant = world.order_move([id], to.x, to.y)
+	print("VISUAL2 reveal: order_move to (%d, %d): %s" % [int(to.x), int(to.y), str(ordered)])
+	# the camera raised over the default (its view wider than the unit's look, so the fog edges around it are in view) and following it
+	hud.camera_set_zoom_limited(false)
+	hud.camera_set_height(700.0)
+	print("VISUAL2 reveal: clip from drawn frame %d" % Engine.get_frames_drawn())
+	var shots := 0
+	for i in 420:
+		var o: Dictionary = world.get_object(id)
+		if not o.is_empty():
+			hud.camera_look_at(Vector2(o.x, o.y))
+		await game.get_tree().process_frame
+		if i % 60 == 0:
+			print("VISUAL2 reveal: frame %d logic %d at (%d, %d)" % [i, world.get_frame(), int(o.get("x", 0)), int(o.get("y", 0))])
+		if i % 140 == 139:
+			shots += 1
+			game._save_named("visual2-reveal%s-%d" % ["" if fade else "-snap", shots])
+	print("VISUAL2 reveal: clip to drawn frame %d" % Engine.get_frames_drawn())
+	var o: Dictionary = world.get_object(id)
+	print("VISUAL2 reveal (fade %s): %s #%d walked from %s to (%d, %d)" % [fade, o.get("template", ""), id, str(from), int(o.get("x", 0)), int(o.get("y", 0))])
+	world.set_shroud_fade(true)
+	return ""
+
+
+func _scenario_dust() -> String:
+	var enemy := ""
+	for n in _enemy_names():
+		enemy = n
+		break
+	if enemy.is_empty():
+		return "no enemy player"
+	var site: Dictionary = {}
+	for t in ["GondorBarracks", "MordorOrcPit", "IsengardUrukPit", "ElvenBarracks", "DwarvenBarracks", "WildGoblinCave", "AngmarBarracks"]:
+		site = world.build2_construct_on_plot(enemy, t)
+		if site.get("ok", false):
+			break
+	if not site.get("ok", false):
+		return "no enemy fortress pad took a building: %s" % str(site)
+	var at := Vector2(float(site.x), float(site.y))
+	# its worker walks over from the enemy's fortress first: wait (in logic frames) until it rises
+	var start: int = world.get_frame()
+	while world.get_frame() < start + 900 and float(world.get_object(int(site.id)).get("construction_percent", 0.0)) <= 0.0:
+		await game.get_tree().process_frame
+	print("VISUAL2 dust: the building rises after %d logic frames" % (world.get_frame() - start))
+	hud.camera_look_at(at)
+	print("VISUAL2 dust: clip from drawn frame %d" % Engine.get_frames_drawn())
+	var fogged_particles := 0
+	for i in 150:
+		await game.get_tree().process_frame
+		fogged_particles += int(world.get_particles_near(at.x, at.y, 200.0).particles)
+	var status := int(world.get_object_shroud_status(int(site.id)))
+	game._save_named("visual2-dust-fog")
+	# the enemy objects drawn near the fogged site and their status (printed: status 0 is an object without a shroud record)
+	var drawn_near := []
+	for e in _enemy_sample():
+		if Vector2(e.x, e.y).distance_to(at) < 900.0 and not e.hidden:
+			drawn_near.append("%s #%d status %d" % [e.template, e.id, e.status])
+	print("VISUAL2 dust: enemy objects drawn within 900 of the fogged site: %s" % str(drawn_near))
+	var scout := _make_local_unit(at + Vector2(140.0, -140.0))
+	if scout < 0:
+		return "no unit template made for the local player"
+	var so: Dictionary = world.get_object(scout)
+	print("VISUAL2 dust: local %s, enemy %s, scout #%d %s owner %s at (%d, %d)" % [game._local_name, enemy, scout, so.get("template", ""), so.get("owner", ""),
+		int(so.get("x", 0)), int(so.get("y", 0))])
+	var seen_particles := 0
+	for i in 180:
+		await game.get_tree().process_frame
+		seen_particles += int(world.get_particles_near(at.x, at.y, 200.0).particles)
+		if i == 120:
+			game._save_named("visual2-dust-seen")
+	var seen_status := int(world.get_object_shroud_status(int(site.id)))
+	print("VISUAL2 dust: clip to drawn frame %d" % Engine.get_frames_drawn())
+	print("VISUAL2 dust: %s's building #%d at (%d, %d) status %d while fogged: %d particles over 150 frames; seen (status %d): %d over 180 frames, now %s" % [enemy,
+		int(site.id), int(at.x), int(at.y), status, fogged_particles, seen_status, seen_particles, JSON.stringify(world.get_object(int(site.id)).get("construction_percent", -2))])
+	if fogged_particles > 0:
+		return "%d particles near the fogged enemy building" % fogged_particles
+	if seen_particles == 0:
+		return "no particle near the building once seen"
 	return ""

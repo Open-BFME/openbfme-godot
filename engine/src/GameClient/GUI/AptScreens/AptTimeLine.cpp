@@ -12,6 +12,8 @@
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/Gadgets.h"
+#include "Libraries/Source/Apt/Apt.h"
+#include "Libraries/Source/Apt/AptCharacterInst.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -168,7 +170,8 @@ AptTimeLine::AptTimeLine(WindowManager &windows, Shell &shell, ShellEnvironment 
 					value = d->localIsObserver ? "1" : "0";
 					break;
 				case 5:
-					value = "0"; // only the War of the Ring types 6 / 7 answer more
+					// RW 0x925148 .. 0x925186: the War of the Ring types, not an observer, the local row won or lost (WOTR2 milestone 5)
+					value = ((d->type == 6 || d->type == 7) && !d->localIsObserver && d->strategicEnd) ? "1" : "0";
 					break;
 			}
 			return true;
@@ -179,7 +182,7 @@ AptTimeLine::AptTimeLine(WindowManager &windows, Shell &shell, ShellEnvironment 
 	{
 		windows.markNumericProvider(name);
 	}
-	for (int i = 0; i < 8; ++i)
+	for (int i = 0; i < MAX_SLOTS; ++i)
 	{
 		// RW 0x925188
 		registerProvider("TimeLine:PlayerColor:" + std::to_string(i), [this, i](const std::string &, std::string &value, bool setting) {
@@ -231,6 +234,97 @@ const ScoreScreenData *AptTimeLine::data() const
 	return m_env.scoreScreen && m_env.scoreScreen->valid ? m_env.scoreScreen : nullptr;
 }
 
+AptTimeLine::~AptTimeLine()
+{
+	if (AptGadgetLayer *layer = windows().gadgetLayer()) layer->destroyEngineGadget(m_playerRange);
+}
+
+WindowMsgHandledType AptTimeLine::gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2)
+{
+	if (m_playerRange && reinterpret_cast<GameWindow *>(data1) == m_playerRange && msg == GCM_SELECTED)
+	{
+		int selected = -1;
+		GadgetComboBoxGetSelectedPos(m_playerRange, &selected);
+		if (selected >= 0) m_firstPlayer = selected;
+		return MSG_HANDLED;
+	}
+	return AptScreen::gadgetMessage(from, msg, data1, data2);
+}
+
+void AptTimeLine::frameUpdate()
+{
+	const ScoreScreenData *d = data();
+	if (!d || d->entries.size() <= LEGACY_MAX_SLOTS) return;
+	AptCharacterInst *instance = windows().apt().resolvePath(windows().apt().level(level()), "Main");
+	AptSpriteInst *parent = instance ? instance->asSprite() : nullptr;
+	if (!parent) return;
+	AptCharacterInst *prototype = parent->childByName("Button0");
+	AptCharacterInst *second = parent->childByName("Button1");
+	if (!prototype || !second) return;
+	AptCharacterInst *axis = parent->childByName("Axis");
+	const bool standingsVisible = axis && axis->globallyVisible() && !isHidden();
+	AptGadgetLayer *layer = windows().gadgetLayer();
+	if (!layer) return;
+	if (!m_playerRange)
+	{
+		m_firstPlayerY = prototype->matrix.ty;
+		m_playerStep = second->matrix.ty - prototype->matrix.ty;
+		std::string error;
+		m_playerRange = layer->createEngineGadget("window/apt/combobox.wnd", 430, 640, 240, 24, ownerWindow(), &error);
+		if (!m_playerRange)
+		{
+			windows().note("extended-layout-error", "score player range creation failed: " + error);
+			return;
+		}
+		GadgetComboBoxSetMaxDisplay(m_playerRange, 4);
+		for (int i = 0; i <= (int)d->entries.size() - LEGACY_MAX_SLOTS; ++i)
+		{
+			const std::string label = "Players " + std::to_string(i + 1) + "-" + std::to_string(i + LEGACY_MAX_SLOTS) + " / " + std::to_string(d->entries.size());
+			GadgetComboBoxAddEntry(m_playerRange, utf8ToU16(label), 0xFFFFFFFFu);
+		}
+		GadgetComboBoxSetSelectedPos(m_playerRange, 0, true);
+	}
+	// OpenBFME extension: initialize the authored button properties for rows absent when Main's frame script ran.
+	for (int i = 0; i < (int)d->entries.size(); ++i)
+	{
+		const std::string name = "Button" + std::to_string(i);
+		AptCharacterInst *row = parent->childByName(name);
+		if (!row && i >= LEGACY_MAX_SLOTS)
+		{
+			row = parent->attachCharacter(prototype->charRef(), name, 0x4000 + i, true);
+			if (row)
+			{
+				row->matrix = prototype->matrix;
+				row->color = prototype->color;
+				row->setMember("buttonName", AptValue::string("$TimeLine:PlayerName:" + std::to_string(i)));
+				row->setMember("buttonScoreName", AptValue::string("$TimeLine:PlayerScore:" + std::to_string(i)));
+				char color[32];
+				std::snprintf(color, sizeof(color), "%#x", d->entries[(size_t)i].color & 0xFFFFFFu);
+				row->setMember("ButtonColor", AptValue::string(color));
+				AptFunction *callback = windows().apt().gc().create<AptFunction>();
+				callback->native = [this, i](AptCallInfo &) {
+					std::string error;
+					if (!windows().invokeASAtValues(level(), "Main", "DoFocusGraph", { AptValue::integer(i) }, &error))
+						windows().note("extended-layout-error", "score player focus failed: " + error);
+					return AptValue::undefined();
+				};
+				row->setMember("DoButtonCallBack", AptValue::object(callback));
+				row->setMember("onRelease", AptValue::object(callback));
+			}
+		}
+		if (!row)
+		{
+			windows().note("extended-layout-error", "missing score player row " + name);
+			return;
+		}
+		row->matrix.ty = m_firstPlayerY + (i - m_firstPlayer) * m_playerStep;
+		row->asChanged = true;
+		row->visible = standingsVisible && i >= m_firstPlayer && i < m_firstPlayer + LEGACY_MAX_SLOTS;
+	}
+	layer->syncPlacements();
+	m_playerRange->winHide(!standingsVisible);
+}
+
 void AptTimeLine::runInit()
 {
 	AptScreen::runInit();
@@ -275,6 +369,15 @@ void AptTimeLine::populate()
 			windows().clearTextBadge("TimeLine:PlayerName:" + std::to_string(i));
 		}
 		windows().setAptImage("TimeLine:PlayerFactionIcon:" + std::to_string(i), "AptIcon" + d->entries[i].side); // RW 0x92632E (lane END-2)
+	}
+	if ((d->type == 6 || d->type == 7) && d->strategicEnd)
+	{
+		// CollectPlayerData RW 0x92723E for the local row (WOTR2 milestone 5): the win / loss page's texts and image
+		auto fetch = [this](const std::string &label) { return label.empty() ? std::string() : loadScreenU16ToUtf8(fetchOrMissing(m_env.gameText, label)); };
+		windows().setAptText("APT:StrategicWinLossTitle", fetch(d->winLossTitleLabel));
+		windows().setAptText("APT:StrategicScenarioName", fetch(d->scenarioNameLabel));
+		windows().setAptText("APT:StrategicWinLossConditionDescription", fetch(d->conditionLabel));
+		windows().setAptImage("StrategicWinLossImage", d->winLossImage);
 	}
 	graph(4);
 	recordHonors();
@@ -396,7 +499,8 @@ const ScoreScreenData::Axis &AptTimeLine::graph(int mode)
 	}
 	if (m_axis.samples != m_lastSamples) // + 0x2B4
 	{
-		windows().setAptText("Timeline:XAxisDescription", loadScreenU16ToUtf8(fetchOrMissing(m_env.gameText, ScoreScreenData::kTimeDescriptionLabels[m_axis.timeFormat])));
+		windows().setAptText("Timeline:XAxisDescription", m_axis.timeFormat < 0 ? std::string(" ") // the war's turn axis (RW 0xBD16E4)
+		                                                      : loadScreenU16ToUtf8(fetchOrMissing(m_env.gameText, ScoreScreenData::kTimeDescriptionLabels[m_axis.timeFormat])));
 		for (int i = 0; i <= 10; ++i)
 		{
 			windows().setAptText("Timeline:XAxis:" + std::to_string(i), m_axis.xLabels[(size_t)i]);

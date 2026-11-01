@@ -1,0 +1,10 @@
+{
+  "comment": "Lane RELGH-3: the protected GitHub environment that holds the stable Actions key (docs/RELEASE.md, 'Stable signing on GitHub Actions'). tools/release/stable_environment.py applies it (the owner's admin login) and checks it (the release workflow's plan and sign-stable jobs, autorelease.sh before anything is pushed). A change here is a change to who can sign a stable release: the owner reviews it.",
+  "environment": "stable-signing",
+  "secret": "OPENBFME_STABLE_SIGNING_KEY",
+  "key_label": "stable-2026",
+  "reviewers": ["Ancalgonn"],
+  "prevent_self_review": true,
+  "can_admins_bypass": false,
+  "deployment_branches": ["main"]
+}

@@ -4,6 +4,7 @@
 #include "GameNetwork/OnlineStart.h"
 
 #include "Common/MiniJson.h"
+#include "GameNetwork/RelayAuth.h"
 #include "GameNetwork/RelayProtocol.h"
 
 #include <cmath>
@@ -126,9 +127,9 @@ bool parse(const std::string &json, const ProfileIdentity &ownProfile, const Lim
 	}
 	long long v = 0;
 	std::string sub;
-	if (!intField(root, "v", 1, 1, v, &sub))
+	if (!intField(root, "v", 1, 2, v, &sub))
 	{
-		return fail(error, "version: this client reads START version 1");
+		return fail(error, "version: this client reads START versions 1 and 2");
 	}
 	std::string kind, gameHex, relay, ticket, profile;
 	const bool replay = kindWanted == Kind::ReplayStart;
@@ -162,20 +163,39 @@ bool parse(const std::string &json, const ProfileIdentity &ownProfile, const Lim
 	{
 		return fail(error, "\"relay\" must be a.b.c.d:port, got " + relay);
 	}
-	if (spectate && (!RelayProtocol::base64UrlDecode(ticket, s.ticket) || s.ticket.size() != RelayProtocol::kTicketBytesV2 || s.ticket[0] != 3))
+	if (profile != ownProfile.digest)
 	{
-		return fail(error, "\"ticket\" must be a spectator ticket (version 3, " + std::to_string(RelayProtocol::kTicketBytesV2) + " bytes of base64url)");
+		// lane JOINVER-1: said on screen (a watch or a rejoin, AptOnlineShell startFailed): in plain words, without the profile ids
+		return fail(error, "this game runs a different OpenBFME version or different game files than yours: both need the same version "
+			"(update through the launcher)");
 	}
-	if (!replay && !spectate && (!RelayProtocol::base64UrlDecode(ticket, s.ticket)
-			|| !((s.ticket.size() == RelayProtocol::kTicketBytes && s.ticket[0] == 1) || (s.ticket.size() == RelayProtocol::kTicketBytesV2 && s.ticket[0] == 2))))
+	s.profile = ownProfile;
+	RelayProtocol::Ticket fields;
+	if (!replay && (!RelayProtocol::base64UrlDecode(ticket, s.ticket)
+		|| !RelayProtocol::readTicketFields(s.ticket.data(), s.ticket.size(), fields, &sub)))
 	{
-		return fail(error, "\"ticket\" must be " + std::to_string(RelayProtocol::kTicketBytes) + " bytes (version 1) or " + std::to_string(RelayProtocol::kTicketBytesV2)
-			+ " bytes (version 2, a rejoin) of base64url");
+		return fail(error, "\"ticket\": invalid base64url or ticket fields: " + sub);
+	}
+	if (!replay && fields.spectator != spectate)
+	{
+		return fail(error, spectate ? "\"ticket\" must be a spectator ticket (version 3 or 6)" : "\"ticket\" must be a player ticket (version 1, 2, 4 or 5)");
+	}
+	// lane AUTH-1 / ANTICHEAT-1 (ONLINE16-FIX, one scheme): the START's "session_key", 16 bytes of base64url (RelayAuth::sessionKey): the relay
+	// recomputes it from the ticket inside the HELLO; an old lobby's START carries none and the game stays
+	// unauthenticated (never a silent weak key). A replay START never carries one
+	if (!replay)
+	{
+		std::string text;
+		if (root.get("session_key") && (!stringField(root, "session_key", text, &sub) || !RelayProtocol::base64UrlDecode(text, s.macKey)
+			|| s.macKey.size() != RelayAuth::kSessionKeyBytes))
+		{
+			return fail(error, "\"session_key\" must be " + std::to_string(RelayAuth::kSessionKeyBytes) + " bytes of base64url");
+		}
 	}
 	// lane ONLINE-3: a rejoin START carries "rejoin": the generation its version 2 ticket names (both or neither)
 	if (!replay && !spectate)
 	{
-		const int ticketGeneration = s.ticket.size() == RelayProtocol::kTicketBytesV2 ? (int)(s.ticket[16] | (s.ticket[17] << 8)) : 0;
+		const int ticketGeneration = fields.generation;
 		long long rejoin = 0;
 		if (root.get("rejoin") && !intField(root, "rejoin", 1, 0xFFFF, rejoin, &sub))
 		{
@@ -191,12 +211,6 @@ bool parse(const std::string &json, const ProfileIdentity &ownProfile, const Lim
 	{
 		return fail(error, "a replay START carries no \"rejoin\"");
 	}
-	if (profile != ownProfile.digest)
-	{
-		return fail(error, "the game's profile identity " + profile + " is not this client's (" + ownProfile.digest
-			+ "): the players' game files or builds differ");
-	}
-	s.profile = ownProfile;
 	long long slot = 0, runAhead = 0, crc = 0, spectator = 0, delay = 0;
 	if (spectate)
 	{
@@ -205,7 +219,7 @@ bool parse(const std::string &json, const ProfileIdentity &ownProfile, const Lim
 		{
 			return fail(error, sub);
 		}
-		if (s.ticket[10] != (std::uint8_t)spectator || (int)(s.ticket[16] | (s.ticket[17] << 8)) != (int)delay)
+		if (fields.slot != (std::uint8_t)spectator || fields.delaySeconds != delay)
 		{
 			return fail(error, "the spectator ticket's index or delay is not the START's");
 		}
@@ -220,9 +234,9 @@ bool parse(const std::string &json, const ProfileIdentity &ownProfile, const Lim
 	s.localSlot = spectate ? -1 : (int)slot; // lane ONLINE-3: a spectator has no slot (the observer's ReplayObserver side is its local player)
 	s.runAhead = (int)runAhead;
 	s.crcInterval = (int)crc;
-	if (!replay && !spectate && s.ticket[10] != (std::uint8_t)slot)
+	if (!replay && !spectate && fields.slot != (std::uint8_t)slot)
 	{
-		return fail(error, "the ticket is for slot " + std::to_string(s.ticket[10]) + ", the START names slot " + std::to_string(slot));
+		return fail(error, "the ticket is for slot " + std::to_string(fields.slot) + ", the START names slot " + std::to_string(slot));
 	}
 	const JsonValue *setup = root.get("setup");
 	if (!setup || !setup->isObject())
@@ -230,8 +244,60 @@ bool parse(const std::string &json, const ProfileIdentity &ownProfile, const Lim
 		return fail(error, "\"setup\" must be an object");
 	}
 	SkirmishGameInfo &g = s.game.game;
+	long long capacity = LEGACY_MAX_SLOTS;
+	if (setup->get("mapStartCount") && !intField(*setup, "mapStartCount", LEGACY_MAX_SLOTS, MAX_SLOTS, capacity, &sub))
+	{
+		return fail(error, sub);
+	}
+	g.mapStartCount = (int)capacity;
 	g.simulationProfile = ownProfile.simulationProfile(); // lane UBERJOIN-1: the game runs the profile its identity names (as the LAN start: LANLobby.cpp), never the default
 	s.game.mode = NewGameMode::Skirmish;
+	// Version 2 distinguishes a strategic START from version 1's skirmish. A v1 START carrying war fields is refused, not played as Open Play.
+	if (v == 2)
+	{
+		long long mode = 0, hash = 0;
+		if (!intField(*setup, "gameMode", 1, 1, mode, &sub) || !stringField(*setup, "scenario", g.scenario, &sub))
+		{
+			return fail(error, "strategic setup: " + sub);
+		}
+		g.gameMode = (int)mode;
+		if (g.scenario.empty() || g.scenario.size() > 64 || g.scenario.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_") != std::string::npos)
+		{
+			return fail(error, "strategic setup: \"scenario\" must be 1 .. 64 ASCII letters, digits or underscores");
+		}
+		if (setup->get("resumeSave"))
+		{
+			if (!stringField(*setup, "resumeSave", g.resumeSave, &sub))
+			{
+				return fail(error, "strategic setup: " + sub);
+			}
+			bool md5 = g.resumeSave.empty() || g.resumeSave.size() == 32;
+			for (char c : g.resumeSave)
+			{
+				md5 = md5 && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+			}
+			if (!md5)
+			{
+				return fail(error, "strategic setup: \"resumeSave\" must be empty or a 32-digit lower-case MD5");
+			}
+		}
+		if (g.resumeSave.empty() && setup->get("resumeHash"))
+		{
+			return fail(error, "strategic setup: \"resumeHash\" is only valid with a resume save");
+		}
+		if (!g.resumeSave.empty())
+		{
+			if (!intField(*setup, "resumeHash", 0, 0xFFFFFFFFll, hash, &sub))
+			{
+				return fail(error, "strategic setup: " + sub);
+			}
+			g.resumeHash = (std::uint32_t)hash;
+		}
+	}
+	else if (setup->get("gameMode") || setup->get("scenario") || setup->get("resumeSave") || setup->get("resumeHash"))
+	{
+		return fail(error, "version 1 is Open Play only; War of the Ring requires START version 2");
+	}
 	long long seed = 0, cash = 0, sw = 0, lh = 0;
 	sub = "\"map\" is empty";
 	if (!stringField(*setup, "map", g.mapName, &sub) || g.mapName.empty() || !intField(*setup, "seed", 0, 0xFFFFFFFFll, seed, &sub)
@@ -270,9 +336,10 @@ bool parse(const std::string &json, const ProfileIdentity &ownProfile, const Lim
 		}
 	}
 	const JsonValue *slots = setup->get("slots");
-	if (!slots || !slots->isArray() || slots->array.empty() || slots->array.size() > (size_t)MAX_SLOTS)
+	if (!slots || !slots->isArray() || slots->array.empty() || slots->array.size() > (size_t)g.serializedSlotCount()
+		|| (g.mapStartCount > LEGACY_MAX_SLOTS && slots->array.size() != (size_t)MAX_SLOTS))
 	{
-		return fail(error, "\"slots\" must be an array of 1 .. 8 slots");
+		return fail(error, "\"slots\" must be 1 .. 8 legacy slots, or 16 slots with an explicit mapStartCount of 9 .. 16");
 	}
 	static const struct
 	{
@@ -307,14 +374,19 @@ bool parse(const std::string &json, const ProfileIdentity &ownProfile, const Lim
 		{
 			return fail(error, at + "unknown state \"" + state + "\"");
 		}
+		if (i >= (size_t)g.mapStartCount && gs.state != SLOT_CLOSED)
+		{
+			return fail(error, at + "exceeds the map's start positions");
+		}
 		if (!gs.isOccupied())
 		{
 			continue;
 		}
 		long long faction = 0, color = 0, startPos = 0, team = 0;
 		if (!stringField(js, "name", name, &sub) || !intField(js, "faction", -1, limits.playerTemplateCount - 1, faction, &sub)
-			|| !intField(js, "color", -1, limits.colorCount - 1, color, &sub) || !intField(js, "startPos", -1, MAX_SLOTS - 1, startPos, &sub)
-			|| !intField(js, "team", -1, MAX_SLOTS - 1, team, &sub))
+			|| !intField(js, "color", -1, limits.colorCount - 1, color, &sub)
+			|| !intField(js, "startPos", -1, g.warOfTheRing() ? 63 : g.mapStartCount - 1, startPos, &sub)
+			|| !intField(js, "team", -1, g.serializedSlotCount() - 1, team, &sub))
 		{
 			return fail(error, at + sub);
 		}
@@ -354,18 +426,43 @@ bool parse(const std::string &json, const ProfileIdentity &ownProfile, const Lim
 		}
 	}
 	g.clearCreateAHeroesIfNotAllowed();
+	// lane CHEAT-1: the optional "cheatMode" (lobby.mjs signAndStart: the host's slot when the host turned Cheat Mode on; absent: off). The seat must be a human
+	// slot of the game: anything else is a refused START, never a game without the seat (the replay's record reads it again: NetPacket::readGameInfo)
+	g.cheatMode = -1;
+	if (const JsonValue *cheat = setup->get("cheatMode"); cheat && cheat->type != JsonValue::NUL)
+	{
+		long long seat = -1;
+		if (!intField(*setup, "cheatMode", 0, MAX_SLOTS - 1, seat, &sub) || !g.slots[seat].isHuman())
+		{
+			return fail(error, "\"cheatMode\" must name a human player's slot");
+		}
+		g.cheatMode = (int)seat;
+	}
 	// lane PLATFORMICON-1: the optional top-level "platforms" (lobby.mjs signAndStart: one entry per slot, null or windows / linux / macos). Display data for
 	// the running game's player list: only a human slot's entry counts, and anything unusable (not an array, a wrong length, another value) is no icon,
 	// never a refusal of the START
-	if (const JsonValue *platforms = root.get("platforms"); platforms && platforms->isArray() && platforms->array.size() == (size_t)MAX_SLOTS)
+	if (const JsonValue *platforms = root.get("platforms"); platforms && platforms->isArray() && platforms->array.size() == (size_t)g.serializedSlotCount())
 	{
-		for (int i = 0; i < MAX_SLOTS; ++i)
+		for (int i = 0; i < g.serializedSlotCount(); ++i)
 		{
 			PlatformKind kind = PlatformKind::None;
 			const JsonValue &p = platforms->array[(size_t)i];
 			if (g.slots[i].isHuman() && p.isString() && platformFromName(p.string, kind))
 			{
 				g.slots[i].platform = kind;
+			}
+		}
+	}
+	// lane CHAT-1: the optional top-level "chatMuted" (lobby.mjs signAndStart: true for a player slot whose account the moderators muted): enforcement
+	// of the lobby's mute in the game's chat (Network::setChatLobbyMuted). A human slot's true counts; anything else mutes nobody (an older lobby)
+	if (const JsonValue *muted = root.get("chatMuted"); muted && muted->isArray())
+	{
+		for (int i = 0; i < MAX_SLOTS && (size_t)i < muted->array.size(); ++i)
+		{
+			const JsonValue &m = muted->array[(size_t)i];
+			if (g.slots[i].isHuman() && m.type == JsonValue::BOOL && m.boolean)
+			{
+				s.chatMutedMask |= 1u << i;
 			}
 		}
 	}
@@ -388,16 +485,96 @@ bool parse(const std::string &json, const ProfileIdentity &ownProfile, const Lim
 	{
 		return fail(error, "this client's slot " + std::to_string(s.localSlot) + " is not a human player's");
 	}
-	std::uint8_t mask = 0;
+	std::uint16_t mask = 0;
 	for (int i = 0; i < MAX_SLOTS; ++i)
 	{
-		mask = (std::uint8_t)(mask | (s.networkSlot[(size_t)i] ? 1u << i : 0u));
+		mask = (std::uint16_t)(mask | (s.networkSlot[(size_t)i] ? 1u << i : 0u));
 	}
-	if (s.ticket[11] != mask)
+	if (fields.slotMask != mask)
 	{
 		return fail(error, "the ticket's slot mask does not match the START's human slots");
 	}
 	out = std::move(s);
+	return true;
+}
+
+bool parsePhase(const std::string &json, const LobbyStart &war, std::uint64_t warGameId, int expectedPhase, LobbyStart &out, std::string *error)
+{
+	JsonValue root;
+	std::string sub;
+	if (!war.online || !war.game.game.warOfTheRing() || war.localSlot < 0 || war.localSlot >= MAX_SLOTS || expectedPhase < 1 || expectedPhase > 1000)
+		return fail(error, "a phase needs the running online war, its original slot and the next phase number");
+	if (!JsonValue::parse(json, root, &sub) || !root.isObject() || json.size() > 64 * 1024)
+		return fail(error, "a phase START is not a bounded JSON object: " + sub);
+	long long version = 0, phase = 0, slot = 0, seed = 0, runAhead = 0, crc = 0, frameMs = 0;
+	std::string kind, phaseKind, warId, gameId, relay, ticket, sessionKey, profile, netMode;
+	if (!intField(root, "v", 2, 2, version, &sub) || !stringField(root, "kind", kind, &sub) || kind != "openbfme-phase-start"
+		|| !stringField(root, "war", warId, &sub) || !intField(root, "phase", expectedPhase, expectedPhase, phase, &sub)
+		|| !stringField(root, "phaseKind", phaseKind, &sub) || phaseKind != (expectedPhase % 2 ? "battle" : "map")
+		|| !stringField(root, "game", gameId, &sub) || !intField(root, "slot", war.localSlot, war.localSlot, slot, &sub)
+		|| !intField(root, "seed", 0, 0xFFFFFFFFll, seed, &sub) || !stringField(root, "relay", relay, &sub)
+		|| !stringField(root, "ticket", ticket, &sub) || !stringField(root, "session_key", sessionKey, &sub)
+		|| !stringField(root, "profile", profile, &sub) || !stringField(root, "netMode", netMode, &sub)
+		|| !intField(root, "frameMs", 50, 200, frameMs, &sub) || !intField(root, "runAhead", 1, 25, runAhead, &sub)
+		|| !intField(root, "crcInterval", 0, 1000, crc, &sub))
+		return fail(error, "phase START fields are invalid: " + sub);
+	if (root.get("setup") || root.get("spectator") || root.get("delay"))
+		return fail(error, "a phase START cannot change the saved war's setup or become a spectator");
+	const auto isId = [](const std::string &id) {
+		return id.size() == 16 && id.find_first_not_of("0123456789abcdef") == std::string::npos;
+	};
+	if (!isId(warId) || !isId(gameId) || std::stoull(warId, nullptr, 16) != warGameId ||
+		std::stoull(gameId, nullptr, 16) == war.onlineGameId)
+		return fail(error, "the phase START names another war, an invalid game id, or reuses the war's relay game");
+	if (profile != war.profile.digest)
+		return fail(error, "this phase runs a different OpenBFME version or game files");
+	if (netMode != "classic" && netMode != "canonical" && netMode != "canonical-equal")
+		return fail(error, "phase START's netMode is unknown");
+	const JsonValue *slots = root.get("slots");
+	if (!slots || !slots->isArray() || slots->array.empty() || slots->array.size() > (size_t)war.game.game.serializedSlotCount())
+		return fail(error, "phase START's slots are not a bounded array");
+	LobbyStart next = war;
+	next.networkSlot.fill(false);
+	int previous = -1;
+	std::uint16_t mask = 0;
+	for (const JsonValue &v : slots->array)
+	{
+		long long s = 0;
+		if (!v.isNumber() || std::floor(v.number) != v.number || v.number < previous + 1 ||
+			v.number >= war.game.game.serializedSlotCount())
+			return fail(error, "phase START's slots are not sorted and unique original slots");
+		s = (long long)v.number;
+		if (!war.networkSlot[(size_t)s])
+			return fail(error, "phase START's slots are not sorted, unique human slots of this war");
+		previous = (int)s;
+		next.networkSlot[(size_t)s] = true;
+		mask = (std::uint16_t)(mask | 1u << s);
+	}
+	if (!next.networkSlot[(size_t)war.localSlot])
+		return fail(error, "this player's original slot is not in the phase");
+	if (!NetAddress::parse(relay, next.relay) || next.relay.ip == 0 || next.relay.port == 0)
+		return fail(error, "phase START's relay is not a.b.c.d:port");
+	if (!RelayProtocol::base64UrlDecode(ticket, next.ticket))
+		return fail(error, "phase START's ticket is not base64url");
+	RelayProtocol::Ticket fields;
+	if (!RelayProtocol::readTicketFields(next.ticket.data(), next.ticket.size(), fields, &sub) || fields.spectator ||
+		fields.gameId != std::stoull(gameId, nullptr, 16) || fields.slot != war.localSlot || fields.slotMask != mask)
+		return fail(error, "phase START's ticket does not bind its game, original slot and human seats: " + sub);
+	long long generation = 0;
+	if (root.get("rejoin") && !intField(root, "rejoin", 1, 0xFFFF, generation, &sub))
+		return fail(error, sub);
+	if (generation != fields.generation)
+		return fail(error, "phase START's rejoin generation differs from its ticket");
+	if (!RelayProtocol::base64UrlDecode(sessionKey, next.macKey) || next.macKey.size() != RelayAuth::kSessionKeyBytes)
+		return fail(error, "phase START's session_key is not 16 bytes of base64url");
+	const int wantedMode = netMode == "classic" ? 0 : netMode == "canonical" ? 1 : 3;
+	if (fields.generation == 0 && ((fields.mode & 3) != wantedMode || (fields.frameMs ? fields.frameMs != frameMs : frameMs != 200)))
+		return fail(error, "phase START's net mode or frame period differs from its signed ticket");
+	next.onlineGameId = std::stoull(gameId, nullptr, 16);
+	next.rejoinGeneration = (int)generation;
+	next.runAhead = (int)runAhead;
+	next.crcInterval = (int)crc;
+	out = std::move(next);
 	return true;
 }
 } // namespace OnlineStart

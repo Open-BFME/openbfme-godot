@@ -1048,7 +1048,7 @@ UpdateSleepTime AutoHealBehavior::update()
 				{
 					if ((int)horde->payloadCount() < horde->getSlotCapacity())
 					{
-						if (Object *member = horde->spawnReplacementMember(*o->getPosition()))
+						if (Object *member = horde->spawnReplacementMember(*o->getPosition(), o->getOrientation()))
 						{
 							member->updateShroudNow();
 							emitFX(logic, "AutoHealBehavior RespawnFXList", d->m_respawnFXList, *member);

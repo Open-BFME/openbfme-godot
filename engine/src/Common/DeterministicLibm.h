@@ -10,7 +10,8 @@
 // in those variants as an explicit fused multiply-add (DetLibm::fma: one rounding in integer arithmetic, no FMA instruction and no libm, so no compiler or CPU feature decides the result) and every other operation as written;
 // tests/test_deterministic_libm.cpp compares it with the host libm over a sweep and pins a hash of its results.
 // The functions take and return IEEE binary64 under the canonical environment (round to nearest). errno is never set. NaN results: a NaN operand
-// is returned quietened (the first NaN operand of two), an invalid operation returns the x86 default NaN 0xFFF8000000000000, as the SSE2 code does.
+// is returned quietened (the first NaN operand of two), except floor / ceil leave it unchanged and fabs only clears its sign bit. An invalid
+// operation returns the x86 default NaN 0xFFF8000000000000, as the SSE2 code does.
 //
 // NOT the retail CRT: RotWK's Lua runs MSVCR71's x87 functions (RW 0xA3CF84 cos, 0xA3CF90 sin, ...); parity with them is not claimed.
 

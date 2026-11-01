@@ -14,6 +14,7 @@
 //   * the rank icons: the image records `UIClip/Level/<c>` (rankIconFor below: the AI level 1 / 4 / 6 / 9, the player's from the profile's points, which
 //     are not ported: level 1, S-3506) and `UIClip/Fellowship/<c>` (cleared outside an online fellowship game); lane MENU-1.
 //   * the template's LoadScreenMusic is the host's to play (LoadScreenSlotInfo::loadMusic, the AUDIO-1 hook; S-273).
+// OpenBFME extended maps retain up to 16 cards; the retail eight-card path is unchanged.
 
 #pragma once
 
@@ -26,7 +27,7 @@
 class GameTextSource;
 class SkirmishSetupSource;
 
-constexpr int MAX_LOAD_SLOTS = 8;
+constexpr int MAX_LOAD_SLOTS = MAX_SLOTS;
 
 struct LoadScreenSlotInfo
 {
@@ -44,6 +45,9 @@ struct LoadScreenSlotInfo
 struct LoadScreenInfo
 {
 	LoadScreenSlotInfo cards[MAX_LOAD_SLOTS];
+	int mapStartCount = LEGACY_MAX_SLOTS;
+	int cardCapacity() const { return mapStartCount > LEGACY_MAX_SLOTS ? MAX_LOAD_SLOTS : LEGACY_MAX_SLOTS; }
+	std::string error;
 	int localCard = 0;        ///< the card of the local slot (it receives the progress)
 	int gameLoadingType = 0;  ///< 1 LAN, 2 skirmish, 5 internet
 	std::string mapName;

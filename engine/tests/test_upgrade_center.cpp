@@ -116,9 +116,18 @@ TEST_CASE("upgrade center: retail-exact acceptance of the field values")
 	CHECK_FALSE(f.load("Upgrade G\n  ResearchSound = ResearchDone\nEnd\n", INI_LOAD_OVERWRITE, &code).empty());
 	CHECK(code == 8); // no audio lookup installed: loud, never accepted
 	REQUIRE(f.load("Upgrade H\n  SubUpgradeTemplateNames = Missing\nEnd\n").empty());
+	// lane MODS-2: RW 0x66FBAB pushes only the names findUpgrade knows (RW 0x66FBED skips the rest): H keeps no sub upgrade, so it grants
+	// its own bit (RW 0x693817); the skipped name is listed
 	std::string err;
-	CHECK_FALSE(f.center.resolveSubUpgrades(&err));
-	CHECK(err.find("Missing") != std::string::npos);
+	CHECK(f.center.resolveSubUpgrades(&err));
+	const UpgradeTemplate *h = f.center.findUpgrade("H");
+	REQUIRE(h != nullptr);
+	CHECK(h->getSubUpgrades().empty());
+	UpgradeMaskType own;
+	own.set((unsigned)h->getMaskBit());
+	CHECK(h->grantMask() == own);
+	CHECK(f.center.unknownSubUpgrades() ==
+		std::vector<std::string>{ "Upgrade H: SubUpgradeTemplateNames names 'Missing', which is not an Upgrade: skipped (RW 0x66FBED)" });
 }
 
 namespace
@@ -219,4 +228,25 @@ TEST_CASE("upgrade center: the sub upgrade cost sum wraps like the retail int ad
 	REQUIRE(f.center.resolveSubUpgrades(&err));
 	Player player(0);
 	CHECK(f.center.findUpgrade("Pack2")->calcCostToBuild(&player, nullptr) == -294967296);
+}
+
+TEST_CASE("MODS-3 (S-5303): more than retail's 1152 upgrades load; the masks hold them and the state words grow only then")
+{
+	CenterFixture f;
+	CHECK(UpgradeMaskType::activeWords() == UpgradeMaskType::WORDS); // the three veterancy upgrades: retail's 0x24 words
+	std::string text;
+	for (int i = 0; i < 1200; ++i)
+	{
+		text += "Upgrade Many" + std::to_string(i) + "\nEnd\n";
+	}
+	REQUIRE(f.load(text).empty()); // retail keeps counting past its mask (RW 0x66FC27); BOTTA 6.0.22 / Edain Volker define ~1160 / ~1395
+	const UpgradeTemplate *last = f.center.findUpgrade("Many1199");
+	REQUIRE(last != nullptr);
+	CHECK(last->getMaskBit() == 1202);
+	CHECK(UpgradeMaskType::activeWords() == 38); // 1203 bits
+	UpgradeMaskType m;
+	m.set((unsigned)last->getMaskBit());
+	CHECK(m.test(1202));
+	CHECK(m.testForAny(last->grantMask()));
+	CHECK_FALSE(m.test(1201));
 }

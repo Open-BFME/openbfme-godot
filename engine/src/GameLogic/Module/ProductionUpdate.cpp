@@ -6,6 +6,8 @@
 #endif
 
 #include "GameLogic/Module/ProductionUpdate.h"
+#include "GameLogic/Module/SlaveWatcherBehavior.h"
+#include "Common/ModEngineFeatures.h"
 #include "GameLogic/SnapshotXfer.h"
 
 #include "Common/Audio/AudioRequests.h"
@@ -38,6 +40,7 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectFilter.h"
 #include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -392,7 +395,8 @@ float ProductionUpdate::heroTimeMultiplier(bool revive) const
 }
 
 // RW 0x8A11D2 (lane HERO-1: the build-index branch RW 0x8A123D .. 0x8A1312)
-bool ProductionUpdate::queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44)
+bool ProductionUpdate::queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44,
+									   bool ignoreCommandPoints)
 {
 	Object *obj = getObject();
 	GameLogic &logic = obj->logic();
@@ -401,7 +405,7 @@ bool ProductionUpdate::queueCreateUnit(const ThingTemplate *unitType, int buildI
 	{
 		unitType = nullptr; // RW 0x8A11EF
 	}
-	if (BuildAssistant::canMakeUnit(*obj, unitType, buildIndex) != CANMAKE_OK)
+	if (BuildAssistant::canMakeUnit(*obj, unitType, buildIndex, ignoreCommandPoints) != CANMAKE_OK)
 	{
 		return false;
 	}
@@ -778,6 +782,15 @@ void ProductionUpdate::cancelAllProduction()
 }
 
 // RW 0x8A072F
+ProductionID ProductionUpdate::requestUniqueUnitID()
+{
+	if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedUniqueProductionId))
+	{
+		return getObject()->logic().nextSharedProductionID();
+	}
+	return m_uniqueID++;
+}
+
 ProductionEntry *ProductionUpdate::currentEntry()
 {
 	for (auto &e : m_queue)
@@ -808,6 +821,18 @@ ProductionEntry *ProductionUpdate::currentEntry()
 			}
 			const int index = player->heroes().findIndex(*e->objectToProduce, e->productionID, 0);
 			if (player->heroes().progressAt(logic, *player, index, getObject()) >= 1.0)
+			{
+				return e.get();
+			}
+		}
+	}
+	if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedHeroRecruitParallel))
+	{
+		// lane MODS-3: edain-unchained.hero-recruit-parallel (its hook 0xEE2000 at RW 0x8A07D1): the first entry that is not a hero's (type 3), so a hero
+		// still reviving or recruiting does not hold the units and upgrades behind it; all heroes: the head
+		for (auto &e : m_queue)
+		{
+			if (e->type != PRODUCTION_BUILD_INDEX)
 			{
 				return e.get();
 			}
@@ -997,6 +1022,12 @@ UpdateSleepTime ProductionUpdate::update()
 				xp->addExperiencePoints(NumericState::sseFromInt32(cost), true, true, true, false);
 			}
 		}
+		// lane MODCOMPAT-AI: RW 0x8A205C .. 0x8A207B: TheScriptEngine hears of the upgrade (RW 0x759A1C: the producer's controlling player's index (+ 0x54),
+		// the upgrade's name (+ 8), the producer's id), before the FX and the grant. Retail reads the index of a null player (a crash): no player tells nobody
+		if (const Player *controller = us->getControllingPlayer(); controller && entry->upgradeToResearch)
+		{
+			us->logic().scriptEngine().notifyOfCompletedUpgrade(controller->getPlayerIndex(), entry->upgradeToResearch->getUpgradeName(), us->getID());
+		}
 		completeUpgrade(entry, player);
 		return UPDATE_SLEEP_NONE;
 	}
@@ -1143,6 +1174,15 @@ void ProductionUpdate::completeUnit(ProductionEntry *entry, Player *player, Unsi
 					logic.reportError("ProductionUpdate: newObject made nothing for " + entry->objectToProduce->getName());
 					removeFromProductionQueue(entry);
 					return;
+				}
+				// lane MODCOMPAT-MOD1: RW 0x8A26BD .. 0x8A270E: an entry with its + 0x44 flag (ObjectCreationUpgrade's UseBuildingProduction queue) hands the new
+				// object to the producer's SlaveWatcherBehavior (RW 0x68BDA5 by name key, RW 0x887AF5)
+				if (entry->flag44)
+				{
+					if (SlaveWatcherBehavior *watcher = SlaveWatcherBehavior::of(*us))
+					{
+						watcher->setSlave(newObj->getID());
+					}
 				}
 				// RW 0x8A2750: the producer's colour index goes to the new object (not ported); RW 0x8A275F UnitInvulnerableTime
 				if (m_data->m_unitInvulnerableTime > 0)

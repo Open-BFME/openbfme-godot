@@ -169,7 +169,7 @@ TEST_CASE("script2 UNIT_AFFECT_OBJECT_PANEL_FLAGS (RW 0x7C569E): Indestructible 
 	CHECK(u.getBodyModule()->isIndestructible());
 	CHECK(h0 != f.g.lw.logic->computeStateHash());
 	CHECK(damage(u, 10.0f) == 0.0f);
-	u.kill(DEATH_NORMAL); // kill is UNRESISTABLE damage: blocked too
+	u.kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // kill is UNRESISTABLE damage: blocked too
 	CHECK_FALSE(u.isEffectivelyDead());
 	run(f.g, act("UNIT_AFFECT_OBJECT_PANEL_FLAGS", { sp(14, "U"), sp(46, "Enabled"), ip(8, 0) }));
 	CHECK((u.scriptStatus() & 1u) != 0);
@@ -484,8 +484,10 @@ TEST_CASE("script2 coverage: the share of the retail script uses (skirmish, camp
 	CHECK(c.total == 14493);
 	// the pins only shrink: SCRIPT-1 left 9,985 action uses (34 %) and 3,113 condition uses (21 %) unported, SCRIPT-2 4,788 and 1,448; lane SCRIPT-3
 	// (hunt, attitude, the building / science availability, the waypoint paths, HAS_FINISHED_AUDIO, CAN_BUILD_AT_BASE, the script volumes)
-	CHECK(a.uncovered <= 3008);
-	CHECK(c.uncovered <= 981); // lane AUDIO-4 (merged): PLAYER_ACQUIRED_SCIENCE and PLAYER_HAS_REACHED_LEVEL_CAP ported (21 uses): 1002 -> 981
+	// lane SCRIPT-4: the guard / idle / stand-ground orders, the team moves, recruiting, garrisons, the command-button abilities, the special powers at a
+	// waypoint, the timed model condition and twelve conditions: 3008 -> 1528 action uses (5.3 %), 981 -> 463 condition uses (3.2 %)
+	CHECK(a.uncovered <= 1528); // tolerance: the pins only shrink as cases are ported
+	CHECK(c.uncovered <= 463);  // tolerance: as above
 }
 
 namespace
@@ -718,29 +720,20 @@ TEST_CASE("BFME1 script economy counters use player masks and retain native comm
 	CHECK(f.g.counter("FreeCP") == f.g.lw.players.findPlayerWithName("Alice")->commandPointsAvailable());
 }
 
-TEST_CASE("BFME1 script references resolve destroyed units only in BFME1 data")
+TEST_CASE("script references retain object identity and destroyed references in both data modes")
 {
 	for (bool bfme1 : { false, true })
 	{
 		Fixture f(bfme1);
 		f.g.frame();
-		const auto qualified = f.g.engine().qualify("Base");
-		f.g.engine().nameInCache(qualified.first + "::unit-reference::" + qualified.second, *f.u);
-		CHECK(f.g.engine().getUnitNamed("Base") == (bfme1 ? f.u : nullptr));
+		run(f.g, act("SET_UNIT_REFERENCE", {sp(14, "Base"), sp(14, "U")}));
+		CHECK(f.g.engine().getUnitNamed("Base") == f.u);
 		CHECK_FALSE(f.g.engine().didUnitExist("Base"));
 		f.g.lw.logic->destroyObject(f.u);
 		f.g.frame();
 		CHECK(f.g.engine().getUnitNamed("Base") == nullptr);
-		CHECK(f.g.engine().didUnitExist("Base") == bfme1);
+		CHECK(f.g.engine().didUnitExist("Base"));
 	}
-}
-
-TEST_CASE("RotWK retains unported BFME1 economy actions")
-{
-	Fixture f;
-	f.g.engine().counter("Funds").value = 42;
-	run(f.g, act("SET_PLAYER_MONEY_TO_COUNTER", {sp(11, "Alice"), sp(4, "Funds")}));
-	CHECK(f.g.counter("Funds") == 42);
 }
 
 TEST_CASE("BFME1 opening army player-count condition excludes neutral players")
@@ -750,7 +743,8 @@ TEST_CASE("BFME1 opening army player-count condition excludes neutral players")
 	CHECK(evalCond(f.g, cond("COMPARE_NUM_PLAYERS_IN_GAME", {ip(6, 2), ip(0, 2)})));
 	CHECK_FALSE(evalCond(f.g, cond("COMPARE_NUM_PLAYERS_IN_GAME", {ip(6, 4), ip(0, 2)})));
 	Fixture retail;
-	CHECK_FALSE(evalCond(retail.g, cond("COMPARE_NUM_PLAYERS_IN_GAME", {ip(6, 2), ip(0, 2)})));
+	// Main now implements this condition for RotWK too; both modes count the two playable players.
+	CHECK(evalCond(retail.g, cond("COMPARE_NUM_PLAYERS_IN_GAME", {ip(6, 2), ip(0, 2)})));
 }
 
 TEST_CASE("BFME1 team recruitment takes matching default-team units and reports its ranking stop")

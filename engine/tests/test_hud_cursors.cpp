@@ -35,7 +35,12 @@ bool readLoose(const std::string &dir, const std::string &stem, std::vector<std:
 TEST_CASE("hud cursors: the cursor names the translators choose are Mouse.ini cursors, and their files decode (animations, hot spots)")
 {
 	const char *install = std::getenv("ROTWK_INSTALL");
-	if (!install || !*install || !haveWorld("hud cursors"))
+	if (!install || !*install)
+	{
+		retailtest::printSkip("hud cursors");
+		return;
+	}
+	if (!haveWorld("hud cursors"))
 	{
 		return;
 	}

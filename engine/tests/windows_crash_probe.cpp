@@ -1,5 +1,6 @@
 // OpenBFME. GPL-3.0. Destructive tests: run only as subprocesses.
 #include "Common/WindowsCrashDump.h"
+#include "Common/PathIO.h"
 #include "Common/JobSystem.h"
 #include "Libraries/WWVegas/WWLib/workerpool.h"
 #include <windows.h>
@@ -24,7 +25,14 @@ void handledFaults()
 
 LONG WINAPI replacedFilter(EXCEPTION_POINTERS *) { return EXCEPTION_CONTINUE_SEARCH; }
 
+static int crashMain(int argc, char **argv);
+
 int main(int argc, char **argv)
+{
+	return PathIO::runMain(argc, argv, crashMain);
+}
+
+static int crashMain(int argc, char **argv)
 {
 	if (argc != 3)
 		return 2;

@@ -67,6 +67,19 @@ static func device_hash(machine_id: String) -> String:
 	return hash.finish().hex_encode()
 
 
+## lane JOINVER-1 (the owner, 2026-10-23): what a create / join tells the lobby about this build beside the sign-in's client (version, system): the
+## build day and whether this is an official release: a packaged game (the release key, scripts/release/release_trust.gd) of a release tag (no
+## development describe, nothing uncommitted). The other player reads it when a join is refused for a different build; the lobby trusts nothing of it
+static func build_info() -> Dictionary:
+	if not ClassDB.class_exists("ReleaseInfo"):
+		return {}
+	var info: RefCounted = ClassDB.instantiate("ReleaseInfo")
+	var version := str(info.version())
+	var packaged := not str(load("res://scripts/release/release_trust.gd").RELEASE_KEY).is_empty()
+	var tag := RegEx.create_from_string("^v\\d+\\.\\d+\\.\\d+(-(alpha|beta|preview|nightly)\\.\\d+)?$").search(version) != null
+	return {"date": str(info.build_date()), "official": packaged and tag}
+
+
 static func identity() -> Dictionary:
 	var result := install_id()
 	if result.has("error"):

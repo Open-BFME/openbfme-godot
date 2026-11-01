@@ -15,8 +15,13 @@
 //   * setPlayerName RW 0x9191EC: the text "DisconnectScreen::PlayerName%d" of the row (an empty name is L" ", RW 0xBD16E4), the row's kick button
 //     hidden, "DisconnectScreen::VotesReceived%d" = L" "; showPlayerVotes RW 0x91949D: VotesReceived%d = L"%d" of the count (RW 0xBDF1B0), L" " for 0; setPlayerTimeoutTime RW 0x91934F: the movie's SetBarPercent(row,
 //     percent) (both arguments "%d"); RW 0x918FF8: ShowKickButton(row) / HideKickButton(row), remembered at + 0x286[row].
-// NOT PORTED (stop S-1123): the chat (InitGadgets, Chat::OnBttnEnterText, the disconnect chat of Quit), the in-game UI calls of show (RW 0x9190F0 closes
-// the other menus and calls TheInGameUI vslot 0x178), the movie's level (the first free `_level`, as GuiFX's).
+// lane CHAT-1, the chat: InitGadgets (RW 0x919529): "ChatBox" (a list box, + 0x27C), "ChatEntry" (a text entry, + 0x280, emptied), "RulesBox" (a list box:
+// reset, then the game text APT:DisconnectRules added); Chat::OnBttnEnterText (RW 0x9196B9): the entry's text taken and emptied, trimmed, a non-empty one
+// sent (RW 0x9193F1: the language filter, not ported (S-5150), then TheNetwork vslot 0x6C sendDisconnectChat); showChat (RW 0x919447): a received
+// line L"[%ls] %ls" added to ChatBox in the colour at RW 0xDB68C4 (0xFFFF0000). Quit (RW 0x9195E1) sends the game text Network:PlayerLeftGame formatted
+// with the local player's name first (the host's part). INFERENCE: Enter in the entry (GEM_EDIT_DONE) is OnBttnEnterText, as in the lobby's chat.
+// NOT PORTED (stop S-1123): the in-game UI calls of show (RW 0x9190F0 closes the other menus and calls TheInGameUI vslot 0x178), the movie's level (the
+// first free `_level`, as GuiFX's).
 
 #pragma once
 
@@ -40,21 +45,42 @@ public:
 		bool kickShown = false;
 	};
 	AptDisconnectScreen(WindowManager &windows, Shell &shell);
+	~AptDisconnectScreen() override;
 
 	// the host's answers to the buttons: Kick of a row, Quit
 	std::function<void(int row)> onKick;
 	std::function<void()> onQuit;
+	// lane CHAT-1: a line typed into the chat (trimmed, not empty); the host sends it (Network::sendDisconnectChat)
+	std::function<void(const std::u16string &)> onChat;
+	// RW 0x919447: a line of the chat (already "[Name] text") into ChatBox; false while the box does not exist yet (the movie is loading)
+	bool showChat(const std::u16string &line);
+	void setRulesText(const std::u16string &rules) { m_rules = rules; }
+	GameWindow *chatEntry() const { return m_chatEntry; }
+	GameWindow *chatBox() const { return m_chatBox; }
+	int chatsSent() const { return m_chatsSent; }
 
 	// puts the rows into the movie: names and votes as texts, the bars and kick buttons through the movie's functions; only what changed is sent (the
 	// first call after the movie loaded sends everything). False while the movie is not loaded yet (call again on the next frame)
 	bool apply(const std::array<Row, 7> &rows);
+	bool apply(const std::vector<Row> &rows, int mapStartCount);
+	GameWindow *rowRange() const { return m_rowRange; }
+	int firstRow() const { return m_firstRow; }
+	const std::string &error() const { return m_error; }
 
 	// what the movie was told (tests): per row the last SetBarPercent and kick state, and every call in order
 	const std::vector<std::string> &calls() const { return m_calls; }
 	int kicks() const { return m_kicks; }
 	int quits() const { return m_quits; }
 
+protected:
+	WindowMsgHandledType gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2) override;
+
 private:
+	bool renderRows();
+	void sendChat(); // RW 0x9196B9
+	GameWindow *m_chatBox = nullptr, *m_chatEntry = nullptr;
+	std::u16string m_rules;
+	int m_chatsSent = 0;
 	void setPlayerName(int row, const std::string &name);
 	void showVotes(int row, int votes);
 	void setBar(int row, int percent);
@@ -62,7 +88,12 @@ private:
 
 	std::array<Row, 7> m_sent{};
 	std::array<bool, 8> m_kickShown{}; // + 0x286
+	std::vector<Row> m_rows;
+	GameWindow *m_rowRange = nullptr;
+	int m_firstRow = 0;
+	std::string m_error;
 	bool m_initialized = false;        // + 0x284
+	bool m_ready = false;
 	bool m_first = true;
 	std::vector<std::string> m_calls;
 	int m_kicks = 0, m_quits = 0;

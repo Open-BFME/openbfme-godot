@@ -107,7 +107,7 @@ std::string LookupTablePostEffect::problem() const
 void LookupTablePostEffect::_render_callback(int32_t p_effect_callback_type, RenderData *p_render_data)
 {
 	(void)p_effect_callback_type;
-	if (m_failed || !p_render_data || m_lookup.is_null())
+	if (m_failed || m_suppressed.load() || !p_render_data || m_lookup.is_null())
 	{
 		return;
 	}
@@ -217,6 +217,7 @@ Dictionary MapPostEffectsHost::get_post_effect_stats() const
 	d["passes"] = m_effect.is_valid() ? m_effect->passes() : (int64_t)0;
 	d["blend"] = m_effect.is_valid() ? m_effect->blend() : 0.0f;
 	d["problem"] = m_effect.is_valid() ? String(m_effect->problem().c_str()) : String();
+	d["suppressed"] = m_effect.is_valid() && m_effect->suppressed();
 	return d;
 }
 

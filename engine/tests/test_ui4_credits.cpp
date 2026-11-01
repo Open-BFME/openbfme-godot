@@ -86,8 +86,7 @@ struct MenuShell
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string error;
-		REQUIRE_MESSAGE(mount.fs.readFile("data/lotr.str", bytes, &error), error);
-		REQUIRE_MESSAGE(text.table.parse(bytes, &error), error);
+		REQUIRE_MESSAGE(text.table.loadRetail(mount.fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 		language = loadLanguage(mount.fs);
 		environment.gameText = &text;
 		environment.fileSystem = &mount.fs;
@@ -155,6 +154,17 @@ TEST_CASE("ui4 retail: language.ini's Language block gives the credits fonts; ad
 	OPENBFME_REQUIRE_RETAIL(mount);
 	const GlobalLanguage language = loadLanguage(mount.fs);
 	CHECK(language.loaded);
+	// RW 0x5E9BEF
+	CHECK(GlobalLanguage::adjustFontSize(24, 1024) == 24);
+	CHECK(GlobalLanguage::adjustFontSize(24, 1280) == 30);
+	CHECK(GlobalLanguage::adjustFontSize(14, 800) == 10); // 10.9375 floored
+	CHECK(GlobalLanguage::adjustFontSize(16, 1920) == 30);
+	// the language archive's own language.ini: its values are the English one's below (another language has its own number format and fonts)
+	CHECK_FALSE(language.localFonts.empty());
+	if (retailtest::skipUnlessEnglish("ui4 retail: the English language.ini's values"))
+	{
+		return;
+	}
 	// the archive's language.ini (RotWK lang\English.big): CreditsTitleFont = "Albertus MT" 24 No, CreditsMinorTitleFont = ... 16 Yes, CreditsNormalFont = ... 14 No
 	CHECK(language.creditsTitleFont.name == "Albertus MT");
 	CHECK(language.creditsTitleFont.size == 24);
@@ -170,11 +180,6 @@ TEST_CASE("ui4 retail: language.ini's Language block gives the credits fonts; ad
 	REQUIRE(language.localFonts.size() == 2);
 	CHECK(language.localFonts.front() == "OmniaLTStd.ttf");
 	CHECK(language.localFonts.back() == "AlbertusMT.otf");
-	// RW 0x5E9BEF
-	CHECK(GlobalLanguage::adjustFontSize(24, 1024) == 24);
-	CHECK(GlobalLanguage::adjustFontSize(24, 1280) == 30);
-	CHECK(GlobalLanguage::adjustFontSize(14, 800) == 10); // 10.9375 floored
-	CHECK(GlobalLanguage::adjustFontSize(16, 1920) == 30);
 }
 
 TEST_CASE("ui4 retail: Credits.ini (a BOM line instead of a block keyword) loads through RW 0x42D753's every-line parser")
@@ -184,8 +189,7 @@ TEST_CASE("ui4 retail: Credits.ini (a BOM line instead of a block keyword) loads
 	GameTextTableSource text;
 	std::vector<std::uint8_t> bytes;
 	std::string error;
-	REQUIRE_MESSAGE(mount.fs.readFile("data/lotr.str", bytes, &error), error);
-	REQUIRE_MESSAGE(text.table.parse(bytes, &error), error);
+	REQUIRE_MESSAGE(text.table.loadRetail(mount.fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 	FixedMetrics metrics;
 	CreditsManager credits;
 	REQUIRE_NOTHROW(credits.load(mount.fs, &text, language, metrics, 1024));

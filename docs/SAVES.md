@@ -1,8 +1,11 @@
 # Saves: retail's snapshot, a command-log save, and how they fit
 
 Lane SAVE-1, 2026-10-12. The owner accepted every recommendation the same
-day. Phase SAVE-2 (the command-log save for single player) is built: see
-section 8, "What is built".
+day. **Current implementation:** single-player saves write a command log and
+a native snapshot (SAVE-4e); campaign-menu saves are also built (CAMPSAVE-1).
+Game-at-frame saves still require the same engine compatibility id, even with
+a snapshot. Multiplayer saves and retail import are not built. See section 8,
+"What is built".
 
 The owner's direction: "for saves we probably need to support both ideally for
 a faithful port but we might want to design it in a way for the sdk to work
@@ -14,7 +17,7 @@ maybe a backwards compatibility mode". "Both" means:
 - **B. A command-log save.** The game's START plus every command so far.
   Loading replays the log at full speed. This reuses ONLINE-3's catch-up.
 
-The answer in one paragraph: **one save container with three parts, a header,
+The accepted design in one paragraph: **one save container with three parts, a header,
 the command log and an optional snapshot, and one Xfer framework that writes
 the snapshot.** Ship B first. It needs almost no new engine code, because every
 skirmish is already recorded as a replay. Then port retail's Xfer framework
@@ -28,7 +31,8 @@ Sources: the RotWK binary through Ghidra and `tools/re/rw2decomp.py`, the
 Open-BFME-2 decomp (BFME2 1.06), Zero Hour's `GameState.cpp`,
 `GameStateMap.cpp` and `Object.cpp` as the donor, `docs/ONLINE.md` and the
 ONLINE-3 lane (`lane/online3`, not merged at cb2ae2c7), and
-`docs/ARCHITECTURE-MODS-UBER.md` (lane/arch1, f4597acf). RW addresses are
+the historical ARCH-1 design (lane/arch1, f4597acf; not included in this tree).
+Current profile settings are in `docs/UBER.md`. RW addresses are
 RotWK 2.01 VAs. Read their caveat: S-001 (the analysed `game.dat` carries
 community-added sections). **(inference)** marks a conclusion that is not a
 binary fact. **(to verify)** marks something nobody has checked yet.
@@ -114,9 +118,11 @@ EBLK (like the name) is written only in tagged files.
   order: reset the engine, xfer the blocks of the mode's list, run every
   queued `loadPostProcess` (RW 0x6DD65C: pointers are saved as IDs and
   resolved here), refresh the shroud, then restart the AI. After a War of the
-  Ring load (modes 4 and 6) it calls `InitRandom(0)` and suspends the logic
-  **(meaning to verify)**. A failure shows "GUI:ErrorLoadingGame" and returns
-  to the shell.
+  Ring map save's load (types 4 and 6) it calls `InitRandom(0)` and suspends
+  the logic (GameState::doLoadGame, the BFME2 decomp's byte-matched
+  0x6DD91A; RotWK's is the same shape; WOTR2 milestone 3 does the reseed, see
+  section 8). The mode 4 load reads list 0, the mode 6 one list 3, mode 1
+  list 4. A failure shows "GUI:ErrorLoadingGame" and returns to the shell.
 - **Screens.** SaveLoad.apt (`AptSaveLoad::*`) is shared with the replay
   list, which MP-2 already ported (`SaveLoadInfo`). Its game-type flags are 1
   Campaign, 2 Skirmish, 4 Replay, 8 War of the Ring single player, 0x10
@@ -158,7 +164,10 @@ command, every peer writes the same snapshot at the same frame, and resuming
 means every peer loads its own file. Our multiplayer save follows the same
 idea (section 4).
 
-### Where our engine stands
+### Where our engine stood at SAVE-1 (2026-10-12)
+
+These are the original pre-SAVE-2 observations, not the current implementation
+status. Current saves and replay versions are described in section 8.
 
 - (Before SAVE-2 / SAVE-4a.) There was no Xfer, no Snapshot interface and no save container: section 8 lists what is built now.
 - There are about 160 one-way `crc(StateHasher&)` walks (Module, weapons,
@@ -174,6 +183,11 @@ idea (section 4).
   and 60 minute games catch up in 9, 48 and 106 s on the reference PC.
 
 ## 2. The design: one container, three parts
+
+Sections 2-7 preserve the accepted SAVE-1 design, proposed tests and phase
+order. They are not a list of shipped features: multiplayer save/resume,
+snapshot rejoin, cross-build game-state migration and SDK-state migration
+remain planned. Section 8 records the implementation and its limits.
 
 ```
 OpenBFME save (.obfmesave)
@@ -248,7 +262,10 @@ functions map to a decomp `::xfer`: 316 tier A (the decomp code is RotWK's),
   per-module list of what was dropped;
 - **the embedded map and the object IDs** taken as saved. Pointers are
   resolved in `loadPostProcess`, as retail does;
-- **WotR saves** need War of the Ring, which isn't built (ROADMAP).
+- **WotR saves**: OpenBFME's War of the Ring map saves exist (section 8,
+  WOTR2 milestone 3); reading retail's `.BfME2WotR` would need retail's
+  CHUNK_LivingWorldLogic object graph (RW 0x6BC653), which the strategic model
+  does not keep in that shape.
 
 **Writing (export) is harder, and only partly testable here.** Retail loads a
 file only if every block it reads is byte-correct for its version, so export
@@ -513,6 +530,10 @@ acceptable as the final answer, which is why SAVE-4 follows.
 
 ## 8. What is built
 
+The lane notes below are chronological. SAVE-4e supersedes SAVE-4a..d's
+staged snapshot refusals and deferred integration checks; their measurements
+and review counts describe those runs, not fixed counts for every build.
+
 ### SAVE-2: the command-log save for single player (lane SAVE-2)
 
 - **The container** (`Common/System/SaveGame/SaveGameFile.h`): `.obfmesave`,
@@ -521,12 +542,15 @@ acceptable as the final answer, which is why SAVE-4 follows.
   version, the engine id, the commit, the profile identity text, the execution
   profile, the game type (1 Campaign, 2 Skirmish), F, the state hash at F, the
   name, the map, the date and time, the command count, for a campaign
-  mission its campaign, mission and difficulty, and the execution profile
-  switches (below). The log is the
-  running replay (format 4) up to F, ending with the end record (F, hash). The
-  snapshot part is empty, and a non-empty one is refused until SAVE-4.
+  mission its campaign, mission and difficulty. Execution-profile switches
+  are records in the log, not fields of the header. The log is the running
+  replay (currently format 7; formats 5 and 6 still read) up to F, ending with
+  the end record (F, hash). Since SAVE-4e the snapshot part holds the native
+  snapshot at F by default; `snapshot: false` explicitly requests a log-only
+  save for the catch-up tests. A refused snapshot fails the save.
 - **The campaign menu save point** (lane CAMPSAVE-1, header version 2; version
-  1 headers still load): after the command count, `u32` save point (0 a game
+  1 headers still load): after the campaign, mission and difficulty fields,
+  `u32` save point (0 a game
   at F, 1 CampaignMenu.apt between missions) and four `u8` flags, each 0 or 1:
   won, ready, advanced (the campaign's + 0xD0 / + 0xD2 / + 0xD3,
   `GameClient/LinearCampaign.h`) and auto-save (retail's IsAutoSaveOrNot). A
@@ -535,25 +559,27 @@ acceptable as the final answer, which is why SAVE-4 follows.
   campaign's auto-save after a won mission (RW 0x6DE8F1: "Auto Save for
   <map>", listed in SaveLoad.apt's AutoSaveList) and CampaignMenu.apt's Save
   write it (`GameWorld.save_campaign_menu`); loading one shows the menu with
-  that state. Having no log to replay, it loads in any build whose data holds
-  its campaign and mission (an update between missions keeps the campaign).
+  that state. Having no log to replay, it ignores the engine compatibility id,
+  but still requires the same data/rules identity and a valid campaign,
+  mission and difficulty (an update between missions can keep the campaign).
 - **Saving reuses the recorder.** Every skirmish's `ReplayWriter` keeps what
   it wrote in memory, and `logUpTo(F, hash)` returns that log with the end
   record. It refuses, with a named reason, a recording that lost a command or
   failed to write, a batch at or after F, or a missing hash of F
   (`GameWorld.save_game`).
 - **Loading** (`GameClient/CommandLogLoad.h`, `GameWorld.check_save` /
-  `prepare_save_load` / `start_save_load` / `save_load_step`): the header is
-  checked against this build (case 2 of section 2). The log's game is started
-  like a replay. `ReplayPlayback` runs the log to F at full speed on the main
-  thread, comparing every recorded hash, with no game view: the load screen
-  stays, under a progress box that says it is catching up. The state hash at F
-  must equal the header's. The game is then handed to the player with a
+  `prepare_save_load` / `start_save_load` / `save_load_step`): a game-at-frame
+  header is checked against this build. The log's game is started like a
+  replay. With a snapshot, the state at F is restored directly (SAVE-4e,
+  case 1 of section 2). Without one (case 2), `ReplayPlayback` runs the log
+  to F at full speed on the main thread, comparing every recorded hash, with
+  no game view; catch-up progress is drawn on the saved-game loading screen.
+  The state hash at F must equal the header's. The game is then handed to the player with a
   recording that continues the saved log (`ReplayWriter::openContinuing`), so
   a later save, and the game's replay, hold the whole game.
 - **Bounded reads:** a file is read part by part; every part's declared size
   is checked against the file's real size and the part's limit (header 1 MiB,
-  log 256 MiB) before anything is allocated, and the Load page's listing reads
+  log and snapshot 256 MiB each) before part payloads are allocated, and the Load page's listing reads
   only the header part and the parts' heads.
 - **Every frame's hash:** a log must hold the state hash of every frame from
   the loaded game's first frame to F, once each, and nothing after F (replay
@@ -563,14 +589,15 @@ acceptable as the final answer, which is why SAVE-4 follows.
   go on unrecorded (`CommandLogLoad::handOver`).
 - **Refusals** are named and tested (T5): not a save, truncated anywhere, a
   part's digest, another container or header version, a part out of order,
-  bytes after the end, a snapshot, an unknown game type, another build ("this
+  bytes after the end, a malformed snapshot, an unknown game type, another build ("this
   game was saved by OpenBFME <version> (engine <id>) ..."), other data (the
   differing identity lines), a log that ends elsewhere than its header says,
   a log of another identity, a log without its end, and a log that does not
   replay the same (its first differing frame).
 - **Faithful and Uber** (decision 7, with UBER-1 merged): a save of the other
-  execution profile loads in single player. Its log is replayed under the
-  profiles it ran, with every hash compared, then the game switches to the
+  execution profile loads in single player. Its snapshot restores the saved
+  profile; on the log-only path its log is replayed under the profiles it ran,
+  with every hash compared. Then the game switches to the
   player's profile at the saved frame (`GameLogic::setSimulationProfile`). The
   switch is a record of the continued replay itself (replay format 6), so that
   replay and every later save replay exactly too.
@@ -594,7 +621,8 @@ acceptable as the final answer, which is why SAVE-4 follows.
   what the game held when one opened (a key, a mouse button, a scroll) ends
   with it (S-4982). `test_saveui1.cpp`, `godot/tests/saveui1_test.gd`.
 - **Files:** the retail Save folder (the user data folder's `Save\`, where
-  Create-a-Hero keeps its heroes); `--save-dir=DIR` overrides it.
+  Create-a-Hero keeps its heroes); the game argument `--save-dir=DIR` after
+  Godot's `--` overrides it (see the developer command below).
 - **Tests:** `test_save2.cpp` (SHA-256, the container, T5 with the bounded
   reads, the load rules, the recorder hooks, the hash coverage, the profile
   switch record, the stops), `test_save2_retail.cpp` (T1 as section 6 asks: a
@@ -607,19 +635,58 @@ acceptable as the final answer, which is why SAVE-4 follows.
   commands, every hash equal; the in-process T1 with live control after the
   load; T5 on the log; the cross-profile loads; the campaign mission),
   `test_save2_menu.cpp` (the pages through the retail movie), and
-  `godot -- --auto --save-test` (save in a game, load it back through the
+  `godot --path godot -- --auto --save-test` (save in a game, load it back through the
   screens, the game at F).
 - **Campaign missions** (S-4002): a mission is recorded in memory only (the
   replay format starts a game from a NewGameMessage, a mission from its
   campaign); its save's header carries the campaign, mission and difficulty,
   which start it again before the catch-up, and the campaign flow goes on from
-  there. Saving between missions (CampaignMenu.apt, S-1360) is not built.
+  there. Saving between missions is built by CAMPSAVE-1's campaign-menu save
+  point above; it is not a mission snapshot.
 - **Stops:** S-4000 to S-4005 (`docs/STOPS.md`).
 - **For ONLINE-3:** nothing was copied from its `CommandLogCatchUp`. A save's
   catch-up drives the archive's `ReplayPlayback`, so a rejoin or a resume from
   a saved log needs only the relay log assembled into a `ReplayFile`; its
   `rejoinStep` loop (`advance(0.2)` within a time budget) is the same shape as
   `CommandLogLoad::step`.
+
+### WOTR2 milestone 3: the War of the Ring map's save
+
+- **The file:** container version 2 adds a fourth part, `LWLD`, after `SNAP`
+  (version 1 files, three parts, still load). A War of the Ring map save is
+  game kind 8 at save point 2: retail's mode 4 (RW 0x6DCFDF: the strategic
+  map up, single player). Its `campaign` field names the scenario
+  (LivingWorldCampaign), its state hash is the strategic game's, and it has
+  no frame, no log and no snapshot. `LWLD` holds two length-prefixed blobs:
+  the strategic game (`LivingWorldLogic::saveState`, GameState's stream of
+  the block `obfme:LivingWorld`), then the host's session (the lobby game
+  the battles start from, each player's lobby slot, the battle count:
+  Godot's `var_to_bytes`, read back with `bytes_to_var`, which refuses
+  objects).
+- **The block:** retail's CHUNK_LivingWorldLogic (RW 0x6BC653, the shared
+  state RW 0x6BBD55, version 7) xfers its object graph (LivingWorldPlayer,
+  ArmySummary, the regions, the beacons). OpenBFME's model keeps the same
+  state as players, regions (buildings, queues), armies (members) and
+  battles by index, so the block is native (`obfme:`). It follows retail's
+  order where the model has the field. It holds everything the state hash
+  covers, plus the event log. The data the world rebuilds (ranks, the RTS
+  templates' rank fields, ResourceMultiplierLimit) comes from the running
+  world at load. Every name and index is checked against the data, and a
+  mismatch is a named refusal.
+- **Loading:** like a campaign menu save, no log is replayed, so another build
+  may load it when the data identity matches and the scenario exists
+  (`GameWorld::wotrSaveVerdict`). The loaded state must hash as the header
+  says. Then the generator starts again from 0 (retail's `InitRandom(0)`
+  above): two loads of one save play the same war; the unsaved game's dice
+  are not repeated, as in retail.
+- **Screens:** Esc on the map opens QuitMenu.apt with retail's War of the Ring
+  branch (+ 0x114 == 0): Save / Load open SaveLoad.apt's War of the Ring page
+  (type 8, RW 0x92179F), whose rows are RW 0x6E04AD's for filter 8 (file
+  name, blank, time, date; a map save gold). The main menu's Load Game
+  offers the same page (flags 0xB).
+- **Not built:** saving inside a War of the Ring battle (retail's mode 3:
+  the battle's own save is refused by name), reading retail `.BfME2WotR`,
+  the multiplayer War of the Ring save (mode 6). Stop S-1332.
 
 ### SAVE-4a: the Xfer framework, GameState and the core blocks (lane SAVE-4a)
 
@@ -800,7 +867,7 @@ acceptable as the final answer, which is why SAVE-4 follows.
     own fields): the module's fields, the turret (TurretAI with its machine), the mover (AIMover with its path, `Path::xfer`: the nodes and their optimised
     links as indices), the locomotor set made again from its id and each locomotor, and the state machine with **every defined state's xfer** (retail keeps
     the state objects; `AIState::xfer` is pure, so every state class says what it keeps). Sub machines (an attack's, a hunt's, a turret's, PLAY-4's
-    guard machine and its attacks) are made again by their kind (the attack's generic, melee or horde melee / ranged machine) and loaded the same way. The block holds the "objects" section's AI part
+    guard machine and its attacks) are made again by their kind (the attack's generic, melee or horde melee / ranged machine) and loaded the same way; last, since version 2, the next formation id (lane BACKLOG-8; a module's formation march since its version 2). The block holds the "objects" section's AI part
     as well as "pathfinder and AI movers": obfme:Objects (SAVE-4b) carries the AI modules as their objects made them, and this block fills them.
   - `obfme:Shroud` (lists 0 and 1; `ShroudManager::xfer`): the grid and settings, per player and channel a run-length plane of the cells, the unlook queue
     in order, the records by slot and the free slot stack, registration and dirty lists; the cells' covering lists are rebuilt from the records.
@@ -914,14 +981,14 @@ blocks). The three can run in parallel: their blocks do not overlap, and each bl
 | SAVE-4c | `obfme:AIWorld` | "pathfinder and AI movers" | the pathfinder's queues and the AI movers; with the AIUpdate module family and its state machines (AIUpdateInterface::xfer RW 0x667416, StateMachine and the AI states, all inventoried) |
 | SAVE-4c | `obfme:Shroud` | "shroud" | the shroud cells per player |
 | SAVE-4c | `obfme:SkirmishAI` | "skirmish AI" | AIPlayer / AISkirmishPlayer (RW 0x8F5756 / 0x8F3F6C), the builders, tactics, target chooser, groups |
-| SAVE-4d | `obfme:ScriptEngine` | "script engine" | flags, counters, timers, completed and sequential scripts, the Lua state, the acquired-science queues' cursors (the players' notice history is saved by obfme:Players) |
+| SAVE-4d | `obfme:ScriptEngine` | "script engine" | flags, counters, timers, completed and sequential scripts, the acquired-science queues' cursors (the players' notice history is saved by obfme:Players); Lua client state is not saved |
 | SAVE-4d | `obfme:Victory`, `obfme:Weather`, `obfme:Economy`, `obfme:CreateAHero`, `obfme:TerrainTrees`, `obfme:LargeGroupAudio` | "victory", "weather", "economy", "create-a-hero", "terrain trees", "large group audio" | the weather changes every frame (seen by the core test); the economy's settings part is configuration (declare it rebuilt), its context and terrain resource cells are state |
 
 Every lane also checks the state its subsystems keep **outside** the hash that a later frame reads (SAVES.md
-section 6's rule), for example GameLogic's AI command sink and pending producer. Then a last, small step turns
+section 6's rule), for example GameLogic's AI command sink and pending producer. SAVE-4e turned
 the snapshot on in the game: `GameWorld.save_game` writes it, `CommandLogLoad` (case 1 of section 2) starts the
-log's game, loads the snapshot, checks the hash at F and catches up only the log after it; T1 in a fresh process
-and T3 (Linux and Windows bytes equal) gate it.
+log's game, loads the snapshot at F and checks the hash there; no log frame runs on this path. T1 in a fresh process
+and T3 (Linux and Windows bytes equal) cover it.
 
 ### SAVE-4e: the snapshot turned on: saves load instantly (lane SAVE-4e)
 
@@ -929,8 +996,8 @@ and T3 (Linux and Windows bytes equal) gate it.
   its xfer (`save4a: the game's block registry is the exact inventory ...` and the real games' T4 cases save a whole snapshot). The AI update family's
   classes got their module-list xfer (their versions and UpdateModule's part; the AI state stays in obfme:AIWorld, S-4193). A merge fix: OpenContain's
   xfer saves SHIP-1's two ship exit counters instead of the count they replaced.
-- **Save** (`GameWorld.save_game`): the header, the log to F and the snapshot at F (`GameLogic::saveSnapshot`). A snapshot the game refuses leaves
-  a log-only save and is named in the result (`snapshot_refused`); option `snapshot: false` writes an earlier alpha's log-only save (tests).
+- **Save** (`GameWorld.save_game`): the header, the log to F and the snapshot at F (`GameLogic::saveSnapshot`). A snapshot the game refuses fails
+  the save with a named error; there is no log-only fallback or `snapshot_refused` success result. Option `snapshot: false` explicitly writes a log-only save (tests).
 - **Load** (`CommandLogLoad`, case 1 of section 2): the log is parsed and checked as before (it is the replay so far, continued by `handOver`); the
   game its log records is started; `LiveGame::loadSnapshot` loads the snapshot over it, checks the frame and the header's state hash, and is ready
   at once: no frame of the log runs. **Transactional:** the started game's own snapshot is kept first; a refused block, frame or hash puts it back
@@ -938,7 +1005,8 @@ and T3 (Linux and Windows bytes equal) gate it.
   runs any more) and the host discards it, never a half-loaded game. The client is told every object's model conditions (S-5011).
 - **Verify mode** (`CommandLogLoad::setVerifyLog`, `openbfme_peer --verify-log`; off by default): the save is caught up from its log as an old save
   is, and at F the caught-up game's snapshot must equal the save's byte for byte (T2 across the two load paths).
-- **Old saves** (log only, from the earlier alphas) catch up as before (case 2).
+- **Log-only saves** catch up as before (case 2), provided the engine compatibility id and data/rules identity still match. A snapshot does not
+  bypass the same-engine-id check either; cross-build game-state migration (section 5) is not implemented.
 - **The loading screen** (`save_flow.gd`, `campaign_flow.gd`, `AptMenuPlayer::set_still_load_progress`): retail's screen for a saved game
   (GameLogic::getLoadScreen RW 0x626A87 with a save loading): the picture screen with a film still (StillImage_Film01 .. 21), the ring and
   GUI:Loading, for a campaign mission and a skirmish (S-5012). SAVE-2's grey Godot panel is gone; an old save's catch-up draws its progress text and
@@ -951,8 +1019,10 @@ and T3 (Linux and Windows bytes equal) gate it.
   drawables as before, the game still running; a header whose hash its log does not end with; the verify mode naming the first differing byte);
   the legal but unusual events (a capture, a temporary defection, a death, a player's every object killed, saved right after them and 30 frames
   later, loaded into another world and played 300 frames equal, saved again byte for byte); T3 with a Windows peer (OPENBFME_WINDOWS_PEER).
-  `godot -- --auto --save-test` loads a snapshot save and an old log-only save through the screens.
-- **Measured** (Deck, Release, `openbfme_peer --load-save` in a fresh process, the 4-AI Fall Back game of `save2 retail T1 (SAVES.md)`): the
+  Lane SAVE2SPLIT-1: the fresh-process T1 runs are a test case per save and load mode (`save2 retail T1 (SAVES.md) 4-AI skirmish <save>
+  ...`, `save2 retail T1 (SAVES.md) a script waiting on a timer <mode> ...`), each its own gate job; a process records each game once.
+  `godot --path godot -- --auto --save-test` loads a snapshot save and a log-only save through the screens (prerequisites and isolated folder below).
+- **Measured** (Deck, Release, `openbfme_peer --load-save` in a fresh process, the 4-AI Fall Back game of the `save2 retail T1 (SAVES.md) 4-AI skirmish ...` cases): the
   11-minute save (frame 3,301, a 4,240,033-byte snapshot) loads from its snapshot in 100 ms; the same save caught up from its log (the earlier
   alphas' path, `--verify-log`) takes 27.8 s. The Angmar mission at frame 151: 385 ms from the snapshot, 4.5 s caught up. The in-process load of a
   1.8 MB snapshot (frame 601): 114 ms. Through the screens (`--save-test`, a CI host): 32 ms for a skirmish at frame 150, 141 ms for the mission.
@@ -978,7 +1048,7 @@ and T3 (Linux and Windows bytes equal) gate it.
     over the same game (its frame and state hash) with the refusal (`--save-test` loads a hostile save over a running game). A game that cannot be
     kept (its own snapshot refused) is not left: the load stops before the saved game is prepared and the page shows why (review r2;
     `tools/save/test_save_flow.py`).
-  - *Closed sets.* `tools/save/closed_sets.py` lists every integer and mask transfer of the snapshot code (988) and puts each in a class: closed (a
+  - *Closed sets.* `tools/save/closed_sets.py` lists every integer and mask transfer of the snapshot code (988 in review r2) and puts each in a class: closed (a
     mask, flag set, enum, index, player, side, team, rank by name) and ids need their check after the transfer in the same function, object
     references (`xferObjectID`, the id list helpers) are looked up when used (S-5014), the open ones (frames, counters, quantities) are named by rule,
     and every other one (a name of an open and a closed word both among them) has an entry in `tools/save/closed_sets.json` with its reason or the
@@ -999,3 +1069,47 @@ and T3 (Linux and Windows bytes equal) gate it.
 - **War of the Ring battles:** not supported by this build (no War of the Ring battle start), so not in T1.
 - **Stops:** S-5010 .. S-5014.
 
+### BFME2CAMP1: the campaign, tutorial and rebuild-hole state (lane BFME2CAMP1, PR #137)
+
+Every new field is versioned, and a block writes its new version only when the state it adds exists: games without that state keep their old bytes and hashes. Every older version loads, with the new field at its default.
+
+| Where | Block / class | Version | Field (type) | An older save loads with |
+|---|---|---|---|---|
+| Save header (`SaveGameFile`) | header | 4 | `campaignCarryover` (string: `CampaignCarryover::State::serialize`, "" for none); refused in a skirmish save or when it does not parse | versions 1 to 3: "" (no carry-over step at the mission's start) |
+| `GameLogicSnapshot.cpp` | obfme:GameLogic | 3 (written with a buildability override or a carry-over state) | the script buildability overrides (count; each: template name string, status int 0..3); the campaign carry-over state (bool present; the serialized state string) | versions 1 and 2: no overrides, no carry-over state |
+| `Object.cpp` | Object | 2 | the campaign carry-over bit (bool, Object + 0x458 bit 4) | version 1: false |
+| `Team.cpp` | the team prototypes | 2 (written when a prototype names an attack priority set) | each prototype's attack priority set name (string) | version 1: no name |
+| `ScriptEngineXfer.cpp` | the script engine | 5 (always: CASTLEAREA-1's run-time trigger list extent at 4, MODCOMPAT-AI's completed upgrades at 5), 6 (written once a script edited the attack priorities) | the attack priority sets (bool; count; each: name string, default int, the template priorities as name / int pairs) | versions 2 and 3: the table as the map's INI made it |
+| `AIUpdateSnapshot.cpp` | AIUpdateInterface | 3 (an area guard or an attack info override), 4 (a team guard) | v3: the area to guard (int, checked against the map's areas), the attack info override (bool + name string); v4: the team to guard (team id) | versions 1 and 2: no area, no override; version 3: no team |
+| `AIUpdateSnapshot.cpp` | DozerAIUpdate | 3 | the rebuild flag (bool, + 0x4D0) | versions 1 and 2: false |
+| `AIStateMachineSnapshot.cpp` | the AI state machine | 2 (written with a goal squad) | the goal squad (bool; the member ids) | version 1: no squad |
+| `AIGuard.cpp` | the guard machine | 2 (an area guard), 3 (a team guard) | v2: the area (int, checked), its centre (coord) and centre flag (bool), the last area scan frame (uint); v3: the guarded team (team id) | version 1: no area; version 2: no team |
+| `RebuildHoleModules.cpp` | RebuildHoleExposeDie | 1 | the die module's part only | new class: an older save has none |
+| `RebuildHoleModules.cpp` | RebuildHoleBehavior | 1 (retail version 3's field order, RW 0x886669) | the update module's part; the worker, rebuilt structure and spawner ids (object ids); the frames to wait (uint); the worker and rebuild templates (name strings, a missing one refuses the load); the spawner's active flag (bool); its paid cost (real) | new class: an older save has none |
+
+The headless check (`openbfme_peer --load-save`) starts a campaign mission's save the way a real load does: the header's carry-over (or, for a first mission without one, the campaign's fresh records) and the mission's delayed list.
+
+### Developer commands (current implementation)
+
+Linux / POSIX shell, from the repository root: the screen test needs a built
+GDExtension in `godot/bin/`, Godot 4.7 on `PATH`, a graphical session, and
+`ROTWK_INSTALL` / `BFME2_INSTALL` pointing to the retail installs. It writes
+and deletes test saves; use an isolated folder, not an existing Save folder.
+This is a UI test, not a headless unit test.
+
+```sh
+godot --path godot -- --auto --save-test --save-dir="$(pwd)/workspace/save-tests"
+```
+
+Linux / POSIX shell, from the repository root: the headless continuation
+check needs the matching build's `engine/build/openbfme_peer`, the two install
+variables above, a same-engine-id `.obfmesave` and the uninterrupted game's
+full `.replay` recording. Keep those inputs under ignored `workspace/`.
+`--verify-log` forces log catch-up and compares the snapshot at F; omit it
+to exercise direct snapshot loading. The peer then plays the remaining replay
+commands and checks their hashes. On Windows use the Windows build's `.exe`
+and native paths instead; the command below is the Linux form.
+
+```sh
+engine/build/openbfme_peer --load-save workspace/saved.obfmesave --replay workspace/full.replay --verify-log --report workspace/save-check.txt
+```

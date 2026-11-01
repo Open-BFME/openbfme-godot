@@ -9,3 +9,5 @@
 # the online service's deploy and operations (the owner's decision: the backend's deploy stays private)
 services/online/deploy
 services/online/DEPLOY.md
+# its bundle test drives services/online/deploy/vps_relay.sh, which the public tree leaves out
+tools/net/test_vps_relay_bundle.py

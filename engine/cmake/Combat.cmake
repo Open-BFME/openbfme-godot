@@ -4,6 +4,7 @@
 set(OPENBFME_COMBAT_SOURCES
     src/GameLogic/Combat/CombatNames.cpp
     src/GameLogic/Combat/CombatQueries.cpp
+    src/GameLogic/Combat/CombatLineOfSight.cpp
     src/GameLogic/Combat/CombatState.cpp
     src/GameLogic/Combat/TargetFinder.cpp
     src/GameLogic/AI/AIClosestEnemy.cpp
@@ -21,8 +22,10 @@ set(OPENBFME_COMBAT_SOURCES
 set(OPENBFME_COMBAT_TESTS
     tests/test_combat_weapons.cpp
     tests/test_combat_damage.cpp
+    tests/test_killsrc1.cpp
     tests/test_combat_ai.cpp
     tests/test_target1_acquire.cpp
+    tests/test_los1_terrain.cpp
     tests/test_combat_horde.cpp
     tests/test_archer_spread.cpp
     tests/test_archer_spread_retail.cpp

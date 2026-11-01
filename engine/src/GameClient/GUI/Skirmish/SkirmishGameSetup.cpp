@@ -3,6 +3,8 @@
 // See GameClient/GUI/Skirmish/SkirmishGameSetup.h.
 
 #include "GameClient/GUI/Skirmish/SkirmishGameSetup.h"
+#include "GameClient/LocalizedText.h"
+#include "Common/ExtendedPlayerColors.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -42,21 +44,7 @@ std::string lowerAscii(std::string s)
 // UnicodeString::format with one %d (the only format the lobby texts use: GUI:TooManyPlayers, GUI:StartingMoneyFormat)
 std::u16string formatInt(const std::u16string &format, int value)
 {
-	std::u16string out;
-	for (std::size_t i = 0; i < format.size(); ++i)
-	{
-		if (format[i] == u'%' && i + 1 < format.size() && format[i + 1] == u'd')
-		{
-			const std::string number = std::to_string(value);
-			out.append(number.begin(), number.end());
-			++i;
-		}
-		else
-		{
-			out.push_back(format[i]);
-		}
-	}
-	return out;
+	return LocalizedText::format(format, { value });
 }
 } // namespace
 
@@ -146,6 +134,7 @@ bool SkirmishGameSetup::init(const std::u16string &userName, std::uint32_t seed,
 	m_info.startingCash = -1;
 	m_info.rules = MpGameRules::defaults(rulesMode());
 	m_info.legendaryHeroes = LegendaryHeroes::kOff;
+	m_info.cheatMode = -1; // lane CHEAT-1: every new setup starts without Cheat Mode (never kept with the profile's last game)
 	m_info.simulationProfile = m_simulationProfile; // lane UBER-1: the player's option, not a rule: a reset keeps it
 	m_info.seed = seed;
 	setSlotStateInternal(m_info.slots[0], SLOT_PLAYER, userName);
@@ -203,6 +192,7 @@ bool SkirmishGameSetup::restoreSaved(const SkirmishGameInfo &saved, const std::s
 	info.rules = saved.rules;
 	info.seed = seed;
 	info.mapName = md->name;
+	info.mapStartCount = md->numPlayers > LEGACY_MAX_SLOTS ? md->numPlayers : LEGACY_MAX_SLOTS;
 	info.mapCRC = md->fileCRC;
 	info.mapSize = md->fileSize;
 	info.mapMask = m_source.mapContentsMask(*md);
@@ -247,6 +237,7 @@ bool SkirmishGameSetup::setMap(const std::string &mapName)
 		return false;
 	}
 	m_info.mapName = md->name;
+	m_info.mapStartCount = md->numPlayers > LEGACY_MAX_SLOTS ? md->numPlayers : LEGACY_MAX_SLOTS;
 	m_info.mapCRC = md->fileCRC;
 	m_info.mapSize = md->fileSize;
 	m_info.mapMask = m_source.mapContentsMask(*md);
@@ -299,24 +290,31 @@ std::vector<SkirmishComboEntry> SkirmishGameSetup::templateEntries() const
 std::vector<SkirmishComboEntry> SkirmishGameSetup::colorEntries(int slot) const
 {
 	const std::vector<SkirmishColor> &colors = m_source.colors();
-	std::vector<bool> available(colors.size(), true);
+	const int colorCount = ExtendedPlayerColors::count((int)colors.size(), m_info.mapStartCount);
+	std::vector<bool> available((size_t)colorCount, true);
 	for (int i = 0; i < MAX_SLOTS; ++i)
 	{
 		const int c = m_info.slots[i].color;
-		if (i != slot && c >= 0 && c < (int)colors.size())
+		if (i != slot && c >= 0 && c < colorCount)
 		{
 			available[(std::size_t)c] = false;
 		}
 	}
 	std::vector<SkirmishComboEntry> out;
 	out.push_back({ label("GUI:???"), 0xFFFFFFFFu, -1, "AptRandomColor" });
-	for (int c = 0; c < (int)colors.size(); ++c)
+	for (int c = 0; c < colorCount; ++c)
 	{
-		if (!available[(std::size_t)c] || (m_strategic && !colors[(std::size_t)c].availableInWotR))
+		const auto *extra = ExtendedPlayerColors::find(c, (int)colors.size(), m_info.mapStartCount);
+		if (!available[(std::size_t)c] || (m_strategic && !extra && !colors[(std::size_t)c].availableInWotR))
 		{
 			continue;
 		}
-		out.push_back({ label(colors[(std::size_t)c].tooltipName), 0xFF000000u | colors[(std::size_t)c].rgb, c, "AptWhiteBox" });
+		if (extra)
+		{
+			const std::string name(extra->name);
+			out.push_back({ std::u16string(name.begin(), name.end()), 0xFF000000u | extra->rgb, c, "AptWhiteBox" });
+		}
+		else out.push_back({ label(colors[(std::size_t)c].tooltipName), 0xFF000000u | colors[(std::size_t)c].rgb, c, "AptWhiteBox" });
 	}
 	return out;
 }
@@ -325,9 +323,13 @@ std::vector<SkirmishComboEntry> SkirmishGameSetup::teamEntries() const
 {
 	std::vector<SkirmishComboEntry> out;
 	out.push_back({ label("Team:0"), 0xFFFFFFFFu, -1 });
-	for (int c = 0; c < MAX_SLOTS / 2; ++c)
+	const MapCacheEntry *map = findMap(m_info.mapName);
+	const int teamCount = map && map->numPlayers > LEGACY_MAX_SLOTS ? MAX_SLOTS / 2 : LEGACY_MAX_SLOTS / 2;
+	for (int c = 0; c < teamCount; ++c)
 	{
-		out.push_back({ label("Team:" + std::to_string(c + 1)), 0xFFFFFFFFu, c });
+		const std::string number = std::to_string(c + 1);
+		const std::u16string text = c < LEGACY_MAX_SLOTS / 2 ? label("Team:" + number) : std::u16string(number.begin(), number.end());
+		out.push_back({ text, 0xFFFFFFFFu, c });
 	}
 	return out;
 }
@@ -520,7 +522,7 @@ std::vector<SkirmishComboEntry> SkirmishGameSetup::startingCashEntries() const
 
 bool SkirmishGameSetup::setSlotState(int slot, SlotState state, const std::u16string &title)
 {
-	if (slot <= 0 || slot >= MAX_SLOTS)
+	if (slot <= 0 || slot >= MAX_SLOTS || slot >= m_info.mapStartCount || state < SLOT_OPEN || state > SLOT_PLAYER)
 	{
 		return false; // handlePlayerSelection: index == 0 || index >= MAX_SLOTS
 	}
@@ -530,7 +532,8 @@ bool SkirmishGameSetup::setSlotState(int slot, SlotState state, const std::u16st
 
 bool SkirmishGameSetup::setSlotColor(int slot, int color)
 {
-	if (slot < 0 || slot >= MAX_SLOTS)
+	if (slot < 0 || slot >= MAX_SLOTS || slot >= m_info.mapStartCount ||
+		color < -1 || color >= ExtendedPlayerColors::count((int)m_source.colors().size(), m_info.mapStartCount))
 	{
 		return false;
 	}
@@ -539,16 +542,13 @@ bool SkirmishGameSetup::setSlotColor(int slot, int color)
 	{
 		return true;
 	}
-	if (color >= -1 && color < (int)m_source.colors().size())
+	if (color != -1)
 	{
-		if (color != -1)
+		for (int i = 0; i < MAX_SLOTS; ++i)
 		{
-			for (int i = 0; i < MAX_SLOTS; ++i)
+			if (i != slot && m_info.slots[i].color == color)
 			{
-				if (i != slot && m_info.slots[i].color == color)
-				{
-					return false;
-				}
+				return false;
 			}
 		}
 	}
@@ -558,7 +558,7 @@ bool SkirmishGameSetup::setSlotColor(int slot, int color)
 
 bool SkirmishGameSetup::setSlotTemplate(int slot, int playerTemplate)
 {
-	if (slot < 0 || slot >= MAX_SLOTS)
+	if (slot < 0 || slot >= MAX_SLOTS || slot >= m_info.mapStartCount)
 	{
 		return false;
 	}
@@ -568,7 +568,7 @@ bool SkirmishGameSetup::setSlotTemplate(int slot, int playerTemplate)
 
 bool SkirmishGameSetup::setSlotTeam(int slot, int team)
 {
-	if (slot < 0 || slot >= MAX_SLOTS)
+	if (slot < 0 || slot >= MAX_SLOTS || slot >= m_info.mapStartCount)
 	{
 		return false;
 	}
@@ -588,7 +588,7 @@ bool SkirmishGameSetup::setSlotHandicap(int slot, int handicap)
 
 bool SkirmishGameSetup::setSlotCreateAHero(int slot, const CreateAHeroHero *hero, std::string *error)
 {
-	if (slot < 0 || slot >= MAX_SLOTS)
+	if (slot < 0 || slot >= MAX_SLOTS || slot >= m_info.mapStartCount)
 	{
 		return false;
 	}
@@ -610,7 +610,11 @@ bool SkirmishGameSetup::setSlotCreateAHero(int slot, const CreateAHeroHero *hero
 
 bool SkirmishGameSetup::setSlotStartPos(int slot, int position)
 {
-	if (slot < 0 || slot >= MAX_SLOTS)
+	const MapCacheEntry *map = findMap(m_info.mapName);
+	// lane WOTR-2: the strategic lobby's position is a region index of the scenario's region campaign (the screen checks it against the map preview's
+	// regions, RW 0x97572C), not a spot of the lobby's map
+	const bool spotOk = m_strategic || (map && position < map->numPlayers);
+	if (slot < 0 || slot >= MAX_SLOTS || slot >= m_info.mapStartCount || position < -1 || !spotOk)
 	{
 		return false;
 	}
@@ -648,7 +652,10 @@ void SkirmishGameSetup::setStrategicMode(bool strategic)
 		return;
 	}
 	m_strategic = strategic;
+	m_info.gameMode = strategic ? 1 : 0; // WOTR2 milestone 8: GT (+ 0x5C); the scenario follows (setWarScenario)
+	m_info.scenario.clear();
 	m_info.rules = MpGameRules::defaults(rulesMode());
+	m_info.cheatMode = -1; // lane CHEAT-1: Cheat Mode is a mode 0 rule
 }
 
 std::u16string SkirmishGameSetup::ruleName(int rule) const
@@ -691,6 +698,22 @@ void SkirmishGameSetup::resetRules()
 {
 	m_info.rules = MpGameRules::defaults(rulesMode());
 	m_info.legendaryHeroes = LegendaryHeroes::kOff;
+	m_info.cheatMode = -1; // lane CHEAT-1
+}
+
+bool SkirmishGameSetup::setCheatMode(bool on)
+{
+	if (!on)
+	{
+		m_info.cheatMode = -1;
+		return true;
+	}
+	if (rulesMode() != RULES_MODE_SKIRMISH || m_localSlot < 0 || m_localSlot >= MAX_SLOTS || !m_info.slots[m_localSlot].isHuman())
+	{
+		return false;
+	}
+	m_info.cheatMode = m_localSlot;
+	return true;
 }
 
 bool SkirmishGameSetup::setLegendaryHeroes(int factor)
@@ -735,19 +758,14 @@ SkirmishGameSetup::StartCheck SkirmishGameSetup::checkStart(int flags, bool will
 	};
 	const bool wotr = m_strategic; // MpGameSetup + 0x7C == 1
 	const MapCacheEntry *md = findMap(m_info.mapName);
-	// RW 0x843245 .. 0x843276: the maximum (RW 0x9758E3: the map's player count, 0 without the map; above 8 the constant 8 at RW 0xC53F2C) and the minimum
-	// (RW 0x97597F: 0 outside the War of the Ring; its scenario's minimum is not ported, stop S-3610)
-	int maxPlayers = md ? (int)md->numPlayers : 0;
-	if (maxPlayers >= 9)
+	// RW 0x843245 .. 0x843276: the maximum (RW 0x9758E3: in the War of the Ring the scenario's MaxPlayers (+ 0x10), else the map's player count; 0
+	// without either; above 8 the constant 8 at RW 0xC53F2C) and the minimum (RW 0x97597F: the scenario's MinPlayers (+ 0x14), 0 outside the War of the Ring)
+	int maxPlayers = wotr ? (m_haveScenario ? m_scenario.maxPlayers : 0) : (md ? (int)md->numPlayers : 0);
+	if (maxPlayers > MAX_SLOTS)
 	{
 		maxPlayers = MAX_SLOTS;
 	}
-	const int minPlayers = 0;
-	if (wotr)
-	{
-		r.stops.push_back("[S-3610] start check: the War of the Ring scenario's player limits (RW 0x9758E3 / 0x97597F) and faction test (GUI:DisabledFaction, RW 0x843447) are not "
-						  "ported: the map's player count stands in and every faction passes");
-	}
+	const int minPlayers = wotr && m_haveScenario ? m_scenario.minPlayers : 0;
 	if (maxPlayers < 1 || maxPlayers < minPlayers)
 	{
 		return refuse("", std::u16string(), {}); // RW 0x843263: no text, the start simply does not happen
@@ -756,7 +774,7 @@ SkirmishGameSetup::StartCheck SkirmishGameSetup::checkStart(int flags, bool will
 	{
 		return refuse("LAN:NoMapSelected", label("LAN:NoMapSelected"), { 1 }); // RW 0x8438D3 (unreachable: no map gives no maximum)
 	}
-	bool allHaveMap = true, allAccepted = true, allSpots = true;
+	bool allHaveMap = true, allAccepted = true, allSpots = true, disabledFaction = false;
 	int numUsers = 0, numHumans = 0, numRandom = 0, numMissingClan = 0;
 	std::set<int> teams;
 	for (int i = 0; i < MAX_SLOTS; ++i)
@@ -806,7 +824,20 @@ SkirmishGameSetup::StartCheck SkirmishGameSetup::checkStart(int flags, bool will
 			{
 				teams.insert(slot.teamNumber);
 			}
-			// RW 0x843447 .. 0x843495: the War of the Ring scenario's faction test (GUI:DisabledFaction) is not ported (S-3610)
+			// RW 0x843447 .. 0x843495 (lane WOTR-2): the War of the Ring scenario's faction test, when the scenario lists DisabledFactions (RW 0x9012D7): a
+			// random faction (+ 0x18 < 0) is disabled, a chosen one when its PlayerTemplate name is in the list (RW 0x90182D: StringBase::compare, exact)
+			if (wotr && m_haveScenario && !m_scenario.disabledFactions.empty())
+			{
+				if (slot.playerTemplate < 0)
+				{
+					disabledFaction = true;
+				}
+				else
+				{
+					const SkirmishFaction *f = faction(slot.playerTemplate);
+					disabledFaction |= f && std::find(m_scenario.disabledFactions.begin(), m_scenario.disabledFactions.end(), f->templateName) != m_scenario.disabledFactions.end();
+				}
+			}
 			if (slot.startPos == -1)
 			{
 				allSpots = false;
@@ -836,9 +867,13 @@ SkirmishGameSetup::StartCheck SkirmishGameSetup::checkStart(int flags, bool will
 	{
 		return refuse("GUI:NeedHumanPlayers", label("GUI:NeedHumanPlayers"), { 1 });
 	}
+	if (wotr && disabledFaction)
+	{
+		return refuse("GUI:DisabledFaction", label("GUI:DisabledFaction"), { 1, 2 }); // RW 0x8435D9 (lane WOTR-2)
+	}
 	if (wotr && !allSpots)
 	{
-		return refuse("GUI:NeedStartSpots", label("GUI:NeedStartSpots"), { 1, 2 }); // RW 0x8435F9 (GUI:DisabledFaction before it, RW 0x8435D9: S-3610)
+		return refuse("GUI:NeedStartSpots", label("GUI:NeedStartSpots"), { 1, 2 }); // RW 0x8435F9
 	}
 	if (numUsers < globalMinPlayers)
 	{

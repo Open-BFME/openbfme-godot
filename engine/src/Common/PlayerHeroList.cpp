@@ -49,7 +49,7 @@ HeroRecord *PlayerHeroList::findByProductionID(std::uint32_t id)
 
 // RW 0x781801 -> RW 0x780713: a purchase record of the template (+ 0x0C from RW 0x73CE2A, see the header; INFERENCE: 1, because no create module class
 // that answers RW 0x73CE2A's vslot 0x24 is ported (S-852))
-void PlayerHeroList::addPurchase(const ThingTemplate &tt)
+HeroRecord PlayerHeroList::recordFromTemplate(const ThingTemplate &tt)
 {
 	HeroRecord r;
 	r.cost = BuildAssistant::buildCost(tt);                                // RW 0x780742: (u16) template + 0x5EA
@@ -57,7 +57,12 @@ void PlayerHeroList::addPurchase(const ThingTemplate &tt)
 	r.rank = 1;
 	r.productionID = 0;                                                    // RW 0x780780: + 0xB4 = 0
 	r.templateName = tt.getName();
-	m_records.push_back(r);
+	return r;
+}
+
+void PlayerHeroList::addPurchase(const ThingTemplate &tt)
+{
+	m_records.push_back(recordFromTemplate(tt));
 }
 
 int PlayerHeroList::addRecord(const HeroRecord &r)
@@ -247,8 +252,9 @@ void PlayerHeroList::crc(StateHasher &h) const
 		h.addFloat(r.experience);
 		h.addI32(r.rank);
 		h.addI32(r.baseRank);
-		for (std::uint32_t w : r.upgradeMask.words)
+		for (unsigned i = 0; i < UpgradeMaskType::activeWords(); ++i) // lane MODS-3: retail's 0x24 words unless the data has more upgrades
 		{
+			const std::uint32_t w = r.upgradeMask.words[i];
 			h.addU32(w);
 		}
 		h.addU32(r.cost);
@@ -272,15 +278,15 @@ void PlayerHeroList::xfer(Xfer &x)
 	x.xferVersion(v);
 	// a record's fixed bytes: experience, rank, base rank, the upgrade mask (0x24 words), cost, start frame, seconds, two flags, production id, level
 	// cap, UI factor, two empty names
-	x.xferVectorSize(m_records, 4 + 4 + 4 + 4 * UpgradeMaskType::WORDS + 4 + 4 + 4 + 1 + 1 + 4 + 4 + 4 + 1 + 1);
+	x.xferVectorSize(m_records, 4 + 4 + 4 + 4 * UpgradeMaskType::activeWords() + 4 + 4 + 4 + 1 + 1 + 4 + 4 + 4 + 1 + 1); // lane MODS-3: activeWords
 	for (HeroRecord &r : m_records)
 	{
 		x.xferReal(&r.experience);
 		x.xferInt(&r.rank);
 		x.xferInt(&r.baseRank);
-		for (std::uint32_t &w : r.upgradeMask.words)
+		for (unsigned i = 0; i < UpgradeMaskType::activeWords(); ++i)
 		{
-			x.xferUnsignedInt(&w);
+			x.xferUnsignedInt(&r.upgradeMask.words[i]);
 		}
 		if (x.isLoading())
 		{

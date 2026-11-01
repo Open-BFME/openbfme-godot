@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0. Straightforward implementation of RFC 1321.
 
 #include "Common/MD5.h"
+#include "Common/PathIO.h"
 
 #include <cstring>
 #include <filesystem>
@@ -127,7 +128,7 @@ std::string MD5::ofBytes(const void *data, size_t size)
 
 std::string MD5::ofFile(const std::string &path, std::string *error)
 {
-	std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
+	std::ifstream in(PathIO::native(path), std::ios::binary);
 	if (!in.is_open())
 	{
 		if (error)

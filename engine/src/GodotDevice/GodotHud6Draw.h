@@ -55,6 +55,7 @@ private:
 	AptMenuPlayer *m_player;
 	std::unique_ptr<FontMetricsSource> m_metrics;
 	RID m_messageItem;
+	float m_messageTop = 0;
 	RID m_radialItem, m_grayItem, m_iconItem;
 	Ref<Shader> m_grayShader, m_iconShader;
 	Ref<ShaderMaterial> m_grayMaterial, m_iconMaterial;

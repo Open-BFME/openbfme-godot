@@ -325,7 +325,7 @@ int ScoreKeeper::timeTakenScore(const GameLogicSettings &settings, unsigned fram
 }
 
 // RW 0x79DFFA
-int ScoreKeeper::computeScore(const GameLogicSettings &settings, unsigned frame) const
+int ScoreKeeper::computeScore(const GameLogicSettings &settings, unsigned frame, int completedObjectives) const
 {
 	const GameLogicSettings::ScoreMultipliers &m = settings.score;
 	using SimMath::sseFromInt32;
@@ -339,7 +339,7 @@ int ScoreKeeper::computeScore(const GameLogicSettings &settings, unsigned frame)
 	s = term(s, 0, m.heroesVetted); // + 0xD0 (S-1061)
 	s = term(s, 0, m.unitsVetted);  // + 0xD4
 	s = term(s, (std::int32_t)m_purchasePointsEarned, m.powerPoints);
-	s = term(s, 0, m.objectivesCompleted); // RW 0x79DE90: no objective list in a skirmish (S-1061)
+	s = term(s, completedObjectives, m.objectivesCompleted); // RW 0x79DE90 (lane CAMPUI-1): the completed shown bonus objectives
 	s += timeTakenScore(settings, m_endFrame != 0 ? m_endFrame : frame);
 	for (int i = 0; i < MAX_PLAYERS; ++i)
 	{

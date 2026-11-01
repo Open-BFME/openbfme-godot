@@ -121,6 +121,7 @@ enum CommandOption : std::uint32_t
 	COMMAND_OPTION_NEED_UPGRADE = 0x40,
 	COMMAND_OPTION_CONTEXTMODE_COMMAND = 0x200,
 	COMMAND_OPTION_NOT_QUEUEABLE = 0x10000,
+	COMMAND_OPTION_OK_FOR_MULTI_EXECUTE = 0x100000,      ///< lane HEROCAST-1: index 20 (RW 0xDA4C88); AIGroup's groupDoSpecialPower / _AT_OBJECT: every member
 	COMMAND_OPTION_ALLOW_ROCK_TARGET = 0x200000,         ///< lane HUD-5: index 21 (RW 0xDA4C88)
 	COMMAND_OPTION_TOGGLE_IMAGE_ON_WEAPONSET = 0x1000000, ///< lane HUD-4: index 24
 	COMMAND_OPTION_MOUNTED_ONLY = 0x4000000,              ///< lane FACT-A: index 26
@@ -169,6 +170,7 @@ public:
 	bool m_isClickable = true, m_showButton = true, m_requiresValidContainer = false; ///< +0x105 .. +0x107
 	int m_requireLevel = 0;                   ///< +0x108
 	bool m_autoAbility = false;               ///< +0x10C
+	bool m_queueIgnoreCP = false;             ///< +0x10D QueueIgnoreCP: only with the mod engine feature edain-unchained.queue-ignore-cp (lane MODS-3; not a retail field)
 	KindOfMaskType m_affectsKindOf{};         ///< +0x110
 	bool m_triggerWhenReady = false;          ///< +0x12C
 	float m_presetRange = 0.0f, m_autoDelay = 0.0f; ///< +0x130 / +0x134
@@ -195,25 +197,29 @@ class CommandSet
 public:
 	enum
 	{
-		MAX_BUTTONS = 33 ///< RW 0xC4F3D8: keys "1" .. "33"
+		MAX_BUTTONS = 33, ///< RW 0xC4F3D8: keys "1" .. "33" (and the slot scans of retail, which Edain Unchained's game.dat leaves at 33)
+		STORAGE = 64      ///< lane MODS-3: edain-unchained.commandset-limit's 64 slots (its .cmdext table 0xED4000); slots >= slotCapacity() stay null
 	};
+	// lane MODS-3: the slots a set takes: 33, or 64 under edain-unchained.commandset-limit (its CommandSet 0xA0 -> 0x11C, the bound 0x21 -> 0x40 in
+	// RW 0x80C8D2 / 0x80C8EF / 0x80C949 / 0x794F38 and the populate trim)
+	static int slotCapacity();
 	CommandSet() = default;
 
 	std::string m_name;
 	CommandSet *m_nextOverride = nullptr; ///< RW +4
 	bool m_isOverride = false;            ///< RW +8
 	int m_marker = -1;                    ///< RW +0xC
-	std::array<const CommandButton *, MAX_BUTTONS> m_command{}; ///< RW +0x14: the FINAL OVERRIDE button at parse time
-	int m_initialVisible = MAX_BUTTONS;   ///< RW +0x98
+	std::array<const CommandButton *, STORAGE> m_command{}; ///< RW +0x14: the FINAL OVERRIDE button at parse time
+	int m_initialVisible = slotCapacity(); ///< RW +0x98 (RW 0x80C949: 33; Edain Unchained's ctor: 64)
 
 	const std::string &getName() const { return m_name; }
 	// RW 0x80C837 without the GameLogic control bar override hook (RW 0x62FF03, not ported); null for an out of range index
-	const CommandButton *getCommandButton(int i) const { return i >= 0 && i < MAX_BUTTONS ? m_command[(size_t)i] : nullptr; }
+	const CommandButton *getCommandButton(int i) const { return i >= 0 && i < STORAGE ? m_command[(size_t)i] : nullptr; }
 	// lane HERO-2: a dynamic set (+0x9C = 1, the Create-a-Hero per-rank sets) takes buttons at run time (RW 0x80C8EF: an index below 33; + 0x98 grows to it)
 	bool m_dynamic = false; ///< RW +0x9C
 	void setDynamicButton(int i, const CommandButton *b)
 	{
-		if (m_dynamic && i >= 0 && i < MAX_BUTTONS)
+		if (m_dynamic && i >= 0 && i < slotCapacity())
 		{
 			m_command[(size_t)i] = b;
 			if (i + 1 > m_initialVisible)
@@ -258,6 +264,15 @@ public:
 	// it), with no button and 0 visible
 	CommandSet *newDynamicCommandSet(const std::string &name);
 
+	// lane MODS-3, edain-unchained.commandset-button-upgrade (its rebuild 0xEDB169 / apply 0xEDB3B8): the set named
+	// "<base>+<list>[+<list>...]", each list the CommandButtons of one active CommandSetUpgrade, "Name[:N] Name[:N] ...". An existing set of that
+	// name is returned (Edain caches every merged set forever by name); else a dynamic set takes base's slots 0 .. 63 (RW 0x80C837 -> 0x80C8EF) then
+	// each list in order: Name:N puts the button in the 0-based slot N (overwriting; N >= the capacity is ignored by RW 0x80C8EF), Name alone the first
+	// empty slot (none: dropped); a name that is no CommandButton is skipped, as Edain does, and named in mergeNotes(). Its count (InitialVisible)
+	// is the highest slot + 1 (RW 0x80C8D2 then 0x80C8EF), not the base's.
+	const CommandSet *mergedCommandSet(const std::string &name);
+	const std::vector<std::string> &mergeNotes() const { return m_mergeNotes; }
+
 	// the acceptance stops of this store as report lines ("[S-200] ...")
 	static std::vector<std::string> acceptanceStops();
 
@@ -280,6 +295,7 @@ private:
 	std::deque<std::unique_ptr<CommandSet>> m_setOverrides;
 	std::vector<std::unique_ptr<CommandButton>> m_deadButtons;    ///< RW ControlBar + 0x244
 	std::vector<std::unique_ptr<CommandSet>> m_deadSets;          ///< RW ControlBar + 0x238
+	std::vector<std::string> m_mergeNotes;                        ///< lane MODS-3: the skipped names of mergedCommandSet
 };
 
 extern thread_local CommandStore *TheCommandStore; ///< RW 0xDE7744 is TheControlBar; this is the command part of it

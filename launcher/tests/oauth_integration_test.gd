@@ -4,6 +4,22 @@ const OAuthAccount := preload("res://scripts/core/oauth_account.gd")
 const SocialClient := preload("res://scripts/net/social_client.gd")
 const MultiplayerScreen := preload("res://scripts/ui/multiplayer_screen.gd")
 
+class RecoveryProbe extends Node:
+	signal recovery_ready(code: String)
+	signal action_done(kind: String, ok: bool)
+	var busy := true
+	var me := {"pid": "synthetic-player"}
+	var calls := 0
+	func is_signed_in() -> bool:
+		return true
+	func create_recovery() -> void:
+		calls += 1
+		if busy:
+			action_done.emit("recovery", false)
+			return
+		recovery_ready.emit("ABCDEFGHJKMNPQRS")
+		action_done.emit("recovery", true)
+
 var lobby_origin := ""
 var control_origin := ""
 var install_root := ""
@@ -258,15 +274,44 @@ func _deny_restore(provider: String, baseline_token: String, expected: Dictionar
 	return unchanged_ok
 
 
-func _make_recovery() -> bool:
+func _make_recovery(client: Node) -> bool:
+	# Friend seeding can start an inbox-driven friends refresh on this client.
+	if not await _wait_social(client):
+		return false
 	var code: Array[String] = [""]
+	var action := {"done": false, "ok": false}
 	var take := func(value: String) -> void: code[0] = value
-	_client.recovery_ready.connect(take)
-	_client.create_recovery()
-	var made := await _wait_for(func() -> bool: return code[0] != "" and not _client.busy, "recovery code made before linking")
-	_client.recovery_ready.disconnect(take)
+	var finished := func(kind: String, ok: bool) -> void:
+		if kind == "recovery":
+			action.done = true
+			action.ok = ok
+	client.recovery_ready.connect(take)
+	client.action_done.connect(finished)
+	client.create_recovery()
+	var completed := await _wait_for(func() -> bool: return action.done, "recovery action completed before linking")
+	client.recovery_ready.disconnect(take)
+	client.action_done.disconnect(finished)
+	var made: bool = completed and action.ok and code[0] != "" and not client.busy
+	_check(made, "recovery code made before linking")
 	_recovery = code[0]
 	return made
+
+
+func _recover_when_ready(client: Node, result: Dictionary) -> void:
+	result.ok = await _make_recovery(client)
+	result.done = true
+
+
+func _check_recovery_ordering() -> void:
+	var probe := RecoveryProbe.new()
+	var result := {"done": false, "ok": false}
+	_recover_when_ready(probe, result)
+	_check(probe.calls == 0 and not result.done, "recovery waits while a friends refresh owns the client")
+	probe.busy = false
+	await _wait_for(func() -> bool: return result.done, "recovery resumed after the refresh")
+	_check(result.ok and probe.calls == 1, "idle client creates exactly one recovery code")
+	probe.free()
+	_recovery = ""
 
 
 func _unlink(provider: String) -> bool:
@@ -286,7 +331,7 @@ func _run_provider(provider: String, install_b: String, install_c: String, with_
 		var friend := await _seed_friend_and_chat()
 		if friend.is_empty():
 			return false
-		if not await _make_recovery():
+		if not await _make_recovery(_client):
 			return false
 		expected = {"pid": _client.me.get("pid", ""), "code": _client.me.get("code", ""), "friend_pid": friend.get("pid", "")}
 		_expected_player = expected.duplicate(true)
@@ -335,6 +380,7 @@ func _run_provider(provider: String, install_b: String, install_c: String, with_
 
 
 func _run() -> void:
+	await _check_recovery_ordering()
 	var supplied := _args()
 	lobby_origin = str(supplied.get("lobby", ""))
 	control_origin = str(supplied.get("control", ""))

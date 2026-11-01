@@ -4,6 +4,7 @@
 #include "GameLogic/Module/AttachUpdate.h"
 #include "GameLogic/Module/AISpecialPowerUpdate.h"
 #include "GameLogic/Module/RepairSpecialPower.h"
+#include "GameLogic/Module/GrabPassengerSpecialPower.h"
 #include "GameLogic/Module/HordeDispatchSpecialPower.h"
 #include "GameLogic/Module/ObjectCreationUpgrade.h"
 #include "GameLogic/Module/SlavedUpdate.h"
@@ -26,6 +27,7 @@
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/HitReactionBehavior.h"
 #include "GameLogic/Module/InvisibilityModules.h"
+#include "GameLogic/Module/PortalModules.h"
 
 #include "Common/Thing/ModuleFactory.h"
 #include "GameClient/MapHordeSpawn.h"
@@ -54,10 +56,14 @@
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Contain/GarrisonContainRuntime.h"
 #include "GameLogic/Object/Contain/TransportContainRuntime.h"
+#include "GameLogic/Module/SiegeModules.h"
+#include "GameLogic/Module/PickupStuffUpdate.h"
+#include "GameLogic/Module/AutoPickUpUpdate.h"
+#include "GameLogic/Module/BoredUpdate.h"
 
 #include <stdexcept>
 
-void LogicModules::registerAll(ModuleFactory &modules, bool bfme1Data)
+void LogicModules::registerAll(ModuleFactory &modules)
 {
 	// Only its S-207 offer is ported; keep the runtime's unported registration.
 	modules.bindTypedData<SpawnUnitBehaviorModuleData>("SpawnUnitBehavior", MODULETYPE_BEHAVIOR);
@@ -90,7 +96,7 @@ void LogicModules::registerAll(ModuleFactory &modules, bool bfme1Data)
 	CombatModules::registerAll(modules);  // lane COMBAT-1: ImmortalBody, HighlanderBody and the die modules
 	ProjectileModules::registerAll(modules); // lane PROJ-1: BezierProjectileBehavior
 	StructureModules::registerAll(modules); // lane COMBAT-2: StructureBody, InactiveBody, StructureCollapseUpdate
-	UpgradeModuleClasses::registerAll(modules, bfme1Data); // lane UPGRADE-1: the upgrade module classes
+	UpgradeModuleClasses::registerAll(modules); // lane UPGRADE-1: the upgrade module classes
 	ObjectCreationUpgrade::registerClass(modules); // lane FACT-A: the object an upgrade makes (the Crystal Moat)
 	ReplaceSelfUpgrade::registerClass(modules);    // lane FACT-A: the wall segment's gates, towers and hubs
 	AttributeModifierPool::registerClass(modules); // lane XP-1: AttributeModifierPoolUpdate (every object's attribute modifier pool)
@@ -104,6 +110,7 @@ void LogicModules::registerAll(ModuleFactory &modules, bool bfme1Data)
 	SpecialAbilityModules::registerAll(modules); // lane HERO-1: the SpecialAbilityUpdate family
 	ExtraModules::registerAll(modules); // lane MODULES-1: the remaining behaviour modules the base game uses
 	GateModules::registerAll(modules); // lane HUD-5: GateOpenAndCloseBehavior, AIGateUpdate
+	PortalModules::registerAll(modules); // lane WALL-2: DynamicPortalBehaviour, FakePathfindPortalBehaviour
 	EmotionModules::registerAll(modules); // lane MODULES-2: EmotionTrackerUpdate, RadiateFearUpdate
 	AreaScanModules::registerAll(modules); // lane MODULES-2: LargeGroupBonusUpdate, PassiveAreaEffectBehavior
 	NotifyCrushModules::registerAll(modules); // lane MODULES-3: (Horde)NotifyTargetsOfImminentProbableCrushingUpdate
@@ -116,10 +123,15 @@ void LogicModules::registerAll(ModuleFactory &modules, bool bfme1Data)
 	AISpecialPowerUpdate::registerClass(modules); // lane MOD-4: the units' own use of their powers (computer players)
 	RepairSpecialPower::registerClass(modules); // lane MOD-4: the builders' repair power
 	HordeDispatchSpecialPower::registerClass(modules); // lane FACT-C: a horde's power passed on to its members
+	GrabPassengerSpecialPower::registerClass(modules); // lane MODCOMPAT-MOD1: the grabs' special power
 	ObjectCreationUpgrade::registerClass(modules); // lane FACT-C: the delayed spawn / grant upgrade (spike moats, wall catapults, the Sanctum's readiness)
 	SpawnBehavior::registerClass(modules); // lane MOD-4: the lairs' spawns
 	TransitionDamageFXModule::registerClass(modules); // lane FX-4: the damage state transition effects (S-686)
 	SlavedUpdate::registerClass(modules); // lane MOD-4: the spawns' guard
+	PickupStuffUpdate::registerModule(modules); // lane MODCOMPAT-MOD1: a skirmish AI's hordes walk to the crates near them (S-1422)
+	AutoPickUpUpdate::registerModule(modules); // lane MODCOMPAT-MOD1: the monsters' grab / eat scans and the WAKE_AUTO_PICKUP button (S-7160)
+	BoredUpdate::registerModule(modules); // lane MODCOMPAT-MOD1: an idle troll clubs a troll friend (S-7161)
 	LargeGroupAudioUpdate::registerClass(modules); // lane AUDIO-4: the logic half of the large group battle sounds
 	ClientBehaviorModules::registerAll(modules); // lane AUDIO-4: the footsteps (a ClientBehavior: the drawables make it, GameClient/)
+	SiegeModules::registerAll(modules); // lane SIEGE-1: SiegeDockingBehavior, SiegeDeploySpecialPower, StopSpecialPower, SiegeAIUpdate (after the AI classes)
 }

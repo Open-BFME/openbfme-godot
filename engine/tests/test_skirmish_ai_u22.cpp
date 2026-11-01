@@ -2,6 +2,7 @@
 // Lane AI-3 (QA-1 follow-up U22): long skirmish games between computer players with an idle human on Tournament Udun (2 v 2). Retail's AI keeps attacking and
 // such games end; the expectations here are outcomes (tactics end, attacks keep coming, the idle human is attacked), never this engine's frame-exact output.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "StartTestUtil.h"
@@ -347,6 +348,7 @@ Object *u22PlaceAt(GameLogic &logic, const char *name, Player *p, float x, float
 	REQUIRE_MESSAGE(o != nullptr, name);
 	Coord3D pos{ x, y, logic.getGroundHeight(x, y) };
 	o->setPosition(&pos);
+	testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	return o;
 }
 } // namespace

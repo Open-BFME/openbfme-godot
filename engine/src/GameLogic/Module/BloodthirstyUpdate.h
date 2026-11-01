@@ -20,17 +20,15 @@ public:
 	std::shared_ptr<ObjectFilter> m_sacrificeFilter;
 	float m_experienceModifier = 1.0f;
 	std::string m_initiateVoice;
-	// BFME1-only data; consuming these fields is unported (S-5017).
-	// Donor: BloodthirstyUpdateModuleDataConstructor.cpp, integer +0x0C = 1.
-	int m_bfme1NumToSacrifice = 1;
-	std::string m_bfme1InitiateVoice2;
+	unsigned m_numToSacrifice = 1;
+	std::string m_initiateVoice2;
 
 	static void buildFieldParse(MultiIniFieldParse &p);
 };
 
 // TARGET FACTS (RotWK 2.01, caveat S-001): canSacrifice RW 0x850DF9, isValidSacrifice RW 0x850E83, addSacrifice RW 0x850EEC, sacrificeHorde
 // RW 0x851080, update RW 0x85123F (read in Ghidra; tier A / B to the byte-matched BFME2 donor
-// Code/GameEngine/Source/GameLogic/Object/Update/BloodthirstyUpdateIfaceChecks.cpp, rva0044E12F .. rva0044E533). MSG_SACRIFICE (1056): the
+// Code/GameEngine/Source/GameLogic/Object/Update/BloodthirstyUpdate.cpp, rva0044E12F .. rva0044E533). MSG_SACRIFICE (1056): the
 // dispatcher gives the selected group's FRONT member's interface the target, source 0 (donor GameLogicDispatch.cpp case 1056 -> AIGroup::rva0036DC6F).
 class BloodthirstyUpdate : public UpdateModule
 {
@@ -41,7 +39,7 @@ public:
 	// paralyzed horde still runs update() (its victim-state cleanup and its 2 s + 1 frame sleep)
 	DisabledMaskType getDisabledTypesToProcess() const override { return (DisabledMaskType)((1u << 3) | (1u << 4)); }
 	void crc(StateHasher &hasher) const override;
-	// OpenBFME native snapshot (S-4190), the crc's fields (retail's xfer, BFME2 BloodthirstyUpdateXfer.cpp: the target, the sacrificer, a counter)
+	// OpenBFME native snapshot (S-4190), the crc's fields (retail's xfer, BFME2 BloodthirstyUpdate.cpp: the target, the sacrificer, a counter)
 	OBFME_MODULE_XFER(BloodthirstyUpdate) // lane SAVE-4b
 
 	static BloodthirstyUpdate *find(Object &object);
@@ -58,6 +56,7 @@ public:
 	void addSacrifice(Object *victim);
 	void cancelSacrifice();
 	const std::string &initiateVoice() const;
+	const std::string &initiateVoice2() const;
 
 	ObjectID bestTargetID() const { return m_bestTargetID; }
 	ObjectID sacrificerID() const { return m_sacrificerID; }

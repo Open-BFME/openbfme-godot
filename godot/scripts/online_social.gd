@@ -42,6 +42,7 @@ func _process(_delta: float) -> void:
 	var online: Dictionary = shell.online_status()
 	if not online.get("signed_in", false):
 		if _started:
+			if not _asking.is_empty(): shell.online_cancel_ask(_asking.key)
 			_started = false
 			_data.clear()
 			_selected = ""
@@ -121,7 +122,8 @@ func _incoming_requests() -> Array:
 
 func _incoming_invites() -> Array:
 	var me: String = _data.get("me", {}).get("pid", "")
-	return _data.get("invites", []).filter(func(i): return i.to.pid == me)
+	var now := int(Time.get_unix_time_from_system())
+	return _data.get("invites", []).filter(func(i): return i.to.pid == me and int(i.expires) > now)
 
 
 ## ONLINEMENU-1 (BATCH-P3 live-lobby check): a lobby without the social service (its /v1/health names no "social"): the Messenger says so,
@@ -296,6 +298,11 @@ func _ask(title: String, text: String, yes: Callable, no := Callable(), invite :
 
 ## one question at a time: the next one goes up once the box is free; an answer runs its action
 func _service_asks() -> void:
+	# Retire before consuming answers: a click can arrive in the same frame as the withdrawal.
+	if not _asking.is_empty() and not str(_asking.invite).is_empty() and not _invite_open(_asking.invite):
+		shell.online_cancel_ask(_asking.key)
+		_asking = {}
+		_notice("The invite is no longer available.")
 	for answer in shell.online_answers():
 		var parts := str(answer).split("|")
 		if _asking.is_empty() or parts.size() != 2 or parts[0] != _asking.key: continue

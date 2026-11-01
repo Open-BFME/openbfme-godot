@@ -2,6 +2,7 @@
 // See Common/LooseFileScan.h.
 
 #include "Common/LooseFileScan.h"
+#include "Common/PathIO.h"
 
 #include <algorithm>
 #include <cctype>
@@ -13,7 +14,7 @@ bool LooseFileScan::findLooseMaps(const std::string &installRoot, std::vector<Lo
 {
 	out.clear();
 	std::error_code ec;
-	stdfs::path root(installRoot);
+	const auto root = PathIO::native(installRoot);
 	if (!stdfs::is_directory(root, ec))
 	{
 		if (error)
@@ -29,7 +30,7 @@ bool LooseFileScan::findLooseMaps(const std::string &installRoot, std::vector<Lo
 		{
 			continue;
 		}
-		std::string ext = it->path().extension().string();
+		std::string ext = it->path().extension().u8string();
 		for (char &c : ext)
 		{
 			c = (char)std::tolower((unsigned char)c);
@@ -39,7 +40,7 @@ bool LooseFileScan::findLooseMaps(const std::string &installRoot, std::vector<Lo
 			continue;
 		}
 		LooseFile f;
-		f.relativePath = stdfs::relative(it->path(), root, ec).generic_string();
+		f.relativePath = it->path().lexically_relative(root).generic_u8string();
 		f.size = (std::uint64_t)it->file_size(ec);
 		out.push_back(std::move(f));
 	}

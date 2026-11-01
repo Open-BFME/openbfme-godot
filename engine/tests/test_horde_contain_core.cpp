@@ -44,6 +44,17 @@ bool nearly(float a, double b, double eps = 1e-4)
 	return std::fabs((double)a - b) <= eps;
 }
 
+// RW 0x86C4EA: the centre the slot table is moved by, the mean of the values in slot order (each added to the running sum, x + sum) times 1 / n
+float centre(const std::vector<float> &values)
+{
+	float sum = 0.0f;
+	for (float v : values)
+	{
+		sum = v + sum;
+	}
+	return values.empty() ? 0.0f : sum * (1.0f / (float)values.size());
+}
+
 // a full horde: member id 100 + k in slot k
 void fill(HordeContainCore &core, int count = 15)
 {
@@ -65,12 +76,21 @@ TEST_CASE("HordeContainCore: the 3x5 slot table, flat slot order, leader slots a
 	REQUIRE(core.slots().size() == 15);
 	const float ys[5] = { 0, 20, -20, 40, -40 };
 	const float xs[3] = { 50, 30, 10 };
+	// RW 0x86C4EA centres the table on the horde (no MACHINE rank, no leader or banner slot here): the mean of the 15 slots, X 30 (450 x (1 / 15) in
+	// single precision, 30.0000019) and Y 0
+	std::vector<float> rawX, rawY;
+	for (int i = 0; i < 15; ++i)
+	{
+		rawX.push_back(xs[i / 5]);
+		rawY.push_back(ys[i % 5]);
+	}
+	const float cx = centre(rawX), cy = centre(rawY);
 	for (int i = 0; i < 15; ++i)
 	{
 		const HordeContainCore::Slot &s = core.slots()[(size_t)i];
 		CHECK(s.rank == i / 5 + 1);
-		CHECK(s.x == xs[i / 5]);
-		CHECK(s.y == ys[i % 5]);
+		CHECK(s.x == xs[i / 5] - cx);
+		CHECK(s.y == ys[i % 5] - cy);
 		CHECK(s.x2 == s.x);
 		CHECK(s.y2 == s.y);
 		CHECK(s.angle == 0.0f);
@@ -101,13 +121,21 @@ TEST_CASE("HordeContainCore: RandomOffset jitter draws x then y per slot, in slo
 	REQUIRE(rng.callLog().size() == 30);
 	const float ys[5] = { 0, 20, -20, 40, -40 };
 	const float xs[3] = { 50, 30, 10 };
+	// the jittered positions, then the table centred on their mean (RW 0x86C4EA)
+	std::vector<float> jx, jy;
 	for (int i = 0; i < 15; ++i)
 	{
 		const int rx = reference.getValue(-3, 3, "r", 0); // (int)-3.9 = -3, (int)3.9 = 3 (truncated bounds)
 		const int ry = reference.getValue(-2, 2, "r", 0);
+		jx.push_back(xs[i / 5] + (float)rx);
+		jy.push_back(ys[i % 5] + (float)ry);
+	}
+	const float cx = centre(jx), cy = centre(jy);
+	for (int i = 0; i < 15; ++i)
+	{
 		const HordeContainCore::Slot &s = core.slots()[(size_t)i];
-		CHECK(s.x == xs[i / 5] + (float)rx);
-		CHECK(s.y == ys[i % 5] + (float)ry);
+		CHECK(s.x == jx[(size_t)i] - cx);
+		CHECK(s.y == jy[(size_t)i] - cy);
 		const GameLogicRandom::Call &cx = rng.callLog()[(size_t)(2 * i)];
 		const GameLogicRandom::Call &cy = rng.callLog()[(size_t)(2 * i + 1)];
 		CHECK(cx.lo == -3);
@@ -130,6 +158,61 @@ TEST_CASE("HordeContainCore: RandomOffset jitter draws x then y per slot, in slo
 	{
 		CHECK(c.line == 1575);
 	}
+}
+
+TEST_CASE("HordeContainCore: a banner carrier's slot follows the ranks and the table is centred with it (RW 0x8776BB, RW 0x86C4EA)")
+{
+	// GondorArcherHorde's table: ranks at X 50 / 30 / 10, the banner carrier at X 70. Measured in RotWK 2.01 (updateGoal RW 0x8E24D3 traced): the members
+	// reserve their goals at X 17.5 / -2.5 / -22.5 from the horde's (16 slots, mean 520 / 16 = 32.5)
+	const HordeContainModuleData d = parseHorde(std::string(kGondor) + "  BannerCarriersAllowed = GondorInfantryBanner\n"
+		"  BannerCarrierPosition = UnitType:GondorFighter Pos:X:70.0 Y:0.0\n");
+	GameLogicRandom rng(RandomAlgorithm::RotWK_GameDat_LCG);
+	rng.initGameLogicRandom(1, -1);
+	HordeContainCore core(d, rng, sameName);
+	core.buildSlots(true);
+	REQUIRE(core.slots().size() == 16);
+	const float xs[3] = { 17.5f, -2.5f, -22.5f };
+	for (int i = 0; i < 15; ++i)
+	{
+		CHECK(core.slots()[(size_t)i].x == xs[i / 5]);
+	}
+	REQUIRE(core.bannerSlot(0) == 15);
+	const HordeContainCore::Slot &banner = core.slots()[15];
+	CHECK(banner.rank == 0);
+	CHECK(banner.x == 37.5f);
+	CHECK(banner.y == 0.0f);
+	CHECK(banner.x2 == 37.5f);
+	// the banner slot takes no member: the free list holds the ranks' slots only
+	CHECK(core.freeList().size() == 15);
+	CHECK(core.bannerSlot(1) == -1);
+	// without BannerCarriersAllowed no slot is appended
+	const HordeContainModuleData plain = parseHorde(std::string(kGondor) + "  BannerCarrierPosition = UnitType:GondorFighter Pos:X:70.0 Y:0.0\n");
+	HordeContainCore without(plain, rng, sameName);
+	without.buildSlots(true);
+	CHECK(without.slots().size() == 15);
+	CHECK(without.bannerSlot(0) == -1);
+}
+
+TEST_CASE("HordeContainCore: a MACHINE rank's first slot is the centre of the table (RW 0x86C4EA, ThingTemplate + 0x109 bit 3)")
+{
+	const HordeContainModuleData d = parseHorde(
+		"  RankInfo = RankNumber:1 UnitType:Crew Position:X:40 Y:-10 Position:X:40 Y:10\n"
+		"  RankInfo = RankNumber:2 UnitType:Ram Position:X:10 Y:5\n"
+		"  RankInfo = RankNumber:3 UnitType:Crew Position:X:-20 Y:0\n");
+	GameLogicRandom rng(RandomAlgorithm::RotWK_GameDat_LCG);
+	rng.initGameLogicRandom(1, -1);
+	HordeContainCore core(d, rng, sameName);
+	core.setMachineTest([](const std::string &unitType) { return unitType == "Ram"; });
+	core.buildSlots(true);
+	REQUIRE(core.slots().size() == 4);
+	// the ram's slot (index 2, after rank 1's two) is the reference: every slot moves by (10, 5)
+	CHECK(core.slots()[0].x == 30.0f);
+	CHECK(core.slots()[0].y == -15.0f);
+	CHECK(core.slots()[1].y == 5.0f);
+	CHECK(core.slots()[2].x == 0.0f);
+	CHECK(core.slots()[2].y == 0.0f);
+	CHECK(core.slots()[3].x == -30.0f);
+	CHECK(core.slots()[3].y == -5.0f);
 }
 
 TEST_CASE("HordeContainCore: members take the first free slot of a rank with their UnitType; others stay slotless (RW 0x873F30)")
@@ -294,18 +377,18 @@ TEST_CASE("HordeContainCore: slot world positions rotate the offset by the owner
 	owner.position = Coord3D{ 100.0f, 200.0f, 5.0f };
 	owner.angle = 0.0f;
 	float outAngle = 123.0f;
-	Coord3D p = core.getSlotWorldPos(101, owner, &outAngle); // slot 1 = (50, 20)
-	CHECK(nearly(p.x, 150.0));
+	Coord3D p = core.getSlotWorldPos(101, owner, &outAngle); // slot 1: (50, 20) less the table's centre (30, 0), RW 0x86C4EA
+	CHECK(nearly(p.x, 120.0));
 	CHECK(nearly(p.y, 220.0));
 	CHECK(nearly(p.z, 5.0));
 	CHECK(outAngle == 0.0f);
 	owner.angle = 1.57079633f; // 90 degrees: (ox, oy) -> (-oy, ox)
 	p = core.getSlotWorldPos(101, owner, nullptr);
 	CHECK(nearly(p.x, 100.0 - 20.0, 1e-3));
-	CHECK(nearly(p.y, 200.0 + 50.0, 1e-3));
+	CHECK(nearly(p.y, 200.0 + 20.0, 1e-3));
 	owner.angle = 3.14159265f; // 180 degrees: (ox, oy) -> (-ox, -oy)
 	p = core.getSlotWorldPos(101, owner, nullptr);
-	CHECK(nearly(p.x, 50.0, 1e-3));
+	CHECK(nearly(p.x, 80.0, 1e-3));
 	CHECK(nearly(p.y, 180.0, 1e-3));
 	// by index uses the second copy (equal here)
 	const Coord3D q = core.getSlotWorldPosByIndex(1, owner);
@@ -315,7 +398,7 @@ TEST_CASE("HordeContainCore: slot world positions rotate the offset by the owner
 	// an unregistered member reads index 0 (std::map operator[]) -> slot 0
 	owner.angle = 0.0f;
 	p = core.getSlotWorldPos(4242, owner, nullptr);
-	CHECK(nearly(p.x, 150.0));
+	CHECK(nearly(p.x, 120.0));
 	CHECK(nearly(p.y, 200.0));
 	CHECK(core.slotOf(4242) == 0); // and the lookup inserted it
 	// the banner carrier alone in the contain list stands at the centre
@@ -330,7 +413,7 @@ TEST_CASE("HordeContainCore: slot world positions rotate the offset by the owner
 	CHECK(nearly(p.y, 200.0));
 	solo.addMember(8, "GondorFighter");
 	p = solo.getSlotWorldPos(7, owner, nullptr);
-	CHECK(nearly(p.x, 150.0)); // two members: the banner carrier uses its slot offset again
+	CHECK(nearly(p.x, 120.0)); // two members: the banner carrier uses its slot offset again
 	// no slots: the owner's position
 	const HordeContainModuleData empty = parseHorde("");
 	HordeContainCore none(empty, r2, sameName);
@@ -398,7 +481,7 @@ TEST_CASE("HordeContainCore retail: the slot table of every HordeContain / Horse
 	}
 	const std::vector<ModuleBody> bodies = collectHordeBodies(c);
 	REQUIRE(bodies.size() == 142);
-	size_t totalSlots = 0, jitterDraws = 0, expectedDraws = 0, withJitter = 0, leaderLinks = 0, modulesWithRanks = 0;
+	size_t totalSlots = 0, extraSlots = 0, jitterDraws = 0, expectedDraws = 0, withJitter = 0, leaderLinks = 0, modulesWithRanks = 0;
 	for (const ModuleBody &b : bodies)
 	{
 		const ParsedModule p = parseRetailModule(c, b);
@@ -413,7 +496,10 @@ TEST_CASE("HordeContainCore retail: the slot table of every HordeContain / Horse
 		{
 			positions += r.positions.size();
 		}
-		CHECK(core.slots().size() == positions);
+		// RW 0x877751: the ranks' slots, then one at LeaderPosition (with LeadersAllowed) and one per BannerCarrierPosition (with BannerCarriersAllowed),
+		// which take no member (the free list holds the ranks' only)
+		const size_t extra = (p.data.m_leadersAllowed.empty() ? 0 : 1) + (p.data.m_bannerCarriersAllowed.empty() ? 0 : p.data.m_bannerCarrierPosition.size());
+		CHECK(core.slots().size() == positions + extra);
 		CHECK(core.freeList().size() == positions);
 		modulesWithRanks += positions > 0 ? 1 : 0;
 		const bool jx = p.data.m_randomOffset.x > 0.0f;
@@ -429,7 +515,8 @@ TEST_CASE("HordeContainCore retail: the slot table of every HordeContain / Horse
 			// the jitter stays inside the bounds
 			CHECK(std::fabs(s.x - s.x2) == 0.0f);
 		}
-		totalSlots += core.slots().size();
+		totalSlots += positions;
+		extraSlots += extra;
 		// every slot gets a member of its own rank's UnitType from a matching horde: fill by unit type
 		HordeContainCore::ObjectId id = 1;
 		size_t placed = 0;
@@ -444,6 +531,7 @@ TEST_CASE("HordeContainCore retail: the slot table of every HordeContain / Horse
 		CHECK(core.freeList().empty());
 	}
 	CHECK(totalSlots == 1558);          // the independent python tally of Position entries
+	MESSAGE("leader and banner carrier slots (RW 0x877A17, 0x8776BB): " << extraSlots);
 	CHECK(leaderLinks == 594);          // and of `Leader` links
 	CHECK(jitterDraws == expectedDraws); // one draw per positive RandomOffset axis per slot
 	CHECK(withJitter == 87);            // independent python scan: modules with a positive RandomOffset axis

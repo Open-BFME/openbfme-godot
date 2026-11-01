@@ -58,7 +58,7 @@ void MapPreviewFindDrawPositions(int startX, int startY, int width, int height, 
 	lr->y += startY;
 }
 
-void MapPreviewPositionStartSpot(GameWindow *button, GameWindow *mapWindow, const Coord3D &pos, const MapCacheEntry &map, GameWindow *const buttons[8])
+void MapPreviewPositionStartSpot(GameWindow *button, GameWindow *mapWindow, const Coord3D &pos, const MapCacheEntry &map, GameWindow *const *buttons, int buttonCount)
 {
 	// RW 0x7019A0: the spot's centre is the waypoint over the map's extent inside the picture (y up the map is up the screen), less half the button's
 	// size; a spot overlapping an earlier one (in the button order, up to this button) moves past it on the axis where the overlap is smaller (both
@@ -76,7 +76,7 @@ void MapPreviewPositionStartSpot(GameWindow *button, GameWindow *mapWindow, cons
 	int x = (int)((fx * (float)(lr.x - ul.x) - (float)(bw / 2)) + (float)ul.x);
 	const float fy = 1.0f - (pos.y - map.extentMin.y) / (map.extentMax.y - map.extentMin.y);
 	int y = (int)((fy * (float)(lr.y - ul.y) - (float)(bh / 2)) + (float)ul.y);
-	for (int i = 0; i < 8; ++i)
+	for (int i = 0; i < buttonCount; ++i)
 	{
 		GameWindow *other = buttons[i];
 		if (other == button)

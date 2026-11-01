@@ -8,6 +8,7 @@
 #include "Common/INI/HostRealText.h"
 
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <sstream>
 
@@ -50,6 +51,7 @@ bool parseMultiPlay(const std::string &value, float (&out)[8], int &count)
 	std::istringstream in(value);
 	std::string token;
 	count = 0;
+	unsigned seen = 0;
 	while (in >> token)
 	{
 		const size_t colon = token.find(':');
@@ -57,22 +59,26 @@ bool parseMultiPlay(const std::string &value, float (&out)[8], int &count)
 		{
 			return false;
 		}
-		const int n = std::atoi(token.substr(2, colon - 2).c_str());
+		const int n = colon == 3 ? token[2] - '0' : 0;
 		float v = 0.0f;
-		if (n < 1 || n > 8 || !parseFloat(token.substr(colon + 1), v))
+		if (n < 1 || n > 8 || (seen & (1u << (n - 1))) ||
+			!parseFloat(token.substr(colon + 1), v) || !std::isfinite(v))
 		{
 			return false;
 		}
 		out[n - 1] = v;
+		seen |= 1u << (n - 1);
 		++count;
 	}
-	return count > 0;
+	return count > 0 && seen == (1u << count) - 1;
 }
 } // namespace
 
 bool ProductionSettings::scan(const std::string &text, ProductionSettings &out, std::string *error)
 {
+	out.loaded = false;
 	bool inBlock = false, haveMin = false, haveMax = false, havePenalty = false, haveMultiple = false, haveUnit = false, haveBuilding = false;
+	int buildingEntries = 0;
 	size_t pos = 0;
 	while (pos <= text.size())
 	{
@@ -153,6 +159,7 @@ bool ProductionSettings::scan(const std::string &text, ProductionSettings &out, 
 				return false;
 			}
 			haveBuilding = true;
+			buildingEntries = n;
 		}
 	}
 	if (!(haveMin && haveMax && havePenalty && haveMultiple && haveUnit && haveBuilding))
@@ -161,6 +168,11 @@ bool ProductionSettings::scan(const std::string &text, ProductionSettings &out, 
 		{
 			*error = "GameData lacks a build time key (MinLowEnergyProductionSpeed, MaxLowEnergyProductionSpeed, LowEnergyPenaltyModifier, MultipleFactory, MultiPlayUnitSpeedMult, MultiPlayBuildingSpeedMult)";
 		}
+		return false;
+	}
+	if (out.multiPlayEntries != buildingEntries)
+	{
+		if (error) *error = "GameData unit/building multiplayer production tables have different MP entry counts";
 		return false;
 	}
 	out.loaded = true;

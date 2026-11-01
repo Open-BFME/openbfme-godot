@@ -69,7 +69,7 @@ CreditsManager::CreditsManager()
 
 CreditsManager::~CreditsManager()
 {
-	// the destructor (BFME2 decomp Rva005B77F1Dtor.cpp, RW twin of 0x9B77F1): the shown list cleared, every line deleted
+	// the destructor (BFME2 decomp Credits.cpp, RW twin of 0x9B77F1): the shown list cleared, every line deleted
 	m_displayedCreditLineList.clear();
 	for (CreditsLine *line : m_creditLineList)
 	{

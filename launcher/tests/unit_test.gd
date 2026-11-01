@@ -21,15 +21,20 @@ const Paths := preload("res://scripts/ui/paths.gd")
 const ProgressMeter := preload("res://scripts/ui/progress_meter.gd")
 const SettingsScreen := preload("res://scripts/ui/settings_screen.gd")
 const MessagePanel := preload("res://scripts/ui/message_panel.gd")
+const PlayerMessages := preload("res://scripts/ui/player_messages.gd")
+const MultiplayerScreen := preload("res://scripts/ui/multiplayer_screen.gd")
+const SocialClient := preload("res://scripts/net/social_client.gd")
 const ReleaseNotes := preload("res://scripts/core/release_notes.gd")
 const InstanceLock := preload("res://scripts/core/instance_lock.gd")
 const Updater := preload("res://scripts/core/updater.gd")
 const BuildInfo := preload("res://scripts/core/build_info.gd")
 const UrlHandler := preload("res://scripts/core/url_handler.gd")
 const OnlineCount := preload("res://scripts/core/online_count.gd")
+const GameList := preload("res://scripts/core/game_list.gd")
 const DesktopEntry := preload("res://scripts/core/desktop_entry.gd")
 const AppIcon := preload("res://scripts/ui/app_icon.gd")
 const ReleaseSignature := preload("res://scripts/crypto/release_signature.gd")
+const GlibcCheck := preload("res://scripts/core/glibc_check.gd")
 const NetPolicy2 := preload("res://scripts/net/net_policy.gd")
 
 
@@ -52,6 +57,31 @@ class FakeHttp extends "res://scripts/net/http_fetch.gd":
 
 var _checks := 0
 var _failed := 0
+
+class TestErrors extends Logger:
+	var _mutex := Mutex.new()
+	var _failed := false
+
+	func _log_error(_function: String, _file: String, _line: int, _code: String, _rationale: String,
+			_editor_notify: bool, error_type: int, _backtraces: Array[ScriptBacktrace]) -> void:
+		if error_type == Logger.ERROR_TYPE_SCRIPT:
+			_mutex.lock()
+			_failed = true
+			_mutex.unlock()
+
+	func _log_message(message: String, _error: bool) -> void:
+		if message.contains("SCRIPT ERROR") or message.contains("Parse Error"):
+			_mutex.lock()
+			_failed = true
+			_mutex.unlock()
+
+	func failed() -> bool:
+		_mutex.lock()
+		var result := _failed
+		_mutex.unlock()
+		return result
+
+var _errors := TestErrors.new()
 
 
 ## lane ONLINE-2: openbfme:// links join a game and nothing else; the registration entries
@@ -96,7 +126,28 @@ func _check(ok: bool, what: String) -> void:
 		print("UNIT FAIL ", what)
 
 
+## lane NIGHTLY-2: Semver.nightly_text exactly as NIGHTLY-1 shipped it (v0.4.12 and the nightlies before NIGHTLY-2): what an installed launcher shows
+@warning_ignore("integer_division")
+static func _shipped_nightly_text(core: String, n: int) -> String:
+	var y := n / 10000
+	var mo := (n / 100) % 100
+	var d := n % 100
+	if n >= 10000000 and mo >= 1 and mo <= 12 and d >= 1 and d <= 31:
+		return "Nightly %s (%04d-%02d-%02d)" % [core, y, mo, d]
+	return "Nightly %s build %d" % [core, n]
+
+
 func _init() -> void:
+	OS.add_logger(_errors)
+	_run.call_deferred()
+
+
+func _run() -> void:
+	for need in ["2.28", "2.35", "2.38"]:
+		_check(GlibcCheck.too_old(need, "2.27") == ("this Linux system is too old for this build. " +
+			"Update to a Linux distribution with GLIBC %s or newer (this system has 2.27). " +
+			"If you need help, use the OpenBFME Discord #bug-reports forum or GitHub issues.") % need,
+			"Linux advice follows the package's actual requirement: " + need)
 	# versions (SemVer 2.0.0 section 11 precedence)
 	var order := ["v0.1.0-preview.0", "v0.1.0-preview.1", "v0.1.0-preview.2", "v0.1.0-preview.10", "v0.1.0", "v0.1.1-preview.1",
 		"v0.1.1", "v0.2.0-preview.9", "v0.2.0", "v0.10.0", "v1.0.0-preview.1", "v1.0.0", "v1.0.10", "v10.0.0"]
@@ -133,6 +184,36 @@ func _init() -> void:
 			["v0.4.13-nightly.20261000", "Nightly 0.4.13 build 20261000"], ["v0.4.13-nightly.7", "Nightly 0.4.13 build 7"]]:
 		_check(Semver.display(d[0]) == d[1], "display %s: %s, not %s" % [d[0], d[1], Semver.display(d[0])])
 	_check(ReleaseNotes.title_of("v0.4.13-nightly.20261022") == "Nightly 0.4.13 (2026-10-22)", "notes: nightly title")
+	# lane NIGHTLY-2 (owner, 2026-10-23): two nightlies a day, <YYMMDD><1|2>00, above every 8-digit date, in run order
+	var twice := ["v0.4.12-nightly.20261022", "v0.4.13-nightly.20261022", "v0.4.13-nightly.20261023", "v0.4.13-nightly.99999999",
+		"v0.4.13-nightly.261023100", "v0.4.13-nightly.261023200", "v0.4.13-nightly.261024100", "v0.4.13-nightly.261101200",
+		"v0.4.13-nightly.270101100", "v0.4.13", "v0.4.14-nightly.261102100"]
+	for i in twice.size():
+		for j in twice.size():
+			var want := 0 if i == j else (-1 if i < j else 1)
+			_check(Semver.compare(twice[i], twice[j]) == want, "semver %s vs %s" % [twice[i], twice[j]])
+	for d in [["v0.4.13-nightly.261023100", "Nightly 0.4.13 (2026-10-23, morning)"], ["v0.4.13-nightly.261023200", "Nightly 0.4.13 (2026-10-23, evening)"],
+			["v0.4.13-nightly.270101100", "Nightly 0.4.13 (2027-01-01, morning)"], ["v0.4.13-nightly.991231200", "Nightly 0.4.13 (2099-12-31, evening)"],
+			["v0.4.13-nightly.261023300", "Nightly 0.4.13 build 261023300"], ["v0.4.13-nightly.261023000", "Nightly 0.4.13 build 261023000"],
+			["v0.4.13-nightly.261023210", "Nightly 0.4.13 build 261023210"], ["v0.4.13-nightly.261323100", "Nightly 0.4.13 build 261323100"],
+			["v0.4.13-nightly.261032100", "Nightly 0.4.13 build 261032100"], ["v0.4.13-nightly.251023100", "Nightly 0.4.13 build 251023100"],
+			["v0.4.13-nightly.202610231", "Nightly 0.4.13 build 202610231"]]:
+		_check(Semver.display(d[0]) == d[1], "display %s: %s, not %s" % [d[0], d[1], Semver.display(d[0])])
+	_check(ReleaseNotes.title_of("v0.4.13-nightly.261023200") == "Nightly 0.4.13 (2026-10-23, evening)", "notes: twice-a-day nightly title")
+	# the bottom bar's short name: a nightly without its date and half day, anything else as display()
+	for d in [["v0.4.13-nightly.261023200", "Nightly 0.4.13"], ["v0.4.12-nightly.20261022", "Nightly 0.4.12"], ["v0.4.5", "Alpha 0.4.5"],
+			["v0.4.0-alpha.3", "v0.4.0 Alpha 3"], ["v0.3.0-preview.4", "v0.3.0-preview.4"], ["dev-build", "dev-build"]]:
+		_check(Semver.display_short(d[0]) == d[1], "display_short %s: %s, not %s" % [d[0], d[1], Semver.display_short(d[0])])
+	# a launcher already shipped (NIGHTLY-1's nightly_text, below as it shipped) shows every twice-a-day number as a build, never a date
+	var shown_wrong := 0
+	for yy in range(26, 100):
+		for mo in range(1, 13):
+			for dd in range(1, 32):
+				for slot in [1, 2]:
+					var n: int = ((yy * 100 + mo) * 100 + dd) * 1000 + slot * 100
+					if _shipped_nightly_text("0.4.13", n) != "Nightly 0.4.13 build %d" % n:
+						shown_wrong += 1
+	_check(shown_wrong == 0, "a NIGHTLY-1 launcher shows %d twice-a-day numbers as a date" % shown_wrong)
 	var plain := ["v0.4.0-alpha.1", "v0.4.0-alpha.4", "v0.4.0-alpha.10", "v0.4.0", "v0.4.5", "v0.4.6", "v0.4.10", "v0.5.0", "v1.0.0"]
 	for i in plain.size():
 		for j in plain.size():
@@ -218,13 +299,26 @@ func _init() -> void:
 	_check(lp.check("https://play.openbfme.com/v1/stats") != "", "the lobby is refused before one is set")
 	_check(lp.set_lobby("https://play.openbfme.com") == "" and lp.set_lobby("https://play.openbfme.com/") == "", "the lobby is a plain https host")
 	_check(lp.check("https://play.openbfme.com/v1/stats") == "", "the lobby's stats path is allowed")
-	for bad in ["https://play.openbfme.com/v1/games", "https://play.openbfme.com/v1/stats?x=1", "https://play.openbfme.com/v1/stats/", "https://play.openbfme.com/",
+	_check(lp.check("https://play.openbfme.com/v1/games") == "", "the lobby's game list is allowed")
+	for bad in ["https://play.openbfme.com/v1/games?x=1", "https://play.openbfme.com/v1/games/", "https://play.openbfme.com/v1/games/abcdef",
+			"https://play.openbfme.com/v1/stats?x=1", "https://play.openbfme.com/v1/stats/", "https://play.openbfme.com/",
 			"https://play.openbfme.com/v1/auth/guest", "https://play.openbfme.com:8443/v1/stats", "http://play.openbfme.com/v1/stats", "https://evil.com/v1/stats",
 			"https://play.openbfme.com.evil.com/v1/stats", "https://u@play.openbfme.com/v1/stats"]:
 		_check(lp.check(bad) != "", "policy refuses %s for the lobby" % bad)
 	for bad in ["http://lobby.example.org", "https://lobby.example.org:8443", "https://lobby.example.org/x", "https://u@lobby.example.org", "ftp://x", "", "https://"]:
 		_check(lp.set_lobby(bad) != "" and lp.lobby_host == "", "a lobby of %s is refused and leaves none set" % bad)
 	_check(NetPolicy.new().check("https://api.github.com/repos/a/b/releases") == "", "GitHub stays allowed beside a lobby")
+	# PR #93 follow-up: a lobby request sets its lobby on its own copy; the shared policy (read by running threads) is untouched
+	var shared := NetPolicy.new()
+	shared.test_origin = "http://127.0.0.1:8123"
+	shared.extra_hosts = ["aio.example.org"]
+	var own: NetPolicy = shared.copy()
+	_check(own != shared and own.test_origin == shared.test_origin and own.extra_hosts == shared.extra_hosts, "a copy keeps the rules")
+	_check(own.set_lobby("https://play.openbfme.com") == "" and own.check("https://play.openbfme.com/v1/games") == "", "the copy allows its lobby")
+	_check(shared.lobby_host == "" and shared.check("https://play.openbfme.com/v1/games") != "", "setting the copy's lobby leaves the shared policy as it was")
+	own.extra_hosts.append("x.example.org")
+	_check(shared.extra_hosts == ["aio.example.org"], "the copy's extra hosts are its own")
+	_check(own.set_lobby("http://bad") != "" and shared.copy().lobby_host == "", "a refused lobby on a copy changes nothing shared")
 	# the player count's answer: exactly version 1 with whole counts
 	for t in [[200, '{"v":1,"players":1,"games_open":0,"games_running":0}', "1 player online"], [200, '{"v":1,"players":0,"games_open":3,"games_running":2,"as_of":5}', "0 players online"],
 			[200, '{"v":1,"players":1234,"games_open":0,"games_running":0}', "1234 players online"]]:
@@ -246,6 +340,56 @@ func _init() -> void:
 	_check(OnlineCount.in_view(false, false, true) and OnlineCount.in_view(true, true, false), "a focused window, or a headless run, is in view")
 	_check(not OnlineCount.in_view(false, true, true) and not OnlineCount.in_view(false, false, false) and not OnlineCount.in_view(false, true, false),
 		"a minimized or unfocused window asks nothing")
+	# the public game list: version 1, every row a public game, or nothing
+	var one := '{"v":1,"games":[{"id":"0123456789abcdef","name":"Westfold","host":"Ada","map":"Fords of Isen","players":2,"openSlots":4,"state":"open","password":false}]}'
+	var parsed := GameList.parse(200, one.to_utf8_buffer())
+	_check(parsed.ok and parsed.games.size() == 1 and parsed.games[0].id == "0123456789abcdef" and GameList.joinable(parsed.games[0]) and GameList.display_name(parsed.games[0]) == "Westfold",
+		"one open game is listed and can be joined")
+	var empty := GameList.parse(200, '{"v":1,"games":[]}'.to_utf8_buffer())
+	_check(empty.ok and empty.games.is_empty(), "an empty game list is success")
+	var flags := [
+		['{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":1,"openSlots":0,"state":"open","password":true}', false, "A (locked)"],
+		['{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":1,"openSlots":3,"state":"started","password":false}', false, "A (started)"],
+		['{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":8,"openSlots":0,"state":"open","password":false}', false, "A (full)"],
+	]
+	for f in flags:
+		var body := '{"v":1,"games":[%s]}' % f[0]
+		var row := GameList.parse(200, body.to_utf8_buffer())
+		_check(row.ok and not GameList.joinable(row.games[0]) and GameList.display_name(row.games[0]) == f[2], "a game that cannot be joined is still listed (%s)" % f[2])
+	var many := PackedStringArray()
+	for i in 200:
+		many.append('{"id":"%016x","name":"N","host":"H","map":"M","players":0,"openSlots":1,"state":"open","password":false}' % i)
+	var full := GameList.parse(200, ('{"v":1,"games":[' + ",".join(many) + "]}").to_utf8_buffer())
+	_check(full.ok and full.games.size() == 200, "200 games are accepted")
+	many.append('{"id":"00000000000000c8","name":"N","host":"H","map":"M","players":0,"openSlots":1,"state":"open","password":false}')
+	_check(not GameList.parse(200, ('{"v":1,"games":[' + ",".join(many) + "]}").to_utf8_buffer()).ok, "201 games are refused")
+	var long_name := "n".repeat(48)
+	var long_host := "h".repeat(24)
+	var long_map := "m".repeat(200)
+	var long_row := '{"v":1,"games":[{"id":"0123456789abcdef","name":"%s","host":"%s","map":"%s","players":1,"openSlots":1,"state":"open","password":false}]}' % [long_name, long_host, long_map]
+	var long_ok := GameList.parse(200, long_row.to_utf8_buffer())
+	_check(long_ok.ok and long_ok.games.size() == 1 and long_ok.games[0].name == long_name and long_ok.games[0].host == long_host and long_ok.games[0].map == long_map,
+		"a 48-byte name, a 24-byte host and a 200-byte map are accepted")
+	var over_map := long_row.replace(long_map, "m".repeat(201))
+	_check(not GameList.parse(200, over_map.to_utf8_buffer()).ok, "a 201-byte map is refused")
+	var wide := "é".repeat(25)  # two UTF-8 bytes each: 50 bytes, 25 characters (under an 80-character cap)
+	var wide_row := '{"v":1,"games":[{"id":"0123456789abcdef","name":"%s","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}' % wide
+	_check(not GameList.parse(200, wide_row.to_utf8_buffer()).ok, "a name over 48 UTF-8 bytes is refused")
+	for bad in ['{"v":2,"games":[]}', '{"games":[]}', '{"v":1}', '{"v":1,"games":null}', "[]", "",
+			'{"v":1,"games":[{"id":"0123456789ABCDEF","name":"A","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcde","name":"A","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"%s","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}' % "x".repeat(81),
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"A\\nB","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":17,"openSlots":1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":1.5,"openSlots":1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":1,"openSlots":-1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":1,"openSlots":1,"state":"waiting","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":"no"}]}',
+			'{"v":1,"games":[null]}', '{"v":1,"games":[{}]}']:
+		var refused := GameList.parse(200, bad.to_utf8_buffer())
+		_check(not refused.ok and refused.games.is_empty(), "the game list refuses %s" % bad.left(48))
+	_check(not GameList.parse(404, '{"v":1,"games":[]}'.to_utf8_buffer()).ok, "a game list that is not 200 is refused")
 	# archive member names
 	var top := "openbfme-v1.0.0-linux-x64"
 	for ok in [top + "/", top + "/OpenBFME.x86_64", top + "/sub/file.txt"]:
@@ -316,8 +460,12 @@ func _init() -> void:
 	_aio()
 	_ui()
 	_ui_dialogs()
+	_player_messages()
+	_social_error_codes()
 	_url_handler()
 	_app_icon()
+	if _errors.failed():
+		_failed += 1
 	if _failed == 0:
 		print("UNIT OK %d checks" % _checks)
 		quit(0)
@@ -407,7 +555,109 @@ func _signkms(path: String) -> void:
 		nine.append("%064x" % (i + 1))
 	for broken in ["", dh + ",", dh + "," + dh, dh.to_upper(), dh.left(63), dh + "00", dh + ",," + kh, ",".join(nine), dh + ";" + kh]:
 		_check(not ReleaseSignature.parse_hex_list(broken).ok, "a malformed key list is refused: '%s'" % broken.left(40))
+	_nightly(fx, deck, kms)
+	_stable_actions(fx, deck, kms)
 	_slots(fx, deck, kms)
+
+
+## lane RELGH-3: the stable Actions key (stable-2026), the SECOND key of launcher/release_keys.pub ("kms" plays it here), signs raw on GitHub
+## Actions once the owner approved the run: valid for every release document under the two-key list a launcher since this lane carries;
+## a launcher whose list is the Deck key alone (made before the transition) refuses it; as a nightly-only key it would be valid for nightlies
+## only (it is a stable key: never in nightly_keys.pub)
+func _stable_actions(fx: Dictionary, deck: PackedByteArray, stable_key: PackedByteArray) -> void:
+	var h := func(k: String) -> PackedByteArray: return String(fx[k]).hex_decode()
+	var V := ReleaseSignature
+	var both := [deck, stable_key]
+	var nightly := [h.call("nightly")]
+	var expect := {"repo": "Test/repo"}
+	print("UNIT stable actions: the stable Actions key checks run")
+	var ok := Manifest.verify(h.call("s_manifest"), h.call("a_manifest_raw"), both, expect, "standard", nightly)
+	_check(ok.ok and ok.manifest.channel == "stable", "stable actions: a stable release signed raw by the list's second key is valid (%s)" % ok.error)
+	_check(V.signer(both, "manifest.json", h.call("s_manifest"), h.call("a_manifest_raw")) == 1, "stable actions: the signer is the list's second key")
+	var old := Manifest.verify(h.call("s_manifest"), h.call("a_manifest_raw"), [deck], expect, "standard", nightly)
+	_check(not old.ok and String(old.error).contains("signature"), "stable actions: a launcher that trusts the Deck key alone refuses it (%s)" % old.error)
+	_check(V.valid_scoped(both, nightly, "manifest-macos.json", h.call("macos"), h.call("a_macos_raw")), "stable actions: its raw signature on a macOS manifest")
+	var pv := Manifest.verify_payload(h.call("payload"), h.call("a_payload_raw"), both, {"repo": "Test/repo", "platform": "linux-x64"}, nightly)
+	_check(pv.ok, "stable actions: its raw signature on a payload (%s)" % pv.error)
+	_check(V.valid_scoped(both, nightly, "manifest.json", h.call("n_manifest"), h.call("a_n_manifest_raw")), "stable actions: a stable key is valid on a nightly too")
+	_check(not V.valid_scoped([deck], [stable_key], "manifest.json", h.call("s_manifest"), h.call("a_manifest_raw")), "stable actions: the same key as a nightly-only key would sign no stable release")
+	_check(Manifest.signature_ok(h.call("s_manifest"), h.call("a_manifest_raw"), both, "standard", nightly) and not Manifest.signature_ok(h.call("s_manifest"), h.call("a_manifest_raw"), [deck], "standard", nightly), "stable actions: signature_ok follows the same rule")
+	# build_info.json with the committed shape: the Deck key first, the stable Actions key second
+	var info: RefCounted = BuildInfo.from_text(BuildInfo.new(), JSON.stringify({"version": "v1.0.0", "repo": "Test/repo", "release_key": deck.hex_encode(),
+		"release_keys": [deck.hex_encode(), stable_key.hex_encode()], "nightly_keys": [nightly[0].hex_encode()], "test_build": false}))
+	_check(info.error == "" and info.release_keys == both, "stable actions: build_info carries both stable keys, the Deck key first (%s)" % info.error)
+	var swapped: RefCounted = BuildInfo.from_text(BuildInfo.new(), JSON.stringify({"version": "v1.0.0", "repo": "Test/repo", "release_key": deck.hex_encode(),
+		"release_keys": [stable_key.hex_encode(), deck.hex_encode()], "test_build": false}))
+	_check(swapped.error.contains("does not begin with release_key"), "stable actions: a list that does not begin with the Deck key is refused (%s)" % swapped.error)
+
+
+## lane RELGH-2: the nightly-only key. valid_scoped: the stable list as ever, or a nightly key AND a nightly document (version v<x.y.z>-nightly.<n>;
+## a manifest's channel "preview"); a stable manifest / payload, a nightly version on channel stable or an empty nightly list is refused
+func _nightly(fx: Dictionary, deck: PackedByteArray, kms: PackedByteArray) -> void:
+	var h := func(k: String) -> PackedByteArray: return String(fx[k]).hex_decode()
+	var nk: PackedByteArray = h.call("nightly")
+	var stable := [deck, kms]
+	var nightly := [nk]
+	var V := ReleaseSignature
+	print("UNIT nightly: the nightly-key checks run")
+	# the stable keys are valid for every document, with or without a nightly list
+	_check(V.valid_scoped(stable, nightly, "manifest.json", h.call("manifest"), h.call("manifest_raw")), "nightly: a stable key on a stable manifest")
+	_check(V.valid_scoped(stable, [], "manifest.json", h.call("manifest"), h.call("manifest_env")), "nightly: a stable key, an empty nightly list")
+	_check(V.valid_scoped(stable, nightly, "manifest.json", h.call("n_manifest"), h.call("n_manifest_deck")), "nightly: a stable key on a nightly manifest")
+	# the nightly key on nightly documents
+	_check(V.is_nightly_document("manifest.json", h.call("n_manifest")) and V.is_nightly_document("payload.json", h.call("n_payload")), "nightly: nightly documents are recognised")
+	_check(V.valid_scoped(stable, nightly, "manifest.json", h.call("n_manifest"), h.call("n_manifest_raw")), "nightly: its raw signature on a nightly manifest")
+	_check(V.valid_scoped(stable, nightly, "manifest.json", h.call("n_manifest"), h.call("n_manifest_env")), "nightly: its envelope signature on a nightly manifest")
+	_check(V.valid_scoped(stable, nightly, "manifest-macos.json", h.call("n_macos"), h.call("n_macos_env")), "nightly: its envelope signature on a nightly macOS manifest")
+	_check(V.valid_scoped(stable, nightly, "payload.json", h.call("n_payload"), h.call("n_payload_raw")), "nightly: its raw signature on a nightly payload")
+	_check(V.valid_scoped(stable, nightly, "payload.json", h.call("n_payload"), h.call("n_payload_env")), "nightly: its envelope signature on a nightly payload")
+	# refused
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("s_manifest"), h.call("s_manifest_raw")), "nightly: its raw signature on a stable manifest is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("s_manifest"), h.call("s_manifest_env")), "nightly: its envelope signature on a stable manifest is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("n_chan"), h.call("n_chan_raw")), "nightly: a nightly version on channel stable is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("n_otherver"), h.call("n_otherver_raw")), "nightly: a preview that is no nightly tag is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("n_newline"), h.call("n_newline_raw")), "nightly: a version with a trailing newline is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("n_intver"), h.call("n_intver_raw")), "nightly: a version that is not a String is refused")
+	_check(not V.valid_scoped(stable, nightly, "payload.json", h.call("payload"), h.call("s_payload_raw")), "nightly: its raw signature on a stable payload is refused")
+	_check(not V.valid_scoped(stable, nightly, "payload.json", h.call("payload"), h.call("s_payload_env")), "nightly: its envelope signature on a stable payload is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest-macos.json", h.call("macos"), h.call("s_macos_env")), "nightly: its envelope signature on a stable macOS manifest is refused")
+	_check(not V.valid_scoped(stable, [], "manifest.json", h.call("n_manifest"), h.call("n_manifest_raw")), "nightly: an empty nightly list refuses the nightly key")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("n_manifest"), h.call("n_manifest_env_wrong_kind")), "nightly: an envelope of another kind is refused")
+	_check(not V.valid_scoped(stable, nightly, "manifest.json", h.call("n_manifest"), h.call("n_manifest_other")), "nightly: an unknown key is refused")
+	_check(not V.valid_scoped([], [], "manifest.json", h.call("n_manifest"), h.call("n_manifest_raw")), "nightly: no keys at all")
+	_check(not V.valid(stable, "manifest.json", h.call("n_manifest"), h.call("n_manifest_raw")), "nightly: valid() alone does not know the nightly key")
+	# Manifest.verify / verify_payload / signature_ok
+	var expect := {"repo": "Test/repo"}
+	var ok := Manifest.verify(h.call("n_manifest"), h.call("n_manifest_raw"), stable, expect, "standard", nightly)
+	_check(ok.ok and ok.manifest.version == "v1.2.3-nightly.20261024", "nightly: Manifest.verify accepts a nightly release signed by the nightly key (%s)" % ok.error)
+	var no_list := Manifest.verify(h.call("n_manifest"), h.call("n_manifest_raw"), stable, expect)
+	_check(not no_list.ok and String(no_list.error).contains("signature"), "nightly: a call site that forgets the list refuses it (%s)" % no_list.error)
+	var refused := Manifest.verify(h.call("s_manifest"), h.call("s_manifest_raw"), stable, expect, "standard", nightly)
+	_check(not refused.ok and String(refused.error).contains("signature"), "nightly: a stable release signed by the nightly key is refused by name (%s)" % refused.error)
+	_check(Manifest.signature_ok(h.call("n_manifest"), h.call("n_manifest_raw"), stable, "standard", nightly) and not Manifest.signature_ok(h.call("s_manifest"), h.call("s_manifest_raw"), stable, "standard", nightly), "nightly: signature_ok follows the same rule")
+	_check(not Manifest.signature_ok(h.call("n_manifest"), h.call("n_manifest_raw"), stable), "nightly: signature_ok with the default list refuses")
+	var pexpect := {"repo": "Test/repo", "platform": "linux-x64"}
+	var pn := Manifest.verify_payload(h.call("n_payload"), h.call("n_payload_raw"), stable, pexpect, nightly)
+	_check(pn.ok, "nightly: verify_payload accepts a nightly payload signed by the nightly key (%s)" % pn.error)
+	_check(not Manifest.verify_payload(h.call("n_payload"), h.call("n_payload_raw"), stable, pexpect).ok, "nightly: verify_payload with the default list refuses")
+	_check(not Manifest.verify_payload(h.call("payload"), h.call("s_payload_raw"), stable, pexpect, nightly).ok, "nightly: verify_payload refuses a stable payload signed by the nightly key")
+	# parse_nightly_list
+	var nh := nk.hex_encode()
+	_check(V.parse_nightly_list("").ok and V.parse_nightly_list("").keys.is_empty(), "nightly: empty text is no keys")
+	_check(V.parse_nightly_list(nh).keys == [nk], "nightly: one key parses")
+	for broken in [nh + ",", nh + "," + nh, nh.to_upper(), nh.left(63), ",".join(PackedStringArray(["%064x" % 1, "%064x" % 2, "%064x" % 3, "%064x" % 4, "%064x" % 5]))]:
+		_check(not V.parse_nightly_list(broken).ok, "nightly: a malformed nightly list is refused: '%s'" % broken.left(30))
+	# build_info.json: nightly_keys
+	var base := {"version": "v1.0.0", "repo": "Test/repo", "release_key": deck.hex_encode(), "release_keys": [deck.hex_encode(), kms.hex_encode()], "test_build": false}
+	var parse := func(extra: Dictionary) -> RefCounted:
+		return BuildInfo.from_text(BuildInfo.new(), JSON.stringify(base.merged(extra)))
+	_check(parse.call({}).error == "" and parse.call({}).nightly_keys.is_empty(), "nightly: build_info without nightly_keys: none")
+	_check(parse.call({"nightly_keys": []}).error == "" and parse.call({"nightly_keys": []}).nightly_keys.is_empty(), "nightly: an empty nightly_keys: none")
+	_check(parse.call({"nightly_keys": [nh]}).error == "" and parse.call({"nightly_keys": [nh]}).nightly_keys == [nk], "nightly: build_info nightly_keys parse")
+	for bad in [nh, [nh, nh], [nh.to_upper()], [nh.left(10)], [5], [nh + "," + nh], [deck.hex_encode()], [kms.hex_encode()], ["", nh], {"a": nh},
+			["%064x" % 1, "%064x" % 2, "%064x" % 3, "%064x" % 4, "%064x" % 5]]:
+		var r2: RefCounted = parse.call({"nightly_keys": bad})
+		_check(r2.error.contains("nightly_keys") and r2.nightly_keys.is_empty(), "nightly: build_info refuses nightly_keys %s (%s)" % [str(bad).left(30), r2.error])
 
 
 ## lane SIGNKMS-1: a release's two signature slots (Updater.release_signature): X.sig, else X.sig2; whichever verified is cached as X.sig
@@ -719,6 +969,87 @@ func _ui() -> void:
 	_check(is_equal_approx(m.rate, 10 * 1048576.0) and m._b == 5, "UI: a new file restarts the sample")
 	_check(ProgressMeter.time_left(59) == "59 s" and ProgressMeter.time_left(90) == "1 min 30 s" and ProgressMeter.time_left(1200) == "20 min" and ProgressMeter.time_left(3725) == "1 h 2 min", "UI: time left")
 	_check(ProgressMeter.mb(3 * 1073741824) == "3.00 GB", "UI: GB above 1 GB")
+
+
+func _player_messages() -> void:
+	var operations := [PlayerMessages.Operation.UPDATE_CHECK, PlayerMessages.Operation.DOWNLOAD,
+		PlayerMessages.Operation.SIGN_IN, PlayerMessages.Operation.LOBBY, PlayerMessages.Operation.GENERAL]
+	var guidance := ["Could not check for updates", "retry the download", "try Sign in again", "try the lobby action again", "action could not be completed"]
+	var secrets := ["private-host.example", "/opt/private-install/version", "C:\\private-install\\version", "private-server.internal"]
+	var diagnostic := "HTTP 503 https://private-host.example:8443/file /opt/private-install/version C:\\private-install\\version private-server.internal"
+	var panel := MessagePanel.new()
+	for index in operations.size():
+		var operation: int = operations[index]
+		var visible := PlayerMessages.error_text(diagnostic, operation)
+		_check(visible.contains(guidance[index]), "messages: operation-specific HTTP recovery %d" % operation)
+		if operation != PlayerMessages.Operation.UPDATE_CHECK:
+			_check(not visible.contains("Could not check for updates"), "messages: HTTP is not always an update check")
+		panel.show_error("Action failed", diagnostic, "about", operation)
+		_check(panel._text.text == visible, "messages: dialog uses operation-specific text")
+		_check(panel._details.contains(diagnostic), "messages: Copy details retains diagnostics")
+		for detail in [diagnostic, "Unknown failure " + diagnostic, "writing " + diagnostic + " failed", "SHA-256 " + diagnostic, "rejected: " + diagnostic]:
+			for shown in [PlayerMessages.error_text(detail, operation), PlayerMessages.status_text(detail, operation), panel._text.text]:
+				for secret in secrets:
+					_check(not shown.contains(secret), "messages: visible text excludes paths and hosts")
+	panel.free()
+	for operation in [PlayerMessages.Operation.SIGN_IN, PlayerMessages.Operation.LOBBY]:
+		var text := PlayerMessages.social_error(diagnostic, operation)
+		_check(text == PlayerMessages.error_text(diagnostic, operation), "messages: social failures use the same safe mapping")
+		for secret in secrets:
+			_check(not text.contains(secret), "messages: social text excludes paths and hosts")
+	var screen := MultiplayerScreen.new()
+	screen.build("")
+	var social := SocialClient.new()
+	screen.client = social
+	var reports := []
+	screen.problem_reported.connect(func(detail: String, operation: int) -> void: reports.append([detail, operation]))
+	screen.show_problem(diagnostic)
+	_check(screen._status.text == PlayerMessages.error_text(diagnostic, PlayerMessages.Operation.SIGN_IN), "messages: signed-out errors use sign-in guidance")
+	social.token = "test-token"
+	social.me = {"pid": "0123456789abcdef"}
+	screen.show_problem(diagnostic)
+	_check(screen._status.text == PlayerMessages.error_text(diagnostic, PlayerMessages.Operation.LOBBY), "messages: signed-in errors use lobby guidance")
+	_check(reports == [[diagnostic, PlayerMessages.Operation.SIGN_IN], [diagnostic, PlayerMessages.Operation.LOBBY]], "messages: social diagnostics go to Copy details separately")
+	screen.free()
+	social.free()
+
+
+func _social_error_codes() -> void:
+	var cases := {
+		"signed_out": "Your social session expired. Sign in again.",
+		"session_revoked": "Your social session was revoked. Sign in again.",
+		"bad_recovery": "The recovery code was not accepted.",
+		"install_required": "Start the game once to create your shared identity.",
+		"banned": "This social account is unavailable.",
+		"suspended": "This social account is temporarily unavailable.",
+		"rate_limited": "Too many social requests. Try again later.",
+		"already_friends": "You are already friends.",
+		"already_requested": "That friend request is already pending.",
+		"unavailable": "That social item is no longer available.",
+		"not_found": "That social item was not found.",
+		"chat_muted": "Chat is unavailable for this account.",
+		"social_unavailable": "The social service is unavailable.",
+		"social_store_full": "The social service cannot save more data right now.",
+	}
+	var http_cases := {429: "Too many social requests. Try again later.",
+		401: "The social session is no longer accepted. Sign in again.",
+		403: "The social session is no longer accepted. Sign in again.",
+		404: "That social item is unavailable."}
+	_check(cases.keys() == SocialClient.ERROR_MESSAGES.keys(), "messages: every known social error code is tested")
+	_check(http_cases.keys() == SocialClient.HTTP_ERROR_MESSAGES.keys(), "messages: every known HTTP error code is tested")
+	var social := SocialClient.new()
+	for operation in [PlayerMessages.Operation.SIGN_IN, PlayerMessages.Operation.LOBBY]:
+		for code in cases:
+			var detail := social._safe_error(400, code)
+			_check(PlayerMessages.error_text(detail, operation) == cases[code], "messages: recovery for %s (%d)" % [code, operation])
+			_check(PlayerMessages.status_text(detail, operation) == cases[code], "messages: status recovery for %s (%d)" % [code, operation])
+			_check(not PlayerMessages.error_text(detail + " https://private-host.example /opt/private-install", operation).contains("private"),
+				"messages: known code guidance does not pass through appended diagnostics")
+		for code in http_cases:
+			var detail := social._safe_error(code, "unknown_server_code")
+			_check(PlayerMessages.error_text(detail, operation) == http_cases[code], "messages: HTTP recovery for %d (%d)" % [code, operation])
+			_check(PlayerMessages.status_text(detail, operation) == http_cases[code], "messages: HTTP status recovery for %d (%d)" % [code, operation])
+	social.free()
 
 
 ## lane UI-5: the Settings tabs show one page at a time; the message dialog closed with its X (Close) opens again (lane UI-3 round 2,

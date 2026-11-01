@@ -19,6 +19,8 @@ const ENVELOPE_HEADER := "OpenBFME signature v2\n"
 const KINDS := ["manifest.json", "manifest-macos.json", "payload.json"]
 const MAX_KEYS := 8
 const MEMO_MAX := 256
+const NIGHTLY_MAX_KEYS := 4   # lane RELGH-2
+const NIGHTLY_VERSION_RE := "^v(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})-nightly\\.[0-9]{8,9}\\z"
 
 # the results of earlier checks in this process (a check costs one to four Ed25519 verifications, ~0.3 s each in GDScript; the launcher
 # checks the same cached manifest again and again): SHA-256 of (kind, keys, signature, SHA-256 of the data) -> the signer's index
@@ -63,6 +65,43 @@ static func signer(keys: Array, kind: String, data: PackedByteArray, sig: Packed
 
 static func valid(keys: Array, kind: String, data: PackedByteArray, sig: PackedByteArray) -> bool:
 	return signer(keys, kind, data, sig) >= 0
+
+
+## lane RELGH-2: true when `data` (a release file of `kind`) is a nightly document: a JSON object whose "version" is a String that is a
+## nightly tag; a manifest kind also needs "channel" == "preview" (payload.json has no channel field)
+static func is_nightly_document(kind: String, data: PackedByteArray) -> bool:
+	if not kind in KINDS:
+		return false
+	var d: Variant = JSON.parse_string(data.get_string_from_utf8())
+	if typeof(d) != TYPE_DICTIONARY or typeof(d.get("version")) != TYPE_STRING:
+		return false
+	var re := RegEx.create_from_string(NIGHTLY_VERSION_RE)
+	if re.search(d.version) == null:
+		return false
+	if kind != "payload.json":
+		return typeof(d.get("channel")) == TYPE_STRING and d.channel == "preview"
+	return true
+
+
+## lane RELGH-2: `sig` is valid for the release file `data` of `kind` iff it verifies under the stable `keys` (valid), or under one of
+## `nightly_keys` AND the file is a nightly document. An empty `nightly_keys` is the stable check alone.
+static func valid_scoped(keys: Array, nightly_keys: Array, kind: String, data: PackedByteArray, sig: PackedByteArray) -> bool:
+	if valid(keys, kind, data, sig):
+		return true
+	if nightly_keys.is_empty() or not is_nightly_document(kind, data):
+		return false
+	return valid(nightly_keys, kind, data, sig)
+
+
+## lane RELGH-2: the nightly list as text (build_info.json's entries joined, release_trust.gd NIGHTLY_KEYS, --trust-nightly-key): empty text
+## is no keys; else 1 to NIGHTLY_MAX_KEYS distinct keys. {ok, error, keys}; anything else is an error (never a guess).
+static func parse_nightly_list(text: String) -> Dictionary:
+	if text.strip_edges() == "":
+		return {"ok": true, "error": "", "keys": []}
+	var parsed := parse_hex_list(text)
+	if parsed.ok and parsed.keys.size() > NIGHTLY_MAX_KEYS:
+		return {"ok": false, "error": "%d nightly keys (at most %d)" % [parsed.keys.size(), NIGHTLY_MAX_KEYS], "keys": []}
+	return parsed
 
 
 ## A list of keys as text: 64 lower-case hex digits each, separated by commas (build_info.json's entries, release_trust.gd RELEASE_KEYS,

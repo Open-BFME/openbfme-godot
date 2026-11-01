@@ -31,6 +31,7 @@
 #include <string>
 #include <vector>
 
+class AttributeModifierStore;
 class ModuleFactory;
 
 class AttributeModifierPool : public BehaviorModule
@@ -41,6 +42,8 @@ public:
 	static void registerClass(ModuleFactory &modules);
 
 	bool add(const std::string &listName, int duration); ///< RW 0x805A8E
+	// RW 0x804F02 (lane BANNER-1; BFME2 0x40334B): every entry, in order, goes to `obj` through Object::addAttributeModifier(name, expiry - frame) (RW 0x68F1A8)
+	void handDownTo(Object &obj) const;
 	bool sum(int type, const char *name, float &out) const; ///< RW 0x804F39
 	bool product(int type, const char *name, bool innate, float &out) const; ///< RW 0x804FFF
 	bool hasList(const std::string &listName) const;
@@ -88,9 +91,15 @@ private:
 		std::string name;
 		unsigned expire = 0;
 	};
-	bool suppressed(unsigned frame, const Entry &e, bool innate) const; ///< RW 0x804D27
+	bool suppressed(unsigned frame, const struct ModifierListTemplate &list, bool innate) const; ///< RW 0x804D27 (the entry's list, fetched by the caller)
 	void removeByName(const std::string &listName);                   ///< RW 0x8052FB (the entry only: S-633)
 
+	// lane HDPERF-1: the AttributeModifierStore of the object's world, taken when the module is made (on the logic thread, in the world's context). A job
+	// worker has no world context (Common/JobSystem.h: the thread_local stores are null there), and the pool is read on the job pool (the shroud's look
+	// asks for SHROUD_CLEARING, the Uber collision facts for the crush levels): through the thread_local a sum there found no store and answered 0, so the
+	// result depended on the thread that took the record (a lockstep desync under load). Null (a pool made outside a world): the thread_local
+	const AttributeModifierStore *m_store = nullptr;
+	const AttributeModifierStore *store() const;
 	std::vector<Entry> m_entries;                      ///< +0x20
 	unsigned m_nextWake = 0x3FFFFFFF;                  ///< +0x2C
 	std::array<unsigned, 15> m_categoryDisabled{};     ///< +0x30

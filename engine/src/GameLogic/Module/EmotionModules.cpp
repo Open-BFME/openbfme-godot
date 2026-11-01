@@ -10,6 +10,7 @@
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/StateHash.h"
+#include "Common/Team.h"
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -158,13 +159,41 @@ float visionRangeOf(Object &obj)
 
 // RW 0x68FA3D Object::canSee(other, range): RW 0x8E3C6E's ellipse with both factors 1 (a circle of range + both bounding circles about the object along its
 // facing), then the firing arc cone when the template's FiringArc (+ 0x54C, default 360) is below 360 (reported, not ported)
+// lane PERF-HD: canSee's values that depend on the seer only, kept for the next call (a scan asks it for every candidate): the cos / sin of its angle
+// (each an emulated sinCosDet) for the same angle bits, and whether its template has a FiringArc. The same values, computed once per seer and angle.
+// The template part lives for one scan only (resetSeerTemplate at each scan's start): a template of an earlier game may share a later one's address.
+struct SeerMemo
+{
+	std::uint32_t angleBits = 0;
+	bool angleKnown = false;
+	float c = 0.0f, s = 0.0f;
+	const ThingTemplate *arcTemplate = nullptr;
+	bool hasArc = false;
+};
+thread_local SeerMemo t_seer;
+
+void resetSeerTemplate()
+{
+	t_seer.arcTemplate = nullptr;
+}
+
 bool canSee(Object &self, Object &other, float range)
 {
 	PartitionManager &pm = self.logic().partition();
 	const float sumR = SimMath::sseAdd(pm.geometryOf(other).circle, pm.geometryOf(self).circle); // RW 0x68FA77 addss
 	// RW 0x70B9E0: the cached (cos, sin) of the object's angle (RW 0x42F4E0 / 0x42F4D0 x87: stop S-167, as the pathfinder)
-	const float c = SimMath::cosDet(self.getOrientation());
-	const float s = SimMath::sinDet(self.getOrientation());
+	const float angle = self.getOrientation();
+	std::uint32_t bits;
+	std::memcpy(&bits, &angle, sizeof(bits));
+	if (!t_seer.angleKnown || t_seer.angleBits != bits)
+	{
+		t_seer.c = SimMath::cosDet(angle);
+		t_seer.s = SimMath::sinDet(angle);
+		t_seer.angleBits = bits;
+		t_seer.angleKnown = true;
+	}
+	const float c = t_seer.c;
+	const float s = t_seer.s;
 	const Coord3D *o = other.getPosition();
 	const Coord3D *p = self.getPosition();
 	const float dx = SimMath::pc24Sub(o->x, p->x);
@@ -183,9 +212,13 @@ bool canSee(Object &self, Object &other, float range)
 		return false;
 	}
 	const ThingTemplate *tt = static_cast<const ThingTemplate *>(self.getTemplate())->getFinalOverride();
-	if (const FieldValue *v = tt->findField("FiringArc"))
+	if (t_seer.arcTemplate != tt)
 	{
-		(void)v;
+		t_seer.hasArc = tt->findField("FiringArc") != nullptr; // lane PERF-HD: a string lookup per candidate before
+		t_seer.arcTemplate = tt;
+	}
+	if (t_seer.hasArc)
+	{
 		self.logic().noteStop("[S-1022] EmotionTrackerUpdate: a template with FiringArc: canSee's firing arc cone (RW 0x68FAC9) is not ported");
 	}
 	return true;
@@ -461,6 +494,7 @@ bool onWallLayer(GameLogic &logic, const Coord3D &pos)
 
 void EmotionTrackerUpdate::tauntScan(Object *&taunt, float &closest)
 {
+	resetSeerTemplate(); // lane PERF-HD: canSee's template memo is this scan's
 	// RW 0x8B58B1 .. 0x8B59D1
 	Object *obj = getObject();
 	GameLogic &logic = obj->logic();
@@ -538,7 +572,19 @@ void EmotionTrackerUpdate::tauntScan(Object *&taunt, float &closest)
 	Object *found = nullptr;
 	if (!(kStandGround >= 0 && obj->testStatus((unsigned)kStandGround)))
 	{
-		found = logic.partition().getClosestObject(*obj->getPosition(), m_data->m_tauntAndPointDistance, FROM_CENTER_2D, { &tracker, &sees, &visible }); // RW 0xA39090
+		if (logic.uber())
+		{
+			// lane UBER-2A, Uber only: the tracker accepts only ENEMIES (and the members of an accepted enemy's horde, on that enemy's layer), so the search
+			// skips the layers of the players this one does not see as enemies (its own and its allies' soldiers, the nearest and most numerous candidates).
+			// Uber rule change: the search's node order differs, so of two candidates at the same distance another may win; an object whose owner changed
+			// since the frame's partition update is looked for on its old layer
+			PartitionFilterLayers enemyLayers(obj->getTeam() ? obj->getTeam()->enemyLayerMask() : 0u); // no team: every relationship is NEUTRAL
+			found = logic.partition().getClosestObject(*obj->getPosition(), m_data->m_tauntAndPointDistance, FROM_CENTER_2D, { &tracker, &sees, &visible, &enemyLayers });
+		}
+		else
+		{
+			found = logic.partition().getClosestObject(*obj->getPosition(), m_data->m_tauntAndPointDistance, FROM_CENTER_2D, { &tracker, &sees, &visible }); // RW 0xA39090
+		}
 	}
 	if (!found)
 	{
@@ -565,6 +611,7 @@ void EmotionTrackerUpdate::tauntScan(Object *&taunt, float &closest)
 
 UpdateSleepTime EmotionTrackerUpdate::update()
 {
+	resetSeerTemplate(); // lane PERF-HD: canSee's template memo is this update's scans'
 	// RW 0x8B5738
 	Object *obj = getObject();
 	GameLogic &logic = obj->logic();
@@ -576,7 +623,9 @@ UpdateSleepTime EmotionTrackerUpdate::update()
 			m_current->stop();
 			m_current = nullptr;
 		}
-		return UPDATE_SLEEP_NONE;
+		// lane PERF-HD (Uber only): nothing to do while contained; Object::friend_setContainedBy wakes the module when the object leaves. Faithful keeps
+		// retail's call every frame (the wake frames are in the state hash)
+		return logic.uber() ? UPDATE_SLEEP_FOREVER : UPDATE_SLEEP_NONE;
 	}
 	if (m_forcedFrames > 0)
 	{
@@ -612,8 +661,9 @@ UpdateSleepTime EmotionTrackerUpdate::update()
 		static const int kAirborne = statusBit("AIRBORNE_TARGET");
 		const ThingTemplate *gollum = nullptr;
 		bool gollumLooked = false;
-		const std::vector<ObjectID> ids = logic.emotions().scaryOrHeroes();
-		for (ObjectID id : ids)
+		const std::vector<ObjectID> &scaryOrHeroes = logic.emotions().scaryOrHeroes();
+		m_scanIds.assign(scaryOrHeroes.begin(), scaryOrHeroes.end()); // a copy, as before (the list may change under the scan), into kept storage
+		for (ObjectID id : m_scanIds)
 		{
 			Object *o = logic.findObjectByID(id);
 			if (!o || o->isDestroyed())
@@ -968,6 +1018,7 @@ bool EmotionModules::visibleToScans(const Object &o)
 
 bool EmotionModules::canSeeObject(Object &self, Object &other, float range)
 {
+	resetSeerTemplate();
 	return canSee(self, other, range);
 }
 

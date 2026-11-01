@@ -92,6 +92,18 @@ ClientMessage &MessageStream::insertAfter(int type, const ClientMessage &after)
 	throw std::logic_error("MessageStream::insertAfter: the message is not in the stream");
 }
 
+ClientMessage &MessageStream::insertBefore(int type, const ClientMessage &before)
+{
+	for (auto it = m_messages.begin(); it != m_messages.end(); ++it)
+	{
+		if (it->get() == &before)
+		{
+			return **m_messages.insert(it, std::make_unique<ClientMessage>(type));
+		}
+	}
+	throw std::logic_error("MessageStream::insertBefore: the message is not in the stream");
+}
+
 std::vector<ClientMessage> MessageStream::propagate()
 {
 	// Each raw event goes through the complete translator pipeline (with the messages the translators derive from it) before the next event is

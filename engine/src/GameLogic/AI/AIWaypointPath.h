@@ -19,7 +19,8 @@
 //     the current waypoint (+ 0x5C); + 0x60 the previous one. onEnter RW 0x75070F: no goal waypoint and not as a team -> STATE_FAILURE; as a team the
 //     team's current waypoint (team + 0x6C) is set to it (or, with none, read from it); the move starts (RW 0x74DADA).
 //   * update RW 0x755A20: as a team, a team waypoint that differs from the state's is taken at once (the previous = the state's) and the move restarts;
-//     otherwise, when the move is done (RW 0x748E46 != 0) (a human player's team: also when the group's centre is within count * a radius of the goal),
+//     otherwise, when the move is done (RW 0x748E46 != 0) (lane AIDATA-1: a SKIRMISH AI player's team, RW 0x6AA5B3, also when the centre of a new AI group
+//     of the team (RW 0x70042A / 0x7A3D3D / 0x76EDA7) is within members x AIData SkirmishGroupFudgeDistance of the goal, RW 0x755B77 .. 0x755C08),
 //     getNextWaypoint RW 0x74292D: GameLogicRandomValue(0, links - 1) (RW 0x6D328E, AIStates.cpp line 0x2657: drawn for every waypoint with a link,
 //     one link included) picks the link (RW 0x484D58), the previous = the current. No next waypoint -> RW 0x66803C(previous) and STATE_SUCCESS. As a
 //     team the team's current waypoint becomes the new one. The AI keeps the previous / current waypoint ids (AI + 0x28 / + 0x2C).
@@ -35,9 +36,9 @@
 //     clear the unit's formation id (RW 0x66B921 / 0x66B9C6), the as-team group command without the formation clears every member's (RW 0x771E31).
 //
 // INFERENCE / NOT PORTED (stop S-1189, docs/STOPS.md): a team WITHOUT a formation keeps no offset from its group's centre (the onEnter branch over the AI's
-// group, RW 0x6630F5-style accessor, with the group speed: the port has no persistent AI group) and the human team's group-radius
-// arrival; the SHIP water path (state 0x49); the attack-follow states and the mood switch (they stay S-1186's stand-in); the internal move is the
-// port's AIMoveToState (exact: no destination adjustment).
+// group, RW 0x6630F5-style accessor, with the group speed: the port has no persistent AI group); the AI group of the skirmish team's arrival test (lane
+// AIDATA-1) leaves no group id or membership behind (no AI group list in the port); the SHIP water path (state 0x49); the attack-follow states and the mood
+// switch (they stay S-1186's stand-in); the internal move is the port's AIMoveToState (exact: no destination adjustment).
 
 #pragma once
 
@@ -78,6 +79,8 @@ public:
 
 private:
 	StateReturnType startMove();
+	// lane AIDATA-1, RW 0x755B77 .. 0x755C08: a skirmish AI player's team counts the waypoint reached when its centre is within members x SkirmishGroupFudgeDistance
+	bool skirmishTeamCloseEnough(Team &team);
 	bool m_asTeam, m_exact;
 	int m_goalWaypoint = -1; ///< the machine's goal waypoint (-1 none)
 	int m_current = -1;     ///< + 0x5C (-1 none)

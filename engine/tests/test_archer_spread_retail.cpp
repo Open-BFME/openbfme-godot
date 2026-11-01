@@ -3,6 +3,7 @@
 // ordered against a MordorFighterHorde spreads its volley over the orcs (HordeContain::attackTargetNow RW 0x875221, the member pick RW 0x86FA87). SKIPs without
 // the games (ROTWK_INSTALL / BFME2_INSTALL).
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "StartTestUtil.h"
@@ -101,15 +102,18 @@ TEST_CASE("archer1 retail: a GondorArcherHorde's first volley at a MordorFighter
 	Player *mordor = archerPlayerAtStart(logic, 1);
 	REQUIRE(men != nullptr);
 	REQUIRE(mordor != nullptr);
-	Object *archers = logic.newObject(logic.things().findTemplate("GondorArcherHorde"), men->getDefaultTeam(), {});
-	Object *orcs = logic.newObject(logic.things().findTemplate("MordorFighterHorde"), mordor->getDefaultTeam(), {});
-	REQUIRE(archers != nullptr);
-	REQUIRE(orcs != nullptr);
-	// the clear arena of the cavalry test (test_horde_cavalry_retail.cpp), the orcs 200 in front of the archers
+	// the clear arena of the cavalry test (test_horde_cavalry_retail.cpp), the orcs 200 in front of the archers. Each horde is made, placed and completed
+	// before the next (the map loop's order, RW 0x62DCE4): its members take the ids after its own
 	const float ax = 1600.0f, bx = 1800.0f, ay = 600.0f;
 	Coord3D pa{ ax, ay, logic.getGroundHeight(ax, ay) }, pb{ bx, ay, logic.getGroundHeight(bx, ay) };
+	Object *archers = logic.newObject(logic.things().findTemplate("GondorArcherHorde"), men->getDefaultTeam(), {});
+	REQUIRE(archers != nullptr);
 	archers->setPosition(&pa);
+	testutil::completeHorde(archers);
+	Object *orcs = logic.newObject(logic.things().findTemplate("MordorFighterHorde"), mordor->getDefaultTeam(), {});
+	REQUIRE(orcs != nullptr);
 	orcs->setPosition(&pb);
+	testutil::completeHorde(orcs);
 	game.advance(2.0); // the members take their slots and the clips load
 	HordeContain *ca = dynamic_cast<HordeContain *>(archers->getContain());
 	HordeContain *co = dynamic_cast<HordeContain *>(orcs->getContain());

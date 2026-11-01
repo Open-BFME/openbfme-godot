@@ -3,7 +3,8 @@
 // runner's stdout pipe open and hung the gate's job for hours (test_netlag1 on a CI host, 2026-10-17). TestChild:
 //   * stops the child (SIGTERM, then waitpid) when it goes out of scope, so an exception or a failed REQUIRE stops it too;
 //   * on Linux, asks the kernel to kill the child when the test process dies (PR_SET_PDEATHSIG), so a crash stops it too;
-//   * points the child's stdin at /dev/null and its stdout / stderr at a log file, so it never holds the test's pipes.
+//   * points the child's stdin at /dev/null and its stdout / stderr at a log file, so it never holds the test's pipes;
+//   * resets the test's signal handlers in the child before anything else, so a stop before the exec never runs doctest's crash report.
 #pragma once
 
 #ifndef _WIN32
@@ -28,9 +29,26 @@ public:
 		all.push_back(exe);
 		all.insert(all.end(), args.begin(), args.end());
 		const pid_t parent = getpid();
+		// lane MACGATE-1: until execv the child is a copy of the test process with doctest's crash handlers; a stop() that came before
+		// the exec (a test failing right after the start) ran doctest's SIGTERM handler there, which reported "test case CRASHED:
+		// SIGTERM" into the test's own output (seen on macOS, whose fork is slower). SIGTERM is blocked across the fork, the child resets
+		// the inherited handlers to their defaults and only then unblocks it: an early SIGTERM simply ends the child.
+		sigset_t term, saved;
+		sigemptyset(&term);
+		sigaddset(&term, SIGTERM);
+		sigprocmask(SIG_BLOCK, &term, &saved);
 		m_pid = fork();
+		if (m_pid != 0)
+		{
+			sigprocmask(SIG_SETMASK, &saved, nullptr);
+		}
 		if (m_pid == 0)
 		{
+			for (int sig : { SIGTERM, SIGINT, SIGABRT, SIGSEGV, SIGILL, SIGFPE, SIGBUS })
+			{
+				signal(sig, SIG_DFL);
+			}
+			sigprocmask(SIG_SETMASK, &saved, nullptr);
 #ifdef __linux__
 			prctl(PR_SET_PDEATHSIG, SIGKILL);
 			if (getppid() != parent)

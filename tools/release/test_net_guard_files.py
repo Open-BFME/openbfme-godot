@@ -14,16 +14,16 @@ import net_guard  # noqa: E402
 def test_scanners_use_portable_owner_paths_without_widening_permissions(tmp_path, monkeypatch):
     from pathlib import PureWindowsPath
 
-    owner = 'func _show_in_file_manager(path):\n\tOS.shell_show_in_file_manager(path)\n'
+    owner = 'func show_in_file_manager(path):\n\tOS.shell_show_in_file_manager(path)\n'
     launcher_owner = 'static func show_in_file_manager(path):\n\tOS.shell_show_in_file_manager(path)\n'
     sources = {
         "engine/src/GameNetwork/Transport.cpp": "void f() { socket(); }",
         "engine/src/Other.cpp": "void f() { socket(); }",
-        "godot/scripts/release/release.gd": owner,
+        "godot/scripts/external_open.gd": owner,
         "godot/scripts/other.gd": owner,
         "godot/scripts/online_lobby.gd": "var request = HTTPRequest.new()",
         "godot/tests/ignored.gd": owner,
-        "launcher/scripts/ui/paths.gd": launcher_owner,
+        "launcher/scripts/core/external_open.gd": launcher_owner,
         "launcher/scripts/other.gd": launcher_owner,
         "launcher/scripts/core/instance_lock.gd": "var server = TCPServer.new()\nvar request = HTTPRequest.new()",
         "launcher/tests/ignored.gd": launcher_owner,
@@ -81,23 +81,25 @@ def test_launcher_excluded_ports_query_is_exact_and_read_only():
     assert not [f for f in findings if "OS.execute" in f]
 
 RELEASE = "godot/scripts/release/release.gd"
-OWNER = "func _show_in_file_manager(path: String) -> Error:\n\treturn OS.shell_show_in_file_manager(path, true)\n"
+OPENER = "godot/scripts/external_open.gd"
+OWNER = "func show_in_file_manager(path: String) -> Error:\n\treturn OS.shell_show_in_file_manager(path, true)\n"
 
 
 def calls(text: str, path: str | None = None) -> list[str]:
     return [f for f in net_guard.gdscript_findings(text, path) if "shell_" in f]
 
 
-def test_only_the_owner_function_of_release_gd_may_call_the_file_manager():
-    assert calls(OWNER, RELEASE) == []
-    assert calls(OWNER.replace("shell_show_in_file_manager", "shell_open"), RELEASE) == []
+def test_only_the_external_open_helper_may_call_the_file_manager():
+    assert calls(OWNER, OPENER) == []
+    assert calls(OWNER.replace("shell_show_in_file_manager", "shell_open"), OPENER) == []
     # the same function in another file, another function of release.gd, a top-level statement
     assert calls(OWNER, "godot/scripts/game.gd") == ["line 2: OS.shell_show_in_file_manager"]
-    assert calls(OWNER.replace("func _show_in_file_manager(", "func open_log_folder("), RELEASE) == ["line 2: OS.shell_show_in_file_manager"]
-    assert calls(OWNER + "var x = OS.shell_open\n", RELEASE) == ["line 3: OS.shell_open"]
+    assert calls(OWNER, RELEASE) == ["line 2: OS.shell_show_in_file_manager"]
+    assert calls(OWNER.replace("func show_in_file_manager(", "func open_log_folder("), OPENER) == ["line 2: OS.shell_show_in_file_manager"]
+    assert calls(OWNER + "var x = OS.shell_open\n", OPENER) == ["line 3: OS.shell_open"]
     # an inner class's method of the same name is not the owner (its func is indented: the class at column 0 ends the owner)
-    inner = OWNER + "class Inner:\n\tfunc _show_in_file_manager(p):\n\t\tOS.shell_open(p)\n"
-    assert calls(inner, RELEASE) == ["line 5: OS.shell_open"]
+    inner = OWNER + "class Inner:\n\tfunc show_in_file_manager(p):\n\t\tOS.shell_open(p)\n"
+    assert calls(inner, OPENER) == ["line 5: OS.shell_open"]
 
 
 def test_sol_r3_bypasses_fail():
@@ -146,7 +148,7 @@ def test_the_game_tree_passes_and_release_gd_keeps_its_guard():
 
 def test_ui3_the_launcher_has_one_file_manager_owner_too():
     """lane UI-3: the launcher's "Show folder" / "Open log folder" go through paths.gd's static show_in_file_manager alone"""
-    paths = "launcher/scripts/ui/paths.gd"
+    paths = "launcher/scripts/core/external_open.gd"
     owner = "static func show_in_file_manager(path: String) -> String:\n\tOS.shell_show_in_file_manager(path, true)\n\treturn \"\"\n"
     assert calls(owner, paths) == []
     assert calls(owner.replace("static func", "func"), paths) == []
@@ -155,9 +157,9 @@ def test_ui3_the_launcher_has_one_file_manager_owner_too():
     assert calls(owner + "static func other():\n\tOS.shell_open(\"https://example.com\")\n", paths) == ["line 5: OS.shell_open"]
     assert calls("static var x := 1\n" + "func f():\n\tOS.shell_open(\"x\")\n", paths) == ["line 3: OS.shell_open"]
     found = net_guard.scan_launcher()
-    # lane ONLINEMENU-1: the account page opens the system browser on a checked sign-in URL (test_launcher_tools pins both calls): no file manager
+    # The account page retains its URL validation but delegates the effect.
     oauth = "launcher/scripts/core/oauth_account.gd"
-    assert [f.split(": ", 1)[-1] for f in found.get(oauth, []) if "shell_" in f] == ["OS.shell_open", "OS.shell_open"]
+    assert [f.split(": ", 1)[-1] for f in found.get(oauth, []) if "shell_" in f] == []
     assert [f for f in found.get(paths, []) if "shell_" in f] == [] and not [p for p, fs in found.items() if p != oauth for f in fs if "shell_" in f]
 
 

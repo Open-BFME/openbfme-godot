@@ -16,6 +16,7 @@
 #include "GameClient/ClientEvents.h"
 #include "GameClient/AnimationSoundClientBehavior.h"
 #include "GameClient/Drawable.h"
+#include "GameClient/EvaDamage.h"
 #include "GameClient/LogicSnapshot.h"
 #include "GameClient/MapObjectDrawables.h"
 #include "GameLogic/GameLogic.h"
@@ -25,6 +26,7 @@
 #include <set>
 #include <string>
 #include <functional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -40,6 +42,8 @@ public:
 	// the simulation's client events, in order: creation, destruction, model conditions, module / sub object visibility, placement
 	void applyEvents(const std::vector<ClientEvent> &events);
 	void setHeroAttackedHandler(std::function<void(ObjectID)> handler) { m_heroAttackedHandler = std::move(handler); }
+	// lane EVADAMAGE-1: what the EVA_DAMAGED events did (EvaDamage::apply)
+	const EvaDamage::Stats &evaDamageStats() const { return m_evaDamage; }
 	void setHeroFlashHandler(std::function<void(const std::string &, int)> handler) { m_heroFlashHandler = std::move(handler); }
 	size_t eventsApplied() const { return m_eventsApplied; }
 
@@ -129,10 +133,18 @@ private:
 	bool m_parallelSync = true;
 	size_t m_parallelSyncMinimum = 512;
 	std::vector<Drawable::SyncPrep> m_syncScratch; ///< lane PERF-3: syncTransforms' per-slot results of the parallel part (kept: no allocation per frame)
+	std::vector<std::uint8_t> m_advancedScratch;   ///< lane PERF-HD: per slot, its animations advanced on the job pool (advance)
+	std::vector<std::uint8_t> m_containedScratch;  ///< lane PERF-HD: per slot, its record has a container (found on the job pool before the dependency flags)
 	AnimationSoundModuleManager m_animationSounds; ///< lane AUDIO-4 (before the drawables: their modules leave its lists when they go)
 	DrawServices m_services;
-	std::map<ObjectID, DrawableID> m_byObject;
+	// lane PERF-CLIENT: object id -> drawable id (0: none), indexed by the object id (ids are small and dense: GameLogic hands them out in order); was a
+	// std::map searched per lookup (the audio, the HUD's horde anchors, the dependency flags: tens of thousands a frame in a battle)
+	std::vector<DrawableID> m_byObject;
+	std::unordered_map<ObjectID, DrawableID> m_byObjectFar; ///< ids at or beyond kDenseObjectIds (a saved game's ids are kept: never expected so far)
+	static constexpr ObjectID kDenseObjectIds = 1u << 22;
+	void bindObject(ObjectID object, DrawableID id); ///< id 0 unbinds
 	std::function<void(ObjectID)> m_heroAttackedHandler;
+	EvaDamage::Stats m_evaDamage; ///< lane EVADAMAGE-1
 	std::function<void(const std::string &, int)> m_heroFlashHandler;
 	size_t m_dependencyUpdates = 0; ///< lane COMBAT-4: dependent drawables whose shared flags changed (RW 0x4BF2D8)
 	std::uint32_t m_nextSeq = 0;

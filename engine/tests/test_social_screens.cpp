@@ -4,6 +4,7 @@
 #include "AptRetail.h"
 #include "GameClient/GameTextTableSource.h"
 #include "GameClient/GUI/AptGadgetLayer.h"
+#include "GameClient/GUI/AptMessageBox.h"
 #include "GameClient/GUI/AptScreens/AptMessenger.h"
 #include "GameClient/GUI/AptScreens/AptOnlineShell.h"
 #include "GameClient/GUI/AptScreens/AptScreenFactories.h"
@@ -45,6 +46,53 @@ TEST_CASE("SOCIAL Messenger providers validate tabs and close without destroying
 	}
 	CHECK_FALSE(windows.hasProvider("MessengerActiveTab"));
 	CHECK_FALSE(windows.hasScreenRef("AptMessenger::InitGadgets"));
+}
+
+TEST_CASE("SOCIAL invite questions cancel only their own box and ignore late button callbacks")
+{
+	apttest::MemorySource source;
+	for (const char *name : { "AptLevel0", "OnlineShell", "GuiFX" })
+	{
+		apttest::TestMovie movie;
+		movie.setRootFrames({ {} });
+		source.add(name, movie);
+	}
+	RecordingShellServices services;
+	ShellEnvironment environment;
+	environment.services = &services;
+	AptScreenFactoryTable factories;
+	registerAptScreenFactories(factories);
+	WindowManager windows(source, services);
+	Shell shell(windows, factories, services, environment);
+	windows.setShell(&shell);
+	windows.init();
+	shell.push("OnlineShell.apt");
+	auto *screen = dynamic_cast<AptOnlineShell *>(shell.top());
+	REQUIRE(screen);
+	REQUIRE(screen->askYesNo("invite-1", u"Invite", u"Join?"));
+	auto *box = screen->messageBox();
+	REQUIRE(box);
+	const auto yes = "_level" + std::to_string(box->level()) + ".MessageBox_OnButtonYes";
+	screen->cancelAsk("another-key");
+	CHECK(screen->asking("invite-1"));
+	screen->cancelAsk("invite-1");
+	CHECK_FALSE(screen->asking("invite-1"));
+	CHECK(box->type() == AptMessageBox::TYPE_NONE);
+	CHECK(screen->takeAnswers().empty());
+	REQUIRE(windows.invokeCallback(yes, ""));
+	CHECK(screen->takeAnswers().empty());
+	REQUIRE(screen->askYesNo("invite-2", u"Invite", u"Join?"));
+	box->show(AptMessageBox::TYPE_OK, u"Room closed", u"The host left.");
+	screen->cancelAsk("invite-2");
+	CHECK(box->type() == AptMessageBox::TYPE_OK);
+	CHECK(box->title() == u"Room closed");
+	CHECK(screen->takeAnswers().empty());
+	box->hide();
+	REQUIRE(screen->askYesNo("invite-3", u"Invite", u"Join?"));
+	REQUIRE(windows.invokeCallback(yes, ""));
+	CHECK(screen->takeAnswers() == std::vector<std::string>{ "invite-3|yes" });
+	REQUIRE(windows.invokeCallback(yes, ""));
+	CHECK(screen->takeAnswers().empty());
 }
 
 TEST_CASE("SOCIAL retail Messenger loads both player tabs and routes actions by public id")
@@ -124,7 +172,7 @@ OnlineLobbyClient::Options shellSocialOptions(int factions, int colors)
 std::string shellGameView(const std::string &id, const std::string &map, bool privateRoom)
 {
 	std::string slots = "[";
-	for (int slot = 0; slot < MAX_SLOTS; ++slot)
+	for (int slot = 0; slot < LEGACY_MAX_SLOTS; ++slot) // an eight-start room: eight records (ONLINE16-FIX)
 	{
 		if (slot) slots += ",";
 		const std::string state = slot == 0 ? "player" : (privateRoom && slot > 1 ? "closed" : "open");
@@ -136,7 +184,7 @@ std::string shellGameView(const std::string &id, const std::string &map, bool pr
 	}
 	slots += "]";
 	return "{\"id\":" + OnlineLobbyClient::jsonQuote(id) +
-		",\"name\":\"Challenge room\",\"state\":\"open\",\"hostSlot\":0,\"seq\":1,"
+		",\"name\":\"Challenge room\",\"state\":\"open\",\"private\":true,\"hostSlot\":0,\"seq\":1,"
 		"\"setup\":{\"map\":" + OnlineLobbyClient::jsonQuote(map) +
 		",\"startingCash\":1000,\"superweaponRestriction\":0,\"legendaryHeroes\":1,\"rules\":null},"
 		"\"slots\":" + slots + "}";

@@ -11,12 +11,19 @@ runtime.
 
 ## Build and run
 
-    tools\retail_oracle\build.bat                       :: MSVC (VS 2022, x86 + x64 tools) -> build\retail_oracle.exe, plus
-                                                        :: build\numeric_driver.exe (engine NumericState), build\hash_driver.exe (engine INIMacroTable::hash),
-                                                        :: build\refpack_driver.exe (engine REF_decode) and tools\x87_oracle's exe,
-                                                        :: which the duration tests compare against
-    python -m pytest tools\retail_oracle -rs            :: the suite; needs pytest and numpy (capstone for two optional tests)
-    tools\retail_oracle\run_tests.bat                   :: both
+Windows only, from the repository root in Command Prompt with MSVC (VS 2022,
+x86 + x64 tools), Python with `pytest` and `numpy` (`capstone` for the disassembly
+checks), and the repo-root engine build already complete:
+
+```bat
+tools\retail_oracle\build.bat
+python -m pytest tools\retail_oracle -rs
+```
+
+`tools\retail_oracle\run_tests.bat` performs both steps. The helper build writes
+`tools\retail_oracle\build\retail_oracle.exe`, the NumericState `numeric_driver.exe`,
+INIMacroTable `hash_driver.exe`, and REF_decode `refpack_driver.exe` there, as well
+as the x87 helper under `tools\x87_oracle\build\`.
 
 The top-level `build.bat` runs this script after the engine build, so a normal build keeps every helper current.
 `hash_driver` links `engine\build\openbfme_core.lib`, so the repo-root `build.bat` must have run first.
@@ -27,8 +34,17 @@ rule (`helpers.py`; the engine's `test_numeric_state.cpp` does it for `x87_oracl
 `stale helper: <name> (...); rebuild with tools\retail_oracle\build.bat` instead of running against an old binary.
 Add an input to `helpers.json` when a helper starts including a new source or header.
 
+**Linux under Wine** (lane BFME2MODE-0): `LLVM_MINGW=<llvm-mingw folder> tools/retail_oracle/build_mingw.sh` builds the same
+`build/retail_oracle.exe` with llvm-mingw (i686). Off Windows, `oracle.py` runs it with `wine` (`$WINE` overrides the binary) and
+`WINEDLLOVERRIDES=msvcr71=n;msvcp71=n`, because Wine would otherwise substitute its builtin msvcr71 (lane WIN-1). Install paths are
+passed as `Z:\...`. The drivers still need MSVC. `test_edition_oracle.py` (the first edition branch, docs/EDITIONS.md) ran this way.
+
 `ROTWK_INSTALL` / `BFME2_INSTALL` name the install folders (defaults `F:\RotWK`, `F:\BFME2`).
 The suite SKIPS loudly (reason shown with `-rs`) if the helper is not built or a binary is absent.
+A binary that is present but is not the image a test's addresses were read from FAILS with the reason (never a fault at
+an unmapped address). `test_apt_handlers.py` identifies `BFME2_INSTALL\game.dat` first (`apt_handlers.identify_image`: base,
+SizeOfImage and the SHA-256 of `.text`) and accepts only the clean BFME2 1.06 image (base `0x400000`); anything else is
+refused with its base, size and digest.
 `tools/retail_oracle/disasm.py <game.dat> <va hex> [count]` disassembles a VA (needs `capstone`).
 
 ## What the helper does and does not do
@@ -112,7 +128,7 @@ duration, nlerp) with their citations.
    comes from in the test header. Remember RW values carry S-001 (`Oracle.caveats`); where it
    matters, show the function is byte-identical to BFME2 1.06 (`test_macro_hash_core_is_byte_identical...`).
 
-## Proven functions (all in `test_retail_oracle.py`)
+## Proven functions (`test_retail_oracle.py` unless another test is named)
 
 | function | address | against |
 |---|---|---|

@@ -2,6 +2,7 @@
 //
 // See BitFlags.h for the target facts. Lane HORDE-1.
 
+#include "Common/Thing/KindOfTokens.h"
 #include "GameLogic/BitFlags.h"
 
 #include "Common/AsciiString.h"
@@ -118,7 +119,7 @@ void ParseBitFlags(INI *ini, std::uint32_t *words, size_t wordCount, const char 
 
 void ParseKindOfMask(INI *ini, void *, void *store, const void *)
 {
-	ParseBitFlags(ini, static_cast<std::uint32_t *>(store), 7, TheKindOfNames);
+	ParseBitFlags(ini, static_cast<std::uint32_t *>(store), 7, KindOfTokens::names()); // lane MODS-3: the table in force
 }
 
 void ParseModelConditionFlags(INI *ini, void *, void *store, const void *)

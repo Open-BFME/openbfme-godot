@@ -10,6 +10,5 @@ class ModuleFactory;
 
 namespace LogicModules
 {
-// Pass the mounted data mode so BFME1-only runtimes do not alter the RotWK registry.
-void registerAll(ModuleFactory &modules, bool bfme1Data = false);
+void registerAll(ModuleFactory &modules);
 }

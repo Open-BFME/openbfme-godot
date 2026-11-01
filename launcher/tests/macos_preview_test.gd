@@ -22,7 +22,7 @@ class PreviewUpdater:
 		assets_fetched += 1
 		return {"ok": false, "error": "unexpected asset download"}
 
-	func _play_bundled(bundle: Dictionary, _args: PackedStringArray) -> Dictionary:
+	func _play_bundled(bundle: Dictionary, _args: PackedStringArray, _before_start: Callable = Callable()) -> Dictionary:
 		started = bundle
 		return {"ok": true, "error": "", "pid": 1}
 

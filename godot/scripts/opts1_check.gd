@@ -31,9 +31,21 @@ func run(p_game: Node, p_shots: String) -> int:
 	await game._step(10)
 	await game._wait_main_ready()
 	await game._step(60)
+	check_presentation()
 	var main_level: int = shell.shell_top_level()
 	var main0 := widget_state(main_level)
 	check("main menu has buttons", main0.size() >= 5, "only %d buttons" % main0.size())
+	if game._res != Vector2i.ZERO:
+		check("command-line resolution is retained in memory", game._display.resolution == game._res, str(game._display.resolution))
+		for cycle in 2:
+			await key(KEY_ENTER, true)
+			check("command-line resolution survives fullscreen cycle %d" % cycle,
+				Vector2i(root.get_visible_rect().size) == game._res, str(root.get_visible_rect().size))
+			await key(KEY_ENTER, true)
+		var command_line_file := ConfigFile.new()
+		command_line_file.load(game._display_path)
+		check("mode hotkeys do not persist the command-line resolution", not command_line_file.has_section_key("display", "resolution"), str(command_line_file.get_sections()))
+		DirAccess.remove_absolute(game._display_path)
 
 	# 1. the window changed directly (the system's maximise / restore / resize buttons), with the main menu up
 	var sizes := [Vector2i(1600, 900), Vector2i(1024, 768), Vector2i(1280, 800)]
@@ -45,6 +57,8 @@ func run(p_game: Node, p_shots: String) -> int:
 		root.size = size
 		await game._step(30)
 		compare("main menu after a resize to %dx%d" % [size.x, size.y], main0, widget_state(main_level))
+
+	await shared_accept_checks()
 
 	# 2. Options.apt from the main menu (its OptionsNav -> Settings): the OpenBFME menu at once
 	if not await open_options():
@@ -98,6 +112,22 @@ func run(p_game: Node, p_shots: String) -> int:
 		check("window mode %s applied" % modes[i], game._display_screen._pending.window_mode == modes[i] and (DisplayServer.get_name() == "headless" or root.mode == DisplaySettings.window_mode_of(modes[i])),
 			"mode %d" % root.mode)
 		compare("Options.apt after window mode %s" % modes[i], page0, widget_state(options_level))
+		if modes[i] != "windowed":
+			var resolution_row: Dictionary = screen.row("resolution")
+			check("%s resolution is enabled" % modes[i], resolution_row.enabled, str(resolution_row))
+			for size in ["1024x768", "1280x720"]:
+				var index := -1
+				for n in resolution_row.items.size():
+					if String(resolution_row.items[n]).replace(" ", "") == size:
+						index = n
+				check("%s offers %s" % [modes[i], size], index != -1, str(resolution_row.items))
+				if index == -1:
+					continue
+				await select("resolution", index)
+				await game._step(10)
+				check("%s renders at %s" % [modes[i], size], Vector2i(game.get_viewport().get_visible_rect().size) == DisplaySettings.parse_resolution(size),
+					str(game.get_viewport().get_visible_rect().size))
+				compare("Options.apt at %s %s" % [modes[i], size], page0, widget_state(options_level))
 	await select("window_mode", 0)
 	await game._step(20)
 	var res: Dictionary = screen.row("resolution")
@@ -200,6 +230,41 @@ func run(p_game: Node, p_shots: String) -> int:
 	return finish()
 
 
+## ACCEPT owns only edits made since entry, even when the launcher writes while the page is open.
+func shared_accept_checks() -> void:
+	var root: Window = game.get_tree().root
+	var runtime := DisplaySettings.snapshot(root)
+	var settings: Dictionary = game._display.to_dict()
+	await open_options()
+	await click_bar("accept")
+	check("unchanged ACCEPT creates no display file or command-line preferences", not FileAccess.file_exists(game._display_path), game._display_path.get_file())
+	await game._step(90)
+	await open_options()
+	var launcher_file := ConfigFile.new()
+	launcher_file.set_value("display", "resolution", "1536x864")
+	launcher_file.set_value("other", "keep", 42)
+	check("launcher writes while Options is open", launcher_file.save(game._display_path) == OK, "save failed")
+	var before := FileAccess.get_file_as_string(game._display_path)
+	await click_bar("accept")
+	check("unchanged ACCEPT leaves the latest file byte-for-byte intact", FileAccess.get_file_as_string(game._display_path) == before, "file changed")
+	await game._step(90)
+	await open_options()
+	await select("max_fps", DisplaySettings.FRAME_LIMITS.find(120))
+	launcher_file.set_value("display", "resolution", "1600x900")
+	check("launcher changes resolution during a game edit", launcher_file.save(game._display_path) == OK, "save failed")
+	await click_bar("accept")
+	var saved := ConfigFile.new()
+	saved.load(game._display_path)
+	check("ACCEPT merges only the edited cap and keeps launcher resolution and unrelated keys",
+		saved.get_value("display", "max_fps") == 120 and saved.get_value("display", "resolution") == "1600x900"
+		and saved.get_value("other", "keep") == 42 and not saved.has_section_key("display", "window_mode"), "unexpected saved values")
+	check("ACCEPT keeps the command-line resolution in effect", game._display.resolution == game._res, str(game._display.resolution))
+	game._display.from_dict(settings)
+	DisplaySettings.restore(root, runtime)
+	DirAccess.remove_absolute(game._display_path)
+	await game._step(90)
+
+
 ## --display-game: the screen over a live game. Esc and the quit menu's Options (RW 0x921783 opens Options.apt over the game), the OPENBFME button, a
 ## resolution and a window mode through the screen while the game runs paused under the quit menu, Esc back out step by step.
 func run_game(p_game: Node, p_shots: String) -> int:
@@ -208,6 +273,7 @@ func run_game(p_game: Node, p_shots: String) -> int:
 	screen = game._display_screen
 	overlay = game._display_overlay
 	shots = p_shots
+	check_presentation()
 	var root: Window = game.get_tree().root
 	if DisplayServer.get_name() == "headless" and root.size.x < 640:
 		root.size = Vector2i(1280, 800)
@@ -281,6 +347,12 @@ func open_options() -> bool:
 		await game._step(15)
 	await game._step(30)
 	return screen.is_open()
+
+
+func check_presentation() -> void:
+	var expected := "bfme2-106" if game._menu_style == "bfme2" else "rotwk-201"
+	var actual: String = shell.get_shell_report().get("presentation_style", "")
+	check("presentation source " + expected, actual == expected, "got " + actual)
 
 
 func finish() -> int:

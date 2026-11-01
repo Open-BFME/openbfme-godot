@@ -6,10 +6,31 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { SqliteIdentityStore, SIGHTING_RETENTION_S } from '../src/identity-store.mjs';
 import { identityStorage } from './identity-storage.mjs';
+import { validateSighting } from '../src/lobby.mjs';
 
 const NOW = 1_700_000_000;
 const install = (i) => i.toString(16).padStart(32, '0');
 const device = (i) => i.toString(16).padStart(64, '0');
+
+test('text repairs merge legacy nickname collisions and rebuild a single searchable index entry', async () => {
+  const storage = identityStorage();
+  try {
+    const index = new SqliteIdentityStore(storage);
+    const raw = sighting(1);
+    raw.nicks = [
+      { nick: '\ud800x', first_seen: NOW - 10, last_seen: NOW - 2 },
+      { nick: '\udc00x', first_seen: NOW - 5, last_seen: NOW },
+      { nick: '�x', first_seen: NOW - 4, last_seen: NOW - 1 },
+    ];
+    storage.sql.exec('INSERT INTO identity_sightings VALUES (?, ?, ?)', raw.install, raw.last_seen, JSON.stringify(raw));
+    while (!await index.migratePage((record) => record, validateSighting)) {}
+    assert.deepEqual(index.getSighting(raw.install).nicks, [{ nick: '�x', first_seen: NOW - 10, last_seen: NOW }]);
+    assert.equal(index.players('�x', null, 51, NOW).length, 1);
+    assert.deepEqual(storage.sql.exec('SELECT nick FROM identity_nicks WHERE install = ?', raw.install).toArray().map((row) => row.nick), ['�x']);
+    assert.equal(validateSighting({ ...raw, nicks: [raw.nicks[0], raw.nicks[0]] }).nicks.length, 1);
+    assert.throws(() => validateSighting({ ...raw, nicks: [raw.nicks[2], raw.nicks[2]] }), /nicks must be unique/);
+  } finally { storage.db.close(); }
+});
 function effective(i, version = 1) {
   return { install: install(i), v: 1, version, block: { kind: 'ban', until: null, reason: 'Capacity fixture' },
     mute_until: null, routing: '', notice: null, devices: [device(0), ...Array.from({ length: 4 }, (_, j) => device(i * 4 + j + 1))] };
@@ -96,6 +117,49 @@ test('legacy migration resumes by bounded durable cursor without partial index p
   assert.equal(reopened.enforcementPage(install(200), 101).length, 5);
   assert.ok(storage.maxRows <= 101);
   storage.db.close();
+});
+
+test('sighting migration skips invalid JSON and mismatched rows with durable counts, cursors and atomic index cleanup', async () => {
+  const storage = identityStorage();
+  const warn = console.warn;
+  const warnings = [];
+  console.warn = (message) => warnings.push(message);
+  try {
+    const index = new SqliteIdentityStore(storage);
+    for (const prefix of ['sighting:', 'enforcement:', 'text-v2:kv']) {
+      storage.sql.exec('INSERT INTO identity_migration VALUES (?, NULL, 1)', prefix);
+    }
+    for (let i = 1; i <= 102; i++) index.saveSighting(sighting(i));
+    storage.sql.exec('UPDATE identity_sightings SET payload = ? WHERE install = ?', '{', install(1));
+    storage.sql.exec('UPDATE identity_sightings SET payload = ? WHERE install = ?', JSON.stringify(sighting(102)), install(2));
+    storage.sql.exec('UPDATE identity_sightings SET payload = ? WHERE install = ?', JSON.stringify({ ...sighting(3), signins: 0 }), install(3));
+    const exec = storage.sql.exec;
+    storage.sql.exec = (query, ...args) => {
+      if (query.startsWith('INSERT OR REPLACE INTO identity_migration')) throw new Error('migration write failed');
+      return exec(query, ...args);
+    };
+    await assert.rejects(index.migratePage((x) => x, validateSighting), /migration write failed/);
+    storage.sql.exec = exec;
+    assert.equal(storage.sql.exec('SELECT COUNT(*) AS n FROM identity_sightings').toArray()[0].n, 102);
+    assert.deepEqual(storage.sql.exec('SELECT * FROM identity_migration_skips').toArray(), []);
+    assert.deepEqual(warnings, []);
+    assert.equal(await index.migratePage((x) => x, validateSighting), false);
+    assert.deepEqual(storage.sql.exec('SELECT cursor, done FROM identity_migration WHERE prefix = ?', 'text-v2:sql').toArray().map((row) => ({ ...row })),
+      [{ cursor: install(100), done: 0 }]);
+    const reopened = new SqliteIdentityStore(storage);
+    assert.equal(await reopened.migratePage((x) => x, validateSighting), false);
+    assert.equal(await reopened.migratePage((x) => x, validateSighting), true);
+    assert.equal(storage.sql.exec('SELECT count FROM identity_migration_skips WHERE prefix = ?', 'text-v2:sql').toArray()[0].count, 3);
+    for (let i = 1; i <= 3; i++) {
+      assert.equal(reopened.getSighting(install(i)), undefined);
+      for (const table of ['identity_nicks', 'identity_devices']) {
+        assert.equal(storage.sql.exec(`SELECT COUNT(*) AS n FROM ${table} WHERE install = ?`, install(i)).toArray()[0].n, 0);
+      }
+    }
+    assert.equal(reopened.getSighting(install(102)).install, install(102));
+    assert.match(warnings.join('\n'), /skipping malformed stored sightings during text-v2:sql: 3/);
+    assert.equal(warnings.length, 1);
+  } finally { console.warn = warn; storage.db.close(); }
 });
 
 test('nickname prefix upper bound skips the Unicode surrogate range', () => {

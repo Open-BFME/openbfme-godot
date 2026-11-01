@@ -20,9 +20,11 @@
 
 #include "GameClient/ControlBar.h"
 #include "GameClient/GUI/AptScreen.h"
+#include "GameClient/GUI/AptScreens/InGameCommandButtonSubMenu.h"
 
 #include <functional>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -32,6 +34,7 @@ class AptPalantir : public AptScreen
 public:
 	bool isMenu() const override { return false; } // lane OPTS-6: the HUD, its keys are the game's
 	AptPalantir(WindowManager &windows, Shell &shell);
+	void setViewportSize(int width, int height);
 
 	// the commands the Palantir registers, in the binary's order (without the screen prefix of the command UI names)
 	static const std::vector<std::string> &retailCommandNames();
@@ -109,6 +112,7 @@ public:
 		std::string rankLabelFormat, timeRemainingText;
 	};
 	void setLocalState(const LocalState &s) { m_local = s; }
+	static std::string rankText(const LocalState &state);
 	// lane HUD-5: the movie calls UpdatePlayerStats made ("SetPlayerMagicProgress(37)", ...), the last 64, for tests and reports
 	const std::vector<std::string> &playerStatsCalls() const { return m_statsCalls; }
 	bool commandInterfaceShown() const { return m_commandShown; }
@@ -138,6 +142,38 @@ public:
 	int movieLevel() const { return level(); }
 	// lane HUD-6: the command button whose content holds the clip at `path` (a "_level<N>." target path): the arc's or the side bar's slot; false none
 	bool contentSlotAt(const std::string &path, bool &arc, int &slot) const;
+
+	// ---- lane CAMPUI-1: the arc's sub-menus and the stance toggle's radial (InGameToggleStanceCommandButton) ----
+	// TARGET FACTS (RotWK game.dat, caveat S-001): PalantirCommandUI::OnSubMenuLoaded (RW 0x93023D) takes atoi(index) in [0, 6) (RW 0x930088) and the clip from
+	// `name` (level prefix removed, RW 0x815563) and, when the arc slot has none, makes the slot's sub-menu (+ 4 of the record (index + 5) * 0x14, RW 0x9D353B);
+	// OnSubMenuUnloaded (RW 0x930340) drops it. OnToggleFlashLoaded / Unloaded keep the slot's CommandButtonToggleFlash clip (+ 8; INFERENCE: their bodies were
+	// not read, the layout of their sub-menu twins is assumed). The content factory (RW 0x92FF5C) makes an InGameToggleStanceCommandButton (RW 0x97004A) for a
+	// TOGGLE_STANCE (0x39) button when the slot has both; its press (RW 0x96FAC6) adds an item per stance of the button's Stances list (at most 3, RW 0x96F62F)
+	// and opens the sub-menu, or requests its close when open; an item's press (RW 0x96F85A -> 0x96F53C) sends MSG_CHANGE_STANCE with the item's stance,
+	// requests the close and plays the toggle flash's Go() (RW 0x9D2DA3). The content's destructor hides an open sub-menu (RW 0x96FCCB).
+	void setStanceHandler(std::function<void(int stance)> send) { m_stancePress = std::move(send); }
+	const InGameCommandButtonSubMenu *subMenu(int position) const
+	{
+		return position >= 0 && position < kArcPositions ? m_subMenu[position].get() : nullptr;
+	}
+	const std::string &toggleFlashPath(int position) const { return m_toggleFlashPath[position < 0 || position >= kArcPositions ? 0 : position]; }
+	unsigned toggleFlashGoes() const { return m_flashGoes; }
+	// RW 0x92FF5C's test for the arc position: its button is TOGGLE_STANCE and the slot has a sub-menu and a toggle flash
+	bool isToggleStanceContent(int position) const;
+	// a clip inside a stance item's content ("_level<N>.<item frame>.Button..."): the toggle's command set slot, the item's stance and its index in the
+	// toggle's Stances list (RW 0x96F2DA; RW 0x96F33E: the item's help is the toggle's TextLabel / DescriptLabel at that index); false none
+	struct StanceItemHit
+	{
+		int slot = -1;      ///< the toggle's command set slot
+		int stance = -1;    ///< the item's stance
+		int listIndex = -1; ///< its index in the toggle's Stances (-1 not there)
+		const CommandButton *toggle = nullptr;
+	};
+	bool stanceItemAt(const std::string &path, StanceItemHit &hit) const;
+	// RW 0x96F6E7: the CommandButton whose image a stance's item shows (Command_SetStanceBattle / Aggressive / HoldGround), null for another stance
+	static const char *setStanceButtonName(int stance);
+	// what the stance radial could not do (no item image, a refused movie call ...), for tests and reports; never silent
+	const std::vector<std::string> &stanceErrors() const { return m_stanceErrors; }
 
 	// ---- lane SPELL-2: the spell book inside the Palantir (InGameSpellBook.apt; RotWK controller RW 0x93178C) ----
 	// TARGET FACTS (RotWK game.dat, caveat S-001): the controller registers OnAptInGameSpellBookLoaded (RW 0x931698: the movie's clip path, e.g. "SpellBookUI",
@@ -200,9 +236,32 @@ public:
 	unsigned long long moviesCalls() const { return m_calls; }
 	const std::vector<std::string> &callErrors() const { return m_callErrors; }
 
+	// ---- lane CAMPUI-1: the flashing buttons of the Palantir (AptPalantirObjectives.cpp) ----
+	// TARGET FACTS (RotWK game.dat, caveat S-001): the Palantir update RW 0x6D7647, in a game that is neither the Living World (RW 0x441E4A) nor a skirmish /
+	// network game (RW 0x625456), while + 0xE5 is clear compares every objective's shown flag with the one it remembered (+ 0x118; nothing remembered
+	// counts as hidden) and sets + 0xE5 on a hidden -> shown change; with + 0xE5 set, the objectives screen (RW 0xDE9EA8) or the tribute screen (RW
+	// 0x914C4B) up clears it, as OnBttnObjectives does (RW 0x6D40C9); a change of + 0xE5 against the bit it sent (+ 0x7E bit 5) calls the movie's
+	// FlashObjectivesButton("_show" / "_hide") (RW 0x80043E). FLASH_SPELL_STORE_BUTTON / FLASH_OBJECTIVES_BUTTON / FLASH_PLANNING_MODE_BUTTON(seconds)
+	// (RW 0x7BDF4E .. -> RW 0x6D455F(slot, seconds)): the slot's timer (+ 0x12C + slot * 8) = max(timer, seconds * 30) client frames; every update
+	// (RW 0x6D72DF) counts it down and, when "running" changes, calls Set<PlayerMagic|Objectives|PlanningMode>ButtonFlashEffectState("_show" / "_hide").
+	// `shown`: the tracker's shown flags in list order; `flashableGame`: neither a skirmish nor a network game; `screenOpen`: the objectives or tribute screen
+	void syncObjectiveFlash(const std::vector<bool> &shown, bool flashableGame, bool screenOpen);
+	void flashButton(int slot, int seconds); ///< RW 0x6D455F (slot 0 PlayerMagic, 1 Objectives, 2 PlanningMode)
+	void tickFlashTimers(double seconds);    ///< RW 0x6D72DF on the client clock (30 counts a second)
+	bool objectivesFlashing() const { return m_objFlash; }
+	bool buttonFlashing(int slot) const { return slot >= 0 && slot < 3 && m_flashOn[slot]; }
+	void clearObjectivesFlash() { m_objFlash = false; } ///< RW 0x6D40C9
+
 private:
+	std::vector<bool> m_objShown;  ///< + 0x118
+	bool m_objFlash = false;       ///< + 0xE5
+	bool m_objFlashSent = false;   ///< + 0x7E bit 5
+	int m_flashTimer[3] = {};      ///< + 0x12C + slot * 8
+	bool m_flashOn[3] = {};        ///< + 0x130 + slot * 8
+	double m_flashClock = 0.0;     ///< the fraction of a client frame not counted yet
 	// RW 0x9D26D2: CreateContent with the clip's "_ContentName" extern provider registered for the call (lane QA-1)
-	bool createContent(const std::string &frame);
+	// `name`: the content clip's name (InGameCommandButton's "content"; a stance item's InGameCommandButtonMovieClip, RW 0x96F7B7 -> 0x9D72DB: "Button")
+	bool createContent(const std::string &frame, const char *name = "content");
 	void hook(const std::string &name);
 	struct Slot
 	{
@@ -210,7 +269,9 @@ private:
 		bool initialized = false; ///< lane HUD-4: the content reported <content>_OnInitialized (RW 0x9D6E4D)
 		int slot = -1;
 		std::string sig;
-		bool overlay = false;      ///< lane AUTOCAST-1: InGameCommandButtonMovieClip::Impl + 0x54 (the state retail last asked for; set even when the call fails)
+		const CommandButton *button = nullptr; ///< lane CAMPUI-1: the button the content shows (+ 0x10 of the arc record)
+		ButtonState state = ButtonState::Hidden;
+		bool overlay = false;     ///< lane AUTOCAST-1: InGameCommandButtonMovieClip::Impl + 0x54 (the state retail last asked for; set even when the call fails)
 		bool overlayDrawn = false; ///< lane AUTOCAST-1 r2: the last SetAutoAbilityOverlayState("_show") reached the movie (the glow is reported only then)
 	};
 	void setOverlay(Slot &s, const std::string &frame, bool show); // lane AUTOCAST-1: RW 0x9D6F9C
@@ -221,6 +282,7 @@ private:
 	bool call(const std::string &path, const std::string &fn, const std::vector<std::string> &args);
 	unsigned m_radarPingCalls = 0; ///< lane RADAR-1
 	void syncFrames(const std::vector<ControlBarButton> &buttons, bool arc);
+	void clearFrame(int position, bool arc);
 	// lane HUD-6 (AptPalantirSideBar.cpp): the side command bar's update (AptInGameSideCommandBar::Impl, RW 0x92F27D / 0x92F082 / 0x92F015)
 	void syncSideBar(const ControlBar &bar);
 	void sideBarLoaded(const std::string &arg);
@@ -279,6 +341,23 @@ private:
 	std::string m_sideFramePath[16];
 	bool m_sideBarLoaded = false;
 	void frameLoaded(bool arc, const std::string &arg, bool loaded);
+
+	// lane CAMPUI-1: the arc slots' sub-menus (+ 4) and toggle flash clips (+ 8), the stance radial
+	void subMenuLoaded(const std::string &arg, bool loaded);   // RW 0x93023D / 0x930340
+	void toggleFlashLoaded(const std::string &arg, bool loaded);
+	void pressToggleStance(int position);                       // RW 0x96FAC6
+	void pressStanceItem(int position, int item);               // RW 0x96F85A -> 0x96F53C
+	void hideStanceMenu(int position);                          // RW 0x96FCCB: Hide() when open
+	void syncSubMenus();                                        // RW 0x9D2F92 for each slot's sub-menu
+	bool createStanceItem(int position, int item);              // RW 0x9D2E25 -> 0x96F7B7
+	void updateStanceItem(int position, int item);
+	void stanceError(const std::string &e);
+	std::unique_ptr<InGameCommandButtonSubMenu> m_subMenu[kArcPositions];
+	std::string m_toggleFlashPath[kArcPositions];
+	std::set<std::string> m_subMenuRegistered, m_itemRegistered;
+	std::function<void(int)> m_stancePress;
+	unsigned m_flashGoes = 0;
+	std::vector<std::string> m_stanceErrors;
 
 	bool m_initialized = false;
 	std::vector<ButtonFrame> m_buttonFrames;

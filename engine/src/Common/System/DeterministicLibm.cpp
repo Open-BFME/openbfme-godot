@@ -1825,7 +1825,7 @@ double floor(double x)
 	const int be = (int)((u >> 52) & 0x7FF);
 	if (be == 0x7FF)
 	{
-		return x; // infinities and NaN unchanged (glibc's floor / ceil return a NaN as it is, even a signalling one)
+		return x; // infinities and NaN unchanged, even signalling ones (GCC's inline floor / ceil, not every host libm)
 	}
 	if (be >= 1075)
 	{
@@ -1854,7 +1854,7 @@ double ceil(double x)
 	const int be = (int)((u >> 52) & 0x7FF);
 	if (be == 0x7FF)
 	{
-		return x; // infinities and NaN unchanged (glibc's floor / ceil return a NaN as it is, even a signalling one)
+		return x; // infinities and NaN unchanged, even signalling ones (GCC's inline floor / ceil, not every host libm)
 	}
 	if (be >= 1075)
 	{

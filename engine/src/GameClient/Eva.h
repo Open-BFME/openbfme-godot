@@ -54,6 +54,11 @@ public:
 	// where `index` last played (false: never played, or it had no position)
 	bool lastPlayedPosition(int index, Coord3D *position) const;
 	int findEvent(const std::string &name) const { return m_ini.eva.findIndex(name, false); }
+	// RW 0x5DCC88 (BFME2 decomp Eva::isEventBlockedByTimeout, Eva.cpp:522): an unknown event counts as blocked; RW's status timer is not decoded (S-247):
+	// INFERENCE, blocked = a report now would be dropped as identical (it played, or another event blocked it, within its TimeBetweenEventsMS)
+	bool isEventBlockedByTimeout(int index, double nowMs) const;
+	// RW 0x5DCCEB (Eva::isEventAboutToPlay, Eva.cpp:534): false for an unknown event; INFERENCE (S-247): the event waits in the queue
+	bool isEventAboutToPlay(int index) const;
 	// the space bar: the next jump-to-location (false: none)
 	bool nextJumpToLocation(double nowMs, Coord3D *position);
 

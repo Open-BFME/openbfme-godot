@@ -8,6 +8,9 @@
 //
 // The stall watch (ZH NetworkDisconnectTime, GameData.ini 15000 ms in 2.01: the disconnect screen comes up after that long on one frame) is reported, not
 // acted on: the disconnect vote (DisconnectManager) is not ported (stop S-723).
+//
+// lane MPDROP-2: once the Network asks the local player to leave (Network::quitRequested: dropped by the others, its own link failed, the disconnect
+// screen's Quit) acquire() hands out no further batch, whatever commands are in (ZH Network::quitGame ends the game at that update).
 
 #pragma once
 
@@ -92,6 +95,8 @@ public:
 		int battalions = 0, troops = 0, objects = 0;
 	};
 	void setCensus(bool on) { m_census = on; }
+	// ONLINE16-FIX: the state hash after every frame without a replay (a rejoined incarnation records none; the soak compares its frames)
+	void setHashEveryFrame(bool on) { m_hashEveryFrame = on; }
 	const std::vector<CensusRow> &censusLog() const { return m_censusLog; }
 	// "count N p50 X p95 Y max Z" of samples (ms); "count 0" when empty
 	static std::string percentiles(std::vector<std::uint32_t> samples);
@@ -136,6 +141,7 @@ private:
 	int m_localPlayer = -1;
 	bool m_waitAfterLoad = false;
 	bool m_census = false;
+	bool m_hashEveryFrame = false;
 	std::vector<CensusRow> m_censusLog;
 	void noteIssued(UnsignedInt protocolFrame);
 	void noteRelayed(UnsignedInt frame, const CommandList &commands);

@@ -77,6 +77,17 @@ public:
 	~WorkerAIUpdate() override;
 	OBFME_MODULE_XFER(WorkerAIUpdate)
 	static void registerClass(ModuleFactory &modules);
+	// lane MODCOMPAT-MOD1: WorkerAIUpdate's own construct (its AI vslot 0x1F8, RW 0x8AD6A4 in the worker vtable RW 0xC6ACA8 + 0x1F8; ZH WorkerAIUpdate::construct),
+	// the order RebuildHoleBehavior's update gives its worker (RW 0x886AAD: isRebuild 1). The rebuild byte (+ 0x581) first, the machines (RW 0x8AD5CA); no
+	// legality / money gate; the structure is made at once on the owner's default team with UNDER_CONSTRUCTION and RECONSTRUCTING (RW 0x8AD72D .. 0x8AD744),
+	// producer and builder the worker, the worker interface's exitingSupplyTruckState (slot 0, RW 0x8AE461), no price (RW 0x8AD77E), UNDER_CONSTRUCTION
+	// again (RW 0x62684D(2, 1)), position and orientation, the ground height, the pathfinder footprint (RW 0x6E85E9), Player::onStructureCreated
+	// (RW 0x6AAF3B), the construction percent 0 (+ 0x288), the health to 1 (body vslots 0x10 / 0x84), AWAITING_CONSTRUCTION cleared, PARTIALLY_CONSTRUCTED and
+	// ACTIVELY_BEING_CONSTRUCTED set (RW 0x68D607), and the BUILD task (newTask, dozer interface slot 0x30). Not ported: the non-rebuild gates (a computer
+	// player's legality flags 6, else BuildAssistant slot 0x64 and flags 0x17) and price: a player's / AI's worker order still runs DozerAIUpdate::construct
+	// (lane FBSIM-1's phantom; stop S-1427); RW 0x684CBA (TerrainLogic over the footprint, S-304)
+	Object *constructForRebuild(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
+	bool isRebuildConstructWorker() const { return m_rebuildConstruct581; }
 
 	UpdateSleepTime update() override; // RW 0x8AE020
 
@@ -149,7 +160,7 @@ private:
 	bool m_hasHarvestPosition = false;              ///< + 0x578
 	int m_currentTree = 0;                          ///< + 0x57C
 	bool m_forceWanting = false;                    ///< + 0x580
-	bool m_unknown581 = false;                      ///< + 0x581
+	bool m_rebuildConstruct581 = false;             ///< + 0x581: the rebuild byte of the worker's construct (RW 0x8AD6A4 stores its sixth argument; MODCOMPAT-MOD1)
 	bool m_forceBusy = false;                       ///< + 0x582
 	std::unique_ptr<AIStateMachine> m_workerMachine; ///< + 0x584
 	std::unique_ptr<AIStateMachine> m_supplyMachine; ///< + 0x58C

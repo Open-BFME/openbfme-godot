@@ -3,6 +3,7 @@
 // OpenBFME retail tests for combat (lane COMBAT-1). They run only when ROTWK_INSTALL and BFME2_INSTALL are set (otherwise SKIP): pure RotWK 2.01 + BFME2 1.06, the object
 // world loaded once, hordes of the real templates fight each other on a flat arena.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -98,6 +99,7 @@ struct Arena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(side == 0 ? 0.0f : 3.14159265f);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	size_t members(Object *horde) { return horde->getContain() ? horde->getContain()->getContainCount() : 0; }
@@ -689,8 +691,13 @@ void checkFight(const FactionFight &f, const char *label)
 		// earliest). Lane MOVE-2 r5: neither horde is ordered during the two setup frames, and an idle member may acquire an enemy then, the attacker's too
 		// (DwarvenPhalanxHorde's front rank meets AngmarDarkDunedainHorde's, which walked toward it, and hits at frame 2 with its 3 frame pre-attack); the old
 		// bound counted from the order with the 2 setup frames allowed to the defender only
-		REQUIRE(f.side[1 - k].firstAttackFrame <= f.side[k].firstDamageFrame);
-		CHECK(f.side[k].firstDamageFrame >= f.side[1 - k].firstAttackFrame + framesOf(enemy.preAttackMs));
+		// a side that lost no health has no first hit to time (firstDamageFrame -1: AngmarDarkRangerHorde shoots GoblinFighterHorde down before it arrives);
+		// the hitting side's gaps between shots are checked all the same
+		if (f.side[k].firstDamageFrame >= 0)
+		{
+			REQUIRE(f.side[1 - k].firstAttackFrame <= f.side[k].firstDamageFrame); // tolerance: an order, attack before damage; the frames between are the approach's
+			CHECK(f.side[k].firstDamageFrame >= f.side[1 - k].firstAttackFrame + framesOf(enemy.preAttackMs)); // tolerance: the pre-attack is the earliest hit
+		}
 		for (int gap : f.side[1 - k].minGap)
 		{
 			CHECK(gap >= framesOf(enemy.gapMs));

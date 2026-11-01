@@ -58,6 +58,9 @@ struct ProjectileShot
 // RW 0x70BCE7 Object::convertBonePosToWorldPos (position only, no transform out): `obj`'s transform applied to the model-space point `bone`, retail's SSE
 // order (per row: z then y, then x, then the translation). Shared by the fire FX aim (RW 0x6CB85A) and TransitionDamageFX (RW 0x8BE077, lane FX-4)
 Coord3D ConvertBonePosToWorldPos(const Object &obj, const Coord3D &bone);
+// RW 0x6CB81A (the first step of the aim query RW 0x6CB85A): the weapon's PreferredTargetBone on the victim, when the victim's drawable has it exactly once
+// (WeaponDelivery.cpp); shared with the weapon terrain line's victim point (lane LOS-1, CombatLineOfSight.cpp)
+bool preferredBoneAim(GameLogic &logic, const WeaponTemplate &w, const Object &victim, Coord3D &out);
 
 class ProjectileLaunchOffsets
 {

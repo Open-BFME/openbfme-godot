@@ -7,9 +7,15 @@ another computer, the OpenBFME lobby keeps a few things:
 
 **Always, when you play online**
 - A random id the game makes once on your computer, and the name you choose.
-- A scrambled (one-way hashed) form of your computer's machine id. We use it only to keep banned players out. It is never shown
+- Your operating system's name and the client version, when supplied by the game or launcher.
+- A scrambled (one-way hashed) form of your computer's machine id, when the client can read it. We use it only to keep banned players out. It is never shown
   to other players, and it can't be turned back into the id.
 - A recovery code, if you make one: only a hashed form of it.
+
+**When you use the social features**
+- Your friend code, friends, friend requests, blocks and their private notes, privacy settings and recent games.
+- Friend chat messages and read markers. Friend chat history is kept permanently; removing a friend does not delete it.
+- Presence and invitations while the lobby is running. Reports can retain server-held room chat as private evidence for moderation.
 
 **Only if you choose to link them**
 - **Discord:** a hashed form of your Discord user id. Not your name, picture, friends or messages.

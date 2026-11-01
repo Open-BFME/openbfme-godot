@@ -32,6 +32,7 @@ extends RefCounted
 const Semver := preload("res://scripts/core/semver.gd")
 const Log := preload("res://scripts/core/launcher_log.gd")
 const InstanceLock := preload("res://scripts/core/instance_lock.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const PROTOCOL := 2
 const MAX_STARTED := 4096
@@ -160,7 +161,7 @@ func _wait_started(version: String) -> Dictionary:
 
 func _status(text: String, final := false) -> void:
 	if _warn != "":
-		text = _warn + " " + text   # a folder that is not the signed package is said with every line
+		text = L10n.t("launcher.game_start.warned", {"warning": _warn, "text": text})   # a folder that is not the signed package is said with every line
 	Log.line("LAUNCHER game start: " + text)
 	_write("status", {"text": text, "final": final})
 
@@ -180,25 +181,25 @@ func run(problem: String) -> int:
 		return 1
 	var b: Dictionary = updater.bundled()
 	if b.is_empty():
-		var why := "the launcher finds no signed game beside itself (%s)" % updater.bundled_problem()
+		var why := L10n.t("launcher.game_start.no_signed_game", {"problem": updater.bundled_problem()})
 		_answer("continue", why)
-		_status("Updates were not checked: %s." % why, true)
+		_status(L10n.t("launcher.game_start.not_checked", {"why": why}), true)
 		return 1
 	var playing: String = b.version
 	var pv: String = updater.play_version()
 	var warn := ""
 	var c: Dictionary = updater.check_bundled()
 	if not c.ok:
-		warn = "This folder is not the signed package (%s): download OpenBFME again." % c.error
+		warn = L10n.t("launcher.game_start.not_signed", {"error": c.error})
 	if pv == b.version:
 		if not _answer("continue", warn):
 			return 1
 	else:
 		var held: Dictionary = updater.hold_for_start(pv)
 		if not held.ok:
-			if not _answer("continue", "%s is installed but cannot be started (%s); %s starts instead" % [pv, held.error, b.version]):
+			if not _answer("continue", L10n.t("launcher.game_start.cannot_start", {"version": pv, "error": held.error, "bundled": b.version})):
 				return 1
-		elif not _answer("start", "%s is installed: it starts instead of %s" % [pv, b.version], pv):
+		elif not _answer("start", L10n.t("launcher.game_start.starts_instead", {"version": pv, "bundled": b.version}), pv):
 			updater.unlock_versions()
 			return 1
 		else:
@@ -220,19 +221,19 @@ func run(problem: String) -> int:
 func _update(problem: String, playing: String) -> int:
 	if updater.macos_updates_unsupported():
 		Log.line("LAUNCHER macOS automated updates are unsupported; continuing with the bundled game")
-		_status("Automatic macOS updates are unavailable. The bundled game starts.", true)
+		_status(L10n.t("launcher.game_start.macos_unavailable"), true)
 		return 0
 	if problem != "":
-		_status("Updates are off: %s." % problem, true)
+		_status(L10n.t("launcher.game_start.updates_off", {"problem": problem}), true)
 		return 2
 	_lock = InstanceLock.new(updater.data_dir, updater.info.version + BACKGROUND)
 	if not _lock.acquire():
 		var open: bool = _lock.other_launcher != ""
-		var text := "Updates were not checked: %s." % _lock.error
+		var text := L10n.t("launcher.game_start.not_checked_lock", {"error": _lock.error})
 		if _lock.other_launcher.ends_with(BACKGROUND):
-			text = "Another start of OpenBFME is already looking for updates."
+			text = L10n.t("launcher.game_start.other_start")
 		elif open:
-			text = "The OpenBFME Launcher is open: it looks after updates."
+			text = L10n.t("launcher.game_start.launcher_open")
 		_status(text, true)
 		_lock = null
 		return 0 if open else 2
@@ -241,20 +242,20 @@ func _update(problem: String, playing: String) -> int:
 		_stop_asked()
 		if total > 0 and Time.get_ticks_msec() - _last_progress > 1000:
 			_last_progress = Time.get_ticks_msec()
-			_write("status", {"text": "%s: %d%%. It starts the next time you start OpenBFME." % [text, int(100.0 * done / total)], "final": false})
-	_status("Checking for updates...")
+			_write("status", {"text": L10n.t("launcher.game_start.progress", {"text": text, "percent": int(100.0 * done / total)}), "final": false})
+	_status(L10n.t("launcher.game_start.checking"))
 	var r: Dictionary = updater.fetch_releases()
 	if not r.ok:
-		_status("Updates skipped: %s. %s starts." % [r.error, playing], true)
+		_status(L10n.t("launcher.game_start.skipped", {"error": r.error, "version": playing}), true)
 		return 2
 	var channel: String = updater.channel()
 	var chan: Array = updater.in_channel(r.releases, channel)
 	if chan.is_empty():
-		_status("There is no %s release yet." % Semver.channel_name(channel).to_lower(), true)
+		_status(L10n.t("launcher.game_start.no_release", {"channel": Semver.channel_name(channel).to_lower()}), true)
 		return 0
 	var mm: Dictionary = updater.release_manifest(chan[0])
 	if not mm.ok:
-		_status("Update rejected: %s. %s starts." % [mm.error, playing], true)
+		_status(L10n.t("launcher.game_start.rejected", {"error": mm.error, "version": playing}), true)
 		return 3
 	var freeze: String = updater.freeze_warning(mm.manifest)
 	if freeze != "":
@@ -262,27 +263,27 @@ func _update(problem: String, playing: String) -> int:
 	var tag: String = chan[0].tag
 	var newest: String = updater.newest_installed()
 	if newest != "" and Semver.compare(tag, newest) <= 0:
-		_status("Up to date (%s)." % playing, true)
+		_status(L10n.t("launcher.game_start.up_to_date", {"version": playing}), true)
 		return 0
 	if not updater.auto_update():
-		_status("%s is available. Open the OpenBFME Launcher to update (updating by itself is off)." % tag, true)
+		_status(L10n.t("launcher.game_start.available", {"version": tag}), true)
 		return 0
 	if _stop_asked():
-		_status("The update goes on in the OpenBFME Launcher.", true)
+		_status(L10n.t("launcher.game_start.goes_on"), true)
 		return 0
-	_status("%s is downloading in the background. It starts the next time you start OpenBFME." % tag)
+	_status(L10n.t("launcher.game_start.downloading", {"version": tag}))
 	var code := 0
 	var i: Dictionary = updater.install(chan[0], false)
-	var msg := "%s is installed. It starts the next time you start OpenBFME." % tag
+	var msg := L10n.t("launcher.game_start.installed", {"version": tag})
 	if not i.ok and _stop_asked():
-		_status("The update goes on in the OpenBFME Launcher.", true)
+		_status(L10n.t("launcher.game_start.goes_on"), true)
 		return 0
 	if not i.ok:
-		msg = "Update not installed: %s. %s stays." % [i.error, playing]
+		msg = L10n.t("launcher.game_start.not_installed", {"error": i.error, "version": playing})
 		code = 3
 	var s: Dictionary = updater.stage_self_update(chan[0])
 	if not s.ok and not _stop_asked():
-		msg += " Launcher update rejected: %s." % s.error
+		msg = L10n.t("launcher.game_start.launcher_rejected", {"message": msg, "error": s.error})
 		code = 3
 	elif s.ok and s.staged != "":
 		Log.line("LAUNCHER launcher update %s staged" % s.staged)

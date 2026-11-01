@@ -31,7 +31,22 @@
 
 class AIUpdateInterface;
 class AIStateMachine;
+class GameLogic;
 class Object;
+class Team;
+
+// lane BFME2CAMP1: ZH Squad (Common/Squad.cpp; AISquad here: AIGroupFormations.cpp has a local Squad); RotWK's (0x1C bytes, ctor RW 0x66823E): the ids of its objects (+ 4 .. + 8) and the list getLiveObjects
+// fills (+ 0x10 .. + 0x14). Implemented in AIHunt.cpp (the squad attack state is its only reader)
+struct AISquad
+{
+	std::vector<ObjectID> objectIDs;
+	// RW 0x8DB149 squadFromTeam(team, clearSquadFirst): the ids emptied first when asked (RW 0x98B95B), then every member of the team in its member order
+	// (RW 0x66362D) appended (RW 0x5487BB)
+	void squadFromTeam(const Team &team, bool clearSquadFirst);
+	// RW 0x8DB103(1): an id that finds no object (RW 0x449681) leaves the squad (RW 0x8DB0AB), then the objects found that are not selectable (RW 0x68DE58)
+	// are dropped from the answer (they stay members)
+	std::vector<Object *> getLiveObjects(GameLogic &logic);
+};
 
 // ZH StateReturnType: the sleep forms are positive frame counts
 inline bool IS_STATE_SLEEP(StateReturnType r) { return (int)r > 0; }
@@ -90,6 +105,9 @@ public:
 	// one). Pure: every state class says what it keeps, a state without fields writes its version only (xferNoFields)
 	virtual void xfer(class Xfer &x) = 0;
 	static void xferNoFields(class Xfer &x);
+	// lane UBER-2C: true for a state whose crcPersistent writes anything (every override of crcPersistent answers true). The machine's hash walks only
+	// those states: walking every state of every unit's machine for the empty default was most of the Faithful state hash's own time
+	virtual bool hasPersistentCrc() const { return false; }
 	// lane MODULES-3 r2: RW State slot 0x1C, called on the current state when a temporary state ends by itself (RW 0x751D9A); nothing for most states, the move
 	// states clear their internal move's "waiting for a path" (RW 0x740C97)
 	virtual void onTemporaryStateEnded() {}
@@ -188,6 +206,10 @@ public:
 	void setGoalObject(ObjectID id) { m_goalObjectID = id; }
 	Object *goalObject() const;
 	const std::vector<Coord3D> &goalPath() const { return m_goalPath; }
+	// lane BFME2CAMP1: RotWK AIStateMachine + 0x4C (ZH AIStateMachine::m_goalSquad): the squad privateAttackTeam sets (RW 0x751E97: made when there is none,
+	// then filled from the team, emptied first), deleted by the machine's clear (RW 0x75464E) and by nothing else; null when there is none
+	AISquad *goalSquad() const { return m_goalSquad.get(); }
+	void setGoalSquadFromTeam(const Team &team);
 	void setGoalPath(const std::vector<Coord3D> &path) { m_goalPath = path; }
 	void addToGoalPath(const Coord3D &p);
 	const Coord3D *goalPathPosition(int index) const;
@@ -218,6 +240,7 @@ private:
 	AIUpdateInterface *m_owner;
 	std::string m_name;
 	std::map<unsigned, std::unique_ptr<AIState>> m_states;
+	std::vector<const AIState *> m_persistentStates; // lane UBER-2C: the states with hasPersistentCrc, in m_states' (id) order
 	AIState *m_currentState = nullptr;
 	AIState *m_temporaryState = nullptr;
 	unsigned m_temporaryStateFrameEnd = 0;
@@ -232,9 +255,13 @@ private:
 	// the persistent goal saved while a temporary state runs (ZH setTemporaryState leaves the goal to the state; the machine keeps it)
 	Coord3D m_savedGoalPosition{ 0.0f, 0.0f, 0.0f };
 	ObjectID m_savedGoalObjectID = INVALID_ID;
+	std::unique_ptr<AISquad> m_goalSquad; ///< lane BFME2CAMP1: + 0x4C
 };
 
 // ---- the states ----------------------------------------------------------------------------------------------------------------
+// stop S-5148: the stop line of the idle state's unported stance failure (RotWK RW 0x7553AB / 0x7537E0; AIStateMachine.cpp), noted by AIIdleState::update
+const char *idleStanceStopLine();
+
 // AIIdleState (ZH AIStates.cpp:1273-1460, B1 RW-equivalent 0x188090): stakes out the unit's cell and sleeps.
 class AIIdleState : public AIState
 {
@@ -309,4 +336,45 @@ public:
 	explicit AIBusyState(AIStateMachine &m) : AIState(m, "AIBusyState") {}
 	StateReturnType update() override { return STATE_CONTINUE; }
 	void xfer(class Xfer &x) override { xferNoFields(x); }
+};
+
+// review of #64: an owner state's sub machine (an attack's, a guard's, a hunt's) that the owner drops while one of the machine's updates runs is kept,
+// halted, until that update returns. The owner's exit can run inside the update: a shot that kills its shooter (SpawnAndFadeNugget, RW 0x698EC3) ends the
+// owner's state, and freeing the machine there freed it and its running state under them. Run marks an update; drop halts the machine and frees it, at
+// once or when the last update running ends
+template <typename M>
+struct KeptSubMachines
+{
+	int running = 0;
+	std::vector<std::unique_ptr<M>> kept;
+	struct Run
+	{
+		KeptSubMachines &k;
+		explicit Run(KeptSubMachines &keeper) : k(keeper) { ++k.running; }
+		~Run()
+		{
+			if (--k.running == 0)
+			{
+				k.kept.clear();
+			}
+		}
+		Run(const Run &) = delete;
+		Run &operator=(const Run &) = delete;
+	};
+	void drop(std::unique_ptr<M> &m)
+	{
+		if (!m)
+		{
+			return;
+		}
+		m->halt();
+		if (running > 0)
+		{
+			kept.push_back(std::move(m));
+		}
+		else
+		{
+			m.reset();
+		}
+	}
 };

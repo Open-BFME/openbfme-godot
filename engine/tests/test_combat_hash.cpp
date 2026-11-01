@@ -49,7 +49,7 @@ TEST_CASE("combat hash: two identical worlds have the same hash and an untouched
 
 TEST_CASE("combat hash: the object fields - the dead flag, the armor set flags, the weapon bonus conditions, the pending damage")
 {
-	MUTATE("dead flag", w.dummy->kill(DEATH_NORMAL));
+	MUTATE("dead flag", w.dummy->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL));
 	MUTATE("armor set flag", w.sword->setArmorSetFlag(CombatNames::armorSetBit("PLAYER_UPGRADE"), true));
 	MUTATE("weapon bonus condition", w.sword->setWeaponBonusCondition(1, true));
 	{
@@ -190,8 +190,8 @@ TEST_CASE("combat hash: death - the slow death's timers and the dead AI")
 {
 	HashWorld a, b;
 	const ObjectID swordId = a.sword->getID();
-	a.sword->kill(DEATH_NORMAL);
-	b.sword->kill(DEATH_NORMAL);
+	a.sword->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
+	b.sword->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	a.frames(2);
 	b.frames(4);
 	CHECK(a.hash() != b.hash());
@@ -217,11 +217,11 @@ TEST_CASE("combat hash: SlowDeathBehavior's own fields - activation and the fram
 	HashWorld a, b;
 	const ObjectID swordId = a.sword->getID();
 	const std::uint32_t before = moduleCrc(a.sword, "SlowDeathBehavior");
-	a.sword->kill(DEATH_NORMAL);
+	a.sword->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	const std::uint32_t after = moduleCrc(a.sword, "SlowDeathBehavior");
 	CHECK(after != before); // activated, with sink / midpoint / destruction frames
 	b.frames(1);
-	b.sword->kill(DEATH_NORMAL);
+	b.sword->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	CHECK(moduleCrc(b.sword, "SlowDeathBehavior") != after); // killed a frame later: the planned frames move
 	// after the sink delay the module has passed its midpoint: another state
 	const std::uint32_t planned = moduleCrc(a.sword, "SlowDeathBehavior");

@@ -3,12 +3,18 @@
 
 #include "GameLogic/SpellCommands.h"
 
+#include "Common/ModEngineFeatures.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/SpecialPower.h"
+#include "GameClient/ControlBarCommands.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
+#include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/SimMath.h"
 
 namespace
 {
@@ -30,6 +36,41 @@ const GameMessageArgument *arg(const GameMessage &m, size_t i, GameMessageArgume
 {
 	const GameMessageArgument *a = m.getArgument(i);
 	return a && a->type == t ? a : nullptr;
+}
+// lane MODS-3: edain-unchained.multi-execute-gate (its 0xEE3000, wrapping the ActionManager tests RW 0x82D5DA / 0x82D925 in the member loops of
+// AIGroup::groupDoSpecialPower RW 0x76F6DA and groupDoSpecialPowerAtObject RW 0x770B67): the member's base command set (RW 0x69156B, 0x71EFA2; none:
+// allowed), its first SPECIAL_POWER button (slots 0 .. 63) whose power is this one; RW 0x942490 answering 3 for it (a DisableOnModelCondition the member
+// holds, or an EnableOnModelCondition it holds none of) refuses the member
+bool multiExecuteGateAllows(const Object &member, const SpecialPowerTemplate &power)
+{
+	const CommandSet *set = TheCommandStore ? TheCommandStore->findCommandSet(member.getCommandSetName()) : nullptr;
+	if (!set)
+	{
+		return true;
+	}
+	for (int i = 0; i < CommandSet::STORAGE; ++i)
+	{
+		const CommandButton *b = set->getCommandButton(i);
+		if (!b || b->m_command != GUI_COMMAND_SPECIAL_POWER || b->m_specialPowerName.empty())
+		{
+			continue;
+		}
+		const SpecialPowerTemplate *bp = TheSpecialPowerStore->findSpecialPowerTemplate(b->m_specialPowerName); // RW 0x688D3C: the final override
+		if (!bp || bp->getID() != power.getID())
+		{
+			continue;
+		}
+		bool needs = false, enabled = false, disabled = false;
+		for (size_t w = 0; w < b->m_enableOnModelCondition.size(); ++w)
+		{
+			const auto bits = member.getModelConditionBits()[w];
+			needs = needs || b->m_enableOnModelCondition[w] != 0;
+			enabled = enabled || (bits & b->m_enableOnModelCondition[w]) != 0;
+			disabled = disabled || (bits & b->m_disableOnModelCondition[w]) != 0;
+		}
+		return !disabled && (!needs || enabled);
+	}
+	return true;
 }
 } // namespace
 
@@ -110,11 +151,8 @@ bool SpellCommands::doSpecialPower(GameLogic &logic, const GameMessage &msg, int
 		break;
 	}
 	}
-	if (!t)
-	{
-		return true; // RW 0x77B9CF and the groupDo* null template exits
-	}
 	std::vector<Object *> group;
+	bool fromSelection = false;
 	if (kind == 3)
 	{
 		Player *issuer = logic.players().getNthPlayer(msg.getPlayerIndex());
@@ -125,8 +163,16 @@ bool SpellCommands::doSpecialPower(GameLogic &logic, const GameMessage &msg, int
 		}
 		group.push_back(book);
 	}
-	else if (Object *src = sourceId != INVALID_ID ? logic.findObjectByID(sourceId) : nullptr)
+	else if (sourceId != INVALID_ID && logic.findObjectByID(sourceId))
 	{
+		// OpenBFME divergence (Sol review HEROCAST-1 r1, as DEVPORT-7e's GameLogicDispatch::issuerObject): RW takes the named object as it is; a source the
+		// issuing player does not control drops the message, so another player cannot reach the object's AI (+ 0x48 ends a running ability, RW 0x854F0B)
+		Object *src = GameLogicDispatch::issuerObject(logic, msg, sourceId);
+		if (!src)
+		{
+			++m_foreignSources;
+			return true;
+		}
 		group.push_back(src);
 	}
 	else
@@ -136,6 +182,7 @@ bool SpellCommands::doSpecialPower(GameLogic &logic, const GameMessage &msg, int
 		{
 			return true;
 		}
+		fromSelection = true;
 		for (ObjectID oid : issuer->selection())
 		{
 			Object *o = logic.findObjectByID(oid);
@@ -145,28 +192,123 @@ bool SpellCommands::doSpecialPower(GameLogic &logic, const GameMessage &msg, int
 			}
 		}
 	}
-	for (Object *member : group)
+	// lane HEROCAST-1: the command source each case passes to its groupDo* (RW 0x77A4C4 / 0x77A4F2 / 0x77B8D2: 2 for MSG_DO_SPECIAL_POWER and the spell book;
+	// RW 0x77A58E: 2 for _AT_LOCATION from the message's source object, RW 0x77A5C1: 0 from the selection; RW 0x77A69A / 0x77A6DB: 0 for _AT_OBJECT)
+	const CommandSourceType source = kind == 2 || (kind == 1 && fromSelection) ? CMD_FROM_PLAYER : CMD_FROM_AI;
+	castWithGroup(logic, group, kind, t, loc, target, options, source);
+	return true;
+}
+
+namespace
+{
+// RW 0x403720 Coord3D::GetLengthEstimate2D: |the larger| + 0.25 * |the smaller| (x87)
+float lengthEstimate2D(float x, float y)
+{
+	const float ax = SimMath::absD(x), ay = SimMath::absD(y);
+	const float big = ax <= ay ? ay : ax, small = ax <= ay ? ax : ay;
+	return SimMath::pc24Add(SimMath::pc24Mul(small, 0.25f), big);
+}
+} // namespace
+
+// lane HEROCAST-1: AIGroup::groupDoSpecialPower (RW 0x76F5DB), groupDoSpecialPowerAtLocation (RW 0x76F774) and groupDoSpecialPowerAtObject (RW 0x77097E)
+// (see the header; tier B with BFME2 0x76D869 / 0x76DA02 / 0x76E658, the decomp AIGroup_groupDoSpecialPower*.cpp; pair_diff: only Object field offsets
+// differ; the Ghidra listing of each RotWK body agrees)
+void SpellCommands::castWithGroup(GameLogic &logic, const std::vector<Object *> &group, int kind, const SpecialPowerTemplate *t, const Coord3D &loc,
+	Object *target, unsigned options, CommandSourceType source)
+{
+	static const int kHero = ObjectTemplateInfoBuilder::kindOfIndex("HERO"); // template + 0x113 bit 2: KindOf 90
+	const bool multiExecute = (options & COMMAND_OPTION_OK_FOR_MULTI_EXECUTE) != 0;
+	// the senior hero: the HERO member with the highest current level rank, the lower ObjectID on a tie; a hero without a valid level is no candidate (and
+	// _AT_OBJECT leaves it out of its member list too). OK_FOR_MULTI_EXECUTE skips the choice in groupDoSpecialPower and _AT_OBJECT, not in _AT_LOCATION
+	Object *best = nullptr;
+	int bestRank = 0;
+	std::vector<Object *> members;
+	std::vector<float> distances;
+	for (Object *o : group)
 	{
-		SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(*member, t);
-		// RW 0x82DFB7 (ported part): the module, fully ready, its requirements
-		if (!sp || sp->getPercentReady() < 1.0f || !sp->requirementsMet())
+		if (kHero >= 0 && (kind == 1 || !multiExecute) && MaskTest(logic.templateInfo(o->getTemplate()).kindOf, (unsigned)kHero))
+		{
+			const ExperienceTracker *xp = o->getExperienceTracker();
+			int rank = 0;
+			// INFERENCE: RW dereferences the tracker (+0x26C) unchecked; a missing one counts as no level
+			if (xp && xp->currentLevelRank(rank))
+			{
+				if (!best || rank > bestRank || (rank == bestRank && o->getID() < best->getID()))
+				{
+					best = o;
+					bestRank = rank;
+				}
+			}
+			else if (kind == 2)
+			{
+				continue; // RW 0x770A0D: _AT_OBJECT does not list it
+			}
+		}
+		if (kind != 2)
+		{
+			members.push_back(o);
+			continue;
+		}
+		if (best)
+		{
+			continue; // RW 0x770A4B: once a hero is chosen no member is listed
+		}
+		// _AT_OBJECT: the members in order of their 2D distance estimate to the target (SSE subtraction), a member after the ones at its distance
+		float d = 0.0f;
+		if (target)
+		{
+			const Coord3D &tp = *target->getPosition(), &op = *o->getPosition();
+			d = lengthEstimate2D(SimMath::subf32(tp.x, op.x), SimMath::subf32(tp.y, op.y));
+		}
+		size_t at = 0;
+		while (at < distances.size() && !(d < distances[at]))
+		{
+			++at;
+		}
+		members.insert(members.begin() + (std::ptrdiff_t)at, o);
+		distances.insert(distances.begin() + (std::ptrdiff_t)at, d);
+	}
+	// one member's turn: true when it cast
+	auto turn = [&](Object &member, bool gated) -> bool {
+		if (AIUpdateInterface *ai = member.getAIUpdateInterface())
+		{
+			if (source == CMD_FROM_PLAYER && ai->preventPlayerCommands())
+			{
+				return false; // AI + 0x3C5 (PreventPlayerCommands)
+			}
+			ai->setLastCommandSource(source); // AI + 0x48
+		}
+		if (kind == 1 && source == CMD_FROM_PLAYER)
+		{
+			member.abortAbilitiesInUse(); // RW 0x693919 (_AT_LOCATION only)
+		}
+		if (!t)
+		{
+			return false;
+		}
+		SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(member, t);
+		// the ActionManager test (RW 0x82D5DA / 0x82DFB7 / 0x82D925, ported part): the module, fully ready, its requirements. The mod gate wraps the member
+		// loops' tests only (RW 0x76F6DA / 0x770B67), not the hero's
+		if (!sp || sp->getPercentReady() < 1.0f || !sp->requirementsMet() ||
+			(gated && (kind == 0 || kind == 2) && ModEngineFeatures::has(ModEngineFeature::EdainUnchainedMultiExecuteGate) && !multiExecuteGateAllows(member, *t)))
 		{
 			++m_refused;
-			continue;
+			return false;
 		}
 		bool done = false;
 		switch (kind)
 		{
 		case 1:
-			done = SpecialPowerModules::doSpecialPowerAtLocation(*member, t, loc, options, false);
+			done = SpecialPowerModules::doSpecialPowerAtLocation(member, t, loc, options, false);
 			break;
 		case 2:
-			done = SpecialPowerModules::doSpecialPowerAtObject(*member, t, target, options, false);
+			done = SpecialPowerModules::doSpecialPowerAtObject(member, t, target, options, false);
 			break;
 		default:
-			done = SpecialPowerModules::doSpecialPower(*member, t, options, false);
+			done = SpecialPowerModules::doSpecialPower(member, t, options, false);
 			break;
 		}
+		// then friend_setUndetectedDefector(false) (RW 0x68B303): no defection is ported, the bit is never set (S-141)
 		if (done)
 		{
 			++m_casts;
@@ -175,8 +317,20 @@ bool SpellCommands::doSpecialPower(GameLogic &logic, const GameMessage &msg, int
 		{
 			++m_refused;
 		}
+		return done;
+	};
+	if (best)
+	{
+		turn(*best, false); // only the hero is tried: skipped or refused, nobody casts
+		return;
 	}
-	return true;
+	for (Object *member : members)
+	{
+		if (turn(*member, true) && kind == 0 && !multiExecute)
+		{
+			return; // groupDoSpecialPower: without OK_FOR_MULTI_EXECUTE the first member that casts ends it
+		}
+	}
 }
 
 // RW 0x77A8D3

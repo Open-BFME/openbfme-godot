@@ -139,14 +139,14 @@ TEST_CASE("combat horde: a dead member leaves the horde at once, the ranks close
 	std::vector<Object *> members = w.membersOf(h);
 	REQUIRE(members.size() == 6);
 	CHECK(w.playerOf('B')->commandPoints().getUsage() == 12);
-	members[0]->kill(DEATH_NORMAL);
+	members[0]->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	CHECK(w.hordeOf(h)->getContainCount() == 5);
 	CHECK(w.playerOf('B')->commandPoints().getUsage() == 10);
 	w.frames(30);
 	CHECK(w.hordeOf(h)->worstMemberSlotError() < 30.0f); // the others closed up
 	for (Object *m : w.membersOf(h))
 	{
-		m->kill(DEATH_NORMAL);
+		m->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	}
 	w.frames(2);
 	CHECK(w.byId(id) == nullptr); // an ImmortalBody cannot die: the horde leaves with its last member

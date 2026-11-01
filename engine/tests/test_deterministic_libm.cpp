@@ -1,7 +1,7 @@
 // OpenBFME unit tests. GPL-3.0. Lane DEP-2: the deterministic libm (Common/DeterministicLibm.h) and the Lua math library on top of it.
 //
 // 1. The same bits as the host glibc over a sweep, on the hosts where glibc runs its FMA variants (x86-64 Linux, glibc >= 2.29, a CPU with FMA
-//    and AVX2): what the simulation computed on Linux before DEP-2. Anywhere else the comparison is skipped with a loud message (the host's
+//    and AVX2), excluding compiler-dependent NaN results: what the simulation computed on Linux before DEP-2. Elsewhere it skips loudly (the host's
 //    libm is a different function there); the pinned hashes of (2) still run.
 // 2. The pinned hashes of the results over a fixed sweep: the same on every platform built and run (Linux and Windows, x86-64 with and without FMA, AArch64 under QEMU; macOS not run).
 // 3. The special values (NaN, infinities, zeros, domain errors) bit for bit.
@@ -218,6 +218,21 @@ double host(Fn f, double x, double y)
 	return 0;
 }
 
+bool hostComparable(Fn f, double x, double y)
+{
+	if (f == Fn::Fmod && std::isnan(x) && std::isnan(y))
+	{
+		return false; // glibc's pick of two NaN operands is its compiler's operand order; ours is pinned below
+	}
+	const std::uint64_t u = bitsOf(x) & 0x7FFFFFFFFFFFFFFFull;
+	if ((f == Fn::Floor || f == Fn::Ceil) && (u & 0x7FF8000000000000ull) == 0x7FF0000000000000ull && (u & 0x000FFFFFFFFFFFFFull) != 0)
+	{
+		// GCC's inline floor / ceil preserve sNaN; Clang's calls into glibc quieten it. The port's unchanged bits are pinned below.
+		return false;
+	}
+	return true;
+}
+
 #if DEP2_GLIBC_X64
 // glibc runs its *_fma variants (the ones the port reproduces) when the CPU has FMA and AVX2 (sysdeps/x86_64/fpu/multiarch/ifunc-fma.h); exp, log
 // and pow are the 2.29 versions when the headers and the library are 2.29 or newer
@@ -258,7 +273,7 @@ TEST_CASE("dep2 libm: the same bits as the host glibc's FMA variants over a swee
 		return;
 	}
 	const int perRange = 200000;
-	long compared = 0;
+	long compared = 0, excluded = 0;
 	for (const Range &r : kRanges)
 	{
 		Rng rng{ 0xD1B54A32D192ED03ull };
@@ -268,9 +283,10 @@ TEST_CASE("dep2 libm: the same bits as the host glibc's FMA variants over a swee
 		{
 			double x, y;
 			draw(r, rng, x, y);
-			if (r.fn == Fn::Fmod && std::isnan(x) && std::isnan(y))
+			if (!hostComparable(r.fn, x, y))
 			{
-				continue; // glibc's pick of two NaN operands is its compiler's operand order (DeterministicLibm.cpp fmod); ours is pinned below
+				++excluded;
+				continue;
 			}
 			const double a = ours(r.fn, x, y);
 			const double b = host(r.fn, x, y);
@@ -280,16 +296,18 @@ TEST_CASE("dep2 libm: the same bits as the host glibc's FMA variants over a swee
 				if (mismatches == 0)
 				{
 					char line[200];
-					std::snprintf(line, sizeof line, "(%a, %a): ours %a, host %a", x, y, a, b);
+					std::snprintf(line, sizeof line, "(%016llx, %016llx): ours %016llx, host %016llx", (unsigned long long)bitsOf(x),
+						(unsigned long long)bitsOf(y), (unsigned long long)bitsOf(a), (unsigned long long)bitsOf(b));
 					first = line;
 				}
 				++mismatches;
 			}
 		}
-		INFO(r.name << ": first difference " << first);
+		INFO(std::string(r.name) << ": first difference " << first);
 		CHECK(mismatches == 0);
 	}
-	MESSAGE(compared << " results compared with the host glibc " << std::string(gnu_get_libc_version()));
+	MESSAGE(compared << " results compared with the host glibc " << std::string(gnu_get_libc_version()) << "; " << excluded
+		<< " compiler-dependent NaN results excluded from the host comparison (the port's bits are pinned)");
 #else
 	// information only: how often this host's libm (another library) disagrees with what Linux computed, the desync the port removes
 	long differ = 0, compared = 0;
@@ -300,6 +318,10 @@ TEST_CASE("dep2 libm: the same bits as the host glibc's FMA variants over a swee
 		{
 			double x, y;
 			draw(r, rng, x, y);
+			if (!hostComparable(r.fn, x, y))
+			{
+				continue;
+			}
 			differ += bitsOf(ours(r.fn, x, y)) != bitsOf(host(r.fn, x, y)) ? 1 : 0;
 			++compared;
 		}
@@ -367,7 +389,7 @@ TEST_CASE("dep2 libm: the pinned hashes of every function's results over a fixed
 	}
 }
 
-TEST_CASE("dep2 libm: special values bit for bit: NaN operands come back quietened, invalid operations give the x86 default NaN or glibc's NAN, infinities and zeros")
+TEST_CASE("dep2 libm: special values bit for bit: NaN propagation, invalid operations, infinities and zeros")
 {
 	const double inf = INFINITY;
 	const std::uint64_t defaultNaN = 0xFFF8000000000000ull; // SSE2's result of an invalid operation (inf - inf, 0 / 0)
@@ -456,7 +478,7 @@ TEST_CASE("dep2 libm: special values bit for bit: NaN operands come back quieten
 		{ "sqrt(2)", DetLibm::sqrt(2.0), 0x3FF6A09E667F3BCDull },
 		{ "floor(-0)", DetLibm::floor(-0.0), 0x8000000000000000ull },
 		{ "floor(-0.5)", DetLibm::floor(-0.5), bitsOf(-1.0) },
-		{ "floor(sNaN)", DetLibm::floor(sNaN), 0x7FF0000000000001ull }, // glibc returns a NaN unchanged
+		{ "floor(sNaN)", DetLibm::floor(sNaN), 0x7FF0000000000001ull }, // the port preserves NaNs, including the signaling bit
 		{ "ceil(-0.5)", DetLibm::ceil(-0.5), 0x8000000000000000ull },
 		{ "ceil(0.5)", DetLibm::ceil(0.5), bitsOf(1.0) },
 		{ "ceil(-inf)", DetLibm::ceil(-inf), bitsOf(-inf) },
@@ -493,6 +515,22 @@ TEST_CASE("dep2 libm: special values bit for bit: NaN operands come back quieten
 	{
 		INFO(c.what);
 		CHECK(bitsOf(c.got) == c.want);
+	}
+}
+
+TEST_CASE("dep2 libm: floor and ceil preserve NaN sign, payload and signaling bit independently of the host")
+{
+	const std::uint64_t inputs[] = {
+		0x7FF0000000000001ull, 0xFFF0000000000001ull,
+		0x7FF31C670B4FA197ull, 0xFFF31C670B4FA197ull,
+		0x7FF8000000000001ull, 0xFFF8000000000001ull,
+		0x7FFFFFFFFFFFFFFFull, 0xFFFFFFFFFFFFFFFFull,
+	};
+	for (std::uint64_t u : inputs)
+	{
+		INFO(u);
+		CHECK(bitsOf(DetLibm::floor(fromBits(u))) == u);
+		CHECK(bitsOf(DetLibm::ceil(fromBits(u))) == u);
 	}
 }
 

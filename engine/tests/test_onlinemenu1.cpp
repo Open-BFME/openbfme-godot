@@ -77,11 +77,11 @@ RelayProbe::Result measure(const NetAddress &relay, int probes, std::uint32_t ti
 	o.timeoutMs = timeoutMs;
 	RelayProbe p(o);
 	std::string error;
-	REQUIRE_MESSAGE(p.start(relay.text(), NetMilliseconds(), &error), error);
+	REQUIRE_MESSAGE(p.start(relay.text(), &error), error);
 	const std::uint64_t until = NetMilliseconds() + (std::uint64_t)(probes + 2) * timeoutMs + 2000;
 	while (p.running() && NetMilliseconds() < until)
 	{
-		p.update(NetMilliseconds());
+		p.update();
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 	REQUIRE_FALSE(p.running());
@@ -147,8 +147,54 @@ TEST_CASE("onlinemenu1: RelayProbe refuses an address it cannot use, by name, an
 	for (const char *bad : { "", "relay.openbfme.com:7350", "1.2.3.4", "1.2.3.4:0", "300.1.1.1:7350", "1.2.3.4:99999" })
 	{
 		error.clear();
-		CHECK_FALSE_MESSAGE(p.start(bad, NetMilliseconds(), &error), bad);
+		CHECK_FALSE_MESSAGE(p.start(bad, &error), bad);
 		CHECK_MESSAGE(error.find("is not a.b.c.d:port") != std::string::npos, bad << ": " << error);
 		CHECK_FALSE(p.running());
 	}
+}
+
+TEST_CASE("onlinemenu1: RelayProbe timestamps replies without waiting for a frame")
+{
+	FakeRelay relay([](int) { return 1; }, 20);
+	RelayProbe::Options options;
+	options.probes = 3;
+	options.timeoutMs = 200;
+	RelayProbe probe(options);
+	std::string error;
+	REQUIRE_MESSAGE(probe.start(relay.address.text(), &error), error);
+	// No update for longer than the whole batch's timeouts: arrivals, not frames, decide RTT and loss.
+	std::this_thread::sleep_for(std::chrono::milliseconds(800));
+	probe.update();
+	REQUIRE_FALSE(probe.running());
+	REQUIRE(probe.hasResult());
+	CHECK(probe.result().sent == 3);
+	CHECK(probe.result().answered == 3);
+	CHECK(probe.result().lossPct == 0);
+	CHECK(probe.result().rttMs >= 20); // tolerance: the stand-in delays each response by 20 ms
+	CHECK(probe.result().rttMs < 200); // tolerance: RTT must stay below the timeout, not include the 800 ms frame stall
+}
+
+TEST_CASE("onlinemenu1: RelayProbe stops and restarts a receiver without leaking old results")
+{
+	FakeRelay silent([](int) { return 0; });
+	FakeRelay answering([](int) { return 1; });
+	RelayProbe probe;
+	std::string error;
+	REQUIRE(probe.start(silent.address.text(), &error));
+	probe.stop();
+	CHECK_FALSE(probe.running());
+	CHECK_FALSE(probe.hasResult());
+	REQUIRE(probe.start(answering.address.text(), &error));
+	const auto until = NetMilliseconds() + 2000;
+	while (probe.running() && NetMilliseconds() < until)
+	{
+		probe.update();
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	REQUIRE(probe.hasResult());
+	CHECK(probe.result().answered == 5);
+	CHECK(probe.result().lossPct == 0);
+	REQUIRE(probe.start(silent.address.text(), &error));
+	CHECK_FALSE(probe.hasResult());
+	// Destruction joins a pending receive rather than leaving a thread using freed state.
 }

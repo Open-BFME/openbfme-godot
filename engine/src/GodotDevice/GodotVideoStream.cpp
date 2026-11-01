@@ -2,6 +2,7 @@
 // See GodotDevice/GodotVideoStream.h.
 
 #include "GodotDevice/GodotVideoStream.h"
+#include "Common/PathIO.h"
 
 #include "GameClient/VP6Decoder.h"
 
@@ -47,7 +48,7 @@ Dictionary VP6MovieStream::open(const String &path)
 	}
 	m_file.close();
 	m_file.clear();
-	m_file.open(p, std::ios::binary);
+	m_file.open(PathIO::native(p), std::ios::binary);
 	if (!m_file)
 	{
 		m_error = String::utf8(("cannot open " + p).c_str());

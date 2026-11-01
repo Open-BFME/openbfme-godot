@@ -35,7 +35,7 @@
 //     RW 0x87AC9A / 0x87A72F / main slot 0x3C RW 0x87AE43).
 // INFERENCE / NOT PORTED (stop S-1104, reported by stopLines()): WHEN the payload is made (RW's caller of main slot 0x70 is not located: here at onObjectCreated, as
 // lane LOGIC-1's HordeContain does, S-149); the client parts (the fades, the drawable bone attachment, the sounds); GrabWeapon and CanGrabStructure (the trolls);
-// ShouldThrowOutPassengers' throw (RW 0x86A530, the physics shock RW 0x792A69); GoAggressiveOnExit (the AI attitude, RW 0x66E12A, is not in the port); the AI
+// ShouldThrowOutPassengers' throw (RW 0x86A530, the physics shock RW 0x792A69); the AI
 // slot 0x1A8 of isSpecificRiderFreeToExit; the SHIP boarding AI (S-4160; lane SHIP-1 ported the pathfinder's shore spot RW 0x6EFBB8 for a SHIP's entries and exits); an indestructible container's payload (body slots 0x8C / 0x88); PassengersInTurret's turret bone
 // (RW 0x68E807); the payload creator's CREATE_DRAWABLE_WITH_LOW_DETAIL status (client); who arms the falling riders (slot 0xF8: no caller located).
 
@@ -96,7 +96,7 @@ public:
 		unsigned long long healed = 0;             // HealthRegen%PerSec heals
 		unsigned long long scattered = 0;          // RW 0x867AD4
 		unsigned long long ridersKilledNotFree = 0;
-		unsigned long long unported = 0;           // GrabWeapon / throw out / GoAggressiveOnExit / the indestructible payload (S-1103)
+		unsigned long long unported = 0;           // GrabWeapon / throw out / the indestructible payload (S-1103)
 	};
 	const Stats &stats() const { return m_stats; }
 

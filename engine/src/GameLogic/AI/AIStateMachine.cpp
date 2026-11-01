@@ -5,10 +5,13 @@
 
 #include "Common/GameCommon.h"
 #include "Common/StateHash.h"
+#include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/EmotionModules.h"
+#include "GameLogic/Module/StancesBehavior.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
 
@@ -100,6 +103,14 @@ void AIStateMachine::defineState(unsigned id, std::unique_ptr<AIState> state, un
 		m_defaultStateId = id;
 	}
 	m_states[id] = std::move(state);
+	m_persistentStates.clear(); // lane UBER-2C: in id order, as crc walked m_states
+	for (const auto &e : m_states)
+	{
+		if (e.second->hasPersistentCrc())
+		{
+			m_persistentStates.push_back(e.second.get());
+		}
+	}
 }
 
 AIState *AIStateMachine::findState(unsigned id) const
@@ -134,6 +145,12 @@ void AIStateMachine::clear()
 {
 	if (m_locked)
 	{
+		// lane BFME2CAMP1, RW 0x75464E: past the locked temporary state's refusal, the goal squad (+ 0x4C) is deleted after StateMachine::clear (RW
+		// 0x8DB679) whether or not its lock let the state go
+		if (!temporaryStateLocked())
+		{
+			m_goalSquad.reset();
+		}
 		return;
 	}
 	if (m_temporaryState)
@@ -152,6 +169,17 @@ void AIStateMachine::clear()
 		s->onExit(EXIT_RESET);
 	}
 	internalClear();
+	m_goalSquad.reset(); // lane BFME2CAMP1: RW 0x754680 .. 0x75468F
+}
+
+void AIStateMachine::setGoalSquadFromTeam(const Team &team)
+{
+	// RW 0x751E97: a squad made (RW 0x66823E) when the machine has none, then RW 0x8DB149(team, true)
+	if (!m_goalSquad)
+	{
+		m_goalSquad = std::make_unique<AISquad>();
+	}
+	m_goalSquad->squadFromTeam(team, true);
 }
 
 StateReturnType AIStateMachine::resetToDefaultState()
@@ -533,7 +561,12 @@ StateReturnType AIIdleState::onEnter()
 	return STATE_CONTINUE; // never sleep at the start: the cell check runs the first time through
 }
 
-// ZH AIStates.cpp:1335: only once, in the first update (onEnter of idle runs during object creation)
+// ZH AIStates.cpp:1335: only once, in the first update (onEnter of idle runs during object creation).
+// lane OFFMAP-1: TARGET RW 0x745A64 (BFME2 0x74405D, decomp AIIdleStateUpdate.cpp:279, tier B same-shape; disassembly read): + 0x25 m_inited; a
+// HORDE_MEMBER (status 0x26, RW 0x44DDEC) needs its container's AI idle (vslot 0x1B8); then, idle and doing ground movement (vslots 0x1B8 / 0x224), a
+// non-zero position only updates the pathfinder's goal (RW 0x68B3BD -> 0x8E28DB with the layer of RW 0x68BBE0); vslot 0x220 setLocomotorGoalNone and
+// setCurrentVictim(0) (RW 0x6682B1). RotWK has none of ZH's goalPosition / "frame <= 1: setPosition(goal)" cheat move: a unit stays where the map
+// placed it, so one placed outside the pathfind grid (MAP ANG Angmar's counterattack wolf riders, y < 0) is not pulled onto cell 0 and stays OFF_MAP
 void AIIdleState::doInitIdleState()
 {
 	if (!m_inited)
@@ -542,31 +575,49 @@ void AIIdleState::doInitIdleState()
 	}
 	m_inited = false;
 	AIUpdateInterface &a = ai();
-	if (a.isIdle() && a.isDoingGroundMovement())
+	Object *obj = a.getObject();
+	static const int hordeMember = ObjectTemplateInfoBuilder::objectStatusIndex("HORDE_MEMBER");
+	bool containerIdle = true;
+	if (hordeMember >= 0 && obj->testStatus((unsigned)hordeMember))
 	{
-		// a unit stopped between grids: stake out the cell it is on and snap onto its goal (the pathfinder's goal for an idle unit is its own cell)
-		Pathfinder &pf = a.world().pathfinder();
-		Coord3D goalPos = *a.getObject()->getPosition();
+		containerIdle = false;
+		const Object *container = obj->getContainedBy();
+		if (container && container->getAIUpdateInterface())
+		{
+			containerIdle = container->getAIUpdateInterface()->isIdle();
+		}
+	}
+	if (a.isIdle() && a.isDoingGroundMovement() && containerIdle)
+	{
+		const Coord3D goalPos = *obj->getPosition();
 		if (goalPos.x != 0.0f || goalPos.y != 0.0f || goalPos.z != 0.0f)
 		{
-			pf.updateGoal(a.adapter(), &goalPos, a.adapter().getLayer());
-			if (pf.goalPosition(a.adapter(), &goalPos))
-			{
-				if (a.frame() <= 1)
-				{
-					a.getObject()->setPosition(&goalPos);
-				}
-				pf.updateGoal(a.adapter(), &goalPos, a.adapter().getLayer());
-			}
+			a.world().pathfinder().updateGoal(a.adapter(), &goalPos, a.adapter().getLayer());
 		}
-		pf.updatePos(a.adapter());
 	}
 	a.setLocomotorGoalNone();
+	a.setCurrentVictim(nullptr);
+}
+
+// stop S-5148 (review of #73): RotWK's idle update (RW 0x7553AB) fails the state every fifth update (the countdown + 0x22, 5 again at onEnter RW 0x7489B6)
+// for an owner that is not status 0x3A, has no temporary state machine (AI + 0x34) and has a StancesBehavior (RW 0x861E6E / 0x68BDA5) while its machine
+// defines state 0x4E (RW 0x8DBA9A); the idle state's failure goes to 0x4E (RW 0x7537E0 .. 0x7537EE: defineState(0, idle, 0, 0x4E)), AIGoingIdleState, whose
+// onEnter tells the StancesBehavior onMoveEnd (RW 0x743864): a stanced unit idle after an attack guards again where it stands (RW 0x662A21). The port's idle
+// state never fails and its failure goes to idle (AIUpdate.cpp), so such a unit stays idle (its plain mood scan, no guard); a FACE_OBJECT state (59) is not
+// ended by it either
+const char *idleStanceStopLine()
+{
+	return "[S-5148] idle stances: RotWK's idle state (RW 0x7553AB) fails every fifth update for a unit with a StancesBehavior and its failure goes to "
+	       "AIGoingIdleState 0x4E (RW 0x7537E0), which guards the unit again where it stands (RW 0x743864 -> 0x86228E); not ported: the unit stays idle";
 }
 
 StateReturnType AIIdleState::update()
 {
 	doInitIdleState();
+	if (machine().findState(AI_GOING_IDLE) && StancesBehavior::of(*ai().getObject()))
+	{
+		ai().getObject()->logic().noteStop(idleStanceStopLine()); // S-5148
+	}
 	AIUpdateInterface &self = ai();
 	if (self.attackMoveActive())
 	{
@@ -579,7 +630,7 @@ StateReturnType AIIdleState::update()
 	// onEnter offset, which is used once; unless the object is disabled EMP / PARALYZED / TEMPORARILY_BUSY (+ 0x1C8 & 0x14 / 0x100) or the mood matrix's idle
 	// action has IgnoreAll (RW 0x664E18(0) & 0x10), the mood scan getNextMoodTarget(1, 1) (RW 0x66844A) runs; a target is attacked (RW 0x66C536, AI command
 	// source 2); none: the sleep is shortened to the next mood check (AI + 0x21C) when that comes sooner, and then the offset is kept for the next time.
-	// Not ported here: the weapon's frame-window test (RW 0x6CA2C3), the stances countdown (+ 0x22) with state 0x4E, the hunt status 0x49, the HORDE_MEMBER
+	// Not ported here: the weapon's frame-window test (RW 0x6CA2C3), the stances countdown (+ 0x22) with state 0x4E (S-5148), the hunt status 0x49, the HORDE_MEMBER
 	// melee wait, the repulsors (KindOf + 0x10D bit 5) and the crate (RW 0x66810B: none in RotWK) (S-326)
 	const unsigned short oldSleepOffset = m_initialSleepOffset;
 	unsigned timeToSleep = kIdleCountdownDelay + oldSleepOffset;
@@ -699,7 +750,6 @@ StateReturnType AIFollowPathState::enterSegment()
 	bool adjusts = true;
 	if (m_exitProduction)
 	{
-		a.setCanPathThroughUnits(true);
 		adjusts = false;
 		m_adjustFinal = true;
 	}
@@ -733,6 +783,12 @@ StateReturnType AIFollowPathState::enterSegment()
 StateReturnType AIFollowPathState::onEnter()
 {
 	m_index = 0;
+	if (m_exitProduction)
+	{
+		// RW 0x74F8E6 .. 0x74F8EE: the exit-production state (id 7) sets the path-through-units flag once, on enter; the segment advance (RW 0x74FA18) does not
+		// set it again, and computePath drops it after its one straight path (RW 0x666079)
+		ai().setCanPathThroughUnits(true);
+	}
 	return enterSegment();
 }
 
@@ -744,9 +800,13 @@ void AIFollowPathState::onExit(StateExitType status)
 		m_move->onExit();
 		m_move.reset();
 	}
-	if (m_exitProduction)
+	// RW 0x74B79E / 0x74B7A5 (S-001): every follow-path exit clears both fields.
+	ai().setCanPathThroughUnits(false);
+	ai().mover().ignoreObstacle(PATHFIND_INVALID_ID);
+	// RW 0x74B77D (BFME2 RVA 0x349D92): both path forms release individuals; the horde waits for its members in RW 0x89E2D0.
+	if (!owner().isKindOfName("HORDE"))
 	{
-		ai().setCanPathThroughUnits(false);
+		owner().setStatus(0x5A, false);
 	}
 }
 
@@ -755,6 +815,13 @@ StateReturnType AIFollowPathState::update()
 	if (!m_move)
 	{
 		return STATE_FAILURE;
+	}
+	// RW 0x74FA28 / BFME2 AIFollowPathState::update publishes the current segment goal each tick.
+	// RW 0x661EFE -> 0x8DB810 uses FLT_MAX (no final facing), for every follow path.
+	if (!machine().isLocked())
+	{
+		machine().setGoalPosition(m_goalPosition);
+		machine().clearGoalAngle();
 	}
 	const StateReturnType ret = m_move->update();
 	if (ret == STATE_SUCCESS)
@@ -801,6 +868,14 @@ void AIStateMachine::crc(StateHasher &h) const
 		h.addFloat(p.y);
 		h.addFloat(p.z);
 	}
+	if (m_goalSquad) // lane BFME2CAMP1: hashed once a squad exists (other machines keep their hashes)
+	{
+		h.addU32((std::uint32_t)m_goalSquad->objectIDs.size());
+		for (ObjectID id : m_goalSquad->objectIDs)
+		{
+			h.addU32(id);
+		}
+	}
 	if (m_currentState)
 	{
 		m_currentState->crc(h);
@@ -809,11 +884,11 @@ void AIStateMachine::crc(StateHasher &h) const
 	{
 		m_temporaryState->crc(h);
 	}
-	for (const auto &e : m_states)
+	for (const AIState *s : m_persistentStates) // lane UBER-2C: the states without kept fields hash nothing and are left out
 	{
-		if (e.second.get() != m_currentState && e.second.get() != m_temporaryState)
+		if (s != m_currentState && s != m_temporaryState)
 		{
-			e.second->crcPersistent(h); // lane MODULES-3 (nothing for the states without kept fields)
+			s->crcPersistent(h); // lane MODULES-3
 		}
 	}
 }

@@ -3,6 +3,7 @@
 // power go through the lockstep command path (LiveGame::commands()); gain_hero_levels is a scenario helper like create_object.
 
 #include "GodotDevice/GodotGameWorld.h"
+#include "Common/PathIO.h"
 
 #include "Common/Player.h"
 #include "Common/PlayerHeroList.h"
@@ -370,7 +371,7 @@ Dictionary GameWorld::get_create_a_hero_record(const String &name) const
 	bool found = false;
 	if (wanted.size() > 4 && AsciiStringUtil::compareNoCase(wanted.substr(wanted.size() - 4), ".cah") == 0)
 	{
-		std::ifstream f(wanted, std::ios::binary);
+		std::ifstream f(PathIO::native(wanted), std::ios::binary);
 		if (f)
 		{
 			bytes.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());

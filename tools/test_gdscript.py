@@ -18,55 +18,75 @@ REPO = Path(__file__).resolve().parents[1]
 GAME = REPO / "godot"
 
 # These need fixture arguments or synthetic servers supplied by an existing runner.
-GAME_OWNERS = {'caster_director_test.gd': 'tools/caster/test_caster_godot.py',
- 'caster_end_fixture.gd': 'tools/caster/test_caster_godot.py',
- 'caster_overlay_test.gd': 'tools/caster/test_caster_godot.py',
- 'caster_vision_test.gd': 'tools/caster/test_caster_godot.py',
- 'online_hostile_test.gd': 'tools/net/test_online_hostile.py',
- 'online_identity_test.gd': 'tools/net/test_online_identity.py',
- 'online_invite_test.gd': 'tools/net/test_online_invite.py',
- 'online_lobby_redirect_test.gd': 'tools/net/test_online_lobby_redirect.py',
- 'online_reports_test.gd': 'tools/net/test_online_reports.py',
- 'online_social_test.gd': 'tools/net/test_online_social_ui.py',
- 'online_stats_test.gd': 'tools/net/test_online_stats.py',
- 'platformicon1_test.gd': 'tools/platformicon/test_make_icons.py',
- 'rejoin_watch_test.gd': 'tools/net/test_rejoin_watchdog.py',
- 'save4e_flow_test.gd': 'tools/save/test_save_flow.py',
- 'update_handover_test.gd': 'tools/release/test_onezip.py'}
-LAUNCHER_OWNERS = {'aio_progress_test.gd': 'tools/release/test_aio.py',
- 'background_play_test.gd': 'tools/release/test_launcher.py',
- 'bfme1_assets_test.gd': 'tools/release/test_aio.py',
- 'bfme1_offer_test.gd': 'tools/release/test_aio.py',
- 'bounded_read_test.gd': 'tools/release/test_onezip.py',
- 'crypto_test.gd': 'tools/release/test_launcher.py',
- 'instance_lock_parser_test.gd': 'tools/release/test_instance_lock.py',
- 'instance_lock_test.gd': 'tools/release/test_instance_lock.py',
- 'layout_test.gd': 'tools/release/test_launcher.py',
- 'lobby_list_test.gd': 'manual: existing legacy scenario; no runner in this branch',
- 'macos_cache_test.gd': 'tools/release/test_macplay.py',
- 'macos_helper_probe_test.gd': 'tools/release/test_macplay.py',
- 'macos_platform_test.gd': 'tools/release/test_macos_platform.py',
- 'macos_preview_test.gd': 'manual: existing legacy scenario; no runner in this branch',
- 'macplay_test.gd': 'tools/release/test_macplay.py',
- 'oauth_integration_test.gd': 'manual: existing legacy scenario; no runner in this branch',
- 'oauth_test.gd': 'manual: existing legacy scenario; no runner in this branch',
- 'social_client_test.gd': 'manual: existing legacy scenario; no runner in this branch',
- 'social_launch_test.gd': 'manual: existing legacy scenario; no runner in this branch',
- 'social_ui_test.gd': 'manual: existing legacy scenario; no runner in this branch',
- 'unit_test.gd': 'tools/release/test_launcher.py'}
+GAME_OWNERS = {
+    **dict.fromkeys(("caster_director_test.gd", "caster_end_fixture.gd", "caster_overlay_test.gd", "caster_vision_test.gd"),
+                    "tools/caster/test_caster_godot.py"),
+    "online_hostile_test.gd": "tools/net/test_online_hostile.py",
+    "crash_log_test.gd": "tools/release/test_launcher.py",
+    "crash_upload_test.gd": "tools/release/test_crash_upload.py",
+    "external_open_test.gd": "tools/release/test_external_open.py",
+    "install_paths_test.gd": "tools/release/test_install_paths.py",
+    "language_warning_test.gd": "tools/release/test_language_warning.py",
+    "opts6_wait_test.gd": "tools/release/test_external_open.py",
+    "release_message_test.gd": "tools/release/test_release_tools.py",
+    "replay_args_test.gd": "tools/release/test_replay_open.py",
+    "save_route_test.gd": "tools/release/test_replay_open.py",
+    "online_identity_test.gd": "tools/net/test_online_identity.py",
+    "online_invite_test.gd": "tools/net/test_online_invite.py",
+    "online_lobby_redirect_test.gd": "tools/net/test_online_lobby_redirect.py",
+    "online_reports_test.gd": "tools/net/test_online_reports.py",
+    "online_social_test.gd": "tools/net/test_online_social_ui.py",
+    "online_stats_test.gd": "tools/net/test_online_stats.py",
+    "http_timed_test.gd": "tools/net/test_http_timed.py",
+    "rejoin_watch_test.gd": "tools/net/test_rejoin_watchdog.py",
+    "platformicon1_test.gd": "tools/platformicon/test_make_icons.py",
+    "update_handover_test.gd": "tools/release/test_onezip.py",
+    "save4e_flow_test.gd": "tools/save/test_save_flow.py",
+}
+LAUNCHER_OWNERS = {
+    "display_test.gd": "tools/release/test_launcher_display.py",
+    **dict.fromkeys(("background_play_test.gd", "crypto_test.gd", "layout_test.gd", "macos_preview_test.gd", "oauth_test.gd",
+                    "social_launch_test.gd", "social_ui_test.gd", "unit_test.gd", "write_failure_test.gd",
+                    "oauth_integration_test.gd", "social_client_test.gd"), "tools/release/test_launcher.py"),
+    "crash_upload_test.gd": "tools/release/test_crash_upload.py",
+    "aio_progress_test.gd": "tools/release/test_aio.py",
+    "bfme1_assets_test.gd": "tools/release/test_aio.py",
+    "bfme1_offer_test.gd": "tools/release/test_aio.py",
+    "bounded_read_test.gd": "tools/release/test_onezip.py",
+    "instance_lock_test.gd": "tools/release/test_instance_lock.py",
+    "instance_lock_parser_test.gd": "tools/release/test_instance_lock.py",
+    "macos_cache_test.gd": "tools/release/test_macplay.py",
+    "macos_helper_probe_test.gd": "tools/release/test_macplay.py",
+    "macos_platform_test.gd": "tools/release/test_macos_platform.py",
+    "macplay_test.gd": "tools/release/test_macplay.py",
+    "external_open_test.gd": "tools/release/test_external_open.py",
+    "first_run_test.gd": "launcher/tests/test_first_run.py",
+    "install_paths_test.gd": "tools/release/test_install_paths.py",
+    "l10n_test.gd": "tools/l10n/test_l10n.py",
+    "lobby_list_test.gd": "tools/release/test_launcher.py",
+    "log_privacy_test.gd": "tools/release/test_launcher.py",
+    "mod_catalog_test.gd": "tools/release/test_mods.py",
+    "mods_window_test.gd": "tools/release/test_mods.py",
+    "replay_association_test.gd": "tools/release/test_replay_open.py",
+    "replay_open_test.gd": "tools/release/test_replay_open.py",
+    "update_fault_test.gd": "tools/release/test_launcher_updates.py",
+    "update_status_test.gd": "tools/release/test_launcher.py",
+    "verifyfiles_test.gd": "tools/test_verifyfiles.py",
+    "verifyfiles_window_test.gd": "tools/test_verifyfiles_window.py",
+}
 # Fixtures, opt-in rendered walks, and the LAN child launched by start_test.gd.
-SUPPORT = {'caster_director_walk.gd': 'godot/scripts/game.gd',
- 'caster_live_walk.gd': 'godot/scripts/game.gd',
- 'caster_overlay_walk.gd': 'godot/scripts/game.gd',
- 'caster_pip_walk.gd': 'godot/scripts/game.gd',
- 'caster_transport_walk.gd': 'godot/scripts/game.gd',
- 'friends_walk.gd': 'godot/scripts/game.gd',
- 'new_game_loading_art_host.gd': 'godot/tests/new_game_loading_art_test.gd',
- 'online_social_node.gd': 'godot/tests/online_social_node.tscn',
- 'smoke_checks.gd': 'godot/tests/smoke_test.gd',
- 'social_privacy_walk.gd': 'godot/tests/social_walk.gd',
- 'social_walk.gd': 'godot/scripts/game.gd',
- 'uberjoin1_lan_test.gd': 'godot/tests/start_test.gd'}
+SUPPORT = {
+    **dict.fromkeys(("caster_transport_walk.gd", "caster_director_walk.gd", "caster_overlay_walk.gd",
+                    "caster_pip_walk.gd", "caster_live_walk.gd", "friends_walk.gd", "social_walk.gd"),
+                   "godot/scripts/game.gd"),
+    "social_privacy_walk.gd": "godot/tests/social_walk.gd",
+    "new_game_loading_art_host.gd": "godot/tests/new_game_loading_art_test.gd",
+    "online_social_node.gd": "godot/tests/online_social_node.tscn",
+    "online_war_walk.gd": "godot/scripts/game.gd",
+    "smoke_checks.gd": "godot/tests/smoke_test.gd",
+    "uberjoin1_lan_test.gd": "godot/tests/start_test.gd",
+    "save_route_game.gd": "godot/tests/save_route_test.gd",
+}
 
 
 def scripts(names: str) -> set[str]:
@@ -75,94 +95,76 @@ def scripts(names: str) -> set[str]:
 
 # Allowlist: complete checks with no retail data, renderer readback, window or
 # frame-delay assumptions. Each must finish within 20 s on a 6-core/6-GiB host.
-ALLOWLIST = {'app_icon_test.gd': 'bundled application icon resources',
- 'bfme1_launch_args_test.gd': 'command-line parsing only; no game is started',
- 'cah_camera_test.gd': 'camera geometry against synthetic bounds',
- 'menustyle_settings_test.gd': 'temporary Options.ini and shell/game spies',
- 'net_score_continue_test.gd': 'score transitions against shell/audio stubs',
- 'online_list_client_test.gd': 'the native list client against synthetic responses',
- 'online_list_test.gd': 'online list parsing and paging against synthetic responses'}
+ALLOWLIST = {
+    "app_icon_test.gd": "bundled application icon resources",
+    "bfme1_launch_args_test.gd": "command-line parsing only; no game is started",
+    "cah_camera_test.gd": "camera geometry against synthetic bounds",
+    "menustyle_settings_test.gd": "temporary Options.ini and shell/game spies",
+    "net_score_continue_test.gd": "score transitions against shell/audio stubs",
+    "controller_menu_test.gd": "controller menu mapping against a stub shell",
+    "controller_routing_test.gd": "controller input routing and scaled, letterboxed pointer motion/clicks",
+    "online_list_test.gd": "online list parsing and paging against synthetic responses",
+    "online_list_client_test.gd": "the native list client against synthetic responses",
+    "online_war_phase_test.gd": "battle relay tickets name only human original seats while tactical seats retain AI",
+    "timeline_markers_test.gd": "score timeline markers against a stub shell",
+    "weatherfx_test.gd": "the Enhanced weather's effects against a stub GameWorld and synthetic images",
+}
 SCRIPT_TIMEOUT = 20
 
 # Denylist part 1: the reviewer's existing 12 CI Godot gates. The external CI
 # runner supplies their assets/window/setup; pytest must never duplicate them.
-CI_GATES = {'audio_test.gd',
- 'end_test.gd',
- 'menufix2_test.gd',
- 'net_end_test.gd',
- 'new_game_loading_art_test.gd',
- 'opts1_test.gd',
- 'opts2_test.gd',
- 'opts6_test.gd',
- 'saveui1_test.gd',
- 'smoke_test.gd',
- 'start_test.gd',
- 'stealth_gate_test.gd'}
+CI_GATES = scripts("""
+    smoke start end net_end stealth_gate audio opts1 opts2 saveui1 opts6
+    new_game_loading_art menufix2
+""")
 
 # Denylist part 2: manual dedicated invocations only, not pytest skips. Having
 # retail paths, a GPU or an opt-in environment variable must not schedule these.
-DENYLIST = {'apt_canvas_pixel_test.gd': 'manual: GPU/window/render readback required (some also need retail assets)',
- 'audio_stress_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'backlog3_focus_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'bfme1_audio_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_building_floor_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_castle_path_test.gd': 'manual: needs a private BFME1 installation',
- 'bfme1_hud_test.gd': 'manual: needs a private BFME1 installation',
- 'bfme1_live_plot_zoom_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_live_tooltip_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_map_memory_test.gd': 'manual: needs a private BFME1 installation',
- 'bfme1_music_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_options_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_plot_test.gd': 'manual: needs a private BFME1 installation',
- 'bfme1_plot_zoom_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_quit_test.gd': 'manual: needs a private BFME1 installation',
- 'bfme1_resource_farm_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_save_folder_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_score_screen_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_script_ai_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_skirmish_menu_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_starting_armies_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_startup_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_test.gd': 'manual: needs a private BFME1 installation',
- 'bfme1_wall_upgrade_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'bfme1_weather_test.gd': 'manual: private BFME1 installation, rebuilt extension and live game/rendering',
- 'building_render_test.gd': 'manual: GPU/window/render readback required (some also need retail assets)',
- 'cah_awards_display_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'camp2_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'campsave1_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'floating_money_text_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'fx_render_test.gd': 'manual: GPU/window/render readback required (some also need retail assets)',
- 'gamma_composite_test.gd': 'manual: GPU/window/render readback required (some also need retail assets)',
- 'hero_radius_cursor_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'hud_image_mode_pixel_test.gd': 'manual: GPU/window/render readback required (some also need retail assets)',
- 'hudredraw_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'menustyle_native_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'menustyle_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'net_uber_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'netlag1_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'object_corpus_sweep.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'online_branding_test.gd': 'manual: GPU/window/render readback required (some also need retail assets)',
- 'opts4_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'opts5_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'pathperf1_render_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'perf3_cull_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'pingwheel_test.gd': 'manual: mixed UI/timer checks and retail skirmish/hash runs; not wholly asset-free',
- 'play3_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'player_house_color_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'player_message_log_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'pro_camera_test.gd': 'manual: GPU/window/render readback required (some also need retail assets)',
- 'radial_background_test.gd': 'manual: GPU/window/render readback required (some also need retail assets)',
- 'render4_test.gd': 'manual: GPU/window/render readback required (some also need retail assets)',
- 'renderwait1_teardown_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'replay_refusal_test.gd': 'manual: mixed stub checks and retail replay subprocess; not wholly asset-free',
- 'selperf_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'shader_test.gd': 'manual: GPU/window/render readback required (some also need retail assets)',
- 'shellfix1_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'spellbook_reload_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'terrain_lighting_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'uberjoin1_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'ui4_resize_test.gd': 'manual: needs private RotWK/BFME2 assets and game/frame setup',
- 'windows_crash_test.gd': 'manual: destructive Windows debug crash/minidump probe; explicit opt-in required'}
+DENYLIST = {
+    "bfme1_audio_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_building_floor_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_live_plot_zoom_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_live_tooltip_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_music_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_options_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_plot_zoom_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_resource_farm_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_save_folder_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_score_screen_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_script_ai_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_skirmish_menu_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_starting_armies_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_startup_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_wall_upgrade_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_weather_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+
+    "fortress_exit_test.gd": "manual: requires private retail assets and a live skirmish",
+    "water_normal_test.gd": "manual: requires GPU rendering for fixed-input water normals",
+    "standing_water_test.gd": "manual: requires private retail assets and GPU water rendering",
+    "ini_error_in_extension_test.gd": "manual: requires private retail assets (a synthetic mod INI over a retail map)",
+    "map_water_ini_error_test.gd": "manual: requires private retail assets (a synthetic mod water.ini over a retail map)",
+    "map_weather_ini_error_test.gd": "manual: requires private retail assets (a synthetic mod weather.ini over a retail map)",
+    **dict.fromkeys(scripts("bfme1_hud bfme1_map_memory bfme1_plot bfme1_quit bfme1_castle_path bfme1_skirmish_ui bfme1_menu_backdrop bfme1"),
+                    "manual: needs a private BFME1 installation"),
+    **dict.fromkeys(scripts("""
+        audio_stress backlog3_focus bfme2camp1 buildperf cah_awards_display camp2 campsave1 floating_money_text
+        hero_radius_cursor hudredraw menustyle_native menustyle net_uber netlag1 occlude1 opts4 opts5
+        packed_model_texture pathperf1_render perf3_cull play3 player_house_color player_message_log
+        pose_buffer pose_buffer_cull_query pose_buffer_query_trigger
+        renderwait1_teardown road_shading selperf shellfix1 spellbook_reload terrain_lighting uberjoin1 ui4_resize
+        controller_main_menu formation_placement mixed_formation_placement online16_fix_bridge p16_ui_dictionary
+        p16_ui_legacy_shape spellbook_rightclick cah_camera_retail shellfb1_cursor shellfb1_spell_store_escape
+    """) | {"object_corpus_sweep.gd"}, "manual: needs private RotWK/BFME2 assets and game/frame setup"),
+    **dict.fromkeys(scripts("""
+        apt_canvas_pixel building_render fx_render gamma_composite glow hud_image_mode_pixel
+        menu_backdrop_resize object_shadow_building object_shadow_instances object_shadow_render online_branding
+        pro_camera pro_camera_bokeh radial_background render4 road_shader shader tangent_convention
+    """), "manual: GPU/window/render readback required (some also need retail assets)"),
+    "pingwheel_test.gd": "manual: mixed UI/timer checks and retail skirmish/hash runs; not wholly asset-free",
+    "replay_refusal_test.gd": "manual: mixed stub checks and retail replay subprocess; not wholly asset-free",
+    "windows_crash_test.gd": "manual: destructive Windows debug crash/minidump probe; explicit opt-in required",
+    "edainfactions1_test.gd": "manual: needs the Edain 4.8.5.3 install (OPENBFME_EDAIN_INSTALL); without it the script only parses",
+}
 ENGINE_ERRORS = re.compile(r"(?m)^\s*(?:SCRIPT ERROR|ERROR):")
 
 
@@ -177,9 +179,6 @@ def test_every_gdscript_is_inventoried():
         for name in found:
             assert f"| `{project}/tests/{name}` |" in inventory, f"undocumented script: {project}/{name}"
         for name, runner in owners.items():
-            if runner.startswith("manual: "):
-                assert runner.removeprefix("manual: ").strip(), "manual scenarios need a reason"
-                continue
             source = (REPO / runner).read_text(encoding="utf-8")
             # Launcher integration entry points delegate to their argument-aware CLI runners.
             if name in {"oauth_integration_test.gd", "social_client_test.gd"}:
@@ -188,8 +187,6 @@ def test_every_gdscript_is_inventoried():
                 source = (REPO / "tools/release" / delegate).read_text(encoding="utf-8")
             assert name in source, f"{runner} no longer invokes {name}"
     for name, consumer in SUPPORT.items():
-        if consumer.startswith("manual: "):
-            continue
         assert name in (REPO / consumer).read_text(encoding="utf-8"), f"unused fixture: {name}"
     assert "res://tests/online_social_node.tscn" in (REPO / "tools/net/test_online_social_node.py").read_text()
     assert all(DENYLIST.values()), "every exclusion needs a reason"

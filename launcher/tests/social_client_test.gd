@@ -253,16 +253,17 @@ func _lock_retry_checks() -> void:
 
 func _late_poll_checks() -> void:
 	var client := await _client()
-	var changed_count := 0
-	client.changed.connect(func() -> void: changed_count += 1)
+	var changed_count: Array[int] = [0]
+	client.changed.connect(func() -> void: changed_count[0] += 1)
 	client.sign_in("Alice")
 	_check(await _wait_until(func() -> bool: return client.is_signed_in() and client._seq != ""), "late poll session starts")
+	_check(changed_count[0] > 0, "late poll signal counter observes state changes")
 	await process_frame
 	client.sign_out()
-	var after_sign_out := changed_count
+	var after_sign_out: int = changed_count[0]
 	await create_timer(2.5).timeout
 	_check(not client.is_signed_in() and client._seq == "", "sign out clears late poll state")
-	_check(changed_count == after_sign_out, "late poll cannot change state after sign out")
+	_check(changed_count[0] == after_sign_out, "late poll cannot change state after sign out")
 
 
 ## ONLINEMENU-1 (BATCH-P3): a lobby whose /v1/health names no "social" (the deployed lobby before the social routes): sign-in stops before

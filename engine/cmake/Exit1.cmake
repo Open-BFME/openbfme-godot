@@ -9,4 +9,5 @@ list(APPEND OPENBFME_SIM_SOURCES
 set(OPENBFME_EXIT1_TESTS
     tests/test_exit1_motion.cpp
     tests/test_idle1_turns.cpp # lane IDLE-1 r2: turning members end the frame without MOVING (building attack, cavalry melee)
+    tests/test_hud_idlemotion1_retail.cpp # lane IDLEMOTION-1: the run-down and the leash hold a member that fell behind (RW 0x87631F, RW 0x877B4F)
 )

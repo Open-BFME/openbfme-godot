@@ -11,6 +11,7 @@
 extends RefCounted
 
 const GameOptions := preload("res://scripts/core/game_options.gd")
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 const CONFIG := "install-paths.cfg"           # InstallLocator::remember (GodotRelease.cpp InstallSetup::config_path)
 const MARKER := "downloaded-installs.cfg"     # InstallLocator::kDownloadedMarkerName
@@ -40,6 +41,7 @@ static func user_name() -> String:
 ## on Windows; the name only as a whole path component, so a word in a sentence that happens to equal it stays.
 static func scrub(text: String, home_dir: String = home(), name: String = user_name()) -> String:
 	const END := "(?=[/\\\\]|$|\\.(?:\\s|$)|[^A-Za-z0-9._~-])"  # a whole path component ends here (a home folder .../ann is not .../anna)
+	var flags := "(?i)" if is_windows() else ""
 	if home_dir.length() > 1:
 		var h := home_dir.trim_suffix("/").trim_suffix("\\")
 		var tilde := "%USERPROFILE%" if is_windows() else "~"
@@ -49,9 +51,9 @@ static func scrub(text: String, home_dir: String = home(), name: String = user_n
 		elif is_windows() and h.contains("/"):
 			forms.append(h.replace("/", "\\"))
 		for f in forms:
-			text = RegEx.create_from_string(_regex_escape(f) + END).sub(text, tilde.replace("$", "$$"), true)
+			text = RegEx.create_from_string(flags + _regex_escape(f) + END).sub(text, tilde.replace("$", "$$"), true)
 	if name.length() > 0:
-		text = RegEx.create_from_string("([/\\\\])" + _regex_escape(name) + END).sub(text, "$1…", true)
+		text = RegEx.create_from_string(flags + "([/\\\\])" + _regex_escape(name) + END).sub(text, "$1…", true)
 	return text
 
 
@@ -105,29 +107,29 @@ static func forget_game_folders(user_dir: String = GameOptions.game_user_dir()) 
 	if not FileAccess.file_exists(p):
 		return ""
 	var err := DirAccess.remove_absolute(p)
-	return "" if err == OK else "cannot remove %s (%s)" % [p, error_string(err)]
+	return "" if err == OK else L10n.t("launcher.paths.cannot_remove", {"path": p, "error": error_string(err)})
 
 
-## "Show folder" / "Open log folder": the launcher's only file-manager call (tools/release/net_guard.py allows OS.shell_show_in_file_manager
-## in this function alone). It opens a folder only when it is an existing local folder that is the launcher's data folder or inside it,
+## "Show folder" / "Open log folder": the launcher's file-manager policy (the shared helper owns the OS effect).
+## It opens a folder only when it is an existing local folder that is the launcher's data folder or inside it,
 ## or one of the game folders game_folders() names now; a URL, a UNC path, a relative path or any other folder is refused. "" or why not.
 static func show_in_file_manager(path: String) -> String:
 	if path == "" or path.contains("://") or path.begins_with("//") or path.begins_with("\\\\") or not path.is_absolute_path():
-		return "not a local folder"
+		return L10n.t("launcher.paths.not_local")
 	var p := path.replace("\\", "/").simplify_path()
 	if p.split("/").has(".."):
-		return "not a plain folder path"
+		return L10n.t("launcher.paths.not_plain")
 	var data := OS.get_user_data_dir().replace("\\", "/").simplify_path()
 	var g := game_folders()
 	var games := [String(g.rotwk).replace("\\", "/").simplify_path(), String(g.bfme2).replace("\\", "/").simplify_path()] if g.found else []
 	if bfme1_folder() != "":
 		games.append(bfme1_folder().replace("\\", "/").simplify_path())  # community PR #36: the BFME1 folder the Game files screen lists
 	if not (p == data or p.begins_with(data + "/") or p in games):
-		return "not a folder the launcher shows"
+		return L10n.t("launcher.paths.not_shown")
 	if not DirAccess.dir_exists_absolute(p):
-		return "the folder does not exist"
-	var err := OS.shell_show_in_file_manager(p, true)
-	return "" if err == OK else "the file manager did not open (%s)" % error_string(err)
+		return L10n.t("launcher.paths.not_exist")
+	var err := preload("res://scripts/core/external_open.gd").show_in_file_manager(p)
+	return "" if err == OK else L10n.t("launcher.paths.fm_failed", {"error": error_string(err)})
 
 
 ## where the Download the games screen puts the games by default: <home>/Games/BFME (the AIO packages go into its RotWK and BFME2)

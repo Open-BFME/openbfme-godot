@@ -167,6 +167,57 @@ TEST_CASE("DataChunkInput: files without a CkMp table, truncated chunks and read
 	}
 }
 
+TEST_CASE("DataChunkInput: every chunk prefix, 2^31 sizes, and unsupported versions produce named errors")
+{
+	Toc toc;
+	const Bytes body = chunk(toc, "A", 1, W().i32(42).b);
+	const Bytes good = file(toc, body);
+	const size_t chunkStart = good.size() - body.size();
+	for (size_t cut = chunkStart + 1; cut < good.size(); ++cut)
+	{
+		const Bytes prefix(good.begin(), good.begin() + (std::ptrdiff_t)cut);
+		ChunkInputStream stream(prefix.data(), prefix.size());
+		DataChunkInput input(&stream);
+		input.registerParser("A", "", [](DataChunkInput &f, DataChunkInfo *, void *) { return f.readInt() == 42; });
+		CAPTURE(cut);
+		CHECK_THROWS_AS(input.parse(), MapParseError);
+	}
+	for (const std::uint32_t size : { 0x80000000u, 0x7FFFFFFFu })
+	{
+		Bytes mutated = good;
+		std::memcpy(mutated.data() + chunkStart + 6, &size, 4);
+		ChunkInputStream stream(mutated.data(), mutated.size());
+		DataChunkInput input(&stream);
+		try
+		{
+			input.parse();
+			FAIL("the absurd size was accepted");
+		}
+		catch (const MapParseError &e)
+		{
+			CHECK(std::string(e.what()).find("overruns the file") != std::string::npos);
+		}
+	}
+	Bytes version = good;
+	version[chunkStart + 4] = 99;
+	ChunkInputStream stream(version.data(), version.size());
+	DataChunkInput input(&stream);
+	input.registerParser("A", "", [](DataChunkInput &, DataChunkInfo *info, void *) {
+		if (info->version != 1)
+		{
+			throw MapParseError("chunk A version " + std::to_string(info->version) + " not supported");
+		}
+		return true;
+	});
+	CHECK_THROWS_WITH_AS(input.parse(), "chunk A version 99 not supported", MapParseError);
+
+	Bytes impossibleToc = good;
+	impossibleToc[7] = 0x80;
+	ChunkInputStream tocStream(impossibleToc.data(), impossibleToc.size());
+	auto readToc = [&] { DataChunkInput broken(&tocStream); };
+	CHECK_THROWS_WITH_AS(readToc(), "chunk table of contents has a negative count", MapParseError);
+}
+
 TEST_CASE("DataChunkInput: Dict reads all five value types, NameKey checks type and id")
 {
 	Toc t;
@@ -894,10 +945,10 @@ TEST_CASE("GlobalLighting: light order within a time of day, shadow colour after
 		CHECK(g.flagDBD == 1);
 		CHECK(g.vecC[2] == 0.5f);
 		CHECK(g.shadowColor == 0x7FA0A0A0u);
-		CHECK(g.hasV8Extra == (version == 8));
+		CHECK(g.hasTerrainLightScale == (version == 8));
 		if (version == 8)
 		{
-			CHECK(g.v8Extra[1] == 0.75f);
+			CHECK(g.terrainLightScale[1] == 0.75f);
 		}
 	}
 	// an unlisted version is refused rather than guessed
@@ -951,17 +1002,18 @@ TEST_CASE("EnvironmentData v2/v3, NamedCameras, CameraAnimationList (free + look
 	CHECK(fa.startOffset == 5);
 	REQUIRE(fa.keys.size() == 1);
 	CHECK(fa.keys[0].frame == 7);
-	CHECK(fa.keys[0].interp == "catm");
+	CHECK(fa.keys[0].interp == CAMERA_INTERP_CATM);
 	CHECK(fa.keys[0].quat[3] == 1.0f);
-	CHECK(fa.keys[0].fovLike == 55.0f);
+	CHECK(fa.keys[0].fov == 55.0f);
 	const CameraAnimation &la = m.chunks.cameraAnimations[1];
 	CHECK(la.type == "look");
 	REQUIRE(la.keys.size() == 1);
 	CHECK(la.keys[0].roll == 0.5f);
-	CHECK(la.keys[0].fovLike == 45.0f);
+	CHECK(la.keys[0].interp == CAMERA_INTERP_LINE);
+	CHECK(la.keys[0].fov == 45.0f);
 	REQUIRE(la.lookAtKeys.size() == 1);
 	CHECK(la.lookAtKeys[0].frame == 9);
-	CHECK(la.lookAtKeys[0].interp == "line");
+	CHECK(la.lookAtKeys[0].interp == CAMERA_INTERP_LINE);
 	CHECK(la.lookAtKeys[0].lookAt[2] == 9.0f);
 	REQUIRE(m.chunks.waypointLinks.size() == 2);
 	CHECK(m.chunks.waypointLinks[0].from == 1);

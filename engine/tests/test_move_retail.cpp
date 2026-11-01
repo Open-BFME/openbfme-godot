@@ -1,7 +1,9 @@
 // OpenBFME retail tests for movement (lane MOVE-1). They run only when ROTWK_INSTALL and BFME2_INSTALL are set (otherwise SKIP). They mount pure RotWK 2.01 +
 // BFME2 1.06, load the object world once, and order units and hordes of the real templates to a point.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
+#include "GameLogic/Module/AmbientAIUpdate.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Module/StructureModules.h"
 
@@ -206,6 +208,9 @@ struct SweepResult
 	bool horde = false;
 	size_t members = 0;
 	float startDist = 0.0f, endDist = 0.0f;
+	// the nearest the unit came to its point during the sweep; ambient wanderers (AnimalAIUpdate / WanderAIUpdate) are judged by it, see the walked test below
+	float nearestDist = 0.0f;
+	bool ambient = false;
 	bool arrived = false;
 	size_t stillMembers = 0;  // hordes: members whose LocomotorSet speed is 0 (carried by a machine or mount)
 	float worstMember = 0.0f; // hordes: the worst member distance from its slot at the end
@@ -246,6 +251,7 @@ std::vector<SweepResult> sweepBatch(RetailGame &g, const std::vector<const Thing
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(0.0f);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		objs.push_back(o);
 		dests.push_back(Coord3D{ x, y + 180.0f, 0.0f });
 		r.horde = o->getContain() && o->getContain()->getHordeContainInterface();
@@ -259,6 +265,24 @@ std::vector<SweepResult> sweepBatch(RetailGame &g, const std::vector<const Thing
 	}
 	g.logic.runLogicFrame();
 	g.logic.runLogicFrame();
+	// RW 0x667ED1 (AIMover::requestPath): an order that comes within two frames of the unit's last path is not requested at once but 5 frames later, and the unit
+	// keeps its old path meanwhile. An ambient wanderer (AnimalAIUpdate draws a wander goal on any idle update) that has just drawn a zero-length wander goal (distance
+	// draw 0: the goal is its own position) therefore "arrives" on that path in the first update after the order and ends the move at once (the Sheep of this
+	// sweep did so when ambient wandering began to draw). That is the retail order of events, not a lost order: the sweep gives such a unit a quiet start
+	for (int quiet = 0; quiet < 30; ++quiet)
+	{
+		bool recentPath = false;
+		for (Object *o : objs)
+		{
+			AIUpdateInterface *ai = o ? o->getAIUpdateInterface() : nullptr;
+			recentPath = recentPath || (ai && dynamic_cast<const AmbientAIUpdate *>(ai) && (int)ai->mover().pathTimestamp() > (int)g.logic.getFrame() - 2);
+		}
+		if (!recentPath)
+		{
+			break;
+		}
+		g.logic.runLogicFrame();
+	}
 	std::vector<ObjectID> ids;
 	for (Object *o : objs)
 	{
@@ -278,7 +302,9 @@ std::vector<SweepResult> sweepBatch(RetailGame &g, const std::vector<const Thing
 		}
 		out[i].setSpeed = ai->locomotorSetSpeed();
 		out[i].accelerationFrames = ai->curLocomotor() ? ai->curLocomotor()->getTemplate().m_acceleration : 0u;
+		out[i].ambient = dynamic_cast<const AmbientAIUpdate *>(ai) != nullptr;
 		out[i].startDist = std::sqrt((dests[i].x - objs[i]->getPosition()->x) * (dests[i].x - objs[i]->getPosition()->x) + (dests[i].y - objs[i]->getPosition()->y) * (dests[i].y - objs[i]->getPosition()->y));
+		out[i].nearestDist = out[i].startDist;
 		ai->aiMoveToPosition(dests[i], CMD_FROM_PLAYER);
 	}
 	for (int f = 0; f < frames; ++f)
@@ -286,6 +312,14 @@ std::vector<SweepResult> sweepBatch(RetailGame &g, const std::vector<const Thing
 		g.logic.runLogicFrame();
 		for (size_t i = 0; i < objs.size(); ++i)
 		{
+			if (objs[i] && out[i].ambient)
+			{
+				if (const Object *now = g.logic.findObjectByID(ids[i]))
+				{
+					const Coord3D &q = *now->getPosition();
+					out[i].nearestDist = std::min(out[i].nearestDist, std::sqrt((dests[i].x - q.x) * (dests[i].x - q.x) + (dests[i].y - q.y) * (dests[i].y - q.y)));
+				}
+			}
 			if (objs[i] && !out[i].knocked)
 			{
 				if (Object *now = g.logic.findObjectByID(ids[i]))
@@ -412,7 +446,11 @@ TEST_CASE("move retail: every ground unit and horde template of the install, ord
 		std::vector<const ThingTemplate *> batch(units.begin() + (long)b, units.begin() + (long)std::min(units.size(), b + 42));
 		for (const SweepResult &r : sweepBatch(g, batch, 140))
 		{
-			const bool walked = (r.problem.empty() || r.horde) && r.endDist < r.startDist * 0.5f;
+			// RotWK AnimalAIUpdate::update (RW 0x882058): an idle animal wanders again (one draw per idle update against WanderPercentage: 80 for the
+			// NeutralGollum_RingHero) and one farther than MaxWanderRadius from the origin it captured walks back to it, so an animal that reached its point is
+			// somewhere else at the end of the sweep: for the ambient wanderers the nearest approach counts
+			const float reached = r.ambient ? r.nearestDist : r.endDist;
+			const bool walked = (r.problem.empty() || r.horde) && reached < r.startDist * 0.5f;
 			if (r.horde)
 			{
 				++hordes;
@@ -768,7 +806,9 @@ TEST_CASE("move retail: two retail hordes standing 40 units apart meet in the co
 		Object *b = g.logic.newObject(tt, g.teamOf(0), ObjectStatusMaskType{});
 		Coord3D pa{ 1000.0f, 1000.0f, 0.0f }, pb{ 1000.0f + dx, 1000.0f, 0.0f };
 		a->setPosition(&pa);
+		testutil::completeHorde(a); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		b->setPosition(&pb);
+		testutil::completeHorde(b); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		g.logic.runLogicFrame();
 		g.ai->processCollisions();
 		const unsigned long long pairs = g.ai->collisionPairsLastFrame();

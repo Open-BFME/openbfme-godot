@@ -1,7 +1,7 @@
 #!/bin/bash
 # Lane LAUNCH-1: the OpenBFME Launcher packages (package.sh runs this; the launcher tests run it with --test-build).
 #
-#   tools/release/build_launcher.sh --out DIR --version TAG --commit SHA --repo OWNER/NAME --key-file FILE [--keys-file FILE] [--mtime UNIX]
+#   tools/release/build_launcher.sh --out DIR --version TAG --commit SHA --repo OWNER/NAME --key-file FILE [--keys-file FILE] [--nightly-keys-file FILE] [--mtime UNIX]
 #                                   [--platforms linux,windows,macos] [--godot BIN] [--worktree | --source COMMIT] [--test-build] [--stage-reverse]
 #
 # Writes DIR/openbfme-launcher-<TAG>-<platform> archive(s): Linux and Windows contain the embedded-pack executable and README.txt;
@@ -13,13 +13,14 @@
 # list, read from --keys-file, default launcher/release_keys.pub, whose first key must be --key-file's; without --keys-file a --key-file
 # that is not the default list's first key, a test or local-trial key, is a one-key list), local_trial (the list is not the staged
 # launcher's own release_keys.pub, or for a source without one its release_key.pub) and test_build (true only with --test-build,
-# which enables the launcher's test options; never for a tester package). Godot's release template with the pack embedded, scripts as text.
+# which enables the launcher's test options; lane RELGH-2: nightly_keys (keys trusted for nightly releases only, from --nightly-keys-file,
+# default launcher/nightly_keys.pub, none for a source without that file; release_keys.py --hex-nightly checks the list); never for a tester package). Godot's release template with the pack embedded, scripts as text.
 # Every file is checked by audit_package.py (content, then the launcher allowlist); archives are make_archive.py's, reproducible.
 # --stage-reverse (REPRO-1's test, test_launcher.py): the staged project's directories and files are created in reverse path order, so a
 # file system that lists a directory in creation order (tmpfs) lists each directory differently; the package must not change.
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
-OUT=""; VERSION=""; COMMIT=""; TARGET=""; KEYFILE=""; KEYSFILE=""; MTIME="${SOURCE_DATE_EPOCH:-}"; PLATFORMS="linux"; GODOT_BIN="${GODOT:-godot}"
+OUT=""; VERSION=""; COMMIT=""; TARGET=""; KEYFILE=""; KEYSFILE=""; NIGHTLYFILE=""; MTIME="${SOURCE_DATE_EPOCH:-}"; PLATFORMS="linux"; GODOT_BIN="${GODOT:-godot}"
 WORKTREE=0; TEST_BUILD=false; SOURCE=HEAD; STAGE_REVERSE=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -29,6 +30,7 @@ while [ $# -gt 0 ]; do
     --repo) TARGET=$2; shift 2 ;;
     --key-file) KEYFILE=$2; shift 2 ;;
     --keys-file) KEYSFILE=$2; shift 2 ;;
+    --nightly-keys-file) NIGHTLYFILE=$2; shift 2 ;;
     --mtime) MTIME=$2; shift 2 ;;
     --platforms) PLATFORMS=$2; shift 2 ;;
     --godot) GODOT_BIN=$2; shift 2 ;;
@@ -36,7 +38,7 @@ while [ $# -gt 0 ]; do
     --source) SOURCE=$2; shift 2 ;;
     --test-build) TEST_BUILD=true; shift ;;
     --stage-reverse) STAGE_REVERSE=1; shift ;;
-    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
     *) echo "build_launcher.sh: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -58,6 +60,17 @@ else
   KEYS=$(python3 "$REPO/tools/release/release_keys.py" --hex "$DEFAULT_KEYS" --format csv) || fail "$DEFAULT_KEYS is not a valid release key list"
   # a --key-file that is not the committed list's first key (a test or local-trial key) trusts itself alone: a one-key list
   [ "${KEYS%%,*}" = "$KEY" ] || KEYS=$KEY
+fi
+# lane RELGH-2: the keys trusted for nightly releases only (a JSON list, possibly [])
+if [ -n "$NIGHTLYFILE" ]; then
+  [ -f "$NIGHTLYFILE" ] || fail "the nightly key list $NIGHTLYFILE does not exist"
+else
+  NIGHTLYFILE="$REPO/launcher/nightly_keys.pub"
+fi
+if [ -f "$NIGHTLYFILE" ]; then
+  NIGHTLY=$(python3 "$REPO/tools/release/release_keys.py" --hex-nightly "$NIGHTLYFILE" --format json) || fail "$NIGHTLYFILE is not a valid nightly key list"
+else
+  NIGHTLY="[]"
 fi
 "$GODOT_BIN" --version | grep -q "^4\.7\.2\." || fail "Godot 4.7.2 is required, found $("$GODOT_BIN" --version)"
 mkdir -p "$OUT"
@@ -87,6 +100,8 @@ EOF
   rm -rf "$WORK/stage.sorted"
 fi
 P="$WORK/stage/launcher"
+# lane CRASHACT-1: the crash service key (CRASH_CLIENT_KEY) into the staged project, or nothing (the launcher then sends no crash report)
+python3 "$REPO/tools/release/crash_key.py" "$P" || fail "the crash service key (tools/release/crash_key.py)"
 DATE=$(python3 - "$MTIME" <<'PY'
 from datetime import datetime, timezone
 import sys
@@ -100,14 +115,23 @@ if [ -f "$P/release_keys.pub" ]; then
 elif [ -f "$P/release_key.pub" ]; then
   OFFICIAL=$(tr -d ' \n\r' < "$P/release_key.pub")
 fi
-python3 - "$P/build_info.json" "$VERSION" "$COMMIT" "$DATE" "$TARGET" "$KEY" "$KEYS" "$TEST_BUILD" "$OFFICIAL" <<'EOF'
+# lane RELGH-2: and its own nightly list (an official build trusts exactly it; none when the staged launcher has no nightly_keys.pub)
+OFFICIAL_NIGHTLY="[]"
+if [ -f "$P/nightly_keys.pub" ]; then
+  OFFICIAL_NIGHTLY=$(python3 "$REPO/tools/release/release_keys.py" --hex-nightly "$P/nightly_keys.pub" --format json) || fail "the staged launcher/nightly_keys.pub is not a valid nightly key list"
+fi
+python3 - "$P/build_info.json" "$VERSION" "$COMMIT" "$DATE" "$TARGET" "$KEY" "$KEYS" "$TEST_BUILD" "$OFFICIAL" "$NIGHTLY" "$OFFICIAL_NIGHTLY" <<'EOF'
 import json, sys
-path, version, commit, date, repo, key, keys, test, official = sys.argv[1:]
+path, version, commit, date, repo, key, keys, test, official, nightly, official_nightly = sys.argv[1:]
 keys = keys.split(",")
 if keys[0] != key:
     sys.exit("build_info.json: release_keys does not begin with release_key")
 info = {"version": version, "commit": commit, "date": date, "repo": repo, "release_key": key, "release_keys": keys, "test_build": test == "true"}
-info["local_trial"] = official == "" or keys != official.split(",")
+nightly = json.loads(nightly)
+if set(nightly) & set(keys):
+    sys.exit("build_info.json: nightly_keys holds a release key")
+info["nightly_keys"] = nightly
+info["local_trial"] = official == "" or keys != official.split(",") or nightly != json.loads(official_nightly)
 open(path, "w", encoding="utf-8").write(json.dumps(info, indent=2, sort_keys=True) + "\n")
 EOF
 python3 "$REPO/tools/release/audit_package.py" "$P" >/dev/null || { python3 "$REPO/tools/release/audit_package.py" "$P"; fail "the staged launcher failed the audit"; }

@@ -3,6 +3,7 @@
 // set and the build surcharge). Independent expectations: the record layout and the CRC-32 checksum were decoded from RW 0x80B4F5 and checked against the
 // 8 retail files with a separate Python reader (every stored checksum matches); the bling lists and the costs are recomputed here from the INI data.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "GameNetwork/GameInfo.h"
@@ -67,6 +68,35 @@ CreateAHeroHero sampleHero()
 	return h;
 }
 } // namespace
+
+TEST_CASE("cahcam1: ViewInfo constructor uses the retail camera defaults (RW 0x6193B4)")
+{
+	const CreateAHeroViewInfo v;
+	CHECK(v.nearPitch == 0.3f);
+	CHECK(v.nearZoom == 0.2f);
+	CHECK(v.nearFloor == 50.0f);
+	CHECK(v.nearDist == 30.0f);
+	CHECK(v.nearShift == 0.0f);
+	CHECK(v.farPitch == 0.4f);
+	CHECK(v.farZoom == 0.3f);
+	CHECK(v.farFloor == 70.0f);
+	CHECK(v.farDist == 50.0f);
+	CHECK(v.farShift == 0.0f);
+	CHECK(v.closeUpPitch == v.nearPitch);
+	CHECK(v.closeUpZoom == v.nearZoom);
+	CHECK(v.closeUpFloor == v.nearFloor);
+	CHECK(v.closeUpDist == v.nearDist);
+	CHECK(v.closeUpShift == v.nearShift);
+	CHECK(v.portraitPitch == v.nearPitch);
+	CHECK(v.portraitZoom == v.nearZoom);
+	CHECK(v.portraitFloor == v.nearFloor);
+	CHECK(v.portraitDist == v.nearDist);
+	CHECK(v.portraitShift == v.nearShift);
+	CHECK(v.normalCam == 0.5f);
+	CHECK(v.cameraAngle == 0.0f);
+	CHECK(v.mapLocation == 0);
+	CHECK_FALSE(v.loaded);
+}
 
 TEST_CASE("create-a-hero: CRC-32 is the reflected 0xEDB88320 polynomial (RW 0xA2D770, the table RW 0xDBBB70)")
 {
@@ -334,6 +364,7 @@ struct Game
 		REQUIRE(o);
 		const Coord3D at = { x, y, 0.0f };
 		o->setPosition(&at);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 };

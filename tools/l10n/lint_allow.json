@@ -1,0 +1,138 @@
+{
+  "*": {
+    "Banner": "a theme variation or font name, not text",
+    "Button": "a theme variation or font name, not text",
+    "Chip": "a theme variation or font name, not text",
+    "Cinzel": "a theme variation or font name, not text",
+    "Heading": "a theme variation or font name, not text",
+    "Inter": "a theme variation or font name, not text",
+    "Label": "a theme variation or font name, not text",
+    "Muted": "a theme variation or font name, not text",
+    "Section": "a theme variation or font name, not text"
+  },
+  "launcher/scripts/core/aio_install.gd": {
+    "# Written by the OpenBFME launcher after it downloaded and checked these folders. The game offers them on its first start.": "a comment in the handoff file the game reads",
+    "# Written by the OpenBFME launcher after it downloaded and checked this folder (optional, from %s).": "a comment in the handoff file the game reads",
+    "AuthAccountUuid: unauthenticated": "an HTTP header sent to the service",
+    "BFME Arena (bfmeladder.com)": "the third-party service's name, passed into the consent text",
+    "SOURCE=All In One BFME Launcher service: ": "content of the handoff file the game reads",
+    "already there and checked": "log only (launcher.log; test_aio.py reads it)",
+    "downloaded and checked": "log only (launcher.log; test_aio.py reads it)"
+  },
+  "launcher/scripts/core/aio_pins.gd": {
+    "*": "generated pin data (tools/release/aio_pins.py): package names of the service, not launcher text"
+  },
+  "launcher/scripts/core/desktop_entry.gd": {
+    "[Desktop Entry]\\nType=Application\\nName=OpenBFME\\nComment=The Battle for Middle-earth II: The Rise of the Witch-king, rebuilt (plays your own game files)\\nExec=\\\"%s\\\"\\nIcon=%s\\nTerminal=false\\nCategories=Game;StrategyGame;\\n": "the content of a .desktop file"
+  },
+  "launcher/scripts/core/game_options.gd": {
+    "Godot": "a folder name"
+  },
+  "launcher/scripts/core/glibc_check.gd": {
+    "requires GLIBC ": "the line prefix of the package's VERSION file"
+  },
+  "launcher/scripts/core/launcher_log.gd": {
+    "[oversized diagnostic omitted]": "log text only",
+    "[private diagnostic omitted]": "log text only"
+  },
+  "launcher/scripts/core/macos_update.gd": {
+    "OpenBFME Launcher.app": "a bundle path component"
+  },
+  "launcher/scripts/core/manifest.gd": {
+    "openbfme-%s-macos-arm64.zip": "a release asset file name"
+  },
+  "launcher/scripts/core/game_files.gd": {
+    "AuthAccountUuid: unauthenticated": "an HTTP header sent to the service"
+  },
+  "launcher/scripts/core/mod_catalog.gd": {
+    "needs engine features": "a status value compared by the Mods screen and the tests; the screen shows its own catalog text",
+    "openbfme.aio-package 1": "the record file's schema key"
+  },
+  "launcher/scripts/core/mod_install.gd": {
+    "AuthAccountUuid: unauthenticated": "an HTTP header sent to the service"
+  },
+  "launcher/scripts/core/oauth_account.gd": {
+    "Authorization: Bearer ": "an HTTP header",
+    "HTTP/1.1 404 Not Found\\r\\nCache-Control: no-store\\r\\nReferrer-Policy: no-referrer\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nConnection: close\\r\\nContent-Length: %d\\r\\n\\r\\n%s": "a raw HTTP response",
+    "Not found.": "the HTTP 404 body sent to a stray local client (Content-Length counted in ASCII)"
+  },
+  "launcher/scripts/core/release_notes.gd": {
+    "Added": "a release-notes section title matched in the release body, not shown",
+    "Bug fixes": "a release-notes section title matched in the release body, not shown",
+    "Changed": "a release-notes section title matched in the release body, not shown"
+  },
+  "launcher/scripts/core/replay_association.gd": {
+    "NoDisplay=true\\nMimeType=%s;\\n": "the content of a .desktop file"
+  },
+  "launcher/scripts/core/updater.gd": {
+    "%d s old": "stale-lock reason for a log line only",
+    "its launcher (pid %d) is gone": "stale-lock reason for a log line only",
+    "no owner after %d s": "stale-lock reason for a log line only"
+  },
+  "launcher/scripts/core/url_handler.gd": {
+    "[Desktop Entry]\\nType=Application\\nName=OpenBFME Launcher (game links)\\nExec=\\\"%s\\\" -- --open-url %%u\\nMimeType=x-scheme-handler/%s;\\nNoDisplay=true\\nTerminal=false\\n": "the content of a .desktop file"
+  },
+  "launcher/scripts/crypto/release_signature.gd": {
+    "*": "mirrored byte-for-byte into the game (godot/scripts/crypto); its texts are the developer --trust-key errors and the signed-message header"
+  },
+  "launcher/scripts/main.gd": {
+    "- Sample note: another change.\\n\\n## What's fixed\\n\\n- Sample note: a fix.\\n\\n## Known issues\\n\\n- Sample note: a known issue.\\n": "made-up --ui-demo release notes (markdown the notes parser reads in English)",
+    "Checking openbfme-%s-%s.%s": "--ui-demo stand-in for the updater's progress text, matched with begins_with",
+    "DEMO TEXT for the launcher screenshots, not real release notes.\\n\\n## What's new\\n\\n- Sample note: what changed in this build.\\n": "made-up --ui-demo release notes (markdown the notes parser reads in English)",
+    "Downloading openbfme-%s-%s-a-very-long-package-name-that-goes-on.tar.gz": "--ui-demo stand-in for the updater's progress text, matched with begins_with",
+    "Downloading openbfme-%s-%s.%s": "--ui-demo stand-in for the updater's progress text, matched with begins_with",
+    "Downloading openbfme-%s-%s.tar.gz": "--ui-demo stand-in for the updater's progress text, matched with begins_with",
+    "OpenBFME Launcher": "the product name (window title, alert title)",
+    "OpenBFME Launcher %s (%s)": "the version line copied into bug reports, kept English",
+    "RotWK: game files 412 of 1 830": "--ui-demo stand-in for the download service's progress text",
+    "no %s translation Automatic may use": "a reason for the log line only",
+    "the game is %s": "a reason for the log line only",
+    "the game's language is not known (%s)": "a reason for the log line only"
+  },
+  "launcher/scripts/net/http_fetch.gd": {
+    "Accept: ": "an HTTP header",
+    "Range: bytes=%d-": "an HTTP header"
+  },
+  "launcher/scripts/net/social_client.gd": {
+    "accept: application/json": "an HTTP header"
+  },
+  "launcher/scripts/ui/app_icon.gd": {
+    "app_icon.gd: the icon does not decode": "a developer error for the log"
+  },
+  "launcher/scripts/ui/mods_screen.gd": {
+    "Demo Team": "made-up --ui-demo mod data",
+    "Example Realms": "made-up --ui-demo mod data",
+    "Made-Up Patch 9.9": "made-up --ui-demo mod data",
+    "Made-Up Patch 9.9: game.dat": "made-up --ui-demo mod data",
+    "Made-Up Patch 9.9: lotrbfme2ep1.exe": "made-up --ui-demo mod data",
+    "Realm Builders": "made-up --ui-demo mod data",
+    "The Test Team": "made-up --ui-demo mod data",
+    "Tiny Tales": "made-up --ui-demo mod data",
+    "HD Gondor": "made-up --ui-demo asset pack name",
+    "Sharper Trees": "made-up --ui-demo asset pack name",
+    "different bones or models than the game's": "made-up --ui-demo asset pack finding (the real reasons come from the game's report.json)"
+  },
+  "launcher/scripts/ui/multiplayer_screen.gd": {
+    "Discord": "a product name"
+  },
+  "launcher/scripts/ui/paths.gd": {
+    "Games": "a folder name"
+  },
+  "launcher/scripts/ui/play_screen.gd": {
+    "Battle for Middle-earth I 1.03": "a game's title and version",
+    "RotWK 2.01 · BFME II 1.06": "the games' short titles and versions"
+  },
+  "launcher/scripts/ui/textures.gd": {
+    "*": "shader source code only"
+  },
+  "launcher/scripts/core/asset_packs.gd": {
+    "# asset packs the game leaves out (one folder name per line; the launcher's Mods page writes this file)\\n": "content of asset-packs/disabled.txt, the file the game reads"
+  },
+  "launcher/scripts/core/launcher_crash.gd": {
+    "OpenBFME crash report: the launcher, %s, build %s": "the crash report's header line for the OpenBFME team (sent to the crash service, never shown)",
+    "its last lines of launcher.log follow": "the crash report's header line for the OpenBFME team (sent to the crash service, never shown)"
+  },
+  "launcher/scripts/net/crash_client.gd": {
+    "*": "the game's crash client byte for byte (tools/release/test_crash_upload.py): log lines, protocol text and error codes, never shown to the player"
+  }
+}

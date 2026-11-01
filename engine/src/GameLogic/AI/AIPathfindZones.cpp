@@ -52,10 +52,14 @@ void PathfindZoneManager::reset()
 	m_zones.clear();
 	m_adjacent.clear();
 	m_tables.clear();
+	m_zoneBlock.clear();
+	m_blockTables.clear();
+	m_anyPortal = false;
 }
 
 void PathfindZoneManager::allocateBlocks(const PathfindRegion &globalBounds)
 {
+	m_anyPortal = false; // lane WALL-2: fresh blocks list no portals
 	// RW 0x939226: (hi - lo + blockSize) / blockSize on each axis
 	m_zoneBlockExtent.x = (globalBounds.hi.x - globalBounds.lo.x + m_blockSize) / m_blockSize;
 	m_zoneBlockExtent.y = (globalBounds.hi.y - globalBounds.lo.y + m_blockSize) / m_blockSize;
@@ -68,6 +72,7 @@ void PathfindZoneManager::calculateZones(const PathfindGridView &map, const Path
 	m_zones.push_back(ZoneInfo()); // zone 0: "unassigned"
 	m_adjacent.clear();
 	m_tables.clear();
+	m_blockTables.clear();
 	const int bs = m_blockSize;
 	const int xCount = (globalBounds.hi.x - globalBounds.lo.x + 1 + bs - 1) / bs;
 	const int yCount = (globalBounds.hi.y - globalBounds.lo.y + 1 + bs - 1) / bs;
@@ -157,12 +162,38 @@ void PathfindZoneManager::calculateZones(const PathfindGridView &map, const Path
 			}
 		}
 	}
+	// lane WALL-2, RW 0x93A584 .. 0x93A5BE: every raised layer in use has one zone of its own (class: CLEAR on the layer), numbered after the ground zones
+	// (INFERENCE S-4856: RW numbers them first)
+	zoneStorageType raisedZone[16] = {};
+	for (const PathfindRaisedView &r : map.raised)
+	{
+		const zoneStorageType z = (zoneStorageType)m_zones.size();
+		ZoneInfo zi;
+		zi.type = (std::uint8_t)PathfindCell::CELL_CLEAR;
+		zi.layer = (std::uint8_t)r.layer;
+		m_zones.push_back(zi);
+		for (size_t k = 0; k < r.count; ++k)
+		{
+			r.cells[k].setZone(z);
+		}
+		raisedZone[r.layer & 15] = z;
+	}
 	// adjacency: every pair of 4-adjacent cells of different zones
 	for (int i = globalBounds.lo.x; i <= globalBounds.hi.x; i++)
 	{
 		for (int j = globalBounds.lo.y; j <= globalBounds.hi.y; j++)
 		{
 			const zoneStorageType z = map.at(i, j).getZone();
+			if (!map.raised.empty())
+			{
+				// lane WALL-2, RW 0x93A0D1 .. 0x93A14B: a CLEAR cell whose connect layer is a raised layer joins the layer's zone
+				const PathfindCell &cell = map.at(i, j);
+				const int conn = (int)cell.getConnectLayer();
+				if (conn >= (int)LAYER_TOP && conn <= (int)LAYER_RAISED_LAST && raisedZone[conn] != 0 && cell.getType() == PathfindCell::CELL_CLEAR && raisedZone[conn] != z)
+				{
+					m_adjacent.emplace_back(std::min(z, raisedZone[conn]), std::max(z, raisedZone[conn]));
+				}
+			}
 			if (i > globalBounds.lo.x)
 			{
 				const zoneStorageType o = map.at(i - 1, j).getZone();
@@ -177,11 +208,114 @@ void PathfindZoneManager::calculateZones(const PathfindGridView &map, const Path
 	}
 	std::sort(m_adjacent.begin(), m_adjacent.end());
 	m_adjacent.erase(std::unique(m_adjacent.begin(), m_adjacent.end()), m_adjacent.end());
+	rebuildZoneBlocks(map, globalBounds);
 	for (Block &bl : m_blocks)
 	{
 		bl.dirty = false;
 	}
 	m_dirty = false;
+}
+
+void PathfindZoneManager::rebuildZoneBlocks(const PathfindGridView &map, const PathfindRegion &globalBounds)
+{
+	// every ground cell's zone lies in the block calculateZones labelled it in (its zones never cross a block border); raised-layer zones keep -1
+	m_zoneBlock.assign(m_zones.size(), -1);
+	m_blockTables.clear();
+	for (Block &b : m_blocks)
+	{
+		b.raisedLink = false;
+	}
+	const int bs = m_blockSize;
+	const int yCount = (globalBounds.hi.y - globalBounds.lo.y + 1 + bs - 1) / bs;
+	for (int i = globalBounds.lo.x; i <= globalBounds.hi.x; i++)
+	{
+		for (int j = globalBounds.lo.y; j <= globalBounds.hi.y; j++)
+		{
+			const PathfindCell &cell = map.at(i, j);
+			const zoneStorageType z = cell.getZone();
+			if (z != UNINITIALIZED_ZONE && z < m_zoneBlock.size())
+			{
+				m_zoneBlock[z] = ((i - globalBounds.lo.x) / bs) * yCount + (j - globalBounds.lo.y) / bs;
+			}
+			// RW 0x939FA8: a CLEAR cell whose connect layer is a raised layer (RW 0x5E2F24: 2 .. 15) puts a pair in its block's list (RW 0x939EF4)
+			const int conn = (int)cell.getConnectLayer();
+			if (conn >= (int)LAYER_TOP && conn <= (int)LAYER_RAISED_LAST && cell.getType() == PathfindCell::CELL_CLEAR && i >= 0 && j >= 0 &&
+				i / bs < m_zoneBlockExtent.x && j / bs < m_zoneBlockExtent.y)
+			{
+				blockAt(i / bs, j / bs).raisedLink = true;
+			}
+		}
+	}
+}
+
+bool PathfindZoneManager::interactsWithRaisedLayer(int cellX, int cellY) const
+{
+	// RW 0x9389CE (the block's list not empty)
+	if (cellX < 0 || cellY < 0)
+	{
+		return false;
+	}
+	const int bx = cellX / m_blockSize, by = cellY / m_blockSize;
+	if (bx >= m_zoneBlockExtent.x || by >= m_zoneBlockExtent.y)
+	{
+		return false;
+	}
+	return m_blocks[(size_t)bx * (size_t)m_zoneBlockExtent.y + (size_t)by].raisedLink;
+}
+
+const std::vector<zoneStorageType> &PathfindZoneManager::blockTable(int profile, int kind) const
+{
+	// the even (non-forced) union tables of BFME2 0x005329C8: only the adjacencies of two zones of one block join (see getBlockZone)
+	const int key = profile * 8 + kind;
+	auto it = m_blockTables.find(key);
+	if (it != m_blockTables.end())
+	{
+		return it->second;
+	}
+	std::vector<zoneStorageType> parent(m_zones.size());
+	std::iota(parent.begin(), parent.end(), (zoneStorageType)0);
+	for (const auto &pair : m_adjacent)
+	{
+		const std::int32_t ba = pair.first < m_zoneBlock.size() ? m_zoneBlock[pair.first] : -1;
+		const std::int32_t bb = pair.second < m_zoneBlock.size() ? m_zoneBlock[pair.second] : -1;
+		if (ba < 0 || ba != bb || !joins(m_zones[pair.first], m_zones[pair.second], profile, kind, false))
+		{
+			continue;
+		}
+		const zoneStorageType ra = findRoot(parent, pair.first), rb = findRoot(parent, pair.second);
+		if (ra != rb)
+		{
+			if (ra < rb) parent[rb] = ra; else parent[ra] = rb;
+		}
+	}
+	for (size_t z = 0; z < parent.size(); ++z)
+	{
+		parent[z] = findRoot(parent, (zoneStorageType)z);
+	}
+	return m_blockTables.emplace(key, std::move(parent)).first->second;
+}
+
+zoneStorageType PathfindZoneManager::getBlockZone(const PathfindMovement &mv, zoneStorageType zone) const
+{
+	if (zone >= m_zones.size())
+	{
+		return 0;
+	}
+	if (mv.surf & LOCOMOTORSURFACE_AIR)
+	{
+		return 1; // as getEffectiveZone: air is all zone 1
+	}
+	const int kind = kindOf(mv);
+	if (kind < 0)
+	{
+		return kind == -1 ? 1 : 0;
+	}
+	if (zone == UNINITIALIZED_ZONE)
+	{
+		return 0;
+	}
+	const int e = (mv.i8 >= 0 ? mv.i8 + 1 : 0) + (mv.b4 ? 1 : 0) + (mv.b5 ? 2 : 0);
+	return blockTable(2 * e, kind)[zone]; // the profile zonesJoin uses (the non-terrain variant)
 }
 
 void PathfindZoneManager::markDirty(const PathfindRegion &cells)

@@ -57,8 +57,12 @@ Ref<godot::Image> loadPackedTexture(AptFileSource &source, const std::string &st
 	PackedByteArray pngData;
 	Ref<godot::Image> png;
 	png.instantiate();
-	if (read(stem + ".png", pngData) && png->load_png_from_buffer(pngData) == OK)
+	if (source.fileExists(stem + ".png"))
 	{
+		// A missing companion is valid; an unreadable or corrupt companion is
+		// a failed texture, not permission to silently discard its alpha.
+		if (!read(stem + ".png", pngData) || png->load_png_from_buffer(pngData) != OK)
+			return Ref<godot::Image>();
 		png->convert(godot::Image::FORMAT_RGBA8);
 		*pairedPng = true;
 		if (png->get_width() != image->get_width() || png->get_height() != image->get_height())

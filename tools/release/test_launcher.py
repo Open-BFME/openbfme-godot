@@ -11,7 +11,6 @@ Skipped (loudly) without Godot 4.7.2; the self-update tests also need the host's
 from __future__ import annotations
 
 import hashlib
-import ctypes
 import io
 import json
 import os
@@ -39,7 +38,7 @@ import ed25519  # noqa: E402
 import make_archive  # noqa: E402
 import make_manifest  # noqa: E402
 from launcher_test_server import COMMIT, TEST_REPO, ReleaseServer, tiny_package  # noqa: E402
-from launcher_test_support import (ARCHIVE_SUFFIX, GAME_EXE, LAUNCHER_EXE, PLATFORM, WINDOWS, asset_name,
+from launcher_test_support import (ARCHIVE_SUFFIX, GAME_EXE, LAUNCHER_EXE, MACOS, MACOS_SKIP, PLATFORM, WINDOWS, asset_name,  # noqa: E402
                                    dismiss_missing_pack_alert, godot_engine, isolated_environment, native_game, normalized_path,
                                    process_running, stop_process)
 
@@ -54,7 +53,7 @@ def _godot_ok() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(not _godot_ok(), reason="SKIP launcher tests: Godot 4.7.2 not found (set GODOT)")
+pytestmark = [pytest.mark.skipif(MACOS, reason=MACOS_SKIP), pytest.mark.skipif(not _godot_ok(), reason="SKIP launcher tests: Godot 4.7.2 not found (set GODOT)")]
 
 
 @pytest.fixture(autouse=True)
@@ -74,16 +73,17 @@ def server():
 
 @pytest.fixture(scope="session")
 def keys(tmp_path_factory):
-    """the secrets of the throwaway release key (the old, Deck-style key), a second trusted key (SIGNKMS-1: the KMS key's stand-in,
+    """(RELGH-2: and a nightly-only key) the secrets of the throwaway release key (the old, Deck-style key), a second trusted key (SIGNKMS-1: the KMS key's stand-in,
     which signs the envelope) and another key"""
-    return {"release": os.urandom(32), "kms": os.urandom(32), "other": os.urandom(32)}
+    return {"release": os.urandom(32), "kms": os.urandom(32), "other": os.urandom(32), "nightly": os.urandom(32)}
 
 
 @pytest.fixture(scope="session", autouse=True)
-def imported():
+def imported(tmp_path_factory):
     """the launcher project's import cache (a fresh clone has none; the first import may abort on a known Godot quirk)"""
+    env = isolated_environment(tmp_path_factory.mktemp("launcher-import"))
     for _ in range(2):
-        subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--import"], capture_output=True, timeout=300)
+        subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--import"], env=env, capture_output=True, timeout=300)
 
 
 # ---- packages ---------------------------------------------------------------------------------------------------------------------------
@@ -93,7 +93,13 @@ def game_script() -> bytes:
 
 
 def slow_game() -> bytes:
-    return native_game("long").read_bytes() if WINDOWS else game_script() + b"exec >/dev/null 2>&1 </dev/null\ntrap 'kill $!; exit' TERM\nsleep 60 &\nwait\n"
+    return native_game("long").read_bytes() if WINDOWS else game_script() + b'''exec >/dev/null 2>&1 </dev/null
+event="$OPENBFME_TEST_PLAYED.$$.exit"
+trap 'rm -f "$event"' EXIT
+trap 'exit' TERM INT
+mkfifo "$event" || exit 1
+read -r done < "$event"
+'''
 
 
 def game_tar(tmp: Path, version: str, extra: bytes = b"", script: bytes | None = None, version_extra: str = "") -> bytes:
@@ -394,7 +400,7 @@ def test_rfc8032_vectors_in_python():
     assert not ed25519.verify(ed25519.public_key(sk), b"\x72", s_plus_l), "S >= L is rejected"
 
 
-def signkms_fixtures(manifest: bytes, deck: bytes, kms: bytes, other: bytes) -> dict[str, str]:
+def signkms_fixtures(manifest: bytes, deck: bytes, kms: bytes, other: bytes, nightly: bytes, nightly_manifest: bytes, stable_manifest: bytes) -> dict[str, str]:
     """SIGNKMS-1: launcher/tests/unit_test.gd --signkms: signatures of a manifest.json, a manifest-macos.json and a payload.json under
     the old (Deck: raw) and the new (KMS: envelope, release_keys.py) throwaway keys, of the wrong kinds, and of an unknown key"""
     import release_keys
@@ -417,6 +423,49 @@ def signkms_fixtures(manifest: bytes, deck: bytes, kms: bytes, other: bytes) -> 
         "payload": pay, "payload_raw": sign(deck, pay), "payload_env": sign(kms, env("payload.json", pay)),
         "payload_env_wrong_kind": sign(kms, env("manifest.json", pay)),
     }
+    # lane RELGH-2: documents signed by the nightly-only key: a nightly release's manifest (a real, schema-valid one), a stable release's,
+    # a manifest with a nightly version but channel stable (and one with a preview channel but a non-nightly version), a nightly and a
+    # stable payload.json, a nightly macOS sidecar
+    nm = json.loads(nightly_manifest)
+    nm_stable_channel = json.dumps(dict(nm, channel="stable"), indent=2).encode() + b"\n"
+    nm_other_version = json.dumps(dict(nm, version="v1.2.3-preview.4"), indent=2).encode() + b"\n"
+    nm_trailing_newline = json.dumps(dict(nm, version=nm["version"] + "\n"), indent=2).encode() + b"\n"
+    nm_int_version = json.dumps(dict(nm, version=123), indent=2).encode() + b"\n"
+    pay_n = json.dumps(dict(json.loads(pay), version="v1.2.3-nightly.261024100"), indent=2).encode() + b"\n"
+    mac_n = json.dumps(dict(json.loads(mac), version="v1.2.3-nightly.20261024"), indent=2).encode() + b"\n"
+    fx.update({
+        "nightly": ed25519.public_key(nightly),
+        "n_manifest": nightly_manifest, "n_manifest_raw": sign(nightly, nightly_manifest),
+        "n_manifest_env": sign(nightly, env("manifest.json", nightly_manifest)),
+        "n_manifest_env_wrong_kind": sign(nightly, env("payload.json", nightly_manifest)),
+        "s_manifest": stable_manifest, "s_manifest_raw": sign(nightly, stable_manifest),
+        "s_manifest_env": sign(nightly, env("manifest.json", stable_manifest)),
+        "n_chan": nm_stable_channel, "n_chan_raw": sign(nightly, nm_stable_channel),
+        "n_otherver": nm_other_version, "n_otherver_raw": sign(nightly, nm_other_version),
+        "n_newline": nm_trailing_newline, "n_newline_raw": sign(nightly, nm_trailing_newline),
+        "n_intver": nm_int_version, "n_intver_raw": sign(nightly, nm_int_version),
+        "n_payload": pay_n, "n_payload_raw": sign(nightly, pay_n), "n_payload_env": sign(nightly, env("payload.json", pay_n)),
+        "s_payload_raw": sign(nightly, pay), "s_payload_env": sign(nightly, env("payload.json", pay)),
+        "n_macos": mac_n, "n_macos_env": sign(nightly, env("manifest-macos.json", mac_n)),
+        "s_macos_env": sign(nightly, env("manifest-macos.json", mac)),
+        "n_manifest_other": sign(other, nightly_manifest), "n_manifest_deck": sign(deck, nightly_manifest),
+    })
+    # lane RELGH-3: the stable Actions key is the list's SECOND stable key and signs RAW (like the Deck key): here "kms" plays it. A stable
+    # release's manifest, macOS sidecar and payload, a nightly's manifest (a stable key is valid for every document)
+    fx.update({
+        "a_manifest_raw": sign(kms, stable_manifest), "a_macos_raw": sign(kms, mac), "a_payload_raw": sign(kms, pay),
+        "a_n_manifest_raw": sign(kms, nightly_manifest),
+    })
+    assert release_keys.verify_detail([("deck", fx["deck"]), ("stable", fx["kms"])], "manifest.json", stable_manifest, fx["a_manifest_raw"]) \
+        == ("stable", "raw")
+    assert release_keys.verify_detail([("deck", fx["deck"])], "manifest.json", stable_manifest, fx["a_manifest_raw"]) is None
+    # the Python twin agrees: a nightly key is valid for the nightly documents only
+    nl = [("nightly", fx["nightly"])]
+    assert release_keys.verify_scoped(lst0 := [("deck", fx["deck"]), ("kms", fx["kms"])], nl, "manifest.json", nightly_manifest, fx["n_manifest_raw"])
+    assert release_keys.verify_scoped(lst0, nl, "manifest.json", stable_manifest, fx["s_manifest_raw"]) is None
+    assert release_keys.verify_scoped(lst0, nl, "manifest.json", nm_stable_channel, fx["n_chan_raw"]) is None
+    assert release_keys.verify_scoped(lst0, nl, "payload.json", pay, fx["s_payload_raw"]) is None
+    assert release_keys.verify_scoped(lst0, nl, "payload.json", pay_n, fx["n_payload_raw"])
     # the envelope signature is what release_keys.verify accepts, and the raw one too (the Python twin of the rule)
     lst = [("deck", fx["deck"]), ("kms", fx["kms"])]
     assert release_keys.verify(lst, "manifest.json", manifest, fx["manifest_env"]) == "kms"
@@ -425,19 +474,165 @@ def signkms_fixtures(manifest: bytes, deck: bytes, kms: bytes, other: bytes) -> 
     return {k: v.hex() for k, v in fx.items()}
 
 
-def test_launcher_unit_rules(tmp_path, keys):
+@pytest.mark.parametrize("project,script,summary", [
+    (LAUNCHER, "log_privacy_test.gd", "PRIVACY OK"),
+    (REPO / "godot", "crash_log_test.gd", "CRASH LOG OK"),
+])
+def test_local_diagnostic_privacy(tmp_path, project, script, summary):
+    r = subprocess.run([GODOT, "--headless", "--path", str(project), "--script", f"res://tests/{script}"],
+                       env=isolated_environment(tmp_path), capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and summary in r.stdout, r.stdout + r.stderr
+    assert "SCRIPT ERROR" not in r.stderr and "Parse Error" not in r.stderr, r.stderr
+
+
+def _unit_run(project, tmp_path, keys):
     files = release_files(tmp_path, "v1.2.3-preview.4", keys["release"])
+    nightly_files = release_files(tmp_path, "v1.2.3-nightly.20261024", keys["release"])   # lane RELGH-2
+    stable_files = release_files(tmp_path, "v1.2.3", keys["release"])
     (tmp_path / "m.json").write_bytes(files["manifest.json"])
     (tmp_path / "m.sig").write_bytes(files["manifest.json.sig"])
-    (tmp_path / "signkms.json").write_text(json.dumps(signkms_fixtures(files["manifest.json"], keys["release"], keys["kms"], keys["other"])))
-    r = subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--script", "res://tests/unit_test.gd", "--",
+    (tmp_path / "signkms.json").write_text(json.dumps(signkms_fixtures(files["manifest.json"], keys["release"], keys["kms"], keys["other"], keys["nightly"],
+                                                                       nightly_files["manifest.json"], stable_files["manifest.json"])))
+    return subprocess.run([GODOT, "--headless", "--path", str(project), "--script", "res://tests/unit_test.gd", "--",
                         f"--key={ed25519.public_key(keys['release']).hex()}", f"--manifest={tmp_path / 'm.json'}",
                         f"--sig={tmp_path / 'm.sig'}", f"--signkms={tmp_path / 'signkms.json'}"], env=isolated_environment(tmp_path),
                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+
+
+def _check_unit_run(r):
+    output = r.stdout + r.stderr
+    assert "SCRIPT ERROR" not in output and "Parse Error" not in output, output
+    assert r.returncode == 0 and "UNIT OK" in r.stdout, output[-5000:]
     print(r.stdout[-3000:])
-    assert r.returncode == 0 and "UNIT OK" in r.stdout, r.stdout[-3000:] + r.stderr[-2000:]
+
+
+def test_launcher_unit_rules(tmp_path, keys):
+    r = _unit_run(LAUNCHER, tmp_path, keys)
+    _check_unit_run(r)
     assert "UNIT signkms: the key-list checks run" in r.stdout, r.stdout[-3000:]
-    assert "SCRIPT ERROR" not in r.stdout + r.stderr, (r.stdout + r.stderr)[-3000:]
+    assert "UNIT stable actions: the stable Actions key checks run" in r.stdout, r.stdout[-3000:]
+
+
+@pytest.mark.parametrize("error", ["SCRIPT ERROR", "Parse Error"])
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_unit_wrapper_rejects_error_output(error, stream, capsys):
+    output = {"stdout": "UNIT OK 1 checks\n", "stderr": ""}
+    output[stream] += error + ": deliberately broken test\n"
+    result = subprocess.CompletedProcess([], 0, **output)
+    with pytest.raises(AssertionError, match=error):
+        _check_unit_run(result)
+    assert "UNIT OK" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("error", ["runtime", "parse"])
+def test_unit_wrapper_rejects_broken_test(tmp_path, keys, error):
+    project = tmp_path / "broken-launcher"
+    shutil.copytree(LAUNCHER, project, ignore=shutil.ignore_patterns(".godot"))
+    script = project / "tests/unit_test.gd"
+    source = script.read_text(encoding="utf-8")
+    if error == "runtime":
+        assert 'screen.build("")' in source
+        source = source.replace('screen.build("")', '# Deliberately reproduce the unbuilt-screen script error.')
+    else:
+        source += "\nfunc deliberately_broken( -> void:\n"
+    script.write_text(source, encoding="utf-8")
+    result = _unit_run(project, tmp_path, keys)
+    marker = "SCRIPT ERROR" if error == "runtime" else "Parse Error"
+    assert marker in result.stdout + result.stderr, result
+    assert "UNIT OK" not in result.stdout + result.stderr, result
+    assert result.returncode != 0, result
+    with pytest.raises(AssertionError, match=marker):
+        _check_unit_run(result)
+
+
+@pytest.mark.skipif(WINDOWS, reason="POSIX FIFO lifetime control")
+def test_slow_game_waits_for_exit_event(tmp_path):
+    game = tmp_path / "game"
+    game.write_bytes(slow_game())
+    game.chmod(0o755)
+    played = tmp_path / "played.txt"
+    with subprocess.Popen([str(game)], env=isolated_environment(tmp_path, OPENBFME_TEST_PLAYED=str(played)),
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as process:
+        event = played.with_name(f"{played.name}.{process.pid}.exit")
+        try:
+            deadline = time.monotonic() + 10
+            while not event.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert event.is_fifo() and process.poll() is None
+            with event.open("w") as signal:
+                signal.write("exit\n")
+            assert process.wait(timeout=10) == 0
+            assert not event.exists()
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=10)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the synthetic argv executable is a Linux fixture; Windows is cross-compiled")
+def test_install_paths_preserve_text_and_process_arguments():
+    r = subprocess.run([sys.executable, str(HERE / "test_install_paths.py"), "--godot", GODOT],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "PATH FIRST-RUN checks=66 failed=0 cases=11" in r.stdout
+    assert "PATH LAUNCHER checks=127 failed=0 cases=11" in r.stdout
+
+
+@pytest.mark.parametrize(("script", "verdict"), [
+    ("oauth_test.gd", r"OAUTH PASS \d+ checks"),
+    ("social_launch_test.gd", r"SOCIAL LAUNCH OK"),
+    ("social_ui_test.gd", r"SOCIAL UI OK"),
+    ("macos_preview_test.gd", r"MAC PREVIEW UNIT OK"),
+    ("lobby_list_test.gd", r"LAUNCHER LIST: \d+ passed, 0 failed"),
+])
+def test_standalone_launcher_scripts(tmp_path, script, verdict):
+    result = subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--script", f"res://tests/{script}"],
+                            env=isolated_environment(tmp_path), capture_output=True, text=True, timeout=90, check=False)
+    output = result.stdout + result.stderr
+    assert not re.search(r"(?m)^\s*(?:SCRIPT ERROR|ERROR):", output), output
+    if result.returncode == 77:
+        assert script == "macos_preview_test.gd" and "native bundle checks SKIP: macOS required" in output, output
+        pytest.skip("macOS preview: portable checks passed; native bundle checks require macOS")
+    assert result.returncode == 0 and re.search(verdict, output), output
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="short-write regression requires Linux RLIMIT_FSIZE")
+def test_launcher_write_failures(tmp_path):
+    # Set the limit in a single-threaded child, not preexec_fn in the threaded release-server process.
+    limit = ("import os, resource, signal, sys; signal.signal(signal.SIGXFSZ, signal.SIG_IGN); "
+             "resource.setrlimit(resource.RLIMIT_FSIZE, (4096, 4096)); os.execv(sys.argv[1], sys.argv[1:])")
+    godot = shutil.which(GODOT) or GODOT  # os.execv takes a path, not a PATH name like the CI's "godot"
+    result = subprocess.run([sys.executable, "-c", limit, godot, "--headless", "--path", str(LAUNCHER), "--script",
+                             "res://tests/write_failure_test.gd", "--", "--write-limited"],
+                            env=isolated_environment(tmp_path), capture_output=True, text=True, timeout=60, check=False)
+    output = result.stdout + result.stderr
+    assert result.returncode == 0 and "WRITE FAILURE PASS: 2 checks (settings=true, icon=true)" in output, output
+    assert not re.search(r"(?m)^\s*(?:SCRIPT ERROR|ERROR):", output), output
+
+
+@pytest.mark.parametrize("runner", ["test_launcher_social.py", "test_launcher_oauth.py"])
+def test_launcher_social_integrations(tmp_path, runner):
+    if runner == "test_launcher_oauth.py":
+        from test_launcher_oauth import node_command, safe_output
+        try:
+            node_command()
+        except RuntimeError as error:
+            pytest.skip(f"SKIP LOUDLY: launcher OAuth integration needs Node.js with node:sqlite support; {error}")
+    # the runners check --godot as a file (test_launcher_oauth.py: is_file): a PATH name like the CI's "godot" is resolved first, as above
+    result = subprocess.run([sys.executable, str(HERE / runner), "--godot", shutil.which(GODOT) or GODOT],
+                            env=isolated_environment(tmp_path), capture_output=True, text=True, timeout=240, check=False)
+    output = result.stdout + result.stderr
+    if runner == "test_launcher_oauth.py":
+        output = safe_output(output)
+    verdict = "OAUTH INTEGRATION PASS" if runner == "test_launcher_oauth.py" else "PASS: persistent identity"
+    assert result.returncode == 0 and verdict in output, output
+
+
+def test_oauth_without_node_skips_loudly(monkeypatch, tmp_path):
+    monkeypatch.delenv("NODE", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(pytest.skip.Exception, match="SKIP LOUDLY: launcher OAuth integration needs Node.js.*not found"):
+        test_launcher_social_integrations(tmp_path, "test_launcher_oauth.py")
 
 
 def _layout_run(project: Path, tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
@@ -452,7 +647,7 @@ def _layout_run(project: Path, tmp_path: Path, *args: str) -> subprocess.Complet
                           env=env, capture_output=True, text=True, timeout=900, stdin=subprocess.DEVNULL)
 
 
-LAYOUT_STATES = ["main", "news", "multiplayer", "mods", "games", "games-bfme1", "games-downloading", "settings", "display", "about", "update", "downloading",
+LAYOUT_STATES = ["main", "news", "multiplayer", "multiplayer-populated", "mods", "games", "games-bfme1", "games-downloading", "settings", "display", "about", "update", "downloading",
                  "error", "glibc", "first-run", "offline", "verifying", "paused", "update-launcher", "warning", "ask", "playing", "long",
                  "picker", "update-launcher+123", "update-launcher+10000000", "long+123", "long+10000000"]
 LAYOUT_SIZES = ["1280x720", "1280x800", "1920x1080", "2560x1440", "3440x1440", "960x540", "960x1000", "2704x1521", "3146x1769"]
@@ -504,6 +699,9 @@ def _sabotaged(tmp_path: Path, name: str, edits: list[tuple[str, str, str]]) -> 
     ("bar-20", [("scripts/main.gd", 'bm.add_theme_constant_override("margin_right", SCREEN_MARGIN)', 'bm.add_theme_constant_override("margin_right", SCREEN_MARGIN + 20)')],
      ["margins are not the window's", "PLAY is off the right margin"]),
     ("rail", [("scripts/main.gd", "const RAIL_INK := Style.NAV_PAD", "const RAIL_INK := 9")], ["the rail does not start on one x"]),
+    ("sidebar-pitch", [("scripts/ui/style.gd", "const NAV_GAP := 2", "const NAV_GAP := 10")], ["sidebar vertical pitch is not 38"]),
+    ("sidebar-width", [("scripts/main.gd", 'var foot := W.trim_label(L10n.t("launcher.main.footer_version"', 'var foot := W.label(L10n.t("launcher.main.footer_version"')],
+     ["sidebar button exceeds rail", "sidebar insets are not 13"]),
     # a screen's column with a gap of its own
     ("gap", [("scripts/ui/settings_screen.gd", "var v := W.vbox(Style.SCREEN_GAP)", "var v := W.vbox(20)")], ["gap is not the theme's SCREEN_GAP"]),
     # the demo states that must apply: the offline state never applies; the folder picker never opens
@@ -569,7 +767,9 @@ def test_play_checks_the_systems_glibc(tmp_path, server, keys):
     game = game_tar(tmp_path, "v0.2.0", version_extra="requires GLIBC 2.35\n")
     server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"], game=game))
     r = launch(tmp_path, server, keys["release"], "--update", "--play", env_extra={"OPENBFME_TEST_SYSTEM_GLIBC": "2.31"})
-    assert r.code == 1 and r.has("it needs GLIBC 2.35 or newer, and this system has GLIBC 2.31"), r
+    assert r.code == 1 and r.has("this Linux system is too old for this build. "
+                                "Update to a Linux distribution with GLIBC 2.35 or newer (this system has 2.31). "
+                                "If you need help, use the OpenBFME Discord #bug-reports forum or GitHub issues."), r
     assert played(tmp_path) == ""
     r = launch(tmp_path, None, keys["release"], "--play", env_extra={"OPENBFME_TEST_SYSTEM_GLIBC": "2.35"})
     assert r.code == 0 and "played game" in played(tmp_path), r
@@ -645,6 +845,23 @@ def test_nightly_channel_name(tmp_path, server, keys):
     assert r.code == 0 and r.has("update installed v0.4.12"), r
     r = launch(other, server, keys["release"], "--channel=bogus", "--list")
     assert r.code == 1 and r.has("unknown channel 'bogus' (stable, nightly)"), r
+
+
+def test_the_nightly_key_signs_nightly_releases_only(tmp_path, server, keys):
+    """RELGH-2: a key trusted for nightly releases only (--trust-nightly-key, a test build's twin of build_info.json nightly_keys): a
+    nightly release it signed is installed on the nightly channel; the same key on a stable release is refused by name; and without the
+    option (a launcher that does not list the key) the nightly release is refused too"""
+    nk = f"--trust-nightly-key={ed25519.public_key(keys['nightly']).hex()}"
+    server.publish("v0.4.13-nightly.20261022", release_files(tmp_path, "v0.4.13-nightly.20261022", keys["nightly"]))
+    r = launch(tmp_path, server, keys["release"], "--channel=nightly", "--update")
+    assert r.code == 3 and r.has("signature is not valid") and installed(tmp_path) == [], r
+    r = launch(tmp_path, server, keys["release"], "--channel=nightly", "--update", nk)
+    assert r.code == 0 and r.has("update installed v0.4.13-nightly.20261022"), r
+    other = tmp_path / "stable"
+    other.mkdir()
+    server.publish("v0.4.14", release_files(tmp_path, "v0.4.14", keys["nightly"]))
+    r = launch(other, server, keys["release"], "--channel=stable", "--update", nk)
+    assert r.code == 3 and r.has("signature is not valid") and installed(other) == [], r
 
 
 def test_offline_launch(tmp_path, server, keys):
@@ -848,7 +1065,7 @@ def test_redirects_only_to_allowed_hosts(tmp_path, server, keys):
     port = server.httpd.server_address[1]
     server.redirect[f"/dl/v0.2.0/{name}"] = f"http://localhost:{port}/dl/v0.2.0/{name}"
     r = launch(tmp_path, server, keys["release"], "--update")
-    assert r.code == 3 and r.has("refused URL 'http://localhost"), r
+    assert r.code == 3 and r.has(f"refused URL 'http://localhost:{port}/dl/v0.2.0/{name}': not HTTPS"), r
     server.redirect[f"/dl/v0.2.0/{name}"] = f"/elsewhere/{name}"  # a relative redirect on the same origin is followed
     server.files[f"/elsewhere/{name}"] = files[name]
     r = launch(tmp_path, server, keys["release"], "--update")
@@ -857,7 +1074,7 @@ def test_redirects_only_to_allowed_hosts(tmp_path, server, keys):
 
 def test_test_origin_must_be_loopback(tmp_path, keys):
     r = launch(tmp_path, None, keys["release"], "--update", origin="http://example.com:80")
-    assert r.code == 1 and r.has("the test API origin must be http://127.0.0.1"), r
+    assert r.code == 1 and r.has("the test API origin must be http://<address>:<port>"), r
 
 
 # ---- the packaged launcher: self-update and the release build ---------------------------------------------------------------------------
@@ -1144,9 +1361,11 @@ def test_release_build_ignores_the_test_options(tmp_path, server, keys, launcher
     inst = unpack_launcher(tmp_path / "rel", launcher_builds["release"])
     server.publish("v0.3.0", release_files(tmp_path, "v0.3.0", keys["release"]))
     # --version only: with the test options ignored, --update would ask the real api.github.com
-    r = launch(tmp_path, server, keys["other"], "--version", exe=inst / LAUNCHER_EXE, timeout=120)
+    r = launch(tmp_path, server, keys["other"], "--version", "--ui-demo=offline", "--ui-demo=paused",
+               exe=inst / LAUNCHER_EXE, timeout=120)
     assert r.has("ignored --api-base: test options are off in a release build"), r
     assert r.has("ignored --trust-key"), r
+    assert r.out.count("ignored --ui-demo: test options are off in a release build") == 2, r
     assert not server.requests, "the release build never contacts the test server"
     assert "updates from Test/repo" in r.out
 
@@ -1478,6 +1697,71 @@ def test_a_stopped_launcher_download_can_be_resumed_or_cancelled(tmp_path, serve
 
 # ---- lane UI-5: updates in the background, the notes cards ------------------------------------------------------------------------------
 
+@pytest.mark.parametrize("case", ["fresh", "cached", "offline", "network-error", "rate-limit", "manifest-error", "available",
+                                  "no-release", "auto-install", "manual", "manual-available", "manual-error",
+                                  "completion", "completion-error"])
+def test_update_pill_and_bottom_line_share_the_completed_state(tmp_path, server, keys, case):
+    current, newer = "v0.4.12-nightly.20261022", "v0.4.13-nightly.20261023"
+    key = keys["release"]
+    server.publish(current, release_files(tmp_path, current, key))
+    r = launch(tmp_path, server, key, "--update", "--auto-update=off", "--channel=nightly", "--online-count=off")
+    assert r.code == 0, r.out
+    head, detail = "Up to date", "Up to date."
+    diagnostic = ""
+    args = []
+    if case == "fresh":
+        for path in (data(tmp_path) / "cache").glob("releases.*"):
+            path.unlink()
+    elif case in ("available", "manual-available", "auto-install"):
+        server.publish(newer, release_files(tmp_path, newer, key))
+        if case == "auto-install":
+            r = launch(tmp_path, server, key, "--auto-update=on")
+            assert r.code == 0, r.out
+            detail = "Installed " + newer + "."
+        else:
+            head, detail = "Nightly 0.4.13 (2026-10-23) is available", newer + " is available."
+    elif case in ("rate-limit", "manual-error"):
+        server.rate_limited = True
+        head, detail = "Could not check for updates", "Could not check for updates. Check your internet connection; retry later."
+        diagnostic = "Updates skipped: GitHub's API rate limit"
+    elif case == "network-error":
+        server.stop()
+        head, detail = "Could not check for updates", "Could not check for updates. Check your internet connection; retry later."
+        diagnostic = "Updates skipped: the release list could not be fetched:"
+    elif case == "manifest-error":
+        server.publish(newer, release_files(tmp_path, newer, key))
+        path = next(p for p in server.files if p.endswith(newer + "/manifest.json.sig"))
+        server.files[path] = b"invalid signature"
+        head, detail = "Could not check for updates", "Update could not be verified. Check for updates and retry."
+        diagnostic = "Update rejected:"
+    elif case == "no-release":
+        server.releases.clear()
+        head, detail = "No nightly release yet", "There is no nightly release yet."
+    elif case == "completion-error":
+        head, detail = "Could not check for updates", "Update could not be verified. Check for updates and retry."
+    if case == "offline" or case.startswith(("manual", "completion")):
+        args.append("--offline")
+    if case == "offline":
+        head, detail = "Offline — updates not checked", ""
+    server.requests.clear()
+    env = isolated_environment(tmp_path)
+    result = subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--script", "res://tests/update_status_test.gd", "--",
+                             f"--api-base={server.origin}", f"--trust-key={ed25519.public_key(key).hex()}", f"--repo={TEST_REPO}",
+                             f"--status-case={case}", f"--status-head={head}", f"--status-detail={detail}",
+                             f"--status-diagnostic={diagnostic}", *args],
+                            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+    out = result.stdout + result.stderr
+    assert result.returncode == 0 and "UPDATE STATUS OK" in out and "SCRIPT ERROR" not in out, out
+    requests = [headers for path, headers in server.requests if path.startswith("/repos/")]
+    if case in ("offline", "completion", "completion-error"):
+        assert requests == []
+    elif case in ("fresh", "cached", "manual"):
+        assert len(requests) == (2 if case == "manual" else 1)
+        assert all(("if-none-match" in h) == (case != "fresh") for h in requests)
+    if case == "auto-install":
+        assert installed(tmp_path) == [current, newer]
+
+
 def test_with_updating_by_itself_off_the_window_only_offers_the_update(tmp_path, server, keys):
     server.publish("v0.1.0", release_files(tmp_path, "v0.1.0", keys["release"]))
     r = launch(tmp_path, server, keys["release"], "--update", "--auto-update=off")
@@ -1727,7 +2011,96 @@ def test_two_launchers_started_at_the_same_moment_get_one_lock(tmp_path, keys):
 def _lock_port(tmp: Path) -> int:
     """the port of the one-launcher lock of tmp's data folder (instance_lock.gd: md5 of the data folder)"""
     d = normalized_path(data(tmp).resolve())
+    return 17000 + int(hashlib.md5(d.encode()).hexdigest()[:8], 16) % 15000
+
+
+def _legacy_lock_port(tmp: Path) -> int:
+    """the port launchers before FLAKEFIX-2 used: 49200..65199, inside the operating systems' ephemeral port ranges"""
+    d = normalized_path(data(tmp).resolve())
     return 49200 + int(hashlib.md5(d.encode()).hexdigest()[:8], 16) % 16000
+
+
+# Linux 32768..60999, Windows 49152..65535 (and 1025..5000 before Vista), macOS 49152..65535
+EPHEMERAL_RANGES = ((1025, 5000), (32768, 60999), (49152, 65535))
+
+
+@pytest.mark.parametrize("holder", ["outgoing", "listening"])
+def test_a_program_on_the_old_lock_port_does_not_stop_the_launcher(tmp_path, keys, holder):
+    """FLAKEFIX-2: the lock port lay inside every OS's ephemeral range, so any program's outgoing connection could hold it and the launcher
+    refused to start ("in use by another program"). The lock port now lies outside them; the old port only matters when an older launcher
+    answers on it"""
+    import socket
+    import threading
+    port = _lock_port(tmp_path)
+    assert not any(first <= port <= last for first, last in EPHEMERAL_RANGES), port
+    old = _legacy_lock_port(tmp_path)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", old))
+    stop = threading.Event()
+    t = None
+    if holder == "listening":  # a silent program listening there
+        sock.listen(4)
+
+        def serve() -> None:
+            sock.settimeout(0.2)
+            while not stop.is_set():
+                try:
+                    c, _ = sock.accept()
+                except OSError:
+                    continue
+                c.settimeout(5)
+                try:
+                    c.recv(1)
+                except OSError:
+                    pass
+                c.close()
+        t = threading.Thread(target=serve, daemon=True)
+        t.start()
+    try:
+        r = launch(tmp_path, None, keys["release"], "--list")
+        assert r.code == 0 and not r.has("in use by another program") and not r.has("already open"), r
+    finally:
+        stop.set()
+        if t is not None:
+            t.join()
+        sock.close()
+
+
+def test_an_older_launcher_on_the_old_lock_port_is_still_seen(tmp_path, keys):
+    """an older launcher (it answers its hello on the old port) still keeps a new one from starting with the same data folder"""
+    import socket
+    import threading
+    old = _legacy_lock_port(tmp_path)
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", old))
+    srv.listen(4)
+    stop = threading.Event()
+
+    def serve() -> None:
+        srv.settimeout(0.2)
+        while not stop.is_set():
+            try:
+                c, _ = srv.accept()
+            except OSError:
+                continue
+            c.sendall(b"OPENBFME-LAUNCHER v0.4.9\n")
+            c.settimeout(5)
+            try:
+                c.recv(1)
+            except OSError:
+                pass
+            c.close()
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    try:
+        r = launch(tmp_path, None, keys["release"], "--list")
+        assert r.code == 1 and r.has("Another OpenBFME Launcher (v0.4.9) is already open"), r
+    finally:
+        stop.set()
+        t.join()
+        srv.close()
+    r = launch(tmp_path, None, keys["release"], "--list")
+    assert r.code == 0, r
 
 
 @pytest.mark.parametrize("answer", [b"", b"HTTP/1.0 200 OK\r\n\r\nnot a launcher\n"])
@@ -1840,9 +2213,25 @@ def test_an_offline_start_asks_nothing(tmp_path, server, keys):
 
 
 def test_the_policy_allows_only_the_lobbys_stats_path():
-    """NetPolicy: the lobby host, over https without a port, for GET /v1/stats alone; any other path or host stays refused"""
+    """NetPolicy: the lobby host, over https without a port, for GET /v1/stats and GET /v1/games only; any other path stays off the list"""
     text = (LAUNCHER / "scripts/net/net_policy.gd").read_text()
-    assert 'const LOBBY_STATS_PATH := "/v1/stats"' in text and "u.path == LOBBY_STATS_PATH" in text
+    assert 'const LOBBY_PATHS := ["/v1/stats", "/v1/games"]' in text
+    assert 'lobby_host != "" and host == lobby_host and u.path in LOBBY_PATHS' in text
+    # the allow-list is those two paths and nothing else the lobby publishes
+    listed = text.split('const LOBBY_PATHS := [', 1)[1].split("]", 1)[0]
+    assert listed.count('"/v1/') == 2 and '"/v1/stats"' in listed and '"/v1/games"' in listed
+
+
+def test_lobby_requests_never_change_the_shared_policy():
+    """PR #93 follow-up (Greptile main.gd:2194): the player count / game list / Host / Join set their lobby on a copy of updater.policy, never on the
+    shared one, which download and fetch threads read while they run (set_lobby clears lobby_host before it parses)"""
+    main = (LAUNCHER / "scripts/main.gd").read_text()
+    assert "updater.policy.set_lobby(" not in main and "updater.policy.lobby_host" not in main
+    assert main.count("var policy: NetPolicy = updater.policy.copy()") == 2 and main.count("HttpFetch.new(policy, info.version)") == 2
+    assert "HttpFetch.new(updater.policy" not in main.split("func _refresh_count()", 1)[1].split("\nfunc _on_count(", 1)[0]
+    assert "HttpFetch.new(updater.policy" not in main.split("func _refresh_game_list()", 1)[1].split("\nfunc _on_game_list(", 1)[0]
+    policy = (LAUNCHER / "scripts/net/net_policy.gd").read_text()
+    assert "p.extra_hosts = extra_hosts.duplicate()" in policy
 
 
 @pytest.mark.parametrize("size", ["1280x720", "1024x768", "1920x1080", "1600x900"])
