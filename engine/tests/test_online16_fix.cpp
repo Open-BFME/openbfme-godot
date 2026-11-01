@@ -19,6 +19,7 @@
 #include "RelayCore.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -816,23 +817,25 @@ TEST_CASE("online16-fix auth: an authenticated client ignores an untagged REFUSE
 	Transport t(client, 0, o);
 	t.setClock([&] { return now; });
 	t.setPeer(1, NetAddress{});
-	auto hellos = [&] {
-		int n = 0;
-		NetAddress from;
-		std::vector<std::uint8_t> d;
-		while (relaySocket.receiveFrom(from, d))
-		{
-			n += d.size() > 4 && d[2] == kVersionAuth && d[3] == HELLO;
-		}
-		return n;
-	};
+	// UDP sockets are nonblocking: sending a datagram does not make it readable
+	// in the same scheduling slice. Wait for receipt using wall time while the
+	// transport's injected protocol clock stays fixed (no synthetic retry ticks).
 	auto deliver = [&](const std::vector<std::uint8_t> &d) {
-		relaySocket.sendTo(client.localAddress(), d.data(), d.size());
-		NetSleepMilliseconds(5);
-		t.service();
+		const auto before = t.stats().bytesReceived;
+		REQUIRE(relaySocket.sendTo(client.localAddress(), d.data(), d.size()));
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+		do
+		{
+			t.service();
+			if (t.stats().bytesReceived != before) break;
+			NetSleepMilliseconds(1);
+		} while (std::chrono::steady_clock::now() < deadline);
+		REQUIRE(t.stats().bytesReceived == before + d.size());
 	};
 	t.service();
-	REQUIRE(hellos() == 1);
+	// Count transport emissions, not immediately readable loopback datagrams.
+	// Exact counts still reject both missing and duplicate HELLOs.
+	REQUIRE(t.stats().relayHellos == 1);
 	// the relay's sealed WELCOME
 	std::array<std::uint8_t, kSessionTokenBytes> token{ 1, 2, 3 };
 	std::vector<std::uint8_t> w = encodeWelcome(kGame, 0, token);
@@ -847,16 +850,16 @@ TEST_CASE("online16-fix auth: an authenticated client ignores an untagged REFUSE
 	// untagged NOT_BOUNDs: one HELLO per helloMs, the binding and the link timer untouched
 	now += 5000;
 	CHECK_FALSE(t.localLinkAlive(1000));
-	hellos();
+	const auto hellosBefore = t.stats().relayHellos;
 	deliver(encodeEmpty(NOT_BOUND));
 	deliver(encodeEmpty(NOT_BOUND));
 	deliver(encodeEmpty(NOT_BOUND));
-	CHECK(hellos() == 1);
+	CHECK(t.stats().relayHellos == hellosBefore + 1);
 	CHECK(t.relayBound());
 	CHECK_FALSE(t.localLinkAlive(1000));
 	now += 100;
 	deliver(encodeEmpty(NOT_BOUND));
-	CHECK(hellos() == 1);
+	CHECK(t.stats().relayHellos == hellosBefore + 2);
 	CHECK(t.relayRefusal() == 0);
 }
 
