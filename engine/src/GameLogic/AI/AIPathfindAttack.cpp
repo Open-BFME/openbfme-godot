@@ -118,7 +118,7 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 			// lane ATTACKPATH-1: the view test RW 0x6F4557 after the reach (RW 0x6FC3BE)
 			if (range.inRangeFrom(p, 10.0f) && !isAttackViewBlockedByObstacle(*obj, p, victim, *victimPos))
 			{
-				Path *path = new Path();
+				Path *path = new Path(m_uberLimits); // lane UBER-PATH
 				path->prependNode(&p, LAYER_GROUND);
 				path->prependNode(&pos, obj->getLayer());
 				path->optimize(*this, obj, loco.validSurfaces, false, nullptr);

@@ -141,6 +141,7 @@ duration, nlerp) with their citations.
 | duration core multiply and `ceil` | RW `0x73A440-0x73A462` (`parseDurationUnsignedInt`), `0x73A418-0x73A428` (`parseDurationReal`) | PLAN rule 2 values, a PC24 model, `tools/x87_oracle`, and lane/ini-1 `NumericState` |
 | RefPack `REF_decode(dest, src, int *sizeout)`, `REF_is` | RW `0xAA17E0` (stdcall, returns the decoded length), `0xAA1A00`; BFME2 `0xA8DAA0` (`equivalent`) | the compiled engine `REF_decode` (`build/refpack_driver.exe`) and the generator's own bytes: 600 random streams over the four header types, the type check, and 20 real retail maps (`test_refpack_oracle.py`). Finding: RotWK's types are 0x10fb/0x11fb/0x90fb/0x91fb (ZH's), not BFME1's 0x15fb/0x16fb |
 | `setFPMode` | RW `0x440809` | control word `0x007F` |
+| `Path::updateClosestSegment` (thiscall `pos*, bool opt`) | RW `0x765598` | the engine's segment and fraction without its S-1833 rule, bit for bit, on the captured Rivendell doubled-back legs: retail keeps the earlier leg (`test_path_follower_oracle.py`) |
 | EA Lua 4.0.1 | RW `0xB62250` `lua_open`, `0x734478` libs, `0xB614B0` `lua_dostring`, ... | see below |
 
 ## Lua feasibility (spec lua-scripting.md gap G8)

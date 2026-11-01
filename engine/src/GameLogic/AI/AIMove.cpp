@@ -572,7 +572,7 @@ bool AIMover::computeQuickPath(const Coord3D &dest)
 		delete m_path;
 		m_path = nullptr;
 	}
-	Path *p = new Path();
+	Path *p = new Path(m_pf.uberLimits()); // lane UBER-PATH
 	Coord3D from = obj.getPosition();
 	from.z = dest.z;
 	p->prependNode(&dest, m_pf.getLayerAt(dest.x, dest.y, dest.z)); // lane WALL-1: the destination's layer (the ground on a map without walls)

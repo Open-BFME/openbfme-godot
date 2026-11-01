@@ -1379,7 +1379,7 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 Path *Pathfinder::buildActualPath(const PathfindObject *obj, unsigned acceptableSurfaces, const Coord3D *fromPos, PathfindCell *goalCell, bool center, bool blocked)
 {
 	note(pathstops::kPath);
-	Path *path = new Path();
+	Path *path = new Path(m_uberLimits); // lane UBER-PATH: the follower's later-leg tie in Uber
 	if (goalCell->getPinched() && goalCell->getParentCell() && !goalCell->getParentCell()->getPinched())
 	{
 		goalCell = goalCell->getParentCell(); // ZH: a path does not end in a pinched cell

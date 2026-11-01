@@ -112,7 +112,8 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // re-measured it once on the merged tree: MODCOMPAT-AI's script references and completed upgrades, compared at each merge point; the other items keep it; merge queue q33
 // re-measured it once on the merged tree, compared at each merge point: #164 keeps it; MODCOMPAT-MOD1 (its modules), #133 (the straight production exits) and #166
 // (the Uber path-search cap) each move it; merge queue q34 re-measured it once on the merged tree, compared at each merge point: SPELLFIX-1, #160
-// and #161 each move it). The state hash's own dispatches are counted
+// and #161 each move it; the path search's target rule re-measured it: an attacker's goal object or victim, and its members, no longer refuse the
+// attacker's cells, RW checkForMovement 0x6EBAA0, from frame 0). The state hash's own dispatches are counted
 // apart from the frame's (PERF-2's collision jobs): with more than one
 // thread the hash itself ran chunks on workers. The Uber hash is not the Faithful one, and a Faithful hash dispatches nothing.
 // Lane MODCOMPAT-MOD1 re-measured the pin vector at GeometryUpgrade's commit (OPENBFME_UBER1_REGEN=1, a CI host): GeometryUpgrade's per-object GeometryInfo
