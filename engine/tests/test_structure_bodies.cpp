@@ -4,8 +4,10 @@
 #include "CombatTestUtil.h"
 
 #include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/ExperienceLevels.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/StructureModules.h"
+#include "GameLogic/Object/ExperienceTracker.h"
 
 using namespace combattest;
 
@@ -557,4 +559,118 @@ TEST_CASE("structure bodies: LifetimeUpdate kills its object after the random li
 	w.frames(2);
 	CHECK(w.byId(id) == nullptr);
 	CHECK(w.cash('A') == cash + 9); // ScoreKill: the bounty of the fuse (9) goes to Alice
+}
+
+namespace
+{
+// lane SIMSMALL-1: a CombatWorld plus an ExperienceLevelSystem so a structure can hold a veterancy rank
+struct RubbleXpWorld : CombatWorld
+{
+	ExperienceLevelSystem levels;
+	ExperienceLevelSystem *savedLevels = TheExperienceLevelSystem;
+	RubbleXpWorld()
+		: CombatWorld()
+	{
+		TheExperienceLevelSystem = &levels;
+		levels.registerBlocks(w.fx.env.blocks);
+		const std::string err = w.load(
+			"ExperienceLevel KeepRank1\n TargetNames = VeteranKeep\n RequiredExperience = 1\n ExperienceAward = 10\n Rank = 1\nEnd\n"
+			"ExperienceLevel KeepRank2\n TargetNames = VeteranKeep\n RequiredExperience = 100\n ExperienceAward = 20\n Rank = 2\nEnd\n"
+			"Object VeteranKeep\n"
+			"  KindOf = STRUCTURE IMMOBILE SELECTABLE SCORE\n"
+			"  Geometry = BOX\n"
+			"  GeometryMajorRadius = 20\n"
+			"  GeometryMinorRadius = 20\n"
+			"  GeometryHeight = 60\n"
+			"  ArmorSet\n"
+			"    Conditions = None\n"
+			"    Armor = StoneArmor\n"
+			"  End\n"
+			"  Body = StructureBody ModuleTag_Body\n"
+			"    MaxHealth = 500\n"
+			"  End\n"
+			"End\n",
+			INI_LOAD_OVERWRITE, "rubblexp.ini");
+		REQUIRE_MESSAGE(err.empty(), err);
+	}
+	~RubbleXpWorld() { TheExperienceLevelSystem = savedLevels; }
+};
+} // namespace
+
+TEST_CASE("rubble reset: a STRUCTURE at veterancy rank 2 dropped to rubble has its ExperienceTracker reset (RW 0x8C1BB7 -> 0x79DA66)")
+{
+	RubbleXpWorld w;
+	Object *keep = w.unit("VeteranKeep", 'B', 300, 300);
+	Object *a = w.unit("Swordsman", 'A', 200, 300);
+	ExperienceTracker *xp = keep->getExperienceTracker();
+	REQUIRE(xp != nullptr);
+	CHECK(xp->getRank() == 1); // initObject's first level (RW 0x693F1B)
+	xp->setExperienceAndLevel(100.0f, false);
+	CHECK(xp->getRank() == 2);
+	DamageInfo d = hit(a, 100000.0f, DAMAGE_UNRESISTABLE);
+	keep->attemptDamage(d);
+	REQUIRE(keep->getBodyModule()->getDamageState() == BODY_RUBBLE);
+	CHECK(keep->isEffectivelyDead());
+	CHECK(xp->getRank() == 1);    // the reset gains the chain's first level again
+	CHECK(xp->getExperience() == 1.0f); // applyLevel leaves the level's RequiredExperience (a rank 1 level's is 1, the retail floor)
+}
+
+TEST_CASE("attemptHealing: an effectively dead object is healed only when its template keeps it (RW 0x8C2FC1)")
+{
+	CombatWorld w(
+		"Object BridgeTower\n"
+		"  KindOf = STRUCTURE IMMOBILE SELECTABLE BRIDGE_TOWER\n"
+		"  Geometry = BOX\n"
+		"  GeometryMajorRadius = 10\n"
+		"  GeometryMinorRadius = 10\n"
+		"  GeometryHeight = 30\n"
+		"  ArmorSet\n"
+		"    Conditions = None\n"
+		"    Armor = StoneArmor\n"
+		"  End\n"
+		"  Body = StructureBody ModuleTag_Body\n"
+		"    MaxHealth = 500\n"
+		"  End\n"
+		"End\n"
+		"Object KeptDead\n"
+		"  KindOf = STRUCTURE IMMOBILE SELECTABLE\n"
+		"  KeepSelectableWhenDead = Yes\n"
+		"  Geometry = BOX\n"
+		"  GeometryMajorRadius = 10\n"
+		"  GeometryMinorRadius = 10\n"
+		"  GeometryHeight = 30\n"
+		"  Body = StructureBody ModuleTag_Body\n"
+		"    MaxHealth = 500\n"
+		"  End\n"
+		"End\n"
+		"Object Grunt\n"
+		"  KindOf = INFANTRY SELECTABLE SCORE\n"
+		"  Geometry = CYLINDER\n"
+		"  GeometryMajorRadius = 8\n"
+		"  GeometryMinorRadius = 8\n"
+		"  GeometryHeight = 20\n"
+		"  Body = ActiveBody ModuleTag_Body\n"
+		"    MaxHealth = 100\n"
+		"  End\n"
+		"End\n");
+	Object *a = w.unit("Swordsman", 'A', 200, 300);
+	Object *tower = w.unit("BridgeTower", 'B', 300, 300);
+	Object *kept = w.unit("KeptDead", 'B', 340, 300);
+	Object *grunt = w.unit("Grunt", 'B', 380, 300);
+	DamageInfo kill = hit(a, 100000.0f, DAMAGE_UNRESISTABLE);
+	tower->attemptDamage(kill);
+	DamageInfo kill2 = hit(a, 100000.0f, DAMAGE_UNRESISTABLE);
+	kept->attemptDamage(kill2);
+	DamageInfo kill3 = hit(a, 100000.0f, DAMAGE_UNRESISTABLE);
+	grunt->attemptDamage(kill3);
+	REQUIRE(tower->isEffectivelyDead());
+	REQUIRE(kept->isEffectivelyDead());
+	REQUIRE(grunt->isEffectivelyDead());
+	// retail refuses the heal only when the template keeps none of KeepSelectableWhenDead / WALL_UPGRADE / BRIDGE / BRIDGE_TOWER
+	grunt->attemptHealing(50.0f, a);
+	CHECK(w.health(grunt) == 0.0f);
+	tower->attemptHealing(50.0f, a);
+	CHECK(w.health(tower) == 50.0f);
+	kept->attemptHealing(50.0f, a);
+	CHECK(w.health(kept) == 50.0f);
 }

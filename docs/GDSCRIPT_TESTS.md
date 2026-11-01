@@ -256,6 +256,8 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/fortress_exit_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
 | `godot/tests/edainfactions1_test.gd` | Manual only; no generic pytest runner | Needs the Edain 4.8.5.3 install (OPENBFME_EDAIN_INSTALL, OPENBFME_EDAIN_ASSETS_INSTALL); without them it only parses. Runs the Dwarven clan choices and the Dwarven AI in real skirmishes. |
 
+| `godot/tests/harlindon_creep_combat_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
+
 ## OAuth readiness regression
 
 Friend seeding can trigger `SocialClient`'s inbox-driven friends refresh. Creating a recovery code while that action owns the client emits `action_done("recovery", false)` and does not emit `recovery_ready`. The old integration ignored the rejection and waited for a code until timeout; no OAuth callback had run yet.

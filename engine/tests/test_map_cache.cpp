@@ -11,6 +11,7 @@
 
 #include "Common/LooseFileScan.h"
 #include "Common/MiniJson.h"
+#include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameClient/MapCache.h"
 #include "GameClient/MapUtil.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
@@ -96,6 +97,31 @@ TEST_CASE("MapCache: unknown keys, bad values and unterminated blocks are errors
 	CHECK(err.find("missing END") != std::string::npos);
 	CHECK_FALSE(MapCache::parse("fileSize = 1\n", e, &err));
 	CHECK(err.find("expected 'MapCache <name>'") != std::string::npos);
+}
+
+// lane EDAINMAPS-2: RW 0x93B9F0 enters a block only with a displayName, and an official one only when its map file exists (Edain's "map edain dol amroth horde"
+// has no .map in any archive); a second block of the same name replaces the first (TheMapCache[name] = block)
+TEST_CASE("map cache load: blocks without a displayName or official maps without their file are not listed; a repeated name replaces the earlier block")
+{
+	auto block = [](const char *name, const char *official, int players, const char *display) {
+		std::string b = std::string("MapCache ") + name + "\n  isOfficial = " + official + "\n  isMultiplayer = yes\n  numPlayers = " + std::to_string(players) + "\n";
+		if (*display) b += std::string("  displayName = ") + display + "\n";
+		return b + "END\n";
+	};
+	const std::string text = block("maps_5Ca_5Ca_2Emap", "yes", 2, "A_00") + block("maps_5Cgone_5Cgone_2Emap", "yes", 2, "G_00") +
+		block("maps_5Cuser_5Cuser_2Emap", "no", 2, "U_00") + block("maps_5Cnoname_5Cnoname_2Emap", "yes", 2, "") + block("maps_5Ca_5Ca_2Emap", "yes", 3, "A_002_00");
+	Win32BIGFileSystem fs;
+	fs.setDerivedFile("maps\\mapcache.ini", std::vector<std::uint8_t>(text.begin(), text.end()), "test");
+	fs.setDerivedFile("maps\\a\\a.map", { 1 }, "test");
+	fs.setDerivedFile("maps\\noname\\noname.map", { 1 }, "test");
+	std::vector<MapCacheEntry> maps;
+	std::string error;
+	REQUIRE_MESSAGE(IniSkirmishSetupSource::loadMapCache(fs, maps, &error), error);
+	REQUIRE(maps.size() == 2);
+	CHECK(maps[0].name == "maps/a/a.map");
+	CHECK(maps[0].numPlayers == 3); // the later block
+	CHECK(maps[0].displayName == u"A2");
+	CHECK(maps[1].name == "maps/user/user.map"); // not official: its file is not checked
 }
 
 TEST_CASE("ObjectNameScan: Object / ChildObject / ObjectReskin names, case-insensitive keywords, roads, comments")

@@ -1387,6 +1387,20 @@ UpdateSleepTime DualWeaponBehavior::update()
 	{
 		return setClose(true);
 	}
+	// performance (the same result): the mounted rule and the switch wait below do not read the victim, and the search (a pure partition walk: relationship,
+	// canSee) changes nothing, so they are asked before it. Before, a sorted search of every enemy in range ran and was thrown away whenever the wait had not
+	// run out
+	if (m_data->m_useCloseRangeWhileMounted && obj->testModelCondition(kMounted))
+	{
+		return setClose(true);
+	}
+	{
+		const int wait = (int)(m_data->m_minimumSwitchTime - obj->logic().getFrame() + m_lastSwitch);
+		if (wait > 0)
+		{
+			return (UpdateSleepTime)wait;
+		}
+	}
 	const float range = m_data->m_switchDistance;
 	Object *victim = nullptr;
 	Object *goal = m_data->m_useRealVictimRange ? ai->currentVictim() : nullptr; // RW 0x668303: AIUpdate + 0x40 by id, the current victim (MOD-4 r2: was the state machine's goal object)
@@ -1422,16 +1436,7 @@ UpdateSleepTime DualWeaponBehavior::update()
 			victim = nullptr;
 		}
 	}
-	if (m_data->m_useCloseRangeWhileMounted && obj->testModelCondition(kMounted))
-	{
-		return setClose(true);
-	}
 	const unsigned now = obj->logic().getFrame();
-	const int wait = (int)(m_data->m_minimumSwitchTime - now + m_lastSwitch);
-	if (wait > 0)
-	{
-		return (UpdateSleepTime)wait;
-	}
 	m_lastSwitch = now;
 	return setClose(victim && !victim->isEffectivelyDead());
 }

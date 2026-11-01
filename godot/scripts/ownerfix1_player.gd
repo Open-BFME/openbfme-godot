@@ -13,6 +13,8 @@
 ##   healglow a Witch King beside the base, hurt and left to heal: each heal plays GameData's DefaultUnitHealingBuffFxList (the HealingBuff glow)
 ##   heroes  (campaign) the mission's heroes hurt, healing and levelled, with the FXLists played and crops (a diagnostic: they fight there, so no heal)
 ##   warchant (campaign) War Chant bought and cast on three orc warriors beside the heroes: its BuffNugget glow (heroes take no War Chant: -HERO)
+##   powers  (campaign, lane B2SPELL-1) after the intro the Palantir's powers button opens the store (ownerfix1-powers-open.png) and the first power for
+##           sale is bought by a click (ownerfix1-powers-picked.png): the owner's blank BFME2 Good campaign store (10-30)
 extends "res://scripts/spell3_player.gd"
 
 
@@ -627,3 +629,19 @@ func _scenario_menus() -> String:
 		await game._wait_seconds(0.5)
 	world.set_paused(false)
 	return "; ".join(fails)
+
+
+func _scenario_powers() -> String:
+	var waited := 0.0
+	while not input_enabled() and waited < 240.0: # the mission's intro gives the input back first
+		await game._wait_seconds(0.5)
+		waited += 0.5
+	await game._wait_seconds(2.0)
+	var st := await open_store()
+	if not st.get("open", false):
+		return "the powers button did not open the store (%s)" % st.get("error", "")
+	shot("powers-open")
+	print("OWNERFIX1 powers: the store's states %s, points %d" % [JSON.stringify(st.get("states", [])), int(st.get("points", -1))])
+	var fails: Array = await buy_all(st)
+	shot("powers-picked")
+	return "" if fails.is_empty() else "; ".join(fails)

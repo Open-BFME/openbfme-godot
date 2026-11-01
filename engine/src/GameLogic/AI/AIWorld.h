@@ -40,6 +40,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 class ArchiveFileSystem;
@@ -96,6 +97,8 @@ public:
 	bool isMobile() const override;
 	bool isKindOf(PathfindKind kind) const override;
 	const PathfindGeometry &getGeometry() const override;
+	// the geometry when getGeometry would fill no cache (the template's movement info is resolved and the object keeps no shape flags of its own), else null
+	const PathfindGeometry *cachedGeometry() const;
 	float getFenceWidth() const override;
 	float getFenceXOffset() const override;
 	float getPathfindDiameter() const override;
@@ -288,6 +291,8 @@ private:
 	std::map<const ThingTemplate *, std::unique_ptr<ObjectMovementInfo>> m_info;
 	std::vector<std::string> m_errors;
 	std::set<std::string, std::less<>> m_noted; // transparent: noteStop looks a text up without building a std::string (every AI update notes one)
+	std::unordered_map<const char *, const std::string *> m_notedFast; // noteStop's fast path: a text seen before, by its address (set nodes are stable)
+	static constexpr size_t kNotedFastMax = 4096;                       // the fast path's size bound
 	std::map<std::string, unsigned> m_failures; // "template: text" -> count
 	bool m_mapReady = false;
 	int m_nextFormationId = 1; ///< AI + 0x20 (hashed once a formation was made)
@@ -301,15 +306,30 @@ private:
 		AIUpdateInterface *ai;
 		float x, y, r;
 		int bucket;
-		const PathfindGeometry *geometry; ///< lane PERF-2: resolved on the logic thread (the adapter's movement info is a lazily filled cache)
+		const PathfindGeometry *geometry; ///< the adapter's cached geometry read on the job pool, else resolved on the logic thread (a lazily filled cache)
 	};
 	std::vector<CollisionUnit> m_collisionUnits;
+	// processCollisions' gather (performance): the AIs in id order (m_ais' order). A new id above the last is appended and a removed AI leaves a null
+	// (compacted when an eighth are null); anything else rebuilds it from m_ais. Then what the job pool read of each
+	std::vector<std::pair<PathfindObjectID, AIUpdateInterface *>> m_aiOrder;
+	bool m_aiOrderDirty = true;
+	size_t m_aiOrderHoles = 0;
+	struct CollisionScan
+	{
+		bool keep;
+		const ThingTemplate *finalTemplate;
+		const PathfindGeometry *geometry; ///< null: resolved on the logic thread
+		float x, y, r;
+	};
+	std::vector<CollisionScan> m_collisionScan;
 	std::vector<int> m_collisionBucketStart, m_collisionBucketFill, m_collisionBucketUnits, m_collisionCandidates;
 	// lane PERF-2: the overlapping pairs found by each fixed run of units (a job of the logic pool), with its candidate scratch; kept between frames
 	struct CollisionChunk
 	{
 		std::vector<int> candidates;
 		std::vector<std::pair<int, int>> pairs; ///< (lower unit index, higher unit index), in the order the serial pass met them
+		std::vector<std::pair<int, int>> live;  ///< with the Uber filter: the pairs it does not skip, in the same order (found on the job pool)
+		bool allied = false;                    ///< a pair of units that are not enemies (the allied stack stop)
 	};
 	std::vector<CollisionChunk> m_collisionChunks;
 	// lane UBER-2B: the Uber pass's per-unit collide facts (ObjectCollide::PairFacts), taken at a unit's first pair
