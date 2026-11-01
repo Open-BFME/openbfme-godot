@@ -76,6 +76,7 @@ public:
 	int applyIncomeMultipliers(const Player &owner, float amountF) const;
 	// RW 0x6AA858 (PlayerEconomyHost): the campaign handicap, identity in a skirmish
 	int applyHandicapMoney(const Player &player, int amount) const override;
+	float aiProductionReduction(const Player &player, bool time) const override;
 
 	// an integer object field of a template (CommandPoints, CommandPointBonus, BountyValue, BuildCost, ...): 0 when the template never set it (the template's
 	// default), an error when the field is not an integer

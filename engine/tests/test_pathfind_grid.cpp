@@ -536,3 +536,51 @@ TEST_CASE("pathfind search budget: past MaxCellsFindPathLimit the search returns
 	CHECK(w2.pf->pool().freeCount() == testConfig().cellInfoPoolSize);
 	CHECK(w.pf->pool().freeCount() == testConfig().cellInfoPoolSize);
 }
+
+TEST_CASE("BFME2 structure reachability: AI and locomotor gates, clear target and enclosed target")
+{
+ World w(60, 60);
+ auto *unit = makeUnit(w.world, 1, 100, 300);
+ auto *target = makeBox(w.world, 2, 300, 300, 20, 20);
+ w.build();
+ const auto ground = groundLoco();
+ CHECK(w.pf->quickDoesPathExistToStructure(*unit, ground, unit->pos, *target));
+ unit->mobile = false;
+ CHECK_FALSE(w.pf->quickDoesPathExistToStructure(*unit, ground, unit->pos, *target));
+ unit->mobile = true;
+ PathfindLocomotorInfo none;
+ CHECK_FALSE(w.pf->quickDoesPathExistToStructure(*unit, none, unit->pos, *target));
+ // A complete cliff ring separates the target from the source's effective zone.
+ for (int i = 24; i <= 36; ++i) {
+  w.terrain.cliff.insert({i,24}); w.terrain.cliff.insert({i,36});
+  w.terrain.cliff.insert({24,i}); w.terrain.cliff.insert({36,i});
+ }
+ w.build();
+ CHECK_FALSE(w.pf->quickDoesPathExistToStructure(*unit, ground, unit->pos, *target));
+ delete unit; delete target;
+}
+
+TEST_CASE("BFME2 structure reachability: leave the footprint in each cardinal direction")
+{
+ for (int opening = 0; opening != 4; ++opening) {
+  CAPTURE(opening);
+  World w(60, 60);
+  auto *unit = makeUnit(w.world, 1, 100, 300);
+  auto *target = makeBox(w.world, 2, 300, 300, 20, 20);
+  // Three sides are cliffs adjoining the footprint, the fourth connects to open terrain.
+  for (int x = 27; x <= 33; ++x) {
+   if (opening != 2) w.terrain.cliff.insert({x,33});
+   if (opening != 3) w.terrain.cliff.insert({x,27});
+  }
+  for (int y = 27; y <= 33; ++y) {
+   if (opening != 0) w.terrain.cliff.insert({33,y});
+   if (opening != 1) w.terrain.cliff.insert({27,y});
+  }
+  w.build();
+  // newMap's explicit structure registration populates the obstacle cells.
+  w.pf->addObjectToPathfindMap(*target);
+  REQUIRE(w.pf->getClippedCell(LAYER_GROUND, &target->pos)->getType() == PathfindCell::CELL_OBSTACLE);
+  CHECK(w.pf->quickDoesPathExistToStructure(*unit, groundLoco(), unit->pos, *target));
+  delete unit; delete target;
+ }
+}

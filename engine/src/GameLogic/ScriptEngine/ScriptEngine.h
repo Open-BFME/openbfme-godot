@@ -241,7 +241,8 @@ public:
 	// list after the map's ones, with its callback (the polygon's + 0x54 / + 0x58 pair, called with entered 1 / 0 by RW 0x6E4B21 / 0x6E4B3E from the object's
 	// trigger update RW 0x69264D). The index of a run-time trigger in the combined list is the map's count + its own index.
 	typedef std::function<void(Object &obj, bool entered)> TriggerCallback;
-	int addPolygonTrigger(const TriggerArea &area, TriggerCallback callback);
+	// Map-owned AI wall polygons outlive object replacement during snapshot load; object-owned castles and gates are restored by their xfers.
+	int addPolygonTrigger(const TriggerArea &area, TriggerCallback callback, bool mapOwned = false);
 	// lane CASTLEAREA-1: PolygonTrigger::removePolygonTrigger RW 0x6E4ABE (the castle's RW 0x79A37D): the trigger leaves the list, then RW 0x6263AF clears every
 	// object's entries of it (Object::removeTriggerEntries: no exit callback runs). The port keeps the slot, empty, so the later indices stay. An index outside the
 	// run-time list (one the engine's reset already dropped) is ignored. Retail's vslot 0x180 call on RW 0xDE42FC after the walk was not read
@@ -506,6 +507,7 @@ private:
 	{
 		std::shared_ptr<TriggerArea> area; ///< shared: the type is incomplete here (the deleter is made in ScriptEngine.cpp)
 		TriggerCallback callback;
+		bool mapOwned = false;
 	};
 	std::vector<RuntimeTrigger> m_runtimeTriggers; ///< lane HUD-5 (see addPolygonTrigger); a removed slot has an empty area and no callback
 	bool m_runtimeTriggerLoad = false;              ///< lane CASTLEAREA-1 (see beginRuntimeTriggerLoad)

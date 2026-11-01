@@ -2,6 +2,8 @@
 // See GameLogic/Economy.h.
 
 #include "GameLogic/Economy.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
+#include "GameLogic/SkirmishAI/SkirmishAIData.h"
 
 #include "GameLogic/SimMath.h"
 #include "Common/ModEngineFeatures.h"
@@ -702,4 +704,17 @@ std::vector<std::string> Economy::report() const
 		lines.push_back("[S-256] " + std::to_string(m_droppedExperience) + " experience grants of resource buildings were dropped (no ExperienceTracker hook installed)");
 	}
 	return lines;
+}
+
+float Economy::aiProductionReduction(const Player &player, bool time) const
+{
+	// TARGET (S-001 provenance caveat): RW 0x73C344..0x73C38C / 0x73C567..0x73C5B8.
+	// The registered AI gate matters: a human or campaign player with difficulty 3 gets no cheat here.
+	const auto &manager = m_logic.skirmishAI();
+	if (player.getSkirmishDifficulty() != 3 || !manager.findAI(player.getPlayerIndex())) return 0.0f;
+	const auto *store = manager.store();
+	if (!store) throw std::logic_error("Brutal AI production requires SkirmishAIData");
+	const auto &cheats = store->data().brutalCheats;
+	const float reduction = time ? cheats.buildTimeReduction : cheats.buildCostReduction;
+	return reduction < 1.0f ? reduction : 1.0f; // upper clamp only, as the target's comiss
 }

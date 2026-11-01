@@ -114,6 +114,10 @@ struct AIBuildRequest
 	// (RW 0x9B51E9): its site is `offset` as RW 0x97D986 stored it (vslot 0x34 = RW 0x97DA4E) at its own `angle` (vslot 0x44 = RW 0x48DA54); its check
 	// RW 0x97DC99 has no enemy count; its start is RW 0x9618BA (no start count); its vslot 0x1C is RW 0x993D2E (the state only)
 	bool plain = false;
+ // BFME2 AIBuildableWallSegment +0x4C: preceding hub; invalid means the first
+ // plain hub request. Subsequent requests use the shared wall span builder.
+ bool wall = false;
+ ObjectID wallStartNode = INVALID_ID;
 
 	bool finished() const { return state == 2 || state == 3; } // RW 0x8EDA5E
 	float bestPriority() const;                                 // RW 0x961BB9: max(effective, base)

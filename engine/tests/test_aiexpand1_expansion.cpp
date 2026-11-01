@@ -606,27 +606,20 @@ TEST_CASE("aiexpand1 expansion in a game: the Medium Men computer kept above 300
 	CHECK(requestTemplate == "MenFortress");
 	CHECK(roundTripDone);
 	CHECK(endedTripDone);
-	// engine pins (Udun, seed 1234, measured on lane AIEXPAND-1's tree): a later simulation change moves them; re-measure and say why
-	// merge queue q29 (AIEXPAND-1 joins after nine simulation items; measured on the merged tree, a CI host, not split per item): the other items move this
-	// AI game, so the heuristic's gate first passes later: the same start is chosen at 2425 (was 1519), its request at 2428 (1964), in progress at 2429 (1965),
-	// complete with the second base at 3169 (2736)
-	// lane MODCOMPAT-MOD1 (measured at GeometryUpgrade's commit, a CI host): GeometryUpgrade (the structures' own level footprints, RW 0x68B244, move this AI
-	// game: the heuristic's gate passes earlier, the same start is chosen): chosenFrame 2425 -> 1519, tacticFrame 2425 -> 1519, requestFrame 2428 -> 2104,
-	// inProgressFrame 2429 -> 2105, doneFrame 3169 -> 2844, baseFrame 3169 -> 2844
-	// lane MODCOMPAT-MOD1 (measured at PickupStuffUpdate's commit, a CI host): PickupStuffUpdate (the AI hordes' scans every ScanIntervalSeconds, RW 0x895741,
-	// and every horde's update in the sleepy update vectors, RW 0x62E982, move this AI game; the same start is chosen at the same frame): requestFrame 2104 ->
-	// 1841, inProgressFrame 2105 -> 1842, doneFrame 2844 -> 2611, baseFrame 2844 -> 2611
-	// merge queue q31 (#112's battalion exit paths move this AI game; measured once on the merged tree and at each merge point): the same start is chosen at
-	// 1821, its request at 1824, in progress at 1825, complete with the second base at 2593
-	// merge queue q33 (measured once on the merged tree and at each merge point): MODCOMPAT-MOD1's own values hold at its merge point; #133's straight
-	// production exits move this AI game: the same start is still chosen at 1519, its request at 2196 (1841), in progress at 2197 (1842), complete with the
-	// second base at 2937 (2611)
-	CHECK(chosenFrame == 1519);
-	CHECK(tacticFrame == 1519);
-	CHECK(requestFrame == 2196);
-	CHECK(inProgressFrame == 2197);
-	CHECK(doneFrame == 2937);
-	CHECK(baseFrame == 2937);
+	// Engine pins, Udun seed 1234: enabling BFME2 Heal adds its real decision/cooldown
+	// draws and moves the later expansion sequence. An isolated control with only
+	// Heal returning false restored all six former pins (2425/2425/2428/2429/3169/3169).
+	// BFME2 farm raiding moves the sequence again. A control restoring only the prior
+	// farm behavior restored all six 1821/1821/1824/1825/2593/2593 pins.
+	// BFME2 native generator lists move the sequence again; restoring only the old
+	// lists restores 1519/1519/1565/1566/2369/2369 exactly.
+	// These are engine regressions, not external retail timing oracles.
+	CHECK(chosenFrame == 2123);
+	CHECK(tacticFrame == 2123);
+	CHECK(requestFrame == 2126);
+	CHECK(inProgressFrame == 2127);
+	CHECK(doneFrame == 2869);
+	CHECK(baseFrame == 2869);
 	MESSAGE("EXPANSION target on frame " << chosenFrame << " at (" << chosenAt.x << ", " << chosenAt.y << "); SimpleExpansion on frame " << tacticFrame
 		<< ", its request on " << requestFrame << " (last state " << lastState << ", in progress on " << inProgressFrame << ", complete on " << doneFrame
 		<< "), the second base on " << baseFrame << "; bases " << aiPtr->build.bases.size() << ", tactics started " << aiPtr->brain.tacticsStarted

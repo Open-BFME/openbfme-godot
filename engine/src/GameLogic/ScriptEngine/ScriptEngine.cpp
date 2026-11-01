@@ -406,7 +406,7 @@ const TriggerArea *ScriptEngine::findTrigger(const std::string &name) const
 }
 
 // lane HUD-5 (see ScriptEngine.h)
-int ScriptEngine::addPolygonTrigger(const TriggerArea &area, TriggerCallback callback)
+int ScriptEngine::addPolygonTrigger(const TriggerArea &area, TriggerCallback callback, bool mapOwned)
 {
 	if (m_runtimeTriggerLoad)
 	{
@@ -415,6 +415,7 @@ int ScriptEngine::addPolygonTrigger(const TriggerArea &area, TriggerCallback cal
 	RuntimeTrigger t;
 	t.area = std::make_shared<TriggerArea>(area);
 	t.callback = std::move(callback);
+	t.mapOwned = mapOwned;
 	m_runtimeTriggers.push_back(std::move(t));
 	return (int)triggerAreaCount() - 1;
 }
@@ -430,6 +431,7 @@ void ScriptEngine::removePolygonTrigger(int index)
 	RuntimeTrigger &t = m_runtimeTriggers[(size_t)index - mapCount];
 	t.area = std::make_shared<TriggerArea>();
 	t.callback = nullptr;
+	t.mapOwned = false;
 	for (Object *o = m_logic.getFirstObject(); o; o = o->getNextObject())
 	{
 		o->removeTriggerEntries(index); // RW 0x6263AF -> RW 0x68B9E9
@@ -438,7 +440,22 @@ void ScriptEngine::removePolygonTrigger(int index)
 
 void ScriptEngine::beginRuntimeTriggerLoad()
 {
-	m_runtimeTriggers.clear();
+	// AIWallBuilder polygons belong to the loaded map, not an object in this block.
+	// Keep their indices and callbacks while castle/gate owners restore their own slots.
+	size_t keep = 0;
+	for (size_t i = 0; i < m_runtimeTriggers.size(); ++i)
+	{
+		if (m_runtimeTriggers[i].mapOwned) keep = i + 1;
+	}
+	m_runtimeTriggers.resize(keep);
+	for (RuntimeTrigger &t : m_runtimeTriggers)
+	{
+		if (!t.mapOwned)
+		{
+			t.area = std::make_shared<TriggerArea>();
+			t.callback = nullptr;
+		}
+	}
 	m_runtimeTriggerLoad = true;
 }
 

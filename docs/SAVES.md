@@ -1113,3 +1113,36 @@ and native paths instead; the command below is the Linux form.
 ```sh
 engine/build/openbfme_peer --load-save workspace/saved.obfmesave --replay workspace/full.replay --verify-log --report workspace/save-check.txt
 ```
+
+Source AI overhaul: `obfme:SkirmishAI` writes layout 10 and loads layouts
+1–10. Historical fields keep their original byte positions; fields absent from
+older layouts receive constructor defaults. AIStatCollector similarly writes v3
+and loads v1–v3. TerrainTrees writes v2 and loads v1–v2, rebuilding unselected
+spatial groups from restored records when the old layout has no cached groups.
+See [AI source overhaul](AI-SOURCE-OVERHAUL.md).
+
+| AI layout | Fields introduced (absent in earlier layouts) |
+| --- | --- |
+| 2 | Upgrade/expansion request fields and upgrader/science-builder state; nested collector v2 adds money reserve/target |
+| 3 | Capture-flag history (defaults empty for v1–v2) |
+| 4 | Expansion heuristic counter, plain request kind and tactic request references |
+| 5 | Army Breaker timers, defense size, recruitment origins; nested collector v3 adds spatial groups |
+| 6 | Native interest-zone threat scalar |
+| 7 | Predefined siege recruitment requests |
+| 8 | Immutable map-authored wall-library identity (validated when present) |
+| 9 | Wall request kind and start-hub ID; cached quote cost uses the existing cost field |
+| 10 | Cumulative wall trigger-entry counters, defaulted empty for older layouts |
+
+Loading still validates player/object references, request kinds, duplicate entries
+and map/data identity before committing state. Unsupported future versions,
+truncated streams and malformed values remain errors. New fields are defaulted
+only when the selected historical layout actually lacks them; corrupt current
+snapshots are not treated as old ones. Loads restore counters without duplicating
+map-authored triggers. This is OpenBFME native save compatibility, not BFME2
+retail save import: the retail wall transfer omits its entry-counter vector.
+
+The synthetic v1–v9 compatibility fixtures were generated with historical snapshot
+writers, independently of the current reader. Their generator, source commits
+and hashes are committed alongside tests of populated fields, defaults,
+conversion to v10 and transactional truncation refusal. No retail save bytes
+are included.

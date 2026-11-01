@@ -113,7 +113,10 @@ int BuildAssistant::calcCostToBuild(const ThingTemplate &tt, const Player *playe
 	X = NumericState::pc24Mul(K, X);
 	const float h = 1.0f;                               // the handicap table RW 0x7B19BF (S-204)
 	const float r = NumericState::pc24Mul(NumericState::pc24Mul(NumericState::pc24Mul((float)cost, h), X), P);
-	return truncToInt(r);                               // cvttss2si; the Brutal AI discount (RW 0x6AA61B) is not ported (S-204)
+	// DONOR: Open-BFME-2 Common/Thing/ThingTemplateBuildCost.cpp (BFME2 RVA 0x33A69A).
+	// TARGET RW 0x73C383 (S-001 caveat): SSE subtraction/multiplication after the cost chain, then cvttss2si.
+	const float reduction = player->economyHost() ? player->economyHost()->aiProductionReduction(*player, false) : 0.0f;
+	return truncToInt(SimMath::mulf32(r, SimMath::subf32(1.0f, reduction)));
 }
 
 // RW 0x73C39E
@@ -190,7 +193,10 @@ int BuildAssistant::calcTimeToBuild(const ThingTemplate &tt, const Player *playe
 		}
 		sec = truncToInt(NumericState::pc24Mul((float)sec, f));
 	}
-	return (int)LOGICFRAMES_PER_SECOND * sec; // RW 0xD9F608: 5
+	const int frames = (int)LOGICFRAMES_PER_SECOND * sec; // RW 0xD9F608: 5
+	const float reduction = player ? logic.economy().aiProductionReduction(*player, true) : 0.0f;
+	// RW 0x73C5AE..0x73C5C8: x87 PC24 product, ceil before integer conversion (not whole-second rounding).
+	return (int)std::ceil(SimMath::pc24MulW((double)frames, SimMath::pc24SubW(1.0, (double)reduction)));
 }
 
 int BuildAssistant::maxSimultaneousOfType(const ThingTemplate &tt) { return (int)(integerField(tt, "MaxSimultaneousOfType") & 0xFFFF); }

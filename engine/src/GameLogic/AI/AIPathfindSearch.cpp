@@ -249,6 +249,52 @@ bool Pathfinder::clientSafeQuickDoesPathExist(const PathfindLocomotorInfo &loco,
 	return obj != nullptr && portalPathExists(obj, loco, z1, z2); // RW 0x6F5EDA .. 0x6F5EE7 (lane WALL-2)
 }
 
+// BFME2 PathfinderQuickStructure.cpp, helper Pathfinder::rva002F4AC1 and
+// Rva002E7261Info::cellCallback. Retains the existing layer/zone/portal facades.
+bool Pathfinder::quickDoesPathExistToStructure(const PathfindObject &obj, const PathfindLocomotorInfo &loco,
+	const Coord3D &from, const PathfindObject &structure)
+{
+	if (!obj.hasAI() || !(loco.validSurfaces & 0x8Fu)) { return false; }
+	Coord3D target = structure.getPosition();
+	const PathfindLayerEnum targetLayer = searchDestinationLayer(target);
+	const bool atUnit = from.x == obj.getPosition().x && from.y == obj.getPosition().y;
+	PathfindCell *sourceCell = getClippedCell(atUnit ? obj.getLayer() : searchDestinationLayer(from), &from);
+	PathfindCell *targetCell = getClippedCell(targetLayer, &target);
+	if (!sourceCell || !targetCell) { return false; }
+	if (targetCell->getType() != PathfindCell::CELL_OBSTACLE)
+	{
+		const PathfindShape shape = structure.getGeometry().shape(0);
+		target.x = SimMath::addf32(target.x, shape.offsetX);
+		target.y = SimMath::addf32(target.y, shape.offsetY);
+		target.z = SimMath::addf32(target.z, shape.offsetZ);
+		targetCell = getClippedCell(targetLayer, &target);
+		if (!targetCell) { return false; }
+		if (targetCell->getType() != PathfindCell::CELL_OBSTACLE)
+		{
+			return clientSafeQuickDoesPathExist(loco, &from, &target, &obj);
+		}
+	}
+	const PathfindObjectID obstacle = targetCell->getObstacleID();
+	ICoord2D goal;
+	worldToCell(&target, true, &goal);
+	const PathfindMovement movement = makeMovement(&obj, loco);
+	const zoneStorageType expected = m_zoneManager.getEffectiveZone(movement, false, sourceCell->getZone());
+	const int delta = 2 - SimMath::truncToInt32(SimMath::mulf32(structure.getGeometry().boundingCircleRadius(), -0.1f));
+	int key = -1; // Native query state is shared across the four rays.
+	const auto ray = [&](int dx, int dy) {
+		const ICoord2D endpoint{goal.x + dx, goal.y + dy};
+		walkLine(*this, targetLayer, goal, endpoint, [&](PathfindCell *, PathfindCell *cell, int, int) {
+			if (cell->getObstacleID() == obstacle) { return false; }
+			key = cell->getZone();
+			return true;
+		});
+		if (key == -1) { return false; }
+		const zoneStorageType actual = m_zoneManager.getEffectiveZone(movement, false, (zoneStorageType)key);
+		return expected == actual || portalPathExists(&obj, loco, expected, actual);
+	};
+	return ray(delta, 0) || ray(-delta, 0) || ray(0, delta) || ray(0, -delta);
+}
+
 // ---------------------------------------------------------------------------------------------------------
 // line passability (RW 0x6F2FC3 / callback 0x6EE234)
 // ---------------------------------------------------------------------------------------------------------

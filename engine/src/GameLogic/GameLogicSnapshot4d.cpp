@@ -93,7 +93,8 @@ std::vector<std::string> GameLogic::save4dStopLines()
 		"S-4121); the burn decay (RW 0xDE46A8 + 0x98, another subsystem's field in retail) follows in an OpenBFME trailer",
 		"[S-4252] snapshot obfme:TerrainTrees (SAVE-4d): OpenBFME's own layout (retail saves the trees inside TerrainLogic::xfer, RW 0x683F8C (1, 2)): only "
 		"the records changed since the map start, each by index in retail's record layout (RW 0x680753, (1, 2)); a load needs a game at its START; the "
-		"client's tree events (topple, removal) are not saved, so a loaded game's tree buffer does not show the trees that fell before the save",
+		"client's tree events (topple, removal) are not saved, so a loaded game's tree buffer does not show the trees that fell before the save; native block "
+		"version 2 preserves cached AI tree groups and selection flags, whereas retail rebuilds the groups on load",
 		"[S-4253] snapshot obfme:Economy (SAVE-4d): the GameData settings are configuration (their hash is checked, not saved), the game context is "
 		"OpenBFME's layout, the TerrainResourceManager follows retail's DoXfer (RW 0x75C7AE, (1, 3)); RETAIL QUIRK NOT KEPT: retail does not save a "
 		"claimant's complete flag (node + 0x11, left uninitialised by a load), the port saves it in a trailer",

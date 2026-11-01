@@ -104,6 +104,7 @@ struct AISkirmishGroup;
 struct AITarget
 {
 	int type = 0;                    ///< + 0x04 (AITARGET index)
+	int defenseSize = 0;             ///< + 0x2C: 0 small / 1 medium / 2 large spatial base group
 	std::uint32_t frame = 0;         ///< + 0x08 (0 at creation, the frame it was set; -1 after a reset)
 	Coord3D position;                ///< + 0x0C
 	bool inactive = true;            ///< + 0x18
@@ -128,10 +129,13 @@ struct AITacticTeam
 	int maximum = -1;                ///< + 0x2D0 (-1 = 0xFFFFFFFF: no maximum)
 	std::vector<int> requiredKinds;  ///< + 0x2E0: a recruit has one of these KindOf bits (RW 0x9A25C8; empty: any)
 	std::vector<int> forbiddenKinds; ///< + 0x2FC: a recruit has none of these (RW 0x9A25E5)
-	int priority = 0;                ///< + 0x21C (FarmKillSquad: 500)
+	int priority = 0;                ///< + 0x21C (BFME2 FarmKillSquad: 30)
 	bool wantsMembers = true;        ///< + 0x31C
 	bool handedOver = false;         ///< + 0x31D
+	std::vector<std::string> remainingUnits; ///< BFME2 predefined unit-info requests, consumed in registration order
 	std::vector<ObjectID> members;   ///< S-418: the recruited units (RW: the team's members)
+	bool hasRecruitOrigin = false;   ///< native prototype +0x324
+	Coord3D recruitOrigin{};         ///< native prototype +0x328: sort recruits by distance from this point
 	Coord3D lastPosition;            ///< tactic team entry + 0x04: the team centre when it last moved (RW 0x8F135E)
 	int index = 0;                   ///< the pooled prototype's + 0x2DC: the team's index in its tactic (RW 0x8F128B / 0x8F12C3 look teams up by it)
 	int idleFrames = 0;              ///< entry + 0x10: frames without moving or fighting (RW 0x8F135E; done at TeamTimeUntilConsideredIdle seconds, RW 0x8F1725)
@@ -162,7 +166,7 @@ struct AITactic
 	std::vector<Coord3D> waypoints;  ///< FlankAttack / PincerAttack waypoints (+ 0x58 -> vector)
 	Coord3D gatherPos;               ///< FormationAttack + 0x58 -> + 4: the team's centre at the launch
 	Coord3D aimPos;                  ///< FormationAttack + 0x58 -> + 0x10: the target position at the launch
-	bool mainLaunched = false;       ///< FeintAttack + 0x58: the main team was sent
+	bool mainLaunched = false;       ///< FeintAttack main-team / RoamingDefense roaming / SiegeGates reached flag
 	std::uint32_t launchFrame = 0;   ///< FeintAttack + 0x5C: the launch frame
 	// lane AIEXPAND-1: SimpleExpansion (ctor RW 0x9B5190): + 0x58 its plain structure request (also in the AI's queues while unfinished); its + 0x5C stage is `step`
 	std::shared_ptr<AIBuildRequest> request;
@@ -174,6 +178,7 @@ struct AIAttackedAt
 	std::uint32_t id = 0;                    ///< + 0x00 (the manager's running id RW 0xDE4A08, or the merged record's)
 	Coord3D position;                        ///< + 0x04
 	float radius = 0.0f;                     ///< + 0x14 (300, RW 0xC16764)
+	float nativeThreat = 0.0f;               ///< BFME2 interest-zone +0x18: raw enemy template threat sum at creation
 	std::uint32_t frame = 0;                 ///< + 0x18
 	AIThreatFinder::ThreatRecord enemies;    ///< + 0x1C: the objects whose player is the AI's ENEMIES
 	AIThreatFinder::ThreatRecord others;     ///< + 0x64: the other (allied) objects
@@ -228,5 +233,19 @@ void flankWaypointsForTest(GameLogic &logic, AITactic &tac, const AITarget &t, c
 void addAttackedAtForTest(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D &pos);
 // test hook (lane AIEXPAND-1): the EXPANSION heuristic (RW 0x97D191, with its gate RW 0x97D035) for `ai` on the target `t`
 void expansionHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &t);
+bool teamMeetsThreatForTest(GameLogic &logic, const AITactic &tac, const AITacticTeam &team);
+void updateInterestZonesForTest(GameLogic &logic, AISkirmishPlayer &ai);
+Coord3D siegeStandBackPointForTest(const Coord3D &from, const Coord3D &wall);
+bool siegeAppliesForTest(GameLogic &logic, const AISkirmishPlayer &ai, const AITarget &target, bool simple);
+void startSiegeForTest(GameLogic &logic, AISkirmishPlayer &ai, int targetIndex, bool simple);
+void runSiegeForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac);
+void updateSiegeForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac);
+std::vector<std::string> offensivePrototypesForTest();
+std::vector<std::string> targetlessPrototypesForTest();
+ObjectID farmKillTargetForTest(GameLogic &logic, const AITactic &tac, int enemy, bool production);
+void startFarmKillForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac);
+void techBuildingHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &target);
+bool roamingDefenseAppliesForTest(GameLogic &logic, AISkirmishPlayer &ai);
+void updateTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac);
 void pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const Coord3D &start, const Coord3D &target);
 } // namespace AITacticalAI
