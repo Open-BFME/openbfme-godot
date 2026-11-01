@@ -135,6 +135,8 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // random draw, RW 0x8994BF, and its scan state in the object hash), from frame 0.
 // Lane MODCOMPAT-MOD1 re-measured the pin vector at BoredUpdate's commit (OPENBFME_UBER1_REGEN=1, a CI host): BoredUpdate (its constructor's logic random
 // draw, RW 0x899F1F, and its countdown in the object hash), from frame 0.
+// Lane PATH-REBUILD re-measured the pin vector (OPENBFME_UBER1_REGEN=1 on its tree): every found path is rebuilt from its optimised nodes (RW 0x767B0E)
+// and the mover hash covers the path's node chain, from frame 0.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")
 {

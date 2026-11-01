@@ -577,7 +577,9 @@ bool AIMover::computeQuickPath(const Coord3D &dest)
 	from.z = dest.z;
 	p->prependNode(&dest, m_pf.getLayerAt(dest.x, dest.y, dest.z)); // lane WALL-1: the destination's layer (the ground on a map without walls)
 	p->prependNode(&from, obj.getLayer());
-	p->optimize(m_pf, &obj, m_host.locomotorInfo().validSurfaces, false, nullptr);
+	const PathfindLocomotorInfo info = m_host.locomotorInfo();
+	p->optimize(m_pf, &obj, info.validSurfaces, false, nullptr);
+	p->rebuild(m_pf, &obj, info, m_host.unitDirectionOf(obj), info.validSurfaces, false); // RW 0x665BF5 (lane PATH-REBUILD)
 	m_path = p;
 	m_pathTimestamp = m_host.frame();
 	setGoalOnPath();

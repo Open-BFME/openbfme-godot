@@ -210,8 +210,8 @@ inline bool cliffOK(Pathfinder &pf, const Coord3D *pos, PathfindLayerEnum layer)
 void Path::optimize(Pathfinder &pathfinder, const PathfindObject *obj, unsigned acceptableSurfaces, bool blocked, const float *dir)
 {
 	// TARGET RW Path::optimize 0x7661A3 (S-001 caveat). It is NOT ZH's backward search: with `dir` null (every call of the
-	// normal search) it is a greedy forward scan from the head; with `dir` (only the fallback of findPath, RW 0x6FE409) a
-	// backward scan from the tail. Both set isOptimized and never write the tail's nextOpti.
+	// normal search) it is a greedy forward scan from the head; with `dir` (only the ship's sideways attack search, RW 0x6FDE38,
+	// not ported: every caller here passes null) a backward scan from the tail. Both set isOptimized and never write the tail's nextOpti.
 	if (!m_path)
 	{
 		m_isOptimized = true;
@@ -275,7 +275,14 @@ void Path::optimize(Pathfinder &pathfinder, const PathfindObject *obj, unsigned 
 				{
 					if (cand->m_layer != lastLayer)
 					{
-						prevLayer = cand->m_layer; // (the step > 30 test of this branch changes nothing, RW 0x76xxxx)
+						prevLayer = cand->m_layer;
+						// RW 0x766532 .. 0x76653B (lane PATH-REBUILD; BFME2 decomp Path_optimizeGroundPath.cpp's ALLOWED_STEPS): a leg may cross a layer
+						// change only within its first three nodes; later the leg ends at the last node of the old layer, so a path up a ramp keeps an
+						// anchor at the ramp's foot and at its top (the port skipped this and cut a chord across the ramp, which the raw chain hid)
+						if (step > 30)
+						{
+							ok = false;
+						}
 					}
 					if (tflag && !ok && std::abs(SimMath::truncToInt32(SimMath::subf32(cand->m_pos.y, m_pathTail->m_pos.y))) + std::abs(SimMath::truncToInt32(SimMath::subf32(cand->m_pos.x, m_pathTail->m_pos.x))) < 40)
 					{

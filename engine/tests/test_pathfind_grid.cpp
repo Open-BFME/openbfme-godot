@@ -167,8 +167,10 @@ TEST_CASE("pathfind: a straight path in the open is the start position and the g
 	CHECK(chain[0].y == 5.0f);
 	CHECK(chain[1].x == 55.0f);
 	CHECK(chain[1].y == 5.0f);
-	// the unoptimised cell path has a node per cell: from, then the centres of cells 1..5
-	CHECK(p->nodeCount() == 6);
+	// lane PATH-REBUILD: the found path is rebuilt from its optimised nodes (RW 0x767B0E), so its chain is these two nodes (6 before: from, then the
+	// centres of cells 1..5) and raw == optimised
+	CHECK(p->nodeCount() == 2);
+	CHECK(p->getFirstNode()->getNext() == p->getFirstNode()->getNextOptimized());
 	delete p;
 	// no cell info stays allocated after a search
 	CHECK(w.pf->pool().freeCount() == testConfig().cellInfoPoolSize);

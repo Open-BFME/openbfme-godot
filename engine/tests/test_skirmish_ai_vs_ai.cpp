@@ -908,7 +908,11 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge queue q35 (SIMSMALL-1, #178, #179, #132; measured once on the merged tree and at each merge point; #179's merge point keeps the archive's pins):
 	// #132's ground-structure melee reach ends seed 2 with Mordor's defeat (start position 0) at 7060; seeds 7 and 1234 stay open at 9000. Engine pins, not
 	// retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 7060 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E: every unit walks other lines; measured twice on the lane's tree):
+	// seed 2 ends with Mordor's defeat (start position 0) at 7211 with a new table, seed 7 stays open at 9000, seed 1234 ends with the Men's defeat (start
+	// position 1) at 8168; with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): seed 2 ends with Mordor's defeat at 7094
+	// with a new table, seeds 7 and 1234 stay open at 9000. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 7094 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -950,14 +954,15 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// merge queue q34 (measured once on the merged tree and at each merge point): SPELLFIX-1 and #160 end it at 7162; #161's block search keeps it open
 			// at 9000 with this table
 			// merge queue q35 (measured once on the merged tree and at each merge point): #132's melee reach ends it with Mordor's defeat at 7060
+			// lane PATH-REBUILD (measured twice on the lane's tree): a new table from the first window on; the game ends with Mordor's defeat at 7094
 			CHECK(run.progress ==
-		"frame 1000: [0 attacks 0 built 70u/8s destroyed 7u/1s] [1 attacks 1 built 91u/8s destroyed 23u/2s]\n"
-		"frame 2000: [0 attacks 1 built 207u/9s destroyed 118u/1s] [1 attacks 2 built 156u/10s destroyed 149u/6s]\n"
-		"frame 3000: [0 attacks 1 built 218u/11s destroyed 186u/1s] [1 attacks 3 built 257u/13s destroyed 203u/7s]\n"
-		"frame 4000: [0 attacks 2 built 326u/13s destroyed 261u/3s] [1 attacks 4 built 361u/16s destroyed 294u/10s]\n"
-		"frame 5000: [0 attacks 2 built 327u/13s destroyed 308u/3s] [1 attacks 4 built 404u/21s destroyed 320u/15s]\n"
-		"frame 6000: [0 attacks 2 built 328u/15s destroyed 312u/3s] [1 attacks 4 built 430u/23s destroyed 321u/16s]\n"
-		"frame 7000: [0 attacks 2 built 328u/16s destroyed 346u/3s] [1 attacks 4 built 463u/24s destroyed 332u/20s]\n");
+		"frame 1000: [0 attacks 0 built 70u/8s destroyed 9u/0s] [1 attacks 1 built 91u/8s destroyed 41u/2s]\n"
+		"frame 2000: [0 attacks 1 built 257u/10s destroyed 121u/1s] [1 attacks 1 built 182u/11s destroyed 185u/5s]\n"
+		"frame 3000: [0 attacks 2 built 297u/13s destroyed 210u/2s] [1 attacks 2 built 294u/12s destroyed 249u/10s]\n"
+		"frame 4000: [0 attacks 2 built 301u/14s destroyed 295u/2s] [1 attacks 4 built 403u/16s destroyed 311u/13s]\n"
+		"frame 5000: [0 attacks 2 built 302u/15s destroyed 361u/2s] [1 attacks 5 built 477u/20s destroyed 312u/13s]\n"
+		"frame 6000: [0 attacks 2 built 303u/18s destroyed 374u/2s] [1 attacks 6 built 507u/24s destroyed 313u/15s]\n"
+		"frame 7000: [0 attacks 2 built 304u/20s destroyed 410u/2s] [1 attacks 6 built 542u/24s destroyed 314u/17s]\n");
 		}
 	}
 }
@@ -1029,6 +1034,9 @@ TEST_CASE("skirmish ai targetless: the generator's FarmKillSquad draw at creatio
 	// merge queue q33 (#133's straight production exits shift the shared random stream before frame 10; measured at each merge point): with seed 1234 the
 	// frame-10 pick draws 1 and starts the FarmKillSquad first; seeds 1234 .. 1249 measured on the merged tree: 1240, 1243, 1245, 1246, 1248 and 1249 draw 0
 	// there (the FlagCaptureSquad at 10, the FarmKillSquad at 11), so the game moves to seed 1240
+	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E, shift the shared random stream before frame 10): with seed 1240 the
+	// frame-10 pick draws 1 again (the FarmKillSquad first); seeds 1240 .. 1255 measured on the lane's tree: 1241, 1242, 1247, 1248, 1253 and 1254 draw 0
+	// there, so the game moves to seed 1241 (the test's draws below hold)
 	OPENBFME_REQUIRE_START(s);
 	static std::vector<MapCacheEntry> cache;
 	std::string error;
@@ -1037,7 +1045,7 @@ TEST_CASE("skirmish ai targetless: the generator's FarmKillSquad draw at creatio
 		REQUIRE_MESSAGE(IniSkirmishSetupSource::loadMapCache(*s->mount->fs, cache, &error), error);
 	}
 	NewGameStart start(RandomAlgorithm::ZH_CarryChain);
-	REQUIRE_MESSAGE(NewGame::prepareNewGame(versusMessage(*s, "FactionMen", -1, "FactionMordor", 1, 1240u), s->world->playerTemplates(), s->settings, cache,
+	REQUIRE_MESSAGE(NewGame::prepareNewGame(versusMessage(*s, "FactionMen", -1, "FactionMordor", 1, 1241u), s->world->playerTemplates(), s->settings, cache,
 						RandomAlgorithm::ZH_CarryChain, start, &error),
 		error);
 	ArchiveW3DFileSource source(*s->mount->fs);

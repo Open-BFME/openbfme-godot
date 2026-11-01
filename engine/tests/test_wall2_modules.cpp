@@ -283,7 +283,7 @@ TEST_CASE("wall2 modules retail: through Helm's Deep's postern gate: a hero orde
 	p = pf.findPath(&ai->adapter(), ai->locomotorInfo(), &from, &to, &partial);
 	REQUIRE(p);
 	CHECK_FALSE(partial);
-	CHECK(p->nodeCount() == 17);
+	CHECK(p->nodeCount() == 7); // lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E): 7 (17 before, the raw cells)
 	// the path through the gate (prependCells RW 0x6EF591): the node at Post01 (the portal crossed), then the Via chain 4, 5 prepended in reverse (Post02,
 	// Post03: the INI lists the vias backwards for that), then the far end Post04, each of them and the node after carrying the id of the waypoint the step to
 	// it starts from
@@ -389,7 +389,8 @@ TEST_CASE("wall2 modules retail: a horde ordered across Helm's Deep's culvert ta
 			// merge queue q26: since the slot table is centred on the horde (community #73, RW 0x86C4EA) only the 7 members of the front ranks end inside;
 			// the other 8 stop in the culvert's passage (y 2900 .. 2921) and stay there (measured to frame 1600). An engine pin of a follow-up, not retail:
 			// the members' own paths through the gate's portal are the open part (likely S-1751: the member's pathfinder layer update RW 0x6F0741)
-			CHECK(inner == 7);
+			// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; measured twice on the lane's tree): all 15 members end inside the wall
+			CHECK(inner == 15);
 			CHECK(hp.y < 2872.0f); // tolerance: the horde itself stands south of Post04
 		}
 		else
