@@ -2220,7 +2220,7 @@ void GameWorld::refresh_views(double deltaMs)
 			animatedLocal.fetch_add(anim, std::memory_order_relaxed);
 		});
 	}
-	animated += animatedLocal.load(std::memory_order_relaxed);
+	animated += animatedLocal; // the jobs are done (parallelFor returns after the last)
 	for (size_t id = 1; id < viewSlots; ++id)
 	{
 		if (!parallel)
