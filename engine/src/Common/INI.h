@@ -216,7 +216,7 @@ public:
 	// B1 ini.cpp:464-510 (INI::load), B2 0x42D2C1-0x42DD35.
 	void load(const std::string &filename, INILoadType loadType);
 	void loadFile(const std::string &filename, INILoadType loadType) { load(filename, loadType); }
-	// RW 0x42D753 (BFME2 decomp INI_loadWithParse.cpp, tier A): the load that hands EVERY line with a first token to `parse` instead of the block
+	// RW 0x42D753 (BFME2 decomp INI.cpp, tier A): the load that hands EVERY line with a first token to `parse` instead of the block
 	// registry (lane UI-4: CreditsManager::load passes RW 0x9C65B6; RotWK's Credits.ini has no block keyword, its first token is the UTF-8 BOM).
 	void load(const std::string &filename, INILoadType loadType, const INIBlockParse &parse);
 	// The first half of load() only: TextFile split, #include expansion and the #define pre-pass

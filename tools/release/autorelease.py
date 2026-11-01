@@ -86,7 +86,7 @@ TEST_PATHS = ("engine/tests/", "godot/tests/", "launcher/tests/")
 
 LANE_ID = re.compile(r"^(?:[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+|[A-Z][a-z]+\d+)(?: r\d+)?(?: \([^()]*\))?:?\s+")
 JARGON = re.compile(r"\bRW\b|0x[0-9A-Fa-f]{3,}|\bS-\d+|\bFB-\d+|\bSol\b|\b[A-Z]{2,}[0-9]*-[0-9A-Z]+\b|#\d|\br\d+\b|\bstack\d+\b|"
-                    r"\bpins?\b|\bgate\b|\.(?:cpp|h|py|sh|gd|md)\b|\b[a-z]+[A-Z][A-Za-z]*(?:'s)?\b")
+                    r"\bpins?\b|\b(?:full|CI|commit|privacy|Boat) gates?\b|\bgates? (?:run|result|log|passed|failed)\b|\.(?:cpp|h|py|sh|gd|md)\b|\b[a-z]+[A-Z][A-Za-z]*(?:'s)?\b")
 FIXED = re.compile(r"\b(?:fix(?:es|ed)?|regression|crash(?:es|ed)?|no longer|stops?\b|instead of|bugs?|broken|wrong)\b", re.I)
 # an integration round's lane merge, "Merge lane/x (<sha>) into integ/p3: ...": its words are the integrator's summary for
 # reviewers; the round's player notes are its release-notes commit's `Release-note:` lines (preview.3 printed "Ce7997fd into integ/p3: ...").
@@ -644,9 +644,22 @@ def _cap(t: str) -> str:
     return t[:1].upper() + t[1:]
 
 
+NOTE_REFS = re.compile(r"\s*\(\s*(#\d+(?:\s*,\s*#\d+)*)\s*\)\s*$")
+
+
+def note_refs(text: str) -> tuple[str, list[int]]:
+    """RELNOTES-1: a `Release-note:` text without its closing `(#12)` / `(#12, #13)`, and those pull request numbers (the community pull
+    requests the line came from: the nightly notes credit their authors on this line only, nightly_notes.note_credits)"""
+    m = NOTE_REFS.search(text)
+    if not m:
+        return text.strip(), []
+    return text[:m.start()].strip(), sorted({int(n) for n in re.findall(r"\d+", m.group(1))})
+
+
 def parse_note(text: str) -> tuple[str, str, str]:
     """(kind, area, text) of one `Release-note:` text: `Kind [Area]: text`, `Fix: text` or a bare text (Added, or Fixed when its words say
     so). area is the AREAS entry the brackets name (case-insensitive) or "" for none / an unknown name (note_warnings names it)."""
+    text = note_refs(text)[0]
     m = NOTE_HEAD.match(text.strip())
     if not m:
         t = text.strip()

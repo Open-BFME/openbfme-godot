@@ -7,6 +7,9 @@
 ## and in the game Esc, the quit menu's Options and back.
 ## game.gd runs it with --menu1-walk[=DIR] (DIR: screenshots walk1-<step>.png, windowed runs only); "MENU1 <step>: ok" / "MENU1 <step>: FAIL <why>"
 ## per step, "MENU1 RESULT: <n> ok, <m> failed" at the end; exit 0 when nothing failed.
+## Lane MODUI-1: a step also fails when the shell reported an error since the last step (a movie or sub-movie that did not load: a mod's screen
+## left empty) and the Skirmish lobby must list maps and show its player slots; the movies' calls the shell does not handle are printed at the end
+## ("MENU1 calls without function: [...]", "MENU1 unhandled commands: [...]") so tools/mod/test_modui1_shell_screens.py compares a mod with 2.01.
 extends RefCounted
 
 var game: Node
@@ -15,6 +18,7 @@ var dir := ""
 var ok_count := 0
 var fail_count := 0
 var loading_checked := false
+var errors_seen := 0 # lane MODUI-1: the shell report's errors already reported
 const PROFILE_ENTRY_STAGE := Rect2(369, 350, 272, 26) # the MENU-1 build's "profile-entry" rect (stage pixels, Skirmish.apt's layout)
 
 const MENU_PATHS := [
@@ -54,6 +58,14 @@ func run(p_game: Node, p_dir: String) -> void:
 	for p in MENU_PATHS:
 		await _menu_path(p[0], p[1], p[2])
 	await _skirmish_start()
+	var report: Dictionary = shell.get_shell_report()
+	print("MENU1 calls without function: ", JSON.stringify(report.get("calls_without_function", [])))
+	var unhandled := []
+	for line in report.get("note_lines", []):
+		if String(line).begins_with("command-unhandled: "):
+			unhandled.push_back(String(line).trim_prefix("command-unhandled: "))
+	print("MENU1 unhandled commands: ", JSON.stringify(unhandled))
+	print("MENU1 mod data notes: ", JSON.stringify(report.get("mod_data_notes", [])))
 	print("MENU1 RESULT: %d ok, %d failed" % [ok_count, fail_count])
 	game.get_tree().quit(0 if fail_count == 0 else 1)
 
@@ -118,6 +130,7 @@ func _skirmish_first_visit() -> void:
 		_fail("skirmish-profile-entry", "no profile name entry")
 	await game._step(60)
 	await _check("skirmish-lobby")
+	_check_lobby_filled("skirmish-lobby-filled")
 
 
 func _skirmish_profile_page() -> void:
@@ -152,11 +165,28 @@ func _skirmish_start() -> void:
 	await _check("skirmish-second-visit")
 	# two computer players (medium) besides the player: three cards on the loading screen
 	# the player's army fixed (the radial step needs a fortress citadel; the same army before and after)
-	var applied: Dictionary = shell.lobby_apply({"slots": [{"slot": 0, "faction": "FactionDwarves"}, {"slot": 1, "state": 3}, {"slot": 2, "state": 3}]})
+	var spec := {"slots": [{"slot": 0, "faction": "FactionDwarves"}, {"slot": 1, "state": 3}, {"slot": 2, "state": 3}]}
+	# lane MODUI-1: on a map that takes three players: the lobby's own if it does, else the first listed one that does (a mod's first map can be a
+	# two-player one, Edain's "aldburg horde": the start check refuses three players there, LAN:TooManyPlayers, as retail)
+	var st: Dictionary = shell.lobby_state()
+	var keys: Array = st.get("map_keys", [])
+	var players: Array = st.get("map_players", [])
+	var current: int = keys.find(st.get("map", ""))
+	if current >= 0 and current < players.size() and players[current] < 3:
+		for i in range(min(keys.size(), players.size())):
+			if players[i] >= 3:
+				spec["map"] = keys[i]
+				print("MENU1 the lobby's map %s takes %d players: %s for three" % [keys[current], players[current], keys[i]])
+				break
+	var applied: Dictionary = shell.lobby_apply(spec)
 	if not applied.get("ok", false):
 		_fail("skirmish-three-players", str(applied.get("errors", [])))
 	await game._step(30)
 	await _check("skirmish-three-players")
+	if not OS.get_environment("MENU1_SHELL_ONLY").is_empty():
+		# lane MODUI-1: the shell screens only (tools/mod/test_modui1_shell_screens.py): a mod's game itself is the simulation's, not the menus'
+		print("MENU1 the game start skipped (MENU1_SHELL_ONLY)")
+		return
 	if not await _click_hittable("lobby.StartGame"):
 		_fail("skirmish-play", "no hittable lobby.StartGame")
 		return
@@ -165,7 +195,8 @@ func _skirmish_start() -> void:
 		if game._state == game.State.PLAYING:
 			break
 	if game._state != game.State.PLAYING:
-		_fail("skirmish-play", "the game did not start (state %d)" % game._state)
+		_fail("skirmish-play", "the game did not start (state %d) on %s; the lobby's messages: %s" % [game._state, shell.lobby_state().get("map", "?"),
+			str(shell.get_shell_report().get("refusals", []))])
 		return
 	if not loading_checked:
 		_fail("skirmish-loading", "the load reported no progress past 40 %")
@@ -208,7 +239,11 @@ func loading_check(percent: int) -> void:
 	loading_checked = true
 	var r: Dictionary = _report()
 	print("MENU1 loading (%d %%): stack %s report %s" % [percent, str(shell.shell_stack()), JSON.stringify(r)])
-	var problems: Array = r.get("problems", [])
+	var problems: Array = r.get("problems", []).duplicate()
+	var errors: Array = shell.get_shell_report().get("errors", [])
+	for i in range(errors_seen, errors.size()):
+		problems.push_back("shell error: %s" % errors[i])
+	errors_seen = errors.size()
 	if problems.is_empty():
 		ok_count += 1
 		print("MENU1 loading: ok")
@@ -229,6 +264,10 @@ func _menu_path(name: String, nav: String, item: String) -> void:
 		await game._click_button(level, nav)
 		await game._step(60)
 	var target := (nav + "." + item) if not nav.is_empty() else item
+	if not shell.find_button(level, target).get("found", false):
+		# lane MODUI-1: a mod's own MainMenu.apt can leave an entry out (Ennorath has no Create-a-Hero): reported apart from a button that does not work
+		_fail(name, "the menu has no button %s" % target)
+		return
 	if not await game._click_button(level, target):
 		_fail(name, "cannot press %s" % target)
 		return
@@ -278,6 +317,23 @@ func _menu_path(name: String, nav: String, item: String) -> void:
 
 # ---- checks and input ---------------------------------------------------------------------------------------------------------------------------
 
+# lane MODUI-1: the setup panel came up with its contents (owner 10-30: Edain's lobby showed the frame only): the map list and the player slots
+func _check_lobby_filled(step: String) -> void:
+	var st: Dictionary = shell.lobby_state()
+	var missing := []
+	if not st.get("found", false):
+		missing.push_back("no lobby")
+	if (st.get("map_keys", []) as Array).is_empty():
+		missing.push_back("no map listed")
+	if not shell.lobby_gadget_rect("0/PlayerTemplate").get("found", false):
+		missing.push_back("no Army combo in player slot 0")
+	if missing.is_empty():
+		ok_count += 1
+		print("MENU1 %s: ok (%d maps)" % [step, st.map_keys.size()])
+	else:
+		_fail(step, ", ".join(missing))
+
+
 # the layering report; a build before lane MENU-1 has none (the "before" pictures: every check passes, only the pictures count)
 func _report() -> Dictionary:
 	return shell.get_layering_report() if shell.has_method("get_layering_report") else {}
@@ -292,7 +348,11 @@ func _check(step: String) -> void:
 	await _shot(step)
 	var r: Dictionary = _report()
 	print("MENU1 %s: stack %s report %s" % [step, str(shell.shell_stack()), JSON.stringify(r)])
-	var problems: Array = r.get("problems", [])
+	var problems: Array = r.get("problems", []).duplicate()
+	var errors: Array = shell.get_shell_report().get("errors", [])
+	for i in range(errors_seen, errors.size()):
+		problems.push_back("shell error: %s" % errors[i])
+	errors_seen = errors.size()
 	if problems.is_empty():
 		ok_count += 1
 		print("MENU1 %s: ok" % step)

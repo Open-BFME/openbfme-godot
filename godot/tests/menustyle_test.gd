@@ -31,6 +31,22 @@ func _initialize() -> void:
 			print("restart: ", line)
 	print("MENUSTYLE restart ", "FAIL" if failed2 else "PASS", " exit=", code2)
 	failed = failed or failed2
+	# lane STABLEQA-1: --stable-channel (a Stable build's menus): both styles without War of the Ring (bfme2: the Options.ini above; rotwk: a new one)
+	for style in ["bfme2", "rotwk"]:
+		var stable_options := options if style == "bfme2" else directory.path_join("Options-stable.ini")
+		var output3: Array = []
+		var code3 := OS.execute(OS.get_executable_path(), PackedStringArray([
+			"--headless", "--path", ProjectSettings.globalize_path("res://"), "--",
+			"--menustyle-check", "--menustyle-expect=" + style, "--stable-channel", "--options-file=" + stable_options,
+		]), output3, true)
+		var text3: String = "".join(output3)
+		var failed3 := code3 != 0 or not text3.contains("MENUSTYLE RESULT: 0 failed") or not text3.contains("War of the Ring offered: false") \
+			or text3.contains("SCRIPT ERROR") or text3.contains("Parse Error")
+		for line in text3.split("\n"):
+			if line.begins_with("MENUSTYLE ") or line.contains("SCRIPT ERROR") or line.contains("Parse Error") or line.begins_with("GAME FAILED"):
+				print("stable ", style, ": ", line)
+		print("MENUSTYLE stable ", style, " ", "FAIL" if failed3 else "PASS", " exit=", code3)
+		failed = failed or failed3
 	for line in text.split("\n"):
 		if line.begins_with("MENUSTYLE ") or line.contains("SCRIPT ERROR") or line.contains("Parse Error") or line.begins_with("GAME FAILED"):
 			print(line)

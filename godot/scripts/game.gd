@@ -47,6 +47,9 @@
 ##     --hud7=<a,b,...>      (lane HUD-7, with --auto) scripts/hud7_player.gd: radar (the view box and a radar click), deselect (a left click on empty
 ##                           ground), sell (a structure's Sell button), upgrade (the fortress's upgrade bubble in progress), herocancel (a hero recruited, then
 ##                           cancelled by a right click); hud7-<name>.png in --screens
+##     --edain-choice=Erebor|IronHills|EredLuin|AI  (with --auto --faction=FactionDwarves, two AIs and Edain mounted) test the
+##                           keep's clan choice through the HUD, or the Dwarven AI's choice at frame 3000; Fall Back 4P is the test map,
+##                           with Dwarves / Men as opponents; screenshots of the clicked selector in --screens
 ##     --pingwheel=<a,b,...> (with --auto) scripts/ping_wheel_player.gd: the ping wheel (not retail) driven by input events: wheel, kinds, space, menus,
 ##                           options, hash (PINGWHEEL_HASH=quiet|pings), video (frames in --screens); pingwheel-<name>.png in --screens
 ##     --autocast1=<a,...>   (lane AUTOCAST-1, with --auto) scripts/autocast1_player.gd: witchking (a right click on the Witch-king's Morgul Blade
@@ -269,6 +272,19 @@
 ##                           back to the main menu, pick it in the Skirmish lobby's Hero combo (with --faction), start, recruit it at the fortress; exit 0 when the
 ##                           hero was saved, chosen, installed and made. --screens writes cah1-*.png. Lane CAH-2 r2: the run saves into a temporary folder
 ##                           of its own (--cah-real-profile: the real save folder) and removes its hero and that folder at its end
+##   lane WOTR-1, War of the Ring (scripts/wotr.gd): the main menu's War of the Ring opens Skirmish.apt in strategic mode; its StartGame message carries
+##   living_world_campaign and starts the strategic map instead of a skirmish; a battle the player fights is a skirmish on the region's map
+##     --stable-channel      (lane STABLEQA-1) the menus as a Stable build shows them: no War of the Ring (a Stable build, version vX.Y.Z, always)
+##     --wotr                (with --auto) main menu -> War of the Ring -> the strategic lobby (--wotr-scenario=<LivingWorldCampaign>, --faction, one AI)
+##                           -> the strategic map; --wotr-turns=N turns with scripted orders; the first battle is fought (--wotr-battle-seconds=S of play,
+##                           then the enemy's forces fall: a test hook), the others autoresolved (WOTR-2: the first battle is autoresolved and the second fought,
+##                           through the retail prompt's buttons); --screens=<dir> writes wotr1-* / wotr2-*.png; exit 0 when every step ran
+##     --wotr-save-at=K      (WOTR2 milestone 3) at the start of turn K+1 the map is saved through the real menus (Esc, the quit menu's Save, the War of the
+##                           Ring page's Save, its result box), the remaining turns are played (every battle autoresolved) and their state hashes kept; then
+##                           the save is loaded twice through the menus (Esc, Load, the page's Load and its confirmation), the same turns played after
+##                           each: exit 0 when both loads give the saved map and the same war (retail reseeds at the load: InitRandom(0), RW 0x6DEA25)
+##                           (--save-dir=<dir> keeps the files out of the profile)
+##
 ## HOOKS OF OTHER LANES (leave the names as they are):
 ##   _on_shell_service(kind, a, b)   every ShellServices call: kind "sound" (a = the sound name) is AUDIO-1's hook for UI sounds and music cues; "load_music" carries the faction's
 ##                                   LoadScreenMusic when a load starts; "background", "mouse_visible", "tooltip" are the others
@@ -280,7 +296,7 @@ const DEFAULT_MAP := "maps/map mp evendim/map mp evendim.map"
 const LEVEL_MAIN_MENU_FRAMES := 20
 const KEEP_RENDERING := true
 
-enum State { BOOT, MENU, LOADING, PLAYING, SCORE, FAILED }
+enum State { BOOT, MENU, LOADING, PLAYING, SCORE, FAILED, STRATEGIC }
 
 var _res := Vector2i(0, 0)
 var _seed := 0
@@ -411,6 +427,15 @@ var _trees1 := PackedStringArray() # lane TREES1 (scripts/trees1_player.gd: harv
 var _start_spot := -1            # lane HUD-5
 ## lane INPUT-1: the keyboard scenarios of scripts/input1_player.gd (--input1=groups,...)
 var _input1 := PackedStringArray()
+var _wotr: Node                # lane WOTR-1: the War of the Ring strategic map (scripts/wotr.gd)
+var _wotr_preview: CanvasLayer # lane WOTR-2: the strategic setup's 3D map preview (scripts/wotr_preview.gd)
+var _wotr_flow := false        # --wotr
+var _wotr_scenario := "WOTRScenario001"
+var _wotr_turns := 4
+var _wotr_save_at := -1        # WOTR2 milestone 3: --wotr-save-at=K
+var _wotr_stats_held := 0       # WOTR2 milestone 6: battle statistics seen with the war held in the battles phase
+var _wotr_battle_save := false  # WOTR2 milestone 6: --wotr-battle-save: the fought battle is saved and loaded back mid-fight
+var _wotr_battle_seconds := 20.0
 var _game_frames := 0
 var _auto_task_started := false
 # lane ONLINE-2
@@ -424,6 +449,9 @@ var _online_players := 2
 var _online: Node = null
 # lane ONLINE-4
 var _online_http: Node = null
+var _online_checked_room := ""
+var _online_checked_save := ""
+var _online_checked_ms := 0
 var _online_reports: Node = null
 var _online_social: Node = null
 var _online_walk := ""
@@ -520,6 +548,7 @@ var _menu_walk := "" # lane FB7-1: --menu-walk=DIR
 var _menu1_walk := "" # lane MENU-1: --menu1-walk=DIR (scripts/menu1_walk.gd)
 var _menu1_walk_on := false
 var _menustyle_check := false
+var _stable_channel := false # lane STABLEQA-1: --stable-channel: the menus as a Stable build shows them (no War of the Ring) in any build
 var _shellfix1_check := false # lane SHELLFIX-1: --shellfix1-check (scripts/shellfix1_check.gd)
 var _shellfix1_game := false  # lane SHELLFIX-1: --shellfix1-game (with --auto)
 var _shellfix1_runner: RefCounted
@@ -546,7 +575,27 @@ var _lan_phase := 0
 var _lan_wait := 0
 var _lan_shot_done := false
 var _lan_start_ms := -1
+var _lan_presses := 0 # the refusal watcher's Start presses (it fails after four: two minutes)
+var _lan_press_ms := 0 # the host's last Start press (a resumed war's retry waits out the countdown and the starting box in wall time)
 var _lan_shots := "" ## lane UBERJOIN-1: --lan-shots=DIR (join): the game list (with an Uber game's tag) and the performance mode box are saved there
+var _lan_wotr := false          # WOTR2 milestone 8: --lan-wotr: the LanStrategic page, a War of the Ring (--wotr-scenario, --wotr-turns)
+var _lan_wotr_region := -1      # --lan-wotr-region=N: this player's start region: the N-th region the setup's preview offers as a start
+var _lan_wotr_crash_turn := -1  # --lan-wotr-crash-turn=K: the process dies (SIGKILL) in turn K's orders phase: a dropped peer for the others
+var _lan_wotr_page := false
+var _lan_wotr_rts_exit := false  # --lan-wotr-rts-exit: (with --lan-wotr-rts) the host leaves the battle through the quit menu's Exit: the war ends for all
+var _lan_wotr_rts := false       # --lan-wotr-rts: vote real time; the host forfeits the battle after 20 s (the quit menu's Forfeit, 0x448)
+var _lan_wotr_resume := ""      # --lan-wotr-resume=NAME (host): the LAN war is the save NAME resumed (WOTR2 milestone 8 step 4: the lobby's Load Game)
+var _lan_wotr_resume_set := false
+var _lan_wotr_save_turn := -1    # --lan-wotr-save-turn=K (host): in turn K the host asks to save the war as "lanwar"; the others say Yes; everyone leaves
+var _lan_wotr_save_asked := false
+var _lan_wotr_tamper := ""       # --lan-wotr-tamper-save=NAME: before the lobby, one byte in the middle of save NAME's strategic state flips (a copy that differs)
+var _lan_wotr_lobby_refusal := false # --lan-wotr-expect-refusal: the run ends once the lobby's refusal of the resumed war is seen (RESULT line)
+var _lan_wotr_rts_battles := -1  # --lan-wotr-rts-battles=N (with --lan-wotr-rts): real time for the first N battles voted, auto-resolve after (the milestone clip)
+var _lan_wotr_stall_turn := -1  # --lan-wotr-stall-turn=K: the process hangs in turn K's orders phase (the others drop it; it must leave by itself)
+var _lan_wotr_stall_seconds := 20 # --lan-wotr-stall-seconds=S: how long (MPDROP-3: a hang far past NetworkPlayerTimeoutTime too)
+var _lan_wotr_setup_tries := 0
+var _lan_wotr_join_tries := 0
+var _lan_wotr_region_set := false
 var _lan_shot_start := "" # lane UI-1: (host) the window 8 s after Play Game: the countdown's QM:STARTINGGAME box (the media)
 var _net_shot := ""
 var _net_shot_frame := -1
@@ -752,6 +801,18 @@ func _ready() -> void:
 			_net_early_orders = false
 		elif arg.begins_with("--net-census="):
 			_net_census = arg.substr(13)
+		elif arg == "--wotr":
+			_wotr_flow = true
+		elif arg.begins_with("--wotr-scenario="):
+			_wotr_scenario = arg.substr(16)
+		elif arg.begins_with("--wotr-turns="):
+			_wotr_turns = int(arg.substr(13))
+		elif arg.begins_with("--wotr-battle-seconds="):
+			_wotr_battle_seconds = float(arg.substr(22))
+		elif arg.begins_with("--wotr-save-at="):
+			_wotr_save_at = int(arg.substr(15))
+		elif arg == "--wotr-battle-save":
+			_wotr_battle_save = true
 		elif arg == "--perf":
 			_perf = true
 		elif arg == "--fps":
@@ -820,6 +881,9 @@ func _ready() -> void:
 				_zoom_out_error = "--widescreen=%s: not a Widescreen view value (original or wider)" % _widescreen_flag
 		elif arg.begins_with("--play1="):
 			_play1 = arg.substr(8).split(",", false)
+		elif arg.begins_with("--edain-choice="):
+			_play1 = PackedStringArray([arg.substr(15)])
+			_play_script = "res://scripts/edainfactions1_player.gd"
 		elif arg.begins_with("--zoom1="):
 			_zoom1 = arg.substr(8).split(",", false)
 		elif arg.begins_with("--uber1="):
@@ -1109,11 +1173,37 @@ func _ready() -> void:
 			_lan_targets = arg.substr(14)
 		elif arg.begins_with("--lan-port-base="):
 			_lan_port_base = int(arg.substr(16))
+		elif arg == "--lan-wotr":
+			_lan_wotr = true
+		elif arg.begins_with("--lan-wotr-region="):
+			_lan_wotr_region = int(arg.substr(18))
+		elif arg.begins_with("--lan-wotr-crash-turn="):
+			_lan_wotr_crash_turn = int(arg.substr(22))
+		elif arg == "--lan-wotr-rts":
+			_lan_wotr_rts = true
+		elif arg.begins_with("--lan-wotr-resume="):
+			_lan_wotr_resume = arg.substr(18)
+		elif arg.begins_with("--lan-wotr-save-turn="):
+			_lan_wotr_save_turn = int(arg.substr(21))
+		elif arg.begins_with("--lan-wotr-tamper-save="):
+			_lan_wotr_tamper = arg.substr(23)
+		elif arg == "--lan-wotr-expect-refusal":
+			_lan_wotr_lobby_refusal = true
+		elif arg.begins_with("--lan-wotr-rts-battles="):
+			_lan_wotr_rts_battles = int(arg.substr(23))
+		elif arg == "--lan-wotr-rts-exit":
+			_lan_wotr_rts_exit = true
+		elif arg.begins_with("--lan-wotr-stall-turn="):
+			_lan_wotr_stall_turn = int(arg.substr(22))
+		elif arg.begins_with("--lan-wotr-stall-seconds="):
+			_lan_wotr_stall_seconds = int(arg.substr(25))
 		elif arg.begins_with("--menu-walk="):
 			_menu_walk = arg.substr(12)
 		elif arg == "--menu1-walk" or arg.begins_with("--menu1-walk="):
 			_menu1_walk = arg.substr(13) if arg.length() > 13 else ""
 			_menu1_walk_on = true
+		elif arg == "--stable-channel":
+			_stable_channel = true
 		elif arg == "--menustyle-check":
 			_menustyle_check = true
 		elif arg == "--shellfix1-check":
@@ -1393,6 +1483,8 @@ func _boot() -> void:
 		shell_config["skirmish_ini"] = "user://bfme1-Skirmish.ini"
 	if not _options_file.is_empty():
 		shell_config["options_file"] = _options_file # lane OPTS-2
+	if _stable_channel:
+		shell_config["stable_channel"] = true # lane STABLEQA-1 (AptMenuPlayer: a Stable build hides War of the Ring by itself)
 	if _scripted_run():
 		# lane MENU-1: a scripted run never reads or writes the player's Skirmish.ini (the profiles): a fresh file of its own, so the first visit of
 		# Skirmish always asks for a profile as the scripts expect
@@ -1432,6 +1524,12 @@ func _boot() -> void:
 	_shell.shell_screen.connect(_on_shell_screen)
 	_game_options_setup() # lane OPTS-2: Options.ini's settings in effect (before any game loads its textures)
 	_display_screen_setup() # lane OPTS-1: the OPENBFME button over Options.apt and its screen
+	_wotr = preload("res://scripts/wotr.gd").new() # lane WOTR-1
+	add_child(_wotr)
+	_wotr.init(self)
+	_wotr_preview = preload("res://scripts/wotr_preview.gd").new() # lane WOTR-2: the strategic setup's map preview
+	add_child(_wotr_preview)
+	_wotr_preview.init(self)
 	if not _shell.shell_push("MainMenu.apt"):
 		_fail("the shell refused MainMenu.apt: " + str(_shell.get_shell_report().errors))
 		return
@@ -1581,8 +1679,16 @@ func _process(delta: float) -> void:
 		_capture_tick() # lane ONLINE-4
 	Release.set_in_game(_state == State.PLAYING) # lane RELEASE-1: the version corner in the menus only
 	_campaign_check_tick() # lane CAMP-1
+	if _wotr_preview != null and (_state == State.MENU or _wotr_preview.view.visible) and _frames % 3 == 0:
+		_wotr_preview.tick() # lane WOTR-2: shown while the strategic setup's LivingWorld gadget is on screen
 	if _state == State.PLAYING and _world != null:
 		_sdk_tick() # lane SDK-2
+	if _objectives_tutorial_input >= 0 and _hud != null:
+		# lane BFME2CAMP1: the scripts may disable / enable input while the screen is open (the Palantir lesson); Return reads the flag when pressed
+		var on: int = 1 if _hud.input_enabled() else 0
+		if on != _objectives_tutorial_input:
+			_objectives_tutorial_input = on
+			_shell.set_objectives_tutorial_input(on == 1)
 	if _stance_at >= 0 and _state == State.PLAYING and _world != null and _world.get_presented_frame() >= _stance_at:
 		_stance_at = -1
 		_stance_proof()
@@ -1595,9 +1701,11 @@ func _process(delta: float) -> void:
 		if _online_http != null:
 			_online_reports.set_context(_shell.online_status())
 		_online_reports.set_available((_state == State.SCORE and _last_game_online) or (_state == State.MENU and _shell.shell_stack().has("OnlineShell.apt")))
+	if _state == State.MENU and _online_http != null and _frames % 30 == 0:
+		_online_resume_tick()
 	if _state == State.MENU:
 		if _menu_style == "bfme2" and _frames % 5 == 0 and _shell.shell_stack().size() > 0 and _shell.shell_stack()[-1] == "MainMenu.apt":
-			_hide_bfme2_campaign_buttons() # lane DEVPORT-8: the BFME2 campaigns are not in this tree (BFME2_CAMPAIGNS)
+			_hide_bfme2_campaign_buttons() # lane DEVPORT-8: only while BFME2_CAMPAIGNS is off (lane BFME2CAMP1 turned it on)
 		if _pending_menu_style != _menu_style and not _switching_menu_style and _clean_main_menu():
 			_switching_menu_style = true
 			call_deferred("_apply_pending_menu_style")
@@ -1618,7 +1726,9 @@ func _process(delta: float) -> void:
 		if _cah != null:
 			_cah.tick(delta)
 		var message: Dictionary = _shell.take_new_game()
-		if not message.is_empty():
+		if not message.is_empty() and not str(message.get("living_world_campaign", "")).is_empty():
+			_wotr.begin_campaign(message) # lane WOTR-1: the strategic lobby's start
+		elif not message.is_empty():
 			_begin_game(message)
 		elif _net_state == "lobby":
 			_net_poll_lobby()
@@ -1766,6 +1876,10 @@ func _on_shell_request(action: String, argument: String) -> void:
 		_begin_replay(argument)
 	elif action == "Lan":
 		_open_lan_lobby()
+	elif action == "LanLoadWar":
+		_save_flow.open_menu(2, 16, false) # WOTR2 milestone 8 (step 4): RW 0x849299: the LAN war saves, the one picked is hosted resumed (_lan_load_war)
+	elif action == "OnlineLoadWar":
+		_save_flow.open_menu(2, 16, false) # BFME2 0x59ECC1: the strategic online page's Load Game, resumed from its staging room
 	elif action == "LanGameStart":
 		_lan_game_start()
 	elif action == "Online":
@@ -1779,10 +1893,12 @@ func _on_shell_request(action: String, argument: String) -> void:
 		_campaign_flow.start("ANGMAR_CAMPAIGN", _campaign_flow.difficulty_from_command(argument))
 	elif action == "BonusCampaign": # RW 0x91BEFA
 		_campaign_flow.start("ANGMAR_BONUS_CAMPAIGN", _campaign_flow.difficulty_from_command(argument))
-	elif action == "LoadCampaign" and argument.begins_with("bfme2:good:"):
-		start_bfme2_campaign("good")
-	elif action == "LoadCampaign" and argument.begins_with("bfme2:evil:"):
-		start_bfme2_campaign("evil")
+	elif action == "LoadCampaign" and argument.begins_with("bfme2:good:"): # lane BFME2CAMP1: RW 0x91AF46 -> RW 0x91BE05 (GOOD_CAMPAIGN)
+		start_bfme2_campaign("good", argument.trim_prefix("bfme2:good:"))
+	elif action == "LoadCampaign" and argument.begins_with("bfme2:evil:"): # RW 0x91AF69 -> RW 0x91BDA6 (EVIL_CAMPAIGN)
+		start_bfme2_campaign("evil", argument.trim_prefix("bfme2:evil:"))
+	elif action == "Tutorial" and argument in ["Basic", "Advanced"]: # lane BFME2CAMP1: AptMainMenu::OnTutorial RW 0x91B825 (mode 6)
+		_campaign_flow.start_tutorial(argument)
 	elif action == "ContinueCampaign":
 		_campaign_flow.continue_saved() # lane CAMPSAVE-1: RW 0x91B50D, nothing without 00000000.sav (RotWK's MainMenu.apt has no button for it)
 
@@ -1964,10 +2080,12 @@ func _apply_pending_menu_style() -> void:
 	print("GAME main menu style: ", _menu_style)
 
 
-## lane DEVPORT-8: THE switch of the BFME2 Good / Evil campaigns (lane B2CAMP-1 turns it on with its campaign entry point). Off, BFME2's own MainMenu.apt
-## GoodCampaign / EvilCampaign buttons are hidden (below) and a request that still names them is refused by name (start_bfme2_campaign). Lane CAMPMENU-1
-## moved it here from the OpenBFME campaign panel (scripts/menu_campaigns.gd, removed: the campaigns start from retail's own Solo Play buttons)
-const BFME2_CAMPAIGNS := false
+## lane DEVPORT-8: THE switch of the BFME2 Good / Evil campaigns. Lane BFME2CAMP1 turned it on with their entry point (start_bfme2_campaign): BFME2's own
+## MainMenu.apt GoodCampaign / EvilCampaign buttons show in the BFME2 menu style and start GOOD_CAMPAIGN / EVIL_CAMPAIGN (BFME2's legend's
+## LinearCampaign.ini, loaded after RotWK's campaigns: Common/SubsystemLegend.h LoadBfme2CampaignsFromLegend, an OpenBFME addition). Off, the buttons
+## are hidden (below) and a request is refused by name. Lane CAMPMENU-1 moved it here from the OpenBFME campaign panel (scripts/menu_campaigns.gd,
+## removed: the campaigns start from retail's own Solo Play buttons)
+const BFME2_CAMPAIGNS := true
 
 ## lane DEVPORT-8: BFME2's own MainMenu.apt has GoodCampaign / EvilCampaign buttons (its Solo Play list: Skirmish, WarOfTheRing, EvilCampaign,
 ## GoodCampaign, LoadGame). While BFME2_CAMPAIGNS is off they are hidden (their clip's _visible); { found: [clip paths], visible: [the
@@ -2018,12 +2136,23 @@ func _hide_bfme2_campaign_buttons() -> void:
 			_shell.set_clip_property(top, "SoloPlayNav.LoadGame", "_y", float(evil_y.value))
 
 
-## lane DEVPORT-8: the BFME2 campaigns are behind BFME2_CAMPAIGNS (off until B2CAMP-1): their buttons are hidden, so a request is a bug somewhere; it is
-## refused by name with the main menu's "not available" box (AptMainMenu::screenUnavailable, lane CAMPMENU-1: retail's GuiFX.apt message box, whose Ok
-## gives the menu back) and the stop line, which is returned. B2CAMP-1 replaces the body with its campaign entry point.
-func start_bfme2_campaign(alignment: String) -> String:
+## lane BFME2CAMP1: BFME2 MainMenu.apt's GoodCampaign / EvilCampaign (AptMainMenu.cpp: the request "bfme2:good:<difficulty>"). TARGET FACTS (RotWK
+## game.dat, which keeps BFME2's starters without registering their handlers): AptMainMenu::GoodCampaign RW 0x91AF46 / EvilCampaign RW 0x91AF69 store the
+## command's first character (+ 0x2A8) and the menu states 9 -> 0xB / 0xC; the menu update (RW 0x91C349, table RW 0x91C70B: 0xB -> RW 0x91C3A3, 0xC
+## -> RW 0x91C3B4) calls RW 0x91C1C8 / 0x91C215, which run RW 0x91C108 (the difficulty 'E' / 'H' / else normal, the transition) with the starter
+## RW 0x91BE05 ("GOOD_CAMPAIGN", RW 0xC7CEB4) / RW 0x91BDA6 ("EVIL_CAMPAIGN", RW 0xC7CEA4) -> RW 0x91B1D2, the campaign start ANGMAR_CAMPAIGN's starter
+## RW 0x91BE64 uses too. The menu skips its music stop for 0xB / 0xC as for 0xD / 0xE (RW 0x91B432 .. 0x91B444). So the start is the Angmar
+## campaign's (campaign_flow.start) with the other name. Donor: BFME2 1.06 registers the two buttons (decomp AptMainMenuCallbacks.cpp 0x00514AE0 /
+## 0x00514B03, AptMainMenu.cpp). Off (BFME2_CAMPAIGNS), or without the campaign in TheLinearCampaignManager (a mod's legend), the request is
+## refused by name with the main menu's "not available" box (AptMainMenu::screenUnavailable: GuiFX.apt's message box) and that line is returned;
+## else "" once the campaign has started
+func start_bfme2_campaign(alignment: String, argument: String = "") -> String:
 	if alignment not in ["good", "evil"]:
 		_fail("unknown BFME2 campaign alignment: " + alignment)
+		return ""
+	var campaign_name := "%s_CAMPAIGN" % alignment.to_upper()
+	if BFME2_CAMPAIGNS and not _campaign_flow.missions_of(campaign_name).is_empty():
+		_campaign_flow.start(campaign_name, _campaign_flow.difficulty_from_command(argument))
 		return ""
 	var line: String = _shell.shell_screen_unavailable("BFME2%sCampaign" % alignment.capitalize())
 	print("GAME stop: ", line)
@@ -2261,7 +2390,7 @@ func _begin_game(message: Dictionary) -> void:
 	var world_was_visible: bool = _world.visible
 	_world.hide() # keep partially constructed terrain behind the loading screen
 	_on_load_progress(0) # present the initial bar before synchronous loading
-	var opts := {"progress": Callable(self, "_on_load_progress"), "test_hooks": _end or not _zoom1.is_empty() or _rules_shot > 0 or not _gamemodes.is_empty() or _uber1 > 0 or _play_script.ends_with("spell3_player.gd") or _play_script.ends_with("weatherfx1_player.gd") or _play_script.ends_with("ownerfix1_player.gd") or _play_script.ends_with("devport7_player.gd") or _play_script.ends_with("banner1_player.gd") or _play_script.ends_with("ownerfix2_player.gd") or not _trees1.is_empty() or _play_script.ends_with("aidata1_player.gd")} # lane ZOOM-1: the bars scenario hurts some units (logged)
+	var opts := {"progress": Callable(self, "_on_load_progress"), "test_hooks": _end or _wotr_flow or not _zoom1.is_empty() or _rules_shot > 0 or not _gamemodes.is_empty() or _uber1 > 0 or _play_script.ends_with("spell3_player.gd") or _play_script.ends_with("weatherfx1_player.gd") or _play_script.ends_with("ownerfix1_player.gd") or _play_script.ends_with("devport7_player.gd") or _play_script.ends_with("banner1_player.gd") or _play_script.ends_with("ownerfix2_player.gd") or not _trees1.is_empty() or _play_script.ends_with("aidata1_player.gd")} # lane ZOOM-1: the bars scenario hurts some units (logged)
 	if _record and _net_state.is_empty():
 		opts["record"] = _last_replay_path() # lane MP-2: every skirmish is recorded
 	if _pingwheel.has("hash"):
@@ -2269,6 +2398,8 @@ func _begin_game(message: Dictionary) -> void:
 	var rep: Dictionary = _world.start_new_game(opts)
 	_report = rep
 	print("GAME load: %d ms, ok=%s" % [Time.get_ticks_msec() - started, rep.ok])
+	if rep.has("not_recorded"):
+		print("GAME ", rep.not_recorded) # lane WOTR-2: a War of the Ring battle
 	if rep.has("timings_ms"): # lane PERF-1: where the load went (ms per stage)
 		print("GAME load timings: ", JSON.stringify(rep.timings_ms))
 	if not rep.ok:
@@ -2516,6 +2647,8 @@ func _enter_game(rep: Dictionary) -> void:
 	print("GAME GuiFX for the end screen: level %d %s" % [gfx.get("level", -1), str(gfx.get("error", ""))])
 	if not _net_state.is_empty():
 		_net_begin()
+	if _wotr != null and _wotr.in_battle():
+		_wotr.on_battle_started(rep) # lane WOTR-1: the armies of a War of the Ring battle
 	_online_spectate = bool(_world.caster_transport_status().get("live", false))
 	if _game_kind == "replay" or _online_spectate:
 		_caster = load("res://scripts/caster_hud.gd").new()
@@ -2891,10 +3024,19 @@ func _zoom_out_setting() -> float:
 	return v.to_float()
 
 
+## lane WEATHERFX-2: the game's Enhanced weather goes with the game (the score screen, Restart, a load, a failed online game): freed at once, its
+## _exit_tree turns the weather's shader globals, the snow grade of the tone mapping and the sun's flash off before the next frame is drawn
+func _remove_weather_fx() -> void:
+	if _weather_fx != null and is_instance_valid(_weather_fx):
+		if _weather_fx.get_parent() != null:
+			_weather_fx.get_parent().remove_child(_weather_fx)
+		_weather_fx.free()
+	_weather_fx = null
+
+
 ## lane WEATHERFX-1: a new game's Enhanced weather (it draws only under Options "Look: Enhanced", scripts/weather_fx.gd)
 func _install_weather_fx() -> void:
-	if _weather_fx != null and is_instance_valid(_weather_fx):
-		_weather_fx.queue_free()
+	_remove_weather_fx()
 	_weather_fx = load("res://scripts/weather_fx.gd").new()
 	_weather_fx.setup(_world, _camera, _audio, _weather_fx_effects, _env.environment if _env != null else null, _sun)
 	if _game_options != null and _game_options.has_method("weather_fx_detail"):
@@ -3073,6 +3215,9 @@ func _run_auto() -> void:
 	await _step(LEVEL_MAIN_MENU_FRAMES + 70)
 	if _cah_demo:
 		await _run_cah()
+		return
+	if _wotr_flow:
+		await _run_wotr() # lane WOTR-1
 		return
 	if not await _auto_lobby_and_start():
 		return
@@ -3644,6 +3789,25 @@ func _auto_lobby_and_start() -> bool:
 		slots.append({"slot": i, "state": _ai})
 	for i in range(mini(_teams.size(), slots.size())): # lane QA-1: --teams
 		slots[i]["team"] = int(_teams[i])
+	if _play_script == "res://scripts/edainfactions1_player.gd":
+		if slots.size() != 3:
+			_fail("Edain selector test needs exactly two AI opponents")
+			return false
+		slots[1]["faction"] = "FactionDwarves"
+		slots[2]["faction"] = "FactionMen"
+		var available: Dictionary = _shell.lobby_state()
+		var keys: PackedStringArray = available.get("map_keys", PackedStringArray())
+		var counts: PackedInt32Array = available.get("map_players", PackedInt32Array())
+		var choice_map := "maps/map mp fall back 4p/map mp fall back 4p.map"
+		if _map_key != DEFAULT_MAP and _map_key != choice_map:
+			_fail("Edain selector test requires Fall Back 4P, not " + _map_key)
+			return false
+		var row: int = keys.find(choice_map)
+		if counts.size() != keys.size() or row < 0 or counts[row] < 3:
+			_fail("Edain selector test: the lobby does not offer Fall Back 4P for three players")
+			return false
+		_map_key = choice_map
+		print("EDAINFACTIONS1 selected lobby map: ", _map_key)
 	var spec := {
 		"map": _map_key,
 		"slots": slots,
@@ -3849,11 +4013,13 @@ func _end_game_tick() -> void:
 	if _end_message_label != null and _end_message_until > 0 and Time.get_ticks_msec() > _end_message_until:
 		_end_message_label.text = ""
 		_end_message_until = 0
+	if _wotr != null and _wotr.in_battle():
+		_wotr.battle_tick() # lane WOTR-1: a War of the Ring battle ends back on the strategic map
 
 
 func _input(event: InputEvent) -> void:
 	# lane END-2: Esc toggles the quit menu (the options meta command, RW 0x9DB877 -> ToggleQuitMenu RW 0x921C9D), as the Palantir's options button does
-	if _state == State.PLAYING and event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+	if (_state == State.PLAYING or _state == State.STRATEGIC) and event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 		# lane CHAT-1: Esc closes the chat window (its input procedure, RW 0x8ECB8F, through the HUD's key path), never the quit menu behind it
 		if _shell != null and _shell.has_method("ingame_chat_has_keys") and _shell.ingame_chat_has_keys():
 			return
@@ -3909,7 +4075,10 @@ func _net_score_flow() -> void:
 		_exit_to_score_screen()
 		await _wait_seconds(3.0)
 	await _wait_seconds(4.0)
-	print("GAME NET score shot %s (forfeit ok %s, score screen %s) -> %s" % [_net_score_shot, str(ok), str(_state == State.SCORE), error_string(get_viewport().get_texture().get_image().save_png(_net_score_shot))])
+	# lane SOLO-3: without a display (--headless) the viewport has no image: the score screen is still reported, the picture is not saved
+	var image := get_viewport().get_texture().get_image()
+	var saved := error_string(image.save_png(_net_score_shot)) if image != null else "not saved (no display)"
+	print("GAME NET score shot %s (forfeit ok %s, score screen %s) -> %s" % [_net_score_shot, str(ok), str(_state == State.SCORE), saved])
 	_net_score_shot = ""
 
 
@@ -3946,6 +4115,7 @@ func _palantir_objectives() -> void:
 
 
 var _objectives_paused := false # lane CAMPUI-1: the objectives screen paused the game (RW 0x8E8843 -> RW 0x625AF1(1, 0, 1))
+var _objectives_tutorial_input := -1 # lane BFME2CAMP1: the tutorial input flag the open objectives screen was given (-1: not open)
 var _stance_at := -1 ## --stance-at=F (lane CAMPUI-1, proof captures; the start option test_hooks): at logic frame F the Witch King is selected, the Palantir's stance button clicked and its Battle item hovered
 var _objectives_at := -1 ## --objectives-at=F (lane CAMPUI-1, proof captures): the Palantir flag's objectives screen opens at logic frame F, closes 6 s later
 
@@ -3960,7 +4130,10 @@ func _open_objectives(mode: int) -> void:
 	if not bool(obj.get("screen_enabled", true)):
 		print("GAME objectives screen: disabled by the map's script (DISABLE_OBJECTIVES_SCREEN)")
 		return
-	var screen: Dictionary = _shell.set_objectives_screen({"game_mode": 0 if mode == 0 else mode, "objectives": obj.get("objectives", [])})
+	# lane BFME2CAMP1: in the tutorial (mode 6) the Return button needs InGameUI + 0x16, the input flag the scripts' DISABLE_INPUT / ENABLE_INPUT set
+	# (RW 0x8E873E; AptObjectivesMenu::InputEnabled)
+	var tutorial_input: bool = _hud != null and _hud.input_enabled()
+	var screen: Dictionary = _shell.set_objectives_screen({"game_mode": 0 if mode == 0 else mode, "tutorial_input": tutorial_input, "objectives": obj.get("objectives", [])})
 	if not screen.get("ok", false):
 		printerr("GAME objectives screen: ", screen.get("error", "?"))
 		return
@@ -3975,6 +4148,7 @@ func _open_objectives(mode: int) -> void:
 		return
 	if _hud != null:
 		_hud.set_objectives_screen_open(true)
+	_objectives_tutorial_input = 1 if tutorial_input else 0
 	print("GAME objectives screen open (Objectives.apt, RW 0x8E8843): ", JSON.stringify(screen.get("rows", [])))
 
 
@@ -3985,6 +4159,7 @@ func _close_objectives() -> void:
 		return
 	_shell.shell_pop()
 	_close_objectives_unpause()
+	_objectives_tutorial_input = -1
 	if _hud != null:
 		_hud.set_objectives_screen_open(false)
 	print("GAME objectives screen closed")
@@ -4096,14 +4271,24 @@ var _restart_stack := PackedStringArray()
 ## ToggleQuitMenu (RW 0x921C9D): an open menu closes with code 0 (back to the game), else QuitMenu.apt opens over the game; a game that is not a network game
 ## pauses while it is open (RW 0x921C4C: RW 0x625AF1(1, 0, 1))
 func _toggle_quit_menu() -> void:
-	if _state != State.PLAYING:
+	if _state != State.PLAYING and _state != State.STRATEGIC:
 		return
 	if _quit_open:
 		_close_quit_menu()
 		return
 	if is_instance_valid(_caster):
 		_caster.overlays.set_clean(false)
-	var ctx: Dictionary = _world.get_quit_menu_context()
+	# WOTR2 milestone 3: on the War of the Ring map retail's quit menu opens over the strategic game (GameLogic + 0x114 == 0, TheLivingWorldLogic's
+	# selection locked): its Save / Load are the War of the Ring page (type 8, RW 0x92179F) and its restart button is Surrender (RW 0x9216EC)
+	var strategic := _state == State.STRATEGIC
+	var ctx: Dictionary = {"in_game": true, "mode": 2, "kind": 0, "strategic_map": true} if strategic else _world.get_quit_menu_context()
+	if strategic and _wotr.net:
+		# WOTR2 milestone 8: a LAN war (+ 0x110 1, + 0x114 1): no Load (RW 0x921F83); step 4: Save while none of the war's humans is gone (RW 0x6B5E3E)
+		ctx = {"in_game": true, "mode": 1, "kind": 1, "strategic_map": true, "war_players_gone": _wotr.war_humans_gone()}
+	if not strategic and _wotr != null and _wotr.in_battle() and int(ctx.get("mode", 2)) == 2:
+		# WOTR2 milestone 6: a single player War of the Ring battle is game kind 0 with the map left (RW 0x6DCFDF's mode 3): Save / Load give the War of the
+		# Ring page (type 8, RW 0x92179F) and Restart reads Forfeit (RW 0x921D5B); the port's battle logic still runs as kind 3 (S-1329)
+		ctx["kind"] = 0
 	var r: Dictionary = _shell.quit_menu({"kind": "open", "context": ctx})
 	print("GAME QUIT open: ", JSON.stringify(r), " context ", JSON.stringify(ctx))
 	_quit_log.append("open")
@@ -4111,11 +4296,13 @@ func _toggle_quit_menu() -> void:
 		printerr("GAME QUIT the quit menu did not open: ", r.get("error", ""))
 		return
 	_quit_open = true
+	if strategic and _wotr.hud != null:
+		_wotr.hud.visible = false # WOTR2 milestone 3: the provisional strategic panels (S-1334) are not drawn over the menus
 	if is_instance_valid(_caster):
 		_caster.set_suspended(true)
 	_set_game_overlays_covered(true)
 	var multiplayer: bool = ctx.get("mode", 2) == 1 or ctx.get("mode", 2) == 5
-	if not multiplayer:
+	if not multiplayer and not strategic: # the strategic game waits for its player's orders: nothing runs to pause
 		# retail's close (AptQuitMenu::~AptQuitMenu, RW 0x921904) unpauses a single player game unconditionally; only a caster's replay that was
 		# already paused on its transport bar stays paused (DEVPORT-5: an OpenBFME caster rule, not retail)
 		_quit_paused = not (is_instance_valid(_caster) and _world.is_paused())
@@ -4142,6 +4329,8 @@ func _close_quit_menu(exiting := false) -> void:
 	var r: Dictionary = _shell.quit_menu({"kind": "close"})
 	print("GAME QUIT close: ", JSON.stringify(r))
 	_quit_open = false
+	if _wotr != null and _wotr.is_active() and _wotr.hud != null:
+		_wotr.hud.visible = true
 	if is_instance_valid(_caster):
 		_caster.set_suspended(false)
 	_set_game_overlays_covered(false)
@@ -4162,7 +4351,18 @@ func _quit_menu_action(action: String, argument := "") -> void:
 		if not ctx.get("allied_victory", false):
 			print("GAME QUIT surrender: ", JSON.stringify(_world.self_destruct(false)))
 	elif action == "QuitMenuExit":
-		call_deferred("_quit_menu_exit")
+		if _state == State.STRATEGIC:
+			_close_quit_menu(true)
+			_wotr.call_deferred("leave_to_shell") # WOTR2 milestone 3: the strategic game ends (RW 0x921904's message 0x6B8)
+		else:
+			call_deferred("_quit_menu_exit")
+	elif action == "QuitMenuRestart" and _wotr != null and _wotr.net and _wotr.in_battle():
+		# WOTR2 milestone 8 (step 3): Forfeit in a LAN war's battle: the surrender MSG 0x448 (MSG_SELF_DESTRUCT) goes through the lockstep; its handler (RW
+		# 0x779A3D case 0x448) leaves the local player in the battle as a defeated observer (GUI:StuckAsObserverInStrategicRTSGameMessage, RW 0x69E974)
+		# while the battle plays on and the war continues: not a departure. INFERENCE [S-1339]: the quit menu's route to that message in a war battle is
+		# not traced (RW 0x9220DE is the restart). Exit (RW 0x921904: 0x448, then the game left) stays a departure that ends the war (QuitWar)
+		_close_quit_menu()
+		print("GAME QUIT LAN war battle forfeit: ", JSON.stringify(_world.self_destruct(true)))
 	elif action == "QuitMenuRestart":
 		call_deferred("_restart_game")
 	elif action == "QuitMenuSave" or action == "QuitMenuLoad":
@@ -4178,6 +4378,18 @@ func _quit_menu_action(action: String, argument := "") -> void:
 ## Exit (RW 0x921904 -> RW 0x625E36(1)): a multiplayer game that is not a sandbox (TheGameInfo vslot 0x50, isSandbox RW 0x800C8F) sends MSG_SELF_DESTRUCT(true), then
 ## MSG_CLEAR_GAME_DATA leaves the game to the score screen (RW 0x779E28: clearGameData(true) for a skirmish or a multiplayer game)
 func _quit_menu_exit() -> void:
+	if _wotr != null and _wotr.net and _wotr.in_battle() and _wotr.capture_armed and not _wotr.lw.battle_capture_done() and _world.lan_war_battle_end_frame() >= 0:
+		# WOTR2 milestone 8 (step 3): an Exit from a LAN war's battle after its victory waits until this peer's logic has run T_end (the victory event's
+		# frame + the end-game timer: the frame every peer reads the result in), at most the timer's 25 frames: its self-destruct and its leave then come
+		# after T_end, the battle's normal end for every peer (wotr.gd _process leaves once the capture ran)
+		_close_quit_menu(true)
+		_wotr.exit_waiting = true
+		print("GAME WOTR NET exit: waiting for the battle's end frame ", _world.lan_war_battle_end_frame())
+		return
+	_quit_menu_exit_now()
+
+
+func _quit_menu_exit_now() -> void:
 	var ctx: Dictionary = _world.get_quit_menu_context()
 	_close_quit_menu(true)
 	var multiplayer: bool = ctx.get("mode", 2) == 1 or ctx.get("mode", 2) == 5
@@ -4299,6 +4511,7 @@ func _tear_down_game(why: String, clear_world: bool = true) -> void:
 		_hud.free()
 		_hud = null
 	_hud_installed = false
+	_remove_weather_fx() # lane WEATHERFX-2
 	_shell.set_tribute_world(null)
 	while _shell.shell_stack().size() > 0:
 		_shell.shell_pop()
@@ -4316,6 +4529,14 @@ func _exit_to_score_screen() -> void:
 	if _state != State.PLAYING:
 		return
 	_state = State.SCORE
+	if _wotr != null and _wotr.in_battle():
+		_wotr.before_battle_left() # lane WOTR-2: a War of the Ring battle's result is counted while its objects still exist
+		if _wotr.net_online and bool(_wotr.battle_result.get("collected", false)) and int(_world.get_end_game_state().get("end_timer", -1)) == 0:
+			# The phase-2 relay game must exist before net_finish closes phase 1's tactical stream (RW 0x625FC2 restarts the network session).
+			var phase_error: String = await _wotr.request_online_phase([])
+			if not phase_error.is_empty():
+				_fail("War of the Ring (online): back on the map: " + phase_error)
+				return
 	if _cheat_game:
 		_show_rules_summary("Cheat Mode (OpenBFME) game: not counted in any statistics") # lane CHEAT-1: the score screen says so
 	if _quit_open:
@@ -4356,6 +4577,7 @@ func _exit_to_score_screen() -> void:
 		_hud.free()
 		_hud = null
 	_hud_installed = false
+	_remove_weather_fx() # lane WEATHERFX-2: no weather over the score screen and the menus after it
 	_shell.set_tribute_world(null)
 	while _shell.shell_stack().size() > 0:
 		_shell.shell_pop()
@@ -4370,6 +4592,9 @@ func _exit_to_score_screen() -> void:
 	_restore_sound_volumes()
 	if not r.get("ok", false):
 		_fail("clear_game_data: " + str(r.get("error", "")))
+		return
+	if _wotr != null and _wotr.in_battle():
+		_wotr.on_battle_left(r) # lane WOTR-1: the battle's result goes to the strategic map, not to the score screen
 		return
 	if not _shell.set_score_screen_from_world(_world):
 		_fail("the score screen has no data")
@@ -5790,25 +6015,28 @@ func _online_walk_run() -> void:
 	_online_shot("main-menu")
 	print("GAME ONLINE WALK: the main menu's Online")
 	_shell.shell_fscommand("AptMainMenu::OnlineButtonPressed", "")
-	if not await _online_wait("the sign-in page", func(st): return st.get("page", "") == "OnlineLogin", 240):
+	# A second session with the kept lobby credential opens straight on Home; only a fresh session needs the Login movie.
+	if not await _online_wait("the sign-in page or the kept session", func(st):
+			return st.get("page", "") == "OnlineLogin" or (st.get("page", "") == "OnlineHome" and st.get("signed_in", false)), 240):
 		return _online_walk_end(false)
-	if not await _online_wait("the nickname field", func(_st):
-		for gadget in _shell.list_gadgets():
-			if gadget.get("name", "") == "OnlineLogin::Nickname" and not gadget.get("hidden", true):
-				return true
-		return false, 30.0):
-		return _online_walk_end(false)
-	_online_shot("login")
-	# lane ONLINEMENU-1: the nickname field is made by the page's own InitGadgets some frames after the page shows: retried until it exists (10 s)
-	var nick := _online_name if not _online_name.is_empty() else ("Host" if _online_walk == "host" else "Joiner")
-	var nick_until := Time.get_ticks_msec() + 10000
-	while true:
-		var r: Dictionary = _shell.online_apply({"nickname": nick})
-		if r.ok or Time.get_ticks_msec() > nick_until:
-			print("GAME ONLINE WALK {\"nickname\":\"%s\"} -> %s" % [nick, "ok" if r.ok else str(r.errors)])
-			break
-		await _wait_seconds(0.25)
-	_online_apply({"command": "AptOnline::Login::Login"})
+	if _shell.online_status().get("page", "") == "OnlineLogin":
+		if not await _online_wait("the nickname field", func(_st):
+			for gadget in _shell.list_gadgets():
+				if gadget.get("name", "") == "OnlineLogin::Nickname" and not gadget.get("hidden", true):
+					return true
+			return false, 30.0):
+			return _online_walk_end(false)
+		_online_shot("login")
+		# lane ONLINEMENU-1: the nickname field is made by the page's own InitGadgets some frames after the page shows: retried until it exists (10 s)
+		var nick := _online_name if not _online_name.is_empty() else ("Host" if _online_walk == "host" else "Joiner")
+		var nick_until := Time.get_ticks_msec() + 10000
+		while true:
+			var r: Dictionary = _shell.online_apply({"nickname": nick})
+			if r.ok or Time.get_ticks_msec() > nick_until:
+				print("GAME ONLINE WALK {\"nickname\":\"%s\"} -> %s" % [nick, "ok" if r.ok else str(r.errors)])
+				break
+			await _wait_seconds(0.25)
+		_online_apply({"command": "AptOnline::Login::Login"})
 	if not await _online_wait("the home page", func(st): return st.get("signed_in", false) and st.get("page", "") == "OnlineHome", 240):
 		return _online_walk_end(false)
 	await _online_wait("the message of the day", func(st): return not st.get("motd", []).is_empty() and st.motd[0] != "...", 80)
@@ -5825,6 +6053,12 @@ func _online_walk_run() -> void:
 		return _online_walk_rejoin()
 	if _online_walk == "hub":
 		await _online_walk_hub()
+		return
+	if _online_walk in ["warhost", "warjoin"]:
+		print("GAME ONLINE WAR entering strategic page")
+		var walked: bool = await load("res://tests/online_war_walk.gd").new().run(self, _online_walk == "warhost")
+		if not walked:
+			_online_walk_end(false)
 		return
 	if _online_walk == "qm":
 		await _online_walk_qm()
@@ -6150,7 +6384,11 @@ func _on_online_started(start_json: String) -> void:
 	# lane ONLINEHUB-1: the game's id for its record and result: the platform's match (Quick Match, tournament) or the lobby's game
 	var ps: Dictionary = _shell.platform_status()
 	var match_id := str(ps.get("match_id", ""))
-	_hub_online = {"id": match_id if not match_id.is_empty() else str(_shell.online_status().get("game_id", "")), "match": match_id,
+	var game_id := str(_shell.online_status().get("game_id", ""))
+	if game_id.is_empty(): # lane SOLO-3: a game started without the online screens (--online-host / --online-join): the START names the lobby's game
+		var start: Variant = JSON.parse_string(start_json)
+		game_id = str(start.get("game", "")) if start is Dictionary else ""
+	_hub_online = {"id": match_id if not match_id.is_empty() else game_id, "match": match_id,
 		"tournament": str(ps.get("tournament_id", ""))}
 	var r: Dictionary = _world.net_online(start_json)
 	print("GAME ONLINE start: ", AptMenuPlayer.online_redact(str(r)))
@@ -6204,7 +6442,25 @@ func _net_poll_lobby() -> void:
 	elif p.state == "started":
 		_net_state = "loading"
 		print("GAME NET lobby started: local slot %d, run-ahead %d, CRC interval %d" % [p.local_slot, p.run_ahead, p.crc_interval])
+		if int(p.message.get("game_mode", 0)) == 1:
+			# RW 0x648CF1 (BFME2 decomp AptOnlineCustomMatchMessageHandler.cpp): the strategic START opens the same war as a LAN START.
+			var message: Dictionary = p.message
+			message["living_world_campaign"] = str(message.get("scenario", ""))
+			_net_state = "playing"
+			if _wotr.begin_campaign(message, true) and _online_walk != "":
+				_run_lan_wotr()
+			return
 		_begin_game(p.message)
+
+
+## WOTR2 milestone 8: the network options of a LAN war's strategic map (wotr.gd begin_campaign -> GameWorld.lan_strategic_begin)
+func _wotr_net_options() -> Dictionary:
+	var opts := {}
+	if _net_disconnect_ms >= 0:
+		opts["disconnect_ms"] = _net_disconnect_ms
+	if _net_player_timeout_ms >= 0:
+		opts["player_timeout_ms"] = _net_player_timeout_ms
+	return opts
 
 
 func _net_begin() -> void:
@@ -6978,6 +7234,9 @@ func _net_end_flow(desyncs: int) -> void:
 
 ## The main menu's LAN: GameWorld's LAN lobby (bound once, kept for the session) handed to LanLobby.apt
 func _open_lan_lobby() -> void:
+	if not _lan_wotr_tamper.is_empty():
+		_tamper_lan_save(_lan_wotr_tamper)
+		_lan_wotr_tamper = ""
 	_sync_simulation_profile() # lane UBER-1: the lobby announces the identity of the player's profile
 	var st: Dictionary = _world.lan_status()
 	if not st.get("open", false):
@@ -6987,6 +7246,8 @@ func _open_lan_lobby() -> void:
 			opts["targets"] = Array(_lan_targets.split(","))
 		if _lan_port_base > 0:
 			opts["port_base"] = _lan_port_base
+		if _wotr != null:
+			opts["resume_check"] = Callable(_wotr, "resume_check") # WOTR2 milestone 8 (step 4): this player's copy of a resumed war
 		var r: Dictionary = _world.lan_open(opts)
 		print("GAME LAN lobby: ", r)
 		if not r.ok:
@@ -7004,10 +7265,182 @@ func _lan_game_start() -> void:
 	if not p.ok:
 		_fail("LAN start: " + str(p.get("error", "")))
 		return
-	_net_state = "loading"
 	_lan_shell_game = true
 	print("GAME LAN game started: local slot %d, run-ahead %d, CRC interval %d" % [p.local_slot, p.run_ahead, p.crc_interval])
+	var message: Dictionary = p.message
+	if int(message.get("game_mode", 0)) == 1:
+		# WOTR2 milestone 8 (step 2b): a War of the Ring (GT + 0x5C = 1): every peer starts the strategic game from the START (RotWK's MSG 0x1F with the
+		# scenario, RW 0x648CF1) instead of loading a map
+		message["living_world_campaign"] = str(message.get("scenario", ""))
+		print("GAME LAN War of the Ring: scenario %s" % message.living_world_campaign)
+		_net_state = "playing"
+		if not _wotr.begin_campaign(message, true):
+			return
+		if _lan_mode != "":
+			_run_lan_wotr()
+		return
+	_net_state = "loading"
 	_begin_game(p.message)
+
+
+## WOTR2 milestone 8 (step 2b): --lan=host|join --lan-wotr: the war's turns over the LAN: each turn the scripted orders and END PHASE (or the phase timer),
+## battles of this player auto-resolved; --lan-wotr-crash-turn=K dies in turn K's orders phase (the others drop it). Prints "GAME WOTR NET RESULT ok"
+## after --wotr-turns turns (the process test compares every survivor's "GAME WOTR NET turn" lines)
+func _run_lan_wotr() -> void:
+	var start_turn: int = int(_wotr.state.turn)
+	var ended_turn := -1
+	var end_sent_ms := -1
+	var voted := {}
+	var waited := 0.0
+	var battle_seen := false
+	while (_wotr.active or _wotr.in_battle()) and not bool(_wotr.state.get("finished", false)) and int(_wotr.state.turn) < start_turn + _wotr_turns:
+		if _wotr.in_battle():
+			# WOTR2 milestone 8 (step 3): a real-time battle over the LAN; --lan-wotr-rts: the host forfeits it through the quit menu (retail's 0x448)
+			if not battle_seen:
+				battle_seen = true
+				print("GAME WOTR NET in a real-time battle")
+				if _lan_wotr_rts and (_lan_mode == "host" or _online_walk == "warhost"):
+					await _wait_seconds(20.0)
+					await _press_escape()
+					await _wait_seconds(3.0)
+					var forfeit := await _click_quit("ExitMission" if _lan_wotr_rts_exit else "Restart")
+					await _wait_seconds(2.0)
+					var yes := await _click_quit("Yes")
+					print("GAME WOTR NET %s: %s %s" % ["exit" if _lan_wotr_rts_exit else "forfeit", str(forfeit), str(yes)])
+			await _wait_seconds(1.0)
+			waited += 1.0
+			if waited > 900.0:
+				_fail("LAN War of the Ring: the battle did not end in 15 minutes")
+				return
+			continue
+		if battle_seen and _wotr.active:
+			battle_seen = false
+		var turn: int = int(_wotr.state.turn)
+		var me: Dictionary = _wotr.state.players[_wotr.local_player]
+		# the notices (a defeated player, a hero killed) and the battle statistics are modal: closed with their own buttons, as the single player run does
+		await _wotr_dismiss_dialogs()
+		if bool(me.defeated):
+			pass # a defeated player's peer only watches (the lockstep runs on)
+		elif int(_wotr.state.phase) == 0 and ended_turn != turn and turn == _lan_wotr_save_turn and (_lan_mode == "host" or _online_walk == "warhost") and not _lan_wotr_save_asked:
+			# WOTR2 milestone 8 (step 4): the quit menu's Save on the map asks the others (the scripted ones say Yes, then everyone votes to leave for now)
+			_lan_wotr_save_asked = true
+			_wotr.ask_lan_save("lanwar")
+			await _wait_seconds(1.0)
+			continue
+		elif int(_wotr.state.phase) == 0 and ended_turn != turn:
+			_wotr.scripted_orders(_lan_wotr_rts) # --lan-wotr-rts: march on the other human (its battle is fought in real time)
+			await _wait_seconds(1.0)
+			if turn == _lan_wotr_crash_turn:
+				print("GAME WOTR NET crash: turn %d (the process is killed)" % turn)
+				OS.kill(OS.get_process_id())
+				return
+			if turn == _lan_wotr_stall_turn:
+				print("GAME WOTR NET stall: turn %d (the process hangs %d s)" % [turn, _lan_wotr_stall_seconds])
+				OS.delay_msec(_lan_wotr_stall_seconds * 1000) # nothing runs: no frame, no datagram (the others' disconnect path drops this client)
+				_lan_wotr_stall_turn = -2 # the stall happened: the client must now leave by itself (wotr.gd _net_tick)
+				ended_turn = turn
+				continue
+			ended_turn = turn
+			end_sent_ms = -1
+		if not bool(me.defeated) and int(_wotr.state.phase) == 0 and ended_turn == turn and not bool(me.get("ended_turn", false)) \
+				and (end_sent_ms < 0 or Time.get_ticks_msec() - end_sent_ms > 3000):
+			_wotr.end_turn() # END PHASE (refused by the client while a notice is up: sent again until the lockstep ran it)
+			end_sent_ms = Time.get_ticks_msec()
+		var pending: int = int(_wotr.state.get("pending_battle", -1))
+		if pending >= 0 and not voted.has([turn, pending]) and _wotr._in_battle(_wotr.state.battles[pending]):
+			voted[[turn, pending]] = true
+			var rts: bool = _lan_wotr_rts and (_lan_wotr_rts_battles < 0 or _lan_wotr_rts_battles > 0)
+			if rts and _lan_wotr_rts_battles > 0:
+				_lan_wotr_rts_battles -= 1
+			print("GAME WOTR NET vote for battle %d in turn %d: %s" % [pending, turn, "real time" if rts else "auto-resolve"])
+			_wotr.choose_battle(rts) # --lan-wotr-rts: the real-time vote (fought only when every human of the war is in the battle)
+		if int(_wotr.state.phase) == 4:
+			await _wotr_resolve_retreats()
+		if _lan_wotr_stall_turn == -2 and int(waited * 2) % 6 == 0:
+			# S-1341: what the resumed client's network knows after its stall (dropped slots, quit, protocol errors), every 3 s
+			var sn: Dictionary = _wotr.lw.net_status()
+			print("GAME WOTR NET after the stall: frame %d, quit %s (%s), dropped %s, errors %s" % [int(sn.get("frame", -1)), str(sn.get("quit_requested", false)),
+				str(sn.get("quit_reason", "")), str(sn.get("dropped", [])), str(sn.get("errors", []))])
+		await _wait_seconds(0.5)
+		waited += 0.5
+		if waited > 600.0:
+			_fail("LAN War of the Ring: turn %d phase %s did not end in 10 minutes" % [turn, str(_wotr.state.phase_name)])
+			return
+	if _lan_wotr_save_turn >= 0 or not _lan_wotr_resume.is_empty():
+		# WOTR2 milestone 8 (step 4): the LAN war's save on every peer (each its own copy, one MD5 and state hash) and the unanimous leave
+		var saves: Array = _wotr.net_saves
+		var ok_save: bool = saves.size() >= 1 and not _wotr.net_war_ended.is_empty()
+		print("GAME WOTR NET SAVE RESULT %s: saves %s, war ended: %s" % ["ok" if ok_save or not _lan_wotr_resume.is_empty() else "FAILED", JSON.stringify(saves), _wotr.net_war_ended])
+		if _online_walk != "" and _lan_wotr_save_turn >= 0 and _state == State.SCORE:
+			# The player presses Continue after agreeing to save. It marks the old relay game left before a later session hosts the saved war.
+			await _score_continue()
+			if not await _online_wait("the online staging room after saving", func(st):
+					return not st.get("in_game", false) and not st.get("busy", false) and st.get("page", "") == "OnlineStrategic", 45):
+				get_tree().quit(1)
+				return
+		get_tree().quit(0 if ok_save or not _lan_wotr_resume.is_empty() else 1)
+		return
+	if not _wotr.net_war_ended.is_empty():
+		# Sol review wotr2m8s3: a player left a battle: the war ended for every peer (no result applied); Continue shows the original lobby again.
+		var lobby_again: bool = _start_stack.has("LanLobby.apt") or _start_stack.has("OnlineShell.apt")
+		var detached: bool = not bool(_wotr.lw.net_status().get("network", true))
+		var war_ok: bool = lobby_again and detached and _net_state.is_empty()
+		if _online_walk != "" and war_ok:
+			await _score_continue()
+			war_ok = await _online_wait("the online strategic page after the battle ended", func(st):
+				return not st.get("in_game", false) and not st.get("busy", false) and st.get("page", "") == "OnlineStrategic", 45)
+		print("GAME WOTR NET WAR END RESULT %s: %s, detached %s, Continue shows %s" % ["ok" if war_ok else "FAILED", _wotr.net_war_ended, str(detached), str(_start_stack)])
+		get_tree().quit(0 if war_ok else 1)
+		return
+	if _lan_wotr_stall_turn == -2:
+		# Sol review wotr2m8s2b2: the stalled client left by itself; its score screen's Continue shows the LAN lobby again (Shell::pop RW 0x75DB34)
+		var left: bool = not _wotr.active
+		var lobby_again: bool = _start_stack.has("LanLobby.apt")
+		print("GAME WOTR NET STALL RESULT %s: left by itself %s, Continue shows %s" % ["ok" if left and lobby_again else "FAILED", str(left), str(_start_stack)])
+		get_tree().quit(0 if left and lobby_again else 1)
+		return
+	var ns: Dictionary = _wotr.lw.net_status()
+	var ok: bool = int(ns.get("desyncs", 0)) == 0
+	print("GAME WOTR NET RESULT %s: turn %d, frame %d, desyncs %d %s, dropped %s, defeated %s" % ["ok" if ok else "FAILED", int(_wotr.state.turn),
+		int(ns.get("frame", -1)), int(ns.get("desyncs", 0)), str(ns.get("desync", "")), str(ns.get("dropped", [])),
+		str(_wotr.state.players.map(func(p): return bool(p.defeated)))])
+	ok = ok and await _lan_wotr_after_checks()
+	get_tree().quit(0 if ok else 1)
+
+
+## Sol review wotr2m8s2b's regressions, on the running LAN war and after it: a direct Save refused in the war (WOTR2 step 4: it goes through the other players' agreement), Load refused (RotWK RW 0x921F83); leaving
+## detaches the session and ends the network game (the next skirmish is not a network game); a single player war on the same LivingWorldGame runs its
+## orders at once and advances
+func _lan_wotr_after_checks() -> bool:
+	var campaign := str(_wotr.lobby_message.get("living_world_campaign", ""))
+	var factions := [str(_wotr.state.players[0].faction), str(_wotr.state.players[_wotr.state.players.size() - 1].faction)]
+	var saved: Dictionary = _wotr.save_map("user://lan_war_refused.sav", "refused")
+	var state_saved: Dictionary = _wotr.lw.save_state()
+	var loaded: String = _wotr.begin_from_save({})
+	var lw_loaded: Dictionary = _wotr.lw.load_state(PackedByteArray(), 0, 0, false)
+	var save_refused: bool = not bool(saved.get("ok", true)) and str(saved.get("error", "")).contains("the other players agree") and not bool(state_saved.get("ok", true)) \
+		and loaded.contains("cannot load") and not bool(lw_loaded.get("ok", true)) and str(lw_loaded.get("error", "")).contains("cannot load")
+	print("GAME WOTR NET AFTER save/load in the war: save %s / %s, load %s / %s" % [str(saved), str(state_saved.get("error", "")), loaded, str(lw_loaded.get("error", ""))])
+	var lw = _wotr.lw
+	_wotr.leave_to_shell()
+	await _wait_seconds(1.0)
+	var detached: bool = not bool(lw.net_status().get("network", true))
+	var poll: Dictionary = _world.net_poll()
+	var not_network: bool = _net_state.is_empty() and str(poll.get("state", "")) != "started"
+	print("GAME WOTR NET AFTER leaving: session detached %s, _net_state '%s', net_poll %s" % [str(detached), _net_state, str(poll.get("state", ""))])
+	var setup := {"campaign": campaign, "seed": 5, "slots": [{"name": "Solo", "faction": factions[0], "human": true, "ai": 0, "team": 0, "start_region": ""},
+		{"name": "Computer", "faction": factions[1], "human": false, "ai": 3, "team": 1, "start_region": ""}]}
+	var started: Dictionary = lw.start(setup)
+	var order: Dictionary = lw.end_turn(0)
+	lw.update()
+	var sp_state: Dictionary = lw.get_strategic_state()
+	var sp_ok: bool = bool(started.get("ok", false)) and bool(order.get("ok", false)) and not order.has("queued") \
+		and (int(sp_state.turn) == 2 or int(sp_state.phase) != 0)
+	print("GAME WOTR NET AFTER single player war on the same world: start %s, END PHASE %s, turn %d phase %d" % [str(started), str(order), int(sp_state.turn), int(sp_state.phase)])
+	var all_ok := save_refused and detached and not_network and sp_ok
+	print("GAME WOTR NET AFTER %s: save/load refused %s, detached %s, not a network game %s, single player war %s" % ["ok" if all_ok else "FAILED",
+		str(save_refused), str(detached), str(not_network), str(sp_ok)])
+	return all_ok
 
 
 ## --lan=host|join: the lobby driven through the movie's own commands and gadget messages
@@ -7030,7 +7463,24 @@ func _lan_script_tick() -> void:
 			_lan_phase = 1
 			_lan_wait = 0
 	elif _lan_phase == 1:
-		if top == "LanLobby.apt" and _lan_wait > 60:
+		if top == "LanLobby.apt" and _lan_wotr and not _lan_wotr_page and _lan_wait > 60:
+			# WOTR2 milestone 8: the LAN menu's War of the Ring button (LanLobby.apt's SelectStrategic: _root.LoadScreen("LanStrategic") loads
+			# LanStrategic.swf and sends AptLanLobby::OnLoadScreen, RW 0x846FB0), clicked as a player does
+			_lan_wotr_page = true # before the await: this tick runs again next frame
+			_lan_wait = 0
+			var level: int = _shell.shell_top_level()
+			var target := ""
+			for b in _shell.list_buttons(level):
+				if b.hittable and str(b.path).to_lower().contains("strategic"):
+					target = str(b.path)
+					break
+			if target.is_empty():
+				print("GAME LAN buttons: ", JSON.stringify(_shell.list_buttons(level)))
+				_fail("LAN script: no War of the Ring button on the LAN page")
+				return
+			print("GAME LAN script: the War of the Ring page (%s)" % target)
+			await _click_button(level, target)
+		elif top == "LanLobby.apt" and _lan_wait > 60 and (_lan_wotr_page or not _lan_wotr):
 			if _lan_mode == "host":
 				print("GAME LAN script: Create Game")
 				_shell.shell_fscommand("AptLanLobby::OnCreateGameBttn", "")
@@ -7057,23 +7507,72 @@ func _lan_script_tick() -> void:
 			if not _faction.is_empty():
 				slots.append({"slot": int(st.slot), "faction": _faction})
 			var spec := {"slots": slots}
-			if _lan_mode == "host":
+			if _lan_mode == "host" and _lan_wotr:
+				spec["scenario"] = _wotr_scenario # WOTR2 milestone 8: the scenario list in place of the maps
+				for i in range(_lan_ai):
+					slots.append({"slot": _lan_players + i, "state": 3})
+			elif _lan_mode == "host":
 				spec["map"] = _map_key
 				for i in range(_lan_ai):
 					slots.append({"slot": _lan_players + i, "state": 3})
 			var a: Dictionary = _shell.lobby_apply(spec)
 			print("GAME LAN script: the setup ", JSON.stringify(spec), " -> ", a.ok, " ", a.errors)
+			if not a.ok and _lan_wotr:
+				# WOTR2 milestone 8: the War of the Ring setup's gadgets come with LanStrategic.swf's frames: tried again (every half second) until they are
+				_lan_wotr_setup_tries += 1
+				if _lan_wotr_setup_tries > 60:
+					_fail("LAN script: the War of the Ring setup was never applied: " + str(a.errors))
+				_lan_wait = 0
+				return
 			_lan_phase = 3
+			_lan_wait = 0
+		elif _lan_wait > 600 and _lan_wotr and _lan_mode == "join" and _lan_wotr_join_tries < 3:
+			# WOTR2 milestone 8: a join that got no answer (the host was still setting the game up): the list's Join again
+			_lan_wotr_join_tries += 1
+			print("GAME LAN script: no game after 10 s, joining again (%d)" % _lan_wotr_join_tries)
+			_lan_phase = 1
 			_lan_wait = 0
 		elif _lan_wait > 600:
 			_fail("LAN script: no game after 10 s: " + str(st))
 	elif _lan_phase == 3:
+		if _lan_wotr and not _lan_wotr_region_set and st.get("in_game", false) and _lan_wait > 30:
+			# WOTR2 milestone 8: this player's start region (a joiner once the host's scenario arrived: it is refused before)
+			# --lan-wotr-region=N: the N-th region the preview offers as a start (AllowsStartInRegion RW 0x97572C)
+			var setup: Dictionary = _shell.strategic_setup({"kind": "state"})
+			var offered: Array = []
+			var selectable: Array = setup.get("selectable", [])
+			for i in range(selectable.size()):
+				if bool(selectable[i]):
+					offered.append(i)
+			if _lan_wotr_region < 0 or _lan_wotr_region >= offered.size():
+				print("GAME LAN script: start region %d of %d offered (waiting)" % [_lan_wotr_region, offered.size()])
+				_lan_wait = 0
+				return
+			var region: int = int(offered[_lan_wotr_region])
+			var picks: Array = [{"slot": int(st.slot), "start_region": region}]
+			if _lan_mode == "host":
+				for i in range(_lan_ai):
+					# the host's AI slots (after the players) take the next offered regions after the last player's (GUI:NeedStartSpots: none without)
+					var ai_region: int = int(offered[(_lan_players + i) % offered.size()])
+					picks.append({"slot": _lan_players + i, "start_region": ai_region})
+			var pick: Dictionary = _shell.lobby_apply({"slots": picks})
+			print("GAME LAN script: start region %d (region %d) -> %s %s" % [_lan_wotr_region, region, str(pick.ok), str(pick.errors)])
+			_lan_wotr_region_set = pick.ok
+			_lan_wait = 0
+			return
+		if _lan_wotr_lobby_refusal and _lan_mode == "join":
+			_lan_watch_refusal(st) # WOTR2 milestone 8 (step 4): the joiner sees the host's refusal line too
 		if _lan_mode == "join":
 			if st.get("in_game", false) and not st.get("accepted_me", false) and _lan_wait > 60:
 				print("GAME LAN script: Accept")
 				_shell.shell_fscommand("MpGameSetup::OnReadyPress", str(int(st.slot)))
 				_lan_wait = 0
 		elif int(st.get("humans", 0)) >= _lan_players and int(st.get("accepted", 0)) >= _lan_players - 1:
+			if not _lan_wotr_resume.is_empty() and not _lan_wotr_resume_set:
+				_lan_wotr_resume_set = true
+				_lan_set_resume()
+				_lan_wait = 0
+				return
 			if _lan_wait > 90:
 				if not _lan_shot.is_empty() and not _lan_shot_done:
 					_lan_shot_done = true
@@ -7088,13 +7587,228 @@ func _lan_script_tick() -> void:
 				_lan_phase = 4
 				_lan_wait = 0
 				_lan_start_ms = Time.get_ticks_msec()
+				_lan_press_ms = Time.get_ticks_msec()
 		else:
 			_lan_wait = 0
+	elif _lan_phase == 4 and _lan_wotr_lobby_refusal:
+		_lan_watch_refusal(st)
+	# the countdown (6 s, RW 0x843840) and the starting box (5 s, RW 0x84392C) before the start: a Start pressed again within them starts the countdown
+	# over, so the retry waits 30 s of wall time (a headless run's frame rate is not 60)
+	elif _lan_phase == 4 and not _lan_wotr_resume.is_empty() and not bool(st.get("started", false)) and Time.get_ticks_msec() - _lan_press_ms > 30000:
+		# the lobby's log, its counts, the LAN errors and the shell's lan- notes (the start check's refusal, the countdown's system lines)
+		print("GAME LAN script: the resumed war did not start: ", JSON.stringify(Array(st.get("log", [])).slice(-4)), "; the lobby ",
+			JSON.stringify({"humans": st.get("humans"), "accepted": st.get("accepted"), "started": st.get("started"), "in_game": st.get("in_game")}),
+			"; errors ", JSON.stringify(st.get("errors", [])), "; notes ",
+			JSON.stringify(Array(_shell.get_shell_report().get("note_lines", [])).filter(func(l): return str(l).begins_with("lan-") and not str(l).begins_with("lan-stops")).slice(-12)))
+		_lan_phase = 3 # the host's Start was refused (a joiner's check): try again
+		_lan_wait = 0
 	elif _lan_phase == 4:
 		if not _lan_shot_start.is_empty() and _lan_start_ms >= 0 and Time.get_ticks_msec() - _lan_start_ms >= 8000:
 			_lan_start_ms = -1
 			var image := get_viewport().get_texture().get_image()
 			print("GAME LAN start shot %s -> %s" % [_lan_shot_start, error_string(image.save_png(_lan_shot_start))])
+
+## WOTR2 milestone 8 (step 4): --lan-wotr-tamper-save (the test of a copy that differs): the save's strategic state with one byte flipped, its session
+## (and so its identity) unchanged
+func _tamper_lan_save(name: String) -> void:
+	var path: String = _save_flow.save_dir().path_join(name + ".obfmesave")
+	var save: Dictionary = _world.read_wotr_save(path)
+	if not save.get("ok", false):
+		_fail("tamper: %s does not read: %s" % [path, str(save.get("error", ""))])
+		return
+	var state: PackedByteArray = save.state
+	var at: int = state.size() / 2
+	state[at] = state[at] ^ 0x01
+	var r: Dictionary = _world.save_wotr_map(path, {"description": name, "scenario": str(save.get("scenario", "")), "state": state,
+		"state_hash": int(save.state_hash), "session": save.session, "lan": true})
+	print("GAME LAN script: tampered %s (byte %d of %d): %s" % [name, at, state.size(), JSON.stringify(r)])
+
+
+## WOTR2 milestone 8 (step 4): --lan-wotr-resume: the host's setup becomes the save NAME resumed (its identity, its state hash, the saved humans'
+## seats besides the host's): the lobby's Load Game (RW 0x849299 -> RW 0x840F3F)
+func _lan_set_resume() -> void:
+	var why := _lan_resume_from(_save_flow.save_dir().path_join(_lan_wotr_resume + ".obfmesave"))
+	if not why.is_empty():
+		_fail("LAN script: the resume was refused: " + why)
+
+## BFME2 0x59ECC1 -> RW 0x8182CF: online Load Game hosts the saved lobby; the same session and save checker as the LAN page are used.
+func _online_load_war(path: String) -> String:
+	var save: Dictionary = _world.read_wotr_save(path)
+	var session = bytes_to_var(save.get("session", PackedByteArray())) if save.get("ok", false) else null
+	var damaged: String = _wotr.lan_session_error(session) if save.get("ok", false) else "is no saved network War of the Ring"
+	if not damaged.is_empty():
+		var why := "%s %s" % [path.get_file().get_basename(), damaged]
+		_shell.save_load_refused(path.get_file().get_basename(), why)
+		return why
+	var md5 := str(session.lan.md5)
+	var own_check: String = _wotr.resume_check(md5, int(save.state_hash))
+	if not own_check.is_empty():
+		_shell.save_load_refused(path.get_file().get_basename(), own_check)
+		return own_check
+	var created: Dictionary = _shell.online_apply({"command": "AptOnline::CustomMatch::CreateGame"})
+	if not created.get("ok", false):
+		return "the strategic page could not create a room for the saved war: " + str(created.get("errors", []))
+	for i in 600:
+		await get_tree().process_frame
+		var status: Dictionary = _shell.online_status()
+		if status.get("in_game", false) and status.get("host", false) and int(status.get("state", -1)) == 6:
+			break
+	var st: Dictionary = _shell.online_status()
+	if not st.get("host", false) or not st.get("in_game", false) or int(st.get("state", -1)) != 6:
+		return "the online room for the saved war could not be created"
+	var seats := []
+	var players: Array = session.lan.get("players", [])
+	for i in range(players.size()):
+		var slot: int = int(session.slots[i])
+		if bool(players[i].get("human", false)) and slot > 0:
+			seats.append([slot, str(players[i].get("name", ""))])
+	var staged: Dictionary = _shell.online_stage_saved_war(session.lobby, md5, int(save.state_hash), seats)
+	print("GAME ONLINE resume %s (md5 %s, hash %d, seats %s): %s" % [path.get_file(), md5, int(save.state_hash), JSON.stringify(seats), JSON.stringify(staged)])
+	var why := "" if staged.get("ok", false) else str(staged.get("error", "the saved war was refused"))
+	if not why.is_empty():
+		_shell.save_load_refused(path.get_file().get_basename(), why)
+	return why
+
+## RW 0x81869B: each member tells the lobby whether its own copy passes the LAN state/hash check. Retrying a refusal lets a newly copied save be found.
+func _online_resume_tick() -> void:
+	var st: Dictionary = _shell.online_status()
+	var md5 := str(st.get("resume_save", ""))
+	if not st.get("in_game", false) or int(st.get("game_mode", 0)) != 1 or md5.is_empty():
+		_online_checked_room = ""
+		_online_checked_save = ""
+		return
+	var room := str(st.get("game_id", ""))
+	var now := Time.get_ticks_msec()
+	if room == _online_checked_room and md5 == _online_checked_save and (now - _online_checked_ms < 5000 or
+			(st.get("resume_check_save", "") == md5 and st.get("resume_check_ok", false))):
+		return
+	var why: String = _wotr.resume_check(md5, int(st.get("resume_hash", 0)))
+	if why.is_empty() and not st.get("host", false):
+		var found: Dictionary = _wotr.find_lan_save(md5)
+		var session: Dictionary = found.get("session", {})
+		var own_slot := int(st.get("slot", -1))
+		var players: Array = session.get("lan", {}).get("players", [])
+		var saved_slot := -1
+		for i in range(players.size()):
+			if bool(players[i].get("human", false)) and str(players[i].get("name", "")) == str(st.get("name", "")):
+				saved_slot = int(session.slots[i])
+				break
+		if saved_slot != own_slot or saved_slot < 1:
+			why = "%s is not in their saved war seat" % str(st.get("name", "the joiner"))
+		else:
+			var original: Dictionary = session.lobby.slots[saved_slot]
+			var spec := {"slot": own_slot, "team": int(original.get("team", -1)), "color": int(original.get("color", -1)),
+				"handicap": int(original.get("handicap", 0))}
+			var pt := int(original.get("player_template", -1))
+			var names: PackedStringArray = _wotr.data.get("faction_names", PackedStringArray())
+			if pt >= 0 and pt < names.size():
+				spec["faction"] = names[pt]
+			if int(original.get("start_pos", -1)) >= 0:
+				spec["start_region"] = int(original.start_pos)
+			var applied: Dictionary = _shell.lobby_apply({"slots": [spec]})
+			if not applied.get("ok", false):
+				why = "the saved seat's choices could not be set: " + str(applied.get("errors", []))
+	var result: Dictionary = _shell.online_resume_check(md5, why)
+	if not result.get("ok", false):
+		printerr("GAME ONLINE saved-war check was refused: ", result.get("error", ""))
+		return
+	_online_checked_room = room
+	_online_checked_save = md5
+	_online_checked_ms = now
+	print("GAME ONLINE saved-war check: %s" % ("copy matches" if why.is_empty() else why))
+
+
+## WOTR2 milestone 8 (step 4): the LAN lobby's Load Game on the War of the Ring page (RW 0x849299 -> RW 0x8182CF -> RW 0x840F3F): the save picked is
+## hosted: a new game with the saved scenario and the saved non-joiner slots (the host's own, the AI with their difficulty), the saved humans' seats
+## open for the joiners, the save's identity and state hash; "" when the game is up
+func _lan_load_war(path: String) -> String:
+	var save: Dictionary = _world.read_wotr_save(path)
+	var session = bytes_to_var(save.get("session", PackedByteArray())) if save.get("ok", false) else null
+	var damaged: String = _wotr.lan_session_error(session) if save.get("ok", false) else "is no saved LAN War of the Ring"
+	if not damaged.is_empty():
+		var why := "%s %s" % [path.get_file().get_basename(), damaged]
+		_shell.save_load_refused(path.get_file().get_basename(), why)
+		return why
+	_shell.shell_fscommand("AptLanLobby::OnCreateGameBttn", "")
+	for i in 100:
+		await get_tree().process_frame
+		if bool(_world.lan_status().get("host", false)):
+			break
+	if not bool(_world.lan_status().get("host", false)):
+		return "the LAN game for the saved war could not be created"
+	if _wotr.lw == null:
+		_wotr.lw = ClassDB.instantiate("LivingWorldGame")
+		_wotr.data = _wotr.lw.setup(_world)
+	var names: PackedStringArray = _wotr.data.get("faction_names", PackedStringArray())
+	var lobby: Dictionary = session.lobby
+	var slots := []
+	for i in range(lobby.get("slots", []).size()):
+		var ls: Dictionary = lobby.slots[i]
+		var state := int(ls.get("state", 0))
+		if state == 6 and i > 0:
+			continue # a saved human's seat (a joiner takes it)
+		if state < 2:
+			slots.append({"slot": i, "state": 1}) # closed: no player of the saved war sat there (lan_host_set_resume closes it in the game too)
+			continue
+		var entry := {"slot": i, "start_region": int(ls.get("start_pos", -1)), "team": int(ls.get("team", -1)), "color": int(ls.get("color", -1))}
+		var pt := int(ls.get("player_template", -1))
+		if pt >= 0 and pt < names.size():
+			entry["faction"] = names[pt]
+		if i > 0:
+			entry["state"] = state
+		slots.append(entry)
+	var applied: Dictionary = _shell.lobby_apply({"scenario": str(lobby.get("living_world_campaign", lobby.get("scenario", ""))), "slots": slots})
+	print("GAME LAN load war %s: setup %s %s" % [path.get_file(), str(applied.get("ok", false)), str(applied.get("errors", []))])
+	var why := _lan_resume_from(path)
+	if not why.is_empty():
+		_shell.save_load_refused(path.get_file().get_basename(), why)
+	return why
+
+
+func _lan_resume_from(path: String) -> String:
+	var save: Dictionary = _world.read_wotr_save(path)
+	var session = bytes_to_var(save.get("session", PackedByteArray())) if save.get("ok", false) else null
+	if not save.get("ok", false):
+		return "%s: %s" % [path.get_file().get_basename(), str(save.get("error", ""))]
+	var damaged: String = _wotr.lan_session_error(session)
+	if not damaged.is_empty():
+		return "%s %s" % [path.get_file().get_basename(), damaged]
+	var seats := []
+	var players: Array = session.lan.get("players", [])
+	for i in range(players.size()):
+		var lobby_slot: int = int(session.slots[i]) if i < session.slots.size() else -1
+		if bool(players[i].get("human", false)) and lobby_slot > 0:
+			seats.append([lobby_slot, str(players[i].get("name", ""))])
+	var r: Dictionary = _world.lan_host_set_resume(str(session.lan.md5), int(save.state_hash), seats, session.lobby)
+	print("GAME LAN resume %s (md5 %s, hash %d, seats %s) -> %s" % [path.get_file(), str(session.lan.md5), int(save.state_hash), JSON.stringify(seats), JSON.stringify(r)])
+	return "" if r.get("ok", false) else str(r.get("error", "the resume was refused"))
+
+
+## --lan-wotr-expect-refusal: the run ends with the lobby's refusal of the resumed war, as every PC sees it (the host's system line)
+func _lan_watch_refusal(st: Dictionary) -> void:
+	for line in st.get("log", []):
+		if str(line).begins_with("system: ") and (str(line).contains("cannot resume") or str(line).contains("seat is open") or str(line).contains("has not checked")):
+			if str(line).contains("has not checked") and _lan_wait < 600:
+				continue # a check still on its way: wait for the answer itself
+			print("GAME LAN RESUME REFUSED: " + str(line).substr(8))
+			get_tree().quit(0)
+			return
+	# the lobby's own start check refuses first when the saved war's other humans are all absent (RW 0x8431B8: a lone human, GUI:NeedHumanPlayers or
+	# LAN:TooFewPlayers): the refusal the host's player sees
+	if _lan_mode == "host":
+		for line in _shell.get_shell_report().get("note_lines", []):
+			if str(line).begins_with("lan-start-refused: GUI:") or str(line).begins_with("lan-start-refused: LAN:"): # the check's labelled lines only
+				print("GAME LAN START REFUSED: " + str(line).substr(19))
+				get_tree().quit(0)
+				return
+	if _lan_mode == "host" and Time.get_ticks_msec() - _lan_press_ms > 30000:
+		# Start again (the first may have come before every joiner's check), past the first's countdown and starting box (a press within them starts over)
+		_shell.shell_fscommand("AptLanLobby::OnStartGameBttn", "")
+		_lan_press_ms = Time.get_ticks_msec()
+		_lan_presses += 1
+	if _lan_presses > 4:
+		_fail("LAN script: no refusal of the resumed war in the lobby's log")
+
 
 # ---- lane END-2: the scripted quit menu --------------------------------------------------------------------------------------------------------------
 
@@ -7663,3 +8377,666 @@ func _run_menu_colours() -> void:
 	var ok := green == 0 and _menu_colours_problems.is_empty()
 	print("UI4 COLOURS %s: %d screens, %d green-dominant texts, %d problems" % ["PASS" if ok else "FAIL", screens, green, _menu_colours_problems.size()])
 	get_tree().quit(0 if ok else 1)
+
+
+# ---- lane WOTR-1: the scripted War of the Ring run (--auto --wotr) -------------------------------------------------------------------------
+
+func _wotr_pick_start_regions() -> bool:
+	var spots: Array = []
+	for attempt in 60:
+		_wotr_preview.tick()
+		if _wotr_preview.view.visible and not _wotr_preview.regions.is_empty():
+			break
+		await _step(5)
+	if not _wotr_preview.view.visible:
+		_save_named("wotr2-preview-missing")
+		_fail("the strategic setup's map preview is not on screen: " + JSON.stringify(_shell.strategic_setup({"kind": "state"})))
+		return false
+	await _step(30)
+	_save_named("wotr2-preview-empty")
+	# a short tour of the map with the mouse (the territory description follows it, RW 0x976D64), as a player looks before picking
+	for tour in ["Rohan", "Gondor", "Lothlorien", "Angmar"]:
+		for i in range(_wotr_preview.regions.size()):
+			if str(_wotr_preview.regions[i].name).to_lower() == tour.to_lower():
+				var p: Vector2 = _wotr_preview.region_screen_position(i)
+				if p.x >= 0:
+					_mouse_event(p, false, false)
+					await _step(40)
+					print("GAME WOTR setup: hover %s: %s" % [tour, str(_shell.strategic_setup({"kind": "state"}).get("territory", "")).replace("\n", " / ")])
+	for sc in _wotr_preview.data.scenarios:
+		if sc.name == _wotr_scenario:
+			spots = sc.default_start_spots
+	for spot in spots.slice(0, 2):
+		var idx := -1
+		for i in range(_wotr_preview.regions.size()):
+			if str(_wotr_preview.regions[i].name).to_lower() == str(spot).to_lower():
+				idx = i
+		var at: Vector2 = _wotr_preview.region_screen_position(idx)
+		print("GAME WOTR setup: %s is region %d at stage %s (the preview picks %d there)" % [spot, idx, str(at), _wotr_preview.pick_stage(at)])
+		if idx < 0 or at.x < 0:
+			_fail("the preview has no region %s" % spot)
+			return false
+		_mouse_event(at, false, false) # the hover fills the territory description
+		await _step(30)
+		_mouse_event(at, true, true)
+		await _step(2)
+		_mouse_event(at, false, true)
+		await _step(15)
+		var st: Dictionary = _shell.strategic_setup({"kind": "state"})
+		var held := false
+		for h in st.holders:
+			held = held or int(h.region) == idx
+		print("GAME WOTR setup: %s (region %d) picked: %s; territory: %s" % [spot, idx, str(held), str(st.get("territory", "")).replace("\n", " / ")])
+		if not held:
+			_save_named("wotr2-pick-failed")
+			_fail("the click on %s took no start region" % spot)
+			return false
+	await _step(20)
+	_save_named("wotr2-preview-picked")
+	return true
+
+
+func _run_wotr() -> void:
+	var menu_level: int = _shell.shell_top_level()
+	# WOTR2 milestone 4: the Solo Play list opens only once the main menu is ready (a movie-writer run reaches it in fewer real seconds): click again
+	# until the War of the Ring item is there
+	var clicked := false
+	for attempt in 6:
+		if not await _click_button(menu_level, "SoloPlayNav"):
+			print("GAME main menu buttons: ", JSON.stringify(_shell.list_buttons(menu_level)))
+			_fail("no SoloPlayNav button")
+			return
+		await _step(90)
+		for path in ["SoloPlayNav.WarOfTheRing", "SoloPlayNav.WOTR", "SoloPlayNav.LivingWorld"]:
+			if _shell.find_button(menu_level, path).found:
+				clicked = await _click_button(menu_level, path)
+				break
+		if clicked:
+			break
+	if not clicked:
+		print("GAME main menu buttons: ", JSON.stringify(_shell.list_buttons(menu_level)))
+		_fail("no War of the Ring item in the solo nav")
+		return
+	await _step(120)
+	if _shell.shell_stack().size() < 2 or _shell.shell_stack()[-1] != "Skirmish.apt":
+		_fail("War of the Ring did not open Skirmish.apt: " + str(_shell.shell_stack()))
+		return
+	# the first visit asks for a profile (the add-profile popup is modal over the page)
+	var applied: Dictionary = {}
+	if not _profile_made:
+		_profile_made = true
+		for attempt in 60:
+			applied = _shell.lobby_apply({"profile": "Gimli"})
+			if applied.ok:
+				break
+			await _step(10)
+		await _step(60)
+	# the strategic setup opens on SkirmishStrategic.swf's new-features page (the promo); Continue plays its _closePromo, which shows the lobby
+	_save_named("wotr1-promo")
+	if _shell.find_button(_shell.shell_top_level(), "lobby.Continue").found:
+		await _click_button(_shell.shell_top_level(), "lobby.Continue")
+		await _step(150)
+	var spec := {"scenario": _wotr_scenario, "slots": [{"slot": 0, "faction": _faction, "color": _color}, {"slot": 1, "state": _ai}]}
+	if _color >= 0:
+		spec.slots[1]["color"] = (_color + 1) % 8 # lane WOTR-2: a fixed colour for the computer too (the map preview tints its region with it)
+	for attempt in 60:
+		applied = _shell.lobby_apply(spec)
+		if applied.ok:
+			break
+		await _step(10)
+	if not applied.ok:
+		_save_named("wotr1-setup-failed")
+		print("GAME strategic lobby buttons: ", JSON.stringify(_shell.list_buttons(_shell.shell_top_level())))
+		var srep: Dictionary = _shell.get_shell_report()
+		print("GAME shell note lines: ", JSON.stringify(srep.get("note_lines", [])))
+		var traces: Array = srep.get("traces", [])
+		print("GAME shell traces: ", JSON.stringify(traces.slice(maxi(0, traces.size() - 40))))
+		_fail("strategic lobby: " + str(applied.errors))
+		return
+	await _step(90)
+	# lane WOTR-2: every player's start region is picked on the setup's map preview, by real clicks: the scenario's DefaultStartSpots, slot 0 first (each
+	# click goes to the next slot without a start, RW 0x975C3A); the territory description follows the mouse
+	if not await _wotr_pick_start_regions():
+		return
+	_save_named("wotr1-setup")
+	if not await _click_button(_shell.shell_top_level(), "lobby.StartGame"):
+		_fail("no StartGame button in the strategic lobby")
+		return
+	var waited := 0
+	while _state != State.STRATEGIC and _state != State.FAILED and waited < 900:
+		await get_tree().process_frame
+		waited += 1
+	if _state != State.STRATEGIC:
+		_fail("the strategic map did not open (state %d)" % _state)
+		return
+	await _wait_seconds(3.0)
+	_save_named("wotr1-map")
+	# WOTR-2: the whole map from the user's zoom-out limit (black beyond the border clouds)
+	_wotr.overview(2.5)
+	await _wait_seconds(2.5)
+	_save_named("wotr2-overview")
+	await _wait_seconds(2.5)
+	var fought := false
+	var autoresolved := false
+	var turns_done := 0
+	var wotr_saved := {}           # WOTR2 milestone 3: the save (--wotr-save-at): its name, turn and state hash
+	var after_save: Array = []     # the state hash after each turn played after the save
+	while turns_done < _wotr_turns and not _wotr.state.finished:
+		if _wotr_save_at >= 0 and turns_done == _wotr_save_at and wotr_saved.is_empty():
+			wotr_saved = await _wotr_save_through_menu()
+			if wotr_saved.is_empty():
+				return
+			fought = true # every battle after the save is autoresolved, in both runs
+			autoresolved = true
+		if not wotr_saved.is_empty():
+			after_save.append(await _wotr_plain_turn())
+			turns_done += 1
+			continue
+		_wotr.scripted_orders()
+		await _wait_seconds(1.0)
+		if turns_done == 0:
+			_save_named("wotr1-orders")
+			# WOTR-2: the HUD's trays opened as a player does (the stats' Expand arrow, the checklist's): real clicks on the movie's buttons
+			if await _wotr_open_hud_trays():
+				_save_named("wotr2-hud-open")
+			# WOTR-2: the region details panel's armies page (its tab clicked as a player does) for the capital (the local player's armies)
+			_wotr.select_region(int(_wotr.state.players[_wotr.local_player].capital))
+			await _wait_seconds(1.0)
+			if await _wotr_click_hud_button("tabs.armies"):
+				_save_named("wotr2-region-armies")
+			if await _wotr_click_hud_button("tabs.structures"):
+				_save_named("wotr2-region-structures")
+				# WOTR-2: a click on the capital's free build plot on the map opens the build radial menu; its first button orders that building
+				var plot_at: Vector2 = _wotr.free_plot_screen_position(int(_wotr.state.players[_wotr.local_player].capital))
+				if plot_at.x >= 0.0:
+					var plot_stage: Vector2 = _shell.window_to_stage(plot_at)
+					_mouse_event(plot_stage, false, false)
+					await _step(2)
+					_mouse_event(plot_stage, true, true)
+					await _step(2)
+					_mouse_event(plot_stage, false, true)
+					await _wait_seconds(1.5)
+					for attempt in 150:
+						if not _wotr_lowest_radial_button().is_empty():
+							break
+						await _step(2)
+					_save_named("wotr2-build-radial")
+					if await _wotr_click_hud_button("radialMenuStage.0.bttnFrame"):
+						await _wait_seconds(1.5)
+						_save_named("wotr2-build-ordered")
+		if turns_done == 1:
+			# WOTR-2: the capital's barracks (ordered on turn 1) stands: a click on it opens the recruit radial (QueueUnitButtons) and its build queue in
+			# the tray; the radial's first button queues that army, twice
+			var capital := int(_wotr.state.players[_wotr.local_player].capital)
+			var bslot := -1
+			for rec in _wotr.lw.recruitable_in(_wotr.local_player, capital):
+				bslot = int(rec.slot)
+				break
+			if bslot >= 0:
+				_wotr.select_region(capital)
+				await _wait_seconds(1.0)
+				var bstage: Vector2 = _shell.window_to_stage(_wotr.building_screen_position(capital, bslot))
+				_mouse_event(bstage, false, false)
+				await _step(2)
+				_mouse_event(bstage, true, true)
+				await _step(2)
+				_mouse_event(bstage, false, true)
+				await _wait_seconds(1.5)
+				_save_named("wotr2-recruit-radial")
+				# the ring's lowest button (its top ones may sit under the checklist tray)
+				var lowest := ""
+				for attempt in 150: # the ring's frames load over frames (Movie Maker's fixed fps)
+					lowest = _wotr_lowest_radial_button()
+					if not lowest.is_empty():
+						break
+					await _step(2)
+				if not lowest.is_empty() and await _wotr_click_hud_button(lowest):
+					await _wotr_click_hud_button(lowest)
+					await _wait_seconds(1.0)
+					_save_named("wotr2-build-queue")
+				# WOTR-2: the queue panel's back button, the armies page, its first army: the army details panel (StrategicDetailsArmyRetinue)
+				if not await _wotr_click_hud_button("backButton"):
+					print("GAME WOTR no back button in the build queue panel: the building deselected directly")
+					_wotr._deselect_building()
+					_wotr._refresh_panels()
+				await _wait_seconds(1.0)
+				if true:
+					if await _wotr_click_hud_button("tabs.armies"):
+						if await _wotr_click_hud_button(".armies.slots.0."):
+							await _wait_seconds(1.5)
+							_save_named("wotr2-army-panel")
+			else:
+				print("GAME WOTR no recruiting building in the capital on turn 2")
+		# WOTR-2: the retail HUD's END PHASE button (StrategicEndTurnButton.swf) when it is up
+		await _wotr_dismiss_dialogs() # WOTR2 milestone 5: a notice holds the phase end (RW 0x6B6ACC)
+		if not await _wotr_click_hud("endTurnButton", "end_turn"):
+			_wotr.end_turn()
+		await _wait_seconds(2.0)
+		await _wotr_dismiss_dialogs()
+		while int(_wotr.state.get("pending_battle", -1)) >= 0:
+			# WOTR-2: the first battle the human decides is autoresolved, the next one fought in real time (the retail prompt's buttons)
+			if not autoresolved:
+				autoresolved = true
+				await _wait_seconds(2.0)
+				_save_named("wotr2-battle-prompt")
+				if not await _wotr_click_hud("AutoResolve", "battle_autoresolve"):
+					_wotr.choose_battle(false)
+				await _wait_seconds(1.0)
+				_save_named("wotr2-autoresolved")
+				await _wotr_dismiss_dialogs(true)
+			elif not fought:
+				fought = true
+				await _wait_seconds(2.0)
+				_save_named("wotr1-battle-prompt")
+				if not await _wotr_click_hud("RealTime", "battle_realtime"):
+					_wotr.choose_battle(true)
+				if not await _wotr_fight():
+					return
+			else:
+				await _wait_seconds(1.5)
+				if not await _wotr_click_hud("AutoResolve", "battle_autoresolve"):
+					_wotr.choose_battle(false)
+			await _wait_seconds(2.0)
+			await _wotr_dismiss_dialogs()
+		await _wotr_resolve_retreats()
+		turns_done += 1
+		print("GAME WOTR turn done: turn %d phase %s hash %d" % [_wotr.state.turn, _wotr.state.phase_name, _wotr.state.hash])
+	_save_named("wotr1-after")
+	print("GAME WOTR RESULT: turns %d, battle autoresolved %s, battle fought %s, finished %s, hash %d" % [turns_done, str(autoresolved), str(fought), str(_wotr.state.finished), _wotr.state.hash])
+	if _wotr_save_at >= 0:
+		get_tree().quit(0 if await _wotr_load_and_replay(wotr_saved, after_save) else 1)
+		return
+	get_tree().quit(0 if turns_done > 0 else 1)
+
+
+## WOTR2 milestone 6: the retreat phase as a player plays it: each of the local player's armies that must retreat is picked (its checklist row's
+## click) and sent to the first friendly region the move order takes (a right click there), then END PHASE through the HUD's button
+func _wotr_resolve_retreats() -> void:
+	for attempt in 8:
+		if int(_wotr.state.get("phase", -1)) != _wotr.PHASE_OWNERSHIP or _wotr.state.get("finished", false):
+			return
+		for id in _wotr.retreats_pending():
+			var a: Dictionary = _wotr._army(id)
+			if int(a.get("destination", -1)) >= 0:
+				continue
+			_wotr.select_army(id)
+			for r in range(_wotr.regions.size()):
+				if r != int(a.region) and _wotr.lw.can_order_move(_wotr.local_player, id, r):
+					_wotr.order_move(id, r)
+					print("GAME WOTR retreat: army %d -> region %d" % [id, r])
+					break
+		await _wait_seconds(1.0)
+		_save_named("wotr6-retreat")
+		if not await _wotr_click_hud("endTurnButton", "end_turn"):
+			_wotr.end_turn()
+		await _wait_seconds(2.0)
+		await _wotr_dismiss_dialogs()
+
+
+## WOTR2 milestone 5: the strategic notices' OK (GuiFX's StrategicMessageBox) and the battle statistics' CONTINUE (StrategicConflictResults.apt) clicked as a
+## player does, until nothing holds the phase; `shot` saves a screenshot of each first
+func _wotr_dismiss_dialogs(shot: bool = false) -> void:
+	for attempt in 60:
+		var st: Dictionary = _shell.strategic_hud({"kind": "state"})
+		# the notice box (level 13) is above the battle statistics: it takes the click first
+		if bool(st.get("notice_shown", false)) and int(st.get("notice_level", -1)) >= 0:
+			await _wait_seconds(1.5)
+			if shot:
+				_save_named("wotr2-notice")
+			if not _wotr.notice_question.is_empty():
+				# WOTR2 milestone 8 (step 4): a Yes / No question (the LAN war's save request, the leave-for-now vote): the scripted player says Yes
+				# the Yes button: GuiFX.apt's ButtonsYesNo group places the MessageBoxOk clip twice under one instance name (their paths match), so
+				# the two are told apart by where they stand: Yes is the left one (the box's Yes / No order: the LAN save run's answers read yes), clicked at its stage position
+				var pair: Array = []
+				var names: Array = []
+				for b in _shell.list_buttons(int(st.notice_level)):
+					names.append("%s at %.0f,%.0f%s" % [str(b.path), float(b.x), float(b.y), "" if b.hittable else " (not hittable)"])
+					if b.hittable and str(b.path).contains("ButtonsYesNo"):
+						pair.append(b)
+				print("GAME WOTR NET question %s: the box's buttons %s" % [_wotr.notice_question, str(names)])
+				if pair.size() != 2:
+					_fail("the strategic question does not show two Yes / No buttons: " + str(names))
+					return
+				pair.sort_custom(func(a, c): return float(a.x) < float(c.x))
+				await _click_at_stage(Vector2(float(pair[0].x), float(pair[0].y)))
+				print("GAME WOTR NET question %s: clicked Yes" % _wotr.notice_question)
+				await _wait_seconds(1.0)
+				continue
+			if not await _click_button(int(st.notice_level), "StrategicMessageBox.ButtonsOk.MessageBoxOk"):
+				_fail("the strategic notice has no OK button")
+				return
+			await _wait_seconds(1.0)
+			continue
+		if bool(st.get("conflict_results_active", false)) and int(st.get("conflict_results_level", -1)) >= 0:
+			await _wait_seconds(1.5)
+			if shot:
+				_save_named("wotr2-conflict-results")
+			# WOTR2 milestone 6 (the turn-12 stacked notice): the resolver waits for the statistics (RW 0x9DF550), so the war is still in its battles phase
+			# and no later notice (a hero army killed in the retreat phase) can open over them
+			var phase_now: int = int(_wotr.lw.get_strategic_state().get("phase", -1))
+			if phase_now != 2 and not _wotr.net: # a LAN war's statistics do not hold the lockstep (S-1339): the other peers' war goes on
+				_fail("the war left the battles phase (now %d) while the battle statistics are open" % phase_now)
+				return
+			_wotr_stats_held += 1
+			print("GAME WOTR battle statistics hold the war in the battles phase (%d)" % _wotr_stats_held)
+			if not await _click_button(int(st.conflict_results_level), "Main.instance14.Continue"): # the movie's CONTINUE (an unnamed clip at depth 14)
+				_fail("the battle statistics have no CONTINUE button")
+				return
+			await _wait_seconds(1.5)
+			continue
+		if _wotr._notices_idle():
+			return
+		await _wait_seconds(0.5)
+	_fail("the strategic notices / battle statistics did not go away")
+
+
+## WOTR2 milestone 3: one turn as the scripted run plays it after the save (the scripted orders, the HUD's END PHASE, every battle autoresolved through
+## the prompt) -> the strategic state hash after it
+func _wotr_plain_turn() -> int:
+	_wotr.scripted_orders()
+	await _wait_seconds(1.0)
+	await _wotr_dismiss_dialogs()
+	if not await _wotr_click_hud("endTurnButton", "end_turn"):
+		_wotr.end_turn()
+	await _wait_seconds(2.0)
+	await _wotr_dismiss_dialogs()
+	while int(_wotr.state.get("pending_battle", -1)) >= 0 and not _wotr.state.finished:
+		await _wait_seconds(1.0)
+		if not await _wotr_click_hud("AutoResolve", "battle_autoresolve"):
+			_wotr.choose_battle(false)
+		await _wait_seconds(2.0)
+		await _wotr_dismiss_dialogs()
+	await _wotr_resolve_retreats()
+	var h: int = _wotr.lw.get_state_hash()
+	print("GAME WOTR turn done: turn %d phase %s hash %d" % [_wotr.state.turn, _wotr.state.phase_name, h])
+	return h
+
+
+## WOTR2 milestone 3: the map saved through the real menus: Esc opens the quit menu over the map, its Save the War of the Ring page (type 8), the page's
+## Save the file (its default name), the result box's Ok closes the page and the menu -> { name, turn, hash } ({} after a failure, reported)
+func _wotr_save_through_menu() -> Dictionary:
+	print("GAME WOTR SAVE begins at frame %d" % Engine.get_frames_drawn()) # the clip's cut (Movie Maker: one frame each)
+	await _press_escape()
+	await _wait_seconds(2.0)
+	if not _quit_open:
+		_fail("Esc on the War of the Ring map opened no quit menu")
+		return {}
+	_save_named("wotr3-quit-menu")
+	var qm: Dictionary = _shell.quit_menu({"kind": "state"})
+	print("GAME WOTR quit menu over the map: ", JSON.stringify(qm))
+	if not await _click_quit("Save") or not await _save_flow._wait_top("SaveLoad.apt", 10.0):
+		_fail("the quit menu's Save opened no SaveLoad.apt over the map")
+		return {}
+	await _wait_seconds(2.0)
+	_save_named("wotr3-save-page")
+	var turn: int = int(_wotr.state.turn)
+	var h: int = _wotr.lw.get_state_hash()
+	_save_flow.last_save = {}
+	if not await _save_flow._click_top("Save"):
+		_fail("the War of the Ring save page has no Save button")
+		return {}
+	await _wait_seconds(2.0)
+	_save_named("wotr3-saved")
+	var saved: Dictionary = _save_flow.last_save
+	if not saved.get("ok", false):
+		_fail("the War of the Ring map was not saved: " + JSON.stringify(saved))
+		return {}
+	await _save_flow._click_any_level("MessageBox", "Ok")
+	await _wait_seconds(2.0)
+	if _quit_open or _state != State.STRATEGIC:
+		_fail("after the save the map is not back (quit menu open %s, state %d, stack %s)" % [str(_quit_open), _state, str(_shell.shell_stack())])
+		return {}
+	print("GAME WOTR SAVE: turn %d, hash %d, %s" % [turn, h, JSON.stringify(saved)])
+	return {"name": str(saved.get("path", "")).get_file().get_basename(), "turn": turn, "hash": h}
+
+
+## WOTR2 milestone 3: the save loaded through the real menus (Esc, Load, the War of the Ring page's Load and the movie's confirmation over the map) -> true
+## when the map is back on the saved turn (the load itself checks the saved state hash; then retail's InitRandom(0), LivingWorldLogic::reseedAfterLoad)
+func _wotr_load_through_menu(saved: Dictionary, shot: String) -> bool:
+	await _press_escape()
+	await _wait_seconds(2.0)
+	if not await _click_quit("Load") or not await _save_flow._wait_top("SaveLoad.apt", 10.0):
+		_fail("the quit menu's Load opened no SaveLoad.apt over the map")
+		return false
+	await _wait_seconds(2.0)
+	_save_named(shot + "-page")
+	_save_flow.last_load = {}
+	var ok: bool = await _save_flow._click_top("Load") # the newest War of the Ring save is the page's first row
+	await _wait_seconds(1.5)
+	_save_named(shot + "-confirm")
+	ok = ok and await _save_flow._click_top("ConfirmationOk")
+	var waited := 0.0
+	while _save_flow.last_load.is_empty() and waited < 60.0:
+		await _wait_seconds(0.1)
+		waited += 0.1
+	await _wait_seconds(3.0)
+	_save_named(shot)
+	print("GAME WOTR LOAD: %s; turn %d (saved turn %d)" % [JSON.stringify(_save_flow.last_load), int(_wotr.state.turn), int(saved.turn)])
+	return ok and _save_flow.last_load.get("state", "") == "wotr_map" and _state == State.STRATEGIC and int(_wotr.state.turn) == int(saved.turn)
+
+
+## WOTR2 milestone 3: the save loaded twice through the menus, the turns after the save played after each load: true when both loads give the saved map
+## and the same war (retail reseeds the generator at a map save's load, so the unsaved game's turns are shown for information only)
+func _wotr_load_and_replay(saved: Dictionary, after_save: Array) -> bool:
+	if saved.is_empty():
+		_fail("--wotr-save-at=%d: the run had no turn %d to save at" % [_wotr_save_at, _wotr_save_at])
+		return false
+	var runs: Array = []
+	var ok := true
+	for load_index in 2:
+		ok = ok and await _wotr_load_through_menu(saved, "wotr3-loaded-%d" % load_index)
+		var hashes: Array = []
+		for i in after_save.size():
+			hashes.append(await _wotr_plain_turn())
+		_save_named("wotr3-replayed-%d" % load_index)
+		runs.append(hashes)
+		print("GAME WOTR load %d replayed at frame %d" % [load_index, Engine.get_frames_drawn()])
+	ok = ok and runs[0] == runs[1] and runs[0].size() == after_save.size()
+	print("GAME WOTR SAVE RESULT: %s; the turns after the save without a load %s, after the first load %s, after the second %s" % ["ok" if ok else "FAILED",
+		str(after_save), str(runs[0]), str(runs[1])])
+	return ok
+
+
+## WOTR-2: real clicks on the strategic HUD's tray arrows (the paths holding "Expand": StrategicStats' Expand, the checklist's ExpandButton), each opening its tray in
+## the movie (no engine request); false when the HUD has none
+func _wotr_open_hud_trays() -> bool:
+	if not _wotr.apt_hud:
+		return false
+	var r: Dictionary = _shell.strategic_hud({"kind": "state"})
+	var level: int = int(r.get("level", -1))
+	var paths := []
+	for b in _shell.list_buttons(level):
+		var path: String = str(b.get("path", ""))
+		print("GAME WOTR HUD button %s at %s, %s" % [path, str(b.x), str(b.y)])
+		if path.to_lower().contains("expand"):
+			paths.append([path, Vector2(float(b.x), float(b.y))])
+	for pa in paths:
+		_mouse_event(pa[1], false, false)
+		await _step(2)
+		_mouse_event(pa[1], true, true)
+		await _step(2)
+		_mouse_event(pa[1], false, true)
+		await _step(2)
+		print("GAME WOTR clicked the HUD's %s" % pa[0])
+	await _wait_seconds(1.5)
+	return not paths.is_empty()
+
+
+## WOTR-2: the path part ("radialMenuStage.<n>.bttnFrame") of the radial menu button lowest on the screen, "" none
+func _wotr_lowest_radial_button() -> String:
+	var r: Dictionary = _shell.strategic_hud({"kind": "state"})
+	var best := ""
+	var best_y := -1.0
+	for b in _shell.list_buttons(int(r.get("level", -1))):
+		var path: String = str(b.get("path", ""))
+		var at := path.find("radialMenuStage.")
+		if at < 0 or not path.contains(".bttnFrame"):
+			continue
+		if float(b.y) > best_y:
+			best_y = float(b.y)
+			best = path.substr(at, path.find(".bttnFrame") + 10 - at)
+	return best
+
+
+## WOTR-2: a real click on the strategic HUD button whose path holds `part` (no engine request expected); false when there is none
+func _wotr_click_hud_button(part: String) -> bool:
+	if not _wotr.apt_hud:
+		return false
+	var r: Dictionary = _shell.strategic_hud({"kind": "state"})
+	# the button may still be loading (a tray movie): wait for it in frames, as Movie Maker's fixed fps compresses wall-clock waits
+	for attempt in 150:
+		var found := false
+		for b in _shell.list_buttons(int(r.get("level", -1))):
+			found = found or str(b.get("path", "")).contains(part)
+		if found:
+			break
+		await _step(2)
+	for b in _shell.list_buttons(int(r.get("level", -1))):
+		var path: String = str(b.get("path", ""))
+		if path.contains(part):
+			var at := Vector2(float(b.x), float(b.y))
+			_mouse_event(at, false, false)
+			await _step(2)
+			_mouse_event(at, true, true)
+			await _step(2)
+			_mouse_event(at, false, true)
+			await _wait_seconds(1.5)
+			print("GAME WOTR clicked the HUD's %s" % path)
+			return true
+	print("GAME WOTR no HUD button for %s" % part)
+	return false
+
+
+## WOTR-2: clicks a button of the strategic HUD (StrategicHUD.apt, its level) whose path contains `part` and waits for the HUD's request; false when
+## there is no such button or the request did not come (the caller then makes the call itself, logged)
+func _wotr_click_hud(part: String, request: String) -> bool:
+	if not _wotr.apt_hud:
+		return false
+	var r: Dictionary = _shell.strategic_hud({"kind": "state"})
+	var level: int = int(r.get("level", -1))
+	var target := ""
+	var at := Vector2.ZERO
+	for b in _shell.list_buttons(level):
+		var path: String = str(b.get("path", ""))
+		if path.contains(part):
+			target = path
+			at = Vector2(float(b.x), float(b.y))
+			break
+	if target.is_empty():
+		print("GAME WOTR no HUD button for %s: %s" % [part, JSON.stringify(_shell.list_buttons(level))])
+		return false
+	var before: int = _wotr.hud_requests_seen
+	# a real click at the button's stage position (list_buttons' paths are target paths find_button does not resolve)
+	_mouse_event(at, false, false)
+	await _step(2)
+	_mouse_event(at, true, true)
+	await _step(2)
+	_mouse_event(at, false, true)
+	await _step(2)
+	for i in 60:
+		await get_tree().process_frame
+		if _wotr.hud_requests_seen > before:
+			print("GAME WOTR clicked the HUD's %s (%s)" % [target, request])
+			return true
+	print("GAME WOTR the HUD's %s gave no %s request" % [target, request])
+	return false
+
+
+## The battle in real time: wait for the game, play --wotr-battle-seconds, then the enemy's forces fall (a test hook: debug_kill_player_objects and the
+## last hit on its fortress, as --end does) and the end sequence returns to the strategic map
+func _wotr_fight() -> bool:
+	var waited := 0.0
+	while _state != State.PLAYING and _state != State.FAILED and waited < 120.0:
+		await get_tree().process_frame
+		waited += get_process_delta_time()
+	if _state != State.PLAYING:
+		_fail("the War of the Ring battle did not start (state %d)" % _state)
+		return false
+	_wotr.scripted_battle_orders()
+	var fought_for := 0.0
+	while fought_for < _wotr_battle_seconds and _state == State.PLAYING and _wotr.battle_stage == "fighting":
+		var c: Vector2 = _wotr.battle_army_center()
+		if c != Vector2.ZERO and _hud != null and _hud.has_method("camera_look_at"):
+			_hud.camera_look_at(c)
+		await _wait_seconds(0.5)
+		fought_for += 0.5
+		# WOTR2 milestone 7: the scripted player answers its ready reinforcement banners (MSG_CALL_IN_REINFORCEMENTS), then sends them after the army
+		if _wotr.call_in_ready_reinforcements() > 0:
+			await _wait_seconds(1.0)
+			_save_named("wotr7-reinforcements")
+			_wotr.scripted_battle_orders()
+		if absf(fought_for - 4.0) < 0.25:
+			_save_named("wotr1-battle")
+		if _wotr_battle_save and absf(fought_for - 6.0) < 0.25:
+			if not await _wotr_battle_save_and_load():
+				return false
+	_save_named("wotr1-battle-late")
+	if _state == State.PLAYING and _wotr.battle_stage == "fighting":
+		_wotr_force_battle_end()
+	var waited2 := 0.0
+	while _state != State.STRATEGIC and _state != State.FAILED and waited2 < 60.0:
+		await get_tree().process_frame
+		waited2 += get_process_delta_time()
+	if _state != State.STRATEGIC:
+		_fail("the battle did not return to the strategic map (state %d)" % _state)
+		return false
+	await _wait_seconds(2.5)
+	_save_named("wotr1-back")
+	return true
+
+
+## WOTR2 milestone 6 (spec Q 5.4): the battle saved through the Save page's path (save_flow.gd: the War of the Ring battle save) and loaded back at once
+## through the Load path; the battle's RTS frame and hash and the strategic hash must come back as saved, and the fight goes on
+func _wotr_battle_save_and_load() -> bool:
+	var dir: String = _save_flow.save_dir()
+	if dir.is_empty():
+		_fail("--wotr-battle-save: there is no Save folder")
+		return false
+	var path := dir.path_join("wotr6-battle.obfmesave")
+	var strategic_before: int = int(_wotr.lw.get_state_hash())
+	var saved: Dictionary = _wotr.save_battle(path, "wotr6-battle")
+	print("GAME WOTR battle save: ", JSON.stringify(saved))
+	if not saved.get("ok", false):
+		_fail("--wotr-battle-save: the battle was not saved: " + str(saved.get("error", "")))
+		return false
+	var error: String = await _save_flow.load_save(path)
+	var waited := 0.0
+	while _state != State.PLAYING and waited < 60.0:
+		await get_tree().process_frame
+		waited += get_process_delta_time()
+	var loaded: Dictionary = _save_flow.last_load
+	var ok: bool = error.is_empty() and _state == State.PLAYING and int(loaded.get("frame", -1)) == int(saved.frame) and int(loaded.get("hash", -1)) == int(saved.hash) \
+		and int(loaded.get("strategic_hash", -1)) == strategic_before and _wotr.battle_stage == "fighting"
+	print("GAME WOTR battle load: %s (saved frame %d hash %d strategic %d; loaded %s)" % ["ok" if ok else "MISMATCH", int(saved.frame), int(saved.hash),
+		strategic_before, JSON.stringify(loaded)])
+	if not ok:
+		_fail("--wotr-battle-save: the battle did not load back as saved: " + error)
+		return false
+	_wotr.scripted_battle_orders()
+	return true
+
+
+## The scripted battle's end (a test hook): every object of the enemy goes but its fortress, then the local side lands the last hit on it (as --end does)
+func _wotr_force_battle_end() -> void:
+	var eco: Dictionary = _world.get_economy()
+	var enemy := ""
+	for p in eco.players:
+		if p.playable and p.name != _local_name:
+			enemy = p.name
+	if enemy.is_empty():
+		print("GAME WOTR the battle has no enemy player left")
+		return
+	var fortress := -1
+	var keep := ""
+	for o in _world.get_player_objects(enemy):
+		if o.commandcenter:
+			fortress = o.id
+			keep = o.template
+	var source := -1
+	for o in _world.get_player_objects(_local_name):
+		if o.structure:
+			source = o.id
+			break
+	print("GAME WOTR the enemy's forces fall: ", _world.debug_kill_player_objects(enemy, keep))
+	if fortress >= 0:
+		print("GAME WOTR last hit: ", _world.debug_damage_object(fortress, 1.0e7, source))

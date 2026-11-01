@@ -19,6 +19,8 @@
 #include "GameClient/CreateAHeroHeroList.h"
 #include "GameClient/GUI/AptScreens/AptCreateAHero.h"
 #include "GameClient/GUI/AptScreens/AptOnlineShell.h"
+#include "GameClient/GUI/AptScreens/AptLanLobby.h"
+#include "GameClient/GUI/Skirmish/LivingWorldShellInfo.h"
 #include "GameClient/GUI/Gadgets.h"
 #include "GameClient/GUI/GameWindow.h"
 #include "GameClient/GUI/MenuNavigator.h"
@@ -1886,6 +1888,176 @@ void signInAndOpenPlay(OnlinePlayer &p, const std::u16string &name)
 }
 } // namespace
 
+TEST_CASE("stableqa1 online: a Stable build refuses the online War of the Ring page with the Stable notice and stays on Open Play")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	NodeLobby lobby("", "");
+	OnlinePlayer p(*s, lobby.port, 22, u"");
+	LivingWorldShellInfo war; // the scenarios are there: only the build's channel refuses the page
+	LivingWorldScenarioEntry scenario;
+	scenario.name = "WarScenario";
+	war.scenarios.push_back(scenario);
+	p.fx.environment.livingWorld = &war;
+	p.fx.environment.warOfTheRingOffered = false; // a Stable build (GodotAptPlayer: BuildVersion::isStableChannel)
+	signInAndOpenPlay(p, u"StableHost");
+	p.tick(30);
+	AptButtonInst *button = starttest::firstButtonIn(p.at("Toggles.ButtonNav.Strategic"));
+	REQUIRE(button);
+	starttest::clickButton(p.fx, *button);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->messageBox() != nullptr; }), p.notes());
+	CHECK(p.sh->messageBox()->text() == AptLanLobby::kStrategicStable);
+	CHECK(p.sh->boxesShown().back() == "GUI:GSErrorTitle|not available: OnlineStrategic");
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == "OnlineOpenPlay"; }), p.notes());
+	CHECK_FALSE(p.sh->strategicMode());
+	CHECK(p.sh->setup()->info().gameMode == 0);
+}
+
+TEST_CASE("wotr9 online strategic: the retail custom-match page opens with the strategic setup and returns to Open Play")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	NodeLobby lobby("", "");
+	OnlinePlayer p(*s, lobby.port, 21, u"");
+	LivingWorldShellInfo war;
+	LivingWorldScenarioEntry scenario;
+	scenario.name = "WarScenario";
+	war.scenarios.push_back(scenario);
+	p.fx.environment.livingWorld = &war;
+	p.fx.environment.warOfTheRingOffered = true;
+	signInAndOpenPlay(p, u"WarHost");
+	p.tick(30);
+	AptButtonInst *button = starttest::firstButtonIn(p.at("Toggles.ButtonNav.Strategic"));
+	REQUIRE(button);
+	starttest::clickButton(p.fx, *button);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == "OnlineStrategic" && p.sh->openPlayState() == 2 && p.sh->gameList(); }),
+		p.notes());
+	CHECK(p.sh->strategicMode());
+	CHECK(p.sh->selectedScenario() == "WarScenario");
+	CHECK(p.sh->setup()->info().gameMode == 1);
+	CHECK_FALSE(p.hasNote("register-duplicate"));
+	button = starttest::firstButtonIn(p.at("Toggles.ButtonNav.OpenPlay"));
+	REQUIRE(button);
+	starttest::clickButton(p.fx, *button);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == "OnlineOpenPlay" && p.sh->openPlayState() == 2; }), p.notes());
+	CHECK_FALSE(p.sh->strategicMode());
+	CHECK(p.sh->setup()->info().gameMode == 0);
+	CHECK_FALSE(p.hasNote("register-duplicate"));
+}
+
+TEST_CASE("wotr9 online strategic: a scenario changed in the staging room reaches the local lobby")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	NodeLobby lobby("", "");
+	OnlinePlayer p(*s, lobby.port, 22, u"");
+	LivingWorldShellInfo war;
+	LivingWorldScenarioEntry first;
+	first.name = "WarScenario";
+	war.scenarios.push_back(first);
+	first.name = "WarScenarioTwo";
+	war.scenarios.push_back(first);
+	p.fx.environment.livingWorld = &war;
+	p.fx.environment.warOfTheRingOffered = true;
+	signInAndOpenPlay(p, u"WarHost");
+	p.tick(30);
+	AptButtonInst *button = starttest::firstButtonIn(p.at("Toggles.ButtonNav.Strategic"));
+	REQUIRE(button);
+	starttest::clickButton(p.fx, *button);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == "OnlineStrategic" && p.sh->openPlayState() == 2; }), p.notes());
+	REQUIRE(p.clickWhenShown("Controls.CreateGame"));
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->openPlayState() == 3 && p.sh->gameNameWindow(); }), p.notes());
+	REQUIRE(p.clickWhenShown("CreateGamePopup.Accept"));
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.client.inGame() && p.sh->openPlayState() == 6; }), p.notes());
+	REQUIRE(p.client.gameInfo().warOfTheRing());
+	CHECK(p.client.gameInfo().scenario == "WarScenario");
+	REQUIRE(p.sh->selectScenario("WarScenarioTwo"));
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.client.gameInfo().scenario == "WarScenarioTwo"; }), p.notes());
+	CHECK(p.client.gameInfo().warOfTheRing());
+}
+
+TEST_CASE("wotr9 online strategic: a joiner's region preview follows the host's scenario")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	NodeLobby lobby("", "");
+	OnlinePlayer host(*s, lobby.port, 24, u""), join(*s, lobby.port, 25, u"");
+	LivingWorldShellInfo war;
+	LivingWorldScenarioEntry sc;
+	sc.name = "WarScenario";
+	war.scenarios.push_back(sc);
+	sc.name = "WarScenarioTwo";
+	war.scenarios.push_back(sc);
+	for (OnlinePlayer *p : { &host, &join })
+	{
+		p->fx.environment.livingWorld = &war;
+		p->fx.environment.warOfTheRingOffered = true;
+	}
+	const std::vector<OnlinePlayer *> all{ &host, &join };
+	signInAndOpenPlay(host, u"Host");
+	REQUIRE(starttest::firstButtonIn(host.at("Toggles.ButtonNav.Strategic")));
+	starttest::clickButton(host.fx, *starttest::firstButtonIn(host.at("Toggles.ButtonNav.Strategic")));
+	REQUIRE(runUntil(all, [&] { return host.sh->currentPage() == "OnlineStrategic" && host.sh->openPlayState() == 2; }));
+	REQUIRE(host.clickWhenShown("Controls.CreateGame"));
+	REQUIRE(runUntil(all, [&] { return host.sh->openPlayState() == 3 && host.sh->gameNameWindow(); }));
+	REQUIRE(host.clickWhenShown("CreateGamePopup.Accept"));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return host.client.inGame() && host.sh->openPlayState() == 6; }), host.notes());
+	signInAndOpenPlay(join, u"Joiner");
+	REQUIRE(starttest::firstButtonIn(join.at("Toggles.ButtonNav.Strategic")));
+	starttest::clickButton(join.fx, *starttest::firstButtonIn(join.at("Toggles.ButtonNav.Strategic")));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return join.sh->currentPage() == "OnlineStrategic" && join.sh->gameRows().size() == 1; }), join.notes());
+	GadgetListBoxSetSelected(join.sh->gameList(), 0);
+	REQUIRE(join.clickWhenShown("Main.Controls.JoinGame"));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return join.client.inGame() && join.sh->openPlayState() == 12; }), join.notes());
+	CHECK(join.sh->selectedScenario() == "WarScenario");
+	REQUIRE(host.sh->selectScenario("WarScenarioTwo"));
+	REQUIRE_MESSAGE(runUntil(all, [&] { return join.client.gameInfo().scenario == "WarScenarioTwo" && join.sh->selectedScenario() == "WarScenarioTwo"; }),
+		join.notes());
+	CHECK(join.sh->setup()->info().scenario == "WarScenarioTwo");
+}
+
+TEST_CASE("wotr9 online strategic: saved-war staging sends its identity and refuses an open saved seat")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	NodeLobby lobby("", "");
+	OnlinePlayer p(*s, lobby.port, 23, u"");
+	LivingWorldShellInfo war;
+	LivingWorldScenarioEntry scenario;
+	scenario.name = "WarScenario";
+	war.scenarios.push_back(scenario);
+	p.fx.environment.livingWorld = &war;
+	p.fx.environment.warOfTheRingOffered = true;
+	signInAndOpenPlay(p, u"WarHost");
+	p.tick(30);
+	AptButtonInst *button = starttest::firstButtonIn(p.at("Toggles.ButtonNav.Strategic"));
+	REQUIRE(button);
+	starttest::clickButton(p.fx, *button);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == "OnlineStrategic" && p.sh->openPlayState() == 2; }), p.notes());
+	REQUIRE(p.clickWhenShown("Controls.CreateGame"));
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->openPlayState() == 3 && p.sh->gameNameWindow(); }), p.notes());
+	REQUIRE(p.clickWhenShown("CreateGamePopup.Accept"));
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.client.inGame() && p.sh->openPlayState() == 6; }), p.notes());
+	const std::string md5 = "0123456789abcdef0123456789abcdef";
+	SkirmishGameInfo saved = p.client.gameInfo();
+	saved.slots[1].state = SLOT_PLAYER;
+	saved.slots[1].name = u"WarJoiner";
+	std::string why;
+	CHECK_FALSE(p.sh->stageSavedWar(saved, { { 2, u"WarJoiner" } }, md5, 123, &why));
+	CHECK(why.find("seat") != std::string::npos);
+	REQUIRE(p.sh->stageSavedWar(saved, { { 1, u"WarJoiner" } }, md5, 123, &why));
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.client.gameInfo().resumeSave == md5; }), p.notes());
+	CHECK(p.client.gameInfo().resumeHash == 123);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.client.gameInfo().slots[1].state == SLOT_OPEN; }), p.notes());
+	REQUIRE(p.fx.wm->invokeCallback("AptOnline::CustomMatch::PlayGame", ""));
+	p.tick(10);
+	CHECK_FALSE(p.sh->startRefusals().empty());
+	CHECK_MESSAGE(std::any_of(p.sh->chatLines().begin(), p.sh->chatLines().end(),
+		[](const std::string &line) { return line.find("WarJoiner") != std::string::npos; }),
+		p.sh->chatLines().front() << " / " << p.sh->chatLines().back());
+	CHECK(p.client.inGame());
+}
+
 TEST_CASE("onlinemenufix3 retail: an online sixteen-slot room scrolls to the last player and returns to eight retail rows")
 {
 	ONLINE4_REQUIRE_NODE();
@@ -2353,6 +2525,9 @@ TEST_CASE("online4 retail: OnlineShell.apt on a local lobby: guest sign-in, the 
 	CHECK(GadgetListBoxGetText(host.sh->chatListWindow(), GadgetListBoxGetNumEntries(host.sh->chatListWindow()) - 1, 0) == u"[Joiner] hello host");
 	// ---- ready: the joiner's press of its own box in the Ready column (lane ONLINE-5: RW 0x84211D gives the boxes their states), seen by the host ----
 	REQUIRE(runUntil({ &host, &join }, [&] { return join.sh->readyIcon(1) == "_enabledUnchecked"; }));
+	// the password pop-up closes with its own animation (ClosePassword: frames 25 .. 38, then frame 0) and its full-screen button (instance1) holds the
+	// room's clicks until it is done, as for a player; a fast join left the press inside that animation (the gate's "covered by popupPassword")
+	REQUIRE_MESSAGE(runUntil({ &host, &join }, [&] { return join.reachable("~1.Ready") != nullptr; }), "the Ready box stays covered: " << join.notes());
 	REQUIRE(join.click("~1.Ready"));
 	REQUIRE(runUntil({ &host, &join }, [&] { return host.client.slotViews()[1].ready && host.sh->setup()->info().slots[1].accepted; }));
 	// ---- Play Game without a relay: the lobby refuses (no_relay) and the player is told plainly ----

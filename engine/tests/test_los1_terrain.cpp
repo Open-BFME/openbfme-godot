@@ -2,6 +2,7 @@
 // Lane LOS-1: the terrain line of sight of attackers on a retail map (TerrainLogic::isClearLineOfSight RW 0x466289, the line of sight filter RW 0x6616AC,
 // the weapon terrain line RW 0x6CC6DD). SKIPs without the games (ROTWK_INSTALL / BFME2_INSTALL).
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "StartTestUtil.h"
@@ -132,6 +133,7 @@ Object *placeAt(GameLogic &logic, const char *tmpl, Player *owner, float x, floa
 	{
 		const Coord3D p{ x, y, logic.getGroundHeight(x, y) };
 		o->setPosition(&p);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	}
 	return o;
 }

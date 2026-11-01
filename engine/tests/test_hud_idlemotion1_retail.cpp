@@ -11,6 +11,7 @@
 // member test (the port asked "not in an attack state") and the crush state's request (the port adjusted the point and reserved it as a final goal; RW clears
 // the adjust byte + 0x48 at RW 0x74F28D and requests the point as not final, RW 0x742425). SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 #include "Idle1TurnProbe.h"
@@ -96,6 +97,7 @@ struct Arena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(angle);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 };
@@ -143,7 +145,8 @@ TEST_CASE("idlemotion1 retail: a lancer left behind while its horde runs a fleei
 	MESSAGE("run-down from frame " << start);
 	// merge queue q29 (measured at IDLEMOTION-1's merge point and on the merged tree): the run-down starts at 59, not 65 (the lane's tree had neither
 	// AIDATA-1's run-down rules, RW 0x748650 / 0x74AA69, nor PATHPRIO-1 and the other items merged before it; not split per item)
-	REQUIRE(start == 59);
+	// merge queue q34 (measured once on the merged tree and at each merge point): 59 -> 58 from #160's merge point on (the lancers walk to their slots, RW 0x871536, instead of being put on them)
+	REQUIRE(start == 58);
 	const unsigned runDown = (unsigned)CombatNames::statuses().runningDownFromBehind;
 	// the last member is put 120 units behind its horde: beyond the leash of the marching horde and of its slot
 	Object *m = membersOf(lancers).back();
@@ -201,14 +204,18 @@ TEST_CASE("idlemotion1 retail: a lancer left behind while its horde runs a fleei
 	// point and on the merged tree): with AIDATA-1's run-down (the goal's speed in the gap, RW 0x74AA69; the status across the horde, RW 0x748650) the run-down
 	// runs the whole 40-frame window and the leash reaches the member on 8 of them; it stands busy with MOVING on 3 (frames 2, 3, 8) and catches up between
 	// them (its first step at frame 0)
-	CHECK(heldFrames == 3);
-	CHECK(leashFrames == 8);
+	// lane MODCOMPAT-MOD1 (the run-down's aim state ends at once, AIAttackAimAtTargetState RW 0x753426 / 0x7524B5; measured at that commit, a CI host): the
+	// member stands busy with MOVING on 4 frames (was 3), the leash reaches it on 9 (was 8), every lancer 4 held frames (was 3)
+	// merge queue q34 (measured at each merge point; #160's members walk to their slots, RW 0x871536, from its merge point on): the member stands busy with
+	// MOVING on 2 frames (was 4), the leash reaches it on 7 (was 9), every lancer 2 held frames (was 4)
+	CHECK(heldFrames == 2);
+	CHECK(leashFrames == 7);
 	CHECK(runDownFrames == 40);
 	CHECK(firstWalk == 0);
 	// the idle1 probe (test_exit1_motion.cpp) counts those frames apart (the other lancers stand on leash frames as well) and finds no member standing with
 	// MOVING otherwise
 	CHECK(probe.framesHeldByRunDown == heldAll);
-	CHECK(heldAll == 3);
+	CHECK(heldAll == 2);
 	CHECK(probe.stillMovingStreaks == 0);
 }
 
@@ -220,7 +227,7 @@ TEST_CASE("idlemotion1 retail: the run-down orders a member whose attack has no 
 	}
 	Arena a(shared(), "FactionElves", "FactionMordor");
 	Object *lancers = nullptr, *orcs = nullptr;
-	REQUIRE(startRunDown(a, lancers, orcs) == 59); // the run-down of the test above
+	REQUIRE(startRunDown(a, lancers, orcs) == 58); // the run-down of the test above
 	// a lancer attacks one orc; its attack's own machine is then cleared (no current state): RW 0x740ECD answers "not active" (RW 0x742DD0: the machine's
 	// current state, none: idle), while the state is still AI_ATTACK_OBJECT
 	Object *m = membersOf(lancers).back();
@@ -251,4 +258,59 @@ TEST_CASE("idlemotion1 retail: the run-down orders a member whose attack has no 
 	CHECK_FALSE(orc->isEffectivelyDead());
 	a.logic.update(5);
 	a.logic.update(6);
+}
+
+// lane MODCOMPAT-MOD1 (a pre-existing gap the lane's games met: three Mithlond Sentries of a running-down horde stood 6 frames with MOVING in AI_ATTACK_OBJECT):
+// AIAttackAimAtTargetState is done at once for an owner with RUNNING_DOWN_FROM_BEHIND (status 0x4B): its onEnter returns STATE_SUCCESS before IS_AIMING_WEAPON
+// and the first turn (RW 0x753426), its update before the turn (RW 0x7524B5). The port turned the member to its victim every frame: the angle goal replaced
+// the walk its horde's pass gave it, so it stood beside its marching horde
+TEST_CASE("idlemotion1 retail: a member running a fleeing horde down is done aiming at once: no turn, no IS_AIMING_WEAPON (RW 0x753426, RW 0x7524B5)")
+{
+	if (!haveWorld())
+	{
+		return;
+	}
+	Arena a(shared(), "FactionElves", "FactionMordor");
+	Object *lancers = nullptr, *orcs = nullptr;
+	REQUIRE(startRunDown(a, lancers, orcs) == 58); // the run-down of the tests above
+	const unsigned runDown = (unsigned)CombatNames::statuses().runningDownFromBehind;
+	const unsigned aiming = (unsigned)CombatNames::statuses().isAimingWeapon;
+	Object *m = membersOf(lancers).back();
+	Object *orc = membersOf(orcs).front();
+	AIUpdateInterface *ai = m->getAIUpdateInterface();
+	REQUIRE(m->testStatus(runDown)); // set across the horde (RW 0x748650)
+	REQUIRE(ai->aiAttackObject(orc, CMD_FROM_AI));
+	AIAttackState *attack = dynamic_cast<AIAttackState *>(ai->stateMachineOrNull()->currentState());
+	REQUIRE(attack != nullptr);
+	AIStateMachine *machine = attack->attackMachine();
+	REQUIRE(machine != nullptr);
+	const unsigned aim = attack->usesMeleeMachine() ? (unsigned)MELEE_AIM : (unsigned)ATTACK_AIM;
+	ai->setLocomotorGoalNone();
+	// onEnter: running down, the aim answers success at once: the machine leaves it in the same call, no status, no angle goal
+	machine->setState(aim);
+	CHECK(machine->currentStateId() != aim);
+	CHECK_FALSE(m->testStatus(aiming));
+	CHECK(ai->mover().goalType() != AIGOAL_ANGLE);
+	// without the status the aim holds and marks the owner aiming
+	m->setStatus(runDown, false);
+	machine->setState(aim);
+	REQUIRE(machine->currentStateId() == aim);
+	CHECK(m->testStatus(aiming));
+	// update, beside the orc (in reach) and facing away from it: without the status the aim turns the lancer (a locomotor goal) and holds; with it the aim
+	// succeeds before the turn
+	const Coord3D op = *orc->getPosition();
+	const Coord3D beside{ SimMath::subf32(op.x, 6.0f), op.y, op.z };
+	m->setPosition(&beside);
+	m->setOrientation(3.14159274f);
+	ai->setLocomotorGoalNone();
+	machine->updateStateMachine();
+	REQUIRE(machine->currentStateId() == aim);
+	CHECK(ai->mover().goalType() != AIGOAL_NONE);
+	ai->setLocomotorGoalNone();
+	m->setPosition(&beside);
+	m->setOrientation(3.14159274f);
+	m->setStatus(runDown, true);
+	machine->updateStateMachine();
+	CHECK(machine->currentStateId() != aim);
+	CHECK(ai->mover().goalType() == AIGOAL_NONE);
 }

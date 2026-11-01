@@ -151,6 +151,8 @@ TEST_CASE("treasure hud: an enemy-owned chest is a move destination rather than 
 {
 	if (!haveWorld("treasure hud")) return;
 	Rig r(shared());
+	const auto stops = r.input->stops();
+	CHECK(std::find(stops.begin(), stops.end(), "[S-5902] crate context clicks move to the crate before the enemy attack test unless force-attack is held; this input adaptation is not verified against RotWK evaluateContextCommand RW 0x81E60B") != stops.end());
 	float mx = 0, my = 0;
 	REQUIRE(r.logic().terrain()->getExtent(0, mx, my));
 	const Coord3D c = r.freeSpot(mx * 0.5f, my * 0.5f, 300.0f);

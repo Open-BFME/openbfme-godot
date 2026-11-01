@@ -4,6 +4,7 @@
 // (rule 2, RW 0x809404: no object of the player matches VictoryConditionStructureObjectFilter), and a player with no builder left is defeated.  SKIP loudly when ROTWK_INSTALL /
 // BFME2_INSTALL are unset.  GPL-3.0.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "BuildTestUtil.h"
@@ -221,6 +222,7 @@ Object *placeBetween(GameLogic &logic, const Fortress &f, const char *name, floa
 	at.y = f.centre->getPosition()->y + (mordorCentre->getPosition()->y - f.centre->getPosition()->y) * along;
 	at.z = f.centre->getPosition()->z;
 	camp->setPosition(&at);
+	testutil::completeHorde(camp); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	camp->friend_onBuildComplete();
 	return camp;
 }

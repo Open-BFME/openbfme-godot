@@ -8,8 +8,10 @@
 #include "GameLogic/Module/MoneyEventModules.h"
 #include "GameLogic/SnapshotXfer.h"
 
+#include "Common/INIException.h"
 #include "Common/NumericState.h"
 #include "Common/Player.h"
+#include "Common/Science.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/Economy.h"
@@ -59,14 +61,26 @@ const FieldParse kPillageFieldParse[] = {
 };
 #undef PM_OFF
 
+// RW 0x73AFE3 INI::parseScience: the next token through TheScienceStore (RW 0x73A386); no store: the plain int throw 0xDEAD0001 (as DockUpdate.cpp)
+void parseScience(INI *ini, void *, void *store, const void *)
+{
+	const char *token = ini->getNextToken();
+	if (!TheScienceStore)
+	{
+		throw INIPlainIntError("TheScienceStore==NULL"); // RW 0x73AFFA
+	}
+	*static_cast<int *>(store) = TheScienceStore->friend_lookupScience(token);
+}
+
 #define SC_OFF(member) (int)offsetof(CrateCollideModuleData, member)
+// RW 0xC71390 (CrateCollide); SalvageCrateCollide's own rows (RW 0xC05F80) follow in kSalvageCrateFieldParse
 const FieldParse kCrateFieldParse[] = {
 	{ "RequiredKindOf", ParseKindOfMask, nullptr, SC_OFF(m_requiredKindOf) },
 	{ "ForbiddenKindOf", ParseKindOfMask, nullptr, SC_OFF(m_forbiddenKindOf) },
 	{ "ForbidOwnerPlayer", INI::parseBool, nullptr, SC_OFF(m_forbidOwnerPlayer) },
 	{ "BuildingPickup", INI::parseBool, nullptr, SC_OFF(m_buildingPickup) },
 	{ "HumanOnly", INI::parseBool, nullptr, SC_OFF(m_humanOnly) },
-	{ "PickupScience", INI::parseAsciiString, nullptr, SC_OFF(m_pickupScience) },
+	{ "PickupScience", parseScience, nullptr, SC_OFF(m_pickupScience) },
 	{ "ExecuteFX", INI::parseAsciiString, nullptr, SC_OFF(m_executeFX) },
 	{ "ExecuteAnimation", INI::parseAsciiString, nullptr, SC_OFF(m_executeAnimation) },
 	{ "ExecuteAnimationTime", INI::parseReal, nullptr, SC_OFF(m_executeAnimationTime) },
@@ -76,6 +90,7 @@ const FieldParse kCrateFieldParse[] = {
 };
 #undef SC_OFF
 #define SC_OFF(member) (int)offsetof(SalvageCrateCollideModuleData, member)
+// RW 0xC05F80 (SalvageCrateCollide)
 const FieldParse kSalvageCrateFieldParse[] = {
 	{ "PorterChance", INI::parsePercentToReal, nullptr, SC_OFF(m_porterChance) },
 	{ "BannerChance", INI::parsePercentToReal, nullptr, SC_OFF(m_bannerChance) },

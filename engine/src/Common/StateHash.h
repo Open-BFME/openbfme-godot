@@ -14,13 +14,33 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
 
 class StateHasher
 {
 public:
 	StateHasher() = default;
 
-	void addU32(std::uint32_t v) { m_crc = ((m_crc << 1) | (m_crc >> 31)) + v; }
+	// lane PERF-HD: a recording hasher appends every word to `tape` instead of chaining it; replay() then chains a tape's words in order, so
+	// the work of finding the words can run on other threads while the chain (one rotate-add per word) stays the one serial walk: the same
+	// value as feeding the words directly
+	explicit StateHasher(std::vector<std::uint32_t> *tape) : m_tape(tape) {}
+	void addU32(std::uint32_t v)
+	{
+		if (m_tape)
+		{
+			m_tape->push_back(v);
+			return;
+		}
+		m_crc = ((m_crc << 1) | (m_crc >> 31)) + v;
+	}
+	void replay(const std::vector<std::uint32_t> &tape)
+	{
+		for (std::uint32_t v : tape)
+		{
+			m_crc = ((m_crc << 1) | (m_crc >> 31)) + v;
+		}
+	}
 	void addI32(std::int32_t v) { addU32((std::uint32_t)v); }
 	void addBool(bool v) { addU32(v ? 1u : 0u); }
 	void addU64(std::uint64_t v)
@@ -56,4 +76,5 @@ public:
 
 private:
 	std::uint32_t m_crc = 0;
+	std::vector<std::uint32_t> *m_tape = nullptr;
 };

@@ -60,9 +60,6 @@ public:
 	virtual int pathPriority() const = 0;           // RW 0x663F48: (DOZER ? 100 : 0) + 10 * crushable level + (CAVALRY ? 5 : 0)
 	// RW 0x66E233's early exits: the unit may path through units (AI + 0x3BA), a deployed SIEGE_TOWER (template + 0x113 bit 0x20, status 0x3B); default no
 	virtual bool canPathThroughUnits() const { return false; }
-	// RW 0x66606E .. 0x66607C: computePath made the exit-production straight path: the AI's path-through-units flag is dropped (AI + 0x3BA = 0, RW 0x666079) and
-	// the machine's goal becomes the destination (RW 0x6654AD with CMD_FROM_AI: no clip, then RW 0x8DB810: unless the machine is locked, angle FLT_MAX); default nothing
-	virtual void exitQuickPathMade(const Coord3D &dest) { (void)dest; }
 	virtual bool isDeployedSiegeTower() const { return false; }
 	// RW 0x68B36F: the object (or its container) the unit is attacking or approaching, 0 when none
 	virtual PathfindObjectID attackTargetOf(const PathfindObject &o) const = 0;
@@ -114,6 +111,9 @@ public:
 	// RW 0x662A0E (a type 7 portal, after destroyPath RW 0x66276B): the AI's vslot 0x60 with CMD_FROM_AI (RW 0x66D8F5, the AI's private idle: INFERENCE S-4857,
 	// the port's aiIdle(CMD_FROM_AI)); default nothing
 	virtual void idleFromAI() {}
+	// RW 0x66606E .. 0x66607C: computePath made the exit-production straight path: the AI's path-through-units flag is dropped (AI + 0x3BA = 0, RW 0x666079) and
+	// the machine's goal becomes the destination (RW 0x6654AD with CMD_FROM_AI: no clip, then RW 0x8DB810: unless the machine is locked, angle FLT_MAX); default nothing
+	virtual void finishExitQuickPath(const Coord3D &destination) { (void)destination; }
 };
 
 enum AIGoalType

@@ -14,6 +14,7 @@
 // press is the world's, a right drag scrolls with the power still waiting, a right click cancels it without an order and the next one moves.
 // The tests SKIP loudly without the installs.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "HudTestUtil.h"
@@ -116,6 +117,7 @@ TEST_CASE("SPELLRC-1 retail: with a spell book power aimed a right drag scrolls 
 	REQUIRE(fort);
 	Coord3D at{ 600, 600, 0 };
 	fort->setPosition(&at);
+	testutil::completeHorde(fort); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	fort->friend_onBuildComplete();
 	h.frames(40);
 	REQUIRE(h.hud->palantir()->spellBookShown());

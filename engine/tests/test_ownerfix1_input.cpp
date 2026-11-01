@@ -9,6 +9,7 @@
 // Each test drives the real HUD (mouse events, key events, the movies' buttons, the control bar), counts the messages that reach the command list and checks
 // the effect in the world. They SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset. GPL-3.0.
 
+#include "HordeCompleteTestUtil.h"
 #include "HudTestUtil.h"
 
 #include "Common/Player.h"
@@ -171,6 +172,7 @@ struct HudFix
 		REQUIRE(c);
 		Coord3D at{ 600.0f, 600.0f, 0.0f };
 		c->setPosition(&at);
+		testutil::completeHorde(c); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		c->friend_onBuildComplete();
 		rig.local->science().grantScience(TheScienceStore->getScienceFromInternalName(science));
 		rig.game->shroud().revealMapForPlayerPermanently(rig.index());
@@ -441,6 +443,7 @@ TEST_CASE("ownerfix1 cutscene input: a double click, a drag box and the hero bar
 	at.x += 120.0f;
 	at.z = f.logic().getGroundHeight(at.x, at.y);
 	hero->setPosition(&at);
+	testutil::completeHorde(hero); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	hero->friend_onBuildComplete();
 	f.frames(40);
 	InGameHeroSelect *bar = f.hud->heroSelect();

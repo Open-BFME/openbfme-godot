@@ -866,7 +866,41 @@ UpdateSleepTime OpenContain::update()
 			it = (!o || o->isDestroyed()) ? m_wanters.erase(it) : std::next(it);
 		}
 	}
+	// lane MODCOMPAT-MOD1, RW 0x8669B1 (called last by RW 0x86702D): the grab's eat. With a victim set (+ 0xC4) and frames left (+ 0xCC > 0) the count goes
+	// down; at 0 a victim still alive is taken out (contain slot 0xA4(victim, 0)), its drawable is hidden (RW 0x6718FB(1), the client's), the eater (+ 0xC8),
+	// when alive, scores the kill (Object::scoreTheKill RW 0x6955BC(victim, 1)) and a victim no longer in the list is destroyed (RW 0x62BBAB). The ids stay set
+	// (RW never clears + 0xC4 / + 0xC8)
+	if (m_eatVictim != INVALID_ID && m_eatFrames > 0 && --m_eatFrames == 0)
+	{
+		GameLogic &logic = getObject()->logic();
+		if (Object *victim = logic.findObjectByID(m_eatVictim))
+		{
+			removeFromContain(victim);
+			if (Object *eater = logic.findObjectByID(m_eatKiller))
+			{
+				eater->scoreTheKill(*victim, 1);
+			}
+			if (std::find(m_contained.begin(), m_contained.end(), victim) == m_contained.end())
+			{
+				logic.destroyObject(victim);
+			}
+		}
+	}
 	return UPDATE_SLEEP_NONE;
+}
+
+// lane MODCOMPAT-MOD1: RW 0x865A5C
+bool OpenContain::manualPickUpAllows(const Object &obj) const
+{
+	return ObjectFilterMatch::allows(getObject()->logic(), m_open->m_manualPickUpFilter, obj, getObject()->getControllingPlayer());
+}
+
+// lane MODCOMPAT-MOD1: RW 0x865853
+void OpenContain::eatPassengerAfter(const Object &victim, int frames, const Object &eater)
+{
+	m_eatFrames = frames < 2 ? 1 : frames;
+	m_eatVictim = victim.getID();
+	m_eatKiller = eater.getID();
 }
 
 // RW 0x8682D9 OpenContain::exitObjectViaDoor
@@ -956,6 +990,9 @@ void OpenContain::crc(StateHasher &h) const
 	h.addFloat(m_rallyPoint.z);
 	h.addBool(m_rallyPointExists);
 	h.addU32(m_doorOpenFrames);
+	h.addU32(m_eatVictim); // lane MODCOMPAT-MOD1
+	h.addU32(m_eatKiller);
+	h.addI32(m_eatFrames);
 	h.addBool(m_deleting);
 	h.addU32((std::uint32_t)m_riderBoneIndex.size());
 	for (const auto &kv : m_riderBoneIndex)
@@ -1011,7 +1048,8 @@ const char *OpenContain::shipStop()
 	return "S-4160: ship boarding and landing are ported only in the contain (lane SHIP-1: the shore spot RW 0x6EFBB8 as a SHIP's entry position, its riders' exit "
 	       "test and their exit to the shore): not ported are the boarding AI (AIPrepareForBoarding RW 0x74403F / 0x756651, the SHIP branch of "
 	       "AIMoveToPositionAndEnterState RW 0x751A8A / 0x756452: the destination adjustment, the ship's states 0x46 / 0x47 and its shore test, "
-	       "privateMoveToPositionAmphibious RW 0x66B564) and the angled exit path RW 0x77122F that the exit states' byte RW 0xDE9064 selects";
+	       "privateMoveToPositionAmphibious RW 0x66B564) and the angled exit path RW 0x77122F that the exit states' byte RW 0xDE9064 selects; "
+	       "OpenBFME boundary policy: a ship/rider exit with only zero-initialized destinations retains ordinary path checks instead of a straight leg";
 }
 
 // lane SHIP-1, RW 0x868516 .. 0x868733 (OpenContain::exitObjectViaDoor with NumberOfExitPaths 0 and a SHIP container). TARGET FACTS (RotWK game.dat, S-001):
@@ -1064,6 +1102,17 @@ void OpenContain::exitShipToShore(const Object &ship, Object &rider)
 	{
 		std::vector<Coord3D> path{ q, q, goal };
 		ai->aiFollowPath(path, const_cast<Object *>(&ship), CMD_FROM_AI, true);
+		// OpenBFME integration guard requested in #133: an untouched ship and
+		// rider have zero-initialized destinations, not an authored exit lane.
+		// Keep the ordinary search for that absent lane; do not reinterpret a
+		// real production exit or a nonzero ship/rider destination.
+		const Coord3D requested = shipAI->mover().requestedDestination();
+		if (requested.x == 0.0f && requested.y == 0.0f && requested.z == 0.0f &&
+		    goal.x == 0.0f && goal.y == 0.0f && goal.z == 0.0f &&
+		    q.x == 0.0f && q.y == 0.0f && q.z == 0.0f)
+		{
+			ai->setCanPathThroughUnits(false);
+		}
 		q = goal;
 	}
 	ai->world().pathfinder().updateGoal(ai->pathfindObject(), &q, LAYER_GROUND); // RW 0x68B3AB
@@ -1123,7 +1172,8 @@ bool OpenContain::getExitOffset(Coord3D &out) const
 // The riders in insertion order as ids (the Objects block has made them), then the crc's fields with the maps in key order, then the statistics.
 void OpenContain::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 }; // 2: lane MODCOMPAT-MOD1's eat (RW interface + 0xC4 / 0xC8 / 0xCC); a version 1 snapshot loads as not eating
+	x.xferVersion(v);
 	xferUpdateModule(x);
 	GameLogic &logic = getObject()->logic();
 	SnapshotXfer::objectPointers(x, logic, m_contained, "a contain's rider", getObject()->getID());
@@ -1143,6 +1193,19 @@ void OpenContain::xfer(Xfer &x)
 	x.xferInt(&m_nextExitPath);
 	SnapshotXfer::checkRange(m_nextExitPath, 1, 0x7FFFFFFF, "a contain's next exit path");
 	x.xferUnsignedInt(&m_doorOpenFrames);
+	if (v.current >= 2) // lane MODCOMPAT-MOD1
+	{
+		x.xferObjectID(&m_eatVictim);
+		x.xferObjectID(&m_eatKiller);
+		x.xferInt(&m_eatFrames);
+		SnapshotXfer::checkRange(m_eatFrames, 0, 0x7FFFFFFF, "a contain's eat frames");
+	}
+	else
+	{
+		m_eatVictim = INVALID_ID;
+		m_eatKiller = INVALID_ID;
+		m_eatFrames = 0;
+	}
 	x.xferBool(&m_deleting);
 	intMap(m_riderBoneIndex, "a contain's rider bones");
 	SnapshotXfer::map(x, m_riderBoneName, 5, "a contain's rider bone names", [&](ObjectID &id) { x.xferObjectID(&id); },

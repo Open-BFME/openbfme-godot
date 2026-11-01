@@ -517,7 +517,7 @@ void SiegeEngineContainT<Base, Horde>::exitOntoWall(Object *obj)
 		const float *cb = container->getBasis();
 		const float fx = cb[0], fy = cb[3];
 		const Coord3D &cp = *container->getPosition();
-		const std::vector<ObjectGeometry::Shape> shapes = ObjectGeometry::shapesOf(*static_cast<const ThingTemplate *>(container->getTemplate())->getFinalOverride());
+		const std::vector<ObjectGeometry::Shape> &shapes = container->geometryShapes(); // the object's own GeometryInfo (lane MODCOMPAT-MOD1)
 		const float radius = shapes.empty() ? 0.0f : shapes.front().majorRadius;
 		const Coord3D front{ SimMath::addf32(SimMath::mulf32(fx, radius), cp.x), SimMath::addf32(SimMath::mulf32(fy, radius), cp.y), cp.z };
 		const PathfindLayerEnum layer = wallLayerAt(front);

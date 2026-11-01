@@ -6,10 +6,10 @@
 // options UI, the retail LANMessage encoding) is NET-2 / XPLAY-2 (stop S-724); this one joins by address.
 //
 // Datagrams (on the game's UDP socket, before the Transport takes it over): u16 magic 0x4C42 ("BL"), u8 kind, then
-//   JOIN       u8 lobby version 3, wstr name, str profile identity   (player -> host, repeated until ACCEPT / REFUSE)
+//   JOIN       u8 lobby version (kVersion), wstr name, str profile identity   (player -> host, repeated until ACCEPT / REFUSE)
 //   ACCEPT     i32 slot                                     (host -> player)
 //   REFUSE     str reason                                   (host -> player: the game is full or already started, another lobby version, another profile)
-//   START      u8 version (kVersion: legacy, 7: extended), str profile identity, NewGameMessage, i32 run-ahead, i32 CRC interval,
+//   START      u8 version (kVersion: legacy, 9: extended), str profile identity, NewGameMessage, i32 run-ahead, i32 CRC interval,
 //              8 or 16 x (u8 used, u32 ip, u16 port), selected by the map's capacity
 //                                                           (host -> every player, repeated until START_ACK)
 //   START_ACK  i32 slot
@@ -38,6 +38,10 @@ struct LobbyStart
 	int crcInterval = 100;
 	std::array<NetAddress, MAX_SLOTS> addresses{}; ///< per slot, the network players' addresses (the local one is its own socket's)
 	std::array<bool, MAX_SLOTS> networkSlot{};     ///< the human slots of the game
+	// WOTR2 milestone 9: the online battle keeps the war's relay seat while its tactical game uses compact player slots (RW 0x6B5E3E).
+	bool battleUsesWarSlots = false;
+	std::array<int, MAX_SLOTS> battleSlotOfWarSlot{};
+	int gameSlot(int networkSlot) const { return battleUsesWarSlots ? battleSlotOfWarSlot[(size_t)networkSlot] : networkSlot; }
 	ProfileIdentity profile;                       ///< the host's (equal to every player's: checked)
 	// lane ONLINE-2: an online game (GameNetwork/OnlineStart.h: the START the lobby service built): every peer is behind the relay (Transport relay mode),
 	// `addresses` are unused
@@ -59,8 +63,9 @@ namespace LANLobby
 {
 // the JOIN / START version: 2: JOIN / START carry the lobby version and the profile identity; 3 (lane HERO-2): the slots' Create-a-Hero records;
 // 4 (lane OWNERFIX-2): the GameInfo slots' handicaps (lane P16: 5 is the same START on an extended, 16-slot record); 6 (lane CHEAT-1): the GameInfo's
-// Cheat Mode (7: on an extended record)
-constexpr std::uint8_t kVersion = 6;
+// Cheat Mode (7: on an extended record); 8 (WOTR2 milestone 8): the GameInfo's game mode and scenario (9: on an extended record; 7 is skipped, the
+// legacy START shares the extended START's numbers); 10 (step 4): a resumed war's save identity and state hash (11: on an extended record; 9 is skipped)
+constexpr std::uint8_t kVersion = 10;
 // the encoded datagrams (exposed for the tests)
 std::vector<std::uint8_t> encodeStart(const LobbyStart &s);
 bool decodeStart(const std::vector<std::uint8_t> &d, LobbyStart &out, std::string *error);

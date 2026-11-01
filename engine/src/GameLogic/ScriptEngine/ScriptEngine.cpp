@@ -22,6 +22,8 @@
 #include "GameLogic/ScriptEngine/ScriptActions.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameLogic/ScriptEngine/ScriptTemplates.h"
+#include "Common/Thing/ThingFactory.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
 
 #include <algorithm>
@@ -98,7 +100,13 @@ ScriptEngine::ScriptEngine(GameLogic &logic)
 	resetBreeze(); // lane VISUAL-2: the reset's values before the first reset
 }
 
-ScriptEngine::~ScriptEngine() = default;
+ScriptEngine::~ScriptEngine()
+{
+	if (m_createActionsTeams)
+	{
+		m_createActionsTeams->setCreateActionsHook(nullptr); // lane TEAMEVENTS-1: the factory outlives the game's logic
+	}
+}
 
 std::string ScriptEngine::currentScriptName() const
 {
@@ -133,6 +141,10 @@ void ScriptEngine::reset()
 	}
 	m_audioTimers.clear();
 	for (std::vector<TriggeredSpecialPower> &l : m_triggeredSpecialPowers) // lane BACKLOG4: RW 0x607FB3
+	{
+		l.clear();
+	}
+	for (std::vector<TriggeredSpecialPower> &l : m_completedUpgrades) // lane MODCOMPAT-AI: RW 0x607FB3
 	{
 		l.clear();
 	}
@@ -232,6 +244,46 @@ void ScriptEngine::newGame(const std::vector<SideScripts> &sides, const std::vec
 	}
 	m_stats.sides = m_sides.size();
 	m_loaded = true;
+	// lane TEAMEVENTS-1: from now on a new team runs its production-condition actions at once; the teams made before the scripts existed (see
+	// TeamFactory::setCreateActionsHook) run theirs now, in creation order
+	TeamFactory &teams = m_logic.players().teams();
+	m_createActionsTeams = &teams;
+	teams.setCreateActionsHook([this](TeamPrototype &proto) { return runTeamCreateActions(proto); });
+	for (TeamPrototype *proto : teams.takePendingCreateActions())
+	{
+		runTeamCreateActions(*proto);
+	}
+}
+
+bool ScriptEngine::runTeamCreateActions(TeamPrototype &proto)
+{
+	if (!m_loaded)
+	{
+		return false;
+	}
+	const std::string &name = proto.templateScripts().productionCondition;
+	const Player *owner = proto.getControllingPlayer();
+	const std::string savedSide = m_currentSide;
+	m_currentSide = owner ? owner->getPlayerName() : std::string(); // RW 0x758ECB: prototype + 0x10 (the owner's name)
+	const std::string scope = qualify(name).first;
+	RScript *sc = findScript(name);
+	if (!sc)
+	{
+		m_currentSide = savedSide;
+		note("teamProductionCondition script not found: '" + name + "' (team " + proto.getName() + ")"); // retail: nothing runs
+		return true;
+	}
+	Team *const savedTeam = m_thisTeam;
+	Player *const savedPlayer = m_currentPlayer;
+	m_currentSide = scope; // RW 0x60D053: RW 0x604243 with the side the lookup answered
+	m_thisTeam = nullptr;
+	m_currentPlayer = nullptr;
+	executeActions(sc->def->actions, *sc);
+	m_thisTeam = savedTeam;
+	m_currentPlayer = savedPlayer;
+	m_currentSide = savedSide;
+	++m_stats.teamCreateActionsRun;
+	return true;
 }
 
 // ---- names ------------------------------------------------------------------------------------------------------------------------------------
@@ -542,6 +594,22 @@ void ScriptEngine::setReference(const std::string &name, const Object &obj)
 	m_references[{ m_currentSide, name }] = obj.getID();
 }
 
+void ScriptEngine::copyReference(const std::string &name, const std::string &source)
+{
+	// RW 0x608504: an empty source returns (RW 0x60851B .. 0x608532); the source's key (RW 0x604043 -> RW 0x72C43C), find (RW 0x606EA0); found: the
+	// key (+ 0x1A20C, name) (RW 0x42C1CC), insert-or-find (RW 0x60741E), the node's + 0x18 = the source node's + 0x18
+	if (source.empty())
+	{
+		return;
+	}
+	const auto it = m_references.find(qualify(source));
+	if (it != m_references.end())
+	{
+		const ObjectID id = it->second;
+		m_references[{ m_currentSide, name }] = id;
+	}
+}
+
 void ScriptEngine::nameInCache(const std::string &name, const Object &obj)
 {
 	if (name.empty())
@@ -557,6 +625,34 @@ void ScriptEngine::nameInCache(const std::string &name, const Object &obj)
 		}
 	}
 	m_namedObjects.emplace_back(name, obj.getID());
+}
+
+void ScriptEngine::transferObjectName(const std::string &name, Object &obj)
+{
+	if (name.empty())
+	{
+		return;
+	}
+	if (!obj.getName().empty())
+	{
+		for (auto &e : m_namedObjects) // RW 0x603912: the first entry of the object
+		{
+			if (e.second == obj.getID())
+			{
+				e.second = INVALID_ID;
+				break;
+			}
+		}
+	}
+	obj.friend_setNameUncached(name); // Object + 0x88
+	for (auto &e : m_namedObjects)
+	{
+		if (e.first == name)
+		{
+			e.second = obj.getID();
+			return;
+		}
+	}
 }
 
 bool ScriptEngine::isInNamedCache(const Object &obj) const
@@ -1279,8 +1375,77 @@ bool ScriptEngine::executeEngineAction(const ScriptActionRec &a)
 			param(a.params, 4).realValue);
 		return true;
 	case ACT_SET_ATTACK_PRIORITY_THING:
+	{
+		// lane BFME2CAMP1, RW 0x605A47 (set, thing or object list, priority): an object list (RW 0x759158): each name's template (RW 0x6D1305) gets the
+		// priority in the set (RW 0x6058B8, made when missing; RW 0x759E24), the walk ending at the first unknown thing or a full table; one thing: the same
+		// once. A debug line for each failure (not kept)
+		const std::string &setName = param(a.params, 0).stringValue, &what = param(a.params, 1).stringValue;
+		const std::int32_t priority = param(a.params, 2).intValue;
+		std::vector<std::string> names;
+		if (const std::vector<std::string> *list = findObjectList(what))
+		{
+			names = *list;
+		}
+		else
+		{
+			names.push_back(what);
+		}
+		for (const std::string &n : names)
+		{
+			const ThingTemplate *t = m_logic.things().findTemplate(n);
+			if (!t)
+			{
+				// "*** Attempting to set attack priority on an unknown thing": retail stops here; the port also reports it (lane BFME2CAMP1 review)
+				m_logic.reportError("SET_ATTACK_PRIORITY_THING: unknown thing '" + n + "' for the attack priority set '" + setName + "'");
+				break;
+			}
+			AttackPriorityInfo *info = m_attackPriorities.findOrCreate(setName);
+			if (!info)
+			{
+				// "*** Error allocating attack priority set": the table is full; reported (lane BFME2CAMP1 review)
+				m_logic.reportError("SET_ATTACK_PRIORITY_THING: no room for the attack priority set '" + setName + "'");
+				break;
+			}
+			info->setPriority(t, priority);
+		}
+		return true;
+	}
 	case ACT_SET_ATTACK_PRIORITY_KIND_OF:
+	{
+		// lane BFME2CAMP1, RW 0x605C78 (set, KindOf, priority): the set (RW 0x6058B8; none: a debug line), then every template of TheThingFactory's list
+		// (+ 0xC, next + 0x494) of that KindOf (RW 0x444FA2) gets the priority (RW 0x759E24: keyed by its final override; each the same value, so the walk's
+		// order decides nothing)
+		AttackPriorityInfo *info = m_attackPriorities.findOrCreate(param(a.params, 0).stringValue);
+		const std::int32_t kindOf = param(a.params, 1).intValue, priority = param(a.params, 2).intValue;
+		if (!info)
+		{
+			m_logic.reportError("SET_ATTACK_PRIORITY_KIND_OF: no room for the attack priority set '" + param(a.params, 0).stringValue + "'"); // lane BFME2CAMP1 review
+		}
+		if (info && kindOf >= 0)
+		{
+			for (const ThingTemplate *t : m_logic.things().templates()) // the master list in creation order (RW + 0xC)
+			{
+				if (t && MaskTest(m_logic.templateInfo(t).kindOf, (unsigned)kindOf)) // the template's own mask (+ 0x108)
+				{
+					info->setPriority(t, priority);
+				}
+			}
+		}
+		return true;
+	}
 	case ACT_SET_DEFAULT_ATTACK_PRIORITY:
+	{
+		// lane BFME2CAMP1, RW 0x605D32 (set, priority): the set (RW 0x6058B8; none: a debug line) gets the default (+ 8)
+		if (AttackPriorityInfo *info = m_attackPriorities.findOrCreate(param(a.params, 0).stringValue))
+		{
+			info->setDefaultPriority(param(a.params, 1).intValue);
+		}
+		else
+		{
+			m_logic.reportError("SET_DEFAULT_ATTACK_PRIORITY: no room for the attack priority set '" + param(a.params, 0).stringValue + "'"); // lane BFME2CAMP1 review
+		}
+		return true;
+	}
 	case ACT_SET_COUNTER_TO_UNIT_THREAT:
 	case ACT_SET_COUNTER_TO_TEAM_THREAT:
 		noteUnportedAction(ScriptTemplates::action(a.resolved)->name); // engine-owned, not ported (S-1180)
@@ -2021,6 +2186,7 @@ void ScriptEngine::crc(StateHasher &h) const
 		h.addString(e.first);
 		h.addU32(e.second);
 	}
+	m_attackPriorities.crc(h); // lane BFME2CAMP1: an edited table only
 	if (!m_references.empty()) // lane CASTLE-UNPACK: hashed once a reference exists (the earlier hashes are unchanged)
 	{
 		h.addU32(0x191B8u);
@@ -2078,6 +2244,20 @@ void ScriptEngine::crc(StateHasher &h) const
 			}
 		}
 	}
+	for (size_t i = 0; i < m_completedUpgrades.size(); ++i) // lane MODCOMPAT-AI: hashed once a player has an entry (the earlier hashes are unchanged)
+	{
+		const std::vector<TriggeredSpecialPower> &l = m_completedUpgrades[i];
+		if (!l.empty())
+		{
+			h.addU32(0x5B5u | ((std::uint32_t)i << 12));
+			h.addU32((std::uint32_t)l.size());
+			for (const TriggeredSpecialPower &e : l)
+			{
+				h.addU32(e.nameCrc);
+				h.addU32(e.source);
+			}
+		}
+	}
 }
 
 // ---- lane BACKLOG4 (S-529): the triggered special powers ---------------------------------------------------------------------------------------
@@ -2113,6 +2293,45 @@ bool ScriptEngine::isSpecialPowerTriggered(int playerIndex, const std::string &n
 	for (auto it = l.begin(); it != l.end(); ++it)
 	{
 		if (it->nameCrc == crc && (source == 0 || source == it->source)) // RW 0x758CEB .. 0x758CF7
+		{
+			if (remove)
+			{
+				l.erase(it); // RW 0x702055
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+// ---- lane MODCOMPAT-AI: the completed upgrades (RW + 0x1A458) -------------------------------------------------------------------------------------
+
+// RW 0x759A1C (the sibling of RW 0x759986: the CRC RW 0x7ED86B, appended at the list's end RW 0x777F5C)
+void ScriptEngine::notifyOfCompletedUpgrade(int playerIndex, const std::string &name, ObjectID source)
+{
+	if (playerIndex < 0 || playerIndex >= kSpecialPowerListPlayers)
+	{
+		note("[S-1180] an upgrade completed by a player index outside the script engine's 20 lists (RW 0x759A1C does not test it) is not recorded");
+		return;
+	}
+	TriggeredSpecialPower e;
+	e.nameCrc = specialPowerNameCrc(name);
+	e.source = source;
+	m_completedUpgrades[(size_t)playerIndex].push_back(e);
+}
+
+// RW 0x758DE5
+bool ScriptEngine::isUpgradeCompleted(int playerIndex, const std::string &name, bool remove, ObjectID source)
+{
+	if (playerIndex < 0 || playerIndex >= kSpecialPowerListPlayers)
+	{
+		return false; // RW 0x758DEB .. 0x758DF4
+	}
+	std::vector<TriggeredSpecialPower> &l = m_completedUpgrades[(size_t)playerIndex];
+	const std::uint32_t crc = specialPowerNameCrc(name);
+	for (auto it = l.begin(); it != l.end(); ++it)
+	{
+		if (it->nameCrc == crc && (source == 0 || source == it->source)) // RW 0x758E11 .. 0x758E1D
 		{
 			if (remove)
 			{
@@ -2201,10 +2420,11 @@ std::vector<std::string> ScriptEngine::stopLines()
 		"[S-1185] map scripts: the War of the Ring per-player gate and RW 0x862535 are not ported (lane CAMP-1H: the team states, RW 0x6A8541, run); sequential scripts run "
 		"(lane SCRIPT-2) without the wait actions' sequential interface (they pass at once) and the AI busy flag + 0x3CA",
 		"[S-1186] map scripts: the AI orders without an AI state here run as stand-ins: the attack-follow waypoint orders march (attack move) to the end of "
-		"the path along each waypoint's first link, the face orders turn at once; NAMED_ATTACK_TEAM and the AI recruiting flag are not ported, nor a group "
+		"the path along each waypoint's first link, the face orders turn at once; the AI recruiting flag is not ported, nor a group "
 		"attack's firing passengers and giant birds (lane SCRIPT-3: hunt, attitude, the group attack and the waypoint path states are ported, S-1188 / S-1189); "
-		"lane SCRIPT-4: the location guards, the idle / guard-for orders and stand ground are ported; the area guards (UNIT_ / TEAM_GUARD_AREA[_FROM_POSITION], "
-		"the guard machine's area form) and TEAM_ATTACK_TEAM (AIAttackSquadState, state 0x17) are not (counted as unported actions)",
+		"lane SCRIPT-4: the location guards, the idle / guard-for orders and stand ground are ported; lane BFME2CAMP1: the area guards (UNIT_ / "
+		"TEAM_GUARD_AREA[_FROM_POSITION]) and the area attacks (TEAM_ / NAMED_ATTACK_AREA) and the squad attacks (TEAM_ / "
+		"NAMED_ATTACK_TEAM: AIAttackSquadState, state 0x17) are",
 		"[S-1187] map scripts: HAS_FINISHED_AUDIO times an event by a logic-side length model (RW 0x759B84 / 0x4541FF: attack + main + decay file lengths "
 		"from the first query); a multi-file sound list contributes its first file where retail draws the audio generator",
 		huntStopLine(),

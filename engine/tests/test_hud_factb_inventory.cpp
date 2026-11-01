@@ -56,19 +56,18 @@ TEST_CASE("factb inventory: Isengard and Mordor reach every structure, unit, her
 		}
 		md += "\n";
 		// the pins (stops S-1993 .. S-1995, docs/STOPS.md): the behaviour module classes of the faction that run as the UnportedModule (it says so
-		// at runtime) or as the base AI. A class ported later leaves the list: move the pin (lane FACT-C ported ObjectCreationUpgrade, SUMMON-1 DoCommandUpgrade, lane FX-4 TransitionDamageFX)
+		// at runtime) or as the base AI. A class ported later leaves the list: move the pin (lane FACT-C ported ObjectCreationUpgrade, SUMMON-1 DoCommandUpgrade, lane FX-4 TransitionDamageFX, lane MODCOMPAT-MOD1 PickupStuffUpdate, AutoPickUpUpdate, BoredUpdate)
 		std::set<std::string> classes;
 		for (const auto &kv : gaps)
 		{
 			classes.insert(kv.first);
 		}
-		const std::set<std::string> isengard = { "AnnounceBirthAndDeathBehavior", "AudioLoopUpgrade", "BaseUpgrade",
-			"EvacuateDamage", "FlingPassengerSpecialAbilityUpdate", "GeometryUpgrade",
-			"PickupStuffUpdate", "SlaveWatcherBehavior" }; // lane FX-4 ported TransitionDamageFX; lane SIEGE-1 SiegeDeployHordeSpecialPower; lane LUMBER1: SupplyCenterCreate / SupplyCenterDockUpdate ported (S-1993)
-		const std::set<std::string> mordor = { "AimWeaponBehavior", "AnnounceBirthAndDeathBehavior", "AudioLoopUpgrade", "AutoPickUpUpdate", "BaseUpgrade",
-			"BoredUpdate", "ClickReactionBehavior", "EvacuateDamage", // lane SUMMON-1 ported DoCommandUpgrade
-			"FlingPassengerSpecialAbilityUpdate", "GeometryUpgrade", "GrabPassengerSpecialPower", "HordeTransportContainDamage",
-			"PickupStuffUpdate", "RunOffMapBehavior", "SlaughterHordeContain", "SlaveWatcherBehavior" }; // lane FX-4 ported TransitionDamageFX; lane SIEGE-1 SiegeDeployHordeSpecialPower; lane LUMBER1: SupplyCenterCreate / SupplyCenterDockUpdate ported (S-1993)
+		const std::set<std::string> isengard = { "AnnounceBirthAndDeathBehavior", "BaseUpgrade",
+			"EvacuateDamage", "FlingPassengerSpecialAbilityUpdate" }; // lane MODCOMPAT-MOD1 ported GeometryUpgrade, SlaveWatcherBehavior and PickupStuffUpdate; lane FX-4 ported TransitionDamageFX; lane SIEGE-1 SiegeDeployHordeSpecialPower; lane LUMBER1: SupplyCenterCreate / SupplyCenterDockUpdate ported (S-1993)
+		const std::set<std::string> mordor = { "AimWeaponBehavior", "AnnounceBirthAndDeathBehavior", "BaseUpgrade",
+			"EvacuateDamage", // lane SUMMON-1 ported DoCommandUpgrade; lane MODCOMPAT-MOD1 ClickReactionBehavior; lane MODCOMPAT-MOD1 AudioLoopUpgrade
+			"FlingPassengerSpecialAbilityUpdate", "HordeTransportContainDamage", // lane MODCOMPAT-MOD1 ported GeometryUpgrade and GrabPassengerSpecialPower
+			"RunOffMapBehavior", "SlaughterHordeContain" }; // lane MODCOMPAT-MOD1 ported SlaveWatcherBehavior, PickupStuffUpdate, AutoPickUpUpdate and BoredUpdate; lane FX-4 ported TransitionDamageFX; lane SIEGE-1 SiegeDeployHordeSpecialPower; lane LUMBER1: SupplyCenterCreate / SupplyCenterDockUpdate ported (S-1993)
 		CHECK(classes == (std::string(f) == "FactionIsengard" ? isengard : mordor));
 	}
 	if (const char *out = std::getenv("FACTB_INVENTORY_OUT"))

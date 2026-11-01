@@ -3,8 +3,8 @@
 // lane RULES-1: the Rules tab of the lobby movie (MpGameSetup.apt's rule rows): RotWK's AptMpGameRules, the panel at AptMpGameSetup + 0xD0.
 //
 // TARGET FACTS (rotwk201_game.exe, caveat S-001; every function below is tier A of its BFME2 1.06 twin unless marked, donor open-bfme-2
-// GUI/GUICallbacks/Apt/AptMpGameRulesCallbacks.cpp and AptMpGameRulesRefreshWidgets.cpp, byte-matched; the two Populate functions are the decomp's
-// recovered (not yet byte-matching) reverse/attempts/0x0057e7a1.cpp and 0x0057eaad.cpp):
+// GUI/GUICallbacks/Apt/AptMpGameRules.cpp, byte-matched; the two Populate functions are the decomp's
+// byte-matched since: AptMpGameRules.cpp):
 //   * the registration RW 0x987106 (tier B of BFME2 0x97F0AA: RotWK appends a tail, no change to the bindings): every "APT:RuleComboBox_<n>" and
 //     "APT:RuleCheckBox_<n>" text (n < 10) becomes " ", the rules get the mode's defaults (RW 0x960A74), the widgets are filed again, then the bindings
 //     MpGameRules::NumCheckBoxes / NumComboBoxes (RW 0x9865C9 queries 1 / 0), AptMpGameRules::Reset and the screen reference

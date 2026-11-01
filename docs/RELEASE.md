@@ -992,12 +992,17 @@ or **Nightly** (everything merged, built every night) in the launcher's Settings
   start at the last stable release.
 - **Notes** (`tools/release/nightly_notes.py`): the first-parent changes since the last nightly (`nightly/last-released`: the previous
   run that published, morning or evening, not the previous day), and for each the community pull requests
-  it carries (a `(cherry picked from commit X)` line whose X GitHub links to a pull request of the repository: its number and author).
+  it carries (a `(cherry picked from commit X)` line whose X GitHub links to a pull request of the repository, or a `#n` in the merge's
+  subject: its number and author). Each `Release-note:` line is credited to the pull requests it came from, and only those (RELNOTES-1):
+  end the line with them, `Release-note: Clicking units on the HUD is faster in large battles. (#169)` (`(#12, #13)` for two; the
+  ending is not printed); a line without one is our own work, and a merge's single line takes every pull request it carries. A merge
+  that carries a pull request none of its lines names fails the notes (fail closed). For merges already in the history,
+  `tools/release/nightly_credits.json` lists the pull requests of each line (one list per line, in order; the coordinator keeps it).
   A change with `Release-note:` lines is described by exactly those (`none` hides it), and its `Test:` lines are its test steps. For the
   rest, the operator's model command (`OPENBFME_NIGHTLY_LLM`) writes one plain sentence and 1 to 6 concrete test steps per change, and
   per community pull request. Each text is checked (the patch notes' jargon rule, no markup, mentions, references or links, the length
   limits); a draft that fails is sent back once with the problems, then the run fails. The page: the build, how to get it, the download
-  table, **Thanks to our community** (each pull request: "Thanks to @login (#n): ..."), What's new / Changed / What's fixed (community
+  table, **Thanks to our community** (each credited line: "Thanks to @login (#n): ..."), What's new / Changed / What's fixed (community
   first, credited), **What to test** (numbered, community first), how to report a problem, the known issues. The logins and numbers come
   from GitHub's record; they are the only mentions and references on the page. The whole page passes `audit-text` with the private
   denylist like every published text.

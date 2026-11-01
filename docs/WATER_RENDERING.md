@@ -38,7 +38,7 @@ PCA and PCA_U now reconstruct animated surface normals using the material's
 basis textures and the coefficient file derived from WaterPCATexture1:
 `Art/Textures/<stem>.basis`. The donor is
 `GameEngine/Source/GameLogic/Map/StandingWaterAreaLoadPCA.cpp` (0x3093F6),
-plus `GameEngineDevice/Source/W3DDevice/GameClient/Rva003093F6BasesSamplers.cpp`
+plus `GameEngine/Source/GameLogic/Map/StandingWaterArea.cpp`
 (0x30822F..0x308509) and `Rva000806F3BasesParams.cpp` (0x80858 onward).
 These paths are relative to the local Open-BFME-2 matching-source checkout.
 Target facts are the mounted RotWK effect/material/texture/basis data; no

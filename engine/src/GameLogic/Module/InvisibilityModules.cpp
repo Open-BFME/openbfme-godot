@@ -851,7 +851,12 @@ bool StealthUpdate::allowedAt(const Coord3D &own, const Coord3D &hordePos) const
 	{
 		obj->logic().noteStop("[S-1041] StealthUpdate PRIMARY_FORMATION: the horde contain's slot 0xEC (RW 0x7764B9) is not read (taken as false)");
 	}
-	// RW 0x7764C7: the script's stealth switch (Object + 0x457 bit 8) is not ported (S-1040)
+	// RW 0x7764C7: the script's stealth switch off (Object + 0x457 bit 8, SCRIPT_UNSTEALTHED: NAMED_SET_STEALTH_ENABLED false, RW 0x7BC7EC) forbids
+	// stealth (lane BFME2CAMP1)
+	if ((obj->scriptStatus() & 8u) != 0)
+	{
+		return false;
+	}
 	if (flags & StealthUpdateModuleData::AWAY_FROM_TREES)
 	{
 		if (!obj->logic().invisibility().treesNear(own, obj)) // RW 0x7764DE .. 0x776566

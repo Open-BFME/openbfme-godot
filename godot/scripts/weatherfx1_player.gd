@@ -6,6 +6,13 @@
 ##   rain      Isengard's Freezing Rain bought and cast through the spell book (power points by the logged test hook): the logic weather RAINY, the
 ##             snow manager's spell ramp draws the drops, the rain sound starts; the run waits for a lightning (the cloud effect's LightningFX)
 ##   darkness  Mordor's Darkness: the logic weather CLOUDY, the cloud effect darkens (phase 1 .. 2) and relights the terrain
+##   menu      (lane WEATHERFX-2, the owner's "washout on the menus with the snow") after a weather scenario (--weatherfx1=snow,menu): the game is left
+##             by input (Esc, Exit, Yes) to the score screen, then its Continue (the lobby) and its way back to the main menu; on each screen the Enhanced weather must be gone (no
+##             WeatherFX node, every weather shader global 0, the tone mapping's AgX at its defaults) and the screen drawn the same in the Original and the
+##             Enhanced look (weather_readability.gd screens_match): "WEATHERFX1 MENU <screen> ok|FAIL ..."
+##   panels    (lane WEATHERFX-2, the owner's pause / powers shots) the pause menu and the powers store over the playfield, each shot in both looks
+##             (weatherfx2-panels-<panel>-<look>.png); lane INGAMEBG-1: each must sit on the in-game background, the battlefield dimmed
+##             (weather_readability.gd panel_backdrop): "WEATHERFX1 PANEL <panel> <look> ok|FAIL ..."
 ## --weatherfx-seconds=<s> (default 40) how long each scenario watches the weather after the cast.
 ## Every scenario (with the enhanced look) then checks READABILITY (weather_readability.gd, the owner 2026-10-29: "weather never hurts
 ## readability"): the same frame drawn with the Original look and with the Enhanced weather, three times each, alternating; the medians of the
@@ -315,3 +322,142 @@ func _scenario_darkness() -> String:
 		fails.append("the cloud effect did not darken / relight the terrain")
 	print("WEATHERFX1 darkness seen %s" % JSON.stringify(seen))
 	return "; ".join(fails)
+
+
+## lane WEATHERFX-2: what of the Enhanced weather is left in the game's scene (the node, its shader globals, the tone mapping): [] when nothing
+func weather_leftovers() -> Array:
+	var out: Array = []
+	var fx = game.get("_weather_fx")
+	if fx != null and is_instance_valid(fx):
+		out.append("a WeatherFX node is still in the scene (active %s)" % str(fx.report().get("active", false)))
+	for g in WeatherFXScript().GLOBALS:
+		var v = RenderingServer.global_shader_parameter_get(g)
+		if v != null and ((v is float and absf(v) > 0.0) or (v is Vector2 and v != Vector2.ZERO)):
+			out.append("shader global %s = %s" % [g, str(v)])
+	var env: Environment = game._env.environment if game.get("_env") != null else null
+	if env != null and (not is_equal_approx(env.tonemap_agx_white, WeatherFXScript().AGX_WHITE) or not is_equal_approx(env.tonemap_agx_contrast, WeatherFXScript().AGX_CONTRAST)):
+		out.append("the tone mapping keeps the snow grade (AgX white %.2f contrast %.2f)" % [env.tonemap_agx_white, env.tonemap_agx_contrast])
+	return out
+
+
+## lane WEATHERFX-2: one screen (no game on it) in both looks: Original, Enhanced, Original again, each 6 frames after the switch; the Enhanced frame
+## against the two Original ones (the menus animate: a pixel counts as changed only if it differs from both)
+func menu_check(screen: String) -> String:
+	var Readability := readability_module()
+	var imgs := {}
+	for lk in ["original", "enhanced", "original2"]:
+		game._game_options.apply_look("enhanced" if lk == "enhanced" else "original")
+		await game._step(6)
+		await RenderingServer.frame_post_draw
+		imgs[lk] = game.get_viewport().get_texture().get_image()
+		if lk != "original2":
+			game._save_named("weatherfx2-%s-%s" % [screen, lk])
+	game._game_options.apply_look(look)
+	var fails := weather_leftovers()
+	var m: Dictionary = Readability.screens_match(imgs.original, imgs.enhanced, imgs.original2)
+	if not m.ok:
+		fails.append(m.why)
+	print("WEATHERFX1 MENU %s %s %s" % [screen, "ok" if fails.is_empty() else "FAIL " + "; ".join(fails), JSON.stringify(m.stats)])
+	return "" if fails.is_empty() else "%s: %s" % [screen, "; ".join(fails)]
+
+
+func _scenario_menu() -> String:
+	var fails := []
+	shot("menu-ingame")
+	await game._press_escape()
+	await game._wait_seconds(2.0)
+	if not await game._click_quit("ExitMission"):
+		return "no ExitMission button in the quit menu"
+	await game._wait_seconds(1.0)
+	if not await game._click_quit("Yes"):
+		return "no confirmation of the Exit"
+	var w := 0.0
+	while game._state != game.State.SCORE and w < 15.0:
+		await game._wait_seconds(0.25)
+		w += 0.25
+	if game._state != game.State.SCORE:
+		return "the Exit did not reach the score screen"
+	await game._wait_seconds(4.0)
+	var r := await menu_check("score")
+	if not r.is_empty():
+		fails.append(r)
+	var lvl: int = shell.shell_top_level()
+	for attempt in 6:
+		if shell.find_button(lvl, "Main.MainButtons.Skip").found:
+			await game._click_button(lvl, "Main.MainButtons.Skip")
+			await game._wait_seconds(1.0)
+		await game._click_button(lvl, "Main.MainButtons.Continue")
+		await game._wait_seconds(1.5)
+		if game._state != game.State.SCORE:
+			break
+	w = 0.0
+	while game._state != game.State.MENU and w < 15.0:
+		await game._wait_seconds(0.25)
+		w += 0.25
+	if game._state != game.State.MENU:
+		fails.append("Continue did not return to the main menu")
+		return "; ".join(fails)
+	await game._wait_seconds(4.0)
+	r = await menu_check("lobby")
+	if not r.is_empty():
+		fails.append(r)
+	# the screen Continue restores (Skirmish), then its way back to the main menu, where the front-end background fades in again (RW 0x815507)
+	for attempt in 3:
+		var st: PackedStringArray = shell.shell_stack()
+		if st.size() > 0 and st[-1] == "MainMenu.apt":
+			break
+		await game._walk_back("weatherfx2")
+		await game._wait_seconds(2.0)
+	var top: PackedStringArray = shell.shell_stack()
+	if top.is_empty() or top[-1] != "MainMenu.apt":
+		fails.append("no way back to the main menu (%s)" % str(top))
+		return "; ".join(fails)
+	await game._wait_seconds(5.0)
+	r = await menu_check("mainmenu")
+	if not r.is_empty():
+		fails.append(r)
+	return "; ".join(fails)
+
+
+## lane WEATHERFX-2 (the owner's pause / powers washout shots): the in-game panels over the playfield, each in both looks. Lane INGAMEBG-1: each panel
+## must sit on the in-game background, which dims the battlefield (weather_readability.gd panel_backdrop against the same look's frame with no panel):
+## "WEATHERFX1 PANEL <panel> <look> ok|FAIL <why> <stats>"
+func _scenario_panels() -> String:
+	var Readability := readability_module()
+	var fails := []
+	var bare := {}
+	await frame_view()
+	await game._wait_seconds(2.0)
+	for lk in ["original", "enhanced"]:
+		bare[lk] = await panel_shot("none", lk)
+	await game._press_escape()
+	await game._wait_seconds(3.0)
+	print("WEATHERFX1 panels pause menu: %s" % JSON.stringify(shell.quit_menu({"kind": "state"})))
+	for lk in ["original", "enhanced"]:
+		fails.append_array(panel_check(Readability, "pause", lk, bare[lk], await panel_shot("pause", lk)))
+	await game._click_quit("Resume")
+	await game._wait_seconds(6.0) # the in-game background's own fade out (Background.apt _hide_IG_BG)
+	var magic := palantir_button("PalantirButtons.Buttons.PlayerMagic")
+	if magic.x < 0:
+		return "no PlayerMagic button"
+	await click(magic)
+	await game._wait_seconds(4.0)
+	for lk in ["original", "enhanced"]:
+		fails.append_array(panel_check(Readability, "powers", lk, bare[lk], await panel_shot("powers", lk)))
+	game._game_options.apply_look(look)
+	return "; ".join(fails)
+
+
+func panel_shot(panel: String, lk: String) -> Image:
+	game._game_options.apply_look(lk)
+	await game._step(6)
+	await RenderingServer.frame_post_draw
+	var img: Image = game.get_viewport().get_texture().get_image()
+	game._save_named("weatherfx2-panels-%s-%s" % [panel, lk])
+	return img
+
+
+func panel_check(Readability: GDScript, panel: String, lk: String, bare: Image, img: Image) -> Array:
+	var m: Dictionary = Readability.panel_backdrop(bare, img, panel)
+	print("WEATHERFX1 PANEL %s %s %s %s" % [panel, lk, "ok" if m.ok else "FAIL " + m.why, JSON.stringify(m.stats)])
+	return [] if m.ok else ["%s %s: %s" % [panel, lk, m.why]]

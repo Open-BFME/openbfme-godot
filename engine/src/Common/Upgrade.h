@@ -126,6 +126,7 @@ public:
 	int getMaskBit() const { return m_maskBit; }
 	float getBuildTimeSeconds() const { return m_buildTime; }
 	int getBuildCost() const { return m_cost; }
+	bool persistsInCampaign() const { return m_persistsInCampaign; } // + 0x78 (WOTR2 milestone 7: RW 0x6E281B keeps these PLAYER upgrades for the war)
 	// the sub upgrades (resolved after the load); empty: the upgrade grants its own bit
 	const std::vector<const UpgradeTemplate *> &getSubUpgrades() const { return m_subUpgrades; }
 	// the bits Object::giveUpgrade sets (RW 0x693817)

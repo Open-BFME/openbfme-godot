@@ -600,7 +600,7 @@ bool AptCreateAHero::suppressPromo() const
 
 void AptCreateAHero::selectHeroSort(int key)
 {
-	// RW 0x9C4EBD (BFME2 0x9B5BDC, Rva005B5BDC.cpp): the same key again its odd (reversed) twin; another key the primary, the old one the secondary
+	// RW 0x9C4EBD (BFME2 0x9B5BDC, AptCreateAHeroManager.cpp): the same key again its odd (reversed) twin; another key the primary, the old one the secondary
 	// unless it was the new key's reversed twin; then the list again (RW 0x9C5A66)
 	const int next = key + 1;
 	const int old = m_heroSortKey0;

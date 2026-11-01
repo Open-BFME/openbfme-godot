@@ -77,9 +77,12 @@ bool getBestContactPoint(const std::vector<Shape> &shapes, const std::vector<Con
                          Coord3D &out);
 // RW 0x690BD2 Object::getWorldspaceBestContactPoint(out, callerPos, label, 0, 0, preferred): the caller's position into the object's space (the orthogonal inverse of its
 // transform, RW 0xB26C00, SSE in the binary's order), getBestContactPoint there, a RUBBLE body (body vslot 0x24 == 3) takes the geometry's height as the point's z,
-// and the point back to the world (SSE). The transform is the object's basis and position (Thing); the shapes and points are its template's (S-1281)
+// and the point back to the world (SSE). The transform is the object's basis and position (Thing); the shapes are its own GeometryInfo's (Object::geometryShapes,
+// lane MODCOMPAT-MOD1), the points its template's (S-1281)
 bool worldspaceBestContactPoint(const Object &obj, const Coord3D &callerPos, const std::string &label, bool preferred, Coord3D &out);
 // lane PATH-2 (S-341): the template's shape list into the pathfinder's geometry (every shape, and shape 0's values as the single-shape fields); nothing changes
 // when the template has no shape. Throws std::logic_error like shapesOf.
 void fillPathfindGeometry(const ThingTemplate &tt, PathfindGeometry &out);
+// lane MODCOMPAT-MOD1: the same from a shape list (an object's own GeometryInfo, Object::geometryShapes)
+void fillPathfindGeometry(const std::vector<Shape> &shapes, PathfindGeometry &out);
 } // namespace ObjectGeometry

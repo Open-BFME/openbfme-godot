@@ -119,6 +119,7 @@
 #include "Common/PlayerList.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameClient/GUI/Skirmish/WorldSkirmishSetupSource.h"
+#include "GameClient/LinearCampaign.h"
 #include "GameClient/LiveGame.h"
 #include "GameClient/MapCreationHooks.h"
 #include "GameClient/MapObjectDrawables.h"
@@ -871,6 +872,14 @@ int runReplay(const Args &a, World &w)
 		o.mapName = replay.header.game.game.mapName; // the mission's map directory ("map ang angmar")
 		o.campaign = true;
 		o.difficulty = save.header.campaignDifficulty;
+		// lane BFME2CAMP1 (review): the carry-over a real load restores (GameWorld::start_campaign_mission from the save's header: LiveGame::campaignCarryoverOptions)
+		const LinearCampaign *campaign = w.world->linearCampaigns().find(save.header.campaign);
+		std::string stop;
+		if (!campaign || !LiveGame::campaignCarryoverOptions(*campaign, save.header.campaignMission, save.header.campaignCarryover, o, stop, error))
+		{
+			std::fprintf(stderr, "openbfme_peer: the save's campaign start: %s\n", campaign ? error.c_str() : ("no campaign '" + save.header.campaign + "'").c_str());
+			return 2;
+		}
 	}
 	else
 	{

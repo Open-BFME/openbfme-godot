@@ -217,6 +217,8 @@ public:
 	// lane CAMPUI-1: what Objectives.apt lists (GUI/AptScreens/AptObjectivesMenu.h): { game_mode, tutorial_input, objectives: [{ label, bonus, shown, completed }] }
 	// from GameWorld.get_mission_objectives(); answers { ok, rows } (the rows as the providers answer them)
 	Dictionary set_objectives_screen(const Dictionary &state);
+	// lane BFME2CAMP1: the open screen's tutorial input flag (InGameUI + 0x16), which the Return button reads when pressed (AptObjectivesMenu::returnAllowed)
+	void set_objectives_tutorial_input(bool on);
 	// lane CAMPUI-1: the in-game notification box (begin / end / show / update / enable / close; see GodotAptPlayer.cpp)
 	Dictionary notification_box(const Dictionary &request);
 	// lane MP-2: a movie -> engine command as the movie's fscommand runs it (WindowManager::invokeCallback: "AptLanLobby::OnCreateGameBttn",
@@ -248,6 +250,7 @@ public:
 	// { open, state, mode, entry, sends: [{ text, mode }] } (the lines Send took since the last call). ingame_chat_close: closes it (RW 0x8ECC7A's
 	// other callers). ingame_chat_has_keys: the keyboard is the window's (the HUD sends its keys here; the pointer stays the world's, as in retail).
 	// ingame_chat_type / ingame_chat_command (tests and the scripted runs): the entry's text set, a movie command run ("Send", "Close")
+	Dictionary banner_ui(const Dictionary &request); // WOTR2 milestone 7: BannerUI.apt
 	bool ingame_chat_open(int64_t mode, const String &receivers);
 	Dictionary ingame_chat_update();
 	void ingame_chat_close();
@@ -269,6 +272,8 @@ public:
 	void set_campaign_menu(const Dictionary &content);
 	Dictionary unlock_bonus_campaign();
 	bool is_bonus_campaign_unlocked() const;
+	// lane STABLEQA-1: ShellEnvironment::warOfTheRingOffered (false in a Stable channel build, or with the shell config's "stable_channel")
+	bool is_war_of_the_ring_offered() const;
 	void set_save_folder(const String &folder);
 	// lane SAVE-2: the host's answer to "SaveGameFile": the screen's message box shows GUI:GameSaved (ok) or `error`; false when SaveLoad.apt is not the top
 	bool save_load_saved(bool ok, const String &error);
@@ -288,6 +293,10 @@ public:
 	Array online_take_requests();
 	void online_deliver(int64_t id, int64_t status, const String &body, const String &error);
 	Dictionary online_status();
+	Dictionary online_phase_request(int64_t phase, const Array &slots);
+	Dictionary online_phase_status() const;
+	Dictionary online_stage_saved_war(const Dictionary &lobby, const String &save, int64_t hash, const Array &seats);
+	Dictionary online_resume_check(const String &save, const String &why);
 	Dictionary online_apply(const Dictionary &spec);
 	Dictionary online_social_status() const;
 	Array online_social_events();
@@ -343,6 +352,8 @@ public:
 	bool create_a_hero_type_name(const String &name);
 	// copies the score screen data of the world's last clear_game_data into TimeLine.apt's environment
 	bool set_score_screen_from_world(Object *world);
+	// WOTR2 milestone 5: the War of the Ring score screen (TimeLine.apt type 6) from a LivingWorldGame and the GameWorld that loaded it
+	bool set_score_screen_from_living_world(Object *livingWorld, Object *world, int64_t localPlayer, int64_t strategicSeconds);
 	// the graph of the TimeLine.apt on the shell stack for the graph mode `mode` ("Units", "Structures", "Resources", "FinalScore"; "" reads the movie's _graphMode
 	// at `path`): { ok, mode, axis: { step, top, samples, y_labels, x_labels, total_time }, lines: [{ color, result, local, points: PackedVector2Array (x 0..1
 	// over the samples, y 0..1 over the top), marks: PackedVector2Array }] }
@@ -350,8 +361,8 @@ public:
 	// a member of a movie instance as a string (`found` false when the instance or member does not exist)
 	Dictionary get_member(int level, const String &path, const String &name);
 	// lane DEVPORT-8 (MENUSTYLE-1): a property of the clip at `path` on `level` set as ActionScript's `clip.<name> = value` does (AptCharacterInst::setProperty:
-	// _visible, _x, _y, _alpha ...); false when there is no such clip or property. game.gd hides BFME2's own MainMenu.apt campaign buttons with it while the
-	// BFME2 campaigns are switched off (game.gd BFME2_CAMPAIGNS)
+	// _visible, _x, _y, _alpha ...); false when there is no such clip or property. game.gd hides BFME2's own MainMenu.apt campaign buttons with it when the
+	// BFME2 campaigns are switched off (game.gd BFME2_CAMPAIGNS, on since lane BFME2CAMP1)
 	bool set_clip_property(int level, const String &path, const String &name, double value);
 	// the game text of `label` ({ found, text }; a missing label is the retail "MISSING: 'label'" text and found false)
 	Dictionary fetch_text(const String &label);
@@ -399,6 +410,8 @@ public:
 	Dictionary quit_menu(const Dictionary &request);
 	// lane HOVER-1: the menus' tool tip (CursorTooltip.h): the label, the text GuiFX shows, the GuiFX calls made, the pointer, the errors
 	Dictionary get_cursor_tooltip() const;
+	Dictionary strategic_hud(const Dictionary &request); // lane WOTR-2: StrategicHUD.apt over the strategic map
+	Dictionary strategic_setup(const Dictionary &request); // lane WOTR-2: the strategic setup's map preview (regions picked, territory text)
 	Array list_buttons(int level);
 	Array list_gadgets();         // lane MENUWORK-1: every live gadget window (name, kind, stage rect, enabled, hidden, text, checked)
 	PackedStringArray take_commands(); // lane MENUWORK-1: WindowManager::takeInvokedCommands

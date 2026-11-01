@@ -711,15 +711,24 @@ TEST_CASE("economy report: every stop of the lane is a line of the logic report 
 	{
 		all += s + "\n";
 	}
-	for (int id = 250; id <= 259; ++id)
+	for (int id = 250; id <= 260; ++id)
 	{
 		const std::string tag = "[S-" + std::to_string(id) + "]";
 		INFO(tag);
 		CHECK(all.find(tag) != std::string::npos);
 	}
-	CHECK(all.find("[S-260]") == std::string::npos); // CrateCollide now has a runtime.
-	// the attribute modifier stop is the always-on line (a missing provider) plus the seam line of S-253: without a provider the report says so, with one the run-time line goes
-	CHECK(all.find("no AttributeModifier provider is installed") != std::string::npos);
+	// the attribute modifier stop is the always-on line plus the seam lines of S-253: GameLogic installs the product provider (lane SPELLFIX-1), so only the sum
+	// seam is reported; without a provider the report says so, with one the run-time line goes
+	CHECK(fx.economy().hasAttributeModifierProvider());
+	CHECK(all.find("no AttributeModifier provider is installed") == std::string::npos);
+	CHECK(all.find("no AttributeModifier sum provider is installed") != std::string::npos);
+	fx.economy().setAttributeModifierProvider(nullptr);
+	bool missing = false;
+	for (const std::string &s : fx.economy().report())
+	{
+		missing = missing || s.find("no AttributeModifier provider is installed") != std::string::npos;
+	}
+	CHECK(missing);
 	fx.economy().setAttributeModifierProvider([](const Object &, int, float &) { return false; });
 	const std::vector<std::string> with = fx.economy().report();
 	for (const std::string &s : with)

@@ -18,7 +18,7 @@ Donor evidence from Open-BFME-2:
   and diffuse materials. The part is the text after the first dot, or the
   whole name when there is no dot. Our channel unpacking uses the existing
   target ARGB convention rather than the donor's address-derived ABI casts.
-- `reverse/attempts/0x0014c470.cpp`, BFME2 VA 0x54C470: recoloured textures
+- `WW3D2/bfme2_mesh_material_pass.cpp` (MeshClass::RecolorHouseColor; an attempt then), BFME2 VA 0x54C470: recoloured textures
   are identified by texture and palette, and classic meshes use a second
   texture stage. This is an attempted reconstruction, not additional proof
   of every effect permutation.

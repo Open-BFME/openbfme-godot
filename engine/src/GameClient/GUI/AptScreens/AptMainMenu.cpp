@@ -16,6 +16,12 @@
 #include "Common/ArchiveFileSystem.h"
 #include "Common/BfmeGame.h"
 #include "GameClient/OptionPreferences.h"
+#include "Libraries/Source/Apt/Apt.h"
+#include "Libraries/Source/Apt/AptActionInterpreter.h"
+#include "Libraries/Source/Apt/AptCharacterInst.h"
+#include "Libraries/Source/Apt/AptObject.h"
+
+#include "GameClient/GUI/Skirmish/LivingWorldShellInfo.h" // lane WOTR-1
 
 #include <algorithm>
 #include <filesystem>
@@ -40,7 +46,6 @@ const CommandRow kRequestCommands[] = {
 	{ "AptMainMenu::ContinueCampaign", ShellAction::ContinueCampaign },
 	{ "AptMainMenu::Expansion1Campaign", ShellAction::Expansion1Campaign },
 	{ "AptMainMenu::BonusCampaign", ShellAction::BonusCampaign },
-	{ "AptMainMenu::WarOfTheRing", ShellAction::WarOfTheRing },
 	{ "AptMainMenu::OnTutorial", ShellAction::Tutorial },
 	{ "AptMainMenu::StopGameMovie", ShellAction::StopGameMovie },
 	{ "AptMainMenu::ResetResolution", ShellAction::ResetResolution },
@@ -109,8 +114,7 @@ const UnavailableScreen kUnavailableScreens[] = {
 	// MainMenu.apt's GoodCampaign / EvilCampaign, hidden while godot/scripts/game.gd BFME2_CAMPAIGNS is off) are refused by these names
 	{ "BFME2GoodCampaign", "The BFME2 Good campaign", "OpenBFME does not have it yet" },
 	{ "BFME2EvilCampaign", "The BFME2 Evil campaign", "OpenBFME does not have it yet" },
-	{ "WarOfTheRing", "War of the Ring", "its strategy map game is still being rebuilt" },
-	{ "Tutorial", "The tutorial", "OpenBFME does not have it yet" },
+	{ "Tutorial", "The War of the Ring tutorial", "OpenBFME does not have it yet" }, // lane BFME2CAMP1: Basic / Advanced start (game.gd)
 	{ "Lan", "Network", "this build has no screen for it" },
 	{ "LoadReplay", "Replays", "this build has no screen for it" },
 };
@@ -127,6 +131,9 @@ const UnavailableScreen *unavailableRow(const std::string &action)
 	return nullptr;
 }
 } // namespace
+
+const char *const AptMainMenu::kWarOfTheRingStable =
+	"War of the Ring is not in the Stable version yet: it is being tested in the Nightly version (OpenBFME Launcher: Settings, Channel).";
 
 std::string AptMainMenu::unavailableScreenName(const std::string &action)
 {
@@ -150,23 +157,370 @@ std::string AptMainMenu::screenUnavailable(const std::string &action)
 	const std::string line = "[S-1914] " + screen + " (AptMainMenu " + action + ") is not available in this build yet: the menu's request has no screen; the "
 		"player is told and the main menu is usable again";
 	windows().note("unported-screen", line);
+	showUnavailableBox(unavailableText(action)); // lane MENUWORK-1: the box says why
+	return line;
+}
+
+void AptMainMenu::showUnavailableBox(const std::string &text)
+{
 	if (!m_box)
 	{
 		m_box = std::make_unique<AptMessageBox>(windows(), shell());
 	}
 	m_boxClosed = false;
-	const std::string text = unavailableText(action); // lane MENUWORK-1: the box says why
 	m_box->show(AptMessageBox::TYPE_OK, u"OpenBFME", std::u16string(text.begin(), text.end()), [this](int) { m_boxClosed = true; });
 	if (m_box->level() < 0)
 	{
 		// GuiFX.apt did not load (noted by the box): the menu comes back at once so it is never left disabled
 		m_boxClosed = true;
 	}
-	return line;
+}
+
+// ---- lane BFME2CAMP1: the other game's two campaign rows in the Solo Play list (an OpenBFME addition, see AptMainMenu.h) ----------------------------
+namespace
+{
+constexpr int kExtraRowDepth = 9100; // ActionScript depths (9100, 9101) above every placed child of SoloPlayNav
+
+// one menu style's addition
+struct ListPlan
+{
+	const char *movie;          // "bfme2" / "rotwk"
+	const char *ownFunction;    // the movie's own campaign function that identifies it (and is absent from the other movie)
+	const char *otherFunction;  // a function of the other movie (its absence is checked too)
+	const char *source;         // the row copied
+	const char *insertAbove;    // the copies go right above this row (the rows above it move up)
+	const char *names[2];       // the copies from the bottom up
+	const char *labels[2];
+	int lockedUntilBonus;       // index of the copy disabled until the bonus unlock, -1 none
+};
+
+const ListPlan kPlans[] = {
+	{ "bfme2", "GoodCampaignButton", "Expansion1CampaignButton", "GoodCampaign", "LoadGame", { "BonusCampaign", "Expansion1Campaign" },
+		{ "$BonusCampaign", "$Expansion1Campaign" }, 0 },
+	{ "rotwk", "Expansion1CampaignButton", "GoodCampaignButton", "Expansion1Campaign", "Expansion1Campaign", { "GoodCampaign", "EvilCampaign" },
+		{ "$GoodCampaign", "$EvilCampaign" }, -1 },
+};
+
+bool sameMatrix(const AptMatrix &a, const AptMatrix &b)
+{
+	return a.a == b.a && a.b == b.b && a.c == b.c && a.d == b.d && a.tx == b.tx && a.ty == b.ty;
+}
+
+// A clip this addition moves: the timeline's matrix (`base`) and what was written over it. When the clip still holds the written matrix the timeline
+// has not touched it since and `base` stands; otherwise (a new instance, or a timeline frame that placed it again) its matrix is the new base
+AptMatrix unpack(const float (&f)[6])
+{
+	AptMatrix m;
+	m.a = f[0];
+	m.b = f[1];
+	m.c = f[2];
+	m.d = f[3];
+	m.tx = f[4];
+	m.ty = f[5];
+	return m;
+}
+
+void pack(const AptMatrix &m, float (&f)[6])
+{
+	f[0] = m.a;
+	f[1] = m.b;
+	f[2] = m.c;
+	f[3] = m.d;
+	f[4] = m.tx;
+	f[5] = m.ty;
+}
+
+template <class Clip>
+AptMatrix baseOf(std::vector<Clip> &moved, AptCharacterInst &inst)
+{
+	for (Clip &m : moved)
+	{
+		if (m.inst == &inst && sameMatrix(inst.matrix, unpack(m.written)))
+		{
+			return unpack(m.base);
+		}
+	}
+	return inst.matrix;
+}
+
+template <class Clip>
+void write(std::vector<Clip> &moved, AptCharacterInst &inst, const AptMatrix &base, const AptMatrix &to)
+{
+	inst.matrix = to;
+	for (Clip &m : moved)
+	{
+		if (m.inst == &inst)
+		{
+			pack(base, m.base);
+			pack(to, m.written);
+			return;
+		}
+	}
+	Clip c;
+	c.inst = &inst;
+	pack(base, c.base);
+	pack(to, c.written);
+	moved.push_back(c);
+}
+
+// a row of the list: its button "bttn" (RotWK's locked BonusCampaign row shows only its "bttnDisabled" face)
+bool isRow(AptCharacterInst *c)
+{
+	AptSpriteInst *s = c ? c->asSprite() : nullptr;
+	return s && (s->childByName("bttn") != nullptr || s->childByName("bttnDisabled") != nullptr);
+}
+
+// a piece of the list's frame: BFME2's NavFrameFive, RotWK's unnamed clips
+bool isFramePiece(AptCharacterInst *c)
+{
+	return c && c->asSprite() && !isRow(c) && (c->instName().empty() || c->instName().rfind("NavFrame", 0) == 0);
+}
+
+// the clip's content bounds (its own space) through `m` into the parent's space: y0 (top), y1 (bottom)
+bool parentYBounds(const AptCharacterInst &c, const AptMatrix &m, float &y0, float &y1)
+{
+	float lx0 = 0, ly0 = 0, lx1 = 0, ly1 = 0;
+	if (!c.contentBounds(lx0, ly0, lx1, ly1))
+	{
+		return false;
+	}
+	bool first = true;
+	for (float lx : { lx0, lx1 })
+	{
+		for (float ly : { ly0, ly1 })
+		{
+			float px = 0, py = 0;
+			m.apply(lx, ly, px, py);
+			y0 = first ? py : std::min(y0, py);
+			y1 = first ? py : std::max(y1, py);
+			first = false;
+		}
+	}
+	return y1 > y0;
+}
+} // namespace
+
+void AptMainMenu::updateExtraRows()
+{
+	std::vector<MovedClip> &moved = m_extraMoved; // the clips of the open list (cleared when it closes)
+	AptSpriteInst *root = level() >= 0 ? windows().apt().level(level()) : nullptr;
+	if (!root || (m_env && m_env->fileSystem && isBfme1Data(*m_env->fileSystem)))
+	{
+		return; // BFME1's menu: its Good / Evil are the Living World's
+	}
+	const ListPlan *plan = nullptr;
+	for (const ListPlan &p : kPlans)
+	{
+		if (m_extraRows.installed ? m_extraRows.movie == p.movie : false)
+		{
+			plan = &p;
+		}
+	}
+	if (!m_extraRows.installed)
+	{
+		for (const ListPlan &p : kPlans)
+		{
+			AptValue own, other, open;
+			if (root->getMember(p.ownFunction, own) && own.isObject() && root->getMember("OpenDifficulty", open) && open.isObject() &&
+				!(root->getMember(p.otherFunction, other) && other.isObject()))
+			{
+				plan = &p;
+			}
+		}
+		if (!plan)
+		{
+			return;
+		}
+		for (const char *side : plan->names)
+		{
+			const std::string name = std::string(side) + "Button"; // the row's click calls _root[<row name> + "Button"]()
+			const std::string s = side;
+			std::weak_ptr<std::vector<std::string>> pending = m_extraPending;
+			AptFunction *fn = windows().apt().vm().newNativeFunction(name, [pending, s](AptCallInfo &) {
+				if (const auto queue = pending.lock()) // the menu is still there: OpenDifficulty(side) runs on its next update, outside this call
+				{
+					queue->push_back(s);
+				}
+				return AptValue::undefined();
+			});
+			root->setMember(name, AptValue::object(fn));
+		}
+		m_extraRows.installed = true;
+		m_extraRows.movie = plan->movie;
+		moved.clear();
+	}
+	if (!plan)
+	{
+		return;
+	}
+	std::vector<std::string> pending;
+	pending.swap(*m_extraPending);
+	for (const std::string &side : pending)
+	{
+		std::string error;
+		if (!windows().invokeAS(level(), "OpenDifficulty", { side }, nullptr, &error))
+		{
+			windows().note("invoke-failed", "MainMenu OpenDifficulty(" + side + ") for the added campaign row: " + error);
+		}
+	}
+	AptCharacterInst *navInst = root->childByName("SoloPlayNav");
+	AptSpriteInst *nav = navInst ? navInst->asSprite() : nullptr;
+	if (!nav)
+	{
+		return;
+	}
+	AptCharacterInst *source = nav->childByName(plan->source);
+	AptCharacterInst *below = nav->childByName(plan->insertAbove);
+	AptCharacterInst *added[2] = { nav->childByName(plan->names[0]), nav->childByName(plan->names[1]) };
+	AptCharacterInst *load = nav->childByName("LoadGame");
+	if (!source || !below || !load || !isRow(source) || !isRow(below) || !isRow(load))
+	{
+		// the list is closed (its rows are gone): the copies go too, the next opening makes new ones
+		for (AptCharacterInst *c : added)
+		{
+			if (c)
+			{
+				windows().apt().removeClipByTarget(nav, AptValue::object(c));
+			}
+		}
+		moved.clear();
+		return;
+	}
+	const AptMatrix sourceBase = baseOf(moved, *source);
+	const AptMatrix belowBase = baseOf(moved, *below);
+	const AptMatrix loadBase = baseOf(moved, *load);
+	// a row's height upward (negative: -35.5 in both movies): the rows' spacing from Load Game to the next row up
+	float step = 0;
+	for (AptCharacterInst *c : nav->children())
+	{
+		if (c != load && c != added[0] && c != added[1] && isRow(c))
+		{
+			const float d = baseOf(moved, *c).ty - loadBase.ty;
+			step = (d < 0 && (step == 0 || d > step)) ? d : step;
+		}
+	}
+	if (step == 0)
+	{
+		return;
+	}
+	for (int i = 0; i < 2; ++i)
+	{
+		if (added[i])
+		{
+			continue;
+		}
+		if (!windows().apt().duplicateClip(nav, AptValue::object(source), AptValue::string(plan->names[i]), AptValue::integer(kExtraRowDepth + i), &added[i]) ||
+			!added[i])
+		{
+			windows().note("main-menu-extra-row", std::string("the Solo Play row ") + plan->names[i] + " could not be made (duplicateMovieClip of SoloPlayNav." +
+													  plan->source + ")");
+			added[i] = nullptr;
+			continue;
+		}
+		added[i]->setMember("buttonName", AptValue::string(plan->labels[i]));
+		AptValue closeParent; // RotWK's rows close the list on a click (OnButtonClick reads it); duplicateMovieClip copies no variable
+		if (source->getMember("closeParent", closeParent))
+		{
+			added[i]->setMember("closeParent", closeParent);
+		}
+		++m_extraRows.rowsAdded;
+	}
+	// lane STABLEQA-1: a Stable build hides War of the Ring's row (both movies list it above the insertion row); the rows above it move up one place
+	// fewer, so they close its gap, and the list grows by one row instead of two
+	AptCharacterInst *hidden = warOfTheRingHidden() ? nav->childByName("WarOfTheRing") : nullptr;
+	hidden = isRow(hidden) && baseOf(moved, *hidden).ty < belowBase.ty ? hidden : nullptr;
+	const float hiddenTy = hidden ? baseOf(moved, *hidden).ty : 0.0f;
+	const float grow = (hidden ? 1.0f : 2.0f) * step;
+	if (hidden)
+	{
+		hidden->visible = false;
+	}
+	// the rows above the insertion row move up two places
+	float rowsTop = 0;
+	bool haveRowsTop = false;
+	for (AptCharacterInst *c : nav->children())
+	{
+		if (c == added[0] || c == added[1] || c == hidden || !isRow(c))
+		{
+			continue;
+		}
+		const AptMatrix base = baseOf(moved, *c);
+		float y0 = 0, y1 = 0;
+		if (parentYBounds(*c, base, y0, y1))
+		{
+			rowsTop = haveRowsTop ? std::min(rowsTop, y0) : y0;
+			haveRowsTop = true;
+		}
+		if (base.ty < belowBase.ty)
+		{
+			AptMatrix to = base;
+			to.ty = base.ty + ((hidden && base.ty < hiddenTy) ? 1.0f : 2.0f) * step;
+			write(moved, *c, base, to);
+		}
+	}
+	for (int i = 0; i < 2; ++i)
+	{
+		if (!added[i])
+		{
+			continue;
+		}
+		AptMatrix to = sourceBase;
+		to.ty = belowBase.ty + (float)(i + 1) * step;
+		added[i]->matrix = to;
+		added[i]->visible = source->visible;
+		added[i]->color = source->color;
+	}
+	// a copy disabled until the bonus unlock (RotWK: MainMenuUnlockBonusCampaign, RW 0x91BB6B): the row's own "_disable" state
+	if (plan->lockedUntilBonus >= 0 && added[plan->lockedUntilBonus] && !(m_env && m_env->bonusCampaignUnlocked))
+	{
+		AptValue done;
+		AptSpriteInst *b = added[plan->lockedUntilBonus]->asSprite();
+		const int disabled = b ? b->labelFrame("_disable") : -1;
+		if (b && disabled >= 0 && !(b->getMember("openbfmeDisabled", done) && done.isBoolean() && done.asBool()))
+		{
+			b->gotoFrame(disabled);
+			b->playing = true;
+			b->setMember("openbfmeDisabled", AptValue::boolean(true));
+		}
+	}
+	// the frame pieces (every other clip with art, not a button and not the list's OpenButton): each stretched about its bottom edge so its part
+	// above the rows' top moves up by the two rows (one with War of the Ring hidden); a piece lying mostly above the rows' top moves up instead
+	if (!haveRowsTop)
+	{
+		return;
+	}
+	for (AptCharacterInst *c : nav->children())
+	{
+		if (c == added[0] || c == added[1] || !isFramePiece(c))
+		{
+			continue;
+		}
+		const AptMatrix base = baseOf(moved, *c);
+		float y0 = 0, y1 = 0;
+		if (!parentYBounds(*c, base, y0, y1))
+		{
+			continue;
+		}
+		AptMatrix to = base;
+		if (y1 - rowsTop < (y1 - y0) * 0.5f)
+		{
+			to.ty = base.ty + grow;
+		}
+		else
+		{
+			const float anchor = std::max(rowsTop, y0);
+			const float k = (y1 - (anchor + grow)) / (y1 - anchor);
+			to.b = base.b * k;
+			to.d = base.d * k;
+			to.ty = y1 + (base.ty - y1) * k;
+		}
+		write(moved, *c, base, to);
+	}
 }
 
 void AptMainMenu::update()
 {
+	updateExtraRows(); // lane BFME2CAMP1
 	if (m_state == 4 && m_credits)
 	{
 		// RW 0x91C631: the roll's update each engine frame; the engine is limited to 100 frames a second while it rolls (RW 0x91B6DA), so the port
@@ -290,6 +644,38 @@ void AptMainMenu::showSkirmish()
 	}
 }
 
+bool AptMainMenu::warOfTheRingHidden() const
+{
+	const ShellEnvironment *environment = m_environment ? m_environment : m_env;
+	return environment && !environment->warOfTheRingOffered;
+}
+
+void AptMainMenu::showWarOfTheRing()
+{
+	// lane WOTR-1.  AptMainMenu::WarOfTheRing (RW 0x91AFE4) sets the transition state 9 / action 8; the menu update (RW 0x91C2FC case 8) runs the shell clean-up
+	// RW 0x7792BC (not ported: the clean-up of a game that is not running here) and RW 0x9282E3(1): the strategic flag RW 0xDB6BF0, then Skirmish.apt unless
+	// it exists.  The menu's fade-out before the action (state 9) is not modelled: the push waits for the shell's own transition.
+	if (warOfTheRingHidden())
+	{
+		// lane STABLEQA-1: a Stable build hides the row (updateExtraRows); a click that still arrives (a script, a mod's menu) is refused with the box,
+		// whose Ok gives the menu back (no request: the host would open the war)
+		windows().note("war-of-the-ring-stable", "AptMainMenu::WarOfTheRing: refused, a Stable channel build offers no War of the Ring");
+		showUnavailableBox(kWarOfTheRingStable);
+		return;
+	}
+	request(ShellAction::WarOfTheRing, std::string()); // the engine still sees the action (as every main-menu action)
+	if (!m_environment || !m_environment->livingWorld)
+	{
+		windows().note("skirmish-environment-missing", "AptMainMenu::WarOfTheRing: no LivingWorldShellInfo, the strategic setup cannot open");
+		return;
+	}
+	m_environment->livingWorld->strategicRequested = true;
+	if (!shell().findScreenByFilename("Skirmish.apt"))
+	{
+		shell().push("Skirmish.apt", false);
+	}
+}
+
 void AptMainMenu::registerAll()
 {
 	registerCommand("AptMainMenu::OnInitialized", [this](const std::string &) {
@@ -305,7 +691,14 @@ void AptMainMenu::registerAll()
 				windows().note("bfme1-main-menu", "ShowMainMenu() could not be called: " + err);
 		}
 	});
-	registerCommand("AptMainMenu::Skirmish", [this](const std::string &) { showSkirmish(); });
+	registerCommand("AptMainMenu::Skirmish", [this](const std::string &) {
+		if (m_environment && m_environment->livingWorld)
+		{
+			m_environment->livingWorld->strategicRequested = false; // RW 0x9282E3(0)
+		}
+		showSkirmish();
+	});
+	registerCommand("AptMainMenu::WarOfTheRing", [this](const std::string &) { showWarOfTheRing(); }); // lane WOTR-1
 	registerCommand("AptMainMenu::GoodCampaign", [this](const std::string &argument) { request(ShellAction::LoadCampaign, "bfme2:good:" + argument); });
 	registerCommand("AptMainMenu::EvilCampaign", [this](const std::string &argument) { request(ShellAction::LoadCampaign, "bfme2:evil:" + argument); });
 	registerCommand("AptMainMenu::Options", [this](const std::string &argument) {

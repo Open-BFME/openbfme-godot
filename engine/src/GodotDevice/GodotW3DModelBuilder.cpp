@@ -123,7 +123,14 @@ Ref<Texture2D> W3DModelBuilder::loadTexture(RetailFileSystem &fs, const std::str
 	// Use the mounted game's texture layout, as the material factory does.
 	const bool flatLayout = fs.archive_fs() && isBfme1Data(*fs.archive_fs());
 	const TextureResolution resolved = Resolve_Packed_W3D_Texture(name, [&](const std::string &path) { return fs.existsNative(path); }, flatLayout);
-	const std::vector<std::string> &candidates = resolved.Tried;
+	std::vector<std::string> candidates = resolved.Tried;
+	// lane WOTR-1 [inference]: a few retail textures exist only as .png in the compiled folder (LivingMap's LM_MinasTirith; the compiled-only .jpg
+	// ones, LM_Smoke and EXLavaSeq, are Resolve_Packed_W3D_Texture's); the retail loader's order for them was not read
+	if (!flatLayout)
+	{
+		const std::string dds = W3D_Compiled_Texture_Path(name);
+		candidates.push_back(dds.substr(0, dds.size() - 4) + ".png");
+	}
 	Ref<Texture2D> texture;
 	for (const std::string &path : candidates)
 	{

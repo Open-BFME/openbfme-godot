@@ -46,6 +46,7 @@
 
 #pragma once
 
+#include "GameLogic/LivingWorld/LivingWorldBattleTags.h"
 #include "Common/ObserverEvent.h"
 
 #include "Common/MpGameRules.h"
@@ -54,6 +55,7 @@
 #include "Common/GameEdition.h"
 #include "Common/SimulationProfile.h"
 #include "Common/Team.h"
+#include "GameLogic/CampaignCarryover.h"
 #include "GameLogic/AI/AICommandSink.h"
 #include "GameLogic/CheatMode.h"
 #include "GameLogic/FXEvents.h"
@@ -70,6 +72,7 @@
 #include <map>
 #include <unordered_map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -407,6 +410,9 @@ public:
 	CombatState &combat() { return *m_combat; }
 	// lane COMBAT-2: the skirmish win / lose rules (init() after the players and their bases exist; update() runs in the logic frame's first phase)
 	VictoryConditions &victory() { return *m_victory; }
+	// WOTR2 milestone 7: a War of the Ring battle's army tags (GameLogic/LivingWorld/LivingWorldBattleTags.h; hashed while in use, obfme:GameLogic version 4)
+	LivingWorldBattleTags &livingWorldTags() { return m_livingWorldTags; }
+	const LivingWorldBattleTags &livingWorldTags() const { return m_livingWorldTags; }
 	BuildAssistantSell &sellList() { return *m_sell; } // lane FACT-A: TheBuildAssistant's sell list (RW 0x7966BB / 0x79468B)
 	const VictoryConditions &victory() const { return *m_victory; }
 	// lane AI-1: TheSkirmishAIManager (newGame after the starting bases; update() runs in phase 5 after the destroy list)
@@ -559,6 +565,22 @@ public:
 	const GameRules &gameRules() const { return m_gameRules; }
 	void setLegendaryHeroes(int factor) { m_legendaryHeroes = factor; }
 	int legendaryHeroes() const { return m_legendaryHeroes; }
+	// lane BFME2CAMP1: the script's buildability overrides (TECHTREE_MODIFY_BUILDABILITY_OBJECT, RW 0x7BCF6C). TARGET FACTS: GameLogic + 0x10 is a hash map
+	// keyed by the template's name (template + 0x64) to a Buildable value (0 Yes, 1 Ignore_Prerequisites, 2 No, 3 Only_By_AI); RW 0x62FEE6 sets the
+	// entry (made when absent: RW 0x62F051), RW 0x62EE6D finds it, and ThingTemplate::getBuildable (RW 0x73BFE8) answers the entry when there is one,
+	// else the template's own byte + 0x602. A null template sets / finds nothing. Nothing removes an entry within a game. The map is only looked up,
+	// so its order is no state (kept sorted here for the save and the hash)
+	void setBuildableStatusOverride(const ThingTemplate *tt, std::int32_t status);
+	bool findBuildableStatusOverride(const ThingTemplate *tt, std::int32_t &status) const;
+	const std::map<std::string, std::int32_t> &buildableStatusOverrides() const { return m_buildableOverrides; }
+	// lane BFME2CAMP1: the current campaign's carry-over (TheLinearCampaignManager + 0x10's LinearCampaign, GameLogic/CampaignCarryover.h) while this game
+	// is a mission of one: set by the mission's start (before addCarryoverStuffToMap), read and changed by the VICTORY / QUICKVICTORY actions
+	// (onCurrentMissionWon RW 0x5EBAEE) and the delayed carry-over script action / condition; the campaign's progress takes it after the game. Retail keeps
+	// it outside the logic (the campaign manager); here it lives with the game so its save and hash hold it. None: not a campaign game (or a campaign
+	// without the carry-over)
+	void setCampaignCarryover(std::optional<CampaignCarryover::State> s) { m_campaignCarryover = std::move(s); }
+	CampaignCarryover::State *campaignCarryover() { return m_campaignCarryover ? &*m_campaignCarryover : nullptr; }
+	const CampaignCarryover::State *campaignCarryover() const { return m_campaignCarryover ? &*m_campaignCarryover : nullptr; }
 	// lane CHEAT-1, OpenBFME: the game's Cheat Mode (GameLogic/CheatMode.h): off unless LiveGame::load configures the cheat seat from the game setup
 	CheatMode::State &cheatMode() { return m_cheatMode; }
 	const CheatMode::State &cheatMode() const { return m_cheatMode; }
@@ -939,6 +961,8 @@ private:
 	LargeGroupAudioLink m_largeGroupAudio; // lane AUDIO-4
 	MissionObjectiveTracker m_missionObjectives; // lane CAMPUI-1
 	std::unique_ptr<VictoryConditions> m_victory;
+	LivingWorldBattleTags m_livingWorldTags;
+	void xferLivingWorldTags(Xfer &x); // WOTR2 milestone 7 (GameLogicSnapshot.cpp)
 	std::unique_ptr<BuildAssistantSell> m_sell; // lane FACT-A
 	std::unique_ptr<SkirmishAIManager> m_skirmishAI;
 	std::unique_ptr<ExperienceWorld> m_experience; // lane XP-1
@@ -974,8 +998,16 @@ private:
 	std::uint32_t hashState(std::vector<StateHashSection> *sections, std::vector<ObjectStateHash> *objects) const; // lane MP-1
 	// lane UBER-1: the Uber profile's "objects" section: every object's own hash on the logic job pool, then (count, id, hash) in list order
 	void hashObjectsUber(StateHasher &x) const;
+	void chainObjectsUber(StateHasher &x) const;
+	size_t listHashObjects() const;
+	static constexpr size_t kHashObjectsPerJob = 64;
 	mutable std::vector<const Object *> m_uberHashObjects;  ///< scratch of hashObjectsUber (the logic owner thread only)
 	mutable std::vector<std::uint32_t> m_uberHashValues;
+	// lane PERF-HD: the Faithful hash's tapes (StateHasher recording): one per section, one per object (kept between frames for their capacity)
+	void hashObjectsTaped(StateHasher &x) const;
+	void gatherObjectTapes() const;
+	mutable std::vector<std::vector<std::uint32_t>> m_hashSectionTapes;
+	mutable std::vector<std::vector<std::uint32_t>> m_hashObjectTapes;
 	struct HashContributor
 	{
 		int token;
@@ -1018,6 +1050,8 @@ private:
 	bool m_showBehindBuildingMarkers = true; ///< lane OCCLUDE-1: RW GameLogic + 0x99
 	GameRules m_gameRules = MpGameRules::none(); ///< lane RULES-1
 	int m_legendaryHeroes = LegendaryHeroes::kOff; ///< lane RULES-1 (OpenBFME)
+	std::map<std::string, std::int32_t> m_buildableOverrides; ///< lane BFME2CAMP1: RW GameLogic + 0x10 (template name -> Buildable)
+	std::optional<CampaignCarryover::State> m_campaignCarryover; ///< lane BFME2CAMP1 (OpenBFME: retail's campaign manager)
 	CheatMode::State m_cheatMode;                  ///< lane CHEAT-1 (OpenBFME)
 	SimulationProfile m_simulationProfile = SimulationProfile::Faithful; ///< lane UBER-1 (OpenBFME)
 	GameEdition m_edition = GameEdition::RotWK201;                         ///< lane BFME2MODE-0 (OpenBFME)

@@ -625,3 +625,106 @@ End
 		CHECK(worstSlotError(mw, horde) < 3.0f);
 	}
 }
+
+TEST_CASE("production exit: rotated factories use the door before routing to a rally behind them")
+{
+	for (auto profile : {SimulationProfile::Faithful, SimulationProfile::Uber})
+	for (float angle : {0.0f, -0.74967724f, 1.57079633f, 2.39191532f})
+	{
+		CAPTURE(angle);
+		MoveWorld mw(140, 140, R"(
+Object DoorFactory
+	KindOf = STRUCTURE IMMOBILE
+	Geometry = BOX
+	GeometryMajorRadius = 60
+	GeometryMinorRadius = 60
+	GeometryHeight = 40
+	GeometryIsSmall = No
+	Behavior = QueueProductionExitUpdate Exit
+		UnitCreatePoint = X:0 Y:0 Z:0
+		NaturalRallyPoint = X:100 Y:0 Z:0
+	End
+End
+)");
+		mw.logic->setSimulationProfile(profile);
+		Object *factory = mw.spawn("DoorFactory", 605, 605, angle);
+		mw.buildMap();
+		Object *unit = mw.spawn("Walker", 605, 605, angle);
+		const float c = std::cos(angle), s = std::sin(angle);
+		// A preceding recruit may still reserve the front lane. Exit movement is
+		// allowed through units, so that reservation must not introduce a grid detour.
+		Object *preceding = mw.spawn("Walker", 605 + 80*c, 605 + 80*s, angle);
+		mw.ai->pathfinder().updateGoal(mw.aiOf(preceding)->adapter(), preceding->getPosition(), LAYER_GROUND);
+		Coord3D rally{605 - 220*c, 605 - 220*s, 0};
+		auto *exit = factory->getObjectExitInterface();
+		REQUIRE(exit);
+		exit->setRallyPoint(&rally);
+		exit->exitObjectViaDoor(unit, DOOR_1);
+		bool clearedDoor = false;
+		for (int frame = 0; frame < 240; ++frame)
+		{
+			mw.frames(1);
+			const float dx = unit->getPosition()->x - 605, dy = unit->getPosition()->y - 605;
+			const float forward = dx*c + dy*s, sideways = -dx*s + dy*c;
+			if (!clearedDoor)
+			{
+				// tolerance: continuous exit routing allows only binary32 integration error, not a grid-sized kink through the gate wall.
+				CHECK(std::abs(sideways) <= 0.05f);
+				if (forward > 100) clearedDoor = true;
+				if (forward > 1) CHECK_FALSE(mw.aiOf(unit)->canPathThroughUnits());
+			}
+			else
+			{
+				CHECK(mw.aiOf(unit)->mover().ignoredObstacleID() == PATHFIND_INVALID_ID);
+				const auto *cell = mw.ai->pathfinder().getCell(LAYER_GROUND, unit->getPosition());
+				REQUIRE(cell);
+				CHECK_FALSE(cell->isObstaclePresent(factory->getID()));
+			}
+		}
+		CHECK(clearedDoor);
+		// tolerance: the ordinary rally route ends within the locomotor's grid arrival tolerance.
+		CHECK(dist2d(*unit->getPosition(), rally) < 12.0f);
+		CHECK(mw.aiOf(unit)->mover().ignoredObstacleID() == PATHFIND_INVALID_ID);
+	}
+}
+
+TEST_CASE("production exit: cancelling the doorway walk clears the exit flag")
+{
+	MoveWorld mw;
+	Object *factory = mw.spawn("Block", 405, 505);
+	mw.buildMap();
+	Object *unit = mw.spawn("Walker", 405, 505);
+	mw.aiOf(unit)->aiFollowPath({Coord3D{505,505,0}}, nullptr, CMD_FROM_AI, true);
+	CHECK(mw.aiOf(unit)->mover().ignoredObstacleID() == PATHFIND_INVALID_ID);
+	mw.aiOf(unit)->aiIdle(CMD_FROM_PLAYER);
+	CHECK_FALSE(mw.aiOf(unit)->canPathThroughUnits());
+	CHECK(mw.aiOf(unit)->mover().ignoredObstacleID() == PATHFIND_INVALID_ID);
+}
+
+TEST_CASE("follow path: every path publishes its segment without facing and clears ignored obstacles on exit")
+{
+	for (bool exitProduction : {false, true})
+	{
+		MoveWorld mw;
+		mw.buildMap();
+		Object *unit = mw.spawn("Walker", 205, 505);
+		auto *ai = mw.aiOf(unit);
+		AIStateMachine machine(*ai, "FollowPathTest");
+		const Coord3D goal{405, 505, 0};
+		machine.setGoalPath({goal});
+		AIFollowPathState state(machine, exitProduction);
+		state.onEnter();
+		machine.setGoalPosition(Coord3D{905, 905, 0});
+		machine.setGoalAngle(1.0f);
+		state.update();
+		CHECK(machine.goalPosition().x == goal.x);
+		CHECK(machine.goalPosition().y == goal.y);
+		CHECK(machine.goalPosition().z == goal.z);
+		CHECK_FALSE(machine.haveGoalAngle());
+		ai->setCanPathThroughUnits(true);
+		ai->mover().ignoreObstacle(42);
+		state.onExit(EXIT_RESET);
+		CHECK_FALSE(ai->canPathThroughUnits());
+		CHECK(ai->mover().ignoredObstacleID() == PATHFIND_INVALID_ID);
+	}
+}

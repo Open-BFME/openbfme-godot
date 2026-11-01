@@ -983,7 +983,8 @@ TEST_CASE("stops S-175: handlers with no decompiled body report 'unported-comman
 	CHECK(fx.services.requests.size() == 16);
 	// lane UI-4: Credits and CreditsExit are ported (the credits roll, S-2520): still requests (the host's music), no longer unported commands; with no
 	// archives in this environment the roll reports that it cannot start
-	CHECK(fx.wm->noteCount("unported-command") == 14);
+	CHECK(fx.wm->noteCount("unported-command") == 13); // lane WOTR-1: War of the Ring is ported (the strategic Skirmish.apt) ...
+	CHECK(fx.wm->noteCount("skirmish-environment-missing") == 1); // ... and says so when the environment has no LivingWorldShellInfo
 	CHECK(fx.wm->noteCount("credits") == 1);
 	CHECK(fx.services.requests[0].action == ShellAction::LoadGame);
 	CHECK(fx.services.requests[0].argument == "arg");

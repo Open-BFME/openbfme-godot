@@ -1,6 +1,7 @@
 // OpenBFME retail tests for movement (lane MOVE-1). They run only when ROTWK_INSTALL and BFME2_INSTALL are set (otherwise SKIP). They mount pure RotWK 2.01 +
 // BFME2 1.06, load the object world once, and order units and hordes of the real templates to a point.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "GameLogic/Module/AmbientAIUpdate.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
@@ -250,6 +251,7 @@ std::vector<SweepResult> sweepBatch(RetailGame &g, const std::vector<const Thing
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(0.0f);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		objs.push_back(o);
 		dests.push_back(Coord3D{ x, y + 180.0f, 0.0f });
 		r.horde = o->getContain() && o->getContain()->getHordeContainInterface();
@@ -804,7 +806,9 @@ TEST_CASE("move retail: two retail hordes standing 40 units apart meet in the co
 		Object *b = g.logic.newObject(tt, g.teamOf(0), ObjectStatusMaskType{});
 		Coord3D pa{ 1000.0f, 1000.0f, 0.0f }, pb{ 1000.0f + dx, 1000.0f, 0.0f };
 		a->setPosition(&pa);
+		testutil::completeHorde(a); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		b->setPosition(&pb);
+		testutil::completeHorde(b); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		g.logic.runLogicFrame();
 		g.ai->processCollisions();
 		const unsigned long long pairs = g.ai->collisionPairsLastFrame();

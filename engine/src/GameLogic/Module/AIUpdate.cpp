@@ -67,24 +67,12 @@ const char *const kStopHost =
 // the registry bits, resolved once by name (a mod's own order cannot break them)
 int modelConditionIndex(const char *name)
 {
-	for (int i = 0; TheModelConditionNames[i]; ++i)
-	{
-		if (std::strcmp(TheModelConditionNames[i], name) == 0)
-		{
-			return i;
-		}
-	}
-	throw std::logic_error(std::string("model condition registry has no ") + name);
+	return CombatNames::modelCondition(name); // hashed (several callers ask per update)
 }
 
 int objectStatusBit(const char *name)
 {
-	const int bit = ObjectTemplateInfoBuilder::objectStatusIndex(name);
-	if (bit < 0)
-	{
-		throw std::logic_error(std::string("object status registry has no ") + name);
-	}
-	return bit;
+	return CombatNames::status(name);
 }
 
 struct StatusBits
@@ -245,18 +233,9 @@ public:
 		const PhysicsBehavior *p = physics();
 		return p != nullptr && p->isStunned();
 	}
-	// lane EXIT-1: obj+0x264, the PhysicsBehavior RW caches at creation (RW 0x69A420); the port finds the module (lane UBER-2B: once, as physicsMotionDisabled
-	// did: the search's dynamic_cast over every module ran per locomotorMaintainCurrentPosition, 2% of a 10k battle)
+	// lane EXIT-1: obj+0x264, the PhysicsBehavior RW caches at creation (RW 0x69A420); the port's Object keeps it with its collide list (PhysicsBehavior::find)
 	bool hasPhysicsModule() const override { return physics() != nullptr; }
-	PhysicsBehavior *physics() const
-	{
-		if (!m_physicsLooked)
-		{
-			m_physics = PhysicsBehavior::find(obj()); // the modules never change after the object is made
-			m_physicsLooked = true;
-		}
-		return m_physics;
-	}
+	PhysicsBehavior *physics() const { return PhysicsBehavior::find(obj()); }
 	bool zMotionSuppressed() const override { return false; }
 	unsigned logicFrame() const override { return obj().logic().getFrame(); }
 	bool containerAllowsBackingUp() const override { return false; }
@@ -368,8 +347,6 @@ private:
 	bool stationary() const { return m_ai.adapter().isStationary(); }
 
 	AIUpdateInterface &m_ai;
-	mutable PhysicsBehavior *m_physics = nullptr;
-	mutable bool m_physicsLooked = false;
 };
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -432,6 +409,11 @@ AIUpdateInterface::~AIUpdateInterface()
 		m_defectedMachine->halt();
 		m_defectedMachine.reset();
 	}
+	if (m_temporaryKeptMachine) // lane MODCOMPAT-MOD1: an object deleted while a temporary machine runs
+	{
+		m_temporaryKeptMachine->halt();
+		m_temporaryKeptMachine.reset();
+	}
 	m_turret.reset(); // after the machine: the attack state's exit clears the turret's target
 	if (m_world)
 	{
@@ -473,6 +455,8 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	m->defineState(AI_FACE_POSITION, std::make_unique<AIFacePositionState>(*m), AI_IDLE, AI_IDLE); // lane SIEGE-1: RW 0x753755 state 0x25 (RW 0x7449D4 mode 0)
 	m->defineState(AI_FACE_OBJECT, std::make_unique<AIFaceState>(*m, true), AI_IDLE, AI_IDLE);
 	m->defineState(AI_HUNT, std::make_unique<AIHuntState>(*m), AI_IDLE, AI_IDLE); // lane SCRIPT-3: RW 0x741133 (AIHunt.cpp)
+	m->defineState(AI_ATTACK_AREA, std::make_unique<AIAttackAreaState>(*m), AI_IDLE, AI_IDLE); // lane BFME2CAMP1: RW 0x74115E (AIHunt.h)
+	m->defineState(AI_ATTACK_SQUAD, std::make_unique<AIAttackSquadState>(*m), AI_IDLE, AI_IDLE); // lane BFME2CAMP1: RW 0x740E95 (AIHunt.h)
 	// lane PLAY-4 (RW 0x753755): AIGuardState 16 (RW 0x74109B) and AIGoingIdleState 0x4E (RW 0x7410C2), both ending in idle (AIGuard.cpp)
 	m->defineState(AI_GUARD, std::make_unique<AIGuardState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_GOING_IDLE, std::make_unique<AIGoingIdleState>(*m), AI_IDLE, AI_IDLE);
@@ -535,6 +519,50 @@ void AIUpdateInterface::endDefectedStateMachine()
 	wakeUpNow();
 }
 
+// lane MODCOMPAT-MOD1 (S-1422): RW 0x6630A9
+void AIUpdateInterface::beginTemporaryStateMachine()
+{
+	if (m_temporaryKeptMachine)
+	{
+		return; // RW 0x6630AC: AI + 0x34 holds a machine already
+	}
+	if (!m_machine)
+	{
+		// RW 0x6630BA reads the machine (AI + 0x30) without a test: an AI before onObjectCreated has none
+		throw std::logic_error("AIUpdateInterface of " + getObject()->getTemplate()->getName() + ": beginTemporaryStateMachine before the AI has a machine (RW 0x6630BA)");
+	}
+	// RW 0x6630B4: AI vslot 0x160 (RW 0x63F3BF in every AI class: nothing)
+	m_temporaryKeptMachine = std::move(m_machine); // RW 0x6630BA: + 0x34 = + 0x30
+	m_machine = makeStateMachine();                // RW 0x6630C4: vslot 0x258
+	m_machine->initDefaultState();                 // RW 0x6630D2: machine slot 0x1C
+}
+
+// lane MODCOMPAT-MOD1 (S-1422): RW 0x6630D7. Machine slot 0x3C is RotWK's halt (RW 0x8DB758), which drops the current state without its exit; the port's
+// halt lets the state exit, as endDefectedStateMachine does (INFERENCE, S-1222 item 3: what the state holds, its path and turret target, is released)
+void AIUpdateInterface::endTemporaryStateMachine()
+{
+	if (!m_temporaryKeptMachine)
+	{
+		return; // RW 0x6630DD
+	}
+	if (m_machine)
+	{
+		if (!m_updatingWithTemporaryMachine)
+		{
+			m_machine->halt(); // RW 0x6630F3: machine slot 0x3C, then the machine's deleting destructor (slot 0) and operator delete (RW 0x42F6A0)
+			m_machine.reset();
+		}
+		else
+		{
+			// RW 0x6630E9: AI + 0x3E0 is set, so the machine whose update runs now is neither halted nor deleted (retail drops the pointer). The port keeps it,
+			// state and all, until AIUpdateInterface::update's machine update returns, then frees it without its exits
+			m_retiredMachine = std::move(m_machine);
+		}
+	}
+	m_machine = std::move(m_temporaryKeptMachine); // RW 0x663110 .. 0x663118: + 0x30 = + 0x34, + 0x34 = 0
+	onTemporaryStateMachineEnded();                // RW 0x66311F: AI vslot 0x164
+}
+
 void AIUpdateInterface::onDelete()
 {
 	// the object leaves the pathfinder before its modules are deleted (AIWorld::objectLeftWorld also runs from ~Object)
@@ -545,6 +573,10 @@ void AIUpdateInterface::onDelete()
 	if (m_defectedMachine)
 	{
 		m_defectedMachine->halt();
+	}
+	if (m_temporaryKeptMachine)
+	{
+		m_temporaryKeptMachine->halt();
 	}
 	m_mover->destroyPath();
 }
@@ -596,7 +628,15 @@ UpdateSleepTime AIUpdateInterface::update()
 		return (UpdateSleepTime)(memberSleep < 1u ? 1u : memberSleep);
 	}
 	unsigned sleep = (unsigned)UPDATE_SLEEP_FOREVER;
+	// lane MODCOMPAT-MOD1: RW 0x669725 .. 0x66974E: AI + 0x3E0 = a machine is kept (AI + 0x34) around the machine's update (endTemporaryStateMachine reads it)
+	m_updatingWithTemporaryMachine = m_temporaryKeptMachine != nullptr;
 	const StateReturnType st = m_machine->updateStateMachine();
+	m_updatingWithTemporaryMachine = false;
+	if (m_retiredMachine)
+	{
+		AIStateMachine::LoadGuard noExits; // the machine endTemporaryStateMachine dropped during its update: retail never deletes it, so no state exits
+		m_retiredMachine.reset();
+	}
 	if (IS_STATE_SLEEP(st))
 	{
 		const unsigned frames = GET_STATE_SLEEP_FRAMES(st);
@@ -1385,18 +1425,6 @@ PathfindObject &AIUpdateInterface::pathfindObject()
 	return *m_adapter;
 }
 
-void AIUpdateInterface::exitQuickPathMade(const Coord3D &dest)
-{
-	// RW 0x666079: AI + 0x3BA = 0; RW 0x66607C -> 0x6654AD(dest, CMD_FROM_AI) -> 0x6636D9 (a goal from the AI is not clipped) -> 0x8DB810 (nothing while the
-	// machine is locked, else RW 0x8DB778: the goal position and + 0x30 = FLT_MAX)
-	m_canPathThroughUnits = false;
-	if (m_machine && !m_machine->isLocked())
-	{
-		m_machine->setGoalPosition(dest);
-		m_machine->clearGoalAngle(); // INFERENCE (as GiantBirdAIUpdate): + 0x30 = FLT_MAX is the machine's goal angle "none"
-	}
-}
-
 LocomotorHost &AIUpdateInterface::locomotorHost()
 {
 	return *m_locoHost;
@@ -1806,6 +1834,11 @@ void AIUpdateInterface::crc(StateHasher &h) const
 		h.addU32(0x663128u);
 		m_defectedMachine->crc(h);
 	}
+	if (m_temporaryKeptMachine) // lane MODCOMPAT-MOD1: hashed while a machine is kept (RW AI + 0x34): the whole machine
+	{
+		h.addU32(0x6630A9u);
+		m_temporaryKeptMachine->crc(h);
+	}
 	h.addI32(m_curLocomotorSet);
 	h.addU32((std::uint32_t)m_lastCommandSource);
 	h.addU32(m_currentVictim);
@@ -1828,6 +1861,20 @@ void AIUpdateInterface::crc(StateHasher &h) const
 		h.addFloat(m_guardLocation.y);
 		h.addFloat(m_guardLocation.z);
 		h.addFloat(m_guardAngle);
+	}
+	if (m_areaToGuard != -1) // lane BFME2CAMP1: hashed once an area was set (AI + 0x6C)
+	{
+		h.addI32(m_areaToGuard);
+	}
+	if (m_guardTeam != 0) // lane BFME2CAMP1: hashed once a team guard set it (AI + 0x68)
+	{
+		h.addU32(0x68u);
+		h.addU32(m_guardTeam);
+	}
+	if (m_attackInfoOverride) // lane BFME2CAMP1: hashed once a script or the team set AI + 0x70
+	{
+		h.addU32(0x70u);
+		h.addString(m_attackInfoName);
 	}
 	h.addU32(m_targetHorde);
 	h.addU32(m_moveAwayRequesters[0]); // lane PHYS-1
@@ -1915,5 +1962,17 @@ void AIUpdateInterface::registerClasses(ModuleFactory &modules)
 			}
 			return std::make_unique<AIUpdateInterface>(thing, data);
 		});
+	}
+}
+
+void AIUpdateInterface::finishExitQuickPath(const Coord3D &destination)
+{
+	// RW 0x666079 clears +0x3BA; 0x6654AD -> 0x6636D9 -> 0x8DB810 sets
+	// the machine goal with CMD_FROM_AI (no player clipping).
+	m_canPathThroughUnits = false;
+	if (m_machine && !m_machine->isLocked()) // RW 0x8DB810
+	{
+		m_machine->setGoalPosition(destination);
+		m_machine->clearGoalAngle();
 	}
 }

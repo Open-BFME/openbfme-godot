@@ -43,7 +43,8 @@ const REQUIRED_ROWS := {
 const REQUIRED_BAR := ["accept", "cancel", "reset"]
 const REQUIRED_MAIN := ["MultiPlayNav", "MyHeroes", "OptionsNav", "QuitMainMenu", "SoloPlayNav", "corner"] # the corner button (a 194 x 105 box) has no name
 const REQUIRED_SUB := {
-	"SoloPlayNav": ["BonusCampaign", "Expansion1Campaign", "LoadGame", "Skirmish", "WarOfTheRing"],
+	# lane BFME2CAMP1 (owner): RotWK's list also has BFME2's Evil / Good Campaign rows (an OpenBFME addition, AptMainMenu.h ExtraRows)
+	"SoloPlayNav": ["BonusCampaign", "EvilCampaign", "Expansion1Campaign", "GoodCampaign", "LoadGame", "Skirmish", "WarOfTheRing"],
 	"MultiPlayNav": ["LocalNetwork", "Online", "Replay"],
 	"OptionsNav": ["AdvancedSettings", "Credits", "Settings"],
 }

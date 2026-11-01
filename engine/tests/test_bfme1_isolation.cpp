@@ -13,6 +13,12 @@
 #include "Common/Audio/AudioIni.h"
 #include "Common/BfmeGame.h"
 #include "Common/INI.h"
+#include "Common/SpecialPower.h"
+#include "Common/StateHash.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
+#include "GameLogic/Module/AutoPickUpUpdate.h"
+#include "GameLogic/LivingWorld/LivingWorldData.h"
 #include "GameLogic/Module/BloodthirstyUpdate.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/ExperienceWorld.h"
@@ -24,6 +30,8 @@
 #include "GameClient/UnitVoiceResponse.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "GameLogic/Module/LogicModules.h"
+#include "GameLogic/Module/SpecialPowerModules.h"
+#include "GameLogic/Object/PartitionManager.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 #include "Libraries/WWVegas/WW3D2/textureloader.h"
 
@@ -102,6 +110,61 @@ struct Bfme1ModuleWorld
 		const ThingTemplate *tmpl = world.get(name);
 		REQUIRE(tmpl);
 		return logic->newObject(tmpl, players.findPlayerWithName("Alice")->getDefaultTeam(), ObjectStatusMaskType{});
+	}
+};
+
+// Observe the real auto-pickup update's power dispatch without depending on the
+// grab ability's animation/weapon implementation or on installed game files.
+struct PickupCall
+{
+	ObjectID target;
+	int type;
+	unsigned options;
+};
+class PickupProbePower : public SpecialPowerModule
+{
+public:
+	PickupProbePower(Thing *thing, const SpecialPowerModuleData *data, std::vector<PickupCall> &calls)
+		: SpecialPowerModule(thing, data), m_calls(calls) {}
+	void doSpecialPowerAtObject(Object *target, unsigned options) override
+	{
+		m_calls.push_back({ target->getID(), getSpecialPowerTemplate()->getSpecialPowerType(), options });
+	}
+private:
+	std::vector<PickupCall> &m_calls;
+};
+struct Bfme1PickupWorld : Bfme1ModuleWorld
+{
+	SpecialPowerTemplate grab, bored;
+	std::vector<PickupCall> calls;
+	Bfme1PickupWorld()
+	{
+		grab.m_type = 0x27;
+		bored.m_type = 0x40; // SPECIAL_MTTROLL_BORED's shared name ordinal (BFME1 binary: 0x41)
+		grab.m_id = 1;
+		bored.m_id = 2;
+		world.modules.bindDataProc("SpecialPowerModule", MODULETYPE_BEHAVIOR, [this](INI *ini) -> std::shared_ptr<ModuleData> {
+			auto data = std::make_shared<SpecialPowerModuleData>();
+			const FieldParse fields[] = {
+				{ "SpecialPowerTemplate", INI::parseAsciiString, nullptr, 0 },
+				{ nullptr, nullptr, nullptr, 0 }
+			};
+			ini->initFromINI(&data->m_specialPowerTemplateName, fields);
+			data->m_specialPowerTemplate = data->m_specialPowerTemplateName == "Grab" ? &grab : &bored;
+			return data;
+		});
+		world.modules.bindModuleProc("SpecialPowerModule", MODULETYPE_BEHAVIOR,
+			[this](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &) -> std::unique_ptr<Module> {
+				return std::make_unique<PickupProbePower>(thing, dynamic_cast<const SpecialPowerModuleData *>(data), calls);
+			});
+		logic->partition().setRegion(0, 0, 1000, 1000);
+	}
+	~Bfme1PickupWorld() { logic->reset(); }
+	void place(Object *object, float x, float y)
+	{
+		const Coord3D position{ x, y, 0 };
+		object->setPosition(&position);
+		logic->partition().update(); // direct update() calls need the frame's moved-object relink first
 	}
 };
 } // namespace
@@ -220,6 +283,156 @@ TEST_CASE("bfme1 isolation: legacy portal and bloodthirsty fields load only in B
 		const std::string error = bfme1.load(text);
 		CHECK_MESSAGE(error.empty(), error);
 	}
+}
+
+TEST_CASE("bfme1 isolation: auto-pickup uses each game's field table, with validated legacy values")
+{
+	const initest::FileList bfme2Legend = { { "Data\\INI\\Default\\SubsystemLegend.ini", "; legend\r\n" },
+		{ "Data\\INI\\AwardSystem.ini", "; BFME2\r\n" } };
+	for (const std::string &field : { "PickUpKindOf = ROCK CLUB", "Bored = Yes", "BoredFilter = NONE +INFANTRY" })
+	{
+		const std::string text = "Object Test\n Behavior = AutoPickUpUpdate Pickup\n " + field + "\n End\nEnd\n";
+		objtest::World bfme1(true);
+		LogicModules::registerAll(bfme1.modules);
+		bfme1.fx.mount(kBfme1Legend);
+		const std::string error = bfme1.load(text);
+		CHECK_MESSAGE(error.empty(), error);
+		for (const auto &legend : { bfme2Legend, kRotwkLegends })
+		{
+			objtest::World other;
+			LogicModules::registerAll(other.modules);
+			other.fx.mount(legend);
+			CHECK(other.load(text).find("Unknown field '" + field.substr(0, field.find(' ')) + "'") != std::string::npos);
+		}
+	}
+	objtest::World bfme1(true);
+	LogicModules::registerAll(bfme1.modules);
+	bfme1.fx.mount(kBfme1Legend);
+	for (const std::string &field : { "PickUpFilter = ALL", "PickUpKindOf2 = ROCK" })
+	{
+		CHECK(bfme1.load("Object Bad\n Behavior = AutoPickUpUpdate Pickup\n " + field + "\n End\nEnd\n").find("Unknown field '") != std::string::npos);
+	}
+	for (const std::string &field : { "PickUpKindOf = NotAKind", "Bored = Maybe", "BoredFilter = NotAFilter" })
+	{
+		CHECK_FALSE(bfme1.load("Object Bad\n Behavior = AutoPickUpUpdate Pickup\n " + field + "\n End\nEnd\n").empty());
+	}
+}
+
+TEST_CASE("bfme1 isolation: auto-pickup retains ANY masks, NONE, edits, inheritance and boredom data")
+{
+	Bfme1ModuleWorld fixture;
+	REQUIRE(fixture.world.load(
+		"Object Picker\n Behavior = AutoPickUpUpdate Pickup\n PickUpKindOf = ROCK CLUB\n PickUpKindOf = -CLUB +ORC\n"
+		" Bored = Yes\n BoredFilter = NONE +INFANTRY\n End\nEnd\n"
+		"ChildObject InheritedPicker Picker\nEnd\n"
+		"Object EmptyPicker\n Behavior = AutoPickUpUpdate Pickup\n PickUpKindOf = ROCK\n PickUpKindOf = NONE\n End\nEnd\n"
+		"Object Rock\n KindOf = ROCK\nEnd\nObject Club\n KindOf = CLUB\nEnd\n"
+		"Object Orc\n KindOf = ORC\nEnd\nObject Foot\n KindOf = INFANTRY\nEnd\n").empty());
+	const auto *data = dynamic_cast<const Bfme1AutoPickUpUpdateModuleData *>(fixture.world.get("Picker")->behaviorModules().find("Pickup")->data.get());
+	const auto *inherited = dynamic_cast<const Bfme1AutoPickUpUpdateModuleData *>(fixture.world.get("InheritedPicker")->behaviorModules().find("Pickup")->data.get());
+	const auto *empty = dynamic_cast<const Bfme1AutoPickUpUpdateModuleData *>(fixture.world.get("EmptyPicker")->behaviorModules().find("Pickup")->data.get());
+	REQUIRE(data);
+	REQUIRE(inherited);
+	REQUIRE(empty);
+	CHECK(data->m_bored);
+	CHECK(inherited->m_bored);
+	CHECK_FALSE(empty->m_bored);
+	CHECK(ObjectFilterMatch::isValid(&data->m_pickUpFilter));
+	CHECK_FALSE(ObjectFilterMatch::isValid(&empty->m_pickUpFilter));
+	CHECK(inherited->m_pickUpFilter == data->m_pickUpFilter);
+	CHECK(inherited->m_boredFilter == data->m_boredFilter);
+	CHECK(ObjectFilterMatch::allows(*fixture.logic, data->m_pickUpFilter, *fixture.make("Rock"), nullptr));
+	CHECK(ObjectFilterMatch::allows(*fixture.logic, data->m_pickUpFilter, *fixture.make("Orc"), nullptr));
+	CHECK_FALSE(ObjectFilterMatch::allows(*fixture.logic, data->m_pickUpFilter, *fixture.make("Club"), nullptr));
+	CHECK_FALSE(ObjectFilterMatch::allows(*fixture.logic, empty->m_pickUpFilter, *fixture.make("Rock"), nullptr));
+	CHECK(ObjectFilterMatch::allows(*fixture.logic, data->m_boredFilter, *fixture.make("Foot"), nullptr));
+	CHECK_FALSE(ObjectFilterMatch::allows(*fixture.logic, data->m_boredFilter, *fixture.make("Rock"), nullptr));
+}
+
+TEST_CASE("bfme1 isolation: auto-pickup dispatches the nearest allowed kind once per button wake")
+{
+	Bfme1PickupWorld fixture;
+	REQUIRE(fixture.world.load(
+		"Object Picker\n Behavior = TransportContain Hold\n Slots = 1\n End\n"
+		" Behavior = SpecialPowerModule GrabPower\n SpecialPowerTemplate = Grab\n End\n"
+		" Behavior = AutoPickUpUpdate Pickup\n PickUpKindOf = ROCK CLUB\n ScanDelayTime = 0\n ScanDistance = 50\n"
+		" RunFromButton = Yes\n RunFromButtonNumber = 2\n End\nEnd\n"
+		"Object Rock\n KindOf = ROCK\nEnd\nObject Club\n KindOf = CLUB\nEnd\nObject Foot\n KindOf = INFANTRY\nEnd\n").empty());
+	Object *picker = fixture.make("Picker");
+	fixture.place(picker, 100, 100);
+	fixture.place(fixture.make("Foot"), 101, 100);
+	fixture.place(fixture.make("Rock"), 120, 100);
+	Object *club = fixture.make("Club");
+	fixture.place(club, 110, 100);
+	auto *pickup = dynamic_cast<AutoPickUpUpdate *>(picker->findModule("AutoPickUpUpdate"));
+	REQUIRE(pickup);
+	pickup->update();
+	CHECK(fixture.calls.empty());
+	AutoPickUpUpdate::wakeAutoPickUp(*picker, 1);
+	pickup->update();
+	CHECK(fixture.calls.empty());
+	AutoPickUpUpdate::wakeAutoPickUp(*picker, 2);
+	CHECK(pickup->xferClass() == typeid(*pickup));
+	StateHasher before;
+	pickup->crc(before);
+	XferSave saved;
+	pickup->xfer(saved); // the pending wake must survive a snapshot of this variant
+	pickup->update();
+	REQUIRE(fixture.calls.size() == 1);
+	CHECK(fixture.calls[0].target == club->getID());
+	CHECK(fixture.calls[0].type == 0x27);
+	CHECK(fixture.calls[0].options == 0x2000);
+	pickup->update();
+	CHECK(fixture.calls.size() == 1);
+	XferLoad load(saved.data());
+	pickup->xfer(load);
+	CHECK(load.atEnd());
+	StateHasher restored;
+	pickup->crc(restored);
+	CHECK(restored.value() == before.value());
+	pickup->update();
+	REQUIRE(fixture.calls.size() == 2);
+	CHECK(fixture.calls.back().target == club->getID());
+}
+
+TEST_CASE("bfme1 isolation: integrated boredom precedes pickup, excludes self and respects its switch")
+{
+	Bfme1PickupWorld fixture;
+	CHECK(std::string(SpecialPowerStore::specialPowerTypeNames()[0x40]) == "SPECIAL_MTTROLL_BORED");
+	REQUIRE(fixture.world.load(
+		"Object Picker\n KindOf = MONSTER\n Behavior = TransportContain Hold\n Slots = 1\n End\n"
+		" Behavior = SpecialPowerModule GrabPower\n SpecialPowerTemplate = Grab\n End\n"
+		" Behavior = SpecialPowerModule BoredPower\n SpecialPowerTemplate = Bored\n End\n"
+		" Behavior = AutoPickUpUpdate Pickup\n PickUpKindOf = ROCK\n Bored = Yes\n BoredFilter = NONE +MONSTER\n"
+		" ScanDelayTime = 0\n ScanDistance = 50\n End\nEnd\n"
+		"ChildObject NotBored Picker\n ReplaceModule Pickup\n Behavior = AutoPickUpUpdate PickupOff\n"
+		" PickUpKindOf = ROCK\n Bored = No\n BoredFilter = NONE +MONSTER\n ScanDelayTime = 0\n ScanDistance = 50\n End\n End\nEnd\n"
+		"Object Friend\n KindOf = MONSTER\nEnd\nObject Rock\n KindOf = ROCK\nEnd\n").empty());
+	Object *picker = fixture.make("Picker");
+	fixture.place(picker, 100, 100);
+	Object *rock = fixture.make("Rock");
+	fixture.place(rock, 110, 100);
+	Object *neutral = fixture.logic->newObject(fixture.world.get("Friend"), fixture.players.getNeutralPlayer()->getDefaultTeam(), ObjectStatusMaskType{});
+	fixture.place(neutral, 101, 100); // nearer and filter-matching, but not allied
+	auto *pickup = dynamic_cast<AutoPickUpUpdate *>(picker->findModule("AutoPickUpUpdate"));
+	REQUIRE(pickup);
+	pickup->update(); // self matches the filter, but must be excluded
+	REQUIRE(fixture.calls.size() == 1);
+	CHECK(fixture.calls.back().target == rock->getID());
+	Object *buddy = fixture.make("Friend");
+	fixture.place(buddy, 130, 100);
+	pickup->update();
+	REQUIRE(fixture.calls.size() == 2);
+	CHECK(fixture.calls.back().target == buddy->getID());
+	CHECK(fixture.calls.back().type == 0x40);
+	CHECK(fixture.calls.back().options == 2);
+	Object *off = fixture.make("NotBored");
+	fixture.place(off, 100, 100);
+	auto *offPickup = dynamic_cast<AutoPickUpUpdate *>(off->findModule("AutoPickUpUpdate"));
+	REQUIRE(offPickup);
+	offPickup->update();
+	REQUIRE(fixture.calls.size() == 3);
+	CHECK(fixture.calls.back().target == rock->getID());
 }
 
 TEST_CASE("bfme1 isolation: legacy portal masks preserve ANY inclusion, rejection, empty masks and inheritance")
@@ -403,6 +616,47 @@ TEST_CASE("bfme1 isolation: bloodthirsty awards experience on each sacrifice, no
 	module->cancelSacrifice();
 	CHECK(module->kills() == 0);
 	CHECK(module->bestTargetID() == INVALID_ID);
+}
+
+TEST_CASE("bfme1 isolation: unavailable Living World campaigns do not abort the startup INI load")
+{
+	initest::Fixture fixture(kBfme1Legend);
+	RetailObjectWorld world(fixture.fsys);
+	// Synthetic campaign fields that stopped the 261031100 nightly. Nested
+	// Object is a campaign row, not a top-level unit definition.
+	const std::string text =
+		"LivingWorldMapInfo\n  GondorBanner = TestBanner\nEnd\n"
+		"LivingWorldCampaign TestCampaign\n  Act = 1\n"
+		"    WorldText = Test:Caption\n    AudioEvent = TestSound\n    EnableRegion = TestRegion\n"
+		"    Object = TestCampaignObject\n  End\nEnd\n"
+		"Object AfterCampaign\n  KindOf = INFANTRY\nEnd\n";
+	REQUIRE(initest::loadError(world.iniEnvironment(), "campaign-startup.ini", text).empty());
+	CHECK(world.things().findTemplate("AfterCampaign") != nullptr);
+	CHECK(world.things().findTemplate("TestCampaignObject") == nullptr);
+	CHECK(world.livingWorld().campaigns.empty());
+	CHECK(world.livingWorld().mapInfo.banners[0].empty());
+	const auto stops = world.livingWorld().acceptanceStops();
+	REQUIRE(stops.size() == 1);
+	CHECK(stops[0] == "[S-5017] BFME1 Living World campaigns and saves are unavailable: campaign blocks use recording stubs, not the BFME2/RotWK War of the Ring parsers; field validation and exact nested block boundaries are unverified");
+	const auto worldStops = world.acceptanceStops();
+	CHECK(std::count(worldStops.begin(), worldStops.end(), stops[0]) == 1);
+}
+
+TEST_CASE("bfme1 isolation: BFME2 and RotWK still validate Living World fields")
+{
+	for (const auto &files : { kRotwkLegends, initest::FileList{
+		{ "Data\\INI\\Default\\SubsystemLegend.ini", "; BFME2\n" }, { "Data\\INI\\AwardSystem.ini", "; BFME2 marker\n" } } })
+	{
+		initest::Fixture fixture(files);
+		RetailObjectWorld world(fixture.fsys);
+		CHECK(world.livingWorld().acceptanceStops().empty());
+		CHECK(initest::loadError(world.iniEnvironment(), "map.ini", "LivingWorldMapInfo\n  GondorBanner = Test\nEnd\n")
+			.find("Unknown field 'GondorBanner'") != std::string::npos);
+		CHECK(initest::loadError(world.iniEnvironment(), "map.ini", "LivingWorldMapInfo\n  MenBanner = Test\nEnd\n").empty());
+		CHECK(world.livingWorld().mapInfo.banners[0] == "Test");
+		CHECK(initest::loadError(world.iniEnvironment(), "campaign.ini", "LivingWorldCampaign Test\n  Act = 1\n    WorldText = Test:Text\n  End\nEnd\n")
+			.find("[S-1321] Living World field 'WorldText' is not ported") != std::string::npos);
+	}
 }
 
 TEST_CASE("bfme1 isolation retail: installed BFME1 object world loads without aborted files")

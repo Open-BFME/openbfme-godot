@@ -4,6 +4,7 @@
 // RadiusCursorRadius wide, throbbing between OpacityMin and OpacityMax, white where the power may be cast and red (0xFF1414) where not, with no pointer;
 // a click where it may not be cast issues nothing. SKIPs without ROTWK_INSTALL / BFME2_INSTALL.
 
+#include "HordeCompleteTestUtil.h"
 #include "HudTestUtil.h"
 
 #include "Common/Player.h"
@@ -328,6 +329,7 @@ TEST_CASE("SPELL-4 retail: Men of the West: each targeted spell book power aims 
 	REQUIRE(citadel);
 	const Coord3D home{ 600.0f, 600.0f, 0.0f };
 	citadel->setPosition(&home);
+	testutil::completeHorde(citadel); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	citadel->friend_onBuildComplete();
 	// every Men science of the book
 	for (const char *sci : { "SCIENCE_Heal", "SCIENCE_RallyingCallMP", "SCIENCE_Rebuild", "SCIENCE_HobbitAllies", "SCIENCE_ArrowVolleyGood", "SCIENCE_TomBombadil",
@@ -478,6 +480,7 @@ TEST_CASE("SUMMONLOC-1 retail: Rohan allies, the Balrog and Summon Orcs (General
 		REQUIRE(citadel);
 		const Coord3D home{ 600.0f, 600.0f, logic.getGroundHeight(600.0f, 600.0f) };
 		citadel->setPosition(&home);
+		testutil::completeHorde(citadel); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		citadel->friend_onBuildComplete();
 		const ScienceType st = TheScienceStore->getScienceFromInternalName(c.science);
 		REQUIRE(st != SCIENCE_INVALID);
@@ -527,6 +530,7 @@ TEST_CASE("SUMMONLOC-1 retail: Dain's Royal Guard (SPELL_BOOK_MEN_OF_DALE_ALLIES
 	REQUIRE(citadel);
 	const Coord3D blocked{ 920.0f, 650.0f, logic.getGroundHeight(920.0f, 650.0f) }; // 120 from Dain: inside MaxCastRange 150
 	citadel->setPosition(&blocked);
+	testutil::completeHorde(citadel); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	citadel->friend_onBuildComplete();
 	r.hud->input().ui().selectObject(dain->getID());
 	r.rig.game->shroud().revealMapForPlayerPermanently(me.getPlayerIndex());

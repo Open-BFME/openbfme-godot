@@ -1,6 +1,6 @@
 // OpenBFME. GPL-3.0.
 //
-// The draw mode of an Apt RenderImage clip (community PR #37, review r1). TARGET FACTS (BFME2, Open-BFME-2 GUI/AptImageModeParser.cpp, matched:
+// The draw mode of an Apt RenderImage clip (community PR #37, review r1). TARGET FACTS (BFME2, Open-BFME-2 Common/AptUtils.cpp, matched:
 // 0x412AF3, called by the image draw 0x412B94): the clip's `_mode` parameter, compared case-insensitively with SOLID 0, GRAYSCALE 1, ALPHA 2,
 // ADDITIVE 3, SOLID_GRAYSCALE 4, SOLID_TEXTURE 5; empty or anything else is ALPHA (2); the mode goes to W3DDisplay's image draw.
 // INFERENCE (stop S-5016): the draw's render states per mode were not read; the Godot shader (aptImageModeShader) ignores the texture alpha for

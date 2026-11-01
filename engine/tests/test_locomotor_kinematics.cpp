@@ -742,7 +742,7 @@ TEST_CASE("dispatcher: a stationary-cap frame, status refusals, appearance table
 		CHECK(l3.speed() == 0.0f);
 	}
 	{
-		LocoFixture z(std::string(kHuman) + "  ZAxisBehavior = FIXED_SURFACE_RELATIVE_HEIGHT\n"); // lane SHIP-1 ported SURFACE_RELATIVE_HEIGHT
+		LocoFixture z(std::string(kHuman) + "  ZAxisBehavior = FIXED_RELATIVE_TO_GROUND_AND_BUILDINGS\n");
 		Locomotor loco(z.tmpl());
 		MockHost h;
 		h.place(0, 0, 0);
@@ -850,7 +850,7 @@ TEST_CASE("Locomotor stops S-081 and S-084 are reported and pinned")
 	CHECK(stops[0].find("x87 and SSE") != std::string::npos);
 	CHECK(stops[1].rfind("S-084:", 0) == 0);
 	CHECK(stops[1].find("HOVER") == std::string::npos); // lane SHIP-1: the HOVER and SHIP movers are ported
-	CHECK(stops[1].find("FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT and ABSOLUTE_HEIGHT (the last three: lane SHIP-1;") != std::string::npos);
+	CHECK(stops[1].find("FIXED_SURFACE_RELATIVE_HEIGHT and FIXED_ABSOLUTE_HEIGHT (the last two: RW 0x5E78DB;") != std::string::npos);
 	CHECK(stops[1].find("GIANT_BIRD") == std::string::npos); // lane TAKEOVER-1: rotateTowardsPosition's GIANT_BIRD branch is ported
 	CHECK(stops[1].find("ScalesWalls") != std::string::npos);
 	CHECK(stops[2].rfind("S-1750:", 0) == 0);
@@ -1083,6 +1083,46 @@ TEST_CASE("HOVER mover: the OTHER mover, then OVER_WATER follows the water under
 	loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 50, 0 }, 100.0f, 11.0f);
 	CHECK(h.mc.count(mcIndex("OVER_WATER")) == 0);
 	CHECK((loco.flags() & LOCOMOTOR_FLAG_OVER_WATER) == 0);
+}
+
+TEST_CASE("FIXED_SURFACE_RELATIVE_HEIGHT / FIXED_ABSOLUTE_HEIGHT: snap to preferred height above water or ground, or absolute height (RW 0x5E78DB)")
+{
+	LocoFixture ground("  Surfaces = AIR\n  PreferredHeight = 325\n  PreferredHeightDamping = 0.5\n"
+					   "  ZAxisBehavior = FIXED_SURFACE_RELATIVE_HEIGHT\n  Appearance = WINGS\n");
+	MockHost h;
+	h.place(0, 0, 0);
+	h.groundZ = 12.0f;
+	Locomotor lg(ground.tmpl());
+	lg.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+	CHECK(h.pos.z == 337.0f);
+	CHECK(h.pending.z == 674.0f);
+	CHECK(h.mc.count(mcIndex("CLIMBING")) == 0);
+	MockHost hw;
+	hw.underwater = true;
+	hw.waterZ = 25.0f;
+	hw.groundZ = 12.0f;
+	Locomotor lw(ground.tmpl());
+	lw.locomotorMoveTowardsPosition(hw, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+	CHECK(hw.pos.z == 350.0f);
+	CHECK(hw.pending.z == 700.0f);
+
+	LocoFixture absolute("  Surfaces = AIR\n  PreferredHeight = 325\n  ZAxisBehavior = FIXED_ABSOLUTE_HEIGHT\n  Appearance = WINGS\n");
+	MockHost ha;
+	ha.groundZ = 12.0f;
+	ha.underwater = true;
+	ha.waterZ = 25.0f;
+	ha.pos.z = 50.0f;
+	ha.syncTransform();
+	Locomotor la(absolute.tmpl());
+	la.locomotorMoveTowardsPosition(ha, Coord3D{ 100, 0, 999 }, 100.0f, 11.0f);
+	CHECK(ha.pos.z == 325.0f);
+	CHECK(ha.pending.z == 600.0f); // 2 * 325 - 50, regardless of goal z or water height
+	CHECK(la.unverified() == std::vector<std::string>{ Locomotor::allStops()[0] }); // only existing numeric parity stop, not S-084
+	MockHost idle;
+	Locomotor parked(absolute.tmpl());
+	CHECK(parked.locomotorMaintainCurrentPosition(idle));
+	CHECK(idle.pos.z == 325.0f);
+	CHECK(idle.pending.z == 650.0f);
 }
 
 TEST_CASE("SURFACE_RELATIVE_HEIGHT / ABSOLUTE_HEIGHT: a tenth of the damped way to the preferred height above the surface each frame; CLIMBING above 0.5 (RW 0x5E7AF6)")

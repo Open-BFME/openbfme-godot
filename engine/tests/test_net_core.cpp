@@ -40,17 +40,17 @@ TEST_CASE("p16 net: LAN START preserves the legacy address table and versions ex
 		const auto bytes = LANLobby::encodeStart(start);
 		// tolerance: the version byte at index 3 requires at least four START header bytes
 		REQUIRE(bytes.size() > 3);
-		// lane P16: the legacy-capacity START keeps the lobby version (4 for the handicap layout, 6 since CHEAT-1's Cheat Mode field);
-		// the same START on an extended record is the next number (5, now 7)
-		CHECK(bytes[3] == (capacity == 8 ? 6 : 7));
+		// lane P16: the legacy-capacity START keeps the lobby version (4 for the handicap layout, 6 for CHEAT-1's Cheat Mode field, 8 since WOTR2
+		// milestone 8's game mode); the same START on an extended record has its own number (5, 7, now 9)
+		CHECK(bytes[3] == (capacity == 8 ? 10 : 11)); // WOTR2 milestone 8 step 4: lobby 10, extended START 11
 		if (capacity == 8)
 		{
 			NetByteWriter legacy;
 			legacy.u16(0x4C42);
 			legacy.u8(4); // LOBBY_START
-			legacy.u8(6); // the legacy START version (lane CHEAT-1)
+			legacy.u8(10); // the legacy START version (lane CHEAT-1: 6; WOTR2 milestone 8: 8, with the game mode and scenario; step 4: 10, the resume)
 			legacy.str(start.profile.text);
-			NetPacket::writeNewGameMessage(legacy, start.game);
+			NetPacket::writeNewGameMessage(legacy, start.game, true);
 			legacy.i32(start.runAhead);
 			legacy.i32(start.crcInterval);
 			for (int i = 0; i < 8; ++i)
@@ -74,7 +74,7 @@ TEST_CASE("p16 net: LAN START preserves the legacy address table and versions ex
 			CHECK_FALSE(LANLobby::decodeStart(std::vector<std::uint8_t>(bytes.begin(), bytes.begin() + n), back, &error));
 		}
 		auto malformed = bytes;
-		malformed[3] = capacity == 8 ? 7 : 6; // the other START layout's version byte (lane CHEAT-1: 6 legacy, 7 extended)
+		malformed[3] = capacity == 8 ? 11 : 10; // the other START layout's version byte (WOTR2 milestone 8 step 4: 10 legacy, 11 extended)
 		CHECK_FALSE(LANLobby::decodeStart(malformed, back, &error));
 		CHECK(error.find("slot capacity") != std::string::npos);
 		malformed = bytes;

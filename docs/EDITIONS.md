@@ -36,8 +36,8 @@ The tests are `engine/tests/test_bfme2mode0.cpp` (BFME2_INSTALL) and
 `tools/re/test_edition_census.py`.
 
 1. **BFME2 1.06 alone loads.** Every INI, every template and every BFME2
-   map's object list load with zero errors. The named list in the test
-   (`namedIniErrors`) is empty; its history is below.
+   map's object list load with one named error. The named list in the test
+   (`namedIniErrors`) holds it; its history is below.
 2. **A BFME2-map AI-vs-AI skirmish is deterministic.** Two Medium computers
    play on BFME2's own Evendim for 3000 frames. They play twice, and the two
    runs agree on every frame hash. The same digest comes out on two CI hosts.
@@ -49,7 +49,11 @@ The tests are `engine/tests/test_bfme2mode0.cpp` (BFME2_INSTALL) and
 
 BFME2 1.06 alone loads 4,238 templates with **no INI error**. Its 120 maps
 place 123,461 objects, and every one of them resolves (no unresolved template,
-no `map.ini` or read error). The named list in the test is empty.
+no `map.ini` or read error). Since merge queue q34 the named list in the test
+has one line: the War of the Ring branch's Living World parser reads
+`Data\INI\Campaigns\RiskCampaign.ini`, and its `AddPlayer` row is one of
+S-1321's unported Living World rows (RW 0x6E309A's table), so the file stops
+there as retail stops a file on a row it cannot parse.
 
 The first run with RotWK's field tables had two errors, both from one cause.
 `BezierProjectileBehavior`'s row `PreLandingEmotionAffectsAllies` is in BFME2

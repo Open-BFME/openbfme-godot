@@ -4,6 +4,7 @@
 // 0x888519 RefundDie, 0x88826E PillageModule) and from the geometry of the disc the manager visits (RW 0x75B4BA): a radius of r cells visits 1, 5, 21, 37, 65 cells for
 // r = 0 .. 4 (the rows of the retail loop traced by hand in the comments below), the cells of the farm in a corner are counted by rows, and so on.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "EconTestUtil.h"
 
@@ -217,6 +218,7 @@ struct World : Fx
 		Object *o = logic->newObject(w.get(tmpl), teamOf(owner), mask("UNDER_CONSTRUCTION"));
 		Coord3D p{ (float)cx * 20.0f, (float)cy * 20.0f, 0.0f };
 		o->setPosition(&p);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 };

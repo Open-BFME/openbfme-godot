@@ -42,6 +42,7 @@
 #include "Common/INIException.h"
 #include "Common/SubsystemLegend.h"
 #include "Common/INI.h"
+#include "Common/AsciiString.h"
 #include "Common/ArchiveFileSystem.h"
 
 #include <algorithm>
@@ -210,5 +211,57 @@ void RunSubsystemIniLoad(SubsystemLegend &legend, INI &ini, const SubsystemLoadO
 		report.unverifiedOrder.push_back(entry.name);
 		legend.loadIniFilesFromLegend(entry.name, ini, options, &report);
 		report.subsystemsLoaded.push_back(entry.name + " [order UNVERIFIED]");
+	}
+}
+
+const char *const kBfme2SubsystemLegendFile = "Data\\INI\\Default\\SubsystemLegend.ini";
+
+// lane BFME2CAMP1: see SubsystemLegend.h (an OpenBFME addition)
+void LoadBfme2CampaignsFromLegend(SubsystemLegend &legend, INI &ini, const SubsystemLoadOptions &options, SubsystemLoadReport &report)
+{
+	static const char *const kManager = "TheLinearCampaignManager";
+	if (!ini.environment().fileSystem->doesFileExist(kBfme2SubsystemLegendFile))
+	{
+		return;
+	}
+	std::vector<SubsystemLegendEntry> rotwk = legend.entries();
+	std::vector<std::string> already;
+	for (const SubsystemLegendEntry &e : rotwk)
+	{
+		if (e.name == kManager)
+		{
+			already = e.initFile;
+		}
+	}
+	std::vector<std::string> files;
+	legend.reset();
+	try
+	{
+		LoadSubsystemFile(ini, kBfme2SubsystemLegendFile, options, &report);
+	}
+	catch (...)
+	{
+		legend.restoreEntries(std::move(rotwk));
+		throw;
+	}
+	if (const SubsystemLegendEntry *bfme2 = legend.findEntry(kManager))
+	{
+		for (const std::string &f : bfme2->initFile)
+		{
+			const bool known = std::any_of(already.begin(), already.end(), [&f](const std::string &a) { return AsciiStringUtil::compareNoCase(a, f) == 0; });
+			if (!known)
+			{
+				files.push_back(f);
+			}
+		}
+	}
+	legend.restoreEntries(std::move(rotwk));
+	for (const std::string &f : files)
+	{
+		LoadSubsystemFile(ini, f, options, &report);
+	}
+	if (!files.empty())
+	{
+		report.subsystemsLoaded.push_back(std::string(kManager) + " [BFME2 legend, OpenBFME]");
 	}
 }

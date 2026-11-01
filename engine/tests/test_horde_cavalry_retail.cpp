@@ -4,6 +4,7 @@
 // onNewTarget RW 0x99006A), never by the module's class name; the port looked the contain up by the literal "HordeContain", so HorseHordeContain hordes
 // skipped the formation freeze and the member orders and stood next to their enemy forever (the AI-vs-AI stall of S-420).
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "StartTestUtil.h"
@@ -125,7 +126,9 @@ void fightKnightsAgainstOrcs(starttest::Shared &s, CavalryFight &out)
 	}
 	Coord3D pa{ ax, ay, logic.getGroundHeight(ax, ay) }, pb{ bx, ay, logic.getGroundHeight(bx, ay) };
 	knights->setPosition(&pa);
+	testutil::completeHorde(knights); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	orcs->setPosition(&pb);
+	testutil::completeHorde(orcs); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	const ObjectID kid = knights->getID(), oid = orcs->getID();
 	game.advance(0.2);
 	HordeAIUpdate *hk = dynamic_cast<HordeAIUpdate *>(knights->getAIUpdateInterface());
@@ -229,6 +232,7 @@ TEST_CASE("horde lifetime retail: a member produced into a horde that is already
 	REQUIRE(horde != nullptr);
 	Coord3D p{ 1200.0f, 1200.0f, logic.getGroundHeight(1200.0f, 1200.0f) };
 	horde->setPosition(&p);
+	testutil::completeHorde(horde); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	game.advance(0.2);
 	HordeContain *hc = dynamic_cast<HordeContain *>(horde->getContain());
 	REQUIRE(hc != nullptr);
@@ -245,6 +249,7 @@ TEST_CASE("horde lifetime retail: a member produced into a horde that is already
 	REQUIRE(late != nullptr);
 	const ObjectID lateId = late->getID();
 	late->setPosition(&p);
+	testutil::completeHorde(late); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	hc->acceptCreatedMember(late);
 	CHECK(hc->membersRefusedAfterDelete() == 1);
 	for (int i = 0; i < 5; ++i)

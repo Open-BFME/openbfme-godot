@@ -344,6 +344,7 @@ std::vector<std::string> HudInput::acceptanceStops()
 		"[S-285] mouse setup: RESOLVED for the default (lane PLAY-1): RotWK's GlobalData sets m_useAlternateMouse = 1 (RW 0x642A4B: the right click orders) and Options.ini "
 		"AlternateMouseSetup replaces it (RW 0x6E61D4: true unless the value is \"yes\"); the device layer (game.gd) passes that to CommandTranslator::setUseAlternateMouse; still "
 		"not ported: the alternate setup's own left-click rules beyond ZH's (the selection never carries a context command)",
+		"[S-5902] crate context clicks move to the crate before the enemy attack test unless force-attack is held; this input adaptation is not verified against RotWK evaluateContextCommand RW 0x81E60B",
 		"[S-286] context commands: resume construction, dock, repair, heal, capture / hijack / sabotage / salvage / snipe, combat drop, special powers, weapon fire commands, unit voice "
 		"responses and the academy statistics are not ported; an attack is issued against an enemy when a selected object (or a member of a selected horde) can possibly have a weapon (RW 0x73C191), standing "
 		"for ActionManager::canAttackObject; a click on a container a selected object may enter is MSG_ENTER (lane GARRISON-1, ActionManager::canEnterObject; the order of the context checks is not read); select-all takes every mobile object of the player across the map",

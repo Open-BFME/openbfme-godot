@@ -21,6 +21,7 @@
 //   payments of 25 = 500 (250 a minute: 10 payments per 300 frames); the citadel pays at frames 30, 60, ..., 600: 20 payments = 500 (250 a minute).
 //   A player's cash after 600 frames: 0 + 500 + 500 = 1000, after 300 frames 250 + 250 = 500.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "Common/AsciiString.h"
@@ -184,6 +185,7 @@ struct Game
 		REQUIRE_MESSAGE(o != nullptr, templateName);
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		o->friend_onBuildComplete(); // a map object is complete at birth (RW 0x62E176): the claim of a resource building
 		return o;
 	}
@@ -569,6 +571,7 @@ TEST_CASE("econ retail: the seven factions on a skirmish map earn 250 a minute p
 		REQUIRE_MESSAGE(obj != nullptr, templateName);
 		Coord3D p{ (float)b.cx * 20.0f + 10.0f, (float)b.cy * 20.0f + 10.0f, 0.0f }; // the centre of cell (cx, cy): the disc is centred on it
 		obj->setPosition(&p);
+		testutil::completeHorde(obj); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		obj->friend_onBuildComplete();
 		mine.insert(obj->getID());
 		return obj;

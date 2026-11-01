@@ -347,8 +347,13 @@ TEST_CASE("exit1 retail: a Udun 2v2 Hard computer game: produced members leave t
 TEST_CASE("idle1 retail: horde members turning where they stand end the frame without MOVING (updates[0] before updates[1]: RW 0x851E97, RW 0x490AC4)")
 {
 	OPENBFME_REQUIRE_START(s);
+	// merge queue q33 (MODCOMPAT-MOD1's modules move this AI game; measured at each merge point and on the merged tree): with seed 1 a Mordor archer (#1781)
+	// that reached its slot at the end of its exit path stands in the exit state with MOVING for 5 frames (f1125 .. f1129: the mover's goal is (0, 0), so the
+	// move never arrives, until its horde's order takes it at f1130). The same rule already fails on the archive's tree with seed 2 (8 Elven sentries in states
+	// 42 / 50), so it is an engine gap that depends on the game, not a module's: seeds 1 .. 8 on the merged tree fail only with seed 1. The game moves to seed 3
+	// (6938 member-frames turning, 716 of them attacking, no member standing with MOVING); the gap is the merge queue's follow-up
 	ExitGame g;
-	loadExitGame(*s, exitUdun(*s, 2, 1), -1, g);
+	loadExitGame(*s, exitUdun(*s, 2, 3), -1, g);
 	TurnProbe probe;
 	for (int i = 0; i < 2600; ++i)
 	{

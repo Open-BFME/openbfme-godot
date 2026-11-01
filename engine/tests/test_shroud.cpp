@@ -3,6 +3,7 @@
 // 0xB50100 (hand-traced below), the looker counts of RW 0xB52E10 / 0xB52EC0, the unlook queue of RW 0xB526A0 / 0xB51690 and the retail data (PartitionCellSize
 // 40, UnlookPersistDuration 1 frame, UseShroud No), never this engine's own output.
 
+#include "HordeCompleteTestUtil.h"
 #include "CreepTestUtil.h"
 #include "doctest.h"
 
@@ -580,10 +581,12 @@ void runRetail(starttest::Shared &s, RetailRun &out, bool checks)
 	REQUIRE(et != nullptr);
 	Object *fighter = logic.newObject(ft, human->getDefaultTeam(), ObjectStatusMaskType{});
 	fighter->setPosition(walker->getPosition());
+	testutil::completeHorde(fighter); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	target = logic.newObject(et, enemy->getDefaultTeam(), ObjectStatusMaskType{});
 	Coord3D fog{ walker->getPosition()->x, walker->getPosition()->y, 0.0f };
 	fog.y = fog.y > maxY * 0.5f ? fog.y - 900.0f : fog.y + 900.0f;
 	target->setPosition(&fog);
+	testutil::completeHorde(target); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	game.advance(0.2);
 	walker = fighter;
 	if (target)
@@ -778,10 +781,12 @@ TEST_CASE("shroud stops: S-560 .. S-567 are the exact stop lines and reach GameL
 		"0x82C167, the action helper: human and not script, as ZH ActionManager isObjectShroudedForAction); its other callers and the other action types were not read",
 		"[S-566] stealth and detection: RotWK's invisibility (InvisibilityUpdate, StealthDetectorUpdate, the InvisibilityManager, the INVISIBLE_STEALTH / CAMOUFLAGE "
 		"conditions and the INVISIBLE_DETECTED statuses) is lane STEALTH-1's (S-1040 .. S-1042); the shroud does not change for a stealthed object",
-		"[S-567] shroud drawing: one texel per cell with bilinear filtering multiplies the terrain, the water, rivers and roads by ShroudColor * level / 255 "
-		"(ClearAlpha / FogAlpha / ShroudAlpha) inside W3DShroud's one-texel border at ShroudAlpha (RW 0x472480 / 0x472EF4 / 0x472792, lane ZOOM-1); objects the "
-		"local player cannot see are not drawn, fogged ones are lit by the fogged light (S-4970); the roads' shroud is inferred (ZH's road buffer has no shroud pass); the radar "
-		"picture is multiplied per pixel; W3DShroud's filter and 4444 texel and W3DRadar's own texture were not read",
+		"[S-567] shroud drawing: one texel per cell with bilinear filtering (terrain.fxo's ShroudSampler: linear, clamp) multiplies the terrain, the water, rivers and roads by the "
+		"4-bit red nibble of W3DShroud's A4R4G4B4 texel of the cell's level (ClearAlpha / FogAlpha / ShroudAlpha) times ShroudColor (RW 0x47266B: FogAlpha 127 reads 7/15, not 127 / 255; "
+		"lane TERRAIN-SAMPLING) inside W3DShroud's one-texel border at ShroudAlpha (RW 0x472480 / 0x472EF4 / 0x472792, lane ZOOM-1); objects the "
+		"local player cannot see are not drawn, fogged ones are lit by the fogged light (S-4970); the water, rivers' and roads' shroud passes are inferred (ZH's road buffer has no shroud "
+		"pass; they read the red nibble like the terrain, where ZH's fixed-function passes would use the texel's green and blue too); the radar "
+		"picture is multiplied per pixel by level / 255; W3DRadar's own texture and W3DShroud's filter switch (the fogged ShroudSampler is plain linear) were not read",
 	};
 	CHECK(ShroudManager::stopLines() == expected);
 	Fx f;
@@ -792,13 +797,17 @@ TEST_CASE("shroud stops: S-560 .. S-567 are the exact stop lines and reach GameL
 	}
 }
 
-TEST_CASE("shroud objects: an omitted clearing range defaults to VisionRange in BFME1 data only (community PR #36); RotWK keeps 0, an explicit 0 stays blind")
+// lane SPELLFIX-1: the rule is every edition's: the ThingTemplate ctor's ShroudClearingRange -1 (RW 0x73FB7A, the constant RW 0xBD19DC) and the Object ctor's
+// fallback to VisionRange (RW 0x69990F: RW 0x699DE2 .. 0x699DF9); BFME2 decomp ObjectConstructor.cpp:549-551; BFME1 Object::initObject (community PR #36)
+TEST_CASE("shroud objects: an omitted clearing range defaults to VisionRange in every edition (RW 0x73FB7A / 0x69990F); an explicit 0 stays blind")
 {
 	const char *objects = "Object Keep\n KindOf = STRUCTURE IMMOBILE\n VisionRange = 100\n Geometry = CYLINDER\n GeometryMajorRadius = 9\nEnd\n"
-		"Object BlindKeep\n KindOf = STRUCTURE IMMOBILE\n VisionRange = 100\n ShroudClearingRange = 0\n Geometry = CYLINDER\n GeometryMajorRadius = 9\nEnd\n";
+		"Object BlindKeep\n KindOf = STRUCTURE IMMOBILE\n VisionRange = 100\n ShroudClearingRange = 0\n Geometry = CYLINDER\n GeometryMajorRadius = 9\nEnd\n"
+		"Object DefaultKeep\n VisionRange = 150\n ShroudClearingRange = -1\nEnd\n";
 	objtest::World rotwk;
 	REQUIRE(rotwk.load(objects).empty());
-	CHECK(ShroudManager::templateVision(*rotwk.get("Keep")).shroudClearingRange == 0.0f);
+	CHECK(ShroudManager::templateVision(*rotwk.get("Keep")).shroudClearingRange == 100.0f);
+	CHECK(ShroudManager::templateVision(*rotwk.get("DefaultKeep")).shroudClearingRange == 150.0f);
 	CHECK(ShroudManager::templateVision(*rotwk.get("BlindKeep")).shroudClearingRange == 0.0f);
 	objtest::World bfme1(true);
 	REQUIRE(bfme1.load(objects).empty());

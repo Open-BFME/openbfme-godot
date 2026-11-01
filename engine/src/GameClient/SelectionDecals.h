@@ -12,7 +12,7 @@
 // - the draw module (RW 0x4B2A9B): nothing unless GameData ShowSelectedUnitMarker (GlobalData + 0x9A5) and, with a player list, the object controlled by the
 //   local player; the decal template is the one the drawable was given (Drawable RW 0x672C32, + 0x44C) by ExperienceTracker::setLevel (RW 0x79DACD: the
 //   object's ExperienceLevel's SelectionDecal block, level + 0xA4); RadiusDecalTemplate::createSelectionRadiusDecal (RW 0x732BAD, BFME2 decomp
-//   RadiusDecalTemplateCreate.cpp): nothing without a Texture, a count or MinRadius / MaxRadius; the decal is Texture / Texture2 in the Style, its size in
+//   RadiusDecal.cpp): nothing without a Texture, a count or MinRadius / MaxRadius; the decal is Texture / Texture2 in the Style, its size in
 //   both axes min + (count - 1) * (max - min) / MaxSelectedUnits, at most max (RW 0x7326CC; MinRadius + 0x20, MaxRadius + 0x24, MaxSelectedUnits + 0x28),
 //   angle 0, the colour given, at the object's position;
 // - each frame (BFME2 decomp RadiusDecal.cpp RadiusDecal::update): opacity = (min + (max - min) * (sin(2 pi * (client frame mod period) / period) + 1) / 2)

@@ -845,8 +845,8 @@ void BezierProjectileBehavior::backOff(const Object &other)
 	delta.y = SimMath::mulf32(delta.y, 0.1f);
 	delta.z = SimMath::mulf32(delta.z, 0.1f);
 	const float angle = obj->getOrientation();
-	const std::vector<ObjectGeometry::Shape> &own = ObjectGeometry::cachedShapesOf(*obj->getTemplate());
-	const std::vector<ObjectGeometry::Shape> &theirs = ObjectGeometry::cachedShapesOf(*other.getTemplate());
+	const std::vector<ObjectGeometry::Shape> &own = obj->geometryShapes(); // lane MODCOMPAT-MOD1: the objects' own GeometryInfo (Object + 0xA8)
+	const std::vector<ObjectGeometry::Shape> &theirs = other.geometryShapes();
 	int i = 0;
 	bool collision = true;
 	while (collision && i++ <= 12)

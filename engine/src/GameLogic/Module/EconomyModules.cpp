@@ -2,11 +2,12 @@
 // See GameLogic/Module/EconomyModules.h.
 
 #include "GameLogic/Module/EconomyModules.h"
-#include "GameLogic/Module/CrateCollide.h"
 
 #include "Common/Thing/ModuleFactory.h"
 #include "GameLogic/Module/AutoDepositUpdate.h"
 #include "GameLogic/Module/MoneyEventModules.h"
+#include "GameLogic/Module/SalvageCrateCollide.h"
+#include "GameLogic/Module/VeterancyCrateCollide.h"
 #include "GameLogic/Module/TerrainResourceBehavior.h"
 #include "GameLogic/Module/UpgradeModules.h"
 
@@ -43,7 +44,7 @@ void EconomyModules::registerAll(ModuleFactory &modules)
 	modules.bindTypedData<PillageModuleData>("PillageModule", MODULETYPE_BEHAVIOR);
 	bindRuntime<PillageModule, PillageModuleData>(modules, "PillageModule");
 	modules.bindTypedData<SalvageCrateCollideModuleData>("SalvageCrateCollide", MODULETYPE_BEHAVIOR);
-	bindRuntime<SalvageCrateCollide, SalvageCrateCollideModuleData>(modules, "SalvageCrateCollide");
 	modules.bindTypedData<VeterancyCrateCollideModuleData>("VeterancyCrateCollide", MODULETYPE_BEHAVIOR);
 	bindRuntime<VeterancyCrateCollide, VeterancyCrateCollideModuleData>(modules, "VeterancyCrateCollide");
+	bindRuntime<SalvageCrateCollide, SalvageCrateCollideModuleData>(modules, "SalvageCrateCollide"); // lane MODCOMPAT-MOD1 (S-260)
 }

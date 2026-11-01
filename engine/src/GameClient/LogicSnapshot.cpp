@@ -331,9 +331,10 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 				}
 			}
 		}
-		if (s.stealthLook == 1 || s.stealthLook == 4)
+		logic.invisibility().clientOpacityRange(*o, &s.stealthOpacityMin, &s.stealthOpacityMax, &s.stealthCycleSeconds); // lane STEALTHLOOK-1: every look
+		if (const Object *horde = o->getHordeObject(false); horde && horde != o) // lane STEALTHLOOK-1: the drawable imitates (RW 0x673114)
 		{
-			logic.invisibility().clientOpacityRange(*o, &s.stealthOpacityMin, &s.stealthOpacityMax, &s.stealthCycleFrames);
+			s.stealthParent = horde->getID();
 		}
 		s.constructionPercent = o->getConstructionPercent();
 		const bool building = s.constructionPercent >= 0.0f || (kActivelyBeingConstructed >= 0 && o->testModelCondition(kActivelyBeingConstructed));
@@ -345,7 +346,26 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 			}
 		}
 	}
-	std::stable_sort(snap->objects.begin(), snap->objects.end(), [](const ObjectSnapshot &a, const ObjectSnapshot &b) { return a.id < b.id; });
+	// lane PERF-HD: the records by id. stable_sort copied every record (about 300 bytes; 11,700 of them in a big battle) through its buffer on every merge
+	// pass, every frame; ids are unique, so sorting (id, index) pairs and moving each record once gives the same order. Nothing moves when it is sorted.
+	const auto byId = [](const ObjectSnapshot &a, const ObjectSnapshot &b) { return a.id < b.id; };
+	if (!std::is_sorted(snap->objects.begin(), snap->objects.end(), byId))
+	{
+		std::vector<std::pair<ObjectID, std::uint32_t>> order;
+		order.reserve(snap->objects.size());
+		for (size_t i = 0; i < snap->objects.size(); ++i)
+		{
+			order.emplace_back(snap->objects[i].id, (std::uint32_t)i);
+		}
+		std::sort(order.begin(), order.end());
+		std::vector<ObjectSnapshot> sorted;
+		sorted.reserve(snap->objects.size());
+		for (const auto &e : order)
+		{
+			sorted.push_back(std::move(snap->objects[e.second]));
+		}
+		snap->objects.swap(sorted);
+	}
 	// Direct id lookup for the render frame (syncTransforms calls find twice per drawable). The index dies with this snapshot.
 	{
 		ObjectID hi = snap->nextObjectId;

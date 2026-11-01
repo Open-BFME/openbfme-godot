@@ -19,6 +19,7 @@
 #include "GameClient/LiveGame.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "GameLogic/AI/AIPathfind.h"
+#include "GameLogic/AI/AIPathfindStops.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
@@ -169,26 +170,23 @@ TEST_CASE("wall1 walls: a wall piece's wall top takes layer 0x11 at its height, 
 	CHECK(w.cell(20, 7).getType() == PathfindCell::CELL_OBSTACLE);
 	CHECK(w.cell(20, 7).getLayer() == LAYER_GROUND);
 	CHECK(w.cell(20, 12).getType() == PathfindCell::CELL_OBSTACLE);
-	// the joints: cells 14 and 15 have a corner on the top (x 150) and the ramp's height there is within 15 of the wall's (54 at cell 14's centre, 60 at
-	// x 150): the wall's layer, connecting to the ramp
-	for (int x = 14; x <= 15; ++x)
-	{
-		INFO("cell " << x);
-		CHECK(w.cell(x, 10).getLayer() == LAYER_WALL_FIRST);
-		CHECK(w.cell(x, 10).getConnectLayer() == LAYER_RAMP);
-	}
-	// the ramp: cells 9 .. 13 (cell 9's corners at x 100 are on the ramp's foot edge)
-	for (int x = 9; x <= 13; ++x)
+	// RotWK's ramp cell RW 0x93527F on the Bridge getRamp builds from the quad: from (150, 100, 60), to (100, 100, 0), width 20, so its start edge is x 150
+	// and its end edge x 100, y 90 .. 110. The edge test RW 0x67CAC6 shortens each edge by 10 at both ends: for a ramp 20 wide each is the point at y 100.
+	// The joint: cell 15 (x 150 .. 160) has its corners at x 150 on the ramp and the start edge's point (150, 100) on its square: it keeps the wall's
+	// layer (60, the ramp's 60 there) and connects to the ramp
+	CHECK(w.cell(15, 10).getLayer() == LAYER_WALL_FIRST);
+	CHECK(w.cell(15, 10).getConnectLayer() == LAYER_RAMP);
+	// the ramp: cells 10 .. 14 have all four corners on it: layer 0x10, no connect layer
+	for (int x = 10; x <= 14; ++x)
 	{
 		INFO("cell " << x);
 		CHECK(w.cell(x, 10).getLayer() == LAYER_RAMP);
+		CHECK(w.cell(x, 10).getConnectLayer() == LAYER_INVALID);
 	}
-	// its foot: cell 9 (corners at x 100: height 0) and cell 10 (centre x 105: 6) are within 15 of the terrain: they connect to the ground; cell 11 (18) does not
-	CHECK(w.cell(9, 10).getConnectLayer() == LAYER_GROUND);
-	CHECK(w.cell(10, 10).getConnectLayer() == LAYER_GROUND);
-	CHECK(w.cell(11, 10).getConnectLayer() == LAYER_INVALID);
-	// cell 13 (centre x 135: 42) is 18 below the joint beside it: no connection of its own (the joint connects to the ramp)
-	CHECK(w.cell(13, 10).getConnectLayer() == LAYER_INVALID);
+	// its foot: cell 9 (x 90 .. 100) has its corners at x 100 on the ramp and the end edge's point (100, 100): the ground (0) is within 15 of the ramp's
+	// plane at the cell's corner (90, 100): -12. It stays the ground and connects to the ramp
+	CHECK(w.cell(9, 10).getLayer() == LAYER_GROUND);
+	CHECK(w.cell(9, 10).getConnectLayer() == LAYER_RAMP);
 	// the ground beside the ramp and the wall stays ground
 	CHECK(w.cell(5, 10).getLayer() == LAYER_GROUND);
 	CHECK(w.cell(12, 5).getLayer() == LAYER_GROUND);
@@ -375,6 +373,145 @@ TEST_CASE("wall1 walls: a destroyed wall piece's cells go back to the ground; th
 	CHECK(w.cell(20, 10).getLayer() == (PathfindLayerEnum)(LAYER_WALL_FIRST + 1));
 	CHECK(w.cell(30, 10).getLayer() == LAYER_GROUND);
 	CHECK(w.cell(22, 10).getLayer() == LAYER_WALL_FIRST);
+}
+
+// review (Greptile, #159): getRamp answers false for a flat RampMesh, so RotWK records no ramp and its ramp cell rule never runs for it; the port's
+// Bridge of such a mesh is all zeros, which must not touch the cell at the map's origin
+TEST_CASE("wall1 walls: a flat RampMesh is no ramp: a piece whose ramp is flat changes no cell, the one at the map's origin included")
+{
+	SyntheticTerrain terrain(20, 20);
+	TestWorld world;
+	Pathfinder pf(testConfig(), &world);
+	pf.newMap(terrain);
+	WallPieceObject *piece = new WallPieceObject();
+	piece->id = 9;
+	piece->pos = { 150.0f, 150.0f, 0.0f }; // its footprint far from the ramp's cells
+	piece->structure = true;
+	piece->kinds.insert(PK_WALK_ON_TOP_OF_WALL);
+	piece->geometry.type = PATHFIND_GEOMETRY_BOX;
+	piece->geometry.majorRadius = 5.0f;
+	piece->geometry.minorRadius = 5.0f;
+	piece->walls.ramps.push_back(quad(0.0f, 0.0f, 30.0f, 20.0f, 0.0f, 0.0f));
+	world.objects[piece->id] = piece;
+	pf.addObjectToPathfindMap(*piece);
+	CHECK(pf.wallPieceCount() == 1);
+	for (int x = 0; x < 10; ++x) // the ramp mesh's cells and around them
+	{
+		for (int y = 0; y < 10; ++y)
+		{
+			INFO(x << ", " << y);
+			const PathfindCell *c = pf.cellAt(x, y);
+			CHECK(c->getLayer() == LAYER_GROUND);
+			CHECK(c->getConnectLayer() == LAYER_INVALID);
+			CHECK_FALSE(c->getBit17());
+			CHECK(c->getType() == PathfindCell::CELL_CLEAR);
+		}
+	}
+	pf.removeObjectFromPathfindMap(*piece);
+	delete piece;
+}
+
+// review (Greptile, #159): a ramp whose Bridge plane is vertical (a RampMesh of no width: its two bands are single points) has no height (RW 0x68044E's
+// ray meets no plane): the ramp is left out of the map and S-4840 says so, no height is made up
+TEST_CASE("wall1 walls: a RampMesh of no width is left out and reported (S-4840): its Bridge's plane is vertical, so it has no height")
+{
+	SyntheticTerrain terrain(30, 20);
+	TestWorld world;
+	Pathfinder pf(testConfig(), &world);
+	pf.newMap(terrain);
+	WallPieceObject *piece = new WallPieceObject();
+	piece->id = 9;
+	piece->pos = { 250.0f, 150.0f, 0.0f }; // its footprint away from the ramp's cells
+	piece->structure = true;
+	piece->kinds.insert(PK_WALK_ON_TOP_OF_WALL);
+	piece->geometry.type = PATHFIND_GEOMETRY_BOX;
+	piece->geometry.majorRadius = 5.0f;
+	piece->geometry.minorRadius = 5.0f;
+	PathfindWallSurface ramp;
+	PathfindWallTriangle a;
+	a.v[0] = { 100.0f, 100.0f, 0.0f };
+	a.v[1] = { 200.0f, 100.0f, 60.0f };
+	a.v[2] = { 200.0f, 100.0f, 60.0f };
+	ramp.triangles = { a, a };
+	ramp.loX = 100.0f;
+	ramp.loY = 100.0f;
+	ramp.hiX = 200.0f;
+	ramp.hiY = 100.0f;
+	ramp.height = 60.0f;
+	piece->walls.ramps.push_back(ramp);
+	world.objects[piece->id] = piece;
+	pf.addObjectToPathfindMap(*piece);
+	CHECK(pf.wallPieceCount() == 1);
+	CHECK(std::find(pf.stops().begin(), pf.stops().end(), std::string(pathstops::kRampNoHeight)) != pf.stops().end());
+	for (int x = 5; x < 25; ++x) // the ramp mesh's cells and around them
+	{
+		for (int y = 5; y < 15; ++y)
+		{
+			INFO(x << ", " << y);
+			const PathfindCell *c = pf.cellAt(x, y);
+			CHECK(c->getLayer() == LAYER_GROUND);
+			CHECK(c->getConnectLayer() == LAYER_INVALID);
+			CHECK_FALSE(c->getBit17());
+			CHECK(c->getType() == PathfindCell::CELL_CLEAR);
+		}
+	}
+	pf.removeObjectFromPathfindMap(*piece);
+	delete piece;
+}
+
+// review (Greptile, #159): a ramp's cells are the ones its Bridge covers (RW 0x9356DF adds and removes through the same cell rule); a two-triangle ramp
+// whose ends differ in width has a Bridge of the two ends' mean width, wider than its triangles near the narrow end. Removing the piece takes back every
+// cell the Bridge gave the ramp
+TEST_CASE("wall1 walls: a removed ramp gives back every cell its Bridge took, where the Bridge is wider than the mesh's triangles too")
+{
+	SyntheticTerrain terrain(30, 20);
+	TestWorld world;
+	Pathfinder pf(testConfig(), &world);
+	pf.newMap(terrain);
+	WallPieceObject *piece = new WallPieceObject();
+	piece->id = 9;
+	piece->pos = { 150.0f, 100.0f, 0.0f };
+	piece->structure = true;
+	piece->kinds.insert(PK_WALK_ON_TOP_OF_WALL);
+	piece->geometry.type = PATHFIND_GEOMETRY_BOX;
+	piece->geometry.majorRadius = 50.0f;
+	piece->geometry.minorRadius = 45.0f;
+	// the narrow end at x = 100 (y 95 .. 105, z 0), the wide end at x = 200 (y 55 .. 145, z 60): the Bridge spans y 75 .. 125 along its length
+	PathfindWallSurface ramp;
+	PathfindWallTriangle a, b;
+	a.v[0] = { 100.0f, 95.0f, 0.0f };
+	a.v[1] = { 200.0f, 55.0f, 60.0f };
+	a.v[2] = { 200.0f, 145.0f, 60.0f };
+	b.v[0] = { 100.0f, 95.0f, 0.0f };
+	b.v[1] = { 200.0f, 145.0f, 60.0f };
+	b.v[2] = { 100.0f, 105.0f, 0.0f };
+	ramp.triangles = { a, b };
+	ramp.loX = 100.0f;
+	ramp.loY = 55.0f;
+	ramp.hiX = 200.0f;
+	ramp.hiY = 145.0f;
+	ramp.height = 60.0f;
+	piece->walls.ramps.push_back(ramp);
+	world.objects[piece->id] = piece;
+	pf.addObjectToPathfindMap(*piece);
+	CHECK(pf.wallPieceCount() == 1);
+	// cell (10, 7) (x 100 .. 110, y 70 .. 80) lies in the Bridge, outside both triangles: the ramp's side, type 5
+	CHECK(pf.cellAt(10, 7)->getLayer() == LAYER_RAMP);
+	CHECK(pf.cellAt(10, 7)->getType() == PathfindCell::CELL_BRIDGE_IMPASSABLE);
+	pf.removeObjectFromPathfindMap(*piece);
+	for (int x = 0; x < 30; ++x)
+	{
+		for (int y = 0; y < 20; ++y)
+		{
+			INFO(x << ", " << y);
+			const PathfindCell *c = pf.cellAt(x, y);
+			CHECK(c->getLayer() == LAYER_GROUND);
+			CHECK(c->getConnectLayer() == LAYER_INVALID);
+			CHECK_FALSE(c->getBit17());
+			CHECK(c->getType() == PathfindCell::CELL_CLEAR);
+		}
+	}
+	delete piece;
 }
 
 TEST_CASE("wall1 walls: without a wall piece every cell stays on the ground and the layer queries answer the terrain (a map without walls is unchanged)")
@@ -676,21 +813,24 @@ TEST_CASE("wall1 walls retail: Helm's Deep's wall sections are walkable: their W
 	{
 		MESSAGE("layer " << kv.first << ": " << kv.second << " cells");
 	}
-	// the cells of each layer on Helm's Deep (the counts of this port's classification, S-4840: not a retail dump)
-	CHECK(cellsByLayer[(int)LAYER_RAMP] == 1908);
-	CHECK(cellsByLayer[0x11] == 2042);
-	CHECK(cellsByLayer[0x12] == 870);
-	CHECK(cellsByLayer[0x13] == 58);
-	CHECK(cellsByLayer[0x14] == 1547);
-	CHECK(cellsByLayer[0x15] == 129);
-	CHECK(cellsByLayer[0x16] == 440);
+	// the cells of each layer on Helm's Deep (the counts of this port's classification, S-4840: not a retail dump). fix/ramp-bridge-cells (RotWK's ramp
+	// cell RW 0x93527F on getRamp's Bridge): ramp 1908 -> 1756, walls 2042 / 870 / 58 / 1547 / 129 / 440 -> 2019 / 702 / 28 / 1545 / 106 / 431. A cell all
+	// of whose corners are on a ramp is the ramp's even over a wall top, a ramp's foot cell stays the ground (connecting to the ramp), and the joints are
+	// only at the ramp's two end edges
+	CHECK(cellsByLayer[(int)LAYER_RAMP] == 1756);
+	CHECK(cellsByLayer[0x11] == 2019);
+	CHECK(cellsByLayer[0x12] == 702);
+	CHECK(cellsByLayer[0x13] == 28);
+	CHECK(cellsByLayer[0x14] == 1545);
+	CHECK(cellsByLayer[0x15] == 106);
+	CHECK(cellsByLayer[0x16] == 431);
 	CHECK(pf.wallHeights().size() == 6);
 	int wallCells = 0;
 	for (const auto &kv : cellsByLayer)
 	{
 		wallCells += isWallLayer((PathfindLayerEnum)kv.first) ? kv.second : 0;
 	}
-	CHECK(wallCells == 2042 + 870 + 58 + 1547 + 129 + 440);
+	CHECK(wallCells == 2019 + 702 + 28 + 1545 + 106 + 431);
 	// every wall height lies above the terrain under the fortress (the meshes are at the sections' world z)
 	for (float h : pf.wallHeights())
 	{
@@ -781,7 +921,29 @@ TEST_CASE("wall1 walls retail: on Helm's Deep a horde ordered onto a wall top ge
 	// the members walk: no member moves more than a stride in a frame (a member put on its goal, RW 0x70C201, would jump; the steep stairs make big height steps)
 	std::map<ObjectID, Coord3D> last;
 	float maxStep = 0.0f;
-	for (int f = 0; f < 1200; ++f)
+	// up there: above the terrain on the wall top, or at the top of the stair on its joint cells (the ramp's layer at the wall's height)
+	int members = 0, up = 0;
+	auto countUp = [&] {
+		members = up = 0;
+		for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
+		{
+			if (o->getContainedBy() == horde && o->getAIUpdateInterface())
+			{
+				++members;
+				const Coord3D p = *o->getPosition();
+				const PathfindLayerEnum l = o->getAIUpdateInterface()->adapter().getLayer();
+				if ((isWallLayer(l) || l == LAYER_RAMP) && p.z == pf.getLayerHeight(p.x, p.y, l) && p.z > g.game->logic().getGroundHeight(p.x, p.y))
+				{
+					++up;
+				}
+			}
+		}
+	};
+	// the walk ends when the move is over (the horde and every member stopped) with every member up, not at a fixed frame: the idle horde then guards its
+	// spot (state 16), and the Easy AI's first wave, whose route moves with the game's random draws and the pathfinder, can pass within its guard range
+	// and draw it off the wall. A member still on the stair is not stopped, so the strides of the whole walk are watched
+	int arrived = -1;
+	for (int f = 0; f < 1200 && arrived < 0; ++f)
 	{
 		g.frames(1);
 		for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
@@ -799,24 +961,23 @@ TEST_CASE("wall1 walls retail: on Helm's Deep a horde ordered onto a wall top ge
 			}
 			last[o->getID()] = p;
 		}
-	}
-	// up there: above the terrain on the wall top, or at the top of the stair on its joint cells (the ramp's layer at the wall's height)
-	int members = 0, up = 0;
-	for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
-	{
-		if (o->getContainedBy() == horde && o->getAIUpdateInterface())
+		countUp();
+		bool stopped = !ai->isMoving();
+		for (Object *o = g.game->logic().getFirstObject(); o && stopped; o = o->getNextObject())
 		{
-			++members;
-			const Coord3D p = *o->getPosition();
-			const PathfindLayerEnum l = o->getAIUpdateInterface()->adapter().getLayer();
-			if ((isWallLayer(l) || l == LAYER_RAMP) && p.z == pf.getLayerHeight(p.x, p.y, l) && p.z > g.game->logic().getGroundHeight(p.x, p.y))
+			if (o->getContainedBy() == horde && o->getAIUpdateInterface() && o->getAIUpdateInterface()->isMoving())
 			{
-				++up;
+				stopped = false;
 			}
+		}
+		if (stopped && members > 0 && up == members)
+		{
+			arrived = f;
 		}
 	}
 	const Coord3D hp = *horde->getPosition();
-	MESSAGE("horde at " << hp.x << ", " << hp.y << " (goal " << goal.x << ", " << goal.y << "): " << up << " of " << members << " members up, largest step " << maxStep);
+	MESSAGE("horde at " << hp.x << ", " << hp.y << " (goal " << goal.x << ", " << goal.y << "): " << up << " of " << members << " members up at frame " << arrived << ", largest step " << maxStep);
+	CHECK(arrived >= 0); // tolerance: the frame the move ended varies with the walk; -1 is a move that never ended with every member up
 	CHECK(members == 15); // GondorFighterHorde's 15 soldiers
 	CHECK(up == members);
 	CHECK(maxStep < 20.0f); // tolerance: a walking member's stride in one logic frame (its speed / 5) stays below 20; a member put on its goal would jump much farther

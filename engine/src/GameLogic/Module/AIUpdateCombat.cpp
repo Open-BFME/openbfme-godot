@@ -207,6 +207,21 @@ bool AIUpdateInterface::findNearestLabeledContactPointOnTarget(const Object &tar
 	return false;
 }
 
+void AIUpdateInterface::transferAttack(ObjectID from, ObjectID to)
+{
+	// RW 0x66826E
+	if (m_currentVictim == from)
+	{
+		m_currentVictim = to; // AI + 0x40
+	}
+	const Object *goal = m_machine ? m_machine->goalObject() : nullptr; // RW 0x8DBACE
+	if (goal && goal->getID() == from)
+	{
+		const Object *now = getObject()->logic().findObjectByID(to); // RW 0x449681
+		m_machine->setGoalObject(now ? now->getID() : (ObjectID)INVALID_ID); // machine vslot 0x38
+	}
+}
+
 void AIUpdateInterface::setCurrentVictim(Object *victim)
 {
 	m_currentVictim = victim ? victim->getID() : (ObjectID)INVALID_ID;
@@ -565,9 +580,26 @@ const AttackPriorityInfo *AIUpdateInterface::attackInfo()
 	if (m_attackInfoGeneration != se.attackPriorities().generation())
 	{
 		m_attackInfoGeneration = se.attackPriorities().generation();
-		m_attackInfo = m_combat.attackPriority.empty() ? nullptr : se.attackPriorities().getAttackInfo(m_combat.attackPriority);
+		if (m_attackInfoOverride)
+		{
+			// lane BFME2CAMP1: the set a script or the team gave, by its name (the default info's name is empty: entry 0)
+			m_attackInfo = m_attackInfoName.empty() ? se.attackPriorities().getDefaultAttackInfo() : se.attackPriorities().getAttackInfo(m_attackInfoName);
+		}
+		else
+		{
+			m_attackInfo = m_combat.attackPriority.empty() ? nullptr : se.attackPriorities().getAttackInfo(m_combat.attackPriority);
+		}
 	}
 	return m_attackInfo;
+}
+
+void AIUpdateInterface::setAttackInfo(const AttackPriorityInfo *info)
+{
+	ScriptEngine &se = getObject()->logic().scriptEngine();
+	m_attackInfoOverride = true;
+	m_attackInfoName = info ? info->getName() : std::string();
+	m_attackInfo = info;
+	m_attackInfoGeneration = se.attackPriorities().generation();
 }
 
 // RW 0x662DD9 (ZH resetNextMoodCheckTime, RotWK's: never earlier): AIData ForceIdleMSEC frames from now unless the check is later already, and the next check
@@ -664,9 +696,9 @@ Object *AIUpdateInterface::getNextMoodTarget(bool calledByAI, bool calledDuringI
 	const unsigned kCloseRange = 7; // TheWeaponConditionNames (RW 0xDA1328) CLOSE_RANGE
 	// RW 0x66849D .. 0x6684EC: dead or OFF_MAP (+ 0x458 bits 0 / 3; lane CAMPUI-1: OFF_MAP from the map's extent, RW 0x69355D: MAP ANG Angmar's
 	// counterattack wolf riders wait below the map's edge until the scripts send them in), SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING, the AI's temporary state
-	// machine (+ 0x34: BeginTemporaryStateMachine RW 0x6630A9, which nothing calls in the port, S-1222), NO_AUTO_ACQUIRE, HORDE_MEMBER, IGNORE_AI_COMMAND,
+	// machine (+ 0x34, RW 0x668489: lane MODCOMPAT-MOD1's beginTemporaryStateMachine RW 0x6630A9), NO_AUTO_ACQUIRE, HORDE_MEMBER, IGNORE_AI_COMMAND,
 	// the model conditions JUST_BUILT (lane SPELL-3: a castle member fading in) and COMING_OUT_OF_FACTORY: nothing
-	if (obj.isEffectivelyDead() || obj.isOffMap() || obj.testStatus((unsigned)kAbilityBusy) || obj.testStatus((unsigned)kNoAutoAcquire) || obj.testStatus((unsigned)kHordeMember) ||
+	if (obj.isEffectivelyDead() || obj.isOffMap() || obj.testStatus((unsigned)kAbilityBusy) || hasTemporaryStateMachine() || obj.testStatus((unsigned)kNoAutoAcquire) || obj.testStatus((unsigned)kHordeMember) ||
 		obj.testStatus((unsigned)kIgnoreAi) || obj.testModelCondition(kJustBuilt) || obj.testModelCondition(kComingOut))
 	{
 		return nullptr;

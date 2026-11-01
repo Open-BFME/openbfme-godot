@@ -4,6 +4,7 @@
 // 0x75C1A9 and the claim decals of a selected resource building). Expected values come from the binary (byte checks), from the retail INI data (the
 // HandicapPercent lists' HEALTH_MULT) or from a control object of the same template without the cause.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "PeImage.h"
@@ -141,6 +142,7 @@ Object *make(GameLogic &logic, const char *templateName, Player &owner, float x,
 	REQUIRE_MESSAGE(o != nullptr, templateName);
 	Coord3D p{ x, y, 0.0f };
 	o->setPosition(&p);
+	testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	return o;
 }
 } // namespace

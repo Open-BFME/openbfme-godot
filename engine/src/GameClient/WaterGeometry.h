@@ -41,7 +41,7 @@ struct StandingMaterial
 bool readStandingMaterial(const MeshShaderMaterialDef &source, StandingMaterial &out, std::string *error = nullptr);
 
 // BFME2 donor StandingWaterAreaLoadPCA.cpp (0x3093F6) and
-// Rva003093F6BasesSamplers.cpp (0x30822F..0x308509). Presentation only.
+// StandingWaterArea.cpp (0x30822F..0x308509). Presentation only.
 using PcaVector = std::array<float, 4>;
 using PcaFrame = std::array<PcaVector, 10>; // mean, then X/Y/Z for groups 0..2
 struct PcaBasis

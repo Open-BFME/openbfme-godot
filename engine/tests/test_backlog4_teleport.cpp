@@ -3,7 +3,7 @@
 // TARGET: RW 0x696E63 Object::teleportTo(pos, keepAI) and RW 0x68DA67 (the transform form): setPosition, recordTransform twice, the drawable's forced
 // gather RW 0x674B1F(1), setPosition, updateShroudNow, the horde's members (interface slot 0x1B8 RW 0x86D881 / 0x1B4 RW 0x86D8FE), and for keepAI == 0
 // the AI's idle (RW 0x5E821A: source 2 with status 0x5A IS_LEAVING_FACTORY, else 0) and path reset (RW 0x66276B). DONOR: the BFME2 decomp's
-// Object::teleportTo (ObjectRva0029660C.cpp), Object::rva0028D412, Rva002747F9::rva002747F9 and HordeContain::rva0046A712 / rva0046A78F.
+// Object::teleportTo (Object_teleportTo.cpp), Object::rva0028D412, Rva002747F9::rva002747F9 and HordeContain::rva0046A712 / rva0046A78F.
 //
 // What the player sees: an object moved by a teleport is drawn AT its new place for the whole logic frame, never sliding across the jump. Each case
 // has a control with the plain setPosition, which is drawn across the jump.

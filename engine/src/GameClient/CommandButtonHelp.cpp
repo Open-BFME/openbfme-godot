@@ -563,7 +563,7 @@ UnicodeString CommandButtonHelp::templateText(const ThingTemplate &tt, const std
 
 namespace
 {
-// RW 0x8077D1 (BFME2 decomp Rva00405B8DTest.cpp OldSchoolHelpBoxContentSource::allRequiredUpgradesComplete, tier A): each needed upgrade, by its Type
+// RW 0x8077D1 (BFME2 decomp OldSchoolHelpBoxContentSource.cpp OldSchoolHelpBoxContentSource::allRequiredUpgradesComplete, tier A): each needed upgrade, by its Type
 // (OBJECT: the object has it, PLAYER: the object's controlling player completed it, any other type: false at once); NeededUpgradeAny = any of them
 bool allRequiredUpgradesComplete(const Object &obj, const CommandButton &b, std::string *unresolved)
 {

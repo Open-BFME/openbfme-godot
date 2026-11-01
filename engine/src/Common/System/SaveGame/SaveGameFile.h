@@ -14,8 +14,8 @@
 //
 // Layout (little-endian, NetPacket's byte writer):
 //   "OBFMESAV"                          8 bytes
-//   u32 container version               1
-//   three parts, in this order: tag "HEAD", "LOG ", "SNAP"; each: 4-byte tag, u32 length, 32-byte SHA-256 of the payload, payload
+//   u32 container version               2 (1 still loads: it has no LWLD part)
+//   four parts, in this order: tag "HEAD", "LOG ", "SNAP", "LWLD"; each: 4-byte tag, u32 length, 32-byte SHA-256 of the payload, payload
 //   HEAD payload: u32 header version 1, str build version (BuildVersion::kVersion), str engine id (ProfileIdentity::buildId), str commit (provenance), str
 //                 profile identity text, str execution profile (the identity's "profile" line), u32 game kind (SaveLoad.apt's type: 1 Campaign, 2 Skirmish),
 //                 u32 frame F, u32 state hash at F, str description (the name the player typed, UTF-8), str map (path), str map display label, str date
@@ -26,9 +26,18 @@
 //                 GameClient/LinearCampaign.h), u8 auto-save (retail's IsAutoSaveOrNot, RW 0x6DE8F1: the Load page's AutoSaveList); each 0 or 1 and
 //                 0 for a game; version 1 headers still load (a game, no flags)
 //                 header version 3 adds: str UTC build date (YYYY-MM-DD, BuildVersion::kBuildDate); absent in versions 1 and 2
+//                 header version 4 (lane BFME2CAMP1) adds: str campaign carry-over (GameLogic/CampaignCarryover.h State::serialize: a mission save's
+//                 carry-over at its mission's start, a campaign menu save's between the missions; "" none; checked by State::parse); versions 1 to 3
+//                 still load (no carry-over)
 //   LOG payload:  an OpenBFME replay (format 4) whose end record is (F, hash at F)
 //   SNAP payload: empty, or the snapshot at F (Common/GameState.h's stream, SAVE-4a); read and digest-checked like the other parts (at most
 //                 kMaxSnapshotBytes); loading a save that carries one is refused by CommandLogLoad until the snapshot loads (SAVE-4b..d)
+//   LWLD payload: lane WOTR2 milestone 3: empty, or u32-prefixed bytes twice: the War of the Ring strategic game (LivingWorldLogic::saveState:
+//                 GameState's stream of the block "obfme:LivingWorld"; present exactly in a game kind 8 save), then the host's session (what the
+//                 host starts the strategic game's battles with: the lobby's game and the players' lobby slots; opaque here). Save point 2 is the strategic map: game kind 8, the scenario
+//                 (LivingWorldCampaign) in `campaign`, the state hash its LivingWorldLogic::stateHash, frame 0, no commands, empty LOG and SNAP.
+//                 WOTR2 milestone 6: save point 3 is a War of the Ring battle (retail mode 3): game kind 8, the scenario, the battle's frame, log and
+//                 snapshot (a point 0 game) plus the strategic game and its session (a point 2 save); the replay format 12 log carries the battle's start
 // Reading never defaults: a bad magic, an unknown version, a part out of order, a truncated part or a digest that does not match is a named error.
 //
 // Not simulation code: it is read and written around the game, never part of the logic state.
@@ -50,7 +59,7 @@ struct SaveGameHeader
 	std::string buildDate;    ///< header version 3: UTC build day, not the local save date; empty in older headers
 	ProfileIdentity profile;  ///< the data, rules and execution profile the game ran under
 	std::string executionProfile; ///< the profile the game ran at F (the identity's "profile" line value: "enhanced" for Faithful, UBER-1's "uber")
-	int gameKind = 2;         ///< 1 Campaign, 2 Skirmish (SaveLoad.apt's game types, RW 0x816164)
+	int gameKind = 2;         ///< 1 Campaign, 2 Skirmish, 8 War of the Ring (SaveLoad.apt's game types, RW 0x816164)
 	std::uint32_t frame = 0;  ///< F: the logic frame the save describes (every batch below F ran)
 	std::uint32_t stateHash = 0; ///< GameLogic::computeStateHash at F
 	std::string description;  ///< the save's name as the player typed it (UTF-8)
@@ -62,24 +71,28 @@ struct SaveGameHeader
 	std::string campaign;
 	int campaignMission = 0, campaignDifficulty = 1;
 	// lane CAMPSAVE-1 (header version 2): where the save was made and the campaign's flags there
-	int savePoint = 0;             ///< 0 a game at frame F, 1 CampaignMenu.apt between missions (the auto-save, the menu's Save)
+	int savePoint = 0;             ///< 0 a game at frame F, 1 CampaignMenu.apt between missions (the auto-save, the menu's Save), 2 the War of the Ring map, 3 a War of the Ring battle (WOTR2 milestone 6)
 	bool campaignVictorious = false, campaignReady = false, campaignAdvanced = false;
 	bool autoSave = false;         ///< the auto-save after a won mission (RW 0x6DE8F1: SaveGameInfo IsAutoSaveOrNot = 1)
+	std::string campaignCarryover; ///< lane BFME2CAMP1 (header version 4): the campaign's carry-over text ("" none)
 };
 
 struct SaveGameFile
 {
-	static constexpr std::uint32_t kContainerVersion = 1;
-	static constexpr std::uint32_t kHeaderVersion = 3; // 3 adds build date; 1 and 2 still read
+	static constexpr std::uint32_t kContainerVersion = 2; // lane WOTR2 milestone 3: the fourth part (1 still loads)
+	static constexpr std::uint32_t kHeaderVersion = 4; // 3 adds the build date, 4 the campaign carry-over (lane BFME2CAMP1); 1 to 3 still read
 	static constexpr const char *kExtension = ".obfmesave";
 	// the most a part may declare (checked before it is read: a larger one is a named refusal, never an allocation)
 	static constexpr std::uint64_t kMaxHeaderBytes = 1u << 20;  // 1 MiB (an identity text and a few names)
 	static constexpr std::uint64_t kMaxLogBytes = 256u << 20;   // 256 MiB (a 60-minute 8-player log is a few MiB)
 	static constexpr std::uint64_t kMaxSnapshotBytes = 256u << 20; // 256 MiB (lane SAVE-4a; the measured core is far below, docs/SAVES.md section 8)
+	static constexpr std::uint64_t kMaxLivingWorldBytes = 64u << 20; // 64 MiB (a War of the Ring game is tens of KiB; its event log grows a few lines a turn)
 
 	SaveGameHeader header;
 	std::vector<std::uint8_t> log;      ///< the replay bytes up to F
 	std::vector<std::uint8_t> snapshot; ///< GameState's snapshot stream at F, or empty (lane SAVE-4a)
+	std::vector<std::uint8_t> livingWorld; ///< lane WOTR2 milestone 3: the War of the Ring strategic game (LivingWorldLogic::saveState), empty otherwise
+	std::vector<std::uint8_t> livingWorldSession; ///< the host's War of the Ring session with it (the lobby's game, its players' slots: Godot's var_to_bytes)
 
 	std::vector<std::uint8_t> encode() const;
 	// headerOnly: the HEAD part is read and checked, the other parts only skipped by their length (the Load page's listing); false + *error otherwise

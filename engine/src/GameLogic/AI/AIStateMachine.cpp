@@ -145,6 +145,12 @@ void AIStateMachine::clear()
 {
 	if (m_locked)
 	{
+		// lane BFME2CAMP1, RW 0x75464E: past the locked temporary state's refusal, the goal squad (+ 0x4C) is deleted after StateMachine::clear (RW
+		// 0x8DB679) whether or not its lock let the state go
+		if (!temporaryStateLocked())
+		{
+			m_goalSquad.reset();
+		}
 		return;
 	}
 	if (m_temporaryState)
@@ -163,6 +169,17 @@ void AIStateMachine::clear()
 		s->onExit(EXIT_RESET);
 	}
 	internalClear();
+	m_goalSquad.reset(); // lane BFME2CAMP1: RW 0x754680 .. 0x75468F
+}
+
+void AIStateMachine::setGoalSquadFromTeam(const Team &team)
+{
+	// RW 0x751E97: a squad made (RW 0x66823E) when the machine has none, then RW 0x8DB149(team, true)
+	if (!m_goalSquad)
+	{
+		m_goalSquad = std::make_unique<AISquad>();
+	}
+	m_goalSquad->squadFromTeam(team, true);
 }
 
 StateReturnType AIStateMachine::resetToDefaultState()
@@ -783,10 +800,9 @@ void AIFollowPathState::onExit(StateExitType status)
 		m_move->onExit();
 		m_move.reset();
 	}
-	if (m_exitProduction)
-	{
-		ai().setCanPathThroughUnits(false);
-	}
+	// RW 0x74B79E / 0x74B7A5 (S-001): every follow-path exit clears both fields.
+	ai().setCanPathThroughUnits(false);
+	ai().mover().ignoreObstacle(PATHFIND_INVALID_ID);
 	// RW 0x74B77D (BFME2 RVA 0x349D92): both path forms release individuals; the horde waits for its members in RW 0x89E2D0.
 	if (!owner().isKindOfName("HORDE"))
 	{
@@ -799,6 +815,13 @@ StateReturnType AIFollowPathState::update()
 	if (!m_move)
 	{
 		return STATE_FAILURE;
+	}
+	// RW 0x74FA28 / BFME2 AIFollowPathState::update publishes the current segment goal each tick.
+	// RW 0x661EFE -> 0x8DB810 uses FLT_MAX (no final facing), for every follow path.
+	if (!machine().isLocked())
+	{
+		machine().setGoalPosition(m_goalPosition);
+		machine().clearGoalAngle();
 	}
 	const StateReturnType ret = m_move->update();
 	if (ret == STATE_SUCCESS)
@@ -844,6 +867,14 @@ void AIStateMachine::crc(StateHasher &h) const
 		h.addFloat(p.x);
 		h.addFloat(p.y);
 		h.addFloat(p.z);
+	}
+	if (m_goalSquad) // lane BFME2CAMP1: hashed once a squad exists (other machines keep their hashes)
+	{
+		h.addU32((std::uint32_t)m_goalSquad->objectIDs.size());
+		for (ObjectID id : m_goalSquad->objectIDs)
+		{
+			h.addU32(id);
+		}
 	}
 	if (m_currentState)
 	{

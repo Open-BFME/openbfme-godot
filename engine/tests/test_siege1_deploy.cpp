@@ -136,7 +136,7 @@ void orderPowerAt(Rig &r, Object &unit, const char *powerName, Object *target)
 	}());
 }
 
-// The WALL-2 integration point played by the test (S-4940): IsEndPortalAboveWall as Open-BFME-2 DynamicPortalBehaviourGetPosition.cpp has it (BFME2 0x460DF6,
+// The WALL-2 integration point played by the test (S-4940): IsEndPortalAboveWall as Open-BFME-2 DynamicPortalBehaviour.cpp has it (BFME2 0x460DF6,
 // RW 0x863EB3): the bone of the waypoint AboveWall of the template's DynamicPortalBehaviour (the ladder's and the tower's: BonePrefix Ladder, NumberOfBones 4,
 // AboveWall 3 -> WayPoint Index:3, the fourth bone "Ladder04") in world space, on a wall (Pathfinder::isPointOnWall(point, false)). The waypoints' creation and
 // removal are counted

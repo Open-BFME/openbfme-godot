@@ -56,6 +56,12 @@ float effectColorScale(const GlobalLightingData &lighting);
 // updateFixedLightEnvironments (RW 0x46E009, the global lights' diffuse only) when the shader LOD is below 2.
 bool fromMap(const GlobalLightingData &lighting, W3DObjectLighting &out, std::string *error, const float *lightScale = nullptr);
 
+// Lane WOTR-2: the strategic map's light set from LivingWorldMapInfo (Ambient, SunRGB / SunDir, Accent1RGB / Accent1Dir, Accent2RGB / Accent2Dir;
+// colours 0..1, Dir in degrees). Both sets alike; colours (and the ambient, clamped to 1) doubled as a map with terrainLightingMultiplier > 1
+// (RW 0x4AC97F); a light below 0.05 in every channel is dropped (ZH Add_Light). INFERENCE (S-1335, the Living World's light code was not
+// found): Dir X = elevation above the horizon, Y = heading around SAGE Z, the light coming from there: toLight = (cos X cos Y, cos X sin Y, sin X).
+void fromLivingWorldMap(const float ambient[3], const float rgb[3][3], const float dirDegrees[3][2], W3DObjectLighting &out);
+
 // The lines this lighting reports (stop S-390 and the facts above), for the model / world reports.
 std::vector<std::string> stopLines();
 }

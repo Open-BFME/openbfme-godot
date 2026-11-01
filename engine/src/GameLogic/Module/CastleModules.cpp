@@ -496,6 +496,35 @@ Object *CastleBehavior::preBuild(const ThingTemplate &tt, int index, bool instan
 	return buildOnPad(list[at], tt, instant);
 }
 
+// lane MODCOMPAT-AI: RW 0x7996D3
+bool CastleBehavior::canBuildAtBase(const ThingTemplate *tt) const
+{
+	if (m_state != STATE_UNPACKED)
+	{
+		return false;
+	}
+	GameLogic &logic = getObject()->logic();
+	const std::vector<ObjectID> &list = tt && templateKindOf(logic, *tt, "FS_BASE_DEFENSE") && !m_defenseFoundations.empty() ? m_defenseFoundations : m_foundations;
+	for (ObjectID id : list)
+	{
+		const Object *pad = logic.findObjectByID(id);
+		if (!pad || pad->isKindOf((unsigned)castleNames().wallUpgrade))
+		{
+			continue;
+		}
+		bool foundation = false;
+		for (const std::unique_ptr<BehaviorModule> &m : pad->modules())
+		{
+			foundation = foundation || m->getFoundationAIUpdate() != nullptr; // RW 0x68C3C3
+		}
+		if (foundation && !occupantOf(*pad))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 // RW 0x79A518
 Object *CastleBehavior::buildOnPad(ObjectID padId, const ThingTemplate &tt, bool instant)
 {

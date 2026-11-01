@@ -1,9 +1,10 @@
 // OpenBFME. GPL-3.0.
 //
 // The money-moving modules that act on deaths and hits (lane ECON-1): RefundDie (RW create proc 0x64C502, data 0x6536A3, die interface mask 2), PillageModule (RW create
-// 0x64C492, data 0x6535ED, interface mask 0x2000: "damage dealt"), and the data of SalvageCrateCollide (RW create 0x651052, data 0x655980, collide interface mask 0x10).
+// 0x64C492, data 0x6535ED, interface mask 0x2000: "damage dealt"), and the data of SalvageCrateCollide (RW create 0x651052, data 0x655980, collide interface mask 0x10;
+// its runtime: GameLogic/Module/SalvageCrateCollide.h, lane MODCOMPAT-MOD1).
 // What calls them (the death pipeline, the damage pipeline, the collision system) belongs to other lanes (stop S-257): RefundDie answers Object::friend_onDie,
-// PillageModule::onDamageDealt is the function the damage pipeline calls for each hit its object lands, SalvageCrateCollide runtime is in CrateCollide.cpp (see docs/CRATE_PICKUPS.md).
+// PillageModule::onDamageDealt is the function the damage pipeline calls for each hit its object lands; SalvageCrateCollide's contacts come from AIWorld's crate pass.
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001):
 //   * DieMuxData (the start of every die module's table, RW 0xC76BD8 extra 8; defaults RW 0x8D2970): DeathTypes (RW 0x73A68A, default ALL), ExemptStatus (+4) and
@@ -95,7 +96,8 @@ private:
 	unsigned m_counter = 0; // RW module + 0x18
 };
 
-// Shared CrateCollide fields, also used by the veterancy shields.
+// CrateCollideModuleData (constructor RW 0x8C07A0), shared by SalvageCrateCollide's data (constructor RW 0x65592C) and the veterancy shields'; the runtime is
+// GameLogic/Module/SalvageCrateCollide.h (lane MODCOMPAT-MOD1)
 class CrateCollideModuleData : public ModuleData
 {
 public:
@@ -104,12 +106,12 @@ public:
 	bool m_forbidOwnerPlayer = false;    // +0x40
 	bool m_buildingPickup = false;       // +0x41
 	bool m_humanOnly = false;            // +0x42
-	std::string m_pickupScience;         // +0x44
+	int m_pickupScience = -1;            // +0x44 (parseScience RW 0x73AFE3; -1 = none)
 	std::string m_executeFX;             // +0x48
 	std::string m_executeAnimation;      // +0x4C
 	float m_executeAnimationTime = 0.0f; // +0x50
 	float m_executeAnimationZRise = 0.0f; // +0x54
-	bool m_executeAnimationFades = true; // +0x58 (BFME2 constructor)
+	bool m_executeAnimationFades = true; // +0x58 (RW 0x8C07FA)
 	static void buildFieldParse(MultiIniFieldParse &p);
 };
 
@@ -118,11 +120,11 @@ class SalvageCrateCollideModuleData : public CrateCollideModuleData
 public:
 	float m_porterChance = 0.0f;         // +0x5C
 	float m_bannerChance = 0.0f;         // +0x60
-	float m_levelUpChance = 0.0f;        // +0x64
-	float m_levelUpRadius = 0.0f;        // +0x68
-	float m_resourceChance = 0.0f;       // +0x6C
-	int m_minResource = 0;               // +0x70
-	int m_maxResource = 0;               // +0x74
+	float m_levelUpChance = 0.5f;        // +0x64 (RW 0xBD869C)
+	float m_levelUpRadius = 100.0f;      // +0x68 (RW 0xBD88D8; parsed as a percent)
+	float m_resourceChance = 0.5f;       // +0x6C
+	int m_minResource = 100;             // +0x70
+	int m_maxResource = 5000;            // +0x74
 	std::string m_upgrade;               // +0x78
 	bool m_allowAIPickup = false;        // +0x7C
 	static void buildFieldParse(MultiIniFieldParse &p);

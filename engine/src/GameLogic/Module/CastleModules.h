@@ -202,6 +202,14 @@ public:
 	std::string baseNameFor(const Player &owner) const;
 	// RW 0x7998FF: CastleToUnpackForFaction names the player's side
 	bool isPlayerAllowedToCapture(const Player &player) const;
+	// lane MODCOMPAT-AI: RW 0x7996D3 (the scripts' CAN_BUILD_OBJECTTYPE_AT_BASE / BUILD_BASE_BUILDING): unpacked (+ 0x34 == 4) and a pad of the list (+ 0x74
+	// the BASE_DEFENSE_FOUNDATIONs for a template with KindOf FS_BASE_DEFENSE (+ 0x110 bit 0) when there are any, else + 0x50 the foundations) that exists
+	// (RW 0x449681), is not a WALL_UPGRADE (+ 0x11A bit 6) and has a FoundationAIUpdate interface (RW 0x68C3C3) without an occupant (slot 0xC). A null
+	// template takes the foundations
+	bool canBuildAtBase(const ThingTemplate *tt) const;
+	// lane MODCOMPAT-AI: RW 0x79A5EC(template, -2, 0) for BUILD_BASE_BUILDING (RW 0x7BEEA4): the first pad of that list that takes the template, built
+	// in the timed form; null when none does
+	Object *buildAtBase(const ThingTemplate &tt) { return preBuild(tt, -2, false); }
 	// ---- lane BACKLOG2: a player's unpack and pack (S-951) ----
 	// RW 0x7983E3 canUnpack (BFME2 decomp Rva00395F57CanUnpack.cpp, tier A): no instant build pending, state 0 and, with checkTimer, the timer run out
 	bool canUnpack(bool checkTimer) const;

@@ -203,10 +203,12 @@ struct MoveWorld : logictest::LogicWorld
 
 	Object *spawn(const std::string &name, float x, float y, float angle = 0.0f, Team *team = nullptr)
 	{
-		Object *o = make(name, team ? team : teamOf("Alice"));
+		// placed, then completed (a horde makes its members around where it stands: the map loop's order)
+		Object *o = make(name, team ? team : teamOf("Alice"), INVALID_ID, false);
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(angle);
+		completeHorde(o);
 		return o;
 	}
 	void frames(int n)

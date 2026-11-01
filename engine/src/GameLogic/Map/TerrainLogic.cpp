@@ -176,6 +176,20 @@ bool TerrainLogic::getLargestExtent(float &maxX, float &maxY) const
 	return true;
 }
 
+namespace
+{
+// the line-of-sight walk's cell centre on one axis (SSE: cvtsi2ss, mulss 10, addss 5)
+float losCellCenter(int i)
+{
+	return SimMath::addf32(SimMath::mulf32(SimMath::sseFromInt32(i), 10.0f), 5.0f);
+}
+} // namespace
+
+int LineOfSightLayers::groundLayerOfCell(int i, int j) const
+{
+	return groundLayer(Coord3D{ losCellCenter(i), losCellCenter(j), 0.0f });
+}
+
 bool TerrainLogic::isClearLineOfSight(const Coord3D &pos, const Coord3D &posOther, const LineOfSightLayers *layers) const
 {
 	// TARGET RW 0x466289 (see the header)
@@ -236,13 +250,10 @@ bool TerrainLogic::isClearLineOfSight(const Coord3D &pos, const Coord3D &posOthe
 			break; // off the map: done, clear
 		}
 		int layer = 1; // LAYER_GROUND
-		float cx = 0.0f, cy = 0.0f;
 		if (layers)
 		{
-			// RW 0x4664A7 .. 0x4664E8 (SSE): the cell centre, z 0, then GetGroundLayer (RW 0x6EACB9)
-			cx = SimMath::addf32(SimMath::mulf32(SimMath::sseFromInt32(wrapSub(x, borderSize)), 10.0f), 5.0f);
-			cy = SimMath::addf32(SimMath::mulf32(SimMath::sseFromInt32(wrapSub(y, borderSize)), 10.0f), 5.0f);
-			layer = layers->groundLayer(Coord3D{ cx, cy, 0.0f });
+			// RW 0x4664A7 .. 0x4664E8 (SSE): the cell centre, z 0, then GetGroundLayer (RW 0x6EACB9); the centre itself only where a layer height is asked
+			layer = layers->groundLayerOfCell(wrapSub(x, borderSize), wrapSub(y, borderSize));
 		}
 		// RW 0x4664ED .. 0x466547: the four corners (cvtsi2ss of the 16-bit samples; comiss keeps the larger), times MAP_HEIGHT_SCALE
 		const size_t idx = (size_t)x + (size_t)y * (size_t)xExtent;
@@ -258,6 +269,7 @@ bool TerrainLogic::isClearLineOfSight(const Coord3D &pos, const Coord3D &posOthe
 		{
 			if (sawGround)
 			{
+				const float cx = losCellCenter(wrapSub(x, borderSize)), cy = losCellCenter(wrapSub(y, borderSize));
 				// RW 0x466554 .. 0x466592: getLayerHeight (x87) - 20.0f, stored as a float; fcomip keeps the higher
 				const float layerHeight = SimMath::pc24Sub(layers->layerHeight(cx, cy, layer), 20.0f);
 				if (layerHeight > height)
@@ -317,7 +329,7 @@ void TerrainLogic::init(const WorldHeightMap &heightMap, const MapChunks &chunks
 		w.label2 = o.m_properties.getAsciiString("waypointPathLabel2");
 		w.label3 = o.m_properties.getAsciiString("waypointPathLabel3");
 		w.biDirectional = o.m_properties.getBool("waypointPathBiDirectional");
-		// lane HUD-5: TerrainLogic::addWaypoint (RW 0x682D4C, BFME2 decomp TerrainLogicLoadMap.cpp, tier A) passes the map object's waypointType (Int) and
+		// lane HUD-5: TerrainLogic::addWaypoint (RW 0x682D4C, BFME2 decomp TerrainLogic.cpp, tier A) passes the map object's waypointType (Int) and
 		// waypointTypeOption (AsciiString) to the Waypoint constructor (RW 0x682B6F: + 0x60 / + 0x64); 0 / empty when the map object has none
 		w.type = o.m_properties.getInt("waypointType");
 		w.typeOption = o.m_properties.getAsciiString("waypointTypeOption");

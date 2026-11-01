@@ -200,7 +200,7 @@ bool WaterGeometry::readStandingMaterial(const MeshShaderMaterialDef &source, St
 
 // BFME2 donor: GameEngine/Source/GameLogic/Map/StandingWaterAreaLoadPCA.cpp
 // RVA 0x3093F6. Samplers: GameEngineDevice/Source/W3DDevice/GameClient/
-// Rva003093F6BasesSamplers.cpp, RVAs 0x30822F/0x308325/0x308417/0x308509.
+// StandingWaterArea.cpp, RVAs 0x30822F/0x308325/0x308417/0x308509.
 // Target data validates the layout; RotWK caller/clock equivalence is S-035.
 // Malformed inputs are rejected explicitly; donor malformed-text parity is unverified.
 bool WaterGeometry::readPcaBasis(const std::string &text, PcaBasis &out, std::string *error)

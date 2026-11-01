@@ -82,6 +82,7 @@ SUPPORT = {
     "social_privacy_walk.gd": "godot/tests/social_walk.gd",
     "new_game_loading_art_host.gd": "godot/tests/new_game_loading_art_test.gd",
     "online_social_node.gd": "godot/tests/online_social_node.tscn",
+    "online_war_walk.gd": "godot/scripts/game.gd",
     "smoke_checks.gd": "godot/tests/smoke_test.gd",
     "uberjoin1_lan_test.gd": "godot/tests/start_test.gd",
     "save_route_game.gd": "godot/tests/save_route_test.gd",
@@ -104,6 +105,7 @@ ALLOWLIST = {
     "controller_routing_test.gd": "controller input routing and scaled, letterboxed pointer motion/clicks",
     "online_list_test.gd": "online list parsing and paging against synthetic responses",
     "online_list_client_test.gd": "the native list client against synthetic responses",
+    "online_war_phase_test.gd": "battle relay tickets name only human original seats while tactical seats retain AI",
     "timeline_markers_test.gd": "score timeline markers against a stub shell",
     "weatherfx_test.gd": "the Enhanced weather's effects against a stub GameWorld and synthetic images",
 }
@@ -119,6 +121,7 @@ CI_GATES = scripts("""
 # Denylist part 2: manual dedicated invocations only, not pytest skips. Having
 # retail paths, a GPU or an opt-in environment variable must not schedule these.
 DENYLIST = {
+    "fortress_exit_test.gd": "manual: requires private retail assets and a live skirmish",
     "water_normal_test.gd": "manual: requires GPU rendering for fixed-input water normals",
     "standing_water_test.gd": "manual: requires private retail assets and GPU water rendering",
     "ini_error_in_extension_test.gd": "manual: requires private retail assets (a synthetic mod INI over a retail map)",
@@ -127,7 +130,7 @@ DENYLIST = {
     **dict.fromkeys(scripts("bfme1_hud bfme1_map_memory bfme1_plot bfme1_quit bfme1_castle_path bfme1_skirmish_ui bfme1_menu_backdrop bfme1"),
                     "manual: needs a private BFME1 installation"),
     **dict.fromkeys(scripts("""
-        audio_stress backlog3_focus buildperf cah_awards_display camp2 campsave1 floating_money_text
+        audio_stress backlog3_focus bfme2camp1 buildperf cah_awards_display camp2 campsave1 floating_money_text
         hero_radius_cursor hudredraw menustyle_native menustyle net_uber netlag1 occlude1 opts4 opts5
         packed_model_texture pathperf1_render perf3_cull play3 player_house_color player_message_log
         pose_buffer pose_buffer_cull_query pose_buffer_query_trigger
@@ -136,13 +139,14 @@ DENYLIST = {
         p16_ui_legacy_shape spellbook_rightclick cah_camera_retail shellfb1_cursor shellfb1_spell_store_escape
     """) | {"object_corpus_sweep.gd"}, "manual: needs private RotWK/BFME2 assets and game/frame setup"),
     **dict.fromkeys(scripts("""
-        apt_canvas_pixel building_render fx_render gamma_composite hud_image_mode_pixel
+        apt_canvas_pixel building_render fx_render gamma_composite glow hud_image_mode_pixel
         menu_backdrop_resize object_shadow_building object_shadow_instances object_shadow_render online_branding
         pro_camera pro_camera_bokeh radial_background render4 road_shader shader tangent_convention
     """), "manual: GPU/window/render readback required (some also need retail assets)"),
     "pingwheel_test.gd": "manual: mixed UI/timer checks and retail skirmish/hash runs; not wholly asset-free",
     "replay_refusal_test.gd": "manual: mixed stub checks and retail replay subprocess; not wholly asset-free",
     "windows_crash_test.gd": "manual: destructive Windows debug crash/minidump probe; explicit opt-in required",
+    "edainfactions1_test.gd": "manual: needs the Edain 4.8.5.3 install (OPENBFME_EDAIN_INSTALL); without it the script only parses",
 }
 ENGINE_ERRORS = re.compile(r"(?m)^\s*(?:SCRIPT ERROR|ERROR):")
 

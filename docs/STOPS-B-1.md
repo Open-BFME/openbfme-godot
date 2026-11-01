@@ -96,7 +96,7 @@ derived command handling; only commands `0xc` and `0x36` preserve the valid-
 target exception.
 
 The member ownership prerequisite follows `HordeContain::onContaining` at RW
-`0x872D0A` (`HordeContainRva0046FA46.cpp` in the BFME2 donor): normal containment
+`0x872D0A` (`HordeContain_onContaining.cpp` in the BFME2 donor): normal containment
 and accepted created members record the horde as producer. Member attack
 eligibility follows RW `0x6F2956`: a `BLOODTHIRSTY` member's horde target matches
 a candidate's own ID or producer ID to bypass the relationship veto. The

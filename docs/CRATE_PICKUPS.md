@@ -1,68 +1,40 @@
-# Walk-over treasure pickups
+# Veterancy pickups over the upstream crate runtime
 
-`SalvageCrateCollide` and `VeterancyCrateCollide` now have runtime modules.
-Stationary pickups are queried during AIWorld's partition/collision phase,
-including when only one moving unit exists. Successful execution emits the
-configured pickup FX, records the executed flag, and destroys the crate.
-The flag participates in snapshots and state hashing. Rewards execute only
-on the logic thread, independently of rendering.
+Editions: shared BFME2/RotWK simulation; BFME1 parity remains unverified (S-5017).
+
+This PR retains only VeterancyCrateCollide and the explicit crate context-click
+adaptation. Salvage rewards, the CrateCollide base and version-2 snapshot,
+AIWorld::processCrateContacts and Object collision caches remain upstream's.
+Common module data is split into CrateCollideModuleData without changing salvage
+field parsing, default values, reward RNG or snapshot layout.
 
 ## Evidence
 
-Target facts (subject to S-001): SalvageCrateCollide's registry entries are
-RW create 0x651052 / data 0x655980; its existing common and reward field
-parsers are retained. Veterancy's target field table 0xC05EB8 specifies
-EffectRange as unsigned, AddsOwnerVeterancy and IsPilot as booleans, and
-AffectsUpToLevel as integer.
+RotWK 2.01 target (subject to S-001 provenance): registry create 0x650FFF calls
+constructor 0x8C0F7B; data constructor 0x6558B7; field table 0xC05EB8; primary
+vtable 0xC71554. Its slots 12/13 point to execute 0x8C10DB / validity 0x8C1039.
+The matching BFME2 source is Open-BFME-2 VeterancyCrateCollide.cpp, execute
+RVA 0x4BCFF0 / validity RVA 0x4BCEF0, and the module-data constructor.
 
-Donor facts: Open-BFME-2 matching sources under
-`Code/GameEngine/Source/GameLogic/Object/Collide/CrateCollide/`:
-`CrateCollideIsValidToExecute.cpp`, `SalvageCrateCollide.cpp`,
-`VeterancyCrateCollide.cpp`, `CrateCollide.cpp` (the merged CrateCollideModuleData constructor),
-`VeterancyCrateCollideModuleDataCtor.cpp`. Salvage draws a probability roll
-even at zero or one, selects a single-unit level award first, then a player
-upgrade if configured, otherwise money. The money range draws only when its
-endpoints differ. AI disallowance precedes reward RNG. PorterChance,
-BannerChance and ResourceChance do not participate in this donor selector;
-we do not invent additional rolls. Veterancy checks trainability and the
-configured current-rank limit, then grants one level. The zero-range shield
-promotes its collector; the nonzero-range donor branch promotes other owned
-objects within range. AddsOwnerVeterancy's donor zero-level gate refuses it.
+The target validity checks the common crate rules, death/height, positive level
+award, trainability, accepting XP and AffectsUpToLevel. getLevelsToGain at RW
+0x8C1025 (BFME2 RVA 0x4BCEDC) returns zero for AddsOwnerVeterancy, otherwise one:
+refusing AddsOwnerVeterancy therefore implements the native zero-level gate.
+The shared native contact pass excludes the HORDE collision record (RW 0x68E31F); a battalion pickup therefore awards the touching individual member, not an unconditional level to the horde.
+Zero EffectRange promotes the collector; a nonzero range promotes other objects
+of its controlling player. The target's IsPilot path additionally checks owner,
+airborne locomotion and transfers the script name after promotion.
 
-The base consume/FX/destroy sequence is also supported by Open-BFME-1's
-`CrateCollide_onCollide.cpp`. Money uses the existing economy multiplayer /
-handicap multiplier and floating-income event path. Experience uses the
-existing tracker and level-up feedback.
+## Explicit limits
 
-## Explicit gaps
+S-5901 records ground-contact approximation of significant height, missing rank
+text/animation and pilot script-name transfer. Pilot crates are explicitly
+refused and reported rather than executing an incomplete transfer. Standard
+experience shields work through the existing shared crate contact pass.
+PickupStuffUpdate's existing collide-interface guard recognizes the new runtime;
+it continues to refuse genuinely unported crate classes. S-1422 describes the
+remaining temporary-machine limits rather than calling Veterancy unported.
 
-S-5900: Contact discovery is an inference: ground bounding-circle overlaps
-queried through the partition, sorted by crate and collector ID, before
-AI-to-AI collision processing. Retail's collision geometry and pair order
-remain unported. This scan is needed because stationary treasure is absent
-from the moving-AI pair list.
-
-S-5901: The unresolved CREEP-controller predicate and pilot transfer are
-refused. The undetected-defector crate predicate is not reproduced. The
-veterancy height gate currently requires ground contact rather than the
-donor's gravity-dependent significant-height tolerance. ExecuteAnimation,
-pilot script-name transfer and the separate GUI rank label are not rendered.
-Both stops appear in the logic report while active crates exist. These gaps
-do not prevent ordinary ground gold chests or experience shields from paying
-once. This is a donor port, not a claim of verified RotWK binary equivalence.
-
-Tests in `test_mod1_retail.cpp` mount retail templates and use a real AI world.
-Gold, shields, soldiers, battalions, rejected collectors, module caches and
-exact stop text are covered. No retail assets are committed.
-
-The derived hasCrateCollide flag is recomputed with the collision interface
-list so contact discovery sees pickups after module creation or replacement.
-
-Editions: these runtime modules serve the shared BFME2/RotWK simulation.
-BFME1 data also reaches these shared modules; BFME1 pickup parity has not
-been verified. Target-binary provenance remains subject to S-001.
-
-Ordinary context clicks on CRATE objects issue a move to their position,
-including enemy-owned crates. Force-attack retains its existing path. This
-priority is an input adaptation, not a verified retail context-command port;
-`treasure hud:*` checks the actual click and eventual chest consumption.
+S-5902 reports the context-click priority adaptation in HudInput::stops.
+Force-attack remains on its existing path. The input adaptation is not claimed
+to reproduce RotWK evaluateContextCommand RW 0x81E60B.

@@ -105,7 +105,9 @@ std::string dirOf(const std::string &path)
 // (ProjectileModules.cpp kBezierBfme2Rows): before it, evilfactionsubobjects.ini stopped at line 1590 and its 53 later templates were undefined
 const std::set<std::string> &namedIniErrors()
 {
-	static const std::set<std::string> named = {};
+	// merge queue q34: the War of the Ring branch's Living World parser reads BFME2 1.06's RiskCampaign.ini, whose AddPlayer row (RW 0x6E309A's table)
+	// is one of S-1321's unported rows (docs/EDITIONS.md)
+	static const std::set<std::string> named = { "Data\\INI\\Campaigns\\RiskCampaign.ini: [S-1321] Living World field 'AddPlayer' is not ported (its retail parser was not read)" };
 	return named;
 }
 } // namespace

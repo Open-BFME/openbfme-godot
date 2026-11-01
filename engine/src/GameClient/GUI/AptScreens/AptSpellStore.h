@@ -67,12 +67,14 @@ public:
 
 private:
 	int computeLayout() const; // RW 0x822DD7
+	void hideInGameBackground(); // lane INGAMEBG-1: RW 0x82289A / 0x8232ED
 	SpellStoreModel m_model;
 	GameLogic *m_logic = nullptr;
 	Player *m_player = nullptr;
 	const GameTextSource *m_text = nullptr;
 	bool m_initialized = false;
 	bool m_closing = false;
+	bool m_backgroundHidden = true; // + 0x2A3 (lane INGAMEBG-1): the in-game background is not shown by this screen (the constructor shows it)
 	int m_layout = -1;
 	int m_points = -1;
 	int m_help = -1;

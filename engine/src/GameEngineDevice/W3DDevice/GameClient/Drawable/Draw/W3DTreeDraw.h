@@ -26,7 +26,7 @@
 //                       RW 0x4CEF06  HideIfModelConditions = <model condition flags>: one more ModelConditionFlags is APPENDED
 //                       to the vector at +0x24 per line (the retail INI repeats the line, once per condition).
 //   DONOR  Open-BFME-2 GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTreeDrawModuleDataCtor.cpp,
-//          W3DPropDrawModuleDataCtor.cpp, W3DFloorDrawCtor.cpp (member layout and names), ZH W3DTreeDraw.cpp.
+//          W3DPropDraw.cpp, W3DFloorDrawCtor.cpp (member layout and names), ZH W3DTreeDraw.cpp.
 //
 // What is NOT retail knowledge (stops, docs/STOPS.md):
 //   S-111  the dynamic tree behaviour (push-aside, topple, sink, morph, fade) and the FXList / tree-template names are stored but

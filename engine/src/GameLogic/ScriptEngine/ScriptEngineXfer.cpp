@@ -36,6 +36,7 @@
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/Team.h"
+#include "Common/Thing/ThingFactory.h"
 #include "Common/Xfer.h"
 #include "GameClient/MapChunks.h"
 #include "GameLogic/GameLogic.h"
@@ -146,8 +147,11 @@ void ScriptEngine::xfer(Xfer &x)
 	// release (loads of snapshots begin with SAVE-4e), so version 1 is not read (a list it lacked would load empty, silently). Lane CASTLE-UNPACK:
 	// version 3 adds the object references (RW + 0x191B8); a version 2 game had none (its engine kept no such map), so it loads with an empty one.
 	// Lane CASTLEAREA-1: version 4 adds the run-time trigger list's extent (removed slots included: the next trigger's index follows it); a version 3
-	// game never removed a run-time trigger, so its owners' saved indices give the extent
-	XferVersion v{ 2, 4 };
+	// game never removed a run-time trigger, so its owners' saved indices give the extent. Lane MODCOMPAT-AI: version 5 adds the completed upgrades
+	// (RW + 0x1A458); an older game's engine kept none, so it loads with empty lists (the lane wrote it as 4 on its branch; renumbered by merge order).
+	// Lane BFME2CAMP1: version 6 adds the attack priority table, written only once a script edited it (every other snapshot is version 5's); 6's
+	// fields follow 5's
+	XferVersion v{ 2, (std::uint8_t)(loading || m_attackPriorities.edited() ? 6 : 5) };
 	x.xferVersion(v);
 	bool loaded = loading ? false : m_loaded;
 	x.xferBool(&loaded);
@@ -441,6 +445,82 @@ void ScriptEngine::xfer(Xfer &x)
 	{
 		runtimeExtent = (std::uint32_t)m_runtimeTriggers.size();
 	}
+	// lane MODCOMPAT-AI (version 5): the completed upgrades (RW + 0x1A458), as the triggered special powers
+	std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers> loadedUpgrades;
+	auto &upgrades = loading ? loadedUpgrades : m_completedUpgrades;
+	if (v.current >= 5)
+	{
+		for (std::vector<TriggeredSpecialPower> &l : upgrades)
+		{
+			x.xferVectorSize(l, 4 + 4);
+			for (TriggeredSpecialPower &e : l)
+			{
+				x.xferUnsignedInt(&e.nameCrc);
+				x.xferObjectID(&e.source);
+				if (loading && e.source != INVALID_ID && e.source >= m_logic.getNextObjectID())
+				{
+					throw XferException("script engine: a completed upgrade names the object " + std::to_string(e.source) + ", which this game never made");
+				}
+			}
+		}
+	}
+	// lane BFME2CAMP1 (version 6): the edited attack priority table (AttackPriorityStore::saved: every entry but the default, in order; its targets by name)
+	bool priorities = loading ? false : m_attackPriorities.edited();
+	auto loadedPriorities = std::make_shared<std::vector<AttackPriorityStore::SavedEntry>>();
+	if (v.current >= 6)
+	{
+		x.xferBool(&priorities);
+	}
+	if (priorities)
+	{
+		std::vector<AttackPriorityStore::SavedEntry> entries = loading ? std::vector<AttackPriorityStore::SavedEntry>() : m_attackPriorities.saved();
+		n = (std::uint32_t)entries.size();
+		x.xferCount(&n, 1 + 4 + 4, sizeof(AttackPriorityStore::SavedEntry));
+		if (loading)
+		{
+			if (n > 0xFF)
+			{
+				throw XferException("script engine: " + std::to_string(n) + " attack priority sets (at most 255)");
+			}
+			entries.resize(n);
+		}
+		for (AttackPriorityStore::SavedEntry &e : entries)
+		{
+			x.xferAsciiString(&e.name);
+			x.xferInt(&e.defaultPriority);
+			std::uint32_t m = (std::uint32_t)e.priorities.size();
+			x.xferCount(&m, 1 + 4, sizeof(std::pair<const std::string, int>) + Xfer::kNodeBytes);
+			if (!loading)
+			{
+				for (auto &kv : e.priorities)
+				{
+					std::string name = kv.first;
+					x.xferAsciiString(&name);
+					x.xferInt(&kv.second);
+				}
+				continue;
+			}
+			for (std::uint32_t j = 0; j < m; ++j)
+			{
+				std::string name;
+				std::int32_t value = 0;
+				x.xferAsciiString(&name);
+				x.xferInt(&value);
+				if (!e.priorities.emplace(name, value).second)
+				{
+					throw XferException("script engine: the attack priority set '" + e.name + "' names '" + name + "' twice");
+				}
+				if (!m_logic.things().findTemplate(name))
+				{
+					throw XferException("script engine: the attack priority set '" + e.name + "' names the thing '" + name + "', which this game lacks");
+				}
+			}
+		}
+		if (loading)
+		{
+			*loadedPriorities = std::move(entries);
+		}
+	}
 	if (!loading)
 	{
 		return;
@@ -480,9 +560,10 @@ void ScriptEngine::xfer(Xfer &x)
 		std::map<std::pair<std::string, std::string>, Counter>, std::map<std::pair<std::string, std::string>, bool>,
 		std::vector<std::pair<std::string, std::vector<std::string>>>, std::vector<std::pair<std::string, ObjectID>>,
 		std::vector<std::vector<SequentialScript>>, std::array<AcquiredScienceQueue, 20>, std::vector<AudioTimer>,
-		std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers>, std::map<std::pair<std::string, std::string>, ObjectID>>>(std::move(tree),
-		std::move(loadedGeneric), std::move(loadedCounters), std::move(loadedFlags), std::move(loadedLists), std::move(loadedNamed), std::move(loadedSequential),
-		loadedQueues, std::move(loadedTimers), std::move(loadedTriggered), std::move(loadedReferences));
+		std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers>, std::map<std::pair<std::string, std::string>, ObjectID>,
+		std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers>>>(std::move(tree), std::move(loadedGeneric), std::move(loadedCounters),
+		std::move(loadedFlags), std::move(loadedLists), std::move(loadedNamed), std::move(loadedSequential), loadedQueues, std::move(loadedTimers),
+		std::move(loadedTriggered), std::move(loadedReferences), std::move(loadedUpgrades));
 	m_pendingTeams.clear();
 	for (const auto &chain : std::get<6>(*staged))
 	{
@@ -494,7 +575,7 @@ void ScriptEngine::xfer(Xfer &x)
 			}
 		}
 	}
-	m_pendingLoad = [this, staged, firstUpdate, difficulty, bonus, runtimeExtent]() {
+	m_pendingLoad = [this, staged, firstUpdate, difficulty, bonus, runtimeExtent, priorities, loadedPriorities]() {
 		while (m_runtimeTriggers.size() < runtimeExtent)
 		{
 			RuntimeTrigger empty; // lane CASTLEAREA-1: a removed slot past the last owner's trigger
@@ -519,6 +600,15 @@ void ScriptEngine::xfer(Xfer &x)
 		m_audioTimers = std::move(std::get<8>(*staged));
 		m_triggeredSpecialPowers = std::move(std::get<9>(*staged)); // lane SAVE-4e
 		m_references = std::move(std::get<10>(*staged));             // lane CASTLE-UNPACK
+		m_completedUpgrades = std::move(std::get<11>(*staged));      // lane MODCOMPAT-AI
+		if (priorities) // lane BFME2CAMP1: the table checked above (every name a template of this game)
+		{
+			m_attackPriorities.restore(*loadedPriorities, nullptr);
+		}
+		else
+		{
+			m_attackPriorities.reset(); // an unedited table: the AIData's entries are made again on use
+		}
 	};
 }
 

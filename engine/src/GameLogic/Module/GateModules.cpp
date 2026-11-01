@@ -303,8 +303,7 @@ void GateOpenAndCloseBehavior::pushOut()
 	});
 	PartitionFilterFn status([](Object &o) { return !o.testStatus((unsigned)hordeMember); }); // RW 0x76A28D
 	PartitionFilterFn wouldCollide([&](Object &o) { // RW 0x67C5F3 (vtable RW 0xC112C8 -> 0x66139C): the overlap equals the filter's flag (true)
-		const ThingTemplate *ot = static_cast<const ThingTemplate *>(o.getTemplate())->getFinalOverride();
-		return NotifyCrushModules::geometriesOverlap(shapes, pos, angle, ObjectGeometry::cachedShapesOf(*ot), *o.getPosition(), o.getOrientation());
+		return NotifyCrushModules::geometriesOverlap(shapes, pos, angle, o.geometryShapes(), *o.getPosition(), o.getOrientation());
 	});
 	const PartitionHits hits = logic.partition().iterateObjectsInRange(pos, range, FROM_BOUNDINGSPHERE_3D, { &alive, &hasAI, &kinds, &status, &wouldCollide }, ITER_FASTEST);
 	for (const PartitionHit &h : hits)
@@ -379,9 +378,10 @@ void GateOpenAndCloseBehavior::setGeometry(bool openGeometry, bool scan)
 	{
 		obj->setGeometryActive(n, !openGeometry);
 	}
+	obj->geometryChanged(true); // RW 0x68B244(1) (closed RW 0x89CA6A, the open twin in RW 0x89CA84) (shroud and partition dirty, pathfinder map out / in; lane MODCOMPAT-MOD1)
 	if (ai)
 	{
-		ai->addObjectToPathfindMap(*obj); // RW 0x68B244(1), RW 0x6E85E9
+		ai->addObjectToPathfindMap(*obj); // RW 0x6E85E9 (after the refresh, as retail: a second insert)
 	}
 }
 

@@ -415,7 +415,11 @@ public:
 	void addOccupant(PathfindCellInfoPool &pool, PathfindOccupantKind kind, PathfindObjectID owner, const ICoord2D &pos);
 	// unlink the node of `owner` in the kind's list; the info is released when no list holds a node (RW 0x8E1CC4)
 	bool removeOccupant(PathfindCellInfoPool &pool, PathfindOccupantKind kind, PathfindObjectID owner);
-	const PathfindOccupant *occupants(PathfindOccupantKind kind) const { return m_info ? m_info->m_occupants[(int)kind] : nullptr; }
+	// lane UBER-PATH: m_occMask's bit clear proves the kind's list empty without reading the pooled record (the search's per-cell checks)
+	const PathfindOccupant *occupants(PathfindOccupantKind kind) const
+	{
+		return (m_occMask >> (unsigned)kind & 1u) && m_info ? m_info->m_occupants[(int)kind] : nullptr;
+	}
 	bool hasOccupants(PathfindOccupantKind kind) const { return occupants(kind) != nullptr; }
 	bool hasAnyOccupant() const;
 	bool isOccupiedBy(PathfindOccupantKind kind, PathfindObjectID owner) const;
@@ -474,6 +478,9 @@ private:
 	std::uint32_t m_bit21 : 1;
 	std::uint32_t m_bit22 : 1;
 	std::uint32_t m_bit23 : 1;
+	// lane UBER-PATH: bit k set while occupant list k may be non-empty: set by addOccupant (the only link), cleared when removeOccupant empties the
+	// list and by reset. A set bit over an empty list only costs the record read; a clear bit is always an empty list
+	std::uint32_t m_occMask : OCC_KIND_COUNT;
 };
 
 // ---------------------------------------------------------------------------------------------------------
@@ -534,6 +541,18 @@ public:
 	// adjacent cell of zone `b`: an AIR mask always, a kind-less mask (-1) always, -666 never; else the two zones join directly for the unit (the pair test the
 	// effective-zone tables are built from, the non-terrain variant)
 	bool zonesJoin(const PathfindMovement &mv, zoneStorageType a, zoneStorageType b) const;
+	// The zone the hierarchical search compares (RW 0x9389A6; BFME2 0x00532041 -> 0x00531FE6(force = false)): retail reads its even union tables, which
+	// the region labeller links only inside the zone's own 16 x 16 block (BFME2 0x005329C8 -> 0x005324D8(0, ..)); the odd tables take every adjacency,
+	// across block borders too (0x00533BEC -> 0x005324D8(1, ..)). Two pieces of one block that meet only outside it (the two sides of a cliff that crosses
+	// the block) are two block zones, so the block search does not route through the cliff. The join rule is zonesJoin's. AIR and kind-less masks as
+	// getEffectiveZone. A raised-layer zone is its own block zone (the block search runs on the ground grid).
+	zoneStorageType getBlockZone(const PathfindMovement &mv, zoneStorageType zone) const;
+	// the block of every ground zone (derived, not saved): set by calculateZones, rebuilt from the cells after a load (Pathfinder::ensureZoneBlocks)
+	bool hasZoneBlocks() const { return !m_zones.empty() && m_zoneBlock.size() == m_zones.size(); }
+	void rebuildZoneBlocks(const PathfindGridView &map, const PathfindRegion &globalBounds);
+	// RW 0x9389CE: the block of cell (x, y) holds a CLEAR cell whose connect layer is a raised layer 2 .. 15 (RW block + 0x38 / + 0x3C, the pairs of that
+	// cell's zone and the layer's the zone update RW 0x93A530 -> 0x939FA8 records). Derived from the cells with the zone blocks
+	bool interactsWithRaisedLayer(int cellX, int cellY) const;
 
 	// the hierarchical block flags (RW block +0x34)
 	void clearPassableFlags();
@@ -565,6 +584,7 @@ private:
 		bool passable = true;
 		bool dirty = false;
 		std::vector<std::uint16_t> portals; // lane WALL-2: RW block + 0 (count) / + 4 (12 waypoint pointers)
+		bool raisedLink = false;            // RW block + 0x38 != + 0x3C (interactsWithRaisedLayer)
 	};
 	bool m_anyPortal = false; // lane WALL-2: a block ever listed a portal (the state hash folds the lists only then: maps without portals hash as before)
 public:
@@ -600,6 +620,9 @@ private:
 	std::vector<ZoneInfo> m_zones; // index = zone id; entry 0 is unused
 	std::vector<std::pair<zoneStorageType, zoneStorageType>> m_adjacent; // sorted, unique, a < b
 	mutable std::map<int, std::vector<zoneStorageType>> m_tables;        // key: (profile * 8 + kind) * 2 + flag -> root of every zone
+	std::vector<std::int32_t> m_zoneBlock;                               // zone -> its block (x block * y blocks + y block); -1: zone 0, raised layers
+	mutable std::map<int, std::vector<zoneStorageType>> m_blockTables;   // key: profile * 8 + kind -> the block-local root of every zone
+	const std::vector<zoneStorageType> &blockTable(int profile, int kind) const;
 };
 
 // ---------------------------------------------------------------------------------------------------------
@@ -981,6 +1004,8 @@ public:
 	// lane PATHPERF-1 (AIPathfindHierarchical.cpp): RW FindClosestHierarchicalPath 0x6F9829 -> 0x6F8601, the A* over the 16 x 16 zone blocks. True when a
 	// corridor was built: its blocks are marked passable (RW 0x6F49BC) and `adjustedTo` is the goal, or the centre of the closest block cell reached when the
 	// goal's block cannot be. False: no corridor (the caller marks every block passable)
+	// the zone blocks the hierarchical search's block zones need (PathfindZoneManager::getBlockZone): rebuilt from the cells when a load left them unset
+	void ensureZoneBlocks();
 	bool findClosestHierarchicalPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, bool isHuman, const Coord3D *from, const Coord3D *to,
 		Coord3D *adjustedTo);
 	// RW 0x6F937E .. 0x6F93B9: the block search's closest-cell key of a cell (dx, dy) from the goal, binary32 as RW computes it (lane PATHPERF-1)
@@ -1038,6 +1063,8 @@ public:
 	// PathfindLayer + 0x3C (Pathfinder::GetWallLayerHeight BFME2 WB 0xd3ec10: the int height as a float); 0 for a layer not in use
 	float raisedLayerHeight(PathfindLayerEnum layer) const;
 	size_t raisedLayerCount() const;
+	// PathfindLayer + 0x18 (k = 0) / + 0x20 (k = 1): the layer's wall connect cells, (-1, -1) when unset (see AIPathfindRaised.cpp)
+	ICoord2D raisedConnectCell(PathfindLayerEnum layer, int k) const;
 
 	// ---- lane WALL-2: portal waypoints (AIPathfindPortals.cpp) ----
 	// THE PORTAL API (for DynamicPortalBehaviour, FakePathfindPortalBehaviour and the siege lane's ladders and towers, which plug in through the first of them):
@@ -1080,7 +1107,13 @@ public:
 	// kUberBurstQueue requests wait (a mass order), the budget is kUberBudgetScale times retail's, so the burst is served in a few frames. A sustained
 	// battle's repaths keep 60-90 waiting (10,000 troops): they get retail's budget, which a larger one would only spend on the same steady trickle
 	// (+34 ms a frame at 4x). A Faithful game never turns the limits on
-	enum { kUberQueueLength = 16384, kUberBudgetScale = 4, kUberBurstQueue = 120, kUberBurstEnd = 40 };
+	enum { kUberQueueLength = 16384, kUberBudgetScale = 2, kUberBurstQueue = 120, kUberBurstEnd = 40 };
+	// lane PERF-HD (Uber only): a search the queue serves may count at most the budget the call has left, and at least this many cells (Helm's Deep: one
+	// search of 130,000 cells took 1.2 s of one logic frame; retail's budget is checked only between requests)
+	enum { kUberSearchFloor = 2000 };
+	// lane PERF-HD (Uber only): a second search of the request being served counts against the cap afresh (AIMover::computeAttackPath's fallback after
+	// findAttackPath), so the first search's cells do not end it at its first cell
+	void restartUberSearchCount() { m_uberSearchAllocs = 0; }
 	void setUberLimits(bool on);
 	bool uberLimits() const { return m_uberLimits; }
 	bool uberBurst() const { return m_uberBurst; } // lane PATHPERF-4: the request queue is draining a burst (the snapshot keeps it)
@@ -1183,7 +1216,24 @@ private:
 		ICoord2D origin{ 0, 0 };        // + 0x10 / + 0x14
 		int width = 0, depth = 0;       // + 8 / + 0xC (cells)
 		std::vector<PathfindCell> cells; // + 0 / + 4, column-major: cells[x * depth + y]
-		bool used() const { return !areas.empty(); }
+		ICoord2D connect[2] = { { -1, -1 }, { -1, -1 } }; // + 0x18 / + 0x20: the wall connect cells (reset by ClassifyWallCells RW 0x768832)
+		bool used() const { return !areas.empty(); }      // RW 0x768326 (+ 0x34 the bridge, none of the wall kind, or + 0x38 the areas)
+		// AddWallConnectCell (RW 0x76879E): a cell that is neither connect cell yet takes the first free one; a third is dropped
+		void addWallConnectCell(const ICoord2D &c)
+		{
+			if ((c.x == connect[0].x && c.y == connect[0].y) || (c.x == connect[1].x && c.y == connect[1].y))
+			{
+				return;
+			}
+			if (connect[0].x == -1)
+			{
+				connect[0] = c;
+			}
+			else if (connect[1].x == -1)
+			{
+				connect[1] = c;
+			}
+		}
 	};
 	PathfindCell *raisedCell(PathfindLayerEnum layer, int x, int y)
 	{
@@ -1199,7 +1249,17 @@ private:
 	PathfindLayerEnum raisedLayerFor(const PathfindWallSurface &s, PathfindObjectID owner);
 	void rebuildRaisedLayer(PathfindLayerEnum layer); // the cells (rebuildRaisedCells), then the units' slots on the layer registered again
 	void rebuildRaisedCells(PathfindLayerEnum layer);
-	void connectRampToRaised(int i, int j, PathfindCell *c, float rampHeight, int corners);
+	// RW 0x9356DF's ends: the cell of a ramp end (getRamp's from, then its to) on a raised layer becomes a wall connect cell of that layer
+	void addRampConnectCells(const Coord3D &from, const Coord3D &to);
+	// every raised layer's connect cells from the wall pieces' ramps, in insertion order: after the load of a version 1 walls snapshot, which has none (RW's
+	// layer xfer RW 0x7683B8 saves + 0x18 / + 0x20, as version 2 does)
+	void rebuildWallConnectCells();
+	// RW 0x6EE600 without an object: the first raised layer in use whose passable cell holds (x, y) and whose height is less than 25 above `z`, else
+	// LAYER_INVALID (RW answers the ground cell's layer then)
+	PathfindLayerEnum raisedLayerAtPoint(float x, float y, float z) const;
+	// PathfindLayer + 0x2C: the raised layer's zone (its cells' zone, setZone RW 0x768336); 0 for a layer without cells
+	zoneStorageType raisedLayerZone(PathfindLayerEnum layer) const;
+	bool connectRampToRaised(int i, int j, PathfindCell *c, float rampHeight, int corners); // true when the cell joined a raised layer
 	void crcRaised(StateHasher &h) const;
 	PathfindLayerEnum wallLayerFor(float height);
 	void stampWallSurface(const PathfindWallSurface &s, PathfindLayerEnum layer);
@@ -1221,11 +1281,54 @@ private:
 	void examineHierarchicalEdgeCell(const ICoord2D &cell, const ICoord2D &delta, PathfindCell *parent, PathfindCell *goal, zoneStorageType parentZone,
 		zoneStorageType *zones, int &zoneCount, const PathfindMovement &mv);
 	void makeHierarchicalPathPassable(PathfindCell *last, bool expand);
+	// the hierarchical search's raised branch (RW 0x6F8CC7 .. 0x6F8F7B): the raised layers whose connect cell lies in the popped cell's block; true: the goal
+	// was found (a layer whose zone is the goal's)
+	bool hierarchicalRaisedLinks(PathfindCell *c, PathfindCell *goal, zoneStorageType cz, zoneStorageType goalZone, const PathfindMovement &mv, int &cellCount);
 	bool examineShortcutCell(PathfindCell *from, PathfindCell *to, int x, int y, struct ShortcutState &state);
 	// RW 0x6EB151: true means the cell blocks the footprint
 	bool blockerCallback(const PathfindObject *obj, const PathfindCell *cell, int *count, bool countAllies, PathfindObjectID ignoreId, bool ignoreUnits,
 		const PathfindMovement *rectMovement, bool isHuman);
 	int occupantCost(const PathfindObject *obj, const PathfindCell *parent, int x, int y, int r, int n, bool skipEnemies);
+	// lane PERF-LOGIC: checkForMovement / occupantCost for the neighbour expansion and the shortcut walk of a search (the same answers). A footprint cell lies in
+	// up to nine neighbours' footprints, and while the search memo is on for `obj` nothing a cell's part of the answer reads changes (the cell's type and
+	// occupant lists, the memo's facts): each cell's part is worked out once per search and parameter set and kept in stamped dense arrays. The parts combine
+	// in the original cell order (AIPathfindUnits.cpp); the calls outside the memo take the original functions
+	bool checkForMovementCached(const PathfindObject *obj, PathfindCheckMovement &info, const ICoord2D *prev);
+	int occupantCostCached(const PathfindObject *obj, const PathfindCell *parent, int x, int y, int r, int n);
+	struct CellMoveFacts
+	{
+		std::uint32_t first = PATHFIND_INVALID_ID, last = PATHFIND_INVALID_ID; // the walk's first and last unit
+		std::uint16_t f = 0;
+	};
+	CellMoveFacts cellMoveFacts(const PathfindObject *obj, const PathfindCheckMovement &info, const PathfindCell *c);
+	void cellCostFacts(const PathfindObject *obj, const PathfindCell *c, int i, int j, std::uint16_t &fixed8, std::vector<float> &reach);
+	struct CellFactsSlot
+	{
+		std::vector<std::uint32_t> stamp;
+		std::vector<CellMoveFacts> facts;
+		std::uint32_t gen = 0;
+		unsigned memoGen = 0;
+		unsigned flags = 0;
+		bool transient = false;
+		bool bound = false;
+		PathfindObjectID ignoreId = PATHFIND_INVALID_ID;
+		PathfindLayerEnum layer = LAYER_GROUND;
+		PathfindMovement mv;
+	};
+	CellFactsSlot m_cellFacts[2];
+	struct CellCostRecord
+	{
+		std::uint32_t stamp = 0;
+		std::uint32_t start = 0;
+		std::uint16_t fixed8 = 0;
+		std::uint16_t count = 0;
+	};
+	std::vector<CellCostRecord> m_cellCost;
+	std::vector<float> m_cellCostReach;
+	std::vector<float> m_cellCostScratch;
+	std::uint32_t m_cellCostGen = 0;
+	unsigned m_cellCostMemoGen = 0;
+	bool m_cellCostBound = false;
 	// lane PATHPERF-1: what checkForMovement and occupantCost ask of an occupant `id` and of the searching unit `obj` (only side-effect-free getters, all
 	// asked at once). While internalFindPath runs for `obj` nothing they read can change, so the answers are kept per search (generation counted) and an
 	// occupant met in many cells is resolved once; elsewhere they are asked afresh. Null when the occupant's object is gone
@@ -1253,7 +1356,52 @@ private:
 	};
 	const OccupantFacts *occupantFacts(const PathfindObject *obj, PathfindObjectID id);
 	SearcherFacts searcherFacts(const PathfindObject *obj) const;
-	struct SearchMemoScope; // internalFindPath's activation of the memo
+	// lane PATHPERF-1: the search memo is on for `obj` while the scope lives (a fresh generation each time; an object id's facts are asked once). Every
+	// search kind opens one (internalFindPath, the attack, move-away, patch and safe searches): the facts are reads no search changes. A nested scope
+	// gives back the outer one's searcher with a fresh generation (the inner entries hold the inner searcher's relationships)
+	struct SearchMemoScope
+	{
+		Pathfinder &pf;
+		bool wasActive;
+		const PathfindObject *outerObj;
+		SearcherFacts outerSelf;
+		ReachMemo outerReach;
+		SearchMemoScope(Pathfinder &p, const PathfindObject *obj)
+			: pf(p), wasActive(p.m_memoActive), outerObj(p.m_memoObj), outerSelf(p.m_memoSelf), outerReach(p.m_memoSelfReach)
+		{
+			begin(obj);
+			if (obj)
+			{
+				pf.m_memoSelf = pf.searcherFacts(obj);
+			}
+		}
+		~SearchMemoScope()
+		{
+			if (wasActive)
+			{
+				begin(outerObj);
+				pf.m_memoSelf = outerSelf;
+				pf.m_memoSelfReach = outerReach;
+				return;
+			}
+			pf.m_memoActive = false;
+			pf.m_memoObj = nullptr;
+		}
+		void begin(const PathfindObject *obj)
+		{
+			pf.m_memoActive = obj != nullptr;
+			pf.m_memoObj = obj;
+			if (++pf.m_memoGen == 0)
+			{
+				for (OccupantFacts &f : pf.m_memo)
+				{
+					f.gen = 0;
+				}
+				pf.m_memoGen = 1;
+			}
+			pf.m_memoSelfReach = ReachMemo();
+		}
+	};
 	// lane MOVE-3: RW 0x6ED46C, the footprint cost of a patch step (-1: blocked); `parent` null counts every footprint cell
 	int patchCellCost(const PathfindObject &obj, const ICoord2D *parent, const ICoord2D &cell, PathfindLayerEnum layer, int r, int n, bool skipHordePositions);
 	// RW 0x6ECFC5: the footprint of RW 0x6ED071 is centred on a cell (its size is odd)
@@ -1303,6 +1451,8 @@ private:
 	bool m_memoActive = false;
 	bool m_searchShortcuts = true;
 	bool m_uberLimits = false; // lane PATHPERF-4
+	int m_uberSearchCap = 0x7fffffff; // lane PERF-HD: the cap of the search being served (kUberSearchFloor .. the budget left); no cap outside the queue
+	int m_uberSearchAllocs = 0;       // lane PERF-HD: the cells the search being served closed (markClosed) or walked (examineShortcutCell), against the cap
 	bool m_uberBurst = false;  // lane PATHPERF-4: the queue is draining a burst (hashed in an Uber game)
 	// lane PATHPERF-2: the line memo (LineMemoScope): an open-addressed table of (cell index * 10 + entry code + 1) -> blocked, entries valid in generation
 	// m_lineMemoGen; the parameters are bound by the scope's first isLinePassable call
@@ -1364,6 +1514,7 @@ public:
 			std::vector<std::pair<PathfindObjectID, PathfindWallSurface>> areas;
 			int height = 0, width = 0, depth = 0;
 			ICoord2D origin{ 0, 0 };
+			ICoord2D connect[2] = { { -1, -1 }, { -1, -1 } }; // version 2
 			std::vector<std::uint32_t> words;
 			std::vector<std::uint16_t> zones, portals;
 			std::vector<Info> infos;
@@ -1374,6 +1525,7 @@ public:
 			PathfindWaypoint w;
 		};
 		bool loaded = false;
+		bool connectsSaved = false; // a version 2 snapshot: the raised layers' wall connect cells are in it
 		std::vector<float> wallHeights;
 		std::vector<WallPiece> wallPieces;
 		bool anyRaised = false;

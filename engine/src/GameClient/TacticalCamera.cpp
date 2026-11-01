@@ -551,7 +551,7 @@ float TacticalCamera::freeMaxHeight() const
 
 float TacticalCamera::farPlane() const
 {
-	return 1800.0f + 2.0f * fogShift(); // RW 0x48B7B1: 1800 (GlobalData + 0x950 = 1.0 times 1800); lane PLAY-1 / ZOOM-1: the extra eye distance
+	return m_clipDepthMultiplier * 1800.0f + 2.0f * fogShift(); // RW 0x48B7B1: GlobalData + 0x950 (1.0) times 1800; lane PLAY-1 / ZOOM-1: the extra eye distance
 }
 
 float TacticalCamera::fogShift() const
@@ -596,6 +596,7 @@ void TacticalCamera::setZoomToDefault()
 void TacticalCamera::resetCamera(const Coord3D *location)
 {
 	// BFME1 W3DView::resetCamera (retail 0x743640) with no duration (RW's click on the middle button: 0x83AD90, the game start: RW 0x63135B -> view slot 0xC8 = RW 0x48D26B)
+	m_scrollDistance = 0.0f; // lane BFME2CAMP1: RW 0x48D286 -> RW 0x485126
 	if (location)
 	{
 		m_pos = *location;
@@ -641,6 +642,8 @@ int TacticalCamera::scrollBy(float dx, float dy)
 	const float S = m_zoom * 0.25f * m_scrollScalar;
 	const float moveX = (dx * fy + (-fx) * dy) * S;
 	const float moveY = (dx * (-fx) * aspectInt + (-fy) * dy) * S;
+	// lane BFME2CAMP1, RW 0x48C9B9 .. 0x48C9D4: + 0x24F4 += the move's length (Coord3D::length RW 0x403111, the z part 0), x87, stored as a float
+	m_scrollDistance = (float)(std::sqrt((double)moveX * (double)moveX + (double)moveY * (double)moveY) + (double)m_scrollDistance);
 	m_pos.x += moveX;
 	m_pos.y += moveY;
 	int mask = 0;
