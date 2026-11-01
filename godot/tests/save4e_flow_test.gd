@@ -37,6 +37,10 @@ class World extends RefCounted:
 
 class Shell extends RefCounted:
 	var refused: Array = []
+	var auto_process := true
+
+	func hide_still_load_screen() -> void:
+		pass
 
 	func save_load_refused(name: String, error: String) -> void:
 		refused.append([name, error])

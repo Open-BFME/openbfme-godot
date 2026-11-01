@@ -240,6 +240,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/tangent_convention_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/terrain_lighting_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/timeline_markers_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: score timeline markers against a stub shell; headless, 20 s timeout. |
+| `godot/tests/save_failure_menu_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: late save refusals resume the shell and replace the loading canvas; synthetic world and shell; headless, 20 s timeout. |
 | `godot/tests/uberjoin1_lan_test.gd` | `godot/tests/start_test.gd` | CI gate's helper/child; not scheduled separately by pytest. |
 | `godot/tests/uberjoin1_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/ui4_resize_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |

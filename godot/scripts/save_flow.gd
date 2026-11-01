@@ -366,6 +366,11 @@ func _load_prepared(prep: Dictionary, name: String) -> String:
 ## shell, RW 0x6DF55E)
 func _back_to_menu(name: String, error: String) -> void:
 	printerr("GAME SAVE load of '%s' failed: %s" % [name, error])
+	# Loading pauses the native shell. Clearing the still-screen flag only dirties
+	# its retained canvas: resume processing so the refusal page replaces it.
+	_hide_overlay()
+	game._shell.hide_still_load_screen()
+	game._shell.auto_process = true
 	if not game._save_test.is_empty():
 		game._fail("the saved game could not be loaded: " + error)
 		return
