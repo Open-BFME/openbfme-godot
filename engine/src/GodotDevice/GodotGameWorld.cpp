@@ -4093,6 +4093,7 @@ Dictionary GameWorld::get_frame_timings() const
 	t["views_ms"] = m_lastViewsMs;
 	t["views_local"] = (int64_t)m_lastViewsLocal;   // lane PERF-CLIENT: the drawables the last refresh_views refreshed on the client job pool
 	t["views_serial"] = (int64_t)m_lastViewsSerial; // and on the main thread
+	t["client_threads"] = (int64_t)JobSystem::client().threadCount(); // the client job pool's threads, the caller included (1: everything inline)
 	t["fx_ms"] = m_lastFxMs;
 	t["new_models"] = (int64_t)m_lastNewModels;
 	t["new_model_ms"] = m_lastNewModelMs;

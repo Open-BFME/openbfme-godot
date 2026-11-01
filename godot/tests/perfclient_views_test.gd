@@ -12,7 +12,7 @@
 ## instance's palette (its pose); both worlds count the same animated drawables and have the same state hash. The parallel world must have run mixed
 ## frames (drawables refreshed both on the pool and serially), the serial world none on the pool; both must have built a model after the first frame,
 ## made occlusion pass materials and lost the destroyed hordes' views. One run samples one thread schedule: a race may need repeated runs.
-## Needs ROTWK_INSTALL and BFME2_INSTALL, and a client job pool of more than one thread (else SKIP, exit 77).
+## Needs ROTWK_INSTALL and BFME2_INSTALL, and a client job pool of more than one thread (get_frame_timings' client_threads; else SKIP, exit 77).
 ## Exit codes: 0 pass, 1 fail, 77 skip.
 extends SceneTree
 
@@ -133,11 +133,6 @@ func _run() -> int:
 	if OS.get_environment("ROTWK_INSTALL").is_empty() or OS.get_environment("BFME2_INSTALL").is_empty():
 		print("SKIP: set ROTWK_INSTALL and BFME2_INSTALL")
 		return EXIT_SKIP
-	var client_threads := OS.get_environment("OPENBFME_CLIENT_THREADS")
-	if client_threads == "1" or (client_threads.is_empty() and OS.get_processor_count() < 2):
-		print("SKIP: the client job pool has one thread (OPENBFME_CLIENT_THREADS '%s', %d processors): the pool pass would run inline" % [
-			client_threads, OS.get_processor_count()])
-		return EXIT_SKIP
 	if not ClassDB.class_exists("RetailFileSystem"):
 		print("FAIL: the openbfme extension is not loaded")
 		return EXIT_FAIL
@@ -150,6 +145,10 @@ func _run() -> int:
 	var ser: Node = _world(fs, false)
 	if par == null or ser == null:
 		return EXIT_FAIL
+	var client_threads: int = int(par.get_frame_timings().get("client_threads", 0))
+	if client_threads < 2:
+		print("SKIP: the client job pool has %d thread(s): the pool pass would run inline" % client_threads)
+		return EXIT_SKIP
 	var par_pairs: Array = _battle(par)
 	var ser_pairs: Array = _battle(ser)
 	_check(not par_pairs.is_empty() and par_pairs == ser_pairs, "the same battle in both worlds")
@@ -204,8 +203,7 @@ func _run() -> int:
 	var so: Dictionary = si.get_occlusion_pass_counts()
 	print("  info: %d frames, %d views at most, %d mixed frames, %d instances, troops %d -> %d, views %d -> %d across the destruction, " % [
 		FRAMES, most_views, mixed, pi.get_instance_count(), troops0, troops1, views_before_destroy, views_after_destroy]
-		+ "models built after frame 0 %s, occlusion pass materials %s / %s, %d processors, OPENBFME_CLIENT_THREADS '%s'" % [new_models, po, so,
-		OS.get_processor_count(), client_threads])
+		+ "models built after frame 0 %s, occlusion pass materials %s / %s, %d client job pool threads" % [new_models, po, so, client_threads])
 	_check(first_bad == -1, "the parallel and the serial world's instancers, animated drawables and state hashes are identical after every frame (first difference: %d)" % first_bad)
 	_check(mixed > 0, "frames refreshed drawables both on the job pool and serially (%d)" % mixed) # tolerance: any mixed frame exercises both passes
 	_check(serial_on_pool == 0, "the serial world refreshed nothing on the job pool")
