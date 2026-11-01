@@ -7,6 +7,7 @@
 
 #include "GameLogic/AI/AIWorld.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -49,4 +50,33 @@ TEST_CASE("perf1 notes: GameLogic::noteStop counts a text noted through 5000 tem
 	const auto it = hits.find(text);
 	REQUIRE(it != hits.end());
 	CHECK(it->second == 5000u);
+}
+
+TEST_CASE("perf1 notes: one buffer reused for two texts of the same length is noted as each text (GameLogic and AIWorld)")
+{
+	CombatWorld w;
+	w.frames(1);
+	AIWorld *ai = w.logic->aiWorld();
+	REQUIRE(ai != nullptr);
+	const std::string first = "perf1 notes: buffer text A";
+	const std::string second = "perf1 notes: buffer text B"; // the same length: only the content tells them apart
+	REQUIRE(first.size() == second.size());
+	char buffer[64] = {};
+	const size_t before = ai->noted().size();
+	for (int i = 0; i < 6; ++i)
+	{
+		const std::string &text = (i % 2 == 0) ? first : second;
+		std::copy(text.begin(), text.end(), buffer);
+		buffer[text.size()] = 0;
+		w.logic->noteStop(std::string_view(buffer, text.size())); // the same address every time
+		ai->noteStop(buffer);
+	}
+	const auto &hits = w.logic->notedStopHits();
+	REQUIRE(hits.count(first) == 1);
+	REQUIRE(hits.count(second) == 1);
+	CHECK(hits.find(first)->second == 3u);
+	CHECK(hits.find(second)->second == 3u);
+	CHECK(ai->noted().size() == before + 2);
+	CHECK(ai->noted().count(first) == 1);
+	CHECK(ai->noted().count(second) == 1);
 }
