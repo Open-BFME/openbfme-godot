@@ -757,12 +757,12 @@ int Pathfinder::occupantCost(const PathfindObject *obj, const PathfindCell *pare
 				{
 					continue;
 				}
-				if (self.aiPriority > f->aiPriority)
+				if (self.aiPriority > f->aiPriority())
 				{
 					continue;
 				}
 				int add;
-				if (f->parked)
+				if (f->parked())
 				{
 					add = 8;
 				}

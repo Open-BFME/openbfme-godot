@@ -40,6 +40,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 class ArchiveFileSystem;
@@ -290,6 +291,8 @@ private:
 	std::map<const ThingTemplate *, std::unique_ptr<ObjectMovementInfo>> m_info;
 	std::vector<std::string> m_errors;
 	std::set<std::string, std::less<>> m_noted; // transparent: noteStop looks a text up without building a std::string (every AI update notes one)
+	std::unordered_map<const char *, const std::string *> m_notedFast; // noteStop's fast path: a text seen before, by its address (set nodes are stable)
+	static constexpr size_t kNotedFastMax = 4096;                       // the fast path's size bound
 	std::map<std::string, unsigned> m_failures; // "template: text" -> count
 	bool m_mapReady = false;
 	int m_nextFormationId = 1; ///< AI + 0x20 (hashed once a formation was made)

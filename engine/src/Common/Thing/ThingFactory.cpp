@@ -615,6 +615,7 @@ void ThingFactory::parseField(INI *ini, void *instance, void *, const void *user
 	// the blocks' template-level behaviour on top of their (raw) body
 	auto eraseBlocks = [&]() {
 		tt->m_rawBlocks.erase(std::remove_if(tt->m_rawBlocks.begin(), tt->m_rawBlocks.end(), [&](const RawBlock &r) { return r.field == b->name; }), tt->m_rawBlocks.end());
+		tt->m_threatCategory = ThingTemplate::RawBlockAnswer();
 	};
 	switch (b->sem)
 	{
@@ -685,6 +686,7 @@ void ThingFactory::parseField(INI *ini, void *instance, void *, const void *user
 		block.lines.push_back(std::move(l));
 	}
 	tt->m_rawBlocks.push_back(std::move(block));
+	tt->m_threatCategory = ThingTemplate::RawBlockAnswer();
 }
 
 // ---------------------------------------------------------------------------------------------

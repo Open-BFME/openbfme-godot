@@ -26,6 +26,8 @@
 #include "Common/NameKeyGenerator.h"
 #include "Common/ProductionPrerequisite.h"
 
+#include <atomic>
+#include <climits>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -185,6 +187,21 @@ public:
 	}
 	std::vector<std::string> fieldNames() const; ///< names of the fields that were set
 	const std::vector<RawBlock> &rawBlocks() const { return m_rawBlocks; }
+	// performance: an answer worked out from the raw blocks on first use (on any thread: every thread works out the same value); unset again when a block
+	// is added or removed, and in a copy
+	struct RawBlockAnswer
+	{
+		static constexpr int kUnset = INT_MIN;
+		mutable std::atomic<int> value{ kUnset };
+		RawBlockAnswer() = default;
+		RawBlockAnswer(const RawBlockAnswer &) {}
+		RawBlockAnswer &operator=(const RawBlockAnswer &)
+		{
+			value.store(kUnset, std::memory_order_relaxed);
+			return *this;
+		}
+	};
+	const RawBlockAnswer &threatCategoryCache() const { return m_threatCategory; } ///< AIThreatFinder::threatCategory's
 	const std::vector<ProductionPrerequisite> &productionPrerequisites() const { return m_productionPrerequisites; }
 	// AUDIO-2: a voice row's value (the audio table rows parsed by RW 0x73ACEF -> 0x73AB45 store {Eva event id, audio event}). Each line changes the
 	// slot the template already has (from an earlier line or the template it was copied from): "NoSound" clears both halves; `EVA:<event>` sets only the
@@ -254,6 +271,7 @@ private:
 	bool m_bfme1 = false; // community PR #36: made by a ThingFactory for BFME1 data
 	const std::unordered_map<std::string, size_t> *m_fieldIndex = nullptr; ///< the factory's name -> slot index of m_fieldNames (unique names)
 	std::vector<RawBlock> m_rawBlocks;
+	RawBlockAnswer m_threatCategory;
 	std::vector<ProductionPrerequisite> m_productionPrerequisites;
 	std::vector<GeometryEvent> m_geometryEvents;
 	mutable std::shared_ptr<const void> m_geometryCache;

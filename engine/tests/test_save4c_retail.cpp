@@ -1203,12 +1203,33 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 		men = p && p->getPlayerTemplate() && p->getPlayerTemplate()->getName() == "FactionMen" ? kv.first : men;
 	}
 	REQUIRE(men != -1);
+	// merge queue q35 (#132's melee reach moves the AIs' game): the Men player can have no unit left besides the actors at frame 2700; the garrison then
+	// goes to the first skirmish player that has one (the keep is made for that player)
 	std::vector<Object *> menUnits;
-	for (Object *u : byPlayer[men])
+	std::vector<int> garrisonOrder{ men };
+	for (int p : playerIds)
 	{
-		if (u != attacker && u != mover && u != guard && u != hunter)
+		if (p != men)
 		{
-			menUnits.push_back(u);
+			garrisonOrder.push_back(p);
+		}
+	}
+	for (int p : garrisonOrder)
+	{
+		for (Object *u : byPlayer[p])
+		{
+			if (menUnits.empty() && u != attacker && u != mover && u != guard && u != hunter)
+			{
+				men = p;
+			}
+			if (p == men && u != attacker && u != mover && u != guard && u != hunter)
+			{
+				menUnits.push_back(u);
+			}
+		}
+		if (!menUnits.empty())
+		{
+			break;
 		}
 	}
 	REQUIRE(!menUnits.empty());

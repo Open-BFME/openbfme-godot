@@ -6,6 +6,7 @@
 #endif
 
 #include "GameLogic/Module/ActiveBody.h"
+#include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/Contain/HordeFlank.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/ExperienceWorld.h"
@@ -25,6 +26,7 @@
 #include "Common/PlayerList.h"
 #include "GameLogic/Module/BloodthirstyUpdate.h"
 #include "GameLogic/Module/HeroModules.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Object/Object.h"
@@ -203,12 +205,14 @@ void ActiveBody::crc(StateHasher &h) const
 // (RW 0x8C283C: the Damaged / ReallyDamaged attribute modifiers, UPGRADE-1's). For a template that is KindOf STRUCTURE (tt KindOf mask byte 0x108 bit 0x80 = bit 7) the state RUBBLE does:
 //   entering (new > old, new == 3): the structure's footprint leaves the pathfinder and is entered again (RW 0x6E85FB remove, 0x6E85E9 add: the add sees the RUBBLE state), the object
 //   gets the status NO_COLLISIONS (RW 0x8C2E3B: 0x62684D(4, 1)), the geometry height becomes the template's StructureRubbleHeight (RW tt + 0x607, a byte; <= 0 takes GlobalData
-//   DefaultStructureRubbleHeight, RW + 0xAE4) through RW 0x68B2CB, and RW 0x8C1BB7 runs: production is reset (RW 0x79DA66 on object + 0x26C), the upgrades go when RemoveUpgradesOnDeath
-//   (data + 0x50) and the command points are released (0x68E114 = removeFromPlayerCommandPoints);
+//   DefaultStructureRubbleHeight, RW + 0xAE4) through RW 0x68B2CB, and RW 0x8C1BB7 runs (BFME2 0x4BDA67, decomp ActiveBodyDamageState.cpp:54-59,
+//   tier B offsets-only): the object's ExperienceTracker (+ 0x26C) is reset (RW 0x79DA66), the upgrades go when RemoveUpgradesOnDeath
+//   (data + 0x50 -> rva0028DA28), the command points are released (0x68E114 = removeFromPlayerCommandPoints) and the attribute modifier pool's
+//   entries are cleared (rva00298E6A);
 //   leaving it (new < 3, old == 3): the template geometry returns, the footprint is re-entered, NO_COLLISIONS is cleared (RW 0x8C2D87..0x8C2DCC).
 // A WALK_ON_TOP_OF_WALL template (KindOf 60, byte 0x10F bit 0x10) runs a "Bookend" variant (BOOKENDING status 0x53, CAN_NOT_WALK_ON 0x4D) that is a wall's (S-342).
-// NOT PORTED (S-342): the geometry height (the geometry is the template's, an Object has none of its own), the production reset, the upgrade removal, the attribute modifiers, the damage FX
-// transitions of the tail (RW 0x8C2C64..0x8C2EF1) and the Bookend of walls.
+// NOT PORTED (S-342): the geometry height (the geometry is the template's, an Object has none of its own), the upgrade removal, the attribute modifier
+// pool clear and the Damaged / ReallyDamaged attribute modifiers, the damage FX transitions of the tail (RW 0x8C2C64..0x8C2EF1) and the Bookend of walls.
 // The model conditions DAMAGED / REALLYDAMAGED / RUBBLE: internalChangeHealth calls the visual update (vslot 0x94, RW 0x8C32A8) after the state changed, not while the
 // object is UNDER_CONSTRUCTION (unless dead); INFERENCE: what vslot 0x94 sets is ZH Drawable::reactToBodyDamageStateChange's (the state's flag, the other two cleared).
 void ActiveBody::updateDamageState(bool initial)
@@ -253,8 +257,13 @@ void ActiveBody::updateDamageState(bool initial)
 			world->removeObjectFromPathfindMap(obj);
 			world->addObjectToPathfindMap(obj);
 		}
-		obj.setStatus((unsigned)CombatNames::statuses().noCollisions, true);
+		// RW 0x8C1BB7: the experience reset, then the command points; RemoveUpgradesOnDeath and the attribute pool clear are S-342's
+		if (ExperienceTracker *xp = obj.getExperienceTracker())
+		{
+			xp->reset(); // RW 0x79DA66 on object + 0x26C (BFME2 decomp ActiveBodyDamageState.cpp:54-59, B2 0x4BDA67)
+		}
 		obj.removeFromPlayerCommandPoints(); // RW 0x8C1BB7 -> 0x68E114
+		obj.setStatus((unsigned)CombatNames::statuses().noCollisions, true); // RW 0x8C2E3B: after the rubble reset
 		++obj.logic().combat().counters().rubbleEntered;
 	}
 	else if (old == BODY_RUBBLE && now != BODY_RUBBLE)
@@ -607,15 +616,59 @@ void ActiveBody::notifyDamageStateChange(const DamageInfo *info, BodyDamageType 
 	}
 }
 
-// RW 0x8C2FC1 attemptHealing
+namespace
+{
+// the dead-but-kept test of RW 0x8C2FC1 (BFME2 0x4BEE21, decomp ActiveBody.cpp attemptHealing, tier B same-shape): the template's
+// KeepSelectableWhenDead (+ 0x642, read as PlayerCommands does) or its KindOf WALL_UPGRADE (150, tt + 0x11A bit 6), BRIDGE (22) or
+// BRIDGE_TOWER (24) (tt + 0x10A & 0x140)
+bool healableWhenDead(const Object &obj)
+{
+	static const int kWallUpgrade = ObjectTemplateInfoBuilder::kindOfIndex("WALL_UPGRADE");
+	static const int kBridge = ObjectTemplateInfoBuilder::kindOfIndex("BRIDGE");
+	static const int kBridgeTower = ObjectTemplateInfoBuilder::kindOfIndex("BRIDGE_TOWER");
+	if ((kWallUpgrade >= 0 && obj.isKindOf((unsigned)kWallUpgrade)) || (kBridge >= 0 && obj.isKindOf((unsigned)kBridge)) ||
+		(kBridgeTower >= 0 && obj.isKindOf((unsigned)kBridgeTower)))
+	{
+		return true;
+	}
+	if (const ThingTemplate *tt = static_cast<const ThingTemplate *>(obj.getTemplate()))
+	{
+		if (const FieldValue *v = tt->getFinalOverride()->findField("KeepSelectableWhenDead"))
+		{
+			if (const bool *b = std::get_if<bool>(v))
+			{
+				return *b;
+			}
+		}
+	}
+	return false;
+}
+} // namespace
+
+// RW 0x8C2FC1 attemptHealing (BFME2 0x4BEE21, decomp ActiveBody.cpp, tier B same-shape). RotWK order: validateArmorAndDamageFX (the armour
+// validation is S-322's); a body whose module data +0x51 (BurningDeathBehavior) is set while the object is in the model condition
+// BURNINGDEATH (index 0x220, the reading SpawnBehavior shares) returns at once; a null DamageInfo returns (ours is a reference); a
+// non-HEALING hit goes to attemptDamage; an effectively dead object (Object + 0x458 bit 0) is refused unless healableWhenDead answers
+// (KeepSelectableWhenDead / WALL_UPGRADE / BRIDGE / BRIDGE_TOWER). Only then are the outputs zeroed and the amount applied
 void ActiveBody::attemptHealing(DamageInfo &info)
 {
-	info.m_output.m_actualDamageDealt = 0.0f;
-	info.m_output.m_actualDamageClipped = 0.0f;
-	if (getObject()->isEffectivelyDead())
+	Object *obj = getObject();
+	static const int kBurningDeath = CombatNames::modelCondition("BURNINGDEATH"); // model condition 0x220
+	if (m_data->m_burningDeathBehavior && obj->testModelCondition(kBurningDeath))
 	{
 		return;
 	}
+	if (info.m_input.m_damageType != DAMAGE_HEALING)
+	{
+		attemptDamage(info);
+		return;
+	}
+	if (obj->isEffectivelyDead() && !healableWhenDead(*obj))
+	{
+		return;
+	}
+	info.m_output.m_actualDamageDealt = 0.0f;
+	info.m_output.m_actualDamageClipped = 0.0f;
 	const float amount = info.m_input.m_amount; // adjustDamage returns the amount for HEALING
 	if (amount > 0.0f)
 	{

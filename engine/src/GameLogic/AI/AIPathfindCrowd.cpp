@@ -18,8 +18,42 @@
 
 bool Pathfinder::crowdingAllowsStep(const PathfindObject &obj, const PathfindLocomotorInfo &loco, const Coord3D &dest)
 {
-	const PathfindMovement mv = makeMovement(&obj, loco);
-	const ICoord2D here = cellOfPosition(obj, obj.getPosition());
+	return crowdingAllowsStep(crowdStepContext(obj, loco), obj, dest);
+}
+
+Pathfinder::CrowdStepContext Pathfinder::crowdStepContext(const PathfindObject &obj, const PathfindLocomotorInfo &loco)
+{
+	CrowdStepContext ctx;
+	ctx.mv = makeMovement(&obj, loco);
+	ctx.here = cellOfPosition(obj, obj.getPosition());
+	// RW 0x6ED0A0: the footprint size N of RW 0x6EAF79, below = N / 2, above = N - N / 2 (review r2: no HORDE / SHIP forced radius here)
+	const int footprint = footprintSize(&obj);
+	ctx.below = footprint / 2;
+	ctx.above = footprint - ctx.below;
+	ctx.self = obj.getID();
+	// 2. the other units' goal reservations around the unit
+	for (int x = ctx.here.x - ctx.below; x < ctx.here.x + ctx.above; ++x)
+	{
+		for (int y = ctx.here.y - ctx.below; y < ctx.here.y + ctx.above; ++y)
+		{
+			const PathfindCell *c = getCell(LAYER_GROUND, x, y);
+			if (c == nullptr)
+			{
+				continue;
+			}
+			for (const PathfindOccupant *o = c->occupants(OCC_GROUND_GOAL); o; o = o->next)
+			{
+				ctx.current += o->owner != ctx.self ? 1 : 0;
+			}
+		}
+	}
+	return ctx;
+}
+
+bool Pathfinder::crowdingAllowsStep(const CrowdStepContext &ctx, const PathfindObject &obj, const Coord3D &dest)
+{
+	const PathfindMovement &mv = ctx.mv;
+	const ICoord2D here = ctx.here;
 	const ICoord2D there = cellOfPosition(obj, dest);
 	// 1. RW 0x6F1B3E (ground layer)
 	if (here.x != there.x || here.y != there.y)
@@ -30,28 +64,8 @@ bool Pathfinder::crowdingAllowsStep(const PathfindObject &obj, const PathfindLoc
 			return false;
 		}
 	}
-	// RW 0x6ED0A0: the footprint size N of RW 0x6EAF79, below = N / 2, above = N - N / 2 (review r2: no HORDE / SHIP forced radius here)
-	const int footprint = footprintSize(&obj);
-	const int below = footprint / 2;
-	const int above = footprint - below;
-	const PathfindObjectID self = obj.getID();
-	// 2. the other units' goal reservations around the unit
-	int current = 0;
-	for (int x = here.x - below; x < here.x + above; ++x)
-	{
-		for (int y = here.y - below; y < here.y + above; ++y)
-		{
-			const PathfindCell *c = getCell(LAYER_GROUND, x, y);
-			if (c == nullptr)
-			{
-				continue;
-			}
-			for (const PathfindOccupant *o = c->occupants(OCC_GROUND_GOAL); o; o = o->next)
-			{
-				current += o->owner != self ? 1 : 0;
-			}
-		}
-	}
+	const int below = ctx.below, above = ctx.above, current = ctx.current;
+	const PathfindObjectID self = ctx.self;
 	// 3. around the candidate
 	int dest_count = 0;
 	for (int x = there.x - below; x < there.x + above; ++x)

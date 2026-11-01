@@ -259,7 +259,7 @@ void GateOpenAndCloseBehavior::playFinishedSound()
 	m_soundPlayed = true;
 }
 
-// RW 0x89C759 (BFME2 0x898FAA, GateOpenAndCloseBehaviorPushOut.cpp): see GateModules.h
+// RW 0x89C759 (BFME2 0x898FAA, GateOpenAndCloseBehavior.cpp): see GateModules.h
 void GateOpenAndCloseBehavior::pushOut()
 {
 	Object *us = getObject();

@@ -69,6 +69,8 @@ struct StructRow
 // Lane MOVE-2 r3 (the melee member pass: the contain runs the Amoeba update and moves the members to their melee destinations through the hub, RW 0x872EFC /
 // 0x870A1B / 0x877D89; blockedBy's step aside as the AI command RW 0x66C4CA; the stored orientation wrapped, RW 0x70C31E): 454 -> 468, 334 -> 344, 740 -> 714, 424 -> 460, 58 -> 76, 108 -> 128, 454 -> 468. Engine pins.
 const StructRow kRows[] = {
+	// Merge queue q35 (#132's ground-structure melee reach: the members swing from the footprint's obstacle ring; measured once on the merged tree and at each
+	// merge point, SIMSMALL-1, #178 and #179 keep the archive's values): 406 -> 396, 432 -> 410, 612 -> 602, 404 -> 370, 72 -> 74, 122 -> 104, 406 -> 396. Engine pins
 	// Merge MOD-4 + AUDIO-4: the death frames re-measured on the merged tree (MOD-4's powers / creeps and LargeGroupAudioUpdate's logic random draws both move them). Engine pins
 	// Merge MOD-4 + AUDIO-4 + ANIM-1: the death frames re-measured on the merged tree (MOD-4's powers / creeps, LargeGroupAudioUpdate's logic random draws and
 	// ANIM-1's attack timing all move them). Engine pins
@@ -98,13 +100,13 @@ const StructRow kRows[] = {
 	// 60 -> 58, 96 -> 110, 390 -> 388. Engine pins
 	// Merge queue q26 (community #73's slot tables centred on their hordes and #74's spiral with BANNER-1 and the rest, measured once on the merged tree):
 	// 388 -> 406, 330 -> 422, 604 -> 660, 426 -> 404, 58 -> 72, 110 -> 122, 388 -> 406. Engine pins
-	{ "FactionMen", "GondorBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 406 },
-	{ "FactionElves", "ElvenBarracks", "StructureBody", 3000.0f, 20.0f, 0, 100.0f, true, 432 }, // no BountyValue line; 422 -> 432 (see below)
-	{ "FactionDwarves", "DwarfBarracks", "ActiveBody", 5000.0f, 20.0f, 125, 155.0f, true, 612 }, // 660 -> 612: fix/horde-contain-no-follow: a horde's move or turn no longer carries its members, they walk to their slots (RW 0x871536)
-	{ "FactionIsengard", "IsengardUrukPit", "StructureBody", 3000.0f, 20.0f, 88, 89.0f, true, 404 },
-	{ "FactionMordor", "MordorBarracks", "StructureBody", 1500.0f, 100.0f, 0, 0.0f, false, 72 },
-	{ "FactionWild", "GoblinCave", "ActiveBody", 1500.0f, 50.0f, 100, 25.0f, true, 122 },
-	{ "FactionAngmar", "AngmarBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 406 },
+	{ "FactionMen", "GondorBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 396 },
+	{ "FactionElves", "ElvenBarracks", "StructureBody", 3000.0f, 20.0f, 0, 100.0f, true, 410 }, // no BountyValue line; 422 -> 432 (see below)
+	{ "FactionDwarves", "DwarfBarracks", "ActiveBody", 5000.0f, 20.0f, 125, 155.0f, true, 602 }, // 660 -> 612: fix/horde-contain-no-follow: a horde's move or turn no longer carries its members, they walk to their slots (RW 0x871536)
+	{ "FactionIsengard", "IsengardUrukPit", "StructureBody", 3000.0f, 20.0f, 88, 89.0f, true, 370 },
+	{ "FactionMordor", "MordorBarracks", "StructureBody", 1500.0f, 100.0f, 0, 0.0f, false, 74 },
+	{ "FactionWild", "GoblinCave", "ActiveBody", 1500.0f, 50.0f, 100, 25.0f, true, 104 },
+	{ "FactionAngmar", "AngmarBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 396 },
 };
 
 // n * (n - 1) / 2 * 1.28 >= H, the first n
@@ -168,7 +170,10 @@ Outcome fightStructure(const StructRow &row, float bountyPercent, bool recordHas
 		out.claimantBefore = out.claimantBefore || c.id == id;
 	}
 	out.cashBefore = (int)a.player(0)->getMoney()->countMoney();
-	const unsigned long long applicationsBefore = a.logic.combat().counters().damageApplications;
+	// the hits on this structure only (merge queue q35: with #132's melee reach the members strike the Wild cave's WildCaveHole in the frame the cave dies
+	// and leaves it, which the game-wide damage counter adds)
+	unsigned long long structureHits = 0;
+	a.logic.combat().setDamageTrace([&structureHits, id](const Object &victim, std::uint32_t, float, float) { structureHits += victim.getID() == id ? 1 : 0; });
 	horde->getAIUpdateInterface()->aiAttackObject(b, CMD_FROM_PLAYER);
 	if (recordHashes)
 	{
@@ -196,7 +201,7 @@ Outcome fightStructure(const StructRow &row, float bountyPercent, bool recordHas
 		if (out.deathFrame < 0 && o && o->isEffectivelyDead())
 		{
 			out.deathFrame = f;
-			out.applications = a.logic.combat().counters().damageApplications - applicationsBefore;
+			out.applications = structureHits;
 			out.obstacleAfterDeath = a.obstacleAt(640.0f, 500.0f);
 			out.obstacleIdAfterDeath = a.obstacleIdAt(640.0f, 500.0f);
 			if (const Object *holder = a.logic.findObjectByID(out.obstacleIdAfterDeath))
@@ -221,7 +226,7 @@ Outcome fightStructure(const StructRow &row, float bountyPercent, bool recordHas
 			if (out.deathFrame < 0)
 			{
 				out.deathFrame = f; // destroyed in the frame it died (DestroyDie)
-				out.applications = a.logic.combat().counters().damageApplications - applicationsBefore;
+				out.applications = structureHits;
 				out.cashAfter = (int)a.player(0)->getMoney()->countMoney();
 				out.obstacleAfterDeath = a.obstacleAt(640.0f, 500.0f);
 				out.obstacleIdAfterDeath = a.obstacleIdAt(640.0f, 500.0f);
@@ -242,6 +247,7 @@ Outcome fightStructure(const StructRow &row, float bountyPercent, bool recordHas
 	}
 	out.collapsesBegun = a.logic.combat().counters().collapsesBegun;
 	out.collapsesDone = a.logic.combat().counters().collapsesDone;
+	a.logic.combat().setDamageTrace(nullptr);
 	return out;
 }
 } // namespace

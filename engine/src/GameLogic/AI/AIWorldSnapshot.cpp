@@ -172,6 +172,7 @@ void AIWorld::xferBody(Xfer &x)
 	if (loading)
 	{
 		m_noted = decltype(m_noted)(noted.begin(), noted.end());
+		m_notedFast.clear(); // its pointers were into the set's old nodes
 		m_nextFormationId = nextFormation; // lane FLANK-1 (version 2)
 	}
 }

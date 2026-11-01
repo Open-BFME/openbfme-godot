@@ -490,6 +490,15 @@ public:
 	// (a view: the hot callers pass literals, and a noted text is found without building a std::string)
 	void noteStop(std::string_view text)
 	{
+		// performance (diagnostics only): hot callers note the same literal every frame (eight times per stepping amoeba member); a text seen before is
+		// found by its address and its content confirmed, instead of two ordered-tree walks over keys of ~250 characters. The ordered maps are never
+		// cleared, so the kept iterator stays valid
+		const auto fast = m_notedStopFast.find(text.data());
+		if (fast != m_notedStopFast.end() && fast->second->first.size() == text.size() && fast->second->first == text)
+		{
+			++fast->second->second;
+			return;
+		}
 		if (m_notedStops.find(text) == m_notedStops.end())
 		{
 			m_notedStops.emplace(text);
@@ -504,6 +513,11 @@ public:
 		{
 			m_notedStopHits.emplace(std::string(text), 1u);
 		}
+		if (m_notedStopFast.size() >= kNotedStopFastMax)
+		{
+			m_notedStopFast.clear(); // a caller that notes a temporary string brings a new address each time
+		}
+		m_notedStopFast[text.data()] = m_notedStopHits.find(text);
 	}
 	const std::map<std::string, unsigned, std::less<>> &notedStopHits() const { return m_notedStopHits; }
 
@@ -975,6 +989,8 @@ private:
 	CastleTemplateStore m_castleTemplates;
 	std::set<std::string, std::less<>> m_notedStops;
 	std::map<std::string, unsigned, std::less<>> m_notedStopHits;
+	std::unordered_map<const char *, std::map<std::string, unsigned, std::less<>>::iterator> m_notedStopFast; // noteStop's fast path (by text address)
+	static constexpr size_t kNotedStopFastMax = 4096;                                                         // the fast path's size bound
 	std::vector<RadarEventNotice> m_radarEventNotices; ///< lane BACKLOG3: oldest first, at most kRadarEventNotices
 	std::vector<BeaconNotice> m_beaconNotices; ///< lane CHAT-1: oldest first, at most kBeaconNotices
 	std::uint32_t m_beaconSeq = 0;

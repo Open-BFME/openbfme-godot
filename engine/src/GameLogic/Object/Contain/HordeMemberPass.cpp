@@ -942,8 +942,10 @@ void HordeContain::moveHub(Object &member, const Coord3D &destIn, float orientat
 		adjusted = SimMath::subf32(SimMath::addf32(remaining, distance), k->speed());
 	}
 	// block 8: the snap threshold
-	float t = l->getMaxAcceleration(host);
-	const float speedLimit = SimMath::mulf32(l->getMaxSpeedForCondition(host), kSpeedFraction);
+	// performance (the same values): the locomotor's speed for the condition is computed once for both (getMaxAcceleration computed it again)
+	const float maxSpeed = l->getMaxSpeedForCondition(host);
+	float t = l->getMaxAccelerationForSpeed(maxSpeed);
+	const float speedLimit = SimMath::mulf32(maxSpeed, kSpeedFraction);
 	if (speedLimit < t)
 	{
 		t = speedLimit;

@@ -3,7 +3,7 @@
 // LivingWorldLogic's save and load (lane WOTR2 milestone 3): the strategic game as the snapshot block "obfme:LivingWorld" (LivingWorldLogic.h).
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; the BFME2 decomp's byte-matched sources are tier A for each):
-//   * the snapshot CHUNK_LivingWorldLogic is RW 0x6BC653 (BFME2 0x6BC653's twin, LivingWorldLogicSnapshotRva002BC653.cpp, version 6): the selected
+//   * the snapshot CHUNK_LivingWorldLogic is RW 0x6BC653 (BFME2 0x6BC653's twin, LivingWorldLogic_xfer.cpp, version 6): the selected
 //     army / building / build plot / spawn / player ids, then the game's save RW 0x6BB5DD (version 3) or its load RW 0x6BBA45, the campaign manager,
 //     the flag + 0xA9, the turn phase object, GameLogic's part, the LivingWorldManager and the LivingWorld object, the counter + 0xF0.
 //   * the game's shared state RW 0x6BBD55 (LivingWorldLogicXferStateRva002BB2B7.cpp, version 7): the region id + 0xB8, the planning flags, the game
