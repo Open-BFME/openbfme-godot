@@ -804,7 +804,9 @@ void GameLogic::prepareWeaponStatusWork(const std::vector<UpdateModule *> &vec)
 	constexpr size_t kModulesPerJob = 256;
 	m_weaponStatusWork.assign(vec.size(), WeaponStatusWork{});
 	std::atomic<bool> other{ false };
-	JobSystem::logic().parallelFor(vec.size(), kModulesPerJob, [this, &vec, &other](size_t, size_t begin, size_t end) {
+	std::atomic<unsigned> filled{ 0 }; // entries the pass will apply (the #192 review: a frame whose modules all sleep is not a pooled one)
+	JobSystem::logic().parallelFor(vec.size(), kModulesPerJob, [this, &vec, &other, &filled](size_t, size_t begin, size_t end) {
+		unsigned mine = 0;
 		for (size_t i = begin; i < end; ++i)
 		{
 			UpdateModule *u = vec[i];
@@ -828,14 +830,16 @@ void GameLogic::prepareWeaponStatusWork(const std::vector<UpdateModule *> &vec)
 			weapons->computeWeaponStatusConditions(work.cond);
 			work.weapons = weapons;
 			work.module = u;
+			++mine;
 		}
+		filled.fetch_add(mine, std::memory_order_relaxed);
 	});
 	if (other.load(std::memory_order_relaxed))
 	{
 		m_weaponStatusWork.assign(vec.size(), WeaponStatusWork{});
 		++m_weaponStatusSerialFrames;
 	}
-	else if (!vec.empty())
+	else if (filled.load(std::memory_order_relaxed) > 0)
 	{
 		++m_weaponStatusPooledFrames;
 	}

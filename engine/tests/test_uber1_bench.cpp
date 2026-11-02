@@ -221,6 +221,7 @@ void runBattle(ArchiveFileSystem &fs, RetailObjectWorld &world, const MapObjectO
 		out.battalionsStart = c.battalions;
 	}
 	double troopsSum = 0.0;
+	const GameLogic::Report before = logic.report(); // lane PERF-WS: the counts over the measured frames alone (before the timers and the sampler's window)
 	// OPENBFME_SAMPLER_FLAG=<file>: the file exists while the measured frames run (a sampling profiler records only then, not the warm-up)
 	const char *samplerFlag = std::getenv("OPENBFME_SAMPLER_FLAG");
 	if (samplerFlag)
@@ -231,7 +232,6 @@ void runBattle(ArchiveFileSystem &fs, RetailObjectWorld &world, const MapObjectO
 		}
 	}
 	const double cpu0 = processCpuMs(), wall0 = wallMs();
-	const GameLogic::Report before = logic.report(); // lane PERF-WS: the counts over the measured frames alone
 	for (int f = 0; f < frames; ++f)
 	{
 		const double t0 = wallMs(), c0 = perfbench::nowMs();
@@ -270,8 +270,8 @@ void runBattle(ArchiveFileSystem &fs, RetailObjectWorld &world, const MapObjectO
 	out.troopsMean = frames > 0 ? troopsSum / (double)frames : 0.0;
 	out.framesWallMs = wallMs() - wall0;
 	out.processCpuMs = cpu0 >= 0.0 ? processCpuMs() - cpu0 : -1.0;
+	const GameLogic::Report after = logic.report(); // after the timers stopped
 	out.objectsEnd = countObjects(logic);
-	const GameLogic::Report after = logic.report();
 	out.weaponStatusSerialFrames = after.weaponStatusSerialFrames - before.weaponStatusSerialFrames;
 	out.weaponStatusPooledFrames = after.weaponStatusPooledFrames - before.weaponStatusPooledFrames;
 }

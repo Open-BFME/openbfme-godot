@@ -934,7 +934,7 @@ public:
 		unsigned long long unportedUpdateCalls = 0;
 		unsigned long long creationsWithoutDispatch = 0;
 		unsigned long long weaponStatusSerialFrames = 0;      ///< lane PERF-WS: frames whose final list held an awake module that is no WeaponStatusHelper (the pass ran serially)
-		unsigned long long weaponStatusPooledFrames = 0;      ///< lane PERF-WS: frames whose final list's conditions were computed on the pool and applied by the pass
+		unsigned long long weaponStatusPooledFrames = 0;      ///< lane PERF-WS: frames whose pre-pass filled at least one entry on the pool for the pass to apply
 		std::vector<std::string> errors;                      ///< problems nothing explains (a bad KindOf line, ...), never dropped
 		std::vector<std::string> stops;                       ///< the stop lines that apply to this run
 	};
@@ -1099,7 +1099,7 @@ private:
 	};
 	std::vector<WeaponStatusWork> m_weaponStatusWork;
 	unsigned long long m_weaponStatusSerialFrames = 0; ///< lane PERF-WS: frames the pre-pass was discarded (Report::weaponStatusSerialFrames)
-	unsigned long long m_weaponStatusPooledFrames = 0; ///< lane PERF-WS: frames the pre-pass filled the entries the pass applied (Report::weaponStatusPooledFrames)
+	unsigned long long m_weaponStatusPooledFrames = 0; ///< lane PERF-WS: frames the pre-pass filled at least one entry (Report::weaponStatusPooledFrames)
 	std::vector<UpdateModule *> m_sleeping;
 	UpdateModule *m_current = nullptr;
 
