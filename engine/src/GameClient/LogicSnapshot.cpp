@@ -24,10 +24,16 @@
 #include "GameLogic/System/InvisibilityManager.h"
 
 #include "Common/PlayerList.h"
+#include "Common/JobSystem.h"           // lane PERF-SNAP: the records on the logic job pool
+#include "Common/Thing/ThingTemplate.h" // lane PERF-SNAP: the templates' final overrides, warmed in the caches before the pool reads them
+#include "GameLogic/AI/AIWorld.h"       // lane PERF-SNAP: the AIWorld whose movement info the radar's bounding radii read
+#include "GameLogic/Combat/CombatQueries.h" // lane PERF-SNAP: the bounding radii warmed before the pool reads them
+#include "GameLogic/Object/PristinePose.h"  // lane PERF-SNAP: the canonical floating-point environment for the pool's build
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 CellShroudStatus ShroudView::cellStatus(int cx, int cy) const
 {
@@ -70,6 +76,9 @@ const ObjectSnapshot *LogicSnapshot::find(ObjectID id) const
 
 namespace
 {
+// lane PERF-SNAP: the record pass's grain, 256 records a chunk (a record is about 300 bytes of reads; 30,000 records make about 120 chunks)
+constexpr size_t kRecordGrain = 256;
+
 // RW 0x68B34C: the current locomotor's speed per logic frame (AI +0x260, its current locomotor +0x1F0, +0x40), 0 (RW 0xC1B594) when there is none or it is not
 // positive. Client read of the completed state (the snapshot is built between frames)
 float locomotorSpeedOf(const Object &o)
@@ -111,6 +120,9 @@ bool sameTransform(const ObjectSnapshot &a, const ObjectSnapshot &b)
 std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, const LogicSnapshot *previous, bool hashed, std::uint32_t stateHash, int viewPlayer,
 	bool teamVision)
 {
+	// lane PERF-SNAP: the records are filled on the logic job pool, which checks the dispatching thread's floating-point environment; the canonical
+	// one for this build, the caller's restored after it (the client's view switch and the tests call from the main thread)
+	const PristinePose::CanonicalEnvironment fp;
 	static const int kActivelyBeingConstructed = ModelCondition::indexOf("ACTIVELY_BEING_CONSTRUCTED");
 	auto snap = std::make_shared<LogicSnapshot>();
 	snap->frame = logic.getFrame();
@@ -122,7 +134,6 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 	snap->globalWeather = logic.weather().weather(); // lane WEATHER-1: TheGlobalWeatherSystem + 0x10, what the client weather reads (WeatherClient)
 	snap->hashed = hashed;
 	snap->stateHash = stateHash;
-	snap->objects.reserve(previous ? previous->objects.size() + 16 : 256);
 	// the local player's shroud (merge with VIS-1): a new copy when its version moved
 	ShroudManager *sm = logic.shroud();
 	const Player *local = logic.players().getLocalPlayer();
@@ -234,10 +245,41 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 		snap->breeze.breezeVersion = b.breezeVersion;
 	}
 	snap->endGame = EndGameView::build(logic, previous ? previous->endGame : std::shared_ptr<const EndGameView>());
+	// lane PERF-SNAP: the records are filled on the logic job pool, one object per slot in list order (the sort below sees the order the serial
+	// loop made). Every per-object read is a read of the frame's state except the caches a first read fills, which are filled here, on this
+	// thread, so the pool only finds: the template's info (GameLogic::templateInfo, through Radar::captureObject) for every object, and for the
+	// radar's WALL_SEGMENT and COMMANDCENTER shapes, exactly where captureObject reads a bounding radius, CombatQueries::boundingCircleRadius
+	// (the template's movement info, its geometry source's, and the object's own geometry copy), as ShroudManager::update warms its lookers
+	// (review of #62). Nothing else is made: the movement info of a template the simulation never asked for would add its errors to the
+	// AIWorld's. The pool's workers run the simulation's floating-point environment, as this thread does
+	static const int kStructure = ObjectTemplateInfoBuilder::kindOfIndex("STRUCTURE");
+	static const int kPhantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
+	static const int kWallSegment = ObjectTemplateInfoBuilder::kindOfIndex("WALL_SEGMENT");
+	static const int kCommandCenter = ObjectTemplateInfoBuilder::kindOfIndex("COMMANDCENTER");
+	std::vector<Object *> list;
+	list.reserve(previous ? previous->objects.size() + 16 : 256);
+	AIWorld *aiWorld = logic.aiWorld();
 	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
 	{
-		snap->objects.emplace_back();
-		ObjectSnapshot &s = snap->objects.back();
+		list.push_back(o);
+		const ThingTemplate *tt = o->getTemplate();
+		if (!tt)
+		{
+			continue;
+		}
+		const KindOfMaskType &kind = logic.templateInfo(tt->getFinalOverride()).kindOf;
+		const bool radarShape = (kWallSegment >= 0 && MaskTest(kind, (unsigned)kWallSegment)) || (kCommandCenter >= 0 && MaskTest(kind, (unsigned)kCommandCenter));
+		if (aiWorld && radarShape)
+		{
+			// every object captureObject might read a radius for (it skips some of them: dead, NOT_ON_RADAR, a neutral structure, a HERO; the superset is
+			// harmless, the movement info is the template's); the object's own geometry copy is per object (Object::ownPathfindGeometry)
+			CombatQueries::boundingCircleRadius(*o);
+		}
+	}
+	snap->objects.resize(list.size());
+	const auto fill = [&](size_t index) {
+		Object *o = list[index];
+		ObjectSnapshot &s = snap->objects[index];
 		s.id = o->getID();
 		s.tmpl = o->getTemplate();
 		std::memcpy(s.basis, o->getBasis(), sizeof(s.basis));
@@ -294,7 +336,6 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 			s.ownerColor = owner->getPlayerColor();
 			s.radarBlip = !o->isDestroyed() && !o->getContainedBy() && owner->hasTeamColor() && HudObjects::isSelectable(*o);
 		}
-		static const int kStructure = ObjectTemplateInfoBuilder::kindOfIndex("STRUCTURE");
 		s.structure = kStructure >= 0 && o->isKindOf((unsigned)kStructure);
 		Radar::captureObject(logic, *o, local, s.radar); // lane RADAR-1
 		if (shroudLocal >= 0)
@@ -309,7 +350,6 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 			s.shroudRecord = sm->hasRecord(*o); // lane VISUAL-2 r2
 		}
 		s.drawableHidden = o->isDrawableHidden(); // lane GARRISON-1
-		static const int kPhantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
 		s.phantomStructure = kPhantom >= 0 && o->testStatus((unsigned)kPhantom); // lane FBSIM-1
 		if (s.phantomStructure && o->getControllingPlayer() != logic.players().getLocalPlayer())
 		{
@@ -345,7 +385,13 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 				s.buildFrames = BuildAssistant::calcTimeToBuild(*o->getTemplate(), owner, nullptr, -1, logic.productionSettings(), logic); // RW 0x68BD71
 			}
 		}
-	}
+	};
+	JobSystem::logic().parallelFor(list.size(), kRecordGrain, [&fill](size_t, size_t begin, size_t end) {
+		for (size_t i = begin; i < end; ++i)
+		{
+			fill(i);
+		}
+	});
 	// lane PERF-HD: the records by id. stable_sort copied every record (about 300 bytes; 11,700 of them in a big battle) through its buffer on every merge
 	// pass, every frame; ids are unique, so sorting (id, index) pairs and moving each record once gives the same order. Nothing moves when it is sorted.
 	const auto byId = [](const ObjectSnapshot &a, const ObjectSnapshot &b) { return a.id < b.id; };
@@ -387,10 +433,13 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 		}
 	}
 	// RW 0x69355D: the frame of the last transform change (a new object counts as changed now)
-	for (ObjectSnapshot &s : snap->objects)
-	{
-		const ObjectSnapshot *before = previous ? previous->find(s.id) : nullptr;
-		s.lastMovedFrame = (before && sameTransform(*before, s)) ? before->lastMovedFrame : snap->frame;
-	}
+	JobSystem::logic().parallelFor(snap->objects.size(), kRecordGrain, [&snap, previous](size_t, size_t begin, size_t end) {
+		for (size_t i = begin; i < end; ++i) // lane PERF-SNAP: each record reads the previous snapshot (immutable) and writes its own frame
+		{
+			ObjectSnapshot &s = snap->objects[i];
+			const ObjectSnapshot *before = previous ? previous->find(s.id) : nullptr;
+			s.lastMovedFrame = (before && sameTransform(*before, s)) ? before->lastMovedFrame : snap->frame;
+		}
+	});
 	return snap;
 }
