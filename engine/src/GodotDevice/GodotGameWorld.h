@@ -970,7 +970,7 @@ private:
 	void adaptClientPool(bool threaded);
 	void restoreClientPool();
 	std::unique_ptr<ClientPoolSizer> m_clientPool;
-	bool m_clientPoolAdapt = !envSet("OPENBFME_CLIENT_THREADS") && !envSet("OPENBFME_CLIENT_POOL_FIXED");
+	bool m_clientPoolAdapt = !envSet("OPENBFME_CLIENT_THREADS") && std::getenv("OPENBFME_CLIENT_POOL_FIXED") == nullptr; // the switch: any value, even none
 	static bool envSet(const char *name) // set and not empty: an empty OPENBFME_CLIENT_THREADS is unset to JobSystem too (its envThreads)
 	{
 		const char *v = std::getenv(name);
