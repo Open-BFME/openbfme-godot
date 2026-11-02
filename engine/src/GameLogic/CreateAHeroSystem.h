@@ -227,6 +227,7 @@ public:
 	// record: 0x2FF). Needs TheCreateAHeroSystem.
 	void applyBuilder(Player &player, const CreateAHeroHero &hero, Object &obj);
 	void buildCommandSet(Object &obj, int rank);                  ///< RW 0x809FFB (level grant, revive)
+	void finishLoad(); ///< native snapshot: rebuild the saved dynamic command-set definition, preserving the exact override
 
 	// the per-group choices of a record (RW 0x80C3AB, + 0x74), computed by onCreated
 	const std::vector<std::pair<std::string, std::vector<int>>> &choicesOf(std::uint32_t objectID) const;
@@ -246,6 +247,7 @@ public:
 
 private:
 	void apply(CreateAHeroHero &hero, Object &obj, std::uint32_t flags); ///< RW 0x80ACE3
+	void buildCommandSetNamed(Object &obj, const CreateAHeroHero &hero, int rank, const std::string &name);
 	void buildLevels(CreateAHeroHero &hero, Object &obj);                 ///< RW 0x80AA38
 	bool powerLevel(const CreateAHeroHero &hero, int power, const std::string &level, const std::string &newLevel, const std::string &target, Object &obj); ///< RW 0x80A190
 	int powerCost(const CreateAHeroHero &hero) const;             ///< RW 0x809CA6

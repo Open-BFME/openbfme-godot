@@ -920,6 +920,16 @@ void CreateAHeroGame::apply(CreateAHeroHero &hero, Object &obj, std::uint32_t fl
 	hero.flags &= ~(8u | 0x200u);
 }
 
+namespace
+{
+std::string heroCommandSetName(const Object &obj, const CreateAHeroHero &hero, int rank)
+{
+	char name[512];
+	std::snprintf(name, sizeof(name), "CommandSet_%s_%s_rank_%d", obj.getName().c_str(), hero.uniqueID.c_str(), rank); // RW 0xC4F270
+	return name;
+}
+} // namespace
+
 void CreateAHeroGame::buildCommandSet(Object &obj, int rank)
 {
 	CreateAHeroHero *hero = heroOfObject(obj.getID()); // RW 0x619562
@@ -927,12 +937,15 @@ void CreateAHeroGame::buildCommandSet(Object &obj, int rank)
 	{
 		return;
 	}
+	buildCommandSetNamed(obj, *hero, rank, heroCommandSetName(obj, *hero, rank));
+}
+
+void CreateAHeroGame::buildCommandSetNamed(Object &obj, const CreateAHeroHero &hero, int rank, const std::string &name)
+{
 	if (!TheCommandStore || !TheCreateAHeroSystem)
 	{
 		throw std::logic_error("CreateAHeroGame::buildCommandSet: the command store or TheCreateAHeroSystem is not installed");
 	}
-	char name[512];
-	std::snprintf(name, sizeof(name), "CommandSet_%s_%s_rank_%d", obj.getName().c_str(), hero->uniqueID.c_str(), rank); // RW 0xC4F270
 	CommandSet *set = TheCommandStore->newDynamicCommandSet(name); // RW 0x72028B(name, 1), cleared by RW 0x80C8D2
 	if (const CommandSet *tmpl = TheCommandStore->findCommandSet(TheCreateAHeroSystem->commandSetTemplate)) // RW 0x71EFA2
 	{
@@ -947,7 +960,7 @@ void CreateAHeroGame::buildCommandSet(Object &obj, int rank)
 	for (int slot = 0; slot < CommandSet::MAX_BUTTONS; ++slot)
 	{
 		bool found = false;
-		for (const CreateAHeroPower &p : hero->powers)
+		for (const CreateAHeroPower &p : hero.powers)
 		{
 			if (p.commandButton.empty() || p.buttonIndex != (std::uint32_t)slot)
 			{
@@ -973,6 +986,48 @@ void CreateAHeroGame::buildCommandSet(Object &obj, int rank)
 	}
 	obj.setCommandSetOverride(name); // + 0x438
 	++m_stats.commandSets;
+}
+
+// Both editions, native snapshots: the command-set name is saved and hashed, but its dynamic definition is not.
+// Recreate only our own named set after the hero records and objects have loaded. A pending level grant can leave
+// the saved command set at an earlier rank than the tracker; never grant that level or replace a script/static set.
+void CreateAHeroGame::finishLoad()
+{
+	for (const auto &entry : m_heroes)
+	{
+		const CreateAHeroHero &hero = entry.second;
+		Object *obj = m_logic.findObjectByID(hero.objectID);
+		if (!obj || !obj->isKindOfName("CREATE_A_HERO") || obj->getCommandSetOverride().empty())
+		{
+			continue; // a record may name an object already gone (SAVE-4d)
+		}
+		const std::string savedName = obj->getCommandSetOverride();
+		const CommandSet *existing = TheCommandStore ? TheCommandStore->findCommandSet(savedName) : nullptr;
+		if (existing && !existing->m_dynamic)
+		{
+			continue; // a static/script-selected definition remains authoritative, even with a generated-looking name
+		}
+		const ExperienceTracker *tracker = obj->getExperienceTracker();
+		const auto *levels = tracker && TheExperienceLevelSystem ? TheExperienceLevelSystem->levelsFor(tracker->levelTargetName()) : nullptr;
+		if (!levels)
+		{
+			continue;
+		}
+		for (const ExperienceLevelTemplate *level : *levels)
+		{
+			const int rank = level->getFinal()->m_rank;
+			// Object::setName does not rename a previously built command set. Permit its historical object-name
+			// component, but require this hero's complete unique ID and an exact rank from its reconstructed chain.
+			const std::string prefix = "CommandSet_";
+			const std::string suffix = "_" + hero.uniqueID + "_rank_" + std::to_string(rank);
+			if (savedName.size() >= prefix.size() + suffix.size() && savedName.compare(0, prefix.size(), prefix) == 0 &&
+				savedName.compare(savedName.size() - suffix.size(), suffix.size(), suffix) == 0)
+			{
+				buildCommandSetNamed(*obj, hero, rank, savedName); // RW 0x809FFB's existing slot selection, exact saved name; no rename or level grant
+				break;
+			}
+		}
+	}
 }
 
 // RW 0x75CD7A: a power button's cost at a level
