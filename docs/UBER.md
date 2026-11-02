@@ -309,6 +309,27 @@ runs at its own rate (here the 10k soldiers' CPU work bounds it) while the
 logic frames take 200-370 ms. Making the logic finish inside its tick is
 Uber's other half.
 
+**PERF-CLIENT: the client pool while the logic is behind.** Both job pools
+default to every hardware thread, so a late worker's single-threaded passes
+compete with the client's slices for the cores. After 3 worker frames in a
+row over the logic frame's budget (200 ms) the client pool keeps a quarter
+of the hardware threads (at least 2); after 5 worker frames in a row under
+150 ms it has every thread again, and it has every thread again while the
+game is paused and whenever it ends, for the menu and the next load
+(`GameClient/ClientPoolPolicy.h`,
+`GameWorld::adaptClientPool`; `get_frame_timings` `client_pool_behind`).
+Measured on an 8-core / 16-thread PC, 30,000 troops, Uber, 1600x900, vsync
+off, 30 s, twice each: with the rule 2.53 and 2.50 logic frames a second
+against 2.17 and 2.20 with the pool fixed at 16 (+14 to +17 %), for 31-34
+render frames a second against 39-41; a client pool fixed at 4 gave 2.47
+and 2.46 against 2.03 and 2.03 in an earlier pair of runs; the logic pool's
+size (8, 12 or 16) makes no difference; the shrunk size on 8 or 4 hardware
+threads (2) is the rule's, not measured. At 10,000 troops the logic keeps its
+clock, the pool stays full and both runs are the same (5.0 logic frames a
+second, 121-123 fps). `OPENBFME_CLIENT_THREADS` (an explicit size)
+or `OPENBFME_CLIENT_POOL_FIXED` turns the rule off. Nothing of the simulation
+changes.
+
 ## The budget at 40,000 units
 
 **Logic.** On the reference PC the logic tick must finish in its 200 ms (5 fps

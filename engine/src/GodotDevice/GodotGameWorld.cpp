@@ -551,6 +551,7 @@ GameWorld::~GameWorld()
 	m_spellStore.reset(); // lane SPELL-2 (review r1): the spell book screens hold the game's player and templates: they go before it
 	m_spellBar.reset();
 	m_cahCameraOffsetValid = false;
+	restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 	m_game.reset();
 	m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
@@ -648,6 +649,7 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 		m_spellStore.reset(); // lane SPELL-2 (review r1): the spell book screens hold the game's player and templates: they go before it
 		m_spellBar.reset();
 		m_cahCameraOffsetValid = false;
+		restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 		m_game.reset();
 		m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
@@ -764,6 +766,7 @@ void GameWorld::clear_scene()
 	m_spellStore.reset(); // lane SPELL-2 (review r1): the spell book screens hold the game's player and templates: they go before it
 	m_spellBar.reset();
 	m_cahCameraOffsetValid = false;
+	restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 	m_game.reset(); // the objects (and through them the drawables) first
 	m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
@@ -1244,6 +1247,7 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 		m_spellStore.reset(); // lane SPELL-2 (review r1): the spell book screens hold the game's player and templates: they go before it
 		m_spellBar.reset();
 		m_cahCameraOffsetValid = false;
+		restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 		m_game.reset();
 		return fail(error);
 	}
@@ -2334,6 +2338,10 @@ void GameWorld::advance(double delta)
 	if (m_paused)
 	{
 		// the simulation and the animations stand still; the streak ribbons still face the camera of this frame (the camera moves while paused)
+		if (m_clientPool)
+		{
+			m_clientPool->restore(); // lane PERF-CLIENT: no logic frame runs while paused, so the paused view has every thread
+		}
 		if (m_netSession)
 		{
 			// SMOOTH-1 (review r4): a network game keeps its transport and protocol pumped while paused (a presentation-only advance: no batch runs)
@@ -2417,6 +2425,7 @@ void GameWorld::advance(double delta)
 	// Single-threaded, the frames run inside advance and this work follows them, as before.
 	const bool threaded = m_game->logicThread();
 	m_fxPendingDt = timing::sumMs(m_fxPendingDt, dt); // seconds: a plain sum through the timing facade (the audited file's float rule)
+	adaptClientPool(threaded); // lane PERF-CLIENT: between dispatches (the main thread's)
 	if (threaded)
 	{
 		heldClientWork();
@@ -4093,7 +4102,8 @@ Dictionary GameWorld::get_frame_timings() const
 	t["views_ms"] = m_lastViewsMs;
 	t["views_local"] = (int64_t)m_lastViewsLocal;   // lane PERF-CLIENT: the drawables the last refresh_views refreshed on the client job pool
 	t["views_serial"] = (int64_t)m_lastViewsSerial; // and on the main thread
-	t["client_threads"] = (int64_t)JobSystem::client().threadCount(); // the client job pool's threads, the caller included (1: everything inline)
+	t["client_threads"] = (int64_t)JobSystem::client().threadCount(); // the client job pool's threads now (lane PERF-CLIENT may have shrunk it), the
+	                                                                  // caller included (1: everything inline)
 	t["fx_ms"] = m_lastFxMs;
 	t["new_models"] = (int64_t)m_lastNewModels;
 	t["new_model_ms"] = m_lastNewModelMs;
@@ -4105,6 +4115,9 @@ Dictionary GameWorld::get_frame_timings() const
 	{
 		t["presented_alpha"] = m_game->presentedAlpha();       // SMOOTH-1: after the presentation delay and the late-frame hold
 		t["worker_frame_ms"] = m_game->lastWorkerFrameMs();     // the logic worker's last frame
+		// lane PERF-CLIENT: this world's policy holds the logic worker behind its clock (the pool is shrunk for it unless its shrunk size is the full
+		// one, or another world's sizer restored it)
+		t["client_pool_behind"] = m_clientPool != nullptr && m_clientPool->policy().behind();
 		t["held_presentations"] = (int64_t)m_game->heldPresentations();
 		t["logic_waits"] = (int64_t)m_game->blockingWaits();     // lane PATHPERF-1: render-side waits that blocked on the worker (cumulative)
 		const std::shared_ptr<const LogicSnapshot> shown = m_game->presentedSnapshot();
@@ -4167,6 +4180,39 @@ void GameWorld::set_render_interpolation(bool enabled)
 bool GameWorld::get_render_interpolation() const
 {
 	return m_renderInterpolation;
+}
+
+// lane PERF-CLIENT: while the logic worker is behind its clock (its last frames over the logic frame's budget), the client job pool keeps a
+// quarter of the hardware threads (at least 2) so the worker's single-threaded passes are not competing with the client's slices for the
+// cores; it grows back once the worker is well under its clock again, and while the game is paused (ClientPoolPolicy.h has the rule and
+// the numbers). The full size is the hardware's:
+// the rule is off whenever OPENBFME_CLIENT_THREADS names another. The pool is resized between dispatches, on this thread, which owns every
+// client dispatch. Nothing of the simulation changes: the pool's size only decides which thread runs a slice
+void GameWorld::adaptClientPool(bool threaded)
+{
+	if (!m_clientPoolAdapt)
+	{
+		return;
+	}
+	if (!m_clientPool)
+	{
+		const int full = JobSystem::defaultThreadCount();
+		m_clientPool = std::make_unique<ClientPoolSizer>(JobSystem::client(), full, ClientPoolPolicy::behindThreadsFor(full));
+	}
+	if (!threaded)
+	{
+		m_clientPool->restore(); // the frames run inside advance: no worker to make room for
+		return;
+	}
+	double ms = 0.0;
+	const unsigned long long completed = m_game->lastWorkerFrame(ms);
+	m_clientPool->apply(completed, ms);
+}
+
+// the game is gone (or about to be): the pool has its full size for the menu and the next load, whose parallel loaders run on it
+void GameWorld::restoreClientPool()
+{
+	m_clientPool.reset();
 }
 
 void GameWorld::set_perf3_client(bool enabled)

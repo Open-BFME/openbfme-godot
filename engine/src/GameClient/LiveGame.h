@@ -352,6 +352,13 @@ public:
 		const std::unique_lock<std::mutex> lock = lockPublication("lastWorkerFrameMs"); // the worker writes it under the same mutex (review r2)
 		return m_lastWorkerFrameMs;
 	}
+	// lane PERF-CLIENT: the worker's completed frames so far and the last one's wall time, read together (the client pool's size follows them)
+	unsigned long long lastWorkerFrame(double &ms) const
+	{
+		const std::unique_lock<std::mutex> lock = lockPublication("lastWorkerFrame");
+		ms = m_lastWorkerFrameMs;
+		return m_workerFrames;
+	}
 	unsigned long long droppedFrames() const { return m_droppedFrames; }
 
 	// lane SCRIPT-1: the script engine's client requests (camera, UI, audio ...) published with the frames, in execution order (render side; taken once)
@@ -511,6 +518,7 @@ private:
 	bool m_stop = false;                  ///< guarded
 	std::exception_ptr m_workerError;     ///< guarded
 	double m_lastWorkerFrameMs = 0.0;     ///< guarded
+	unsigned long long m_workerFrames = 0; ///< guarded: lane PERF-CLIENT, the worker's completed frames
 	std::thread m_worker;
 	std::atomic<std::thread::id> m_workerId{};
 	bool m_threaded = false;

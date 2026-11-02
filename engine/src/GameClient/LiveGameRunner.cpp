@@ -629,6 +629,7 @@ void LiveGame::workerLoop()
 			std::lock_guard<std::mutex> lock(m_pubMutex);
 			m_running = false;
 			m_lastWorkerFrameMs = secondsSince(t0) * 1000.0;
+			++m_workerFrames; // lane PERF-CLIENT: a completed worker frame
 		}
 		m_pubCv.notify_all();
 	}
