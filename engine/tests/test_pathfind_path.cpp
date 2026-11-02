@@ -462,6 +462,28 @@ TEST_CASE("path: rebuild with a locomotor whose bend is blocked falls back to an
 	CHECK(std::fabs(std::sqrt(dx * dx + dy * dy) - 5.0f) <= 0.01f); // tolerance: the arc's trigonometry (S-167)
 	CHECK(n->getPosition()->x > 45.0f);                                // tolerance: east of the start, the first way's side
 	CHECK(n->getPosition()->y > 5.0f);                                 // tolerance: north of it, the turn
+	// a bend past a right angle may go the other way round (RW 0x766F7F refuses the other way under a right angle): facing north-west at (45, 45)
+	// with the leg east, the natural turn is a right turn about (52.07, 52.07) whose arc crosses the structure moved onto it; the other way is a
+	// left turn about (37.93, 37.93), clear, so the bend is drawn there with the full radius 10 (not the radius-5 fallback)
+	rig.pf.removeObjectFromPathfindMap(*block);
+	block->pos = pt(58, 60);
+	rig.pf.addObjectToPathfindMap(*block);
+	facing.x = -0.70710677f;
+	facing.y = 0.70710677f;
+	rig.obj.pos = pt(45, 45);
+	std::unique_ptr<Path> o = rig.searched(cellsAlong({ pt(45, 45), pt(125, 45), pt(125, 125) }), { 0, 8, 16 });
+	o->rebuild(rig.pf, &rig.obj, loco, facing, loco.validSurfaces, false);
+	CHECK(rawEqualsOptimised(*o));
+	const PathNode *w = o->getFirstNode()->getNext();
+	REQUIRE(w != nullptr);
+	{
+		const float dx = w->getPosition()->x - 37.928932f, dy = w->getPosition()->y - 37.928932f;
+		CHECK(std::fabs(std::sqrt(dx * dx + dy * dy) - 10.0f) <= 0.01f); // tolerance: the arc's trigonometry (S-167)
+		CHECK(w->getPosition()->x < 45.0f);                                 // tolerance: west of the start (the arc leaves along the facing, north-west); the right turn's first point lies east
+	}
+	facing.x = 0.0f;
+	facing.y = 1.0f;
+	rig.obj.pos = pt(45, 5);
 	// without the structure the same bend is drawn with the full radius about (55, 5)
 	std::unique_ptr<Path> q = rig.searched(cellsAlong({ pt(45, 5), pt(125, 5), pt(125, 85) }), { 0, 8, 16 });
 	rig.pf.removeObjectFromPathfindMap(*block);

@@ -223,6 +223,7 @@ private:
 		bool noCornerAfter; // RW + 8: no corner arc after the bend
 	};
 	void appendCopy(const PathNode *src);
+	void appendPoint(const Coord3D *pos, PathfindLayerEnum layer); // an arc point at the tail
 	void roundCorner(PathNode *prev, PathNode *cur, PathNode *next, float radius);
 	bool bendFirstSegment(Pathfinder &pf, const PathfindObject *obj, const PathfindLocomotorInfo &loco, PathNode *node, const RebuildVec &input, BendOptions &opt,
 		unsigned surfaces, float maxAngle, bool blocked);

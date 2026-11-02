@@ -178,6 +178,32 @@ int Path::arcSegments(float angle, float radius)
 
 // RW 0x766603 (decomp Path::rva003649B1): a copy of `src` (position, layer, waypoint id) appended; on an optimised path a copy at the tail's x / y
 // is dropped and the tail's optimised link is the copy
+// an arc point: a node at `pos` on `layer` with no waypoint id, linked at the tail as appendCopy links (appendNode walks from the head, so the arcs of
+// a long chain would cost its square); a point at the tail's x / y is dropped on an optimised path (RW 0x665429)
+void Path::appendPoint(const Coord3D *pos, PathfindLayerEnum layer)
+{
+	if (m_isOptimized && m_pathTail && pos->x == m_pathTail->getPosition()->x && pos->y == m_pathTail->getPosition()->y)
+	{
+		return;
+	}
+	PathNode *node = new PathNode();
+	node->setPosition(pos);
+	node->setLayer(layer);
+	if (m_pathTail)
+	{
+		m_pathTail->append(node);
+	}
+	else
+	{
+		m_path = node;
+	}
+	if (m_isOptimized && m_pathTail)
+	{
+		m_pathTail->setNextOptimized(node);
+	}
+	m_pathTail = node;
+}
+
 void Path::appendCopy(const PathNode *src)
 {
 	const Coord3D *pos = src->getPosition();
@@ -278,7 +304,7 @@ void Path::roundCorner(PathNode *prev, PathNode *cur, PathNode *next, float radi
 		pt.x = q.x;
 		pt.y = q.y;
 		pt.z = curPos.z;
-		appendNode(&pt, cur->getLayer());
+		appendPoint(&pt, cur->getLayer());
 		return pt;
 	};
 	if (turnLeft)
@@ -447,7 +473,7 @@ bool Path::bendFirstSegment(Pathfinder &pf, const PathfindObject *obj, const Pat
 		}
 		else
 		{
-			appendNode(&position, node->getLayer());
+			appendPoint(&position, node->getLayer());
 			node->setPosition(&position);
 		}
 	}
