@@ -312,7 +312,8 @@ Uber's other half.
 **PERF-CLIENT: the client pool while the logic is behind.** Both job pools
 default to every hardware thread, so a late worker's single-threaded passes
 compete with the client's slices for the cores. After 3 worker frames in a
-row over the logic frame's budget (200 ms) the client pool keeps a quarter
+row over the logic frame's budget (200 ms), counted by the worker itself as
+it completes them, the client pool keeps a quarter
 of the hardware threads (at least 2); after 5 worker frames in a row under
 150 ms it has every thread again, and it has every thread again while the
 game is paused and whenever it ends, for the menu and the next load

@@ -4115,9 +4115,9 @@ Dictionary GameWorld::get_frame_timings() const
 	{
 		t["presented_alpha"] = m_game->presentedAlpha();       // SMOOTH-1: after the presentation delay and the late-frame hold
 		t["worker_frame_ms"] = m_game->lastWorkerFrameMs();     // the logic worker's last frame
-		// lane PERF-CLIENT: this world's policy holds the logic worker behind its clock (the pool is shrunk for it unless its shrunk size is the full
-		// one, or another world's sizer restored it)
-		t["client_pool_behind"] = m_clientPool != nullptr && m_clientPool->policy().behind();
+		// lane PERF-CLIENT: the logic worker is behind its clock (the pool is shrunk for it unless its shrunk size is the full one, or another world's
+		// sizer restored it)
+		t["client_pool_behind"] = m_game->workerBehind();
 		t["held_presentations"] = (int64_t)m_game->heldPresentations();
 		t["logic_waits"] = (int64_t)m_game->blockingWaits();     // lane PATHPERF-1: render-side waits that blocked on the worker (cumulative)
 		const std::shared_ptr<const LogicSnapshot> shown = m_game->presentedSnapshot();
@@ -4182,7 +4182,7 @@ bool GameWorld::get_render_interpolation() const
 	return m_renderInterpolation;
 }
 
-// lane PERF-CLIENT: while the logic worker is behind its clock (its last frames over the logic frame's budget), the client job pool keeps a
+// lane PERF-CLIENT: while the logic worker is behind its clock (its frames over the logic frame's budget, counted by the worker itself), the client job pool keeps a
 // quarter of the hardware threads (at least 2) so the worker's single-threaded passes are not competing with the client's slices for the
 // cores; it grows back once the worker is well under its clock again, and while the game is paused (ClientPoolPolicy.h has the rule and
 // the numbers). The full size is the hardware's:
@@ -4204,9 +4204,7 @@ void GameWorld::adaptClientPool(bool threaded)
 		m_clientPool->restore(); // the frames run inside advance: no worker to make room for
 		return;
 	}
-	double ms = 0.0;
-	const unsigned long long completed = m_game->lastWorkerFrame(ms);
-	m_clientPool->apply(completed, ms);
+	m_clientPool->apply(m_game->workerBehind());
 }
 
 // the game is gone (or about to be): the pool has its full size for the menu and the next load, whose parallel loaders run on it

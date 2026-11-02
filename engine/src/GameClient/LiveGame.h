@@ -22,6 +22,7 @@
 #include "Common/SimulationProfile.h"
 #include "Common/Team.h"
 #include "GameClient/ClientEvents.h"
+#include "GameClient/ClientPoolPolicy.h"
 #include "GameClient/DrawableLaunchBones.h"
 #include "GameClient/DrawableWallMeshes.h"
 #include "GameClient/LogicSnapshot.h"
@@ -352,12 +353,12 @@ public:
 		const std::unique_lock<std::mutex> lock = lockPublication("lastWorkerFrameMs"); // the worker writes it under the same mutex (review r2)
 		return m_lastWorkerFrameMs;
 	}
-	// lane PERF-CLIENT: the worker's completed frames so far and the last one's wall time, read together (the client pool's size follows them)
-	unsigned long long lastWorkerFrame(double &ms) const
+	// lane PERF-CLIENT: whether the logic worker is behind its clock (ClientPoolPolicy, fed by the worker with every frame it completes); the client
+	// pool's size follows it. False while the logic runs on the calling thread
+	bool workerBehind() const
 	{
-		const std::unique_lock<std::mutex> lock = lockPublication("lastWorkerFrame");
-		ms = m_lastWorkerFrameMs;
-		return m_workerFrames;
+		const std::unique_lock<std::mutex> lock = lockPublication("workerBehind");
+		return m_clientPoolPolicy.behind();
 	}
 	unsigned long long droppedFrames() const { return m_droppedFrames; }
 
@@ -518,7 +519,7 @@ private:
 	bool m_stop = false;                  ///< guarded
 	std::exception_ptr m_workerError;     ///< guarded
 	double m_lastWorkerFrameMs = 0.0;     ///< guarded
-	unsigned long long m_workerFrames = 0; ///< guarded: lane PERF-CLIENT, the worker's completed frames
+	ClientPoolPolicy m_clientPoolPolicy;  ///< guarded: lane PERF-CLIENT, the worker's frames against the logic clock (reset when the worker starts)
 	std::thread m_worker;
 	std::atomic<std::thread::id> m_workerId{};
 	bool m_threaded = false;

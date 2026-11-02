@@ -970,7 +970,12 @@ private:
 	void adaptClientPool(bool threaded);
 	void restoreClientPool();
 	std::unique_ptr<ClientPoolSizer> m_clientPool;
-	bool m_clientPoolAdapt = std::getenv("OPENBFME_CLIENT_THREADS") == nullptr && std::getenv("OPENBFME_CLIENT_POOL_FIXED") == nullptr;
+	bool m_clientPoolAdapt = !envSet("OPENBFME_CLIENT_THREADS") && !envSet("OPENBFME_CLIENT_POOL_FIXED");
+	static bool envSet(const char *name) // set and not empty: an empty OPENBFME_CLIENT_THREADS is unset to JobSystem too (its envThreads)
+	{
+		const char *v = std::getenv(name);
+		return v && *v;
+	}
 	int m_lastLogicFrames = 0;
 	bool m_renderInterpolation = true; ///< SMOOTH-1: handed to every LiveGame this world makes
 	bool m_logicThreadDefault = true;  ///< SMOOTH-1: the logic worker of the next load (option logic_thread)

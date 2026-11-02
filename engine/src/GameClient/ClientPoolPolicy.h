@@ -8,15 +8,17 @@
 // its frames (the rule's own effect is in docs/UBER.md). The logic rate only matters while the logic is behind, so the pool shrinks then
 // and grows back once the worker is well under its clock again (kLeaveFrames frames in a row under recoveredMs, not merely on time).
 //
-// ClientPoolPolicy is pure: a completed worker frame (its completion count and its wall time) goes in, the thread count the pool should
-// have comes out. A render frame that sees the same completion again changes nothing: the counts are worker frames, whatever the render
-// rate. Integer milliseconds throughout, and the only floating-point operations are comparisons (GodotGameWorld.cpp is a simulation
-// source: tools/sim/sim_audit.py). ClientPoolSizer applies the policy to a pool and restores the full size when it dies, so a game that
-// ends while behind leaves the pool as it found it for the menu and the next load (the parallel loaders run on the same pool). A sizer
-// touches the pool only when the size it wants changes, so a second live world on the same pool (a parity test's two worlds, a view
-// switch's) that never shrank it never resizes it either, and two sizers do not trade sizes every frame.
-// Nothing of the simulation changes: the pool's size only decides which thread runs a client slice. Main thread only (every client
-// dispatch is the render thread's; JobSystem::setThreadCount resizes between dispatches).
+// ClientPoolPolicy is pure: the worker feeds it every frame it completes (the frame's wall time) and reads back whether the logic is
+// behind. It lives in the LiveGame and is fed on the worker thread, under the publication mutex, so every worker frame counts whatever the
+// render rate (the #194 review: a render thread sampling the worker's last frame would skip the completions between two of its advances
+// and stretch the streaks). Integer milliseconds, and the only floating-point operations are comparisons (GodotGameWorld.cpp is a
+// simulation source: tools/sim/sim_audit.py).
+// ClientPoolSizer applies the answer to a pool on the main thread (every client dispatch is the render thread's; JobSystem::setThreadCount
+// resizes between dispatches) and restores the full size when it dies, so a game that ends while behind leaves the pool as it found it
+// for the menu and the next load (the parallel loaders run on the same pool). A sizer touches the pool only when the size it wants
+// changes, so a second live world on the same pool (a parity test's two worlds, a view switch's) that never shrank it never resizes it
+// either, and two sizers do not trade sizes every frame.
+// Nothing of the simulation changes: the pool's size only decides which thread runs a client slice.
 #pragma once
 
 #include "Common/GameCommon.h"
@@ -39,24 +41,12 @@ public:
 	// the shrunk size: a quarter of the hardware threads, at least 2, never more than there are (16 -> 4, 8 -> 2, 4 -> 2, 2 -> 2, 1 -> 1)
 	static constexpr int behindThreadsFor(int hardwareThreads) { return std::min(hardwareThreads, std::max(2, hardwareThreads / 4)); }
 
-	ClientPoolPolicy(int fullThreads, int behindThreads)
-		: m_full(fullThreads), m_behind(std::min(behindThreads, fullThreads))
-	{
-	}
-
-	int fullThreads() const { return m_full; }
-	int behindThreads() const { return m_behind; }
 	bool behind() const { return m_isBehind; }
 
-	// a render frame's view of the worker: `completed` worker frames so far, the last one's wall time; the threads the pool should have now
-	int update(unsigned long long completed, double lastFrameMs)
+	// a completed worker frame of `ms` wall time; whether the logic is behind its clock after it
+	bool frame(double ms)
 	{
-		if (completed == m_seen)
-		{
-			return m_isBehind ? m_behind : m_full; // the same worker frame as last time
-		}
-		m_seen = completed;
-		if (lastFrameMs > (double)budgetMs())
+		if (ms > (double)budgetMs())
 		{
 			m_under = 0;
 			if (!m_isBehind && ++m_over >= kEnterFrames)
@@ -67,7 +57,7 @@ public:
 		else
 		{
 			m_over = 0;
-			if (m_isBehind && lastFrameMs < (double)recoveredMs())
+			if (m_isBehind && ms < (double)recoveredMs())
 			{
 				if (++m_under >= kLeaveFrames)
 				{
@@ -79,47 +69,50 @@ public:
 				m_under = 0;
 			}
 		}
-		return m_isBehind ? m_behind : m_full;
+		return m_isBehind;
 	}
 
-	// a new game, or the logic back on the calling thread: the pool's full size, the counts from the start
+	// the worker starts (a new game, the logic back from the calling thread): not behind, the counts from the start
 	void reset()
 	{
 		m_isBehind = false;
 		m_over = m_under = 0;
-		m_seen = 0;
 	}
 
 private:
-	int m_full;
-	int m_behind;
 	bool m_isBehind = false;
-	int m_over = 0;
-	int m_under = 0;
-	unsigned long long m_seen = 0;
+	int m_over = 0;  // late worker frames in a row (while not behind)
+	int m_under = 0; // recovered worker frames in a row (while behind)
 };
 
-// Applies the policy to a pool; the pool has its full size again when the sizer dies or is reset. The pool is at its full size when the
-// sizer is made (every sizer restores it); the sizer resizes only when the size it wants changes (`m_applied`), see above
+// the pool's size follows the policy's answer: `fullThreads` (the hardware's) or `behindThreads` while the logic is behind. One per live
+// game, made with it and restored when the game ends; the sizer resizes only when the size it wants changes (`m_applied`), see above
 class ClientPoolSizer
 {
 public:
 	ClientPoolSizer(JobSystem &pool, int fullThreads, int behindThreads)
-		: m_pool(pool), m_policy(fullThreads, behindThreads), m_applied(fullThreads)
+		: m_pool(pool), m_full(fullThreads), m_behind(std::min(behindThreads, fullThreads)), m_applied(fullThreads)
 	{
 	}
 	~ClientPoolSizer() { restore(); }
 	ClientPoolSizer(const ClientPoolSizer &) = delete;
 	ClientPoolSizer &operator=(const ClientPoolSizer &) = delete;
 
-	void apply(unsigned long long completed, double lastFrameMs) { set(m_policy.update(completed, lastFrameMs)); }
+	int fullThreads() const { return m_full; }
+	int behindThreads() const { return m_behind; }
+	bool behind() const { return m_isBehind; } // the answer last applied
+
+	void apply(bool behind)
+	{
+		m_isBehind = behind;
+		set(behind ? m_behind : m_full);
+	}
 	void restore()
 	{
-		m_policy.reset();
-		set(m_policy.fullThreads());
+		m_isBehind = false;
+		set(m_full);
 	}
-	bool shrunk() const { return m_pool.threadCount() < m_policy.fullThreads(); }
-	const ClientPoolPolicy &policy() const { return m_policy; }
+	bool shrunk() const { return m_pool.threadCount() < m_full; }
 
 private:
 	void set(int threads)
@@ -135,6 +128,8 @@ private:
 		}
 	}
 	JobSystem &m_pool;
-	ClientPoolPolicy m_policy;
+	int m_full;
+	int m_behind;
+	bool m_isBehind = false;
 	int m_applied; // the size this sizer last set
 };

@@ -510,6 +510,7 @@ void LiveGame::setLogicThread(bool enabled)
 			m_stop = false;
 			m_work.clear();
 			m_running = false;
+			m_clientPoolPolicy.reset(); // lane PERF-CLIENT: the counts from the worker's start
 		}
 		m_threaded = true;
 		m_worker = std::thread([this] { workerLoop(); });
@@ -629,7 +630,7 @@ void LiveGame::workerLoop()
 			std::lock_guard<std::mutex> lock(m_pubMutex);
 			m_running = false;
 			m_lastWorkerFrameMs = secondsSince(t0) * 1000.0;
-			++m_workerFrames; // lane PERF-CLIENT: a completed worker frame
+			m_clientPoolPolicy.frame(m_lastWorkerFrameMs); // lane PERF-CLIENT: every completed worker frame counts, whatever the render rate
 		}
 		m_pubCv.notify_all();
 	}
