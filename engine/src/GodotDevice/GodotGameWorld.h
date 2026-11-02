@@ -509,6 +509,8 @@ public:
 	// lane RENDERWAIT-1: the live logic may be read now without waiting (the client window is open, or the worker is idle): per-frame scripts skip their
 	// live reads otherwise; the client windows' counts and their cost to the logic (LiveGame::ClientWindowStats)
 	bool is_logic_held() const;
+	String logic_failure() const;
+	void crash_test_logic();
 	Dictionary get_client_window_stats() const;
 	void beginClientWindow(); // SceneTree process_frame
 	void endClientWindow();   // RenderingServer frame_pre_draw

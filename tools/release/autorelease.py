@@ -644,7 +644,9 @@ def _cap(t: str) -> str:
     return t[:1].upper() + t[1:]
 
 
-NOTE_REFS = re.compile(r"\s*\(\s*(#\d+(?:\s*,\s*#\d+)*)\s*\)\s*$")
+# NOTESDUP-1: the credit may also stand before the line's closing full stop ("... cores (#178, #179)."; the 11-01 evening nightly showed it
+# as text with full-width signs); the stop stays, the numbers go
+NOTE_REFS = re.compile(r"\s*\(\s*(#\d+(?:\s*,\s*#\d+)*)\s*\)\s*(\.?)\s*$")
 
 
 def note_refs(text: str) -> tuple[str, list[int]]:
@@ -653,7 +655,7 @@ def note_refs(text: str) -> tuple[str, list[int]]:
     m = NOTE_REFS.search(text)
     if not m:
         return text.strip(), []
-    return text[:m.start()].strip(), sorted({int(n) for n in re.findall(r"\d+", m.group(1))})
+    return text[:m.start()].strip() + m.group(2), sorted({int(n) for n in re.findall(r"\d+", m.group(1))})
 
 
 def parse_note(text: str) -> tuple[str, str, str]:

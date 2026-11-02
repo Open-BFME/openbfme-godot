@@ -314,7 +314,7 @@ def test_pulls_of_makes_one_attempt_for_nonpositive_attempts(monkeypatch, attemp
 
 # ---- RELNOTES-1: each Release-note line credited to its own pull requests only -------------------------------------------------------
 AUTHORS = {133: "daisyhasacat", 137: "Ancalgonn", 140: "daisyhasacat", 141: "Ancalgonn", 144: "Ancalgonn", 156: "NotNBR",
-           159: "NotNBR", 164: "NotNBR", 165: "NotNBR", 166: "NotNBR", 169: "NotNBR"}
+           159: "NotNBR", 164: "NotNBR", 165: "NotNBR", 166: "NotNBR", 169: "NotNBR", 132: "daisyhasacat", 178: "NotNBR", 179: "NotNBR"}
 
 
 class FakeGitHub:
@@ -419,10 +419,54 @@ def test_a_merge_queue_credits_its_contributors_line_by_line_and_our_own_lines_n
         nn.build_context(None, "a", "b", FakeGitHub())
 
 
+MQ35 = ["A building that collapses to rubble loses its experience, as in the original game.",
+        "Destroyed bridges, bridge towers and wall upgrades that stay on the field can be healed again, as in the original game.",
+        "Arcing projectiles from weapons with a preferred target bone aim at that bone, as in the original game.",
+        "Large battles run faster: more of the logic frame, the collision pass and the partition update share the work across CPU cores "
+        "(#178, #179).",
+        "Melee units attack a large building from its edge instead of crowding towards its middle, and structures created by powers block "
+        "paths where they stand (#132)."]
+
+
+def test_a_merge_queue_and_a_later_credits_fix_describe_each_pull_request_once(monkeypatch):
+    # NOTESDUP-1, nightly 261101200 (bf43aae1f..22f897213): MERGEQ-35's five lines credit #178 / #179 / #132; the credits fix after it
+    # (a plain commit, tools only) names the three numbers in its subject. #132, #178 and #179 each appeared twice: the merge's own lines
+    # plus a model text per pull request ("6 changes, 8 for the model"), and the lines' "(#178, #179)." endings showed full-width signs.
+    mq35, fix = "83c1a0476f5a51a433f3e73ce53aa0aa6fd9ad78", "22f8972134a9978e2a3a79135f9de7286fcce9a0"
+    commits = [{"sha": mq35, "subject": "Merge MERGEQ-35: rubble experience, dead-but-kept heals, preferred-bone aim, faster logic frames and "
+                "melee reach on large buildings (SIMSMALL-1, #178, #179, #132)", "body": "".join(f"Release-note: {t}\n" for t in MQ35),
+                "files": ["engine/src/x.cpp"]},
+               {"sha": fix, "subject": "Nightly credits: the MERGEQ-35 merge's lines credit #178, #179 and #132", "body": "",
+                "files": ["tools/release/nightly_credits.json"]}]
+    monkeypatch.setattr(nn.ar, "first_parent_commits", lambda g, a, b: commits)
+    inner = {mq35: [{"sha": f"{n}".ljust(40, "0"), "subject": f"Merge community PR {n}", "body": ""} for n in (132, 178, 179)]}
+    monkeypatch.setattr(nn, "inner_commits", lambda g, s: inner.get(s, []))
+    for rows in (None, nn.load_credits(nn.HERE / "nightly_credits.json")):   # the lines' own endings, and the credits file's row
+        ctx = nn.build_context(None, "bf43aae1f", "22f897213", FakeGitHub(), rows)
+        assert [u["id"] for u in nn.units(ctx)] == [mq35, fix]            # two changes, two units: no pull request goes to the model
+        assert not any("pr" in u["id"] for u in nn.units(ctx))
+        assert ctx["changes"][0]["notes"][3].endswith("share the work across CPU cores.")
+        text = rendered(ctx)
+        assert "\uff03" not in text and "cores (#178" not in text and "stand (#132" not in text
+        assert "- Large battles run faster: more of the logic frame, the collision pass and the partition update share the work across CPU " \
+               "cores. Thanks to @NotNBR (#178, #179)." in text
+        assert "block paths where they stand. Thanks to @daisyhasacat (#132)." in text
+        thanks = text[text.index("## Thanks to our community"):text.index("## What's new")]
+        assert len([x for x in thanks.splitlines() if x.startswith("- ")]) == 2   # one line per credited Release-note line
+        assert text.count("Thanks to @NotNBR (#178, #179)") == 2                  # its community line + its What's new line
+        assert "Thanks to @daisyhasacat (#132) and @NotNBR (#178, #179)." in text[text.index("## What to test"):]   # the merge's steps
+        assert "Thanks to @NotNBR (#178):" not in text and "Thanks to @NotNBR (#179):" not in text
+    # a plain commit naming a pull request no line credits is still described, once
+    commits[1]["subject"] = "Nightly credits: #164"
+    assert [u["id"] for u in nn.units(nn.build_context(None, "a", "b", FakeGitHub()))] == [mq35, f"{fix}:pr164"]
+
+
 def test_note_refs_and_the_stable_notes_drop_the_ending():
     assert nn.ar.note_refs("Fixed [AI]: Squads take orders. (#156)") == ("Fixed [AI]: Squads take orders.", [156])
     assert nn.ar.note_refs("Faster. ( #165 , #164 )") == ("Faster.", [164, 165])
     assert nn.ar.note_refs("Water on the grid (#154, Ancalgonn).") == ("Water on the grid (#154, Ancalgonn).", [])
+    assert nn.ar.note_refs("Share the work across CPU cores (#178, #179).") == ("Share the work across CPU cores.", [178, 179])
+    assert nn.ar.note_refs("Block paths (#132) .") == ("Block paths.", [132])
     assert nn.ar.parse_note("Fixed [AI]: Squads take orders. (#156)") == ("fixed", "AI", "Squads take orders.")
 
 

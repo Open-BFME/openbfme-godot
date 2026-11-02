@@ -113,7 +113,8 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // re-measured it once on the merged tree, compared at each merge point: #164 keeps it; MODCOMPAT-MOD1 (its modules), #133 (the straight production exits) and #166
 // (the Uber path-search cap) each move it; merge queue q34 re-measured it once on the merged tree, compared at each merge point: SPELLFIX-1, #160
 // and #161 each move it; the path search's target rule re-measured it: an attacker's goal object or victim, and its members, no longer refuse the
-// attacker's cells, RW checkForMovement 0x6EBAA0, from frame 0). The state hash's own dispatches are counted
+// attacker's cells, RW checkForMovement 0x6EBAA0, from frame 0; merge queue q36 re-measured it once on the merged tree, compared at each merge
+// point: WARG-1 moves it (its own vector, which the archive's newer commits keep) and PR #182 moves it again). The state hash's own dispatches are counted
 // apart from the frame's (PERF-2's collision jobs): with more than one
 // thread the hash itself ran chunks on workers. The Uber hash is not the Faithful one, and a Faithful hash dispatches nothing.
 // Lane MODCOMPAT-MOD1 re-measured the pin vector at GeometryUpgrade's commit (OPENBFME_UBER1_REGEN=1, a CI host): GeometryUpgrade's per-object GeometryInfo
@@ -136,6 +137,8 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // random draw, RW 0x8994BF, and its scan state in the object hash), from frame 0.
 // Lane MODCOMPAT-MOD1 re-measured the pin vector at BoredUpdate's commit (OPENBFME_UBER1_REGEN=1, a CI host): BoredUpdate (its constructor's logic random
 // draw, RW 0x899F1F, and its countdown in the object hash), from frame 0.
+// Lane WARG-1 re-measured the pin vector once on the lane's tree after the archive merge (OPENBFME_UBER1_REGEN=1, a CI host): FindClosestPath (RW
+// 0x6FB869) at computePath's fallback and the attack and melee approach paths, and the unclamped cells of RW 0x6E8CE6.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")
 {

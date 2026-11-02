@@ -842,6 +842,9 @@ public:
 	bool worldToCell(const Coord3D *pos, ICoord2D *cell);
 	// RW 0x6E8CE6: floor(pos * 0.1), plus 0.5 when not centred; clamped to the extent (the flag is true when it had to clamp)
 	bool worldToCell(const Coord3D *pos, bool center, ICoord2D *cell);
+	// lane WARG-1: RW 0x6E8CE6 as retail calls it from adjustDestination (RW 0x6FE456) and snapClosestGoalPosition (RW 0x6F3F95): floor(pos * 0.1), plus 0.5
+	// when not centred, and NOT clamped (an off-map point keeps its off-grid cell, which getCell has none for)
+	static ICoord2D worldToCellUnclamped(const Coord3D *pos, bool center);
 	bool isMapReady() const { return m_isMapReady; }
 	PathfindGridStats gridStats() const;
 	const PathfindConfig &config() const { return m_config; }
@@ -1029,6 +1032,10 @@ public:
 	// RW internalFindPath 0x6FD06F; with `hierarchical` the search runs inside the corridor findClosestHierarchicalPath left (its block flags, its path
 	// positions in the estimate and the closest-cell choice). `partial` is only ever set here (findPath clears it)
 	Path *internalFindPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to, bool hierarchical, bool *partial);
+	// lane WARG-1: RW FindClosestPath 0x6FB869 (vtable slot + 4): the path to the goal, else to the reachable cell that best combines nearness to the goal and
+	// path cost (`costMultiplier`); `rawTo` is left as given (RW writes only its local copy). Null when nothing qualifies. The caller owns the result
+	Path *findClosestPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *rawTo, bool blocked, float costMultiplier,
+		bool moveAllies);
 	// findPath as it was before lane PATHPERF-1 (no corridor, every block passable): AIMover::pathReachingGoal's stand-in for RW 0x6F74D0
 	Path *findPathWithoutCorridor(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to, bool *partial);
 	// lane PATHPERF-1 (AIPathfindHierarchical.cpp): RW FindClosestHierarchicalPath 0x6F9829 -> 0x6F8601, the A* over the 16 x 16 zone blocks. True when a

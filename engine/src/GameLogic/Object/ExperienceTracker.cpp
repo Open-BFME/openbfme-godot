@@ -395,16 +395,34 @@ void ExperienceTracker::crc(StateHasher &hasher) const
 void ExperienceTracker::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);
+	const std::string rebuiltTarget = x.isLoading() ? m_templateName : std::string();
 	x.xferAsciiString(&m_templateName);
 	x.xferAsciiString(&m_levelName);
-	// identities: the level target is a template of this game's data, the level one of its experience levels (or none)
-	if (x.isLoading() && !m_parent->logic().things().findTemplate(m_templateName))
+	// Native snapshots, both editions: Object::friend_initObject has rebuilt a Create-a-Hero's own level chain before this xfer,
+	// using the staged saved object-to-hero binding when the snapshot contains CreateAHero (not the object's current owner).
+	// Its target is CreateAHero_<uniqueID> (RW 0x80AA76 / 0x80AA8A), not a ThingTemplate. Accept only that reconstructed identity
+	// with its registered chain, never an arbitrary name or a CreateAHero_ prefix. No retail rules or snapshot bytes change.
+	const bool generatedTarget = x.isLoading() && !m_parent->logic().things().findTemplate(m_templateName);
+	const auto *chain = generatedTarget && TheExperienceLevelSystem ? TheExperienceLevelSystem->levelsFor(m_templateName) : nullptr;
+	if (generatedTarget && (m_templateName != rebuiltTarget || !chain || chain->empty()))
 	{
 		throw XferException("an experience tracker's level target '" + m_templateName + "' is not a template of this game's data");
 	}
 	if (x.isLoading() && !m_levelName.empty() && !(TheExperienceLevelSystem && TheExperienceLevelSystem->findLevel(m_levelName)))
 	{
 		throw XferException("an experience tracker's level '" + m_levelName + "' is not an experience level of this game's data");
+	}
+	if (generatedTarget && !m_levelName.empty())
+	{
+		bool belongs = false;
+		for (const ExperienceLevelTemplate *level : *chain)
+		{
+			belongs |= level->getFinal()->m_name == m_levelName;
+		}
+		if (!belongs)
+		{
+			throw XferException("an experience tracker's level '" + m_levelName + "' is not in its generated target '" + m_templateName + "'");
+		}
 	}
 	x.xferReal(&m_experience);
 	x.xferInt(&m_experienceValue);

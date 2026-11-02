@@ -73,7 +73,9 @@ void GameLogic::registerSave4dBlocks(GameState &gs)
 	add("obfme:Victory", saveLoad, [this](Xfer &x) { m_victory->xfer(x); }, nullptr, "victory");
 	add("obfme:Weather", saveLoad, [this](Xfer &x) { m_weather->xfer(x); }, nullptr, "weather");
 	add("obfme:Economy", saveLoad, [this](Xfer &x) { m_economy->xfer(x); }, [this]() { m_economy->finishLoad(); }, "economy");
-	add("obfme:CreateAHero", saveLoad, [this](Xfer &x) { m_createAHeroes->xfer(x); }, nullptr, "create-a-hero");
+	add("obfme:CreateAHero", saveLoad, [this](Xfer &x) { m_createAHeroes->xfer(x); }, [this]() { m_createAHeroes->finishLoad(); }, "create-a-hero");
+	gs.setLoadPreparation("obfme:CreateAHero", [this](Xfer &x) { m_createAHeroes->prepareLoad(x); },
+		[this]() { m_createAHeroes->clearLoadPreparation(); });
 	add("obfme:TerrainTrees", saveLoad, [this](Xfer &x) { m_trees->xfer(x); }, nullptr, "terrain trees");
 	add("obfme:LargeGroupAudio", saveLoad, [this](Xfer &x) { m_largeGroupAudio.xfer(x); }, nullptr, "large group audio");
 	// lane CAMPUI-1: retail's own blocks and layouts (MissionObjectiveTracker.h), list 0 only: retail's CRC xfer skips both and no hash section holds them

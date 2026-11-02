@@ -908,7 +908,10 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge queue q35 (SIMSMALL-1, #178, #179, #132; measured once on the merged tree and at each merge point; #179's merge point keeps the archive's pins):
 	// #132's ground-structure melee reach ends seed 2 with Mordor's defeat (start position 0) at 7060; seeds 7 and 1234 stay open at 9000. Engine pins, not
 	// retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 7060 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Lane WARG-1 (FindClosestPath RW 0x6FB869 at computePath's fallback and the attack paths, the unclamped cells RW 0x6E8CE6; measured once on the lane's
+	// tree after the archive merge, a CI host): seed 2 ends with Mordor's defeat (start position 0) at 7971 with a new table, seed 7 stays open at 9000, seed
+	// 1234 ends with Mordor's defeat (start position 0) at 7803 after two launches. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 7971 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, 0, 7803 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -919,7 +922,7 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 		MESSAGE("progress, seed " << g.seed << ":\n" << run.progress);
 		// lane MODCOMPAT-MOD1 (PickupStuffUpdate, measured at its commit): the seed 7 game launches three (its AI hordes' crate scans and every horde's update in
 		// the sleepy update vectors move it)
-		CHECK(run.attacks[0] + run.attacks[1] >= (g.seed == 2u ? 2u : g.seed == 7u ? 3u : 4u)); // tolerance: a floor of launches per game (DECOMP-1 r3: seed 2 launches two; seed 7 three)
+		CHECK(run.attacks[0] + run.attacks[1] >= (g.seed == 7u ? 3u : 2u)); // tolerance: a floor of launches per game (DECOMP-1 r3: seed 2 launches two; seed 7 three; lane WARG-1: seed 1234 two before its end at 7803)
 		// SMOOTH-2 (the pending position cleared every frame, RW 0x62618F, feeds the crush warning's velocity RW 0x68EF58) ends seed 1234 with Men's defeat:
 		// 5275 on SMOOTH-2's base, 5186 on the merged tree (with GARRISON-1 / STEALTH-2 / END-2); seeds 2 and 7 stay open. Lane SMOOTH-3 (RotWK's member hub near arm RW 0x874F09, the angle goal RW 0x5E98D6 turning at the locomotor's rate): seed 1234 is open at 9000 as well. Engine pins, not retail values.
 		// SCRIPT-2 (merged with AUDIO-3 / GARRISON-2 / SMOOTH-3): the AI libraries' scripts now evaluate the conditions they use (PLAYER_HAS_OBJECT_COMPARISON ...
@@ -950,14 +953,15 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// merge queue q34 (measured once on the merged tree and at each merge point): SPELLFIX-1 and #160 end it at 7162; #161's block search keeps it open
 			// at 9000 with this table
 			// merge queue q35 (measured once on the merged tree and at each merge point): #132's melee reach ends it with Mordor's defeat at 7060
+			// lane WARG-1 (measured once on the lane's tree after the archive merge): FindClosestPath and the unclamped cells end it at 7971 with this table
 			CHECK(run.progress ==
-		"frame 1000: [0 attacks 0 built 70u/8s destroyed 7u/1s] [1 attacks 1 built 91u/8s destroyed 23u/2s]\n"
-		"frame 2000: [0 attacks 1 built 207u/9s destroyed 118u/1s] [1 attacks 2 built 156u/10s destroyed 149u/6s]\n"
-		"frame 3000: [0 attacks 1 built 218u/11s destroyed 186u/1s] [1 attacks 3 built 257u/13s destroyed 203u/7s]\n"
-		"frame 4000: [0 attacks 2 built 326u/13s destroyed 261u/3s] [1 attacks 4 built 361u/16s destroyed 294u/10s]\n"
-		"frame 5000: [0 attacks 2 built 327u/13s destroyed 308u/3s] [1 attacks 4 built 404u/21s destroyed 320u/15s]\n"
-		"frame 6000: [0 attacks 2 built 328u/15s destroyed 312u/3s] [1 attacks 4 built 430u/23s destroyed 321u/16s]\n"
-		"frame 7000: [0 attacks 2 built 328u/16s destroyed 346u/3s] [1 attacks 4 built 463u/24s destroyed 332u/20s]\n");
+		"frame 1000: [0 attacks 0 built 85u/8s destroyed 11u/0s] [1 attacks 1 built 91u/8s destroyed 23u/2s]\n"
+		"frame 2000: [0 attacks 2 built 240u/9s destroyed 137u/0s] [1 attacks 2 built 215u/10s destroyed 174u/3s]\n"
+		"frame 3000: [0 attacks 2 built 390u/12s destroyed 257u/1s] [1 attacks 2 built 325u/12s destroyed 336u/7s]\n"
+		"frame 4000: [0 attacks 2 built 506u/13s destroyed 336u/1s] [1 attacks 3 built 417u/14s destroyed 427u/9s]\n"
+		"frame 5000: [0 attacks 2 built 508u/14s destroyed 362u/1s] [1 attacks 3 built 460u/21s destroyed 469u/10s]\n"
+		"frame 6000: [0 attacks 2 built 645u/16s destroyed 392u/1s] [1 attacks 3 built 481u/25s destroyed 540u/11s]\n"
+		"frame 7000: [0 attacks 3 built 720u/16s destroyed 405u/1s] [1 attacks 3 built 494u/25s destroyed 697u/14s]\n");
 		}
 	}
 }
@@ -1158,7 +1162,9 @@ TEST_CASE("skirmish ai tactics: the offensive bodies make retail's draws in orde
 	// PR #137 (BFME2CAMP1's rebuild holes: a destroyed structure leaves a hole its owner's AI rebuilds, so the AI's targets and with them the random stream
 	// move): none of these fourteen hands a Pincer team its waypoints within 2600 frames (PR triage: 0 distances from b5a3bb549 on, main 87579746e measured
 	// 1); a probe of seeds 72 .. 131 on the PR's tree (a CI host) found 74, 81, 100, 119, 124 (one each) and 99 (two)
-	for (std::uint32_t seed : { 1234u, 2u, 7u, 11u, 13u, 17u, 19u, 31u, 29u, 67u, 37u, 41u, 53u, 71u, 83u, 107u })
+	// Lane WARG-1 (FindClosestPath RW 0x6FB869 and the unclamped cells RW 0x6E8CE6 move every game): none of these sixteen hands a Pincer team its waypoints
+	// within 2600 frames; a probe of twelve seeds on the lane's tree after the archive merge (74 .. 139 and 126, a CI host) found 126 (one)
+	for (std::uint32_t seed : { 1234u, 2u, 7u, 11u, 13u, 17u, 19u, 31u, 29u, 67u, 37u, 41u, 53u, 71u, 83u, 107u, 126u })
 	{
 		NewGameStart start(RandomAlgorithm::ZH_CarryChain);
 		REQUIRE_MESSAGE(NewGame::prepareNewGame(versusMessage(*s, "FactionMen", -1, "FactionMordor", 2, seed), s->world->playerTemplates(), s->settings, cache,
