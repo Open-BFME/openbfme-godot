@@ -167,6 +167,9 @@ TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1
 		if (threads > 1)
 		{
 			CHECK(run.hashWorkerChunks > 0); // the hash itself ran on several threads
+			// lane PERF-WS: every frame's final list (the WeaponStatusHelpers) was computed on the pool and applied in list order; the pin above
+			// proves the applied conditions are the serial pass's
+			CHECK(run.weaponStatusSerialFrames == 0);
 		}
 		else
 		{

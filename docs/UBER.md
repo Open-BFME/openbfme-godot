@@ -546,6 +546,31 @@ closed 200,000+ cells, plus up to 25,000 of the shortcut walk.
   132 -> 92 ms, 20k 204 -> 133 ms, 40k 345 -> 217 ms; ticks over the 200 ms
   clock at 20k: 23-30 -> 0-1 of 50, at 40k: 49-50 -> 25-29.
 
+### PERF-WS: the final list's weapon status conditions on the pool (done)
+
+The final update list (phase 6) is one WeaponStatusHelper per weapon-capable
+object (the troops, the horde controllers, the buildings), each a serial call
+that reads its own object alone and writes its own weapons' slot conditions
+and model conditions, so nothing a module of the pass writes changes what a
+later one computes.
+
+- Both profiles, no rule change: the conditions of every module the pass
+  will update are computed on the logic job pool before the pass, against
+  the list at its start and with the pass's own tests, and applied in list
+  order where update would have computed them (the same writes, the same
+  client events, the same hash: `GameLogic::prepareWeaponStatusWork`). With
+  one logic thread the pass computes in update as before. An awake module of
+  the list that is no such helper makes the frame serial again (counted in
+  `GameLogic::Report::weaponStatusSerialFrames`).
+- Result (the uber bench's battle, map mp fall back 8p, 30,000 troops, 16
+  logic threads, Windows MSVC; the mean of frames 1-175 of one run each, read
+  with a temporary per-phase wall-clock probe of the lane): phase 6 is 6.0 ms
+  a frame instead of 10.1 (Uber) and 10.3 instead of 14.3 (Faithful); the hash
+  chains are unchanged. With one logic thread phase 6 is the serial pass's.
+- It is the first delivered piece of U4's parallel module phases: the
+  compute-then-apply shape, pure reads on the pool and a serial commit in
+  list order, is the one the other phases will take.
+
 ### U2: parallel queries and paths, GPU animation (next)
 
 - **Snapshot queries.** Before each module phase, the queries a module will
@@ -599,7 +624,7 @@ closed 200,000+ cells, plus up to 25,000 of the shortcut walk.
   Its commands are merged in player order into the next frame's command list.
 - Module phases split by spatial tiles with a halo: a tile's modules run in
   parallel when their reads and writes stay inside the tile, and the cross-tile
-  work commits serially in object order.
+  work commits serially in object order (the final list is done: PERF-WS).
 - Shroud and visibility: per player in parallel for the logic, a compute
   shader for the client texture.
 - **Target (unvalidated):** 40k at 144 fps sustained on the reference PC.

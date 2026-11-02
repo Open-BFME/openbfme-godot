@@ -270,6 +270,7 @@ void runBattle(ArchiveFileSystem &fs, RetailObjectWorld &world, const MapObjectO
 	out.framesWallMs = wallMs() - wall0;
 	out.processCpuMs = cpu0 >= 0.0 ? processCpuMs() - cpu0 : -1.0;
 	out.objectsEnd = countObjects(logic);
+	out.weaponStatusSerialFrames = logic.report().weaponStatusSerialFrames;
 }
 } // namespace uberbench
 
