@@ -1347,6 +1347,11 @@ void AptPalantir::syncSpellBook(const std::vector<SpellSlot> &slots)
 		call(m_spellPath, "SetState", { "_show" }); // RW 0x9312DE
 		return;
 	}
+	// Shared BFME2/RotWK presentation correction: compact slots move when an earlier power is acquired.
+	// Preserve the previous power identities before updating any slot, so availability flashes follow the power rather than its old screen position.
+	int previousButtons[kSpellSlots], previousStates[kSpellSlots];
+	std::copy_n(m_spellButton, kSpellSlots, previousButtons);
+	std::copy_n(m_spellState, kSpellSlots, previousStates);
 	for (int i = 0; i < kSpellSlots; ++i)
 	{
 		const SpellSlot empty;
@@ -1376,14 +1381,27 @@ void AptPalantir::syncSpellBook(const std::vector<SpellSlot> &slots)
 		m_spellButton[i] = sl.buttonIndex;
 		if (sl.state != m_spellState[i])
 		{
-			const bool wasUsable = m_spellState[i] == SPELL_UP || m_spellState[i] == SPELL_STATIC;
 			call(m_spellPath, "SetButtonState", { std::to_string(i + 1), spellStateName(sl.state) }); // RW 0x93125F
-			const bool usable = sl.state == SPELL_UP || sl.state == SPELL_STATIC;
-			if (usable && !wasUsable && m_spellState[i] >= 0)
-			{
-				call(m_spellPath, "FlashButton", { std::to_string(i + 1) }); // RW 0x931467 .. 0x9314C3
-			}
 			m_spellState[i] = sl.state;
+		}
+		// An unseen power is newly available after initialization; the first sync after Shown still suppresses flashes for already owned powers.
+		int previousState = previousStates[0] < 0 ? -1 : SPELL_UNUSED;
+		if (sl.buttonIndex >= 0)
+		{
+			for (int j = 0; j < kSpellSlots; ++j)
+			{
+				if (previousButtons[j] == sl.buttonIndex)
+				{
+					previousState = previousStates[j];
+					break;
+				}
+			}
+		}
+		const bool wasUsable = previousState == SPELL_UP || previousState == SPELL_STATIC;
+		const bool usable = sl.state == SPELL_UP || sl.state == SPELL_STATIC;
+		if (usable && !wasUsable && previousState >= 0)
+		{
+			call(m_spellPath, "FlashButton", { std::to_string(i + 1) }); // RW 0x931467 .. 0x9314C3
 		}
 	}
 }

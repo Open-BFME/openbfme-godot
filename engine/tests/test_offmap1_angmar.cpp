@@ -8,6 +8,7 @@
 #include "doctest.h"
 #include "CampaignTestUtil.h"
 #include "StartTestUtil.h"
+#include "GameLogic/AI/AIWaypointPath.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/ScriptEngine/MissionObjectiveTracker.h"
@@ -196,12 +197,13 @@ TEST_CASE("offmap1 retail: MAP ANG Angmar's counterattack timer sends the off-ma
 	CHECK(m.frame() > go); // tolerance: after the timer is the claim; the frame is printed
 	// retail's condition (the map's script): TEAM_INSIDE_AREA_PARTIALLY of one of the three waves in 'AT - Reveal Rogash Battle'
 	CHECK(wavesInsideArrivalArea(m) > 0u); // tolerance: "partially inside" is any member
-	// each wolf rider horde marches on toward its path's end (the armed attack move); the march to the fortresses and their damage is
-	// test_script2_angmar's real flow ("Uber survives the counterattack": the counterattack damages a completed fortress)
+	// each wolf rider horde follows its path in the attack-follow state (lane WARG-1: NAMED_ATTACK_FOLLOW_WAYPOINTS RW 0x7C920F -> AI command 0x10, state 0x22,
+	// RW 0x755D78: waypoint by waypoint, attacking what it meets); the march to the fortresses and their damage is test_script2_angmar's real flow ("Uber
+	// survives the counterattack": the counterattack damages a completed fortress)
 	for (const char *n : kWolfRiders)
 	{
 		Object *h = m.unit(n);
 		REQUIRE_MESSAGE(h != nullptr, n);
-		CHECK_MESSAGE(h->getAIUpdateInterface()->attackMoveActive(), n);
+		CHECK_MESSAGE(h->getAIUpdateInterface()->currentStateId() == (unsigned)AI_ATTACK_FOLLOW_WAYPOINT_PATH_AS_INDIVIDUALS, n);
 	}
 }

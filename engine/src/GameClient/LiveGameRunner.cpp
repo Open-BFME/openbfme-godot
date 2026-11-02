@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <stdexcept>
 
 namespace
 {
@@ -358,9 +359,43 @@ void LiveGame::waitIdle(const char *file, int line) const
 	{
 		m_windowOpen = true; // the worker is idle: nothing runs until the window ends
 	}
-	if (m_workerError)
+	if (m_workerError && !m_logicFailureHandler)
 	{
 		std::rethrow_exception(m_workerError);
+	}
+}
+
+void LiveGame::setLogicFailureHandler(std::function<void(const std::string &)> handler)
+{
+	std::lock_guard<std::mutex> lock(m_pubMutex);
+	m_logicFailureHandler = std::move(handler);
+}
+
+void LiveGame::setWorkerFrameFailure(const std::string &text)
+{
+	std::lock_guard<std::mutex> lock(m_pubMutex);
+	m_workerFrameFailure = text;
+}
+
+std::string LiveGame::logicFailure() const
+{
+	std::lock_guard<std::mutex> lock(m_pubMutex);
+	return m_logicFailure;
+}
+
+std::string LiveGame::describeWorkerFailure(std::exception_ptr failure)
+{
+	try
+	{
+		std::rethrow_exception(failure);
+	}
+	catch (const std::exception &e)
+	{
+		return e.what();
+	}
+	catch (...)
+	{
+		return "an exception that is no std::exception";
 	}
 }
 
@@ -618,12 +653,34 @@ void LiveGame::workerLoop()
 			{
 				std::this_thread::sleep_for(std::chrono::milliseconds(m_options.workerFrameDelayMs)); // SMOOTH-2 diagnostic: a slow frame
 			}
+			std::string diagnosticFailure;
+			{
+				std::lock_guard<std::mutex> lock(m_pubMutex);
+				diagnosticFailure = m_workerFrameFailure;
+			}
+			if (!diagnosticFailure.empty())
+			{
+				throw std::runtime_error(diagnosticFailure); // lane WORKERFAIL-1 diagnostic: a frame that throws
+			}
 			runFrameOwned(item);
 		}
 		catch (...)
 		{
+			// lane WORKERFAIL-1: named before anything waits on it: whatever the failed frame left behind may still bring the process down
+			const std::exception_ptr failure = std::current_exception();
+			const std::string text = "after logic frame " + std::to_string(frame()) + ": " + describeWorkerFailure(failure);
+			std::function<void(const std::string &)> handler;
+			{
+				std::lock_guard<std::mutex> lock(m_pubMutex);
+				handler = m_logicFailureHandler;
+			}
+			if (handler)
+			{
+				handler(text);
+			}
 			std::lock_guard<std::mutex> lock(m_pubMutex);
-			m_workerError = std::current_exception();
+			m_workerError = failure;
+			m_logicFailure = text;
 		}
 		{
 			std::lock_guard<std::mutex> lock(m_pubMutex);
