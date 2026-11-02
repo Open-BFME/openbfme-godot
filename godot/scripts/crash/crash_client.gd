@@ -435,9 +435,10 @@ static func target() -> Dictionary:
 	return {"ok": true, "error": "", "url": ENDPOINT, "key": key}
 
 
-## Sends the queue (see the header). id_path: the install id file. Emits `finished` and returns
+## Sends the queue (see the header). id_path: the install id file. first: a queued report to send before the older ones (lane CRASHDIALOG-1: the one
+## the player is watching; UPLOADS_PER_RUN would otherwise spend the run on older ones). Emits `finished` and returns
 ## {sent: [[name, report_id]], dropped: [[name, reason]], kept: count, error: "" or why the run stopped}.
-func upload_queue(dir: String, id_path: String) -> Dictionary:
+func upload_queue(dir: String, id_path: String, first: String = "") -> Dictionary:
 	_cancelled = false
 	var summary := {"sent": [], "dropped": [], "kept": 0, "error": "", "errors": []}
 	var pruned := prune(dir)
@@ -446,6 +447,9 @@ func upload_queue(dir: String, id_path: String) -> Dictionary:
 	var names := queued(dir)
 	if names.is_empty():
 		return _finish(summary, names)
+	if names.has(first):
+		names.remove_at(names.find(first))
+		names.insert(0, first)
 	var where := target()
 	var identity := install_id(id_path) if where.ok else {}
 	if not where.ok:

@@ -5,6 +5,7 @@
 extends SceneTree
 
 const CrashClient := preload("res://scripts/crash/crash_client.gd")
+const CrashDialog := preload("res://scripts/crash/crash_dialog.gd")
 const QUEUE := "user://crash-queue"
 
 var checks := 0
@@ -41,11 +42,13 @@ func _run() -> void:
 	var stage := arg("--stage=")
 	if stage == "upload":
 		await _upload()
+		await _dialog_upload()
 	elif stage == "ci":
 		await _ci()
 	else:
 		_report()
 		_queue()
+		_dialog_local()
 		await _toggle()
 	print("CRASHUP %s %d checks" % ["OK" if failed == 0 else "FAILED", checks])
 	quit(0 if failed == 0 else 1)
@@ -273,6 +276,99 @@ func _write(path: String, text: String) -> void:
 
 
 ## the runner's fake service answers 201, 201, 429, 400, 201, then 201 after 4 s, then never
+## Lane CRASHDIALOG-1: the dialog's rows and bar, words required, nothing leaves before the player says so, "Don't send" takes the report back
+func _dialog_local() -> void:
+	var words: Dictionary = root.get_node("Release").CRASH_DIALOG_WORDS
+	for word in CrashDialog.required_strings():
+		check(words.has(word), "the game has the dialog's word %s" % word)
+	var data := {"version": "v9", "client": {"version": "v9"}, "os_name": "Windows", "os_version": "11", "cpu_name": "CPU X", "gpu_name": "GPU Y",
+		"context": {"map": "maps/map a/map a.map", "mode": "skirmish", "factions": ["Men", "Elves"]},
+		"settings": {"resolution_width": 2560, "resolution_height": 1440, "vsync": false}, "backtrace": ["a", "b", "c"], "log_tail": ["x", "y"]}
+	var rows: Array = CrashDialog.summary_rows(data, words)
+	check(rows.size() == 7, "seven rows: %s" % [rows])
+	check(rows[0][1] == "v9, Windows 11", "the version row: %s" % rows[0][1])
+	check(rows[1][1] == "CPU X, GPU Y", "the PC row names what is sent: %s" % rows[1][1])
+	check(rows[2][1] == "map a.map, skirmish, Men, Elves", "the game row: %s" % rows[2][1])
+	check(rows[3][1] == "2560 x 1440, vsync off", "the display row: %s" % rows[3][1])
+	check(rows[4][1] == "Error lines from the log: 3", "the crash row counts the report's lines: %s" % rows[4][1])
+	check(rows[5][1] == "The last 2 lines, filtered for privacy", "the log row counts the report's lines: %s" % rows[5][1])
+	check(CrashDialog.summary_rows({}, words).size() == 6, "a report without display settings has no such row")
+	check(CrashDialog.size_text(1) == "1 KB" and CrashDialog.size_text(38 * 1024) == "38 KB" and CrashDialog.size_text(38 * 1024 + 1) == "39 KB", "sizes")
+	check(CrashDialog.send_fraction(0.0) == CrashDialog.QUEUED, "the bar starts where queueing left it")
+	check(CrashDialog.send_fraction(1000.0) <= CrashDialog.SEND_END and CrashDialog.send_fraction(1.0) > CrashDialog.QUEUED, "the bar eases and never fills by itself")
+	var build: Dictionary = CrashClient.build({"version": "v9", "os_name": "Windows", "header": ["h"]}, PackedStringArray(["ERROR: x"]), func(t: String) -> String: return t)
+	check(build.ok, "a report to show: %s" % [build.error])
+	_clear(QUEUE)
+	var dialog := _dialog(build, false)
+	dialog.start()
+	check(dialog.state == CrashDialog.State.ASK and CrashClient.queued(QUEUE).is_empty(), "off: asked first, nothing queued (state %d)" % dialog.state)
+	var closed := [false]
+	dialog._config["on_close"] = func() -> void: closed[0] = true
+	dialog._on_dont_send()
+	check(closed[0] and CrashClient.queued(QUEUE).is_empty(), "Don't send: closed, nothing queued")
+	dialog.queue_free()
+
+
+func _dialog(report: Dictionary, automatic: bool) -> Control:
+	var dialog: Control = CrashDialog.new()
+	dialog.setup({"strings": root.get_node("Release").CRASH_DIALOG_WORDS, "data": report.data, "json": report.json, "wire": report.wire, "queue": QUEUE,
+		"install_id": "user://crash-install-id", "client": CrashClient, "automatic": automatic})
+	root.add_child(dialog)
+	return dialog
+
+
+## Lane CRASHDIALOG-1, against the fake service, whose plan comes after _upload's: sent (its reference), then a report the service refuses, then one kept for
+## later that "Try again" sends, then "Don't send" during the request takes it out of the queue
+func _dialog_upload() -> void:
+	var build: Dictionary = CrashClient.build({"version": "v9", "os_name": "Windows", "header": ["h"]}, PackedStringArray(["ERROR: x"]), func(t: String) -> String: return t)
+	_clear(QUEUE)
+	var older: Dictionary = CrashClient.enqueue(QUEUE, build.wire, int(Time.get_unix_time_from_system()) - 60)
+	var dialog := _dialog(build, true)
+	var seen: Array = []
+	dialog.state_changed.connect(func(s: int) -> void: seen.append(s))
+	dialog.start()
+	await _dialog_settled(dialog)
+	check(dialog.state == CrashDialog.State.SENT and seen == [CrashDialog.State.SENDING, CrashDialog.State.SENT], "sent: %d %s" % [dialog.state, seen])
+	check(dialog.progress == 1.0 and dialog._bar.value == 100.0, "the bar is full: %f" % dialog.progress)
+	check(RegEx.create_from_string("^[0-9a-f]{24}$").search(dialog.reference) != null, "the service's reference is shown: %s" % dialog.reference)
+	check(dialog._reference_label.text == dialog.reference and dialog._reference_row.visible, "the reference's row")
+	check(CrashClient.queued(QUEUE).is_empty(), "the older report goes with it, after the one on screen: %s" % [CrashClient.queued(QUEUE)])
+	dialog.queue_free()
+	_clear(QUEUE)
+	dialog = _dialog(build, true)
+	dialog.start()
+	await _dialog_settled(dialog)
+	check(dialog.state == CrashDialog.State.NOT_SENT and CrashClient.queued(QUEUE).is_empty(), "refused (400): said so, removed: %d %s" % [dialog.state, dialog.error_text])
+	dialog.queue_free()
+	_clear(QUEUE)
+	dialog = _dialog(build, true)
+	dialog.start()
+	await _dialog_settled(dialog)
+	check(dialog.state == CrashDialog.State.KEPT and CrashClient.queued(QUEUE).size() == 1 and dialog._retry.visible, "offline / 429: kept, Try again offered: %d" % dialog.state)
+	dialog._begin_send()
+	await _dialog_settled(dialog)
+	check(dialog.state == CrashDialog.State.SENT and CrashClient.queued(QUEUE).is_empty(), "Try again: sent: %d" % dialog.state)
+	dialog.queue_free()
+	_clear(QUEUE)
+	dialog = _dialog(build, true)
+	var closed := [false]
+	dialog._config["on_close"] = func() -> void: closed[0] = true
+	dialog.start() # the service holds this answer back
+	await create_timer(0.3).timeout
+	check(dialog.state == CrashDialog.State.SENDING and dialog.progress > CrashDialog.QUEUED and dialog.progress < CrashDialog.SEND_END, "sending: the bar moves: %f" % dialog.progress)
+	check(CrashClient.queued(QUEUE).size() == 1, "sending: the report is queued first (a crash here loses nothing)")
+	dialog._on_dont_send()
+	check(closed[0] and CrashClient.queued(QUEUE).is_empty(), "Don't send while sending: stopped, taken out of the queue")
+	dialog.queue_free()
+
+
+func _dialog_settled(dialog: Control) -> void:
+	for i in 300:
+		await create_timer(0.1).timeout
+		if dialog.state != CrashDialog.State.SENDING:
+			return
+
+
 func _upload() -> void:
 	check(not OS.get_environment(CrashClient.TEST_ENDPOINT_ENV).is_empty(), "the runner set the test endpoint")
 	_clear(QUEUE)

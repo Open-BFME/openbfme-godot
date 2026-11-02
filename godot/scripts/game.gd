@@ -749,6 +749,12 @@ var _cah_hero_id := ""          # lane CAH-1: the unique id of the hero the --ca
 
 
 func _ready() -> void:
+	if Release.crash_report_pid() > 0:
+		# lane CRASHDIALOG-1: this process is the crash dialog: no game boots. Here and not on the command line: an export template refuses a scene path
+		# there (Godot's disable_path_overrides)
+		process_mode = Node.PROCESS_MODE_DISABLED
+		get_tree().change_scene_to_file.call_deferred("res://scenes/crash_report.tscn")
+		return
 	var recording_error := _set_recording_args(OS.get_cmdline_args() + OS.get_cmdline_user_args())
 	if not recording_error.is_empty():
 		_fail(recording_error)
