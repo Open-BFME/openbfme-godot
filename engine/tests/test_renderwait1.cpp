@@ -12,7 +12,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <stdexcept>
+#include <string>
 #include <thread>
+#include <vector>
 
 namespace
 {
@@ -77,6 +80,43 @@ TEST_CASE("renderwait1: publication contention is not a logic-frame wait; frame 
 	waits = logicFrameWaitSites(sites);
 	REQUIRE(waits.size() == 2);
 	CHECK(waits[1].site == "unknown wait site");
+}
+
+TEST_CASE("workerfail1: a worker failure's text is the exception's, or a name for one that is no std::exception")
+{
+	CHECK(LiveGame::describeWorkerFailure(std::make_exception_ptr(std::runtime_error("bad frame"))) == "bad frame");
+	CHECK(LiveGame::describeWorkerFailure(std::make_exception_ptr(7)) == "an exception that is no std::exception");
+}
+
+TEST_CASE("workerfail1 retail: a frame that throws on the worker names its text and, with a handler, no wait rethrows it")
+{
+	if (!hudtest::haveWorld("workerfail1 worker failure"))
+	{
+		return;
+	}
+	{
+		hudtest::Rig rig(hudtest::shared());
+		stageBattle(rig);
+		std::vector<std::string> handled;
+		rig.game->setLogicFailureHandler([&handled](const std::string &text) { handled.push_back(text); });
+		CHECK(rig.game->logicFailure().empty());
+		rig.game->setWorkerFrameFailure("workerfail1 test failure");
+		rig.game->setLogicThread(true);
+		const std::string expected = "after logic frame " + std::to_string(rig.game->frame()) + ": workerfail1 test failure";
+		rig.game->advance(0.2);
+		CHECK_NOTHROW(rig.game->holdLogic());
+		CHECK(rig.game->logicFailure() == expected);
+		REQUIRE(handled.size() == 1);
+		CHECK(handled[0] == expected);
+		CHECK_NOTHROW(rig.game->holdLogic()); // every later wait too: the HUD's next input event
+	}
+	hudtest::Rig rig(hudtest::shared());
+	stageBattle(rig);
+	rig.game->setWorkerFrameFailure("workerfail1 test failure");
+	rig.game->setLogicThread(true);
+	rig.game->advance(0.2);
+	CHECK_THROWS_WITH(rig.game->holdLogic(), "workerfail1 test failure"); // no handler (tests, tools): the failure reaches the caller
+	rig.game->setLogicFailureHandler([](const std::string &) {}); // the rig's teardown waits too, inside a destructor: no throw there
 }
 
 TEST_CASE("renderwait1 retail: 60 Hz render frames beside 250 ms logic frames never wait, get a client window every logic frame, and the logic is unchanged")

@@ -122,6 +122,7 @@
 #include <godot_cpp/variant/basis.hpp>
 #include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
+#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
@@ -355,6 +356,8 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_parallel_views", "enabled"), &GameWorld::set_parallel_views); // lane PERF-CLIENT: the A/B switch (tests)
 	ClassDB::bind_method(D_METHOD("get_logic_wait_sites"), &GameWorld::get_logic_wait_sites);
 	ClassDB::bind_method(D_METHOD("is_logic_held"), &GameWorld::is_logic_held);
+	ClassDB::bind_method(D_METHOD("logic_failure"), &GameWorld::logic_failure);
+	ClassDB::bind_method(D_METHOD("crash_test_logic"), &GameWorld::crash_test_logic);
 	ClassDB::bind_method(D_METHOD("get_client_window_stats"), &GameWorld::get_client_window_stats);
 	ClassDB::bind_method(D_METHOD("reset_logic_wait_sites"), &GameWorld::reset_logic_wait_sites);
 	ClassDB::bind_method(D_METHOD("set_render_interpolation", "enabled"), &GameWorld::set_render_interpolation);
@@ -604,6 +607,19 @@ bool GameWorld::is_logic_held() const
 	return !m_game || m_game->logicHeld();
 }
 
+String GameWorld::logic_failure() const
+{
+	return m_game ? toGodot(m_game->logicFailure()) : String();
+}
+
+void GameWorld::crash_test_logic()
+{
+	if (m_game && OS::get_singleton()->is_debug_build())
+	{
+		m_game->setWorkerFrameFailure("a deliberate failure (--crash-test-logic)");
+	}
+}
+
 Dictionary GameWorld::get_client_window_stats() const
 {
 	Dictionary d;
@@ -626,7 +642,7 @@ Dictionary GameWorld::get_client_window_stats() const
 
 void GameWorld::_process(double delta)
 {
-	if (m_autoAdvance)
+	if (m_autoAdvance && (!m_game || m_game->logicFailure().empty())) // lane WORKERFAIL-1: a stopped logic is not driven (game.gd ends the game)
 	{
 		advance(delta);
 	}
@@ -1200,6 +1216,8 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	m_audio.reset(); // AUDIO-2: the audio side reads the game
 	m_cahCameraOffsetValid = false;
 	m_game.reset(new LiveGame(*m_world, *m_fs->archive_fs(), *m_assets, *m_options));
+	// lane WORKERFAIL-1: game.gd stops the game with this text (logic_failure); printed at once, on the worker, so the session log has it whatever happens next
+	m_game->setLogicFailureHandler([](const std::string &text) { UtilityFunctions::printerr(toGodot("GAME logic worker stopped " + text)); });
 	m_game->setRenderInterpolation(m_renderInterpolation);
 	// lane RENDERWAIT-1: a blocking wait on the logic worker names its script caller (the innermost GDScript frame: the C++ site of a bound query is
 	// the query itself, the script line says who asked)
