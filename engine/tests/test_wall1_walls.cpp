@@ -22,9 +22,11 @@
 #include "GameLogic/AI/AIPathfindStops.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/GameMessage.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/NewGame/NewGame.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/System/ShroudManager.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
 #include <algorithm>
@@ -1055,4 +1057,50 @@ TEST_CASE("wall1 walls retail: a right click on a Helm's Deep wall top orders th
 	CHECK(dx * dx + dy * dy < 900.0f); // tolerance: the walk ends within the locomotor's close-enough distance of the clicked point
 	CHECK(isWallLayer(ai->adapter().getLayer()));
 	CHECK(at.z == pf.getLayerHeight(at.x, at.y, ai->adapter().getLayer()));
+}
+
+// lane WALL-3, the owner's report: a right click on an enemy's Helm's Deep wall only ever attacked it. RotWK's evaluateContextCommand (RW 0x81E60B) attacks only on the
+// selection's POSSIBLE / POSSIBLE_AFTER_MOVING (RW 0x81F18E); a selection none of whose weapons damages the wall (WeaponSet RW 0x6C8652: INVALID_SHOT) on a
+// WALK_ON_TOP_OF_WALL object that is no WALL_UPGRADE reaches the move (RW 0x81F618 .. 0x81F63A). HelmsDeepSectionAi's armour HelmsDeepWalls takes no HERO damage
+// (DEFAULT 0 %) and 25 % of SIEGE: Boromir (BoromirSword, HERO) moves, a Mordor catapult (its rock's warhead has a SIEGE nugget) attacks
+TEST_CASE("wall3 walls retail: a right click on an enemy's Helm's Deep wall moves a hero whose weapons do the wall no damage (MSG_DO_MOVETO), a catapult attacks it")
+{
+	if (!hudtest::haveWorld("wall3 enemy wall"))
+	{
+		return;
+	}
+	hudtest::Rig rig(hudtest::shared(), "map wor helms deep", "FactionMen");
+	rig.frame(2);
+	Object *wall = nullptr;
+	for (Object *o = rig.logic().getFirstObject(); o && !wall; o = o->getNextObject())
+	{
+		wall = o->getTemplate() && o->getTemplate()->getName() == "HelmsDeepSectionAi" ? o : nullptr;
+	}
+	REQUIRE(wall);
+	REQUIRE(wall->getControllingPlayer() == rig.local); // the fortress' walls are Player_1's (the test above)
+	// the player is Player_2 (the rig's FactionMordor enemy), who sees the whole map
+	Player *enemy = rig.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemy);
+	rig.game->players().setLocalPlayer(enemy);
+	rig.game->shroud().revealMapForPlayerPermanently(enemy->getPlayerIndex());
+	rig.input->commandTranslator().setUseAlternateMouse(true);
+	REQUIRE(HudObjects::relationshipToLocal(rig.input->context(), *wall) == ENEMIES);
+	const TerrainLogic *terrain = rig.logic().terrain();
+	REQUIRE(terrain);
+	const Waypoint *startWp = terrain->findWaypointByName("Player_2_Start");
+	REQUIRE(startWp);
+	const auto evaluateWith = [&](const char *templateName, float dx) {
+		Object *unit = rig.make(templateName, startWp->location.x + dx, startWp->location.y, enemy);
+		rig.frame(2);
+		rig.lookAt(*unit->getPosition());
+		rig.frame(1);
+		const Coord3D up = *unit->getPosition();
+		const ICoord2D px = rig.screenOf({ up.x, up.y, up.z + 10.0f });
+		rig.leftClick(px.x, px.y);
+		REQUIRE(rig.input->ui().selected() == std::vector<ObjectID>{ unit->getID() });
+		rig.frame(1);
+		return rig.input->commandTranslator().evaluateContextCommand(wall, wall->getPosition(), EvaluateType::EvaluateOnly);
+	};
+	CHECK(evaluateWith("GondorBoromir", 0.0f) == MSG_DO_MOVETO);
+	CHECK(evaluateWith("MordorCatapult", 120.0f) == MSG_DO_ATTACK_OBJECT);
 }
