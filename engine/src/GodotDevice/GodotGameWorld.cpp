@@ -320,6 +320,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_placement_ghost", "template_name"), &GameWorld::get_placement_ghost);
 	ClassDB::bind_method(D_METHOD("create_object", "template_name", "player", "x", "y", "angle"), &GameWorld::create_object, DEFVAL(0.0));
 	ClassDB::bind_method(D_METHOD("get_ground_height", "x", "y"), &GameWorld::get_ground_height);
+	ClassDB::bind_method(D_METHOD("get_align_on_terrain_height", "x", "y", "z"), &GameWorld::get_align_on_terrain_height);
 	ClassDB::bind_method(D_METHOD("queue_unit", "player", "producer", "template_name", "secondary"), &GameWorld::queue_unit, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("cancel_unit", "player", "producer", "template_name", "all"), &GameWorld::cancel_unit, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("set_rally_point", "player", "producer", "x", "y"), &GameWorld::set_rally_point);
@@ -3566,6 +3567,11 @@ int64_t GameWorld::create_object(const String &template_name, int64_t player, do
 double GameWorld::get_ground_height(double x, double y) const
 {
 	return m_game ? (double)m_game->logic().getGroundHeight((float)x, (float)y) : 0.0;
+}
+
+double GameWorld::get_align_on_terrain_height(double x, double y, double z) const
+{
+	return m_game ? (double)m_game->logic().getAlignOnTerrainHeight((float)x, (float)y, (float)z) : 0.0;
 }
 
 void GameWorld::queue_unit(int64_t player, int64_t producer, const String &template_name, bool secondary)

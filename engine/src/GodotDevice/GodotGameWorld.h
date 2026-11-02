@@ -224,6 +224,9 @@ public:
 	// player commands, appended to the lockstep command list; they run in the next logic frame (advance). `queue_unit` selects `producer` and issues
 	// MSG_QUEUE_UNIT_CREATE (secondary = the second production queue), `cancel_unit` MSG_CANCEL_UNIT_CREATE, `set_rally_point` MSG_SET_RALLY_POINT.
 	double get_ground_height(double x, double y) const;
+	// lane WALL-3: the height a move hint at SAGE (x, y, z) stands at (TerrainLogic::alignOnTerrain RW 0x6819D9: GameLogic::getAlignOnTerrainHeight); reads the
+	// live logic like get_ground_height
+	double get_align_on_terrain_height(double x, double y, double z) const;
 	void queue_unit(int64_t player, int64_t producer, const String &template_name, bool secondary);
 	void cancel_unit(int64_t player, int64_t producer, const String &template_name, bool all);
 	void set_rally_point(int64_t player, int64_t producer, double x, double y);
