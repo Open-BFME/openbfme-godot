@@ -398,7 +398,8 @@ void ExperienceTracker::xfer(Xfer &x)
 	const std::string rebuiltTarget = x.isLoading() ? m_templateName : std::string();
 	x.xferAsciiString(&m_templateName);
 	x.xferAsciiString(&m_levelName);
-	// Native snapshots, both editions: Object::friend_initObject has rebuilt a Create-a-Hero's own level chain before this xfer.
+	// Native snapshots, both editions: Object::friend_initObject has rebuilt a Create-a-Hero's own level chain before this xfer,
+	// using the staged saved object-to-hero binding when the snapshot contains CreateAHero (not the object's current owner).
 	// Its target is CreateAHero_<uniqueID> (RW 0x80AA76 / 0x80AA8A), not a ThingTemplate. Accept only that reconstructed identity
 	// with its registered chain, never an arbitrary name or a CreateAHero_ prefix. No retail rules or snapshot bytes change.
 	const bool generatedTarget = x.isLoading() && !m_parent->logic().things().findTemplate(m_templateName);

@@ -216,14 +216,44 @@ void GameState::saveBlocks(const std::vector<std::string> &tokens, std::vector<s
 	out = std::move(x.data());
 }
 
+void GameState::setLoadPreparation(const std::string &token, std::function<void(Xfer &)> prepare, std::function<void()> cleanup)
+{
+	Block *block = find(token);
+	if (!block || !prepare || !cleanup)
+	{
+		throw std::logic_error("GameState::setLoadPreparation: invalid preparation for '" + token + "'");
+	}
+	block->prepareLoad = std::move(prepare);
+	block->finishPreparation = std::move(cleanup);
+}
+
 void GameState::loadBlocks(const std::vector<std::string> &tokens, const std::vector<std::uint8_t> &bytes)
 {
-	// lane SAVE-4e: the whole stream is walked twice. First its framing alone (every block skipped by its end offset, RW 0xA203D6): the tokens, known,
+	// lane SAVE-4e: first walk the framing alone (every block skipped by its end offset, RW 0xA203D6): the tokens, known,
 	// once each and in the list's order, every block inside the stream, the end token and nothing after it; a damaged, truncated, reordered or foreign
-	// stream is refused here, before any block touches the game. Then the blocks load (their contents checked by their own xfers).
+	// stream is refused here, before any block touches the game. When registered, a preparation pass stages dependencies without committing them.
+	// Finally the blocks load in their unchanged stream order (their contents checked by their own xfers).
 	{
 		XferLoad framing(bytes);
 		walkBlocks(framing, tokens, false);
+	}
+	struct PreparedBlocks
+	{
+		std::vector<Block *> blocks;
+		~PreparedBlocks()
+		{
+			for (Block *block : blocks) block->finishPreparation();
+		}
+	} prepared;
+	for (const std::string &token : tokens)
+	{
+		Block *block = find(token);
+		if (block && block->prepareLoad) prepared.blocks.push_back(block);
+	}
+	if (!prepared.blocks.empty())
+	{
+		XferLoad preparation(bytes);
+		walkBlocks(preparation, tokens, true, true);
 	}
 	XferLoad x(bytes);
 	m_postProcess.clear();
@@ -237,7 +267,7 @@ void GameState::loadBlocks(const std::vector<std::string> &tokens, const std::ve
 	}
 }
 
-void GameState::walkBlocks(XferLoad &x, const std::vector<std::string> &tokens, bool load)
+void GameState::walkBlocks(XferLoad &x, const std::vector<std::string> &tokens, bool load, bool prepare)
 {
 	{
 		readHeader(x);
@@ -275,10 +305,16 @@ void GameState::walkBlocks(XferLoad &x, const std::vector<std::string> &tokens, 
 				continue;
 			}
 			seen.push_back(token);
+			if (prepare && !b->prepareLoad)
+			{
+				x.skipBlock();
+				continue;
+			}
 			x.beginBlock();
 			try
 			{
-				x.xferSnapshot(b->snapshot);
+				if (prepare) b->prepareLoad(x);
+				else x.xferSnapshot(b->snapshot);
 				x.endBlock();
 			}
 			catch (const std::exception &e)

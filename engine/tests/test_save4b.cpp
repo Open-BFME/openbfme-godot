@@ -11,6 +11,7 @@
 
 #include "Common/GameState.h"
 #include "Common/JobSystem.h"
+#include "Common/Snapshot.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/RwFieldTables.h"
 #include "Common/XferLoad.h"
@@ -1283,6 +1284,204 @@ TEST_CASE("save4b section 8 (review r2): every class frames its own version (Imm
 	}
 }
 
+
+TEST_CASE("save4b native load preparation validates framing first and clears staged hero dependencies on every exit")
+{
+	GameState state;
+	std::vector<std::string> events;
+	bool prepared = false;
+	int failure = 0;
+	SUBCASE("normal completion") {}
+	SUBCASE("preparation throws") { failure = 1; }
+	SUBCASE("ordinary xfer throws") { failure = 2; }
+	SUBCASE("postprocess throws") { failure = 3; }
+	SUBCASE("bad framing never prepares or loads") { failure = 4; }
+	struct Block : Snapshot
+	{
+		GameState &state;
+		std::vector<std::string> &events;
+		bool &prepared;
+		int &failure;
+		std::int32_t value = 42;
+		Block(GameState &s, std::vector<std::string> &e, bool &p, int &f) : state(s), events(e), prepared(p), failure(f) {}
+		void crc(Xfer *x) override { xfer(x); }
+		void xfer(Xfer *x) override
+		{
+			x->xferInt(&value);
+			if (!x->isLoading()) return;
+			CHECK(prepared);
+			events.push_back("load");
+			if (failure == 2) throw XferException("test load failure");
+			state.addPostProcessSnapshot(this);
+		}
+		void loadPostProcess() override
+		{
+			CHECK(prepared);
+			events.push_back("post");
+			if (failure == 3) throw XferException("test postprocess failure");
+		}
+	} objects(state, events, prepared, failure), heroes(state, events, prepared, failure);
+	state.addSnapshotBlock("objects", &objects, 1, "test", {});
+	state.addSnapshotBlock("heroes", &heroes, 1, "test", {});
+	state.setLoadPreparation("heroes", [&](Xfer &x) {
+		std::int32_t staged = 0;
+		x.xferInt(&staged);
+		CHECK(staged == 42);
+		prepared = true;
+		events.push_back("prepare");
+		if (failure == 1) throw XferException("test preparation failure");
+	}, [&]() {
+		prepared = false;
+		events.push_back("cleanup");
+	});
+	const std::vector<std::string> tokens{ "objects", "heroes" };
+	std::vector<std::uint8_t> bytes;
+	state.saveBlocks(tokens, bytes);
+	if (failure == 4) bytes.pop_back();
+	if (failure) CHECK_THROWS_AS(state.loadBlocks(tokens, bytes), XferException);
+	else state.loadBlocks(tokens, bytes);
+	CHECK_FALSE(prepared);
+	if (failure == 4) CHECK(events.empty());
+	else
+	{
+		REQUIRE_FALSE(events.empty());
+		CHECK(events.front() == "prepare");
+		CHECK(events.back() == "cleanup");
+		CHECK(std::count(events.begin(), events.end(), "cleanup") == 1);
+		if (!failure) CHECK(events == std::vector<std::string>{ "prepare", "load", "load", "post", "post", "cleanup" });
+	}
+}
+
+TEST_CASE("save4b create-a-hero: transferred heroes load from saved object bindings instead of their new owners")
+{
+	// Both editions, native saves. Resetting the slot records after saving models
+	// a fresh START where the saved object-to-record bindings do not yet exist.
+	ExperienceLevelSystem levels, rebuiltLevels;
+	CreateAHeroSystem cah;
+	CommandStore commands;
+	struct RestoreGlobals
+	{
+		ExperienceLevelSystem *levels = TheExperienceLevelSystem;
+		CreateAHeroSystem *cah = TheCreateAHeroSystem;
+		CommandStore *commands = TheCommandStore;
+		~RestoreGlobals() { TheExperienceLevelSystem = levels; TheCreateAHeroSystem = cah; TheCommandStore = commands; }
+	} restore;
+	TheExperienceLevelSystem = &levels;
+	TheCreateAHeroSystem = &cah;
+	TheCommandStore = &commands;
+	logictest::LogicWorld world;
+	levels.registerBlocks(world.w.fx.env.blocks);
+	cah.canBuildUpgradeName = "Upgrade_TransferBuild";
+	cah.mapModeUpgradeName = "Upgrade_TransferMap";
+	cah.gameModeUpgradeName = "Upgrade_TransferGame";
+	const std::string levelIni = R"ini(
+ExperienceLevel CreateAHeroLevel1
+ TargetNames = CreateAHero
+ RequiredExperience = 1
+ Rank = 1
+End
+ExperienceLevel CreateAHeroLevel2
+ TargetNames = CreateAHero
+ RequiredExperience = 100
+ Rank = 2
+End
+)ini";
+	REQUIRE(world.w.load(levelIni + R"ini(
+Upgrade Upgrade_TransferBuild
+ Type = PLAYER
+End
+Upgrade Upgrade_TransferMap
+ Type = OBJECT
+End
+Upgrade Upgrade_TransferGame
+ Type = OBJECT
+End
+Object CreateAHero
+ KindOf = CREATE_A_HERO HERO
+End
+)ini").empty());
+	CreateAHeroClass cls;
+	cls.upgradeName = "Upgrade_TransferGame";
+	CreateAHeroSubClass sub;
+	sub.upgradeName = cls.upgradeName;
+	cls.subClasses.push_back(sub);
+	cah.addClass(cls, nullptr);
+	bool recipientHasHero = false;
+	bool foreignTarget = false;
+	bool duplicateBinding = false;
+	SUBCASE("recipient has no hero record") {}
+	SUBCASE("recipient has a different hero and live object") { recipientHasHero = true; }
+	SUBCASE("another saved hero target is still refused") { recipientHasHero = true; foreignTarget = true; }
+	SUBCASE("duplicate nonzero saved object bindings are refused") { recipientHasHero = true; duplicateBinding = true; }
+	Player *alice = world.players.findPlayerWithName("Alice");
+	Player *bob = world.players.findPlayerWithName("Bob");
+	REQUIRE(alice);
+	REQUIRE(bob);
+	CreateAHeroHero original, recipient;
+	original.uniqueID = "TransferredHero";
+	recipient.uniqueID = "RecipientHero";
+	world.logic->createAHeroes().assign(*alice, original);
+	if (recipientHasHero) world.logic->createAHeroes().assign(*bob, recipient);
+	world.logic->createAHeroes().startGame();
+	Object *hero = world.make("CreateAHero", alice->getDefaultTeam());
+	const ObjectID id = hero->getID();
+	hero->getExperienceTracker()->gainLevel(false);
+	REQUIRE(hero->getExperienceTracker()->getRank() == 2);
+	ObjectID recipientID = INVALID_ID;
+	if (recipientHasHero) recipientID = world.make("CreateAHero", bob->getDefaultTeam())->getID();
+	hero->setTeam(bob->getDefaultTeam());
+	REQUIRE(hero->getControllingPlayer() == bob);
+	REQUIRE(world.logic->createAHeroes().heroOfObject(id)->uniqueID == original.uniqueID);
+	if (foreignTarget) hero->getExperienceTracker()->setLevelTargetName("CreateAHero_RecipientHero");
+	if (duplicateBinding) world.logic->createAHeroes().heroOf(*bob)->objectID = id;
+	std::vector<std::string> blocks = coreAndSave4b();
+	blocks.push_back("obfme:CreateAHero");
+	std::vector<std::uint8_t> bytes;
+	world.logic->gameState().saveBlocks(blocks, bytes);
+	const auto before = sectionValues(*world.logic);
+	world.logic->createAHeroes().assign(*alice, original);
+	if (recipientHasHero) world.logic->createAHeroes().assign(*bob, recipient);
+	REQUIRE_FALSE(world.logic->createAHeroes().heroOfObject(id));
+	TheExperienceLevelSystem = &rebuiltLevels;
+	REQUIRE(world.w.load(levelIni).empty());
+	REQUIRE_FALSE(rebuiltLevels.levelsFor("CreateAHero_TransferredHero"));
+	const std::string result = loadError(world, blocks, bytes);
+	if (foreignTarget || duplicateBinding)
+	{
+		if (duplicateBinding) CHECK(result.find("object " + std::to_string(id) + " is bound to more than one saved hero") != std::string::npos);
+		else CHECK(result.find("level target 'CreateAHero_RecipientHero' is not a template") != std::string::npos);
+		// Failure also releases the temporary binding cache: an ordinary creation
+		// after the failed load must use its player's record again.
+		Object *next = world.make("CreateAHero", alice->getDefaultTeam());
+		CHECK(next->getExperienceTracker()->levelTargetName() == "CreateAHero_TransferredHero");
+		return;
+	}
+	REQUIRE(result == "(loaded)");
+	hero = world.logic->findObjectByID(id);
+	REQUIRE(hero);
+	CHECK(hero->getControllingPlayer() == bob);
+	CHECK(hero->getExperienceTracker()->levelTargetName() == "CreateAHero_TransferredHero");
+	CHECK(hero->getExperienceTracker()->getLevelName() == "CreateAHeroLevel2_TransferredHero");
+	CHECK(hero->getExperienceTracker()->getRank() == 2);
+	REQUIRE(world.logic->createAHeroes().heroOfObject(id));
+	CHECK(world.logic->createAHeroes().heroOfObject(id)->uniqueID == original.uniqueID);
+	if (recipientHasHero)
+	{
+		REQUIRE(world.logic->createAHeroes().heroOfObject(recipientID));
+		CHECK(world.logic->createAHeroes().heroOfObject(recipientID)->uniqueID == recipient.uniqueID);
+	}
+	const auto after = sectionValues(*world.logic);
+	for (const char *section : { "objects", "create-a-hero", "experience", "players and teams", "frame, object ids, RNG" })
+	{
+		CAPTURE(section);
+		CHECK(after.at(section) == before.at(section));
+	}
+	std::vector<std::uint8_t> again;
+	world.logic->gameState().saveBlocks(blocks, again);
+	CHECK(again == bytes);
+	Object *next = world.make("CreateAHero", alice->getDefaultTeam());
+	CHECK(next->getExperienceTracker()->levelTargetName() == "CreateAHero_TransferredHero"); // cleanup after success
+}
 
 TEST_CASE("save4b create-a-hero: reconstructed generated experience targets roundtrip and foreign identities are refused")
 {
