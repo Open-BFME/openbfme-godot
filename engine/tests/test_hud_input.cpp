@@ -739,6 +739,45 @@ TEST_CASE("synthetic HUD: hiding one porter preserves other selections and an un
 	r.selected({ other->getID(), castle->getID() });
 }
 
+TEST_CASE("synthetic HUD: a queued stop cannot reach a porter that just entered construction")
+{
+	synthetichud::Rig r;
+	REQUIRE(r.w.load("Object TestPorter\n KindOf = SELECTABLE DOZER\nEnd\n") == "");
+	Object *porter = r.place("TestPorter", 100, 100);
+	std::vector<ObjectID> remaining;
+	SUBCASE("porter alone") {}
+	SUBCASE("stop still reaches the other selected unit")
+	{
+		Object *other = r.place("TestFighter", 200, 100);
+		r.input->ui().selectObject(other->getID());
+		r.players.getLocalPlayer()->selection().push_back(other->getID());
+		remaining.push_back(other->getID());
+	}
+	r.input->ui().selectObject(porter->getID());
+	r.players.getLocalPlayer()->selection().push_back(porter->getID());
+	std::vector<ObjectID> stopped;
+	int stops = 0;
+	r.dispatch.registerHandler(MSG_DO_STOP, "test", [&](GameLogic &, const GameMessage &) {
+		++stops;
+		stopped = r.players.getLocalPlayer()->selection();
+		return true;
+	});
+	// Both editions: the hide happens before the next client update, but S is already queued.
+	// Dispatch must remove the porter before executing that stop, rather than merely fixing the final selection.
+	porter->setStatus((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("UNSELECTABLE"), true);
+	r.logic->friend_containLeaveWorld(*porter);
+	r.input->key(KEY_S, KEY_STATE_DOWN);
+	r.input->key(KEY_S, KEY_STATE_UP);
+	r.input->update();
+	REQUIRE(r.commands.messages().size() == 2);
+	CHECK(r.commands.messages()[0].getType() == MSG_REMOVE_FROM_SELECTED_GROUP);
+	CHECK(r.commands.messages()[1].getType() == MSG_DO_STOP);
+	r.drain();
+	CHECK(stops == 1);
+	CHECK(stopped == remaining);
+	r.selected(remaining);
+}
+
 TEST_CASE("synthetic HUD: drag selection filters enemies and Shift adds to it")
 {
 	synthetichud::Rig r;

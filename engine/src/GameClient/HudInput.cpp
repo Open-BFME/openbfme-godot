@@ -161,7 +161,8 @@ size_t HudInput::update()
 		// before translating more input. UNSELECTABLE alone must not remove an unpacked castle (see above).
 		if (o && !o->isInWorld() && o->isKindOfName("DOZER") && unselectable >= 0 && o->testStatus((unsigned)unselectable))
 		{
-			m_stream.append(MSG_REMOVE_FROM_SELECTED_GROUP).appendObjectID(id);
+			// The logic must lose the porter before commands derived from input already queued this client frame.
+			m_stream.prepend(MSG_REMOVE_FROM_SELECTED_GROUP).appendObjectID(id);
 			if (m_ui.placeBuildSource() == id)
 			{
 				m_ui.setGUICommand(nullptr);
