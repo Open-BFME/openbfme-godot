@@ -4632,14 +4632,15 @@ Dictionary GameWorld::lan_strategic_begin(Object *living_world, const Array &slo
 	}
 	if (m_netStart.online && m_netStart.rejoinGeneration > 0)
 	{
-		r["error"] = "an online War of the Ring cannot rejoin a running strategic map without its relay command log";
+		// WOTR2 S-4075: RotWK has no reconnect (LobbyStart::holdsForRejoin); the lobby refuses a war's rejoin ticket, this is the client's own guard
+		r["error"] = "a War of the Ring cannot be rejoined: RotWK has no reconnect and the war's state cannot be caught up [S-4075]";
 		return r;
 	}
 	NetworkConfig config;
 	config.localSlot = m_netStart.localSlot;
 	config.runAhead = m_netStart.runAhead;
 	config.crcInterval = m_netStart.crcInterval;
-	config.holdForRejoin = m_netStart.online; // ONLINE-3: the relay holds a silent slot, unlike LAN's immediate hand-over
+	config.holdForRejoin = m_netStart.holdsForRejoin(); // WOTR2 S-4075: false: a war's drop is retail's immediate hand-over, online as on a LAN
 	std::string error;
 	if (!m_fs.is_valid() || !NetworkSettings::load(*m_fs->archive_fs(), config.settings, &error))
 	{

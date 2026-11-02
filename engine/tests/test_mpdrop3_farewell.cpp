@@ -39,8 +39,9 @@ struct HangRun
 	std::string log;
 };
 
-// `hangAfterDropMs`: how long slot 2 stays hung after the survivors dropped it
-HangRun runHang(std::uint64_t hangAfterDropMs)
+// `hangAfterDropMs`: how long slot 2 stays hung after the survivors dropped it; `survivorsLeaveMs`: the survivors stop that long after the drop (they
+// played on and left: nobody answers the dropped player any more)
+HangRun runHang(std::uint64_t hangAfterDropMs, std::uint64_t survivorsLeaveMs = ~0ull)
 {
 	struct P
 	{
@@ -119,6 +120,10 @@ HangRun runHang(std::uint64_t hangAfterDropMs)
 				}
 				r.droppedAtMs = now;
 				resumeAt = now + hangAfterDropMs;
+			}
+			if (r.dropped && now - r.droppedAtMs >= survivorsLeaveMs)
+			{
+				peers[0].stopped = peers[1].stopped = true;
 			}
 			if (r.dropped && now >= resumeAt)
 			{
@@ -206,6 +211,23 @@ TEST_CASE("mpdrop3: a hung player whose drop was lost learns it was dropped as s
 		CHECK(r.lastFrame <= r.dropFrame); // tolerance: `frame` is the next frame to run: frames before the drop are the survivors' too; none from the drop's on
 		CHECK_FALSE(r.forked);
 	}
+}
+
+// WOTR2 (the combined LAN matrix's 120 s stall, S-1127): the survivors finished the war and left long before the hung player runs again, so nobody
+// answers its traffic with its drop (MPDROP-3's answer) and everything sent to it while it hung is lost. It must not drop them and play on alone: after
+// a hang longer than NetworkDisconnectTime + NetworkPlayerTimeoutTime it drops nobody until a player is heard again, and with none heard for that span
+// it leaves as a dropped player
+TEST_CASE("mpdrop3 (WOTR2 stall): a hung player whose drop was lost while the others played on and left leaves as dropped after its own hang: it drops "
+		  "nobody and runs no frame from the drop's frame on")
+{
+	const HangRun r = runHang(3 * kTimeoutMs + 20000, 2000);
+	INFO(r.log);
+	REQUIRE(r.dropped);
+	CHECK(r.quit);
+	CHECK(r.quitReason.find("dropped by the other players: none was heard") == 0);
+	CHECK(r.quitAfterMs == (std::uint64_t)(kDisconnectMs + kTimeoutMs)); // the span the others wait before they drop a silent player (an update a ms)
+	CHECK(r.lastFrame <= r.dropFrame); // tolerance: as above: none from the drop's frame on
+	CHECK_FALSE(r.forked);
 }
 
 namespace

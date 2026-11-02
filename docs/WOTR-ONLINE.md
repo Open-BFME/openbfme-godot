@@ -46,21 +46,34 @@ GameSpy behavior.
   ABSOLUTE_HEIGHT and SCALING_WALLS is not ported`. Both peers then reported
   `GAME FAIL: start_new_game failed`. A two-turn run with one battle passed;
   the second battle is not verified.
-- Combined LAN matrix, 120-second stall: `FAIL: the stalled Bob did not leave
-  by itself to the LAN lobby`, followed by a split-game surrender complaint.
-  The isolated 120-second rerun passed. This intermittent failure is not
-  explained and must not be presented as a stable combined-matrix pass.
-- S-4075 remains open. The relay holds a dropped strategic slot, but
-  `GameWorld::lan_strategic_begin` refuses a rejoin generation because the
-  restarted strategic logic cannot apply the relay's command log. The lobby
-  stores phase replay metadata and signed logs, but no client playback driver
-  reconstructs the strategic and tactical phases. The two possible designs
-  are deterministic strategic command-log catch-up (preferred, reusing the
-  classic relay's authenticated log) or a validated strategic state snapshot
-  followed by the log tail; the latter needs a new transfer/trust contract.
-  The coordinator must choose and assign the protocol owner before this
-  dependent work proceeds. The online strategic spectator remains explicitly
-  refused. The open-stop count is 831.
+- Combined LAN matrix, 120-second stall (explained and fixed, 11-01): the
+  survivors finish the 5-turn war and exit about 97 s before the stalled Bob
+  runs again, so MPDROP-3's answer to his traffic never comes; his only drop
+  notice is what sits in his socket. Their resends to the silent Bob fill
+  about 380 KB of it in 12 s, just under the 425,984-byte buffer of a host
+  with the stock `net.core.rmem_max` (dev's is 16 MB: never failed there);
+  past it the kernel drops the last datagrams, the DISCONNECTPLAYER among
+  them, and Bob drops the others (the split game). Now a game that hung
+  longer than NetworkDisconnectTime + NetworkPlayerTimeoutTime drops nobody
+  until a player is heard again, and leaves as dropped when none is
+  (`DisconnectManager::checkOwnHang`, S-1127).
+- S-4075, late rejoin (closed by following retail, 11-01): RotWK 2.01 has
+  no reconnect. `ConnectionManager::disconnectPlayer` (RW 0x8D57D8) drops a
+  player for good, the NetCommandType list (RW 0x989449) has no rejoin, and
+  the war's live-human count (RW 0x6B5E3E) skips a gone player. An online
+  war therefore holds no one for a rejoin, on the map or in a battle
+  (`LobbyStart::holdsForRejoin`; Open Play keeps ONLINE-3's hold, S-3900):
+  a crashed or stalled peer is surrendered at once, as on a LAN, and the
+  others play on. The lobby refuses a war's rejoin by name
+  (`409 war_no_rejoin`); the online screens offer no rejoin box and no
+  REJOIN / WATCH row for the player's own war; `lan_strategic_begin` and
+  `NetGameSession::beginRejoin` refuse a war rejoin START.
+- S-4075 stays open for: phase replay playback (the lobby stores the
+  records, no client driver plays them), online strategic spectators
+  (refused by name), and a real-time battle after a player dropped from the
+  map: the lobby's phase vote still waits for the dropped seat (it cannot
+  confirm a drop), so the phase request fails by name after 30 s. A
+  relay-confirmed drop for the phase vote would close it.
 
 Adversarial review: two-peer equal hashes and a fought battle do not prove
 late rejoin, phase replay playback, or long-session relay integrity. The

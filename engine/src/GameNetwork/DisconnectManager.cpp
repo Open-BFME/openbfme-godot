@@ -448,10 +448,55 @@ std::string DisconnectManager::frameLine(Network &net, std::uint64_t now, std::u
 	return line;
 }
 
+void DisconnectManager::checkOwnHang(Network &net, std::uint64_t now)
+{
+	// OpenBFME (S-1127): see m_hangEndMs. Only once the load screen is gone: a long map load is the load barrier's (the slow loader rule)
+	const std::uint64_t span = (std::uint64_t)m_settings.disconnectTime + m_settings.playerTimeoutTime;
+	if (m_lastUpdateMs != 0 && now - m_lastUpdateMs > span && net.gameRunning() && !m_loadScreenUp)
+	{
+		m_hangEndMs = now;
+		m_hangMs = now - m_lastUpdateMs;
+		note("this player hung " + std::to_string(m_hangMs) + " ms (the others drop a silent player after " + std::to_string(span)
+			+ " ms): it drops nobody until a player is heard again");
+	}
+	m_lastUpdateMs = now;
+	if (m_hangEndMs == 0)
+	{
+		return;
+	}
+	const int local = net.config().localSlot;
+	bool other = false, fresh = false;
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		if (i == local || !net.isPlayerConnected(i) || net.isLeftState(i))
+		{
+			continue;
+		}
+		other = true;
+		fresh = fresh || net.lastHeard(i, now) > m_hangEndMs; // read in a later update than the one that drained the socket
+	}
+	if (!other || fresh)
+	{
+		if (fresh)
+		{
+			note("a player is heard again after this player's hang: the usual rules (a lost drop of this player comes again, MPDROP-3)");
+		}
+		m_hangEndMs = 0;
+		return;
+	}
+	if (now - m_hangEndMs >= span && m_quitReason.empty())
+	{
+		m_quitReason = "dropped by the other players: none was heard in the " + std::to_string(span / 1000) + " s after this player's own "
+			+ std::to_string(m_hangMs / 1000) + " s hang (its drop was lost)";
+		note("quit: " + m_quitReason);
+	}
+}
+
 void DisconnectManager::update(Network &net, std::uint64_t now, std::uint32_t logicFrame)
 {
 	const int local = net.config().localSlot;
 	applyPendingDrops(net, logicFrame); // lane MP-2 (review): a held drop whose claimed leave / drop arrived since
+	checkOwnHang(net, now);
 	if (m_announced && logicFrame > m_announcedFrame)
 	{
 		m_announced = false; // the announced frame ran
@@ -535,7 +580,7 @@ void DisconnectManager::update(Network &net, std::uint64_t now, std::uint32_t lo
 		m_lastFrame = logicFrame;
 		m_lastFrameTime = (long long)now;
 	}
-	if (m_state != SCREENOFF)
+	if (m_state != SCREENOFF && m_hangEndMs == 0) // OpenBFME (S-1127): after this player's own hang, no drop or vote until a player is heard again
 	{
 		updateDisconnectStatus(net, now, logicFrame);
 	}

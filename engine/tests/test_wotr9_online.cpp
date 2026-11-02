@@ -218,3 +218,23 @@ TEST_CASE("wotr9 online client: malformed strategic room and save answers are re
 		CHECK(c.gameInfo().slots[1].startPos == 9);
 	}
 }
+
+TEST_CASE("wotr2 S-4075: only an online Open Play game holds a dropped player for a rejoin; a War of the Ring holds no one, on its map or in its battles "
+		  "(RotWK has no reconnect, RW 0x8D57D8): its drop is retail's hand-over at once, as on a LAN")
+{
+	LobbyStart skirmish;
+	skirmish.online = true;
+	CHECK(skirmish.holdsForRejoin());
+	skirmish.online = false;
+	CHECK_FALSE(skirmish.holdsForRejoin()); // LAN: retail's hand-over
+	LobbyStart war;
+	war.online = true;
+	war.game.game.gameMode = 1;
+	war.game.game.scenario = "WarScenario";
+	CHECK_FALSE(war.holdsForRejoin()); // the strategic map (GameWorld::lan_strategic_begin)
+	LobbyStart battle; // lan_war_battle: the tactical game of the battle (no war fields) on the war's original relay seats
+	battle.online = true;
+	battle.battleUsesWarSlots = true;
+	CHECK_FALSE(battle.game.game.warOfTheRing());
+	CHECK_FALSE(battle.holdsForRejoin());
+}

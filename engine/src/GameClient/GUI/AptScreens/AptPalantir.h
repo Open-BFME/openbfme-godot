@@ -280,6 +280,7 @@ private:
 	std::set<std::string> m_pressRegistered; // the press callbacks registered, once per position
 	std::set<std::string> m_initRegistered;  // lane HUD-4: the _OnInitialized callbacks, once per position
 	bool call(const std::string &path, const std::string &fn, const std::vector<std::string> &args);
+	bool callValues(const std::string &path, const std::string &fn, const std::vector<AptValue> &args);
 	unsigned m_radarPingCalls = 0; ///< lane RADAR-1
 	void syncFrames(const std::vector<ControlBarButton> &buttons, bool arc);
 	void clearFrame(int position, bool arc);
@@ -329,7 +330,7 @@ private:
 	int m_lastLevel = -1, m_lastRank = 0, m_lastProgress = 1;
 	bool m_previousPurchasable[20] = {};
 	std::vector<std::string> m_statsCalls;
-	void statsCall(const std::string &fn, const std::vector<std::string> &args);
+	void statsCall(const std::string &fn, const std::vector<AptValue> &args);
 	ObjectID m_contextObject = INVALID_ID;
 	std::string m_contextSet, m_factionSent, m_portraitShown;
 	std::string m_lastTexts;
