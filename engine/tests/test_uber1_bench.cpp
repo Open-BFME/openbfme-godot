@@ -231,6 +231,7 @@ void runBattle(ArchiveFileSystem &fs, RetailObjectWorld &world, const MapObjectO
 		}
 	}
 	const double cpu0 = processCpuMs(), wall0 = wallMs();
+	const GameLogic::Report before = logic.report(); // lane PERF-WS: the counts over the measured frames alone
 	for (int f = 0; f < frames; ++f)
 	{
 		const double t0 = wallMs(), c0 = perfbench::nowMs();
@@ -270,7 +271,9 @@ void runBattle(ArchiveFileSystem &fs, RetailObjectWorld &world, const MapObjectO
 	out.framesWallMs = wallMs() - wall0;
 	out.processCpuMs = cpu0 >= 0.0 ? processCpuMs() - cpu0 : -1.0;
 	out.objectsEnd = countObjects(logic);
-	out.weaponStatusSerialFrames = logic.report().weaponStatusSerialFrames;
+	const GameLogic::Report after = logic.report();
+	out.weaponStatusSerialFrames = after.weaponStatusSerialFrames - before.weaponStatusSerialFrames;
+	out.weaponStatusPooledFrames = after.weaponStatusPooledFrames - before.weaponStatusPooledFrames;
 }
 } // namespace uberbench
 

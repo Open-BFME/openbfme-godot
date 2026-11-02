@@ -835,6 +835,10 @@ void GameLogic::prepareWeaponStatusWork(const std::vector<UpdateModule *> &vec)
 		m_weaponStatusWork.assign(vec.size(), WeaponStatusWork{});
 		++m_weaponStatusSerialFrames;
 	}
+	else if (!vec.empty())
+	{
+		++m_weaponStatusPooledFrames;
+	}
 }
 
 // RW 0x62EADF .. 0x62EB4D: the reverse scan that moves FOREVER modules from the phase vector to `sleeping`
@@ -1046,6 +1050,7 @@ void GameLogic::reset()
 	m_sleeping.clear();
 	m_weaponStatusWork.clear(); // lane PERF-WS: no module pointer outlives its game
 	m_weaponStatusSerialFrames = 0;
+	m_weaponStatusPooledFrames = 0;
 	m_objectsToDestroy.clear();
 	m_objectsById.clear();
 	m_templateInfo.clear();
@@ -1643,6 +1648,7 @@ GameLogic::Report GameLogic::report() const
 	r.unportedCreated = m_modules.unportedCreated();
 	r.creationsWithoutDispatch = m_creationsWithoutDispatch;
 	r.weaponStatusSerialFrames = m_weaponStatusSerialFrames;
+	r.weaponStatusPooledFrames = m_weaponStatusPooledFrames;
 	r.errors = m_errors;
 	for (const Object *o = m_objectHead; o; o = o->getNextObject())
 	{
