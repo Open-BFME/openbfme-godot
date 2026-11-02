@@ -182,6 +182,13 @@ void Construction::completeConstruction(Object &structure, Object *builder)
 	structure.setConstructionPercent(-1.0f);
 	structure.setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, false);
 	setModelConditions(structure, { "AWAITING_CONSTRUCTION", "PARTIALLY_CONSTRUCTED", "ACTIVELY_BEING_CONSTRUCTED" }, { "CONSTRUCTION_COMPLETE" });
+	// Both editions: the dozer explicitly refreshes the body's visual condition before notifying the player (RW 0x88DF6B, body slot 0x94;
+	// clean BFME2 1.06 0x88AC76, slot 0x90; DozerAIUpdateCtor.cpp:Rva0048A69E). Health changes during construction suppress this refresh, so a
+	// stale REALLYDAMAGED flag from placement must not survive until GettingBuiltBehavior's next update. Preserve actual damage at completion.
+	if (ActiveBody *body = dynamic_cast<ActiveBody *>(structure.getBodyModule()))
+	{
+		body->evaluateVisualCondition();
+	}
 	if (Player *owner = structure.getControllingPlayer())
 	{
 		onStructureConstructionComplete(*owner, builder, structure, false);

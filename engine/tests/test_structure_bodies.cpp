@@ -4,6 +4,7 @@
 #include "CombatTestUtil.h"
 
 #include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Construction.h"
 #include "GameLogic/ExperienceLevels.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/StructureModules.h"
@@ -176,6 +177,45 @@ DamageInfo hit(const Object *source, float amount, int type)
 }
 
 } // namespace
+
+// Both editions: RW 0x88DF6B / clean BFME2 1.06 0x88AC76 explicitly evaluate the visual condition at dozer completion.
+// The placement sets health to 1 before UNDER_CONSTRUCTION; healing during construction updates the body state while leaving the visual flags alone.
+TEST_CASE("structure bodies: construction completion refreshes stale damage flags immediately and preserves actual damage")
+{
+	struct Expected
+	{
+		float health;
+		BodyDamageType state;
+	};
+	for (const Expected &expected : { Expected{ 1000.0f, BODY_PRISTINE }, Expected{ 500.0f, BODY_DAMAGED }, Expected{ 200.0f, BODY_REALLYDAMAGED } })
+	{
+		CAPTURE(expected.health);
+		CombatWorld w(kStructures);
+		Object *keep = w.unit("Keep", 'B', 300, 300);
+		ActiveBody *body = dynamic_cast<ActiveBody *>(keep->getBodyModule());
+		REQUIRE(body != nullptr);
+		body->internalChangeHealth(-999.0f);
+		REQUIRE(keep->testModelCondition(CombatNames::modelCondition("REALLYDAMAGED")));
+		keep->setStatus((unsigned)CombatNames::statuses().underConstruction, true);
+		Construction::setModelConditions(*keep, {}, { "PARTIALLY_CONSTRUCTED", "ACTIVELY_BEING_CONSTRUCTED" });
+		keep->setConstructionPercent(99.0f);
+		body->internalChangeHealth(expected.health - 1.0f);
+		CHECK(body->appliedDamageState() == expected.state);
+		CHECK(keep->testModelCondition(CombatNames::modelCondition("REALLYDAMAGED")));
+		// No later module update: the completion itself must synchronize the flags with the body's current state.
+		Construction::completeConstruction(*keep, nullptr);
+		CHECK(body->getHealth() == expected.health);
+		CHECK(body->appliedDamageState() == expected.state);
+		CHECK_FALSE(keep->isUnderConstruction());
+		CHECK(keep->getConstructionPercent() == -1.0f);
+		CHECK(keep->testModelCondition(CombatNames::modelCondition("DAMAGED")) == (expected.state == BODY_DAMAGED));
+		CHECK(keep->testModelCondition(CombatNames::modelCondition("REALLYDAMAGED")) == (expected.state == BODY_REALLYDAMAGED));
+		CHECK_FALSE(keep->testModelCondition(CombatNames::modelCondition("RUBBLE")));
+		CHECK_FALSE(keep->testModelCondition(CombatNames::modelCondition("PARTIALLY_CONSTRUCTED")));
+		CHECK_FALSE(keep->testModelCondition(CombatNames::modelCondition("ACTIVELY_BEING_CONSTRUCTED")));
+		CHECK_FALSE(keep->isDestroyed());
+	}
+}
 
 TEST_CASE("structure bodies: StructureBody is an ActiveBody with a constructor id; its damage and its damage states are ActiveBody's")
 {

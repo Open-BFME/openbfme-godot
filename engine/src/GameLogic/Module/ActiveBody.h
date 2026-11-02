@@ -83,6 +83,8 @@ public:
 	float getReviveReference() const { return m_reviveReference; }
 	BodyDamageType getDamageState() const override { return calcDamageState(); }
 	void applyInitialDamageState() override { updateDamageState(true); }
+	// Body interface RW 0x8C1D53: apply the stored damage state even when health did not change (e.g. construction completion).
+	void evaluateVisualCondition();
 	void setInitialHealth(int initialPercent) override;
 	// lane SUMMON-1: RW 0x8C47DE (vt[0x58]) with its second argument 0 (the ObjectCreationList's health)
 	void setInitialHealthPercent(float percent) override;
