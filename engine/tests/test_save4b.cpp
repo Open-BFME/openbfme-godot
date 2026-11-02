@@ -1369,6 +1369,16 @@ TEST_CASE("save4b create-a-hero: transferred heroes load from saved object bindi
 	TheExperienceLevelSystem = &levels;
 	TheCreateAHeroSystem = &cah;
 	TheCommandStore = &commands;
+	struct ColorHooks : ObjectClientHooks
+	{
+		std::map<std::uint32_t, std::vector<std::uint32_t>> colors;
+		void objectCreated(Object &) override {}
+		void objectDestroyed(Object &) override {}
+		void setCustomColors(Object &obj, int kind, std::uint32_t a, std::uint32_t b, std::uint32_t c) override
+		{
+			colors[obj.getID()] = {std::uint32_t(kind), a, b, c};
+		}
+	} hooks; // outlives the world even if a failed assertion exits this test
 	logictest::LogicWorld world;
 	levels.registerBlocks(world.w.fx.env.blocks);
 	cah.canBuildUpgradeName = "Upgrade_TransferBuild";
@@ -1419,6 +1429,12 @@ End
 	REQUIRE(bob);
 	CreateAHeroHero original, recipient;
 	original.uniqueID = "TransferredHero";
+	original.primaryColor = 0xff123456u;
+	original.secondaryColor = 0xff56789au;
+	original.tertiaryColor = 0xff9abcdeu;
+	recipient.primaryColor = 0xffabcdefu;
+	recipient.secondaryColor = 0xff345678u;
+	recipient.tertiaryColor = 0xff789abcu;
 	recipient.uniqueID = "RecipientHero";
 	world.logic->createAHeroes().assign(*alice, original);
 	if (recipientHasHero) world.logic->createAHeroes().assign(*bob, recipient);
@@ -1445,7 +1461,9 @@ End
 	TheExperienceLevelSystem = &rebuiltLevels;
 	REQUIRE(world.w.load(levelIni).empty());
 	REQUIRE_FALSE(rebuiltLevels.levelsFor("CreateAHero_TransferredHero"));
+	world.logic->setClientHooks(&hooks);
 	const std::string result = loadError(world, blocks, bytes);
+	world.logic->setClientHooks(&world.hooks);
 	if (foreignTarget || duplicateBinding)
 	{
 		if (duplicateBinding) CHECK(result.find("object " + std::to_string(id) + " is bound to more than one saved hero") != std::string::npos);
@@ -1460,15 +1478,20 @@ End
 	hero = world.logic->findObjectByID(id);
 	REQUIRE(hero);
 	CHECK(hero->getControllingPlayer() == bob);
+	REQUIRE(hooks.colors.count(id) == 1);
+	CHECK(hooks.colors.at(id) == std::vector<std::uint32_t>{3u, original.primaryColor, original.secondaryColor, original.tertiaryColor});
 	CHECK(hero->getExperienceTracker()->levelTargetName() == "CreateAHero_TransferredHero");
 	CHECK(hero->getExperienceTracker()->getLevelName() == "CreateAHeroLevel2_TransferredHero");
 	CHECK(hero->getExperienceTracker()->getRank() == 2);
 	REQUIRE(world.logic->createAHeroes().heroOfObject(id));
+	CHECK((world.logic->createAHeroes().heroOfObject(id)->flags & 8u) == 0u); // the color dirty bit was already consumed before saving
 	CHECK(world.logic->createAHeroes().heroOfObject(id)->uniqueID == original.uniqueID);
 	if (recipientHasHero)
 	{
 		REQUIRE(world.logic->createAHeroes().heroOfObject(recipientID));
 		CHECK(world.logic->createAHeroes().heroOfObject(recipientID)->uniqueID == recipient.uniqueID);
+		REQUIRE(hooks.colors.count(recipientID) == 1);
+		CHECK(hooks.colors.at(recipientID) == std::vector<std::uint32_t>{3u, recipient.primaryColor, recipient.secondaryColor, recipient.tertiaryColor});
 	}
 	const auto after = sectionValues(*world.logic);
 	for (const char *section : { "objects", "create-a-hero", "experience", "players and teams", "frame, object ids, RNG" })

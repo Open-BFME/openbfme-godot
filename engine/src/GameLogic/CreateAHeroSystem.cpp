@@ -737,6 +737,13 @@ void CreateAHeroGame::onCreated(Object &obj)
 			if (entry.second.objectID == obj.getID())
 			{
 				buildLevels(entry.second, obj);
+				// Both editions: the fresh drawable needs its saved presentation colors (RW 0x80AF0B).
+				// Send them directly; apply() would regrant upgrades and consume saved flags.
+				if (ObjectClientHooks *client = m_logic.clientHooks())
+				{
+					const CreateAHeroHero &hero = entry.second;
+					client->setCustomColors(obj, 3, hero.primaryColor, hero.secondaryColor, hero.tertiaryColor);
+				}
 				break;
 			}
 		}
