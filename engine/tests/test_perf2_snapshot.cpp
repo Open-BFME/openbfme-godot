@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace
@@ -184,6 +185,80 @@ TEST_CASE("perf2: the snapshot's records built on the logic job pool equal the s
 		if (bytesOf(serial->objects[i]) != bytesOf(again->objects[i]))
 		{
 			FAIL("record " << i << " differs between two builds on the pool");
+		}
+	}
+}
+
+namespace
+{
+// a fresh world (every lazily filled cache cold), the big battle after 60 frames with the shroud displayed, and its FIRST snapshot built with
+// `threads` logic threads: every record's bytes, its template pointer left out (two worlds allocate their templates apart) and its template's name
+// beside it (the #193 review: the pool's build must not depend on an earlier read having filled a cache)
+struct FirstBuild
+{
+	std::vector<std::vector<std::uint8_t>> records;
+	std::vector<std::string> templates;
+	std::uint64_t dispatches = 0, inlineDispatches = 0, frame = 0;
+};
+FirstBuild buildFirst(int threads)
+{
+	FirstBuild out;
+	hudtest::SharedWorld w;
+	GameLogicSettings settings;
+	std::string error;
+	REQUIRE_MESSAGE(perf1::loadFreshWorld(w, settings, error), error);
+	auto scope = w.world->enterContext();
+	hudtest::Rig rig(w, "map mp fall back 4p", "FactionMen", "FactionMen");
+	GameLogic &logic = rig.logic();
+	perf1::setUpBigBattle(rig);
+	for (int f = 0; f < 60; ++f)
+	{
+		logic.runLogicFrame();
+	}
+	logic.shroud()->setDisplayed(true);
+	JobSystem::logic().setThreadCount(threads);
+	const JobSystem::Stats s0 = JobSystem::logic().stats();
+	const std::shared_ptr<const LogicSnapshot> snap = LogicSnapshot::build(logic, nullptr, false, 0);
+	const JobSystem::Stats s1 = JobSystem::logic().stats();
+	out.dispatches = s1.dispatches - s0.dispatches;
+	out.inlineDispatches = s1.inlineDispatches - s0.inlineDispatches;
+	out.frame = (std::uint64_t)snap->frame;
+	out.records.reserve(snap->objects.size());
+	for (const ObjectSnapshot &s : snap->objects)
+	{
+		ObjectSnapshot c = s;
+		c.tmpl = nullptr;
+		out.records.push_back(bytesOf(c));
+		out.templates.push_back(s.tmpl ? s.tmpl->getName() : std::string());
+	}
+	return out;
+}
+} // namespace
+
+TEST_CASE("perf2: a fresh world's first snapshot built on the logic job pool equals another fresh world's single-threaded build field for field (no "
+		  "earlier read warmed a cache)")
+{
+	if (!retailtest::pureMount())
+	{
+		retailtest::printSkip("perf2 snapshot on the pool, cold");
+		return;
+	}
+	LogicThreadsGuard guard;
+	const int threads = std::max(2, JobSystem::defaultThreadCount());
+	const FirstBuild serial = buildFirst(1);
+	const FirstBuild parallel = buildFirst(threads);
+	INFO(threads << " logic threads");
+	CHECK(parallel.dispatches == 2u); // the record pass and the lastMovedFrame pass, both on the pool
+	CHECK(parallel.inlineDispatches == 0u);
+	CHECK(serial.frame == parallel.frame);
+	REQUIRE(serial.records.size() == parallel.records.size());
+	REQUIRE(serial.records.size() > 1000u); // tolerance: the big battle has thousands of objects; the exact count is the scenario's
+	for (size_t i = 0; i < serial.records.size(); ++i)
+	{
+		if (serial.records[i] != parallel.records[i] || serial.templates[i] != parallel.templates[i])
+		{
+			FAIL("record " << i << " (" << serial.templates[i] << " / " << parallel.templates[i]
+						  << ") differs between a fresh world's first build on the pool and a fresh world's single-threaded one");
 		}
 	}
 }
