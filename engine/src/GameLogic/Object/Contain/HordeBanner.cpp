@@ -57,7 +57,7 @@ const char *const kStop =
 	"the template's experience pool, the attribute modifiers, the lifetime and the formation modifiers), the DISABLED_HELD update (RW 0x855830) and the carrier's "
 	"removal RW 0x871915 (DiedRespawnTime; not on a garrison release) are ported, as is nearby replenishment (RW 0x89AB8F: allied "
 	"hordes in distance order, capacity, one/all, shroud/UnitSpawnFX, expedited banner countdown); NOT ported: RW 0x8719E4's RW 0x8B50A5, the carrier's copied "
-	"upgrades / experience, the producer's exit, RW 0x871915's H+0x264 branch and BannerCarrierDestroyHordeOnDeath, RW 0x873AE3's defection hand-over, RW 0x625E0A, interface slots 0x174 / 0x10 and behavior links, MorphCondition / "
+	"upgrades / experience, the producer's exit, RW 0x871915's H+0x264 branch (BannerCarrierDestroyHordeOnDeath is ported), RW 0x873AE3's defection hand-over, RW 0x625E0A, interface slots 0x174 / 0x10 and behavior links, MorphCondition / "
 	"ExpLevelDraw grammars (raw tokens); INFERENCE: the carrier stands at its BannerCarrierPosition, a carrier lost on its way into a garrison is cleared as by RW 0x871915";
 
 HordeContain *hordeContainOf(Object *o)
@@ -427,12 +427,27 @@ void HordeContain::bannerCheck(bool force)
 	m_dirty = true;
 }
 
-// RW 0x871915. NOT PORTED (S-587): the H + 0x264 branch (the other non-slot member, not identified) and BannerCarrierDestroyHordeOnDeath (module data + 0x224:
-// retail then keeps the id and kills every member with BannerCarrierHordeDeathType, RW 0x698EC3; three Angmar hordes set it): the id is cleared as without it
+// RW 0x871915. NOT PORTED (S-587): the H + 0x264 branch (the other non-slot member, not identified). With BannerCarrierDestroyHordeOnDeath (module data
+// + 0x224, RW 0x871950) retail keeps the carrier id (H + 0x26C is not cleared, so no new carrier) and kills every member of the contain list copy that
+// has a body (RW 0x871983 .. 0x87199B: Object::kill RW 0x698EC3 with DAMAGE_UNRESISTABLE and the BannerCarrierHordeDeathType word, + 0x228, as the death
+// type). Without the flag the id is cleared as before
 void HordeContain::bannerCarrierRemoved(const Object &member)
 {
 	if (member.getID() != m_bannerCarrier || m_bannerCarrier == 0)
 	{
+		return;
+	}
+	if (m_data->horde.m_bannerCarrierDestroyHordeOnDeath)
+	{
+		// RW 0x872AB5 -> 0x865598 copies the contain list (RW 0x76CB49) before the kills remove their members from it
+		const std::vector<Object *> members(m_members.begin(), m_members.end());
+		for (Object *m : members)
+		{
+			if (m && m->getBodyModule())
+			{
+				m->kill(DAMAGE_UNRESISTABLE, (int)m_data->horde.m_bannerCarrierHordeDeathType);
+			}
+		}
 		return;
 	}
 	m_bannerCarrier = 0; // RW 0x8719B5
