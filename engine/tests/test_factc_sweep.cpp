@@ -24,6 +24,7 @@
 #include "GameLogic/Module/SpecialAbilityModules.h"
 #include "GameLogic/System/ShroudManager.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -131,6 +132,10 @@ const std::map<std::string, std::string> &knownAbilityGaps()
 	static const std::map<std::string, std::string> gaps = {
 		// (lane MODCOMPAT-MOD1: GrabPassengerSpecialPower is ported, the cave troll's tree grab reaches its ability: the S-140 pin went)
 		// (lane FLY-1: Drogoth flies, his WingBlast and Incinerate reach their point: the S-084 pins went)
+		// the Necromancer horde is destroyed while these two powers are awaited, so no recharge starts: the sweep reads only a living caster's modules (a destroyed
+		// object's modules are freed), and the cause of the death is not known yet
+		{ "AngmarNecromancerHorde Command_NecromancerFellStrength", "the Necromancer horde is destroyed while its power is awaited|the caster was destroyed" },
+		{ "AngmarNecromancerHorde Command_NecromancerWellOfSouls", "the Necromancer horde is destroyed while its power is awaited|the caster was destroyed" },
 	};
 	return gaps;
 }
@@ -386,14 +391,34 @@ AbilityResult runAbility(HudRig &h, const Offer &offer, const Coord3D &spot)
 	}
 	const bool modeLeft = h.hud->input().ui().getGUICommand() != nullptr;
 	h.hud->input().ui().setGUICommand(nullptr); // a player's Escape
+	const ObjectID casterId = o->getID();
 	bool fired = false;
+	bool casterGone = false;
 	for (int i = 0; i < 300 && !fired; ++i)
 	{
 		h.frames(1);
+		// a caster may die while its power is awaited (the Necromancer horde does, see knownAbilityGaps): the modules read below belong to objects, and a
+		// destroyed object's modules are freed, so only the live caster's modules are compared
+		Object *caster = logic.findObjectByID(casterId);
+		if (!caster || caster->isDestroyed())
+		{
+			casterGone = true;
+			break;
+		}
+		const std::vector<SpecialPowerModuleInterface *> live = powerModules(caster, r.power);
 		for (size_t k = 0; k < mods.size(); ++k)
 		{
-			fired = fired || mods[k]->getReadyFrame() > std::max(ready0[k], now0);
+			if (std::find(live.begin(), live.end(), mods[k]) != live.end())
+			{
+				fired = fired || mods[k]->getReadyFrame() > std::max(ready0[k], now0);
+			}
 		}
+	}
+	if (casterGone)
+	{
+		r.outcome = "the caster was destroyed while the power was awaited";
+		destroyAll(logic, made);
+		return r;
 	}
 	std::ostringstream why;
 	for (Object *x : withMembers(o))
