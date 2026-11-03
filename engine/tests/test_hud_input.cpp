@@ -369,7 +369,7 @@ TEST_CASE("hud input: a batch of raw events gives the messages the same events d
 TEST_CASE("stops S-280 .. S-288: the HUD input reports what it does not port, and an unported meta command is counted, never dropped")
 {
 	const std::vector<std::string> stops = HudInput::acceptanceStops();
-	REQUIRE(stops.size() == 14);
+	REQUIRE(stops.size() == 15); // S-5902 adds the crate context-click adaptation.
 	// the control bar, radar and Palantir report S-289 .. S-294 (their own test: test_hud_palantir.cpp)
 	for (size_t i = 0; i < 9; ++i)
 	{
@@ -379,6 +379,7 @@ TEST_CASE("stops S-280 .. S-288: the HUD input reports what it does not port, an
 	CHECK(stops[10].compare(0, 8, "[S-1920]") == 0); // lane PLAY-1: the move hint
 	CHECK(stops[11].compare(0, 8, "[S-1954]") == 0); // lane HUD-5: RotWK's pick types
 	CHECK(stops[13] == FormationPlacement::stopLine());
+	CHECK(stops[14] == "[S-5902] crate context clicks move to the crate before the enemy attack test unless force-attack is held; this input adaptation is not verified against RotWK evaluateContextCommand RW 0x81E60B");
 	CHECK(stops[12].compare(0, 8, "[S-3302]") == 0); // lane PLAY-1: the placement ghost (renumbered by PLAY-3)
 	if (!haveWorld("hud stops"))
 	{
