@@ -753,8 +753,8 @@ TEST_CASE("dispatcher: a stationary-cap frame, status refusals, appearance table
 		CHECK_THROWS_WITH_AS(loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f), doctest::Contains("S-084"), std::logic_error);
 	}
 	{
-		// lane MECH-D: the ScalesWalls look-ahead (RW 0x5E8956 .. 0x5E8FF8) is ported; a host that does not answer it (this mock) moves the unit as before
-		// and the dispatcher raises no S-084 stop for it
+		// lane MECH-D: the ScalesWalls look-ahead (RW 0x5E8956 .. 0x5E8FF8) is ported; a host that does not answer it (this mock) moves the unit as before.
+		// The S-084 stop still comes from the NO_Z branch's unported layer / water / falling cases (RW 0x5E774A / 0x5E5785), not from the look-ahead
 		LocoFixture sw(std::string(kHuman) + "  ScalesWalls = Yes\n");
 		Locomotor loco(sw.tmpl());
 		MockHost h;
@@ -765,7 +765,7 @@ TEST_CASE("dispatcher: a stationary-cap frame, status refusals, appearance table
 		{
 			noted = noted || s.rfind("S-084", 0) == 0;
 		}
-		CHECK_FALSE(noted);
+		CHECK(noted);
 	}
 }
 
