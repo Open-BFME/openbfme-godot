@@ -478,7 +478,7 @@ public:
 	bool isScalingWall() const override
 	{
 		// RW 0x694BF8 (getHorde) + AI vslot 0x7C + HordeContain interface vslot 0x238 (RW 0x86BD54): the horde's locomotor has ScalesWalls and it keeps a wall
-		Object *horde = obj().getHordeObject(true);
+		Object *horde = obj().getHordeObject(false); // RW 0x693A1A: the object itself when HORDE, else its container; not the producer
 		ContainModuleInterface *contain = horde ? horde->getContain() : nullptr;
 		HordeContainInterface *hc = contain ? contain->getHordeContainInterface() : nullptr;
 		return hc && hc->isScalingWall();

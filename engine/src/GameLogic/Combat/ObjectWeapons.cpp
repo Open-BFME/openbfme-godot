@@ -167,7 +167,7 @@ private:
 // 0x86BD54) or, without a horde, when it is CLIMBING or RAPPELLING (RW 0x696080: model conditions 0x67 / 0x69)
 bool objectIsOnWall(const Object &o)
 {
-	Object *horde = o.getHordeObject(true);
+	Object *horde = o.getHordeObject(false); // RW 0x693A1A: the object itself when HORDE, else its container
 	ContainModuleInterface *contain = horde ? horde->getContain() : nullptr;
 	HordeContainInterface *hc = contain ? contain->getHordeContainInterface() : nullptr;
 	if (hc)

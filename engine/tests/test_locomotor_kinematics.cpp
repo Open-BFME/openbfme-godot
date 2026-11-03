@@ -236,6 +236,8 @@ struct MockHost : LocomotorHost
 	void hordeEndReform() override { ++reformEnd; }
 	bool hordeFormationReady(float) const override { return formationReady; }
 	bool thingWaitsForFormation() const override { return thingWaits; }
+	bool scalingWall = false;
+	bool isScalingWall() const override { return scalingWall; }
 	// lane SHIP-1
 	bool underwater = false;
 	float waterZ = 0.0f;
@@ -765,6 +767,31 @@ TEST_CASE("dispatcher: a stationary-cap frame, status refusals, appearance table
 		}
 		CHECK_FALSE(noted);
 	}
+}
+
+TEST_CASE("SCALING_WALLS: a locomotor on a kept wall keeps its height (no z force, no ground snap, RW 0x5E76AC case 9); off a wall it is NO_Z")
+{
+	// lane MECH-D: the horde wall-scaling locomotor's z case. On a wall the matrix z the climb left is kept; before the port it threw S-084.
+	LocoFixture f(std::string(kHuman) + "  ScalesWalls = Yes\n  ZAxisBehavior = SCALING_WALLS\n");
+	Locomotor loco(f.tmpl());
+	MockHost h;
+	h.place(0, 0, 0);
+	h.pos.z = 25.0f;
+	h.transform.m[2][3] = 25.0f;
+	h.groundZ = 0.0f;
+	h.scalingWall = true;
+	CHECK_NOTHROW(loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f));
+	CHECK(nearly(h.pos.z, 25.0, 1e-6));     // the wall's height, not the ground
+	CHECK(nearly(h.pending.z, 25.0, 1e-5)); // the common tail: 2 * z - the object's z before the transform
+	// off a wall the same locomotor is NO_Z_MOTIVE_FORCE: the ground height
+	MockHost g;
+	g.place(0, 0, 0);
+	g.pos.z = 25.0f;
+	g.transform.m[2][3] = 25.0f;
+	g.groundZ = 7.0f;
+	g.scalingWall = false;
+	loco.locomotorMoveTowardsPosition(g, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+	CHECK(nearly(g.pos.z, 7.0, 1e-6));
 }
 
 TEST_CASE("NO_Z_MOTIVE_FORCE: z is the terrain height; the pending position is the previous effective position with 2z - z0")
