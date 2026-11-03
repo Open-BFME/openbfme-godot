@@ -40,7 +40,7 @@ func tick() -> void:
 	var st: Dictionary = game._shell.strategic_setup({"kind": "state"})
 	if not st.get("found", false) or not st.get("visible", false):
 		if view.visible:
-			view.visible = false
+			_set_preview_visible(false)
 			_set_hover(-1)
 		return
 	if st.region_campaign != built_campaign:
@@ -58,10 +58,19 @@ func tick() -> void:
 		_frame_camera()
 	if not view.visible:
 		lw.apply_map_lighting() # LivingWorldMapInfo's lights as the W3D shaders' light set (a battle's map set its own)
-	view.visible = true
+	_set_preview_visible(true)
 	region_fx.update_gamma()
 	_apply_colors(st)
 	last_state = st
+
+
+func _set_preview_visible(shown: bool) -> void:
+	view.visible = shown
+	if vp != null:
+		# Presentation only (both editions): hiding the TextureRect does not stop an
+		# UPDATE_ALWAYS viewport. Keep its scene and animation clocks, but draw only
+		# while the setup preview is shown; a later reveal resumes normal rendering.
+		vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS if shown else SubViewport.UPDATE_DISABLED
 
 
 func _build(campaign_name: String) -> bool:
@@ -82,7 +91,7 @@ func _build(campaign_name: String) -> bool:
 	vp.own_world_3d = false
 	vp.world_3d = World3D.new() # the preview's own scene and physics space (the strategic map's world stays apart)
 	vp.transparent_bg = false
-	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED # tick enables it when the preview is shown
 	vp.size = Vector2i(512, 384)
 	add_child(vp)
 	var env := WorldEnvironment.new()

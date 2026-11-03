@@ -14,6 +14,7 @@
 #include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Module/UpgradeModuleClasses.h"
 #include "GameLogic/Combat/CombatState.h"
+#include "GameLogic/SimMath.h"
 #include "GameLogic/BuildStops.h"
 #include "GameLogic/StructureStops.h"
 #include "GameLogic/VictoryConditions.h"
@@ -270,6 +271,20 @@ float GameLogic::getLayerHeightForDestination(float x, float y, float z) const
 	{
 		const Pathfinder &pf = m_aiWorld->pathfinder();
 		return pf.getLayerHeight(x, y, pf.getLayerAt(x, y, z));
+	}
+	return getGroundHeight(x, y);
+}
+
+float GameLogic::getAlignOnTerrainHeight(float x, float y, float z) const
+{
+	// RW 0x6819D9: layer = getLayerForDestination(0, pos) (RW 0x680A75), z = getLayerHeight(x, y, layer) (vslot 0x1C), + 2.5 when layer > LAYER_GROUND
+	if (m_aiWorld && m_aiWorld->mapReady())
+	{
+		const Pathfinder &pf = m_aiWorld->pathfinder();
+		constexpr float kAlignOnTerrainLift = 2.5f; // RW 0xBE5AE8 (BFME2 0x00BCFB10): the lift above any layer but the ground
+		const PathfindLayerEnum layer = pf.getLayerAt(x, y, z);
+		const float height = pf.getLayerHeight(x, y, layer);
+		return layer > LAYER_GROUND ? SimMath::addf32(height, kAlignOnTerrainLift) : height;
 	}
 	return getGroundHeight(x, y);
 }

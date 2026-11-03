@@ -164,15 +164,36 @@ TEST_CASE("hud build: click a Porter, press the barracks button, place the ghost
 	CHECK(building->testStatus((unsigned)phantom));
 	CHECK(moneyStart - rig.local->getMoney()->countMoney() == (std::uint32_t)BuildAssistant::calcCostToBuild(*building->getTemplate(), rig.local, porter, -1)); // paid once, at the construct
 	int guard = 1200;
+	bool checkedHiddenPorter = false;
 	while ((building->isUnderConstruction() || building->testStatus((unsigned)phantom)) && guard-- > 0)
 	{
 		frames(1);
+		if (!checkedHiddenPorter && !porter->isInWorld())
+		{
+			// Both editions deselect on entry (RW 0x88C51B / BFME2 0x489256). Give the HUD its next
+			// update, then try the same build button that used to pull the hidden porter out of its site.
+			hud.update(0.0);
+			CHECK(hud.input().ui().selected().empty());
+			CHECK(hud.controlBar().sourceObject() == INVALID_ID);
+			CHECK(hud.controlBar().sideButtons().empty());
+			CHECK_FALSE(hud.controlBar().pressButton(slot, inPalantir));
+			CHECK_FALSE(hud.input().ui().isPlacing());
+			frames(1);
+			CHECK(rig.local->selection().empty());
+			CHECK_FALSE(porter->isInWorld());
+			CHECK(building->getBuilderID() == porter->getID());
+			checkedHiddenPorter = true;
+		}
 	}
+	CHECK(checkedHiddenPorter);
 	CHECK(!building->isUnderConstruction());
 	CHECK(building->getConstructionPercent() == -1.0f);
 	const float dx = building->getPosition()->x - site.x, dy = building->getPosition()->y - site.y;
 	CHECK(dx * dx + dy * dy < 4.0f);
 	// the cancel path: a second placement ended by Escape sends nothing
+	click(rig.screenOf(*porter->getPosition()).x, rig.screenOf(*porter->getPosition()).y);
+	frames(1);
+	CHECK(hud.input().ui().firstSelected() == porter->getID());
 	hud.controlBar().update();
 	CHECK(hud.controlBar().pressButton(slot, inPalantir));
 	CHECK(hud.input().ui().isPlacing());

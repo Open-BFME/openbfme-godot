@@ -484,6 +484,9 @@ public:
 	// lane WALL-2: the height of the layer a point at (x, y, z) stands on (TheTerrainLogic vslot 0x1C with RW 0x680A75's layer): a wall top's, a ramp's or a
 	// walkway's, the terrain elsewhere
 	float getLayerHeightForDestination(float x, float y, float z) const;
+	// lane WALL-3: TerrainLogic::alignOnTerrain's height with stickToGround (RW 0x6819D9 / BFME2 0x2811DD, vslot 0x48): the height of the layer RW 0x680A75
+	// names at (x, y, z), 2.5 (RW 0xBE5AE8) above it on any layer but the ground; the terrain without an AI world. The move hint stands there (RW 0x48EDED)
+	float getAlignOnTerrainHeight(float x, float y, float z) const;
 	float getHighestLayerHeight(float x, float y) const;
 	// problems nothing explains; each distinct text is kept once and reaches report().errors
 	void reportError(const std::string &text);

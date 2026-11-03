@@ -326,7 +326,7 @@ void Pathfinder::optimizeGroundPath(Path &path, int diameter)
 Path *Pathfinder::buildGroundPath(const Coord3D *from, PathfindCell *goalCell, bool center, int diameter, float formationColumnWidth)
 {
 	// RW 0x6F0DA3 (BFME2 decomp PathfinderBuildGroundPath.cpp, tier A)
-	Path *path = new Path();
+	Path *path = new Path(m_uberLimits); // lane UBER-PATH
 	prependCells(path, from, goalCell, center);
 	optimizeGroundPath(*path, diameter);
 	const float spread = SimMath::mulf32(2.0f, formationColumnWidth); // AIData + 0xA0

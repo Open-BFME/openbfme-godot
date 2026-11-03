@@ -446,9 +446,11 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 			// fights the horde, 13 of 20 killed (975 health)
 			// Merge queue q34 (measured at each merge point): Haldir still fights the horde: 2 of 20 killed (150 health) with #160 (the members walk to their
 			// slots, RW 0x871536), 7 of 20 (525 health) with #161 (the block search's block zones move the scene's creeps and computer opponent)
+			// Lane WARG-1 (FindClosestPath RW 0x6FB869 and the unclamped cells RW 0x6E8CE6 move the scene's creeps and computer opponent; measured once on the
+			// lane's tree after the archive merge, a CI host): Haldir still fights the horde, 165 health taken from it (525)
 			if (hero == "ElvenHaldir")
 			{
-				CHECK(own.lost == 525.0f);
+				CHECK(own.lost == 165.0f);
 			}
 			else
 			{

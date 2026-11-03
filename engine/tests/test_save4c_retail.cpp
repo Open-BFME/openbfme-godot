@@ -1214,78 +1214,92 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 			garrisonOrder.push_back(p);
 		}
 	}
+	// lane WARG-1 (the AIs' game at frame 2700 moves with the pathfinder changes): the first player whose non-actor units include one the keep accepts (the
+	// Men player's units can all be horde members or busy then); each candidate player gets the keep in both games, and loses it again when none enters
 	for (int p : garrisonOrder)
 	{
+		if (rider)
+		{
+			break;
+		}
+		menUnits.clear();
 		for (Object *u : byPlayer[p])
 		{
-			if (menUnits.empty() && u != attacker && u != mover && u != guard && u != hunter)
-			{
-				men = p;
-			}
-			if (p == men && u != attacker && u != mover && u != guard && u != hunter)
+			if (u != attacker && u != mover && u != guard && u != hunter)
 			{
 				menUnits.push_back(u);
 			}
 		}
-		if (!menUnits.empty())
+		if (menUnits.empty())
 		{
-			break;
+			continue;
 		}
-	}
-	REQUIRE(!menUnits.empty());
-	ObjectID keepId = INVALID_ID;
-	// the keep's spot: the first of the offsets from that unit (80 east, then the other directions and distances) where the unit's pathfinder reaches the
-	// keep's four corners and its entry point (the entry offset is 50 east of the keep: HordeGarrisonContain's EntryOffset), so the garrison order is
-	// legal (review r7: the same fixed spot, 80 east, lay on the neutral Amon Hen structures once the archive's AI changes moved the game's state at
-	// frame 3,000, and the order was refused by RW 0x82CBD5's path test)
-	Coord3D keepSpot{};
-	{
-		Object *near = menUnits.front();
-		Pathfinder &pf = near->getAIUpdateInterface()->world().pathfinder();
-		const Coord3D from = *near->getPosition();
-		auto reaches = [&](float x, float y) {
-			Coord3D q{ x, y, la.getGroundHeight(x, y) };
-			return pf.clientSafeQuickDoesPathExist(near->getAIUpdateInterface()->locomotorInfo(), &from, &q);
-		};
-		bool found = false;
-		for (float r : { 80.0f, 140.0f, 200.0f, 260.0f })
+		men = p;
+		ObjectID keepId = INVALID_ID;
+		// the keep's spot: the first of the offsets from that unit (80 east, then the other directions and distances) where the unit's pathfinder reaches the
+		// keep's four corners and its entry point (the entry offset is 50 east of the keep: HordeGarrisonContain's EntryOffset), so the garrison order is
+		// legal (review r7: the same fixed spot, 80 east, lay on the neutral Amon Hen structures once the archive's AI changes moved the game's state at
+		// frame 3,000, and the order was refused by RW 0x82CBD5's path test)
+		Coord3D keepSpot{};
 		{
-			for (int d = 0; d < 8 && !found; ++d)
+			Object *near = menUnits.front();
+			Pathfinder &pf = near->getAIUpdateInterface()->world().pathfinder();
+			const Coord3D from = *near->getPosition();
+			auto reaches = [&](float x, float y) {
+				Coord3D q{ x, y, la.getGroundHeight(x, y) };
+				return pf.clientSafeQuickDoesPathExist(near->getAIUpdateInterface()->locomotorInfo(), &from, &q);
+			};
+			bool found = false;
+			for (float r : { 80.0f, 140.0f, 200.0f, 260.0f })
 			{
-				const float ang = (float)d * 0.78539816f;
-				const float cx = from.x + r * std::cos(ang), cy = from.y + r * std::sin(ang);
-				bool clear = reaches(cx + 50.0f, cy);
-				for (float ox : { -40.0f, 40.0f })
-					for (float oy : { -40.0f, 40.0f })
-						clear = clear && reaches(cx + ox, cy + oy);
-				if (clear)
+				for (int d = 0; d < 8 && !found; ++d)
 				{
-					keepSpot = Coord3D{ cx, cy, la.getGroundHeight(cx, cy) };
-					found = true;
+					const float ang = (float)d * 0.78539816f;
+					const float cx = from.x + r * std::cos(ang), cy = from.y + r * std::sin(ang);
+					bool clear = reaches(cx + 50.0f, cy);
+					for (float ox : { -40.0f, 40.0f })
+						for (float oy : { -40.0f, 40.0f })
+							clear = clear && reaches(cx + ox, cy + oy);
+					if (clear)
+					{
+						keepSpot = Coord3D{ cx, cy, la.getGroundHeight(cx, cy) };
+						found = true;
+					}
 				}
 			}
+			if (!found)
+			{
+				continue; // no open ground within 260 of the player's first unit: the next player
+			}
 		}
-		REQUIRE(found); // tolerance: a precondition (the first Men unit has open ground within 260 of it)
-	}
-	for (Game *g : { &a, &b })
-	{
-		GameLogic &l = g->logic();
-		Object *k = l.newObject(keep, l.players().getNthPlayer(men)->getDefaultTeam(), ObjectStatusMaskType{});
-		REQUIRE(k != nullptr);
-		Coord3D p = keepSpot;
-		k->setPosition(&p);
-		testutil::completeHorde(k); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
-		REQUIRE((keepId == INVALID_ID || keepId == k->getID()));
-		keepId = k->getID();
-	}
-	garrison = la.findObjectByID(keepId);
-	REQUIRE(garrison->getContain() != nullptr);
-	for (Object *u : menUnits)
-	{
-		if (!rider && garrison->getContain()->isValidContainerFor(*u, true, false) && GarrisonRules::canEnterObject(*u, garrison, CMD_FROM_SCRIPT, 0, true) &&
-			u->getAIUpdateInterface()->allowedToRespondToCommand(CMD_FROM_SCRIPT, 0x42))
+		for (Game *g : { &a, &b })
 		{
-			rider = u;
+			GameLogic &l = g->logic();
+			Object *k = l.newObject(keep, l.players().getNthPlayer(men)->getDefaultTeam(), ObjectStatusMaskType{});
+			REQUIRE(k != nullptr);
+			Coord3D at = keepSpot;
+			k->setPosition(&at);
+			testutil::completeHorde(k); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
+			REQUIRE((keepId == INVALID_ID || keepId == k->getID()));
+			keepId = k->getID();
+		}
+		garrison = la.findObjectByID(keepId);
+		REQUIRE(garrison->getContain() != nullptr);
+		for (Object *u : menUnits)
+		{
+			if (!rider && garrison->getContain()->isValidContainerFor(*u, true, false) && GarrisonRules::canEnterObject(*u, garrison, CMD_FROM_SCRIPT, 0, true) &&
+				u->getAIUpdateInterface()->allowedToRespondToCommand(CMD_FROM_SCRIPT, 0x42))
+			{
+				rider = u;
+			}
+		}
+		if (!rider)
+		{
+			// no unit of this player enters the keep: the keep goes and the next player is tried (in both games alike)
+			for (Game *g : { &a, &b })
+			{
+				g->logic().destroyObject(g->logic().findObjectByID(keepId));
+			}
 		}
 	}
 	REQUIRE(rider != nullptr);

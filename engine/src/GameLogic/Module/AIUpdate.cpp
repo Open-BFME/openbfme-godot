@@ -465,6 +465,9 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_AS_INDIVIDUALS, std::make_unique<AIFollowWaypointPathState>(*m, false, false), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_EXACT_AS_TEAM, std::make_unique<AIFollowWaypointPathState>(*m, true, true), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_EXACT_AS_INDIVIDUALS, std::make_unique<AIFollowWaypointPathState>(*m, false, true), AI_IDLE, AI_IDLE);
+	// lane WARG-1 (RW 0x753755): the attack-follow states, 0x23 (RW 0x750AE7(machine, 1)) then 0x22 (asTeam 0), both ending in idle
+	m->defineState(AI_ATTACK_FOLLOW_WAYPOINT_PATH_AS_TEAM, std::make_unique<AIAttackFollowWaypointPathState>(*m, true), AI_IDLE, AI_IDLE);
+	m->defineState(AI_ATTACK_FOLLOW_WAYPOINT_PATH_AS_INDIVIDUALS, std::make_unique<AIAttackFollowWaypointPathState>(*m, false), AI_IDLE, AI_IDLE);
 	// lane LUMBER1 (RW 0x753755): AIDockState 14 (RW 0x740F01) and AIHarvestState 47 (RW 0x740F2C), both ending in idle
 	m->defineState(AI_DOCK, std::make_unique<AIDockState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_HARVEST, std::make_unique<AIHarvestState>(*m), AI_IDLE, AI_IDLE);

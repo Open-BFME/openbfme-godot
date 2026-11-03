@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <map>
 #include <set>
 
@@ -878,9 +879,9 @@ TEST_CASE("ai move: a unit on a cliff cell: findPath's corridor ends it partial 
 }
 
 // lane PATHPERF-1 (the MERGEQ-2 FACT failures): the melee approach (RW 0x668E94's + 0x3B4 branch) and computeAttackPath's adjust branch (RW 0x666E51) call
-// pathfinder slot + 4 (FindClosestPath RW 0x6FB869, S-166), not findPath (slot 0): the stand-in is the search without findPath's corridor, which leaves every
-// block passable; findPath leaves the blocks off its corridor impassable
-TEST_CASE("ai move: the melee approach path is slot + 4 (FindClosestPath, S-166), not findPath: no hierarchical corridor")
+// pathfinder slot + 4, FindClosestPath (RW 0x6FB869), not findPath (slot 0). Lane WARG-1 ported it (S-166): like findPath it searches inside the hierarchical
+// corridor (RW 0x6F9829) when it has one, and the approach reaches its goal around the cliff wall
+TEST_CASE("ai move: the melee approach path is slot + 4 (FindClosestPath RW 0x6FB869): it reaches its goal around a cliff wall")
 {
 	Sim sim(128, 64);
 	for (int x = 64; x < 80; ++x) // a cliff wall over the block column x = 64..79 below y = 48: the way across is a detour through the top blocks
@@ -892,20 +893,43 @@ TEST_CASE("ai move: the melee approach path is slot + 4 (FindClosestPath, S-166)
 	}
 	sim.build();
 	Unit &u = sim.add(1, 105.0f, 105.0f);
-	const Coord3D from = u.obj.pos, goal{ 1105.0f, 105.0f, 0.0f };
-	// findPath: a corridor, the block of cell (120, 60) off it
-	std::unique_ptr<Path> corridor(sim.pf->findPath(&u.obj, groundLoco(), &from, &goal, nullptr));
-	REQUIRE(corridor != nullptr);
-	REQUIRE_FALSE(sim.pf->zoneManager().isPassable(120, 60));
-	// the melee approach, requested without the offset and served by the path queue
+	const Coord3D goal{ 1105.0f, 105.0f, 0.0f };
 	REQUIRE(u.ai->requestMeleeApproachPath(goal, true));
 	REQUIRE(u.ai->meleeApproachPending());
 	sim.step(false);
 	REQUIRE(u.ai->path() != nullptr);
-	CHECK(sim.pf->zoneManager().isPassable(120, 60)); // the search ran without a corridor
 	const Coord3D end = *u.ai->path()->getLastNode()->getPosition();
 	CHECK(end.x == doctest::Approx(goal.x));
 	CHECK(end.y == doctest::Approx(goal.y));
+}
+
+// lane WARG-1: FindClosestPath (RW 0x6FB869) toward a goal inside a cliff: the goal steps back toward the unit in steps of 30 while no quick path exists (at most
+// 5); FindClosestHierarchicalPath (RW 0x6F9829) moves the search's destination to the nearest reachable block cell, and the search's path reaches it (the
+// caller's destination is never written: RW 0x6FC078 .. 0x6FC0C2 keeps the closest cell in its local copy). findPath's own closest-cell rule (RW 0x6FDA6C: a nearer cell that fails
+// the footprint test shuts out every farther one), the old stand-in, could stop beside the unit
+TEST_CASE("warg1 pathfind: FindClosestPath to a goal deep in a cliff ends at the cliff's edge, not beside the unit")
+{
+	Sim sim(64, 32);
+	for (int x = 30; x < 64; ++x) // cliff from cell x 30 eastwards
+	{
+		for (int y = 0; y < 32; ++y)
+		{
+			sim.terrain.cliff.insert({ x, y });
+		}
+	}
+	sim.build();
+	Unit &u = sim.add(1, 55.0f, 155.0f);
+	const Coord3D from = u.obj.pos;
+	Coord3D goal{ 505.0f, 155.0f, 0.0f }; // cell (50, 15): 20 cells into the cliff, beyond the 5 steps of 30 back
+	const Coord3D asked = goal;
+	std::unique_ptr<Path> p(sim.pf->findClosestPath(&u.obj, groundLoco(), &from, &goal, false, 0.0f, false));
+	REQUIRE(p != nullptr);
+	const Coord3D end = *p->getLastNode()->getPosition();
+	CHECK(end.x == 245.0f); // the corridor's adjusted destination at the cliff's edge (cell 24: the footprint's margin before cell 30), not beside the unit
+	CHECK(end.y == 165.0f);
+	CHECK(goal.x == asked.x); // reached through the corridor's adjusted destination: rawTo is not written (RW 0x6FB869 never writes it)
+	CHECK(goal.y == asked.y);
+	std::printf("  info: closest path end (%.1f, %.1f), destination moved to (%.1f, %.1f)\n", end.x, end.y, goal.x, goal.y);
 }
 
 // ---------------------------------------------------------------------------------------------------------

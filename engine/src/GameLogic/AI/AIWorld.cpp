@@ -26,6 +26,7 @@
 #include "GameLogic/AI/AIGroup.h"
 #include "GameLogic/Combat/CombatLineOfSight.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
+#include "GameLogic/AI/AIStateMachine.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/SlavedUpdate.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
@@ -741,9 +742,29 @@ bool ObjectPathfindAdapter::cannotWalkOn() const
 	return cannot >= 0 && m_object->testStatus((unsigned)cannot);
 }
 
-bool ObjectPathfindAdapter::ignoresAsTarget(const PathfindObject &) const
+// RW checkForMovement (0x6EBAA0), the enemy branch (BFME2 decomp PathfinderCheckForMovement.cpp): an enemy does not refuse the cell when it is the unit's
+// target: the AI state machine's goal object (RW 0x8DBACE) or the current victim (RW 0x668303), or contained in one (a horde's member), or the target's own
+// container (and its members). A unit without an AI, or with neither target, is refused
+bool ObjectPathfindAdapter::ignoresAsTarget(const PathfindObject &other) const
 {
-	return false; // the attack machine's target (RW 0x8DBACE, 0x668303) belongs to the combat milestone
+	const ObjectPathfindAdapter *o = dynamic_cast<const ObjectPathfindAdapter *>(&other);
+	AIUpdateInterface *ai = m_object->getAIUpdateInterface();
+	if (!o || !ai)
+	{
+		return false;
+	}
+	const Object *unit = &o->object();
+	const auto targets = [unit](const Object *t) { return t && (unit == t || unit->getContainedBy() == t); };
+	const AIStateMachine *machine = ai->stateMachineOrNull(); // null before onObjectCreated or for a machineless loaded AI: no goal object
+	if (const Object *goal = machine ? machine->goalObject() : nullptr)
+	{
+		if (targets(goal) || targets(goal->getContainedBy()))
+		{
+			return true;
+		}
+	}
+	const Object *victim = ai->currentVictim();
+	return victim && (targets(victim) || targets(victim->getContainedBy()));
 }
 
 bool ObjectPathfindAdapter::pathsThroughEachOther() const
