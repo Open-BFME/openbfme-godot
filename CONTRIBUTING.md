@@ -49,6 +49,10 @@ literal test fixtures, so there is **no allowlist and no path exemption**; tests
 - Assert exact expected values in tests: for an expected count of 3, use `CHECK(count == 3);`, not `CHECK(count > 0);` or
   `doctest::Approx`. If a bound really is needed, explain why with `// tolerance: <reason>` (GDScript `# tolerance: <reason>`) on the
   same line or the line above.
+- A fix for logic, data, state or a protocol comes with a test that fails without the fix. A purely visual fix comes with before and
+  after captures attached to the pull request; never commit them.
+- If you re-measure a golden hash pin (`engine/tests/data/**/*.hashes`), stage the gameplay change that explains it and add
+  `// pin: <reason>` to a C++ test under `engine/tests/` in the same commit. The commit gate refuses a pin change without it.
 - If you add or close rows in `docs/STOPS.md`, run `python3 tools/stops_count.py --write` and include the updated `README.md` count.
 - Retail-data tests need your own game files through `ROTWK_INSTALL` and `BFME2_INSTALL`; they skip without them, as on public CI.
   The Godot smoke test also needs the installed games. Never add game files to your PR.
@@ -70,6 +74,9 @@ Every pull request runs `.github/workflows/pr.yml` on GitHub's own runners, with
 - a Windows build (the release's llvm-mingw cross build), compile only;
 - a macOS arm64 build of the game library and unit test executable, followed by the console filter regression tests;
 - the Python tests that need no game files.
+
+Greptile, Devin and Macroscope review each pull request against `REVIEW.md`. Their comments are advice. Check each one against the code,
+fix the real ones, and answer the others with a written reason. Do not resolve a thread silently.
 
 A maintainer then reviews the change. We may ask for changes, or for a test that shows the behaviour against the original game.
 

@@ -31,6 +31,9 @@ keeps its current mode (RotWK's rules on BFME1 data, stop S-5017).
    reached through one edition accessor, not in per-function `if` tests on
    strings or install paths spread through the code.
 5. **Mods declare their edition.** A mod is loaded for the edition it names.
+6. **Check every edition.** A change to a shared parser, data table or startup
+   path is checked against BFME1, BFME2 and RotWK data; a field another
+   edition uses is handled or reported, never rejected by accident.
 
 Everything else (sources, numerics, tests, the commit gate, privacy) is in
-`CLAUDE.md` and `docs/PLAN.md`.
+`CLAUDE.md`, `docs/PLAN.md` and `REVIEW.md`.
