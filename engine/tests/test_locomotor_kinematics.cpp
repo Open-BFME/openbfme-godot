@@ -201,6 +201,8 @@ struct MockHost : LocomotorHost
 	unsigned logicFrame() const override { return frame; }
 	bool containerAllowsBackingUp() const override { return containerBack; }
 	float groundHeightAt(float, float) const override { return groundZ; }
+	bool rampOrRaisedLayer = false; // lane WALL-4: the object's layer is the ramp's or a walkway's
+	bool isOnRampOrRaisedLayer() const override { return rampOrRaisedLayer; }
 	LocomotorPath *getPath() override { return path; }
 	bool testObjectStatus(int bit) const override { return status.count(bit) != 0; }
 	bool testModelCondition(int bit) const override { return mc.count(bit) != 0; }
@@ -1283,4 +1285,33 @@ TEST_CASE("ambient flight: idle wings circle in both directions and climb withou
 	CHECK(h.pos.x == 0);
 	CHECK(h.pos.y == 0);
 	CHECK(h.pos.z == 0);
+}
+
+TEST_CASE("handleBehaviorZ NO_Z_MOTIVE_FORCE (RW 0x5E77AF .. 0x5E77EE, lane WALL-4): after the first second a unit on the ramp or a walkway more than 20 above its layer's height keeps its own")
+{
+	LocoFixture f(kHuman);
+	struct Case
+	{
+		bool rampOrRaised;
+		unsigned frame;
+		float z;
+		float expect;
+	};
+	// the surface is 0. Kept: the ramp layer, frame 6, 25 above. Put on the surface: frame 5 (not above LOGICFRAMES_PER_SECOND), 20 above (not more than 20),
+	// 15 above, and any height on another layer
+	const Case cases[] = { { true, 6, 25.0f, 25.0f }, { true, 5, 25.0f, 0.0f }, { true, 6, 20.0f, 0.0f }, { true, 6, 15.0f, 0.0f }, { false, 6, 25.0f, 0.0f } };
+	for (const Case &c : cases)
+	{
+		INFO("ramp or walkway " << c.rampOrRaised << ", frame " << c.frame << ", z " << c.z);
+		Locomotor loco(f.tmpl());
+		MockHost h;
+		h.place(0, 0, 0);
+		h.pos.z = c.z;
+		h.syncTransform();
+		h.frame = c.frame;
+		h.groundZ = 0.0f;
+		h.rampOrRaisedLayer = c.rampOrRaised;
+		loco.locomotorMoveTowardsPosition(h, Coord3D{ 1000, 0, 0 }, 1000.0f, 11.0f);
+		CHECK(h.pos.z == c.expect);
+	}
 }

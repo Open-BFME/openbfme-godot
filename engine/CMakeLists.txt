@@ -279,6 +279,7 @@ include(cmake/Summon1.cmake)    # SUMMON-1: the Thrall Master's summons, the OCL
 include(cmake/Backlog4.cmake)  # BACKLOG4: the teleport forms, the special power runtime, defection (OPENBFME_BACKLOG4_TESTS)
 include(cmake/Ship1.cmake)      # SHIP-1: ships and hover units (OPENBFME_SHIP1_TESTS)
 include(cmake/RenderWait1.cmake) # RENDERWAIT-1: the render never waits on the logic worker (OPENBFME_RENDERWAIT1_TESTS)
+include(cmake/PerfClient.cmake)  # PERF-CLIENT: the client job pool's size while the logic worker is behind (OPENBFME_PERFCLIENT_TESTS)
 include(cmake/Backlog2.cmake)   # BACKLOG2: castle / camp / construction ports (appends to OPENBFME_SIM_SOURCES; OPENBFME_BACKLOG2_TESTS)
 include(cmake/Contrib1.cmake)   # CONTRIB-1: the known RotWK 2.01 layouts, Data1.big by its entries (OPENBFME_CONTRIB1_TESTS)
 include(cmake/Netlag1.cmake)    # NETLAG-1: the command delay of a multiplayer game (OPENBFME_NETLAG1_TESTS)
@@ -822,6 +823,7 @@ add_executable(openbfme_tests
     ${OPENBFME_TREES1_TESTS}
     ${OPENBFME_SHIP1_TESTS}
     ${OPENBFME_RENDERWAIT1_TESTS}
+    ${OPENBFME_PERFCLIENT_TESTS}
     ${OPENBFME_BACKLOG2_TESTS}
     ${OPENBFME_CONTRIB1_TESTS}
     ${OPENBFME_NETLAG1_TESTS}

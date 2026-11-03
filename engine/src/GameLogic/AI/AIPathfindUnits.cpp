@@ -16,7 +16,7 @@
 //   * adjustDestination RW 0x6FE456 with the ring search 0x6FA2A4 and the per-cell test 0x6F66D9 / 0x6F83EB;
 //   * the request queue and processPathfindQueue RW 0x6F2364, 0x6ED0FB.
 // DONOR (ZH AIPathfind.cpp:4924-5650, 5648-5965, 9694-10112): the shape of the above where RW was not read. See docs/STOPS.md S-163 and
-// S-164 for what is not ported (kind-1 slot, rotated-rectangle fill, the AI target rules of checkForMovement, the partition grid).
+// S-164 for what is not ported (kind-1 slot, rotated-rectangle fill, the partition grid).
 
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/SimMath.h"
@@ -161,6 +161,22 @@ void Pathfinder::getRadiusAndCenter(const PathfindObject *obj, int &iRadius, boo
 	const int r = footprintSize(obj);
 	iRadius = r / 2;
 	center = (r & 1) != 0;
+}
+
+ICoord2D Pathfinder::worldToCellUnclamped(const Coord3D *pos, bool center)
+{
+	ICoord2D cell;
+	if (center)
+	{
+		cell.x = realToIntFloor(SimMath::mulf32(pos->x, 0.1f));
+		cell.y = realToIntFloor(SimMath::mulf32(pos->y, 0.1f));
+	}
+	else
+	{
+		cell.x = realToIntFloor(SimMath::addf32(SimMath::mulf32(pos->x, 0.1f), 0.5f));
+		cell.y = realToIntFloor(SimMath::addf32(SimMath::mulf32(pos->y, 0.1f), 0.5f));
+	}
+	return cell;
 }
 
 bool Pathfinder::worldToCell(const Coord3D *pos, bool center, ICoord2D *cell)
@@ -494,7 +510,7 @@ bool Pathfinder::checkForMovement(const PathfindObject *obj, PathfindCheckMoveme
 				{
 					return false;
 				}
-				if (obj->ignoresAsTarget(*o))
+				if (m_uberLimits && obj->ignoresAsTarget(*o)) // lane UBER-PATH: Faithful keeps S-164
 				{
 					continue;
 				}
@@ -646,7 +662,7 @@ Pathfinder::CellMoveFacts Pathfinder::cellMoveFacts(const PathfindObject *obj, c
 			fail = true;
 			break;
 		}
-		if (obj->ignoresAsTarget(*o))
+		if (m_uberLimits && obj->ignoresAsTarget(*o)) // lane UBER-PATH: Faithful keeps S-164
 		{
 			continue;
 		}
@@ -1530,9 +1546,11 @@ void Pathfinder::snapClosestGoalPosition(PathfindObject &obj, Coord3D *pos)
 	int iRadius;
 	bool center;
 	getRadiusAndCenter(&obj, iRadius, center);
-	ICoord2D cell;
+	// lane WARG-1: RW 0x6F3F95 takes the cell with RW 0x6E8CE6, which does not clamp: an off-map goal (a script's staging waypoint outside the map) stays off the
+	// map, its cell has no grid cell, every check below fails and the goal is the off-grid cell's centre. The port's clamped worldToCell moved it onto row 0
+	// of the map, and a unit off the map then searched toward the map's edge instead of taking computePath's quick path (both ends off the map, RW 0x665E0B)
+	const ICoord2D cell = worldToCellUnclamped(pos, center);
 	PathfindLayerEnum layer = LAYER_GROUND;
-	worldToCell(pos, center, &cell);
 	adjustCoordToCell(cell.x, cell.y, center, *pos, LAYER_GROUND);
 	if (checkDestination(&obj, cell.x, cell.y, layer, iRadius, center))
 	{
@@ -1687,8 +1705,9 @@ bool Pathfinder::adjustDestination(PathfindObject &obj, const PathfindLocomotorI
 	int iRadius;
 	bool center;
 	getRadiusAndCenter(&obj, iRadius, center);
-	ICoord2D cell;
-	worldToCell(dest, center, &cell);
+	// lane WARG-1: RW 0x6FE456 takes the cell with RW 0x6E8CE6, which does not clamp: the ring search of an off-map destination looks around its off-grid cell
+	// (the cells off the grid fail checkForAdjust), not around a clamped one on the map's edge row
+	const ICoord2D cell = worldToCellUnclamped(dest, center);
 	// RW 0x680A75 (TerrainLogic::getLayerForDestination): the destination's own layer (lane WALL-1: a wall top's or a ramp's; the ground elsewhere)
 	const PathfindLayerEnum layer = getLayerAt(dest->x, dest->y, dest->z);
 	bool candidate = false;

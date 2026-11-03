@@ -222,16 +222,17 @@ public:
 	bool computePath(const Coord3D &dest);
 	bool computeQuickPath(const Coord3D &dest);
 	// lane EXIT-1 (factored out of doLocomotor for the horde member update RW 0x66C748): RW 0x6F1B3E, the straight step `from` -> `to` toward the locomotor goal is
-	// valid; RW 0x6F74D0, a path from `from` that reaches the locomotor goal, else null
+	// valid (lane WALL-4: its end on the layer there, and a change of layer only as RotWK allows it); RW 0x6F74D0, a path from `from` that reaches the locomotor
+	// goal, else null
 	bool stepValid(const Coord3D &from, const Coord3D &to);
 	Path *pathReachingGoal(const Coord3D &from);
 	// lane EXIT-1: the horde member update's switch to the path goal around doLocomotor (RW 0x66CD29 / 0x66CD41 write AI + 0x1FC directly)
 	void setGoalTypeRaw(AIGoalType t) { m_goalType = t; }
 	// distance left to the goal for the current goal type (RW 0x664127)
 	float locomotorDistanceToGoal() const;
-	// lane WALL-1: the unit's layer settles to the cell under it (Pathfinder::settleLayer) and, with a type 4 goal on a path, follows the nearest path node's
-	// layer (Pathfinder::UpdateLayer BFME2 0x6F11A1). The horde member update (RW 0x66C748) calls it too; its z then is the layer's height
-	// (LocomotorHost::groundHeightAt). Lane WALL-2: a type 1 path goal's layer follows RotWK's doLocomotor (RW 0x669D3D .. 0x669D66, the point ahead's layer)
+	// lane WALL-1 / WALL-4: a unit whose wall top, walkway or ramp went away under it takes the ground (Pathfinder::layerAfterSurfaceLoss, INFERENCE S-1750),
+	// then stands on the terrain, and AdjustLayer (S-4840). doLocomotor's branches make RotWK's layer changes: a path goal's UpdateLayer (RW 0x669D3D .. 0x669D66, the
+	// point ahead's layer), an explicit goal's RW 0x680A75 after its step (RW 0x669B95), the horde member update's (RW 0x66C748). The member update calls it too
 	void refreshLayer();
 
 	// ---- the per-frame locomotor step (RW 0x669932): returns the number of frames until the next call is needed ----

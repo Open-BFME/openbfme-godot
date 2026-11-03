@@ -30,6 +30,9 @@
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
+#include <algorithm>
+#include <cmath>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -384,12 +387,12 @@ TEST_CASE("wall2 modules retail: a horde ordered across Helm's Deep's culvert ta
 		if (gate)
 		{
 			// the horde's own path crosses the gate: its point ahead on the waypoint nodes for 19 frames (AI + 0x3BB; a HORDE appearance locomotor walks them on
-			// the ground, RW 0x669E47 .. 0x669E89); the members follow their formation slots with straight steps (RW 0x6F1B3E asks the target cell only)
+			// the ground, RW 0x669E47 .. 0x669E89); the members follow their formation slots with straight steps (RW 0x6F1B3E: the target cell; since lane WALL-4 its layer change too)
 			CHECK(hordeOnPortal == 19);
 			// merge queue q26: since the slot table is centred on the horde (community #73, RW 0x86C4EA) only the 7 members of the front ranks end inside;
 			// the other 8 stop in the culvert's passage (y 2900 .. 2921) and stay there (measured to frame 1600). An engine pin of a follow-up, not retail:
-			// the members' own paths through the gate's portal are the open part (likely S-1751: the member's pathfinder layer update RW 0x6F0741)
-			// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; measured twice on the lane's tree): all 15 members end inside the wall
+			// the members' own paths through the gate's portal are the open part (lane WALL-4 ported the member's AdjustLayer RW 0x6F0741, which S-1751 named
+			// as the likely cause); lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E): all 15 members end inside the wall
 			CHECK(inner == 15);
 			CHECK(hp.y < 2872.0f); // tolerance: the horde itself stands south of Post04
 		}
@@ -647,9 +650,10 @@ TEST_CASE("wall2 raised retail: a hero on Helm's Deep's left gatehouse walks to 
 	Object *hero = g.game->createObject("GondorBoromir", owner->getPlayerIndex(), a, 0.0f, &error);
 	REQUIRE_MESSAGE(hero, error);
 	hero->setPosition(&a);
-	g.frames(2);
 	AIUpdateInterface *ai = hero->getAIUpdateInterface();
 	REQUIRE(ai);
+	ai->setLayer(pf.getLayerAt(ai->adapter(), a)); // as a map's placement on the wall top gives it (RW 0x62E14C .. 0x62E15F; lane WALL-4)
+	g.frames(2);
 	MESSAGE("the hero starts at " << hero->getPosition()->x << ", " << hero->getPosition()->y << ", " << hero->getPosition()->z << " on layer " << (int)ai->adapter().getLayer());
 	REQUIRE(isWallLayer(ai->adapter().getLayer()));
 	Coord3D from = *hero->getPosition(), to = b;
@@ -688,8 +692,213 @@ TEST_CASE("wall2 raised retail: a hero on Helm's Deep's left gatehouse walks to 
 	INFO("the hero stands at " << at.x << ", " << at.y << ", " << at.z << " on layer " << (int)ai->adapter().getLayer());
 	CHECK(sawRaised);
 	CHECK(raisedZ == 225.0f); // the walkway's height (its layer's int height)
-	CHECK(isWallLayer(ai->adapter().getLayer()));
+	// lane WALL-4: RotWK's UpdateLayer runs before each step (RW 0x669D66, then the locomotor's move): the walk's last step leaves the ramp's top for the
+	// right gatehouse's wall cell and nothing re-layers a unit that stopped. It stays on the ramp's layer and stands at the wall top's height, which
+	// GetWallHeight takes from the wall cell under it (RW 0x6F0B27)
+	CHECK(ai->adapter().getLayer() == LAYER_RAMP);
+	const PathfindCell *endCell = pf.cellAt((int)std::floor(at.x / 10.0f), (int)std::floor(at.y / 10.0f));
+	REQUIRE(endCell);
+	REQUIRE(isWallLayer((PathfindLayerEnum)endCell->getLayer()));
+	CHECK(at.z == pf.getLayerHeight(at.x, at.y, (PathfindLayerEnum)endCell->getLayer()));
 	CHECK((at.x - b.x) * (at.x - b.x) + (at.y - b.y) * (at.y - b.y) < 900.0f); // tolerance: within the locomotor's close-enough distance of the goal cell
+	// that ramp layer on a wall cell is no trap: sent back to the left gatehouse the hero gets a full path from where it stands, walks over the walkway again and
+	// arrives
+	Coord3D back = *hero->getPosition(), home = a;
+	bool backPartial = true;
+	Path *again = pf.findPath(&ai->adapter(), ai->locomotorInfo(), &back, &home, &backPartial);
+	REQUIRE(again);
+	CHECK_FALSE(backPartial);
+	delete again;
+	ai->aiMoveToPosition(a, CMD_FROM_PLAYER);
+	bool sawRaisedBack = false;
+	for (int f = 0; f < 900; ++f)
+	{
+		g.frames(1);
+		sawRaisedBack = sawRaisedBack || isRaisedLayer(ai->adapter().getLayer());
+		const Coord3D q = *hero->getPosition();
+		if ((q.x - a.x) * (q.x - a.x) + (q.y - a.y) * (q.y - a.y) < 400.0f && !ai->isMoving())
+		{
+			break;
+		}
+	}
+	const Coord3D home2 = *hero->getPosition();
+	INFO("back at " << home2.x << ", " << home2.y << ", " << home2.z << " on layer " << (int)ai->adapter().getLayer());
+	CHECK(sawRaisedBack);
+	CHECK((home2.x - a.x) * (home2.x - a.x) + (home2.y - a.y) * (home2.y - a.y) < 900.0f); // tolerance: within the locomotor's close-enough distance of the goal cell
+	// on the left gatehouse's wall top, not on the ground under it: a wall cell, at its height
+	const PathfindCell *homeCell = pf.cellAt((int)std::floor(home2.x / 10.0f), (int)std::floor(home2.y / 10.0f));
+	REQUIRE(homeCell);
+	REQUIRE(isWallLayer((PathfindLayerEnum)homeCell->getLayer()));
+	CHECK(home2.z == pf.getLayerHeight(home2.x, home2.y, (PathfindLayerEnum)homeCell->getLayer()));
+}
+
+TEST_CASE("walljoint1 retail: a unit that stepped off the gatehouse ramp's top onto the walkway keeps the ramp's layer, and AdjustLayer puts it on the walkway, not the ground")
+{
+	OPENBFME_REQUIRE_START(s);
+	PortalGame g(*s);
+	g.frames(2);
+	Pathfinder &pf = g.game->ai().pathfinder();
+	Object *left = g.first("HelmsDeepGatehouseLeft");
+	REQUIRE(left);
+	// just west of the east ramp's top edge (x 2931.3): off the ramp mesh, over the ground grid's cell 292 (the gate's passage, 84 below) and walkway cell 292
+	const Coord3D at{ 2924.37f, 2658.46f, 223.98f };
+	float rampZ = 0.0f;
+	REQUIRE_FALSE(pf.isPointOnRamp(at.x, at.y, &rampZ));
+	const PathfindCell *ground = pf.cellAt(292, 265);
+	REQUIRE(ground);
+	REQUIRE(ground->getLayer() == LAYER_GROUND);
+	const PathfindCell *walk = pf.raisedCellAt(LAYER_TOP, 292, 265);
+	REQUIRE(walk);
+	REQUIRE(walk->getType() == PathfindCell::CELL_CLEAR);
+	std::string error;
+	Object *hero = g.game->createObject("GondorBoromir", left->getControllingPlayer()->getPlayerIndex(), at, 0.0f, &error);
+	REQUIRE_MESSAGE(hero, error);
+	hero->setPosition(&at);
+	AIUpdateInterface *ai = hero->getAIUpdateInterface();
+	REQUIRE(ai);
+	ai->setLayer(LAYER_RAMP);
+	// the port's surface-loss rule (S-1750) took this for a lost ramp and put the unit on the ground, at the terrain
+	CHECK(pf.layerAfterSurfaceLoss(ai->adapter()) == LAYER_RAMP);
+	// RotWK's AdjustLayer (RW 0x6F0741): the footprint cell is another layer and its surface is not above; walkway 2 has a passable cell there within 10
+	CHECK(pf.adjustLayer(ai->adapter(), LAYER_RAMP) == LAYER_TOP);
+	g.frames(1);
+	MESSAGE("after a frame: layer " << (int)ai->adapter().getLayer() << " z " << hero->getPosition()->z);
+	CHECK(ai->adapter().getLayer() == LAYER_TOP);
+	CHECK(hero->getPosition()->z > 200.0f); // tolerance: on the walkway (225), not in the passage (141.6)
+}
+
+namespace
+{
+// orders `horde` to `goal` and runs until it and its members stand (at most `maxFrames`): the largest change of a member's z from one frame to the next
+float hordeWalkMaxZStep(PortalGame &g, Object *horde, const Coord3D &goal, int maxFrames, int &frames)
+{
+	AIUpdateInterface *ai = horde->getAIUpdateInterface();
+	ai->aiMoveToPosition(goal, CMD_FROM_PLAYER);
+	std::map<ObjectID, float> last;
+	float maxStep = 0.0f;
+	for (frames = 0; frames < maxFrames; ++frames)
+	{
+		g.frames(1);
+		bool moving = ai->isMoving();
+		for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
+		{
+			if (o->getContainedBy() != horde || !o->getAIUpdateInterface())
+			{
+				continue;
+			}
+			const float z = o->getPosition()->z;
+			const auto it = last.find(o->getID());
+			if (it != last.end())
+			{
+				maxStep = std::max(maxStep, std::fabs(z - it->second));
+			}
+			last[o->getID()] = z;
+			moving = moving || o->getAIUpdateInterface()->isMoving();
+		}
+		if (!moving && frames > 30)
+		{
+			break;
+		}
+	}
+	return maxStep;
+}
+} // namespace
+
+TEST_CASE("walljoint1 retail: a 15-member horde crosses Helm's Deep's gatehouse walkway and back and ends on the left top; its members' z steps are measured")
+{
+	OPENBFME_REQUIRE_START(s);
+	PortalGame g(*s);
+	g.frames(2);
+	Pathfinder &pf = g.game->ai().pathfinder();
+	Object *left = g.first("HelmsDeepGatehouseLeft");
+	Object *right = g.first("HelmsDeepGatehouseRight");
+	REQUIRE(left);
+	REQUIRE(right);
+	Coord3D a, b;
+	REQUIRE(nearestWallTop(pf, *left->getPosition(), a));
+	REQUIRE(nearestWallTop(pf, *right->getPosition(), b));
+	Player *owner = left->getControllingPlayer();
+	REQUIRE(owner);
+	// the horde starts on a clear ground cell 60 .. 250 from the left top, more than 15 below it, from which a hero has a full path up to it
+	std::string error;
+	Object *probe = g.game->createObject("GondorBoromir", owner->getPlayerIndex(), a, 0.0f, &error);
+	REQUIRE_MESSAGE(probe, error);
+	AIUpdateInterface *pai = probe->getAIUpdateInterface();
+	Coord3D start{ 0, 0, 0 };
+	bool found = false;
+	for (int r = 6; r <= 25 && !found; ++r)
+	{
+		for (int k = 0; k < 16 && !found; ++k)
+		{
+			const float ang = k * 0.3926991f;
+			const float x = a.x + std::cos(ang) * r * 10.0f, y = a.y + std::sin(ang) * r * 10.0f;
+			const PathfindCell *c = pf.cellAt((int)std::floor(x / 10.0f), (int)std::floor(y / 10.0f));
+			if (!c || c->getLayer() != LAYER_GROUND || c->getType() != PathfindCell::CELL_CLEAR || a.z - g.game->logic().getGroundHeight(x, y) < 15.0f)
+			{
+				continue;
+			}
+			Coord3D f{ x, y, g.game->logic().getGroundHeight(x, y) }, to = a;
+			probe->setPosition(&f);
+			pai->setLayer(LAYER_GROUND);
+			bool partial = true;
+			Path *p = pf.findPath(&pai->adapter(), pai->locomotorInfo(), &f, &to, &partial);
+			found = p && !partial;
+			start = found ? f : start;
+			delete p;
+		}
+	}
+	g.game->logic().destroyObject(probe);
+	REQUIRE(found);
+	Object *horde = g.game->createObject("GondorFighterHorde", owner->getPlayerIndex(), start, 0.0f, &error);
+	REQUIRE_MESSAGE(horde, error);
+	g.frames(15);
+	int members = 0;
+	for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
+	{
+		members += o->getContainedBy() == horde ? 1 : 0;
+	}
+	REQUIRE(members == 15);
+	// up the left gatehouse's ramp, over the walkway (raised layer 2, 84 above the gate's passage) to the right gatehouse's top, and back
+	// each leg ends with the horde and its members standing (not at the frame limit) and the horde within 60 of its goal
+	auto arrived = [&](const Coord3D &goal) {
+		const Coord3D h = *horde->getPosition();
+		// tolerance: the horde stops where its formation fits, 36 .. 43 from the wall-top cell it was sent to (measured); the two tops are ~340 apart
+		return (h.x - goal.x) * (h.x - goal.x) + (h.y - goal.y) * (h.y - goal.y) < 3600.0f;
+	};
+	int frames = 0;
+	const float up = hordeWalkMaxZStep(g, horde, a, 1500, frames);
+	MESSAGE("up to the left top: " << frames << " frames, largest member z step " << up);
+	CHECK(frames < 1500); // tolerance: the leg's frame limit, not reached
+	CHECK(arrived(a));
+	const float over = hordeWalkMaxZStep(g, horde, b, 1500, frames);
+	MESSAGE("over the walkway to the right top: " << frames << " frames, largest member z step " << over);
+	CHECK(frames < 1500); // tolerance: the leg's frame limit, not reached
+	CHECK(arrived(b));
+	const float back = hordeWalkMaxZStep(g, horde, a, 1500, frames);
+	MESSAGE("back over to the left top: " << frames << " frames, largest member z step " << back);
+	CHECK(frames < 1500); // tolerance: the leg's frame limit, not reached
+	CHECK(arrived(a));
+	// tolerance: 20 is the review's bound for a step along the ramps (a member climbs at most ~16 a frame there)
+	CHECK(up <= 20.0f);
+	// OPEN (lane WALLJOINT-1, measured): over the walkway two retail-faithful paths still drop members for 1 .. 10 frames: RW 0x6F0889's last resort on a
+	// horde whose layer is still the ramp's for the frame after its centre left the ramp (UpdateLayer runs before the step, RW 0x6F25FE mode 0; the
+	// fallback's height RW 0x6E8E19 -> 0x6F0B27 at the ramp layer over a ground cell is the terrain), and members that RW 0x6EE600's +5 offset puts on the
+	// ground beside the walkway mesh's north notch (x 2821 .. 2871, y > 2675), whose next step to the walkway RW 0x6F1B3E refuses. Reported, not checked
+	// tolerance: 20 as above (WARN: the open gap stays visible in the output)
+	WARN(over <= 20.0f);
+	// tolerance: 20 as above
+	WARN(back <= 20.0f);
+	// every member arrived on the left gatehouse's wall top (not on the ground under it)
+	int onTop = 0;
+	for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getContainedBy() == horde && o->getAIUpdateInterface())
+		{
+			const Coord3D q = *o->getPosition();
+			onTop += q.z > g.game->logic().getGroundHeight(q.x, q.y) + 20.0f ? 1 : 0;
+		}
+	}
+	CHECK(onTop == 15);
 }
 
 TEST_CASE("wall2 walls retail: a wall piece is classified with the model of its current state: Helm's Deep's culvert as rubble (RBHDDWCulv_D3)")
@@ -1010,11 +1219,13 @@ TEST_CASE("wall2 walls retail: on MAP MP Anfalas a hero idle on a GenericTreeBri
 	std::string error;
 	Object *hero = g.game->createObject("GondorBoromir", me->getPlayerIndex(), onDeck, 0.0f, &error);
 	REQUIRE_MESSAGE(hero, error);
-	// on the deck's surface (createObject puts it on the terrain; a map's units on walls carry their height)
+	// on the deck's surface (createObject puts it on the terrain; a map's units on walls carry their height) and on its layer, as a map's placement gives it
+	// (RW 0x62E14C .. 0x62E15F: the layer RW 0x680A75 names there; lane WALL-4: RotWK's movers put no unit on a surface above it at its height)
 	onDeck.z = pf.getLayerHeight(onDeck.x, onDeck.y, deckLayer);
 	hero->setPosition(&onDeck);
 	AIUpdateInterface *ai = hero->getAIUpdateInterface();
 	REQUIRE(ai);
+	ai->setLayer(pf.getLayerAt(ai->adapter(), onDeck));
 	ai->aiIdle(CMD_FROM_AI); // not the guard of its creation point on the terrain under the deck
 	g.frames(3);
 	const Coord3D before = *hero->getPosition();

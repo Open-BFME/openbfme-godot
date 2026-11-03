@@ -912,7 +912,11 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// seed 2 ends with Mordor's defeat (start position 0) at 7211 with a new table, seed 7 stays open at 9000, seed 1234 ends with the Men's defeat (start
 	// position 1) at 8168; with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): seed 2 ends with Mordor's defeat at 7094
 	// with a new table, seeds 7 and 1234 stay open at 9000. Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 7094 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Merge queue q37 (measured once on the merged tree and at each merge point): at #187's (on top of WARG-1) seed 2 stays open at 9000 and seed 7 ends
+	// with the Men's defeat (start position 0) at 7246; ATKRESET-1 (attack orders end the FiringDuration lock) ends seed 2 with the Men's defeat (start
+	// position 1) at 6858 with a new table and seed 7 with Mordor's defeat (start position 1) at 8584; seed 1234 stays open at 9000. Engine pins, not
+	// retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 1, 6858 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 8584 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -923,7 +927,7 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 		MESSAGE("progress, seed " << g.seed << ":\n" << run.progress);
 		// lane MODCOMPAT-MOD1 (PickupStuffUpdate, measured at its commit): the seed 7 game launches three (its AI hordes' crate scans and every horde's update in
 		// the sleepy update vectors move it)
-		CHECK(run.attacks[0] + run.attacks[1] >= (g.seed == 2u ? 2u : g.seed == 7u ? 3u : 4u)); // tolerance: a floor of launches per game (DECOMP-1 r3: seed 2 launches two; seed 7 three)
+		CHECK(run.attacks[0] + run.attacks[1] >= (g.seed == 7u ? 3u : 2u)); // tolerance: a floor of launches per game (DECOMP-1 r3: seed 2 launches two; seed 7 three; lane WARG-1: seed 1234 two before its end at 7803)
 		// SMOOTH-2 (the pending position cleared every frame, RW 0x62618F, feeds the crush warning's velocity RW 0x68EF58) ends seed 1234 with Men's defeat:
 		// 5275 on SMOOTH-2's base, 5186 on the merged tree (with GARRISON-1 / STEALTH-2 / END-2); seeds 2 and 7 stay open. Lane SMOOTH-3 (RotWK's member hub near arm RW 0x874F09, the angle goal RW 0x5E98D6 turning at the locomotor's rate): seed 1234 is open at 9000 as well. Engine pins, not retail values.
 		// SCRIPT-2 (merged with AUDIO-3 / GARRISON-2 / SMOOTH-3): the AI libraries' scripts now evaluate the conditions they use (PLAYER_HAS_OBJECT_COMPARISON ...
@@ -955,14 +959,14 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// at 9000 with this table
 			// merge queue q35 (measured once on the merged tree and at each merge point): #132's melee reach ends it with Mordor's defeat at 7060
 			// lane PATH-REBUILD (measured twice on the lane's tree): a new table from the first window on; the game ends with Mordor's defeat at 7094
+			// merge queue q37 (measured once on the merged tree; ATKRESET-1 moves it): a new table from the first window on; the game ends with the Men's defeat at 6858
 			CHECK(run.progress ==
-		"frame 1000: [0 attacks 0 built 70u/8s destroyed 9u/0s] [1 attacks 1 built 91u/8s destroyed 41u/2s]\n"
-		"frame 2000: [0 attacks 1 built 257u/10s destroyed 121u/1s] [1 attacks 1 built 182u/11s destroyed 185u/5s]\n"
-		"frame 3000: [0 attacks 2 built 297u/13s destroyed 210u/2s] [1 attacks 2 built 294u/12s destroyed 249u/10s]\n"
-		"frame 4000: [0 attacks 2 built 301u/14s destroyed 295u/2s] [1 attacks 4 built 403u/16s destroyed 311u/13s]\n"
-		"frame 5000: [0 attacks 2 built 302u/15s destroyed 361u/2s] [1 attacks 5 built 477u/20s destroyed 312u/13s]\n"
-		"frame 6000: [0 attacks 2 built 303u/18s destroyed 374u/2s] [1 attacks 6 built 507u/24s destroyed 313u/15s]\n"
-		"frame 7000: [0 attacks 2 built 304u/20s destroyed 410u/2s] [1 attacks 6 built 542u/24s destroyed 314u/17s]\n");
+		"frame 1000: [0 attacks 0 built 70u/8s destroyed 5u/1s] [1 attacks 1 built 76u/7s destroyed 21u/2s]\n"
+		"frame 2000: [0 attacks 2 built 279u/11s destroyed 109u/2s] [1 attacks 2 built 168u/10s destroyed 136u/5s]\n"
+		"frame 3000: [0 attacks 3 built 429u/12s destroyed 167u/7s] [1 attacks 2 built 214u/14s destroyed 337u/5s]\n"
+		"frame 4000: [0 attacks 4 built 547u/15s destroyed 234u/9s] [1 attacks 2 built 286u/16s destroyed 443u/5s]\n"
+		"frame 5000: [0 attacks 4 built 707u/20s destroyed 282u/12s] [1 attacks 2 built 337u/18s destroyed 556u/6s]\n"
+		"frame 6000: [0 attacks 5 built 821u/21s destroyed 327u/20s] [1 attacks 2 built 353u/23s destroyed 691u/6s]\n");
 		}
 	}
 }
@@ -1166,7 +1170,9 @@ TEST_CASE("skirmish ai tactics: the offensive bodies make retail's draws in orde
 	// PR #137 (BFME2CAMP1's rebuild holes: a destroyed structure leaves a hole its owner's AI rebuilds, so the AI's targets and with them the random stream
 	// move): none of these fourteen hands a Pincer team its waypoints within 2600 frames (PR triage: 0 distances from b5a3bb549 on, main 87579746e measured
 	// 1); a probe of seeds 72 .. 131 on the PR's tree (a CI host) found 74, 81, 100, 119, 124 (one each) and 99 (two)
-	for (std::uint32_t seed : { 1234u, 2u, 7u, 11u, 13u, 17u, 19u, 31u, 29u, 67u, 37u, 41u, 53u, 71u, 83u, 107u })
+	// Lane WARG-1 (FindClosestPath RW 0x6FB869 and the unclamped cells RW 0x6E8CE6 move every game): none of these sixteen hands a Pincer team its waypoints
+	// within 2600 frames; a probe of twelve seeds on the lane's tree after the archive merge (74 .. 139 and 126, a CI host) found 126 (one)
+	for (std::uint32_t seed : { 1234u, 2u, 7u, 11u, 13u, 17u, 19u, 31u, 29u, 67u, 37u, 41u, 53u, 71u, 83u, 107u, 126u })
 	{
 		NewGameStart start(RandomAlgorithm::ZH_CarryChain);
 		REQUIRE_MESSAGE(NewGame::prepareNewGame(versusMessage(*s, "FactionMen", -1, "FactionMordor", 2, seed), s->world->playerTemplates(), s->settings, cache,

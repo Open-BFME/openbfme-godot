@@ -40,9 +40,14 @@ struct HangRun
 };
 
 // `hangAfterDropMs`: how long slot 2 stays hung after the survivors dropped it; `survivorsLeaveMs`: the survivors stop that long after the drop (they
-// played on and left: nobody answers the dropped player any more)
-HangRun runHang(std::uint64_t hangAfterDropMs, std::uint64_t survivorsLeaveMs = ~0ull)
+// played on and left: nobody answers the dropped player any more); `onlyDeciderLeaves`: then only slot 0, the drop's decider, stops (slot 1 plays on)
+// `pauseMs` (Sol r1 of wotr2-r1): no drop expected: slot 2 hangs that long from its hang on (`pauseAll`: every player's game hangs with it)
+// `delayToSurvivorMs` (Sol r2 of wotr2-r2): slot 2's last datagrams to slot 1 arrive that much late, so slot 1's timeout bar runs behind the decider's
+// and it applies the decider's drop before it votes; `retail`: RotWK's NetworkDisconnectTime 15000 and NetworkPlayerTimeoutTime 60000
+HangRun runHang(std::uint64_t hangAfterDropMs, std::uint64_t survivorsLeaveMs = ~0ull, bool onlyDeciderLeaves = false, bool pauseAll = false,
+	std::uint64_t pauseMs = 0, std::uint64_t delayToSurvivorMs = 0, bool retail = false)
 {
+	const std::uint32_t disconnectMs = retail ? 15000 : kDisconnectMs, timeoutMs = retail ? 60000 : kTimeoutMs;
 	struct P
 	{
 		UDP socket;
@@ -71,8 +76,8 @@ HangRun runHang(std::uint64_t hangAfterDropMs, std::uint64_t survivorsLeaveMs = 
 		c.localSlot = i;
 		c.runAhead = 2;
 		c.crcInterval = 0;
-		c.settings.disconnectTime = kDisconnectMs;
-		c.settings.playerTimeoutTime = kTimeoutMs;
+		c.settings.disconnectTime = disconnectMs;
+		c.settings.playerTimeoutTime = timeoutMs;
 		for (int j = 0; j < 3; ++j)
 		{
 			c.slotPlayerIndex[(size_t)j] = 10 + j;
@@ -91,13 +96,40 @@ HangRun runHang(std::uint64_t hangAfterDropMs, std::uint64_t survivorsLeaveMs = 
 	}
 	HangRun r;
 	std::uint64_t resumeAt = 0, resumedAt = 0;
-	const std::uint64_t end = 1000 + 200000;
+	const std::uint64_t end = 1000 + (retail ? 700000 : 200000);
+	std::uint64_t delayedAt = 0;
+	std::vector<std::vector<std::uint8_t>> delayed;
 	for (; now < end; ++now)
 	{
 		if (!peers[2].hung && resumedAt == 0 && peers[2].frame >= 30)
 		{
 			peers[2].hung = true; // the process hangs: nothing runs, nothing is read
 			r.hungFrame = peers[2].frame;
+			if (delayToSurvivorMs != 0)
+			{
+				// slot 2's datagrams slot 1 has not read yet are held back (the others' go on to it at once)
+				NetAddress from;
+				std::vector<std::uint8_t> bytes;
+				std::vector<std::vector<std::uint8_t>> others;
+				while (peers[1].socket.receiveFrom(from, bytes))
+				{
+					(from == peers[2].socket.localAddress() ? delayed : others).push_back(bytes);
+				}
+				for (const std::vector<std::uint8_t> &b : others)
+				{
+					peers[0].socket.sendTo(peers[1].socket.localAddress(), b.data(), b.size());
+				}
+				REQUIRE_FALSE(delayed.empty());
+				delayedAt = now + delayToSurvivorMs;
+			}
+			resumeAt = pauseMs ? now + pauseMs : 0;
+		}
+		if (delayedAt != 0 && now == delayedAt)
+		{
+			for (const std::vector<std::uint8_t> &b : delayed)
+			{
+				peers[2].socket.sendTo(peers[1].socket.localAddress(), b.data(), b.size());
+			}
 		}
 		if (peers[2].hung)
 		{
@@ -119,13 +151,14 @@ HangRun runHang(std::uint64_t hangAfterDropMs, std::uint64_t survivorsLeaveMs = 
 					r.backlogBytes = std::max(r.backlogBytes, b);
 				}
 				r.droppedAtMs = now;
-				resumeAt = now + hangAfterDropMs;
+				resumeAt = pauseMs ? resumeAt : now + hangAfterDropMs;
 			}
 			if (r.dropped && now - r.droppedAtMs >= survivorsLeaveMs)
 			{
-				peers[0].stopped = peers[1].stopped = true;
+				peers[0].stopped = true;
+				peers[1].stopped = peers[1].stopped || !onlyDeciderLeaves;
 			}
-			if (r.dropped && now >= resumeAt)
+			if (resumeAt != 0 && now >= resumeAt)
 			{
 				peers[2].hung = false;
 				resumedAt = now;
@@ -134,7 +167,7 @@ HangRun runHang(std::uint64_t hangAfterDropMs, std::uint64_t survivorsLeaveMs = 
 		for (int i = 0; i < 3; ++i)
 		{
 			P &p = peers[(size_t)i];
-			if (p.hung || p.stopped)
+			if (p.hung || p.stopped || (pauseAll && peers[2].hung))
 			{
 				continue;
 			}
@@ -228,6 +261,58 @@ TEST_CASE("mpdrop3 (WOTR2 stall): a hung player whose drop was lost while the ot
 	CHECK(r.quitAfterMs == (std::uint64_t)(kDisconnectMs + kTimeoutMs)); // the span the others wait before they drop a silent player (an update a ms)
 	CHECK(r.lastFrame <= r.dropFrame); // tolerance: as above: none from the drop's frame on
 	CHECK_FALSE(r.forked);
+}
+
+// WOTR2 (Sol r1 of wotr2-r1): three players; the decider of the hung player's drop leaves while the other survivor plays on. That survivor answers the
+// returning player with what it kept for it (MPDROP-3), its vote to drop it among that, but not the decider's DISCONNECTPLAYER: before, the returning
+// player waited for ever at the drop's frame. Every player it hears voted it out (RotWK's voted-out test, RW 0x8D826F, on itself): it leaves as dropped
+TEST_CASE("mpdrop3 (WOTR2, three players): the decider of a hung player's lost drop leaves while another survivor plays on: the returning player, voted "
+		  "out by every player it hears, leaves as dropped; it drops nobody and runs no frame from the drop's frame on")
+{
+	const HangRun r = runHang(3 * kTimeoutMs + 20000, 2000, true);
+	INFO(r.log);
+	REQUIRE(r.dropped);
+	CHECK(r.quit);
+	CHECK(r.quitReason.find("dropped by the other players: every player heard") == 0);
+	CHECK(r.quitAfterMs == (std::uint64_t)(kDisconnectMs + kTimeoutMs)); // the span the others wait before they drop a silent player (an update a ms)
+	CHECK(r.lastFrame <= r.dropFrame); // tolerance: as above: none from the drop's frame on
+	CHECK_FALSE(r.forked);
+}
+
+// Sol r1 of wotr2-r1: the own-hang rule drops nobody where nobody was dropped: one player suspended a moment, or every player suspended together far
+// past NetworkDisconnectTime + NetworkPlayerTimeoutTime (a host that slept with all three games on it): all play on in step
+TEST_CASE("mpdrop3 (WOTR2): a short hang of one player and a long hang of every player together drop nobody and quit nobody")
+{
+	for (const bool all : { false, true })
+	{
+		CAPTURE(all);
+		const HangRun r = runHang(0, ~0ull, false, all, all ? 45000 : 3000);
+		INFO(r.log);
+		CHECK_FALSE(r.dropped);
+		CHECK_FALSE(r.quit);
+		CHECK_FALSE(r.forked);
+		CHECK(r.lastFrame > r.hungFrame + 100); // tolerance: the game ran on after the hang (about 5 frames a second for the rest of the run)
+	}
+}
+
+// WOTR2 (Sol r2 of wotr2-r2): as above, but slot 2's last datagrams reach slot 1 a little late (200 ms; with RotWK's timings 1 s), so slot 1's bar
+// runs behind the decider's: it applies the decider's drop before its own timeout votes, and keeps no vote for slot 2 either. Before, the returning
+// player heard slot 1's kept backlog, cleared its guard and waited for ever at the drop's frame. No frame came from the players it heard, and nobody is
+// heard any more once that backlog is acknowledged: it leaves as dropped
+TEST_CASE("mpdrop3 (WOTR2, three players, late link): the survivor that plays on applied the drop without voting: the returning player gets no frame "
+		  "from it and leaves as dropped (the test timings and RotWK's)")
+{
+	for (const bool retail : { false, true })
+	{
+		CAPTURE(retail);
+		const HangRun r = runHang(retail ? 180000 : 3 * kTimeoutMs + 20000, 2000, true, false, 0, retail ? 1000 : 200, retail);
+		INFO(r.log);
+		REQUIRE(r.dropped);
+		CHECK(r.quit);
+		CHECK(r.quitReason.find("dropped by the other players: no frame came from the players heard") == 0);
+		CHECK(r.lastFrame <= r.dropFrame); // tolerance: as above: none from the drop's frame on
+		CHECK_FALSE(r.forked);
+	}
 }
 
 namespace

@@ -137,7 +137,8 @@ public:
 class Path : public LocomotorPath
 {
 public:
-	Path();
+	// lane UBER-PATH: `laterLegOnTie` is the Uber pathfinder's follower rule (updateClosestSegment); Faithful paths keep RW's tie
+	explicit Path(bool laterLegOnTie = false);
 	~Path() override;
 	Path(const Path &) = delete;
 	Path &operator=(const Path &) = delete;
@@ -231,6 +232,7 @@ private:
 	PathNode *m_path;
 	PathNode *m_pathTail;
 	bool m_isOptimized;
+	bool m_laterLegOnTie; // lane UBER-PATH (see the constructor)
 	bool m_blockedByAlly;
 	PathNode *m_closest;           // RW Path +0x10: the closest segment's start node
 	float m_t;                     // RW Path +0x14: 0..1 along the current segment
@@ -865,6 +867,9 @@ public:
 	bool worldToCell(const Coord3D *pos, ICoord2D *cell);
 	// RW 0x6E8CE6: floor(pos * 0.1), plus 0.5 when not centred; clamped to the extent (the flag is true when it had to clamp)
 	bool worldToCell(const Coord3D *pos, bool center, ICoord2D *cell);
+	// lane WARG-1: RW 0x6E8CE6 as retail calls it from adjustDestination (RW 0x6FE456) and snapClosestGoalPosition (RW 0x6F3F95): floor(pos * 0.1), plus 0.5
+	// when not centred, and NOT clamped (an off-map point keeps its off-grid cell, which getCell has none for)
+	static ICoord2D worldToCellUnclamped(const Coord3D *pos, bool center);
 	bool isMapReady() const { return m_isMapReady; }
 	PathfindGridStats gridStats() const;
 	const PathfindConfig &config() const { return m_config; }
@@ -1052,6 +1057,10 @@ public:
 	// RW internalFindPath 0x6FD06F; with `hierarchical` the search runs inside the corridor findClosestHierarchicalPath left (its block flags, its path
 	// positions in the estimate and the closest-cell choice). `partial` is only ever set here (findPath clears it)
 	Path *internalFindPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to, bool hierarchical, bool *partial);
+	// lane WARG-1: RW FindClosestPath 0x6FB869 (vtable slot + 4): the path to the goal, else to the reachable cell that best combines nearness to the goal and
+	// path cost (`costMultiplier`); `rawTo` is left as given (RW writes only its local copy). Null when nothing qualifies. The caller owns the result
+	Path *findClosestPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *rawTo, bool blocked, float costMultiplier,
+		bool moveAllies);
 	// findPath as it was before lane PATHPERF-1 (no corridor, every block passable): AIMover::pathReachingGoal's stand-in for RW 0x6F74D0
 	Path *findPathWithoutCorridor(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to, bool *partial);
 	// lane PATHPERF-1 (AIPathfindHierarchical.cpp): RW FindClosestHierarchicalPath 0x6F9829 -> 0x6F8601, the A* over the 16 x 16 zone blocks. True when a
@@ -1078,8 +1087,9 @@ public:
 	void clip(Coord3D *from, Coord3D *to);
 
 	// ---- lane WALL-1: wall tops and ramps (AIPathfindWalls.cpp) ----
-	// Pathfinder::GetWallHeight (BFME2 WorldBuilder decomp 0xd3ed70): the height of `layer` at (x, y): a wall layer's height, a ramp's surface (raised to the
-	// wall under it), the terrain for the ground and every other layer
+	// TheTerrainLogic->getLayerHeight (W3DTerrainLogic::getLayerHeight RW 0x4623A5 / BFME2 0x462C95): the height of `layer` at (x, y). The ground: the terrain;
+	// a raised walkway: its height; a ramp or a wall layer: Pathfinder::GetWallHeight (RW 0x6F0B27 / BFME2 0x6EF68C) of the point, which first takes the
+	// layer of the ground grid's cell there when it is another (a ramp cell only for a point on the ramp); off every ramp the terrain (lane WALL-4, S-4840)
 	float getLayerHeight(float x, float y, PathfindLayerEnum layer) const;
 	// ZH TerrainLogic::getHighestLayerForDestination + getLayerHeight: the highest walkable surface at (x, y) (a wall top or a ramp over the terrain)
 	float getHighestLayerHeight(float x, float y) const;
@@ -1091,15 +1101,28 @@ public:
 	// without `z` takes the terrain's height there
 	PathfindLayerEnum getLayerAt(float x, float y) const;
 	PathfindLayerEnum getLayerAt(float x, float y, float z) const;
+	// lane WALL-4: the same for the object at `pos`, as RotWK's callers ask it (RW 0x6EE600 moves the point by 5 for an even footprint)
+	PathfindLayerEnum getLayerAt(const PathfindObject &obj, const Coord3D &pos) const;
 	// Pathfinder::IsPointOnRamp: (x, y) is on a ramp's surface; `z` its height there
 	bool isPointOnRamp(float x, float y, float *z = nullptr) const;
 	// Pathfinder::IsPointOnWall (BFME2 0x6E940F): the ground cell under `pos` has a wall layer (and is CLEAR when `requireClear`)
 	bool isPointOnWall(const Coord3D &pos, bool requireClear = false) const;
-	// Pathfinder::UpdateLayer (BFME2 0x6F11A1): the layer a unit at its position takes when the path node it follows is on `nodeLayer`
-	PathfindLayerEnum updateLayer(const PathfindObject &obj, PathfindLayerEnum nodeLayer) const;
-	// lane WALL-1: the layer of a unit that is not following a path node: a unit put on a wall top (a map's archers, a teleported horde member) takes the
-	// wall's layer, one whose wall is gone takes the ground (Pathfinder::AdjustLayer BFME2 0x6EF2A6 for the ground grid's layers; INFERENCE, S-4300)
-	PathfindLayerEnum settleLayer(const PathfindObject &obj) const;
+	// Pathfinder::UpdateLayer (RW 0x6F25FE / BFME2 0x6F11A1): the layer a unit at its position takes when the path node it follows is on `nodeLayer`,
+	// AdjustLayer included (UpdateLayer ends with it); a walkway node or a unit on a walkway keeps lane WALL-2's rule (S-4856)
+	PathfindLayerEnum updateLayer(const PathfindObject &obj, PathfindLayerEnum nodeLayer);
+	// Pathfinder::AdjustLayer (RW 0x6F0741 / BFME2 0x6EF2A6) for a unit on `layer` at its position: where the cell under it (the unit's footprint rule) is of
+	// another layer, that layer when its surface is more than 10 above the unit; then the first raised walkway with a cell there within 10 of the unit's height.
+	// Otherwise `layer`
+	PathfindLayerEnum adjustLayer(const PathfindObject &obj, PathfindLayerEnum layer);
+	// the layer test of Pathfinder::IsValidHordeMemberRegularMovement (RW 0x6F1B3E / BFME2 0x6F06A3) after its cell test: a straight step from `from` to `to`
+	// (`toLayer` the layer RW 0x680A75 names at `to`) changes layer only onto a ramp, from the ground or a wall; a step from a ramp or a walkway may change it.
+	// True on a map without wall pieces
+	bool straightStepKeepsLayer(const PathfindObject &obj, const Coord3D &from, const Coord3D &to, PathfindLayerEnum toLayer);
+	// lane WALL-1 (INFERENCE, S-1750): the layer of a unit whose surface went away under it (its wall piece, walkway or ramp removed): the ground when the
+	// ground grid's cell under it is a plain ground cell that does not carry its layer and it is on no ramp; else its layer. RotWK's handling of a removed
+	// wall under a unit was not read (AdjustLayer moves a unit down only onto a walkway within 10 of it)
+	PathfindLayerEnum layerAfterSurfaceLoss(const PathfindObject &obj) const;
+	bool hasWallPieces() const { return !m_wallPieces.empty(); }
 	// the wall heights by layer (index = layer - LAYER_WALL_FIRST) and the counts, for tests and reports
 	const std::vector<float> &wallHeights() const { return m_wallHeights; }
 	size_t wallPieceCount() const { return m_wallPieces.size(); }
@@ -1335,6 +1358,9 @@ private:
 	bool isWallPiece(PathfindObjectID id) const;
 	PathfindRegion surfaceCells(const PathfindWallSurface &s) const;
 	float wallHeightOf(PathfindLayerEnum layer) const;
+	// lane WALL-4: every wall piece's ramps get their Bridge plane (PathfindWallSurface::planeState), on the serial paths that add or load wall pieces, so the
+	// height queries (which may run on the job pools) only read it
+	void prepareRampPlanes();
 	void cleanOpenAndClosedLists();
 	// lane BACKLOG-8 r2 (AIPathfindGround.cpp): RW 0x6E8BBA's cell test, RW 0x6F0DA3 and RW 0x765BF6
 	bool groundCellClear(const PathfindCell *cell, unsigned crusher) const;

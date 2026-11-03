@@ -6,7 +6,11 @@
 
 #include "Common/StateHash.h"
 #include "Common/Team.h"
+#include "GameLogic/AI/AIAttack.h"
 #include "GameLogic/AI/AIGroupFormations.h"
+#include "GameLogic/AI/AIHunt.h"
+#include "GameLogic/Combat/ObjectWeapons.h"
+#include "GameLogic/WeaponState.h"
 #include "GameLogic/AI/AIMove.h"
 #include "GameLogic/AI/AIGarrisonStates.h"
 #include "GameLogic/GameLogic.h"
@@ -22,7 +26,8 @@ const char *waypointPathStopLine()
 {
 	return "[S-1189] AI waypoint paths (RW 0xC28F90 states 2 .. 5): a team's formation offsets are ported (lane BACKLOG-8: RW 0x94FCBA through RW 0x771E7D "
 		   "and the state's group offset); a team without a formation keeps no offset from its group's centre, the AI group of a skirmish team's arrival test "
-		   "keeps no group id or membership (lane AIDATA-1 ported the test), the SHIP water path (state 0x49) and the attack-follow states are not ported; the internal move is the port's AIMoveToState";
+		   "keeps no group id or membership (lane AIDATA-1 ported the test), the SHIP water path (state 0x49) and the mood switch to attack-follow (RW 0x755A35) are not ported (lane WARG-1 ported the attack-follow states 0x22 / 0x23 "
+		   "without the AI crate and AI + 0x3C7); the internal move is the port's AIMoveToState";
 }
 
 AIFollowWaypointPathState::AIFollowWaypointPathState(AIStateMachine &m, bool asTeam, bool exact)
@@ -45,23 +50,18 @@ const Waypoint *AIFollowWaypointPathState::nextWaypoint(const Waypoint &w, GameL
 	return logic.terrain() ? logic.terrain()->findWaypointById(w.linksTo[(size_t)which]) : nullptr;
 }
 
-StateReturnType AIFollowWaypointPathState::startMove()
+// computeGoal (RW 0x747723, RW 0x755A20's callee): the waypoint plus the group offset, a formation's turned to the path direction first
+bool AIFollowWaypointPathState::computeGoal(Coord3D &goal) const
 {
-	const Waypoint *w = owner().logic().terrain() ? owner().logic().terrain()->findWaypointById(m_current) : nullptr;
-	if (m_move)
-	{
-		m_move->onExit();
-		m_move.reset();
-	}
+	const TerrainLogic *terrain = owner().logic().terrain();
+	const Waypoint *w = terrain ? terrain->findWaypointById(m_current) : nullptr;
 	if (!w)
 	{
-		return STATE_FAILURE;
+		return false;
 	}
-	// computeGoal (RW 0x755A20's callee): the waypoint plus the group offset, a formation's turned to the path direction first
 	Coord2D offset = m_groupOffset;
 	if (ai().formationId() != 0)
 	{
-		const TerrainLogic *terrain = owner().logic().terrain();
 		Coord3D nearPoint = w->location;
 		Coord3D farPoint = w->location;
 		farPoint.x = SimMath::subf32(farPoint.x, 1.0f);
@@ -78,9 +78,24 @@ StateReturnType AIFollowWaypointPathState::startMove()
 		}
 		AIGroupFormations::rotateOffset(farPoint, nearPoint, offset);
 	}
-	Coord3D goal = w->location;
+	goal = w->location;
 	goal.x = SimMath::addf32(goal.x, offset.x);
 	goal.y = SimMath::addf32(goal.y, offset.y);
+	return true;
+}
+
+StateReturnType AIFollowWaypointPathState::startMove()
+{
+	if (m_move)
+	{
+		m_move->onExit();
+		m_move.reset();
+	}
+	Coord3D goal{ 0.0f, 0.0f, 0.0f };
+	if (!computeGoal(goal))
+	{
+		return STATE_FAILURE;
+	}
 	m_move = std::make_unique<AIMoveToState>(ai().mover(), goal, !m_exact);
 	return m_move->onEnter();
 }
@@ -305,6 +320,184 @@ bool AIUpdateInterface::aiFollowWaypointPath(int waypointId, CommandSourceType s
 	}
 	setLastCommandSource(source);
 	m_machine->setState(id);
+	wakeUpNow();
+	return true;
+}
+
+// ---- lane WARG-1: the attack-follow states 0x22 / 0x23 (AIWaypointPath.h) ----
+
+AIAttackFollowWaypointPathState::AIAttackFollowWaypointPathState(AIStateMachine &m, bool asTeam)
+	: AIFollowWaypointPathState(m, asTeam, false) // RW 0x744603(machine, asTeam, 0)
+{
+}
+
+AIAttackFollowWaypointPathState::~AIAttackFollowWaypointPathState()
+{
+	if (m_attackMachine)
+	{
+		m_attackMachine->halt();
+	}
+}
+
+// RW 0x74E083: idle 0 (the default), the crate 0x27 (not ported, S-1189), the attack 10; each ends in idle
+std::unique_ptr<AIStateMachine> AIAttackFollowWaypointPathState::makeAttackMachine()
+{
+	std::unique_ptr<AIStateMachine> m = std::make_unique<AIStateMachine>(ai(), "AIAttackFollowMachine");
+	m->defineState(AI_IDLE, makeHuntIdleState(*m), AI_IDLE, AI_IDLE);
+	m->defineState(AI_ATTACK_OBJECT, std::make_unique<AIAttackState>(*m, false, true, false), AI_IDLE, AI_IDLE);
+	return m;
+}
+
+bool AIAttackFollowWaypointPathState::attackMachineIdle() const
+{
+	const AIState *cur = m_attackMachine ? m_attackMachine->currentState() : nullptr;
+	return !cur || cur->isIdle(); // RW 0x755D8B: no state counts as idle; else the state's slot 0x20
+}
+
+StateReturnType AIAttackFollowWaypointPathState::onEnter()
+{
+	// RW 0x750B58
+	if (!m_attackMachine)
+	{
+		m_attackMachine = makeAttackMachine();
+	}
+	m_attackMachine->clear();             // vslot 0x14
+	m_attackMachine->setState(AI_IDLE);   // vslot 0x20
+	return AIFollowWaypointPathState::onEnter(); // RW 0x75070F
+}
+
+void AIAttackFollowWaypointPathState::onExit(StateExitType status)
+{
+	// RW 0x74BB7E
+	if (m_attackMachine)
+	{
+		m_attackMachine->setState(AI_IDLE);
+	}
+	AIFollowWaypointPathState::onExit(status); // RW 0x74BAB6
+}
+
+StateReturnType AIAttackFollowWaypointPathState::update()
+{
+	// RW 0x755D78 (ZH AIAttackFollowWaypointPathState::update)
+	if (!m_attackMachine)
+	{
+		return STATE_FAILURE;
+	}
+	Object &obj = owner();
+	AIUpdateInterface &self = ai();
+	bool retarget = false;
+	bool repath = false;
+	if (!attackMachineIdle())
+	{
+		static const int kMoving = AIUpdateInterface::modelConditionBit("MOVING");        // Object + 0x113 bit 0x20
+		static const int kBackingUp = AIUpdateInterface::modelConditionBit("BACKING_UP"); // Object + 0x11F bit 0x10
+		self.setLocomotorGoalNone(); // AI vslot 0x220
+		obj.setModelConditionState(kMoving, false);
+		obj.setModelConditionState(kBackingUp, false);
+		m_attackMachine->updateStateMachine(); // vslot 0x10
+		if (!m_attackMachine || !attackMachineIdle())
+		{
+			return STATE_CONTINUE;
+		}
+		retarget = true;
+		repath = true;
+	}
+	// the AI's crate (RW 0x66810B): none in the port (S-1189)
+	if (Object *victim = self.getNextMoodTarget(!retarget, false)) // RW 0x755E3F: RW 0x66844A
+	{
+		m_attackMachine->setGoalObject(victim->getID()); // vslot 0x38
+		m_attackMachine->setState(AI_ATTACK_OBJECT);     // 10 (AI + 0x3C7 = 1 is not ported, S-1189)
+		return STATE_CONTINUE;
+	}
+	if (repath)
+	{
+		// RW 0x755E86: computeGoal(asTeam) (RW 0x747723), then the internal move's computePath (vslot 0x44)
+		Coord3D goal{ 0.0f, 0.0f, 0.0f };
+		if (move() && computeGoal(goal))
+		{
+			move()->setGoal(goal);
+			move()->computePath();
+		}
+	}
+	return AIFollowWaypointPathState::update(); // RW 0x755A20
+}
+
+void AIAttackFollowWaypointPathState::crc(StateHasher &h) const
+{
+	AIFollowWaypointPathState::crc(h);
+	h.addBool(m_attackMachine != nullptr);
+	if (m_attackMachine)
+	{
+		m_attackMachine->crc(h);
+	}
+}
+
+// OpenBFME layout (ZH AIAttackFollowWaypointPathState::xfer: the follow state, then the attack machine)
+void AIAttackFollowWaypointPathState::xfer(Xfer &x)
+{
+	XferVersion v{ 1, 1 };
+	x.xferVersion(v);
+	AIFollowWaypointPathState::xfer(x);
+	bool has = m_attackMachine != nullptr;
+	x.xferBool(&has);
+	if (!x.isLoading())
+	{
+		if (m_attackMachine)
+		{
+			m_attackMachine->xfer(x);
+		}
+		return;
+	}
+	std::unique_ptr<AIStateMachine> loaded;
+	if (has)
+	{
+		loaded = makeAttackMachine();
+		loaded->xfer(x);
+	}
+	m_attackMachine = std::move(loaded);
+}
+
+// AI commands 0x10 / 0x11 (RW 0x754A3C / 0x754AAA -> aiDoCommand -> AI vslot 0xA8, RW 0x66C1C9)
+bool AIUpdateInterface::aiAttackFollowWaypointPath(int waypointId, int maxShotsToFire, CommandSourceType source, bool asTeam)
+{
+	const int command = asTeam ? 0x11 : 0x10;
+	if (!acceptCommand(source, command))
+	{
+		return false; // RW 0x667174
+	}
+	{
+		RoutedCommand c;
+		c.type = command;
+		c.source = source;
+		c.waypointId = waypointId;
+		c.maxShots = maxShotsToFire;
+		if (routeCommand(c))
+		{
+			return true;
+		}
+	}
+	Object &obj = *getObject();
+	if (isAiInDeadState() || !GarrisonRules::isMobile(obj))
+	{
+		return false; // RW 0x66C1CF / 0x66C1D8
+	}
+	const unsigned id = asTeam ? AI_ATTACK_FOLLOW_WAYPOINT_PATH_AS_TEAM : AI_ATTACK_FOLLOW_WAYPOINT_PATH_AS_INDIVIDUALS;
+	m_machine->clear(); // vslot 0x14
+	if (AIFollowWaypointPathState *s = dynamic_cast<AIFollowWaypointPathState *>(m_machine->findState(id)))
+	{
+		s->setGoalWaypoint(waypointId); // RW 0x6E8498
+	}
+	setLastCommandSource(source); // AI + 0x48
+	m_machine->setState(id);      // 0x22 + asTeam
+	if (ObjectWeapons *w = obj.getWeapons())
+	{
+		if (Weapon *cur = w->currentWeapon()) // RW 0x68B58C(0)
+		{
+			cur->clearWhenFiringEnds();          // + 0x20 = 0
+			cur->setMaxShotCount(maxShotsToFire); // + 0x34
+		}
+	}
+	// a player or script source: the client's notification (RW 0x66B2F5)
 	wakeUpNow();
 	return true;
 }

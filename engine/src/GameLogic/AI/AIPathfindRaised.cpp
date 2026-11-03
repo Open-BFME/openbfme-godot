@@ -34,8 +34,9 @@
 //   * the ramp joint rule is BFME2's (the RotWK counterpart of gd_0052E914 was not compared), applied to every raised layer with a cell under the ramp (BFME2:
 //     the layers of the ramp's two ends);
 //   * the raised zones are numbered after the ground zones (RW numbers them first): the zone ids differ, the partition does not;
-//   * a unit's layer on a walkway (UpdateLayer / AdjustLayer): it takes the raised layer at a node on it once off the ramp's surface, and leaves it where
-//     the layer has no cell (Pathfinder::settleLayer, AIPathfindWalls.cpp);
+//   * a unit's layer on a walkway: UpdateLayer's mode 0 and AdjustLayer are RotWK's since lane WALL-4 (AIPathfindWalls.cpp; mode 0 asks RW 0x6EE600 for
+//     every port walkway: RotWK's Bridge-backed layers ask objectInteractsWithBridgeLayer, S-161); a unit whose walkway was removed under it takes the
+//     ground (Pathfinder::layerAfterSurfaceLoss, INFERENCE S-1750);
 //   * the wall connect cells (+ 0x18 / + 0x20): ClassifyWallCells (RW 0x768832) resets them; the ramp classification (RW 0x9356DF, add) makes the cell of a
 //     ramp end (getRamp's from, then its to) on a raised layer (RW 0x6EE600) a connect cell of that layer (AddWallConnectCell RW 0x76879E: a cell that is
 //     neither yet takes the first free one). The port classifies the ramps again after a layer's cells are made (restampWalls), so a walkway gets its

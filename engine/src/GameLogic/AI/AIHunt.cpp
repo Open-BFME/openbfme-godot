@@ -75,6 +75,11 @@ int playerDifficulty(const Player &p, GameLogic &logic)
 
 } // namespace
 
+std::unique_ptr<AIState> makeHuntIdleState(AIStateMachine &m)
+{
+	return std::make_unique<HuntIdleState>(m);
+}
+
 const char *huntStopLine()
 {
 	return "[S-1188] AI hunt (TEAM_HUNT / NAMED_HUNT / PLAYER_HUNT, RW 0x741133): the crate pick-up (AI + 0x238) is not part of the port (lane TARGET-1: the "

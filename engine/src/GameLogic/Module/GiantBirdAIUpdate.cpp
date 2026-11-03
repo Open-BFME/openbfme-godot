@@ -279,6 +279,7 @@ public:
 	unsigned logicFrame() const override { return base().logicFrame(); }
 	bool containerAllowsBackingUp() const override { return base().containerAllowsBackingUp(); }
 	float groundHeightAt(float x, float y) const override { return base().groundHeightAt(x, y); }
+	bool isOnRampOrRaisedLayer() const override { return base().isOnRampOrRaisedLayer(); }
 	LocomotorPath *getPath() override { return base().getPath(); }
 	bool testObjectStatus(int bit) const override { return base().testObjectStatus(bit); }
 	bool testModelCondition(int bit) const override { return base().testModelCondition(bit); }

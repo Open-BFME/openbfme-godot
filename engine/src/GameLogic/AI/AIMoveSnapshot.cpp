@@ -22,7 +22,7 @@ void AIMover::xfer(Xfer &x)
 		std::unique_ptr<Path> loaded;
 		if (hasPath)
 		{
-			loaded = std::make_unique<Path>();
+			loaded = std::make_unique<Path>(m_pf.uberLimits()); // lane UBER-PATH: the snapshot's profile set the pathfinder's limits before the movers load
 			loaded->xfer(x);
 			loaded->setWaypointSource(&m_pf); // lane WALL-2: its portal nodes name the pathfinder's waypoints (the source a search gives a path)
 		}

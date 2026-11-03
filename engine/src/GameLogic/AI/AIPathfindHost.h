@@ -61,6 +61,10 @@ struct PathfindWallSurface
 	float height = 0.0f;                                   // a wall top: its height; a ramp: its highest point
 	// the triangle under (x, y) (edges included) and its height there; false when no triangle holds the point
 	bool heightAt(float x, float y, float &z) const;
+	// lane WALL-4: a ramp's Bridge plane (RW 0x68044E), made from the triangles on first use and kept (the triangles never change): 0 not made yet, 1 a plane
+	// through `planePoint` with the normal `planeNormal`, 2 none (getRamp found no ramp, or the plane is vertical). Neither saved nor hashed
+	mutable int planeState = 0;
+	mutable Coord3D planePoint{ 0.0f, 0.0f, 0.0f }, planeNormal{ 0.0f, 0.0f, 0.0f };
 };
 
 struct PathfindWallGeometry
@@ -253,8 +257,8 @@ public:
 	// the object status CAN_NOT_WALK_ON (RW index 0x4D, the binary's status name table): RW 0x936C8A .. 0x936C95 clears a WALK_ON_TOP_OF_WALL template's
 	// wall flag with it (review of #63)
 	virtual bool cannotWalkOn() const { return false; }
-	// RW checkForMovement (0x6EBAA0), enemy branch: `other` (or its container) is the unit's current attack / approach target, so a
-	// parked enemy of that kind does not block it (the AI state machine's target RW 0x8DBACE and 0x668303; S-164)
+	// RW checkForMovement (0x6EBAA0), enemy branch: `other` (or its container) is the unit's current attack / approach target, so an
+	// enemy of that kind does not block it (the AI state machine's goal object RW 0x8DBACE, the current victim RW 0x668303)
 	virtual bool ignoresAsTarget(const PathfindObject &other) const { (void)other; return false; }
 	// KindOf PATH_THROUGH_EACH_OTHER (116)
 	virtual bool pathsThroughEachOther() const { return false; }

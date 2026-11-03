@@ -11,12 +11,26 @@
 ##   --prefix=<name>   the screenshot prefix (default combat3)
 ##   --speed=<f>       the logic speed (default 1.0)
 ##   --only=<part>     charge, pikes or grond (default: all three)
+##   --charger=<horde> the charging horde template (default RohanRohirrimHorde; lane WARG-1: IsengardWargRiderHorde, AngmarWolfRiders, ...)
+##   --victim=<horde>  the charged horde template of the charge part (default GondorFighterHorde)
+##   --charger-faction=<faction>  the charging side's faction (default FactionMordor)
+##   --spot=<x>,<y>    lane WARG-1: the charge part's spot instead of the open one the viewer picks (the victims stand 150 east of it)
+##   --gap=<n>         lane WARG-1: the charger starts this far west of the victims (default 600)
+##   --audio           lane WARG-1: the retail audio manager (GameAudio, attached to the world as the game does) plays the battle, heard from the camera
 extends Node3D
 
 var _map_name := "map mp fall back 4p"
 var _shots := ""
 var _prefix := "combat3"
 var _speed := 1.0
+var _charger := "RohanRohirrimHorde"
+var _victim := "GondorFighterHorde"
+var _charger_faction := "FactionMordor"
+var _spot := Vector2.ZERO
+var _has_spot := false
+var _gap := 600.0
+var _with_audio := false
+var _audio: Node = null
 var _world: Node3D
 var _camera: Camera3D
 var _label: Label
@@ -36,6 +50,20 @@ func _ready() -> void:
 			_speed = float(arg.substr(8))
 		elif arg.begins_with("--only="):
 			_only = arg.substr(7)
+		elif arg.begins_with("--charger="):
+			_charger = arg.substr(10)
+		elif arg.begins_with("--victim="):
+			_victim = arg.substr(9)
+		elif arg.begins_with("--charger-faction="):
+			_charger_faction = arg.substr(18)
+		elif arg.begins_with("--spot="):
+			var xy := arg.substr(7).split(",")
+			_spot = Vector2(float(xy[0]), float(xy[1]))
+			_has_spot = true
+		elif arg.begins_with("--gap="):
+			_gap = float(arg.substr(6))
+		elif arg == "--audio":
+			_with_audio = true
 	var fs: RefCounted = ClassDB.instantiate("RetailFileSystem")
 	var mount: Dictionary = fs.mount_retail()
 	if not mount.ok:
@@ -68,13 +96,30 @@ func _ready() -> void:
 		return
 	var slots := [
 		{"player": "Player_1", "faction": "FactionMen", "human": true, "team": 0, "start_index": 0},
-		{"player": "Player_2", "faction": "FactionMordor", "human": false, "team": 1, "start_index": 1},
+		{"player": "Player_2", "faction": _charger_faction, "human": false, "team": 1, "start_index": 1},
 	]
 	var rep: Dictionary = _world.load_map(_map_name, {"slots": slots, "seed": 4711})
 	if not rep.ok:
 		_fail("load_map failed: %s" % [rep.errors.slice(0, 5)])
 		return
 	root.add_child(_world)
+	if _with_audio:
+		_audio = ClassDB.instantiate("GameAudio")
+		_audio.name = "GameAudio"
+		add_child(_audio)
+		var booted: Dictionary = _audio.boot(fs, {"seed": 4711})
+		if not booted.get("ok", false):
+			_fail("GameAudio boot failed: %s" % [booted.get("errors", [])])
+			return
+		# the shell sets the sliders from AudioSettings' defaults (game.gd's shell config): sound, voice, music, ambient, movie
+		var dv: PackedFloat32Array = _audio.get_default_volumes()
+		var sliders := ["sound", "voice", "music", "ambient", "movie"]
+		for i in mini(dv.size(), sliders.size()):
+			_audio.set_volume(sliders[i], dv[i])
+		var at: Dictionary = _world.attach_audio()
+		if not at.get("ok", false):
+			_fail("attach_audio failed: %s" % [at])
+			return
 	var idx := 0
 	for pl in rep.players:
 		if "Player_1" in str(pl) and _local < 0:
@@ -112,6 +157,8 @@ func _aim(focus: Vector3, pos: Vector2, height: float) -> void:
 	var g: float = _world.get_ground_height(pos.x, pos.y)
 	_camera.position = _sage_to_godot(Vector3(pos.x, pos.y, g + height))
 	_camera.look_at(_sage_to_godot(focus), Vector3.UP)
+	if _audio != null:
+		_audio.update_microphone(Vector3(pos.x, pos.y, g + height), focus, true)
 
 
 ## an open spot near the middle of the map's trees: no tree within 260 of it
@@ -209,9 +256,9 @@ func _charge(victim_template: String, porcupine: bool, spot: Vector2, tag: Strin
 	if porcupine:
 		print("COMBAT3VIEW toggle ", JSON.stringify(_world.order_toggle_formation(victims)))
 		await _wait(60)
-	var riders: int = _world.create_object("RohanRohirrimHorde", _enemy, spot.x - 450.0, spot.y, 0.0)
-	await _wait(5)
 	var g0: float = _world.get_ground_height(spot.x, spot.y)
+	var riders: int = _world.create_object(_charger, _enemy, spot.x + 150.0 - _gap, spot.y, 0.0)
+	await _wait(5)
 	_aim(Vector3(spot.x + 100.0, spot.y, g0 + 15.0), Vector2(spot.x + 40.0, spot.y - 300.0), 120.0)
 	print("COMBAT3VIEW charge ", JSON.stringify(_world.debug_ai_attack(riders, victims)))
 	var saved_thrown := false
@@ -240,6 +287,9 @@ func _charge(victim_template: String, porcupine: bool, spot: Vector2, tag: Strin
 			_save("stunned")
 			saved_lying = true
 	print("COMBAT3VIEW %s: %s" % [tag, _report_line(riders, victims)])
+	var rep: Dictionary = _world.get_combat_report()
+	print("COMBAT3VIEW crush %s -> %s: crushes %d, crush weapon shots %d, knockbacks %d, bumps %d" % [_charger, victim_template, rep.get("crushes", -1),
+		rep.get("crush_weapon_shots", -1), rep.get("crush_knockbacks", -1), rep.get("crush_bumps", -1)])
 	_thrown_total = 0
 	_seen_thrown = {}
 	await _clear([riders, victims])
@@ -273,14 +323,16 @@ func _grond(spot: Vector2) -> void:
 
 func _run() -> void:
 	await get_tree().process_frame
-	var spot := _pick_spot()
+	var spot := _spot if _has_spot else _pick_spot()
 	print("COMBAT3VIEW spot (%.0f, %.0f) local %d enemy %d" % [spot.x, spot.y, _local, _enemy])
 	if _only.is_empty() or _only == "charge":
-		await _charge("GondorFighterHorde", false, spot, "Rohirrim charge Gondor soldiers: CrushKnockback throws the trampled men; the riders slow at each crush")
+		await _charge(_victim, false, spot, "%s charge %s" % [_charger, _victim] if _charger != "RohanRohirrimHorde" else "Rohirrim charge Gondor soldiers: CrushKnockback throws the trampled men; the riders slow at each crush")
 	if _only.is_empty() or _only == "pikes":
 		await _charge("GondorTowerShieldGuardHorde", true, spot, "The same charge into tower guards in porcupine formation: CRUSHED_DECELERATE 1000% stops it at the pikes")
 	if _only.is_empty() or _only == "grond":
 		await _grond(spot)
+	if _audio != null:
+		print("COMBAT3VIEW audio ", JSON.stringify(_audio.get_report()).substr(0, 600))
 	print("COMBAT3VIEW DONE")
 	get_tree().quit(0)
 
