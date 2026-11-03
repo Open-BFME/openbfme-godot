@@ -216,6 +216,7 @@ public:
 	void objectLeftWorld(Object &obj);
 	void addObjectToPathfindMap(Object &obj);
 	void removeObjectFromPathfindMap(Object &obj);
+	void removeObjectFromPathfindMapKeepGateFlag(Object &obj); // lane WALLFOOT-1: RW 0x6E861E, the gate's removal (bit 17 kept)
 	// the AI of an object (null when it has none)
 	AIUpdateInterface *aiOf(PathfindObjectID id) const;
 	AIUpdateInterface *aiOf(const Object &obj) const;

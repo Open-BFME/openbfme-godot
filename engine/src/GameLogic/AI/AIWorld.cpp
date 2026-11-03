@@ -1239,6 +1239,14 @@ void AIWorld::removeObjectFromPathfindMap(Object &obj)
 	}
 }
 
+void AIWorld::removeObjectFromPathfindMapKeepGateFlag(Object &obj)
+{
+	if (m_mapReady)
+	{
+		m_pathfinder->removeObjectFromPathfindMapKeepGateFlag(adapterFor(obj));
+	}
+}
+
 AIUpdateInterface *AIWorld::aiOf(PathfindObjectID id) const
 {
 	auto it = m_ais.find(id);

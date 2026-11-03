@@ -485,7 +485,7 @@ PathfindGridStats Pathfinder::gridStats() const
 std::vector<std::string> Pathfinder::allStops()
 {
 	return { pathstops::kShore, pathstops::kSlopeAndConfig, pathstops::kRivers, pathstops::kLayers, pathstops::kZoneProfiles, pathstops::kHierarchical,
-		pathstops::kLargeRectGoal, pathstops::kClosestCellThirdTest, pathstops::kGroupDestination, pathstops::kBaseSiteWindow, pathstops::kWallLayer,
+		pathstops::kLargeRectGoal, pathstops::kClosestCellThirdTest, pathstops::kGroupDestination, pathstops::kBaseSiteWindow, pathstops::kGroundTypeFilter, pathstops::kWallFlagDrawable, pathstops::kWallLayer,
 		pathstops::kWallLayerCount, pathstops::kRampNoHeight, pathstops::kLargeRectFootprint,
 		pathstops::kLargeRectReservation, pathstops::kQueueFull, pathstops::kQueueTime, pathstops::kPath, pathstops::kNumerics, pathstops::kPortals,
 		pathstops::kPortalTable, pathstops::kRaisedLayers, pathstops::kRaisedLayerCount, pathstops::kPortalLayerQuirk, pathstops::kPortalLostHorde,

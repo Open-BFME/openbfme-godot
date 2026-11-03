@@ -48,6 +48,12 @@ const char *const kGroupDestination =
 // S-164 footprints, reservations, queue
 const char *const kBaseSiteWindow =
 	"S-164 the BASE_SITE bit-17 window of the footprint routine is not modelled";
+// lane WALLFOOT-1
+const char *const kGroundTypeFilter =
+	"S-164 a footprint skips a ground cell that is not CLEAR / RUBBLE (insertion) or RUBBLE / OBSTACLE (removal): RotWK's box filters off-ground cells only "
+	"(RW 0x93707A) and its cylinder none (a type 5 cell takes the obstacle, bits 17 / 22 are written)";
+const char *const kWallFlagDrawable =
+	"S-164 the footprint's gate / wall flag ignores the drawable queries RW 0x6729A3 / 0x6729E9 (RW 0x936E21)";
 // S-4840 wall tops and ramps (lane WALL-1, AIPathfindWalls.cpp)
 const char *const kWallLayer =
 	"S-4840 wall tops and ramps come from the draw module's WallBoundsMesh / RampMesh1 / RampMesh2 of the default model state: a wall top is tested as "

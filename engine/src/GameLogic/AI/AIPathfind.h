@@ -827,6 +827,8 @@ public:
 	// Add / remove a structure's footprint (RW 0x936B7D); mobile units use updateGoal / updatePos.
 	void addObjectToPathfindMap(PathfindObject &obj) { classifyObjectFootprint(obj, true); }
 	void removeObjectFromPathfindMap(PathfindObject &obj) { classifyObjectFootprint(obj, false); }
+	// lane WALLFOOT-1: RW 0x6E861E (BFME2 0x6E71AD), GateOpenAndCloseBehavior's removal: the box's cells keep bit 17 (CanPathThroughGates)
+	void removeObjectFromPathfindMapKeepGateFlag(PathfindObject &obj) { classifyObjectFootprint(obj, false, true); }
 
 	// ---- grid access ----
 	const ICoord2D *getExtent() const { return &m_extent.hi; }
@@ -1282,8 +1284,8 @@ private:
 
 	void freeGrid();
 	void classifyMapCell(int i, int j, PathfindCell *cell);
-	void classifyObjectFootprint(PathfindObject &obj, bool insert);
-	void internal_classifyObjectFootprint(PathfindObject &obj, bool insert, bool walkOnWall);
+	void classifyObjectFootprint(PathfindObject &obj, bool insert, bool keepGateFlag = false);
+	void internal_classifyObjectFootprint(PathfindObject &obj, bool insert, bool walkOnWall, bool keepGateFlag);
 	void classifyFence(PathfindObject &obj, bool insert);
 	// lane WALL-1: Pathfinder::ClassifyWall (BFME2 0x92F63F, pathfinder_classify.cpp): the wall tops and ramps of a wall piece into / out of the ground grid
 	void classifyWall(PathfindObject &obj, bool insert);
