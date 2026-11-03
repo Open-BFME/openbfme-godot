@@ -35,6 +35,7 @@ public:
 	bool isUnported() const override { return false; }
 	UpdateSleepTime update() override;
 	SleepyUpdatePhase getUpdatePhase() const override { return PHASE_FINAL; } // RW 0x8311B1
+	ObjectWeapons *weaponStatusWeapons() const override; // lane PERF-WS: the object's weapons (update computes their status conditions from the object alone)
 	DisabledMaskType getDisabledTypesToProcess() const override { return (DisabledMaskType)((1u << 3) | (1u << 8)); } // RW 0x8E3C58
 	OBFME_MODULE_XFER(WeaponStatusHelper) // lane SAVE-4b: the shell's (the helper keeps nothing of its own)
 };
