@@ -257,7 +257,7 @@ func chosen() -> Array:
 
 ## the launcher's chosen game is Battle for Middle-earth I (main.gd --game, the Play screen's game picker)
 func bfme1_chosen() -> bool:
-	return updater.get_state("launcher", "game", "bfme2") == BFME1
+	return updater.selected_game() == BFME1
 
 
 func total_size() -> int:
@@ -611,8 +611,13 @@ func write_marker(folders: Dictionary) -> String:
 		guids.append(p.guid)
 	var lines := PackedStringArray(["# Written by the OpenBFME launcher after it downloaded and checked these folders. The game offers them on its first start.",
 		"SOURCE=All In One BFME Launcher service: " + ", ".join(guids)])
-	for key in folders:
-		lines.append("%s_INSTALL=%s" % [String(key).to_upper(), folders[key]])
+	var remembered := folders.duplicate()
+	if choice == BFME2_ONLY and not remembered.has("rotwk"):
+		var previous: Dictionary = preload("res://scripts/ui/paths.gd").read_cfg(dir.path_join(MARKER))
+		var rotwk: String = previous.get("ROTWK_INSTALL", "")
+		if not rotwk.is_empty(): remembered["rotwk"] = rotwk
+	for key in remembered:
+		lines.append("%s_INSTALL=%s" % [String(key).to_upper(), remembered[key]])
 	var path := dir.path_join(MARKER)
 	var f := FileAccess.open(path + ".tmp", FileAccess.WRITE)
 	if f == null:

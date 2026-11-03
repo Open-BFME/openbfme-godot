@@ -85,6 +85,28 @@ static func game_folders(user_dir: String = GameOptions.game_user_dir(), bfme2_o
 	return {"found": false, "rotwk": "", "bfme2": "", "source": ""}
 
 
+## Prefer the shared game choice; old launcher state remains the migration default.
+static func selected_game(fallback: String = "bfme2", user_dir: String = GameOptions.game_user_dir()) -> String:
+	var cfg := ConfigFile.new()
+	if cfg.load(user_dir.path_join("game-selection.cfg")) == OK:
+		var game := str(cfg.get_value("game", "selected", fallback))
+		if game in ["bfme1", "bfme2", "bfme2-106"]: return game
+	return fallback
+
+
+## Shared with the direct game's Release.selected_game(). Return the disk error to the caller.
+static func remember_game(game: String, user_dir: String = GameOptions.game_user_dir()) -> Error:
+	if game not in ["bfme1", "bfme2", "bfme2-106"]: return ERR_INVALID_PARAMETER
+	var err := DirAccess.make_dir_recursive_absolute(user_dir)
+	if err != OK: return err
+	var path := user_dir.path_join("game-selection.cfg")
+	var cfg := ConfigFile.new()
+	err = cfg.load(path)
+	if err != OK and err != ERR_FILE_NOT_FOUND: return err
+	cfg.set_value("game", "selected", game)
+	return cfg.save(path)
+
+
 ## KEY=VALUE lines of the game's folder files (comments and blank lines skipped, as InstallLocator reads them); {} when missing
 static func read_cfg(path: String) -> Dictionary:
 	var out := {}
@@ -120,7 +142,7 @@ static func show_in_file_manager(path: String) -> String:
 	if p.split("/").has(".."):
 		return L10n.t("launcher.paths.not_plain")
 	var data := OS.get_user_data_dir().replace("\\", "/").simplify_path()
-	var g := game_folders()
+	var g := game_folders(GameOptions.game_user_dir(), true)
 	var games := [String(g.rotwk).replace("\\", "/").simplify_path(), String(g.bfme2).replace("\\", "/").simplify_path()] if g.found else []
 	if bfme1_folder() != "":
 		games.append(bfme1_folder().replace("\\", "/").simplify_path())  # community PR #36: the BFME1 folder the Game files screen lists

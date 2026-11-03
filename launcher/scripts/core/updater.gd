@@ -253,6 +253,18 @@ func set_state(section: String, key: String, value: Variant) -> void:
 	_state_lock.unlock()
 
 
+func selected_game() -> String:
+	return Paths.selected_game(str(get_state("launcher", "game", "bfme2")))
+
+
+## Picker and --game share the selection file read by direct game launches.
+func select_game(game: String) -> Error:
+	var err := Paths.remember_game(game)
+	if err != OK: return err
+	set_state("launcher", "game", game)
+	return OK
+
+
 func _reload_state() -> void:
 	var fresh := ConfigFile.new()
 	if fresh.load(data_dir.path_join("state.cfg")) == OK:
@@ -1178,16 +1190,16 @@ func _prune_locked() -> void:
 ## --mod= (scripts/core/mod_install.gd active_args); a picked mod that cannot be started is an error, never a start without it.
 func game_arguments(args: PackedStringArray = PackedStringArray()) -> Dictionary:
 	args = args.duplicate()
-	if get_state("launcher", "game", "bfme2") == "bfme1" and not Array(args).any(func(a): return a.begins_with("--online-") or a == "--replay" or a.begins_with("--replay=")):
+	if selected_game() == "bfme1" and not Array(args).any(func(a): return a.begins_with("--online-") or a == "--replay" or a.begins_with("--replay=")):
 		var folder := Paths.bfme1_folder()
 		if folder.is_empty():
 			return {"ok": false, "error": L10n.t("launcher.updater.no_bfme1")}
 		if not "--" in args: args.append("--")
 		args.append_array(PackedStringArray(["--game=bfme1", "--bfme1-install=" + folder]))
-	elif get_state("launcher", "game", "bfme2") == "bfme2-106":
+	elif selected_game() == "bfme2-106":
 		if not "--" in args: args.append("--")
 		args.append("--game=bfme2-106")
-	elif get_state("launcher", "game", "bfme2") != "bfme1":
+	elif selected_game() != "bfme1":
 		if not "--" in args: args.append("--")
 		args.append("--game=bfme2")
 		var mod := ModInstall.active_args(data_dir.path_join("mods"))

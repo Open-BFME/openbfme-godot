@@ -104,3 +104,23 @@ func run() -> void:
         assert result.returncode == 0, output
         assert "ERROR:" not in output, output
         assert "STANDALONE PACK ERROR PASS" in output, output
+
+
+def test_standalone_cli_checks_and_persists_the_selected_game(tmp_path):
+    godot = shutil.which(os.environ.get("GODOT", "godot"))
+    user = tmp_path / "game-user"
+    base = tmp_path / "BFME2"
+    user.mkdir()
+    base.mkdir()
+    (user / "install-paths.cfg").write_text(f"BFME2_INSTALL={base}\n", encoding="utf-8")
+    env = dict(os.environ, OPENBFME_GAME_USER_DIR=str(user), BFME2_INSTALL="", ROTWK_INSTALL="")
+    for game, expected in [("bfme2-106", 0), ("bfme2", 1)]:
+        result = subprocess.run(
+            [godot, "--headless", "--path", str(ROOT / "launcher"), "--",
+             "--launcher-dir=" + str(tmp_path / "launcher"), "--game=" + game, "--check-game-files"],
+            env=env, capture_output=True, text=True, timeout=30)
+        output = result.stdout + result.stderr
+        assert result.returncode == expected, output
+        assert "ERROR:" not in output, output
+        assert ("GAME FILES found" if expected == 0 else "GAME FILES missing") in output
+        assert f'selected="{game}"' in (user / "game-selection.cfg").read_text()

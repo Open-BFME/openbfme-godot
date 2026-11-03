@@ -457,6 +457,7 @@
   "launcher.main.free_camera_on": "Free camera on: it applies the next time the game starts.",
   "launcher.main.game_did_not_start": "The game did not start",
   "launcher.main.game_paused": "Paused. Resume continues where it stopped.",
+  "launcher.main.game_selection_failed": "Could not remember the selected game",
   "launcher.main.games_downloaded": "The games are downloaded and checked: {folders}. OpenBFME offers these folders when it starts.",
   "launcher.main.games_in": "In {folder}",
   "launcher.main.games_not_downloaded_status": "The games were not downloaded: {error}",

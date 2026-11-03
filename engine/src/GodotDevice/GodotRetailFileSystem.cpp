@@ -50,6 +50,31 @@ std::string toNative(const String &s)
 	return std::string(utf8.get_data(), (size_t)utf8.length());
 }
 
+void addLanguageWarning(Dictionary &result, const RetailMountReport &report)
+{
+	if (report.ok && !report.unverifiedLanguage.empty())
+	{
+		// PR #77: language archives no pin covers were mounted: the texts of the warning the game shows once per install (scripts/release/release.gd)
+		Dictionary warning;
+		Array archives;
+		for (const UnverifiedLanguageArchive &a : report.unverifiedLanguage)
+		{
+			Dictionary d;
+			d["install"] = toGodot(a.install);
+			d["path"] = toGodot(RetailPrintableText(a.path));
+			d["language"] = toGodot(RetailPrintableText(a.language));
+			d["md5"] = toGodot(a.md5);
+			d["size"] = (int64_t)a.size;
+			archives.push_back(d);
+		}
+		warning["archives"] = archives;
+		warning["message"] = toGodot(RetailLanguageWarningText(report.unverifiedLanguage));
+		warning["details"] = toGodot(RetailLanguageWarningDetails(report.unverifiedLanguage, BuildVersion::versionLine()));
+		warning["signature"] = toGodot(RetailLanguageWarningSignature(report.unverifiedLanguage));
+		result["unverified_language"] = warning;
+	}
+}
+
 // lane MOD-5: the user maps folder of a RotWK install (the user data folder that its gi.dat names in the device's application data folder, then
 // RW 0x70254F's "Maps"); "" + `error` when the install's gi.dat cannot be read
 std::string userMapFolderOf(const std::string &rotwkRoot, std::string &error)
@@ -685,27 +710,7 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 				report.ok = false; // the mod the player asked for, or nothing (never retail instead)
 			}
 		}
-		if (report.ok && !report.unverifiedLanguage.empty())
-		{
-			// PR #77: language archives no pin covers were mounted: the texts of the warning the game shows once per install (scripts/release/release.gd)
-			Dictionary warning;
-			Array archives;
-			for (const UnverifiedLanguageArchive &a : report.unverifiedLanguage)
-			{
-				Dictionary d;
-				d["install"] = toGodot(a.install);
-				d["path"] = toGodot(RetailPrintableText(a.path));
-				d["language"] = toGodot(RetailPrintableText(a.language));
-				d["md5"] = toGodot(a.md5);
-				d["size"] = (int64_t)a.size;
-				archives.push_back(d);
-			}
-			warning["archives"] = archives;
-			warning["message"] = toGodot(RetailLanguageWarningText(report.unverifiedLanguage));
-			warning["details"] = toGodot(RetailLanguageWarningDetails(report.unverifiedLanguage, BuildVersion::versionLine()));
-			warning["signature"] = toGodot(RetailLanguageWarningSignature(report.unverifiedLanguage));
-			result["unverified_language"] = warning;
-		}
+		addLanguageWarning(result, report);
 		if (report.ok)
 		{
 			m_fs = std::move(fs);
@@ -941,6 +946,7 @@ Dictionary RetailFileSystem::mountBfme2Shell(const std::string &bfme2Root)
 			UtilityFunctions::push_warning("RetailFileSystem: ", toGodot(w));
 		}
 		result["warnings"] = warnings;
+		addLanguageWarning(result, report);
 		if (report.ok)
 		{
 			std::string scanError;

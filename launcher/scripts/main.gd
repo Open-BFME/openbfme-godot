@@ -817,11 +817,14 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 			if game not in ["bfme1", "bfme2", "bfme2-106"]:
 				Log.line("LAUNCHER --game takes bfme1, bfme2 (RotWK), or bfme2-106")
 				return 1
-			updater.set_state("launcher", "game", game)
+			var err := updater.select_game(game)
+			if err != OK:
+				Log.line("LAUNCHER could not remember game selection: " + error_string(err))
+				return 1
 	if "--version" in args:
 		print("OpenBFME Launcher %s" % info.version)
 	if "--check-game-files" in args:
-		var folders := Paths.game_folders()
+		var folders := Paths.game_folders(GameOptions.game_user_dir(), updater.selected_game() == "bfme2-106")
 		if folders.found:
 			print("GAME FILES found (source: %s)" % folders.source)
 			Log.line("LAUNCHER game files found (source: %s)" % folders.source)
@@ -1183,9 +1186,12 @@ func _build_ui() -> void:
 	stack.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	cv.add_child(stack)
 	_play_screen = PlayScreen.new()
-	_play_screen.game_picker.select(maxi(0, ["bfme2", "bfme1", "bfme2-106"].find(updater.get_state("launcher", "game", "bfme2"))))
+	_play_screen.game_picker.select(maxi(0, ["bfme2", "bfme1", "bfme2-106"].find(updater.selected_game())))
 	_play_screen.game_selected.connect(func(game: String):
-		updater.set_state("launcher", "game", game)
+		var err := updater.select_game(game)
+		if err != OK:
+			_show_error(L10n.t("launcher.main.game_selection_failed"), error_string(err))
+			return
 		_refresh_games())
 	_play_screen.download_games.connect(_open_download)
 	_play_screen.show_news.connect(_show_screen.bind("news"))
@@ -1618,7 +1624,7 @@ func _start_aio(dir: String, resume := false) -> void:
 	if not resume:
 		# community PR #36: the package the panel showed when Download was pressed (BFME1 only when that is the chosen game: install refuses
 		# it otherwise)
-		aio.choose(AioInstall.BFME1 if _games_screen.offer_bfme1 else (AioInstall.BFME2_ONLY if updater.get_state("launcher", "game", "bfme2") == "bfme2-106" else AioInstall.GAMES))
+		aio.choose(AioInstall.BFME1 if _games_screen.offer_bfme1 else (AioInstall.BFME2_ONLY if updater.selected_game() == "bfme2-106" else AioInstall.GAMES))
 	_aio_target = dir
 	_start_job(_job_aio.bind(dir), "aio")
 
@@ -1770,7 +1776,7 @@ func _show_notes() -> void:
 
 
 func _refresh_games() -> void:
-	_show_games(Paths.game_folders(GameOptions.game_user_dir(), updater.get_state("launcher", "game", "bfme2") == "bfme2-106"))
+	_show_games(Paths.game_folders(GameOptions.game_user_dir(), updater.selected_game() == "bfme2-106"))
 
 
 func _show_games(g: Dictionary, demo := false) -> void:
@@ -1784,7 +1790,7 @@ func _show_games(g: Dictionary, demo := false) -> void:
 	if g.found and g.rotwk.is_empty(): where = Paths.short(g.bfme2)
 	var bfme1 := Paths.bfme1_folder()
 	g["bfme1"] = bfme1
-	var use_bfme1: bool = updater.get_state("launcher", "game", "bfme2") == "bfme1"
+	var use_bfme1: bool = updater.selected_game() == "bfme1"
 	# community PR #36: BFME1 is the player's own install; its download is optional (Game files, from BFME Arena, a third party)
 	_play_screen.missing_games.text = L10n.t("launcher.main.bfme1_missing", {"folder": Paths.short(Paths.default_games_dir().path_join("BFME1"))}) if use_bfme1 else L10n.t("launcher.play_screen.not_found")
 	_play_screen.set_games(not bfme1.is_empty() if use_bfme1 else g.found, aio.enabled(), Paths.short(bfme1) if use_bfme1 else where)
@@ -1828,7 +1834,7 @@ func _set_buttons() -> void:
 	# community PR #36: the Game files download follows the chosen game (BFME1: the optional BFME1 package), except while a download
 	# runs or is paused: that one keeps its package (Resume continues what was started)
 	if not aio_running and _paused != "aio" and not _demo_bfme1:
-		aio.choose(AioInstall.BFME1 if aio.bfme1_chosen() else (AioInstall.BFME2_ONLY if updater.get_state("launcher", "game", "bfme2") == "bfme2-106" else AioInstall.GAMES))
+		aio.choose(AioInstall.BFME1 if aio.bfme1_chosen() else (AioInstall.BFME2_ONLY if updater.selected_game() == "bfme2-106" else AioInstall.GAMES))
 	if not aio_running and _paused != "aio":
 		_games_screen.set_offer(aio.choice == AioInstall.BFME1, aio.total_size() / 1e9, aio.chosen())
 	_games_screen.set_download_state(aio_running, _paused == "aio", busy and not aio_running, aio.enabled())

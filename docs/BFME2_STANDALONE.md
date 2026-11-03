@@ -19,6 +19,12 @@ Command-line selection uses `--game=bfme2-106` (game or launcher).
 The launcher's historical `--game=bfme2` value continues to mean RotWK.
 `--aio-package=bfme2-106` selects the standalone download package.
 A direct headless game launch needs `BFME2_INSTALL` or a remembered folder.
+The launcher picker and launcher `--game` write the same `game-selection.cfg`
+read by direct game starts. Explicit game command-line choices override it;
+legacy installs keep the RotWK default. Standalone folder checks and Show folder
+accept a BFME2-only install, and refreshing BFME2 retains an existing downloaded
+RotWK location. Unpinned language archives carry the same warning details and
+confirmation signature as regular gameplay mounts.
 
 BFME2 uses the existing verified `bfme2-106` archive policy, base INI legend,
 six playable factions and BFME2 menu. The BFME2 shell-map default follows
