@@ -19,6 +19,7 @@ set(OPENBFME_PHYS1_TESTS
     tests/test_phys1_rank_odr.cpp
     tests/test_phys1_pathfind.cpp
     tests/test_attackpath1.cpp
+    tests/test_path_target_rule.cpp
     tests/test_phys1_approach.cpp
     tests/test_phys1_melee.cpp
     tests/test_phys1_fire_gate.cpp

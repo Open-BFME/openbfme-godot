@@ -22,6 +22,7 @@
 #include "Common/SimulationProfile.h"
 #include "Common/Team.h"
 #include "GameClient/ClientEvents.h"
+#include "GameClient/ClientPoolPolicy.h"
 #include "GameClient/DrawableLaunchBones.h"
 #include "GameClient/DrawableWallMeshes.h"
 #include "GameClient/LogicSnapshot.h"
@@ -291,6 +292,16 @@ public:
 	void setClientWindowParkMs(double ms);
 	// diagnostic (tests): the worker sleeps this long before each frame (Options::workerFrameDelayMs); only while the worker is off
 	void setWorkerFrameDelayMs(int ms) { m_options.workerFrameDelayMs = m_threaded ? m_options.workerFrameDelayMs : ms; }
+	// lane WORKERFAIL-1: a frame that throws on the worker stops the logic. With a handler (the game: GameWorld, set before the worker runs) the handler gets
+	// the text on the worker thread, logicFailure() keeps it and the waits return with the worker idle: a wait can sit under a Godot-bound method (HUD input),
+	// where a rethrown exception has no catch and ends the process through std::terminate, its text lost. Without a handler (tests, tools) the waits rethrow it.
+	void setLogicFailureHandler(std::function<void(const std::string &)> handler);
+	// the text of the exception that stopped the logic worker ("" while it runs)
+	std::string logicFailure() const;
+	// the exception's what(), or a name for one that is no std::exception
+	static std::string describeWorkerFailure(std::exception_ptr failure);
+	// diagnostic (tests, --crash-test-logic): the worker's next frame throws std::runtime_error(text)
+	void setWorkerFrameFailure(const std::string &text);
 	struct ClientWindowStats
 	{
 		unsigned long long opened = 0;   ///< render frames whose window opened
@@ -351,6 +362,13 @@ public:
 	{
 		const std::unique_lock<std::mutex> lock = lockPublication("lastWorkerFrameMs"); // the worker writes it under the same mutex (review r2)
 		return m_lastWorkerFrameMs;
+	}
+	// lane PERF-CLIENT: whether the logic worker is behind its clock (ClientPoolPolicy, fed by the worker with every frame it completes); the client
+	// pool's size follows it. False while the logic runs on the calling thread
+	bool workerBehind() const
+	{
+		const std::unique_lock<std::mutex> lock = lockPublication("workerBehind");
+		return m_clientPoolPolicy.behind();
 	}
 	unsigned long long droppedFrames() const { return m_droppedFrames; }
 
@@ -510,7 +528,11 @@ private:
 	bool m_running = false;               ///< guarded: the worker is inside a frame
 	bool m_stop = false;                  ///< guarded
 	std::exception_ptr m_workerError;     ///< guarded
+	std::string m_logicFailure;           ///< guarded: lane WORKERFAIL-1, m_workerError's text
+	std::function<void(const std::string &)> m_logicFailureHandler; ///< guarded
+	std::string m_workerFrameFailure;     ///< guarded: setWorkerFrameFailure
 	double m_lastWorkerFrameMs = 0.0;     ///< guarded
+	ClientPoolPolicy m_clientPoolPolicy;  ///< guarded: lane PERF-CLIENT, the worker's frames against the logic clock (reset when the worker starts)
 	std::thread m_worker;
 	std::atomic<std::thread::id> m_workerId{};
 	bool m_threaded = false;

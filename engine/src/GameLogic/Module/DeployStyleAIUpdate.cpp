@@ -273,7 +273,9 @@ bool DeployStyleAIUpdate::routeCommand(const RoutedCommand &c)
 		m_attackPositionCommand = true;
 		m_attackPos = c.position;
 		break;
-	case 0xF: // 0xF .. 0x12, 0x1F, 0x21, 0x23 (only 0xF is routed)
+	case 0xF: // 0xF .. 0x12, 0x1F, 0x21, 0x23 (0xF and, lane WARG-1, the attack-follow 0x10 / 0x11 are routed)
+	case 0x10:
+	case 0x11:
 		m_attackCommand = true;
 		break;
 	default:
@@ -314,6 +316,10 @@ void DeployStyleAIUpdate::dispatch(const RoutedCommand &c)
 		return;
 	case 0xF:
 		armAttackMove(c.position, c.source);
+		return;
+	case 0x10:
+	case 0x11:
+		aiAttackFollowWaypointPath(c.waypointId, c.maxShots, c.source, c.type == 0x11); // lane WARG-1
 		return;
 	default:
 		throw std::logic_error("DeployStyleAIUpdate: a kept command of a type the port does not route");

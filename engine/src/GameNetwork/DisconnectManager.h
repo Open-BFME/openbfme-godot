@@ -219,11 +219,12 @@ private:
 	std::vector<NetCommandMsg> m_decided; ///< lane MP-DROP-1: the drops this peer decided (sent again to a player that announces a frame at or before one)
 	// OpenBFME (S-1127, WOTR2's 120 s stall): this player's own hang. A game that did not update for longer than the others wait before they drop a
 	// silent player (NetworkDisconnectTime + NetworkPlayerTimeoutTime) was the silent one; while it hung, the others' resends to it filled its socket's
-	// receive buffer and the kernel dropped what came last, their DISCONNECTPLAYER among it. MPDROP-3's answer to its traffic needs them still running:
-	// once they have played on and left, nothing tells it. So after such a hang it drops and votes out nobody until a player is heard again (a datagram
-	// read after the update that ended the hang, which drained the socket); none heard for the same span: the others dropped it, and it leaves.
+	// receive buffer and the kernel dropped what came last, their DISCONNECTPLAYER among it. MPDROP-3's answer to its traffic needs the decider still
+	// running: once it has left, nothing tells it. So after such a hang it drops and votes out nobody for that span again; then it leaves as dropped when
+	// no player was heard since (a datagram read after the update that ended the hang, which drained the socket), when every player heard voted it out,
+	// or when no frame ran since and nobody is heard any more (only a dropped slot's kept backlog came).
 	std::uint64_t m_lastUpdateMs = 0; ///< the clock of the previous update (0: none yet)
 	std::uint64_t m_hangEndMs = 0;    ///< the update that ended this player's hang (0: no hang being answered)
 	std::uint64_t m_hangMs = 0;       ///< how long it hung
-	void checkOwnHang(Network &net, std::uint64_t now);
+	void checkOwnHang(Network &net, std::uint64_t now, std::uint32_t logicFrame);
 };

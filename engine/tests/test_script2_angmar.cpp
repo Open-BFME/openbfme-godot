@@ -109,8 +109,12 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 	});
 	// the retail numbers of the counterattack's troll slings (AngmarTrollSling, the IceRock upgrade: test_falsedef_retail.cpp, from the INI) on the citadel:
 	// AngmarStoneThrowerIceWarhead's 500 FROST x FortressArmor 10% = 50 and 900 SIEGE x DamageScalar 150% (ENEMIES +STRUCTURE) x FortressArmor 100% = 1350.
-	// The undefended loss of a full 7,500 citadel is then 5 volleys of 50 + 1350 (7,000), a 6th 50 (7,050) and a 6th 1350 that takes the last 450, all
-	// from the slings: the observed fast kill is these numbers, nothing more
+	// Before lane WARG-1 the undefended loss of a full 7,500 citadel was 5 volleys of 50 + 1350 (7,000), a 6th 50 (7,050) and a 6th 1350 that took the
+	// last 450, all from the slings. Lane WARG-1 (the attack-follow states, RW 0x755D78): the waves' wolf riders now ride their paths to the citadels and
+	// attack them too (their mood target on the way), so the citadels also take the riders' and their banner carrier's melee hits (engine pins, measured on
+	// the lane's tree; the slings' hits keep the retail numbers above, the last one takes what the melee left). Merge queue q36 re-measured the melee counts once on the
+	// merged tree, compared at each merge point: WARG-1 keeps them; PR #182's Uber target rule (an attacker's goal object or victim does not refuse its
+	// cells, RW checkForMovement 0x6EBAA0; this case runs Uber) moves them
 	auto checkSlingKill = [&]() {
 		std::map<std::string, int> kinds;
 		for (const CitadelHit &h : citadelHits)
@@ -123,8 +127,8 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 		{
 			MESSAGE("citadel hits: " << kv.second << " x " << kv.first);
 		}
-		const std::map<std::string, int> expected = { { "AngmarTrollSling dealt 1350 taken 1350", 5 }, { "AngmarTrollSling dealt 1350 taken 450", 1 },
-			{ "AngmarTrollSling dealt 50 taken 50", 6 } };
+		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 101 }, { "AngmarTrollSling dealt 1350 taken 1017", 1 },
+			{ "AngmarTrollSling dealt 1350 taken 1350", 3 }, { "AngmarTrollSling dealt 50 taken 50", 4 }, { "AngmarWolfRider dealt 5 taken 5", 1033 } };
 		CHECK(kinds == expected);
 	};
 	if (!saved)
@@ -208,6 +212,29 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 		}
 	}
 	REQUIRE(citadels.size() == 3);
+	if (!saved)
+	{
+		// lane WARG-1: the counterattack's waves follow their waypoint paths in the attack-follow state (RW 0x755D78) and attack what they meet on the way
+		// (getNextMoodTarget RW 0x66844A); every path starts at the troll plateau's mouth (about 2600, 560), where the fixture left the player's army. These
+		// flows need the waves at the citadels (the undefended loss; the defended flow's citadel damage before the fixture defeats them), so the player's
+		// mobile units leave the route as a player would: placed at 3300, 2400, at least 700 from every counterattack path and citadel
+		std::vector<Object *> army;
+		for (Object *o = m.logic().getFirstObject(); o; o = o->getNextObject())
+		{
+			if (o->getControllingPlayer() == m.logic().players().getLocalPlayer() && o->getAIUpdateInterface() && !o->getContainedBy() &&
+				!o->isKindOfName("STRUCTURE") && !o->isEffectivelyDead())
+			{
+				army.push_back(o);
+			}
+		}
+		MESSAGE(army.size() << " of the player's units leave the counterattack's route");
+		int k = 0;
+		for (Object *o : army)
+		{
+			m.place(*o, Coord3D{ 3300.0f + 40.0f * (float)(k % 6), 2400.0f + 40.0f * (float)(k / 6), 0.0f });
+			++k;
+		}
+	}
 	const ThingTemplate *citadelType = m.logic().things().findTemplate("AngmarFortressCitadel");
 	REQUIRE(citadelType);
 	auto assertFortressesSurvive = [&] {
@@ -232,7 +259,9 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 	REQUIRE(m.until([&] { go = m.engine().findCounter(me + "/BN Counterattack Go"); return go && go->value < 1; }, 800));
 	if (!defend)
 	{
-		REQUIRE(m.until([&] { return m.flag("/BN Destroyed Fortress"); }, 600));
+		// lane WARG-1: the waves follow their waypoint paths (the attack-follow states) from the plateau's mouth round by the map's east edge to the
+		// citadels, a longer march than the stand-in's straight attack move to the path's end (600 frames before)
+		REQUIRE(m.until([&] { return m.flag("/BN Destroyed Fortress"); }, 1500));
 		CHECK(ScriptConditions::countPlayerObjects(m.logic(), *m.logic().players().getLocalPlayer(), { citadelType }) == 2);
 		MESSAGE("fortress loss at frame " << m.frame());
 		if (saved)
@@ -270,7 +299,8 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 			}
 		}
 		return false;
-	}, 300));
+	}, 1500)); // lane WARG-1: the waves' march along their paths (above; 300 frames before)
+	MESSAGE("first citadel damage at frame " << m.frame());
 	for (const char *t : { "PlyrBNEast/Counterattack Wave 1", "PlyrBNEast/Counterattack Troll Slings", "PlyrBNWest/Counterattack Wave 1",
 			 "PlyrBNWest/Counterattack Troll Slings", "PlyrBNOther/South Counterattack Wave 1", "PlyrBNOther/South Counterattack Troll Slings" })
 	{

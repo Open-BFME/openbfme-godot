@@ -363,6 +363,7 @@ var _display_game := false               # --display-game
 var _fs: RefCounted
 var _audio: Node
 var _world: Node3D           # GameWorld
+var _crash_test_logic := false # lane WORKERFAIL-1: --crash-test-logic
 var _shell: Node2D           # AptMenuPlayer
 var _camera: Camera3D
 var _env: WorldEnvironment
@@ -791,6 +792,8 @@ func _ready() -> void:
 			_cheat_script = arg.substr(15) # lane CHEAT-1
 		elif arg == "--cheat-lobby":
 			_cheat_lobby = true
+		elif arg == "--crash-test-logic":
+			_crash_test_logic = true
 		elif arg == "--auto":
 			_auto = true
 		elif arg.begins_with("--perf-stat="):
@@ -1673,6 +1676,15 @@ func _sdk_show_banner(text: String) -> void:
 
 func _process(delta: float) -> void:
 	_frames += 1
+	if _world != null and _state != State.FAILED:
+		# lane WORKERFAIL-1: the logic worker stopped on an exception: named to the player and in the crash report, not a crash from the next HUD wait
+		var logic_failure: String = _world.logic_failure()
+		if not logic_failure.is_empty():
+			_fail("The game logic stopped with an internal error " + logic_failure)
+			return
+		if _crash_test_logic and _state == State.PLAYING:
+			_crash_test_logic = false
+			_world.crash_test_logic() # debug builds: a throw on the logic worker, once the game runs
 	if _platform_ready:
 		_platform_tick() # lane ONLINEHUB-1
 	if not _capture_dir.is_empty():

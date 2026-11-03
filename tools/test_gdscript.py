@@ -107,6 +107,7 @@ ALLOWLIST = {
     "online_list_client_test.gd": "the native list client against synthetic responses",
     "online_war_phase_test.gd": "battle relay tickets name only human original seats while tactical seats retain AI",
     "timeline_markers_test.gd": "score timeline markers against a stub shell",
+    "wotr_preview_visibility_test.gd": "hidden War of the Ring preview rendering and reveal; synthetic shell, no retail assets or readback",
     "save_failure_menu_test.gd": "late save refusals resume the shell and replace the loading canvas; synthetic world and shell",
     "weatherfx_test.gd": "the Enhanced weather's effects against a stub GameWorld and synthetic images",
 }

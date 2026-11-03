@@ -55,8 +55,10 @@ GameSpy behavior.
   past it the kernel drops the last datagrams, the DISCONNECTPLAYER among
   them, and Bob drops the others (the split game). Now a game that hung
   longer than NetworkDisconnectTime + NetworkPlayerTimeoutTime drops nobody
-  until a player is heard again, and leaves as dropped when none is
-  (`DisconnectManager::checkOwnHang`, S-1127).
+  for that span again, then leaves as dropped when no player was heard
+  since, when every player heard voted it out, or when no frame ran and
+  nobody is heard any more (the decider left while another survivor plays
+  on, voting or not); `DisconnectManager::checkOwnHang`, S-1127.
 - S-4075, late rejoin (closed by following retail, 11-01): RotWK 2.01 has
   no reconnect. `ConnectionManager::disconnectPlayer` (RW 0x8D57D8) drops a
   player for good, the NetCommandType list (RW 0x989449) has no rejoin, and

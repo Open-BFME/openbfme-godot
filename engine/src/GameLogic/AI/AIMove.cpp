@@ -28,7 +28,8 @@ const char *const kStopExplicit =
 const char *const kStopDistance =
 	"S-166 getLocomotorDistanceToGoal (RW 0x664127) is the ZH body (path remaining distance, at least the straight distance to the last node), the retail body was not read";
 const char *const kStopRequests =
-	"S-166 the approach request (RW 0x6638FC), melee approach request (RW 0x6639CF), safe request (RW 0x663C6B) and findClosestPath are not ported (the attack request "
+	"S-166 the approach request (RW 0x6638FC), melee approach request (RW 0x6639CF) and safe request (RW 0x663C6B) are not ported (lane WARG-1 ported FindClosestPath "
+	"RW 0x6FB869; the attack request "
 	"RW 0x663802 and allied clearing RW 0x6F503B are lane PHYS-1's, S-784 / S-785)";
 const char *const kStopGroup =
 	"S-166 blockedBy skips the group / formation sort key (obj+0x42C / +0x430, unresolved)";
@@ -434,10 +435,10 @@ bool AIMover::computeAttackPath()
 				destroyPath();
 				Coord3D adjusted = pos;
 				m_pf.adjustDestination(obj, info, &adjusted, nullptr);
-				// lane PATHPERF-1: RW calls pathfinder slot +4 here (RW 0x666E51 -> FindClosestPath RW 0x6FB869, not ported: S-166), not findPath (slot 0, RW 0x6FE7CB):
-				// the stand-in is the search without findPath's hierarchical corridor and goal step-back
+				// RW 0x666E3D .. 0x666E51: pathfinder slot + 4, FindClosestPath (RW 0x6FB869, lane WARG-1), not findPath (slot 0, RW 0x6FE7CB): not blocked, the cost
+				// multiplier 0.2 (RW 0xBDAD78), moveAllies 1
 				m_pf.restartUberSearchCount(); // lane PERF-HD (Uber only): its own cap, not what findAttackPath left
-				m_path = m_pf.findPathWithoutCorridor(&obj, info, &pos, &adjusted, nullptr);
+				m_path = m_pf.findClosestPath(&obj, info, &pos, &adjusted, false, 0.200000003f, true);
 				if (m_path == nullptr)
 				{
 					m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
@@ -526,8 +527,9 @@ void AIMover::doPathfind()
 		const PathfindLocomotorInfo info = m_host.locomotorInfo();
 		const Coord3D pos = obj.getPosition();
 		destroyPath();
-		// lane PATHPERF-1: slot +4 is FindClosestPath (RW 0x6FB869, not ported: S-166), not findPath: the search without findPath's corridor stands in for it
-		m_path = m_pf.findPathWithoutCorridor(&obj, info, &pos, &m_attackPos, nullptr);
+		// RW 0x6692E9 .. 0x669319: slot + 4 is FindClosestPath (RW 0x6FB869, lane WARG-1): blocked when the AI has blocked frames (+ 0x16C > 0), the cost
+		// multiplier 0.05 (RW 0xBDD760), moveAllies 0
+		m_path = m_pf.findClosestPath(&obj, info, &pos, &m_attackPos, m_blockedFrames > 0, 0.0500000007f, false);
 		if (m_path && m_path->getLastNode() && isDoingGroundMovement())
 		{
 			const PathNode *end = m_path->getLastNode();
@@ -572,7 +574,7 @@ bool AIMover::computeQuickPath(const Coord3D &dest)
 		delete m_path;
 		m_path = nullptr;
 	}
-	Path *p = new Path();
+	Path *p = new Path(m_pf.uberLimits()); // lane UBER-PATH
 	Coord3D from = obj.getPosition();
 	from.z = dest.z;
 	p->prependNode(&dest, m_pf.getLayerAt(dest.x, dest.y, dest.z)); // lane WALL-1: the destination's layer (the ground on a map without walls)
@@ -669,11 +671,10 @@ bool AIMover::computePath(const Coord3D &destIn)
 	}
 	if (np == nullptr && m_path == nullptr && tryClosest)
 	{
-		// FindClosestPath (RW 0x6FB869) is not ported (S-166): as for its other callers the search without findPath's corridor stands in for it; its
-		// `blocked`, cost multiplier 0 and its adjustment of the destination are not modelled
+		// RW 0x6664EA .. 0x66650C: FindClosestPath (pathfinder slot + 4, RW 0x6FB869, lane WARG-1) with blocked = the AI's blocked frames > 0, the cost multiplier 0
+		// and moveAllies 0
 		const Coord3D pos = obj.getPosition();
-		note(kStopRequests);
-		np = m_pf.findPathWithoutCorridor(&obj, info, &pos, &dest, nullptr);
+		np = m_pf.findClosestPath(&obj, info, &pos, &dest, m_blockedFrames > 0, 0.0f, false);
 		m_retryPath = true;
 	}
 	if (np)
@@ -728,15 +729,14 @@ bool AIMover::needToRotate()
 }
 
 // RW 0x6EF865 (the first test of RW 0x6F1B3E): the step's end and the goal are in the same pathfinder cell, the cells measured as RW 0x6ECFC5 / 0x6E8CE6 do for the
-// unit: an odd footprint floors x / 10, an even one adds the half-cell offset (review r2)
+// unit: an odd footprint floors x / 10, an even one adds the half-cell offset (review r2). Lane WARG-1: RW 0x6E8CE6 does not clamp to the grid; the port's
+// clamped worldToCell put two different off-map points on the same edge cell
 bool AIMover::stepEndsInGoalCell(const Coord3D &now)
 {
 	PathfindObject &obj = m_host.pathfindObject();
 	const bool center = (m_pf.footprintSize(&obj) & 1) != 0;
-	ICoord2D nowCell{ 0, 0 }, goalCell{ -1, -1 };
-	Coord3D at = now, goalPos = m_goal;
-	m_pf.worldToCell(&at, center, &nowCell);
-	m_pf.worldToCell(&goalPos, center, &goalCell);
+	const ICoord2D nowCell = Pathfinder::worldToCellUnclamped(&now, center);
+	const ICoord2D goalCell = Pathfinder::worldToCellUnclamped(&m_goal, center);
 	return nowCell.x == goalCell.x && nowCell.y == goalCell.y;
 }
 

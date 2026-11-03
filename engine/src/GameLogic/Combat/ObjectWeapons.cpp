@@ -126,6 +126,8 @@ public:
 	std::uint32_t weaponBonusConditionMask() override { return m_w.owner().weaponBonusConditionMask(); }
 	const WeaponBonusSet *globalWeaponBonusSet() override { return nullptr; } // GameData's WeaponBonus set is not loaded (S-320): the bonus of no condition is 1.0
 	float rateOfFireAttributeProduct() override { return 1.0f; }              // the attribute modifiers (S-320)
+	// lane PERF-WS: the two reads below run on the logic job pool (computeWeaponStatusConditions through Weapon::getStatus): keep them reads when
+	// S-320 is ported
 	bool containedAmmo(const ObjectFilter &, unsigned &count) override
 	{
 		count = 0;
@@ -1587,12 +1589,20 @@ bool ObjectWeapons::fireCurrentWeapon(Object *victim, const Coord3D *pos)
 // RW 0x68E197
 void ObjectWeapons::updateWeaponStatusConditions()
 {
+	std::array<int, WEAPONSLOT_COUNT> cond;
+	computeWeaponStatusConditions(cond);
+	applyWeaponStatusConditions(cond);
+}
+
+void ObjectWeapons::computeWeaponStatusConditions(std::array<int, WEAPONSLOT_COUNT> &cond)
+{
 	const CombatNames::Status &st = CombatNames::statuses();
 	const std::uint32_t now = m_owner->logic().getFrame();
 	const bool attacking = m_owner->testStatus((unsigned)st.isAttacking);
 	const bool firing = m_owner->testStatus((unsigned)st.isFiringWeapon);
 	const bool aiming = m_owner->testStatus((unsigned)st.isAimingWeapon);
-	for (int slot = 0; slot < 5; ++slot)
+	cond.fill(-1);
+	for (int slot = 0; slot < 5; ++slot) // RW 0x68E197: the five slots of the loop (the array has WEAPONSLOT_COUNT)
 	{
 		const Weapon *w = weaponInSlot(slot);
 		if (!w || !w->getTemplate())
@@ -1600,13 +1610,20 @@ void ObjectWeapons::updateWeaponStatusConditions()
 			continue;
 		}
 		const int status = w->getStatus(host());
-		const int cond = WeaponStatusCondition(*w->getTemplate(), *w, status, now, attacking, firing, aiming);
-		if (cond == m_slotCondition[(size_t)slot])
+		cond[(size_t)slot] = WeaponStatusCondition(*w->getTemplate(), *w, status, now, attacking, firing, aiming);
+	}
+}
+
+void ObjectWeapons::applyWeaponStatusConditions(const std::array<int, WEAPONSLOT_COUNT> &cond)
+{
+	for (int slot = 0; slot < 5; ++slot) // the loop's five slots, as above
+	{
+		if (cond[(size_t)slot] < 0 || cond[(size_t)slot] == m_slotCondition[(size_t)slot])
 		{
 			continue;
 		}
-		m_slotCondition[(size_t)slot] = cond;
-		applySlotCondition(slot, cond);
+		m_slotCondition[(size_t)slot] = cond[(size_t)slot];
+		applySlotCondition(slot, cond[(size_t)slot]);
 	}
 }
 
