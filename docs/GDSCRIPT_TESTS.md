@@ -22,6 +22,8 @@ and executes the production `grayTextureFor` body using real Godot CPU Images.
 A recording texture boundary checks that grayscale requests cause one grayscale
 upload and no color upload/readback; exact luminance/alpha, source immutability,
 cache identity, both request orders, mipmaps and missing/empty images are checked.
+Synthetic BC3/DXT5 mip blocks also pin exact decompressed grayscale/alpha bytes
+and verify that the cached compressed image's format and bytes stay unchanged.
 `--source-ref <old-ref>` runs the same assertions against a prior revision (the
 pre-fix code fails the upload/readback checks). No retail files or GPU are used;
 this is neither a rendered HUD test nor a GPU timing benchmark. It reuses only

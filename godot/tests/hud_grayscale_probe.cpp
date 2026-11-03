@@ -99,6 +99,30 @@ public:
 				alphaKept = alphaKept && after[i] == after[i+1] && after[i] == after[i+2] && after[i+3] == before[i+3];
 		}
 		checks["every mip converted with alpha kept and source intact"] = alphaKept && hud.images["mips"]->get_data() == before;
+		// Three synthetic BC3/DXT5 blocks: constant red/green/blue at mip
+		// sizes 4x4/2x2/1x1. Index zero selects the explicit alpha and RGB565
+		// endpoints; no compressor, DDS file, retail bytes or GPU is needed.
+		PackedByteArray blocks, compressedWant;
+		blocks.resize(3 * 16); blocks.fill(0);
+		const uint16_t rgb565[] = {0xf800, 0x07e0, 0x001f};
+		const uint8_t alphas[] = {17, 128, 254}, grays[] = {76, 150, 29};
+		for (int level = 0; level < 3; ++level)
+		{
+			blocks[level*16] = blocks[level*16+1] = alphas[level];
+			blocks[level*16+8] = blocks[level*16+10] = uint8_t(rgb565[level]);
+			blocks[level*16+9] = blocks[level*16+11] = uint8_t(rgb565[level] >> 8);
+			const int side = 4 >> level;
+			for (int pixel = 0; pixel < side * side; ++pixel)
+			{
+				for (int channel = 0; channel < 3; ++channel) compressedWant.append(grays[level]);
+				compressedWant.append(alphas[level]);
+			}
+		}
+		hud.images["compressed"] = Image::create_from_data(4, 4, true, Image::FORMAT_DXT5, blocks);
+		auto compressed = hud.grayTextureFor("compressed");
+		checks["compressed mip exact grayscale and alpha"] = compressed.is_valid() && compressed->image->get_data() == compressedWant;
+		checks["compressed mip metadata preserved"] = compressed.is_valid() && compressed->image->get_format() == Image::FORMAT_RGBA8 && compressed->image->has_mipmaps() && compressed->image->get_width() == 4 && compressed->image->get_height() == 4;
+		checks["compressed source format and blocks unchanged"] = hud.images["compressed"]->is_compressed() && hud.images["compressed"]->get_format() == Image::FORMAT_DXT5 && hud.images["compressed"]->has_mipmaps() && hud.images["compressed"]->get_data() == blocks;
 		const int uploads = RecordedTexture::uploads;
 		checks["missing image stays null"] = hud.grayTextureFor("missing").is_null();
 		const int requests = hud.imageRequests;
