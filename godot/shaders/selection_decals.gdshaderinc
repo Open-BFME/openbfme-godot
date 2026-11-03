@@ -1,5 +1,6 @@
 // OpenBFME. GPL-3.0. Lane SELPERF-1: the selected units' merge decals (SHADOW_MERGE_DECAL, e.g. decal_G_level4 with its cut-out decal_good_CO), drawn
-// by the terrain per pixel instead of a CPU-composed texture (that cost seconds a frame for a marching army of 150 hordes).
+// by the terrain per pixel instead of a CPU-composed texture (that cost seconds a frame for a marching army of 150 hordes); lane SELWALL-1: and by the wall
+// top / bridge models (W3DShaderKey::SelectionDecals, sel_merge_at).
 //
 // TARGET FACTS (engine GameClient/SelectionDecals.h): RotWK draws the list with the projected shadow manager's stencil passes (RW 0x50D46A, the
 //   BFME2 donor's RVA 0x10DA71; the stencil states in flushDecals RW 0x50977A):
@@ -16,6 +17,12 @@ global uniform sampler2D sel_atlas; // RGBA8: every merge decal texture of the s
 global uniform vec4 sel_grid;       // min x, min y, cell size, cells x
 global uniform vec4 sel_grid2;      // cells y, cell offset, index offset, mode (0 nothing, 1 the two stencil passes, 2 the simple pass)
 global uniform float sel_alpha_ref; // the alpha test's reference (0..255)
+// lane SELWALL-1: the decal's height range on a wall surface (engine GameClient/SelectionDecals.h kSelectionDecalMaxHeight; RotWK's descriptor + 0x20)
+const float SEL_MAX_HEIGHT = 20.0;
+// lane SELWALL-1: a wall model's surface takes the decals only where it faces up at least this much (the world normal's up component: about 45 degrees);
+// INFERENCE (S-2522): RotWK projects onto the drawable's walkway sub-meshes (RampMesh1 / RampMesh2 / WallBoundsMesh / RaisedWallMesh, RW 0x6729A3 /
+// 0x6729E9 / 0x672943 / 0x672973), which the port stands in with the visible faces that face up, not the side faces
+const float SEL_WALL_MIN_UP = 0.7;
 
 vec4 sel_texel(int n) {
 	return texelFetch(sel_data, ivec2(n % 1024, n / 1024), 0);
@@ -35,13 +42,15 @@ vec4 sel_bilinear(vec4 rect, vec2 uv) {
 	return mix(top, bottom, fr.y);
 }
 
-// the merge decals at the SAGE world point `w`: their colour (retail space, 0..1) and how much of the terrain it covers (0 nothing, 1 opaque)
-vec4 sel_merge(vec2 w) {
+// lane SELWALL-1: the merge decals at the SAGE world point `w` of a surface: the terrain (`wall` false) leaves the raised decals out (their index entry
+// is -(i + 1)), a wall top or bridge model (`wall` true, W3DShaderKey::SelectionDecals) takes a decal only within 20 (kSelectionDecalMaxHeight) of the
+// point's height. Their colour (retail space, 0..1) and how much of the surface it covers (0 nothing, 1 opaque)
+vec4 sel_merge_at(vec3 w, bool wall) {
 	int mode = int(sel_grid2.w);
 	if (mode == 0) {
 		return vec4(0.0);
 	}
-	vec2 g = (w - sel_grid.xy) / sel_grid.z;
+	vec2 g = (w.xy - sel_grid.xy) / sel_grid.z;
 	if (g.x < 0.0 || g.y < 0.0 || g.x >= sel_grid.w || g.y >= sel_grid2.x) {
 		return vec4(0.0);
 	}
@@ -61,7 +70,13 @@ vec4 sel_merge(vec2 w) {
 		if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
 			continue;
 		}
-		int di = int(e.w) * 4;
+		if (!wall && e.w < 0.0) {
+			continue;
+		}
+		int di = int(e.w < 0.0 ? -e.w - 1.0 : e.w) * 4;
+		if (wall && !(abs(w.z - sel_texel(di + 1).w) <= SEL_MAX_HEIGHT)) {
+			continue;
+		}
 		vec4 d = sel_texel(di);
 		if (mode == 1 && floor(sel_bilinear(sel_texel(di + 3), uv).a * d.w + 0.5) >= sel_alpha_ref) {
 			// pass 0: a cut-out in the stencil here, so pass 1 draws nothing here whatever the other decals are
@@ -82,4 +97,9 @@ vec4 sel_merge(vec2 w) {
 		}
 	}
 	return (drawn && !covered) ? best : vec4(0.0);
+}
+
+// the terrain's (the SAGE point x, y)
+vec4 sel_merge(vec2 w) {
+	return sel_merge_at(vec3(w, 0.0), false);
 }

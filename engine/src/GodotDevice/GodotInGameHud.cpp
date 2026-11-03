@@ -1611,15 +1611,24 @@ void HudDevice::drawSelectionDecals()
 		}
 		++decalsDrawn;
 		// SAGE (x, y, z up) -> Godot (x, z, -y); the decal projects down its -Y over a box as wide as the decal and 60 units deep around the drawable
+		// lane SELWALL-1: a raised decal (a unit on a wall top) only onto the wall top and bridge models, within kSelectionDecalMaxHeight of its height
+		// (RotWK's decal box is +-maxHeight in z, RW 0x50C79C .. 0x50C7E7, and its terrain part is skipped, RW 0x50CDE4 .. 0x50CDF9)
 		decal->set_position(Vector3(sd.position.x, sd.position.z, -sd.position.y));
 		decal->set_rotation(Vector3(0.0f, sd.angle, 0.0f));
-		decal->set_size(Vector3(sd.size, 60.0f, sd.size));
+		decal->set_size(Vector3(sd.size, sd.raised ? 2.0f * kSelectionDecalMaxHeight : 60.0f, sd.size));
+		// lane SELWALL-1: on a wall top only its upward faces: Godot fades the decal over smoothstep(normal_fade, 1, dot(normal, up) * 0.5 + 0.5), so
+		// 0.5 * 0.7 + 0.5 starts the fade where selection_decals.gdshaderinc SEL_WALL_MIN_UP cuts the merge decals off (the wall's side faces drop out);
+		// the terrain keeps the decal on any slope
+		decal->set_normal_fade(sd.raised ? 0.85f : 0.0f);
 		// RotWK's alpha shader (terrain * (1 - a) + texel * colour * a, a = texel alpha * the colour's alpha); the terrain is unshaded (terrain.gdshader), so the
 		// decal's albedo reaches the screen as it is
 		decal->set_texture(Decal::TEXTURE_ALBEDO, dt->albedo);
 		decal->set_modulate(Color(1, 1, 1, ((sd.color >> 24) & 0xFF) / 255.0f));
 		decal->set_albedo_mix(1.0f);
-		decal->set_cull_mask(1u << 19); // the terrain's layer (GodotMapTerrain): the units stand on the marker, it is not painted on them
+		// the terrain's layer (GodotMapTerrain): the units stand on the marker, it is not painted on them; lane SELWALL-1: a raised decal the wall tops' and
+		// bridges' layer instead (GodotW3DInstancer.h kSelectionDecalLayer: RotWK projects every selection decal onto the WALK_ON_TOP_OF_WALL objects near it,
+		// RW 0x50C876, and leaves out its terrain part, RW 0x50CDE4); INFERENCE (S-2522): a decal on the terrain is not also drawn on a wall
+		decal->set_cull_mask(sd.raised ? kSelectionDecalLayer : (1u << 19));
 		decal->set_upper_fade(0.0f);
 		decal->set_lower_fade(0.0f);
 		decal->set_visible(true);
@@ -2331,6 +2340,8 @@ Dictionary InGameHudNode::get_state() const
 			e["color"] = (int64_t)sd.color;
 			e["x"] = sd.position.x;
 			e["y"] = sd.position.y;
+			e["z"] = sd.position.z;   // lane SELWALL-1
+			e["raised"] = sd.raised; // lane SELWALL-1: no terrain part (a wall top under it)
 			decals.push_back(e);
 		}
 		s["selection_decals"] = decals;

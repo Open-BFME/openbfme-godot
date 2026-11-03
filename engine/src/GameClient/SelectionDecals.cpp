@@ -14,6 +14,7 @@
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 
 #include <algorithm>
 #include <cmath>
@@ -89,6 +90,7 @@ void addDecal(std::vector<SelectionDecal> &out, const Object &obj, const Drawabl
 	d.object = obj.getID();
 	const Drawable *draw = drawables ? drawables->findByObject(obj.getID()) : nullptr;
 	d.position = draw ? *draw->getPosition() : *obj.getPosition();
+	d.drawZ = d.position.z; // lane SELWALL-1
 	d.drawable = draw ? (unsigned)draw->getID() : 0u;
 	// RW 0x7326CC: min + (count - 1) * (max - min) / MaxSelectedUnits, at most max
 	const float step = (t->maxRadius - t->minRadius) / (float)(t->maxSelectedUnits ? t->maxSelectedUnits : 1);
@@ -197,9 +199,14 @@ bool RefreshSelectionDecals(const DrawableManager *drawables, const SelectionDec
 		}
 		if (draw)
 		{
+			// lane SELWALL-1: against the drawable's own height (an AIRBORNE_TARGET decal's position.z is its layer's, MarkRaisedSelectionDecals)
 			const Coord3D &p = *draw->getPosition();
-			changed = changed || p.x != d.position.x || p.y != d.position.y || p.z != d.position.z;
-			d.position = p;
+			if (p.x != d.position.x || p.y != d.position.y || p.z != d.drawZ)
+			{
+				changed = true;
+				d.position = p;
+				d.drawZ = p.z;
+			}
 		}
 		if (!last || last->throbCycle != d.throbCycle || last->opacityMin != d.opacityMin || last->opacityMax != d.opacityMax)
 		{
@@ -260,7 +267,7 @@ bool ComposeMergeDecals(const std::vector<SelectionDecal> &decals, const std::fu
 	bool first = true;
 	for (const SelectionDecal &d : decals)
 	{
-		if (!(d.style & kMergeStyle) || d.size <= 0.0f)
+		if (!(d.style & kMergeStyle) || d.size <= 0.0f || d.raised) // lane SELWALL-1: the terrain leaves a raised decal out (the shader's sel_merge)
 		{
 			continue;
 		}
@@ -402,6 +409,48 @@ bool ComposeMergeDecals(const std::vector<SelectionDecal> &decals, const std::fu
 	return true;
 }
 
+// ---- lane SELWALL-1: the decals above the terrain --------------------------------------------------------------------------------------------------------
+
+bool MarkRaisedSelectionDecals(std::vector<SelectionDecal> &list, const std::function<float(float, float)> &floorHeight,
+	const std::function<bool(ObjectID, const Coord3D &, float &)> &groundedHeight)
+{
+	bool changed = false;
+	for (SelectionDecal &d : list)
+	{
+		float z = 0.0f;
+		const Coord3D drawn{ d.position.x, d.position.y, d.drawZ };
+		if (groundedHeight && groundedHeight(d.object, drawn, z) && z != d.position.z)
+		{
+			d.position.z = z; // RW 0x68DB35: the layer's height under an AIRBORNE_TARGET object
+			changed = true;
+		}
+		// RW 0x50CDE4 .. 0x50CDF9 (= BFME2 0x50C841, decomp rva0010C841, W3DProjectedShadowDecalHelpers.cpp:1097-1098): the terrain part is drawn while
+		// pos.z - floor < maxHeight
+		const bool raised = !(d.position.z - floorHeight(d.position.x, d.position.y) < kSelectionDecalMaxHeight);
+		changed = changed || raised != d.raised;
+		d.raised = raised;
+	}
+	return changed;
+}
+
+bool MarkRaisedSelectionDecals(std::vector<SelectionDecal> &list, const GameLogic &logic)
+{
+	// RW 0x68DB35 (BFME2 0x68D4E0, ObjectVisualPositionBFME2.cpp): with status bit 6 (AIRBORNE_TARGET, RW 0xD8AFF0) the visual position's height is
+	// getLayerHeight(x, y, getLayerForDestination(object, position)), RW 0x68DB8B .. 0x68DBE1
+	static const int airborne = ObjectTemplateInfoBuilder::objectStatusIndex("AIRBORNE_TARGET");
+	return MarkRaisedSelectionDecals(
+		list, [&logic](float x, float y) { return logic.getGroundHeight(x, y); },
+		[&logic](ObjectID id, const Coord3D &at, float &z) {
+			const Object *o = airborne >= 0 ? logic.findObjectByID(id) : nullptr;
+			if (!o || !o->testStatus((unsigned)airborne))
+			{
+				return false;
+			}
+			z = logic.getLayerHeightForDestination(at.x, at.y, at.z);
+			return true;
+		});
+}
+
 // ---- lane SELPERF-1: the merge decals for the terrain shader ---------------------------------------------------------------------------------------------
 
 bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::function<bool(const std::string &, MergeDecalAtlasRect &)> &rect,
@@ -524,7 +573,7 @@ bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::f
 		p[4] = (float)((d.color >> 16) & 0xFFu);
 		p[5] = (float)((d.color >> 8) & 0xFFu);
 		p[6] = (float)(d.color & 0xFFu);
-		p[7] = 0.0f;
+		p[7] = d.position.z; // lane SELWALL-1: a wall surface's height window (sel_merge_at)
 		const MergeDecalAtlasRect &a = items[i].tex, &b = items[i].cut;
 		p[8] = (float)a.x;
 		p[9] = (float)a.y;
@@ -556,7 +605,7 @@ bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::f
 				e[0] = items[i].d->position.x;
 				e[1] = items[i].d->position.y;
 				e[2] = items[i].d->size;
-				e[3] = (float)i;
+				e[3] = items[i].d->raised ? -(float)(i + 1) : (float)i; // lane SELWALL-1: the terrain skips a raised decal
 			}
 		}
 	}
@@ -586,6 +635,11 @@ void atlasSample(const DecalImage &atlas, const float r[4], float u, float v, fl
 
 bool EvaluateMergeDecalGrid(const MergeDecalGrid &grid, const DecalImage &atlas, float x, float y, std::uint8_t rgba[4])
 {
+	return EvaluateMergeDecalGrid(grid, atlas, x, y, 0.0f, DecalReceiver::Terrain, rgba);
+}
+
+bool EvaluateMergeDecalGrid(const MergeDecalGrid &grid, const DecalImage &atlas, float x, float y, float z, DecalReceiver receiver, std::uint8_t rgba[4])
+{
 	if (grid.decals == 0 || !atlas.rgba)
 	{
 		return false;
@@ -613,7 +667,16 @@ bool EvaluateMergeDecalGrid(const MergeDecalGrid &grid, const DecalImage &atlas,
 		{
 			continue;
 		}
-		const float *d = t + (size_t)e[3] * 16;
+		// lane SELWALL-1: the terrain leaves a raised decal out; a wall surface takes a decal only within the height window of its point
+		if (receiver == DecalReceiver::Terrain && e[3] < 0.0f)
+		{
+			continue;
+		}
+		const float *d = t + (size_t)(e[3] < 0.0f ? -e[3] - 1.0f : e[3]) * 16;
+		if (receiver == DecalReceiver::Wall && !(std::fabs(z - d[7]) <= kSelectionDecalMaxHeight))
+		{
+			continue;
+		}
 		float s[4];
 		if (!grid.simple)
 		{

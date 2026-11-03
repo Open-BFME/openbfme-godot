@@ -16,6 +16,7 @@
 #include "GameClient/DrawableWallMeshes.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameClient/HudObjects.h"
+#include "GameClient/SelectionDecals.h"
 #include "GameClient/LiveGame.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "GameLogic/AI/AIPathfind.h"
@@ -700,7 +701,9 @@ struct WallGame
 };
 
 // a wall-top cell that a unit at `from` reaches by a full path (searched from the nearest wall cells outward), its centre in `goal`
-bool reachableWallTop(Pathfinder &pf, PathfindObject &unit, const PathfindLocomotorInfo &loco, const Coord3D &from, Coord3D &goal, PathfindLayerEnum &layer)
+// `near`: the point the wall-top cells are taken nearest to (default: `from`, the unit's start)
+bool reachableWallTop(Pathfinder &pf, PathfindObject &unit, const PathfindLocomotorInfo &loco, const Coord3D &from, Coord3D &goal, PathfindLayerEnum &layer,
+	const Coord3D *near = nullptr)
 {
 	struct Candidate
 	{
@@ -728,7 +731,8 @@ bool reachableWallTop(Pathfinder &pf, PathfindObject &unit, const PathfindLocomo
 				}
 				if (inner)
 				{
-					const float fx = (float)x * 10.0f + 5.0f - from.x, fy = (float)y * 10.0f + 5.0f - from.y;
+					const Coord3D &o = near ? *near : from;
+					const float fx = (float)x * 10.0f + 5.0f - o.x, fy = (float)y * 10.0f + 5.0f - o.y;
 					cands.push_back({ fx * fx + fy * fy, x, y });
 				}
 			}
@@ -899,6 +903,87 @@ TEST_CASE("wall1 walls retail: on Helm's Deep a hero ordered onto a wall top wal
 	INFO("back at " << back.x << ", " << back.y << ", " << back.z << " on layer " << (int)ai->adapter().getLayer());
 	CHECK(ai->adapter().getLayer() == LAYER_GROUND);
 	CHECK(back.z == g.game->logic().getGroundHeight(back.x, back.y));
+}
+
+// lane SELWALL-1, the owner's report: the selection marker of a unit on a Helm's Deep wall was drawn on the ground below it. RotWK leaves out the terrain part of
+// a selection decal that stands kSelectionDecalMaxHeight (20) or more above the terrain (RW 0x50CDE4 .. 0x50CDF9) and projects it onto the
+// WALK_ON_TOP_OF_WALL objects near it (RW 0x50C876); the decal stands at the drawable's height (RW 0x68DB35). The HUD marks it raised
+// (MarkRaisedSelectionDecals with the terrain's height, InGameHud::markRaisedSelectionDecals)
+TEST_CASE("selwall1 retail: on Helm's Deep a hero on the Deeping Wall has a raised selection decal at its height; at its start the decal is on the terrain")
+{
+	OPENBFME_REQUIRE_START(s);
+	WallGame g(*s);
+	g.frames(2);
+	Player *me = g.human();
+	REQUIRE(me);
+	Pathfinder &pf = g.game->ai().pathfinder();
+	std::string error;
+	Object *hero = g.game->createObject("GondorBoromir", me->getPlayerIndex(), g.startOfSlot0(), 0.0f, &error);
+	REQUIRE_MESSAGE(hero, error);
+	g.frames(2);
+	AIUpdateInterface *ai = hero->getAIUpdateInterface();
+	REQUIRE(ai);
+	SelectionDecalSettings settings;
+	settings.showSelectedUnitMarker = true;
+	auto decals = [&] {
+		std::vector<SelectionDecal> d = BuildSelectionDecals(g.game->logic(), &g.game->drawables(), me, { hero->getID() }, settings, 7);
+		MarkRaisedSelectionDecals(d, g.game->logic()); // the HUD's (InGameHud::markRaisedSelectionDecals)
+		return d;
+	};
+	std::vector<SelectionDecal> d = decals();
+	REQUIRE(d.size() == 1);
+	CHECK_FALSE(d[0].raised);
+	CHECK(d[0].position.z == hero->getPosition()->z);
+	// the Deeping Wall: the HelmsDeepSection pieces across the valley (Ai, B, C and the Culvert), not the keep's walls and stairs
+	const Object *section = nullptr;
+	for (Object *o = g.game->logic().getFirstObject(); o && !section; o = o->getNextObject())
+	{
+		section = o->getTemplate() && o->getTemplate()->getName() == "HelmsDeepSectionB" ? o : nullptr;
+	}
+	REQUIRE(section);
+	const Coord3D sectionAt = *section->getPosition();
+	Coord3D goal;
+	PathfindLayerEnum wallLayer = LAYER_INVALID;
+	REQUIRE(reachableWallTop(pf, ai->adapter(), ai->locomotorInfo(), *hero->getPosition(), goal, wallLayer, &sectionAt));
+	MESSAGE("HelmsDeepSectionB at " << sectionAt.x << ", " << sectionAt.y << "; the hero walks to the reachable wall top nearest it at " << goal.x << ", " << goal.y
+		<< " (layer " << (int)wallLayer << ")");
+	ai->aiMoveToPosition(goal, CMD_FROM_PLAYER);
+	for (int f = 0; f < 3000; ++f)
+	{
+		g.frames(1);
+		const Coord3D p = *hero->getPosition();
+		const float dx = p.x - goal.x, dy = p.y - goal.y;
+		if (dx * dx + dy * dy < 400.0f && !ai->isMoving())
+		{
+			break;
+		}
+	}
+	const Coord3D at = *hero->getPosition();
+	INFO("the hero stands at " << at.x << ", " << at.y << ", " << at.z << " on layer " << (int)ai->adapter().getLayer() << ", the terrain at "
+		<< g.game->logic().getGroundHeight(at.x, at.y));
+	REQUIRE(isWallLayer(ai->adapter().getLayer()));
+	// the wall piece the hero stands on is a Deeping Wall section (the WALK_ON_TOP_OF_WALL object nearest it)
+	std::string piece;
+	float best = 1e18f;
+	for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->isKindOfName("WALK_ON_TOP_OF_WALL"))
+		{
+			const float px = o->getPosition()->x - at.x, py = o->getPosition()->y - at.y;
+			if (px * px + py * py < best)
+			{
+				best = px * px + py * py;
+				piece = o->getTemplate()->getName();
+			}
+		}
+	}
+	MESSAGE("the hero stands on " << piece << " at " << at.x << ", " << at.y << ", " << at.z << ", the terrain at " << g.game->logic().getGroundHeight(at.x, at.y));
+	CHECK(piece.rfind("HelmsDeepSection", 0) == 0);
+	d = decals();
+	REQUIRE(d.size() == 1);
+	CHECK(d[0].position.z == at.z);
+	CHECK(d[0].raised);
+	CHECK(at.z - g.game->logic().getGroundHeight(at.x, at.y) >= kSelectionDecalMaxHeight); // tolerance: the wall top stands about 23 over the courtyard; raised needs 20 or more
 }
 
 TEST_CASE("wall1 walls retail: on Helm's Deep a horde ordered onto a wall top gets its members up there")

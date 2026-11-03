@@ -126,6 +126,7 @@ std::string W3DShaderKey::Id() const
 	if (Fog) id += "_fog" + std::to_string(Fog); // lane RENDER-4
 	if (AlphaOverride) id += "_ao"; // lane BUILD-5 r3
 	if (OcclusionPass) id += "_occl" + std::to_string(OcclusionPass); // lane OCCLUDE-1
+	if (SelectionDecals) id += "_sel"; // lane SELWALL-1
 	return id;
 }
 
@@ -173,6 +174,8 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	// without applying Godot's lighting a second time. Other surfaces keep the unshaded path.
 	// Port of PR #136 onto OCCLUDE-1: the occlusion passes stay unshaded (they draw only a mark or a flat colour and return early).
 	const bool shadowReceiver = !k.OcclusionPass && k.Blend == W3D_GODOT_BLEND_OPAQUE && !alphaOverride;
+	// lane SELWALL-1: only an opaque surface of its own (an occlusion pass or a translucent drawable's surface draws no decal)
+	const bool selectionDecals = k.SelectionDecals && shadowReceiver;
 	if (k.OcclusionPass)
 	{
 		// lane OCCLUDE-1: drawn in the transparent pass after the opaque scene; writes no depth
@@ -204,6 +207,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	}
 	if (shadowReceiver) line("#include \"res://shaders/object_shadow.gdshaderinc\"");
 	if (shadowReceiver) line("instance uniform bool w3d_receive_shadows : instance_index(1) = false;");
+	if (selectionDecals) line("#include \"res://shaders/selection_decals.gdshaderinc\""); // lane SELWALL-1
 
 	// ---- uniforms ----
 	line("uniform sampler2D w3d_palette : filter_nearest, repeat_disable;");
@@ -736,6 +740,16 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	{
 		line("\tALBEDO = clamp(cur.rgb, 0.0, 1.0);");
 	}
+	if (selectionDecals)
+	{
+		// lane SELWALL-1 (an opaque surface only): the merge decals at the pixel's SAGE point (Godot (x, y, z) = SAGE (x, z, -y)), over the surface's
+		// colour as on the terrain (terrain.gdshader): the decal's colour decoded the same way, the surface's own colour kept for the shadow split below
+		line("\tvec3 sel_world = (INV_VIEW_MATRIX * vec4(v_vpos, 1.0)).xyz;");
+		// only where the surface faces up (SEL_WALL_MIN_UP: the walkable top, a ramp, a stair's tread; not the wall's side faces)
+		line("\tvec4 sel = normalize(v_wnrm).y >= SEL_WALL_MIN_UP ? sel_merge_at(vec3(sel_world.x, -sel_world.z, sel_world.y), true) : vec4(0.0);");
+		line("\tvec3 sel_ground = ALBEDO;");
+		line("\tALBEDO = mix(ALBEDO, w3d_to_linear(clamp(sel.rgb, 0.0, 1.0)), sel.a);");
+	}
 	switch ((W3DGodotBlend)k.Blend)
 	{
 	case W3D_GODOT_BLEND_OPAQUE:
@@ -755,8 +769,17 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	{
 		line("\tv_shadow_color = clamp(cur.rgb, 0.0, 1.0);");
 		line("\tfloat shadow_enabled = w3d_receive_shadows ? w3d_shadow.w : 0.0;");
-		line("\tEMISSION = ALBEDO * (1.0 - shadow_enabled);");
-		line("\tALBEDO = vec3(shadow_enabled);");
+		if (selectionDecals)
+		{
+			// lane SELWALL-1: the decal stays above the object shadows, as terrain.gdshader keeps it (only the surface's own share is shadowed)
+			line("\tEMISSION = ALBEDO - sel_ground * (1.0 - sel.a) * shadow_enabled;");
+			line("\tALBEDO = vec3((1.0 - sel.a) * shadow_enabled);");
+		}
+		else
+		{
+			line("\tEMISSION = ALBEDO * (1.0 - shadow_enabled);");
+			line("\tALBEDO = vec3(shadow_enabled);");
+		}
 	}
 	line("}");
 	if (shadowReceiver)
