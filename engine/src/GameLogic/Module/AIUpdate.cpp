@@ -1448,6 +1448,15 @@ PathfindLocomotorInfo AIUpdateInterface::locomotorInfo() const
 		}
 		info.downhillOnly = t.m_downhillOnly;
 		info.crusher = t.m_scalesWalls; // S-222 inference (RW loco+0x15)
+		// lane PATH-REBUILD: Path::rebuild's reads of the current locomotor (RW 0x767B0E)
+		info.present = true;
+		info.fastTurnRadius = t.m_fastTurnRadius;
+		info.slowTurnRadius = t.m_slowTurnRadius;
+		info.fasterThanQuarterSpeed = m_curLocomotor->isFasterThanQuarterSpeed(*m_locoHost); // the host is made with the module (the constructor)
+		info.canReverse = t.m_appearance == LOCO_WHEELS_FOUR && t.m_canMoveBackwards != 0;
+		info.maxTurnWithoutReform = t.m_maxTurnWithoutReform;
+		info.turnThresholdHS = t.m_turnThresholdHighSpeed;
+		info.floatingZ = t.m_zAxisBehavior == Z_FLOATING_Z;
 	}
 	return info;
 }

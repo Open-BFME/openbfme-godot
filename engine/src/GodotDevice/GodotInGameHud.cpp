@@ -354,11 +354,13 @@ Ref<ImageTexture> HudDevice::grayTextureFor(const std::string &file)
 	{
 		return it->second;
 	}
-	Ref<ImageTexture> colour = textureFor(file);
+	// Use the retained decoded image: ImageTexture::get_image() reads back from
+	// the GPU on the first disabled draw (shared presentation, both editions).
+	Ref<godot::Image> colour = imageFor(file);
 	Ref<ImageTexture> out;
 	if (colour.is_valid())
 	{
-		Ref<godot::Image> img = colour->get_image();
+		Ref<godot::Image> img = colour;
 		if (img.is_valid() && !img->is_empty())
 		{
 			img = img->duplicate();

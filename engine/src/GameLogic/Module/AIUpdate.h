@@ -130,7 +130,7 @@ public:
 	// B1 aiAttackObject (AIUpdate.cpp privateAttackObject): clears the machine and enters AI_ATTACK_OBJECT with the victim as the goal; false when this object cannot attack it
 	// `maxShotsToFire`: the command's shot limit (AICommandParms m_intValue, RW 0x66C536), set on the current weapon once the state is entered
 	bool aiAttackObject(Object *victim, CommandSourceType source, int maxShotsToFire = 0x7FFFFFFF);
-	bool aiForceAttackObject(Object *victim, CommandSourceType source);
+	bool aiForceAttackObject(Object *victim, CommandSourceType source, int maxShotsToFire = 0x7FFFFFFF); // retail callers pass NO_MAX_SHOTS_LIMIT or forward one
 	// lane PLAY-2: aiAttackPosition (RW 0x6961F1, AICommandType 0xE) -> privateAttackPosition (RW 0x66DE02; BFME2 decomp
 	// AIUpdateInterfacePrivateCommands.cpp:AIUpdateInterface::privateAttackPosition, tier B "edited": the RotWK differences are offsets and branch targets).
 	// The unit attacks the ground at `pos` (state AI_ATTACK_POSITION) firing at most `maxShotsToFire` shots; a weapon with a ContinueAttackRange first looks

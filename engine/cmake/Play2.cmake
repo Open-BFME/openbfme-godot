@@ -3,7 +3,8 @@
 
 set(OPENBFME_PLAY2_TESTS
     tests/test_force_attack_play2.cpp
-    tests/test_force_attack_play2_retail.cpp)
+    tests/test_force_attack_play2_retail.cpp
+    tests/test_atkreset1.cpp) # lane ATKRESET-1: the attack commands end the FiringDuration lock
 
 # client only (the Options screen's advanced page): listed in tools/sim/sim_policy.json's exclusions
 set(OPENBFME_PLAY2_SOURCES

@@ -908,10 +908,15 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge queue q35 (SIMSMALL-1, #178, #179, #132; measured once on the merged tree and at each merge point; #179's merge point keeps the archive's pins):
 	// #132's ground-structure melee reach ends seed 2 with Mordor's defeat (start position 0) at 7060; seeds 7 and 1234 stay open at 9000. Engine pins, not
 	// retail values.
-	// Lane WARG-1 (FindClosestPath RW 0x6FB869 at computePath's fallback and the attack paths, the unclamped cells RW 0x6E8CE6; measured once on the lane's
-	// tree after the archive merge, a CI host): seed 2 ends with Mordor's defeat (start position 0) at 7971 with a new table, seed 7 stays open at 9000, seed
-	// 1234 ends with Mordor's defeat (start position 0) at 7803 after two launches. Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 7971 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, 0, 7803 } })
+	// Lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E: every unit walks other lines; measured twice on the lane's tree):
+	// seed 2 ends with Mordor's defeat (start position 0) at 7211 with a new table, seed 7 stays open at 9000, seed 1234 ends with the Men's defeat (start
+	// position 1) at 8168; with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): seed 2 ends with Mordor's defeat at 7094
+	// with a new table, seeds 7 and 1234 stay open at 9000. Engine pins, not retail values.
+	// Merge queue q37 (measured once on the merged tree and at each merge point): at #187's (on top of WARG-1) seed 2 stays open at 9000 and seed 7 ends
+	// with the Men's defeat (start position 0) at 7246; ATKRESET-1 (attack orders end the FiringDuration lock) ends seed 2 with the Men's defeat (start
+	// position 1) at 6858 with a new table and seed 7 with Mordor's defeat (start position 1) at 8584; seed 1234 stays open at 9000. Engine pins, not
+	// retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 1, 6858 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 8584 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -953,15 +958,15 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// merge queue q34 (measured once on the merged tree and at each merge point): SPELLFIX-1 and #160 end it at 7162; #161's block search keeps it open
 			// at 9000 with this table
 			// merge queue q35 (measured once on the merged tree and at each merge point): #132's melee reach ends it with Mordor's defeat at 7060
-			// lane WARG-1 (measured once on the lane's tree after the archive merge): FindClosestPath and the unclamped cells end it at 7971 with this table
+			// lane PATH-REBUILD (measured twice on the lane's tree): a new table from the first window on; the game ends with Mordor's defeat at 7094
+			// merge queue q37 (measured once on the merged tree; ATKRESET-1 moves it): a new table from the first window on; the game ends with the Men's defeat at 6858
 			CHECK(run.progress ==
-		"frame 1000: [0 attacks 0 built 85u/8s destroyed 11u/0s] [1 attacks 1 built 91u/8s destroyed 23u/2s]\n"
-		"frame 2000: [0 attacks 2 built 240u/9s destroyed 137u/0s] [1 attacks 2 built 215u/10s destroyed 174u/3s]\n"
-		"frame 3000: [0 attacks 2 built 390u/12s destroyed 257u/1s] [1 attacks 2 built 325u/12s destroyed 336u/7s]\n"
-		"frame 4000: [0 attacks 2 built 506u/13s destroyed 336u/1s] [1 attacks 3 built 417u/14s destroyed 427u/9s]\n"
-		"frame 5000: [0 attacks 2 built 508u/14s destroyed 362u/1s] [1 attacks 3 built 460u/21s destroyed 469u/10s]\n"
-		"frame 6000: [0 attacks 2 built 645u/16s destroyed 392u/1s] [1 attacks 3 built 481u/25s destroyed 540u/11s]\n"
-		"frame 7000: [0 attacks 3 built 720u/16s destroyed 405u/1s] [1 attacks 3 built 494u/25s destroyed 697u/14s]\n");
+		"frame 1000: [0 attacks 0 built 70u/8s destroyed 5u/1s] [1 attacks 1 built 76u/7s destroyed 21u/2s]\n"
+		"frame 2000: [0 attacks 2 built 279u/11s destroyed 109u/2s] [1 attacks 2 built 168u/10s destroyed 136u/5s]\n"
+		"frame 3000: [0 attacks 3 built 429u/12s destroyed 167u/7s] [1 attacks 2 built 214u/14s destroyed 337u/5s]\n"
+		"frame 4000: [0 attacks 4 built 547u/15s destroyed 234u/9s] [1 attacks 2 built 286u/16s destroyed 443u/5s]\n"
+		"frame 5000: [0 attacks 4 built 707u/20s destroyed 282u/12s] [1 attacks 2 built 337u/18s destroyed 556u/6s]\n"
+		"frame 6000: [0 attacks 5 built 821u/21s destroyed 327u/20s] [1 attacks 2 built 353u/23s destroyed 691u/6s]\n");
 		}
 	}
 }
@@ -1033,6 +1038,9 @@ TEST_CASE("skirmish ai targetless: the generator's FarmKillSquad draw at creatio
 	// merge queue q33 (#133's straight production exits shift the shared random stream before frame 10; measured at each merge point): with seed 1234 the
 	// frame-10 pick draws 1 and starts the FarmKillSquad first; seeds 1234 .. 1249 measured on the merged tree: 1240, 1243, 1245, 1246, 1248 and 1249 draw 0
 	// there (the FlagCaptureSquad at 10, the FarmKillSquad at 11), so the game moves to seed 1240
+	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E, shift the shared random stream before frame 10): with seed 1240 the
+	// frame-10 pick draws 1 again (the FarmKillSquad first); seeds 1240 .. 1255 measured on the lane's tree: 1241, 1242, 1247, 1248, 1253 and 1254 draw 0
+	// there, so the game moves to seed 1241 (the test's draws below hold)
 	OPENBFME_REQUIRE_START(s);
 	static std::vector<MapCacheEntry> cache;
 	std::string error;
@@ -1041,7 +1049,7 @@ TEST_CASE("skirmish ai targetless: the generator's FarmKillSquad draw at creatio
 		REQUIRE_MESSAGE(IniSkirmishSetupSource::loadMapCache(*s->mount->fs, cache, &error), error);
 	}
 	NewGameStart start(RandomAlgorithm::ZH_CarryChain);
-	REQUIRE_MESSAGE(NewGame::prepareNewGame(versusMessage(*s, "FactionMen", -1, "FactionMordor", 1, 1240u), s->world->playerTemplates(), s->settings, cache,
+	REQUIRE_MESSAGE(NewGame::prepareNewGame(versusMessage(*s, "FactionMen", -1, "FactionMordor", 1, 1241u), s->world->playerTemplates(), s->settings, cache,
 						RandomAlgorithm::ZH_CarryChain, start, &error),
 		error);
 	ArchiveW3DFileSource source(*s->mount->fs);

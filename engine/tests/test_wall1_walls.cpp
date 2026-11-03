@@ -234,6 +234,11 @@ TEST_CASE("wall1 walls: a ground unit's path to the wall top climbs the ramp (gr
 	const std::vector<PathfindLayerEnum> layers = nodeLayers(*up);
 	REQUIRE(!layers.empty());
 	CHECK(layers.back() == LAYER_WALL_FIRST);
+	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E): the chain is the optimiser's anchors. RW 0x7661A3's scan ends
+	// a leg where the layer changes after its third node (RW 0x766532 .. 0x76653B), so the path is the start, the last ground node at the ramp's foot,
+	// the last ramp node at its top and the goal on the wall (the port cut a chord across the ramp before, which the raw chain's cells hid)
+	CHECK(layers.size() == 4);
+	CHECK(layers.front() == LAYER_GROUND);
 	// the layers never go back and never jump from the ground to the wall: ground ... ramp ... wall
 	int phase = 0;
 	for (PathfindLayerEnum l : layers)
@@ -260,12 +265,15 @@ TEST_CASE("wall1 walls: a ground unit's path to the wall top climbs the ramp (gr
 	Path *down = w.pf->findPath(v, groundLoco(), &top, &ground, &partial);
 	REQUIRE(down != nullptr);
 	CHECK_FALSE(partial);
+	// lane PATH-REBUILD: the same four anchors downhill (the wall's last node at the ramp's top, the ramp's last at its foot)
+	CHECK(nodeLayers(*down).size() == 4);
 	bool sawRamp = false;
 	for (PathfindLayerEnum l : nodeLayers(*down))
 	{
 		sawRamp = sawRamp || l == LAYER_RAMP;
 	}
 	CHECK(sawRamp);
+	CHECK(down->getFirstNode()->getLayer() == LAYER_WALL_FIRST);
 	CHECK(down->getLastNode()->getLayer() == LAYER_GROUND);
 	delete down;
 	// a goal on the ground beside the wall: the path stays on the ground

@@ -172,6 +172,17 @@ public:
 	// ZH Path::optimize: shortcut the cell path by line of sight (marks the optimised chain, ZH setNextOptimized)
 	void optimize(Pathfinder &pathfinder, const PathfindObject *obj, unsigned acceptableSurfaces, bool blocked, const float *dir = nullptr);
 
+	// lane PATH-REBUILD: RW Path::rebuild 0x767B0E (AIPathfindRebuild.cpp): the raw chain of the search is freed and the path built again from its
+	// optimised nodes alone (`next` == `nextOptimized` afterwards), the first segment bent from the unit's facing by its locomotor's turn radius and
+	// every corner rounded by an arc. Every path a search returns gets it (buildActualPath's faceDirection, RW 0x6FDCDA for the goal path); the
+	// blocked unit's patches do not
+	void rebuild(Pathfinder &pf, const PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord2D &facing, unsigned acceptableSurfaces, bool blocked);
+	struct RebuildVec
+	{
+		float x, y, z;
+	};
+	static int arcSegments(float angle, float radius); // RW 0x765E00: the segments of an arc, 1..128
+
 	// ---- LocomotorPath (the consumer in GameLogic/Locomotor.h) ----
 	LocomotorPathPoint computePointAhead(float distance) override;
 	void updateClosestSegment(const Coord3D &pos) override;
@@ -204,6 +215,20 @@ public:
 
 private:
 	void xferLoad(class Xfer &x);
+	// lane PATH-REBUILD (AIPathfindRebuild.cpp)
+	struct BendOptions
+	{
+		bool dryRun;        // RW + 0: test the arc's cells, append nothing
+		bool otherWay;      // RW + 1: the arc the other way round
+		float radius;       // RW + 4
+		bool noCornerAfter; // RW + 8: no corner arc after the bend
+	};
+	void appendCopy(const PathNode *src);
+	void appendPoint(const Coord3D *pos, PathfindLayerEnum layer); // an arc point at the tail
+	void roundCorner(PathNode *prev, PathNode *cur, PathNode *next, float radius);
+	bool bendFirstSegment(Pathfinder &pf, const PathfindObject *obj, const PathfindLocomotorInfo &loco, PathNode *node, const RebuildVec &input, BendOptions &opt,
+		unsigned surfaces, float maxAngle, bool blocked);
+	void reverseTurn(Pathfinder &pf, const PathfindObject *obj, const PathfindLocomotorInfo &loco, PathNode *start, PathNode *end, const RebuildVec &input, float radius);
 	PathNode *m_path;
 	PathNode *m_pathTail;
 	bool m_isOptimized;
@@ -1341,7 +1366,10 @@ private:
 	bool groundCellClear(const PathfindCell *cell, unsigned crusher) const;
 	Path *buildGroundPath(const Coord3D *from, PathfindCell *goalCell, bool center, int diameter, float formationColumnWidth);
 	void optimizeGroundPath(Path &path, int diameter);
-	Path *buildActualPath(const PathfindObject *obj, unsigned acceptableSurfaces, const Coord3D *fromPos, PathfindCell *goalCell, bool center, bool blocked);
+	// RW 0x6F1A31: the cells from the goal back to the unit, optimised; `faceDirection` (RW's seventh argument): finished by Path::rebuild from the unit's
+	// facing (lane PATH-REBUILD). RW passes 1 from the attack, safe and move-away searches and the closest-cell path; the goal path calls the rebuild itself
+	Path *buildActualPath(const PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *fromPos, PathfindCell *goalCell, bool center, bool blocked,
+		bool faceDirection);
 	void prependCells(Path *path, const Coord3D *fromPos, PathfindCell *goalCell, bool center);
 	int examineNeighboringCells(PathfindCell *parentCell, PathfindCell *goalCell, const PathfindLocomotorInfo &loco, bool isHuman, bool centerInCell,
 		int radius, const ICoord2D &startCellNdx, const PathfindObject *obj, bool hierarchical = false, int attackDistance = 0);

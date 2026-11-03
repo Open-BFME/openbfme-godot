@@ -423,7 +423,9 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// puts them on their slots, so they stand elsewhere when the bird arrives; the damage and the kills are the same
 				// merge queue q34 (measured at each merge point): 4 strikes (3 before) from #160's merge point on (the scene's horde members walk to their slots,
 				// RW 0x871536); the damage and the kills are the same
-				CHECK(ord.shots == (drogoth ? 4u : 0u));
+				// lane PATH-REBUILD: 3 strikes (4 before): the found paths are rebuilt from their optimised nodes (RW 0x767B0E), so the scene's units walk other
+				// lines; the damage and the kills are the same
+				CHECK(ord.shots == (drogoth ? 3u : 0u));
 				CHECK(ord.lost == (drogoth ? 1500.0f : 450.0f));
 				CHECK(ord.membersKilled == (drogoth ? 20u : 5u));
 				continue;
@@ -446,11 +448,11 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 			// fights the horde, 13 of 20 killed (975 health)
 			// Merge queue q34 (measured at each merge point): Haldir still fights the horde: 2 of 20 killed (150 health) with #160 (the members walk to their
 			// slots, RW 0x871536), 7 of 20 (525 health) with #161 (the block search's block zones move the scene's creeps and computer opponent)
-			// Lane WARG-1 (FindClosestPath RW 0x6FB869 and the unclamped cells RW 0x6E8CE6 move the scene's creeps and computer opponent; measured once on the
-			// lane's tree after the archive merge, a CI host): Haldir still fights the horde, 165 health taken from it (525)
+			// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; measured twice on the lane's tree): Haldir still fights the
+			// horde: 18 of 20 killed (1350 health) with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree)
 			if (hero == "ElvenHaldir")
 			{
-				CHECK(own.lost == 165.0f);
+				CHECK(own.lost == 1350.0f);
 			}
 			else
 			{
@@ -604,8 +606,15 @@ TEST_CASE("attack1 heroes retail: the mounted Witch-king and Mouth of Sauron, or
 	// run, nothing in a crush run), 18 killed, nearest 14.5005, with CRUSHER_LEVEL -1 4 swings taking 1350 from 14.5279; the Mouth of Sauron 5 shots, 5 killed
 	// (150 in the crush run), 3 swings (75 / 225), nearest 0.825811, with CRUSHER_LEVEL -1 4 swings taking 300 from 60.3109. The duels and the blocking are
 	// unchanged. Engine pins, not retail values.
-	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 4u, 18u, 0.0f, { 800.0f, 112.0f }, 4u, 525.0f, 1350.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 4u, 1350.0f, 14.5279f, 14.5005f },
-			 Case{ "FactionMordor", "MordorMouthOfSauron", 5u, 5u, 150.0f, { 640.0f, 320.0f }, 3u, 75.0f, 225.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 4u, 300.0f, 60.3109f, 0.825811f } })
+	// Lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E, so the heroes and the scene's units walk other lines; measured twice
+	// on the lane's tree): the Witch-king 4 shots, all swings of his mace (the first took 450, 1350 outside the run, nothing in a crush run), 18 killed,
+	// nearest 7.89051, with CRUSHER_LEVEL -1 5 swings taking 1500 from 22.4116; the Mouth of Sauron 8 shots, 8 killed (300 in the crush run), 3 swings
+	// (75 / 225), nearest 7.23316, with CRUSHER_LEVEL -1 3 swings taking 225 from 33.2918. The duels, the hit sizes and the blocking are unchanged. Engine
+	// pins, not retail values. With the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree) the Witch-king
+	// holds and the Mouth of Sauron takes 7 shots, 7 killed (75 in the crush run), 6 swings (75 / 450), nearest 2.96156, with CRUSHER_LEVEL -1 5 swings
+	// taking 375 from 69.5376.
+	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 4u, 18u, 0.0f, { 800.0f, 112.0f }, 4u, 450.0f, 1350.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 5u, 1500.0f, 22.4116f, 7.89051f },
+			 Case{ "FactionMordor", "MordorMouthOfSauron", 7u, 7u, 75.0f, { 640.0f, 320.0f }, 6u, 75.0f, 450.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 5u, 375.0f, 69.5376f, 2.96156f } })
 	{
 		INFO(std::string(c.hero));
 		const ThingTemplate *tt = s->world->things().findTemplate(c.hero);

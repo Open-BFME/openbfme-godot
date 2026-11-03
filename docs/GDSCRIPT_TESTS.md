@@ -11,6 +11,25 @@ python -m pytest -q -rs tools/test_gdscript.py
 
 ## Scheduling policy
 
+The manual native HUD grayscale fixture is separate from the GDScript runner:
+
+```sh
+python godot/tests/hud_grayscale_test.py --bindings-build engine/build --scratch workspace/gray-check --godot "$GODOT"
+```
+
+On macOS with a configured native bindings build, it compiles a scratch extension
+and executes the production `grayTextureFor` body using real Godot CPU Images.
+A recording texture boundary checks that grayscale requests cause one grayscale
+upload and no color upload/readback; exact luminance/alpha, source immutability,
+cache identity, both request orders, mipmaps and missing/empty images are checked.
+Synthetic BC3/DXT5 mip blocks also pin exact decompressed grayscale/alpha bytes
+and verify that the cached compressed image's format and bytes stay unchanged.
+`--source-ref <old-ref>` runs the same assertions against a prior revision (the
+pre-fix code fails the upload/readback checks). No retail files or GPU are used;
+this is neither a rendered HUD test nor a GPU timing benchmark. It reuses only
+the bindings archive and never replaces the game extension. Logs and results
+remain under the requested new scratch directory.
+
 The launcher coverage gap is closed by the existing release pytest runners,
 including the resource-limited write-failure regression and the argument-aware
 social/OAuth fixtures. Every launcher entry point is listed below.

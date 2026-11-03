@@ -127,8 +127,10 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 		{
 			MESSAGE("citadel hits: " << kv.second << " x " << kv.first);
 		}
-		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 101 }, { "AngmarTrollSling dealt 1350 taken 1017", 1 },
-			{ "AngmarTrollSling dealt 1350 taken 1350", 3 }, { "AngmarTrollSling dealt 50 taken 50", 4 }, { "AngmarWolfRider dealt 5 taken 5", 1033 } };
+		// merge queue q37 (measured once on the merged tree; the table at #187's merge point differs again, ATKRESET-1's attack orders move it): wolf rider
+		// hits 1033 -> 1006, banner carrier hits 101 -> 83, the last sling hit takes 955 (1017)
+		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 83 }, { "AngmarTrollSling dealt 1350 taken 955", 1 },
+			{ "AngmarTrollSling dealt 1350 taken 1350", 3 }, { "AngmarTrollSling dealt 50 taken 50", 4 }, { "AngmarWolfRider dealt 5 taken 5", 1006 } };
 		CHECK(kinds == expected);
 	};
 	if (!saved)
