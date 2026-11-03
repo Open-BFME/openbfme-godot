@@ -170,6 +170,9 @@ private:
 	bool m_follow;
 	Coord3D m_prevVictimPos{ 0.0f, 0.0f, 0.0f };
 	unsigned m_approachFrame = 0;
+	// an owner that cannot move waits (BFME2 decomp AIAttackApproachTargetState::onEnter retail 0x0034CD3A, + 0x68 / + 0x71)
+	bool m_waiting = false;
+	unsigned m_waitFrame = 0;
 };
 
 class AIAttackAimState : public AIState

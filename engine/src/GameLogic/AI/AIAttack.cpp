@@ -7,6 +7,8 @@
 #include "GameLogic/ObjectTemplateInfo.h"
 
 #include "Common/StateHash.h"
+#include "Common/GameCommon.h"
+#include "GameLogic/AI/AIGarrisonStates.h"
 #include "GameLogic/AI/AIMove.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -456,6 +458,17 @@ StateReturnType AIAttackApproachState::onEnter()
 	}
 	const Coord3D goal = victim ? *victim->getPosition() : machine().goalPosition();
 	m_prevVictimPos = goal;
+	m_waiting = false;
+	if (!GarrisonRules::isMobile(source) || a.curLocomotorSpeed() < 0.1f)
+	{
+		// an owner that cannot move (Object::isMobile false, or its locomotor's max speed below 0.1: a speedless locomotor such as the fortress
+		// catapults' FloatingCatapultLocomotor) asks for no path: it waits two seconds and then fails unless the victim came into range (BFME2 decomp
+		// AIAttackApproachTargetStateOnEnter.cpp onEnter retail 0x0034CD3A, before the turret and computePath; updateInternal: m_waiting -> the wait frame
+		// passed = failure). The port made a move at speed 0 and held the victim, never firing
+		m_waiting = true;
+		m_waitFrame = a.frame() + 2u * (unsigned)LOGICFRAMES_PER_SECOND;
+		return STATE_CONTINUE;
+	}
 	aimTurret(a, *m_att, victim, machine().goalPosition()); // lane GARRISON-2: RW 0x74E6CE before the path
 	// lane PHYS-1: the approach's computePath RW 0x749A3E asks for an attack path (RW 0x663802 -> computeAttackPath 0x6668CA -> findAttackPath 0x6FC18E): a free cell in
 	// weapon reach, reserved, instead of a move to the victim's centre (the destination is not adjusted). A HORDE object attacks through its horde machine (the approach
@@ -490,6 +503,10 @@ StateReturnType AIAttackApproachState::update()
 	if (inRange())
 	{
 		return STATE_SUCCESS;
+	}
+	if (m_waiting)
+	{
+		return a.frame() > m_waitFrame ? STATE_FAILURE : STATE_CONTINUE; // the decomp's updateInternal
 	}
 	if (!m_move)
 	{
@@ -532,6 +549,8 @@ void AIAttackApproachState::crc(StateHasher &h) const
 	h.addFloat(m_prevVictimPos.y);
 	h.addFloat(m_prevVictimPos.z);
 	h.addU32(m_approachFrame);
+	h.addBool(m_waiting);
+	h.addU32(m_waitFrame);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
