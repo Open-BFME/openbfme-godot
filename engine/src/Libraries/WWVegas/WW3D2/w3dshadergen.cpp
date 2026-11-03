@@ -746,9 +746,15 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		// colour as on the terrain (terrain.gdshader): the decal's colour decoded the same way, the surface's own colour kept for the shadow split below
 		line("\tvec3 sel_world = (INV_VIEW_MATRIX * vec4(v_vpos, 1.0)).xyz;");
 		// only where the surface faces up (SEL_WALL_MIN_UP: the walkable top, a ramp, a stair's tread; not the wall's side faces)
-		line("\tvec4 sel = normalize(v_wnrm).y >= SEL_WALL_MIN_UP ? sel_merge_at(vec3(sel_world.x, -sel_world.z, sel_world.y), true) : vec4(0.0);");
+		line("\tbool sel_up = normalize(v_wnrm).y >= SEL_WALL_MIN_UP;");
+		line("\tvec3 sel_at = vec3(sel_world.x, -sel_world.z, sel_world.y);");
+		line("\tvec4 sela = sel_up ? sel_alpha_at(sel_at, true) : vec4(0.0);");
+		line("\tvec4 sel = sel_up ? sel_merge_at(sel_at, true) : vec4(0.0);");
 		line("\tvec3 sel_ground = ALBEDO;");
+		// lane HERORING-1: the alpha decals (a hero's ring) first, blended over the surface's gamma colour, then the merge decals (as terrain.gdshader)
+		line("\tif (sela.a > 0.0) { ALBEDO = w3d_to_linear(clamp(cur.rgb, 0.0, 1.0) * (1.0 - sela.a) + sela.rgb); }");
 		line("\tALBEDO = mix(ALBEDO, w3d_to_linear(clamp(sel.rgb, 0.0, 1.0)), sel.a);");
+		line("\tfloat sel_keep = (1.0 - sela.a) * (1.0 - sel.a);");
 	}
 	switch ((W3DGodotBlend)k.Blend)
 	{
@@ -772,8 +778,8 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		if (selectionDecals)
 		{
 			// lane SELWALL-1: the decal stays above the object shadows, as terrain.gdshader keeps it (only the surface's own share is shadowed)
-			line("\tEMISSION = ALBEDO - sel_ground * (1.0 - sel.a) * shadow_enabled;");
-			line("\tALBEDO = vec3((1.0 - sel.a) * shadow_enabled);");
+			line("\tEMISSION = ALBEDO - sel_ground * sel_keep * shadow_enabled;");
+			line("\tALBEDO = vec3(sel_keep * shadow_enabled);");
 		}
 		else
 		{

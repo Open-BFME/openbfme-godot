@@ -285,9 +285,8 @@ struct HudDevice : public AptNativeHook
 	IconUIOp dragBox;
 	unsigned long long dragBoxFrames = 0;
 	void drawIconOps(RID parent);
-	// lane UI-4: the selection markers (GameClient/SelectionDecals.h) as Godot Decal nodes under a Node3D beside the camera, one per decal, reused
+	// lane UI-4: the Node3D beside the camera the HUD's own Decal nodes live under (lane HERORING-1: the selection decals are in the shaders' grid)
 	uint64_t decalRootId = 0;
-	std::vector<uint64_t> decalIds;
 	unsigned decalsDrawn = 0;
 	// lane SELPERF-1: the SHADOW_MERGE_DECAL decals drawn by the terrain shader (godot/shaders/selection_decals.gdshaderinc) from the grid of this frame
 	// (BuildMergeDecalGrid) in the global sel_data and their textures in the global sel_atlas; the atlas grows when a texture is new to it
@@ -1266,7 +1265,8 @@ void HudDevice::drawRadiusCursor()
 
 void HudDevice::drawResourceFeedback()
 {
-	// lane OWNERFIX-2 (GameClient/TerrainResourceFeedback.h): drawn as the selection decals are (S-2522): a Godot Decal over the terrain layer. The claim
+	// lane OWNERFIX-2 (GameClient/TerrainResourceFeedback.h): a Godot Decal over the terrain layer (lane HERORING-1: the selection decals left that path;
+	// a Decal blends into ALBEDO, the terrain's shadow weight since its colour went to EMISSION, so these show faintly: S-2522, a follow-up). The claim
 	// decals: TerrainResourceClaimDecal tinted 0x6464C8 at opacity 0x80 (type 0x20, SHADOW_ALPHA_DECAL); the placement decal: PlaceTerrainResourceClaimantDecal
 	// tinted the band colour, its alpha the texture's times the claimable vertices' alpha (RW 0x75C1A9 with the opacity 0x80; INFERENCE S-5030: bilinear across
 	// a terrain quad)
@@ -1575,71 +1575,12 @@ void HudDevice::drawSelectionDecals()
 		root->set_name("SelectionDecals");
 		parent->add_child(root);
 		decalRootId = root->get_instance_id();
-		decalIds.clear();
 	}
 	const std::vector<SelectionDecal> &list = hud->selectionDecals();
 	decalsDrawn = 0;
-	for (size_t i = 0; i < list.size(); ++i)
-	{
-		const SelectionDecal &sd = list[i];
-		if (sd.style & 0x1000u)
-		{
-			continue; // composed below
-		}
-		const DecalTextures *dt = unlitDecalFor(sd.texture, sd.color & 0xFFFFFFu);
-		if (!dt)
-		{
-			continue; // the texture's error is in drawErrors (textureFor)
-		}
-		Decal *decal = nullptr;
-		if (decalsDrawn < decalIds.size())
-		{
-			decal = Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(decalIds[decalsDrawn])));
-		}
-		if (!decal)
-		{
-			decal = memnew(Decal);
-			root->add_child(decal);
-			if (decalsDrawn < decalIds.size())
-			{
-				decalIds[decalsDrawn] = decal->get_instance_id();
-			}
-			else
-			{
-				decalIds.push_back(decal->get_instance_id());
-			}
-		}
-		++decalsDrawn;
-		// SAGE (x, y, z up) -> Godot (x, z, -y); the decal projects down its -Y over a box as wide as the decal and 60 units deep around the drawable
-		// lane SELWALL-1: a raised decal (a unit on a wall top) only onto the wall top and bridge models, within kSelectionDecalMaxHeight of its height
-		// (RotWK's decal box is +-maxHeight in z, RW 0x50C79C .. 0x50C7E7, and its terrain part is skipped, RW 0x50CDE4 .. 0x50CDF9)
-		decal->set_position(Vector3(sd.position.x, sd.position.z, -sd.position.y));
-		decal->set_rotation(Vector3(0.0f, sd.angle, 0.0f));
-		decal->set_size(Vector3(sd.size, sd.raised ? 2.0f * kSelectionDecalMaxHeight : 60.0f, sd.size));
-		// lane SELWALL-1: on a wall top only its upward faces: Godot fades the decal over smoothstep(normal_fade, 1, dot(normal, up) * 0.5 + 0.5), so
-		// 0.5 * 0.7 + 0.5 starts the fade where selection_decals.gdshaderinc SEL_WALL_MIN_UP cuts the merge decals off (the wall's side faces drop out);
-		// the terrain keeps the decal on any slope
-		decal->set_normal_fade(sd.raised ? 0.85f : 0.0f);
-		// RotWK's alpha shader (terrain * (1 - a) + texel * colour * a, a = texel alpha * the colour's alpha); the terrain is unshaded (terrain.gdshader), so the
-		// decal's albedo reaches the screen as it is
-		decal->set_texture(Decal::TEXTURE_ALBEDO, dt->albedo);
-		decal->set_modulate(Color(1, 1, 1, ((sd.color >> 24) & 0xFF) / 255.0f));
-		decal->set_albedo_mix(1.0f);
-		// the terrain's layer (GodotMapTerrain): the units stand on the marker, it is not painted on them; lane SELWALL-1: a raised decal the wall tops' and
-		// bridges' layer instead (GodotW3DInstancer.h kSelectionDecalLayer: RotWK projects every selection decal onto the WALK_ON_TOP_OF_WALL objects near it,
-		// RW 0x50C876, and leaves out its terrain part, RW 0x50CDE4); INFERENCE (S-2522): a decal on the terrain is not also drawn on a wall
-		decal->set_cull_mask(sd.raised ? kSelectionDecalLayer : (1u << 19));
-		decal->set_upper_fade(0.0f);
-		decal->set_lower_fade(0.0f);
-		decal->set_visible(true);
-	}
-	for (size_t i = decalsDrawn; i < decalIds.size(); ++i)
-	{
-		if (Decal *decal = Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(decalIds[i]))))
-		{
-			decal->set_visible(false);
-		}
-	}
+	// lane HERORING-1: a non-merge decal (a hero's ring, SHADOW_ALPHA_DECAL) is no Godot Decal node any more: a Decal blends into ALBEDO, which the terrain
+	// and the W3D receivers use as the shadow weight since their colour went to EMISSION, so it barely showed; it is in the shaders' grid below with the
+	// merge decals (sel_alpha_at). The root node stays: the resource feedback's decals live under it (drawResourceFeedback)
 
 	// lane SELPERF-1: the merge decals: this frame's grid to the terrain shader (RotWK's two stencil passes per pixel there); the composed image is only the
 	// state report's (composeMergeReport)
@@ -1649,18 +1590,24 @@ void HudDevice::drawSelectionDecals()
 	// the grid follows the markers: built and uploaded when they changed (hud->selectionDecalsVersion), else the shader keeps the last one
 	const bool fresh = hud->selectionDecalsVersion() != selVersion || selMode < 0;
 	selVersion = hud->selectionDecalsVersion();
-	if (fresh && (!selAtlasFor(list) || !BuildMergeDecalGrid(list, [this](const std::string &f, MergeDecalAtlasRect &r) {
-			// a missing texture is not in the atlas: BuildMergeDecalGrid fails with its name (no outline this frame)
-			return selAtlasPack.rect(f, r);
-		}, ds, selGrid, &error)))
+	if (fresh)
 	{
-		if (!error.empty() && drawErrors.size() < 100)
+		const bool built = selAtlasFor(list) && BuildMergeDecalGrid(list, [this](const std::string &f, MergeDecalAtlasRect &r) {
+			// a missing texture is not in the atlas: BuildMergeDecalGrid fails with its name (no outline this frame); lane HERORING-1: an alpha decal's is
+			// left out with its error
+			return selAtlasPack.rect(f, r);
+		}, ds, selGrid, &error);
+		// once each: the grid is built again every client frame a selected decal throbs (lane HERORING-1: a skipped alpha decal's note would fill the list)
+		if (!error.empty() && drawErrors.size() < 100 && std::find(drawErrors.begin(), drawErrors.end(), error) == drawErrors.end())
 		{
 			drawErrors.push_back(error);
 		}
-		selGrid = MergeDecalGrid();
+		if (!built)
+		{
+			selGrid = MergeDecalGrid();
+		}
 	}
-	const int mode = selGrid.decals == 0 ? 0 : (selGrid.simple ? 2 : 1);
+	const int mode = SelectionDecalShaderMode(selGrid); // lane HERORING-1: + 4 when there are alpha decals (sel_alpha_at)
 	if (mode != 0 && rs)
 	{
 		if (fresh)
@@ -1706,7 +1653,7 @@ void HudDevice::drawSelectionDecals()
 			rs->global_shader_parameter_set("sel_alpha_ref", (float)selGrid.alphaRef);
 			selAlphaSet = selGrid.alphaRef;
 		}
-		decalsDrawn += (unsigned)selGrid.decals;
+		decalsDrawn += (unsigned)(selGrid.decals + selGrid.alphaDecals);
 	}
 	else if (mode != selMode && rs)
 	{
@@ -1857,7 +1804,6 @@ void HudDevice::freeSelectionDecals()
 		root->queue_free();
 	}
 	decalRootId = 0;
-	decalIds.clear();
 	if (radiusCursorBound)
 	{
 		if (RenderingServer *rs = RenderingServer::get_singleton())
@@ -2354,6 +2300,8 @@ Dictionary InGameHudNode::get_state() const
 		m["simple"] = d->hud->selectionDecalSettings().useSimpleMergeDecals;
 		m["composes"] = d->mergeComposes; // lane SELPERF-1
 		m["gpu_decals"] = (int64_t)d->selGrid.decals;
+		m["gpu_alpha_decals"] = (int64_t)d->selGrid.alphaDecals; // lane HERORING-1
+		m["gpu_max_alpha_per_cell"] = (int64_t)d->selGrid.maxAlphaPerCell;
 		m["gpu_cells"] = (int64_t)d->selGrid.cellsX * d->selGrid.cellsY;
 		m["gpu_max_per_cell"] = (int64_t)d->selGrid.maxPerCell;
 		m["gpu_uploads"] = d->selUploads;

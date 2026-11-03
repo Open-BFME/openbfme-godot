@@ -204,11 +204,12 @@ TEST_CASE("selwall1: a wall model's opaque surface draws the merge decals (W3DSh
 	CHECK(code.find("vec3 sel_ground = ALBEDO;") > code.find("ALBEDO = w3d_to_linear(clamp(cur.rgb, 0.0, 1.0));")); // tolerance: an order of two text positions, not a value
 	CHECK(code.find("#include \"res://shaders/selection_decals.gdshaderinc\"") != std::string::npos);
 	// only on the surface's upward faces (the walkable top, not the side faces)
-	CHECK(code.find("vec4 sel = normalize(v_wnrm).y >= SEL_WALL_MIN_UP ? sel_merge_at(vec3(sel_world.x, -sel_world.z, sel_world.y), true) : vec4(0.0);") != std::string::npos);
+	CHECK(code.find("bool sel_up = normalize(v_wnrm).y >= SEL_WALL_MIN_UP;") != std::string::npos);
+	CHECK(code.find("vec4 sel = sel_up ? sel_merge_at(sel_at, true) : vec4(0.0);") != std::string::npos);
 	CHECK(code.find("vec3 sel_world = (INV_VIEW_MATRIX * vec4(v_vpos, 1.0)).xyz;") != std::string::npos);
 	// over the lit colour, kept above the object shadows as on the terrain
-	CHECK(code.find("EMISSION = ALBEDO - sel_ground * (1.0 - sel.a) * shadow_enabled;") != std::string::npos);
-	CHECK(code.find("ALBEDO = vec3((1.0 - sel.a) * shadow_enabled);") != std::string::npos);
+	CHECK(code.find("EMISSION = ALBEDO - sel_ground * sel_keep * shadow_enabled;") != std::string::npos); // lane HERORING-1: the alpha decals' share too
+	CHECK(code.find("ALBEDO = vec3(sel_keep * shadow_enabled);") != std::string::npos);
 	// the generator ignores the bit for a blended surface, a translucent drawable's and an occlusion pass
 	W3DShaderKey blended = sel;
 	blended.Blend = W3D_GODOT_BLEND_MIX;

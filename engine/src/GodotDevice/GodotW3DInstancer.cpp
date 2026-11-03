@@ -942,9 +942,7 @@ int64_t W3DInstancer::add_model(const String &model_name)
 		{
 			Materials->Set_Selection_Decals(true);
 		}
-		BuildingSelectionDecals = true;
 		const int64_t id = add_model(model_name);
-		BuildingSelectionDecals = false;
 		if (Materials)
 		{
 			Materials->Set_Selection_Decals(false);
@@ -1065,10 +1063,6 @@ int64_t W3DInstancer::build_model(const String &model_name)
 			item.Node->set_multimesh(item.MM);
 			item.Node->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
 			item.Node->set_instance_shader_parameter("w3d_receive_shadows", ShadowReceiving);
-			if (BuildingSelectionDecals)
-			{
-				item.Node->set_layer_mask(item.Node->get_layer_mask() | kSelectionDecalLayer); // lane SELWALL-1: the hero selection decals project onto it
-			}
 			add_child(item.Node);
 			model->Draws.push_back(std::move(item));
 		}

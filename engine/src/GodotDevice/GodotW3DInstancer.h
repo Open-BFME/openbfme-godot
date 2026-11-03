@@ -52,9 +52,6 @@
 #include <unordered_map>
 #include <vector>
 
-// lane SELWALL-1: the render layer of the wall top and bridge models (W3DInstancer::Set_Build_Selection_Decals), the hero selection decals' second
-// receiver beside the terrain's 1 << 19 (GodotMapTerrain); 1 << 18 is the glow pass's (GodotGlowEffect.h)
-constexpr std::uint32_t kSelectionDecalLayer = 1u << 17;
 
 namespace godot
 {
@@ -133,8 +130,8 @@ public:
 	// The add clears them.
 	void Set_Build_Texture_Swaps(const std::vector<std::pair<std::string, std::string>> &swaps) { PendingSwaps = swaps; }
 	// lane SELWALL-1 (C++ only): the next add_model / add_model_colored builds a wall top or bridge model (KINDOF_WALK_ON_TOP_OF_WALL): its meshes are built
-	// again under a name with "#sel", their opaque surfaces draw the selection's merge decals (W3DShaderKey::SelectionDecals), and its draws are also on
-	// kSelectionDecalLayer, which the other selection decals project onto (GodotInGameHud.cpp). The add clears it
+	// again under a name with "#sel", their opaque surfaces draw the selection decals (W3DShaderKey::SelectionDecals: the merge decals and, lane HERORING-1,
+	// the alpha decals). The add clears it
 	void Set_Build_Selection_Decals(bool on) { PendingSelectionDecals = on; }
 	// "#tex&a=b&c=d" (lower case, in the state's order): the part of a model's cache name that its texture swaps make; empty without swaps
 	static std::string Texture_Swap_Suffix(const std::vector<std::pair<std::string, std::string>> &swaps);
@@ -368,7 +365,6 @@ private:
 	std::string BuildSuffix; // lane CAH-2: the colour set of the model being built (add_model_colored), part of the mesh cache key
 	std::vector<std::pair<std::string, std::string>> PendingSwaps; // stop S-5015: Set_Build_Texture_Swaps, taken by the next add_model
 	bool PendingSelectionDecals = false; // lane SELWALL-1: Set_Build_Selection_Decals, taken by the next add_model
-	bool BuildingSelectionDecals = false; // lane SELWALL-1: the model being built is a wall top or bridge (build_model's draws join kSelectionDecalLayer)
 	std::vector<std::unique_ptr<Model>> Models;
 	std::vector<Instance> Instances;
 	bool ShadowReceiving = false;

@@ -984,6 +984,18 @@ TEST_CASE("selwall1 retail: on Helm's Deep a hero on the Deeping Wall has a rais
 	CHECK(d[0].position.z == at.z);
 	CHECK(d[0].raised);
 	CHECK(at.z - g.game->logic().getGroundHeight(at.x, at.y) >= kSelectionDecalMaxHeight); // tolerance: the wall top stands about 23 over the courtyard; raised needs 20 or more
+	// lane HERORING-1: the hero's SHADOW_ALPHA_DECAL goes into the shaders' grid as a raised alpha decal (record 0, its entries -1: the terrain leaves it out)
+	CHECK(d[0].style == 0x20u);
+	MergeDecalGrid grid;
+	std::string gridError;
+	REQUIRE_MESSAGE(BuildMergeDecalGrid(d, [](const std::string &, MergeDecalAtlasRect &r) { r = { 0, 0, 64, 64 }; return true; }, settings, grid, &gridError), gridError);
+	CHECK(grid.decals == 0);
+	CHECK(grid.alphaDecals == 1);
+	CHECK(SelectionDecalShaderMode(grid) == 4);
+	const float *cell = &grid.texels[(size_t)grid.cellOffset * 4];
+	REQUIRE(cell[3] == 1.0f);
+	CHECK(grid.texels[((size_t)grid.indexOffset + (size_t)cell[2]) * 4 + 3] == -1.0f);
+	CHECK(grid.texels[7] == at.z);
 }
 
 TEST_CASE("wall1 walls retail: on Helm's Deep a horde ordered onto a wall top gets its members up there")

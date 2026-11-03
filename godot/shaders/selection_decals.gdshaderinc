@@ -13,9 +13,9 @@
 // EvaluateMergeDecalGrid is this file's arithmetic in C++ (engine/tests/test_selperf1_merge_grid.cpp compares it with ComposeMergeDecals).
 
 global uniform sampler2D sel_data;  // RGBA32F, 1024 texels a row
-global uniform sampler2D sel_atlas; // RGBA8: every merge decal texture of the selection
+global uniform sampler2D sel_atlas; // RGBA8: every merge decal texture of the selection (lane HERORING-1: and every alpha decal's)
 global uniform vec4 sel_grid;       // min x, min y, cell size, cells x
-global uniform vec4 sel_grid2;      // cells y, cell offset, index offset, mode (0 nothing, 1 the two stencil passes, 2 the simple pass)
+global uniform vec4 sel_grid2;      // cells y, cell offset, index offset, mode (0 nothing, 1 the two stencil passes, 2 the simple pass; + 4 with alpha decals)
 global uniform float sel_alpha_ref; // the alpha test's reference (0..255)
 // lane SELWALL-1: the decal's height range on a wall surface (engine GameClient/SelectionDecals.h kSelectionDecalMaxHeight; RotWK's descriptor + 0x20)
 const float SEL_MAX_HEIGHT = 20.0;
@@ -46,7 +46,7 @@ vec4 sel_bilinear(vec4 rect, vec2 uv) {
 // is -(i + 1)), a wall top or bridge model (`wall` true, W3DShaderKey::SelectionDecals) takes a decal only within 20 (kSelectionDecalMaxHeight) of the
 // point's height. Their colour (retail space, 0..1) and how much of the surface it covers (0 nothing, 1 opaque)
 vec4 sel_merge_at(vec3 w, bool wall) {
-	int mode = int(sel_grid2.w);
+	int mode = int(sel_grid2.w) & 3; // lane HERORING-1: + 4 when there are alpha decals (sel_alpha_at)
 	if (mode == 0) {
 		return vec4(0.0);
 	}
@@ -97,6 +97,53 @@ vec4 sel_merge_at(vec3 w, bool wall) {
 		}
 	}
 	return (drawn && !covered) ? best : vec4(0.0);
+}
+
+// lane HERORING-1: the alpha decals (a hero's ring, SHADOW_ALPHA_DECAL) at the SAGE point `w` of a surface, blended in their list order as RotWK's
+// flushDecals draws them before the merge list (RW 0x509A1F: ShaderClass 0x1198B3, SRC_ALPHA / ONE_MINUS_SRC_ALPHA, no alpha test; texture x diffuse,
+// MODULATE RW 0x5373FC; the diffuse is the colour with the opacity as alpha, RW 0x73228B): over a surface colour C each one gives C (1 - a) + c a with
+// a = texel alpha x opacity, c = texel x colour. Returned premultiplied: rgb the decals' share (retail space, 0..1), a how much of the surface is covered,
+// so the surface becomes C (1 - result.a) + result.rgb. The same raised and wall rules as sel_merge_at
+vec4 sel_alpha_at(vec3 w, bool wall) {
+	if (int(sel_grid2.w) < 4) {
+		return vec4(0.0);
+	}
+	vec2 g = (w.xy - sel_grid.xy) / sel_grid.z;
+	if (g.x < 0.0 || g.y < 0.0 || g.x >= sel_grid.w || g.y >= sel_grid2.x) {
+		return vec4(0.0);
+	}
+	vec4 cell = sel_texel(int(sel_grid2.y) + int(g.y) * int(sel_grid.w) + int(g.x));
+	int first = int(cell.z);
+	int count = int(cell.w);
+	vec3 cd = vec3(0.0);
+	float keep = 1.0;
+	for (int i = 0; i < count; i++) {
+		vec4 e = sel_texel(int(sel_grid2.z) + first + i); // x, y, size, decal
+		vec2 d = w.xy - e.xy;
+		if (dot(d, d) > 0.5 * e.z * e.z) {
+			continue; // outside the turned square's circumcircle
+		}
+		if (!wall && e.w < 0.0) {
+			continue;
+		}
+		int di = int(e.w < 0.0 ? -e.w - 1.0 : e.w) * 4;
+		vec4 rec1 = sel_texel(di + 1); // r, g, b, z
+		if (wall && !(abs(w.z - rec1.w) <= SEL_MAX_HEIGHT)) {
+			continue;
+		}
+		vec4 rec3 = sel_texel(di + 3); // the turn's cosine and sine
+		float co = rec3.x;
+		float si = rec3.y;
+		vec2 uv = vec2((d.x * co + d.y * si) / e.z + 0.5, (d.x * si - d.y * co) / e.z + 0.5);
+		if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+			continue;
+		}
+		vec4 s = sel_bilinear(sel_texel(di + 2), uv);
+		float a = s.a * sel_texel(di).w / 255.0;
+		cd = cd * (1.0 - a) + s.rgb * rec1.rgb / 255.0 * a;
+		keep *= 1.0 - a;
+	}
+	return vec4(cd, 1.0 - keep);
 }
 
 // the terrain's (the SAGE point x, y)

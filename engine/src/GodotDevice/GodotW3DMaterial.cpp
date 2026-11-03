@@ -203,7 +203,8 @@ void W3D_Ensure_Light_Globals()
 	{
 		rs->global_shader_parameter_add(StringName(String("w3d_sway") + String::num_int64(i)), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4());
 	}
-	// lane SELPERF-1: the selection's merge decals the terrain shader draws (godot/shaders/selection_decals.gdshaderinc; the HUD sets them, mode 0 = none)
+	// lane SELPERF-1: the selection's merge decals the terrain shader draws (godot/shaders/selection_decals.gdshaderinc; the HUD sets them, mode 0 = none;
+	// lane SELWALL-1 / HERORING-1: the wall models' shaders too, and the alpha decals)
 	rs->global_shader_parameter_add(StringName("sel_data"), RenderingServer::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
 	rs->global_shader_parameter_add(StringName("sel_atlas"), RenderingServer::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
 	rs->global_shader_parameter_add(StringName("sel_grid"), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4(0.0f, 0.0f, 1.0f, 0.0f));

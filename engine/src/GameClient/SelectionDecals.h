@@ -40,8 +40,9 @@
 //   (half extents sx, sy, the height) around the decal (RW 0x50C79C .. 0x50C7E7), every triangle of them, top-down from the decal's place; the decal stands
 //   at Object's visual position (RW 0x68DB35: a contained object's container's; an AIRBORNE_TARGET object's at the height of its layer, RW 0x68DB8B ..
 //   0x68DBE1; else the drawable's), so a unit on a wall top has it at the wall's height and a flying unit on the ground or wall under it.
-// INFERENCE (stop S-2522): the device draws each other decal as a projected texture of the given size at the drawable's position, tinted by the colour at the
-//   opacity (Texture2 of a non-merge decal is not used; lane SELWALL-1: on every wall top / bridge model within 20 of the decal's height, not RotWK's
+// INFERENCE (stop S-2522): the device draws each other decal (lane HERORING-1: an alpha decal, in the shaders' grid with the merge decals, blended as
+//   RotWK's ShaderClass 0x1198B3 before them) as a texture of the given size at the drawable's position, tinted by the colour at the opacity (Texture2 of
+//   a non-merge decal is not used; lane SELWALL-1: on every wall top / bridge model within 20 of the decal's height, not RotWK's
 //   caster set (at most 16 objects near the decal, their walkway sub-meshes RampMesh1 / RampMesh2 / WallBoundsMesh / RaisedWallMesh, RW 0x6729A3 /
 //   0x6729E9 / 0x672943 / 0x672973; the port: the upward faces of the visible models); its terrain part where it is not raised, MarkRaisedSelectionDecals with
 //   the terrain's height as the floor, no terrain bridges, S-161; the height range is the constant 20, kSelectionDecalMaxHeight: no retail selectable
@@ -166,8 +167,10 @@ struct MergeDecalAtlasRect
 };
 
 // lane SELPERF-1: the merge decals as the terrain shader reads them (godot/shaders/selection_decals.gdshaderinc): RGBA32F texels, kWidth a row:
-//   decal i at texels 4i .. 4i + 3: (x, y, size, opacity 0..255), (r, g, b 0..255, z), Texture's atlas rect (x, y, w, h), Texture2's (w 0 in the simple mode);
-//   cell c of the grid at cellOffset + c: (first, count) into the index list; the index list's entry j at indexOffset + j: (x, y, size, decal) (the place
+//   decal i at texels 4i .. 4i + 3: (x, y, size, opacity 0..255), (r, g, b 0..255, z), Texture's atlas rect (x, y, w, h), Texture2's (w 0 in the simple mode;
+//   lane HERORING-1: an alpha decal's (cos, sin) of its turn, 0, 0); the merge decals are records 0 .. decals - 1, the alpha decals the next alphaDecals;
+//   cell c of the grid at cellOffset + c: (first, count) into the index list (lane HERORING-1: then (alphaFirst, alphaCount), its alpha entries, which follow
+//   every merge entry); the index list's entry j at indexOffset + j: (x, y, size, decal) (the place
 //   repeated: the shader's bounds test reads one texel; lane SELWALL-1: decal is -(i + 1) for a raised decal i, which the terrain skips before any other
 //   fetch), each cell's decals in the list's order (pass 1's "the last disc drawn wins" and the simple pass's "the first one wins")
 struct MergeDecalGrid
@@ -179,8 +182,10 @@ struct MergeDecalGrid
 	float minX = 0.0f, minY = 0.0f, cellSize = 1.0f;
 	int cellsX = 0, cellsY = 0;
 	int cellOffset = 0, indexOffset = 0;
-	size_t decals = 0;     ///< how many merge decals went in (0: the shader draws nothing)
+	size_t decals = 0;     ///< how many merge decals went in (records 0 .. decals - 1)
 	int maxPerCell = 0;    ///< the longest cell list (the shader's loop)
+	size_t alphaDecals = 0; ///< lane HERORING-1: how many alpha decals went in (records decals .. decals + alphaDecals - 1)
+	int maxAlphaPerCell = 0; ///< lane HERORING-1: the longest alpha list of a cell
 	bool simple = false;   ///< UseSimpleMergeDecals: one blended pass
 	int alphaRef = 0x60;   ///< the alpha test's reference (0..255)
 };
@@ -211,8 +216,11 @@ private:
 	int m_height = 0;
 };
 
-// the decals of `decals` whose Style has SHADOW_MERGE_DECAL into `out`; `rect` answers a texture's atlas rectangle (false: not in the atlas, an error).
-// False with `error` when a texture is missing (as ComposeMergeDecals).
+// the decals of `decals` whose Style has SHADOW_MERGE_DECAL into `out` and, lane HERORING-1, the alpha decals (SHADOW_ALPHA_DECAL 0x20, SHADOW_ALPHA_DECAL_DYNAMIC 0x400);
+// `rect` answers a texture's atlas rectangle (false: not in the atlas, an error). False with `error` when a merge decal's texture is missing (as
+// ComposeMergeDecals); an alpha decal whose texture is missing, or a decal of another style, is left out with its error in `error` (true)
+// lane HERORING-1: the shaders' mode (sel_grid2.w): the merge decals' (0 none, 1 the two passes, 2 the simple pass), + 4 when there are alpha decals
+int SelectionDecalShaderMode(const MergeDecalGrid &grid);
 bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::function<bool(const std::string &, MergeDecalAtlasRect &)> &rect,
 	const SelectionDecalSettings &settings, MergeDecalGrid &out, std::string *error);
 
@@ -229,3 +237,10 @@ enum class DecalReceiver
 };
 // the shader's result at the world point (x, y, z) of `receiver` (selection_decals.gdshaderinc sel_merge_at, in C++); Terrain ignores z and is the above
 bool EvaluateMergeDecalGrid(const MergeDecalGrid &grid, const DecalImage &atlas, float x, float y, float z, DecalReceiver receiver, std::uint8_t rgba[4]);
+
+// lane HERORING-1: the surface's colour bytes `surface` (gamma space) under every selection decal at (x, y, z) of `receiver`, as the shaders draw it
+// (selection_decals.gdshaderinc sel_alpha_at, then sel_merge_at): the alpha decals blended in their list order, then the merge result over them. False
+// where no decal covers the point (out = surface). The merge result is blended in gamma space here; the shaders mix it in linear space: the same in the two
+// passes (it covers 0 or 1), not in the simple pass (UseSimpleMergeDecals, a blended pass)
+bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas, float x, float y, float z, DecalReceiver receiver,
+	const std::uint8_t surface[3], std::uint8_t out[3]);
