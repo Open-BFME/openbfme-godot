@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "HordeCompleteTestUtil.h"
 #include "Common/Upgrade.h"
 #include "ObjectTestUtil.h"
 
@@ -216,8 +217,10 @@ struct LogicWorld
 	UpgradeCenter upgradeCenter;
 	UpgradeCenter *savedUpgradeCenter = TheUpgradeCenter;
 
-	LogicWorld(RandomAlgorithm rng = RandomAlgorithm::ZH_CarryChain, const char *extraTemplates = nullptr)
+	// bfme1: the objects are BFME1 templates (objtest::World(true): their bfme1Data() answers true)
+	LogicWorld(RandomAlgorithm rng = RandomAlgorithm::ZH_CarryChain, const char *extraTemplates = nullptr, bool bfme1 = false)
 		: hooks(log)
+		, w(bfme1)
 		, templates(w.keys)
 		, players(w.keys, templates, teams)
 	{
@@ -275,12 +278,21 @@ struct LogicWorld
 		return script;
 	}
 
-	Object *make(const std::string &templateName, Team *team = nullptr, ObjectID id = INVALID_ID)
+	// a horde makes its members in onBuildComplete (RotWK HordeContain RW 0x8718ED), which every game creator runs once it has placed the object (the map loop
+	// RW 0x62DCE4: setOrientation, setPosition, then RW 0x68D252). make completes a horde at once, at the origin, unless the caller places it first and then
+	// calls completeHorde (spawn helpers); a test that moves a complete horde uses Object::teleportTo (its members come along, RW 0x86D881)
+	Object *make(const std::string &templateName, Team *team = nullptr, ObjectID id = INVALID_ID, bool complete = true)
 	{
 		const ThingTemplate *t = w.get(templateName);
 		REQUIRE_MESSAGE(t != nullptr, "template " << templateName);
-		return logic->newObject(t, team, ObjectStatusMaskType{}, id);
+		Object *o = logic->newObject(t, team, ObjectStatusMaskType{}, id);
+		if (complete)
+		{
+			completeHorde(o);
+		}
+		return o;
 	}
+	static void completeHorde(Object *o) { testutil::completeHorde(o); }
 	Team *teamOf(const std::string &player) { return players.findPlayerWithName(player)->getDefaultTeam(); }
 	~LogicWorld() { TheUpgradeCenter = savedUpgradeCenter; }
 	// several worlds alive: the one about to be used selects its center

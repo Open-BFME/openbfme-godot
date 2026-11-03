@@ -239,7 +239,7 @@ TEST_CASE("replay open: foreign profiles, unsupported formats and invalid build 
 	auto future = recording(h);
 	future[8] = 99;
 	CHECK_FALSE(ReplayFile::parse(future, file, &error));
-	CHECK(error == "replay version 99 (this build reads 5 .. 11)");
+	CHECK(error == "replay version 99 (this build reads 5 .. 12)");
 	auto bad = h;
 	bad.buildVersion = "bad\nversion";
 	CHECK_FALSE(ReplayFile::parse(recording(bad), file, &error));

@@ -8,6 +8,7 @@
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/Team.h"
+#include "GameClient/LinearCampaign.h"
 #include "GameClient/LiveGame.h"
 #include "GameClient/MapChunks.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
@@ -44,6 +45,45 @@ struct Mission
 		o.mapName = mapName;
 		o.campaign = true;
 		o.simulationProfile = profile;
+		std::string error;
+		REQUIRE_MESSAGE(game->load(o, &error), error);
+		take();
+	}
+	// lane BFME2CAMP1: mission `index` of the campaign `campaign` (TheLinearCampaignManager's) as GameWorld.start_campaign_mission starts it: the
+	// campaign's difficulty and the campaign's carry-over (GameLogic/CampaignCarryover.h): `carry` (a previous mission's won state), else for the first
+	// mission the campaign's fresh records
+	void loadCampaignMission(starttest::Shared &s, const std::string &campaign, int index, int difficulty = 1, const CampaignCarryover::State *carry = nullptr)
+	{
+		const LinearCampaign *c = s.world->linearCampaigns().find(campaign);
+		REQUIRE_MESSAGE(c != nullptr, campaign);
+		REQUIRE((size_t)index < c->missions.size()); // tolerance: a precondition (the mission exists), not a measured value
+		source.reset(new ArchiveW3DFileSource(*s.mount->fs));
+		assets.reset(new WW3DAssetManager(*source));
+		game.reset(new LiveGame(*s.world, *s.mount->fs, *assets, s.options));
+		LiveGame::Options o;
+		o.mapName = c->missions[(size_t)index].map;
+		o.campaign = true;
+		o.difficulty = difficulty;
+		if (carry || index == 0)
+		{
+			o.campaignCarryover = true;
+			o.carryover = carry ? *carry : CampaignCarryover::beginCampaign(c->carryoverUnits);
+			o.carryoverDelayed = c->missions[(size_t)index].delayCarryover;
+		}
+		std::string error;
+		REQUIRE_MESSAGE(game->load(o, &error), error);
+		take();
+	}
+	// lane BFME2CAMP1: a tutorial map as AptMainMenu::OnTutorial starts it (RW 0x91B825): a new single player game of mode 6 with the map's scripts
+	void loadTutorial(starttest::Shared &s, const std::string &mapName)
+	{
+		source.reset(new ArchiveW3DFileSource(*s.mount->fs));
+		assets.reset(new WW3DAssetManager(*source));
+		game.reset(new LiveGame(*s.world, *s.mount->fs, *assets, s.options));
+		LiveGame::Options o;
+		o.mapName = mapName;
+		o.campaign = true;
+		o.tutorial = true;
 		std::string error;
 		REQUIRE_MESSAGE(game->load(o, &error), error);
 		take();
@@ -123,6 +163,11 @@ struct Mission
 	void place(Object &o, Coord3D p)
 	{
 		p.z = logic().getGroundHeight(p.x, p.y);
+		if (o.getContain() && o.getContain()->getHordeContainInterface())
+		{
+			o.teleportTo(&p, true); // a horde's move leaves its members (RW 0x871536); the teleport brings them (RW 0x86D881)
+			return;
+		}
 		o.setPosition(&p);
 	}
 	// kills an object (a horde through its members: its ImmortalBody does not die, the horde goes with its last member)

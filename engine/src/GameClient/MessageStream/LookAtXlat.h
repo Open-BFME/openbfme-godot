@@ -68,7 +68,7 @@ public:
 	// the client frame the translator counts (middle click timing, last mouse move)
 	unsigned clientFrame() const { return m_frame; }
 
-	// lane BACKLOG3 (S-454): TheKeyboard's state of a DirectInput key (RW 0x63F0E2; BFME2 decomp KeyboardKeyAccessors.cpp, tier A). The end of the tick
+	// lane BACKLOG3 (S-454): TheKeyboard's state of a DirectInput key (RW 0x63F0E2; BFME2 decomp Keyboard.cpp, tier A). The end of the tick
 	// (RW 0x83BAF8 ..) drops a held scroll / rotate / zoom key the keyboard no longer has down, so a release the stream never carried (the keyboard's reset
 	// when the window loses the focus) cannot leave the camera moving. Unset: every key the translator holds counts as down
 	void setKeyboard(std::function<bool(int)> isKeyDown) { m_isKeyDown = std::move(isKeyDown); }

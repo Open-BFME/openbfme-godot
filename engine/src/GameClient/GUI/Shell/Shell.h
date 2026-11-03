@@ -87,6 +87,9 @@ public:
 	const std::string &backdropImage() const { return m_backdropImage; }
 	// GameData's ShellMapOn of `gameDataText` (data\ini\gamedata.ini); false + *error when the GameData block has no such key or a bad value
 	static bool readShellMapOn(const std::string &gameDataText, bool &on, std::string *error);
+	// lane BFME2MODE-0: the same in BFME2 1.06 data (bfme2Data), whose gamedata.ini has no ShellMapOn: an absent key is GlobalData's constructor default, 1
+	// (BFME2 0x6369FD in GlobalData::GlobalData 0x63631C; RW 0x64308E writes 1 too, but RotWK's data sets the key, and RotWK data without it stays an error)
+	static bool readShellMapOnForData(const std::string &gameDataText, bool bfme2Data, bool &on, std::string *error);
 	// lane CAMP-2: any Bool field of the GameData block (the last one wins); false + *error when it is there but not Yes / No; `found` false when absent
 	static bool readGameDataBool(const std::string &gameDataText, const std::string &field, bool &value, bool &found, std::string *error);
 

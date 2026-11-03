@@ -27,13 +27,18 @@
 //
 // Cliff cells carry the class block their UVs must wrap into (ClassWrapRect): the UV of a cell that straddles
 // the class edge is interpolated unwrapped and wrapped PER PIXEL (wrap_into_class), so no texel of another
-// class is ever read; the mip level comes from the unwrapped UV (continuous derivatives).
+// class is ever read; the filter footprint comes from the unwrapped UV (continuous derivatives).
 //
-// Not wired here (reported by the builder, stop S-031): the Taint mask path (albedo = base), the
-// shadow-receiving variants and the shroud texture (shroud = 1).
+// Filtering (lane TERRAIN-SAMPLING): the Base / Normal samplers are 8x anisotropic in retail (terrain.fxo); see atlas_gradients(). The shroud texel is the 4-bit red
+// nibble of W3DShroud's A4R4G4B4 pixel (RW 0x47266B; engine ShroudTexel.h), sampled bilinearly with clamp (ShroudSampler).
+//
+// Not wired here (reported by the builder, stop S-031): the Taint mask path (albedo = base) and the shadow-receiving variants.
 
-uniform sampler2D base_atlas : filter_linear_mipmap, repeat_disable, hint_default_white;
-uniform sampler2D normal_atlas : filter_linear_mipmap, repeat_disable, hint_default_black;
+// lane TERRAIN-SAMPLING: retail's BaseSampler* and NormalSampler* (terrain.fxo, Clamped and Wrapped) are MinFilter ANISOTROPIC (3), MagFilter and MipFilter LINEAR (2),
+// MaxAnisotropy 8; only the _L (low detail) samplers are linear. The anisotropic hint makes the hardware filter along the footprint's major axis; the level it
+// takes is the viewport's (the OpenBFMEAnisotropic option), and atlas_gradients() caps the footprint's ratio at retail's 8 (stop S-031).
+uniform sampler2D base_atlas : filter_linear_mipmap_anisotropic, repeat_disable, hint_default_white;
+uniform sampler2D normal_atlas : filter_linear_mipmap_anisotropic, repeat_disable, hint_default_black;
 uniform sampler2D cloud_tex : filter_linear_mipmap, repeat_enable, hint_default_white;
 uniform sampler2D macro_tex : filter_linear_mipmap, repeat_enable, hint_default_white;
 // The per-cell layer records (TerrainComposite.h): RGBA32F, 9 texels per record, 512 records per row.
@@ -41,8 +46,10 @@ uniform sampler2D records : filter_nearest, repeat_disable, hint_default_black;
 
 uniform vec2 atlas_size = vec2(2048.0, 2048.0);
 // ZH builds 3 mip levels (MIP_LEVELS_3) so mips never bleed past the 4-px class gutters; the level of
-// detail is computed here and clamped to the same range.
+// detail is clamped to the same range (atlas_gradients).
 uniform float max_atlas_lod = 2.0;
+// terrain.fxo MaxAnisotropy of the Base / Normal samplers
+uniform float max_anisotropy = 8.0;
 
 uniform vec3 sun_dir_sage = vec3(0.0, 0.0, 1.0); // toward the light (see stop S-033: -lightPos)
 uniform vec3 sun_color = vec3(1.0);
@@ -74,8 +81,8 @@ uniform vec2 map_size = vec2(1.0);                    // whole bordered map in w
 uniform float map_border_width = 0.0;                 // border in world units (INFERRED)
 uniform float map_cell_size = 10.0;
 uniform float shroud = 1.0;
-// VIS-1: the local player's shroud, one texel per shroud cell (L8 = the cell's GameData alpha: ClearAlpha / FogAlpha / ShroudAlpha, 0 opaque, 255 clear),
-// over the world rectangle origin .. origin + extent (SAGE x, y); the colour is multiplied by ShroudColor * level (INFERENCE, stop S-567)
+// VIS-1: the local player's shroud, one texel per shroud cell (L8 = the red nibble times 17 of the cell's A4R4G4B4 texel, W3DShroud RW 0x47266B: GameData ClearAlpha / FogAlpha / ShroudAlpha, 0 opaque, 255 clear, x ShroudColor, kept to 4 bits),
+// over the world rectangle origin .. origin + extent (SAGE x, y); the colour is multiplied by that texel (shroud_color stays white: ShroudColor is inside the texel; stop S-567)
 uniform sampler2D shroud_tex : filter_linear, repeat_disable, hint_default_white;
 uniform vec2 shroud_origin = vec2(0.0);
 uniform vec2 shroud_extent = vec2(1.0);
@@ -145,12 +152,28 @@ vec4 weather_vertex_color(vec3 nrm, vec4 baked) {
 	return vec4(c, baked.a);
 }
 
-float atlas_lod(vec2 uv) {
-	vec2 p = uv * atlas_size;
-	vec2 dx = dFdx(p);
-	vec2 dy = dFdy(p);
-	float d = max(dot(dx, dx), dot(dy, dy));
-	return clamp(0.5 * log2(max(d, 0.00000001)), 0.0, max_atlas_lod);
+// The explicit gradients (in UV units) the anisotropic sample takes. The footprint is the one the screen-space derivatives of the unwrapped UV give; the
+// hardware reads N = min(ceil(major / minor), level) texels along the major axis at LOD log2(major / N) (Vulkan 16.9 / D3D9's anisotropic filter). Retail's
+// MaxAnisotropy is 8: a footprint thinner than 1:8 has its minor axis lengthened to major / 8, so a viewport level of 16 reads no more than retail's 8 probes.
+// ZH's three mip levels (max_atlas_lod) bound the LOD: a footprint that would take a deeper one is shrunk to it, because a deeper mip bleeds past the class gutters.
+void atlas_gradients(vec2 uv, out vec2 gx, out vec2 gy) {
+	vec2 dx = dFdx(uv) * atlas_size;
+	vec2 dy = dFdy(uv) * atlas_size;
+	float lx = length(dx);
+	float ly = length(dy);
+	float major = max(lx, ly);
+	float minor = min(lx, ly);
+	if (minor * max_anisotropy < major) {
+		float grow = major / (max_anisotropy * max(minor, 0.00001));
+		dx = (lx < ly) ? dx * grow : dx;
+		dy = (lx < ly) ? dy : dy * grow;
+		minor = major / max_anisotropy;
+	}
+	float probes = min(ceil(major / max(minor, 0.00001)), max_anisotropy);
+	float lod = log2(max(major / probes, 0.00000001));
+	float shrink = lod > max_atlas_lod ? exp2(max_atlas_lod - lod) : 1.0;
+	gx = dx * shrink / atlas_size;
+	gy = dy * shrink / atlas_size;
 }
 
 // Reference: TerrainUv::wrapIntoClass (WorldHeightMapUV.cpp). GLSL mod() takes the sign of the divisor.
@@ -190,13 +213,13 @@ vec4 record_texel(int rec, int k) {
 }
 
 // One layer's lit colour in retail (gamma) space, before cloud / macro / fog.
-vec3 shade_layer(vec2 uv_unwrapped, vec4 rect, vec4 vcol, float lod) {
+vec3 shade_layer(vec2 uv_unwrapped, vec4 rect, vec4 vcol, vec2 gx, vec2 gy) {
 	vec2 uv = wrap_into_class(rect, uv_unwrapped);
-	vec3 albedo = textureLod(base_atlas, uv, lod).rgb;
+	vec3 albedo = textureGrad(base_atlas, uv, gx, gy).rgb;
 	if (debug_mode == 7) {
 		return albedo;
 	}
-	vec4 nm = textureLod(normal_atlas, uv, lod);
+	vec4 nm = textureGrad(normal_atlas, uv, gx, gy);
 	vec2 nxy = 2.0 * nm.xy - 1.0;
 	float nz = sqrt(max(1.0 - dot(nxy, nxy), 0.0));
 	vec3 N = normalize(vec3(nxy, nz));
@@ -237,16 +260,17 @@ vec3 terrain_output(vec2 uv0, vec4 vcol) {
 	vec4 rect1 = record_texel(rec, 3);
 	vec4 rect2 = record_texel(rec, 7);
 
-	float lod0 = atlas_lod(uv0);
-	float lod1 = atlas_lod(uv1);
-	float lod2 = atlas_lod(uv2);
+	vec2 g0x, g0y, g1x, g1y, g2x, g2y;
+	atlas_gradients(uv0, g0x, g0y);
+	atlas_gradients(uv1, g1x, g1y);
+	atlas_gradients(uv2, g2x, g2y);
 
-	vec3 comp = shade_layer(uv0, v_wrap, vcol, lod0);
+	vec3 comp = shade_layer(uv0, v_wrap, vcol, g0x, g0y);
 	if (has1) {
-		comp = mix(comp, shade_layer(uv1, rect1, vcol, lod1), alpha1);
+		comp = mix(comp, shade_layer(uv1, rect1, vcol, g1x, g1y), alpha1);
 	}
 	if (has2) {
-		comp = mix(comp, shade_layer(uv2, rect2, vcol, lod2), alpha2);
+		comp = mix(comp, shade_layer(uv2, rect2, vcol, g2x, g2y), alpha2);
 	}
 	if (debug_mode == 4) { return vec3(fract(uv0 * 16.0), 0.0); }
 	if (debug_mode == 7) { return retail_output(clamp(comp, 0.0, 1.0)); }

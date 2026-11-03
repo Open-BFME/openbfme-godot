@@ -31,7 +31,7 @@
 // apparent controller is the owner), the radar, the passenger damage of DamagePercentToUnits (contain slot 0x148), healSingleObject (HealObjects: no 2.01 garrison
 // sets it, reported when one does), MobileGarrison (RW 0x87C273), the killing branch of GarrisonContain::onRemoving (KillPassengersOnDeath, RW 0x87C09A: the fling
 // and kill of an ejected rider), the contain's rally point of the exit path (exit slots 0x1C / 0x20, S-1620; the exit itself, RW 0x87CA2B with the cell test
-// RW 0x6E8707 and the adjustment RW 0x6F3C87, is lane GARRISON-3's). Lane BACKLOG-1 (BFME2 decomp GarrisonContainValidateRallyPoint.cpp, tier A for RW
+// RW 0x6E8707 and the adjustment RW 0x6F3C87, is lane GARRISON-3's). Lane BACKLOG-1 (BFME2 decomp GarrisonContain.cpp, tier A for RW
 // 0x87B3EC; the decomp's removeInvalidObjectsFromGarrisonPoints attempt for RW 0x87C5D8): the exit position search of removeAllContained (validateRallyPoint: two
 // findPositionAround calls, the second's random start angle draws the logic RNG) and the points' weapon test RW 0x441B59 (the current weapon's MeleeWeapon). Determinism: the
 // contained list keeps insertion order, the points are an array, the members on the way a set ordered by id.

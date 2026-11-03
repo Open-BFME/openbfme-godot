@@ -109,9 +109,14 @@ Dictionary GameWorld::get_invisibility(int64_t id, int64_t enemy) const
 	const ::Player *e = enemy >= 0 ? m_game->players().getNthPlayer((int)enemy) : nullptr;
 	d["stealthed_for_enemy"] = e ? InvisibilityManager::isStealthedAndUndetected(*o, e) : false;
 	// the opacity factor the client draws now (GameClient/StealthLook on the presented snapshot)
-	const std::shared_ptr<const LogicSnapshot> presented = m_game->presentedSnapshot();
-	const ObjectSnapshot *rec = presented ? presented->find(o->getID()) : nullptr;
-	d["draw_opacity"] = rec ? (double)StealthLook::opacity(*rec, *presented, m_stealthClockMs) : 1.0;
+	const Drawable *draw = m_game->drawables().findByObject(o->getID()); // lane STEALTHLOOK-1: the drawable's stepped opacity (+0xB4)
+	d["draw_opacity"] = draw ? (double)draw->stealthOpacity() : 1.0;
+	d["draw_hidden"] = draw ? draw->stealthHidden() : false; // lane STEALTHLOOK-1: +0x43E (look 5 on a drawable that can hide)
+	d["draw_look"] = draw ? (int64_t)draw->stealth().look : (int64_t)-1;   // lane STEALTHLOOK-1: the drawable's +0x164
+	d["cannot_hide"] = draw ? draw->cannotHideByStealth() : false;         // lane STEALTHLOOK-1: +0x3AB
+	const std::shared_ptr<const LogicSnapshot> snap = m_game->presentedSnapshot();
+	const ObjectSnapshot *rec = snap ? snap->find(o->getID()) : nullptr;
+	d["snap_look"] = rec ? (int64_t)rec->stealthLook : (int64_t)-1;
 	return d;
 }
 

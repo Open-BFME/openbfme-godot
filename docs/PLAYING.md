@@ -752,10 +752,12 @@ These are the open gaps a player is most likely to notice. Each one is a
 recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
 
 **Not available yet**
-- Your heroes' experience does not carry over from one campaign mission to
-  the next yet (S-4903), and the campaign's saves are OpenBFME's own, not the
-  original game's (S-1360).
-- War of the Ring.
+- Heroes carry over from one campaign mission to the next with their
+  experience, but the campaign's saves are OpenBFME's own, not the original
+  game's: a campaign saved in the original game cannot be continued (S-1360).
+- War of the Ring can be played alone or over LAN, and saved and resumed,
+  but not online yet (S-4075). A battle with more armies than its map has
+  start positions is decided automatically instead of being fought (S-1342).
 - Online play is a test feature; Quick Match, tournaments, statistics and
   friends have service-backed implementations, but War of the Ring online
   is not available (see [Online play](#online-play-test-feature)).
@@ -763,20 +765,20 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   but its language archives are not checked: the game shows a warning when it
   starts (once per install, with *Copy details*; S-1561).
   OpenBFME's own texts (the online screens, the rules tab) are English only.
-  Players whose games are in different languages cannot join each other's
-  games or play each other's replays: the language archives are part of the
-  game files the lobby and replays compare, although they do not change the
-  game itself.
+  Players whose games are in different languages may not be able to join
+  each other's games or play each other's replays.
 
 **Looks or sounds different**
 - Team colours on units and buildings use the original's blend, but which
   colour a map without one gets is an educated guess (S-119).
 - The computer opponent builds, attacks and finishes games, and uses its
-  heroes, spell book and powers, but it does not yet defend or expand the way
-  the original does, and it skips some powers (S-413, S-415, S-417, S-1421).
-- Ordinary unit and building shadows are not drawn yet (S-3304). Placement
-  previews can draw authored decal shadows, including area-of-effect decals;
-  that is not general model-shadow support.
+  heroes, spell book and powers, but it does not yet defend its base the way
+  the original does, it expands to a second base with only some factions, and
+  it skips some powers (S-417, S-1421).
+- Units, buildings and trees cast shadows, but they are not yet drawn exactly
+  like the original's, and a building's placement preview casts no model
+  shadow (S-3304). Placement previews can draw authored decal shadows,
+  including area-of-effect decals.
 - A destroyed enemy building out of your sight disappears at once instead of
   staying in the fog until you look again (S-561).
 - Some sounds are missing: units being damaged, scripted music and parts of
@@ -786,19 +788,16 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   click targets can be slightly off (S-130, S-455).
 
 **Menus**
-- Menus support keyboard navigation (arrows, Enter, Esc and PageUp/PageDown)
-  and controller navigation (D-pad/left stick, A/B and shoulder buttons).
-  This does not add controller orders during gameplay.
-- Skirmish's profile statistics page uses recorded local game results, not
-  placeholder labels.
-- The graphics detail settings set the particle limit, texture quality and
-  health bars, but OpenBFME doesn't draw shadows yet, and the model,
-  animation, terrain, water and shader detail rows are greyed out (S-3402).
-  A texture quality change shows from the next game.
+- Menus work with the keyboard (arrows, Enter, Esc and PageUp/PageDown) and
+  a game controller (D-pad/left stick, A/B and shoulder buttons), but a
+  controller cannot give orders during a game.
+- The graphics detail settings set the particle limit, texture quality,
+  shadows and health bars, but the model, animation, terrain, water and
+  shader detail rows are greyed out (S-3402). A texture quality change shows
+  from the next game.
 - Replays can be watched from *Load Replay*, with caster playback controls
-  (pause, speed and seeking), but Save Replay on the score screen is not
-  ported (S-1125, S-1126). The score screen's graphs are simplified (S-1063).
-- LAN: the disconnect screen has no chat (S-1123).
+  (pause, speed and seeking), but a replay cannot be saved under a name
+  (S-1125). The score screen's graphs are simplified (S-1063).
 - Online: when a player's game crashes, the others drop that player when the
   disconnect screen's bar runs out, but only if the game's first player still
   in it (the packet router) runs this version or later: everyone in an online
@@ -808,9 +807,16 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   bar runs out (S-4811).
 
 **In-game interface**
-- Help boxes include hero-bar and spell-book providers and command costs;
-  text wrapping and centering still use an inferred layout, and two retail
-  visibility guards are not ported (S-2702, S-2703).
+- Radar: the Ring and beacon markers and the stealth alerts are missing
+  (S-2451, S-2452).
+- Hero bar: a Create-a-Hero hero shows its class's icon, not its own picture
+  (S-2521).
+- Help boxes and tool tips: a hero's help does not count battles fought, the
+  main menu's My Heroes and Quit buttons show no tool tip, and the lobby, the
+  Create-a-Hero builder's power tips, the disband and rename tips, the control
+  bar's resource, command point and menu buttons and the War of the Ring map
+  have no tool tips yet (S-4612, S-4610). Help box text wrapping is an
+  educated guess (S-2702).
 - Build bubbles don't flash yet; queued-unit counts are drawn (S-2701).
 - Selection rings always use the highest-detail look, whatever the detail
   setting (S-2522).

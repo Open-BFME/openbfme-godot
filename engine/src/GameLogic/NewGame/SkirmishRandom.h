@@ -48,6 +48,7 @@ struct SkirmishResolveInput
 	const PlayerTemplateStore *templates = nullptr;
 	int numColors = 0;                 ///< the number of MultiplayerColor blocks
 	const MapCacheEntry *map = nullptr; ///< the cache entry of the game's map (retail reads numPlayers and the Player_N_Start waypoints from it)
+	bool strategicStarts = false;       ///< lane WOTR-2: a War of the Ring campaign: the start positions are region indices every player picked (no map spots, nothing random)
 };
 
 namespace SkirmishRandom

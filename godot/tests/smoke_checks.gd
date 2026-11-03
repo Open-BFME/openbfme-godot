@@ -549,7 +549,7 @@ func _map_terrain(fs: RefCounted) -> void:
 	# water, rivers, post effects: survey counts
 	var water: Dictionary = report.water
 	_check(water.areas_in_map == (want.standingWater as Array).size(), "%d standing water areas (survey %d)" % [water.areas_in_map, (want.standingWater as Array).size()])
-	_check(water.areas + water.triangulation_failed == water.areas_in_map and water.areas > 0, "every water area is rendered or counted as failed (%d + %d)" % [water.areas, water.triangulation_failed])
+	_check(water.areas + water.grid_failed == water.areas_in_map and water.areas > 0, "every water area is rendered or counted as failed (%d + %d)" % [water.areas, water.grid_failed])
 	var rivers: Dictionary = report.rivers
 	_check(rivers.areas_in_map == (want.rivers as Array).size(), "%d river areas (survey %d)" % [rivers.areas_in_map, (want.rivers as Array).size()])
 	_check(rivers.rendered > 0 and rivers.rendered <= rivers.areas_in_map, "%d rivers rendered" % rivers.rendered)
@@ -582,6 +582,12 @@ func _map_terrain(fs: RefCounted) -> void:
 		_check((mi as MeshInstance3D).mesh.get_surface_count() == 1, "%s is a single surface (one composite pass)" % mi.name)
 		break
 	_check(terrain_mat != null and not terrain_mat.shader.code.contains("blend_mix") and not terrain_mat.shader.code.contains("depth_draw_never"), "the terrain shader is opaque (no alpha blend, writes depth)")
+	# lane TERRAIN-SAMPLING: terrain.fxo's Base / Normal samplers are MinFilter ANISOTROPIC, MagFilter / MipFilter LINEAR, MaxAnisotropy 8 (pinned from the binary in
+	# tools/render/test_terrain_sampling_binary_facts.py); the atlases carry the anisotropic hint and the footprint is sampled with explicit gradients (textureGrad)
+	var common: ShaderInclude = load("res://shaders/terrain_common.gdshaderinc")
+	_check(common != null and common.code.contains("uniform sampler2D base_atlas : filter_linear_mipmap_anisotropic,") and common.code.contains("uniform sampler2D normal_atlas : filter_linear_mipmap_anisotropic,"), "the terrain atlases are sampled with the anisotropic filter hint")
+	_check(common != null and common.code.contains("textureGrad(base_atlas,") and common.code.contains("textureGrad(normal_atlas,") and not common.code.contains("textureLod(base_atlas") and not common.code.contains("textureLod(normal_atlas"), "the atlases are sampled with explicit gradients, not a fixed LOD")
+	_check(common != null and common.code.contains("uniform float max_anisotropy = 8.0;"), "the footprint's ratio is capped at the effect's MaxAnisotropy of 8")
 	for group in ["StandingWater", "Rivers"]:
 		var node := root.get_node_or_null(group)
 		_check(node != null, "the scene has a %s node" % group)
@@ -1031,6 +1037,7 @@ func _game_world(fs: RefCounted) -> void:
 	for p in sk.players:
 		found = found or String(p).contains("'Player_1' FactionMen")
 	_check(found and String(sk.players[10]).ends_with("$1500"), "the lobby slot gave Player_1 the Men and GameData's default starting cash: %s" % [sk.players.slice(10, 12)])
+	_shroud_texels(fs, skirm)
 	_production(other, third, skirm, sk)
 	_heroes(other, skirm) # lane HERO-1
 	# lane WEATHER-1: a snowy map (map.ini IsSnowing = Yes, EXSnowFlake2.tga) draws its snow
@@ -1071,6 +1078,52 @@ func _weather_report(world: Node3D, map: String, snowing: bool) -> void:
 		_check(wids.has(id), "weather stop %s is reported" % id)
 	var weather_node: Node = world.get_node_or_null("Weather")
 	_check(weather_node != null and weather_node.get_node_or_null("Snow") != null, "%s: the Weather node holds the snow layer" % map)
+
+
+## Lane TERRAIN-SAMPLING (stop S-567): the shroud texture the terrain, water and roads read holds W3DShroud's 4-bit level (RW 0x47266B): every texel is a nibble times 17
+## (FogAlpha 127 would be nibble 7 = 119, ClearAlpha 255 is 255, ShroudAlpha 0 is 0; a fresh skirmish has no fogged cell). The packing itself is pinned for every level by engine/tests/test_fogfx1_shroud_fade.cpp.
+func _shroud_texels(fs: RefCounted, skirm: Dictionary) -> void:
+	var world: Node3D = ClassDB.instantiate("GameWorld") # its own world: the local player and the clock of the worlds compared above stay as they were
+	_tree.root.add_child(world)
+	world.setup(fs)
+	var with_terrain: Dictionary = skirm.duplicate()
+	with_terrain["terrain"] = true
+	var loaded: Dictionary = world.load_map("map mp fall back 4p", with_terrain)
+	var player := -1
+	for i in loaded.players.size():
+		if String(loaded.players[i]).contains("'Player_1' FactionMen"):
+			player = i
+	world.set_shroud_fade(false) # the texels snap to their levels
+	world.set_local_player(player)
+	world.set_shroud_drawn(true)
+	world.advance(0.2)
+	var mat: ShaderMaterial = null
+	var terrain: Node = world.find_child("Terrain", true, false)
+	_check(terrain != null, "the live game's map has a Terrain node")
+	if terrain == null:
+		world.queue_free()
+		return
+	for mi in terrain.find_children("*", "MeshInstance3D", true, false):
+		mat = (mi as MeshInstance3D).mesh.surface_get_material(0)
+		break
+	var tex: Texture2D = mat.get_shader_parameter("shroud_tex") if mat != null else null
+	var img: Image = tex.get_image() if tex != null else null
+	_check(img != null and img.get_format() == Image.FORMAT_L8, "the terrain material has the shroud texture (L8)")
+	if img == null:
+		world.queue_free()
+		return
+	var seen := {}
+	for b in img.get_data():
+		seen[b] = true
+	var off_grid := []
+	for b in seen:
+		if b % 17 != 0:
+			off_grid.append(b)
+	_check(off_grid.is_empty(), "every shroud texel is a 4-bit level times 17 (levels seen %s)" % [seen.keys()])
+	_check(seen.has(0) and seen.has(255), "the border / shrouded cells read 0 and the cleared cells 255 (levels seen %s)" % [seen.keys()])
+	_check(not seen.has(127), "no texel holds the unquantised FogAlpha 127 (a fogged cell is 119 = 7 / 15: pinned in test_fogfx1_shroud_fade.cpp)")
+	world.queue_free()
+
 
 ## FX-1: the retail FX data and the FXPlayer. Truth for the counts is a GDScript line scan of the two INI files (independent of the C++
 ## parsers): the number of distinct `FXParticleSystem <name>` / `FXList <name>` definitions.

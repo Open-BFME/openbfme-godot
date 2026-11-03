@@ -73,6 +73,8 @@ bool footprintsCollide(const Footprint &a, const Footprint &b);
 // the footprints of a template at a place: one per ACTIVE shape of its geometry, at the shape's offset turned by `angle` (RW 0xAD14F0; lane PATH-2, S-341: the
 // placement overlap reader of retail was not traced, every active shape is INFERRED to count); false when the logic has no AIWorld or the template no geometry
 bool footprintsOf(GameLogic &logic, const ThingTemplate &tt, const Coord3D &pos, float angle, std::vector<Footprint> &out);
+// lane MODCOMPAT-MOD1: the same for a placed object, from its own GeometryInfo (Object::ownPathfindGeometry) at its position and angle
+bool footprintsOf(GameLogic &logic, const Object &obj, std::vector<Footprint> &out);
 std::vector<std::string> stopLines();
 const char *codeName(LegalBuildCode code);
 // lane BUILD-5: RotWK BuildAssistant::getPortTransform (RW 0x794C63): a PORT's site snapped to the shore and turned to face the water; false when the

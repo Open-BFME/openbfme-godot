@@ -1,4 +1,23 @@
 extends SceneTree
+## GDScript assert() only logs a SCRIPT ERROR and the run carries on, so a failed one still ended in PASS / exit 0. Every check goes through
+## _check: a failure is recorded and printed as FAIL, and _finish quits 1 when any failed.
+var _failures: Array[String] = []
+
+func _check(ok: bool, reason := "") -> bool:
+	if not ok:
+		_failures.append(reason)
+		var stack := get_stack()
+		printerr("FAIL: ", reason, " (line ", stack[1].line if stack.size() > 1 else 0, ")")
+	return ok
+
+func _finish(pass_message: String) -> void:
+	if _failures.is_empty():
+		print(pass_message)
+		quit()
+		return
+	printerr(_failures.size(), " check(s) failed")
+	quit(1)
+
 func _initialize() -> void: call_deferred("_run")
 func _run() -> void:
 	var install := OS.get_environment("BFME1_INSTALL")
@@ -23,10 +42,12 @@ func _run() -> void:
 	if not boot.ok: quit(1); return
 	var instancer = ClassDB.instantiate("W3DInstancer")
 	root.add_child(instancer)
-	assert(instancer.setup(fs).ok)
+	if not _check(instancer.setup(fs).ok):
+		_finish("")
+		return
 	var floor_id: int = instancer.add_model("GBCampFloor")
-	assert(floor_id >= 0)  # tolerance: an index: any found index is valid
-	assert(instancer.get_model_report(floor_id).errors.is_empty())
+	_check(floor_id >= 0)  # tolerance: an index: any found index is valid
+	_check(instancer.get_model_report(floor_id).errors.is_empty())
 	print("BFME1 CAMP FLOOR PASS")
 	for name in ["Options", "Save", "Load", "Resume", "Restart", "ExitMission"]:
 		var menu: Dictionary = shell.quit_menu({"kind":"open","context":{"in_game":true,"mode":2,"kind":3}})
@@ -38,30 +59,33 @@ func _run() -> void:
 			for item in ["Options", "Save", "Load", "Resume", "Restart", "ExitMission"]:
 				if ("." + item + ".") in op:
 					labels[item] = op.split("'")[1]
-		assert(labels.size() == 6, str(labels))
+		_check(labels.size() == 6, str(labels))
 		var unique := {}
 		for label in labels.values(): unique[label] = true
-		assert(unique.size() == 6, str(labels))
-		assert(shell.quit_menu({"kind":"state"}).initialized == 1)
+		_check(unique.size() == 6, str(labels))
+		_check(shell.quit_menu({"kind":"state"}).initialized == 1)
 		var button: Dictionary = shell.find_button(menu.level,name)
-		assert(button.found)
+		if not _check(button.found, name):
+			_finish("")
+			return
 		shell.post_mouse_move_stage(Vector2(button.x,button.y))
 		shell.post_mouse_button(true)
 		shell.post_mouse_button(false)
 		for i in 90: shell.tick(0.033)
 		if name in ["Restart", "ExitMission"]:
 			var yes: Dictionary = shell.find_button(menu.level, "popup.navSearching.Yes")
-			assert(yes.found)
+			if not _check(yes.found, name):
+				_finish("")
+				return
 			shell.post_mouse_move_stage(Vector2(yes.x,yes.y))
 			shell.post_mouse_button(true)
 			shell.post_mouse_button(false)
 			for i in 90: shell.tick(0.033)
 		var expected: String = {"Options":"QuitMenuOptions","Save":"QuitMenuSave","Load":"QuitMenuLoad","Resume":"QuitMenuReturn","Restart":"QuitMenuRestart","ExitMission":"QuitMenuExit"}[name]
 		var state: Dictionary = shell.quit_menu({"kind":"state"})
-		assert(state.requests.has(expected), str(state))
+		_check(state.requests.has(expected), str(state))
 		print("BFME1 QUIT PASS ",name)
 		shell.quit_menu({"kind":"close"})
 	for error in shell.get_shell_report().errors:
-		assert(not "constant type 8" in error, error)
-	print("BFME1 PAUSE MENU PASS")
-	quit()
+		_check(not "constant type 8" in error, error)
+	_finish("BFME1 PAUSE MENU PASS")

@@ -18,7 +18,7 @@ std::vector<int> NetGameSession::disconnectedPlayerIndices() const
 	{
 		const int player = m_config.slotPlayerIndex[(size_t)slot];
 		const bool dropped = m_network ? m_network->isDisconnected(slot) : (playbackDrops & (1u << slot)) != 0;
-		if (player >= 0 && m_start.game.game.slots[slot].disconnected(dropped))
+		if (player >= 0 && m_start.game.game.slots[m_start.gameSlot(slot)].disconnected(dropped))
 		{
 			players.push_back(player);
 		}
@@ -66,11 +66,11 @@ bool NetGameSession::setUp(LiveGame &game, std::string *error)
 	m_config.settings = m_options.network; // lane MP-2
 	m_config.adaptiveRunAhead = m_options.adaptiveRunAhead; // the lobby's run-ahead is the minimum
 	m_config.earlyOrders = m_options.earlyOrders;           // lane NETLAG-2
-	m_config.holdForRejoin = m_start.online;                // lane ONLINE-3: an online drop holds the player for a rejoin (LAN: retail's hand-over)
+	m_config.holdForRejoin = m_start.holdsForRejoin();      // lane ONLINE-3: an online drop holds the player for a rejoin (LAN, a war: retail's hand-over)
 	m_config.rejoinWindowMs = m_options.rejoinWindowMs;
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
-		m_config.slotNames[(size_t)s] = m_start.game.game.slots[s].name;
+		m_config.slotNames[(size_t)s] = m_start.game.game.slots[m_start.gameSlot(s)].name;
 	}
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
@@ -78,7 +78,8 @@ bool NetGameSession::setUp(LiveGame &game, std::string *error)
 		{
 			continue;
 		}
-		const Player *p = (size_t)s < r.startSlotPlayers.size() ? game.players().findPlayerWithName(r.startSlotPlayers[(size_t)s]) : nullptr;
+		const int gameSlot = m_start.gameSlot(s);
+		const Player *p = (size_t)gameSlot < r.startSlotPlayers.size() ? game.players().findPlayerWithName(r.startSlotPlayers[(size_t)gameSlot]) : nullptr;
 		if (!p)
 		{
 			if (error)
@@ -138,6 +139,14 @@ bool NetGameSession::beginRejoin(LiveGame &game, std::string *error)
 		if (error)
 		{
 			*error = "a rejoin needs an online START with a rejoin ticket";
+		}
+		return false;
+	}
+	if (!m_start.holdsForRejoin())
+	{
+		if (error)
+		{
+			*error = "a War of the Ring cannot be rejoined: RotWK has no reconnect and the war's state cannot be caught up [S-4075]";
 		}
 		return false;
 	}
@@ -676,8 +685,12 @@ void NetGameSession::finish(LiveGame &game)
 			m_network->update(game.protocolFrame(), game.commands());
 			game.commands().reset();
 		}
-		m_network->leave(game.protocolFrame());
-		m_network->update(game.protocolFrame(), m_empty);
+		const UnsignedInt protocolFrame = game.protocolFrame();
+		m_network->leave(protocolFrame);
+		// WOTR2 milestone 8: the leave's execution frame, Network::leave's PLAYERLEAVE (the frame after executionFrame of the same protocol frame: asking
+		// again returns the frame the leave used and moves nothing)
+		m_leaveFrame = m_network->executionFrame(protocolFrame) + 1;
+		m_network->update(protocolFrame, m_empty);
 	}
 	if (m_writer && m_writer->isOpen())
 	{

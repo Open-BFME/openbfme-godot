@@ -164,7 +164,7 @@ const char *meleeReachStopLine()
 {
 	return "[S-3806] melee reach (RW 0x6ED843, lane PLAY-4): the footprint test of a unit target is ported; a SIEGE_TOWER target outside the boxes takes RW's top branch "
 		   "(RW 0x6EDB6F .. 0x6EDC74, lane SIEGE-1: a deployed tower's portal top attack point within 20 in height and the radii in x and y; the portal is WALL-2's, "
-		   "S-4940; INFERENCE: the attacker's Object + 0xB8 is its bounding circle radius); a STRUCTURE target keeps the edge distance (S-320)";
+		   "S-4940; INFERENCE: the attacker's Object + 0xB8 is its bounding circle radius); structure obstacle rings are ported, but wall-top / bridge-layer exceptions are not";
 }
 
 class ObjectWeapons::RangeHost : public WeaponRangeHost
@@ -202,14 +202,14 @@ public:
 	// RW 0x6ED843 (Pathfinder, the melee reach test of RW 0x6CC07C).
 	//   * the unit's current weapon (RW 0x68B58C(0)) must be a MeleeWeapon (RW 0x6ED86D), else false;
 	//   * its range in cells: floor(range * 0.1 + 0.1) (RW 0x6ED8AB .. 0x6ED8CF, x87; the range is RW 0x6CA935 called with the TARGET: its bonus and range scale);
-	//   * a STRUCTURE target (RW 0x6ED8D5): INFERENCE (S-320): the edge-to-edge distance within the weapon's reach (set by the caller) stands for the ring of cells
-	//     around the unit's footprint that RW walks for the structure's obstacle id (RW 0x6ED937 .. 0x6EDA52) and its WALK_ON_TOP_OF_WALL tail (RW 0x6EDA58);
+	//   * a STRUCTURE target (RW 0x6ED8D5): rings around the unit footprint find the target obstacle id (RW 0x6ED937 .. 0x6EDA52).
+	//     The WALK_ON_TOP_OF_WALL / bridge-layer tail remains unported (S-3806).
 	//   * any other target (lane PLAY-4 r1): the footprint boxes (Pathfinder::meleeReachCells, RW 0x6EDB0C .. 0x6EDB69); a CAN_CLIMB_WALLS target on a wall
 	//     (RW 0x6EDAD4 -> 0x696057) is not ported (wall climbing is S-084: no unit climbs); a SIEGE_TOWER target outside the boxes takes the top branch
 	//     (RW 0x6EDB6F .. 0x6EDC74, lane SIEGE-1: siegeTowerTopReach; stop S-3806 for its inference).
 	bool meleeReach(const RangeSubject &source, const Coord3D &sourcePos, const RangeSubject &victim) override
 	{
-		if (victim.isStructure || !victim.object)
+		if (!victim.object)
 		{
 			return CircleDistanceSquared(sourcePos, source.boundingCircleRadius, victim.position, victim.boundingCircleRadius) <= SimMath::mulf32(m_meleeReach, m_meleeReach);
 		}
@@ -235,6 +235,10 @@ public:
 		}
 		const float range = WeaponGetAttackRangeNoTarget(*cur->getTemplate(), bonus, tw ? tw->rangeHost() : *this, victim);
 		const int cells = SimMath::fistp32(SimMath::fstpDword(SimMath::floorD(SimMath::pc24AddW(SimMath::pc24MulW((double)range, (double)0.1f), (double)0.1f))));
+		if (victim.isStructure)
+		{
+			return world->pathfinder().meleeStructureReach(*unit, sourcePos, *target, cells);
+		}
 		if (world->pathfinder().meleeReachCells(*unit, sourcePos, *target, cells))
 		{
 			return true;
@@ -846,8 +850,7 @@ const char *ObjectWeapons::choiceStopLine()
 	return "[S-1582] weapon choice: RW 0x6C8A4E is ported (lane DECOMP-1: criteria 0 .. 5, ReadyStatusSharedWithinSet, the victimless pick, the 1 / 0 score of canDamage RW 0x6CDBF3 "
 	       "through each nugget's isApplicable, the range error, OnlyAgainst / PreferredAgainst / OnlyInCondition, the turret aim gate RW 0x662398 on GARRISON-2's TurretAI); "
 	       "NOT ported: calcPitches RW 0xAD2620 for a pitch-limited weapon (taken as within; no retail weapon limits its pitch), CannotTargetCastleVictims' test (no retail weapon "
-	       "sets it), SlaveAttackNugget's isApplicable (RW 0x910DCF asks the unported SlaveWatcherBehavior: "
-	       "the base test RW 0x90D77C stands in), DamageContainedNugget's contain slot 0x1C (taken as false); INFERENCE: HordeAttackNugget's member (RW 0x9119CB, horde slots 0x50 / 0x114) is the first living one";
+	       "sets it), DamageContainedNugget's contain slot 0x1C (taken as false); INFERENCE: HordeAttackNugget's member (RW 0x9119CB, horde slots 0x50 / 0x114) is the first living one";
 }
 
 // RW 0x6CDBF3 Weapon::canDamage (lane DECOMP-1, tier A): no template, or OUT_OF_AMMO with AutoReloadsClip set: false; CannotTargetCastleVictims (+ 0x168: a victim
@@ -870,7 +873,7 @@ bool ObjectWeapons::canDamage(const Weapon &w, Object &victim) const
 	return WeaponTemplateAnyNuggetApplicable(m_owner->logic(), *t, m_owner->getID(), &victim);
 }
 
-// RW 0x6C8A4E WeaponSet::chooseBestWeaponForTarget (lane DECOMP-1; BFME2 decomp reverse/attempts/0x002c7d03.cpp, tier B same-shape: the RotWK body is BFME2's with the AI
+// RW 0x6C8A4E WeaponSet::chooseBestWeaponForTarget (lane DECOMP-1; BFME2 decomp WeaponSetSetWeaponLock.cpp (was an attempt, matched since), tier B same-shape: the RotWK body is BFME2's with the AI
 // at Object + 0x260; every step below was read from RotWK). Criteria 5 takes the set's DefaultWeaponChoiceCritera (+ 0x360). A locked weapon stays. With
 // ReadyStatusSharedWithinSet (+ 0x364) any weapon not READY_TO_FIRE keeps the current one. No victim: the first slot (0 .. 5) whose weapon is not OUT_OF_AMMO with
 // AutoReloadsClip, is not a MeleeWeapon (+ 0x125) and has NoVictimNeeded (+ 0x16B), else PRIMARY and false. Else slots 5 .. 0: the slot's auto-choose test
@@ -1284,6 +1287,34 @@ bool ObjectWeapons::isSlotWithinAttackRange(int slot, const Object &victim, floa
 	const float dz = SimMath::subf32(vic.position.z, src.position.z);
 	self->m_rangeHost->m_meleeReach = WeaponGetAttackRange(t, bonus, *self->m_rangeHost, src, dz);
 	return WeaponIsWithinAttackRange(t, bonus, *self->m_rangeHost, src, src.position, &vic, vic.position, extra, checkMin);
+}
+
+bool ObjectWeapons::currentWeaponBonus(WeaponBonus &out) const
+{
+	const Weapon *w = weaponInSlot(m_curSlot);
+	if (!w || !w->getTemplate())
+	{
+		return false;
+	}
+	w->computeBonus(*const_cast<ObjectWeapons *>(this)->m_host, 0, out);
+	return true;
+}
+
+bool ObjectWeapons::isWithinAttackRangeWithBonus(const Object &victim, const WeaponBonus &bonus) const
+{
+	// isSlotWithinAttackRange(m_curSlot, victim, 0.0f, true) with the bonus given
+	const Weapon *w = weaponInSlot(m_curSlot);
+	if (!w || !w->getTemplate())
+	{
+		return false;
+	}
+	const WeaponTemplate &t = *w->getTemplate();
+	ObjectWeapons *self = const_cast<ObjectWeapons *>(this);
+	const RangeSubject src = subjectOf(*m_owner);
+	const RangeSubject vic = subjectOf(victim);
+	const float dz = SimMath::subf32(vic.position.z, src.position.z);
+	self->m_rangeHost->m_meleeReach = WeaponGetAttackRange(t, bonus, *self->m_rangeHost, src, dz);
+	return WeaponIsWithinAttackRange(t, bonus, *self->m_rangeHost, src, src.position, &vic, vic.position, 0.0f, true);
 }
 
 bool ObjectWeapons::isWithinAttackRange(const Coord3D &pos) const

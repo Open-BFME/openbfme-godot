@@ -172,10 +172,47 @@ enum GameMessageType : int
 	MSG_ADD_TO_TEAM8 = 1146,
 	MSG_ADD_TO_TEAM9 = 1147,
 	MSG_END_NETWORK_MESSAGES = 1148,
+	// WOTR2 milestone 8: the strategic game's messages (RotWK's name table RW 0x7111F8, strings 0xC2000C .. 0xC20168; the numbers are BFME2's), handled by
+	// LivingWorldLogic's switch RW 0x6BE6A6 (LivingWorldLogicMessages.cpp). 0x6BD .. 0x6C0 have no retail name (the port's names). They run on the
+	// strategic command stream, not the RTS logic's, so IsNetworkLogicMessageType does not take them (a skirmish never sees one)
+	MSG_LW_DONE_SESSION = 1701,
+	MSG_LW_DONE_PHASE = 1702,
+	MSG_LW_SET_CONFLICT_RESOLUTION_METHOD = 1703,
+	MSG_LW_ARMY_MOVE_REQUEST = 1704,
+	MSG_LW_CANCEL_ARMY_MOVE_REQUEST = 1705,
+	MSG_LW_BUILD_BUILDING = 1706,
+	MSG_LW_DESTROY_BUILDING = 1707,
+	MSG_LW_QUEUE_UNIT = 1708,
+	MSG_LW_DEQUEUE_UNIT = 1709,
+	MSG_LW_DEQUEUE_UNIT_AT_INDEX = 1710,
+	MSG_LW_SWAP_ARMY_MEMBERS = 1711,
+	MSG_LW_CANCEL_ARMY_MEMBER_MOVE = 1712,
+	MSG_LW_DISBAND_ARMY_MEMBER = 1713,
+	MSG_LW_DISBAND_ARMY = 1714,
+	MSG_LW_CANCEL_ARMY_MEMBER_DISBAND = 1715,
+	MSG_LW_SWAP_ARMIES_IN_BATTLE = 1716,
+	MSG_LW_FORCE_ENTER_REALTIME_BATTLE = 1717,
+	MSG_LW_DEBUG_QUICKWIN_BATTLE = 1718,
+	MSG_LW_RESOLVE_REGION_AWARD_DISPUTE = 1719,
+	MSG_LW_PLAYER_SURRENDERED = 1720,
+	MSG_LW_REQUEST_ENDGAME = 1721,
+	MSG_LW_TRANSITION_TO_TACTICAL_COMPLETE = 1722,
+	MSG_LW_TRANSITION_TO_STRATEGIC_COMPLETE = 1723,
+	MSG_LW_SCORESCREEN_DONE = 1724,
+	MSG_LW_AUTORESOLVE_STEP_LIMIT = 1725,
+	MSG_LW_AUTORESOLVE_SKIP = 1726,
+	MSG_LW_MARK_UNIT_FOR_UPGRADE = 1727,
+	MSG_LW_UNMARK_UNIT_FOR_UPGRADE = 1728,
+	MSG_LW_FIRST = 1701,
+	MSG_LW_LAST = 1728,
 	// lane CHEAT-1: OpenBFME's Cheat Mode command (GameLogic/CheatMode.h), run only in a game whose setup has Cheat Mode on and only for the host's slot. Not a
 	// retail type (PLAN rule 4: a stated divergence): it sits far outside RotWK's 1001 .. 1999 range, so it never gets a selection group (RW 0x6AAB85) and can
 	// never meet a retail message; every logic-type check names it explicitly (IsNetworkLogicMessageType)
-	MSG_OPENBFME_CHEAT = 32001
+	MSG_OPENBFME_CHEAT = 32001,
+	// WOTR2 milestone 8 (step 4): a LAN war's save request (ask / refuse / save). RotWK sends it as the lockstep's NETCOMMANDTYPE_SAVE_GAME (type 30, RW
+	// 0x8D5273 -> ProcessSaveGameCommand RW 0x629750, stamped by the packet router for its next frame); the port carries it as a strategic order in the
+	// command stream [S-1344: the one observable difference: the Yes / No box appears at the order's execution frame]. OpenBFME's range, as the cheat
+	MSG_LW_OPENBFME_SAVE = 32002
 };
 
 // lane CHEAT-1: a type the network, the replay and the logic dispatcher carry: retail's logic range plus MSG_OPENBFME_CHEAT

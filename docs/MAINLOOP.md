@@ -33,7 +33,7 @@ Several names in the decompilation are placeholders (`rvaXXXXXXXX`, `m_unk`,
 
 1. **Logic runs at 5 Hz and drawing at 30 Hz.** `BfmeLogicFramesPerSecond = 5` and
    `BfmeClientFramesPerSecond = 30` (C, `Common/ColdGlobalDwordGetters.cpp:249`,
-   `GameClient/LivingWorldEyeTowerProcessItems.cpp:16`). One logic frame lasts 200 ms
+   `GameClient/LivingWorld/LivingWorldEyeTower.cpp:311`). One logic frame lasts 200 ms
    and spans 6 client frames.
 2. **One logic frame is 6 calls to `GameLogic::update(phase)`, phases 1 to 6, one
    per client frame** (C, `GameLogic/System/GameLogicInit.cpp:4645`, RVA 0x24555A).
@@ -671,7 +671,7 @@ cache.translation = D3DXVec3CatmullRom(V0, V1, V2, V3, f)
 
 ### 6.3 Drawable lifetime and `updateDrawable`
 
-**Create** (`GameLogic/System/GameLogicRva0023FABE.cpp:63-75`), C:
+**Create** (`GameLogic/System/GameLogic.cpp:3755-3775`), C:
 1. `Object::initObject` calls **`GetGameLogicRandomValue(1,999)`**. Drawable
    creation consumes the synchronised logic RNG.
 2. `ThingFactory::newDrawable` creates the drawable. It spins `Sleep(0)` while assets
@@ -722,7 +722,7 @@ syncTime += TheW3DFrameLengthInMsec (= 1000/30 = 33) * delta;  WW3D::Sync(syncTi
 - Animation stops when the client frame does not advance (pause) or the window is
   minimised.
 
-### 6.5 Camera: `W3DView::update` (0x8C3AC, `W3DViewRva0008C3AC.cpp:554-731`), C
+### 6.5 Camera: `W3DView::update` (0x8C3AC, `W3DView_update.cpp:563-740`), C
 
 Called at the start of the render pass, in this order:
 1. Terrain centre update (uses the previous camera).
@@ -748,7 +748,7 @@ update FPS average; LOD
 advance the animation clock (6.4)
 replay fast-forward: render 1 frame in 30 (otherwise only camera moves + clock)
 time multiplier > 1: render every Nth call
-renderPass(now)  (0x4A462, W3DDisplayRva0004A462.cpp:352-491)
+renderPass(now)  (0x4A462, W3DDisplay.cpp:1509-1650)
 ```
 
 The only limiter inside the display is a 29 ms busy-wait. It only throttles when the

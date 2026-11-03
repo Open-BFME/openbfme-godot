@@ -101,8 +101,11 @@ struct ObjectSnapshot
 	// lane COMBAT-4: the object this one is contained in (Object + 0x27C; INVALID_ID when none): the drawable of a rider / crew member takes its container's
 	// DependencySharedModelFlags (RW 0x4BF2D8, DrawableManager::syncTransforms)
 	ObjectID containedBy = INVALID_ID;
-	float stealthOpacityMin = 1.0f, stealthOpacityMax = 1.0f; ///< the friend's pulse range (InvisibilityManager::clientOpacityRange), set for looks 1 / 4
-	unsigned stealthCycleFrames = 0;
+	float stealthOpacityMin = 1.0f, stealthOpacityMax = 1.0f; ///< the friend's pulse range (InvisibilityManager::clientOpacityRange)
+	float stealthCycleSeconds = 1.0f;                      ///< the pulse / blend cycle in seconds (InvisibilityManager::clientOpacityRange)
+	// lane STEALTHLOOK-1: the object's stealth parent (Object::getHordeObject(false), RW 0x693A1A): a horde member's drawable imitates its
+	// opacity / hidden / look each client frame (RW 0x673114); INVALID_ID for the horde itself and unparented objects
+	ObjectID stealthParent = INVALID_ID;
 	// lane PROJ-2: a launched projectile (ProjectileUpdateInterface::projectileClientInfo): the frame of its last launch or bounce, its launcher, the end
 	// of its flight and the segment count; the drawable's fade (GameClient/DrawableFade, RW 0x85EE00 .. 0x85EF31) starts from them
 	bool projectile = false;

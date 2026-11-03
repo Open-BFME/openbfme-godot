@@ -42,6 +42,7 @@
 #include "GameLogic/Module/UpdateModule.h"
 #include "GameLogic/Object/Contain/TunnelContainRuntime.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "GameLogic/System/DOTManager.h"
 #include "GameLogic/System/InvisibilityManager.h"
@@ -219,6 +220,14 @@ void GameLogic::xferObjects(Xfer &x)
 		deleteObjectForLoad(m_objectHead);
 	}
 	m_objectsToDestroy.clear();
+	// lane CASTLEAREA-1: the run-time polygon triggers (castle areas, AI gates) are their owners': the old objects' are gone with them, each owner's xfer below
+	// puts its own back at its saved index (ScriptEngine::beginRuntimeTriggerLoad)
+	struct RuntimeTriggerLoad
+	{
+		ScriptEngine &engine;
+		~RuntimeTriggerLoad() { engine.endRuntimeTriggerLoad(); }
+	} runtimeTriggerLoad{ *m_scriptEngine };
+	m_scriptEngine->beginRuntimeTriggerLoad();
 	// ---- every object of the snapshot, made with its id, team and status (ThingFactory::newObject without the BuildVariations draw: the saved template is
 	// the variation already) ----
 	for (size_t i = 0; i < toc.size(); ++i)

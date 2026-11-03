@@ -32,7 +32,7 @@ const BLUE_U := 0.875
 const V := 0.5
 
 var _failures := 0
-var _phase := 1 # 1 = numeric patch cases, 2 = the map render
+var _phase := 1 # 1 = numeric patch cases, 2 = the map render, 3 = the anisotropic filter on an oblique plane
 var _map_viewport: SubViewport
 var _map_ok := false
 var _case := -1
@@ -114,6 +114,14 @@ func _make_cases() -> Array:
 
 
 func _process(_delta: float) -> bool:
+	if _phase == 3:
+		_frame += 1
+		if _frame >= 6:
+			_check_aniso()
+			_phase = 2
+			_frame = 0
+			_start_map()
+		return false
 	if _phase == 2:
 		_frame += 1
 		if _frame >= 6:
@@ -130,9 +138,9 @@ func _process(_delta: float) -> bool:
 		_frame = 0
 		if _case >= _cases.size():
 			if _phase == 1:
-				_phase = 2
+				_phase = 3
 				_frame = 0
-				_start_map()
+				_start_aniso()
 				return false
 			return false
 		_start_case()
@@ -182,6 +190,81 @@ func _check_current() -> void:
 	print("  %s %s: got (%d,%d,%d) want (%d,%d,%d)" % ["ok  " if ok else "FAIL", _cases[_case][0], roundi(px.r * 255.0), roundi(px.g * 255.0), roundi(px.b * 255.0), roundi(want.r * 255.0), roundi(want.g * 255.0), roundi(want.b * 255.0)])
 	if not ok:
 		_failures += 1
+
+
+## lane TERRAIN-SAMPLING: terrain.fxo's Base / Normal samplers are 8x anisotropic. A one-cell patch whose atlas holds black / white stripes that vary along u
+## (a period of 4 texels, so the mip chain's level 2 averages them to grey) is seen from 3 degrees above the plane: v is foreshortened to a fraction of a texel
+## per pixel and u is not. The old fixed LOD (the larger axis, at most level 2) blurs the stripes away; the anisotropic sample keeps them.
+const ANISO_ATLAS := 512
+const ANISO_U_SPAN := 0.125 # 64 texels across the cell: 2 pixels per texel at the 128 pixel viewport
+
+func _aniso_atlas() -> Image:
+	var img := Image.create(ANISO_ATLAS, ANISO_ATLAS, false, Image.FORMAT_RGBA8)
+	for y in ANISO_ATLAS:
+		for x in ANISO_ATLAS:
+			img.set_pixel(x, y, Color.WHITE if (x / 2) % 2 == 0 else Color.BLACK)
+	img.generate_mipmaps()
+	return img
+
+
+var _aniso_views: Array = [] # [SubViewport at 16x, SubViewport with the filter off]
+
+
+func _start_aniso() -> void:
+	_aniso_views.clear()
+	for level in [Viewport.ANISOTROPY_16X, Viewport.ANISOTROPY_DISABLED]:
+		var vp := SubViewport.new()
+		vp.size = Vector2i(128, 128)
+		vp.own_world_3d = true
+		vp.anisotropic_filtering_level = level
+		vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		root.add_child(vp)
+		var uv := PackedVector2Array([Vector2(0, 0), Vector2(ANISO_U_SPAN, 0), Vector2(ANISO_U_SPAN, 1), Vector2(0, 1)])
+		var patch: Node3D = _builder.build_test_patch({"base_atlas": _aniso_atlas(), "uv0": uv, "layers": []})
+		if patch == null:
+			print("  FAIL anisotropic: build_test_patch returned null")
+			_failures += 1
+			return
+		vp.add_child(patch)
+		var cam := Camera3D.new()
+		cam.fov = 40.0
+		cam.near = 0.1
+		cam.far = 200.0
+		vp.add_child(cam)
+		cam.position = Vector3(5.0, 3.0, 14.0)
+		cam.look_at(Vector3(5.0, 0.0, -5.0))
+		cam.current = true
+		_aniso_views.append(vp)
+
+
+func _stripe_contrast(vp: SubViewport) -> float:
+	var img := vp.get_texture().get_image()
+	var clear := img.get_pixel(64, 2)
+	var best := 0.0
+	for y in img.get_height():
+		var lo := 1.0
+		var hi := 0.0
+		var all_plane := true
+		for x in range(32, 96):
+			var p := img.get_pixel(x, y)
+			if p.is_equal_approx(clear):
+				all_plane = false
+				break
+			lo = minf(lo, p.r)
+			hi = maxf(hi, p.r)
+		if all_plane:
+			best = maxf(best, hi - lo)
+	return best
+
+
+func _check_aniso() -> void:
+	if _aniso_views.size() != 2:
+		return
+	var on := _stripe_contrast(_aniso_views[0])
+	var off := _stripe_contrast(_aniso_views[1])
+	print("  anisotropic: the largest stripe contrast %.3f at 16x, %.3f with the filter off" % [on, off])
+	_check_ok(on > 0.2, "the anisotropic filter keeps the stripes that vary along u (contrast %.3f)" % on) # tolerance: the GPU's own footprint approximation
+	_check_ok(on > 2.0 * off, "the same view without the filter loses them (contrast %.3f)" % off) # tolerance: a ratio of two GPU measurements, the filter's effect is the claim
 
 
 func _start_map() -> void:

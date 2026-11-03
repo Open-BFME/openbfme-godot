@@ -91,6 +91,9 @@ std::u16string AptLanLobby::text(const std::string &label) const
 const char16_t *const AptLanLobby::kStrategicUnavailable =
 	u"War of the Ring network games are not available yet: its strategy map game is still being rebuilt. Use Open Play.";
 
+const char16_t *const AptLanLobby::kStrategicStable =
+	u"War of the Ring is not in the Stable version yet: it is being tested in the Nightly version (OpenBFME Launcher: Settings, Channel). Use Open Play.";
+
 void AptLanLobby::showError(const std::string &title, const std::string &body)
 {
 	// RW 0x84ED5D -> RW 0x81A452: an Ok box with the two game texts
@@ -110,6 +113,7 @@ void AptLanLobby::showRuleWarning(const std::u16string &title, const std::u16str
 void AptLanLobby::systemChat(const std::u16string &line)
 {
 	// RW 0x847508 kind 2: TheLAN's RequestChat with the SYSTEM type (slot 0x54 with 3): every player of the game gets the line, this one included
+	windows().note("lan-system-chat", narrow(line)); // OpenBFME: the line in the shell report too (the scripted runs read the countdown's stops there)
 	if (m_lan && m_lan->currentGame())
 	{
 		m_lan->requestChat(line, true);
@@ -265,9 +269,9 @@ AptLanLobby::AptLanLobby(WindowManager &windows, Shell &shell, ShellEnvironment 
 	});
 	registerCommand("AptLanLobby::OnStartGameBttn", [this](const std::string &) { m_state = 5; });   // RW 0x846F72
 	registerCommand("AptLanLobby::OnCreateGameBttn", [this](const std::string &) {
-		if (m_strategic)
+		if (m_strategic && !strategicMode())
 		{
-			box().show(AptMessageBox::TYPE_OK, u"OpenBFME", kStrategicUnavailable); // lane MENUWORK-1 (S-4753)
+			box().show(AptMessageBox::TYPE_OK, u"OpenBFME", this->environment().warOfTheRingOffered ? kStrategicUnavailable : kStrategicStable); // lane MENUWORK-1 (S-4753)
 			return;
 		}
 		if (m_state == 1)
@@ -283,6 +287,23 @@ AptLanLobby::AptLanLobby(WindowManager &windows, Shell &shell, ShellEnvironment 
 	});
 	// lane MENUWORK-1 (S-4753): a LAN game from a save is not ported: the press used to note it and show nothing; the player is told now
 	registerCommand("AptLanLobby::OnLoadGameBttn", [this](const std::string &) {
+		if (m_strategic && !this->environment().warOfTheRingOffered)
+		{
+			box().show(AptMessageBox::TYPE_OK, u"OpenBFME", kStrategicStable); // lane STABLEQA-1: no LAN war saves in a Stable build
+			return;
+		}
+		if (m_strategic)
+		{
+			// WOTR2 milestone 8 (step 4): RW 0x849299: the War of the Ring page's Load Game: the save page in load mode for the LAN war saves (the client
+			// hosts the one picked as a resumed war, RW 0x8182CF -> RW 0x840F3F)
+			if (!this->environment().services)
+			{
+				this->windows().note("command-unwired", "LanLoadWar: the host gave no shell services [S-1064]");
+				return;
+			}
+			this->environment().services->request(ShellRequest{ ShellAction::LanLoadWar, "16" });
+			return;
+		}
 		this->windows().note("unported-command", "AptLanLobby::OnLoadGameBttn: loading a saved LAN game is not ported [S-4753]");
 		box().show(AptMessageBox::TYPE_OK, u"OpenBFME", u"Loading a saved network game is not available yet: start a new game instead.");
 	});
@@ -298,10 +319,26 @@ AptLanLobby::AptLanLobby(WindowManager &windows, Shell &shell, ShellEnvironment 
 		// RotWK switches the lobby between Open Play and War of the Ring games (the list's mode + 0x304: 0 open play, 1 strategic). Lane MENUWORK-1
 		// (S-4753): War of the Ring is not available yet, so its page says so when it opens and its Create Game is refused with the same words
 		m_strategic = argument == "LanStrategic";
-		if (m_strategic)
+		// WOTR2 milestone 8: the setup in mode 1 (RW 0x8445C9: the scenario list, the War of the Ring rules, region start positions); without the Living
+		// World data the page still says War of the Ring is not available
+		if (m_strategic && !this->environment().warOfTheRingOffered)
+		{
+			// lane STABLEQA-1: a Stable build offers no War of the Ring yet: the page says so and its Create Game is refused (OnCreateGameBttn)
+			box().show(AptMessageBox::TYPE_OK, u"OpenBFME", kStrategicStable);
+		}
+		else if (m_strategic && this->environment().livingWorld && !this->environment().livingWorld->scenarios.empty())
+		{
+			enterStrategicMode(*this->environment().livingWorld);
+		}
+		else if (m_strategic)
 		{
 			box().show(AptMessageBox::TYPE_OK, u"OpenBFME", kStrategicUnavailable);
 		}
+		else
+		{
+			leaveStrategicMode(); // LanOpenPlay: mode 0 (RW 0x8445C9 with 0)
+		}
+		m_listDirty = true;
 	});
 	// lane MENUWORK-1: the screen's GameSorter (RotWK's AptLanLobby constructs one, decomp AptLanLobbyDestructor.cpp; its constructor RW 0x9888B7
 	// registers the five header commands): a header pressed re-sorts the game list (the commands used to reach no handler)
@@ -454,6 +491,11 @@ void AptLanLobby::pumpLan()
 				if (const LANGame *game = m_lan->currentGame())
 				{
 					model->replaceInfo(game->info);
+					// WOTR2 milestone 8: a player shows the host's scenario (the host's choice: nothing is sent back)
+					if (game->info.warOfTheRing() && game->info.scenario != selectedScenario())
+					{
+						selectScenario(game->info.scenario, false);
+					}
 					refreshLobby();
 				}
 			}
@@ -531,7 +573,7 @@ void AptLanLobby::fillGamesList()
 		}
 		r.name = games[i].name;
 		r.map = games[i].info.mapName;
-		r.mode = 0; // open play: OpenBFME's LAN has no War of the Ring games (S-4751)
+		r.mode = games[i].info.gameMode; // + 0x5C: 0 open play, 1 War of the Ring (WOTR2 milestone 8)
 		// vslot 6 (RW 0x802B04 / 0x84A8AD): 0 a user map (not in the map cache or not official), 1 non-default rules, 2 in progress
 		const MapCacheEntry *cached = setupModel() ? setupModel()->findMap(games[i].info.mapName) : nullptr;
 		r.icon[0] = !cached || !cached->isOfficial;
@@ -541,8 +583,15 @@ void AptLanLobby::fillGamesList()
 	for (const size_t i : m_sorter.order(sortRows))
 	{
 		const LANGame &g = games[i];
+		// WOTR2 milestone 8: the page lists the games of its own mode (LanOpenPlay open play, LanStrategic War of the Ring; INFERENCE [S-4751]: the
+		// filter routine is not read, GameSorter compares maps only within a mode)
+		if (g.info.gameMode != (m_strategic ? 1 : 0))
+		{
+			continue;
+		}
 		const int occupied = sortRows[i].players;
-		std::string map = g.info.mapName;
+		// a War of the Ring game's map is a placeholder: its scenario is shown (INFERENCE [S-4751])
+		std::string map = g.info.warOfTheRing() ? g.info.scenario : g.info.mapName;
 		const size_t slash = map.find_last_of("/\\");
 		map = slash == std::string::npos ? map : map.substr(slash + 1);
 		if (map.size() > 4 && map.compare(map.size() - 4, 4, ".map") == 0)
@@ -769,6 +818,7 @@ void AptLanLobby::update()
 		}
 		if (model)
 		{
+			applyScenarioLimits(); // WOTR2 milestone 8: a War of the Ring's scenario limits and factions (as the single player start)
 			// lane GAMEMODES-1: RotWK's start check (RW 0x8431B8); its lines go to every player as system chat (the owner's vslot 0x44, kinds 0 and 2)
 			const SkirmishGameSetup::StartCheck check = model->checkStart();
 			for (const std::string &stop : check.stops)

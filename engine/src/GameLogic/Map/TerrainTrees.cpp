@@ -322,12 +322,12 @@ int TerrainTrees::unitMoved(const Object &obj)
 	{
 		return 0;
 	}
-	const ThingTemplate &tt = *static_cast<const ThingTemplate *>(obj.getTemplate())->getFinalOverride();
-	// (obj + 0x38, + 0x44, + 0xA8 with its bounding circle + 0xB8, 1, 0); the circle (RW 0xAD2860) from the template's shapes, as the pathfinder's geometry
-	// computes it (a game without a pathfinder has crushers too)
+	// (obj + 0x38, + 0x44, + 0xA8 with its bounding circle + 0xB8, 1, 0); the circle (RW 0xAD2860) from the object's own shapes (lane MODCOMPAT-MOD1), as the
+	// pathfinder's geometry computes it (a game without a pathfinder has crushers too)
+	const std::vector<ObjectGeometry::Shape> &shapes = obj.geometryShapes();
 	PathfindGeometry pg;
-	ObjectGeometry::fillPathfindGeometry(tt, pg);
-	return toppleTreesInGeometry(*obj.getPosition(), obj.getOrientation(), ObjectGeometry::shapesOf(tt), pg.boundingCircleRadius(), obj, true, 0);
+	ObjectGeometry::fillPathfindGeometry(shapes, pg);
+	return toppleTreesInGeometry(*obj.getPosition(), obj.getOrientation(), shapes, pg.boundingCircleRadius(), obj, true, 0);
 }
 
 // RW 0x6854FD (lane TREES1)

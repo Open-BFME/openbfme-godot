@@ -1113,6 +1113,7 @@ void WindowManager::componentInstanceDestroyed(AptCharacterInst &inst)
 			if (r.window)
 			{
 				r.window->winHide(true);
+				r.window->winSetClipRemoved();
 			}
 			return;
 		}

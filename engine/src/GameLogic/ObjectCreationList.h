@@ -37,11 +37,13 @@
 //         vslot 0x58 RW 0x8C47DE with percent * 100), the first slaved interface's onEnslave(source) (behaviour slot 0x68, RW 0x8A529F), the dispositions
 //         (LIKE_EXISTING, ABSOLUTE_ANGLE, RELATIVE_ANGLE, SPAWN_AROUND, ANIMATED, ON_GROUND_ALIGNED (a random angle at line 0x5B6), SEND_IT_OUT (0x5C5, 0x5CB,
 //         0x5CC), SEND_IT_FLYING (0x5E7 .. 0x5E9), SEND_IT_UP (0x5F3 .. 0x5F5), RANDOM_FORCE (RW 0x5EF9C3: 0x245 .. 0x247), BUILDING_CHUNKS, INHERIT_VELOCITY,
-//         FORWARD_IMPACT, REVERSE_IMPACT), the force through PhysicsBehavior's fling (RW 0x792DBD), ContainInsideSourceObject (else the object is destroyed).
+//         FORWARD_IMPACT, REVERSE_IMPACT), the force through PhysicsBehavior's fling (RW 0x792DBD), ContainInsideSourceObject (else the object is destroyed);
+//         lane SPELLFIX-1: StartingBusyTime (AI command 0x31: AIUpdateInterface::aiBusyFor, RW 0x5F1D2E) and ClearRemovables (ConstructionSite's
+//         clearRemovableForConstruction RW 0x796576 / moveObjectsForConstruction RW 0x797465, TerrainTrees::removeTreesForConstruction RW 0x684BCA).
 // NOT PORTED (stop S-530, counted in m_unportedUses and noted once per kind through GameLogic::noteStop): the other nugget kinds (CreateDebris,
-// ApplyRandomForce, FireWeapon, Attack); PutInContainer; ClearRemovables (RW 0x796576 / 0x797465 / 0x684BCA); the props of RW 0x5F12BE (a TREE, SHRUB or
+// ApplyRandomForce, FireWeapon, Attack); PutInContainer; the props of RW 0x5F12BE (a TREE, SHRUB or
 // OPTIMIZED_PROP template: RW 0x683D89 / 0x6808ED / 0x67D742); WaypointSpawnPoints (RW 0x5F1A60); OffsetInLocalSpace (the source's
-// transform, RW 0x5E07F7 / 0x70BA76); MoveUsesStrafeUpdate (RW 0x7A82AF); StartingBusyTime (AI command 0x31, vslot 0x140); InvulnerableTime (RW 0x68C6C8:
+// transform, RW 0x5E07F7 / 0x70BA76); MoveUsesStrafeUpdate (RW 0x7A82AF); InvulnerableTime (RW 0x68C6C8:
 // RW 0x68B303 / 0x8E3ABB); FADE_AND_DIE_ORNAMENT / SPAWNED_MODELCONDITION_TRIGGER / FLOATING's modules (FadeAndDieOrnamentUpdate, SpawnedModelConditionCreate,
 // FloatUpdate: UnportedModules); USE_WATER_SURFACE without a pathfinder terrain; the STRUCTURE pathfinder add (RW 0x6E85E9); a SpreadFormation without a source
 // (retail reads an unset position). The client parts (fades, FadeSound, ParticleSystem, InheritAttributesFromSource, the drawable flags) are the client's.

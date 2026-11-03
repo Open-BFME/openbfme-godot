@@ -22,18 +22,14 @@ const char *const kStopPortalNormal = kStopSpecialLayer;
 const char *const kStopPortalMineshaft = kStopSpecialLayer;
 const char *const kStopUpdate =
 	"S-166 the movement-complete block of AIUpdateInterface::update (RW 0x6695EF) skips the object goal refresh (0x68B411, 0x6EF225, 0x68B3BD), the status bit clears and the turret update; the state machine's sleep comes from the host";
-const char *const kStopExitQuickPath =
-	"S-166 computePath's straight path for a unit following its exit-production path (RW 0x666036 .. 0x66607C: state 7 with AI + 0x3BA; the flag is dropped and the machine's "
-	"goal becomes the destination, RW 0x6654AD) is read but not applied: applied, production exits moved (test_aipow1: a frame 22 for 23; test_play4_heroes_retail: 2 shots, "
-	"150 lost and 2 members killed in an order that has none) and the goal overwrite alone sent an idle Battle-stance unit 826.975 from its guard spot (test_play4_stances_retail, "
-	"bound 365; without the overwrite it passes); INFERENCE, not verified: the port's exit state and guard keep the machine's goal for something RotWK does not";
 const char *const kStopExplicit =
 	"S-166 doLocomotor goal types 2 and 4 (RW 0x669A01-0x669B95): the validation of a straight move (RW 0x6F1B3E) is approximated by the PATH-1 line test or a passable "
 	"target cell, and the fallback path of a blocked straight move (RW 0x6F74D0) by a pathfinder search (the two bodies were not fully read)";
 const char *const kStopDistance =
 	"S-166 getLocomotorDistanceToGoal (RW 0x664127) is the ZH body (path remaining distance, at least the straight distance to the last node), the retail body was not read";
 const char *const kStopRequests =
-	"S-166 the approach request (RW 0x6638FC), melee approach request (RW 0x6639CF), safe request (RW 0x663C6B) and findClosestPath are not ported (the attack request "
+	"S-166 the approach request (RW 0x6638FC), melee approach request (RW 0x6639CF) and safe request (RW 0x663C6B) are not ported (lane WARG-1 ported FindClosestPath "
+	"RW 0x6FB869; the attack request "
 	"RW 0x663802 and allied clearing RW 0x6F503B are lane PHYS-1's, S-784 / S-785)";
 const char *const kStopGroup =
 	"S-166 blockedBy skips the group / formation sort key (obj+0x42C / +0x430, unresolved)";
@@ -46,13 +42,13 @@ inline float hypot2(float x, float y)
 
 std::vector<std::string> AIMover::allStops()
 {
-	return { kStopSpecialLayer, kStopUpdate, kStopExitQuickPath, kStopExplicit, kStopDistance, kStopRequests, kStopGroup };
+	return { kStopSpecialLayer, kStopUpdate, kStopExplicit, kStopDistance, kStopRequests, kStopGroup };
 }
 
 void AIMover::note(const char *stop)
 {
 	// the movers note these on every frame of a move: a known stop is compared by its text only the first time (a bit per stop)
-	static const char *const kKnown[] = { kStopSpecialLayer, kStopUpdate, kStopExitQuickPath, kStopExplicit, kStopDistance, kStopRequests, kStopGroup };
+	static const char *const kKnown[] = { kStopSpecialLayer, kStopUpdate, kStopExplicit, kStopDistance, kStopRequests, kStopGroup };
 	for (unsigned i = 0; i < sizeof(kKnown) / sizeof(kKnown[0]); ++i)
 	{
 		if (kKnown[i] == stop)
@@ -439,9 +435,10 @@ bool AIMover::computeAttackPath()
 				destroyPath();
 				Coord3D adjusted = pos;
 				m_pf.adjustDestination(obj, info, &adjusted, nullptr);
-				// lane PATHPERF-1: RW calls pathfinder slot +4 here (RW 0x666E51 -> FindClosestPath RW 0x6FB869, not ported: S-166), not findPath (slot 0, RW 0x6FE7CB):
-				// the stand-in is the search without findPath's hierarchical corridor and goal step-back
-				m_path = m_pf.findPathWithoutCorridor(&obj, info, &pos, &adjusted, nullptr);
+				// RW 0x666E3D .. 0x666E51: pathfinder slot + 4, FindClosestPath (RW 0x6FB869, lane WARG-1), not findPath (slot 0, RW 0x6FE7CB): not blocked, the cost
+				// multiplier 0.2 (RW 0xBDAD78), moveAllies 1
+				m_pf.restartUberSearchCount(); // lane PERF-HD (Uber only): its own cap, not what findAttackPath left
+				m_path = m_pf.findClosestPath(&obj, info, &pos, &adjusted, false, 0.200000003f, true);
 				if (m_path == nullptr)
 				{
 					m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
@@ -530,8 +527,9 @@ void AIMover::doPathfind()
 		const PathfindLocomotorInfo info = m_host.locomotorInfo();
 		const Coord3D pos = obj.getPosition();
 		destroyPath();
-		// lane PATHPERF-1: slot +4 is FindClosestPath (RW 0x6FB869, not ported: S-166), not findPath: the search without findPath's corridor stands in for it
-		m_path = m_pf.findPathWithoutCorridor(&obj, info, &pos, &m_attackPos, nullptr);
+		// RW 0x6692E9 .. 0x669319: slot + 4 is FindClosestPath (RW 0x6FB869, lane WARG-1): blocked when the AI has blocked frames (+ 0x16C > 0), the cost
+		// multiplier 0.05 (RW 0xBDD760), moveAllies 0
+		m_path = m_pf.findClosestPath(&obj, info, &pos, &m_attackPos, m_blockedFrames > 0, 0.0500000007f, false);
 		if (m_path && m_path->getLastNode() && isDoingGroundMovement())
 		{
 			const PathNode *end = m_path->getLastNode();
@@ -576,7 +574,7 @@ bool AIMover::computeQuickPath(const Coord3D &dest)
 		delete m_path;
 		m_path = nullptr;
 	}
-	Path *p = new Path();
+	Path *p = new Path(m_pf.uberLimits()); // lane UBER-PATH
 	Coord3D from = obj.getPosition();
 	from.z = dest.z;
 	p->prependNode(&dest, m_pf.getLayerAt(dest.x, dest.y, dest.z)); // lane WALL-1: the destination's layer (the ground on a map without walls)
@@ -627,10 +625,15 @@ bool AIMover::computePath(const Coord3D &destIn)
 		}
 	}
 	// lane BACKLOG5 (BFME2 decomp AIUpdateInterface_computePath.cpp as donor, tier B same-shape: the RotWK offsets are read from the RotWK disassembly).
-	// RW 0x666036 .. 0x66607C, the straight path of a unit following its exit-production path (state 7 with AI + 0x3BA), is read but not applied: S-166
+	// RW 0x666036..0x66607C, BFME2 AIUpdateInterface_computePath.cpp:
+	// first exit path is unconditional, with no ignored producer or line test.
 	if (m_host.stateId() == 7 && obj.canPathThroughUnits())
 	{
-		note(kStopExitQuickPath);
+		if (computeQuickPath(dest))
+		{
+			m_host.finishExitQuickPath(dest);
+			return true;
+		}
 	}
 	const Coord3D orig = dest;
 	{
@@ -668,11 +671,10 @@ bool AIMover::computePath(const Coord3D &destIn)
 	}
 	if (np == nullptr && m_path == nullptr && tryClosest)
 	{
-		// FindClosestPath (RW 0x6FB869) is not ported (S-166): as for its other callers the search without findPath's corridor stands in for it; its
-		// `blocked`, cost multiplier 0 and its adjustment of the destination are not modelled
+		// RW 0x6664EA .. 0x66650C: FindClosestPath (pathfinder slot + 4, RW 0x6FB869, lane WARG-1) with blocked = the AI's blocked frames > 0, the cost multiplier 0
+		// and moveAllies 0
 		const Coord3D pos = obj.getPosition();
-		note(kStopRequests);
-		np = m_pf.findPathWithoutCorridor(&obj, info, &pos, &dest, nullptr);
+		np = m_pf.findClosestPath(&obj, info, &pos, &dest, m_blockedFrames > 0, 0.0f, false);
 		m_retryPath = true;
 	}
 	if (np)
@@ -727,15 +729,14 @@ bool AIMover::needToRotate()
 }
 
 // RW 0x6EF865 (the first test of RW 0x6F1B3E): the step's end and the goal are in the same pathfinder cell, the cells measured as RW 0x6ECFC5 / 0x6E8CE6 do for the
-// unit: an odd footprint floors x / 10, an even one adds the half-cell offset (review r2)
+// unit: an odd footprint floors x / 10, an even one adds the half-cell offset (review r2). Lane WARG-1: RW 0x6E8CE6 does not clamp to the grid; the port's
+// clamped worldToCell put two different off-map points on the same edge cell
 bool AIMover::stepEndsInGoalCell(const Coord3D &now)
 {
 	PathfindObject &obj = m_host.pathfindObject();
 	const bool center = (m_pf.footprintSize(&obj) & 1) != 0;
-	ICoord2D nowCell{ 0, 0 }, goalCell{ -1, -1 };
-	Coord3D at = now, goalPos = m_goal;
-	m_pf.worldToCell(&at, center, &nowCell);
-	m_pf.worldToCell(&goalPos, center, &goalCell);
+	const ICoord2D nowCell = Pathfinder::worldToCellUnclamped(&now, center);
+	const ICoord2D goalCell = Pathfinder::worldToCellUnclamped(&m_goal, center);
 	return nowCell.x == goalCell.x && nowCell.y == goalCell.y;
 }
 
@@ -771,9 +772,11 @@ bool AIMover::stepValid(const Coord3D &from, const Coord3D &to)
 	m_pf.setIgnoreObstacleID(m_ignoreObstacleId); // a unit leaving its factory ignores the footprint it stands in
 	// lane HORDE-2: RW 0x6F1B3E first asks RW 0x6EF865(unit, new position, goal): a step that ends in the GOAL's cell is valid (the path is then deleted,
 	// RW 0x669B14) whatever the cell holds; without it a member whose slot cell is occupied kept its fallback path for good (S-532)
+	// performance (every profile, the same answers): the three tests only read, so their OR is asked cheapest first; the line walk (the costly one, it reads
+	// every unit on the line's footprints) only runs for a step whose end cell the terrain refuses (RW asks the goal cell, the line, then the terrain)
 	Coord3D at = to;
-	const bool valid = stepEndsInGoalCell(at) || m_pf.isLinePassable(&obj, info.validSurfaces, obj.getLayer(), from, at, false, true) ||
-		m_pf.validMovementPosition(&obj, info, obj.getLayer(), &at);
+	const bool valid = stepEndsInGoalCell(at) || m_pf.validMovementPosition(&obj, info, obj.getLayer(), &at) ||
+		m_pf.isLinePassable(&obj, info.validSurfaces, obj.getLayer(), from, at, false, true);
 	m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
 	return valid;
 }

@@ -4,6 +4,7 @@
 // the NeededUpgrade gate of RW 0x695338); the unported cases are a named stop (S-5305); Edain Unchained's QueueIgnoreCP (mod engine feature
 // edain-unchained.queue-ignore-cp) parses only with the feature and lets a doCommandButton build past the command point refusal only.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "Common/BuildAssistant.h"
@@ -100,7 +101,7 @@ struct Game
 		REQUIRE_MESSAGE(tt, name);
 		Object *o = logic->newObject(tt, player->getDefaultTeam(), ObjectStatusMaskType{});
 		REQUIRE(o);
-		return o;
+		return testutil::completeHorde(o);
 	}
 	bool stopNoted(const std::string &prefix) const
 	{

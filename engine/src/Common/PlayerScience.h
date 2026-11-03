@@ -81,6 +81,16 @@ public:
 
 	// vslot 3 (RW 0x6AEE11): the rank reset and the sciences reset
 	void reset();
+	// WOTR2 milestone 7: ArmySummarySystem's initial load RW 0x8125FC for a War of the Ring battle player: reset (vslot 3), resetSciences (RW 0x6AED4B),
+	// addSkillPoints(the war's skill points, no scalar) (RW 0x782AA4), purchase points = earnedSpellPoints + the war's bonus (RW 0x80F49C + RW 0x441BBD),
+	// then the war's science list replaces the list when it is not empty (RW 0x6ACEF4: a vector assignment, nobody told)
+	void loadFromLivingWorld(float skillPoints, int bonusPoints, const ScienceVec &sciences);
+	// RW 0x80F49C ComputePlayerEarnedSpellPoints: the SciencePurchasePointsGranted of every rank 1 .. the current rank
+	int earnedSpellPoints() const;
+	void resetSciences();                         // RW 0x6AED4B (lane BFME2CAMP1: the campaign's carry-over step calls it on its own too, RW 0x5EBE13)
+	// + 0x18, the rank the skill point scalar table starts at (RW 0x71C311; lane BFME2CAMP1: the carry-over step sets it to the rank, RW 0x5EBE2D)
+	void setScalarBaseRank(int rank) { m_scalarBaseRank = rank; }
+	int getScalarBaseRank() const { return m_scalarBaseRank; }
 	bool setRankLevel(int level);                 // vslot 1 (RW 0x782865)
 	void addSciencePurchasePoints(int delta);     // vslot 2 (RW 0x6AA980 -> 0x782764)
 	bool addSkillPoints(float points, bool applyScalar); // RW 0x782AA4
@@ -92,6 +102,7 @@ public:
 	int getSkillPointsLevelUp() const { return m_skillPointsNextRank; }
 	int getSkillPointsLevelDown() const { return m_skillPointsThisRank; }
 	void setSkillPointsModifier(float m) { m_skillPointsModifier = m; }
+	float skillPointsModifier() const { return m_skillPointsModifier; } // +0x10 (Player + 0x18)
 	void setRankLevelCap(int cap) { m_rankCap = cap; }
 	int getRankLevelCap() const { return m_rankCap; }
 	// RW 0x782942 (lane OWNERFIX-1): the first rank r in 1 .. max rank - 1 whose summed SciencePurchasePointsGranted (ranks 1 .. r) reaches `points`;
@@ -104,6 +115,8 @@ public:
 	bool grantScience(ScienceType st);             // RW 0x6AE3A7
 	bool isCapableOfPurchasingScience(ScienceType st) const; // RW 0x6AC8BC
 	bool attemptToPurchaseScience(ScienceType st); // RW 0x6AE36F
+	// RW 0x6AE3CC (a campaign's carried science at a mission start): grantable -> addScience; added: purchase points -= its cost (vslot 2)
+	bool grantAndPayScience(ScienceType st);
 
 	// RW 0x6AE1C9 .. 0x6AE2E6: the special power modules of the player's objects are told about a new science (installed by the logic that owns
 	// the objects; without it the notification is counted, stop S-526)
@@ -143,7 +156,6 @@ public:
 
 private:
 	void baseReset();                 // RW 0x782774
-	void resetSciences();             // RW 0x6AED4B
 	void rankGranted(const PlayerRankInfo &ri); // RW 0x6AE332
 	void computeNeeded();             // RW 0x7826F6
 	const std::string &side() const;

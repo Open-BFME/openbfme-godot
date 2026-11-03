@@ -56,7 +56,8 @@
 //   * the movie: won -> "Next Mission:" (APT:CampaignNextMission), the buttons MainMenu / SaveGame / LoadGame / NextMission; lost -> "Failed Mission:"
 //     (APT:CampaignFailedMission), MainMenu / LoadGame (moved to x 512) / LastMission (APT:ReplayMissionBttn).
 // OpenBFME DIFFERENCES (stop S-1360): the auto-save and the menu's saves are OpenBFME saves of the campaign's state between missions
-// (SaveGameFile's campaign menu save point), never a retail format; the carry-over heroes between missions are not ported (S-4903).
+// (SaveGameFile's campaign menu save point), never a retail format; the carry-over heroes between missions are not ported (S-4903; lane BFME2CAMP1 ported the first mission's spawn,
+// GameLogic/CampaignCarryover.h).
 #pragma once
 
 #include <string>

@@ -180,6 +180,10 @@ struct TeamTemplateScripts
 	std::int32_t initialIdleFrames = 0;
 	float destroyedThreshold = 0.0f;
 	std::string generic[32];
+	// lane TEAMEVENTS-1: teamProductionCondition + 0x110 (RW 0x7A38A3, key RW 0xDA2CCC) and teamExecutesActionsOnCreate + 0x114 (RW 0x7A38D9, key
+	// RW 0xDA2D14, the bool read RW 0x714A66: missing = false); the prototype's + 0x23C / + 0x240 that RW 0x7A6E8E reads
+	std::string productionCondition;
+	bool executeActionsOnCreate = false;
 };
 
 class TeamPrototype
@@ -201,6 +205,10 @@ public:
 	bool getIsSingleton() const { return m_singleton; }
 	int getID() const { return m_id; }
 	const Dict &getDict() const { return m_dict; }
+	// lane BFME2CAMP1: + 0x318, the attack priority set TEAM_APPLY_ATTACK_PRIORITY_SET gave the team (RW 0x7A1BCF; RW 0x691F0C reads it): an object that
+	// joins one of the prototype's teams takes it (Object::applyTeamAttackPriority); "" none
+	void setAttackPriorityName(const std::string &n) { m_attackPriorityName = n; }
+	const std::string &attackPriorityName() const { return m_attackPriorityName; }
 	const std::vector<Team *> &teams() const { return m_teams; }
 	Team *getFirstTeam() const { return m_teams.empty() ? nullptr : m_teams.front(); }
 	// lane CAMP-1: the head of retail's instance list (prototype + 0x334): a new team is PREPENDED (RW 0x79FA5C -> RW 0x79F9D0), so the head is the newest
@@ -215,6 +223,7 @@ private:
 	bool m_singleton;
 	int m_id;
 	Dict m_dict;
+	std::string m_attackPriorityName; ///< lane BFME2CAMP1: + 0x318
 	std::vector<Team *> m_teams;
 	mutable std::unique_ptr<TeamTemplateScripts> m_scripts; ///< lane CAMP-1H: templateScripts()
 };
@@ -231,7 +240,17 @@ public:
 	TeamPrototype *initTeam(const std::string &name, Player *owner, bool singleton, const Dict *dict = nullptr);
 	// a new team of a prototype (ZH createInactiveTeam / createTeam: a singleton prototype has exactly one). lane CAMP-1H: `activate` is RW 0x7A6FCB's
 	// createTeam (active) against RW 0x7A6E8E's createInactiveTeam (the singleton's existing team is activated too, RW 0x7A70CE with its flag)
+	// lane TEAMEVENTS-1: RW 0x7A6E8E runs the production-condition script's actions (see setCreateActionsHook) on both paths, the singleton's existing
+	// team too, after the new team is linked into its prototype and before RW 0x7A6FCB's activation
 	Team *createTeam(TeamPrototype *proto, bool activate = false);
+	// lane TEAMEVENTS-1: RW 0x7A6E8E's action run for a prototype with teamExecutesActionsOnCreate: the script engine's lookup (RW 0x758ECB) and action
+	// run (RW 0x60D053 with no team). The hook answers false while the engine has no scripts yet: the prototype is queued (in creation order) and
+	// takePendingCreateActions hands the queue to the engine once its scripts are built. Retail looks the script up in TheSidesList (RW 0x604986
+	// reads TheSidesList + 0x3C sides), which exists while PlayerList::newGame makes the map's teams; ours builds the script engine after the players
+	// (and the objects), so a team made before that (a map singleton, RW 0x7A73DB -> 0x7A6E8E, or an object's team, RW 0x7A7147) runs its actions
+	// when the engine starts. INFERENCE: no RotWK 2.01 map has a singleton or an object-owned team with the flag (the census: only AI-built teams).
+	void setCreateActionsHook(std::function<bool(TeamPrototype &)> hook) { m_createActionsHook = std::move(hook); }
+	std::vector<TeamPrototype *> takePendingCreateActions();
 
 	TeamPrototype *findTeamPrototype(const std::string &name) const;
 	// lane SCRIPT-2: RW 0x7A2C47, the prototype of that name owned by the player of that name (the maps reuse a team name under several owners:
@@ -253,6 +272,8 @@ public:
 	// lane SAVE-4b: the member ids each team's load read, in team order (GameLogic::xferObjects loads the teams a second time after making the objects; the
 	// post-process must link the snapshot's members, not the ones that second load reads from the live lists)
 	std::vector<std::vector<ObjectID>> friend_loadedMembers() const;
+	// lane BFME2CAMP1: the id the next team gets (every id below it was issued; a load checks a saved team id against it)
+	TeamID nextTeamID() const { return m_nextTeamID; }
 	void friend_setLoadedMembers(const std::vector<std::vector<ObjectID>> &members);
 
 private:
@@ -262,4 +283,7 @@ private:
 	TeamID m_nextTeamID = 1;
 	int m_nextPrototypeID = 1;
 	size_t m_loadedTeamCount = (size_t)-1; ///< lane SAVE-4e: the teams the snapshot being loaded holds (-1: no load)
+	std::function<bool(TeamPrototype &)> m_createActionsHook; ///< lane TEAMEVENTS-1
+	std::vector<TeamPrototype *> m_pendingCreateActions;      ///< lane TEAMEVENTS-1: runs the hook could not take yet
+	void runCreateActions(TeamPrototype *proto);
 };

@@ -98,6 +98,9 @@ constexpr int W3D_OCCLUSION_PASS_COLOR = 2;
 constexpr int W3D_OCCLUSION_SLOT_SHIFT = 15;
 constexpr int W3D_OCCLUSION_SLOTS = 32;
 constexpr int W3D_OCCLUSION_OCCLUDER_BIT = 1 << 20;
+// lane INGAMEBG-1: bit 21, the instance belongs to a scene without fog (the Apt View3D's own scene, RW 0x5424E0: SceneClass's FogEnabled false), so the
+// map's hardware fog (S-1651) is not applied to it
+constexpr int W3D_NO_SCENE_FOG_BIT = 1 << 21;
 constexpr int W3D_OCCLUSION_STENCIL_MARK = 255;
 constexpr int W3D_OCCLUSION_STENCIL_DONE = 1;
 // the render priorities of the passes: after the opaque scene, before the other blended surfaces (retail draws the quads before its translucent list);

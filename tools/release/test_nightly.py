@@ -107,10 +107,11 @@ def test_tester_readme_titles():
     assert rt.title_of("v0.4.13-nightly.261023300", "Linux") == "OpenBFME v0.4.13-nightly.261023300 - alpha build for Linux"
 
 
-def change(sha, notes=(), tests=(), player=True, community=(), inner=()):
+def change(sha, notes=(), tests=(), player=True, community=(), inner=(), note_credits=None):
     return {"sha": sha, "subject": "Merge lane/x: something", "notes": list(notes),
             "hidden": any(not t or t.lower() == "none" for t in notes), "tests": list(tests), "player": player,
-            "files": ["godot/scripts/x.gd"] if player else ["tools/x.py"], "inner": list(inner), "community": list(community)}
+            "files": ["godot/scripts/x.gd"] if player else ["tools/x.py"], "inner": list(inner), "community": list(community),
+            "note_credits": note_credits if note_credits is not None else [[] for _ in notes]}
 
 
 PR = {"pr": 67, "login": "daisyhasacat", "title": "Fix road corners", "subjects": ["Fix road corners"]}
@@ -309,3 +310,170 @@ def test_pulls_of_makes_one_attempt_for_nonpositive_attempts(monkeypatch, attemp
         with pytest.raises(SystemExit, match="fail closed"):
             github.pulls_of(SHA)
     assert len(calls) == 1
+
+
+# ---- RELNOTES-1: each Release-note line credited to its own pull requests only -------------------------------------------------------
+AUTHORS = {133: "daisyhasacat", 137: "Ancalgonn", 140: "daisyhasacat", 141: "Ancalgonn", 144: "Ancalgonn", 156: "NotNBR",
+           159: "NotNBR", 164: "NotNBR", 165: "NotNBR", 166: "NotNBR", 169: "NotNBR", 132: "daisyhasacat", 178: "NotNBR", 179: "NotNBR"}
+
+
+class FakeGitHub:
+    """GitHub links the cherry-picks of `linked` to their pull requests only (a port's rewritten commits it does not know)"""
+    repo = "Open-BFME/openbfme-godot"
+
+    def __init__(self, linked=()):
+        self.linked = set(linked)
+
+    def pulls_of(self, sha):
+        n = int(sha[:3])
+        return [self.pull(n)] if n in self.linked else []
+
+    def pull(self, n):
+        if n not in AUTHORS:
+            raise SystemExit(f"#{n} is not a pull request")
+        return {"pr": n, "login": AUTHORS[n], "title": f"PR {n}"}
+
+
+def merge(monkeypatch, sha, subject, lines, cherries=()):
+    body = "".join(f"Release-note: {t}\n" for t in lines)
+    monkeypatch.setattr(nn.ar, "first_parent_commits", lambda g, a, b: [{"sha": sha, "subject": subject, "body": body,
+                                                                         "files": ["engine/src/x.cpp"]}])
+    inner = [{"sha": f"{n}".ljust(40, "0"), "subject": f"port of {n}", "body": f"(cherry picked from commit {f'{n}'.ljust(40, 'e')})"}
+             for n in cherries]
+    monkeypatch.setattr(nn, "inner_commits", lambda g, s: inner)
+
+
+PLAIN = ["Terrain textures stay sharp at shallow camera angles.", "Glowing models light up the screen.",
+         "Large battles render faster.", "Clicking and hovering over units on the HUD is faster in large battles."]
+MQ32 = ["The BFME2 campaigns are playable.", "The BFME2 tutorials start from the main menu.", "A destroyed creep lair leaves a hole.",
+        "Melee units whose target died now pick a nearby enemy building again.", "Mods' AI scripts that build upgrades now run.",
+        "Map teams set to run their actions when created now do so.",
+        "Fixed: Computer players' capture squads no longer stand at a flag forever.", "Ramps now join the wall tops only at their ends."]
+
+
+def rendered(ctx):
+    d = good_draft(ctx)
+    return nn.render(ctx, d, "v0.4.12-nightly.261030200", [], "Open-BFME/openbfme-godot", "", "", True, False, False)[0]
+
+
+def test_a_batch_whose_github_links_one_author_credits_each_line_to_its_own_pull_request(monkeypatch):
+    # the 10-30 plain batch: GitHub linked only #141 / #144 (Ancalgonn); #165 and #169 (NotNBR) were credited to Ancalgonn
+    sha = "27b8f5bafd9b81fddd53a4eae007ba8b03cc2c92"
+    subject = "Merge the 10-30 plain batch: terrain, glow, render frame and HUD picking (#141, #144, #165, #169)"
+    merge(monkeypatch, sha, subject, PLAIN, cherries=(141, 144, 165, 169))
+    gh = FakeGitHub(linked=(141, 144))
+    # without per-line credits the merge's four pull requests can't be placed: fail closed, never spread
+    with pytest.raises(SystemExit, match="#141, #144, #165, #169 but none"):
+        nn.build_context(None, "a", "b", gh)
+    # the lines' own endings
+    merge(monkeypatch, sha, subject, [f"{t} (#{n})" for t, n in zip(PLAIN, (141, 144, 165, 169))], cherries=(141, 144, 165, 169))
+    ctx = nn.build_context(None, "a", "b", gh)
+    assert ctx["changes"][0]["notes"] == PLAIN          # the ending is not part of the text
+    text = rendered(ctx)
+    assert "- Large battles render faster. Thanks to @NotNBR (#165)." in text
+    assert "- Clicking and hovering over units on the HUD is faster in large battles. Thanks to @NotNBR (#169)." in text
+    assert "- Terrain textures stay sharp at shallow camera angles. Thanks to @Ancalgonn (#141)." in text
+    thanks = text[text.index("## Thanks to our community"):text.index("## What's new")]
+    assert thanks.splitlines()[2:6] == ["- Thanks to @Ancalgonn (#141): Terrain textures stay sharp at shallow camera angles.",
+                                        "- Thanks to @Ancalgonn (#144): Glowing models light up the screen.",
+                                        "- Thanks to @NotNBR (#165): Large battles render faster.",
+                                        "- Thanks to @NotNBR (#169): Clicking and hovering over units on the HUD is faster in large battles."]
+    # the same merge, as it is in the history (no endings), placed by nightly_credits.json
+    merge(monkeypatch, sha, subject, PLAIN, cherries=(141, 144, 165, 169))
+    ctx2 = nn.build_context(None, "a", "b", gh, {sha: [[141], [144], [165], [169]]})
+    assert rendered(ctx2) == text
+    with pytest.raises(SystemExit, match="lists 3 lines"):
+        nn.build_context(None, "a", "b", gh, {sha: [[141], [144], [165, 169]]})
+
+
+def test_a_merge_queue_credits_its_contributors_line_by_line_and_our_own_lines_not_at_all(monkeypatch):
+    # MERGEQ-32: GitHub linked #137 only; every line read "Thanks to @Ancalgonn (#137)", our mod AI and team lines included
+    sha = "207e9b632d2c5985700be9e21d220f3be9d830a3"
+    merge(monkeypatch, sha, "Merge MERGEQ-32: campaigns, rebuild holes, the capture release, ramps (#137, #140, #156, #159)", MQ32,
+          cherries=(137,))
+    rows = [[137], [137], [137], [140], [], [], [156], [159]]
+    text = rendered(nn.build_context(None, "a", "b", FakeGitHub(linked=(137,)), {sha: rows}))
+    assert "- Mods' AI scripts that build upgrades now run.\n" in text and "- Map teams set to run their actions when created now do so.\n" in text
+    assert "now pick a nearby enemy building again. Thanks to @daisyhasacat (#140)." in text
+    assert "no longer stand at a flag forever. Thanks to @NotNBR (#156)." in text
+    assert "only at their ends. Thanks to @NotNBR (#159)." in text
+    assert text.count("Thanks to @Ancalgonn (#137)") == 3 * 2 + 1   # three lines (community section, What's new), What to test
+    test = text[text.index("## What to test"):]
+    assert "Thanks to @Ancalgonn (#137), @daisyhasacat (#140) and @NotNBR (#156, #159)." in test   # the steps cover the whole merge
+    # MERGEQ-33: GitHub links none of the port's commits; the subject's numbers still credit their lines
+    sha = "cf38c5d40de8423efd24472fbbfb3ddbb6e57933"
+    merge(monkeypatch, sha, "Merge MERGEQ-33: a faster logic frame, straight production exits and the Uber cap (#164, #133, #166)",
+          ["The game logic runs faster.", "Structures change their footprint.", "Soldiers leave on one straight path.",
+           "In Uber mode one long path search can no longer stall a frame."])
+    with pytest.raises(SystemExit, match="#133, #164, #166 but none"):
+        nn.build_context(None, "a", "b", FakeGitHub())
+    text = rendered(nn.build_context(None, "a", "b", FakeGitHub(), {sha: [[164], [], [133], [166]]}))
+    assert "- The game logic runs faster. Thanks to @NotNBR (#164)." in text
+    assert "- Structures change their footprint.\n" in text
+    assert "- Soldiers leave on one straight path. Thanks to @daisyhasacat (#133)." in text
+    # a single line takes every pull request its merge carries; a number that is no pull request fails closed
+    merge(monkeypatch, sha, "Merge #164", ["The game logic runs faster."])
+    assert "- The game logic runs faster. Thanks to @NotNBR (#164)." in rendered(nn.build_context(None, "a", "b", FakeGitHub()))
+    merge(monkeypatch, sha, "Merge the fix of issue #9999", ["The game logic runs faster."])
+    with pytest.raises(SystemExit, match="#9999"):
+        nn.build_context(None, "a", "b", FakeGitHub())
+
+
+MQ35 = ["A building that collapses to rubble loses its experience, as in the original game.",
+        "Destroyed bridges, bridge towers and wall upgrades that stay on the field can be healed again, as in the original game.",
+        "Arcing projectiles from weapons with a preferred target bone aim at that bone, as in the original game.",
+        "Large battles run faster: more of the logic frame, the collision pass and the partition update share the work across CPU cores "
+        "(#178, #179).",
+        "Melee units attack a large building from its edge instead of crowding towards its middle, and structures created by powers block "
+        "paths where they stand (#132)."]
+
+
+def test_a_merge_queue_and_a_later_credits_fix_describe_each_pull_request_once(monkeypatch):
+    # NOTESDUP-1, nightly 261101200 (bf43aae1f..22f897213): MERGEQ-35's five lines credit #178 / #179 / #132; the credits fix after it
+    # (a plain commit, tools only) names the three numbers in its subject. #132, #178 and #179 each appeared twice: the merge's own lines
+    # plus a model text per pull request ("6 changes, 8 for the model"), and the lines' "(#178, #179)." endings showed full-width signs.
+    mq35, fix = "83c1a0476f5a51a433f3e73ce53aa0aa6fd9ad78", "22f8972134a9978e2a3a79135f9de7286fcce9a0"
+    commits = [{"sha": mq35, "subject": "Merge MERGEQ-35: rubble experience, dead-but-kept heals, preferred-bone aim, faster logic frames and "
+                "melee reach on large buildings (SIMSMALL-1, #178, #179, #132)", "body": "".join(f"Release-note: {t}\n" for t in MQ35),
+                "files": ["engine/src/x.cpp"]},
+               {"sha": fix, "subject": "Nightly credits: the MERGEQ-35 merge's lines credit #178, #179 and #132", "body": "",
+                "files": ["tools/release/nightly_credits.json"]}]
+    monkeypatch.setattr(nn.ar, "first_parent_commits", lambda g, a, b: commits)
+    inner = {mq35: [{"sha": f"{n}".ljust(40, "0"), "subject": f"Merge community PR {n}", "body": ""} for n in (132, 178, 179)]}
+    monkeypatch.setattr(nn, "inner_commits", lambda g, s: inner.get(s, []))
+    for rows in (None, nn.load_credits(nn.HERE / "nightly_credits.json")):   # the lines' own endings, and the credits file's row
+        ctx = nn.build_context(None, "bf43aae1f", "22f897213", FakeGitHub(), rows)
+        assert [u["id"] for u in nn.units(ctx)] == [mq35, fix]            # two changes, two units: no pull request goes to the model
+        assert not any("pr" in u["id"] for u in nn.units(ctx))
+        assert ctx["changes"][0]["notes"][3].endswith("share the work across CPU cores.")
+        text = rendered(ctx)
+        assert "\uff03" not in text and "cores (#178" not in text and "stand (#132" not in text
+        assert "- Large battles run faster: more of the logic frame, the collision pass and the partition update share the work across CPU " \
+               "cores. Thanks to @NotNBR (#178, #179)." in text
+        assert "block paths where they stand. Thanks to @daisyhasacat (#132)." in text
+        thanks = text[text.index("## Thanks to our community"):text.index("## What's new")]
+        assert len([x for x in thanks.splitlines() if x.startswith("- ")]) == 2   # one line per credited Release-note line
+        assert text.count("Thanks to @NotNBR (#178, #179)") == 2                  # its community line + its What's new line
+        assert "Thanks to @daisyhasacat (#132) and @NotNBR (#178, #179)." in text[text.index("## What to test"):]   # the merge's steps
+        assert "Thanks to @NotNBR (#178):" not in text and "Thanks to @NotNBR (#179):" not in text
+    # a plain commit naming a pull request no line credits is still described, once
+    commits[1]["subject"] = "Nightly credits: #164"
+    assert [u["id"] for u in nn.units(nn.build_context(None, "a", "b", FakeGitHub()))] == [mq35, f"{fix}:pr164"]
+
+
+def test_note_refs_and_the_stable_notes_drop_the_ending():
+    assert nn.ar.note_refs("Fixed [AI]: Squads take orders. (#156)") == ("Fixed [AI]: Squads take orders.", [156])
+    assert nn.ar.note_refs("Faster. ( #165 , #164 )") == ("Faster.", [164, 165])
+    assert nn.ar.note_refs("Water on the grid (#154, Ancalgonn).") == ("Water on the grid (#154, Ancalgonn).", [])
+    assert nn.ar.note_refs("Share the work across CPU cores (#178, #179).") == ("Share the work across CPU cores.", [178, 179])
+    assert nn.ar.note_refs("Block paths (#132) .") == ("Block paths.", [132])
+    assert nn.ar.parse_note("Fixed [AI]: Squads take orders. (#156)") == ("fixed", "AI", "Squads take orders.")
+
+
+def test_the_credits_file_names_real_merges_line_by_line():
+    merges = nn.load_credits(nn.HERE / "nightly_credits.json")
+    assert merges
+    for sha, lines in merges.items():
+        r = nn.subprocess.run(["git", "-C", str(nn.HERE), "log", "-1", "--format=%b", sha], capture_output=True, text=True)
+        assert not r.returncode, f"{sha[:10]} is not a commit of this repository"
+        assert len(nn.ar.release_note_texts(r.stdout)) == len(lines), sha[:10]

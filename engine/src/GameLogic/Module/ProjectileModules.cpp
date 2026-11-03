@@ -99,13 +99,16 @@ const FieldParse kBezierParse[] = {
 	{ "CurveFlattenMinDist", INI::parseReal, nullptr, BP_OFF(m_curveFlattenMinDist) },
 	{ "PreLandingEmotion", parseEmotion, nullptr, BP_OFF(m_preLandingEmotion) },
 	{ "PreLandingEmotionRadius", INI::parseReal, nullptr, BP_OFF(m_preLandingEmotionRadius) },
-	// Open-BFME-2 reverse/fieldparse_tables.tsv: 0x841B58, bool +0xB4.
-	{ "PreLandingEmotionAffectsAllies", INI::parseBool, nullptr, BP_OFF(m_preLandingEmotionAffectsAllies) },
 	{ "InvisibleFrames", INI::parseUnsignedInt, nullptr, BP_OFF(m_invisibleFrames) },
 	{ "FadeInTime", INI::parseUnsignedInt, nullptr, BP_OFF(m_fadeInTime) },
 	{ "PostLandingStateTime", INI::parseDurationUnsignedInt, nullptr, BP_OFF(m_postLandingStateTime) },
 	{ "PostLandingEmotion", parseEmotion, nullptr, BP_OFF(m_postLandingEmotion) },
 	{ "PostLandingEmotionRadius", INI::parseReal, nullptr, BP_OFF(m_postLandingEmotionRadius) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+// lane BFME2MODE-0: BFME2 1.06's row that RotWK's table 0xC58368 dropped (BFME2 table 0xC41B58, after PreLandingEmotionRadius), found only in BFME2 1.06 data
+const FieldParse kBezierBfme2Rows[] = {
+	{ "PreLandingEmotionAffectsAllies", INI::parseBool, nullptr, BP_OFF(m_preLandingEmotionAffectsAllies) },
 	{ nullptr, nullptr, nullptr, 0 }
 };
 #undef BP_OFF
@@ -220,7 +223,20 @@ float ProjectileInvSqrt(float value)
 
 void BezierProjectileBehaviorModuleData::buildFieldParse(MultiIniFieldParse &p)
 {
+	static const Bfme2FieldRowsRegistration bfme2Rows(kBezierParse, kBezierBfme2Rows); // lane BFME2MODE-0
 	p.add(kBezierParse);
+}
+
+// lane BFME2MODE-0 (AGENTS.md): the pre-landing scare's relationship mask, the projectile behaviour's edition variant. RotWK passes the constant 7 (allies, enemies,
+// neutral; RW 0x85F31A .. 0x85F3F0); BFME2 1.06 builds it from PreLandingEmotionAffectsAllies (BFME2 0x85C2B8 .. 0x85C2D4 in update 0x85C226, Rva 0x45C226,
+// BezierProjectileBehavior.cpp (update): 2 (neutral), 6 (neutral | allies) when the field is set, then | 1 (enemies))
+int BezierProjectileBehaviorModuleData::preLandingRelationshipMask(GameEdition edition) const
+{
+	if (edition == GameEdition::BFME2_106)
+	{
+		return (m_preLandingEmotionAffectsAllies ? 6 : 2) | 1;
+	}
+	return 7;
 }
 
 void ProjectileModules::registerAll(ModuleFactory &modules)
@@ -365,12 +381,20 @@ void BezierProjectileBehavior::positionForLaunch(Object *launcher, int wslot, in
 	obj->setTransform(&pos, basis);
 }
 
-// RW 0x6CB85A getAimPosition(out, projectile, victim, flag = 1). The weapon's aim bone is a drawable query (not available); the aim point of the victim's geometry (RW 0xAD30E0, the
-// victim's aim points chosen by a seed) is INFERENCE S-362: the geometry centre. The seed IS drawn (GameLogicRandomValue(0, 12345678) at Weapon.cpp:1749, RW 0x6CB8C2..0x6CB8D3): the
-// retail logic random sequence advances once per aim query
+// RW 0x6CB85A (BFME2 0x2CAB3A WeaponTemplate::adjustTargetPositionOnVictim, decomp WeaponTemplateTargetPositions.cpp:90-110, tier A):
+// first the weapon's PreferredTargetBone (RW 0x6CB81A, as ObjectWeaponDelivery::fireFXAimPosition asks it: the module's m_weapon,
+// +0x3C, is the firing weapon's template — RW 0x85EBEE reads it for the speeds the same way); a bone that answers is returned with
+// no random draw. Otherwise GameLogicRandomValue(0, 12345678) at Weapon.cpp:1749 (RW 0x6CB8C2..0x6CB8D3) is drawn and the victim's
+// worldspace best contact point answers; the contact point of the victim's geometry (RW 0xAD30E0, the aim points chosen by the
+// seed) is INFERENCE S-362: the geometry centre
 Coord3D BezierProjectileBehavior::aimPosition(const Object &victim)
 {
 	Object *obj = getObject();
+	Coord3D bone;
+	if (m_weapon && preferredBoneAim(obj->logic(), *m_weapon, victim, bone))
+	{
+		return bone;
+	}
 	obj->logic().random().getValue(0, 12345678, kWeaponCpp, 1749);
 	Coord3D p = *victim.getPosition();
 	p.z = SimMath::addf32(p.z, SimMath::mulf32(CombatQueries::geometry(victim).height, 0.5f));
@@ -554,7 +578,7 @@ UpdateSleepTime BezierProjectileBehavior::update()
 		obj->setModelConditionState(kModelConditionAboutToHit, true);
 		if (d->m_preLandingEmotion != -1)
 		{
-			// RW 0x85F31A .. 0x85F3F0 (lane FLANK-1; BFME2 decomp BezierProjectileBehaviorUpdate.cpp:136 has a relationship byte at + 0xB4 that RotWK does not read: RotWK
+			// RW 0x85F31A .. 0x85F3F0 (lane FLANK-1; BFME2 decomp BezierProjectileBehavior.cpp (update) has a relationship byte at + 0xB4 that RotWK does not read: RotWK
 			// passes the constant 7): ThePartitionManager within PreLandingEmotionRadius (+ 0xB0) of the path's end (+ 0x5C), distance type 1 (FROM_CENTER_3D), sorted near to far,
 			// through the filters RW 0xC11DC0 (the projectile's relationship to the object in mask 7 = allies, enemies, neutral: every object), RW 0xC10E20 (alive) and
 			// RW 0xC0F374 (the projectile's off-map flag, Object + 0x458 bit 3: never set in the port, S-920); every hit but the projectile asks its emotion tracker for
@@ -562,9 +586,10 @@ UpdateSleepTime BezierProjectileBehavior::update()
 			PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); });
 			const PartitionHits hits =
 				logic.partition().iterateObjectsInRange(m_flightPathEnd, d->m_preLandingEmotionRadius, FROM_CENTER_3D, { &alive }, ITER_SORTED_NEAR_TO_FAR);
+			const int relationships = d->preLandingRelationshipMask(logic.edition()); // lane BFME2MODE-0: 7 in RotWK (every object)
 			for (const PartitionHit &hit : hits)
 			{
-				if (hit.object != obj)
+				if (hit.object != obj && (relationships & (1 << (int)obj->getRelationship(*hit.object))) != 0)
 				{
 					EmotionTrackerUpdate::requestEmotion(*hit.object, d->m_preLandingEmotion, obj, 1);
 					++logic.combat().counters().projectilePreLandingEmotions;
@@ -789,7 +814,7 @@ bool ProjectileModules::shouldProjectileCollideWith(GameLogic &logic, const Weap
 	return true;
 }
 
-// RW 0x85EF6A (lane FLANK-1; BFME2 decomp BezierProjectileBehaviorSlots.cpp rva0045BF06): a path and a warhead; an object of KindOf HORDE (template + 0x115 bit 5) or
+// RW 0x85EF6A (lane FLANK-1; BFME2 decomp BezierProjectileBehavior.cpp rva0045BF06): a path and a warhead; an object of KindOf HORDE (template + 0x115 bit 5) or
 // dead (Object + 0x458 bit 0) never; else the warhead's RW 0x6CC79C with the launcher found by id, the projectile and the intended victim's id (+ 0x38)
 bool BezierProjectileBehavior::projectileCanCollideWith(const Object *other) const
 {
@@ -808,7 +833,7 @@ bool BezierProjectileBehavior::projectileCanCollideWith(const Object *other) con
 	return ProjectileModules::shouldProjectileCollideWith(logic, *m_warhead, launcher, obj, other, m_victimID);
 }
 
-// RW 0x85EA5F (lane FLANK-1; BFME2 decomp BezierProjectileBehaviorSlots.cpp rva0045B9FB): k = min(path size - 1, the step) (an unsigned compare), the step toward
+// RW 0x85EA5F (lane FLANK-1; BFME2 decomp BezierProjectileBehavior.cpp rva0045B9FB): k = min(path size - 1, the step) (an unsigned compare), the step toward
 // path point max(k - 1, 0) is 0.1 of (that point - the position) (SSE, x, y, z each); while the projectile's shapes at the stepped position still overlap `other`'s
 // (GeometryInfo::CollidesWith = RW 0xAD2CE0 with the projectile's angle and the other's position and angle), at most 13 times, take another step; then one step back
 // and setPosition (RW 0x70C201)
@@ -828,8 +853,8 @@ void BezierProjectileBehavior::backOff(const Object &other)
 	delta.y = SimMath::mulf32(delta.y, 0.1f);
 	delta.z = SimMath::mulf32(delta.z, 0.1f);
 	const float angle = obj->getOrientation();
-	const std::vector<ObjectGeometry::Shape> &own = ObjectGeometry::cachedShapesOf(*obj->getTemplate());
-	const std::vector<ObjectGeometry::Shape> &theirs = ObjectGeometry::cachedShapesOf(*other.getTemplate());
+	const std::vector<ObjectGeometry::Shape> &own = obj->geometryShapes(); // lane MODCOMPAT-MOD1: the objects' own GeometryInfo (Object + 0xA8)
+	const std::vector<ObjectGeometry::Shape> &theirs = other.geometryShapes();
 	int i = 0;
 	bool collision = true;
 	while (collision && i++ <= 12)
@@ -870,7 +895,7 @@ bool BezierProjectileBehavior::projectileHandleCollision(Object *other)
 	CombatState::Counters &counters = logic.combat().counters();
 	if (other)
 	{
-		// RW 0x85FDCE (BFME2 decomp BezierProjectileBehaviorCollide.cpp:150): the back-off first (RW 0x85EA5F, lane FLANK-1), then a non-CrushStyle projectile detonates
+		// RW 0x85FDCE (BFME2 decomp BezierProjectileBehavior.cpp rva0045CD6E): the back-off first (RW 0x85EA5F, lane FLANK-1), then a non-CrushStyle projectile detonates
 		backOff(*other);
 		if (!d->m_crushStyle)
 		{
@@ -879,7 +904,7 @@ bool BezierProjectileBehavior::projectileHandleCollision(Object *other)
 		}
 		if (!alreadyHit(other->getID()))
 		{
-			// RW 0x85F85B (BFME2 decomp BezierProjectileBehaviorRva0045C812.cpp): handleProjectileDetonation(warhead, &origin + 0x2C, the PROJECTILE object (+ 0x08), &other's
+			// RW 0x85F85B (BFME2 decomp BezierProjectileBehavior.cpp rva0045C812): handleProjectileDetonation(warhead, &origin + 0x2C, the PROJECTILE object (+ 0x08), &other's
 			// position, bonus + 0x74), then the thing is remembered (+ 0x7C). lane FLANK-1: the source was the producer; retail's is the projectile
 			if (m_warhead)
 			{

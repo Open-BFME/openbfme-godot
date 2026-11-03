@@ -531,8 +531,11 @@ bool parseText(AptReader &r, std::uint32_t at, AptTextInfo &t)
 	t.alignment = r.u32(at + 28, "text alignment");
 	t.fontHeight = r.f32(at + 36, "text font height");
 	t.readOnly = boolField(r, at + 40, "text read-only");
-	t.multiline = boolField(r, at + 44, "text multiline");
-	t.wordWrap = boolField(r, at + 48, "text word-wrap");
+	// lane MODUI-1: the multiline and word-wrap dwords are compared with 0 where retail reads them (the display string ctor, RW 0x4AA3D2 /
+	// 0x4AA3DB: cmp dword [src + 0x28 / + 0x24], 0 with src = the character + 8), so any non-zero value is "on". Mod tools leave other
+	// non-zero values there (Edain's MpGameSetup.apt: 161; others 0x001E4000), which retail shows as wrapping multiline fields.
+	t.multiline = r.u32(at + 44, "text multiline") != 0;
+	t.wordWrap = r.u32(at + 48, "text word-wrap") != 0;
 	t.initialText = r.cstring(r.u32(at + 52, "text content pointer"), "text content");
 	t.variableName = r.cstring(r.u32(at + 56, "text variable pointer"), "text variable");
 	if (r.ok() && t.alignment > 2)
@@ -645,16 +648,21 @@ bool AptFile::parse(const std::string &movieName, std::shared_ptr<const std::vec
 	}
 	AptReader r(aptBytes->data(), aptBytes->size(), movieName + ".apt");
 	const std::vector<std::uint8_t> &d = *aptBytes;
-	if (d.size() < 12 || std::memcmp(d.data(), "Apt Data", 8) != 0 || d[8] != ':' || d[10] != 0x1A || d[11] != 0)
+	// lane MODUI-1: retail never checks the .apt's header text (RotWK holds no "Apt Data" string); its only reader is AptGetSwfVersion
+	// (RW 0xAF8110): byte 9 - '0' when byte 8 is ':', else 6. Mod tools write other headers (Edain's InGameHeroSelect.apt and Ennorath's
+	// MainMenu.apt start "Apt Data:74" 1A 00), which retail plays as version 7. The movie itself is found through the .const's entry offset.
+	if (d.size() < 10)
 	{
-		return setError(error, movieName + ".apt: bad magic (expected \"Apt Data:N\" 1A 00)");
+		return setError(error, movieName + ".apt: " + std::to_string(d.size()) + " bytes, shorter than the version header retail reads (RW 0xAF8110)");
 	}
-	if (d[9] != '6' && d[9] != '7')
+	const int version = d[8] == ':' ? (int)(std::int8_t)d[9] - '0' : 6;
+	if (version != 6 && version != 7)
 	{
-		return setError(error, movieName + ".apt: unsupported Apt version '" + std::string(1, (char)d[9]) + "' (expected 6 or 7)");
+		// stop: only the SWF 6 and 7 rules (AptValue.h: the code branches on version == 7) are ported and pinned against retail
+		return setError(error, movieName + ".apt: Apt version " + std::to_string(version) + " (RW 0xAF8110) is not ported (6 and 7 are)");
 	}
 	out.name = movieName;
-	out.version = (std::uint32_t)(d[9] - '0');
+	out.version = (std::uint32_t)version;
 	out.consts = consts;
 	out.data = aptBytes;
 

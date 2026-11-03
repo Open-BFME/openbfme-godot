@@ -124,6 +124,10 @@ void SlavedUpdateModuleData::buildFieldParse(MultiIniFieldParse &p)
 
 SlavedUpdateInterface *SlavedUpdateInterface::of(Object &obj)
 {
+	if (obj.moduleLookupsCached())
+	{
+		return obj.slavedModule(); // lane PERF-HD: kept by Object::rebuildCollideModules (the same first module)
+	}
 	for (const std::unique_ptr<BehaviorModule> &m : obj.modules())
 	{
 		if (SlavedUpdateInterface *s = dynamic_cast<SlavedUpdateInterface *>(m.get()))

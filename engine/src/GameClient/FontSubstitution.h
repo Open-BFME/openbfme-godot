@@ -14,6 +14,8 @@
 //   24 -> 18 Times New Roman, 72 -> 36 Times New Roman.  The rounding of an interpolated size is not stated (truncated here, S-132).
 //
 // A font with no block is drawn as itself at the requested size.
+// Lane MODUI-1 (target fact): RotWK loads the file through its INI loader (block "FontSubstitution", RW 0xD9ECCC -> RW 0x618D04), so the lines
+// are TextFile's (Libraries/file/TextFile.h, RW 0xA15AFE): ';' and "//" comments are blanked and the line numbers are the CR count.
 
 #pragma once
 

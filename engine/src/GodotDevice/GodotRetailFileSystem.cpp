@@ -3,6 +3,8 @@
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "Common/PathIO.h"
 #include "Common/BfmeGame.h"
+#include "Common/GameEdition.h"
+#include <cstdlib>
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
 #include "Common/RetailArchivePolicy.h"
@@ -271,6 +273,16 @@ PackedStringArray RetailFileSystem::get_file_sources(const String &path) const
 	return out;
 }
 
+namespace
+{
+// lane BFME2MODE-0: the developer switch's value (OPENBFME_EDITION; empty = rotwk)
+std::string envEdition()
+{
+	const char *v = std::getenv("OPENBFME_EDITION");
+	return v ? std::string(v) : std::string();
+}
+} // namespace
+
 Dictionary RetailFileSystem::mount_retail()
 {
 	if (m_shellSource)
@@ -288,7 +300,13 @@ Dictionary RetailFileSystem::mount_retail()
 	std::string rotwkRoot;
 	std::string bfme2Root;
 	std::string error;
-	if (!ResolveInstallPath("ROTWK_INSTALL", config, rotwkRoot, &error))
+	// lane BFME2MODE-0: OPENBFME_EDITION=bfme2 (developer switch, docs/EDITIONS.md) mounts BFME2 1.06 alone: no RotWK install is needed
+	GameEdition edition = GameEdition::RotWK201;
+	if (!parseGameEdition(envEdition(), edition, &error))
+	{
+		errors.push_back(toGodot(error));
+	}
+	if (edition == GameEdition::RotWK201 && !ResolveInstallPath("ROTWK_INSTALL", config, rotwkRoot, &error))
 	{
 		errors.push_back(toGodot(error));
 	}
@@ -324,7 +342,7 @@ Dictionary RetailFileSystem::mount_bfme2_path(const String &root)
 	if (!m_userMapError.empty()) result["user_map_error"] = toGodot(m_userMapError);
 	result["rotwk_install"] = root; // gi.dat / saves belong to this active game install
 	PackedStringArray stops;
-	stops.push_back("[S-5911] BFME2-only gameplay uses the shared simulation; BFME2 versus RotWK logic differences remain unverified, including the stored-only PreLandingEmotionAffectsAllies filter");
+	stops.push_back("[S-5911] BFME2-only gameplay uses the shared simulation; remaining BFME2 versus RotWK logic and initialization-order differences remain unverified");
 	result["stops"] = stops;
 	return result;
 }
@@ -551,19 +569,31 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 		}
 	}
 
-	std::vector<RetailInstall> installs(2);
-	installs[0].label = "rotwk";
-	installs[0].root = rotwkRoot;
-	installs[1].label = "bfme2";
-	installs[1].root = bfme2Root;
-	if (!RetailArchivePolicy::loadBuiltin("rotwk-201", installs[0].policy, &error))
+	// lane BFME2MODE-0: the developer switch OPENBFME_EDITION=bfme2 mounts BFME2 1.06's archives alone (docs/EDITIONS.md); anything but rotwk / bfme2 is an
+	// error. The rules stay RotWK's in Phase 0; the data decides the edition (Common/GameEdition.h isBfme2Data)
+	GameEdition edition = GameEdition::RotWK201;
+	if (!parseGameEdition(envEdition(), edition, &error))
 	{
 		errors.push_back(toGodot(error));
 	}
-	if (!RetailArchivePolicy::loadBuiltin("bfme2-106", installs[1].policy, &error))
+	std::vector<RetailInstall> installs(edition == GameEdition::BFME2_106 ? 1 : 2);
+	RetailInstall &bfme2Install = installs.back();
+	if (edition == GameEdition::RotWK201)
+	{
+		installs[0].label = "rotwk";
+		installs[0].root = rotwkRoot;
+		if (!RetailArchivePolicy::loadBuiltin("rotwk-201", installs[0].policy, &error))
+		{
+			errors.push_back(toGodot(error));
+		}
+	}
+	bfme2Install.label = "bfme2";
+	bfme2Install.root = bfme2Root;
+	if (!RetailArchivePolicy::loadBuiltin("bfme2-106", bfme2Install.policy, &error))
 	{
 		errors.push_back(toGodot(error));
 	}
+	result["edition"] = gameEditionName(edition);
 
 	result["rotwk_install"] = toGodot(rotwkRoot);
 	result["bfme2_install"] = toGodot(bfme2Root);
@@ -680,7 +710,13 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 			// PLAN rule 7 / stop S-039: loose map files in the install folders are contamination; they are
 			// reported by the mount and by every map build, never read.
 			std::string scanError;
-			if (!LooseFileScan::scanInstalls({ { "rotwk", rotwkRoot }, { "bfme2", bfme2Root } }, m_loose, &scanError))
+			// lane BFME2MODE-0: the mounted installs only (BFME2 1.06 alone under OPENBFME_EDITION=bfme2)
+			std::vector<std::pair<std::string, std::string>> scanned = { { "rotwk", rotwkRoot }, { "bfme2", bfme2Root } };
+			if (edition == GameEdition::BFME2_106)
+			{
+				scanned.erase(scanned.begin());
+			}
+			if (!LooseFileScan::scanInstalls(scanned, m_loose, &scanError))
 			{
 				errors.push_back(toGodot("loose file scan: " + scanError));
 				m_fs.reset();
@@ -693,7 +729,7 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 			// lane MOD-5: the user maps folder, the one folder the archive file system reads from disk (RW 0xA149A2's local step)
 			if (m_fs)
 			{
-				m_userMapFolder = userMapFolderOf(rotwkRoot, m_userMapError);
+				m_userMapFolder = userMapFolderOf(edition == GameEdition::BFME2_106 ? bfme2Root : rotwkRoot, m_userMapError); // BFME2MODE-0: that game's maps folder
 				m_fs->setLocalFolder(m_userMapFolder);
 				if (!m_userMapError.empty())
 				{

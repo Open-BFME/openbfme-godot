@@ -1,6 +1,7 @@
 // OpenBFME retail tests for lane BACKLOG-1 (stops S-1100 / S-1101 / S-1620 / S-785: the RotWK functions the BFME2 decomp has byte-matched source for). They
 // share the HUD tests' retail world (the file name sorts with the test_hud_* files) and SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -117,6 +118,7 @@ struct Arena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(angle);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	void run(int frames)

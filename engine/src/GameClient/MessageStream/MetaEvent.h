@@ -9,7 +9,7 @@
 // the key names KEY_NONE, KEY_A .. KEY_Z, KEY_0 .. KEY_9, KEY_F1 .. KEY_F12, KEY_KP0 .. KEY_KP9, KEY_KPSLASH and the punctuation, arrow and edit keys; the
 // transitions DOWN, UP and DOUBLEDOWN; the modifier names NONE, SHIFT, CTRL, ALT and their combinations; the useable-in names GAME, SHELL, PLANNING; the
 // categories CONTROL, INFORMATION, INTERFACE, SELECTION, TAUNT, TEAM, MISC, DEBUG.
-// TARGET FACTS (lane INPUT-1): the CommandMap block (MetaMap::parseMetaMap RW 0x5DAD46, BFME2 decomp MetaMapParseMetaMap.cpp tier A) fills a record with the
+// TARGET FACTS (lane INPUT-1): the CommandMap block (MetaMap::parseMetaMap RW 0x5DAD46, BFME2 decomp MetaEvent.cpp tier A) fills a record with the
 // field table RW 0xBF0E70: Key (INI::parseLookupList RW 0x42E9B7 over the 86 {name, scan code} pairs RW 0xBF0B50, KEY_ESC .. KEY_KPSLASH, KEY_NONE last),
 // Transition (lookup RW 0xBF0E08: DOWN 0, UP 1, DOUBLEDOWN 2), Modifiers (lookup RW 0xBF0E28: NONE 0, CTRL 4, ALT 0x40, SHIFT 0x10, CTRL_ALT 0x44,
 // SHIFT_CTRL 0x14, SHIFT_ALT 0x50, SHIFT_ALT_CTRL 0x54), UseableIn (INI::parseBitString32 RW 0x42E840 with SHELL, GAME, PLANNING, RW 0xD9DCAC),

@@ -3,7 +3,7 @@
 // GameSorter (lane MENUWORK-1): the sort order of a lobby's game list (LanLobby.apt's list headers).
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; the decompile's files are byte-matched to RotWK, tier A):
-//   * the constructor RW 0x9888B7 (BFME2 0x980842; GameNetwork/GameSorterDestructor.cpp) registers GameSorter::OnSortStatus, OnSortName, OnSortMap,
+//   * the constructor RW 0x9888B7 (BFME2 0x980842; GameNetwork/GameSorter.cpp) registers GameSorter::OnSortStatus, OnSortName, OnSortMap,
 //     OnSortPlayers and OnSortPing and starts with the primary key 4 (players), the secondary key 8 (ping) and the status cycle 0; RotWK's
 //     AptLanLobby has one as a member (decompile AptLanLobbyDestructor.cpp), as the online custom match screen does;
 //   * the commands select Name 1, Map 2, Players 4, Ping 8, Status 16 through RW 0x9881DE (BFME2 0x980182, Rva00580172.cpp): the same key again
@@ -12,7 +12,7 @@
 //     GameInfo vslot 7 (the number of list icons: LANGameInfo RW 0x8311B1 returns 3); the comparator RW 0x988418 (BFME2 0x9803C0,
 //     Rva005803C0Compare.cpp) reads per game: vslot 9 (RW 0x801360 GameInfo::getNumOpenOrOccupiedSlots), vslot 8 (RW 0x800ACE getNumPlayers:
 //     the occupied slots), the name (vslot 22), vslot 21 (the ping: LANGameInfo RW 0x851E97 returns 0) and the map (_strcmpi of getMap(), only
-//     between games of the same mode +0x5C, else equal); the status record RW 0x98824E (BFME2 0x9801F6, Rva005801F6Compare.cpp) compares, for
+//     between games of the same mode +0x5C, else equal); the status record RW 0x98824E (BFME2 0x9801F6, GameSorter.cpp) compares, for
 //     each icon index i = (cycle + n) % icons, whether each game has that icon (GameInfo vslot 6: RW 0x802B04 / LANGameInfo RW 0x84A8AD: icon 0 a
 //     user map (mode 0: not in the map cache or not official), icon 1 non-default rules, icon 2 (LAN) a game in progress): 1 when only the first
 //     has it, -1 when only the second. For the primary, then the secondary key: Name / Map / Ping by their difference (descending when the

@@ -16,6 +16,7 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 
+#include <stdexcept>
 #include <variant>
 
 namespace
@@ -320,4 +321,30 @@ std::vector<std::string> ObjectFilterMatch::unresolvedNames(const ThingFactory &
 		}
 	}
 	return missing;
+}
+
+// lane MODCOMPAT-MOD1: RW 0x76379C (see the header)
+bool ObjectFilterMatch::allowsKindOf(const ObjectFilter &f, const KindOfMaskType &kindOf)
+{
+	if (f.side != ObjectFilter::SIDE_ANY)
+	{
+		throw std::logic_error("ObjectFilter: a side filter asked about a KindOf mask without a player (RW 0x76379C reads the null player's template, + 0x34)");
+	}
+	if (f.relationships != 0) // RW 0x763849: no players
+	{
+		return false;
+	}
+	if (nonEmpty(f.excludeKindOf) && anyBit(f.excludeKindOf, kindOf)) // RW 0x76389D
+	{
+		return false;
+	}
+	switch (f.rule) // RW 0x7638B6
+	{
+	case ObjectFilter::RULE_NONE:
+		return nonEmpty(f.includeKindOf) && subsetOf(kindOf, f.includeKindOf);
+	case ObjectFilter::RULE_ANY:
+		return nonEmpty(f.includeKindOf) && anyBit(f.includeKindOf, kindOf);
+	default:
+		return true; // RULE_ALL, and rule 0 (retail rewrites it to 3)
+	}
 }

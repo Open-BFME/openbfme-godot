@@ -38,7 +38,7 @@ PCA and PCA_U now reconstruct animated surface normals using the material's
 basis textures and the coefficient file derived from WaterPCATexture1:
 `Art/Textures/<stem>.basis`. The donor is
 `GameEngine/Source/GameLogic/Map/StandingWaterAreaLoadPCA.cpp` (0x3093F6),
-plus `GameEngineDevice/Source/W3DDevice/GameClient/Rva003093F6BasesSamplers.cpp`
+plus `GameEngine/Source/GameLogic/Map/StandingWaterArea.cpp`
 (0x30822F..0x308509) and `Rva000806F3BasesParams.cpp` (0x80858 onward).
 These paths are relative to the local Open-BFME-2 matching-source checkout.
 Target facts are the mounted RotWK effect/material/texture/basis data; no
@@ -64,8 +64,15 @@ textures resolve. Other technique families/LODs explicitly report their
 bump approximation in water.material_stops.
 
 The mesh now follows BFME2's matched `W3DWater.cpp` allocation (RVA
-0x8304A): a shared 20-unit grid, doubled until at most 60000 cells, selected
-by polygon cell centres. Grid origins truncate toward zero. The matched
+0x8304A; RotWK `AllocateAndFillBuffers` is RW 0x482A16): a shared 20-unit grid,
+doubled until at most 60000 cells, selected by polygon cell centres. Retail
+draws every standing-water area this way, bump or PCA; there is no polygon
+triangulation (the earlier ear-clipping gate rejected Adorn River's pinched
+97-point outline, which visits ten vertices twice, so that map drew no water).
+The cell test is RW 0x70E911: a bounds check, then crossing parity with a
+half-open y range, so a cell centre on an edge follows retail's tie-break. Grid
+origins truncate toward zero; counts and origins scale by the float reciprocal
+`1.0f / spacing`, as the binary does. The matched
 `W3DWaterStandingWaveQuery.cpp` (0x8026B) selects enabled PCA shoreline
 segments by nearest midpoint, preserving source order and strict depth and
 radius gates. Degenerate segments are ignored. CUSTOM0/1 carry midpoint,

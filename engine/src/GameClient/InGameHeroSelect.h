@@ -6,7 +6,7 @@
 // player's idle builders take the first button (the count of them as its number) when there are any; the heroes follow.
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; the BFME2 twins are tier A / B in tools/re/rw2decomp.py and the BFME2 decomp's
-// GameClient/GUI/InGame/Tactical/InGameHeroSelect*.cpp and reverse/attempts/0x005264f5.cpp describe them):
+// GameClient/GUI/InGame/Tactical/InGameHeroSelect*.cpp and InGameHeroSelectInterface.cpp describe them):
 // - the data (Palantir + 0xC0, ctor RW 0x92CCE4): a hero list {object id, last rank, flash frames} and a builder list {object id, used}. Object::initObject
 //   (RW 0x693F16) and Object::restoreObjectToWorldInternal (RW 0x6923FB) add an object through RW 0x6D4759 -> 0x92CD78: KindOf HERO (template + 0x113 bit 2) ->
 //   RW 0x92C734, else KindOf PORTER (+ 0x119 bit 7) -> RW 0x92C809. Object::tempRemoveObjectFromWorld (RW 0x692397) and ~Object (RW 0x69A876) remove it (RW

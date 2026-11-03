@@ -36,6 +36,9 @@ public:
 	// The 32^3 RGBA8 volume of W3DLookupTablePostEffect::VolumeFromStrip and the chunk's BlendFactor
 	void setLookup(const std::vector<std::uint8_t> &volume, float blend);
 	float blend() const { return m_blend; }
+	// lane GLOW-1: retail runs the grade only above a low effects LOD (W3DViewDrawPostPass.h; GlowPostEffectHost decides each frame): a suppressed grade draws nothing
+	void setSuppressed(bool suppressed) { m_suppressed.store(suppressed); }
+	bool suppressed() const { return m_suppressed.load(); }
 	// Render-time failures (a shader that does not compile, an unsupported colour buffer): reported, never silent
 	std::string problem() const;
 	int64_t passes() const { return m_passes.load(); }
@@ -53,6 +56,7 @@ private:
 	bool m_failed = false;
 	std::string m_problem;
 	std::atomic<int64_t> m_passes{ 0 };
+	std::atomic<bool> m_suppressed{ false };
 };
 
 class MapPostEffectsHost : public Node3D
@@ -61,8 +65,18 @@ class MapPostEffectsHost : public Node3D
 
 public:
 	void setEffect(const Ref<LookupTablePostEffect> &effect) { m_effect = effect; }
+	// lane GLOW-1: the glow host reads the grade (the holder is active when an effect is set, RW 0x501B01) and suppresses it at a low effects LOD
+	bool hasEffect() const { return m_effect.is_valid(); }
+	Ref<LookupTablePostEffect> effect() const { return m_effect; }
+	void setSuppressed(bool suppressed)
+	{
+		if (m_effect.is_valid())
+		{
+			m_effect->setSuppressed(suppressed);
+		}
+	}
 	void _notification(int what);
-	// { installed, passes, blend, problem }
+	// { installed, passes, blend, problem, suppressed }
 	Dictionary get_post_effect_stats() const;
 
 protected:

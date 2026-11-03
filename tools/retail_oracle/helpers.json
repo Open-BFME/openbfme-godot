@@ -24,7 +24,7 @@
     },
     "hash_driver": {
       "exe": "build/hash_driver.exe",
-      "inputs": ["hash_driver.cpp", "build.bat", "../../engine/src"]
+      "inputs": ["hash_driver.cpp", "build.bat", "../../engine/src", "../../engine/thirdparty/fast_float/include"]
     }
   }
 }

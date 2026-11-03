@@ -538,7 +538,7 @@ void postHeldSound(int slot, const std::string &n, std::uint32_t holderId, std::
 		mgr->removeAudioEvent(it->second);
 		held.erase(it);
 	}
-	static const char *const kTag[HELD_SOUND_SLOTS] = { "building loop", "move loop" };
+	static const char *const kTag[HELD_SOUND_SLOTS] = { "building loop", "move loop", "upgrade loop" };
 	AudioLog::Scope scope(kTag[slot]);
 	const AudioHandle h = mgr->playSoundForObject(n, objectId);
 	if (h >= AHSV_FirstHandle)

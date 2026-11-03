@@ -62,10 +62,12 @@ Object *constructOnPlot(Object &plot, const ThingTemplate &what, const Coord3D &
 
 // DozerAIUpdate::construct (the builder's vslot 0x1F8, RW 0x797796 for a DOZER builder; slot 0x64 RW 0x88D272): the structure is made as an inert phantom (PENDING_CONSTRUCTION,
 // PHANTOM_STRUCTURE, effectively dead, out of the world) with the builder as producer, the owner pays the price now; null when refused. lane FBSIM-1
-Object *constructByDozer(Object &dozer, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
+// isRebuild (the dozer's + 0x4D0, the interface's + 0x28 byte, lane BFME2CAMP1): nothing is withdrawn and no paid cost set (RW 0x88D2F9)
+Object *constructByDozer(Object &dozer, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool isRebuild = false);
 // slot 0x68 RW 0x88D44F: the dozer reached its phantom: false when the site is no longer legal (the caller removes it), else the structure is in the world, UNDER_CONSTRUCTION
 // at 1 hit point with its pathfinder footprint (lane FBSIM-1)
-bool placePhantomStructure(Object &dozer, Object &structure);
+// isRebuild (+ 0x4D0): no legality test, and the structure also gets RECONSTRUCTING (status 21, RW 0x88D5F0 .. 0x88D601)
+bool placePhantomStructure(Object &dozer, Object &structure, bool isRebuild = false);
 // BuildAssistant slot 0x38 for a builder that is neither a dozer nor a plot (the script engine, the AI): the structure appears complete at once (RW 0x7978A1 ff)
 Object *buildObjectNow(GameLogic &logic, Object *builder, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
 

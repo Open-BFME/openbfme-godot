@@ -1133,10 +1133,8 @@ UpdateSleepTime SiegeDeploySpecialPower::update()
 		bool ok = SimMath::absD((double)rel) < (double)0.15f; // RW 0xBE53C8 (a float read as the double compare's operand)
 		if (ok)
 		{
-			const ThingTemplate *ot = static_cast<const ThingTemplate *>(obj->getTemplate())->getFinalOverride();
-			const ThingTemplate *dt = static_cast<const ThingTemplate *>(dock->getTemplate())->getFinalOverride();
-			const bool touching = NotifyCrushModules::geometriesOverlap(ObjectGeometry::shapesOf(*ot), *obj->getPosition(), obj->getOrientation(),
-				ObjectGeometry::shapesOf(*dt), *dock->getPosition(), dock->getOrientation()); // RW 0x68BA2A -> RW 0xAD2CE0
+			const bool touching = NotifyCrushModules::geometriesOverlap(obj->geometryShapes(), *obj->getPosition(), obj->getOrientation(),
+				dock->geometryShapes(), *dock->getPosition(), dock->getOrientation()); // RW 0x68BA2A -> RW 0xAD2CE0 (the objects' own GeometryInfo)
 			ok = (touching || idle) && portalAboveWall(*obj);
 		}
 		if (ok)

@@ -101,8 +101,7 @@ bool FindPosition::tryPosition(GameLogic &logic, const Coord3D &center, float di
 		probe.minorRadius = kProbeRadius;
 		const std::vector<ObjectGeometry::Shape> probeShapes = { probe };
 		PartitionFilterFn wouldCollide([&](Object &o) { // RW 0xC112C8 -> 0x66139C: allowed when the overlap equals the filter's flag (1)
-			const ThingTemplate *ot = static_cast<const ThingTemplate *>(o.getTemplate())->getFinalOverride();
-			return NotifyCrushModules::geometriesOverlap(probeShapes, pos, angle, ObjectGeometry::shapesOf(*ot), *o.getPosition(), o.getOrientation());
+			return NotifyCrushModules::geometriesOverlap(probeShapes, pos, angle, o.geometryShapes(), *o.getPosition(), o.getOrientation());
 		});
 		const PartitionHits hits = logic.partition().iterateObjectsInRange(pos, kObjectScan, FROM_CENTER_3D, { &wouldCollide }, ITER_FASTEST);
 		for (const PartitionHit &h : hits)

@@ -219,7 +219,7 @@ public:
 	explicit SettingsLoad(ArchiveFileSystem *fs)
 	{
 		m_env.fileSystem = fs;
-		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "InGameUI", "Language" }, StubExtent::Lenient);
+		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "InGameUI", "Language" }, StubExtent::LenientAfterEnd);
 		m_env.blocks.registerBlock("InGameUI", [this](INI *ini) {
 			m_state.inGameUi = true;
 			ini->initFromINI(&m_state, kInGameUiFields);
@@ -483,7 +483,7 @@ static bool loadInGameUiValue(ArchiveFileSystem *fs, const std::string *memory, 
 	INIEnvironment env;
 	env.fileSystem = fs;
 	INIBlockRecorder recorder;
-	RegisterRecordingBlockStubs(env.blocks, recorder, { "InGameUI" }, StubExtent::Lenient);
+	RegisterRecordingBlockStubs(env.blocks, recorder, { "InGameUI" }, StubExtent::LenientAfterEnd);
 	env.blocks.registerBlock("InGameUI", [&](INI *ini) {
 		state.inGameUi = true;
 		ini->initFromINI(&state, fields);
@@ -563,7 +563,7 @@ UnicodeString CommandButtonHelp::templateText(const ThingTemplate &tt, const std
 
 namespace
 {
-// RW 0x8077D1 (BFME2 decomp Rva00405B8DTest.cpp OldSchoolHelpBoxContentSource::allRequiredUpgradesComplete, tier A): each needed upgrade, by its Type
+// RW 0x8077D1 (BFME2 decomp OldSchoolHelpBoxContentSource.cpp OldSchoolHelpBoxContentSource::allRequiredUpgradesComplete, tier A): each needed upgrade, by its Type
 // (OBJECT: the object has it, PLAYER: the object's controlling player completed it, any other type: false at once); NeededUpgradeAny = any of them
 bool allRequiredUpgradesComplete(const Object &obj, const CommandButton &b, std::string *unresolved)
 {

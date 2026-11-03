@@ -13,6 +13,7 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/BuildPlacement.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/RebuildHoleModules.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
 #include "GameLogic/Module/ProductionUpdate.h"
@@ -1490,21 +1491,28 @@ void updateDozerManager(GameLogic &logic, AISkirmishPlayer &ai, Player &player)
 // RW 0x90D16A (the base builder, AIPlayer + 4): a structure of the AI's bases that died is built again: every base entry (RW 0x9BC76C collects them by template
 // name) whose structure (+ 0x24) is the dead object gets RW 0x9618E3, its priority multiplied by the ArmyDefinition's StructureRebuildPriorityModifier (+ 0x88,
 // SSE), the money reserve flag (+ 0x21) and a new start (vslot 0x18 = RW 0x97DE12). A RebuildHoleBehavior object stands for its
-// structure (RW 0x886448: its template and id); the port has no rebuild holes (the module is not ported), so the dead object is always the structure itself.
+// structure (RW 0x886448; lane MODCOMPAT-MOD1: the hole interface's slot 3 getRebuildTemplate, its name, and slot 1 getSpawnerID, the dead structure's id).
 void rebuildDestroyedStructure(GameLogic &logic, AISkirmishPlayer &ai, const Object &dead)
 {
 	if (!ai.army || !dead.getTemplate())
 	{
 		return;
 	}
-	const std::string &name = dead.getTemplate()->getName();
+	const RebuildHoleBehavior *hole = RebuildHoleBehavior::of(dead);
+	if (hole && !hole->getRebuildTemplate())
+	{
+		logic.reportError("the skirmish AI's rebuild: the hole " + dead.getTemplate()->getName() + " has no rebuild template (RW 0x90D1A5 reads it unchecked)");
+		return;
+	}
+	const std::string &name = hole ? hole->getRebuildTemplate()->getName() : dead.getTemplate()->getName(); // + 0x64
+	const ObjectID deadID = hole ? hole->getSpawnerID() : dead.getID();
 	for (AIBaseInstance &b : ai.build.bases)
 	{
 		for (AIBaseSlot &slot : b.slots)
 		{
 			for (auto &e : slot.entries)
 			{
-				if (e->templateName != name || e->built != dead.getID())
+				if (e->templateName != name || e->built != deadID)
 				{
 					continue;
 				}
@@ -2006,7 +2014,7 @@ void AIBaseBuilder::onObjectLeft(GameLogic &logic, AISkirmishPlayer &ai, Object 
 			f.erase(it);
 		}
 	}
-	// RW 0x8F0C69: an FS_FACTORY leaves the unit builder (RW 0x9A051D, BFME2 decomp Rva00598149Map.cpp tier A): every entry of the object goes and the
+	// RW 0x8F0C69: an FS_FACTORY leaves the unit builder (RW 0x9A051D, BFME2 decomp AIUnitBuilder.cpp tier A): every entry of the object goes and the
 	// composition is computed again (+ 0x2C = 1, RW 0x9A055D); the event of a death (the object leaving the world) or of a change of owner (the old owner)
 	if (isKind(obj, fsFactory))
 	{

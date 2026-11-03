@@ -4,7 +4,7 @@
 //
 // Sources (BFME1 decomp game/Libraries/Source/EA/Apt/):
 //   Math.*     aptMath{Sin,Cos,Tan,Asin,Acos,Atan,Atan2,Abs,Ceil,Floor,Exp,Log,Sqrt,Round}.cpp, aptMax.cpp,
-//              aptMin.cpp, Rva008A5160MathPow.cpp, Rva008A51B0MathRandom.cpp.  A native receives
+//              aptMin.cpp, Rva008A5160MathPow.cpp, aptMathRandom.cpp.  A native receives
 //              (self, argc) and reads its arguments from the global argument array with the FIRST argument
 //              on top (g_bfmeArr1233[count-1]); fewer arguments than required returns the fallback value
 //              (undefined).  Results are boxed with MakeFloat (float) except round and abs, which return

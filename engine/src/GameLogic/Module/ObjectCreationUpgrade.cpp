@@ -16,6 +16,8 @@
 #include "Common/Upgrade.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/ProductionUpdate.h"
+#include "GameLogic/Module/SlaveWatcherBehavior.h"
+#include "GameLogic/Damage.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
 #include "Common/INIException.h"
@@ -116,8 +118,19 @@ void ObjectCreationUpgrade::processUpgradeRemoval()
 	m_pending = false;
 	if (m_data->m_destroyWhenSold)
 	{
-		++m_unported; // the slave of the owner's SlaveWatcherBehavior killed: that module has no runtime (S-1995)
-		++s_stopUses;
+		// lane MODCOMPAT-MOD1: RW 0x8B87F9 .. 0x8B886E: the owner's SlaveWatcherBehavior (RW 0x68BDA5 by name key), its slave (RW 0xA0605D, found by id)
+		// killed (RW 0x698EC3(8, 0)) and, with DeathAnimAndDuration, its special condition for AnimTime frames (RW 0x68B581)
+		if (SlaveWatcherBehavior *watcher = SlaveWatcherBehavior::of(*getObject()))
+		{
+			if (Object *slave = getObject()->logic().findObjectByID(watcher->getSlaveID()))
+			{
+				slave->kill(DAMAGE_UNRESISTABLE, 0);
+				if (m_data->m_deathAnimCondition != -1)
+				{
+					slave->setSpecialModelConditionState(m_data->m_deathAnimCondition, m_data->m_deathAnimFrames);
+				}
+			}
+		}
 	}
 }
 
@@ -167,6 +180,10 @@ UpdateSleepTime ObjectCreationUpgrade::update()
 			at.z = SimMath::addf32(SimMath::addf32(SimMath::addf32(SimMath::mulf32(m[6], o.x), SimMath::mulf32(m[7], o.y)), SimMath::mulf32(m[8], o.z)), t.z);
 			made->setOrientation(SimMath::addf32(obj->getOrientation(), d->m_angle)); // RW 0x8B8683 (+ 0x1C0)
 			made->setPosition(&at);                                                  // RW 0x70C201
+			if (SlaveWatcherBehavior *watcher = SlaveWatcherBehavior::of(*obj))     // lane MODCOMPAT-MOD1: RW 0x8B86C0 .. 0x8B86D6 (RW 0x68BDA5 by name key)
+			{
+				watcher->setSlave(made->getID()); // RW 0x887AF5
+			}
 			made->friend_onBuildComplete();                                          // RW 0x8B86DB .. 0x8B8708: its create modules
 			m_spawned = made->getID();
 			if (d->m_fadeInTime > 0)
@@ -174,8 +191,6 @@ UpdateSleepTime ObjectCreationUpgrade::update()
 				++m_unported; // the drawable's fade in (client)
 				++s_stopUses;
 			}
-			++m_unported; // the owner's SlaveWatcherBehavior is not told (RW 0x887AF5; S-1995)
-			++s_stopUses;
 		}
 	}
 	if (const UpgradeTemplate *grant = TheUpgradeCenter && !d->m_grantUpgrade.empty() ? TheUpgradeCenter->findUpgrade(d->m_grantUpgrade) : nullptr) // RW 0x66F5E5
@@ -216,7 +231,7 @@ void ObjectCreationUpgrade::registerClass(ModuleFactory &modules)
 std::vector<std::string> ObjectCreationUpgrade::acceptanceStops()
 {
 	return { "[S-2007] ObjectCreationUpgrade (RW 0x8B8281 / 0x8B8464 / 0x8B87C5) runs: Delay, ThingToSpawn at Offset and Angle, GrantUpgrade, RemoveUpgrade; not ported: "
-			 "UpgradeObject, the SlaveWatcherBehavior link and DestroyWhenSold's kill (S-1995), FadeInTime (client): " +
+			 "UpgradeObject, FadeInTime (client); the SlaveWatcherBehavior link and DestroyWhenSold's kill run (lane MODCOMPAT-MOD1): " +
 			 std::to_string(s_stopUses) + " uses" };
 }
 

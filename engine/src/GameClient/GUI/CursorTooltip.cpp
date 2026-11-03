@@ -160,7 +160,7 @@ bool CursorTooltipSettings::scan(const std::string &mouseIni, const std::string 
 		INIEnvironment env;
 		INIBlockRecorder recorder;
 		GlobalLanguage language;
-		RegisterRecordingBlockStubs(env.blocks, recorder, { "Language" }, StubExtent::Lenient);
+		RegisterRecordingBlockStubs(env.blocks, recorder, { "Language" }, StubExtent::LenientAfterEnd);
 		language.registerBlocks(env.blocks);
 		INI ini(env);
 		try

@@ -193,6 +193,7 @@ void TeamFactory::clear()
 	m_byName.clear();
 	m_nextTeamID = 1;
 	m_nextPrototypeID = 1;
+	m_pendingCreateActions.clear();
 }
 
 TeamPrototype *TeamFactory::initTeam(const std::string &name, Player *owner, bool singleton, const Dict *dict)
@@ -216,6 +217,7 @@ Team *TeamFactory::createTeam(TeamPrototype *proto, bool activate)
 	if (proto->getIsSingleton() && !proto->m_teams.empty())
 	{
 		Team *t = proto->m_teams.front(); // a singleton prototype has exactly one team
+		runCreateActions(proto); // lane TEAMEVENTS-1: RW 0x7A6ED8 .. 0x7A6F21
 		if (activate)
 		{
 			t->setActive();
@@ -228,11 +230,32 @@ Team *TeamFactory::createTeam(TeamPrototype *proto, bool activate)
 	// lane CAMP-1H: the constructor (RW 0x7A6C91 -> RW 0x7A6E0D): + 0x60 when the prototype has an EnemySighted (+ 0x1FC) or AllClear (+ 0x200) script
 	const TeamTemplateScripts &ts = proto->templateScripts();
 	t->scriptState().checkEnemySighted = !ts.enemySighted.empty() || !ts.allClear.empty();
+	runCreateActions(proto); // lane TEAMEVENTS-1: RW 0x7A6F65 .. 0x7A6FB2
 	if (activate)
 	{
 		t->setActive();
 	}
 	return t;
+}
+
+// lane TEAMEVENTS-1: RW 0x7A6E8E's "if (prototype + 0x240) { script = RW 0x758ECB(owner, + 0x23C); if (script) RW 0x60D053(...) }"
+void TeamFactory::runCreateActions(TeamPrototype *proto)
+{
+	if (!proto->templateScripts().executeActionsOnCreate)
+	{
+		return;
+	}
+	if (!m_createActionsHook || !m_createActionsHook(*proto))
+	{
+		m_pendingCreateActions.push_back(proto);
+	}
+}
+
+std::vector<TeamPrototype *> TeamFactory::takePendingCreateActions()
+{
+	std::vector<TeamPrototype *> out;
+	out.swap(m_pendingCreateActions);
+	return out;
 }
 
 const TeamTemplateScripts &TeamPrototype::templateScripts() const
@@ -254,6 +277,8 @@ const TeamTemplateScripts &TeamPrototype::templateScripts() const
 		{
 			ts->generic[i] = m_dict.getAsciiString("teamGenericScriptHook" + std::to_string(i)); // "%s%d" (RW 0xC1222C)
 		}
+		ts->productionCondition = m_dict.getAsciiString("teamProductionCondition"); // lane TEAMEVENTS-1: RW 0x7A389E
+		ts->executeActionsOnCreate = m_dict.getBool("teamExecutesActionsOnCreate"); // RW 0x7A38D0
 		m_scripts = std::move(ts);
 	}
 	return *m_scripts;
@@ -333,6 +358,10 @@ void TeamFactory::crc(StateHasher &h) const
 		h.addString(p->getName());
 		h.addI32(p->getControllingPlayer() ? p->getControllingPlayer()->getPlayerIndex() : -1);
 		h.addBool(p->getIsSingleton());
+		if (!p->attackPriorityName().empty()) // lane BFME2CAMP1: hashed once set
+		{
+			h.addString(p->attackPriorityName());
+		}
 		h.addU32((std::uint32_t)p->teams().size()); // the prototype's teams, in creation order
 		for (const Team *t : p->teams())
 		{
@@ -414,7 +443,10 @@ void Team::xfer(Xfer &x)
 
 void TeamFactory::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	// version 2 (lane BFME2CAMP1): each prototype's attack priority set name (+ 0x318), written only when a prototype has one (every other snapshot is
+	// version 1's)
+	const bool names = std::any_of(m_prototypes.begin(), m_prototypes.end(), [](const std::unique_ptr<TeamPrototype> &p) { return !p->attackPriorityName().empty(); });
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || names ? 2 : 1) };
 	x.xferVersion(v);
 	x.xferUnsignedInt(&m_nextTeamID);
 	x.xferInt(&m_nextPrototypeID);
@@ -440,6 +472,15 @@ void TeamFactory::xfer(Xfer &x)
 		{
 			throw XferException("the snapshot's team prototype " + std::to_string(id) + " '" + owner + "/" + name + "' is not this game's "
 				+ std::to_string(tp->getID()) + " '" + ownNow + "/" + tp->getName() + "'");
+		}
+		std::string priorityName = tp->attackPriorityName();
+		if (v.current >= 2)
+		{
+			x.xferAsciiString(&priorityName);
+		}
+		if (x.isLoading())
+		{
+			tp->setAttackPriorityName(v.current >= 2 ? priorityName : std::string());
 		}
 	}
 	// every team in creation order: (id, prototype id); a team past the game's own is created with its saved id (ZH TeamPrototype::xfer creates a team

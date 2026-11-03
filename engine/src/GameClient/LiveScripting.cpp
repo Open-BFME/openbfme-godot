@@ -203,7 +203,8 @@ bool LiveScripting::describe(Object &obj, LuaObjectInfo *out, bool count)
 	{
 		if (count && !t.listName.empty() && AsciiStringUtil::compareNoCase(t.listName, "None") != 0)
 		{
-			m_stats.errors.push_back(tt->getName() + ": AILuaEventsList " + t.listName + " is not an EventList of ScriptEvents.xml");
+			m_stats.stops.push_back("[S-127] " + tt->getName() + ": AILuaEventsList " + t.listName +
+				" is not an EventList of ScriptEvents.xml; retail binds a null event list (RW 0x7396E8, AIUpdateInterface RW 0x662597)");
 		}
 		return false;
 	}

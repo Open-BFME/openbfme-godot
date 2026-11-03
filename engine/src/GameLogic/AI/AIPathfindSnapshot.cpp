@@ -138,6 +138,8 @@ void PathfindZoneManager::xfer(Xfer &x)
 		return;
 	}
 	m_tables.clear();
+	m_zoneBlock.clear(); // derived from the cells, which load after the zones: Pathfinder::ensureZoneBlocks rebuilds it
+	m_blockTables.clear();
 	// the closed sets: a block per block of the extent, a zone's class (a cell type 0 .. 7, layers 0 .. LAYER_LAST, lanes WALL-1 / WALL-2), the adjacency sorted, unique, a < b, of zones
 	if (m_blockSize <= 0 || m_zoneBlockExtent.x < 0 || m_zoneBlockExtent.y < 0 ||
 		(std::uint64_t)m_zoneBlockExtent.x * (std::uint64_t)m_zoneBlockExtent.y != m_blocks.size())
@@ -488,7 +490,14 @@ void Pathfinder::xfer(Xfer &x)
 	}
 	for (const LoadedInfo &li : infos)
 	{
-		object(li.obstacle, "the obstacle of a cell");
+		// Sol review of MODCOMPAT-MOD1 (blocking): a cell's obstacle may name an object that no longer exists. Retail's footprint removal (RW 0x6E85FB ->
+		// 0x936B7D(remove)) walks only the object's ACTIVE shapes and its per-cell helper RW 0x93491C clears only a visited cell this object owns (info +
+		// 0x28 == Object + 0x74); GeometryUpgrade sets the flags (RW 0x8BAFD4 / 0x8BAFE6) before RW 0x68B244(1) re-registers, so the cells only the hidden
+		// shapes covered keep the id after the building dies. Nothing clears them later: setType RW 0x934387 keeps a cell with an obstacle id OBSTACLE (the
+		// map's only reclassification, RW 0x935C57, runs at the new map RW 0x6EA1F2 and on a water height change RW 0x6834B8 -> 0x6E85A4), and the
+		// lookups that resolve the id (ZH AIPathfind.cpp's dozer / tall building tests, RW the same family) treat a missing object as a plain obstacle. So
+		// such a cell is game state: the id need only be one the game has issued (a past object), not a live one.
+		AIXfer::issued(li.obstacle, "pathfinder: the obstacle of a cell");
 		for (const std::vector<std::uint32_t> &chain : li.owners)
 		{
 			std::set<std::uint32_t> once(chain.begin(), chain.end());

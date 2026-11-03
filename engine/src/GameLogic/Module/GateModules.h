@@ -23,7 +23,7 @@
 //     finished sound once elapsed > TimeBeforePlayingClosedSound, unsettled, DOOR_1_CLOSING on; open (1): 100 %, settled, DOOR_1_OPENING on / DOOR_1_CLOSING
 //     off, the OPEN geometry; opening (0): the percent, at >= 100 open, above PercentOpenForPathing the OPEN geometry, the open sound after
 //     TimeBeforePlayingOpenSound, unsettled, DOOR_1_OPENING on. Under construction again at the end: unsettled.
-//   * the push-out scan (RW 0x89C759, BFME2 0x898FAA tier A, GateOpenAndCloseBehaviorPushOut.cpp): a GeometryInfo (RW 0x450429: CYLINDER, not small, height 30,
+//   * the push-out scan (RW 0x89C759, BFME2 0x898FAA tier A, GateOpenAndCloseBehavior.cpp): a GeometryInfo (RW 0x450429: CYLINDER, not small, height 30,
 //     both radii the template's bounding circle radius, template + 0xB0); its centre the gate's position moved along the gate's unit direction (RW 0x70BA23: cos /
 //     sin of the angle) by offset = circle (+0x10) * 0.66 (double RW 0xBDE9C8, x87 fmul, fstp dword; the direction products and sums SSE floats; z unchanged);
 //     ThePartitionManager's range query (RW 0xA39340) around it, radius sphere (+0x14) * 1.1f (RW 0xBE4398, mulss), distance type 3 (FROM_BOUNDINGSPHERE_3D),
@@ -37,7 +37,8 @@
 //     (RW 0x668303) is the gate: the hit's move-away (RW 0x89C5A2). wouldLikeToCollideWith (RW 0x89C35E): the CLOSED geometry and RW 0x89C33A(other);
 //   * the geometry (RW 0x89C9FA closed / RW 0x89CA84 open): when it changes, the push-out scan, the object leaves the pathfinder's map (RW 0x6E861E), its
 //     shapes named in GeometryForOpen go active (open) or inactive (closed) and those in GeometryForClosed the other way (GeometryInfo::setActive RW 0xAD3520),
-//     the object's bounds are refreshed (RW 0x68B244) and it enters the map again (RW 0x6E85E9);
+//     the object's geometry refresh RW 0x68B244(1) runs (Object::geometryChanged: shroud and partition dirty, out of and into the pathfinder's map; lane
+//     MODCOMPAT-MOD1) and it enters the map again (RW 0x6E85E9);
 //   * MSG_OPEN_GATE (1079) / MSG_CLOSE_GATE (1081) (dispatcher RW 0x779A3D, cases RW 0x77BF7B / 0x77C037): argument 0's object; its GateOpenAndCloseBehavior,
 //     else its GateProxyBehavior; open when not open and settled / close when open and settled. No owner test;
 //   * the buttons (processCommandUI RW 0x9410D7): TOGGLE_GATE on the context object with a settled gate: MSG_CLOSE_GATE when open, else MSG_OPEN_GATE, the
@@ -173,7 +174,7 @@ public:
 	int triggerIndex() const { return m_trigger; }
 
 private:
-	void loadTrigger(); // RW 0x8B4BB7
+	void loadTrigger(int savedIndex = -1); // RW 0x8B4BB7
 	const AIGateUpdateModuleData *m_data;
 	int m_trigger = -1;     ///< the trigger's index in the script engine's list (+0x24 holds its id)
 	int m_allies = 0;       ///< +0x28

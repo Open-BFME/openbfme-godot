@@ -160,7 +160,7 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj, bool &comm
 			}
 			if (const ThingTemplate *tt = b.getThingTemplate())
 			{
-				const int buildable = BuildAssistant::buildable(*tt);
+				const int buildable = BuildAssistant::buildable(*tt, obj.logic());
 				if (buildable == 2 || (buildable == 3 && player->getPlayerType() != PLAYER_COMPUTER))
 				{
 					return ButtonState::Hidden;
@@ -191,7 +191,7 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj, bool &comm
 			{
 				return ButtonState::Hidden;
 			}
-			const int buildable = BuildAssistant::buildable(*tt);
+			const int buildable = BuildAssistant::buildable(*tt, obj.logic());
 			if (buildable == 2 || (buildable == 3 && player->getPlayerType() != PLAYER_COMPUTER))
 			{
 				return ButtonState::Hidden; // Buildable = No, and Only_By_AI for a human

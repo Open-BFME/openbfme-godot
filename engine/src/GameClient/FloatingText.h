@@ -3,7 +3,7 @@
 // FloatingText: InGameUI's floating texts, the "+N" money text a resource building, a fortress or a captured structure shows when it pays its owner.
 //
 // DONOR FACTS (Open-BFME-2, tier A per file; ZH InGameUI.cpp is the shape):
-//   * the payers (AutoDepositUpdateUpdate.cpp, TerrainResourceBehaviorUpdate.cpp): the text is GUI:AddCash formatted with the amount paid, at the object's
+//   * the payers (AutoDepositUpdate.cpp, TerrainResourceBehaviorUpdate.cpp): the text is GUI:AddCash formatted with the amount paid, at the object's
 //     position raised by 10 (AutoDepositUpdate, its deposit and its initial capture bonus) or by the geometry's getMaxHeightAbovePosition
 //     (TerrainResourceBehavior), in the owner's colour with alpha 0xE6. Economy::noteIncome logs those (Economy::IncomeEvent).
 //   * addFloatingText (InGameUIFloatingText.cpp): only while TheGameLogic draws the icon UI; the record keeps the text, colour, position, a frame count of 0

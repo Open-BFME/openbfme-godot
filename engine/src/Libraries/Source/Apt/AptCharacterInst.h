@@ -281,7 +281,8 @@ public:
 
 	// A loaded movie replaces the content of the instance (0x00AD17F0 -> setType 0x12, set data, advance).
 	void becomeMovie(const std::shared_ptr<const AptFile> &movie);
-	// lane CAH-1: unloadMovie / getURL("", clip): the content goes (Unload fired), the instance stays as an empty, stopped clip with its name and placement
+	// lane CAH-1: unloadMovie / getURL("", clip): the content goes (Unload fired), the instance stays as an empty, stopped clip with its name and placement;
+	// lane WOTR-2: its own variables go too
 	void unloadContent();
 	bool isMovie() const { return m_type == Type::Movie; }
 

@@ -18,3 +18,5 @@ set(OPENBFME_SAVE2_TESTS
 )
 # lane SAVE-UI1: the in-game Save / Load screen flow (the quit menu's backgrounds, SaveLoad's Escape and its return to the game)
 list(APPEND OPENBFME_SAVE2_TESTS tests/test_saveui1.cpp)
+# lane INGAMEBG-1: the in-game background behind the quit menu, the Powers screen and the objectives (on SAVE-UI1's retail shell fixture)
+list(APPEND OPENBFME_SAVE2_TESTS tests/test_ingamebg1.cpp)

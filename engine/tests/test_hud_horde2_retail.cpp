@@ -2,6 +2,7 @@
 // hordes re-forming after a melee, two-run determinism and hash mutation. They share the HUD tests' retail world (the file name sorts with the test_hud_* files, see
 // test_hud_combat_retail.cpp) and SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -98,6 +99,7 @@ struct Arena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(angle);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	std::vector<ObjectID> memberIds(Object *horde)

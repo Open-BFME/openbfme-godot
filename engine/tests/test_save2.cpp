@@ -120,12 +120,13 @@ TEST_CASE("save2: the container writes its header, log and empty snapshot and re
 {
 	const SaveGameFile f = sample();
 	const std::vector<std::uint8_t> bytes = f.encode();
-	REQUIRE(bytes.size() > 12); // tolerance: a guard before the parts' tags are read (the exact layout is checked below, partOffset(bytes, 3) == size)
+	REQUIRE(bytes.size() > 12); // tolerance: a guard before the parts' tags are read (the exact layout is checked below, partOffset(bytes, 4) == size)
 	CHECK(std::string((const char *)bytes.data(), 8) == "OBFMESAV");
 	CHECK(std::string((const char *)bytes.data() + partOffset(bytes, 0), 4) == "HEAD");
 	CHECK(std::string((const char *)bytes.data() + partOffset(bytes, 1), 4) == "LOG ");
 	CHECK(std::string((const char *)bytes.data() + partOffset(bytes, 2), 4) == "SNAP");
-	CHECK(partOffset(bytes, 3) == bytes.size()); // the empty snapshot is the last part
+	CHECK(std::string((const char *)bytes.data() + partOffset(bytes, 3), 4) == "LWLD"); // lane WOTR2 milestone 3: container version 2
+	CHECK(partOffset(bytes, 4) == bytes.size()); // the empty War of the Ring part is the last part
 	SaveGameFile back;
 	std::string error;
 	REQUIRE_MESSAGE(SaveGameFile::parse(bytes, back, &error), error);
@@ -219,8 +220,8 @@ TEST_CASE("save2 T5: a damaged, truncated or foreign file is refused with its na
 	SUBCASE("another container version")
 	{
 		std::vector<std::uint8_t> b = good;
-		b[8] = 2;
-		CHECK(parseError(b) == "save container version 2 (this build reads version 1)");
+		b[8] = 3;
+		CHECK(parseError(b) == "save container version 3 (this build reads versions 1 and 2)");
 	}
 	SUBCASE("a part out of order, bytes after the end")
 	{
@@ -249,7 +250,7 @@ TEST_CASE("save2 T5: a damaged, truncated or foreign file is refused with its na
 		CHECK_FALSE(snapLoad.hasSnapshot());
 		SaveGameFile k = sample();
 		k.header.gameKind = 4;
-		CHECK(parseError(k.encode()) == "the save's game kind 4 is not one this build saves (1 Campaign, 2 Skirmish)");
+		CHECK(parseError(k.encode()) == "the save's game kind 4 is not one this build saves (1 Campaign, 2 Skirmish, 8 War of the Ring, 16 a LAN War of the Ring)");
 		SaveGameFile c = sample();
 		c.header.gameKind = 1;
 		CHECK(parseError(c.encode()) == "the save is a campaign mission without its campaign");
@@ -258,10 +259,10 @@ TEST_CASE("save2 T5: a damaged, truncated or foreign file is refused with its na
 		CHECK(parseError(sk.encode()) == "the save is a skirmish that names a campaign");
 		std::vector<std::uint8_t> v = good;
 		const size_t head = partOffset(good, 0);
-		v[head + 40] = 4; // unknown header version, with a valid digest
+		v[head + 40] = 5; // the header version word (its digest recomputed below so only the version is wrong; lane CAMPSAVE-1: 1 and 2 load; build date: 3; lane BFME2CAMP1: 4)
 		const std::array<std::uint8_t, 32> d = Sha256::hash(v.data() + head + 40, (size_t)(partOffset(good, 1) - head - 40));
 		std::memcpy(v.data() + head + 8, d.data(), 32);
-		CHECK(parseError(v) == "save header version 4 (this build reads versions 1, 2 and 3)");
+		CHECK(parseError(v) == "save header version 5 (this build reads versions 1 to 4)");
 	}
 	SUBCASE("a missing file")
 	{
@@ -431,6 +432,61 @@ TEST_CASE("save reader: sparse large and maximum replay frame numbers have bound
 	REQUIRE_MESSAGE(writer.logUpTo(save.header.frame, save.header.stateHash, save.log, &error), error);
 	CommandLogLoad load;
 	CHECK_MESSAGE(load.prepare(save, &error), error);
+}
+
+// WOTR2 milestone 6: replay format 12 carries a War of the Ring battle's start (NewGameMessage::livingWorldBattle); any other recording stays format 11
+TEST_CASE("replay wotr: a War of the Ring battle's start round-trips in format 12; other recordings stay format 11; a damaged battle block is refused")
+{
+	auto record = [](const ReplayHeader &h) {
+		ReplayWriter writer;
+		writer.setKeepCopy(true);
+		std::string error;
+		REQUIRE_MESSAGE(writer.open("", h, &error), error);
+		writer.recordHash(3, 77);
+		std::vector<std::uint8_t> bytes;
+		REQUIRE_MESSAGE(writer.logUpTo(3, 77, bytes, &error), error);
+		return bytes;
+	};
+	auto formatOf = [](const std::vector<std::uint8_t> &b) { return (std::uint32_t)b[8] | ((std::uint32_t)b[9] << 8) | ((std::uint32_t)b[10] << 16) | ((std::uint32_t)b[11] << 24); };
+	ReplayHeader plain;
+	plain.game = smallGame();
+	plain.profile = sample().header.profile;
+	CHECK(formatOf(record(plain)) == 11);
+	ReplayHeader h = plain;
+	LivingWorldBattleStart &b = h.game.livingWorldBattle;
+	b.active = true;
+	b.ownerSlot = 0;
+	b.ownerBuildings = { "MordorFortress", "" };
+	b.members.push_back({ 1, 7, 0, "GondorAragornMP", 1, 900.5f, { "Upgrade_A" } });
+	b.members.push_back({ 0, 9, 2, "MordorFighterHorde", 3 });
+	b.slotStarts.push_back({ 0, 2500, 9, {} });
+	b.slotStarts.push_back({ 1, 7600, 12, { "MenPorter", "MenInn" } });
+	const std::vector<std::uint8_t> bytes = record(h);
+	CHECK(formatOf(bytes) == 12);
+	ReplayFile back;
+	std::string error;
+	REQUIRE_MESSAGE(ReplayFile::parse(bytes, back, &error), error);
+	const LivingWorldBattleStart &r = back.header.game.livingWorldBattle;
+	CHECK(r.active);
+	CHECK(r.ownerSlot == 0);
+	CHECK(r.ownerBuildings == b.ownerBuildings);
+	REQUIRE(r.members.size() == 2);
+	CHECK(r.members[0].thingTemplate == "GondorAragornMP");
+	CHECK(r.members[0].experience == 900.5f);
+	CHECK(r.members[0].upgrades == std::vector<std::string>{ "Upgrade_A" });
+	CHECK(r.members[1].memberIndex == 2);
+	CHECK(r.members[1].quantity == 3);
+	REQUIRE(r.slotStarts.size() == 2);
+	CHECK(r.slotStarts[1].cash == 7600);
+	CHECK(r.slotStarts[1].garrisonArmyId == 12);
+	CHECK(r.slotStarts[1].bonusUnits == std::vector<std::string>{ "MenPorter", "MenInn" });
+	CHECK(back.hashes.at(3) == 77);
+	// a member on slot 40 is refused by name
+	ReplayHeader bad = h;
+	bad.game.livingWorldBattle.members[0].slot = 40;
+	ReplayFile refused;
+	CHECK_FALSE(ReplayFile::parse(record(bad), refused, &error));
+	CHECK(error == "the War of the Ring battle's army member 0 is damaged");
 }
 
 TEST_CASE("replay reader: disk truncations, unknown records, oversized fields and foreign profiles have named errors")
@@ -790,4 +846,135 @@ TEST_CASE("save2: the replay records an execution profile switch, refuses a bad 
 	twice.insert(twice.end() - 9, log.begin() + (std::ptrdiff_t)at, log.begin() + (std::ptrdiff_t)(at + 9));
 	CHECK_FALSE(ReplayFile::parse(twice, parsed, &error));
 	CHECK(error == "replay profile switches out of order (frame 2)");
+}
+
+
+// lane WOTR2 milestone 3: container version 2's War of the Ring part and save point 2 (the strategic map); version 1 containers still load
+TEST_CASE("save2 wotr: a War of the Ring map save round-trips; its rules are refused by name; a version 1 container still loads")
+{
+	SaveGameFile w = sample();
+	w.header.gameKind = 8;
+	w.header.savePoint = 2;
+	w.header.frame = 0;
+	w.header.commands = 0;
+	w.header.campaign = "WOTRScenario001";
+	w.header.mapPath.clear();
+	w.log.clear();
+	w.livingWorld = { 9, 8, 7, 6 };
+	w.livingWorldSession = { 5, 4 };
+	SaveGameFile back;
+	std::string error;
+	REQUIRE_MESSAGE(SaveGameFile::parse(w.encode(), back, &error), error);
+	CHECK(back.header.gameKind == 8);
+	CHECK(back.header.savePoint == 2);
+	CHECK(back.header.campaign == "WOTRScenario001");
+	CHECK(back.livingWorld == w.livingWorld);
+	CHECK(back.livingWorldSession == w.livingWorldSession);
+	CHECK(back.log.empty());
+
+	SaveGameFile x = w;
+	x.livingWorld.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save carries no strategic game"); // a session alone is no game
+	x.livingWorldSession.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save carries no strategic game");
+	CHECK(parseError(x.encode(), true) == "(parsed)"); // the listing reads the header only
+	x = w;
+	x.header.campaign.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save names no scenario");
+	x = w;
+	x.header.savePoint = 0;
+	CHECK(parseError(x.encode()) == "the War of the Ring save is neither at the strategic map nor inside a battle");
+	x = w;
+	x.log = { 1 };
+	CHECK(parseError(x.encode()) == "the War of the Ring map save carries an RTS game (a frame, commands, a log or a snapshot)");
+	x = w;
+	x.header.frame = 5;
+	CHECK(parseError(x.encode()) == "the War of the Ring map save carries an RTS game (a frame, commands, a log or a snapshot)");
+	x = sample();
+	x.livingWorld = { 1 };
+	CHECK(parseError(x.encode()) == "the save carries a War of the Ring game it is not");
+	x = sample();
+	x.header.savePoint = 2;
+	CHECK(parseError(x.encode()) == "the save is at the War of the Ring map without its strategic game");
+	x = w;
+	x.header.autoSave = true;
+	CHECK(parseError(x.encode()) == "the save is a game at its frame with the campaign menu's flags");
+	x = w;
+	x.header.savePoint = 3; // WOTR2 milestone 6: a battle's save needs its RTS game
+	CHECK(parseError(x.encode()) == "the War of the Ring battle save carries no RTS game (a frame, a log and a snapshot)");
+	x = w;
+	x.header.savePoint = 4;
+	CHECK(parseError(x.encode()) == "the save's save point 4 is not one this build saves (0 a game, 1 the campaign menu, 2 the War of the Ring map, 3 a War of the Ring battle)");
+	x = sample();
+	x.header.gameKind = 4;
+	CHECK(parseError(x.encode()) == "the save's game kind 4 is not one this build saves (1 Campaign, 2 Skirmish, 8 War of the Ring, 16 a LAN War of the Ring)");
+	// WOTR2 milestone 8 (step 4, Sol wotr2m8s4 #1): 16, a LAN war's map save (the LAN lobby's Load Game page): as 8 at the map, never inside a battle
+	x = w;
+	x.header.gameKind = 16;
+	REQUIRE_MESSAGE(SaveGameFile::parse(x.encode(), back, &error), error);
+	CHECK(back.header.gameKind == 16);
+	CHECK(back.livingWorld == w.livingWorld);
+	x.header.campaign.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save names no scenario");
+	x = w;
+	x.header.gameKind = 16;
+	x.livingWorld.clear();
+	x.livingWorldSession.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save carries no strategic game");
+	x = w;
+	x.header.gameKind = 16;
+	x.header.savePoint = 3;
+	CHECK(parseError(x.encode()) == "the LAN War of the Ring save is not at the strategic map");
+
+	// WOTR2 milestone 6 (spec Q 3): save point 3, a War of the Ring battle: the four parts round-trip; each missing RTS part is refused by name
+	SaveGameFile b = sample();
+	b.header.gameKind = 8;
+	b.header.savePoint = 3;
+	b.header.campaign = "WOTRScenario001";
+	b.snapshot = { 3, 1, 4 };
+	b.livingWorld = { 9, 8, 7, 6 };
+	b.livingWorldSession = { 5, 4 };
+	REQUIRE(b.header.frame == 321);
+	REQUIRE_FALSE(b.log.empty());
+	REQUIRE_MESSAGE(SaveGameFile::parse(b.encode(), back, &error), error);
+	CHECK(back.header.savePoint == 3);
+	CHECK(back.header.frame == b.header.frame);
+	CHECK(back.log == b.log);
+	CHECK(back.snapshot == b.snapshot);
+	CHECK(back.livingWorld == b.livingWorld);
+	CHECK(back.livingWorldSession == b.livingWorldSession);
+	CHECK(back.encode() == b.encode());
+	x = b;
+	x.snapshot.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring battle save carries no RTS game (a frame, a log and a snapshot)");
+	x = b;
+	x.log.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring battle save carries no RTS game (a frame, a log and a snapshot)");
+	x = b;
+	x.header.frame = 0;
+	CHECK(parseError(x.encode()) == "the War of the Ring battle save carries no RTS game (a frame, a log and a snapshot)");
+	x = b;
+	x.livingWorld.clear();
+	x.livingWorldSession.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save carries no strategic game");
+	x = b;
+	x.header.campaign.clear();
+	CHECK(parseError(x.encode()) == "the War of the Ring save names no scenario");
+	x = sample();
+	x.header.savePoint = 3;
+	CHECK(parseError(x.encode()) == "the save is inside a War of the Ring battle without its strategic game");
+
+	// a version 1 container: three parts (no LWLD); it loads as before
+	std::vector<std::uint8_t> v1 = sample().encode();
+	REQUIRE(partOffset(v1, 4) == v1.size());
+	v1.resize(partOffset(v1, 3));
+	v1[8] = 1;
+	REQUIRE_MESSAGE(SaveGameFile::parse(v1, back, &error), error);
+	CHECK(back.header.frame == 321);
+	CHECK(back.livingWorld.empty());
+	// and a version 1 container cannot hold a War of the Ring game
+	std::vector<std::uint8_t> v1w = w.encode();
+	v1w.resize(partOffset(v1w, 3));
+	v1w[8] = 1;
+	CHECK(parseError(v1w) == "the War of the Ring save carries no strategic game");
 }

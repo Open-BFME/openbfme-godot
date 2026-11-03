@@ -22,8 +22,8 @@
 //     ends there (no grant). The pending flag stays set (only processUpgradeRemoval clears it). Then GrantUpgrade given to the owner (RW 0x69388B) and RemoveUpgrade taken (RW 0x691438); UPDATE_SLEEP_FOREVER.
 //   * processUpgradeRemoval (mux slot 8, RW 0x8B87C5): not executed, not pending; with DestroyWhenSold the owner's SlaveWatcherBehavior's slave is
 //     killed (damage type 8) and DeathAnimAndDuration's condition set on it.
-// NOT PORTED (counted in unported(), stop S-2007): UpgradeObject (read by no code of the update), the SlaveWatcherBehavior
-// link and DestroyWhenSold's kill (SlaveWatcherBehavior has no runtime, S-1995), FadeInTime (a drawable fade: client).
+// NOT PORTED (counted in unported(), stop S-2007): UpgradeObject (read by no code of the update), FadeInTime (a drawable fade: client). The
+// SlaveWatcherBehavior link and DestroyWhenSold's kill run since lane MODCOMPAT-MOD1 (SlaveWatcherBehavior.h).
 
 #pragma once
 

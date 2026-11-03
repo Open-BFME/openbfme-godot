@@ -11,5 +11,9 @@ const TEXT := {
 	"en": {
 		"common.cancel": "Cancel",
 		"common.close": "Close",
+		"game.wotr.map_missing.text": "The battle map for {region} is not in this installation, so the battle was auto-resolved.",
+		"game.wotr.map_missing.title": "Battle map missing",
+		"game.wotr.rts_demoted.text": "The battle in {region} has too many armies for its map to be fought in real time yet, so it was auto-resolved.",
+		"game.wotr.rts_demoted.title": "Battle auto-resolved",
 	},
 }

@@ -48,6 +48,7 @@ struct Kind
 	int canAttack = kindOf("CAN_ATTACK");
 	int unattackable = kindOf("UNATTACKABLE");
 	int inert = kindOf("INERT");
+	int notAutoAcquirable = kindOf("NOT_AUTOACQUIRABLE");
 	int aircraft = kindOf("AIRCRAFT");
 	int mine = kindOf("MINE");
 	int hero = kindOf("HERO");

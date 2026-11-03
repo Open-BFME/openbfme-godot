@@ -5,6 +5,11 @@
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Module/PortalModules.h"
 #include "GameLogic/Module/CollideModule.h"
+#include "GameLogic/Module/NotifyCrushModules.h"
+#include "GameLogic/Module/SalvageCrateCollide.h"
+#include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Combat/CombatQueries.h"
+#include "GameLogic/Object/PartitionManager.h"
 
 #include "Common/ArchiveFileSystem.h"
 #include "Common/AsciiString.h"
@@ -21,6 +26,7 @@
 #include "GameLogic/AI/AIGroup.h"
 #include "GameLogic/Combat/CombatLineOfSight.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
+#include "GameLogic/AI/AIStateMachine.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/SlavedUpdate.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
@@ -58,7 +64,7 @@ const char *const kStopAlliedStack =
 // lane PATH-2 (item 2): the incremental registration of placed objects
 const char *const kStopRegistration =
 	"S-610 a placed structure's footprint enters the pathfinder at the creation sites the port has (map objects RW 0x62E192, starting bases RW 0x629EC9, construction, "
-	"castle unpack, LiveGame::createObject as RW 0x62C98D); the other callers of RW addObjectToPathfindMap 0x6E85E9 (an OCL's object RW 0x5F1673, Object state changes "
+	"castle unpack, LiveGame::createObject as RW 0x62C98D, and OCL structures RW 0x5F1673); the other callers of RW addObjectToPathfindMap 0x6E85E9 (Object state changes "
 	"RW 0x68B2A1 / 0x68BCDB / 0x6923EB / 0x694838 / 0x698BDA, RW 0x67B43B, 0x6AA755 and 39 module sites RW 0x797949 .. 0x911DB9) are not traced";
 
 // ---- raw field readers (the object table's rows are kept as raw tokens, S-072) ------------------------------------------------
@@ -543,25 +549,21 @@ const ObjectMovementInfo &ObjectPathfindAdapter::info() const
 	return *m_info;
 }
 
+const PathfindGeometry *ObjectPathfindAdapter::cachedGeometry() const
+{
+	if (m_object->keepsOwnGeometry())
+	{
+		return nullptr; // its own shape flags or another template's geometry (lane MODCOMPAT-MOD1): a copy made on first use
+	}
+	const ThingTemplate *tt = m_object->getTemplate();
+	return tt == m_infoTemplate && m_info ? &m_info->geometry : nullptr;
+}
+
 const PathfindGeometry &ObjectPathfindAdapter::getGeometry() const
 {
-	// lane HUD-5: an object whose own GeometryInfo changed (Object + 0xA8, RW 0xAD3520) answers with its own shape flags
-	const std::vector<std::uint8_t> &active = m_object->geometryActive();
-	if (active.empty())
-	{
-		return info().geometry;
-	}
-	if (m_ownGeometryVersion != m_object->geometryVersion())
-	{
-		m_ownGeometry = info().geometry;
-		for (size_t i = 0; i < m_ownGeometry.shapes.size() && i < active.size(); ++i)
-		{
-			m_ownGeometry.shapes[i].active = active[i] != 0;
-		}
-		m_ownGeometry.cacheRadii(); // lane UBER-2B: the radii of the flags just set (see PathfindGeometry::cacheRadii)
-		m_ownGeometryVersion = m_object->geometryVersion();
-	}
-	return m_ownGeometry;
+	// lane HUD-5: an object whose own GeometryInfo changed (Object + 0xA8, RW 0xAD3520) answers with its own shape flags (lane MODCOMPAT-MOD1: the object's
+	// copy, Object::ownPathfindGeometry)
+	return m_object->ownPathfindGeometry(info().geometry);
 }
 
 float ObjectPathfindAdapter::getFenceWidth() const { return info().fenceWidth; }
@@ -740,9 +742,29 @@ bool ObjectPathfindAdapter::cannotWalkOn() const
 	return cannot >= 0 && m_object->testStatus((unsigned)cannot);
 }
 
-bool ObjectPathfindAdapter::ignoresAsTarget(const PathfindObject &) const
+// RW checkForMovement (0x6EBAA0), the enemy branch (BFME2 decomp PathfinderCheckForMovement.cpp): an enemy does not refuse the cell when it is the unit's
+// target: the AI state machine's goal object (RW 0x8DBACE) or the current victim (RW 0x668303), or contained in one (a horde's member), or the target's own
+// container (and its members). A unit without an AI, or with neither target, is refused
+bool ObjectPathfindAdapter::ignoresAsTarget(const PathfindObject &other) const
 {
-	return false; // the attack machine's target (RW 0x8DBACE, 0x668303) belongs to the combat milestone
+	const ObjectPathfindAdapter *o = dynamic_cast<const ObjectPathfindAdapter *>(&other);
+	AIUpdateInterface *ai = m_object->getAIUpdateInterface();
+	if (!o || !ai)
+	{
+		return false;
+	}
+	const Object *unit = &o->object();
+	const auto targets = [unit](const Object *t) { return t && (unit == t || unit->getContainedBy() == t); };
+	const AIStateMachine *machine = ai->stateMachineOrNull(); // null before onObjectCreated or for a machineless loaded AI: no goal object
+	if (const Object *goal = machine ? machine->goalObject() : nullptr)
+	{
+		if (targets(goal) || targets(goal->getContainedBy()))
+		{
+			return true;
+		}
+	}
+	const Object *victim = ai->currentVictim();
+	return victim && (targets(victim) || targets(victim->getContainedBy()));
 }
 
 bool ObjectPathfindAdapter::pathsThroughEachOther() const
@@ -815,7 +837,10 @@ void AIWorld::attach()
 	m_hooksToken = m_logic.addWorldHooks([this](Object &o) { objectEnteredWorld(o); }, [this](Object &o) { objectLeftWorld(o); });
 	m_hashToken = m_logic.addStateHashContributor([this](StateHasher &h) { crc(h); }, "pathfinder and AI movers");
 	m_logic.installPhaseWork("pathfinderQueue", [this]() { processPathfindQueue(); });
-	m_logic.installPhaseWork("partitionAndCollision", [this]() { processCollisions(); });
+	m_logic.installPhaseWork("partitionAndCollision", [this]() {
+		processCollisions();
+		processCrateContacts(); // lane MODCOMPAT-MOD1: the crates' contacts, after the AI units' pass (S-780)
+	});
 	// PROD-1's hand-off: what production asks the AI of a produced object (move to the rally point, follow the exit path, idle, regroup) runs here, at the call sites
 	// production already has (GameLogic/AI/AICommandSink.h)
 	m_logic.aiCommands().setHandler([this](Object &obj, const AICommand &c) { return executeCommand(obj, c); });
@@ -904,11 +929,24 @@ void AIWorld::reportMovementFailure(const Object &obj, const std::string &text)
 
 void AIWorld::noteStop(const char *stop)
 {
-	const std::string_view text(stop);
-	if (m_noted.find(text) == m_noted.end())
+	// performance (diagnostics only): every ordinary AI update notes kStopUpdate. The text was looked up in the set (keys of ~300 characters sharing long
+	// prefixes) each time; a text seen before is found by its address, its content compared once more (an address may be reused for another text)
+	const auto fast = m_notedFast.find(stop);
+	if (fast != m_notedFast.end() && std::strcmp(fast->second->c_str(), stop) == 0)
 	{
-		m_noted.emplace(text);
+		return;
 	}
+	const std::string_view text(stop);
+	auto it = m_noted.find(text);
+	if (it == m_noted.end())
+	{
+		it = m_noted.emplace(text).first;
+	}
+	if (m_notedFast.size() >= kNotedFastMax)
+	{
+		m_notedFast.clear(); // a caller that notes a temporary string brings a new address each time
+	}
+	m_notedFast[stop] = &*it;
 }
 
 std::vector<std::string> AIWorld::allStops()
@@ -966,6 +1004,7 @@ std::vector<std::string> AIWorld::stops() const
 // ---- the map ----------------------------------------------------------------------------------------------------------------------
 void AIWorld::newMap(const PathfindTerrain &terrain)
 {
+	m_cratesValid = false; // lane MODCOMPAT-MOD1: the crate list is rebuilt from the objects by the next crate pass
 	// RW 0x6EA1F2: classify the terrain, then every object's footprint, then the zones
 	std::vector<PathfindObject *> structures;
 	for (Object *o = m_logic.getFirstObject(); o; o = o->getNextObject())
@@ -1134,13 +1173,28 @@ const ObjectMovementInfo &AIWorld::movementInfo(const ThingTemplate &tt)
 	return *it->second;
 }
 
-void AIWorld::objectEnteredWorld(Object &)
+void AIWorld::objectEnteredWorld(Object &obj)
 {
 	// a structure's footprint enters the map with newMap (the live game) or addObjectToPathfindMap (construction); nothing to do for the seam itself
+	// lane MODCOMPAT-MOD1: a crate joins the crate contact pass (RW 0x68E31F registers it with the collision manager); a stale list is rebuilt whole
+	if (m_cratesValid && CrateCollide::isCrate(obj))
+	{
+		const auto it = std::lower_bound(m_crates.begin(), m_crates.end(), obj.getID());
+		if (it == m_crates.end() || *it != obj.getID())
+		{
+			m_crates.insert(it, obj.getID());
+		}
+	}
 }
 
 void AIWorld::objectLeftWorld(Object &obj)
 {
+	// lane MODCOMPAT-MOD1: RW 0x68C18F unregisters it from the collision manager
+	const auto crate = std::lower_bound(m_crates.begin(), m_crates.end(), obj.getID());
+	if (crate != m_crates.end() && *crate == obj.getID())
+	{
+		m_crates.erase(crate);
+	}
 	if (!m_attached)
 	{
 		return;
@@ -1191,7 +1245,19 @@ AIUpdateInterface *AIWorld::aiOf(const Object &obj) const
 
 void AIWorld::registerAI(AIUpdateInterface &ai)
 {
-	m_ais[(PathfindObjectID)ai.getObject()->getID()] = &ai;
+	const PathfindObjectID id = (PathfindObjectID)ai.getObject()->getID();
+	m_ais[id] = &ai;
+	if (!m_aiOrderDirty)
+	{
+		if (m_aiOrder.empty() || id > m_aiOrder.back().first)
+		{
+			m_aiOrder.emplace_back(id, &ai);
+		}
+		else
+		{
+			m_aiOrderDirty = true;
+		}
+	}
 }
 
 void AIWorld::unregisterAI(AIUpdateInterface &ai)
@@ -1200,6 +1266,20 @@ void AIWorld::unregisterAI(AIUpdateInterface &ai)
 	if (it != m_ais.end() && it->second == &ai)
 	{
 		m_ais.erase(it);
+		if (!m_aiOrderDirty)
+		{
+			const PathfindObjectID id = (PathfindObjectID)ai.getObject()->getID();
+			auto at = std::lower_bound(m_aiOrder.begin(), m_aiOrder.end(), id, [](const std::pair<PathfindObjectID, AIUpdateInterface *> &e, PathfindObjectID v) { return e.first < v; });
+			if (at != m_aiOrder.end() && at->first == id && at->second == &ai)
+			{
+				at->second = nullptr;
+				++m_aiOrderHoles;
+			}
+			else
+			{
+				m_aiOrderDirty = true;
+			}
+		}
 	}
 }
 
@@ -1248,45 +1328,77 @@ void AIWorld::processCollisions()
 	std::vector<CollisionUnit> &units = m_collisionUnits;
 	units.clear();
 	const bool uberFacts = m_logic.uber();
-	const ThingTemplate *crushWarm = nullptr;
-	for (const auto &kv : m_ais) // ordered by id
+	// performance (every profile, the same units in the same order): the AIs in id order are kept in a vector (m_aiOrder: appended, holed, compacted or
+	// rebuilt as registerAI / unregisterAI say); the job pool reads each one's tests, final template, geometry and position (each job writes only its own entries). The adapter's movement info is a
+	// lazily filled cache shared by template, so a unit whose geometry is not cached yet is resolved below, on this thread, as before
+	constexpr size_t kUnitsPerJob = 64, kScansPerJob = 256;
+	JobSystem &jobs = JobSystem::logic();
+	if (m_aiOrderDirty)
 	{
-		AIUpdateInterface *ai = kv.second;
-		if (ai->getObject()->isDestroyed() || ai->isImmobile() || !ai->getObject()->isInWorld())
+		m_aiOrder.assign(m_ais.begin(), m_ais.end());
+		m_aiOrderDirty = false;
+		m_aiOrderHoles = 0;
+	}
+	else if (m_aiOrderHoles > m_aiOrder.size() / 8)
+	{
+		m_aiOrder.erase(std::remove_if(m_aiOrder.begin(), m_aiOrder.end(), [](const std::pair<PathfindObjectID, AIUpdateInterface *> &e) { return e.second == nullptr; }), m_aiOrder.end());
+		m_aiOrderHoles = 0;
+	}
+	m_collisionScan.resize(m_aiOrder.size());
+	jobs.parallelFor(m_aiOrder.size(), kScansPerJob, [this](size_t, size_t begin, size_t end) {
+		for (size_t i = begin; i < end; ++i)
 		{
-			continue; // lane GARRISON-1: a contain's rider out of the world (RW 0x68C18F) is not in the partition (ZH PartitionManager::processCollisions)
+			AIUpdateInterface *ai = m_aiOrder[i].second;
+			CollisionScan &c = m_collisionScan[i];
+			if (!ai)
+			{
+				c.keep = false; // removed since the last compaction
+				continue;
+			}
+			const Object *o = ai->getObject();
+			// lane GARRISON-1: a contain's rider out of the world (RW 0x68C18F) is not in the partition (ZH PartitionManager::processCollisions); lane
+			// MODCOMPAT-MOD1: nor an object whose collision manager record was removed (RW 0xB6C480, CritterEmitterUpdate RW 0x8CD1F6)
+			c.keep = !(o->isDestroyed() || ai->isImmobile() || !o->isInWorld() || o->isOutOfCollisionManager());
+			if (!c.keep)
+			{
+				continue;
+			}
+			c.finalTemplate = static_cast<const ThingTemplate *>(o->getTemplate())->getFinalOverride();
+			c.geometry = ai->adapter().cachedGeometry();
+			const Coord3D &p = *o->getPosition();
+			c.x = p.x;
+			c.y = p.y;
+			c.r = c.geometry ? c.geometry->boundingCircleRadius() : 0.0f;
 		}
-		units.push_back(CollisionUnit{ kv.first, ai, 0.0f, 0.0f, 0.0f, 0, &ai->adapter().getGeometry() });
-		if (uberFacts)
+	});
+	const ThingTemplate *crushWarm = nullptr;
+	for (size_t i = 0; i < m_aiOrder.size(); ++i)
+	{
+		const CollisionScan &c = m_collisionScan[i];
+		if (!c.keep)
+		{
+			continue;
+		}
+		AIUpdateInterface *ai = m_aiOrder[i].second;
+		CollisionUnit u{ m_aiOrder[i].first, ai, c.x, c.y, c.r, 0, c.geometry };
+		if (!u.geometry)
+		{
+			u.geometry = &ai->adapter().getGeometry();
+			u.r = u.geometry->boundingCircleRadius();
+		}
+		units.push_back(u);
+		if (uberFacts && c.finalTemplate != crushWarm)
 		{
 			// lane UBER-3W: the crush info of every unit's template is in GameLogic's cache before the facts are taken on the job pool (below); a horde's
 			// soldiers have consecutive ids and one template, so this is one lookup per horde
-			const ThingTemplate *tt = static_cast<const ThingTemplate *>(ai->getObject()->getTemplate())->getFinalOverride();
-			if (tt != crushWarm)
-			{
-				m_logic.crushInfo(tt);
-				crushWarm = tt;
-			}
+			m_logic.crushInfo(c.finalTemplate);
+			crushWarm = c.finalTemplate;
 		}
 	}
 	if (units.size() < 2)
 	{
 		return;
 	}
-	// lane PERF-2: every unit's position and footprint radius on the logic job pool (each job writes only its own units; nothing changes the state
-	// while the pass reads it; the geometry was resolved above, on this thread, because the adapter's movement info is filled on first use)
-	constexpr size_t kUnitsPerJob = 64;
-	JobSystem &jobs = JobSystem::logic();
-	jobs.parallelFor(units.size(), kUnitsPerJob, [&units](size_t, size_t begin, size_t end) {
-		for (size_t i = begin; i < end; ++i)
-		{
-			CollisionUnit &u = units[i];
-			const Coord3D &p = *u.ai->getObject()->getPosition();
-			u.x = p.x;
-			u.y = p.y;
-			u.r = u.geometry->boundingCircleRadius();
-		}
-	});
 	// uniform grid over the units' own extent, 40-unit buckets (a bucket spans several footprints); buckets are visited in index order
 	float minX = units[0].x, minY = units[0].y, maxX = units[0].x, maxY = units[0].y;
 	for (const CollisionUnit &u : units)
@@ -1384,7 +1496,7 @@ void AIWorld::processCollisions()
 	// lane UBER-2B (Uber only): the facts every pair's handlers test first, once per unit and pass. A pair whose handlers would all return at those tests is
 	// counted and skipped: AIMover::onCollide returns for a contained unit or a contained other (both ways), the collide modules as ObjectCollide::pairIsInert
 	// says. lane UBER-3W: the facts of every unit with a pair are taken before the first pair meets, on the logic job pool (each job writes only its own
-	// units' facts and their objects' lazily found physics module; the one shared lazy cache, GameLogic::crushInfo, was filled above on this thread). They
+	// units' facts; the physics module is kept by Object since buildModules; the one shared lazy cache, GameLogic::crushInfo, was filled above on this thread). They
 	// were taken on this thread at the unit's first pair, 5% of a one-thread 30,000-troop clash frame. Uber rule change (snapshot semantics): a unit's facts
 	// are those from before the pass's first pair (UBER-2B: before its own first pair), so a pair after a crush or a stun in the same pass reads them from before it
 	const bool filter = m_logic.uber();
@@ -1412,26 +1524,47 @@ void AIWorld::processCollisions()
 			}
 		});
 	}
-	const auto factsOf = [&](int i) -> std::uint8_t { return m_collisionFactState[(size_t)i]; };
+	// performance (the same decisions): the facts are the pass start's, so the pairs the Uber filter skips are found on the job pool; the serial loop below
+	// meets the others in their order (all of them without the filter). The allied-pair test (it only reads, for a diagnostic stop) is taken there too,
+	// with the teams of the pass start
+	jobs.parallelFor(chunkCount, 1, [this, &units, filter](size_t, size_t begin, size_t end) {
+		for (size_t chunk = begin; chunk < end; ++chunk)
+		{
+			CollisionChunk &c = m_collisionChunks[chunk];
+			c.live.clear();
+			c.allied = false;
+			for (const std::pair<int, int> &pair : c.pairs)
+			{
+				const CollisionUnit &a = units[(size_t)pair.first], &b = units[(size_t)pair.second];
+				c.allied = c.allied || a.ai->adapter().getRelationship(b.ai->adapter()) != PATHFIND_ENEMIES;
+				if (filter)
+				{
+					const bool aContained = m_collisionFactState[(size_t)pair.first] == 2, bContained = m_collisionFactState[(size_t)pair.second] == 2;
+					const ObjectCollide::PairFacts &fa = m_collisionFacts[(size_t)pair.first], &fb = m_collisionFacts[(size_t)pair.second];
+					const bool moverInert = (aContained || fb.container != nullptr) && (bContained || fa.container != nullptr);
+					if (moverInert && ObjectCollide::pairIsInert(fa, fb))
+					{
+						continue;
+					}
+				}
+				if (filter)
+				{
+					c.live.push_back(pair);
+				}
+			}
+		}
+	});
 	bool alliedPair = false;
 	for (size_t chunk = 0; chunk < chunkCount; ++chunk)
 	{
-		for (const std::pair<int, int> &pair : m_collisionChunks[chunk].pairs)
+		const CollisionChunk &c = m_collisionChunks[chunk];
+		m_collisionPairs += c.pairs.size();
+		const std::vector<std::pair<int, int>> &live = filter ? c.live : c.pairs;
+		m_collisionPairsSkipped += c.pairs.size() - live.size();
+		alliedPair = alliedPair || c.allied;
+		for (const std::pair<int, int> &pair : live)
 		{
 			const CollisionUnit &a = units[(size_t)pair.first], &b = units[(size_t)pair.second];
-			++m_collisionPairs;
-			alliedPair = alliedPair || a.ai->adapter().getRelationship(b.ai->adapter()) != PATHFIND_ENEMIES;
-			if (filter)
-			{
-				const bool aContained = factsOf(pair.first) == 2, bContained = factsOf(pair.second) == 2;
-				const ObjectCollide::PairFacts &fa = m_collisionFacts[(size_t)pair.first], &fb = m_collisionFacts[(size_t)pair.second];
-				const bool moverInert = (aContained || fb.container != nullptr) && (bContained || fa.container != nullptr);
-				if (moverInert && ObjectCollide::pairIsInert(fa, fb))
-				{
-					++m_collisionPairsSkipped;
-					continue;
-				}
-			}
 			a.ai->onCollide(b.ai->adapter());
 			b.ai->onCollide(a.ai->adapter());
 			// lane HORDE-2: the collide modules of both objects (ZH Object::onCollide: SquishCollide, HordeMemberCollide, ...), the lower id first (inference, S-581)
@@ -1447,5 +1580,90 @@ void AIWorld::processCollisions()
 	if (alliedPair)
 	{
 		m_logic.noteStop(kStopAlliedStack);
+	}
+}
+
+// lane MODCOMPAT-MOD1 (S-260 / S-780): the crates' contacts (see the header). The candidates are the projectile pass's (CombatState::processProjectileContacts):
+// the partition's objects within the crate's bounding sphere, then each pair's narrow test from its lower ObjectID's side with each object's own
+// GeometryInfo (RW 0xB6D060 -> 0x68C7B2 -> RW 0xAD2CE0)
+void AIWorld::processCrateContacts()
+{
+	if (!m_mapReady)
+	{
+		return;
+	}
+	if (!m_cratesValid)
+	{
+		m_crates.clear();
+		for (Object *o = m_logic.getFirstObject(); o; o = o->getNextObject())
+		{
+			if (!o->isDestroyed() && o->isInWorld() && CrateCollide::isCrate(*o))
+			{
+				m_crates.push_back(o->getID());
+			}
+		}
+		std::sort(m_crates.begin(), m_crates.end());
+		m_cratesValid = true;
+	}
+	if (m_crates.empty())
+	{
+		return;
+	}
+	static const int kNoCollide = CombatNames::kindOf("NO_COLLIDE"), kHorde = CombatNames::kindOf("HORDE");
+	static const unsigned kNoCollisions = (unsigned)CombatNames::statuses().noCollisions;
+	const auto registered = [&](const Object &o) {
+		// RW 0x68E31F: no collision manager record for NO_COLLIDE (template + 0x108 bit 30) or HORDE (+ 0x115 bit 5); RW 0xB6C480 removed records
+		return o.isInWorld() && !o.isDestroyed() && !o.isKindOf((unsigned)kNoCollide) && !o.isKindOf((unsigned)kHorde) && !o.testStatus(kNoCollisions) &&
+			!o.isOutOfCollisionManager();
+	};
+	m_crateScratch.assign(m_crates.begin(), m_crates.end()); // a contact destroys crates and can make objects: walk a copy
+	for (PathfindObjectID id : m_crateScratch)
+	{
+		Object *crate = m_logic.findObjectByID(id);
+		if (!crate || crate->isDestroyed())
+		{
+			const auto it = std::lower_bound(m_crates.begin(), m_crates.end(), id);
+			if (it != m_crates.end() && *it == id)
+			{
+				m_crates.erase(it);
+			}
+			continue;
+		}
+		if (!registered(*crate) || crate->geometryShapes().empty())
+		{
+			continue;
+		}
+		PartitionFilterFn candidate([&](Object &o) { return &o != crate && o.getAIUpdateInterface() && registered(o); });
+		const PartitionHits hits =
+			m_logic.partition().iterateObjectsInRange(*crate->getPosition(), CombatQueries::boundingSphereRadius(*crate), FROM_BOUNDINGSPHERE_3D, { &candidate }, ITER_FASTEST);
+		m_crateHits.clear();
+		for (const PartitionHit &h : hits)
+		{
+			m_crateHits.push_back(h.object->getID());
+		}
+		std::sort(m_crateHits.begin(), m_crateHits.end());
+		for (PathfindObjectID otherId : m_crateHits)
+		{
+			if (crate->isDestroyed())
+			{
+				break; // collected by an earlier contact
+			}
+			Object *o = m_logic.findObjectByID(otherId);
+			if (!o || o->isDestroyed())
+			{
+				continue;
+			}
+			const bool crateFirst = crate->getID() < o->getID();
+			Object &first = crateFirst ? *crate : *o;
+			Object &second = crateFirst ? *o : *crate;
+			if (!NotifyCrushModules::geometriesOverlap(first.geometryShapes(), *first.getPosition(), first.getOrientation(), second.geometryShapes(), *second.getPosition(),
+			                                           second.getOrientation()))
+			{
+				continue;
+			}
+			++m_crateContacts;
+			ObjectCollide::onCollide(first, second);
+			ObjectCollide::onCollide(second, first);
+		}
 	}
 }

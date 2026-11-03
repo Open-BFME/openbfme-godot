@@ -50,7 +50,7 @@ public:
 	const FoundationAIUpdateModuleData *foundationData() const { return m_foundationData; }
 	// RW 0x858701 (Construction::constructOnPlot)
 	Object *construct(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool instant);
-	// lane BACKLOG2: the creation interface (RW 0xC30DE8 slot 4, RW 0x859198; BFME2 decomp FoundationAIUpdateSlots.cpp:rva00456134, tier A): the site is cleared
+	// lane BACKLOG2: the creation interface (RW 0xC30DE8 slot 4, RW 0x859198; BFME2 decomp FoundationAIUpdate.cpp:rva00456134, tier A): the site is cleared
 	// (RW 0x858C41), the structure constructed (slot 7: construct above), then the units in the way are moved off (RW 0x858CFC); null when refused
 	Object *createOnSite(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool instant);
 	// lane SCRIPT-2: RW 0x858BCB (module slot 0x24): a plot's new owner takes the structure on it (its occupant: the CastleMemberBehavior's occupant here, S-952):

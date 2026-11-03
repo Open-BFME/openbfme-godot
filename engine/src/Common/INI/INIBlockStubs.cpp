@@ -59,6 +59,36 @@ bool isColumnZero(const std::string &line)
 	return !line.empty() && line[0] != ' ' && line[0] != '\t' && line[0] != '\v' && line[0] != '\f';
 }
 
+// `Keyword` or `Keyword Name ...` (a block header), not `Keyword = value` (a field)
+bool isHeaderForm(const std::string &line)
+{
+	const size_t b = line.find_first_not_of(" \n\r\t=");
+	if (b == std::string::npos)
+	{
+		return false;
+	}
+	const size_t e = line.find_first_of(" \n\r\t=", b);
+	if (e == std::string::npos)
+	{
+		return true;
+	}
+	const size_t next = line.find_first_not_of(" \t", e);
+	return next == std::string::npos || line[next] != '=';
+}
+
+// the text before a ';' comment, trimmed of whitespace; "" for a blank or comment-only line
+std::string significantText(const std::string &line)
+{
+	std::string text = line.substr(0, line.find(';'));
+	const size_t b = text.find_first_not_of(" \t\r\n\v\f");
+	if (b == std::string::npos)
+	{
+		return std::string();
+	}
+	const size_t e = text.find_last_not_of(" \t\r\n\v\f");
+	return text.substr(b, e - b + 1);
+}
+
 std::string firstTokenOf(const std::string &line)
 {
 	const size_t b = line.find_first_not_of(" \n\r\t=");
@@ -215,6 +245,7 @@ void RegisterRecordingBlockStubs(INIBlockRegistry &registry, INIBlockRecorder &r
 			}
 			else
 			{
+				bool previousIsEnd = false; // the last significant line consumed (blank and comment lines do not count) is an End
 				for (;;)
 				{
 					const std::string *next = ini->peekNextLine();
@@ -226,9 +257,18 @@ void RegisterRecordingBlockStubs(INIBlockRegistry &registry, INIBlockRecorder &r
 					{
 						break;
 					}
+					if (mode == StubExtent::LenientAfterEnd && previousIsEnd && isHeaderForm(*next) && ini->environment().blocks.contains(firstTokenOf(*next)))
+					{
+						break;
+					}
 					ini->readLine();
 					lastLine = *next;
 					++record.extentLines;
+					const std::string significant = significantText(*next);
+					if (!significant.empty())
+					{
+						previousIsEnd = AsciiStringUtil::compareNoCase(firstTokenOf(significant), "End") == 0;
+					}
 				}
 			}
 			record.endsWithEnd = !lastLine.empty() && AsciiStringUtil::compareNoCase(firstTokenOf(lastLine), "End") == 0;

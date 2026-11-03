@@ -112,6 +112,11 @@ BannerCarrierUpdate::BannerCarrierUpdate(Thing *thing, const BannerCarrierUpdate
 	, m_data(data)
 {
 	setWakeFrame(getObject(), UPDATE_SLEEP((int)(data->m_idleSpawnRate > 0 ? data->m_idleSpawnRate : 1)));
+	// INFERENCE, stop S-587 (lane SPELLFIX-1): retail's ctor RW 0x89A258 is the UpdateModule ctor (RW 0x653114: next call frame + 0x14 = 0) and the vtables,
+	// no wake of its own, so retail's first update runs at once. Porting that alone lets an Angmar horde's carrier (BannerCarrierMinLevel 0: a carrier from
+	// the start) spawn a member while production still adds the horde's own members one by one, overfilling AngmarNecromancerHorde (8 of 7 Slots); how
+	// retail's member production keeps the horde within its Slots is not read yet. Until it is, the first update waits IdleSpawnRate, and Heal's replenish
+	// ping (DeletionUpdate 1 s, IdleSpawnRate 2 s) dies before it refills a horde (SPELLFIX-1's should_fail test)
 }
 
 void BannerCarrierUpdate::registerClass(ModuleFactory &modules)

@@ -1,4 +1,23 @@
 extends SceneTree
+## GDScript assert() only logs a SCRIPT ERROR and the run carries on, so a failed one still ended in PASS / exit 0. Every check goes through
+## _check: a failure is recorded and printed as FAIL, and _finish quits 1 when any failed.
+var _failures: Array[String] = []
+
+func _check(ok: bool, reason := "") -> bool:
+	if not ok:
+		_failures.append(reason)
+		var stack := get_stack()
+		printerr("FAIL: ", reason, " (line ", stack[1].line if stack.size() > 1 else 0, ")")
+	return ok
+
+func _finish(pass_message: String) -> void:
+	if _failures.is_empty():
+		print(pass_message)
+		quit()
+		return
+	printerr(_failures.size(), " check(s) failed")
+	quit(1)
+
 # Selected-unit ground powers use the same textured terrain decal as spell-book powers.
 # Runs against the explicitly mounted profile, including enabled mods.
 func _initialize() -> void: call_deferred("_run")
@@ -9,32 +28,40 @@ func _run() -> void:
 		return
 	root.size = Vector2i(1280, 720)
 	var fs = ClassDB.instantiate("RetailFileSystem")
-	assert(fs.mount_retail().ok)
+	if not _check(fs.mount_retail().ok):
+		_finish("")
+		return
 	var world = ClassDB.instantiate("GameWorld")
 	root.add_child(world)
-	assert(world.setup(fs).ok)
+	if not _check(world.setup(fs).ok):
+		_finish("")
+		return
 	var loaded: Dictionary = world.load_map("map mp fall back 4p", {"terrain": true, "slots": [{"player": "Player_1", "faction": "FactionMen", "human": true}]})
-	assert(loaded.ok, str(loaded))
+	if not _check(loaded.ok, str(loaded)):
+		_finish("")
+		return
 	var owner := -1
 	for i in loaded.players.size():
 		if String(loaded.players[i]).contains("'Player_1'"): owner = i
-	assert(owner != -1)
+	_check(owner != -1)
 	var hero = world.create_object("ElvenElrond", owner, 2000, 1800, 0)
 	# tolerance: live object IDs are allocated dynamically; zero is the invalid ID.
-	assert(hero != 0)
+	_check(hero != 0)
 	world.gain_hero_levels(hero, 10)
 	world.ready_object_powers(hero)
 	var camera := Camera3D.new()
 	root.add_child(camera)
 	var hud = ClassDB.instantiate("InGameHudNode")
 	root.add_child(hud)
-	assert(hud.setup(fs, world, camera, "Player_1", {"camera_start": Vector3(2000, 0, -1800)}).ok)
+	if not _check(hud.setup(fs, world, camera, "Player_1", {"camera_start": Vector3(2000, 0, -1800)}).ok):
+		_finish("")
+		return
 	world.set_shroud_drawn(false)
 	hud.select_object_with_message(hero)
 	for i in 20:
 		world.advance(1.0 / 30.0)
 		await process_frame
-	assert(hud.press_command_button("Command_SpecialPowerSpawnWhirlwind"), str(hud.get_command_buttons()))
+	_check(hud.press_command_button("Command_SpecialPowerSpawnWhirlwind"), str(hud.get_command_buttons()))
 	var cursor: Dictionary = {}
 	var pixel := Vector2.ZERO
 	var aim := Vector2.ZERO
@@ -47,13 +74,15 @@ func _run() -> void:
 			pixel = point
 			aim = target
 			break
-	assert(pixel != Vector2.ZERO, str(cursor))
-	assert(cursor.type == "NaturesWrathRadiusCursor", str(cursor))
-	assert(cursor.texture == "SCCNaturesWrath", str(cursor))
-	assert(cursor.size == 140.0, str(cursor))
-	assert(cursor.rgb == 0xFFFFFF, str(cursor))
-	assert(cursor.drawn and cursor.error.is_empty(), str(cursor))
-	assert(cursor.pointer == "None", str(cursor))
+	if not _check(pixel != Vector2.ZERO, str(cursor)):
+		_finish("")
+		return
+	_check(cursor.type == "NaturesWrathRadiusCursor", str(cursor))
+	_check(cursor.texture == "SCCNaturesWrath", str(cursor))
+	_check(cursor.size == 140.0, str(cursor))
+	_check(cursor.rgb == 0xFFFFFF, str(cursor))
+	_check(cursor.drawn and cursor.error.is_empty(), str(cursor))
+	_check(cursor.pointer == "None", str(cursor))
 	var hidden: Image
 	var bounds := Rect2()
 	if DisplayServer.get_name() != "headless":
@@ -79,26 +108,25 @@ func _run() -> void:
 				var after := hidden.get_pixel(x, y)
 				if before.get_luminance() - after.get_luminance() > 0.02: brighter_pixels += 1
 		# tolerance: a visible white overlay must brighten pixels; counts vary with GPU sampling and antialiasing.
-		assert(brighter_pixels > 0, "cursor state was active but no white texture reached the terrain pixels")
+		_check(brighter_pixels > 0, "cursor state was active but no white texture reached the terrain pixels")
 		# Restore the texture with the frozen scene before exercising cancellation.
 		hud.set_process(true)
 		await process_frame
 		await process_frame
 		hud.set_process(false)
 		await RenderingServer.frame_post_draw
-		assert(root.get_texture().get_image().get_data() == shown.get_data())
+		_check(root.get_texture().get_image().get_data() == shown.get_data())
 
 	hud.inject_mouse_button(2, true, pixel, false)
 	hud.inject_mouse_button(2, false, pixel, false)
 	# The HUD publishes cancellation while the scene and elapsed time stay frozen.
 	hud.set_process(true)
 	for i in 4: await process_frame
-	assert(not hud.get_spellbook_state().radius_cursor.visible)
+	_check(not hud.get_spellbook_state().radius_cursor.visible)
 	if hidden != null:
 		await RenderingServer.frame_post_draw
 		var cancelled := root.get_texture().get_image()
 		# The scene stays frozen: cancellation must remove exactly the same pixels
 		# as disabling the shader transform, including a stale terrain texture.
-		assert(cancelled.get_region(Rect2i(bounds)).get_data() == hidden.get_region(Rect2i(bounds)).get_data(), "cancel left cursor pixels on the terrain")
-	print("HERO RADIUS CURSOR PASS: white SCCNaturesWrath terrain decal, diameter 140; cancel clears it")
-	quit()
+		_check(cancelled.get_region(Rect2i(bounds)).get_data() == hidden.get_region(Rect2i(bounds)).get_data(), "cancel left cursor pixels on the terrain")
+	_finish("HERO RADIUS CURSOR PASS: white SCCNaturesWrath terrain decal, diameter 140; cancel clears it")

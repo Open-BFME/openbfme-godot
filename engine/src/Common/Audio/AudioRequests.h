@@ -37,11 +37,14 @@ void postWeaponFireSound(const std::string &eventName, std::uint32_t objectId, s
 //   HELD_BUILDING_LOOP: GettingBuiltBehavior's Self*Loop (RW 0x8566DF adds, module + 0x24; RW 0x856644 / 0x856992 / 0x85750D remove; holder = the structure)
 //                       and the dozer's building sound (startBuildingSound RW 0x88C4A3 / finishBuildingSound RW 0x88BFA9; holder = the dozer, sound on the site)
 //   HELD_MOVE_LOOP:     AIInternalMoveToState's move loop (startMoveSound RW 0x748C0B keeps it at state + 0x40; onEnter RW 0x74DAE4 / onExit RW 0x748E06 remove)
+//   HELD_UPGRADE_LOOP:  AudioLoopUpgrade's SoundToPlay (RW 0x8BBE71 adds, module + 0x2C; RW 0x8BBEFE / 0x8BBCB6 / 0x8BBF5A remove; holder = the module's own
+//                       key, AudioLoopUpgrade::soundKey: an object can carry several, e.g. IsengardFortressCitadel four)
 enum HeldSoundSlot
 {
 	HELD_BUILDING_LOOP = 0,
 	HELD_MOVE_LOOP = 1,
-	HELD_SOUND_SLOTS = 2
+	HELD_UPGRADE_LOOP = 2,
+	HELD_SOUND_SLOTS = 3
 };
 void postHeldSound(int slot, const std::string &eventName, std::uint32_t holderId, std::uint32_t objectId);
 void stopHeldSound(int slot, std::uint32_t holderId);

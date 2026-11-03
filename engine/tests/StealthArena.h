@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -73,7 +74,7 @@ struct Arena
 		REQUIRE_MESSAGE(o != nullptr, templateName);
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
-		return o;
+		return testutil::completeHorde(o);
 	}
 	void run(int frames)
 	{

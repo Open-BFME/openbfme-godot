@@ -49,6 +49,11 @@ bool BuildVersion::isReleaseVersion(const std::string &version)
 	return false;
 }
 
+bool BuildVersion::isStableChannel(const std::string &version)
+{
+	return isReleaseVersion(version) && version.find('-') == std::string::npos;
+}
+
 std::string BuildVersion::displayVersion(const std::string &version)
 {
 	// v<major>.<minor>.<patch>[-alpha.<n>], matched as a whole (the launcher's grammar, launcher/scripts/core/semver.gd)

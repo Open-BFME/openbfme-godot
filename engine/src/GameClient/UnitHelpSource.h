@@ -4,7 +4,7 @@
 // level, maximum health, melee and ranged damage, its upgrades and its description, as an InGameSimpleHelp (CommandButtonHelp::simple).
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; the BFME2 decomp is the donor: UnitHelpSource.cpp / GapBodiesGE26.cpp, tier B edited for the builder):
-//   * the hero bar's slot handler (RW 0x92BF34, BFME2 decomp InGameHeroSelectInterfaceRva005254C5.cpp, tier A; registered per slot by RW 0x92DFDE for the
+//   * the hero bar's slot handler (RW 0x92BF34, BFME2 decomp Holder00525D9A.cpp, tier A; registered per slot by RW 0x92DFDE for the
 //     paths "<clip>/Hero%d/" and RW 0x92E058 "<clip>/SelectAllHeroesBttn/"): the builder slot shows the help of the command button
 //     "NonCommand_SelectNearestBuilder" (RW 0x71D6EA findCommandButton, RW 0x807A00), a hero slot a UnitHelpSource of the hero (vtable RW 0xC130E8) through the
 //     control bar's provider (RW 0x807848); the select-all button (RW 0x92C265) the help of "NonCommand_SelectAllHeroes";

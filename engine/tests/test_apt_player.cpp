@@ -449,6 +449,26 @@ TEST_CASE("player: attachMovie, createEmptyMovieClip and removeMovieClip use dep
 	CHECK(fx.errorsText().empty());
 }
 
+// lane WOTR-2: attachMovie's symbol lookup (RW 0xB016D0) compares the names with _strcmpi (RW 0xAE76B0) and finds nothing it was not given
+TEST_CASE("player: attachMovie finds an export whatever the case of its name; an unknown name attaches nothing")
+{
+	TestMovie m;
+	std::uint32_t sprite = m.addSprite({ {} });
+	m.addCharacter(0);
+	std::uint32_t sid = m.addCharacter(sprite);
+	m.addExport("Gizmo", sid);
+	std::uint32_t go = program(m, [&](Asm &a) {
+		a.pushByte(5).pushString("g").pushString("GIZMO").pushByte(3).getStringVar("this").pushString("attachMovie").op(APT_OP_EA_CALLMETHODPOP);
+		a.pushByte(6).pushString("h").pushString("Gadget").pushByte(3).getStringVar("this").pushString("attachMovie").op(APT_OP_EA_CALLMETHODPOP);
+	});
+	m.setRootFrames({ { m.addActionItem(go) } });
+	PlayerFx fx;
+	REQUIRE(fx.load(0, "A", m));
+	CHECK(fx.at("g"));
+	CHECK(fx.at("h") == nullptr);
+	CHECK(fx.errorsText().find("no export named 'Gadget'") != std::string::npos);
+}
+
 // ---- stops: behaviours the binary reading did not settle are reported at run time and pinned (docs/STOPS.md S-100..S-109) ----
 
 TEST_CASE("stops S-100: a character the parser has no layout for is placed as an inert instance and reported")

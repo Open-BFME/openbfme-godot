@@ -8,6 +8,7 @@
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/ClickReactionBehavior.h"
 #include "GameLogic/Module/ExitInterface.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Object/Object.h"
@@ -132,12 +133,29 @@ void GameLogicDispatch::createSelectedGroup(const GameMessage &m)
 	{
 		sel.clear();
 	}
+	bool first = true; // RW 0x77A0A6: [ebp + 0xF], cleared after the first object found
 	for (size_t i = 1; i < m.getArgumentCount(); ++i)
 	{
 		const GameMessageArgument *a = m.getArgument(i);
 		if (a->type == ARGUMENTDATATYPE_OBJECTID && std::find(sel.begin(), sel.end(), a->objectID) == sel.end())
 		{
 			sel.push_back(a->objectID);
+		}
+		// lane MODCOMPAT-MOD1: RW 0x77A0C1 .. 0x77A0FF: each object found goes to selectObject (RW 0x625685) with force = createNewGroup and the first
+		// object; there an object RW 0x6937C0 calls selectable (or a forced one) that the sending player controls (RW 0x68B678) is told through its click
+		// interface (RW 0x68C409, slot 1: ClickReactionBehavior::onClick)
+		Object *obj = a->type == ARGUMENTDATATYPE_OBJECTID ? m_logic.findObjectByID(a->objectID) : nullptr;
+		if (obj)
+		{
+			const bool force = flag->boolean && first;
+			first = false;
+			if ((ClickReactionBehavior::selectableForClick(*obj) || force) && obj->getControllingPlayer() == player)
+			{
+				if (ClickReactionBehavior *click = ClickReactionBehavior::find(*obj))
+				{
+					click->onClick();
+				}
+			}
 		}
 	}
 }

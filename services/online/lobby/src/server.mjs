@@ -26,7 +26,7 @@ export function readEnv(env = process.env) {
 }
 
 export function fileStore(dir) {
-  for (const sub of ['games', 'starts', 'archives', 'logs', 'players', 'meta', 'enforcement', 'sightings', 'reports', 'moderation-receipts']) mkdirSync(join(dir, sub), { recursive: true });
+  for (const sub of ['games', 'starts', 'archives', 'logs', 'players', 'wars', 'meta', 'enforcement', 'sightings', 'reports', 'moderation-receipts']) mkdirSync(join(dir, sub), { recursive: true });
   const reports = createNodeReportStore(join(dir, 'reports'));
   const gamesDir = join(dir, 'games');
   const syncDirectory = (path) => {
@@ -161,7 +161,7 @@ export function fileStore(dir) {
       return { started: times('starts'), finished: times('logs') };
     },
     // INFRA-2: the admin backup's listing, in key order after `after` (the keys lobby.mjs's parseBlobKey accepts)
-    listBlobs: (after, limit) => ['archives', 'logs', 'players', 'starts'].flatMap((sub) => readdirSync(join(dir, sub)).map((f) => `${sub}/${f}`))
+    listBlobs: (after, limit) => ['archives', 'logs', 'players', 'starts', 'wars'].flatMap((sub) => readdirSync(join(dir, sub)).map((f) => `${sub}/${f}`))
       .filter((k) => parseBlobKey(k) && k > after).sort().slice(0, limit)
       .map((key) => {
         const st = statSync(join(dir, key));

@@ -1165,6 +1165,7 @@ void W3DScriptedModelDraw::poseView(W3DDrawPoseView &v) const
 	v.hiddenGeneration = m_hiddenGeneration;
 	static const std::vector<std::pair<std::string, std::string>> noSwaps;
 	v.textureSwaps = m_curModelInfo ? &m_curModelInfo->textures : &noSwaps; // stop S-5015: a SNOW state's look is often its texture swap alone
+	v.glow = m_data.m_glowEnabled ? (m_data.m_glowEmissive ? 2 : 1) : 0; // RW 0x4C518B / 0x47A94F (BFME2 W3DHordeModelDrawSetModelState): the module data's GlowEnabled (+ 0x128) calls the render object's vslot 0x1CC(1) and GlowEmissive (+ 0x129) its vslot 0x1D4; GlowEmissive only counts with GlowEnabled
 }
 
 bool W3DScriptedModelDraw::modelCondition(const std::string &name)

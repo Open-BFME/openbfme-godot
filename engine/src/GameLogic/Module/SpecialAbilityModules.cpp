@@ -12,6 +12,7 @@
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Object/PartitionManager.h"
+#include "GameLogic/Object/Contain/OpenContainRuntime.h"
 
 #include "Common/GameCommon.h"
 #include "Common/INIException.h"
@@ -572,9 +573,21 @@ bool SpecialAbilityUpdate::allowsSpecialPowerUse() const
 	{
 		return true;
 	}
-	// RW 0x851BA2: the object's contain (+ 0x258) slot 0x114(0) below its slot 0x70 (the room test: not ported, S-1043, as in ToggleHidden's canHide)
-	getObject()->logic().noteStop("[S-1043] SpecialAbilityUpdate: the garrison enum's room test (RW 0x851BA2) is not ported; the power is refused");
-	return false;
+	// RW 0x851BA2 (lane MODCOMPAT-MOD1): the grab enums need room: the object's contain (+ 0x258) holds fewer (slot 0x114(0)) than its maximum (slot 0x70);
+	// no contain answers no. Slot 0x70 is OpenContain's getContainMax (RW 0x86584C, TransportContain RW 0x869F86): another contain class is a stop (no retail
+	// grab object has one), refused
+	ContainModuleInterface *c = getObject()->getContain();
+	if (!c)
+	{
+		return false;
+	}
+	const OpenContain *open = dynamic_cast<const OpenContain *>(c);
+	if (!open)
+	{
+		getObject()->logic().noteStop("[S-1043] SpecialAbilityUpdate: the grab enums' room test (RW 0x851BA2) of a contain that is not an OpenContain is not ported; the power is refused");
+		return false;
+	}
+	return (int)c->getContainCount() < open->getContainMax();
 }
 
 // RW 0x851551
@@ -614,17 +627,57 @@ bool SpecialAbilityUpdate::conditionsAllow() const
 }
 
 // RW 0x85266D
-UpdateSleepTime SpecialAbilityUpdate::calcSleep() const
+UpdateSleepTime SpecialAbilityUpdate::calcSleep()
 {
 	if (m_active || m_data->m_alwaysValidateSpecialObjects || m_effectExpiry != 0) // RW 0x85266D tests the effect expiry (+ 0x2C)
 	{
 		return (UpdateSleepTime)1;
 	}
+	releaseCapture();
 	if (m_data->m_requiredConditions == 0 && m_data->m_rejectedConditions == 0)
 	{
 		return UPDATE_SLEEP_FOREVER;
 	}
 	return (UpdateSleepTime)1;
+}
+
+// RW 0x85266D, the sleep calculation: in an ability that is no longer active (no effect running, not AlwaysValidateSpecialObjects): a
+// capture ability (special power type 0x1D) whose capturer and target (+ 0x40, kept after finishAbility) both exist releases the capture. The target on
+// the capturer's controlling player (RW 0x68B678 on both) takes CAPTURED (RW 0x5E3BA5(0x77)); else a target still recording this capturer (+ 0x80) shows
+// CANCEL_CAPTURE for LOGICFRAMES_PER_SECOND frames (RW 0x68B581(0x6F, RW 0xDE8E0C)). The capturer loses CAPTURING (RW 0x5E3B79(0x70)) either way, and in
+// both cases the target loses START_CAPTURE (RW 0x5E3B79(0x6E)) and its capturer (+ 0x80 = 0). The port set CAPTURING when the capture began (RW 0x851F39 .. 0x851FE7)
+// and never cleared it: the skirmish AI's capture squad (AITacticalAI.cpp updateIdleCounters, RW 0x8F135E) saw a capturing member for ever, its team never
+// idle, and gave it no further order after its first capture, completed or interrupted.
+void SpecialAbilityUpdate::releaseCapture()
+{
+	const SpecialPowerTemplate *spt = m_data->m_specialPowerTemplate; // RW 0x688D3C(module data + 0x38), the template's type at + 0x1C
+	if (!spt || spt->m_type != 0x1D)
+	{
+		return;
+	}
+	Object *obj = getObject();
+	Object *t = target(); // RW 0x449681(+ 0x40)
+	if (!t)
+	{
+		return;
+	}
+	bool release = false;
+	if (t->getControllingPlayer() == obj->getControllingPlayer())
+	{
+		setCondition(*t, kMcCaptured, true);
+		release = true;
+	}
+	else if (t->getCapturerID() == obj->getID())
+	{
+		t->setSpecialModelConditionState(kMcCancelCapture, 5); // LOGICFRAMES_PER_SECOND frames (RW 0xDE8E0C = RW 0xD9F608)
+		release = true;
+	}
+	setCondition(*obj, kMcCapturing, false);
+	if (release)
+	{
+		setCondition(*t, kMcStartCapture, false);
+		t->setCapturerID(INVALID_ID);
+	}
 }
 
 bool SpecialAbilityUpdate::needToUnpack() const // RW 0x85133C
@@ -637,9 +690,24 @@ bool SpecialAbilityUpdate::needToPack() const // RW 0x851316
 	return m_packingState == 4 && (!m_data->m_skipPackingWithNoTarget || !m_noTarget) && m_data->m_packFrames != 0;
 }
 
-bool SpecialAbilityUpdate::persistentTrigger() const // RW 0x852465 (the garrison enum 0x27 branch: S-860)
+// RW 0x852465: none left; SPECIAL_GRAB_PASSENGER (0x27) with a target that is not SHRUBBERY (template + 0x108 bit 6), or after the first trigger, stops
+// (lane MODCOMPAT-MOD1: a tree is whacked once more, PersistentPrepTime later); else PersistentPrepTime is set
+bool SpecialAbilityUpdate::persistentTrigger() const
 {
-	return m_persistentLeft != 0 && m_data->m_persistentPrepFrames != 0;
+	if (m_persistentLeft == 0)
+	{
+		return false;
+	}
+	if (m_data->m_specialPowerTemplate && m_data->m_specialPowerTemplate->m_type == 0x27)
+	{
+		static const int kShrubbery = ObjectTemplateInfoBuilder::kindOfIndex("SHRUBBERY");
+		const Object *t = target();
+		if ((t && !(kShrubbery >= 0 && t->isKindOf((unsigned)kShrubbery))) || m_triggerCount > 1)
+		{
+			return false;
+		}
+	}
+	return m_data->m_persistentPrepFrames != 0;
 }
 
 void SpecialAbilityUpdate::restartPersistent() // RW 0x8524BC
@@ -965,11 +1033,28 @@ void SpecialAbilityUpdate::approachTarget()
 	ai->aiMoveToObject(t, CMD_FROM_AI);
 }
 
+// RW 0x85241F (lane MODCOMPAT-MOD1): SPECIAL_GRAB_PASSENGER (0x27) with a target that is neither SHRUBBERY (template + 0x108 bit 6) nor GRAB_AND_KILL
+// (+ 0x114 bit 3) prepares 0 frames (it triggers at once); else PreparationTime
+unsigned SpecialAbilityUpdate::preparationFrames() const
+{
+	if (m_data->m_specialPowerTemplate && m_data->m_specialPowerTemplate->m_type == 0x27)
+	{
+		static const int kShrubbery = ObjectTemplateInfoBuilder::kindOfIndex("SHRUBBERY");
+		static const int kGrabAndKill = ObjectTemplateInfoBuilder::kindOfIndex("GRAB_AND_KILL");
+		const Object *t = target();
+		if (t && !(kShrubbery >= 0 && t->isKindOf((unsigned)kShrubbery)) && !(kGrabAndKill >= 0 && t->isKindOf((unsigned)kGrabAndKill)))
+		{
+			return 0;
+		}
+	}
+	return m_data->m_preparationFrames;
+}
+
 // RW 0x853BEC
 void SpecialAbilityUpdate::startPreparation()
 {
 	Object *obj = getObject();
-	m_prepFrames = m_data->m_preparationFrames; // RW 0x85241F (the garrison enum 0x27 answers 0: S-860)
+	m_prepFrames = preparationFrames(); // RW 0x85241F
 	if (m_prepFrames != 0)
 	{
 		// RW 0x853C1B: the AI faces the target (vslot 0xEC: S-859); PREPARING on, UNPACKING / RAISING_FLAG off, the unpacking variation
@@ -1124,9 +1209,13 @@ void SpecialAbilityUpdate::triggerAbilityEffect()
 			return; // RW 0x854901: a capture that does not happen skips the common end (stealth, freeze, modifier)
 		}
 	}
-	else if (type == 0x15 || type == 0x27 || type == 0x28 || type == 0x2A)
+	else if (type == 0x27 || type == 0x28)
 	{
-		++m_unported; // the capture / garrison / charge / SpecialDisguiseUpdate cancel (0x85) / weather enums of the switch: S-860
+		grabTrigger(type);
+	}
+	else if (type == 0x15 || type == 0x2A)
+	{
+		++m_unported; // the laser-guided missiles / charge enums of the switch: S-860
 	}
 	if (m_data->m_loseStealthOnTrigger)
 	{
@@ -1147,6 +1236,86 @@ void SpecialAbilityUpdate::triggerAbilityEffect()
 		obj->addAttributeModifier(m_data->m_triggerAttributeModifier, (int)m_data->m_attributeModifierDuration); // RW 0x68F1A8
 	}
 	(void)logic;
+}
+
+// lane MODCOMPAT-MOD1: RW 0x8540A1 .. 0x8544C8, the grab enums of the trigger (SPECIAL_GRAB_PASSENGER 0x27, SPECIAL_GRAB_CHUNK 0x28; the trigger count was
+// raised before). The first trigger, with the object's contain (+ 0x258; none: nothing): without a target object the tree at the target location within
+// 5.0 (RW 0xBDAE58, TheTerrainLogic RW 0x67F52B(loc, 5, 1, 1)) becomes a tree object (RW 0x68449B) that is the target: not ported (S-860, counted). A
+// CHUNK_VENDOR target of 0x28 or a ROCK_VENDOR target of 0x27 hands out its GrabObject (the body's slot 0x74, made by RW 0x6D165E, produced by the object
+// and contained) and is hurt (RW 0x697E50): not ported (S-860, counted). Any other target the contain accepts (slot 0x98(target, 1, 0)) leaves the horde
+// that holds it (the holder's horde interface slot 0x38) and is contained (slot 0x9C); a GRAB_AND_KILL target (template + 0x114 bit 3) shows PREPARING
+// (Object + 0x114 bit 31). The second trigger with a target: a SHRUBBERY target shows CLUB (+ 0x114 bit 27); a GRAB_AND_KILL one is let go (slot 0xA4(target,
+// 0)), PREPARING clears on the object and the target, the object shows the UnpackingVariation's PACKING_TYPE and the ability has no target (+ 0x7D)
+void SpecialAbilityUpdate::grabTrigger(int type)
+{
+	Object *obj = getObject();
+	Object *t = target();
+	static const int kShrubbery = ObjectTemplateInfoBuilder::kindOfIndex("SHRUBBERY");
+	static const int kGrabAndKill = ObjectTemplateInfoBuilder::kindOfIndex("GRAB_AND_KILL");
+	static const int kChunkVendor = ObjectTemplateInfoBuilder::kindOfIndex("CHUNK_VENDOR");
+	static const int kRockVendor = ObjectTemplateInfoBuilder::kindOfIndex("ROCK_VENDOR");
+	static const int kClub = CombatNames::modelCondition("CLUB"); // 91
+	auto kind = [](const Object &o, int bit) { return bit >= 0 && o.isKindOf((unsigned)bit); };
+	if (m_triggerCount == 1)
+	{
+		ContainModuleInterface *contain = obj->getContain();
+		if (!contain)
+		{
+			return;
+		}
+		if (!t)
+		{
+			++m_unported; // RW 0x8540D4 .. 0x854112: the tree object at the location (S-860)
+			obj->logic().noteStop("[S-860] SpecialAbilityUpdate: the grab of a tree (RW 0x68449B makes the tree an object) is not ported");
+			return;
+		}
+		const bool vendor = (kind(*t, kChunkVendor) && type == 0x28) || (kind(*t, kRockVendor) && type == 0x27);
+		if (vendor)
+		{
+			++m_unported; // RW 0x85415C .. 0x854348: the vendor's GrabObject (S-860)
+			obj->logic().noteStop("[S-860] SpecialAbilityUpdate: the grab of a ROCK_VENDOR / CHUNK_VENDOR (its GrabObject made and held, the vendor hurt, RW 0x85415C) is not ported");
+			return;
+		}
+		if (!contain->isValidContainerFor(*t, true, false)) // slot 0x98(target, 1, 0)
+		{
+			return;
+		}
+		if (Object *holder = t->getContainedBy()) // + 0x27C
+		{
+			ContainModuleInterface *hc = holder->getContain();
+			if (hc && hc->getHordeContainInterface())
+			{
+				hc->removeFromContain(t); // the horde interface's slot 0x38 (RW 0x87393E removeMemberFromHorde), as GiantBirdAIUpdate's grab
+			}
+		}
+		contain->addToContain(t); // slot 0x9C
+		if (kind(*t, kGrabAndKill))
+		{
+			setCondition(*t, kMcPreparing, true); // + 0x114 |= 0x80000000
+		}
+		return;
+	}
+	if (m_triggerCount != 2 || !t)
+	{
+		return;
+	}
+	if (kind(*t, kShrubbery))
+	{
+		setCondition(*t, kClub, true); // + 0x114 |= 0x8000000
+		return;
+	}
+	if (!kind(*t, kGrabAndKill))
+	{
+		return;
+	}
+	if (ContainModuleInterface *contain = obj->getContain())
+	{
+		contain->removeFromContain(t); // slot 0xA4(target, 0)
+	}
+	setCondition(*obj, kMcPreparing, false);
+	setCondition(*t, kMcPreparing, false);
+	setUnpackingVariation(); // RW 0x85444A .. 0x8544BD: the data's UnpackingVariation (+ 0x6C) as at RW 0x853C64
+	m_noTarget = true;       // + 0x7D
 }
 
 // lane HERO-2: RW 0x8544F2 .. 0x854772, the capture of SpecialAbilityUpdate's trigger (SPECIAL_INFANTRY_CAPTURE_BUILDING 0x1D, SPECIAL_BLACKLOTUS 0x1A). The
@@ -1366,6 +1535,81 @@ void SpecialAbilityUpdate::startUnpacking()
 }
 
 // RW 0x8530BA
+// lane MODCOMPAT-MOD1: RW 0x85321E .. 0x853367, finishAbility's grab enums. Object + 0x4A4 is cleared (a field this engine does not read: unidentified). The
+// target loses TAGGED (status 0x3F). After exactly one trigger: a SHRUBBERY target shows CLUB; else a CHUNK_VENDOR target clears the object's model condition
+// 176 (+ 0x122 bit 0). Then, when the command options (+ 0x6C) have 0x4000 (the eat), the object's contain eats the target after the grab's TriggerTime
+// (contain slot 0xAC, RW 0x865853: GrabPassengerAnimAndDuration + 8), the body's health becomes min(100, health / max * 100 + GrabPassengerHealGainPercent)
+// percent (body slots 0x14 / 0x58(percent, 0)), the object and the target show the grab's AnimState for its AnimTime (RW 0x68B581) and the object's AI is
+// busy for AnimTime (RW 0x852E2A(frames, 2))
+void SpecialAbilityUpdate::grabFinish()
+{
+	Object *obj = getObject();
+	Object *t = target();
+	if (!t)
+	{
+		return;
+	}
+	static const int kTagged = ObjectTemplateInfoBuilder::objectStatusIndex("TAGGED"); // 0x3F
+	if (kTagged < 0)
+	{
+		throw std::logic_error("SpecialAbilityUpdate RW 0x85324A: no TAGGED object status");
+	}
+	t->setStatus((unsigned)kTagged, false);
+	if (m_triggerCount != 1)
+	{
+		return;
+	}
+	static const int kShrubbery = ObjectTemplateInfoBuilder::kindOfIndex("SHRUBBERY");
+	static const int kChunkVendor = ObjectTemplateInfoBuilder::kindOfIndex("CHUNK_VENDOR");
+	static const int kClub = CombatNames::modelCondition("CLUB"); // 91: + 0x114 bit 27
+	if (kShrubbery >= 0 && t->isKindOf((unsigned)kShrubbery))
+	{
+		setCondition(*t, kClub, true);
+	}
+	else if (kChunkVendor >= 0 && t->isKindOf((unsigned)kChunkVendor))
+	{
+		setCondition(*obj, 176, false); // + 0x122 bit 0
+	}
+	if ((m_options & 0x4000u) == 0) // byte + 0x6D bit 6
+	{
+		return;
+	}
+	ContainModuleInterface *contain = obj->getContain();
+	if (!contain)
+	{
+		return;
+	}
+	OpenContain *open = dynamic_cast<OpenContain *>(contain);
+	if (!open)
+	{
+		throw std::logic_error("SpecialAbilityUpdate RW 0x8532EF: the grab's eat on a contain that is not an OpenContain (contain slot 0xAC is OpenContain's RW 0x865853)");
+	}
+	open->eatPassengerAfter(*t, (int)m_data->m_grabTriggerFrames, *obj);
+	if (BodyModuleInterface *body = obj->getBodyModule())
+	{
+		// RW 0x8532F9 .. 0x853324: body slot 0x14 (ActiveBody RW 0x8C1D75: health / max in the FPU, 0 without a positive max), fmul 100.0f (RW 0xBD88D8),
+		// fadd the heal gain (data + 0x30), fstp float [EBP - 0x14]; fcomip against 100.0f: above it, 100 (Sol review: the x87 24-bit precision control the
+		// game runs at, as ConstructionModules' percentOfHealth)
+		const float maxHealth = body->getMaxHealth();
+		const double fraction = maxHealth > 0.0f ? SimMath::pc24DivW((double)body->getHealth(), (double)maxHealth) : 0.0;
+		float percent = SimMath::fstpDword(SimMath::pc24AddW(SimMath::pc24MulW(fraction, 100.0), (double)m_data->m_grabPassengerHealGainPercent));
+		if (100.0f < percent)
+		{
+			percent = 100.0f;
+		}
+		body->setInitialHealthPercent(percent); // slot 0x58(percent, 0)
+	}
+	if (m_data->m_grabAnimCondition >= 0)
+	{
+		obj->setSpecialModelConditionState(m_data->m_grabAnimCondition, m_data->m_grabAnimFrames); // RW 0x68B581(+ 0x24, + 0x28)
+		t->setSpecialModelConditionState(m_data->m_grabAnimCondition, m_data->m_grabAnimFrames);
+	}
+	if (AIUpdateInterface *ai = obj->getAIUpdateInterface())
+	{
+		ai->aiBusyFor(m_data->m_grabAnimFrames, CMD_FROM_AI); // RW 0x852E2A(+ 0x28, 2)
+	}
+}
+
 void SpecialAbilityUpdate::finishAbility(bool ownerDying, bool aborted)
 {
 	Object *obj = getObject();
@@ -1391,6 +1635,10 @@ void SpecialAbilityUpdate::finishAbility(bool ownerDying, bool aborted)
 		{
 			heal->waitForButton();
 		}
+	}
+	if (type == 0x27 || type == 0x28)
+	{
+		grabFinish();
 	}
 	if (type == 0x1D || type == 0x1A)
 	{
@@ -2416,9 +2664,11 @@ std::vector<std::string> SpecialAbilityModules::stopLines()
 		"module's finish notice (vslot 0x4C), sounds and voices (client): each counted (unported())",
 		"[S-860] SpecialAbilityUpdate ability enums not ported: SPECIAL_MISSILE_DEFENDER_LASER_GUIDED_MISSILES (0x15), the black lotus capture's special objects "
 		"(0x1A; SPECIAL_INFANTRY_CAPTURE_BUILDING 0x1D runs: lane HERO-2, S-1225), "
-		"SPECIAL_GRAB_PASSENGER / SPECIAL_GRAB_CHUNK (0x27 / 0x28) and SPECIAL_CHARGE_ATTACK (0x2A) in the trigger / preparation / packing (the 0x20 disguise trigger "
-		"RW 0x8544CD runs: lane STEALTH-2; SPECIAL_SCREECH 0x89, the disguise cancels 0x84 / 0x85: lane HERO-2), the special objects (SpecialObject: no retail use), "
-		"GrabPassengerAnimAndDuration, ContactPointOverride, the unit cost of the summoning templates (+ 0x80): counted",
+		"SPECIAL_CHARGE_ATTACK (0x2A) in the trigger / preparation / packing (the 0x20 disguise trigger RW 0x8544CD runs: lane STEALTH-2; SPECIAL_SCREECH 0x89, the "
+		"disguise cancels 0x84 / 0x85: lane HERO-2; the grab enums SPECIAL_GRAB_PASSENGER / SPECIAL_GRAB_CHUNK 0x27 / 0x28 run since lane MODCOMPAT-MOD1: the "
+		"object grab, its hold, release and eat), the grab of a tree (RW 0x68449B makes it an object) and of a ROCK_VENDOR / CHUNK_VENDOR (its GrabObject, RW "
+		"0x85415C), the 0x28 unpack model condition (RW 0x85384C), the special objects (SpecialObject: no retail use), ContactPointOverride, the unit cost of the "
+		"summoning templates (+ 0x80): counted",
 		"[S-861] ToggleMountedSpecialAbilityUpdate: the toggle, CancelDisguiseWhenDismounting and MountedTemplate (the replacement RW 0x8B140D: Construction::"
 		"buildObjectNow, name, experience, health, team, SynchronizeTimerOnSpecialPower; the old object destroyed after its packing, RW 0x8B1E9A) run (lane "
 		"HERO-2); lane SUMMON-1: the initiate RW 0x8B1FDA (a current locomotor of speed 0 refuses, else IGNORE_AI_COMMAND) and SummonReplacementSpecialAbilityUpdate "

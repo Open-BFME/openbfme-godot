@@ -363,14 +363,16 @@ TEST_CASE("MOD-4: a Rohan peasant's RepairSpecialPower sends it to repair a dama
 
 // ---- the registered stops ------------------------------------------------------------------------------------------------------------------------------------
 
-TEST_CASE("MOD-4: PickupStuffUpdate, GeometryUpgrade, ThreatFinderUpdate and the rebuild holes stay UnportedModules, each reported as its stop [S-1422] .. [S-1424], [S-1427]")
+// lane MODCOMPAT-MOD1 ported the rebuild holes (RebuildHoleExposeDie / RebuildHoleBehavior): their S-1427 line is RebuildHoleBehavior's (test_rebuildhole.cpp)
+// lane MODCOMPAT-MOD1 ported PickupStuffUpdate (its stop [S-1422] is PickupStuffUpdate::stopLines, test_pickup_modules.cpp)
+TEST_CASE("MOD-4: ThreatFinderUpdate stays an UnportedModule, reported as its stop [S-1424]")
 {
 	OPENBFME_REQUIRE_START(s);
 	const std::vector<std::string> unported = s->world->modules().unportedModuleClassNames();
 	const std::vector<std::string> stops = s->world->acceptanceStops();
-	const char *const ids[] = { "[S-1422] PickupStuffUpdate", "[S-1423] GeometryUpgrade", "[S-1424] ThreatFinderUpdate", "[S-1427] RebuildHoleExposeDie",
-		"[S-1427] RebuildHoleExposeDie" };
-	REQUIRE(Mod4Stops::classes().size() == 5);
+	// lane MODCOMPAT-MOD1 ported GeometryUpgrade (its [S-1423] is now GeometryUpgrade::stopLines, test_geometry_upgrade.cpp)
+	const char *const ids[] = { "[S-1424] ThreatFinderUpdate" };
+	REQUIRE(Mod4Stops::classes().size() == 1);
 	for (size_t i = 0; i < Mod4Stops::classes().size(); ++i)
 	{
 		const std::string &name = Mod4Stops::classes()[i];
@@ -380,7 +382,7 @@ TEST_CASE("MOD-4: PickupStuffUpdate, GeometryUpgrade, ThreatFinderUpdate and the
 		{
 			found += l.rfind(ids[i], 0) == 0 ? 1 : 0;
 		}
-		CHECK_MESSAGE(found == 1, ids[i]); // the two rebuild classes share S-1427
+		CHECK_MESSAGE(found == 1, ids[i]);
 		// the retail data uses each class
 		int uses = 0;
 		for (const ThingTemplate *tt : s->world->things().templates())
@@ -392,9 +394,13 @@ TEST_CASE("MOD-4: PickupStuffUpdate, GeometryUpgrade, ThreatFinderUpdate and the
 		}
 		CHECK_MESSAGE(uses > 0, name);
 	}
-	// the lane's ported classes are bound
+	// the lane's ported classes are bound (and lane MODCOMPAT-MOD1's PickupStuffUpdate)
+	CHECK(std::find(unported.begin(), unported.end(), "PickupStuffUpdate") == unported.end());
 	CHECK(std::find(unported.begin(), unported.end(), "AISpecialPowerUpdate") == unported.end());
 	CHECK(std::find(unported.begin(), unported.end(), "RepairSpecialPower") == unported.end());
+	CHECK(std::find(unported.begin(), unported.end(), "GeometryUpgrade") == unported.end()); // lane MODCOMPAT-MOD1
+	CHECK(std::find(unported.begin(), unported.end(), "RebuildHoleExposeDie") == unported.end()); // lane MODCOMPAT-MOD1
+	CHECK(std::find(unported.begin(), unported.end(), "RebuildHoleBehavior") == unported.end());
 	int s1421 = 0;
 	for (const std::string &l : stops)
 	{

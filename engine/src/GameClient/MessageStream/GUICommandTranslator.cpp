@@ -243,7 +243,7 @@ MessageDisposition GUICommandTranslator::translateAttackMove(const ClientMessage
 	}
 	else if (carriesOut)
 	{
-		// doAttackMoveCommand (0x004311A7, Rva004311A7.cpp, matched): nothing without a first selected drawable with an object, else MSG_DO_ATTACKMOVETO
+		// doAttackMoveCommand (0x004311A7, doAttackMoveCommand.cpp, matched): nothing without a first selected drawable with an object, else MSG_DO_ATTACKMOVETO
 		// (0x430) { location: the terrain point under the click's region corner (hi) } and the unit voice (pickAndPlayUnitVoiceResponse 0x004DAAFD: the
 		// port plays it from the logic message, HudInput's observer). It returns 1: the command ends either way
 		const ICoord2D mouse = msg.arg(0).region.hi;

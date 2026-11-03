@@ -322,7 +322,7 @@ long long Network::earlyLeadMs() const
 void Network::send(const NetCommandMsg &c)
 {
 	std::string error;
-	const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(c, &error);
+	const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(c, &error, m_config.messages);
 	if (bytes.empty())
 	{
 		m_errors.push_back("cannot encode " + std::string(NetCommandTypeName(c.type)) + ": " + error);
@@ -513,7 +513,7 @@ void Network::updateCanonical(UnsignedInt logicFrame, CommandList &pending)
 	{
 		NetByteWriter w;
 		std::string error;
-		if (!NetPacket::writeGameMessage(w, m, &error))
+		if (!NetPacket::writeGameMessage(w, m, &error, m_config.messages))
 		{
 			m_errors.push_back("canonical order encode: " + error);
 			continue;
@@ -573,7 +573,7 @@ void Network::receiveAll()
 		{
 			continue; // lane MP-2: a dropped player's late traffic (its connection is retired)
 		}
-		if (!NetPacket::decodeCommand(bytes, c, &error))
+		if (!NetPacket::decodeCommand(bytes, c, &error, m_config.messages))
 		{
 			m_errors.push_back("slot " + std::to_string(from) + ": " + error);
 			continue;
@@ -723,10 +723,24 @@ void Network::file(const NetCommandMsg &c, int fromSlot)
 			// misses the host's frame. It is refused with the whole resend while the owner is heard (DisconnectManager::heard, RW 0x8D335D: in the game,
 			// whether or not another player's silence put the disconnect screen up); the frame then waits for the owner's own packet. Once the owner is
 			// silent the survivors' resends are the only way to reach the same frame before its drop (allOnSameFrame), so they are taken as before
-			if (copy->getType() == MSG_OPENBFME_CHEAT && m_disconnect.slotHeard(*this, owner, now(), m_logicFrame))
+			// WOTR2 milestone 8 (Sol review wotr2m8s2a): a War of the Ring surrender (MSG_LW_PLAYER_SURRENDERED: the player's whole team leaves the war) has
+			// the same single authority, the player stamped from its own slot's frame: refused in a resend the same way
+			// WOTR2 milestone 8 (step 4, Sol review wotr2m8s4 #6): a LAN war's save request / answer (MSG_LW_OPENBFME_SAVE: a forged Yes would make a peer
+			// write the asker's file alone) and the leave-for-now vote (MSG_LW_REQUEST_ENDGAME 0x6B9: it ends the war) have the same single authority
+			const int type = copy->getType();
+			const bool ownerOnly = type == MSG_OPENBFME_CHEAT || type == MSG_LW_PLAYER_SURRENDERED || type == MSG_LW_OPENBFME_SAVE || type == MSG_LW_REQUEST_ENDGAME;
+			if (ownerOnly && m_disconnect.slotHeard(*this, owner, now(), m_logicFrame))
 			{
-				m_errors.push_back("slot " + std::to_string(fromSlot) + " resent a Cheat Mode command in slot " + std::to_string(owner) + "'s frame " +
-					std::to_string(c.frame) + ": refused (a Cheat Mode command is never relayed)");
+				const std::string what = type == MSG_OPENBFME_CHEAT ? "a Cheat Mode command"
+					: type == MSG_LW_PLAYER_SURRENDERED                ? "a War of the Ring surrender"
+					: type == MSG_LW_OPENBFME_SAVE                     ? "a War of the Ring save request or answer"
+					                                                   : "a War of the Ring leave-for-now vote";
+				const std::string brief = type == MSG_OPENBFME_CHEAT ? "a Cheat Mode command"
+					: type == MSG_LW_PLAYER_SURRENDERED                 ? "a surrender"
+					: type == MSG_LW_OPENBFME_SAVE                      ? "a save request or answer"
+					                                                    : "a leave-for-now vote";
+				m_errors.push_back("slot " + std::to_string(fromSlot) + " resent " + what + " in slot " + std::to_string(owner) + "'s frame " +
+					std::to_string(c.frame) + ": refused (" + brief + " is never relayed)");
 				return;
 			}
 			if (copy->getType() != MSG_SELF_DESTRUCT)
@@ -1485,7 +1499,7 @@ int Network::verifyDropClaims(int sender, int target, std::uint16_t gone) const
 void Network::sendDirect(const NetCommandMsg &c)
 {
 	std::string error;
-	const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(c, &error);
+	const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(c, &error, m_config.messages);
 	if (bytes.empty())
 	{
 		m_errors.push_back("cannot encode " + std::string(NetCommandTypeName(c.type)) + ": " + error);
@@ -1520,7 +1534,7 @@ void Network::sendDirectTo(int slot, const NetCommandMsg &c)
 		return;
 	}
 	std::string error;
-	const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(c, &error);
+	const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(c, &error, m_config.messages);
 	std::string why;
 	if (bytes.empty() || !m_transport.sendTo(slot, bytes, &why))
 	{
@@ -1626,7 +1640,7 @@ void Network::sendFrameDataToPlayer(int slot, UnsignedInt startFrame, UnsignedIn
 			c.runAheadChange = h->second.runAheadChange[(size_t)owner];
 			c.rejoinMask = h->second.rejoinMask[(size_t)owner]; // lane ONLINE-3
 			std::string error;
-			const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(c, &error);
+			const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(c, &error, m_config.messages);
 			std::string why;
 			if (bytes.empty() || !m_transport.sendTo(slot, bytes, &why))
 			{
@@ -2204,6 +2218,6 @@ bool Network::submitView(UnsignedInt frame, float cameraX, float cameraY, float 
 	c.executionFrame = frame;
 	c.view = { cameraX, cameraY, cursorX, cursorY };
 	c.viewFlags = cursorOverWorld ? 1 : 0;
-	const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(c, nullptr);
+	const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(c, nullptr, m_config.messages);
 	return !bytes.empty() && m_transport.sendToLog(bytes);
 }

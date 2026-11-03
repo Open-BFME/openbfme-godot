@@ -3,6 +3,7 @@
 // OpenBFME retail tests for combat (lane COMBAT-1). They run only when ROTWK_INSTALL and BFME2_INSTALL are set (otherwise SKIP): pure RotWK 2.01 + BFME2 1.06, the object
 // world loaded once, hordes of the real templates fight each other on a flat arena.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -98,6 +99,7 @@ struct Arena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(side == 0 ? 0.0f : 3.14159265f);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	size_t members(Object *horde) { return horde->getContain() ? horde->getContain()->getContainCount() : 0; }
@@ -855,4 +857,32 @@ TEST_CASE("combat retail: every faction's basic melee horde and basic archer hor
 		std::printf("  info: %s: %s died at frame %d, %llu applications, %zu / %zu members left\n", label.c_str(), f.loserSide == 0 ? m.hordeA : m.hordeB, f.endFrame, f.applications,
 			f.side[0].alive, f.side[1].alive);
 	}
+}
+
+TEST_CASE("combat retail: Aragorn closes to and damages goblin creeps")
+{
+	if (!haveWorld()) return;
+	Arena a(shared(), "FactionMen", "FactionWild");
+	Object *hero = a.place("GondorAragornMP", 0, 300, 300);
+	const char *target = "MoriarGoblinLair";
+	SUBCASE("lair") {}
+	SUBCASE("swordsman") { target = "MordorGoblinSwordsman_Slaved"; }
+	SUBCASE("archer") { target = "MordorGoblinArcher_Slaved"; }
+	Object *victim = a.place(target, 1, 420, 300);
+	// Bare GameLogic creation does not register placed structures, unlike LiveGame.
+	if (std::string(target) == "MoriarGoblinLair") a.ai->addObjectToPathfindMap(*victim);
+	// Register both objects with the movement world before issuing the order.
+	a.logic.runLogicFrame();
+	a.logic.runLogicFrame();
+	REQUIRE(hero->getAIUpdateInterface()->aiAttackObject(victim, CMD_FROM_PLAYER));
+	const ObjectID targetId = victim->getID();
+	auto health = [&]() {
+		const Object *object = a.logic.findObjectByID(targetId);
+		return object && object->getBodyModule() ? object->getBodyModule()->getHealth() : 0.0f;
+	};
+	const float before = health();
+	for (int i = 0; i < 50 && health() == before; ++i)
+		a.logic.runLogicFrame();
+	// tolerance: at least one sword hit must land within ten seconds of approaching a nearby creep.
+	CHECK(health() < before);
 }

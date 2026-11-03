@@ -550,7 +550,7 @@ struct ButtonWorld
 
 TEST_CASE("script4 NAMED_ / TEAM_USE_COMMANDBUTTON_ABILITY (RW 0x7C6243 / 0x7C11EE -> Object::doCommandButton RW 0x696FD2): the named unit runs every "
 		  "slot of its command set holding the button (twice for two slots); a team runs the button by name on every group member, command set or not; "
-		  "STOP idles (RW 0x5E821A); a type without a port is noted (S-1190); an unknown button does nothing")
+		  "STOP idles (RW 0x5E821A); an unknown button does nothing")
 {
 	ButtonWorld b;
 	ScriptEngine &e = b.w.logic->scriptEngine();
@@ -558,9 +558,10 @@ TEST_CASE("script4 NAMED_ / TEAM_USE_COMMANDBUTTON_ABILITY (RW 0x7C6243 / 0x7C11
 	c->setName("C");
 	Object *s = b.w.unit("Swordsman", 'A', 260.0f, 200.0f); // no command set
 	run(e, act("NAMED_USE_COMMANDBUTTON_ABILITY", { sp(14, "C"), sp(34, "Command_Upg") }));
-	CHECK(b.noteCount("[S-1190] NAMED_USE_COMMANDBUTTON_ABILITY: command button Command_Upg (command 7)") == 2); // slots 1 and 2
+	// lane MODCOMPAT-AI: OBJECT_UPGRADE runs through Object::doCommandButton (RW 0x6970D5: no ProductionUpdate, nothing queued), not noted any more
+	CHECK(b.noteCount("[S-1190]") == 0);
 	run(e, act("NAMED_USE_COMMANDBUTTON_ABILITY", { sp(14, "C"), sp(34, "Command_Nothing") }));
-	CHECK(b.noteCount("[S-1190]") == 2);
+	CHECK(b.noteCount("[S-1190]") == 0);
 	for (Object *o : { c, s })
 	{
 		o->getAIUpdateInterface()->aiMoveToPosition(Coord3D{ 800.0f, 800.0f, 0.0f }, CMD_FROM_SCRIPT);

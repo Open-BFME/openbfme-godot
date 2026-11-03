@@ -453,7 +453,7 @@ TEST_CASE("pathfind stops: what a build and a search report is registered, every
 	delete w.pf->findPath(nullptr, groundLoco(), &from, &inside, &partial);
 	delete w.pf->findPath(nullptr, groundLoco(), &from, &far, &partial);
 	const std::vector<std::string> all = Pathfinder::allStops();
-	REQUIRE(all.size() == 25);
+	REQUIRE(all.size() == 26); // S-4840's vertical ramp plane (review of #159) joined the 25
 	std::set<std::string> registered(all.begin(), all.end());
 	CHECK(registered.size() == all.size());
 	std::set<int> rows;
@@ -473,7 +473,7 @@ TEST_CASE("pathfind stops: what a build and a search report is registered, every
 		REQUIRE(s.compare(0, 4, "S-16") == 0);
 		rows.insert(s[4] - '0');
 	}
-	CHECK(wallRows == 2);
+	CHECK(wallRows == 3);
 	CHECK(portalRows == 7);
 	// the rows the pathfinder core raises: S-160 classification, S-161 layers, S-162 zones, S-163 search, S-164 footprints, S-165 path,
 	// S-167 numerics (S-166, the AI move path, has its own list: AIMover::allStops)

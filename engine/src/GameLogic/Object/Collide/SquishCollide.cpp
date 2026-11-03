@@ -159,11 +159,6 @@ void readName(const ThingTemplate &t, const char *name, std::string &out)
 	}
 }
 
-const ThingTemplate &finalTemplate(const Object &o)
-{
-	return *o.getTemplate()->getFinalOverride();
-}
-
 // RW 0x70B9E0: the unit direction (cos, sin) of the object's angle
 void facing(const Object &o, float &fx, float &fy)
 {
@@ -440,13 +435,13 @@ bool ObjectCrush::shapesTouch(const Object &self, float selfRadius, const Object
 	// lane FLANK-1: RW 0x8BFDE2 .. 0x8BFE4C: a copy of self's GeometryInfo (RW 0x4923F0) whose FIRST shape (when it has one, active or not) takes `selfRadius` as its major
 	// (+ 0x8, RW 0x8BFB5E) and minor (+ 0xC, RW 0x8BFB86) radius; then other's geometry (this, ECX = other + 0xA8) at other's position and angle against that copy at
 	// self's position and angle (RW 0xAD2CE0: every active shape pair, the heights and the planar test; NotifyCrushModules::geometriesOverlap)
-	std::vector<ObjectGeometry::Shape> mine = ObjectGeometry::cachedShapesOf(finalTemplate(self));
+	std::vector<ObjectGeometry::Shape> mine = self.geometryShapes(); // lane MODCOMPAT-MOD1: the object's own GeometryInfo (Object + 0xA8)
 	if (!mine.empty())
 	{
 		mine[0].majorRadius = selfRadius;
 		mine[0].minorRadius = selfRadius;
 	}
-	return NotifyCrushModules::geometriesOverlap(ObjectGeometry::cachedShapesOf(finalTemplate(other)), *other.getPosition(), other.getOrientation(), mine,
+	return NotifyCrushModules::geometriesOverlap(other.geometryShapes(), *other.getPosition(), other.getOrientation(), mine,
 	                                             *self.getPosition(), self.getOrientation());
 }
 

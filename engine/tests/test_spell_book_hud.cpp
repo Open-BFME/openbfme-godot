@@ -5,6 +5,7 @@
 // spell book then shows the power (_up, its image under InGameSpellBookSpell1Image), the reopened store shows it _already_purchased, and after a
 // cast the slot is _notReady with its recharge timer. SKIPs without ROTWK_INSTALL / BFME2_INSTALL.
 
+#include "HordeCompleteTestUtil.h"
 #include "HudTestUtil.h"
 #include "HudAudioTestUtil.h"
 
@@ -86,6 +87,7 @@ TEST_CASE("hud click audio: spell book active and not-ready movie requests")
 	REQUIRE(fort);
 	Coord3D at{ 600.0f, 600.0f, 0.0f };
 	fort->setPosition(&at);
+	testutil::completeHorde(fort); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	fort->friend_onBuildComplete();
 	b.frames(40);
 	std::string error;
@@ -220,6 +222,7 @@ TEST_CASE("SPELL-2 retail: the retail InGameSpellBook and SpellStore.apt movies 
 		REQUIRE(c);
 		Coord3D at{ 600.0f, 600.0f, 0.0f };
 		c->setPosition(&at);
+		testutil::completeHorde(c); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		c->friend_onBuildComplete();
 		b.frames(40);
 		AptPalantir *p = b.hud->palantir();
@@ -295,6 +298,7 @@ TEST_CASE("SPELL-2 retail: the retail InGameSpellBook and SpellStore.apt movies 
 			REQUIRE(farm);
 			const Coord3D farmAt{ 800.0f, 600.0f, b.rig.logic().getGroundHeight(800.0f, 600.0f) };
 			farm->setPosition(&farmAt);
+			testutil::completeHorde(farm); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 			farm->friend_onBuildComplete();
 			b.frames(12); // a logic frame (5 a second) puts it into the partition
 			b.rig.lookAt(farmAt);
@@ -664,6 +668,7 @@ TEST_CASE("hud click audio: Men spell store purchase requests")
 	REQUIRE(fort);
 	Coord3D at{ 600.0f, 600.0f, 0.0f };
 	fort->setPosition(&at);
+	testutil::completeHorde(fort); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	fort->friend_onBuildComplete();
 	b.frames(40);
 	AptPalantir *pal = b.hud->palantir();
@@ -779,6 +784,7 @@ TEST_CASE("hud6 recovered spell and builder help retail")
 	REQUIRE(fort);
 	Coord3D at{ 600, 600, 0 };
 	fort->setPosition(&at);
+	testutil::completeHorde(fort); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 	fort->friend_onBuildComplete();
 	b.frames(40);
 	std::string error;
@@ -855,6 +861,7 @@ void checkStoreMouse(SharedWorld &sharedWorld, const char *faction, const char *
 		REQUIRE(c);
 		Coord3D at{ 600.0f, 600.0f, 0.0f };
 		c->setPosition(&at);
+		testutil::completeHorde(c); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		c->friend_onBuildComplete();
 	}
 	b.frames(40);
@@ -991,6 +998,7 @@ TEST_CASE("SPELL-3 store at an uneven render rate: every _active power shows its
 		REQUIRE(c);
 		Coord3D at{ 600.0f, 600.0f, 0.0f };
 		c->setPosition(&at);
+		testutil::completeHorde(c); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		c->friend_onBuildComplete();
 		b.rig.local->science().addSciencePurchasePoints(40);
 	}

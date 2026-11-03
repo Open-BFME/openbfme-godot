@@ -3,6 +3,7 @@
 // from the tower, the evacuate message brings them out, a destroyed tower ejects them; the run is deterministic. They share the HUD tests' retail world (the file
 // name sorts with the test_hud_* files) and SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -107,6 +108,7 @@ struct Arena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(angle);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	void run(int frames)
@@ -623,6 +625,7 @@ TEST_CASE("garrison retail: a plain GarrisonContain refuses NO_GARRISON objects 
 			}
 			Coord3D p{ 500.0f, 600.0f, 0.0f };
 			o->setPosition(&p);
+			testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 			if (g->garrisonAllows(*o))
 			{
 				++noGarrisonTested;

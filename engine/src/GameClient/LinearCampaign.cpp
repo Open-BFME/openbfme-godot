@@ -111,7 +111,7 @@ std::vector<std::string> LinearCampaignManager::stopLines()
 {
 	return {
 		"[S-1360] the campaign between missions: the auto-save after a won mission (RW 0x6DE8F1) and the saves of CampaignMenu.apt are OpenBFME saves of "
-		"the campaign's state (the campaign menu save point), not retail's GameState snapshot; the carry-over heroes are not carried (S-4903)",
+		"the campaign's state (the campaign menu save point) with its carry-over (S-4903), not retail's GameState snapshot",
 		"[S-1364] the campaign presentation: MillisecondsAfterStartToStartFadeUp is not applied (its reader is not decoded); lane CAMP-2: the movies (OverallCampaignIntroMovie, "
 		"IntroMovie, PLAY_MOVIE_IN_GAME) show their VP6 picture with their narration (S-2340)",
 		"[S-4900] the campaign menu's Save / Load: CampaignMenu.apt is pushed again once SaveLoad.apt has left the stack (INFERENCE: retail's refocus of the "
@@ -120,8 +120,12 @@ std::vector<std::string> LinearCampaignManager::stopLines()
 		"screen (INFERENCE: its caller, the manager's subsystem slot 9, was not located)",
 		"[S-4902] the score screen of a campaign game lists the local player only (the port's campaign start builds no game slots), and its music plays on "
 		"under CampaignMenu.apt (RW 0x925699 restarts the shell's music for the types 2 / 3 only)",
-		"[S-4903] the campaign's carry-over units (RW 0x5EBAEE's record of the CarryoverUnit objects of a won mission, their spawn in the next mission) "
-		"are not ported: a mission starts with the map's own units",
+		"[S-4903] the campaign's carry-over between missions (lane BFME2CAMP1: RW 0x5EBAEE's records of a won mission, RW 0x5EC5D1's restore, the next "
+		"mission's spawn and the delayed one) keeps no battle statistics of a carried unit (its record's + 0xA4 block, Object + 0x488: S-852)",
+		"[S-4904] the BFME2 campaigns (lane BFME2CAMP1): GOOD_CAMPAIGN / EVIL_CAMPAIGN come from BFME2's legend's LinearCampaign.ini, loaded after RotWK's own "
+		"campaigns (an OpenBFME addition: RotWK's legend names LinearCampaignExpansion1.ini only) and play with RotWK 2.01's rules; the carry-over heroes "
+		"are spawned (RW 0x5EBD76) one formation slot only (the WalkOnTemplate formation, S-4460, is not ported); the BFME2 menu's tutorials "
+		"(AptMainMenu::OnTutorial RW 0x91B825: a new game of mode 6) are not ported",
 		"[S-1711] the military caption (SHOW_MILITARY_CAPTION) is typed as retail types it (RW 0x69CE5F, lane CAMPUI-1) with InGameUI.ini's MilitaryCaption* "
 		"settings and language.ini's caption font; the incoming character's slide (RW 0x69B7BE's + 0x28 string) is not drawn",
 	};

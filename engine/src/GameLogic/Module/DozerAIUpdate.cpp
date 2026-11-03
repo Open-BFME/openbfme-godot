@@ -187,6 +187,15 @@ DozerAIUpdate::~DozerAIUpdate()
 	finishBuildingSound(); // RW 0x88D1F6
 }
 
+void DozerAIUpdate::onDelete()
+{
+	AIUpdateInterface::onDelete();
+	if (m_unplacedStructure != INVALID_ID)
+	{
+		removeUnplacedStructure(); // RW 0x88D1AC: + 0x568 (the interface's + 0xC0) != 0 -> RW 0x88CFFE
+	}
+}
+
 // ---- the dozer interface ------------------------------------------------------------------------------------------------------
 
 bool DozerAIUpdate::isAnyTaskPending() const
@@ -433,7 +442,7 @@ bool DozerAIUpdate::placeUnplacedStructure()
 		m_unplacedStructure = INVALID_ID;
 		return true;
 	}
-	if (!Construction::placePhantomStructure(*getObject(), *obj))
+	if (!Construction::placePhantomStructure(*getObject(), *obj, m_isRebuild))
 	{
 		removeUnplacedStructure();
 		return false;
@@ -547,14 +556,15 @@ bool DozerAIUpdate::siteIsLegal(const ThingTemplate &what, const Coord3D &pos, f
 	return BuildPlacement::isLocationLegalToBuild(getObject()->logic(), pos, *what.getFinalOverride(), angle, kConstructLegalFlags, getObject(), &owner) == LBC_OK;
 }
 
-Object *DozerAIUpdate::construct(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner)
+Object *DozerAIUpdate::construct(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool isRebuild)
 {
-	// RW 0x88C217: the machine made, nothing is created, paid or changed when the site is not legal
+	// RW 0x88C217: + 0x4D0 = the rebuild flag first (lane BFME2CAMP1); the machine made, nothing is created, paid or changed when the site is not legal
+	m_isRebuild = isRebuild;
 	if (m_primaryState < 0)
 	{
 		primarySetState(PRIMARY_IDLE);
 	}
-	if (!siteIsLegal(what, pos, angle, owner))
+	if (!isRebuild && !siteIsLegal(what, pos, angle, owner)) // RW 0x88C23D: a rebuild skips the tests
 	{
 		return nullptr;
 	}
@@ -563,7 +573,7 @@ Object *DozerAIUpdate::construct(const ThingTemplate &what, const Coord3D &pos, 
 		cancelTaskInternal(DOZER_TASK_BUILD); // RW 0x88C2C3
 	}
 	// slot 0x64 (RW 0x88D272): the inert phantom with the builder as producer, the owner pays the price up front (lane FBSIM-1: Construction::constructByDozer)
-	Object *structure = Construction::constructByDozer(*getObject(), what, pos, angle, owner);
+	Object *structure = Construction::constructByDozer(*getObject(), what, pos, angle, owner, isRebuild);
 	if (!structure)
 	{
 		return nullptr;
@@ -1196,6 +1206,10 @@ void DozerAIUpdate::crc(StateHasher &h) const
 	h.addI32(m_currentTask);
 	h.addI32(m_buildSubTask);
 	h.addU32(m_unplacedStructure);
+	if (m_isRebuild)
+	{
+		h.addBool(true); // lane BFME2CAMP1: hashed once set, so games without a rebuild keep their hashes
+	}
 	h.addI32(m_primaryState);
 	h.addU32(m_idleTimestamp);
 	h.addI32(m_idlePlayer);

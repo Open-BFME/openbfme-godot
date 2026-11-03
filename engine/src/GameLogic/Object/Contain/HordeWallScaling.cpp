@@ -118,7 +118,7 @@ struct Frame
 
 float maxHeightOf(const Object &o)
 {
-	return ObjectGeometry::maxHeightAbovePosition(ObjectGeometry::shapesOf(*o.getTemplate()));
+	return ObjectGeometry::maxHeightAbovePosition(o.geometryShapes());
 }
 } // namespace
 

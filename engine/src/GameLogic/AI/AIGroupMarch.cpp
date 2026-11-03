@@ -13,7 +13,7 @@
 //     the size) containing the point (RW 0x65F4A2, inclusive) means a tighten; then a group of more than one unit, no tighten, no waypoint, no target,
 //     a player source, no formation template (-1) and AIData UseFormations (+ 0xBD) go to RW 0x7747DE(pos, player, mode 0, the ignored obstacle, ground 1);
 //     its true ends the move.
-//   * RW 0x7747DE (decomp BfmeConv986.cpp, tier A): RW 0x76FFF0 drops the members that are held (Object + 0x1C8 bit 3), have no AI, no current locomotor or
+//   * RW 0x7747DE (decomp BfmeC986.cpp, tier A): RW 0x76FFF0 drops the members that are held (Object + 0x1C8 bit 3), have no AI, no current locomotor or
 //     are KindOf IMMOBILE (template + 0x108 bit 2), one at a time; a group whose last member would go answers true (nothing moves). Without a member whose
 //     locomotor has a FormationPriority (+ 0x78 != 0), false. Then RW 0x76F426 (every member gives up its pathfinder goal, RW 0x68B401, a horde its members'
 //     goals as well, HordeContain slot 52 RW 0x86F0F1), the ground path (RW 0x76F115; false ends with false), the formation (RW 0x94FCBA), the march

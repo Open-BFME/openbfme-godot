@@ -14,6 +14,9 @@
 //   * hide RW 0x953243 (RW 0x81A38D): the type becomes 5 and the clip's Hide(instant) (RW 0x92E25E with "Hide");
 //   * a button command RW 0x953141 .. 0x953197: the type becomes 5 and the button callback gets 0 Ok, 1 Cancel, 2 Yes, 3 No; the state commands
 //     (RW 0x9531B4 ..) give the state callback 0 showing, 1 shown, 2 hiding, 3 hidden.
+//   * WOTR2 milestone 5: AptStrategicMessageBox (RW 0x953007, built by AptGuiFX::Init RW 0x782FF4) holds the same box on the clip
+//     "StrategicMessageBox" (the strategic notices, spec M); the state callback (+ 0x20) is replaced by every show: _OnShowing / _OnShown / _OnHiding
+//     give it 0 / 1 / 2, _OnHidden 3 and then clears it, an instant hide gives 2 and 3 at once (RW 0x953141 .. 0x953459).
 // OpenBFME DIFFERENCES: GuiFX.apt is at its BFME1 level 11 here (RotWK: 13, see EndGame.h / S-1060); the records and commands use the level the movie is
 // in, so the clip's own names match. The box's timeout (+ 0x24, timeGetTime) and Change (state 4) are not used by the callers ported here.
 
@@ -48,15 +51,16 @@ public:
 		BUTTON_NO = 3
 	};
 	using ButtonFn = std::function<void(int button)>;
+	using StateFn = std::function<void(int state)>; // 0 showing, 1 shown, 2 hiding, 3 hidden
 
-	// Loads GuiFX.apt (AptGuiFXScreen) for the box's clip.
-	AptMessageBox(WindowManager &windows, Shell &shell);
+	// Loads GuiFX.apt (AptGuiFXScreen) for the box's clip ("MessageBox": TheMessageBox; "StrategicMessageBox": AptStrategicMessageBox).
+	AptMessageBox(WindowManager &windows, Shell &shell, std::string clip = "MessageBox");
 	~AptMessageBox();
 	AptMessageBox(const AptMessageBox &) = delete;
 	AptMessageBox &operator=(const AptMessageBox &) = delete;
 
 	// RW 0x953861: the texts are the already fetched game texts (UTF-16)
-	void show(Type type, const std::u16string &title, const std::u16string &text, ButtonFn onButton = ButtonFn());
+	void show(Type type, const std::u16string &title, const std::u16string &text, ButtonFn onButton = ButtonFn(), StateFn onState = StateFn());
 	// RW 0x953243
 	void hide(bool instant = false);
 	// RW 0x9532F3: a pending show / hide reaches the clip once the movie is loaded (the lobby calls it every update)
@@ -66,21 +70,27 @@ public:
 	int level() const;
 	// the clip calls made, in order ("Show Ok false", "Hide false"), for tests
 	const std::vector<std::string> &calls() const { return m_calls; }
+	// the commands the clip sent, in order ("button 0", "state 3"), for tests
+	const std::vector<std::string> &trace() const { return m_trace; }
 	std::u16string title() const { return m_title; }
 	std::u16string text() const { return m_text; }
 
 private:
 	void registerCommands();
 	std::string prefix() const; // "_level<n>.MessageBox"
+	void state(int s);
 
 	WindowManager &m_windows;
+	std::string m_clip;
 	std::unique_ptr<AptScreen> m_guiFX;
 	Type m_type = TYPE_NONE;
 	int m_pending = 0; // RW + 0x14: 0 nothing, 2 show, 3 hide
 	bool m_instant = false;
 	bool m_large = false;
 	ButtonFn m_onButton;
+	StateFn m_onState;
 	std::u16string m_title, m_text;
 	std::vector<std::string> m_calls;
+	std::vector<std::string> m_trace;
 	std::vector<std::string> m_commands;
 };

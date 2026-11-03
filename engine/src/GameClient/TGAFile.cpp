@@ -4,8 +4,9 @@
 #include "GameClient/TGAFile.h"
 
 #include <cstring>
+#include <vector>
 
-bool TGAFile::decode(const std::uint8_t *data, size_t size, TGAImage &out, std::string *error, int maxDimension)
+bool TGAFile::decode(const std::uint8_t *data, size_t size, TGAImage &out, std::string *error, int maxDimension, bool rle)
 {
 	auto fail = [&](const std::string &msg) {
 		if (error)
@@ -30,9 +31,9 @@ bool TGAFile::decode(const std::uint8_t *data, size_t size, TGAImage &out, std::
 	{
 		return fail("TGA: colour-mapped images are not supported");
 	}
-	if (imageType != 2)
+	if (imageType != 2 && !(rle && imageType == 10))
 	{
-		return fail("TGA: image type " + std::to_string(imageType) + " (only uncompressed true-colour type 2 is read; RLE is rejected like retail)");
+		return fail("TGA: image type " + std::to_string(imageType) + (rle ? " (true-colour types 2 and 10 are read)" : " (only uncompressed true-colour type 2 is read; the terrain reader rejects RLE like retail)"));
 	}
 	if (depth != 24 && depth != 32)
 	{
@@ -45,7 +46,48 @@ bool TGAFile::decode(const std::uint8_t *data, size_t size, TGAImage &out, std::
 	const size_t bpp = (size_t)depth / 8;
 	const size_t pixelsAt = 18 + (size_t)idLength; // colour map length is 0 (colorMapType 0)
 	const size_t need = (size_t)width * (size_t)height * bpp;
-	if (size < pixelsAt + need)
+	std::vector<std::uint8_t> unpacked;
+	if (imageType == 10)
+	{
+		// ZH TARGA.CPP Targa::DecodeImage: packets until every pixel is filled; a packet may not run past the image (an error here)
+		unpacked.reserve(need);
+		size_t at = pixelsAt;
+		while (unpacked.size() < need)
+		{
+			if (at >= size)
+			{
+				return fail("TGA: RLE data truncated (" + std::to_string(unpacked.size() / bpp) + " of " + std::to_string(need / bpp) + " pixels)");
+			}
+			const std::uint8_t packet = data[at++];
+			const size_t count = (size_t)(packet & 0x7F) + 1;
+			if (unpacked.size() + count * bpp > need)
+			{
+				return fail("TGA: an RLE packet runs past the image");
+			}
+			if (packet & 0x80)
+			{
+				if (at + bpp > size)
+				{
+					return fail("TGA: RLE data truncated");
+				}
+				for (size_t i = 0; i < count; ++i)
+				{
+					unpacked.insert(unpacked.end(), data + at, data + at + bpp);
+				}
+				at += bpp;
+			}
+			else
+			{
+				if (at + count * bpp > size)
+				{
+					return fail("TGA: RLE data truncated");
+				}
+				unpacked.insert(unpacked.end(), data + at, data + at + count * bpp);
+				at += count * bpp;
+			}
+		}
+	}
+	else if (size < pixelsAt + need)
 	{
 		return fail("TGA: pixel data truncated (" + std::to_string(size - pixelsAt) + " of " + std::to_string(need) + " bytes)");
 	}
@@ -54,7 +96,7 @@ bool TGAFile::decode(const std::uint8_t *data, size_t size, TGAImage &out, std::
 	out.pixelDepth = depth;
 	out.topDownFlag = (flags & 0x20) != 0;
 	out.rgba.resize((size_t)width * (size_t)height * 4);
-	const std::uint8_t *src = data + pixelsAt;
+	const std::uint8_t *src = imageType == 10 ? unpacked.data() : data + pixelsAt;
 	std::uint8_t *dst = out.rgba.data();
 	for (size_t i = 0; i < (size_t)width * (size_t)height; ++i)
 	{

@@ -85,16 +85,6 @@ void parseNoting(INI *ini, void *instance, void *store, const void *userData)
 	static_cast<BlockState *>(instance)->seen |= (unsigned)(std::uintptr_t)userData;
 }
 
-size_t indentOf(const std::string &line)
-{
-	size_t n = 0;
-	while (n < line.size() && (line[n] == ' ' || line[n] == '\t'))
-	{
-		++n;
-	}
-	return n;
-}
-
 // the line without its ; or // comment
 std::string withoutComment(const std::string &line)
 {
@@ -105,6 +95,32 @@ std::string withoutComment(const std::string &line)
 		cut = slashes;
 	}
 	return cut == std::string::npos ? line : line.substr(0, cut);
+}
+
+// lane MODCOMPAT-1: a line opening one of the nested blocks of AIData's SideInfo / SkirmishBuildList / AttackPriority (no `=`, the first token one
+// of RotWK's block rows): Structure (BuildListInfo), SkillSet1 .. SkillSet5 (SideInfo), and the blocks themselves when nested
+bool opensSubBlock(const std::string &line)
+{
+	const std::string l = withoutComment(line);
+	if (l.find('=') != std::string::npos)
+	{
+		return false;
+	}
+	const size_t b = l.find_first_not_of(" \t");
+	if (b == std::string::npos)
+	{
+		return false;
+	}
+	const size_t e = l.find_first_of(" \t", b);
+	const std::string token = l.substr(b, e == std::string::npos ? std::string::npos : e - b);
+	for (const char *k : { "Structure", "SkillSet1", "SkillSet2", "SkillSet3", "SkillSet4", "SkillSet5", "SideInfo", "SkirmishBuildList", "AttackPriority" })
+	{
+		if (AsciiStringUtil::compareNoCase(token, k) == 0)
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 bool firstTokenIsEnd(const std::string &line)
@@ -120,8 +136,12 @@ bool firstTokenIsEnd(const std::string &line)
 }
 
 // the catch-all row (token NULL): userData is the field name. A `Field = value` line is consumed (the rest of the line is not read). A line without
-// `=` is a nested block of the block being read (AIData's SideInfo / SkirmishBuildList / AttackPriority, with their own Structure sub blocks): it ends at
-// the first End that is not indented deeper than its header, the rule the recording stubs use for these same files.
+// `=` is a nested block of the block being read (AIData's SideInfo / SkirmishBuildList, with their own Structure / SkillSet sub blocks). Retail reads
+// these blocks token by token (ZH AI::parseSkirmishBuildList / BuildListInfo::parseStructure / AI::parseSideInfo through initFromINI; RotWK's AIData
+// field names at RW 0x81D3A4 SkirmishBuildList, 0x81D3B8 SideInfo, 0x81D738 .. 0x81D768 SkillSet5 .. 1): every sub block ends at its own End, and
+// the indentation means nothing (lane MODCOMPAT-1: Ennorath writes `SkirmishBuildList Rohan` at column 0 with deeper Ends, which the old
+// indentation rule read past the AIData block's own End). So the skip counts them: a line whose first token opens one of those sub blocks goes a
+// level deeper, an End goes a level up, and the block ends at the End of its own level.
 void noteUnapplied(INI *ini, void *instance, void *, const void *userData)
 {
 	static_cast<BlockState *>(instance)->unapplied.insert(std::string(ini->getCurBlockStart()) + "." + static_cast<const char *>(userData));
@@ -130,7 +150,7 @@ void noteUnapplied(INI *ini, void *instance, void *, const void *userData)
 	{
 		return;
 	}
-	const size_t headerIndent = indentOf(header);
+	int depth = 1;
 	for (;;)
 	{
 		const std::string *next = ini->peekNextLine();
@@ -141,9 +161,16 @@ void noteUnapplied(INI *ini, void *instance, void *, const void *userData)
 		}
 		const std::string line = *next;
 		ini->readLine();
-		if (firstTokenIsEnd(line) && indentOf(line) <= headerIndent)
+		if (firstTokenIsEnd(line))
 		{
-			return;
+			if (--depth == 0)
+			{
+				return;
+			}
+		}
+		else if (opensSubBlock(line))
+		{
+			++depth;
 		}
 	}
 }
@@ -368,11 +395,11 @@ public:
 		{
 			// recording stubs only: the world's own map.ini pass parses the Weapon / Locomotor / Armor / DamageFX / FX blocks into their stores, a second
 			// parse here would apply them again
-			RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "AIData" }, StubExtent::Lenient, false);
+			RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "AIData" }, StubExtent::LenientAfterEnd, false);
 			reg("AIData", kAIDataFields, 2u);
 			return;
 		}
-		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "GameData", "AIData", "MultiplayerSettings", "MultiplayerColor" }, StubExtent::Lenient);
+		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "GameData", "AIData", "MultiplayerSettings", "MultiplayerColor" }, StubExtent::LenientAfterEnd);
 		reg("GameData", kGameDataFields, 1u);
 		reg("AIData", kAIDataFields, 2u);
 		reg("MultiplayerSettings", kMultiplayerFields, 4u);

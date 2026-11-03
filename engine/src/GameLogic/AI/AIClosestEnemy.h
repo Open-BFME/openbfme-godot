@@ -41,6 +41,7 @@ class Object;
 class PartitionFilter;
 class Weapon;
 struct Coord3D;
+struct TriggerArea;
 
 namespace AI
 {
@@ -60,8 +61,23 @@ enum Qualifier : unsigned
 
 // RW 0x7006D7. `info` null: the partition's closest object; else the scored search. Never throws for a missing piece: unported parts are reported (S-326)
 Object *findClosestEnemy(Object &me, const Coord3D &pos, float range, unsigned qualifiers, const AttackPriorityInfo *info, PartitionFilter *optionalFilter, int arg);
+// Building filters shared with melee reacquisition (BFME2 RVAs 0x261B7E / 0x261246).
+bool allowsBuildingTarget(const Object &seeker, Object &target);
+bool isSignificantBuildingTarget(Object &target);
 // RW 0x701443
 Object *findClosestEnemy(Object &me, float range, unsigned qualifiers, const AttackPriorityInfo *info, PartitionFilter *optionalFilter, int arg);
+// lane BFME2CAMP1: RW 0x700F52(area, me, info), the attack-area state's search: isAbleToAttack false: none. The filters, linked in RW's order: the ENEMIES head
+// (vtable 0xC1D688), possible-to-attack (0xC0F368), reject buildings (0xC0F1A8: always, there is no ATTACK_BUILDINGS here), stealthed and undetected (0xC0F19C),
+// FLEE_OFF_MAP (0xC1D6A0), alive (0xC10E20); the polygon filter (0xC1D654, allow RW 0x66103C: the candidate's position truncated to integers in the area,
+// RW 0x6E4DC7) is kept apart. The area's bounds (RW 0x6E4D2C: floor of the low corner, ceil of the high one, as integers) bound the search:
+//   * no info: the polygon filter joins the chain; ThePartitionManager's closest object to me within 9999.9 (RW 0xC1D8E4), distance type 1, inside the bounds
+//     (RW 0xA390F0 -> RW 0xA3BDB0), adjusted (RW 0x68D30E(me, 1, 0));
+//   * an info: the objects inside the bounds (RW 0xA393C0 -> RW 0xA3C4E0, unsorted). Each: p = the priority (RW 0x7597E9(me, it, 1)); 0 skips it; a container
+//     takes its contained objects' highest (vslot 0x110 with RW 0x6FF29B); n = _ftol(sqrt(edge distance squared, RW 0x66352C) / AttackPriorityDistanceModifier)
+//     (x87 under PC24); score = max(1, cvttss2si(p - n)) as a float. A higher score, or the same score with a higher p, wins when the polygon filter allows
+//     it. The winner is adjusted (RW 0x68D30E(me, 1, 0)).
+// The CONTESTING_BUILDING branch (status 0x25 and the container's vslot 0xDC, RW 0x701054) has no setter of the status in the port (as in RW 0x7006D7).
+Object *findClosestEnemyInArea(const TriggerArea &area, Object &me, const AttackPriorityInfo *info);
 // RW 0x68D30E: the victim an attacker aims at. Null attacker: null. The victim's container chain is climbed while the container has a horde interface; a
 // result without a horde interface is the victim itself; a horde with no members (slot 0x180(0)) gives null; else its member near the attacker (slot 0x48,
 // RW 0x86FA87) within the attacker's attack range (RW 0x6CA935) when `attackRange` and the attacker is not a HORDE and holds a ranged current weapon, 0 (no

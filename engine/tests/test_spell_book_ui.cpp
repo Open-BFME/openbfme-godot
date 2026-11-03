@@ -4,6 +4,7 @@
 // through the dispatcher; the cast bar shows the bought power ready, a press starts the targeting of a NEED_TARGET_POS power and the ground click casts
 // it through MSG_DO_SPECIAL_POWER_AT_LOCATION; a no-target power casts at once.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "SpellTestAI.h"
 #include "StartTestUtil.h"
@@ -75,6 +76,7 @@ struct UiGame
 			Object *o = logic->newObject(t, player(i)->getDefaultTeam(), ObjectStatusMaskType{});
 			Coord3D pos{ 1100.0f * (float)i + 500.0f, 300.0f, 0.0f };
 			o->setPosition(&pos);
+			testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 			o->friend_onBuildComplete();
 			REQUIRE(SpecialPowerModules::createSpellBook(*logic, *player(i)));
 		}

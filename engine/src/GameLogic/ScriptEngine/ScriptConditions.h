@@ -52,6 +52,11 @@ public:
 	static Team *team(ScriptEngine &engine, const std::string &name, bool create = false); // lane CAMP-1H: `create` (RW 0x759FDA's flag)
 	// RW 0x70CF29
 	static bool pointInTrigger(const TriggerArea &t, float x, float y);
+	// lane BFME2CAMP1: the polygon's bounds (RW 0x70CB46: min / max of the points from FLT_MAX / -FLT_MAX); its centre (RW 0x70CE93: (hi + lo) * 0.5 per axis),
+	// with the ground height there as z (RW 0x6E4CA7: TheTerrainLogic vslot 0x18); its radius (RW 0x70CE80, + 0x20 as RW 0x70CB46 computes it: the
+	// half diagonal, sqrt under PC24 stored as a float)
+	static Coord3D triggerCenter(GameLogic &logic, const TriggerArea &t);
+	static float triggerRadius(const TriggerArea &t);
 	// RW 0x96E85F: the type names of a type parameter (an object list's types, or the one type)
 	static std::vector<std::string> typeNames(ScriptEngine &engine, const std::string &parameter);
 	// RW 0x6ABAF7(.., alive, .., not under construction): the player's team members of one of the types (RW 0x73D5C2), each counted once
@@ -61,4 +66,7 @@ public:
 	static bool equivalentTemplates(const ThingTemplate *a, const ThingTemplate *b);
 	// the live members of a team, in member order
 	static std::vector<Object *> members(const Team &t);
+	// RW 0x7A0ECD: the mean position of EVERY member (dead ones too), each axis summed in member order, times 1 / n; false for an empty team (retail divides
+	// by zero there)
+	static bool teamCentreAllMembers(const Team &t, Coord3D &out);
 };

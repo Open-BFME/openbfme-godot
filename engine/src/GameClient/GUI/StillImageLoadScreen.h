@@ -9,7 +9,7 @@
 //       - 0 (a campaign mission), 3, 6: unless a save game is loading or the mode is 3, a non-empty picture name (GameLogic + 0x84) makes the picture
 //         screen (RW 0x757CA0) with that picture, + 0x88 and + 0x8C (the mission's LoadScreenMusicTrack and voice track; the tutorial INI fields
 //         *LoadScreenStillImage / *MusicTrack / *VoiceTrack, RW 0xC01964 ..., are the same triple); otherwise the picture screen with the mapped
-//         image "StillImage_Film%02d" of a client random draw 1 .. 21 (RW 0x626362, BFME2 decomp Rva0023D614Film.cpp);
+//         image "StillImage_Film%02d" of a client random draw 1 .. 21 (RW 0x626362, BFME2 decomp GameLogic.cpp:Rva0023D614Set);
 //       - 1, 2, 5 (LAN, skirmish, internet): with GameLogic + 0x114 == 0 the picture screen as above, else the players' screen LoadScreen.apt
 //         (AptLoadScreen, RW 0x81D356; the skirmish lobby's + 0x114 is 3: AptMapPreview's start spots, BFME2 decomp AptMapPreview.cpp);
 //       - 4, 7: other screens (the shell's), not handled here.

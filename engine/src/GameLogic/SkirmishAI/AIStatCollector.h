@@ -3,7 +3,7 @@
 // AIStatCollector (lane DECOMP-3): the player info record of TheSkirmishAIManager (0x44 bytes, ctor RW 0x8E46D9; one per playable player, the map at manager
 // + 0xA3C keyed by Player + 0x54). It holds the player's objects the skirmish AI reads, filled by the manager's object events rather than rebuilt: the lists
 // keep the order in which objects were registered. Donor: BFME2 decomp AIStatCollector.cpp:AIStatCollector (tier B for RW 0x8E46D9) and
-// Rva004E0425Dispatch.cpp:AIStatCollector::Register (tier B for RW 0x8E4591); its UnRegister counterpart has no tier in RotWK (RotWK's own RW 0x8E480C is read
+// AIStatCollector.cpp:AIStatCollector::Register (tier B for RW 0x8E4591); its UnRegister counterpart has no tier in RotWK (RotWK's own RW 0x8E480C is read
 // from the disassembly). The decomp names the sub objects by address only.
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; static disassembly, spot-checked in Ghidra):

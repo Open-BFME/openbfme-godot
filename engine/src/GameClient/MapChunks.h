@@ -10,7 +10,7 @@
 //   MPPositionList/Info    TARGET Open-BFME-2 GameClient/GUI/MapMetaData_MPPositionWriters.cpp:40-75
 //   ObjectsList/Object v3  TARGET Open-BFME-2 GameClient/MapObjectWriteObjectsDataChunk.cpp:69-84
 //   PolygonTriggers v4/v5  DONOR ZH PolygonTrigger.cpp:135-230; v5 CORPUS+OS
-//   TriggerAreas v1        TARGET Open-BFME-2 Common/Rva002E37E5Write.cpp:53-64, Rva0030B2B6Write.cpp:27-54
+//   TriggerAreas v1        TARGET Open-BFME-2 GameLogic/Map/PolygonTrigger.cpp:399, Common/AreaPolygonBase.cpp (rva0030B2B6)
 //   StandingWaterAreas v2  CORPUS+OS (Map/StandingWaterArea.cs layout)
 //   RiverAreas v1/v2       CORPUS+OS (Map/RiverArea.cs layout)
 //   StandingWaveAreas v1/2 CORPUS+OS (Map/StandingWaveArea.cs layout)

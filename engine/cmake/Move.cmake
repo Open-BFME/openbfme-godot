@@ -6,6 +6,7 @@ set(OPENBFME_MOVE_SOURCES
     src/GameLogic/AI/AIGroup.cpp
     src/GameLogic/AI/AICommands.cpp
     src/GameLogic/AI/AIWorld.cpp
+    src/GameLogic/Module/AmbientAIUpdate.cpp
     src/GameLogic/Module/AIUpdate.cpp
     src/GameLogic/Module/HordeAIUpdate.cpp
     src/GameLogic/Object/Contain/HordeMemberPass.cpp

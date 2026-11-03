@@ -3,6 +3,7 @@
 // data and its effect measured on retail units: a wounded Gondor soldier within the radius gets 60% of its max health back (capped at max), an enemy
 // next to it and an ally outside the radius get nothing.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "StartTestUtil.h"
 
@@ -56,6 +57,7 @@ struct HealGame
 		REQUIRE(o);
 		Coord3D pos{ x, y, 0.0f };
 		o->setPosition(&pos);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 };

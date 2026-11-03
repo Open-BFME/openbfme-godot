@@ -9,6 +9,7 @@
 // Independent expectations: the workspace census, committed as tests/data/hero/faction_heroes.json (each faction's BuildableHeroesMP + BuildableRingHeroesMP and
 // its structures).
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "Common/BuildAssistant.h"
@@ -222,6 +223,7 @@ struct Game
 		REQUIRE(o);
 		const Coord3D at = { x, y, 0.0f };
 		o->setPosition(&at);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	void select(Object *o)

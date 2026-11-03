@@ -35,6 +35,36 @@ def find_host() -> Path | None:
     return HOST if HOST.is_file() else None
 
 
+# Lane BFME2MODE-0: off Windows the helper (built by build_mingw.sh) runs under Wine. RotWK's / BFME2's own msvcr71 / msvcp71 must be the
+# native DLLs: Wine substitutes its builtin msvcr71 even for a full path (lane WIN-1), which would answer for another CRT
+WINE_OVERRIDES = "msvcr71=n;msvcp71=n"
+
+
+def under_wine() -> bool:
+    return os.name != "nt"
+
+
+def host_command(host: Path) -> list[str]:
+    return [os.environ.get("WINE", "wine"), str(host)] if under_wine() else [str(host)]  # WINE: another Wine binary
+
+
+def host_env() -> dict | None:
+    if not under_wine():
+        return None
+    env = dict(os.environ)
+    env["WINEDLLOVERRIDES"] = WINE_OVERRIDES
+    env.setdefault("WINEDEBUG", "-all")
+    return env
+
+
+def host_path(p: str | os.PathLike) -> str:
+    """a path as the helper sees it: under Wine an absolute POSIX path is on drive Z:"""
+    s = str(p)
+    if under_wine() and s.startswith("/"):
+        return "Z:" + s.replace("/", "\\")
+    return s
+
+
 def install_dir(env: str, fallback: str) -> Path | None:
     """Retail install folder from the environment (ROTWK_INSTALL / BFME2_INSTALL), else a default."""
     for cand in (os.environ.get(env), fallback):
@@ -97,7 +127,8 @@ class Oracle:
             raise FileNotFoundError(f"{HOST} is not built; run tools/retail_oracle/build.bat")
         self._timeout = timeout
         self.tag = tag
-        self._p = subprocess.Popen([str(host)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+        self._p = subprocess.Popen(host_command(host), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1,
+                                   env=host_env())
         self._deadline = None
         self._lock = threading.Lock()  # guards _deadline and _timed_out between send() and the watchdog
         self._timed_out = False  # set by the watchdog BEFORE it kills the helper; never inferred from the exit status
@@ -107,7 +138,7 @@ class Oracle:
             threading.Thread(target=self._watchdog, daemon=True).start()
             for dll in binds:
                 self.send(f"bind {dll}")
-            self.load_info = self.send(f"load {tag} {game_dat}")
+            self.load_info = self.send(f"load {tag} {host_path(game_dat)}")
             self.fields = dict(tok.split("=", 1) for tok in self.load_info.split() if "=" in tok)
         except BaseException:
             self._terminate()  # no supervisor, worker or pipe outlives a failed construction

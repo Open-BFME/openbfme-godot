@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <map>
 #include <set>
 
@@ -140,6 +141,15 @@ struct Unit : AIMoveHost
 	bool pathThroughUnits = false, deployedSiegeTower = false; // lane PATHPRIO-1: onCollide's exits (AI + 0x3BA, SIEGE_TOWER + DEPLOYED)
 	bool canPathThroughUnits() const override { return pathThroughUnits; }
 	bool isDeployedSiegeTower() const override { return deployedSiegeTower; }
+	// RW 0x666079 .. 0x66607C: the AI drops its path-through-units flag (the mock keeps it on the object) and takes the destination as its machine's goal
+	int exitQuickPaths = 0;
+	Coord3D exitQuickDest{};
+	void finishExitQuickPath(const Coord3D &d) override
+	{
+		++exitQuickPaths;
+		exitQuickDest = d;
+		obj.throughUnits = false;
+	}
 	bool crushOrSquishPolicy(const PathfindObject &other) const override { return obj.canCrushOrSquish(other); } // the mock's levels are its template's
 	float wanderFactor() const override { return 0.0f; }
 	float closeEnoughDist() const override { return 10.0f; }
@@ -595,7 +605,7 @@ TEST_CASE("ai move: the repath cadence: a path found from the queue is not asked
 	// onEnter queued one request; after the path came, update asked for none or one more (the quick path leaves pathGoal stale)
 	CHECK(u.state->pathRequests() <= 2);
 	CHECK(u.ai->path() != nullptr);
-	CHECK(AIMover::allStops().size() == 7);
+	CHECK(AIMover::allStops().size() == 6);
 	for (const std::string &s : AIMover::allStops())
 	{
 		CHECK(s.compare(0, 6, "S-166 ") == 0);
@@ -869,9 +879,9 @@ TEST_CASE("ai move: a unit on a cliff cell: findPath's corridor ends it partial 
 }
 
 // lane PATHPERF-1 (the MERGEQ-2 FACT failures): the melee approach (RW 0x668E94's + 0x3B4 branch) and computeAttackPath's adjust branch (RW 0x666E51) call
-// pathfinder slot + 4 (FindClosestPath RW 0x6FB869, S-166), not findPath (slot 0): the stand-in is the search without findPath's corridor, which leaves every
-// block passable; findPath leaves the blocks off its corridor impassable
-TEST_CASE("ai move: the melee approach path is slot + 4 (FindClosestPath, S-166), not findPath: no hierarchical corridor")
+// pathfinder slot + 4, FindClosestPath (RW 0x6FB869), not findPath (slot 0). Lane WARG-1 ported it (S-166): like findPath it searches inside the hierarchical
+// corridor (RW 0x6F9829) when it has one, and the approach reaches its goal around the cliff wall
+TEST_CASE("ai move: the melee approach path is slot + 4 (FindClosestPath RW 0x6FB869): it reaches its goal around a cliff wall")
 {
 	Sim sim(128, 64);
 	for (int x = 64; x < 80; ++x) // a cliff wall over the block column x = 64..79 below y = 48: the way across is a detour through the top blocks
@@ -883,20 +893,43 @@ TEST_CASE("ai move: the melee approach path is slot + 4 (FindClosestPath, S-166)
 	}
 	sim.build();
 	Unit &u = sim.add(1, 105.0f, 105.0f);
-	const Coord3D from = u.obj.pos, goal{ 1105.0f, 105.0f, 0.0f };
-	// findPath: a corridor, the block of cell (120, 60) off it
-	std::unique_ptr<Path> corridor(sim.pf->findPath(&u.obj, groundLoco(), &from, &goal, nullptr));
-	REQUIRE(corridor != nullptr);
-	REQUIRE_FALSE(sim.pf->zoneManager().isPassable(120, 60));
-	// the melee approach, requested without the offset and served by the path queue
+	const Coord3D goal{ 1105.0f, 105.0f, 0.0f };
 	REQUIRE(u.ai->requestMeleeApproachPath(goal, true));
 	REQUIRE(u.ai->meleeApproachPending());
 	sim.step(false);
 	REQUIRE(u.ai->path() != nullptr);
-	CHECK(sim.pf->zoneManager().isPassable(120, 60)); // the search ran without a corridor
 	const Coord3D end = *u.ai->path()->getLastNode()->getPosition();
 	CHECK(end.x == doctest::Approx(goal.x));
 	CHECK(end.y == doctest::Approx(goal.y));
+}
+
+// lane WARG-1: FindClosestPath (RW 0x6FB869) toward a goal inside a cliff: the goal steps back toward the unit in steps of 30 while no quick path exists (at most
+// 5); FindClosestHierarchicalPath (RW 0x6F9829) moves the search's destination to the nearest reachable block cell, and the search's path reaches it (the
+// caller's destination is never written: RW 0x6FC078 .. 0x6FC0C2 keeps the closest cell in its local copy). findPath's own closest-cell rule (RW 0x6FDA6C: a nearer cell that fails
+// the footprint test shuts out every farther one), the old stand-in, could stop beside the unit
+TEST_CASE("warg1 pathfind: FindClosestPath to a goal deep in a cliff ends at the cliff's edge, not beside the unit")
+{
+	Sim sim(64, 32);
+	for (int x = 30; x < 64; ++x) // cliff from cell x 30 eastwards
+	{
+		for (int y = 0; y < 32; ++y)
+		{
+			sim.terrain.cliff.insert({ x, y });
+		}
+	}
+	sim.build();
+	Unit &u = sim.add(1, 55.0f, 155.0f);
+	const Coord3D from = u.obj.pos;
+	Coord3D goal{ 505.0f, 155.0f, 0.0f }; // cell (50, 15): 20 cells into the cliff, beyond the 5 steps of 30 back
+	const Coord3D asked = goal;
+	std::unique_ptr<Path> p(sim.pf->findClosestPath(&u.obj, groundLoco(), &from, &goal, false, 0.0f, false));
+	REQUIRE(p != nullptr);
+	const Coord3D end = *p->getLastNode()->getPosition();
+	CHECK(end.x == 245.0f); // the corridor's adjusted destination at the cliff's edge (cell 24: the footprint's margin before cell 30), not beside the unit
+	CHECK(end.y == 165.0f);
+	CHECK(goal.x == asked.x); // reached through the corridor's adjusted destination: rawTo is not written (RW 0x6FB869 never writes it)
+	CHECK(goal.y == asked.y);
+	std::printf("  info: closest path end (%.1f, %.1f), destination moved to (%.1f, %.1f)\n", end.x, end.y, goal.x, goal.y);
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -1138,7 +1171,7 @@ bool hasLine(const std::vector<std::string> &lines, const char *exact)
 }
 } // namespace
 
-TEST_CASE("backlog5: the two withdrawn rules are named at runtime with their measured effect (S-163 goal offset, S-166 exit-production straight path)")
+TEST_CASE("backlog5: S-163 remains reported while retail exit-production consumes its straight-path flag")
 {
 	// S-163: a LARGE_RECTANGLE_PATHFIND unit's search raises the line and does not offset its goal (the path ends in the goal's cell)
 	{
@@ -1166,7 +1199,7 @@ TEST_CASE("backlog5: the two withdrawn rules are named at runtime with their mea
 			CHECK(line.find("goal offset of internalFindPath") == std::string::npos); // an ordinary unit raises nothing
 		}
 	}
-	// S-166: a unit in state 7 that may path through units gets the ordinary search around a cliff wall, not the straight path, and the line
+	// RW 0x666036: state 7 takes one unconditional quick path, then ordinary searches.
 	for (int state : { 1, 7 })
 	{
 		CAPTURE(state);
@@ -1180,13 +1213,43 @@ TEST_CASE("backlog5: the two withdrawn rules are named at runtime with their mea
 		a.stateIdValue = state;
 		a.obj.throughUnits = true;
 		REQUIRE(a.ai->computePath(Coord3D{ 405.0f, 105.0f, 0.0f }));
-		CHECK(a.ai->path()->nodeCount() == 29u); // around the wall (the pinned result of the ordinary search in both states), not the 2-node straight path
-		CHECK(a.obj.throughUnits); // the flag is not dropped
-		CHECK(hasLine(a.ai->stops(),
-			"S-166 computePath's straight path for a unit following its exit-production path (RW 0x666036 .. 0x66607C: state 7 with AI + 0x3BA; the flag is dropped and the machine's "
-			"goal becomes the destination, RW 0x6654AD) is read but not applied: applied, production exits moved (test_aipow1: a frame 22 for 23; test_play4_heroes_retail: 2 shots, "
-			"150 lost and 2 members killed in an order that has none) and the goal overwrite alone sent an idle Battle-stance unit 826.975 from its guard spot (test_play4_stances_retail, "
-			"bound 365; without the overwrite it passes); INFERENCE, not verified: the port's exit state and guard keep the machine's goal for something RotWK does not") == (state == 7));
+		CHECK(a.ai->path()->nodeCount() == (state == 7 ? 2u : 29u));
+		CHECK(a.obj.throughUnits == (state != 7));
+		// The exit flag is one-shot: a subsequent search takes the ordinary path.
+		if (state == 7) {
+			REQUIRE(a.ai->computePath(Coord3D{405, 105, 0}));
+			CHECK(a.ai->path()->nodeCount() == 29u);
+		}
+	}
+	// RW 0x666036 .. 0x66607C for a battalion member: state 7 with the flag takes ONE straight path (through the wall), the flag is dropped and the machine's goal is
+	// the destination; the next segment's path (the flag gone) is the ordinary search around the wall. No S-166 line for a battalion member
+	{
+		Sim sim(60, 30);
+		for (int y = 0; y < 22; ++y)
+		{
+			sim.terrain.cliff.insert({ 30, y });
+		}
+		sim.build();
+		Unit &horde = sim.add(3, 105.0f, 255.0f);
+		horde.obj.kinds.insert(PK_HORDE);
+		Unit &a = sim.add(2, 205.0f, 105.0f);
+		a.container = horde.ai.get();
+		a.stateIdValue = 7;
+		a.obj.throughUnits = true;
+		const Coord3D dest{ 405.0f, 105.0f, 0.0f };
+		REQUIRE(a.ai->computePath(dest));
+		CHECK(a.ai->path()->nodeCount() == 2u); // the straight path
+		CHECK(!a.obj.throughUnits);             // RW 0x666079
+		CHECK(a.exitQuickPaths == 1);           // RW 0x66607C
+		CHECK(a.exitQuickDest.x == dest.x);
+		CHECK(a.exitQuickDest.y == dest.y);
+		REQUIRE(a.ai->computePath(dest));
+		CHECK(a.ai->path()->nodeCount() == 29u); // one-shot: the second path goes around the wall (the ordinary search's pinned result above)
+		CHECK(a.exitQuickPaths == 1);
+		for (const std::string &line : a.ai->stops())
+		{
+			CHECK(line.find("straight path for a non-battalion unit") == std::string::npos);
+		}
 	}
 	// S-1830: patchPath names what its layer step leaves out (lane WALL-2: the bridge layers)
 	{

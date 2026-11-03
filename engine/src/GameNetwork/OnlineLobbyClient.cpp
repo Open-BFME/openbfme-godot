@@ -305,6 +305,11 @@ void OnlineLobbyClient::refuse(const std::string &request, const std::string &co
 		}
 	}
 	e.text = u16(safe);
+	if (request == "phase")
+	{
+		m_phaseWaiting = false;
+		m_phaseError = safe;
+	}
 	m_events.push_back(e);
 }
 
@@ -532,6 +537,14 @@ std::string setupFields(const SkirmishGameInfo &s, bool includeCapacity = false)
 	if (includeCapacity || s.mapStartCount > LEGACY_MAX_SLOTS)
 	{
 		out += ",\"mapStartCount\":" + std::to_string(s.mapStartCount);
+	}
+	if (s.warOfTheRing())
+	{
+		out += ",\"gameMode\":1,\"scenario\":" + OnlineLobbyClient::jsonQuote(s.scenario);
+		if (s.resumed())
+		{
+			out += ",\"resumeSave\":" + OnlineLobbyClient::jsonQuote(s.resumeSave) + ",\"resumeHash\":" + std::to_string(s.resumeHash);
+		}
 	}
 	return out;
 }
@@ -794,7 +807,8 @@ void OnlineLobbyClient::reportLink(int rttMs, int lossPct)
 		rttMs == -1 ? std::string("{\"rtt\":null}") : "{\"rtt\":" + std::to_string(rttMs) + ",\"loss\":" + std::to_string(lossPct) + "}");
 }
 
-void OnlineLobbyClient::setOtherSlot(int slot, SlotState state, int faction, int color, int startPos, int team, int handicap)
+void OnlineLobbyClient::setOtherSlot(int slot, SlotState state, int faction, int color, int startPos, int team, int handicap,
+	const std::u16string &savedName)
 {
 	if (!inGame() || slot < 0 || slot >= MAX_SLOTS)
 	{
@@ -803,7 +817,7 @@ void OnlineLobbyClient::setOtherSlot(int slot, SlotState state, int faction, int
 	std::string body = "{\"slot\":" + std::to_string(slot) + ",\"state\":\"" + slotStateName(state) + "\"";
 	if (state != SLOT_OPEN && state != SLOT_CLOSED)
 	{
-		const std::u16string &name = m_info.slots[slot].name;
+		const std::u16string &name = savedName.empty() ? m_info.slots[slot].name : savedName;
 		body += ",\"name\":" + jsonQuote(utf16ToUtf8(name.empty() ? u"Computer" : name)) + slotChoices(faction, color, startPos, team, handicap);
 	}
 	body += "}";
@@ -831,6 +845,17 @@ void OnlineLobbyClient::setReady(bool ready)
 		return;
 	}
 	queue("ready", "POST", "/v1/games/" + m_gameId + "/ready", std::string("{\"ready\":") + (ready ? "true" : "false") + "}");
+}
+
+void OnlineLobbyClient::setResumeCheck(const std::string &save, bool ok, const std::string &why)
+{
+	if (!inGame() || !m_info.resumed() || save != m_info.resumeSave || why.size() > 512)
+	{
+		refuse("slot", "bad_field", "a save check must name this room's saved war and a reason of at most 512 bytes");
+		return;
+	}
+	queue("slot", "POST", "/v1/games/" + m_gameId + "/slot",
+		"{\"resumeCheck\":{\"save\":" + jsonQuote(save) + ",\"ok\":" + (ok ? "true" : "false") + ",\"why\":" + jsonQuote(why) + "}}");
 }
 
 void OnlineLobbyClient::chat(const std::u16string &text)
@@ -869,6 +894,36 @@ void OnlineLobbyClient::start()
 		return;
 	}
 	queue("start", "POST", "/v1/games/" + m_gameId + "/start", "");
+}
+
+bool OnlineLobbyClient::requestPhase(int phase, const std::vector<int> &slots)
+{
+	if (!inGame() || !m_info.warOfTheRing() || m_localSlot < 0 || m_localSlot >= MAX_SLOTS || phase < 1 || phase > 1000 || m_phasePending)
+		return false;
+	std::uint16_t mask = 0;
+	for (int s : slots)
+	{
+		if (s < 0 || s >= MAX_SLOTS || !m_info.slots[s].isHuman() || (mask & (1u << s)))
+			return false;
+		mask = (std::uint16_t)(mask | (1u << s));
+	}
+	if (!slots.empty() && !(mask & (1u << m_localSlot)))
+		return false;
+	m_phaseNumber = phase;
+	m_phasePending = true;
+	m_phaseWaiting = false;
+	m_phaseStartJson.clear();
+	m_phaseError.clear();
+	std::string body = "{\"phase\":" + std::to_string(phase) + ",\"kind\":\"" + (phase % 2 ? "battle" : "map") + "\"";
+	if (!slots.empty())
+	{
+		body += ",\"slots\":[";
+		for (size_t i = 0; i < slots.size(); ++i)
+			body += (i ? "," : "") + std::to_string(slots[i]);
+		body += "]";
+	}
+	queue("phase", "POST", "/v1/games/" + m_gameId + "/phase", body + "}");
+	return true;
 }
 
 std::string OnlineLobbyClient::finishGame()
@@ -1030,6 +1085,11 @@ void OnlineLobbyClient::leftGame(const std::string &why)
 	m_seq = 0;
 	m_chatSince = 0;
 	m_startJson.clear();
+	m_phaseNumber = 0;
+	m_phasePending = false;
+	m_phaseWaiting = false;
+	m_phaseStartJson.clear();
+	m_phaseError.clear();
 	m_pollQueued = false;
 	m_nextPoll = 0;
 	m_heldInFlight = 0; // lane ONLINE-5: the held poll's answer, when it comes, is an answer to nothing we asked
@@ -1041,7 +1101,7 @@ void OnlineLobbyClient::leftGame(const std::string &why)
 	for (auto it = m_queue.begin(); it != m_queue.end();)
 	{
 		const bool gameRequest = it->kind == "poll" || it->kind == "slot" || it->kind == "setup" || it->kind == "ready" || it->kind == "chat" ||
-			it->kind == "kick" || it->kind == "start" || it->kind == "link";
+			it->kind == "kick" || it->kind == "start" || it->kind == "link" || it->kind == "phase";
 		it = gameRequest ? m_queue.erase(it) : it + 1;
 	}
 	Event e{ Event::Removed };
@@ -1103,6 +1163,63 @@ bool OnlineLobbyClient::readGameView(const JsonValue &g, std::string *error, boo
 		info.slots[i] = SkirmishGameSlot();
 	}
 	info.mapName = strOf(setup->get("map"));
+	info.gameMode = 0;
+	info.scenario.clear();
+	info.resumeSave.clear();
+	info.resumeHash = 0;
+	if (const JsonValue *mode = setup->get("gameMode"))
+	{
+		long long war = 0;
+		if (!intOf(mode, 1, 1, war))
+		{
+			return fail("\"gameMode\" must be 1 for a War of the Ring");
+		}
+		info.gameMode = 1;
+	}
+	if (info.warOfTheRing())
+	{
+		const JsonValue *scenario = setup->get("scenario");
+		if (!scenario || !scenario->isString() || scenario->string.empty() || scenario->string.size() > 64
+			|| scenario->string.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_") != std::string::npos)
+		{
+			return fail("\"scenario\" must name a War of the Ring campaign");
+		}
+		info.scenario = scenario->string;
+		if (const JsonValue *save = setup->get("resumeSave"))
+		{
+			if (!save->isString())
+			{
+				return fail("\"resumeSave\" must be a string");
+			}
+			info.resumeSave = save->string;
+			bool md5 = info.resumeSave.empty() || info.resumeSave.size() == 32;
+			for (char c : info.resumeSave)
+			{
+				md5 = md5 && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+			}
+			if (!md5)
+			{
+				return fail("\"resumeSave\" must be a lower-case MD5");
+			}
+		}
+		if (info.resumed())
+		{
+			long long hash = 0;
+			if (!intOf(setup->get("resumeHash"), 0, 0xFFFFFFFFll, hash))
+			{
+				return fail("\"resumeHash\" must be a 32-bit unsigned integer for a resumed war");
+			}
+			info.resumeHash = (std::uint32_t)hash;
+		}
+		else if (setup->get("resumeHash"))
+		{
+			return fail("\"resumeHash\" without a save");
+		}
+	}
+	else if (setup->get("scenario") || setup->get("resumeSave") || setup->get("resumeHash"))
+	{
+		return fail("an Open Play game carries War of the Ring fields");
+	}
 	long long cash = 0, sw = 0, lh = 0;
 	if (info.mapName.empty() || !intOf(setup->get("startingCash"), -1, 1000000000, cash) || !intOf(setup->get("superweaponRestriction"), 0, 1, sw) ||
 		!intOf(setup->get("legendaryHeroes"), 1, 4, lh))
@@ -1180,7 +1297,7 @@ bool OnlineLobbyClient::readGameView(const JsonValue &g, std::string *error, boo
 		}
 		long long faction = 0, color = 0, startPos = 0, team = 0;
 		if (!intOf(js.get("faction"), -1, m_options.playerTemplateCount - 1, faction) || !intOf(js.get("color"), -1, m_options.colorCount - 1, color) ||
-			!intOf(js.get("startPos"), -1, capacity - 1, startPos) || !intOf(js.get("team"), -1, count - 1, team))
+			!intOf(js.get("startPos"), -1, info.warOfTheRing() ? 63 : capacity - 1, startPos) || !intOf(js.get("team"), -1, count - 1, team))
 		{
 			return fail(at + "faction / color / startPos / team out of range (" + std::to_string(m_options.playerTemplateCount) + " factions, " +
 				std::to_string(m_options.colorCount) + " colours)");
@@ -1214,6 +1331,20 @@ bool OnlineLobbyClient::readGameView(const JsonValue &g, std::string *error, boo
 			return fail(at + "\"ready\" / \"you\" must be true or false");
 		}
 		gs.accepted = ready->boolean;
+		views[(size_t)i] = SlotView{ state, ready->boolean, you->boolean };
+		if (const JsonValue *check = js.get("resumeCheck"); check && check->type != JsonValue::NUL)
+		{
+			const JsonValue *save = check->isObject() ? check->get("save") : nullptr;
+			const JsonValue *ok = check->isObject() ? check->get("ok") : nullptr;
+			const JsonValue *why = check->isObject() ? check->get("why") : nullptr;
+			if (!info.resumed() || gs.state != SLOT_PLAYER || !check->isObject() || !save || !save->isString() || save->string.size() != 32
+				|| save->string.find_first_not_of("0123456789abcdef") != std::string::npos || !ok || ok->type != JsonValue::BOOL
+				|| !why || !why->isString() || why->string.size() > 512)
+			{
+				return fail(at + "\"resumeCheck\" is malformed");
+			}
+			views[(size_t)i].resumeCheck = { save->string, why->string, ok->boolean, true };
+		}
 		// lane PLATFORMICON-1: lobby.mjs gameView `platform`: null / absent (an older lobby, an AI, an open slot) or windows / linux / macos. Display data:
 		// anything else is no icon, named in platformNotes (a view is never refused for it)
 		gs.platform = PlatformKind::None;
@@ -1234,7 +1365,6 @@ bool OnlineLobbyClient::readGameView(const JsonValue &g, std::string *error, boo
 				}
 			}
 		}
-		views[(size_t)i] = SlotView{ state, ready->boolean, you->boolean };
 		// lane ONLINEMENU-1: lobby.mjs gameView `link`: null / absent (not reported, an older lobby) or { rtt: 1 .. 10000 | null, loss: 0 .. 100 }; a
 		// player's slot only. Anything else refuses the view (a protocol error, as every other field)
 		if (const JsonValue *link = js.get("link"); link && link->type != JsonValue::NUL)
@@ -1380,6 +1510,8 @@ void OnlineLobbyClient::deliver(int id, int status, const std::string &body, con
 		}
 	}
 	const std::string kind = p.kind.substr(0, p.kind.find(':'));
+	if (kind == "phase")
+		m_phasePending = false;
 	if (kind == "features")
 	{
 		// ONLINEMENU-1: data for the social session; any failure leaves the features empty (no social), nothing refused, no box
@@ -1510,6 +1642,12 @@ void OnlineLobbyClient::deliver(int id, int status, const std::string &body, con
 	if (status != 200)
 	{
 		const std::string code = fits(root.get("error"), 64) ? strOf(root.get("error")) : std::string("protocol");
+		if (kind == "phase" && status == 409 && code == "phase_wait")
+		{
+			// The first vote is recorded, not refused. The war keeps its current relay stream while the other seats vote.
+			m_phaseWaiting = true;
+			return;
+		}
 		if (socialRequest)
 		{
 			long long retry = 0;
@@ -1602,6 +1740,25 @@ void OnlineLobbyClient::handle(const Pending &p, int, const JsonValue &root)
 {
 	const std::string kind = p.kind.substr(0, p.kind.find(':'));
 	std::string error;
+	if (kind == "phase")
+	{
+		long long phase = 0;
+		const JsonValue *start = root.get("start");
+		if (!inGame() || strOf(root.get("war")) != m_gameId ||
+			!intOf(root.get("phase"), m_phaseNumber, m_phaseNumber, phase) || !start || !start->isObject())
+		{
+			refuse(kind, "protocol", "the phase answer does not match the requested war and phase");
+			return;
+		}
+		const std::string json = toJson(*start);
+		if (json.size() > kMaxStartBytes)
+		{
+			refuse(kind, "protocol", "the phase START is too large");
+			return;
+		}
+		m_phaseStartJson = json;
+		return;
+	}
 	if (kind == "signin")
 	{
 		const JsonValue *account = root.get("account");
@@ -1716,6 +1873,24 @@ void OnlineLobbyClient::handle(const Pending &p, int, const JsonValue &root)
 			}
 			l.build = joinBuildOf(g.get("build"));
 			l.map = strOf(g.get("map"));
+			if (const JsonValue *war = g.get("gameMode"))
+			{
+				long long mode = 0;
+				if (!intOf(war, 1, 1, mode) || !fits(g.get("scenario"), 64) || !g.get("scenario")->isString()
+					|| g.get("scenario")->string.empty() || !g.get("resume") || g.get("resume")->type != JsonValue::BOOL)
+				{
+					refuse(kind, "protocol", "a listed War of the Ring game has a malformed gameMode, scenario or resume flag");
+					return;
+				}
+				l.gameMode = 1;
+				l.scenario = g.get("scenario")->string;
+				l.resume = g.get("resume")->boolean;
+			}
+			else if (g.get("scenario") || g.get("resume"))
+			{
+				refuse(kind, "protocol", "an Open Play listing carries strategic fields");
+				return;
+			}
 			l.players = (int)players;
 			l.openSlots = (int)open;
 			l.mapStartCount = (int)capacity;

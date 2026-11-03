@@ -262,16 +262,7 @@ bool ConstructionSite::GeometryFilter::allow(Object &obj)
 
 std::vector<ObjectGeometry::Shape> ConstructionSite::objectShapes(const Object &obj)
 {
-	std::vector<ObjectGeometry::Shape> shapes = ObjectGeometry::shapesOf(*static_cast<const ThingTemplate *>(obj.getTemplate())->getFinalOverride());
-	const std::vector<std::uint8_t> &active = obj.geometryActive();
-	if (active.size() == shapes.size())
-	{
-		for (size_t i = 0; i < shapes.size(); ++i)
-		{
-			shapes[i].active = active[i] != 0;
-		}
-	}
-	return shapes;
+	return obj.geometryShapes(); // the object's own GeometryInfo (Object + 0xA8)
 }
 
 bool ConstructionSite::isRemovableForConstruction(GameLogic &logic, const Object *obj)

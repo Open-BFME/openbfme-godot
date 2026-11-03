@@ -4,6 +4,7 @@
 #include "GameClient/GUI/AptScreens/AptScreenFactories.h"
 
 #include "GameClient/GUI/AptScreens/AptMainMenu.h"
+#include "GameClient/GUI/Skirmish/LivingWorldShellInfo.h" // lane WOTR-1
 #include "GameClient/GUI/AptScreens/AptPalantir.h"
 #include "GameClient/GUI/AptScreens/AptQuitMenu.h"
 #include "GameClient/GUI/AptScreens/AptObjectivesMenu.h"
@@ -23,10 +24,18 @@ void registerAptScreenFactories(AptScreenFactoryTable &table)
 		return std::make_unique<AptMessenger>(c.windows, c.shell, c.environment);
 	});
 	table.registerFactory("MainMenu.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
-		return std::make_unique<AptMainMenu>(c.windows, c.shell, c.services, &c.environment);
+		auto m = std::make_unique<AptMainMenu>(c.windows, c.shell, c.services, &c.environment);
+		m->setEnvironment(&c.environment); // lane WOTR-1: War of the Ring's strategic flag
+		return m;
 	});
 	table.registerFactory("Skirmish.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
-		return std::make_unique<AptSkirmish>(c.windows, c.shell, c.environment);
+		// RW 0x6D2E3A: the screen gets the strategic flag RW 0xDB6BF0 (lane WOTR-1)
+		auto s = std::make_unique<AptSkirmish>(c.windows, c.shell, c.environment);
+		if (c.environment.livingWorld && c.environment.livingWorld->strategicRequested)
+		{
+			s->enterStrategicMode(*c.environment.livingWorld);
+		}
+		return s;
 	});
 	table.registerFactory("LoadScreen.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
 		return std::make_unique<AptLoadScreen>(c.windows, c.shell, c.environment);

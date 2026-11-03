@@ -32,6 +32,7 @@ public:
 		ALLOW_STRUCTURES = 1,       ///< AutoAcquireEnemiesWhenIdle ATTACK_BUILDINGS
 		HORDES_ONLY = 2,            ///< the seeker is a horde: targets are horde objects and lone units, never members
 		MEMBERS_ONLY = 4,           ///< the seeker is a lone unit: targets are lone units and horde MEMBERS, never the horde object
+		IGNORE_INSIGNIFICANT_BUILDINGS = 16, ///< source qualifier 4; melee reacquisition always uses it
 		CENTER_3D = 8               ///< review of #73: the range and the order by the 3D centre distance (RW 0x7006D7's partition queries, distance type 1)
 	};
 	// the nearest enemy of `seeker` within `range` (edge to the seeker's centre; CENTER_3D: centre to centre) that one of its weapons can attack, or null.

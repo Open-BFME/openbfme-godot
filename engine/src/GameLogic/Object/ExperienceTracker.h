@@ -99,6 +99,7 @@ public:
 	float getExperienceScalar() const { return m_scalar; }
 	const std::string &getLevelName() const { return m_levelName; }
 	bool hasGainedLevel() const { return m_leveled; }
+	void clearGainedLevel() { m_leveled = false; } ///< RW 0x780172 writes + 0x20 = 0 after carrying an army entry's experience over; lane BFME2CAMP1: the campaign's carry-over object after its recorded experience (RW 0x78020B)
 	ObjectID getExperienceSink() const { return m_sink; }
 	float getRankFactor() const { return m_rankFactor; }
 	int getBaseRank() const { return m_baseRank; }

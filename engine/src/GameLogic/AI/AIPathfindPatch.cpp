@@ -273,6 +273,11 @@ Path *Pathfinder::patchPath(PathfindObject &obj, const PathfindLocomotorInfo &lo
 	while (!m_open.empty())
 	{
 		PathfindCell *c = m_open.pop();
+		if (m_uberLimits && m_uberSearchAllocs > m_uberSearchCap)
+		{
+			markClosed(c); // lane PERF-HD: the Uber queue's cap (the search's exhausted answer follows)
+			break;
+		}
 		bool isTarget = false;
 		for (int t = 0; t < targetCount; t++)
 		{
@@ -280,7 +285,7 @@ Path *Pathfinder::patchPath(PathfindObject &obj, const PathfindLocomotorInfo &lo
 		}
 		if (isTarget)
 		{
-			result = new Path();
+			result = new Path(m_uberLimits); // lane UBER-PATH
 			prependCells(result, &from, c, centre);
 			result->markOptimized(); // RW + 0xC = 1: the patch keeps every cell (no line-of-sight optimisation)
 			break;
@@ -397,6 +402,7 @@ Path *Pathfinder::patchPath(PathfindObject *obj, const PathfindLocomotorInfo &lo
 		return nullptr;
 	}
 	note(pathstops::kPatchLayers);
+	SearchMemoScope memo(*this, obj); // lane PATHPERF-1's memo for this search too
 	int radius = 0;
 	bool centerInCell = false;
 	getRadiusAndCenter(obj, radius, centerInCell);
@@ -498,6 +504,11 @@ Path *Pathfinder::patchPath(PathfindObject *obj, const PathfindLocomotorInfo &lo
 	while (!m_open.empty())
 	{
 		parentCell = m_open.pop();
+		if (m_uberLimits && m_uberSearchAllocs > m_uberSearchCap)
+		{
+			markClosed(parentCell); // lane PERF-HD: the Uber queue's cap (the search's exhausted answer follows)
+			break;
+		}
 		Coord3D cellCenter;
 		adjustCoordToCell(parentCell->getXIndex(), parentCell->getYIndex(), centerInCell, cellCenter, parentCell->getLayer());
 		const PathNode *matchNode;
@@ -513,7 +524,7 @@ Path *Pathfinder::patchPath(PathfindObject *obj, const PathfindLocomotorInfo &lo
 		if (found)
 		{
 			m_isTunneling = false;
-			result = new Path();
+			result = new Path(m_uberLimits); // lane UBER-PATH
 			result->setWaypointSource(originalPath->waypointSource()); // lane WALL-2: the portals of the copied nodes
 			for (const PathNode *node = lastNode; node != matchNode; node = node->getPrevious())
 			{

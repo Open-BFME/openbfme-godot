@@ -214,7 +214,7 @@ public:
 			m_state.values.terrainResourceCellSize = 1.0f;
 			m_state.seen |= SEEN_CELL;
 		}
-		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "GameData" }, StubExtent::Lenient);
+		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "GameData" }, StubExtent::LenientAfterEnd);
 		m_env.blocks.registerBlock("GameData", [this](INI *ini) {
 			m_state.block = true;
 			ini->getNextTokenOrNull(); // a name after the keyword is not used

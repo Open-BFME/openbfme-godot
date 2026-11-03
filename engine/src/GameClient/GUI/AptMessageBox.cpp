@@ -60,7 +60,7 @@ const char *typeName(AptMessageBox::Type t)
 }
 } // namespace
 
-AptMessageBox::AptMessageBox(WindowManager &windows, Shell &shell) : m_windows(windows)
+AptMessageBox::AptMessageBox(WindowManager &windows, Shell &shell, std::string clip) : m_windows(windows), m_clip(std::move(clip))
 {
 	// lane SAVE-2: a GuiFX.apt already loaded (the end screen's, loaded with a game) carries the box: RotWK's TheMessageBox is built on the one GuiFX level
 	// (RW 0x81A3FB on _level13's clip); a second instance could not have its level
@@ -84,7 +84,7 @@ int AptMessageBox::level() const
 
 std::string AptMessageBox::prefix() const
 {
-	return "_level" + std::to_string(level()) + ".MessageBox"; // RW 0x9534DE: "_level%u." + the clip path
+	return "_level" + std::to_string(level()) + "." + m_clip; // RW 0x9534DE: "_level%u." + the clip path
 }
 
 void AptMessageBox::registerCommands()
@@ -103,6 +103,7 @@ void AptMessageBox::registerCommands()
 			    m_type = TYPE_NONE;
 			    m_pending = 0;
 			    m_calls.push_back(std::string("button ") + std::to_string(b));
+			    m_trace.push_back(std::string("button ") + std::to_string(b));
 			    if (m_onButton)
 			    {
 				    ButtonFn fn = m_onButton;
@@ -113,18 +114,35 @@ void AptMessageBox::registerCommands()
 			m_commands.push_back(name);
 		}
 	}
-	// RW 0x9531B4 ..: the state commands go to a state callback; none of the callers ported here passes one
-	for (const char *state : { "_OnShowing", "_OnShown", "_OnHiding", "_OnHidden" })
+	// RW 0x9531B4 ..: the state commands go to the state callback (_OnHidden: 3, then the callback is dropped)
+	const char *states[4] = { "_OnShowing", "_OnShown", "_OnHiding", "_OnHidden" };
+	for (int st = 0; st < 4; ++st)
 	{
-		const std::string name = prefix() + state;
-		if (m_windows.registerCommand(name, [](const std::string &) {}))
+		const std::string name = prefix() + states[st];
+		if (m_windows.registerCommand(name, [this, st](const std::string &) {
+			    m_trace.push_back(std::string("state ") + std::to_string(st));
+			    state(st);
+		    }))
 		{
 			m_commands.push_back(name);
 		}
 	}
 }
 
-void AptMessageBox::show(Type type, const std::u16string &title, const std::u16string &text, ButtonFn onButton)
+void AptMessageBox::state(int s)
+{
+	if (m_onState)
+	{
+		StateFn fn = m_onState;
+		if (s == 3)
+		{
+			m_onState = StateFn();
+		}
+		fn(s);
+	}
+}
+
+void AptMessageBox::show(Type type, const std::u16string &title, const std::u16string &text, ButtonFn onButton, StateFn onState)
 {
 	// RW 0x953861
 	if (m_type != TYPE_NONE)
@@ -133,6 +151,7 @@ void AptMessageBox::show(Type type, const std::u16string &title, const std::u16s
 	}
 	m_type = type;
 	m_onButton = std::move(onButton);
+	m_onState = std::move(onState); // replaced by every show (a notice pre-empted this way never hears its _OnHidden: retail's hazard, spec M 4)
 	m_title = title;
 	m_text = text;
 	const std::string records = "APT:" + prefix() + "_"; // RW 0xC8171C "APT:_level%u.%s_"
@@ -154,6 +173,11 @@ void AptMessageBox::hide(bool instant)
 	m_instant = instant;
 	m_pending = 3;
 	update();
+	if (instant)
+	{
+		state(2); // RW 0x953243 with instant: hiding and hidden at once
+		state(3);
+	}
 }
 
 void AptMessageBox::update()
@@ -166,17 +190,17 @@ void AptMessageBox::update()
 	std::string error;
 	if (m_pending == 2)
 	{
-		if (!m_windows.invokeASAtValues(level(), "MessageBox", "Show", { AptValue::string(typeName(m_type)), AptValue::boolean(m_large) }, &error))
+		if (!m_windows.invokeASAtValues(level(), m_clip, "Show", { AptValue::string(typeName(m_type)), AptValue::boolean(m_large) }, &error))
 		{
-			m_windows.note("invoke-failed", "MessageBox.Show: " + error);
+			m_windows.note("invoke-failed", m_clip + ".Show: " + error);
 		}
 		m_calls.push_back(std::string("Show ") + typeName(m_type) + (m_large ? " true" : " false"));
 	}
 	else if (m_pending == 3)
 	{
-		if (!m_windows.invokeASAtValues(level(), "MessageBox", "Hide", { AptValue::boolean(m_instant) }, &error))
+		if (!m_windows.invokeASAtValues(level(), m_clip, "Hide", { AptValue::boolean(m_instant) }, &error))
 		{
-			m_windows.note("invoke-failed", "MessageBox.Hide: " + error);
+			m_windows.note("invoke-failed", m_clip + ".Hide: " + error);
 		}
 		m_calls.push_back(std::string("Hide ") + (m_instant ? "true" : "false"));
 	}

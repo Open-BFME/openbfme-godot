@@ -3,6 +3,17 @@
 Goal: RotWK 2.01 in Godot, faithful to retail, loading the player's own game
 files. Long term, also run BFME2/RotWK mods and play against retail clients.
 
+**Editions.** The target list grows to two editions with their own rules:
+BFME2 1.06 and RotWK 2.01. BFME2 is the base and RotWK is BFME2 plus its
+differences. Source priority is per edition: that edition's own binary first
+(the clean BFME2 1.06 `game.dat`, md5 `34391b253b0ee12d6cec1178f46d3bf9`, for
+BFME2; the RotWK 2.01 `game.dat` for RotWK, rule 9), then that edition's
+decomp (Open-BFME-2 for BFME2; none yet for RotWK), then the other edition.
+Until the BFME2 edition is switched on, every game runs RotWK's rules.
+BFME1 keeps its current mode (RotWK's rules on BFME1 data, S-5017). The
+contributor rules for editions are in `AGENTS.md`; the measured size of the
+work is in `docs/EDITIONS.md`.
+
 ## Two profiles, designed in from the start
 
 This is the target contract, not a claim of retail compatibility today.

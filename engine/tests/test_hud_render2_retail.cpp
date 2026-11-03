@@ -3,6 +3,7 @@
 // launcher's transform composed with the ARROW launch bone of the archer's model (GUArcher_SKN), which is checked against the bone worked out from the W3D hierarchy and
 // animation files directly. Two runs give the same state hash in every frame. They run only when ROTWK_INSTALL and BFME2_INSTALL are set (otherwise SKIP).
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -180,6 +181,7 @@ struct LaunchArena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(side == 0 ? 0.0f : 3.14159265f);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 };

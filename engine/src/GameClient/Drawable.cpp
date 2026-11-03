@@ -74,6 +74,10 @@ bool Drawable::isKindOfName(const char *name) const
 
 void Drawable::reactToTransformChange(const Coord3D *oldPos, float oldAngle)
 {
+	if (m_reactionMuted)
+	{
+		return;
+	}
 	for (std::unique_ptr<DrawableModule> &m : m_clientModules)
 	{
 		m->reactToTransformChange(oldPos, oldAngle); // lane AUDIO-4
@@ -94,6 +98,8 @@ void Drawable::addEntry(DrawServices &services, const ThingTemplate::Nugget &nug
 	e.className = nugget.name;
 	e.tag = nugget.tag;
 	e.data = nugget.data.get();
+	// lane STEALTHLOOK-1 (RW 0x679AE8): +0x3AB, a draw module's ModuleData fails its +0x78 query (the model draws' AffectedByStealth)
+	m_cannotHideByStealth = m_cannotHideByStealth || !StealthLook::moduleDataAffectedByStealth(e.data);
 	const W3DDrawClassInfo *ci = W3DDrawModules::find(nugget.name);
 	if (!ci)
 	{
@@ -358,6 +364,33 @@ void Drawable::flushModelConditions(bool hasWeaponTiming, int weaponTimingFrames
 	setModelConditionFlags(m_flags);
 }
 
+bool Drawable::advanceIsLocal() const
+{
+	for (const DrawEntry &e : m_entries)
+	{
+		if (e.draw && e.animated && !e.draw->advanceIsLocal())
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+void Drawable::advanceAnimationLocal(double elapsedMs)
+{
+	for (DrawEntry &e : m_entries)
+	{
+		if (e.draw && e.animated)
+		{
+			e.draw->advance(elapsedMs);
+		}
+		if (e.isTruck || !e.truckChecked || e.truckData != e.data)
+		{
+			advanceTires(e, elapsedMs);
+		}
+	}
+}
+
 void Drawable::advanceAnimation(double elapsedMs)
 {
 	m_services.host.setChunkName(m_template->getName());
@@ -367,7 +400,10 @@ void Drawable::advanceAnimation(double elapsedMs)
 		{
 			e.draw->advance(elapsedMs);
 		}
-		advanceTires(e, elapsedMs);
+		if (e.isTruck || !e.truckChecked || e.truckData != e.data) // lane PERF-HD: the call only for a truck (or an entry not looked at yet)
+		{
+			advanceTires(e, elapsedMs);
+		}
 	}
 }
 
@@ -527,6 +563,46 @@ void Drawable::updatePhantomLook(const ObjectSnapshot &rec)
 	}
 }
 
+void Drawable::syncStealthLook(const ObjectSnapshot &rec)
+{
+	// lane STEALTHLOOK-1: a member of a HORDE imitates (RW 0x673114's parent branch), the setter never runs for it; every other object takes the
+	// setter when the snapshot's look changed (RW 0x6760F9; the phase is drawn only then, retail draws it inside the setter on a pulse look)
+	m_stealthParentId = rec.stealthParent;
+	if (m_stealthParentId != INVALID_ID)
+	{
+		return;
+	}
+	if (rec.stealthLook == m_stealth.look)
+	{
+		return;
+	}
+	const float phaseDraw = (rec.stealthLook == StealthLook::LOOK_VISIBLE_FRIENDLY || rec.stealthLook == StealthLook::LOOK_VISIBLE_FRIENDLY_DETECTED)
+		? m_services.random.real(0.0f, StealthLook::kPi)
+		: 0.0f;
+	if (StealthLook::setLook(m_stealth, rec.stealthLook, rec.stealthOpacityMin, rec.stealthOpacityMax, rec.stealthCycleSeconds, phaseDraw, m_cannotHideByStealth))
+	{
+		++m_changeCount;
+	}
+}
+
+void Drawable::updateStealthLook(const Drawable *parent)
+{
+	// RW 0x673114, once per client frame (updateDrawable RW 0x675996 via GameClient::update RW 0x64849E)
+	if (m_stealthParentId != INVALID_ID)
+	{
+		if (!parent)
+		{
+			return; // the parent object has no drawable: the call ends early
+		}
+		if (StealthLook::imitate(m_stealth, parent->stealth()))
+		{
+			++m_changeCount;
+		}
+		return;
+	}
+	StealthLook::update(m_stealth);
+}
+
 void Drawable::commitSync(const SyncPrep &prep)
 {
 	const RenderInterpolation::Pose &p = prep.pose;
@@ -566,9 +642,9 @@ Drawable::PresentedLook Drawable::presentedLook(const LogicSnapshot *presented, 
 		look.hidden = synced ? m_shroudLook.hidden : (rec && rec->shroudedForLocal);
 		look.fogLook = synced && m_shroudLook.fullyObscured;
 	}
-	// lane STEALTH-1 (RW 0x81AA03 -> RW 0x6760F9, GameClient/StealthLook): an invisible object an enemy looks at is not drawn
-	// lane GARRISON-1: the drawable's hidden flag the logic sets (RW 0x6718FB: a rider of an ENCLOSED container, a horde member gone into a garrison)
-	if (rec && (StealthLook::hidden(*rec) || rec->drawableHidden))
+	// lane STEALTHLOOK-1 (RW 0x81AA03 -> RW 0x6760F9, GameClient/StealthLook): the drawable's own hidden-by-stealth flag (+0x43E; a member's is the
+	// imitated parent's, RW 0x673114) decides what an enemy sees - a look-5 drawable whose modules are not all affected stays drawn
+	if (m_stealth.hidden || (rec && rec->drawableHidden))
 	{
 		look.hidden = true;
 	}

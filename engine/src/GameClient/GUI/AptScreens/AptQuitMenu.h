@@ -26,7 +26,10 @@
 //     an Exit (+ 0x27C, RW 0x921A7C), else hides the background (RW 0x622C88(0), RW 0x921A96) unless + 0x27D is set (RW 0x9226DF: a skirmish's restart;
 //     SaveLoad's load over the game, RW 0x8183D0, is the host's: the game is cleared behind the load screen).
 // The screen posts its decisions as ShellRequests (QuitMenuReturn / Exit / Restart / Forfeit / Options); the host closes the movie and acts.
-// NOT PORTED (stop S-1064): the Living World branches, the network quit of the first six frames (the host's Exit leaves through
+// WOTR2 milestone 3: the War of the Ring map (QuitMenuContext::strategicMap, + 0x114 == 0): SaveMenu / LoadMenu give type 8 (RW 0x92179F), the
+// restart button is Surrender (RW 0x9216EC; disabled: surrendering the strategic game is not ported), Save and Load stay enabled (RotWK's edited
+// OnInitialized tests, RW 0x921D5B tier B: not ported, inference).
+// NOT PORTED (stop S-1064): the battles' Living World branches, the network quit of the first six frames (the host's Exit leaves through
 // the same path at any frame), the asset transfer of MSG_SELF_DESTRUCT(true) to a living ally.
 
 #pragma once

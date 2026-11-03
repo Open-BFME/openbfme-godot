@@ -59,7 +59,7 @@ read only there), so it has no effect in 2.01.
 |---|---|---|---|---|
 | 0 | `ModelLOD` | Low .. UltraHigh | manager + 0x1774; GlobalData + 0x24 = ModelLOD <= 0 | stop S-3402 |
 | 1 | `AnimationLOD` | VeryLow .. UltraHigh | + 0x1788 | stop S-3402 |
-| 2 | `EffectsLOD` | VeryLow .. UltraHigh | + 0x1778; MaxParticleCount (+ 0xAC8) and the two particle priorities (+ 0x17A0 / + 0x17A4) of that preset; UseHeatEffects = >= 2 (+ 0x25) | particle cap and priorities applied (FX player); heat effects stop S-3402 (no smudge pass, S-194) |
+| 2 | `EffectsLOD` | VeryLow .. UltraHigh | + 0x1778; MaxParticleCount (+ 0xAC8) and the two particle priorities (+ 0x17A0 / + 0x17A4) of that preset; UseHeatEffects = >= 2 (+ 0x25) | particle cap and priorities applied (FX player); at VeryLow / Low neither the map's colour grade nor the glow pass is drawn (W3DView draw, RW 0x48789F; stop S-5231); heat effects stop S-3402 (no smudge pass, S-194) |
 | 3 | `ShadowLOD` | Off .. UltraHigh | decals = 1..2, volumes = 2, shadow mapping = >= 3 (+ 0x60 / 61 / 62) | directional volume shadow maps: Medium and High a 2048 atlas, UltraHigh 4096 (each of the four cascades gets RotWK's MapSize, at least 2048 at UltraHigh); Off/Low disable maps; retail decals/stencil parity remains S-3402 |
 | 4 | `TerrainLOD` | Low .. High | normal map >= 2, distance textures and ShowProps >= 1 (+ 0x49 / 4A / 1C), tank tracks of preset Low / Medium / High | stop S-3402 |
 | 5 | `WaterLOD` | Low .. UltraHigh | + 0x1784; + 0x5E = >= 2; soft water edge >= 1 (+ 0x84) | stop S-3402 |
@@ -73,8 +73,9 @@ their saved values and the presets still carry them. The three usable rows act
 in part:
 
 - **VFX Detail (EffectsLOD):** the particle cap and the two particle priorities
-  take effect at once in a game; the heat effects it also turns on are not
-  drawn (no smudge pass).
+  take effect at once in a game, and at Very Low / Low the map's colour grade
+  and the glow pass (the GlowEffect block) are not drawn, as in retail (stop
+  S-5231); the heat effects it also turns on are not drawn (no smudge pass).
 - **Texture Quality:** the texture reduction applies to the models loaded
   after the change, so it shows from the next game (or map) loaded; retail
   reloads the textures at once.
@@ -376,14 +377,24 @@ movie's difficulty choice, and its Easy / Medium / Hard button sends
 0x91AFAF) to `campaign_flow.gd`. RotWK has no Continue Campaign button;
 you continue a campaign from Load Game (its auto-saves).
 
-BFME2's 1.06 `MainMenu.apt` (the BFME2 style) has no Angmar buttons, so
-in that style you can't start the Angmar campaigns from the menu; switch
-to the RotWK style to play them. BFME2's own Good / Evil campaign buttons
-stay hidden while `game.gd`'s `BFME2_CAMPAIGNS` is off (until B2CAMP-1).
-Load Game moves up into their place. A request that still names them,
-`game.gd.start_bfme2_campaign(alignment: String)` with `good` / `evil`
-(B2CAMP-1's entry point), gets the main menu's "not available" box
-("The BFME2 Good campaign is not available yet: ...").
+BFME2's 1.06 `MainMenu.apt` (the BFME2 style) has no Angmar buttons; OpenBFME
+adds them (lane BFME2CAMP1, an OpenBFME addition): while the Solo Play list is
+open, copies of its Good Campaign row named `Expansion1Campaign` ("ANGMAR
+CAMPAIGN") and `BonusCampaign` ("EPILOGUE", disabled until the bonus unlock as
+in RotWK) sit between Good Campaign and Load Game, the list's frame stretched to
+hold them; they open the movie's own difficulty choice, which sends RotWK's
+`AptMainMenu::Expansion1Campaign` / `BonusCampaign` (`AptMainMenu.h`
+`ExtraRows`). BFME2's own Good / Evil campaign buttons
+show in the BFME2 style (lane BFME2CAMP1 turned `game.gd`'s
+`BFME2_CAMPAIGNS` on) and start `GOOD_CAMPAIGN` / `EVIL_CAMPAIGN` with the
+chosen difficulty, as RotWK's own unregistered starters do (RW 0x91AF46 /
+0x91AF69 -> RW 0x91BE05 / 0x91BDA6). Those campaigns come from BFME2's
+legend's `LinearCampaign.ini`, which OpenBFME loads after RotWK's campaigns
+(an OpenBFME addition: RotWK's legend names only
+`LinearCampaignExpansion1.ini`). They play with RotWK 2.01's rules and data.
+With the switch off, or with data that has no such campaign,
+`game.gd.start_bfme2_campaign(alignment, difficulty)` shows the main menu's
+"not available" box instead.
 
 ### Checks
 
@@ -397,7 +408,9 @@ The settings test checks a separate-process read and keeps the choice out
 of `Options.ini`. The runtime check covers Cancel, deferred Accept,
 repeated switches, world-state and gameplay provenance preservation.
 `--menu1-walk=DIR` drives real viewport mouse/key events in the selected
-style and saves screenshots in windowed runs. Use isolated options/menu
+style and saves screenshots in windowed runs. A step fails when the shell
+reported an error since the previous step (a movie that did not load) or
+the Skirmish lobby lists no map or no player slot (lane MODUI-1). Use isolated options/menu
 config files for each style and resolution; do not change the player's
 saved choice to run the walk.
 

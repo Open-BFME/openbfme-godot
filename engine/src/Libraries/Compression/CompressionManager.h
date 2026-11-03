@@ -3,7 +3,7 @@
 //
 // Port of the read side of CompressionManager.
 //   target fact (BFME1 decompile): Open-BFME-1 game/Libraries/Source/Compression/
-//     CompressionManager_decompressData.cpp (getCompressionType, isDataCompressed,
+//     CompressionManager.cpp (getCompressionType, isDataCompressed,
 //     getUncompressedSize, decompressData; retail 0x0081E560 / 0x0081E890).
 //   donor fact: ZH Libraries/Source/Compression/CompressionManager.cpp:103-134, 166-190, 286-318.
 //

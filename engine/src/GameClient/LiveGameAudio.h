@@ -21,6 +21,8 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class ArchiveFileSystem;
@@ -124,6 +126,7 @@ private:
 		std::string event;
 		std::uint32_t handle = 0;
 		bool tried = false; ///< started (or refused out of range) for `event`
+		unsigned seenPass = 0; ///< lane PERF-HD: the update pass that last saw its object (update's per-pass set before)
 	};
 	void stopAmbient(ObjectID id, Ambient &a);
 	struct EvaWatch
@@ -156,13 +159,18 @@ private:
 	std::map<std::string, Group> m_groups; ///< "map/sound/cellx,celly" -> its playing sound
 	unsigned m_lgaFrame = 0xffffffffu;
 	static std::string evaField(const Object &obj, const char *field);
-	std::map<ObjectID, EvaWatch> m_eva;
+	std::unordered_map<ObjectID, EvaWatch> m_eva; // lane PERF-HD: looked up per object per update (never iterated)
 	class Resolver; // the AudioOwnerResolver forwarding to objectPosition / drawablePosition
 
 	LiveGame &m_game;
 	AudioManager &m_audio;
 	std::map<ObjectID, Ambient> m_ambients;
-	std::map<ObjectID, bool> m_battleCounted;
+	std::unordered_set<ObjectID> m_battleCounted; // lane PERF-HD: membership only
+	unsigned m_ambientPass = 0;                  // lane PERF-HD: Ambient::seenPass
+	UnsignedInt m_ambientFrame = 0xffffffffu;    // lane PERF-HD: the logic frame of the last object scan
+	ObjectID m_ambientNextId = INVALID_ID;       // the logic's next object id at the last object scan (a new object rescans between frames)
+	std::unordered_map<const ThingTemplate *, std::uint8_t> m_templateAudio; // lane PERF-HD: 1 = an ambient sound field, 2 = an Eva event field (templateAudio)
+	std::uint8_t templateAudio(const ThingTemplate &tt);
 	Stats m_stats;
 	ScriptAudioStats m_scriptAudio;
 	std::unique_ptr<Resolver> m_resolver;

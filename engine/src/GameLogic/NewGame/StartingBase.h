@@ -35,6 +35,8 @@ class Object;
 class Player;
 class TerrainLogic;
 
+class GameLogicDispatch;
+
 namespace StartingBase
 {
 struct Placed
@@ -43,14 +45,28 @@ struct Placed
 	unsigned id = 0;
 	Coord3D position;
 	bool structure = false;
+	int armyId = -1;      // lane WOTR-1: the War of the Ring army member the object stands for (-1 none)
+	int memberIndex = -1;
 };
 struct Result
 {
 	std::vector<Placed> placed;
 	std::vector<std::string> errors;
+	std::vector<std::string> notes; // lane WOTR-1: what retail skips without an error (a War of the Ring building whose build plot the map lacks), reported
 };
 // RW 0x62AC17 for one slot (`slotNum` is its index); the placed objects and every problem are in `result` (never silent)
 void placeForPlayer(GameLogic &logic, int slotNum, const SkirmishGameSlot &slot, Player &player, const PlayerTemplate &pt, Result &result);
+// lane WOTR-1: a War of the Ring battle's slot (RW 0x629F34 instead of the starting base): the region owner's buildings on Player_1_BuildPlot_<n>, then the slot's army
+// members at its start waypoint (four abreast, 70 apart, starting 100 from the waypoint: S-1329)
+void placeLivingWorldBattle(GameLogic &logic, int slotNum, const SkirmishGameSlot &slot, Player &player, const PlayerTemplate &pt, const LivingWorldBattleStart &battle, Result &result);
+// WOTR2 milestone 7 (step 5): ArmySummarySystem::update RW 0x80F4D3 (logic phase 5, after the experience system): a counting reinforcement whose arrival frame
+// came (unsigned >=) is ready (2 -> 3); then a computer player's ready armies are called in (AIUnitBuilder RW 0x9A0426, game kind != 3) [S-1329 inference:
+// on the frame they turn ready, the AI's own cadence was not traced]
+void updateLivingWorldReinforcements(GameLogic &logic);
+// MSG_CALL_IN_REINFORCEMENTS 0x45F -> CallArmyReinforcementIntoBattleByID RW 0x812875 -> RW 0x812563: a ready army (3) is on the field (4): its entries spawn at its
+// walk-on spawn point and walk to the gather point (ArmyPlacer RW 0x782214, reinforcement); false when the army is not ready
+bool callInLivingWorldArmy(GameLogic &logic, int armyId);
+void registerLivingWorldHandlers(::GameLogicDispatch &dispatcher);
 // the unit offset arithmetic alone (tests pin it): the position of a starting unit from the structure position and the template's offset
 Coord3D unitPositionFromOffset(const Coord3D &structurePos, const Coord3D &offset);
 std::vector<std::string> stopLines();

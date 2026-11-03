@@ -6,6 +6,7 @@
 // recorded hash or header was changed is refused naming the frame. The game files are read in this process (the "fresh process" of T1 is a fresh LiveGame
 // here). SKIP loudly without ROTWK_INSTALL / BFME2_INSTALL.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "StartTestUtil.h"
@@ -43,6 +44,8 @@
 #include "GameNetwork/LockstepDriver.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -54,10 +57,14 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <process.h>
+#else
 #include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 namespace
@@ -409,6 +416,7 @@ TEST_CASE("CASTER-4 metrics: retail battalions count once, support units count, 
 		expectedValue += BuildAssistant::buildCost(*tt);
 		Object *object = logic.newObject(tt, player->getDefaultTeam(), {});
 		REQUIRE(object != nullptr);
+		testutil::completeHorde(object); // a horde makes its members (onBuildComplete, RW 0x8718ED)
 		if (object->isKindOfName("HORDE"))
 		{
 			horde = object;
@@ -915,16 +923,80 @@ int runPeer(const std::string &args)
 #endif
 } // namespace
 
-TEST_CASE("save2 retail T1 (SAVES.md): a 4-AI skirmish saved with each named scenario in flight, every save loaded in a fresh process and played on "
-		  "past F + 3000 with the uninterrupted game's commands: every frame's hash is the unsaved game's (lane SAVE-4e: from the save's snapshot, no frame "
-		  "of its log run; the 11-minute save also caught up from its log, its snapshot compared, both load times measured; T3 with a Windows peer)")
+#ifdef OPENBFME_PEER_EXE
+namespace
 {
-	OPENBFME_REQUIRE_START(s);
-#ifndef OPENBFME_PEER_EXE
-	MESSAGE("SKIP save2 retail T1 (fresh process): the openbfme_peer executable is not built");
+// lane SAVE2SPLIT-1: the 4-AI game of SAVES.md T1 is recorded once per process and shared by the test cases below, one per save and load mode (the gate
+// runs each case as a job of its own, so no single case holds up the suite; the recording is the old single case's, unchanged). Its files carry the
+// process id, so two jobs side by side in one directory never share them; they are removed when the process ends
+struct Taken
+{
+	std::string scenario, path, found;
+	UnsignedInt frame = 0;
+	bool eleven = false; ///< lane SAVE-4e: the 11-minute save (the load time measurement, the verify mode, T3)
+};
+
+const char *const kFourAiScenarios[4] = { "mid-combat", "mid-construction", "special power in flight", "horde mid-march" };
+
+std::string processTag()
+{
+#ifdef _WIN32
+	return std::to_string((int)_getpid());
 #else
+	return std::to_string((int)getpid());
+#endif
+}
+
+struct FourAiGame
+{
+	bool recorded = false;
+	std::string fullPath;
+	std::vector<Taken> saves;
+	bool seen[4] = { false, false, false, false };
+	std::vector<std::string> writerErrors;
+	UnsignedInt startFrame = 0, lastFrame = 0;
+	std::uint32_t finalHash = 0;
+	void removeFiles()
+	{
+		for (const Taken &t : saves)
+		{
+			std::remove(t.path.c_str());
+		}
+		if (!fullPath.empty())
+		{
+			std::remove(fullPath.c_str());
+		}
+	}
+	~FourAiGame() { removeFiles(); }
+	const Taken *find(const std::string &scenario) const
+	{
+		for (const Taken &t : saves)
+		{
+			if (t.scenario == scenario)
+			{
+				return &t;
+			}
+		}
+		return nullptr;
+	}
+};
+
+// a human (Men) and four Medium AIs on Fall Back 8p, recorded under the peer's identity; each named scenario saved at the first frame it is in flight
+// (from two minutes on), the 11-minute save at frame 3300, the game played on to F + 3000 of the last save
+const FourAiGame &fourAiGame(starttest::Shared &s)
+{
+	static FourAiGame game;
+	if (game.recorded)
+	{
+		return game;
+	}
+	// a recording that failed part way (a REQUIRE) is started again by the next case
+	game.removeFiles();
+	game = FourAiGame();
 	std::string error;
-	const std::string profilePath = "save2_t1_profile.txt", fullPath = "save2_t1_full.replay";
+	const std::string tag = processTag();
+	const std::string profilePath = "save2_t1_profile_" + tag + ".txt";
+	game.fullPath = "save2_t1_full_" + tag + ".replay";
 	// the peer's identity (the archives it mounts, hashed): the game is recorded under it, so the saves are this build's in the fresh process too
 	REQUIRE(runPeer("--profile-text " + profilePath) == 0);
 	const ProfileIdentity profile = ProfileIdentity::fromText(readText(profilePath));
@@ -933,34 +1005,23 @@ TEST_CASE("save2 retail T1 (SAVES.md): a 4-AI skirmish saved with each named sce
 	// merge queue q24: seed 8644 (8642 before). Since OFFMAP-1 (RotWK's idle state RW 0x745A64: no ZH frame <= 1 snap) seed 8642's game had no special power
 	// in flight in its 20 minutes (the Dwarves alive with 100+ objects; measured); seeds 8644 and 8645 hold all four scenarios (a DwarvenGuardianHorde's power
 	// at frame 1632 / 1887) and pass. The scenarios are the test's subject, the seed is not
-	const NewGameMessage message = fourAiMessage(*s, 8644u);
-	struct Taken
-	{
-		std::string scenario, path, found;
-		UnsignedInt frame = 0;
-		bool eleven = false; ///< lane SAVE-4e: the 11-minute save (the load time measurement, the verify mode, T3)
-	};
-	std::vector<Taken> saves;
-	const char *const names[4] = { "mid-combat", "mid-construction", "special power in flight", "horde mid-march" };
-	UnsignedInt startFrame = 0, lastFrame = 0;
-	std::uint32_t finalHash = 0;
+	const NewGameMessage message = fourAiMessage(s, 8644u);
 	{
 		Loaded g;
-		load(*s, message, g);
+		load(s, message, g);
 		ReplayWriter writer;
 		writer.setKeepCopy(true);
 		ReplayHeader h;
 		h.game = message;
 		h.recordingSlot = 0;
 		h.profile = profile;
-		REQUIRE_MESSAGE(writer.open(fullPath, h, &error), error);
+		REQUIRE_MESSAGE(writer.open(game.fullPath, h, &error), error);
 		LockstepDriver driver(nullptr, &writer);
 		RegisterLogicCRCHandler(g.game->dispatch());
-		startFrame = g.game->frame();
+		game.startFrame = g.game->frame();
 		g.game->setFrameDriver(&driver);
 		// from two minutes on, each scenario is saved at the first frame it is in flight (at most 30 minutes of game time; review of #74: since the destination
 		// adjustment spirals around the cell, RW 0x6FA2A4, the first special power in flight comes at frame 7405, a DwarvenGuardianHorde's, past 20 minutes)
-		bool seen[4] = { false, false, false, false };
 		bool elevenTaken = false;
 		// lane SAVE-4e: the save as GameWorld::save_game writes it: the log to F and the snapshot at F
 		auto takeSave = [&](Taken &t) {
@@ -980,7 +1041,7 @@ TEST_CASE("save2 retail T1 (SAVES.md): a 4-AI skirmish saved with each named sce
 			sh.mapPath = message.game.mapName;
 			REQUIRE_MESSAGE(save.write(t.path, &error), error);
 		};
-		for (int i = 0; i < 9000 && (saves.size() < 5 || !elevenTaken); ++i)
+		for (int i = 0; i < 9000 && (game.saves.size() < 5 || !elevenTaken); ++i)
 		{
 			humanCommands(*g.game, g.game->commands());
 			REQUIRE(g.game->advance(0.2) == 1);
@@ -991,10 +1052,10 @@ TEST_CASE("save2 retail T1 (SAVES.md): a 4-AI skirmish saved with each named sce
 				Taken t;
 				t.scenario = "eleven minutes";
 				t.frame = g.game->logic().getFrame();
-				t.path = "save2_t1_eleven.obfmesave";
+				t.path = "save2_t1_eleven_" + tag + ".obfmesave";
 				t.eleven = true;
-				takeSave(t);
-				saves.push_back(t);
+				game.saves.push_back(t);
+				takeSave(game.saves.back());
 				elevenTaken = true;
 			}
 			if (i < 600)
@@ -1006,27 +1067,23 @@ TEST_CASE("save2 retail T1 (SAVES.md): a 4-AI skirmish saved with each named sce
 			const std::set<std::string> *sets[4] = { &sc.combat, &sc.construction, &sc.power, &sc.marching };
 			for (int k = 0; k < 4; ++k)
 			{
-				if (seen[k] || sets[k]->empty())
+				if (game.seen[k] || sets[k]->empty())
 				{
 					continue;
 				}
-				seen[k] = true;
+				game.seen[k] = true;
 				Taken t;
-				t.scenario = names[k];
+				t.scenario = kFourAiScenarios[k];
 				t.frame = g.game->logic().getFrame();
 				for (const std::string &n : *sets[k])
 				{
 					t.found += " " + n;
 				}
-				t.path = "save2_t1_" + std::to_string(k) + ".obfmesave";
-				takeSave(t);
+				t.path = "save2_t1_" + std::to_string(k) + "_" + tag + ".obfmesave";
+				game.saves.push_back(t);
+				takeSave(game.saves.back());
 				MESSAGE(t.scenario << " at frame " << t.frame << ":" << t.found);
-				saves.push_back(t);
 			}
-		}
-		for (int k = 0; k < 4; ++k)
-		{
-			CHECK_MESSAGE(seen[k], names[k] << " never happened in 30 minutes of the game");
 		}
 		REQUIRE(elevenTaken);
 		for (int i = 0; i < 3000; ++i) // F + 3000 for the last save, more for the earlier ones
@@ -1035,87 +1092,172 @@ TEST_CASE("save2 retail T1 (SAVES.md): a 4-AI skirmish saved with each named sce
 			REQUIRE(g.game->advance(0.2) == 1);
 		}
 		g.game->drainFrames();
-		lastFrame = g.game->logic().getFrame();
-		finalHash = g.game->logic().computeStateHash();
-		writer.close(lastFrame, finalHash);
-		CHECK(writer.errors().empty());
+		game.lastFrame = g.game->logic().getFrame();
+		game.finalHash = g.game->logic().computeStateHash();
+		writer.close(game.lastFrame, game.finalHash);
+		game.writerErrors = writer.errors();
 		g.game->setFrameDriver(nullptr);
 	}
-	// each save in a fresh process: loaded from its snapshot (lane SAVE-4e: no frame of its log runs), then the uninterrupted game's commands to its end,
-	// every hash compared; the 11-minute save also caught up from its log (--verify-log: an old save's path, the snapshot compared at F)
-	char want[64];
-	std::snprintf(want, sizeof(want), "0x%08X recorded 0x%08X", finalHash, finalHash);
-	auto check = [&](const Taken &t, const std::string &report, int rc, bool snapshot) {
-		INFO(t.scenario << " (frame " << t.frame << "), " << (snapshot ? "from its snapshot" : "caught up from its log") << ", fresh process report:\n" << report);
-		CHECK(rc == 0);
-		CHECK(reportField(report, "save_frame") == std::to_string(t.frame));
-		CHECK(reportField(report, "load_mode") == (snapshot ? "snapshot" : "catch_up"));
-		CHECK(reportField(report, "catch_up_hashes") == (snapshot ? std::string("0") : std::to_string(t.frame - startFrame)));
-		CHECK(reportField(report, "hashes_compared") == std::to_string(lastFrame - t.frame));
-		CHECK(reportField(report, "mismatches") == "0");
-		CHECK(reportField(report, "final_hash") == want);
-	};
-	std::string elevenPath;
-	for (const Taken &t : saves)
+	game.recorded = true;
+	return game;
+}
+
+// a save of the game in a fresh process: loaded from its snapshot (lane SAVE-4e: no frame of its log runs), then the uninterrupted game's commands to its
+// end, every hash compared; or caught up from its log (--verify-log: an old save's path, the snapshot compared at F). Peer is empty for this build's
+// openbfme_peer, else the command of a Windows peer (T3) with its install arguments
+struct FreshLoad
+{
+	int rc = -1;
+	std::string report;
+};
+
+FreshLoad loadFresh(const FourAiGame &game, const Taken &t, bool snapshot, const std::string &windowsPeer = std::string())
+{
+	FreshLoad r;
+	if (windowsPeer.empty())
 	{
-		const std::string reportPath = t.path + ".report";
-		int rc = runPeer("--load-save \"" + t.path + "\" --replay \"" + fullPath + "\" --report \"" + reportPath + "\"");
-		const std::string report = readText(reportPath);
-		check(t, report, rc, true);
+		const std::string reportPath = t.path + (snapshot ? ".report" : ".verify.report");
+		r.rc = runPeer("--load-save \"" + t.path + "\" --replay \"" + game.fullPath + "\" --report \"" + reportPath + "\"" + (snapshot ? "" : " --verify-log"));
+		r.report = readText(reportPath);
 		std::remove(reportPath.c_str());
-		if (!t.eleven)
-		{
-			std::remove(t.path.c_str());
-			continue;
-		}
-		elevenPath = t.path;
-		rc = runPeer("--load-save \"" + t.path + "\" --replay \"" + fullPath + "\" --report \"" + reportPath + "\" --verify-log");
-		const std::string verified = readText(reportPath);
-		check(t, verified, rc, false);
-		std::remove(reportPath.c_str());
-		// the measurement (SAVES.md section 8): the same 11-minute save, from its snapshot and caught up from its log, in a fresh process each
-		MESSAGE("SAVE-4e load time of the 11-minute save (frame " << t.frame << ", " << reportField(report, "snapshot_bytes")
-										<< " snapshot bytes): from the snapshot " << reportField(report, "load_ms") << " ms, caught up from the log "
-										<< reportField(verified, "load_ms") << " ms");
+		return r;
 	}
-	// T3 (SAVES.md section 6): a Windows peer (OPENBFME_WINDOWS_PEER: the command that runs openbfme_peer.exe, e.g. under Wine; its install paths in
-	// OPENBFME_WINDOWS_ROTWK / OPENBFME_WINDOWS_BFME2) catches the Linux save up from its log and saves the same snapshot bytes at F (--verify-log),
-	// then loads the Linux snapshot and plays on with every hash equal
+	const std::string reportPath = std::string("save2_t1_windows_") + (snapshot ? "snapshot" : "catch_up") + "_" + processTag() + ".report";
+	const int raw = std::system((windowsPeer + "--load-save " + t.path + " --replay " + game.fullPath + " --report " + reportPath + (snapshot ? "" : " --verify-log")).c_str());
+#ifdef _WIN32
+	r.rc = raw;
+#else
+	r.rc = WIFEXITED(raw) ? WEXITSTATUS(raw) : -1;
+#endif
+	r.report = readText(reportPath);
+	std::remove(reportPath.c_str());
+	return r;
+}
+
+void checkFresh(const FourAiGame &game, const Taken &t, const FreshLoad &r, bool snapshot)
+{
+	char want[64];
+	std::snprintf(want, sizeof(want), "0x%08X recorded 0x%08X", game.finalHash, game.finalHash);
+	INFO(t.scenario << " (frame " << t.frame << "), " << (snapshot ? "from its snapshot" : "caught up from its log") << ", fresh process report:\n" << r.report);
+	CHECK(r.rc == 0);
+	CHECK(reportField(r.report, "save_frame") == std::to_string(t.frame));
+	CHECK(reportField(r.report, "load_mode") == (snapshot ? "snapshot" : "catch_up"));
+	CHECK(reportField(r.report, "catch_up_hashes") == (snapshot ? std::string("0") : std::to_string(t.frame - game.startFrame)));
+	CHECK(reportField(r.report, "hashes_compared") == std::to_string(game.lastFrame - t.frame));
+	CHECK(reportField(r.report, "mismatches") == "0");
+	CHECK(reportField(r.report, "final_hash") == want);
+}
+
+// one named scenario's save (or the 11-minute save) loaded in a fresh process from its snapshot, or the 11-minute save caught up from its log
+void fourAiLoad(starttest::Shared &s, const std::string &scenario, bool snapshot)
+{
+	const FourAiGame &game = fourAiGame(s);
+	CHECK(game.writerErrors.empty());
+	const Taken *t = game.find(scenario);
+	REQUIRE_MESSAGE(t != nullptr, scenario << " never happened in 30 minutes of the game");
+	const FreshLoad r = loadFresh(game, *t, snapshot);
+	checkFresh(game, *t, r, snapshot);
+	// the measurement (SAVES.md section 8): the 11-minute save, from its snapshot and caught up from its log, in a fresh process each (a case each)
+	if (t->eleven && snapshot)
+	{
+		MESSAGE("SAVE-4e load time of the 11-minute save (frame " << t->frame << ", " << reportField(r.report, "snapshot_bytes") << " snapshot bytes) from the snapshot: "
+																 << reportField(r.report, "load_ms") << " ms");
+	}
+	else if (t->eleven)
+	{
+		MESSAGE("SAVE-4e load time of the 11-minute save (frame " << t->frame << ") caught up from the log: " << reportField(r.report, "load_ms") << " ms");
+	}
+}
+
+// T3 (SAVES.md section 6): a Windows peer (OPENBFME_WINDOWS_PEER: the command that runs openbfme_peer.exe, e.g. under Wine; its install paths in
+// OPENBFME_WINDOWS_ROTWK / OPENBFME_WINDOWS_BFME2) catches the Linux 11-minute save up from its log and saves the same snapshot bytes at F (--verify-log),
+// or loads the Linux snapshot and plays on with every hash equal
+void fourAiWindowsPeer(starttest::Shared &s, bool snapshot)
+{
 	const char *windowsPeer = std::getenv("OPENBFME_WINDOWS_PEER");
 	if (!windowsPeer || !*windowsPeer)
 	{
 		MESSAGE("SKIP save2 retail T3 (the snapshot bytes on Windows): OPENBFME_WINDOWS_PEER is not set");
+		return;
 	}
-	else
-	{
-		const char *wr = std::getenv("OPENBFME_WINDOWS_ROTWK"), *wb = std::getenv("OPENBFME_WINDOWS_BFME2");
-		const std::string install = std::string(" --rotwk \"") + (wr ? wr : std::getenv("ROTWK_INSTALL")) + "\" --bfme2 \"" + (wb ? wb : std::getenv("BFME2_INSTALL")) + "\" ";
-		const Taken *eleven = nullptr;
-		for (const Taken &t : saves)
-		{
-			eleven = t.eleven ? &t : eleven;
-		}
-		REQUIRE(eleven);
-		for (bool snapshot : { false, true })
-		{
-			const std::string reportPath = "save2_t1_windows.report";
-			const std::string cmd = std::string(windowsPeer) + install + "--load-save " + elevenPath + " --replay " + fullPath + " --report " + reportPath
-				+ (snapshot ? "" : " --verify-log");
-			const int raw = std::system(cmd.c_str());
-#ifdef _WIN32
-			const int rc = raw;
+	const FourAiGame &game = fourAiGame(s);
+	CHECK(game.writerErrors.empty());
+	const Taken *eleven = game.find("eleven minutes");
+	REQUIRE(eleven);
+	const char *wr = std::getenv("OPENBFME_WINDOWS_ROTWK"), *wb = std::getenv("OPENBFME_WINDOWS_BFME2");
+	const std::string install = std::string(" --rotwk \"") + (wr ? wr : std::getenv("ROTWK_INSTALL")) + "\" --bfme2 \"" + (wb ? wb : std::getenv("BFME2_INSTALL")) + "\" ";
+	const FreshLoad r = loadFresh(game, *eleven, snapshot, std::string(windowsPeer) + install);
+	MESSAGE("T3, the Windows peer " << (snapshot ? "from the Linux snapshot" : "caught up, its snapshot compared with Linux's") << ":\n" << r.report);
+	checkFresh(game, *eleven, r, snapshot);
+}
+} // namespace
+#endif
+
+// SAVES.md T1: a 4-AI skirmish (seed 8644) saved with each named scenario in flight and at eleven minutes, every save loaded in a fresh process and
+// played on past F + 3000 with the uninterrupted game's commands: every frame's hash is the unsaved game's (lane SAVE-4e: from the save's snapshot, no
+// frame of its log run; the 11-minute save also caught up from its log, its snapshot compared, both load times measured; T3 with a Windows peer). Lane
+// SAVE2SPLIT-1: a case per save and load mode (one case before), the recording shared within a process (fourAiGame)
+#ifdef OPENBFME_PEER_EXE
+#define SAVE2_T1_FRESH(call, what) call
 #else
-			const int rc = WIFEXITED(raw) ? WEXITSTATUS(raw) : -1;
+#define SAVE2_T1_FRESH(call, what) MESSAGE("SKIP save2 retail T1 (" what "): the openbfme_peer executable is not built")
 #endif
-			const std::string report = readText(reportPath);
-			MESSAGE("T3, the Windows peer " << (snapshot ? "from the Linux snapshot" : "caught up, its snapshot compared with Linux's") << ":\n" << report);
-			check(*eleven, report, rc, snapshot);
-			std::remove(reportPath.c_str());
-		}
-	}
-	std::remove(elevenPath.c_str());
-	std::remove(fullPath.c_str());
-#endif
+
+TEST_CASE("save2 retail T1 (SAVES.md) 4-AI skirmish mid-combat: the save with a unit attacking, loaded from its snapshot in a fresh process "
+		  "and played on past F + 3000 with the uninterrupted game's commands: every frame's hash is the unsaved game's")
+{
+	OPENBFME_REQUIRE_START(s);
+	SAVE2_T1_FRESH(fourAiLoad(*s, "mid-combat", true), "fresh process");
+}
+
+TEST_CASE("save2 retail T1 (SAVES.md) 4-AI skirmish mid-construction: the save with a structure being built, loaded from its snapshot in a "
+		  "fresh process and played on past F + 3000 with the uninterrupted game's commands: every frame's hash is the unsaved game's")
+{
+	OPENBFME_REQUIRE_START(s);
+	SAVE2_T1_FRESH(fourAiLoad(*s, "mid-construction", true), "fresh process");
+}
+
+TEST_CASE("save2 retail T1 (SAVES.md) 4-AI skirmish special power in flight: the save with a special power running, loaded from its snapshot "
+		  "in a fresh process and played on past F + 3000 with the uninterrupted game's commands: every frame's hash is the unsaved game's")
+{
+	OPENBFME_REQUIRE_START(s);
+	SAVE2_T1_FRESH(fourAiLoad(*s, "special power in flight", true), "fresh process");
+}
+
+TEST_CASE("save2 retail T1 (SAVES.md) 4-AI skirmish horde mid-march: the save with a horde moving, loaded from its snapshot in a fresh "
+		  "process and played on past F + 3000 with the uninterrupted game's commands: every frame's hash is the unsaved game's")
+{
+	OPENBFME_REQUIRE_START(s);
+	SAVE2_T1_FRESH(fourAiLoad(*s, "horde mid-march", true), "fresh process");
+}
+
+TEST_CASE("save2 retail T1 (SAVES.md) 4-AI skirmish 11-minute save from its snapshot: loaded in a fresh process (no frame of its log run, the "
+		  "load time measured) and played on past F + 3000 with the uninterrupted game's commands: every frame's hash is the unsaved game's")
+{
+	OPENBFME_REQUIRE_START(s);
+	SAVE2_T1_FRESH(fourAiLoad(*s, "eleven minutes", true), "fresh process");
+}
+
+TEST_CASE("save2 retail T1 (SAVES.md) 4-AI skirmish 11-minute save caught up from its log: in a fresh process, its snapshot compared at F "
+		  "(--verify-log, the load time measured), played on past F + 3000 with the uninterrupted game's commands: every frame's hash is the "
+		  "unsaved game's")
+{
+	OPENBFME_REQUIRE_START(s);
+	SAVE2_T1_FRESH(fourAiLoad(*s, "eleven minutes", false), "fresh process");
+}
+
+TEST_CASE("save2 retail T1 (SAVES.md) 4-AI skirmish T3 Windows peer caught up from the log: the Linux 11-minute save caught up on a Windows "
+		  "peer saves the same snapshot bytes at F and plays on past F + 3000 with every hash equal (OPENBFME_WINDOWS_PEER)")
+{
+	OPENBFME_REQUIRE_START(s);
+	SAVE2_T1_FRESH(fourAiWindowsPeer(*s, false), "fresh process");
+}
+
+TEST_CASE("save2 retail T1 (SAVES.md) 4-AI skirmish T3 Windows peer from the Linux snapshot: the Linux 11-minute save's snapshot loaded on a "
+		  "Windows peer plays on past F + 3000 with every hash equal (OPENBFME_WINDOWS_PEER)")
+{
+	OPENBFME_REQUIRE_START(s);
+	SAVE2_T1_FRESH(fourAiWindowsPeer(*s, true), "fresh process");
 }
 
 TEST_CASE("save2 retail: the loaded game's recording must open, or the load fails named (review: it went on unrecorded); a log keeping only its final "
@@ -1181,7 +1323,7 @@ TEST_CASE("save2 retail: the loaded game's recording must open, or the load fail
 	CHECK(cl.hashesCompared() == 0u);
 }
 
-TEST_CASE("save2 retail T1, a campaign mission: recorded in memory, saved at frame F, started again from its campaign and caught up, every later hash equal")
+TEST_CASE("save2 retail T1 (a campaign mission): recorded in memory, saved at frame F, started again from its campaign and caught up, every later hash equal")
 {
 	OPENBFME_REQUIRE_START(s);
 	// the mission's script countdowns after PLAY-4's movement and guard changes: the intro cine's last ones run until about frame 200 and no
@@ -1443,35 +1585,77 @@ TEST_CASE("campsave1 retail: three more ANGMAR_CAMPAIGN missions (Conquest of Rh
 	}
 }
 
-TEST_CASE("save2 retail T1 (SAVES.md), a script waiting on a timer: a campaign mission saved with a script countdown timer running, loaded in a fresh "
-		  "process from its campaign start and played on to F + 3000 with the uninterrupted game's commands: every frame's hash equal (lane SAVE-4e: from "
-		  "its snapshot, and caught up from its log with the snapshot compared)")
+#ifdef OPENBFME_PEER_EXE
+namespace
 {
-	OPENBFME_REQUIRE_START(s);
-#ifndef OPENBFME_PEER_EXE
-	MESSAGE("SKIP save2 retail T1 (a mission, fresh process): the openbfme_peer executable is not built");
-#else
+// lane SAVE2SPLIT-1: SAVES.md T1's "a script waiting on a timer", the Angmar mission recorded once per process (as fourAiGame) and shared by its two
+// cases, from the snapshot and caught up from the log; the files carry the process id and are removed when the process ends
+struct TimerMission
+{
+	bool recorded = false;
+	std::string fullPath, savePath;
+	UnsignedInt startFrame = 0, savedFrame = 0, lastFrame = 0;
+	std::uint32_t finalHash = 0;
+	void removeFiles()
+	{
+		for (const std::string &p : { savePath, fullPath })
+		{
+			if (!p.empty())
+			{
+				std::remove(p.c_str());
+			}
+		}
+	}
+	~TimerMission() { removeFiles(); }
+};
+
+const TimerMission &timerMission(starttest::Shared &s)
+{
+	static TimerMission m;
+	if (m.recorded)
+	{
+		return m;
+	}
+	m.removeFiles();
+	m = TimerMission();
 	std::string error;
-	const std::string profilePath = "save2_t1m_profile.txt", fullPath = "save2_t1m_full.replay", savePath = "save2_t1m.obfmesave",
-					  reportPath = "save2_t1m.report";
+	const std::string tag = processTag(), profilePath = "save2_t1m_profile_" + tag + ".txt";
+	m.fullPath = "save2_t1m_full_" + tag + ".replay";
+	m.savePath = "save2_t1m_" + tag + ".obfmesave";
 	REQUIRE(runPeer("--profile-text " + profilePath) == 0);
 	const ProfileIdentity profile = ProfileIdentity::fromText(readText(profilePath));
 	std::remove(profilePath.c_str());
 	const std::string map = "map ang angmar";
-	UnsignedInt startFrame = 0, savedFrame = 0, lastFrame = 0;
-	std::uint32_t finalHash = 0;
+	// lane BFME2CAMP1 (review): the mission is started as GameWorld::start_campaign_mission starts it, the campaign's carry-over step included
+	// (LiveGame::campaignCarryoverOptions: mission 0 begins the campaign), and the save's header carries that start's carry-over text, as a real save
+	// does; openbfme_peer restores it from the header
+	LiveGame::Options o;
+	std::string carryText;
+	{
+		const LinearCampaign *campaign = s.world->linearCampaigns().find("ANGMAR_CAMPAIGN");
+		REQUIRE(campaign != nullptr);
+		std::string stop;
+		REQUIRE_MESSAGE(LiveGame::campaignCarryoverOptions(*campaign, 0, std::string(), o, stop, error), error);
+		carryText = o.campaignCarryover ? o.carryover.serialize() : std::string();
+	}
+	o.mapName = map;
+	o.campaign = true;
+	o.difficulty = 2;
 	{
 		Loaded g;
-		loadMission(*s, map, 2, g);
+		g.source = std::make_unique<ArchiveW3DFileSource>(*s.mount->fs);
+		g.assets = std::make_unique<WW3DAssetManager>(*g.source);
+		g.game = std::make_unique<LiveGame>(*s.world, *s.mount->fs, *g.assets, s.options);
+		REQUIRE_MESSAGE(g.game->load(o, &error), error);
 		ReplayWriter writer;
 		writer.setKeepCopy(true);
 		ReplayHeader h;
 		h.game.game.mapName = map; // as GameWorld::start_campaign_mission records a mission (its map directory)
 		h.profile = profile;
-		REQUIRE_MESSAGE(writer.open(fullPath, h, &error), error);
+		REQUIRE_MESSAGE(writer.open(m.fullPath, h, &error), error);
 		LockstepDriver driver(nullptr, &writer);
 		RegisterLogicCRCHandler(g.game->dispatch());
-		startFrame = g.game->frame();
+		m.startFrame = g.game->frame();
 		g.game->setFrameDriver(&driver);
 		Scenarios sc;
 		for (int i = 0; i < 3300 && sc.timers.empty(); ++i)
@@ -1486,10 +1670,10 @@ TEST_CASE("save2 retail T1 (SAVES.md), a script waiting on a timer: a campaign m
 		}
 		REQUIRE_MESSAGE(!sc.timers.empty(), "no script countdown timer ran in the mission");
 		MESSAGE("the mission at its save: " << sc.text());
-		savedFrame = g.game->logic().getFrame();
+		m.savedFrame = g.game->logic().getFrame();
 		const std::uint32_t hash = g.game->logic().computeStateHash();
 		SaveGameFile save;
-		REQUIRE_MESSAGE(writer.logUpTo(savedFrame, hash, save.log, &error), error);
+		REQUIRE_MESSAGE(writer.logUpTo(m.savedFrame, hash, save.log, &error), error);
 		REQUIRE_MESSAGE(g.game->logic().saveSnapshot(save.snapshot, &error), error); // lane SAVE-4e
 		SaveGameHeader &sh = save.header;
 		sh.buildVersion = BuildVersion::kVersion;
@@ -1500,11 +1684,149 @@ TEST_CASE("save2 retail T1 (SAVES.md), a script waiting on a timer: a campaign m
 		sh.campaign = "ANGMAR_CAMPAIGN";
 		sh.campaignMission = 0;
 		sh.campaignDifficulty = 2;
+		sh.campaignCarryover = carryText; // header version 4 (lane BFME2CAMP1)
+		sh.frame = m.savedFrame;
+		sh.stateHash = hash;
+		sh.mapPath = "maps/" + map + "/" + map + ".map";
+		REQUIRE_MESSAGE(save.write(m.savePath, &error), error);
+		for (int i = 0; i < 3000; ++i)
+		{
+			humanCommands(*g.game, g.game->commands(), false);
+			REQUIRE(g.game->advance(0.2) == 1);
+		}
+		g.game->drainFrames();
+		m.lastFrame = g.game->logic().getFrame();
+		m.finalHash = g.game->logic().computeStateHash();
+		writer.close(m.lastFrame, m.finalHash);
+		g.game->setFrameDriver(nullptr);
+	}
+	m.recorded = true;
+	return m;
+}
+
+// the mission's save loaded in a fresh process from its campaign start: from the snapshot, or caught up from its log with the snapshot compared
+void timerMissionLoad(starttest::Shared &s, bool snapshot)
+{
+	const TimerMission &m = timerMission(s);
+	const std::string reportPath = std::string("save2_t1m_") + (snapshot ? "snapshot" : "catch_up") + "_" + processTag() + ".report";
+	char want[64];
+	std::snprintf(want, sizeof(want), "0x%08X recorded 0x%08X", m.finalHash, m.finalHash);
+	const int rc = runPeer("--load-save \"" + m.savePath + "\" --replay \"" + m.fullPath + "\" --report \"" + reportPath + "\"" + (snapshot ? "" : " --verify-log"));
+	const std::string report = readText(reportPath);
+	std::remove(reportPath.c_str());
+	MESSAGE("fresh process report (" << (snapshot ? "from the snapshot" : "caught up, the snapshot compared") << "):\n" << report);
+	CHECK(rc == 0);
+	CHECK(reportField(report, "save_frame") == std::to_string(m.savedFrame));
+	CHECK(reportField(report, "load_mode") == (snapshot ? "snapshot" : "catch_up"));
+	CHECK(reportField(report, "catch_up_hashes") == (snapshot ? std::string("0") : std::to_string(m.savedFrame - m.startFrame)));
+	CHECK(reportField(report, "hashes_compared") == "3000");
+	CHECK(reportField(report, "mismatches") == "0");
+	CHECK(reportField(report, "final_hash") == want);
+}
+} // namespace
+#endif
+
+// SAVES.md T1, a script waiting on a timer: a campaign mission saved with a script countdown timer running, loaded in a fresh process from its campaign
+// start and played on to F + 3000 with the uninterrupted game's commands: every frame's hash equal (lane SAVE-4e: from its snapshot, and caught up from its
+// log with the snapshot compared). Lane SAVE2SPLIT-1: a case per load mode (one case before), the recording shared within a process (timerMission)
+TEST_CASE("save2 retail T1 (SAVES.md) a script waiting on a timer from its snapshot: a campaign mission saved with a script countdown timer running, "
+		  "loaded from its snapshot in a fresh process from its campaign start and played on to F + 3000 with the uninterrupted game's commands: "
+		  "every frame's hash equal")
+{
+	OPENBFME_REQUIRE_START(s);
+	SAVE2_T1_FRESH(timerMissionLoad(*s, true), "a mission, fresh process");
+}
+
+TEST_CASE("save2 retail T1 (SAVES.md) a script waiting on a timer caught up from its log: a campaign mission saved with a script countdown timer "
+		  "running, caught up from its log in a fresh process from its campaign start (the snapshot compared at F) and played on to F + 3000 with "
+		  "the uninterrupted game's commands: every frame's hash equal")
+{
+	OPENBFME_REQUIRE_START(s);
+	SAVE2_T1_FRESH(timerMissionLoad(*s, false), "a mission, fresh process");
+}
+
+// lane BFME2CAMP1 (review): a campaign mission whose start spawns its carry-over (GOOD_CAMPAIGN's Rivendell: ElvenGlorfindel), saved and checked in a
+// fresh process. openbfme_peer must start the mission with the carry-over a real load restores (the header's campaignCarryover through
+// LiveGame::campaignCarryoverOptions, as GameWorld::start_campaign_mission does); without it the caught-up game has no Glorfindel and its hashes differ
+TEST_CASE("save2 retail T1 (BFME2CAMP1) a campaign mission with its carry-over: GOOD_CAMPAIGN's Rivendell saved at frame F, checked in a fresh process "
+		  "from its snapshot and caught up from its log: the peer restores the header's carry-over, every later hash equal")
+{
+	OPENBFME_REQUIRE_START(s);
+#ifndef OPENBFME_PEER_EXE
+	MESSAGE("SKIP save2 retail T1 (a carry-over mission, fresh process): the openbfme_peer executable is not built");
+#else
+	std::string error;
+	const std::string profilePath = "save2_t1c_profile.txt", fullPath = "save2_t1c_full.replay", savePath = "save2_t1c.obfmesave",
+					  reportPath = "save2_t1c.report";
+	REQUIRE(runPeer("--profile-text " + profilePath) == 0);
+	const ProfileIdentity profile = ProfileIdentity::fromText(readText(profilePath));
+	std::remove(profilePath.c_str());
+	std::string map, campaignName, carryText;
+	LiveGame::Options o;
+	{
+		const LinearCampaign *campaign = s->world->linearCampaigns().find("GOOD_CAMPAIGN");
+		REQUIRE(campaign != nullptr);
+		REQUIRE(!campaign->missions.empty());
+		map = campaign->missions[0].map;
+		campaignName = campaign->name;
+		std::string stop;
+		REQUIRE_MESSAGE(LiveGame::campaignCarryoverOptions(*campaign, 0, std::string(), o, stop, error), error);
+		REQUIRE(o.campaignCarryover); // the first mission begins the campaign (beginCampaign RW 0x5EC4EC)
+		carryText = o.carryover.serialize(); // what GameWorld::start_campaign_mission keeps for a save (m_campaignStart.carryover)
+	}
+	o.mapName = map;
+	o.campaign = true;
+	o.difficulty = 1;
+	UnsignedInt startFrame = 0, savedFrame = 0, lastFrame = 0;
+	std::uint32_t finalHash = 0;
+	{
+		Loaded g;
+		g.source = std::make_unique<ArchiveW3DFileSource>(*s->mount->fs);
+		g.assets = std::make_unique<WW3DAssetManager>(*g.source);
+		g.game = std::make_unique<LiveGame>(*s->world, *s->mount->fs, *g.assets, s->options);
+		REQUIRE_MESSAGE(g.game->load(o, &error), error);
+		int carried = 0;
+		for (Object *obj = g.game->logic().getFirstObject(); obj; obj = obj->getNextObject())
+		{
+			carried += obj->isCampaignCarryover() ? 1 : 0;
+		}
+		REQUIRE(carried > 0); // tolerance: a precondition (the carry-over made its objects; Rivendell makes ElvenGlorfindel), not the value under test
+		ReplayWriter writer;
+		writer.setKeepCopy(true);
+		ReplayHeader h;
+		h.game.game.mapName = map; // as GameWorld::start_campaign_mission records a mission (its map directory)
+		h.profile = profile;
+		REQUIRE_MESSAGE(writer.open(fullPath, h, &error), error);
+		LockstepDriver driver(nullptr, &writer);
+		RegisterLogicCRCHandler(g.game->dispatch());
+		startFrame = g.game->frame();
+		g.game->setFrameDriver(&driver);
+		for (int i = 0; i < 60; ++i)
+		{
+			humanCommands(*g.game, g.game->commands(), false);
+			REQUIRE(g.game->advance(0.2) == 1);
+		}
+		g.game->drainFrames();
+		savedFrame = g.game->logic().getFrame();
+		const std::uint32_t hash = g.game->logic().computeStateHash();
+		SaveGameFile save;
+		REQUIRE_MESSAGE(writer.logUpTo(savedFrame, hash, save.log, &error), error);
+		REQUIRE_MESSAGE(g.game->logic().saveSnapshot(save.snapshot, &error), error);
+		SaveGameHeader &sh = save.header;
+		sh.buildVersion = BuildVersion::kVersion;
+		sh.engineId = ProfileIdentity::buildId();
+		sh.profile = profile;
+		sh.executionProfile = "enhanced";
+		sh.gameKind = 1;
+		sh.campaign = campaignName;
+		sh.campaignMission = 0;
+		sh.campaignDifficulty = 1;
+		sh.campaignCarryover = carryText; // header version 4
 		sh.frame = savedFrame;
 		sh.stateHash = hash;
 		sh.mapPath = "maps/" + map + "/" + map + ".map";
 		REQUIRE_MESSAGE(save.write(savePath, &error), error);
-		for (int i = 0; i < 3000; ++i)
+		for (int i = 0; i < 300; ++i)
 		{
 			humanCommands(*g.game, g.game->commands(), false);
 			REQUIRE(g.game->advance(0.2) == 1);
@@ -1521,12 +1843,11 @@ TEST_CASE("save2 retail T1 (SAVES.md), a script waiting on a timer: a campaign m
 	{
 		const int rc = runPeer("--load-save \"" + savePath + "\" --replay \"" + fullPath + "\" --report \"" + reportPath + "\"" + (snapshot ? "" : " --verify-log"));
 		const std::string report = readText(reportPath);
-		MESSAGE("fresh process report (" << (snapshot ? "from the snapshot" : "caught up, the snapshot compared") << "):\n" << report);
+		MESSAGE("fresh process report (" << (snapshot ? "from the snapshot" : "caught up from the log: the carry-over start") << "):\n" << report);
 		CHECK(rc == 0);
-		CHECK(reportField(report, "save_frame") == std::to_string(savedFrame));
 		CHECK(reportField(report, "load_mode") == (snapshot ? "snapshot" : "catch_up"));
 		CHECK(reportField(report, "catch_up_hashes") == (snapshot ? std::string("0") : std::to_string(savedFrame - startFrame)));
-		CHECK(reportField(report, "hashes_compared") == "3000");
+		CHECK(reportField(report, "hashes_compared") == "300");
 		CHECK(reportField(report, "mismatches") == "0");
 		CHECK(reportField(report, "final_hash") == want);
 	}

@@ -118,9 +118,11 @@ EBLK (like the name) is written only in tagged files.
   order: reset the engine, xfer the blocks of the mode's list, run every
   queued `loadPostProcess` (RW 0x6DD65C: pointers are saved as IDs and
   resolved here), refresh the shroud, then restart the AI. After a War of the
-  Ring load (modes 4 and 6) it calls `InitRandom(0)` and suspends the logic
-  **(meaning to verify)**. A failure shows "GUI:ErrorLoadingGame" and returns
-  to the shell.
+  Ring map save's load (types 4 and 6) it calls `InitRandom(0)` and suspends
+  the logic (GameState::doLoadGame, the BFME2 decomp's byte-matched
+  0x6DD91A; RotWK's is the same shape; WOTR2 milestone 3 does the reseed, see
+  section 8). The mode 4 load reads list 0, the mode 6 one list 3, mode 1
+  list 4. A failure shows "GUI:ErrorLoadingGame" and returns to the shell.
 - **Screens.** SaveLoad.apt (`AptSaveLoad::*`) is shared with the replay
   list, which MP-2 already ported (`SaveLoadInfo`). Its game-type flags are 1
   Campaign, 2 Skirmish, 4 Replay, 8 War of the Ring single player, 0x10
@@ -260,7 +262,10 @@ functions map to a decomp `::xfer`: 316 tier A (the decomp code is RotWK's),
   per-module list of what was dropped;
 - **the embedded map and the object IDs** taken as saved. Pointers are
   resolved in `loadPostProcess`, as retail does;
-- **WotR saves** need War of the Ring, which isn't built (ROADMAP).
+- **WotR saves**: OpenBFME's War of the Ring map saves exist (section 8,
+  WOTR2 milestone 3); reading retail's `.BfME2WotR` would need retail's
+  CHUNK_LivingWorldLogic object graph (RW 0x6BC653), which the strategic model
+  does not keep in that shape.
 
 **Writing (export) is harder, and only partly testable here.** Retail loads a
 file only if every block it reads is byte-correct for its version, so export
@@ -645,6 +650,44 @@ and review counts describe those runs, not fixed counts for every build.
   `rejoinStep` loop (`advance(0.2)` within a time budget) is the same shape as
   `CommandLogLoad::step`.
 
+### WOTR2 milestone 3: the War of the Ring map's save
+
+- **The file:** container version 2 adds a fourth part, `LWLD`, after `SNAP`
+  (version 1 files, three parts, still load). A War of the Ring map save is
+  game kind 8 at save point 2: retail's mode 4 (RW 0x6DCFDF: the strategic
+  map up, single player). Its `campaign` field names the scenario
+  (LivingWorldCampaign), its state hash is the strategic game's, and it has
+  no frame, no log and no snapshot. `LWLD` holds two length-prefixed blobs:
+  the strategic game (`LivingWorldLogic::saveState`, GameState's stream of
+  the block `obfme:LivingWorld`), then the host's session (the lobby game
+  the battles start from, each player's lobby slot, the battle count:
+  Godot's `var_to_bytes`, read back with `bytes_to_var`, which refuses
+  objects).
+- **The block:** retail's CHUNK_LivingWorldLogic (RW 0x6BC653, the shared
+  state RW 0x6BBD55, version 7) xfers its object graph (LivingWorldPlayer,
+  ArmySummary, the regions, the beacons). OpenBFME's model keeps the same
+  state as players, regions (buildings, queues), armies (members) and
+  battles by index, so the block is native (`obfme:`). It follows retail's
+  order where the model has the field. It holds everything the state hash
+  covers, plus the event log. The data the world rebuilds (ranks, the RTS
+  templates' rank fields, ResourceMultiplierLimit) comes from the running
+  world at load. Every name and index is checked against the data, and a
+  mismatch is a named refusal.
+- **Loading:** like a campaign menu save, no log is replayed, so another build
+  may load it when the data identity matches and the scenario exists
+  (`GameWorld::wotrSaveVerdict`). The loaded state must hash as the header
+  says. Then the generator starts again from 0 (retail's `InitRandom(0)`
+  above): two loads of one save play the same war; the unsaved game's dice
+  are not repeated, as in retail.
+- **Screens:** Esc on the map opens QuitMenu.apt with retail's War of the Ring
+  branch (+ 0x114 == 0): Save / Load open SaveLoad.apt's War of the Ring page
+  (type 8, RW 0x92179F), whose rows are RW 0x6E04AD's for filter 8 (file
+  name, blank, time, date; a map save gold). The main menu's Load Game
+  offers the same page (flags 0xB).
+- **Not built:** saving inside a War of the Ring battle (retail's mode 3:
+  the battle's own save is refused by name), reading retail `.BfME2WotR`,
+  the multiplayer War of the Ring save (mode 6). Stop S-1332.
+
 ### SAVE-4a: the Xfer framework, GameState and the core blocks (lane SAVE-4a)
 
 - **The framework** (`Common/Xfer.h`, `XferSave.h`, `XferLoad.h`, `XferCRC.h`, `Snapshot.h`): one `xfer` per class
@@ -976,8 +1019,10 @@ and T3 (Linux and Windows bytes equal) cover it.
   drawables as before, the game still running; a header whose hash its log does not end with; the verify mode naming the first differing byte);
   the legal but unusual events (a capture, a temporary defection, a death, a player's every object killed, saved right after them and 30 frames
   later, loaded into another world and played 300 frames equal, saved again byte for byte); T3 with a Windows peer (OPENBFME_WINDOWS_PEER).
+  Lane SAVE2SPLIT-1: the fresh-process T1 runs are a test case per save and load mode (`save2 retail T1 (SAVES.md) 4-AI skirmish <save>
+  ...`, `save2 retail T1 (SAVES.md) a script waiting on a timer <mode> ...`), each its own gate job; a process records each game once.
   `godot --path godot -- --auto --save-test` loads a snapshot save and a log-only save through the screens (prerequisites and isolated folder below).
-- **Measured** (Deck, Release, `openbfme_peer --load-save` in a fresh process, the 4-AI Fall Back game of `save2 retail T1 (SAVES.md)`): the
+- **Measured** (Deck, Release, `openbfme_peer --load-save` in a fresh process, the 4-AI Fall Back game of the `save2 retail T1 (SAVES.md) 4-AI skirmish ...` cases): the
   11-minute save (frame 3,301, a 4,240,033-byte snapshot) loads from its snapshot in 100 ms; the same save caught up from its log (the earlier
   alphas' path, `--verify-log`) takes 27.8 s. The Angmar mission at frame 151: 385 ms from the snapshot, 4.5 s caught up. The in-process load of a
   1.8 MB snapshot (frame 601): 114 ms. Through the screens (`--save-test`, a CI host): 32 ms for a skirmish at frame 150, 141 ms for the mission.
@@ -1023,6 +1068,26 @@ and T3 (Linux and Windows bytes equal) cover it.
     failed save's error there too); no log-only fallback.
 - **War of the Ring battles:** not supported by this build (no War of the Ring battle start), so not in T1.
 - **Stops:** S-5010 .. S-5014.
+
+### BFME2CAMP1: the campaign, tutorial and rebuild-hole state (lane BFME2CAMP1, PR #137)
+
+Every new field is versioned, and a block writes its new version only when the state it adds exists: games without that state keep their old bytes and hashes. Every older version loads, with the new field at its default.
+
+| Where | Block / class | Version | Field (type) | An older save loads with |
+|---|---|---|---|---|
+| Save header (`SaveGameFile`) | header | 4 | `campaignCarryover` (string: `CampaignCarryover::State::serialize`, "" for none); refused in a skirmish save or when it does not parse | versions 1 to 3: "" (no carry-over step at the mission's start) |
+| `GameLogicSnapshot.cpp` | obfme:GameLogic | 3 (written with a buildability override or a carry-over state) | the script buildability overrides (count; each: template name string, status int 0..3); the campaign carry-over state (bool present; the serialized state string) | versions 1 and 2: no overrides, no carry-over state |
+| `Object.cpp` | Object | 2 | the campaign carry-over bit (bool, Object + 0x458 bit 4) | version 1: false |
+| `Team.cpp` | the team prototypes | 2 (written when a prototype names an attack priority set) | each prototype's attack priority set name (string) | version 1: no name |
+| `ScriptEngineXfer.cpp` | the script engine | 5 (always: CASTLEAREA-1's run-time trigger list extent at 4, MODCOMPAT-AI's completed upgrades at 5), 6 (written once a script edited the attack priorities) | the attack priority sets (bool; count; each: name string, default int, the template priorities as name / int pairs) | versions 2 and 3: the table as the map's INI made it |
+| `AIUpdateSnapshot.cpp` | AIUpdateInterface | 3 (an area guard or an attack info override), 4 (a team guard) | v3: the area to guard (int, checked against the map's areas), the attack info override (bool + name string); v4: the team to guard (team id) | versions 1 and 2: no area, no override; version 3: no team |
+| `AIUpdateSnapshot.cpp` | DozerAIUpdate | 3 | the rebuild flag (bool, + 0x4D0) | versions 1 and 2: false |
+| `AIStateMachineSnapshot.cpp` | the AI state machine | 2 (written with a goal squad) | the goal squad (bool; the member ids) | version 1: no squad |
+| `AIGuard.cpp` | the guard machine | 2 (an area guard), 3 (a team guard) | v2: the area (int, checked), its centre (coord) and centre flag (bool), the last area scan frame (uint); v3: the guarded team (team id) | version 1: no area; version 2: no team |
+| `RebuildHoleModules.cpp` | RebuildHoleExposeDie | 1 | the die module's part only | new class: an older save has none |
+| `RebuildHoleModules.cpp` | RebuildHoleBehavior | 1 (retail version 3's field order, RW 0x886669) | the update module's part; the worker, rebuilt structure and spawner ids (object ids); the frames to wait (uint); the worker and rebuild templates (name strings, a missing one refuses the load); the spawner's active flag (bool); its paid cost (real) | new class: an older save has none |
+
+The headless check (`openbfme_peer --load-save`) starts a campaign mission's save the way a real load does: the header's carry-over (or, for a first mission without one, the campaign's fresh records) and the mission's delayed list.
 
 ### Developer commands (current implementation)
 

@@ -1496,6 +1496,50 @@ TEST_CASE("online2: the online START becomes a LobbyStart; another profile, a mi
 	CHECK_FALSE(OnlineStart::utf8ToUtf16("\xED\xA0\x80", u)); // a surrogate
 }
 
+TEST_CASE("wotr9 online START: strategic setup and saved war identity require version 2")
+{
+	const ProfileIdentity own = ProfileIdentity::fromText("openbfme-profile 1\ntest\n");
+	const OnlineStart::Limits limits{ 8, 8 };
+	const std::string ticket = "AQHvzauJZ0UjAQEHAJQ1dxkKDPX40Zd_QbpSaTVc2UI"; // slot 1, mask 0x07
+	const std::string slots = "[{\"state\":\"player\",\"name\":\"Ann\",\"faction\":0,\"color\":0,\"startPos\":8,\"team\":0},"
+		"{\"state\":\"player\",\"name\":\"Bea\",\"faction\":1,\"color\":1,\"startPos\":9,\"team\":1},"
+		"{\"state\":\"player\",\"name\":\"Cy\",\"faction\":2,\"color\":2,\"startPos\":10,\"team\":2}]";
+	const std::string prefix = "{\"v\":2,\"kind\":\"openbfme-start\",\"game\":\"0123456789abcdef\",\"slot\":1,\"relay\":\"192.0.2.10:7350\","
+		"\"ticket\":\"" + ticket + "\",\"runAhead\":3,\"crcInterval\":100,\"profile\":\"" + own.digest + "\",\"setup\":{";
+	const std::string suffix = "\"map\":\"maps/strategic/strategic.map\",\"seed\":4242,\"startingCash\":-1,\"superweaponRestriction\":0,"
+		"\"rules\":null,\"legendaryHeroes\":1,\"slots\":" + slots + "}}";
+	auto parse = [&](const std::string &fields, LobbyStart &out, std::string &error) {
+		return OnlineStart::parse(prefix + fields + suffix, own, limits, out, &error);
+	};
+	LobbyStart start;
+	std::string error;
+	REQUIRE_MESSAGE(parse("\"gameMode\":1,\"scenario\":\"WarScenario\",", start, error), error);
+	CHECK(start.game.game.gameMode == 1);
+	CHECK(start.game.game.scenario == "WarScenario");
+	CHECK(start.game.game.slots[1].startPos == 9); // a region index, not a map's eighth start
+	CHECK(start.game.game.resumeSave.empty());
+	const std::string save = "0123456789abcdef0123456789abcdef";
+	REQUIRE_MESSAGE(parse("\"gameMode\":1,\"scenario\":\"WarScenario\",\"resumeSave\":\"" + save + "\",\"resumeHash\":42,", start, error), error);
+	CHECK(start.game.game.resumeSave == save);
+	CHECK(start.game.game.resumeHash == 42);
+	CHECK_FALSE(parse("\"gameMode\":0,\"scenario\":\"WarScenario\",", start, error));
+	CHECK(error.find("\"gameMode\"") != std::string::npos);
+	CHECK_FALSE(parse("\"gameMode\":1,\"scenario\":\"\",", start, error));
+	CHECK(error.find("\"scenario\"") != std::string::npos);
+	CHECK_FALSE(parse("\"gameMode\":1,\"scenario\":\"WarScenario\",\"resumeSave\":\"\",\"resumeHash\":42,", start, error));
+	CHECK(error.find("\"resumeHash\"") != std::string::npos);
+	CHECK_FALSE(parse("\"gameMode\":1,\"scenario\":\"WarScenario\",\"resumeSave\":\"ABCDEF0123456789abcdef0123456789\",\"resumeHash\":42,", start, error));
+	CHECK(error.find("\"resumeSave\"") != std::string::npos);
+	CHECK_FALSE(parse("\"gameMode\":1,\"scenario\":\"WarScenario\",\"resumeSave\":\"\",\"resumeHash\":-1,", start, error));
+	CHECK(error.find("\"resumeHash\"") != std::string::npos);
+	CHECK_FALSE(parse("", start, error));
+	CHECK(error.find("\"gameMode\"") != std::string::npos);
+	std::string legacy = prefix + "\"gameMode\":1,\"scenario\":\"WarScenario\",\"resumeSave\":\"\",\"resumeHash\":0," + suffix;
+	legacy.replace(legacy.find("\"v\":2"), 5, "\"v\":1");
+	CHECK_FALSE(OnlineStart::parse(legacy, own, limits, start, &error));
+	CHECK(error.find("version 1 is Open Play only") != std::string::npos);
+}
+
 TEST_CASE("online2: the relay binds by ticket, forwards in place, enforces the slot check, the targets, the budget, and answers NOT_BOUND / REFUSED")
 {
 	using namespace RelayProtocol;

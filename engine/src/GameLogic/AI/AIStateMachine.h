@@ -31,7 +31,22 @@
 
 class AIUpdateInterface;
 class AIStateMachine;
+class GameLogic;
 class Object;
+class Team;
+
+// lane BFME2CAMP1: ZH Squad (Common/Squad.cpp; AISquad here: AIGroupFormations.cpp has a local Squad); RotWK's (0x1C bytes, ctor RW 0x66823E): the ids of its objects (+ 4 .. + 8) and the list getLiveObjects
+// fills (+ 0x10 .. + 0x14). Implemented in AIHunt.cpp (the squad attack state is its only reader)
+struct AISquad
+{
+	std::vector<ObjectID> objectIDs;
+	// RW 0x8DB149 squadFromTeam(team, clearSquadFirst): the ids emptied first when asked (RW 0x98B95B), then every member of the team in its member order
+	// (RW 0x66362D) appended (RW 0x5487BB)
+	void squadFromTeam(const Team &team, bool clearSquadFirst);
+	// RW 0x8DB103(1): an id that finds no object (RW 0x449681) leaves the squad (RW 0x8DB0AB), then the objects found that are not selectable (RW 0x68DE58)
+	// are dropped from the answer (they stay members)
+	std::vector<Object *> getLiveObjects(GameLogic &logic);
+};
 
 // ZH StateReturnType: the sleep forms are positive frame counts
 inline bool IS_STATE_SLEEP(StateReturnType r) { return (int)r > 0; }
@@ -191,6 +206,10 @@ public:
 	void setGoalObject(ObjectID id) { m_goalObjectID = id; }
 	Object *goalObject() const;
 	const std::vector<Coord3D> &goalPath() const { return m_goalPath; }
+	// lane BFME2CAMP1: RotWK AIStateMachine + 0x4C (ZH AIStateMachine::m_goalSquad): the squad privateAttackTeam sets (RW 0x751E97: made when there is none,
+	// then filled from the team, emptied first), deleted by the machine's clear (RW 0x75464E) and by nothing else; null when there is none
+	AISquad *goalSquad() const { return m_goalSquad.get(); }
+	void setGoalSquadFromTeam(const Team &team);
 	void setGoalPath(const std::vector<Coord3D> &path) { m_goalPath = path; }
 	void addToGoalPath(const Coord3D &p);
 	const Coord3D *goalPathPosition(int index) const;
@@ -236,6 +255,7 @@ private:
 	// the persistent goal saved while a temporary state runs (ZH setTemporaryState leaves the goal to the state; the machine keeps it)
 	Coord3D m_savedGoalPosition{ 0.0f, 0.0f, 0.0f };
 	ObjectID m_savedGoalObjectID = INVALID_ID;
+	std::unique_ptr<AISquad> m_goalSquad; ///< lane BFME2CAMP1: + 0x4C
 };
 
 // ---- the states ----------------------------------------------------------------------------------------------------------------

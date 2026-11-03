@@ -4,14 +4,14 @@
 // hover area (Options' "tooltip2DShadows", Skirmish's columns, the main menu's buttons through AptButtonTooltipMap.ini), drawn by GuiFX.apt's ToolTip clip.
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; the BFME2 decomp is the donor at the addresses marked tier A / B):
-//   * the hover (AptPlayer::HandleOverButtons RW 0x624C68, BFME2 decomp reverse/attempts/0x00224f6c.cpp, tier A): the hovered button's target path below its
+//   * the hover (AptPlayer::HandleOverButtons RW 0x624C68, BFME2 decomp AptPlayer.cpp, tier A): the hovered button's target path below its
 //     level ("SoloPlayNav/Skirmish/bttn"; an unnamed button gives an empty last name, so the path ends with '/') goes first to the level's over-button
 //     handlers, then "<movie without its extension>/<path>" to the global ones (the hero bar, the spell book: InGameHud); a name that does not end with '/'
 //     goes to the tooltip function (RW 0x6235E2, decomp attempt 0x002238e6.cpp): the name is replaced by its ButtonMap entry when it has one (the map at
 //     + 0xC, filled from data\ini\AptButtonTooltipMap.ini's "ButtonMap = <path> <name>" rows), the text "TOOLTIP:" + name is fetched, and ONLY when the
 //     string file has it Mouse::setCursorTooltip(text, -1, null, 1.0) runs (RW 0x5EE1A6, BFME2 decomp MouseRva001EEA6D.cpp, tier A: the request text,
 //     the delay override -1, the default colour);
-//   * Mouse::drawTooltip (RW 0x5EE7A8, BFME2 decomp MouseDrawTooltip.cpp, tier B same-shape), once a frame: a request that differs from the last one restarts
+//   * Mouse::drawTooltip (RW 0x5EE7A8, BFME2 decomp Input/Mouse.cpp, tier B same-shape), once a frame: a request that differs from the last one restarts
 //     the delay clock (timeGetTime); the delay is Mouse.ini's TooltipDelayTime (Mouse + 0x127C) unless the request carried one (>= 0), 0 with GlobalData
 //     + 0x9C1 (a command line switch, false by default, RW 0x642E19); once the delay has passed the tip may show: with GlobalData + 0x9BF (true, RW 0x642E0C),
 //     a display and a non-empty request: a request that differs from the one sent calls ShowToolTip with the font (Language.ini's TooltipFontName when it

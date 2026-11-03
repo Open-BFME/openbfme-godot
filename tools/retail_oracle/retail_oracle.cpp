@@ -336,15 +336,25 @@ struct CallRegs
 	u32 r_eax, r_ecx, r_edx, r_ebx, r_esi, r_edi, r_ebp, r_esp;
 };
 
-static u32 g_target, g_nargs, g_args[64], g_savedEsp, g_recoverEip;
-static u32 g_cw = 0x007F;    // x87 control word: PC24, round to nearest, all exceptions masked
-static u32 g_mxcsr = 0x1F80; // SSE control: round to nearest, all exceptions masked
-static CallRegs g_in, g_out;
-static u16 g_outCw;
-static u32 g_outMxcsr;
-static u8 g_outXmm0[16];
-static u8 g_outEnv[28];
-static u8 g_outSt0[10];
+// the call frame's state; the mingw build's doCall (file-scope asm below) names these symbols, so there they have C linkage
+#if defined(__MINGW32__)
+#define ORACLE_CALL_STATE
+extern "C" {
+#else
+#define ORACLE_CALL_STATE static
+#endif
+ORACLE_CALL_STATE u32 g_target, g_nargs, g_args[64], g_savedEsp, g_recoverEip;
+ORACLE_CALL_STATE u32 g_cw = 0x007F;    // x87 control word: PC24, round to nearest, all exceptions masked
+ORACLE_CALL_STATE u32 g_mxcsr = 0x1F80; // SSE control: round to nearest, all exceptions masked
+ORACLE_CALL_STATE CallRegs g_in, g_out;
+ORACLE_CALL_STATE u16 g_outCw;
+ORACLE_CALL_STATE u32 g_outMxcsr;
+ORACLE_CALL_STATE u8 g_outXmm0[16];
+ORACLE_CALL_STATE u8 g_outEnv[28];
+ORACLE_CALL_STATE u8 g_outSt0[10];
+#if defined(__MINGW32__)
+}
+#endif
 
 static volatile LONG g_inCall = 0;
 static volatile LONG g_faulted = 0;
@@ -388,6 +398,62 @@ static LONG CALLBACK vectoredHandler(EXCEPTION_POINTERS *ep)
 	return EXCEPTION_CONTINUE_EXECUTION;
 }
 
+#if defined(__MINGW32__)
+// Lane BFME2MODE-0: the llvm-mingw build (build_mingw.sh, for Wine). clang's MS-style asm cannot take a label's address (offset Recover), so
+// the same sequence as the MSVC doCall below is a file-scope function in GNU assembler (Intel syntax); CallRegs' fields are 4 bytes apart
+extern "C" void oracle_doCall(void);
+__asm__(".intel_syntax noprefix\n"
+		".text\n"
+		".globl _oracle_doCall\n"
+		"_oracle_doCall:\n"
+		"  pushfd\n"
+		"  pushad\n"
+		"  mov dword ptr [_g_savedEsp], esp\n"
+		"  mov dword ptr [_g_recoverEip], offset _oracle_recover\n"
+		"  fninit\n"
+		"  fldcw word ptr [_g_cw]\n"
+		"  ldmxcsr dword ptr [_g_mxcsr]\n"
+		"  mov ecx, dword ptr [_g_nargs]\n"
+		"1:\n"
+		"  test ecx, ecx\n"
+		"  jz 2f\n"
+		"  push dword ptr [_g_args + ecx*4 - 4]\n"
+		"  dec ecx\n"
+		"  jmp 1b\n"
+		"2:\n"
+		"  mov eax, dword ptr [_g_in + 0]\n"
+		"  mov ecx, dword ptr [_g_in + 4]\n"
+		"  mov edx, dword ptr [_g_in + 8]\n"
+		"  mov ebx, dword ptr [_g_in + 12]\n"
+		"  mov esi, dword ptr [_g_in + 16]\n"
+		"  mov edi, dword ptr [_g_in + 20]\n"
+		"  mov ebp, dword ptr [_g_in + 24]\n"
+		"  call dword ptr [_g_target]\n"
+		"  mov dword ptr [_g_out + 0], eax\n"
+		"  mov dword ptr [_g_out + 4], ecx\n"
+		"  mov dword ptr [_g_out + 8], edx\n"
+		"  mov dword ptr [_g_out + 12], ebx\n"
+		"  mov dword ptr [_g_out + 16], esi\n"
+		"  mov dword ptr [_g_out + 20], edi\n"
+		"  mov dword ptr [_g_out + 24], ebp\n"
+		"  mov dword ptr [_g_out + 28], esp\n"
+		"  fnstcw word ptr [_g_outCw]\n"
+		"  stmxcsr dword ptr [_g_outMxcsr]\n"
+		"  movups xmmword ptr [_g_outXmm0], xmm0\n"
+		"  fnstenv [_g_outEnv]\n"
+		".globl _oracle_recover\n"
+		"_oracle_recover:\n"
+		"  mov esp, dword ptr [_g_savedEsp]\n"
+		"  popad\n"
+		"  popfd\n"
+		"  ret\n"
+		".att_syntax prefix\n");
+
+static void doCall()
+{
+	oracle_doCall();
+}
+#else
 static void doCall()
 {
 	__asm
@@ -433,6 +499,7 @@ static void doCall()
 		popfd
 	}
 }
+#endif
 
 static void captureSt0(int &depth, bool &have)
 {
@@ -541,6 +608,29 @@ static std::string runCall(u32 target, const std::string &conv, std::vector<u32>
 // ---------------------------------------------------------------------------------------------
 // Memory helpers (SEH guarded)
 // ---------------------------------------------------------------------------------------------
+#if defined(__MINGW32__)
+// Lane BFME2MODE-0: the llvm-mingw build (tools/retail_oracle/build_mingw.sh, run under Wine) has no SEH __try; the kernel's own copies fail
+// cleanly on an unmapped or protected page instead
+static bool guardedRead(u32 addr, u8 *dst, size_t n)
+{
+	SIZE_T done = 0;
+	return ReadProcessMemory(GetCurrentProcess(), (const void *)(size_t)addr, dst, n, &done) && done == n;
+}
+
+static bool guardedWrite(u32 addr, const u8 *src, size_t n)
+{
+	DWORD old = 0;
+	bool reprotect = VirtualProtect((void *)(size_t)addr, n, PAGE_EXECUTE_READWRITE, &old) != 0;
+	SIZE_T done = 0;
+	bool ok = WriteProcessMemory(GetCurrentProcess(), (void *)(size_t)addr, src, n, &done) && done == n;
+	if (reprotect)
+	{
+		DWORD tmp;
+		VirtualProtect((void *)(size_t)addr, n, old, &tmp);
+	}
+	return ok;
+}
+#else
 static bool guardedRead(u32 addr, u8 *dst, size_t n)
 {
 	__try
@@ -573,6 +663,7 @@ static bool guardedWrite(u32 addr, const u8 *src, size_t n)
 		return false;
 	}
 }
+#endif
 
 // ---------------------------------------------------------------------------------------------
 // Protocol

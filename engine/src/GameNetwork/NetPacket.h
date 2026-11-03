@@ -129,23 +129,36 @@ constexpr std::uint32_t kMaxGameMessageArguments = 1u << 20;
 // GameMessage (format 2): u16 type, u8 player index (0xFF = -1), u32 argument count, then per argument a u8 GameMessageArgumentDataType and its value
 // (format 1 had a u8 count: a selection of 255 objects has 256 arguments). Only the argument types GameMessage can hold are written; false + *error for any
 // other (never a silent truncation)
-bool writeGameMessage(NetByteWriter &w, const GameMessage &m, std::string *error);
-// null + *error on a malformed or truncated message, a type outside 1001 .. 1147 or an unknown argument type
-std::unique_ptr<GameMessage> readGameMessage(NetByteReader &r, std::string *error);
+// WOTR2 milestone 8 (step 2): the message family a lockstep game carries. A skirmish or battle (Logic) carries the RTS logic's messages; a War of the
+// Ring's strategic map (Strategic: GameNetwork/StrategicSession.h) carries the MSG_LW_* orders, MSG_LOGIC_CRC and the disconnect path's MSG_SELF_DESTRUCT. A message of the other family is refused
+// at the decode like any type the stream does not know (a skirmish refuses MSG_LW_* exactly as before the family existed)
+enum class MessageFamily : std::uint8_t
+{
+	Logic,
+	Strategic
+};
+bool messageInFamily(int type, MessageFamily family);
+bool writeGameMessage(NetByteWriter &w, const GameMessage &m, std::string *error, MessageFamily family = MessageFamily::Logic);
+// null + *error on a malformed or truncated message, a type outside the family (Logic: 1001 .. 1147 and 32001) or an unknown argument type
+std::unique_ptr<GameMessage> readGameMessage(NetByteReader &r, std::string *error, MessageFamily family = MessageFamily::Logic);
 
 // OpenBFME P16: legacy records have no prefix and exactly 8 slots. Extended records begin with this invalid legacy slot state,
 // then i32 mapStartCount (9..16), then 16 slots. Slots beyond mapStartCount must be closed. Old readers reject the tag as a slot state.
 constexpr std::int32_t kExtendedGameInfoTag = -16;
-void writeGameInfo(NetByteWriter &w, const SkirmishGameInfo &g);
+// WOTR2 milestone 8 (step 2): `warFields`: the game mode (u8) and the scenario (str) follow Cheat Mode. Only the LAN messages of LANAPI protocol 5 and
+// LANLobby version 8 / 9 carry them; a replay, a save and every older message do not (their bytes are unchanged): read without them, a game is open play
+void writeGameInfo(NetByteWriter &w, const SkirmishGameInfo &g, bool warFields = false);
 // lane UBERJOIN-1: `profileOptionalAtEnd`: the simulation profile (the last field) may be absent when the packet ends right before it (the game list's
 // announcement, the one place a GameInfo is the packet's tail: an announcement of a peer that predates UBER-1 lists as Faithful). Present, it is checked as
 // ever (a value this build does not know is refused); a GameInfo with more bytes after it never takes the shortcut
 // lane OWNERFIX-2: the eight slots' handicaps (GameSlot + 0x20) follow the profile; `slotHandicaps` false reads a GameInfo written before they existed (a
 // format 5 / 6 replay or save: every handicap 0). An announcement without the profile has none either (every handicap 0); one with the profile must carry
 // them (the LAN protocol version that carries them refuses older peers first). A handicap outside 0, -5 .. -95 (SkirmishGameSlot::handicapValid) is refused
-bool readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string *error, bool profileOptionalAtEnd = false, bool slotHandicaps = true, bool cheatField = true);
-void writeNewGameMessage(NetByteWriter &w, const NewGameMessage &m);
-bool readNewGameMessage(NetByteReader &r, NewGameMessage &m, std::string *error, bool slotHandicaps = true, bool cheatField = true);
+bool readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string *error, bool profileOptionalAtEnd = false, bool slotHandicaps = true, bool cheatField = true,
+	bool warFields = false);
+void writeNewGameMessage(NetByteWriter &w, const NewGameMessage &m, bool warFields = false);
+bool readNewGameMessage(NetByteReader &r, NewGameMessage &m, std::string *error, bool slotHandicaps = true, bool cheatField = true, bool warFields = false);
+constexpr std::size_t kMaxScenarioName = 128; ///< WOTR2 milestone 8: a longer scenario name is refused (retail sends a byte index)
 } // namespace NetPacket
 
 // One network command (ZH NetCommandMsg and its subclasses, reduced to the commands this lane exchanges)
@@ -192,6 +205,6 @@ namespace NetPacket
 constexpr std::uint8_t kDisconnectPlayer16 = 0x87;
 constexpr std::uint8_t kDisconnectScreenOff16 = 0x88;
 constexpr std::uint8_t kFrameResend16 = 0x89;
-std::vector<std::uint8_t> encodeCommand(const NetCommandMsg &c, std::string *error);
-bool decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommandMsg &out, std::string *error);
+std::vector<std::uint8_t> encodeCommand(const NetCommandMsg &c, std::string *error, MessageFamily family = MessageFamily::Logic);
+bool decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommandMsg &out, std::string *error, MessageFamily family = MessageFamily::Logic);
 } // namespace NetPacket

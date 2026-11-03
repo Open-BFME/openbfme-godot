@@ -180,6 +180,7 @@ public:
 	std::uint32_t whenWeCanFireAgain() const { return m_whenWeCanFireAgain; } // +0x18
 	std::uint32_t whenPreAttackFinished() const { return m_whenPreAttackFinished; } // +0x1C
 	std::uint32_t whenFiringEnds() const { return m_whenFiringEnds; }    // +0x20
+	void clearWhenFiringEnds() { m_whenFiringEnds = 0; }                 // +0x20 = 0 (lane BFME2CAMP1: privateAttackTeam RW 0x66C07F)
 	std::uint32_t followThruEnd() const { return m_followThruEnd; }      // +0x24
 	std::uint32_t timerStart() const { return m_timerStart; }            // +0x28
 	std::uint32_t lastFireFrame() const { return m_lastFireFrame; }      // +0x2C

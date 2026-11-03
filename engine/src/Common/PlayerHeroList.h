@@ -78,6 +78,7 @@ public:
 	const HeroRecord *findByProductionID(std::uint32_t id) const;
 
 	void clear() { m_records.clear(); }
+	static HeroRecord recordFromTemplate(const ThingTemplate &tt); ///< RW 0x780713 (lane BFME2CAMP1: CREATE_UNIT_REVIVAL_ENTRY_AT_LEVEL too)
 	void addPurchase(const ThingTemplate &tt);        ///< RW 0x781801 (-> 0x780713)
 	int addRecord(const HeroRecord &r);               ///< push_back (RW 0x6E40A6); returns the new index (RW 0x781792 returns size - 1)
 	void erase(size_t index) { m_records.erase(m_records.begin() + (long)index); } ///< RW 0x6E33C5

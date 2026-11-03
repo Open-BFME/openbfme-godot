@@ -25,8 +25,8 @@ func _run() -> void:
 		push_error('not fs.is_shell_source()')
 		quit(1)
 		return
-	if not (mounted.stops == PackedStringArray(["[S-5911] BFME2-only gameplay uses the shared simulation; BFME2 versus RotWK logic differences remain unverified, including the stored-only PreLandingEmotionAffectsAllies filter"])):
-		push_error('mounted.stops == PackedStringArray(["[S-5911] BFME2-only gameplay uses the shared simulation; BFME2 versus RotWK logic differences remain unverified, including the stored-only PreLandingEmotionAffectsAllies filter"])')
+	if not (mounted.stops == PackedStringArray(["[S-5911] BFME2-only gameplay uses the shared simulation; remaining BFME2 versus RotWK logic and initialization-order differences remain unverified"])):
+		push_error('mounted.stops == PackedStringArray(["[S-5911] BFME2-only gameplay uses the shared simulation; remaining BFME2 versus RotWK logic and initialization-order differences remain unverified"])')
 		quit(1)
 		return
 	if not (not mounted.mounted.is_empty()):

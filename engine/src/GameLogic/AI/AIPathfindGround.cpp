@@ -220,7 +220,7 @@ bool Pathfinder::adjustGroundPathPosition(const Coord3D &from, Coord3D *pos)
 
 void Pathfinder::optimizeGroundPath(Path &path, int diameter)
 {
-	// RW 0x765BF6 (BFME2 decomp PathRva00363FA4.cpp, tier A). Only the ground layer exists (S-161): the layer-change limit of the first loop never applies
+	// RW 0x765BF6 (BFME2 decomp Path_optimizeGroundPath.cpp, tier A). Only the ground layer exists (S-161): the layer-change limit of the first loop never applies
 	PathNode *anchor = path.getFirstNode();
 	while (anchor && anchor != path.getLastNode())
 	{
@@ -326,7 +326,7 @@ void Pathfinder::optimizeGroundPath(Path &path, int diameter)
 Path *Pathfinder::buildGroundPath(const Coord3D *from, PathfindCell *goalCell, bool center, int diameter, float formationColumnWidth)
 {
 	// RW 0x6F0DA3 (BFME2 decomp PathfinderBuildGroundPath.cpp, tier A)
-	Path *path = new Path();
+	Path *path = new Path(m_uberLimits); // lane UBER-PATH
 	prependCells(path, from, goalCell, center);
 	optimizeGroundPath(*path, diameter);
 	const float spread = SimMath::mulf32(2.0f, formationColumnWidth); // AIData + 0xA0

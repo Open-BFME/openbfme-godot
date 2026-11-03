@@ -6,7 +6,7 @@
 // main menu and come back"): the lobby's game as RotWK writes it into Skirmish.ini and reads it back. Client code: no simulation state.
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001):
-//   * GameInfoToAsciiString (RW 0x8023C1; BFME2 0x800AF8, tier A; donor BFME2 decomp GameNetwork/GameInfoPlayerCounts.cpp:724, byte-matched):
+//   * GameInfoToAsciiString (RW 0x8023C1; BFME2 0x800AF8, tier A; donor BFME2 decomp GameNetwork/GameSlotApparent.cpp:1047, byte-matched):
 //     "M=%3.3x%s;MC=%X;MS=%d;SD=%d;GSID=%X;GT=%d;SI=%d;" (the map contents mask, the map path, its CRC and size, the seed, + 0x88, the mode + 0x5C, the
 //     scenario + 0x58), then "GR=" and the ten rules each as "%d " (RW 0x960B4F; BFME2 0x95A087, tier A) and ";", then "S=" and per slot
 //     "H<name>,<ip %X>,<port %d>,<accepted T/F><has map T/F>,<colour>,<template>,<start>,<team>,<+0x20>,<+0x40>,<hero>:" for a human,

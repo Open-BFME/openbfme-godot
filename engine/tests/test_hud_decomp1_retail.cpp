@@ -1,6 +1,7 @@
 // OpenBFME retail tests for lane DECOMP-1: stops closed with the Open-BFME-2 decompilation's progress, every fact confirmed in RotWK's binary. They share the
 // HUD tests' retail world (the file name sorts with the test_hud_* files, see test_hud_combat_retail.cpp) and SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "HudTestUtil.h"
 
@@ -95,6 +96,7 @@ struct Arena
 		Coord3D p{ x, y, 0.0f };
 		o->setPosition(&p);
 		o->setOrientation(angle);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	void frames(int n)

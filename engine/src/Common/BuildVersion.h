@@ -28,6 +28,11 @@ std::string displayVersion(const std::string &version);
 // Strict launcher release-tag grammar, for untrusted recording metadata (not arbitrary git-describe text).
 bool isReleaseVersion(const std::string &version);
 
+// Lane STABLEQA-1 (owner, 2026-10-30): a Stable channel build: its version is a plain release tag "v0.4.12" (the launcher's stable channel,
+// tools/release/make_manifest.py channel_of). Nightlies ("-nightly.<n>"), alphas, previews and development builds ("v0.4.11-3-g0123456789",
+// "-dirty", "untracked") are not. Stable builds do not offer War of the Ring yet (ShellEnvironment::warOfTheRingOffered).
+bool isStableChannel(const std::string &version);
+
 // "OpenBFME Alpha 0.4.5 (<build date>)": the line the main menu's watermark and the first-run screen show.
 std::string displayLine();
 } // namespace BuildVersion

@@ -170,6 +170,17 @@ struct SkirmishGameInfo
 	// (the host's slot, a human slot). Every player sees it before joining (the game lists), on the load screen and in game; never in Quick Match
 	int cheatMode = -1;
 	bool cheatModeOn() const { return cheatMode >= 0; }
+	// WOTR2 milestone 8 (step 2): RotWK GameInfo + 0x5C (GT: 0 open play, 1 War of the Ring; GameInfoToAsciiString RW 0x8023C1) and + 0x58 (SI: the
+	// scenario, an index into the campaign manager's list, RW 0x7B9636). The port sends the scenario as its LivingWorldCampaign name [port decision: no
+	// list order to agree on]; "" in open play. In a war a slot's start position is a region index (RW 0x9759BB) and the map is a placeholder
+	int gameMode = 0;
+	std::string scenario;
+	bool warOfTheRing() const { return gameMode == 1; }
+	// WOTR2 milestone 8 (step 4): a resumed LAN war (RotWK's START resume branch RW 0x779C1F, TheGameInfo + 0x8C; mode-6 header RW 0x6DEFD0): the
+	// save's identity (retail's 16-byte MD5 of the strategic state, as 32 lower-case hex digits; "" a new war) and its state hash (the load check)
+	std::string resumeSave;
+	std::uint32_t resumeHash = 0;
+	bool resumed() const { return !resumeSave.empty(); }
 	// lane RULES-1: AllowCustomHeroes (rule 0): a game with no rule block keeps every slot's Create-a-Hero; with the block only rule 0 == 1 allows them (RW 0x842A85
 	// enables a slot's hero combo only then). The host, the wire reader and the game start all hold a setup to it
 	bool customHeroesAllowed() const { return MpGameRules::isNone(rules) || rules[RULE_ALLOW_CUSTOM_HEROES] == 1; }
@@ -237,7 +248,7 @@ struct SkirmishGameInfo
 		return false;
 	}
 
-	// lane GAMEMODES-1: RotWK GameInfo::isSandbox (vslot 0x50, RW 0x800C8F; BFME2 decomp GameNetwork/GameInfoPlayerCounts.cpp GameInfo::isSandbox, BFME2
+	// lane GAMEMODES-1: RotWK GameInfo::isSandbox (vslot 0x50, RW 0x800C8F; BFME2 decomp GameNetwork/GameSlotApparent.cpp GameInfo::isSandbox, BFME2
 	// 0x7FF3E3, the same body): the team of `localSlot` (getLocalSlotNum, vslot 0x34; without one, the team of the first occupied slot) and every OTHER
 	// occupied slot (RW 0x8009B1: human or AI, an observer included) on that team: no slot of team -1 (none) and no other team. A game alone is a sandbox
 	bool isSandbox(int localSlot) const
@@ -294,10 +305,91 @@ struct SkirmishGameInfo
 		}
 		return mapStartCount == o.mapStartCount && mapName == o.mapName && mapCRC == o.mapCRC && mapSize == o.mapSize && mapMask == o.mapMask && seed == o.seed && startingCash == o.startingCash
 			&& superweaponRestriction == o.superweaponRestriction && inProgress == o.inProgress && rules == o.rules && legendaryHeroes == o.legendaryHeroes
-			&& simulationProfile == o.simulationProfile && cheatMode == o.cheatMode;
+			&& simulationProfile == o.simulationProfile && cheatMode == o.cheatMode && gameMode == o.gameMode && scenario == o.scenario && resumeSave == o.resumeSave && resumeHash == o.resumeHash;
 	}
 };
 
+
+// lane WOTR-1: a War of the Ring battle fought in real time.  RotWK starts it in a game state other than the skirmish's 3, so placeNetworkBuildingsForPlayer
+// (RW 0x62AC17) places no starting base and calls RW 0x629F34 instead: the player whose living-world id owns the battle's region gets the region's buildings
+// (their BattleThingTemplate) at the map's "Player_1_BuildPlot_<n>" waypoints (n = 1, 2, ... in the region's building order).  The armies' members are placed
+// at their player's start waypoint (where retail creates them was not read: S-1329).
+struct LivingWorldBattleStart
+{
+	bool active = false;
+	int ownerSlot = -1;                      // the slot of the region's owner (its buildings stand on Player_1_BuildPlot_<n>); -1 none
+	std::vector<std::string> ownerBuildings; // the BattleThingTemplate of every completed building of the region, region order
+	std::vector<int> ownerBuildingIds;       // WOTR2 milestone 7: their Living World building ids (+ 0x18 -> Object + 0x484), one per building
+	struct Member
+	{
+		int slot = -1;
+		int armyId = 0;
+		int memberIndex = 0;
+		std::string thingTemplate;
+		int quantity = 0;
+		float experience = 0.0f;           // WOTR2 milestone 6: CarryoverUnit RW 0x780172: the entry's experience and upgrade set
+		std::vector<std::string> upgrades;
+		std::string spawnId;               // WOTR2 milestone 7: the entry's + 0xD0 -> Object + 0x480 (RW 0x80EDF1)
+	};
+	std::vector<Member> members;
+	// WOTR2 milestone 6 (spec R 3, 2.4): per slot what its player starts with: the cash Player::initFromDict deposits (RW 0x6B1213), the garrison army
+	// the starting units belong to, and the Living World bonus units (one object each) that follow its StartingUnitTacticalWOTR
+	struct SlotStart
+	{
+		int slot = -1;
+		std::uint32_t cash = 0;
+		int garrisonArmyId = 0;
+		std::vector<std::string> bonusUnits;
+		// WOTR2 milestone 7: the War of the Ring player's hero list entries no build queue holds, moved to the battle player's list (RW 0x6E42DA)
+		struct Hero
+		{
+			std::string templateName;
+			std::string spawnId;
+			float experience = 0.0f;
+			bool dead = false;
+		};
+		std::vector<Hero> heroes;
+		// WOTR2 milestone 7 (RW 0x8125FC): the war's skill points, bonus purchase points, sciences and lasting upgrades of the player
+		float skillPoints = 0.0f;
+		int bonusPoints = 0;
+		std::vector<std::string> sciences;
+		std::vector<std::string> upgrades;
+	};
+	std::vector<SlotStart> slotStarts;
+	// WOTR2 milestone 7 (step 5): every battle army's start (RW 0x6B851C): on the field (4) or a reinforcement (2) arriving at a frame, with its walk-on
+	// spawn / gather waypoint choices; members of a state 2 army are placed when it is called in (MSG_CALL_IN_REINFORCEMENTS)
+	struct ArmyStart
+	{
+		int slot = -1;
+		int armyId = 0;
+		int state = 4;
+		int arrivalFrame = 0;
+		std::vector<std::pair<std::string, std::string>> spawnPoints;
+	};
+	std::vector<ArmyStart> armies;
+	const ArmyStart *armyStart(int armyId) const
+	{
+		for (const ArmyStart &a : armies)
+		{
+			if (a.armyId == armyId)
+			{
+				return &a;
+			}
+		}
+		return nullptr;
+	}
+	const SlotStart *slotStart(int slot) const
+	{
+		for (const SlotStart &s : slotStarts)
+		{
+			if (s.slot == slot)
+			{
+				return &s;
+			}
+		}
+		return nullptr;
+	}
+};
 
 // ZH GameLogic.h GameMode / Common/GameCommon.h GameDifficulty: the arguments of MSG_NEW_GAME.
 enum class NewGameMode
@@ -313,4 +405,8 @@ struct NewGameMessage
 	int difficulty = kDifficultyNormal;
 	int rankPoints = 0;
 	SkirmishGameInfo game; // TheSkirmishGameInfo at the moment of the message
+	// lane WOTR-1: the War of the Ring setup posts the same message from the strategic lobby with the chosen scenario (a LivingWorldCampaign name); empty
+	// for a skirmish.  The consumer starts the strategic game instead of loading `game.mapName` (GUI/Skirmish/LivingWorldShellInfo.h)
+	std::string livingWorldCampaign;
+	LivingWorldBattleStart livingWorldBattle; // lane WOTR-1: set for a War of the Ring battle (the strategic game posts it)
 };

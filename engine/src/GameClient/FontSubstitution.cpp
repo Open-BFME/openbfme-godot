@@ -3,10 +3,11 @@
 
 #include "GameClient/FontSubstitution.h"
 
+#include "Libraries/file/TextFile.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
-#include <sstream>
 
 namespace
 {
@@ -67,8 +68,22 @@ bool takeName(const std::string &in, std::string &name, std::string &rest)
 
 bool FontSubstitution::parse(const std::string &text, std::string *error)
 {
-	std::istringstream in(text);
-	std::string raw;
+	// lane MODUI-1: RotWK reads the file through the INI loader (block "FontSubstitution", block table RW 0xD9ECCC -> RW 0x618D04), so its lines
+	// are TextFile's (RW 0xA15AFE): ';' and "//" comments blanked, includes expanded. Patch 2.02's file has a "// New font size interpolation"
+	// line between its blocks; a parser that only knew ';' refused it and every 2.02-based mod stopped before the main menu.
+	TextFile file;
+	const std::vector<std::uint8_t> bytes(text.begin(), text.end());
+	const TextFile::FileReader noIncludes = [](const std::string &path, std::vector<std::uint8_t> &, std::string *why) {
+		if (why)
+		{
+			*why = "#include \"" + path + "\" is not read here (stop S-132: the file's own text only)";
+		}
+		return false;
+	};
+	if (!file.parseBytes("data\\ini\\fontsubstitution.ini", bytes, noIncludes, error))
+	{
+		return false;
+	}
 	int lineNo = 0;
 	std::string current;
 	bool inBlock = false;
@@ -79,11 +94,10 @@ bool FontSubstitution::parse(const std::string &text, std::string *error)
 		}
 		return false;
 	};
-	while (std::getline(in, raw))
+	for (const TextFile::Line &kept : file.lines())
 	{
-		++lineNo;
-		std::size_t semi = raw.find(';');
-		std::string line = trim(semi == std::string::npos ? raw : raw.substr(0, semi));
+		lineNo = kept.lineNumber;
+		const std::string line = trim(kept.text);
 		if (line.empty())
 		{
 			continue;

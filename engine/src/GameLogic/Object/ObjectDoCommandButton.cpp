@@ -36,15 +36,14 @@
 // doSpecialPowerAtObject (RW 0x68E67A) with the same options; HIJACK_VEHICLE (29): with an AI, aiEnterObject(target, cmdSource) (AI + 0x20 -> RW 0x66C5A4).
 // doCommandButtonAtPosition(button, pos, cmdSource, fromAutoAbility) (RW 0x6979D9, ret 0x10): a disabled object does nothing (the flag only reaches the
 // options); ATTACK_MOVE (10): see below; STOP (14): aiIdle; FIRE_WEAPON (23): see below; SPECIAL_POWER / SPELL_BOOK: Object::doSpecialPowerAtLocation (RW
-// 0x68E754); DOZER_CONSTRUCT (53): see below.
+// 0x68E754); DOZER_CONSTRUCT (53): see below; WAKE_AUTO_PICKUP (49): AutoPickUpUpdate::wakeAutoPickUp (RW 0x68C8DE, lane MODCOMPAT-MOD1).
 //
 // NOT PORTED (stop S-5305, noted by name when met; nothing happens): the cases that append a message to the local client's message stream from inside the
 // logic (TheMessageStream RW 0xDE6398 slot 0x48: EXIT_CONTAINER 16 -> 0x41D, EVACUATE 17 -> 0x41E with TheInGameUI slot 0xBC and the voice, HORDE_TOGGLE_
 // FORMATION 36 -> 0x453, ONE_RING 39 -> 0x454, CREW_EVACUATE 40 -> 0x455, CLOSE_GATE 42 -> 0x439, OPEN_GATE 43 -> 0x437, HORDE_SET_FORMATION 52 -> 0x460);
 // FIRE_WEAPON 23 (RW 0x68C91B writes Object + 0x478, an unported field, then the lock and the AI's attack); TOGGLE_WEAPON 35 (RW 0x69720E, the weapon slot
 // rule RW 0x75CD39 and the status hand-over RW 0x6CD142 / 0x6CA232); REVIVE 46 (RW 0x6973CB: the build index at button + 0xC0 is the control bar's run-time
-// field, RW 0x75D5F5 starts it at -1; the port keeps it in the client's ControlBarButton); WAKE_AUTO_PICKUP 49 (RW 0x68C8DE: behaviour interface slot 0x6C,
-// no ported module answers it); START_SELF_REPAIR 51 / START_NEIGHBORHOOD_REPAIR 59 / CANCEL_NEIGHBORHOOD 60 (RW 0x68C3E6: behaviour slot 0x80, no ported
+// field, RW 0x75D5F5 starts it at -1; the port keeps it in the client's ControlBarButton); START_SELF_REPAIR 51 / START_NEIGHBORHOOD_REPAIR 59 / CANCEL_NEIGHBORHOOD 60 (RW 0x68C3E6: behaviour slot 0x80, no ported
 // module answers it); the gate proxy (GateProxyBehavior, S-1940); the target forms' ATTACK_MOVE 10 (RW 0x696266), FIRE_WEAPON and DOZER_CONSTRUCT 53
 // (TheBuildAssistant slot 0x38). Client only, counted: the gate voice responses. Inherited from SpecialPowerModules (S-5305 too): RW 0x68E5A3's horde step
 // RW 0x68CB85 (a horde that can toggle its formation does so before the power) and its auto-ability disabled exception (options & 0x20000000).
@@ -64,6 +63,7 @@
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/AutoPickUpUpdate.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/GateModules.h"
 #include "GameLogic/Module/ProductionUpdate.h"
@@ -392,8 +392,13 @@ void Object::doCommandButton(const CommandButton *button, CommandSourceType cmdS
 		unported(*this, b, "doCommandButton", "the control bar's build index at button + 0xC0, RW 0x6973CB");
 		return;
 	case GUI_COMMAND_WAKE_AUTO_PICKUP:
-		unported(*this, b, "doCommandButton", "behaviour interface slot 0x6C, RW 0x68C8DE");
+	{
+		// lane MODCOMPAT-MOD1: RW 0x697397 .. 0x6973C1: the number is 1 for OPTION_ONE (0x2000), 2 for OPTION_TWO (0x4000), 3 for OPTION_THREE (0x8000),
+		// else 0 (EBX, zeroed at RW 0x696FE0); RW 0x68C8DE wakes the AutoPickUpUpdates of that number
+		const int number = (b.m_options & 0x2000u) ? 1 : (b.m_options & 0x4000u) ? 2 : (b.m_options & 0x8000u) ? 3 : 0;
+		AutoPickUpUpdate::wakeAutoPickUp(*this, number);
 		return;
+	}
 	case GUI_COMMAND_START_SELF_REPAIR:
 	case GUI_COMMAND_START_NEIGHBORHOOD_REPAIR:
 	case GUI_COMMAND_CANCEL_NEIGHBORHOOD:

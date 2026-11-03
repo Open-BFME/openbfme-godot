@@ -26,7 +26,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import helpers  # noqa: E402
-from apt_handlers import AptHandlers  # noqa: E402
+from apt_handlers import AptHandlers, UnsupportedImage, identify_image  # noqa: E402
 from oracle import Oracle, OracleError, find_host, install_dir  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -45,8 +45,18 @@ helpers.require_fresh("apt_driver")
 
 @pytest.fixture(scope="module")
 def apt():
-    with Oracle("b2", B2_DIR / "game.dat") as o:
-        yield AptHandlers(o)
+    # The handlers are patched at fixed VAs, so the image is identified from the file first (apt_handlers.identify_image).
+    # A wrong image is an explicit failure with the reason, never a write fault at an address the image does not map.
+    game_dat = B2_DIR / "game.dat"
+    try:
+        image = identify_image(game_dat.read_bytes())
+    except UnsupportedImage as e:
+        pytest.fail(f"{game_dat}: {e}", pytrace=False)
+    with Oracle("b2", game_dat) as o:
+        try:
+            yield AptHandlers(o, image)
+        except UnsupportedImage as e:
+            pytest.fail(f"{game_dat}: {e}", pytrace=False)
 
 
 # ---- operands ----------------------------------------------------------------------------------
@@ -174,7 +184,8 @@ def engine(lines):
     return out
 
 
-POOL_FAULT = "eip=00adb177"  # the pool allocator's first load of its (never built) global, BFME2 0x00ADB177
+# POOL_FAULT (apt.pool_fault) is the pool allocator's first load of its never built global, BFME2 0x00ADB177 in the clean image
+# (apt_handlers.POOL_FAULT_VA), rebased with the image.
 
 
 def needs_pool_allocator(op, case):
@@ -185,14 +196,14 @@ def needs_pool_allocator(op, case):
     return op == "equals2" and len(case) == 2 and case[1].startswith("S:") and case[0][0] in "IFU"
 
 
-# The exact number of Equals2 cases of the seeded pools that retail faults on at POOL_FAULT. A change in the pools or in the
+# The exact number of Equals2 cases of the seeded pools that retail faults on at apt.pool_fault. A change in the pools or in the
 # harness changes these counts and fails the test, so the exclusion cannot grow unnoticed.
 EXCLUDED_EQUALS2 = {6: 49, 7: 57}
 
 
 def compare(apt, op, swf, cases):
     """`cases`: operand-token tuples (under first). Runs the retail handler and the engine. Returns (mismatches, unexpected
-    faults, excluded cases): the excluded ones faulted at POOL_FAULT and match needs_pool_allocator."""
+    faults, excluded cases): the excluded ones faulted at apt.pool_fault and match needs_pool_allocator."""
     lines = [f"{op} {swf} " + " ".join(c) for c in cases]
     want = engine(lines)
     bad = []
@@ -203,7 +214,7 @@ def compare(apt, op, swf, cases):
         try:
             got = apt.run(op, swf, *values)
         except OracleError as e:
-            if needs_pool_allocator(op, case) and POOL_FAULT in str(e):
+            if needs_pool_allocator(op, case) and apt.pool_fault in str(e):
                 excluded.append(line)
                 continue
             faults.append((line, str(e)[:120]))
@@ -264,15 +275,15 @@ def test_unary_handler_matches_retail(apt, op, swf):
 
 def test_stop_s016_string_concatenation_and_string_vs_nonstring_equals2_fault_in_retail(apt):
     # docs/STOPS.md S-016: these retail paths format a string through the game's pool allocator, a global the harness does not
-    # build, so they fault at POOL_FAULT. The exclusions in the comparison tests are exactly these cases; this test pins them.
+    # build, so they fault at apt.pool_fault. The exclusions in the comparison tests are exactly these cases; this test pins them.
     add2 = [("S:61", "S:62"), ("S:31", "I:1"), ("I:1", "S:31"), ("F:3f800000", "S:61"), ("S:61", "U"), ("B:1", "S:61"), ("S:", "S:")]
     for swf in (6, 7):
         for case in add2:
-            with pytest.raises(OracleError, match=POOL_FAULT):
+            with pytest.raises(OracleError, match=apt.pool_fault):
                 apt.run("add2", swf, *[apt.build(t, i) for i, t in enumerate(case)])
         for case in [("I:1", "S:616263"), ("F:3f800000", "S:616263")]:
             assert needs_pool_allocator("equals2", case)
-            with pytest.raises(OracleError, match=POOL_FAULT):
+            with pytest.raises(OracleError, match=apt.pool_fault):
                 apt.run("equals2", swf, *[apt.build(t, i) for i, t in enumerate(case)])
     # and the cases the exclusion does NOT cover really run: string against string, against a boolean, numeric string vs number
     for case in [("S:61", "S:61"), ("S:61", "B:1"), ("I:1", "S:312e30"), ("S:312e30", "F:3f800000")]:

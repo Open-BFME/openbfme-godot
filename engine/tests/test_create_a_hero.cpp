@@ -3,6 +3,7 @@
 // set and the build surcharge). Independent expectations: the record layout and the CRC-32 checksum were decoded from RW 0x80B4F5 and checked against the
 // 8 retail files with a separate Python reader (every stored checksum matches); the bling lists and the costs are recomputed here from the INI data.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "GameNetwork/GameInfo.h"
@@ -363,6 +364,7 @@ struct Game
 		REQUIRE(o);
 		const Coord3D at = { x, y, 0.0f };
 		o->setPosition(&at);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 };

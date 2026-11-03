@@ -2,6 +2,7 @@
 // Lane DECOMP-3: the skirmish AI's player info record (AIStatCollector, RW 0x8E46D9) filled by the manager's object events. Binary facts SKIP when RW_GAME_DAT
 // is unset; the retail scenarios SKIP when ROTWK_INSTALL / BFME2_INSTALL are unset.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "BuildTestUtil.h"
@@ -62,7 +63,7 @@ Object *make(GameLogic &logic, const char *name, Player &owner, const Coord3D &a
 	Object *o = logic.newObject(tt, owner.getDefaultTeam(), ObjectStatusMaskType{});
 	REQUIRE_MESSAGE(o, name);
 	o->setPosition(&at);
-	return o;
+	return testutil::completeHorde(o);
 }
 
 // the position of the player's first structure (its start), moved by (dx, dy)
@@ -303,6 +304,7 @@ TEST_CASE("decomp3 S-1301: Object::isAbleToAttack on a horde, its members and a 
 	REQUIRE(tt);
 	Object *horde = logic.newObject(tt, men->getDefaultTeam(), ObjectStatusMaskType{});
 	REQUIRE(horde);
+	testutil::completeHorde(horde); // a horde makes its members (onBuildComplete, RW 0x8718ED)
 	CHECK(horde->isAbleToAttack()); // CAN_ATTACK KindOf
 	REQUIRE(horde->getContain());
 	REQUIRE(horde->getContain()->getContainedItemsList());
@@ -453,6 +455,7 @@ TEST_CASE("decomp3 S-418: the object events of an INERT object, a CommandSetUpgr
 		REQUIRE(hero);
 		const Coord3D hp{ at.x - 60.0f, at.y, at.z };
 		hero->setPosition(&hp);
+		testutil::completeHorde(hero); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		const SpecialPowerModule *capture = nullptr;
 		for (const std::unique_ptr<BehaviorModule> &m : hero->modules())
 		{

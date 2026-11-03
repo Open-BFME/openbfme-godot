@@ -38,7 +38,7 @@ std::int32_t colorInt(std::uint32_t rgb)
 } // namespace
 
 bool SkirmishSides::build(const SidesList &mapSides, const SkirmishGameInfo &info, int localSlot, const std::vector<GameLogicSettings::MultiplayerColorDef> &colors,
-	const PlayerTemplateStore &templates, Built &out, std::string *error)
+	const PlayerTemplateStore &templates, Built &out, std::string *error, bool sharedStarts)
 {
 	out = Built();
 	SidesList &sides = out.sides;
@@ -81,6 +81,31 @@ bool SkirmishSides::build(const SidesList &mapSides, const SkirmishGameInfo &inf
 		if (slot.playerTemplate >= 0)
 		{
 			out.slotPlayerNames[(size_t)i] = "Player_" + std::to_string(slot.startPos + 1);
+			bool shared = false;
+			for (int j = 0; j < i; ++j)
+			{
+				shared = shared || (info.slots[j].isOccupied() && info.slots[j].playerTemplate >= 0 && info.slots[j].startPos == slot.startPos);
+			}
+			if (shared && sharedStarts)
+			{
+				// lane WOTR-2 [S-1329 inference] (review r3): the side name is the player's identity (scripts, teams), the start position only its place: a
+				// slot sharing an earlier slot's position takes the lowest Player_<n> that no slot's position gives and no earlier sharer took
+				for (int n = 1; n <= MAX_SLOTS; ++n)
+				{
+					const std::string candidate = "Player_" + std::to_string(n);
+					bool used = false;
+					for (int k = 0; k < MAX_SLOTS; ++k)
+					{
+						used = used || (info.slots[k].isOccupied() && info.slots[k].playerTemplate >= 0 && info.slots[k].startPos + 1 == n) ||
+							   (k < i && out.slotPlayerNames[(size_t)k] == candidate);
+					}
+					if (!used)
+					{
+						out.slotPlayerNames[(size_t)i] = candidate;
+						break;
+					}
+				}
+			}
 		}
 		else
 		{

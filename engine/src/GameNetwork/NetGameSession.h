@@ -130,6 +130,8 @@ public:
 	// the local player stops (ZH leave); the replay gets its end record. An unjoined rejoin (above) sends nothing: no frame counts for frames it never
 	// played and no PLAYERLEAVE (the player keeps the slot, as after a crash, and can rejoin again)
 	void finish(LiveGame &game);
+	// WOTR2 milestone 8: the logic frame finish's PLAYERLEAVE executes on (the departure frame the other peers record for the local slot), 0xFFFFFFFF none sent
+	UnsignedInt leaveFrame() const { return m_leaveFrame; }
 	// true when every command sent so far was acked by every peer (a finished peer stays until then)
 	bool allAcked() const;
 	// lane MP-2: the disconnect path asks the local player to leave (dropped by the others, its own connection failed, the last one left, or Quit on the
@@ -158,6 +160,7 @@ private:
 	LiveGame *m_game = nullptr;
 	std::unique_ptr<Transport> m_transport;
 	std::unique_ptr<Network> m_network;
+	UnsignedInt m_leaveFrame = 0xFFFFFFFFu; ///< WOTR2 milestone 8: leaveFrame()
 	std::unique_ptr<ReplayWriter> m_writer;
 	std::unique_ptr<LockstepDriver> m_driver;
 	CommandList m_empty;

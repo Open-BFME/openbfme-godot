@@ -9,17 +9,17 @@
 //   (RW 0x671EC6 -> BuffManager::TurnOffBuff, not immediate); a complex buff is the glow-outline kind (asserted unsupported, MakeGlowOutlineBuff);
 //   else a HORDE gets none, the template by KindOf (CAVALRY, ORC, INFANTRY, TROLL, MUMAKIL, SHIP, MONSTER, else BuffThingTemplate) through
 //   TheThingFactory (none: nothing) and Drawable::TurnOnBuff (RW 0x671E56: the drawable's BuffManager + 0x450, made on first use);
-// - BuffManager::TurnOnBuff (RW 0x764483, BFME2 decomp BuffManager.cpp:147): buff types 1 .. 8 only, nine 0x44-byte instances by type; every type is
-//   sub type 1 (table RW 0xDC0138 equivalent): BuffInstance::MakeNormalBuff (RW 0x7641A2, decomp Rva00362518.cpp): no template or drawable: false;
+// - BuffManager::TurnOnBuff (RW 0x764483, BFME2 decomp GlowMaterial.cpp:620): buff types 1 .. 8 only, nine 0x44-byte instances by type; every type is
+//   sub type 1 (table RW 0xDC0138 equivalent): BuffInstance::MakeNormalBuff (RW 0x7641A2, decomp GlowMaterial.cpp): no template or drawable: false;
 //   an instance without a TBuff makes one (BuffLogic::addBuff RW 0x707FFF -> W3DBuffBuffer::addBuff RW 0x4D3376); another template replaces it (the
 //   old TBuff released); the same template while it fades out (state 2) is put back to state 1 at opacity 1; then active, the expiry frame = logic
 //   frame + BuffLifeTime (+ 0x14);
-// - BuffInstance::TurnOff (decomp BuffManager.cpp): immediate releases the TBuff; else an active sub type 1 instance puts its TBuff into state 2
+// - BuffInstance::TurnOff (decomp GlowMaterial.cpp): immediate releases the TBuff; else an active sub type 1 instance puts its TBuff into state 2
 //   (fade out) and goes inactive;
 // - TBuff (constructor RW 0x4D12FA): state 0 (fade in), opacity 0, visible = the drawable's + 0x441, position = the drawable's interpolated
 //   position (RW 0x676711), scale = the drawable's instance scale (+ 0x200); W3DBuffBuffer::addBuff refuses a 1001st TBuff of a type;
-// - TBuff::UpdateFade (RW 0x4D1417, decomp Rva000D1C10.cpp), once per drawn frame after the TBuff is filled: state 0 adds 1/12 (0.083333336) up to
-//   1 (then state 1), state 2 subtracts 1/12 down to 0 (then state 3); the fill (RW 0x4D1ACD, decomp W3DBuffBufferFill.cpp) draws the buff model's
+// - TBuff::UpdateFade (RW 0x4D1417, decomp TBuff.cpp), once per drawn frame after the TBuff is filled: state 0 adds 1/12 (0.083333336) up to
+//   1 (then state 1), state 2 subtracts 1/12 down to 0 (then state 3); the fill (RW 0x4D1ACD, decomp W3DBuffBuffer.cpp) draws the buff model's
 //   meshes at the TBuff's position + the mesh's translation, the vertices times the scale, the colour emissive * vertex colour * opacity.
 // INFERENCE (stop S-4642): the expiry test (an active instance turned off when the logic frame reaches its expiry) and the TBuff's position following
 //   the drawable every frame are taken from the fields the code keeps (+ 0x14, the drawable pointer), the updater was not read; a TBuff in state 3 is

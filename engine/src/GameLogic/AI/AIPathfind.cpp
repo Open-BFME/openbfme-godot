@@ -475,7 +475,7 @@ std::vector<std::string> Pathfinder::allStops()
 {
 	return { pathstops::kShore, pathstops::kSlopeAndConfig, pathstops::kRivers, pathstops::kLayers, pathstops::kZoneProfiles, pathstops::kHierarchical,
 		pathstops::kLargeRectGoal, pathstops::kPartialRebuild, pathstops::kGroupDestination, pathstops::kBaseSiteWindow, pathstops::kWallLayer,
-		pathstops::kWallLayerCount, pathstops::kLargeRectFootprint,
+		pathstops::kWallLayerCount, pathstops::kRampNoHeight, pathstops::kLargeRectFootprint,
 		pathstops::kLargeRectReservation, pathstops::kQueueFull, pathstops::kQueueTime, pathstops::kPath, pathstops::kNumerics, pathstops::kPortals,
 		pathstops::kPortalTable, pathstops::kRaisedLayers, pathstops::kRaisedLayerCount, pathstops::kPortalLayerQuirk, pathstops::kPortalLostHorde,
 		pathstops::kAttackRaisedFallback };

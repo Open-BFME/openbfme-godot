@@ -26,6 +26,7 @@
 #include "GameClient/TGAFile.h"
 #include "GameClient/TerrainAtlas.h"
 #include "GameClient/TerrainRoads.h"
+#include "GameClient/WaterGeometry.h"
 #include "GameClient/TerrainTypes.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/ObjectNameIndex.h"
@@ -910,4 +911,41 @@ TEST_CASE("map corpus: Minas Morgul cliff cells straddle their texture class and
 	}
 	CHECK(withRect == 1460);
 	CHECK(leaks == 0);
+}
+
+TEST_CASE("map corpus: Adorn River's one standing-water polygon (97 points, ten revisited vertices) fills as RW 0x482A16 fills it")
+{
+	retailtest::Mount *mount = retailtest::pureMount();
+	if (!mount)
+	{
+		retailtest::printSkip("map corpus Adorn River water");
+		return;
+	}
+	REQUIRE_MESSAGE(mount->fs != nullptr, mount->error);
+	std::string err;
+	std::vector<std::uint8_t> bytes;
+	const std::string path = "maps\\map mp adorn river\\map mp adorn river.map";
+	REQUIRE_MESSAGE(mount->fs->readFile(path, bytes, &err), err);
+	LoadedMap m;
+	MapReadOptions opt;
+	REQUIRE_MESSAGE(MapReader::load(bytes, path, opt, m, &err), err);
+	REQUIRE(m.chunks.standingWaterAreas.size() == 1);
+	const StandingWaterArea &area = m.chunks.standingWaterAreas[0];
+	REQUIRE(area.points.size() == 97);
+	// The outline pinches to a zero-width neck at ten places, each a vertex visited twice (indices 5/93, 6/92,
+	// 12/84, 13/83, 22/76, 26/72, 33/63, 34/62, 42/56, 43/55). The ear-clipping triangulator this replaced stopped
+	// with 22 vertices left after 75 ears, so no water was drawn. Expected values come from
+	// tools/render/standing_water_grid_oracle.py, an independent float32 port of RW 0x482A16 / 0x70E911 that reads the
+	// polygon from the install: ROTWK_INSTALL=... BFME2_INSTALL=... python tools/render/standing_water_grid_oracle.py adorn
+	// (tools/render/test_standing_water_grid_oracle.py pins the same numbers).
+	std::size_t revisited = 0;
+	for (std::size_t i = 0; i < area.points.size(); ++i)
+		for (std::size_t j = i + 1; j < area.points.size(); ++j)
+			revisited += area.points[i].x == area.points[j].x && area.points[i].y == area.points[j].y;
+	CHECK(revisited == 10);
+	WaterGeometry::StandingGrid grid;
+	REQUIRE(WaterGeometry::buildStandingGrid(area, m.chunks.standingWaveAreas, [](float, float) { return 0.0f; }, grid));
+	CHECK(grid.spacing == 20);
+	CHECK(grid.vertices.size() == 3758);
+	CHECK(grid.indices.size() == 19728); // 3288 cells
 }

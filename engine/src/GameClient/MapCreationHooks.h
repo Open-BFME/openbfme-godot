@@ -67,7 +67,7 @@ bool scan(const std::string &scriptEventsXml, const std::string &scriptsLua, Cre
 // data\scripts\scriptevents.xml and data\scripts\scripts.lua of the mounted archives
 bool load(ArchiveFileSystem &fs, CreationScriptData &out, std::string *error);
 
-// The OnCreated hooks of `tmpl` (final override). Problems (an unknown list name, a handler function scripts.lua does not define,
-// a list whose Inherit chain does not end) are appended to *problems, never dropped.
-std::vector<MapCreationHook> templateHooks(const ThingTemplate &tmpl, const CreationScriptData &data, std::vector<std::string> *problems);
+// The OnCreated hooks of `tmpl` (final override). Missing lists go to stops (retail binds a null list); other inventory problems go to problems.
+std::vector<MapCreationHook> templateHooks(const ThingTemplate &tmpl, const CreationScriptData &data, std::vector<std::string> *problems,
+	std::vector<std::string> *stops = nullptr);
 } // namespace MapCreationHooks

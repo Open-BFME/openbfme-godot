@@ -72,7 +72,28 @@
 //   * unpack RW 0x79BE6A (both forms): the castle's footprint leaves the pathfinder, + 0x9C / + 0x44 reset, the layout (or the explicit object of + 0x98) is made, every member
 //     learns the keep (member + 0x14 = the keep's id, RW 0x7990D9: BUILD-1's "occupant" reading of that field is wrong, S-952), + 0x48 = the frame, the castle gets UNPACKING
 //     instead of PACKING and UNSELECTABLE, the walk-on-wall members' footprints are added (RW 0x799E3F), and the keep takes the castle's price (truncated) and script name
-//     (ScriptEngine RW 0x759467) while the castle is renamed "No Name". RW 0x683955 (when RW 0xDE4690 is set) and RW 0x79B881 (the layout's second list) were not read.
+//     (ScriptEngine RW 0x759467) while the castle is renamed "No Name". RW 0x683955 (when RW 0xDE4690 is set) was not read.
+// Lane CASTLEAREA-1 (TARGET FACTS, RotWK game.dat; BFME2 decomp CastleBehaviorRegisterOwnedObject_Unresolved.cpp:622 / CastleBehaviorRegisterOwnedObject.cpp:725,
+// Rva00396E4ARemove.cpp:186 / :206, SidesListCastleBuildLists.cpp):
+//   * the castle's areas RW 0x79B881, after the layout of the template form of the unpack (RW 0x79BE6A, after RW 0x79B903) and in the module's xfer on a load
+//     (RW 0x79B9D6, state + 0x34 not 0): for index 0, 1, .. a new PolygonTrigger (RW 0x6E5275) takes the index-th area of the castle's key (the base name of the
+//     owner's faction, RW 0x799021 -> 0x798F70) from TheSidesList (RW 0x72D76E: the areas are the CastleTemplates chunk's lines with points, keyed by the chunk's
+//     name: RW 0x731010 -> RW 0x730721; a line without points is not kept) until there is none. Each is registered by RW 0x79AB88: the callback RW 0x79A218 with
+//     the module as its context (RW 0x6E4B10), the castle's transform applied to its points (polygon vslot 0x28 RW 0x73253A -> RW 0x70C9C4: x' = ((m01 y + m00 x)
+//     + m02 0) + m03, y' = ((m10 x + m11 y) + m12 0) + m13, SSE), the list + 0x80, the name "Dynamic %s of id %d at index %d" (RW 0x7982A5: the castle's template,
+//     its id, the list's new size) and PolygonTrigger::addPolygonTrigger (RW 0x6E4A99). Retail data: the 51 castle_* / camp_* bases of BFME2's archives have one
+//     area each; RotWK's fortress_* and AI bases have none (tools/castle/castle_survey.py's survey).
+//   * the dispatcher RW 0x79A218(object, context, entered): entered -> RW 0x799157, else RW 0x79935E (object null: nothing).
+//   * enter RW 0x799157: an object without KindOf IGNORED_IN_GUI (template + 0x10D bit 7, KindOf 0x2F) gets the status INSIDE_CASTLE (0x55, RW 0x62684D) and its
+//     id goes into the set + 0x8C (RW 0x472958). An IGNORED_IN_GUI object (the critters) with the keep (+ 0x38, RW 0x449681), an AI (+ 0x260) and the AI's
+//     animal interface (vslot 0x180) whose slot 0 says it is afraid of castles: its pathfinder goal goes (RW 0x68B401) and it paths (RW 0x667ED1(dest, 1)) to its
+//     position + 150 (RW 0xC041F8) along Normalize(itself - the keep) (RW 0x405553: no zero test). The CritterDesync log lines are not ported (a debug file).
+//   * exit RW 0x79935E: an object whose id is in the set loses INSIDE_CASTLE and leaves the set.
+//   * RW 0x79A37D (from the pack RW 0x79CCF2 and the module's destructor): every trigger of + 0x80 leaves the list (removePolygonTrigger RW 0x6E4ABE, then every
+//     object's entries of it are cleared, RW 0x6263AF: no exit runs, so a unit inside keeps INSIDE_CASTLE) and is deleted; the list empties. The set stays.
+// The status' only reader is the line of sight's victim point (RW 0x6CB85A, Combat/CombatLineOfSight.cpp); its only writers are RW 0x799157 / 0x79935E (every
+// push 0x55 / RW 0x44DDEC call of the text section). Retail's xfer saves neither the set nor the areas (it rebuilds them); the port's native snapshot keeps both
+// (OpenBFME, S-4190: a load continues the saved game, where retail's rebuild of a castle saved in state 1 .. 3 makes a second set of areas at the unpack).
 // The partition queries run on ThePartitionManager (lane MODULES-2): the capture scan RW 0x79B4D2 is distance type 0 unsorted, the push out RW 0x79C826 type 3 unsorted.
 // INFERENCE / NOT PORTED (stop S-951, S-952): the push out's geometry overlap filter (RW 0x67C5F3, vtable RW 0xC112C8 -> RW 0xAD2CE0) and the AI's slot 0x1C8 test are not ported; the occupant of a plot is the port's CastleMemberBehavior occupant that still exists
 // (retail clears the plot's + 0x28 in the plot's own update, RW 0x8584DB, one frame later); the crew (RW 0x79B0F1 / 0x798397 / 0x798344), the castle's alert map (+ 0xA0), the stored
@@ -88,6 +109,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -149,6 +171,7 @@ public:
 		STATE_ABANDONED = 5   // RW 0x79CB47: fading out until FadeTime runs out, then packed (RW 0x79CCF2)
 	};
 	CastleBehavior(Thing *thing, const CastleBehaviorModuleData *data);
+	~CastleBehavior() override; // lane CASTLEAREA-1: RW 0x79AAA7 -> RW 0x79A37D
 	UpdateSleepTime update() override;
 	CreateModuleInterface *getCreate() override { return this; }
 	void onCreate() override; // RW 0x79C761 (lane SPELL-3): a Summoned castle starts its timed unpack
@@ -179,6 +202,14 @@ public:
 	std::string baseNameFor(const Player &owner) const;
 	// RW 0x7998FF: CastleToUnpackForFaction names the player's side
 	bool isPlayerAllowedToCapture(const Player &player) const;
+	// lane MODCOMPAT-AI: RW 0x7996D3 (the scripts' CAN_BUILD_OBJECTTYPE_AT_BASE / BUILD_BASE_BUILDING): unpacked (+ 0x34 == 4) and a pad of the list (+ 0x74
+	// the BASE_DEFENSE_FOUNDATIONs for a template with KindOf FS_BASE_DEFENSE (+ 0x110 bit 0) when there are any, else + 0x50 the foundations) that exists
+	// (RW 0x449681), is not a WALL_UPGRADE (+ 0x11A bit 6) and has a FoundationAIUpdate interface (RW 0x68C3C3) without an occupant (slot 0xC). A null
+	// template takes the foundations
+	bool canBuildAtBase(const ThingTemplate *tt) const;
+	// lane MODCOMPAT-AI: RW 0x79A5EC(template, -2, 0) for BUILD_BASE_BUILDING (RW 0x7BEEA4): the first pad of that list that takes the template, built
+	// in the timed form; null when none does
+	Object *buildAtBase(const ThingTemplate &tt) { return preBuild(tt, -2, false); }
 	// ---- lane BACKLOG2: a player's unpack and pack (S-951) ----
 	// RW 0x7983E3 canUnpack (BFME2 decomp Rva00395F57CanUnpack.cpp, tier A): no instant build pending, state 0 and, with checkTimer, the timer run out
 	bool canUnpack(bool checkTimer) const;
@@ -224,6 +255,20 @@ public:
 	}
 	// lane CASTLE-1: the stop lines S-950 .. S-952 (in GameLogic::report through BuildStops)
 	static std::vector<std::string> stopLines();
+	// ---- lane CASTLEAREA-1: the castle's areas (see the file comment) ----
+	// one area of + 0x80: its index in the script engine's trigger list and the polygon as registered (world points)
+	struct Area
+	{
+		int trigger = -1;
+		std::string name;
+		std::vector<float> points; ///< x0, y0, x1, y1, ..
+	};
+	const std::vector<Area> &areas() const { return m_areas; }
+	// RW + 0x8C: the objects the areas set INSIDE_CASTLE on, by id
+	const std::set<ObjectID> &insideIds() const { return m_inside; }
+	// RW 0x799157 / RW 0x79935E
+	void onTriggerEntered(Object &obj);
+	void onTriggerExited(Object &obj);
 
 private:
 	// RW 0x7987EE
@@ -256,6 +301,10 @@ private:
 	void payForUnpackOf(const ThingTemplate &tt);
 	// the occupant of a foundation (the castle's: the keep; a plot's: its member's occupant) that still exists, or null
 	Object *occupantOf(const Object &foundation) const;
+	// lane CASTLEAREA-1: RW 0x79B881 (the areas of `layout`), RW 0x79AB88 (one area; savedIndex >= 0: a snapshot load's, at that index), RW 0x79A37D
+	void buildAreas(const struct CastleTemplate &layout);
+	void registerArea(Area area, int savedIndex);
+	void freeAreas();
 
 	const CastleBehaviorModuleData *m_data;
 	int m_state = STATE_IDLE;
@@ -270,6 +319,8 @@ private:
 	std::string m_explicitTemplate;    // RW + 0x98 (lane BACKLOG2: MSG_CASTLE_UNPACK_EXPLICIT_OBJECT's template)
 	std::vector<ObjectID> m_owned;
 	std::vector<ObjectID> m_foundations, m_members, m_crew, m_defenseFoundations; // RW + 0x50, + 0x5C, + 0x68, + 0x74
+	std::vector<Area> m_areas;  // RW + 0x80 (lane CASTLEAREA-1)
+	std::set<ObjectID> m_inside; // RW + 0x8C (lane CASTLEAREA-1)
 	std::string m_lastError;
 };
 

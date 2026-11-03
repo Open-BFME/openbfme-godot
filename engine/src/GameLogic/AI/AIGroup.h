@@ -74,7 +74,7 @@ public:
 	void groupIdle(CommandSourceType source);
 
 	// ---- lane PLAY-2: the force-attack commands (RW 0x77AED3 / 0x77AF93 in GameLogicDispatch RW 0x779A3D) ----
-	// RW 0x76FCBF (BFME2 decomp AIGroupIsIdle.cpp:AIGroup::isIdle, tier B same-shape): every member's AI is idle or the member is effectively dead
+	// RW 0x76FCBF (BFME2 decomp AIGroup.cpp:AIGroup::isIdle, tier B same-shape): every member's AI is idle or the member is effectively dead
 	bool isIdle() const;
 	// RW 0x76FAB7 (BFME2 decomp AIGroupAttackTeam.cpp:AIGroup::setWeaponLockForGroup, tier A): Object::setWeaponLock (RW 0x69121A) on every member; a
 	// member whose weapon before the lock had ShareTimers (template + 0x16A) and was not ready to fire (RW 0x6CD142 != 0) passes that weapon's next fire frame

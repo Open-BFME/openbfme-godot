@@ -1,5 +1,6 @@
 // OpenBFME. GPL-3.0.
 // Lane MENUWORK-1: GameSorter, the game lists' sort order (RW 0x9888B7 / 0x9881DE, BFME2 0x5803C0; GameNetwork/GameSorter.h).
+#include "GameClient/GUI/Skirmish/LivingWorldShellInfo.h"
 #include "doctest.h"
 
 #include "GameNetwork/GameSorter.h"
@@ -202,4 +203,17 @@ TEST_CASE("menuwork1 retail: LanLobby.apt: the list headers sort, Refresh refill
 	CHECK(fx.wm->invokeCallback("AptLanLobby::OnLoadScreen", "LanOpenPlay"));
 	CHECK(fx.wm->invokeCallback("AptLanLobby::OnCreateGameBttn", ""));
 	CHECK(run([&] { return lobby->state() == 4 && lan->amIHost(); }));
+	// lane STABLEQA-1: a Stable build (warOfTheRingOffered false), even with the War of the Ring scenarios: the page names the Nightly version, its
+	// Create Game hosts nothing and its Load Game asks for no LAN war save
+	LivingWorldShellInfo lw;
+	lw.scenarios.push_back(LivingWorldScenarioEntry{});
+	fx.environment.livingWorld = &lw;
+	fx.environment.warOfTheRingOffered = false;
+	const std::size_t requests = fx.services.requests.size();
+	CHECK(fx.wm->invokeCallback("AptLanLobby::OnLoadScreen", "LanStrategic"));
+	CHECK(lobby->messageBox()->text() == AptLanLobby::kStrategicStable);
+	CHECK(fx.wm->invokeCallback("AptLanLobby::OnLoadGameBttn", ""));
+	CHECK(lobby->messageBox()->text() == AptLanLobby::kStrategicStable);
+	CHECK(fx.services.requests.size() == requests);
+	fx.environment.livingWorld = nullptr;
 }

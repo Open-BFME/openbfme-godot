@@ -224,7 +224,7 @@ public:
 	explicit Load(ArchiveFileSystem *fs)
 	{
 		m_env.fileSystem = fs;
-		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "GameData" }, StubExtent::Lenient);
+		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "GameData" }, StubExtent::LenientAfterEnd);
 		m_env.blocks.registerBlock("GameData", [this](INI *ini) {
 			m_state.block = true;
 			ini->getNextTokenOrNull(); // a name after the keyword is not used

@@ -116,12 +116,14 @@ func run(owner: Node) -> void:
 	game.get_tree().quit(0 if failures == 0 else 1)
 
 
-## lane DEVPORT-8: with game.gd BFME2_CAMPAIGNS off (until B2CAMP-1) no BFME2 campaign button is in the menu (BFME2's own MainMenu.apt buttons are hidden by
-## game.gd), and a request that names one is refused by name. Lane CAMPMENU-1: the campaigns are retail's own Solo Play entries (no OpenBFME panel):
+## lane DEVPORT-8 / BFME2CAMP1: game.gd BFME2_CAMPAIGNS is on: BFME2's own MainMenu.apt GoodCampaign / EvilCampaign show and take the pointer in the
+## BFME2 style (they start GOOD_CAMPAIGN / EVIL_CAMPAIGN: tests/bfme2camp1_test.gd plays that start); RotWK's MainMenu.apt has no such buttons. Lane CAMPMENU-1: the campaigns are retail's own Solo Play entries (no OpenBFME panel):
 ## RotWK's list holds Expansion1Campaign and BonusCampaign (MainMenu.apt; tools/menus/retail_controls.json), clicked as the player would
-const ROTWK_SOLO_ENTRIES := ["BonusCampaign", "Expansion1Campaign", "LoadGame", "Skirmish", "WarOfTheRing"]
+## lane BFME2CAMP1 (an OpenBFME addition, AptMainMenu.h ExtraRows): RotWK's list also holds BFME2's EvilCampaign / GoodCampaign rows, BFME2's list RotWK's
+## Expansion1Campaign / BonusCampaign rows
+const ROTWK_SOLO_ENTRIES := ["BonusCampaign", "EvilCampaign", "Expansion1Campaign", "GoodCampaign", "LoadGame", "Skirmish", "WarOfTheRing"]
 func _check_campaign_buttons(style: String) -> void:
-	check(not game.BFME2_CAMPAIGNS, "the BFME2 campaign switch is off in this tree")
+	check(game.BFME2_CAMPAIGNS, "the BFME2 campaign switch is on in this tree (lane BFME2CAMP1)")
 	var overlay := _visible_godot_buttons(game)
 	check(overlay.is_empty(), "%s: no Godot button over the main menu (every button is the movie's): %s" % [style, overlay])
 	var top: int = game._shell.shell_top_level()
@@ -133,6 +135,12 @@ func _check_campaign_buttons(style: String) -> void:
 		await game._wait_seconds(1.5)
 		opened = not game._clean_main_menu()
 	var native: Dictionary = game.bfme2_campaign_buttons()
+	# lane STABLEQA-1: a Stable build (or --stable-channel) hides War of the Ring's row: it is not drawn and takes no click
+	var offered: bool = game._shell.is_war_of_the_ring_offered()
+	check(offered != game._stable_channel, "%s: War of the Ring offered: %s (--stable-channel %s)" % [style, offered, game._stable_channel])
+	if opened:
+		var wotr: Dictionary = game._shell.get_member(top, "SoloPlayNav.WarOfTheRing", "_visible")
+		check(wotr.get("found", false) and (str(wotr.value) in ["true", "1"]) == offered, "%s: War of the Ring's row visible: %s" % [style, wotr])
 	if style == "rotwk":
 		check(opened, "rotwk: the Solo Play list opened")
 		var names := []
@@ -141,33 +149,27 @@ func _check_campaign_buttons(style: String) -> void:
 			if not names.has(name):
 				names.append(name)
 		names.sort()
-		check(names == ROTWK_SOLO_ENTRIES, "rotwk: retail's Solo Play entries take the pointer: %s" % [game.solo_play_entries()])
+		var expected := ROTWK_SOLO_ENTRIES.duplicate()
+		if not offered:
+			expected.erase("WarOfTheRing")
+		check(names == expected, "rotwk: retail's Solo Play entries take the pointer: %s" % [game.solo_play_entries()])
 		check(not game.campaign_entry("Expansion1Campaign").is_empty(), "rotwk: SoloPlayNav.Expansion1Campaign can be clicked")
 	if style == "bfme2":
 		check(opened, "bfme2: the Solo Play list opened")
 		check(native.get("found", []) == ["SoloPlayNav.GoodCampaign", "SoloPlayNav.EvilCampaign"], "bfme2: BFME2's MainMenu.apt GoodCampaign / EvilCampaign found: %s" % JSON.stringify(native))
-		var evil_y: Dictionary = game._shell.get_member(top, "SoloPlayNav.EvilCampaign", "_y")
-		var load_y: Dictionary = game._shell.get_member(top, "SoloPlayNav.LoadGame", "_y")
-		check(load_y.get("found", false) and str(load_y.value) == str(evil_y.get("value", "")), "bfme2: Load Game took the hidden rows' place: %s / %s" % [load_y, evil_y])
 		var shown := []
 		for b in game._shell.list_buttons(top):
 			if bool(b.hittable) and str(b.path).begins_with("_level%d.SoloPlayNav." % top):
 				shown.append(str(b.path).split(".")[2])
-		check(shown.has("Skirmish") and shown.has("WarOfTheRing") and shown.has("LoadGame"), "bfme2: the list's other entries can be clicked: %s" % [shown])
-	check(native.get("visible", []).is_empty() and native.get("hittable", []).is_empty(), "%s: no BFME2 campaign button of MainMenu.apt is visible or clickable: %s" % [style, JSON.stringify(native)])
+		check(shown.has("Skirmish") and shown.has("WarOfTheRing") == offered and shown.has("LoadGame"), "bfme2: the list's other entries can be clicked: %s" % [shown])
+		check(shown.has("GoodCampaign") and shown.has("EvilCampaign"), "bfme2: BFME2's GoodCampaign / EvilCampaign can be clicked: %s" % [shown])
+		check(native.get("visible", []) == ["SoloPlayNav.GoodCampaign", "SoloPlayNav.EvilCampaign"], "bfme2: both campaign clips are visible: %s" % JSON.stringify(native))
+	if style == "rotwk":
+		check(not game.campaign_entry("GoodCampaign").is_empty() and not game.campaign_entry("EvilCampaign").is_empty(), "rotwk: the added GoodCampaign / EvilCampaign rows can be clicked: %s" % [game.solo_play_entries()])
+	if style == "bfme2":
+		check(not game.campaign_entry("Expansion1Campaign").is_empty(), "bfme2: the added Expansion1Campaign (Angmar Campaign) row can be clicked: %s" % [game.solo_play_entries()])
 	if opened:
 		await _close_list(nav)
-	for alignment in ["good", "evil"]:
-		var line: String = game.start_bfme2_campaign(alignment)
-		check(line.begins_with("[S-1914] The BFME2 %s campaign " % alignment.capitalize()), style + ": a " + alignment + " request is refused by name: " + line)
-		# the main menu's "not available" box (GuiFX.apt's MessageBox): its Ok gives the menu back
-		await game._step(30)
-		var ok: Dictionary = game._walk_find_box_ok()
-		check(not ok.is_empty(), style + ": the " + alignment + " refusal shows the not-available box")
-		if not ok.is_empty():
-			await _click(Vector2(ok.x, ok.y))
-		await game._wait_main_ready()
-		check(game._clean_main_menu(), style + ": the menu is usable again after the " + alignment + " box")
 
 
 ## lane CAMPMENU-1: the Godot buttons drawn over the clean main menu (an OpenBFME panel such as MENUSTYLE-1's campaign panel), by their node paths

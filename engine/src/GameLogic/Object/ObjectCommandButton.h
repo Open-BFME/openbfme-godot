@@ -4,6 +4,8 @@
 // Lane SCRIPT-4: Object::doCommandButton / doCommandButtonAtObject / doCommandButtonAtPosition as the map scripts run them (NAMED_ / TEAM_USE_
 // COMMANDBUTTON_ABILITY[_ON_NAMED / _AT_WAYPOINT], through AIGroup RW 0x76F9FF / 0x76FA59 / 0x76FA2A for a team). Free functions, so Object.h does not
 // grow; the AI's own copies (AISpecialPowerUpdate::runButton, AutoAbilityBehavior::doCommand) are left as they are.
+// Lane MODCOMPAT-AI: the three functions run Object::doCommandButton* (lane MODS-3, ObjectDoCommandButton.cpp: the fuller port of the same retail
+// functions, production, upgrades and castle pack / unpack included); what that port lacks is stop S-5305. The facts below are SCRIPT-4's first reading.
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; BFME2 decomp GameLogic/Object/Object.cpp:845 / rva00297000 / :1162, tier B; the command numbers are
 // GUICommandType's):

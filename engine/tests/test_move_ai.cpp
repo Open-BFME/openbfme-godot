@@ -4,6 +4,7 @@
 
 #include "doctest.h"
 #include "MoveTestUtil.h"
+#include "GameLogic/Module/AmbientAIUpdate.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -382,4 +383,84 @@ TEST_CASE("move: allied clearing animates the displaced unit and clears the anim
 		CHECK(ai->isIdle());
 		CHECK_FALSE(unit->testModelCondition(moving));
 	}
+}
+
+TEST_CASE("ambient AI: animals and civilians choose wander goals, respect zero percentage and preserve explicit orders")
+{
+	const char *objects =
+		"ChildObject Animal Walker\n  Behavior = AnimalAIUpdate ModuleTag_AI\n    WanderPercentage = 101\n    MaxWanderDistance = 50\n    MaxWanderRadius = 100\n  End\nEnd\n"
+		"ChildObject StillAnimal Walker\n  Behavior = AnimalAIUpdate ModuleTag_AI\n    WanderPercentage = 0\n  End\nEnd\n"
+		"ChildObject Civilian Walker\n  Behavior = WanderAIUpdate ModuleTag_AI\n    WanderDistance = 30\n  End\nEnd\n";
+	MoveWorld mw(100, 100, objects);
+	mw.buildMap();
+	Object *animal = mw.spawn("Animal", 205, 205);
+	Object *still = mw.spawn("StillAnimal", 505, 505);
+	Object *civilian = mw.spawn("Civilian", 705, 705);
+	mw.frames(3);
+	CHECK(std::string(AmbientAIUpdate::stopLine()) == "[S-5910] ambient wandering is ported from RotWK AnimalAIUpdate::update (RW 0x882058) and WanderAIUpdate::update (RW 0x8ACAFA): the idle gate, the RNG draws and their order, the SALT_LICK scan, the return-to-origin test (Coord3D::GetLengthEstimate, RW 0x4035AC) and ConditionForEntry. Not ported: the enemy flee scan every UpdateTimer frames, the special-layer check (RW 0x881FCC, with the returning state) and WanderAIUpdate WildBeast acquisition, which reports this stop and issues no wander order; the ordinary pathfinder validates wander destinations.");
+	const auto report = mw.logic->report();
+	CHECK(std::find(report.stops.begin(), report.stops.end(), AmbientAIUpdate::stopLine()) != report.stops.end());
+	CHECK(mw.aiOf(still)->isIdle());
+	CHECK_FALSE(mw.aiOf(civilian)->isIdle());
+	const Coord3D old = *still->getPosition();
+	const Coord3D animalOld = *animal->getPosition();
+	mw.frames(40);
+	CHECK((animal->getPosition()->x != animalOld.x || animal->getPosition()->y != animalOld.y));
+	CHECK(still->getPosition()->x == old.x);
+	CHECK(still->getPosition()->y == old.y);
+	mw.aiOf(animal)->aiMoveToPosition(Coord3D{ 805, 205, 0 }, CMD_FROM_PLAYER);
+	mw.frames(3);
+	CHECK(mw.aiOf(animal)->currentStateId() == (unsigned)AI_MOVE_TO);
+}
+
+TEST_CASE("ambient AI: the return-to-origin test of an animal uses Coord3D::GetLengthEstimate (RW 0x4035AC), not the exact length")
+{
+	const char *objects =
+		"ChildObject Animal Walker\n  Behavior = AnimalAIUpdate ModuleTag_AI\n    WanderPercentage = 101\n    MaxWanderDistance = 50\n    MaxWanderRadius = 100\n  End\nEnd\n";
+	MoveWorld mw(100, 100, objects);
+	mw.buildMap();
+	Object *animal = mw.spawn("Animal", 205, 205);
+	mw.frames(1); // the first update captures the origin (205, 205)
+	const auto wanderDraws = [&](float x, float y) {
+		mw.aiOf(animal)->aiIdle(CMD_FROM_PLAYER);
+		const Coord3D at{ x, y, 0.0f };
+		animal->setPosition(&at);
+		mw.logic->random().clearCallLog();
+		mw.logic->random().enableCallLog(true);
+		mw.frames(1);
+		mw.logic->random().enableCallLog(false);
+		int angleDraws = 0, distanceDraws = 0, rolls = 0;
+		for (const auto &c : mw.logic->random().callLog())
+		{
+			angleDraws += c.file == "AnimalAIUpdate.cpp" && c.line == 0xf2;
+			distanceDraws += c.file == "AnimalAIUpdate.cpp" && c.line == 0xf5;
+			rolls += c.file == "AnimalAIUpdate.cpp" && c.line == 0x9a;
+		}
+		CHECK(rolls == 1);
+		CHECK(angleDraws == distanceDraws);
+		return angleDraws;
+	};
+	// offset (75, 75) from the origin: the exact length is 106.07 (> 100, the animal would walk home), the estimate 75 + 0.25 * 75 = 93.75 (<= 100: it wanders)
+	CHECK(wanderDraws(280.0f, 280.0f) == 1);
+	// offset (96, 26): the exact length is 99.46 (<= 100), the estimate 96 + 6.5 = 102.5 (> 100: it walks home and draws nothing more)
+	CHECK(wanderDraws(301.0f, 231.0f) == 0);
+}
+
+TEST_CASE("ambient AI: ConditionForEntry is a ModelConditionState (RW 0x869F22 / 0x46E918), not a KindOf")
+{
+	const char *objects =
+		"ChildObject GatedColon Walker\n  Behavior = WanderAIUpdate ModuleTag_AI\n    WanderDistance = 30\n    ConditionForEntry = ModelConditionState:MOVING\n  End\nEnd\n"
+		"ChildObject GatedSpace Walker\n  Behavior = WanderAIUpdate ModuleTag_AI\n    WanderDistance = 30\n    ConditionForEntry = ModelConditionState MOVING\n  End\nEnd\n"
+		"ChildObject Open Walker\n  Behavior = WanderAIUpdate ModuleTag_AI\n    WanderDistance = 30\n  End\nEnd\n"
+		"ChildObject KindOfGate Walker\n  Behavior = WanderAIUpdate ModuleTag_AI\n    ConditionForEntry = INFANTRY\n  End\nEnd\n";
+	MoveWorld mw(100, 100, objects);
+	mw.buildMap();
+	Object *colon = mw.spawn("GatedColon", 205, 205);
+	Object *space = mw.spawn("GatedSpace", 405, 405);
+	Object *open = mw.spawn("Open", 605, 605);
+	mw.frames(3);
+	CHECK(mw.aiOf(colon)->isIdle()); // the object is not MOVING, so the gate keeps it still
+	CHECK(mw.aiOf(space)->isIdle());
+	CHECK_FALSE(mw.aiOf(open)->isIdle());
+	CHECK_THROWS_AS(mw.spawn("KindOfGate", 805, 805), std::logic_error); // the tag must be ModelConditionState (RW 0xC5A644)
 }

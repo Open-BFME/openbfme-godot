@@ -29,7 +29,7 @@ const float kDurationMsecScale = LOGICFRAMES_PER_MSEC_REAL; // 5.0f / 1000.0f ==
 // B2 0x9BA4F8 / B1 0x012A86A8: SECONDS_PER_LOGICFRAME_REAL = 0.2f (a writable global; the
 // accelerated form squares it at run time).
 const float kSecondsPerLogicFrame = SECONDS_PER_LOGICFRAME_REAL; // 1.0f / 5.0f == 0.2f
-// B2src INI_parseAngleReal.cpp, B1 GameCommonConvertThunk.cpp: RADS_PER_DEGREE = 0x3C8EFA35.
+// B2src INI.cpp, B1 GameCommonConvertThunk.cpp: RADS_PER_DEGREE = 0x3C8EFA35.
 const float kRadsPerDegree = 0.017453292f;
 
 bool equalsNoCase(const char *a, const char *b)
@@ -137,7 +137,7 @@ void INI::parsePercentToReal(INI *ini, void *, void *store, const void *)
 	*(float *)store = ini->scanPercentToReal(token);
 }
 
-// B2src INI_parseAngleReal.cpp.
+// B2src INI.cpp.
 void INI::parseAngleReal(INI *ini, void *, void *store, const void *)
 {
 	*(float *)store = NumericState::pc24Mul(ini->scanReal(ini->getNextToken()), kRadsPerDegree);

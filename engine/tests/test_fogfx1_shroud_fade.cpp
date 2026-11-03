@@ -2,6 +2,7 @@
 #include "doctest.h"
 
 #include "GameClient/ShroudFade.h"
+#include "GameClient/ShroudTexel.h"
 
 #include <cstring>
 
@@ -98,4 +99,48 @@ TEST_CASE("fogfx1: a forced rebuild lands every cell on its final level; cells o
 	CHECK_FALSE(f.fading());
 	CHECK(f.current(1, 1) == 255);
 	CHECK(f.current(0, 0) == 0);
+}
+
+// Lane TERRAIN-SAMPLING (stop S-567): W3DShroud's A4R4G4B4 texel, RW 0x47266B (BFME2 Rva00072D5DShroudPixel, W3DShroudMaterialPass.cpp). The terrain effect reads
+// the red channel only, so the 4-bit red nibble is the level the ground is multiplied by.
+TEST_CASE("shroud texel: the fog level 127 packs to red nibble 7 and reads back as 7/15, not 127/255")
+{
+	const ShroudTexel::Colour white; // GameData ShroudColor 255 255 255
+	const std::uint16_t texel = ShroudTexel::pixel(127, white);
+	CHECK(texel == 0xF777); // alpha min(max(127 - 4, 0) * 255 / 46, 255) = 255 -> F; red 0x7F -> 7; green 7; blue 7
+	CHECK(ShroudTexel::redNibble(texel) == 7u);
+	CHECK(ShroudTexel::redByte(127, white) == 119); // 7 * 17: the byte whose /255 is Direct3D's 7/15 = 0.46667
+}
+
+TEST_CASE("shroud texel: every level keeps the high nibble of level * ShroudColor, 255 is opaque white, the alpha ramps over levels 4 .. 50")
+{
+	const ShroudTexel::Colour white;
+	for (int level = 0; level < 255; ++level)
+	{
+		const std::uint16_t t = ShroudTexel::pixel((std::uint8_t)level, white);
+		CHECK(ShroudTexel::redNibble(t) == (unsigned int)level >> 4);
+		CHECK(((t >> 4) & 0xF) == (unsigned int)level >> 4); // green
+		CHECK((t & 0xF) == (unsigned int)level >> 4);        // blue
+		const int alpha = std::min(std::max(level - 4, 0) * 255 / 46, 255);
+		CHECK(((t >> 12) & 0xF) == (unsigned int)(alpha >> 4));
+	}
+	CHECK(ShroudTexel::pixel(255, white) == 0xFFFF);
+	CHECK(ShroudTexel::pixel(255, ShroudTexel::Colour{ 0.0f, 0.0f, 0.0f }) == 0xFFFF); // level 255 ignores the colour (RW 0x4726EE)
+	CHECK(ShroudTexel::pixel(0, white) == 0x0000);
+	CHECK(ShroudTexel::pixel(4, white) == 0x0000); // alpha 0 at level 4
+	CHECK(ShroudTexel::pixel(50, white) == 0xF333); // alpha 46 * 255 / 46 = 255
+	CHECK(ShroudTexel::redByte(0, white) == 0);
+	CHECK(ShroudTexel::redByte(255, white) == 255);
+	CHECK(ShroudTexel::redByte(16, white) == 17);
+	CHECK(ShroudTexel::redByte(15, white) == 0); // below the first nibble step
+}
+
+TEST_CASE("shroud texel: the colour scales each channel before the truncation to a nibble; red, green and blue are independent")
+{
+	const ShroudTexel::Colour c{ 0.5f, 1.0f, 0.25f };
+	const std::uint16_t t = ShroudTexel::pixel(200, c); // red 100 -> 6, green 200 -> C, blue 50 -> 3
+	CHECK(ShroudTexel::redNibble(t) == 6u);
+	CHECK(((t >> 4) & 0xF) == 0xCu);
+	CHECK((t & 0xF) == 3u);
+	CHECK(ShroudTexel::redByte(200, c) == 102);
 }

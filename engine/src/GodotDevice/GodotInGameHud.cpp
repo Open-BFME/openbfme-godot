@@ -1200,6 +1200,7 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("inject_key", "dik_code", "down"), &InGameHudNode::inject_key);
 	ClassDB::bind_method(D_METHOD("hold_input", "on"), &InGameHudNode::hold_input);                 // lane BACKLOG3 (QA)
 	ClassDB::bind_method(D_METHOD("set_input_enabled", "on"), &InGameHudNode::set_input_enabled); // lane BACKLOG3 (QA)
+	ClassDB::bind_method(D_METHOD("input_enabled"), &InGameHudNode::input_enabled); // lane BFME2CAMP1
 	ClassDB::bind_method(D_METHOD("script_input", "enable"), &InGameHudNode::script_input); // lane OWNERFIX-1
 	ClassDB::bind_method(D_METHOD("set_broadcast_clean", "on"), &InGameHudNode::set_broadcast_clean);
 	ClassDB::bind_method(D_METHOD("inject_mouse_wheel", "notches", "position"), &InGameHudNode::inject_mouse_wheel);
@@ -1215,6 +1216,7 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("camera_set_zoom_limited", "on"), &InGameHudNode::camera_set_zoom_limited); // lane CAMPUI-1
 	ClassDB::bind_method(D_METHOD("camera_animation_request", "action", "name"), &InGameHudNode::camera_animation_request); // lane CAMANIM-1
 	ClassDB::bind_method(D_METHOD("camera_animation_state"), &InGameHudNode::camera_animation_state);                  // lane CAMANIM-1
+	ClassDB::bind_method(D_METHOD("camera_set_clip_depth_multiplier", "m"), &InGameHudNode::camera_set_clip_depth_multiplier); // lane MODCOMPAT-AI
 	ClassDB::bind_method(D_METHOD("set_objectives_screen_open", "open"), &InGameHudNode::set_objectives_screen_open); // lane CAMPUI-1
 	ClassDB::bind_method(D_METHOD("flash_palantir_button", "slot", "seconds"), &InGameHudNode::flash_palantir_button); // lane CAMPUI-1
 	ClassDB::bind_method(D_METHOD("is_objectives_flag_flashing"), &InGameHudNode::is_objectives_flag_flashing); // lane CAMPUI-1
@@ -3652,6 +3654,11 @@ void InGameHudNode::set_broadcast_clean(bool on)
 	}
 }
 
+bool InGameHudNode::input_enabled() const
+{
+	return d->ready && d->hud && d->hud->input().ui().getInputEnabled();
+}
+
 void InGameHudNode::set_input_enabled(bool on)
 {
 	if (d->ready && d->hud)
@@ -3904,6 +3911,14 @@ void InGameHudNode::camera_set_zoom_limited(bool on)
 	if (d->cam)
 	{
 		d->cam->setZoomLimited(on); // lane CAMPUI-1: RW 0x443C81 (the letterbox lifts the zoom limit while it is on)
+	}
+}
+
+void InGameHudNode::camera_set_clip_depth_multiplier(double m)
+{
+	if (d->cam)
+	{
+		d->cam->setClipDepthMultiplier((float)m); // RW 0x7CAFA5 case 0x14E: GlobalData + 0x950, read by setCameraTransform (RW 0x48B7B1)
 	}
 }
 

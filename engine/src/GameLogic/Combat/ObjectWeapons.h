@@ -130,6 +130,10 @@ public:
 	bool isWithinAttackRange(const Coord3D &pos) const;
 	// lane GARRISON-2: RW 0x6CC653 for the weapon in `slot` (TurretAI::isAnyWeaponInRangeOf, RW 0x8DC626)
 	bool isSlotWithinAttackRange(int slot, const Object &victim, float extra = 0.0f, bool checkMin = true) const;
+	// isWithinAttackRange with the current weapon's bonus computed by the caller (currentWeaponBonus): the bonus is the attacker's alone, so a loop over many
+	// victims computes it once (performance, the same answers and the same melee reach left in the range host). False without a current weapon
+	bool currentWeaponBonus(WeaponBonus &out) const;
+	bool isWithinAttackRangeWithBonus(const Object &victim, const WeaponBonus &bonus) const;
 	// lane PHYS-1: RW 0x6CC07C(source, sourcePos, victim, victimPos, extra, checkMin) for the current weapon with the source standing at `sourcePos` (findAttackPath's
 	// candidate cells); `victim` may be null (a position target)
 	bool isWithinAttackRangeFrom(const Coord3D &sourcePos, const Object *victim, const Coord3D &victimPos, float extra, bool checkMin) const;

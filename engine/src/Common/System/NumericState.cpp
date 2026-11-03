@@ -817,12 +817,9 @@ enum FastOp
 	FAST_DIV
 };
 
-inline bool fastFloat(FastOp op, float a, float b, float &f)
+// the operation itself, the environment already checked: pure arithmetic, no instruction here can change MXCSR or the x87 control word
+inline bool fastArithmetic(FastOp op, float a, float b, float &f)
 {
-	if (!fastEnvironment())
-	{
-		return false;
-	}
 	const double x = (double)a, y = (double)b;
 	double r;
 	switch (op)
@@ -832,17 +829,20 @@ inline bool fastFloat(FastOp op, float a, float b, float &f)
 		case FAST_MUL: r = x * y; break;
 		default: r = x / y; break;
 	}
-	return normalFloatResult(r, f) && fastEnvironment();
+	return normalFloatResult(r, f);
+}
+
+// lane PERF-HD: the environment is read once per operation (it was read before, after and, from fastDouble, again before: the reads were most of
+// the fast path's cost in a big battle); between that read and the result nothing but this thread's arithmetic runs, so the answer is the same
+inline bool fastFloat(FastOp op, float a, float b, float &f)
+{
+	return fastEnvironment() && fastArithmetic(op, a, b, f);
 }
 
 inline bool fastDouble(FastOp op, double a, double b, float &f)
 {
-	if (!fastEnvironment())
-	{
-		return false;
-	}
 	float fa, fb;
-	return isFloatValue(a, fa) && isFloatValue(b, fb) && fastFloat(op, fa, fb, f);
+	return fastEnvironment() && isFloatValue(a, fa) && isFloatValue(b, fb) && fastArithmetic(op, fa, fb, f);
 }
 } // namespace
 
@@ -1099,7 +1099,7 @@ double sqrtPC24(double x)
 	if (fastEnvironment() && isFloatValue(x, fx) && fx > 0.0f)
 	{
 		float f;
-		if (normalFloatResult(std::sqrt((double)fx), f) && fastEnvironment())
+		if (normalFloatResult(std::sqrt((double)fx), f)) // lane PERF-HD: the environment was read above (nothing between can change it)
 		{
 			return (double)f;
 		}

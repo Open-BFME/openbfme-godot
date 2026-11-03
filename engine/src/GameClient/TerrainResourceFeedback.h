@@ -24,7 +24,7 @@
 //   * RW 0x75C1A9 (vx, vy in map vertices of 10 units, the cell of a vertex is (v / 2)): the vertex's own cell not claimable -> alpha 0; else weight 12 minus
 //     4 per unclaimable edge neighbour (x +- 1, y +- 1 halved), 2 for (+1, +1) and (-1, -1), 3 for (-1, +1) and (+1, -1), 1 per unclaimable (x +- 2, y +- 2);
 //     weight <= 0 -> 0, below 12 -> alpha * weight / 12;
-//   * the selection feedback (TerrainResourceClientBehavior::createSelectionFeedback, BFME2 decomp TerrainResourceClientBehaviorSlots.cpp, slot 17): the holder
+//   * the selection feedback (TerrainResourceClientBehavior::createSelectionFeedback, BFME2 decomp TerrainResourceClientBehavior.cpp, slot 17): the holder
 //     at InGameUI + 0x58C counts its users; while it has any, each client frame (ResourceEntryOwner RW twin of BFME2 0x4E7E3A) every claimant whose owner is the
 //     local player or an ally (getPlayersWithRelationship(local, ALLOW_SAME_PLAYER | ALLOW_ALLIES = 3)) and is Visible (the claim's flag, RW twin of 0x4E81DE)
 //     keeps one decal (TerrainResourceClaimFeedback::Impl::updateClaimedDecalForClaimant, BFME2 0x4E7FCA): TerrainResourceClaimDecal, type 0x20, 2 * radius,

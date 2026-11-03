@@ -155,12 +155,19 @@ The release privacy scanner imports Python's possessive-repeat regex constants; 
    `NOTICE`, `VERSION`, the archives and `SHA256SUMS-<version>.txt`, and audits every
    file, pack entry and archive member for retail-format bytes
    (`tools/release/audit_package.py`, the commit gate's rules). A dirty tree is refused.
-4. `ROTWK_INSTALL=... BFME2_INSTALL=... tools/release/test_export.sh <linux .tar.gz>`:
+4. `ROTWK_INSTALL=... BFME2_INSTALL=... BFME1_INSTALL=... tools/release/test_export.sh <linux .tar.gz>`:
    start, the crash test (`tools/release/crash_test.py`: SIGSEGV leaves the native
    backtrace in the session log, no home folder or user name in the log or the console)
    and the fresh-user test (`tools/release/fresh_user_test.py`: nothing found, a Wine
    prefix found and accepted, remembered, picked, swapped and empty picks rejected) on
    the packaged executable, and the smoke test on the packaged pack and library.
+   When `BFME1_INSTALL` is set, the packaged executable must load its object world
+   and reach `MainMenu.apt`, and the packaged `bfme1_test.gd` must pass its menu,
+   lobby, castle and outpost checks. An invalid install or a skipped or failed test
+   fails release validation. When `BFME1_INSTALL` is unset or empty, both BFME1
+   checks print `SKIP` without failing publication; BFME1 packaged startup remains
+   unverified on that builder. BFME1 logs, when run, are `bfme1-start.log` and
+   `bfme1-smoke.log`.
    The package is checked against an ALLOWLIST (`audit_package.py --release`): exactly the
    release's files (the executable(s), the GDExtension library, `OpenBFME.pck`,
    `README_TESTERS.txt`, `LICENSE`, `NOTICE`, `VERSION`, and since ONEZIP-1 the launcher's
@@ -982,7 +989,7 @@ or **Nightly** (everything merged, built every night) in the launcher's Settings
   commit for the next release, also with the same tree (two release tags on one commit make the build's version ambiguous).
 - **Gate.** No gate record: the full gate is the merge queue's job. The nightly's candidate is checked as it is built (a failure
   anywhere publishes nothing, and the next run uses the same number): the Linux, Windows and macOS builds and packages with their audits;
-  `test_export.sh` on the Linux package (a skirmish start, the smoke, crash and fresh-user runs); the launcher's unit and
+  `test_export.sh` on the Linux package (a skirmish start, the smoke, crash and fresh-user runs, plus BFME1 packaged startup and smoke checks when `BFME1_INSTALL` is set); the launcher's unit and
   layout tests (`tools/release/test_launcher.py -k 'unit_rules or layout'`; the whole file is the merge gate's) and `godot/tests/end_test.gd` (a skirmish to its end) on the build host; the Windows start and the
   help-box run of the Windows package (under Wine on a Linux host, judged by `windows_start_check.sh` / `windows_hud6_check.sh`); the
   Deck's package checks; the metadata, tree and asset privacy audits with the private denylist. The builder is the operator's
@@ -992,12 +999,17 @@ or **Nightly** (everything merged, built every night) in the launcher's Settings
   start at the last stable release.
 - **Notes** (`tools/release/nightly_notes.py`): the first-parent changes since the last nightly (`nightly/last-released`: the previous
   run that published, morning or evening, not the previous day), and for each the community pull requests
-  it carries (a `(cherry picked from commit X)` line whose X GitHub links to a pull request of the repository: its number and author).
+  it carries (a `(cherry picked from commit X)` line whose X GitHub links to a pull request of the repository, or a `#n` in the merge's
+  subject: its number and author). Each `Release-note:` line is credited to the pull requests it came from, and only those (RELNOTES-1):
+  end the line with them, `Release-note: Clicking units on the HUD is faster in large battles. (#169)` (`(#12, #13)` for two; the
+  ending is not printed); a line without one is our own work, and a merge's single line takes every pull request it carries. A merge
+  that carries a pull request none of its lines names fails the notes (fail closed). For merges already in the history,
+  `tools/release/nightly_credits.json` lists the pull requests of each line (one list per line, in order; the coordinator keeps it).
   A change with `Release-note:` lines is described by exactly those (`none` hides it), and its `Test:` lines are its test steps. For the
   rest, the operator's model command (`OPENBFME_NIGHTLY_LLM`) writes one plain sentence and 1 to 6 concrete test steps per change, and
   per community pull request. Each text is checked (the patch notes' jargon rule, no markup, mentions, references or links, the length
   limits); a draft that fails is sent back once with the problems, then the run fails. The page: the build, how to get it, the download
-  table, **Thanks to our community** (each pull request: "Thanks to @login (#n): ..."), What's new / Changed / What's fixed (community
+  table, **Thanks to our community** (each credited line: "Thanks to @login (#n): ..."), What's new / Changed / What's fixed (community
   first, credited), **What to test** (numbered, community first), how to report a problem, the known issues. The logins and numbers come
   from GitHub's record; they are the only mentions and references on the page. The whole page passes `audit-text` with the private
   denylist like every published text.

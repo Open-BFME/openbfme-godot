@@ -78,23 +78,6 @@ BezierProjectileBehavior *flyingBezier(Object &o)
 	return nullptr;
 }
 
-// lane SIEGE-1: the shapes of the object's own GeometryInfo (Object + 0xA8): its template's, with the active flags it keeps (GeometryInfo::setActive RW 0xAD3520,
-// the gates' open and closed shapes); the template's list itself while the object never changed a flag
-const std::vector<ObjectGeometry::Shape> &activeShapes(const Object &o, std::vector<ObjectGeometry::Shape> &scratch)
-{
-	const std::vector<ObjectGeometry::Shape> &shapes = ObjectGeometry::cachedShapesOf(*o.getTemplate());
-	const std::vector<std::uint8_t> &active = o.geometryActive();
-	if (active.size() != shapes.size())
-	{
-		return shapes;
-	}
-	scratch.assign(shapes.begin(), shapes.end());
-	for (size_t i = 0; i < scratch.size(); ++i)
-	{
-		scratch[i].active = active[i] != 0;
-	}
-	return scratch;
-}
 } // namespace
 
 void CombatState::noteFlyingProjectile(std::uint32_t objectId)
@@ -109,7 +92,7 @@ void CombatState::noteFlyingProjectile(std::uint32_t objectId)
 // lane FLANK-1 (S-363 / S-780). Retail: RW 0x68E31F registers an object without KindOf NO_COLLIDE (bit 30) with the collision manager (RW 0xB6C470); the manager's
 // update (row RW 0x62E93B .. 0x62E94E, after ThePartitionManager's) finds the overlapping pairs (broad phase RW 0xB6D8A0, the test vslot 0x20) and calls onCollide
 // both ways (RW 0xB6D060). A BezierProjectileBehavior's collide interface (RW vtable 0xC585C8, slot 0 RW 0x85E52B) asks canCollideWith (RW 0x85EF6A) and hands an
-// accepted contact to handleCollision (RW 0x85FDB7; BFME2 decomp BezierProjectileBehaviorSlots.cpp rva0045B4C0 / rva0045BF06, Collide.cpp rva0045CD6E).
+// accepted contact to handleCollision (RW 0x85FDB7; BFME2 decomp BezierProjectileBehavior.cpp rva0045B4C0 / rva0045BF06 / rva0045CD6E).
 // INFERENCE (stop S-780): the pairs of a flying projectile are the objects ThePartitionManager returns within its bounding sphere (distance type 3) whose shapes
 // overlap (RW 0xAD2CE0, NotifyCrushModules::geometriesOverlap), met in id order; retail's broad phase and its contact table order were not ported. Lane SIEGE-1 read
 // the contact test (vslot 0x20 = RW 0x68C7B2): it runs from the pair's lower ObjectID's side with each object's own GeometryInfo (see the test below). Only the
@@ -156,13 +139,14 @@ void CombatState::processProjectileContacts()
 		{
 			continue;
 		}
-		const std::vector<ObjectGeometry::Shape> &own = ObjectGeometry::cachedShapesOf(*p->getTemplate());
+		const std::vector<ObjectGeometry::Shape> &own = p->geometryShapes(); // lane MODCOMPAT-MOD1: the object's own GeometryInfo
 		if (own.empty())
 		{
 			continue; // no shape overlaps anything (RW 0xAD2CE0 walks the shapes)
 		}
 		PartitionFilterFn candidate([&](Object &o) {
-			return &o != p && !o.isDestroyed() && o.isInWorld() && !o.isKindOf(kNoCollide) && !o.isKindOf(kHorde) && !o.testStatus(kNoCollisions);
+			return &o != p && !o.isDestroyed() && o.isInWorld() && !o.isKindOf(kNoCollide) && !o.isKindOf(kHorde) && !o.testStatus(kNoCollisions) &&
+				!o.isOutOfCollisionManager(); // lane MODCOMPAT-MOD1: RW 0xB6C480 removed its record
 		});
 		const PartitionHits hits =
 			m_logic.partition().iterateObjectsInRange(*p->getPosition(), CombatQueries::boundingSphereRadius(*p), FROM_BOUNDINGSPHERE_3D, { &candidate }, ITER_FASTEST);
@@ -188,8 +172,8 @@ void CombatState::processProjectileContacts()
 			// pair by the id window slot 4 returns, RW 0x670216 = Object + 0x74). RW 0xAD2CE0's height rules are not symmetric (the own shape's centre against
 			// the other's top, the own top against the other's base z): a structure made before the stone tests its own shapes against the stone, so the
 			// lintel of Helm's Deep's gate arch (offset z 110) does not reach down onto a stone falling on the gate
-			const std::vector<ObjectGeometry::Shape> &projShapes = activeShapes(*p, m_projShapesScratch);
-			const std::vector<ObjectGeometry::Shape> &otherShapes = activeShapes(*o, m_otherShapesScratch);
+			const std::vector<ObjectGeometry::Shape> &projShapes = p->geometryShapes(); // the objects' own GeometryInfo (Object + 0xA8, Object::geometryShapes)
+			const std::vector<ObjectGeometry::Shape> &otherShapes = o->geometryShapes();
 			const bool overlap = p->getID() < o->getID()
 				? NotifyCrushModules::geometriesOverlap(projShapes, *p->getPosition(), p->getOrientation(), otherShapes, *o->getPosition(), o->getOrientation())
 				: NotifyCrushModules::geometriesOverlap(otherShapes, *o->getPosition(), o->getOrientation(), projShapes, *p->getPosition(), p->getOrientation());
@@ -287,7 +271,7 @@ std::vector<std::string> CombatState::stops()
 		"target pitch test and the FiringTrackerHelper shell (the tracker runs from the AI update; the WeaponStatusHelper is ported, lane PROJ-2) are not available; a weapon that needs them answers as "
 		"if they were neutral",
 		"[S-321] delivery: DamageNugget is delivered (radius damage scans the object list in list order, RW's partition order is implementation defined); a weapon with a ProjectileNugget launches a projectile "
-		"object through ProjectileLauncher (lane PROJ-1, stops S-360..S-364); MetaImpactNugget throws through the shockwave handler (lane COMBAT-4, S-1600 / S-1790); DOTNugget hits and registers its damage over time with the DOTManager (lane DECOMP-1, S-1959); AttributeModifierNugget adds its ModifierList, disables its AntiCategories and plays its AntiFX (lane DECOMP-1: RW 0x90EAF9, the arc's fcos is S-167's cosd); ParalyzeNugget disables its victims (lane DECOMP-1: RW 0x90F177); WeaponOCLNugget runs its ObjectCreationList (lane FACT-A: RW 0x90F858 / 0x90F887); lane NUGGET-1 delivers StealMoney (RW 0x9118B1), OpenGate (RW 0x9115BB / 0x91161F; a GateProxyBehavior victim is not opened: S-1940), EmotionWeapon (RW 0x911770 / 0x9117A7), LuaEvent (RW 0x911EDC, through the live game's script engine; none attached: counted, S-1220), SpawnAndFade (RW 0x911C46), SpecialModelCondition (RW 0x90EF46), Grab (RW 0x910C8A; the passenger's fling is S-863), DamageField (RW 0x90F5F3; the victim form needs the weapon's PreferredTargetBone, retail reads a null source otherwise: reported) and DamageContained (RW 0x91117C); SlaveAttack (SlaveWatcherBehavior has no runtime, S-1995), FireLogic (TheFireLogicSystem is not ported, S-191) and the passenger hit roll are counted and not executed",
+		"object through ProjectileLauncher (lane PROJ-1, stops S-360..S-364); MetaImpactNugget throws through the shockwave handler (lane COMBAT-4, S-1600 / S-1790); DOTNugget hits and registers its damage over time with the DOTManager (lane DECOMP-1, S-1959); AttributeModifierNugget adds its ModifierList, disables its AntiCategories and plays its AntiFX (lane DECOMP-1: RW 0x90EAF9, the arc's fcos is S-167's cosd); ParalyzeNugget disables its victims (lane DECOMP-1: RW 0x90F177); WeaponOCLNugget runs its ObjectCreationList (lane FACT-A: RW 0x90F858 / 0x90F887); lane NUGGET-1 delivers StealMoney (RW 0x9118B1), OpenGate (RW 0x9115BB / 0x91161F; a GateProxyBehavior victim is not opened: S-1940), EmotionWeapon (RW 0x911770 / 0x9117A7), LuaEvent (RW 0x911EDC, through the live game's script engine; none attached: counted, S-1220), SpawnAndFade (RW 0x911C46), SpecialModelCondition (RW 0x90EF46), Grab (RW 0x910C8A; the passenger's fling is S-863), DamageField (RW 0x90F5F3; the victim form needs the weapon's PreferredTargetBone, retail reads a null source otherwise: reported) and DamageContained (RW 0x91117C); SlaveAttack orders the expansion's slave to shoot (lane MODCOMPAT-MOD1: RW 0x910DCF / 0x910EA1 / 0x910F78); FireLogic (TheFireLogicSystem is not ported, S-191) and the passenger hit roll are counted and not executed",
 		"[S-322] ActiveBody: armour is the ArmorSet of the object's armor flags looked up per hit (RW 0x5D893C; the flank test RW 0x68FB63 is lane HORDE-2's, S-582); the ARMOR / INVULNERABLE attribute modifiers, the burning death "
 		"fire cap, doDamageFX and the damage modules' onDamage are not ported (the damage state model conditions are COMBAT-2's, S-342); ImmortalBody / HighlanderBody / ActiveBody share the data table 0xC71D68, "
 		"StructureBody (an extra EMPTY table 0xC84858), InactiveBody, RespawnBody, DelayedDeathBody and SymbioticStructuresBody run since COMBAT-2 (S-340, S-343)",

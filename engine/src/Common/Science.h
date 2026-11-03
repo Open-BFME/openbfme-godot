@@ -98,7 +98,7 @@ public:
 	bool isScienceGrantable(ScienceType st) const;                // RW 0x5FECBA
 	bool playerHasPrereqsForScience(const ScienceOwner &player, ScienceType st) const;                        // RW 0x5FED05
 	bool playerHasRootPrereqsAndCanPurchase(const ScienceOwner &player, ScienceType st, bool multiplayerCosts) const; // RW 0x5FED5B
-	// lane HOVER-1: RW 0x5FF4D7 (BFME2 decomp ScienceStoreRootPrereqs.cpp, tier A) with its memo walk RW 0x5FF323 (BFME2 0x5FFAA1,
+	// lane HOVER-1: RW 0x5FF4D7 (BFME2 decomp Science.cpp, tier A) with its memo walk RW 0x5FF323 (BFME2 0x5FFAA1,
 	// ScienceStoreFindScienceInfo.cpp, tier A): the player owns the science, or one of its prerequisite groups (none counts) holds only sciences
 	// that pass the same test, recursively. INFERENCE (S-4612): a science met again while its own test runs counts as failing (retail recurses
 	// without a guard; no retail science is its own prerequisite)

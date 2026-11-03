@@ -176,7 +176,47 @@ void buildOne(LiveGame &live, Player &player, Object &dozerObj, const ThingTempl
 	}
 }
 
-// a site for `tt` around `centre` the dozer's construct gate accepts (rings of 40 from 160 to 760, 24 directions), away from the sites already used
+// the test's layout rule (not an engine rule): the footprints of `tt` at `c`, grown by kSiteGap all round, touch no placed STRUCTURE's own footprint. A legal
+// site may touch a neighbour (RotWK's placement test RW 0x796D37 only refuses an overlap); two footprints meeting at a corner can then close a pocket the
+// builder stands in after it leaves its last building (the pathfinder takes no diagonal step between two blocked cells), and the next build is never reached
+// (lane MODCOMPAT-MOD1: the structures' own level footprints made the Elves' sites pack that tightly). Two pathfind cells (2 x 10) keep one clear cell between
+// the rasterized footprints whatever their alignment
+const float kSiteGap = 20.0f;
+
+bool siteKeepsGap(GameLogic &logic, const ThingTemplate &tt, const Coord3D &c)
+{
+	std::vector<BuildPlacement::Footprint> mine, other;
+	if (!BuildPlacement::footprintsOf(logic, tt, c, 0.0f, mine))
+	{
+		return true;
+	}
+	for (BuildPlacement::Footprint &f : mine)
+	{
+		f.major += kSiteGap;
+		f.minor += kSiteGap;
+	}
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->isDestroyed() || !o->isInWorld() || !o->isKindOfName("STRUCTURE") || !BuildPlacement::footprintsOf(logic, *o, other))
+		{
+			continue;
+		}
+		for (const BuildPlacement::Footprint &a : mine)
+		{
+			for (const BuildPlacement::Footprint &b : other)
+			{
+				if (BuildPlacement::footprintsCollide(a, b))
+				{
+					return false;
+				}
+			}
+		}
+	}
+	return true;
+}
+
+// a site for `tt` around `centre` the dozer's construct gate accepts (rings of 40 from 160 to 760, 24 directions), away from the sites already used and
+// kSiteGap clear of every placed structure (siteKeepsGap)
 bool findSite(LiveGame &live, DozerAIUpdate &dozer, Player &player, const ThingTemplate &tt, const Coord3D &centre, Coord3D &site)
 {
 	GameLogic &logic = live.logic();
@@ -189,7 +229,7 @@ bool findSite(LiveGame &live, DozerAIUpdate &dozer, Player &player, const ThingT
 			c.x += (float)(r * std::cos(a));
 			c.y += (float)(r * std::sin(a));
 			c.z = logic.getGroundHeight(c.x, c.y);
-			if (dozer.siteIsLegal(tt, c, 0.0f, player))
+			if (dozer.siteIsLegal(tt, c, 0.0f, player) && siteKeepsGap(logic, tt, c))
 			{
 				site = c;
 				return true;

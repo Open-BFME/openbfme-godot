@@ -316,7 +316,7 @@ bool SkirmishRandom::resolve(SkirmishGameInfo &info, const SkirmishResolveInput 
 	{
 		slot.saveOffOriginalInfo();
 	}
-	return populateRandomStartPosition(info, in, rng, error) && populateRandomSideAndColor(info, in, rng, error);
+	return (in.strategicStarts || populateRandomStartPosition(info, in, rng, error)) && populateRandomSideAndColor(info, in, rng, error);
 }
 
 std::vector<std::string> SkirmishRandom::stopLines()

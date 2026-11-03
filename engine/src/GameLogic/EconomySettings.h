@@ -86,7 +86,8 @@ struct EconomyContext
 		MODE_SKIRMISH = 2,
 		MODE_REPLAY = 3,
 		MODE_SHELL = 4,
-		MODE_INTERNET = 5
+		MODE_INTERNET = 5,
+		MODE_TUTORIAL = 6 // lane BFME2CAMP1: AptMainMenu::OnTutorial's new game (RW 0x91B825: RW 0x7111E5(6))
 	};
 	int gameMode = MODE_SKIRMISH;
 	int gameKind = 3;

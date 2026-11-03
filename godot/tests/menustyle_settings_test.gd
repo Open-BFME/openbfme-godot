@@ -77,10 +77,10 @@ func _initialize() -> void:
 	shell.opts[Options.MENU_STYLE_KEY] = "unknown"
 	var found := options.current()
 	check(found[Options.MENU_STYLE_KEY] == "rotwk" and "\n".join(options.problems).contains("unknown"), "an unknown value: the default, reported")
-	# lane DEVPORT-8: the BFME2 campaigns stay out of the shipped menu until B2CAMP-1 turns the one switch on (lane CAMPMENU-1: game.gd's, the OpenBFME
-	# campaign panel is gone: the campaigns are retail's own Solo Play buttons)
+	# lane DEVPORT-8: the one switch of the BFME2 campaigns; lane BFME2CAMP1 turned it on (BFME2 MainMenu.apt's own buttons start them). Lane CAMPMENU-1:
+	# game.gd's, the OpenBFME campaign panel is gone: the campaigns are retail's own Solo Play buttons
 	var game_script: GDScript = load("res://scripts/game.gd")
-	check(game_script.BFME2_CAMPAIGNS == false, "game.gd BFME2_CAMPAIGNS is off in this tree")
+	check(game_script.BFME2_CAMPAIGNS == true, "game.gd BFME2_CAMPAIGNS is on in this tree (lane BFME2CAMP1)")
 	check(not ResourceLoader.exists("res://scripts/menu_campaigns.gd"), "no OpenBFME campaign panel script")
 	options.free()
 	shell.free()

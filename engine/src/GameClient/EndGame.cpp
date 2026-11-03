@@ -433,6 +433,18 @@ void EndGameController::startEndGameTimer(unsigned frame)
 	m_endGameTimerFrame = frame;
 }
 
+long long EndGameController::victoryTimerEndFrame(const std::vector<VictoryConditions::Event> &events)
+{
+	for (const VictoryConditions::Event &e : events)
+	{
+		if (e.kind == VictoryConditions::Event::ALLIANCE_VICTORY)
+		{
+			return (long long)e.frame + kEndGameTimerFrames;
+		}
+	}
+	return -1;
+}
+
 // RW 0x808E1F
 void EndGameController::showEndGame(const std::string &label, bool evil, const std::string &sound, const std::string &cheer, double nowMs, bool victory)
 {
@@ -801,16 +813,44 @@ std::string ScoreScreenData::formatTime(const std::string &format, int seconds)
 	return out;
 }
 
+int ScoreScreenData::sampleCount(const Entry &e) const
+{
+	return type == 6 || type == 7 ? (int)e.warTurns.size() : (int)e.perFrame.size(); // RW 0x925014: row + 0x20 size / 12
+}
+
+float ScoreScreenData::value(const Entry &e, int i, int mode) const
+{
+	if (type != 6 && type != 7)
+	{
+		return i >= 0 && i < (int)e.perFrame.size() ? graphValue(e.perFrame[(size_t)i], mode) : 0.0f;
+	}
+	if (i < 0 || i >= (int)e.warTurns.size()) // RW 0x9252C4 (strict)
+	{
+		return 0.0f;
+	}
+	const std::array<int, 3> &s = e.warTurns[(size_t)i]; // territories, units, structures
+	switch (mode)
+	{
+		case 0: return (float)s[1];
+		case 1: return (float)s[2];
+		case 2: return 0.0f; // "Resources": not handled by the war's source
+		case 3: return (float)s[0];
+		default: // x87: the products summed at 80 bits, stored as a float
+			return (float)((long double)s[1] * warMultipliers[0] + (long double)s[2] * warMultipliers[1] + (long double)s[0] * warMultipliers[2]);
+	}
+}
+
 ScoreScreenData::Axis ScoreScreenData::axis(int mode, const std::string formats[3]) const
 {
 	Axis a;
 	float maxValue = -FLT_MAX; // RW 0xBD190C
 	for (const Entry &e : entries)
 	{
-		a.samples = std::max(a.samples, (int)e.perFrame.size());
-		for (const ScoreKeeper::PerFrameStats &f : e.perFrame)
+		const int n = sampleCount(e);
+		a.samples = std::max(a.samples, n);
+		for (int f = 0; f < n; ++f)
 		{
-			maxValue = std::max(maxValue, graphValue(f, mode));
+			maxValue = std::max(maxValue, value(e, f, mode));
 		}
 	}
 	if (a.samples == 0)
@@ -843,6 +883,18 @@ ScoreScreenData::Axis ScoreScreenData::axis(int mode, const std::string formats[
 	{
 		std::snprintf(b, sizeof(b), "%d", i * step); // Timeline:YAxis:%d, UnicodeString "%d"
 		a.yLabels.push_back(b);
+	}
+	if (type == 6 || type == 7)
+	{
+		// WOTR2 milestone 5: the war's x axis numbers turns: label i = min(i * N / 10 + 1, N); no description (one space); the total = label 10
+		for (int i = 0; i <= 10; ++i)
+		{
+			std::snprintf(b, sizeof(b), "%d", std::min(i * a.samples / 10 + 1, a.samples));
+			a.xLabels.push_back(b);
+		}
+		a.totalTime = a.xLabels.back();
+		a.timeFormat = -1;
+		return a;
 	}
 	// the x axis (RW 0x925BC1 ..): the label of mark i is the time of entry (samples + 0.5) * i * 0.1; the format by the total time
 	const int totalSeconds = a.samples / 5; // / LOGICFRAMES_PER_SECOND (RW 0xD9F608)
@@ -954,8 +1006,60 @@ ScoreScreenData::StatCell ScoreScreenData::timeCell(std::uint32_t seconds, const
 }
 
 // RW 0x9CDEC1, once per entry (the column is the entry's position)
+// WOTR2 milestone 5: GameStats::StrategicEndGame's 27 rows (RW 0x9F1BDF / 0x9F18CD order)
+const char *const ScoreScreenData::kWarStatLabels[kWarStatRows] = { "STAT:STRATEGIC_RTS_TIME", "STAT:STRATEGIC_NON_RTS_TIME",
+	"STAT:STRATEGIC_TURNS_PLAYED", "STAT:STRATEGIC_STRUCTURES_CREATED_RTS", "STAT:STRATEGIC_STRUCTURES_LOST_RTS", "STAT:STRATEGIC_STRUCTURES_LOST_AUTORESOLVE",
+	"STAT:STRATEGIC_STRUCTURES_DESTROYED_RTS", "STAT:STRATEGIC_STRUCTURES_DESTROYED_AUTORESOLVE", "STAT:STRATEGIC_FORTRESSES_BUILT",
+	"STAT:STRATEGIC_FARMS_BUILT", "STAT:STRATEGIC_ARMORIES_BUILT", "STAT:STRATEGIC_BARRACKS_BUILT", "STAT:STRATEGIC_UNITS_CREATED",
+	"STAT:STRATEGIC_UNITS_LOST", "STAT:STRATEGIC_UNIT_KILL_DEATH_RATIO", "STAT:STRATEGIC_UNITS_LOST_AUTORESOLVE", "STAT:STRATEGIC_UNITS_KILLED_RTS",
+	"STAT:STRATEGIC_UNITS_KILLED_AUTORESOLVE", "STAT:STRATEGIC_RTS_BATTLES_WON", "STAT:STRATEGIC_RTS_BATTLES_LOST",
+	"STAT:STRATEGIC_RTS_BATTLES_WIN_LOSS_RATIO", "STAT:STRATEGIC_AUTORESOLVED_BATTLES_WON", "STAT:STRATEGIC_AUTORESOLVED_BATTLES_LOST",
+	"STAT:STRATEGIC_TERRITORIES_CONQUERED", "STAT:STRATEGIC_TERRITORIES_LOST", "STAT:STRATEGIC_REGIONS_CONQUERED", "STAT:STRATEGIC_REGIONS_LOST" };
+
 std::vector<ScoreScreenData::StatRow> ScoreScreenData::statRows(const std::function<std::string(const std::string &)> &fetch, const std::string &decimal) const
 {
+	if (type == 6 || type == 7)
+	{
+		// AptTimeLineStats::CollectPlayerData RW 0x9CD79A: every row gets a value for every entry
+		std::vector<StatRow> rows((size_t)kWarStatRows);
+		for (int r = 0; r < kWarStatRows; ++r)
+		{
+			rows[(size_t)r].label = fetch(kWarStatLabels[r]);
+			rows[(size_t)r].values.resize(std::max<size_t>(entries.size(), 8));
+		}
+		for (size_t i = 0; i < entries.size(); ++i)
+		{
+			const std::array<std::int32_t, 27> &v = entries[i].warStats;
+			for (int r = 0; r < kWarStatRows; ++r)
+			{
+				StatCell c;
+				if (r <= 1)
+				{
+					c = timeCell((std::uint32_t)v[(size_t)r], fetch);
+				}
+				else if (r == 14)
+				{
+					c = ratioCell((float)(v[17] + v[16]), (float)v[13], decimal);
+				}
+				else if (r == 20)
+				{
+					c = ratioCell((float)v[18], (float)v[19], decimal);
+				}
+				else
+				{
+					c = intCell(v[(size_t)r]);
+				}
+				StatRow &row = rows[(size_t)r];
+				row.values[i] = c;
+				row.shown = true;
+				if (row.best <= c.value && c.value != row.best)
+				{
+					row.best = c.value;
+				}
+			}
+		}
+		return rows;
+	}
 	std::vector<StatRow> rows((size_t)kStatRows);
 	for (int r = 0; r < kStatRows; ++r)
 	{

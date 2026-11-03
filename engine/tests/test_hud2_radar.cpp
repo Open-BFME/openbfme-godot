@@ -94,6 +94,27 @@ void checkArt(SharedWorld &s, const char *map)
 }
 } // namespace
 
+TEST_CASE("hud2 radar: RLE type 10 art decodes runs and literals in north-up order; malformed packets fail")
+{
+	// Stored bottom row is blue, blue; top row is red, green. TGA packets use BGRA bytes.
+	std::vector<std::uint8_t> tga(18, 0);
+	tga[2] = 10;
+	tga[12] = 2;
+	tga[14] = 2;
+	tga[16] = 32;
+	tga.insert(tga.end(), { 0x81, 255, 0, 0, 200, 0x01, 0, 0, 255, 255, 0, 255, 0, 128 });
+	int w = 0, h = 0;
+	std::vector<std::uint8_t> rgba;
+	std::string err;
+	REQUIRE_MESSAGE(Radar::decodeArt(tga, w, h, rgba, &err), err);
+	CHECK(w == 2);
+	CHECK(h == 2);
+	CHECK(rgba == std::vector<std::uint8_t>({ 0, 0, 255, 200, 0, 0, 255, 200, 255, 0, 0, 255, 0, 255, 0, 128 }));
+	tga[18] = 0x84; // a run of 5 exceeds the four-pixel image
+	CHECK_FALSE(Radar::decodeArt(tga, w, h, rgba, &err));
+	CHECK(err == "TGA: an RLE packet runs past the image");
+}
+
 TEST_CASE("hud2 radar: a map's <stem>_art.tga is the radar picture, pixel for pixel in map north-up order (fall back 4p, evendim)")
 {
 	if (!haveWorld("hud2 radar art"))

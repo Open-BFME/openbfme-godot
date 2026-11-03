@@ -10,6 +10,7 @@
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/ClickReactionBehavior.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
 
@@ -20,8 +21,8 @@ namespace
 {
 const char *const kStop =
 	"[S-1024] HitReactionBehavior: ported (RW 0x85C30F; the drawable status bit Drawable + 0x26C bit 12 is the drawable's synced copy of the model condition "
-	"HIT_REACTION, RW 0x679512 / 0x68B53C, read here on the object); not identified: the interface RW 0x68C409 finds (behavior slot 0x84) and its slot 8(0) "
-	"after a reaction (noted); the drawable refresh RW 0x67449C is the client's; every object counts as having a drawable (RW 0x628882 makes one for each)";
+	"HIT_REACTION, RW 0x679512 / 0x68B53C, read here on the object); the interface RW 0x68C409 finds (behavior slot 0x84) is ClickReactionBehavior's click "
+	"interface (lane MODCOMPAT-MOD1): its slot 8(0) after a reaction ends a click reaction (taken as the only class answering slot 0x84); the drawable refresh RW 0x67449C is the client's; every object counts as having a drawable (RW 0x628882 makes one for each)";
 
 #define HR_OFF(field) (int)offsetof(HitReactionBehaviorModuleData, field)
 
@@ -157,7 +158,11 @@ UpdateSleepTime HitReactionBehavior::update()
 				{
 					obj->setModelConditionState(b.level[level], true); // bit 13 / 14 / 15
 				}
-				logic.noteStop("[S-1024] HitReactionBehavior: the interface RW 0x68C409 finds (behavior slot 0x84) is not identified: its slot 8(0) after a reaction is not run");
+				// RW 0x85C55A: Object's click interface (RW 0x68C409: ClickReactionBehavior, lane MODCOMPAT-MOD1) slot 2 with false: its reaction ends
+				if (ClickReactionBehavior *click = ClickReactionBehavior::find(*obj))
+				{
+					click->clearReaction(false);
+				}
 				if (m_data->m_hitsParalyze)
 				{
 					obj->setDisabled(kDisabledParalyzed, logic.getFrame() + (UnsignedInt)m_countdown); // RW 0x85C57B

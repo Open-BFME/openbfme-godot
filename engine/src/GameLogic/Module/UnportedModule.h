@@ -74,4 +74,18 @@ private:
 };
 
 // the default createProc of ModuleFactory
+// lane MODCOMPAT-MOD1: the interface mask of an unported behaviour or update module (0 for any other module)
+inline int unportedInterfaceMask(const Module &m)
+{
+	if (const UnportedBehaviorModule *b = dynamic_cast<const UnportedBehaviorModule *>(&m))
+	{
+		return b->interfaceMask();
+	}
+	if (const UnportedUpdateModule *u = dynamic_cast<const UnportedUpdateModule *>(&m))
+	{
+		return u->interfaceMask();
+	}
+	return 0;
+}
+
 std::unique_ptr<Module> makeUnportedModule(Thing *thing, const ModuleData *data, const std::string &className, ModuleType type, int interfaceMask);

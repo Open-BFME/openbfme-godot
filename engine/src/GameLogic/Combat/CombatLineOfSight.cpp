@@ -58,6 +58,13 @@ public:
 		const PathfindCell *cell = m_pf.getCell(LAYER_GROUND, &cellCenter); // RW 0x5E2EF2(1, pos)
 		return cell ? (int)cell->getLayer() : (int)LAYER_GROUND;
 	}
+	// the centre (i * 10 + 5, j * 10 + 5) is exact in a float and Pathfinder::worldToCell's floor(c / 10) gives back (i, j); a cell outside the extent is
+	// the overflow's null cell
+	int groundLayerOfCell(int i, int j) const override
+	{
+		const PathfindCell *cell = m_pf.getCell(LAYER_GROUND, i, j);
+		return cell ? (int)cell->getLayer() : (int)LAYER_GROUND;
+	}
 	// TheTerrainLogic vslot 0x1C getLayerHeight(x, y, layer): the pathfinder's layer height, as AIUpdate's and the pathfinder's own callers ask it (a wall
 	// top's, a ramp's or a raised walkway's height, lanes WALL-1 / WALL-2, S-161)
 	float layerHeight(float x, float y, int layer) const override
@@ -97,18 +104,7 @@ bool CombatLineOfSight::isClearLineOfSightTerrain(GameLogic &logic, const Coord3
 
 float CombatLineOfSight::maxHeightAbovePosition(const Object &obj)
 {
-	const std::vector<ObjectGeometry::Shape> &shapes = ObjectGeometry::cachedShapesOf(*obj.getTemplate());
-	const std::vector<std::uint8_t> &active = obj.geometryActive();
-	if (active.empty())
-	{
-		return ObjectGeometry::maxHeightAbovePosition(shapes);
-	}
-	std::vector<ObjectGeometry::Shape> own = shapes;
-	for (size_t i = 0; i < own.size() && i < active.size(); ++i)
-	{
-		own[i].active = active[i] != 0;
-	}
-	return ObjectGeometry::maxHeightAbovePosition(own);
+	return ObjectGeometry::maxHeightAbovePosition(obj.geometryShapes()); // RW 0xAD1920 on the object's own GeometryInfo (Object + 0xA8)
 }
 
 Coord3D CombatLineOfSight::victimLineOfSightPoint(const Weapon &weapon, const Object &source, const Object &victim)

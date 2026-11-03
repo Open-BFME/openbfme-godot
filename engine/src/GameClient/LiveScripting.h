@@ -52,7 +52,7 @@ public:
 		size_t worldEntries = 0, worldExits = 0;
 		size_t engineEvents = 0;               ///< lane HERO-2: engine dispatches (RW 0x7379CB) that reached an object with a handler list
 		size_t modelConditionChanges = 0;      ///< lane HERO-2: model condition changes the AI update handed to the ModelCondition events (RW 0x663E32)
-		std::vector<std::string> errors;       ///< an AILuaEventsList that is not an EventList of ScriptEvents.xml; handler alerts
+		std::vector<std::string> errors;       ///< handler alerts
 		std::vector<std::string> stops;        ///< the reports of the script engine ("[S-124] ...")
 	};
 	Stats stats() const;

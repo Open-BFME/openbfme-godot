@@ -4,7 +4,7 @@ path of the RotWK game.dat; caveat S-001: the community-modified image); the ret
 assertion is read from the files, so a different binary or a wrong citation fails loudly.
 
 What retail does (stops S-022 / S-119; BFME2 decomp MeshModelClass::RecolorHouseColor, bfme2_mesh_material_pass.cpp:323-352, RW 0x54BDE0):
-  * a mesh that retail converted to DefaultW3D.fx (Rva00173230Finish.cpp:82 -> MeshMatDescFXShaderConversion.cpp:527, at the static levels whose gamelod.ini
+  * a mesh that retail converted to DefaultW3D.fx (MeshModelClass_Register_For_Rendering.cpp:82 -> MeshMatDescFXShaderConversion.cpp:527, at the static levels whose gamelod.ini
     sets ShaderMaterialReplacement) takes the FX path: the parameters Texture_0 / Texture_1 are found by their HouseColorTexture annotation (0 / 1), Texture_1
     becomes the recoloured copy of Texture_0 ("#<texture>#<options>") and HouseColorEnable = true (RW 0x54C086 looks the parameter up by name);
   * any other single-texture mesh keeps the fixed-function pipeline: the recoloured texture replaces its stage 1 texture and the shader's DetailColor

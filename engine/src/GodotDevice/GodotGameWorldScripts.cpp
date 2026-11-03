@@ -10,6 +10,7 @@
 #include "GameClient/LiveGame.h"
 #include "GameClient/LiveGameAudio.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Damage.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameClient/MapChunks.h"
@@ -68,6 +69,8 @@ void GameWorld::bindScriptMethods()
 	ClassDB::bind_method(D_METHOD("debug_script_unit", "name"), &GameWorld::debug_script_unit);
 	ClassDB::bind_method(D_METHOD("debug_script_team", "name"), &GameWorld::debug_script_team);
 	ClassDB::bind_method(D_METHOD("debug_script_place_at", "name", "x", "y"), &GameWorld::debug_script_place_at);
+	ClassDB::bind_method(D_METHOD("debug_script_move_to", "name", "team", "x", "y"), &GameWorld::debug_script_move_to); // lane BFME2CAMP1
+	ClassDB::bind_method(D_METHOD("debug_script_teleport", "name", "team", "x", "y"), &GameWorld::debug_script_teleport);
 	ClassDB::bind_method(D_METHOD("debug_script_kill_team", "name"), &GameWorld::debug_script_kill_team);
 	ClassDB::bind_method(D_METHOD("debug_defer_script_audio", "sound"), &GameWorld::debug_defer_script_audio); // RENDERWAIT-1 r3 (tests)
 	ClassDB::bind_method(D_METHOD("get_pending_script_audio"), &GameWorld::get_pending_script_audio);
@@ -305,7 +308,9 @@ Dictionary GameWorld::update_script_view(double delta_ms, const Dictionary &came
 		m_scriptView->apply(r, cur, angle);
 	}
 	m_pendingScriptRequests.clear();
-	m_scriptView->update(delta_ms);
+	// lane FADETIME-1: the fade steps per published logic frame (RW 0x60CC67) and lerps by the frame fraction (GameEngine + 0x3C,
+	// LiveGame::alpha); no game: no frames and no fade
+	m_scriptView->update(delta_ms, m_game ? m_game->frame() : 0u, m_game ? m_game->alpha() : 0.0);
 	const ScriptCameraDirector &v = *m_scriptView;
 	Dictionary d;
 	d["moving"] = v.moving();
@@ -370,6 +375,7 @@ Dictionary GameWorld::update_script_view(double delta_ms, const Dictionary &came
 	d["caption_text"] = g(text);
 	d["caption_ms"] = v.captionMsLeft();
 	d["fade"] = v.fade();
+	d["fade_type"] = (int64_t)v.fadeType(); // lane FADETIME-1: retail TFade (0 none, 1 subtract, 2 add, 3 saturate, 4 multiply)
 	return d;
 }
 
@@ -481,8 +487,18 @@ Dictionary GameWorld::debug_script_victory()
 		out["error"] = "the mission has ended already";
 		return out;
 	}
-	engine.addEndRequest(true, "QUICKVICTORY");
-	out["ok"] = true;
+	// lane BFME2CAMP1: the QUICKVICTORY action itself (ScriptActions: the end request and RW 0x7BE0C6's onCurrentMissionWon, so a campaign's
+	// carry-over records the mission as its own win does)
+	ScriptActionRec a;
+	a.internalName = "QUICKVICTORY";
+	a.type = a.resolved = ScriptTemplates::findAction(a.internalName.c_str());
+	if (a.resolved < 0)
+	{
+		out["error"] = "no QUICKVICTORY action template";
+		return out;
+	}
+	engine.executeAction(a);
+	out["ok"] = !engine.endRequests().empty();
 	return out;
 }
 
@@ -599,6 +615,81 @@ Dictionary GameWorld::debug_script_place_at(const String &name, double x, double
 		o->setPosition(&p);
 		out["ok"] = true;
 	}
+	return out;
+}
+
+// lane BFME2CAMP1: see GodotGameWorld.h
+Dictionary GameWorld::debug_script_move_to(const String &name, bool team, double x, double y)
+{
+	Dictionary out;
+	out["ok"] = false;
+	if (hooksRefused(m_game.get(), m_testHooks, m_netHost || m_netClient || m_netStarted || m_netSession, out))
+	{
+		return out;
+	}
+	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
+	std::vector<::Object *> units;
+	if (team)
+	{
+		if (Team *t = ScriptConditions::team(m_game->logic().scriptEngine(), name.utf8().get_data()))
+		{
+			units = ScriptConditions::members(*t);
+		}
+	}
+	else if (::Object *o = m_game->logic().scriptEngine().getUnitNamed(name.utf8().get_data()))
+	{
+		units.push_back(o);
+	}
+	int64_t n = 0;
+	for (::Object *o : units)
+	{
+		AIUpdateInterface *ai = o->isEffectivelyDead() ? nullptr : o->getAIUpdateInterface();
+		if (ai)
+		{
+			ai->aiMoveToPosition(Coord3D{ (float)x, (float)y, 0.0f }, CMD_FROM_PLAYER);
+			++n;
+		}
+	}
+	out["ok"] = n > 0;
+	out["count"] = n;
+	return out;
+}
+
+Dictionary GameWorld::debug_script_teleport(const String &name, bool team, double x, double y)
+{
+	Dictionary out;
+	out["ok"] = false;
+	if (hooksRefused(m_game.get(), m_testHooks, m_netHost || m_netClient || m_netStarted || m_netSession, out))
+	{
+		return out;
+	}
+	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
+	std::vector<::Object *> units;
+	if (team)
+	{
+		if (Team *t = ScriptConditions::team(m_game->logic().scriptEngine(), name.utf8().get_data()))
+		{
+			units = ScriptConditions::members(*t);
+		}
+	}
+	else if (::Object *o = m_game->logic().scriptEngine().getUnitNamed(name.utf8().get_data()))
+	{
+		units.push_back(o);
+	}
+	int64_t n = 0;
+	for (::Object *o : units)
+	{
+		if (o->isEffectivelyDead() || o->getContainedBy())
+		{
+			continue; // a horde's members go with their horde (its contain re-places them)
+		}
+		Coord3D p{ (float)x, (float)y, 0.0f };
+		p.z = m_game->logic().getGroundHeight(p.x, p.y);
+		o->teleportTo(&p, false);
+		++n;
+	}
+	out["ok"] = n > 0;
+	out["count"] = n;
 	return out;
 }
 

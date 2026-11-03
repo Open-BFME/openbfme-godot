@@ -15,6 +15,7 @@
 #pragma once
 
 #include "GameClient/GUI/AptScreens/AptPalantir.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameClient/GUI/AptScreens/AptSpellStore.h"
 #include "GameClient/SpellBookUI.h"
 #include "GameClient/GUI/Shell/Shell.h"
@@ -54,7 +55,7 @@ class GameTextSource;
 class LiveGame;
 class RetailObjectWorld;
 
-class InGameHud
+class InGameHud : public ScriptLocalView
 {
 public:
 	struct Config
@@ -157,6 +158,10 @@ public:
 	void scriptInput(bool enable);
 	// lane CAMPUI-1: the objectives screen is up (the Palantir's flag stops flashing, RW 0x6D7647), and a script's FLASH_*_BUTTON(seconds) (RW 0x6D455F)
 	void setObjectivesScreenOpen(bool open) { m_objectivesScreenOpen = open; }
+	// lane BFME2CAMP1: the script engine's client view (ScriptLocalView; registered with the game while the HUD lives): the attached camera's scroll total
+	// (TacticalCamera::scrollDistance, W3DView + 0x24F4) and the objectives screen above
+	float cameraScrollDistance() const override;
+	bool objectivesScreenOpen() const override { return m_objectivesScreenOpen; }
 	void flashPalantirButton(int slot, int seconds);
 	bool palantirObjectivesFlashing() const;
 	bool scriptMouseHidden() const { return m_input->ui().scriptMouseHidden(); } ///< DISABLE_INPUT's Mouse::setVisibility(false): the device shows no pointer

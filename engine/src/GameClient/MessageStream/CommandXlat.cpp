@@ -508,7 +508,7 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 		else
 		{
 			// RW 0x81E60B -> 0x81DB0C: a drawable does not veto the final location order. Only BASE_FOUNDATION drops the drawable.
-			// BFME2 CommandXlat_Rva004297bb.cpp, RVA 0x429E11 (tier B, operand-only differences); issueMove RVA 0x4292F6 (tier A).
+			// BFME2 CommandXlat.cpp, RVA 0x429E11 (tier B, operand-only differences); issueMove RVA 0x4292F6 (tier A).
 			msgType = issueMove(obj && obj->isKindOfName("BASE_FOUNDATION") ? nullptr : obj, pos, type);
 		}
 	}

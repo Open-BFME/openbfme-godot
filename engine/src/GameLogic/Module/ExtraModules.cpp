@@ -4,12 +4,19 @@
 #include "GameLogic/Module/ExtraModules.h"
 
 #include "Common/Thing/ModuleFactory.h"
+#include "GameLogic/Module/CommandButtonHuntUpdate.h"
+#include "GameLogic/Module/AudioLoopUpgrade.h"
+#include "GameLogic/Module/ClickReactionBehavior.h"
+#include "GameLogic/Module/CritterEmitterUpdate.h"
 #include "GameLogic/Module/ExtraCreateModules.h"
 #include "GameLogic/Module/ExtraDieModules.h"
 #include "GameLogic/Module/ExtraUpdateModules.h"
 #include "GameLogic/Module/ExtraUpgradeModules.h"
 #include "GameLogic/Module/FireWeaponWhenDamagedBehavior.h"
 #include "GameLogic/Module/FlammableUpdate.h"
+#include "GameLogic/Module/GeometryUpgrade.h"
+#include "GameLogic/Module/RebuildHoleModules.h"
+#include "GameLogic/Module/SlaveWatcherBehavior.h"
 
 #include <memory>
 #include <stdexcept>
@@ -36,9 +43,14 @@ void ExtraModules::registerAll(ModuleFactory &modules)
 {
 	bind<AttributeModifierUpgrade, AttributeModifierUpgradeModuleData>(modules, "AttributeModifierUpgrade");
 	bind<AllowBannerSpawnUpgrade, UpgradeModuleData>(modules, "AllowBannerSpawnUpgrade"); // lane BANNER-1
+	GeometryUpgrade::registerModule(modules); // lane MODCOMPAT-MOD1
 	bind<CreateObjectDie, CreateObjectDieModuleData>(modules, "CreateObjectDie");
 	bind<FireWeaponWhenDeadBehavior, FireWeaponWhenDeadBehaviorModuleData>(modules, "FireWeaponWhenDeadBehavior");
 	FireWeaponWhenDamagedBehavior::registerModule(modules); // lane MODS-3
+	CommandButtonHuntUpdate::registerModule(modules);       // lane MODCOMPAT-MOD1
+	CritterEmitterUpdate::registerModule(modules); // lane MODCOMPAT-MOD1
+	AudioLoopUpgrade::registerModule(modules);     // lane MODCOMPAT-MOD1
+	ClickReactionBehavior::registerModule(modules); // lane MODCOMPAT-MOD1
 	bind<UpgradeDie, UpgradeDieModuleData>(modules, "UpgradeDie");
 	bind<HeroDie, HeroDieModuleData>(modules, "HeroDie");
 	bind<DeletionUpdate, DeletionUpdateModuleData>(modules, "DeletionUpdate");
@@ -48,4 +60,6 @@ void ExtraModules::registerAll(ModuleFactory &modules)
 	bind<ExperienceLevelCreate, ExperienceLevelCreateModuleData>(modules, "ExperienceLevelCreate");
 	bind<LockWeaponCreate, LockWeaponCreateModuleData>(modules, "LockWeaponCreate");
 	bind<InheritUpgradeCreate, InheritUpgradeCreateModuleData>(modules, "InheritUpgradeCreate");
+	RebuildHoleModules::registerModules(modules); // lane MODCOMPAT-MOD1: RebuildHoleExposeDie, RebuildHoleBehavior
+	SlaveWatcherBehavior::registerModule(modules); // lane MODCOMPAT-MOD1
 }

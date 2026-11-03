@@ -196,11 +196,30 @@ std::vector<std::uint8_t> NetByteReader::bytes()
 	return b;
 }
 
-bool NetPacket::writeGameMessage(NetByteWriter &w, const GameMessage &m, std::string *error)
+bool NetPacket::messageInFamily(int type, MessageFamily family)
 {
-	if (!IsNetworkLogicMessageType(m.getType())) // lane CHEAT-1: + MSG_OPENBFME_CHEAT
+	if (family == MessageFamily::Strategic)
 	{
-		return failWith(error, "GameMessage type " + std::to_string(m.getType()) + " is not a logic message (1001 .. 1147, or 32001 lane CHEAT-1)");
+		// WOTR2 milestone 8: the orders, the CRC, and the disconnect path's MSG_SELF_DESTRUCT (a FRAMERESEND relays a frame that holds one)
+		return (type >= MSG_LW_FIRST && type <= MSG_LW_LAST) || type == MSG_LW_OPENBFME_SAVE || type == MSG_LOGIC_CRC || type == MSG_SELF_DESTRUCT;
+	}
+	return IsNetworkLogicMessageType(type); // lane CHEAT-1: + MSG_OPENBFME_CHEAT
+}
+
+namespace
+{
+std::string familyRange(NetPacket::MessageFamily family)
+{
+	return family == NetPacket::MessageFamily::Strategic ? "a strategic message (1701 .. 1728, the LAN war save 32002, the logic CRC or a self-destruct)"
+	                                                     : "a logic message (1001 .. 1147, or 32001 lane CHEAT-1)";
+}
+} // namespace
+
+bool NetPacket::writeGameMessage(NetByteWriter &w, const GameMessage &m, std::string *error, MessageFamily family)
+{
+	if (!messageInFamily(m.getType(), family))
+	{
+		return failWith(error, "GameMessage type " + std::to_string(m.getType()) + " is not " + familyRange(family));
 	}
 	if (m.getPlayerIndex() < -1 || m.getPlayerIndex() > 254)
 	{
@@ -244,7 +263,7 @@ bool NetPacket::writeGameMessage(NetByteWriter &w, const GameMessage &m, std::st
 	return true;
 }
 
-std::unique_ptr<GameMessage> NetPacket::readGameMessage(NetByteReader &r, std::string *error)
+std::unique_ptr<GameMessage> NetPacket::readGameMessage(NetByteReader &r, std::string *error, MessageFamily family)
 {
 	const int type = r.u16();
 	const std::uint8_t player = r.u8();
@@ -261,9 +280,9 @@ std::unique_ptr<GameMessage> NetPacket::readGameMessage(NetByteReader &r, std::s
 			", and the bytes left hold " + std::to_string(r.remaining() / 2) + ")");
 		return nullptr;
 	}
-	if (!IsNetworkLogicMessageType(type)) // lane CHEAT-1: + MSG_OPENBFME_CHEAT
+	if (!messageInFamily(type, family))
 	{
-		failWith(error, "GameMessage type " + std::to_string(type) + " is not a logic message (1001 .. 1147, or 32001 lane CHEAT-1)");
+		failWith(error, "GameMessage type " + std::to_string(type) + " is not " + familyRange(family));
 		return nullptr;
 	}
 	std::unique_ptr<GameMessage> m = std::make_unique<GameMessage>(type, player == 0xFF ? -1 : (int)player);
@@ -314,7 +333,7 @@ std::unique_ptr<GameMessage> NetPacket::readGameMessage(NetByteReader &r, std::s
 	return m;
 }
 
-void NetPacket::writeGameInfo(NetByteWriter &w, const SkirmishGameInfo &g)
+void NetPacket::writeGameInfo(NetByteWriter &w, const SkirmishGameInfo &g, bool warFields)
 {
 	bool extended = g.mapStartCount != LEGACY_MAX_SLOTS;
 	for (int i = LEGACY_MAX_SLOTS; i < MAX_SLOTS; ++i)
@@ -370,9 +389,17 @@ void NetPacket::writeGameInfo(NetByteWriter &w, const SkirmishGameInfo &g)
 		w.i32(g.slots[i].handicap); // lane OWNERFIX-2: GameSlot + 0x20 (RotWK's LAN option string carries it as "Handicap=%d", RW 0x8476E6 = BFME2 decomp BfmeAptScreenLanLobby.cpp AptLanLobby::MpOwnerSelectHandicap, tier A)
 	}
 	w.i32(g.cheatMode); // lane CHEAT-1: Cheat Mode (-1 off, else the cheat seat's slot)
+	if (warFields)
+	{
+		w.u8((std::uint8_t)g.gameMode); // WOTR2 milestone 8: GT (+ 0x5C) and SI (+ 0x58, the scenario's name)
+		w.str(g.scenario);
+		w.str(g.resumeSave); // step 4 (lobby 10 / START 11 / LAN API 6): a resumed war's save identity and state hash
+		w.u32(g.resumeHash);
+	}
 }
 
-bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string *error, bool profileOptionalAtEnd, bool slotHandicaps, bool cheatField)
+bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string *error, bool profileOptionalAtEnd, bool slotHandicaps, bool cheatField,
+	bool warFields)
 {
 	g = SkirmishGameInfo();
 	const std::int32_t firstState = r.i32();
@@ -455,6 +482,13 @@ bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string 
 	}
 	// lane CHEAT-1: Cheat Mode (absent: an older replay / save format or an announcement without the profile: off)
 	g.cheatMode = (!cheatField || handicapsAbsent) ? -1 : r.i32();
+	if (warFields && !handicapsAbsent)
+	{
+		g.gameMode = r.u8(); // WOTR2 milestone 8
+		g.scenario = r.str();
+		g.resumeSave = r.str(); // step 4
+		g.resumeHash = r.u32();
+	}
 	if (r.failed())
 	{
 		return failWith(error, r.badFlag() ? "GameInfo with a flag that is not 0 / 1" : "truncated GameInfo");
@@ -498,6 +532,29 @@ bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string 
 	{
 		return failWith(error, "GameInfo Cheat Mode seat " + std::to_string(g.cheatMode) + " is not a human slot");
 	}
+	// WOTR2 milestone 8: open play names no scenario, a War of the Ring names one
+	if (g.gameMode != 0 && g.gameMode != 1)
+	{
+		return failWith(error, "GameInfo game mode " + std::to_string(g.gameMode) + " (0 open play, 1 War of the Ring)");
+	}
+	if (g.warOfTheRing() == g.scenario.empty() || g.scenario.size() > kMaxScenarioName)
+	{
+		return failWith(error, g.warOfTheRing() ? "GameInfo War of the Ring without a scenario (or a name over " + std::to_string(kMaxScenarioName) + " bytes)"
+		                                        : "GameInfo open play names the scenario \"" + g.scenario + "\"");
+	}
+	// WOTR2 milestone 8 (step 4): only a war is resumed; its save identity is an MD5 (32 lower-case hex digits)
+	if (g.resumed())
+	{
+		bool hex = g.resumeSave.size() == 32;
+		for (char c : g.resumeSave)
+		{
+			hex = hex && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+		}
+		if (!g.warOfTheRing() || !hex)
+		{
+			return failWith(error, "GameInfo resume save \"" + g.resumeSave.substr(0, 40) + "\" (a War of the Ring's 32-digit MD5 only)");
+		}
+	}
 	// lane UBER-1: a simulation profile this build does not know is a refused setup (never a guess)
 	if (!simulationProfileValid(profile))
 	{
@@ -518,15 +575,15 @@ bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string 
 	return true;
 }
 
-void NetPacket::writeNewGameMessage(NetByteWriter &w, const NewGameMessage &m)
+void NetPacket::writeNewGameMessage(NetByteWriter &w, const NewGameMessage &m, bool warFields)
 {
 	w.u8(m.mode == NewGameMode::Skirmish ? 1 : 0);
 	w.i32(m.difficulty);
 	w.i32(m.rankPoints);
-	writeGameInfo(w, m.game);
+	writeGameInfo(w, m.game, warFields);
 }
 
-bool NetPacket::readNewGameMessage(NetByteReader &r, NewGameMessage &m, std::string *error, bool slotHandicaps, bool cheatField)
+bool NetPacket::readNewGameMessage(NetByteReader &r, NewGameMessage &m, std::string *error, bool slotHandicaps, bool cheatField, bool warFields)
 {
 	const std::uint8_t mode = r.u8();
 	if (mode > 1)
@@ -536,10 +593,10 @@ bool NetPacket::readNewGameMessage(NetByteReader &r, NewGameMessage &m, std::str
 	m.mode = mode ? NewGameMode::Skirmish : NewGameMode::SinglePlayer;
 	m.difficulty = r.i32();
 	m.rankPoints = r.i32();
-	return readGameInfo(r, m.game, error, false, slotHandicaps, cheatField);
+	return readGameInfo(r, m.game, error, false, slotHandicaps, cheatField, warFields);
 }
 
-std::vector<std::uint8_t> NetPacket::encodeCommand(const NetCommandMsg &c, std::string *error)
+std::vector<std::uint8_t> NetPacket::encodeCommand(const NetCommandMsg &c, std::string *error, MessageFamily family)
 {
 	NetByteWriter w;
 	std::uint8_t wireType = (std::uint8_t)c.type;
@@ -561,7 +618,7 @@ std::vector<std::uint8_t> NetPacket::encodeCommand(const NetCommandMsg &c, std::
 			failWith(error, "GAMECOMMAND without a message");
 			return {};
 		}
-		if (!writeGameMessage(w, *c.message, error))
+		if (!writeGameMessage(w, *c.message, error, family))
 		{
 			return {};
 		}
@@ -626,7 +683,7 @@ std::vector<std::uint8_t> NetPacket::encodeCommand(const NetCommandMsg &c, std::
 		w.u16((std::uint16_t)c.messages.size());
 		for (const std::shared_ptr<GameMessage> &m : c.messages)
 		{
-			if (!m || !writeGameMessage(w, *m, error))
+			if (!m || !writeGameMessage(w, *m, error, family))
 			{
 				return {};
 			}
@@ -665,7 +722,7 @@ std::vector<std::uint8_t> NetPacket::encodeCommand(const NetCommandMsg &c, std::
 	return w.take();
 }
 
-bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommandMsg &out, std::string *error)
+bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommandMsg &out, std::string *error, MessageFamily family)
 {
 	NetByteReader r(bytes);
 	out = NetCommandMsg();
@@ -691,7 +748,7 @@ bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommand
 		break;
 	case NETCOMMANDTYPE_GAMECOMMAND:
 	{
-		std::unique_ptr<GameMessage> m = readGameMessage(r, error);
+		std::unique_ptr<GameMessage> m = readGameMessage(r, error, family);
 		if (!m)
 		{
 			return false;
@@ -748,7 +805,7 @@ bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommand
 		const std::uint16_t n = r.u16();
 		for (std::uint16_t i = 0; i < n && !r.failed(); ++i)
 		{
-			std::unique_ptr<GameMessage> m = readGameMessage(r, error);
+			std::unique_ptr<GameMessage> m = readGameMessage(r, error, family);
 			if (!m)
 			{
 				return false;

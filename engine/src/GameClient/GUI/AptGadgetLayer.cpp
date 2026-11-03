@@ -51,8 +51,11 @@ bool loadGadgetSkinData(ArchiveFileSystem &fs, GadgetSkinData &out, std::string 
 
 const std::vector<std::string> &AptGadgetLayer::componentSymbols()
 {
-	// RotWK game.dat 0x00C4FD..: the nine names that share the gadget handler; View3D has its own handler (device component)
-	static const std::vector<std::string> names = { "GameWindow", "HorzSlider", "ComboBox", "ImageComboBox", "CheckBox", "TextEntry", "ListBox", "PushButton", "BinkMovie" };
+	// RotWK game.dat 0x00C4FD..: the names that share the gadget handler (RW 0x814F09 .. 0x81514E register them with the same factory); View3D has its own
+	// handler (device component). Lane WOTR-2: "LivingWorldMap" (RW 0x81514E, string RW 0xC4FC84) too: MpGameSetup's LivingWorld clip (the strategic
+	// setup's map preview) asks for it by `_type` and hands the window to AptMapPreview::MapGadgetInit
+	static const std::vector<std::string> names = { "GameWindow", "HorzSlider", "ComboBox", "ImageComboBox", "CheckBox", "TextEntry", "ListBox", "PushButton", "BinkMovie",
+		"LivingWorldMap" };
 	return names;
 }
 
@@ -131,6 +134,18 @@ std::shared_ptr<GameWindow> AptGadgetLayer::createGadget(AptComponentRequest &re
 		m_notes.push_back("BinkMovie placeholder " + request.instancePath + ": the video host is a device component (S-177)");
 		return nullptr;
 	}
+	// lane WOTR-2: LivingWorldMap (RW 0x81514E) is no skinned gadget: MpGameSetup's clip sets `_Load = "LivingWorldMap"`, no file of the archives. Its window
+	// is the area TheLivingWorld's display draws the strategic setup's map preview in (the device draws it there, S-1335); a bare window of the clip's size
+	if (request.symbol == "LivingWorldMap")
+	{
+		GameWindow *window = m_gwm.winCreate(nullptr, WIN_STATUS_ENABLED, (int)request.x0, (int)request.y0, (int)(request.x1 - request.x0), (int)(request.y1 - request.y0), nullptr);
+		if (!window)
+		{
+			m_errors.push_back("gadget " + request.instancePath + " (LivingWorldMap): the window could not be created");
+			return nullptr;
+		}
+		return placeGadget(window, request);
+	}
 	// the placeholder's script names the skin (`_Load`, relative to window\\); without it the symbol's own skin is read and the gap is noted [S-172]
 	std::string path;
 	if (request.hasLoad)
@@ -179,6 +194,11 @@ std::shared_ptr<GameWindow> AptGadgetLayer::createGadget(AptComponentRequest &re
 	{
 		window->winSetStatus(WIN_STATUS_APT_TEMPLATE);
 	}
+	return placeGadget(window, request);
+}
+
+std::shared_ptr<GameWindow> AptGadgetLayer::placeGadget(GameWindow *window, AptComponentRequest &request)
+{
 	// created at the size of the placeholder (menus-apt.md 1.3 / 3.3)
 	const int x = (int)request.x0, y = (int)request.y0;
 	const int w = (int)(request.x1 - request.x0), h = (int)(request.y1 - request.y0);

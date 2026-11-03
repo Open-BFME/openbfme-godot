@@ -27,7 +27,10 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
+#include <sstream>
 #include <string>
+#include <vector>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -568,4 +571,151 @@ TEST_CASE("uberjoin1 retail: the LAN list tags an Uber game; Join from Normal as
 	CHECK(js->boxesShown()[3] == "mode-switch-failed|The performance mode could not be switched: " + refuse);
 	CHECK(!joinLan->currentGame());
 	CHECK(joinLan->profile().simulationProfile() == SimulationProfile::Faithful);
+}
+
+namespace
+{
+void collectButtons(AptCharacterInst *c, std::vector<AptButtonInst *> &out)
+{
+	if (!c)
+	{
+		return;
+	}
+	if (AptButtonInst *b = c->asButton())
+	{
+		if (b->globallyVisible())
+		{
+			out.push_back(b);
+		}
+		return;
+	}
+	if (AptSpriteInst *sp = c->asSprite())
+	{
+		for (AptCharacterInst *k : sp->children())
+		{
+			collectButtons(k, out);
+		}
+	}
+}
+
+// presses the visible button whose path holds `part` when the pointer at its centre reaches it (a player's click); false: none reachable
+bool pressReachable(starttest::ShellFx &fx, AptLanLobby &screen, const std::string &part)
+{
+	std::vector<AptButtonInst *> all;
+	collectButtons(fx.wm->apt().level(screen.level()), all);
+	for (AptButtonInst *b : all)
+	{
+		float x0, y0, x1, y1, x, y;
+		if (b->targetPath().find(part) == std::string::npos || !b->contentBounds(x0, y0, x1, y1))
+		{
+			continue;
+		}
+		b->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, x, y);
+		AptButtonInst *hit = fx.wm->apt().input().hitTestButtons(x, y);
+		const std::string clip = b->targetPath().substr(0, b->targetPath().rfind('.'));
+		if (hit && (hit == b || hit->targetPath().compare(0, clip.size(), clip) == 0))
+		{
+			starttest::clickAt(fx, x, y);
+			return true;
+		}
+	}
+	return false;
+}
+
+// the shown rule rows (the movie's RuleComboBox / RuleCheckBox placeholders) that are not the screen's filed rows or reach into the player list
+std::string lanRulesProblems(starttest::ShellFx &fx, AptLanLobby &screen)
+{
+	std::set<const GameWindow *> filed;
+	for (int i = 0; i < 16; ++i)
+	{
+		filed.insert(screen.ruleComboWindow(i));
+		filed.insert(screen.ruleCheckWindow(i));
+	}
+	GameWindow *firstRow = screen.slotGadget(0, "Player");
+	if (!firstRow)
+	{
+		return "no player list";
+	}
+	int lx = 0, listTop = 0;
+	firstRow->winGetScreenPosition(&lx, &listTop);
+	std::ostringstream out;
+	int shown = 0;
+	for (GameWindow *w : fx.wm->gadgetLayer()->gadgets().allWindows())
+	{
+		const std::string &n = w->aptInstanceName();
+		bool visible = true;
+		for (GameWindow *p = w; p; p = p->winGetParent())
+		{
+			visible = visible && !p->winIsHidden();
+		}
+		if ((n.rfind("RuleComboBox", 0) != 0 && n.rfind("RuleCheckBox", 0) != 0) || !visible)
+		{
+			continue;
+		}
+		++shown;
+		int x = 0, y = 0, ww = 0, hh = 0;
+		w->winGetScreenPosition(&x, &y);
+		w->winGetSize(&ww, &hh);
+		if (!filed.count(w))
+		{
+			out << "an unfiled " << n << " is shown at (" << x << "," << y << "); ";
+		}
+		if (y + hh > listTop)
+		{
+			out << n << " at (" << x << "," << y << ") is over the player list (its top " << listTop << "); ";
+		}
+	}
+	return shown == 0 ? std::string("no rule row is shown") : out.str();
+}
+} // namespace
+
+TEST_CASE("rulesov1 retail: the LAN game's RULES tab shows one set of rule rows, above the player list, after the LAN list's own RULES tab")
+{
+	OPENBFME_REQUIRE_START(s);
+	MountedArchive a;
+	a.install = "rotwk";
+	a.canonicalPath = "test.big";
+	a.size = 1;
+	a.md5 = "0123456789abcdef0123456789abcdef";
+	const ProfileIdentity profile = ProfileIdentity::compute({ a }, RandomAlgorithm::ZH_CarryChain, {});
+	std::unique_ptr<LANAPI> hostLan = testLan(profile, u"Host", s->world->playerTemplates().getPlayerTemplateCount(), (int)s->settings.multiplayerColors.size());
+	starttest::ShellFx host(*s, 21);
+	host.environment.lan = hostLan.get();
+	host.environment.services = &host.services;
+	host.shell->push("LanLobby.apt");
+	REQUIRE(host.shell->errors().empty());
+	AptLanLobby *hs = dynamic_cast<AptLanLobby *>(host.shell->top());
+	REQUIRE(hs);
+	auto run = [&](const std::function<bool()> &done, int limit = 300) {
+		for (int i = 0; i < limit; ++i)
+		{
+			host.tick(1);
+			NetSleepMilliseconds(2);
+			if (done())
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+	REQUIRE(run([&] { return hs->state() == 1; }));
+	// the LAN list's own MAP / RULES panel: its RULES tab when the page has one
+	const bool listRules = run([&] { return pressReachable(host, *hs, "TabButtons.RulesTab"); }, 120);
+	MESSAGE("the LAN list's RULES tab " << (listRules ? "pressed" : "not on the page"));
+	host.tick(120);
+	CHECK(host.wm->invokeCallback("AptLanLobby::OnCreateGameBttn", ""));
+	REQUIRE(run([&] { return hs->state() == 4; }));
+	host.tick(60);
+	REQUIRE(run([&] { return pressReachable(host, *hs, "TabButtons.RulesTab"); }));
+	REQUIRE(run([&] { return hs->rulesPopulated() && hs->slotGadget(0, "Player") != nullptr; }));
+	host.tick(120);
+	CHECK_MESSAGE(lanRulesProblems(host, *hs).empty(), lanRulesProblems(host, *hs));
+	for (const char *tab : { "TabButtons.MapTab", "TabButtons.ChatTab", "TabButtons.RulesTab" })
+	{
+		REQUIRE_MESSAGE(run([&] { return pressReachable(host, *hs, tab); }), tab);
+		host.tick(60);
+	}
+	REQUIRE(run([&] { return hs->rulesPopulated(); }));
+	host.tick(60);
+	CHECK_MESSAGE(lanRulesProblems(host, *hs).empty(), lanRulesProblems(host, *hs));
 }

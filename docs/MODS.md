@@ -149,7 +149,9 @@ names them.
 - **Age of the Ring** and other programs OpenBFME does not know yet stop with a message naming the file.
 - The mod corpus test (`OPENBFME_MOD_CORPUS`) mounts every package laid out by `tools/mod/aio_package.py`, turns on the features of its
   programs and loads its objects through the retail parsers. Most remaining messages are the mods' own data errors, which retail also
-  meets (logs/mods1-report.md lists them per mod).
+  meets (logs/mods1-report.md lists them per mod). It also loads every Apt movie of every package (the menus and the in-game screens,
+  MODUI-1), and `tools/mod/test_modui1_shell_screens.py` walks the menus of each package that ships its own Apt movies (Skirmish with its
+  lobby, Options, LAN, Online, Replays, Load, Create-a-Hero) and fails on any screen 2.01 shows but the mod's does not.
 
 ## Asset packs: drag-and-drop HD models and textures
 

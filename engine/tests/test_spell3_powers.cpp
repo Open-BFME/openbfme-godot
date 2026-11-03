@@ -3,6 +3,7 @@
 // Bezier paths and die at the end, the water horses' weapon hurts what stands in the way), an area-damage power (Earthquake: its pieces, its five weapons),
 // a summon, a buff, a global power and Devastation; the casts go through the retail GameMessages and SpellCommands.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 #include "SpellTestAI.h"
 #include "StartTestUtil.h"
@@ -95,6 +96,7 @@ struct Spell3Game
 		REQUIRE(o);
 		Coord3D pos{ x, y, 0.0f };
 		o->setPosition(&pos);
+		testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		return o;
 	}
 	const SpecialPowerTemplate *grant(const char *power)

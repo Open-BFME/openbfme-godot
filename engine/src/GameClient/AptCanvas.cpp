@@ -162,8 +162,9 @@ void AptTextureStore::decodeEntry(const std::string &path, const std::vector<std
 	std::string error;
 	{
 		TGAImage image;
-		// the atlases are up to 1024 wide and 2048 high in the corpus; 4096 is far above any of them
-		if (!TGAFile::decode(bytes.data(), bytes.size(), image, &error, 4096))
+		// the atlases are up to 1024 wide and 2048 high in the corpus; 4096 is far above any of them. RLE images are read (lane MODUI-1: retail's
+		// texture loader decodes them, TGAFile.h; Edain's map previews are RLE)
+		if (!TGAFile::decode(bytes.data(), bytes.size(), image, &error, 4096, true))
 		{
 			entry.error = path + ": " + error;
 		}

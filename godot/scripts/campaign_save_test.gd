@@ -16,6 +16,9 @@
 ##             and Fornost by their own win moves), the score screen's Continue, the auto-save (its header names the next mission, its listing is an
 ##             auto-save of the Campaign page), CampaignMenu.apt naming the next mission of the campaign's INI (name, picture), Next Mission; the
 ##             eighth mission's win unlocks the bonus campaign (no auto-save, no menu)
+##   carry     (lane BFME2CAMP1; --campaign=GOOD_CAMPAIGN --mission=0 --campaign-win): MAP GOOD Rivendell won by the cheat hook (the QUICKVICTORY action:
+##             RW 0x5EBAEE records the campaign's carry-over), the score screen's Continue, the auto-save holding the carry-over (Glorfindel, Gloin and the
+##             heroes Rivendell held back), Next Mission: MAP GOOD High Pass, whose intro spawns Glorfindel and Gloin from it
 ##   quit      (--campaign=ANGMAR_CAMPAIGN --mission=N): the in-game menu during the mission: Restart (RW 0x9220DE -> RW 0x5EC5D1) starts the same mission
 ##             again; Exit Mission leaves to the score screen, whose Continue shows CampaignMenu.apt after a defeat (Replay Mission)
 ##   single_player (no --campaign): the main menu's single player page (SoloPlayNav), saved as a picture: EPILOGUE (BonusCampaign) is enabled only with
@@ -103,6 +106,8 @@ func run() -> bool:
 		ok = await _run_single_player()
 	elif scenario == "eight":
 		ok = await _run_eight()
+	elif scenario == "carry":
+		ok = await _run_carry()
 	elif scenario == "quit":
 		ok = await _run_quit()
 	elif scenario == "continue_command":
@@ -394,4 +399,37 @@ func _run_eight() -> bool:
 	_check(flow.last_auto_save == autos[6], "the last mission wrote no auto-save")
 	await game._wait_seconds(3.0)
 	_shot("main-menu")
+	return true
+
+
+## lane BFME2CAMP1: the campaign's carry-over from a won mission to the next one, through the score screen, the auto-save and the menu
+func _run_carry() -> bool:
+	flow.auto_win_all = true
+	if not _check(flow.campaign == "GOOD_CAMPAIGN" and flow.mission == 0, "GOOD_CAMPAIGN starts at mission 0 (%s %d)" % [flow.campaign, flow.mission]):
+		return false
+	if not _check(await _wait_until(func(): return flow.ended_log.size() >= 1, 400.0), "MAP GOOD Rivendell ended"):
+		return false
+	_check(String(flow.ended_log[0]).contains(" victory "), "Rivendell won: %s" % flow.ended_log[0])
+	if not _check(await _continue_score(), "the score screen's Continue ran RW 0x927EC6"):
+		return false
+	if not _check(await _wait_until(_menu_shown, 30.0), "CampaignMenu.apt is shown"):
+		return false
+	_check(flow.carryover.contains(" ElvenGlorfindel") and flow.carryover.contains(" DwarvenGloin") and flow.carryover.contains(" ElvenElrond"),
+		"the campaign's carry-over holds Glorfindel, Gloin and the held-back Elrond: %s" % flow.carryover.replace("\n", " | ").left(300))
+	var check: Dictionary = game._world.check_save(flow.last_auto_save)
+	_check(check.get("ok", false) and String(check.get("carryover", "")) == flow.carryover, "the auto-save %s holds the same carry-over" % flow.last_auto_save.get_file())
+	_shot("menu-high-pass")
+	var begun: int = flow.begun
+	if not _check(await _click("Buttons.NextMission"), "Next Mission"):
+		return false
+	if not _check(await _wait_until(func(): return flow.begun == begun + 1 and game._state == game.State.PLAYING, 240.0), "MAP GOOD High Pass started"):
+		return false
+	var found := func() -> bool:
+		return game._world.debug_script_unit("Glorfindel").get("ok", false) and game._world.debug_script_unit("Gloin").get("ok", false)
+	if not _check(await _wait_until(found, 60.0), "High Pass's intro spawned Glorfindel and Gloin from the carry-over"):
+		return false
+	print("CAMPSAVE1 carry: Glorfindel %s, Gloin %s" % [JSON.stringify(game._world.debug_script_unit("Glorfindel")), JSON.stringify(game._world.debug_script_unit("Gloin"))])
+	for i in 4: # the intro's camera moves over the heroes' arrival: a picture every few seconds (with --screens)
+		await game._wait_seconds(3.0 + 3.0 * i)
+		_shot("high-pass-heroes-%d" % i)
 	return true

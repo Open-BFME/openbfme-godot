@@ -22,8 +22,8 @@
 //     HIT_REACTION, as the drawable last saw it. Every model condition write of the logic is followed by RW 0x68B53C, so the copy equals the object's own bit:
 //     the port reads the object's HIT_REACTION.
 //
-// NOT PORTED / INFERENCE (stop S-1024): the interface RW 0x68C409 finds (the first module answering behavior slot 0x84) and its slot 8(0) after a reaction are
-// not identified (noted when a reaction starts); the drawable refresh RW 0x67449C(0) is the client's; the drawable exists for every object (RW 0x628882 makes
+// INFERENCE (stop S-1024): the interface RW 0x68C409 finds (the first module answering behavior slot 0x84) is ClickReactionBehavior's click interface (lane
+// MODCOMPAT-MOD1, taken as the only class answering slot 0x84): its slot 8(0) after a reaction ends a click reaction; the drawable refresh RW 0x67449C(0) is the client's; the drawable exists for every object (RW 0x628882 makes
 // one for each), so the "no drawable" exit never applies in the logic; the drawable's flag is read as the object's HIT_REACTION (the synced copy above).
 
 #pragma once

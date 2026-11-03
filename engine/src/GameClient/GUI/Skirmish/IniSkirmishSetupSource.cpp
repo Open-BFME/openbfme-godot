@@ -456,6 +456,28 @@ bool IniSkirmishSetupSource::loadMapCache(ArchiveFileSystem &fs, std::vector<Map
 		}
 		return false;
 	}
+	// RW 0x93B9F0 (BFME2 INI::parseMapCacheDefinition, open-bfme-2 INIMapCache.cpp, native 0x5350BA): a block is entered only when its displayName is not
+	// empty and, for an official map, when the map file exists (RW 0xA14AEB doesFileExist), as TheMapCache[lower-cased name] = the block, so a later block
+	// of the same name replaces the earlier one. Edain's mapcache.ini lists the official "map edain dol amroth horde" whose .map is in no archive
+	std::vector<MapCacheEntry> kept;
+	kept.reserve(out.size());
+	for (MapCacheEntry &entry : out)
+	{
+		if (entry.displayName.empty() || (entry.isOfficial && !fs.doesFileExist(backslashes(entry.name))))
+		{
+			continue;
+		}
+		auto same = std::find_if(kept.begin(), kept.end(), [&](const MapCacheEntry &k) { return k.name == entry.name; });
+		if (same != kept.end())
+		{
+			*same = std::move(entry);
+		}
+		else
+		{
+			kept.push_back(std::move(entry));
+		}
+	}
+	out = std::move(kept);
 	return true;
 }
 

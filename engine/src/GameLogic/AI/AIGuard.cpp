@@ -5,6 +5,7 @@
 #include "GameLogic/AI/AIGuard.h"
 
 #include "Common/GameCommon.h"
+#include "Common/NumericState.h"
 #include "Common/Player.h"
 #include "Common/StateHash.h"
 #include "Common/Team.h"
@@ -21,6 +22,9 @@
 #include "GameLogic/SimMath.h"
 #include "GameLogic/WeaponState.h"
 #include "GameLogic/AI/AIXfer.h"
+#include "GameClient/MapChunks.h"
+#include "GameLogic/ScriptEngine/ScriptConditions.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
 
 namespace ModelCondition
 {
@@ -326,9 +330,18 @@ public:
 		{
 			return STATE_SUCCESS;
 		}
-		m_exit.center = g.positionToGuard();
+		// RW 0x94A05E .. 0x94A09E: the guarded object's position (S-3802: not ported), else the guarded team's centre (RW 0x7A1EEE -> RW 0x7A0ECD), else
+		// the position to guard (+ 0x48); lane BFME2CAMP1 (review): guardedSpot
+		m_exit.center = g.guardedSpot();
 		const float range = AIGuardMachine::getStdGuardRange(obj);
 		m_exit.radiusSqr = SimMath::mulf32(range, range);
+		if (const TriggerArea *area = g.areaToGuard())
+		{
+			// lane BFME2CAMP1, RW 0x94A0F5 .. 0x94A120: an area guard's radius is the polygon's (squared, x87 rounded to a float) around its centre (RW 0x6E4CA7)
+			const float r = ScriptConditions::triggerRadius(*area);
+			m_exit.radiusSqr = SimMath::mulf32(r, r);
+			m_exit.center = ScriptConditions::triggerCenter(obj.logic(), *area);
+		}
 		m_exit.conditions = GuardExitConditions::ATTACK_ExitIfOutsideRadius | GuardExitConditions::ATTACK_ExitIfNoUnitFound;
 		startAttack(machine(), false, *nemesis);
 		m_deadline = obj.logic().getFrame() + 3u * (unsigned)LOGICFRAMES_PER_SECOND;
@@ -417,7 +430,11 @@ public:
 		}
 		// RW 0x68BBE0 / 0x6FF7FA: the owner's layer (Object + 0x428) is the ground or the nemesis can be reached across layers: S-3802, always the ground here
 		const float range = AIGuardMachine::getAdjustedVisionRange(obj); // OWNERTYPE | MOOD
-		m_exit.center = g.positionToGuard();
+		m_exit.center = g.guardedSpot(); // RW 0x94A2B5 ..: the guarded object, else the team's centre, else + 0x48 (as the inner state; lane BFME2CAMP1 review)
+		if (const TriggerArea *area = g.areaToGuard())
+		{
+			m_exit.center = g.areaGuardCenter(*area); // lane BFME2CAMP1, RW 0x94A35A: + 0x60 ? + 0x54 : the polygon's centre (the range stays the vision range)
+		}
 		m_exit.radiusSqr = SimMath::mulf32(range, range);
 		m_exit.attackGiveUpFrame = logic.getFrame() + settingsOf(obj).guardChaseUnitsFrames;
 		m_exit.conditions = GuardExitConditions::ATTACK_ExitIfExpiredDuration | GuardExitConditions::ATTACK_ExitIfOutsideRadius |
@@ -498,8 +515,8 @@ public:
 
 const char *guardStopLine()
 {
-	return "[S-3802] AI guard (RW 0x662A21 -> state 16, the guard machine RW 0x949A10): ported for the LOCATION guard of the stances; not ported: the object, team "
-		   "and area guards, the turret's target in lookForInnerTarget, the AI + 0x3CD layer flag and the outer state's layer test (RW 0x68BBE0 / 0x6FF7FA: "
+	return "[S-3802] AI guard (RW 0x662A21 -> state 16, the guard machine RW 0x949A10): ported for the LOCATION guard of the stances and (lane BFME2CAMP1) the AREA "
+		   "and TEAM guards of the scripts; not ported: the object guard, the turret's target in lookForInnerTarget, the AI + 0x3CD layer flag and the outer state's layer test (RW 0x68BBE0 / 0x6FF7FA: "
 		   "every object is on the ground layer), AI crates, the inner state's restart flag (lane TARGET-1: TheAI's closest enemy is RotWK's search, AIClosestEnemy.h)";
 }
 
@@ -557,10 +574,51 @@ float AIGuardMachine::getStdGuardRange(const Object &obj)
 	return getAdjustedVisionRange(obj); // RW 0x949567: OWNERTYPE | MOOD | GUARDINNER (the inner factor is not read by RW 0x6FF412)
 }
 
+const TriggerArea *AIGuardMachine::areaToGuard() const
+{
+	if (m_area < 0)
+	{
+		return nullptr;
+	}
+	const ScriptEngine &e = const_cast<AIGuardMachine *>(this)->owner().getObject()->logic().scriptEngine();
+	return (size_t)m_area < e.triggerAreaCount() ? &e.triggerAreaAt((size_t)m_area) : nullptr;
+}
+
+Coord3D AIGuardMachine::areaGuardCenter(const TriggerArea &area) const
+{
+	if (m_areaCenterValid)
+	{
+		return m_areaCenter; // + 0x54 (+ 0x60 set)
+	}
+	return ScriptConditions::triggerCenter(const_cast<AIGuardMachine *>(this)->owner().getObject()->logic(), area); // RW 0x6E4CA7
+}
+
+Coord3D AIGuardMachine::guardedSpot() const
+{
+	if (m_teamToGuard != 0)
+	{
+		GameLogic &logic = const_cast<AIGuardMachine *>(this)->owner().getObject()->logic();
+		Coord3D c;
+		if (const Team *t = logic.players().teams().findTeamByID(m_teamToGuard)) // RW 0x7A1EEE
+		{
+			if (ScriptConditions::teamCentreAllMembers(*t, c)) // RW 0x7A0ECD
+			{
+				return c;
+			}
+		}
+	}
+	return m_positionToGuard; // + 0x48
+}
+
 Coord3D AIGuardMachine::guardPosition() const
 {
-	// RW 0x949BD3: the position to guard (a LOCATION guard); the owner's when it is still 0, 0
-	Coord3D p = m_positionToGuard;
+	// RW 0x949BD3: the position to guard (a LOCATION guard; lane BFME2CAMP1: the guarded team's mean position, guardedSpot); lane BFME2CAMP1: an area guard's
+	// centre (RW 0x949C34: + 0x60 ? + 0x54 : the polygon's centre); the owner's when it is still 0, 0
+	Coord3D p = guardedSpot();
+	if (const TriggerArea *area = areaToGuard())
+	{
+		p = areaGuardCenter(*area);
+	}
 	if (p.x == 0.0f && p.y == 0.0f)
 	{
 		p = *const_cast<AIGuardMachine *>(this)->owner().getObject()->getPosition();
@@ -589,8 +647,23 @@ bool AIGuardMachine::lookForInnerTarget()
 			return true;
 		}
 	}
-	Coord3D pos = m_positionToGuard;
-	const float range = getStdGuardRange(obj);
+	Coord3D pos = guardedSpot(); // RW 0x949BD3 (lane BFME2CAMP1: a team guard's team position)
+	float range = getStdGuardRange(obj);
+	// lane BFME2CAMP1, RW 0x949D6C .. 0x949DAA: an area guard scans once AIData GuardEnemyScanRate (+ 0x40) frames passed since its last scan (+ 0x70, set to
+	// the frame when it does), within the polygon's radius (RW 0x70CE80) around its centre (RW 0x6E4CA7)
+	const TriggerArea *area = areaToGuard();
+	bool scan = true;
+	if (area)
+	{
+		const unsigned now = logic.getFrame();
+		scan = settingsOf(obj).guardEnemyScanRate + m_lastAreaScan <= now;
+		if (scan)
+		{
+			m_lastAreaScan = now;
+		}
+		range = ScriptConditions::triggerRadius(*area);
+		pos = ScriptConditions::triggerCenter(logic, *area);
+	}
 	if (pos.x == 0.0f && pos.y == 0.0f)
 	{
 		pos = *obj.getPosition();
@@ -617,14 +690,29 @@ bool AIGuardMachine::lookForInnerTarget()
 	// not 0), UNFOGGED for a human player, AUTO_ACQUIRE, WITHIN_ATTACK_RANGE when STAND_GROUND (status 0x44), COMPUTER_CREEPS for a computer player
 	const unsigned flags = guardQualifiers(obj, ai);
 	const AttackPriorityInfo *info = ai.attackInfo(); // AI + 0x70
-	Object *victim = AI::findClosestEnemy(obj, pos, range, flags, info, nullptr, 0); // RW 0x70146A
-	if (!victim)
+	Object *victim = nullptr;
+	if (scan)
 	{
-		const Coord3D guard = guardPosition();
-		const float half = SimMath::mulf32(range, 0.5f); // RW 0xBD869C
-		if (distSqr2D(guard, *obj.getPosition()) > SimMath::mulf32(half, half))
+		victim = AI::findClosestEnemy(obj, pos, range, flags, info, nullptr, 0); // RW 0x70146A
+		if (!victim && !area)
 		{
-			victim = AI::findClosestEnemy(obj, half, flags, info, nullptr, 0); // RW 0x701443
+			const Coord3D guard = guardPosition();
+			const float half = SimMath::mulf32(range, 0.5f); // RW 0xBD869C
+			if (distSqr2D(guard, *obj.getPosition()) > SimMath::mulf32(half, half))
+			{
+				victim = AI::findClosestEnemy(obj, half, flags, info, nullptr, 0); // RW 0x701443
+			}
+		}
+	}
+	if (!victim && area && m_areaCenterValid)
+	{
+		// lane BFME2CAMP1, RW 0x949F6C .. 0x94A015: the stored centre floored to integers (floor, fistp) outside the polygon (RW 0x6E4DC7): the search around
+		// the area's centre again, whatever the scan rate said
+		const float cx = (float)SimMath::floorToInt(m_areaCenter.x);
+		const float cy = (float)SimMath::floorToInt(m_areaCenter.y);
+		if (!ScriptConditions::pointInTrigger(*area, cx, cy))
+		{
+			victim = AI::findClosestEnemy(obj, pos, range, flags, info, nullptr, 0); // RW 0x94A015
 		}
 	}
 	// RW 0x949F4A .. 0x949F5D: a HORDE victim (+ 0x115 bit 5) is adjusted (RW 0x68D30E(owner, 1, 0))
@@ -648,12 +736,29 @@ void AIGuardMachine::crcGuard(StateHasher &h) const
 	h.addFloat(m_guardAngle);
 	h.addU32(m_nemesis);
 	h.addI32(m_guardMode);
+	if (m_teamToGuard != 0) // lane BFME2CAMP1 (M4): a team guard's team, hashed only for one
+	{
+		h.addU32(0x40u);
+		h.addU32(m_teamToGuard);
+	}
+	if (m_area != -1 || m_areaCenterValid || m_lastAreaScan != 0) // lane BFME2CAMP1: an area guard's fields, hashed only for one
+	{
+		h.addI32(m_area);
+		h.addFloat(m_areaCenter.x);
+		h.addFloat(m_areaCenter.y);
+		h.addFloat(m_areaCenter.z);
+		h.addBool(m_areaCenterValid);
+		h.addU32(m_lastAreaScan);
+	}
 	crc(h);
 }
 
 void AIGuardMachine::xferGuard(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	// version 2 (lane BFME2CAMP1): the area guard's fields, written only by an area guard (every other snapshot keeps version 1's bytes)
+	// version 3 (lane BFME2CAMP1, M4): the team to guard, written only by a team guard
+	const bool areaGuard = m_area != -1 || m_areaCenterValid || m_lastAreaScan != 0;
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || m_teamToGuard != 0 ? 3 : (areaGuard ? 2 : 1)) };
 	x.xferVersion(v);
 	AIXfer::coord(x, m_positionToGuard);
 	x.xferReal(&m_guardAngle);
@@ -662,6 +767,38 @@ void AIGuardMachine::xferGuard(Xfer &x)
 	if (x.isLoading())
 	{
 		AIXfer::inRange(m_guardMode, GUARDMODE_NORMAL, GUARDMODE_GUARD_FLYING_UNITS_ONLY, "ai guard: the guard mode");
+	}
+	if (v.current >= 2)
+	{
+		x.xferInt(&m_area);
+		AIXfer::coord(x, m_areaCenter);
+		x.xferBool(&m_areaCenterValid);
+		x.xferUnsignedInt(&m_lastAreaScan);
+		if (x.isLoading())
+		{
+			const std::int32_t count = (std::int32_t)owner().getObject()->logic().scriptEngine().triggerAreaCount();
+			AIXfer::inRange(m_area, -1, count - 1, "ai guard: the area");
+		}
+	}
+	else if (x.isLoading())
+	{
+		m_area = -1;
+		m_areaCenter = Coord3D{ 0.0f, 0.0f, 0.0f };
+		m_areaCenterValid = false;
+		m_lastAreaScan = 0;
+	}
+	if (v.current >= 3)
+	{
+		x.xferUnsignedInt(&m_teamToGuard);
+		// a team id the game issued (the teams load before the objects); the team itself may be gone (the spot is then the position to guard)
+		if (x.isLoading() && m_teamToGuard >= owner().getObject()->logic().players().teams().nextTeamID())
+		{
+			throw XferException("ai guard: the team " + std::to_string(m_teamToGuard) + " is not a team id the game has issued");
+		}
+	}
+	else if (x.isLoading())
+	{
+		m_teamToGuard = 0;
 	}
 	xfer(x);
 }
@@ -684,11 +821,31 @@ StateReturnType AIGuardState::onEnter()
 	static const std::string kStop = guardStopLine();
 	obj.logic().noteStop(kStop);
 	m_guardMachine = std::make_unique<AIGuardMachine>(a);
-	if (a.guardTargetType() != GUARDTARGET_LOCATION)
+	if (a.guardTargetType() == GUARDTARGET_AREA)
 	{
-		return STATE_FAILURE; // S-3802: only the LOCATION guard is ported (the stances' guard)
+		// lane BFME2CAMP1 (BFME2 decomp AIGuardStateOnEnter.cpp, case GUARDTARGET_AREA): the machine gets the AI's area (AI vslot 0x1E4) and, when the AI's
+		// guard location is not 0 (Coord3D::GetLengthEstimate != 0: only all three components 0 give 0), that location as the area's centre (+ 0x54 / + 0x60)
+		m_guardMachine->setAreaToGuard(a.areaToGuardIndex());
+		const Coord3D &loc = a.guardLocation();
+		if (loc.x != 0.0f || loc.y != 0.0f || loc.z != 0.0f)
+		{
+			m_guardMachine->setAreaCenter(loc);
+		}
 	}
-	m_guardMachine->setPositionToGuard(a.guardLocation(), obj.getOrientation()); // the radius slot of BFME2's setter is the owner's angle (Object + 0x44)
+	else if (a.guardTargetType() == GUARDTARGET_TEAM)
+	{
+		// lane BFME2CAMP1 (BFME2 decomp AIGuardStateOnEnter.cpp, case GUARDTARGET_BFME_TEAM): setTeamToGuard(TheTeamFactory->findTeamByID(the AI's guard
+		// team, vslot 120)); the machine keeps the id and looks the team up when it needs the position (the same team while it exists)
+		m_guardMachine->setTeamToGuard(a.guardTeam());
+	}
+	else if (a.guardTargetType() != GUARDTARGET_LOCATION)
+	{
+		return STATE_FAILURE; // S-3802: the object guard is not ported
+	}
+	else
+	{
+		m_guardMachine->setPositionToGuard(a.guardLocation(), obj.getOrientation()); // the radius slot of BFME2's setter is the owner's angle (Object + 0x44)
+	}
 	m_guardMachine->setGuardMode(a.guardMode());
 	if (m_guardMachine->initDefaultState() == STATE_FAILURE)
 	{

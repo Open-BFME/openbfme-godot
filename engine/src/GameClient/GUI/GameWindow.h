@@ -277,6 +277,10 @@ public:
 	bool winGetEnabled();
 	int winHide(bool hide);
 	bool winIsHidden();
+	// The placeholder clip of this component window left the display list (WindowManager::componentInstanceDestroyed): the window stays (its
+	// screen may still read it) but is never shown again; a later winHide(false) keeps it hidden.
+	void winSetClipRemoved() { m_clipRemoved = true; }
+	bool winClipRemoved() const { return m_clipRemoved; }
 	std::uint32_t winSetStatus(std::uint32_t status);
 	std::uint32_t winClearStatus(std::uint32_t status);
 	std::uint32_t winGetStatus();
@@ -410,6 +414,7 @@ protected:
 	std::string m_aptInstanceName;
 	std::string m_badgeImage, m_badgeHelp; // lane PLATFORMICON-1
 	int m_badgeSize = 0;
+	bool m_clipRemoved = false;
 };
 
 inline bool BitTest(std::uint32_t value, std::uint32_t bits) { return (value & bits) != 0; }

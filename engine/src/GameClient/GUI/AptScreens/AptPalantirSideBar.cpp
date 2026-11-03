@@ -2,7 +2,7 @@
 //
 // Lane HUD-6: the side command bar's update (InGameSideCommandBar.apt, the builder's build list in its carved frame). See AptPalantir.h.
 //
-// TARGET FACTS (RotWK game.dat, caveat S-001; AptInGameSideCommandBar::Impl, BFME2 decomp reverse/attempts/0x005285ef.cpp is the donor for the class layout,
+// TARGET FACTS (RotWK game.dat, caveat S-001; AptInGameSideCommandBar::Impl, BFME2 decomp AptInGameSideCommandBar.cpp is the donor for the class layout,
 // tier B same-shape for RW 0x92F082):
 //   * the update RW 0x92F27D: nothing before the movie loaded (+ 0x14 == 0); the context object (+ 0x1C) must exist, have the template KindOf DOZER
 //     (+ 0x109 bit 0x40), be controlled by the local player (RW 0x68B678 == RW 0x6A8839) whose + 0x770 is 0, and UpdateButtonVisiblity must show at least one

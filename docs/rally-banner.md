@@ -4,7 +4,7 @@
 
 The reference is the supplied **modified** RotWK 2.01 image, not a
 checksum-verified publisher binary (S-001). The BFME2 donor is
-`ControlBarShowRallyPoint.cpp`, mapped from RW 0x71D18F to BFME2 0x71B892;
+`ControlBar.cpp:ControlBar::showRallyPoint`, mapped from RW 0x71D18F to BFME2 0x71B892;
 the target decompilation was checked for the changed offsets.
 
 - **RW 0x71D18F**: a null location destroys the cached drawable and clears

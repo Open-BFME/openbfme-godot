@@ -229,12 +229,14 @@ AptSaveLoad::AptSaveLoad(WindowManager &windows, Shell &shell, ShellEnvironment 
 	{
 		this->windows().note("provider-unwired", "SaveLoad.apt: the host gave no SaveLoadInfo [S-1126]");
 	}
-	else if (m_env.saveLoad->flags & ~7u)
+	else if (m_env.saveLoad->flags & ~0xFu)
 	{
-		this->windows().note("unported-command", "SaveLoad.apt: the War of the Ring and multiplayer pages are not ported [S-4003]");
+		this->windows().note("unported-command", "SaveLoad.apt: the multiplayer War of the Ring page is not ported [S-4003]");
 	}
 	const unsigned flags = m_env.saveLoad ? m_env.saveLoad->flags : 4u;
-	m_gameType = (flags & 1u) ? 1 : (flags & 2u) ? 2 : (flags & 4u) ? 4 : m_gameType; // RW 0x816692
+	// RW 0x816692: the first of types 1, 2, 4 in the mask; a mask without them (the quit menu's 8 in a War of the Ring game, RW 0x92179F) leaves + 0x2A0 at
+	// the constructor's 0 (the decomp's AptSaveLoad ctor, m_2A0(0)) until the movie's tabs set CurrentGameType
+	m_gameType = (flags & 1u) ? 1 : (flags & 2u) ? 2 : (flags & 4u) ? 4 : 0;
 	m_generation = m_env.saveLoad ? m_env.saveLoad->generation : 0;
 }
 
@@ -384,7 +386,9 @@ void AptSaveLoad::populateSaves()
 		std::string c1, c2, c3;
 		if (s)
 		{
-			c1 = s->retailImport ? s->fileNameUtf8 + " (import: coming later)" : s->fileNameUtf8;
+			// lane WOTR2 milestone 3: the War of the Ring page's columns are (file name, " ", time, date) (RW 0x6E04AD's column table, filter 8: 1, 0, 5, 6);
+			// the caller puts the file name in column 0
+			c1 = m_gameType == 8 ? std::string(" ") : s->retailImport ? s->fileNameUtf8 + " (import: coming later)" : s->fileNameUtf8;
 			c2 = s->timeUtf8;
 			c3 = s->dateUtf8;
 		}
@@ -416,12 +420,13 @@ void AptSaveLoad::populateSaves()
 		{
 			continue;
 		}
-		Color colour = s.gameKind == 1 ? kCampaignSave : kCompatible;
+		// RW 0x6E04AD: types 1 and 4 (a campaign save, the War of the Ring map's mode 4) in (239, 204, 82), the others white
+		Color colour = s.gameKind == 1 || (s.gameKind == 8 && s.savePoint == 2) ? kCampaignSave : kCompatible;
 		if (!s.loadable || s.retailImport)
 		{
 			colour = kIncompatible; // OpenBFME: a save this build cannot load, a retail save (import is SAVE-7)
 		}
-		const std::string map = mapName(s);
+		const std::string map = m_gameType == 8 ? s.fileNameUtf8 : mapName(s);
 		addRow(list, toU16(map), map, &s, colour, (int)i);
 	}
 	// the GameList's first row selected, else the AutoSaveList's (RW 0x6E04AD's end)

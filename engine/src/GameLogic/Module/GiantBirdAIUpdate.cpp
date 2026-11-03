@@ -1180,7 +1180,7 @@ private:
 		{
 			return true;
 		}
-		const float top = ObjectGeometry::maxHeightAbovePosition(ObjectGeometry::shapesOf(*near->getTemplate()));
+		const float top = ObjectGeometry::maxHeightAbovePosition(near->geometryShapes());
 		return SimMath::addf32(top, ground) <= height;
 	}
 
@@ -1882,7 +1882,7 @@ bool GiantBirdAIUpdate::deferWhileAttacking(const RoutedCommand &c)
 	return true;
 }
 
-// AI vslot 0x78 (RW 0x76B491; BFME2 decomp Rva003697F9.cpp, tier B edited): mobile, else nothing; the machine cleared; the goal position the path's last point
+// AI vslot 0x78 (RW 0x76B491; BFME2 decomp GiantBirdAIUpdate_privateFollowPath.cpp, tier B edited): mobile, else nothing; the machine cleared; the goal position the path's last point
 // (RW 0x8DB810 as above); the goal path; the source; the ignored obstacle (RW 0x66831A); state 0x3F6; goal type 1. The production exit flag is not read
 void GiantBirdAIUpdate::privateFollowPath(const std::vector<Coord3D> &path, Object *ignoreObject, CommandSourceType source, bool exitProduction)
 {
@@ -2584,4 +2584,10 @@ std::vector<std::string> GiantBirdAIUpdate::stopLines()
 		     "deferred command other than the routed ones and the follow paths, the weapon's PreferredTargetBone aim (the "
 		     "contact point is used) and Object::adjustVictim's member choice (the nearest living member, INFERENCE); the attack-move's mood re-check clock (RW 0x662E01) "
 		     "is the MoodAttackCheckRate interval (INFERENCE)" };
+}
+
+// lane MODCOMPAT-MOD1: AI vslot 0x164 (RW 0x76D3B1), run when a temporary state machine ends (RW 0x66311F): not ported (S-4040)
+void GiantBirdAIUpdate::onTemporaryStateMachineEnded()
+{
+	world().noteStop("[S-4040] GiantBirdAIUpdate: vslot 0x164 (RW 0x76D3B1), run when the AI's temporary state machine ends (RW 0x6630D7), is not ported");
 }

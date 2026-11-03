@@ -1387,6 +1387,20 @@ UpdateSleepTime DualWeaponBehavior::update()
 	{
 		return setClose(true);
 	}
+	// performance (the same result): the mounted rule and the switch wait below do not read the victim, and the search (a pure partition walk: relationship,
+	// canSee) changes nothing, so they are asked before it. Before, a sorted search of every enemy in range ran and was thrown away whenever the wait had not
+	// run out
+	if (m_data->m_useCloseRangeWhileMounted && obj->testModelCondition(kMounted))
+	{
+		return setClose(true);
+	}
+	{
+		const int wait = (int)(m_data->m_minimumSwitchTime - obj->logic().getFrame() + m_lastSwitch);
+		if (wait > 0)
+		{
+			return (UpdateSleepTime)wait;
+		}
+	}
 	const float range = m_data->m_switchDistance;
 	Object *victim = nullptr;
 	Object *goal = m_data->m_useRealVictimRange ? ai->currentVictim() : nullptr; // RW 0x668303: AIUpdate + 0x40 by id, the current victim (MOD-4 r2: was the state machine's goal object)
@@ -1422,16 +1436,7 @@ UpdateSleepTime DualWeaponBehavior::update()
 			victim = nullptr;
 		}
 	}
-	if (m_data->m_useCloseRangeWhileMounted && obj->testModelCondition(kMounted))
-	{
-		return setClose(true);
-	}
 	const unsigned now = obj->logic().getFrame();
-	const int wait = (int)(m_data->m_minimumSwitchTime - now + m_lastSwitch);
-	if (wait > 0)
-	{
-		return (UpdateSleepTime)wait;
-	}
 	m_lastSwitch = now;
 	return setClose(victim && !victim->isEffectivelyDead());
 }
@@ -2463,8 +2468,8 @@ std::vector<std::string> HeroAbilityModules::stopLines()
 		"defection and given back (RW 0x663128 / 0x663171), the ability in use aborted (RW 0x693919 -> 0x851C92 / 0x8513E4), the slave released and the "
 		"spawner stopped (RW 0x8A4ED8 slot 2, RW 0x68C3A3 slots 9 / 12), the original team kept by name and looked up (RW 0x69959D / 0x7A7483), the kill of "
 		"an object returned to a defeated player (RW 0x69AB83) and setTeam's neutral team for a player who is not active (RW 0x699554). "
-		"Open (lane BACKLOG4 r1 inventory): (1) the AI's temporary machine slot (AI + 0x34): RW 0x6630D7 gives it back at defect / endDefection, but nothing "
-		"fills it in this port (BeginTemporaryStateMachine RW 0x6630A9's callers are not ported), so the call is absent; (2) a kept attack state's slot 0x40 "
+		"Open (lane BACKLOG4 r1 inventory): (1) closed by lane MODCOMPAT-MOD1: the AI's temporary machine (AI + 0x34, filled by PickupStuffUpdate through RW "
+		"0x6630A9) is given back at defect / endDefection (RW 0x6630D7); (2) a kept attack state's slot 0x40 "
 		"(RW 0x8DB749: the machine's slot 0x34 calls it for a state answering State slot 0x24) is not read, reported when met; (3) the defection's machine is "
 		"halted with its state's exit (retail's halt RW 0x8DB758 drops the state without it: INFERENCE that what the state holds is to be released); (4) RW "
 		"0x693919 aborts only SpecialAbilityUpdate's abilities: an active special power update of another class (WeaponModeSpecialPowerUpdate) is reported, "

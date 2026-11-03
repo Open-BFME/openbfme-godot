@@ -327,9 +327,10 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	line("void vertex() {");
 	line("\tfloat px = INSTANCE_CUSTOM.x;");
 	line("\tint base = px < 0.0 ? int(-px + 0.5) - 1 : int(px + 0.5);");
-	line("\tv_instance.x = px < 0.0 ? 1.0 : 0.0;");
 	// lane VISUAL-2: INSTANCE_CUSTOM.w = rigid bone + 1024 * sway type + 16384 * fogged (W3DInstancer)
 	line("\tint wi = int(INSTANCE_CUSTOM.w + 0.5);");
+	// lane INGAMEBG-1: v_instance.x = infantry light (1) + 2 * an instance of its own scene without fog (W3D_NO_SCENE_FOG_BIT, the Apt View3D)
+	line("\tv_instance.x = (px < 0.0 ? 1.0 : 0.0) + ((wi & " + std::to_string(W3D_NO_SCENE_FOG_BIT) + ") != 0 ? 2.0 : 0.0);");
 	line("\tv_instance.y = (wi & 16384) != 0 ? w3d_fogged_frac : 1.0;");
 	line("\tvec3 p; vec3 n;");
 	if (k.Skin)
@@ -435,7 +436,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 			line("\t\tvec3 fy = cross(wn, fx);");
 		}
 		line("\t\tvec3 vv = normalize(CAMERA_POSITION_WORLD - wpos);");
-		line("\t\tmat3 ld = v_instance.x > 0.5 ? w3d_ldir_inf : w3d_ldir_obj;");
+		line("\t\tmat3 ld = mod(v_instance.x, 2.0) > 0.5 ? w3d_ldir_inf : w3d_ldir_obj;");
 		for (int i = 0; i < 3; ++i)
 		{
 			const std::string si = std::to_string(i);
@@ -453,7 +454,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\t{");
 		line("\t\tvec3 wn = normalize(MODEL_NORMAL_MATRIX * NORMAL);");
 		line("\t\tvec3 vv = normalize(CAMERA_POSITION_WORLD - wpos);");
-		line("\t\tbool inf = v_instance.x > 0.5;");
+		line("\t\tbool inf = mod(v_instance.x, 2.0) > 0.5;");
 		line("\t\tmat3 lc = inf ? w3d_lcol_inf : w3d_lcol_obj;");
 		line("\t\tmat3 ld = inf ? w3d_ldir_inf : w3d_ldir_obj;");
 		line("\t\tvec3 amb = inf ? w3d_amb_inf : w3d_amb_obj;");
@@ -581,7 +582,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		}
 		line("\tvec3 lts[3] = vec3[3](v_lt0, v_lt1, v_lt2);");
 		line("\tvec3 hts[3] = vec3[3](v_ht0, v_ht1, v_ht2);");
-		line("\tbool inf = v_instance.x > 0.5;");
+		line("\tbool inf = mod(v_instance.x, 2.0) > 0.5;");
 		line("\tmat3 lc = inf ? w3d_lcol_inf : w3d_lcol_obj;");
 		line("\tvec3 amb = inf ? w3d_amb_inf : w3d_amb_obj;");
 		line("\tlc[0] += w3d_tint; lc[1] += w3d_tint; lc[2] += w3d_tint; amb += w3d_tint;");
@@ -721,7 +722,8 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	{
 		// lane RENDER-4 (S-1651): the fog stage after the pixel shader (saturated output, D3D9), at the eye range of the fragment (the effects' vertex
 		// fog, RW normalmapped.fxo / simple.fxo: |eye - world position|, here per pixel)
-		line("	cur.rgb = w3d_apply_fog(clamp(cur.rgb, 0.0, 1.0), length(v_vpos));");
+		// lane INGAMEBG-1: an instance of a scene without fog (the Apt View3D's own scene: SceneClass's FogEnabled false, RW 0x5424E0) skips it
+		line("	cur.rgb = v_instance.x > 1.5 ? clamp(cur.rgb, 0.0, 1.0) : w3d_apply_fog(clamp(cur.rgb, 0.0, 1.0), length(v_vpos));");
 	}
 	// the D3D9 frame buffer saturates; the gamma space result is handed to Godot as linear (sRGB-encoded again on output)
 	// RENDER-3 (S-831): a blended surface draws in the transparent pass, which composites in retail's gamma space (GodotGammaComposite.h): it

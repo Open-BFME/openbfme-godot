@@ -23,7 +23,8 @@ const PathfindGeometry &geometry(const Object &obj)
 	{
 		throw std::logic_error("combat geometry: the game has no AIWorld (the geometry of an object is the pathfinder's)");
 	}
-	return world->movementInfo(*obj.getTemplate()).geometry;
+	// lane MODCOMPAT-MOD1: the object's own GeometryInfo (Object + 0xA8; + 0xB8 / + 0xBC its radii), the template's while the object changed no shape flag
+	return obj.ownPathfindGeometry(world->movementInfo(*obj.getTemplate()).geometry);
 }
 
 float boundingCircleRadius(const Object &obj)

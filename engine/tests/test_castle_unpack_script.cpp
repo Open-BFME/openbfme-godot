@@ -2,6 +2,7 @@
 // RotWK's (caveat S-001, static disassembly): NAMED_BASE_UNPACKABLE_FOR_PLAYER RW 0x7E5142, PLAYER_HAS_N_OR_FEWER_BASES RW 0x7E64CD, NAMED_BASE_UNPACK /
 // NAMED_BASE_UNPACK_FREE RW 0x7BED64 (see ScriptConditions.cpp and ScriptActionsUnits.cpp). Edain's castle maps run them from their script libraries.  GPL-3.0.
 
+#include "HordeCompleteTestUtil.h"
 #include "doctest.h"
 
 #include "ProdTestUtil.h"
@@ -220,6 +221,7 @@ struct CreateHost : ScriptEngineHost
 			p.z = logic.getGroundHeight(p.x, p.y);
 			o->setOrientation(angle);
 			o->setPosition(&p);
+			testutil::completeHorde(o); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
 		}
 		return o;
 	}

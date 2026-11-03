@@ -1,8 +1,9 @@
 // OpenBFME. GPL-3.0.
 //
-// Water mesh geometry (no Godot dependency): ear-clipping triangulation of standing-water polygons and the
-// river ribbon built from cross-section lines. Spec maps-and-terrain.md 3.6 ("triangulate each polygon (ear
-// clipping; points may be non-convex) at z = waterHeight"). The river strip, its UVs and its vertex colour are
+// Water mesh geometry (no Godot dependency): the grid retail fills from a standing-water polygon and the
+// river ribbon built from cross-section lines. Standing water is not triangulated: RenderableStandingWaterArea::
+// AllocateAndFillBuffers (RW 0x482A16) keeps the grid cells whose centre is inside the polygon (buildStandingGrid),
+// so a polygon that touches itself, as Adorn River's does, needs no special case. The river strip, its UVs and its vertex colour are
 // those of WaterRenderObjClass::drawRiverWater (BFME2 1.06 game.dat RVA 0x00100A0B, reconstructed in Open-BFME-2's
 // W3DWaterDrawRiverWater.cpp), which draws them with RiverWater.fx (river.gdshader).
 
@@ -40,7 +41,7 @@ struct StandingMaterial
 bool readStandingMaterial(const MeshShaderMaterialDef &source, StandingMaterial &out, std::string *error = nullptr);
 
 // BFME2 donor StandingWaterAreaLoadPCA.cpp (0x3093F6) and
-// Rva003093F6BasesSamplers.cpp (0x30822F..0x308509). Presentation only.
+// StandingWaterArea.cpp (0x30822F..0x308509). Presentation only.
 using PcaVector = std::array<float, 4>;
 using PcaFrame = std::array<PcaVector, 10>; // mean, then X/Y/Z for groups 0..2
 struct PcaBasis
@@ -53,11 +54,6 @@ PcaFrame samplePcaBasis(const PcaBasis &basis, float clientTime);
 // fx_2_0 technique names in file order. Bounds-checked; no baked content indices.
 bool readEffectTechniques(const std::vector<std::uint8_t> &bytes, std::vector<std::string> &names, std::string *error);
 
-// Triangulates a simple polygon (either winding, non-convex allowed). Returns false for degenerate input
-// (fewer than 3 points, zero area, or a polygon the ear search cannot finish). indices are triangle triples.
-bool triangulate(const std::vector<Point2F> &polygon, std::vector<std::uint32_t> &indices);
-
-// BFME2 W3DWater.cpp AllocateAndFillBuffers (0x8304A), high-detail grid.
 // Wave query follows W3DWaterStandingWaveQuery.cpp (0x8026B).
 struct StandingVertex
 {
@@ -71,11 +67,11 @@ struct StandingGrid
 	std::vector<std::uint32_t> indices;
 	float spacing = 20;
 };
+// RotWK RenderableStandingWaterArea::AllocateAndFillBuffers (RW 0x482A16; BFME2 W3DWater.cpp 0x8304A), high-detail grid.
+// False (and an empty grid) for fewer than 3 points, non-finite or unrepresentable coordinates, or a polygon whose
+// grid keeps no cell: the caller reports it.
 bool buildStandingGrid(const StandingWaterArea &area, const std::vector<StandingWaveArea> &waves,
 	const std::function<float(float,float)> &ground, StandingGrid &out);
-
-// Signed area (positive = counter-clockwise in a y-up frame).
-float signedArea(const std::vector<Point2F> &polygon);
 
 struct RiverStrip
 {

@@ -740,7 +740,14 @@ TEST_CASE("fx2 retail: a walking mumakil fires the FXEvent footsteps of its movi
 	rig.game->advance(0.2);
 	REQUIRE(mum->getAIUpdateInterface() != nullptr);
 	mum->getAIUpdateInterface()->aiMoveToPosition(Coord3D{ 1900.0f, 1500.0f, 0.0f }, CMD_FROM_PLAYER);
-	const unsigned long long logicBefore = rig.logic().fxEvents().total();
+	// lane MODCOMPAT-MOD1: a unit walking through a bird emitter (CritterEmitterUpdate::onCollide RW 0x8CD297) fires that emitter's FXList on the logic side;
+	// the mumak's path crosses one, so those events are told apart from the footsteps
+	const auto critterEvents = [&rig] {
+		const auto &sites = rig.logic().fxEvents().perSite();
+		const auto it = sites.find("CritterEmitterUpdate");
+		return it == sites.end() ? 0ull : it->second;
+	};
+	const unsigned long long logicBefore = rig.logic().fxEvents().total() - critterEvents();
 	for (int i = 0; i < 60; ++i)
 	{
 		// the render side at 30 Hz: six draws per logic frame, each stepping the animations and the events
@@ -756,7 +763,7 @@ TEST_CASE("fx2 retail: a walking mumakil fires the FXEvent footsteps of its movi
 	CHECK(fx.stats().frameEventsFired > 0);
 	CHECK(fx.stats().played.count("FXEvent"));
 	CHECK(fx.stats().missingFXLists.empty());
-	CHECK(rig.logic().fxEvents().total() == logicBefore); // the footsteps are the client's: no logic call
+	CHECK(rig.logic().fxEvents().total() - critterEvents() == logicBefore); // the footsteps are the client's: no logic call
 }
 
 // lane INTEG-1 (S-634): XP-1's level grant in a live game. After logic frame 10 a Gondor soldier horde's 49th orc kill grants GoodLevel2 (RW 0x821319) to the

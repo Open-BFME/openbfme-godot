@@ -365,7 +365,8 @@ std::vector<MapCreationHook> MapCreationHooks::templateEventLists(const ThingTem
 	return out;
 }
 
-std::vector<MapCreationHook> MapCreationHooks::templateHooks(const ThingTemplate &tmpl, const CreationScriptData &data, std::vector<std::string> *problems)
+std::vector<MapCreationHook> MapCreationHooks::templateHooks(const ThingTemplate &tmpl, const CreationScriptData &data, std::vector<std::string> *problems,
+	std::vector<std::string> *stops)
 {
 	std::vector<MapCreationHook> out;
 	auto problem = [&](const std::string &p) {
@@ -405,7 +406,13 @@ std::vector<MapCreationHook> MapCreationHooks::templateHooks(const ThingTemplate
 				auto it = data.eventLists.find(name);
 				if (it == data.eventLists.end())
 				{
-					problem("AILuaEventsList " + h.eventList + (name == h.eventList ? "" : " (inherits " + name + ")") + " is not an EventList of scriptevents.xml");
+					// RW 0x7396E8 returns null for an absent list; an absent inherited base keeps the child's handlers (RW 0x739848).
+					// This scanner is only an inventory: the actual registry decides which handlers run.
+					if (stops && AsciiStringUtil::compareNoCase(name, "None") != 0)
+					{
+						stops->push_back("[S-127] template " + tmpl.getName() + ": AILuaEventsList " + h.eventList +
+							(name == h.eventList ? "" : " (inherits " + name + ")") + " is not an EventList of scriptevents.xml; retail binds no missing list");
+					}
 					break;
 				}
 				if (!seen.insert(name).second)

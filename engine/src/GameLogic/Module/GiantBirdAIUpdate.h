@@ -2,7 +2,7 @@
 //
 // GiantBirdAIUpdate (lane FLY-1): the AI module of the GIANT_BIRD flyers (the fell beasts of Mordor, Drogoth, Gwaihir, the dragon strike's dragon). RotWK and
 // BFME2 only (no Zero Hour counterpart); the BFME2 decomp is the donor where it has byte-matched bodies (Code/GameEngine/Source/GameLogic/Object/Update/
-// AIUpdate/GiantBird*.cpp, AIGiantBird*State*.cpp, Common/GiantBirdAttackMoveToState.cpp ...; every RotWK body cited below is tier B same-shape against it:
+// AIUpdate/GiantBird*.cpp, AIGiantBird*State*.cpp, AI/AIAttackSwoopThenIdleStateMachine.cpp ...; every RotWK body cited below is tier B same-shape against it:
 // the same code with RotWK's offsets, which are BFME2's + 0xC4 for the class's own fields).
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001):
@@ -39,7 +39,7 @@
 //     RW 0xC2DB00: enter RW 0x76A451, update RW 0x76B14A, exit RW 0x76B228, next point RW 0x76A496), entered by RW 0x76D84B; each next point is the path's
 //     point at the terrain height + the path height, the following one the look-ahead (AI flags bit 7), built with RW 0x769EA5 (mask RW 0xDE7908); the
 //     loop flag + 0x614 restarts the path when the waypoint chain closes on its first waypoint. BFME2 decomp GiantBirdFollowPathStates.cpp,
-//     GiantBirdAIUpdatePrivateFollowPathAppend.cpp, Rva003697F9.cpp, Rva00368344Rva0036BB2F.cpp (RotWK read in Ghidra: the same statements);
+//     GiantBirdAIUpdatePrivateFollowPathAppend.cpp, GiantBirdAIUpdate_privateFollowPath.cpp, Rva00368344Rva0036BB2F.cpp (RotWK read in Ghidra: the same statements);
 //
 //   * the face commands 0x26 / 0x27: AI vslots 0x114 / 0x118 (RW 0x76B543 / 0x76B559) -> RW 0x76AB4E (target position, source, object flag): unless IMMOBILE,
 //     the goal angle + 0x5F0 = the angle to the point + the orientation, the machine cleared, the goal position the bird's own, the source, state 0x3FF
@@ -181,6 +181,9 @@ protected:
 	void privateFacePosition(const Coord3D &pos, CommandSourceType source) override;
 	const char *machineName() const override { return "GiantBirdAIUpdateMachine"; }
 	std::unique_ptr<AIStateMachine> makeStateMachine() override; // RW 0x769E50 -> RW 0x7695C2
+	// lane MODCOMPAT-MOD1: AI vslot 0x164 after a temporary state machine ends (RW 0x76D3B1): not ported, reported (S-4040). No ported caller starts a
+	// temporary machine on a bird (PickupStuffUpdate is a horde module)
+	void onTemporaryStateMachineEnded() override;
 
 public:
 	// RW 0x769C31 -> RW 0x769335 AIAttackSwoopThenIdleStateMachine: `attackStateId` (RW 10) Swoop(1, 0) -> 0x3F4 Attack(1) -> 0x3F5 FollowThru(0) -> 0, the idle state

@@ -3,9 +3,12 @@
 
 #include "GameLogic/ScriptEngine/AttackPriority.h"
 
+#include <algorithm>
+
 #include "Common/NumericState.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
+#include "Common/StateHash.h"
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/GameLogic.h"
@@ -116,6 +119,98 @@ void AttackPriorityStore::reset()
 	m_entries.clear();
 	m_entries.emplace_back(); // RW 0x603269: + 0x19200, default 1, no map
 	++m_generation;
+	m_edited = false;
+}
+
+AttackPriorityInfo *AttackPriorityStore::findOrCreate(const std::string &name)
+{
+	// RW 0x6058B8: entries 1 .. by name (StringBase compare: exact)
+	for (size_t i = 1; i < m_entries.size(); ++i)
+	{
+		if (m_entries[i].m_name == name)
+		{
+			m_edited = true; // the caller edits it
+			return &m_entries[i];
+		}
+	}
+	if (m_entries.size() > 0xFF) // RW 0x6058F4: 0xFF < count -> null
+	{
+		return nullptr;
+	}
+	m_entries.emplace_back();
+	m_entries.back().m_name = name; // RW 0x605906: the slot's name; its default and table as constructed
+	m_edited = true;
+	return &m_entries.back();
+}
+
+std::vector<AttackPriorityStore::SavedEntry> AttackPriorityStore::saved() const
+{
+	std::vector<SavedEntry> out;
+	for (size_t i = 1; i < m_entries.size(); ++i)
+	{
+		SavedEntry e;
+		e.name = m_entries[i].m_name;
+		e.defaultPriority = m_entries[i].m_defaultPriority;
+		for (const auto &kv : m_entries[i].m_priorities)
+		{
+			e.priorities[kv.first->getName()] = kv.second; // the key is a final override: its name finds it again
+		}
+		out.push_back(std::move(e));
+	}
+	// by name (review m3): an unedited table's AIData entries are made in the order the AIs first use them, which a loaded game may not repeat; the
+	// lookups go by name, so the order is no state (only the 0xFF limit counts the entries)
+	std::sort(out.begin(), out.end(), [](const SavedEntry &a, const SavedEntry &b) { return a.name < b.name; });
+	return out;
+}
+
+bool AttackPriorityStore::restore(const std::vector<SavedEntry> &entries, std::string *why)
+{
+	std::deque<AttackPriorityInfo> made;
+	made.emplace_back();
+	for (const SavedEntry &e : entries)
+	{
+		made.emplace_back();
+		AttackPriorityInfo &info = made.back();
+		info.m_name = e.name;
+		info.m_defaultPriority = e.defaultPriority;
+		for (const auto &kv : e.priorities)
+		{
+			const ThingTemplate *t = m_logic.things().findTemplate(kv.first);
+			if (!t)
+			{
+				if (why)
+				{
+					*why = "the attack priority set '" + e.name + "' names the thing '" + kv.first + "', which this game lacks";
+				}
+				return false;
+			}
+			info.setPriority(t, kv.second); // keyed by its final override, as RW 0x759E24
+		}
+	}
+	m_entries = std::move(made);
+	m_edited = true;
+	++m_generation;
+	return true;
+}
+
+void AttackPriorityStore::crc(StateHasher &h) const
+{
+	if (!m_edited)
+	{
+		return;
+	}
+	h.addU32(0x19200u);
+	for (const SavedEntry &e : saved())
+	{
+		h.addString(e.name);
+		h.addI32(e.defaultPriority);
+		h.addU32((std::uint32_t)e.priorities.size());
+		for (const auto &kv : e.priorities)
+		{
+			h.addString(kv.first);
+			h.addI32(kv.second);
+		}
+	}
 }
 
 const AttackPriorityInfo *AttackPriorityStore::getAttackInfo(const std::string &name)

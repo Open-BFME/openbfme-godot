@@ -215,7 +215,7 @@ template <class Ok> std::uint32_t weightedVertexColor(std::uint32_t color, int x
 
 std::uint32_t TerrainResourceClaimView::vertexColor(const GameLogic &logic, std::uint32_t color, int x, int y, int player)
 {
-	// RW 0x75C1A9 (BFME2 decomp TerrainResourceManagerOverlayAlpha.cpp rva0035A61F): isCellClaimable(cell, 0, 0, false, player) around the vertex
+	// RW 0x75C1A9 (BFME2 decomp TerrainResourceManager.cpp rva0035A61F): isCellClaimable(cell, 0, 0, false, player) around the vertex
 	return weightedVertexColor(color, x, y, [&](int cx, int cy) { return claimable(logic, cx, cy, 0u, INVALID_ID, false, player); });
 }
 

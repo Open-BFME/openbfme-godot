@@ -1,4 +1,23 @@
 extends SceneTree
+## GDScript assert() only logs a SCRIPT ERROR and the run carries on, so a failed one still ended in PASS / exit 0. Every check goes through
+## _check: a failure is recorded and printed as FAIL, and _finish quits 1 when any failed.
+var _failures: Array[String] = []
+
+func _check(ok: bool, reason := "") -> bool:
+ if not ok:
+  _failures.append(reason)
+  var stack := get_stack()
+  printerr("FAIL: ", reason, " (line ", stack[1].line if stack.size() > 1 else 0, ")")
+ return ok
+
+func _finish(pass_message: String) -> void:
+ if _failures.is_empty():
+  print(pass_message)
+  quit()
+  return
+ printerr(_failures.size(), " check(s) failed")
+ quit(1)
+
 class ShellStub extends Node2D:
  var calls := {}
  var texture: ImageTexture
@@ -24,29 +43,31 @@ func _run():
   {"result":4,"points":PackedVector2Array([Vector2.ONE])},
   {"result":0,"points":PackedVector2Array()}]}
  var markers: Array=graph.marker_commands()
- assert(markers.size()==4)
- assert(markers[0].name=="AptTimelineVictorious")
- assert(markers[0].rect==Rect2(194,58,32,24))
- assert(markers[1].name=="AptTimelineFortress")
- assert(markers[1].rect==Rect2(44,88,32,24))
- assert(markers[2].name=="AptTimelineDefeated")
- assert(markers[2].rect==Rect2(94,8,32,24))
- assert(markers[3].name=="AptTimelineDisconnected")
- assert(markers[3].rect==Rect2(144,108,32,24))
- assert(markers[0].region==Rect2(4,6,16,12))
+ if not _check(markers.size()==4):
+  _finish("")
+  return
+ _check(markers[0].name=="AptTimelineVictorious")
+ _check(markers[0].rect==Rect2(194,58,32,24))
+ _check(markers[1].name=="AptTimelineFortress")
+ _check(markers[1].rect==Rect2(44,88,32,24))
+ _check(markers[2].name=="AptTimelineDefeated")
+ _check(markers[2].rect==Rect2(94,8,32,24))
+ _check(markers[3].name=="AptTimelineDisconnected")
+ _check(markers[3].rect==Rect2(144,108,32,24))
+ _check(markers[0].region==Rect2(4,6,16,12))
  graph.marker_commands()
- for count in shell.calls.values(): assert(count==1)
+ for count in shell.calls.values(): _check(count==1)
  graph.free()
  shell.free()
  if not OS.get_environment("ROTWK_INSTALL").is_empty():
   var fs=ClassDB.instantiate("RetailFileSystem")
-  assert(fs.mount_retail().ok)
+  _check(fs.mount_retail().ok)
   var world=ClassDB.instantiate("GameWorld")
   root.add_child(world)
-  assert(world.setup(fs).ok)
+  _check(world.setup(fs).ok)
   var native=ClassDB.instantiate("AptMenuPlayer")
   root.add_child(native)
-  assert(native.boot_shell(fs,world,{"skirmish_ini":"user://timeline-markers-test.ini"}).ok)
+  _check(native.boot_shell(fs,world,{"skirmish_ini":"user://timeline-markers-test.ini"}).ok)
   native.auto_process=false
   var overlay=load("res://scripts/timeline_graph.gd").new()
   overlay.shell=native
@@ -57,18 +78,19 @@ func _run():
    {"color":0x20ff80,"result":2,"points":PackedVector2Array([Vector2(0.8,0.2)])}]}
   root.add_child(overlay)
   var authored: Array=overlay.marker_commands()
-  assert(authored.size()==4)
+  if not _check(authored.size()==4):
+   _finish("")
+   return
   for marker in authored:
-   assert(marker.texture!=null)
-   assert(marker.region.has_area())
-   assert(marker.rect.has_area())
+   _check(marker.texture!=null)
+   _check(marker.region.has_area())
+   _check(marker.rect.has_area())
   for frame in 5: await process_frame
   if DisplayServer.get_name()!="headless":
    await RenderingServer.frame_post_draw
    var capture:=OS.get_environment("OPENBFME_TIMELINE_SCREENSHOT")
-   if not capture.is_empty(): assert(root.get_texture().get_image().save_png(capture)==OK)
+   if not capture.is_empty(): _check(root.get_texture().get_image().save_png(capture)==OK)
   overlay.free()
   native.free()
   world.free()
- print("TIMELINE MARKERS PASS")
- quit()
+ _finish("TIMELINE MARKERS PASS")

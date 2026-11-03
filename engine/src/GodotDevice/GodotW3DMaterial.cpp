@@ -11,6 +11,7 @@
 #include "Common/AsciiString.h"
 #include "GameEngineDevice/W3DDevice/GameClient/W3DObjectLighting.h"
 #include "GameEngineDevice/W3DDevice/GameClient/W3DHardwareFog.h"
+#include "Libraries/WWVegas/WW3D2/assetmgr.h"
 #include "Libraries/WWVegas/WW3D2/shader.h"
 #include "Libraries/WWVegas/WW3D2/w3dfxconvert.h"
 #include "Libraries/WWVegas/WW3D2/textureloader.h"
@@ -425,6 +426,22 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 		}
 	}
 	TextureResolution res = Resolve_Packed_W3D_Texture(name, [&](const std::string &p) { return Fs.doesFileExist(p); }, isBfme1Data(Fs)); // community PR #36: the archives' layout
+	bool isPng = false;
+	if (!res.Found && !isBfme1Data(Fs) && name.size() > 4)
+	{
+		// lane WOTR-2 [inference, as the W3DModelBuilder's WOTR-1 fallback]: a few retail textures exist only as .png in the compiled folder
+		// (LivingMap's LM_MinasTirith); the compiled-only .jpg ones (LM_Smoke, EXLavaSeq) resolve through Resolve_Packed_W3D_Texture above
+		const std::string dds = W3D_Compiled_Texture_Path(name);
+		const std::string png = dds.size() > 4 ? dds.substr(0, dds.size() - 4) + ".png" : std::string();
+		res.Tried.push_back(png);
+		if (!png.empty() && Fs.doesFileExist(png))
+		{
+			res.Found = true;
+			res.Path = png;
+			res.IsDDS = false;
+			isPng = true;
+		}
+	}
 	if (!res.Found)
 	{
 		if (!quietWhenMissing)
@@ -459,7 +476,9 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	Ref<Image> image;
 	image.instantiate();
 	Error err;
-	if (res.Path.size() >= 4 && res.Path.substr(res.Path.size() - 4) == ".jpg")
+	if (isPng)
+		err = image->load_png_from_buffer(buffer);
+	else if (res.Path.size() >= 4 && res.Path.substr(res.Path.size() - 4) == ".jpg")
 	{
 		AptArchiveFileSource source(Fs);
 		bool paired = false;
@@ -725,6 +744,26 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 			{
 				simpleUv.reset(new SimpleFxUvMapper(uvTransform));
 			}
+		}
+		else if (AsciiStringUtil::lowered(fx.TypeName) == "watershader.fx")
+		{
+			// WOTR-2 [S-035 approximation]: a WaterShader.FX mesh (LivingMap's WATER) draws its MaterialColorDiffuse (rgb, alpha) lit like an untextured
+			// classic material and alpha blended without depth writes; the bump, environment, wave and PCA textures and the specular are not drawn.
+			// Before this the effect fell to the normalmapped path with no texture: a white (on the strategic map, pink-lit) sheet.
+			key.Fx = false;
+			key.Texturing = false;
+			key.PriGradient = W3D_GRADIENT_MODULATE;
+			key.Blend = W3D_GODOT_BLEND_MIX;
+			key.DepthWrite = false;
+			for (const MeshShaderMaterialProperty &p : fx.Properties)
+			{
+				if (AsciiStringUtil::lowered(p.Name) == "materialcolordiffuse")
+				{
+					diffuse = Color(p.Float[0], p.Float[1], p.Float[2], p.Float[3]);
+					ambientMat = Color(p.Float[0], p.Float[1], p.Float[2], 1.0f);
+				}
+			}
+			out.Notes.push_back("WaterShader.FX drawn as its MaterialColorDiffuse (S-035)");
 		}
 		else
 		{

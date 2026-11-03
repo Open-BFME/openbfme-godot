@@ -25,6 +25,7 @@ Path *Pathfinder::findSafePath(const PathfindObject *obj, const PathfindLocomoto
 	{
 		return nullptr;
 	}
+	SearchMemoScope memo(*this, obj); // lane PATHPERF-1's memo for this search too
 	int radius = 0;
 	bool center = false;
 	getRadiusAndCenter(obj, radius, center);
@@ -52,9 +53,24 @@ Path *Pathfinder::findSafePath(const PathfindObject *obj, const PathfindLocomoto
 	Path *result = nullptr;
 	int cellCount = 0;
 	float farthest = 0.0f;
+	PathfindCell *farthestCell = nullptr; // lane PERF-HD: the cell of `farthest` (closed, its path record kept until the lists are cleaned)
 	while (!m_open.empty())
 	{
 		PathfindCell *c = m_open.pop();
+		if (m_uberLimits && m_uberSearchAllocs > m_uberSearchCap)
+		{
+			// lane PERF-HD (Uber only): the queue's cap ends the search as a big one ends (RW 0x6FCFA4: it takes the farthest cell): a path to the farthest
+			// cell reached where the unit fits, so a panicking unit still flees
+			markClosed(c);
+			int crowd = 0;
+			if (farthestCell &&
+				checkDestination(obj, farthestCell->getXIndex(), farthestCell->getYIndex(), farthestCell->getLayer(), radius, center, &crowd, false) &&
+				crowd == 0)
+			{
+				result = buildActualPath(obj, loco.validSurfaces, &pos, farthestCell, center, false);
+			}
+			break;
+		}
 		Coord3D cc;
 		adjustCoordToCell(c->getXIndex(), c->getYIndex(), center, cc, c->getLayer());
 		// RW 0x6FCF31 .. 0x6FCF83 (SSE): (y - r1.y)^2 + (x - r1.x)^2 and the same to r2, the smaller
@@ -74,6 +90,7 @@ Path *Pathfinder::findSafePath(const PathfindObject *obj, const PathfindLocomoto
 		if (distSqr > farthest)
 		{
 			farthest = distSqr;
+			farthestCell = c;
 			if (cellCount > 2000)
 			{
 				ok = true; // RW 0x6FCFA4: a big search takes the farthest cell

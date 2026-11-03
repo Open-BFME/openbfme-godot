@@ -22,7 +22,7 @@ func _wait_request(panel: Node) -> void:
 
 func _run() -> void:
 	if not ClassDB.class_exists("AptMenuPlayer"):
-		assert(load("res://openbfme.gdextension") != null)
+		_check(load("res://openbfme.gdextension") != null, "openbfme.gdextension did not load")
 	var url := "http://127.0.0.1:1"
 	var preview := false
 	for argument in OS.get_cmdline_user_args():

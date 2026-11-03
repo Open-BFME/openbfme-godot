@@ -40,6 +40,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 class ArchiveFileSystem;
@@ -96,6 +97,8 @@ public:
 	bool isMobile() const override;
 	bool isKindOf(PathfindKind kind) const override;
 	const PathfindGeometry &getGeometry() const override;
+	// the geometry when getGeometry would fill no cache (the template's movement info is resolved and the object keeps no shape flags of its own), else null
+	const PathfindGeometry *cachedGeometry() const;
 	float getFenceWidth() const override;
 	float getFenceXOffset() const override;
 	float getPathfindDiameter() const override;
@@ -147,9 +150,6 @@ private:
 	PathfindLayerEnum m_layer = LAYER_GROUND;
 	mutable const ThingTemplate *m_infoTemplate = nullptr;
 	mutable const ObjectMovementInfo *m_info = nullptr;
-	// lane HUD-5: the template's geometry with the object's own shape flags (Object::setGeometryActive, RW 0xAD3520: a gate's open / closed shapes)
-	mutable PathfindGeometry m_ownGeometry;
-	mutable std::uint32_t m_ownGeometryVersion = 0xFFFFFFFFu;
 	// lane WALL-1: the wall surfaces at the transform they were computed for
 	mutable PathfindWallGeometry m_wallGeometry;
 	mutable bool m_wallLooked = false, m_hasWall = false;
@@ -228,6 +228,14 @@ public:
 	// the overlap pass of the collision manager for mobile units: every pair of AI units whose footprints overlap meets in
 	// AIUpdateInterface::onCollide (RW 0x66E233), both ways, in id order (phase 2, RW 0x62E93B)
 	void processCollisions();
+	// lane MODCOMPAT-MOD1 (S-260 / S-780): RotWK's collision manager also holds the objects without an AI (every object whose KindOf has no NO_COLLIDE and no
+	// HORDE, RW 0x68E31F -> 0xB6C470); the overlap pass above has only the AI units, so the crates (objects with a crate collide, CrateCollide::isCrate) get
+	// their own pass after it in the same row: each live crate in id order meets the AI objects (no NO_COLLIDE, no HORDE) whose shapes overlap its own,
+	// in id order, both ways (ObjectCollide::onCollide, the lower id first). The crate list is derived (not saved): kept by the world hooks, rebuilt from
+	// the objects after a load or a new map
+	void processCrateContacts();
+	unsigned long long crateContacts() const { return m_crateContacts; } ///< the overlapping crate pairs met so far (statistics)
+	size_t crateCount() const { return m_crates.size(); }
 	// lane PHYS-1: RW moveAllies 0x6F503B (AIUpdateAllies.cpp): every stationary ally on the cells along `path` is asked to step away; false when not done
 	bool moveAllies(AIUpdateInterface &mover, Path &path, bool force);
 	// lane MOVE-3 r2: RW 0x6F85A6 moveAlliesAwayFromDestination (RW 0x6F7F3E -> the Bresenham line RW 0x6F57C3 -> each cell RW 0x6F53AF): every cell of the line
@@ -283,6 +291,8 @@ private:
 	std::map<const ThingTemplate *, std::unique_ptr<ObjectMovementInfo>> m_info;
 	std::vector<std::string> m_errors;
 	std::set<std::string, std::less<>> m_noted; // transparent: noteStop looks a text up without building a std::string (every AI update notes one)
+	std::unordered_map<const char *, const std::string *> m_notedFast; // noteStop's fast path: a text seen before, by its address (set nodes are stable)
+	static constexpr size_t kNotedFastMax = 4096;                       // the fast path's size bound
 	std::map<std::string, unsigned> m_failures; // "template: text" -> count
 	bool m_mapReady = false;
 	int m_nextFormationId = 1; ///< AI + 0x20 (hashed once a formation was made)
@@ -296,21 +306,40 @@ private:
 		AIUpdateInterface *ai;
 		float x, y, r;
 		int bucket;
-		const PathfindGeometry *geometry; ///< lane PERF-2: resolved on the logic thread (the adapter's movement info is a lazily filled cache)
+		const PathfindGeometry *geometry; ///< the adapter's cached geometry read on the job pool, else resolved on the logic thread (a lazily filled cache)
 	};
 	std::vector<CollisionUnit> m_collisionUnits;
+	// processCollisions' gather (performance): the AIs in id order (m_ais' order). A new id above the last is appended and a removed AI leaves a null
+	// (compacted when an eighth are null); anything else rebuilds it from m_ais. Then what the job pool read of each
+	std::vector<std::pair<PathfindObjectID, AIUpdateInterface *>> m_aiOrder;
+	bool m_aiOrderDirty = true;
+	size_t m_aiOrderHoles = 0;
+	struct CollisionScan
+	{
+		bool keep;
+		const ThingTemplate *finalTemplate;
+		const PathfindGeometry *geometry; ///< null: resolved on the logic thread
+		float x, y, r;
+	};
+	std::vector<CollisionScan> m_collisionScan;
 	std::vector<int> m_collisionBucketStart, m_collisionBucketFill, m_collisionBucketUnits, m_collisionCandidates;
 	// lane PERF-2: the overlapping pairs found by each fixed run of units (a job of the logic pool), with its candidate scratch; kept between frames
 	struct CollisionChunk
 	{
 		std::vector<int> candidates;
 		std::vector<std::pair<int, int>> pairs; ///< (lower unit index, higher unit index), in the order the serial pass met them
+		std::vector<std::pair<int, int>> live;  ///< with the Uber filter: the pairs it does not skip, in the same order (found on the job pool)
+		bool allied = false;                    ///< a pair of units that are not enemies (the allied stack stop)
 	};
 	std::vector<CollisionChunk> m_collisionChunks;
 	// lane UBER-2B: the Uber pass's per-unit collide facts (ObjectCollide::PairFacts), taken at a unit's first pair
 	std::vector<ObjectCollide::PairFacts> m_collisionFacts;
 	std::vector<std::uint8_t> m_collisionFactState; ///< 0: not taken yet, 1: taken, 2: taken and AIUpdateInterface::isContained
 	unsigned long long m_collisionPairsSkipped = 0;
+	// lane MODCOMPAT-MOD1: processCrateContacts' crate ids (sorted), its scratch copies, and whether the list is current (false: rebuilt from the objects)
+	std::vector<PathfindObjectID> m_crates, m_crateScratch, m_crateHits;
+	bool m_cratesValid = false;
+	unsigned long long m_crateContacts = 0;
 	PathfindWallMeshSource *m_wallMeshes = nullptr; // lane WALL-1
 	int m_moveAlliesDepth = 0; // lane PHYS-1: RW pathfinder + 0x1C1BC, the recursion guard of moveAllies
 	int m_peakTickCells = 0;

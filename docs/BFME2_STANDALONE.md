@@ -25,11 +25,11 @@ six playable factions and BFME2 menu. The BFME2 shell-map default follows
 Open-BFME-2 `GlobalData.cpp` (constructor `m_shellMapOn(1)`), while
 RotWK retains its required explicit INI field. Archives, language files and checksums
 are checked by the existing mount/download paths. The shared simulation is
-retained: S-5911 explicitly reports that BFME2-versus-RotWK logic and
-subsystem-order fidelity are not fully verified. The BFME2-only
-`PreLandingEmotionAffectsAllies` field is retained; its ally filter is
-unported and the shared runtime still uses RotWK's relationship mask 7. This does not change the
-project's source policy or claim BFME2 retail cross-play compatibility.
+retained: S-5911 explicitly reports that remaining BFME2-versus-RotWK logic and
+subsystem-order fidelity are not fully verified. Edition detection, base-legend
+loading, shell-map defaults and projectile emotion variants use main's shared
+implementations. This does not change the project's source policy or claim
+BFME2 retail cross-play compatibility.
 RotWK mod arguments are refused in this initial standalone path.
 
 Standalone gameplay reads custom maps from the BFME2 user-data `Maps` folder

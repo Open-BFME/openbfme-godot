@@ -105,6 +105,14 @@ AptQuitMenu::~AptQuitMenu()
 std::string AptQuitMenu::saveLoadType() const
 {
 	const QuitMenuContext *c = m_env.quitMenu;
+	if (c && c->inGame && c->gameKind == 0)
+	{
+		return "8"; // RW 0x92179F / 0x9217F0: + 0x114 == 0 first, a War of the Ring game (lane WOTR2 milestone 3)
+	}
+	if (c && c->isMultiplayer() && c->strategicMap)
+	{
+		return "16"; // RW 0x92179F: flags 0x10 (WOTRMP) when RW 0x610A21 (a network war's map)
+	}
 	if (c && c->isMultiplayer())
 	{
 		return "4";
@@ -115,13 +123,22 @@ std::string AptQuitMenu::saveLoadType() const
 std::string AptQuitMenu::restartPopupType() const
 {
 	const QuitMenuContext *c = m_env.quitMenu;
-	return (!c || !c->inGame || c->gameKind == 3) ? "Restart" : "Forfeit"; // "Surrender" belongs to the Living World (not ported)
+	// RW 0x9216EC (the decomp's AptQuitMenu::Externs, tier A): no game or + 0x114 == 3 "Restart", the War of the Ring map (isSelectionLocked) "Surrender"
+	if (!c || !c->inGame || c->gameKind == 3)
+	{
+		return "Restart";
+	}
+	return c->strategicMap ? "Surrender" : "Forfeit";
 }
 
 std::string AptQuitMenu::restartTooltip() const
 {
 	const QuitMenuContext *c = m_env.quitMenu;
-	return (!c || !c->inGame || c->gameKind == 3) ? "TOOLTIP:QuitMenu/Restart/TheButton" : "TOOLTIP:QuitMenu/Forfeit/WOTRForfeit";
+	if (!c || !c->inGame || c->gameKind == 3)
+	{
+		return "TOOLTIP:QuitMenu/Restart/TheButton";
+	}
+	return c->strategicMap ? "TOOLTIP:QuitMenu/Surrender/WOTRSurrender" : "TOOLTIP:QuitMenu/Forfeit/WOTRForfeit";
 }
 
 void AptQuitMenu::post(int action, const std::string &name, const std::string &argument)
@@ -156,11 +173,30 @@ void AptQuitMenu::onInitialized()
 		{
 			disable("Restart");
 		}
-		disable("Save"); // RW 0x921E3C (DAT 0xC4FF8C)
-		disable("Load"); // RW 0x921F83 (DAT 0xC4FF84)
+		else if (c->strategicMap)
+		{
+			disable("Restart"); // WOTR2 milestone 8: a network war map's Surrender (0x6B8 then the map left) is not ported [S-1064]; Exit leaves it
+		}
+		// RW 0x921E3C (DAT 0xC4FF8C): disabled unless a network war's map is up (FUN_00610a21 / FUN_00441e4a), where RotWK saves (GameState mode 6), and
+		// while some of the war's humans are gone (RW 0x6B5E3E). WOTR2 milestone 8 (step 4): the save page in its War of the Ring multiplayer mode (0x10)
+		if (!c->strategicMap || c->warPlayersGone)
+		{
+			disable("Save");
+		}
+		disable("Load"); // RW 0x921F83 (DAT 0xC4FF84): every network game
 	}
+	else if (c && c->inGame && c->strategicMap)
+	{
+		// lane WOTR2 milestone 3: the single player branch on the War of the Ring map (the decomp's OnInitialized, BFME2 0x51B5B5; RotWK RW 0x921D5B is
+		// tier B, "edited"): Save and Load stay (retail disables them while the LivingWorld's + 0x14 count is 0, and Save while RW 0x6B254F's test holds:
+		// neither is ported, INFERENCE: both are enabled on the map). The Surrender button is disabled: surrendering the strategic game (the dtor's
+		// message 0x6B8 MSG_LW_PLAYER_SURRENDERED, the local player id RW 0x6B3557) is not ported [S-1064]
+		disable("Restart");
+		windows().note("unported-command", "QuitMenu.apt: Surrender on the War of the Ring map is not ported [S-1064]");
+	}
+	// RW 0x921D5B's tail: + 0x114 != 3: "APT:Surrender" on the War of the Ring map, else "APT:Forfeit"; no game or + 0x114 == 3: "APT:Restart"
 	const bool restart = !c || !c->inGame || c->gameKind == 3;
-	windows().setAptText("APT:RestartOrSurrender", text(m_env, restart ? "APT:Restart" : "APT:Forfeit"));
+	windows().setAptText("APT:RestartOrSurrender", text(m_env, restart ? "APT:Restart" : c->strategicMap ? "APT:Surrender" : "APT:Forfeit"));
 }
 
 // ---- lane CHEAT-1: the Cheat Mode panel (see AptQuitMenu.h) ---------------------------------------------------------------------------------------------

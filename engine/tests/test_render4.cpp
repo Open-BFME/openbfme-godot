@@ -71,7 +71,7 @@ TEST_CASE("render4 fog: a W3D shader key with fog applies it before the hand-ove
 	const std::string a = Generate_W3D_Shader_Code(plain);
 	const std::string b = Generate_W3D_Shader_Code(fogged);
 	CHECK(a.find("w3d_apply_fog") == std::string::npos);
-	CHECK(b.find("cur.rgb = w3d_apply_fog(clamp(cur.rgb, 0.0, 1.0), length(v_vpos));") != std::string::npos);
+	CHECK(b.find("cur.rgb = v_instance.x > 1.5 ? clamp(cur.rgb, 0.0, 1.0) : w3d_apply_fog(clamp(cur.rgb, 0.0, 1.0), length(v_vpos));") != std::string::npos);
 	CHECK(b.find("global uniform vec3 w3d_fog_color;") != std::string::npos);
 	// the fog sits before the opaque hand-over (the fixed-function fog stage follows the pixel shader)
 	CHECK(b.find("w3d_apply_fog(clamp") < b.find("ALBEDO = w3d_to_linear"));

@@ -102,7 +102,8 @@ public:
 
 private:
 	friend class AnimationSoundModuleManager;
-	void update(AnimationSoundModuleManager &manager); // RW 0x8CE75B
+	// RW 0x8CE75B; lane PERF-CLIENT: the manager's audio and microphone are asked once per manager update (the same for every module of it)
+	void update(AnimationSoundModuleManager &manager, AudioManager *audio, const Coord3D &mic);
 	void computeRange(AudioManager *audio);     // RW 0x8CE4CC .. 0x8CE531
 
 	const AnimationSoundClientBehaviorModuleData *m_data;
@@ -111,6 +112,15 @@ private:
 	const AudioManager *m_rangeFor = nullptr;       ///< the audio manager m_rangeSq was computed for (port)
 	AnimationSoundClientBehavior *m_next = nullptr;  // + 0x14
 	AnimationSoundClientBehavior *m_prev = nullptr;  // + 0x18
+	// lane PERF-HD: the upper-case names of the animations last seen (update ran upper() on every track of every audible drawable in every render frame)
+	struct AnimName
+	{
+		const void *anim = nullptr;
+		std::string raw, upper;
+	};
+	AnimName m_animNames[3];
+	unsigned m_animNameNext = 0;
+	const std::string &upperName(const void *anim, const std::string &raw);
 };
 
 // TheAnimationSoundModuleManager, one per game's drawables (DrawServices::animationSounds)

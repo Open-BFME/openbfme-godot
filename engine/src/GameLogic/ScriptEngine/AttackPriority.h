@@ -22,17 +22,20 @@
 //     the name is not empty (AI constructor RW 0x66ECFE); the object constructor (RW 0x697D58 .. 0x697D8B) replaces it with the team prototype's attack
 //     priority name (RW 0x691F0C) when that is set and names a NAMED info.
 //
-// INFERENCE / NOT PORTED (stop S-326): the script actions that edit infos (SET_ATTACK_PRIORITY_THING / KIND_OF / SET_DEFAULT_ATTACK_PRIORITY and
-// NAMED / TEAM_APPLY_ATTACK_PRIORITY_SET: S-1180) are not ported, so the table holds only infos made from AIData; nothing sets a team prototype's attack
-// priority name either (ZH: only TEAM_APPLY_ATTACK_PRIORITY_SET does), so the object constructor's team override (RW 0x697D58) and the save's name
-// (RW 0x667BEF) are not ported: AI + 0x70 is always the module data's info; the table is emptied with the script
-// engine's reset (ZH ScriptEngine::reset does; RotWK's reset body is not read) and an entry made again holds the same values.
+// Lane BFME2CAMP1 ported the scripts' side: SET_ATTACK_PRIORITY_THING (RW 0x605A47), SET_ATTACK_PRIORITY_KIND_OF (RW 0x605C78), SET_DEFAULT_ATTACK_PRIORITY
+// (RW 0x605D32) edit the table through findOrCreate (RW 0x6058B8); NAMED_APPLY_ATTACK_PRIORITY_SET (RW 0x7BBC5B) / TEAM_APPLY_ATTACK_PRIORITY_SET (RW 0x7BF864)
+// set AI + 0x70 (kept by name, as the save RW 0x667BEF does) and the team prototype's name (+ 0x318, RW 0x7A1BCF), which a later team member takes when it
+// joins (RW 0x697D27 .. 0x697D8B) or is built (RW 0x69A575 ..).
+// INFERENCE / NOT PORTED (stop S-326): the table is emptied with the script engine's reset (ZH ScriptEngine::reset does; RotWK's reset body is not read);
+// an AI looks its module data's info up on its first use, not in its constructor, so an AIData entry is made at that first use (an entry's place only
+// matters for the 0xFF limit); the debug lines of an unknown thing / a full table are not kept.
 
 #pragma once
 
 #include <deque>
 #include <map>
 #include <string>
+#include <vector>
 
 class GameLogic;
 class Object;
@@ -48,6 +51,7 @@ public:
 	// RW 0x759E24
 	void setPriority(const ThingTemplate *tmpl, int priority);
 	bool hasTable() const { return !m_priorities.empty(); }
+	void setDefaultPriority(int p) { m_defaultPriority = p; } // lane BFME2CAMP1: SET_DEFAULT_ATTACK_PRIORITY (RW 0x605D32: + 8)
 
 private:
 	friend class AttackPriorityStore;
@@ -70,9 +74,26 @@ public:
 	unsigned generation() const { return m_generation; }
 	size_t size() const { return m_entries.size(); }
 
+	// lane BFME2CAMP1: RW 0x6058B8(name, create 1), the scripts' lookup: the entry of that name (entries 1 ..), else a new one appended with the name alone
+	// (default 1, no table) while the table has room (count <= 0xFF), else null. The table is then a script's state: edited() from then on
+	AttackPriorityInfo *findOrCreate(const std::string &name);
+	bool edited() const { return m_edited; }
+	// the table as a save holds it (an edited table only: every entry but the default, by name, its targets by template name in name order)
+	struct SavedEntry
+	{
+		std::string name;
+		int defaultPriority = 1;
+		std::map<std::string, int> priorities;
+	};
+	std::vector<SavedEntry> saved() const;
+	// the loaded table replaces this one (its targets' templates resolved by name: an unknown one is an error, `why`); the AI modules look up again
+	bool restore(const std::vector<SavedEntry> &entries, std::string *why);
+	void crc(class StateHasher &h) const; // an edited table only (an unedited one is the AIData's, made the same way on every peer)
+
 private:
 	GameLogic &m_logic;
 	std::deque<AttackPriorityInfo> m_entries; ///< entry 0 the default; a deque keeps the entries' addresses
 	unsigned m_generation = 0;
 	unsigned m_undefinedLookups = 0;
+	bool m_edited = false; ///< lane BFME2CAMP1: a script made or changed an entry
 };

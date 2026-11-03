@@ -6,6 +6,7 @@
 #include "GameClient/MapChunks.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -75,6 +76,35 @@ bool fromMap(const GlobalLightingData &lighting, W3DObjectLighting &out, std::st
 	fillSet(tod.objects, out.colorScale, lightScale, out.objects);
 	fillSet(tod.infantry, out.colorScale, lightScale, out.infantry);
 	return true;
+}
+
+void fromLivingWorldMap(const float ambient[3], const float rgb[3][3], const float dirDegrees[3][2], W3DObjectLighting &out)
+{
+	out = W3DObjectLighting();
+	out.colorScale = 2.0f;
+	W3DLightSet &set = out.objects;
+	for (int c = 0; c < 3; ++c)
+	{
+		set.ambient[c] = std::clamp(ambient[c], 0.0f, 1.0f) * out.colorScale;
+	}
+	const float degToRad = 3.14159265358979f / 180.0f;
+	for (int i = 0; i < 3; ++i)
+	{
+		if (rgb[i][0] < 0.05f && rgb[i][1] < 0.05f && rgb[i][2] < 0.05f)
+		{
+			continue;
+		}
+		const float el = dirDegrees[i][0] * degToRad;
+		const float az = dirDegrees[i][1] * degToRad;
+		const float toLight[3] = { std::cos(el) * std::cos(az), std::cos(el) * std::sin(az), std::sin(el) };
+		for (int c = 0; c < 3; ++c)
+		{
+			set.color[set.count][c] = rgb[i][c] * out.colorScale;
+			set.toLight[set.count][c] = toLight[c];
+		}
+		++set.count;
+	}
+	out.infantry = set;
 }
 
 std::vector<std::string> stopLines()

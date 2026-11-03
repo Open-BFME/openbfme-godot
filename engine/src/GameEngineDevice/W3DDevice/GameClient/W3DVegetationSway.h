@@ -1,7 +1,7 @@
 // OpenBFME - lane VISUAL-2: the tree sway of the W3DTreeDraw trees (W3DTreeBuffer's vegetation sway; client only, never simulation state).
 //
 // TARGET FACTS (RotWK 2.01, each tier A = byte-identical to BFME2 1.06, whose decomp C++ is byte-matched; tools/re/rw2decomp.py):
-// - RW 0x4E5D2C (BFME2 0x4E6406, decomp W3DVegetationBufferSwayUpdate.cpp): when the breeze version changed, the 100-entry offset table
+// - RW 0x4E5D2C (BFME2 0x4E6406, decomp W3DVegetationBufferBase.cpp): when the breeze version changed, the 100-entry offset table
 //   offsets[i] = (dirX * S, dirY * S, C - 1) with S / C the sine / cosine of lean + intensity * cos(i * 0.06220976), and for each of the 10 sway
 //   types step = 100 / (breezePeriod * swayRate) * GameClientRandomValueReal(1 - r/2, 1 + r/2) (at least 0), offset 0 and factor
 //   GameClientRandomValueReal(1 - r/2, 1 + r/2) (r = randomness; per type the step's draw, then the factor's); then every type's offset advances by its
