@@ -1199,7 +1199,12 @@ func game_arguments(args: PackedStringArray = PackedStringArray()) -> Dictionary
 	elif selected_game() == "bfme2-106":
 		if not "--" in args: args.append("--")
 		args.append("--game=bfme2-106")
-	elif selected_game() != "bfme1":
+	elif selected_game() == "bfme1":
+		# Replay/online launches historically use RotWK even with BFME1 selected.
+		# Be explicit now that a missing argument reads the persisted game choice.
+		if not "--" in args: args.append("--")
+		args.append("--game=bfme2")
+	else:
 		if not "--" in args: args.append("--")
 		args.append("--game=bfme2")
 		var mod := ModInstall.active_args(data_dir.path_join("mods"))

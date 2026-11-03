@@ -142,8 +142,15 @@ static func show_in_file_manager(path: String) -> String:
 	if p.split("/").has(".."):
 		return L10n.t("launcher.paths.not_plain")
 	var data := OS.get_user_data_dir().replace("\\", "/").simplify_path()
-	var g := game_folders(GameOptions.game_user_dir(), true)
-	var games := [String(g.rotwk).replace("\\", "/").simplify_path(), String(g.bfme2).replace("\\", "/").simplify_path()] if g.found else []
+	# A partial BFME2 environment override can differ from the remembered RotWK
+	# pair. Allow exactly the folders either edition can display.
+	var games: Array[String] = []
+	for standalone in [false, true]:
+		var g := game_folders(GameOptions.game_user_dir(), standalone)
+		if g.found:
+			for folder in [g.rotwk, g.bfme2]:
+				if not str(folder).is_empty():
+					games.append(str(folder).replace("\\", "/").simplify_path())
 	if bfme1_folder() != "":
 		games.append(bfme1_folder().replace("\\", "/").simplify_path())  # community PR #36: the BFME1 folder the Game files screen lists
 	if not (p == data or p.begins_with(data + "/") or p in games):

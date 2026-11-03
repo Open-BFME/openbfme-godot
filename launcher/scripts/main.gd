@@ -1187,12 +1187,7 @@ func _build_ui() -> void:
 	cv.add_child(stack)
 	_play_screen = PlayScreen.new()
 	_play_screen.game_picker.select(maxi(0, ["bfme2", "bfme1", "bfme2-106"].find(updater.selected_game())))
-	_play_screen.game_selected.connect(func(game: String):
-		var err := updater.select_game(game)
-		if err != OK:
-			_show_error(L10n.t("launcher.main.game_selection_failed"), error_string(err))
-			return
-		_refresh_games())
+	_play_screen.game_selected.connect(_on_game_selected)
 	_play_screen.download_games.connect(_open_download)
 	_play_screen.show_news.connect(_show_screen.bind("news"))
 	_play_screen.open_replay.connect(_pick_replay)
@@ -1773,6 +1768,15 @@ func _show_notes() -> void:
 		_play_screen.set_notes(L10n.t("launcher.main.newest", {"title": ReleaseNotes.title_of(chan[0].tag)}), chan[0].notes, L10n.t("launcher.main.no_release_notes"))
 	else:
 		_play_screen.set_notes("", "", L10n.t("launcher.main.notes_placeholder"))
+
+
+func _on_game_selected(game: String) -> void:
+	var err := updater.select_game(game)
+	if err != OK:
+		_play_screen.game_picker.select(maxi(0, ["bfme2", "bfme1", "bfme2-106"].find(updater.selected_game())))
+		_show_error(L10n.t("launcher.main.game_selection_failed"), error_string(err))
+		return
+	_refresh_games()
 
 
 func _refresh_games() -> void:

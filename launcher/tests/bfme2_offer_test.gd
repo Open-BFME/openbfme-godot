@@ -5,6 +5,11 @@ const Updater := preload("res://scripts/core/updater.gd")
 const BuildInfo := preload("res://scripts/core/build_info.gd")
 const Paths := preload("res://scripts/ui/paths.gd")
 const PlayScreen := preload("res://scripts/ui/play_screen.gd")
+class SelectionFailureMain extends "res://scripts/main.gd":
+	var selection_error := false
+	func _show_error(_title: String, _text: String, _operation := 0) -> void:
+		selection_error = true
+
 var failed := false
 func check(ok: bool, message: String) -> void:
 	if not ok:
@@ -64,6 +69,42 @@ func run() -> void:
 	var remembered := Paths.read_cfg(folder.path_join(Aio.MARKER))
 	check(remembered.ROTWK_INSTALL == old_rotwk, "standalone download retains the previous RotWK location")
 	check(remembered.BFME2_INSTALL == folder.path_join("BFME2"), "standalone download replaces the BFME2 location")
+	# Persisted BFME1 must not change the historical RotWK replay/online path.
+	check(updater.select_game("bfme1") == OK, "persist BFME1 before opening a recording")
+	for incoming in [PackedStringArray(["--replay", "fixture"]), PackedStringArray(["--replay=fixture"]), PackedStringArray(["--online-join=fixture"])]:
+		var launch: Dictionary = updater.game_arguments(incoming)
+		check(launch.ok and "--game=bfme2" in launch.args and not "--game=bfme1" in launch.args, "replay/online explicitly mounts RotWK despite BFME1 selection")
+	check(updater.selected_game() == "bfme1", "recording launch does not overwrite the picker choice")
+	check(updater.select_game("bfme2") == OK, "restore the selected edition")
+	# A filesystem failure must restore the UI to the still-selected game.
+	var blocked := folder.path_join("not-a-directory")
+	var blocker := FileAccess.open(blocked, FileAccess.WRITE)
+	blocker.store_string("fixture")
+	blocker.close()
+	OS.set_environment("OPENBFME_GAME_USER_DIR", blocked)
+	var failure := SelectionFailureMain.new()
+	failure.updater = updater
+	failure._play_screen = PlayScreen.new()
+	failure._play_screen.game_picker.select(2)
+	failure._on_game_selected("bfme2-106")
+	check(failure.selection_error, "selection persistence failure is shown")
+	check(failure._play_screen.game_picker.selected == 0, "failed selection restores the old picker value")
+	failure._play_screen.free()
+	failure.free()
+	OS.set_environment("OPENBFME_GAME_USER_DIR", folder)
+	# The two editions can display different sources with a partial environment override.
+	var alternate_base := folder.path_join("other BFME2")
+	DirAccess.make_dir_recursive_absolute(alternate_base)
+	var remembered_config := FileAccess.open(folder.path_join("install-paths.cfg"), FileAccess.WRITE)
+	remembered_config.store_string("ROTWK_INSTALL=" + old_rotwk + "\nBFME2_INSTALL=" + folder.path_join("BFME2") + "\n")
+	remembered_config.close()
+	OS.set_environment("BFME2_INSTALL", alternate_base)
+	check(Paths.game_folders(folder).rotwk == old_rotwk, "RotWK displays the complete remembered pair")
+	check(Paths.game_folders(folder, true).bfme2 == alternate_base, "standalone displays its environment override")
+	for shown in [old_rotwk, folder.path_join("BFME2"), alternate_base]:
+		check(Paths.show_in_file_manager(shown).is_empty(), "Show folder accepts each edition's displayed folder")
+	check(not Paths.show_in_file_manager(folder).is_empty(), "Show folder still refuses an unrelated existing folder")
+	OS.set_environment("BFME2_INSTALL", "")
 	var origin := OS.get_environment("OPENBFME_AIO_ORIGIN")
 	if not origin.is_empty():
 		updater.data_dir = folder.path_join("launcher")
