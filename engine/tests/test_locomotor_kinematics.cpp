@@ -751,17 +751,19 @@ TEST_CASE("dispatcher: a stationary-cap frame, status refusals, appearance table
 		CHECK_THROWS_WITH_AS(loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f), doctest::Contains("S-084"), std::logic_error);
 	}
 	{
+		// lane MECH-D: the ScalesWalls look-ahead (RW 0x5E8956 .. 0x5E8FF8) is ported; a host that does not answer it (this mock) moves the unit as before
+		// and the dispatcher raises no S-084 stop for it
 		LocoFixture sw(std::string(kHuman) + "  ScalesWalls = Yes\n");
 		Locomotor loco(sw.tmpl());
 		MockHost h;
 		h.place(0, 0, 0);
-		loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+		CHECK_NOTHROW(loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f));
 		bool noted = false;
 		for (const std::string &s : loco.unverified())
 		{
 			noted = noted || s.rfind("S-084", 0) == 0;
 		}
-		CHECK(noted);
+		CHECK_FALSE(noted);
 	}
 }
 
@@ -852,9 +854,9 @@ TEST_CASE("Locomotor stops S-081 and S-084 are reported and pinned")
 	CHECK(stops[0].find("x87 and SSE") != std::string::npos);
 	CHECK(stops[1].rfind("S-084:", 0) == 0);
 	CHECK(stops[1].find("HOVER") == std::string::npos); // lane SHIP-1: the HOVER and SHIP movers are ported
-	CHECK(stops[1].find("FIXED_SURFACE_RELATIVE_HEIGHT and FIXED_ABSOLUTE_HEIGHT (the last two: RW 0x5E78DB;") != std::string::npos);
+	CHECK(stops[1].find("FIXED_RELATIVE_TO_GROUND_AND_BUILDINGS") != std::string::npos); // the remaining z behaviours, lane WALL-4 / MECH-D
 	CHECK(stops[1].find("GIANT_BIRD") == std::string::npos); // lane TAKEOVER-1: rotateTowardsPosition's GIANT_BIRD branch is ported
-	CHECK(stops[1].find("ScalesWalls") != std::string::npos);
+	CHECK(stops[1].find("ScalesWalls") == std::string::npos); // lane MECH-D: the ScalesWalls look-ahead is ported
 	CHECK(stops[2].rfind("S-1750:", 0) == 0);
 	CHECK(stops[2].find("RW 0x5E7CC7") != std::string::npos);
 	LocoFixture f(kHuman);

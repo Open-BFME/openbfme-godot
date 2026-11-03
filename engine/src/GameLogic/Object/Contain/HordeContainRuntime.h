@@ -157,6 +157,8 @@ public:
 	virtual void attackTargetNow(Object *victim, bool closestMemberOnly) = 0;
 	// slot 0 (RW 0x875550): the released ranks attack the ground at `pos`
 	virtual void attackPositionNow(const Coord3D &pos) = 0;
+	// slot 0x238 (RW 0x86BD54, lane MECH-D): the horde's current locomotor has ScalesWalls and it keeps a wall to scale
+	virtual bool isScalingWall() const = 0;
 };
 
 class HordeContain : public UpdateModule, public ContainModuleInterface, public CreateModuleInterface, public HordeContainInterface
@@ -359,8 +361,8 @@ public:
 	// contain slot 0x23C (RW 0x86BCF9): the wall the horde scales (0 ends it)
 	void setWallToScale(ObjectID wall);
 	ObjectID wallToScale() const { return m_wallToScale; }
-	// contain slot 0x238 (RW 0x86BD54)
-	bool isScalingWall() const;
+	// contain slot 0x238 (RW 0x86BD54); the interface's
+	bool isScalingWall() const override;
 	// the collide entry (RW 0x86C61E)
 	void collideWithWall(Object *other);
 	// RW 0x86D170, at the end of the member pass
