@@ -303,7 +303,8 @@ PIN_FIX = (
     "a re-measured pin needs the change that explains it: stage the gameplay change and add `// pin: <reason>` (what changed and why the "
     "hashes move) to a C++ test under engine/tests/ in the same commit; a comment already in the tree does not count")
 _PIN_JUSTIFIED = re.compile(r"//\s*pin:\s*\S")
-_RAW_STRING = re.compile(r'R"([^()\\\s]*)\(.*?\)\1"')
+# whichever starts first wins, so a raw string's opening inside a comment or string is not one; a ' after a hex digit is a digit separator
+_CPP_TOKEN = re.compile(r"""//[^\n]*|/\*.*?\*/|(?<!\w)(?:u8|[uUL])?R"([^()\\\s]*)\(.*?\)\1"|"(?:\\.|[^"\\\n])*"|(?<![0-9A-Fa-f])'(?:\\.|[^'\\\n])*'""", re.S)
 
 
 def is_pin_file(rel: str) -> bool:
@@ -311,14 +312,18 @@ def is_pin_file(rel: str) -> bool:
     return rel.startswith("engine/tests/data/") and rel.lower().endswith(".hashes")
 
 
+def _cpp_without_strings(text: str) -> str:
+    """`text` with its string and character literals and block comments emptied, line numbers kept; line comments stay."""
+    return _CPP_TOKEN.sub(lambda m: m.group(0) if m.group(0).startswith("//") else "\n" * m.group(0).count("\n") + '""', text)
+
+
 def has_pin_reason(rel: str, text: str, added: set[int]) -> bool:
-    """True when the staged C++ test `rel` under engine/tests/ has a `// pin: <reason>` comment among its `added` (1-based) lines. String
-    literals on the line do not count; the check reads one line at a time, so the inside of a multi-line raw string is not recognised."""
+    """True when the staged C++ test `rel` under engine/tests/ has a `// pin: <reason>` line comment among its `added` (1-based) lines. Text
+    inside a string, a multi-line raw string or a block comment does not count."""
     if not (rel.startswith("engine/tests/") and Path(rel).suffix.lower() in CPP_SUFFIXES):
         return False
-    lines = text.splitlines()
-    return any(1 <= number <= len(lines) and _PIN_JUSTIFIED.search(_STRING.sub('""', _RAW_STRING.sub('""', lines[number - 1])))
-               for number in added)
+    lines = _cpp_without_strings(text).split("\n")
+    return any(1 <= number <= len(lines) and _PIN_JUSTIFIED.search(lines[number - 1]) for number in added)
 
 
 def pin_problems(pins: list[str], justified: bool) -> list[str]:
@@ -329,16 +334,17 @@ def pin_problems(pins: list[str], justified: bool) -> list[str]:
             for rel in pins]
 
 
-_C_ESCAPES = {"a": "\a", "b": "\b", "t": "\t", "n": "\n", "v": "\v", "f": "\f", "r": "\r"}
+_C_ESCAPES = {b"a": b"\a", b"b": b"\b", b"t": b"\t", b"n": b"\n", b"v": b"\v", b"f": b"\f", b"r": b"\r"}
 
 
 def diff_new_path(header: str) -> str:
-    """The path of a `+++ ` diff header, '' for /dev/null: Git C-quotes a name with special characters and ends a name holding whitespace with a tab."""
+    """The path of a `+++ ` diff header, '' for /dev/null: Git C-quotes a name with special characters, writing raw bytes as octal escapes, and
+    ends a name holding whitespace with a tab."""
     name = header[4:]
     quoted = re.match(r'"((?:\\.|[^"\\])*)"', name)
     if quoted:
-        name = re.sub(r"\\([0-7]{3}|.)", lambda m: chr(int(m.group(1), 8)) if len(m.group(1)) == 3 else _C_ESCAPES.get(m.group(1), m.group(1)),
-                      quoted.group(1))
+        name = re.sub(rb"\\([0-3][0-7]{2}|.)", lambda m: bytes([int(m.group(1), 8)]) if len(m.group(1)) == 3 else _C_ESCAPES.get(m.group(1), m.group(1)),
+                      quoted.group(1).encode("utf-8")).decode("utf-8", "replace")
     else:
         name = name.split("\t", 1)[0]
     return "" if name == "/dev/null" else name.removeprefix("b/")
