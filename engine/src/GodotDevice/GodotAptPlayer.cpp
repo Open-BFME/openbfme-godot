@@ -4026,6 +4026,11 @@ Vector2 AptMenuPlayer::get_stage_size() const
 
 void AptMenuPlayer::clearCanvas()
 {
+	if (m->nativeHook)
+	{
+		m->nativeHook->beginCanvas();
+		m->nativeHook->endCanvas(); // no retained placeholder uses the hook's offscreen resources now
+	}
 	RenderingServer *rs = RenderingServer::get_singleton();
 	if (!rs)
 	{
@@ -4212,6 +4217,10 @@ void AptMenuPlayer::render(bool force)
 		plan = AptCanvasPlanRedraw(m->list, segments, m->drawnList, drawn);
 		sameShape = !plan.full;
 	}
+	if (m->nativeHook)
+	{
+		m->nativeHook->beginCanvas();
+	}
 	const bool unchanged = sameShape && segments.size() == m->segments.size() &&
 		std::all_of(plan.same.begin(), plan.same.end(), [](bool same) { return same; });
 	if (unchanged)
@@ -4248,6 +4257,10 @@ void AptMenuPlayer::render(bool force)
 		all.old.assign(m->segments.size(), -1);
 		all.same.assign(m->segments.size(), false);
 		countLevels(all);
+	}
+	if (m->nativeHook)
+	{
+		m->nativeHook->endCanvas();
 	}
 	std::uint64_t t3 = time->get_ticks_usec();
 	m->listUs += t1 - t0;

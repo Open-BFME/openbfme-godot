@@ -255,6 +255,7 @@ struct HudDevice : public AptNativeHook
 	struct GlobeLayer
 	{
 		SubViewport *view = nullptr;
+		std::uint64_t viewId = 0; // child viewports may be freed before the owned movie player's canvas teardown
 		W3DInstancer *inst = nullptr;
 	};
 	GlobeLayer globeAdd, globeMul; ///< SPHERE01 alone over black (A), SPHERE02 alone over white (M)
@@ -264,6 +265,10 @@ struct HudDevice : public AptNativeHook
 	// lane QA-1: the probe's own canvas items (globeProbe): freed with this node, before the globe material
 	std::vector<RID> probeItems;
 	bool globeTried = false;
+	bool globeInCanvas = false;
+	void beginCanvas() override { globeInCanvas = false; }
+	void endCanvas() override { syncGlobeVisibility(); }
+	void syncGlobeVisibility();
 	unsigned globeDraws = 0;
 	bool ensureGlobe();
 	bool makeGlobeLayer(GlobeLayer &layer, const char *name, const Color &clear, const char *hidden);
@@ -507,14 +512,33 @@ void fragment() {
 }
 )";
 
+// Presentation for both editions: hidden movies/HUD owners retain their globe resources, but draw no scenes.
+// Keep animation clocks and mapper state intact so showing the same canvas resumes normally.
+void HudDevice::syncGlobeVisibility()
+{
+	const Node2D *hudOwner = Object::cast_to<Node2D>(owner);
+	const auto *movie = playerId ? Object::cast_to<AptMenuPlayer>(ObjectDB::get_instance(ObjectID(playerId))) : nullptr;
+	const bool shown = globeInCanvas && hudOwner && hudOwner->is_visible_in_tree() && movie && movie->is_visible_in_tree();
+	const SubViewport::UpdateMode mode = shown ? SubViewport::UPDATE_ALWAYS : SubViewport::UPDATE_DISABLED;
+	for (GlobeLayer *layer : { &globeAdd, &globeMul })
+	{
+		SubViewport *view = layer->viewId ? Object::cast_to<SubViewport>(ObjectDB::get_instance(ObjectID(layer->viewId))) : nullptr;
+		if (view && view->get_update_mode() != mode)
+		{
+			view->set_update_mode(mode);
+		}
+	}
+}
+
 bool HudDevice::makeGlobeLayer(GlobeLayer &layer, const char *name, const Color &clear, const char *hidden)
 {
 	layer.view = memnew(SubViewport);
+	layer.viewId = layer.view->get_instance_id();
 	layer.view->set_name(name);
 	layer.view->set_use_own_world_3d(true);
 	layer.view->set_transparent_background(false);
 	layer.view->set_size(Vector2i(256, 256));
-	layer.view->set_update_mode(SubViewport::UPDATE_ALWAYS);
+	layer.view->set_update_mode(SubViewport::UPDATE_DISABLED); // enabled only while RenderGlobe is in the visible retained canvas
 	owner->add_child(layer.view);
 	Ref<Environment> env;
 	env.instantiate();
@@ -634,6 +658,7 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		{
 			return;
 		}
+		globeInCanvas = true;
 		rs->canvas_item_set_copy_to_backbuffer(item, true, r); // D: the frame buffer behind the clip
 		rs->canvas_item_set_material(item, globeMaterial->get_rid());
 		rs->canvas_item_add_texture_rect(item, r, globeAdd.view->get_texture()->get_rid());
@@ -3125,6 +3150,7 @@ void InGameHudNode::_process(double delta)
 	{
 		return;
 	}
+	d->syncGlobeVisibility(); // a parent hide/reveal also applies when the retained movie list did not change
 	Viewport *vp = get_viewport();
 	const Vector2 window = vp ? vp->get_visible_rect().get_size() : Vector2(1024, 768);
 	d->hud->setWindowSize((int)window.x, (int)window.y);
