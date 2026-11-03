@@ -6,6 +6,7 @@ var failures := 0
 var world: Node
 var hud: Node2D
 var player: Node2D
+var shared: Node2D
 var camera: Camera3D
 var views: Array[SubViewport] = []
 
@@ -31,6 +32,8 @@ func settle() -> void:
 func finish() -> void:
 	if is_instance_valid(hud):
 		hud.free()
+	if is_instance_valid(shared):
+		shared.free()
 	if is_instance_valid(camera):
 		camera.free()
 	if is_instance_valid(world):
@@ -140,4 +143,69 @@ func _run() -> void:
 	hud.free()
 	hud = null
 	check(world.get_frame()==frame and world.get_state_hash()==state_hash,"visible HUD teardown preserves simulation state")
+	await shared_player_case(fs)
 	finish()
+
+# Gameplay attaches to a shell-owned player that outlives the HUD. Exercise its callbacks and detachment too.
+func shared_player_case(fs: RefCounted) -> void:
+	var frame: int = world.get_frame()
+	var state_hash: int = world.get_state_hash()
+	shared = ClassDB.instantiate("AptMenuPlayer")
+	root.add_child(shared)
+	var folder := OS.get_environment("OPENBFME_GAME_USER_DIR")
+	if folder.is_empty():
+		folder = OS.get_temp_dir()
+	var config := {"options_file": folder.path_join("globe-options-%d.ini" % OS.get_process_id()),
+		"skirmish_ini": folder.path_join("globe-skirmish-%d.ini" % OS.get_process_id()), "seed": 4711}
+	var boot: Dictionary = shared.boot_shell(fs,world,config)
+	if not check(boot.ok,"shared shell boot: "+str(boot.get("errors",[]))):
+		return
+	if not check(shared.shell_push("Palantir.apt"),"shared shell pushes the gameplay Palantir screen"):
+		return
+	hud = ClassDB.instantiate("InGameHudNode")
+	root.add_child(hud)
+	var attached: Dictionary = hud.attach(fs,world,camera,shared,"Player_1",{"camera_start":Vector3.ZERO})
+	if not check(attached.ok,"HUD attaches to shared shell: "+str(attached.get("errors",[]))):
+		return
+	for _frame in range(40):
+		await process_frame
+	views.clear()
+	for child in hud.get_children():
+		if child is SubViewport and String(child.name).begins_with("PalantirGlobe"):
+			views.append(child)
+	if not check(views.size()==2,"shared shell creates both native globe layers"):
+		return
+	modes(SubViewport.UPDATE_ALWAYS,"shared shell visible globe renders")
+	var level: int = hud.get_spellbook_state().palantir_level
+	shared.set_level_visible(level,false)
+	await settle()
+	modes(SubViewport.UPDATE_DISABLED,"shared movie hide stops both scenes")
+	shared.set_level_visible(level,true)
+	await settle()
+	modes(SubViewport.UPDATE_ALWAYS,"shared movie reveal resumes both scenes")
+	shared.hide()
+	await settle()
+	modes(SubViewport.UPDATE_DISABLED,"shared player hide stops both scenes")
+	shared.show()
+	await settle()
+	modes(SubViewport.UPDATE_ALWAYS,"shared player reveal resumes both scenes")
+	hud.hide()
+	await settle()
+	modes(SubViewport.UPDATE_DISABLED,"shared HUD hide stops both scenes")
+	hud.show()
+	await settle()
+	modes(SubViewport.UPDATE_ALWAYS,"shared HUD reveal resumes both scenes")
+	shared.render(true)
+	shared.render(true)
+	modes(SubViewport.UPDATE_ALWAYS,"shared cached redraw retains globe")
+	hud.free()
+	hud = null
+	check(is_instance_valid(shared) and shared.is_booted(),"HUD free preserves booted shared shell")
+	check(shared.shell_push("MainMenu.apt"),"shared shell opens a new screen after HUD hook detachment")
+	for _frame in range(40):
+		await process_frame
+	check(shared.has_level(shared.shell_top_level()),"shared shell movie loads after HUD free")
+	var rebuilds: int = shared.get_stats().rebuilds
+	shared.render(true)
+	check(shared.get_stats().rebuilds==rebuilds+1,"shared shell renders normally after HUD free")
+	check(world.get_frame()==frame and world.get_state_hash()==state_hash,"shared shell lifecycle preserves simulation state")
