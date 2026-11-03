@@ -250,6 +250,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/weatherfx_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: the Enhanced weather's effects against a stub GameWorld and synthetic images (lane WEATHERFX-2: no weather outside a live game, the menus' Original / Enhanced check; lane INGAMEBG-1: the in-game panels' backdrop check); headless, 20 s timeout. |
 | `godot/tests/windows_crash_test.gd` | Manual only; no generic pytest runner | Denied here: destructive Windows debug crash/minidump probe; explicit opt-in required. |
 | `godot/tests/water_normal_test.gd` | Manual only; no generic pytest runner | GPU rendering; synthetic textures, no retail assets. |
+| `godot/tests/draw_cull_test.gd` | Manual only; no generic pytest runner | GPU rendering and a frame_pre_draw; retail soldier models. |
 | `godot/tests/standing_water_test.gd` | Manual only; no generic pytest runner | Private retail assets and GPU water rendering. |
 | `godot/tests/ini_error_in_extension_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod object INI over a retail map. |
 | `godot/tests/map_water_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `water.ini` over a retail map. |
