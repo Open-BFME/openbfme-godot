@@ -4,6 +4,7 @@
 
 #include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/compositor.hpp>
+#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/rd_pipeline_color_blend_state.hpp>
 #include <godot_cpp/classes/rd_pipeline_color_blend_state_attachment.hpp>
@@ -123,6 +124,21 @@ std::atomic<int64_t> g_copiesLive{ 0 }; // review r4: sample copies currently he
 Ref<GammaCompositeEffect> g_encode;
 Ref<GammaCompositeEffect> g_decode;
 
+// lane GPUPERF-1: per render target, the grade that took this frame's decode over, and the frames whose decode it did
+struct Deferred
+{
+	uint64_t frame = UINT64_MAX;
+	Ref<CompositorEffect> grade;
+};
+std::map<uint64_t, Deferred> g_defer;     // by render target RID
+std::map<uint64_t, uint64_t> g_deferred;  // by render target RID: the frame the grade decoded
+std::atomic<int64_t> g_deferredDecodes{ 0 };
+
+uint64_t nowFrame()
+{
+	return Engine::get_singleton()->get_process_frames();
+}
+
 void problem(const std::string &s)
 {
 	std::lock_guard<std::mutex> lock(g_mutex);
@@ -227,38 +243,49 @@ void GammaCompositeEffect::setDecode(bool decode)
 	set_access_resolved_color(!decode); // review r3: the per-pixel MSAA encode reads the resolved opaque image
 }
 
+bool GammaCompositeEffect::ensureCompute(RenderingDevice *rd)
+{
+	if (m_failed)
+	{
+		return false;
+	}
+	if (m_shader.is_valid())
+	{
+		return true;
+	}
+	Ref<RDShaderSource> src;
+	src.instantiate();
+	src->set_language(RenderingDevice::SHADER_LANGUAGE_GLSL);
+	src->set_stage_source(RenderingDevice::SHADER_STAGE_COMPUTE, String(kCompute));
+	Ref<RDShaderSPIRV> spirv = rd->shader_compile_spirv_from_source(src);
+	if (spirv.is_null() || !spirv->get_stage_compile_error(RenderingDevice::SHADER_STAGE_COMPUTE).is_empty())
+	{
+		m_failed = true;
+		problem("S-831: the gamma compositing compute shader did not compile; the transparent pass is not converted");
+		return false;
+	}
+	m_shader = rd->shader_create_from_spirv(spirv);
+	m_pipeline = m_shader.is_valid() ? rd->compute_pipeline_create(m_shader) : RID();
+	if (!m_pipeline.is_valid())
+	{
+		m_failed = true;
+		problem("S-831: the gamma compositing pipeline could not be created; the transparent pass is not converted");
+		return false;
+	}
+	return true;
+}
+
 void GammaCompositeEffect::_render_callback(int32_t p_effect_callback_type, RenderData *p_render_data)
 {
+	(void)p_effect_callback_type;
 	if (m_failed || !p_render_data)
 	{
 		return;
 	}
 	RenderingDevice *rd = RenderingServer::get_singleton()->get_rendering_device();
-	if (!rd)
+	if (!rd || !ensureCompute(rd))
 	{
 		return;
-	}
-	if (!m_shader.is_valid())
-	{
-		Ref<RDShaderSource> src;
-		src.instantiate();
-		src->set_language(RenderingDevice::SHADER_LANGUAGE_GLSL);
-		src->set_stage_source(RenderingDevice::SHADER_STAGE_COMPUTE, String(kCompute));
-		Ref<RDShaderSPIRV> spirv = rd->shader_compile_spirv_from_source(src);
-		if (spirv.is_null() || !spirv->get_stage_compile_error(RenderingDevice::SHADER_STAGE_COMPUTE).is_empty())
-		{
-			m_failed = true;
-			problem("S-831: the gamma compositing compute shader did not compile; the transparent pass is not converted");
-			return;
-		}
-		m_shader = rd->shader_create_from_spirv(spirv);
-		m_pipeline = m_shader.is_valid() ? rd->compute_pipeline_create(m_shader) : RID();
-		if (!m_pipeline.is_valid())
-		{
-			m_failed = true;
-			problem("S-831: the gamma compositing pipeline could not be created; the transparent pass is not converted");
-			return;
-		}
 	}
 	Ref<RenderSceneBuffersRD> buffers = p_render_data->get_render_scene_buffers();
 	if (buffers.is_null())
@@ -270,11 +297,30 @@ void GammaCompositeEffect::_render_callback(int32_t p_effect_callback_type, Rend
 	{
 		return;
 	}
+	// lane GPUPERF-1: the grade took this frame's decode over when it directly follows the pair (deferDecodeTo) and is enabled
+	if (m_decode)
+	{
+		const uint64_t rt = buffers->get_render_target().get_id();
+		const uint64_t frame = nowFrame();
+		std::lock_guard<std::mutex> lock(g_mutex);
+		auto it = g_defer.find(rt);
+		if (it != g_defer.end() && it->second.frame == frame && it->second.grade.is_valid() && it->second.grade->get_enabled())
+		{
+			g_deferred[rt] = frame;
+			++g_deferredDecodes;
+			return;
+		}
+	}
 	if (!m_decode && buffers->get_msaa_3d() != RenderingServer::VIEWPORT_MSAA_DISABLED)
 	{
 		encodeSamples(rd, buffers.ptr(), size);
 		return;
 	}
+	convert(rd, buffers.ptr(), size, m_decode);
+}
+
+void GammaCompositeEffect::convert(RenderingDevice *rd, RenderSceneBuffersRD *buffers, const Vector2i &size, bool decode)
+{
 	for (uint32_t view = 0; view < buffers->get_view_count(); ++view)
 	{
 		const RID image = buffers->get_color_layer(view);
@@ -296,7 +342,7 @@ void GammaCompositeEffect::_render_callback(int32_t p_effect_callback_type, Rend
 		PackedFloat32Array push;
 		push.push_back((float)size.x);
 		push.push_back((float)size.y);
-		push.push_back(m_decode ? 1.0f : 0.0f);
+		push.push_back(decode ? 1.0f : 0.0f);
 		push.push_back(0.0f);
 		const PackedByteArray bytes = push.to_byte_array();
 		const int64_t list = rd->compute_list_begin();
@@ -306,7 +352,6 @@ void GammaCompositeEffect::_render_callback(int32_t p_effect_callback_type, Rend
 		rd->compute_list_dispatch(list, (uint32_t)((size.x + 7) / 8), (uint32_t)((size.y + 7) / 8), 1);
 		rd->compute_list_end();
 	}
-	(void)p_effect_callback_type;
 }
 
 RID GammaCompositeEffect::rasterPipeline(RenderingDevice *rd, int64_t format, RenderingDevice::TextureSamples samples, bool perSample)
@@ -544,6 +589,7 @@ Dictionary GammaCompositeHost::get_gamma_stats() const
 	d["sample_copies_created"] = (int64_t)g_copiesCreated;
 	d["sample_copies_live"] = (int64_t)g_copiesLive;
 	d["exact_msaa_edges"] = (bool)g_exactMsaaEdges;
+	d["deferred_decodes"] = (int64_t)g_deferredDecodes; // lane GPUPERF-1: decodes the map's grade did in its pass
 	return d;
 }
 
@@ -616,6 +662,49 @@ void ensure(Node *node)
 		comp->set_compositor_effects(effects);
 	}
 	g_installed = true;
+}
+
+void deferDecodeTo(Viewport *vp, const Ref<CompositorEffect> &grade)
+{
+	if (!vp || grade.is_null())
+	{
+		return;
+	}
+	const uint64_t rt = RenderingServer::get_singleton()->viewport_get_render_target(vp->get_viewport_rid()).get_id();
+	std::lock_guard<std::mutex> lock(g_mutex);
+	g_defer[rt] = Deferred{ nowFrame(), grade };
+	if ((nowFrame() & 1023) == 0)
+	{
+		for (auto it = g_deferred.begin(); it != g_deferred.end();)
+		{
+			it = nowFrame() > it->second + 600 ? g_deferred.erase(it) : std::next(it);
+		}
+		for (auto it = g_defer.begin(); it != g_defer.end();)
+		{
+			it = nowFrame() > it->second.frame + 600 ? g_defer.erase(it) : std::next(it);
+		}
+	}
+}
+
+bool decodeDeferred(const RID &rt)
+{
+	std::lock_guard<std::mutex> lock(g_mutex);
+	auto it = g_deferred.find(rt.get_id());
+	return it != g_deferred.end() && it->second == nowFrame();
+}
+
+void decodeNow(RenderSceneBuffersRD *buffers)
+{
+	RenderingDevice *rd = RenderingServer::get_singleton()->get_rendering_device();
+	if (!rd || !buffers || g_decode.is_null() || !g_decode->ensureCompute(rd))
+	{
+		return;
+	}
+	const Vector2i size = buffers->get_internal_size();
+	if (size.x > 0 && size.y > 0)
+	{
+		g_decode->convert(rd, buffers, size, true);
+	}
 }
 
 bool installed()

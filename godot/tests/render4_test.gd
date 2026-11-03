@@ -112,6 +112,71 @@ func _run() -> int:
 	cam.compositor.compositor_effects = list
 	host.set_process_internal(true)
 
+	# lane GPUPERF-1: with the gamma pair running (a GammaCompositeHost keeps it; a white quad at alpha 0.25 is drawn in the transparent pass), the
+	# decode is left to the grade (fused_passes counts them); with a pass-through effect between the decode and the grade the two run apart. Both show
+	# the same picture of a still scene (the map hidden: its clouds and water move with the time; an opaque colour ramp behind the veil).
+	map.visible = false
+	var ramp := MeshInstance3D.new()
+	var ramp_mesh := QuadMesh.new()
+	ramp_mesh.size = Vector2(4000, 4000)
+	ramp.mesh = ramp_mesh
+	var ramp_mat := ShaderMaterial.new()
+	ramp_mat.shader = Shader.new()
+	ramp_mat.shader.code = "shader_type spatial; render_mode unshaded, fog_disabled, cull_disabled; void fragment() { ALBEDO = vec3(fract(UV.x * 7.0), UV.y, 1.0 - UV.x); }"
+	ramp.material_override = ramp_mat
+	cam.add_child(ramp)
+	ramp.position = Vector3(0, 0, -30)
+	var keeper: Node = ClassDB.instantiate("GammaCompositeHost")
+	vp.add_child(keeper)
+	var veil := MeshInstance3D.new()
+	var veil_mesh := QuadMesh.new()
+	veil_mesh.size = Vector2(4000, 4000)
+	veil.mesh = veil_mesh
+	var veil_mat := ShaderMaterial.new()
+	veil_mat.shader = Shader.new()
+	veil_mat.shader.code = "shader_type spatial; render_mode unshaded, fog_disabled, blend_mix, depth_draw_never, cull_disabled; void fragment() { ALBEDO = vec3(1.0); ALPHA = 0.25; }"
+	veil.material_override = veil_mat
+	cam.add_child(veil)
+	veil.position = Vector3(0, 0, -20)
+	veil.scale = Vector3(0.5, 1.0, 1.0) # half the picture: the ramp alone and under the veil
+	await _frames(6)
+	var f0: Dictionary = host.get_post_effect_stats()
+	await _frames(6)
+	var f1: Dictionary = host.get_post_effect_stats()
+	_check(int(f1.fused_passes) - int(f0.fused_passes) >= 6, "fall back: the grade takes over the gamma decode (%d fused passes in 6 frames)" % (int(f1.fused_passes) - int(f0.fused_passes)))
+	var fused: Image = vp.get_texture().get_image()
+	var through_script := GDScript.new()
+	through_script.source_code = "extends CompositorEffect\nfunc _init():\n\teffect_callback_type = EFFECT_CALLBACK_TYPE_POST_TRANSPARENT\nfunc _render_callback(_t, _d):\n\tpass\n"
+	through_script.reload()
+	var through: CompositorEffect = through_script.new()
+	var with_through: Array = cam.compositor.compositor_effects
+	with_through.insert(with_through.size() - 1, through)
+	cam.compositor.compositor_effects = with_through
+	await _frames(6)
+	var f2: Dictionary = host.get_post_effect_stats()
+	await _frames(6)
+	var f3: Dictionary = host.get_post_effect_stats()
+	_check(int(f3.fused_passes) == int(f2.fused_passes) and int(f3.passes) > int(f2.passes), "fall back: with an effect between them the decode and the grade run apart (%d fused)" % (int(f3.fused_passes) - int(f2.fused_passes)))
+	var apart: Image = vp.get_texture().get_image()
+	var worst := 0.0
+	var differing := 0
+	for y in range(0, apart.get_height(), 2):
+		for x in range(0, apart.get_width(), 2):
+			var a: Color = fused.get_pixel(x, y)
+			var b: Color = apart.get_pixel(x, y)
+			var d := maxf(absf(a.r - b.r), maxf(absf(a.g - b.g), absf(a.b - b.b)))
+			worst = maxf(worst, d)
+			differing += 1 if d > 0.0 else 0
+	print("  info fall back: %d of %d sampled pixels differ" % [differing, (apart.get_height() / 2) * (apart.get_width() / 2)])
+	_check(differing == 0, "fall back: the fused grade shows the separate passes' picture exactly (largest difference %.2f / 255)" % (worst * 255.0))
+	with_through.erase(through)
+	cam.compositor.compositor_effects = with_through
+	veil.queue_free()
+	ramp.queue_free()
+	map.visible = true
+	keeper.queue_free()
+	await _frames(4)
+
 	# leaving the tree takes the grade off the camera
 	vp.remove_child(map)
 	await _frames(2)
