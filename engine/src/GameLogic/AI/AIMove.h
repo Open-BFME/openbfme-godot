@@ -231,7 +231,7 @@ public:
 	// distance left to the goal for the current goal type (RW 0x664127)
 	float locomotorDistanceToGoal() const;
 	// lane WALL-1 / WALL-4: a unit whose wall top, walkway or ramp went away under it takes the ground (Pathfinder::layerAfterSurfaceLoss, INFERENCE S-1750),
-	// then stands on the terrain, and AdjustLayer (S-4840). doLocomotor's branches make RotWK's layer changes: a path goal's UpdateLayer (RW 0x669D3D .. 0x669D66, the
+	// then stands on the terrain (lane WALL-5: no per-frame AdjustLayer, S-4840). doLocomotor's branches make RotWK's layer changes: a path goal's UpdateLayer (RW 0x669D3D .. 0x669D66, the
 	// point ahead's layer), an explicit goal's RW 0x680A75 after its step (RW 0x669B95), the horde member update's (RW 0x66C748). The member update calls it too
 	void refreshLayer();
 

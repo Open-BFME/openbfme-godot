@@ -48,7 +48,7 @@
 
 namespace
 {
-const float kSameWallTolerance = 3.5f;  // ClassifyWall: two wall tops closer than this are one layer
+const float kSameWallTolerance = 3.5f;  // ClassifyWall: a wall top at most this far from the closest layer's height joins it (RW 0xC7FADC)
 const float kRampJoinTolerance = 15.0f; // RW 0xBDC6CC: a ramp meets a wall (or, INFERENCE, the ground) within this height
 const float kLayerSwitch = 10.0f;       // UpdateLayer and AdjustLayer (RW 0xBD83D8): a unit takes a wall's layer only within this height of the wall top
 const int kMaxWallLayers = LAYER_WALL_LAST - LAYER_WALL_FIRST + 1;
@@ -460,6 +460,16 @@ PathfindRegion Pathfinder::surfaceCells(const PathfindWallSurface &s) const
 	return r;
 }
 
+PathfindRegion Pathfinder::wallEdgeWindow(const PathfindWallSurface &s) const
+{
+	PathfindRegion r;
+	r.lo.x = std::max(SimMath::floorToInt(s.loX) / 10 - 2, m_extent.lo.x);
+	r.lo.y = std::max(SimMath::floorToInt(s.loY) / 10 - 2, m_extent.lo.y);
+	r.hi.x = std::min(SimMath::ceilToInt(s.hiX) / 10 + 2, m_extent.hi.x);
+	r.hi.y = std::min(SimMath::ceilToInt(s.hiY) / 10 + 2, m_extent.hi.y);
+	return r;
+}
+
 float Pathfinder::wallHeightOf(PathfindLayerEnum layer) const
 {
 	const int k = (int)layer - (int)LAYER_WALL_FIRST;
@@ -468,16 +478,27 @@ float Pathfinder::wallHeightOf(PathfindLayerEnum layer) const
 
 PathfindLayerEnum Pathfinder::wallLayerFor(float height)
 {
+	// lane WALL-5: RW 0x9362A3 .. 0x93650A: the closest height (fabs of the difference, x87 at the game's precision and stored as a float: the same float as
+	// this double difference for wall heights; only a strictly smaller distance replaces it, so a tie keeps the first, RW 0x9362FB), a new layer only when that
+	// is more than 3.5 away (RW 0xC7FADC); the layer's height is raised to the taller
+	int best = -1;
+	float bestDist = 0.0f;
 	for (size_t k = 0; k < m_wallHeights.size(); ++k)
 	{
-		if (SimMath::absD(SimMath::subD((double)height, (double)m_wallHeights[k])) < (double)kSameWallTolerance)
+		const float d = (float)SimMath::absD(SimMath::subD((double)height, (double)m_wallHeights[k]));
+		if (best < 0 || d < bestDist)
 		{
-			if (height > m_wallHeights[k])
-			{
-				m_wallHeights[k] = height;
-			}
-			return (PathfindLayerEnum)((int)LAYER_WALL_FIRST + (int)k);
+			best = (int)k;
+			bestDist = d;
 		}
+	}
+	if (best >= 0 && !(bestDist > kSameWallTolerance))
+	{
+		if (height > m_wallHeights[(size_t)best])
+		{
+			m_wallHeights[(size_t)best] = height;
+		}
+		return (PathfindLayerEnum)((int)LAYER_WALL_FIRST + best);
 	}
 	if ((int)m_wallHeights.size() >= kMaxWallLayers)
 	{
@@ -544,6 +565,7 @@ void Pathfinder::stampWallSurface(const PathfindWallSurface &s, PathfindLayerEnu
 {
 	const PathfindRegion r = surfaceCells(s);
 	const float h = wallHeightOf(layer);
+	std::vector<ICoord2D> changed; // lane WALL-5: every cell RW 0x935051 answers true for (a corner covered), the edge pass's candidates
 	for (int i = r.lo.x; i <= r.hi.x; ++i)
 	{
 		for (int j = r.lo.y; j <= r.hi.y; ++j)
@@ -559,16 +581,18 @@ void Pathfinder::stampWallSurface(const PathfindWallSurface &s, PathfindLayerEnu
 				continue;
 			}
 			const PathfindLayerEnum cl = c->getLayer();
-			if (isWallLayer(cl) && cl != layer && wallHeightOf(cl) > h)
-			{
-				continue; // a taller wall keeps the cell
-			}
+			// lane WALL-5: RW 0x935051 skips only the layer change under a wall at least as tall (RW 0x93511E .. 0x93512F: the layer is set only when the new
+			// height is greater; the cell is stamped otherwise: CLEAR, unpinched, a candidate of the edge pass on its layer)
+			const bool taller = isWallLayer(cl) && cl != layer && !(h > wallHeightOf(cl));
 			const PathfindObjectID obs = c->getObstacleID();
 			if (isWallPiece(obs))
 			{
 				c->removeObstacleId(m_pool, obs); // a wall piece's footprint does not cover a wall top (its own or a neighbour's)
 			}
-			c->setLayer(layer);
+			if (!taller)
+			{
+				c->setLayer(layer);
+			}
 			c->setConnectLayer(LAYER_INVALID);
 			c->setPinched(false);
 			c->setBit17(true); // lane WALL-2: RW 0x935191 (the wall cell RW 0x935051): bit 17 set (the units without CanPathThroughGates stay off the wall)
@@ -576,7 +600,72 @@ void Pathfinder::stampWallSurface(const PathfindWallSurface &s, PathfindLayerEnu
 			c->setType(PathfindCell::CELL_CLEAR); // keeps another structure's obstacle (setType)
 			c->setZone(PathfindZoneManager::UNINITIALIZED_ZONE);
 			if (!m_buildingMap) m_zoneManager.markCellDirty(i, j);
+			changed.push_back(ICoord2D{ i, j });
 		}
+	}
+	wallEdgePass(wallEdgeWindow(s), layer, changed);
+}
+
+int Pathfinder::otherLayerNeighbours(int x, int y, PathfindLayerEnum layer)
+{
+	int n = 0;
+	for (int dy = -1; dy <= 1; ++dy)
+	{
+		for (int dx = -1; dx <= 1; ++dx)
+		{
+			if (dx == 0 && dy == 0)
+			{
+				continue;
+			}
+			const PathfindCell *nb = getCell(LAYER_GROUND, x + dx, y + dy); // off the map: none (RW: the extent test skips it)
+			if (nb && nb->getLayer() != layer)
+			{
+				++n;
+			}
+		}
+	}
+	return n;
+}
+
+void Pathfinder::wallEdgePass(const PathfindRegion &r, PathfindLayerEnum layer, const std::vector<ICoord2D> &changed)
+{
+	// RW 0x936686 .. 0x9367AA (BFME2 PathfinderClassifyWall.cpp 244-255): over the top's window (every layer, y outer), a cell of the top's layer loses its
+	// pinched bit, then any CLEAR cell with 2 or more of its 8 neighbours on another layer is pinched (the count reads layers only: the order is free)
+	for (int j = r.lo.y; j <= r.hi.y; ++j)
+	{
+		for (int i = r.lo.x; i <= r.hi.x; ++i)
+		{
+			PathfindCell *c = getCell(LAYER_GROUND, i, j);
+			if (!c)
+			{
+				continue;
+			}
+			if (c->getLayer() == layer)
+			{
+				c->setPinched(false);
+			}
+			if (c->getType() == PathfindCell::CELL_CLEAR && otherLayerNeighbours(i, j, c->getLayer()) > 1)
+			{
+				c->setPinched(true);
+			}
+		}
+	}
+	// RW 0x9367B0 .. 0x936811 (256-258): a stamped cell that is pinched and CLEAR becomes the rim (type 8, RW 0x9367E6: SetType_Dirty), every stamped cell
+	// loses its pinched bit; the ground ring beside the top stays pinched
+	for (const ICoord2D &at : changed)
+	{
+		PathfindCell *c = getCell(LAYER_GROUND, at.x, at.y);
+		if (!c)
+		{
+			continue;
+		}
+		if (c->getPinched() && c->getType() == PathfindCell::CELL_CLEAR)
+		{
+			c->setType(PathfindCell::CELL_WALL_EDGE);
+			c->setZone(PathfindZoneManager::UNINITIALIZED_ZONE);
+			if (!m_buildingMap) m_zoneManager.markCellDirty(at.x, at.y);
+		}
+		c->setPinched(false);
 	}
 }
 
@@ -697,11 +786,12 @@ void Pathfinder::rebuildWallConnectCells()
 	{
 		r.connect[0] = r.connect[1] = ICoord2D{ -1, -1 };
 	}
-	for (const WallPiece &p : m_wallPieces)
+	// lane WALL-5: in the order the ramps are stamped (restampWalls: newest first, RW 0x935BFF)
+	for (auto p = m_wallPieces.rbegin(); p != m_wallPieces.rend(); ++p)
 	{
-		for (const PathfindWallSurface &s : p.ramps)
+		for (auto s = p->ramps.rbegin(); s != p->ramps.rend(); ++s)
 		{
-			const RampBridge b = makeRampBridge(s);
+			const RampBridge b = makeRampBridge(*s);
 			if (b.valid && bridgeNormal(b).z != 0.0f) // the ramps stampRampSurface stamps
 			{
 				addRampConnectCells(b.from, b.to);
@@ -713,7 +803,6 @@ void Pathfinder::rebuildWallConnectCells()
 void Pathfinder::restampWalls(const PathfindRegion &region)
 {
 	// lane WALL-2: the raised layers whose pieces meet the region are made again (their cells, RW 0x7684F8 / 0x768832), before the ramps join them
-	bool rebuilt = false;
 	if (m_anyRaised)
 	{
 		std::array<bool, 16> touched{};
@@ -732,7 +821,6 @@ void Pathfinder::restampWalls(const PathfindRegion &region)
 			if (touched[(size_t)l])
 			{
 				rebuildRaisedLayer((PathfindLayerEnum)l);
-				rebuilt = true;
 			}
 		}
 	}
@@ -748,15 +836,14 @@ void Pathfinder::restampWalls(const PathfindRegion &region)
 			}
 		}
 	}
-	// a rebuilt raised layer lost every ramp's joint on it, the far ones too (review #63): then every ramp, in insertion order as a full classification
-	for (const WallPiece &p : m_wallPieces)
+	// lane WALL-5: every piece's ramps, newest first, as RotWK's RW 0x935BFF stamps every Bridge after a change (a ramp whose joint lies on a wall top stamped
+	// again above, its piece's cells outside the region, gets its joint back: the stamp made it CLEAR or the edge pass type 8; a rebuilt raised layer lost every
+	// ramp's joint on it, the far ones too, review #63)
+	for (auto p = m_wallPieces.rbegin(); p != m_wallPieces.rend(); ++p)
 	{
-		if (rebuilt || overlaps(p.cells, region))
+		for (auto s = p->ramps.rbegin(); s != p->ramps.rend(); ++s)
 		{
-			for (const PathfindWallSurface &s : p.ramps)
-			{
-				stampRampSurface(s);
-			}
+			stampRampSurface(*s);
 		}
 	}
 }
@@ -773,7 +860,8 @@ void Pathfinder::classifyWall(PathfindObject &obj, bool insert)
 		}
 		const WallPiece piece = *it;
 		m_wallPieces.erase(it);
-		// the piece's cells go back to the ground (their terrain class again: RW 0x934A85 keeps an obstacle), then the overlapping pieces are classified again
+		// the piece's cells go back to the ground (their terrain class again, INFERENCE S-4840: RotWK sets CLEAR, RW 0x936996; RW 0x934A85 keeps an obstacle),
+		// then the overlapping pieces are classified again
 		// a ramp's cells are the ones its Bridge covers (RW 0x9356DF removes through the same cell rule it adds with), a wall top's its mesh's
 		auto unstamp = [&](const PathfindWallSurface &s, const RampBridge *bridge, auto &&isMine) {
 			const PathfindRegion r = surfaceCells(s);
@@ -792,6 +880,7 @@ void Pathfinder::classifyWall(PathfindObject &obj, bool insert)
 						c->setLayer(LAYER_GROUND);
 						c->setConnectLayer(LAYER_INVALID);
 						c->setBit17(false);
+						c->setPinched(false); // lane WALL-5: the reset unpinches (RW 0x936968 .. 0x9369EF; a rim cell, type 8, is the top's)
 						classifyMapCell(i, j, c);
 					}
 					else if (bridge)
@@ -810,11 +899,7 @@ void Pathfinder::classifyWall(PathfindObject &obj, bool insert)
 				}
 			}
 		};
-		for (size_t k = 0; k < piece.walls.size(); ++k)
-		{
-			const PathfindLayerEnum layer = piece.wallLayers[k];
-			unstamp(piece.walls[k], nullptr, [&](const PathfindCell &c) { return c.getLayer() == layer; });
-		}
+		// lane WALL-5: RotWK removes the piece's Bridges first (RW 0x9356DF, called at RW 0x93620D / 0x936280), then ClassifyWall's remove branch runs
 		for (const PathfindWallSurface &s : piece.ramps)
 		{
 			const RampBridge b = makeRampBridge(s);
@@ -822,6 +907,28 @@ void Pathfinder::classifyWall(PathfindObject &obj, bool insert)
 			{
 				unstamp(s, &b, [](const PathfindCell &c) { return c.getLayer() == LAYER_RAMP; });
 			}
+		}
+		// lane WALL-5: RW 0x936853 .. 0x936962 (BFME2 PathfinderClassifyWall.cpp 261-268): every pinched cell of a top's window with 2 or more neighbours on
+		// another layer loses its pinched bit, counted while the tops' layers are still in place; then RW 0x936968 .. 0x9369EF resets the top's cells
+		for (const PathfindWallSurface &s : piece.walls)
+		{
+			const PathfindRegion r = wallEdgeWindow(s);
+			for (int j = r.lo.y; j <= r.hi.y; ++j)
+			{
+				for (int i = r.lo.x; i <= r.hi.x; ++i)
+				{
+					PathfindCell *c = getCell(LAYER_GROUND, i, j);
+					if (c && c->getPinched() && otherLayerNeighbours(i, j, c->getLayer()) > 1)
+					{
+						c->setPinched(false);
+					}
+				}
+			}
+		}
+		for (size_t k = 0; k < piece.walls.size(); ++k)
+		{
+			const PathfindLayerEnum layer = piece.wallLayers[k];
+			unstamp(piece.walls[k], nullptr, [&](const PathfindCell &c) { return c.getLayer() == layer; });
 		}
 		// lane WALL-2: the piece's raised areas leave their layers (RW: the layer is freed and its cells made again; an empty layer is no longer in use)
 		for (PathfindLayerEnum l : piece.raisedLayers)

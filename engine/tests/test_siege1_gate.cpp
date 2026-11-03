@@ -202,14 +202,15 @@ TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's ga
 	CHECK(c.firstHit == 20);
 	CHECK(c.deathFrame == 224);
 	const GateRun t = pinnedRun(*s, kHelmsDeep, "Main Gate", "GondorTrebuchet", 400.0f, 600);
-	CHECK(t.contactsWhileStanding == 1);
+	// lane WALL-5 (ClassifyWall's edge pass RW 0x936686 .. 0x936811 and its height choice RW 0x9362A3: the wall tops' rims refuse every locomotor, the pinched ground beside them costs more, moving the routes and the random stream at Helm's Deep; measured once on the lane's tree): the trebuchet no contact while the gate stands (1), death 386 -> 341; the Dwarven catapult death 369 -> 301
+	CHECK(t.contactsWhileStanding == 0);
 	CHECK(t.firstHit == 19);
-	CHECK(t.deathFrame == 386);
+	CHECK(t.deathFrame == 341);
 	const GateRun dc = pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenCatapult", 400.0f, 600);
 	// its two stones a throw (until q31): both met HelmsDeepGatehouseLeft at frame 102 and, at frame 341, the front of the arch (HelmsDeepGatehouseCenter) 51 before
 	// its centre at z 174, below the lintel (the stones fell short; not the lintel reaching down, which the pair rule removed)
 	CHECK(dc.contactsWhileStanding == 0);
-	CHECK(dc.deathFrame == 369);
+	CHECK(dc.deathFrame == 301);
 	const GateRun b = pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBallista", 400.0f, 600);
 	// merge queue q27: one contact while the gate stands (was 0) and death 311 -> 389, LOS-1 (the terrain line of sight with the wall layers' heights;
 	// measured at each merge point)

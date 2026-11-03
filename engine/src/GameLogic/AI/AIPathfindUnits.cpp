@@ -204,10 +204,12 @@ bool Pathfinder::worldToCell(const Coord3D *pos, bool center, ICoord2D *cell)
 // ---------------------------------------------------------------------------------------------------------
 unsigned Pathfinder::validLocomotorSurfacesForCellType(PathfindCell::CellType t)
 {
-	// TARGET RW table 0xDA2444 indexed by the 3-bit cell type (bits are the LocomotorSurfaceType flags of Locomotor.h: GROUND 1,
-	// WATER 2, CLIFF 4, AIR 8, RUBBLE 0x10, OBSTACLE 0x20, IMPASSABLE 0x40, DEEP_WATER 0x80)
-	static const unsigned table[8] = { 0x09, 0x0A, 0x0C, 0x18, 0x28, 0x48, 0x48, 0x88 };
-	return table[(unsigned)t & 7u];
+	// TARGET RW table 0xDA2444 indexed by the 4-bit cell type (`and 0xf` at every reader; bits are the LocomotorSurfaceType flags of Locomotor.h:
+	// GROUND 1, WATER 2, CLIFF 4, AIR 8, RUBBLE 0x10, OBSTACLE 0x20, IMPASSABLE 0x40, DEEP_WATER 0x80); lane WALL-5: entry 8 (RW 0xDA2464, the wall
+	// tops' rims) is 0; the bytes after it are other data (types 9 .. 15 are never written)
+	static const unsigned table[9] = { 0x09, 0x0A, 0x0C, 0x18, 0x28, 0x48, 0x48, 0x88, 0x00 };
+	const unsigned i = (unsigned)t & 0xFu;
+	return i < 9u ? table[i] : 0u;
 }
 
 PathfindMovement Pathfinder::makeMovement(const PathfindObject *obj, const PathfindLocomotorInfo &loco)

@@ -52,7 +52,7 @@ const char *const kBaseSiteWindow =
 const char *const kWallLayer =
 	"S-4840 wall tops and ramps come from the draw module's WallBoundsMesh / RampMesh1 / RampMesh2 of the default model state: a wall top is tested as "
 	"its mesh's triangles (retail: the outline polygon), a ramp's cells follow RotWK's ramp cell rule (RW 0x93527F) on the Bridge getRamp builds from its "
-	"mesh; a removed walkway sends its ramp joints back to the ground (INFERENCE), and ClassifyWall's pinch pass is not applied";
+	"mesh; a removed walkway sends its ramp joints back to the ground (INFERENCE); lane WALL-5 ported ClassifyWall's edge pass (the rim type 8) and its height-layer choice; the port stamps an earlier piece again when a new one meets it, keeps another structure's obstacle under a top and gives a removed top's cells their terrain class (INFERENCE)";
 const char *const kWallLayerCount =
 	"S-4840 more than 48 wall-top heights: the wall surface is left out of the pathfinder's map (RW allows 0x11 .. 0x40)";
 const char *const kRampNoHeight =

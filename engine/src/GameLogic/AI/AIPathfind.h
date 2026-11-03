@@ -343,7 +343,7 @@ enum { COST_ORTHOGONAL = 10, COST_DIAGONAL = 14 };
 class PathfindCell
 {
 public:
-	// RW cell types (the low 4 bits of [cell+0xC]); the surface table at RW 0xDA2444 has an entry for each of 0..7
+	// RW cell types (the low 4 bits of [cell+0xC]); the surface table at RW 0xDA2444 has an entry for each of 0..8 (its bytes after entry 8 are other data)
 	enum CellType
 	{
 		CELL_CLEAR = 0x00,
@@ -353,7 +353,10 @@ public:
 		CELL_OBSTACLE = 0x04,
 		CELL_BRIDGE_IMPASSABLE = 0x05, // RW: a type the footprint pinch pass writes and the passability tests reject (name INFERRED)
 		CELL_IMPASSABLE = 0x06,
-		CELL_DEEP_WATER = 0x07
+		CELL_DEEP_WATER = 0x07,
+		// lane WALL-5: a wall top's rim (ClassifyWall's edge pass, RW 0x9367B0 .. 0x936811: a stamped cell pinched by 2 or more neighbours on another layer;
+		// BFME2 decomp CellEdge); the surface table's entry 8 (RW 0xDA2464) is 0: no locomotor stands on it
+		CELL_WALL_EDGE = 0x08
 	};
 
 	PathfindCell() { reset(nullptr); }
@@ -676,7 +679,7 @@ private:
 struct PathfindGridStats
 {
 	int width = 0, height = 0;       // cells
-	int types[8] = {};               // by PathfindCell::CellType
+	int types[9] = {};               // by PathfindCell::CellType (lane WALL-5: 8 the wall tops' rims)
 	int pinched = 0;
 	int impassableToPlayers = 0, extraPass = 0; // cell bits 18 and 21
 };
@@ -1328,6 +1331,13 @@ private:
 	void crcRaised(StateHasher &h) const;
 	PathfindLayerEnum wallLayerFor(float height);
 	void stampWallSurface(const PathfindWallSurface &s, PathfindLayerEnum layer);
+	// lane WALL-5: ClassifyWall's edge pass after a wall top's stamp (RW 0x936686 .. 0x936811): `changed` the cells the stamp covered
+	void wallEdgePass(const PathfindRegion &r, PathfindLayerEnum layer, const std::vector<ICoord2D> &changed);
+	// lane WALL-5: ClassifyWall's window of a wall top (RW 0x936511 .. 0x9365CB): the polygon's bounds, the low corner floored and the high ceiled to integers
+	// (getBounds RW 0x6E4D2C), divided by 10 (idiv), 2 cells more each way, clamped to the map
+	PathfindRegion wallEdgeWindow(const PathfindWallSurface &s) const;
+	// lane WALL-5: the 8 neighbours of (x, y) whose layer is not the cell's (a neighbour off the map is not counted)
+	int otherLayerNeighbours(int x, int y, PathfindLayerEnum layer);
 	void stampRampSurface(const PathfindWallSurface &s);
 	void restampWalls(const PathfindRegion &region);
 	bool isWallPiece(PathfindObjectID id) const;

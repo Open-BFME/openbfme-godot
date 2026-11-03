@@ -829,14 +829,10 @@ void AIMover::refreshLayer()
 		return;
 	}
 	// lane WALL-4: RotWK's doLocomotor sets no layer before its goal's branch (the branches do: UpdateLayer on a path, RW 0x680A75 after an explicit goal's
-	// step). The port keeps two rules of its own here (INFERENCE, S-4840 and S-1750): a unit whose wall top, walkway or ramp went away stands on the ground;
-	// and AdjustLayer (RW 0x6F0741) on every unit, because the port's wall tops are a cell wider than RotWK's (no edge pass, S-4840): a unit at a wall's foot
-	// can stand on a wall-top cell, and the search refuses that cell to a ground unit; AdjustLayer puts it on the wall only when the top is more than 10 above
-	PathfindLayerEnum layer = m_pf.layerAfterSurfaceLoss(obj);
-	if (layer == obj.getLayer())
-	{
-		layer = m_pf.adjustLayer(obj, layer);
-	}
+	// step). The port keeps one rule of its own here (INFERENCE, S-1750): a unit whose wall top, walkway or ramp went away stands on the ground. Lane WALL-5:
+	// with ClassifyWall's edge pass (the wall tops' rims type 8, S-4840) a unit at a wall's foot no longer stands on a wall-top cell, so the per-frame AdjustLayer
+	// lane WALL-4 added for it is gone (RotWK runs AdjustLayer only from its callers)
+	const PathfindLayerEnum layer = m_pf.layerAfterSurfaceLoss(obj);
 	if (layer != obj.getLayer())
 	{
 		m_host.setLayer(layer);
