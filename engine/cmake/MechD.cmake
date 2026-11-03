@@ -2,4 +2,5 @@
 # melee reach of a climber on a wall): tests. Included from engine/CMakeLists.txt.
 set(OPENBFME_MECHD_TESTS
     tests/test_mechd_walls.cpp
+    tests/test_mechd_classic.cpp
 )
