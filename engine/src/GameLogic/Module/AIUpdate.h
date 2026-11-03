@@ -429,8 +429,10 @@ public:
 	float groundHeightAt(float x, float y) const override;
 	// lane WALL-1: TheTerrainLogic->getLayerHeight(x, y, the object's layer): the terrain on the ground, a wall top's or a ramp's height on theirs
 	float layerHeightAt(float x, float y) const;
-	// lane WALL-1: after the object was put somewhere directly (a horde member snapped onto its slot, a member put on its goal): its layer settles to the cell
-	// under it (Pathfinder::settleLayer) and, off the ground, it stands on that layer's surface. Nothing for a ground unit that stays on the ground
+	// lane WALL-4: the object's layer is the ramp's or a raised walkway's (RW 0x5E77C2 .. 0x5E77D0)
+	bool isOnRampOrRaisedLayer() const;
+	// lane WALL-1 / WALL-4: after the object was put somewhere directly, outside RotWK's movers (the tests' placements; no game code calls it): AdjustLayer (RW 0x6F0741: a
+	// surface more than 10 above it, a walkway within 10) and, off the ground, it stands on that layer's surface. Nothing for a ground unit that stays on the ground
 	void settleOnLayer();
 	void setLayer(PathfindLayerEnum layer) override;
 	bool isImmobile() const override;

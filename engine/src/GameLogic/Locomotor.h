@@ -415,6 +415,8 @@ public:
 	virtual unsigned logicFrame() const = 0;                 // TheGameLogic+0x40
 	virtual bool containerAllowsBackingUp() const = 0;       // RW 0x5E6530-0x5E655A (HORDE_MEMBER inside a container whose template flag +0xD8 is set)
 	virtual float groundHeightAt(float x, float y) const = 0; // terrain height for NO_Z_MOTIVE_FORCE
+	// lane WALL-4: the object's layer is the ramp's (0x10) or a raised walkway's (2 .. 15; RW 0x5E2F24), for NO_Z_MOTIVE_FORCE's height hold (RW 0x5E77C2)
+	virtual bool isOnRampOrRaisedLayer() const { return false; }
 	virtual LocomotorPath *getPath() = 0;                    // RW 0x5E3884
 	// obj+0x94 ObjectStatus bits and obj+0x10C model condition bits (by index into the registries).
 	virtual bool testObjectStatus(int bit) const = 0;

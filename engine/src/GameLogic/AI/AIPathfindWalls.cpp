@@ -17,7 +17,10 @@
 //         else it is layer 0x10 (RotWK RW 0x93527F, read in full for this file's stampRampSurface).
 //       - removal: the cells go back to layer 1, then the other wall pieces whose bounds overlap are classified again.
 //   * the neighbour test of every search (examineNeighboringCells BFME2 0x6F83F5, the zone joins RW 0x9380BC): PathfindCell::layersCompatible.
-//   * Pathfinder::GetWallHeight (WB 0xd3ed70, BFME2 0x6EF68C): getLayerHeight. Pathfinder::UpdateLayer (WB 0xd388b0, BFME2 0x6F11A1): updateLayer.
+//   * Pathfinder::GetWallHeight (WB 0xd3ed70, BFME2 0x6EF68C, RW 0x6F0B27): getLayerHeight. Pathfinder::UpdateLayer (WB 0xd388b0, BFME2 0x6F11A1, RW 0x6F25FE):
+//     updateLayer (its walkway mode 0 stays lane WALL-2's, S-4856). Pathfinder::AdjustLayer (BFME2 0x6EF2A6, RW 0x6F0741): adjustLayer. The layer test of
+//     IsValidHordeMemberRegularMovement (BFME2 0x6F06A3, RW 0x6F1B3E): straightStepKeepsLayer. Read from the BFME2 decomp and checked against the RotWK 2.01
+//     bytes (lane WALL-4): the same bodies in both editions.
 //
 // INFERENCE (stop S-4840, docs/STOPS.md, raised as pathstops::kWallLayer):
 //   * the outline polygon of a mesh (W3DScriptedModelDraw::getPolygon WB 0x93ead0: the boundary edges chained) is tested as the mesh's triangles (the same
@@ -47,17 +50,12 @@ namespace
 {
 const float kSameWallTolerance = 3.5f;  // ClassifyWall: two wall tops closer than this are one layer
 const float kRampJoinTolerance = 15.0f; // RW 0xBDC6CC: a ramp meets a wall (or, INFERENCE, the ground) within this height
-const float kLayerSwitch = 10.0f;       // UpdateLayer: a unit takes a wall's layer only within this height of the wall top
+const float kLayerSwitch = 10.0f;       // UpdateLayer and AdjustLayer (RW 0xBD83D8): a unit takes a wall's layer only within this height of the wall top
 const int kMaxWallLayers = LAYER_WALL_LAST - LAYER_WALL_FIRST + 1;
 
 float cornerX(int i, int k) { return SimMath::sseFromInt32((i + ((k == 1 || k == 2) ? 1 : 0)) * 10); }
 float cornerY(int j, int k) { return SimMath::sseFromInt32((j + ((k >= 2) ? 1 : 0)) * 10); }
 float centreOf(int i) { return SimMath::addf32(SimMath::sseFromInt32(i * 10), 5.0f); }
-
-bool within(float a, float b, float tolerance)
-{
-	return SimMath::absD(SimMath::subD((double)a, (double)b)) <= (double)tolerance;
-}
 
 // the corners of cell (i, j) inside `s` and the mean surface height over them (the cell's centre height when the centre is inside)
 int cellCoverage(const PathfindWallSurface &s, int i, int j, float &height)
@@ -284,15 +282,47 @@ Coord3D bridgeNormal(const RampBridge &b)
 	return Coord3D{ subf32(mulf32(uy, vz), mulf32(uz, vy)), subf32(mulf32(uz, vx), mulf32(ux, vz)), subf32(mulf32(ux, vy), mulf32(uy, vx)) };
 }
 
-// RW 0x68044E: the plane's height at (x, y). Only for a Bridge whose plane is not vertical (stampRampSurface leaves the others out, reported)
-float bridgeHeight(const RampBridge &b, float x, float y)
+// RW 0x68044E: the height at (x, y) of the plane through `p` with the normal `n` (n.z not 0)
+float planeHeight(const Coord3D &p, const Coord3D &n, float x, float y)
 {
 	using SimMath::addf32;
 	using SimMath::mulf32;
 	using SimMath::subf32;
-	const Coord3D &p = b.fromLeft;
-	const Coord3D n = bridgeNormal(b);
 	return subf32(p.z, SimMath::divf32(addf32(mulf32(n.x, subf32(x, p.x)), mulf32(n.y, subf32(y, p.y))), n.z));
+}
+
+// RW 0x68044E: the plane's height at (x, y). Only for a Bridge whose plane is not vertical (stampRampSurface leaves the others out, reported)
+float bridgeHeight(const RampBridge &b, float x, float y)
+{
+	return planeHeight(b.fromLeft, bridgeNormal(b), x, y);
+}
+
+// lane WALL-4: the ramp's Bridge plane (PathfindWallSurface::planeState 1 or 2)
+void storeRampPlane(const PathfindWallSurface &s)
+{
+	const RampBridge b = makeRampBridge(s);
+	const Coord3D n = b.valid ? bridgeNormal(b) : Coord3D{ 0.0f, 0.0f, 0.0f };
+	s.planeState = b.valid && !(n.z == 0.0f) ? 1 : 2;
+	s.planePoint = b.fromLeft;
+	s.planeNormal = n;
+}
+
+// lane WALL-4: the ramp's Bridge plane at (x, y); false for a ramp without one. A surface not prepared (Pathfinder::prepareRampPlanes) gets it made here and
+// not kept, so a query never writes
+bool rampPlaneHeight(const PathfindWallSurface &s, float x, float y, float &h)
+{
+	if (s.planeState == 0)
+	{
+		PathfindWallSurface local = s;
+		storeRampPlane(local);
+		return rampPlaneHeight(local, x, y, h);
+	}
+	if (s.planeState != 1)
+	{
+		return false;
+	}
+	h = planeHeight(s.planePoint, s.planeNormal, x, y);
+	return true;
 }
 
 // RW 0x67C81E: the segment (a, b) meets the rectangle [x0, x1] x [y0, y1] (edges included; Cohen-Sutherland)
@@ -892,7 +922,22 @@ void Pathfinder::classifyWall(PathfindObject &obj, bool insert)
 		return;
 	}
 	m_wallPieces.push_back(piece);
+	prepareRampPlanes();
 	restampWalls(piece.cells);
+}
+
+void Pathfinder::prepareRampPlanes()
+{
+	for (const WallPiece &p : m_wallPieces)
+	{
+		for (const PathfindWallSurface &s : p.ramps)
+		{
+			if (s.planeState == 0)
+			{
+				storeRampPlane(s);
+			}
+		}
+	}
 }
 
 bool Pathfinder::isPointOnRamp(float x, float y, float *z) const
@@ -950,10 +995,69 @@ PathfindLayerEnum Pathfinder::getLayerAt(float x, float y, float z) const
 	return c && (isWallLayer(c->getLayer()) || c->getLayer() == LAYER_RAMP) ? c->getLayer() : LAYER_GROUND;
 }
 
+PathfindLayerEnum Pathfinder::getLayerAt(const PathfindObject &obj, const Coord3D &pos) const
+{
+	if (m_wallPieces.empty() || m_blockOfMapCells.empty())
+	{
+		return LAYER_GROUND;
+	}
+	// TerrainLogic::getLayerForDestination (RW 0x680A75) with the object, as its callers pass it: a ramp at the point first (RW 0x6E89EE), then RW 0x6EE600
+	// with the object, which moves the point by 5 in x and y for an even footprint (RW 0x6EE62D .. 0x6EE64C, 5.0 at RW 0xBDAE58, the parity RW 0x6ECFC5)
+	// before the walkway scan and the ground grid cell's layer. RotWK first returns the ground for an object whose byte + 0x4AC is set (RW 0x68C053); that
+	// flag is not identified and the port has none (S-4840)
+	if (isPointOnRamp(pos.x, pos.y))
+	{
+		return LAYER_RAMP;
+	}
+	float x = pos.x, y = pos.y;
+	if ((footprintSize(&obj) & 1) == 0)
+	{
+		x = SimMath::addf32(x, 5.0f);
+		y = SimMath::addf32(y, 5.0f);
+	}
+	const PathfindLayerEnum raised = raisedLayerAtPoint(x, y, pos.z);
+	if (raised != LAYER_INVALID)
+	{
+		return raised;
+	}
+	const PathfindCell *c = cellAt(SimMath::floorToInt(SimMath::mulf32(x, 0.1f)), SimMath::floorToInt(SimMath::mulf32(y, 0.1f)));
+	return c && (isWallLayer(c->getLayer()) || c->getLayer() == LAYER_RAMP) ? c->getLayer() : LAYER_GROUND;
+}
+
 float Pathfinder::getLayerHeight(float x, float y, PathfindLayerEnum layer) const
 {
 	const float terrain = m_terrain ? m_terrain->getGroundHeight(x, y) : 0.0f;
 	if (m_wallPieces.empty())
+	{
+		return terrain;
+	}
+	if (isRaisedLayer(layer))
+	{
+		return raisedLayerInUse(layer) ? raisedLayerHeight(layer) : terrain; // lane WALL-2: GetWallLayerHeight (BFME2 WB 0xd3ec10)
+	}
+	if (!isWallLayer(layer) && layer != LAYER_RAMP)
+	{
+		return terrain;
+	}
+	// Pathfinder::GetWallHeight (RW 0x6F0B27 / BFME2 0x6EF68C, decomp Pathfinder/pathfinder.cpp:1491-1548; tier A, both editions), called by
+	// W3DTerrainLogic::getLayerHeight (RW 0x4623A5) with the point at z 0. The ground grid's cell under the point (floor(x / 10), RW 0x5E2EF2) names the layer
+	// when it is another one: a ramp cell only for a point on the ramp, any other cell always (the ground: the terrain; another wall: that wall's height)
+	const PathfindCell *c = m_blockOfMapCells.empty() ? nullptr : cellAt(SimMath::floorToInt(SimMath::mulf32(x, 0.1f)), SimMath::floorToInt(SimMath::mulf32(y, 0.1f)));
+	if (c && (PathfindLayerEnum)c->getLayer() != layer)
+	{
+		if (c->getLayer() == LAYER_RAMP)
+		{
+			if (isPointOnRamp(x, y))
+			{
+				layer = LAYER_RAMP;
+			}
+		}
+		else
+		{
+			layer = (PathfindLayerEnum)c->getLayer();
+		}
+	}
+	if (layer == LAYER_GROUND)
 	{
 		return terrain;
 	}
@@ -962,31 +1066,45 @@ float Pathfinder::getLayerHeight(float x, float y, PathfindLayerEnum layer) cons
 		const int k = (int)layer - (int)LAYER_WALL_FIRST;
 		return k < (int)m_wallHeights.size() ? m_wallHeights[(size_t)k] : terrain;
 	}
-	if (isRaisedLayer(layer))
+	if (layer != LAYER_RAMP)
 	{
-		return raisedLayerInUse(layer) ? raisedLayerHeight(layer) : terrain; // lane WALL-2: GetWallLayerHeight (BFME2 WB 0xd3ec10)
+		return terrain; // a cell of a layer the ground grid does not hold (none is written): not reached
 	}
-	if (layer == LAYER_RAMP)
+	// the ramp under the point: its height there. RotWK reads the Bridge's plane at the point (RW 0x68044E) and keeps it from going below 0 where RW 0x6EE600
+	// names a wall there (the layer value of RW 0x6E88F3 is 0 for a wall layer); the port has the ramp mesh's surface (S-4840) and the wall cell took the
+	// branch above, so that max is never met
+	float z = 0.0f;
+	if (isPointOnRamp(x, y, &z))
 	{
-		// the ramp under the point (raised to the wall the cell belongs to), else the ramp under one of the four points 10 away, else the cell's wall
-		const PathfindCell *c = cellAt(SimMath::floorToInt(SimMath::mulf32(x, 0.1f)), SimMath::floorToInt(SimMath::mulf32(y, 0.1f)));
-		const float wall = c && isWallLayer(c->getLayer()) ? wallHeightOf(c->getLayer()) : terrain;
-		float z = 0.0f;
-		if (isPointOnRamp(x, y, &z))
+		return z;
+	}
+	// else the first ramp one of the four points 10 away in x and y lies on, in the ramp list's order (RotWK's list at pathfinder + 0x5C, whose insertion
+	// was not read: the port walks the wall pieces in the order they were added; RW: (x - 10, y - 10), (x + 10, y - 10),
+	// (x + 10, y + 10), (x - 10, y + 10), SSE: RW 0x6F0C0C .. 0x6F0C76 builds them from (x - 10, y - 10) plus 20, RW 0xBDBC6C): that ramp's plane at the
+	// point itself, not at the corner (RW 0x68044E on `pos`)
+	const float x0 = SimMath::subf32(x, 10.0f), y0 = SimMath::subf32(y, 10.0f);
+	const float x1 = SimMath::addf32(x0, 20.0f), y1 = SimMath::addf32(y0, 20.0f);
+	const float cx[4] = { x0, x1, x1, x0 };
+	const float cy[4] = { y0, y0, y1, y1 };
+	for (const WallPiece &p : m_wallPieces)
+	{
+		for (const PathfindWallSurface &s : p.ramps)
 		{
-			return c && isWallLayer(c->getLayer()) && wall > z ? wall : z;
-		}
-		static const float dx[4] = { -10.0f, 10.0f, -10.0f, 10.0f };
-		static const float dy[4] = { -10.0f, -10.0f, 10.0f, 10.0f };
-		for (int k = 0; k < 4; ++k)
-		{
-			if (isPointOnRamp(SimMath::addf32(x, dx[k]), SimMath::addf32(y, dy[k]), &z))
+			for (int k = 0; k < 4; ++k)
 			{
-				return z;
+				float h = 0.0f;
+				if (s.heightAt(cx[k], cy[k], h))
+				{
+					// a ramp whose Bridge has no height (a vertical plane, left out of the cells and reported, S-4840): the corner's height on the mesh
+					float plane = 0.0f;
+					return rampPlaneHeight(s, x, y, plane) ? plane : h;
+				}
 			}
 		}
-		return wall;
 	}
+	// RotWK: the point's own z, which W3DTerrainLogic::getLayerHeight sets to 0 (RW 0x4623A5, xorps), for a point on no ramp's Bridge. The port tests the ramp
+	// mesh's triangles, narrower than the Bridge whose quad made the ramp cells (S-4840): a point on a ramp cell off the triangles is on RotWK's ramp. Until the
+	// ramp test is the Bridge's, such a point takes the terrain (the port's answer before lane WALL-4)
 	return terrain;
 }
 
@@ -1038,21 +1156,28 @@ PathfindLayerEnum Pathfinder::searchDestinationLayer(const Coord3D &to) const
 	return isRaisedLayer(l) ? l : LAYER_GROUND;
 }
 
-PathfindLayerEnum Pathfinder::updateLayer(const PathfindObject &obj, PathfindLayerEnum nodeLayer) const
+PathfindLayerEnum Pathfinder::updateLayer(const PathfindObject &obj, PathfindLayerEnum nodeLayer)
 {
-	PathfindLayerEnum cur = obj.getLayer();
+	const PathfindLayerEnum cur = obj.getLayer();
 	if (m_wallPieces.empty())
 	{
 		return cur;
 	}
-	// BFME2 0x6F11A1: the mode from the node's layer (later rules win), then the unit's layer
+	// Pathfinder::UpdateLayer (RW 0x6F25FE / BFME2 0x6F11A1, decomp Pathfinder/PathfinderUpdateLayer.cpp:93-155; tier A, both editions). The mode from the
+	// node's layer (later rules win): 0 a raised walkway (above), 1 the ramp, the ground under a wall unit 1 else 3, a wall 2 (1 when the unit is more than 10
+	// from that wall's height, x87 |z - h| in double, or is on the ground)
 	const Coord3D &pos = obj.getPosition();
-	const bool onRamp = isPointOnRamp(pos.x, pos.y);
 	if (isRaisedLayer(nodeLayer) || isRaisedLayer(cur))
 	{
-		// lane WALL-2 (INFERENCE S-4856): a node on a raised walkway: the unit takes the walkway's layer once off the ramp's surface where the walkway has a cell;
-		// a unit on a walkway keeps it while the walkway has a cell under it, else it is on the ramp it walks down or on the ground
+		// mode 0 (a walkway node) and a unit on a walkway: lane WALL-2's rule (INFERENCE S-4856). RotWK's mode 0 keeps a unit on the ramp's surface on the ramp
+		// (no setLayer, no AdjustLayer) and else takes the walkway's layer when RW 0x6EE600 names it at the unit (TheTerrainLogic->objectInteractsWithBridgeLayer
+		// RW 0x680C29 for a Bridge's layer), else keeps the unit's: it counts on a ramp node ahead while the unit climbs the ramp, which Path::optimize's layer
+		// rule (RW: a straight leg ends where the layer changes) gives and the port's optimiser lacks (open PR #187 ports it): the point ahead is the walkway's node from the
+		// ramp's foot, the unit kept its wall layer up the ramp and fell under the walkway at its top. Lane WALL-2's rule: a walkway node takes the walkway's
+		// layer once off the ramp's surface where the walkway has a cell; a unit on a walkway keeps it while the walkway has a cell under it, else it is on the
+		// ramp it walks down, the wall top it steps onto or the ground
 		const int cx = SimMath::floorToInt(SimMath::mulf32(pos.x, 0.1f)), cy = SimMath::floorToInt(SimMath::mulf32(pos.y, 0.1f));
+		const bool onRamp = isPointOnRamp(pos.x, pos.y);
 		if (isRaisedLayer(nodeLayer))
 		{
 			const PathfindCell *rc = raisedCellAt(nodeLayer, cx, cy);
@@ -1071,113 +1196,160 @@ PathfindLayerEnum Pathfinder::updateLayer(const PathfindObject &obj, PathfindLay
 		{
 			return cur;
 		}
-		return onRamp ? LAYER_RAMP : LAYER_GROUND;
+		// off the walkway: the ramp under the unit, else the wall top whose cell it is on (lane WALL-1's settle did this before lane WALL-4), else the ground
+		const PathfindCell *gc = m_blockOfMapCells.empty() ? nullptr : cellAt(cx, cy);
+		return onRamp ? LAYER_RAMP : (gc && isWallLayer((PathfindLayerEnum)gc->getLayer()) ? (PathfindLayerEnum)gc->getLayer() : LAYER_GROUND);
 	}
 	int mode = 3;
-	if (nodeLayer == LAYER_RAMP || (nodeLayer == LAYER_GROUND && isWallLayer(cur)))
+	if (nodeLayer == LAYER_RAMP)
 	{
 		mode = 1;
+	}
+	if (nodeLayer == LAYER_GROUND)
+	{
+		mode = isWallLayer(cur) ? 1 : 3;
 	}
 	if (isWallLayer(nodeLayer))
 	{
 		mode = 2;
-		if (!within(pos.z, getLayerHeight(pos.x, pos.y, nodeLayer), kLayerSwitch) || cur == LAYER_GROUND)
+		if (SimMath::absD(SimMath::subD((double)pos.z, (double)getLayerHeight(pos.x, pos.y, nodeLayer))) > (double)kLayerSwitch || cur == LAYER_GROUND)
 		{
 			mode = 1;
 		}
 	}
+	PathfindLayerEnum next = cur;
 	switch (mode)
 	{
 	case 1:
-		if (onRamp)
-		{
-			cur = LAYER_RAMP;
-		}
-		else if (cur == LAYER_RAMP)
-		{
-			cur = LAYER_GROUND;
-		}
+		next = isPointOnRamp(pos.x, pos.y) ? LAYER_RAMP : (cur == LAYER_RAMP ? LAYER_GROUND : cur);
 		break;
 	case 2:
-		cur = onRamp ? LAYER_RAMP : nodeLayer;
+		next = isPointOnRamp(pos.x, pos.y) ? LAYER_RAMP : nodeLayer;
 		break;
 	default:
-		cur = cur == LAYER_RAMP && onRamp ? LAYER_RAMP : LAYER_GROUND;
+		if (cur == LAYER_RAMP && isPointOnRamp(pos.x, pos.y))
+		{
+			return cur; // a unit on the ramp's surface stays on it: no setLayer, no AdjustLayer
+		}
+		next = LAYER_GROUND;
 		break;
 	}
-	return cur;
+	// Object::setLayer (RW 0x68BB9D), then AdjustLayer (RW 0x6F0741, the call RW 0x6F278D) on the new layer
+	return adjustLayer(obj, next);
 }
 
-PathfindLayerEnum Pathfinder::settleLayer(const PathfindObject &obj) const
+PathfindLayerEnum Pathfinder::adjustLayer(const PathfindObject &obj, PathfindLayerEnum layer)
 {
-	const PathfindLayerEnum cur = obj.getLayer();
 	if (m_wallPieces.empty() || m_blockOfMapCells.empty())
 	{
-		return cur == LAYER_GROUND ? cur : LAYER_GROUND; // no wall left: every unit is on the ground
+		return layer; // a map without wall pieces has no other layer under a unit (every cell is the ground's)
 	}
+	// Pathfinder::AdjustLayer (RW 0x6F0741 / BFME2 0x6EF2A6, decomp Pathfinder/PathfinderAdjustLayer.cpp:29-49; tier A, both editions). The cell under the
+	// unit by its footprint rule (RW 0x6EF30E: an odd footprint floors x / 10, an even one adds the half cell; off the grid, none) on the unit's layer
+	// (getCell RW 0x5E2E9C: a walkway's own cell, else the ground grid's)
 	const Coord3D &pos = obj.getPosition();
-	const PathfindCell *c = cellAt(SimMath::floorToInt(SimMath::mulf32(pos.x, 0.1f)), SimMath::floorToInt(SimMath::mulf32(pos.y, 0.1f)));
-	if (!c)
+	const bool center = (footprintSize(&obj) & 1) != 0;
+	Coord3D at = pos;
+	ICoord2D cell{ 0, 0 };
+	if (worldToCell(&at, center, &cell))
+	{
+		return layer;
+	}
+	const PathfindCell *c = getCell(layer, cell.x, cell.y);
+	if (!c || (PathfindLayerEnum)c->getLayer() == layer)
+	{
+		return layer;
+	}
+	PathfindLayerEnum result = layer;
+	// the cell's layer when its surface (TheTerrainLogic->getLayerHeight, vslot 0x1C) is above the unit's height + 10 (x87 fadd, stored as a float; fcompi)
+	const PathfindLayerEnum cl = (PathfindLayerEnum)c->getLayer();
+	if (getLayerHeight(pos.x, pos.y, cl) > SimMath::addf32(pos.z, kLayerSwitch))
+	{
+		result = cl;
+	}
+	// then (whatever the line above did) the first raised layer 2 .. 15 in use whose own cell at floor(x / 10) (RW 0x5E2EF2) is of that layer and not type 5,
+	// and whose height is within 10 of the unit's (x87 h - z in double, CRT fabs, < 10)
+	if (m_anyRaised)
+	{
+		const int rx = SimMath::floorToInt(SimMath::mulf32(pos.x, 0.1f)), ry = SimMath::floorToInt(SimMath::mulf32(pos.y, 0.1f));
+		for (int l = (int)LAYER_TOP; l <= (int)LAYER_RAISED_LAST; ++l)
+		{
+			const PathfindLayerEnum rl = (PathfindLayerEnum)l;
+			if (!raisedLayerInUse(rl))
+			{
+				continue;
+			}
+			const PathfindCell *rc = raisedCellAt(rl, rx, ry);
+			if (rc && (PathfindLayerEnum)rc->getLayer() == rl && rc->getType() != PathfindCell::CELL_BRIDGE_IMPASSABLE &&
+				SimMath::absD(SimMath::subD((double)getLayerHeight(pos.x, pos.y, rl), (double)pos.z)) < (double)kLayerSwitch)
+			{
+				result = rl;
+				break;
+			}
+		}
+	}
+	return result;
+}
+
+bool Pathfinder::straightStepKeepsLayer(const PathfindObject &obj, const Coord3D &from, const Coord3D &to, PathfindLayerEnum toLayer)
+{
+	if (m_wallPieces.empty() || m_blockOfMapCells.empty())
+	{
+		return true;
+	}
+	// RW 0x6F1B3E from RW 0x6F1C14 (BFME2 0x6F06A3, decomp Pathfinder/PathfinderIsValidHordeMemberRegularMovement.cpp:37-79; the same body in both editions,
+	// only struct offsets differ): the layer TheTerrainLogic->getLayerForDestination (RW 0x680A75) names at `from`; the same layer: valid
+	const PathfindLayerEnum fromLayer = getLayerAt(obj, from);
+	if (fromLayer == toLayer)
+	{
+		return true;
+	}
+	// the two cells on their layers by the unit's footprint rule (RW 0x6ECFDE, then getCell RW 0x5E2E9C). RW 0x6F1C49 .. 0x6F1C66 on the cell dwords: when the
+	// `to` cell's connect layer is not the `from` cell's layer and the `from` cell's connect layer is the `to` cell's layer, the step is refused. RotWK reads the
+	// `from` cell without a null test (a unit off the grid would crash it); the port skips the test there
+	const bool center = (footprintSize(&obj) & 1) != 0;
+	Coord3D f = from, t = to;
+	ICoord2D fc{ 0, 0 }, tc{ 0, 0 };
+	const PathfindCell *fromCell = worldToCell(&f, center, &fc) ? nullptr : getCell(fromLayer, fc.x, fc.y);
+	const PathfindCell *toCell = worldToCell(&t, center, &tc) ? nullptr : getCell(toLayer, tc.x, tc.y);
+	if (fromCell && toCell && toCell->getConnectLayer() != fromCell->getLayer() && fromCell->getConnectLayer() == toCell->getLayer())
+	{
+		return false;
+	}
+	// from a ramp or a raised walkway (any layer other than the ground and the walls): valid. From the ground or a wall top: only onto a ramp (RW 0x6F1C68 ..
+	// 0x6F1C81; the wall test RW 0x6E82B3)
+	if (fromLayer != LAYER_GROUND && (fromLayer == LAYER_RAMP || !isWallLayer(fromLayer)))
+	{
+		return true;
+	}
+	return toLayer == LAYER_RAMP;
+}
+
+PathfindLayerEnum Pathfinder::layerAfterSurfaceLoss(const PathfindObject &obj) const
+{
+	const PathfindLayerEnum cur = obj.getLayer();
+	if (cur == LAYER_GROUND)
 	{
 		return cur;
 	}
-	const PathfindLayerEnum cl = c->getLayer();
-	const bool onRamp = isPointOnRamp(pos.x, pos.y);
+	if (m_wallPieces.empty() || m_blockOfMapCells.empty())
+	{
+		return LAYER_GROUND; // no wall piece left: no surface but the ground
+	}
+	const Coord3D &pos = obj.getPosition();
+	const int cx = SimMath::floorToInt(SimMath::mulf32(pos.x, 0.1f)), cy = SimMath::floorToInt(SimMath::mulf32(pos.y, 0.1f));
+	const PathfindCell *c = cellAt(cx, cy);
+	if (!c || c->getLayer() != LAYER_GROUND || c->allowsLayer(cur))
+	{
+		return cur;
+	}
 	if (isRaisedLayer(cur))
 	{
-		// lane WALL-2 (INFERENCE S-4856): on a walkway while it has a passable cell under the unit; else the ramp under it, else the ground grid's layer
-		const PathfindCell *rc = raisedCellAt(cur, SimMath::floorToInt(SimMath::mulf32(pos.x, 0.1f)), SimMath::floorToInt(SimMath::mulf32(pos.y, 0.1f)));
+		const PathfindCell *rc = raisedCellAt(cur, cx, cy);
 		if (rc && rc->getType() != PathfindCell::CELL_BRIDGE_IMPASSABLE)
 		{
-			return cur;
-		}
-		return onRamp ? LAYER_RAMP : (isWallLayer(cl) ? cl : LAYER_GROUND);
-	}
-	if (cur == LAYER_GROUND)
-	{
-		if (isWallLayer(cl))
-		{
-			return cl; // put on a wall top
-		}
-		// a unit walking straight (a horde member to its slot) onto a ramp: the ramp (UpdateLayer's mode 1 for a unit without a path node). A ramp cell that
-		// does not connect to the ground is up the ramp: a ground unit on it is on the ramp even where the cell's edge is off the ramp's surface
-		return cl == LAYER_RAMP && (onRamp || c->getConnectLayer() != LAYER_GROUND) ? LAYER_RAMP : cur;
-	}
-	if (cur == LAYER_RAMP)
-	{
-		if (onRamp)
-		{
-			return cur;
-		}
-		if (m_anyRaised)
-		{
-			// lane WALL-2: off the ramp's top onto a walkway at the unit's height
-			const int cx = SimMath::floorToInt(SimMath::mulf32(pos.x, 0.1f)), cy = SimMath::floorToInt(SimMath::mulf32(pos.y, 0.1f));
-			for (int l = (int)LAYER_TOP; l <= (int)LAYER_RAISED_LAST; ++l)
-			{
-				const PathfindCell *rc = raisedCellAt((PathfindLayerEnum)l, cx, cy);
-				if (rc && rc->getType() != PathfindCell::CELL_BRIDGE_IMPASSABLE && within(pos.z, raisedLayerHeight((PathfindLayerEnum)l), kLayerSwitch))
-				{
-					return (PathfindLayerEnum)l;
-				}
-			}
-		}
-		if (isWallLayer(cl) && within(pos.z, wallHeightOf(cl), kLayerSwitch))
-		{
-			return cl; // off the ramp's top onto the wall (UpdateLayer's mode 2)
-		}
-		return cl == LAYER_GROUND ? LAYER_GROUND : cur;
-	}
-	if (isWallLayer(cur) && !c->allowsLayer(cur))
-	{
-		if (cl == LAYER_RAMP)
-		{
-			return onRamp ? LAYER_RAMP : cur; // from the wall down onto its ramp
-		}
-		if (!isWallLayer(cl))
-		{
-			return LAYER_GROUND; // the wall under the unit is gone
+			return cur; // the walkway is still there
 		}
 	}
-	return cur;
+	return isPointOnRamp(pos.x, pos.y) ? cur : LAYER_GROUND;
 }

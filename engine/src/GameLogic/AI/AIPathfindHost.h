@@ -61,6 +61,10 @@ struct PathfindWallSurface
 	float height = 0.0f;                                   // a wall top: its height; a ramp: its highest point
 	// the triangle under (x, y) (edges included) and its height there; false when no triangle holds the point
 	bool heightAt(float x, float y, float &z) const;
+	// lane WALL-4: a ramp's Bridge plane (RW 0x68044E), made from the triangles on first use and kept (the triangles never change): 0 not made yet, 1 a plane
+	// through `planePoint` with the normal `planeNormal`, 2 none (getRamp found no ramp, or the plane is vertical). Neither saved nor hashed
+	mutable int planeState = 0;
+	mutable Coord3D planePoint{ 0.0f, 0.0f, 0.0f }, planeNormal{ 0.0f, 0.0f, 0.0f };
 };
 
 struct PathfindWallGeometry

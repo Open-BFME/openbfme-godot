@@ -309,22 +309,90 @@ TEST_CASE("wall1 walls: a unit's layer follows the path node it is on (Pathfinde
 	CHECK(w.pf->updateLayer(*u, LAYER_GROUND) == LAYER_WALL_FIRST);
 	u->pos = { 120.0f, 100.0f, 60.0f };
 	CHECK(w.pf->updateLayer(*u, LAYER_RAMP) == LAYER_RAMP);
-	// settle: a ground unit put on the wall top takes the wall's layer; a ramp unit off the ramp on the ground takes the ground
-	LayeredUnit *placed = w.unit(3, 200.0f, 100.0f, 60.0f, LAYER_GROUND);
-	CHECK(w.pf->settleLayer(*placed) == LAYER_WALL_FIRST);
-	LayeredUnit *off = w.unit(4, 60.0f, 100.0f, 0.0f, LAYER_RAMP);
-	CHECK(w.pf->settleLayer(*off) == LAYER_GROUND);
-	// a unit walking straight (no path node): a ground unit on the ramp takes the ramp, a ramp unit off its top at the wall's height the wall, a wall unit
-	// stepping onto the ramp the ramp
-	LayeredUnit *walker = w.unit(5, 125.0f, 100.0f, 30.0f, LAYER_GROUND);
-	CHECK(w.pf->settleLayer(*walker) == LAYER_RAMP);
-	LayeredUnit *topped = w.unit(6, 155.0f, 100.0f, 58.0f, LAYER_RAMP);
-	CHECK(w.pf->settleLayer(*topped) == LAYER_WALL_FIRST);
-	LayeredUnit *down = w.unit(7, 125.0f, 100.0f, 60.0f, LAYER_WALL_FIRST);
-	CHECK(w.pf->settleLayer(*down) == LAYER_RAMP);
-	// a ground unit beside the ramp, under its side, stays on the ground (the cell is the ramp's, the unit is not on the ramp's surface: x 95 is off the ramp)
-	LayeredUnit *beside = w.unit(8, 95.0f, 100.0f, 0.0f, LAYER_GROUND);
-	CHECK(w.pf->settleLayer(*beside) == LAYER_GROUND);
+	// lane WALL-4: UpdateLayer ends with AdjustLayer (RW 0x6F278D): a ground unit at the terrain inside the wall's cells with a ground node ahead stays on the
+	// ground by mode 3, and AdjustLayer puts it on the wall top 60 above it
+	LayeredUnit *inside = w.unit(3, 200.0f, 100.0f, 0.0f, LAYER_GROUND);
+	CHECK(w.pf->updateLayer(*inside, LAYER_GROUND) == LAYER_WALL_FIRST);
+}
+
+TEST_CASE("wall4 layers: Pathfinder::AdjustLayer (RW 0x6F0741): a unit takes the cell's layer only when that surface is more than 10 above it; the surface loss rule")
+{
+	WallWorld w;
+	// below the wall top (60) by more than 10: onto the wall; at its height: the unit keeps its layer (RotWK has no lift for a ground unit at the wall's height)
+	LayeredUnit *under = w.unit(1, 200.0f, 100.0f, 0.0f, LAYER_GROUND);
+	CHECK(w.pf->adjustLayer(*under, LAYER_GROUND) == LAYER_WALL_FIRST);
+	LayeredUnit *level = w.unit(2, 200.0f, 100.0f, 60.0f, LAYER_GROUND);
+	CHECK(w.pf->adjustLayer(*level, LAYER_GROUND) == LAYER_GROUND);
+	// the ramp's surface at x 125 is 30: from the ground below it onto the ramp; from 30 itself not
+	LayeredUnit *foot = w.unit(3, 125.0f, 100.0f, 0.0f, LAYER_GROUND);
+	CHECK(w.pf->adjustLayer(*foot, LAYER_GROUND) == LAYER_RAMP);
+	LayeredUnit *on = w.unit(4, 125.0f, 100.0f, 30.0f, LAYER_GROUND);
+	CHECK(w.pf->adjustLayer(*on, LAYER_GROUND) == LAYER_GROUND);
+	// AdjustLayer never puts a unit down onto the ground grid's surface: a ramp unit over the ground beside the ramp, a wall unit over the ramp, keep their layers
+	LayeredUnit *off = w.unit(5, 60.0f, 100.0f, 0.0f, LAYER_RAMP);
+	CHECK(w.pf->adjustLayer(*off, LAYER_RAMP) == LAYER_RAMP);
+	LayeredUnit *down = w.unit(6, 125.0f, 100.0f, 60.0f, LAYER_WALL_FIRST);
+	CHECK(w.pf->adjustLayer(*down, LAYER_WALL_FIRST) == LAYER_WALL_FIRST);
+	// the cell's own layer: nothing to do
+	LayeredUnit *top = w.unit(7, 200.0f, 100.0f, 60.0f, LAYER_WALL_FIRST);
+	CHECK(w.pf->adjustLayer(*top, LAYER_WALL_FIRST) == LAYER_WALL_FIRST);
+	// a ground unit at the terrain under the ramp's side (cell (12, 8), a type 5 cell of the ramp's layer, off the ramp's triangles): the ramp's plane there is
+	// 30 above it, so RotWK's rule puts it on the ramp (no unit stands on a type 5 cell in play; lane WALL-1's settle kept it on the ground)
+	LayeredUnit *side = w.unit(9, 125.0f, 85.0f, 0.0f, LAYER_GROUND);
+	CHECK(w.pf->adjustLayer(*side, LAYER_GROUND) == LAYER_RAMP);
+	// the surface loss rule (INFERENCE S-1750): a ramp unit over a plain ground cell off the ramp takes the ground; a wall unit on its wall, a ramp unit on the
+	// ramp and a ground unit keep their layers
+	CHECK(w.pf->layerAfterSurfaceLoss(*off) == LAYER_GROUND);
+	CHECK(w.pf->layerAfterSurfaceLoss(*top) == LAYER_WALL_FIRST);
+	LayeredUnit *rampUnit = w.unit(8, 125.0f, 100.0f, 30.0f, LAYER_RAMP);
+	CHECK(w.pf->layerAfterSurfaceLoss(*rampUnit) == LAYER_RAMP);
+	// a wall unit over a plain ground cell beside the wall (the wall top gone from under it) takes the ground
+	LayeredUnit *lost = w.unit(10, 200.0f, 140.0f, 60.0f, LAYER_WALL_FIRST);
+	CHECK(w.pf->layerAfterSurfaceLoss(*lost) == LAYER_GROUND);
+}
+
+TEST_CASE("wall4 layers: GetWallHeight (RW 0x6F0B27) takes the layer of the cell under the point; off the ramp's triangles the ramp's plane at the point")
+{
+	WallWorld w;
+	// a wall layer over a ground cell: the terrain; over the wall's cells: its height
+	CHECK(w.pf->getLayerHeight(200.0f, 140.0f, LAYER_WALL_FIRST) == 0.0f);
+	CHECK(w.pf->getLayerHeight(200.0f, 100.0f, LAYER_WALL_FIRST) == 60.0f);
+	// the ramp layer over the wall top's joint (cell 15, off the ramp's surface): the wall's height; over the ramp's surface: the ramp's
+	CHECK(w.pf->getLayerHeight(155.0f, 100.0f, LAYER_RAMP) == 60.0f);
+	CHECK(w.pf->getLayerHeight(125.0f, 100.0f, LAYER_RAMP) == 30.0f);
+	// a wall layer over the ramp's surface (a ramp cell, the point on the ramp): the ramp's
+	CHECK(w.pf->getLayerHeight(125.0f, 100.0f, LAYER_WALL_FIRST) == 30.0f);
+	// the ramp's side cell (12, 8): the point (125, 85) is off the triangles, the corner (135, 95) on them: the Bridge's plane at (125, 85), the ramp's 30
+	// there (the plane rises 60 over x 100 .. 150 and does not change along y)
+	REQUIRE(w.cell(12, 8).getLayer() == LAYER_RAMP);
+	CHECK_FALSE(w.pf->isPointOnRamp(125.0f, 85.0f));
+	CHECK(w.pf->getLayerHeight(125.0f, 85.0f, LAYER_RAMP) == 30.0f);
+}
+
+TEST_CASE("wall4 layers: the layer test of IsValidHordeMemberRegularMovement (RW 0x6F1B3E): from the ground or a wall only onto a ramp; RotWK's connect test")
+{
+	WallWorld w;
+	LayeredUnit *u = w.unit(1, 85.0f, 100.0f, 0.0f, LAYER_GROUND);
+	auto step = [&](float fx, float fy, float fz, float tx, float ty, float tz) {
+		const Coord3D from{ fx, fy, fz }, to{ tx, ty, tz };
+		u->pos = from;
+		return w.pf->straightStepKeepsLayer(*u, from, to, w.pf->getLayerAt(*u, to));
+	};
+	// on one layer: valid (the ground, the ramp, the wall top)
+	CHECK(step(60.0f, 100.0f, 0.0f, 70.0f, 100.0f, 0.0f));
+	CHECK(step(120.0f, 100.0f, 24.0f, 130.0f, 100.0f, 36.0f));
+	CHECK(step(180.0f, 100.0f, 60.0f, 190.0f, 100.0f, 60.0f));
+	// the ground onto the ramp: valid (the plain cell 8 onto the ramp's cell 10)
+	CHECK(step(85.0f, 100.0f, 0.0f, 105.0f, 100.0f, 6.0f));
+	// the ground onto the wall top, the wall top onto the ground: refused (only a ramp takes a step off the ground or a wall)
+	CHECK_FALSE(step(200.0f, 140.0f, 0.0f, 200.0f, 110.0f, 0.0f));
+	CHECK_FALSE(step(200.0f, 100.0f, 60.0f, 200.0f, 125.0f, 60.0f));
+	// from the ramp onto the wall top's joint (cell 15 connects to the ramp): valid (a step from the ramp may change its layer)
+	CHECK(step(145.0f, 100.0f, 58.0f, 155.0f, 100.0f, 60.0f));
+	// RW 0x6F1C49 .. 0x6F1C66: from a cell that connects to the target's layer onto a cell that does not connect back, refused: the ramp's foot (cell 9, the
+	// ground connected to the ramp) onto the ramp (cell 10, no connect layer), and the wall's joint (cell 15) down onto the ramp's top (cell 14)
+	CHECK_FALSE(step(95.0f, 100.0f, 0.0f, 105.0f, 100.0f, 6.0f));
+	CHECK_FALSE(step(155.0f, 100.0f, 60.0f, 145.0f, 100.0f, 54.0f));
 }
 
 TEST_CASE("wall1 walls: a destroyed wall piece's cells go back to the ground; the next piece at the same height shares the layer, a taller one keeps its cells")
@@ -839,6 +907,37 @@ TEST_CASE("wall1 walls retail: Helm's Deep's wall sections are walkable: their W
 	{
 		CHECK(h > 0.0f); // tolerance: a wall top above the map's zero (the meshes are at the sections' world z)
 	}
+}
+
+TEST_CASE("wall4 layers retail: Helm's Deep's map objects take their layer at placement (RW 0x62E14C): none with an AI on a wall cell at its wall's height is on the ground")
+{
+	OPENBFME_REQUIRE_START(s);
+	WallGame g(*s);
+	g.frames(2);
+	Pathfinder &pf = g.game->ai().pathfinder();
+	int onWallCells = 0, groundAtWallHeight = 0;
+	for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
+	{
+		AIUpdateInterface *ai = o->getAIUpdateInterface();
+		if (!ai || o->getContainedBy())
+		{
+			continue;
+		}
+		const Coord3D &p = *o->getPosition();
+		const PathfindCell *c = pf.cellAt((int)std::floor(p.x / 10.0f), (int)std::floor(p.y / 10.0f));
+		if (!c || !isWallLayer((PathfindLayerEnum)c->getLayer()))
+		{
+			continue;
+		}
+		++onWallCells;
+		if (ai->adapter().getLayer() == LAYER_GROUND && p.z == pf.getLayerHeight(p.x, p.y, (PathfindLayerEnum)c->getLayer()))
+		{
+			++groundAtWallHeight;
+		}
+	}
+	MESSAGE(onWallCells << " objects with an AI on wall cells, " << groundAtWallHeight << " of them on the ground layer at the wall's height");
+	CHECK(onWallCells == 1); // measured on the retail map (an engine pin: the number of the map's AI objects standing on wall cells)
+	CHECK(groundAtWallHeight == 0);
 }
 
 TEST_CASE("wall1 walls retail: on Helm's Deep a hero ordered onto a wall top walks up onto it and stands at the wall's height, then walks back down")

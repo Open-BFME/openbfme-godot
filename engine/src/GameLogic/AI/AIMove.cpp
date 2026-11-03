@@ -23,8 +23,9 @@ const char *const kStopPortalMineshaft = kStopSpecialLayer;
 const char *const kStopUpdate =
 	"S-166 the movement-complete block of AIUpdateInterface::update (RW 0x6695EF) skips the object goal refresh (0x68B411, 0x6EF225, 0x68B3BD), the status bit clears and the turret update; the state machine's sleep comes from the host";
 const char *const kStopExplicit =
-	"S-166 doLocomotor goal types 2 and 4 (RW 0x669A01-0x669B95): the validation of a straight move (RW 0x6F1B3E) is approximated by the PATH-1 line test or a passable "
-	"target cell, and the fallback path of a blocked straight move (RW 0x6F74D0) by a pathfinder search (the two bodies were not fully read)";
+	"S-166 doLocomotor goal types 2 and 4 (RW 0x669A01-0x669B95): the cell test of a straight move's validation (RW 0x6F1B3E) is approximated by the PATH-1 line test "
+	"or a passable target cell on the target's layer (its layer test is ported, lane WALL-4), and the fallback path of a blocked straight move (RW 0x6F74D0) by a "
+	"pathfinder search (its body was not fully read)";
 const char *const kStopDistance =
 	"S-166 getLocomotorDistanceToGoal (RW 0x664127) is the ZH body (path remaining distance, at least the straight distance to the last node), the retail body was not read";
 const char *const kStopRequests =
@@ -775,8 +776,19 @@ bool AIMover::stepValid(const Coord3D &from, const Coord3D &to)
 	// performance (every profile, the same answers): the three tests only read, so their OR is asked cheapest first; the line walk (the costly one, it reads
 	// every unit on the line's footprints) only runs for a step whose end cell the terrain refuses (RW asks the goal cell, the line, then the terrain)
 	Coord3D at = to;
-	const bool valid = stepEndsInGoalCell(at) || m_pf.validMovementPosition(&obj, info, obj.getLayer(), &at) ||
-		m_pf.isLinePassable(&obj, info.validSurfaces, obj.getLayer(), from, at, false, true);
+	bool valid = stepEndsInGoalCell(at);
+	if (!valid)
+	{
+		// lane WALL-4: RW 0x6F1B3E tests the step's end on the layer RW 0x680A75 names there (a wall top, a ramp, a walkway), then its layer change
+		// (Pathfinder::straightStepKeepsLayer). The end's test keeps S-166's form (the terrain or the line); a map without wall pieces asks the unit's layer, as before
+		const bool walls = m_pf.hasWallPieces() && m_pf.isMapReady();
+		const PathfindLayerEnum toLayer = walls ? m_pf.getLayerAt(obj, to) : obj.getLayer();
+		valid = m_pf.validMovementPosition(&obj, info, toLayer, &at) || m_pf.isLinePassable(&obj, info.validSurfaces, obj.getLayer(), from, at, false, true);
+		if (valid && walls)
+		{
+			valid = m_pf.straightStepKeepsLayer(obj, from, to, toLayer);
+		}
+	}
 	m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
 	return valid;
 }
@@ -816,7 +828,15 @@ void AIMover::refreshLayer()
 	{
 		return;
 	}
-	PathfindLayerEnum layer = m_pf.settleLayer(obj);
+	// lane WALL-4: RotWK's doLocomotor sets no layer before its goal's branch (the branches do: UpdateLayer on a path, RW 0x680A75 after an explicit goal's
+	// step). The port keeps two rules of its own here (INFERENCE, S-4840 and S-1750): a unit whose wall top, walkway or ramp went away stands on the ground;
+	// and AdjustLayer (RW 0x6F0741) on every unit, because the port's wall tops are a cell wider than RotWK's (no edge pass, S-4840): a unit at a wall's foot
+	// can stand on a wall-top cell, and the search refuses that cell to a ground unit; AdjustLayer puts it on the wall only when the top is more than 10 above
+	PathfindLayerEnum layer = m_pf.layerAfterSurfaceLoss(obj);
+	if (layer == obj.getLayer())
+	{
+		layer = m_pf.adjustLayer(obj, layer);
+	}
 	if (layer != obj.getLayer())
 	{
 		m_host.setLayer(layer);
@@ -835,32 +855,6 @@ void AIMover::refreshLayer()
 			{
 				p.z = z;
 				m_host.setPosition(p);
-			}
-		}
-	}
-	// lane WALL-2: a path goal (type 1) takes RotWK's layer update in doLocomotor itself (RW 0x669D3D .. 0x669D66: the point ahead's layer); a type 4 goal with a
-	// path (the horde member update) keeps lane WALL-1's (INFERENCE, S-4840)
-	if (m_path && m_goalType == AIGOAL_EXPLICIT_WITH_PATH)
-	{
-		// the path node nearest the unit: the current segment's start or its end (BFME2 doLocomotor 0x66A3A0 asks gd_00364521)
-		const PathNode *node = m_path->currentNode() ? m_path->currentNode() : m_path->getFirstNode();
-		if (node && node->getNext())
-		{
-			const Coord3D &p = obj.getPosition();
-			const Coord3D *a = node->getPosition(), *b = node->getNext()->getPosition();
-			const float da = SimMath::sumSquares2(SimMath::subf32(a->x, p.x), SimMath::subf32(a->y, p.y));
-			const float db = SimMath::sumSquares2(SimMath::subf32(b->x, p.x), SimMath::subf32(b->y, p.y));
-			if (db < da)
-			{
-				node = node->getNext();
-			}
-		}
-		if (node)
-		{
-			layer = m_pf.updateLayer(obj, node->getLayer());
-			if (layer != obj.getLayer())
-			{
-				m_host.setLayer(layer);
 			}
 		}
 	}
@@ -1024,6 +1018,17 @@ unsigned AIMover::doLocomotor()
 				const float rem = SimMath::addf32(m_path->remainingDistanceFrom(pt), m_pathExtra);
 				loco->locomotorMoveTowardsPosition(lh, pt.position, rem, speed);
 				m_path->updateClosestSegment(obj.getPosition());
+			}
+			// lane WALL-4, RW 0x669B95 .. 0x669BA8 (BFME2 doLocomotor 0x66A3A0, decomp AIUpdateInterface_doLocomotor.cpp:462-506): both explicit goals end with the
+			// layer RW 0x680A75 names where the unit now stands, stored straight into the object (RW 0x68BBF4: obj + 0x428, not Object::setLayer RW 0x68BB9D)
+			if (m_pf.isMapReady())
+			{
+				const Coord3D now = obj.getPosition();
+				const PathfindLayerEnum here = m_pf.getLayerAt(obj, now);
+				if (here != obj.getLayer())
+				{
+					m_host.setLayer(here);
+				}
 			}
 			m_doFinalPosition = false;
 			break;

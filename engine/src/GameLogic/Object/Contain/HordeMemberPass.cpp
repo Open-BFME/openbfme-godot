@@ -1008,8 +1008,7 @@ void HordeContain::moveHub(Object &member, const Coord3D &destIn, float orientat
 		// shared was snapped onto the slot and sent 1 .. 5 units away again every few frames (the cavalry's melee jitter, lane SMOOTH-3).
 		if (!ownerMoving)
 		{
-			member.setPosition(&q);
-			a->settleOnLayer(); // lane WALL-1: a member put on a wall top's slot stands on the wall
+			member.setPosition(&q); // lane WALL-4: RotWK's near arm sets no layer (its pass runs AdjustLayer on the horde, RW 0x874015, not ported: S-4840)
 			q = *member.getPosition();
 			host.setPendingPosition(q);
 			if (world.mapReady())
