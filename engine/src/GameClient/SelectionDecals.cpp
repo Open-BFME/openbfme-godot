@@ -234,9 +234,12 @@ namespace
 constexpr std::uint32_t kMergeStyle = 0x1000u; // SHADOW_MERGE_DECAL
 constexpr int kPassAlphaRef = 0x60;            // INFERENCE (S-2522): ZH ShaderClass::Apply's ALPHAREF for the alpha-tested shaders
 // lane HERORING-1: the styles flushDecals draws with the blended alpha shader (RW 0x509A1F -> ShaderClass 0x1198B3) and setOpacity colours as an alpha
-// decal (RW 0x73228B, mask 0x1420): SHADOW_ALPHA_DECAL 0x20 and SHADOW_ALPHA_DECAL_DYNAMIC 0x400. Not 0x2000 (SHADOW_DECAL_TERRAIN_CLAIM): RotWK moves it onto the claim grid
-// (RW 0x50C48B) and colours its vertices from the TerrainResourceManager (RW 0x50D264)
+// decal (RW 0x73228B, mask 0x1420): SHADOW_ALPHA_DECAL 0x20 and SHADOW_ALPHA_DECAL_DYNAMIC 0x400. SHADOW_DECAL_TERRAIN_CLAIM 0x2000 shares the shader but
+// RotWK moves it onto the claim grid (RW 0x50C48B) and colours its vertices from the TerrainResourceManager (RW 0x50D264): lane PLACEDECAL-1 draws it
+// only with that vertex mask (kTerrainClaimStyle)
 constexpr std::uint32_t kAlphaStyles = 0x20u | 0x400u;
+// lane PLACEDECAL-1: SHADOW_DECAL_TERRAIN_CLAIM, drawn as an alpha decal when it carries its vertex mask (the placement claim decal)
+constexpr std::uint32_t kTerrainClaimStyle = 0x2000u;
 
 // bilinear RGBA at (u, v) in [0, 1], v = 0 the top row (the GPU filters before the alpha test)
 void sample(const DecalImage &img, float u, float v, float out[4])
@@ -465,6 +468,8 @@ bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::f
 	out.alphaRef = settings.useSimpleMergeDecals ? std::max(0, std::min(255, (int)(settings.opacityOfSimpleMergeDecals * 255.0f))) : kPassAlphaRef;
 	out.decals = 0;
 	out.alphaDecals = 0;
+	out.maskDecals = 0;
+	out.drawn.assign(decals.size(), 0);
 	out.maxPerCell = 0;
 	out.maxAlphaPerCell = 0;
 	out.cellsX = out.cellsY = 0;
@@ -511,11 +516,21 @@ bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::f
 			}
 			merge.push_back(it);
 		}
-		else if (d.style & kAlphaStyles)
+		else if ((d.style & kAlphaStyles) || ((d.style & kTerrainClaimStyle) && d.maskW > 0))
 		{
+			// lane PLACEDECAL-1: a SHADOW_DECAL_TERRAIN_CLAIM decal with its vertex mask is drawn with the same shader (RW 0x509A1F: 0x2000 -> 0x1198B3), its
+			// alpha weighted per terrain vertex (RW 0x50D264); a mask (of any decal) holds one alpha a vertex
+			if ((d.maskW > 0 || d.maskH > 0 || !d.maskAlpha.empty()) &&
+				(d.maskW <= 0 || d.maskH <= 0 || d.maskAlpha.size() != (size_t)d.maskW * (size_t)d.maskH))
+			{
+				note("selection decal " + d.texture + ": its vertex mask has " + std::to_string(d.maskAlpha.size()) + " alphas for " +
+					std::to_string(d.maskW) + " x " + std::to_string(d.maskH) + " vertices (not drawn)");
+				continue;
+			}
 			// lane HERORING-1: RotWK's flushDecals draws these with one blended shader (RW 0x509A1F: ShaderClass 0x1198B3, SRC_ALPHA / ONE_MINUS_SRC_ALPHA,
 			// no alpha test); only Texture is drawn (Texture2 of a non-merge decal is not used)
-			Item it{ &d, {}, {}, true, d.size * 0.5f * (d.angle != 0.0f ? 1.41421356f : 1.0f) };
+			const float extent = std::max(d.size, d.sizeY > 0.0f ? d.sizeY : d.size); // lane PLACEDECAL-1: the longer side
+			Item it{ &d, {}, {}, true, extent * 0.5f * (d.angle != 0.0f ? 1.41421356f : 1.0f) };
 			if (!rect(d.texture, it.tex) || it.tex.w <= 0 || it.tex.h <= 0)
 			{
 				note("selection decal texture " + d.texture + " not found (the decal is not drawn)");
@@ -610,7 +625,13 @@ bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::f
 	const size_t entries = mergeEntries + (size_t)astart[cells];
 	out.cellOffset = (int)(items.size() * 4);
 	out.indexOffset = out.cellOffset + (int)cells;
-	const size_t texels = (size_t)out.indexOffset + entries;
+	// lane PLACEDECAL-1: the vertex masks after the index list, a header texel and one texel a vertex each
+	size_t maskTexels = 0;
+	for (const Item &it : items)
+	{
+		maskTexels += it.alpha && it.d->maskW > 0 ? 1u + it.d->maskAlpha.size() : 0u;
+	}
+	const size_t texels = (size_t)out.indexOffset + entries + maskTexels;
 	out.rows = (int)((texels + MergeDecalGrid::kWidth - 1) / MergeDecalGrid::kWidth);
 	// every texel the shader reads is written below; the last row's tail is never read (the buffer keeps its capacity from frame to frame)
 	out.texels.resize((size_t)out.rows * MergeDecalGrid::kWidth * 4);
@@ -634,10 +655,12 @@ bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::f
 		p[11] = (float)a.h;
 		if (items[i].alpha)
 		{
-			// lane HERORING-1: an alpha decal's turn as its cosine and sine (sel_alpha_at); no Texture2
+			// lane HERORING-1: an alpha decal's turn as its cosine and sine (sel_alpha_at); no Texture2. Lane PLACEDECAL-1: its y size and its terrain-only
+			// flag or vertex mask (written below)
 			p[12] = std::cos(d.angle);
 			p[13] = std::sin(d.angle);
-			p[14] = p[15] = 0.0f;
+			p[14] = d.sizeY > 0.0f ? d.sizeY : d.size;
+			p[15] = d.terrainOnly || d.maskW > 0 ? -1.0f : 0.0f;
 		}
 		else
 		{
@@ -669,10 +692,38 @@ bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::f
 				float *e = t + ((size_t)out.indexOffset + at) * 4;
 				e[0] = items[i].d->position.x;
 				e[1] = items[i].d->position.y;
-				e[2] = items[i].d->size;
+				e[2] = std::max(items[i].d->size, items[i].d->sizeY); // lane PLACEDECAL-1: the longer side (the circumcircle test)
 				e[3] = items[i].d->raised ? -(float)(i + 1) : (float)i; // lane SELWALL-1: the terrain skips a raised decal
 			}
 		}
+	}
+	// lane PLACEDECAL-1: the vertex masks
+	size_t m = (size_t)out.indexOffset + entries;
+	for (size_t i = 0; i < items.size(); ++i)
+	{
+		const SelectionDecal &d = *items[i].d;
+		if (!items[i].alpha || d.maskW <= 0)
+		{
+			continue;
+		}
+		t[i * 16 + 15] = (float)m;
+		float *hdr = t + m * 4;
+		hdr[0] = (float)d.maskVx0;
+		hdr[1] = (float)d.maskVy0;
+		hdr[2] = (float)d.maskW;
+		hdr[3] = (float)d.maskH;
+		for (size_t k = 0; k < d.maskAlpha.size(); ++k)
+		{
+			float *v = t + (m + 1 + k) * 4;
+			v[0] = (float)d.maskAlpha[k];
+			v[1] = v[2] = v[3] = 0.0f;
+		}
+		m += 1 + d.maskAlpha.size();
+		++out.maskDecals;
+	}
+	for (const Item &it : items)
+	{
+		out.drawn[(size_t)(it.d - decals.data())] = 1;
 	}
 	return true;
 }
@@ -790,26 +841,62 @@ bool BuildSelectionDecalGrid(const std::vector<SelectionDecal> &decals, const st
 		return true;
 	}
 	std::vector<SelectionDecal> others;
-	for (const SelectionDecal &d : decals)
+	std::vector<size_t> at; // lane PLACEDECAL-1: each other decal's index in `decals` (out.drawn is the input's)
+	for (size_t i = 0; i < decals.size(); ++i)
 	{
-		if (!(d.style & kMergeStyle))
+		if (!(decals[i].style & kMergeStyle))
 		{
-			others.push_back(d);
+			others.push_back(decals[i]);
+			at.push_back(i);
 		}
 	}
 	std::string notes; // the other decals' notes are already in `error` from the first build
 	if (!others.empty() && BuildMergeDecalGrid(others, rect, settings, out, &notes))
 	{
+		std::vector<std::uint8_t> drawn(decals.size(), 0);
+		for (size_t k = 0; k < at.size() && k < out.drawn.size(); ++k)
+		{
+			drawn[at[k]] = out.drawn[k];
+		}
+		out.drawn = std::move(drawn);
 		return true;
 	}
 	out = MergeDecalGrid();
 	return false;
 }
 
+Coord3D DecalShadowCentre(const Coord3D &p, float offsetX, float offsetY, float angle)
+{
+	const float co = std::cos(angle), si = std::sin(angle);
+	return Coord3D{ p.x + offsetX * co + offsetY * si, p.y + offsetX * si - offsetY * co, p.z };
+}
+
+std::uint32_t DecalShadowColor(unsigned opacityPeak)
+{
+	return ((std::uint32_t)opacityPeak << 24) | 0xFFFFFFu; // the low byte (RW 0x7322AA)
+}
+
 int SelectionDecalShaderMode(const MergeDecalGrid &grid)
 {
 	return (grid.decals == 0 ? 0 : (grid.simple ? 2 : 1)) + (grid.alphaDecals > 0 ? 4 : 0);
 }
+
+namespace
+{
+// lane PLACEDECAL-1: a vertex mask's alpha at the world point (x, y): bilinear between the four vertices around it, clamped to the mask (sel_mask_at)
+float maskAt(const float *t, size_t header, float x, float y)
+{
+	const float *h = t + header * 4;
+	const int w = (int)h[2], hh = (int)h[3];
+	const float fx = std::max(0.0f, std::min((float)(w - 1), x / 10.0f - h[0]));
+	const float fy = std::max(0.0f, std::min((float)(hh - 1), y / 10.0f - h[1]));
+	const int x0 = std::min((int)fx, w - 1), y0 = std::min((int)fy, hh - 1);
+	const int x1 = std::min(x0 + 1, w - 1), y1 = std::min(y0 + 1, hh - 1);
+	const float tx = fx - (float)x0, ty = fy - (float)y0;
+	auto a = [&](int vx, int vy) { return t[(header + 1 + (size_t)vy * (size_t)w + (size_t)vx) * 4]; };
+	return (a(x0, y0) * (1.0f - tx) + a(x1, y0) * tx) * (1.0f - ty) + (a(x0, y1) * (1.0f - tx) + a(x1, y1) * tx) * ty;
+}
+} // namespace
 
 bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas, float x, float y, float z, DecalReceiver receiver,
 	const std::uint8_t surface[3], std::uint8_t out[3], const float *shadow)
@@ -843,20 +930,25 @@ bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas
 					continue;
 				}
 				const float *d = t + (size_t)(e[3] < 0.0f ? -e[3] - 1.0f : e[3]) * 16;
-				if (receiver == DecalReceiver::Wall && !(std::fabs(z - d[7]) <= kSelectionDecalMaxHeight))
+				if (receiver == DecalReceiver::Wall && (d[15] != 0.0f || !(std::fabs(z - d[7]) <= kSelectionDecalMaxHeight)))
 				{
-					continue;
+					continue; // lane PLACEDECAL-1: a terrain-only decal draws on no wall top
 				}
-				// the top-down projection (BFME2 decomp W3DProjectedShadowDecalHelpers.cpp): u along the turned x axis, v toward -y at angle 0
+				// the top-down projection (BFME2 decomp W3DProjectedShadowDecalHelpers.cpp): u along the turned x axis, v toward -y at angle 0; lane
+				// PLACEDECAL-1: u over the decal's x size, v over its y size
 				const float co = d[12], si = d[13];
-				const float u = (dx * co + dy * si) / e[2] + 0.5f, v = (dx * si - dy * co) / e[2] + 0.5f;
+				const float u = (dx * co + dy * si) / d[2] + 0.5f, v = (dx * si - dy * co) / d[14] + 0.5f;
 				if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f)
 				{
 					continue;
 				}
 				float s[4];
 				atlasSample(atlas, d + 8, u, v, s);
-				const float a = s[3] * d[3] / 255.0f;
+				float a = s[3] * d[3] / 255.0f;
+				if (d[15] > 0.0f)
+				{
+					a *= maskAt(t, (size_t)d[15], x, y) / 255.0f; // lane PLACEDECAL-1: the vertex mask
+				}
 				for (int ch = 0; ch < 3; ++ch)
 				{
 					c[ch] = c[ch] * (1.0f - a) + s[ch] * d[4 + ch] * a;
@@ -918,7 +1010,7 @@ bool MergeDecalAtlas::update(const std::vector<SelectionDecal> &decals, const Se
 	for (const SelectionDecal &d : decals)
 	{
 		const bool merge = (d.style & kMergeStyle) != 0;
-		if (!merge && !(d.style & kAlphaStyles))
+		if (!merge && !(d.style & kAlphaStyles) && !((d.style & kTerrainClaimStyle) && d.maskW > 0))
 		{
 			continue;
 		}

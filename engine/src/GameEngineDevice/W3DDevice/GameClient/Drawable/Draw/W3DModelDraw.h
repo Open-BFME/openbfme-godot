@@ -199,7 +199,7 @@ struct ModelConditionInfo
 	ModelShadowInfo shadow;
 	unsigned shadowOpacityStart = 0;      ///< ShadowOpacityStart / Peak / End: parseUnsignedInt, no maximum (RW 0x42ECB2 with userData 0)
 	float shadowOpacityFadeInTime = 0.0f;
-	unsigned shadowOpacityPeak = 0;
+	unsigned shadowOpacityPeak = 0xFF;    ///< lane PLACEDECAL-1: the condition info's constructor sets Peak 0xFF, Start / End 0 (RW 0x4C30A8 / 0x4C308E)
 	float shadowOpacityFadeOutTime = 0.0f;
 	unsigned shadowOpacityEnd = 0;
 	std::vector<ModelTurretInfo> turrets;

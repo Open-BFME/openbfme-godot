@@ -293,8 +293,6 @@ struct HudDevice : public AptNativeHook
 	IconUIOp dragBox;
 	unsigned long long dragBoxFrames = 0;
 	void drawIconOps(RID parent);
-	// lane UI-4: the Node3D beside the camera the HUD's own Decal nodes live under (lane HERORING-1: the selection decals are in the shaders' grid)
-	uint64_t decalRootId = 0;
 	unsigned decalsDrawn = 0;
 	// lane SELPERF-1: the SHADOW_MERGE_DECAL decals drawn by the terrain shader (godot/shaders/selection_decals.gdshaderinc) from the grid of this frame
 	// (BuildMergeDecalGrid) in the global sel_data and their textures in the global sel_atlas; the atlas grows when a texture is new to it
@@ -329,13 +327,17 @@ struct HudDevice : public AptNativeHook
 	std::string radiusDecalError; ///< the texture of the cursor that could not be read (also in the HUD's draw errors)
 	void drawRadiusCursor();
 	// lane OWNERFIX-2: the resource claim feedback (InGameHud::resourceFeedback, GameClient/TerrainResourceFeedback.h): the selected resource building's
-	// claim decals, the placement decal (its texture masked by the claimable vertices) and the placement's percentage text
-	std::vector<uint64_t> claimDecalIds;
-	uint64_t placeDecalId = 0;
-	Ref<ImageTexture> placeDecalTexture;
-	unsigned placeDecalVersion = ~0u;
+	// claim decals, the placement decal (its texture masked by the claimable vertices) and the placement's percentage text; lane PLACEDECAL-1: the decals
+	// are in the selection decals' grid (drawSelectionDecals), these count what went in
 	int claimDecalsDrawn = 0;
 	bool placeDecalDrawn = false;
+	std::vector<SelectionDecal> selExtras; ///< lane PLACEDECAL-1: this frame's other decals: the ghost's shadows, then the resource claims'
+	std::vector<SelectionDecal> selList;   ///< lane PLACEDECAL-1: the grid's decals when there are others: the shadows, the resource decals, the selection's
+	uint64_t selExtrasKey = 0;             ///< lane PLACEDECAL-1: what the last grid's other decals were (0: none)
+	unsigned extraDecalsDrawn = 0;         ///< lane PLACEDECAL-1: the ghost's decal shadows in the grid
+	unsigned shadowCount = 0;              ///< lane PLACEDECAL-1: the last build's counts (the grid it built stays until the next)
+	int claimCount = 0, placeCount = 0;
+	double decalsLateMs = 0.0;             ///< lane PLACEDECAL-1: drawSelectionDecals' time (it runs after the ghost, inside the camera part)
 	bool placeTextDrawn = false;
 	bool chatHistoryShown = false; ///< lane CHAT-1: the scroll-back replaces the message lines while the chat window is open
 	int messageLinesDrawn = 0;     ///< lane CHAT-1: the lines the last draw put on screen
@@ -343,7 +345,6 @@ struct HudDevice : public AptNativeHook
 	void drawMessageLines();
 	Rect2 placeTextRect;
 	std::string resourceDecalError;
-	void drawResourceFeedback();
 	void drawPlacementText(const Ref<Font> &font, float k);
 	void applyCamera(const Vector2 &window, double alpha);
 };
@@ -1293,146 +1294,6 @@ void HudDevice::drawRadiusCursor()
 	radiusDecalDrawn = true;
 }
 
-void HudDevice::drawResourceFeedback()
-{
-	// lane OWNERFIX-2 (GameClient/TerrainResourceFeedback.h): a Godot Decal over the terrain layer (lane HERORING-1: the selection decals left that path;
-	// a Decal blends into ALBEDO, the terrain's shadow weight since its colour went to EMISSION, so these show faintly: S-2522, a follow-up). The claim
-	// decals: TerrainResourceClaimDecal tinted 0x6464C8 at opacity 0x80 (type 0x20, SHADOW_ALPHA_DECAL); the placement decal: PlaceTerrainResourceClaimantDecal
-	// tinted the band colour, its alpha the texture's times the claimable vertices' alpha (RW 0x75C1A9 with the opacity 0x80; INFERENCE S-5030: bilinear across
-	// a terrain quad)
-	Node3D *root = decalRootId ? Object::cast_to<Node3D>(ObjectDB::get_instance(godot::ObjectID(decalRootId))) : nullptr;
-	claimDecalsDrawn = 0;
-	placeDecalDrawn = false;
-	if (!root)
-	{
-		return;
-	}
-	const TerrainResourceUiSettings &ui = hud->radiusCursorTemplates().resourceUi();
-	const TerrainResourceFeedback &fb = hud->resourceFeedback();
-	auto place = [](Decal *decal, const Coord3D &p, float size) {
-		// SAGE (x, y, z up) -> Godot (x, z, -y); projected down over a box `size` wide and 200 units deep around the point
-		decal->set_position(Vector3(p.x, p.z, -p.y));
-		decal->set_rotation(Vector3(0.0f, 0.0f, 0.0f));
-		decal->set_size(Vector3(size, 200.0f, size));
-		decal->set_albedo_mix(1.0f);
-		decal->set_cull_mask(1u << 19); // the terrain's layer (GodotMapTerrain)
-		decal->set_upper_fade(0.0f);
-		decal->set_lower_fade(0.0f);
-	};
-	const std::vector<ResourceClaimDecal> &claimed = fb.claimedDecals();
-	const DecalTextures *claimTex = claimed.empty() ? nullptr : unlitDecalFor(ui.claimDecal, 0x6464C8u);
-	if (!claimed.empty() && !claimTex)
-	{
-		resourceDecalError = "TerrainResourceClaimDecal: no texture '" + ui.claimDecal + "'";
-	}
-	for (size_t i = 0; claimTex && i < claimed.size(); ++i)
-	{
-		Decal *decal = i < claimDecalIds.size() ? Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(claimDecalIds[i]))) : nullptr;
-		if (!decal)
-		{
-			decal = memnew(Decal);
-			root->add_child(decal);
-			if (i < claimDecalIds.size())
-			{
-				claimDecalIds[i] = decal->get_instance_id();
-			}
-			else
-			{
-				claimDecalIds.push_back(decal->get_instance_id());
-			}
-		}
-		place(decal, claimed[i].position, claimed[i].size);
-		decal->set_texture(Decal::TEXTURE_ALBEDO, claimTex->albedo);
-		decal->set_modulate(Color(1, 1, 1, claimed[i].opacity / 255.0f));
-		decal->set_visible(true);
-		++claimDecalsDrawn;
-	}
-	for (size_t i = (size_t)claimDecalsDrawn; i < claimDecalIds.size(); ++i)
-	{
-		if (Decal *decal = Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(claimDecalIds[i]))))
-		{
-			decal->set_visible(false);
-		}
-	}
-	const ResourcePlacementFeedback &rp = fb.placement();
-	Decal *pd = placeDecalId ? Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(placeDecalId))) : nullptr;
-	if (!rp.active || rp.maskW <= 0 || rp.maskH <= 0 || !(rp.decalSize > 0.0f))
-	{
-		if (pd)
-		{
-			pd->set_visible(false);
-		}
-		return;
-	}
-	if (rp.version != placeDecalVersion || placeDecalTexture.is_null())
-	{
-		const DecalImage img = decalImageFor(ui.placeDecal);
-		if (img.width <= 0 || !img.rgba)
-		{
-			resourceDecalError = "PlaceTerrainResourceClaimantDecal: no texture '" + ui.placeDecal + "'";
-			if (pd)
-			{
-				pd->set_visible(false);
-			}
-			return;
-		}
-		const int w = img.width, h = img.height;
-		PackedByteArray px;
-		px.resize((int64_t)w * h * 4);
-		uint8_t *out = px.ptrw();
-		const unsigned col[3] = { (rp.color >> 16) & 0xFFu, (rp.color >> 8) & 0xFFu, rp.color & 0xFFu };
-		const float half = rp.decalSize * 0.5f;
-		auto maskAt = [&](float vx, float vy) {
-			// bilinear between the four vertices around (vx, vy), in vertex units relative to the mask's first vertex
-			const float fx = std::clamp(vx, 0.0f, (float)(rp.maskW - 1)), fy = std::clamp(vy, 0.0f, (float)(rp.maskH - 1));
-			const int x0 = std::min((int)fx, rp.maskW - 1), y0 = std::min((int)fy, rp.maskH - 1);
-			const int x1 = std::min(x0 + 1, rp.maskW - 1), y1 = std::min(y0 + 1, rp.maskH - 1);
-			const float tx = fx - (float)x0, ty = fy - (float)y0;
-			auto a = [&](int x, int y) { return (float)rp.maskAlpha[(size_t)y * (size_t)rp.maskW + (size_t)x]; };
-			return (a(x0, y0) * (1 - tx) + a(x1, y0) * tx) * (1 - ty) + (a(x0, y1) * (1 - tx) + a(x1, y1) * tx) * ty;
-		};
-		for (int j = 0; j < h; ++j)
-		{
-			// the texture's v runs along Godot +z = SAGE -y
-			const float wy = rp.decalCenter.y + half - ((float)j + 0.5f) / (float)h * rp.decalSize;
-			for (int i = 0; i < w; ++i)
-			{
-				const float wx = rp.decalCenter.x - half + ((float)i + 0.5f) / (float)w * rp.decalSize;
-				const float m = maskAt(wx / TerrainResourceFeedback::kVertexSpacing - (float)rp.maskVx0, wy / TerrainResourceFeedback::kVertexSpacing - (float)rp.maskVy0);
-				const size_t o = ((size_t)j * (size_t)w + (size_t)i) * 4;
-				for (int c = 0; c < 3; ++c)
-				{
-					out[o + c] = (uint8_t)((img.rgba[o + c] * col[c] + 127) / 255u);
-				}
-				out[o + 3] = (uint8_t)std::lround(img.rgba[o + 3] * m / 255.0f);
-			}
-		}
-		// lane FOGFX-1 (FB-0055): the decal's texture is updated in place (a new ImageTexture as the pointer crossed each claim cell made Godot pack its
-		// decal atlas again)
-		const Ref<Image> image = Image::create_from_data(w, h, false, Image::FORMAT_RGBA8, px);
-		if (placeDecalTexture.is_valid() && placeDecalTexture->get_width() == w && placeDecalTexture->get_height() == h)
-		{
-			placeDecalTexture->update(image);
-		}
-		else
-		{
-			placeDecalTexture = ImageTexture::create_from_image(image);
-		}
-		placeDecalVersion = rp.version;
-	}
-	if (!pd)
-	{
-		pd = memnew(Decal);
-		root->add_child(pd);
-		placeDecalId = pd->get_instance_id();
-	}
-	place(pd, rp.decalCenter, rp.decalSize);
-	pd->set_texture(Decal::TEXTURE_ALBEDO, placeDecalTexture);
-	pd->set_modulate(Color(1, 1, 1, 1));
-	pd->set_visible(true);
-	placeDecalDrawn = true;
-}
-
 namespace
 {
 // UTF-16 (the engine's UnicodeString) to a Godot String: surrogate pairs joined, a lone surrogate shown as U+FFFD
@@ -1593,24 +1454,50 @@ void HudDevice::drawPlacementText(const Ref<Font> &font, float k)
 
 void HudDevice::drawSelectionDecals()
 {
-	Node3D *root = decalRootId ? Object::cast_to<Node3D>(ObjectDB::get_instance(godot::ObjectID(decalRootId))) : nullptr;
-	if (!root)
-	{
-		Node *parent = camera ? camera->get_parent() : nullptr;
-		if (!parent)
-		{
-			return;
-		}
-		root = memnew(Node3D);
-		root->set_name("SelectionDecals");
-		parent->add_child(root);
-		decalRootId = root->get_instance_id();
-	}
-	const std::vector<SelectionDecal> &list = hud->selectionDecals();
 	decalsDrawn = 0;
 	// lane HERORING-1: a non-merge decal (a hero's ring, SHADOW_ALPHA_DECAL) is no Godot Decal node any more: a Decal blends into ALBEDO, which the terrain
 	// and the W3D receivers use as the shadow weight since their colour went to EMISSION, so it barely showed; it is in the shaders' grid below with the
-	// merge decals (sel_alpha_at). The root node stays: the resource feedback's decals live under it (drawResourceFeedback)
+	// merge decals (sel_alpha_at).
+	// Lane PLACEDECAL-1: so are the other decals of RotWK's alpha lists: the placement ghost's decal shadow (a drawable's, list + 4, drawn first: RW
+	// 0x50D92C), then the addDecal list (+ 8) newest first (the shadow factory, BFME2 0x10BB11): the placement claim decal (PlaceTerrainResourceClaimantDecal,
+	// its alpha weighted per vertex; made as the placement starts), the selected resource building's claims (TerrainResourceClaimDecal), the selection's
+	// (INFERENCE S-2522: the claims made after the selection's markers)
+	const std::vector<SelectionDecal> &selection = hud->selectionDecals();
+	const TerrainResourceUiSettings &resourceUi = hud->radiusCursorTemplates().resourceUi();
+	const TerrainResourceFeedback &resources = hud->resourceFeedback();
+	extraDecalsDrawn = 0;
+	selExtras.clear();
+	if (ghost && world && world->hud_game())
+	{
+		ghost->appendShadowDecals(selExtras);
+	}
+	const size_t shadows = selExtras.size();
+	resources.appendDecals(resourceUi.claimDecal, resourceUi.placeDecal, selExtras);
+	// what the other decals are (the grid is built again when it changes: the ghost moves, a claim comes or goes, the mask changes)
+	uint64_t key = 0;
+	if (!selExtras.empty())
+	{
+		key = 1469598103934665603ull;
+		auto mix = [&key](const void *p, size_t n) {
+			for (size_t i = 0; i < n; ++i)
+			{
+				key = (key ^ ((const unsigned char *)p)[i]) * 1099511628211ull;
+			}
+		};
+		for (const SelectionDecal &d : selExtras)
+		{
+			const float f[7] = { d.position.x, d.position.y, d.position.z, d.size, d.sizeY, d.angle, d.drawZ };
+			const int v[9] = { (int)d.style, (int)d.color, d.terrainOnly ? 1 : 0, d.maskVx0, d.maskVy0, d.maskW, d.maskH, (int)d.texture.size(), (int)d.maskAlpha.size() };
+			mix(f, sizeof f);
+			mix(v, sizeof v);
+			mix(d.texture.data(), d.texture.size());
+			mix(d.maskAlpha.data(), d.maskAlpha.size());
+		}
+		key = key == 0 ? 1 : key;
+	}
+	const bool extras = key != 0;
+	const bool extrasChanged = key != selExtrasKey;
+	selExtrasKey = key;
 
 	// lane SELPERF-1: the merge decals: this frame's grid to the terrain shader (RotWK's two stencil passes per pixel there); the composed image is only the
 	// state report's (composeMergeReport)
@@ -1618,25 +1505,70 @@ void HudDevice::drawSelectionDecals()
 	RenderingServer *rs = RenderingServer::get_singleton();
 	std::string error;
 	// the grid follows the markers: built and uploaded when they changed (hud->selectionDecalsVersion), else the shader keeps the last one
-	const bool fresh = hud->selectionDecalsVersion() != selVersion || selMode < 0;
+	// lane PLACEDECAL-1: also when the other decals change (the ghost moves, a claim comes or goes, the mask changes) or go
+	const bool fresh = hud->selectionDecalsVersion() != selVersion || selMode < 0 || extrasChanged;
 	selVersion = hud->selectionDecalsVersion();
 	if (fresh)
 	{
+		// the selection copied only with other decals
+		selList.clear();
+		if (extras)
+		{
+			selList.reserve(selExtras.size() + selection.size());
+			selList.insert(selList.end(), selExtras.begin(), selExtras.end());
+			selList.insert(selList.end(), selection.begin(), selection.end());
+		}
+		const std::vector<SelectionDecal> &list = extras ? selList : selection;
 		const bool built = selAtlasFor(list) && BuildSelectionDecalGrid(list, [this](const std::string &f, MergeDecalAtlasRect &r) {
 			// a missing texture is not in the atlas: the merge list fails with its name (no outline this frame), the alpha decals are still drawn
 			// (BuildSelectionDecalGrid); lane HERORING-1: an alpha decal's is left out with its error
 			return selAtlasPack.rect(f, r);
 		}, ds, selGrid, &error);
-		// once each: the grid is built again every client frame a selected decal throbs (lane HERORING-1: a skipped alpha decal's note would fill the list)
-		if (!error.empty() && drawErrors.size() < 100 && std::find(drawErrors.begin(), drawErrors.end(), error) == drawErrors.end())
+		// once each: the grid is built again every client frame a selected decal throbs (lane HERORING-1: a skipped alpha decal's note would fill the list);
+		// lane PLACEDECAL-1: note by note (the joined list changes with the decals in it)
+		for (size_t at = 0; !error.empty() && at <= error.size();)
 		{
-			drawErrors.push_back(error);
+			const size_t end = std::min(error.find("; ", at), error.size());
+			const std::string one = error.substr(at, end - at);
+			if (drawErrors.size() < 100 && std::find(drawErrors.begin(), drawErrors.end(), one) == drawErrors.end())
+			{
+				drawErrors.push_back(one);
+			}
+			at = end + 2;
 		}
 		if (!built)
 		{
 			selGrid = MergeDecalGrid();
 		}
+		// lane OWNERFIX-2's state report: the resource decals that went into the grid (a missing texture or a refused decal is also in drawErrors). A
+		// grid that is not built (a merge decal's texture missing) draws none of them
+		resourceDecalError.clear();
+		claimCount = placeCount = 0;
+		shadowCount = 0;
+		for (size_t i = 0; extras && i < selList.size(); ++i)
+		{
+			const bool in = built && i < selGrid.drawn.size() && selGrid.drawn[i] != 0;
+			if (i < shadows)
+			{
+				shadowCount += in ? 1u : 0u;
+				continue;
+			}
+			if (i >= selExtras.size())
+			{
+				break; // the selection's
+			}
+			const bool place = (selList[i].style & 0x2000u) != 0;
+			(place ? placeCount : claimCount) += in ? 1 : 0;
+			if (!in)
+			{
+				resourceDecalError = !built ? "the selection decal grid was not built: " + error :
+					std::string(place ? "PlaceTerrainResourceClaimantDecal" : "TerrainResourceClaimDecal") + " '" + selList[i].texture + "' not drawn: " + error;
+			}
+		}
 	}
+	claimDecalsDrawn = claimCount;
+	placeDecalDrawn = placeCount > 0;
+	extraDecalsDrawn = shadowCount;
 	const int mode = SelectionDecalShaderMode(selGrid); // lane HERORING-1: + 4 when there are alpha decals (sel_alpha_at)
 	if (mode != 0 && rs)
 	{
@@ -1683,7 +1615,7 @@ void HudDevice::drawSelectionDecals()
 			rs->global_shader_parameter_set("sel_alpha_ref", (float)selGrid.alphaRef);
 			selAlphaSet = selGrid.alphaRef;
 		}
-		decalsDrawn += (unsigned)(selGrid.decals + selGrid.alphaDecals);
+		decalsDrawn += (unsigned)(selGrid.decals + selGrid.alphaDecals) - extraDecalsDrawn - (unsigned)claimDecalsDrawn - (placeDecalDrawn ? 1u : 0u);
 	}
 	else if (mode != selMode && rs)
 	{
@@ -1829,11 +1761,6 @@ DecalImage HudDevice::decalImageFor(const std::string &file)
 
 void HudDevice::freeSelectionDecals()
 {
-	if (Node3D *root = decalRootId ? Object::cast_to<Node3D>(ObjectDB::get_instance(godot::ObjectID(decalRootId))) : nullptr)
-	{
-		root->queue_free();
-	}
-	decalRootId = 0;
 	if (radiusCursorBound)
 	{
 		if (RenderingServer *rs = RenderingServer::get_singleton())
@@ -2332,6 +2259,7 @@ Dictionary InGameHudNode::get_state() const
 		}
 		s["selection_decals"] = decals;
 		s["selection_decals_drawn"] = (int64_t)d->decalsDrawn;
+		s["ghost_shadow_decals_drawn"] = (int64_t)d->extraDecalsDrawn; // lane PLACEDECAL-1: the placement ghost's decal shadows in the same grid
 		d->composeMergeReport(); // lane SELPERF-1: composed here only (the terrain shader draws the merge decals)
 		Dictionary m;
 		m["decals"] = (int64_t)d->merged.decals;
@@ -2340,7 +2268,8 @@ Dictionary InGameHudNode::get_state() const
 		m["simple"] = d->hud->selectionDecalSettings().useSimpleMergeDecals;
 		m["composes"] = d->mergeComposes; // lane SELPERF-1
 		m["gpu_decals"] = (int64_t)d->selGrid.decals;
-		m["gpu_alpha_decals"] = (int64_t)d->selGrid.alphaDecals; // lane HERORING-1
+		m["gpu_alpha_decals"] = (int64_t)d->selGrid.alphaDecals; // lane HERORING-1 (lane PLACEDECAL-1: with the extra decals below)
+		m["gpu_extra_decals"] = (int64_t)(d->extraDecalsDrawn + (unsigned)d->claimDecalsDrawn + (d->placeDecalDrawn ? 1u : 0u)); // the ghost's and the resource decals
 		m["gpu_max_alpha_per_cell"] = (int64_t)d->selGrid.maxAlphaPerCell;
 		m["gpu_cells"] = (int64_t)d->selGrid.cellsX * d->selGrid.cellsY;
 		m["gpu_max_per_cell"] = (int64_t)d->selGrid.maxPerCell;
@@ -3165,9 +3094,7 @@ void InGameHudNode::_process(double delta)
 	const uint64_t ta = Time::get_singleton()->get_ticks_usec();
 	d->drawIconOps(get_canvas_item()); // lane HUD-5
 	const uint64_t tb = Time::get_singleton()->get_ticks_usec();
-	d->drawSelectionDecals();          // lane UI-4
 	d->drawRadiusCursor();             // lane SPELL-4
-	d->drawResourceFeedback();         // lane OWNERFIX-2
 	d->drawMessageLines();             // lane CHAT-1
 	const uint64_t tc = Time::get_singleton()->get_ticks_usec();
 	if (d->hud6)
@@ -3242,6 +3169,14 @@ void InGameHudNode::_process(double delta)
 		d->placeMs = (double)(tg - tp) / 1000.0; // lane FOGFX-1 (FB-0055): the placement's legality and the ghost, apart
 		d->ghostMs = (double)(Time::get_singleton()->get_ticks_usec() - tg) / 1000.0;
 	}
+	{
+		// lane UI-4; lane PLACEDECAL-1: after the ghost's sync, so the ghost's decal shadow is this frame's (the placement claim decal is the placement
+		// update's of the frame before, InGameHud::updateResourceFeedback in hud->update: S-5030). Its time is hud_decals_ms, a part of hud_update_ms
+		const uint64_t td = Time::get_singleton()->get_ticks_usec();
+		d->drawSelectionDecals();
+		d->decalsLateMs = (double)(Time::get_singleton()->get_ticks_usec() - td) / 1000.0;
+		d->decalsMs += d->decalsLateMs;
+	}
 	const uint64_t t2 = Time::get_singleton()->get_ticks_usec();
 	if (d->player && !d->ownsPlayer)
 	{
@@ -3274,8 +3209,8 @@ void InGameHudNode::_process(double delta)
 		d->world->net_submit_view(d->cam->position().x, d->cam->position().y, ground.x, ground.y, overWorld);
 	}
 	const uint64_t t3 = Time::get_singleton()->get_ticks_usec();
-	d->updateMs = (double)(t1 - t0) / 1000.0;
-	d->cameraMs = (double)(t2 - t1) / 1000.0;
+	d->updateMs = (double)(t1 - t0) / 1000.0 + d->decalsLateMs; // lane PLACEDECAL-1: the selection decals counted in the update, not the camera
+	d->cameraMs = (double)(t2 - t1) / 1000.0 - d->decalsLateMs;
 	d->cursorMs = (double)(t3 - t2) / 1000.0;
 }
 

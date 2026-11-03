@@ -104,6 +104,14 @@ struct SelectionDecal
 	// lane SELWALL-1: the drawable's height (position.z before an AIRBORNE_TARGET object's layer height): RefreshSelectionDecals compares with it, so a
 	// grounded decal is not a change every frame
 	float drawZ = 0.0f;
+	// lane PLACEDECAL-1: the other decals of RotWK's alpha list the HUD draws with the selection's (the placement ghost's shadow, the resource claims and
+	// the placement claim decal): the height of a decal that is not square (0: `size`, a square); RotWK's Shadow + 0x64 (terrain only: no wall top, no
+	// height test, RW 0x50C792); a SHADOW_DECAL_TERRAIN_CLAIM decal's per-vertex alpha (RW 0x50D264 -> RW 0x75C1A9): maskW x maskH map vertices from
+	// (maskVx0, maskVy0), 10 units apart
+	float sizeY = 0.0f;
+	bool terrainOnly = false;
+	int maskVx0 = 0, maskVy0 = 0, maskW = 0, maskH = 0;
+	std::vector<std::uint8_t> maskAlpha;
 };
 
 // lane SELWALL-1: the projected decal's height range (the shadow's + 0x60): the drawable's condition state's ShadowMaxHeight, 20 without one
@@ -168,7 +176,9 @@ struct MergeDecalAtlasRect
 
 // lane SELPERF-1: the merge decals as the terrain shader reads them (godot/shaders/selection_decals.gdshaderinc): RGBA32F texels, kWidth a row:
 //   decal i at texels 4i .. 4i + 3: (x, y, size, opacity 0..255), (r, g, b 0..255, z), Texture's atlas rect (x, y, w, h), Texture2's (w 0 in the simple mode;
-//   lane HERORING-1: an alpha decal's (cos, sin) of its turn, 0, 0); the merge decals are records 0 .. decals - 1, the alpha decals the next alphaDecals;
+//   lane HERORING-1: an alpha decal's (cos, sin) of its turn, then (lane PLACEDECAL-1) its height (y size) and 0, -1 for a terrain-only decal or the texel
+//   of its vertex mask: a header (vx0, vy0, w, h) and w x h texels, the alpha in x, after the index list); the merge decals are records 0 .. decals - 1,
+//   the alpha decals the next alphaDecals;
 //   cell c of the grid at cellOffset + c: (first, count) into the index list (lane HERORING-1: then (alphaFirst, alphaCount), its alpha entries, which follow
 //   every merge entry); the index list's entry j at indexOffset + j: (x, y, size, decal) (the place
 //   repeated: the shader's bounds test reads one texel; lane SELWALL-1: decal is -(i + 1) for a raised decal i, which the terrain skips before any other
@@ -185,6 +195,8 @@ struct MergeDecalGrid
 	size_t decals = 0;     ///< how many merge decals went in (records 0 .. decals - 1)
 	int maxPerCell = 0;    ///< the longest cell list (the shader's loop)
 	size_t alphaDecals = 0; ///< lane HERORING-1: how many alpha decals went in (records decals .. decals + alphaDecals - 1)
+	size_t maskDecals = 0;  ///< lane PLACEDECAL-1: how many of them carry a vertex mask
+	std::vector<std::uint8_t> drawn; ///< lane PLACEDECAL-1: per input decal, 1 when it went into the grid (a successful build only)
 	int maxAlphaPerCell = 0; ///< lane HERORING-1: the longest alpha list of a cell
 	bool simple = false;   ///< UseSimpleMergeDecals: one blended pass
 	int alphaRef = 0x60;   ///< the alpha test's reference (0..255)
@@ -225,7 +237,7 @@ bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::f
 	const SelectionDecalSettings &settings, MergeDecalGrid &out, std::string *error);
 // the grid the shaders draw (the HUD's): BuildMergeDecalGrid, and when its merge list fails (a merge decal's texture missing: no outline that frame,
 // as ComposeMergeDecals) the grid of the other decals, so a hero's ring does not go with an unrelated marker's texture (the merge error stays in
-// `error`). False when not even that grid is built (`out` is then empty)
+// `error`; lane PLACEDECAL-1: out.drawn indexes `decals`). False when not even that grid is built (`out` is then empty)
 bool BuildSelectionDecalGrid(const std::vector<SelectionDecal> &decals, const std::function<bool(const std::string &, MergeDecalAtlasRect &)> &rect,
 	const SelectionDecalSettings &settings, MergeDecalGrid &out, std::string *error);
 
@@ -251,3 +263,12 @@ bool EvaluateMergeDecalGrid(const MergeDecalGrid &grid, const DecalImage &atlas,
 // shaders split it (terrain.gdshader light(): the alpha decals over the shadowed ground, the merge decals above)
 bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas, float x, float y, float z, DecalReceiver receiver,
 	const std::uint8_t surface[3], std::uint8_t out[3], const float *shadow = nullptr);
+
+// lane PLACEDECAL-1: a drawable's decal shadow (W3DModelDraw Shadow = SHADOW_ALPHA_DECAL ..., the placement ghost's): its centre for the drawable at `p`
+// turned `angle`: ShadowOffsetX along the decal's u axis (cos, sin), ShadowOffsetY along its v axis (sin, -cos) (addShadow negates both, RW 0x50C07E /
+// 0x50C083, and the projection adds them to its 0.5, RW 0x50C713 .. 0x50C729; BFME2 decomp W3DProjectedShadowDecalHelpers.cpp)
+Coord3D DecalShadowCentre(const Coord3D &p, float offsetX, float offsetY, float angle);
+// its diffuse: white, ShadowOpacityPeak's low byte as the alpha (W3DModelDraw's shadow setup RW 0x4C4F22 .. 0x4C4FCC: setOpacity(Peak), RW 0x73228B,
+// shifts the value left 24, RW 0x7322AA). INFERENCE (S-5032): the _DYNAMIC types' fade (0x400 / 0x800 / 0x10000, RW 0x4B1BC6 -> RW 0x7323CE) is not run,
+// Peak stands for it
+std::uint32_t DecalShadowColor(unsigned opacityPeak);
