@@ -263,6 +263,8 @@ struct HudDevice : public AptNativeHook
 	Ref<ShaderMaterial> globeMaterial;
 	// lane QA-1: the probe's own canvas items (globeProbe): freed with this node, before the globe material
 	std::vector<RID> probeItems;
+	// the globe's backbuffer copy: an empty child of the globe's item drawn behind it, with the clip's rectangle (see drawPlaceholder); freed with this node
+	RID globeCopyItem;
 	bool globeTried = false;
 	unsigned globeDraws = 0;
 	bool ensureGlobe();
@@ -630,9 +632,26 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		// lane HUD-2 (see ensureGlobe): the clip's rectangle, the colour transform of the clip is not applied (retail draws the scene directly)
 		if (r.size.x < 1.0f || r.size.y < 1.0f || !ensureGlobe())
 		{
+			if (globeCopyItem.is_valid())
+			{
+				rs->canvas_item_set_copy_to_backbuffer(globeCopyItem, false, Rect2()); // no globe, no copy
+			}
 			return;
 		}
-		rs->canvas_item_set_copy_to_backbuffer(item, true, r); // D: the frame buffer behind the clip
+		// D: the frame buffer behind the clip. Godot 4.7's canvas renderer copies the WHOLE frame for the first screen-texture material of a canvas,
+		// whatever rect its own item asks for (RendererCanvasRenderRD::_render_items replaces the item's rect with Rect2()); a rect copy made by an
+		// item drawn before it marks the screen texture as copied. So the copy is an empty child drawn behind the globe's item, with the clip's
+		// rectangle rounded out to whole pixels: the shader reads D only inside it (SCREEN_UV, nearest), so the picture is the same and the copy
+		// shrinks from the full window (2.1 ms of GPU time at 2880x1800 on the UHD 770) to the globe.
+		if (!globeCopyItem.is_valid())
+		{
+			globeCopyItem = rs->canvas_item_create();
+			rs->canvas_item_set_draw_behind_parent(globeCopyItem, true);
+		}
+		rs->canvas_item_set_parent(globeCopyItem, item); // the item may be a new one (AptMenuPlayer remakes a slot's item)
+		const Vector2 lo = (r.position - Vector2(1.0f, 1.0f)).floor();
+		const Vector2 hi = (r.position + r.size + Vector2(1.0f, 1.0f)).ceil();
+		rs->canvas_item_set_copy_to_backbuffer(globeCopyItem, true, Rect2(lo, hi - lo));
 		rs->canvas_item_set_material(item, globeMaterial->get_rid());
 		rs->canvas_item_add_texture_rect(item, r, globeAdd.view->get_texture()->get_rid());
 		++globeDraws;
@@ -1893,6 +1912,11 @@ InGameHudNode::~InGameHudNode()
 		for (const RID &item : d->probeItems)
 		{
 			rs->free_rid(item); // lane QA-1: the globe probe's items go before the globe material
+		}
+		if (d->globeCopyItem.is_valid())
+		{
+			rs->free_rid(d->globeCopyItem);
+			d->globeCopyItem = RID();
 		}
 		if (d->iconItem.is_valid())
 		{
