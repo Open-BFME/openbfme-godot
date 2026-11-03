@@ -782,15 +782,43 @@ bool EvaluateMergeDecalGrid(const MergeDecalGrid &grid, const DecalImage &atlas,
 	return true;
 }
 
+bool BuildSelectionDecalGrid(const std::vector<SelectionDecal> &decals, const std::function<bool(const std::string &, MergeDecalAtlasRect &)> &rect,
+	const SelectionDecalSettings &settings, MergeDecalGrid &out, std::string *error)
+{
+	if (BuildMergeDecalGrid(decals, rect, settings, out, error))
+	{
+		return true;
+	}
+	std::vector<SelectionDecal> others;
+	for (const SelectionDecal &d : decals)
+	{
+		if (!(d.style & kMergeStyle))
+		{
+			others.push_back(d);
+		}
+	}
+	std::string notes; // the other decals' notes are already in `error` from the first build
+	if (!others.empty() && BuildMergeDecalGrid(others, rect, settings, out, &notes))
+	{
+		return true;
+	}
+	out = MergeDecalGrid();
+	return false;
+}
+
 int SelectionDecalShaderMode(const MergeDecalGrid &grid)
 {
 	return (grid.decals == 0 ? 0 : (grid.simple ? 2 : 1)) + (grid.alphaDecals > 0 ? 4 : 0);
 }
 
 bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas, float x, float y, float z, DecalReceiver receiver,
-	const std::uint8_t surface[3], std::uint8_t out[3])
+	const std::uint8_t surface[3], std::uint8_t out[3], const float *shadow)
 {
 	float c[3] = { (float)surface[0], (float)surface[1], (float)surface[2] };
+	for (int ch = 0; shadow && ch < 3; ++ch)
+	{
+		c[ch] *= shadow[ch]; // the shadowed surface the decals are drawn over
+	}
 	bool drawn = false;
 	// lane HERORING-1: the alpha decals in their list order, each blended over the surface (RW 0x509A1F's ShaderClass 0x1198B3: SRC_ALPHA /
 	// ONE_MINUS_SRC_ALPHA, texture x diffuse, MODULATE at RW 0x5373FC; the diffuse the colour with the opacity as alpha, setOpacity RW 0x73228B)

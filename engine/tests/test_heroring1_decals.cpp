@@ -154,6 +154,23 @@ TEST_CASE("heroring1: the grid carries an alpha decal after the merge decals: it
 	CHECK(g.alphaDecals == 0);
 	missing[0].texture = "nope";
 	CHECK_FALSE(BuildMergeDecalGrid(missing, &Atlas::rect, twoPasses(), g, &err));
+	// the shaders' grid (BuildSelectionDecalGrid, the HUD's): a merge decal's missing texture takes the merge list, not the hero's ring
+	REQUIRE(BuildSelectionDecalGrid({ member(0, 0, 0), hero(60, 0, 0, 0xFFFFFFFFu) }, &Atlas::rect, twoPasses(), g, &err));
+	CHECK(g.decals == 1);
+	CHECK(g.alphaDecals == 1);
+	std::vector<SelectionDecal> broken = { member(0, 0, 0), hero(60, 0, 0, 0xFFFFFFFFu) };
+	broken[0].texture = "nope";
+	REQUIRE(BuildSelectionDecalGrid(broken, &Atlas::rect, twoPasses(), g, &err));
+	CHECK(err.find("nope") != std::string::npos);
+	CHECK(g.decals == 0);
+	CHECK(g.alphaDecals == 1);
+	CHECK(g.texels[0 * 16 + 0] == 60.0f); // the ring is record 0
+	broken[1].texture = "nope"; // the ring's texture missing too: an empty grid (nothing drawn), both errors named
+	REQUIRE(BuildSelectionDecalGrid(broken, &Atlas::rect, twoPasses(), g, &err));
+	CHECK(g.alphaDecals == 0);
+	CHECK(SelectionDecalShaderMode(g) == 0);
+	broken.pop_back(); // the merge decal alone
+	CHECK_FALSE(BuildSelectionDecalGrid(broken, &Atlas::rect, twoPasses(), g, &err));
 	// a skipped alpha decal before another: the other takes the first alpha record and draws
 	const Atlas atlas;
 	REQUIRE(BuildMergeDecalGrid({ hero(0, 0, 0, 0xFFFF0000u, "nope"), hero(0, 0, 0, 0xFFFFFFFFu) }, &Atlas::rect, twoPasses(), g, &err));
@@ -281,7 +298,42 @@ TEST_CASE("heroring1: the wall shader blends the alpha decals over the surface's
 	sel.SelectionDecals = true;
 	const std::string code = Generate_W3D_Shader_Code(sel);
 	CHECK(code.find("vec4 sela = sel_up ? sel_alpha_at(sel_at, true) : vec4(0.0);") != std::string::npos);
-	CHECK(code.find("if (sela.a > 0.0) { ALBEDO = w3d_to_linear(clamp(cur.rgb, 0.0, 1.0) * (1.0 - sela.a) + sela.rgb); }") != std::string::npos);
-	CHECK(code.find("float sel_keep = (1.0 - sela.a) * (1.0 - sel.a);") != std::string::npos);
+	// review r2 (#208): the surface's shadowed share and the ring over it go to light() (one colour space), the shadow split keeps the merge share
+	CHECK(code.find("varying vec3 v_shadow_over;") != std::string::npos);
+	CHECK(code.find("vec3 sel_shadow = clamp(cur.rgb, 0.0, 1.0);") != std::string::npos);
+	CHECK(code.find("if (sela.a > 0.0) { sel_shadow *= 1.0 - sela.a; sel_over = sela.rgb; ALBEDO = w3d_to_linear(sel_shadow + sel_over); sel_ground = ALBEDO; }") !=
+		std::string::npos);
+	CHECK(code.find("float sel_keep = 1.0 - sel.a;") != std::string::npos);
+	CHECK(code.find("(1.0 - sela.a) * (1.0 - sel.a)") == std::string::npos);
+	CHECK(code.find("v_shadow_color = sel_shadow;") != std::string::npos);
+	CHECK(code.find("v_shadow_over = sel_over;") != std::string::npos);
+	CHECK(code.find("DIFFUSE_LIGHT += shadow_to_linear(v_shadow_color * mix(w3d_shadow.rgb, vec3(1.0), ATTENUATION) + v_shadow_over);") != std::string::npos);
 	CHECK(code.find("EMISSION = ALBEDO - sel_ground * sel_keep * shadow_enabled;") != std::string::npos);
+}
+
+TEST_CASE("heroring1: under an object shadow the ring is drawn over the shadowed surface, as the shaders split it (review r2, #208)")
+{
+	const Atlas a;
+	MergeDecalGrid g;
+	std::string err;
+	REQUIRE_MESSAGE(BuildMergeDecalGrid({ hero(0, 0, 0, 0x80FFFFFFu) }, &Atlas::rect, twoPasses(), g, &err), err);
+	const std::uint8_t white[3] = { 255, 255, 255 }, black[3] = { 0, 0, 0 };
+	std::uint8_t out[3] = { 0, 0, 0 };
+	// half shadowed white ground: 128 (1 - a) + texel x a, a = 128 / 255
+	const float half[3] = { 128.0f / 255.0f, 128.0f / 255.0f, 128.0f / 255.0f };
+	REQUIRE(EvaluateSelectionDecals(g, a.image(), 0.0f, 0.0f, 0.0f, DecalReceiver::Terrain, white, out, half));
+	CHECK(out[0] == 114);
+	CHECK(out[1] == 139);
+	CHECK(out[2] == 164);
+	// fully shadowed: the ring's own share only, never below it
+	const float none[3] = { 0.0f, 0.0f, 0.0f };
+	REQUIRE(EvaluateSelectionDecals(g, a.image(), 0.0f, 0.0f, 0.0f, DecalReceiver::Terrain, white, out, none));
+	CHECK(out[0] == 50);
+	CHECK(out[1] == 75);
+	CHECK(out[2] == 100);
+	// over black any shadow is the same
+	REQUIRE(EvaluateSelectionDecals(g, a.image(), 0.0f, 0.0f, 0.0f, DecalReceiver::Terrain, black, out, half));
+	CHECK(out[0] == 50);
+	CHECK(out[1] == 75);
+	CHECK(out[2] == 100);
 }

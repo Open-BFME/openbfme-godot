@@ -1622,9 +1622,9 @@ void HudDevice::drawSelectionDecals()
 	selVersion = hud->selectionDecalsVersion();
 	if (fresh)
 	{
-		const bool built = selAtlasFor(list) && BuildMergeDecalGrid(list, [this](const std::string &f, MergeDecalAtlasRect &r) {
-			// a missing texture is not in the atlas: BuildMergeDecalGrid fails with its name (no outline this frame); lane HERORING-1: an alpha decal's is
-			// left out with its error
+		const bool built = selAtlasFor(list) && BuildSelectionDecalGrid(list, [this](const std::string &f, MergeDecalAtlasRect &r) {
+			// a missing texture is not in the atlas: the merge list fails with its name (no outline this frame), the alpha decals are still drawn
+			// (BuildSelectionDecalGrid); lane HERORING-1: an alpha decal's is left out with its error
 			return selAtlasPack.rect(f, r);
 		}, ds, selGrid, &error);
 		// once each: the grid is built again every client frame a selected decal throbs (lane HERORING-1: a skipped alpha decal's note would fill the list)

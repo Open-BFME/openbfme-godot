@@ -223,6 +223,11 @@ private:
 int SelectionDecalShaderMode(const MergeDecalGrid &grid);
 bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::function<bool(const std::string &, MergeDecalAtlasRect &)> &rect,
 	const SelectionDecalSettings &settings, MergeDecalGrid &out, std::string *error);
+// the grid the shaders draw (the HUD's): BuildMergeDecalGrid, and when its merge list fails (a merge decal's texture missing: no outline that frame,
+// as ComposeMergeDecals) the grid of the other decals, so a hero's ring does not go with an unrelated marker's texture (the merge error stays in
+// `error`). False when not even that grid is built (`out` is then empty)
+bool BuildSelectionDecalGrid(const std::vector<SelectionDecal> &decals, const std::function<bool(const std::string &, MergeDecalAtlasRect &)> &rect,
+	const SelectionDecalSettings &settings, MergeDecalGrid &out, std::string *error);
 
 // the shader's result at the world point (x, y) (selection_decals.gdshaderinc sel_apply, in C++): false where nothing is drawn; else the colour bytes
 // and the alpha the terrain is covered with (255 for the two passes, the opacity for the simple pass)
@@ -242,5 +247,7 @@ bool EvaluateMergeDecalGrid(const MergeDecalGrid &grid, const DecalImage &atlas,
 // (selection_decals.gdshaderinc sel_alpha_at, then sel_merge_at): the alpha decals blended in their list order, then the merge result over them. False
 // where no decal covers the point (out = surface). The merge result is blended in gamma space here; the shaders mix it in linear space: the same in the two
 // passes (it covers 0 or 1), not in the simple pass (UseSimpleMergeDecals, a blended pass)
+// `shadow` (optional, per channel, 1 lit .. 0 black): the object shadow on the surface; the decals are drawn over the shadowed surface, as the
+// shaders split it (terrain.gdshader light(): the alpha decals over the shadowed ground, the merge decals above)
 bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas, float x, float y, float z, DecalReceiver receiver,
-	const std::uint8_t surface[3], std::uint8_t out[3]);
+	const std::uint8_t surface[3], std::uint8_t out[3], const float *shadow = nullptr);
