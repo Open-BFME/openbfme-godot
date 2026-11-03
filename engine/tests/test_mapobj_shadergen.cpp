@@ -20,6 +20,17 @@ W3DShaderKey texturedKey()
 }
 } // namespace
 
+TEST_CASE("shadergen: the instance slots in use are reported once per step, only at a new peak")
+{
+	static_assert(W3D_Instance_Slot_Report_Due(499, 500));
+	static_assert(W3D_Instance_Slot_Report_Due(999, 1000));
+	static_assert(!W3D_Instance_Slot_Report_Due(499, 499));
+	static_assert(!W3D_Instance_Slot_Report_Due(500, 501));
+	static_assert(!W3D_Instance_Slot_Report_Due(500, 500)); // a second game climbing back to the old peak
+	static_assert(!W3D_Instance_Slot_Report_Due(1200, 1000));
+	CHECK(W3D_INSTANCE_SLOT_VALUES == 16);
+}
+
 TEST_CASE("shadergen: the HouseColor permutation adds the house texture sampler, the packed colour varying and the recolour; other keys are unchanged")
 {
 	W3DShaderKey plain = texturedKey();

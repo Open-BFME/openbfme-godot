@@ -72,6 +72,7 @@ public:
 	// Builds the model (meshes, materials, MultiMeshes). Returns the model id, or -1; the report says why either way.
 	int64_t add_model(const String &model_name);
 	Dictionary get_model_report(int64_t model) const;
+	static int64_t instance_slots_in_use() { return SlotsInUse; } // draw nodes of every instancer, each holding one of Godot's instance uniform slots
 
 	// clip: "HIERARCHY.CLIP" or a clip name of the model's hierarchy; empty = bind pose. Returns the instance id or -1.
 	int64_t add_instance(int64_t model, const Transform3D &transform, const String &clip, double start_time, double speed);
@@ -329,6 +330,7 @@ private:
 
 	void warn_stop(const W3DStopHit &hit); // lane PERF-HD: once per stop id
 	void warn(const std::string &message);
+	void note_slot_holder(const String &part);
 	void ensure_occlusion_passes(MeshGpu &gpu, bool mark, bool color); // lane OCCLUDE-1
 	const HAnimClass *resolve_clip(const Model &m, const std::string &name); // nullptr (and an error recorded) when the clip is not registered
 	std::shared_ptr<MeshGpu> build_mesh(const MeshModelClass &mesh, std::vector<std::string> &errors);
@@ -362,6 +364,9 @@ private:
 	std::vector<Instance> Instances;
 	bool ShadowReceiving = false;
 	static inline bool ShadowMapsEnabled = false;
+	static inline int64_t SlotsInUse = 0;
+	static inline int64_t SlotsPeak = 0;
+	int64_t SlotsHeld = 0; // this instancer's share of SlotsInUse
 	std::vector<Ref<ShaderMaterial>> AllMaterials;
 	std::vector<W3DMapperBinding> Mappers;
 

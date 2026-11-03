@@ -1105,6 +1105,13 @@ def test_exported_files_have_pck_rules(project, rules):
     assert_export_rules_cover_project(REPO / project, rules)
 
 
+def test_the_game_has_room_for_its_instance_uniform_slots():
+    # Godot's default of 65536 values holds 4096 W3D draw nodes, and a long Minas Tirith game ran out (w3dshadergen.h)
+    settings = (REPO / "godot" / "project.godot").read_text(encoding="utf-8")
+    size = re.search(r"^limits/global_shader_variables/buffer_size=(\d+)$", settings, re.M)
+    assert size and int(size.group(1)) >= 262144
+
+
 def synthetic_export_project(tmp_path: Path, name: str, files: dict[str, str]) -> Path:
     project = tmp_path / name
     configs = ["export_presets.cfg", "project.godot"]
