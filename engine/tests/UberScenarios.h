@@ -35,6 +35,10 @@ struct Run
 	std::vector<double> tickMs;            ///< logic + state hash of each frame: what the logic owner spends per tick of a recorded game
 	std::uint64_t hashDispatches = 0;      ///< the logic job pool's dispatches made by the state hashes alone
 	std::uint64_t hashWorkerChunks = 0;    ///< of their chunks, those a worker thread ran
+	std::uint64_t weaponStatusSerialFrames = 0; ///< lane PERF-WS: of the measured frames, those whose final list ran serially (the pre-pass discarded;
+	                                            ///< GameLogic::Report::weaponStatusSerialFrames)
+	std::uint64_t weaponStatusPooledFrames = 0; ///< lane PERF-WS: of the measured frames, those whose weapon status conditions were computed on the
+	                                            ///< pool and applied by the pass (Report::weaponStatusPooledFrames); every one with more than one thread
 	std::vector<double> wallMs;        ///< wall time of each logic frame (the parallel parts count once, as the player waits for them)
 	std::vector<double> cpuMs;         ///< the calling thread's CPU time of each frame
 	std::vector<PhaseTimes> phases;    ///< per frame, the wall time of each of the six phases

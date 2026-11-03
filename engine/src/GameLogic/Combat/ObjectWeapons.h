@@ -208,6 +208,11 @@ public:
 	// ---- every frame ---------------------------------------------------------------------------------------------------------------
 	// RW 0x68E197: the per slot weapon status model conditions (the WeaponStatusHelper calls it every frame, PHASE_FINAL; lane PROJ-2); and the FiringTracker (RW 0x8E30DD)
 	void updateWeaponStatusConditions();
+	// lane PERF-WS: its two halves. compute reads the object alone (its statuses, its weapons' timers and ammo) into `cond`, one per slot (-1: no
+	// weapon); the scheduler runs it on the logic job pool for every WeaponStatusHelper of the final list before the pass. apply writes the
+	// slots whose condition changed (the model conditions: ordered client events), in the pass, in list order. update is compute then apply
+	void computeWeaponStatusConditions(std::array<int, WEAPONSLOT_COUNT> &cond);
+	void applyWeaponStatusConditions(const std::array<int, WEAPONSLOT_COUNT> &cond);
 	// RW 0x69036C Object::setFiringConditionForCurrentWeapon (lane PROJ-2): the current slot's FIRING conditions (RW 0x6C83FD(slot, 1), the slot's other weapon
 	// conditions cleared, RW 0x6C84C9) set at once, without touching the cached condition of RW 0x68E197; the fire state calls it right before the shot
 	void setFiringConditionForCurrentWeapon();

@@ -174,11 +174,12 @@ TEST_CASE("siege1 gate: #64's catapult made inside its MinimumAttackRange of Hel
 	// merge queue q32 (#159's ramp cells, RW 0x93527F, move the stones' scatter at Helm's Deep; measured once on the merged tree, the change appears at #159's merge point): one contact while the gate stands (two), first hit and death unchanged
 	// merge queue q33 (MODCOMPAT-MOD1's modules move the stones' scatter; measured at each merge point and named with a contact log): two contacts while the
 	// gate stands, both the gatehouse in the line of fire (HelmsDeepGatehouseLeft at frame 259, HelmsDeepGatehouseCenter at 294), first hit 48, death 319
-	CHECK(r.contactsWhileStanding == 2); // HelmsDeepGatehouseLeft, the tower beside the gate, and HelmsDeepGatehouseCenter
+	// lane WARG-1 (FindClosestPath RW 0x6FB869 at the attack path's adjust RW 0x666E51 and computePath's fallback, the unclamped cells RW 0x6E8CE6; measured once on the lane's tree after the archive merge, a CI host): one contact while the gate stands, death 319 -> 354
+	CHECK(r.contactsWhileStanding == 1);
 	// lane MODCOMPAT-MOD1 (GeometryUpgrade: every object reads its own GeometryInfo, RW Object + 0xA8, for its combat circle and sphere (+ 0xB8 / + 0xBC), partition cells and pathfinder footprint, and the gate's open / closed switch runs the full refresh RW 0x68B244; measured at its commit, a CI host):
 	// first hit 49 -> 48, the gate's death 287 -> 252
 	CHECK(r.firstHit == 48);
-	CHECK(r.deathFrame == 319);
+	CHECK(r.deathFrame == 354);
 }
 
 TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's gate break it; the arch takes no stone meant for the gate")
@@ -194,14 +195,16 @@ TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's ga
 	// merge queue q34 (#161's block search, block zones RW 0x9389A6 and raised branch RW 0x9389CE, moves the AI defender and the random stream at Helm's
 	// Deep; measured once on the merged tree and at each merge point, SPELLFIX-1 and #160 keep the archive's values): the catapult 10 shots (9), death 326
 	// (292); the ballista two contacts while the gate stands (0; what they met was not identified, as the trebuchet's one since q31), death 467 (389)
-	CHECK(c.shots == 10);
+	// lane WARG-1 (FindClosestPath RW 0x6FB869 at the attack path's adjust RW 0x666E51 and computePath's fallback, the unclamped cells RW 0x6E8CE6; measured once on the lane's tree after the archive merge, a CI host): the catapult 7 shots (10), death 224 (326); the trebuchet death 386 (387); the
+	// ballista one contact while the gate stands (2), death 311 (467)
+	CHECK(c.shots == 7);
 	CHECK(c.contactsWhileStanding == 0);
 	CHECK(c.firstHit == 20);
-	CHECK(c.deathFrame == 326);
+	CHECK(c.deathFrame == 224);
 	const GateRun t = pinnedRun(*s, kHelmsDeep, "Main Gate", "GondorTrebuchet", 400.0f, 600);
 	CHECK(t.contactsWhileStanding == 1);
 	CHECK(t.firstHit == 19);
-	CHECK(t.deathFrame == 387);
+	CHECK(t.deathFrame == 386);
 	const GateRun dc = pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenCatapult", 400.0f, 600);
 	// its two stones a throw (until q31): both met HelmsDeepGatehouseLeft at frame 102 and, at frame 341, the front of the arch (HelmsDeepGatehouseCenter) 51 before
 	// its centre at z 174, below the lintel (the stones fell short; not the lintel reaching down, which the pair rule removed)
@@ -210,8 +213,8 @@ TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's ga
 	const GateRun b = pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBallista", 400.0f, 600);
 	// merge queue q27: one contact while the gate stands (was 0) and death 311 -> 389, LOS-1 (the terrain line of sight with the wall layers' heights;
 	// measured at each merge point)
-	CHECK(b.contactsWhileStanding == 2);
-	CHECK(b.deathFrame == 467);
+	CHECK(b.contactsWhileStanding == 1);
+	CHECK(b.deathFrame == 311);
 }
 
 TEST_CASE("siege1 gate: Mordor's catapult and Gondor's trebuchet in front of Minas Tirith's gate break it")
@@ -237,7 +240,7 @@ TEST_CASE("siege1 gate: the rams, Grond and the mumak in front of the gates (no 
 	OPENBFME_REQUIRE_START(s);
 	// merge queue q35 (#132's ground-structure melee reach, measured once on the merged tree and at each merge point; SIMSMALL-1, #178 and #179 keep the archive's values): the rams 99 -> 134, 102 -> 145 at Helm's Deep, 57 -> 90 at Minas Tirith
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 134);
-	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenDemolisher", 250.0f, 600).deathFrame == 145); // lane MODCOMPAT-MOD1: 101 -> 102 (GeometryUpgrade's own GeometryInfo per object, RW 0x68B244)
+	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenDemolisher", 250.0f, 600).deathFrame == 143); // lane MODCOMPAT-MOD1: 101 -> 102 (GeometryUpgrade's own GeometryInfo per object, RW 0x68B244); lane WARG-1 (FindClosestPath, measured once on the lane's tree): 145 -> 143
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorGrond", 250.0f, 600).deathFrame == 128);
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorMumakil", 250.0f, 600).deathFrame == 247); // merge queue q27: 246 -> 247, LOS-1
 	CHECK(pinnedRun(*s, kMinasTirith, "Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 90);

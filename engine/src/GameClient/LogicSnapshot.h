@@ -34,6 +34,7 @@ class GameLogic;
 class ThingTemplate;
 struct EndGameView;
 
+// every field is pinned by test_perf2_snapshot.cpp's bytesOf (the pool's build against the serial one): a field added here goes there too
 struct ObjectSnapshot
 {
 	ObjectID id = INVALID_ID;
@@ -168,7 +169,9 @@ struct LogicSnapshot
 	const ObjectSnapshot *find(ObjectID id) const;
 
 	// Builds the snapshot of the logic's current (completed) state. `previous` gives lastMovedFrame its history (null: the first snapshot).
-	// Must run on the thread that owns the simulation, between frames.
+	// Must run on the thread that owns the simulation, between frames (lane PERF-SNAP: the records are filled on the logic job pool under the
+	// canonical floating-point environment, which build sets for its lifetime and restores; a dispatch from another environment would throw
+	// std::logic_error from the pool).
 	// lane ONLINE-3: viewPlayer >= 0: the shroud of that player instead of the local player's (the player an observer looks at, LiveGame::observeNextPlayer)
 	static std::shared_ptr<const LogicSnapshot> build(GameLogic &logic, const LogicSnapshot *previous, bool hashed, std::uint32_t stateHash, int viewPlayer = -1,
 		bool teamVision = false); ///< viewPlayer -2: omniscient presentation (no simulation mutation)

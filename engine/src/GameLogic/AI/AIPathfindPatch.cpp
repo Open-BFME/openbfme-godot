@@ -285,7 +285,7 @@ Path *Pathfinder::patchPath(PathfindObject &obj, const PathfindLocomotorInfo &lo
 		}
 		if (isTarget)
 		{
-			result = new Path();
+			result = new Path(m_uberLimits); // lane UBER-PATH
 			prependCells(result, &from, c, centre);
 			result->markOptimized(); // RW + 0xC = 1: the patch keeps every cell (no line-of-sight optimisation)
 			break;
@@ -524,7 +524,7 @@ Path *Pathfinder::patchPath(PathfindObject *obj, const PathfindLocomotorInfo &lo
 		if (found)
 		{
 			m_isTunneling = false;
-			result = new Path();
+			result = new Path(m_uberLimits); // lane UBER-PATH
 			result->setWaypointSource(originalPath->waypointSource()); // lane WALL-2: the portals of the copied nodes
 			for (const PathNode *node = lastNode; node != matchNode; node = node->getPrevious())
 			{
