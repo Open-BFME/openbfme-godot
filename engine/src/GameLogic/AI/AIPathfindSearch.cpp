@@ -1280,7 +1280,7 @@ Path *Pathfinder::findClosestPath(PathfindObject *obj, const PathfindLocomotorIn
 			if (goalOnObstacle || closest == nullptr || throughUnits || destinationOK(c))
 			{
 				m_isTunneling = false;
-				Path *path = buildActualPath(obj, loco.validSurfaces, from, goalCell, centerInCell, blocked);
+				Path *path = buildActualPath(obj, loco, from, goalCell, centerInCell, blocked, true); // RW 0x6FC13F: faceDirection 1
 				cleanOpenAndClosedLists();
 				parentCell->releaseInfo(m_pool);
 				goalCell->releaseInfo(m_pool);
@@ -1357,7 +1357,7 @@ Path *Pathfinder::findClosestPath(PathfindObject *obj, const PathfindLocomotorIn
 	{
 		// RW 0x6FC078 .. 0x6FC0C2: the closest cell's centre (index * 10 + 5) goes to the local goal copy only; the caller's `rawTo` is not written (ZH writes it)
 		m_isTunneling = false;
-		Path *path = buildActualPath(obj, loco.validSurfaces, from, closest, centerInCell, blocked);
+		Path *path = buildActualPath(obj, loco, from, closest, centerInCell, blocked, true); // RW 0x6FC0C7: faceDirection 1
 		cleanOpenAndClosedLists();
 		goalCell->releaseInfo(m_pool);
 		return path;
@@ -1517,8 +1517,10 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 		if (c == goalCell)
 		{
 			m_isTunneling = false;
-			note(pathstops::kPartialRebuild); // RW 0x6FDCDA: the rebuild of the complete path (RW 0x767B0E) is not ported
-			Path *path = buildActualPath(obj, loco.validSurfaces, from, goalCell, centerInCell, false);
+			note(pathstops::kClosestCellThirdTest);
+			// RW 0x6FDC40 builds with faceDirection 0, then RW 0x6FDCDA calls the rebuild (RW 0x767B0E) with the unit's facing itself: the same as faceDirection 1
+			// (between the two, RW 0x6FDC4E .. 0x6FDCB3 appends the mineshaft nodes of S-161, not ported: a port of those goes before the rebuild)
+			Path *path = buildActualPath(obj, loco, from, goalCell, centerInCell, false, true);
 			parentCell->releaseInfo(m_pool);
 			cleanOpenAndClosedLists();
 			c->releaseInfo(m_pool);
@@ -1615,8 +1617,11 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 			*partial = true;
 		}
 		m_isTunneling = false;
-		note(pathstops::kPartialRebuild);
-		Path *path = buildActualPath(obj, loco.validSurfaces, from, closest, centerInCell, false);
+		note(pathstops::kClosestCellThirdTest);
+		// RW 0x6FDD70: faceDirection 1, a literal (BFME2 decomp pathfinder.cpp:4639 BuildActualPath(.., false, true)); RW 0x6FDD8E (a partial exit the
+		// port folds into this one) passes 1 too. (The static byte RW 0xDA25B4 read at RW 0x6FE3E7 belongs to the ship's sideways attack search
+		// RW 0x6FDE38, not ported: S-784)
+		Path *path = buildActualPath(obj, loco, from, closest, centerInCell, false, true);
 		cleanOpenAndClosedLists();
 		goalCell->releaseInfo(m_pool);
 		return path;
@@ -1630,9 +1635,11 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 // ---------------------------------------------------------------------------------------------------------
 // path building
 // ---------------------------------------------------------------------------------------------------------
-Path *Pathfinder::buildActualPath(const PathfindObject *obj, unsigned acceptableSurfaces, const Coord3D *fromPos, PathfindCell *goalCell, bool center, bool blocked)
+Path *Pathfinder::buildActualPath(const PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *fromPos, PathfindCell *goalCell, bool center, bool blocked,
+	bool faceDirection)
 {
 	note(pathstops::kPath);
+	const unsigned acceptableSurfaces = loco.validSurfaces;
 	Path *path = new Path(m_uberLimits); // lane UBER-PATH: the follower's later-leg tie in Uber
 	if (goalCell->getPinched() && goalCell->getParentCell() && !goalCell->getParentCell()->getPinched())
 	{
@@ -1640,6 +1647,19 @@ Path *Pathfinder::buildActualPath(const PathfindObject *obj, unsigned acceptable
 	}
 	prependCells(path, fromPos, goalCell, center);
 	path->optimize(*this, obj, acceptableSurfaces, blocked, nullptr);
+	if (faceDirection)
+	{
+		// RW 0x6F1AED .. 0x6F1B11 (lane PATH-REBUILD). RW always has an object here; the port's searches without one (a "does a path exist" query, the
+		// tests) face east, which only matters with a locomotor, and those have none
+		Coord2D facing;
+		facing.x = 1.0f;
+		facing.y = 0.0f;
+		if (obj)
+		{
+			facing = obj->getUnitDirection2D();
+		}
+		path->rebuild(*this, obj, loco, facing, acceptableSurfaces, blocked);
+	}
 	return path;
 }
 

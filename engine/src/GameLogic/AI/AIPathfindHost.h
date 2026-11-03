@@ -61,6 +61,10 @@ struct PathfindWallSurface
 	float height = 0.0f;                                   // a wall top: its height; a ramp: its highest point
 	// the triangle under (x, y) (edges included) and its height there; false when no triangle holds the point
 	bool heightAt(float x, float y, float &z) const;
+	// lane WALL-4: a ramp's Bridge plane (RW 0x68044E), made from the triangles on first use and kept (the triangles never change): 0 not made yet, 1 a plane
+	// through `planePoint` with the normal `planeNormal`, 2 none (getRamp found no ramp, or the plane is vertical). Neither saved nor hashed
+	mutable int planeState = 0;
+	mutable Coord3D planePoint{ 0.0f, 0.0f, 0.0f }, planeNormal{ 0.0f, 0.0f, 0.0f };
 };
 
 struct PathfindWallGeometry
@@ -199,6 +203,9 @@ public:
 	virtual PathfindObjectID getID() const = 0;
 	virtual const Coord3D &getPosition() const = 0;
 	virtual float getOrientation() const = 0;
+	// lane PATH-REBUILD: the unit's 2D direction (RW 0x70B9E0, the Object's cached unit direction vector): the orientation's cosine and sine unless
+	// the adapter answers from the object's transform
+	virtual Coord2D getUnitDirection2D() const;
 	virtual PathfindLayerEnum getLayer() const = 0;
 	virtual float getHeightAboveTerrain() const = 0;
 	virtual bool isMobile() const = 0;
@@ -340,4 +347,14 @@ struct PathfindLocomotorInfo
 	unsigned validSurfaces = 0; // LocomotorSurfaceType bits (GameLogic/Locomotor.h): RW loco+0x10
 	bool downhillOnly = false;  // RW loco+0x14
 	bool crusher = false;       // RW loco+0x15 (the 'bC' of the movement struct: a crusher passes obstacle cells with bit 22)
+	// lane PATH-REBUILD: what Path::rebuild (RW 0x767B0E) reads of the current locomotor; `present` false (no locomotor entry, Object + 0x260 ->
+	// + 0x1F0 null) takes the plain copy with the default radius
+	bool present = false;
+	float fastTurnRadius = 0.0f;         // template + 0x38 FastTurnRadius (RW 0x69AE01)
+	float slowTurnRadius = 0.0f;         // template + 0x34 SlowTurnRadius (RW 0x69ADFA)
+	bool fasterThanQuarterSpeed = false; // RW 0x5E4CA7 at the search
+	bool canReverse = false;             // RW 0x5E389C's template part: WHEELS_FOUR (+ 0x74 == 1) with CanMoveBackwards (+ 0xD8)
+	float maxTurnWithoutReform = 0.0f;   // template + 0x84
+	float turnThresholdHS = 0.0f;        // template + 0x40 TurnThresholdHS
+	bool floatingZ = false;              // template + 0x70 ZAxisBehavior == 8 (FLOATING_Z): the facing's bend is taken even where its arc is not valid
 };

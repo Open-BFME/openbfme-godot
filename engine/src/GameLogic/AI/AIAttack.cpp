@@ -734,13 +734,23 @@ void AIAttackFireState::onExit(StateExitType)
 	{
 		return; // the object is being deleted: its modules are going away
 	}
+	// lane ATKRESET-1: AIAttackFireWeaponState::onExit RW 0x74C8BE (vtable 0xC27858 slot 5; BFME2 0x74B08A identical, decomp
+	// AIAttackFireWeaponStateOnExit.cpp): IS_FIRING_WEAPON (0x0D) and IGNORING_STEALTH (0x1B) are cleared, the current weapon's status is written back
+	// (RW 0x6CDCE7); a swing cancelled before it landed (PRE_ATTACK) ends (+ 0x1C = 0) and the status is written back again; then END_FIRE_STATE (0x52)
+	static const int kIgnoringStealth = CombatNames::status("IGNORING_STEALTH");
+	static const int kEndFireState = CombatNames::status("END_FIRE_STATE");
 	owner().setStatus((unsigned)CombatNames::statuses().isFiringWeapon, false);
+	owner().setStatus((unsigned)kIgnoringStealth, false);
 	ObjectWeapons *w = owner().getWeapons();
-	if (w && w->currentWeapon() && w->currentStatus() == WEAPON_PRE_ATTACK)
+	if (Weapon *cur = w ? w->currentWeapon() : nullptr)
 	{
-		// a swing that was cancelled before it landed (the victim moved away): the pre-attack ends (ZH AIAttackFireWeaponState::onExit)
-		w->currentWeapon()->setWhenPreAttackFinished(0);
+		if (w->weaponStatusWriteBack(*cur) == WEAPON_PRE_ATTACK)
+		{
+			cur->setWhenPreAttackFinished(0);
+			w->weaponStatusWriteBack(*cur);
+		}
 	}
+	owner().setStatus((unsigned)kEndFireState, false);
 }
 
 void AIAttackFireState::crc(StateHasher &h) const

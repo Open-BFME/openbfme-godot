@@ -453,6 +453,13 @@ PathfindObjectID ObjectPathfindAdapter::getID() const { return m_object->getID()
 const Coord3D &ObjectPathfindAdapter::getPosition() const { return *m_object->getPosition(); }
 float ObjectPathfindAdapter::getOrientation() const { return m_object->getOrientation(); }
 
+// lane PATH-REBUILD: RW 0x70B9E0's vector is the object's facing; the port's transform basis holds the same cosine and sine (AIUpdateInterface::unitDirectionOf)
+Coord2D ObjectPathfindAdapter::getUnitDirection2D() const
+{
+	// RW 0x70B9E0: the cosine and sine of the orientation (a unit vector); the transform's basis is the same for a yaw-only unit up to its rounding
+	return PathfindObject::getUnitDirection2D();
+}
+
 float ObjectPathfindAdapter::getHeightAboveTerrain() const
 {
 	const Coord3D &p = *m_object->getPosition();

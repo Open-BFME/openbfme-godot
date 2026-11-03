@@ -241,6 +241,7 @@ public:
 	bool containerAllowsBackingUp() const override { return false; }
 	// RW 0x5E774A: TheTerrainLogic vslot 0x1C at the object's layer (lane WALL-1: a wall top's or a ramp's height, Pathfinder::getLayerHeight)
 	float groundHeightAt(float x, float y) const override { return m_ai.layerHeightAt(x, y); }
+	bool isOnRampOrRaisedLayer() const override { return m_ai.isOnRampOrRaisedLayer(); }
 	LocomotorPath *getPath() override { return m_ai.m_mover->path(); }
 	bool testObjectStatus(int bit) const override { return bit >= 0 && obj().testStatus((unsigned)bit); }
 	bool testModelCondition(int bit) const override { return obj().testModelCondition(bit); }
@@ -1447,6 +1448,15 @@ PathfindLocomotorInfo AIUpdateInterface::locomotorInfo() const
 		}
 		info.downhillOnly = t.m_downhillOnly;
 		info.crusher = t.m_scalesWalls; // S-222 inference (RW loco+0x15)
+		// lane PATH-REBUILD: Path::rebuild's reads of the current locomotor (RW 0x767B0E)
+		info.present = true;
+		info.fastTurnRadius = t.m_fastTurnRadius;
+		info.slowTurnRadius = t.m_slowTurnRadius;
+		info.fasterThanQuarterSpeed = m_curLocomotor->isFasterThanQuarterSpeed(*m_locoHost); // the host is made with the module (the constructor)
+		info.canReverse = t.m_appearance == LOCO_WHEELS_FOUR && t.m_canMoveBackwards != 0;
+		info.maxTurnWithoutReform = t.m_maxTurnWithoutReform;
+		info.turnThresholdHS = t.m_turnThresholdHighSpeed;
+		info.floatingZ = t.m_zAxisBehavior == Z_FLOATING_Z;
 	}
 	return info;
 }
@@ -1485,6 +1495,16 @@ float AIUpdateInterface::layerHeightAt(float x, float y) const
 	return getObject()->logic().getGroundHeight(x, y);
 }
 
+bool AIUpdateInterface::isOnRampOrRaisedLayer() const
+{
+	if (!m_adapter)
+	{
+		return false;
+	}
+	const PathfindLayerEnum l = m_adapter->getLayer();
+	return l == LAYER_RAMP || isRaisedLayer(l);
+}
+
 void AIUpdateInterface::settleOnLayer()
 {
 	if (!m_world || !m_adapter || !m_world->mapReady())
@@ -1492,7 +1512,7 @@ void AIUpdateInterface::settleOnLayer()
 		return;
 	}
 	const PathfindLayerEnum before = m_adapter->getLayer();
-	const PathfindLayerEnum layer = m_world->pathfinder().settleLayer(*m_adapter);
+	const PathfindLayerEnum layer = m_world->pathfinder().adjustLayer(*m_adapter, before);
 	if (layer != before)
 	{
 		m_adapter->setLayer(layer);

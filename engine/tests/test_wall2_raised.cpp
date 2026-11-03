@@ -231,12 +231,13 @@ TEST_CASE("wall2 raised: a unit on the left wall top walks to the right one over
 		CHECK(n->getLayer() == LAYER_GROUND);
 	}
 	delete under;
-	// a unit's layer: on the walkway at a node there it keeps layer 2; walking off the walkway's cells onto the right ramp it takes the ramp
+	// a unit's layer: on the walkway at a node there it keeps layer 2 (UpdateLayer's mode 0: RW 0x6EE600 names the walkway at the unit); the walkway is not
+	// lost under it; walking off the walkway's cells onto the right wall top at a wall node it takes the wall (lane WALL-2's rule, S-4856)
 	LayeredUnit *k = w.unit(3, 300.0f, 100.0f, 60.0f, LAYER_TOP);
 	CHECK(w.pf->updateLayer(*k, LAYER_TOP) == LAYER_TOP);
-	CHECK(w.pf->settleLayer(*k) == LAYER_TOP);
+	CHECK(w.pf->layerAfterSurfaceLoss(*k) == LAYER_TOP);
 	k->pos = { 450.0f, 100.0f, 60.0f };
-	CHECK(w.pf->settleLayer(*k) == LAYER_WALL_FIRST);
+	CHECK(w.pf->updateLayer(*k, LAYER_WALL_FIRST) == LAYER_WALL_FIRST);
 }
 
 TEST_CASE("wall2 raised: without the walkway the wall tops meet only through the ground; removing the walkway frees layer 2 and its joints")

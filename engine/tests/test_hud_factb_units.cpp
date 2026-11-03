@@ -2985,7 +2985,10 @@ TEST_CASE("factb spell book: every Isengard spell book power cast through the HU
 	// so the Taint line passes; it still asserts no effect of TaintSpecialPower of its own (S-1997 keeps the explanation)
 	// merge queue q26 (community #73's slot table centred on the horde, as #73's own run found): the scene misses the 500 heuristic again (1536 with the cast,
 	// 1732 without), so Taint is a KNOWN line once more
-	r.check({ { "spell SpellBookDevastation", "S-921 (SPELL-3)" }, { "spell SpellBookIndustry", "S-1997" },
+	// merge queue q37 (measured once on the merged tree and at each merge point): at #187's the Devastation scene still misses the 500 heuristic (1536 with
+	// the cast, 1672 without); ATKRESET-1 (attack orders end the FiringDuration lock) moves the fight so it meets it (532 more lost with the cast), so its
+	// line passes; S-921 keeps the explanation (no effect of its own is asserted)
+	r.check({ { "spell SpellBookIndustry", "S-1997" },
 		{ "spell SpellBookFueltheFires", "S-1997" }, { "spell SpellBookDragonStrike", "S-1997" }, { "spell SpellBookIsengardTaint", "S-1997" } });
 }
 
