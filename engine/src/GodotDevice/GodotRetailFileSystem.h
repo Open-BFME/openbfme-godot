@@ -128,6 +128,7 @@ protected:
 private:
 	Dictionary mountFrom(const std::string &rotwkRoot, const std::string &bfme2Root, PackedStringArray errors);
 	Dictionary mountBfme2Shell(const std::string &bfme2Root);
+	void checkAssetPackModels(PackedStringArray &errors, Dictionary &result);
 	void mountMods(const std::string &rotwkRoot, PackedStringArray &errors); // lane MODS-1
 
 	std::unique_ptr<Win32BIGFileSystem> m_fs;

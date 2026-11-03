@@ -340,6 +340,11 @@ Dictionary RetailFileSystem::mount_bfme2_path(const String &root)
 	}
 	result["user_map_folder"] = toGodot(m_userMapFolder);
 	if (!m_userMapError.empty()) result["user_map_error"] = toGodot(m_userMapError);
+	PackedStringArray errors = result.get("errors", PackedStringArray());
+	checkAssetPackModels(errors, result);
+	result["ok"] = m_mounted;
+	result["errors"] = errors;
+	m_lastError = errors.is_empty() ? String() : String(errors[0]);
 	result["rotwk_install"] = root; // gi.dat / saves belong to this active game install
 	PackedStringArray stops;
 	stops.push_back("[S-5911] BFME2-only gameplay uses the shared simulation; remaining BFME2 versus RotWK logic and initialization-order differences remain unverified");
@@ -742,30 +747,7 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 		{
 			mountMods(rotwkRoot, errors);
 		}
-		// lane SDK-1: the asset packs' models against the files they replace in the mounted set (game and mods): a model that does not keep
-		// the original's skeleton is left out with a note; a pack model that is not a W3D file stops the start (AssetPacks::checkModels)
-		if (m_mounted && !m_packs.empty())
-		{
-			ArchiveW3DFileSource mounted(*m_fs);
-			std::vector<std::string> packErrors;
-			const bool modelsOk = m_packs.checkModels(mounted, packErrors);
-			m_packLinesRead = false; // lane PROFILE-3: the misfits are left out now
-			if (!modelsOk)
-			{
-				for (const std::string &e : packErrors)
-				{
-					errors.push_back(toGodot(e));
-				}
-				m_fs.reset();
-				m_mounted = false;
-			}
-			PackedStringArray notes;
-			for (const std::string &n : m_packs.notes())
-			{
-				notes.push_back(toGodot(n));
-			}
-			result["asset_pack_notes"] = notes;
-		}
+		checkAssetPackModels(errors, result);
 	}
 
 	result["mod"] = get_mod_report();
@@ -783,6 +765,34 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 		UtilityFunctions::push_error("RetailFileSystem: ", errors[i]);
 	}
 	return result;
+}
+
+void RetailFileSystem::checkAssetPackModels(PackedStringArray &errors, Dictionary &result)
+{
+	// lane SDK-1: the asset packs' models against the files they replace in the mounted set (game and mods): a model that does not keep
+	// the original's skeleton is left out with a note; a pack model that is not a W3D file stops the start (AssetPacks::checkModels)
+	if (m_mounted && !m_packs.empty())
+	{
+		ArchiveW3DFileSource mounted(*m_fs);
+		std::vector<std::string> packErrors;
+		const bool modelsOk = m_packs.checkModels(mounted, packErrors);
+		m_packLinesRead = false; // lane PROFILE-3: the misfits are left out now
+		if (!modelsOk)
+		{
+			for (const std::string &e : packErrors)
+			{
+				errors.push_back(toGodot(e));
+			}
+			m_fs.reset();
+			m_mounted = false;
+		}
+		PackedStringArray notes;
+		for (const std::string &n : m_packs.notes())
+		{
+			notes.push_back(toGodot(n));
+		}
+		result["asset_pack_notes"] = notes;
+	}
 }
 
 void RetailFileSystem::mountMods(const std::string &rotwkRoot, PackedStringArray &errors)

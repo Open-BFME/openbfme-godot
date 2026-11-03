@@ -525,6 +525,17 @@ func selected_game() -> String:
 
 
 func _mount_retail_folders(fs: RefCounted) -> Dictionary:
+	var args := OS.get_cmdline_user_args()
+	if selected_game() != "bfme1":
+		# lane SDK-0: cosmetic asset packs (drawing only; engine GameClient/AssetPacks.h): every folder in user://asset-packs (name order), then
+		# each --asset-pack=FOLDER; a pack with a problem stops the start with its message rather than being skipped
+		var packs: Dictionary = fs.set_asset_packs(asset_pack_folders(args))
+		if not packs.ok:
+			return {"ok": false, "errors": packs.errors}
+		if not packs.packs.is_empty():
+			print("RELEASE asset packs: ", ", ".join(packs.packs), " (", packs.textures, " textures, ", packs.models, " models)")
+			for note in packs.notes:
+				print("RELEASE asset packs: ", note)
 	if selected_game() == "bfme2-106":
 		if Array(OS.get_cmdline_user_args()).any(func(a): return a.begins_with("--mod-engine=")) or not mod_args(OS.get_cmdline_user_args(), OS.get_environment("OPENBFME_MOD")).is_empty() or not install_mod_args(OS.get_cmdline_user_args(), OS.get_environment("OPENBFME_MOD_INSTALL")).is_empty():
 			return {"ok": false, "errors": ["BFME2-only mode currently supports the verified base game without RotWK mods."]}
@@ -560,7 +571,6 @@ func _mount_retail_folders(fs: RefCounted) -> Dictionary:
 		return fs.mount_bfme1_path(install)
 	var setup: RefCounted = ClassDB.instantiate("InstallSetup")
 	var conf: Dictionary = setup.configured()
-	var args := OS.get_cmdline_user_args()
 	fs.set_mods(mod_args(args, OS.get_environment("OPENBFME_MOD"))) # lane MODS-1: RotWK's -mod, mounted over the verified game files
 	fs.set_install_mods(install_mod_args(args, OS.get_environment("OPENBFME_MOD_INSTALL"))) # lane MODS-2: mods installed into the game folder
 	var engines := PackedStringArray() # lane MODS-3: the modified game binaries of the mod (Common/ModEngineFeatures.h): their features turn on
@@ -568,15 +578,6 @@ func _mount_retail_folders(fs: RefCounted) -> Dictionary:
 		if a.begins_with("--mod-engine="):
 			engines.push_back(a.trim_prefix("--mod-engine="))
 	fs.set_mod_engines(engines)
-	# lane SDK-0: cosmetic asset packs (drawing only; engine GameClient/AssetPacks.h): every folder in user://asset-packs (name order), then
-	# each --asset-pack=FOLDER; a pack with a problem stops the start with its message rather than being skipped
-	var packs: Dictionary = fs.set_asset_packs(asset_pack_folders(args))
-	if not packs.ok:
-		return {"ok": false, "errors": packs.errors}
-	if not packs.packs.is_empty():
-		print("RELEASE asset packs: ", ", ".join(packs.packs), " (", packs.textures, " textures, ", packs.models, " models)")
-		for note in packs.notes:
-			print("RELEASE asset packs: ", note)
 	var test_pick := _first_run_test_args(args)
 	print("RELEASE game folders: ", conf.source)
 	if conf.source == "env" and test_pick.is_empty():

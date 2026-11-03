@@ -30,7 +30,9 @@ subsystem-order fidelity are not fully verified. Edition detection, base-legend
 loading, shell-map defaults and projectile emotion variants use main's shared
 implementations. This does not change the project's source policy or claim
 BFME2 retail cross-play compatibility.
-RotWK mod arguments are refused in this initial standalone path.
+RotWK mod arguments are refused in this initial standalone path. Cosmetic asset
+packs still load from the enabled-pack folders and explicit `--asset-pack=`
+arguments, with the same model checks and named failures as the RotWK mount.
 
 Standalone gameplay reads custom maps from the BFME2 user-data `Maps` folder
 named by its own `gi.dat`, and reports that path as `user_map_folder`. A missing

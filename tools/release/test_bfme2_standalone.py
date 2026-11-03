@@ -63,3 +63,44 @@ def test_bfme2_only_download_never_requests_rotwk(tmp_path):
         assert "original-RotWK" not in marker
     finally:
         server.stop()
+
+
+def test_asset_pack_errors_reach_both_game_mounts(tmp_path):
+    """Exercise the real startup method before either native mount is needed."""
+    godot = shutil.which(os.environ.get("GODOT", "godot"))
+    shutil.copytree(ROOT / "godot/scripts", tmp_path / "scripts")
+    (tmp_path / "project.godot").write_text(
+        'config_version=5\n[application]\nconfig/name="Standalone pack regression"\n'
+        '[autoload]\nRelease="*res://release_stub.gd"\n', encoding="utf-8")
+    (tmp_path / "release_stub.gd").write_text(
+        'extends Node\nvar info: RefCounted\n'
+        'func selected_game() -> String: return "bfme2-106"\n'
+        'func display_line() -> String: return "test"\n', encoding="utf-8")
+    (tmp_path / "check.gd").write_text('''extends SceneTree
+class Files extends RefCounted:
+    var folders := PackedStringArray()
+    func set_asset_packs(paths: PackedStringArray) -> Dictionary:
+        folders = paths
+        return {"ok": false, "errors": ["invalid fixture pack"]}
+func _initialize() -> void:
+    create_timer(5).timeout.connect(func(): quit(1))
+    call_deferred("run")
+func run() -> void:
+    var release = load("res://scripts/release/release.gd").new()
+    var files := Files.new()
+    var result: Dictionary = await release._mount_retail_folders(files)
+    assert(result == {"ok": false, "errors": ["invalid fixture pack"]})
+    assert(files.folders.has("explicit-fixture-pack"))
+    release.free()
+    print("STANDALONE PACK ERROR PASS")
+    quit()
+''', encoding="utf-8")
+    for game in ["bfme2-106", "bfme2"]:
+        result = subprocess.run(
+            [godot, "--headless", "--path", str(tmp_path), "--script", "res://check.gd",
+             "--", "--game=" + game, "--asset-pack=explicit-fixture-pack"],
+            capture_output=True, text=True, timeout=30)
+        output = result.stdout + result.stderr
+        assert result.returncode == 0, output
+        assert "ERROR:" not in output, output
+        assert "STANDALONE PACK ERROR PASS" in output, output
