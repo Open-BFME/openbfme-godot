@@ -44,6 +44,7 @@ GAME_OWNERS = {
     "save4e_flow_test.gd": "tools/save/test_save_flow.py",
 }
 LAUNCHER_OWNERS = {
+    "bfme2_offer_test.gd": "tools/release/test_bfme2_standalone.py",
     "display_test.gd": "tools/release/test_launcher_display.py",
     **dict.fromkeys(("background_play_test.gd", "crypto_test.gd", "layout_test.gd", "macos_preview_test.gd", "oauth_test.gd",
                     "social_launch_test.gd", "social_ui_test.gd", "unit_test.gd", "write_failure_test.gd",
@@ -123,6 +124,7 @@ CI_GATES = scripts("""
 # Denylist part 2: manual dedicated invocations only, not pytest skips. Having
 # retail paths, a GPU or an opt-in environment variable must not schedule these.
 DENYLIST = {
+    "bfme2_standalone_test.gd": "manual: requires private BFME2 data and the native extension",
     "harlindon_creep_combat_test.gd": "manual: requires private retail assets and a live skirmish",
     "fortress_exit_test.gd": "manual: requires private retail assets and a live skirmish",
     "water_normal_test.gd": "manual: requires GPU rendering for fixed-input water normals",

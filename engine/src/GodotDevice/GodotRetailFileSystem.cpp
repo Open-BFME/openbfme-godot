@@ -50,6 +50,31 @@ std::string toNative(const String &s)
 	return std::string(utf8.get_data(), (size_t)utf8.length());
 }
 
+void addLanguageWarning(Dictionary &result, const RetailMountReport &report)
+{
+	if (report.ok && !report.unverifiedLanguage.empty())
+	{
+		// PR #77: language archives no pin covers were mounted: the texts of the warning the game shows once per install (scripts/release/release.gd)
+		Dictionary warning;
+		Array archives;
+		for (const UnverifiedLanguageArchive &a : report.unverifiedLanguage)
+		{
+			Dictionary d;
+			d["install"] = toGodot(a.install);
+			d["path"] = toGodot(RetailPrintableText(a.path));
+			d["language"] = toGodot(RetailPrintableText(a.language));
+			d["md5"] = toGodot(a.md5);
+			d["size"] = (int64_t)a.size;
+			archives.push_back(d);
+		}
+		warning["archives"] = archives;
+		warning["message"] = toGodot(RetailLanguageWarningText(report.unverifiedLanguage));
+		warning["details"] = toGodot(RetailLanguageWarningDetails(report.unverifiedLanguage, BuildVersion::versionLine()));
+		warning["signature"] = toGodot(RetailLanguageWarningSignature(report.unverifiedLanguage));
+		result["unverified_language"] = warning;
+	}
+}
+
 // lane MOD-5: the user maps folder of a RotWK install (the user data folder that its gi.dat names in the device's application data folder, then
 // RW 0x70254F's "Maps"); "" + `error` when the install's gi.dat cannot be read
 std::string userMapFolderOf(const std::string &rotwkRoot, std::string &error)
@@ -67,6 +92,7 @@ void RetailFileSystem::_bind_methods()
 	ClassDB::bind_method(D_METHOD("mount_bfme1_path", "root"), &RetailFileSystem::mount_bfme1_path);
 	ClassDB::bind_method(D_METHOD("is_bfme1"), &RetailFileSystem::is_bfme1);
 	ClassDB::bind_method(D_METHOD("mount_retail"), &RetailFileSystem::mount_retail);
+	ClassDB::bind_method(D_METHOD("mount_bfme2_path", "root"), &RetailFileSystem::mount_bfme2_path);
 	ClassDB::bind_method(D_METHOD("mount_retail_paths", "rotwk", "bfme2"), &RetailFileSystem::mount_retail_paths); // RELEASE-1
 	ClassDB::bind_method(D_METHOD("create_bfme2_shell"), &RetailFileSystem::create_bfme2_shell);
 	ClassDB::bind_method(D_METHOD("is_mounted"), &RetailFileSystem::is_mounted);
@@ -314,6 +340,41 @@ Dictionary RetailFileSystem::mount_retail()
 		errors.push_back(toGodot(error));
 	}
 	return mountFrom(rotwkRoot, bfme2Root, errors);
+}
+
+Dictionary RetailFileSystem::mount_bfme2_path(const String &root)
+{
+	setBfme1Mounted(false);
+	m_bfme1 = false;
+	m_bfme1Root.clear();
+	m_modReport = ModMountReport();
+	m_installModReport = ModMountReport();
+	ModEngineFeatures::reset();
+	Dictionary result = mountBfme2Shell(toNative(root));
+	m_shellSource = false; // explicit gameplay mount; menu-only factory retains its role
+	if (m_mounted)
+	{
+		// Gameplay uses this edition's gi.dat namespace; the presentation-only
+		// BFME2 shell deliberately has no local/user-map search path.
+		m_userMapFolder = userMapFolderOf(toNative(root), m_userMapError);
+		m_fs->setLocalFolder(m_userMapFolder);
+		if (!m_userMapError.empty())
+		{
+			UtilityFunctions::push_warning("RetailFileSystem: no user maps folder: ", toGodot(m_userMapError));
+		}
+	}
+	result["user_map_folder"] = toGodot(m_userMapFolder);
+	if (!m_userMapError.empty()) result["user_map_error"] = toGodot(m_userMapError);
+	PackedStringArray errors = result.get("errors", PackedStringArray());
+	checkAssetPackModels(errors, result);
+	result["ok"] = m_mounted;
+	result["errors"] = errors;
+	m_lastError = errors.is_empty() ? String() : String(errors[0]);
+	result["rotwk_install"] = root; // gi.dat / saves belong to this active game install
+	PackedStringArray stops;
+	stops.push_back("[S-5911] BFME2-only gameplay uses the shared simulation; remaining BFME2 versus RotWK logic and initialization-order differences remain unverified");
+	result["stops"] = stops;
+	return result;
 }
 
 Dictionary RetailFileSystem::mount_retail_paths(const String &rotwk, const String &bfme2)
@@ -649,27 +710,7 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 				report.ok = false; // the mod the player asked for, or nothing (never retail instead)
 			}
 		}
-		if (report.ok && !report.unverifiedLanguage.empty())
-		{
-			// PR #77: language archives no pin covers were mounted: the texts of the warning the game shows once per install (scripts/release/release.gd)
-			Dictionary warning;
-			Array archives;
-			for (const UnverifiedLanguageArchive &a : report.unverifiedLanguage)
-			{
-				Dictionary d;
-				d["install"] = toGodot(a.install);
-				d["path"] = toGodot(RetailPrintableText(a.path));
-				d["language"] = toGodot(RetailPrintableText(a.language));
-				d["md5"] = toGodot(a.md5);
-				d["size"] = (int64_t)a.size;
-				archives.push_back(d);
-			}
-			warning["archives"] = archives;
-			warning["message"] = toGodot(RetailLanguageWarningText(report.unverifiedLanguage));
-			warning["details"] = toGodot(RetailLanguageWarningDetails(report.unverifiedLanguage, BuildVersion::versionLine()));
-			warning["signature"] = toGodot(RetailLanguageWarningSignature(report.unverifiedLanguage));
-			result["unverified_language"] = warning;
-		}
+		addLanguageWarning(result, report);
 		if (report.ok)
 		{
 			m_fs = std::move(fs);
@@ -711,30 +752,7 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 		{
 			mountMods(rotwkRoot, errors);
 		}
-		// lane SDK-1: the asset packs' models against the files they replace in the mounted set (game and mods): a model that does not keep
-		// the original's skeleton is left out with a note; a pack model that is not a W3D file stops the start (AssetPacks::checkModels)
-		if (m_mounted && !m_packs.empty())
-		{
-			ArchiveW3DFileSource mounted(*m_fs);
-			std::vector<std::string> packErrors;
-			const bool modelsOk = m_packs.checkModels(mounted, packErrors);
-			m_packLinesRead = false; // lane PROFILE-3: the misfits are left out now
-			if (!modelsOk)
-			{
-				for (const std::string &e : packErrors)
-				{
-					errors.push_back(toGodot(e));
-				}
-				m_fs.reset();
-				m_mounted = false;
-			}
-			PackedStringArray notes;
-			for (const std::string &n : m_packs.notes())
-			{
-				notes.push_back(toGodot(n));
-			}
-			result["asset_pack_notes"] = notes;
-		}
+		checkAssetPackModels(errors, result);
 	}
 
 	result["mod"] = get_mod_report();
@@ -752,6 +770,34 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 		UtilityFunctions::push_error("RetailFileSystem: ", errors[i]);
 	}
 	return result;
+}
+
+void RetailFileSystem::checkAssetPackModels(PackedStringArray &errors, Dictionary &result)
+{
+	// lane SDK-1: the asset packs' models against the files they replace in the mounted set (game and mods): a model that does not keep
+	// the original's skeleton is left out with a note; a pack model that is not a W3D file stops the start (AssetPacks::checkModels)
+	if (m_mounted && !m_packs.empty())
+	{
+		ArchiveW3DFileSource mounted(*m_fs);
+		std::vector<std::string> packErrors;
+		const bool modelsOk = m_packs.checkModels(mounted, packErrors);
+		m_packLinesRead = false; // lane PROFILE-3: the misfits are left out now
+		if (!modelsOk)
+		{
+			for (const std::string &e : packErrors)
+			{
+				errors.push_back(toGodot(e));
+			}
+			m_fs.reset();
+			m_mounted = false;
+		}
+		PackedStringArray notes;
+		for (const std::string &n : m_packs.notes())
+		{
+			notes.push_back(toGodot(n));
+		}
+		result["asset_pack_notes"] = notes;
+	}
 }
 
 void RetailFileSystem::mountMods(const std::string &rotwkRoot, PackedStringArray &errors)
@@ -900,6 +946,7 @@ Dictionary RetailFileSystem::mountBfme2Shell(const std::string &bfme2Root)
 			UtilityFunctions::push_warning("RetailFileSystem: ", toGodot(w));
 		}
 		result["warnings"] = warnings;
+		addLanguageWarning(result, report);
 		if (report.ok)
 		{
 			std::string scanError;
