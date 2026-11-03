@@ -38,6 +38,18 @@ func _run() -> void:
 			push_error(str(archive))
 			quit(1)
 			return
+	# The gameplay mount must expose BFME2's user maps; a menu-only source must not.
+	var shell = ClassDB.instantiate("AptMenuPlayer")
+	var user_data: Dictionary = shell.create_a_hero_save_folder(mounted.bfme2_install)
+	shell.free()
+	assert(user_data.ok, str(user_data))
+	var expected_maps: String = str(user_data.user_data).path_join("Maps")
+	assert(fs.get_user_map_folder() == expected_maps)
+	assert(mounted.user_map_folder == expected_maps)
+	assert(not mounted.has("user_map_error"))
+	var presentation = fs.create_bfme2_shell()
+	assert(presentation != null)
+	assert(presentation.get_user_map_folder() == "")
 	var world = ClassDB.instantiate("GameWorld")
 	root.add_child(world)
 	var setup: Dictionary = world.setup(fs)

@@ -32,6 +32,11 @@ unported and the shared runtime still uses RotWK's relationship mask 7. This doe
 project's source policy or claim BFME2 retail cross-play compatibility.
 RotWK mod arguments are refused in this initial standalone path.
 
+Standalone gameplay reads custom maps from the BFME2 user-data `Maps` folder
+named by its own `gi.dat`, and reports that path as `user_map_folder`. A missing
+or unreadable `gi.dat` reports `user_map_error`, as in the existing RotWK mount.
+The presentation-only BFME2 menu source keeps no local map search path.
+
 Validation includes synthetic launcher selection, a complete local-service
 BFME2-only download with no RotWK requests, first-run callbacks and native
 install/legend tests. `godot/tests/bfme2_standalone_test.gd` is the manual

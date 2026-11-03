@@ -309,6 +309,19 @@ Dictionary RetailFileSystem::mount_bfme2_path(const String &root)
 	ModEngineFeatures::reset();
 	Dictionary result = mountBfme2Shell(toNative(root));
 	m_shellSource = false; // explicit gameplay mount; menu-only factory retains its role
+	if (m_mounted)
+	{
+		// Gameplay uses this edition's gi.dat namespace; the presentation-only
+		// BFME2 shell deliberately has no local/user-map search path.
+		m_userMapFolder = userMapFolderOf(toNative(root), m_userMapError);
+		m_fs->setLocalFolder(m_userMapFolder);
+		if (!m_userMapError.empty())
+		{
+			UtilityFunctions::push_warning("RetailFileSystem: no user maps folder: ", toGodot(m_userMapError));
+		}
+	}
+	result["user_map_folder"] = toGodot(m_userMapFolder);
+	if (!m_userMapError.empty()) result["user_map_error"] = toGodot(m_userMapError);
 	result["rotwk_install"] = root; // gi.dat / saves belong to this active game install
 	PackedStringArray stops;
 	stops.push_back("[S-5911] BFME2-only gameplay uses the shared simulation; BFME2 versus RotWK logic differences remain unverified, including the stored-only PreLandingEmotionAffectsAllies filter");
