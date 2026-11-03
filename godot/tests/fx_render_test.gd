@@ -78,6 +78,7 @@ func _run() -> int:
 	await _case_saturation()
 	await _case_dust_soft_edges()
 	await _case_soft_ground()
+	await _case_culling()
 	return EXIT_PASS if _failures == 0 else EXIT_FAIL
 
 
@@ -319,3 +320,32 @@ func _case_soft_ground() -> void:
 	_check(_near(add_mid, 0.5, 0.5, 0.5, 0.04), "soft: an additive particle 8 units in front of the plane adds half its colour: %s" % _fmt(add_mid))
 	plane.queue_free()
 	_fx.soft_particles = false
+
+
+## Lane GPUPERF-3: a system out of the camera's view is not built (culled_batches), the picture is the one without the culling, and an advance
+## with no particle step and nothing else changed keeps the batches (rebuilds_skipped); a camera move rebuilds them.
+func _case_culling() -> void:
+	_fx.clear()
+	var seen := _define("ALPHA", "TexCull.tga", Color(0, 1, 0), 1.0)
+	_play(seen, Vector3.ZERO)
+	_play(_define("ALPHA", "TexFar.tga", Color(1, 0, 0), 1.0), Vector3(50000, 0, 0))
+	await _settle()
+	var st: Dictionary = _fx.get_stats()
+	_check(int(st.culled_batches) == 1 and int(st.sprites) == 1, "culling: the system out of view is not built (%d culled, %d sprites)" % [int(st.culled_batches), int(st.sprites)])
+	var with_culling := _pixel(0, 0)
+	_fx.set_frustum_culling(false)
+	_fx.rebuild()
+	await _settle()
+	st = _fx.get_stats()
+	var without := _pixel(0, 0)
+	_check(int(st.culled_batches) == 0 and int(st.sprites) == 2, "culling off: both systems built (%d sprites)" % int(st.sprites))
+	_check(with_culling.is_equal_approx(without) and _near(with_culling, 0, 1, 0), "culling: the picture is the same %s %s" % [_fmt(with_culling), _fmt(without)])
+	_fx.set_frustum_culling(true)
+	_fx.rebuild()
+	var s0 := int(_fx.get_stats().rebuilds_skipped)
+	_fx.advance(0.001) # below a 30 Hz step: nothing changes
+	_check(int(_fx.get_stats().rebuilds_skipped) == s0 + 1, "an advance without a step or a change keeps the batches")
+	_camera.position.x += 1.0
+	_fx.advance(0.001)
+	_check(int(_fx.get_stats().rebuilds_skipped) == s0 + 1, "a camera move rebuilds them")
+	_camera.position.x -= 1.0
