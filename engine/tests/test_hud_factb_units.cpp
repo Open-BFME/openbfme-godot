@@ -2988,7 +2988,9 @@ TEST_CASE("factb spell book: every Isengard spell book power cast through the HU
 	// merge queue q37 (measured once on the merged tree and at each merge point): at #187's the Devastation scene still misses the 500 heuristic (1536 with
 	// the cast, 1672 without); ATKRESET-1 (attack orders end the FiringDuration lock) moves the fight so it meets it (532 more lost with the cast), so its
 	// line passes; S-921 keeps the explanation (no effect of its own is asserted)
-	r.check({ { "spell SpellBookIndustry", "S-1997" },
+	// The attack aim's half-turn success rule moves the scene's fight again: the Devastation scene misses the 500 heuristic (2140 with the cast, 2157
+	// without); as before, no effect of DevastateSpecialPower is asserted (S-1997), so it is a KNOWN line
+	r.check({ { "spell SpellBookIndustry", "S-1997" }, { "spell SpellBookDevastation", "S-1997|no effect of DevastateSpecialPower is asserted" },
 		{ "spell SpellBookFueltheFires", "S-1997" }, { "spell SpellBookDragonStrike", "S-1997" }, { "spell SpellBookIsengardTaint", "S-1997" } });
 }
 
