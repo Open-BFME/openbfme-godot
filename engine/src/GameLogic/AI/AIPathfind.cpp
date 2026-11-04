@@ -474,7 +474,7 @@ PathfindGridStats Pathfinder::gridStats() const
 	s.height = m_extent.hi.y + 1;
 	for (const PathfindCell &c : m_blockOfMapCells)
 	{
-		s.types[(int)c.getType() & 7]++;
+		s.types[std::min((int)c.getType(), 8)]++;
 		if (c.getPinched()) s.pinched++;
 		if (c.getImpassableToPlayers()) s.impassableToPlayers++;
 		if (c.getExtraPass()) s.extraPass++;

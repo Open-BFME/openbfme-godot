@@ -100,7 +100,7 @@ void Pathfinder::classifyFence(PathfindObject &obj, bool insert)
 				}
 				if (changed)
 				{
-					cellRef.setZone(PathfindZoneManager::UNINITIALIZED_ZONE);
+					// lane QPATH-1: RW 0x93485A / 0x93491C leave the cell's zone (+ 8) alone; only the block is marked dirty (RW 0x937D96)
 					if (!m_buildingMap) m_zoneManager.markCellDirty(cx, cy);
 				}
 				if (cellBounds.lo.x > cx) cellBounds.lo.x = cx;
@@ -214,21 +214,18 @@ void Pathfinder::internal_classifyObjectFootprint(PathfindObject &obj, bool inse
 			// 0x9371ED .. 0x93742C), so setTypeAsObstacle leaves such a cell as it is there
 			cellRef.setType(PathfindCell::CELL_CLEAR);
 		}
-		bool changed;
+		// lane QPATH-1: RW 0x93485A / 0x93491C (the per-cell calls of RW 0x936B7D) leave the cell's zone (+ 8) alone: it keeps its zone until the zone update
+		// (ZH reset it to UNINITIALIZED here)
 		if (insert)
 		{
 			ICoord2D p;
 			p.x = cx;
 			p.y = cy;
-			changed = cellRef.setTypeAsObstacle(m_pool, obj, false, p);
+			cellRef.setTypeAsObstacle(m_pool, obj, false, p);
 		}
 		else
 		{
-			changed = cellRef.removeObstacle(m_pool, obj);
-		}
-		if (changed)
-		{
-			cellRef.setZone(PathfindZoneManager::UNINITIALIZED_ZONE);
+			cellRef.removeObstacle(m_pool, obj);
 		}
 		// lane WALLFOOT-1: the gate's keeping removal leaves the box's bit 17 (RW 0x93713A / 0x937140); the cylinder writes it regardless (RW 0x9373C7)
 		if (wall && !(box && keepGateFlag) && cellRef.getBit17() != insert)

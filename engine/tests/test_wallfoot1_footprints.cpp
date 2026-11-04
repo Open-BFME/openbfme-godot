@@ -6,9 +6,12 @@
 
 #include "PathfindTestUtil.h"
 #include "Siege1TestUtil.h"
+#include "GameLogic/AI/AIPathfindStops.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Module/GateModules.h"
 
+#include <algorithm>
+#include <string>
 #include <vector>
 
 using namespace pathtest;
@@ -183,6 +186,79 @@ TEST_CASE("wallfoot1: the gate's keeping removal (RW 0x6E861E) leaves its box's 
 	CHECK_FALSE(w.cell(15, 15).getBit17());
 }
 
+TEST_CASE("wallfoot1: the two S-164 stop lines are raised whole: the drawable wall flag by a structure that is no gate or wall, the ground type filter by a skipped ground cell")
+{
+	auto raised = [](const Pathfinder &pf, const char *line) {
+		return std::find(pf.stops().begin(), pf.stops().end(), std::string(line)) != pf.stops().end();
+	};
+	CHECK(std::string(pathstops::kGroundTypeFilter) ==
+		  "S-164 a footprint skips a ground cell that is not CLEAR / RUBBLE (insertion) or RUBBLE / OBSTACLE (removal): RotWK's box filters off-ground cells only "
+		  "(RW 0x93707A) and its cylinder none (a type 5 cell takes the obstacle, bits 17 / 22 are written)");
+	CHECK(std::string(pathstops::kWallFlagDrawable) == "S-164 the footprint's gate / wall flag ignores the drawable queries RW 0x6729A3 / 0x6729E9 (RW 0x936E21)");
+	{
+		// a gate's cylinder on clear ground: neither line (a cylinder visits each cell once; a box's steps of 5 visit a cell twice, the second visit
+		// finds the OBSTACLE it wrote and is skipped, so every box raises the filter line, a cell RotWK's 0x93485A leaves as it is too)
+		World w(40, 30);
+		w.build();
+		TestObject &gate = w.structure(8, 150.0f, 150.0f, 30.0f, 0.0f, PATHFIND_GEOMETRY_CYLINDER);
+		gate.kinds.insert(PK_BLOCKING_GATE);
+		w.pf->addObjectToPathfindMap(gate);
+		CHECK_FALSE(raised(*w.pf, pathstops::kWallFlagDrawable));
+		CHECK_FALSE(raised(*w.pf, pathstops::kGroundTypeFilter));
+	}
+	{
+		// a building's cylinder on clear ground: the drawable line only; over a cliff cell (skipped, RotWK's cylinder has no filter): the filter line too
+		World w(40, 30);
+		w.build();
+		TestObject &b = w.structure(7, 150.0f, 150.0f, 30.0f, 0.0f, PATHFIND_GEOMETRY_CYLINDER);
+		w.pf->addObjectToPathfindMap(b);
+		CHECK(raised(*w.pf, pathstops::kWallFlagDrawable));
+		CHECK_FALSE(raised(*w.pf, pathstops::kGroundTypeFilter));
+		w.pf->removeObjectFromPathfindMap(b);
+		CHECK_FALSE(raised(*w.pf, pathstops::kGroundTypeFilter));
+		w.cell(15, 15).setType(PathfindCell::CELL_CLIFF);
+		w.pf->addObjectToPathfindMap(b);
+		CHECK(w.cell(15, 15).getType() == PathfindCell::CELL_CLIFF);
+		CHECK(raised(*w.pf, pathstops::kGroundTypeFilter));
+	}
+}
+
+TEST_CASE("wallfoot1 retail: Helm's Deep's main gate killed open keeps its closed box's bit 17; killed closed it loses it (Object::onDie's plain removal RW 0x699068, then the dead path RW 0x89CCB3)")
+{
+	OPENBFME_REQUIRE_START(s);
+	for (const bool killOpen : { true, false })
+	{
+		FortressGame g(*s, "maps/map wor helms deep/map wor helms deep.map", false);
+		Object *gate = g.named("Main Gate");
+		REQUIRE(gate);
+		GateOpenAndCloseBehavior *b = GateOpenAndCloseBehavior::findGate(*gate);
+		REQUIRE(b);
+		REQUIRE(g.game->logic().aiWorld());
+		Pathfinder &pf = g.game->logic().aiWorld()->pathfinder();
+		g.frames(70);
+		REQUIRE(b->isSettled());
+		REQUIRE(b->isOpen()); // OpenByDefault
+		b->close();
+		g.frames(70);
+		REQUIRE(b->isSettled());
+		if (killOpen)
+		{
+			b->open();
+			g.frames(70);
+			REQUIRE(b->isSettled());
+		}
+		REQUIRE(b->isOpen() == killOpen);
+		PathfindCell *centre = pf.getCell(LAYER_GROUND, gate->getPosition());
+		REQUIRE(centre);
+		CHECK(centre->getBit17());
+		gate->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
+		g.frames(10);
+		REQUIRE(gate->isEffectivelyDead());
+		CHECK_FALSE(centre->isObstaclePresent(gate->getID())); // the dead gate stands open
+		CHECK(centre->getBit17() == killOpen);
+	}
+}
+
 TEST_CASE("wallfoot1 retail: Helm's Deep's main gate closed and opened again leaves every wall top and ramp cell's type, layer and pinched bit as they were; its closed footprint keeps bit 17")
 {
 	OPENBFME_REQUIRE_START(s);
@@ -225,7 +301,7 @@ TEST_CASE("wallfoot1 retail: Helm's Deep's main gate closed and opened again lea
 	}
 	REQUIRE(b->isOpen());
 	const std::vector<Snap> before = offGround(); // the open gate
-	REQUIRE(!before.empty());
+	REQUIRE(before.size() == 6587); // pin: review prtrkk (Devin): Helm's Deep's wall top and ramp cells, measured on the archive with and without #207
 	b->close();
 	g.frames(70);
 	REQUIRE(b->isSettled());

@@ -72,6 +72,11 @@ bool Drawable::isKindOfName(const char *name) const
 	return bit >= 0 && MaskTest(m_kindOf, (unsigned)bit);
 }
 
+bool Drawable::isKindOfIndex(int bit) const
+{
+	return bit >= 0 && MaskTest(m_kindOf, (unsigned)bit);
+}
+
 void Drawable::reactToTransformChange(const Coord3D *oldPos, float oldAngle)
 {
 	if (m_reactionMuted)

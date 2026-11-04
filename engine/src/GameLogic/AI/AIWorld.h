@@ -115,6 +115,8 @@ public:
 	const PathfindObject *getTopContainer() const override;
 	bool isParked() const override;
 	bool hasAI() const override;
+	bool isStatusImmobile() const override;
+	bool getAILocomotorInfo(PathfindLocomotorInfo &out) const override;
 	PathfindObjectID getIgnoredObstacleID() const override;
 	bool canPathThroughUnits() const override;
 	bool isAircraftThatAdjustsDestination() const override;

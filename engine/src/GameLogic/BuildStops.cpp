@@ -69,8 +69,7 @@ std::vector<std::string> BuildStops::lines()
 	              "0x82D7F2 / 0x82C84C: the owner's finished resp. unfinished structure stands for them), the script engine's note at the arrival (RW 0x756C87); the "
 	              "idle worker list is the dozer's marked flag (TheInGameUI vslots 0x1A4 / 0x1A8); the primary machine reset after a PLAYER command runs before the "
 	              "command (RW: after it); the AI player's 'dozer free' call (slot 0x7C) follows the completion tail RW 0x88DBB3 and is also made when a task is "
-	              "cancelled (S-890); AIMover::locomotorDistanceToGoal measures a one-node path (RotWK: 100 only without a path, RW 0x6641A3) but keeps the port's 100 "
-	              "for a longer path without a closest node");
+	              "cancelled (S-890)");
 	for (const std::string &s : BuildCommands::acceptanceStops())
 	{
 		out.push_back(s);

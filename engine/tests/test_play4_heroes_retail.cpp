@@ -405,9 +405,11 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// per-tick goal publication move QueueProductionExitUpdate's Moria goblin
 				// spawns (RW 0x8A3DD5 -> 0x87C9B8 -> state 7); the flying heroes themselves
 				// never enter state 7. Upstream q29 also leaves Drogoth passive here.
-				CHECK(own.shots == 0u);
-				CHECK(own.lost == 0.0f);
-				CHECK(own.membersKilled == 0u);
+				// Merge queue q38 (measured once on the merged tree and at each merge point; #172 keeps it): with LOCODIST-1 a GIANT_BIRD locomotor's distance
+				// to the goal is 0 (RW 0x664127), so Drogoth, on his own, strikes the horde once (825 health, 11 of 20 killed); the fell beasts stay passive
+				CHECK(own.shots == (drogoth ? 1u : 0u));
+				CHECK(own.lost == (drogoth ? 825.0f : 0.0f));
+				CHECK(own.membersKilled == (drogoth ? 11u : 0u));
 				// lane BACKLOG4: 3 strikes (4 before): the hero's creation uses the teleport form (RW 0x7814CF: RW 0x696E63(pos, 0)), which idles the new
 				// hero's AI and wakes it; the fight's damage and kills are unchanged (measured with and without that call)
 				// lane STEALTHFLY1: 2 strikes (3 before): recruited from the fortress, Drogoth leaves along its production exit path in the bird's own follow
@@ -450,9 +452,11 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 			// slots, RW 0x871536), 7 of 20 (525 health) with #161 (the block search's block zones move the scene's creeps and computer opponent)
 			// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; measured twice on the lane's tree): Haldir still fights the
 			// horde: 18 of 20 killed (1350 health) with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree)
+			// Merge queue q38 (LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves the scene's creeps and computer opponent; measured once on
+			// the merged tree and at each merge point, #172 keeps it): Haldir's 4 strikes on his own take nothing from the horde (the creep first, as in q28)
 			if (hero == "ElvenHaldir")
 			{
-				CHECK(own.lost == 1350.0f);
+				CHECK(own.lost == 0.0f);
 			}
 			else
 			{
@@ -613,8 +617,13 @@ TEST_CASE("attack1 heroes retail: the mounted Witch-king and Mouth of Sauron, or
 	// pins, not retail values. With the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree) the Witch-king
 	// holds and the Mouth of Sauron takes 7 shots, 7 killed (75 in the crush run), 6 swings (75 / 450), nearest 2.96156, with CRUSHER_LEVEL -1 5 swings
 	// taking 375 from 69.5376.
-	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 4u, 18u, 0.0f, { 800.0f, 112.0f }, 4u, 450.0f, 1350.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 5u, 1500.0f, 22.4116f, 7.89051f },
-			 Case{ "FactionMordor", "MordorMouthOfSauron", 7u, 7u, 75.0f, { 640.0f, 320.0f }, 6u, 75.0f, 450.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 5u, 375.0f, 69.5376f, 2.96156f } })
+	// Merge queue q38 (LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, so the heroes and the scene's units stop elsewhere; measured once on
+	// the merged tree and at each merge point, #172 keeps them): the Witch-king 3 shots, all swings of his mace (the first took 525, 1275 outside the run,
+	// nothing in a crush run), 17 killed, nearest 1.8156, with CRUSHER_LEVEL -1 3 swings taking 1350 from 4.09441; the Mouth of Sauron 5 shots, 5 killed
+	// (150 in the crush run), 3 swings (75 / 225), nearest 8.67229, with CRUSHER_LEVEL -1 4 swings taking 300 from 47.8748. The duels, the hit sizes and the
+	// blocking are unchanged. Engine pins, not retail values.
+	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 3u, 17u, 0.0f, { 800.0f, 112.0f }, 3u, 525.0f, 1275.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 3u, 1350.0f, 4.09441f, 1.8156f },
+			 Case{ "FactionMordor", "MordorMouthOfSauron", 5u, 5u, 150.0f, { 640.0f, 320.0f }, 3u, 75.0f, 225.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 4u, 300.0f, 47.8748f, 8.67229f } })
 	{
 		INFO(std::string(c.hero));
 		const ThingTemplate *tt = s->world->things().findTemplate(c.hero);

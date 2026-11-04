@@ -101,8 +101,10 @@ GHPR_TOP = frozenset({".github", "CONTRIBUTING.md"})
 # the public main's top level (the sync recipe: the archive sha's tree without archive/, plus the README line; a PRIVACY.md is not carried any more, PR #34); anything else is refused. ONLINE-2: services/
 # (the online relay and lobby service source) is public by the owner's decision of 2026-10-11; its secrets come from the environment at deploy time.
 # BFME2MODE-0: AGENTS.md (the game-editions contributor rules) is public by the owner's decision of 2026-10-29
-PUBLIC_TOP = frozenset({".gitattributes", ".gitignore", ".gitmodules", "AGENTS.md", "CLAUDE.md", "LICENSE", "NOTICE", "README.md",
-                        "build.bat", "docs", "engine", "godot", "launcher", "pytest.ini", "run_tests.bat", "services", "tools"} | GHPR_TOP)
+# REVIEW.md, .greptile/ and .macroscope/ (the review bots' shared rules) are public by the owner's decision of 2026-11-03
+PUBLIC_TOP = frozenset({".gitattributes", ".gitignore", ".gitmodules", ".greptile", ".macroscope", "AGENTS.md", "CLAUDE.md", "LICENSE",
+                        "NOTICE", "README.md", "REVIEW.md", "build.bat", "docs", "engine", "godot", "launcher", "pytest.ini",
+                        "run_tests.bat", "services", "tools"} | GHPR_TOP)
 PRIVATE_DIRS = frozenset({"workspace", "archive", "reference", "references"})
 URL = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://\S*|\bwww\.\S+|\bmailto:\S+")
 # characters that could start emphasis, code or a link in Markdown: replaced by plain look-alikes, never escaped with a backslash (the launcher

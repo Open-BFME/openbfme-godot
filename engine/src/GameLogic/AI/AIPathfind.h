@@ -194,6 +194,12 @@ public:
 	// RW 0x765972: length from a point returned by computePointAhead (the segment containing it) to the end of the optimised path,
 	// measured with the retail approximation max + 0.25 * min on each segment
 	float remainingFrom(const PathNode *node, const Coord3D &pos) const;
+	// lane LOCODIST-1, RW 0x766173 then RW 0x765972 on its result (getLocomotorDistanceToGoal RW 0x664127): the remaining length from the point `speed`
+	// ahead (computePointAhead writes Path + 0x18 as retail does; the node is part of RW's returned record, so the port's m_lastAheadNode is kept)
+	float remainingFromPointAhead(float speed);
+	// RW 0x765B12 Path::computeFlightDistToGoal (BFME2 0x763EC0, decomp AI/Path.cpp:86): the sum of the non-negative projections of the unit's offset to
+	// every optimised node on its segment's direction; `goal` gets the first node past the unit (the head without a next node, zero without a head)
+	float computeFlightDistToGoal(const Coord3D &pos, Coord3D &goal) const;
 	// the node the follower is on (RW Path+0x10) and the fraction along its segment (RW Path+0x14)
 	const PathNode *currentNode() const { return m_closest; }
 	float currentT() const { return m_t; }
@@ -368,7 +374,7 @@ enum { COST_ORTHOGONAL = 10, COST_DIAGONAL = 14 };
 class PathfindCell
 {
 public:
-	// RW cell types (the low 4 bits of [cell+0xC]); the surface table at RW 0xDA2444 has an entry for each of 0..7
+	// RW cell types (the low 4 bits of [cell+0xC]); the surface table at RW 0xDA2444 has an entry for each of 0..8 (its bytes after entry 8 are other data)
 	enum CellType
 	{
 		CELL_CLEAR = 0x00,
@@ -378,7 +384,10 @@ public:
 		CELL_OBSTACLE = 0x04,
 		CELL_BRIDGE_IMPASSABLE = 0x05, // RW: a type the footprint pinch pass writes and the passability tests reject (name INFERRED)
 		CELL_IMPASSABLE = 0x06,
-		CELL_DEEP_WATER = 0x07
+		CELL_DEEP_WATER = 0x07,
+		// lane WALL-5: a wall top's rim (ClassifyWall's edge pass, RW 0x9367B0 .. 0x936811: a stamped cell pinched by 2 or more neighbours on another layer;
+		// BFME2 decomp CellEdge); the surface table's entry 8 (RW 0xDA2464) is 0: no locomotor stands on it
+		CELL_WALL_EDGE = 0x08
 	};
 
 	PathfindCell() { reset(nullptr); }
@@ -562,6 +571,9 @@ public:
 	// RW 0x93894B: the effective zone of `zone` for a unit. `terrainVariant` (flag 1) treats obstacle zones like ground; AIR units
 	// are all in zone 1; a mask that kind-less (RW kind -1) is zone 1, kind -666 zone 0.
 	zoneStorageType getEffectiveZone(const PathfindMovement &mv, bool terrainVariant, zoneStorageType zone) const;
+	// lane QPATH-1: RW 0x938939, the terrain zone of `zone`: adjacent CLEAR and OBSTACLE zones of one layer are one terrain zone (a structure does not split the
+	// ground under it); the highest zone id of the class. 0 for zone 0 and ids out of range
+	zoneStorageType getTerrainZone(zoneStorageType zone) const;
 	// RW 0x937B9F: the kind of a surface mask (-1: everything passable, -666: no valid combination)
 	static int kindOf(const PathfindMovement &mv);
 	// lane PATHPERF-1: RW 0x938240 (BFME2 decomp Rva002E99F9Sub460::rva005318DB, tier A): the hierarchical search may step from a cell of zone `a` into an
@@ -701,7 +713,7 @@ private:
 struct PathfindGridStats
 {
 	int width = 0, height = 0;       // cells
-	int types[8] = {};               // by PathfindCell::CellType
+	int types[9] = {};               // by PathfindCell::CellType (lane WALL-5: 8 the wall tops' rims)
 	int pinched = 0;
 	int impassableToPlayers = 0, extraPass = 0; // cell bits 18 and 21
 };
@@ -1078,9 +1090,19 @@ public:
 	int hierarchicalPositionOf(int cellX, int cellY) const;
 	// the corridor's last index (RW HierarchicalPath + 0x14 after RW 0x93B3D8), -1 when there is none
 	int hierarchicalLastIndex() const { return m_hierLast; }
-	// terrain-and-structure zone test, no search (ZH clientSafeQuickDoesPathExist). Lane WALL-2: with the unit (RW 0x6F5BB0 QuickDoesPathExist's first argument)
-	// different zones still pass when a portal chain joins them (RW 0x6F5EE7 -> 0x6F5547)
+	// the ZH client-safe zone test (ZH clientSafeQuickDoesPathExist), no search. Lane QPATH-1: no RotWK caller; RW 0x6F5BB0 is quickDoesPathExist below. Kept for
+	// the object-less debug view and zone tests; with a unit, different zones still pass when a portal chain joins them (RW 0x6F5EE7 -> 0x6F5547)
 	bool clientSafeQuickDoesPathExist(const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to, const PathfindObject *obj = nullptr);
+	// lane QPATH-1: Pathfinder::QuickDoesPathExist, RW 0x6F5BB0 (BFME2 0x6F477E, Open-BFME-2 pathfinder.cpp:2951; tier B same-shape, layout operands only),
+	// both editions. `overrideSet` is the caller's locomotor set (retail's fourth argument); null: the object's AI's (none -> false). The retail callers
+	// all use this one; clientSafeQuickDoesPathExist stays for the debug view and the zone-only tests
+	bool quickDoesPathExist(const PathfindObject &obj, const Coord3D *from, const Coord3D *to, const PathfindLocomotorInfo *overrideSet);
+	// findPath's goal test: quickDoesPathExist with the unit and the set; an object-less search (the debug view, zone tests: no retail caller) takes the
+	// client-safe zone test
+	bool quickPathForSearch(const PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to)
+	{
+		return obj ? quickDoesPathExist(*obj, from, to, &loco) : clientSafeQuickDoesPathExist(loco, from, to, nullptr);
+	}
 	// RW 0x6F2FC3: the straight line is passable for the unit (the optimiser's test)
 	bool isLinePassable(const PathfindObject *obj, unsigned acceptableSurfaces, PathfindLayerEnum layer, const Coord3D &startWorld,
 		const Coord3D &endWorld, bool blocked, bool allowPinched = false);
@@ -1169,10 +1191,12 @@ public:
 	// RW 0x6E82FD: a portal (the flag + 0x48) of type 1, 2, 3, 4, 7 or 8
 	static bool isPortalWaypoint(const PathfindWaypoint &w);
 	// RW 0x6F5547: a chain of portals the unit may take leads from zone `from` to zone `to` (the effective zones, terrain variant, of the portals' cells)
-	bool portalPathExists(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to) const;
+	// lane QPATH-1: `terrainVariant` names the table the caller's zones come from, and the portals are filed under that table's zones (QuickDoesPathExist
+	// passes false, see quickDoesPathExist; internalFindPath and the hierarchical search keep the terrain variant: S-162)
+	bool portalPathExists(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to, bool terrainVariant = true) const;
 	// performance (the same answers): while a scope lives on this thread, portalPathExists for `obj` remembers each zone pair's answer. Nothing the answer
 	// reads (the portal waypoints, their zones and links, what the unit may cross) changes while one search runs (AI::findClosestEnemy opens one)
-	bool portalPathExistsUncached(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to) const;
+	bool portalPathExistsUncached(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to, bool terrainVariant) const;
 	class PortalMemoScope
 	{
 	public:
@@ -1355,6 +1379,13 @@ private:
 	void crcRaised(StateHasher &h) const;
 	PathfindLayerEnum wallLayerFor(float height);
 	void stampWallSurface(const PathfindWallSurface &s, PathfindLayerEnum layer);
+	// lane WALL-5: ClassifyWall's edge pass after a wall top's stamp (RW 0x936686 .. 0x936811): `changed` the cells the stamp covered
+	void wallEdgePass(const PathfindRegion &r, PathfindLayerEnum layer, const std::vector<ICoord2D> &changed);
+	// lane WALL-5: ClassifyWall's window of a wall top (RW 0x936511 .. 0x9365CB): the polygon's bounds, the low corner floored and the high ceiled to integers
+	// (getBounds RW 0x6E4D2C), divided by 10 (idiv), 2 cells more each way, clamped to the map
+	PathfindRegion wallEdgeWindow(const PathfindWallSurface &s) const;
+	// lane WALL-5: the 8 neighbours of (x, y) whose layer is not the cell's (a neighbour off the map is not counted)
+	int otherLayerNeighbours(int x, int y, PathfindLayerEnum layer);
 	void stampRampSurface(const PathfindWallSurface &s);
 	void restampWalls(const PathfindRegion &region);
 	bool isWallPiece(PathfindObjectID id) const;
