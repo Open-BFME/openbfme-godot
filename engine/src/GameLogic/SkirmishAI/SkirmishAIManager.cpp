@@ -4,6 +4,7 @@
 
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/SkirmishAI/AIUpgrade.h"
+#include "GameLogic/Module/GateModules.h"
 
 #include <algorithm>
 #include <iterator>
@@ -291,12 +292,52 @@ void SkirmishAIManager::updateGroup(AISkirmishGroup &g)
 		return;
 	}
 	g.lastLiveCount = live;
-	// RW 0x8ED6DC (manager + 0xA74, before), every AI by player index, RW 0x8EDB2C (the group's tasks), RW 0x8ED726 (after): the + 0xA74 object and the
-	// tasks are not ported (S-412)
+	// RW 0x8EDE50 .. 0x8EDE5B: the manager's gate list closes the enemy gates that block pathing before the group's AIs run
+	Player *first = firstAIMember(g);
+	if (first)
+	{
+		updateGates(true, *first);
+	}
+	// RW 0x8EDE60 .. 0x8EDE86: every AI by player index, then RW 0x8EDB2C (the group's tasks), then RW 0x8ED726 (the gates reopen)
 	for (auto &kv : g.players)
 	{
 		updateAI(*kv.second, g);
 	}
+	if (first)
+	{
+		updateGates(false, *first);
+	}
+}
+
+// RW 0x8ED6DC / RW 0x8ED726: the manager + 0xA74's vector, in registration order. `before`: every gate whose closed geometry is the one in the pathfinder's map
+// (RW 0x89C12F) and whose owner is the AI player's ENEMY (RW 0x89C18E: Player::getRelationship, ENEMIES) gets the CLOSED geometry (RW 0x89C9FA(0)); after the
+// group's AIs the same gates get the OPEN geometry (RW 0x89CA84(1, 0), forced even when already open). The pathfinder's portal refresh RW 0x6E85B0 follows
+// each walk; the port's add / removeObjectFromPathfindMap (GateOpenAndCloseBehavior::setGeometry) apply at once, so it has nothing left to do.
+void SkirmishAIManager::updateGates(bool before, Player &player)
+{
+	for (GateOpenAndCloseBehavior *gate : m_gates)
+	{
+		if (!gate || !gate->blocksPathing() || gate->relationshipTo(player) != ENEMIES)
+		{
+			continue;
+		}
+		gate->setGeometry(!before, false, true);
+	}
+}
+
+void SkirmishAIManager::registerGate(GateOpenAndCloseBehavior &gate)
+{
+	// RW 0x8EDA39: a duplicate is not appended
+	if (std::find(m_gates.begin(), m_gates.end(), &gate) == m_gates.end())
+	{
+		m_gates.push_back(&gate);
+	}
+}
+
+void SkirmishAIManager::unregisterGate(GateOpenAndCloseBehavior &gate)
+{
+	// RW 0x8ED772: the first entry of the pointer is erased
+	m_gates.erase(std::remove(m_gates.begin(), m_gates.end(), &gate), m_gates.end());
 }
 
 AISkirmishPlayer *SkirmishAIManager::groupFirstAI(AISkirmishGroup &g) const
@@ -543,6 +584,7 @@ void SkirmishAIManager::reset()
 	m_groups.clear();
 	m_infoPlayers.clear();
 	m_captureFlags.clear();
+	m_gates.clear(); // every gate unregisters in its destructor (RW 0x89BF87); a reset has none left
 	m_records.clear();
 	m_farmSites.clear();
 	m_started = false;
@@ -655,7 +697,8 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"tables have no terminating row, so an unknown field crashes retail where the port reports it; a CombatChainDefinition without Unit writes "
 		"before RW's table (the port rejects it, S-411)",
 		"[S-412] skirmish ai: TheSkirmishAIManager's creation rules, groups and update cadence are ported (RW 0x6AA030, 0x6A9EAD, 0x6A96A0, 0x8EDDF6, "
-		"0x6C7946); the bodies they call are not: the manager object + 0xA74, the group tasks (RW 0x8EDB2C), "
+		"0x6C7946); the manager's gate list (+ 0xA74, RW 0x8ED6DC / 0x8ED726: every gate registers at construction, RW 0x89C04B -> 0x8EDA39, and the group update "
+		"closes the enemy gates that block pathing before its AIs and reopens them after) is ported; the bodies they call are not: the group tasks (RW 0x8EDB2C), "
 		"AISkirmishPlayer RW 0x6C75B5 / the shutdown, the wall builder (RW 0x8F0EB4's + 0xE4); a computer player builds its base (S-413), trains its army "
 		"(S-415) builds farms (S-419), attacks with its tactic teams (S-417) and (lane AI5) buys its units' and structures' upgrades and its plots' expansions "
 		"(+ 0x108 AIUnitUpgrader, + 0x12C AIUpgradeScienceBuilder, the player info record's listeners: S-1876); lane BACKLOG6: AIPlayer::update RW 0x8F0EB4 is checked against the BFME2 "

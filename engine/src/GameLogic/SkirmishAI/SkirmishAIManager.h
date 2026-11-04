@@ -23,15 +23,17 @@
 //     record in player index order (RW 0x8E3CF3), then every group in creation order (RW 0x8EDDF6).
 //   * group update RW 0x8EDDF6 (only while active): the first COMPUTER member (or any member when MakeAll..., RW 0x8EDACE) — none makes the group
 //     inactive; its AI's brain's shared part (+ 0x164 -> + 0x14) is updated with the number of live AI members (RW 0x8EDA8E: not defeated
-//     (Player + 0x754), and COMPUTER or MakeAll...); the manager's object at + 0xA74 runs before and after (RW 0x8ED6DC / 0x8ED726); every AI of the
-//     group, in player index order, gets that shared part and is updated (RW 0x6C7946); the group's tasks (+ 0x18) are updated (RW 0x8EDB2C).
+//     (Player + 0x754), and COMPUTER or MakeAll...); the manager's gate list (+ 0xA74) closes every enemy gate that blocks pathing (RW 0x8ED6DC), every AI
+//     of the group, in player index order, gets that shared part and is updated (RW 0x6C7946); the group's tasks (+ 0x18) are updated (RW 0x8EDB2C); the gate
+//     list then reopens those gates (RW 0x8ED726).
 //   * AI update RW 0x6C7946: a disabled AI only updates its brain while its group still has more than one live AI member, or exactly one and the AI
 //     has an army; an enabled AI whose player is defeated is shut down (RW 0x6C78D9 / 0x6C7928) and disabled; otherwise RW 0x6C75B5 (when
 //     + 0x178 != -1), RW 0x6C7677, the AIPlayer part RW 0x8F0EB4 (its sub systems at + 0x4, + 0xE4, + 0x38, + 0x90, + 0xC0, + 0x108, + 0x12C -> + 0xC
 //     each through RW 0x90CD00 "update unless disabled"), then the brain (+ 0x164, RW 0x90CD00).
 // What is ported here: the creation rules, the grouping, the disabled rule, the cadence and the order of every call above, with the state each
-// step owns (hashed). The bodies of the called components (player info, the + 0xA74 object, the group tasks, the AIPlayer sub systems, the brain,
-// the shutdown) are not ported: each call is counted and reported (stop S-412).
+// step owns (hashed), and the gate list (+ 0xA74: every GateOpenAndCloseBehavior registers itself, RW 0x89C04B -> 0x8EDA39). The bodies of the
+// called components (player info, the group tasks, the AIPlayer sub systems, the brain, the shutdown) are not ported: each call is counted and
+// reported (stop S-412).
 
 #pragma once
 
@@ -47,6 +49,7 @@
 #include <vector>
 
 class GameLogic;
+class GateOpenAndCloseBehavior;
 class Object;
 class Player;
 class PlayerList;
@@ -124,6 +127,10 @@ public:
 
 	const std::vector<std::unique_ptr<AISkirmishGroup>> &groups() const { return m_groups; }
 	const AISkirmishPlayer *findAI(int playerIndex) const;
+	// RW 0x89C04B -> 0x8EDA39 / 0x8ED772: the manager's gate list (+ 0xA74), the gates the AI opens and closes for itself (RW 0x8ED6DC / 0x8ED726)
+	void registerGate(GateOpenAndCloseBehavior &gate);
+	void unregisterGate(GateOpenAndCloseBehavior &gate);
+	const std::vector<GateOpenAndCloseBehavior *> &gates() const { return m_gates; }
 	// RW 0x6A9D9C: historical registration order; dead and captured flags stay listed.
 	const std::vector<ObjectID> &captureFlags() const { return m_captureFlags; }
 	const AISkirmishGroup *findGroup(int playerIndex) const;
@@ -196,6 +203,8 @@ private:
 	AISkirmishPlayer *groupFirstAI(AISkirmishGroup &g) const; ///< the group's first AI (firstOfGroup: the target chooser's owner)
 	bool countsAsAI(const Player &p) const;
 	void updateGroup(AISkirmishGroup &g);
+	// RW 0x8ED6DC (before the group's AIs: the enemy gates' CLOSED geometry) / RW 0x8ED726 (after them: OPEN, forced)
+	void updateGates(bool before, Player &player);
 	void updateAI(AISkirmishPlayer &ai, AISkirmishGroup &g);
 	AISkirmishPlayer *eventAI(const Object &obj);
 	// lane AI5: the AI of a player whatever its state (the record's listeners keep listening after a shutdown); null without one
@@ -206,6 +215,7 @@ private:
 	std::vector<std::unique_ptr<AISkirmishGroup>> m_groups;
 	std::vector<int> m_infoPlayers;
 	std::vector<ObjectID> m_captureFlags;
+	std::vector<GateOpenAndCloseBehavior *> m_gates; ///< manager + 0xA74 (a 12-byte vector in retail, made by the manager's ctor)
 	std::map<int, std::unique_ptr<AIStatCollector>> m_records; ///< manager + 0xA3C: the player info records by player index (lane DECOMP-3)
 	void makeRecord(const Player &player);
 	std::vector<std::shared_ptr<AIBuildRequest>> m_farmSites; ///< RW 0xDE9EEC (made by the first economy builder, RW 0x8EEBAC)

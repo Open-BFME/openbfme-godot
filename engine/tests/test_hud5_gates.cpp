@@ -31,6 +31,7 @@
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <string>
@@ -58,8 +59,8 @@ int templateIndex(Shared &s, const std::string &name)
 	return -1;
 }
 
-// slot 0 at start 0 (the fortress), slot 1 at start 1; `aiAtFortress`: slot 0 is a computer player, slot 1 the human
-NewGameMessage gateMessage(Shared &s, const std::string &map, bool aiAtFortress)
+// slot 0 at start 0 (the fortress), slot 1 at start 1; `aiAtFortress`: slot 0 is a computer player, slot 1 the human; `withAI` false: both are human
+NewGameMessage gateMessage(Shared &s, const std::string &map, bool aiAtFortress, bool withAI = true)
 {
 	NewGameMessage m;
 	m.game.mapName = map;
@@ -69,7 +70,7 @@ NewGameMessage gateMessage(Shared &s, const std::string &map, bool aiAtFortress)
 	for (int i = 0; i < 2; ++i)
 	{
 		SkirmishGameSlot &sl = m.game.slots[i];
-		const bool ai = aiAtFortress ? i == 0 : i == 1;
+		const bool ai = withAI && (aiAtFortress ? i == 0 : i == 1);
 		sl.state = ai ? SLOT_EASY_AI : SLOT_PLAYER;
 		sl.name = ai ? u"Easy" : u"Host";
 		sl.accepted = true;
@@ -151,7 +152,7 @@ struct GateGame
 TEST_CASE("stops-b S-1366 retail: scripted gate actions and condition use the settled gate and update pathing")
 {
 	OPENBFME_REQUIRE_START(s);
-	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false, false));
 	g.frames(2);
 	Object *gate = g.named("Main Gate");
 	REQUIRE(gate);
@@ -206,7 +207,7 @@ TEST_CASE("stops-b S-1366 retail: scripted gate actions and condition use the se
 TEST_CASE("hud5 gates retail: Helm's Deep's main gate closes and opens by MSG_CLOSE_GATE / MSG_OPEN_GATE: states, timing, model conditions, geometry, pathfinder")
 {
 	OPENBFME_REQUIRE_START(s);
-	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false, false));
 	g.frames(2);
 	Object *gate = g.named("Main Gate");
 	REQUIRE(gate);
@@ -282,7 +283,7 @@ TEST_CASE("hud5 gates retail: the gate is in the state hash; two runs of the sam
 	// the state hash without its "skirmish AI" section: that section hashes the world's SkirmishAIStore, which every game on this map changes (its own hash
 	// differs after each game of the process, with or without a computer player: a finding for the AI lane, not the gates'); the gates are in the objects
 	auto run = [&](bool close, std::uint32_t &objects) {
-		GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+		GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false, false));
 		g.frames(2);
 		Object *gate = g.named("Main Gate");
 		REQUIRE(gate);
@@ -358,6 +359,50 @@ TEST_CASE("hud5 gates retail: a computer player's gate (Helm's Deep at start 1) 
 	g.frames(2);
 	CHECK(u->alliesInside() == 0);
 	CHECK(b->state() == GateOpenAndCloseBehavior::CLOSING);
+}
+
+// RW 0x8ED6DC / 0x8ED726 (the manager's gate list + 0xA74): an AI group closes every enemy gate whose closed geometry blocks pathing before its AIs run and
+// reopens it after. The gate's own update runs earlier in the frame (phase 3/4, RW 0x89CC29), the AI manager in phase 5 (RW 0x62EBEF), so a gate the human
+// closed ends each frame with the OPEN geometry while its logic state stays CLOSED; without the walk it would stay CLOSED in the pathfinder's map.
+TEST_CASE("rai gate object retail: an AI group closes the enemy gate that blocks pathing before its AIs and reopens it after (RW 0x8ED6DC / 0x8ED726)")
+{
+	OPENBFME_REQUIRE_START(s);
+	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+	Object *gate = g.named("Main Gate");
+	REQUIRE(gate);
+	GateOpenAndCloseBehavior *b = GateOpenAndCloseBehavior::findGate(*gate);
+	REQUIRE(b);
+	Player *owner = gate->getControllingPlayer();
+	REQUIRE(owner);
+	CHECK_FALSE(owner->isSkirmishAI());
+	SkirmishAIManager &m = g.game->logic().skirmishAI();
+	CHECK(m.findAI(owner->getPlayerIndex()) == nullptr);
+	Player *ai = nullptr;
+	for (int i = 0; i < g.game->players().getPlayerCount(); ++i)
+	{
+		Player *p = g.game->players().getNthPlayer(i);
+		ai = p && p->getPlayerType() == PLAYER_COMPUTER ? p : ai;
+	}
+	REQUIRE(ai);
+	REQUIRE(ai->isSkirmishAI());
+	REQUIRE(m.findAI(ai->getPlayerIndex()));
+	// every gate registers itself in the manager's list at construction (RW 0x89C04B -> 0x8EDA39)
+	const std::vector<GateOpenAndCloseBehavior *> &gates = m.gates();
+	CHECK(std::find(gates.begin(), gates.end(), b) != gates.end());
+	// the human closes the gate and lets it settle: its own update puts the CLOSED geometry in the pathfinder's map
+	g.send(MSG_CLOSE_GATE, owner->getPlayerIndex(), gate->getID());
+	g.frames(70);
+	REQUIRE(b->state() == GateOpenAndCloseBehavior::CLOSED);
+	CHECK(b->isSettled());
+	// the AI's group update ran in phase 5 of that frame: the enemy gate that blocks pathing got the OPEN geometry (RW 0x89CA84(1, 0)); the logic state stays closed
+	CHECK(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_OPEN);
+	CHECK(g.shapeActive(*gate, "OpenLeft"));
+	CHECK_FALSE(g.shapeActive(*gate, "Closed"));
+	CHECK_FALSE(g.blocksCentre(*gate));
+	// the next frame's gate update closes it again; the AI reopens it after its AIs, so the end of every frame has it open
+	g.frames(1);
+	CHECK(b->state() == GateOpenAndCloseBehavior::CLOSED);
+	CHECK(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_OPEN);
 }
 
 // Sol's review (HUD-5 r1): Minas Tirith's gate with a computer owner. Its only gate (MinisGateDoor, object "Gate") has a GateOpenAndCloseBehavior and no
@@ -454,7 +499,7 @@ bool insideGate(GateGame &g, Object &gate, Object &unit)
 TEST_CASE("gatepush1 gates retail: a gate closing on a unit in its gateway asks it to move away that frame and it ends outside the closed gate; a unit beside it and a horde member are not asked")
 {
 	OPENBFME_REQUIRE_START(s);
-	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false, false));
 	g.frames(2);
 	Object *gate = g.named("Main Gate");
 	REQUIRE(gate);
@@ -510,7 +555,7 @@ TEST_CASE("gatepush1 gates retail: a gate closing on a unit in its gateway asks 
 TEST_CASE("gatepush1 gates retail: the closed gate repels a colliding unit (RepelCollidingUnits, RotWK's default Yes) unless the unit attacks the gate; an open gate repels nobody")
 {
 	OPENBFME_REQUIRE_START(s);
-	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false, false));
 	g.frames(2);
 	Object *gate = g.named("Main Gate");
 	REQUIRE(gate);
