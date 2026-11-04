@@ -371,11 +371,13 @@ TEST_CASE("save4b retail T4: a real 4-player skirmish's snapshot is written (SAV
 	// CommandButtonHuntUpdate, HordeDispatchSpecialPower, HordeNotifyTargetsOfImminentProbableCrushingUpdate or HorseHordeContain object (108)
 	// Merge queue q37 (#187's rebuilt paths on top of WARG-1, measured once on the merged tree): a HordeNotifyTargetsOfImminentProbableCrushingUpdate and a
 	// HorseHordeContain object again (109)
+	// Lane GROUP-SPEED (the group speed cap and leader bands, RW 0x77005F; measured on the merged tree): the AIs' play gains a CommandButtonHuntUpdate and
+	// an AutoHealBehavior object, and the census is otherwise q37's (111)
 	CHECK(classes == std::set<std::string>{
 		"AISpecialPowerUpdate", "ActiveBody", "ArmorUpgrade", "ArrowStormUpdate", "AttributeModifierAuraUpdate", "AttributeModifierPoolUpdate",
-		"AttributeModifierUpgrade", "AudioLoopUpgrade", "AutoAbilityBehavior", "AutoDepositUpdate", "AutoPickUpUpdate", "BannerCarrierUpdate",
+		"AttributeModifierUpgrade", "AudioLoopUpgrade", "AutoAbilityBehavior", "AutoDepositUpdate", "AutoHealBehavior", "AutoPickUpUpdate", "BannerCarrierUpdate",
 		"BezierProjectileBehavior", "BloodthirstyUpdate", "BoredUpdate", "BuildableHeroListUpgrade", "BuildingBehavior", "CastleBehavior", "CastleMemberBehavior",
-		"CastleUpgrade", "CitadelSlaughterHordeContain", "ClickReactionBehavior", "CloudBreakSpecialPower", "CommandPointsUpgrade", "CommandSetUpgrade",
+		"CastleUpgrade", "CitadelSlaughterHordeContain", "ClickReactionBehavior", "CloudBreakSpecialPower", "CommandButtonHuntUpdate", "CommandPointsUpgrade", "CommandSetUpgrade",
 		"CostModifierUpgrade", "CreateObjectDie", "CritterEmitterUpdate", "DamageFilteredCreateObjectDie", "DarknessSpecialPower", "DefectionHelper",
 		"DelayedDeathBody", "DestroyDie", "DevastateSpecialPower", "DoCommandUpgrade", "DualWeaponBehavior", "ElvenWoodSpecialPower", "EmotionTrackerUpdate",
 		"FXListDie", "FiringTrackerHelper", "FoundationAIUpdate", "FreezingRainSpecialPower", "GeometryUpgrade", "GettingBuiltBehavior", "GiveUpgradeUpdate",
