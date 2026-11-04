@@ -328,7 +328,7 @@ Pathfinder::PortalMemoScope::~PortalMemoScope()
 	}
 }
 
-bool Pathfinder::portalPathExists(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to) const
+bool Pathfinder::portalPathExists(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to, bool terrainVariant) const
 {
 	if (m_waypointIds.empty() || obj == nullptr)
 	{
@@ -345,7 +345,7 @@ bool Pathfinder::portalPathExists(const PathfindObject *obj, const PathfindLocom
 		}
 		if (memo.loco.validSurfaces == loco.validSurfaces && memo.loco.downhillOnly == loco.downhillOnly && memo.loco.crusher == loco.crusher)
 		{
-			const std::uint64_t key = (std::uint64_t)from << 32 | (std::uint64_t)to;
+			const std::uint64_t key = (std::uint64_t)from << 32 | (std::uint64_t)to | (terrainVariant ? 0 : (std::uint64_t)1 << 31);
 			const auto it = memo.answers.find(key);
 			if (it != memo.answers.end())
 			{
@@ -354,7 +354,7 @@ bool Pathfinder::portalPathExists(const PathfindObject *obj, const PathfindLocom
 			known = &memo.answers[key];
 		}
 	}
-	const bool answer = portalPathExistsUncached(obj, loco, from, to);
+	const bool answer = portalPathExistsUncached(obj, loco, from, to, terrainVariant);
 	if (known)
 	{
 		*known = answer;
@@ -362,7 +362,7 @@ bool Pathfinder::portalPathExists(const PathfindObject *obj, const PathfindLocom
 	return answer;
 }
 
-bool Pathfinder::portalPathExistsUncached(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to) const
+bool Pathfinder::portalPathExistsUncached(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to, bool terrainVariant) const
 {
 	if (obj->refusesPortals() || !obj->hasAI())
 	{
@@ -386,7 +386,7 @@ bool Pathfinder::portalPathExistsUncached(const PathfindObject *obj, const Pathf
 		{
 			continue;
 		}
-		const zoneStorageType z = m_zoneManager.getEffectiveZone(mv, true, cell->getZone());
+		const zoneStorageType z = m_zoneManager.getEffectiveZone(mv, terrainVariant, cell->getZone()); // lane QPATH-1: the caller's table
 		byZone.emplace(z, w->id);
 		zoneOf[w->id] = z;
 	}

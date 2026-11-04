@@ -24,6 +24,14 @@
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
+#include "Common/INIException.h"
+#include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/AI/AIPathfindHost.h"
+#include "GameLogic/Locomotor.h"
+#include "GameLogic/Module/ExtraDieModules.h"
+#include "GameLogic/Module/NotifyCrushModules.h"
+#include "GameLogic/Module/SquishCollide.h"
+#include "GameLogic/Object/PartitionManager.h"
 
 #include <cstddef>
 #include <stdexcept>
@@ -176,6 +184,88 @@ void PorcupineFormationBodyModuleData::buildFieldParse(MultiIniFieldParse &p)
 	p.add(kPorcupineParse);                   // RW table 0xC72E18
 }
 
+namespace
+{
+// lane SIEGEFALL-1: the ClearanceTestingSlowDeathBehavior rows (RW table 0xC60590)
+using ClearanceData = ClearanceTestingSlowDeathBehaviorModuleData;
+std::vector<ObjectGeometry::Shape> &clearanceShapes(void *store) { return *static_cast<std::vector<ObjectGeometry::Shape> *>(store); }
+ObjectGeometry::Shape &lastClearanceShape(INI *, void *store)
+{
+	std::vector<ObjectGeometry::Shape> &shapes = clearanceShapes(store);
+	if (shapes.empty())
+	{
+		throw INIException(3, "ClearanceGeometry has no shape");
+	}
+	return shapes.back();
+}
+// RW 0xAD4040: the type (the names RW 0xDC1C38: SPHERE 0, CYLINDER 1, BOX 2); the list becomes one default shape of that type
+void parseClearanceGeometry(INI *ini, void *, void *store, const void *)
+{
+	const std::string t = ini->getNextToken();
+	int type = -1;
+	if (AsciiStringUtil::compareNoCase(t, "SPHERE") == 0) type = ObjectGeometry::SHAPE_SPHERE;
+	else if (AsciiStringUtil::compareNoCase(t, "CYLINDER") == 0) type = ObjectGeometry::SHAPE_CYLINDER;
+	else if (AsciiStringUtil::compareNoCase(t, "BOX") == 0) type = ObjectGeometry::SHAPE_BOX;
+	if (type < 0)
+	{
+		throw INIException(3, "ClearanceGeometry '%s' is not SPHERE, CYLINDER or BOX", t.c_str());
+	}
+	std::vector<ObjectGeometry::Shape> &shapes = clearanceShapes(store);
+	shapes.assign(1, ObjectGeometry::Shape());
+	shapes[0].type = type;
+}
+void parseClearanceMajorRadius(INI *ini, void *, void *store, const void *) { lastClearanceShape(ini, store).majorRadius = ini->scanReal(ini->getNextToken()); } // RW 0xAD2BC0
+void parseClearanceMinorRadius(INI *ini, void *, void *store, const void *) { lastClearanceShape(ini, store).minorRadius = ini->scanReal(ini->getNextToken()); } // RW 0xAD2C10
+void parseClearanceHeight(INI *ini, void *, void *store, const void *) { lastClearanceShape(ini, store).height = ini->scanReal(ini->getNextToken()); }          // RW 0xAD2B60
+// RW 0x42ED6F (BFME2 0x42F02F): a real, stored, then refused below 0
+void parseNonNegativeReal(INI *ini, void *, void *store, const void *)
+{
+	const float v = ini->scanReal(ini->getNextToken());
+	*(float *)store = v;
+	if (0.0f > v)
+	{
+		throw INIException(3, "invalid Real value %1.7f -- expected >= 0", (double)v);
+	}
+}
+// RW 0x42EDC2 (BFME2 0x42F082): a real, stored, then refused above 0
+void parseNonPositiveReal(INI *ini, void *, void *store, const void *)
+{
+	const float v = ini->scanReal(ini->getNextToken());
+	*(float *)store = v;
+	if (v > 0.0f)
+	{
+		throw INIException(3, "invalid Real value %1.7f -- expected <= 0", (double)v);
+	}
+}
+const FieldParse kClearanceParse[] = {
+	{ "ClearanceGeometry", parseClearanceGeometry, nullptr, (int)offsetof(ClearanceData, m_clearanceGeometry) },
+	{ "ClearanceGeometryMajorRadius", parseClearanceMajorRadius, nullptr, (int)offsetof(ClearanceData, m_clearanceGeometry) },
+	{ "ClearanceGeometryMinorRadius", parseClearanceMinorRadius, nullptr, (int)offsetof(ClearanceData, m_clearanceGeometry) },
+	{ "ClearanceGeometryRotationAnchorOffset", INI::parseCoord2D, nullptr, (int)offsetof(ClearanceData, m_clearanceGeometryRotationAnchorOffset) },
+	{ "ClearanceGeometryHeight", parseClearanceHeight, nullptr, (int)offsetof(ClearanceData, m_clearanceGeometry) },
+	{ "ClearanceGeometryIsSmall", INI::parseBool, nullptr, (int)offsetof(ClearanceData, m_clearanceGeometryIsSmall) },
+	{ "ClearanceGeometryOffset", INI::parseCoord3D, nullptr, (int)offsetof(ClearanceData, m_clearanceGeometryOffset) },
+	{ "ClearanceMaxHeight", parseNonNegativeReal, nullptr, (int)offsetof(ClearanceData, m_clearanceMaxHeight) },
+	{ "ClearanceMaxHeightFraction", parseNonNegativeReal, nullptr, (int)offsetof(ClearanceData, m_clearanceMaxHeightFraction) },
+	{ "ClearanceMinHeight", parseNonPositiveReal, nullptr, (int)offsetof(ClearanceData, m_clearanceMinHeight) },
+	{ "ClearanceMinHeightFraction", parseNonNegativeReal, nullptr, (int)offsetof(ClearanceData, m_clearanceMinHeightFraction) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+} // namespace
+
+void ClearanceTestingSlowDeathBehaviorModuleData::buildFieldParse(MultiIniFieldParse &p)
+{
+	SlowDeathBehaviorModuleData::buildFieldParse(p); // RW 0xC58A98 and the DieMux rows (0xC76BD8)
+	p.add(kClearanceParse);                           // RW 0xC60590
+}
+
+float ClearanceTestingSlowDeathBehaviorModuleData::clearanceBoundingSphereRadius() const
+{
+	PathfindGeometry g;
+	ObjectGeometry::fillPathfindGeometry(m_clearanceGeometry, g);
+	return g.computeBoundingSphereRadius();
+}
+
 void DestroyDieModuleData::buildFieldParse(MultiIniFieldParse &p) { p.add(kDestroyDieParse); }
 void KeepObjectDieModuleData::buildFieldParse(MultiIniFieldParse &p) { p.add(kKeepObjectDieParse); }
 void FXListDieModuleData::buildFieldParse(MultiIniFieldParse &p) { p.add(kFXListDieParse); }
@@ -198,14 +288,15 @@ void CombatModules::registerAll(ModuleFactory &modules)
 	bindRuntime<FXListDie, FXListDieModuleData>(modules, "FXListDie");
 	modules.bindTypedData<SlowDeathBehaviorModuleData>("SlowDeathBehavior", MODULETYPE_BEHAVIOR);
 	bindRuntime<SlowDeathBehavior, SlowDeathBehaviorModuleData>(modules, "SlowDeathBehavior");
+	modules.bindTypedData<ClearanceTestingSlowDeathBehaviorModuleData>("ClearanceTestingSlowDeathBehavior", MODULETYPE_BEHAVIOR); // lane SIEGEFALL-1
+	bindRuntime<ClearanceTestingSlowDeathBehavior, ClearanceTestingSlowDeathBehaviorModuleData>(modules, "ClearanceTestingSlowDeathBehavior");
 }
 
 // ---- DestroyDie / FXListDie -------------------------------------------------------------------------------------------------------
 void DestroyDie::onDie(const DieModuleInterface::Event &event)
 {
 	Object *obj = getObject();
-	bool angle = false;
-	if (!m_data->m_dieMux.isDieApplicable(*obj, event, &angle))
+	if (!m_data->m_dieMux.isDieApplicable(*obj, event))
 	{
 		return;
 	}
@@ -215,8 +306,7 @@ void DestroyDie::onDie(const DieModuleInterface::Event &event)
 void FXListDie::onDie(const DieModuleInterface::Event &event)
 {
 	Object *obj = getObject();
-	bool angle = false;
-	if (!m_data->m_dieMux.isDieApplicable(*obj, event, &angle))
+	if (!m_data->m_dieMux.isDieApplicable(*obj, event))
 	{
 		return;
 	}
@@ -253,8 +343,7 @@ SlowDeathBehavior::SlowDeathBehavior(Thing *thing, const SlowDeathBehaviorModule
 
 bool SlowDeathBehavior::isDieApplicable(const DieModuleInterface::Event &event) const
 {
-	bool angle = false;
-	return m_data->m_dieMux.isDieApplicable(*getObject(), event, &angle);
+	return m_data->m_dieMux.isDieApplicable(*getObject(), event);
 }
 
 // RW 0x860608 (SlowDeathBehaviorInterface slot 1): overkill = (int)(dealt - clipped) (cvttss2si), fild; divided by the body's max health (body slot 0x1C, x87), times
@@ -327,7 +416,7 @@ void SlowDeathBehavior::onDie(const DieModuleInterface::Event &event)
 		}
 		total -= weights[i];
 		SlowDeathBehavior *pick = candidates[i];
-		if (pick->isDieApplicable(event))
+		if (pick->isDieApplicable(event) && pick->canBeginSlowDeath())
 		{
 			pick->beginSlowDeath(event);
 			return;
@@ -670,6 +759,85 @@ void SlowDeathBehavior::crc(StateHasher &h) const
 	h.addBool(m_hitGroundPending);
 	h.addBool(m_fadeBegun);
 	h.addU32(m_fadeFrame);
+}
+
+// ---- ClearanceTestingSlowDeathBehavior (lane SIEGEFALL-1) --------------------------------------------------------------------------------------------------
+ClearanceTestingSlowDeathBehavior::ClearanceTestingSlowDeathBehavior(Thing *thing, const ClearanceTestingSlowDeathBehaviorModuleData *data)
+	: SlowDeathBehavior(thing, data)
+	, m_clearanceData(data)
+{
+}
+
+Coord3D ClearanceTestingSlowDeathBehavior::getClearanceTestGeometryCenter() const
+{
+	return ExtraDieModules::transformPoint(*getObject(), m_clearanceData->m_clearanceGeometryOffset); // RW 0x70BFD1 (BFME2 0x70A812)
+}
+
+// RW 0x887191 (BFME2 0x883F19, tier A; donors Open-BFME-2 Rva00483C35Rva00483F19.cpp, Open-BFME-1 ClearanceTestingSlowDeathBehaviorRva001F7430.cpp):
+//   1. the centre: ClearanceGeometryOffset through the object's transform; the radius: GeometryInfo + 0x14 (the bounding sphere) * 1.1f (mulss, BFME2 0xBCE3B8);
+//   2. ThePartitionManager->getClosestObject(centre, radius, FROM_BOUNDINGSPHERE_3D (3), chain) with the chain in And order (BFME2 0xA25790 appends): first the
+//      filter of vtable BFME2 0xC49E84 (allow BFME2 0x883C9F: refuse when this object's crusher level (BFME2 0x694815, signed byte) is not 0 and above the
+//      other's crushable level (BFME2 0x68CE7B, jg), refuse the object itself and an object on an airborne locomotor (BFME2 0x68B81E: AI + current locomotor +
+//      template surfaces bit AIR), allow an object without a body, else allow unless the body's damage state is RUBBLE (BFME2 body vslot 0x20 == 3)), then
+//      PartitionFilterWouldCollide(centre, the clearance geometry, the object's angle, true) (ctor BFME2 0x67C2C9, allow BFME2 0x661603: the geometry overlap
+//      RW 0xAD2CE0 of the other's own GeometryInfo at its position and angle, == desired); any object found: false;
+//   3. when TheTerrainLogic exists and either fraction is at most 1.0 (comiss: 1.0f >= MaxHeightFraction, else 1.0f >= MinHeightFraction), the footprint walk
+//      (the sampler RW 0x8E047D / next point RW 0x8E0354, the layer heights against z + MaxHeight (x87) and MinHeight + z (SSE), the high / low fractions
+//      (cvtsi2ss, divss) against MaxHeightFraction / MinHeightFraction): NOT PORTED (S-7163: the RotWK sampler bodies were not read; BFME2 0x8DC1BF / 0x8DC096
+//      have no verified pair). The walk is reported and the terrain counts as clear.
+// The filter bodies and the data ctor are read from BFME2 only (S-7163).
+bool ClearanceTestingSlowDeathBehavior::canBeginSlowDeath()
+{
+	Object *obj = getObject();
+	GameLogic &logic = obj->logic();
+	const ClearanceTestingSlowDeathBehaviorModuleData *d = m_clearanceData;
+	const Coord3D center = getClearanceTestGeometryCenter();
+	const float radius = SimMath::mulf32(d->clearanceBoundingSphereRadius(), 1.1f);
+	const float angle = obj->getOrientation();
+	const signed char crusherLevel = (signed char)ObjectCrush::crusherLevel(*obj);
+	auto crusherFilter = [&](Object &other) {
+		if (crusherLevel != 0 && crusherLevel > (signed char)ObjectCrush::crushableLevel(other))
+		{
+			return false;
+		}
+		if (&other == obj)
+		{
+			return false;
+		}
+		if (const AIUpdateInterface *ai = other.getAIUpdateInterface())
+		{
+			if (const Locomotor *loco = ai->curLocomotor())
+			{
+				if (loco->getTemplate().m_surfaces & LOCOMOTORSURFACE_AIR)
+				{
+					return false;
+				}
+			}
+		}
+		const BodyModuleInterface *body = other.getBodyModule();
+		return !body || body->getDamageState() != BODY_RUBBLE;
+	};
+	auto wouldCollide = [&](Object &other) {
+		return NotifyCrushModules::geometriesOverlap(d->m_clearanceGeometry, center, angle, other.geometryShapes(), *other.getPosition(), other.getOrientation());
+	};
+	PartitionFilterFn<decltype(crusherFilter)> first(crusherFilter);
+	PartitionFilterFn<decltype(wouldCollide)> second(wouldCollide);
+	if (logic.partition().getClosestObject(center, radius, FROM_BOUNDINGSPHERE_3D, { &first, &second }))
+	{
+		return false;
+	}
+	if (1.0f >= d->m_clearanceMaxHeightFraction || 1.0f >= d->m_clearanceMinHeightFraction)
+	{
+		logic.noteStop("[S-7163] ClearanceTestingSlowDeathBehavior of " + obj->getTemplate()->getName() +
+			": the footprint height walk (RW 0x887191 with the sampler RW 0x8E047D / 0x8E0354, not read) is not ported: the terrain counts as clear");
+	}
+	return true;
+}
+
+void ClearanceTestingSlowDeathBehavior::xfer(Xfer &x)
+{
+	SnapshotXfer::version(x, 1, 1);
+	SlowDeathBehavior::xfer(x);
 }
 
 // ---- lane SAVE-4b: the snapshots (OpenBFME native, S-4190) ------------------------------------------------------------------------------------------------

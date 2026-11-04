@@ -748,7 +748,7 @@ TEST_CASE("save4c retail hostile inputs (SAVES.md section 8, rules 3 to 5): for 
 			"block '" + t + "': ai world: the snapshot's AI of object " + std::to_string(u32At(one, id0)) + " where the loaded game has object " +
 				std::to_string(u32At(one, id1)) + "'s");
 		refused(t, secs, withU32(one, run0, big), "block '" + t + "': pathfinder: a run of " + std::to_string(big) + " class words at cell 0 of " + std::to_string(cells));
-		refused(t, secs, withU32(one, word0, (u32At(one, word0) & ~0xFu) | 9u), "block '" + t + "': pathfinder: a cell type 9 is outside 0 .. 7");
+		refused(t, secs, withU32(one, word0, (u32At(one, word0) & ~0xFu) | 9u), "block '" + t + "': pathfinder: a cell type 9 is outside 0 .. 8");
 	}
 }
 

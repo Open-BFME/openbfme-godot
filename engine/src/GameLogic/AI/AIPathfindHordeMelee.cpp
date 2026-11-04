@@ -36,7 +36,7 @@
 //     cliff -> false; an obstacle cell must be the AI's ignored obstacle (else false; nothing else is checked there); type 6 -> false; the goal list
 //     (info + 0x14): every unit that is not the unit, not its ignored obstacle and not contained by it: an ally adds 1, a non-ally standing at its goal
 //     (RW 0x68B47F) -> false; the position list (info + 0x20): every unit that is not the unit and not contained by it adds 3 for an ally, else 1.
-// INFERENCE / NOT PORTED (stop S-590): the layer for a destination is the ground (S-161); the quick path test RW 0x6F5BB0 is the port's clientSafeQuickDoesPathExist (as in canApproachToTarget).
+// INFERENCE / NOT PORTED (stop S-590): the layer for a destination is the ground (S-161); the quick path test RW 0x6F5BB0 (RW 0x6F6D08 / 0x6F6D19 / 0x6F6D2E, the unit and the caller's set) is quickDoesPathExist (lane QPATH-1).
 
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIPathfindLine.h"
@@ -286,13 +286,13 @@ bool Pathfinder::adjustHordeMeleeDestination(PathfindObject &obj, const Pathfind
 		}
 		else if (height <= 0.0f || SimMath::absD((double)SimMath::subf32(at.z, height)) <= 50.0)
 		{
-			bool ok = clientSafeQuickDoesPathExist(loco, &unitPos, &at);
+			bool ok = quickDoesPathExist(obj, &unitPos, &at, &loco);
 			if (!goalReachableKnown)
 			{
-				goalReachable = clientSafeQuickDoesPathExist(loco, &unitPos, &goal);
+				goalReachable = quickDoesPathExist(obj, &unitPos, &goal, &loco);
 				goalReachableKnown = true;
 			}
-			if (!goalReachable && clientSafeQuickDoesPathExist(loco, &goal, &at))
+			if (!goalReachable && quickDoesPathExist(obj, &goal, &at, &loco))
 			{
 				ok = true;
 			}

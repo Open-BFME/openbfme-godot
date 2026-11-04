@@ -6,7 +6,6 @@
 #include "GodotDevice/GodotGammaComposite.h"
 #include "GodotDevice/GodotGameWorld.h"
 #include "GodotDevice/GodotInGameHud.h"
-#include "GodotDevice/MacOSTrackpad.h"
 #include "GodotDevice/GodotFXPlayer.h"
 #include "GodotDevice/GodotLogicClock.h"
 #include "GodotDevice/GodotMapObjectBuilder.h"
@@ -65,7 +64,6 @@ static void uninitialize_openbfme(ModuleInitializationLevel p_level)
 {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE)
 	{
-		MacOSTrackpad::shutdown(); // no native callback may outlive the extension
 		WindowsCrashDump::uninstall();
 		ConsoleFilter::uninstall(); // RELEASE-1: the original stdout / stderr back before the extension's code goes
 		GammaComposite::shutdown();
